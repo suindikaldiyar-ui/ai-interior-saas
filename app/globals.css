@@ -3,25 +3,247 @@
 @tailwind utilities;
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --paper: #f2f0eb;
+  --paper-alt: #e9e6df;
+  --graphite: #16181a;
+  --graphite-soft: #4a4f53;
+  --line: #dcd8d0;
+  --line-strong: #c3bdb2;
+  --patina: #1f5e5b;
+  --patina-soft: #2e7b77;
+  --ochre: #b4791f;
+  --viewport: #1b1d1f;
+  --select: #e0a92e;
+
+  /* ── Конфигуратор корпусной мебели ──
+     Язык взят из мира производства: замерный лист, синька чертежа,
+     кромка ЛДСП, жёлтая рулетка. Фон холодный намеренно: кремовый фон
+     с тёплым акцентом — самое частое оформление, выдающее шаблон. */
+  --concrete: #e7e7e4;
+  --concrete-deep: #d6d7d3;
+  --sheet: #fcfcfb;
+  --ink: #16181a;
+  --graphite-mw: #5c6165;
+  --blueprint: #1b3a6b;
+  --tape: #e8b417;
+  --alert: #c0392b;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+/* Все числа моноширинные и в колонку: цифры в смете и в размерной цепочке
+   обязаны стоять друг под другом, иначе их невозможно сверять глазом. */
+.mw-num {
+  font-family: var(--font-mono, ui-monospace, 'IBM Plex Mono', Menlo, monospace);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+.mw-root {
+  background: var(--concrete);
+  color: var(--ink);
+  font-family: var(--font-ui, 'Archivo', system-ui, sans-serif);
+}
+
+/* Лист чертежа рендерится как физический лист: его печатают и вешают
+   на стене объекта. Единственная скевоморфная вольность, и она заслужена. */
+.mw-sheet {
+  background: var(--sheet);
+  box-shadow: 0 1px 2px rgba(22, 24, 26, 0.08), 0 8px 24px rgba(22, 24, 26, 0.06);
+}
+
+.mw-label {
+  font-size: 11px;
+  line-height: 14px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--graphite-mw);
+}
+
+/* Цели касания на планшете — не меньше 44 px. */
+.mw-touch {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+/* Изменившиеся размеры подсвечиваются на 400 мс: видно, что инструмент
+   пересчитал, а не перерисовал. Других эффектов на странице нет. */
+@keyframes mw-flash {
+  from {
+    fill: var(--tape);
+  }
+  to {
+    fill: var(--blueprint);
   }
 }
 
-body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+.mw-flash {
+  animation: mw-flash 400ms ease-out;
 }
 
-@layer utilities {
-  .text-balance {
-    text-wrap: balance;
+@media (prefers-reduced-motion: reduce) {
+  .mw-flash {
+    animation: none;
+  }
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--paper);
+  color: var(--graphite);
+  font-feature-settings: 'kern' 1, 'liga' 1;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Все числа в интерфейсе должны стоять в колонку — иначе координаты «пляшут». */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+.micro-label {
+  font-size: 10px;
+  line-height: 14px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--graphite-soft);
+}
+
+/* Тонкий скроллбар — «чертёжная» оболочка не терпит системных полос. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--graphite-soft);
+}
+
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: 1px;
+}
+
+/* Спиннеры у number-полей ломают моноширинную сетку координат. */
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+input[type='color'] {
+  -webkit-appearance: none;
+  appearance: none;
+  border: 1px solid var(--line-strong);
+  padding: 0;
+  background: none;
+  cursor: pointer;
+}
+
+input[type='color']::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+
+input[type='color']::-webkit-color-swatch {
+  border: none;
+}
+
+/* Печать = «Скачать PDF» в кабинете клиента. Системный диалог печати умеет
+   сохранять в PDF и, в отличие от jsPDF, не требует тащить кириллический
+   шрифт в бандл. Прячем интерактив и разворачиваем таблицу на всю ширину. */
+@media print {
+  .print\:hidden {
+    display: none !important;
+  }
+
+  body {
+    background: #fff;
+  }
+
+  table {
+    page-break-inside: auto;
+  }
+
+  tr {
+    page-break-inside: avoid;
+  }
+
+  /* Чертёж печатается на A4 альбомном: лист вешают на стене объекта. */
+  @page {
+    size: A4 landscape;
+    margin: 10mm;
+  }
+
+  /* Синька уходит в чёрный: цветной принтер в цеху — редкость,
+     а серая линия на чёрно-белой печати теряется. */
+  .mw-root,
+  .mw-sheet {
+    background: #fff !important;
+    box-shadow: none !important;
+    color: #000 !important;
+  }
+
+  .mw-root svg [stroke='var(--blueprint)'],
+  .mw-root svg line,
+  .mw-root svg rect,
+  .mw-root svg circle,
+  .mw-root svg polygon {
+    stroke: #000 !important;
+  }
+
+  .mw-root svg text {
+    fill: #000 !important;
+  }
+
+  /* Размерные линии не должны обрезаться на краю листа. */
+  .mw-root svg {
+    overflow: visible;
+    max-width: 100%;
+  }
+
+  .mw-root {
+    display: block !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  .mw-root aside {
+    width: 100% !important;
+    border: 0 !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

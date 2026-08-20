@@ -4,23 +4,44 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "refs": "node scripts/build-references.mjs",
+    "prebuild": "node scripts/build-references.mjs",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "test:spatial": "tsx scripts/verify-spatial.ts",
+    "verify": "npm run typecheck && npm run test:spatial && npm run test:catalog && npm run test:millwork && npm run build && npm run test:capture && npm run test:demo",
+    "test:capture": "node scripts/verify-capture.mjs",
+    "test:catalog": "tsx scripts/verify-catalog.ts",
+    "test:rls": "node scripts/verify-rls.mjs",
+    "test:millwork": "tsx scripts/verify-millwork.ts",
+    "test:render": "node scripts/verify-render-live.mjs",
+    "test:demo": "node scripts/verify-demo.mjs"
   },
   "dependencies": {
+    "@react-three/drei": "^9.122.0",
+    "@react-three/fiber": "^8.18.0",
+    "@supabase/ssr": "^0.12.4",
+    "@supabase/supabase-js": "^2.112.3",
+    "next": "14.2.35",
     "react": "^18",
     "react-dom": "^18",
-    "next": "14.2.25"
+    "sharp": "^0.35.3",
+    "three": "^0.169.0",
+    "zustand": "^4.5.7"
   },
   "devDependencies": {
-    "typescript": "^5",
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
+    "@types/three": "^0.169.0",
+    "eslint": "^8",
+    "eslint-config-next": "14.2.35",
+    "playwright": "^1.62.1",
     "postcss": "^8",
     "tailwindcss": "^3.4.1",
-    "eslint": "^8",
-    "eslint-config-next": "14.2.25"
+    "tsx": "^4.23.12",
+    "typescript": "^5"
   }
 }
