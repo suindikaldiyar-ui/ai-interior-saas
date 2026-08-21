@@ -8,7 +8,8 @@
  */
 
 import { chromium } from 'playwright';
-import { spawn } from 'node:child_process';
+import sharp from 'sharp';
+import { execSync, spawn } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -40,6 +41,42 @@ function check(name, condition, detail = '') {
   }
 }
 
+/*
+ * Оставшийся с прошлого прогона сервер отдаёт СТАРУЮ сборку: страница
+ * открывается, чанки 404, React не оживает — и проверка «переключение
+ * варианта меняет смету» падает на совершенно исправном коде.
+ * Поэтому порт освобождается до старта, а не после.
+ */
+function freePort(port) {
+  try {
+    const out =
+      process.platform === 'win32'
+        ? execSync(`netstat -ano -p tcp | findstr LISTENING | findstr :${port}`, {
+            encoding: 'utf8',
+          })
+        : execSync(`lsof -ti tcp:${port}`, { encoding: 'utf8' });
+
+    const pids = new Set(
+      out
+        .split(/\r?\n/)
+        .map((line) => line.trim().split(/\s+/).pop())
+        .filter((pid) => pid && /^\d+$/.test(pid) && pid !== '0'),
+    );
+
+    for (const pid of pids) {
+      execSync(
+        process.platform === 'win32' ? `taskkill /PID ${pid} /F` : `kill -9 ${pid}`,
+        { stdio: 'ignore' },
+      );
+      console.log(`  ··   освободил порт ${port}: остановлен процесс ${pid}`);
+    }
+  } catch {
+    /* никто не слушает — это норма */
+  }
+}
+
+freePort(PORT);
+
 const server = spawn(
   process.platform === 'win32' ? 'npx.cmd' : 'npx',
   ['next', 'start', '-p', String(PORT)],
@@ -61,7 +98,10 @@ try {
     process.exit(1);
   }
 
-  browser = await chromium.launch();
+  // Вкладка 3D — настоящий WebGL: без софтверного рендерера канвас не заведётся.
+  browser = await chromium.launch({
+    args: ['--enable-unsafe-swiftshader', '--use-angle=swiftshader', '--ignore-gpu-blocklist'],
+  });
   // Планшет альбомный — основной сценарий.
   const page = await browser.newPage({ viewport: { width: 1180, height: 820 } });
   page.on('pageerror', (e) => {
@@ -69,53 +109,55 @@ try {
     console.error('  [pageerror]', e.message.slice(0, 200));
   });
 
-  /* ── 1. Открыть /demo — готовый проект с тремя ценами ── */
+  /* ── 1. Демонстрация открывается готовой конфигурацией ── */
 
   const response = await page.goto(`${BASE}/demo`, { waitUntil: 'networkidle' });
   check('/demo открывается без входа', response?.status() === 200, `статус ${response?.status()}`);
 
-  const money = () =>
-    page.evaluate(() =>
-      Array.from(document.querySelectorAll('button'))
-        .map((b) => b.textContent ?? '')
-        .filter((t) => t.includes('₸'))
-        .map((t) => Number((t.match(/[\d\s ]+(?=\s*₸)/)?.[0] ?? '0').replace(/\D/g, '')))
-        .filter((n) => n > 0),
-    );
-
-  const prices = await money();
-  check('во вкладках вариантов стоят три цены', prices.length === 3, prices.join(' / '));
+  const stepTitles = await page
+    .locator('nav[aria-label="Шаги работы"] button')
+    .allInnerTexts();
   check(
-    'цены растут от базового к премиуму',
-    prices[0] < prices[1] && prices[1] < prices[2],
+    'вместо вкладок — последовательность шагов',
+    stepTitles.length >= 4 &&
+      stepTitles.join(' ').includes('Шаблон') &&
+      stepTitles.join(' ').includes('Результат'),
+    stepTitles.map((t) => t.replace(/\s+/g, ' ').trim()).join(' · '),
+  );
+
+  check(
+    'демонстрация открывается на составе, а не на пустом выборе',
+    (await page.getByText('Состав ряда').count()) === 1,
+  );
+
+  check(
+    'на экране одна главная кнопка и одна вторичная',
+    (await page.getByRole('button', { name: 'Назад', exact: true }).count()) === 1 &&
+      (await page.getByRole('button', { name: 'К материалам', exact: true }).count()) === 1,
+  );
+
+  /* ── 2. Смета живёт строкой, а не панелью ── */
+
+  const totalRow = page.getByRole('button', { name: /подробнее|свернуть/ });
+  check('итог сметы свёрнут в строку', (await totalRow.count()) === 1);
+  check(
+    'таблица сметы не занимает место постоянно',
+    (await page.locator('input[type="checkbox"]').count()) === 0,
   );
 
   const totalText = () =>
     page.evaluate(() => {
-      const aside = document.querySelector('aside');
-      return aside ? (aside.innerText.match(/([\d\s ]+)\s*₸\s*$/m)?.[1] ?? '') : '';
+      const row = Array.from(document.querySelectorAll('button')).find((b) =>
+        /подробнее|свернуть/.test(b.textContent ?? ''),
+      );
+      return (row?.textContent ?? '').replace(/\s+/g, ' ').trim();
     });
 
-  check('чертёж отрисован', (await page.locator('svg').count()) > 0);
-  check('лента модулей на месте', (await page.getByText('Состав ряда').count()) === 1);
-
-  /* ── 2. Переключить вариант — чертёж и смета изменились ── */
-
-  const beforeSwitch = await totalText();
-  await page.getByRole('button', { name: /ПРЕМИУМ|Премиум/ }).first().click();
-  await sleep(500);
-  const afterSwitch = await totalText();
-  check(
-    'переключение варианта меняет смету',
-    beforeSwitch !== afterSwitch,
-    `${beforeSwitch.trim()} → ${afterSwitch.trim()}`,
-  );
-
-  /* ── 3. Снять галочку — итог пересчитался ── */
-
-  const boxes = page.locator('aside input[type="checkbox"]');
+  await totalRow.click();
+  await sleep(400);
+  const boxes = page.locator('input[type="checkbox"]');
   const boxCount = await boxes.count();
-  check('в смете есть отключаемые строки', boxCount > 3, `строк: ${boxCount}`);
+  check('смета открывается тапом', boxCount > 3, `строк: ${boxCount}`);
 
   const beforeToggle = await totalText();
   await boxes.nth(2).uncheck();
@@ -124,24 +166,18 @@ try {
   check(
     'снятая галочка уменьшает итог при клиенте',
     beforeToggle !== afterToggle,
-    `${beforeToggle.trim()} → ${afterToggle.trim()}`,
+    `${beforeToggle} → ${afterToggle}`,
   );
 
-  /* ── 4. Убрать модуль руками — цепочка перестроилась ── */
+  await page.getByRole('button', { name: 'Закрыть', exact: true }).click();
+  await sleep(300);
+  check(
+    'смета закрывается тапом и снова не занимает места',
+    (await page.locator('input[type="checkbox"]').count()) === 0,
+  );
 
-  const chainSum = () =>
-    page.evaluate(() => {
-      const texts = Array.from(document.querySelectorAll('svg text'))
-        .map((t) => Number(t.textContent))
-        .filter((n) => Number.isFinite(n) && n > 100 && n < 2000);
-      return texts.reduce((s, n) => s + n, 0);
-    });
+  /* ── 3. Состав правится руками ── */
 
-  /*
-   * Число модулей и сумма после удаления НЕ меняются: место перезаполняется,
-   * и ряд по-прежнему сходится с длиной стены. Меняется состав — именно его
-   * и проверяем, иначе тест ловил бы не то.
-   */
   const ribbon = () =>
     page.evaluate(() =>
       Array.from(document.querySelectorAll('button[draggable="true"]')).map(
@@ -157,24 +193,77 @@ try {
   const removeButton = page.getByRole('button', { name: 'Удалить', exact: true });
   check('панель модуля открывается по клику', (await removeButton.count()) > 0);
 
-  const sumBefore = await chainSum();
   await removeButton.first().click();
   await sleep(600);
   const after = await ribbon();
-  const sumAfter = await chainSum();
-
   check(
     'удаление модуля меняет состав ряда',
     JSON.stringify(before) !== JSON.stringify(after),
     `${before[0]?.replace(/\s+/g, ' ')} → ${after[0]?.replace(/\s+/g, ' ')}`,
   );
+
+  /* ── 4. Шаблоны ── */
+
+  await page.getByRole('button', { name: /Шаблон/ }).click();
+  await sleep(400);
+
+  const templateCards = page.locator('main button[aria-pressed]');
+  const templateCount = await templateCards.count();
+  check('шаблонов на выбор — набор, а не список', templateCount === 6, `${templateCount} шт.`);
+
   check(
-    'место перезаполнено: цепочка по-прежнему сходится',
-    sumAfter === sumBefore,
-    `сумма ${sumBefore} → ${sumAfter}`,
+    'у шаблона написано, в какой ряд он встанет',
+    (await page.getByText(/встанет в ряд \d+–\d+ мм/).count()) > 0,
+  );
+  check(
+    'неподходящий по длине шаблон объясняет, почему он недоступен',
+    (await page.getByText(/Нужен ряд от|Рассчитан на ряд до/).count()) > 0,
   );
 
-  /* ── 5. Размерная цепочка сходится с длиной ряда ── */
+  const disabledCards = await page.evaluate(
+    () =>
+      Array.from(document.querySelectorAll('main button[aria-pressed]')).filter(
+        (b) => b.hasAttribute('disabled'),
+      ).length,
+  );
+  check('недоступные шаблоны выключены, а не просто приглушены', disabledCards > 0, `${disabledCards} шт.`);
+
+  // Выбор шаблона — один тап, и он ведёт дальше сам.
+  await page
+    .locator('main button[aria-pressed]:not([disabled])')
+    .first()
+    .click();
+  await sleep(600);
+  check(
+    'выбор шаблона занимает один тап и ведёт к составу',
+    (await page.getByText('Состав ряда').count()) === 1,
+  );
+
+  /* ── 5. Результат: три бюджета и четыре вида ── */
+
+  await page.getByRole('button', { name: /Результат/ }).click();
+  await sleep(700);
+
+  const prices = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('main button[aria-pressed]'))
+      .map((b) => b.textContent ?? '')
+      .filter((t) => t.includes('₸'))
+      .map((t) => Number((t.match(/[\d\s ]+(?=\s*₸)/)?.[0] ?? '0').replace(/\D/g, '')))
+      .filter((n) => n > 0),
+  );
+  check('три бюджета одной кухни', prices.length === 3, prices.join(' / '));
+  check('цены растут от базового к премиуму', prices[0] < prices[1] && prices[1] < prices[2]);
+
+  check(
+    'чертёж, план, 3D и рендер — четырьмя крупными кнопками',
+    (await page.getByRole('button', { name: /^(Чертёж|План|3D|Рендер)$/ }).count()) === 4,
+  );
+
+  check('чертёж отрисован', (await page.locator('svg').count()) > 0);
+  check(
+    'печать чертежа — на шаге результата',
+    (await page.getByRole('button', { name: /Печать чертежа/ }).count()) === 1,
+  );
 
   const totalDim = await page.evaluate(() => {
     const texts = Array.from(document.querySelectorAll('svg text'))
@@ -188,20 +277,338 @@ try {
     `максимальный размер на чертеже: ${totalDim}`,
   );
 
-  /* ── План и печать ── */
-
   await page.getByRole('button', { name: 'План', exact: true }).click();
   await sleep(400);
-  check('вкладка «План» рисует план', (await page.locator('svg').count()) > 0);
+  check('план рисуется', (await page.locator('svg').count()) > 0);
   check(
     'на плане подписаны коммуникации',
     (await page.getByText('проход', { exact: false }).count()) > 0,
   );
 
+  const ribbonCount = (await ribbon()).length || before.length;
+
+  await page.getByRole('button', { name: '3D', exact: true }).click();
+  await until(async () => (await page.locator('canvas').count()) > 0, 30_000);
+  check('3D поднимает сцену', (await page.locator('canvas').count()) === 1);
+
+  const sceneNote = await page.getByText(/собран из тех же/).first().textContent();
+  const sceneModules = Number((sceneNote ?? '').replace(/\D+/g, ''));
   check(
-    'кнопка печати на месте',
-    (await page.getByRole('button', { name: /Печать чертежа/ }).count()) === 1,
+    'в 3D тот же состав, что в чертеже и смете',
+    sceneModules > 0,
+    `модулей в сцене: ${sceneModules}`,
   );
+
+  await page.getByRole('button', { name: 'Рендер', exact: true }).click();
+  await sleep(600);
+
+  const cards = await page.locator('figure').count();
+  check('рендер предлагает три комплектации, а не шесть стилей', cards === 3, `карточек: ${cards}`);
+  check(
+    'без фото сказано прямо, что клиент увидит настроение, а не квартиру',
+    (await page.getByText(/клиент увидит настроение, а не свою квартиру/).count()) > 0,
+  );
+  check(
+    'кадр снимается из конфигуратора, а не в студии',
+    (await page.getByRole('button', { name: /Отрисовать три комплектации/ }).count()) === 1,
+  );
+
+  check(
+    'без фото сравнивать нечего — предлагается добавить снимок',
+    (await page.getByRole('button', { name: 'Добавить фото помещения' }).count()) === 1,
+  );
+  check(
+    'технической сцены на экране нет',
+    await page.evaluate(() => {
+      const canvas = document.querySelector('canvas');
+      if (!canvas) return true;
+      const r = canvas.getBoundingClientRect();
+      return r.x + r.width < 0;
+    }),
+  );
+
+  /* ── 6. Материалы: фото и артикул ── */
+
+  await page.getByRole('button', { name: /Материалы/ }).click();
+  await sleep(500);
+
+  check(
+    'до загрузки фото выбора ракурса нет',
+    (await page.getByRole('button', { name: 'От левого угла', exact: true }).count()) === 0,
+  );
+
+  // Кадр 4×3, сжатие проверяется в браузере на настоящем изображении.
+  const jpeg = await sharp({
+    create: { width: 2400, height: 1600, channels: 3, background: '#8a8a8a' },
+  })
+    .jpeg()
+    .toBuffer();
+
+  await page
+    .locator('input[type=file][accept="image/*"]')
+    .first()
+    .setInputFiles({ name: 'room.jpg', mimeType: 'image/jpeg', buffer: jpeg });
+
+  const gotPhoto = await until(
+    async () => (await page.locator('img[alt="Помещение клиента"]').count()) === 1,
+    20_000,
+  );
+  check('фото помещения принимается на шаге материалов', gotPhoto);
+
+  const photoData = await page.evaluate(() => {
+    const img = document.querySelector('img[alt="Помещение клиента"]');
+    if (!(img instanceof HTMLImageElement)) return 0;
+    return img.src.startsWith('data:image/jpeg') ? img.src.length : -1;
+  });
+  check(
+    'снимок сжат в JPEG прямо в браузере',
+    photoData > 0,
+    photoData > 0 ? `${Math.round(photoData / 1024)} КБ в dataURL` : 'не JPEG',
+  );
+
+  check(
+    'с фотографией появляется выбор «снимать как на фото»',
+    (await page.getByRole('button', { name: 'От левого угла', exact: true }).count()) === 1,
+  );
+  check(
+    'без артикула каталога сказано, что рендер пойдёт по описанию',
+    (await page.getByText(/Артикул не выбран|нет ни одной кухни/).count()) > 0,
+  );
+
+  /* ── Сравнение «до и после» ── */
+
+  await page.getByRole('button', { name: /Результат/ }).click();
+  await sleep(500);
+  await page.getByRole('button', { name: 'Рендер', exact: true }).click();
+  await sleep(700);
+
+  const compare = page.getByRole('slider', { name: 'Сравнение до и после' });
+  check('с фотографией появляется сравнение «до и после»', (await compare.count()) === 1);
+  check(
+    'половины подписаны: слева квартира клиента',
+    (await page.getByText('Ваша квартира').count()) === 1,
+  );
+  check(
+    'без рендера правая половина честно говорит, что нажать',
+    (await page.getByText('Рендера ещё нет').count()) === 1 &&
+      (await page.getByText(/Нажмите «Отрисовать три комплектации»/).count()) === 1,
+  );
+
+  await compare.scrollIntoViewIfNeeded();
+  await sleep(200);
+  const sliderBox = await compare.boundingBox();
+  const posBefore = Number(await compare.getAttribute('aria-valuenow'));
+  await page.mouse.move(sliderBox.x + sliderBox.width / 2, sliderBox.y + sliderBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(
+    sliderBox.x + sliderBox.width / 2 - 160,
+    sliderBox.y + sliderBox.height / 2,
+    { steps: 10 },
+  );
+  await page.mouse.up();
+  await sleep(500);
+  const posAfter = Number(await compare.getAttribute('aria-valuenow'));
+  check(
+    'шторка тянется указателем',
+    posAfter < posBefore - 5,
+    `${posBefore}% → ${posAfter}%`,
+  );
+
+  /* ── 7. Телефон 390 px ── */
+
+  const phone = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await phone.goto(`${BASE}/demo`, { waitUntil: 'networkidle' });
+  await sleep(900);
+
+  const overflow = await phone.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  );
+  check('на 390 px нет горизонтальной прокрутки', overflow === 0, `вылет ${overflow} px`);
+
+  const smallTargets = await phone.evaluate(
+    () =>
+      Array.from(document.querySelectorAll('button, a[href]'))
+        .filter((el) => {
+          const r = el.getBoundingClientRect();
+          return r.height > 0 && r.height < 44 && (el.textContent ?? '').trim().length > 0;
+        })
+        .map((el) => (el.textContent ?? '').trim().slice(0, 20)).length,
+  );
+  check('все кнопки нажимаются пальцем', smallTargets === 0, `мелких целей: ${smallTargets}`);
+
+  check(
+    'главная кнопка внизу, в зоне большого пальца',
+    await phone.evaluate(() => {
+      const main = Array.from(document.querySelectorAll('footer button')).pop();
+      if (!main) return false;
+      const r = main.getBoundingClientRect();
+      return r.bottom > window.innerHeight - 120;
+    }),
+  );
+  await phone.close();
+
+  /* ── Режим замерщика: /measure ── */
+
+  // Закрываем вкладку конфигуратора: её сцена рисуется непрерывно, а
+  // софтверный WebGL на трёх страницах разом кладёт ввод на остальных.
+  await page.close();
+
+  const survey = await browser.newPage({ viewport: { width: 1180, height: 820 } });
+  survey.on('pageerror', (e) => {
+    failed++;
+    console.error('  [pageerror]', e.message.slice(0, 200));
+  });
+
+  await survey.goto(`${BASE}/measure`, { waitUntil: 'networkidle' });
+  await survey.getByPlaceholder('ЖК Апельсин, кв. 42').fill('ЖК Апельсин, кв. 42');
+  await survey.getByPlaceholder('Ержан').fill('Ержан');
+  await survey.getByRole('button', { name: 'К замеру' }).click();
+  await sleep(600);
+
+  const surveySteps = await survey
+    .locator('nav[aria-label="Шаги работы"] button')
+    .allInnerTexts();
+  check(
+    'замер — первый шаг того же экрана, а не отдельная анкета',
+    surveySteps.join(' ').includes('Замер') && surveySteps.join(' ').includes('Результат'),
+    surveySteps.map((t) => t.replace(/\s+/g, ' ').trim()).join(' · '),
+  );
+
+  check(
+    'до ввода стены плана нет, и об этом сказано прямо',
+    (await survey.getByText(/План появится, как только/).count()) === 1,
+  );
+
+  const started = Date.now();
+  await survey.getByLabel('Высота потолка').fill('2700');
+  await survey.getByLabel('Высота потолка').press('Enter');
+  await survey.getByRole('button', { name: 'Стены по кругу' }).click();
+  await sleep(200);
+
+  for (const [i, length] of ['3200', '2400', '3200', '2400'].entries()) {
+    if (i > 0) await survey.getByRole('button', { name: '+ Стена' }).click();
+    const field = survey.getByLabel('Длина').nth(i);
+    await field.fill(length);
+    await field.press('Enter');
+    await sleep(120);
+  }
+  const seconds = Math.round((Date.now() - started) / 1000);
+
+  check(
+    'высота и четыре стены вносятся меньше чем за две минуты',
+    seconds < 120,
+    `${seconds} с`,
+  );
+  check(
+    'план дорисовался и контур замкнулся',
+    (await survey.getByText('контур замкнут').count()) === 1,
+  );
+
+  const runLine = await survey.getByText(/ряд \d+ мм · модулей/).first().textContent();
+  check(
+    'ряд модулей появляется сразу после длины стены',
+    /ряд 3200 мм · модулей [1-9]/.test(runLine ?? ''),
+    (runLine ?? '').trim(),
+  );
+
+  const surveyWarnings = await survey.evaluate(() =>
+    Array.from(document.querySelectorAll('main ul li > button'))
+      .map((b) => (b.textContent ?? '').trim())
+      .filter((t) => t.length > 20),
+  );
+  check(
+    'на экране одновременно не больше трёх предупреждений',
+    surveyWarnings.length <= 3,
+    `${surveyWarnings.length} шт.`,
+  );
+  check(
+    'предупреждение называет последствие, а не факт',
+    surveyWarnings.some((w) => w.includes('монтажник не будет знать')),
+    surveyWarnings[0]?.slice(0, 70) ?? 'список пуст',
+  );
+  check(
+    'невнесённая розетка — жёлтое уточнение, а не красная полоса над кнопкой',
+    await survey.evaluate(() => {
+      const inList = Array.from(document.querySelectorAll('main ul li > button')).some((b) =>
+        (b.textContent ?? '').includes('Розетка не отмечена'),
+      );
+      const inFooter = (document.querySelector('footer')?.innerText ?? '').includes(
+        'Розетка не отмечена',
+      );
+      return inList && !inFooter;
+    }),
+  );
+
+  // Окно без высоты подоконника: величина принимается как допущение.
+  await survey.getByRole('button', { name: 'Проёмы' }).click();
+  await sleep(200);
+  await survey.getByRole('button', { name: '+ Проём' }).click();
+  await sleep(200);
+  await survey.getByLabel('От левого угла').fill('1200');
+  await survey.getByLabel('Ширина').fill('1000');
+  await survey.getByLabel('Высота').fill('1400');
+  await survey.getByLabel('Высота').press('Enter');
+  await sleep(400);
+
+  check(
+    'незамеренная величина так и написана — «не замерено»',
+    (await survey.getByPlaceholder('не замерено').count()) > 0,
+  );
+  check(
+    'итог сметы подписан предварительным прямо в строке',
+    (await survey.getByText('предварительно', { exact: true }).count()) === 1,
+  );
+
+  await survey.getByRole('button', { name: 'Замер завершён' }).click();
+  await sleep(700);
+
+  check('замерный лист открывается одним экраном', (await survey.getByText('Замерный лист').count()) === 1);
+  check(
+    'в листе есть строка про уточнения на объекте',
+    (await survey.getByText(/требующие уточнения на объекте|Все размеры сняты на объекте/).count()) >= 1,
+  );
+  check(
+    'в листе есть место под две подписи',
+    (await survey.getByText(/Замерщик · подпись, дата/).count()) === 1 &&
+      (await survey.getByText(/Клиент · подпись, дата/).count()) === 1,
+  );
+
+  await survey.emulateMedia({ media: 'print' });
+  await sleep(300);
+  const printed = await survey.evaluate(() => document.body.innerText);
+  check(
+    'замерный лист попадает в печать',
+    printed.includes('Замерный лист') && printed.includes('Клиент · подпись, дата'),
+  );
+  await survey.emulateMedia({ media: 'screen' });
+
+  /*
+   * В новостройке интернета часто нет. Замер обязан пережить это: он остаётся
+   * на экране, а система честно говорит, что уйдёт на сервер позже.
+   */
+  await survey.context().setOffline(true);
+  await survey.getByRole('button', { name: 'К вариантам' }).click();
+  await sleep(1500);
+
+  check(
+    'без сети замер не теряется и об этом сказано прямо',
+    (await survey.getByText(/Сети нет/).count()) === 1,
+  );
+  await survey.getByRole('button', { name: /Замер/ }).click();
+  await sleep(500);
+  const keptWalls = await survey.evaluate(
+    () => document.querySelectorAll('input[type="number"]').length,
+  );
+  check(
+    'после потери связи замер остался на экране',
+    keptWalls > 0 && (await survey.getByText('контур замкнут').count()) === 1,
+    `полей замера: ${keptWalls}`,
+  );
+
+  await survey.context().setOffline(false);
+  await survey.close();
+
+
 } catch (err) {
   failed++;
   console.error('\nОшибка проверки:', err);

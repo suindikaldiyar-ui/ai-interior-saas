@@ -145,6 +145,8 @@ export interface Run {
   /** Сумма ширин и зазоров минус длина ряда. Обязана быть нулевой. */
   residualMm: number;
   warnings: string[];
+  /** Отпечаток состава: по нему сверяются чертёж, смета и рендер. */
+  fingerprint: string;
 }
 
 export interface RunRequirements {
@@ -177,6 +179,10 @@ export interface Estimate {
   variant: VariantKey;
   lines: EstimateLine[];
   total: number;
+  /** Отпечаток ряда, по которому смета посчитана. */
+  fingerprint: string;
+  /** Смета опирается на допущения замера — точной она называться не может. */
+  preliminary?: boolean;
   /** Снимок ставок на дату расчёта: сохранённая смета не должна «плавать». */
   priceSnapshot: Record<string, number>;
   calculatedAt: string;
@@ -218,7 +224,16 @@ export interface MillworkResponse {
 
 export type IssueLevel = 'error' | 'warning';
 
+/**
+ * Что именно не так. Две категории по смыслу разные и показываются
+ * в разных местах: поломка раскладки — это баг конфигуратора, а расхождение
+ * с коммуникацией — нормальная рабочая ситуация, которую решают на объекте.
+ * Смешивать их в один список нельзя: тогда обе выглядят как одна поломка.
+ */
+export type IssueKind = 'layout' | 'comm' | 'fit';
+
 export interface LayoutIssue {
+  kind: IssueKind;
   level: IssueLevel;
   moduleId?: string;
   /** Позиция вдоль ряда, куда указывает флажок на плане. */

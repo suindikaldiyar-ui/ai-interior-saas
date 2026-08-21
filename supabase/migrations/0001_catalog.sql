@@ -34,7 +34,7 @@ create table orgs (
   slug         text not null unique,
   name         text not null,
   logo_url     text,
-  accent_color text not null default '#1F5E5B',
+  accent_color text not null default '#3D8FD1',
   domain       text unique,
   plan         text not null default 'trial',
   created_at   timestamptz not null default now()

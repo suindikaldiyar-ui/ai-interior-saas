@@ -1,7 +1,14 @@
 'use client';
 
-import { useState } from 'react';
-import { APPLIANCE_SLOTS, STANDARD_WIDTHS } from '@/lib/millwork/modules';
+import { useEffect, useState } from 'react';
+import {
+  APPLIANCE_SLOTS,
+  MAX_WIDTH,
+  MIN_WIDTH,
+  STANDARD_WIDTHS,
+  isStandardWidth,
+} from '@/lib/millwork/modules';
+import { widthOverflowMm } from '@/lib/millwork/invariants';
 import { freeSpaceMm } from '@/lib/millwork/layout';
 import type { ApplianceKind, MillworkOp, Module, Run } from '@/types/millwork';
 
@@ -37,32 +44,74 @@ export default function RunEditor({ run, selectedModuleId, onSelect, onOps }: Pr
   const free = freeSpaceMm(run);
   const selected = run.modules.find((m) => m.id === selectedModuleId) ?? null;
 
+  /*
+   * Ширина вводится числом: корпусную мебель делают на заказ, и сама
+   * раскладка выдаёт модули вроде 630 мм — из списка стандартов такое
+   * не наберёшь. Стандарты остаются чипами быстрого выбора.
+   */
+  const [widthDraft, setWidthDraft] = useState('');
+  const [widthNote, setWidthNote] = useState<string | null>(null);
+
+  const selectedWidth = selected?.widthMm ?? 0;
+  useEffect(() => {
+    setWidthDraft(selectedWidth ? String(selectedWidth) : '');
+    setWidthNote(null);
+  }, [selectedModuleId, selectedWidth]);
+
+  const commitWidth = (raw: number) => {
+    if (!selected || selected.appliance) return;
+
+    const wanted = Math.round(raw);
+    if (!Number.isFinite(wanted) || wanted < MIN_WIDTH || wanted > MAX_WIDTH) {
+      setWidthNote(`Ширина модуля — от ${MIN_WIDTH} до ${MAX_WIDTH} мм.`);
+      setWidthDraft(String(selected.widthMm));
+      return;
+    }
+
+    // Инвариант проверяется ДО применения: отрицательного остатка
+    // и вылезшего за стену ряда пользователь видеть не должен.
+    const over = widthOverflowMm(run, selected.id, wanted, MIN_WIDTH);
+    if (over > 0) {
+      setWidthNote(`Не помещается: ряд вышел бы за стену на ${over} мм.`);
+      setWidthDraft(String(selected.widthMm));
+      return;
+    }
+
+    setWidthNote(null);
+    if (wanted !== selected.widthMm) {
+      onOps([{ op: 'set_width', moduleId: selected.id, widthMm: wanted }]);
+    }
+  };
+
   const drop = (targetId: string) => {
     if (!dragId || dragId === targetId) return;
     onOps([{ op: 'move_module', moduleId: dragId, afterModuleId: targetId }]);
     setDragId(null);
   };
 
+  // Подпись приходит из раскладки: она описывает содержание модуля,
+  // а не его ширину — 900 мм это двухдверный модуль, а не «дверца 900».
   const label = (unit: Module) =>
-    unit.appliance
-      ? APPLIANCE_SLOTS[unit.appliance].title
-      : unit.kind === 'tall'
-        ? 'Пенал'
-        : unit.frontType === 'drawers'
-          ? `${unit.drawerCount} ящика`
-          : 'Дверца';
+    unit.appliance ? APPLIANCE_SLOTS[unit.appliance].title : unit.label;
 
   return (
     <div>
-      <div className="mb-1.5 flex items-baseline justify-between">
-        <span className="mw-label">Состав ряда</span>
-        <span className="mw-num text-[11px]" style={{ color: free === 0 ? 'var(--graphite-mw)' : 'var(--alert)' }}>
+      <div className="mb-2 flex items-baseline justify-between">
+        <span className="text-[15px] font-medium">Состав ряда</span>
+        <span
+          className="mw-num text-[13px]"
+          style={{ color: free === 0 ? 'var(--graphite-mw)' : 'var(--alert)' }}
+        >
           {free === 0 ? 'место занято полностью' : `осталось ${free} мм`}
         </span>
       </div>
 
-      {/* Ширина ленты пропорциональна модулям — она совпадает с чертежом */}
-      <div className="flex w-full gap-[2px]">
+      {/*
+        * Ширина ленты пропорциональна модулям — она совпадает с чертежом.
+        * На телефоне пропорция сохраняется, а лента прокручивается вбок:
+        * это единственное место, где горизонтальная прокрутка уместна.
+        */}
+      <div className="flex w-full gap-1 overflow-x-auto pb-1">
         {run.modules.map((unit) => {
           const active = unit.id === selectedModuleId;
           return (
@@ -74,17 +123,23 @@ export default function RunEditor({ run, selectedModuleId, onSelect, onOps }: Pr
               onDragOver={(e) => e.preventDefault()}
               onDrop={() => drop(unit.id)}
               onClick={() => onSelect(active ? null : unit.id)}
-              style={{ flexGrow: unit.widthMm, flexBasis: 0 }}
-              className={`mw-touch overflow-hidden border px-1 py-1.5 text-left ${
+              style={{ flexGrow: unit.widthMm, flexBasis: 0, minWidth: 76 }}
+              className={`min-h-[72px] overflow-hidden rounded-[var(--r-control)] px-2 py-2 text-left ${
                 active
-                  ? 'border-blueprint bg-tape/35'
-                  : unit.isFiller
-                    ? 'border-alert bg-sheet'
-                    : 'border-blueprint/40 bg-sheet hover:border-blueprint'
+                  ? 'bg-cyanBright text-navyDeep'
+                  : unit.kind === 'filler'
+                    ? 'bg-alert/20'
+                    : 'bg-sheet hover:bg-navyLine/50'
               }`}
             >
-              <span className="mw-num block text-[10px] leading-none">{unit.widthMm}</span>
-              <span className="block truncate text-[9px] leading-tight text-graphiteMw">
+              <span className="mw-num block text-[15px] font-medium leading-none">
+                {unit.widthMm}
+              </span>
+              <span
+                className={`mt-1 block truncate text-[12px] leading-tight ${
+                  active ? 'text-navyDeep/80' : 'text-graphiteMw'
+                }`}
+              >
                 {label(unit)}
               </span>
             </button>
@@ -93,36 +148,78 @@ export default function RunEditor({ run, selectedModuleId, onSelect, onOps }: Pr
       </div>
 
       {selected && (
-        <div className="mt-2 border border-blueprint/40 bg-sheet p-2">
-          <div className="mb-2 flex items-baseline justify-between">
-            <span className="mw-label">Модуль {selected.widthMm} мм</span>
+        <div className="mw-panel mt-3">
+          <div className="mb-3 flex items-baseline justify-between">
+            <span className="text-[15px] font-medium">Модуль {selected.widthMm} мм</span>
             <button
               type="button"
               onClick={() => onOps([{ op: 'remove_module', moduleId: selected.id }])}
-              className="mw-touch border border-alert px-2 text-[11px] uppercase tracking-[0.1em] text-alert"
+              className="mw-btn mw-btn-ghost text-alert"
             >
               Удалить
             </button>
           </div>
 
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <label className="block">
-              <span className="mw-label">Ширина</span>
-              <select
-                value={selected.appliance ? '' : selected.widthMm}
+            <label className="col-span-2 block">
+              <span className="mw-label">Ширина, мм</span>
+              <input
+                type="number"
+                inputMode="numeric"
+                min={MIN_WIDTH}
+                max={MAX_WIDTH}
+                step={1}
+                value={widthDraft}
                 disabled={Boolean(selected.appliance)}
-                onChange={(e) =>
-                  onOps([{ op: 'set_width', moduleId: selected.id, widthMm: Number(e.target.value) }])
-                }
-                className="mw-num mw-touch mt-1 w-full border border-blueprint/40 bg-white px-1.5 text-[12px] disabled:opacity-40"
-              >
-                {selected.appliance && <option value="">{selected.widthMm} (техника)</option>}
-                {STANDARD_WIDTHS.map((w) => (
-                  <option key={w} value={w}>
-                    {w}
-                  </option>
-                ))}
-              </select>
+                onChange={(e) => setWidthDraft(e.target.value)}
+                onBlur={(e) => commitWidth(Number(e.target.value))}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                }}
+                className="mw-num mw-touch mt-1 w-full border border-blueprint/40 bg-field px-1.5 text-[13px] disabled:opacity-40"
+              />
+
+              {selected.appliance ? (
+                <span className="mt-1 block text-[10px] leading-tight text-graphiteMw">
+                  {selected.widthMm} — ширина прибора «
+                  {APPLIANCE_SLOTS[selected.appliance].title}»
+                </span>
+              ) : (
+                <>
+                  <span className="mt-1 flex flex-wrap gap-[3px]">
+                    {STANDARD_WIDTHS.map((w) => (
+                      <button
+                        key={w}
+                        type="button"
+                        onClick={() => {
+                          setWidthDraft(String(w));
+                          commitWidth(w);
+                        }}
+                        className={`mw-num border px-1 py-[2px] text-[10px] ${
+                          selected.widthMm === w
+                            ? 'border-blueprint bg-blueprint text-sheet'
+                            : 'border-blueprint/30 text-blueprint hover:border-blueprint'
+                        }`}
+                      >
+                        {w}
+                      </button>
+                    ))}
+                  </span>
+
+                  {widthNote ? (
+                    <span className="mt-1 block text-[10px] leading-tight text-alert">
+                      {widthNote}
+                    </span>
+                  ) : (
+                    !isStandardWidth(selected.widthMm) && (
+                      // Спокойная подпись, а не ошибка: мебель делают на заказ.
+                      <span className="mt-1 block text-[10px] leading-tight text-graphiteMw">
+                        Нестандартный модуль — изготавливается по размеру.
+                      </span>
+                    )
+                  )}
+                </>
+              )}
             </label>
 
             <label className="block">
@@ -135,7 +232,7 @@ export default function RunEditor({ run, selectedModuleId, onSelect, onOps }: Pr
                     { op: 'set_fronts', moduleId: selected.id, drawerCount: Number(e.target.value) },
                   ])
                 }
-                className="mw-touch mt-1 w-full border border-blueprint/40 bg-white px-1.5 text-[12px] disabled:opacity-40"
+                className="mw-touch mt-1 w-full border border-blueprint/40 bg-field px-1.5 text-[12px] disabled:opacity-40"
               >
                 <option value={0}>Дверца</option>
                 {[1, 2, 3, 4, 5].map((n) => (
@@ -160,7 +257,7 @@ export default function RunEditor({ run, selectedModuleId, onSelect, onOps }: Pr
                     },
                   ])
                 }
-                className="mw-touch mt-1 w-full border border-blueprint/40 bg-white px-1.5 text-[12px]"
+                className="mw-touch mt-1 w-full border border-blueprint/40 bg-field px-1.5 text-[12px]"
               >
                 <option value="base">Нижний</option>
                 <option value="tall">Пенал</option>
@@ -183,7 +280,7 @@ export default function RunEditor({ run, selectedModuleId, onSelect, onOps }: Pr
                     },
                   ]);
                 }}
-                className="mw-touch mt-1 w-full border border-blueprint/40 bg-white px-1.5 text-[12px]"
+                className="mw-touch mt-1 w-full border border-blueprint/40 bg-field px-1.5 text-[12px]"
               >
                 {APPLIANCE_OPTIONS.map((a) => (
                   <option key={a || 'none'} value={a}>
@@ -209,14 +306,14 @@ export default function RunEditor({ run, selectedModuleId, onSelect, onOps }: Pr
               },
             ])
           }
-          className="mw-touch border border-blueprint px-2 text-[11px] uppercase tracking-[0.1em] text-blueprint"
+          className="mw-btn mw-btn-ghost"
         >
           + Модуль
         </button>
         <button
           type="button"
           onClick={() => onOps([{ op: 'add_module', kind: 'tall', widthMm: 600 }])}
-          className="mw-touch border border-blueprint px-2 text-[11px] uppercase tracking-[0.1em] text-blueprint"
+          className="mw-btn mw-btn-ghost"
         >
           + Пенал
         </button>

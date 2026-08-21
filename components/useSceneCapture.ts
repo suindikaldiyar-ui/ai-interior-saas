@@ -3,7 +3,7 @@
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { useThree } from '@react-three/fiber';
-import { heroCamera } from '@/lib/cameraFraming';
+import { heroCamera, runCamera } from '@/lib/cameraFraming';
 import {
   CAPTURE_ASPECT,
   CAPTURE_HEIGHT,
@@ -104,11 +104,18 @@ export function SceneCapture() {
         gl.setSize(CAPTURE_WIDTH, CAPTURE_HEIGHT, false);
 
         let shotCamera: THREE.PerspectiveCamera;
-        if (framing === 'hero') {
-          const hero = heroCamera(store.room);
-          shotCamera = new THREE.PerspectiveCamera(hero.fov, CAPTURE_ASPECT, 0.1, 200);
-          shotCamera.position.set(hero.position[0], hero.position[1], hero.position[2]);
-          shotCamera.lookAt(hero.target[0], hero.target[1], hero.target[2]);
+        if (framing !== 'current') {
+          const shot =
+            framing === 'hero'
+              ? heroCamera(store.room)
+              : runCamera(
+                  store.room,
+                  CAPTURE_ASPECT,
+                  framing === 'run-left' ? 'left' : framing === 'run-right' ? 'right' : 'front',
+                );
+          shotCamera = new THREE.PerspectiveCamera(shot.fov, CAPTURE_ASPECT, 0.1, 200);
+          shotCamera.position.set(shot.position[0], shot.position[1], shot.position[2]);
+          shotCamera.lookAt(shot.target[0], shot.target[1], shot.target[2]);
           shotCamera.updateProjectionMatrix();
         } else {
           perspective.aspect = CAPTURE_ASPECT;

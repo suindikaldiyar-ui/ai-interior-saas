@@ -95,7 +95,9 @@ function BaseFacade({
   const solid = module.role === 'sink' || module.role === 'hob';
 
   if (module.role === 'fridge') {
-    const height = KITCHEN.fridgeHeight - KITCHEN.plinthHeight;
+    // Высота из раскладки: на чертеже колонна холодильника той же высоты,
+    // что соседние пеналы, и расходиться они не имеют права.
+    const height = (module.heightM ?? KITCHEN.fridgeHeight) - KITCHEN.plinthHeight;
     return (
       <group>
         <mesh position={[module.centerX, bottom + height / 2, KITCHEN.baseDepth / 2 - 0.01]} castShadow receiveShadow>
@@ -107,6 +109,50 @@ function BaseFacade({
           <boxGeometry args={[width, 0.006, 0.01]} />
           <meshStandardMaterial color={DARK} roughness={0.6} />
         </mesh>
+      </group>
+    );
+  }
+
+  /*
+   * Пенал — во всю высоту, как на чертеже. Раньше сюда попадал обычный
+   * нижний модуль, и духовка уезжала под столешницу: 3D показывал не ту
+   * кухню, которую посчитали. Высота приходит из раскладки.
+   */
+  if (module.role === 'tall') {
+    const height = (module.heightM ?? 2.3) - KITCHEN.plinthHeight;
+    const ovenH = 0.6;
+    // Духовка в пенале ставится на удобной высоте, а не у пола.
+    const ovenBottom = bottom + height - 0.95;
+
+    return (
+      <group>
+        <mesh
+          position={[module.centerX, bottom + height / 2, KITCHEN.baseDepth / 2 - 0.01]}
+          castShadow
+          receiveShadow
+        >
+          <boxGeometry args={[width, height, KITCHEN.baseDepth - 0.02]} />
+          <meshStandardMaterial color={palette.facade} roughness={palette.facadeRough} />
+        </mesh>
+
+        {/* Горизонтальный шов: пенал собирают из двух фасадов. */}
+        <mesh position={[module.centerX, bottom + height * 0.62, z]}>
+          <boxGeometry args={[width, 0.004, 0.008]} />
+          <meshStandardMaterial color={DARK} roughness={0.6} />
+        </mesh>
+
+        {module.hasOven && (
+          <group>
+            <mesh position={[module.centerX, ovenBottom + ovenH / 2, z]} castShadow>
+              <boxGeometry args={[width, ovenH, KITCHEN.facadeThickness]} />
+              <meshStandardMaterial color={DARK} roughness={0.25} metalness={0.5} />
+            </mesh>
+            <mesh position={[module.centerX, ovenBottom + ovenH * 0.72, z + 0.012]}>
+              <boxGeometry args={[width - 0.06, 0.22, 0.006]} />
+              <meshStandardMaterial color="#2B3033" roughness={0.1} metalness={0.2} />
+            </mesh>
+          </group>
+        )}
       </group>
     );
   }

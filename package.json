@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "node scripts/dev.mjs",
     "refs": "node scripts/build-references.mjs",
     "prebuild": "node scripts/build-references.mjs",
     "build": "next build",
@@ -11,11 +11,12 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test:spatial": "tsx scripts/verify-spatial.ts",
-    "verify": "npm run typecheck && npm run test:spatial && npm run test:catalog && npm run test:millwork && npm run build && npm run test:capture && npm run test:demo",
+    "verify": "npm run typecheck && npm run test:spatial && npm run test:catalog && npm run test:millwork && npm run test:survey && npm run build && npm run test:capture && npm run test:demo",
     "test:capture": "node scripts/verify-capture.mjs",
     "test:catalog": "tsx scripts/verify-catalog.ts",
     "test:rls": "node scripts/verify-rls.mjs",
     "test:millwork": "tsx scripts/verify-millwork.ts",
+    "test:survey": "tsx scripts/verify-survey.ts",
     "test:render": "node scripts/verify-render-live.mjs",
     "test:demo": "node scripts/verify-demo.mjs"
   },

@@ -13,9 +13,26 @@ import { buildRun, fillGap, runWidthSum } from '../lib/millwork/layout';
 import { applyOps } from '../lib/millwork/ops';
 import { buildEstimate, recalcTotal } from '../lib/millwork/estimate';
 import { buildVariants } from '../lib/millwork/variants';
-import { validateRun } from '../lib/millwork/validate';
-import { CORNER_SIZE_MM, GEOMETRY, STANDARD_WIDTHS } from '../lib/millwork/modules';
-import { DEMO_COMMS, DEMO_OPENINGS, DEMO_RATES, DEMO_REQUIREMENTS } from '../lib/millwork/demo';
+import { commIssues, layoutIssues, validateRun } from '../lib/millwork/validate';
+import {
+  RunOverflowError,
+  appliancesPlacedOnce,
+  assertRunFits,
+  widthOverflowMm,
+} from '../lib/millwork/invariants';
+import {
+  CORNER_SIZE_MM,
+  GEOMETRY,
+  MIN_WIDTH,
+  STANDARD_WIDTHS,
+} from '../lib/millwork/modules';
+import {
+  DEMO_COMMS,
+  DEMO_OPENINGS,
+  DEMO_PROJECT,
+  DEMO_RATES,
+  DEMO_REQUIREMENTS,
+} from '../lib/millwork/demo';
 import type { CommPoint, Opening, RunRequirements } from '../types/millwork';
 
 let failed = 0;
@@ -107,6 +124,203 @@ console.log('\nСумма модулей');
 
   const exact = fillGap(600);
   check('ровный промежуток берётся одним стандартом', exact.length === 1 && exact[0] === 600);
+}
+
+/* ─────────────────────────  Жёсткий инвариант  ───────────────────────── */
+
+console.log('\nИнвариант «ряд помещается в стену»');
+{
+  const run = buildRun(baseInput);
+
+  // Отрицательного остатка пользователь не должен увидеть никогда: сборка
+  // такого ряда обязана падать, а не показывать сообщение в интерфейсе.
+  let threw = false;
+  try {
+    assertRunFits({ ...run, lengthMm: 2000 });
+  } catch (err) {
+    threw = err instanceof RunOverflowError;
+  }
+  check('ряд длиннее стены бросает RunOverflowError', threw);
+
+  let overlapThrew = false;
+  try {
+    assertRunFits({
+      ...run,
+      modules: [
+        { ...run.modules[0], offsetMm: 0, widthMm: 900 },
+        { ...run.modules[1], offsetMm: 400 },
+      ],
+    });
+  } catch {
+    overlapThrew = true;
+  }
+  check('наложение модулей бросает исключение', overlapThrew);
+
+  let overflow = 0;
+  for (let lengthMm = 300; lengthMm <= 6000; lengthMm += 50) {
+    try {
+      const r = buildRun({ ...baseInput, lengthMm });
+      if (runWidthSum(r) > lengthMm) overflow++;
+    } catch {
+      overflow++;
+    }
+  }
+  check('115 длин подряд собираются без превышения', overflow === 0, `сбоев: ${overflow}`);
+
+  let cornerOverflow = 0;
+  for (let lengthMm = 1200; lengthMm <= 6000; lengthMm += 50) {
+    try {
+      const r = buildRun({ ...baseInput, lengthMm, cornerAt: 'end' });
+      if (runWidthSum(r) > lengthMm) cornerOverflow++;
+    } catch {
+      cornerOverflow++;
+    }
+  }
+  check('с угловым модулем инвариант тоже держится', cornerOverflow === 0, `сбоев: ${cornerOverflow}`);
+
+  const wide = applyOps({
+    run,
+    requirements: REQ,
+    ops: Array.from({ length: 8 }, () => ({
+      op: 'add_module' as const,
+      kind: 'base' as const,
+      widthMm: 1200,
+    })),
+    openings: OPENINGS,
+  });
+  check(
+    'массовое добавление модулей не выводит ряд за стену',
+    runWidthSum(wide) === wide.lengthMm,
+    `сумма ${runWidthSum(wide)} при длине ${wide.lengthMm}`,
+  );
+}
+
+/* ─────────────────────────  Приборы не дублируются  ───────────────────────── */
+
+console.log('\nКаждый прибор ровно один раз');
+{
+  const run = buildRun(baseInput);
+  const counts = appliancesPlacedOnce(run);
+  const missing = REQ.appliances.filter((a) => counts.get(a) !== 1);
+  check(
+    'все приборы из требований попали в ряд по одному разу',
+    missing.length === 0,
+    missing.length ? `не по одному: ${missing.join(', ')}` : REQ.appliances.join(', '),
+  );
+
+  // Дубликаты в требованиях — опечатка ввода, а не заказ двух плит.
+  const dupes = buildRun({
+    ...baseInput,
+    requirements: {
+      ...REQ,
+      appliances: [...REQ.appliances, 'hob', 'sink600', 'fridge'],
+    },
+  });
+  const dupeCounts = appliancesPlacedOnce(dupes);
+  check(
+    'дубликаты в требованиях схлопываются',
+    dupeCounts.get('hob') === 1 &&
+      dupeCounts.get('sink600') === 1 &&
+      dupeCounts.get('fridge') === 1,
+    `плит ${dupeCounts.get('hob')}, моек ${dupeCounts.get('sink600')}, холодильников ${dupeCounts.get('fridge')}`,
+  );
+  check('ряд с дубликатами всё равно сходится', runWidthSum(dupes) === dupes.lengthMm);
+
+  const estimate = buildEstimate(dupes, 'basic', DEMO_RATES);
+  const keys = estimate.lines.map((l) => l.key);
+  check(
+    'в смете нет двух строк с одним ключом',
+    new Set(keys).size === keys.length,
+    `строк ${keys.length}, уникальных ${new Set(keys).size}`,
+  );
+  const hobLines = estimate.lines.filter((l) => l.key === 'appliance_hob');
+  check(
+    'варочная панель посчитана один раз',
+    hobLines.length === 1 && hobLines[0].quantity === 1,
+    `строк ${hobLines.length}, количество ${hobLines[0]?.quantity}`,
+  );
+}
+
+/* ─────────────────────────  Демонстрация  ───────────────────────── */
+
+console.log('\nДемо-проект');
+{
+  const demo = buildRun({
+    lengthMm: DEMO_PROJECT.lengthMm,
+    ceilingHeightMm: DEMO_PROJECT.ceilingHeightMm,
+    requirements: DEMO_REQUIREMENTS,
+    openings: DEMO_OPENINGS,
+    comms: DEMO_COMMS,
+    cornerAt: DEMO_PROJECT.cornerAt,
+  });
+
+  const issues = validateRun(demo, DEMO_COMMS);
+  check(
+    'демо открывается без единого предупреждения',
+    issues.length === 0,
+    issues.map((i) => `${i.level}: ${i.message}`).join(' | ') || 'чисто',
+  );
+  check('сумма демо сходится с длиной ряда', runWidthSum(demo) === demo.lengthMm);
+
+  const sink = demo.modules.find((m) => m.appliance === 'sink600');
+  const win = DEMO_OPENINGS[0];
+  const sinkCenter = sink ? sink.offsetMm + sink.widthMm / 2 : -1;
+  check(
+    'мойка стоит под окном',
+    sinkCenter > win.fromCornerMm && sinkCenter < win.fromCornerMm + win.widthMm,
+    `центр мойки ${sinkCenter}, окно ${win.fromCornerMm}…${win.fromCornerMm + win.widthMm}`,
+  );
+
+  const hob = demo.modules.find((m) => m.appliance === 'hob');
+  const hood = demo.upperSegments.flatMap((s) => s.modules).find((m) => m.appliance === 'hood');
+  check(
+    'вытяжка встала над варочной панелью',
+    Boolean(hob && hood && hob.offsetMm === hood.offsetMm),
+  );
+
+  check(
+    'модулей уже стандарта в ряду нет',
+    demo.modules.every((m) => m.widthMm >= 150),
+    demo.modules.map((m) => m.widthMm).join(' '),
+  );
+}
+
+/* ─────────────────────────  Категории проблем  ───────────────────────── */
+
+console.log('\nКатегории проблем');
+{
+  const run = buildRun(baseInput);
+  const movedVent = DEMO_COMMS.map((c) =>
+    c.kind === 'ventilation' ? { ...c, fromCornerMm: 100 } : c,
+  );
+  const issues = validateRun(run, movedVent);
+
+  check(
+    'расхождение с вентканалом — это comm, а не поломка раскладки',
+    commIssues(issues).some((i) => i.message.includes('вентканал')) &&
+      layoutIssues(issues).length === 0,
+  );
+  check(
+    'у каждой проблемы есть категория',
+    issues.every((i) => ['layout', 'comm', 'fit'].includes(i.kind)),
+  );
+  check(
+    'в исправном ряду поломок раскладки нет',
+    layoutIssues(validateRun(run, DEMO_COMMS)).length === 0,
+  );
+}
+
+/* ─────────────────────────  Подписи модулей  ───────────────────────── */
+
+console.log('\nПодписи по содержанию');
+{
+  const run = buildRun({ ...baseInput, lengthMm: 4200 });
+  const wide = run.modules.find((m) => !m.appliance && m.widthMm > 600);
+  check(
+    'широкий модуль подписан как двухдверный, а не «дверца 900»',
+    Boolean(wide && wide.label.includes('дверцы')),
+    wide ? `${wide.widthMm} мм → «${wide.label}»` : 'широкого модуля не нашлось',
+  );
 }
 
 /* ─────────────────────────  Угол  ───────────────────────── */
@@ -257,18 +471,76 @@ console.log('\nОперации над составом');
     resized.modules.find((m) => m.appliance === 'sink600')?.widthMm === 600,
   );
 
-  // Произвольная ширина садится на стандарт.
+  /*
+   * Ширина вводится числом: мебель заказная, и сама раскладка выдаёт
+   * модули вроде 630 мм. Нестандарт принимается, но ряд шире стены
+   * не становится ни при каком вводе.
+   */
   const plain = after.modules.find((m) => !m.appliance && m.kind === 'base')!;
-  const snapped = applyOps({
+  const custom = applyOps({
     run: after,
     requirements: REQ,
     ops: [{ op: 'set_width', moduleId: plain.id, widthMm: 437 }],
     openings: OPENINGS,
   });
   check(
-    'произвольная ширина сажается на стандарт и сумма сходится',
-    runWidthSum(snapped) === snapped.lengthMm,
-    `сумма ${runWidthSum(snapped)}`,
+    'нестандартная ширина принимается как есть',
+    custom.modules.some((m) => m.widthMm === 437),
+    `ширины: ${custom.modules.map((m) => m.widthMm).join(' ')}`,
+  );
+  check(
+    'после ручной ширины сумма по-прежнему сходится с рядом',
+    runWidthSum(custom) === custom.lengthMm,
+    `сумма ${runWidthSum(custom)}`,
+  );
+  check(
+    'нестандартный модуль помечен, но это не добор',
+    custom.modules.find((m) => m.widthMm === 437)?.isFiller === true &&
+      custom.modules.find((m) => m.widthMm === 437)?.kind !== 'filler',
+  );
+
+  // Ширина за пределами диапазона не применяется вовсе.
+  const tooWide = applyOps({
+    run: after,
+    requirements: REQ,
+    ops: [{ op: 'set_width', moduleId: plain.id, widthMm: 1800 }],
+    openings: OPENINGS,
+  });
+  check(
+    'ширина вне 150…1200 отклоняется с объяснением',
+    tooWide.modules.every((m) => m.widthMm !== 1800) && tooWide.warnings.length > 0,
+    tooWide.warnings[0] ?? 'предупреждения нет',
+  );
+
+  /*
+   * Проверка «не влезает» ДО применения: правка отклоняется целиком,
+   * а не съедает соседние модули.
+   */
+  const tightRun = buildRun({
+    lengthMm: 1800,
+    ceilingHeightMm: 2700,
+    requirements: { ...REQ, appliances: ['sink600', 'hob'] },
+    openings: [],
+    comms: [],
+  });
+  const tightPlain = tightRun.modules.find((m) => !m.appliance)!;
+  const overflowMm = widthOverflowMm(tightRun, tightPlain.id, 1200, MIN_WIDTH);
+  const rejected = applyOps({
+    run: tightRun,
+    requirements: { ...REQ, appliances: ['sink600', 'hob'] },
+    ops: [{ op: 'set_width', moduleId: tightPlain.id, widthMm: 1200 }],
+    openings: [],
+  });
+  check(
+    'слишком широкий модуль не применяется и превышение названо',
+    overflowMm > 0 &&
+      rejected.modules.every((m) => m.widthMm !== 1200) &&
+      rejected.warnings.some((w) => w.includes(String(overflowMm))),
+    `превышение ${overflowMm} мм · ${rejected.warnings[0] ?? '—'}`,
+  );
+  check(
+    'после отклонённой правки ряд по-прежнему сходится',
+    runWidthSum(rejected) === rejected.lengthMm,
   );
 
   const drawers = applyOps({

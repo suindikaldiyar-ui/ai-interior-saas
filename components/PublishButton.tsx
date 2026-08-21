@@ -69,7 +69,7 @@ export default function PublishButton() {
         value={clientName}
         onChange={(e) => setClientName(e.target.value)}
         placeholder="Имя клиента"
-        className="w-28 border border-lineStrong bg-white px-1.5 py-1.5 text-[11px] outline-none"
+        className="w-28 border border-lineStrong bg-field px-1.5 py-1.5 text-[11px] outline-none"
       />
       <button
         type="button"

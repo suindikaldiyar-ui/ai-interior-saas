@@ -155,10 +155,12 @@ export function splitIntoModules(lengthM: number): number[] {
 
 /* ─────────────────────────  Расстановка техники  ───────────────────────── */
 
-export type ModuleRole = 'plain' | 'fridge' | 'sink' | 'hob' | 'dishwasher';
+export type ModuleRole = 'plain' | 'fridge' | 'sink' | 'hob' | 'dishwasher' | 'tall';
 
 export type KitchenModule = {
   width: number;
+  /** Высота пенала в метрах. Для нижних модулей не задаётся. */
+  heightM?: number;
   /** Локальная X центра модуля внутри ряда, отсчёт от середины ряда. */
   centerX: number;
   role: ModuleRole;
@@ -422,6 +424,9 @@ export function isKitchen(item: Pick<FurnitureItem, 'type'>): boolean {
 export type RunModuleLike = {
   widthMm: number;
   offsetMm: number;
+  /** Пенал обязан остаться пеналом: на чертеже он во всю высоту. */
+  kind?: string;
+  heightMm?: number;
   appliance?: string;
   frontType?: string;
   drawerCount?: number;
@@ -433,11 +438,12 @@ export function modulesFromRun(
 ): KitchenModule[] {
   const totalMm = totalWidthM * 1000;
 
-  const roleOf = (appliance?: string): ModuleRole => {
+  const roleOf = (appliance?: string, kind?: string): ModuleRole => {
+    if (appliance === 'fridge') return 'fridge';
+    if (kind === 'tall') return 'tall';
     if (!appliance) return 'plain';
     if (appliance.startsWith('sink')) return 'sink';
     if (appliance === 'hob') return 'hob';
-    if (appliance === 'fridge') return 'fridge';
     if (appliance.startsWith('dishwasher')) return 'dishwasher';
     return 'plain';
   };
@@ -446,9 +452,10 @@ export function modulesFromRun(
     .filter((m) => m.widthMm > 0)
     .map((m) => ({
       width: m.widthMm / 1000,
+      heightM: m.heightMm ? m.heightMm / 1000 : undefined,
       // Центр модуля в локальных координатах ряда: середина ряда — ноль.
       centerX: (m.offsetMm + m.widthMm / 2 - totalMm / 2) / 1000,
-      role: roleOf(m.appliance),
+      role: roleOf(m.appliance, m.kind),
       hasOven: m.appliance === 'oven',
       drawers: m.frontType === 'drawers' && (m.drawerCount ?? 0) > 0,
     }));

@@ -196,7 +196,24 @@ export function buildEstimateDrafts(run: Run): Draft[] {
     drafts.push({ key: 'faucet', title: 'Смеситель', unit: 'pcs', quantity: 1 });
   }
 
-  return drafts.filter((d) => d.quantity > 0);
+  /*
+   * Схлопываем строки с одинаковым ключом. Два модуля одного прибора обязаны
+   * дать ОДНУ строку с количеством 2, а не две строки по одной цене: иначе
+   * в смете появляются деньги, которых нет, и итог перестаёт сходиться
+   * с составом ряда.
+   */
+  const merged = new Map<string, Draft>();
+  for (const draft of drafts) {
+    if (draft.quantity <= 0) continue;
+    const existing = merged.get(draft.key);
+    if (existing) {
+      existing.quantity = round2(existing.quantity + draft.quantity);
+    } else {
+      merged.set(draft.key, { ...draft });
+    }
+  }
+
+  return Array.from(merged.values());
 }
 
 function countertopTitle(kind: Run['options']['countertop']): string {
@@ -277,7 +294,7 @@ export function buildEstimate(
     lines.filter((l) => l.enabled).reduce((sum, l) => sum + l.total, 0),
   );
 
-  return { variant, lines, total, priceSnapshot, calculatedAt };
+  return { variant, lines, total, priceSnapshot, calculatedAt, fingerprint: run.fingerprint };
 }
 
 /** Пересчёт итога после снятия галочек — без обращения к каталогу. */

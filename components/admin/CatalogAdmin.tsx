@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { previewUrl } from '@/lib/catalog';
+import { TYPICAL_PRICE_LIST } from '@/lib/millwork/rates';
 import { supabaseBrowser } from '@/lib/supabase/client';
 import {
   APPLIES_TO,
@@ -22,7 +23,7 @@ type Props = {
 };
 
 const inputCls =
-  'w-full border border-lineStrong bg-white px-2 py-1.5 text-[12px] outline-none';
+  'mw-touch w-full border border-navyLine bg-navyDeep px-2 text-[13px] outline-none focus:border-cyan';
 
 export default function CatalogAdmin({ orgId, initialCategories, initialItems }: Props) {
   const supabase = supabaseBrowser();
@@ -208,6 +209,33 @@ export default function CatalogAdmin({ orgId, initialCategories, initialItems }:
     if (res.ok) await reload();
   };
 
+  /* ── Типовой прайс ── */
+
+  /*
+   * Заполняет каталог средними ставками, чтобы смета считалась с первого дня.
+   * Существующие цены компании не трогаются: свои дороже любых средних.
+   */
+  const seedRates = async () => {
+    setBusy(true);
+    setNotice('Заполняем ставки…');
+
+    const res = await fetch('/api/catalog/seed-rates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ orgId }),
+    });
+    const data = await res.json().catch(() => ({}));
+    setBusy(false);
+
+    setNotice(
+      res.ok
+        ? `Добавлено позиций: ${data.added}, пропущено ${data.skipped}. ` +
+          'Это средние по рынку — проверьте цены своей компании.'
+        : (data.error ?? 'Не удалось заполнить прайс.'),
+    );
+    if (res.ok) await reload();
+  };
+
   /* ── Сортировка перетаскиванием ── */
 
   const onDrop = async (targetId: string) => {
@@ -235,7 +263,7 @@ export default function CatalogAdmin({ orgId, initialCategories, initialItems }:
 
   if (!supabase) {
     return (
-      <p className="p-6 text-[13px] text-ochre">
+      <p className="p-6 text-[13px] text-alert">
         Supabase не настроен. Добавьте NEXT_PUBLIC_SUPABASE_URL и
         NEXT_PUBLIC_SUPABASE_ANON_KEY в .env.local.
       </p>
@@ -252,22 +280,27 @@ export default function CatalogAdmin({ orgId, initialCategories, initialItems }:
         onChange={onFileChosen}
       />
       <input ref={csvInput} type="file" accept=".csv,text/csv" hidden onChange={onCsvChosen} />
+      <datalist id="estimate-keys">
+        {TYPICAL_PRICE_LIST.map((r) => (
+          <option key={r.estimateKey} value={r.estimateKey} />
+        ))}
+      </datalist>
 
       {/* Категории */}
-      <aside className="w-full border-b border-line lg:w-[290px] lg:shrink-0 lg:border-b-0 lg:border-r">
-        <div className="flex items-center justify-between border-b border-line px-3 py-2">
-          <span className="micro-label">Категории</span>
+      <aside className="w-full border-b border-navyLine bg-sheet lg:w-[290px] lg:shrink-0 lg:border-b-0 lg:border-r">
+        <div className="flex items-center justify-between border-b border-navyLine px-3 py-2">
+          <span className="mw-label">Категории</span>
           <button
             type="button"
             onClick={addCategory}
-            className="border border-lineStrong px-2 py-1 text-[10px] uppercase tracking-[0.1em] hover:border-graphite"
+            className="border border-navyLine px-2 py-1 text-[10px] uppercase tracking-[0.1em] hover:border-cyan"
           >
             + Категория
           </button>
         </div>
 
         {categories.length === 0 && (
-          <p className="px-3 py-4 text-[12px] text-graphiteSoft">
+          <p className="px-3 py-4 text-[12px] text-graphiteMw">
             Категорий нет. Заведите первую — товар появится в панели материалов сам,
             без правок кода.
           </p>
@@ -277,19 +310,19 @@ export default function CatalogAdmin({ orgId, initialCategories, initialItems }:
           <div
             key={c.id}
             onClick={() => setActiveCategory(c.id)}
-            className={`cursor-pointer border-b border-line px-3 py-2 ${
-              activeCategory === c.id ? 'bg-paperAlt' : 'hover:bg-paperAlt/60'
+            className={`cursor-pointer border-b border-navyLine px-3 py-2 ${
+              activeCategory === c.id ? 'bg-navy' : 'hover:bg-navy/60'
             }`}
           >
             <div className="flex items-baseline justify-between gap-2">
               <span className="text-[12px] font-medium">{c.name_ru}</span>
-              <span className="font-mono text-[10px] text-graphiteSoft">{c.key}</span>
+              <span className="font-mono text-[10px] text-graphiteMw">{c.key}</span>
             </div>
 
             {activeCategory === c.id && (
               <div className="mt-2 grid grid-cols-2 gap-2">
                 <label>
-                  <span className="micro-label">Применяется к</span>
+                  <span className="mw-label">Применяется к</span>
                   <select
                     value={c.applies_to}
                     onChange={(e) =>
@@ -305,7 +338,7 @@ export default function CatalogAdmin({ orgId, initialCategories, initialItems }:
                   </select>
                 </label>
                 <label>
-                  <span className="micro-label">Единица</span>
+                  <span className="mw-label">Единица</span>
                   <select
                     value={c.unit}
                     onChange={(e) =>
@@ -327,14 +360,14 @@ export default function CatalogAdmin({ orgId, initialCategories, initialItems }:
       </aside>
 
       {/* Товары */}
-      <section className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2">
-          <span className="micro-label">Товары</span>
+      <section className="min-w-0 flex-1 bg-concrete">
+        <div className="flex flex-wrap items-center gap-2 border-b border-navyLine px-3 py-2">
+          <span className="mw-label">Товары</span>
           <button
             type="button"
             onClick={addItem}
             disabled={!activeCategory || busy}
-            className="border border-lineStrong px-2 py-1 text-[10px] uppercase tracking-[0.1em] hover:border-graphite disabled:opacity-40"
+            className="mw-touch border border-navyLine px-3 text-[10px] uppercase tracking-[0.1em] text-graphiteMw hover:border-cyan hover:text-textMw disabled:opacity-40"
           >
             + Товар
           </button>
@@ -342,17 +375,29 @@ export default function CatalogAdmin({ orgId, initialCategories, initialItems }:
             type="button"
             onClick={() => csvInput.current?.click()}
             disabled={busy}
-            className="border border-patina bg-patina px-2 py-1 text-[10px] uppercase tracking-[0.1em] text-paper disabled:opacity-40"
+            className="mw-touch border border-cyanBright bg-cyanBright px-3 text-[10px] uppercase tracking-[0.1em] text-navyDeep disabled:opacity-40"
           >
             Импорт CSV из 1С
           </button>
-          {notice && <span className="text-[11px] text-graphiteSoft">{notice}</span>}
+          <button
+            type="button"
+            onClick={seedRates}
+            disabled={busy}
+            className="mw-touch border border-navyLine px-3 text-[10px] uppercase tracking-[0.1em] text-graphiteMw hover:border-cyan hover:text-textMw disabled:opacity-40"
+            title="Средние ставки по рынку — заменить своими"
+          >
+            Загрузить типовой прайс
+          </button>
+          {notice && <span className="text-[11px] text-graphiteMw">{notice}</span>}
+          <span className="ml-auto text-[10px] text-graphiteMw">
+            Типовой прайс — ориентир, а не цены вашей компании
+          </span>
         </div>
 
         {errors.length > 0 && (
-          <ul className="border-b border-line bg-paperAlt px-3 py-2">
+          <ul className="border-b border-alert/50 bg-navy px-3 py-2">
             {errors.slice(0, 12).map((e, i) => (
-              <li key={i} className="text-[11px] text-ochre">
+              <li key={i} className="text-[11px] text-alert">
                 {e}
               </li>
             ))}
@@ -362,9 +407,9 @@ export default function CatalogAdmin({ orgId, initialCategories, initialItems }:
         <div className="overflow-x-auto">
           <table className="w-full min-w-[820px] border-collapse">
             <thead>
-              <tr className="border-b border-line text-left">
-                {['', 'Артикул', 'Название', 'Цена', 'Ед.', 'Файлы', ''].map((h, i) => (
-                  <th key={i} className="micro-label px-2 py-1.5 font-normal">
+              <tr className="border-b border-navyLine bg-sheet text-left">
+                {['', 'Артикул', 'Название', 'Ключ сметы', 'Цена', 'Ед.', 'Файлы', ''].map((h, i) => (
+                  <th key={i} className="mw-label px-2 py-1.5 font-normal">
                     {h}
                   </th>
                 ))}
@@ -383,7 +428,7 @@ export default function CatalogAdmin({ orgId, initialCategories, initialItems }:
                     onDragStart={() => setDragId(item.id)}
                     onDragOver={(e) => e.preventDefault()}
                     onDrop={() => onDrop(item.id)}
-                    className="border-b border-line hover:bg-paperAlt/50"
+                    className="border-b border-navyLine/70 hover:bg-navy/60"
                   >
                     <td className="w-12 px-2 py-1.5">
                       {preview ? (
@@ -391,24 +436,38 @@ export default function CatalogAdmin({ orgId, initialCategories, initialItems }:
                         <img
                           src={preview}
                           alt=""
-                          className="h-9 w-9 border border-lineStrong object-cover"
+                          className="h-9 w-9 border border-navyLine object-cover"
                         />
                       ) : (
-                        <div className="h-9 w-9 border border-dashed border-lineStrong" />
+                        <div className="h-9 w-9 border border-dashed border-navyLine" />
                       )}
                     </td>
                     <td className="px-2 py-1.5">
                       <input
                         defaultValue={item.article}
                         onBlur={(e) => patchItem(item.id, { article: e.target.value })}
-                        className="tnum w-32 border border-transparent bg-transparent px-1 py-0.5 font-mono text-[11px] hover:border-lineStrong focus:border-lineStrong"
+                        className="mw-num w-32 border border-transparent bg-transparent px-1 py-0.5 font-mono text-[11px] hover:border-navyLine focus:border-navyLine"
                       />
                     </td>
                     <td className="px-2 py-1.5">
                       <input
                         defaultValue={item.name_ru}
                         onBlur={(e) => patchItem(item.id, { name_ru: e.target.value })}
-                        className="w-full min-w-[160px] border border-transparent bg-transparent px-1 py-0.5 text-[12px] hover:border-lineStrong focus:border-lineStrong"
+                        className="w-full min-w-[160px] border border-transparent bg-transparent px-1 py-0.5 text-[12px] hover:border-navyLine focus:border-navyLine"
+                      />
+                    </td>
+                    <td className="px-2 py-1.5">
+                      {/* Пока ключ пуст, товар в смету не попадает. */}
+                      <input
+                        defaultValue={String(item.meta?.estimateKey ?? '')}
+                        onBlur={(e) =>
+                          patchItem(item.id, {
+                            meta: { ...(item.meta ?? {}), estimateKey: e.target.value.trim() },
+                          })
+                        }
+                        placeholder="—"
+                        list="estimate-keys"
+                        className="mw-num w-36 border border-transparent bg-transparent px-1 py-0.5 font-mono text-[11px] hover:border-navyLine focus:border-navyLine"
                       />
                     </td>
                     <td className="px-2 py-1.5">
@@ -416,14 +475,14 @@ export default function CatalogAdmin({ orgId, initialCategories, initialItems }:
                         type="number"
                         defaultValue={item.price}
                         onBlur={(e) => patchItem(item.id, { price: Number(e.target.value) })}
-                        className="tnum w-24 border border-transparent bg-transparent px-1 py-0.5 font-mono text-[11px] hover:border-lineStrong focus:border-lineStrong"
+                        className="mw-num w-24 border border-transparent bg-transparent px-1 py-0.5 font-mono text-[11px] hover:border-navyLine focus:border-navyLine"
                       />
                     </td>
                     <td className="px-2 py-1.5">
                       <select
                         value={item.unit}
                         onChange={(e) => patchItem(item.id, { unit: e.target.value })}
-                        className="border border-transparent bg-transparent px-1 py-0.5 text-[11px] hover:border-lineStrong"
+                        className="border border-transparent bg-transparent px-1 py-0.5 text-[11px] hover:border-navyLine"
                       >
                         {CATALOG_UNITS.map((u) => (
                           <option key={u} value={u}>
@@ -437,13 +496,13 @@ export default function CatalogAdmin({ orgId, initialCategories, initialItems }:
                         type="button"
                         onClick={() => pickFile(item.id)}
                         disabled={busy}
-                        className="border border-lineStrong px-1.5 py-1 text-[10px] uppercase tracking-[0.1em] hover:border-graphite disabled:opacity-40"
+                        className="border border-navyLine px-2 py-1.5 text-[10px] uppercase tracking-[0.1em] text-graphiteMw hover:border-cyan hover:text-textMw disabled:opacity-40"
                       >
                         Загрузить
                       </button>
                       {surface && (
                         <span
-                          className={`ml-1.5 text-[10px] ${hasComposite ? 'text-patina' : 'text-ochre'}`}
+                          className={`ml-1.5 text-[10px] ${hasComposite ? 'text-cyan' : 'text-alert'}`}
                           title="Композит — то, что уходит в модель как референс"
                         >
                           {hasComposite ? 'композит есть' : 'нет композита'}
@@ -454,7 +513,7 @@ export default function CatalogAdmin({ orgId, initialCategories, initialItems }:
                       <button
                         type="button"
                         onClick={() => removeItem(item.id)}
-                        className="border border-lineStrong px-1.5 py-1 text-[10px] uppercase tracking-[0.1em] text-ochre hover:border-ochre"
+                        className="border border-alert/60 px-2 py-1.5 text-[10px] uppercase tracking-[0.1em] text-alert hover:border-alert"
                       >
                         Удалить
                       </button>
@@ -467,7 +526,7 @@ export default function CatalogAdmin({ orgId, initialCategories, initialItems }:
         </div>
 
         {activeCategory && visibleItems.length === 0 && (
-          <p className="px-3 py-4 text-[12px] text-graphiteSoft">
+          <p className="px-3 py-4 text-[12px] text-graphiteMw">
             В категории пусто. Добавьте товар или импортируйте выгрузку из 1С —
             колонки article, name, category_key, price, unit.
           </p>

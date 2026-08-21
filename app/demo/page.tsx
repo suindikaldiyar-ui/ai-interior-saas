@@ -1,33 +1,30 @@
 import Workspace from '@/components/millwork/Workspace';
 import {
-  DEMO_COMMS,
   DEMO_MEASUREMENT,
-  DEMO_OPENINGS,
   DEMO_PROJECT,
   DEMO_RATES,
   DEMO_REQUIREMENTS,
 } from '@/lib/millwork/demo';
+import { workspaceInput } from '@/lib/millwork/workspace';
 
 export const metadata = { title: 'Демонстрация — InteriorAI Studio' };
 
 /**
  * Демонстрация без входа: готовый проект с тремя посчитанными вариантами.
- * Приложение никогда не открывается пустым.
+ * Раскладывается тем же `workspaceInput`, что и рабочий объект, — демо
+ * обязано быть продуктом, а не его имитацией.
  */
 export default function DemoPage() {
-  return (
-    <Workspace
-      title={DEMO_PROJECT.title}
-      zone={DEMO_PROJECT.zone}
-      measuredBy={DEMO_MEASUREMENT.measuredBy}
-      measuredAt={DEMO_MEASUREMENT.measuredAt}
-      lengthMm={DEMO_PROJECT.lengthMm}
-      ceilingHeightMm={DEMO_PROJECT.ceilingHeightMm}
-      requirements={DEMO_REQUIREMENTS}
-      openings={DEMO_OPENINGS}
-      comms={DEMO_COMMS}
-      rates={DEMO_RATES}
-      cornerAt={DEMO_PROJECT.cornerAt}
-    />
-  );
+  const input = workspaceInput({
+    title: DEMO_PROJECT.title,
+    zone: DEMO_PROJECT.zone,
+    measurement: DEMO_MEASUREMENT,
+    requirements: DEMO_REQUIREMENTS,
+    rates: DEMO_RATES,
+    wallId: 'w1',
+    cornerAt: DEMO_PROJECT.cornerAt,
+  });
+
+  // Демонстрация открывается готовой конфигурацией, а не выбором шаблона.
+  return <Workspace {...input} templateId="linear-column" />;
 }

@@ -19,7 +19,7 @@ export async function POST(request: Request) {
     );
   }
 
-  let body: { token?: string; renderId?: string };
+  let body: { token?: string; renderId?: string; approved?: boolean };
   try {
     body = await request.json();
   } catch {
@@ -28,8 +28,11 @@ export async function POST(request: Request) {
 
   const token = String(body.token ?? '');
   const renderId = String(body.renderId ?? '');
-  if (!token || !renderId) {
-    return NextResponse.json({ error: 'Нужны token и renderId.' }, { status: 400 });
+  if (!token || (!renderId && !body.approved)) {
+    return NextResponse.json(
+      { error: 'Нужен token и либо renderId, либо approved.' },
+      { status: 400 },
+    );
   }
 
   const { data: project } = await service
@@ -42,23 +45,30 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Проект не найден.' }, { status: 404 });
   }
 
-  // Рендер обязан принадлежать этому же проекту — иначе по чужому id
-  // можно было бы пометить чужой вариант.
-  const { data: render } = await service
-    .from('renders')
-    .select('id, style_id')
-    .eq('id', renderId)
-    .eq('project_id', project.id)
-    .maybeSingle();
+  /*
+   * Рендер обязан принадлежать этому же проекту — иначе по чужому id
+   * можно было бы пометить чужой вариант. У кухни картинки нет вовсе:
+   * клиент соглашается с чертежом и сметой, а не с изображением.
+   */
+  let render: { id: string; style_id: string } | null = null;
+  if (renderId) {
+    const { data } = await service
+      .from('renders')
+      .select('id, style_id')
+      .eq('id', renderId)
+      .eq('project_id', project.id)
+      .maybeSingle();
 
-  if (!render) {
-    return NextResponse.json({ error: 'Вариант не найден.' }, { status: 404 });
+    if (!data) {
+      return NextResponse.json({ error: 'Вариант не найден.' }, { status: 404 });
+    }
+    render = data as { id: string; style_id: string };
   }
 
   const { error } = await service
     .from('projects')
     .update({
-      liked_render_id: render.id,
+      ...(render ? { liked_render_id: render.id } : {}),
       liked_at: new Date().toISOString(),
       status: 'approved',
     })
@@ -80,7 +90,7 @@ export async function POST(request: Request) {
       org?.name ? `Компания: ${escapeHtml(org.name)}` : '',
       project.client_name ? `Клиент: ${escapeHtml(project.client_name)}` : '',
       project.client_phone ? `Телефон: ${escapeHtml(project.client_phone)}` : '',
-      `Стиль: ${escapeHtml(render.style_id)}`,
+      render ? `Стиль: ${escapeHtml(render.style_id)}` : 'Согласована конфигурация кухни',
     ]
       .filter(Boolean)
       .join('\n'),

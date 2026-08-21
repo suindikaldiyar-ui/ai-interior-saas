@@ -1,5 +1,14 @@
-import { APPLIANCE_SLOTS, MIN_WIDTH, frontPlan, isStandardWidth, snapToStandard } from './modules';
+import {
+  APPLIANCE_SLOTS,
+  MAX_WIDTH,
+  MIN_WIDTH,
+  frontPlan,
+  isStandardWidth,
+  snapToStandard,
+} from './modules';
 import { buildUpperRow, fillGap } from './layout';
+import { assertRunFits, widthOverflowMm } from './invariants';
+import { runFingerprint } from './fingerprint';
 import type {
   ApplianceKind,
   MillworkOp,
@@ -82,7 +91,15 @@ function makePlainModule(kind: ModuleKind, widthMm: number, appliance?: Applianc
     drawerCount: fronts.drawerCount,
     doorCount: fronts.doorCount,
     isFiller: !isStandardWidth(widthMm),
-    label: appliance ? APPLIANCE_SLOTS[appliance].title : kind === 'tall' ? 'Пенал' : String(widthMm),
+    label: appliance
+      ? APPLIANCE_SLOTS[appliance].title
+      : kind === 'tall'
+        ? 'Пенал'
+        : fronts.drawerCount > 0
+          ? `${fronts.drawerCount} ящика`
+          : fronts.doorCount >= 2
+            ? `${fronts.doorCount} дверцы`
+            : 'Дверца',
   };
 }
 
@@ -136,11 +153,29 @@ export function applyOps({ run, requirements, ops, openings = [] }: ApplyOpsInpu
         const at = modules.findIndex((m) => m.id === op.moduleId);
         if (at < 0) break;
         if (modules[at].appliance) {
-          // Габарит техники фиксирован стандартом, менять его нельзя.
+          // Габарит техники фиксирован прибором, менять его нельзя.
           warnings.push(`${modules[at].label}: ширина техники не меняется.`);
           break;
         }
-        modules[at] = { ...modules[at], widthMm: snapToStandard(op.widthMm) };
+
+        /*
+         * Ширина вводится числом: корпусную мебель делают на заказ, и сам
+         * buildRun раздаёт остаток модулями вроде 630 мм. Стандарт остаётся
+         * подсказкой, а не рамкой.
+         */
+        const wanted = Math.round(op.widthMm);
+        if (!Number.isFinite(wanted) || wanted < MIN_WIDTH || wanted > MAX_WIDTH) {
+          warnings.push(`Ширина модуля — от ${MIN_WIDTH} до ${MAX_WIDTH} мм.`);
+          break;
+        }
+
+        const over = widthOverflowMm({ modules, lengthMm: run.lengthMm }, op.moduleId, wanted, MIN_WIDTH);
+        if (over > 0) {
+          warnings.push(`${wanted} мм не помещается: ряд длиннее стены на ${over} мм.`);
+          break;
+        }
+
+        modules[at] = { ...modules[at], widthMm: wanted };
         break;
       }
 
@@ -199,6 +234,13 @@ export function applyOps({ run, requirements, ops, openings = [] }: ApplyOpsInpu
         run.ceilingHeightMm,
       )
     : [];
+
+  // Отпечаток пересчитывается вместе с составом — иначе смета и чертёж
+  // разойдутся молча, а это ровно то, от чего он защищает.
+  nextRun.fingerprint = runFingerprint(nextRun);
+
+  // Тот же инвариант, что и в buildRun: правки не могут вывести ряд за стену.
+  assertRunFits(nextRun);
 
   return nextRun;
 }

@@ -145,7 +145,7 @@ function Num({
   return (
     <label className="flex flex-col gap-1">
       <span className="micro-label">{label}</span>
-      <div className="flex items-center border border-lineStrong bg-white">
+      <div className="flex items-center border border-lineStrong bg-field">
         <input
           type="number"
           className="tnum w-full bg-transparent px-2 py-1.5 font-mono text-[12px]"
@@ -173,7 +173,7 @@ function Color({
   return (
     <label className="flex flex-col gap-1">
       <span className="micro-label">{label}</span>
-      <div className="flex items-center gap-2 border border-lineStrong bg-white px-2 py-1">
+      <div className="flex items-center gap-2 border border-lineStrong bg-field px-2 py-1">
         <input
           type="color"
           className="h-5 w-7"
@@ -335,7 +335,7 @@ function AssistantTab() {
               className={`inline-block max-w-[95%] border px-2.5 py-2 text-left text-[12px] leading-relaxed ${
                 m.role === 'user'
                   ? 'border-graphite bg-graphite text-paper'
-                  : 'border-lineStrong bg-white text-graphite'
+                  : 'border-lineStrong bg-field text-graphite'
               }`}
             >
               {m.content}
@@ -382,7 +382,7 @@ function AssistantTab() {
             }}
             rows={2}
             placeholder="Поставь диван у северной стены…"
-            className="min-h-[54px] flex-1 resize-none border border-lineStrong bg-white px-2 py-1.5 text-[12px] leading-snug outline-none placeholder:text-graphiteSoft/60"
+            className="min-h-[54px] flex-1 resize-none border border-lineStrong bg-field px-2 py-1.5 text-[12px] leading-snug outline-none placeholder:text-graphiteSoft/60"
           />
           <div className="flex flex-col gap-1">
             <Btn
@@ -607,7 +607,7 @@ function RoomTab() {
             onChange={(e) =>
               setRoom({ floorMaterial: e.target.value as typeof room.floorMaterial })
             }
-            className="border border-lineStrong bg-white px-2 py-1.5 text-[12px]"
+            className="border border-lineStrong bg-field px-2 py-1.5 text-[12px]"
           >
             <option value="parquet">Паркет</option>
             <option value="plank">Доска</option>
@@ -660,7 +660,7 @@ function VariantCard({
   const name = style?.ru ?? variant.styleId;
 
   return (
-    <div className="border border-lineStrong bg-white">
+    <div className="border border-lineStrong bg-field">
       <div className="relative aspect-[3/2] w-full overflow-hidden bg-paperAlt">
         {variant.status === 'done' && variant.image && (
           // eslint-disable-next-line @next/next/no-img-element
@@ -786,7 +786,7 @@ function VariantsTab({
         onChange={(e) => setNotes(e.target.value)}
         rows={2}
         placeholder="шторы в пол, вечерний свет, без ковра"
-        className="w-full resize-none border border-lineStrong bg-white px-2 py-1.5 text-[12px] leading-snug outline-none placeholder:text-graphiteSoft/60"
+        className="w-full resize-none border border-lineStrong bg-field px-2 py-1.5 text-[12px] leading-snug outline-none placeholder:text-graphiteSoft/60"
       />
 
       {HAS_REFERENCES && (

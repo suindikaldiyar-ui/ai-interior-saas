@@ -3,30 +3,126 @@
 @tailwind utilities;
 
 :root {
-  --paper: #f2f0eb;
-  --paper-alt: #e9e6df;
-  --graphite: #16181a;
-  --graphite-soft: #4a4f53;
-  --line: #dcd8d0;
-  --line-strong: #c3bdb2;
-  --patina: #1f5e5b;
-  --patina-soft: #2e7b77;
-  --ochre: #b4791f;
-  --viewport: #1b1d1f;
+  /* Студия живёт на той же синьке: платформа должна выглядеть одним
+     продуктом, а не двумя приложениями под общим логотипом.
+     Имена оставлены прежними — на них завязан весь интерфейс фаз 1–3. */
+  --paper: #0b1524;
+  --paper-alt: #111e33;
+  --graphite: #e4ebf4;
+  --graphite-soft: #8395b0;
+  --line: #23364f;
+  --line-strong: #2f4666;
+  --field: #0d2138;
+  --patina: #3d8fd1;
+  --patina-soft: #6fb7e8;
+  --ochre: #e8b417;
+  --viewport: #0b1524;
   --select: #e0a92e;
 
-  /* ── Конфигуратор корпусной мебели ──
-     Язык взят из мира производства: замерный лист, синька чертежа,
-     кромка ЛДСП, жёлтая рулетка. Фон холодный намеренно: кремовый фон
-     с тёплым акцентом — самое частое оформление, выдающее шаблон. */
-  --concrete: #e7e7e4;
-  --concrete-deep: #d6d7d3;
-  --sheet: #fcfcfb;
-  --ink: #16181a;
-  --graphite-mw: #5c6165;
-  --blueprint: #1b3a6b;
+  /* ── Синька ──
+     Чертёж исторически печатался цианотипией: глубокий синий фон, белые
+     линии. Интерфейсу возвращён его собственный артефакт, а не выбрана
+     тёмная тема ради вкуса. На бумаге всё инвертируется обратно —
+     см. @media print ниже. */
+  --navy-deep: #0b1524;
+  --navy: #111e33;
+  --navy-line: #23364f;
+  --sheet: #0d2138;
+  --cyan: #6fb7e8;
+  --cyan-bright: #3d8fd1;
+  --text: #e4ebf4;
+  --text-dim: #8395b0;
   --tape: #e8b417;
-  --alert: #c0392b;
+  --alert: #e5544b;
+
+  /* Прежние имена оставлены как псевдонимы: на них завязаны чертёжные
+     компоненты, и ломать их ради переименования смысла нет. */
+  --concrete: var(--navy-deep);
+  --concrete-deep: var(--navy);
+  --ink: var(--text);
+  --graphite-mw: var(--text-dim);
+  --blueprint: var(--cyan);
+}
+
+/* ── Плотность ──
+   Прежние 11 px и рамки в один пиксель делали из инструмента старую
+   CAD-программу: экран невозможно объяснить замерщику за пять минут.
+   Цвет остался, изменилась плотность — воздух, крупный текст, поверхности
+   вместо рамок. Чертёж под это правило НЕ подпадает: там мелкий шрифт
+   уместен, это технический документ. */
+:root {
+  --r-panel: 10px;
+  --r-control: 8px;
+  --pad-panel: 20px;
+  --h-button: 48px;
+  --h-input: 56px;
+  --gap-touch: 8px;
+}
+
+.mw-root {
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+@layer components {
+  /* Панель читается перепадом плоскостей, а не линией. */
+  .mw-panel {
+    background: var(--navy);
+    border-radius: var(--r-panel);
+    padding: var(--pad-panel);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.28);
+  }
+
+  .mw-panel-flat {
+    background: var(--navy);
+    border-radius: var(--r-panel);
+  }
+
+  /* Кнопки и поля: палец, а не курсор. */
+  .mw-btn {
+    min-height: var(--h-button);
+    border-radius: var(--r-control);
+    padding: 0 20px;
+    font-size: 14px;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    transition: background-color 0.12s ease, border-color 0.12s ease;
+  }
+
+  .mw-btn-primary {
+    background: var(--cyan-bright);
+    color: var(--navy-deep);
+    border: 0;
+  }
+  .mw-btn-primary:hover:not(:disabled) { background: var(--cyan); }
+  .mw-btn-primary:disabled { opacity: 0.4; }
+
+  .mw-btn-ghost {
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--navy-line);
+  }
+  .mw-btn-ghost:hover:not(:disabled) { border-color: var(--cyan); }
+  .mw-btn-ghost:disabled { opacity: 0.4; }
+
+  .mw-field {
+    min-height: var(--h-input);
+    border-radius: var(--r-control);
+    background: var(--sheet);
+    border: 1px solid var(--navy-line);
+    padding: 0 14px;
+    font-size: 17px;
+    width: 100%;
+    outline: none;
+  }
+  .mw-field:focus { border-color: var(--cyan); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mw-btn { transition: none; }
 }
 
 /* Все числа моноширинные и в колонку: цифры в смете и в размерной цепочке
@@ -43,11 +139,12 @@
   font-family: var(--font-ui, 'Archivo', system-ui, sans-serif);
 }
 
-/* Лист чертежа рендерится как физический лист: его печатают и вешают
-   на стене объекта. Единственная скевоморфная вольность, и она заслужена. */
+/* Лист чертежа — настоящая синька: тёмно-синее поле, тонкая светлая рамка
+   вместо тени. Тень на тёмном фоне не читается и выглядит грязью. */
 .mw-sheet {
   background: var(--sheet);
-  box-shadow: 0 1px 2px rgba(22, 24, 26, 0.08), 0 8px 24px rgba(22, 24, 26, 0.06);
+  border: 1px solid var(--navy-line);
+  box-shadow: inset 0 0 0 1px rgba(111, 183, 232, 0.08);
 }
 
 .mw-label {
@@ -58,10 +155,29 @@
   color: var(--graphite-mw);
 }
 
-/* Цели касания на планшете — не меньше 44 px. */
+/*
+ * Нативный select рисуется системным виджетом поверх нашего фона: на синьке
+ * он выезжает светлым прямоугольником, и панель выглядит недовёрстанной.
+ * Гасим системную отрисовку и рисуем стрелку сами.
+ */
+.mw-root select,
+.mw-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, var(--blueprint) 50%),
+    linear-gradient(135deg, var(--blueprint) 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) calc(50% - 2px),
+    calc(100% - 9px) calc(50% - 2px);
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 26px;
+}
+
+/* Цели касания: палец, стоя, в чужой квартире. */
 .mw-touch {
-  min-height: 44px;
-  min-width: 44px;
+  min-height: 48px;
+  min-width: 48px;
 }
 
 /* Изменившиеся размеры подсвечиваются на 400 мс: видно, что инструмент
@@ -77,6 +193,205 @@
 
 .mw-flash {
   animation: mw-flash 400ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mw-flash {
+    animation: none;
+  }
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--paper);
+  color: var(--graphite);
+  font-feature-settings: 'kern' 1, 'liga' 1;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Все числа в интерфейсе должны стоять в колонку — иначе координаты «пляшут». */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+.micro-label {
+  font-size: 10px;
+  line-height: 14px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--graphite-soft);
+}
+
+/* Тонкий скроллбар — «чертёжная» оболочка не терпит системных полос. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--graphite-soft);
+}
+
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: 1px;
+}
+
+/* Спиннеры у number-полей ломают моноширинную сетку координат. */
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+input[type='color'] {
+  -webkit-appearance: none;
+  appearance: none;
+  border: 1px solid var(--line-strong);
+  padding: 0;
+  background: none;
+  cursor: pointer;
+}
+
+input[type='color']::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+
+input[type='color']::-webkit-color-swatch {
+  border: none;
+}
+
+/* Печать = «Скачать PDF» в кабинете клиента. Системный диалог печати умеет
+   сохранять в PDF и, в отличие от jsPDF, не требует тащить кириллический
+   шрифт в бандл. Прячем интерактив и разворачиваем таблицу на всю ширину. */
+@media print {
+  /*
+   * НА БУМАГЕ ВСЁ ИНВЕРТИРУЕТСЯ. На экране цианотипия, на печати — обычный
+   * чертёж: белый лист, чёрные линии. Синий фон в принтере съел бы картридж
+   * и сделал лист нечитаемым в цеху.
+   *
+   * Инвертируем сами переменные, а не отдельные селекторы: весь интерфейс
+   * построен на токенах, поэтому одного этого блока хватает и на чертёж,
+   * и на смету, и на всё, что появится позже.
+   */
+  :root {
+    --navy-deep: #ffffff;
+    --navy: #ffffff;
+    --navy-line: #000000;
+    --sheet: #ffffff;
+    --cyan: #000000;
+    --cyan-bright: #000000;
+    --text: #000000;
+    --text-dim: #333333;
+    --tape: #000000;
+    --alert: #000000;
+
+    --paper: #ffffff;
+    --paper-alt: #ffffff;
+    --graphite: #000000;
+    --graphite-soft: #333333;
+    --line: #000000;
+    --line-strong: #000000;
+    --field: #ffffff;
+    --patina: #000000;
+    --ochre: #000000;
+  }
+
+  .print\:hidden {
+    display: none !important;
+  }
+
+  /* Чертёж печатается на A4 альбомном: лист вешают на стене объекта. */
+  @page {
+    size: A4 landscape;
+    margin: 10mm;
+  }
+
+  html,
+  body {
+    background: #fff;
+    color: #000;
+  }
+
+  /* Экранная раскладка — колонки на всю высоту экрана. На бумаге это
+     превращается в обрезанный столбец, поэтому поток распрямляется.
+     :where() обнуляет специфичность: иначе это правило перебивает
+     print:hidden, и в печать уезжают вкладки, лента и командная строка. */
+  :where(.mw-root),
+  :where(.mw-root > div),
+  :where(.mw-root section),
+  :where(.mw-root aside) {
+    display: block !important;
+    height: auto !important;
+    max-height: none !important;
+    width: 100% !important;
+    overflow: visible !important;
+    border: 0 !important;
+  }
+
+  .mw-sheet {
+    border: 0 !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    max-width: none !important;
+  }
+
+  /* Размерные линии не должны обрезаться ни на одной длине ряда.
+     Высоту ограничиваем, иначе чертёж растягивается на весь лист
+     и тонкие элементы превращаются в чёрные полосы. */
+  :where(.mw-root svg) {
+    overflow: visible !important;
+    width: 100% !important;
+    height: auto !important;
+    max-height: 165mm;
+  }
+
+  /* Смета уезжает на следующий лист: чертёж занимает свой целиком. */
+  .mw-root aside {
+    page-break-before: always;
+    margin-top: 0;
+  }
+
+  .mw-root table {
+    page-break-inside: auto;
+    width: 100%;
+  }
+
+  .mw-root tr {
+    page-break-inside: avoid;
+  }
+
+  /* Галочки в печати смысла не имеют, а выключенные строки видны блёклыми. */
+  .mw-root input[type='checkbox'] {
+    display: none !important;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -198,8 +513,9 @@ input[type='color']::-webkit-color-swatch {
     margin: 10mm;
   }
 
-  /* Синька уходит в чёрный: цветной принтер в цеху — редкость,
-     а серая линия на чёрно-белой печати теряется. */
+  /* НА БУМАГЕ ВСЁ ИНВЕРТИРУЕТСЯ. На экране цианотипия, на печати —
+     обычный чертёж: белый лист, чёрные линии. Синий фон в принтере
+     съел бы картридж и сделал лист нечитаемым в цеху. */
   .mw-root,
   .mw-sheet {
     background: #fff !important;

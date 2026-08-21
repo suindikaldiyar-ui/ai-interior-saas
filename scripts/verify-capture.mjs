@@ -16,7 +16,7 @@
  */
 
 import { chromium } from 'playwright';
-import { spawn } from 'node:child_process';
+import { execSync, spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -83,6 +83,12 @@ const PAGE_HELPERS = () => {
     return { data: ctx.getImageData(0, 0, w, h).data, natural: [img.width, img.height] };
   };
 
+  /** Сдвигает прошлый кадр в key_prev и снимает новый: так видно, устоялась ли сцена. */
+  window.__snap = (key) => {
+    window.__frames[`${key}_prev`] = window.__frames[key];
+    return window.__grab(key);
+  };
+
   window.__grab = (key) => {
     window.__frames[key] = document.querySelector('canvas').toDataURL('image/png');
     return window.__frames[key].length;
@@ -133,6 +139,42 @@ const PAGE_HELPERS = () => {
   };
 };
 
+/*
+ * Оставшийся с прошлого прогона сервер отдаёт СТАРУЮ сборку: страница
+ * открывается, чанки 404, React не оживает — и проверка «переключение
+ * варианта меняет смету» падает на совершенно исправном коде.
+ * Поэтому порт освобождается до старта, а не после.
+ */
+function freePort(port) {
+  try {
+    const out =
+      process.platform === 'win32'
+        ? execSync(`netstat -ano -p tcp | findstr LISTENING | findstr :${port}`, {
+            encoding: 'utf8',
+          })
+        : execSync(`lsof -ti tcp:${port}`, { encoding: 'utf8' });
+
+    const pids = new Set(
+      out
+        .split(/\r?\n/)
+        .map((line) => line.trim().split(/\s+/).pop())
+        .filter((pid) => pid && /^\d+$/.test(pid) && pid !== '0'),
+    );
+
+    for (const pid of pids) {
+      execSync(
+        process.platform === 'win32' ? `taskkill /PID ${pid} /F` : `kill -9 ${pid}`,
+        { stdio: 'ignore' },
+      );
+      console.log(`  ··   освободил порт ${port}: остановлен процесс ${pid}`);
+    }
+  } catch {
+    /* никто не слушает — это норма */
+  }
+}
+
+freePort(PORT);
+
 const server = spawn(
   process.platform === 'win32' ? 'npx.cmd' : 'npx',
   ['next', 'start', '-p', String(PORT)],
@@ -178,6 +220,31 @@ try {
   const asideText = () =>
     page.evaluate(() => document.querySelector('aside')?.innerText ?? '');
   const grab = (key) => page.evaluate((k) => window.__grab(k), key);
+
+  /*
+   * Кадр после изменения сцены снимаем НЕ по таймеру, а дождавшись, пока он
+   * действительно перестанет совпадать с предыдущим. На загруженной машине
+   * софтверный WebGL рисует кадр дольше секунды, и фиксированная пауза
+   * снимала старое содержимое буфера: эталоны выходили побайтово равными,
+   * и падала проверка, к самому захвату отношения не имеющая.
+   */
+  const grabChanged = async (key, fromKey, timeout = 20_000) => {
+    let len = await grab(key);
+    await until(async () => {
+      len = await page.evaluate((k) => window.__snap(k), key);
+      /*
+       * Мало дождаться, что кадр отличается от прошлого: сцена дорисовывается
+       * по частям, и на полпути разница выходит меньше настоящей. Ждём, пока
+       * два подряд снимка совпадут — значит, рисовать больше нечего.
+       */
+      return page.evaluate(
+        ({ a, b }) => window.__frames[a] !== window.__frames[b] &&
+          window.__frames[a] === window.__frames[`${a}_prev`],
+        { a: key, b: fromKey },
+      );
+    }, timeout);
+    return len;
+  };
   const diff = (ka, kb) =>
     page.evaluate(
       ({ a, b, w, h }) => window.__diff(a, b, w, h),
@@ -244,8 +311,8 @@ try {
   // Хелперы включены: выделенный ковёр + сетка.
   await page.getByRole('button', { name: 'Сетка', exact: true }).click();
   await page.locator('aside').getByText('Ковёр', { exact: true }).first().click();
-  await sleep(1000);
-  const helpersLen = await grab('helpers');
+  await sleep(600);
+  const helpersLen = await grabChanged('helpers', 'clean');
 
   check('эталонные кадры сняты и различаются', cleanLen !== helpersLen, `${cleanLen} vs ${helpersLen}`);
 
@@ -306,8 +373,17 @@ try {
   await until(async () => !(await asideText()).includes('···'), 60_000);
   await sleep(800);
 
-  // Кадр сразу после захвата — хелперы обязаны вернуться.
+  /*
+   * Кадр после захвата: хелперы обязаны вернуться. Ждём, пока картинка
+   * действительно совпадёт с дозахватной, а не снимаем по таймеру —
+   * на медленной машине сцена дорисовывается уже после ответа роутов.
+   */
   await grab('after');
+  await until(async () => {
+    await grab('after');
+    const back = await diff('after', 'helpers');
+    return back.changedRatio < helpersVsClean.changedRatio * 0.4;
+  }, 15_000);
 
   /* ── Кадры ── */
 

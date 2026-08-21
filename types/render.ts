@@ -6,7 +6,26 @@ import type { FurnitureItem, RoomConfig } from './interior';
  * GEOMETRY_REFERENCE, поэтому планировка не уезжает между вариантами.
  */
 
-export type CaptureFraming = 'hero' | 'current';
+/**
+ * `run` — кадр конфигуратора: весь ряд гарнитура в поле зрения целиком.
+ * Съёмочная точка «героя» рассчитана на комнату, и в кухне 3.2 × 2.4 м
+ * она встаёт вплотную к столешнице: холодильник и духовая колонна
+ * не попадают в кадр, а именно их клиент и сверяет с чертежом.
+ */
+export type CaptureFraming = 'hero' | 'current' | 'run' | 'run-left' | 'run-right';
+
+/**
+ * С какой стороны снят ряд. Фотографию помещения замерщик делает от двери,
+ * то есть почти всегда с угла: если clay снят фронтально, а фото с угла,
+ * модель вынуждена выбирать между ними — и выбирает не то.
+ */
+export type RunAngle = 'front' | 'left' | 'right';
+
+export const RUN_ANGLE_LABEL: Record<RunAngle, string> = {
+  front: 'Фронтально',
+  left: 'От левого угла',
+  right: 'От правого угла',
+};
 
 /** Оба кадра — JPEG в dataURL. PNG на 1536×1024 даёт 3–5 МБ и ловит 413. */
 export type CaptureResult = {
@@ -23,6 +42,12 @@ export type RenderVariant = {
   error?: string;
   durationMs?: number;
 };
+
+/**
+ * Фотография помещения клиента — dataURL, сжатый на клиенте до 1600 px.
+ * Она главнее любого кадра из вьюпорта: окна, двери и ракурс берутся с неё.
+ */
+export type RoomPhoto = string;
 
 export type ReferencePayload = {
   label: string;
@@ -55,6 +80,8 @@ export type RenderRequest = {
   references?: ReferencePayload[];
   catalogRefs?: CatalogReference[];
   customNotes?: string;
+  /** Фотография помещения клиента. С ней геометрию задаёт она, а не сцена. */
+  roomPhoto?: RoomPhoto;
 };
 
 /** clay + beauty + это число = не больше восьми картинок на запрос. */

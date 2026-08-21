@@ -125,7 +125,7 @@ export default function ClientPortal({
     return () => window.removeEventListener('keydown', onKey);
   }, [openIndex, renders.length]);
 
-  const accent = org?.accent_color ?? '#1F5E5B';
+  const accent = org?.accent_color ?? '#3D8FD1';
 
   return (
     <div
@@ -219,7 +219,7 @@ export default function ClientPortal({
         <section className="px-4 pb-8">
           <h2 className="micro-label mb-2">Спецификация</h2>
           <div className="overflow-x-auto border border-lineStrong">
-            <table className="w-full min-w-[560px] border-collapse bg-white">
+            <table className="w-full min-w-[560px] border-collapse bg-field">
               <thead>
                 <tr className="border-b border-line text-left">
                   {['Зона', 'Артикул', 'Наименование', 'Кол-во', 'Цена', 'Сумма'].map((h) => (

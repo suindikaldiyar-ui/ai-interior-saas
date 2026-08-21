@@ -4,10 +4,13 @@ import {
   GEOMETRY,
   MIN_WIDTH,
   STANDARD_WIDTHS,
+  WATER_TOLERANCE_MM,
   frontPlan,
   isStandardWidth,
   largestStandardUpTo,
 } from './modules';
+import { assertRunFits, runWidthSum } from './invariants';
+import { runFingerprint } from './fingerprint';
 import type {
   ApplianceKind,
   CommPoint,
@@ -42,12 +45,12 @@ function moduleId(kind: ModuleKind, offsetMm: number, appliance?: ApplianceKind)
 
 /* ─────────────────────────  Якорные модули  ───────────────────────── */
 
-/** Допуск на попадание мойки в точку водоснабжения. */
-export const WATER_TOLERANCE_MM = 600;
 /** Варочная не ближе этого расстояния к краю ряда. */
 const HOB_EDGE_CLEARANCE_MM = 400;
 /** И не ближе этого к мойке — иначе некуда ставить посуду. */
 const HOB_SINK_CLEARANCE_MM = 300;
+/** Абсолютный минимум столешницы между мойкой и плитой. */
+const MIN_COUNTER_GAP_MM = 150;
 
 type Anchor = {
   kind: ModuleKind;
@@ -71,9 +74,17 @@ function planAnchors(
   lengthMm: number,
   req: RunRequirements,
   comms: CommPoint[],
+  openings: Opening[] = [],
+  offsetMm = 0,
 ): Anchor[] {
   const anchors: Anchor[] = [];
-  const has = (a: ApplianceKind) => req.appliances.includes(a);
+  /*
+   * Дубликаты в требованиях схлопываются: два одинаковых прибора в списке —
+   * это опечатка ввода, а не заказ на две варочные панели. Иначе техника
+   * попадает в ряд дважды и в смету уходят несуществующие деньги.
+   */
+  const wanted = new Set(req.appliances);
+  const has = (a: ApplianceKind) => wanted.has(a);
   const tallLeft = req.tallSide === 'left';
 
   const sinkKind: ApplianceKind | null = has('sink800')
@@ -143,24 +154,80 @@ function planAnchors(
 
   if (has('hob')) {
     const width = APPLIANCE_SLOTS.hob.widthMm;
-    const fromSink = sinkKind
-      ? sinkCenter +
-        APPLIANCE_SLOTS[sinkKind].widthMm / 2 +
-        HOB_SINK_CLEARANCE_MM +
-        width / 2
-      : lengthMm * 0.6;
     const low = HOB_EDGE_CLEARANCE_MM + width / 2;
-    const high = lengthMm - HOB_EDGE_CLEARANCE_MM - width / 2;
+    const high = Math.max(low, lengthMm - HOB_EDGE_CLEARANCE_MM - width / 2);
+    const sinkWidth = sinkKind ? APPLIANCE_SLOTS[sinkKind].widthMm : 0;
+
+    /*
+     * Плита отходит от мойки на рабочий зазор. Если справа места нет,
+     * она уходит ВЛЕВО от мойки, а не зажимается к правому краю: иначе
+     * плита оказывается перед мойкой и рабочий треугольник разваливается.
+     */
+    let desired: number;
+    if (!sinkKind) {
+      desired = Math.min(Math.max(lengthMm * 0.6, low), high);
+    } else {
+      const sinkRight = sinkCenter + sinkWidth / 2;
+      const wanted = sinkRight + HOB_SINK_CLEARANCE_MM + width / 2;
+      // Не отбрасываем правую сторону сразу: сначала пробуем прижать плиту
+      // к допустимому краю. Пока между мойкой и плитой остаётся рабочая
+      // столешница, справа лучше, чем зеркальный прыжок налево.
+      const rightCandidate = Math.min(Math.max(wanted, low), high);
+      const gapToSink = rightCandidate - width / 2 - sinkRight;
+      const left = sinkCenter - sinkWidth / 2 - HOB_SINK_CLEARANCE_MM - width / 2;
+      desired = gapToSink >= MIN_COUNTER_GAP_MM ? rightCandidate : Math.max(left, low);
+    }
+
+    /*
+     * Вытяжка обязана висеть строго над плитой, а верхний ряд разрывается
+     * над окном. Значит плита под окном — это гарантированно кухня без
+     * вытяжки. Сдвигаем её из оконного пролёта, если вытяжка заказана.
+     */
+    if (has('hood')) {
+      desired = clearOfWindows(desired, width, openings, offsetMm, low, high);
+    }
+
     anchors.push({
       kind: 'base',
       appliance: 'hob',
       widthMm: width,
-      desiredCenterMm: Math.min(Math.max(fromSink, low), Math.max(low, high)),
+      desiredCenterMm: desired,
       priority: 2,
     });
   }
 
   return anchors.sort((a, b) => a.desiredCenterMm - b.desiredCenterMm);
+}
+
+/** Ближайшая позиция центра, при которой модуль не попадает в оконный пролёт. */
+function clearOfWindows(
+  desiredCenterMm: number,
+  widthMm: number,
+  openings: Opening[],
+  offsetMm: number,
+  lowMm: number,
+  highMm: number,
+): number {
+  const spans = openings
+    .filter((o) => o.kind === 'window' || o.kind === 'arch')
+    .filter((o) => o.sillMm + o.heightMm > GEOMETRY.upper.bottomFromFloor)
+    // Проёмы заданы от угла стены, а якоря — от начала полезного участка.
+    .map((o) => ({ from: o.fromCornerMm - offsetMm, to: o.fromCornerMm + o.widthMm - offsetMm }))
+    .sort((a, b) => a.from - b.from);
+
+  let center = desiredCenterMm;
+  for (const span of spans) {
+    const left = center - widthMm / 2;
+    const right = center + widthMm / 2;
+    if (right <= span.from || left >= span.to) continue;
+
+    const toRight = span.to + widthMm / 2;
+    const toLeft = span.from - widthMm / 2;
+    // Предпочитаем сдвиг вправо: слева обычно стоят пеналы.
+    center = toRight <= highMm ? toRight : Math.max(toLeft, lowMm);
+  }
+
+  return Math.min(Math.max(center, lowMm), highMm);
 }
 
 /* ─────────────────────────  Заполнение промежутков  ───────────────────────── */
@@ -197,6 +264,16 @@ export function fillGap(gapMm: number): number[] {
   return widths;
 }
 
+/** Подпись по содержанию, а не по ширине: 900 мм — это двухдверный модуль. */
+function describeFronts(doorCount: number, drawerCount: number): string {
+  if (drawerCount > 0) {
+    const word = drawerCount === 1 ? 'ящик' : drawerCount < 5 ? 'ящика' : 'ящиков';
+    return `${drawerCount} ${word}`;
+  }
+  if (doorCount >= 2) return `${doorCount} дверцы`;
+  return 'Дверца';
+}
+
 function makeModule(
   kind: ModuleKind,
   widthMm: number,
@@ -219,7 +296,11 @@ function makeModule(
     drawerCount: fronts.drawerCount,
     doorCount: fronts.doorCount,
     isFiller: kind === 'filler' || !isStandardWidth(widthMm),
-    label: spec ? spec.title : kind === 'tall' ? 'Пенал' : String(widthMm),
+    label: spec
+      ? spec.title
+      : kind === 'tall'
+        ? 'Пенал'
+        : describeFronts(fronts.doorCount, fronts.drawerCount),
   };
 }
 
@@ -265,7 +346,7 @@ export function buildRun(input: BuildRunInput): Run {
   }
 
   const span = Math.max(0, limit - cursor);
-  const anchors = planAnchors(span, requirements, comms).map((a) => ({
+  const anchors = planAnchors(span, requirements, comms, openings, cursor).map((a) => ({
     ...a,
     desiredCenterMm: a.desiredCenterMm + cursor,
   }));
@@ -308,7 +389,15 @@ export function buildRun(input: BuildRunInput): Run {
     const reserve = kept.slice(i + 1).reduce((sum, a) => sum + a.widthMm, 0);
     const desired = Math.round(anchor.desiredCenterMm - anchor.widthMm / 2);
     const maxStart = limit - anchor.widthMm - reserve;
-    const startMm = Math.max(flow, Math.min(desired, maxStart));
+    let startMm = Math.max(flow, Math.min(desired, maxStart));
+
+    /*
+     * Щель уже самого узкого стандарта закрывать нечем — получился бы
+     * доборный модуль в 50 мм, которого цех не делает. Подтягиваем якорь
+     * влево вплотную: сдвиг на пару сантиметров дешевле нелепого модуля.
+     */
+    if (startMm > flow && startMm - flow < MIN_WIDTH) startMm = flow;
+
     placed.push({ anchor, startMm });
     flow = startMm + anchor.widthMm;
   }
@@ -326,6 +415,20 @@ export function buildRun(input: BuildRunInput): Run {
     at += anchor.widthMm;
   }
 
+  const tail = limit - at;
+  if (tail > 0 && tail < MIN_WIDTH && modules.length > 0) {
+    // Огрызок в хвосте прирастает к последнему обычному модулю.
+    const lastPlain = [...modules].reverse().find((m) => !m.appliance && m.kind === 'base');
+    if (lastPlain) {
+      lastPlain.widthMm += tail;
+      lastPlain.isFiller = !isStandardWidth(lastPlain.widthMm);
+      for (let i = modules.indexOf(lastPlain) + 1; i < modules.length; i++) {
+        modules[i].offsetMm += tail;
+      }
+      at = limit;
+    }
+  }
+
   for (const width of fillGap(limit - at)) {
     modules.push(makeModule('base', width, at));
     at += width;
@@ -340,7 +443,7 @@ export function buildRun(input: BuildRunInput): Run {
     ? buildUpperRow(modules, usable, openings, requirements, ceilingHeightMm)
     : [];
 
-  return {
+  const run: Run = {
     id: input.id ?? 'run',
     lengthMm: usable,
     ceilingHeightMm,
@@ -349,7 +452,13 @@ export function buildRun(input: BuildRunInput): Run {
     options: requirements.options,
     residualMm: usable - at,
     warnings,
+    fingerprint: runFingerprint({ modules, upperSegments }),
   };
+
+  // Жёсткий инвариант: ряд, не помещающийся в стену, наружу не выходит.
+  assertRunFits(run);
+
+  return run;
 }
 
 /* ─────────────────────────  Верхний ряд  ───────────────────────── */
@@ -440,9 +549,7 @@ export function buildUpperRow(
 
 /* ─────────────────────────  Помощь интерфейсу  ───────────────────────── */
 
-export function runWidthSum(run: Run): number {
-  return run.modules.reduce((sum, m) => sum + m.widthMm, 0);
-}
+export { runWidthSum };
 
 export function freeSpaceMm(run: Run): number {
   return run.lengthMm - runWidthSum(run);
@@ -452,4 +559,4 @@ export function allModules(run: Run): Module[] {
   return [...run.modules, ...run.upperSegments.flatMap((s) => s.modules)];
 }
 
-export { STANDARD_WIDTHS };
+export { STANDARD_WIDTHS, WATER_TOLERANCE_MM };

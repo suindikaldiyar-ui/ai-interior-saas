@@ -47,7 +47,7 @@ export const ASSET_KINDS = [
 ] as const;
 export type AssetKind = (typeof ASSET_KINDS)[number];
 
-export type OrgRole = 'owner' | 'manager' | 'designer';
+export type OrgRole = 'owner' | 'manager' | 'designer' | 'surveyor';
 
 export type Org = {
   id: string;
@@ -57,6 +57,8 @@ export type Org = {
   accent_color: string;
   domain: string | null;
   plan: string;
+  city?: string;
+  phone?: string;
 };
 
 export type CatalogCategory = {

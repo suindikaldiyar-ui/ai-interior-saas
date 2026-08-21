@@ -2,6 +2,9 @@ import { NextResponse } from 'next/server';
 import { geminiHeaders, geminiUrl, imageModel, parseImageResponse } from '@/lib/gemini';
 import { getEntry } from '@/lib/furnitureCatalog';
 import { getStyle, styleBlock } from '@/lib/renderStyles';
+import { APPLIANCE_SLOTS } from '@/lib/millwork/modules';
+import type { RunModuleLike } from '@/lib/kitchen';
+import type { ApplianceKind } from '@/types/millwork';
 import type { FurnitureItem, RoomConfig } from '@/types/interior';
 import {
   MAX_CATALOG_IMAGES,
@@ -60,6 +63,7 @@ type TableRow = {
 
 /** Промпту нужны только подписи образцов, сами картинки уходят отдельными частями. */
 type SwatchLabel = { label: string };
+type UpperLike = { fromMm: number; toMm: number; count: number };
 
 /** Образец каталога вместе с номером картинки, если он попал в лимит. */
 type PlacedCatalogRef = CatalogReference & { imageIndex: number | null };
@@ -162,15 +166,74 @@ ${windows}.
 ${furniture}`;
 }
 
+/**
+ * Состав гарнитура словами.
+ *
+ * Одного clay-кадра мало: модель узнаёт в пенале «место для духовки» и
+ * дорисовывает прибор туда, где на чертеже глухая дверца. Числа идут в
+ * промпт как ОГРАНИЧЕНИЕ — это обратное направление, смету по-прежнему
+ * считает код.
+ */
+function buildMillworkBlock(items: RenderRequest['items']): string {
+  const lines: string[] = [];
+
+  for (const item of items ?? []) {
+    const modules = (item.meta as Record<string, unknown> | undefined)?.runModules;
+    if (!Array.isArray(modules) || modules.length === 0) continue;
+
+    const parts = (modules as RunModuleLike[]).map((unit, i) => {
+      const slot = unit.appliance ? APPLIANCE_SLOTS[unit.appliance as ApplianceKind] : null;
+      const what = slot
+        ? slot.title.toLowerCase()
+        : unit.frontType === 'drawers' && (unit.drawerCount ?? 0) > 0
+          ? `${unit.drawerCount} ящика`
+          : 'глухой фасад';
+      return `${i + 1}. ${unit.widthMm} мм — ${what}`;
+    });
+
+    const appliances = (modules as RunModuleLike[])
+      .map((unit) =>
+        unit.appliance ? APPLIANCE_SLOTS[unit.appliance as ApplianceKind]?.title.toLowerCase() : null,
+      )
+      .filter(Boolean);
+
+    const uppers = (item.meta as Record<string, unknown> | undefined)?.runUppers;
+    const upperLine = Array.isArray(uppers)
+      ? uppers.length === 0
+        ? 'Верхних шкафов нет вовсе — стена над столешницей открыта.'
+        : `Верхний ряд стоит ТОЛЬКО на участках: ${(uppers as UpperLike[])
+            .map((u) => `${u.fromMm}–${u.toMm} мм (${u.count} шт.)`)
+            .join(', ')}. На остальной длине стены верхних шкафов НЕТ — разрыв сделан намеренно, там окно или вытяжной участок. Не достраивай ряд до сплошного.`
+      : '';
+
+    lines.push(
+      `# СОСТАВ ГАРНИТУРА «${item.label}» — слева направо, воспроизвести буквально
+${parts.join('\n')}
+Всего модулей: ${modules.length}. Ширины сходятся с чертежом, по которому клиенту посчитали смету.
+${upperLine}
+Техника в кадре — ТОЛЬКО эта: ${appliances.join(', ') || 'её нет вовсе'}.
+Духовку, микроволновку, посудомойку или винный шкаф в другие модули НЕ добавлять:
+там глухие фасады, и клиент за них заплатил как за глухие.`,
+    );
+  }
+
+  return lines.join('\n\n');
+}
+
 function buildPrompt(
   body: RenderRequest,
   style: NonNullable<ReturnType<typeof getStyle>>,
   references: SwatchLabel[],
   catalogRefs: PlacedCatalogRef[],
+  hasPhoto: boolean,
 ): string {
-  // IMAGE 1 — clay, IMAGE 2 — beauty, дальше артикулы каталога, затем образцы.
+  /*
+   * С фотографией: 1 — помещение клиента, 2 — clay, 3 — beauty.
+   * Без неё нумерация прежняя: 1 — clay, 2 — beauty.
+   */
+  const baseImages = hasPhoto ? 3 : 2;
   const withImages = catalogRefs.filter((r) => r.imageIndex !== null);
-  const imageIndexOfReference = (i: number) => i + 3 + withImages.length;
+  const imageIndexOfReference = (i: number) => i + baseImages + 1 + withImages.length;
 
   const catalogRoles = withImages
     .map(
@@ -196,17 +259,63 @@ ${textOnly
       : '';
 
   const notes = body.customNotes?.trim();
+  const millwork = buildMillworkBlock(body.items ?? []);
 
   return `Ты — архитектурный визуализатор. Твоя задача — сделать фотореалистичный снимок
 интерьера, СТРОГО сохранив геометрию комнаты с приложенных изображений.
 
 IMAGE_ROLES:
-[IMAGE 1] GEOMETRY_REFERENCE — clay-рендер: только форма комнаты и мебели, без цвета и текстур
-[IMAGE 2] LAYOUT_REFERENCE — цветной вид: расстановка и пропорции
+${
+  hasPhoto
+    ? `[IMAGE 1] ROOM_PHOTO — фотография помещения клиента, черновая отделка
+[IMAGE 2] GEOMETRY_REFERENCE — clay-рендер гарнитура: только форма и раскладка
+[IMAGE 3] LAYOUT_REFERENCE — цветной вид гарнитура`
+    : `[IMAGE 1] GEOMETRY_REFERENCE — clay-рендер: только форма комнаты и мебели, без цвета и текстур
+[IMAGE 2] LAYOUT_REFERENCE — цветной вид: расстановка и пропорции`
+}
 ${catalogRoles}
 ${swatchRoles || (catalogRoles ? '' : '(образцов материалов нет — материалы берутся из описания стиля)')}
 
-# GEOMETRY_LOCK — воспроизвести буквально, без единого отклонения
+${
+  hasPhoto
+    ? `# GEOMETRY_LOCK — фотография клиента главнее всего
+Ты не рисуешь новую комнату. Ты показываешь, как В ЭТОМ САМОМ помещении
+встанет спроектированный гарнитур. Клиент обязан узнать свою квартиру.
+
+Из [IMAGE 1] берётся БУКВАЛЬНО, без единого отклонения:
+- окна и двери: количество, размеры, положение на стене, высота подоконника,
+  переплёт рам, откосы;
+- пропорции и длина стен, высота потолка, расположение углов;
+- ракурс, точка съёмки, наклон камеры и кадрирование — снимок сделан оттуда же;
+- всё, что относится к самому помещению: ниши, выступы, короба, батареи, балки.
+- ЗАПРЕЩЕНО двигать окно или дверь, менять их размер, добавлять новые
+  или убирать существующие. Окно не в той стене — это чужая квартира.
+- Проёмы на [IMAGE 2] условны: clay-кадр собран по замеру и может показывать
+  окно там, где на фотографии его нет. В споре о проёмах прав [IMAGE 1].
+  Окон и дверей, которых нет на фотографии, в кадре быть не должно.
+
+Из [IMAGE 2] и блока «СОСТАВ ГАРНИТУРА» берётся БУКВАЛЬНО:
+- расстановка модулей вдоль стены, их порядок и ширины;
+- положение мойки, варочной панели, духового шкафа и холодильника;
+- высота нижнего ряда, верхних шкафов и пеналов, разрывы верхнего ряда.
+- Гарнитур ставится к той же стене и в тот же участок, что на clay-кадре.
+  Если ракурс фотографии отличается от clay-кадра, гарнитур ПЕРЕСТРАИВАЕТСЯ
+  под ракурс фотографии, но состав модулей при этом не меняется.
+
+ЗАМЕНЯЕТСЯ ровно две вещи:
+1) черновая отделка стен, пола и потолка — на чистовую;
+2) пустая стена — на спроектированный гарнитур.
+Больше ничего. Строительный мусор, стремянки, мешки и провода с фотографии
+убираются; окна, двери и геометрия — остаются.
+
+- МАТЕРИАЛЫ И ЦВЕТА ВЫБРАННЫХ АРТИКУЛОВ воспроизводятся ТОЧНО по своим
+  референсам из CATALOG_ITEM: рисунок, тон, фактура, размер модуля, направление
+  укладки. Стилевой пресет на них НЕ влияет и не может их перекрасить,
+  осветлить, затемнить или заменить похожим материалом.
+  Это товар клиента — он должен узнать в рендере именно свой артикул.
+
+`
+    : `# GEOMETRY_LOCK — воспроизвести буквально, без единого отклонения
 - Пропорции комнаты, положение и длина каждой стены — точно как в [IMAGE 1].
 - Положение, размер и форма окна, высота подоконника — без изменений.
 - Высота потолка — без изменений.
@@ -216,8 +325,11 @@ ${swatchRoles || (catalogRoles ? '' : '(образцов материалов н
 - ЗАПРЕЩЕНО двигать мебель, менять её количество, поворот или размер.
 - КУХОННЫЙ ГАРНИТУР: разбивка на модули, число и ширина фасадов, положение
   мойки, варочной панели, духового шкафа и холодильника воспроизводятся ТОЧНО
-  по clay-кадру. Не придумывай свою раскладку шкафов и не переставляй технику —
+  по clay-кадру и по списку «СОСТАВ ГАРНИТУРА» ниже — он главнее любых
+  привычных решений. Не придумывай свою раскладку шкафов и не переставляй технику —
   клиенту посчитали в смете именно эту конфигурацию, и он её узнает.
+  ЗАПРЕЩЕНО добавлять технику, которой нет в списке: духовка под столешницей
+  там, где по списку глухой фасад, — это чужая кухня и лишние деньги в смете.
   Верхние шкафы там, где их нет на clay-кадре, не дорисовывай: разрыв ряда
   над окном сделан намеренно.
 - МАТЕРИАЛЫ И ЦВЕТА ВЫБРАННЫХ АРТИКУЛОВ воспроизводятся ТОЧНО по своим
@@ -226,6 +338,8 @@ ${swatchRoles || (catalogRoles ? '' : '(образцов материалов н
   осветлить, затемнить или заменить похожим материалом.
   Это товар клиента — он должен узнать в рендере именно свой артикул.
 
+`
+}
 # FREE — можно переосмыслить в рамках стиля
 Стиль управляет ТОЛЬКО тем, что не выбрано в каталоге.
 - Конкретный дизайн каждого предмета внутри того же посадочного места и габарита.
@@ -235,6 +349,8 @@ ${swatchRoles || (catalogRoles ? '' : '(образцов материалов н
 - Характер света и время суток.
 ${notes ? `- Отдельные пожелания дизайнера (учесть обязательно): ${notes}` : ''}
 
+${millwork ? `${millwork}
+` : ''}
 # BINDING TABLE — что где лежит
 ${buildBindingTable(body.items ?? [], references, catalogRefs, style, imageIndexOfReference)}
 ${textOnlyBlock}
@@ -384,8 +500,9 @@ export async function POST(request: Request) {
       }
     }
 
+    const photoOffset = body.roomPhoto ? 1 : 0;
     const placedCatalog: PlacedCatalogRef[] = [
-      ...catalogParsed.map((c, i) => ({ ...c.ref, imageIndex: i + 3 })),
+      ...catalogParsed.map((c, i) => ({ ...c.ref, imageIndex: i + 3 + photoOffset })),
       ...catalogTextOnly.map((ref) => ({ ...ref, imageIndex: null })),
     ];
 
@@ -398,33 +515,51 @@ export async function POST(request: Request) {
       )
       .slice(0, swatchBudget);
 
+    /*
+     * Фотография помещения — главное изображение запроса. Без неё модель
+     * рисует свои стены и окна, и клиент не узнаёт квартиру.
+     */
+    const photo = body.roomPhoto ? fromDataUrl(body.roomPhoto) : null;
+
     const prompt = buildPrompt(
       body,
       style,
       references.map((r) => ({ label: r.label })),
       placedCatalog,
+      photo !== null,
     );
 
     // Каждое изображение подписано текстовой частью прямо перед собой —
     // это лечит перепутывание атрибутов, когда картинок больше пяти.
-    const parts: Part[] = [
-      { text: prompt },
-      { text: '[IMAGE 1] GEOMETRY_REFERENCE — clay-рендер, эталон формы и ракурса:' },
-      { inlineData: clay },
-      { text: '[IMAGE 2] LAYOUT_REFERENCE — цветной вид, расстановка и пропорции:' },
-      { inlineData: beauty },
-    ];
+    const parts: Part[] = [{ text: prompt }];
+
+    if (photo) {
+      parts.push({
+        text: '[IMAGE 1] ROOM_PHOTO — помещение клиента: окна, двери, стены и ракурс берутся отсюда:',
+      });
+      parts.push({ inlineData: photo });
+    }
+
+    const base = photo ? 1 : 0;
+    parts.push({
+      text: `[IMAGE ${base + 1}] GEOMETRY_REFERENCE — clay-рендер, эталон состава и раскладки:`,
+    });
+    parts.push({ inlineData: clay });
+    parts.push({
+      text: `[IMAGE ${base + 2}] LAYOUT_REFERENCE — цветной вид гарнитура:`,
+    });
+    parts.push({ inlineData: beauty });
 
     catalogParsed.forEach((c, i) => {
       parts.push({
-        text: `[IMAGE ${i + 3}] CATALOG_ITEM — артикул ${c.ref.article} «${c.ref.name}», зона: ${c.ref.targetLabel}. Воспроизвести точно:`,
+        text: `[IMAGE ${base + i + 3}] CATALOG_ITEM — артикул ${c.ref.article} «${c.ref.name}», зона: ${c.ref.targetLabel}. Воспроизвести точно:`,
       });
       parts.push({ inlineData: c.parsed });
     });
 
     references.forEach((r, i) => {
       parts.push({
-        text: `[IMAGE ${i + 3 + catalogParsed.length}] MATERIAL_SWATCH — ${r.label}:`,
+        text: `[IMAGE ${base + i + 3 + catalogParsed.length}] MATERIAL_SWATCH — ${r.label}:`,
       });
       parts.push({ inlineData: r.parsed });
     });

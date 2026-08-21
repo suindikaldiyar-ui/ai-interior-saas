@@ -10,7 +10,7 @@ import {
 } from '@/types/roomAnalysis';
 
 const fieldCls =
-  'tnum w-full border border-lineStrong bg-white px-2 py-1.5 font-mono text-[12px] outline-none';
+  'tnum w-full border border-lineStrong bg-field px-2 py-1.5 font-mono text-[12px] outline-none';
 
 export default function MeasurePanel() {
   const analysis = useInteriorStore((s) => s.analysis);

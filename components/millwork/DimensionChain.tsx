@@ -21,6 +21,11 @@ export type DimSegment = {
 type Props = {
   segments: DimSegment[];
   totalMm: number;
+  /**
+   * Размер получен из допущения. По отраслевой норме такие идут пунктиром —
+   * это читается без объяснений и отличает «померили» от «предположили».
+   */
+  assumedTotal?: boolean;
   /** Ширина рисунка в пользовательских единицах SVG. */
   width: number;
   /** Масштаб: пикселей SVG на миллиметр. */
@@ -35,6 +40,7 @@ const TICK = 5;
 export default function DimensionChain({
   segments,
   totalMm,
+  assumedTotal = false,
   width,
   scale,
   y = 0,
@@ -107,7 +113,15 @@ export default function DimensionChain({
 
       {showTotal && (
         <g>
-          <line x1={0} y1={totalLine} x2={width} y2={totalLine} stroke="var(--blueprint)" strokeWidth={1} />
+          <line
+            x1={0}
+            y1={totalLine}
+            x2={width}
+            y2={totalLine}
+            stroke={assumedTotal ? 'var(--tape)' : 'var(--blueprint)'}
+            strokeWidth={1}
+            strokeDasharray={assumedTotal ? '7 4' : undefined}
+          />
           <line x1={0} y1={totalLine - TICK} x2={0} y2={totalLine + TICK} stroke="var(--blueprint)" strokeWidth={1} />
           <line
             x1={width}
@@ -124,9 +138,10 @@ export default function DimensionChain({
             textAnchor="middle"
             fontSize={11}
             fontWeight={600}
-            fill="var(--blueprint)"
+            fill={assumedTotal ? 'var(--tape)' : 'var(--blueprint)'}
           >
             {totalMm}
+            {assumedTotal ? '*' : ''}
           </text>
         </g>
       )}

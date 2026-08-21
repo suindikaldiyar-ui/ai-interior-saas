@@ -1,0 +1,1035 @@
+<title>Руководство замерщика</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+  /* ──────────────────────────────────────────────────────────────
+     Синька продукта: тот же набор токенов, что в app/globals.css.
+     Светлая тема — это напечатанный лист, тёмная — экран планшета.
+     ────────────────────────────────────────────────────────────── */
+  :root {
+    --ground: #f2f5f8;
+    --panel: #ffffff;
+    --panel-2: #e8eef4;
+    --line: #c3d2df;
+    --line-strong: #9db2c6;
+    --ink: #0b1524;
+    --ink-dim: #4c6076;
+    --cyan: #1f6fa8;
+    --cyan-bright: #12557f;
+    --tape: #8a6400;
+    --tape-bg: #fdf3d5;
+    --alert: #b03127;
+    --alert-bg: #fbe6e4;
+    --ok: #1c6b58;
+
+    --measure: 68ch;
+    --radius: 2px;
+  }
+
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme='light']) {
+      --ground: #0b1524;
+      --panel: #111e33;
+      --panel-2: #0d2138;
+      --line: #23364f;
+      --line-strong: #2f4666;
+      --ink: #e4ebf4;
+      --ink-dim: #8395b0;
+      --cyan: #6fb7e8;
+      --cyan-bright: #3d8fd1;
+      --tape: #e8b417;
+      --tape-bg: #1e2436;
+      --alert: #e5544b;
+      --alert-bg: #2a1c22;
+      --ok: #4fbfa0;
+    }
+  }
+
+  :root[data-theme='dark'] {
+    color-scheme: dark;
+    --ground: #0b1524;
+    --panel: #111e33;
+    --panel-2: #0d2138;
+    --line: #23364f;
+    --line-strong: #2f4666;
+    --ink: #e4ebf4;
+    --ink-dim: #8395b0;
+    --cyan: #6fb7e8;
+    --cyan-bright: #3d8fd1;
+    --tape: #e8b417;
+    --tape-bg: #1e2436;
+    --alert: #e5544b;
+    --alert-bg: #2a1c22;
+    --ok: #4fbfa0;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: 'Archivo', system-ui, -apple-system, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .num,
+  code,
+  th,
+  .label {
+    font-family: 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .wrap {
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: 0 20px 96px;
+  }
+
+  /* ── Шапка: чертёжная рамка с уголками ── */
+  header.sheet {
+    position: relative;
+    margin: 28px 0 0;
+    padding: 34px 28px 26px;
+    background: var(--panel);
+    border: 1px solid var(--line-strong);
+  }
+  header.sheet::before,
+  header.sheet::after {
+    content: '';
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    border: 1px solid var(--cyan);
+  }
+  header.sheet::before { top: 8px; left: 8px; border-right: 0; border-bottom: 0; }
+  header.sheet::after { bottom: 8px; right: 8px; border-left: 0; border-top: 0; }
+
+  .eyebrow {
+    font-family: 'IBM Plex Mono', ui-monospace, monospace;
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--cyan);
+    margin: 0 0 10px;
+  }
+
+  h1 {
+    font-size: clamp(30px, 5vw, 46px);
+    line-height: 1.05;
+    letter-spacing: -0.025em;
+    font-weight: 700;
+    margin: 0 0 12px;
+    text-wrap: balance;
+  }
+
+  .lede {
+    max-width: var(--measure);
+    font-size: 17px;
+    color: var(--ink-dim);
+    margin: 0;
+  }
+
+  .stamp {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 26px;
+    margin-top: 22px;
+    padding-top: 14px;
+    border-top: 1px solid var(--line);
+    font-family: 'IBM Plex Mono', ui-monospace, monospace;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+  }
+  .stamp b { color: var(--ink); font-weight: 500; }
+
+  /* ── Оглавление ── */
+  nav.toc {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 1px;
+    margin: 28px 0 0;
+    background: var(--line);
+    border: 1px solid var(--line);
+  }
+  nav.toc a {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 12px 14px;
+    background: var(--panel);
+    color: var(--ink);
+    text-decoration: none;
+    font-size: 14px;
+  }
+  nav.toc a:hover { background: var(--panel-2); color: var(--cyan-bright); }
+  nav.toc a span {
+    font-family: 'IBM Plex Mono', ui-monospace, monospace;
+    font-size: 11px;
+    color: var(--cyan);
+  }
+
+  /* ── Разделы ── */
+  section { margin-top: 56px; scroll-margin-top: 16px; }
+
+  .rule {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+  .rule::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: repeating-linear-gradient(
+      90deg,
+      var(--line-strong) 0 6px,
+      transparent 6px 10px
+    );
+  }
+  .rule .no {
+    font-family: 'IBM Plex Mono', ui-monospace, monospace;
+    font-size: 12px;
+    color: var(--cyan);
+    border: 1px solid var(--cyan);
+    padding: 2px 7px;
+  }
+  h2 {
+    font-size: clamp(21px, 2.6vw, 27px);
+    letter-spacing: -0.02em;
+    margin: 0;
+    font-weight: 600;
+    text-wrap: balance;
+  }
+  h3 {
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin: 30px 0 8px;
+  }
+
+  p, li { max-width: var(--measure); }
+  p { margin: 0 0 14px; }
+  ul, ol { margin: 0 0 16px; padding-left: 20px; }
+  li { margin-bottom: 6px; }
+  strong { font-weight: 600; }
+
+  .cols {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 18px;
+    align-items: start;
+  }
+  .cols p, .cols li { max-width: none; }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    padding: 16px 18px;
+  }
+  .card h3 { margin-top: 0; }
+
+  /* ── Шаги обхода: нумерация здесь настоящая ── */
+  .steps { display: grid; gap: 1px; background: var(--line); border: 1px solid var(--line); }
+  .step { background: var(--panel); padding: 18px 20px; display: grid; grid-template-columns: 46px 1fr; gap: 16px; }
+  .step .n {
+    font-family: 'IBM Plex Mono', ui-monospace, monospace;
+    font-size: 22px;
+    font-weight: 500;
+    color: var(--cyan);
+    line-height: 1.2;
+  }
+  .step h3 { margin: 0 0 6px; }
+  .step p:last-child, .step ul:last-child { margin-bottom: 0; }
+
+  /* ── Плашки ── */
+  .note {
+    border-left: 3px solid var(--cyan);
+    background: var(--panel-2);
+    padding: 12px 16px;
+    margin: 0 0 16px;
+  }
+  .note.warn { border-left-color: var(--tape); background: var(--tape-bg); }
+  .note.stop { border-left-color: var(--alert); background: var(--alert-bg); }
+  .note p:last-child { margin-bottom: 0; }
+  .note .label {
+    display: block;
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+    color: var(--cyan);
+  }
+  .note.warn .label { color: var(--tape); }
+  .note.stop .label { color: var(--alert); }
+
+  /* ── Таблицы ── */
+  .scroll { overflow-x: auto; margin: 0 0 18px; }
+  table { border-collapse: collapse; width: 100%; min-width: 520px; background: var(--panel); }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); font-size: 14px; vertical-align: top; }
+  th {
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+    font-weight: 500;
+    border-bottom: 1px solid var(--line-strong);
+  }
+  td.num, th.num { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .no-cell { color: var(--alert); font-weight: 600; }
+  .yes-cell { color: var(--ok); font-weight: 600; }
+
+  /* ── Чек-лист ── */
+  .check { list-style: none; padding: 0; display: grid; gap: 1px; background: var(--line); border: 1px solid var(--line); }
+  .check li {
+    margin: 0;
+    max-width: none;
+    background: var(--panel);
+    padding: 10px 14px;
+    display: grid;
+    grid-template-columns: 18px 1fr;
+    gap: 12px;
+    align-items: start;
+    font-size: 14px;
+  }
+  .check li::before {
+    content: '';
+    width: 14px;
+    height: 14px;
+    margin-top: 4px;
+    border: 1px solid var(--line-strong);
+  }
+  .check li.key { font-weight: 600; }
+  .check li.key::before { border-color: var(--cyan); }
+
+  /* ── Ролики ── */
+  .clip { border: 1px solid var(--line); background: var(--panel); padding: 14px 16px; }
+  .clip .len { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 11px; color: var(--cyan); }
+  .clip h3 { margin: 4px 0 6px; font-size: 16px; }
+  .clip p { font-size: 14px; margin-bottom: 8px; }
+  .clip .titre { font-size: 14px; font-weight: 600; border-top: 1px dashed var(--line-strong); padding-top: 8px; margin: 0; }
+
+  a { color: var(--cyan-bright); }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+
+  footer {
+    margin-top: 64px;
+    padding-top: 16px;
+    border-top: 1px solid var(--line);
+    font-size: 13px;
+    color: var(--ink-dim);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+
+  /* ── Печать: лист для папки обучения ── */
+  @media print {
+    :root {
+      --ground: #fff; --panel: #fff; --panel-2: #fff;
+      --line: #bbb; --line-strong: #666;
+      --ink: #000; --ink-dim: #333;
+      --cyan: #000; --cyan-bright: #000;
+      --tape: #000; --tape-bg: #fff;
+      --alert: #000; --alert-bg: #fff;
+      --ok: #000;
+    }
+    @page { size: A4; margin: 14mm; }
+    nav.toc { display: none; }
+    section { break-inside: auto; margin-top: 26px; }
+    .step, .card, .clip, table { break-inside: avoid; }
+    header.sheet { border: 1px solid #000; }
+  }
+</style>
+
+<div class="wrap">
+  <header class="sheet">
+    <p class="eyebrow">InteriorAI Studio · Полевой документ</p>
+    <h1>Руководство замерщика</h1>
+    <p class="lede">
+      Как приехать на объект с планшетом и уехать с подписанным замерным листом,
+      тремя ценами и отправленной клиенту ссылкой. Документ для обучения новых
+      сотрудников и для работы на объекте.
+    </p>
+    <div class="stamp">
+      <span>Кухня · линейный ряд</span>
+      <span>Версия <b>2</b></span>
+      <span>Все размеры — <b>целые миллиметры</b></span>
+      <span>Один визит — <b>один договор</b></span>
+    </div>
+  </header>
+
+  <nav class="toc" aria-label="Содержание">
+    <a href="#chto"><span>01</span> Что система делает</a>
+    <a href="#podgotovka"><span>02</span> Подготовка</a>
+    <a href="#obekt"><span>03</span> Замер на объекте</a>
+    <a href="#sostav"><span>04</span> Состав гарнитура</a>
+    <a href="#render"><span>05</span> Рендер</a>
+    <a href="#preduprezhdeniya"><span>06</span> Предупреждения</a>
+    <a href="#razgovor"><span>07</span> Разговор с клиентом</a>
+    <a href="#oshibki"><span>08</span> Частые ошибки</a>
+    <a href="#chek"><span>09</span> Чек-лист выезда</a>
+    <a href="#video"><span>10</span> Сценарии для видео</a>
+    <a href="#standarty"><span>11</span> Что зафиксировано</a>
+  </nav>
+
+  <!-- ─────────────── 01 ─────────────── -->
+  <section id="chto">
+    <div class="rule"><span class="no">01</span><h2>Что система делает и чего не делает</h2></div>
+
+    <div class="cols">
+      <div class="card">
+        <h3>Делает</h3>
+        <ul>
+          <li>считает состав гарнитура по размерам помещения — какие модули, какой ширины, в каком порядке;</li>
+          <li>строит чертёж фасада и план с размерами в миллиметрах;</li>
+          <li>считает смету: корпус, фасады, кромка, столешница, фурнитура, техника, монтаж;</li>
+          <li>рисует три фотореалистичных варианта в квартире клиента;</li>
+          <li>выдаёт клиенту ссылку, где он всё это видит с телефона.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Не делает</h3>
+        <ul>
+          <li>не заменяет замер: размеры снимает человек, система только считает по ним;</li>
+          <li>не выдумывает того, чего не знает — если розетка не отмечена, так и пишет;</li>
+          <li>не даёт рабочих чертежей для распила. Это документ для продажи и монтажа, не для цеха.</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>Три состояния каждой величины</h3>
+    <p>
+      Клиент смотрит в тот же экран, что и вы, и всё, что там написано, принимает
+      за факт. Поэтому система нигде не выглядит уверенной там, где она не знает.
+    </p>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>Состояние</th><th>Как выглядит</th><th>Что значит для сметы</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Замерено</td>
+            <td>обычное число</td>
+            <td>смета точная</td>
+          </tr>
+          <tr>
+            <td>Принято по умолчанию</td>
+            <td>приглушённый цвет, пунктир, подпись «стандартная высота подоконника — 850 мм»; на чертеже размер идёт пунктиром со звёздочкой</td>
+            <td>смета предварительная</td>
+          </tr>
+          <tr>
+            <td>Не замерено</td>
+            <td>так и написано: «не замерено»</td>
+            <td>смета предварительная, позиция уходит в список уточнений</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      Внизу чертежа и в кабинете клиента всегда стоит одна из двух строк:
+      «Позиции, требующие уточнения на объекте: …» или «Все размеры сняты на объекте».
+      Пустое поле в замере — это «не замерено», а не ноль: система подставит стандарт,
+      но подпишет его как допущение и никогда не выдаст за ваш замер.
+    </p>
+  </section>
+
+  <!-- ─────────────── 02 ─────────────── -->
+  <section id="podgotovka">
+    <div class="rule"><span class="no">02</span><h2>Подготовка — делается один раз</h2></div>
+
+    <h3>Каталог и цены</h3>
+    <p>
+      Без цен смета показывает нули. Заходим: <strong>Каталог → Загрузить типовой прайс</strong>.
+      Это 33 позиции со средними ставками по рынку — ЛДСП за м², фасады за м², кромка
+      за м. п., столешница за м. п., петли за штуку, доставка и монтаж в процентах.
+    </p>
+    <p>
+      Дальше руководитель правит их под свою компанию. Товар попадает в смету по колонке
+      «Ключ сметы»: пока ключ пуст, строка не считается.
+    </p>
+    <div class="note stop">
+      <span class="label">Нельзя</span>
+      <p>
+        Показывать клиенту смету на типовом прайсе. Это ориентир, а не цены компании:
+        договор, подписанный по чужим ставкам, компания закроет с убытком.
+      </p>
+    </div>
+
+    <h3>Доступы</h3>
+    <p>
+      Вход — по ссылке на почту, пароля нет. Первый вошедший заводит компанию и становится
+      владельцем, остальных приглашают на странице «Сотрудники»: <strong>менеджер</strong>
+      ведёт объекты и каталог, <strong>замерщик</strong> вносит замер и собирает конфигурацию.
+      Приглашение принимается само при первом входе.
+    </p>
+
+    <h3>Что взять с собой</h3>
+    <ul>
+      <li>планшет или ноутбук — без сети тоже работает, данные уйдут на сервер позже;</li>
+      <li>лазерный дальномер или рулетка;</li>
+      <li>телефон для фотографий.</li>
+    </ul>
+  </section>
+
+  <!-- ─────────────── 03 ─────────────── -->
+  <section id="obekt">
+    <div class="rule"><span class="no">03</span><h2>Замер на объекте</h2></div>
+    <p>
+      Всё на одном экране, вкладка <strong>ЗАМЕР</strong>. Слева ввод, справа план —
+      он дорисовывается вместе с вводом. Порядок повторяет обход помещения.
+      Любой шаг можно пропустить и вернуться: пропущенный останется помеченным,
+      молча он не исчезнет.
+    </p>
+
+    <div class="steps">
+      <article class="step">
+        <div class="n">1</div>
+        <div>
+          <h3>Высота потолка</h3>
+          <p>
+            Одно число в миллиметрах. Мерим от чистого пола: если стяжки ещё нет —
+            вычитаем её толщину и записываем это в заметки.
+          </p>
+          <p>
+            От высоты зависит, влезет ли антресоль. Не знаете — оставьте пустым:
+            система подставит 2700 мм и подпишет как допущение.
+          </p>
+        </div>
+      </article>
+
+      <article class="step">
+        <div class="n">2</div>
+        <div>
+          <h3>Стены по кругу</h3>
+          <p>
+            Идём по периметру от угла слева от входа. Для каждой стены: длина в
+            миллиметрах, затем поворот — «90° влево», «90° вправо» или «другой угол».
+            Замкнулся контур — помещение готово, план это показывает.
+          </p>
+          <p>
+            Отметьте, вдоль какой стены встанет ряд, — кнопка «ряд здесь». Как только
+            её длина задана, на плане появляется предварительный состав.
+          </p>
+          <div class="note warn">
+            <span class="label">На объекте</span>
+            <p>
+              Мерим по низу, у пола, а не по середине стены: в новостройке стены кривые,
+              разница доходит до 3 см — это ширина целого доборного элемента.
+            </p>
+          </div>
+        </div>
+      </article>
+
+      <article class="step">
+        <div class="n">3</div>
+        <div>
+          <h3>Проёмы</h3>
+          <p>
+            На каждой стене отмечаем окна, двери, арки, ниши, короба и выступы.
+            Для каждого: <strong>привязка от левого угла</strong>, ширина, высота,
+            низ от пола.
+          </p>
+          <p>
+            Эти четыре цифры решают, узнает ли клиент свою квартиру на рендере.
+            Если проёмов в замере нет, а на фотографии они есть, модель получает два
+            несовпадающих источника и начинает додумывать: окно съезжает, появляется
+            второе, дверь пропадает.
+          </p>
+          <p>
+            Короба и выступы отмечаем отдельно — их придётся обходить, и это меняет
+            состав гарнитура.
+          </p>
+        </div>
+      </article>
+
+      <article class="step">
+        <div class="n">4</div>
+        <div>
+          <h3>Коммуникации</h3>
+          <p>
+            Вода, канализация, газ, вентиляция, розетки, выключатели, радиатор.
+            Для каждой точки: привязка от угла и высота от пола.
+          </p>
+          <p>
+            Мойка садится напротив вывода воды — перенос трубы на объекте стоит дороже,
+            чем сдвиг модуля на бумаге. Вытяжка встаёт строго над варочной панелью,
+            а вентканал сверяется с ней и даёт предупреждение, если он далеко.
+          </p>
+          <div class="note warn">
+            <span class="label">Обязательно</span>
+            <p>
+              Розетки под холодильник, духовку, посудомойку и варочную. Это самая частая
+              переделка на монтаже и самый частый разговор на повышенных тонах.
+            </p>
+          </div>
+        </div>
+      </article>
+
+      <article class="step">
+        <div class="n">5</div>
+        <div>
+          <h3>Фото стены, где встанет гарнитур</h3>
+          <p>
+            Один снимок помечаем главным — он станет основой рендера. Снимок сжимается
+            до 1600 px прямо в браузере, мегабайты с телефона никуда не уезжают.
+          </p>
+          <ul>
+            <li>снимаем <strong>фронтально</strong>, стоя напротив стены;</li>
+            <li>телефон держим <strong>горизонтально</strong>, на уровне груди;</li>
+            <li>в кадр входит <strong>вся стена целиком</strong>, от угла до угла, вместе с полом и потолком;</li>
+            <li>окно или дверь в кадре — хорошо: модель возьмёт их положение оттуда;</li>
+            <li>убираем стремянки, мешки, инструмент;</li>
+            <li>дневной свет, без вспышки.</li>
+          </ul>
+          <p>
+            Общий вид помещения можно снять дополнительно — в рендер он не идёт,
+            но останется в объекте.
+          </p>
+        </div>
+      </article>
+    </div>
+
+    <h3>Со слов клиента</h3>
+    <p>
+      Пока разговариваете — записывайте. Поле «Со слов клиента» всегда на экране,
+      рядом кнопка записи голосом: наговорили — текст лёг в поле с отметкой времени.
+      Сюда идёт всё: «мойку ближе к окну», «холодильник обязательно слева»,
+      «дверцы без ручек», «бюджет до полутора миллионов».
+    </p>
+    <p>
+      Этот текст попадает в примечания чертежа и в кабинет клиента — потом никто
+      не будет спорить, о чём договаривались.
+    </p>
+
+    <h3>Замер завершён</h3>
+    <p>
+      Кнопка показывает сводку: габариты, проёмы, коммуникации, сколько величин
+      замерено, сколько принято по умолчанию, сколько неизвестно, и что именно
+      осталось уточнить — с кнопкой «Дозамерить».
+    </p>
+    <p>
+      Тот же экран печатается как <strong>замерный лист</strong>: A4, место для двух
+      подписей. Клиент подписывает прямо на объекте.
+    </p>
+    <div class="note">
+      <span class="label">Без сети</span>
+      <p>
+        В шапке появится «Нет сети — сохранено на планшете». Замер никуда не денется:
+        он лежит в памяти планшета и уйдёт на сервер, как только появится связь.
+        Продолжайте работать.
+      </p>
+    </div>
+  </section>
+
+  <!-- ─────────────── 04 ─────────────── -->
+  <section id="sostav">
+    <div class="rule"><span class="no">04</span><h2>Состав гарнитура</h2></div>
+
+    <h3>Что можно менять</h3>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>Параметр</th><th>Можно</th><th>Как</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Ширина модуля</td><td class="yes-cell">Да</td><td>Числом, 150–1200 мм, или чипами стандартов</td></tr>
+          <tr><td>Тип модуля</td><td class="yes-cell">Да</td><td>Дверца, ящики, пенал, угловой</td></tr>
+          <tr><td>Техника в модуле</td><td class="yes-cell">Да</td><td>Выпадающий список</td></tr>
+          <tr><td>Порядок модулей</td><td class="yes-cell">Да</td><td>Перетаскиванием</td></tr>
+          <tr><td>Ширина модуля с техникой</td><td class="no-cell">Нет</td><td>Диктует прибор: духовка 600, посудомойка 450 или 600, холодильник 600, мойка 600 или 800</td></tr>
+          <tr><td>Высота столешницы</td><td class="no-cell">Нет</td><td class="num">858 мм</td></tr>
+          <tr><td>Низ верхнего ряда</td><td class="no-cell">Нет</td><td class="num">1450 мм</td></tr>
+          <tr><td>Глубина модулей</td><td class="no-cell">Нет</td><td class="num">560 низ / 320 верх</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      Высоты и глубины зафиксированы не для удобства программы. Вся фурнитура, техника,
+      мойки и столешницы в стране сделаны под эти размеры: гарнитур с нестандартной
+      высотой не соберётся из существующих комплектующих.
+    </p>
+    <div class="note">
+      <span class="label">Нестандарт — не ошибка</span>
+      <p>
+        Корпусную мебель делают на заказ, модуль 630 мм нормален, и подписан он спокойно.
+        Красным помечается только вынужденный добор — его стараются убрать,
+        перераспределив ширины. Если введённая ширина не влезает, правка не применяется
+        вовсе и система говорит, на сколько ряд вышел бы за стену.
+      </p>
+    </div>
+
+    <h3>Три способа менять состав</h3>
+    <ol>
+      <li>
+        <strong>Голосом или текстом</strong> — командная строка внизу, кнопка микрофона
+        рядом. Самый быстрый способ при клиенте: «убери пенал», «поставь посудомойку 45
+        рядом с мойкой», «сделай ящики вместо дверцы во втором модуле», «подними верхние
+        до потолка», «холодильник справа», «фурнитуру Blum». Голос работает в Chrome
+        и Edge; в других браузерах кнопки просто нет, строка остаётся текстовой.
+      </li>
+      <li>
+        <strong>Руками</strong> — вкладка ФАСАД, лента модулей сверху. Кликаем модуль,
+        открывается панель: ширина, фасад, тип, техника.
+      </li>
+      <li><strong>Кнопками</strong> — «+ Модуль» и «+ Пенал».</li>
+    </ol>
+    <p>После любого изменения чертёж и смета пересчитываются мгновенно.</p>
+
+    <h3>Три варианта</h3>
+    <p>Это не три разные кухни, а <strong>одна кухня в трёх бюджетах</strong>:</p>
+    <ul>
+      <li><strong>Базовый</strong> — минимум модулей, ЛДСП-столешница, фурнитура стандарт, без антресоли;</li>
+      <li><strong>Оптимальный</strong> — кварцевая столешница, доводчики, встроенная мойка и варочная;</li>
+      <li><strong>Премиум</strong> — до потолка с антресолью, встроенная техника, Blum, подсветка, интегрированные ручки.</li>
+    </ul>
+    <p>
+      Раскладка у всех трёх одна. Клиент выбирает не «что красивее», а «сколько готов
+      потратить» — так решение принимается быстрее.
+    </p>
+  </section>
+
+  <!-- ─────────────── 05 ─────────────── -->
+  <section id="render">
+    <div class="rule"><span class="no">05</span><h2>Рендер: чтобы клиент узнал свою квартиру</h2></div>
+    <p>Самое ценное в системе и самое чувствительное к ошибкам замера.</p>
+
+    <h3>Как это работает</h3>
+    <p>Модель получает три вещи:</p>
+    <ol>
+      <li><strong>Фотографию помещения</strong> — отсюда окна, двери, пропорции стен, высота потолка, ракурс;</li>
+      <li><strong>Технический кадр гарнитура</strong> — отсюда расстановка модулей и техники;</li>
+      <li><strong>Состав ряда списком</strong> — какие модули и что в них стоит.</li>
+    </ol>
+    <p>
+      Заменяются ровно две вещи: черновая отделка на чистовую и пустая стена на гарнитур.
+      Всё остальное остаётся как на фотографии.
+    </p>
+
+    <h3>Что сделать, чтобы получилось</h3>
+    <div class="cols">
+      <div class="card">
+        <h3>Внесите проёмы в замер</h3>
+        <p>Иначе у модели два источника, которые не сходятся, и она додумывает.</p>
+      </div>
+      <div class="card">
+        <h3>Совместите ракурс</h3>
+        <p>
+          Перед отрисовкой выберите, как снят кадр: фронтально, от левого угла или
+          от правого. Он должен совпадать с ракурсом вашей фотографии.
+        </p>
+      </div>
+      <div class="card">
+        <h3>Снимайте стену целиком</h3>
+        <p>Не влезли холодильник или пенал — модель нарисует то, что видит, и ряд выйдет короче.</p>
+      </div>
+      <div class="card">
+        <h3>Выберите материалы из каталога</h3>
+        <p>
+          Без выбранного артикула клиент увидит настроение, а не ваш товар. С артикулом
+          в рендер уходят фасад, столешница и фартук — именно ваши.
+        </p>
+      </div>
+    </div>
+
+    <h3>Проверка перед показом клиенту</h3>
+    <p>Смотрим на три картинки и проверяем три вещи:</p>
+    <ol>
+      <li>окно и дверь <strong>на тех же местах</strong>, что на фотографии;</li>
+      <li>холодильник, мойка и варочная <strong>в том же порядке</strong>, что на чертеже;</li>
+      <li>количество модулей <strong>совпадает</strong> с составом ряда.</li>
+    </ol>
+    <p>
+      Что-то не так — жмём «Перерисовать» под этим вариантом. Кадр остаётся тем же,
+      меняется только картинка; обычно хватает одного повтора.
+    </p>
+  </section>
+
+  <!-- ─────────────── 06 ─────────────── -->
+  <section id="preduprezhdeniya">
+    <div class="rule"><span class="no">06</span><h2>Предупреждения: как их читать</h2></div>
+    <p>
+      На экране одновременно не больше трёх, остальные свёрнуты в «ещё N». Каждое
+      кликабельно и показывает своё место на плане. Формулировка называет последствие,
+      а не факт.
+    </p>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>Цвет</th><th>Что значит</th><th>Что делать</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="no-cell">Красное</td>
+            <td>Гарнитур физически не встанет: сумма модулей больше длины ряда, модуль поперёк дверного проёма, мойка дальше 600 мм от вывода воды</td>
+            <td>Разобраться на месте. Пока красное не убрано, кнопка «Отправить клиенту» не работает</td>
+          </tr>
+          <tr>
+            <td style="color: var(--tape); font-weight: 600;">Жёлтое</td>
+            <td>Требует уточнения, но работать не мешает: розетка не отмечена, вентканал не отмечен, подоконник принят по умолчанию</td>
+            <td>Дозамерить, если клиент рядом. Останется в замерном листе и в чертеже</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      Информационные сообщения на экране не показываются вовсе — они уходят в примечания
+      чертежа, чтобы не превращать экран в фон, который никто не читает.
+    </p>
+  </section>
+
+  <!-- ─────────────── 07 ─────────────── -->
+  <section id="razgovor">
+    <div class="rule"><span class="no">07</span><h2>Разговор с клиентом на объекте</h2></div>
+
+    <h3>До выезда</h3>
+    <p>
+      Открываем систему заранее, проверяем, что каталог заполнен и вход работает.
+      Настройку при клиенте не начинаем никогда.
+    </p>
+
+    <h3>На объекте — порядок</h3>
+    <div class="steps">
+      <article class="step">
+        <div class="n">1</div>
+        <div>
+          <h3>Мерим и разговариваем одновременно</h3>
+          <p>
+            Не молчим. Каждое число вносим сразу, план растёт на экране, клиент видит,
+            как появляется его помещение.
+          </p>
+        </div>
+      </article>
+      <article class="step">
+        <div class="n">2</div>
+        <div>
+          <h3>Показываем предварительный ряд</h3>
+          <p>
+            «Смотрите, на эту стену встают вот столько — холодильник, духовая колонна,
+            мойка, посудомойка, варочная».
+          </p>
+        </div>
+      </article>
+      <article class="step">
+        <div class="n">3</div>
+        <div>
+          <h3>Слушаем и вносим</h3>
+          <p>
+            Клиент говорит — вы вводите команду вслух: «мойку ближе к окну» — и она
+            переезжает. Самый сильный момент встречи: решение принимается сейчас,
+            а не через неделю.
+          </p>
+        </div>
+      </article>
+      <article class="step">
+        <div class="n">4</div>
+        <div>
+          <h3>Показываем три цены</h3>
+          <p>Не спрашиваем «какая нравится». Спрашиваем: <strong>«На какой бюджет ориентируемся?»</strong></p>
+        </div>
+      </article>
+      <article class="step">
+        <div class="n">5</div>
+        <div>
+          <h3>Убираем лишнее при клиенте</h3>
+          <p>
+            Снимаем галочки в смете — сумма падает на глазах. Клиент видит, что цена
+            управляемая, и перестаёт торговаться вслепую.
+          </p>
+        </div>
+      </article>
+      <article class="step">
+        <div class="n">6</div>
+        <div>
+          <h3>Отрисовываем</h3>
+          <p>Три варианта, около полминуты. Пока считается — заполняем контакты.</p>
+        </div>
+      </article>
+      <article class="step">
+        <div class="n">7</div>
+        <div>
+          <h3>Отправляем ссылку</h3>
+          <p>
+            «Отправить клиенту» — ссылка копируется, рядом кнопка WhatsApp, статус объекта
+            переходит в «Отправлено клиенту». Клиент открывает на своём телефоне, крутит,
+            показывает жене. Замерный лист подписываем на месте.
+          </p>
+        </div>
+      </article>
+    </div>
+
+    <div class="note">
+      <span class="label">Если система ошиблась при клиенте</span>
+      <p>
+        Спокойно поправляем руками и продолжаем. Не комментируем, не извиняемся.
+        Клиент не заметит, если вы сами не остановитесь.
+      </p>
+    </div>
+  </section>
+
+  <!-- ─────────────── 08 ─────────────── -->
+  <section id="oshibki">
+    <div class="rule"><span class="no">08</span><h2>Частые ошибки</h2></div>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Ошибка</th><th>Чем оборачивается</th></tr></thead>
+        <tbody>
+          <tr><td>Не внесены проёмы</td><td>Рендер рисует чужую квартиру</td></tr>
+          <tr><td>Фото из угла, а ракурс кадра — фронтальный</td><td>Модель сводит два вида и придумывает третий</td></tr>
+          <tr><td>Не отмечены розетки</td><td>Переделка на монтаже, разбирательство с клиентом</td></tr>
+          <tr><td>Мерили по середине стены</td><td>Гарнитур не встаёт: стены кривые, расхождение до 3 см</td></tr>
+          <tr><td>Показали смету на типовом прайсе</td><td>Цена не ваша, договор подписан с убытком</td></tr>
+          <tr><td>Оставили нули в смете</td><td>Каталог не заполнен, показывать нельзя</td></tr>
+          <tr><td>Мерили до стяжки и не записали</td><td>Высота уйдёт на 5–7 см, антресоль не влезет</td></tr>
+          <tr><td>Сняли стену не целиком</td><td>На рендере ряд короче, чем в смете</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ─────────────── 09 ─────────────── -->
+  <section id="chek">
+    <div class="rule"><span class="no">09</span><h2>Чек-лист выезда</h2></div>
+    <div class="cols">
+      <div>
+        <h3>Перед выездом</h3>
+        <ul class="check">
+          <li>каталог заполнен своими ценами</li>
+          <li>вход в систему работает</li>
+          <li>дальномер и телефон заряжены</li>
+        </ul>
+      </div>
+      <div>
+        <h3>На объекте</h3>
+        <ul class="check">
+          <li>высота потолка</li>
+          <li>все стены по кругу, замкнутый контур</li>
+          <li class="key">все проёмы: окна, двери, ниши, короба</li>
+          <li class="key">розетки под технику, вода, вентканал</li>
+          <li>фото стены гарнитура — фронтально, вся стена в кадре</li>
+          <li>заметки со слов клиента</li>
+          <li>замерный лист подписан</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Перед показом</h3>
+        <ul class="check">
+          <li>ракурс кадра совпадает с фото</li>
+          <li>материалы выбраны из каталога</li>
+          <li class="key">окно и дверь на рендере там же, где на фото</li>
+          <li>смета не показывает нулей</li>
+          <li>красных предупреждений не осталось</li>
+        </ul>
+      </div>
+      <div>
+        <h3>После</h3>
+        <ul class="check">
+          <li>ссылка отправлена клиенту</li>
+          <li>статус объекта — «Отправлено клиенту»</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─────────────── 10 ─────────────── -->
+  <section id="video">
+    <div class="rule"><span class="no">10</span><h2>Сценарии для видео</h2></div>
+    <p>
+      Короткие ролики, каждый решает одну задачу. Снимаем вертикально, экран крупно,
+      руки в кадре.
+    </p>
+    <div class="cols">
+      <article class="clip">
+        <span class="len">15–20 сек</span>
+        <h3>Смета за минуту</h3>
+        <p>Пустая квартира, планшет в руке. Вносим четыре числа — план растёт. Появляется состав ряда. Три цены.</p>
+        <p class="titre">«Замер и смета — на объекте, а не через неделю»</p>
+      </article>
+      <article class="clip">
+        <span class="len">10–15 сек</span>
+        <h3>Скажи — и подвинется</h3>
+        <p>Крупно экран. Голосом: «мойку ближе к окну». Мойка переезжает, чертёж перестраивается, сумма меняется.</p>
+        <p class="titre">«Правки при клиенте, а не после»</p>
+      </article>
+      <article class="clip">
+        <span class="len">15 сек</span>
+        <h3>Три бюджета</h3>
+        <p>Три цены на экране. Снимаем галочку «антресоль» — сумма падает.</p>
+        <p class="titre">«Клиент видит, из чего складывается цена»</p>
+      </article>
+      <article class="clip">
+        <span class="len">20 сек</span>
+        <h3>Ваша квартира, ваша кухня</h3>
+        <p>Слева фото черновой отделки, справа рендер. Одно окно, одна дверь, одно помещение.</p>
+        <p class="titre">«Это не картинка из интернета. Это его квартира»</p>
+      </article>
+      <article class="clip">
+        <span class="len">10 сек</span>
+        <h3>Чертёж на печать</h3>
+        <p>Нажатие «Печать чертежа» — выезжает A4 со штампом и размерами.</p>
+        <p class="titre">«Монтажник получает миллиметры, а не пожелания»</p>
+      </article>
+      <article class="clip">
+        <span class="len">20 сек</span>
+        <h3>До и после</h3>
+        <p>Фото пустой бетонной квартиры — три рендера подряд.</p>
+        <p class="titre">«Из бетона в подписанный договор за один визит»</p>
+      </article>
+    </div>
+    <div class="note stop">
+      <span class="label">Показывать нельзя</span>
+      <p>
+        Реальные цены клиентов, чужие фотографии без разрешения, экраны с ошибками и
+        предупреждениями. Перед съёмкой проходим весь путь один раз и убеждаемся,
+        что он чистый.
+      </p>
+    </div>
+  </section>
+
+  <!-- ─────────────── 11 ─────────────── -->
+  <section id="standarty">
+    <div class="rule"><span class="no">11</span><h2>Что зафиксировано в системе</h2></div>
+    <p>Числа, которые не меняются из интерфейса. Знать их полезно: они отвечают на половину вопросов клиента.</p>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Величина</th><th class="num">Значение</th><th>Почему так</th></tr></thead>
+        <tbody>
+          <tr><td>Высота столешницы от пола</td><td class="num">858 мм</td><td>Цоколь 100 + корпус 720 + столешница 38</td></tr>
+          <tr><td>Низ верхнего ряда</td><td class="num">1450 мм</td><td>Рабочая зона между столешницей и шкафами</td></tr>
+          <tr><td>Глубина нижнего ряда</td><td class="num">560 мм</td><td>Под столешницу 600 мм с выносом</td></tr>
+          <tr><td>Глубина верхнего ряда</td><td class="num">320 мм</td><td>Не бьёт по голове над рабочей зоной</td></tr>
+          <tr><td>Ширина модуля</td><td class="num">150–1200 мм</td><td>Шире 600 мм ставится вторая дверь: одна провисает на петлях</td></tr>
+          <tr><td>Угловой модуль</td><td class="num">900 × 900 мм</td><td>Стандарт под карусель</td></tr>
+          <tr><td>Допуск мойки до вывода воды</td><td class="num">600 мм</td><td>Дальше — перенос трубы за счёт компании</td></tr>
+          <tr><td>Высота потолка по умолчанию</td><td class="num">2700 мм</td><td>Стандарт новостройки. Подставляется как допущение</td></tr>
+          <tr><td>Высота подоконника по умолчанию</td><td class="num">850 мм</td><td>Подставляется как допущение</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      Верхний ряд разрывается на участке окна — шкафы поперёк окна клиент замечает
+      мгновенно. Вытяжка при этом остаётся строго над варочной панелью; если она
+      попадает в разрыв, система об этом предупредит.
+    </p>
+  </section>
+
+  <footer>
+    Документ для обучения сотрудников и для работы на объекте. Числа сверены с
+    расчётным движком системы. Если поведение системы разошлось с этим текстом —
+    прав движок, а документ надо править.
+  </footer>
+</div>

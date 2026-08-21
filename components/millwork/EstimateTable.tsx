@@ -19,7 +19,7 @@ export default function EstimateTable({ estimate, disabledKeys, onToggle }: Prop
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="mw-label border-b border-blueprint/25 px-3 py-2">Смета</div>
+      <div className="mw-label border-b border-navyLine px-3 py-2">Смета</div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         <table className="w-full border-collapse">
@@ -29,7 +29,7 @@ export default function EstimateTable({ estimate, disabledKeys, onToggle }: Prop
               return (
                 <tr
                   key={line.key}
-                  className={`border-b border-blueprint/12 ${off ? 'opacity-40' : ''}`}
+                  className={`border-b border-navyLine/60 ${off ? 'opacity-40' : ''}`}
                 >
                   <td className="w-8 px-2 py-1.5 align-top">
                     <input
@@ -37,7 +37,7 @@ export default function EstimateTable({ estimate, disabledKeys, onToggle }: Prop
                       checked={!off}
                       onChange={() => onToggle(line.key)}
                       aria-label={line.title}
-                      className="mt-0.5 h-4 w-4 accent-[var(--blueprint)]"
+                      className="mt-0.5 h-4 w-4 rounded-none accent-[var(--cyan-bright)]"
                     />
                   </td>
                   <td className="px-1 py-1.5">
@@ -60,8 +60,11 @@ export default function EstimateTable({ estimate, disabledKeys, onToggle }: Prop
         </table>
       </div>
 
-      <div className="flex items-baseline justify-between border-t-2 border-blueprint px-3 py-2">
-        <span className="mw-label">Итого</span>
+      <div className="flex items-baseline justify-between border-t-2 border-cyan px-3 py-2">
+        <span className="mw-label">
+          {/* Подпись у самой суммы: её и увидит клиент, а не сноску сверху. */}
+          {estimate.preliminary ? 'Итого · предварительно' : 'Итого'}
+        </span>
         <span className="mw-num text-[20px] font-semibold">{formatMoney(estimate.total)} ₸</span>
       </div>
     </div>

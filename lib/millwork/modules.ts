@@ -65,6 +65,9 @@ export const APPLIANCE_SLOTS: Record<ApplianceKind, ApplianceSpec> = {
   microwave: { widthMm: 600, kind: 'upper', needs: ['socket'], title: 'Микроволновка' },
 };
 
+/** Допуск на попадание мойки в точку водоснабжения. */
+export const WATER_TOLERANCE_MM = 600;
+
 /** Угловой модуль — всегда 900 × 900, это стандарт под карусель. */
 export const CORNER_SIZE_MM = 900;
 

@@ -39,7 +39,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, orgId: existing.data[0].org_id });
   }
 
-  let body: { name?: string; slug?: string } = {};
+  let body: { name?: string; slug?: string; city?: string; phone?: string } = {};
   try {
     body = await request.json();
   } catch {
@@ -57,7 +57,7 @@ export async function POST(request: Request) {
 
   const { data: org, error: orgError } = await service
     .from('orgs')
-    .insert({ name, slug })
+    .insert({ name, slug, city: (body.city ?? '').trim(), phone: (body.phone ?? '').trim() })
     .select('id')
     .single();
 

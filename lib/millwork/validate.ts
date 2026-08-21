@@ -1,14 +1,18 @@
-import { APPLIANCE_SLOTS } from './modules';
-import { WATER_TOLERANCE_MM, runWidthSum } from './layout';
+import { APPLIANCE_SLOTS, WATER_TOLERANCE_MM } from './modules';
+import { appliancesPlacedOnce } from './invariants';
 import type { CommPoint, LayoutIssue, Module, Run } from '@/types/millwork';
 
 /**
- * Проверки раскладки против реальных коммуникаций.
+ * Проверки раскладки.
  *
- * Мойка в 900 мм от вывода воды — это переделка на объекте. Увидеть её надо
- * в квартире на замере, а не на монтаже: именно эта функция экономит компании
- * живые деньги, поэтому расхождение показывается красным флажком на плане,
- * а не прячется в лог.
+ * Здесь два принципиально разных класса проблем, и путать их нельзя:
+ *
+ *  - `layout` — поломка конфигуратора. Пользователь такого видеть не должен
+ *    никогда, поэтому нарушение инварианта бросает исключение на сборке,
+ *    а не показывается сообщением в интерфейсе.
+ *  - `comm` — расхождение с реальными коммуникациями. Это нормальная рабочая
+ *    ситуация: мойка в 900 мм от вывода воды решается на объекте. Показывается
+ *    красным флажком на плане, где видно, куда именно смотреть.
  */
 
 const NEEDS_LABEL: Record<string, string> = {
@@ -19,6 +23,19 @@ const NEEDS_LABEL: Record<string, string> = {
   gas: 'газ',
 };
 
+/*
+ * Формулировка называет ПОСЛЕДСТВИЕ, а не факт: «розетка не отмечена» — это
+ * строка в фоне, а «монтажник не будет знать, где её выводить» — причина
+ * дозамерить. Род подставляется явно, иначе фраза читается как машинная.
+ */
+const NEEDS_MISSING: Record<string, string> = {
+  water: 'Вывод воды не отмечен на замере — монтажник не будет знать, где его выводить',
+  sewer: 'Канализация не отмечена на замере — монтажник не будет знать, где её выводить',
+  socket: 'Розетка не отмечена на замере — монтажник не будет знать, где её выводить',
+  vent: 'Вентканал не отмечен на замере — вытяжку будет некуда подключить',
+  gas: 'Газ не отмечен на замере — подключение придётся согласовывать на месте',
+};
+
 const COMM_FOR_NEED: Record<string, CommPoint['kind']> = {
   water: 'water_supply',
   sewer: 'sewer',
@@ -27,7 +44,7 @@ const COMM_FOR_NEED: Record<string, CommPoint['kind']> = {
   gas: 'gas',
 };
 
-/** Насколько далеко розетка может быть от модуля — её проще перенести. */
+/** Насколько далеко точка может быть от модуля — розетку перенести проще. */
 const TOLERANCE_MM: Record<string, number> = {
   water: WATER_TOLERANCE_MM,
   sewer: WATER_TOLERANCE_MM,
@@ -40,20 +57,25 @@ function centerOf(unit: Module): number {
   return unit.offsetMm + unit.widthMm / 2;
 }
 
+/* ─────────────────────────  Мягкие проверки  ───────────────────────── */
+
 export function validateRun(run: Run, comms: CommPoint[]): LayoutIssue[] {
   const issues: LayoutIssue[] = [];
 
+  // Что не поместилось — это не поломка, а честный отказ движка.
   for (const warning of run.warnings) {
-    issues.push({ level: 'warning', message: warning });
+    issues.push({ kind: 'fit', level: 'warning', message: warning });
   }
 
-  // Сумма ширин обязана сойтись с длиной ряда до миллиметра.
-  const sum = runWidthSum(run);
-  if (sum !== run.lengthMm) {
-    issues.push({
-      level: 'error',
-      message: `Сумма модулей ${sum} мм не сходится с длиной ряда ${run.lengthMm} мм (расхождение ${run.lengthMm - sum} мм).`,
-    });
+  // Дубль прибора означал бы, что клиенту посчитали лишнюю технику.
+  for (const [appliance, count] of Array.from(appliancesPlacedOnce(run))) {
+    if (count > 1) {
+      issues.push({
+        kind: 'layout',
+        level: 'error',
+        message: `${APPLIANCE_SLOTS[appliance as keyof typeof APPLIANCE_SLOTS]?.title ?? appliance}: попал в ряд ${count} раза.`,
+      });
+    }
   }
 
   const modules = [...run.modules, ...run.upperSegments.flatMap((s) => s.modules)];
@@ -69,10 +91,11 @@ export function validateRun(run: Run, comms: CommPoint[]): LayoutIssue[] {
 
       if (points.length === 0) {
         issues.push({
+          kind: 'comm',
           level: 'warning',
           moduleId: unit.id,
           atMm: center,
-          message: `${spec.title}: не отмечен ${NEEDS_LABEL[need]} — уточните на замере.`,
+          message: `${NEEDS_MISSING[need] ?? `${NEEDS_LABEL[need]} не отмечен`} (модуль «${spec.title}»).`,
         });
         continue;
       }
@@ -86,6 +109,7 @@ export function validateRun(run: Run, comms: CommPoint[]): LayoutIssue[] {
       const distance = Math.round(Math.abs(nearest.fromCornerMm - center));
       if (distance > (TOLERANCE_MM[need] ?? 600)) {
         issues.push({
+          kind: 'comm',
           level: 'error',
           moduleId: unit.id,
           atMm: center,
@@ -103,6 +127,7 @@ export function validateRun(run: Run, comms: CommPoint[]): LayoutIssue[] {
 
   if (hob && !hood) {
     issues.push({
+      kind: 'fit',
       level: 'warning',
       moduleId: hob.id,
       atMm: centerOf(hob),
@@ -112,6 +137,7 @@ export function validateRun(run: Run, comms: CommPoint[]): LayoutIssue[] {
 
   if (hob && hood && Math.abs(centerOf(hob) - centerOf(hood)) > 20) {
     issues.push({
+      kind: 'layout',
       level: 'error',
       moduleId: hood.id,
       atMm: centerOf(hood),
@@ -124,4 +150,19 @@ export function validateRun(run: Run, comms: CommPoint[]): LayoutIssue[] {
 
 export function hasErrors(issues: LayoutIssue[]): boolean {
   return issues.some((i) => i.level === 'error');
+}
+
+/** Расхождения с коммуникациями — их место на плане, а не в баннере ошибок. */
+export function commIssues(issues: LayoutIssue[]): LayoutIssue[] {
+  return issues.filter((i) => i.kind === 'comm');
+}
+
+/** Что не поместилось в ряд — это отдельный разговор с замерщиком. */
+export function fitIssues(issues: LayoutIssue[]): LayoutIssue[] {
+  return issues.filter((i) => i.kind === 'fit');
+}
+
+/** Поломка конфигуратора. В норме список пуст. */
+export function layoutIssues(issues: LayoutIssue[]): LayoutIssue[] {
+  return issues.filter((i) => i.kind === 'layout');
 }

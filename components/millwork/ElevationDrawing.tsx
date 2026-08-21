@@ -16,6 +16,8 @@ import type { Module, Run } from '@/types/millwork';
 
 type Props = {
   run: Run;
+  /** Габарит получен из допущения — на чертеже он идёт пунктиром. */
+  assumedTotal?: boolean;
   selectedModuleId?: string | null;
   onSelect?: (moduleId: string) => void;
   /** Идентификаторы модулей, ширина которых только что изменилась. */
@@ -42,6 +44,7 @@ const APPLIANCE_MARK: Record<string, string> = {
 
 export default function ElevationDrawing({
   run,
+  assumedTotal = false,
   selectedModuleId,
   onSelect,
   changedIds = [],
@@ -164,6 +167,7 @@ export default function ElevationDrawing({
           </>
         )}
 
+        {/* Добор — вынужденная планка. Нестандартная ширина — норма заказной мебели. */}
         {unit.isFiller && (
           <text
             className="mw-num"
@@ -171,9 +175,9 @@ export default function ElevationDrawing({
             y={yTop + 11}
             textAnchor="middle"
             fontSize={7}
-            fill="var(--alert)"
+            fill={unit.kind === 'filler' ? 'var(--alert)' : 'var(--graphite-mw)'}
           >
-            добор
+            {unit.kind === 'filler' ? 'добор' : 'нестандарт'}
           </text>
         )}
       </g>
@@ -239,26 +243,26 @@ export default function ElevationDrawing({
         </g>
       ))}
 
-      {/* Цоколь */}
+      {/* Цоколь и столешница — контуром, а не заливкой: сплошная плашка
+          на печати схлопывается в чёрную полосу, а на синьке не читается. */}
       <rect
         x={PADDING_LEFT}
         y={yOf(GEOMETRY.base.plinthH)}
         width={drawWidth}
         height={yOf(0) - yOf(GEOMETRY.base.plinthH)}
-        fill="var(--concrete-deep)"
+        fill="none"
         stroke="var(--blueprint)"
         strokeWidth={0.5}
       />
 
-      {/* Столешница */}
       <rect
         x={PADDING_LEFT}
         y={yOf(BASE_TOTAL_H)}
         width={drawWidth}
         height={GEOMETRY.base.countertopH * heightScale}
-        fill="var(--concrete-deep)"
+        fill="none"
         stroke="var(--blueprint)"
-        strokeWidth={0.6}
+        strokeWidth={1}
       />
 
       {run.modules.map((m) => renderModule(m, false))}
@@ -279,6 +283,7 @@ export default function ElevationDrawing({
             highlighted: selectedModuleId === m.id,
           }))}
           totalMm={run.lengthMm}
+          assumedTotal={assumedTotal}
           width={drawWidth}
           scale={scale}
           onSelect={onSelect}

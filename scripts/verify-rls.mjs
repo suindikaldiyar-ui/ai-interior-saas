@@ -48,6 +48,26 @@ if (!URL || !ANON || !SERVICE) {
   process.exit(0);
 }
 
+/*
+ * Ключи бывают заполнены заглушкой из .env.local.example. Тогда честный ответ —
+ * «не проверено», а не падение с «fetch failed»: красный прогон по проекту,
+ * которого нет, прячет настоящие поломки.
+ */
+const reachable = await fetch(`${URL}/auth/v1/health`, {
+  headers: { apikey: ANON },
+  signal: AbortSignal.timeout(10_000),
+})
+  .then((r) => r.ok)
+  .catch(() => false);
+
+if (!reachable) {
+  console.log(
+    `\nПропущено: проект ${URL} недоступен (заглушка в .env.local или нет сети).\n` +
+      'Мультиарендность НЕ проверена.\n',
+  );
+  process.exit(0);
+}
+
 let failed = 0;
 let passed = 0;
 

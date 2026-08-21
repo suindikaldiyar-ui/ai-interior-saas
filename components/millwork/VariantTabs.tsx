@@ -16,7 +16,7 @@ type Props = {
 
 export default function VariantTabs({ variants, active, onChange }: Props) {
   return (
-    <div className="grid grid-cols-3 border-b border-blueprint/25">
+    <div className="grid grid-cols-3 border-b border-navyLine">
       {variants.map((variant) => {
         const on = variant.key === active;
         return (
@@ -25,17 +25,29 @@ export default function VariantTabs({ variants, active, onChange }: Props) {
             type="button"
             onClick={() => onChange(variant.key)}
             aria-pressed={on}
-            className={`mw-touch border-r border-blueprint/20 px-2 py-2 text-left last:border-r-0 ${
-              on ? 'bg-tape' : 'bg-transparent hover:bg-concreteDeep'
+            className={`mw-touch relative border-r border-navyLine px-2 py-2 text-left last:border-r-0 ${
+              on ? 'bg-navy' : 'bg-transparent hover:bg-navy/60'
             }`}
           >
-            <span className="block text-[11px] uppercase tracking-[0.14em]">{variant.title}</span>
-            <span className="mw-num block text-[17px] font-semibold leading-tight">
+            <span
+              className={`block text-[11px] uppercase tracking-[0.14em] ${
+                on ? 'text-textMw' : 'text-graphiteMw'
+              }`}
+            >
+              {variant.title}
+            </span>
+            {/* Жёлтый только как акцент: цифры на синем жёлтым не читаются. */}
+            <span
+              className={`mw-num block text-[17px] font-semibold leading-tight ${
+                on ? 'text-textMw' : 'text-graphiteMw'
+              }`}
+            >
               {formatMoney(variant.estimate.total)} ₸
             </span>
             <span className="mt-0.5 block text-[10px] leading-tight text-graphiteMw">
               {variant.description}
             </span>
+            {on && <span className="absolute inset-x-0 bottom-0 h-[2px] bg-tape" />}
           </button>
         );
       })}

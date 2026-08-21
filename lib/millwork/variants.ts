@@ -74,9 +74,9 @@ export function buildVariants(input: BuildVariantsInput): Variant[] {
 
   return strategies.map((strategy) => {
     const requirements: RunRequirements = {
-  ...input.requirements,
-   options: { ...(input.requirements?.options || {}), ...(strategy.options || {}) },
-};
+      ...input.requirements,
+      options: { ...input.requirements.options, ...strategy.options },
+    };
 
     const run = buildRun({ ...input, requirements, id: `${input.id ?? 'run'}-${strategy.key}` });
 

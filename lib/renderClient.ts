@@ -16,7 +16,7 @@ import type {
 } from '@/types/render';
 
 /** Файл из Storage в dataURL — модель принимает только inline-данные. */
-async function urlToDataUrl(url: string): Promise<string | undefined> {
+export async function urlToDataUrl(url: string): Promise<string | undefined> {
   try {
     const res = await fetch(url);
     if (!res.ok) return undefined;
@@ -146,6 +146,10 @@ export async function renderVariant(
   capture: CaptureResult,
   references: ReferencePayload[],
   catalogRefs: CatalogReference[] = [],
+  /** Пожелания именно к этому варианту: конфигуратор пишет сюда комплектацию. */
+  notes?: string,
+  /** Фотография помещения клиента: с ней геометрию задаёт она, а не сцена. */
+  roomPhoto?: string,
 ): Promise<void> {
   const store = useInteriorStore.getState();
   store.updateVariant(styleId, {
@@ -166,7 +170,8 @@ export async function renderVariant(
       items: store.items,
       references,
       catalogRefs,
-      customNotes: store.customNotes,
+      customNotes: notes ?? store.customNotes,
+      roomPhoto,
     };
 
     const res = await fetch('/api/ai/render', {
