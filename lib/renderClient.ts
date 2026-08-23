@@ -5,7 +5,12 @@ import { referenceByRole, referenceUrl, surfaceArea } from '@/lib/catalog';
 import { isKitchen } from '@/lib/kitchen';
 import { catalogUrl } from '@/lib/supabase/config';
 import { loadSelectedReferences } from '@/lib/references';
-import { APRON_TARGET, COUNTERTOP_TARGET, useInteriorStore } from '@/store/useInteriorStore';
+import {
+  APRON_TARGET,
+  COUNTERTOP_TARGET,
+  FACADE_TARGET,
+  useInteriorStore,
+} from '@/store/useInteriorStore';
 import { targetLabel } from '@/types/catalog';
 import type {
   CaptureResult,
@@ -86,7 +91,8 @@ function planKitchenRefs(
     return [
       {
         targetKey: `${targetKey}#${part.role}`,
-        label: `${part.title} · ${label}`,
+        // Без сцены названия гарнитура нет — тогда подписи хватает и одной.
+        label: label ? `${part.title} · ${label}` : part.title,
         article: entry.article,
         name: entry.name_ru,
         appliesTo: 'zone',
@@ -118,8 +124,11 @@ export async function buildCatalogRefs(): Promise<CatalogReference[]> {
     backsplash: Boolean(state.selections[APRON_TARGET]),
   };
 
-  // Площадь кухни нужна и отдельным поверхностям: она задаёт их порядок
-  // в промпте, когда картинок больше, чем лимит.
+  /*
+   * Площадь кухни задаёт порядок строк в промпте, когда картинок больше,
+   * чем лимит. Сцены на шаге материалов может не быть вовсе — тогда берём
+   * разумный минимум: порядок важнее точности.
+   */
   const kitchenArea =
     state.items.filter(isKitchen).reduce((max, item) => {
       const box = item.dimensions;
@@ -135,7 +144,18 @@ export async function buildCatalogRefs(): Promise<CatalogReference[]> {
       const label = sceneItem ? sceneItem.label : targetLabel(targetKey);
       const area = surfaceArea(targetKey, state.room);
 
+      /*
+       * Фасады выбираются под собственным ключом и не зависят от сцены.
+       * У объектов, собранных раньше, товар лежит под id гарнитура — эта
+       * ветка ниже осталась ради них, но выбор под новым ключом главнее:
+       * иначе в промпт уехали бы два разных артикула фасадов.
+       */
+      if (targetKey === FACADE_TARGET) {
+        return planKitchenRefs(targetKey, entry, '', kitchenArea, taken);
+      }
+
       if (sceneItem && isKitchen(sceneItem)) {
+        if (state.selections[FACADE_TARGET]) return [];
         return planKitchenRefs(targetKey, entry, label, Math.max(area, 6), taken);
       }
 

@@ -6,6 +6,7 @@ import { formatMoney } from '@/lib/millwork/estimate';
 import {
   APRON_TARGET,
   COUNTERTOP_TARGET,
+  FACADE_TARGET,
   useInteriorStore,
 } from '@/store/useInteriorStore';
 import type { CatalogEntryFull } from '@/types/catalog';
@@ -82,6 +83,22 @@ export default function MaterialsStep({
     () => catalog.filter((e) => estimateKey(e) === 'wall_panel'),
     [catalog],
   );
+
+  /*
+   * Фасады пишутся под собственный ключ, а не под id объекта сцены: на этом
+   * шаге сцены ещё нет, id нет, и выбор молча уходил в никуда.
+   *
+   * `kitchenItemId` остаётся ради объектов, собранных до этой правки: там
+   * товар лежит под id гарнитура. Читаем оба ключа, пишем в новый.
+   */
+  const legacyId = kitchenItemId ? selections[kitchenItemId] : undefined;
+  const facadeId = selections[FACADE_TARGET] ?? legacyId;
+
+  const selectFacade = (id: string | null) => {
+    setSelection(FACADE_TARGET, id);
+    // Старый ключ снимаем, иначе в промпт уедут два разных артикула фасадов.
+    if (kitchenItemId && selections[kitchenItemId]) setSelection(kitchenItemId, null);
+  };
 
   const addPhoto = async (file: File | undefined) => {
     if (!file) return;
@@ -189,9 +206,8 @@ export default function MaterialsStep({
         <Surface
           title="Фасады кухни"
           items={facades}
-          target={kitchenItemId}
-          selections={selections}
-          onSelect={setSelection}
+          selectedId={facadeId}
+          onSelect={selectFacade}
           missing="В каталоге нет ни одной кухни"
           waiting="Фасады пойдут по описанию комплектации"
         />
@@ -199,9 +215,8 @@ export default function MaterialsStep({
         <Surface
           title="Столешница"
           items={countertops}
-          target={COUNTERTOP_TARGET}
-          selections={selections}
-          onSelect={setSelection}
+          selectedId={selections[COUNTERTOP_TARGET]}
+          onSelect={(id) => setSelection(COUNTERTOP_TARGET, id)}
           missing="В каталоге нет столешниц"
           waiting="Столешница пойдёт по описанию комплектации"
         />
@@ -209,9 +224,8 @@ export default function MaterialsStep({
         <Surface
           title="Фартук"
           items={aprons}
-          target={APRON_TARGET}
-          selections={selections}
-          onSelect={setSelection}
+          selectedId={selections[APRON_TARGET]}
+          onSelect={(id) => setSelection(APRON_TARGET, id)}
           missing="В каталоге нет стеновых панелей"
           waiting="Фартук пойдёт по описанию комплектации"
         />
@@ -235,22 +249,19 @@ export default function MaterialsStep({
 function Surface({
   title,
   items,
-  target,
-  selections,
+  selectedId,
   onSelect,
   missing,
   waiting,
 }: {
   title: string;
   items: CatalogEntryFull[];
-  /** Куда пишется выбор. Для фасадов это объект сцены, и до неё он null. */
-  target: string | null;
-  selections: Record<string, string>;
-  onSelect: (target: string, itemId: string | null) => void;
+  /** Что выбрано сейчас. Ключ хранения — забота вызывающего. */
+  selectedId: string | undefined;
+  onSelect: (itemId: string | null) => void;
   missing: string;
   waiting: string;
 }) {
-  const selectedId = target ? selections[target] : undefined;
   const selected = items.find((i) => i.id === selectedId) ?? null;
 
   return (
@@ -270,10 +281,9 @@ function Surface({
                 <button
                   key={item.id}
                   type="button"
-                  onClick={() => target && onSelect(target, active ? null : item.id)}
+                  onClick={() => onSelect(active ? null : item.id)}
                   aria-pressed={active}
-                  disabled={!target}
-                  className={`mw-touch flex items-center gap-3 rounded-[var(--r-control)] px-4 text-left disabled:opacity-40 ${
+                  className={`mw-touch flex items-center gap-3 rounded-[var(--r-control)] px-4 text-left ${
                     active ? 'bg-cyanBright text-navyDeep' : 'bg-sheet hover:bg-navyLine/40'
                   }`}
                 >

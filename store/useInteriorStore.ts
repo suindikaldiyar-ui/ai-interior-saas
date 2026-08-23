@@ -134,7 +134,7 @@ export type InteriorState = {
  * Фасады живут под id объекта сцены (гарнитур и есть объект), а столешница
  * и фартук — под собственными ключами: своего объекта у них нет.
  */
-export { APRON_TARGET, COUNTERTOP_TARGET } from '@/types/catalog';
+export { APRON_TARGET, COUNTERTOP_TARGET, FACADE_TARGET } from '@/types/catalog';
 
 /** Снимок перед мутацией: past растёт до лимита, future сбрасывается. */
 function history(state: InteriorState): Pick<InteriorState, 'past' | 'future'> {
