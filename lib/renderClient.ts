@@ -5,7 +5,7 @@ import { referenceByRole, referenceUrl, surfaceArea } from '@/lib/catalog';
 import { isKitchen } from '@/lib/kitchen';
 import { catalogUrl } from '@/lib/supabase/config';
 import { loadSelectedReferences } from '@/lib/references';
-import { useInteriorStore } from '@/store/useInteriorStore';
+import { APRON_TARGET, COUNTERTOP_TARGET, useInteriorStore } from '@/store/useInteriorStore';
 import { targetLabel } from '@/types/catalog';
 import type {
   CaptureResult,
@@ -53,6 +53,8 @@ function planKitchenRefs(
   entry: ReturnType<typeof useInteriorStore.getState>['catalog'][number],
   label: string,
   area: number,
+  /** Поверхности, у которых есть СВОЙ выбранный товар: их артикул главнее. */
+  taken: { countertop: boolean; backsplash: boolean },
 ): RefPlan[] {
   const meta = entry.meta as Record<string, unknown>;
   const parts: { role: 'facade' | 'countertop' | 'backsplash'; title: string; text: string }[] = [
@@ -70,6 +72,14 @@ function planKitchenRefs(
   ];
 
   return parts.flatMap((part) => {
+    /*
+     * Столешницу и фартук теперь выбирают отдельными товарами. Если выбор
+     * сделан — он и уходит в промпт; строки из комплекта кухни остаются
+     * только для объектов, собранных до разделения.
+     */
+    if (part.role === 'countertop' && taken.countertop) return [];
+    if (part.role === 'backsplash' && taken.backsplash) return [];
+
     const asset = referenceByRole(entry, part.role);
     // Фартука в комплекте может не быть — тогда строки просто нет.
     if (!asset && part.role === 'backsplash') return [];
@@ -98,6 +108,24 @@ export async function buildCatalogRefs(): Promise<CatalogReference[]> {
   const byId = new Map(state.catalog.map((e) => [e.id, e]));
   const sceneById = new Map(state.items.map((i) => [i.id, i]));
 
+  /*
+   * Столешница и фартук выбираются своими товарами и уходят в BINDING TABLE
+   * СВОЕЙ строкой: одной строкой на всю кухню модель красила гарнитур в цвет
+   * столешницы.
+   */
+  const taken = {
+    countertop: Boolean(state.selections[COUNTERTOP_TARGET]),
+    backsplash: Boolean(state.selections[APRON_TARGET]),
+  };
+
+  // Площадь кухни нужна и отдельным поверхностям: она задаёт их порядок
+  // в промпте, когда картинок больше, чем лимит.
+  const kitchenArea =
+    state.items.filter(isKitchen).reduce((max, item) => {
+      const box = item.dimensions;
+      return Math.max(max, box.width * box.height);
+    }, 0) || 6;
+
   const plans: RefPlan[] = Object.entries(state.selections).flatMap(
     ([targetKey, itemId]) => {
       const entry = byId.get(itemId);
@@ -108,7 +136,23 @@ export async function buildCatalogRefs(): Promise<CatalogReference[]> {
       const area = surfaceArea(targetKey, state.room);
 
       if (sceneItem && isKitchen(sceneItem)) {
-        return planKitchenRefs(targetKey, entry, label, Math.max(area, 6));
+        return planKitchenRefs(targetKey, entry, label, Math.max(area, 6), taken);
+      }
+
+      if (targetKey === COUNTERTOP_TARGET || targetKey === APRON_TARGET) {
+        return [
+          {
+            targetKey,
+            // targetLabel знает эти ключи: подпись одна и в промпте, и в спецификации.
+            label,
+            article: entry.article,
+            name: entry.name_ru,
+            appliesTo: entry.category.applies_to,
+            area: kitchenArea * 0.4,
+            url: referenceUrl(entry),
+            description: entry.description,
+          },
+        ];
       }
 
       return [

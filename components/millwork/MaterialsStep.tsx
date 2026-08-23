@@ -3,7 +3,12 @@
 import { useMemo, useRef, useState } from 'react';
 import { compressPhoto } from '@/lib/photo';
 import { formatMoney } from '@/lib/millwork/estimate';
-import { useInteriorStore } from '@/store/useInteriorStore';
+import {
+  APRON_TARGET,
+  COUNTERTOP_TARGET,
+  useInteriorStore,
+} from '@/store/useInteriorStore';
+import type { CatalogEntryFull } from '@/types/catalog';
 import { RUN_ANGLE_LABEL, type RunAngle } from '@/types/render';
 
 /**
@@ -41,13 +46,42 @@ export default function MaterialsStep({
   const selections = useInteriorStore((s) => s.selections);
   const setSelection = useInteriorStore((s) => s.setSelection);
 
-  const kitchens = useMemo(
+  /*
+   * ТРИ ПОВЕРХНОСТИ, А НЕ ОДИН СПИСОК.
+   *
+   * Фасады, столешница и фартук выбираются одновременно и стоят в смете
+   * тремя разными строками. Одним списком с одним выбором клиент видел
+   * своей только одну поверхность, а две остальные модель придумывала.
+   *
+   * Столешницу и фартук ищем по ключу сметы: именно он связывает товар
+   * каталога со строкой расчёта.
+   */
+  const estimateKey = (entry: CatalogEntryFull) =>
+    String(entry.meta?.estimateKey ?? '').trim();
+
+  const facades = useMemo(
     () => catalog.filter((e) => e.category.applies_to === 'zone'),
     [catalog],
   );
 
-  const selectedId = kitchenItemId ? selections[kitchenItemId] : undefined;
-  const selected = kitchens.find((k) => k.id === selectedId) ?? null;
+  const countertops = useMemo(
+    () =>
+      catalog.filter((e) => {
+        const key = estimateKey(e);
+        // Запил и плинтус — работы, а не поверхность: выбирать их нечего.
+        return (
+          key.startsWith('countertop_') &&
+          key !== 'countertop_miter' &&
+          key !== 'countertop_plinth'
+        );
+      }),
+    [catalog],
+  );
+
+  const aprons = useMemo(
+    () => catalog.filter((e) => estimateKey(e) === 'wall_panel'),
+    [catalog],
+  );
 
   const addPhoto = async (file: File | undefined) => {
     if (!file) return;
@@ -144,55 +178,126 @@ export default function MaterialsStep({
         )}
       </section>
 
-      {/* ── Артикул каталога ── */}
+      {/* ── Материалы: три поверхности, три выбора ── */}
       <section className="mw-panel">
         <h3 className="text-[17px] font-medium">Материалы из каталога</h3>
         <p className="mt-1 text-[13px] leading-snug text-graphiteMw">
-          Артикул кухни даёт в рендер фасады, столешницу и фартук — именно ваши.
+          Фасады, столешница и фартук — три разные поверхности. Каждая уходит
+          в рендер своим артикулом; невыбранная не мешает остальным.
         </p>
 
-        {kitchens.length === 0 ? (
-          <div className="mt-4">
-            <p className="text-[15px] leading-snug text-tape">
-              В каталоге нет ни одной кухни — клиент увидит настроение, а не ваш товар.
-            </p>
-            <a href="/admin/catalog" className="mw-btn mw-btn-ghost mt-3">
-              Завести кухню в каталоге
-            </a>
-          </div>
-        ) : (
-          <>
-            <div className="mt-4 grid gap-2">
-              {kitchens.map((k) => {
-                const active = k.id === selectedId;
-                return (
-                  <button
-                    key={k.id}
-                    type="button"
-                    onClick={() => kitchenItemId && setSelection(kitchenItemId, active ? null : k.id)}
-                    aria-pressed={active}
-                    className={`mw-touch flex items-center gap-3 rounded-[var(--r-control)] px-4 text-left ${
-                      active ? 'bg-cyanBright text-navyDeep' : 'bg-sheet hover:bg-navyLine/40'
-                    }`}
-                  >
-                    <span className="text-[15px]">{k.name_ru}</span>
-                    <span className="mw-num ml-auto text-[13px] opacity-80">
-                      {k.article}
-                      {k.price > 0 ? ` · ${formatMoney(k.price)} ₸` : ''}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
+        <Surface
+          title="Фасады кухни"
+          items={facades}
+          target={kitchenItemId}
+          selections={selections}
+          onSelect={setSelection}
+          missing="В каталоге нет ни одной кухни"
+          waiting="Фасады пойдут по описанию комплектации"
+        />
 
-            {!selected && (
-              <p className="mt-3 text-[13px] leading-snug text-tape">
-                Артикул не выбран — рендер пойдёт по описанию комплектации.
-              </p>
-            )}
-          </>
+        <Surface
+          title="Столешница"
+          items={countertops}
+          target={COUNTERTOP_TARGET}
+          selections={selections}
+          onSelect={setSelection}
+          missing="В каталоге нет столешниц"
+          waiting="Столешница пойдёт по описанию комплектации"
+        />
+
+        <Surface
+          title="Фартук"
+          items={aprons}
+          target={APRON_TARGET}
+          selections={selections}
+          onSelect={setSelection}
+          missing="В каталоге нет стеновых панелей"
+          waiting="Фартук пойдёт по описанию комплектации"
+        />
+
+        {facades.length + countertops.length + aprons.length === 0 && (
+          <a href="/admin/catalog" className="mw-btn mw-btn-ghost mt-4">
+            Завести товары в каталоге
+          </a>
         )}
       </section>
+    </div>
+  );
+}
+
+/**
+ * Одна поверхность: заголовок, список артикулов и строка состояния.
+ *
+ * Состояние пишется по каждой поверхности отдельно — «фартук пойдёт по
+ * описанию» ничего не говорит о фасадах, и наоборот.
+ */
+function Surface({
+  title,
+  items,
+  target,
+  selections,
+  onSelect,
+  missing,
+  waiting,
+}: {
+  title: string;
+  items: CatalogEntryFull[];
+  /** Куда пишется выбор. Для фасадов это объект сцены, и до неё он null. */
+  target: string | null;
+  selections: Record<string, string>;
+  onSelect: (target: string, itemId: string | null) => void;
+  missing: string;
+  waiting: string;
+}) {
+  const selectedId = target ? selections[target] : undefined;
+  const selected = items.find((i) => i.id === selectedId) ?? null;
+
+  return (
+    <div className="mt-5">
+      <p className="text-[15px] font-medium">{title}</p>
+
+      {items.length === 0 ? (
+        <p className="mt-2 text-[13px] leading-snug text-tape">
+          {missing} — {waiting.toLowerCase()}.
+        </p>
+      ) : (
+        <>
+          <div className="mt-2 grid gap-2">
+            {items.map((item) => {
+              const active = item.id === selectedId;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => target && onSelect(target, active ? null : item.id)}
+                  aria-pressed={active}
+                  disabled={!target}
+                  className={`mw-touch flex items-center gap-3 rounded-[var(--r-control)] px-4 text-left disabled:opacity-40 ${
+                    active ? 'bg-cyanBright text-navyDeep' : 'bg-sheet hover:bg-navyLine/40'
+                  }`}
+                >
+                  <span className="text-[15px]">{item.name_ru}</span>
+                  <span className="mw-num ml-auto text-[13px] opacity-80">
+                    {item.article}
+                    {item.price > 0 ? ` · ${formatMoney(item.price)} ₸` : ''}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          <p className="mt-2 text-[13px] leading-snug">
+            {selected ? (
+              <span className="text-graphiteMw">
+                Выбрано: {selected.name_ru} · {selected.article}
+              </span>
+            ) : (
+              <span className="text-tape">{waiting}.</span>
+            )}
+          </p>
+        </>
+      )}
     </div>
   );
 }

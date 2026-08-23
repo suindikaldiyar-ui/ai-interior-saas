@@ -150,7 +150,18 @@ export function wallTarget(wall: WallSide): TargetKey {
   return `wall:${wall}`;
 }
 
+/**
+ * Кухня — это ТРИ поверхности: фасады, столешница и фартук. Фасады живут под
+ * id объекта сцены, а у столешницы и фартука своего объекта нет, поэтому у
+ * них собственные ключи. Значения попадают в сохранённые проекты, менять их
+ * нельзя — старые объекты потеряют выбранный товар.
+ */
+export const COUNTERTOP_TARGET: TargetKey = 'zone:countertop';
+export const APRON_TARGET: TargetKey = 'zone:backsplash';
+
 export function targetLabel(key: TargetKey): string {
+  if (key === COUNTERTOP_TARGET) return 'Столешница';
+  if (key === APRON_TARGET) return 'Фартук';
   if (key === 'floor') return 'Пол';
   if (key === 'ceiling') return 'Потолок';
   if (key.startsWith('wall:')) {
