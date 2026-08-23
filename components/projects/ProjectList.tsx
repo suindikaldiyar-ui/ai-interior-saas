@@ -71,14 +71,14 @@ export default function ProjectList({ initial }: { initial: Row[] }) {
         {visible.map((row) => (
           <article key={row.id} className="border border-navyLine bg-sheet">
             <Link href={`/project/${row.id}`} className="block px-3 pt-3">
-              <h2 className="text-[14px] font-medium leading-tight">
+              <h2 className="text-[15px] font-medium leading-tight">
                 {projectTitle(row)}
               </h2>
-              <p className="mt-0.5 text-[12px] text-graphiteMw">
+              <p className="mt-0.5 text-[13px] text-graphiteMw">
                 {row.zone}
                 {row.client_name ? ` · ${row.client_name}` : ''}
               </p>
-              <p className="mw-num mt-2 text-[11px] text-graphiteMw">
+              <p className="mw-num mt-2 text-[13px] text-graphiteMw">
                 {row.surveyor || '—'} · {row.updated_at.slice(0, 10)}
               </p>
               <p className="mw-num mt-1 text-[17px] font-semibold">
@@ -91,7 +91,7 @@ export default function ProjectList({ initial }: { initial: Row[] }) {
               <select
                 value={row.status}
                 onChange={(e) => setStatus(row.id, e.target.value as ProjectStatus)}
-                className="mw-touch mt-1 w-full border border-navyLine bg-navyDeep px-1.5 text-[12px]"
+                className="mw-field mt-2"
               >
                 {PROJECT_STATUSES.map((status) => (
                   <option key={status} value={status}>
@@ -123,7 +123,7 @@ function FilterChip({
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={`mw-touch border px-2.5 text-[11px] uppercase tracking-[0.1em] ${
+      className={`mw-touch border px-2.5 text-[13px] uppercase tracking-[0.1em] ${
         active
           ? 'border-cyanBright bg-cyanBright text-navyDeep'
           : 'border-navyLine text-graphiteMw hover:border-cyan hover:text-textMw'

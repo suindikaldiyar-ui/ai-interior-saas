@@ -45,10 +45,10 @@ export default function MeasurePage() {
             setSurvey((prev) => ({ ...prev, measuredBy: surveyor }));
             setStep('survey');
           }}
-          className="w-full max-w-md border border-navyLine bg-sheet p-4"
+          className="mw-panel w-full max-w-md"
         >
           <p className="mw-label mb-1">Новый объект</p>
-          <h1 className="mb-4 text-[20px] font-semibold tracking-[-0.02em]">Адрес и клиент</h1>
+          <h1 className="mw-title mb-4">Адрес и клиент</h1>
 
           <label className="mb-3 block">
             <span className="mw-label">Адрес объекта</span>
@@ -57,7 +57,7 @@ export default function MeasurePage() {
               value={contact.address}
               onChange={(e) => setContact({ ...contact, address: e.target.value })}
               placeholder="ЖК Апельсин, кв. 42"
-              className="mw-touch mt-1 w-full border border-navyLine bg-navyDeep px-2 text-[15px] outline-none"
+              className="mw-field mt-2"
             />
           </label>
 
@@ -66,7 +66,7 @@ export default function MeasurePage() {
             <input
               value={contact.clientName}
               onChange={(e) => setContact({ ...contact, clientName: e.target.value })}
-              className="mw-touch mt-1 w-full border border-navyLine bg-navyDeep px-2 text-[15px] outline-none"
+              className="mw-field mt-2"
             />
           </label>
 
@@ -78,7 +78,7 @@ export default function MeasurePage() {
               value={contact.clientPhone}
               onChange={(e) => setContact({ ...contact, clientPhone: e.target.value })}
               placeholder="+7"
-              className="mw-num mw-touch mt-1 w-full border border-navyLine bg-navyDeep px-2 text-[15px] outline-none"
+              className="mw-num mw-field mt-2"
             />
           </label>
 
@@ -88,13 +88,13 @@ export default function MeasurePage() {
               value={surveyor}
               onChange={(e) => setSurveyor(e.target.value)}
               placeholder="Ержан"
-              className="mw-touch mt-1 w-full border border-navyLine bg-navyDeep px-2 text-[15px] outline-none"
+              className="mw-field mt-2"
             />
           </label>
 
           <button
             type="submit"
-            className="mw-touch w-full border border-cyanBright bg-cyanBright px-3 text-[12px] uppercase tracking-[0.1em] text-navyDeep"
+            className="mw-btn mw-btn-lg mw-btn-primary w-full"
           >
             К замеру
           </button>
@@ -168,7 +168,7 @@ export default function MeasurePage() {
   return (
     <>
       {(error || saving) && (
-        <div className="mw-root border-b border-tape px-4 py-2 text-[12px]">
+        <div className="mw-root border-b border-tape px-4 py-2 text-[13px]">
           {saving ? 'Сохраняем объект…' : error}
         </div>
       )}

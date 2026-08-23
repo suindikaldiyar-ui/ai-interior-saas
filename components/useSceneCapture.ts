@@ -24,6 +24,42 @@ type CaptureFn = (framing: CaptureFraming) => Promise<CaptureResult>;
 const nextFrame = () =>
   new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
+/**
+ * Снимок кадра БЕЗ кодирования: копия пикселей в обычный 2D-канвас.
+ *
+ * Делается сразу после `gl.render`, в том же кадре: буфер WebGL-канваса
+ * очищается на следующем композите, и позже копировать было бы нечего.
+ */
+function grabFrame(source: HTMLCanvasElement): HTMLCanvasElement {
+  const copy = document.createElement('canvas');
+  copy.width = source.width;
+  copy.height = source.height;
+  const ctx = copy.getContext('2d');
+  if (!ctx) throw new Error('Кадр не скопировался: нет 2D-контекста.');
+  ctx.drawImage(source, 0, 0);
+  return copy;
+}
+
+/** Кодирование в JPEG в стороне от главного потока. */
+function encodeFrame(canvas: HTMLCanvasElement): Promise<string> {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          reject(new Error('Кадр не закодировался.'));
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(reader.error ?? new Error('Кадр не прочитался.'));
+        reader.readAsDataURL(blob);
+      },
+      'image/jpeg',
+      JPEG_QUALITY,
+    );
+  });
+}
+
 /** Компонент внутри <Canvas>: регистрирует функцию захвата, ничего не рендерит. */
 export function SceneCapture() {
   const { gl, scene, camera } = useThree();
@@ -87,6 +123,16 @@ export function SceneCapture() {
 
       store.setCaptureMode(true);
 
+      /*
+       * Кадры снимаем в обычный 2D-канвас и кодируем ПОСЛЕ восстановления
+       * сцены. `toDataURL` кодирует JPEG синхронно и держит главный поток:
+       * замер показал 7 289 мс на beauty и 1 748 мс на clay — почти девять
+       * секунд, в которые интерфейс не отвечает вовсе. `toBlob` кодирует в
+       * стороне от главного потока, а сцена к этому моменту уже своя.
+       */
+      let beautyFrame: HTMLCanvasElement | null = null;
+      let clayFrame: HTMLCanvasElement | null = null;
+
       try {
         // Ждём именно коммит React, а не просто следующий кадр: только после
         // него хелперы гарантированно выброшены из графа сцены.
@@ -134,7 +180,7 @@ export function SceneCapture() {
         });
 
         gl.render(scene, shotCamera);
-        const beauty = gl.domElement.toDataURL('image/jpeg', JPEG_QUALITY);
+        beautyFrame = grabFrame(gl.domElement);
 
         /*
          * Clay: чистая геометрия без цвета и текстур — по ней модель читает
@@ -151,11 +197,9 @@ export function SceneCapture() {
         scene.overrideMaterial = clay;
 
         gl.render(scene, shotCamera);
-        const clayShot = gl.domElement.toDataURL('image/jpeg', JPEG_QUALITY);
+        clayFrame = grabFrame(gl.domElement);
 
         for (const object of hidden) object.visible = true;
-
-        return { beauty, clay: clayShot };
       } finally {
         // Восстанавливаем всё безусловно: если захват упадёт посередине,
         // вьюпорт останется 1536×1024 и вёрстка поедет.
@@ -173,6 +217,16 @@ export function SceneCapture() {
         committedRef.current = null;
         store.setCaptureMode(false);
       }
+
+      if (!beautyFrame || !clayFrame) throw new Error('Кадр не снялся.');
+
+      // Имя clay уже занято материалом съёмки — здесь это готовый кадр.
+      const [beauty, clayShot] = await Promise.all([
+        encodeFrame(beautyFrame),
+        encodeFrame(clayFrame),
+      ]);
+
+      return { beauty, clay: clayShot };
     };
 
     registerCapture(run);

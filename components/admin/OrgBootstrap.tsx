@@ -40,10 +40,10 @@ export default function OrgBootstrap() {
     <main className="mw-root flex min-h-screen items-center justify-center px-4">
       <form onSubmit={submit} className="w-full max-w-sm border border-navyLine bg-sheet p-4">
         <p className="mw-label mb-1">Первый вход</p>
-        <h1 className="mb-1 text-[20px] font-semibold tracking-[-0.02em]">
+        <h1 className="mw-title mb-1">
           Создайте компанию
         </h1>
-        <p className="mb-4 text-[12px] text-graphiteMw">
+        <p className="mb-4 text-[13px] text-graphiteMw">
           Каталог, объекты и доступы сотрудников привязаны к компании.
           Вы становитесь её владельцем.
         </p>
@@ -55,7 +55,7 @@ export default function OrgBootstrap() {
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Decofasa"
-            className="mw-touch mt-1 w-full border border-navyLine bg-navyDeep px-2 text-[15px] outline-none"
+            className="mw-field mt-2"
           />
         </label>
 
@@ -65,7 +65,7 @@ export default function OrgBootstrap() {
             value={city}
             onChange={(e) => setCity(e.target.value)}
             placeholder="Алматы"
-            className="mw-touch mt-1 w-full border border-navyLine bg-navyDeep px-2 text-[15px] outline-none"
+            className="mw-field mt-2"
           />
         </label>
 
@@ -77,7 +77,7 @@ export default function OrgBootstrap() {
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
             placeholder="+7"
-            className="mw-num mw-touch mt-1 w-full border border-navyLine bg-navyDeep px-2 text-[15px] outline-none"
+            className="mw-num mw-field mt-2"
           />
         </label>
 
@@ -87,19 +87,19 @@ export default function OrgBootstrap() {
             value={slug}
             onChange={(e) => setSlug(e.target.value)}
             placeholder="decofasa"
-            className="mw-num mw-touch mt-1 w-full border border-navyLine bg-navyDeep px-2 text-[14px] outline-none"
+            className="mw-num mw-field mt-2"
           />
         </label>
 
         <button
           type="submit"
           disabled={busy}
-          className="mw-touch w-full border border-cyanBright bg-cyanBright px-3 text-[12px] uppercase tracking-[0.1em] text-navyDeep disabled:opacity-40"
+          className="mw-btn mw-btn-lg mw-btn-primary w-full"
         >
           {busy ? 'Создаём…' : 'Создать компанию'}
         </button>
 
-        {error && <p className="mt-3 text-[12px] text-alert">{error}</p>}
+        {error && <p className="mt-3 text-[13px] text-alert">{error}</p>}
       </form>
     </main>
   );

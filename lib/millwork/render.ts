@@ -1,10 +1,12 @@
 'use client';
 
 import { captureScene } from '@/lib/captureRegistry';
+import { VARIANT_STYLE } from './styles';
+import { PROJECTS_BUCKET, storageUrl } from '@/lib/supabase/config';
 import { buildCatalogRefs, renderVariant, urlToDataUrl } from '@/lib/renderClient';
 import { assertSameConfiguration } from '@/lib/millwork/fingerprint';
 import { useInteriorStore } from '@/store/useInteriorStore';
-import type { Variant, VariantKey } from '@/types/millwork';
+import type { Variant } from '@/types/millwork';
 import type { RunAngle } from '@/types/render';
 
 /**
@@ -15,18 +17,8 @@ import type { RunAngle } from '@/types/render';
  * один раз — геометрия во всех трёх картинках совпадает до модуля.
  */
 
-/** Стиль подобран под бюджет, а не наоборот. */
-export const VARIANT_STYLE: Record<VariantKey, string> = {
-  basic: 'scandi',
-  optimal: 'warm-minimal',
-  premium: 'premium-modern',
-};
-
-export const MILLWORK_STYLE_IDS = [
-  VARIANT_STYLE.basic,
-  VARIANT_STYLE.optimal,
-  VARIANT_STYLE.premium,
-];
+// Таблица стилей живёт в модуле без 'use client': её читает и сервер.
+export { MILLWORK_STYLE_IDS, VARIANT_STYLE } from './styles';
 
 const COUNTERTOP_TEXT: Record<string, string> = {
   ldsp: 'столешница ЛДСП 38 мм с кромкой',
@@ -68,7 +60,43 @@ export type MillworkRenderInput = {
   roomPhoto?: string | null;
   /** Ракурс clay-кадра. Подбирается под ракурс фотографии. */
   angle?: RunAngle;
+  /** Объект в базе: с ним картинки уезжают в Storage и живут по ссылке. */
+  projectId?: string | null;
 };
+
+/**
+ * Картинка из ответа модели — в Storage, в состоянии остаётся ссылка.
+ *
+ * Три base64-картинки по полтора мегабайта — это не «немного памяти»:
+ * вкладка держит их в состоянии, каждая перерисовка таскает строку, а
+ * планшет замерщика начинает захлёбываться ровно в тот момент, когда
+ * клиент смотрит на экран. По ссылке картинку рисует браузер, а не React.
+ *
+ * Без объекта в базе (демонстрация) оставляем как есть: складывать некуда.
+ */
+async function offloadToStorage(styleId: string, projectId?: string | null): Promise<void> {
+  if (!projectId) return;
+
+  const store = useInteriorStore.getState();
+  const image = store.renderVariants.find((v) => v.styleId === styleId)?.image;
+  if (!image || !image.startsWith('data:')) return;
+
+  try {
+    const res = await fetch('/api/projects/render', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId, styleId, image }),
+    });
+    const data = (await res.json()) as { path?: string };
+    if (!data.path) return;
+
+    useInteriorStore.getState().updateVariant(styleId, {
+      image: storageUrl(PROJECTS_BUCKET, data.path),
+    });
+  } catch {
+    /* не уехало — картинка остаётся в памяти, показывать всё равно есть что */
+  }
+}
 
 /**
  * Повтор одного варианта на уже снятом кадре.
@@ -80,6 +108,7 @@ export type MillworkRenderInput = {
 export async function rerenderMillworkVariant(
   variant: Variant,
   roomPhoto?: string | null,
+  projectId?: string | null,
 ): Promise<void> {
   const store = useInteriorStore.getState();
   if (!store.lastCapture) return;
@@ -100,12 +129,14 @@ export async function rerenderMillworkVariant(
     variantNotes(variant),
     photo,
   );
+  await offloadToStorage(VARIANT_STYLE[variant.key], projectId);
 }
 
 export async function runMillworkRenders({
   variants,
   roomPhoto,
   angle = 'front',
+  projectId,
 }: MillworkRenderInput): Promise<void> {
   /*
    * Кадр всегда «на ряд»: сравнивать с чертежом можно только целый ряд.
@@ -155,7 +186,7 @@ export async function runMillworkRenders({
         catalogRefs,
         variantNotes(variant),
         photo,
-      ),
+      ).then(() => offloadToStorage(VARIANT_STYLE[variant.key], projectId)),
     ),
   );
 }

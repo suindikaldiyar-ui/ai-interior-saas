@@ -1,8 +1,10 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useDebug } from '@/lib/debug';
 import { useInteriorStore } from '@/store/useInteriorStore';
 import dynamic from 'next/dynamic';
+import ThemeToggle from '@/components/ThemeToggle';
 import BeforeAfter from './BeforeAfter';
 import CommandBar from './CommandBar';
 import DrawingSheet from './DrawingSheet';
@@ -69,7 +71,7 @@ import type {
 const KitchenScene = dynamic(() => import('./KitchenScene'), {
   ssr: false,
   loading: () => (
-    <div className="flex h-full items-center justify-center text-[12px] text-graphiteMw">
+    <div className="flex h-full items-center justify-center text-[13px] text-graphiteMw">
       Собираем сцену…
     </div>
   ),
@@ -138,6 +140,8 @@ export default function Workspace(props: WorkspaceProps) {
     props.initialState?.selectedVariant ?? 'optimal',
   );
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Технические подписи включаются адресом ?debug=1, см. lib/debug.ts
+  const debug = useDebug();
 
   /*
    * Первый шаг — тот, где работа ещё не сделана: незавершённый замер ведёт
@@ -335,7 +339,7 @@ export default function Workspace(props: WorkspaceProps) {
   };
 
   /*
-   * Один список, отсортированный по последствиям, и не больше трёх строк
+   * Один список, отсортированный по последствиям, и не больше двух строк
    * на экране: десяток предупреждений превращается в фон, который не читает
    * никто. Остальные — под «ещё N», каждое кликабельно и ведёт на план.
    */
@@ -474,7 +478,7 @@ export default function Workspace(props: WorkspaceProps) {
      * по ссылке увидит чертёж и смету, но не увидит свою кухню рядом
      * с фотографией своей квартиры.
      */
-    if (activeRender) {
+    if (activeRender?.startsWith('data:')) {
       await fetch('/api/projects/render', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -560,11 +564,13 @@ export default function Workspace(props: WorkspaceProps) {
           </p>
         </div>
 
+        <ThemeToggle className="ml-auto" />
+
         <a
           href="/demo"
           target="_blank"
           rel="noopener noreferrer"
-          className="mw-btn mw-btn-ghost ml-auto hidden sm:inline-flex"
+          className="mw-btn mw-btn-ghost hidden sm:inline-flex"
         >
           Показать пример
         </a>
@@ -589,7 +595,7 @@ export default function Workspace(props: WorkspaceProps) {
       </div>
 
       {props.ratesMissing && (
-        <p className="mx-4 mb-2 rounded-[var(--r-control)] bg-navy px-4 py-3 text-[14px] leading-snug text-tape print:hidden">
+        <p className="mx-4 mb-2 rounded-[var(--r-control)] bg-navy px-4 py-3 text-[15px] leading-snug text-tape print:hidden">
           Заполните цены каталога, чтобы считать смету.{' '}
           <a href="/admin/catalog" className="text-cyanBright underline">
             Перейти в каталог →
@@ -599,7 +605,7 @@ export default function Workspace(props: WorkspaceProps) {
 
       {share && (
         <div className="mx-4 mb-2 flex flex-wrap items-center gap-3 rounded-[var(--r-control)] bg-navy px-4 py-3 print:hidden">
-          <span className="text-[14px]">Ссылка скопирована:</span>
+          <span className="text-[15px]">Ссылка скопирована:</span>
           <code className="mw-num text-[13px] text-cyan">{share.url}</code>
           <a
             href={share.wa}
@@ -621,7 +627,7 @@ export default function Workspace(props: WorkspaceProps) {
 
       {/* ── Один экран — одна задача ── */}
       <main className="min-h-0 flex-1 overflow-y-auto px-4 pb-6">
-        <p className="mb-4 text-[14px] leading-snug text-graphiteMw print:hidden">
+        <p className="mb-4 text-[13px] leading-snug text-graphiteMw print:hidden">
           {STEP_HINT[step]}
         </p>
 
@@ -671,7 +677,7 @@ export default function Workspace(props: WorkspaceProps) {
               }}
             />
             {!templateId && suggested && (
-              <p className="mt-4 text-[14px] text-graphiteMw">
+              <p className="mt-4 text-[13px] text-graphiteMw">
                 Для ряда {input.lengthMm} мм обычно берут «{suggested.name}».
               </p>
             )}
@@ -722,11 +728,11 @@ export default function Workspace(props: WorkspaceProps) {
                     onClick={() => setVariantKey(variant.key)}
                     aria-pressed={chosen}
                     className={`mw-panel-flat p-4 text-left ${
-                      chosen ? 'ring-2 ring-cyanBright' : 'hover:bg-sheet'
+                      chosen ? 'ring-2 ring-inset ring-cyanBright' : 'hover:bg-sheet'
                     }`}
                   >
-                    <span className="block text-[16px] font-medium">{variant.title}</span>
-                    <span className="mw-num mt-1 block text-[21px] font-semibold">
+                    <span className="block text-[17px] font-medium">{variant.title}</span>
+                    <span className="mw-num mt-1 block text-[22px] font-semibold">
                       {formatMoney(variant.estimate.total)} ₸
                     </span>
                     <span className="mt-2 block text-[13px] leading-snug text-graphiteMw">
@@ -777,7 +783,7 @@ export default function Workspace(props: WorkspaceProps) {
                   className={
                     resultView === 'scene'
                       ? 'mt-4 h-[460px] overflow-hidden rounded-[var(--r-panel)] bg-navyDeep print:hidden'
-                      : 'pointer-events-none fixed left-[-3000px] top-0 h-[220px] w-[340px] opacity-0'
+                      : 'mw-scene-hidden fixed left-[-3000px] top-0 h-[220px] w-[340px] opacity-0'
                   }
                   aria-hidden={resultView !== 'scene'}
                 >
@@ -785,6 +791,7 @@ export default function Workspace(props: WorkspaceProps) {
                     run={active.run}
                     ceilingHeightMm={props.ceilingHeightMm}
                     roomDepthM={props.roomDepthM}
+                    hidden={resultView !== 'scene'}
                     onItemId={setKitchenItemId}
                   />
                 </div>
@@ -792,6 +799,8 @@ export default function Workspace(props: WorkspaceProps) {
                   <p className="mt-2 text-[13px] leading-snug text-graphiteMw">
                     Гарнитур собран из тех же {active.run.modules.length} модулей, что
                     чертёж и смета.
+                    {/* Отпечаток — сверка для нас, а не разговор с клиентом. */}
+                    {debug && ` Отпечаток ${active.run.fingerprint}.`}
                   </p>
                 )}
               </>
@@ -814,6 +823,7 @@ export default function Workspace(props: WorkspaceProps) {
                     roomPhoto={roomPhoto}
                     angle={renderAngle}
                     onOpen={setZoom}
+                    projectId={props.projectId}
                   />
                 </div>
               </div>
@@ -857,7 +867,7 @@ export default function Workspace(props: WorkspaceProps) {
           </>
         )}
 
-        {/* ── Предупреждения: не больше трёх, повторы схлопнуты ── */}
+        {/* ── Предупреждения: не больше двух, повторы схлопнуты ── */}
         {softWarnings.length > 0 && (
           <ul className="mt-5 grid gap-2 print:hidden">
             {(showAllWarnings ? softWarnings : shownSoft).map((w) => (
@@ -869,7 +879,7 @@ export default function Workspace(props: WorkspaceProps) {
                     setWarningAt(w.atMm ?? null);
                     if (step === 'result') setResultView('plan');
                   }}
-                  className="w-full rounded-[var(--r-control)] bg-navy px-4 py-3 text-left text-[14px] leading-snug text-graphiteMw"
+                  className="w-full rounded-[var(--r-control)] bg-navy px-4 py-3 text-left text-[13px] leading-snug text-graphiteMw"
                 >
                   <span className="mr-2 text-tape">●</span>
                   {w.message}
@@ -881,7 +891,7 @@ export default function Workspace(props: WorkspaceProps) {
                 <button
                   type="button"
                   onClick={() => setShowAllWarnings(true)}
-                  className="text-[14px] text-graphiteMw underline"
+                  className="text-[13px] text-graphiteMw underline"
                 >
                   ещё {hiddenSoft}
                 </button>
@@ -894,7 +904,7 @@ export default function Workspace(props: WorkspaceProps) {
       {/* ── Низ экрана: зона большого пальца ── */}
       <footer className="border-t border-navyLine/60 bg-navyDeep px-4 pb-4 pt-3 print:hidden">
         {blockingWarnings.length > 0 && (
-          <p className="mb-3 rounded-[var(--r-control)] bg-alert/15 px-4 py-3 text-[14px] leading-snug text-alert">
+          <p className="mb-3 rounded-[var(--r-control)] bg-alert/15 px-4 py-3 text-[15px] leading-snug text-alert">
             {blockingWarnings[0].message}
             {blockingWarnings.length > 1 && ` И ещё ${blockingWarnings.length - 1}.`}
           </p>
@@ -917,7 +927,7 @@ export default function Workspace(props: WorkspaceProps) {
             type="button"
             onClick={goBack}
             disabled={index === 0}
-            className="mw-btn mw-btn-ghost"
+            className="mw-btn mw-btn-lg mw-btn-ghost"
           >
             Назад
           </button>
@@ -930,7 +940,7 @@ export default function Workspace(props: WorkspaceProps) {
                 ? 'Сначала разберитесь с красным расхождением — на объекте это переделка'
                 : undefined
             }
-            className="mw-btn mw-btn-primary flex-1"
+            className="mw-btn mw-btn-lg mw-btn-primary flex-1"
           >
             {nextLabel}
           </button>

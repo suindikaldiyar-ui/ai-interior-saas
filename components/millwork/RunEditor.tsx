@@ -136,7 +136,7 @@ export default function RunEditor({ run, selectedModuleId, onSelect, onOps }: Pr
                 {unit.widthMm}
               </span>
               <span
-                className={`mt-1 block truncate text-[12px] leading-tight ${
+                className={`mt-1 block truncate text-[13px] leading-tight ${
                   active ? 'text-navyDeep/80' : 'text-graphiteMw'
                 }`}
               >
@@ -180,7 +180,7 @@ export default function RunEditor({ run, selectedModuleId, onSelect, onOps }: Pr
               />
 
               {selected.appliance ? (
-                <span className="mt-1 block text-[10px] leading-tight text-graphiteMw">
+                <span className="mt-1 block text-[13px] leading-tight text-graphiteMw">
                   {selected.widthMm} — ширина прибора «
                   {APPLIANCE_SLOTS[selected.appliance].title}»
                 </span>
@@ -195,9 +195,9 @@ export default function RunEditor({ run, selectedModuleId, onSelect, onOps }: Pr
                           setWidthDraft(String(w));
                           commitWidth(w);
                         }}
-                        className={`mw-num border px-1 py-[2px] text-[10px] ${
+                        className={`mw-num border px-1 py-[2px] text-[13px] ${
                           selected.widthMm === w
-                            ? 'border-blueprint bg-blueprint text-sheet'
+                            ? 'mw-btn-primary'
                             : 'border-blueprint/30 text-blueprint hover:border-blueprint'
                         }`}
                       >
@@ -207,13 +207,13 @@ export default function RunEditor({ run, selectedModuleId, onSelect, onOps }: Pr
                   </span>
 
                   {widthNote ? (
-                    <span className="mt-1 block text-[10px] leading-tight text-alert">
+                    <span className="mt-1 block text-[13px] leading-tight text-alert">
                       {widthNote}
                     </span>
                   ) : (
                     !isStandardWidth(selected.widthMm) && (
                       // Спокойная подпись, а не ошибка: мебель делают на заказ.
-                      <span className="mt-1 block text-[10px] leading-tight text-graphiteMw">
+                      <span className="mt-1 block text-[13px] leading-tight text-graphiteMw">
                         Нестандартный модуль — изготавливается по размеру.
                       </span>
                     )
@@ -232,7 +232,7 @@ export default function RunEditor({ run, selectedModuleId, onSelect, onOps }: Pr
                     { op: 'set_fronts', moduleId: selected.id, drawerCount: Number(e.target.value) },
                   ])
                 }
-                className="mw-touch mt-1 w-full border border-blueprint/40 bg-field px-1.5 text-[12px] disabled:opacity-40"
+                className="mw-touch mt-1 w-full border border-blueprint/40 bg-field px-1.5 text-[13px] disabled:opacity-40"
               >
                 <option value={0}>Дверца</option>
                 {[1, 2, 3, 4, 5].map((n) => (
@@ -257,7 +257,7 @@ export default function RunEditor({ run, selectedModuleId, onSelect, onOps }: Pr
                     },
                   ])
                 }
-                className="mw-touch mt-1 w-full border border-blueprint/40 bg-field px-1.5 text-[12px]"
+                className="mw-touch mt-1 w-full border border-blueprint/40 bg-field px-1.5 text-[13px]"
               >
                 <option value="base">Нижний</option>
                 <option value="tall">Пенал</option>
@@ -280,7 +280,7 @@ export default function RunEditor({ run, selectedModuleId, onSelect, onOps }: Pr
                     },
                   ]);
                 }}
-                className="mw-touch mt-1 w-full border border-blueprint/40 bg-field px-1.5 text-[12px]"
+                className="mw-touch mt-1 w-full border border-blueprint/40 bg-field px-1.5 text-[13px]"
               >
                 {APPLIANCE_OPTIONS.map((a) => (
                   <option key={a || 'none'} value={a}>

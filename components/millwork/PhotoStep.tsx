@@ -58,10 +58,10 @@ export default function PhotoStep({
     <main className="mw-root flex min-h-screen items-start justify-center px-4 py-8">
       <div className="w-full max-w-2xl border border-navyLine bg-sheet p-4">
         <p className="mw-label mb-1">Шаг 3 из 3</p>
-        <h1 className="mb-1 text-[20px] font-semibold tracking-[-0.02em]">
+        <h1 className="mw-title mb-1">
           Фото стены, где будет гарнитур
         </h1>
-        <p className="mb-4 text-[12px] leading-snug text-graphiteMw">
+        <p className="mb-4 text-[13px] leading-snug text-graphiteMw">
           Снимите стену целиком, от угла до угла, вместе с окном и дверью.
           Именно этот кадр станет основой визуализации: клиент должен увидеть
           свою квартиру, а не похожую. Снимок сжимается до 1600 px прямо здесь.
@@ -93,19 +93,19 @@ export default function PhotoStep({
                   <button
                     type="button"
                     onClick={() => onChange(photos, photo.id)}
-                    className={`text-[10px] uppercase tracking-[0.1em] ${
+                    className={`text-[13px] ${
                       primary ? 'text-cyanBright' : 'text-graphiteMw underline'
                     }`}
                   >
                     {primary ? 'Главное' : 'Сделать главным'}
                   </button>
-                  <span className="mw-num ml-auto text-[10px] text-graphiteMw">
+                  <span className="mw-num ml-auto text-[13px] text-graphiteMw">
                     {photo.sizeKb} КБ
                   </span>
                   <button
                     type="button"
                     onClick={() => remove(photo.id)}
-                    className="text-[10px] text-alert"
+                    className="text-[13px] text-alert"
                     aria-label="Удалить снимок"
                   >
                     ×
@@ -119,16 +119,16 @@ export default function PhotoStep({
             type="button"
             onClick={() => input.current?.click()}
             disabled={busy}
-            className="flex aspect-[4/3] items-center justify-center border border-dashed border-navyLine text-[12px] text-graphiteMw hover:border-cyan hover:text-textMw disabled:opacity-40"
+            className="flex aspect-[4/3] items-center justify-center border border-dashed border-navyLine text-[13px] text-graphiteMw hover:border-cyan hover:text-textMw disabled:opacity-40"
           >
             {busy ? 'Сжимаем…' : '+ Добавить фото'}
           </button>
         </div>
 
-        {error && <p className="mb-2 text-[12px] text-alert">{error}</p>}
+        {error && <p className="mb-2 text-[13px] text-alert">{error}</p>}
 
         {photos.length === 0 && (
-          <p className="mb-3 text-[12px] text-tape">
+          <p className="mb-3 text-[13px] text-tape">
             Без фото помещения клиент увидит настроение, а не свою квартиру.
           </p>
         )}
@@ -137,7 +137,7 @@ export default function PhotoStep({
           type="button"
           onClick={onSubmit}
           disabled={photos.length === 0 || busy}
-          className="mw-touch w-full border border-cyanBright bg-cyanBright px-3 text-[12px] uppercase tracking-[0.1em] text-navyDeep disabled:opacity-40"
+          className="mw-btn mw-btn-lg mw-btn-primary w-full"
         >
           {submitLabel}
         </button>
@@ -146,7 +146,7 @@ export default function PhotoStep({
           <button
             type="button"
             onClick={onSubmit}
-            className="mt-2 w-full text-[11px] text-graphiteMw underline"
+            className="mt-2 w-full text-[13px] text-graphiteMw underline"
           >
             Продолжить без фото — рендер будет по описанию
           </button>

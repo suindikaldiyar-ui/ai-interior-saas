@@ -27,8 +27,8 @@ export default async function CatalogPage() {
           <code>SUPABASE_SERVICE_ROLE_KEY</code>, примените миграцию{' '}
           <code>supabase/migrations/0001_catalog.sql</code> и перезапустите сервер.
         </p>
-        <Link href="/" className="mt-4 inline-block text-[12px] text-cyanBright underline">
-          ← В студию
+        <Link href="/projects" className="mt-4 inline-block text-[12px] text-cyanBright underline">
+          ← К объектам
         </Link>
       </main>
     );

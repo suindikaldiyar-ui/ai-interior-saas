@@ -37,7 +37,10 @@ export default function StepBar({ steps, active, onSelect }: Props) {
             type="button"
             onClick={() => onSelect(step.key)}
             aria-current={current ? 'step' : undefined}
-            className={`mw-touch flex shrink-0 items-center gap-2 rounded-[var(--r-control)] px-4 text-[14px] ${
+            /* Подпись на телефоне скрыта, но шаг обязан называться:
+               иначе кнопка остаётся без доступного имени. */
+            aria-label={step.title}
+            className={`mw-touch flex shrink-0 items-center gap-2 rounded-[var(--r-control)] px-4 text-[15px] ${
               current
                 ? 'bg-cyanBright text-navyDeep'
                 : step.done
@@ -47,7 +50,7 @@ export default function StepBar({ steps, active, onSelect }: Props) {
           >
             <span
               aria-hidden
-              className={`mw-num flex h-6 w-6 items-center justify-center rounded-full text-[12px] ${
+              className={`mw-num flex h-6 w-6 items-center justify-center rounded-full text-[13px] ${
                 current
                   ? 'bg-navyDeep/20 text-navyDeep'
                   : step.done
@@ -57,7 +60,7 @@ export default function StepBar({ steps, active, onSelect }: Props) {
             >
               {step.done && !current ? '✓' : i + 1}
             </span>
-            {step.title}
+            <span className={current ? '' : 'hidden sm:inline'}>{step.title}</span>
           </button>
         );
       })}

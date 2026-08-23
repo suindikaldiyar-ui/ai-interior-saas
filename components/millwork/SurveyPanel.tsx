@@ -155,7 +155,7 @@ export default function SurveyPanel({
               max={4500}
               autoFocus
             />
-            <p className="mt-2 text-[11px] leading-snug text-graphiteMw">
+            <p className="mt-2 text-[13px] leading-snug text-graphiteMw">
               От неё зависят верхний ряд и антресоль. Не знаете — оставьте пустым,
               подставим стандарт и подпишем как допущение.
             </p>
@@ -182,7 +182,7 @@ export default function SurveyPanel({
                         walls: survey.walls.map((x) => ({ ...x, isRunWall: x.id === w.id })),
                       })
                     }
-                    className={`text-[10px] uppercase tracking-[0.1em] ${
+                    className={`text-[13px] ${
                       w.isRunWall ? 'text-cyanBright' : 'text-graphiteMw underline'
                     }`}
                   >
@@ -193,7 +193,7 @@ export default function SurveyPanel({
                     onClick={() =>
                       patch({ walls: survey.walls.filter((x) => x.id !== w.id) })
                     }
-                    className="ml-auto text-[11px] text-alert"
+                    className="ml-auto text-[13px] text-alert"
                     aria-label={`Удалить стену ${i + 1}`}
                   >
                     ×
@@ -226,10 +226,10 @@ export default function SurveyPanel({
                         })
                       }
                       aria-pressed={w.turn === turn}
-                      className={`mw-touch border px-2 text-[10px] uppercase tracking-[0.1em] ${
+                      className={`mw-btn ${
                         w.turn === turn
-                          ? 'border-blueprint bg-blueprint text-sheet'
-                          : 'border-blueprint/30 text-blueprint'
+                          ? 'mw-btn-primary'
+                          : 'mw-btn-ghost'
                       }`}
                     >
                       {label}
@@ -240,7 +240,7 @@ export default function SurveyPanel({
                       type="number"
                       value={w.turnDeg}
                       onChange={(e) => patchWall(w.id, { turnDeg: Number(e.target.value) })}
-                      className="mw-num mw-touch w-16 border border-blueprint/40 bg-field px-1 text-[13px]"
+                      className="mw-num mw-touch w-20 rounded-[var(--r-control)] bg-surface2 px-2 text-[15px]"
                       aria-label="Угол поворота"
                     />
                   )}
@@ -255,7 +255,7 @@ export default function SurveyPanel({
                 patch({ walls: [...survey.walls, next], steps: { ...survey.steps, walls: 'done' } });
                 setActiveWallId(next.id);
               }}
-              className="mw-touch w-full border border-blueprint px-2 text-[11px] uppercase tracking-[0.1em] text-blueprint"
+              className="mw-btn mw-btn-ghost w-full"
             >
               + Стена
             </button>
@@ -263,7 +263,7 @@ export default function SurveyPanel({
         );
 
       case 'openings':
-        if (!wall) return <p className="text-[12px] text-graphiteMw">Сначала добавьте стену.</p>;
+        if (!wall) return <p className="text-[13px] text-graphiteMw">Сначала добавьте стену.</p>;
         return (
           <div data-survey-step="openings">
             <div className="mb-2 flex flex-wrap gap-1">
@@ -273,10 +273,10 @@ export default function SurveyPanel({
                   type="button"
                   onClick={() => setActiveWallId(w.id)}
                   aria-pressed={w.id === wall.id}
-                  className={`mw-touch border px-2 text-[10px] uppercase tracking-[0.1em] ${
+                  className={`mw-btn ${
                     w.id === wall.id
-                      ? 'border-blueprint bg-blueprint text-sheet'
-                      : 'border-blueprint/30 text-blueprint'
+                      ? 'mw-btn-primary'
+                      : 'mw-btn-ghost'
                   }`}
                 >
                   Стена {i + 1}
@@ -296,7 +296,7 @@ export default function SurveyPanel({
                         ),
                       })
                     }
-                    className="mw-touch border border-blueprint/40 bg-field px-1.5 text-[12px]"
+                    className="mw-touch border border-blueprint/40 bg-field px-1.5 text-[13px]"
                   >
                     {OPENING_KINDS.map((k) => (
                       <option key={k} value={k}>
@@ -311,7 +311,7 @@ export default function SurveyPanel({
                         openings: wall.openings.filter((o) => o.id !== opening.id),
                       })
                     }
-                    className="ml-auto text-[11px] text-alert"
+                    className="ml-auto text-[13px] text-alert"
                     aria-label="Удалить проём"
                   >
                     ×
@@ -368,7 +368,7 @@ export default function SurveyPanel({
                   steps: { ...survey.steps, openings: 'done' },
                 });
               }}
-              className="mw-touch w-full border border-blueprint px-2 text-[11px] uppercase tracking-[0.1em] text-blueprint"
+              className="mw-btn mw-btn-ghost w-full"
             >
               + Проём
             </button>
@@ -390,7 +390,7 @@ export default function SurveyPanel({
                         ),
                       })
                     }
-                    className="mw-touch border border-blueprint/40 bg-field px-1.5 text-[12px]"
+                    className="mw-touch border border-blueprint/40 bg-field px-1.5 text-[13px]"
                   >
                     {COMM_KINDS.map((k) => (
                       <option key={k} value={k}>
@@ -407,7 +407,7 @@ export default function SurveyPanel({
                         ),
                       })
                     }
-                    className="mw-touch border border-blueprint/40 bg-field px-1.5 text-[12px]"
+                    className="mw-touch border border-blueprint/40 bg-field px-1.5 text-[13px]"
                   >
                     {survey.walls.map((w, i) => (
                       <option key={w.id} value={w.id}>
@@ -420,7 +420,7 @@ export default function SurveyPanel({
                     onClick={() =>
                       patch({ comms: survey.comms.filter((c) => c.id !== comm.id) })
                     }
-                    className="ml-auto text-[11px] text-alert"
+                    className="ml-auto text-[13px] text-alert"
                     aria-label="Удалить точку"
                   >
                     ×
@@ -468,7 +468,7 @@ export default function SurveyPanel({
                 };
                 patch({ comms: [...survey.comms, comm], steps: { ...survey.steps, comms: 'done' } });
               }}
-              className="mw-touch w-full border border-blueprint px-2 text-[11px] uppercase tracking-[0.1em] text-blueprint"
+              className="mw-btn mw-btn-ghost w-full"
             >
               + Точка
             </button>
@@ -503,7 +503,7 @@ export default function SurveyPanel({
                           })),
                         })
                       }
-                      className={`text-[10px] uppercase tracking-[0.1em] ${
+                      className={`text-[13px] ${
                         photo.primary ? 'text-cyanBright' : 'text-graphiteMw underline'
                       }`}
                     >
@@ -514,7 +514,7 @@ export default function SurveyPanel({
                       onClick={() =>
                         patch({ photos: survey.photos.filter((p) => p.id !== photo.id) })
                       }
-                      className="ml-auto text-[11px] text-alert"
+                      className="ml-auto text-[13px] text-alert"
                       aria-label="Удалить снимок"
                     >
                       ×
@@ -524,7 +524,7 @@ export default function SurveyPanel({
               ))}
             </div>
 
-            <label className="mw-touch flex w-full cursor-pointer items-center justify-center border border-dashed border-blueprint/40 text-[11px] uppercase tracking-[0.1em] text-blueprint">
+            <label className="mw-touch flex w-full cursor-pointer items-center justify-center border border-dashed border-blueprint/40 text-[13px] text-blueprint">
               {busy ? 'Сжимаем…' : '+ Фото стены'}
               <input
                 type="file"
@@ -557,7 +557,7 @@ export default function SurveyPanel({
               />
             </label>
 
-            <p className="mt-2 text-[11px] leading-snug text-tape">
+            <p className="mt-2 text-[13px] leading-snug text-tape">
               Без фото помещения клиент увидит настроение, а не свою квартиру.
             </p>
           </div>
@@ -583,7 +583,7 @@ export default function SurveyPanel({
                   setStep(key);
                 }}
                 aria-pressed={step === key}
-                className={`mw-touch border px-2 text-[10px] uppercase tracking-[0.1em] ${
+                className={`mw-btn ${
                   step === key
                     ? 'border-cyanBright bg-cyanBright text-navyDeep'
                     : state === 'done'
@@ -604,7 +604,7 @@ export default function SurveyPanel({
           <button
             type="button"
             onClick={() => setStepState(step, 'skipped')}
-            className="mw-touch border border-blueprint/30 px-2 text-[10px] uppercase tracking-[0.1em] text-graphiteMw"
+            className="mw-btn mw-btn-ghost text-graphiteMw"
           >
             Пропустить шаг
           </button>
@@ -614,7 +614,7 @@ export default function SurveyPanel({
               const index = SURVEY_STEPS.indexOf(step);
               setStep(SURVEY_STEPS[Math.min(SURVEY_STEPS.length - 1, index + 1)]);
             }}
-            className="mw-touch border border-blueprint px-2 text-[10px] uppercase tracking-[0.1em] text-blueprint"
+            className="mw-btn mw-btn-ghost"
           >
             Дальше
           </button>
@@ -627,7 +627,7 @@ export default function SurveyPanel({
             <button
               type="button"
               onClick={record}
-              className={`ml-auto mw-touch border px-2 text-[10px] uppercase tracking-[0.1em] ${
+              className={`ml-auto mw-btn ${
                 listening ? 'border-alert text-alert' : 'border-blueprint/40 text-blueprint'
               }`}
             >
@@ -639,7 +639,7 @@ export default function SurveyPanel({
             onChange={(e) => patch({ clientNotes: e.target.value })}
             rows={3}
             placeholder="«мойку ближе к окну», «короб в углу обойти»"
-            className="w-full resize-none border border-blueprint/30 bg-field px-2 py-1.5 text-[12px] leading-snug outline-none"
+            className="w-full resize-none border border-blueprint/30 bg-field px-2 py-1.5 text-[13px] leading-snug outline-none"
           />
         </div>
       </section>
@@ -655,7 +655,7 @@ export default function SurveyPanel({
           onPickWall={setActiveWallId}
         />
 
-        <div className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[11px]">
+        <div className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[13px]">
           <span className="mw-label">Величины</span>
           <span className="mw-num text-graphiteMw">
             замерено {stats.measured} · допущено {stats.assumed} · не замерено {stats.unknown}
@@ -668,7 +668,7 @@ export default function SurveyPanel({
         </div>
 
         {preview.error && (
-          <p className="mt-2 border border-alert bg-sheet px-2 py-1.5 text-[11px] text-alert">
+          <p className="mt-2 border border-alert bg-sheet px-2 py-1.5 text-[13px] text-alert">
             {preview.error}
           </p>
         )}
@@ -681,7 +681,7 @@ export default function SurveyPanel({
             });
             onFinish();
           }}
-          className="mw-touch mt-3 w-full border border-cyanBright bg-cyanBright px-3 text-[12px] uppercase tracking-[0.1em] text-navyDeep"
+          className="mw-btn mw-btn-lg mw-btn-primary mt-3 w-full"
         >
           Замер завершён
         </button>

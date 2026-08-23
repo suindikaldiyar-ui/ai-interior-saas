@@ -107,8 +107,8 @@ export default function MeasurementForm({ initial, onSubmit, submitLabel = 'Со
   return (
     <div className="mw-root min-h-screen px-4 py-4">
       <header className="mb-3 flex flex-wrap items-baseline gap-x-4">
-        <h1 className="text-[20px] font-semibold tracking-[-0.02em]">Замерный лист</h1>
-        <span className="mw-num text-[12px] text-graphiteMw">
+        <h1 className="text-[22px] font-semibold tracking-[-0.02em]">Замерный лист</h1>
+        <span className="mw-num text-[13px] text-graphiteMw">
           периметр {summary} мм · потолок {ceiling} мм
         </span>
       </header>
@@ -182,7 +182,7 @@ export default function MeasurementForm({ initial, onSubmit, submitLabel = 'Со
                 key={w.id}
                 type="button"
                 onClick={() => setActiveWall(i)}
-                className={`mw-touch border px-3 text-[12px] ${
+                className={`mw-touch border px-3 text-[13px] ${
                   i === activeWall ? 'border-blueprint bg-tape' : 'border-blueprint/30'
                 }`}
               >
@@ -195,7 +195,7 @@ export default function MeasurementForm({ initial, onSubmit, submitLabel = 'Со
                 setWalls((prev) => [...prev, { id: nextId('wall'), lengthMm: 2000, angleDeg: 90, openings: [] }]);
                 setActiveWall(walls.length);
               }}
-              className="mw-touch border border-blueprint px-3 text-[12px] text-blueprint"
+              className="mw-touch border border-blueprint px-3 text-[13px] text-blueprint"
             >
               + Стена
             </button>
@@ -258,7 +258,7 @@ export default function MeasurementForm({ initial, onSubmit, submitLabel = 'Со
                     key={kind}
                     type="button"
                     onClick={() => addOpening(kind)}
-                    className="mw-touch border border-blueprint/35 px-2 text-[11px]"
+                    className="mw-touch border border-blueprint/35 px-2 text-[13px]"
                   >
                     + {OPENING_LABEL[kind]}
                   </button>
@@ -268,7 +268,7 @@ export default function MeasurementForm({ initial, onSubmit, submitLabel = 'Со
               {wall.openings.map((opening) => (
                 <div key={opening.id} className="mb-2 border border-blueprint/20 p-2">
                   <div className="mb-1 flex items-baseline justify-between">
-                    <span className="text-[12px]">{OPENING_LABEL[opening.kind]}</span>
+                    <span className="text-[13px]">{OPENING_LABEL[opening.kind]}</span>
                     <button
                       type="button"
                       onClick={() =>
@@ -276,7 +276,7 @@ export default function MeasurementForm({ initial, onSubmit, submitLabel = 'Со
                           openings: wall.openings.filter((o) => o.id !== opening.id),
                         })
                       }
-                      className="text-[11px] text-alert"
+                      className="text-[13px] text-alert"
                     >
                       удалить
                     </button>
@@ -347,7 +347,7 @@ export default function MeasurementForm({ initial, onSubmit, submitLabel = 'Со
                       },
                     ])
                   }
-                  className="mw-touch border border-blueprint/35 px-2 text-[11px]"
+                  className="mw-touch border border-blueprint/35 px-2 text-[13px]"
                 >
                   + {COMM_LABEL[kind]}
                 </button>
@@ -356,7 +356,7 @@ export default function MeasurementForm({ initial, onSubmit, submitLabel = 'Со
 
             {comms.map((point) => (
               <div key={point.id} className="mb-1.5 flex items-end gap-2">
-                <span className="w-24 shrink-0 text-[12px]">{COMM_LABEL[point.kind]}</span>
+                <span className="w-24 shrink-0 text-[13px]">{COMM_LABEL[point.kind]}</span>
                 <label className="flex-1">
                   <span className="mw-label">От угла</span>
                   <input
@@ -392,7 +392,7 @@ export default function MeasurementForm({ initial, onSubmit, submitLabel = 'Со
                 <button
                   type="button"
                   onClick={() => setComms((prev) => prev.filter((c) => c.id !== point.id))}
-                  className="mw-touch px-2 text-[11px] text-alert"
+                  className="mw-touch px-2 text-[13px] text-alert"
                 >
                   ✕
                 </button>
@@ -413,7 +413,7 @@ export default function MeasurementForm({ initial, onSubmit, submitLabel = 'Со
           <button
             type="button"
             onClick={submit}
-            className="mw-touch w-full border border-blueprint bg-blueprint px-4 text-[13px] uppercase tracking-[0.1em] text-sheet"
+            className="mw-btn mw-btn-lg mw-btn-primary w-full"
           >
             {submitLabel}
           </button>

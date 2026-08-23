@@ -77,8 +77,12 @@ try {
   });
 
   await page.goto(`${BASE}/demo`, { waitUntil: 'networkidle' });
+  await sleep(700);
 
-  // Глазная проверка сцены: гарнитур обязан быть виден.
+  // Результат: 3D — один из четырёх видов, рендер рядом.
+  await page.getByRole('button', { name: /Результат/ }).click();
+  await sleep(600);
+
   await page.getByRole('button', { name: '3D', exact: true }).click();
   await sleep(3500);
   await page.screenshot({ path: '.capture-check/millwork-3d.png' });

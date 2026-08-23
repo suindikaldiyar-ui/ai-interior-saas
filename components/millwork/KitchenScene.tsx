@@ -18,7 +18,7 @@ import type { Run } from '@/types/millwork';
 const RoomCanvas = dynamic(() => import('@/components/RoomCanvas'), {
   ssr: false,
   loading: () => (
-    <div className="flex h-full items-center justify-center text-[12px] text-graphiteMw">
+    <div className="flex h-full items-center justify-center text-[13px] text-graphiteMw">
       Собираем сцену…
     </div>
   ),
@@ -31,6 +31,8 @@ type Props = {
   run: Run;
   ceilingHeightMm: number;
   roomDepthM?: number;
+  /** Сцена за экраном: держим её живой, но без непрерывной отрисовки. */
+  hidden?: boolean;
   /** Идентификатор созданного объекта — по нему вешается выбор материалов. */
   onItemId?: (id: string) => void;
 };
@@ -39,6 +41,7 @@ export default function KitchenScene({
   run,
   ceilingHeightMm,
   roomDepthM = DEFAULT_ROOM_DEPTH_M,
+  hidden = false,
   onItemId,
 }: Props) {
   const itemIdRef = useRef<string | null>(null);
@@ -104,6 +107,14 @@ export default function KitchenScene({
           fromMm: segment.fromMm,
           toMm: segment.toMm,
           count: segment.modules.length,
+          /*
+           * Вытяжка живёт в верхнем ряду, а не в списке модулей ряда.
+           * Без неё в промпте модель рисовала над варочной обычный шкаф —
+           * на чертеже вытяжка есть, в рендере её не было.
+           */
+          appliances: segment.modules
+            .map((unit) => unit.appliance)
+            .filter((a): a is NonNullable<typeof a> => Boolean(a)),
         })),
       },
     });
@@ -118,5 +129,5 @@ export default function KitchenScene({
     onItemId?.(id);
   }, [run, ceilingHeightMm, roomDepthM, onItemId]);
 
-  return <RoomCanvas />;
+  return <RoomCanvas frameloop={hidden ? 'demand' : 'always'} />;
 }

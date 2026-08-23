@@ -199,7 +199,7 @@ export default function TemplatesAdmin({ initial }: { initial: RunTemplate[] }) 
               </div>
 
               {tooNarrow && (
-                <p className="mt-3 text-[14px] leading-snug text-alert">
+                <p className="mt-3 text-[15px] leading-snug text-alert">
                   Техника занимает {width} мм — при ряде от {draft.minLengthMm} мм она
                   не встанет. Поднимите нижнюю границу или уберите прибор.
                 </p>
@@ -219,17 +219,17 @@ export default function TemplatesAdmin({ initial }: { initial: RunTemplate[] }) 
           <button type="button" onClick={save} disabled={busy} className="mw-btn mw-btn-primary">
             {busy ? 'Сохраняем…' : 'Сохранить'}
           </button>
-          {notice && <p className="self-center text-[14px] text-graphiteMw">{notice}</p>}
+          {notice && <p className="self-center text-[13px] text-graphiteMw">{notice}</p>}
         </div>
 
         <section className="mw-panel">
           <h2 className="text-[17px] font-medium">Встроенные решения</h2>
-          <p className="mt-1 text-[14px] leading-snug text-graphiteMw">
+          <p className="mt-1 text-[13px] leading-snug text-graphiteMw">
             Они есть у всех и не редактируются. Ваши показываются первыми.
           </p>
           <ul className="mt-3 grid gap-2">
             {RUN_TEMPLATES.map((t) => (
-              <li key={t.id} className="flex flex-wrap items-baseline gap-x-3 text-[14px]">
+              <li key={t.id} className="flex flex-wrap items-baseline gap-x-3 text-[15px]">
                 <span>{t.name}</span>
                 <span className="mw-num text-[13px] text-graphiteMw">
                   {t.minLengthMm}–{t.maxLengthMm} мм

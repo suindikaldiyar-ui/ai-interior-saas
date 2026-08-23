@@ -212,7 +212,8 @@ try {
     console.error('  [pageerror]', e.message.slice(0, 300));
   });
 
-  await page.goto(BASE, { waitUntil: 'networkidle' });
+  // Студия переехала в (legacy): корень теперь ведёт в список объектов.
+  await page.goto(`${BASE}/studio`, { waitUntil: 'networkidle' });
   await page.waitForSelector('canvas', { timeout: 30_000 });
   await sleep(2500);
   await page.evaluate(PAGE_HELPERS);

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useDebug } from '@/lib/debug';
 import {
   MILLWORK_STYLE_IDS,
   VARIANT_STYLE,
@@ -25,11 +26,20 @@ type Props = {
   roomPhoto?: string | null;
   angle: RunAngle;
   onOpen?: (image: string) => void;
+  /** Объект в базе: с ним картинки уезжают в Storage сразу после отрисовки. */
+  projectId?: string | null;
 };
 
-export default function RenderPanel({ variants, roomPhoto, angle, onOpen }: Props) {
+export default function RenderPanel({
+  variants,
+  roomPhoto,
+  angle,
+  onOpen,
+  projectId,
+}: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const debug = useDebug();
 
   const renderVariants = useInteriorStore((s) => s.renderVariants);
   const byStyle = new Map(renderVariants.map((v) => [v.styleId, v]));
@@ -39,7 +49,7 @@ export default function RenderPanel({ variants, roomPhoto, angle, onOpen }: Prop
     setBusy(true);
     setError(null);
     try {
-      await runMillworkRenders({ variants, roomPhoto, angle });
+      await runMillworkRenders({ variants, roomPhoto, angle, projectId });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Кадр снять не удалось.');
     } finally {
@@ -52,7 +62,7 @@ export default function RenderPanel({ variants, roomPhoto, angle, onOpen }: Prop
     setBusy(true);
     setError(null);
     try {
-      await rerenderMillworkVariant(variant, roomPhoto);
+      await rerenderMillworkVariant(variant, roomPhoto, projectId);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Повтор не удался.');
     } finally {
@@ -90,10 +100,10 @@ export default function RenderPanel({ variants, roomPhoto, angle, onOpen }: Prop
                     src={state.image}
                     alt={variant.title}
                     onClick={() => state.image && onOpen?.(state.image)}
-                    className="h-full w-full cursor-zoom-in object-cover"
+                    className="mw-appear h-full w-full cursor-zoom-in object-cover"
                   />
                 ) : (
-                  <div className="flex h-full items-center justify-center px-4 text-center text-[14px] text-graphiteMw">
+                  <div className="flex h-full items-center justify-center px-4 text-center text-[13px] text-graphiteMw">
                     {!started
                       ? 'Кадр ещё не снят'
                       : state?.status === 'error'
@@ -106,7 +116,7 @@ export default function RenderPanel({ variants, roomPhoto, angle, onOpen }: Prop
               </div>
 
               <figcaption className="p-4">
-                <span className="block text-[16px] font-medium leading-tight">
+                <span className="block text-[17px] font-medium leading-tight">
                   {variant.title}
                 </span>
                 <span className="mw-num mt-1 block text-[15px]">
@@ -115,7 +125,9 @@ export default function RenderPanel({ variants, roomPhoto, angle, onOpen }: Prop
                 <span className="mt-2 flex items-baseline gap-3 text-[13px] text-graphiteMw">
                   <span>
                     {style?.ru ?? styleId}
-                    {state?.durationMs ? ` · ${Math.round(state.durationMs / 1000)} с` : ''}
+                    {debug && state?.durationMs
+                      ? ` · ${Math.round(state.durationMs / 1000)} с`
+                      : ''}
                   </span>
                   {started && state?.status !== 'rendering' && (
                     <button

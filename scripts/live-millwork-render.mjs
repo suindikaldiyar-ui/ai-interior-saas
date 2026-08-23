@@ -99,33 +99,43 @@ try {
     );
   });
 
-  await page.goto(`${BASE}/demo`, { waitUntil: 'networkidle' });
-
-  // Чертёж — эталон для сверки раскладки.
-  await page.getByRole('button', { name: 'Фасад', exact: true }).click();
-  await sleep(500);
-  const sheet = page.locator('svg').first();
-  await sheet.screenshot({ path: `${OUT}/00-elevation.png` });
-
-  await page.getByRole('button', { name: 'Рендер', exact: true }).click();
-  await sleep(3000);
+  await fetch(`${BASE}/demo`).catch(() => undefined);
+  await page.goto(`${BASE}/demo`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+  await sleep(2500);
 
   /*
    * Фотография помещения — основа кадра. Прикладываем её тем же путём,
-   * что и замерщик: через поле выбора файла на вкладке рендера.
+   * что и замерщик: на шаге «Материалы».
    */
   const PHOTO = process.env.ROOM_PHOTO;
   if (PHOTO) {
-    await page.locator('input[type=file][accept="image/*"]').first().setInputFiles(PHOTO);
-    await page.waitForFunction(() => {
-      const img = document.querySelector('img[alt="Помещение клиента"]');
-      return Boolean(img);
-    }, { timeout: 20000 });
+    await page.getByRole('button', { name: /Материалы/ }).first().click();
+    await sleep(1500);
+    await page
+      .locator('input[type=file][accept="image/*"]')
+      .first()
+      .setInputFiles(PHOTO, { timeout: 60_000 });
+    await page.waitForFunction(
+      () => Boolean(document.querySelector('img[alt="Помещение клиента"]')),
+      { timeout: 30000 },
+    );
     const angle = process.env.ROOM_ANGLE;
     if (angle) await page.getByRole('button', { name: angle, exact: true }).click();
     console.log(`  фото приложено: ${PHOTO}${angle ? ` · ракурс «${angle}»` : ''}`);
     await sleep(500);
   }
+
+  await page.getByRole('button', { name: /Результат/ }).first().click();
+  await sleep(1000);
+
+  // Чертёж — эталон для сверки раскладки.
+  await page.getByRole('button', { name: 'Чертёж', exact: true }).click();
+  await sleep(700);
+  const sheet = page.locator('svg').first();
+  await sheet.screenshot({ path: `${OUT}/00-elevation.png` });
+
+  await page.getByRole('button', { name: 'Рендер', exact: true }).click();
+  await sleep(2000);
 
   await page.getByRole('button', { name: /Отрисовать три комплектации/ }).click();
 

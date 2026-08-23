@@ -60,16 +60,18 @@ export default function CommandBar({ onSubmit, busy, lastReply }: Props) {
 
   return (
     <div className="mw-panel">
-      {lastReply && <p className="mb-3 text-[14px] text-graphiteMw">{lastReply}</p>}
+      {lastReply && <p className="mb-3 text-[13px] text-graphiteMw">{lastReply}</p>}
 
       <div className="mb-3 flex flex-wrap gap-2">
-        {HINTS.map((hint) => (
+        {HINTS.map((hint, i) => (
           <button
             key={hint}
             type="button"
             disabled={busy}
             onClick={() => void onSubmit(hint)}
-            className="mw-touch rounded-[var(--r-control)] bg-sheet px-3 text-[13px] text-graphiteMw hover:text-textMw disabled:opacity-40"
+            className={`mw-touch rounded-[var(--r-control)] bg-sheet px-3 text-[13px] text-graphiteMw hover:text-textMw disabled:opacity-40 ${
+              i > 2 ? 'hidden sm:inline-flex' : ''
+            }`}
           >
             {hint}
           </button>

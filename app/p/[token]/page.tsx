@@ -3,6 +3,7 @@ import ClientPortal from '@/components/ClientPortal';
 import ClientOffer from '@/components/millwork/ClientOffer';
 import { fetchCatalog } from '@/lib/catalog';
 import { DEFAULT_REQUIREMENTS, composeVariants, workspaceInput } from '@/lib/millwork/workspace';
+import { VARIANT_STYLE } from '@/lib/millwork/styles';
 import { isEstimatePreliminary, resolveSurvey } from '@/types/survey';
 import type { MillworkState } from '@/lib/projects';
 import { storageUrl } from '@/lib/supabase/config';
@@ -76,13 +77,20 @@ export default async function SharePage({ params }: PageProps) {
      * Фотография помещения и картинка выбранной комплектации: сравнение
      * «до и после» — главное доказательство, что планировка не поехала.
      */
-    const { data: renderRow } = await service
+    /*
+     * Картинки всех трёх комплектаций лежат в Storage, поэтому «последняя»
+     * больше не значит «та, что выбрали». Берём строку выбранного стиля,
+     * и только если её нет — самую свежую.
+     */
+    const { data: renderRows } = await service
       .from('renders')
-      .select('image_path, created_at')
+      .select('image_path, style_id, created_at')
       .eq('project_id', project.id as string)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .order('created_at', { ascending: false });
+
+    const chosenStyle = VARIANT_STYLE[millwork.selectedVariant ?? 'optimal'];
+    const renderRow =
+      (renderRows ?? []).find((r) => r.style_id === chosenStyle) ?? (renderRows ?? [])[0];
     // Те же состояния величин, что видел замерщик: клиент не должен узнать
     // о допущениях позже, чем подпишет.
     const survey = millwork.survey ? resolveSurvey(millwork.survey) : null;

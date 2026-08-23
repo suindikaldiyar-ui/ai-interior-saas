@@ -23,7 +23,7 @@ export type SurveyWarning = {
 };
 
 /** Сколько предупреждений видно одновременно. Остальные — под «ещё N». */
-export const VISIBLE_WARNINGS = 3;
+export const VISIBLE_WARNINGS = 2;
 
 const SEVERITY_ORDER: Record<Severity, number> = { blocking: 0, clarify: 1, info: 2 };
 

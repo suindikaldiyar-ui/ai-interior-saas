@@ -99,13 +99,13 @@ export default function KnownField({
                 : 'border-blueprint/50'
           }`}
         />
-        <span className="mw-num pointer-events-none absolute right-2 text-[11px] text-graphiteMw">
+        <span className="mw-num pointer-events-none absolute right-2 text-[13px] text-graphiteMw">
           {suffix}
         </span>
       </span>
 
       {assumedValue && (
-        <span className="mt-0.5 block text-[10px] leading-tight text-tape">
+        <span className="mt-0.5 block text-[13px] leading-tight text-tape">
           принято по умолчанию: {value.basis}
         </span>
       )}

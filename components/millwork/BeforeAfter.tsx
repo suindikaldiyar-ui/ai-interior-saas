@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 /**
  * «До и после»: фотография помещения против рендера.
@@ -9,8 +9,11 @@ import { useCallback, useRef, useState } from 'react';
  * окно, свою дверь и свои стены — и на них стоит его кухня. Техническая
  * 3D-сцена здесь не нужна вовсе, она нужна только для захвата кадра.
  *
- * Шторка тянется пальцем: Pointer Events ловят и мышь, и касание одним
- * кодом, а `setPointerCapture` не теряет палец за краем картинки.
+ * ПРОИЗВОДИТЕЛЬНОСТЬ. Во время перетаскивания React не трогается вовсе:
+ * позиция живёт в `ref` и пишется прямо в CSS-переменную `--split`, не чаще
+ * одного кадра. Слушатель `pointermove` навешивается на САМ блок только
+ * между `pointerdown` и `pointerup` — не на window и не навсегда. В состояние
+ * позиция попадает один раз, на отпускании.
  */
 
 type Props = {
@@ -27,6 +30,8 @@ type Props = {
   onOpen?: (image: string) => void;
 };
 
+const START_POS = 50;
+
 export default function BeforeAfter({
   photo,
   render,
@@ -35,25 +40,103 @@ export default function BeforeAfter({
   emptyHint = 'Нажмите «Отрисовать три комплектации»',
   onOpen,
 }: Props) {
-  const [pos, setPos] = useState(50);
-  const frame = useRef<HTMLDivElement>(null);
-  // Отдельный признак перетаскивания: полагаться на hasPointerCapture нельзя —
-  // захват недоступен для эмулированных указателей и молча роняет обработчик.
-  const dragging = useRef(false);
+  /*
+   * Счётчик рендеров для `scripts/check-repaint.mjs`: включается только
+   * флагом из скрипта, в обычной работе это одно чтение свойства. Мерить
+   * перерисовки иначе нечем — а именно они здесь и были проблемой.
+   */
+  if (typeof window !== 'undefined') {
+    const w = window as unknown as { __baCount?: boolean; __baRenders?: number };
+    if (w.__baCount) w.__baRenders = (w.__baRenders ?? 0) + 1;
+  }
 
-  const moveTo = useCallback((clientX: number) => {
-    const box = frame.current?.getBoundingClientRect();
-    if (!box || box.width === 0) return;
-    const next = ((clientX - box.left) / box.width) * 100;
-    setPos(Math.min(100, Math.max(0, next)));
+  /** Значение для React: подпись, aria и стартовая раскладка. */
+  const [pos, setPos] = useState(START_POS);
+
+  const frame = useRef<HTMLDivElement>(null);
+  const handle = useRef<HTMLDivElement>(null);
+  /** Живая позиция во время перетаскивания — без перерисовки дерева. */
+  const live = useRef(START_POS);
+  const raf = useRef<number | null>(null);
+  /** Снятие слушателей текущего перетаскивания. */
+  const stopDrag = useRef<(() => void) | null>(null);
+
+  /** Пишем позицию в DOM напрямую: CSS-переменная и aria на ручке. */
+  const paint = useCallback((value: number) => {
+    live.current = value;
+    frame.current?.style.setProperty('--split', `${value}%`);
+    handle.current?.setAttribute('aria-valuenow', String(Math.round(value)));
   }, []);
+
+  const fromClientX = useCallback(
+    (clientX: number) => {
+      const box = frame.current?.getBoundingClientRect();
+      if (!box || box.width === 0) return;
+      const next = ((clientX - box.left) / box.width) * 100;
+      paint(Math.min(100, Math.max(0, next)));
+    },
+    [paint],
+  );
+
+  // Незакрытое перетаскивание не должно пережить размонтирование.
+  useEffect(() => () => stopDrag.current?.(), []);
+
+  const beginDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    const el = frame.current;
+    if (!el) return;
+
+    stopDrag.current?.();
+    fromClientX(event.clientX);
+
+    try {
+      el.setPointerCapture(event.pointerId);
+    } catch {
+      /* эмулированный указатель захват не поддерживает */
+    }
+
+    const onMove = (e: PointerEvent) => {
+      // Не чаще кадра: между кадрами всё равно ничего не видно.
+      const x = e.clientX;
+      if (raf.current !== null) return;
+      raf.current = requestAnimationFrame(() => {
+        raf.current = null;
+        fromClientX(x);
+      });
+    };
+
+    const onEnd = () => {
+      stopDrag.current?.();
+      // Единственный setState за всё перетаскивание.
+      setPos(live.current);
+    };
+
+    el.addEventListener('pointermove', onMove);
+    el.addEventListener('pointerup', onEnd);
+    el.addEventListener('pointercancel', onEnd);
+
+    stopDrag.current = () => {
+      el.removeEventListener('pointermove', onMove);
+      el.removeEventListener('pointerup', onEnd);
+      el.removeEventListener('pointercancel', onEnd);
+      if (raf.current !== null) {
+        cancelAnimationFrame(raf.current);
+        raf.current = null;
+      }
+      stopDrag.current = null;
+    };
+  };
+
+  const nudge = (delta: number) => {
+    const next = Math.min(100, Math.max(0, live.current + delta));
+    paint(next);
+    setPos(next);
+  };
 
   if (!photo) {
     return (
       <div className="mw-panel-flat flex w-full max-w-3xl flex-col items-center gap-3 px-6 py-10 text-center">
         <p className="text-[15px] leading-snug text-graphiteMw">
-          Сравнить не с чем: фотографии помещения нет. С ней клиент увидит
-          свою квартиру, а не похожую.
+          Без фотографии помещения клиент увидит настроение, а не свою квартиру.
         </p>
         {onAddPhoto && (
           <button type="button" onClick={onAddPhoto} className="mw-btn mw-btn-primary">
@@ -65,39 +148,12 @@ export default function BeforeAfter({
   }
 
   return (
-    /* Ширина ограничена: на планшете кадр 3:2 во всю ширину выдавливает
-       карточки вариантов и кнопки за экран. */
     <figure className="m-0 w-full max-w-3xl lg:max-w-[560px]">
       <div
         ref={frame}
+        style={{ '--split': `${pos}%` } as React.CSSProperties}
         className="relative aspect-[3/2] w-full touch-none select-none overflow-hidden rounded-[var(--r-panel)] bg-navyDeep"
-        onPointerDown={(e) => {
-          dragging.current = true;
-          moveTo(e.clientX);
-          // Захват держит палец за краем картинки; без него тоже работает.
-          try {
-            e.currentTarget.setPointerCapture(e.pointerId);
-          } catch {
-            /* указатель уже отпущен или эмулирован */
-          }
-        }}
-        onPointerMove={(e) => {
-          if (dragging.current) moveTo(e.clientX);
-        }}
-        onPointerUp={(e) => {
-          dragging.current = false;
-          try {
-            e.currentTarget.releasePointerCapture(e.pointerId);
-          } catch {
-            /* захвата и не было */
-          }
-        }}
-        onPointerCancel={() => {
-          dragging.current = false;
-        }}
-        onPointerLeave={() => {
-          dragging.current = false;
-        }}
+        onPointerDown={beginDrag}
       >
         {/* До: помещение клиента */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -112,7 +168,7 @@ export default function BeforeAfter({
         {/* После: выбранная комплектация */}
         <div
           className="absolute inset-0"
-          style={{ clipPath: `inset(0 0 0 ${pos}%)` }}
+          style={{ clipPath: 'inset(0 0 0 var(--split))' }}
           aria-hidden={!render}
         >
           {render ? (
@@ -126,7 +182,7 @@ export default function BeforeAfter({
             />
           ) : (
             <div className="flex h-full w-full items-center justify-center bg-navyDeep/85 px-6 text-center">
-              <span className="text-[14px] leading-snug text-graphiteMw">{emptyHint}</span>
+              <span className="text-[13px] leading-snug text-graphiteMw">{emptyHint}</span>
             </div>
           )}
         </div>
@@ -134,9 +190,10 @@ export default function BeforeAfter({
         {/* Шторка */}
         <div
           className="pointer-events-none absolute inset-y-0 w-px bg-cyanBright"
-          style={{ left: `${pos}%` }}
+          style={{ left: 'var(--split)' }}
         />
         <div
+          ref={handle}
           role="slider"
           aria-label="Сравнение до и после"
           aria-valuemin={0}
@@ -144,11 +201,11 @@ export default function BeforeAfter({
           aria-valuenow={Math.round(pos)}
           tabIndex={0}
           onKeyDown={(e) => {
-            if (e.key === 'ArrowLeft') setPos((p) => Math.max(0, p - 4));
-            if (e.key === 'ArrowRight') setPos((p) => Math.min(100, p + 4));
+            if (e.key === 'ArrowLeft') nudge(-4);
+            if (e.key === 'ArrowRight') nudge(4);
           }}
           className="absolute top-1/2 flex h-11 w-11 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize items-center justify-center rounded-full bg-cyanBright text-navyDeep shadow-[0_2px_8px_rgba(0,0,0,0.4)]"
-          style={{ left: `${pos}%` }}
+          style={{ left: 'var(--split)' }}
         >
           <span aria-hidden className="text-[15px] leading-none">
             ⇄

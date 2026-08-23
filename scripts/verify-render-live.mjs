@@ -83,7 +83,8 @@ try {
   });
 
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-  await page.goto(BASE, { waitUntil: 'networkidle' });
+  // Студия переехала в (legacy): корень ведёт в список объектов.
+  await page.goto(`${BASE}/studio`, { waitUntil: 'networkidle' });
   await page.waitForSelector('canvas', { timeout: 30_000 });
   await sleep(2500);
 

@@ -2,170 +2,264 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ──────────────────────────────────────────────────────────────────────────
+   ПАЛИТРА
+
+   Синька отменена. Инструмент мебельной компании берёт язык самого
+   производства: тёплый почти-чёрный вместо серого, костяной текст вместо
+   белого, латунь вместо неона. Один акцентный цвет на весь продукт —
+   он означает «основное действие» и «выбрано», больше ничего.
+
+   Имена переменных оставлены прежними (--navy, --cyan, --sheet): на них
+   завязаны чертёжные компоненты и полсотни классов Tailwind. Меняются
+   значения, а не имена — иначе редизайн превращается в переписывание.
+   ────────────────────────────────────────────────────────────────────── */
 :root {
-  /* Студия живёт на той же синьке: платформа должна выглядеть одним
-     продуктом, а не двумя приложениями под общим логотипом.
-     Имена оставлены прежними — на них завязан весь интерфейс фаз 1–3. */
-  --paper: #0b1524;
-  --paper-alt: #111e33;
-  --graphite: #e4ebf4;
-  --graphite-soft: #8395b0;
-  --line: #23364f;
-  --line-strong: #2f4666;
-  --field: #0d2138;
-  --patina: #3d8fd1;
-  --patina-soft: #6fb7e8;
-  --ochre: #e8b417;
-  --viewport: #0b1524;
-  --select: #e0a92e;
+  color-scheme: dark;
 
-  /* ── Синька ──
-     Чертёж исторически печатался цианотипией: глубокий синий фон, белые
-     линии. Интерфейсу возвращён его собственный артефакт, а не выбрана
-     тёмная тема ради вкуса. На бумаге всё инвертируется обратно —
-     см. @media print ниже. */
-  --navy-deep: #0b1524;
-  --navy: #111e33;
-  --navy-line: #23364f;
-  --sheet: #0d2138;
-  --cyan: #6fb7e8;
-  --cyan-bright: #3d8fd1;
-  --text: #e4ebf4;
-  --text-dim: #8395b0;
-  --tape: #e8b417;
-  --alert: #e5544b;
+  /* Основа */
+  --bg: #16150f;
+  --surface: #1e1d16;
+  --surface-2: #272519;
+  --line-warm: #34322a;
+  --text: #f2efe6;
+  --text-dim: #9c978a;
 
-  /* Прежние имена оставлены как псевдонимы: на них завязаны чертёжные
-     компоненты, и ломать их ради переименования смысла нет. */
-  --concrete: var(--navy-deep);
-  --concrete-deep: var(--navy);
+  /* Действие и состояния */
+  --accent: #c08b3e;
+  --accent-sub: #8a6428;
+  --positive: #6e8b5b;
+  --alert: #b5533f;
+
+  /* Одна тень на весь продукт. Блоки разделяются перепадом плоскости. */
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.28);
+
+  /* ── Прежние имена: конфигуратор и чертёж ── */
+  --navy-deep: var(--bg);
+  --navy: var(--surface);
+  --navy-line: var(--line-warm);
+  --sheet: var(--surface-2);
+  --cyan: #d8a25a; /* наведение, тонкие акцентные линии */
+  --cyan-bright: var(--accent); /* основное действие, «выбрано» */
+  --tape: var(--accent);
+
+  /* ── Прежние имена: студия и админка ── */
+  --paper: var(--bg);
+  --paper-alt: var(--surface);
+  --graphite: var(--text);
+  --graphite-soft: var(--text-dim);
+  --line: var(--line-warm);
+  --line-strong: #423f34;
+  --field: var(--surface-2);
+  --patina: var(--accent);
+  --patina-soft: var(--cyan);
+  --ochre: var(--accent);
+  --viewport: var(--bg);
+  --select: var(--accent);
+
+  --concrete: var(--bg);
+  --concrete-deep: var(--surface);
   --ink: var(--text);
   --graphite-mw: var(--text-dim);
-  --blueprint: var(--cyan);
+  /* Линии чертежа: костяные, а не цветные. Чертёж — документ, не украшение. */
+  --blueprint: #cfc8b6;
 }
 
-/* ── Плотность ──
-   Прежние 11 px и рамки в один пиксель делали из инструмента старую
-   CAD-программу: экран невозможно объяснить замерщику за пять минут.
-   Цвет остался, изменилась плотность — воздух, крупный текст, поверхности
-   вместо рамок. Чертёж под это правило НЕ подпадает: там мелкий шрифт
-   уместен, это технический документ. */
+/* ── Светлая тема ──
+   Переключателем в шапке, выбор запоминается. Тёплая бумага, а не белизна:
+   тот же продукт при дневном свете на объекте. */
+html[data-theme='light'] {
+  color-scheme: light;
+
+  --bg: #f7f5ef;
+  --surface: #ffffff;
+  --surface-2: #f1eee5;
+  --line-warm: #e4e0d5;
+  --text: #1a1913;
+  --text-dim: #6e6a5e;
+
+  --accent: #8a6428;
+  --accent-sub: #6d4e1e;
+  --positive: #4f6740;
+  --alert: #9c4130;
+
+  --shadow: 0 1px 2px rgba(26, 25, 19, 0.1);
+
+  --cyan: #a97c33;
+  --line-strong: #d5d0c2;
+  --blueprint: #4a4639;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   ПРОСТРАНСТВО
+
+   Плотность больше не читается как «мощно», она читается как
+   недоделанность. Экран должен казаться недозаполненным.
+   ────────────────────────────────────────────────────────────────────── */
 :root {
-  --r-panel: 10px;
-  --r-control: 8px;
-  --pad-panel: 20px;
-  --h-button: 48px;
-  --h-input: 56px;
+  --r-panel: 14px;
+  --r-control: 10px;
+  --pad-panel: 24px;
+  --gap-block: 20px;
+  --h-button: 44px;
+  --h-button-lg: 52px;
+  --h-input: 52px;
   --gap-touch: 8px;
 }
 
 .mw-root {
   font-size: 15px;
-  line-height: 1.5;
+  line-height: 1.55;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui, system-ui, sans-serif);
 }
 
 @layer components {
   /* Панель читается перепадом плоскостей, а не линией. */
   .mw-panel {
-    background: var(--navy);
+    background: var(--surface);
     border-radius: var(--r-panel);
     padding: var(--pad-panel);
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.28);
+    box-shadow: var(--shadow);
   }
 
   .mw-panel-flat {
-    background: var(--navy);
+    contain: paint;
+    background: var(--surface);
     border-radius: var(--r-panel);
   }
 
-  /* Кнопки и поля: палец, а не курсор. */
+  /* Рамка выделения рисуется ВНУТРЬ: наружную обрезал бы contain. */
+  .mw-btn:focus-visible,
+  .mw-panel-flat:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+
+  /*
+   * Кнопки и поля: палец, а не курсор.
+   *
+   * `contain: paint` — не украшение, а причина: без него наведение на любую
+   * кнопку помечало грязным весь кадр (медиана отрисовки 967 600 px²,
+   * то есть весь вьюпорт). С ним отрисовка ограничена самой кнопкой.
+   * Переходов на цвете здесь нет и быть не должно — они возвращают тот же
+   * поток отрисовок. Единственное движение — нажатие, и оно на transform.
+   */
   .mw-btn {
+    contain: paint;
     min-height: var(--h-button);
     border-radius: var(--r-control);
-    padding: 0 20px;
-    font-size: 14px;
+    padding: 0 18px;
+    font-size: 15px;
     font-weight: 500;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     gap: 8px;
-    transition: background-color 0.12s ease, border-color 0.12s ease;
+    transition: transform 90ms ease;
+  }
+  .mw-btn:active:not(:disabled) {
+    transform: scale(0.985);
   }
 
   .mw-btn-primary {
-    background: var(--cyan-bright);
-    color: var(--navy-deep);
+    background: var(--accent);
+    color: #16150f;
     border: 0;
   }
-  .mw-btn-primary:hover:not(:disabled) { background: var(--cyan); }
-  .mw-btn-primary:disabled { opacity: 0.4; }
+  .mw-btn-primary:hover:not(:disabled) {
+    background: var(--cyan);
+  }
+  .mw-btn-primary:active:not(:disabled) {
+    background: var(--accent-sub);
+  }
+  .mw-btn-primary:disabled {
+    opacity: 0.4;
+  }
+
+  /* Главное действие экрана — выше остальных на восемь пикселей. */
+  .mw-btn-lg {
+    min-height: var(--h-button-lg);
+    font-size: 15px;
+  }
 
   .mw-btn-ghost {
-    background: transparent;
+    background: var(--surface-2);
     color: var(--text);
-    border: 1px solid var(--navy-line);
+    border: 0;
   }
-  .mw-btn-ghost:hover:not(:disabled) { border-color: var(--cyan); }
-  .mw-btn-ghost:disabled { opacity: 0.4; }
+  .mw-btn-ghost:hover:not(:disabled) {
+    background: var(--line-warm);
+  }
+  .mw-btn-ghost:disabled {
+    opacity: 0.4;
+  }
 
   .mw-field {
     min-height: var(--h-input);
     border-radius: var(--r-control);
-    background: var(--sheet);
-    border: 1px solid var(--navy-line);
+    background: var(--surface-2);
+    border: 1px solid transparent;
     padding: 0 14px;
     font-size: 17px;
     width: 100%;
     outline: none;
   }
-  .mw-field:focus { border-color: var(--cyan); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .mw-btn { transition: none; }
+  .mw-field:focus {
+    border-color: var(--accent);
+  }
 }
 
 /* Все числа моноширинные и в колонку: цифры в смете и в размерной цепочке
    обязаны стоять друг под другом, иначе их невозможно сверять глазом. */
-.mw-num {
+.mw-num,
+.tnum {
   font-family: var(--font-mono, ui-monospace, 'IBM Plex Mono', Menlo, monospace);
   font-variant-numeric: tabular-nums;
   font-feature-settings: 'tnum' 1;
 }
 
-.mw-root {
-  background: var(--concrete);
-  color: var(--ink);
-  font-family: var(--font-ui, 'Archivo', system-ui, sans-serif);
-}
-
-/* Лист чертежа — настоящая синька: тёмно-синее поле, тонкая светлая рамка
-   вместо тени. Тень на тёмном фоне не читается и выглядит грязью. */
+/* Лист чертежа. Плотность чертежа НЕ трогаем: это технический документ,
+   мелкий шрифт там уместен и читается как норма отрасли. */
 .mw-sheet {
-  background: var(--sheet);
-  border: 1px solid var(--navy-line);
-  box-shadow: inset 0 0 0 1px rgba(111, 183, 232, 0.08);
+  background: var(--surface-2);
+  border-radius: var(--r-panel);
+  box-shadow: var(--shadow);
 }
 
 .mw-label {
-  font-size: 11px;
-  line-height: 14px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--graphite-mw);
+  font-size: 13px;
+  line-height: 18px;
+  letter-spacing: 0.02em;
+  color: var(--text-dim);
+}
+
+/* Заголовки: спокойный отрицательный трекинг, один заголовок на экран. */
+.mw-title {
+  font-size: 22px;
+  line-height: 1.25;
+  font-weight: 600;
+  letter-spacing: -0.011em;
+}
+
+.mw-display {
+  font-size: 32px;
+  line-height: 1.15;
+  font-weight: 600;
+  letter-spacing: -0.011em;
 }
 
 /*
- * Нативный select рисуется системным виджетом поверх нашего фона: на синьке
- * он выезжает светлым прямоугольником, и панель выглядит недовёрстанной.
- * Гасим системную отрисовку и рисуем стрелку сами.
+ * Нативный select рисуется системным виджетом поверх нашего фона и выезжает
+ * чужим прямоугольником. Гасим системную отрисовку и рисуем стрелку сами.
  */
 .mw-root select,
 .mw-select {
   appearance: none;
   -webkit-appearance: none;
-  background-image: linear-gradient(45deg, transparent 50%, var(--blueprint) 50%),
-    linear-gradient(135deg, var(--blueprint) 50%, transparent 50%);
+  background-image: linear-gradient(45deg, transparent 50%, var(--text-dim) 50%),
+    linear-gradient(135deg, var(--text-dim) 50%, transparent 50%);
   background-position:
     calc(100% - 14px) calc(50% - 2px),
     calc(100% - 9px) calc(50% - 2px);
@@ -174,17 +268,66 @@
   padding-right: 26px;
 }
 
-/* Цели касания: палец, стоя, в чужой квартире. */
-.mw-touch {
-  min-height: 48px;
-  min-width: 48px;
+/*
+ * Сцена, уехавшая за экран ради захвата кадра. R3F ставит на свою обёртку
+ * и канвас `pointer-events: auto`, поэтому гасим их явно: указатель не
+ * должен доходить до сцены, которую никто не видит.
+ */
+.mw-scene-hidden,
+.mw-scene-hidden * {
+  pointer-events: none !important;
 }
 
-/* Изменившиеся размеры подсвечиваются на 400 мс: видно, что инструмент
-   пересчитал, а не перерисовал. Других эффектов на странице нет. */
+/* Цели касания: палец, стоя, в чужой квартире. */
+.mw-touch {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   ДВИЖЕНИЕ
+
+   Ровно три эффекта на весь продукт, больше не нужно:
+   1. нажатие кнопки — scale(0.985), 90 мс (см. .mw-btn выше);
+   2. появление карточки рендера — проявление 180 мс, по одной;
+   3. смена числа в смете — короткая подсветка значения, 300 мс.
+
+   Всё остальное — без анимации. Ни один эффект не идёт на свойствах,
+   вызывающих раскладку или перекраску большой площади.
+   ────────────────────────────────────────────────────────────────────── */
+@keyframes mw-appear {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.mw-appear {
+  animation: mw-appear 180ms ease-out both;
+}
+
+@keyframes mw-value {
+  from {
+    color: var(--accent);
+  }
+  to {
+    color: inherit;
+  }
+}
+
+.mw-value-flash {
+  animation: mw-value 300ms ease-out;
+}
+
+/* Размеры на чертеже подсвечиваются тем же приёмом: видно, что инструмент
+   пересчитал, а не перерисовал. */
 @keyframes mw-flash {
   from {
-    fill: var(--tape);
+    fill: var(--accent);
   }
   to {
     fill: var(--blueprint);
@@ -192,42 +335,44 @@
 }
 
 .mw-flash {
-  animation: mw-flash 400ms ease-out;
+  animation: mw-flash 300ms ease-out;
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .mw-appear,
+  .mw-value-flash,
   .mw-flash {
     animation: none;
   }
+  .mw-btn {
+    transition: none;
+  }
+  .mw-btn:active:not(:disabled) {
+    transform: none;
+  }
 }
 
+/* ── Оболочка ── */
 html,
 body {
   height: 100%;
 }
 
 body {
-  background: var(--paper);
-  color: var(--graphite);
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui, system-ui, sans-serif);
   font-feature-settings: 'kern' 1, 'liga' 1;
   -webkit-font-smoothing: antialiased;
 }
 
-/* Все числа в интерфейсе должны стоять в колонку — иначе координаты «пляшут». */
-.tnum {
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: 'tnum' 1;
-}
-
 .micro-label {
-  font-size: 10px;
-  line-height: 14px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--graphite-soft);
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-dim);
 }
 
-/* Тонкий скроллбар — «чертёжная» оболочка не терпит системных полос. */
+/* Тонкий скроллбар: системная полоса на тёплом фоне выглядит чужой. */
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--line-strong) transparent;
@@ -244,10 +389,7 @@ body {
 
 *::-webkit-scrollbar-thumb {
   background: var(--line-strong);
-}
-
-*::-webkit-scrollbar-thumb:hover {
-  background: var(--graphite-soft);
+  border-radius: 3px;
 }
 
 :focus {
@@ -255,11 +397,11 @@ body {
 }
 
 :focus-visible {
-  outline: 2px solid var(--patina);
+  outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
 
-/* Спиннеры у number-полей ломают моноширинную сетку координат. */
+/* Спиннеры у number-полей ломают моноширинную сетку размеров. */
 input[type='number']::-webkit-outer-spin-button,
 input[type='number']::-webkit-inner-spin-button {
   -webkit-appearance: none;
@@ -288,40 +430,36 @@ input[type='color']::-webkit-color-swatch {
   border: none;
 }
 
-/* Печать = «Скачать PDF» в кабинете клиента. Системный диалог печати умеет
-   сохранять в PDF и, в отличие от jsPDF, не требует тащить кириллический
-   шрифт в бандл. Прячем интерактив и разворачиваем таблицу на всю ширину. */
+/* ──────────────────────────────────────────────────────────────────────────
+   ПЕЧАТЬ
+
+   «Скачать PDF» в кабинете клиента — это системный диалог печати: он умеет
+   сохранять в PDF и не требует тащить кириллический шрифт в бандл.
+
+   НА БУМАГЕ ВСЁ ИНВЕРТИРУЕТСЯ: белый лист, чёрные линии. Тёмный фон в
+   принтере съел бы картридж и сделал лист нечитаемым в цеху. Инвертируем
+   сами токены, а не отдельные селекторы: интерфейс построен на них,
+   поэтому одного блока хватает и на чертёж, и на смету, и на то,
+   что появится позже.
+   ────────────────────────────────────────────────────────────────────── */
 @media print {
-  /*
-   * НА БУМАГЕ ВСЁ ИНВЕРТИРУЕТСЯ. На экране цианотипия, на печати — обычный
-   * чертёж: белый лист, чёрные линии. Синий фон в принтере съел бы картридж
-   * и сделал лист нечитаемым в цеху.
-   *
-   * Инвертируем сами переменные, а не отдельные селекторы: весь интерфейс
-   * построен на токенах, поэтому одного этого блока хватает и на чертёж,
-   * и на смету, и на всё, что появится позже.
-   */
-  :root {
-    --navy-deep: #ffffff;
-    --navy: #ffffff;
-    --navy-line: #000000;
-    --sheet: #ffffff;
-    --cyan: #000000;
-    --cyan-bright: #000000;
+  :root,
+  html[data-theme='light'] {
+    --bg: #ffffff;
+    --surface: #ffffff;
+    --surface-2: #ffffff;
+    --line-warm: #000000;
     --text: #000000;
     --text-dim: #333333;
-    --tape: #000000;
+    --accent: #000000;
+    --accent-sub: #000000;
+    --positive: #000000;
     --alert: #000000;
+    --shadow: none;
 
-    --paper: #ffffff;
-    --paper-alt: #ffffff;
-    --graphite: #000000;
-    --graphite-soft: #333333;
-    --line: #000000;
+    --cyan: #000000;
     --line-strong: #000000;
-    --field: #ffffff;
-    --patina: #000000;
-    --ochre: #000000;
+    --blueprint: #000000;
   }
 
   .print\:hidden {
@@ -373,6 +511,10 @@ input[type='color']::-webkit-color-swatch {
     max-height: 165mm;
   }
 
+  .mw-root svg text {
+    fill: #000 !important;
+  }
+
   /* Смета уезжает на следующий лист: чертёж занимает свой целиком. */
   .mw-root aside {
     page-break-before: always;
@@ -391,175 +533,5 @@ input[type='color']::-webkit-color-swatch {
   /* Галочки в печати смысла не имеют, а выключенные строки видны блёклыми. */
   .mw-root input[type='checkbox'] {
     display: none !important;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .mw-flash {
-    animation: none;
-  }
-}
-
-html,
-body {
-  height: 100%;
-}
-
-body {
-  background: var(--paper);
-  color: var(--graphite);
-  font-feature-settings: 'kern' 1, 'liga' 1;
-  -webkit-font-smoothing: antialiased;
-}
-
-/* Все числа в интерфейсе должны стоять в колонку — иначе координаты «пляшут». */
-.tnum {
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: 'tnum' 1;
-}
-
-.micro-label {
-  font-size: 10px;
-  line-height: 14px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--graphite-soft);
-}
-
-/* Тонкий скроллбар — «чертёжная» оболочка не терпит системных полос. */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: var(--line-strong) transparent;
-}
-
-*::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-
-*::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-*::-webkit-scrollbar-thumb {
-  background: var(--line-strong);
-}
-
-*::-webkit-scrollbar-thumb:hover {
-  background: var(--graphite-soft);
-}
-
-:focus {
-  outline: none;
-}
-
-:focus-visible {
-  outline: 2px solid var(--patina);
-  outline-offset: 1px;
-}
-
-/* Спиннеры у number-полей ломают моноширинную сетку координат. */
-input[type='number']::-webkit-outer-spin-button,
-input[type='number']::-webkit-inner-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
-}
-
-input[type='number'] {
-  -moz-appearance: textfield;
-  appearance: textfield;
-}
-
-input[type='color'] {
-  -webkit-appearance: none;
-  appearance: none;
-  border: 1px solid var(--line-strong);
-  padding: 0;
-  background: none;
-  cursor: pointer;
-}
-
-input[type='color']::-webkit-color-swatch-wrapper {
-  padding: 2px;
-}
-
-input[type='color']::-webkit-color-swatch {
-  border: none;
-}
-
-/* Печать = «Скачать PDF» в кабинете клиента. Системный диалог печати умеет
-   сохранять в PDF и, в отличие от jsPDF, не требует тащить кириллический
-   шрифт в бандл. Прячем интерактив и разворачиваем таблицу на всю ширину. */
-@media print {
-  .print\:hidden {
-    display: none !important;
-  }
-
-  body {
-    background: #fff;
-  }
-
-  table {
-    page-break-inside: auto;
-  }
-
-  tr {
-    page-break-inside: avoid;
-  }
-
-  /* Чертёж печатается на A4 альбомном: лист вешают на стене объекта. */
-  @page {
-    size: A4 landscape;
-    margin: 10mm;
-  }
-
-  /* НА БУМАГЕ ВСЁ ИНВЕРТИРУЕТСЯ. На экране цианотипия, на печати —
-     обычный чертёж: белый лист, чёрные линии. Синий фон в принтере
-     съел бы картридж и сделал лист нечитаемым в цеху. */
-  .mw-root,
-  .mw-sheet {
-    background: #fff !important;
-    box-shadow: none !important;
-    color: #000 !important;
-  }
-
-  .mw-root svg [stroke='var(--blueprint)'],
-  .mw-root svg line,
-  .mw-root svg rect,
-  .mw-root svg circle,
-  .mw-root svg polygon {
-    stroke: #000 !important;
-  }
-
-  .mw-root svg text {
-    fill: #000 !important;
-  }
-
-  /* Размерные линии не должны обрезаться на краю листа. */
-  .mw-root svg {
-    overflow: visible;
-    max-width: 100%;
-  }
-
-  .mw-root {
-    display: block !important;
-    height: auto !important;
-    overflow: visible !important;
-  }
-
-  .mw-root aside {
-    width: 100% !important;
-    border: 0 !important;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
   }
 }

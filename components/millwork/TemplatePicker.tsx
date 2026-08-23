@@ -51,7 +51,12 @@ function Preview({ template }: { template: RunTemplate }) {
   const cell = (width - pad * 2) / slots;
 
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="w-full" role="presentation">
+    <svg
+      viewBox={`0 0 ${width} ${height}`}
+      className="w-full"
+      role="presentation"
+      data-doc
+    >
       {/* Стена */}
       <line
         x1={pad}
@@ -145,9 +150,9 @@ export default function TemplatePicker({
             onClick={() => !blocked && onSelect(template)}
             disabled={Boolean(blocked)}
             aria-pressed={active}
-            className={`mw-panel-flat p-4 text-left transition-colors ${
+            className={`mw-panel-flat p-4 text-left ${
               active
-                ? 'ring-2 ring-cyanBright'
+                ? 'ring-2 ring-inset ring-cyanBright'
                 : blocked
                   ? 'opacity-45'
                   : 'hover:bg-sheet'
@@ -158,10 +163,10 @@ export default function TemplatePicker({
             <p className="mt-3 text-[17px] font-medium leading-tight">
               {template.name}
               {template.id.startsWith('org:') && (
-                <span className="ml-2 text-[12px] text-cyan">ваш</span>
+                <span className="ml-2 text-[13px] text-cyan">ваш</span>
               )}
             </p>
-            <p className="mt-1 text-[14px] leading-snug text-graphiteMw">{template.hint}</p>
+            <p className="mt-1 text-[13px] leading-snug text-graphiteMw">{template.hint}</p>
 
             <p className="mw-num mt-3 text-[13px] text-cyan">
               {blocked ? (

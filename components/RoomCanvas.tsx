@@ -655,7 +655,16 @@ function Scene() {
   );
 }
 
-export default function RoomCanvas() {
+export default function RoomCanvas({
+  /**
+   * `demand` — для сцены, уехавшей за экран ради захвата кадра: она обязана
+   * оставаться живой, но рисовать по 60 кадров в секунду ей незачем.
+   * Захват всё равно вызывает `gl.render` сам.
+   */
+  frameloop = 'always',
+}: {
+  frameloop?: 'always' | 'demand';
+} = {}) {
   const selectItem = useInteriorStore((s) => s.selectItem);
 
   useHotkeys();
@@ -664,6 +673,7 @@ export default function RoomCanvas() {
 
   return (
     <Canvas
+      frameloop={frameloop}
       shadows="soft"
       dpr={[1, 2]}
       camera={{ position: [5.2, 3.6, 6.4], fov: 42, near: 0.1, far: 200 }}

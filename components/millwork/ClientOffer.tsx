@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import ThemeToggle from '@/components/ThemeToggle';
 import BeforeAfter from './BeforeAfter';
 import ElevationDrawing from './ElevationDrawing';
 import { UNIT_LABEL_MW, formatMoney } from '@/lib/millwork/estimate';
@@ -77,26 +78,25 @@ export default function ClientOffer({
         <span className="text-[13px]">
           {title} · {zone}
         </span>
-        {clientName && (
-          <span className="mw-label ml-auto">Для {clientName}</span>
-        )}
+        {clientName && <span className="mw-label ml-auto">Для {clientName}</span>}
+        <ThemeToggle className={clientName ? '' : 'ml-auto'} />
       </header>
 
       <section className="border-b border-navyLine px-4 py-4">
         <p className="mw-label mb-1">Ваша кухня</p>
-        <p className="mw-num text-[28px] font-semibold leading-none">
+        <p className="mw-num mw-display">
           {formatMoney(estimate.total)} ₸
         </p>
-        <p className="mt-1 text-[12px] text-graphiteMw">
+        <p className="mt-1 text-[13px] text-graphiteMw">
           Цены зафиксированы на {estimate.calculatedAt}. Ряд {run.lengthMm} мм,
           модулей {run.modules.length}.
         </p>
         {preliminary && (
-          <p className="mt-1 text-[12px] text-tape">
+          <p className="mt-1 text-[13px] text-tape">
             Смета предварительная: часть размеров принята по умолчанию.
           </p>
         )}
-        <p className="mt-1 text-[11px] leading-snug">
+        <p className="mt-1 text-[13px] leading-snug">
           {pending.length > 0 ? (
             <span className="text-tape">
               Позиции, требующие уточнения на объекте: {pending.join('; ')}.
@@ -131,7 +131,7 @@ export default function ClientOffer({
               <tr key={line.key} className="border-b border-navyLine/60">
                 <td className="py-1.5 pr-2">
                   <div className="text-[13px] leading-tight">{line.title}</div>
-                  <div className="mw-num text-[11px] text-graphiteMw">
+                  <div className="mw-num text-[13px] text-graphiteMw">
                     {line.quantity} {UNIT_LABEL_MW[line.unit]}
                   </div>
                 </td>
@@ -148,7 +148,7 @@ export default function ClientOffer({
             type="button"
             onClick={approve}
             disabled={busy || liked}
-            className="mw-touch border border-cyanBright bg-cyanBright px-4 text-[12px] uppercase tracking-[0.1em] text-navyDeep disabled:opacity-50"
+            className="mw-btn mw-btn-lg mw-btn-primary"
           >
             {liked ? 'Вариант согласован' : 'Мне подходит'}
           </button>

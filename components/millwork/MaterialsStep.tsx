@@ -79,7 +79,7 @@ export default function MaterialsStep({
       {/* ── Фотография помещения ── */}
       <section className="mw-panel">
         <h3 className="text-[17px] font-medium">Фото помещения</h3>
-        <p className="mt-1 text-[14px] leading-snug text-graphiteMw">
+        <p className="mt-1 text-[13px] leading-snug text-graphiteMw">
           С него берутся окна, двери и ракурс. Из сцены — только гарнитур.
         </p>
 
@@ -93,7 +93,7 @@ export default function MaterialsStep({
               className="aspect-[3/2] w-full cursor-zoom-in rounded-[var(--r-control)] object-cover"
             />
           ) : (
-            <div className="flex aspect-[3/2] w-full items-center justify-center rounded-[var(--r-control)] border border-dashed border-navyLine px-6 text-center text-[14px] leading-snug text-tape">
+            <div className="flex aspect-[3/2] w-full items-center justify-center rounded-[var(--r-control)] border border-dashed border-navyLine px-6 text-center text-[15px] leading-snug text-tape">
               Без фото клиент увидит настроение, а не свою квартиру
             </div>
           )}
@@ -123,7 +123,7 @@ export default function MaterialsStep({
 
         {roomPhoto && (
           <div className="mt-5">
-            <p className="text-[14px] font-medium">Снимать как на фото</p>
+            <p className="text-[15px] font-medium">Снимать как на фото</p>
             <p className="mt-1 text-[13px] leading-snug text-graphiteMw">
               Кадр гарнитура снимется с той же стороны, с какой сделано фото.
             </p>
@@ -147,19 +147,19 @@ export default function MaterialsStep({
       {/* ── Артикул каталога ── */}
       <section className="mw-panel">
         <h3 className="text-[17px] font-medium">Материалы из каталога</h3>
-        <p className="mt-1 text-[14px] leading-snug text-graphiteMw">
+        <p className="mt-1 text-[13px] leading-snug text-graphiteMw">
           Артикул кухни даёт в рендер фасады, столешницу и фартук — именно ваши.
         </p>
 
         {kitchens.length === 0 ? (
-          <p className="mt-4 text-[14px] leading-snug text-tape">
-            В каталоге нет ни одной кухни. Заведите товар с областью применения
-            «зона» —{' '}
-            <a href="/admin/catalog" className="text-cyanBright underline">
-              перейти в каталог
+          <div className="mt-4">
+            <p className="text-[15px] leading-snug text-tape">
+              В каталоге нет ни одной кухни — клиент увидит настроение, а не ваш товар.
+            </p>
+            <a href="/admin/catalog" className="mw-btn mw-btn-ghost mt-3">
+              Завести кухню в каталоге
             </a>
-            .
-          </p>
+          </div>
         ) : (
           <>
             <div className="mt-4 grid gap-2">

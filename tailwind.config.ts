@@ -10,38 +10,48 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        paper: 'var(--paper, #0B1524)',
-        paperAlt: 'var(--paper-alt, #111E33)',
-        graphite: 'var(--graphite, #E4EBF4)',
-        graphiteSoft: 'var(--graphite-soft, #8395B0)',
-        line: 'var(--line, #23364F)',
-        lineStrong: 'var(--line-strong, #2F4666)',
-        /* Поля ввода: на синьке белый фон слепит. */
-        field: 'var(--field, #0D2138)',
+        /* ── Тёплая палитра производства. Значения — в globals.css. ──
+           Хекс здесь только запасной: он должен совпадать с токеном,
+           иначе Tailwind покажет один цвет, а страница другой. */
+        bgWarm: 'var(--bg, #16150F)',
+        surface: 'var(--surface, #1E1D16)',
+        surface2: 'var(--surface-2, #272519)',
+        lineWarm: 'var(--line-warm, #34322A)',
+        accent: 'var(--accent, #C08B3E)',
+        accentSub: 'var(--accent-sub, #8A6428)',
+        positive: 'var(--positive, #6E8B5B)',
+
+        paper: 'var(--paper, #16150F)',
+        paperAlt: 'var(--paper-alt, #1E1D16)',
+        graphite: 'var(--graphite, #F2EFE6)',
+        graphiteSoft: 'var(--graphite-soft, #9C978A)',
+        line: 'var(--line, #34322A)',
+        lineStrong: 'var(--line-strong, #423F34)',
+        field: 'var(--field, #272519)',
         // Акцент арендатора приходит из CSS-переменной, которую ставит layout
         // по домену. Хекс остаётся фоллбэком для платформы без брендирования.
-        patina: 'var(--patina, #1F5E5B)',
-        patinaSoft: 'var(--patina-soft, #2E7B77)',
-        ochre: 'var(--ochre, #E8B417)',
-        viewport: 'var(--viewport, #0B1524)',
-        select: '#E0A92E',
+        patina: 'var(--patina, #C08B3E)',
+        patinaSoft: 'var(--patina-soft, #D8A25A)',
+        ochre: 'var(--ochre, #C08B3E)',
+        viewport: 'var(--viewport, #16150F)',
+        select: 'var(--select, #C08B3E)',
 
-        // Синька: конфигуратор и студия. См. globals.css.
-        navyDeep: 'var(--navy-deep, #0B1524)',
-        navy: 'var(--navy, #111E33)',
-        navyLine: 'var(--navy-line, #23364F)',
-        cyan: 'var(--cyan, #6FB7E8)',
-        cyanBright: 'var(--cyan-bright, #3D8FD1)',
-        textMw: 'var(--text, #E4EBF4)',
-        // Псевдонимы прежних имён — чертёжные компоненты завязаны на них.
-        concrete: 'var(--concrete, #0B1524)',
-        concreteDeep: 'var(--concrete-deep, #111E33)',
-        sheet: 'var(--sheet, #0D2138)',
-        ink: 'var(--ink, #E4EBF4)',
-        graphiteMw: 'var(--graphite-mw, #8395B0)',
-        blueprint: 'var(--blueprint, #6FB7E8)',
-        tape: 'var(--tape, #E8B417)',
-        alert: 'var(--alert, #E5544B)',
+        // Прежние имена конфигуратора и чертежа: значения тёплые, имена
+        // остались, чтобы редизайн не превратился в переписывание разметки.
+        navyDeep: 'var(--navy-deep, #16150F)',
+        navy: 'var(--navy, #1E1D16)',
+        navyLine: 'var(--navy-line, #34322A)',
+        cyan: 'var(--cyan, #D8A25A)',
+        cyanBright: 'var(--cyan-bright, #C08B3E)',
+        textMw: 'var(--text, #F2EFE6)',
+        concrete: 'var(--concrete, #16150F)',
+        concreteDeep: 'var(--concrete-deep, #1E1D16)',
+        sheet: 'var(--sheet, #272519)',
+        ink: 'var(--ink, #F2EFE6)',
+        graphiteMw: 'var(--graphite-mw, #9C978A)',
+        blueprint: 'var(--blueprint, #CFC8B6)',
+        tape: 'var(--tape, #C08B3E)',
+        alert: 'var(--alert, #B5533F)',
       },
       fontFamily: {
         mono: [
@@ -54,11 +64,10 @@ const config: Config = {
         ],
       },
       fontSize: {
-        micro: ['10px', { lineHeight: '14px', letterSpacing: '0.14em' }],
-        tiny: ['11px', { lineHeight: '16px' }],
-      },
-      borderRadius: {
-        none: '0',
+        /* Шкала 13 / 15 / 17 / 22 / 32. Ниже 13 px не опускаемся нигде,
+           кроме чертежа: там мелкий шрифт — норма отрасли. */
+        micro: ['13px', { lineHeight: '18px' }],
+        tiny: ['13px', { lineHeight: '18px' }],
       },
     },
   },

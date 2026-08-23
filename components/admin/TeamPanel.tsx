@@ -95,7 +95,7 @@ export default function TeamPanel({
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="zamer@company.kz"
-                className="mw-touch mt-1 w-full border border-navyLine bg-navyDeep px-2 text-[14px] outline-none"
+                className="mw-field mt-2"
               />
             </label>
 
@@ -104,7 +104,7 @@ export default function TeamPanel({
               <select
                 value={role}
                 onChange={(e) => setRole(e.target.value as OrgRole)}
-                className="mw-touch mt-1 w-full border border-navyLine bg-navyDeep px-2 text-[13px]"
+                className="mw-field mt-2"
               >
                 {ORG_ROLES.filter((r) => r !== 'owner' || isOwner).map((r) => (
                   <option key={r} value={r}>
@@ -113,27 +113,27 @@ export default function TeamPanel({
                 ))}
               </select>
             </label>
-            <p className="mb-3 text-[11px] text-graphiteMw">{ROLE_HINT[role]}</p>
+            <p className="mb-3 text-[13px] text-graphiteMw">{ROLE_HINT[role]}</p>
 
             <button
               type="submit"
               disabled={busy}
-              className="mw-touch w-full border border-cyanBright bg-cyanBright px-3 text-[11px] uppercase tracking-[0.1em] text-navyDeep disabled:opacity-40"
+              className="mw-btn mw-btn-lg mw-btn-primary w-full"
             >
               {busy ? 'Отправляем…' : 'Пригласить'}
             </button>
 
-            {notice && <p className="mt-2 text-[12px] text-graphiteMw">{notice}</p>}
+            {notice && <p className="mt-2 text-[13px] text-graphiteMw">{notice}</p>}
           </form>
         ) : (
-          <p className="border-b border-navyLine px-3 py-3 text-[12px] text-graphiteMw">
+          <p className="border-b border-navyLine px-3 py-3 text-[13px] text-graphiteMw">
             Приглашать сотрудников может владелец или менеджер.
           </p>
         )}
 
         <ul>
           {rows.length === 0 && (
-            <li className="px-3 py-3 text-[12px] text-graphiteMw">Приглашений нет.</li>
+            <li className="px-3 py-3 text-[13px] text-graphiteMw">Приглашений нет.</li>
           )}
           {rows.map((row) => (
             <li
@@ -142,14 +142,14 @@ export default function TeamPanel({
             >
               <span className="text-[13px]">{row.email}</span>
               <span className="mw-label">{ROLE_LABEL[row.role] ?? row.role}</span>
-              <span className="mw-num ml-auto text-[11px] text-graphiteMw">
+              <span className="mw-num ml-auto text-[13px] text-graphiteMw">
                 {row.accepted_at ? 'вошёл' : 'ждёт входа'}
               </span>
               {!row.accepted_at && canInvite && (
                 <button
                   type="button"
                   onClick={() => revoke(row.id)}
-                  className="text-[11px] text-tape underline"
+                  className="text-[13px] text-tape underline"
                 >
                   Отозвать
                 </button>

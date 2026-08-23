@@ -51,12 +51,17 @@ export default function EstimateSheet({
         aria-expanded={open}
         className="mw-touch flex w-full items-center gap-3 rounded-[var(--r-control)] bg-navy px-4 text-left"
       >
-        <span className="text-[14px] text-graphiteMw">{variantTitle}</span>
-        <span className="mw-num text-[19px] font-semibold">
+        <span className="hidden truncate text-[13px] text-graphiteMw sm:block">
+          {variantTitle}
+        </span>
+        <span
+          key={estimate.total}
+          className="mw-num mw-value-flash whitespace-nowrap text-[22px] font-semibold"
+        >
           {formatMoney(estimate.total)} ₸
         </span>
         {preliminary && (
-          <span className="text-[12px] text-tape">предварительно</span>
+          <span className="text-[13px] text-tape">предварительно</span>
         )}
         <span className="ml-auto text-[13px] text-cyan">
           {open ? 'свернуть' : 'подробнее'}

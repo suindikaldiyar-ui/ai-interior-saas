@@ -30,7 +30,7 @@ export default function VariantTabs({ variants, active, onChange }: Props) {
             }`}
           >
             <span
-              className={`block text-[11px] uppercase tracking-[0.14em] ${
+              className={`block text-[13px] ${
                 on ? 'text-textMw' : 'text-graphiteMw'
               }`}
             >
@@ -44,7 +44,7 @@ export default function VariantTabs({ variants, active, onChange }: Props) {
             >
               {formatMoney(variant.estimate.total)} ₸
             </span>
-            <span className="mt-0.5 block text-[10px] leading-tight text-graphiteMw">
+            <span className="mt-0.5 block text-[13px] leading-tight text-graphiteMw">
               {variant.description}
             </span>
             {on && <span className="absolute inset-x-0 bottom-0 h-[2px] bg-tape" />}
