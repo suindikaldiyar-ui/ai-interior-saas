@@ -88,7 +88,10 @@ export default async function SharePage({ params }: PageProps) {
       .eq('project_id', project.id as string)
       .order('created_at', { ascending: false });
 
-    const chosenStyle = VARIANT_STYLE[millwork.selectedVariant ?? 'optimal'];
+    // Стиль выбирал замерщик; у старых объектов его нет — там стиль
+    // выводился из комплектации, и эта таблица остаётся запасным вариантом.
+    const chosenStyle =
+      millwork.renderStyle ?? VARIANT_STYLE[millwork.selectedVariant ?? 'optimal'];
     const renderRow =
       (renderRows ?? []).find((r) => r.style_id === chosenStyle) ?? (renderRows ?? [])[0];
     // Те же состояния величин, что видел замерщик: клиент не должен узнать

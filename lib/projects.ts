@@ -49,6 +49,8 @@ export type MillworkState = {
   disabled?: Partial<Record<VariantKey, string[]>>;
   /** Снимок ставок на момент расчёта. */
   priceSnapshot?: Record<string, number>;
+  /** Стиль рендера: его выбирает человек, и он обязан пережить закрытие. */
+  renderStyle?: string;
   savedAt?: string;
 };
 

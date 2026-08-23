@@ -25,7 +25,15 @@ type Props = {
   title: string;
   /** Что сделать, если фотографии ещё нет. */
   onAddPhoto?: () => void;
-  /** Что написать, если рендера ещё нет. */
+  /**
+   * Что показать в пустой половине, пока рендера нет.
+   *
+   * Здесь стоит сама кнопка отрисовки, а не надпись «нажмите там-то»:
+   * сравнение занимает почти весь экран, и кнопка под ним не видна без
+   * прокрутки — пользователь решает, что рендер не работает.
+   */
+  emptyAction?: React.ReactNode;
+  /** Текст для случая, когда действия нет (кабинет клиента). */
   emptyHint?: string;
   onOpen?: (image: string) => void;
   /** Высота блока. На шаге результата это главный экран, а не иллюстрация. */
@@ -39,7 +47,8 @@ export default function BeforeAfter({
   render,
   title,
   onAddPhoto,
-  emptyHint = 'Нажмите «Отрисовать кухню»',
+  emptyAction,
+  emptyHint = 'Визуализация ещё готовится',
   onOpen,
   heightClass = 'aspect-[3/2]',
 }: Props) {
@@ -198,18 +207,27 @@ export default function BeforeAfter({
             className="h-full w-full object-cover"
           />
         ) : (
-          /*
-           * Половина обрезана шторкой, поэтому подпись прижата вправо:
-           * по центру кадра её закрыла бы сама ручка.
-           */
-          <div className="flex h-full w-full items-center justify-end bg-navyDeep/85 px-[5%] text-right">
-            {/* Не шире своей половины: иначе начало фразы срежет шторкой. */}
-            <span className="max-w-[38%] text-[15px] leading-snug text-graphiteMw">
-              {emptyHint}
-            </span>
-          </div>
+          <div className="h-full w-full bg-navyDeep/85" />
         )}
       </div>
+
+      {/*
+       * Действие пустой половины живёт ВНЕ обрезанного слоя и стоит по центру
+       * видимой части: внутри клипа шторка срезала бы кнопку, а по центру
+       * всего кадра её закрыла бы ручка.
+       */}
+      {!render && (
+        <div
+          /* На телефоне половина узкая, и по центру кнопка налезала бы на
+             ручку шторки — там она уходит ниже. */
+          className="absolute top-[66%] flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-3 px-4 text-center sm:top-1/2"
+          style={{ left: 'min(calc((var(--split) + 100%) / 2), calc(100% - 110px))' }}
+        >
+          {emptyAction ?? (
+            <span className="text-[15px] leading-snug text-graphiteMw">{emptyHint}</span>
+          )}
+        </div>
+      )}
 
       {/*
        * Шторку видно с двух метров: экран смотрят вдвоём, и клиент должен

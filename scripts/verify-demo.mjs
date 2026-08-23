@@ -414,6 +414,52 @@ try {
     'на весь экран — отдельной кнопкой',
     (await page.getByRole('button', { name: /На весь экран/ }).count()) === 1,
   );
+
+  /*
+   * Кнопка отрисовки стоит В САМОМ сравнении: оно занимает 70% экрана, и
+   * кнопка под ним не видна без прокрутки — рендер выглядит неработающим.
+   */
+  const renderButton = await page.evaluate(() => {
+    const slider = document.querySelector('[role="slider"][aria-label="Сравнение до и после"]');
+    const frame = slider?.parentElement;
+    const button = Array.from(frame?.querySelectorAll('button') ?? []).find((b) =>
+      (b.textContent ?? '').includes('Отрисовать кухню'),
+    );
+    if (!button || !frame) return null;
+    const box = button.getBoundingClientRect();
+    const inside = box.top >= frame.getBoundingClientRect().top && box.bottom <= window.innerHeight;
+    return { inside, x: Math.round(box.x), w: Math.round(box.width) };
+  });
+  check(
+    'кнопка отрисовки — внутри сравнения и видна без прокрутки',
+    Boolean(renderButton) && renderButton.inside,
+    renderButton ? `${renderButton.w} px на x=${renderButton.x}` : 'кнопки нет',
+  );
+
+  // Стиль выбирает человек: бюджет и вкус — разные вещи.
+  for (const title of ['Скандинавский', 'Тёплый минимализм', 'Премиум-модерн']) {
+    check(
+      `стиль «${title}» предлагается`,
+      (await page.getByRole('button', { name: title, exact: true }).count()) === 1,
+    );
+  }
+  check(
+    'по умолчанию выбран премиум-модерн',
+    (await page
+      .getByRole('button', { name: 'Премиум-модерн', exact: true })
+      .getAttribute('aria-pressed')) === 'true',
+  );
+
+  await page.getByRole('button', { name: 'Скандинавский', exact: true }).click();
+  await sleep(300);
+  check(
+    'выбор стиля переключается',
+    (await page
+      .getByRole('button', { name: 'Скандинавский', exact: true })
+      .getAttribute('aria-pressed')) === 'true',
+  );
+  await page.getByRole('button', { name: 'Премиум-модерн', exact: true }).click();
+  await sleep(300);
   await sleep(700);
 
   const compare = page.getByRole('slider', { name: 'Сравнение до и после' });
@@ -423,9 +469,8 @@ try {
     (await page.getByText('Ваша квартира').count()) === 1,
   );
   check(
-    'без рендера правая половина честно говорит, что нажать',
-    (await page.getByText('Рендера ещё нет').count()) === 1 &&
-      (await page.getByText(/Нажмите «Отрисовать кухню»/).count()) === 1,
+    'без рендера правая половина подписана и предлагает действие',
+    (await page.getByText('Рендера ещё нет').count()) === 1,
   );
 
   await compare.scrollIntoViewIfNeeded();

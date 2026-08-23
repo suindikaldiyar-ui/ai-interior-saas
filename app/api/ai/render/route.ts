@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { geminiHeaders, geminiUrl, imageModel, parseImageResponse } from '@/lib/gemini';
 import { getEntry } from '@/lib/furnitureCatalog';
-import { getStyle, styleBlock } from '@/lib/renderStyles';
+import { PHOTOGRAPHY, getStyle, optionsBlock, styleBlock } from '@/lib/renderStyles';
 import { APPLIANCE_SLOTS } from '@/lib/millwork/modules';
 import type { RunModuleLike } from '@/lib/kitchen';
 import type { ApplianceKind } from '@/types/millwork';
@@ -241,6 +241,16 @@ function buildPrompt(
    * Без неё нумерация прежняя: 1 — clay, 2 — beauty.
    */
   const baseImages = hasPhoto ? 3 : 2;
+
+  // Опции комплектации приезжают вместе со сценой: ручки и высота верхнего
+  // ряда видны в кадре, и модель обязана их воспроизвести.
+  const kitchenItem = (body.items ?? []).find((item) => item.type === 'kitchen_unit');
+  const runOptions = ((kitchenItem?.meta as Record<string, unknown> | undefined)?.runOptions ??
+    {}) as {
+    integratedHandles?: boolean;
+    upperToCeiling?: boolean;
+    hasCornice?: boolean;
+  };
   const withImages = catalogRefs.filter((r) => r.imageIndex !== null);
   const imageIndexOfReference = (i: number) => i + baseImages + 1 + withImages.length;
 
@@ -378,10 +388,8 @@ ${textOnlyBlock}
 # ИСХОДНЫЕ ДАННЫЕ СЦЕНЫ (для сверки, геометрия та же, что на изображениях)
 ${describeScene(body.room, body.items ?? [])}
 
-# ТЕХНИЧЕСКИЕ ТРЕБОВАНИЯ
-Фотореалистичная архитектурная съёмка интерьера. Объектив 35 мм. Естественный свет
-из окна. Мягкие натуральные тени. Вертикали строго вертикальны, без искажений
-широкоугольника. Реалистичные материалы с корректными отражениями и микрорельефом.
+# ${PHOTOGRAPHY}
+${optionsBlock(runOptions)}
 
 ЗАПРЕЩЕНО: текст, надписи, водяные знаки, логотипы, подписи, люди, лица, части тела,
 искажённая перспектива, заваленный горизонт, дублирование мебели, сюрреалистичные

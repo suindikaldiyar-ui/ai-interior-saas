@@ -1,7 +1,7 @@
 'use client';
 
+import { useCallback, useState } from 'react';
 import { captureScene } from '@/lib/captureRegistry';
-import { VARIANT_STYLE } from './styles';
 import { PROJECTS_BUCKET, storageUrl } from '@/lib/supabase/config';
 import { buildCatalogRefs, renderVariant, urlToDataUrl } from '@/lib/renderClient';
 import { assertSameConfiguration } from '@/lib/millwork/fingerprint';
@@ -54,6 +54,26 @@ export function variantNotes(variant: Variant): string {
  * Один захват на три запроса. Внутри одного вызова роута три картинки
  * не уместятся в 60 с Vercel Hobby, поэтому запросы идут врозь.
  */
+/**
+ * Стиль выбирает человек, а не таблица.
+ *
+ * Раньше стиль был жёстко привязан к комплектации: «премиум» рисовался
+ * премиум-модерном и никак иначе. Но бюджет и вкус — разные вещи, и
+ * клиенту в скандинавской квартире не нужен графит с подсветкой.
+ */
+export const RENDER_CHOICES: { id: string; title: string }[] = [
+  { id: 'scandi', title: 'Скандинавский' },
+  { id: 'warm-minimal', title: 'Тёплый минимализм' },
+  { id: 'premium-modern', title: 'Премиум-модерн' },
+];
+
+/** По умолчанию — премиум-модерн: он продаёт лучше остальных. */
+export const DEFAULT_RENDER_STYLE = 'premium-modern';
+
+export function isRenderStyle(id: string | null | undefined): boolean {
+  return RENDER_CHOICES.some((s) => s.id === id);
+}
+
 export type MillworkRenderInput = {
   variants: Variant[];
   /** Фотография помещения клиента, dataURL. Без неё рендер рисует свои стены. */
@@ -62,6 +82,8 @@ export type MillworkRenderInput = {
   angle?: RunAngle;
   /** Объект в базе: с ним картинки уезжают в Storage и живут по ссылке. */
   projectId?: string | null;
+  /** Выбранный стиль. Без него берётся стиль по умолчанию. */
+  styleId?: string;
 };
 
 /**
@@ -109,6 +131,7 @@ export async function rerenderMillworkVariant(
   variant: Variant,
   roomPhoto?: string | null,
   projectId?: string | null,
+  styleId: string = DEFAULT_RENDER_STYLE,
 ): Promise<void> {
   const store = useInteriorStore.getState();
   if (!store.lastCapture) return;
@@ -122,14 +145,14 @@ export async function rerenderMillworkVariant(
   const catalogRefs = await buildCatalogRefs();
 
   await renderVariant(
-    VARIANT_STYLE[variant.key],
+    styleId,
     store.lastCapture,
     [],
     catalogRefs,
     variantNotes(variant),
     photo,
   );
-  await offloadToStorage(VARIANT_STYLE[variant.key], projectId);
+  await offloadToStorage(styleId, projectId);
 }
 
 export async function runMillworkRenders({
@@ -137,6 +160,7 @@ export async function runMillworkRenders({
   roomPhoto,
   angle = 'front',
   projectId,
+  styleId = DEFAULT_RENDER_STYLE,
 }: MillworkRenderInput): Promise<void> {
   /*
    * Кадр всегда «на ряд»: сравнивать с чертежом можно только целый ряд.
@@ -174,19 +198,62 @@ export async function runMillworkRenders({
 
   const catalogRefs = await buildCatalogRefs();
 
-  const styleIds = variants.map((v) => VARIANT_STYLE[v.key]);
-  useInteriorStore.getState().startRenderBatch(styleIds, capture);
+  useInteriorStore.getState().startRenderBatch([styleId], capture);
 
   await Promise.allSettled(
     variants.map((variant) =>
       renderVariant(
-        VARIANT_STYLE[variant.key],
+        styleId,
         capture,
         [],
         catalogRefs,
         variantNotes(variant),
         photo,
-      ).then(() => offloadToStorage(VARIANT_STYLE[variant.key], projectId)),
+      ).then(() => offloadToStorage(styleId, projectId)),
     ),
   );
+}
+
+/**
+ * Состояние отрисовки одно на весь экран результата.
+ *
+ * Кнопка живёт в двух местах — крупная в пустой половине сравнения и
+ * обычная у карточки, — и обе обязаны знать одно и то же «сейчас рисуем».
+ * Два независимых состояния дали бы две кнопки с разным мнением.
+ */
+export function useMillworkRender(input: MillworkRenderInput) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const { variants, roomPhoto, angle, projectId, styleId } = input;
+
+  const render = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await runMillworkRenders({ variants, roomPhoto, angle, projectId, styleId });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Кадр снять не удалось.');
+    } finally {
+      setBusy(false);
+    }
+  }, [variants, roomPhoto, angle, projectId, styleId]);
+
+  /** Повтор: кадр остаётся тем же, меняется только картинка. */
+  const rerender = useCallback(
+    async (variant: Variant) => {
+      setBusy(true);
+      setError(null);
+      try {
+        await rerenderMillworkVariant(variant, roomPhoto, projectId, styleId);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Повтор не удался.');
+      } finally {
+        setBusy(false);
+      }
+    },
+    [roomPhoto, projectId, styleId],
+  );
+
+  return { busy, error, render, rerender };
 }

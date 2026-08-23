@@ -84,6 +84,16 @@ export default function KitchenScene({
         appliances: appliances.map((a) =>
           a.startsWith('sink') ? 'sink' : a.startsWith('dishwasher') ? 'dishwasher' : a,
         ),
+        /*
+         * Комплектация словами: по ней рендер знает, что ручек нет и что
+         * верхний ряд идёт до потолка. Без этого модель рисует «обычную»
+         * кухню с накладными ручками и зазором под потолком.
+         */
+        runOptions: {
+          integratedHandles: run.options.integratedHandles,
+          upperToCeiling: run.options.upperToCeiling,
+          hasCornice: run.options.hasCornice,
+        },
         // Тот же массив, что в чертеже и смете.
         runModules: run.modules.map((unit) => ({
           widthMm: unit.widthMm,

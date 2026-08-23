@@ -29,7 +29,11 @@ import {
   hasBlocking,
   splitWarnings,
 } from '@/lib/millwork/warnings';
-import { VARIANT_STYLE } from '@/lib/millwork/render';
+import {
+  DEFAULT_RENDER_STYLE,
+  isRenderStyle,
+  useMillworkRender,
+} from '@/lib/millwork/render';
 import {
   requirementsFromTemplate,
   suggestTemplate,
@@ -164,6 +168,15 @@ export default function Workspace(props: WorkspaceProps) {
   const [resultView, setResultView] = useState<ResultView>('facade');
   const [estimateOpen, setEstimateOpen] = useState(false);
   const [renderAngle, setRenderAngle] = useState<RunAngle>('front');
+  /*
+   * Стиль выбирает человек, а не таблица комплектаций: бюджет и вкус —
+   * разные вещи. Выбор живёт в состоянии объекта и переживает закрытие.
+   */
+  const [renderStyle, setRenderStyle] = useState<string>(
+    isRenderStyle(props.initialState?.renderStyle)
+      ? (props.initialState?.renderStyle as string)
+      : DEFAULT_RENDER_STYLE,
+  );
   const [templateId, setTemplateId] = useState<string | null>(
     props.initialState?.templateId ?? props.templateId ?? null,
   );
@@ -221,7 +234,7 @@ export default function Workspace(props: WorkspaceProps) {
    */
   const renderVariants = useInteriorStore((s) => s.renderVariants);
   const activeRender =
-    renderVariants.find((v) => v.styleId === VARIANT_STYLE[variantKey])?.image ?? null;
+    renderVariants.find((v) => v.styleId === renderStyle)?.image ?? null;
   const requirements = useMemo(
     () =>
       template
@@ -270,6 +283,19 @@ export default function Workspace(props: WorkspaceProps) {
     () => composeVariants(input, disabled, editedRuns),
     [input, disabled, editedRuns],
   );
+
+  /*
+   * Отрисовка одна на экран: кнопка стоит и в пустой половине сравнения,
+   * и у карточки. Два состояния дали бы две кнопки с разным мнением о том,
+   * рисуем мы сейчас или нет.
+   */
+  const render = useMillworkRender({
+    variants,
+    roomPhoto,
+    angle: renderAngle,
+    projectId: props.projectId,
+    styleId: renderStyle,
+  });
 
   const active = variants.find((v) => v.key === variantKey) ?? variants[0];
   const issues = useMemo(
@@ -397,6 +423,7 @@ export default function Workspace(props: WorkspaceProps) {
         requirements,
         runs: editedRuns,
         selectedVariant: variantKey,
+        renderStyle,
         disabled,
         priceSnapshot: active.estimate.priceSnapshot,
         savedAt: new Date().toISOString(),
@@ -436,7 +463,17 @@ export default function Workspace(props: WorkspaceProps) {
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
-  }, [editedRuns, disabled, variantKey, active.estimate, survey, templateId, requirements, props.projectId]);
+  }, [
+    editedRuns,
+    disabled,
+    variantKey,
+    renderStyle,
+    active.estimate,
+    survey,
+    templateId,
+    requirements,
+    props.projectId,
+  ]);
 
   /*
    * Связь вернулась — отправляем то, что лежит на планшете. Замерщик об этом
@@ -490,7 +527,7 @@ export default function Workspace(props: WorkspaceProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           projectId: props.projectId,
-          styleId: VARIANT_STYLE[variantKey],
+          styleId: renderStyle,
           image: activeRender,
         }),
       }).catch(() => undefined);
@@ -507,7 +544,7 @@ export default function Workspace(props: WorkspaceProps) {
       setShare({ url, wa: whatsappLink(url, props.clientName ?? '') });
       await navigator.clipboard?.writeText(url).catch(() => undefined);
     }
-  }, [props.projectId, props.shareToken, props.clientName, activeRender, variantKey]);
+  }, [props.projectId, props.shareToken, props.clientName, activeRender, renderStyle]);
 
   const saveLabel =
     saveState === 'saving'
@@ -735,15 +772,34 @@ export default function Workspace(props: WorkspaceProps) {
               heightClass="h-[70vh] min-h-[320px]"
               onAddPhoto={() => setStep('materials')}
               onOpen={setZoom}
+              emptyAction={
+                /* Кнопка прямо в пустой половине: под сравнением её не видно
+                   без прокрутки, и рендер выглядит неработающим. */
+                <button
+                  type="button"
+                  onClick={() => void render.render()}
+                  disabled={render.busy}
+                  className="mw-btn mw-btn-lg mw-btn-primary text-[17px]"
+                >
+                  {render.busy ? 'Снимаем кадр…' : 'Отрисовать кухню'}
+                </button>
+              }
             />
 
             <div className="mt-5">
               <RenderPanel
                 variants={variants}
                 roomPhoto={roomPhoto}
-                angle={renderAngle}
                 onOpen={setZoom}
-                projectId={props.projectId}
+                styleId={renderStyle}
+                onStyleChange={(id) => {
+                  dirty.current = true;
+                  setRenderStyle(id);
+                }}
+                busy={render.busy}
+                error={render.error}
+                onRender={() => void render.render()}
+                onRerender={(variant) => void render.rerender(variant)}
               />
             </div>
 
