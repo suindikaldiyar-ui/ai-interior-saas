@@ -110,8 +110,7 @@ try {
 
   await page.getByRole('button', { name: /Результат/ }).first().click();
   await sleep(700);
-  await page.getByRole('button', { name: 'Рендер', exact: true }).click();
-  await sleep(700);
+  await sleep(300);
 
   // Длинные задачи главного потока — то, из-за чего интерфейс «залипает».
   await page.evaluate(() => {
@@ -129,10 +128,10 @@ try {
   const startedAt = Date.now();
   await page.getByRole('button', { name: /Отрисовать/ }).first().click({ noWaitAfter: true });
 
-  // Ждём, пока появятся три картинки.
+  // Ждём картинку комплектации.
   for (let i = 0; i < 120; i++) {
     const done = await page.locator('figure img').count();
-    if (done >= 3) break;
+    if (done >= 1) break;
     await sleep(500);
   }
   const totalMs = Date.now() - startedAt;

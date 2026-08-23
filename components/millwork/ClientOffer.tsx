@@ -23,8 +23,12 @@ type Props = {
   title: string;
   zone: string;
   run: Run;
-  /** Название выбранной комплектации — подпись правой половины сравнения. */
-  variantTitle: string;
+  /**
+   * Название комплектации. Комплектация теперь одна, и в сравнении подпись
+   * говорит «Ваша кухня»; поле остаётся для чертежа и для возврата трёх
+   * бюджетов.
+   */
+  variantTitle?: string;
   estimate: Estimate;
   disabledKeys: string[];
   approved: boolean;
@@ -43,7 +47,6 @@ export default function ClientOffer({
   title,
   zone,
   run,
-  variantTitle,
   estimate,
   disabledKeys,
   approved,
@@ -109,11 +112,15 @@ export default function ClientOffer({
 
       {photoUrl && (
         <section className="border-b border-navyLine px-4 py-4">
-          <p className="mw-label mb-2">Ваша квартира и ваша кухня</p>
+          {/*
+            * Главное доказательство: планировка не поехала. Поэтому блок
+            * во всю ширину и почти во весь экран, а не картинка сбоку.
+            */}
           <BeforeAfter
             photo={photoUrl}
             render={renderUrl}
-            title={variantTitle}
+            title="Ваша кухня"
+            heightClass="h-[70vh] min-h-[320px]"
             emptyHint="Визуализация ещё готовится"
           />
         </section>

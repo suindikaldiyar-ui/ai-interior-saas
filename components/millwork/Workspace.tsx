@@ -18,9 +18,10 @@ import StepBar, { type StepKey } from './StepBar';
 import SurveyPanel from './SurveyPanel';
 import SurveySheet from './SurveySheet';
 import TemplatePicker from './TemplatePicker';
-import { formatMoney, type RateTable } from '@/lib/millwork/estimate';
+import type { RateTable } from '@/lib/millwork/estimate';
 import { applyOps } from '@/lib/millwork/ops';
 import { composeVariants, workspaceInput } from '@/lib/millwork/workspace';
+import { MAIN_VARIANT, SINGLE_VARIANT } from '@/lib/millwork/variants';
 import { validateRun } from '@/lib/millwork/validate';
 import {
   collectWarnings,
@@ -80,14 +81,14 @@ const KitchenScene = dynamic(() => import('./KitchenScene'), {
 const CatalogLoader = dynamic(() => import('@/components/CatalogLoader'), { ssr: false });
 
 /** Чем смотреть результат. Чертёж плотный намеренно — это документ. */
-type ResultView = 'facade' | 'plan' | 'scene' | 'render';
+type ResultView = 'facade' | 'plan' | 'scene';
 
 const STEP_HINT: Record<StepKey, string> = {
   survey: 'Меряем по низу стены, у пола: вверху стены новостройки кривые.',
   template: 'Выберите типовое решение — длина подставится из замера.',
   compose: 'Правьте состав голосом или руками: чертёж и смета пересчитаются сразу.',
   materials: 'Фото помещения и артикул каталога нужны, чтобы клиент узнал свою квартиру.',
-  result: 'Покажите клиенту три бюджета одной его кухни.',
+  result: 'Тяните шторку: слева квартира клиента, справа его кухня.',
 };
 
 export type WorkspaceProps = {
@@ -136,8 +137,13 @@ export type WorkspaceProps = {
 const AUTOSAVE_DELAY_MS = 2000;
 
 export default function Workspace(props: WorkspaceProps) {
-  const [variantKey, setVariantKey] = useState<VariantKey>(
-    props.initialState?.selectedVariant ?? 'optimal',
+  /*
+   * Комплектация одна (см. SINGLE_VARIANT). Ключ остаётся: он держит
+   * снятые галочки сметы, стиль рендера и сохранённое состояние объекта,
+   * а вернуть три бюджета — это флаг, а не переписывание.
+   */
+  const [variantKey] = useState<VariantKey>(
+    props.initialState?.selectedVariant ?? MAIN_VARIANT,
   );
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // Технические подписи включаются адресом ?debug=1, см. lib/debug.ts
@@ -717,39 +723,37 @@ export default function Workspace(props: WorkspaceProps) {
 
         {step === 'result' && (
           <>
-            {/* Три бюджета одной кухни — крупными карточками, а не полосой */}
-            <div className="grid gap-3 sm:grid-cols-3">
-              {variants.map((variant) => {
-                const chosen = variant.key === variantKey;
-                return (
-                  <button
-                    key={variant.key}
-                    type="button"
-                    onClick={() => setVariantKey(variant.key)}
-                    aria-pressed={chosen}
-                    className={`mw-panel-flat p-4 text-left ${
-                      chosen ? 'ring-2 ring-inset ring-cyanBright' : 'hover:bg-sheet'
-                    }`}
-                  >
-                    <span className="block text-[17px] font-medium">{variant.title}</span>
-                    <span className="mw-num mt-1 block text-[22px] font-semibold">
-                      {formatMoney(variant.estimate.total)} ₸
-                    </span>
-                    <span className="mt-2 block text-[13px] leading-snug text-graphiteMw">
-                      {variant.description}
-                    </span>
-                  </button>
-                );
-              })}
+            {/*
+              * Сравнение — главный экран продажи, а не иллюстрация к чертежу.
+              * Клиент смотрит на свою квартиру с кухней; чертёж, план и смета
+              * нужны потом и живут ниже.
+              */}
+            <BeforeAfter
+              photo={roomPhoto}
+              render={activeRender}
+              title="Ваша кухня"
+              heightClass="h-[70vh] min-h-[320px]"
+              onAddPhoto={() => setStep('materials')}
+              onOpen={setZoom}
+            />
+
+            <div className="mt-5">
+              <RenderPanel
+                variants={variants}
+                roomPhoto={roomPhoto}
+                angle={renderAngle}
+                onOpen={setZoom}
+                projectId={props.projectId}
+              />
             </div>
 
-            <div className="mt-5 flex flex-wrap gap-2">
+            {/* Ниже — документы: чертёж, план и техническая сцена. */}
+            <div className="mt-6 flex flex-wrap gap-2 print:hidden">
               {(
                 [
                   ['facade', 'Чертёж'],
                   ['plan', 'План'],
                   ['scene', '3D'],
-                  ['render', 'Рендер'],
                 ] as [ResultView, string][]
               ).map(([key, label]) => (
                 <button
@@ -772,70 +776,37 @@ export default function Workspace(props: WorkspaceProps) {
             </div>
 
             {/*
-              * Сцена нужна только для захвата кадра. На виде «3D» она на месте
-              * и во всю высоту; на виде «Рендер» она уезжает за экран, но
-              * остаётся смонтированной — иначе снимать кадр будет нечем.
+              * Сцена нужна ещё и для захвата кадра, поэтому она смонтирована
+              * всегда: на виде «3D» — во всю высоту, иначе уезжает за экран.
+              * `display:none` не годится — канвас нулевого размера не рисуется.
               */}
-            {(resultView === 'scene' || resultView === 'render') && (
-              <>
-                <CatalogLoader />
-                <div
-                  className={
-                    resultView === 'scene'
-                      ? 'mt-4 h-[460px] overflow-hidden rounded-[var(--r-panel)] bg-navyDeep print:hidden'
-                      : 'mw-scene-hidden fixed left-[-3000px] top-0 h-[220px] w-[340px] opacity-0'
-                  }
-                  aria-hidden={resultView !== 'scene'}
-                >
-                  <KitchenScene
-                    run={active.run}
-                    ceilingHeightMm={props.ceilingHeightMm}
-                    roomDepthM={props.roomDepthM}
-                    hidden={resultView !== 'scene'}
-                    onItemId={setKitchenItemId}
-                  />
-                </div>
-                {resultView === 'scene' && (
-                  <p className="mt-2 text-[13px] leading-snug text-graphiteMw">
-                    Гарнитур собран из тех же {active.run.modules.length} модулей, что
-                    чертёж и смета.
-                    {/* Отпечаток — сверка для нас, а не разговор с клиентом. */}
-                    {debug && ` Отпечаток ${active.run.fingerprint}.`}
-                  </p>
-                )}
-              </>
-            )}
-
-            {resultView === 'render' && (
-              <div className="mt-4">
-                {/* Главное на этом экране — «до и после», а не служебная сцена. */}
-                <BeforeAfter
-                  photo={roomPhoto}
-                  render={activeRender}
-                  title={active.title}
-                  onAddPhoto={() => setStep('materials')}
-                  onOpen={setZoom}
-                />
-
-                <div className="mt-5">
-                  <RenderPanel
-                    variants={variants}
-                    roomPhoto={roomPhoto}
-                    angle={renderAngle}
-                    onOpen={setZoom}
-                    projectId={props.projectId}
-                  />
-                </div>
-              </div>
-            )}
-
+            <CatalogLoader />
             <div
               className={
-                resultView === 'scene' || resultView === 'render'
-                  ? 'mt-4 hidden print:block'
-                  : 'mt-4'
+                resultView === 'scene'
+                  ? 'mt-4 h-[460px] overflow-hidden rounded-[var(--r-panel)] bg-navyDeep print:hidden'
+                  : 'mw-scene-hidden fixed left-[-3000px] top-0 h-[220px] w-[340px] opacity-0'
               }
+              aria-hidden={resultView !== 'scene'}
             >
+              <KitchenScene
+                run={active.run}
+                ceilingHeightMm={props.ceilingHeightMm}
+                roomDepthM={props.roomDepthM}
+                hidden={resultView !== 'scene'}
+                onItemId={setKitchenItemId}
+              />
+            </div>
+            {resultView === 'scene' && (
+              <p className="mt-2 text-[13px] leading-snug text-graphiteMw">
+                Гарнитур собран из тех же {active.run.modules.length} модулей, что
+                чертёж и смета.
+                {/* Отпечаток — сверка для нас, а не разговор с клиентом. */}
+                {debug && ` Отпечаток ${active.run.fingerprint}.`}
+              </p>
+            )}
+
+            <div className={resultView === 'scene' ? 'mt-4 hidden print:block' : 'mt-4'}>
               <DrawingSheet
                 title={props.title}
                 zone={props.zone}
@@ -913,7 +884,7 @@ export default function Workspace(props: WorkspaceProps) {
         <div className="mb-3">
           <EstimateSheet
             estimate={active.estimate}
-            variantTitle={active.title}
+            variantTitle={SINGLE_VARIANT ? 'Ваша кухня' : active.title}
             disabledKeys={disabled[active.key]}
             onToggle={toggleLine}
             open={estimateOpen}

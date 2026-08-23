@@ -6,6 +6,14 @@ import Workspace from '@/components/millwork/Workspace';
 import { photoToFile, type RoomPhoto } from '@/lib/photo';
 import { DEMO_RATES } from '@/lib/millwork/demo';
 import { DEFAULT_REQUIREMENTS } from '@/lib/millwork/workspace';
+import {
+  ZONE_DRAFT_BADGE,
+  ZONE_DRAFT_NOTE,
+  ZONE_ORDER,
+  ZONE_PROFILES,
+  zoneProfile,
+} from '@/lib/millwork/zones';
+import type { ZoneKind } from '@/types/millwork';
 import { emptySurvey, newWall, resolveSurvey, type Survey } from '@/types/survey';
 
 /**
@@ -27,6 +35,12 @@ export default function MeasurePage() {
     clientPhone: '',
   });
   const [surveyor, setSurveyor] = useState('');
+  /*
+   * Зона выбирается до замера: от неё зависят габариты корпуса и состав
+   * статей сметы. Полностью просчитана кухня — остальные зоны честно
+   * подписаны «в разработке», см. lib/millwork/zones.ts.
+   */
+  const [zone, setZone] = useState<ZoneKind>('kitchen');
   const [survey, setSurvey] = useState<Survey>(() => {
     const base = emptySurvey('', new Date().toISOString().slice(0, 10));
     // Первая стена заводится сразу: замер всегда начинается с неё.
@@ -45,10 +59,47 @@ export default function MeasurePage() {
             setSurvey((prev) => ({ ...prev, measuredBy: surveyor }));
             setStep('survey');
           }}
-          className="mw-panel w-full max-w-md"
+          className="mw-panel w-full max-w-xl"
         >
           <p className="mw-label mb-1">Новый объект</p>
-          <h1 className="mw-title mb-4">Адрес и клиент</h1>
+          <h1 className="mw-title mb-4">Зона, адрес и клиент</h1>
+
+          <p className="mw-label">Что меряем</p>
+          <div className="mb-4 mt-2 grid gap-2 sm:grid-cols-2">
+            {ZONE_ORDER.map((kind) => {
+              const profile = ZONE_PROFILES[kind];
+              const chosen = zone === kind;
+              return (
+                <button
+                  key={kind}
+                  type="button"
+                  onClick={() => setZone(kind)}
+                  aria-pressed={chosen}
+                  /* Плоскость на плоскости: на белой панели белая карточка
+                     не читается как карточка. */
+                  className={`mw-panel-flat bg-sheet px-4 py-3 text-left ${
+                    chosen ? 'ring-2 ring-inset ring-cyanBright' : ''
+                  }`}
+                >
+                  <span className="block text-[15px] font-medium">{profile.title}</span>
+                  <span className="mt-0.5 block text-[13px] leading-snug text-graphiteMw">
+                    {profile.hint}
+                  </span>
+                  <span className="mw-num mt-1 block text-[13px] text-graphiteMw">
+                    глубина {profile.depthMm} мм ·{' '}
+                    {profile.height === 'ceiling' ? 'до потолка' : `${profile.height} мм`}
+                  </span>
+                  {!profile.ready && (
+                    <span className="mt-1 block text-[13px] text-tape">{ZONE_DRAFT_BADGE}</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
+          {!ZONE_PROFILES[zone].ready && (
+            <p className="mb-4 text-[13px] leading-snug text-tape">{ZONE_DRAFT_NOTE}</p>
+          )}
 
           <label className="mb-3 block">
             <span className="mw-label">Адрес объекта</span>
@@ -123,7 +174,8 @@ export default function MeasurePage() {
           surveyor: finished.measuredBy,
           measurement: resolveSurvey(finished).measurement,
           survey: finished,
-          requirements: DEFAULT_REQUIREMENTS,
+          zone: zoneProfile(zone).title,
+          requirements: { ...DEFAULT_REQUIREMENTS, zone },
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -174,12 +226,12 @@ export default function MeasurePage() {
       )}
       <Workspace
         title={contact.address || 'Новый замер'}
-        zone="Кухня"
+        zone={zoneProfile(zone).title}
         measuredBy={survey.measuredBy}
         measuredAt={survey.measuredAt}
         lengthMm={runWall?.lengthMm || 3000}
         ceilingHeightMm={resolution.measurement.ceilingHeightMm}
-        requirements={DEFAULT_REQUIREMENTS}
+        requirements={{ ...DEFAULT_REQUIREMENTS, zone }}
         openings={runWall?.openings ?? []}
         comms={resolution.measurement.comms}
         rates={DEMO_RATES}

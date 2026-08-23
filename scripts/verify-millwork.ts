@@ -12,7 +12,9 @@
 import { buildRun, fillGap, runWidthSum } from '../lib/millwork/layout';
 import { applyOps } from '../lib/millwork/ops';
 import { buildEstimate, recalcTotal } from '../lib/millwork/estimate';
-import { buildVariants } from '../lib/millwork/variants';
+import { DEFAULT_STRATEGIES, MAIN_VARIANT, buildVariants } from '../lib/millwork/variants';
+import { RUN_TEMPLATES, requirementsFromTemplate, templateFits } from '../lib/millwork/templates';
+import { ZONE_ORDER, ZONE_PROFILES } from '../lib/millwork/zones';
 import { commIssues, layoutIssues, validateRun } from '../lib/millwork/validate';
 import {
   RunOverflowError,
@@ -607,30 +609,115 @@ console.log('\nСмета');
   );
 }
 
-/* ─────────────────────────  Три варианта  ───────────────────────── */
+/* ─────────────────────────  Комплектация  ───────────────────────── */
 
-console.log('\nТри варианта');
+console.log('\nКомплектация');
 {
   const variants = buildVariants({ ...baseInput, rates: DEMO_RATES });
 
-  check('вариантов ровно три', variants.length === 3);
-  check(
-    'цены различаются и растут от базового к премиуму',
-    variants[0].estimate.total < variants[1].estimate.total &&
-      variants[1].estimate.total < variants[2].estimate.total,
-    variants.map((v) => v.estimate.total).join(' < '),
+  check('в поток уходит одна комплектация', variants.length === 1, `вариантов: ${variants.length}`);
+  check('и это «Оптимальный»', variants[0].key === MAIN_VARIANT, variants[0].title);
+  check('у неё есть цена', variants[0].estimate.total > 0, String(variants[0].estimate.total));
+
+  /*
+   * Три бюджета убраны из потока, но не из кода: вернуть их — это поменять
+   * SINGLE_VARIANT, а не восстанавливать удалённые стратегии.
+   */
+  check('стратегии на три бюджета сохранены', DEFAULT_STRATEGIES.length === 3);
+
+  const all = buildVariants({ ...baseInput, rates: DEMO_RATES, strategies: DEFAULT_STRATEGIES });
+  check('под флагом остаётся одна даже из полного списка', all.length === 1);
+
+  // Ключевое свойство трёх бюджетов: одна кухня, а не три разные.
+  // Считаем ряды напрямую: под флагом buildVariants вернул бы только один.
+  const layouts = DEFAULT_STRATEGIES.map((strategy) =>
+    JSON.stringify(
+      buildRun({
+        ...baseInput,
+        requirements: {
+          ...baseInput.requirements,
+          options: { ...baseInput.requirements.options, ...strategy.options },
+        },
+      }).modules.map((m) => [m.kind, m.widthMm, m.appliance ?? '']),
+    ),
+  );
+  check('раскладка нижнего ряда у всех стратегий одна', new Set(layouts).size === 1);
+}
+
+/* ─────────────────────  Шаблон меняет состав  ───────────────────── */
+
+console.log('\nШаблон доходит до раскладки');
+{
+  /*
+   * Выбор шаблона обязан менять чертёж. Если цепочка «шаблон → requirements →
+   * buildRun» где-то оборвётся, все шаблоны дадут один и тот же ряд, а
+   * замерщик будет выбирать из карточек, которые ничего не решают.
+   */
+  const lengthMm = 3200;
+  const fitting = RUN_TEMPLATES.filter((t) => templateFits(t, lengthMm));
+  check('на 3200 мм подходит хотя бы три шаблона', fitting.length >= 3, `подходит: ${fitting.length}`);
+
+  const prints = fitting.map(
+    (t) =>
+      buildRun({
+        lengthMm,
+        ceilingHeightMm: 2700,
+        requirements: requirementsFromTemplate(t),
+        openings: [],
+        comms: [],
+      }).fingerprint,
   );
 
-  // Ключевое свойство: это одна кухня в трёх бюджетах, а не три разные кухни.
-  const layouts = variants.map((v) =>
-    JSON.stringify(v.run.modules.map((m) => [m.kind, m.widthMm, m.appliance ?? ''])),
-  );
-  check('раскладка нижнего ряда у всех трёх одинакова', new Set(layouts).size === 1);
-
   check(
-    'премиум поднимает верхние до потолка',
-    variants[2].run.options.upperToCeiling && !variants[0].run.options.upperToCeiling,
+    'разные шаблоны дают разные отпечатки конфигурации',
+    new Set(prints).size === fitting.length,
+    prints.join(' '),
   );
+
+  const withColumn = requirementsFromTemplate(
+    RUN_TEMPLATES.find((t) => t.id === 'linear-column')!,
+  );
+  const withoutColumn = requirementsFromTemplate(
+    RUN_TEMPLATES.find((t) => t.id === 'linear-standard')!,
+  );
+  const a = buildRun({ lengthMm, ceilingHeightMm: 2700, requirements: withColumn, openings: [], comms: [] });
+  const b = buildRun({ lengthMm, ceilingHeightMm: 2700, requirements: withoutColumn, openings: [], comms: [] });
+  check(
+    'шаблон с колонной ставит духовой шкаф, а стандартный — нет',
+    a.modules.some((m) => m.appliance === 'oven') && !b.modules.some((m) => m.appliance === 'oven'),
+  );
+}
+
+/* ─────────────────────────  Зоны квартиры  ───────────────────────── */
+
+console.log('\nЗоны');
+{
+  /*
+   * Полностью просчитана кухня. У остальных зон честно убраны статьи,
+   * которых там нет: столешницы и фартука в спальне не существует, и
+   * показывать их в смете нельзя — это выдуманные деньги.
+   */
+  const kitchen = buildRun({ ...baseInput, requirements: { ...baseInput.requirements, zone: 'kitchen' } });
+  const bedroom = buildRun({ ...baseInput, requirements: { ...baseInput.requirements, zone: 'bedroom' } });
+
+  const kitchenLines = buildEstimate(kitchen, 'optimal', DEMO_RATES).lines.map((l) => l.key);
+  const bedroomLines = buildEstimate(bedroom, 'optimal', DEMO_RATES).lines.map((l) => l.key);
+
+  check('в кухне есть столешница и фартук',
+    kitchenLines.some((k) => k.startsWith('countertop_')) && kitchenLines.includes('wall_panel'));
+  check('в спальне их нет вовсе',
+    !bedroomLines.some((k) => k.startsWith('countertop_')) && !bedroomLines.includes('wall_panel'));
+  check('и спальня от этого дешевле',
+    buildEstimate(bedroom, 'optimal', DEMO_RATES).total <
+      buildEstimate(kitchen, 'optimal', DEMO_RATES).total);
+  check('корпус считается в обеих зонах', bedroomLines.includes('ldsp_carcass'));
+
+  check('зона едет вместе с рядом', bedroom.zone === 'bedroom');
+  check('кухня — зона по умолчанию', buildRun(baseInput).zone === 'kitchen');
+  check('каждая зона знает свои габариты',
+    ZONE_ORDER.every((k) => ZONE_PROFILES[k].depthMm >= 300 && ZONE_PROFILES[k].title.length > 0));
+  check('готовой отмечена только кухня',
+    ZONE_ORDER.filter((k) => ZONE_PROFILES[k].ready).join(',') === 'kitchen');
 }
 
 /* ─────────────────────────  Стандарты не параметризуются  ───────────────────────── */

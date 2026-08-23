@@ -150,11 +150,17 @@ export default function TemplatePicker({
             onClick={() => !blocked && onSelect(template)}
             disabled={Boolean(blocked)}
             aria-pressed={active}
+            /*
+             * Выключенная карточка не должна выглядеть просто бледной: тап,
+             * на который ничего не отвечает, читается как «выбор шаблона
+             * ничего не меняет». Поэтому причина подписана заметно, а не
+             * приглушена вместе со всей карточкой.
+             */
             className={`mw-panel-flat p-4 text-left ${
               active
                 ? 'ring-2 ring-inset ring-cyanBright'
                 : blocked
-                  ? 'opacity-45'
+                  ? 'opacity-70'
                   : 'hover:bg-sheet'
             }`}
           >
@@ -170,7 +176,7 @@ export default function TemplatePicker({
 
             <p className="mw-num mt-3 text-[13px] text-cyan">
               {blocked ? (
-                <span className="text-tape">{blocked}</span>
+                <span className="text-alert">Не подходит: {blocked}</span>
               ) : (
                 <>
                   {TEMPLATE_LAYOUT_LABEL[template.layout]} · встанет в ряд{' '}

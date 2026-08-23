@@ -61,6 +61,28 @@ export const DEFAULT_STRATEGIES: VariantStrategy[] = [
   },
 ];
 
+/**
+ * ОДНА КОМПЛЕКТАЦИЯ ВМЕСТО ТРЁХ.
+ *
+ * Три бюджета усложняли разговор: клиент начинал сравнивать картинки вместо
+ * того, чтобы принимать решение, а три средних рендера продают хуже одного
+ * сильного. Комплектация меняется не выбором из трёх, а переключателями
+ * состава — столешница, фурнитура, антресоль, — которые уже есть.
+ *
+ * Стратегии `basic` и `premium` НЕ удалены: вернуть три варианта — это
+ * поменять флаг обратно, а не восстанавливать код.
+ */
+export const SINGLE_VARIANT = true;
+
+/** Комплектация, которая показывается, когда вариант один. */
+export const MAIN_VARIANT: VariantKey = 'optimal';
+
+/** Какие стратегии реально уходят в поток. */
+export function activeStrategies(all: VariantStrategy[] = DEFAULT_STRATEGIES): VariantStrategy[] {
+  if (!SINGLE_VARIANT) return all;
+  return all.filter((s) => s.key === MAIN_VARIANT);
+}
+
 export interface BuildVariantsInput extends Omit<BuildRunInput, 'requirements'> {
   requirements: RunRequirements;
   rates: RateTable;
@@ -70,7 +92,7 @@ export interface BuildVariantsInput extends Omit<BuildRunInput, 'requirements'> 
 }
 
 export function buildVariants(input: BuildVariantsInput): Variant[] {
-  const strategies = input.strategies ?? DEFAULT_STRATEGIES;
+  const strategies = activeStrategies(input.strategies ?? DEFAULT_STRATEGIES);
 
   return strategies.map((strategy) => {
     const requirements: RunRequirements = {

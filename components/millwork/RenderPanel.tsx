@@ -15,10 +15,11 @@ import type { RunAngle } from '@/types/render';
 import type { Variant } from '@/types/millwork';
 
 /**
- * Три комплектации в квартире клиента.
+ * Кухня в квартире клиента.
  *
- * Фотография и артикул выбираются шагом раньше — здесь только результат:
- * одна кнопка, три картинки и повтор для той, что не удалась.
+ * Комплектация одна: три бюджета усложняли разговор, клиент сравнивал
+ * картинки вместо того, чтобы решать. Фотография и артикул выбираются шагом
+ * раньше — здесь только результат: одна кнопка, одна картинка и повтор.
  */
 
 type Props = {
@@ -74,7 +75,7 @@ export default function RenderPanel({
     <div>
       <div className="flex flex-wrap items-center gap-3">
         <button type="button" onClick={run} disabled={busy} className="mw-btn mw-btn-primary">
-          {busy ? 'Снимаем кадр…' : 'Отрисовать три комплектации'}
+          {busy ? 'Снимаем кадр…' : 'Отрисовать кухню'}
         </button>
         {!roomPhoto && (
           <p className="text-[13px] leading-snug text-tape">
@@ -85,7 +86,8 @@ export default function RenderPanel({
 
       {error && <p className="mt-3 text-[13px] text-alert">{error}</p>}
 
-      <div className="mt-4 grid gap-3 sm:grid-cols-3">
+      {/* Карточка одна и крупная: это результат, а не набор миниатюр. */}
+      <div className="mt-4 grid max-w-2xl gap-3">
         {variants.map((variant) => {
           const styleId = VARIANT_STYLE[variant.key];
           const state = byStyle.get(styleId);

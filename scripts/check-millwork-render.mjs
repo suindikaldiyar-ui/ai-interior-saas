@@ -79,7 +79,7 @@ try {
   await page.goto(`${BASE}/demo`, { waitUntil: 'networkidle' });
   await sleep(700);
 
-  // Результат: 3D — один из четырёх видов, рендер рядом.
+  // Результат: сравнение вверху, 3D — один из трёх видов ниже.
   await page.getByRole('button', { name: /Результат/ }).click();
   await sleep(600);
 
@@ -87,11 +87,10 @@ try {
   await sleep(3500);
   await page.screenshot({ path: '.capture-check/millwork-3d.png' });
 
-  await page.getByRole('button', { name: 'Рендер', exact: true }).click();
-  await sleep(2500);
-  await page.getByRole('button', { name: /Отрисовать три комплектации/ }).click();
+  await page.getByRole('button', { name: /Отрисовать кухню/ }).click();
 
-  for (let i = 0; i < 40 && calls.length < 3; i++) await sleep(1000);
+  // Комплектация одна — и запрос к роуту ровно один.
+  for (let i = 0; i < 40 && calls.length < 1; i++) await sleep(1000);
 
   console.log(`\nзапросов: ${calls.length}`);
   for (const c of calls) {

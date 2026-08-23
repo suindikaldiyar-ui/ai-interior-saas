@@ -134,8 +134,16 @@ export interface RunOptions {
   integratedHandles: boolean;
 }
 
+/**
+ * Зона квартиры. Полностью просчитана кухня; остальные заведены габаритами
+ * и составом статей — см. lib/millwork/zones.ts.
+ */
+export type ZoneKind = 'kitchen' | 'bedroom' | 'living' | 'bathroom' | 'hallway';
+
 export interface Run {
   id: string;
+  /** Зона, под которую собран ряд. По умолчанию кухня. */
+  zone?: ZoneKind;
   /** Длина ряда по стене. */
   lengthMm: number;
   ceilingHeightMm: number;
@@ -150,6 +158,8 @@ export interface Run {
 }
 
 export interface RunRequirements {
+  /** Зона квартиры: от неё зависят габариты и состав статей сметы. */
+  zone?: ZoneKind;
   appliances: ApplianceKind[];
   /** С какой стороны ставить холодильник и пенал. */
   tallSide: 'left' | 'right';

@@ -445,6 +445,8 @@ export function buildRun(input: BuildRunInput): Run {
 
   const run: Run = {
     id: input.id ?? 'run',
+    // Зона едет с рядом дальше: от неё зависит состав статей сметы.
+    zone: requirements.zone ?? 'kitchen',
     lengthMm: usable,
     ceilingHeightMm,
     modules,

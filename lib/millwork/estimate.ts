@@ -5,6 +5,7 @@ import {
   moduleHeightMm,
 } from './modules';
 import { allModules } from './layout';
+import { zoneProfile } from './zones';
 import type {
   Estimate,
   EstimateLine,
@@ -137,31 +138,49 @@ export function buildEstimateDrafts(run: Run): Draft[] {
   const hasCorner = run.modules.some((m) => m.kind === 'corner_base');
   const counterMp = round3(run.lengthMm / MM_IN_M);
 
+  /*
+   * Столешницы и фартука в спальне и прихожей нет вовсе. Считать их «на всякий
+   * случай» нельзя: клиент увидел бы в смете позицию, которой не существует.
+   */
+  const zone = zoneProfile(run.zone);
+
   const drafts: Draft[] = [
     { key: 'ldsp_carcass', title: 'Корпус ЛДСП', unit: 'm2', quantity: round2(carcass) },
     { key: 'hdf_back', title: 'Задние стенки ХДФ', unit: 'm2', quantity: round2(backs) },
     { key: 'front_panel', title: 'Фасады', unit: 'm2', quantity: round2(fronts) },
     { key: 'pvc_edge', title: 'Кромка ПВХ', unit: 'mp', quantity: round2(edge / MM_IN_M) },
-    {
+  ];
+
+  if (zone.hasCountertop) {
+    drafts.push({
       key: `countertop_${run.options.countertop}`,
       title: `Столешница (${countertopTitle(run.options.countertop)})`,
       unit: 'mp',
       quantity: counterMp,
-    },
-  ];
+    });
 
-  if (hasCorner) {
-    drafts.push({ key: 'countertop_miter', title: 'Запил столешницы на угол', unit: 'pcs', quantity: 1 });
+    if (hasCorner) {
+      drafts.push({ key: 'countertop_miter', title: 'Запил столешницы на угол', unit: 'pcs', quantity: 1 });
+    }
+
+    drafts.push({
+      key: 'countertop_plinth',
+      title: 'Плинтус столешницы',
+      unit: 'mp',
+      quantity: counterMp,
+    });
   }
 
-  drafts.push(
-    { key: 'countertop_plinth', title: 'Плинтус столешницы', unit: 'mp', quantity: counterMp },
-    {
+  if (zone.hasApron) {
+    drafts.push({
       key: 'wall_panel',
       title: 'Стеновая панель (фартук)',
       unit: 'mp',
       quantity: run.options.hasUpper ? counterMp : 0,
-    },
+    });
+  }
+
+  drafts.push(
     { key: `hinge_${run.options.hardwareClass}`, title: `Петли (${hardwareTitle(run.options.hardwareClass)})`, unit: 'pcs', quantity: hinges },
     { key: `slide_${run.options.hardwareClass}`, title: `Направляющие (${hardwareTitle(run.options.hardwareClass)})`, unit: 'set', quantity: slides },
     { key: 'lift_mechanism', title: 'Подъёмники верхних фасадов', unit: 'pcs', quantity: lifts },

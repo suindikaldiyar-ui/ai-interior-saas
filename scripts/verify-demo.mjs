@@ -239,25 +239,40 @@ try {
     (await page.getByText('Состав ряда').count()) === 1,
   );
 
-  /* ── 5. Результат: три бюджета и четыре вида ── */
+  /* ── 5. Результат: сравнение во весь экран и три вида ниже ── */
 
   await page.getByRole('button', { name: /Результат/ }).click();
   await sleep(700);
 
-  const prices = await page.evaluate(() =>
-    Array.from(document.querySelectorAll('main button[aria-pressed]'))
-      .map((b) => b.textContent ?? '')
-      .filter((t) => t.includes('₸'))
-      .map((t) => Number((t.match(/[\d\s ]+(?=\s*₸)/)?.[0] ?? '0').replace(/\D/g, '')))
-      .filter((n) => n > 0),
+  // Комплектация одна: выбор из трёх бюджетов с экрана убран.
+  const priceButtons = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('main button[aria-pressed]')).filter((b) =>
+      (b.textContent ?? '').includes('₸'),
+    ).length,
   );
-  check('три бюджета одной кухни', prices.length === 3, prices.join(' / '));
-  check('цены растут от базового к премиуму', prices[0] < prices[1] && prices[1] < prices[2]);
+  check('карточек с бюджетами на экране нет', priceButtons === 0, `карточек: ${priceButtons}`);
+
+  const oneTotal = await page.evaluate(() => {
+    const row = Array.from(document.querySelectorAll('button')).find((b) =>
+      (b.textContent ?? '').includes('подробнее'),
+    );
+    return row?.textContent?.includes('₸') ?? false;
+  });
+  check('сумма живёт в строке итога', oneTotal);
+
+  // Фотографии ещё нет — и об этом сказано прямо, а не показано пустое место.
+  check(
+    'без фото сравнение честно говорит, чего не хватает',
+    (await page.getByRole('button', { name: 'Добавить фото помещения' }).count()) === 1,
+  );
 
   check(
-    'чертёж, план, 3D и рендер — четырьмя крупными кнопками',
-    (await page.getByRole('button', { name: /^(Чертёж|План|3D|Рендер)$/ }).count()) === 4,
+    'чертёж, план и 3D — тремя кнопками ниже сравнения',
+    (await page.getByRole('button', { name: /^(Чертёж|План|3D)$/ }).count()) === 3,
   );
+
+  await page.getByRole('button', { name: 'Чертёж', exact: true }).click();
+  await sleep(400);
 
   check('чертёж отрисован', (await page.locator('svg').count()) > 0);
   check(
@@ -299,24 +314,25 @@ try {
     `модулей в сцене: ${sceneModules}`,
   );
 
-  await page.getByRole('button', { name: 'Рендер', exact: true }).click();
-  await sleep(600);
-
   const cards = await page.locator('figure').count();
-  check('рендер предлагает три комплектации, а не шесть стилей', cards === 3, `карточек: ${cards}`);
+  check('карточка рендера одна, а не набор миниатюр', cards === 1, `карточек: ${cards}`);
   check(
     'без фото сказано прямо, что клиент увидит настроение, а не квартиру',
     (await page.getByText(/клиент увидит настроение, а не свою квартиру/).count()) > 0,
   );
   check(
     'кадр снимается из конфигуратора, а не в студии',
-    (await page.getByRole('button', { name: /Отрисовать три комплектации/ }).count()) === 1,
+    (await page.getByRole('button', { name: /Отрисовать кухню/ }).count()) === 1,
   );
 
   check(
     'без фото сравнивать нечего — предлагается добавить снимок',
     (await page.getByRole('button', { name: 'Добавить фото помещения' }).count()) === 1,
   );
+  // Сцена нужна только для захвата кадра: на любом виде, кроме 3D, она уезжает
+  // за экран — но остаётся смонтированной, иначе снимать кадр будет нечем.
+  await page.getByRole('button', { name: 'Чертёж', exact: true }).click();
+  await sleep(500);
   check(
     'технической сцены на экране нет',
     await page.evaluate(() => {
@@ -378,8 +394,26 @@ try {
   /* ── Сравнение «до и после» ── */
 
   await page.getByRole('button', { name: /Результат/ }).click();
-  await sleep(500);
-  await page.getByRole('button', { name: 'Рендер', exact: true }).click();
+  await sleep(700);
+
+  // Главный экран продажи: во всю ширину и почти во весь экран.
+  const heroCompare = await page.evaluate(() => {
+    const slider = document.querySelector('[role="slider"][aria-label="Сравнение до и после"]');
+    const frame = slider?.parentElement;
+    if (!frame) return null;
+    const box = frame.getBoundingClientRect();
+    return { h: Math.round(box.height), share: box.height / window.innerHeight };
+  });
+  check('сравнение «до и после» стоит первым на шаге результата', Boolean(heroCompare));
+  check(
+    'и занимает не меньше 70% экрана',
+    Boolean(heroCompare) && heroCompare.share >= 0.69,
+    heroCompare ? `${heroCompare.h} px = ${Math.round(heroCompare.share * 100)}% экрана` : '—',
+  );
+  check(
+    'на весь экран — отдельной кнопкой',
+    (await page.getByRole('button', { name: /На весь экран/ }).count()) === 1,
+  );
   await sleep(700);
 
   const compare = page.getByRole('slider', { name: 'Сравнение до и после' });
@@ -391,7 +425,7 @@ try {
   check(
     'без рендера правая половина честно говорит, что нажать',
     (await page.getByText('Рендера ещё нет').count()) === 1 &&
-      (await page.getByText(/Нажмите «Отрисовать три комплектации»/).count()) === 1,
+      (await page.getByText(/Нажмите «Отрисовать кухню»/).count()) === 1,
   );
 
   await compare.scrollIntoViewIfNeeded();

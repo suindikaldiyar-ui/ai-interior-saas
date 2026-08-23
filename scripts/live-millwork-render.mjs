@@ -134,17 +134,14 @@ try {
   const sheet = page.locator('svg').first();
   await sheet.screenshot({ path: `${OUT}/00-elevation.png` });
 
-  await page.getByRole('button', { name: 'Рендер', exact: true }).click();
-  await sleep(2000);
+  await page.getByRole('button', { name: /Отрисовать кухню/ }).click();
 
-  await page.getByRole('button', { name: /Отрисовать три комплектации/ }).click();
-
-  for (let i = 0; i < 180 && results.length < 3; i++) await sleep(1000);
+  for (let i = 0; i < 180 && results.length < 1; i++) await sleep(1000);
 
   await sleep(1000);
   await page.screenshot({ path: `${OUT}/00-panel.png`, fullPage: true });
 
-  console.log(`\nготово: ${results.filter((r) => r.kb).length} из 3`);
+  console.log(`\nготово: ${results.filter((r) => r.kb).length} из 1`);
   await browser.close();
 } finally {
   server.kill();

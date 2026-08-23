@@ -7,7 +7,7 @@
  * 44 px и где строка уезжает за правый край.
  */
 import { execSync, spawn } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, rmSync } from 'node:fs';
 import { chromium } from 'playwright';
 import sharp from 'sharp';
 
@@ -48,6 +48,9 @@ const photo = await sharp({
   .toBuffer();
 
 freePort(PORT);
+// Чистим папку: снимок экрана, который перестал существовать, читается как
+// свежий и врёт про состояние продукта.
+rmSync(OUT, { recursive: true, force: true });
 mkdirSync(OUT, { recursive: true });
 
 const server = spawn('npx', ['next', 'start', '-p', String(PORT)], {
@@ -155,11 +158,12 @@ async function run(browser, { width, height, theme }) {
   await sleep(800);
   await shot(page, `result-${tag}`);
 
-  const renderTab = page.getByRole('button', { name: 'Рендер', exact: true });
-  if (await renderTab.count()) {
-    await renderTab.click();
-    await sleep(900);
-    await shot(page, `compare-${tag}`);
+  // Чертёж на том же шаге, ниже сравнения.
+  const sheetTab = page.getByRole('button', { name: 'Чертёж', exact: true });
+  if (await sheetTab.count()) {
+    await sheetTab.click();
+    await sleep(700);
+    await shot(page, `drawing-${tag}`);
   }
 
   await page.close();
