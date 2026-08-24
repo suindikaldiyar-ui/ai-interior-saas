@@ -9,7 +9,9 @@ import {
   FACADE_TARGET,
   useInteriorStore,
 } from '@/store/useInteriorStore';
+import { zoneProfile } from '@/lib/millwork/zones';
 import type { CatalogEntryFull } from '@/types/catalog';
+import type { ZoneKind } from '@/types/millwork';
 import { RUN_ANGLE_LABEL, type RunAngle } from '@/types/render';
 
 /**
@@ -21,6 +23,8 @@ import { RUN_ANGLE_LABEL, type RunAngle } from '@/types/render';
  */
 
 type Props = {
+  /** Зона объекта: в спальне столешницы и фартука не существует. */
+  zone?: ZoneKind;
   kitchenItemId: string | null;
   roomPhoto: string | null;
   onPhotoChange: (dataUrl: string | null) => void;
@@ -32,6 +36,7 @@ type Props = {
 const ANGLES: RunAngle[] = ['front', 'left', 'right'];
 
 export default function MaterialsStep({
+  zone = 'kitchen',
   kitchenItemId,
   roomPhoto,
   onPhotoChange,
@@ -43,6 +48,7 @@ export default function MaterialsStep({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const profile = zoneProfile(zone);
   const catalog = useInteriorStore((s) => s.catalog);
   const selections = useInteriorStore((s) => s.selections);
   const setSelection = useInteriorStore((s) => s.setSelection);
@@ -91,6 +97,14 @@ export default function MaterialsStep({
    * `kitchenItemId` остаётся ради объектов, собранных до этой правки: там
    * товар лежит под id гарнитура. Читаем оба ключа, пишем в новый.
    */
+  /** Сколько блоков на экране: в спальне остаётся один — фасады. */
+  const surfaces = 1 + (profile.hasCountertop ? 1 : 0) + (profile.hasApron ? 1 : 0);
+  /** Есть ли вообще что выбирать в этой зоне. */
+  const available =
+    facades.length +
+    (profile.hasCountertop ? countertops.length : 0) +
+    (profile.hasApron ? aprons.length : 0);
+
   const legacyId = kitchenItemId ? selections[kitchenItemId] : undefined;
   const facadeId = selections[FACADE_TARGET] ?? legacyId;
 
@@ -199,38 +213,48 @@ export default function MaterialsStep({
       <section className="mw-panel">
         <h3 className="text-[17px] font-medium">Материалы из каталога</h3>
         <p className="mt-1 text-[13px] leading-snug text-graphiteMw">
-          Фасады, столешница и фартук — три разные поверхности. Каждая уходит
-          в рендер своим артикулом; невыбранная не мешает остальным.
+          {surfaces === 1
+            ? 'Артикул уходит в рендер: клиент увидит свой фасад, а не похожий.'
+            : 'Каждая поверхность уходит в рендер своим артикулом; невыбранная не мешает остальным.'}
         </p>
 
         <Surface
-          title="Фасады кухни"
+          title={profile.facadeTitle}
           items={facades}
           selectedId={facadeId}
           onSelect={selectFacade}
-          missing="В каталоге нет ни одной кухни"
+          missing="В каталоге нет подходящих артикулов"
           waiting="Фасады пойдут по описанию комплектации"
         />
 
-        <Surface
-          title="Столешница"
-          items={countertops}
-          selectedId={selections[COUNTERTOP_TARGET]}
-          onSelect={(id) => setSelection(COUNTERTOP_TARGET, id)}
-          missing="В каталоге нет столешниц"
-          waiting="Столешница пойдёт по описанию комплектации"
-        />
+        {/*
+          * Столешницы и фартука в спальне и прихожей не существует — и в
+          * смете, и на чертеже их уже нет. Показывать здесь пустой блок
+          * значило бы предлагать выбрать то, чего в зоне не бывает.
+          */}
+        {profile.hasCountertop && (
+          <Surface
+            title="Столешница"
+            items={countertops}
+            selectedId={selections[COUNTERTOP_TARGET]}
+            onSelect={(id) => setSelection(COUNTERTOP_TARGET, id)}
+            missing="В каталоге нет столешниц"
+            waiting="Столешница пойдёт по описанию комплектации"
+          />
+        )}
 
-        <Surface
-          title="Фартук"
-          items={aprons}
-          selectedId={selections[APRON_TARGET]}
-          onSelect={(id) => setSelection(APRON_TARGET, id)}
-          missing="В каталоге нет стеновых панелей"
-          waiting="Фартук пойдёт по описанию комплектации"
-        />
+        {profile.hasApron && (
+          <Surface
+            title="Фартук"
+            items={aprons}
+            selectedId={selections[APRON_TARGET]}
+            onSelect={(id) => setSelection(APRON_TARGET, id)}
+            missing="В каталоге нет стеновых панелей"
+            waiting="Фартук пойдёт по описанию комплектации"
+          />
+        )}
 
-        {facades.length + countertops.length + aprons.length === 0 && (
+        {available === 0 && (
           <a href="/admin/catalog" className="mw-btn mw-btn-ghost mt-4">
             Завести товары в каталоге
           </a>

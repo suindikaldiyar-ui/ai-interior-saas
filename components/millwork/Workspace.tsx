@@ -22,6 +22,7 @@ import type { RateTable } from '@/lib/millwork/estimate';
 import { applyOps } from '@/lib/millwork/ops';
 import { composeVariants, workspaceInput } from '@/lib/millwork/workspace';
 import { MAIN_VARIANT, SINGLE_VARIANT } from '@/lib/millwork/variants';
+import { zoneProfile } from '@/lib/millwork/zones';
 import { validateRun } from '@/lib/millwork/validate';
 import {
   collectWarnings,
@@ -751,6 +752,7 @@ export default function Workspace(props: WorkspaceProps) {
           <>
             <CatalogLoader />
             <MaterialsStep
+              zone={zone}
               kitchenItemId={kitchenItemId}
               roomPhoto={roomPhoto}
               onPhotoChange={(next) => {
@@ -946,7 +948,9 @@ export default function Workspace(props: WorkspaceProps) {
         <div className="mb-3">
           <EstimateSheet
             estimate={active.estimate}
-            variantTitle={SINGLE_VARIANT ? 'Ваша кухня' : active.title}
+            /* Комплектация одна, поэтому строка итога называет ЗОНУ:
+               «Ваша кухня» в спальне читается как чужой проект. */
+            variantTitle={SINGLE_VARIANT ? zoneProfile(zone).yours : active.title}
             disabledKeys={disabled[active.key]}
             onToggle={toggleLine}
             open={estimateOpen}

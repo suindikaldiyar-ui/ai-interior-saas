@@ -22,6 +22,13 @@ export type ZoneProfile = {
   height: number | 'ceiling';
   /** Что за мебель тут стоит — одной строкой для замерщика. */
   hint: string;
+  /**
+   * Как называются фасады этой зоны. «Фасады кухни» в спальне читаются как
+   * чужой текст, а замерщик показывает этот экран клиенту.
+   */
+  facadeTitle: string;
+  /** Как зону называют в разговоре с клиентом: род у зон разный. */
+  yours: string;
   /** Какие секции доступны в этой зоне. */
   sections: SectionKind[];
   /** Состав по умолчанию, если шаблон не выбран. */
@@ -49,6 +56,8 @@ export const ZONE_PROFILES: Record<ZoneKind, ZoneProfile> = {
     depthMm: 560,
     height: 'ceiling',
     hint: 'Нижний и верхний ряд, техника, мойка, столешница',
+    facadeTitle: 'Фасады кухни',
+    yours: 'Ваша кухня',
     sections: [],
     defaultSections: [],
     fillSection: 'shelves',
@@ -68,6 +77,8 @@ export const ZONE_PROFILES: Record<ZoneKind, ZoneProfile> = {
     depthMm: 600,
     height: 'ceiling',
     hint: 'Шкаф-купе до потолка: штанга, полки, ящики',
+    facadeTitle: 'Фасады шкафа',
+    yours: 'Ваша спальня',
     sections: ['hanging_long', 'hanging_double', 'shelves', 'drawers', 'open', 'mezzanine'],
     defaultSections: ['hanging_long', 'shelves', 'drawers', 'hanging_double'],
     fillSection: 'shelves',
@@ -88,6 +99,8 @@ export const ZONE_PROFILES: Record<ZoneKind, ZoneProfile> = {
     depthMm: 400,
     height: 'ceiling',
     hint: 'Вешалка, обувница, скамья, зеркало',
+    facadeTitle: 'Фасады прихожей',
+    yours: 'Ваша прихожая',
     sections: ['hooks', 'shoes', 'bench', 'mirror', 'shelves', 'mezzanine'],
     defaultSections: ['hooks', 'shoes', 'bench', 'mirror'],
     fillSection: 'shelves',
@@ -107,6 +120,8 @@ export const ZONE_PROFILES: Record<ZoneKind, ZoneProfile> = {
     depthMm: 400,
     height: 2000,
     hint: 'ТВ-зона: ниша, подвесные модули, подсветка',
+    facadeTitle: 'Фасады модулей',
+    yours: 'Ваш зал',
     sections: ['tv_niche', 'hanging_module', 'open', 'drawers', 'shelves'],
     defaultSections: ['hanging_module', 'tv_niche', 'hanging_module', 'drawers'],
     fillSection: 'hanging_module',
@@ -125,6 +140,8 @@ export const ZONE_PROFILES: Record<ZoneKind, ZoneProfile> = {
     depthMm: 450,
     height: 850,
     hint: 'Тумба под раковину, пенал, зеркальный шкаф',
+    facadeTitle: 'Фасады тумбы',
+    yours: 'Ваш санузел',
     sections: ['vanity', 'tall_unit', 'mirror_cabinet', 'open', 'drawers'],
     defaultSections: ['vanity', 'tall_unit'],
     // Длинную стену санузла добираем тумбами, а не частоколом пеналов.
