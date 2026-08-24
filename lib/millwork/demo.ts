@@ -59,6 +59,25 @@ export const DEMO_REQUIREMENTS: RunRequirements = DEFAULT_REQUIREMENTS;
  * организации: у каждой компании своя себестоимость, в коде её быть не должно.
  */
 export const DEMO_RATES: RateTable = {
+  // Зоны кроме кухни: без этих ставок смета спальни не считается.
+  ldsp_moisture: 14500,
+  countertop_moisture: 42000,
+  sliding_door: 38000,
+  sliding_system: 42000,
+  wardrobe_rod: 4500,
+  rod_holder: 1200,
+  rod_pantograph: 26000,
+  shelf_panel: 11000,
+  drawer_box: 14000,
+  coat_hook: 1500,
+  shoe_rack: 9000,
+  bench_seat: 38000,
+  mirror_panel: 32000,
+  hanging_bracket: 6500,
+  cable_channel: 3500,
+  led_niche: 8500,
+  sink_cutout: 12000,
+
   ldsp_carcass: 9500,
   hdf_back: 2200,
   front_panel: 26000,

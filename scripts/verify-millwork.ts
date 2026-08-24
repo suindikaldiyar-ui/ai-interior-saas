@@ -15,6 +15,13 @@ import { buildEstimate, recalcTotal } from '../lib/millwork/estimate';
 import { DEFAULT_STRATEGIES, MAIN_VARIANT, buildVariants } from '../lib/millwork/variants';
 import { RUN_TEMPLATES, requirementsFromTemplate, templateFits } from '../lib/millwork/templates';
 import { ZONE_ORDER, ZONE_PROFILES } from '../lib/millwork/zones';
+import {
+  templateAppliancesWidthMm,
+  templatesForZone,
+  zoneReadiness,
+} from '../lib/millwork/templates';
+import { vanityWaterConflicts } from '../lib/millwork/warnings';
+import type { ZoneKind } from '../types/millwork';
 import { commIssues, layoutIssues, validateRun } from '../lib/millwork/validate';
 import {
   RunOverflowError,
@@ -690,34 +697,202 @@ console.log('\nШаблон доходит до раскладки');
 
 /* ─────────────────────────  Зоны квартиры  ───────────────────────── */
 
-console.log('\nЗоны');
+console.log('\nЗоны: ряд собирается и сходится');
 {
   /*
-   * Полностью просчитана кухня. У остальных зон честно убраны статьи,
-   * которых там нет: столешницы и фартука в спальне не существует, и
-   * показывать их в смете нельзя — это выдуманные деньги.
+   * Каждая зона обязана собрать ряд на любой разумной длине и сойтись с ней
+   * до миллиметра. Ряд, который не сходится, — это мебель, которая не встанет
+   * в стену, и деньги, которые компания потеряет на своём производстве.
    */
-  const kitchen = buildRun({ ...baseInput, requirements: { ...baseInput.requirements, zone: 'kitchen' } });
-  const bedroom = buildRun({ ...baseInput, requirements: { ...baseInput.requirements, zone: 'bedroom' } });
+  for (const zone of ZONE_ORDER) {
+    for (const lengthMm of [1200, 1800, 2600, 3400, 4200]) {
+      const run = buildRun({
+        lengthMm,
+        ceilingHeightMm: 2700,
+        requirements: { ...baseInput.requirements, zone },
+        openings: [],
+        comms: [],
+      });
+      check(
+        `${ZONE_PROFILES[zone].title}: ряд ${lengthMm} мм сходится`,
+        runWidthSum(run) === lengthMm && run.residualMm === 0,
+        `сумма ${runWidthSum(run)}`,
+      );
+    }
+  }
+}
 
-  const kitchenLines = buildEstimate(kitchen, 'optimal', DEMO_RATES).lines.map((l) => l.key);
-  const bedroomLines = buildEstimate(bedroom, 'optimal', DEMO_RATES).lines.map((l) => l.key);
+console.log('\nЗоны: в смете нет чужих строк');
+{
+  const estimateFor = (zone: ZoneKind, lengthMm = 3000) =>
+    buildEstimate(
+      buildRun({
+        lengthMm,
+        ceilingHeightMm: 2700,
+        requirements: { ...baseInput.requirements, zone },
+        openings: [],
+        comms: [],
+      }),
+      'optimal',
+      DEMO_RATES,
+    );
 
-  check('в кухне есть столешница и фартук',
-    kitchenLines.some((k) => k.startsWith('countertop_')) && kitchenLines.includes('wall_panel'));
-  check('в спальне их нет вовсе',
-    !bedroomLines.some((k) => k.startsWith('countertop_')) && !bedroomLines.includes('wall_panel'));
-  check('и спальня от этого дешевле',
-    buildEstimate(bedroom, 'optimal', DEMO_RATES).total <
-      buildEstimate(kitchen, 'optimal', DEMO_RATES).total);
-  check('корпус считается в обеих зонах', bedroomLines.includes('ldsp_carcass'));
+  const keys = (zone: ZoneKind) => estimateFor(zone).lines.map((l) => l.key);
 
-  check('зона едет вместе с рядом', bedroom.zone === 'bedroom');
-  check('кухня — зона по умолчанию', buildRun(baseInput).zone === 'kitchen');
-  check('каждая зона знает свои габариты',
-    ZONE_ORDER.every((k) => ZONE_PROFILES[k].depthMm >= 300 && ZONE_PROFILES[k].title.length > 0));
-  check('готовой отмечена только кухня',
-    ZONE_ORDER.filter((k) => ZONE_PROFILES[k].ready).join(',') === 'kitchen');
+  const bedroom = keys('bedroom');
+  check('спальня: столешницы нет', !bedroom.some((k) => k.startsWith('countertop_')));
+  check('спальня: фартука нет', !bedroom.includes('wall_panel'));
+  check('спальня: есть двери-купе и система', bedroom.includes('sliding_door') && bedroom.includes('sliding_system'));
+  check('спальня: штанга и держатели', bedroom.includes('wardrobe_rod') && bedroom.includes('rod_holder'));
+  check('спальня: полки и ящики', bedroom.includes('shelf_panel') && bedroom.includes('drawer_box'));
+  const bedroomFronts =
+    estimateFor('bedroom').lines.find((l) => l.key === 'front_panel')?.quantity ?? 0;
+  check(
+    'спальня: распашных фасадов и петель нет — шкаф закрыт купе',
+    !bedroom.includes('hinge_standard') && bedroomFronts < 1,
+    `фасадов ${bedroomFronts} м² — это фронты ящиков`,
+  );
+
+  const living = keys('living');
+  check('зал: фартука нет', !living.includes('wall_panel'));
+  check('зал: столешницы нет', !living.some((k) => k.startsWith('countertop_')));
+  check(
+    'зал: кабель-канал, подсветка ниши и подвесной крепёж',
+    living.includes('cable_channel') && living.includes('led_niche') && living.includes('hanging_bracket'),
+  );
+
+  const bathroom = keys('bathroom');
+  check('санузел: фартука нет', !bathroom.includes('wall_panel'));
+  check('санузел: корпус влагостойкий, а не обычный',
+    bathroom.includes('ldsp_moisture') && !bathroom.includes('ldsp_carcass'));
+  check('санузел: столешница влагостойкая', bathroom.includes('countertop_moisture'));
+  check('санузел: вырез под раковину', bathroom.includes('sink_cutout'));
+
+  const hallway = keys('hallway');
+  check('прихожая: столешницы нет', !hallway.some((k) => k.startsWith('countertop_')));
+  check(
+    'прихожая: зеркало, крючки, обувница, скамья',
+    hallway.includes('mirror_panel') &&
+      hallway.includes('coat_hook') &&
+      hallway.includes('shoe_rack') &&
+      hallway.includes('bench_seat'),
+  );
+  check(
+    'прихожая: штанга торцевая или пантограф — вдоль стены в 400 мм плечики не встают',
+    hallway.includes('rod_pantograph'),
+  );
+
+  const kitchen = keys('kitchen');
+  check('кухня: столешница и фартук на месте',
+    kitchen.some((k) => k.startsWith('countertop_')) && kitchen.includes('wall_panel'));
+  check('кухня: секционных статей нет', !kitchen.includes('sliding_door') && !kitchen.includes('mirror_panel'));
+
+  // Ни одна зона не считается по нулевым ставкам: это была бы выдуманная сумма.
+  for (const zone of ZONE_ORDER) {
+    const zero = estimateFor(zone).lines.filter((l) => l.missingRate);
+    check(
+      `${ZONE_PROFILES[zone].title}: все строки со ставкой`,
+      zero.length === 0,
+      zero.map((l) => l.key).join(' ') || 'нулевых нет',
+    );
+  }
+}
+
+console.log('\nЗоны: двери-купе');
+{
+  // Двери-купе — самая дорогая позиция после корпуса, и она обязана расти
+  // вместе с шириной шкафа: иначе трёхметровый шкаф стоит как двухметровый.
+  const area = (lengthMm: number) => {
+    const run = buildRun({
+      lengthMm,
+      ceilingHeightMm: 2700,
+      requirements: { ...baseInput.requirements, zone: 'bedroom' },
+      openings: [],
+      comms: [],
+    });
+    const line = buildEstimate(run, 'optimal', DEMO_RATES).lines.find((l) => l.key === 'sliding_door');
+    return line?.quantity ?? 0;
+  };
+
+  const small = area(1800);
+  const large = area(3600);
+  check('двери-купе считаются по м²', small > 0 && large > 0, `${small} м² против ${large} м²`);
+  check('и растут вместе с шириной шкафа', large > small * 1.5);
+
+  const doors = buildEstimate(
+    buildRun({
+      lengthMm: 3600,
+      ceilingHeightMm: 2700,
+      requirements: { ...baseInput.requirements, zone: 'bedroom' },
+      openings: [],
+      comms: [],
+    }),
+    'optimal',
+    DEMO_RATES,
+  ).lines.find((l) => l.key === 'sliding_system');
+  check('система купе — комплектом на каждую дверь', (doors?.quantity ?? 0) >= 3, String(doors?.quantity));
+}
+
+console.log('\nЗоны: тумба под раковину привязана к воде');
+{
+  const run = buildRun({
+    lengthMm: 2000,
+    ceilingHeightMm: 2700,
+    requirements: { ...baseInput.requirements, zone: 'bathroom' },
+    openings: [],
+    comms: [],
+  });
+
+  const water = (fromCornerMm: number): CommPoint[] => [
+    { id: 'w1', wallId: 'w1', kind: 'water_supply', fromCornerMm, heightMm: 500 },
+  ];
+
+  const near = vanityWaterConflicts(run, water(400));
+  const far = vanityWaterConflicts(run, water(1800));
+
+  check('в допуске 300 мм молчит', near.length === 0);
+  check('дальше 300 мм — блокирующее', far.length === 1 && far[0].severity === 'blocking', far[0]?.message);
+}
+
+console.log('\nЗоны: шаблоны и готовность');
+{
+  for (const zone of ZONE_ORDER) {
+    const list = templatesForZone(zone);
+    check(`${ZONE_PROFILES[zone].title}: минимум два шаблона`, list.length >= 2, `${list.length}`);
+    check(
+      `${ZONE_PROFILES[zone].title}: шаблоны только своей зоны`,
+      list.every((t) => (t.zone ?? 'kitchen') === zone),
+    );
+
+    // Карточка, обещающая ряд короче суммы секций, не соберётся.
+    for (const template of list) {
+      check(
+        `${template.name}: диапазон вмещает состав`,
+        template.minLengthMm >= templateAppliancesWidthMm(template),
+        `${template.minLengthMm} против ${templateAppliancesWidthMm(template)}`,
+      );
+    }
+
+    const readiness = zoneReadiness(zone);
+    check(
+      `${ZONE_PROFILES[zone].title}: готовность посчитана, а не проставлена руками`,
+      readiness.ready,
+      readiness.missing.join(', ') || 'всё на месте',
+    );
+  }
+
+  // Шаблон зоны разворачивается через buildRun, своей раскладки у него нет.
+  const wardrobe = templatesForZone('bedroom')[0];
+  const run = buildRun({
+    lengthMm: 2800,
+    ceilingHeightMm: 2700,
+    requirements: requirementsFromTemplate(wardrobe),
+    openings: [],
+    comms: [],
+  });
+  check('шаблон шкафа разворачивается в ряд', run.modules.length >= 3);
+  check('и ряд сходится с длиной', runWidthSum(run) === 2800);
+  check('шкаф-купе помечен как купе', run.doorSystem === 'sliding');
 }
 
 /* ─────────────────────────  Стандарты не параметризуются  ───────────────────────── */

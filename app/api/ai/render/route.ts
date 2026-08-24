@@ -2,9 +2,11 @@ import { NextResponse } from 'next/server';
 import { geminiHeaders, geminiUrl, imageModel, parseImageResponse } from '@/lib/gemini';
 import { getEntry } from '@/lib/furnitureCatalog';
 import { PHOTOGRAPHY, getStyle, optionsBlock, styleBlock } from '@/lib/renderStyles';
+import { SECTION_SPECS } from '@/lib/millwork/sections';
+import { zoneProfile } from '@/lib/millwork/zones';
 import { APPLIANCE_SLOTS } from '@/lib/millwork/modules';
 import type { RunModuleLike } from '@/lib/kitchen';
-import type { ApplianceKind } from '@/types/millwork';
+import type { ApplianceKind, SectionKind } from '@/types/millwork';
 import type { FurnitureItem, RoomConfig } from '@/types/interior';
 import {
   MAX_CATALOG_IMAGES,
@@ -183,11 +185,15 @@ function buildMillworkBlock(items: RenderRequest['items']): string {
 
     const parts = (modules as RunModuleLike[]).map((unit, i) => {
       const slot = unit.appliance ? APPLIANCE_SLOTS[unit.appliance as ApplianceKind] : null;
+      // В зонах без техники роль модуля задаёт секция: штанга, полки, обувница.
+      const section = unit.section ? SECTION_SPECS[unit.section as SectionKind] : null;
       const what = slot
         ? slot.title.toLowerCase()
-        : unit.frontType === 'drawers' && (unit.drawerCount ?? 0) > 0
-          ? `${unit.drawerCount} ящика`
-          : 'глухой фасад';
+        : section
+          ? `${section.title.toLowerCase()} (${section.hint})`
+          : unit.frontType === 'drawers' && (unit.drawerCount ?? 0) > 0
+            ? `${unit.drawerCount} ящика`
+            : 'глухой фасад';
       return `${i + 1}. ${unit.widthMm} мм — ${what}`;
     });
 
@@ -245,12 +251,21 @@ function buildPrompt(
   // Опции комплектации приезжают вместе со сценой: ручки и высота верхнего
   // ряда видны в кадре, и модель обязана их воспроизвести.
   const kitchenItem = (body.items ?? []).find((item) => item.type === 'kitchen_unit');
-  const runOptions = ((kitchenItem?.meta as Record<string, unknown> | undefined)?.runOptions ??
-    {}) as {
+  const kitchenMeta = kitchenItem?.meta as Record<string, unknown> | undefined;
+  const runOptions = (kitchenMeta?.runOptions ?? {}) as {
     integratedHandles?: boolean;
     upperToCeiling?: boolean;
     hasCornice?: boolean;
   };
+
+  /*
+   * Зона решает, ЧТО в кадре: в спальне это шкаф во всю стену и край
+   * кровати, в санузле — тумба, зеркало и влажный блик на плитке. Без
+   * этого модель рисует кухню везде, где видит корпусный ряд.
+   */
+  const zone = zoneProfile(
+    (kitchenMeta?.zone as Parameters<typeof zoneProfile>[0]) ?? 'kitchen',
+  );
   const withImages = catalogRefs.filter((r) => r.imageIndex !== null);
   const imageIndexOfReference = (i: number) => i + baseImages + 1 + withImages.length;
 
@@ -389,6 +404,10 @@ ${textOnlyBlock}
 ${describeScene(body.room, body.items ?? [])}
 
 # ${PHOTOGRAPHY}
+
+ЧТО В КАДРЕ (${zone.title})
+${zone.scene}
+
 ${optionsBlock(runOptions)}
 
 ЗАПРЕЩЕНО: текст, надписи, водяные знаки, логотипы, подписи, люди, лица, части тела,

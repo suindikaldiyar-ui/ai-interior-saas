@@ -118,7 +118,13 @@ console.log('\nУниверсальная модель');
     targetsFor('object').length === 0 && targetsFor('opening').length === 0,
   );
   check('подпись стены человекочитаема', targetLabel('wall:north').includes('north'));
-  check('подпись зоны человекочитаема', targetLabel('zone:kitchen') === 'Зона: kitchen');
+  // Три поверхности кухни названы по-человечески, прочие зоны — как есть.
+  check(
+    'подпись зоны человекочитаема',
+    targetLabel('zone:kitchen') === 'Фасады кухни' &&
+      targetLabel('zone:countertop') === 'Столешница' &&
+      targetLabel('zone:bedroom') === 'Зона: bedroom',
+  );
 }
 
 /* ─────────────────────────  Спецификация  ───────────────────────── */

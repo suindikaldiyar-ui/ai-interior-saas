@@ -428,6 +428,8 @@ export type RunModuleLike = {
   kind?: string;
   heightMm?: number;
   appliance?: string;
+  /** Начинка модуля в зонах без техники: штанга, полки, обувница. */
+  section?: string;
   frontType?: string;
   drawerCount?: number;
 };

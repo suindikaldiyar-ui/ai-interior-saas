@@ -97,6 +97,39 @@ export type ApplianceKind =
 
 export type FrontType = 'door' | 'drawers' | 'none' | 'appliance';
 
+/**
+ * Секция — это НАЧИНКА модуля в зонах, где нет техники.
+ *
+ * У кухни роль модуля задаёт прибор: мойка, варочная, духовка. В спальне и
+ * прихожей приборов нет, а разница между модулями решает всё: штанга под
+ * пальто требует 1500 мм высоты, полки — 350 мм шага, ящики — своей
+ * фурнитуры. Без секции ряд превратился бы в набор одинаковых коробок,
+ * а смета — в один корпус ЛДСП.
+ */
+export type SectionKind =
+  // Спальня
+  | 'hanging_long'
+  | 'hanging_double'
+  | 'shelves'
+  | 'drawers'
+  | 'open'
+  | 'mezzanine'
+  // Прихожая
+  | 'hooks'
+  | 'shoes'
+  | 'bench'
+  | 'mirror'
+  // Зал
+  | 'tv_niche'
+  | 'hanging_module'
+  // Санузел
+  | 'vanity'
+  | 'tall_unit'
+  | 'mirror_cabinet';
+
+/** Чем закрывается зона: распашными фасадами или дверями-купе. */
+export type DoorSystem = 'hinged' | 'sliding';
+
 export interface Module {
   id: string;
   kind: ModuleKind;
@@ -111,6 +144,8 @@ export interface Module {
   doorCount: number;
   /** Ширина не из списка стандартов — доборный. */
   isFiller: boolean;
+  /** Начинка модуля в зонах без техники. У кухни её нет. */
+  section?: SectionKind;
   label: string;
 }
 
@@ -144,6 +179,8 @@ export interface Run {
   id: string;
   /** Зона, под которую собран ряд. По умолчанию кухня. */
   zone?: ZoneKind;
+  /** Чем закрыт ряд. Двери-купе считаются по м² и меняют глубину корпуса. */
+  doorSystem?: DoorSystem;
   /** Длина ряда по стене. */
   lengthMm: number;
   ceilingHeightMm: number;
@@ -160,6 +197,10 @@ export interface Run {
 export interface RunRequirements {
   /** Зона квартиры: от неё зависят габариты и состав статей сметы. */
   zone?: ZoneKind;
+  /** Состав секций для зон без техники. Пусто — берётся состав по умолчанию. */
+  sections?: SectionKind[];
+  /** Двери-купе или распашные. Считается по-разному, стоит по-разному. */
+  doorSystem?: DoorSystem;
   appliances: ApplianceKind[];
   /** С какой стороны ставить холодильник и пенал. */
   tallSide: 'left' | 'right';

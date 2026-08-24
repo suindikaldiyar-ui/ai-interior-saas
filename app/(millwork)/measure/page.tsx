@@ -13,6 +13,7 @@ import {
   ZONE_PROFILES,
   zoneProfile,
 } from '@/lib/millwork/zones';
+import { zoneReadiness } from '@/lib/millwork/templates';
 import type { ZoneKind } from '@/types/millwork';
 import { emptySurvey, newWall, resolveSurvey, type Survey } from '@/types/survey';
 
@@ -89,7 +90,7 @@ export default function MeasurePage() {
                     глубина {profile.depthMm} мм ·{' '}
                     {profile.height === 'ceiling' ? 'до потолка' : `${profile.height} мм`}
                   </span>
-                  {!profile.ready && (
+                  {!zoneReadiness(kind).ready && (
                     <span className="mt-1 block text-[13px] text-tape">{ZONE_DRAFT_BADGE}</span>
                   )}
                 </button>
@@ -97,7 +98,7 @@ export default function MeasurePage() {
             })}
           </div>
 
-          {!ZONE_PROFILES[zone].ready && (
+          {!zoneReadiness(zone).ready && (
             <p className="mb-4 text-[13px] leading-snug text-tape">{ZONE_DRAFT_NOTE}</p>
           )}
 

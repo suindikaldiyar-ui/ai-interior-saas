@@ -5,6 +5,7 @@ import {
   moduleHeightMm,
 } from './modules';
 import { allModules } from './layout';
+import { SLIDING_DOOR, sectionSpec, slidingDoorCount } from './sections';
 import { zoneProfile } from './zones';
 import type {
   Estimate,
@@ -94,6 +95,170 @@ function edgeBandingMm(unit: Module, ceilingHeightMm: number, upperToCeiling: bo
 
 /* ─────────────────────────  Сборка строк  ───────────────────────── */
 
+/**
+ * Статьи, которых на кухне нет вовсе.
+ *
+ * Двери-купе, штанга, зеркало, кабель-канал — это не «прочее», а самые
+ * заметные деньги в своей зоне: система купе стоит дороже корпуса, а
+ * зеркало в прихожей дороже фасада. Считаем их от того же ряда, что даёт
+ * чертёж, чтобы смета и рисунок не разошлись.
+ */
+function sectionDrafts(run: Run): Draft[] {
+  const zone = zoneProfile(run.zone);
+  if (!run.zone || run.zone === 'kitchen') return [];
+
+  const drafts: Draft[] = [];
+  const modules = allModules(run);
+  const heightMm =
+    zone.height === 'ceiling' ? run.ceilingHeightMm : zone.height;
+  const heightM = heightMm / MM_IN_M;
+
+  /*
+   * Двери-купе считаются по м² полотна и растут вместе с шириной шкафа,
+   * а система (направляющие, ролики, стопоры) — комплектом на каждую дверь.
+   */
+  if (run.doorSystem === 'sliding') {
+    const doors = slidingDoorCount(run.lengthMm);
+    const doorWidthM = (run.lengthMm / doors + SLIDING_DOOR.overlapMm) / MM_IN_M;
+
+    drafts.push(
+      {
+        key: 'sliding_door',
+        title: 'Двери-купе',
+        unit: 'm2',
+        quantity: round2(doors * doorWidthM * heightM),
+      },
+      { key: 'sliding_system', title: 'Система купе (комплект на дверь)', unit: 'set', quantity: doors },
+    );
+  }
+
+  for (const unit of modules) {
+    if (!unit.section) continue;
+    const spec = sectionSpec(unit.section);
+    const widthM = round3(unit.widthMm / MM_IN_M);
+
+    switch (unit.section) {
+      case 'hanging_long':
+        drafts.push(
+          { key: 'wardrobe_rod', title: 'Штанга для одежды', unit: 'mp', quantity: widthM },
+          { key: 'rod_holder', title: 'Держатели штанги', unit: 'pcs', quantity: 2 },
+        );
+        break;
+
+      case 'hanging_double':
+        // Две штанги в одной секции: 1000 сверху и 900 снизу.
+        drafts.push(
+          { key: 'wardrobe_rod', title: 'Штанга для одежды', unit: 'mp', quantity: round2(widthM * 2) },
+          { key: 'rod_holder', title: 'Держатели штанги', unit: 'pcs', quantity: 4 },
+        );
+        break;
+
+      case 'shelves':
+      case 'open': {
+        // Шаг полок 350 мм: сколько их влезает по высоте секции.
+        const usableH = spec.heightMm > 0 ? spec.heightMm : heightMm;
+        const count = Math.max(1, Math.floor(usableH / 350));
+        drafts.push({
+          key: 'shelf_panel',
+          title: 'Полки',
+          unit: 'm2',
+          quantity: round2(count * widthM * (zone.depthMm / MM_IN_M)),
+        });
+        break;
+      }
+
+      case 'drawers':
+        drafts.push({
+          key: 'drawer_box',
+          title: 'Ящики в сборе',
+          unit: 'set',
+          quantity: unit.drawerCount || spec.drawerCount,
+        });
+        break;
+
+      case 'hooks':
+        // Крючки по одному на 150 мм ширины: куртка, сумка, зонт.
+        drafts.push({
+          key: 'coat_hook',
+          title: 'Крючки',
+          unit: 'pcs',
+          quantity: Math.max(2, Math.round(unit.widthMm / 150)),
+        });
+        break;
+
+      case 'shoes':
+        drafts.push({
+          key: 'shoe_rack',
+          title: 'Обувница наклонная (ярус)',
+          unit: 'pcs',
+          quantity: 3,
+        });
+        break;
+
+      case 'bench':
+        drafts.push({ key: 'bench_seat', title: 'Скамья с мягким сиденьем', unit: 'pcs', quantity: 1 });
+        break;
+
+      case 'mirror':
+        drafts.push({
+          key: 'mirror_panel',
+          title: 'Зеркало',
+          unit: 'm2',
+          quantity: round2(widthM * (spec.heightMm / MM_IN_M)),
+        });
+        break;
+
+      case 'tv_niche':
+        drafts.push(
+          { key: 'cable_channel', title: 'Кабель-канал за нишей', unit: 'mp', quantity: widthM },
+          { key: 'led_niche', title: 'Подсветка ниши LED', unit: 'mp', quantity: widthM },
+        );
+        break;
+
+      case 'hanging_module':
+        drafts.push({
+          key: 'hanging_bracket',
+          title: 'Подвесной крепёж (комплект на модуль)',
+          unit: 'set',
+          quantity: 1,
+        });
+        break;
+
+      case 'vanity':
+        drafts.push({ key: 'sink_cutout', title: 'Вырез под раковину', unit: 'pcs', quantity: 1 });
+        break;
+
+      case 'mirror_cabinet':
+        drafts.push({
+          key: 'mirror_panel',
+          title: 'Зеркало',
+          unit: 'm2',
+          quantity: round2(widthM * (spec.heightMm / MM_IN_M)),
+        });
+        break;
+
+      default:
+        break;
+    }
+  }
+
+  /*
+   * Прихожая с открытой вешалкой: обычная штанга вдоль стены в 400 мм не
+   * помещается — плечики упираются в фасад. Нужен пантограф или торцевая
+   * штанга, и это отдельные деньги, а не «штанга как везде».
+   */
+  if (run.zone === 'hallway' && modules.some((m) => m.section === 'hooks')) {
+    drafts.push({
+      key: 'rod_pantograph',
+      title: 'Штанга торцевая или пантограф',
+      unit: 'set',
+      quantity: 1,
+    });
+  }
+
+  return drafts;
+}
+
 export function buildEstimateDrafts(run: Run): Draft[] {
   const upperToCeiling = run.options.upperToCeiling;
   const ceiling = run.ceilingHeightMm;
@@ -144,14 +309,30 @@ export function buildEstimateDrafts(run: Run): Draft[] {
    */
   const zone = zoneProfile(run.zone);
 
+  /*
+   * В санузле корпус влагостойкий: обычный ЛДСП разбухает по кромке за пару
+   * лет. Это другой материал и другая ставка, поэтому и ключ другой —
+   * подставлять цену обычного было бы враньём в смете.
+   */
+  const carcassKey = zone.moistureProof ? 'ldsp_moisture' : 'ldsp_carcass';
+  const carcassTitle = zone.moistureProof ? 'Корпус влагостойкий ЛДСП' : 'Корпус ЛДСП';
+
   const drafts: Draft[] = [
-    { key: 'ldsp_carcass', title: 'Корпус ЛДСП', unit: 'm2', quantity: round2(carcass) },
+    { key: carcassKey, title: carcassTitle, unit: 'm2', quantity: round2(carcass) },
     { key: 'hdf_back', title: 'Задние стенки ХДФ', unit: 'm2', quantity: round2(backs) },
     { key: 'front_panel', title: 'Фасады', unit: 'm2', quantity: round2(fronts) },
     { key: 'pvc_edge', title: 'Кромка ПВХ', unit: 'mp', quantity: round2(edge / MM_IN_M) },
   ];
 
-  if (zone.hasCountertop) {
+  if (zone.hasCountertop && zone.moistureProof) {
+    // Санузел: столешница своя, влагостойкая, и запила на угол там не бывает.
+    drafts.push({
+      key: 'countertop_moisture',
+      title: 'Столешница влагостойкая',
+      unit: 'mp',
+      quantity: counterMp,
+    });
+  } else if (zone.hasCountertop) {
     drafts.push({
       key: `countertop_${run.options.countertop}`,
       title: `Столешница (${countertopTitle(run.options.countertop)})`,
@@ -199,6 +380,8 @@ export function buildEstimateDrafts(run: Run): Draft[] {
   if (run.options.hasCornice) {
     drafts.push({ key: 'cornice', title: 'Антресоль до потолка', unit: 'mp', quantity: counterMp });
   }
+
+  drafts.push(...sectionDrafts(run));
 
   // Техника и мойка — отдельными позициями, их клиент часто покупает сам.
   for (const unit of modules) {

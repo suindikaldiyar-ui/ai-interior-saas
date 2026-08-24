@@ -10,6 +10,8 @@ import {
   largestStandardUpTo,
 } from './modules';
 import { assertRunFits, runWidthSum } from './invariants';
+import { SECTION_SPECS, sectionSpec } from './sections';
+import { isSectionZone, zoneProfile } from './zones';
 import { runFingerprint } from './fingerprint';
 import type {
   ApplianceKind,
@@ -19,6 +21,7 @@ import type {
   Opening,
   Run,
   RunRequirements,
+  SectionKind,
   UpperSegment,
 } from '@/types/millwork';
 
@@ -317,6 +320,222 @@ export interface BuildRunInput {
   cornerAt?: 'start' | 'end' | null;
 }
 
+/* ─────────────────────  Ряд из секций (не кухня)  ───────────────────── */
+
+/**
+ * Раскладка зон без техники.
+ *
+ * У кухни порядок диктует прибор: мойка у воды, варочная не у края. В шкафу
+ * приборов нет, поэтому порядок задаёт замерщик через состав секций, а
+ * ширины считаются здесь — по тем же правилам, что и на кухне: сначала
+ * желаемая ширина, потом сжатие до минимума, потом остаток раздаётся
+ * поровну. Инвариант тот же: сумма ширин сходится с длиной ряда
+ * до миллиметра.
+ *
+ * Детерминизм обязателен так же, как на кухне: тот же состав и та же длина
+ * дают тот же ряд, иначе чертёж, смета и рендер покажут разную мебель.
+ */
+/** Шаг сетки цеха: ширины кратны 50 мм, а не «сколько получилось». */
+const SECTION_STEP_MM = 50;
+
+function planSections(
+  sections: SectionKind[],
+  fill: SectionKind,
+  spanMm: number,
+): { kinds: SectionKind[]; widths: number[] } {
+  if (sections.length === 0 || spanMm <= 0) return { kinds: [], widths: [] };
+
+  /*
+   * Секций больше, чем помещается: отбрасываем с конца. Ужимать ниже
+   * минимума нельзя — штанга в 300 мм это не штанга, а щель.
+   */
+  const kinds: SectionKind[] = [];
+  let minTotal = 0;
+  for (const kind of sections) {
+    const spec = sectionSpec(kind);
+    if (minTotal + spec.minWidthMm > spanMm) break;
+    kinds.push(kind);
+    minTotal += spec.minWidthMm;
+  }
+  if (kinds.length === 0) return { kinds: [], widths: [spanMm] };
+
+  /*
+   * Стена длиннее, чем состав: добираем повторяемой секцией зоны, а не
+   * оставляем метровую доборную планку. Полка или подвесной модуль — это
+   * мебель, доборная планка в 2750 мм — это дыра в проекте.
+   */
+  const fillSpec = sectionSpec(fill);
+  let maxTotal = kinds.reduce((sum, k) => sum + sectionSpec(k).maxWidthMm, 0);
+  while (spanMm - maxTotal >= fillSpec.minWidthMm) {
+    kinds.push(fill);
+    maxTotal += fillSpec.maxWidthMm;
+  }
+
+  const specs = kinds.map(sectionSpec);
+  const widths = specs.map((spec) => spec.preferredWidthMm);
+  let total = widths.reduce((sum, w) => sum + w, 0);
+
+  // Не помещается — жмём по очереди до минимума, начиная с самых широких.
+  if (total > spanMm) {
+    const order = specs
+      .map((spec, i) => ({ i, room: spec.preferredWidthMm - spec.minWidthMm }))
+      .sort((a, b) => b.room - a.room || a.i - b.i);
+
+    for (const { i } of order) {
+      if (total <= spanMm) break;
+      const cut = Math.min(widths[i] - specs[i].minWidthMm, total - spanMm);
+      widths[i] -= cut;
+      total -= cut;
+    }
+  }
+
+  // Остаток раздаём шагами по 50 мм, не переходя максимум секции.
+  let rest = spanMm - total;
+  while (rest >= SECTION_STEP_MM) {
+    let placed = 0;
+    for (let i = 0; i < widths.length && rest >= SECTION_STEP_MM; i++) {
+      if (specs[i].maxWidthMm - widths[i] < SECTION_STEP_MM) continue;
+      widths[i] += SECTION_STEP_MM;
+      rest -= SECTION_STEP_MM;
+      placed += SECTION_STEP_MM;
+    }
+    if (placed === 0) break;
+  }
+
+  // Мельче шага сетки — прирастает к последней секции: доборная планка
+  // в 30 мм не нужна ни цеху, ни клиенту.
+  if (rest > 0 && rest < SECTION_STEP_MM && widths.length > 0) {
+    widths[widths.length - 1] += rest;
+    rest = 0;
+  }
+
+  return { kinds, widths };
+}
+
+function buildSectionRun(input: BuildRunInput): Run {
+  const { lengthMm, ceilingHeightMm, requirements, cornerAt = null } = input;
+
+  const warnings: string[] = [];
+  const usable = Math.max(0, Math.round(lengthMm));
+  const profile = zoneProfile(requirements.zone);
+
+  const wanted = (requirements.sections?.length
+    ? requirements.sections
+    : profile.defaultSections
+  ).filter((kind) => profile.sections.includes(kind));
+
+  // Антресоль живёт над рядом, а не в нём: в раскладке по длине её нет.
+  const inRow = wanted.filter((kind) => kind !== 'mezzanine');
+  const hasMezzanine = wanted.includes('mezzanine');
+
+  const doorSystem = requirements.doorSystem ?? profile.doorSystem;
+
+  const modules: Module[] = [];
+  let at = 0;
+  let limit = usable;
+
+  if (cornerAt === 'start') {
+    modules.push(makeModule('corner_base', CORNER_SIZE_MM, 0));
+    at = CORNER_SIZE_MM;
+  } else if (cornerAt === 'end') {
+    limit = Math.max(0, usable - CORNER_SIZE_MM);
+  }
+
+  const plan = planSections(inRow, profile.fillSection, Math.max(0, limit - at));
+  const { kinds, widths } = plan;
+
+  if (kinds.length < inRow.length) {
+    warnings.push(
+      `В ряд ${usable} мм поместились не все секции: ${kinds.length} из ${inRow.length}.`,
+    );
+  }
+
+  widths.forEach((widthMm, i) => {
+    const kind = kinds[i] ?? profile.fillSection;
+    const spec = SECTION_SPECS[kind];
+    const unit = makeModule(
+      spec.moduleKind,
+      widthMm,
+      at,
+      undefined,
+      spec.frontType === 'drawers' ? spec.drawerCount : undefined,
+    );
+    unit.section = kind;
+    unit.label = spec.title;
+    if (spec.frontType === 'none') {
+      unit.frontType = 'none';
+      unit.doorCount = 0;
+      unit.drawerCount = 0;
+    }
+
+    /*
+     * Шкаф-купе закрыт полотнами, а не распашными фасадами: внутренние
+     * секции остаются открытыми. Иначе смета посчитала бы и двери-купе,
+     * и фасады с петлями — клиент заплатил бы за фасады, которых нет.
+     */
+    if (doorSystem === 'sliding' && unit.frontType === 'door') {
+      unit.frontType = 'none';
+      unit.doorCount = 0;
+    }
+    modules.push(unit);
+    at += widthMm;
+  });
+
+  // Хвост закрываем доборным: ряд обязан сходиться с длиной стены.
+  const tail = limit - at;
+  if (tail > 0) {
+    const filler = makeModule('filler', tail, at);
+    filler.label = 'Доборная планка';
+    modules.push(filler);
+    at += tail;
+  }
+
+  if (cornerAt === 'end') {
+    modules.push(makeModule('corner_base', CORNER_SIZE_MM, at));
+    at += CORNER_SIZE_MM;
+  }
+
+  /*
+   * Антресоль — сплошной верхний ряд по всей длине. Разрывов под окна здесь
+   * не делаем: шкаф ставят к глухой стене, а если окно есть, его поймает
+   * проверка проёмов.
+   */
+  const upperSegments: UpperSegment[] = [];
+  if (hasMezzanine && usable > 0) {
+    const spec = SECTION_SPECS.mezzanine;
+    const mezzanine: Module[] = [];
+    let mAt = 0;
+    for (const width of fillGap(usable)) {
+      const unit = makeModule('upper', Math.min(width, spec.maxWidthMm), mAt);
+      unit.section = 'mezzanine';
+      unit.label = spec.title;
+      mezzanine.push(unit);
+      mAt += unit.widthMm;
+    }
+    if (mAt < usable && mezzanine.length > 0) {
+      mezzanine[mezzanine.length - 1].widthMm += usable - mAt;
+    }
+    upperSegments.push({ fromMm: 0, toMm: usable, modules: mezzanine });
+  }
+
+  const run: Run = {
+    id: input.id ?? 'run',
+    zone: requirements.zone ?? 'kitchen',
+    doorSystem,
+    lengthMm: usable,
+    ceilingHeightMm,
+    modules,
+    upperSegments,
+    options: requirements.options,
+    residualMm: usable - at,
+    warnings,
+    fingerprint: runFingerprint({ modules, upperSegments }),
+  };
+
+  assertRunFits(run);
+  return run;
+}
+
 export function buildRun(input: BuildRunInput): Run {
   const {
     lengthMm,
@@ -326,6 +545,9 @@ export function buildRun(input: BuildRunInput): Run {
     openings = [],
     cornerAt = null,
   } = input;
+
+  // Зоны без техники собираются из секций: у них нет ни мойки, ни варочной.
+  if (isSectionZone(requirements.zone)) return buildSectionRun(input);
 
   const warnings: string[] = [];
   const usable = Math.max(0, Math.round(lengthMm));
@@ -447,6 +669,7 @@ export function buildRun(input: BuildRunInput): Run {
     id: input.id ?? 'run',
     // Зона едет с рядом дальше: от неё зависит состав статей сметы.
     zone: requirements.zone ?? 'kitchen',
+    doorSystem: 'hinged',
     lengthMm: usable,
     ceilingHeightMm,
     modules,

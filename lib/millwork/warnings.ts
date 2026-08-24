@@ -106,6 +106,49 @@ export function sinkWaterConflicts(run: Run | null, comms: CommPoint[]): SurveyW
     });
 }
 
+/** Допуск в санузле жёстче кухонного: сифон не тянется. */
+export const VANITY_BLOCKING_MM = 300;
+
+/**
+ * Тумба под раковину должна встать на вывод воды.
+ *
+ * На кухне мойку можно сдвинуть на полметра гибкой подводкой. В санузле
+ * так нельзя: раковина висит над сифоном, и расхождение больше 300 мм —
+ * это перенос стояка, отдельные работы и отдельные деньги. Поэтому
+ * предупреждение блокирующее, а не жёлтое.
+ */
+export function vanityWaterConflicts(run: Run | null, comms: CommPoint[]): SurveyWarning[] {
+  if (!run || run.zone !== 'bathroom') return [];
+
+  const water = comms.filter((c) => c.kind === 'water_supply');
+  if (water.length === 0) return [];
+
+  return run.modules
+    .filter((unit) => unit.section === 'vanity')
+    .flatMap((unit) => {
+      const center = unit.offsetMm + unit.widthMm / 2;
+      const nearest = water.reduce((best, point) =>
+        Math.abs(point.fromCornerMm - center) < Math.abs(best.fromCornerMm - center)
+          ? point
+          : best,
+      );
+      const distance = Math.round(Math.abs(nearest.fromCornerMm - center));
+      if (distance <= VANITY_BLOCKING_MM) return [];
+
+      return [
+        {
+          id: `vanity-water-${unit.id}`,
+          severity: 'blocking' as const,
+          moduleId: unit.id,
+          atMm: center,
+          message:
+            `Тумба под раковину в ${distance} мм от вывода воды — ` +
+            'это перенос стояка, отдельные работы и отдельные деньги.',
+        },
+      ];
+    });
+}
+
 /** Незамеренное и принятое по умолчанию — жёлтым, с последствием. */
 export function surveyWarnings(stats: SurveyStats): SurveyWarning[] {
   const pending = stats.pending.map((p, i) => ({
@@ -145,6 +188,7 @@ export function collectWarnings(input: {
   const all = [
     ...doorwayConflicts(input.run, input.openings),
     ...sinkWaterConflicts(input.run, input.comms),
+    ...vanityWaterConflicts(input.run, input.comms),
     ...fromIssues,
     ...(input.stats ? surveyWarnings(input.stats) : []),
   ];

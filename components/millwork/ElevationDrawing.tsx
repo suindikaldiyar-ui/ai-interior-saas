@@ -3,6 +3,8 @@
 import { useMemo } from 'react';
 import DimensionChain from './DimensionChain';
 import { APPLIANCE_SLOTS, BASE_TOTAL_H, GEOMETRY, moduleHeightMm } from '@/lib/millwork/modules';
+import { sectionSpec } from '@/lib/millwork/sections';
+import { zoneHeightMm, zoneProfile } from '@/lib/millwork/zones';
 import type { Module, Run } from '@/types/millwork';
 
 /**
@@ -68,32 +70,70 @@ export default function ElevationDrawing({
     ? ceiling
     : upperBottom + GEOMETRY.upper.carcassH;
 
-  const marks: [number, string][] = [
-    [0, 'пол'],
-    [GEOMETRY.base.plinthH, 'цоколь'],
-    [BASE_TOTAL_H, 'столешница'],
-    ...(run.options.hasUpper
-      ? ([
-          [upperBottom, 'низ верхних'],
-          [upperTop, 'верх верхних'],
-        ] as [number, string][])
-      : []),
-    [ceiling, 'потолок'],
-  ];
+  /*
+   * Зона решает, что вообще есть на чертеже. Подписывать «столешница» и
+   * «низ верхних» в шкафу-купе нельзя: этих отметок там не существует,
+   * а чертёж читает цех и монтажник.
+   */
+  const zone = zoneProfile(run.zone);
+  const sectionZone = Boolean(run.zone) && run.zone !== 'kitchen';
+  const zoneTop = Math.min(zoneHeightMm(run.zone, ceiling), ceiling);
+
+  const marks: [number, string][] = sectionZone
+    ? [
+        [0, 'пол'],
+        [GEOMETRY.base.plinthH, 'цоколь'],
+        ...(zone.hasCountertop ? ([[zoneTop, 'столешница']] as [number, string][]) : []),
+        ...(zone.hasCountertop ? [] : ([[zoneTop, 'верх ряда']] as [number, string][])),
+        [ceiling, 'потолок'],
+      ]
+    : [
+        [0, 'пол'],
+        [GEOMETRY.base.plinthH, 'цоколь'],
+        [BASE_TOTAL_H, 'столешница'],
+        ...(run.options.hasUpper
+          ? ([
+              [upperBottom, 'низ верхних'],
+              [upperTop, 'верх верхних'],
+            ] as [number, string][])
+          : []),
+        [ceiling, 'потолок'],
+      ];
+
+  /** Верх и низ модуля секционной зоны: у каждой секции своя высота. */
+  const sectionBounds = (unit: Module, isUpper: boolean): { top: number; bottom: number } => {
+    const spec = unit.section ? sectionSpec(unit.section) : null;
+
+    // Антресоль и подвесные модули висят, остальное стоит на цоколе.
+    if (isUpper || spec?.moduleKind === 'upper') {
+      const height = spec?.heightMm || GEOMETRY.upper.carcassH;
+      return { top: zoneTop, bottom: Math.max(0, zoneTop - height) };
+    }
+
+    if (spec && spec.heightMm > 0 && spec.moduleKind === 'base') {
+      return { top: spec.heightMm, bottom: GEOMETRY.base.plinthH };
+    }
+
+    return { top: zoneTop, bottom: GEOMETRY.base.plinthH };
+  };
 
   const renderModule = (unit: Module, isUpper: boolean) => {
     const x = PADDING_LEFT + unit.offsetMm * scale;
     const w = unit.widthMm * scale;
 
-    const top = isUpper ? upperTop : BASE_TOTAL_H;
-    const bottom = isUpper
-      ? upperBottom
-      : unit.kind === 'tall'
-        ? 0
-        : GEOMETRY.base.plinthH;
+    const bounds = sectionZone
+      ? sectionBounds(unit, isUpper)
+      : { top: isUpper ? upperTop : BASE_TOTAL_H, bottom: isUpper ? upperBottom : 0 };
+    const top = bounds.top;
+    const bottom = bounds.bottom;
 
-    const tallTop = unit.kind === 'tall' ? moduleHeightMm('tall') : top;
-    const yTop = yOf(unit.kind === 'tall' ? tallTop : top);
+    /*
+     * У кухни пенал выше нижнего ряда и берёт свою стандартную высоту.
+     * В секционных зонах высоту уже посчитала сама секция: штанга под
+     * пальто и обувница — это разные высоты, а не «пенал».
+     */
+    const tallTop = !sectionZone && unit.kind === 'tall' ? moduleHeightMm('tall') : top;
+    const yTop = yOf(tallTop);
     const h = yOf(bottom) - yTop;
 
     const active = selectedModuleId === unit.id;
@@ -255,15 +295,18 @@ export default function ElevationDrawing({
         strokeWidth={0.5}
       />
 
-      <rect
-        x={PADDING_LEFT}
-        y={yOf(BASE_TOTAL_H)}
-        width={drawWidth}
-        height={GEOMETRY.base.countertopH * heightScale}
-        fill="none"
-        stroke="var(--blueprint)"
-        strokeWidth={1}
-      />
+      {/* Столешница есть не в каждой зоне: в шкафу её нет вовсе. */}
+      {(!sectionZone || zone.hasCountertop) && (
+        <rect
+          x={PADDING_LEFT}
+          y={yOf(sectionZone ? zoneTop : BASE_TOTAL_H)}
+          width={drawWidth}
+          height={GEOMETRY.base.countertopH * heightScale}
+          fill="none"
+          stroke="var(--blueprint)"
+          strokeWidth={1}
+        />
+      )}
 
       {run.modules.map((m) => renderModule(m, false))}
       {run.upperSegments.flatMap((segment) =>

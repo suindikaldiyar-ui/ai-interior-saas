@@ -1,8 +1,9 @@
 'use client';
 
 import { APPLIANCE_SLOTS } from '@/lib/millwork/modules';
+import type { ZoneKind } from '@/types/millwork';
 import {
-  RUN_TEMPLATES,
+  templatesForZone,
   TEMPLATE_LAYOUT_LABEL,
   templateBlockedReason,
   type RunTemplate,
@@ -17,6 +18,8 @@ import {
 
 type Props = {
   lengthMm: number;
+  /** Зона объекта: шаблоны других зон здесь не показываются вовсе. */
+  zone?: ZoneKind;
   selectedId: string | null;
   onSelect: (template: RunTemplate) => void;
   /** Типовые решения компании — они идут первыми. */
@@ -133,13 +136,14 @@ function Preview({ template }: { template: RunTemplate }) {
 
 export default function TemplatePicker({
   lengthMm,
+  zone = 'kitchen',
   selectedId,
   onSelect,
   orgTemplates = [],
 }: Props) {
   return (
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-      {[...orgTemplates, ...RUN_TEMPLATES].map((template) => {
+      {templatesForZone(zone, orgTemplates).map((template) => {
         const blocked = templateBlockedReason(template, lengthMm);
         const active = template.id === selectedId;
 

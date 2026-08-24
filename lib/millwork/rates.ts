@@ -44,6 +44,25 @@ export type TypicalRate = {
 };
 
 export const TYPICAL_PRICE_LIST: TypicalRate[] = [
+  /* ── Зоны кроме кухни: шкаф-купе, прихожая, ТВ-зона, санузел ── */
+  { estimateKey: 'ldsp_moisture', article: 'MAT-LDSP-WET', name: 'Корпус влагостойкий ЛДСП 16 мм', categoryKey: 'materials', unit: 'm2', price: 14500 },
+  { estimateKey: 'countertop_moisture', article: 'TOP-WET', name: 'Столешница влагостойкая', categoryKey: 'countertops', unit: 'running_meter', price: 42000 },
+  { estimateKey: 'sliding_door', article: 'WRD-DOOR', name: 'Полотно двери-купе', categoryKey: 'wardrobe', unit: 'm2', price: 38000 },
+  { estimateKey: 'sliding_system', article: 'WRD-SYS', name: 'Система купе на одну дверь', categoryKey: 'wardrobe', unit: 'set', price: 42000 },
+  { estimateKey: 'wardrobe_rod', article: 'WRD-ROD', name: 'Штанга для одежды', categoryKey: 'wardrobe', unit: 'running_meter', price: 4500 },
+  { estimateKey: 'rod_holder', article: 'WRD-ROD-HOLD', name: 'Держатель штанги', categoryKey: 'wardrobe', unit: 'piece', price: 1200 },
+  { estimateKey: 'rod_pantograph', article: 'WRD-PANTO', name: 'Штанга торцевая или пантограф', categoryKey: 'wardrobe', unit: 'set', price: 26000 },
+  { estimateKey: 'shelf_panel', article: 'WRD-SHELF', name: 'Полка ЛДСП', categoryKey: 'wardrobe', unit: 'm2', price: 11000 },
+  { estimateKey: 'drawer_box', article: 'WRD-DRAWER', name: 'Ящик в сборе', categoryKey: 'wardrobe', unit: 'set', price: 14000 },
+  { estimateKey: 'coat_hook', article: 'HAL-HOOK', name: 'Крючок', categoryKey: 'hallway', unit: 'piece', price: 1500 },
+  { estimateKey: 'shoe_rack', article: 'HAL-SHOE', name: 'Обувница наклонная, ярус', categoryKey: 'hallway', unit: 'piece', price: 9000 },
+  { estimateKey: 'bench_seat', article: 'HAL-BENCH', name: 'Скамья с мягким сиденьем', categoryKey: 'hallway', unit: 'piece', price: 38000 },
+  { estimateKey: 'mirror_panel', article: 'HAL-MIRROR', name: 'Зеркало', categoryKey: 'hallway', unit: 'm2', price: 32000 },
+  { estimateKey: 'hanging_bracket', article: 'LIV-BRACKET', name: 'Подвесной крепёж на модуль', categoryKey: 'living', unit: 'set', price: 6500 },
+  { estimateKey: 'cable_channel', article: 'LIV-CABLE', name: 'Кабель-канал', categoryKey: 'living', unit: 'running_meter', price: 3500 },
+  { estimateKey: 'led_niche', article: 'LIV-LED', name: 'Подсветка ниши LED', categoryKey: 'living', unit: 'running_meter', price: 8500 },
+  { estimateKey: 'sink_cutout', article: 'BAT-CUTOUT', name: 'Вырез под раковину', categoryKey: 'bath', unit: 'piece', price: 12000 },
+
   { estimateKey: 'ldsp_carcass', article: 'MAT-LDSP-16', name: 'Корпус ЛДСП 16 мм', categoryKey: 'materials', unit: 'm2', price: 9500 },
   { estimateKey: 'hdf_back', article: 'MAT-HDF-3', name: 'Задняя стенка ХДФ 3 мм', categoryKey: 'materials', unit: 'm2', price: 2200 },
   { estimateKey: 'front_panel', article: 'MAT-FRONT-MDF', name: 'Фасад МДФ эмаль', categoryKey: 'materials', unit: 'm2', price: 26000 },

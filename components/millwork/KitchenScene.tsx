@@ -89,6 +89,7 @@ export default function KitchenScene({
          * верхний ряд идёт до потолка. Без этого модель рисует «обычную»
          * кухню с накладными ручками и зазором под потолком.
          */
+        zone: run.zone ?? 'kitchen',
         runOptions: {
           integratedHandles: run.options.integratedHandles,
           upperToCeiling: run.options.upperToCeiling,
@@ -105,6 +106,8 @@ export default function KitchenScene({
             ceilingHeightMm: run.ceilingHeightMm,
           }),
           appliance: unit.appliance,
+          // Начинка модуля: в шкафу роль решает не прибор, а секция.
+          section: unit.section,
           frontType: unit.frontType,
           drawerCount: unit.drawerCount,
         })),

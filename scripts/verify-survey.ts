@@ -16,8 +16,10 @@ import {
   splitWarnings,
   VISIBLE_WARNINGS,
 } from '../lib/millwork/warnings';
+import { ZONE_ORDER } from '../lib/millwork/zones';
 import {
   RUN_TEMPLATES,
+  templatesForZone,
   requirementsFromTemplate,
   suggestTemplate,
   templateAppliancesWidthMm,
@@ -329,11 +331,18 @@ check(
 
 section('Шаблоны');
 
-check(
-  'набор шаблонов небольшой: это первый экран, а не каталог решений',
-  RUN_TEMPLATES.length >= 4 && RUN_TEMPLATES.length <= 8,
-  `${RUN_TEMPLATES.length} шт.`,
-);
+/*
+ * Список меряется ПО ЗОНЕ, а не целиком: замерщик видит только шаблоны своей
+ * зоны, и восемь кухонных решений рядом с двумя шкафными его не касаются.
+ */
+for (const zone of ZONE_ORDER) {
+  const list = templatesForZone(zone);
+  check(
+    `${zone}: набор небольшой — это первый экран, а не каталог решений`,
+    list.length >= 2 && list.length <= 8,
+    `${list.length} шт.`,
+  );
+}
 
 check(
   'у каждого шаблона задан диапазон длины и он осмысленный',

@@ -226,7 +226,12 @@ export default function Workspace(props: WorkspaceProps) {
    * иначе чертёж и смета разошлись бы.
    */
   const template = templateById(templateId, props.orgTemplates ?? []);
-  const suggested = useMemo(() => suggestTemplate(props.lengthMm), [props.lengthMm]);
+  // Шаблоны своей зоны: кухонные решения в спальне предлагать нечего.
+  const zone = props.requirements.zone ?? 'kitchen';
+  const suggested = useMemo(
+    () => suggestTemplate(props.lengthMm, zone),
+    [props.lengthMm, zone],
+  );
 
   /*
    * Рендер выбранной комплектации: он же правая половина сравнения.
@@ -709,6 +714,7 @@ export default function Workspace(props: WorkspaceProps) {
           <>
             <TemplatePicker
               lengthMm={input.lengthMm}
+              zone={zone}
               orgTemplates={props.orgTemplates}
               selectedId={templateId}
               onSelect={(t: RunTemplate) => {
