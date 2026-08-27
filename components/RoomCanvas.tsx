@@ -584,7 +584,7 @@ function useHotkeys() {
 
 /* ─────────────────────────  Сцена  ───────────────────────── */
 
-function Scene() {
+function Scene({ children }: { children?: React.ReactNode }) {
   const room = useInteriorStore((s) => s.room);
   const items = useInteriorStore((s) => s.items);
   const showGrid = useInteriorStore((s) => s.showGrid);
@@ -606,6 +606,9 @@ function Scene() {
       {items.map((item) => (
         <FurnitureMesh key={item.id} item={item} />
       ))}
+
+      {/* Гости сцены: интерактивный гарнитур конфигуратора. */}
+      {children}
 
       {/* Контактные тени — часть картинки, в beauty-кадре остаются.
           В clay-проходе гасятся по имени группы: там нужна голая геометрия. */}
@@ -662,8 +665,10 @@ export default function RoomCanvas({
    * Захват всё равно вызывает `gl.render` сам.
    */
   frameloop = 'always',
+  children,
 }: {
   frameloop?: 'always' | 'demand';
+  children?: React.ReactNode;
 } = {}) {
   const selectItem = useInteriorStore((s) => s.selectItem);
 
@@ -686,7 +691,7 @@ export default function RoomCanvas({
       }}
       onPointerMissed={() => selectItem(null)}
     >
-      <Scene />
+      <Scene>{children}</Scene>
     </Canvas>
   );
 }

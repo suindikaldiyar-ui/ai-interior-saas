@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useState } from 'react';
-import { captureScene } from '@/lib/captureRegistry';
+import { captureForRender } from './capture';
 import { PROJECTS_BUCKET, storageUrl } from '@/lib/supabase/config';
 import { buildCatalogRefs, renderVariant, urlToDataUrl } from '@/lib/renderClient';
 import { assertSameConfiguration } from '@/lib/millwork/fingerprint';
@@ -166,7 +166,11 @@ export async function runMillworkRenders({
    * Кадр всегда «на ряд»: сравнивать с чертежом можно только целый ряд.
    * Сторону съёмки задаёт фотография — модель не должна мирить два ракурса.
    */
-  const capture = await captureScene(
+  /*
+   * Перед съёмкой мебель закрывается: открытый на встрече ящик не должен
+   * уехать в clay-кадр. См. lib/millwork/capture.ts.
+   */
+  const capture = await captureForRender(
     angle === 'left' ? 'run-left' : angle === 'right' ? 'run-right' : 'run',
   );
 

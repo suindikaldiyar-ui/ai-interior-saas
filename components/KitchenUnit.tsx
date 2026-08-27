@@ -419,6 +419,15 @@ function Apron({ length, palette, meta }: { length: number; palette: Palette; me
 export default function KitchenUnit({ item }: { item: FurnitureItem }) {
   const room = useInteriorStore((s) => s.room);
 
+  /*
+   * Интерактивный гарнитур строит Cabinet3D — прямо из `Run`, вместе с
+   * наполнением. Рисовать здесь второй меш означало бы поставить в сцену
+   * две кухни, вложенные друг в друга.
+   */
+  const interactive = Boolean(
+    (item.meta as Record<string, unknown> | undefined)?.interactive,
+  );
+
   const meta = useMemo(
     () => readKitchenMeta(item.meta as Record<string, unknown> | undefined),
     [item.meta],
@@ -478,6 +487,10 @@ export default function KitchenUnit({ item }: { item: FurnitureItem }) {
   const sideSign = meta.side === 'left' ? -1 : 1;
   const sideX = sideSign * (primaryLength / 2 - KITCHEN.baseDepth / 2);
   const sideZ = primaryZ + KITCHEN.baseDepth / 2 + secondary / 2;
+
+  // Объект остаётся в сторе — его читают захват кадра, промпт и материалы, —
+  // но меш у него свой, интерактивный.
+  if (interactive) return null;
 
   return (
     <group>

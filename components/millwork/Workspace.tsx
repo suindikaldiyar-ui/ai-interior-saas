@@ -16,6 +16,7 @@ import PlanDrawing from './PlanDrawing';
 import RenderPanel from './RenderPanel';
 import RunEditor from './RunEditor';
 import StepBar, { type StepKey } from './StepBar';
+import { openablePartIds } from './cabinet3d/Cabinet3D';
 import SurveyPanel from './SurveyPanel';
 import SurveySheet from './SurveySheet';
 import TemplatePicker from './TemplatePicker';
@@ -185,6 +186,12 @@ export default function Workspace(props: WorkspaceProps) {
    * Стиль выбирает человек, а не таблица комплектаций: бюджет и вкус —
    * разные вещи. Выбор живёт в состоянии объекта и переживает закрытие.
    */
+  const openParts = useInteriorStore((s) => s.openParts);
+  const cutaway = useInteriorStore((s) => s.cutaway);
+  const setOpenParts = useInteriorStore((s) => s.setOpenParts);
+  const closeAllParts = useInteriorStore((s) => s.closeAllParts);
+  const setCutaway = useInteriorStore((s) => s.setCutaway);
+
   const [renderStyle, setRenderStyle] = useState<string>(
     isRenderStyle(props.initialState?.renderStyle)
       ? (props.initialState?.renderStyle as string)
@@ -898,9 +905,53 @@ export default function Workspace(props: WorkspaceProps) {
                 ceilingHeightMm={props.ceilingHeightMm}
                 roomDepthM={props.roomDepthM}
                 hidden={resultView !== 'scene'}
+                interactive
+                production={props.production}
                 onItemId={setKitchenItemId}
               />
             </div>
+            {resultView === 'scene' && (
+              <div className="mt-3 flex flex-wrap items-center gap-2 print:hidden">
+                <button
+                  type="button"
+                  onClick={() => setOpenParts(openablePartIds(active.run))}
+                  className="mw-btn mw-btn-primary"
+                >
+                  Открыть всё
+                </button>
+                <button
+                  type="button"
+                  onClick={closeAllParts}
+                  disabled={openParts.length === 0}
+                  className="mw-btn mw-btn-ghost"
+                >
+                  Закрыть всё
+                </button>
+
+                {/* Разрез убирает фасады совсем: наполнение видно целиком. */}
+                {(
+                  [
+                    [false, 'Только фасады'],
+                    [true, 'Разрез'],
+                  ] as [boolean, string][]
+                ).map(([value, label]) => (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={() => setCutaway(value)}
+                    aria-pressed={cutaway === value}
+                    className={`mw-btn ${cutaway === value ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+
+                <p className="w-full text-[13px] leading-snug text-graphiteMw">
+                  Нажмите на ящик или дверцу — откроется.
+                </p>
+              </div>
+            )}
+
             {resultView === 'scene' && (
               <p className="mt-2 text-[13px] leading-snug text-graphiteMw">
                 Гарнитур собран из тех же {active.run.modules.length} модулей, что

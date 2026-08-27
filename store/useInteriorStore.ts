@@ -63,6 +63,16 @@ export type InteriorState = {
 
   /** При true из сцены исчезают все служебные элементы — режим съёмки. */
   captureMode: boolean;
+  /**
+   * Что открыто в интерактивной сцене: id ящиков и дверей.
+   *
+   * Живёт в сторе, а не в компоненте: это состояние читают кнопки «Открыть
+   * всё» над сценой и захват кадра — открытый ящик в clay-кадре модель
+   * посчитала бы частью мебели и нарисовала бы выдвинутым.
+   */
+  openParts: string[];
+  /** Разрез: фасады убраны совсем, видно наполнение целиком. */
+  cutaway: boolean;
   renderFraming: CaptureFraming;
   customNotes: string;
   selectedReferenceIds: string[];
@@ -104,6 +114,10 @@ export type InteriorState = {
   redo: () => void;
 
   setCaptureMode: (value: boolean) => void;
+  toggleOpenPart: (id: string) => void;
+  setOpenParts: (ids: string[]) => void;
+  closeAllParts: () => void;
+  setCutaway: (value: boolean) => void;
   setRenderFraming: (framing: CaptureFraming) => void;
   setCustomNotes: (value: string) => void;
   toggleReference: (id: string) => void;
@@ -224,6 +238,8 @@ export const useInteriorStore = create<InteriorState>((set, get) => ({
   past: [],
   future: [],
 
+  openParts: [],
+  cutaway: false,
   captureMode: false,
   renderFraming: 'hero',
   customNotes: '',
@@ -547,6 +563,17 @@ export const useInteriorStore = create<InteriorState>((set, get) => ({
     }),
 
   setCaptureMode: (value) => set({ captureMode: value }),
+
+  toggleOpenPart: (id) =>
+    set((state) => ({
+      openParts: state.openParts.includes(id)
+        ? state.openParts.filter((x) => x !== id)
+        : [...state.openParts, id],
+    })),
+
+  setOpenParts: (ids) => set({ openParts: Array.from(new Set(ids)) }),
+  closeAllParts: () => set({ openParts: [] }),
+  setCutaway: (value) => set({ cutaway: value }),
   setRenderFraming: (framing) => set({ renderFraming: framing }),
   setCustomNotes: (value) => set({ customNotes: value }),
 

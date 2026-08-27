@@ -5,6 +5,8 @@ import { useEffect, useRef } from 'react';
 import { KITCHEN } from '@/lib/kitchen';
 import { moduleHeightMm } from '@/lib/millwork/modules';
 import { useInteriorStore } from '@/store/useInteriorStore';
+import Cabinet3D from './cabinet3d/Cabinet3D';
+import type { ProductionSettings } from '@/types/catalog';
 import type { Run } from '@/types/millwork';
 
 /**
@@ -31,6 +33,15 @@ type Props = {
   run: Run;
   ceilingHeightMm: number;
   roomDepthM?: number;
+  /**
+   * Интерактивный гарнитур: ящики выезжают, двери открываются.
+   *
+   * Меш строит `Cabinet3D` прямо из `Run` вместе с наполнением, поэтому
+   * обычный `KitchenUnit` для этого объекта не рисуется — иначе в сцене
+   * стояли бы две кухни одна в другой.
+   */
+  interactive?: boolean;
+  production?: ProductionSettings;
   /** Сцена за экраном: держим её живой, но без непрерывной отрисовки. */
   hidden?: boolean;
   /** Идентификатор созданного объекта — по нему вешается выбор материалов. */
@@ -42,6 +53,8 @@ export default function KitchenScene({
   ceilingHeightMm,
   roomDepthM = DEFAULT_ROOM_DEPTH_M,
   hidden = false,
+  interactive = false,
+  production,
   onItemId,
 }: Props) {
   const itemIdRef = useRef<string | null>(null);
@@ -77,6 +90,8 @@ export default function KitchenScene({
       },
       meta: {
         layout: 'linear',
+        // Меш этого объекта рисует Cabinet3D — см. KitchenUnit.
+        interactive,
         // По нему рендер сверяет, что снимает ту же кухню, что в смете.
         fingerprint: run.fingerprint,
         hasUpper,
@@ -140,7 +155,21 @@ export default function KitchenScene({
 
     itemIdRef.current = id;
     onItemId?.(id);
-  }, [run, ceilingHeightMm, roomDepthM, onItemId]);
+  }, [run, ceilingHeightMm, roomDepthM, interactive, onItemId]);
 
-  return <RoomCanvas frameloop={hidden ? 'demand' : 'always'} />;
+  const lengthM = run.lengthMm / 1000;
+  const depthM = Math.max(roomDepthM, KITCHEN.baseDepth + 1.2);
+
+  return (
+    <RoomCanvas frameloop={hidden ? 'demand' : 'always'}>
+      {interactive && (
+        <Cabinet3D
+          run={run}
+          production={production}
+          roomWidthM={lengthM}
+          roomDepthM={depthM}
+        />
+      )}
+    </RoomCanvas>
+  );
 }
