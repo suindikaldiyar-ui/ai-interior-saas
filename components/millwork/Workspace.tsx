@@ -8,9 +8,10 @@ import ThemeToggle from '@/components/ThemeToggle';
 import BeforeAfter from './BeforeAfter';
 import CommandBar from './CommandBar';
 import DrawingSheet from './DrawingSheet';
-import ElevationDrawing from './ElevationDrawing';
+import ElevationDrawing, { type DrawingMode } from './ElevationDrawing';
 import EstimateSheet from './EstimateSheet';
 import MaterialsStep from './MaterialsStep';
+import PanelList from './PanelList';
 import PlanDrawing from './PlanDrawing';
 import RenderPanel from './RenderPanel';
 import RunEditor from './RunEditor';
@@ -41,6 +42,7 @@ import {
   templateById,
   type RunTemplate,
 } from '@/lib/millwork/templates';
+import type { ProductionSettings } from '@/types/catalog';
 import type { RunAngle } from '@/types/render';
 import {
   isEstimatePreliminary,
@@ -48,9 +50,12 @@ import {
   type Survey,
 } from '@/types/survey';
 import { shareUrl, whatsappLink, type MillworkState } from '@/lib/projects';
+import { runFingerprint } from '@/lib/millwork/fingerprint';
 import type {
   CommPoint,
   MillworkOp,
+  Module,
+  ModuleFill,
   Opening,
   Run,
   RunRequirements,
@@ -86,7 +91,7 @@ const KitchenScene = dynamic(() => import('./KitchenScene'), {
 const CatalogLoader = dynamic(() => import('@/components/CatalogLoader'), { ssr: false });
 
 /** Чем смотреть результат. Чертёж плотный намеренно — это документ. */
-type ResultView = 'facade' | 'plan' | 'scene';
+type ResultView = 'facade' | 'plan' | 'scene' | 'panels';
 
 const STEP_HINT: Record<StepKey, string> = {
   survey: 'Меряем по низу стены, у пола: вверху стены новостройки кривые.',
@@ -124,6 +129,8 @@ export type WorkspaceProps = {
   templateId?: string | null;
   /** Типовые решения компании из настроек. */
   orgTemplates?: RunTemplate[];
+  /** Настройки цеха: толщины и зазоры, от них зависит детализировка. */
+  production?: ProductionSettings;
   /**
    * Замер объекта. Пока он не завершён, конфигуратор открывается на панели
    * «Замер»: замерщик вносит размер и сразу видит, что там встанет.
@@ -167,6 +174,11 @@ export default function Workspace(props: WorkspaceProps) {
         : 'template',
   );
   const [resultView, setResultView] = useState<ResultView>('facade');
+  /*
+   * Эскиз в двух видах: «с фасадами» показывают клиенту, «внутри» —
+   * цеху и тому же клиенту, когда он спрашивает, куда встанут кастрюли.
+   */
+  const [drawingMode, setDrawingMode] = useState<DrawingMode>('fronts');
   const [estimateOpen, setEstimateOpen] = useState(false);
   const [renderAngle, setRenderAngle] = useState<RunAngle>('front');
   /*
@@ -314,6 +326,33 @@ export default function Workspace(props: WorkspaceProps) {
     if (flashTimer.current) clearTimeout(flashTimer.current);
     flashTimer.current = setTimeout(() => setChangedIds([]), 420);
   }, []);
+
+  /**
+   * Правка наполнения модуля.
+   *
+   * Идёт тем же путём, что и правка состава: результат ложится в
+   * `editedRuns`, попадает в автосохранение и меняет отпечаток — чертёж,
+   * смета и рендер обязаны увидеть одну и ту же мебель.
+   */
+  const changeFill = (moduleId: string, fill: ModuleFill) => {
+    const patch = (list: Module[]) =>
+      list.map((unit) => (unit.id === moduleId ? { ...unit, fill } : unit));
+
+    const next: Run = {
+      ...active.run,
+      modules: patch(active.run.modules),
+      upperSegments: active.run.upperSegments.map((segment) => ({
+        ...segment,
+        modules: patch(segment.modules),
+      })),
+    };
+
+    dirty.current = true;
+    setEditedRuns((prev) => ({
+      ...prev,
+      [variantKey]: { ...next, fingerprint: runFingerprint(next) },
+    }));
+  };
 
   const runOps = useCallback(
     (ops: MillworkOp[]) => {
@@ -818,6 +857,7 @@ export default function Workspace(props: WorkspaceProps) {
                   ['facade', 'Чертёж'],
                   ['plan', 'План'],
                   ['scene', '3D'],
+                  ['panels', 'Детализировка'],
                 ] as [ResultView, string][]
               ).map(([key, label]) => (
                 <button
@@ -870,7 +910,54 @@ export default function Workspace(props: WorkspaceProps) {
               </p>
             )}
 
-            <div className={resultView === 'scene' ? 'mt-4 hidden print:block' : 'mt-4'}>
+            {/* Эскиз в двух видах: фасады клиенту, разрез цеху. */}
+            {resultView === 'facade' && (
+              <div className="mt-3 flex flex-wrap gap-2 print:hidden">
+                {(
+                  [
+                    ['fronts', 'С фасадами'],
+                    ['inside', 'Внутри'],
+                  ] as [DrawingMode, string][]
+                ).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setDrawingMode(value)}
+                    aria-pressed={drawingMode === value}
+                    className={`mw-btn ${drawingMode === value ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+                {drawingMode === 'inside' && (
+                  <p className="self-center text-[13px] leading-snug text-graphiteMw">
+                    Полку тяните мышью, двойной клик добавляет и убирает её.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Детализировка — лист для цеха, а не для клиента. */}
+            {resultView === 'panels' && (
+              <div className="mt-4">
+                <PanelList
+                  run={active.run}
+                  title={props.title}
+                  zone={props.zone}
+                  measuredBy={props.measuredBy}
+                  measuredAt={props.measuredAt}
+                  production={props.production}
+                />
+              </div>
+            )}
+
+            <div
+              className={
+                resultView === 'scene' || resultView === 'panels'
+                  ? 'mt-4 hidden print:block'
+                  : 'mt-4'
+              }
+            >
               <DrawingSheet
                 title={props.title}
                 zone={props.zone}
@@ -887,6 +974,8 @@ export default function Workspace(props: WorkspaceProps) {
                     selectedModuleId={selectedId}
                     onSelect={setSelectedId}
                     changedIds={changedIds}
+                    mode={drawingMode}
+                    onFillChange={changeFill}
                   />
                 ) : (
                   <PlanDrawing

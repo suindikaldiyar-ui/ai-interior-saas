@@ -204,6 +204,60 @@ export function isSurfaceKind(appliesTo: AppliesTo): boolean {
   return appliesTo === 'floor' || appliesTo === 'wall' || appliesTo === 'ceiling';
 }
 
+/* ─────────────────────────  Производство  ───────────────────────── */
+
+/**
+ * Настройки цеха.
+ *
+ * У каждой компании свои толщины и свои зазоры. Захардкоженные числа
+ * сделали бы детализировку неверной для половины клиентов, а неверная
+ * детализировка хуже её отсутствия: по ней распилят плиту.
+ */
+export type ProductionSettings = {
+  /** Толщина ЛДСП корпуса, мм. */
+  carcassMm: 16 | 18;
+  /** Толщина фасада, мм. */
+  frontMm: 16 | 18 | 19;
+  /** Толщина ХДФ задней стенки, мм. */
+  backMm: 3 | 4;
+  /** Задняя стенка вкладная (в паз) или накладная (на гвозди). */
+  backMount: 'inset' | 'overlay';
+  /** Зазор вокруг фасада, мм. */
+  frontGapMm: 3 | 4;
+  /** Видимая кромка, мм. Скрытая всегда 0.4. */
+  visibleEdgeMm: 1 | 2;
+};
+
+export const DEFAULT_PRODUCTION: ProductionSettings = {
+  carcassMm: 16,
+  frontMm: 16,
+  backMm: 3,
+  backMount: 'inset',
+  frontGapMm: 4,
+  visibleEdgeMm: 2,
+};
+
+/** Настройки организации с подстановкой значений по умолчанию. */
+export function productionSettings(raw: unknown): ProductionSettings {
+  const value = (raw ?? {}) as Partial<ProductionSettings>;
+  const pick = <K extends keyof ProductionSettings>(
+    key: K,
+    allowed: ProductionSettings[K][],
+  ): ProductionSettings[K] =>
+    allowed.includes(value[key] as ProductionSettings[K])
+      ? (value[key] as ProductionSettings[K])
+      : DEFAULT_PRODUCTION[key];
+
+  return {
+    carcassMm: pick('carcassMm', [16, 18]),
+    frontMm: pick('frontMm', [16, 18, 19]),
+    backMm: pick('backMm', [3, 4]),
+    backMount: pick('backMount', ['inset', 'overlay']),
+    frontGapMm: pick('frontGapMm', [3, 4]),
+    visibleEdgeMm: pick('visibleEdgeMm', [1, 2]),
+  };
+}
+
 /* ─────────────────────────  Проекты  ───────────────────────── */
 
 export type ProjectSelections = Record<TargetKey, string>;

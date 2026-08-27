@@ -21,6 +21,20 @@ import {
   zoneReadiness,
 } from '../lib/millwork/templates';
 import { vanityWaterConflicts } from '../lib/millwork/warnings';
+import {
+  SYSTEM32_BASE_MM,
+  SYSTEM32_STEP_MM,
+  addShelf,
+  moduleCarcassHeightMm,
+  moveDrawerBoundary,
+  moveShelf,
+  removeShelf,
+  snapTo32,
+} from '../lib/millwork/fill';
+import { buildPanels, panelTotals } from '../lib/millwork/panels';
+import { panelsCsvFile, panelsToCsv } from '../lib/millwork/csv-export';
+import { runFingerprint } from '../lib/millwork/fingerprint';
+import { DEFAULT_PRODUCTION } from '../types/catalog';
 import type { ZoneKind } from '../types/millwork';
 import { commIssues, layoutIssues, validateRun } from '../lib/millwork/validate';
 import {
@@ -893,6 +907,175 @@ console.log('\nЗоны: шаблоны и готовность');
   check('шаблон шкафа разворачивается в ряд', run.modules.length >= 3);
   check('и ряд сходится с длиной', runWidthSum(run) === 2800);
   check('шкаф-купе помечен как купе', run.doorSystem === 'sliding');
+}
+
+/* ─────────────────────────  Наполнение модулей  ───────────────────────── */
+
+console.log('\nНаполнение: система 32');
+{
+  /*
+   * Полка садится ТОЛЬКО на присадочное отверстие. Полки на «высоте 412 мм»
+   * не существует, и мебельщик замечает это первым: если полка встаёт куда
+   * угодно, инструмент писал человек не из отрасли.
+   */
+  const offGrid: string[] = [];
+  const drawerMismatch: string[] = [];
+
+  for (const zone of ZONE_ORDER) {
+    for (const lengthMm of [1800, 2600, 3200, 4000]) {
+      const run = buildRun({
+        lengthMm,
+        ceilingHeightMm: 2700,
+        requirements: { ...baseInput.requirements, zone },
+        openings: [],
+        comms: [],
+      });
+
+      for (const unit of [...run.modules, ...run.upperSegments.flatMap((s) => s.modules)]) {
+        const fill = unit.fill;
+        if (!fill) {
+          offGrid.push(`${zone}/${unit.id}: нет наполнения`);
+          continue;
+        }
+
+        for (const shelf of fill.shelves) {
+          if ((shelf - SYSTEM32_BASE_MM) % SYSTEM32_STEP_MM !== 0) {
+            offGrid.push(`${zone}/${unit.id}: полка ${shelf}`);
+          }
+        }
+
+        if (fill.drawerHeights.length > 0) {
+          const sum = fill.drawerHeights.reduce((a, b) => a + b, 0);
+          const height = moduleCarcassHeightMm(unit, run);
+          if (sum !== height) drawerMismatch.push(`${zone}/${unit.id}: ${sum} против ${height}`);
+        }
+      }
+    }
+  }
+
+  check('каждая полка стоит на шаге 32 мм', offGrid.length === 0, offGrid.slice(0, 3).join(' · '));
+  check(
+    'сумма высот фронтов ящиков равна высоте модуля',
+    drawerMismatch.length === 0,
+    drawerMismatch.slice(0, 3).join(' · '),
+  );
+
+  check('snapTo32 не опускается ниже первого отверстия', snapTo32(-500) === SYSTEM32_BASE_MM);
+  check('snapTo32 берёт ближайшее отверстие', snapTo32(412) === 416, String(snapTo32(412)));
+
+  // Наполнение — часть конфигурации: чертёж, смета и рендер видят одну мебель.
+  const run = buildRun(baseInput);
+  const moved = {
+    ...run,
+    modules: run.modules.map((unit, i) =>
+      // Берём модуль, у которого полка есть: у ниши под технику её нет.
+      i === run.modules.findIndex((m) => (m.fill?.shelves.length ?? 0) > 0) && unit.fill
+        ? { ...unit, fill: moveShelf(unit.fill, 0, 500, moduleCarcassHeightMm(unit, run)) }
+        : unit,
+    ),
+  };
+  check(
+    'отпечаток меняется при изменении наполнения',
+    runFingerprint(moved) !== run.fingerprint,
+    `${run.fingerprint} → ${runFingerprint(moved)}`,
+  );
+
+  // Ограничения правок: полка не липнет к соседней, ящик не выходит за пределы.
+  const fill = { shelves: [352, 704], dividerMm: 0, rodsMm: [], drawerHeights: [], hinge: 'none' as const };
+  check('полку нельзя поставить вплотную к соседней', moveShelf(fill, 0, 690, 2000).shelves[0] === 352);
+  check('полка добавляется на свободное место', addShelf(fill, 1200, 2000).shelves.length === 3);
+  check('полка убирается', removeShelf(fill, 0).shelves.length === 1);
+
+  const drawers = {
+    shelves: [],
+    dividerMm: 0,
+    rodsMm: [],
+    drawerHeights: [140, 220, 220, 220],
+    hinge: 'none' as const,
+  };
+  const shifted = moveDrawerBoundary(drawers, 0, 60);
+  check(
+    'граница ящиков двигается, а сумма не меняется',
+    shifted.drawerHeights.reduce((a, b) => a + b, 0) === 800 && shifted.drawerHeights[0] === 200,
+    shifted.drawerHeights.join(' + '),
+  );
+  check(
+    'ящик выше 400 мм не делается',
+    moveDrawerBoundary(drawers, 0, 400).drawerHeights[0] === 140,
+  );
+}
+
+/* ─────────────────────────  Детализировка  ───────────────────────── */
+
+console.log('\nДетализировка');
+{
+  const run = buildRun(baseInput);
+  const panels = buildPanels({ run });
+  const totals = panelTotals(panels);
+
+  check('детали посчитаны для всех модулей', panels.length > run.modules.length, `${panels.length} деталей`);
+  check('в каждом корпусе есть боковины, дно и крыша',
+    run.modules.every((unit) =>
+      unit.kind === 'filler' ||
+      panels.some((p) => p.moduleId === unit.id && p.name === 'Боковина'),
+    ),
+  );
+  check('у фасада кромка по всем четырём торцам',
+    panels.filter((p) => p.name === 'Фасад').every((p) => p.edges.long === 2 && p.edges.short === 2),
+  );
+  check('у задней стенки кромки нет',
+    panels.filter((p) => p.name === 'Задняя стенка').every((p) => p.edges.long + p.edges.short === 0),
+  );
+  check('текстура проставлена у каждой детали ЛДСП',
+    panels.filter((p) => p.material.startsWith('ЛДСП')).every((p) => p.grain !== 'none'),
+  );
+  check('итоги считаются', totals.ldspM2 > 0 && totals.edgeThickM > 0,
+    `ЛДСП ${totals.ldspM2} м², кромка ${totals.edgeThickM} м`);
+
+  /*
+   * Площадь корпуса из детализировки обязана сойтись с площадью в смете:
+   * это одна и та же плита, и расходиться им негде.
+   */
+  const estimate = buildEstimate(run, 'optimal', DEMO_RATES);
+  const carcassLine = estimate.lines.find((l) => l.key === 'ldsp_carcass');
+  const ratio = (carcassLine?.quantity ?? 0) / Math.max(totals.ldspM2, 0.001);
+  check(
+    'площадь ЛДСП сходится со сметой в пределах 25%',
+    ratio > 0.75 && ratio < 1.25,
+    `смета ${carcassLine?.quantity} м², детализировка ${totals.ldspM2} м²`,
+  );
+
+  // Толщина плиты — настройка компании, а не константа кода.
+  const thick = buildPanels({ run, production: { ...DEFAULT_PRODUCTION, carcassMm: 18 } });
+  const bottom16 = panels.find((p) => p.name === 'Дно');
+  const bottom18 = thick.find((p) => p.name === 'Дно');
+  check(
+    'смена толщины ЛДСП меняет размеры дна',
+    Boolean(bottom16 && bottom18) && bottom18!.lengthMm === bottom16!.lengthMm - 4,
+    `${bottom16?.lengthMm} → ${bottom18?.lengthMm}`,
+  );
+
+  const gap3 = buildPanels({ run, production: { ...DEFAULT_PRODUCTION, frontGapMm: 3 } });
+  const front4 = panels.find((p) => p.name === 'Фасад');
+  const front3 = gap3.find((p) => p.name === 'Фасад');
+  check(
+    'зазор фасада берётся из настроек цеха',
+    Boolean(front3 && front4) && front3!.lengthMm === front4!.lengthMm + 1,
+    `${front4?.lengthMm} → ${front3?.lengthMm}`,
+  );
+
+  // Выгрузка для раскроя: разделитель, колонки и кириллица без искажений.
+  const csv = panelsToCsv(panels);
+  const head = csv.split('\r\n')[0];
+  check('в CSV десять колонок через точку с запятой', head.split(';').length === 10, head);
+
+  const cp = panelsCsvFile(panels, 'windows-1251');
+  const decoded = new TextDecoder('windows-1251').decode(cp.bytes);
+  check('windows-1251 читается обратно без потерь', decoded === csv);
+
+  const utf = panelsCsvFile(panels, 'utf-8');
+  check('в UTF-8 файле есть BOM для Excel',
+    utf.bytes[0] === 0xef && utf.bytes[1] === 0xbb && utf.bytes[2] === 0xbf);
 }
 
 /* ─────────────────────────  Стандарты не параметризуются  ───────────────────────── */

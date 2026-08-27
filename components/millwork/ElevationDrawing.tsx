@@ -1,11 +1,21 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import DimensionChain from './DimensionChain';
 import { APPLIANCE_SLOTS, BASE_TOTAL_H, GEOMETRY, moduleHeightMm } from '@/lib/millwork/modules';
 import { sectionSpec } from '@/lib/millwork/sections';
 import { zoneHeightMm, zoneProfile } from '@/lib/millwork/zones';
-import type { Module, Run } from '@/types/millwork';
+import {
+  addShelf,
+  flipHinge,
+  moduleCarcassHeightMm,
+  moveDivider,
+  moveDrawerBoundary,
+  moveShelf,
+  removeShelf,
+  snapTo32,
+} from '@/lib/millwork/fill';
+import type { Module, ModuleFill, Run } from '@/types/millwork';
 
 /**
  * Вид спереди — главный документ для производства.
@@ -16,6 +26,16 @@ import type { Module, Run } from '@/types/millwork';
  * без заливок и градиентов.
  */
 
+/**
+ * Два вида одного эскиза.
+ *
+ * «С фасадами» — вид для клиента: контуры модулей, двери, ширины, размерная
+ * цепочка. «Внутри» — разрез для цеха и для разговора «а куда я поставлю
+ * кастрюли»: полки с высотами, перегородки, штанги, ящики. Фасады на нём
+ * не рисуются — они закрывают ровно то, ради чего этот вид смотрят.
+ */
+export type DrawingMode = 'fronts' | 'inside';
+
 type Props = {
   run: Run;
   /** Габарит получен из допущения — на чертеже он идёт пунктиром. */
@@ -24,6 +44,9 @@ type Props = {
   onSelect?: (moduleId: string) => void;
   /** Идентификаторы модулей, ширина которых только что изменилась. */
   changedIds?: string[];
+  mode?: DrawingMode;
+  /** Правка наполнения перетаскиванием. Без неё вид «внутри» только читается. */
+  onFillChange?: (moduleId: string, fill: ModuleFill) => void;
 };
 
 const PADDING_LEFT = 74;
@@ -44,12 +67,404 @@ const APPLIANCE_MARK: Record<string, string> = {
   microwave: 'МВ',
 };
 
+/**
+ * Метка направления открывания: треугольник в углу двери со стороны ручки.
+ * Клик по метке меняет сторону — числа замерщик не вводит.
+ */
+function HingeMark({
+  hinge,
+  doorCount,
+  x,
+  width,
+  yTop,
+  height,
+  onFlip,
+}: {
+  hinge: ModuleFill['hinge'];
+  doorCount: number;
+  x: number;
+  width: number;
+  yTop: number;
+  height: number;
+  onFlip?: () => void;
+}) {
+  // У двух дверей стороны очевидны: левая налево, правая направо.
+  if (doorCount !== 1 || hinge === 'none') return null;
+
+  const size = Math.min(12, width / 3);
+  const midY = yTop + height / 2;
+  // Вершина треугольника смотрит на петлю, основание — на ручку.
+  const points =
+    hinge === 'left'
+      ? `${x + 2},${midY} ${x + 2 + size},${midY - size / 2} ${x + 2 + size},${midY + size / 2}`
+      : `${x + width - 2},${midY} ${x + width - 2 - size},${midY - size / 2} ${x + width - 2 - size},${midY + size / 2}`;
+
+  return (
+    <polygon
+      points={points}
+      fill="var(--blueprint)"
+      fillOpacity={0.55}
+      stroke="var(--blueprint)"
+      strokeWidth={0.4}
+      style={{ cursor: onFlip ? 'pointer' : 'default' }}
+      onClick={
+        onFlip
+          ? (event) => {
+              event.stopPropagation();
+              onFlip();
+            }
+          : undefined
+      }
+    >
+      <title>{hinge === 'left' ? 'Петли слева' : 'Петли справа'}</title>
+    </polygon>
+  );
+}
+
+/**
+ * Разрез модуля: полки, перегородка, штанги, ящики.
+ *
+ * ПРАВКА ПЕРЕТАСКИВАНИЕМ. Замерщик не вводит числа — он тянет. Правила
+ * производительности те же, что у шторки сравнения: `pointermove` живёт
+ * только между `pointerdown` и `pointerup`, позиция пишется прямо в DOM,
+ * а `setState` случается ОДИН раз, на отпускании.
+ */
+function ModuleInside({
+  unit,
+  x,
+  width,
+  yTop,
+  height,
+  heightMm,
+  onFillChange,
+}: {
+  unit: Module;
+  x: number;
+  width: number;
+  yTop: number;
+  height: number;
+  heightMm: number;
+  onFillChange?: (moduleId: string, fill: ModuleFill) => void;
+}) {
+  const fill = unit.fill;
+  const drag = useRef<(() => void) | null>(null);
+  const raf = useRef<number | null>(null);
+
+  useEffect(() => () => drag.current?.(), []);
+
+  if (!fill || unit.kind === 'filler' || unit.appliance) return null;
+
+  const scaleY = height / Math.max(heightMm, 1);
+  /** Экранный Y по высоте от дна корпуса. */
+  const yAt = (mm: number) => yTop + height - mm * scaleY;
+  /** Общая обвязка перетаскивания: слушатели живут только на время жеста. */
+  const startDrag = (
+    event: React.PointerEvent,
+    onMove: (mm: number) => void,
+    onEnd: (mm: number) => void,
+  ) => {
+    event.stopPropagation();
+    const svg = (event.currentTarget as SVGGraphicsElement).ownerSVGElement;
+    if (!svg) return;
+
+    const box = svg.getBoundingClientRect();
+    const viewH = svg.viewBox.baseVal.height || box.height;
+    const toMm = (clientY: number) => {
+      const localY = ((clientY - box.top) / box.height) * viewH;
+      return Math.round((yTop + height - localY) / scaleY);
+    };
+
+    let last = toMm(event.clientY);
+    drag.current?.();
+
+    const move = (e: PointerEvent) => {
+      const mm = toMm(e.clientY);
+      if (raf.current !== null) return;
+      raf.current = requestAnimationFrame(() => {
+        raf.current = null;
+        last = mm;
+        onMove(mm);
+      });
+    };
+
+    const up = () => {
+      drag.current?.();
+      onEnd(last);
+    };
+
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+
+    drag.current = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+      if (raf.current !== null) {
+        cancelAnimationFrame(raf.current);
+        raf.current = null;
+      }
+      drag.current = null;
+    };
+  };
+
+  const editable = Boolean(onFillChange);
+  const inner = { x: x + 2, width: Math.max(0, width - 4) };
+
+  return (
+    <g>
+      {/* Корпус: внутренний контур, чтобы полки читались внутри него. */}
+      <rect
+        x={inner.x}
+        y={yTop + 2}
+        width={inner.width}
+        height={Math.max(0, height - 4)}
+        fill="none"
+        stroke="var(--blueprint)"
+        strokeWidth={0.4}
+        strokeDasharray="3 2"
+      />
+
+      {/*
+        * Пустое место: двойной клик ставит сюда полку. Прямоугольник идёт
+        * ПЕРЕД полками — нарисованный после них, он перехватывал нажатия,
+        * и полка переставала тянуться.
+        */}
+      {editable && (
+        <rect
+          x={inner.x}
+          y={yTop + 2}
+          width={inner.width}
+          height={Math.max(0, height - 4)}
+          fill="transparent"
+          onDoubleClick={(event) => {
+            event.stopPropagation();
+            const svg = (event.currentTarget as SVGRectElement).ownerSVGElement;
+            if (!svg) return;
+            const box = svg.getBoundingClientRect();
+            const viewH = svg.viewBox.baseVal.height || box.height;
+            const localY = ((event.clientY - box.top) / box.height) * viewH;
+            const mm = Math.round((yTop + height - localY) / scaleY);
+            onFillChange?.(unit.id, addShelf(fill, mm, heightMm));
+          }}
+        />
+      )}
+
+      {/* Полки: сплошные линии с высотой от пола. */}
+      {fill.shelves.map((mm, i) => (
+        <g key={`shelf-${i}`}>
+          <line
+            data-shelf={i}
+            x1={inner.x}
+            y1={yAt(mm)}
+            x2={inner.x + inner.width}
+            y2={yAt(mm)}
+            stroke="var(--blueprint)"
+            strokeWidth={1.2}
+            style={{ cursor: editable ? 'ns-resize' : 'default' }}
+            onPointerDown={
+              editable
+                ? (event) => {
+                    const line = event.currentTarget as SVGLineElement;
+                    const label = line.parentElement?.querySelector('text');
+                    startDrag(
+                      event,
+                      (value) => {
+                        const snapped = snapTo32(value);
+                        line.setAttribute('y1', String(yAt(snapped)));
+                        line.setAttribute('y2', String(yAt(snapped)));
+                        if (label) {
+                          label.setAttribute('y', String(yAt(snapped) - 3));
+                          label.textContent = String(snapped);
+                        }
+                      },
+                      (value) => onFillChange?.(unit.id, moveShelf(fill, i, value, heightMm)),
+                    );
+                  }
+                : undefined
+            }
+            onDoubleClick={
+              editable
+                ? (event) => {
+                    event.stopPropagation();
+                    onFillChange?.(unit.id, removeShelf(fill, i));
+                  }
+                : undefined
+            }
+          />
+          <text
+            className="mw-num"
+            x={inner.x + 3}
+            y={yAt(mm) - 3}
+            fontSize={7}
+            fill="var(--graphite-mw)"
+          >
+            {mm}
+          </text>
+        </g>
+      ))}
+
+      {/* Перегородка: ходит влево-вправо шагом 32 мм. */}
+      {fill.dividerMm > 0 && (
+        <line
+          x1={x + fill.dividerMm * (width / Math.max(unit.widthMm, 1))}
+          y1={yTop + 2}
+          x2={x + fill.dividerMm * (width / Math.max(unit.widthMm, 1))}
+          y2={yTop + height - 2}
+          stroke="var(--blueprint)"
+          strokeWidth={1.2}
+          style={{ cursor: editable ? 'ew-resize' : 'default' }}
+          onPointerDown={
+            editable
+              ? (event) => {
+                  event.stopPropagation();
+                  const line = event.currentTarget as SVGLineElement;
+                  const svg = line.ownerSVGElement;
+                  if (!svg) return;
+                  const box = svg.getBoundingClientRect();
+                  const viewW = svg.viewBox.baseVal.width || box.width;
+                  const scaleX = width / Math.max(unit.widthMm, 1);
+                  const toMm = (clientX: number) => {
+                    const localX = ((clientX - box.left) / box.width) * viewW;
+                    return Math.round((localX - x) / scaleX);
+                  };
+
+                  let last = toMm(event.clientX);
+                  const move = (e: PointerEvent) => {
+                    last = toMm(e.clientX);
+                    const at = x + Math.max(0, last) * scaleX;
+                    line.setAttribute('x1', String(at));
+                    line.setAttribute('x2', String(at));
+                  };
+                  const up = () => {
+                    window.removeEventListener('pointermove', move);
+                    window.removeEventListener('pointerup', up);
+                    onFillChange?.(unit.id, moveDivider(fill, last, unit.widthMm));
+                  };
+                  window.addEventListener('pointermove', move);
+                  window.addEventListener('pointerup', up);
+                }
+              : undefined
+          }
+        />
+      )}
+
+      {/* Штанга: условное обозначение — кружок с осью. */}
+      {fill.rodsMm.map((mm, i) => (
+        <g key={`rod-${i}`}>
+          <line
+            x1={inner.x + 6}
+            y1={yAt(mm)}
+            x2={inner.x + inner.width - 6}
+            y2={yAt(mm)}
+            stroke="var(--blueprint)"
+            strokeWidth={0.8}
+            strokeDasharray="6 3"
+          />
+          <circle
+            cx={inner.x + inner.width / 2}
+            cy={yAt(mm)}
+            r={3}
+            fill="none"
+            stroke="var(--blueprint)"
+            strokeWidth={0.8}
+          />
+          <text
+            className="mw-num"
+            x={inner.x + inner.width - 6}
+            y={yAt(mm) - 3}
+            textAnchor="end"
+            fontSize={7}
+            fill="var(--graphite-mw)"
+          >
+            штанга {mm}
+          </text>
+        </g>
+      ))}
+
+      {/* Ящики: отдельными прямоугольниками, границы тянутся. */}
+      {fill.drawerHeights.length > 0 &&
+        fill.drawerHeights.map((front, i) => {
+          const above = fill.drawerHeights.slice(0, i).reduce((sum, h) => sum + h, 0);
+          const top = yTop + above * scaleY;
+          const boxH = front * scaleY;
+
+          return (
+            <g key={`drawer-${i}`}>
+              <rect
+                x={inner.x + 2}
+                y={top + 1}
+                width={Math.max(0, inner.width - 4)}
+                height={Math.max(0, boxH - 2)}
+                fill="none"
+                stroke="var(--blueprint)"
+                strokeWidth={0.6}
+              />
+              <text
+                className="mw-num"
+                x={inner.x + inner.width / 2}
+                y={top + boxH / 2 + 3}
+                textAnchor="middle"
+                fontSize={7}
+                fill="var(--graphite-mw)"
+              >
+                {front}
+              </text>
+
+              {/* Граница между ящиками: тянем, сумма высот не меняется. */}
+              {editable && i < fill.drawerHeights.length - 1 && (
+                <line
+                  x1={inner.x}
+                  y1={top + boxH}
+                  x2={inner.x + inner.width}
+                  y2={top + boxH}
+                  stroke="transparent"
+                  strokeWidth={6}
+                  style={{ cursor: 'ns-resize' }}
+                  onPointerDown={(event) => {
+                    const startMm = (yTop + height - event.clientY) / scaleY;
+                    startDrag(
+                      event,
+                      () => undefined,
+                      (value) => {
+                        // Тянем вниз — верхний фронт растёт.
+                        const delta = Math.round(startMm - value);
+                        onFillChange?.(unit.id, moveDrawerBoundary(fill, i, delta));
+                      },
+                    );
+                  }}
+                />
+              )}
+            </g>
+          );
+        })}
+
+      {/* Пустая секция: сказать прямо, а не оставлять белое место. */}
+      {fill.shelves.length === 0 &&
+        fill.rodsMm.length === 0 &&
+        fill.drawerHeights.length === 0 && (
+          <text
+            x={x + width / 2}
+            y={yTop + height / 2}
+            textAnchor="middle"
+            fontSize={7}
+            fill="var(--graphite-mw)"
+          >
+            без наполнения
+          </text>
+        )}
+    </g>
+  );
+}
+
 export default function ElevationDrawing({
   run,
   assumedTotal = false,
   selectedModuleId,
   onSelect,
   changedIds = [],
+  mode = 'fronts',
+  onFillChange,
 }: Props) {
   const changed = useMemo(() => new Set(changedIds), [changedIds]);
 
@@ -156,8 +571,21 @@ export default function ElevationDrawing({
           strokeWidth={active ? 1.4 : 0.8}
         />
 
+        {/* Наполнение: полки, штанги, ящики. Фасады на этом виде не рисуются. */}
+        {mode === 'inside' && (
+          <ModuleInside
+            unit={unit}
+            x={x}
+            width={w}
+            yTop={yTop}
+            height={h}
+            heightMm={moduleCarcassHeightMm(unit, run)}
+            onFillChange={onFillChange}
+          />
+        )}
+
         {/* Фасады: разделители дверей и ящиков — цех считает по ним петли. */}
-        {unit.frontType === 'drawers' &&
+        {mode === 'fronts' && unit.frontType === 'drawers' &&
           Array.from({ length: unit.drawerCount - 1 }, (_, i) => {
             const step = h / unit.drawerCount;
             const y = yTop + step * (i + 1);
@@ -174,7 +602,7 @@ export default function ElevationDrawing({
             );
           })}
 
-        {unit.frontType === 'door' && unit.doorCount === 2 && (
+        {mode === 'fronts' && unit.frontType === 'door' && unit.doorCount === 2 && (
           <line
             x1={x + w / 2}
             y1={yTop}
@@ -182,6 +610,27 @@ export default function ElevationDrawing({
             y2={yTop + h}
             stroke="var(--blueprint)"
             strokeWidth={0.4}
+          />
+        )}
+
+        {/*
+          * Треугольник направления открывания. Одна метка — и цех не
+          * ошибётся стороной петель; это отраслевое обозначение, его не
+          * нужно объяснять.
+          */}
+        {mode === 'fronts' && unit.frontType === 'door' && unit.fill && (
+          <HingeMark
+            hinge={unit.fill.hinge}
+            doorCount={unit.doorCount}
+            x={x}
+            width={w}
+            yTop={yTop}
+            height={h}
+            onFlip={
+              onFillChange && unit.fill.hinge !== 'none'
+                ? () => onFillChange(unit.id, flipHinge(unit.fill as ModuleFill))
+                : undefined
+            }
           />
         )}
 

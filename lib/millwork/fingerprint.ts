@@ -19,6 +19,8 @@ export type FingerprintPart = {
   heightMm?: number;
   appliance?: string;
   frontCount: number;
+  /** Наполнение: полки и штанги — тоже мебель, и разъезжаться им нельзя. */
+  fill?: string;
 };
 
 export function moduleParts(modules: Module[]): FingerprintPart[] {
@@ -27,13 +29,31 @@ export function moduleParts(modules: Module[]): FingerprintPart[] {
     widthMm: unit.widthMm,
     appliance: unit.appliance,
     frontCount: unit.frontType === 'drawers' ? unit.drawerCount : unit.doorCount,
+    fill: fillPart(unit),
   }));
+}
+
+/**
+ * Наполнение в отпечатке: замерщик подвинул полку — чертёж, смета и рендер
+ * обязаны знать об этом все трое. Складываем в короткую строку, порядок
+ * полей фиксирован.
+ */
+function fillPart(unit: Module): string | undefined {
+  const fill = unit.fill;
+  if (!fill) return undefined;
+  return [
+    fill.shelves.join('.'),
+    fill.dividerMm,
+    fill.rodsMm.join('.'),
+    fill.drawerHeights.join('.'),
+    fill.hinge,
+  ].join('/');
 }
 
 /** Устойчивый хеш: порядок полей фиксирован, случайности нет. */
 export function configurationFingerprint(modules: Module[]): string {
   const text = moduleParts(modules)
-    .map((p) => `${p.kind}:${p.widthMm}:${p.appliance ?? '-'}:${p.frontCount}`)
+    .map((p) => `${p.kind}:${p.widthMm}:${p.appliance ?? '-'}:${p.frontCount}:${p.fill ?? '-'}`)
     .join('|');
 
   // FNV-1a: коротко, детерминированно и без зависимостей.

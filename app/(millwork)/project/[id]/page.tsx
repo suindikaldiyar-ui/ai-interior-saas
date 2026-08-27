@@ -6,6 +6,7 @@ import { fetchCatalog } from '@/lib/catalog';
 import { missingRequiredRates, ratesFromCatalog } from '@/lib/millwork/rates';
 import { DEFAULT_REQUIREMENTS, workspaceInput } from '@/lib/millwork/workspace';
 import { parseOrgTemplates } from '@/lib/millwork/templates';
+import { productionSettings } from '@/types/catalog';
 import { loadProject, projectTitle } from '@/lib/projects';
 import { PROJECTS_BUCKET, storageUrl } from '@/lib/supabase/config';
 import { SUPABASE_READY } from '@/lib/supabase/config';
@@ -51,7 +52,7 @@ export default async function ProjectPage({ params }: { params: { id: string } }
 
   const [catalog, { data: orgRow }] = await Promise.all([
     fetchCatalog(supabase, org.id),
-    supabase.from('orgs').select('run_templates').eq('id', org.id).maybeSingle(),
+    supabase.from('orgs').select('run_templates, production').eq('id', org.id).maybeSingle(),
   ]);
   const rates = ratesFromCatalog(catalog);
 
@@ -86,6 +87,7 @@ export default async function ProjectPage({ params }: { params: { id: string } }
       initialState={project.millwork ?? null}
       survey={project.millwork?.survey ?? null}
       orgTemplates={parseOrgTemplates(orgRow?.run_templates)}
+      production={productionSettings(orgRow?.production)}
       ratesMissing={missingRequiredRates(rates).length > 0}
     />
   );

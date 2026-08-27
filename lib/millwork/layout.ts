@@ -10,6 +10,7 @@ import {
   largestStandardUpTo,
 } from './modules';
 import { assertRunFits, runWidthSum } from './invariants';
+import { defaultFill } from './fill';
 import { SECTION_SPECS, sectionSpec } from './sections';
 import { isSectionZone, zoneProfile } from './zones';
 import { runFingerprint } from './fingerprint';
@@ -44,6 +45,19 @@ import type {
  */
 function moduleId(kind: ModuleKind, offsetMm: number, appliance?: ApplianceKind): string {
   return `${kind}-${offsetMm}${appliance ? `-${appliance}` : ''}`;
+}
+
+/**
+ * Наполнение считается сразу при сборке ряда: чертёж, смета и детализировка
+ * обязаны видеть одну и ту же мебель, а не досчитывать её каждый по-своему.
+ */
+function withFill(
+  modules: Module[],
+  shell: Pick<Run, 'zone' | 'ceilingHeightMm' | 'options'>,
+): void {
+  modules.forEach((unit, i) => {
+    unit.fill = defaultFill(unit, shell, i, modules.length);
+  });
 }
 
 /* ─────────────────────────  Якорные модули  ───────────────────────── */
@@ -518,6 +532,14 @@ function buildSectionRun(input: BuildRunInput): Run {
     upperSegments.push({ fromMm: 0, toMm: usable, modules: mezzanine });
   }
 
+  const shell = {
+    zone: requirements.zone ?? 'kitchen',
+    ceilingHeightMm,
+    options: requirements.options,
+  };
+  withFill(modules, shell);
+  for (const segment of upperSegments) withFill(segment.modules, shell);
+
   const run: Run = {
     id: input.id ?? 'run',
     zone: requirements.zone ?? 'kitchen',
@@ -664,6 +686,14 @@ export function buildRun(input: BuildRunInput): Run {
   const upperSegments = requirements.options.hasUpper
     ? buildUpperRow(modules, usable, openings, requirements, ceilingHeightMm)
     : [];
+
+  const kitchenShell = {
+    zone: requirements.zone ?? 'kitchen',
+    ceilingHeightMm,
+    options: requirements.options,
+  };
+  withFill(modules, kitchenShell);
+  for (const segment of upperSegments) withFill(segment.modules, kitchenShell);
 
   const run: Run = {
     id: input.id ?? 'run',
