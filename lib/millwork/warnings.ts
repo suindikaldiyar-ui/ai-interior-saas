@@ -74,7 +74,12 @@ export function doorwayConflicts(run: Run | null, openings: Opening[]): SurveyWa
 }
 
 /** Мойка далеко от вывода воды — при том, что вывод на замере отмечен. */
-export function sinkWaterConflicts(run: Run | null, comms: CommPoint[]): SurveyWarning[] {
+export function sinkWaterConflicts(
+  run: Run | null,
+  comms: CommPoint[],
+  /** Мойку переставил замерщик: тогда это предупреждение, а не запрет. */
+  manual = false,
+): SurveyWarning[] {
   if (!run) return [];
 
   const water = comms.filter((c) => c.kind === 'water_supply');
@@ -95,7 +100,12 @@ export function sinkWaterConflicts(run: Run | null, comms: CommPoint[]): SurveyW
       return [
         {
           id: `sink-water-${unit.id}`,
-          severity: 'blocking' as const,
+          /*
+           * Мойку двигал человек — значит он видел вывод воды своими
+           * глазами. Блокировать его решение мы не вправе, назвать
+           * последствие обязаны.
+           */
+          severity: (manual ? 'clarify' : 'blocking') as SurveyWarning['severity'],
           moduleId: unit.id,
           atMm: center,
           message:
@@ -104,6 +114,95 @@ export function sinkWaterConflicts(run: Run | null, comms: CommPoint[]): SurveyW
         },
       ];
     });
+}
+
+/* ─────────────────  Ручная расстановка техники  ───────────────── */
+
+/** Варочная ближе этого к краю ряда — некуда ставить посуду. */
+export const HOB_EDGE_MM = 400;
+/** И ближе этого к мойке — брызги на конфорки. */
+export const HOB_SINK_MM = 300;
+
+/**
+ * Что не так с ручной расстановкой.
+ *
+ * ПРЕДУПРЕЖДАЕМ, НО НЕ ЗАПРЕЩАЕМ. Замерщик стоит в квартире и видит то,
+ * чего не знает алгоритм: газовый вывод не там, где ждали, у хозяйки своё
+ * представление о том, где стоять плите. Правило может быть нарушено
+ * осознанно — наше дело назвать последствие, а решает человек.
+ */
+export function manualPlacementWarnings(
+  run: Run | null,
+  /** Вытяжка заказана: тогда её отсутствие в ряду — это последствие. */
+  hoodRequested = false,
+): SurveyWarning[] {
+  if (!run) return [];
+
+  const modules = run.modules;
+  const hob = modules.find((m) => m.appliance === 'hob');
+  const sink = modules.find((m) => m.appliance?.startsWith('sink'));
+  const out: SurveyWarning[] = [];
+
+  if (hob) {
+    const left = hob.offsetMm;
+    const right = run.lengthMm - (hob.offsetMm + hob.widthMm);
+    const edge = Math.min(left, right);
+
+    if (edge < HOB_EDGE_MM) {
+      out.push({
+        id: `hob-edge-${hob.id}`,
+        severity: 'clarify',
+        moduleId: hob.id,
+        atMm: hob.offsetMm + hob.widthMm / 2,
+        message:
+          `Варочная в ${Math.round(edge)} мм от края ряда — рядом с ней некуда ` +
+          'ставить горячую посуду.',
+      });
+    }
+
+    if (sink) {
+      const gap =
+        hob.offsetMm > sink.offsetMm
+          ? hob.offsetMm - (sink.offsetMm + sink.widthMm)
+          : sink.offsetMm - (hob.offsetMm + hob.widthMm);
+
+      if (gap < HOB_SINK_MM) {
+        out.push({
+          id: `hob-sink-${hob.id}`,
+          severity: 'clarify',
+          moduleId: hob.id,
+          atMm: hob.offsetMm + hob.widthMm / 2,
+          message:
+            `Между мойкой и варочной ${Math.max(0, Math.round(gap))} мм — ` +
+            'меньше рабочего зазора в 300 мм.',
+        });
+      }
+    }
+  }
+
+  /*
+   * Вытяжка висит строго над варочной, а верхний ряд разорван над окном.
+   * Значит варочная под окном — это кухня без вытяжки, и сказать об этом
+   * надо сразу, а не на монтаже.
+   */
+  if (hoodRequested && hob) {
+    const hasHood = run.upperSegments
+      .flatMap((segment) => segment.modules)
+      .some((unit) => unit.appliance === 'hood');
+
+    if (!hasHood) {
+      out.push({
+        id: `hood-missing-${hob.id}`,
+        severity: 'clarify',
+        moduleId: hob.id,
+        atMm: hob.offsetMm + hob.widthMm / 2,
+        message:
+          'На этом месте вытяжку над варочной не повесить — там разрыв верхнего ряда.',
+      });
+    }
+  }
+
+  return out;
 }
 
 /** Допуск в санузле жёстче кухонного: сифон не тянется. */
@@ -176,6 +275,10 @@ export function collectWarnings(input: {
   openings: Opening[];
   comms: CommPoint[];
   stats?: SurveyStats | null;
+  /** Мойку переставил замерщик руками: тогда расхождение с водой — жёлтое. */
+  manualSink?: boolean;
+  /** Вытяжка заказана: её пропажа из ряда — последствие переноса варочной. */
+  hoodRequested?: boolean;
 }): SurveyWarning[] {
   const fromIssues: SurveyWarning[] = input.issues.map((issue, i) => ({
     id: `issue-${i}`,
@@ -187,8 +290,9 @@ export function collectWarnings(input: {
 
   const all = [
     ...doorwayConflicts(input.run, input.openings),
-    ...sinkWaterConflicts(input.run, input.comms),
+    ...sinkWaterConflicts(input.run, input.comms, input.manualSink),
     ...vanityWaterConflicts(input.run, input.comms),
+    ...manualPlacementWarnings(input.run, input.hoodRequested),
     ...fromIssues,
     ...(input.stats ? surveyWarnings(input.stats) : []),
   ];

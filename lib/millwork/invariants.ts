@@ -82,6 +82,48 @@ export function widthOverflowMm(
   return Math.max(0, minSum - run.lengthMm);
 }
 
+/**
+ * Что потеряет ряд, если поставить прибор сюда.
+ *
+ * Ручная позиция сильнее умолчаний, но не сильнее стены: когда прибор
+ * встаёт посреди ряда, остальным может не хватить места. Считаем это ДО
+ * применения — как и для ширины модуля: правка, которая молча выкидывает
+ * посудомойку, показала бы клиенту не тот состав, который он заказывал.
+ *
+ * Возвращает список приборов, которые пришлось бы выбросить, и сколько
+ * миллиметров не хватает.
+ */
+export function manualAnchorCost(
+  before: Run,
+  after: Run,
+): { dropped: string[]; missingMm: number } {
+  const placed = (run: Run) =>
+    new Set(
+      [...run.modules, ...run.upperSegments.flatMap((s) => s.modules)]
+        .map((m) => m.appliance)
+        .filter(Boolean) as string[],
+    );
+
+  const was = placed(before);
+  const now = placed(after);
+
+  /*
+   * Вытяжка сюда не входит: она не занимает места в ряду и висит там, где
+   * варочная. Если варочная уехала под окно, вытяжки в верхнем ряду не
+   * будет — но это повод предупредить, а не запретить перенос: решение
+   * принимает замерщик, стоя в квартире.
+   */
+  const dropped = Array.from(was).filter((a) => a !== 'hood' && !now.has(a));
+
+  const widths: Record<string, number> = {};
+  for (const unit of before.modules) {
+    if (unit.appliance) widths[unit.appliance] = unit.widthMm;
+  }
+  const missingMm = dropped.reduce((sum, a) => sum + (widths[a] ?? 0), 0);
+
+  return { dropped, missingMm };
+}
+
 /** Сколько раз каждый прибор попал в ряд. В норме — ровно один. */
 export function appliancesPlacedOnce(run: Run): Map<string, number> {
   const counts = new Map<string, number>();

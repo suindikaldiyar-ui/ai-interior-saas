@@ -15,7 +15,7 @@ import {
   removeShelf,
   snapTo32,
 } from '@/lib/millwork/fill';
-import type { Module, ModuleFill, Run } from '@/types/millwork';
+import type { ApplianceKind, Module, ModuleFill, Run } from '@/types/millwork';
 
 /**
  * Вид спереди — главный документ для производства.
@@ -47,7 +47,19 @@ type Props = {
   mode?: DrawingMode;
   /** Правка наполнения перетаскиванием. Без неё вид «внутри» только читается. */
   onFillChange?: (moduleId: string, fill: ModuleFill) => void;
+  /**
+   * Перенос прибора мышью: центр от левого края ряда, мм.
+   *
+   * Алгоритм ставит мойку к воде, а варочную не у края — верные умолчания.
+   * Но на объекте замерщик видит то, чего алгоритм не знает, и должен уметь
+   * поправить руками. Без этого он доверяет расстановке только тогда, когда
+   * она совпала с его планом.
+   */
+  onMoveAppliance?: (appliance: ApplianceKind, centerMm: number) => void;
 };
+
+/** Шаг привязки при переносе: мебель делают с точностью до полсантиметра. */
+const MOVE_STEP_MM = 50;
 
 const PADDING_LEFT = 74;
 const PADDING_RIGHT = 26;
@@ -465,8 +477,23 @@ export default function ElevationDrawing({
   changedIds = [],
   mode = 'fronts',
   onFillChange,
+  onMoveAppliance,
 }: Props) {
   const changed = useMemo(() => new Set(changedIds), [changedIds]);
+
+  /*
+   * Перетаскивание прибора. Правила те же, что у шторки сравнения и полок:
+   * `pointermove` живёт только между `pointerdown` и `pointerup`, позиция
+   * пишется прямо в DOM, а `setState` — ровно один, на отпускании. Ряд
+   * пересобирается тоже один раз: пересборка на каждом кадре означала бы
+   * пересчёт сметы шестьдесят раз в секунду.
+   */
+  const ghost = useRef<SVGGElement>(null);
+  const ghostRect = useRef<SVGRectElement>(null);
+  const ghostLabel = useRef<SVGTextElement>(null);
+  const moveCleanup = useRef<(() => void) | null>(null);
+
+  useEffect(() => () => moveCleanup.current?.(), []);
 
   const ceiling = run.ceilingHeightMm;
   // Масштаб подбирается так, чтобы ряд любой длины уместился по ширине листа.
@@ -532,6 +559,74 @@ export default function ElevationDrawing({
     return { top: zoneTop, bottom: GEOMETRY.base.plinthH };
   };
 
+  /** Перенос прибора: подсветка будущего места и расстояние от левого угла. */
+  const startMove = (event: React.PointerEvent, unit: Module) => {
+    if (!onMoveAppliance || !unit.appliance) return;
+    event.stopPropagation();
+
+    const svg = (event.currentTarget as SVGGraphicsElement).ownerSVGElement;
+    if (!svg) return;
+
+    const box = svg.getBoundingClientRect();
+    const viewW = svg.viewBox.baseVal.width || box.width;
+    const toMm = (clientX: number) => {
+      const localX = ((clientX - box.left) / box.width) * viewW;
+      return Math.round((localX - PADDING_LEFT) / scale);
+    };
+
+    const half = unit.widthMm / 2;
+    const grabOffset = toMm(event.clientX) - (unit.offsetMm + half);
+
+    const snap = (mm: number) => {
+      const clamped = Math.min(Math.max(mm, half), Math.max(half, run.lengthMm - half));
+      return Math.round(clamped / MOVE_STEP_MM) * MOVE_STEP_MM;
+    };
+
+    let last = snap(unit.offsetMm + half);
+    let frame: number | null = null;
+
+    const paint = (centerMm: number) => {
+      const rect = ghostRect.current;
+      const label = ghostLabel.current;
+      if (ghost.current) ghost.current.style.display = '';
+      if (rect) rect.setAttribute('x', String(PADDING_LEFT + (centerMm - half) * scale));
+      if (label) {
+        label.setAttribute('x', String(PADDING_LEFT + centerMm * scale));
+        label.textContent = `${Math.round(centerMm - half)} мм от угла`;
+      }
+    };
+
+    const onMove = (e: PointerEvent) => {
+      const mm = snap(toMm(e.clientX) - grabOffset);
+      if (frame !== null) return;
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        last = mm;
+        paint(mm);
+      });
+    };
+
+    const onEnd = () => {
+      moveCleanup.current?.();
+      onMoveAppliance(unit.appliance as ApplianceKind, last);
+    };
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onEnd);
+    window.addEventListener('pointercancel', onEnd);
+
+    moveCleanup.current = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onEnd);
+      window.removeEventListener('pointercancel', onEnd);
+      if (frame !== null) cancelAnimationFrame(frame);
+      if (ghost.current) ghost.current.style.display = 'none';
+      moveCleanup.current = null;
+    };
+
+    paint(last);
+  };
+
   const renderModule = (unit: Module, isUpper: boolean) => {
     const x = PADDING_LEFT + unit.offsetMm * scale;
     const w = unit.widthMm * scale;
@@ -554,12 +649,35 @@ export default function ElevationDrawing({
     const active = selectedModuleId === unit.id;
     const mark = unit.appliance ? APPLIANCE_MARK[unit.appliance] : null;
 
+    /*
+     * Вытяжка не перетаскивается: она обязана висеть над варочной и едет
+     * за ней сама. Отдельная вытяжка — это ошибка монтажа, а не свобода.
+     */
+    const movable = Boolean(onMoveAppliance && unit.appliance && unit.appliance !== 'hood');
+
     return (
       <g
         key={`${isUpper ? 'u' : 'b'}-${unit.id}`}
         onClick={onSelect ? () => onSelect(unit.id) : undefined}
-        style={{ cursor: onSelect ? 'pointer' : 'default' }}
+        onPointerDown={movable ? (event) => startMove(event, unit) : undefined}
+        style={{ cursor: movable ? 'ew-resize' : onSelect ? 'pointer' : 'default' }}
       >
+        {movable && <title>Тяните, чтобы перенести</title>}
+
+        {/*
+          * Прозрачная зона захвата. Контур модуля нарисован `fill="none"`,
+          * а такая фигура ловит указатель только по линии обводки: тянуть
+          * прибор было бы можно лишь за миллиметровую рамку.
+          */}
+        {movable && (
+          <rect
+            x={x}
+            y={yTop}
+            width={w}
+            height={h}
+            fill="transparent"
+          />
+        )}
         <rect
           x={x}
           y={yTop}
@@ -756,6 +874,36 @@ export default function ElevationDrawing({
           strokeWidth={1}
         />
       )}
+
+      {/*
+        * Подсветка будущего места прибора. Живёт над рядом и показывается
+        * только во время переноса: замерщик должен видеть, куда прибор
+        * встанет, ДО того как отпустит.
+        */}
+      <g ref={ghost} style={{ display: 'none' }} pointerEvents="none">
+        <rect
+          ref={ghostRect}
+          x={PADDING_LEFT}
+          y={yOf(BASE_TOTAL_H)}
+          width={600 * scale}
+          height={yOf(0) - yOf(BASE_TOTAL_H)}
+          fill="var(--tape)"
+          fillOpacity={0.22}
+          stroke="var(--tape)"
+          strokeWidth={1}
+        />
+        <text
+          ref={ghostLabel}
+          className="mw-num"
+          x={PADDING_LEFT}
+          y={yOf(BASE_TOTAL_H) - 6}
+          textAnchor="middle"
+          fontSize={9}
+          fill="var(--tape)"
+        >
+          0 мм от угла
+        </text>
+      </g>
 
       {run.modules.map((m) => renderModule(m, false))}
       {run.upperSegments.flatMap((segment) =>

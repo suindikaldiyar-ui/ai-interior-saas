@@ -22,6 +22,9 @@ import SurveySheet from './SurveySheet';
 import TemplatePicker from './TemplatePicker';
 import type { RateTable } from '@/lib/millwork/estimate';
 import { applyOps } from '@/lib/millwork/ops';
+import { buildRun } from '@/lib/millwork/layout';
+import { manualAnchorCost } from '@/lib/millwork/invariants';
+import { APPLIANCE_SLOTS } from '@/lib/millwork/modules';
 import { composeVariants, workspaceInput } from '@/lib/millwork/workspace';
 import { MAIN_VARIANT, SINGLE_VARIANT } from '@/lib/millwork/variants';
 import { zoneProfile } from '@/lib/millwork/zones';
@@ -58,6 +61,7 @@ import {
 import { shareUrl, whatsappLink, type MillworkState } from '@/lib/projects';
 import { runFingerprint } from '@/lib/millwork/fingerprint';
 import type {
+  ApplianceKind,
   CommPoint,
   MillworkOp,
   Module,
@@ -208,6 +212,18 @@ export default function Workspace(props: WorkspaceProps) {
       ? (props.initialState?.renderStyle as string)
       : DEFAULT_RENDER_STYLE,
   );
+  /*
+   * Позиции техники, заданные замерщиком руками. Живут в состоянии объекта
+   * вместе с требованиями, поэтому переживают пересчёт и сохранение.
+   */
+  const [manualAnchors, setManualAnchors] = useState<
+    NonNullable<RunRequirements['manualAnchors']>
+  >(
+    props.initialState?.requirements?.manualAnchors ?? {},
+  );
+  /** Почему последняя правка не применилась. */
+  const [moveNotice, setMoveNotice] = useState<string | null>(null);
+
   const [templateId, setTemplateId] = useState<string | null>(
     props.initialState?.templateId ?? props.templateId ?? null,
   );
@@ -271,13 +287,15 @@ export default function Workspace(props: WorkspaceProps) {
   const renderVariants = useInteriorStore((s) => s.renderVariants);
   const activeRender =
     renderVariants.find((v) => v.styleId === renderStyle)?.image ?? null;
-  const requirements = useMemo(
-    () =>
-      template
-        ? requirementsFromTemplate(template, props.requirements.options)
-        : props.requirements,
-    [template, props.requirements],
-  );
+  const requirements = useMemo(() => {
+    const base = template
+      ? requirementsFromTemplate(template, props.requirements.options)
+      : props.requirements;
+
+    return Object.keys(manualAnchors).length > 0
+      ? { ...base, manualAnchors }
+      : base;
+  }, [template, props.requirements, manualAnchors]);
 
   const input = useMemo(() => {
     if (!resolution) {
@@ -372,6 +390,57 @@ export default function Workspace(props: WorkspaceProps) {
     }));
   };
 
+  /**
+   * Перенос прибора на новое место.
+   *
+   * Проверка идёт ДО применения: если после переноса какой-то прибор
+   * перестаёт помещаться, правку не применяем и говорим, чего не хватает.
+   * Молча выбросить посудомойку нельзя — клиент увидел бы не тот состав,
+   * который заказывал.
+   */
+  const moveAppliance = (appliance: ApplianceKind, centerMm: number) => {
+    const next = { ...manualAnchors, [appliance]: centerMm };
+
+    let candidate: Run;
+    try {
+      candidate = buildRun({
+        lengthMm: input.lengthMm,
+        ceilingHeightMm: input.ceilingHeightMm,
+        requirements: { ...requirements, manualAnchors: next },
+        openings: input.openings,
+        comms: input.comms,
+        cornerAt: input.cornerAt,
+      });
+    } catch {
+      setMoveNotice('Сюда прибор не встаёт: ряд не сходится с длиной стены.');
+      return;
+    }
+
+    const { dropped, missingMm } = manualAnchorCost(active.run, candidate);
+    if (dropped.length > 0) {
+      const titles = dropped
+        .map((a) => APPLIANCE_SLOTS[a as ApplianceKind]?.title ?? a)
+        .join(', ');
+      setMoveNotice(
+        `Не переношу: на этом месте не остаётся места под ${titles} — не хватает ${missingMm} мм.`,
+      );
+      return;
+    }
+
+    setMoveNotice(null);
+    dirty.current = true;
+    // Ручная расстановка отменяет прежние правки состава: ряд пересобран.
+    setEditedRuns({});
+    setManualAnchors(next);
+  };
+
+  const resetAnchors = () => {
+    dirty.current = true;
+    setEditedRuns({});
+    setManualAnchors({});
+    setMoveNotice(null);
+  };
+
   const runOps = useCallback(
     (ops: MillworkOp[]) => {
       if (ops.length === 0) return;
@@ -446,8 +515,13 @@ export default function Workspace(props: WorkspaceProps) {
         openings: input.openings,
         comms: input.comms,
         stats: resolution?.stats ?? null,
+        // Как только замерщик взял расстановку в свои руки, расхождение
+        // с водой становится предупреждением, а не запретом: он видел
+        // вывод своими глазами.
+        manualSink: Object.keys(manualAnchors).length > 0,
+        hoodRequested: requirements.appliances.includes('hood'),
       }),
-    [issues, active.run, input.openings, input.comms, resolution],
+    [issues, active.run, input.openings, input.comms, resolution, manualAnchors, requirements],
   );
 
   /*
@@ -1005,12 +1079,29 @@ export default function Workspace(props: WorkspaceProps) {
                     {label}
                   </button>
                 ))}
-                {drawingMode === 'inside' && (
+                {drawingMode === 'inside' ? (
                   <p className="self-center text-[13px] leading-snug text-graphiteMw">
                     Полку тяните мышью, двойной клик добавляет и убирает её.
                   </p>
+                ) : (
+                  <p className="self-center text-[13px] leading-snug text-graphiteMw">
+                    Технику можно перетащить: тяните модуль вдоль ряда.
+                  </p>
+                )}
+
+                {/* Кнопка видна, только когда есть что возвращать. */}
+                {Object.keys(manualAnchors).length > 0 && (
+                  <button type="button" onClick={resetAnchors} className="mw-btn mw-btn-ghost">
+                    Вернуть автоматическую расстановку
+                  </button>
                 )}
               </div>
+            )}
+
+            {moveNotice && (
+              <p className="mt-3 rounded-[var(--r-control)] bg-alert/15 px-4 py-3 text-[13px] leading-snug text-alert print:hidden">
+                {moveNotice}
+              </p>
             )}
 
             {/* Детализировка — лист для цеха, а не для клиента. */}
@@ -1052,6 +1143,7 @@ export default function Workspace(props: WorkspaceProps) {
                     changedIds={changedIds}
                     mode={drawingMode}
                     onFillChange={changeFill}
+                    onMoveAppliance={moveAppliance}
                   />
                 ) : (
                   <PlanDrawing

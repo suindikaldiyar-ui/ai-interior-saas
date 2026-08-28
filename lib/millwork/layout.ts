@@ -74,6 +74,8 @@ type Anchor = {
   appliance: ApplianceKind;
   widthMm: number;
   desiredCenterMm: number;
+  /** Позицию задал замерщик руками: её нельзя ни сдвинуть, ни отбросить. */
+  manual?: boolean;
   /** Чем меньше, тем важнее сохранить место при нехватке длины. */
   priority: number;
 };
@@ -211,6 +213,27 @@ function planAnchors(
       desiredCenterMm: desired,
       priority: 2,
     });
+  }
+
+  /*
+   * Ручные позиции применяются ПОСЛЕДНИМИ и перебивают всё, что посчитал
+   * алгоритм. Приоритет становится наивысшим: при нехватке длины ряда
+   * отбрасываются другие приборы, но не этот — замерщик поставил его
+   * сознательно, стоя в квартире.
+   *
+   * Вытяжка сюда не попадает: она обязана висеть над варочной, и отдельная
+   * её позиция — ошибка монтажа, а не свобода выбора.
+   */
+  const manual = req.manualAnchors ?? {};
+  for (const anchor of anchors) {
+    const at = manual[anchor.appliance];
+    if (at === undefined || anchor.appliance === 'hood') continue;
+
+    // Прибор не должен вылезти за ряд: центр зажимается по краям.
+    const half = anchor.widthMm / 2;
+    anchor.desiredCenterMm = Math.min(Math.max(at - offsetMm, half), Math.max(half, lengthMm - half));
+    anchor.manual = true;
+    anchor.priority = -1;
   }
 
   return anchors.sort((a, b) => a.desiredCenterMm - b.desiredCenterMm);
@@ -606,6 +629,11 @@ export function buildRun(input: BuildRunInput): Run {
     kept = [...anchors]
       .sort((a, b) => a.priority - b.priority)
       .filter((a) => {
+        // Ручную позицию не отбрасываем: её выбрал человек на объекте.
+        if (a.manual) {
+          running += a.widthMm;
+          return true;
+        }
         if (running + a.widthMm > span) {
           warnings.push(
             `${APPLIANCE_SLOTS[a.appliance].title}: не помещается в ряд ${usable} мм.`,
@@ -626,11 +654,59 @@ export function buildRun(input: BuildRunInput): Run {
    * ними остаются промежутки, и хвост ряда вылезает за стену, хотя по
    * сумме ширин всё помещалось.
    */
+  /*
+   * СНАЧАЛА РУЧНЫЕ ПОЗИЦИИ, ПОТОМ ОСТАЛЬНОЕ.
+   *
+   * Замерщик перетащил варочную к газовому выводу — она обязана встать
+   * ИМЕННО там, а колонны и мойка расступиться. Если раскладывать всё
+   * подряд слева направо, ручная позиция упирается в то, что уже стоит
+   * слева, и прибор остаётся на месте: правка «не работает» при верном коде.
+   */
   const placed: { anchor: Anchor; startMm: number }[] = [];
+
+  const manualAnchors = kept.filter((a) => a.manual);
+  const autoAnchors = kept.filter((a) => !a.manual);
+
+  /** Занятые ручными приборами участки: их обходят все остальные. */
+  const fixed: { fromMm: number; toMm: number }[] = [];
+
+  for (const anchor of [...manualAnchors].sort((a, b) => a.desiredCenterMm - b.desiredCenterMm)) {
+    const desired = Math.round(anchor.desiredCenterMm - anchor.widthMm / 2);
+    let startMm = Math.min(Math.max(desired, cursor), Math.max(cursor, limit - anchor.widthMm));
+
+    // Две ручные позиции не должны накладываться: вторая отступает вправо.
+    for (const span of fixed) {
+      if (startMm < span.toMm && startMm + anchor.widthMm > span.fromMm) {
+        startMm = Math.min(span.toMm, Math.max(cursor, limit - anchor.widthMm));
+      }
+    }
+
+    placed.push({ anchor, startMm });
+    fixed.push({ fromMm: startMm, toMm: startMm + anchor.widthMm });
+  }
+
+  fixed.sort((a, b) => a.fromMm - b.fromMm);
+
+  /**
+   * Куда встанет обычный прибор, обходя ручные участки.
+   *
+   * Сначала пробуем поставить слева от ближайшего ручного участка — там
+   * порядок ряда сохраняется. Не влезает — уходим правее него.
+   */
+  const fitAround = (fromMm: number, widthMm: number): number => {
+    let at = fromMm;
+    for (const span of fixed) {
+      if (at >= span.toMm) continue;
+      if (at + widthMm <= span.fromMm) return at;
+      at = span.toMm;
+    }
+    return at;
+  };
+
   let flow = cursor;
-  for (let i = 0; i < kept.length; i++) {
-    const anchor = kept[i];
-    const reserve = kept.slice(i + 1).reduce((sum, a) => sum + a.widthMm, 0);
+  for (let i = 0; i < autoAnchors.length; i++) {
+    const anchor = autoAnchors[i];
+    const reserve = autoAnchors.slice(i + 1).reduce((sum, a) => sum + a.widthMm, 0);
     const desired = Math.round(anchor.desiredCenterMm - anchor.widthMm / 2);
     const maxStart = limit - anchor.widthMm - reserve;
     let startMm = Math.max(flow, Math.min(desired, maxStart));
@@ -642,9 +718,31 @@ export function buildRun(input: BuildRunInput): Run {
      */
     if (startMm > flow && startMm - flow < MIN_WIDTH) startMm = flow;
 
+    startMm = fitAround(startMm, anchor.widthMm);
+
+    /*
+     * Ручные позиции съели место: этот прибор поставить некуда. Отбрасываем
+     * ЕГО, а не ручной — замерщик поставил ручной сознательно. Инвариант
+     * «ряд помещается в стену» при этом остаётся нерушимым.
+     */
+    if (startMm + anchor.widthMm > limit) {
+      warnings.push(
+        `${APPLIANCE_SLOTS[anchor.appliance].title}: не помещается после ручной расстановки.`,
+      );
+      continue;
+    }
+
     placed.push({ anchor, startMm });
     flow = startMm + anchor.widthMm;
   }
+
+  // Дальше раскладка идёт слева направо, поэтому порядок восстанавливаем.
+  placed.sort((a, b) => a.startMm - b.startMm);
+
+  /** Приборы с ручной позицией: их модули двигать нельзя. */
+  const manualAnchorSet = new Set(
+    placed.filter((p) => p.anchor.manual).map((p) => p.anchor.appliance as string),
+  );
 
   // Промежутки между якорями закрываем стандартными ширинами.
   const modules: Module[] = [...cornerModules];
@@ -661,14 +759,36 @@ export function buildRun(input: BuildRunInput): Run {
 
   const tail = limit - at;
   if (tail > 0 && tail < MIN_WIDTH && modules.length > 0) {
-    // Огрызок в хвосте прирастает к последнему обычному модулю.
-    const lastPlain = [...modules].reverse().find((m) => !m.appliance && m.kind === 'base');
+    /*
+     * Огрызок в хвосте прирастает к обычному модулю. Но подращивать можно
+     * только тот, что стоит ПОСЛЕ ручных позиций: рост сдвигает всё правее
+     * себя, и прибор, который замерщик поставил на 1200 мм, уехал бы на
+     * 1250. Правку в полсантиметра он не заметит, а доверие к инструменту
+     * потеряет.
+     */
+    const lastManual = modules.reduce(
+      (index, unit, i) =>
+        unit.appliance && manualAnchorSet.has(unit.appliance) ? i : index,
+      -1,
+    );
+
+    const lastPlain = [...modules]
+      .reverse()
+      .find(
+        (m) => !m.appliance && m.kind === 'base' && modules.indexOf(m) > lastManual,
+      );
+
     if (lastPlain) {
       lastPlain.widthMm += tail;
       lastPlain.isFiller = !isStandardWidth(lastPlain.widthMm);
       for (let i = modules.indexOf(lastPlain) + 1; i < modules.length; i++) {
         modules[i].offsetMm += tail;
       }
+      at = limit;
+    } else {
+      // Расти нечему — закрываем хвост доборной планкой в конце ряда.
+      const filler = makeModule('filler', tail, at);
+      modules.push(filler);
       at = limit;
     }
   }

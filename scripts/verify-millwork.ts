@@ -20,7 +20,11 @@ import {
   templatesForZone,
   zoneReadiness,
 } from '../lib/millwork/templates';
-import { vanityWaterConflicts } from '../lib/millwork/warnings';
+import {
+  manualPlacementWarnings,
+  sinkWaterConflicts,
+  vanityWaterConflicts,
+} from '../lib/millwork/warnings';
 import {
   SYSTEM32_BASE_MM,
   SYSTEM32_STEP_MM,
@@ -41,6 +45,7 @@ import {
   RunOverflowError,
   appliancesPlacedOnce,
   assertRunFits,
+  manualAnchorCost,
   widthOverflowMm,
 } from '../lib/millwork/invariants';
 import {
@@ -907,6 +912,134 @@ console.log('\nЗоны: шаблоны и готовность');
   check('шаблон шкафа разворачивается в ряд', run.modules.length >= 3);
   check('и ряд сходится с длиной', runWidthSum(run) === 2800);
   check('шкаф-купе помечен как купе', run.doorSystem === 'sliding');
+}
+
+/* ─────────────────────  Ручная расстановка техники  ───────────────────── */
+
+console.log('\nРучная расстановка');
+{
+  const at = (run: ReturnType<typeof buildRun>, appliance: string) => {
+    const unit = [...run.modules, ...run.upperSegments.flatMap((s) => s.modules)].find(
+      (m) => m.appliance === appliance,
+    );
+    return unit ? unit.offsetMm + unit.widthMm / 2 : null;
+  };
+
+  const auto = buildRun(baseInput);
+
+  /*
+   * Ручная позиция сильнее умолчаний: замерщик стоит в квартире и видит
+   * то, чего алгоритм не знает. Прибор обязан встать ИМЕННО туда, а не
+   * упереться в то, что уже стоит слева.
+   */
+  for (const centerMm of [700, 1200, 2000, 2900]) {
+    const run = buildRun({
+      ...baseInput,
+      requirements: { ...REQ, manualAnchors: { hob: centerMm } },
+    });
+    check(
+      `варочная встаёт на ${centerMm} мм`,
+      at(run, 'hob') === centerMm,
+      `оказалась на ${at(run, 'hob')}`,
+    );
+    check(`и ряд сходится с длиной`, runWidthSum(run) === run.lengthMm);
+  }
+
+  // Вытяжка едет за варочной сама: отдельная вытяжка — ошибка монтажа.
+  const moved = buildRun({
+    ...baseInput,
+    requirements: { ...REQ, manualAnchors: { hob: 2900 } },
+  });
+  check('вытяжка следует за варочной', at(moved, 'hood') === at(moved, 'hob'));
+
+  const hoodTry = buildRun({
+    ...baseInput,
+    requirements: { ...REQ, manualAnchors: { hood: 300 } },
+  });
+  check(
+    'вытяжку отдельно перетащить нельзя',
+    at(hoodTry, 'hood') === at(hoodTry, 'hob'),
+    `вытяжка ${at(hoodTry, 'hood')}, варочная ${at(hoodTry, 'hob')}`,
+  );
+
+  // Инвариант «ряд помещается в стену» ручная расстановка не отменяет.
+  let overflow = 0;
+  for (let centerMm = 300; centerMm <= 3200; centerMm += 50) {
+    try {
+      const run = buildRun({
+        ...baseInput,
+        requirements: { ...REQ, manualAnchors: { hob: centerMm } },
+      });
+      if (runWidthSum(run) !== run.lengthMm) overflow++;
+    } catch {
+      overflow++;
+    }
+  }
+  check('шестьдесят позиций подряд не ломают ряд', overflow === 0, `сбоев: ${overflow}`);
+
+  // Правка, из-за которой прибор перестаёт помещаться, не применяется.
+  const tight = buildRun({
+    ...baseInput,
+    requirements: { ...REQ, manualAnchors: { hob: 700 } },
+  });
+  const cost = manualAnchorCost(auto, tight);
+  check(
+    'выпавшие приборы названы до применения',
+    cost.dropped.length > 0,
+    cost.dropped.join(', ') || 'ничего не выпало',
+  );
+  check(
+    'а при свободной позиции ничего не выпадает',
+    manualAnchorCost(auto, buildRun({
+      ...baseInput,
+      requirements: { ...REQ, manualAnchors: { hob: 2900 } },
+    })).dropped.length === 0,
+  );
+
+  // Ручная позиция переживает пересчёт: она часть требований.
+  const twice = [1, 2].map(() =>
+    buildRun({ ...baseInput, requirements: { ...REQ, manualAnchors: { hob: 2000 } } }),
+  );
+  check(
+    'пересчёт не сбрасывает ручную позицию',
+    at(twice[0], 'hob') === 2000 && at(twice[1], 'hob') === 2000,
+  );
+  check(
+    'и даёт тот же ряд',
+    JSON.stringify(twice[0].modules) === JSON.stringify(twice[1].modules),
+  );
+
+  /* Нарушение правила предупреждает, но не запрещает. */
+  const nearEdge = buildRun({
+    ...baseInput,
+    requirements: { ...REQ, manualAnchors: { hob: 350 } },
+  });
+  const edgeWarnings = manualPlacementWarnings(nearEdge);
+  check(
+    'варочная у края даёт жёлтое предупреждение',
+    edgeWarnings.some((w) => w.severity === 'clarify' && w.message.includes('от края ряда')),
+    edgeWarnings.map((w) => w.message).join(' | ') || 'предупреждений нет',
+  );
+  check('но раскладка применена', at(nearEdge, 'hob') === 350);
+
+  const nearSink = buildRun({
+    ...baseInput,
+    requirements: { ...REQ, manualAnchors: { hob: 2100 } },
+  });
+  check(
+    'варочная вплотную к мойке — тоже жёлтое',
+    manualPlacementWarnings(nearSink).some((w) => w.message.includes('Между мойкой и варочной')),
+  );
+
+  // Мойка, переставленная руками, перестаёт быть красным флажком.
+  const farSink = buildRun({
+    ...baseInput,
+    requirements: { ...REQ, manualAnchors: { sink600: 3000 } },
+  });
+  const asAuto = sinkWaterConflicts(farSink, COMMS, false);
+  const asManual = sinkWaterConflicts(farSink, COMMS, true);
+  check('автоматически — блокирующее', asAuto[0]?.severity === 'blocking');
+  check('вручную — предупреждение', asManual[0]?.severity === 'clarify');
 }
 
 /* ─────────────────────────  Наполнение модулей  ───────────────────────── */
