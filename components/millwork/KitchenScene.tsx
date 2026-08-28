@@ -6,6 +6,7 @@ import { KITCHEN } from '@/lib/kitchen';
 import { moduleHeightMm } from '@/lib/millwork/modules';
 import { useInteriorStore } from '@/store/useInteriorStore';
 import Cabinet3D from './cabinet3d/Cabinet3D';
+import type { SceneView } from '@/lib/cameraFraming';
 import type { ProductionSettings } from '@/types/catalog';
 import type { Run } from '@/types/millwork';
 
@@ -42,6 +43,8 @@ type Props = {
    */
   interactive?: boolean;
   production?: ProductionSettings;
+  /** Ракурс интерактивной сцены. */
+  view?: SceneView;
   /** Сцена за экраном: держим её живой, но без непрерывной отрисовки. */
   hidden?: boolean;
   /** Идентификатор созданного объекта — по нему вешается выбор материалов. */
@@ -55,6 +58,7 @@ export default function KitchenScene({
   hidden = false,
   interactive = false,
   production,
+  view,
   onItemId,
 }: Props) {
   const itemIdRef = useRef<string | null>(null);
@@ -168,6 +172,7 @@ export default function KitchenScene({
           production={production}
           roomWidthM={lengthM}
           roomDepthM={depthM}
+          view={view}
         />
       )}
     </RoomCanvas>

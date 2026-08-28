@@ -4,6 +4,11 @@ import { getEntry } from '@/lib/furnitureCatalog';
 import { PHOTOGRAPHY, getStyle, optionsBlock, styleBlock } from '@/lib/renderStyles';
 import { SECTION_SPECS } from '@/lib/millwork/sections';
 import { zoneProfile } from '@/lib/millwork/zones';
+import {
+  assertShapeMatches,
+  compositionBlock,
+  type RunShape,
+} from '@/lib/millwork/composition';
 import { APPLIANCE_SLOTS } from '@/lib/millwork/modules';
 import type { RunModuleLike } from '@/lib/kitchen';
 import type { ApplianceKind, SectionKind } from '@/types/millwork';
@@ -266,6 +271,22 @@ function buildPrompt(
   const zone = zoneProfile(
     (kitchenMeta?.zone as Parameters<typeof zoneProfile>[0]) ?? 'kitchen',
   );
+
+  /*
+   * Форма берётся из состава, а не из описания: угловой она считается
+   * тогда и только тогда, когда в ряду есть угловой модуль.
+   */
+  const runModules = (kitchenMeta?.runModules ?? []) as RunModuleLike[];
+  const shape: RunShape = runModules.some((m) => String(m.kind).startsWith('corner'))
+    ? 'corner_l'
+    : 'linear';
+  const composition = compositionBlock({
+    shape,
+    lengthMm: Math.round(
+      runModules.reduce((sum, m) => sum + (Number(m.widthMm) || 0), 0),
+    ),
+    moduleCount: runModules.length,
+  });
   const withImages = catalogRefs.filter((r) => r.imageIndex !== null);
   const imageIndexOfReference = (i: number) => i + baseImages + 1 + withImages.length;
 
@@ -313,6 +334,8 @@ ${swatchRoles || (catalogRoles ? '' : '(образцов материалов н
 ${
   hasPhoto
     ? `# GEOMETRY_LOCK — фотография клиента главнее всего
+${composition}
+
 Ты не рисуешь новую комнату. Ты показываешь, как В ЭТОМ САМОМ помещении
 встанет спроектированный гарнитур. Клиент обязан узнать свою квартиру.
 
@@ -359,6 +382,8 @@ ${
 
 `
     : `# GEOMETRY_LOCK — воспроизвести буквально, без единого отклонения
+${composition}
+
 - Пропорции комнаты, положение и длина каждой стены — точно как в [IMAGE 1].
 - Положение, размер и форма окна, высота подоконника — без изменений.
 - Высота потолка — без изменений.
@@ -573,6 +598,20 @@ export async function POST(request: Request) {
       placedCatalog,
       photo !== null,
     );
+
+    /*
+     * Сверка формы перед отправкой: отпечаток конфигурации сводит чертёж,
+     * смету и кадр, но форму он не ловит — она живёт в тексте промпта.
+     * Расхождение здесь означало бы, что клиенту нарисуют не ту кухню.
+     */
+    const shapeOfRun: RunShape = (
+      ((body.items ?? []).find((item) => item.type === 'kitchen_unit')?.meta as
+        | Record<string, unknown>
+        | undefined)?.runModules as { kind?: string }[] | undefined
+    )?.some((m) => String(m.kind).startsWith('corner'))
+      ? 'corner_l'
+      : 'linear';
+    assertShapeMatches(prompt, shapeOfRun);
 
     // Каждое изображение подписано текстовой частью прямо перед собой —
     // это лечит перепутывание атрибутов, когда картинок больше пяти.

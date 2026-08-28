@@ -20,11 +20,20 @@ export type CabinetParts = {
   carcass: THREE.MeshStandardMaterial;
   front: THREE.MeshStandardMaterial;
   counter: THREE.MeshStandardMaterial;
+  /** Цоколь: тот же материал, что корпус, но темнее на 15%. */
+  plinth: THREE.MeshStandardMaterial;
   appliance: THREE.MeshStandardMaterial;
   metal: THREE.MeshStandardMaterial;
   /** Невидимый материал зон касания. */
   hit: THREE.MeshBasicMaterial;
 };
+
+/** Тот же цвет, но темнее: цоколь и тени в нишах. */
+function darken(hex: string, amount: number): string {
+  const color = new THREE.Color(hex);
+  color.multiplyScalar(1 - amount);
+  return `#${color.getHexString()}`;
+}
 
 export type CabinetPalette = {
   facade: string;
@@ -40,20 +49,30 @@ export function useCabinetParts(palette: CabinetPalette): CabinetParts {
     return {
       box,
       cylinder,
+      /*
+       * 3D показывает КОНСТРУКЦИЮ, а не материалы: текстуры дерева и мрамора
+       * здесь не нужны, их показывает рендер. Поэтому все поверхности
+       * матовые и нейтральные, а читается мебель формой и тенями.
+       */
       carcass: new THREE.MeshStandardMaterial({
-        color: palette.carcass,
+        color: darken(palette.carcass, 0.08),
         roughness: 0.72,
-        metalness: 0.02,
+        metalness: 0,
       }),
       front: new THREE.MeshStandardMaterial({
         color: palette.facade,
-        roughness: 0.42,
-        metalness: 0.04,
+        roughness: 0.72,
+        metalness: 0,
       }),
       counter: new THREE.MeshStandardMaterial({
         color: palette.counter,
-        roughness: 0.3,
-        metalness: 0.05,
+        roughness: 0.28,
+        metalness: 0.04,
+      }),
+      plinth: new THREE.MeshStandardMaterial({
+        color: darken(palette.carcass, 0.15),
+        roughness: 0.8,
+        metalness: 0,
       }),
       appliance: new THREE.MeshStandardMaterial({
         color: '#2A2C2E',
@@ -62,7 +81,7 @@ export function useCabinetParts(palette: CabinetPalette): CabinetParts {
       }),
       metal: new THREE.MeshStandardMaterial({
         color: '#9AA0A6',
-        roughness: 0.28,
+        roughness: 0.35,
         metalness: 0.85,
       }),
       // Зоны касания невидимы, но должны ловить луч: `visible: false` его

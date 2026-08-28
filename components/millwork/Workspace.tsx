@@ -44,6 +44,11 @@ import {
   type RunTemplate,
 } from '@/lib/millwork/templates';
 import type { ProductionSettings } from '@/types/catalog';
+import {
+  DEFAULT_SCENE_VIEW,
+  SCENE_VIEW_LABEL,
+  type SceneView,
+} from '@/lib/cameraFraming';
 import type { RunAngle } from '@/types/render';
 import {
   isEstimatePreliminary,
@@ -180,6 +185,12 @@ export default function Workspace(props: WorkspaceProps) {
    * цеху и тому же клиенту, когда он спрашивает, куда встанут кастрюли.
    */
   const [drawingMode, setDrawingMode] = useState<DrawingMode>('fronts');
+  /*
+   * Ракурс сцены. По умолчанию три четверти: фронтальный вид плоский, из
+   * него не видно ни глубины, ни свеса столешницы, а мебель продаётся
+   * именно объёмом.
+   */
+  const [sceneView, setSceneView] = useState<SceneView>(DEFAULT_SCENE_VIEW);
   const [estimateOpen, setEstimateOpen] = useState(false);
   const [renderAngle, setRenderAngle] = useState<RunAngle>('front');
   /*
@@ -907,6 +918,7 @@ export default function Workspace(props: WorkspaceProps) {
                 hidden={resultView !== 'scene'}
                 interactive
                 production={props.production}
+                view={sceneView}
                 onItemId={setKitchenItemId}
               />
             </div>
@@ -943,6 +955,19 @@ export default function Workspace(props: WorkspaceProps) {
                     className={`mw-btn ${cutaway === value ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
                   >
                     {label}
+                  </button>
+                ))}
+
+                {/* Ракурс: фронтальный вид плоский, объём даёт «три четверти». */}
+                {(Object.keys(SCENE_VIEW_LABEL) as SceneView[]).map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setSceneView(value)}
+                    aria-pressed={sceneView === value}
+                    className={`mw-btn ${sceneView === value ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+                  >
+                    {SCENE_VIEW_LABEL[value]}
                   </button>
                 ))}
 

@@ -4,12 +4,14 @@ import { useEffect, useMemo, useRef } from 'react';
 import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import CabinetModule3D from './CabinetModule3D';
+import SceneCamera from './SceneCamera';
 import { useCabinetParts } from './parts';
 import { moduleCarcassHeightMm } from '@/lib/millwork/fill';
 import { GEOMETRY } from '@/lib/millwork/modules';
 import { zoneProfile } from '@/lib/millwork/zones';
 import { useInteriorStore } from '@/store/useInteriorStore';
 import { DEFAULT_PRODUCTION, type ProductionSettings } from '@/types/catalog';
+import { DEFAULT_SCENE_VIEW, type SceneView } from '@/lib/cameraFraming';
 import type { Run } from '@/types/millwork';
 
 /**
@@ -34,6 +36,8 @@ type Props = {
   roomDepthM: number;
   facadeColor?: string;
   counterColor?: string;
+  /** Ракурс: спереди, три четверти или сверху. */
+  view?: SceneView;
 };
 
 export default function Cabinet3D({
@@ -41,8 +45,9 @@ export default function Cabinet3D({
   production = DEFAULT_PRODUCTION,
   roomWidthM,
   roomDepthM,
-  facadeColor = '#D8D2C6',
+  facadeColor = '#D8D6D2',
   counterColor = '#3C3B37',
+  view = DEFAULT_SCENE_VIEW,
 }: Props) {
   const groupRef = useRef<THREE.Group>(null);
   const openParts = useInteriorStore((s) => s.openParts);
@@ -71,8 +76,14 @@ export default function Cabinet3D({
 
   const zone = zoneProfile(run.zone);
   const thicknessM = production.carcassMm / MM;
+  const frontThicknessM = production.frontMm / MM;
+  const gapM = production.frontGapMm / MM;
   const depthM = zone.depthMm / MM;
   const plinthM = GEOMETRY.base.plinthH / MM;
+  /** Цоколь утоплен: по нижней тени шкаф «стоит», а не лежит на полу. */
+  const plinthSetbackM = 0.05;
+  /** Столешница свисает вперёд — по свесу читается торцевая полоса. */
+  const counterOverhangM = 0.025;
 
   /*
    * Размеры и положение считаются один раз на состав: при каждом кадре
@@ -132,13 +143,21 @@ export default function Cabinet3D({
   return (
     <group ref={groupRef} position={[originX, 0, originZ]}>
       <SceneProbe group={groupRef} />
+      <SceneCamera
+        room={{ width: roomWidthM, depth: roomDepthM, height: run.ceilingHeightMm / MM }}
+        view={view}
+      />
 
-      {/* Цоколь: одна планка на весь ряд, как в цеху. */}
+      {/*
+        * Цоколь: одна планка на весь ряд, утопленная на 50 мм и темнее
+        * корпуса. Это и даёт нижнюю тень, из-за которой мебель стоит на
+        * полу, а не лежит на нём.
+        */}
       <mesh
         geometry={parts.box}
-        material={parts.carcass}
-        position={[lengthM / 2, plinthM / 2, -depthM / 2 - 0.02]}
-        scale={[lengthM, plinthM, depthM * 0.9]}
+        material={parts.plinth}
+        position={[lengthM / 2, plinthM / 2, -depthM / 2 - plinthSetbackM / 2]}
+        scale={[lengthM, plinthM, depthM - plinthSetbackM]}
         receiveShadow
       />
 
@@ -146,6 +165,9 @@ export default function Cabinet3D({
         <CabinetModule3D
           key={entry.unit.id}
           unit={entry.unit}
+          gapM={gapM}
+          frontThicknessM={frontThicknessM}
+          integratedHandles={Boolean(run.options.integratedHandles)}
           x={entry.x}
           y={entry.y}
           heightM={entry.heightM}
@@ -158,7 +180,11 @@ export default function Cabinet3D({
         />
       ))}
 
-      {/* Столешница: там, где она в этой зоне есть. */}
+      {/*
+        * Столешница: сплошная плита поверх нижнего ряда, шире корпуса на
+        * свес. По торцевой полосе в 38 мм ряд читается как кухня, а не как
+        * шкаф с крышкой.
+        */}
       {hasCountertop && (
         <mesh
           geometry={parts.box}
@@ -166,11 +192,33 @@ export default function Cabinet3D({
           position={[
             lengthM / 2,
             (counterTopY + GEOMETRY.base.countertopH / 2) / MM,
-            -depthM / 2 - 0.02,
+            -depthM / 2 + counterOverhangM / 2 + frontThicknessM / 2,
           ]}
-          scale={[lengthM, GEOMETRY.base.countertopH / MM, depthM + 0.04]}
+          scale={[
+            lengthM,
+            GEOMETRY.base.countertopH / MM,
+            depthM + counterOverhangM + frontThicknessM,
+          ]}
           castShadow
           receiveShadow
+        />
+      )}
+
+      {/*
+        * Ниша под верхним рядом: тонкая тёмная плоскость по низу шкафов.
+        * Именно она читается как подсветка рабочей зоны и отделяет верхний
+        * ряд от стены.
+        */}
+      {run.upperSegments.length > 0 && (
+        <mesh
+          geometry={parts.box}
+          material={parts.plinth}
+          position={[
+            lengthM / 2,
+            GEOMETRY.upper.bottomFromFloor / MM - 0.004,
+            -GEOMETRY.upper.depth / MM / 2,
+          ]}
+          scale={[lengthM, 0.008, GEOMETRY.upper.depth / MM]}
         />
       )}
     </group>

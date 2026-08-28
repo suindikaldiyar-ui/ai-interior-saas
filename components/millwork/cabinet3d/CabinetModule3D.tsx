@@ -17,6 +17,10 @@ const MM = 1000;
 
 type Props = {
   unit: Module;
+  /** Зазор вокруг фасада и толщина фасада — из настроек цеха. */
+  gapM: number;
+  frontThicknessM: number;
+  integratedHandles: boolean;
   /** Левый край модуля от левого края ряда, метры. */
   x: number;
   /** Низ корпуса от пола, метры. */
@@ -33,8 +37,21 @@ type Props = {
 /** Штанга: труба 25 мм — то, что реально ставят в шкаф. */
 const ROD_DIAMETER_M = 0.025;
 
+/**
+ * Техника, которую ВИДНО в кадре.
+ *
+ * Холодильник, посудомойка и мойка встроены за фасад: в реальной кухне на
+ * их месте обычная дверца, а не чёрная плита. Тёмными остаются только те
+ * приборы, у которых своя лицевая панель, — духовка, варочная, вытяжка.
+ * Без этого ряд из семи модулей читается как стена чёрных слэбов.
+ */
+const VISIBLE_APPLIANCES = new Set(['oven', 'hob', 'hood', 'microwave']);
+
 export default function CabinetModule3D({
   unit,
+  gapM,
+  frontThicknessM,
+  integratedHandles,
   x,
   y,
   heightM,
@@ -63,7 +80,6 @@ export default function CabinetModule3D({
         material={parts.carcass}
         position={[thicknessM / 2, heightM / 2, -depthM / 2]}
         scale={[thicknessM, heightM, depthM]}
-        castShadow
         receiveShadow
       />
       <mesh
@@ -71,7 +87,6 @@ export default function CabinetModule3D({
         material={parts.carcass}
         position={[widthM - thicknessM / 2, heightM / 2, -depthM / 2]}
         scale={[thicknessM, heightM, depthM]}
-        castShadow
         receiveShadow
       />
 
@@ -81,7 +96,6 @@ export default function CabinetModule3D({
         material={parts.carcass}
         position={[widthM / 2, thicknessM / 2, -depthM / 2]}
         scale={[innerW, thicknessM, depthM]}
-        receiveShadow
       />
       <mesh
         geometry={parts.box}
@@ -106,7 +120,6 @@ export default function CabinetModule3D({
           material={parts.carcass}
           position={[widthM / 2, mm / MM, -depthM / 2 - 0.01]}
           scale={[innerW - 0.002, thicknessM, innerDepth]}
-          castShadow
           receiveShadow
         />
       ))}
@@ -138,7 +151,7 @@ export default function CabinetModule3D({
         * на два сантиметра, он оставляет видимой кромку корпуса — иначе
         * колонна читается как чёрный монолит, а не как встроенный прибор.
         */}
-      {unit.appliance && (
+      {unit.appliance && VISIBLE_APPLIANCES.has(unit.appliance) && (
         <>
           <mesh
             geometry={parts.box}
@@ -176,19 +189,26 @@ export default function CabinetModule3D({
               width={widthM}
               height={frontMm / MM}
               depth={innerDepth}
-              thickness={thicknessM}
+              thickness={frontThicknessM}
               parts={parts}
               cutaway={cutaway}
+              gap={gapM}
+              integratedHandle={integratedHandles}
             />
           );
         })}
 
-      {/* Двери. В разрезе их нет вовсе. */}
+      {/*
+        * Двери. В разрезе их нет вовсе.
+        *
+        * Встроенная техника (холодильник, посудомойка, мойка) закрыта
+        * фасадом наравне с обычным модулем: так это и выглядит в квартире.
+        */}
       {!cutaway &&
-        !unit.appliance &&
-        unit.frontType === 'door' &&
-        Array.from({ length: unit.doorCount }, (_, i) => {
-          const doorW = widthM / unit.doorCount;
+        (!unit.appliance || !VISIBLE_APPLIANCES.has(unit.appliance)) &&
+        Array.from({ length: Math.max(1, unit.doorCount) }, (_, i) => {
+          const doors = Math.max(1, unit.doorCount);
+          const doorW = widthM / doors;
           const id = `${unit.id}:door:${i}`;
 
           /*
@@ -197,7 +217,7 @@ export default function CabinetModule3D({
            * и она обязана совпасть с треугольником на чертеже.
            */
           const hinge =
-            unit.doorCount > 1
+            doors > 1
               ? i === 0
                 ? ('left' as const)
                 : ('right' as const)
@@ -216,9 +236,11 @@ export default function CabinetModule3D({
               y={0}
               width={doorW}
               height={heightM}
-              depth={0}
-              thickness={thicknessM}
+              depth={depthM}
+              thickness={frontThicknessM}
               parts={parts}
+              gap={gapM}
+              integratedHandle={integratedHandles}
             />
           );
         })}

@@ -31,6 +31,8 @@ type Props = {
   parts: CabinetParts;
   /** Разрез: фасады убраны, видно короб ящика. */
   cutaway: boolean;
+  gap: number;
+  integratedHandle: boolean;
 };
 
 export default function InteractiveDrawer({
@@ -45,6 +47,8 @@ export default function InteractiveDrawer({
   thickness,
   parts,
   cutaway,
+  gap,
+  integratedHandle,
 }: Props) {
   const group = useRef<THREE.Group>(null);
   const touch = useRef<THREE.Mesh>(null);
@@ -97,7 +101,6 @@ export default function InteractiveDrawer({
         material={parts.carcass}
         position={[0, -boxH / 2 + thickness / 2, 0]}
         scale={[inner, thickness, depth * 0.9]}
-        castShadow
       />
       <mesh
         geometry={parts.box}
@@ -120,13 +123,32 @@ export default function InteractiveDrawer({
 
       {/* Фронт. В разрезе его нет: он закрывает ровно то, ради чего смотрят. */}
       {!cutaway && (
-        <mesh
-          geometry={parts.box}
-          material={parts.front}
-          position={[0, 0, depth / 2]}
-          scale={[width - 0.004, height - 0.004, thickness]}
-          castShadow
-        />
+        <>
+          <mesh
+            geometry={parts.box}
+            material={parts.front}
+            position={[0, 0, depth / 2 + thickness / 2]}
+            scale={[width - 2 * gap, height - 2 * gap, thickness]}
+            castShadow
+          />
+
+          {/* Ручка: профиль по верхней кромке либо накладная скоба. */}
+          {integratedHandle ? (
+            <mesh
+              geometry={parts.box}
+              material={parts.metal}
+              position={[0, height / 2 - gap - 0.01, depth / 2 + thickness + 0.004]}
+              scale={[width - 2 * gap, 0.02, 0.015]}
+            />
+          ) : (
+            <mesh
+              geometry={parts.box}
+              material={parts.metal}
+              position={[0, 0, depth / 2 + thickness + 0.012]}
+              scale={[Math.min(0.26, width * 0.5), 0.016, 0.016]}
+            />
+          )}
+        </>
       )}
     </group>
   );

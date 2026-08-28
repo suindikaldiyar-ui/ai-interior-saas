@@ -111,25 +111,49 @@ try {
     `  канвас ${scene.w}×${scene.h} · гарнитур: мешей ${counts?.cabinet.meshes}, материалов ` +
       `${counts?.cabinet.materials} · вся сцена: мешей ${counts?.scene.meshes}, материалов ${counts?.scene.materials}`,
   );
-  await page.screenshot({ path: `${OUT}/closed.png` });
+  // Софтверный WebGL рисует кадр долго: снимку нужен запас по времени.
+  await page.screenshot({ path: `${OUT}/closed.png`, timeout: 120_000 });
 
   /* ── Открыть всё ── */
   const before = await page.evaluate(fpsProbe);
   await page.getByRole('button', { name: 'Открыть всё', exact: true }).click({ force: true });
   const during = await page.evaluate(fpsProbe);
   await sleep(1200);
-  await page.screenshot({ path: `${OUT}/open-all.png` });
+  await page.screenshot({ path: `${OUT}/open-all.png`, timeout: 120_000 });
   console.log(`  кадров в секунду: покой ${before} · «Открыть всё» ${during}`);
+
+  const defaultView = await page.evaluate(() =>
+    [...document.querySelectorAll('button')]
+      .filter((b) => ['Спереди', 'Три четверти', 'Сверху'].includes((b.textContent ?? '').trim()))
+      .map((b) => `${(b.textContent ?? '').trim()}=${b.getAttribute('aria-pressed')}`)
+      .join(' · '),
+  );
+  console.log('  ракурс по умолчанию:', defaultView);
+
+  // Ракурсы: по умолчанию три четверти, переключатель работает.
+  for (const view of ['Спереди', 'Сверху', 'Три четверти']) {
+    const btn = page.getByRole('button', { name: view, exact: true });
+    const pressed = await btn.getAttribute('aria-pressed');
+    console.log(`  ракурс «${view}»: до нажатия aria-pressed=${pressed}`);
+    await btn.click({ force: true });
+    await sleep(1200);
+    const fps = await page.evaluate(fpsProbe);
+    console.log(`    после переключения: ${fps} кадров/с`);
+    await page
+      .locator('canvas')
+      .screenshot({ path: `${OUT}/view-${view}.png`, timeout: 60_000 })
+      .catch((e) => console.log('    снимок не снялся:', e.message.slice(0, 60)));
+  }
 
   await page.getByRole('button', { name: 'Разрез', exact: true }).click({ force: true });
   await sleep(1200);
-  await page.screenshot({ path: `${OUT}/cutaway.png` });
+  await page.screenshot({ path: `${OUT}/cutaway.png`, timeout: 120_000 });
   await page.getByRole('button', { name: 'Только фасады', exact: true }).click({ force: true });
   await sleep(600);
 
   await page.getByRole('button', { name: 'Закрыть всё', exact: true }).click({ force: true });
   await sleep(1500);
-  await page.screenshot({ path: `${OUT}/closed-again.png` });
+  await page.screenshot({ path: `${OUT}/closed-again.png`, timeout: 120_000 });
 
   /* ── Клик по мебели ── */
   const canvasBox = await page.locator('canvas').boundingBox();
@@ -245,7 +269,7 @@ try {
   } else {
     console.log('  390 px: открываемых элементов в кадре нет');
   }
-  await phone.screenshot({ path: `${OUT}/phone.png` });
+  await phone.screenshot({ path: `${OUT}/phone.png`, timeout: 120_000 });
 
   await browser.close();
   console.log(`  снимки: ${OUT}`);

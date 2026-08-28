@@ -35,6 +35,68 @@ export function heroCamera(room: RoomConfig): CameraFraming {
   };
 }
 
+/* ─────────────────────  Ракурсы интерактивной сцены  ───────────────────── */
+
+/**
+ * Три вида, между которыми переключается замерщик на встрече.
+ *
+ * По умолчанию «три четверти»: фронтальный вид плоский, из него не понять
+ * ни глубины, ни свеса столешницы, а мебель продаётся именно объёмом.
+ */
+export type SceneView = 'front' | 'three-quarter' | 'top';
+
+export const SCENE_VIEW_LABEL: Record<SceneView, string> = {
+  front: 'Спереди',
+  'three-quarter': 'Три четверти',
+  top: 'Сверху',
+};
+
+export const DEFAULT_SCENE_VIEW: SceneView = 'three-quarter';
+
+/**
+ * Точка съёмки под каждый вид. Ряд стоит у северной стены, поэтому камера
+ * всегда стоит южнее и смотрит на него.
+ */
+export function sceneCamera(room: RoomConfig, view: SceneView): CameraFraming {
+  const runY = 1.1;
+  const distance = clamp(room.width * 0.9, 2.2, 6.5);
+
+  if (view === 'front') {
+    return {
+      position: [0, round2(Math.min(1.6, room.height - 0.4)), round2(distance * 1.35)],
+      target: [0, runY, -room.depth / 2],
+      fov: FOV_RUN,
+    };
+  }
+
+  if (view === 'top') {
+    // Не строго сверху: отвесный вид превращает ряд в план, а план у нас
+    // уже есть отдельным чертежом.
+    return {
+      position: [round2(room.width * 0.15), round2(room.height + 1.4), round2(distance * 0.75)],
+      target: [0, 0.6, round2(-room.depth / 2 + 0.4)],
+      fov: FOV_RUN,
+    };
+  }
+
+  /*
+   * Три четверти: камера смещена вбок примерно на треть длины ряда, высота
+   * 1.6 м, лёгкий наклон вниз. Так видны и фасады, и глубина, и свес
+   * столешницы — то, ради чего 3D вообще смотрят.
+   */
+  return {
+    position: [
+      round2(-room.width / 3),
+      round2(Math.min(1.6, room.height - 0.4)),
+      // Ряд должен войти в кадр целиком: с более близкой точки середина
+      // видна, а концы ряда обрезаны, и сверить с чертежом нечего.
+      round2(distance * 1.25),
+    ],
+    target: [round2(room.width * 0.05), 1.05, round2(-room.depth / 2 + 0.3)],
+    fov: FOV_RUN,
+  };
+}
+
 /**
  * Кадр под линейный гарнитур: весь ряд у северной стены целиком.
  *
