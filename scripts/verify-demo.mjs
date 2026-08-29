@@ -80,7 +80,13 @@ freePort(PORT);
 const server = spawn(
   process.platform === 'win32' ? 'npx.cmd' : 'npx',
   ['next', 'start', '-p', String(PORT)],
-  { cwd: ROOT, stdio: 'ignore', shell: process.platform === 'win32' },
+  {
+    cwd: ROOT,
+    stdio: 'ignore',
+    shell: process.platform === 'win32',
+    // Дверь на время приёмки снята: иначе проверка упрётся в /gate.
+    env: { ...process.env, SITE_PASSWORD: '' },
+  },
 );
 
 let browser;

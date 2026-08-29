@@ -1,9 +1,16 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 import { ORG_HOST_HEADER, ORG_SLUG_HEADER } from '@/lib/tenantHeaders';
+import {
+  GATE_COOKIE,
+  gateToken,
+  isOpenPath,
+  safeEqual,
+  sitePassword,
+} from '@/lib/gate';
 
 /**
- * Две задачи: обновить сессию Supabase и определить арендатора по домену.
+ * Три задачи: пароль на сайт, сессия Supabase и арендатор по домену.
  *
  * Домен кладём в заголовки, а не ходим за организацией в базу прямо здесь:
  * middleware выполняется на каждый запрос, лишний round-trip к базе на краю
@@ -36,7 +43,55 @@ function resolveSlug(host: string): string | null {
   return null;
 }
 
+/*
+ * Хеш пароля считается один раз на процесс: SHA-256 дешёвый, но выполнять
+ * его на каждый запрос к каждой картинке незачем.
+ */
+let cached: { password: string; token: string } | null = null;
+
+async function expectedToken(password: string): Promise<string> {
+  if (cached?.password === password) return cached.token;
+  const token = await gateToken(password);
+  cached = { password, token };
+  return token;
+}
+
+/**
+ * Дверь на сайт.
+ *
+ * Возвращает ответ, если гостя надо остановить, и null, если он проходит.
+ * Запросу к API отвечаем 401, а не редиректом: `fetch` за редиректом уйдёт
+ * на HTML-страницу и упадёт на разборе JSON — в интерфейсе это выглядит как
+ * поломка сервера, а не как «введите пароль».
+ */
+async function checkGate(request: NextRequest): Promise<NextResponse | null> {
+  const password = sitePassword();
+  if (!password) return null;
+
+  const { pathname, search } = request.nextUrl;
+  if (isOpenPath(pathname)) return null;
+
+  const token = request.cookies.get(GATE_COOKIE)?.value ?? '';
+  if (safeEqual(token, await expectedToken(password))) return null;
+
+  if (pathname.startsWith('/api/')) {
+    return NextResponse.json(
+      { error: 'Сайт закрыт паролем. Откройте /gate и введите его.' },
+      { status: 401 },
+    );
+  }
+
+  const url = request.nextUrl.clone();
+  url.pathname = '/gate';
+  url.search = `?next=${encodeURIComponent(pathname + search)}`;
+  return NextResponse.redirect(url);
+}
+
 export async function middleware(request: NextRequest) {
+  // Дверь стоит ПЕРВОЙ: обновлять сессию тому, кого мы не пускаем, незачем.
+  const closed = await checkGate(request);
+  if (closed) return closed;
+
   const host = request.headers.get('host') ?? '';
   const slug = resolveSlug(host);
 

@@ -270,6 +270,8 @@ mkdirSync('.capture-check', { recursive: true });
 const server = spawn('npx', ['next', 'start', '-p', String(PORT)], {
   stdio: 'ignore',
   shell: process.platform === 'win32',
+  // Дверь на время приёмки снята: иначе проверка упрётся в /gate.
+  env: { ...process.env, SITE_PASSWORD: '' },
 });
 
 const photo = await sharp({
