@@ -7,6 +7,7 @@ import { sectionSpec } from '@/lib/millwork/sections';
 import { zoneHeightMm, zoneProfile } from '@/lib/millwork/zones';
 import {
   addShelf,
+  columnNiches,
   flipHinge,
   moduleCarcassHeightMm,
   moveDivider,
@@ -76,7 +77,7 @@ const APPLIANCE_MARK: Record<string, string> = {
   sink600: 'М',
   sink800: 'М',
   fridge: 'Х',
-  microwave: 'МВ',
+  microwave: 'МК',
 };
 
 /**
@@ -647,7 +648,13 @@ export default function ElevationDrawing({
     const h = yOf(bottom) - yTop;
 
     const active = selectedModuleId === unit.id;
-    const mark = unit.appliance ? APPLIANCE_MARK[unit.appliance] : null;
+    /*
+     * У колонны приборов два, и один кружок посреди пенала соврал бы: цех
+     * должен видеть, где какая ниша и какой она высоты.
+     */
+    const niches = unit.column ? columnNiches(unit, moduleCarcassHeightMm(unit, run)) : [];
+    const mark = unit.appliance && niches.length === 0 ? APPLIANCE_MARK[unit.appliance] : null;
+    const isDisplay = unit.section === 'glass_display';
 
     /*
      * Вытяжка не перетаскивается: она обязана висеть над варочной и едет
@@ -750,6 +757,78 @@ export default function ElevationDrawing({
                 : undefined
             }
           />
+        )}
+
+        {/*
+          * КОЛОННА: два прямоугольника ниш с метками и высотами. Высоты
+          * берутся из `columnNiches` — той же функции, по которой строится
+          * 3D и наполнение.
+          */}
+        {niches.map((niche) => {
+          const nicheTop = yOf(bottom + niche.toMm);
+          const nicheH = (niche.toMm - niche.fromMm) * heightScale;
+          const label = APPLIANCE_MARK[niche.appliance] ?? '';
+
+          return (
+            <g key={niche.appliance}>
+              <rect
+                x={x + 2}
+                y={nicheTop}
+                width={w - 4}
+                height={nicheH}
+                fill="none"
+                stroke="var(--blueprint)"
+                strokeWidth={0.6}
+              />
+              <text
+                x={x + w / 2}
+                y={nicheTop + nicheH / 2 + 3}
+                textAnchor="middle"
+                fontSize={8}
+                fill="var(--blueprint)"
+              >
+                {label}
+              </text>
+              {/* Высота ниши: по ней прибор либо встанет, либо нет. */}
+              <text
+                className="mw-num"
+                x={x + w - 4}
+                y={nicheTop + nicheH - 3}
+                textAnchor="end"
+                fontSize={6}
+                fill="var(--graphite-mw)"
+              >
+                {niche.toMm - niche.fromMm}
+              </text>
+            </g>
+          );
+        })}
+
+        {/*
+          * ВИТРИНА: стекло в раме. Двойной контур — отраслевое обозначение
+          * остеклённой дверцы, подписи хватает одной.
+          */}
+        {isDisplay && mode === 'fronts' && (
+          <>
+            <rect
+              x={x + 3}
+              y={yTop + 3}
+              width={Math.max(0, w - 6)}
+              height={Math.max(0, h - 6)}
+              fill="none"
+              stroke="var(--blueprint)"
+              strokeWidth={0.4}
+            />
+            <text
+              x={x + w / 2}
+              y={yTop + h / 2}
+              textAnchor="middle"
+              fontSize={7}
+              fill="var(--blueprint)"
+            >
+              стекло
+            </text>
+          </>
         )}
 
         {mark && (

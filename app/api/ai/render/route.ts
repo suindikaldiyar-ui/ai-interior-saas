@@ -192,20 +192,44 @@ function buildMillworkBlock(items: RenderRequest['items']): string {
       const slot = unit.appliance ? APPLIANCE_SLOTS[unit.appliance as ApplianceKind] : null;
       // В зонах без техники роль модуля задаёт секция: штанга, полки, обувница.
       const section = unit.section ? SECTION_SPECS[unit.section as SectionKind] : null;
-      const what = slot
-        ? slot.title.toLowerCase()
-        : section
-          ? `${section.title.toLowerCase()} (${section.hint})`
-          : unit.frontType === 'drawers' && (unit.drawerCount ?? 0) > 0
-            ? `${unit.drawerCount} ящика`
-            : 'глухой фасад';
+
+      /*
+       * Колонна из двух приборов описывается явно и с порядком: иначе
+       * модель ставит духовку туда, где по чертежу микроволновка, — а
+       * клиент замечает это первым, он этой кухней будет пользоваться.
+       */
+      const column = unit.column
+        ? `колонна: сверху ${APPLIANCE_SLOTS[unit.column.top as ApplianceKind]?.title.toLowerCase()}, ` +
+          `снизу ${APPLIANCE_SLOTS[unit.column.bottom as ApplianceKind]?.title.toLowerCase()}`
+        : null;
+
+      const what = column
+        ? column
+        : slot
+          ? unit.builtIn === false
+            ? `${slot.title.toLowerCase()} отдельностоящий, БЕЗ фасада — виден целиком`
+            : unit.appliance === 'fridge'
+              ? 'холодильник, встроенный и закрытый фасадом заподлицо'
+              : slot.title.toLowerCase()
+          : section
+            ? `${section.title.toLowerCase()} (${section.hint})`
+            : unit.frontType === 'drawers' && (unit.drawerCount ?? 0) > 0
+              ? `${unit.drawerCount} ящика`
+              : 'глухой фасад';
       return `${i + 1}. ${unit.widthMm} мм — ${what}`;
     });
 
+    const columns = (modules as RunModuleLike[]).filter((unit) => unit.column);
+
     const appliances = (modules as RunModuleLike[])
-      .map((unit) =>
-        unit.appliance ? APPLIANCE_SLOTS[unit.appliance as ApplianceKind]?.title.toLowerCase() : null,
+      .flatMap((unit) =>
+        unit.column
+          ? [unit.column.bottom, unit.column.top]
+          : unit.appliance
+            ? [unit.appliance]
+            : [],
       )
+      .map((appliance) => APPLIANCE_SLOTS[appliance as ApplianceKind]?.title.toLowerCase())
       .filter(Boolean);
 
     const uppers = (item.meta as Record<string, unknown> | undefined)?.runUppers;
@@ -230,9 +254,13 @@ ${parts.join('\n')}
 Всего модулей: ${modules.length}. Ширины сходятся с чертежом, по которому клиенту посчитали смету.
 ${upperLine}
 Техника в кадре — ТОЛЬКО эта: ${appliances.join(', ') || 'её нет вовсе'}.
-Приборов ровно ${appliances.length}, ни одним больше. В пенале ровно один прибор:
-второй духовой шкаф, микроволновая печь, кофемашина и винный шкаф над духовкой
-или под ней — это НЕ этот гарнитур. В остальных модулях глухие фасады и ящики,
+Приборов ровно ${appliances.length}, ни одним больше. ${
+        columns.length > 0
+          ? 'В колонне РОВНО ДВА прибора и ровно в том порядке, что назван выше; ' +
+            'третьего прибора — кофемашины, винного шкафа, второй духовки — в ней нет.'
+          : 'В пенале ровно один прибор: второй духовой шкаф, микроволновая печь, ' +
+            'кофемашина и винный шкаф над духовкой или под ней — это НЕ этот гарнитур.'
+      } В остальных модулях глухие фасады и ящики,
 и клиент заплатил за них как за глухие.`,
     );
   }

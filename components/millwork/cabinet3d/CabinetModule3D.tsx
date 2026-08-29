@@ -2,6 +2,7 @@
 
 import InteractiveDoor from './InteractiveDoor';
 import InteractiveDrawer from './InteractiveDrawer';
+import { columnNiches } from '@/lib/millwork/fill';
 import type { CabinetParts } from './parts';
 import type { Module } from '@/types/millwork';
 
@@ -32,6 +33,8 @@ type Props = {
   openParts: string[];
   onToggle: (id: string) => void;
   cutaway: boolean;
+  /** Подсветка витрины горит. Перед захватом кадра гаснет. */
+  displayLit?: boolean;
 };
 
 /** Штанга: труба 25 мм — то, что реально ставят в шкаф. */
@@ -61,6 +64,7 @@ export default function CabinetModule3D({
   openParts,
   onToggle,
   cutaway,
+  displayLit = true,
 }: Props) {
   const widthM = unit.widthMm / MM;
   const fill = unit.fill;
@@ -71,6 +75,20 @@ export default function CabinetModule3D({
   const innerDepth = depthM - thicknessM;
 
   const isOpen = (id: string) => openParts.includes(id);
+
+  /*
+   * Что видно в кадре. Встроенный холодильник закрыт фасадом, как обычный
+   * модуль; отдельностоящий стоит на виду целиком — это разные деньги и
+   * разный вид, и путать их нельзя.
+   */
+  const visibleAppliance =
+    Boolean(unit.appliance) &&
+    !unit.column &&
+    (VISIBLE_APPLIANCES.has(unit.appliance as string) || unit.builtIn === false);
+
+  // Колонна: два прибора один над другим, каждый в своей нише.
+  const niches = unit.column ? columnNiches(unit, heightM * MM) : [];
+  const isDisplay = unit.section === 'glass_display';
 
   return (
     <group position={[x, y, 0]}>
@@ -151,7 +169,7 @@ export default function CabinetModule3D({
         * на два сантиметра, он оставляет видимой кромку корпуса — иначе
         * колонна читается как чёрный монолит, а не как встроенный прибор.
         */}
-      {unit.appliance && VISIBLE_APPLIANCES.has(unit.appliance) && (
+      {visibleAppliance && (
         <>
           <mesh
             geometry={parts.box}
@@ -167,6 +185,68 @@ export default function CabinetModule3D({
             position={[widthM / 2, heightM - 0.09, -depthM / 2 + 0.03]}
             scale={[widthM - 0.09, 0.02, 0.01]}
           />
+        </>
+      )}
+
+      {/*
+        * КОЛОННА: две тёмные врезки в одном пенале, на своих высотах.
+        * Ниши берутся из `columnNiches` — той же функции, что рисует
+        * чертёж: посчитай их здесь заново, и 3D разойдётся с эскизом.
+        */}
+      {niches.map((niche) => {
+        const nicheH = (niche.toMm - niche.fromMm) / MM;
+        return (
+          <mesh
+            key={niche.appliance}
+            geometry={parts.box}
+            material={parts.appliance}
+            position={[
+              widthM / 2,
+              (niche.fromMm / MM) + nicheH / 2,
+              -depthM / 2 + 0.01,
+            ]}
+            scale={[widthM - 0.05, nicheH - 0.02, depthM - 0.06]}
+            castShadow
+          />
+        );
+      })}
+
+      {/*
+        * ВИТРИНА: стеклянная дверь в раме и лента по контуру. Подсветка
+        * гаснет перед захватом кадра — светящаяся полоса в clay читается
+        * моделью как часть мебели.
+        */}
+      {isDisplay && !cutaway && (
+        <>
+          <mesh
+            geometry={parts.box}
+            material={parts.glass}
+            position={[widthM / 2, heightM / 2, frontThicknessM / 2]}
+            scale={[widthM - 2 * gapM, heightM - 2 * gapM, frontThicknessM]}
+          />
+          {/* Рама: планки по верху и низу стекла. */}
+          {(
+            [
+              [widthM / 2, gapM + 0.02, widthM, 0.04],
+              [widthM / 2, heightM - gapM - 0.02, widthM, 0.04],
+            ] as [number, number, number, number][]
+          ).map(([cx, cy, w, h]) => (
+            <mesh
+              key={`frame-${cy}`}
+              geometry={parts.box}
+              material={parts.metal}
+              position={[cx, cy, frontThicknessM]}
+              scale={[w, h, frontThicknessM]}
+            />
+          ))}
+          {displayLit && (
+            <mesh
+              geometry={parts.box}
+              material={parts.glow}
+              position={[widthM / 2, heightM - thicknessM * 1.5, -depthM / 2]}
+              scale={[widthM - 2 * thicknessM, 0.012, depthM - thicknessM]}
+            />
+          )}
         </>
       )}
 
@@ -205,7 +285,9 @@ export default function CabinetModule3D({
         * фасадом наравне с обычным модулем: так это и выглядит в квартире.
         */}
       {!cutaway &&
-        (!unit.appliance || !VISIBLE_APPLIANCES.has(unit.appliance)) &&
+        !visibleAppliance &&
+        !unit.column &&
+        !isDisplay &&
         Array.from({ length: Math.max(1, unit.doorCount) }, (_, i) => {
           const doors = Math.max(1, unit.doorCount);
           const doorW = widthM / doors;

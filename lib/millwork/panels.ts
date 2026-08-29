@@ -1,5 +1,5 @@
 import { moduleCarcassHeightMm, moduleDepthMm } from './fill';
-import { GEOMETRY } from './modules';
+import { BUILT_IN_FRIDGE_FRONTS, GEOMETRY } from './modules';
 import { DEFAULT_PRODUCTION, type ProductionSettings } from '@/types/catalog';
 import type { Module, Panel, PanelTotals, Run } from '@/types/millwork';
 
@@ -151,9 +151,29 @@ function modulePanels(
     grain: 'none',
   });
 
-  if (isAppliance) return panels;
-
   const gap = production.frontGapMm;
+
+  /*
+   * Встроенный холодильник закрыт фасадом заподлицо: две створки во всю
+   * высоту пенала. Без этих деталей раскрой уедет — фасад есть в смете,
+   * а в цех уходит лист без него.
+   */
+  if (unit.builtIn) {
+    const doorHeight = Math.round((heightMm - gap * (BUILT_IN_FRIDGE_FRONTS + 1)) / BUILT_IN_FRIDGE_FRONTS);
+    push({
+      name: 'Фасад встройки',
+      material: `Фасад ${production.frontMm}`,
+      lengthMm: doorHeight,
+      widthMm: unit.widthMm - gap,
+      qty: BUILT_IN_FRIDGE_FRONTS,
+      edges: { long: 2, short: 2 },
+      edgeType: thick,
+      grain: 'along',
+    });
+    return panels;
+  }
+
+  if (isAppliance) return panels;
 
   if (unit.frontType === 'door' && unit.doorCount > 0) {
     const doorWidth = Math.round((unit.widthMm - gap * (unit.doorCount + 1)) / unit.doorCount);

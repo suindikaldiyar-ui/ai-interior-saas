@@ -1,4 +1,4 @@
-import type { ApplianceKind, ModuleKind } from '@/types/millwork';
+import type { ApplianceKind, Module, ModuleKind } from '@/types/millwork';
 
 /**
  * Отраслевые стандарты корпусной мебели.
@@ -62,8 +62,56 @@ export const APPLIANCE_SLOTS: Record<ApplianceKind, ApplianceSpec> = {
   sink600: { widthMm: 600, kind: 'base', needs: ['water', 'sewer'], title: 'Мойка 600' },
   sink800: { widthMm: 800, kind: 'base', needs: ['water', 'sewer'], title: 'Мойка 800' },
   fridge: { widthMm: 600, kind: 'tall', needs: ['socket'], title: 'Холодильник' },
-  microwave: { widthMm: 600, kind: 'upper', needs: ['socket'], title: 'Микроволновка' },
+  /*
+   * Микроволновка встраивается в ПЕНАЛ, а не висит над столешницей: так её
+   * ставят в колонну с духовкой, и так она попадает в ряд одним модулем.
+   * Ниша по стандарту 380–450 мм, берём середину.
+   */
+  microwave: { widthMm: 600, kind: 'tall', needs: ['socket'], nicheHMm: 400, title: 'Микроволновка' },
 };
+
+/* ─────────────────────  Колонна из двух приборов  ───────────────────── */
+
+/**
+ * Духовка и микроволновка в одном пенале.
+ *
+ * Самое частое, чего конфигуратор не умел: мебельщик ставит два прибора
+ * друг над другом почти в каждый заказ. Числа отраслевые и из интерфейса
+ * не меняются — это те же стандарты, что ширины фасадов.
+ */
+export const APPLIANCE_COLUMN = {
+  widthMm: 600,
+  /** Приборы начинаются на этой высоте от дна: духовка на уровне груди. */
+  baseMm: 700,
+  /** Ниша микроволновки: стандарт 380–450 мм. */
+  microwaveNicheMm: [380, 450] as const,
+  /** Ниже этой высоты два прибора друг над другом не собираются. */
+  minHeightMm: 1400,
+  /** Полка между нишами — она же дно верхнего прибора. */
+  shelfMm: 16,
+} as const;
+
+/** Высота ниши прибора: духовка 595, микроволновка 400. */
+export function nicheHeightMm(appliance: ApplianceKind): number {
+  return APPLIANCE_SLOTS[appliance].nicheHMm ?? 0;
+}
+
+/**
+ * Какие приборы стоят в модуле. У колонны их два, и потерять второй
+ * нельзя: в смете это духовка без микроволновки, за которую заплатили.
+ */
+export function moduleAppliances(unit: Pick<Module, 'appliance' | 'column'>): ApplianceKind[] {
+  if (unit.column) {
+    return [unit.column.bottom as ApplianceKind, unit.column.top as ApplianceKind];
+  }
+  return unit.appliance ? [unit.appliance] : [];
+}
+
+/**
+ * Створок на фасаде встроенного холодильника: дверь холодильной камеры
+ * и дверь морозильной. Это то, что цех делает на самом деле.
+ */
+export const BUILT_IN_FRIDGE_FRONTS = 2;
 
 /** Допуск на попадание мойки в точку водоснабжения. */
 export const WATER_TOLERANCE_MM = 600;

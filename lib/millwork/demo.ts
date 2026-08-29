@@ -77,6 +77,9 @@ export const DEMO_RATES: RateTable = {
   cable_channel: 3500,
   led_niche: 8500,
   sink_cutout: 12000,
+  // Витрина: стекло в раме и лента по контуру.
+  glass_front: 48000,
+  led_display: 9500,
 
   ldsp_carcass: 9500,
   hdf_back: 2200,

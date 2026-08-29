@@ -1,4 +1,5 @@
 import { APPLIANCE_SLOTS } from './modules';
+import { applianceRowWidthMm } from './layout';
 import { sectionSpec } from './sections';
 import { zoneProfile } from './zones';
 import type {
@@ -310,9 +311,12 @@ export function templateAppliancesWidthMm(template: RunTemplate): number {
       .reduce((sum, kind) => sum + sectionSpec(kind).minWidthMm, 0);
   }
 
-  return template.appliances
-    .filter((a) => APPLIANCE_SLOTS[a].kind !== 'upper')
-    .reduce((sum, a) => sum + APPLIANCE_SLOTS[a].widthMm, 0);
+  /*
+   * Считает та же функция, что и раскладка: духовка с микроволновкой
+   * занимают ОДИН пенал, и шаблон, посчитавший их двумя, потребовал бы
+   * лишние 600 мм стены — и выключился бы там, где всё помещается.
+   */
+  return applianceRowWidthMm(template.appliances);
 }
 
 /**

@@ -15,6 +15,7 @@ import { SECTION_SPECS, sectionSpec } from './sections';
 import { isSectionZone, zoneProfile } from './zones';
 import { runFingerprint } from './fingerprint';
 import type {
+  ApplianceColumn,
   ApplianceKind,
   CommPoint,
   Module,
@@ -72,6 +73,10 @@ const MIN_COUNTER_GAP_MM = 150;
 type Anchor = {
   kind: ModuleKind;
   appliance: ApplianceKind;
+  /** Второй прибор в том же пенале: духовка и микроволновка одной колонной. */
+  columnWith?: ApplianceKind;
+  /** Прибор закрыт фасадом: встроенный холодильник. */
+  builtIn?: boolean;
   widthMm: number;
   desiredCenterMm: number;
   /** Позицию задал замерщик руками: её нельзя ни сдвинуть, ни отбросить. */
@@ -120,12 +125,17 @@ function planAnchors(
 
   // Пеналы у стены: холодильник в самом торце, за ним духовая колонна.
   let tallCursor = tallLeft ? 0 : lengthMm;
-  const pushTall = (appliance: ApplianceKind) => {
+  const pushTall = (
+    appliance: ApplianceKind,
+    extra: { columnWith?: ApplianceKind; builtIn?: boolean } = {},
+  ) => {
     const width = APPLIANCE_SLOTS[appliance].widthMm;
     const center = tallLeft ? tallCursor + width / 2 : tallCursor - width / 2;
     anchors.push({
       kind: 'tall',
       appliance,
+      columnWith: extra.columnWith,
+      builtIn: extra.builtIn,
       widthMm: width,
       desiredCenterMm: center,
       priority: appliance === 'fridge' ? 0 : 3,
@@ -133,8 +143,22 @@ function planAnchors(
     tallCursor += tallLeft ? width : -width;
   };
 
-  if (has('fridge')) pushTall('fridge');
-  if (has('oven')) pushTall('oven');
+  /*
+   * Холодильник: встроенный закрыт фасадом, отдельностоящий виден целиком.
+   * В ряду он занимает одно и то же место, но это разные деньги и разный
+   * вид, поэтому признак едет с якорем до самого модуля.
+   */
+  if (has('fridge')) pushTall('fridge', { builtIn: (req.fridgeType ?? 'built_in') === 'built_in' });
+
+  /*
+   * Духовка и микроволновка в ОДНОМ пенале, если заказаны обе. Двумя
+   * отдельными пеналами по 600 мм это съело бы лишний метр стены —
+   * мебельщик так не делает никогда.
+   */
+  const wantsColumn = has('oven') && has('microwave');
+  if (wantsColumn) pushTall('oven', { columnWith: 'microwave' });
+  else if (has('oven')) pushTall('oven');
+  else if (has('microwave')) pushTall('microwave');
 
   let sinkCenter = lengthMm * 0.35;
   if (sinkKind) {
@@ -320,14 +344,33 @@ function makeModule(
   offsetMm: number,
   appliance?: ApplianceKind,
   drawersRequested?: number,
+  extra: { columnWith?: ApplianceKind; builtIn?: boolean; columnTop?: 'microwave' | 'oven' } = {},
 ): Module {
   const spec = appliance ? APPLIANCE_SLOTS[appliance] : null;
   const fronts = appliance
     ? { doorCount: 0, drawerCount: 0 }
     : frontPlan(kind, widthMm, drawersRequested);
 
+  const id = moduleId(kind, offsetMm, appliance);
+
+  /*
+   * Колонна: два прибора в одном пенале. По умолчанию микроволновка
+   * сверху — так ей пользуются, не приседая; порядок меняется кнопкой
+   * и входит в отпечаток конфигурации.
+   */
+  let column: ApplianceColumn | undefined;
+  if (appliance && extra.columnWith) {
+    const pair = [appliance, extra.columnWith] as ('microwave' | 'oven')[];
+    const top = extra.columnTop ?? 'microwave';
+    const resolvedTop = pair.includes(top) ? top : pair[0];
+    const bottom = pair.find((a) => a !== resolvedTop) ?? pair[0];
+    column = { moduleId: id, top: resolvedTop, bottom };
+  }
+
   return {
-    id: moduleId(kind, offsetMm, appliance),
+    id,
+    column,
+    builtIn: extra.builtIn,
     kind,
     widthMm,
     offsetMm,
@@ -336,12 +379,58 @@ function makeModule(
     drawerCount: fronts.drawerCount,
     doorCount: fronts.doorCount,
     isFiller: kind === 'filler' || !isStandardWidth(widthMm),
-    label: spec
-      ? spec.title
-      : kind === 'tall'
-        ? 'Пенал'
-        : describeFronts(fronts.doorCount, fronts.drawerCount),
+    label: column
+      ? `Колонна: ${APPLIANCE_SLOTS[column.bottom as ApplianceKind].title.toLowerCase()} и ${APPLIANCE_SLOTS[
+          column.top as ApplianceKind
+        ].title.toLowerCase()}`
+      : spec
+        ? spec.title
+        : kind === 'tall'
+          ? 'Пенал'
+          : describeFronts(fronts.doorCount, fronts.drawerCount),
   };
+}
+
+/**
+ * Сколько места в ряду занимает техника.
+ *
+ * Микроволновка вместе с духовкой стоит в ОДНОМ пенале, поэтому дважды
+ * её ширину считать нельзя: иначе витрина или обычный модуль отказались
+ * бы вставать там, где место есть.
+ */
+export function applianceRowWidthMm(appliances: ApplianceKind[]): number {
+  const wanted = new Set(appliances);
+  const column = wanted.has('oven') && wanted.has('microwave');
+
+  let sum = 0;
+  for (const appliance of Array.from(wanted)) {
+    // Вытяжка висит в верхнем ряду и места на стене не занимает.
+    if (appliance === 'hood') continue;
+    if (appliance === 'microwave' && column) continue;
+    sum += APPLIANCE_SLOTS[appliance].widthMm;
+  }
+  return sum;
+}
+
+/* ─────────────────────────  Витрина  ───────────────────────── */
+
+/**
+ * Витрина в торце ряда.
+ *
+ * Ставится там, где её и делают: у свободного края, напротив пеналов.
+ * Своей раскладки у неё нет — это обычный модуль ряда, просто с другим
+ * содержимым, поэтому инвариант «сумма сходится с длиной» её касается
+ * ровно так же.
+ */
+function makeDisplay(widthMm: number, offsetMm: number): Module {
+  const spec = SECTION_SPECS.glass_display;
+  const unit = makeModule('tall', widthMm, offsetMm);
+  unit.section = 'glass_display';
+  unit.label = spec.title;
+  unit.frontType = 'none';
+  unit.doorCount = 0;
+  unit.drawerCount = 0;
+  return unit;
 }
 
 /* ─────────────────────────  Сборка ряда  ───────────────────────── */
@@ -612,6 +701,30 @@ export function buildRun(input: BuildRunInput): Run {
     limit = Math.max(0, usable - CORNER_SIZE_MM);
   }
 
+  /*
+   * Витрина занимает своё место ДО раскладки техники и встаёт в свободный
+   * торец — напротив пеналов. Если после неё технике не хватает стены,
+   * отказывается ВИТРИНА: холодильник в кухне важнее подсветки.
+   */
+  const wantsDisplay = Boolean(requirements.glassDisplay);
+  let display: { widthMm: number; side: 'start' | 'end' } | null = null;
+
+  if (wantsDisplay) {
+    const width = SECTION_SPECS.glass_display.preferredWidthMm;
+    if (limit - cursor - width >= applianceRowWidthMm(requirements.appliances)) {
+      display = { widthMm: width, side: requirements.tallSide === 'left' ? 'end' : 'start' };
+    } else {
+      warnings.push(`Витрина ${width} мм: не помещается — технике не остаётся места.`);
+    }
+  }
+
+  if (display?.side === 'start') {
+    cornerModules.push(makeDisplay(display.widthMm, cursor));
+    cursor += display.widthMm;
+  } else if (display?.side === 'end') {
+    limit -= display.widthMm;
+  }
+
   const span = Math.max(0, limit - cursor);
   const anchors = planAnchors(span, requirements, comms, openings, cursor).map((a) => ({
     ...a,
@@ -753,7 +866,13 @@ export function buildRun(input: BuildRunInput): Run {
       modules.push(makeModule('base', width, at));
       at += width;
     }
-    modules.push(makeModule(anchor.kind, anchor.widthMm, at, anchor.appliance));
+    modules.push(
+      makeModule(anchor.kind, anchor.widthMm, at, anchor.appliance, undefined, {
+        columnWith: anchor.columnWith,
+        builtIn: anchor.builtIn,
+        columnTop: requirements.columnTop,
+      }),
+    );
     at += anchor.widthMm;
   }
 
@@ -796,6 +915,11 @@ export function buildRun(input: BuildRunInput): Run {
   for (const width of fillGap(limit - at)) {
     modules.push(makeModule('base', width, at));
     at += width;
+  }
+
+  if (display?.side === 'end') {
+    modules.push(makeDisplay(display.widthMm, at));
+    at += display.widthMm;
   }
 
   if (cornerAt === 'end') {

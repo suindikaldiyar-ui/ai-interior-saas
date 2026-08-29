@@ -52,6 +52,8 @@ export default function Cabinet3D({
   const groupRef = useRef<THREE.Group>(null);
   const openParts = useInteriorStore((s) => s.openParts);
   const cutaway = useInteriorStore((s) => s.cutaway);
+  // Подсветка витрины: гаснет перед захватом кадра, см. lib/millwork/capture.ts
+  const displayLit = useInteriorStore((s) => s.displayLit);
   const toggleOpenPart = useInteriorStore((s) => s.toggleOpenPart);
 
   /*
@@ -177,6 +179,7 @@ export default function Cabinet3D({
           openParts={openParts}
           onToggle={toggleOpenPart}
           cutaway={cutaway}
+          displayLit={displayLit}
         />
       ))}
 

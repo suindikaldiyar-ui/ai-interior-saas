@@ -10,7 +10,31 @@ import {
 } from '@/lib/millwork/modules';
 import { widthOverflowMm } from '@/lib/millwork/invariants';
 import { freeSpaceMm } from '@/lib/millwork/layout';
-import type { ApplianceKind, MillworkOp, Module, Run } from '@/types/millwork';
+import type {
+  ApplianceKind,
+  FridgeType,
+  MillworkOp,
+  Module,
+  Run,
+  RunRequirements,
+} from '@/types/millwork';
+
+/**
+ * Правка СОСТАВА, а не раскладки.
+ *
+ * Техника, колонна, встройка и верхний ряд меняют требования к ряду, и ряд
+ * пересобирается целиком через `buildRun`. Операциями это делать нельзя:
+ * операция правит модуль, а здесь меняется то, из чего модули считаются.
+ */
+export type CompositionPatch = {
+  appliances?: ApplianceKind[];
+  /** С какой стороны стоят пеналы: этим отличаются компоновки. */
+  tallSide?: 'left' | 'right';
+  columnTop?: 'microwave' | 'oven';
+  fridgeType?: FridgeType;
+  glassDisplay?: boolean;
+  upperToCeiling?: boolean;
+};
 
 /**
  * Лента модулей ровно над чертежом и совпадающая с ним по ширине:
@@ -24,7 +48,30 @@ type Props = {
   selectedModuleId: string | null;
   onSelect: (moduleId: string | null) => void;
   onOps: (ops: MillworkOp[]) => void;
+  /** Требования, по которым собран ряд: из них видно состав техники. */
+  requirements?: RunRequirements;
+  /** Правка состава. Без неё панель только читается. */
+  onComposition?: (patch: CompositionPatch) => void;
 };
+
+/**
+ * Техника, которую замерщик добавляет и убирает сам.
+ *
+ * Микроволновку мебельщик ставит почти в каждый заказ, а конфигуратор её
+ * не предлагал вовсе. В умолчания она при этом не идёт: набор техники —
+ * это разговор с клиентом, а не наша догадка.
+ */
+const ADDABLE: ApplianceKind[] = [
+  'fridge',
+  'oven',
+  'microwave',
+  'hob',
+  'hood',
+  'sink600',
+  'sink800',
+  'dishwasher45',
+  'dishwasher60',
+];
 
 const APPLIANCE_OPTIONS: (ApplianceKind | '')[] = [
   '',
@@ -39,7 +86,14 @@ const APPLIANCE_OPTIONS: (ApplianceKind | '')[] = [
   'hood',
 ];
 
-export default function RunEditor({ run, selectedModuleId, onSelect, onOps }: Props) {
+export default function RunEditor({
+  run,
+  selectedModuleId,
+  onSelect,
+  onOps,
+  requirements,
+  onComposition,
+}: Props) {
   const [dragId, setDragId] = useState<string | null>(null);
   const free = freeSpaceMm(run);
   const selected = run.modules.find((m) => m.id === selectedModuleId) ?? null;
@@ -91,11 +145,98 @@ export default function RunEditor({ run, selectedModuleId, onSelect, onOps }: Pr
 
   // Подпись приходит из раскладки: она описывает содержание модуля,
   // а не его ширину — 900 мм это двухдверный модуль, а не «дверца 900».
+  // У колонны приборов два, и назвать её одним из них значит соврать.
   const label = (unit: Module) =>
-    unit.appliance ? APPLIANCE_SLOTS[unit.appliance].title : unit.label;
+    unit.column || !unit.appliance ? unit.label : APPLIANCE_SLOTS[unit.appliance].title;
+
+  const wanted = new Set(requirements?.appliances ?? []);
+  const toggleAppliance = (appliance: ApplianceKind) => {
+    if (!onComposition || !requirements) return;
+    const next = wanted.has(appliance)
+      ? requirements.appliances.filter((a) => a !== appliance)
+      : [...requirements.appliances, appliance];
+    onComposition({ appliances: next });
+  };
+
+  const upperToCeiling = Boolean(run.options.upperToCeiling);
 
   return (
     <div>
+      {/*
+        * Техника и верхний ряд — это СОСТАВ, и он стоит над лентой модулей:
+        * сначала решают, что в кухне есть, потом двигают модули.
+        */}
+      {requirements && onComposition && (
+        <div className="mw-panel mb-3">
+          <span className="mw-label">Техника</span>
+          <div className="mt-1 flex flex-wrap gap-1">
+            {ADDABLE.map((appliance) => {
+              const on = wanted.has(appliance);
+              return (
+                <button
+                  key={appliance}
+                  type="button"
+                  onClick={() => toggleAppliance(appliance)}
+                  aria-pressed={on}
+                  className={`mw-btn ${on ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+                >
+                  {APPLIANCE_SLOTS[appliance].title}
+                </button>
+              );
+            })}
+          </div>
+
+          {wanted.has('oven') && wanted.has('microwave') && (
+            <p className="mt-2 text-[13px] leading-snug text-graphiteMw">
+              Духовка и микроволновка встают в одну колонну 600 мм — так их
+              и ставят, двумя пеналами это лишние 600 мм стены.
+            </p>
+          )}
+
+          {/*
+            * Верхний ряд до потолка просит примерно каждый второй клиент,
+            * поэтому это выбор на виду, а не опция в глубине.
+            */}
+          {run.options.hasUpper && (
+            <div className="mt-3">
+              <span className="mw-label">Верхний ряд</span>
+              <div className="mt-1 flex flex-wrap gap-1">
+                {(
+                  [
+                    [false, 'Стандартный'],
+                    [true, 'До потолка'],
+                  ] as [boolean, string][]
+                ).map(([value, title]) => (
+                  <button
+                    key={title}
+                    type="button"
+                    onClick={() => onComposition({ upperToCeiling: value })}
+                    aria-pressed={upperToCeiling === value}
+                    className={`mw-btn ${upperToCeiling === value ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+                  >
+                    {title}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="mt-3">
+            <span className="mw-label">Дополнительно</span>
+            <div className="mt-1 flex flex-wrap gap-1">
+              <button
+                type="button"
+                onClick={() => onComposition({ glassDisplay: !requirements.glassDisplay })}
+                aria-pressed={Boolean(requirements.glassDisplay)}
+                className={`mw-btn ${requirements.glassDisplay ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+              >
+                Витрина с подсветкой
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="mb-2 flex items-baseline justify-between">
         <span className="text-[15px] font-medium">Состав ряда</span>
         <span
@@ -159,6 +300,71 @@ export default function RunEditor({ run, selectedModuleId, onSelect, onOps }: Pr
               Удалить
             </button>
           </div>
+
+          {/*
+            * Колонна: верх и низ меняются местами одной кнопкой. По
+            * умолчанию микроволновка сверху — так ей пользуются, не
+            * приседая; но у половины заказов наоборот.
+            */}
+          {selected.column && onComposition && (
+            <div className="mb-3">
+              <span className="mw-label">Колонна</span>
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <span className="text-[13px] text-graphiteMw">
+                  Сверху {APPLIANCE_SLOTS[selected.column.top as ApplianceKind].title.toLowerCase()},
+                  снизу {APPLIANCE_SLOTS[selected.column.bottom as ApplianceKind].title.toLowerCase()}
+                </span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    onComposition({
+                      columnTop: selected.column?.top === 'oven' ? 'microwave' : 'oven',
+                    })
+                  }
+                  className="mw-btn mw-btn-ghost"
+                >
+                  Поменять местами
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/*
+            * Встроенный холодильник закрыт фасадом, отдельностоящий стоит
+            * на виду. Разница в цене заметная, поэтому это выбор, а не
+            * умолчание в коде.
+            */}
+          {selected.appliance === 'fridge' && onComposition && (
+            <div className="mb-3">
+              <span className="mw-label">Холодильник</span>
+              <div className="mt-1 flex flex-wrap gap-1">
+                {(
+                  [
+                    ['built_in', 'Встроенный'],
+                    ['freestanding', 'Отдельностоящий'],
+                  ] as [FridgeType, string][]
+                ).map(([value, label]) => {
+                  const on = (selected.builtIn ? 'built_in' : 'freestanding') === value;
+                  return (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => onComposition({ fridgeType: value })}
+                      aria-pressed={on}
+                      className={`mw-btn ${on ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="mt-1 text-[13px] leading-snug text-graphiteMw">
+                {selected.builtIn
+                  ? 'Закрыт фасадом заподлицо: фасад и петли для встройки в смете.'
+                  : 'Стоит на виду: фасада на этот модуль в смете нет.'}
+              </p>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             <label className="col-span-2 block">

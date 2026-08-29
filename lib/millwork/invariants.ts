@@ -1,9 +1,10 @@
+import { moduleAppliances } from './modules';
 import type { Run } from '@/types/millwork';
 
 /**
- * Инварианты ряда. Файл намеренно ни от чего не зависит: его импортируют
- * и раскладка, и проверки, а взаимный импорт между ними уронил бы модуль
- * на инициализации.
+ * Инварианты ряда. Файл намеренно не зависит ни от чего, кроме отраслевых
+ * стандартов: его импортируют и раскладка, и проверки, а взаимный импорт
+ * между ними уронил бы модуль на инициализации.
  */
 
 export function runWidthSum(run: Pick<Run, 'modules'>): number {
@@ -99,9 +100,9 @@ export function manualAnchorCost(
 ): { dropped: string[]; missingMm: number } {
   const placed = (run: Run) =>
     new Set(
-      [...run.modules, ...run.upperSegments.flatMap((s) => s.modules)]
-        .map((m) => m.appliance)
-        .filter(Boolean) as string[],
+      [...run.modules, ...run.upperSegments.flatMap((s) => s.modules)].flatMap((m) =>
+        moduleAppliances(m),
+      ) as string[],
     );
 
   const was = placed(before);
@@ -128,8 +129,11 @@ export function manualAnchorCost(
 export function appliancesPlacedOnce(run: Run): Map<string, number> {
   const counts = new Map<string, number>();
   for (const unit of [...run.modules, ...run.upperSegments.flatMap((s) => s.modules)]) {
-    if (!unit.appliance) continue;
-    counts.set(unit.appliance, (counts.get(unit.appliance) ?? 0) + 1);
+    // В колонне два прибора: считаем оба, иначе дубль микроволновки
+    // пройдёт мимо проверки.
+    for (const appliance of moduleAppliances(unit)) {
+      counts.set(appliance, (counts.get(appliance) ?? 0) + 1);
+    }
   }
   return counts;
 }

@@ -1,7 +1,7 @@
-import { GEOMETRY, moduleHeightMm } from './modules';
+import { APPLIANCE_COLUMN, GEOMETRY, moduleHeightMm, nicheHeightMm } from './modules';
 import { sectionSpec } from './sections';
 import { zoneHeightMm, zoneProfile } from './zones';
-import type { Module, ModuleFill, Run, ZoneKind } from '@/types/millwork';
+import type { ApplianceKind, Module, ModuleFill, Run, ZoneKind } from '@/types/millwork';
 
 /**
  * ЧТО ВНУТРИ МОДУЛЯ.
@@ -29,6 +29,50 @@ export const SYSTEM32_BASE_MM = 32;
 export function snapTo32(mm: number): number {
   const steps = Math.round((mm - SYSTEM32_BASE_MM) / SYSTEM32_STEP_MM);
   return SYSTEM32_BASE_MM + Math.max(0, steps) * SYSTEM32_STEP_MM;
+}
+
+/**
+ * Ближайшее отверстие НЕ НИЖЕ заданной высоты.
+ *
+ * Ниша под прибор не может стать меньше паспортной: духовка в 590 мм не
+ * влезет. Поэтому опора ниши округляется вверх, а не к ближайшему —
+ * лишние миллиметры прибору не мешают, недостающие означают возврат.
+ */
+export function snapUp32(mm: number): number {
+  const steps = Math.ceil((mm - SYSTEM32_BASE_MM) / SYSTEM32_STEP_MM);
+  return SYSTEM32_BASE_MM + Math.max(0, steps) * SYSTEM32_STEP_MM;
+}
+
+/**
+ * Ниши колонны снизу вверх: высота от дна корпуса и её прибор.
+ *
+ * Одна функция на чертёж, 3D и наполнение: посчитай её дважды — и клиент
+ * увидит духовку на одной высоте, а цех присадит на другой. Полки-опоры
+ * садятся на систему 32, как любые другие: ниша от этого только выше
+ * паспортной, а не ниже.
+ */
+export function columnNiches(
+  unit: Pick<Module, 'column'>,
+  carcassHeightMm: number,
+): { appliance: ApplianceKind; fromMm: number; toMm: number }[] {
+  const column = unit.column;
+  if (!column) return [];
+
+  const bottomH = nicheHeightMm(column.bottom as ApplianceKind);
+  const topH = nicheHeightMm(column.top as ApplianceKind);
+
+  // Низкий пенал: приборы садятся от дна, иначе верхний упрётся в крышу.
+  const needed = bottomH + topH + APPLIANCE_COLUMN.shelfMm;
+  const base = snapUp32(
+    Math.max(0, Math.min(APPLIANCE_COLUMN.baseMm, carcassHeightMm - needed)),
+  );
+
+  const boundary = snapUp32(base + bottomH);
+
+  return [
+    { appliance: column.bottom as ApplianceKind, fromMm: base, toMm: boundary },
+    { appliance: column.top as ApplianceKind, fromMm: boundary, toMm: snapUp32(boundary + topH) },
+  ];
 }
 
 /** Полки ближе трёх шагов друг к другу бессмысленны: туда ничего не встанет. */
@@ -162,6 +206,22 @@ export function defaultFill(
     hinge: 'none',
   };
 
+  /*
+   * Колонна: полки-опоры ниш. Это настоящие детали — на них стоит духовка,
+   * и в детализировке они обязаны быть. Ниже нижней ниши остаётся отсек
+   * под противни, выше верхней — полка, если место есть.
+   */
+  if (unit.column) {
+    const niches = columnNiches(unit, heightMm);
+    const shelves = [
+      niches[0].fromMm,
+      niches[1].fromMm,
+      snapUp32(niches[1].toMm),
+    ].filter((mm) => mm > 0 && mm < heightMm - MIN_SHELF_GAP_MM);
+
+    return { ...empty, shelves: dedupe(shelves) };
+  }
+
   // У техники и доборной планки наполнения нет: внутри прибор или пустота.
   if (unit.appliance || unit.kind === 'filler') return empty;
 
@@ -213,6 +273,10 @@ export function defaultFill(
 
       case 'tv_niche':
         return { ...empty };
+
+      case 'glass_display':
+        // Стеклянные полки шагом 350 мм: посуда и стекло, а не коробки.
+        return { ...empty, shelves: steppedShelves(heightMm, 350) };
 
       case 'hanging_module':
         return { ...empty, shelves: evenShelves(heightMm, 1), hinge };

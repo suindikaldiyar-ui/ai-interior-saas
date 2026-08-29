@@ -430,6 +430,10 @@ export type RunModuleLike = {
   appliance?: string;
   /** Начинка модуля в зонах без техники: штанга, полки, обувница. */
   section?: string;
+  /** Два прибора в одном пенале: духовка и микроволновка. */
+  column?: { top: string; bottom: string };
+  /** Техника закрыта фасадом заподлицо. */
+  builtIn?: boolean;
   frontType?: string;
   drawerCount?: number;
 };

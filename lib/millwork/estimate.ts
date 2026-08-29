@@ -1,11 +1,13 @@
 import {
   APPLIANCE_SLOTS,
+  BUILT_IN_FRIDGE_FRONTS,
   hingesPerDoor,
+  moduleAppliances,
   moduleDepthMm,
   moduleHeightMm,
 } from './modules';
 import { allModules } from './layout';
-import { SLIDING_DOOR, sectionSpec, slidingDoorCount } from './sections';
+import { SLIDING_DOOR, displayLedMeters, sectionSpec, slidingDoorCount } from './sections';
 import { zoneProfile } from './zones';
 import type {
   Estimate,
@@ -66,6 +68,17 @@ function backPanelAreaM2(unit: Module, ceilingHeightMm: number, upperToCeiling: 
 
 /** Площадь фасадов. У техники фасада нет — она приходит со своей панелью. */
 function frontAreaM2(unit: Module, ceilingHeightMm: number, upperToCeiling: boolean): number {
+  /*
+   * Встроенный холодильник закрыт фасадом заподлицо — это плита ЛДСП или
+   * МДФ во всю высоту пенала, и стоит она заметных денег. Отдельностоящий
+   * не даёт в смету ни фасада, ни петель: разница между вариантами
+   * измеряется десятками тысяч, поэтому это отдельные строки.
+   */
+  if (unit.builtIn) {
+    const h = moduleHeightMm(unit.kind, { upperToCeiling, ceilingHeightMm });
+    return (unit.widthMm * h) / MM2_IN_M2;
+  }
+
   if (unit.frontType === 'appliance' || unit.frontType === 'none') return 0;
   const h = moduleHeightMm(unit.kind, { upperToCeiling, ceilingHeightMm });
   return (unit.widthMm * h) / MM2_IN_M2;
@@ -78,6 +91,12 @@ function frontAreaM2(unit: Module, ceilingHeightMm: number, upperToCeiling: bool
 function edgeBandingMm(unit: Module, ceilingHeightMm: number, upperToCeiling: boolean): number {
   const h = moduleHeightMm(unit.kind, { upperToCeiling, ceilingHeightMm });
   const w = unit.widthMm;
+
+  if (unit.builtIn) {
+    // Корпус плюс периметр каждой створки фасада встройки.
+    const doorH = h / BUILT_IN_FRIDGE_FRONTS;
+    return 2 * (h + w) + BUILT_IN_FRIDGE_FRONTS * 2 * (doorH + w);
+  }
 
   if (unit.frontType === 'appliance' || unit.frontType === 'none') {
     return 2 * (h + w);
@@ -297,6 +316,17 @@ export function buildEstimateDrafts(run: Run): Draft[] {
       slides += unit.drawerCount;
       handles += unit.drawerCount;
     }
+
+    /*
+     * Петли для встройки: фасад висит на дверце прибора, а не на корпусе,
+     * и комплект у них свой. Без этой строки встроенный холодильник стоил
+     * бы столько же, сколько отдельностоящий, — а разница ощутимая.
+     */
+    if (unit.builtIn) {
+      const h = moduleHeightMm(unit.kind, { upperToCeiling, ceilingHeightMm: ceiling });
+      hinges += BUILT_IN_FRIDGE_FRONTS * hingesPerDoor(h / BUILT_IN_FRIDGE_FRONTS);
+      handles += BUILT_IN_FRIDGE_FRONTS;
+    }
   }
 
   // Столешница: длина ряда плюс запил на угол, если ряд угловой.
@@ -381,17 +411,49 @@ export function buildEstimateDrafts(run: Run): Draft[] {
     drafts.push({ key: 'cornice', title: 'Антресоль до потолка', unit: 'mp', quantity: counterMp });
   }
 
+  /*
+   * Витрина живёт и в кухне, и в зале, поэтому считается отдельно от
+   * секционных зон: `sectionDrafts` на кухне не работает вовсе. Стекло в
+   * раме — это не фасад ЛДСП, и подсветка идёт по контуру погонными
+   * метрами, а не «комплектом».
+   */
+  for (const unit of modules) {
+    if (unit.section !== 'glass_display') continue;
+    const h = moduleHeightMm(unit.kind, { upperToCeiling, ceilingHeightMm: ceiling });
+
+    drafts.push(
+      {
+        key: 'glass_front',
+        title: 'Стеклянная дверь в раме',
+        unit: 'm2',
+        quantity: round2((unit.widthMm * h) / MM2_IN_M2),
+      },
+      {
+        key: 'led_display',
+        title: 'Подсветка витрины LED',
+        unit: 'mp',
+        quantity: displayLedMeters(unit.widthMm, h),
+      },
+    );
+  }
+
   drafts.push(...sectionDrafts(run));
 
-  // Техника и мойка — отдельными позициями, их клиент часто покупает сам.
+  /*
+   * Техника и мойка — отдельными позициями, их клиент часто покупает сам.
+   * В колонне приборов ДВА, и второй терять нельзя: клиент заказал
+   * микроволновку, а в смете её нет — это разговор о доверии, а не о
+   * девяноста тысячах.
+   */
   for (const unit of modules) {
-    if (!unit.appliance) continue;
-    drafts.push({
-      key: `appliance_${unit.appliance}`,
-      title: APPLIANCE_SLOTS[unit.appliance].title,
-      unit: 'pcs',
-      quantity: 1,
-    });
+    for (const appliance of moduleAppliances(unit)) {
+      drafts.push({
+        key: `appliance_${appliance}`,
+        title: APPLIANCE_SLOTS[appliance].title,
+        unit: 'pcs',
+        quantity: 1,
+      });
+    }
   }
 
   if (modules.some((m) => m.appliance === 'sink600' || m.appliance === 'sink800')) {

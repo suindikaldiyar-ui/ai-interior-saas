@@ -125,6 +125,15 @@ export default function KitchenScene({
             ceilingHeightMm: run.ceilingHeightMm,
           }),
           appliance: unit.appliance,
+          /*
+           * Колонна и встройка: без них модель дорисовывает по-своему —
+           * в пенале «узнаёт» место под духовку и ставит туда прибор,
+           * а отдельностоящий холодильник закрывает фасадом.
+           */
+          column: unit.column
+            ? { top: unit.column.top, bottom: unit.column.bottom }
+            : undefined,
+          builtIn: unit.builtIn,
           // Начинка модуля: в шкафу роль решает не прибор, а секция.
           section: unit.section,
           frontType: unit.frontType,

@@ -24,6 +24,10 @@ export type CabinetParts = {
   plinth: THREE.MeshStandardMaterial;
   appliance: THREE.MeshStandardMaterial;
   metal: THREE.MeshStandardMaterial;
+  /** Стекло витрины: прозрачное, но с бликом — иначе его не видно вовсе. */
+  glass: THREE.MeshStandardMaterial;
+  /** Светящаяся полоса подсветки. Гаснет перед захватом кадра. */
+  glow: THREE.MeshBasicMaterial;
   /** Невидимый материал зон касания. */
   hit: THREE.MeshBasicMaterial;
 };
@@ -84,6 +88,19 @@ export function useCabinetParts(palette: CabinetPalette): CabinetParts {
         roughness: 0.35,
         metalness: 0.85,
       }),
+      /*
+       * Витрина: сквозь стекло видно полки, иначе это просто ещё один
+       * шкаф. Прозрачность 0.18 — стекло читается бликом, а не пеленой.
+       */
+      glass: new THREE.MeshStandardMaterial({
+        color: '#DFE6E8',
+        roughness: 0.06,
+        metalness: 0.1,
+        transparent: true,
+        opacity: 0.18,
+        depthWrite: false,
+      }),
+      glow: new THREE.MeshBasicMaterial({ color: '#F6E2B8' }),
       // Зоны касания невидимы, но должны ловить луч: `visible: false` его
       // не пропускает, поэтому материал прозрачный, а не выключенный.
       hit: new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }),

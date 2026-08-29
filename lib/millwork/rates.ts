@@ -62,6 +62,8 @@ export const TYPICAL_PRICE_LIST: TypicalRate[] = [
   { estimateKey: 'cable_channel', article: 'LIV-CABLE', name: 'Кабель-канал', categoryKey: 'living', unit: 'running_meter', price: 3500 },
   { estimateKey: 'led_niche', article: 'LIV-LED', name: 'Подсветка ниши LED', categoryKey: 'living', unit: 'running_meter', price: 8500 },
   { estimateKey: 'sink_cutout', article: 'BAT-CUTOUT', name: 'Вырез под раковину', categoryKey: 'bath', unit: 'piece', price: 12000 },
+  { estimateKey: 'glass_front', article: 'DSP-GLASS', name: 'Стеклянная дверь в раме', categoryKey: 'materials', unit: 'm2', price: 48000 },
+  { estimateKey: 'led_display', article: 'DSP-LED', name: 'Подсветка витрины LED', categoryKey: 'hardware', unit: 'running_meter', price: 9500 },
 
   { estimateKey: 'ldsp_carcass', article: 'MAT-LDSP-16', name: 'Корпус ЛДСП 16 мм', categoryKey: 'materials', unit: 'm2', price: 9500 },
   { estimateKey: 'hdf_back', article: 'MAT-HDF-3', name: 'Задняя стенка ХДФ 3 мм', categoryKey: 'materials', unit: 'm2', price: 2200 },

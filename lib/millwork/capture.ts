@@ -26,7 +26,20 @@ export async function captureForRender(
   // нарисует кухню без фасадов.
   if (store.cutaway) store.setCutaway(false);
 
+  /*
+   * Подсветка витрины гаснет на время съёмки. Это та же ловушка, что с
+   * открытым ящиком: светящаяся полоса в clay-кадре читается моделью как
+   * часть мебели, и в рендер приезжает кухня со светящейся щелью.
+   */
+  const wasLit = store.displayLit;
+  if (wasLit) store.setDisplayLit(false);
+
   await settled();
 
-  return captureScene(framing);
+  try {
+    return await captureScene(framing);
+  } finally {
+    // Кадр снят — на встрече подсветка снова нужна.
+    if (wasLit) useInteriorStore.getState().setDisplayLit(true);
+  }
 }

@@ -12,7 +12,14 @@
 import { buildRun, fillGap, runWidthSum } from '../lib/millwork/layout';
 import { applyOps } from '../lib/millwork/ops';
 import { buildEstimate, recalcTotal } from '../lib/millwork/estimate';
-import { DEFAULT_STRATEGIES, MAIN_VARIANT, buildVariants } from '../lib/millwork/variants';
+import {
+  DEFAULT_STRATEGIES,
+  MAIN_VARIANT,
+  MAX_ARRANGEMENTS,
+  buildArrangements,
+  buildVariants,
+  mostDifferent,
+} from '../lib/millwork/variants';
 import { RUN_TEMPLATES, requirementsFromTemplate, templateFits } from '../lib/millwork/templates';
 import { ZONE_ORDER, ZONE_PROFILES } from '../lib/millwork/zones';
 import {
@@ -29,6 +36,7 @@ import {
   SYSTEM32_BASE_MM,
   SYSTEM32_STEP_MM,
   addShelf,
+  columnNiches,
   moduleCarcassHeightMm,
   moveDrawerBoundary,
   moveShelf,
@@ -1040,6 +1048,343 @@ console.log('\nРучная расстановка');
   const asManual = sinkWaterConflicts(farSink, COMMS, true);
   check('автоматически — блокирующее', asAuto[0]?.severity === 'blocking');
   check('вручную — предупреждение', asManual[0]?.severity === 'clarify');
+}
+
+/* ─────────────────────  Компоновки одной кухни  ───────────────────── */
+
+console.log('\nКомпоновки');
+{
+  const list = buildArrangements({
+    lengthMm: 3200,
+    ceilingHeightMm: 2700,
+    requirements: REQ,
+    openings: OPENINGS,
+    comms: COMMS,
+    rates: DEMO_RATES,
+  });
+
+  /*
+   * Больше трёх не показываем никогда: это прямые слова мебельщика —
+   * «клиент теряется». Меньше двух — это не выбор, а показ одного варианта.
+   */
+  check('вариантов не больше трёх', list.length <= MAX_ARRANGEMENTS, `их ${list.length}`);
+  check('и не меньше двух', list.length >= 2, `их ${list.length}`);
+
+  check(
+    'варианты действительно разные',
+    new Set(list.map((a) => a.run.fingerprint)).size === list.length,
+    list.map((a) => `${a.key}:${a.run.fingerprint}`).join(' · '),
+  );
+
+  // Ряд каждого варианта — обычный ряд: инвариант его касается так же.
+  check(
+    'каждый вариант сходится с длиной ряда',
+    list.every((a) => runWidthSum(a.run) === a.run.lengthMm),
+  );
+  check(
+    'и ни один не потерял технику',
+    list.every((a) => !a.run.warnings.some((w) => w.includes('не помещается'))),
+    list.flatMap((a) => a.run.warnings).join(' | ') || 'предупреждений нет',
+  );
+
+  /*
+   * Своей раскладки у варианта нет: это ДРУГИЕ ТРЕБОВАНИЯ, а `buildRun`
+   * тот же. Иначе карточка разошлась бы с чертежом и сметой — ровно та же
+   * ловушка, что и с шаблонами.
+   */
+  check(
+    'вариант разворачивается через buildRun',
+    list.every((a) => {
+      const again = buildRun({
+        lengthMm: 3200,
+        ceilingHeightMm: 2700,
+        requirements: a.requirements,
+        openings: OPENINGS,
+        comms: COMMS,
+      });
+      return again.fingerprint === a.run.fingerprint;
+    }),
+  );
+
+  // Детерминизм: одна и та же кухня не должна предлагать разные варианты.
+  const again = buildArrangements({
+    lengthMm: 3200,
+    ceilingHeightMm: 2700,
+    requirements: REQ,
+    openings: OPENINGS,
+    comms: COMMS,
+    rates: DEMO_RATES,
+  });
+  check(
+    'два прогона дают те же варианты',
+    JSON.stringify(again.map((a) => a.key)) === JSON.stringify(list.map((a) => a.key)),
+    list.map((a) => a.key).join(', '),
+  );
+
+  check(
+    'у каждого варианта своя сумма в карточке',
+    list.every((a) => a.estimate.total > 0),
+  );
+  check(
+    'и смета посчитана по его же ряду',
+    list.every((a) => a.estimate.fingerprint === a.run.fingerprint),
+  );
+
+  /*
+   * Смена варианта сбрасывает ручную расстановку: вариант собран заново,
+   * и прежние позиции к нему не относятся. В интерфейсе об этом сказано
+   * словами, а здесь проверяется, что требования варианта их не тащат.
+   */
+  const withManual = buildArrangements({
+    lengthMm: 3200,
+    ceilingHeightMm: 2700,
+    requirements: { ...REQ, manualAnchors: { hob: 900 } },
+    openings: OPENINGS,
+    comms: COMMS,
+    rates: DEMO_RATES,
+  });
+  check(
+    'вариант не тащит за собой чужую ручную расстановку',
+    withManual.every((a) => (a.requirements.manualAnchors ?? {}).hob === undefined),
+  );
+
+  // Три самые разные, а не первые попавшиеся.
+  const many = [...list, ...list.map((a) => ({ ...a, key: `${a.key}-2` }))];
+  const picked = mostDifferent(many, 3);
+  check('отбор оставляет ровно три', picked.length === 3);
+  check(
+    'и не берёт две одинаковые расстановки подряд',
+    new Set(picked.map((a) => a.run.fingerprint)).size >= 2,
+    picked.map((a) => a.key).join(', '),
+  );
+
+  // Длинная стена: вариантов больше, и отбор обязан их проредить.
+  const long = buildArrangements({
+    lengthMm: 4200,
+    ceilingHeightMm: 2700,
+    requirements: REQ,
+    openings: OPENINGS,
+    comms: COMMS,
+    rates: DEMO_RATES,
+  });
+  check('на длинной стене вариантов тоже не больше трёх', long.length <= MAX_ARRANGEMENTS);
+  check(
+    'и они не повторяют друг друга',
+    new Set(long.map((a) => a.run.fingerprint)).size === long.length,
+  );
+}
+
+/* ──────────────  Колонна, встройка, витрина, верхний ряд  ────────────── */
+
+console.log('\nКолонна, встройка и витрина');
+{
+  const REQ_MW: RunRequirements = { ...REQ, appliances: [...REQ.appliances, 'microwave'] };
+  const long = { ...baseInput, lengthMm: 3600 };
+
+  const withColumn = buildRun({ ...long, requirements: REQ_MW });
+  const column = withColumn.modules.find((m) => m.column);
+
+  /*
+   * Духовка и микроволновка — ОДИН пенал 600 мм. Двумя пеналами это лишние
+   * 600 мм стены, и мебельщик так не делает никогда.
+   */
+  check('микроволновка встаёт в ряд', Boolean(column), column ? '' : 'колонны нет');
+  check(
+    'колонна занимает один модуль 600 мм',
+    column?.widthMm === 600 && withColumn.modules.filter((m) => m.column).length === 1,
+    `ширина ${column?.widthMm}`,
+  );
+  check('и ряд сходится с длиной', runWidthSum(withColumn) === withColumn.lengthMm);
+  check(
+    'по умолчанию микроволновка сверху',
+    column?.column?.top === 'microwave' && column?.column?.bottom === 'oven',
+    `${column?.column?.bottom} снизу, ${column?.column?.top} сверху`,
+  );
+
+  // Оба прибора попадают в смету: потерянный второй — это деньги клиента.
+  const columnEstimate = buildEstimate(withColumn, MAIN_VARIANT, DEMO_RATES);
+  const line = (key: string) => columnEstimate.lines.find((l) => l.key === key);
+  check('духовка в смете', (line('appliance_oven')?.quantity ?? 0) === 1);
+  check('микроволновка в смете', (line('appliance_microwave')?.quantity ?? 0) === 1);
+  check(
+    'и ни один прибор не попал в ряд дважды',
+    Array.from(appliancesPlacedOnce(withColumn).values()).every((n) => n === 1),
+  );
+
+  // Ниши: высоты паспортные и на системе 32 — полка садится на отверстие.
+  const niches = columnNiches(column!, moduleCarcassHeightMm(column!, withColumn));
+  check(
+    'ниша духовки не меньше 595 мм',
+    niches.find((n) => n.appliance === 'oven')!.toMm -
+      niches.find((n) => n.appliance === 'oven')!.fromMm >=
+      595,
+  );
+  check(
+    'ниша микроволновки не меньше 380 мм',
+    niches.find((n) => n.appliance === 'microwave')!.toMm -
+      niches.find((n) => n.appliance === 'microwave')!.fromMm >=
+      380,
+  );
+  check(
+    'опоры ниш стоят на шаге 32 мм',
+    niches.every(
+      (n) =>
+        (n.fromMm - SYSTEM32_BASE_MM) % SYSTEM32_STEP_MM === 0 &&
+        (n.toMm - SYSTEM32_BASE_MM) % SYSTEM32_STEP_MM === 0,
+    ),
+    niches.map((n) => `${n.fromMm}–${n.toMm}`).join(' · '),
+  );
+  check(
+    'колонна помещается в высоту пенала',
+    niches[1].toMm <= moduleCarcassHeightMm(column!, withColumn),
+  );
+
+  // «Поменять местами» — это ДРУГАЯ мебель, и отпечаток обязан её различать.
+  const swapped = buildRun({ ...long, requirements: { ...REQ_MW, columnTop: 'oven' } });
+  const swappedColumn = swapped.modules.find((m) => m.column);
+  check(
+    'смена мест меняет порядок приборов',
+    swappedColumn?.column?.top === 'oven' && swappedColumn?.column?.bottom === 'microwave',
+  );
+  check(
+    'и меняет отпечаток конфигурации',
+    swapped.fingerprint !== withColumn.fingerprint,
+    `${withColumn.fingerprint} против ${swapped.fingerprint}`,
+  );
+  check(
+    'а раскладка при этом та же',
+    swapped.modules.map((m) => m.widthMm).join() ===
+      withColumn.modules.map((m) => m.widthMm).join(),
+  );
+
+  // Микроволновка без духовки: свой пенал, а не пропажа.
+  const alone = buildRun({
+    ...long,
+    requirements: { ...REQ, appliances: ['sink600', 'hob', 'hood', 'microwave'] },
+  });
+  check(
+    'микроволновка без духовки встаёт своим пеналом',
+    alone.modules.some((m) => m.appliance === 'microwave' && m.kind === 'tall'),
+  );
+
+  /* ── Холодильник: встроенный или отдельностоящий ── */
+
+  const builtIn = buildRun({ ...long, requirements: { ...REQ_MW, fridgeType: 'built_in' } });
+  const freeStanding = buildRun({
+    ...long,
+    requirements: { ...REQ_MW, fridgeType: 'freestanding' },
+  });
+
+  check(
+    'по умолчанию холодильник встроенный',
+    withColumn.modules.find((m) => m.appliance === 'fridge')?.builtIn === true,
+  );
+
+  const frontOf = (run: ReturnType<typeof buildRun>) =>
+    buildEstimate(run, MAIN_VARIANT, DEMO_RATES).lines.find((l) => l.key === 'front_panel')
+      ?.quantity ?? 0;
+  const hingesOf = (run: ReturnType<typeof buildRun>) =>
+    buildEstimate(run, MAIN_VARIANT, DEMO_RATES).lines.find((l) => l.key === 'hinge_standard')
+      ?.quantity ?? 0;
+
+  check(
+    'встроенный добавляет фасад в смету',
+    frontOf(builtIn) > frontOf(freeStanding),
+    `${frontOf(builtIn)} м² против ${frontOf(freeStanding)} м²`,
+  );
+  check(
+    'и петли для встройки',
+    hingesOf(builtIn) > hingesOf(freeStanding),
+    `${hingesOf(builtIn)} против ${hingesOf(freeStanding)}`,
+  );
+  check(
+    'отдельностоящий фасада не даёт',
+    !buildPanels({ run: freeStanding, production: DEFAULT_PRODUCTION }).some(
+      (panel) => panel.name === 'Фасад встройки',
+    ),
+  );
+  check(
+    'а встроенный даёт детали фасада для цеха',
+    buildPanels({ run: builtIn, production: DEFAULT_PRODUCTION }).some(
+      (panel) => panel.name === 'Фасад встройки',
+    ),
+  );
+  check(
+    'встройка меняет отпечаток конфигурации',
+    builtIn.fingerprint !== freeStanding.fingerprint,
+  );
+
+  /* ── Витрина с подсветкой ── */
+
+  const display = buildRun({ ...long, requirements: { ...REQ_MW, glassDisplay: true } });
+  const displayUnit = display.modules.find((m) => m.section === 'glass_display');
+
+  check('витрина встаёт в ряд', Boolean(displayUnit));
+  check('ряд с витриной сходится с длиной', runWidthSum(display) === display.lengthMm);
+  check(
+    'витрина стоит в торце ряда',
+    display.modules[display.modules.length - 1]?.section === 'glass_display',
+  );
+  check(
+    'и не выкидывает технику',
+    Array.from(appliancesPlacedOnce(display).keys()).length ===
+      Array.from(appliancesPlacedOnce(withColumn).keys()).length,
+  );
+
+  const displayEstimate = buildEstimate(display, MAIN_VARIANT, DEMO_RATES);
+  const led = displayEstimate.lines.find((l) => l.key === 'led_display');
+  const glass = displayEstimate.lines.find((l) => l.key === 'glass_front');
+  check(
+    'подсветка витрины считается в погонных метрах',
+    led?.unit === 'mp' && (led?.quantity ?? 0) > 0,
+    `${led?.quantity} м.п.`,
+  );
+  check('стеклянная дверь идёт своей строкой', (glass?.quantity ?? 0) > 0);
+  check(
+    'у витрины нет распашного фасада',
+    displayUnit?.frontType === 'none' && displayUnit?.doorCount === 0,
+  );
+
+  // Короткий ряд: отказывается витрина, а не холодильник.
+  const tight = buildRun({
+    ...baseInput,
+    lengthMm: 2400,
+    requirements: { ...REQ, glassDisplay: true },
+  });
+  check(
+    'в коротком ряду отказывается витрина, а не техника',
+    !tight.modules.some((m) => m.section === 'glass_display') &&
+      tight.modules.some((m) => m.appliance === 'fridge'),
+  );
+  check(
+    'и отказ назван словами',
+    tight.warnings.some((w) => w.includes('Витрина')),
+    tight.warnings.join(' | ') || 'предупреждений нет',
+  );
+
+  /* ── Верхний ряд до потолка ── */
+
+  const standard = buildRun({ ...long, requirements: REQ_MW });
+  const toCeiling = buildRun({
+    ...long,
+    requirements: { ...REQ_MW, options: { ...REQ_MW.options, upperToCeiling: true } },
+  });
+
+  const upperHeight = (run: ReturnType<typeof buildRun>) => {
+    const unit = run.upperSegments.flatMap((seg) => seg.modules)[0];
+    return unit ? moduleCarcassHeightMm(unit, run) : 0;
+  };
+
+  check(
+    'до потолка верхний ряд выше стандартного',
+    upperHeight(toCeiling) > upperHeight(standard),
+    `${upperHeight(toCeiling)} против ${upperHeight(standard)}`,
+  );
+  check(
+    'и это другая смета',
+    buildEstimate(toCeiling, MAIN_VARIANT, DEMO_RATES).total !==
+      buildEstimate(standard, MAIN_VARIANT, DEMO_RATES).total,
+  );
 }
 
 /* ─────────────────────────  Наполнение модулей  ───────────────────────── */

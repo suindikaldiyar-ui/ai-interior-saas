@@ -21,6 +21,12 @@ export type FingerprintPart = {
   frontCount: number;
   /** Наполнение: полки и штанги — тоже мебель, и разъезжаться им нельзя. */
   fill?: string;
+  /**
+   * Колонна и встройка. Микроволновка над духовкой и духовка над
+   * микроволновкой — это разная мебель, а холодильник за фасадом стоит
+   * других денег, чем отдельностоящий. Отпечаток обязан их различать.
+   */
+  extras?: string;
 };
 
 export function moduleParts(modules: Module[]): FingerprintPart[] {
@@ -30,6 +36,7 @@ export function moduleParts(modules: Module[]): FingerprintPart[] {
     appliance: unit.appliance,
     frontCount: unit.frontType === 'drawers' ? unit.drawerCount : unit.doorCount,
     fill: fillPart(unit),
+    extras: extrasPart(unit),
   }));
 }
 
@@ -50,10 +57,24 @@ function fillPart(unit: Module): string | undefined {
   ].join('/');
 }
 
+/** Колонна, встройка и секция — короткой строкой в фиксированном порядке. */
+function extrasPart(unit: Module): string | undefined {
+  const parts = [
+    unit.column ? `${unit.column.bottom}<${unit.column.top}` : '',
+    unit.builtIn ? 'built_in' : '',
+    unit.section ?? '',
+  ].filter(Boolean);
+
+  return parts.length > 0 ? parts.join(',') : undefined;
+}
+
 /** Устойчивый хеш: порядок полей фиксирован, случайности нет. */
 export function configurationFingerprint(modules: Module[]): string {
   const text = moduleParts(modules)
-    .map((p) => `${p.kind}:${p.widthMm}:${p.appliance ?? '-'}:${p.frontCount}:${p.fill ?? '-'}`)
+    .map(
+      (p) =>
+        `${p.kind}:${p.widthMm}:${p.appliance ?? '-'}:${p.frontCount}:${p.fill ?? '-'}:${p.extras ?? '-'}`,
+    )
     .join('|');
 
   // FNV-1a: коротко, детерминированно и без зависимостей.

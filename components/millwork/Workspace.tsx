@@ -14,7 +14,8 @@ import MaterialsStep from './MaterialsStep';
 import PanelList from './PanelList';
 import PlanDrawing from './PlanDrawing';
 import RenderPanel from './RenderPanel';
-import RunEditor from './RunEditor';
+import ArrangementCards from './ArrangementCards';
+import RunEditor, { type CompositionPatch } from './RunEditor';
 import StepBar, { type StepKey } from './StepBar';
 import { openablePartIds } from './cabinet3d/Cabinet3D';
 import SurveyPanel from './SurveyPanel';
@@ -26,7 +27,12 @@ import { buildRun } from '@/lib/millwork/layout';
 import { manualAnchorCost } from '@/lib/millwork/invariants';
 import { APPLIANCE_SLOTS } from '@/lib/millwork/modules';
 import { composeVariants, workspaceInput } from '@/lib/millwork/workspace';
-import { MAIN_VARIANT, SINGLE_VARIANT } from '@/lib/millwork/variants';
+import {
+  MAIN_VARIANT,
+  SINGLE_VARIANT,
+  buildArrangements,
+  type Arrangement,
+} from '@/lib/millwork/variants';
 import { zoneProfile } from '@/lib/millwork/zones';
 import { validateRun } from '@/lib/millwork/validate';
 import {
@@ -224,6 +230,19 @@ export default function Workspace(props: WorkspaceProps) {
   /** Почему последняя правка не применилась. */
   const [moveNotice, setMoveNotice] = useState<string | null>(null);
 
+  /*
+   * Правки состава поверх шаблона: техника, колонна, встройка, витрина и
+   * высота верхнего ряда. Шаблон задаёт умолчания, а замерщик правит их
+   * при клиенте — и правка обязана пережить пересчёт и закрытие объекта.
+   */
+  const [composition, setComposition] = useState<CompositionPatch>({
+    appliances: props.initialState?.requirements?.appliances,
+    columnTop: props.initialState?.requirements?.columnTop,
+    fridgeType: props.initialState?.requirements?.fridgeType,
+    glassDisplay: props.initialState?.requirements?.glassDisplay,
+    upperToCeiling: props.initialState?.requirements?.options?.upperToCeiling,
+  });
+
   const [templateId, setTemplateId] = useState<string | null>(
     props.initialState?.templateId ?? props.templateId ?? null,
   );
@@ -287,15 +306,61 @@ export default function Workspace(props: WorkspaceProps) {
   const renderVariants = useInteriorStore((s) => s.renderVariants);
   const activeRender =
     renderVariants.find((v) => v.styleId === renderStyle)?.image ?? null;
+  /*
+   * ОСНОВА ДЛЯ КОМПОНОВОК: состав без того, чем компоновки друг от друга
+   * отличаются, — без стороны пеналов и без ручных позиций.
+   *
+   * Иначе карточки едут вслед за выбранным вариантом: выбрал «холодильник
+   * справа» — и «как считает расчёт» пересобирается с пеналами справа,
+   * становится тем же самым рядом и схлопывается с ним. Выбор перестаёт
+   * быть выбором, а подсветка выбранной карточки — врать.
+   */
+  const arrangementBase = useMemo(() => {
+    const base = template
+      ? requirementsFromTemplate(template, props.requirements.options)
+      : props.requirements;
+
+    return {
+      ...base,
+      appliances: composition.appliances ?? base.appliances,
+      columnTop: composition.columnTop ?? base.columnTop,
+      fridgeType: composition.fridgeType ?? base.fridgeType,
+      glassDisplay: composition.glassDisplay ?? base.glassDisplay,
+      manualAnchors: {},
+      options: {
+        ...base.options,
+        upperToCeiling: composition.upperToCeiling ?? base.options.upperToCeiling,
+      },
+      lockedOptions: composition.upperToCeiling === undefined ? undefined : ['upperToCeiling'],
+    } as RunRequirements;
+  }, [template, props.requirements, composition]);
+
   const requirements = useMemo(() => {
     const base = template
       ? requirementsFromTemplate(template, props.requirements.options)
       : props.requirements;
 
-    return Object.keys(manualAnchors).length > 0
-      ? { ...base, manualAnchors }
-      : base;
-  }, [template, props.requirements, manualAnchors]);
+    const next: RunRequirements = {
+      ...base,
+      appliances: composition.appliances ?? base.appliances,
+      tallSide: composition.tallSide ?? base.tallSide,
+      columnTop: composition.columnTop ?? base.columnTop,
+      fridgeType: composition.fridgeType ?? base.fridgeType,
+      glassDisplay: composition.glassDisplay ?? base.glassDisplay,
+      options: {
+        ...base.options,
+        upperToCeiling: composition.upperToCeiling ?? base.options.upperToCeiling,
+      },
+      /*
+       * Выбор человека сильнее стратегии комплектации: иначе «до потолка»
+       * нажимается, а верхний ряд остаётся стандартным — стратегия
+       * `optimal` перекрывает эту опцию своей.
+       */
+      lockedOptions: composition.upperToCeiling === undefined ? undefined : ['upperToCeiling'],
+    };
+
+    return Object.keys(manualAnchors).length > 0 ? { ...next, manualAnchors } : next;
+  }, [template, props.requirements, manualAnchors, composition]);
 
   const input = useMemo(() => {
     if (!resolution) {
@@ -328,6 +393,30 @@ export default function Workspace(props: WorkspaceProps) {
     // Пока стены не введены, ряд брать неоткуда — держим габарит из пропсов.
     return seed.lengthMm > 0 ? seed : { ...seed, lengthMm: props.lengthMm };
   }, [resolution, requirements, props]);
+
+  /*
+   * Компоновки: две-три расстановки ОДНОЙ кухни из одного замера. Считаются
+   * от требований без ручных позиций — иначе карточки поплыли бы вслед за
+   * выбранным вариантом и перестали быть выбором.
+   */
+  const arrangements = useMemo(() => {
+    if (zone !== 'kitchen') return [];
+    try {
+      return buildArrangements({
+        lengthMm: input.lengthMm,
+        ceilingHeightMm: input.ceilingHeightMm,
+        requirements: arrangementBase,
+        openings: input.openings,
+        comms: input.comms,
+        rates: input.rates,
+        cornerAt: input.cornerAt,
+        disabledKeys: disabled[variantKey],
+      });
+    } catch {
+      // Компоновки — подсказка, а не расчёт: их отсутствие ничего не ломает.
+      return [];
+    }
+  }, [zone, input, arrangementBase, disabled, variantKey]);
 
   /*
    * Три варианта — одна раскладка в трёх комплектациях, плюс правки
@@ -432,6 +521,68 @@ export default function Workspace(props: WorkspaceProps) {
     // Ручная расстановка отменяет прежние правки состава: ряд пересобран.
     setEditedRuns({});
     setManualAnchors(next);
+  };
+
+  /**
+   * Правка состава: техника, колонна, встройка, витрина, верхний ряд.
+   *
+   * Ряд пересобирается целиком через `buildRun`, поэтому прежние правки
+   * модулей к нему уже не относятся: они ссылались на модули, которых
+   * больше нет. Ручную расстановку это не трогает — прибор, поставленный
+   * замерщиком, остаётся на своём месте.
+   */
+  const changeComposition = (patch: CompositionPatch) => {
+    dirty.current = true;
+    setMoveNotice(null);
+    setEditedRuns({});
+    setSelectedId(null);
+    setComposition((prev) => ({ ...prev, ...patch }));
+  };
+
+  /**
+   * Выбор компоновки.
+   *
+   * Вариант — это ДРУГИЕ ТРЕБОВАНИЯ, а не своя раскладка: ряд собирается
+   * заново тем же `buildRun`. Поэтому прежние правки модулей к нему уже
+   * не относятся, а ручная расстановка сбрасывается — и об этом говорится
+   * прямо, иначе замерщик решит, что его правка пропала сама.
+   */
+  const chooseArrangement = (arrangement: Arrangement) => {
+    const hadManual = Object.keys(manualAnchors).length > 0;
+    const next = arrangement.requirements.manualAnchors ?? {};
+
+    // Вариант может добавить прибор — например, микроволновку в колонну.
+    const added = arrangement.requirements.appliances.filter(
+      (a) => !requirements.appliances.includes(a),
+    );
+
+    dirty.current = true;
+    setEditedRuns({});
+    setSelectedId(null);
+    setManualAnchors(next);
+    setComposition((prev) => ({
+      ...prev,
+      appliances: arrangement.requirements.appliances,
+      tallSide: arrangement.requirements.tallSide,
+    }));
+
+    /*
+     * Говорим вслух и про сброс, и про добавленный прибор. Иначе замерщик
+     * видит, что его правка исчезла, а карточка, на которую он нажал,
+     * пропала из списка, — и решает, что инструмент сломался.
+     */
+    const notes = [
+      hadManual && Object.keys(next).length === 0
+        ? 'Ручная расстановка сброшена — вариант собран заново.'
+        : null,
+      added.length > 0
+        ? `${added
+            .map((a) => APPLIANCE_SLOTS[a].title)
+            .join(', ')} добавлен${added.length > 1 ? 'ы' : 'а'} в состав — теперь этот прибор есть во всех вариантах.`
+        : null,
+    ].filter(Boolean);
+
+    setMoveNotice(notes.length > 0 ? notes.join(' ') : null);
   };
 
   const resetAnchors = () => {
@@ -854,6 +1005,7 @@ export default function Workspace(props: WorkspaceProps) {
                 setTemplateId(t.id);
                 // Правки предыдущего состава к новому шаблону не относятся.
                 setEditedRuns({});
+                setComposition({});
                 setStep('compose');
               }}
             />
@@ -867,12 +1019,38 @@ export default function Workspace(props: WorkspaceProps) {
 
         {step === 'compose' && (
           <>
+            {arrangements.length > 1 && (
+              <div className="mb-4">
+                <ArrangementCards
+                  arrangements={arrangements}
+                  /*
+                    * Активна та карточка, чей ряд сейчас на экране. Сверяем
+                    * отпечатком: правил состав руками — не активна ни одна,
+                    * и это честно.
+                    */
+                  activeKey={
+                    arrangements.find((a) => a.run.fingerprint === active.run.fingerprint)?.key ??
+                    null
+                  }
+                  onSelect={chooseArrangement}
+                />
+              </div>
+            )}
+
             <RunEditor
               run={active.run}
               selectedModuleId={selectedId}
               onSelect={setSelectedId}
               onOps={runOps}
+              requirements={requirements}
+              onComposition={changeComposition}
             />
+            {moveNotice && (
+              <p className="mt-3 rounded-[var(--r-control)] bg-navy px-4 py-3 text-[13px] leading-snug text-graphiteMw">
+                {moveNotice}
+              </p>
+            )}
+
             <div className="mt-4">
               <CommandBar onSubmit={sendCommand} busy={busy} lastReply={reply} />
             </div>

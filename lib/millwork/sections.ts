@@ -182,6 +182,25 @@ export const SECTION_SPECS: Record<SectionKind, SectionSpec> = {
     hint: 'висит на стене, опор нет',
   },
 
+  /* ── Витрина: кухня и зал ── */
+  glass_display: {
+    kind: 'glass_display',
+    title: 'Витрина с подсветкой',
+    moduleKind: 'tall',
+    /*
+     * Стеклянная дверь в раме — это не фасад ЛДСП: она идёт своей строкой
+     * сметы и своим материалом. Ставить ей `door` нельзя, иначе клиент
+     * заплатит и за стекло, и за глухой фасад того же места.
+     */
+    frontType: 'none',
+    drawerCount: 0,
+    minWidthMm: 300,
+    maxWidthMm: 600,
+    preferredWidthMm: 400,
+    heightMm: 0,
+    hint: 'стеклянные полки, подсветка по контуру',
+  },
+
   /* ── Санузел ── */
   vanity: {
     kind: 'vanity',
@@ -234,6 +253,14 @@ export const SLIDING_DOOR = {
 export function slidingDoorCount(lengthMm: number): number {
   if (lengthMm <= 0) return 0;
   return Math.max(2, Math.ceil(lengthMm / SLIDING_DOOR.maxWidthMm));
+}
+
+/**
+ * Погонные метры подсветки витрины: лента идёт по контуру фасада.
+ * Считается из габарита модуля, а не «примерно два метра».
+ */
+export function displayLedMeters(widthMm: number, heightMm: number): number {
+  return Math.round(((2 * (widthMm + heightMm)) / 1000) * 100) / 100;
 }
 
 export function sectionSpec(kind: SectionKind): SectionSpec {

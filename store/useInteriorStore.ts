@@ -73,6 +73,11 @@ export type InteriorState = {
   openParts: string[];
   /** Разрез: фасады убраны совсем, видно наполнение целиком. */
   cutaway: boolean;
+  /**
+   * Подсветка витрины горит. Перед захватом кадра гаснет: светящаяся
+   * полоса в clay-кадре читается моделью как часть мебели.
+   */
+  displayLit: boolean;
   renderFraming: CaptureFraming;
   customNotes: string;
   selectedReferenceIds: string[];
@@ -118,6 +123,7 @@ export type InteriorState = {
   setOpenParts: (ids: string[]) => void;
   closeAllParts: () => void;
   setCutaway: (value: boolean) => void;
+  setDisplayLit: (value: boolean) => void;
   setRenderFraming: (framing: CaptureFraming) => void;
   setCustomNotes: (value: string) => void;
   toggleReference: (id: string) => void;
@@ -240,6 +246,7 @@ export const useInteriorStore = create<InteriorState>((set, get) => ({
 
   openParts: [],
   cutaway: false,
+  displayLit: true,
   captureMode: false,
   renderFraming: 'hero',
   customNotes: '',
@@ -574,6 +581,7 @@ export const useInteriorStore = create<InteriorState>((set, get) => ({
   setOpenParts: (ids) => set({ openParts: Array.from(new Set(ids)) }),
   closeAllParts: () => set({ openParts: [] }),
   setCutaway: (value) => set({ cutaway: value }),
+  setDisplayLit: (value) => set({ displayLit: value }),
   setRenderFraming: (framing) => set({ renderFraming: framing }),
   setCustomNotes: (value) => set({ customNotes: value }),
 
