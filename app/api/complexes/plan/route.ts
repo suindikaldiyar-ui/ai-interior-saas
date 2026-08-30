@@ -28,12 +28,15 @@ type CreateBody = {
 
 type PatchBody = CreateBody & {
   id?: string;
+  /** Адрес публичной страницы. Меняется только осознанно: на него ведёт реклама. */
+  slug?: string;
+  /** Где снят замер. Правится и отдельно от замера: опечатки бывают. */
+  sourceApartment?: string;
   /** Замер зоны: он и открывает планировку. */
   zone?: ZoneKind;
   measurement?: Measurement;
   notes?: string;
   measuredBy?: string;
-  sourceApartment?: string;
 };
 
 async function orgOf(supabase: NonNullable<ReturnType<typeof supabaseServer>>) {
@@ -142,12 +145,36 @@ export async function PATCH(request: Request) {
   const patch: Record<string, unknown> = {};
 
   if (body.code !== undefined) patch.code = body.code.trim();
+
+  /*
+   * Слаг НЕ едет за кодом планировки: на адрес страницы ведёт реклама,
+   * и правка кода не должна ломать чужую ссылку. Менять адрес можно,
+   * но отдельным полем и с проверкой на занятость.
+   */
+  if (body.slug !== undefined) {
+    const { data: taken } = await supabase
+      .from('floor_plans')
+      .select('slug')
+      .eq('complex_id', plan.complexId)
+      .neq('id', body.id);
+
+    patch.slug = uniqueSlug(
+      body.slug,
+      (taken ?? []).map((row) => String(row.slug)),
+    );
+  }
+
   if (body.rooms !== undefined) patch.rooms = Math.max(1, Math.round(body.rooms));
   if (body.areaM2 !== undefined) patch.area_m2 = Number(body.areaM2) || 0;
   if (body.roomAreas !== undefined) patch.room_areas = cleanAreas(body.roomAreas);
   if (body.isPublic !== undefined) patch.is_public = body.isPublic;
   if (body.toleranceMm !== undefined) {
     patch.tolerance_mm = Math.max(0, Math.round(body.toleranceMm));
+  }
+
+  // Квартира замера правится и без нового замера: опечатки бывают.
+  if (body.sourceApartment !== undefined && !body.measurement) {
+    patch.source_apartment = body.sourceApartment.trim();
   }
 
   if (body.zone && body.measurement) {
@@ -177,4 +204,78 @@ export async function PATCH(request: Request) {
   if (!data) return NextResponse.json({ error: 'Планировка не найдена.' }, { status: 404 });
 
   return NextResponse.json({ ok: true, plan: toPlan(data as never) });
+}
+
+/**
+ * Удаление планировки.
+ *
+ * Готовые проекты уходят каскадом, а объекты, собранные по этой планировке,
+ * теряют связь с ней (`on delete set null`) — сами объекты остаются со
+ * своими размерами. Без `force` отказываем и называем последствия: это
+ * работа замерщика, а не строка в справочнике.
+ */
+export async function DELETE(request: Request) {
+  const supabase = supabaseServer();
+  if (!supabase) {
+    return NextResponse.json({ error: 'Supabase не настроен.' }, { status: 503 });
+  }
+
+  const orgId = await orgOf(supabase);
+  if (!orgId) return NextResponse.json({ error: 'Требуется вход.' }, { status: 401 });
+
+  const url = new URL(request.url);
+  const id = url.searchParams.get('id');
+  const force = url.searchParams.get('force') === '1';
+
+  if (!id) return NextResponse.json({ error: 'Нужен id планировки.' }, { status: 400 });
+
+  // Чужая планировка не найдётся: RLS уже применена.
+  const { data: plan } = await supabase
+    .from('floor_plans')
+    .select('id, code, zones, measured_at')
+    .eq('id', id)
+    .maybeSingle();
+
+  if (!plan) return NextResponse.json({ error: 'Планировка не найдена.' }, { status: 404 });
+
+  const [{ count: ready }, { count: projects }] = await Promise.all([
+    supabase
+      .from('ready_projects')
+      .select('id', { count: 'exact', head: true })
+      .eq('floor_plan_id', id),
+    supabase
+      .from('projects')
+      .select('id', { count: 'exact', head: true })
+      .eq('floor_plan_id', id),
+  ]);
+
+  const readyCount = ready ?? 0;
+  const projectCount = projects ?? 0;
+  const measured = Array.isArray(plan.zones) && plan.zones.length > 0 && Boolean(plan.measured_at);
+
+  if ((readyCount > 0 || measured) && !force) {
+    const parts = [
+      readyCount > 0 ? `${readyCount} готовых проекта` : null,
+      measured ? 'замер квартиры' : null,
+    ].filter(Boolean);
+
+    return NextResponse.json(
+      {
+        error:
+          `У планировки «${plan.code}» удалится ${parts.join(' и ')}.` +
+          (projectCount > 0
+            ? ` ${projectCount} объектов останутся со своими размерами, но потеряют связь с планировкой.`
+            : ''),
+        ready: readyCount,
+        projects: projectCount,
+        needsConfirm: true,
+      },
+      { status: 409 },
+    );
+  }
+
+  const { error } = await supabase.from('floor_plans').delete().eq('id', id);
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  return NextResponse.json({ ok: true, deletedReady: readyCount, unlinkedProjects: projectCount });
 }

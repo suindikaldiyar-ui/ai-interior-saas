@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase/server';
 import { COMPLEX_FIELDS, READY_FIELDS, fetchLibrary, toComplex, toReady } from '@/lib/complexes';
 import type { ReadyProject } from '@/types/complexes';
-import { slugify, uniqueSlug } from '@/lib/slug';
+import { uniqueSlug } from '@/lib/slug';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -21,6 +21,11 @@ type Body = {
   developer?: string;
   city?: string;
   isPublic?: boolean;
+  /**
+   * Адрес публичной страницы. Меняется только ОСОЗНАННО: на слаг ведёт
+   * реклама, и переименование ЖК не должно ломать чужую ссылку.
+   */
+  slug?: string;
 };
 
 async function orgOf(supabase: ReturnType<typeof supabaseServer>) {
@@ -117,6 +122,62 @@ export async function POST(request: Request) {
   return NextResponse.json({ ok: true, complex: toComplex(data as never) });
 }
 
+/**
+ * Удаление ЖК.
+ *
+ * Планировки и готовые проекты уходят каскадом — это может стереть работу
+ * целого месяца, поэтому без `force` мы отказываем и НАЗЫВАЕМ, сколько
+ * планировок пропадёт. Подтверждение в интерфейсе — не единственная
+ * защита: случайный запрос мимо интерфейса тоже не должен ничего стереть.
+ */
+export async function DELETE(request: Request) {
+  const supabase = supabaseServer();
+  if (!supabase) {
+    return NextResponse.json({ error: 'Supabase не настроен.' }, { status: 503 });
+  }
+
+  const orgId = await orgOf(supabase);
+  if (!orgId) return NextResponse.json({ error: 'Требуется вход.' }, { status: 401 });
+
+  const url = new URL(request.url);
+  const id = url.searchParams.get('id');
+  const force = url.searchParams.get('force') === '1';
+
+  if (!id) return NextResponse.json({ error: 'Нужен id ЖК.' }, { status: 400 });
+
+  // Чужой ЖК не найдётся: RLS уже применена к этому запросу.
+  const { data: complex } = await supabase
+    .from('complexes')
+    .select('id, name')
+    .eq('id', id)
+    .maybeSingle();
+
+  if (!complex) return NextResponse.json({ error: 'ЖК не найден.' }, { status: 404 });
+
+  const { count: plans } = await supabase
+    .from('floor_plans')
+    .select('id', { count: 'exact', head: true })
+    .eq('complex_id', id);
+
+  const planCount = plans ?? 0;
+
+  if (planCount > 0 && !force) {
+    return NextResponse.json(
+      {
+        error: `В «${complex.name}» ${planCount} планировок — они удалятся вместе с ЖК.`,
+        plans: planCount,
+        needsConfirm: true,
+      },
+      { status: 409 },
+    );
+  }
+
+  const { error } = await supabase.from('complexes').delete().eq('id', id);
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  return NextResponse.json({ ok: true, deletedPlans: planCount });
+}
+
 export async function PATCH(request: Request) {
   const supabase = supabaseServer();
   if (!supabase) {
@@ -130,13 +191,28 @@ export async function PATCH(request: Request) {
   if (!body.id) return NextResponse.json({ error: 'Нужен id ЖК.' }, { status: 400 });
 
   const patch: Record<string, unknown> = {};
-  if (body.name !== undefined) {
-    patch.name = body.name.trim();
-    patch.slug = slugify(body.name);
-  }
+  if (body.name !== undefined) patch.name = body.name.trim();
   if (body.developer !== undefined) patch.developer = body.developer.trim();
   if (body.city !== undefined) patch.city = body.city.trim();
   if (body.isPublic !== undefined) patch.is_public = body.isPublic;
+
+  /*
+   * Слаг НЕ едет за названием. Переименовали ЖК — реклама, в которой стоит
+   * старый адрес, продолжает работать. Менять адрес можно, но отдельным
+   * полем и с проверкой на занятость: unique (org_id, slug).
+   */
+  if (body.slug !== undefined) {
+    const { data: taken } = await supabase
+      .from('complexes')
+      .select('slug')
+      .eq('org_id', orgId)
+      .neq('id', body.id);
+
+    patch.slug = uniqueSlug(
+      body.slug,
+      (taken ?? []).map((row) => String(row.slug)),
+    );
+  }
 
   // RLS не даст тронуть чужой ЖК: строка просто не найдётся.
   const { data, error } = await supabase

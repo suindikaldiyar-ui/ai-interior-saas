@@ -226,6 +226,42 @@ export async function fetchPublicPlan(
   };
 }
 
+/**
+ * Один ЖК со своими планировками для публичной страницы.
+ *
+ * Отдельный запрос, а не фильтр по всей библиотеке: у компании их могут
+ * быть десятки, а посадочная страница обязана открываться мгновенно —
+ * на неё приходят с рекламы.
+ */
+export async function fetchPublicComplex(
+  client: SupabaseClient,
+  orgId: string,
+  complexSlug: string,
+): Promise<{ complex: Complex; plans: FloorPlan[] } | null> {
+  const { data: complexRow } = await client
+    .from('complexes')
+    .select(COMPLEX_FIELDS)
+    .eq('org_id', orgId)
+    .eq('slug', complexSlug)
+    .eq('is_public', true)
+    .maybeSingle();
+
+  if (!complexRow) return null;
+
+  const { data: planRows } = await client
+    .from('floor_plans')
+    .select(PLAN_FIELDS)
+    .eq('complex_id', (complexRow as ComplexRow).id)
+    .eq('is_public', true)
+    .order('rooms')
+    .order('code');
+
+  return {
+    complex: toComplex(complexRow as ComplexRow),
+    plans: (planRows ?? []).map((row) => toPlan(row as unknown as PlanRow)),
+  };
+}
+
 /** Публичный список: только те ЖК и планировки, которые открыты. */
 export async function fetchPublicLibrary(
   client: SupabaseClient,

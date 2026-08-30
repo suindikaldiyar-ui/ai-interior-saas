@@ -36,9 +36,13 @@ export default async function ZkIndexPage() {
 
         {library.map(({ complex, plans }) => (
           <section key={complex.id} className="mw-panel mb-4">
-            <h2 className="text-[17px] font-medium">{complex.name}</h2>
+            {/* Клик по названию ведёт на страницу дома со всеми его квартирами. */}
+            <Link href={`/zk/${complex.slug}`} className="text-[17px] font-medium">
+              {complex.name}
+            </Link>
             <p className="mb-3 text-[13px] text-graphiteMw">
               {[complex.developer, complex.city].filter(Boolean).join(' · ')}
+              {plans.length > 0 ? ` · ${plans.length} планировок` : ''}
             </p>
 
             <ul className="grid gap-2 sm:grid-cols-2">
