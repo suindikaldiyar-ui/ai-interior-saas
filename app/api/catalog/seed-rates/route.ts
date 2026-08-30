@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { TYPICAL_CATEGORIES, TYPICAL_PRICE_LIST } from '@/lib/millwork/rates';
+import { ensureCategories } from '@/lib/catalog';
+import { TYPICAL_CATEGORIES, TYPICAL_PRICE_LIST, orphanTypicalRates } from '@/lib/millwork/rates';
 import { supabaseServer } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
@@ -10,8 +11,16 @@ export const dynamic = 'force-dynamic';
  *
  * Это ОРИЕНТИР, а не цены компании — интерфейс говорит об этом прямо.
  * Смысл в том, чтобы новый пользователь увидел работающую смету в первый
- * визит, а не упёрся в пустой каталог. Существующие товары не перезаписываем:
- * если компания уже завела свою цену, она главнее любого среднего значения.
+ * визит, а не упёрся в пустой каталог.
+ *
+ * Порядок здесь обязателен: СНАЧАЛА КАТЕГОРИИ, ПОТОМ ТОВАРЫ. `category_id`
+ * объявлен NOT NULL, и на пустом каталоге загрузка падала целиком —
+ * четыре категории зон (шкаф-купе, прихожая, ТВ-зона, санузел) в прайсе
+ * были, а в списке категорий их не завели.
+ *
+ * Ни существующие категории, ни существующие артикулы не трогаем: если
+ * компания уже завела свою цену или свою категорию, она главнее любого
+ * среднего значения.
  */
 export async function POST(request: Request) {
   const supabase = supabaseServer();
@@ -38,53 +47,76 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Нужен orgId.' }, { status: 400 });
   }
 
-  // RLS сама не даст записать в чужую организацию.
-  const { error: catError } = await supabase.from('catalog_categories').upsert(
-    TYPICAL_CATEGORIES.map((c, i) => ({
-      org_id: orgId,
-      key: c.key,
-      name_ru: c.name,
-      applies_to: c.appliesTo,
-      unit: c.unit,
-      sort_order: i,
-    })),
-    { onConflict: 'org_id,key' },
-  );
-
-  if (catError) {
+  /*
+   * Прайс уехал вперёд категорий — это наша ошибка, а не пользователя.
+   * Говорим прямо, вместо того чтобы уронить вставку на NOT NULL.
+   */
+  const orphans = orphanTypicalRates();
+  if (orphans.length > 0) {
     return NextResponse.json(
-      { error: `Не удалось завести категории: ${catError.message}` },
+      {
+        error:
+          `В типовом прайсе ${orphans.length} позиций без категории: ` +
+          `${Array.from(new Set(orphans.map((r) => r.categoryKey))).join(', ')}. ` +
+          'Это ошибка прайса, а не каталога.',
+      },
+      { status: 500 },
+    );
+  }
+
+  // RLS сама не даст записать в чужую организацию.
+  const categories = await ensureCategories(supabase, orgId, TYPICAL_CATEGORIES);
+  if (categories.error) {
+    return NextResponse.json(
+      { error: `Не удалось завести категории: ${categories.error}` },
       { status: 403 },
     );
   }
 
-  const { data: categories } = await supabase
-    .from('catalog_categories')
-    .select('id, key')
-    .eq('org_id', orgId);
-
-  const byKey = new Map((categories ?? []).map((c) => [c.key, c.id]));
-
-  const { data: existing } = await supabase
+  const { data: existing, error: itemsError } = await supabase
     .from('catalog_items')
     .select('article')
     .eq('org_id', orgId);
 
+  if (itemsError) {
+    return NextResponse.json(
+      { error: `Нет доступа к каталогу: ${itemsError.message}` },
+      { status: 403 },
+    );
+  }
+
   const known = new Set((existing ?? []).map((i) => i.article));
 
-  const payload = TYPICAL_PRICE_LIST.filter((r) => !known.has(r.article)).map((r) => ({
-    org_id: orgId,
-    category_id: byKey.get(r.categoryKey),
-    article: r.article,
-    name_ru: r.name,
-    price: r.price,
-    unit: r.unit,
-    meta: { estimateKey: r.estimateKey, typical: true },
-    is_active: true,
-  }));
+  /*
+   * Товар без найденной категории не вставляем НИКОГДА: строка с пустым
+   * `category_id` роняет весь батч, и пользователь остаётся вообще без
+   * прайса — ровно то, с чего началась эта поломка.
+   */
+  const payload = TYPICAL_PRICE_LIST.filter((r) => !known.has(r.article)).flatMap((r) => {
+    const categoryId = categories.byKey.get(r.categoryKey);
+    if (!categoryId) return [];
+
+    return [
+      {
+        org_id: orgId,
+        category_id: categoryId,
+        article: r.article,
+        name_ru: r.name,
+        price: r.price,
+        unit: r.unit,
+        meta: { estimateKey: r.estimateKey, typical: true },
+        is_active: true,
+      },
+    ];
+  });
 
   if (payload.length === 0) {
-    return NextResponse.json({ ok: true, added: 0, skipped: TYPICAL_PRICE_LIST.length });
+    return NextResponse.json({
+      ok: true,
+      added: 0,
+      addedCategories: categories.created,
+      skipped: TYPICAL_PRICE_LIST.length,
+    });
   }
 
   const { data, error } = await supabase.from('catalog_items').insert(payload).select('id');
@@ -99,6 +131,7 @@ export async function POST(request: Request) {
   return NextResponse.json({
     ok: true,
     added: data?.length ?? 0,
+    addedCategories: categories.created,
     skipped: TYPICAL_PRICE_LIST.length - payload.length,
   });
 }

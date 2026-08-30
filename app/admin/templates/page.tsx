@@ -28,6 +28,9 @@ export default async function TemplatesPage() {
         <span className="text-[17px] font-medium">{org.name}</span>
         <span className="mw-label">Типовые решения</span>
         <div className="ml-auto flex items-center gap-2">
+          <Link href="/admin/complexes" className="mw-btn mw-btn-ghost">
+            Планировки
+          </Link>
           <Link href="/admin/catalog" className="mw-btn mw-btn-ghost">
             Каталог
           </Link>

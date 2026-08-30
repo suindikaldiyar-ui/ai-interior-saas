@@ -141,6 +141,15 @@ export type WorkspaceProps = {
   ratesMissing?: boolean;
   /** Фотография помещения клиента: основа рендера. */
   roomPhoto?: string | null;
+  /**
+   * Планировка ЖК, по которой собран объект. С ней работают две вещи:
+   * честная строка «размеры из библиотеки» и кнопка «Сохранить как готовый
+   * проект» — из этого объекта получается витрина для сотен одинаковых
+   * квартир.
+   */
+  floorPlanId?: string | null;
+  /** Откуда взяты размеры. Замерщик и клиент читают это до подписи. */
+  libraryNote?: string | null;
   /** Готовая конфигурация: демонстрация не открывается пустым экраном. */
   templateId?: string | null;
   /** Типовые решения компании из настроек. */
@@ -260,6 +269,8 @@ export default function Workspace(props: WorkspaceProps) {
     props.initialState?.savedAt ? 'saved' : 'idle',
   );
   const [share, setShare] = useState<{ url: string; wa: string } | null>(null);
+  /** Что ответил сервер на «Сохранить как готовый проект». */
+  const [readyNotice, setReadyNotice] = useState<string | null>(null);
   const [kitchenItemId, setKitchenItemId] = useState<string | null>(null);
   // Снимок можно добавить и позже, прямо из вкладки рендера.
   const [roomPhoto, setRoomPhoto] = useState<string | null>(props.roomPhoto ?? null);
@@ -834,6 +845,42 @@ export default function Workspace(props: WorkspaceProps) {
     }
   }, [props.projectId, props.shareToken, props.clientName, activeRender, renderStyle]);
 
+  /**
+   * «Сохранить как готовый проект».
+   *
+   * Уходит ряд ЦЕЛИКОМ со снимком цен: на публичной странице планировки
+   * клиент увидит ту же сумму и через полгода, когда каталог переоценят.
+   * Больше трёх на зону сервер не примет — то же правило, что у компоновок.
+   */
+  const saveAsReady = useCallback(async () => {
+    if (!props.floorPlanId) return;
+    setReadyNotice(null);
+
+    try {
+      const res = await fetch('/api/complexes/ready', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          floorPlanId: props.floorPlanId,
+          zone,
+          title: `${zoneProfile(zone).title} ${active.run.lengthMm} мм`,
+          run: active.run,
+          priceSnapshot: active.estimate.priceSnapshot,
+          total: active.estimate.total,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+
+      setReadyNotice(
+        res.ok
+          ? 'Готовый проект сохранён — он появится на странице этой планировки.'
+          : (data.error ?? 'Проект не сохранился.'),
+      );
+    } catch {
+      setReadyNotice('Сети нет — попробуйте ещё раз.');
+    }
+  }, [props.floorPlanId, zone, active]);
+
   const saveLabel =
     saveState === 'saving'
       ? 'Сохраняем…'
@@ -1017,6 +1064,18 @@ export default function Workspace(props: WorkspaceProps) {
           </>
         )}
 
+        {/*
+          * Размеры из библиотеки: сказать об этом надо раньше, чем замерщик
+          * покажет экран клиенту. Строка висит на всех шагах — не только там,
+          * где её удобно поставить.
+          */}
+        {props.libraryNote && (
+          <p className="mb-4 rounded-[var(--r-control)] bg-navy px-4 py-3 text-[13px] leading-snug text-tape print:hidden">
+            {props.libraryNote}. Сверьте на месте: подставленные величины
+            помечены как допущения, смета по ним предварительная.
+          </p>
+        )}
+
         {step === 'compose' && (
           <>
             {arrangements.length > 1 && (
@@ -1140,6 +1199,20 @@ export default function Workspace(props: WorkspaceProps) {
                   {label}
                 </button>
               ))}
+              {/*
+                * Из этого объекта получается витрина для сотен одинаковых
+                * квартир: тот же ряд, та же цена, публичная страница.
+                */}
+              {props.floorPlanId && (
+                <button
+                  type="button"
+                  onClick={() => void saveAsReady()}
+                  className="mw-btn mw-btn-ghost"
+                >
+                  Сохранить как готовый проект
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={() => window.print()}
@@ -1279,6 +1352,12 @@ export default function Workspace(props: WorkspaceProps) {
             {moveNotice && (
               <p className="mt-3 rounded-[var(--r-control)] bg-alert/15 px-4 py-3 text-[13px] leading-snug text-alert print:hidden">
                 {moveNotice}
+              </p>
+            )}
+
+            {readyNotice && (
+              <p className="mt-3 rounded-[var(--r-control)] bg-navy px-4 py-3 text-[13px] leading-snug text-graphiteMw print:hidden">
+                {readyNotice}
               </p>
             )}
 

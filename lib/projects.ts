@@ -67,6 +67,8 @@ export type ProjectRow = {
   share_token: string;
   /** Главный снимок помещения: путь в бакете проектов. */
   source_photo_path: string | null;
+  /** Типовая планировка ЖК, по которой собран объект. */
+  floor_plan_id: string | null;
   source_photos: { path: string; name?: string }[];
   measurements: Measurement | Record<string, never>;
   millwork: MillworkState;
@@ -75,7 +77,7 @@ export type ProjectRow = {
 };
 
 const LIST_FIELDS =
-  'id, org_id, address, zone, surveyor, client_name, client_phone, status, total, share_token, source_photo_path, updated_at, created_at';
+  'id, org_id, address, zone, surveyor, client_name, client_phone, status, total, share_token, source_photo_path, floor_plan_id, updated_at, created_at';
 
 export async function listProjects(
   supabase: SupabaseClient,

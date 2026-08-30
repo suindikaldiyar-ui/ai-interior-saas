@@ -77,6 +77,80 @@ export async function fetchCategories(
   return error || !data ? [] : (data as CatalogCategory[]);
 }
 
+/* ─────────────────────  Недостающие категории  ───────────────────── */
+
+export type WantedCategory = {
+  key: string;
+  name: string;
+  appliesTo: CatalogCategory['applies_to'];
+  unit: CatalogCategory['unit'];
+};
+
+export type EnsureResult = {
+  /** key → id: по нему товар находит свою категорию. */
+  byKey: Map<string, string>;
+  /** Сколько категорий пришлось завести. */
+  created: number;
+  error?: string;
+};
+
+/**
+ * Завести недостающие категории и вернуть карту «ключ → id».
+ *
+ * Товар в каталоге не существует без категории: `category_id` объявлен
+ * NOT NULL, потому что `applies_to` определяет поведение товара в сцене,
+ * и угадывать его нельзя. Поэтому категории заводятся ПЕРЕД товарами.
+ *
+ * СУЩЕСТВУЮЩИЕ НЕ ТРОГАЕМ. Тут был соблазн сделать upsert одной строкой —
+ * он бы переписал компании название, единицу и `applies_to` её собственной
+ * категории с тем же ключом. Заводим только то, чего нет.
+ */
+export async function ensureCategories(
+  supabase: SupabaseClient,
+  orgId: string,
+  wanted: WantedCategory[],
+): Promise<EnsureResult> {
+  const { data: existing, error } = await supabase
+    .from('catalog_categories')
+    .select('id, key, sort_order')
+    .eq('org_id', orgId);
+
+  if (error) return { byKey: new Map(), created: 0, error: error.message };
+
+  const byKey = new Map<string, string>(
+    (existing ?? []).map((row) => [String(row.key), String(row.id)]),
+  );
+
+  const missing = wanted.filter((category) => !byKey.has(category.key));
+  if (missing.length === 0) return { byKey, created: 0 };
+
+  // Новые встают в конец списка: чужой порядок не переставляем.
+  const tail = (existing ?? []).reduce(
+    (max, row) => Math.max(max, Number(row.sort_order) || 0),
+    0,
+  );
+
+  const { data: created, error: insertError } = await supabase
+    .from('catalog_categories')
+    .insert(
+      missing.map((category, i) => ({
+        org_id: orgId,
+        key: category.key,
+        name_ru: category.name,
+        applies_to: category.appliesTo,
+        unit: category.unit,
+        sort_order: tail + i + 1,
+      })),
+    )
+    .select('id, key');
+
+  if (insertError) return { byKey, created: 0, error: insertError.message };
+
+  for (const row of created ?? []) byKey.set(String(row.key), String(row.id));
+
+  return { byKey, created: created?.length ?? 0 };
+}
+
 /* ─────────────────────────  Файлы товара  ───────────────────────── */
 
 export function assetByKind(

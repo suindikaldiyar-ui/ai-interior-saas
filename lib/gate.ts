@@ -54,9 +54,17 @@ export function safeEqual(a: string, b: string): boolean {
  *
  * `/p/[token]` — кабинет клиента: ссылку отправляют клиенту, и пароль там
  * неуместен; вместе с ним открыт и тот единственный запрос, который эта
- * страница делает. `/gate` — сама дверь: закрыв её, войти было бы нельзя.
+ * страница делает. `/zk` — посадочные страницы планировок: на них ведёт
+ * реклама. `/gate` — сама дверь: закрыв её, войти было бы нельзя.
  */
-const OPEN_PREFIXES = ['/gate', '/p/', '/api/projects/like'];
+const OPEN_PREFIXES = [
+  '/gate',
+  '/p/',
+  '/api/projects/like',
+  // Посадочные страницы планировок: это реклама, пароль там бессмыслен.
+  '/zk',
+  '/api/complexes/lead',
+];
 
 export function isOpenPath(pathname: string): boolean {
   return OPEN_PREFIXES.some(

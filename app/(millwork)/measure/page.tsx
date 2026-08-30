@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import PlanPicker, { type PlanChoice } from '@/components/millwork/PlanPicker';
 import Workspace from '@/components/millwork/Workspace';
 import { photoToFile, type RoomPhoto } from '@/lib/photo';
 import { DEMO_RATES } from '@/lib/millwork/demo';
@@ -15,7 +16,15 @@ import {
 } from '@/lib/millwork/zones';
 import { zoneReadiness } from '@/lib/millwork/templates';
 import type { ZoneKind } from '@/types/millwork';
-import { emptySurvey, newWall, resolveSurvey, type Survey } from '@/types/survey';
+import {
+  emptySurvey,
+  newWall,
+  resolveSurvey,
+  surveyFromMeasurement,
+  type Survey,
+} from '@/types/survey';
+import { isMeasured, libraryBasis, planZone } from '@/types/complexes';
+import type { MillworkState } from '@/lib/projects';
 
 /**
  * Новый объект: адрес, контакт — и сразу рабочий экран замера.
@@ -49,6 +58,12 @@ export default function MeasurePage() {
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /*
+   * Типовая планировка. Ради неё всё и строится: один замер работает на
+   * сотни одинаковых квартир, а клиенту говорят «на вашу квартиру у нас
+   * уже есть готовый проект».
+   */
+  const [planChoice, setPlanChoice] = useState<PlanChoice | null>(null);
 
   /* ── Шаг 1: адрес и контакт ── */
   if (step === 'contact') {
@@ -57,7 +72,27 @@ export default function MeasurePage() {
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            setSurvey((prev) => ({ ...prev, measuredBy: surveyor }));
+
+            /*
+             * Размеры из библиотеки подставляются ДОПУЩЕНИЯМИ, а не замером:
+             * они сняты на другой квартире. Замерщик сверяет их на месте,
+             * и до подтверждения смета остаётся предварительной.
+             */
+            const fromLibrary =
+              planChoice && isMeasured(planChoice.plan)
+                ? planZone(planChoice.plan, zone)
+                : null;
+
+            setSurvey((prev) =>
+              fromLibrary
+                ? surveyFromMeasurement(
+                    fromLibrary.measurement,
+                    libraryBasis(planChoice!.plan),
+                    surveyor,
+                    prev.measuredAt,
+                  )
+                : { ...prev, measuredBy: surveyor },
+            );
             setStep('survey');
           }}
           className="mw-panel w-full max-w-xl"
@@ -144,11 +179,18 @@ export default function MeasurePage() {
             />
           </label>
 
+          {/* Типовая планировка: ЖК и тип квартиры. */}
+          <div className="mb-4">
+            <PlanPicker zone={zone} value={planChoice} onChange={setPlanChoice} />
+          </div>
+
           <button
             type="submit"
             className="mw-btn mw-btn-lg mw-btn-primary w-full"
           >
-            К замеру
+            {planChoice && isMeasured(planChoice.plan) && planZone(planChoice.plan, zone)
+              ? 'К сверке размеров'
+              : 'К замеру'}
           </button>
         </form>
       </main>
@@ -172,6 +214,7 @@ export default function MeasurePage() {
           address: contact.address,
           clientName: contact.clientName,
           clientPhone: contact.clientPhone,
+          floorPlanId: planChoice?.plan.id,
           surveyor: finished.measuredBy,
           measurement: resolveSurvey(finished).measurement,
           survey: finished,
@@ -182,6 +225,25 @@ export default function MeasurePage() {
       const data = await res.json().catch(() => ({}));
 
       if (res.ok && data.projectId) {
+        /*
+         * Замер уходит в библиотеку и «открывает» планировку для всех
+         * одинаковых квартир. Падение этого запроса не отменяет объект:
+         * работа замерщика важнее записи в библиотеку.
+         */
+        if (planChoice?.saveToLibrary) {
+          await fetch('/api/complexes/plan', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              id: planChoice.plan.id,
+              zone,
+              measurement: resolveSurvey(finished).measurement,
+              measuredBy: finished.measuredBy,
+              sourceApartment: planChoice.sourceApartment || contact.address,
+            }),
+          }).catch(() => undefined);
+        }
+
         /*
          * Снимки уходят по одному уже сжатыми. Падение загрузки не отменяет
          * объект: замер важнее, фото можно добавить из конфигуратора.
@@ -226,6 +288,24 @@ export default function MeasurePage() {
         </div>
       )}
       <Workspace
+        floorPlanId={planChoice?.plan.id ?? null}
+        libraryNote={
+          planChoice && isMeasured(planChoice.plan) && planZone(planChoice.plan, zone)
+            ? libraryBasis(planChoice.plan)
+            : null
+        }
+        /*
+         * Выбранный готовый проект открывается составом: замерщик правит
+         * его под клиента, а не собирает заново.
+         */
+        initialState={
+          planChoice?.ready
+            ? ({
+                runs: { optimal: planChoice.ready.run },
+                priceSnapshot: planChoice.ready.priceSnapshot,
+              } as MillworkState)
+            : null
+        }
         title={contact.address || 'Новый замер'}
         zone={zoneProfile(zone).title}
         measuredBy={survey.measuredBy}

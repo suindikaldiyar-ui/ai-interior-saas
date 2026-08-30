@@ -29,6 +29,9 @@ export default async function ProductionPage() {
         <span className="text-[17px] font-medium">{org.name}</span>
         <span className="mw-label">Производство</span>
         <div className="ml-auto flex items-center gap-2">
+          <Link href="/admin/complexes" className="mw-btn mw-btn-ghost">
+            Планировки
+          </Link>
           <Link href="/admin/catalog" className="mw-btn mw-btn-ghost">
             Каталог
           </Link>

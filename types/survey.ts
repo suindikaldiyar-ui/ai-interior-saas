@@ -166,6 +166,77 @@ export function newWall(index: number): SurveyWall {
   };
 }
 
+/* ────────────────  Замер из библиотеки планировок  ──────────────── */
+
+/**
+ * Библиотечный замер → замер объекта.
+ *
+ * КАЖДАЯ ВЕЛИЧИНА ПРИХОДИТ КАК `assumed`, а не `measured`. Замер снят на
+ * другой квартире: у одинаковых планировок стены расходятся на сантиметры,
+ * и подставить чужие миллиметры как свои — это ровно то враньё, от которого
+ * защищает весь слой состояний. Замерщик подтверждает их на объекте, и до
+ * этого смета остаётся предварительной.
+ *
+ * `basis` объясняет происхождение прямо в интерфейсе: откуда число, когда
+ * и на какой квартире оно снято, какой допуск.
+ */
+export function surveyFromMeasurement(
+  measurement: Measurement,
+  basis: string,
+  measuredBy = '',
+  measuredAt = '',
+): Survey {
+  const from = <T>(value: T | undefined | null): Known<T> =>
+    value === undefined || value === null ? UNKNOWN : assumed(value, basis);
+
+  const walls: SurveyWall[] = measurement.walls.map((wall, index) => ({
+    id: wall.id || `w${index + 1}`,
+    lengthMm: from(wall.lengthMm > 0 ? wall.lengthMm : undefined),
+    // Прямой угол — это `right`; всё остальное замерщик уточнит сам.
+    turn: wall.angleDeg === DEFAULT_TURN_DEG ? 'right' : 'custom',
+    turnDeg: wall.angleDeg || DEFAULT_TURN_DEG,
+    isRunWall: index === 0,
+    openings: wall.openings.map((opening, i) => ({
+      id: opening.id || `${wall.id || index}-o${i + 1}`,
+      kind: opening.kind,
+      fromCornerMm: from(opening.fromCornerMm),
+      widthMm: from(opening.widthMm),
+      heightMm: from(opening.heightMm),
+      sillMm: from(opening.sillMm),
+      ...(opening.depthMm !== undefined ? { depthMm: from(opening.depthMm) } : {}),
+    })),
+  }));
+
+  const comms: SurveyComm[] = measurement.comms.map((comm, i) => ({
+    id: comm.id || `c${i + 1}`,
+    kind: comm.kind,
+    wallId: comm.wallId,
+    fromCornerMm: from(comm.fromCornerMm),
+    heightMm: from(comm.heightMm),
+    note: comm.note,
+  }));
+
+  return {
+    ceilingHeightMm: from(measurement.ceilingHeightMm > 0 ? measurement.ceilingHeightMm : undefined),
+    walls: walls.length > 0 ? walls : [newWall(0)],
+    comms,
+    photos: [],
+    clientNotes: '',
+    /*
+     * Шаги не отмечены пройденными: замерщик обязан пройти их и подтвердить
+     * размеры на месте. Подставленное — это черновик, а не сделанная работа.
+     */
+    steps: { ceiling: 'todo', walls: 'todo', openings: 'todo', comms: 'todo', photos: 'todo' },
+    measuredBy,
+    measuredAt,
+  };
+}
+
+/** Все ли величины замера подтверждены на объекте. */
+export function allMeasured(survey: Survey): boolean {
+  return surveyStats(survey).assumed === 0 && surveyStats(survey).unknown === 0;
+}
+
 /* ─────────────────────────  Подсчёт состояний  ───────────────────────── */
 
 export type SurveyStats = {

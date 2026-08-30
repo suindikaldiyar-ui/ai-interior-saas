@@ -17,6 +17,8 @@ type CreateRequest = {
   requirements?: RunRequirements;
   /** Замер целиком, вместе с состояниями величин. */
   survey?: Survey;
+  /** Типовая планировка ЖК, если объект собран по ней. */
+  floorPlanId?: string;
 };
 
 /** Новый объект: адрес, контакт клиента и замер. Дальше сразу конфигуратор. */
@@ -60,6 +62,9 @@ export async function POST(request: Request) {
       client_name: body.clientName ?? '',
       client_phone: body.clientPhone ?? '',
       surveyor: body.surveyor ?? '',
+      // Объект помнит свою планировку: по ней видно, откуда размеры,
+      // и в неё же уходит «сохранить как готовый проект».
+      floor_plan_id: body.floorPlanId ?? null,
       measurements: body.measurement ?? {},
       millwork: {
         requirements: body.requirements ?? DEFAULT_REQUIREMENTS,

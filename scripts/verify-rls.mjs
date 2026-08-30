@@ -88,6 +88,13 @@ const service = createClient(URL, SERVICE, {
 const stamp = Date.now().toString(36);
 const made = { users: [], orgs: [] };
 
+/*
+ * Миграция 0008 может быть ещё не применена к этому проекту. Тогда честный
+ * ответ — «не проверено» по этому разделу, а не падение всего прогона:
+ * красный прогон по несуществующей таблице прячет настоящие поломки.
+ */
+const libraryReady = !(await service.from('complexes').select('id').limit(1)).error;
+
 async function makeTenant(label) {
   const email = `rls-${label}-${stamp}@example.test`;
   const password = `Pw-${stamp}-${label}!`;
@@ -147,7 +154,54 @@ async function makeTenant(label) {
     .single();
   if (projectError) throw new Error(`insert project: ${projectError.message}`);
 
-  return { email, password, orgId: org.id, categoryId: category.id, itemId: item.id, project };
+  /*
+   * Библиотека планировок принадлежит организации так же, как каталог:
+   * двадцать обмеренных планировок — это её актив, и чужой сотрудник
+   * не должен видеть их ни строкой.
+   */
+  let complexId = null;
+  let planId = null;
+
+  if (libraryReady) {
+    const { data: complex, error: complexError } = await service
+      .from('complexes')
+      .insert({
+        org_id: org.id,
+        slug: `zk-${label}-${stamp}`,
+        name: `ЖК ${label} ${stamp}`,
+        developer: 'Застройщик',
+        city: 'Астана',
+      })
+      .select('id')
+      .single();
+    if (complexError) throw new Error(`insert complex: ${complexError.message}`);
+    complexId = complex.id;
+
+    const { data: plan, error: planError } = await service
+      .from('floor_plans')
+      .insert({
+        complex_id: complex.id,
+        slug: `plan-${label}-${stamp}`,
+        code: `3К-${label}`,
+        rooms: 3,
+        area_m2: 90.5,
+      })
+      .select('id')
+      .single();
+    if (planError) throw new Error(`insert floor plan: ${planError.message}`);
+    planId = plan.id;
+  }
+
+  return {
+    email,
+    password,
+    orgId: org.id,
+    categoryId: category.id,
+    itemId: item.id,
+    project,
+    complexId,
+    planId,
+  };
 }
 
 async function signIn(tenant) {
@@ -256,6 +310,73 @@ try {
 
   const foreignOrg = await clientA.from('orgs').select('id').eq('id', b.orgId);
   check('чужая организация не видна', (foreignOrg.data ?? []).length === 0);
+
+  console.log('\nБиблиотека планировок');
+
+  if (!libraryReady) {
+    console.log('  пропущено: миграция 0008_complexes.sql не применена к этому проекту');
+  }
+
+  if (libraryReady) {
+  const ownComplexes = await clientA.from('complexes').select('id, org_id');
+  check(
+    'свои ЖК видны',
+    (ownComplexes.data ?? []).some((r) => r.id === a.complexId),
+    `видно строк: ${ownComplexes.data?.length ?? 0}`,
+  );
+  check(
+    'чужие ЖК не видны в общем списке',
+    !(ownComplexes.data ?? []).some((r) => r.org_id === b.orgId),
+  );
+
+  const foreignComplex = await clientA.from('complexes').select('id').eq('id', b.complexId);
+  check(
+    'запрос чужого ЖК по id возвращает ноль строк',
+    (foreignComplex.data ?? []).length === 0,
+    `строк: ${foreignComplex.data?.length ?? 0}`,
+  );
+
+  const foreignPlan = await clientA.from('floor_plans').select('id').eq('id', b.planId);
+  check(
+    'чужая планировка не видна',
+    (foreignPlan.data ?? []).length === 0,
+    `строк: ${foreignPlan.data?.length ?? 0}`,
+  );
+
+  // Замер чужой планировки — это подмена размеров в чужом объекте.
+  const hijack = await clientA
+    .from('floor_plans')
+    .update({ measured_at: new Date().toISOString(), measured_by: 'чужой' })
+    .eq('id', b.planId)
+    .select('id');
+  check(
+    'замер в чужую планировку не записывается',
+    (hijack.data ?? []).length === 0,
+    `строк: ${hijack.data?.length ?? 0}`,
+  );
+
+  const readyInForeign = await clientA.from('ready_projects').insert({
+    floor_plan_id: b.planId,
+    zone: 'kitchen',
+    title: 'Чужой готовый проект',
+  });
+  check(
+    'готовый проект в чужую планировку не вставляется',
+    Boolean(readyInForeign.error),
+    readyInForeign.error?.message?.slice(0, 80) ?? 'ошибки нет — это провал',
+  );
+
+  const anonPlans = createClient(URL, ANON, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const anonRead = await anonPlans.from('floor_plans').select('id');
+  check(
+    'анонимный запрос к планировкам не отдаёт ничего',
+    (anonRead.data ?? []).length === 0,
+    `строк: ${anonRead.data?.length ?? 0}`,
+  );
+
+  }
 
   console.log('\nКабинет клиента');
   check(

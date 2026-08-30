@@ -64,12 +64,31 @@ import {
 } from '../lib/millwork/modules';
 import {
   DEMO_COMMS,
+  DEMO_MEASUREMENT,
   DEMO_OPENINGS,
   DEMO_PROJECT,
   DEMO_RATES,
   DEMO_REQUIREMENTS,
 } from '../lib/millwork/demo';
 import type { CommPoint, Opening, RunRequirements } from '../types/millwork';
+import {
+  DEFAULT_TOLERANCE_MM,
+  MAX_READY_PER_ZONE,
+  isMeasured,
+  libraryBasis,
+  planRunLengthMm,
+  planZone,
+  type FloorPlan,
+  type ReadyProject,
+} from '../types/complexes';
+import { limitByZone } from '../lib/complexes';
+import { slugify, uniqueSlug } from '../lib/slug';
+import {
+  isEstimatePreliminary,
+  resolveSurvey,
+  surveyFromMeasurement,
+  surveyStats,
+} from '../types/survey';
 
 let failed = 0;
 let passed = 0;
@@ -1048,6 +1067,151 @@ console.log('\nРучная расстановка');
   const asManual = sinkWaterConflicts(farSink, COMMS, true);
   check('автоматически — блокирующее', asAuto[0]?.severity === 'blocking');
   check('вручную — предупреждение', asManual[0]?.severity === 'clarify');
+}
+
+/* ─────────────────────  Библиотека планировок ЖК  ───────────────────── */
+
+console.log('\nБиблиотека планировок');
+{
+  const measurement = DEMO_MEASUREMENT;
+
+  const draft: FloorPlan = {
+    id: 'p1',
+    complexId: 'c1',
+    slug: '3k-90-5',
+    code: '3К-90.5',
+    rooms: 3,
+    areaM2: 90.5,
+    roomAreas: [
+      { name: 'Кухня', areaM2: 11.85 },
+      { name: 'Спальня', areaM2: 14.71 },
+    ],
+    zones: [],
+    toleranceMm: DEFAULT_TOLERANCE_MM,
+    isPublic: true,
+  };
+
+  const measured: FloorPlan = {
+    ...draft,
+    zones: [{ zone: 'kitchen', measurement }],
+    measuredAt: '2026-03-12T09:00:00.000Z',
+    measuredBy: 'Ержан',
+    sourceApartment: 'кв. 42, 5 этаж',
+  };
+
+  /*
+   * Планировка работает В ДВУХ состояниях. Флага «обмерена» в базе нет
+   * намеренно: его забудут переключить, и продукт начнёт обещать проекты,
+   * которых не существует.
+   */
+  check('заведённая планировка не считается обмеренной', !isMeasured(draft));
+  check('обмеренная считается', isMeasured(measured));
+  check(
+    'зоны без даты замера мало',
+    !isMeasured({ ...measured, measuredAt: undefined }),
+  );
+  check(
+    'даты без зон тоже мало',
+    !isMeasured({ ...measured, zones: [] }),
+  );
+
+  check(
+    'длина ряда берётся из библиотечного замера',
+    planRunLengthMm(planZone(measured, 'kitchen')) === measurement.walls[0].lengthMm,
+    String(planRunLengthMm(planZone(measured, 'kitchen'))),
+  );
+  check(
+    'у необмеренной длины ряда нет вовсе',
+    planRunLengthMm(planZone(draft, 'kitchen')) === null,
+  );
+
+  // Честная строка: дата, квартира и допуск. Её читает и замерщик, и клиент.
+  const basis = libraryBasis(measured);
+  check(
+    'происхождение размеров названо словами',
+    basis.includes('кв. 42') && basis.includes('±30'),
+    basis,
+  );
+
+  /* ── Подстановка размеров: ДОПУЩЕНИЯ, а не замер ── */
+
+  const survey = surveyFromMeasurement(measurement, basis, 'Ержан', '2026-08-30');
+  const stats = surveyStats(survey);
+
+  check(
+    'ни одна подставленная величина не считается замеренной',
+    stats.measured === 0,
+    `замеренных ${stats.measured}, допущений ${stats.assumed}`,
+  );
+  check('и все они помечены как допущения', stats.assumed > 0);
+  check(
+    'каждое допущение объясняет, откуда взялось',
+    stats.assumptions.every((a) => a.basis === basis),
+  );
+  check(
+    'смета по подставленным размерам — предварительная',
+    isEstimatePreliminary(stats),
+  );
+
+  // Размеры при этом настоящие: ряд собирается той же длины.
+  const resolved = resolveSurvey(survey);
+  check(
+    'подставленная длина стены совпадает с библиотечной',
+    resolved.measurement.walls[0].lengthMm === measurement.walls[0].lengthMm,
+    `${resolved.measurement.walls[0].lengthMm} против ${measurement.walls[0].lengthMm}`,
+  );
+  check(
+    'проёмы и коммуникации тоже подставлены',
+    resolved.measurement.walls[0].openings.length === measurement.walls[0].openings.length &&
+      resolved.measurement.comms.length === measurement.comms.length,
+  );
+  check(
+    'шаги замера не отмечены пройденными',
+    Object.values(survey.steps).every((state) => state === 'todo'),
+  );
+
+  /* ── Готовых проектов на зону не больше трёх ── */
+
+  const project = (id: string, zone: ZoneKind): ReadyProject => ({
+    id,
+    floorPlanId: 'p1',
+    zone,
+    title: `Проект ${id}`,
+    run: buildRun(baseInput),
+    priceSnapshot: {},
+    total: 1_000_000,
+    isPublic: true,
+  });
+
+  const many = [
+    project('1', 'kitchen'),
+    project('2', 'kitchen'),
+    project('3', 'kitchen'),
+    project('4', 'kitchen'),
+    project('5', 'bedroom'),
+  ];
+
+  const shown = limitByZone(many);
+  check(
+    'на зону показываем не больше трёх',
+    shown.filter((p) => p.zone === 'kitchen').length === MAX_READY_PER_ZONE,
+    `их ${shown.filter((p) => p.zone === 'kitchen').length}`,
+  );
+  check(
+    'но другая зона от этого не страдает',
+    shown.some((p) => p.zone === 'bedroom'),
+  );
+
+  /* ── Адрес публичной страницы читается человеком ── */
+
+  check('слаг из русского названия', slugify('ЖК Апельсин') === 'zhk-apelsin', slugify('ЖК Апельсин'));
+  check('слаг из кода планировки', slugify('3К-90.5') === '3k-90-5', slugify('3К-90.5'));
+  check('казахские буквы тоже переводятся', slugify('Ұлы Дала') === 'uly-dala', slugify('Ұлы Дала'));
+  check(
+    'второй такой же код не затирает первый',
+    uniqueSlug('3К-90.5', ['3k-90-5']) === '3k-90-5-2',
+    uniqueSlug('3К-90.5', ['3k-90-5']),
+  );
 }
 
 /* ─────────────────────  Компоновки одной кухни  ───────────────────── */

@@ -229,8 +229,11 @@ export default function CatalogAdmin({ orgId, initialCategories, initialItems }:
 
     setNotice(
       res.ok
-        ? `Добавлено позиций: ${data.added}, пропущено ${data.skipped}. ` +
-          'Это средние по рынку — проверьте цены своей компании.'
+        ? `Добавлено позиций: ${data.added}, пропущено ${data.skipped}` +
+          // Категории заводятся вместе с прайсом: на пустом каталоге их нет,
+          // а без категории товар в базе не существует.
+          (data.addedCategories ? `, заведено категорий: ${data.addedCategories}` : '') +
+          '. Это средние по рынку — проверьте цены своей компании.'
         : (data.error ?? 'Не удалось заполнить прайс.'),
     );
     if (res.ok) await reload();

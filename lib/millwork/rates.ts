@@ -101,10 +101,47 @@ export const TYPICAL_PRICE_LIST: TypicalRate[] = [
   { estimateKey: 'appliance_microwave', article: 'APP-MICROWAVE', name: 'Микроволновка', categoryKey: 'appliances', unit: 'piece', price: 90000 },
 ];
 
-export const TYPICAL_CATEGORIES = [
-  { key: 'materials', name: 'Материалы', appliesTo: 'object' as const, unit: 'm2' as const },
-  { key: 'countertops', name: 'Столешницы и панели', appliesTo: 'object' as const, unit: 'running_meter' as const },
-  { key: 'hardware', name: 'Фурнитура', appliesTo: 'object' as const, unit: 'piece' as const },
-  { key: 'services', name: 'Услуги', appliesTo: 'object' as const, unit: 'piece' as const },
-  { key: 'appliances', name: 'Техника', appliesTo: 'object' as const, unit: 'piece' as const },
+export type TypicalCategory = {
+  key: string;
+  name: string;
+  /**
+   * Все типовые категории — `object`. Это статьи СМЕТЫ, а не поверхности:
+   * пометь их `zone`, и двери-купе со штангой полезут в шаг «Материалы»
+   * как товары на выбор клиенту.
+   */
+  appliesTo: 'object';
+  unit: 'm2' | 'piece' | 'running_meter' | 'set';
+};
+
+/**
+ * Категории типового прайса.
+ *
+ * КАЖДЫЙ `categoryKey` из `TYPICAL_PRICE_LIST` обязан быть здесь. Список
+ * зон (спальня, прихожая, зал, санузел) появился позже прайса, и четыре
+ * категории под них тогда не завели: загрузка падала целиком на
+ * `category_id … violates not-null constraint`. Расхождение теперь ловит
+ * `orphanTypicalRates` и приёмка `npm run test:catalog`.
+ */
+export const TYPICAL_CATEGORIES: TypicalCategory[] = [
+  { key: 'materials', name: 'Материалы', appliesTo: 'object', unit: 'm2' },
+  { key: 'countertops', name: 'Столешницы и панели', appliesTo: 'object', unit: 'running_meter' },
+  { key: 'hardware', name: 'Фурнитура', appliesTo: 'object', unit: 'piece' },
+  { key: 'services', name: 'Услуги', appliesTo: 'object', unit: 'piece' },
+  { key: 'appliances', name: 'Техника', appliesTo: 'object', unit: 'piece' },
+  // Зоны кроме кухни: шкаф-купе, прихожая, ТВ-зона, санузел.
+  { key: 'wardrobe', name: 'Шкафы-купе и гардеробные', appliesTo: 'object', unit: 'm2' },
+  { key: 'hallway', name: 'Прихожая', appliesTo: 'object', unit: 'piece' },
+  { key: 'living', name: 'ТВ-зона', appliesTo: 'object', unit: 'running_meter' },
+  { key: 'bath', name: 'Санузел', appliesTo: 'object', unit: 'piece' },
 ];
+
+/**
+ * Позиции прайса, для которых нет категории.
+ *
+ * В норме список пуст. Не пуст — значит прайс уехал вперёд категорий, и
+ * загрузка на пустом каталоге упадёт на NOT NULL: товару некуда встать.
+ */
+export function orphanTypicalRates(): TypicalRate[] {
+  const known = new Set(TYPICAL_CATEGORIES.map((c) => c.key));
+  return TYPICAL_PRICE_LIST.filter((rate) => !known.has(rate.categoryKey));
+}

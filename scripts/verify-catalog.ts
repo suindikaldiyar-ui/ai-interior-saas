@@ -9,6 +9,12 @@
 import { decodeCsvBuffer, normalizeUnit, parseCatalogCsv, parseCsv } from '../lib/csv';
 import { buildSpec, quantityFor, specTotal, surfaceArea } from '../lib/catalog';
 import { roomFromAnalysis } from '../lib/roomFromAnalysis';
+import {
+  REQUIRED_RATE_KEYS,
+  TYPICAL_CATEGORIES,
+  TYPICAL_PRICE_LIST,
+  orphanTypicalRates,
+} from '../lib/millwork/rates';
 import { needsConfirmation } from '../types/roomAnalysis';
 import { targetsFor, targetLabel, type CatalogEntryFull } from '../types/catalog';
 import { DEFAULT_ROOM, type RoomConfig } from '../types/interior';
@@ -282,6 +288,60 @@ console.log('\nФото и замер');
     needsConfirmation({ ...analysis, warnings: ['сильное искажение'] }),
   );
   check('чистый уверенный анализ проходит молча', !needsConfirmation(analysis));
+}
+
+/* ─────────────────────────  Типовой прайс  ───────────────────────── */
+
+console.log('\nТиповой прайс');
+{
+  /*
+   * Товар в каталоге не существует без категории: `category_id` объявлен
+   * NOT NULL. Прайс однажды уехал вперёд списка категорий — четыре зоны
+   * (шкаф-купе, прихожая, ТВ-зона, санузел) появились в позициях, но не
+   * в категориях, — и загрузка на пустом каталоге падала целиком.
+   */
+  const orphans = orphanTypicalRates();
+  check(
+    'у каждой позиции прайса есть своя категория',
+    orphans.length === 0,
+    orphans.map((r) => `${r.article}→${r.categoryKey}`).slice(0, 5).join(', '),
+  );
+
+  const keys = TYPICAL_CATEGORIES.map((c) => c.key);
+  check('ключи категорий не повторяются', new Set(keys).size === keys.length);
+
+  /*
+   * Все типовые категории — `object`: это статьи сметы, а не поверхности.
+   * Пометь их `zone`, и двери-купе со штангой полезут в шаг «Материалы»
+   * как товары на выбор клиенту.
+   */
+  check(
+    'типовые категории не притворяются поверхностями',
+    TYPICAL_CATEGORIES.every((c) => c.appliesTo === 'object'),
+  );
+
+  const units = new Set(['m2', 'piece', 'running_meter', 'set']);
+  check(
+    'единицы измерения из перечисления базы',
+    TYPICAL_CATEGORIES.every((c) => units.has(c.unit)) &&
+      TYPICAL_PRICE_LIST.every((r) => units.has(r.unit)),
+  );
+
+  const articles = TYPICAL_PRICE_LIST.map((r) => r.article);
+  check('артикулы прайса уникальны', new Set(articles).size === articles.length);
+
+  const estimateKeys = TYPICAL_PRICE_LIST.map((r) => r.estimateKey);
+  check(
+    'ключи статей сметы уникальны',
+    new Set(estimateKeys).size === estimateKeys.length,
+    'иначе одна ставка перетрёт другую',
+  );
+
+  check(
+    'обязательные статьи сметы в прайсе есть',
+    REQUIRED_RATE_KEYS.every((key) => estimateKeys.includes(key)),
+    REQUIRED_RATE_KEYS.filter((key) => !estimateKeys.includes(key)).join(', '),
+  );
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

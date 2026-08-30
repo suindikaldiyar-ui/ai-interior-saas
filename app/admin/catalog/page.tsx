@@ -68,6 +68,12 @@ export default async function CatalogPage() {
             Объекты
           </Link>
           <Link
+            href="/admin/complexes"
+            className="mw-touch flex items-center border border-navyLine px-3 text-[11px] uppercase tracking-[0.1em] text-graphiteMw hover:border-cyan hover:text-textMw"
+          >
+            Планировки
+          </Link>
+          <Link
             href="/admin/templates"
             className="mw-touch flex items-center border border-navyLine px-3 text-[11px] uppercase tracking-[0.1em] text-graphiteMw hover:border-cyan hover:text-textMw"
           >

@@ -2,6 +2,8 @@ import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import Workspace from '@/components/millwork/Workspace';
 import { fetchCatalog } from '@/lib/catalog';
+import { PLAN_FIELDS, toPlan } from '@/lib/complexes';
+import { isMeasured, libraryBasis } from '@/types/complexes';
 
 import { missingRequiredRates, ratesFromCatalog } from '@/lib/millwork/rates';
 import { DEFAULT_REQUIREMENTS, workspaceInput } from '@/lib/millwork/workspace';
@@ -77,10 +79,29 @@ export default async function ProjectPage({ params }: { params: { id: string } }
     ? storageUrl(PROJECTS_BUCKET, project.source_photo_path)
     : null;
 
+  /*
+   * Объект собран по типовой планировке: строка «размеры из библиотеки»
+   * обязана вернуться вместе с объектом. Замерщик может открыть его через
+   * неделю и уже не помнить, что часть величин — чужой замер.
+   */
+  let libraryNote: string | null = null;
+  if (project.floor_plan_id) {
+    const { data: planRow } = await supabase
+      .from('floor_plans')
+      .select(PLAN_FIELDS)
+      .eq('id', project.floor_plan_id)
+      .maybeSingle();
+
+    const plan = planRow ? toPlan(planRow as never) : null;
+    if (plan && isMeasured(plan)) libraryNote = libraryBasis(plan);
+  }
+
   return (
     <Workspace
       {...input}
       roomPhoto={roomPhoto}
+      floorPlanId={project.floor_plan_id}
+      libraryNote={libraryNote}
       projectId={project.id}
       shareToken={project.share_token}
       clientName={project.client_name}
