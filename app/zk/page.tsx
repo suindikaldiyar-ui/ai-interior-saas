@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { fetchPublicLibrary } from '@/lib/complexes';
-import { orgByHost } from '@/lib/org';
+import { publicOrg } from '@/lib/org';
 import { supabaseService } from '@/lib/supabase/server';
 import { isMeasured } from '@/types/complexes';
 
@@ -14,7 +14,7 @@ export const dynamic = 'force-dynamic';
  */
 export default async function ZkIndexPage() {
   const service = supabaseService();
-  const org = await orgByHost();
+  const org = await publicOrg();
 
   const library = service && org ? await fetchPublicLibrary(service, org.id) : [];
 
@@ -28,9 +28,22 @@ export default async function ZkIndexPage() {
           встанет и сколько это стоит.
         </p>
 
-        {library.length === 0 && (
+        {/*
+          * Организация не определилась по домену, а в базе их несколько:
+          * угадывать нельзя — чужая библиотека на чужом домене хуже пустой
+          * страницы. Говорим прямо, чтобы владелец понял, что настроить.
+          */}
+        {!org && (
           <p className="text-[15px] leading-snug text-graphiteMw">
-            Пока ни одной планировки не опубликовано.
+            Домен не привязан к компании. Укажите его в настройках организации
+            или откройте страницу на поддомене компании.
+          </p>
+        )}
+
+        {org && library.length === 0 && (
+          <p className="text-[15px] leading-snug text-graphiteMw">
+            Пока ни одной планировки не опубликовано. Планировка появляется
+            здесь, когда опубликованы и она, и её ЖК.
           </p>
         )}
 

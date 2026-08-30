@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import ThemeToggle from '@/components/ThemeToggle';
 import { fetchPublicComplex, schemeUrl } from '@/lib/complexes';
-import { brandStyle, orgByHost } from '@/lib/org';
+import { brandStyle, publicOrg } from '@/lib/org';
 import { supabaseService } from '@/lib/supabase/server';
 import { isMeasured } from '@/types/complexes';
 
@@ -20,7 +20,7 @@ type PageProps = { params: { complex: string } };
  */
 export default async function ComplexPage({ params }: PageProps) {
   const service = supabaseService();
-  const org = await orgByHost();
+  const org = await publicOrg();
   if (!service || !org) notFound();
 
   const found = await fetchPublicComplex(service, org.id, params.complex);

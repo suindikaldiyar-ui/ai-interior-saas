@@ -219,6 +219,39 @@ export default function ComplexAdmin({ library, ready }: Props) {
   const removeReady = (id: string) =>
     send(`/api/complexes/ready?id=${id}`, { method: 'DELETE' }, 'Готовый проект удалён.');
 
+  /**
+   * Публикация — это СОСТОЯНИЕ, а не действие.
+   *
+   * Кнопка «Скрыть» читается двояко: и как «сейчас видно, нажми чтобы
+   * скрыть», и как «сейчас скрыто». Из-за этого планировка лежала
+   * `is_public = false`, а экран выглядел так, будто она опубликована.
+   * Две кнопки с `aria-pressed` двусмысленности не оставляют.
+   */
+  const publishSwitch = (
+    isPublic: boolean,
+    onChange: (next: boolean) => void,
+  ) => (
+    <span className="flex gap-1">
+      {(
+        [
+          [true, 'Опубликована'],
+          [false, 'Скрыта'],
+        ] as [boolean, string][]
+      ).map(([value, title]) => (
+        <button
+          key={title}
+          type="button"
+          onClick={() => value !== isPublic && onChange(value)}
+          aria-pressed={value === isPublic}
+          disabled={busy}
+          className={`mw-btn ${value === isPublic ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+        >
+          {title}
+        </button>
+      ))}
+    </span>
+  );
+
   /** Полоса подтверждения: последствия названы, кнопок ровно две. */
   const confirmBar = (kind: 'complex' | 'plan', id: string) =>
     confirm && confirm.kind === kind && confirm.id === id ? (
@@ -398,9 +431,26 @@ export default function ComplexAdmin({ library, ready }: Props) {
                 <span className="mw-num text-[13px] text-graphiteMw">
                   {plans.length} планировок
                 </span>
-                {!complex.isPublic && (
-                  <span className="text-[13px] text-tape">скрыт</span>
-                )}
+                {/*
+                  * Видно на /zk ровно то, что опубликовано с обеих сторон.
+                  * Ноль публичных — самая частая причина пустой витрины.
+                  */}
+                <span
+                  className="text-[13px]"
+                  style={{
+                    color:
+                      complex.isPublic && plans.some((p) => p.isPublic)
+                        ? 'var(--text-dim)'
+                        : 'var(--tape)',
+                  }}
+                >
+                  {!complex.isPublic
+                    ? 'ЖК скрыт — на /zk его нет'
+                    : plans.some((p) => p.isPublic)
+                      ? `на /zk видно ${plans.filter((p) => p.isPublic).length}`
+                      : 'на /zk не видно: ни одна планировка не опубликована'}
+                </span>
+
 
                 <div className="ml-auto flex flex-wrap items-center gap-2">
                   <Link href={`/zk/${complex.slug}`} className="mw-btn mw-btn-ghost">
@@ -423,14 +473,7 @@ export default function ComplexAdmin({ library, ready }: Props) {
                   >
                     Изменить
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => void toggleComplexPublic(complex)}
-                    disabled={busy}
-                    className="mw-btn mw-btn-ghost"
-                  >
-                    {complex.isPublic ? 'Скрыть' : 'Опубликовать'}
-                  </button>
+                  {publishSwitch(complex.isPublic, () => void toggleComplexPublic(complex))}
                   <button
                     type="button"
                     onClick={() => void remove('complex', complex.id)}
@@ -650,9 +693,7 @@ export default function ComplexAdmin({ library, ready }: Props) {
                                   ? `Обмерена ${new Date(plan.measuredAt as string).toLocaleDateString('ru-RU')}`
                                   : 'Заведена — размеров ещё нет'}
                               </span>
-                              {!plan.isPublic && (
-                                <span className="text-[13px] text-tape">скрыта</span>
-                              )}
+
 
                               <div className="ml-auto flex flex-wrap items-center gap-2">
                                 <label className="mw-btn mw-btn-ghost cursor-pointer">
@@ -688,14 +729,7 @@ export default function ComplexAdmin({ library, ready }: Props) {
                                 >
                                   Изменить
                                 </button>
-                                <button
-                                  type="button"
-                                  onClick={() => void togglePlanPublic(plan)}
-                                  disabled={busy}
-                                  className="mw-btn mw-btn-ghost"
-                                >
-                                  {plan.isPublic ? 'Скрыть' : 'Опубликовать'}
-                                </button>
+                                {publishSwitch(plan.isPublic, () => void togglePlanPublic(plan))}
                                 <Link
                                   href={`/zk/${complex.slug}/${plan.slug}`}
                                   className="mw-btn mw-btn-ghost"
@@ -712,6 +746,23 @@ export default function ComplexAdmin({ library, ready }: Props) {
                                 </button>
                               </div>
                             </div>
+
+                            {/*
+                              * Разрыв между «я нажал опубликовать» и «на /zk
+                              * пусто» ловится здесь: причина названа прямо,
+                              * а не оставлена на догадки.
+                              */}
+                            {(!plan.isPublic || !complex.isPublic) && (
+                              <p className="mt-1 text-[13px] leading-snug text-tape">
+                                На публичных страницах не видна:{' '}
+                                {!plan.isPublic && !complex.isPublic
+                                  ? 'скрыты и планировка, и ЖК'
+                                  : !plan.isPublic
+                                    ? 'скрыта сама планировка'
+                                    : 'скрыт весь ЖК'}
+                                .
+                              </p>
+                            )}
 
                             {plan.roomAreas.length > 0 && (
                               <p className="mw-num mt-1 text-[13px] text-graphiteMw">

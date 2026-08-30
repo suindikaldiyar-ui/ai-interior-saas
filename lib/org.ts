@@ -47,6 +47,31 @@ export async function orgByHost(): Promise<Org | null> {
   return null;
 }
 
+/**
+ * Организация для ПУБЛИЧНОЙ страницы.
+ *
+ * `orgByHost` находит арендатора по поддомену или привязанному домену. Пока
+ * компания одна и домен ей не привязан, он не находит НИЧЕГО: на localhost,
+ * на адресе хостинга и на голом корневом домене публичные страницы
+ * оказывались пустыми, а страница планировки отдавала 404 — при полностью
+ * опубликованных данных.
+ *
+ * Поэтому запасной путь: если организация в базе РОВНО ОДНА, это она.
+ * Утечки между арендаторами здесь нет — как только компаний становится
+ * больше одной, мы не угадываем, а честно ничего не показываем: чужая
+ * библиотека на чужом домене хуже пустой страницы.
+ */
+export async function publicOrg(): Promise<Org | null> {
+  const byHost = await orgByHost();
+  if (byHost) return byHost;
+
+  const service = supabaseService();
+  if (!service) return null;
+
+  const { data } = await service.from('orgs').select(ORG_FIELDS).limit(2);
+  return (data ?? []).length === 1 ? ((data as Org[])[0] ?? null) : null;
+}
+
 export async function orgById(id: string): Promise<Org | null> {
   const service = supabaseService();
   if (!service) return null;

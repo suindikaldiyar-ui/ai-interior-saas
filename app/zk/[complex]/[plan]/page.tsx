@@ -5,7 +5,7 @@ import PlanLead from '@/components/zk/PlanLead';
 import { fetchPublicPlan, limitByZone, schemeUrl } from '@/lib/complexes';
 import { formatMoney } from '@/lib/millwork/estimate';
 import { zoneProfile } from '@/lib/millwork/zones';
-import { orgByHost, brandStyle } from '@/lib/org';
+import { brandStyle, publicOrg } from '@/lib/org';
 import { storageUrl, PROJECTS_BUCKET } from '@/lib/supabase/config';
 import { supabaseService } from '@/lib/supabase/server';
 import { isMeasured, planRunLengthMm, planZone } from '@/types/complexes';
@@ -28,7 +28,7 @@ type PageProps = { params: { complex: string; plan: string } };
  */
 export default async function PlanPage({ params }: PageProps) {
   const service = supabaseService();
-  const org = await orgByHost();
+  const org = await publicOrg();
   if (!service || !org) notFound();
 
   const found = await fetchPublicPlan(service, org.id, params.complex, params.plan);
