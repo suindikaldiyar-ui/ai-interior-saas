@@ -111,13 +111,28 @@ export default async function PlanPage({ params }: PageProps) {
 
                 return (
                   <article key={project.id} className="mw-panel-flat">
+                    {/*
+                      * Рендер — главная картинка карточки: он продаёт лучше
+                      * чертежа. Но у планировки ЖК нет фотографии квартиры,
+                      * поэтому настоящий в кадре только гарнитур, и об этом
+                      * сказано прямо под картинкой. Без этой строки клиент
+                      * будет искать своё окно и не найдёт — один такой
+                      * разговор дороже красивой картинки.
+                      */}
                     {render && (
-                      /* eslint-disable-next-line @next/next/no-img-element */
-                      <img
-                        src={render}
-                        alt={project.title}
-                        className="mb-2 w-full rounded-[var(--r-control)]"
-                      />
+                      <>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={render}
+                          alt={project.title}
+                          className="w-full rounded-[var(--r-control)]"
+                        />
+                        <p className="mb-2 mt-1 text-[13px] leading-snug text-graphiteMw">
+                          Гарнитур — по размерам со схемы. Комната на
+                          визуализации условная: точную покажем после замера
+                          вашей квартиры.
+                        </p>
+                      </>
                     )}
                     <p className="text-[15px] font-medium leading-tight">{project.title}</p>
                     <p className="mt-0.5 text-[13px] leading-snug text-graphiteMw">

@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import ComplexAdmin from '@/components/admin/ComplexAdmin';
 import OrgBootstrap from '@/components/admin/OrgBootstrap';
 import { fetchLibrary, fetchReady, schemaNeedsMigration } from '@/lib/complexes';
+import { productionSettings } from '@/types/catalog';
 import { SUPABASE_READY } from '@/lib/supabase/config';
 import { currentOrg, currentUser, supabaseServer } from '@/lib/supabase/server';
 import type { ReadyProject } from '@/types/complexes';
@@ -27,6 +28,11 @@ export default async function ComplexesPage() {
 
   const supabase = supabaseServer();
   const library = supabase ? await fetchLibrary(supabase, org.id) : [];
+
+  // Настройки цеха: от толщин и зазоров зависит расход материалов.
+  const { data: orgRow } = supabase
+    ? await supabase.from('orgs').select('production').eq('id', org.id).maybeSingle()
+    : { data: null };
 
   /*
    * Готовые проекты грузим сразу: без них у обмеренной планировки не видно
@@ -65,6 +71,7 @@ export default async function ComplexesPage() {
         /* Пока миграция не применена, размеры со схемы сохранять некуда —
            лучше сказать это прямо, чем показать непонятную ошибку базы. */
         schemaOutdated={schemaNeedsMigration()}
+        production={productionSettings(orgRow?.production)}
       />
     </main>
   );

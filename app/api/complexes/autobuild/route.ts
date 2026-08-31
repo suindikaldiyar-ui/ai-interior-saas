@@ -6,6 +6,7 @@ import { ratesFromCatalog } from '@/lib/millwork/rates';
 import { parseOrgTemplates } from '@/lib/millwork/templates';
 import { supabaseServer } from '@/lib/supabase/server';
 import { hasSchemeSizes, isMeasured } from '@/types/complexes';
+import { productionSettings } from '@/types/catalog';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -64,13 +65,15 @@ export async function POST(request: Request) {
 
   const [catalog, { data: orgRow }] = await Promise.all([
     fetchCatalog(supabase, orgId),
-    supabase.from('orgs').select('run_templates').eq('id', orgId).maybeSingle(),
+    supabase.from('orgs').select('run_templates, production').eq('id', orgId).maybeSingle(),
   ]);
 
   const result = buildAutoProjects({
     plan,
     rates: ratesFromCatalog(catalog),
     templates: parseOrgTemplates(orgRow?.run_templates),
+    // Настройки цеха: от толщин и зазоров зависит расход материалов.
+    production: productionSettings(orgRow?.production),
     calculatedAt: new Date().toISOString(),
   });
 

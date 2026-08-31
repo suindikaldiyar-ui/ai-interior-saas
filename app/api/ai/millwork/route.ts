@@ -7,7 +7,24 @@ import {
   textModel,
 } from '@/lib/gemini';
 import { STANDARD_WIDTHS } from '@/lib/millwork/modules';
-import type { MillworkOp, MillworkRequest, MillworkResponse, Run } from '@/types/millwork';
+import { SECTION_SPECS } from '@/lib/millwork/sections';
+import {
+  allowsAppliance,
+  allowsSection,
+  applianceRefusal,
+  sectionRefusal,
+  zoneAppliances,
+  zoneProfile,
+} from '@/lib/millwork/zones';
+import type {
+  ApplianceKind,
+  MillworkOp,
+  MillworkRequest,
+  MillworkResponse,
+  Run,
+  SectionKind,
+  ZoneKind,
+} from '@/types/millwork';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -16,6 +33,7 @@ export const maxDuration = 60;
 const REQUEST_TIMEOUT_MS = 50_000;
 
 const MODULE_KINDS = ['base', 'upper', 'tall', 'corner_base', 'corner_upper', 'filler'];
+const SECTIONS = Object.keys(SECTION_SPECS);
 const APPLIANCES = [
   'oven',
   'hob',
@@ -50,6 +68,7 @@ const RESPONSE_SCHEMA = {
               'replace_module',
               'set_width',
               'set_fronts',
+              'set_section',
               'move_module',
               'set_option',
             ],
@@ -58,6 +77,7 @@ const RESPONSE_SCHEMA = {
           afterModuleId: { type: 'STRING', nullable: true },
           kind: { type: 'STRING', enum: MODULE_KINDS, nullable: true },
           appliance: { type: 'STRING', enum: APPLIANCES, nullable: true },
+          section: { type: 'STRING', enum: SECTIONS, nullable: true },
           widthMm: { type: 'NUMBER', nullable: true },
           drawerCount: { type: 'NUMBER', nullable: true },
           key: {
@@ -75,10 +95,12 @@ const RESPONSE_SCHEMA = {
 } as const;
 
 function describeRun(run: Run): string {
+  const zone = zoneProfile(run.zone);
   const base = run.modules
     .map(
       (m) =>
         `  - id=${m.id} ${m.kind} ${m.widthMm} мм${m.appliance ? ` техника=${m.appliance}` : ''}` +
+        `${m.section ? ` секция=${m.section}` : ''}` +
         `${m.frontType === 'drawers' ? ` ящиков=${m.drawerCount}` : ''}` +
         `${m.frontType === 'door' ? ` дверей=${m.doorCount}` : ''}`,
     )
@@ -96,7 +118,7 @@ function describeRun(run: Run): string {
           .join('\n')
       : '  - верхнего ряда нет';
 
-  return `Длина ряда: ${run.lengthMm} мм, потолок ${run.ceilingHeightMm} мм.
+  return `Зона: ${zone.title}. Длина ряда: ${run.lengthMm} мм, потолок ${run.ceilingHeightMm} мм.
 Опции: верхний ряд=${run.options.hasUpper}, до потолка=${run.options.upperToCeiling}, фурнитура=${run.options.hardwareClass}, столешница=${run.options.countertop}, антресоль=${run.options.hasCornice}.
 
 Нижний ряд:
@@ -146,10 +168,39 @@ function fail(reply: string, status = 200) {
   return NextResponse.json<MillworkResponse>({ reply, ops: [] }, { status });
 }
 
+/**
+ * ЧТО БЫВАЕТ В ЭТОЙ ЗОНЕ.
+ *
+ * Блок уходит в промпт, но на нём проверка не заканчивается: ответ модели
+ * ещё раз просеивается кодом. Модель — предложение, а не разрешение.
+ */
+function zoneBlock(zone: ZoneKind): string {
+  const profile = zoneProfile(zone);
+  const appliances = zoneAppliances(zone);
+
+  if (appliances.length > 0) {
+    return `# ЗОНА: ${profile.title}
+Доступная техника: ${appliances.join(', ')}.
+Секций в этой зоне нет: состав задаётся приборами и глухими модулями.`;
+  }
+
+  return `# ЗОНА: ${profile.title}
+ТЕХНИКИ В ЭТОЙ ЗОНЕ НЕТ ВООБЩЕ. Ни мойки, ни варочной, ни посудомойки,
+ни холодильника — это шкаф, а не кухня. Операции с полем appliance
+запрещены полностью.
+
+Состав задаётся СЕКЦИЯМИ (op=set_section, поле section):
+${profile.sections.map((kind) => `- ${kind} — ${SECTION_SPECS[kind].title}: ${SECTION_SPECS[kind].hint}`).join('\n')}
+
+Если просят поставить сюда кухонный прибор — верни пустой ops и объясни,
+что в этой зоне его не бывает.`;
+}
+
 /** Нормализация: в типизированные операции проходит только валидное. */
-function normalizeOps(raw: unknown): MillworkOp[] {
-  if (!Array.isArray(raw)) return [];
+function normalizeOps(raw: unknown, zone: ZoneKind): { ops: MillworkOp[]; refused: string[] } {
+  if (!Array.isArray(raw)) return { ops: [], refused: [] };
   const ops: MillworkOp[] = [];
+  const refused: string[] = [];
 
   for (const item of raw) {
     const o = item as Record<string, unknown>;
@@ -158,6 +209,21 @@ function normalizeOps(raw: unknown): MillworkOp[] {
     const afterModuleId = typeof o.afterModuleId === 'string' ? o.afterModuleId : '';
     const kind = MODULE_KINDS.includes(String(o.kind)) ? (o.kind as MillworkOp extends { kind: infer K } ? K : never) : null;
     const appliance = APPLIANCES.includes(String(o.appliance)) ? String(o.appliance) : undefined;
+    const section = SECTIONS.includes(String(o.section)) ? (String(o.section) as SectionKind) : undefined;
+
+    /*
+     * Последний рубеж: модель может предложить что угодно, но чужой зоне
+     * это не достанется. Отказ называет причину — молчание читалось бы
+     * как поломка команды.
+     */
+    if (appliance && !allowsAppliance(zone, appliance as ApplianceKind)) {
+      refused.push(applianceRefusal(zone, appliance as ApplianceKind));
+      continue;
+    }
+    if (section && !allowsSection(zone, section)) {
+      refused.push(sectionRefusal(zone, section));
+      continue;
+    }
     const widthMm = typeof o.widthMm === 'number' && Number.isFinite(o.widthMm) ? o.widthMm : undefined;
 
     switch (op) {
@@ -181,6 +247,9 @@ function normalizeOps(raw: unknown): MillworkOp[] {
         break;
       case 'set_width':
         if (moduleId && widthMm !== undefined) ops.push({ op: 'set_width', moduleId, widthMm });
+        break;
+      case 'set_section':
+        if (moduleId && section) ops.push({ op: 'set_section', moduleId, section });
         break;
       case 'set_fronts':
         if (moduleId) {
@@ -206,7 +275,7 @@ function normalizeOps(raw: unknown): MillworkOp[] {
     }
   }
 
-  return ops;
+  return { ops, refused };
 }
 
 export async function POST(request: Request) {
@@ -226,6 +295,9 @@ export async function POST(request: Request) {
     return fail('Пустая команда.', 400);
   }
 
+  // Зона решает, что вообще бывает в составе — и в промпте, и в разборе.
+  const zone: ZoneKind = body.requirements?.zone ?? body.run.zone ?? 'kitchen';
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
@@ -241,7 +313,9 @@ export async function POST(request: Request) {
             role: 'user',
             parts: [
               {
-                text: `# ТЕКУЩИЙ РЯД\n${describeRun(body.run)}\n\n# КОМАНДА\n${body.message}`,
+                text:
+                  `${zoneBlock(zone)}\n\n# ТЕКУЩИЙ РЯД\n${describeRun(body.run)}` +
+                  `\n\n# КОМАНДА\n${body.message}`,
               },
             ],
           },
@@ -264,11 +338,20 @@ export async function POST(request: Request) {
     if (!text) return fail('Модель вернула пустой ответ.');
 
     const parsed = JSON.parse(stripFence(text)) as Record<string, unknown>;
+    const { ops, refused } = normalizeOps(parsed.ops, zone);
 
-    return NextResponse.json<MillworkResponse>({
-      reply: typeof parsed.reply === 'string' ? parsed.reply : 'Готово.',
-      ops: normalizeOps(parsed.ops),
-    });
+    /*
+     * Модель предложила чужое — говорим об этом её же ответом вместо
+     * «Готово», после которого на экране ничего не изменилось.
+     */
+    const reply =
+      refused.length > 0
+        ? Array.from(new Set(refused)).join(' ')
+        : typeof parsed.reply === 'string'
+          ? parsed.reply
+          : 'Готово.';
+
+    return NextResponse.json<MillworkResponse>({ reply, ops });
   } catch (err) {
     const aborted = err instanceof Error && err.name === 'AbortError';
     return fail(

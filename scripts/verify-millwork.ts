@@ -21,7 +21,16 @@ import {
   mostDifferent,
 } from '../lib/millwork/variants';
 import { RUN_TEMPLATES, requirementsFromTemplate, templateFits } from '../lib/millwork/templates';
-import { ZONE_ORDER, ZONE_PROFILES } from '../lib/millwork/zones';
+import {
+  ZONE_ORDER,
+  ZONE_PROFILES,
+  allowsAppliance,
+  allowsSection,
+  applianceRefusal,
+  zoneAppliances,
+  zoneOptions,
+  zoneProfile,
+} from '../lib/millwork/zones';
 import {
   templateAppliancesWidthMm,
   templatesForZone,
@@ -57,6 +66,7 @@ import {
   widthOverflowMm,
 } from '../lib/millwork/invariants';
 import {
+  APPLIANCE_SLOTS,
   CORNER_SIZE_MM,
   GEOMETRY,
   MIN_WIDTH,
@@ -70,7 +80,7 @@ import {
   DEMO_RATES,
   DEMO_REQUIREMENTS,
 } from '../lib/millwork/demo';
-import type { CommPoint, Opening, RunRequirements } from '../types/millwork';
+import type { CommPoint, Opening, RunRequirements, SectionKind } from '../types/millwork';
 import {
   DEFAULT_TOLERANCE_MM,
   MAX_READY_PER_ZONE,
@@ -1087,6 +1097,136 @@ console.log('\nРучная расстановка');
   check('вручную — предупреждение', asManual[0]?.severity === 'clarify');
 }
 
+/* ─────────────────────  Состав по зоне  ───────────────────── */
+
+console.log('\nСостав по зоне');
+{
+  /*
+   * Шаг «Состав» долго оставался кухонным: в шкафу-купе предлагались мойка
+   * и посудомойка. Замерщик видит кнопки, которых там быть не может, и
+   * перестаёт доверять экрану — а он показывает этот экран клиенту.
+   */
+  check(
+    'на кухне доступна вся техника',
+    zoneAppliances('kitchen').length === Object.keys(APPLIANCE_SLOTS).length,
+    `${zoneAppliances('kitchen').length} приборов`,
+  );
+
+  for (const zone of ZONE_ORDER.filter((z) => z !== 'kitchen')) {
+    check(
+      `в зоне «${zoneProfile(zone).title}» техники нет вовсе`,
+      zoneAppliances(zone).length === 0,
+      zoneAppliances(zone).join(', '),
+    );
+  }
+
+  check('в спальне мойки не бывает', !allowsAppliance('bedroom', 'sink600'));
+  check('и посудомойки тоже', !allowsAppliance('bedroom', 'dishwasher45'));
+  check('а на кухне бывает', allowsAppliance('kitchen', 'sink600'));
+
+  // Секции — наоборот: они есть везде, кроме кухни.
+  check('у кухни секций нет', zoneProfile('kitchen').sections.length === 0);
+  check(
+    'в прихожей есть крючки, обувница, скамья и зеркало',
+    ['hooks', 'shoes', 'bench', 'mirror'].every((s) =>
+      allowsSection('hallway', s as SectionKind),
+    ),
+    zoneProfile('hallway').sections.join(', '),
+  );
+  check('витрина бывает в спальне', allowsSection('bedroom', 'glass_display'));
+  check('но штанги в санузле не бывает', !allowsSection('bathroom', 'hanging_long'));
+
+  /* ── Отказ называет причину ── */
+
+  const refusal = applianceRefusal('bedroom', 'dishwasher45');
+  check(
+    'отказ объясняет мир, а не говорит «не могу»',
+    refusal.includes('В спальне') && refusal.toLowerCase().includes('посудомойка'),
+    refusal,
+  );
+
+  /* ── Движок не пускает чужое ── */
+
+  const bedroom = buildRun({
+    lengthMm: 3200,
+    ceilingHeightMm: 2700,
+    requirements: {
+      ...REQ,
+      zone: 'bedroom',
+      appliances: [],
+      sections: ['hanging_long', 'shelves', 'drawers'],
+      options: { ...REQ.options, hasUpper: false },
+    },
+    openings: [],
+    comms: [],
+  });
+
+  const hacked = applyOps({
+    run: bedroom,
+    requirements: { ...REQ, zone: 'bedroom', appliances: [] },
+    ops: [{ op: 'add_module', kind: 'base', appliance: 'dishwasher45' }],
+  });
+
+  check(
+    'операция с кухонным прибором в спальне отклонена',
+    !hacked.modules.some((m) => m.appliance === 'dishwasher45'),
+  );
+  check(
+    'и отказ назван словами',
+    hacked.warnings.some((w) => w.toLowerCase().includes('посудомойка')),
+    hacked.warnings.join(' | ') || 'предупреждений нет',
+  );
+  check('ряд при этом остался целым', runWidthSum(hacked) === hacked.lengthMm);
+
+  // Своя секция меняется, чужая — нет.
+  const changed = applyOps({
+    run: bedroom,
+    requirements: { ...REQ, zone: 'bedroom', appliances: [] },
+    ops: [{ op: 'set_section', moduleId: bedroom.modules[0].id, section: 'shelves' }],
+  });
+  check(
+    'секция своей зоны меняется',
+    changed.modules[0].section === 'shelves',
+    String(changed.modules[0].section),
+  );
+  check(
+    'и наполнение пересчитывается под неё',
+    (changed.modules[0].fill?.shelves.length ?? 0) > 0,
+  );
+
+  const foreign = applyOps({
+    run: bedroom,
+    requirements: { ...REQ, zone: 'bedroom', appliances: [] },
+    ops: [{ op: 'set_section', moduleId: bedroom.modules[0].id, section: 'vanity' }],
+  });
+  check(
+    'секция чужой зоны отклонена',
+    foreign.modules[0].section !== 'vanity',
+    String(foreign.modules[0].section),
+  );
+  check(
+    'с объяснением',
+    foreign.warnings.some((w) => w.toLowerCase().includes('тумба под раковину')),
+    foreign.warnings.join(' | '),
+  );
+
+  /* ── Переключатели тоже по зоне ── */
+
+  check('верхний ряд настраивается только на кухне', zoneOptions('kitchen').upperRow);
+  check(
+    'в шкафу-купе переключателя верхнего ряда нет',
+    !zoneOptions('bedroom').upperRow,
+    'он там ничего не менял бы: высоту задаёт профиль зоны',
+  );
+  check('двери-купе предлагаются в спальне и прихожей',
+    zoneOptions('bedroom').doorSystem && zoneOptions('hallway').doorSystem);
+  check('и не предлагаются на кухне', !zoneOptions('kitchen').doorSystem);
+  check(
+    'столешница настраивается там, где она есть',
+    zoneOptions('kitchen').countertop && !zoneOptions('bedroom').countertop,
+  );
+}
+
 /* ─────────────────  Размеры со схемы и автопроект  ───────────────── */
 
 console.log('\nРазмеры со схемы');
@@ -1331,6 +1471,26 @@ console.log('\nРазмеры со схемы');
     'и без ставок каталога тоже: нули с виду настоящей цены',
     Boolean(buildAutoProjects({ plan: scheme, rates: {} }).blocked),
     buildAutoProjects({ plan: scheme, rates: {} }).blocked ?? '',
+  );
+
+  /* ── Расход материалов ── */
+
+  /*
+   * Мебельщику расход интереснее цены: по нему он мгновенно понимает,
+   * сходится ли смета с его практикой. Считается из той же детализировки,
+   * что уходит в цех, — второй расчёт разошёлся бы с раскроем.
+   */
+  const materials = kitchen!.materials;
+  check('расход ЛДСП посчитан', materials.ldspM2 > 0, `${materials.ldspM2} м²`);
+  check('фасады посчитаны', materials.frontM2 > 0, `${materials.frontM2} м²`);
+  check('задние стенки посчитаны', materials.hdfM2 > 0, `${materials.hdfM2} м²`);
+  check('кромка посчитана', materials.edgeThickM > 0, `${materials.edgeThickM} м.п.`);
+  check('детали посчитаны', materials.count > 0, `${materials.count} шт.`);
+
+  check(
+    'расход считается той же детализировкой, что уходит в цех',
+    JSON.stringify(materials) ===
+      JSON.stringify(panelTotals(buildPanels({ run: kitchen!.run }))),
   );
 
   // Слишком короткая стена: шаблона нет — не выдумываем.

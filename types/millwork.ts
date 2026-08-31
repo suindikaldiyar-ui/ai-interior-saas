@@ -378,6 +378,8 @@ export type MillworkOp =
   | { op: 'replace_module'; moduleId: string; kind: ModuleKind; appliance?: ApplianceKind }
   | { op: 'set_width'; moduleId: string; widthMm: number }
   | { op: 'set_fronts'; moduleId: string; drawerCount: number }
+  /** Сменить начинку модуля в зонах без техники: штанга вместо полок. */
+  | { op: 'set_section'; moduleId: string; section: SectionKind }
   | { op: 'move_module'; moduleId: string; afterModuleId: string }
   | { op: 'set_option'; key: 'upperToCeiling' | 'hardwareClass' | 'countertop' | 'hasUpper' | 'hasCornice'; value: string | boolean };
 

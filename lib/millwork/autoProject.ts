@@ -3,6 +3,7 @@ import { buildEstimate, type RateTable } from './estimate';
 import { missingRequiredRates } from './rates';
 import { requirementsFromTemplate, suggestTemplate, type RunTemplate } from './templates';
 import { MAIN_VARIANT, activeStrategies, DEFAULT_STRATEGIES, withStrategy } from './variants';
+import { buildPanels, panelTotals } from './panels';
 import { zoneProfile } from './zones';
 import { measurementFromWall, SCHEME_CEILING_MM } from '../planCalibration';
 import {
@@ -12,7 +13,8 @@ import {
   type FloorPlan,
   type SizeSource,
 } from '@/types/complexes';
-import type { Estimate, Measurement, Run, ZoneKind } from '@/types/millwork';
+import type { Estimate, Measurement, PanelTotals, Run, ZoneKind } from '@/types/millwork';
+import type { ProductionSettings } from '@/types/catalog';
 
 /**
  * АВТОПРОЕКТ ПОД ПЛАНИРОВКУ.
@@ -35,6 +37,14 @@ export type AutoProject = {
   templateId: string;
   /** Откуда размеры: от этого зависит слово «предварительно» на странице. */
   sizeSource: SizeSource;
+  /**
+   * Расход материалов: ЛДСП, фасады, ХДФ, кромка, число деталей.
+   *
+   * Мебельщику это интереснее цены: по расходу он мгновенно понимает,
+   * сходится ли смета с его практикой. Наружу, клиенту, он не уходит —
+   * по нему видны и схема сборки, и нормы кромки.
+   */
+  materials: PanelTotals;
 };
 
 /** Почему по зоне ничего не собралось. Пользователь имеет право знать. */
@@ -73,6 +83,8 @@ export function buildAutoProjects(input: {
   rates: RateTable;
   calculatedAt?: string;
   templates?: RunTemplate[];
+  /** Настройки цеха: от них зависит расход материалов. */
+  production?: ProductionSettings;
 }): AutoProjectResult {
   const { plan, rates } = input;
 
@@ -151,6 +163,8 @@ export function buildAutoProjects(input: {
     }
 
     const estimate = buildEstimate(run, MAIN_VARIANT, rates, [], input.calculatedAt);
+    // Детализировка уже умеет считаться — берём её, а не считаем заново.
+    const materials = panelTotals(buildPanels({ run, production: input.production }));
 
     projects.push({
       zone,
@@ -160,6 +174,7 @@ export function buildAutoProjects(input: {
       lengthMm,
       templateId: template.id,
       sizeSource: source,
+      materials,
     });
   }
 

@@ -10,13 +10,22 @@ import {
 } from '@/lib/millwork/modules';
 import { widthOverflowMm } from '@/lib/millwork/invariants';
 import { freeSpaceMm } from '@/lib/millwork/layout';
+import { SECTION_SPECS } from '@/lib/millwork/sections';
+import {
+  zoneAppliances,
+  zoneOptions,
+  zoneProfile,
+} from '@/lib/millwork/zones';
 import type {
   ApplianceKind,
+  DoorSystem,
   FridgeType,
   MillworkOp,
   Module,
   Run,
   RunRequirements,
+  SectionKind,
+  ZoneKind,
 } from '@/types/millwork';
 
 /**
@@ -28,6 +37,10 @@ import type {
  */
 export type CompositionPatch = {
   appliances?: ApplianceKind[];
+  /** Состав секций зон без техники: шкаф собирается из них. */
+  sections?: SectionKind[];
+  /** Купе или распашные — главное решение шкафа. */
+  doorSystem?: DoorSystem;
   /** С какой стороны стоят пеналы: этим отличаются компоновки. */
   tallSide?: 'left' | 'right';
   columnTop?: 'microwave' | 'oven';
@@ -45,6 +58,8 @@ export type CompositionPatch = {
 
 type Props = {
   run: Run;
+  /** Зона объекта: она решает, что вообще бывает в составе. */
+  zone?: ZoneKind;
   selectedModuleId: string | null;
   onSelect: (moduleId: string | null) => void;
   onOps: (ops: MillworkOp[]) => void;
@@ -55,13 +70,10 @@ type Props = {
 };
 
 /**
- * Техника, которую замерщик добавляет и убирает сам.
- *
- * Микроволновку мебельщик ставит почти в каждый заказ, а конфигуратор её
- * не предлагал вовсе. В умолчания она при этом не идёт: набор техники —
- * это разговор с клиентом, а не наша догадка.
+ * Порядок техники на экране: слева направо, как её обычно и ставят.
+ * САМ НАБОР приходит из зоны — в шкафу-купе приборов нет вовсе.
  */
-const ADDABLE: ApplianceKind[] = [
+const APPLIANCE_ORDER: ApplianceKind[] = [
   'fridge',
   'oven',
   'microwave',
@@ -73,21 +85,11 @@ const ADDABLE: ApplianceKind[] = [
   'dishwasher60',
 ];
 
-const APPLIANCE_OPTIONS: (ApplianceKind | '')[] = [
-  '',
-  'sink600',
-  'sink800',
-  'hob',
-  'oven',
-  'dishwasher45',
-  'dishwasher60',
-  'fridge',
-  'microwave',
-  'hood',
-];
+
 
 export default function RunEditor({
   run,
+  zone = 'kitchen',
   selectedModuleId,
   onSelect,
   onOps,
@@ -149,7 +151,21 @@ export default function RunEditor({
   const label = (unit: Module) =>
     unit.column || !unit.appliance ? unit.label : APPLIANCE_SLOTS[unit.appliance].title;
 
+  const profile = zoneProfile(zone);
+  const options = zoneOptions(zone);
+
+  /*
+   * Состав зоны: на кухне это приборы, в остальных зонах — секции.
+   * Списки берутся из профиля зоны, а не из константы экрана: четыре
+   * независимых списка разъехались бы на первой же правке.
+   */
+  const appliances = APPLIANCE_ORDER.filter((a) => zoneAppliances(zone).includes(a));
+  const sections = profile.sections;
+
   const wanted = new Set(requirements?.appliances ?? []);
+  const chosenSections = requirements?.sections ?? profile.defaultSections;
+  const wantedSections = new Set(chosenSections);
+
   const toggleAppliance = (appliance: ApplianceKind) => {
     if (!onComposition || !requirements) return;
     const next = wanted.has(appliance)
@@ -158,7 +174,16 @@ export default function RunEditor({
     onComposition({ appliances: next });
   };
 
+  const toggleSection = (section: SectionKind) => {
+    if (!onComposition) return;
+    const next = wantedSections.has(section)
+      ? chosenSections.filter((s) => s !== section)
+      : [...chosenSections, section];
+    onComposition({ sections: next });
+  };
+
   const upperToCeiling = Boolean(run.options.upperToCeiling);
+  const doorSystem = run.doorSystem ?? profile.doorSystem;
 
   return (
     <div>
@@ -168,23 +193,53 @@ export default function RunEditor({
         */}
       {requirements && onComposition && (
         <div className="mw-panel mb-3">
-          <span className="mw-label">Техника</span>
-          <div className="mt-1 flex flex-wrap gap-1">
-            {ADDABLE.map((appliance) => {
-              const on = wanted.has(appliance);
-              return (
-                <button
-                  key={appliance}
-                  type="button"
-                  onClick={() => toggleAppliance(appliance)}
-                  aria-pressed={on}
-                  className={`mw-btn ${on ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
-                >
-                  {APPLIANCE_SLOTS[appliance].title}
-                </button>
-              );
-            })}
-          </div>
+          {/* Кухня собирается приборами, шкаф — секциями. */}
+          {appliances.length > 0 ? (
+            <>
+              <span className="mw-label">Техника</span>
+              <div className="mt-1 flex flex-wrap gap-1">
+                {appliances.map((appliance) => {
+                  const on = wanted.has(appliance);
+                  return (
+                    <button
+                      key={appliance}
+                      type="button"
+                      onClick={() => toggleAppliance(appliance)}
+                      aria-pressed={on}
+                      className={`mw-btn ${on ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+                    >
+                      {APPLIANCE_SLOTS[appliance].title}
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          ) : (
+            <>
+              <span className="mw-label">Что внутри</span>
+              <div className="mt-1 flex flex-wrap gap-1">
+                {sections.map((section) => {
+                  const on = wantedSections.has(section);
+                  return (
+                    <button
+                      key={section}
+                      type="button"
+                      onClick={() => toggleSection(section)}
+                      aria-pressed={on}
+                      title={SECTION_SPECS[section].hint}
+                      className={`mw-btn ${on ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+                    >
+                      {SECTION_SPECS[section].title}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="mt-2 text-[13px] leading-snug text-graphiteMw">
+                Порядок секций — слева направо по ряду; ширины считает
+                раскладка, как и на кухне.
+              </p>
+            </>
+          )}
 
           {wanted.has('oven') && wanted.has('microwave') && (
             <p className="mt-2 text-[13px] leading-snug text-graphiteMw">
@@ -197,7 +252,7 @@ export default function RunEditor({
             * Верхний ряд до потолка просит примерно каждый второй клиент,
             * поэтому это выбор на виду, а не опция в глубине.
             */}
-          {run.options.hasUpper && (
+          {options.upperRow && run.options.hasUpper && (
             <div className="mt-3">
               <span className="mw-label">Верхний ряд</span>
               <div className="mt-1 flex flex-wrap gap-1">
@@ -221,19 +276,49 @@ export default function RunEditor({
             </div>
           )}
 
-          <div className="mt-3">
-            <span className="mw-label">Дополнительно</span>
-            <div className="mt-1 flex flex-wrap gap-1">
-              <button
-                type="button"
-                onClick={() => onComposition({ glassDisplay: !requirements.glassDisplay })}
-                aria-pressed={Boolean(requirements.glassDisplay)}
-                className={`mw-btn ${requirements.glassDisplay ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
-              >
-                Витрина с подсветкой
-              </button>
+          {/*
+            * Купе или распашные — главное решение шкафа и разные деньги:
+            * полотна считаются по м², петли и фасады не считаются вовсе.
+            */}
+          {options.doorSystem && (
+            <div className="mt-3">
+              <span className="mw-label">Двери</span>
+              <div className="mt-1 flex flex-wrap gap-1">
+                {(
+                  [
+                    ['sliding', 'Купе'],
+                    ['hinged', 'Распашные'],
+                  ] as [DoorSystem, string][]
+                ).map(([value, title]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => onComposition({ doorSystem: value })}
+                    aria-pressed={doorSystem === value}
+                    className={`mw-btn ${doorSystem === value ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+                  >
+                    {title}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
+
+          {options.glassDisplay && (
+            <div className="mt-3">
+              <span className="mw-label">Дополнительно</span>
+              <div className="mt-1 flex flex-wrap gap-1">
+                <button
+                  type="button"
+                  onClick={() => onComposition({ glassDisplay: !requirements.glassDisplay })}
+                  aria-pressed={Boolean(requirements.glassDisplay)}
+                  className={`mw-btn ${requirements.glassDisplay ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+                >
+                  Витрина с подсветкой
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -449,52 +534,92 @@ export default function RunEditor({
               </select>
             </label>
 
-            <label className="block">
-              <span className="mw-label">Тип</span>
-              <select
-                value={selected.kind}
-                onChange={(e) =>
-                  onOps([
-                    {
-                      op: 'replace_module',
-                      moduleId: selected.id,
-                      kind: e.target.value as Module['kind'],
-                      appliance: selected.appliance,
-                    },
-                  ])
-                }
-                className="mw-touch mt-1 w-full border border-blueprint/40 bg-field px-1.5 text-[13px]"
-              >
-                <option value="base">Нижний</option>
-                <option value="tall">Пенал</option>
-                <option value="corner_base">Угловой</option>
-              </select>
-            </label>
+            {/*
+              * Тип модуля правится там, где типов несколько. В зонах без
+              * техники его задаёт секция: пенал под пальто и тумба под
+              * раковину — это не «выбор пользователя», а свойство секции.
+              */}
+            {appliances.length > 0 && (
+              <label className="block">
+                <span className="mw-label">Тип</span>
+                <select
+                  value={selected.kind}
+                  onChange={(e) =>
+                    onOps([
+                      {
+                        op: 'replace_module',
+                        moduleId: selected.id,
+                        kind: e.target.value as Module['kind'],
+                        appliance: selected.appliance,
+                      },
+                    ])
+                  }
+                  className="mw-touch mt-1 w-full border border-blueprint/40 bg-field px-1.5 text-[13px]"
+                >
+                  <option value="base">Нижний</option>
+                  <option value="tall">Пенал</option>
+                  <option value="corner_base">Угловой</option>
+                </select>
+              </label>
+            )}
 
-            <label className="block">
-              <span className="mw-label">Техника</span>
-              <select
-                value={selected.appliance ?? ''}
-                onChange={(e) => {
-                  const value = e.target.value as ApplianceKind | '';
-                  onOps([
-                    {
-                      op: 'replace_module',
-                      moduleId: selected.id,
-                      kind: value ? APPLIANCE_SLOTS[value].kind : 'base',
-                      appliance: value || undefined,
-                    },
-                  ]);
-                }}
-                className="mw-touch mt-1 w-full border border-blueprint/40 bg-field px-1.5 text-[13px]"
-              >
-                {APPLIANCE_OPTIONS.map((a) => (
-                  <option key={a || 'none'} value={a}>
-                    {a ? APPLIANCE_SLOTS[a].title : 'Нет'}
-                  </option>
-                ))}
-              </select>
-            </label>
+            {/*
+              * НИ ОДНОГО ЧУЖОГО ПУНКТА. В шкафу-купе мойки не бывает,
+              * и предлагать её в выпадающем списке — то же самое, что
+              * показать кнопку, которая ничего не делает.
+              */}
+            {appliances.length > 0 ? (
+              <label className="block">
+                <span className="mw-label">Техника</span>
+                <select
+                  value={selected.appliance ?? ''}
+                  onChange={(e) => {
+                    const value = e.target.value as ApplianceKind | '';
+                    onOps([
+                      {
+                        op: 'replace_module',
+                        moduleId: selected.id,
+                        kind: value ? APPLIANCE_SLOTS[value].kind : 'base',
+                        appliance: value || undefined,
+                      },
+                    ]);
+                  }}
+                  className="mw-touch mt-1 w-full border border-blueprint/40 bg-field px-1.5 text-[13px]"
+                >
+                  <option value="">Нет</option>
+                  {appliances.map((a) => (
+                    <option key={a} value={a}>
+                      {APPLIANCE_SLOTS[a].title}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : (
+              <label className="block">
+                <span className="mw-label">Секция</span>
+                <select
+                  value={selected.section ?? ''}
+                  onChange={(e) => {
+                    const value = e.target.value as SectionKind | '';
+                    if (!value) return;
+                    onOps([{ op: 'set_section', moduleId: selected.id, section: value }]);
+                  }}
+                  className="mw-touch mt-1 w-full border border-blueprint/40 bg-field px-1.5 text-[13px]"
+                >
+                  {!selected.section && <option value="">—</option>}
+                  {sections.map((section) => (
+                    <option key={section} value={section}>
+                      {SECTION_SPECS[section].title}
+                    </option>
+                  ))}
+                </select>
+                {selected.section && (
+                  <span className="mt-1 block text-[13px] leading-snug text-graphiteMw">
+                    {SECTION_SPECS[selected.section].hint}
+                  </span>
+                )}
+              </label>
+            )}
           </div>
         </div>
       )}
@@ -516,13 +641,15 @@ export default function RunEditor({
         >
           + Модуль
         </button>
-        <button
-          type="button"
-          onClick={() => onOps([{ op: 'add_module', kind: 'tall', widthMm: 600 }])}
-          className="mw-btn mw-btn-ghost"
-        >
-          + Пенал
-        </button>
+        {appliances.length > 0 && (
+          <button
+            type="button"
+            onClick={() => onOps([{ op: 'add_module', kind: 'tall', widthMm: 600 }])}
+            className="mw-btn mw-btn-ghost"
+          >
+            + Пенал
+          </button>
+        )}
       </div>
     </div>
   );

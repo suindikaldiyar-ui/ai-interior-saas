@@ -246,6 +246,8 @@ export default function Workspace(props: WorkspaceProps) {
    */
   const [composition, setComposition] = useState<CompositionPatch>({
     appliances: props.initialState?.requirements?.appliances,
+    sections: props.initialState?.requirements?.sections,
+    doorSystem: props.initialState?.requirements?.doorSystem,
     columnTop: props.initialState?.requirements?.columnTop,
     fridgeType: props.initialState?.requirements?.fridgeType,
     glassDisplay: props.initialState?.requirements?.glassDisplay,
@@ -334,6 +336,8 @@ export default function Workspace(props: WorkspaceProps) {
     return {
       ...base,
       appliances: composition.appliances ?? base.appliances,
+      sections: composition.sections ?? base.sections,
+      doorSystem: composition.doorSystem ?? base.doorSystem,
       columnTop: composition.columnTop ?? base.columnTop,
       fridgeType: composition.fridgeType ?? base.fridgeType,
       glassDisplay: composition.glassDisplay ?? base.glassDisplay,
@@ -354,6 +358,8 @@ export default function Workspace(props: WorkspaceProps) {
     const next: RunRequirements = {
       ...base,
       appliances: composition.appliances ?? base.appliances,
+      sections: composition.sections ?? base.sections,
+      doorSystem: composition.doorSystem ?? base.doorSystem,
       tallSide: composition.tallSide ?? base.tallSide,
       columnTop: composition.columnTop ?? base.columnTop,
       fridgeType: composition.fridgeType ?? base.fridgeType,
@@ -636,6 +642,8 @@ export default function Workspace(props: WorkspaceProps) {
           body: JSON.stringify({
             message: text,
             run: active.run,
+            // Зона решает, что вообще бывает в составе: и в промпте,
+            // и в разборе ответа модели.
             requirements,
           }),
         });
@@ -1098,6 +1106,7 @@ export default function Workspace(props: WorkspaceProps) {
 
             <RunEditor
               run={active.run}
+              zone={zone}
               selectedModuleId={selectedId}
               onSelect={setSelectedId}
               onOps={runOps}

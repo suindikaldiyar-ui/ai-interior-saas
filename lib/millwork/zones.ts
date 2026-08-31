@@ -1,4 +1,6 @@
-import type { DoorSystem, SectionKind, ZoneKind } from '@/types/millwork';
+import { APPLIANCE_SLOTS } from './modules';
+import { SECTION_SPECS } from './sections';
+import type { ApplianceKind, DoorSystem, SectionKind, ZoneKind } from '@/types/millwork';
 
 /**
  * Зоны квартиры.
@@ -29,6 +31,12 @@ export type ZoneProfile = {
   facadeTitle: string;
   /** Как зону называют в разговоре с клиентом: род у зон разный. */
   yours: string;
+  /**
+   * «на кухне», «в спальне» — предложный падеж. Без него отказ звучит
+   * машинно: «в зоне «спальня» посудомойка не бывает» читается как
+   * ошибка программы, а не как объяснение мира.
+   */
+  locative: string;
   /** Какие секции доступны в этой зоне. */
   sections: SectionKind[];
   /** Состав по умолчанию, если шаблон не выбран. */
@@ -58,6 +66,7 @@ export const ZONE_PROFILES: Record<ZoneKind, ZoneProfile> = {
     hint: 'Нижний и верхний ряд, техника, мойка, столешница',
     facadeTitle: 'Фасады кухни',
     yours: 'Ваша кухня',
+    locative: 'на кухне',
     sections: [],
     defaultSections: [],
     fillSection: 'shelves',
@@ -79,7 +88,16 @@ export const ZONE_PROFILES: Record<ZoneKind, ZoneProfile> = {
     hint: 'Шкаф-купе до потолка: штанга, полки, ящики',
     facadeTitle: 'Фасады шкафа',
     yours: 'Ваша спальня',
-    sections: ['hanging_long', 'hanging_double', 'shelves', 'drawers', 'open', 'mezzanine'],
+    locative: 'в спальне',
+    sections: [
+      'hanging_long',
+      'hanging_double',
+      'shelves',
+      'drawers',
+      'open',
+      'mezzanine',
+      'glass_display',
+    ],
     defaultSections: ['hanging_long', 'shelves', 'drawers', 'hanging_double'],
     fillSection: 'shelves',
     doorSystem: 'sliding',
@@ -101,6 +119,7 @@ export const ZONE_PROFILES: Record<ZoneKind, ZoneProfile> = {
     hint: 'Вешалка, обувница, скамья, зеркало',
     facadeTitle: 'Фасады прихожей',
     yours: 'Ваша прихожая',
+    locative: 'в прихожей',
     sections: ['hooks', 'shoes', 'bench', 'mirror', 'shelves', 'mezzanine'],
     defaultSections: ['hooks', 'shoes', 'bench', 'mirror'],
     fillSection: 'shelves',
@@ -122,6 +141,7 @@ export const ZONE_PROFILES: Record<ZoneKind, ZoneProfile> = {
     hint: 'ТВ-зона: ниша, подвесные модули, подсветка',
     facadeTitle: 'Фасады модулей',
     yours: 'Ваш зал',
+    locative: 'в зале',
     sections: ['tv_niche', 'hanging_module', 'open', 'drawers', 'shelves'],
     defaultSections: ['hanging_module', 'tv_niche', 'hanging_module', 'drawers'],
     fillSection: 'hanging_module',
@@ -142,6 +162,7 @@ export const ZONE_PROFILES: Record<ZoneKind, ZoneProfile> = {
     hint: 'Тумба под раковину, пенал, зеркальный шкаф',
     facadeTitle: 'Фасады тумбы',
     yours: 'Ваш санузел',
+    locative: 'в санузле',
     sections: ['vanity', 'tall_unit', 'mirror_cabinet', 'open', 'drawers'],
     defaultSections: ['vanity', 'tall_unit'],
     // Длинную стену санузла добираем тумбами, а не частоколом пеналов.
@@ -181,4 +202,96 @@ export const ZONE_DRAFT_NOTE =
 export function zoneHeightMm(kind: ZoneKind | undefined | null, ceilingHeightMm: number): number {
   const profile = zoneProfile(kind);
   return profile.height === 'ceiling' ? ceilingHeightMm : profile.height;
+}
+
+/* ─────────────────  Что бывает в этой зоне, а что нет  ───────────────── */
+
+/**
+ * ОДИН ИСТОЧНИК ПРАВДЫ О СОСТАВЕ ЗОНЫ.
+ *
+ * Шаг «Состав» долго оставался кухонным: холодильник, мойка и посудомойка
+ * предлагались в шкафу-купе. Замерщик видит кнопки, которых там быть
+ * не может, и перестаёт доверять экрану целиком — а он показывает этот
+ * экран клиенту.
+ *
+ * Поэтому список доступного считается ОТСЮДА везде: чипы состава,
+ * выпадающие списки модуля, операции движка и разбор команд модели.
+ * Четыре независимых списка разъехались бы на первой же правке.
+ */
+
+/** Приборы этой зоны. В шкафу-купе их нет вовсе — и это не «пока нет». */
+export function zoneAppliances(zone: ZoneKind | undefined | null): ApplianceKind[] {
+  return zoneProfile(zone).kind === 'kitchen'
+    ? (Object.keys(APPLIANCE_SLOTS) as ApplianceKind[])
+    : [];
+}
+
+export function allowsAppliance(
+  zone: ZoneKind | undefined | null,
+  appliance: ApplianceKind,
+): boolean {
+  return zoneAppliances(zone).includes(appliance);
+}
+
+export function allowsSection(
+  zone: ZoneKind | undefined | null,
+  section: SectionKind,
+): boolean {
+  return zoneProfile(zone).sections.includes(section);
+}
+
+/**
+ * Отказ словами, а не молчанием.
+ *
+ * «В спальне посудомойки не бывает» объясняет мир, а «не могу» выглядит
+ * поломкой. Формулировка одна на интерфейс, движок и модель.
+ */
+export function zoneRefusal(zone: ZoneKind | undefined | null, what: string): string {
+  return `${zoneProfile(zone).locative[0].toUpperCase()}${zoneProfile(zone).locative.slice(1)} такого не бывает: ${what}.`;
+}
+
+export function applianceRefusal(
+  zone: ZoneKind | undefined | null,
+  appliance: ApplianceKind,
+): string {
+  return zoneRefusal(zone, APPLIANCE_SLOTS[appliance].title.toLowerCase());
+}
+
+export function sectionRefusal(
+  zone: ZoneKind | undefined | null,
+  section: SectionKind,
+): string {
+  return zoneRefusal(zone, SECTION_SPECS[section].title.toLowerCase());
+}
+
+/**
+ * Какие переключатели состава показывать.
+ *
+ * Переключатель, который ничего не меняет, — та же ложь, что чужая кнопка:
+ * `upperToCeiling` в шкафу-купе не читается вовсе (высоту там задаёт
+ * профиль зоны), а дверей-купе не бывает на кухне.
+ */
+export type ZoneOptions = {
+  /** Верхний ряд и его высота: только там, где верхний ряд вообще есть. */
+  upperRow: boolean;
+  /** Купе или распашные: там, где шкаф закрывают полотнами. */
+  doorSystem: boolean;
+  /** Столешница и фартук. */
+  countertop: boolean;
+  /** Витрина с подсветкой как отдельная опция ряда. */
+  glassDisplay: boolean;
+};
+
+export function zoneOptions(zone: ZoneKind | undefined | null): ZoneOptions {
+  const profile = zoneProfile(zone);
+  const kitchen = profile.kind === 'kitchen';
+
+  return {
+    upperRow: kitchen,
+    // Купе ставят в шкаф: спальня и прихожая. На кухне их не бывает.
+    doorSystem: profile.kind === 'bedroom' || profile.kind === 'hallway',
+    countertop: profile.hasCountertop,
+    // В остальных зонах витрина — это секция состава, а не опция ряда.
+    glassDisplay: kitchen,
+  };
 }

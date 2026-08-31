@@ -9,6 +9,9 @@ import {
 import { buildUpperRow, fillGap } from './layout';
 import { assertRunFits, widthOverflowMm } from './invariants';
 import { runFingerprint } from './fingerprint';
+import { defaultFill } from './fill';
+import { SECTION_SPECS } from './sections';
+import { allowsAppliance, allowsSection, applianceRefusal, sectionRefusal } from './zones';
 import type {
   ApplianceKind,
   MillworkOp,
@@ -17,6 +20,7 @@ import type {
   Opening,
   Run,
   RunRequirements,
+  SectionKind,
 } from '@/types/millwork';
 
 /**
@@ -115,7 +119,28 @@ export function applyOps({ run, requirements, ops, openings = [] }: ApplyOpsInpu
   let options = { ...run.options };
   const warnings: string[] = [];
 
+  const zone = requirements.zone ?? run.zone ?? 'kitchen';
+
   for (const op of ops) {
+    /*
+     * НИ ОДНОГО ЧУЖОГО ЭЛЕМЕНТА, откуда бы операция ни пришла — из ленты
+     * модулей, из командной строки или от модели. Отказ называет причину:
+     * «в зоне «спальня» посудомойки не бывает» объясняет мир, а молчание
+     * выглядит поломкой.
+     */
+    const appliance =
+      op.op === 'add_module' || op.op === 'replace_module' ? op.appliance : undefined;
+
+    if (appliance && !allowsAppliance(zone, appliance)) {
+      warnings.push(applianceRefusal(zone, appliance));
+      continue;
+    }
+
+    if (op.op === 'set_section' && !allowsSection(zone, op.section)) {
+      warnings.push(sectionRefusal(zone, op.section));
+      continue;
+    }
+
     switch (op.op) {
       case 'add_module': {
         const width = op.appliance
@@ -192,6 +217,39 @@ export function applyOps({ run, requirements, ops, openings = [] }: ApplyOpsInpu
         break;
       }
 
+      /*
+       * Смена начинки в зонах без техники. Секция задаёт и тип модуля,
+       * и фасад: пенал под пальто и тумба под раковину — это свойства
+       * секции, а не выбор в отдельном списке.
+       */
+      case 'set_section': {
+        const at = modules.findIndex((m) => m.id === op.moduleId);
+        if (at < 0) {
+          warnings.push(`Модуль ${op.moduleId} не найден.`);
+          break;
+        }
+
+        const spec = SECTION_SPECS[op.section as SectionKind];
+        const width = modules[at].widthMm;
+        const fronts =
+          spec.frontType === 'drawers'
+            ? frontPlan(spec.moduleKind, width, spec.drawerCount)
+            : frontPlan(spec.moduleKind, width);
+
+        modules[at] = {
+          ...modules[at],
+          kind: spec.moduleKind,
+          section: op.section,
+          label: spec.title,
+          frontType: spec.frontType,
+          drawerCount: spec.frontType === 'drawers' ? fronts.drawerCount : 0,
+          doorCount: spec.frontType === 'door' ? fronts.doorCount : 0,
+          // Наполнение считается заново: полки и штанга у секций разные.
+          fill: undefined,
+        };
+        break;
+      }
+
       case 'move_module': {
         const from = modules.findIndex((m) => m.id === op.moduleId);
         const to = modules.findIndex((m) => m.id === op.afterModuleId);
@@ -216,6 +274,15 @@ export function applyOps({ run, requirements, ops, openings = [] }: ApplyOpsInpu
   }
 
   modules = rebalance(modules, run.lengthMm);
+
+  /*
+   * Наполнение пересчитывается там, где оно слетело со сменой секции:
+   * чертёж, смета и детализировка обязаны видеть одну мебель.
+   */
+  const shell = { zone, ceilingHeightMm: run.ceilingHeightMm, options };
+  modules = modules.map((unit, i) =>
+    unit.fill ? unit : { ...unit, fill: defaultFill(unit, shell, i, modules.length) },
+  );
 
   const nextRun: Run = {
     ...run,

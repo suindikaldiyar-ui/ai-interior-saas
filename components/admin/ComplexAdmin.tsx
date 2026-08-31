@@ -6,6 +6,11 @@ import { useState } from 'react';
 import { compressPhoto, photoToFile } from '@/lib/photo';
 import { schemeUrl } from '@/lib/complexes';
 import PlanCalibrator from './PlanCalibrator';
+import PanelList from '@/components/millwork/PanelList';
+import PlanRenderer from './PlanRenderer';
+import { buildPanels, panelTotals } from '@/lib/millwork/panels';
+import { panelsCsvFile, panelsFileName } from '@/lib/millwork/csv-export';
+import { DEFAULT_PRODUCTION, type ProductionSettings } from '@/types/catalog';
 import {
   DEFAULT_TOLERANCE_MM,
   MAX_READY_PER_ZONE,
@@ -42,6 +47,8 @@ type Props = {
   ready: Record<string, ReadyProject[]>;
   /** Миграция 0009 не применена: размеры со схемы сохранять некуда. */
   schemaOutdated?: boolean;
+  /** Настройки цеха: от них зависит расход материалов. */
+  production?: ProductionSettings;
 };
 
 type ComplexDraft = { name: string; developer: string; city: string; slug: string };
@@ -63,7 +70,12 @@ const emptyPlan = (): Omit<PlanDraft, 'slug' | 'sourceApartment'> => ({
   toleranceMm: DEFAULT_TOLERANCE_MM,
 });
 
-export default function ComplexAdmin({ library, ready, schemaOutdated = false }: Props) {
+export default function ComplexAdmin({
+  library,
+  ready,
+  schemaOutdated = false,
+  production = DEFAULT_PRODUCTION,
+}: Props) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -82,6 +94,13 @@ export default function ComplexAdmin({ library, ready, schemaOutdated = false }:
   );
   /** Планировка, у которой сейчас снимают размеры со схемы. */
   const [calibrating, setCalibrating] = useState<FloorPlan | null>(null);
+  /** Проект, у которого раскрыта детализировка. */
+  const [panelsOf, setPanelsOf] = useState<string | null>(null);
+  /*
+   * Проект, который сейчас рисуют. Сцена монтируется только под него:
+   * держать три сцены одновременно планшет не обязан.
+   */
+  const [renderingOf, setRenderingOf] = useState<string | null>(null);
 
   const send = async (url: string, init: RequestInit, ok: string) => {
     setBusy(true);
@@ -277,6 +296,26 @@ export default function ComplexAdmin({ library, ready, schemaOutdated = false }:
       json('PATCH', { id: complex.id, isPublic: !complex.isPublic }),
       complex.isPublic ? 'ЖК скрыт с публичных страниц.' : 'ЖК опубликован.',
     );
+
+  /**
+   * Выгрузка для раскроя — тот же файл, что с объекта: `;` в разделителе
+   * и windows-1251, иначе программы раскроя его не примут.
+   */
+  const exportCsv = (project: ReadyProject) => {
+    const panels = buildPanels({ run: project.run, production });
+    // windows-1251 по умолчанию: так файл примут программы раскроя.
+    const { bytes, type } = panelsCsvFile(panels);
+    // Копия в обычный ArrayBuffer: Blob не принимает view поверх чужого буфера.
+    const url = URL.createObjectURL(new Blob([bytes.slice().buffer], { type }));
+
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = panelsFileName(project.title);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
 
   const removeReady = (id: string) =>
     send(`/api/complexes/ready?id=${id}`, { method: 'DELETE' }, 'Готовый проект удалён.');
@@ -912,34 +951,110 @@ export default function ComplexAdmin({ library, ready, schemaOutdated = false }:
 
                             {/* Готовые проекты: их и предлагают первым экраном. */}
                             {list.length > 0 && (
-                              <ul className="mt-2 grid gap-1">
-                                {list.map((project) => (
-                                  <li
-                                    key={project.id}
-                                    className="flex flex-wrap items-baseline gap-x-3 text-[13px]"
-                                  >
-                                    <span>{project.title}</span>
-                                    <span className="text-graphiteMw">
-                                      {zoneProfile(project.zone).title}
-                                    </span>
-                                    {project.isAuto && (
-                                      <span className="text-tape">
-                                        собран автоматически
-                                      </span>
-                                    )}
-                                    <span className="mw-num">
-                                      {formatMoney(project.total)} ₸
-                                    </span>
-                                    <button
-                                      type="button"
-                                      onClick={() => void removeReady(project.id)}
-                                      disabled={busy}
-                                      className="mw-btn mw-btn-ghost ml-auto text-alert"
-                                    >
-                                      Удалить
-                                    </button>
-                                  </li>
-                                ))}
+                              <ul className="mt-2 grid gap-2">
+                                {list.map((project) => {
+                                  const totals = panelTotals(
+                                    buildPanels({ run: project.run, production }),
+                                  );
+                                  const open = panelsOf === project.id;
+
+                                  return (
+                                    <li key={project.id}>
+                                      <div className="flex flex-wrap items-baseline gap-x-3 text-[13px]">
+                                        <span>{project.title}</span>
+                                        <span className="text-graphiteMw">
+                                          {zoneProfile(project.zone).title}
+                                        </span>
+                                        {project.isAuto && (
+                                          <span className="text-tape">
+                                            собран автоматически
+                                          </span>
+                                        )}
+                                        <span className="mw-num">
+                                          {formatMoney(project.total)} ₸
+                                        </span>
+                                        <button
+                                          type="button"
+                                          onClick={() => void removeReady(project.id)}
+                                          disabled={busy}
+                                          className="mw-btn mw-btn-ghost ml-auto text-alert"
+                                        >
+                                          Удалить
+                                        </button>
+                                      </div>
+
+                                      {/*
+                                        * РАСХОД МАТЕРИАЛОВ. Мебельщику он
+                                        * интереснее цены: по нему сразу видно,
+                                        * сходится ли смета с его практикой.
+                                        * На публичной странице этой строки нет
+                                        * и быть не должно — по ней читаются
+                                        * схема сборки, толщины и нормы кромки.
+                                        */}
+                                      <p className="mw-num mt-1 text-[13px] leading-snug text-graphiteMw">
+                                        Расход: ЛДСП {totals.ldspM2} м² · фасады{' '}
+                                        {totals.frontM2} м² · ХДФ {totals.hdfM2} м² ·
+                                        кромка {totals.edgeThickM} м.п. ·{' '}
+                                        {totals.count} деталей
+                                      </p>
+
+                                      <div className="mt-1 flex flex-wrap gap-2">
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            setPanelsOf(open ? null : project.id)
+                                          }
+                                          className="mw-btn mw-btn-ghost"
+                                        >
+                                          {open ? 'Свернуть детализировку' : 'Детализировка'}
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => exportCsv(project)}
+                                          className="mw-btn mw-btn-ghost"
+                                        >
+                                          Выгрузить CSV
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            setRenderingOf(
+                                              renderingOf === project.id ? null : project.id,
+                                            )
+                                          }
+                                          className="mw-btn mw-btn-ghost"
+                                        >
+                                          {project.renderPath ? 'Перерисовать' : 'Отрисовать'}
+                                        </button>
+                                      </div>
+
+                                      {renderingOf === project.id && (
+                                        <PlanRenderer
+                                          project={project}
+                                          production={production}
+                                          onDone={() => {
+                                            setRenderingOf(null);
+                                            setNotice(
+                                              'Визуализация сохранена: она станет главной картинкой на публичной странице.',
+                                            );
+                                            router.refresh();
+                                          }}
+                                        />
+                                      )}
+
+                                      {open && (
+                                        <div className="mt-2">
+                                          <PanelList
+                                            run={project.run}
+                                            title={project.title}
+                                            zone={zoneProfile(project.zone).title}
+                                            production={production}
+                                          />
+                                        </div>
+                                      )}
+                                    </li>
+                                  );
+                                })}
                               </ul>
                             )}
 
