@@ -689,10 +689,17 @@ export default function Workspace(props: WorkspaceProps) {
     [active, requirements, props.openings, flash],
   );
 
-  /** Выбор варианта идёт тем же путём, что и любая правка состава. */
+  /**
+   * Выбор варианта идёт тем же путём, что и любая правка состава, но
+   * ВЫДЕЛЕНИЕ ОСТАЁТСЯ: замерщик при клиенте перебирает варианты подряд —
+   * «а если стекло? а если подъёмник?». Ширина от варианта не меняется,
+   * значит и идентификатор модуля тот же, и меню остаётся открытым.
+   */
   const chooseVariant = (kind: ModuleVariantKind) => {
     if (!selectedId) return;
-    runOps([{ op: 'set_variant', moduleId: selectedId, variant: kind }]);
+    const keep = selectedId;
+    runOps([{ op: 'set_variant', moduleId: keep, variant: kind }]);
+    setSelectedId(keep);
   };
 
   const sendCommand = useCallback(

@@ -109,6 +109,12 @@ import {
   splitAppliances,
 } from '../lib/millwork/composition';
 import {
+  CARGO_MAX_MM,
+  CARGO_MIN_MM,
+  hasBottom,
+  variantsForModule,
+} from '../lib/millwork/moduleVariants';
+import {
   calibrationDriftPercent,
   lengthMm as planLengthMm,
   measurementFromWall,
@@ -1103,6 +1109,206 @@ console.log('\nРучная расстановка');
   const asManual = sinkWaterConflicts(farSink, COMMS, true);
   check('автоматически — блокирующее', asAuto[0]?.severity === 'blocking');
   check('вручную — предупреждение', asManual[0]?.severity === 'clarify');
+}
+
+/* ─────────────────────  Варианты мест  ───────────────────── */
+
+console.log('\nВарианты мест');
+{
+  // Без окна: верхний ряд сплошной, над мойкой есть шкаф.
+  const run = buildRun({
+    lengthMm: 3200,
+    ceilingHeightMm: 2700,
+    requirements: REQ,
+    openings: [],
+    comms: [],
+  });
+
+  const upper = run.upperSegments.flatMap((segment) => segment.modules);
+  const sink = run.modules.find((m) => m.appliance?.startsWith('sink'))!;
+
+  /*
+   * Верхний ряд выравнивается по мойке: в шкаф над ней ставят сушилку,
+   * и он обязан совпадать с мойкой по ширине. Раньше ряд заполнялся
+   * широкими стандартами, накрывал мойку модулем на 1025 мм — вариант
+   * существовал, а места под него не было.
+   */
+  const overSink = upper.find(
+    (m) => m.offsetMm === sink.offsetMm && m.widthMm === sink.widthMm,
+  );
+  check('над мойкой есть свой шкаф той же ширины', Boolean(overSink),
+    upper.map((m) => `${m.offsetMm}:${m.widthMm}`).join(' '));
+
+  const dryerHere = variantsForModule(overSink!, run).some((v) => v.kind === 'upper_dryer');
+  check('и в нём предлагается сушилка', dryerHere);
+
+  const elsewhere = upper.find((m) => m.id !== overSink!.id && !m.appliance)!;
+  check(
+    'а в других местах сушилки нет вовсе',
+    !variantsForModule(elsewhere, run).some((v) => v.kind === 'upper_dryer'),
+    variantsForModule(elsewhere, run).map((v) => v.title).join(', '),
+  );
+
+  // Вытяжка привязана к варочной и вариантом не выбирается.
+  const hood = upper.find((m) => m.appliance === 'hood')!;
+  check('у техники вариантов нет', variantsForModule(hood, run).length === 0);
+
+  /*
+   * Ни одного варианта, который не влезает по ширине: серая кнопка —
+   * это вопрос «почему нельзя», а задавать его на встрече некому.
+   */
+  const tooNarrow = upper.find((m) => m.widthMm < 600 && !m.appliance);
+  if (tooNarrow) {
+    check(
+      'в узкое место сушилка не предлагается',
+      !variantsForModule(tooNarrow, run).some((v) => v.kind === 'upper_dryer'),
+      `${tooNarrow.widthMm} мм`,
+    );
+  }
+
+  /* ── Карго вместо мёртвого места ── */
+
+  const narrow = run.modules.find((m) => !m.appliance && m.widthMm <= CARGO_MAX_MM);
+  check(
+    'узкий остаток стал карго, а не глухой дверцей',
+    narrow?.variant === 'cargo',
+    `${narrow?.widthMm} мм · ${narrow?.label}`,
+  );
+  check('и подписан как карго', narrow?.label === 'Карго');
+
+  const estimate = buildEstimate(run, MAIN_VARIANT, DEMO_RATES);
+  const cargoLine = estimate.lines.find((l) => l.key === 'cargo_150');
+  check('механизм карго попал в смету', (cargoLine?.quantity ?? 0) > 0,
+    `${cargoLine?.quantity} шт · ${cargoLine?.total} ₸`);
+
+  // Уже 150 мм карго не бывает: такой огрызок прирастает к соседу.
+  const tiny = buildRun({
+    lengthMm: 2530,
+    ceilingHeightMm: 2700,
+    requirements: { ...REQ, appliances: ['sink600', 'hob', 'hood'] },
+    openings: [],
+    comms: [],
+  });
+  check(
+    'остаток уже 150 мм карго не становится',
+    tiny.modules.every((m) => m.variant !== 'cargo' || m.widthMm >= CARGO_MIN_MM),
+    tiny.modules.map((m) => `${m.widthMm}${m.variant ? ':' + m.variant : ''}`).join(' '),
+  );
+
+  /* ── Модуль под мойку ── */
+
+  check('у модуля мойки нет дна', !hasBottom(sink));
+  check('а у обычного есть', hasBottom(run.modules.find((m) => !m.appliance)!));
+
+  const sinkPanels = buildPanels({ run }).filter((panel) => panel.moduleId === sink.id);
+  check(
+    'дно не уходит в раскрой',
+    !sinkPanels.some((panel) => panel.name === 'Дно'),
+    sinkPanels.map((p) => p.name).join(', '),
+  );
+  check(
+    'и работа по нему есть в смете',
+    (estimate.lines.find((l) => l.key === 'sink_base')?.quantity ?? 0) === 1,
+  );
+
+  /* ── Выбор варианта ── */
+
+  const before = buildEstimate(run, MAIN_VARIANT, DEMO_RATES).total;
+  const withDryer = applyOps({
+    run,
+    requirements: REQ,
+    ops: [{ op: 'set_variant', moduleId: overSink!.id, variant: 'upper_dryer' }],
+  });
+
+  check('вариант применился', withDryer.warnings.length === 0, withDryer.warnings.join(' | '));
+  check(
+    'сушилка сохранилась после пересборки верхнего ряда',
+    withDryer.upperSegments
+      .flatMap((segment) => segment.modules)
+      .some((m) => m.variant === 'upper_dryer'),
+  );
+  check(
+    'отпечаток изменился: это другая мебель',
+    withDryer.fingerprint !== run.fingerprint,
+    `${run.fingerprint} → ${withDryer.fingerprint}`,
+  );
+
+  const after = buildEstimate(withDryer, MAIN_VARIANT, DEMO_RATES).total;
+  check('и цена выросла на механизм', after > before, `+${Math.round(after - before)} ₸`);
+
+  /* ── Чужое место ── */
+
+  const refused = applyOps({
+    run,
+    requirements: REQ,
+    ops: [{ op: 'set_variant', moduleId: elsewhere.id, variant: 'upper_dryer' }],
+  });
+  check(
+    'в чужое место вариант не встаёт',
+    !refused.upperSegments
+      .flatMap((segment) => segment.modules)
+      .some((m) => m.id === elsewhere.id && m.variant === 'upper_dryer'),
+  );
+  check(
+    'и отказ назван словами',
+    refused.warnings.some((w) => w.includes('не встаёт')),
+    refused.warnings.join(' | ') || 'предупреждений нет',
+  );
+
+  /* ── Ручная расстановка переживает смену варианта ── */
+
+  const manual = buildRun({
+    lengthMm: 3200,
+    ceilingHeightMm: 2700,
+    requirements: { ...REQ, manualAnchors: { hob: 2000 } },
+    openings: [],
+    comms: [],
+  });
+  const hobAt = (r: typeof manual) => {
+    const unit = r.modules.find((m) => m.appliance === 'hob');
+    return unit ? unit.offsetMm + unit.widthMm / 2 : null;
+  };
+  const narrowThere = manual.modules.find((m) => !m.appliance && m.widthMm >= 300);
+
+  if (narrowThere) {
+    const changed = applyOps({
+      run: manual,
+      requirements: { ...REQ, manualAnchors: { hob: 2000 } },
+      ops: [{ op: 'set_variant', moduleId: narrowThere.id, variant: 'drawers' }],
+    });
+    check(
+      'смена варианта не сбрасывает ручную расстановку',
+      hobAt(changed) === hobAt(manual),
+      `${hobAt(manual)} → ${hobAt(changed)}`,
+    );
+  }
+
+  /* ── Зона ── */
+
+  const bedroom = buildRun({
+    lengthMm: 3200,
+    ceilingHeightMm: 2700,
+    requirements: {
+      ...REQ,
+      zone: 'bedroom',
+      appliances: [],
+      sections: ['hanging_long', 'shelves'],
+      options: { ...REQ.options, hasUpper: false },
+    },
+    openings: [],
+    comms: [],
+  });
+
+  const kitchenOnly = bedroom.modules.flatMap((unit) =>
+    variantsForModule(unit, bedroom, 'bedroom').map((v) => v.kind),
+  );
+  check(
+    'в спальне не предлагается ни одного кухонного варианта',
+    !kitchenOnly.some((kind) =>
+      ['cargo', 'sink_base', 'hob_base', 'upper_dryer', 'corner_carousel'].includes(kind),
+    ),
+    Array.from(new Set(kitchenOnly)).join(', ') || 'вариантов нет',
+  );
 }
 
 /* ─────────────────  Угловые и П-образные кухни  ───────────────── */
