@@ -74,14 +74,32 @@ import type { CommPoint, Opening, RunRequirements } from '../types/millwork';
 import {
   DEFAULT_TOLERANCE_MM,
   MAX_READY_PER_ZONE,
+  SCHEME_TOLERANCE_MM,
+  hasSchemeSizes,
   isMeasured,
   libraryBasis,
   planRunLengthMm,
+  planToleranceMm,
   planZone,
+  sizeBasis,
+  sizeSourceFor,
+  zoneRunLengthMm,
+  type DerivedWall,
   type FloorPlan,
+  type PlanPoint,
   type ReadyProject,
 } from '../types/complexes';
 import { limitByZone } from '../lib/complexes';
+import {
+  calibrationDriftPercent,
+  lengthMm as planLengthMm,
+  measurementFromWall,
+  mmPerPxFromArea,
+  openingOnWall,
+  polygonAreaPx,
+  polygonSizeMm,
+} from '../lib/planCalibration';
+import { buildAutoProjects } from '../lib/millwork/autoProject';
 import { slugify, uniqueSlug } from '../lib/slug';
 import {
   isEstimatePreliminary,
@@ -1069,6 +1087,266 @@ console.log('\nРучная расстановка');
   check('вручную — предупреждение', asManual[0]?.severity === 'clarify');
 }
 
+/* ─────────────────  Размеры со схемы и автопроект  ───────────────── */
+
+console.log('\nРазмеры со схемы');
+{
+  /*
+   * Схема застройщика — масштабный чертёж. Комната 3200 × 3700 мм на нём
+   * занимает какой-то прямоугольник в пикселях; площадь из объявления
+   * известна — значит масштаб выводится, а из него длина любой стены.
+   */
+  const KITCHEN_W = 3200;
+  const KITCHEN_H = 3700;
+  const areaM2 = (KITCHEN_W * KITCHEN_H) / 1_000_000;
+
+  // Пусть на схеме комната занимает 320 × 370 px: масштаб ровно 10 мм/px.
+  const square: PlanPoint[] = [
+    { x: 100, y: 100 },
+    { x: 420, y: 100 },
+    { x: 420, y: 470 },
+    { x: 100, y: 470 },
+  ];
+
+  check('площадь контура считается формулой шнурков', polygonAreaPx(square) === 320 * 370);
+  check(
+    'обводка по часовой и против даёт одну площадь',
+    polygonAreaPx([...square].reverse()) === polygonAreaPx(square),
+  );
+
+  const mmPerPx = mmPerPxFromArea(polygonAreaPx(square), areaM2);
+  check('масштаб выводится из площади', mmPerPx !== null && Math.abs(mmPerPx - 10) < 0.001,
+    String(mmPerPx));
+
+  const size = polygonSizeMm(square, mmPerPx!);
+  check(
+    'габариты комнаты сходятся с объявлением',
+    size.widthMm === KITCHEN_W && size.heightMm === KITCHEN_H,
+    `${size.widthMm} × ${size.heightMm}`,
+  );
+  check(
+    'расхождение с объявлением нулевое на точной обводке',
+    calibrationDriftPercent(square, mmPerPx!, areaM2) === 0,
+  );
+
+  // Промах углом на 5 % площади обязан быть виден человеку.
+  const sloppy: PlanPoint[] = [
+    { x: 100, y: 100 },
+    { x: 436, y: 100 },
+    { x: 436, y: 470 },
+    { x: 100, y: 470 },
+  ];
+  check(
+    'кривая обводка показывает расхождение',
+    calibrationDriftPercent(sloppy, mmPerPx!, areaM2) >= 4,
+    `${calibrationDriftPercent(sloppy, mmPerPx!, areaM2)} %`,
+  );
+
+  check('вырожденный контур масштаба не даёт', mmPerPxFromArea(0, areaM2) === null);
+  check('нулевая площадь из объявления тоже', mmPerPxFromArea(1000, 0) === null);
+
+  /* ── Длина стены и проёмы ── */
+
+  const wallFrom: PlanPoint = { x: 100, y: 100 };
+  const wallTo: PlanPoint = { x: 420, y: 100 };
+  check(
+    'длина стены выводится из масштаба',
+    planLengthMm(wallFrom, wallTo, mmPerPx!) === KITCHEN_W,
+    String(planLengthMm(wallFrom, wallTo, mmPerPx!)),
+  );
+
+  // Клики по краям окна проецируются на стену: попасть точно в линию нельзя.
+  const opening = openingOnWall(
+    { from: wallFrom, to: wallTo },
+    { x: 200, y: 112 },
+    { x: 300, y: 96 },
+    mmPerPx!,
+  );
+  check(
+    'проём проецируется на стену',
+    opening?.fromCornerMm === 1000 && opening?.widthMm === 1000,
+    JSON.stringify(opening),
+  );
+  check(
+    'промах мышью в пару сантиметров окном не считается',
+    openingOnWall({ from: wallFrom, to: wallTo }, { x: 200, y: 100 }, { x: 202, y: 100 }, mmPerPx!) ===
+      null,
+  );
+  check(
+    'проём за краем стены обрезается по стене',
+    (openingOnWall(
+      { from: wallFrom, to: wallTo },
+      { x: 60, y: 100 },
+      { x: 200, y: 100 },
+      mmPerPx!,
+    )?.fromCornerMm ?? -1) === 0,
+  );
+
+  /* ── Стена со схемы идёт в обычный конвейер ── */
+
+  const wall: DerivedWall = {
+    zone: 'kitchen',
+    from: wallFrom,
+    to: wallTo,
+    lengthMm: KITCHEN_W,
+    openings: [{ kind: 'window', fromCornerMm: 1000, widthMm: 1000 }],
+  };
+
+  const measurement = measurementFromWall(wall);
+  check('стена со схемы становится замером для движка', measurement.walls[0].lengthMm === KITCHEN_W);
+  check('и проём едет вместе с ней', measurement.walls[0].openings.length === 1);
+  check(
+    'у окна появляется отраслевая высота: на плане её нет физически',
+    measurement.walls[0].openings[0].sillMm === 850,
+  );
+
+  const scheme: FloorPlan = {
+    id: 'p-scheme',
+    complexId: 'c1',
+    slug: '3k-90-5',
+    code: '3К-90.5',
+    rooms: 3,
+    areaM2: 90.5,
+    roomAreas: [{ name: 'Кухня', areaM2 }],
+    zones: [],
+    derivedWalls: [wall],
+    calibration: {
+      mmPerPx: mmPerPx!,
+      basisRoom: 'Кухня',
+      basisAreaM2: areaM2,
+      basisPolygon: square,
+      calibratedAt: '2026-08-30T10:00:00.000Z',
+    },
+    toleranceMm: DEFAULT_TOLERANCE_MM,
+    isPublic: true,
+  };
+
+  /*
+   * ТРИ СОСТОЯНИЯ, а не два: заведена, размеры со схемы, обмерена.
+   * Обещания у них разные, и путать их нельзя.
+   */
+  check('планировка со схемой не считается обмеренной', !isMeasured(scheme));
+  check('но размеры со схемы у неё есть', hasSchemeSizes(scheme));
+  check('источник размеров зоны — схема', sizeSourceFor(scheme, 'kitchen') === 'scheme');
+  check('длина ряда берётся со схемы', zoneRunLengthMm(scheme, 'kitchen') === KITCHEN_W);
+  check(
+    'допуск схемы — сто миллиметров, а не тридцать',
+    planToleranceMm(scheme, 'kitchen') === SCHEME_TOLERANCE_MM,
+    `${planToleranceMm(scheme, 'kitchen')} мм`,
+  );
+  check(
+    'основание названо словами',
+    (sizeBasis(scheme, 'kitchen') ?? '').includes('со схемы'),
+    sizeBasis(scheme, 'kitchen') ?? '',
+  );
+
+  /* ── Настоящий замер сильнее ── */
+
+  const surveyed: FloorPlan = {
+    ...scheme,
+    zones: [{ zone: 'kitchen', measurement: DEMO_MEASUREMENT }],
+    measuredAt: '2026-09-01T09:00:00.000Z',
+    measuredBy: 'Ержан',
+  };
+
+  check('замер вытесняет схему как источник', sizeSourceFor(surveyed, 'kitchen') === 'survey');
+  check(
+    'и длина берётся из замера, а не со схемы',
+    zoneRunLengthMm(surveyed, 'kitchen') === DEMO_MEASUREMENT.walls[0].lengthMm,
+    String(zoneRunLengthMm(surveyed, 'kitchen')),
+  );
+  check(
+    'допуск возвращается к тридцати миллиметрам',
+    planToleranceMm(surveyed, 'kitchen') === DEFAULT_TOLERANCE_MM,
+  );
+  check(
+    'основание тоже меняется на замер',
+    (sizeBasis(surveyed, 'kitchen') ?? '').includes('замер'),
+  );
+
+  /* ── Подстановка со схемы — допущения ── */
+
+  const survey = surveyFromMeasurement(measurement, sizeBasis(scheme, 'kitchen')!, '', '');
+  const stats = surveyStats(survey);
+  check('величины со схемы не считаются замеренными', stats.measured === 0);
+  check('и смета по ним предварительная', isEstimatePreliminary(stats));
+
+  /* ── Автопроект ── */
+
+  console.log('\nАвтопроект');
+
+  const auto = buildAutoProjects({ plan: scheme, rates: DEMO_RATES });
+  const kitchen = auto.projects.find((p) => p.zone === 'kitchen');
+
+  check('по стене со схемы собирается проект', Boolean(kitchen), auto.blocked ?? '');
+  check('ряд собран на длину со схемы', kitchen?.run.lengthMm === KITCHEN_W);
+  check('и сходится с ней до миллиметра', kitchen ? runWidthSum(kitchen.run) === KITCHEN_W : false);
+  check('цена посчитана', (kitchen?.estimate.total ?? 0) > 0);
+  check('источник размеров помечен схемой', kitchen?.sizeSource === 'scheme');
+  check(
+    'смета посчитана по тому же ряду',
+    kitchen?.estimate.fingerprint === kitchen?.run.fingerprint,
+  );
+
+  /*
+   * Считает ТОТ ЖЕ код, что у замерщика: две ветки расчёта разошлись бы,
+   * и предварительная цена отличалась бы от итоговой не из-за размеров,
+   * а из-за двух калькуляторов.
+   */
+  const sameByHand = buildRun({
+    lengthMm: KITCHEN_W,
+    ceilingHeightMm: measurement.ceilingHeightMm,
+    requirements: kitchen!.run.options
+      ? {
+          ...requirementsFromTemplate(
+            RUN_TEMPLATES.find((t) => t.id === kitchen!.templateId)!,
+          ),
+          options: kitchen!.run.options,
+        }
+      : requirementsFromTemplate(RUN_TEMPLATES.find((t) => t.id === kitchen!.templateId)!),
+    openings: measurement.walls[0].openings,
+    comms: [],
+  });
+  check(
+    'автопроект собран тем же buildRun, что и вручную',
+    sameByHand.fingerprint === kitchen!.run.fingerprint,
+    `${sameByHand.fingerprint} против ${kitchen!.run.fingerprint}`,
+  );
+
+  // Один автопроект на зону: выбор из трёх выдуманных хуже одного честного.
+  check(
+    'на зону ровно один автопроект',
+    auto.projects.filter((p) => p.zone === 'kitchen').length === 1,
+  );
+
+  /* ── Без масштаба и без ставок не считаем ── */
+
+  const bare: FloorPlan = { ...scheme, calibration: undefined, derivedWalls: [] };
+  check(
+    'без размеров автопроект не собирается вовсе',
+    Boolean(buildAutoProjects({ plan: bare, rates: DEMO_RATES }).blocked),
+    buildAutoProjects({ plan: bare, rates: DEMO_RATES }).blocked ?? '',
+  );
+  check(
+    'и без ставок каталога тоже: нули с виду настоящей цены',
+    Boolean(buildAutoProjects({ plan: scheme, rates: {} }).blocked),
+    buildAutoProjects({ plan: scheme, rates: {} }).blocked ?? '',
+  );
+
+  // Слишком короткая стена: шаблона нет — не выдумываем.
+  const tiny: FloorPlan = {
+    ...scheme,
+    derivedWalls: [{ ...wall, lengthMm: 900, openings: [] }],
+  };
+  const tinyResult = buildAutoProjects({ plan: tiny, rates: DEMO_RATES });
+  check('под несобираемую длину проект не выдумывается', tinyResult.projects.length === 0);
+  check(
+    'и причина названа',
+    tinyResult.skipped.some((s) => s.reason.includes('нет подходящего решения')),
+    tinyResult.skipped.map((s) => s.reason).join('; '),
+  );
+}
+
 /* ─────────────────────  Библиотека планировок ЖК  ───────────────────── */
 
 console.log('\nБиблиотека планировок');
@@ -1087,6 +1365,7 @@ console.log('\nБиблиотека планировок');
       { name: 'Спальня', areaM2: 14.71 },
     ],
     zones: [],
+    derivedWalls: [],
     toleranceMm: DEFAULT_TOLERANCE_MM,
     isPublic: true,
   };

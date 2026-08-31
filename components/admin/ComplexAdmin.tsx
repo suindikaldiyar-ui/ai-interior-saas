@@ -5,13 +5,19 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { compressPhoto, photoToFile } from '@/lib/photo';
 import { schemeUrl } from '@/lib/complexes';
+import PlanCalibrator from './PlanCalibrator';
 import {
   DEFAULT_TOLERANCE_MM,
   MAX_READY_PER_ZONE,
+  SCHEME_TOLERANCE_MM,
+  hasSchemeSizes,
   isMeasured,
+  planToleranceMm,
   roomAreasTotal,
   type Complex,
+  type DerivedWall,
   type FloorPlan,
+  type PlanCalibration,
   type ReadyProject,
   type RoomArea,
 } from '@/types/complexes';
@@ -34,6 +40,8 @@ import { zoneProfile } from '@/lib/millwork/zones';
 type Props = {
   library: { complex: Complex; plans: FloorPlan[] }[];
   ready: Record<string, ReadyProject[]>;
+  /** Миграция 0009 не применена: размеры со схемы сохранять некуда. */
+  schemaOutdated?: boolean;
 };
 
 type ComplexDraft = { name: string; developer: string; city: string; slug: string };
@@ -55,7 +63,7 @@ const emptyPlan = (): Omit<PlanDraft, 'slug' | 'sourceApartment'> => ({
   toleranceMm: DEFAULT_TOLERANCE_MM,
 });
 
-export default function ComplexAdmin({ library, ready }: Props) {
+export default function ComplexAdmin({ library, ready, schemaOutdated = false }: Props) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -72,6 +80,8 @@ export default function ComplexAdmin({ library, ready }: Props) {
   const [confirm, setConfirm] = useState<{ kind: 'complex' | 'plan'; id: string; text: string } | null>(
     null,
   );
+  /** Планировка, у которой сейчас снимают размеры со схемы. */
+  const [calibrating, setCalibrating] = useState<FloorPlan | null>(null);
 
   const send = async (url: string, init: RequestInit, ok: string) => {
     setBusy(true);
@@ -171,6 +181,58 @@ export default function ComplexAdmin({ library, ready }: Props) {
 
       setConfirm(null);
       setNotice(kind === 'complex' ? 'ЖК удалён.' : 'Планировка удалена.');
+      router.refresh();
+    } catch {
+      setNotice('Сети нет — попробуйте ещё раз.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /* ── Размеры со схемы ── */
+
+  const saveCalibration = async (
+    plan: FloorPlan,
+    calibration: PlanCalibration,
+    derivedWalls: DerivedWall[],
+  ) => {
+    const res = await send(
+      '/api/complexes/plan',
+      json('PATCH', { id: plan.id, calibration, derivedWalls }),
+      `Размеры сняты со схемы: ${derivedWalls.length} стен. Это не замер — ` +
+        `допуск ±${SCHEME_TOLERANCE_MM} мм, смета предварительная.`,
+    );
+    if (res.ok) setCalibrating(null);
+  };
+
+  /**
+   * «Собрать проекты»: шаблон по длине, ряд, смета — тем же кодом, что
+   * у замерщика. Один автопроект на зону; ручной не трогаем.
+   */
+  const autobuild = async (plan: FloorPlan) => {
+    setBusy(true);
+    setNotice(null);
+    try {
+      const res = await fetch('/api/complexes/autobuild', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ planId: plan.id }),
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        setNotice(data.error ?? 'Проекты не собрались.');
+        return;
+      }
+
+      const skipped = (data.skipped ?? []) as { zone: string; reason: string }[];
+      setNotice(
+        `Собрано проектов: ${data.added}.` +
+          (skipped.length > 0
+            ? ` Пропущено: ${skipped.map((s) => `${s.zone} — ${s.reason}`).join('; ')}.`
+            : '') +
+          ' Это стартовая точка: замерщик откроет и поправит.',
+      );
       router.refresh();
     } catch {
       setNotice('Сети нет — попробуйте ещё раз.');
@@ -279,6 +341,25 @@ export default function ComplexAdmin({ library, ready }: Props) {
 
   return (
     <div className="px-4 pb-16">
+      {calibrating && schemeUrl(calibrating.schemePath) && (
+        <PlanCalibrator
+          plan={calibrating}
+          schemeUrl={schemeUrl(calibrating.schemePath) as string}
+          onCancel={() => setCalibrating(null)}
+          onSave={(calibration, derivedWalls) =>
+            saveCalibration(calibrating, calibration, derivedWalls)
+          }
+        />
+      )}
+
+      {schemaOutdated && (
+        <p className="mb-4 rounded-[var(--r-control)] bg-alert/15 px-4 py-3 text-[13px] leading-snug text-alert">
+          База отстала от кода: не применена миграция
+          <span className="mw-num"> 0009_plan_scale.sql</span>. Библиотека
+          работает, но размеры со схемы и автопроекты сохранять некуда.
+        </p>
+      )}
+
       {notice && (
         <p className="mb-4 rounded-[var(--r-control)] bg-navy px-4 py-3 text-[13px] text-graphiteMw">
           {notice}
@@ -691,7 +772,9 @@ export default function ComplexAdmin({ library, ready }: Props) {
                               >
                                 {measured
                                   ? `Обмерена ${new Date(plan.measuredAt as string).toLocaleDateString('ru-RU')}`
-                                  : 'Заведена — размеров ещё нет'}
+                                  : hasSchemeSizes(plan)
+                                    ? `Размеры со схемы · допуск ±${planToleranceMm(plan)} мм`
+                                    : 'Заведена — размеров ещё нет'}
                               </span>
 
 
@@ -709,6 +792,38 @@ export default function ComplexAdmin({ library, ready }: Props) {
                                     }}
                                   />
                                 </label>
+                                {/*
+                                  * Снять размеры со схемы можно только когда
+                                  * схема есть: обводить нечего.
+                                  */}
+                                {scheme && !schemaOutdated && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setCalibrating(plan)}
+                                    className="mw-btn mw-btn-ghost"
+                                  >
+                                    {hasSchemeSizes(plan)
+                                      ? 'Размеры со схемы'
+                                      : 'Снять размеры со схемы'}
+                                  </button>
+                                )}
+
+                                {/*
+                                  * Без длины ряда цена — выдуманное число,
+                                  * поэтому кнопка появляется только когда
+                                  * размеры откуда-то есть.
+                                  */}
+                                {(hasSchemeSizes(plan) || measured) && !schemaOutdated && (
+                                  <button
+                                    type="button"
+                                    onClick={() => void autobuild(plan)}
+                                    disabled={busy}
+                                    className="mw-btn mw-btn-ghost"
+                                  >
+                                    Собрать проекты
+                                  </button>
+                                )}
+
                                 <button
                                   type="button"
                                   onClick={() =>
@@ -771,6 +886,21 @@ export default function ComplexAdmin({ library, ready }: Props) {
                               </p>
                             )}
 
+                            {/*
+                              * Размеры со схемы названы отдельно от замера:
+                              * смешивать их нельзя, у них разная точность.
+                              */}
+                            {!measured && hasSchemeSizes(plan) && (
+                              <p className="mt-1 text-[13px] leading-snug text-graphiteMw">
+                                Со схемы:{' '}
+                                {plan.derivedWalls
+                                  .map((w) => `${zoneProfile(w.zone).title} ${w.lengthMm} мм`)
+                                  .join(' · ')}
+                                . Масштаб по комнате «{plan.calibration?.basisRoom}».
+                                Это не замер — смета предварительная.
+                              </p>
+                            )}
+
                             {measured && (
                               <p className="mt-1 text-[13px] text-graphiteMw">
                                 Замер: {plan.measuredBy || 'без имени'}
@@ -792,6 +922,11 @@ export default function ComplexAdmin({ library, ready }: Props) {
                                     <span className="text-graphiteMw">
                                       {zoneProfile(project.zone).title}
                                     </span>
+                                    {project.isAuto && (
+                                      <span className="text-tape">
+                                        собран автоматически
+                                      </span>
+                                    )}
                                     <span className="mw-num">
                                       {formatMoney(project.total)} ₸
                                     </span>

@@ -4,7 +4,7 @@ import ThemeToggle from '@/components/ThemeToggle';
 import { fetchPublicComplex, schemeUrl } from '@/lib/complexes';
 import { brandStyle, publicOrg } from '@/lib/org';
 import { supabaseService } from '@/lib/supabase/server';
-import { isMeasured } from '@/types/complexes';
+import { hasSchemeSizes, isMeasured } from '@/types/complexes';
 
 export const dynamic = 'force-dynamic';
 
@@ -101,9 +101,16 @@ export default async function ComplexPage({ params }: PageProps) {
                   */}
                 <span
                   className="mt-2 block text-[13px]"
-                  style={{ color: measured ? 'var(--accent)' : 'var(--text-dim)' }}
+                  style={{
+                    color:
+                      measured || hasSchemeSizes(plan) ? 'var(--accent)' : 'var(--text-dim)',
+                  }}
                 >
-                  {measured ? 'Есть готовые проекты' : 'Готовим проект'}
+                  {measured
+                    ? 'Есть готовые проекты'
+                    : hasSchemeSizes(plan)
+                      ? 'Есть предварительный проект'
+                      : 'Готовим проект'}
                 </span>
               </Link>
             );

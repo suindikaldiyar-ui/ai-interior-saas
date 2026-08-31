@@ -67,7 +67,20 @@ export async function POST(request: Request) {
   }
 
   const existing = await fetchReady(supabase, body.floorPlanId);
-  const inZone = existing.filter((p) => p.zone === body.zone);
+
+  /*
+   * Ручной проект вытесняет автоматический: собранный замерщиком главнее
+   * посчитанного по схеме. Освобождается и место в лимите на зону.
+   */
+  const autoInZone = existing.filter((p) => p.zone === body.zone && p.isAuto);
+  if (autoInZone.length > 0) {
+    await supabase
+      .from('ready_projects')
+      .delete()
+      .in('id', autoInZone.map((p) => p.id));
+  }
+
+  const inZone = existing.filter((p) => p.zone === body.zone && !p.isAuto);
 
   /*
    * Больше трёх на зону не показываем — то же правило, что у компоновок.
@@ -95,6 +108,9 @@ export async function POST(request: Request) {
       price_snapshot: body.priceSnapshot ?? {},
       total: Number(body.total) || 0,
       render_path: body.renderPath ?? null,
+      is_auto: false,
+      // Ручной проект собран по замеру — иначе замерщик его бы не сохранял.
+      size_source: 'survey',
     })
     .select(READY_FIELDS)
     .single();
@@ -106,7 +122,11 @@ export async function POST(request: Request) {
     );
   }
 
-  return NextResponse.json({ ok: true, project: toReady(data as never) });
+  return NextResponse.json({
+    ok: true,
+    project: toReady(data as never),
+    replacedAuto: autoInZone.length,
+  });
 }
 
 export async function DELETE(request: Request) {

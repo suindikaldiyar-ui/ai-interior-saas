@@ -23,7 +23,8 @@ import {
   surveyFromMeasurement,
   type Survey,
 } from '@/types/survey';
-import { isMeasured, libraryBasis, planZone } from '@/types/complexes';
+import { hasSchemeSizes, isMeasured, libraryBasis, planZone, schemeBasis } from '@/types/complexes';
+import { measurementFromWall } from '@/lib/planCalibration';
 import type { MillworkState } from '@/lib/projects';
 
 /**
@@ -74,23 +75,30 @@ export default function MeasurePage() {
             e.preventDefault();
 
             /*
-             * Размеры из библиотеки подставляются ДОПУЩЕНИЯМИ, а не замером:
-             * они сняты на другой квартире. Замерщик сверяет их на месте,
-             * и до подтверждения смета остаётся предварительной.
+             * Размеры подставляются ДОПУЩЕНИЯМИ, а не замером: они сняты
+             * на другой квартире или вовсе со схемы застройщика. Замерщик
+             * сверяет их на месте, и до подтверждения смета предварительная.
+             *
+             * Порядок источников тот же, что везде: настоящий замер сильнее
+             * схемы. Основание пишется своё — замерщик обязан видеть, чему
+             * доверяет: чужому замеру с допуском 30 мм или обводке со 100.
              */
-            const fromLibrary =
-              planChoice && isMeasured(planChoice.plan)
-                ? planZone(planChoice.plan, zone)
+            const plan = planChoice?.plan ?? null;
+            const measuredZone = plan && isMeasured(plan) ? planZone(plan, zone) : null;
+            const schemeWall =
+              !measuredZone && plan && hasSchemeSizes(plan)
+                ? (plan.derivedWalls.find((w) => w.zone === zone) ?? null)
+                : null;
+
+            const seed = measuredZone
+              ? { measurement: measuredZone.measurement, basis: libraryBasis(plan!) }
+              : schemeWall
+                ? { measurement: measurementFromWall(schemeWall), basis: schemeBasis(plan!) }
                 : null;
 
             setSurvey((prev) =>
-              fromLibrary
-                ? surveyFromMeasurement(
-                    fromLibrary.measurement,
-                    libraryBasis(planChoice!.plan),
-                    surveyor,
-                    prev.measuredAt,
-                  )
+              seed
+                ? surveyFromMeasurement(seed.measurement, seed.basis, surveyor, prev.measuredAt)
                 : { ...prev, measuredBy: surveyor },
             );
             setStep('survey');
@@ -188,7 +196,10 @@ export default function MeasurePage() {
             type="submit"
             className="mw-btn mw-btn-lg mw-btn-primary w-full"
           >
-            {planChoice && isMeasured(planChoice.plan) && planZone(planChoice.plan, zone)
+            {planChoice &&
+            ((isMeasured(planChoice.plan) && planZone(planChoice.plan, zone)) ||
+              (hasSchemeSizes(planChoice.plan) &&
+                planChoice.plan.derivedWalls.some((w) => w.zone === zone)))
               ? 'К сверке размеров'
               : 'К замеру'}
           </button>
@@ -292,7 +303,11 @@ export default function MeasurePage() {
         libraryNote={
           planChoice && isMeasured(planChoice.plan) && planZone(planChoice.plan, zone)
             ? libraryBasis(planChoice.plan)
-            : null
+            : planChoice &&
+                hasSchemeSizes(planChoice.plan) &&
+                planChoice.plan.derivedWalls.some((w) => w.zone === zone)
+              ? schemeBasis(planChoice.plan)
+              : null
         }
         /*
          * Выбранный готовый проект открывается составом: замерщик правит

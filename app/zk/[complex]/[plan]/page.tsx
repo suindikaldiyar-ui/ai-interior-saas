@@ -8,7 +8,12 @@ import { zoneProfile } from '@/lib/millwork/zones';
 import { brandStyle, publicOrg } from '@/lib/org';
 import { storageUrl, PROJECTS_BUCKET } from '@/lib/supabase/config';
 import { supabaseService } from '@/lib/supabase/server';
-import { isMeasured, planRunLengthMm, planZone } from '@/types/complexes';
+import {
+  hasSchemeSizes,
+  isMeasured,
+  planToleranceMm,
+  zoneRunLengthMm,
+} from '@/types/complexes';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,8 +41,16 @@ export default async function PlanPage({ params }: PageProps) {
 
   const { complex, plan, ready } = found;
   const measured = isMeasured(plan);
+  const fromScheme = hasSchemeSizes(plan);
   const scheme = schemeUrl(plan.schemePath);
   const projects = limitByZone(ready);
+
+  /*
+   * Хотя бы один проект собран по схеме — значит цена предварительная.
+   * Слово «предварительно» обязано стоять РЯДОМ с суммой: клиент запомнит
+   * первую названную цифру, и разница на замере будет стоить доверия.
+   */
+  const anyPreliminary = projects.some((p) => p.sizeSource === 'scheme' || p.isAuto);
 
   return (
     <main className="mw-root min-h-screen px-4 py-8" style={brandStyle(org)}>
@@ -85,13 +98,13 @@ export default async function PlanPage({ params }: PageProps) {
         )}
 
         {/* ── Готовые проекты ── */}
-        {measured && projects.length > 0 && (
+        {projects.length > 0 && (
           <section className="mb-4">
             <h2 className="mb-2 text-[17px] font-medium">Готовые проекты для этой квартиры</h2>
             <div className="grid gap-3 sm:grid-cols-2">
               {projects.map((project) => {
-                const zone = planZone(plan, project.zone);
-                const lengthMm = planRunLengthMm(zone);
+                const lengthMm = zoneRunLengthMm(plan, project.zone);
+                const preliminary = project.sizeSource === 'scheme' || project.isAuto;
                 const render = project.renderPath
                   ? storageUrl(PROJECTS_BUCKET, project.renderPath)
                   : null;
@@ -115,6 +128,15 @@ export default async function PlanPage({ params }: PageProps) {
                     <p className="mw-num mt-2 text-[17px] font-semibold">
                       {formatMoney(project.total)} ₸
                     </p>
+                    {/*
+                      * Цена без слова «предварительно» рядом недопустима:
+                      * она посчитана по размерам со схемы, а не по квартире.
+                      */}
+                    {preliminary && (
+                      <p className="mt-0.5 text-[13px] leading-snug text-tape">
+                        предварительно, по размерам со схемы
+                      </p>
+                    )}
                   </article>
                 );
               })}
@@ -122,7 +144,7 @@ export default async function PlanPage({ params }: PageProps) {
           </section>
         )}
 
-        {measured && projects.length === 0 && (
+        {(measured || fromScheme) && projects.length === 0 && (
           <p className="mw-panel mb-4 text-[15px] leading-snug text-graphiteMw">
             Квартиру мы обмерили — проект соберём под ваши материалы и покажем
             с ценой.
@@ -134,7 +156,7 @@ export default async function PlanPage({ params }: PageProps) {
           * «примерно 1 800 000» без длины ряда — это выдуманное число, за
           * которое потом стыдно на замере.
           */}
-        {!measured && (
+        {!measured && !fromScheme && (
           <p className="mw-panel mb-4 text-[15px] leading-snug text-graphiteMw">
             Проект под эту планировку готовим. Размеры снимем на квартире:
             площадь комнаты цены не даёт — кухня 11.85 м² бывает и 3200 мм
@@ -154,6 +176,19 @@ export default async function PlanPage({ params }: PageProps) {
             {plan.sourceApartment ? ` (${plan.sourceApartment})` : ''}. На вашей
             квартире возможны отклонения до {plan.toleranceMm} мм — уточним
             на замере.
+          </p>
+        )}
+
+        {/*
+          * Размеры со схемы — отдельная строка и отдельная честность:
+          * это не квартира клиента и даже не квартира такого же типа,
+          * это чертёж застройщика.
+          */}
+        {!measured && fromScheme && (
+          <p className="mt-4 text-[13px] leading-snug text-graphiteMw">
+            {anyPreliminary ? 'Цена предварительная. ' : ''}Размеры сняты со
+            схемы планировки, отклонение до {planToleranceMm(plan)} мм. Точные
+            снимем на замере — цена может измениться.
           </p>
         )}
       </div>

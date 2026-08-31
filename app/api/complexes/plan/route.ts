@@ -2,7 +2,13 @@ import { NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase/server';
 import { PLAN_FIELDS, toPlan } from '@/lib/complexes';
 import { uniqueSlug } from '@/lib/slug';
-import { DEFAULT_TOLERANCE_MM, type FloorPlanZone, type RoomArea } from '@/types/complexes';
+import {
+  DEFAULT_TOLERANCE_MM,
+  type DerivedWall,
+  type FloorPlanZone,
+  type PlanCalibration,
+  type RoomArea,
+} from '@/types/complexes';
 import type { Measurement, ZoneKind } from '@/types/millwork';
 
 export const runtime = 'nodejs';
@@ -37,6 +43,9 @@ type PatchBody = CreateBody & {
   measurement?: Measurement;
   notes?: string;
   measuredBy?: string;
+  /** Масштаб схемы и снятые с неё стены. Это НЕ замер: допуск другой. */
+  calibration?: PlanCalibration | null;
+  derivedWalls?: DerivedWall[];
 };
 
 async function orgOf(supabase: NonNullable<ReturnType<typeof supabaseServer>>) {
@@ -175,6 +184,16 @@ export async function PATCH(request: Request) {
   // Квартира замера правится и без нового замера: опечатки бывают.
   if (body.sourceApartment !== undefined && !body.measurement) {
     patch.source_apartment = body.sourceApartment.trim();
+  }
+
+  /*
+   * Размеры со схемы. Пишутся отдельно от `zones` намеренно: `zones`
+   * означает «обмерена замерщиком», и смешивать эти состояния нельзя —
+   * иначе продукт начнёт обещать точность, которой у обводки нет.
+   */
+  if (body.calibration !== undefined) patch.calibration = body.calibration;
+  if (body.derivedWalls !== undefined) {
+    patch.derived_walls = body.derivedWalls.filter((w) => w.lengthMm > 0);
   }
 
   if (body.zone && body.measurement) {

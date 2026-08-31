@@ -6,8 +6,11 @@ import {
   type Complex,
   type FloorPlan,
   type FloorPlanZone,
+  type DerivedWall,
+  type PlanCalibration,
   type ReadyProject,
   type RoomArea,
+  type SizeSource,
 } from '@/types/complexes';
 import type { RateTable } from './millwork/estimate';
 import type { Run, ZoneKind } from '@/types/millwork';
@@ -50,6 +53,8 @@ type PlanRow = {
   room_areas: RoomArea[] | null;
   scheme_path: string | null;
   zones: FloorPlanZone[] | null;
+  calibration?: PlanCalibration | null;
+  derived_walls?: DerivedWall[] | null;
   measured_at: string | null;
   measured_by: string | null;
   source_apartment: string | null;
@@ -68,18 +73,69 @@ type ReadyRow = {
   total: number | string;
   render_path: string | null;
   is_public: boolean;
+  is_auto?: boolean | null;
+  size_source?: string | null;
   created_at?: string;
 };
 
 export const COMPLEX_FIELDS = 'id, org_id, slug, name, developer, city, is_public, created_at';
 
 /** Полей ровно столько, сколько нужно странице: лишнее наружу не уезжает. */
-export const PLAN_FIELDS =
+const PLAN_FIELDS_BASE =
   'id, complex_id, slug, code, rooms, area_m2, room_areas, scheme_path, zones, ' +
   'measured_at, measured_by, source_apartment, tolerance_mm, is_public, created_at';
 
-export const READY_FIELDS =
+const READY_FIELDS_BASE =
   'id, floor_plan_id, zone, title, run, price_snapshot, total, render_path, is_public, created_at';
+
+/** Поля, которые приносит миграция 0009: масштаб схемы и автопроект. */
+const PLAN_FIELDS_0009 = `${PLAN_FIELDS_BASE}, calibration, derived_walls`;
+const READY_FIELDS_0009 = `${READY_FIELDS_BASE}, is_auto, size_source`;
+
+/*
+ * ПОРЯДОК ВЫКАТКИ НЕ ДОЛЖЕН ЛОМАТЬ ЭКРАН.
+ *
+ * Новый код читает поля, которых до миграции 0009 в базе нет, а PostgREST
+ * на несуществующую колонку роняет ЗАПРОС ЦЕЛИКОМ — вместе с библиотекой
+ * планировок и публичными страницами. Поэтому первый же такой ответ
+ * переключает чтение на прежний набор полей: экран продолжает работать,
+ * а `schemaNeedsMigration()` честно говорит, чего не хватает.
+ */
+let planFields = PLAN_FIELDS_0009;
+let readyFields = READY_FIELDS_0009;
+
+export function schemaNeedsMigration(): boolean {
+  return planFields !== PLAN_FIELDS_0009 || readyFields !== READY_FIELDS_0009;
+}
+
+/** Ответ PostgREST про отсутствующую колонку: код 42703. */
+function isMissingColumn(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false;
+  return error.code === '42703' || /column .* does not exist/i.test(error.message ?? '');
+}
+
+type Answer<T> = { data: T | null; error: { code?: string; message?: string } | null };
+
+/** Запрос с откатом на прежний набор полей, если миграция ещё не применена. */
+async function withPlanFields<T>(run: (fields: string) => PromiseLike<Answer<T>>): Promise<Answer<T>> {
+  const first = await run(planFields);
+  if (!isMissingColumn(first.error)) return first;
+
+  planFields = PLAN_FIELDS_BASE;
+  return run(planFields);
+}
+
+async function withReadyFields<T>(run: (fields: string) => PromiseLike<Answer<T>>): Promise<Answer<T>> {
+  const first = await run(readyFields);
+  if (!isMissingColumn(first.error)) return first;
+
+  readyFields = READY_FIELDS_BASE;
+  return run(readyFields);
+}
+
+/** Полный список полей планировки — для запросов вне этого модуля. */
+export const PLAN_FIELDS = PLAN_FIELDS_0009;
+export const READY_FIELDS = READY_FIELDS_0009;
 
 export function toComplex(row: ComplexRow): Complex {
   return {
@@ -105,6 +161,8 @@ export function toPlan(row: PlanRow): FloorPlan {
     roomAreas: Array.isArray(row.room_areas) ? row.room_areas : [],
     schemePath: row.scheme_path ?? undefined,
     zones: Array.isArray(row.zones) ? row.zones : [],
+    calibration: row.calibration ?? undefined,
+    derivedWalls: Array.isArray(row.derived_walls) ? row.derived_walls : [],
     measuredAt: row.measured_at ?? undefined,
     measuredBy: row.measured_by ?? undefined,
     sourceApartment: row.source_apartment ?? undefined,
@@ -125,6 +183,8 @@ export function toReady(row: ReadyRow): ReadyProject {
     total: Number(row.total) || 0,
     renderPath: row.render_path ?? undefined,
     isPublic: row.is_public,
+    isAuto: row.is_auto ?? false,
+    sizeSource: (row.size_source as SizeSource | null) ?? undefined,
     createdAt: row.created_at,
   };
 }
@@ -151,11 +211,9 @@ export async function fetchPlans(
 ): Promise<FloorPlan[]> {
   if (complexIds.length === 0) return [];
 
-  const { data, error } = await client
-    .from('floor_plans')
-    .select(PLAN_FIELDS)
-    .in('complex_id', complexIds)
-    .order('code');
+  const { data, error } = await withPlanFields((fields) =>
+    client.from('floor_plans').select(fields).in('complex_id', complexIds).order('code'),
+  );
 
   if (error || !data) return [];
   return (data as unknown as PlanRow[]).map(toPlan);
@@ -200,29 +258,33 @@ export async function fetchPublicPlan(
 
   if (!complexRow) return null;
 
-  const { data: planRow } = await client
-    .from('floor_plans')
-    .select(PLAN_FIELDS)
-    .eq('complex_id', (complexRow as ComplexRow).id)
-    .eq('slug', planSlug)
-    .eq('is_public', true)
-    .maybeSingle();
+  const { data: planRow } = await withPlanFields((fields) =>
+    client
+      .from('floor_plans')
+      .select(fields)
+      .eq('complex_id', (complexRow as ComplexRow).id)
+      .eq('slug', planSlug)
+      .eq('is_public', true)
+      .maybeSingle(),
+  );
 
   if (!planRow) return null;
 
   const plan = toPlan(planRow as unknown as PlanRow);
 
-  const { data: readyRows } = await client
-    .from('ready_projects')
-    .select(READY_FIELDS)
-    .eq('floor_plan_id', plan.id)
-    .eq('is_public', true)
-    .order('created_at', { ascending: false });
+  const { data: readyRows } = await withReadyFields((fields) =>
+    client
+      .from('ready_projects')
+      .select(fields)
+      .eq('floor_plan_id', plan.id)
+      .eq('is_public', true)
+      .order('created_at', { ascending: false }),
+  );
 
   return {
     complex: toComplex(complexRow as ComplexRow),
     plan,
-    ready: (readyRows ?? []).map((row) => toReady(row as ReadyRow)),
+    ready: (readyRows ?? []).map((row) => toReady(row as unknown as ReadyRow)),
   };
 }
 
@@ -248,13 +310,15 @@ export async function fetchPublicComplex(
 
   if (!complexRow) return null;
 
-  const { data: planRows } = await client
-    .from('floor_plans')
-    .select(PLAN_FIELDS)
-    .eq('complex_id', (complexRow as ComplexRow).id)
-    .eq('is_public', true)
-    .order('rooms')
-    .order('code');
+  const { data: planRows } = await withPlanFields((fields) =>
+    client
+      .from('floor_plans')
+      .select(fields)
+      .eq('complex_id', (complexRow as ComplexRow).id)
+      .eq('is_public', true)
+      .order('rooms')
+      .order('code'),
+  );
 
   return {
     complex: toComplex(complexRow as ComplexRow),
@@ -277,15 +341,17 @@ export async function fetchPublicLibrary(
   const complexes = (complexRows ?? []).map((row) => toComplex(row as ComplexRow));
   if (complexes.length === 0) return [];
 
-  const { data: planRows } = await client
-    .from('floor_plans')
-    .select(PLAN_FIELDS)
-    .in(
-      'complex_id',
-      complexes.map((c) => c.id),
-    )
-    .eq('is_public', true)
-    .order('code');
+  const { data: planRows } = await withPlanFields((fields) =>
+    client
+      .from('floor_plans')
+      .select(fields)
+      .in(
+        'complex_id',
+        complexes.map((c) => c.id),
+      )
+      .eq('is_public', true)
+      .order('code'),
+  );
 
   const plans = (planRows ?? []).map((row) => toPlan(row as unknown as PlanRow));
 
@@ -301,13 +367,15 @@ export async function fetchReady(
   client: SupabaseClient,
   floorPlanId: string,
 ): Promise<ReadyProject[]> {
-  const { data } = await client
-    .from('ready_projects')
-    .select(READY_FIELDS)
-    .eq('floor_plan_id', floorPlanId)
-    .order('created_at', { ascending: false });
+  const { data } = await withReadyFields((fields) =>
+    client
+      .from('ready_projects')
+      .select(fields)
+      .eq('floor_plan_id', floorPlanId)
+      .order('created_at', { ascending: false }),
+  );
 
-  return (data ?? []).map((row) => toReady(row as ReadyRow));
+  return (data ?? []).map((row) => toReady(row as unknown as ReadyRow));
 }
 
 /**

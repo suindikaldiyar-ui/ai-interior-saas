@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { fetchPublicLibrary } from '@/lib/complexes';
 import { publicOrg } from '@/lib/org';
 import { supabaseService } from '@/lib/supabase/server';
-import { isMeasured } from '@/types/complexes';
+import { hasSchemeSizes, isMeasured } from '@/types/complexes';
 
 export const dynamic = 'force-dynamic';
 
@@ -73,11 +73,24 @@ export default async function ZkIndexPage() {
                       * Обмеренная планировка обещает проект и цену,
                       * заведённая — только разговор. Смешивать нельзя.
                       */}
+                    {/*
+                      * Размеры со схемы — тоже проект, но предварительный.
+                      * Три состояния, а не два: обещания у них разные.
+                      */}
                     <span
                       className="mt-1 block text-[13px]"
-                      style={{ color: isMeasured(plan) ? 'var(--accent)' : 'var(--text-dim)' }}
+                      style={{
+                        color:
+                          isMeasured(plan) || hasSchemeSizes(plan)
+                            ? 'var(--accent)'
+                            : 'var(--text-dim)',
+                      }}
                     >
-                      {isMeasured(plan) ? 'Есть готовые проекты' : 'Готовим проект'}
+                      {isMeasured(plan)
+                        ? 'Есть готовые проекты'
+                        : hasSchemeSizes(plan)
+                          ? 'Есть предварительный проект'
+                          : 'Готовим проект'}
                     </span>
                   </Link>
                 </li>

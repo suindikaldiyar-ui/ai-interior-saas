@@ -344,8 +344,10 @@ export function requirementsFromTemplate(
 export function suggestTemplate(
   lengthMm: number,
   zone: ZoneKind | undefined | null = 'kitchen',
+  /** Решения компании: они идут первыми и здесь тоже. */
+  extra: RunTemplate[] = [],
 ): RunTemplate | null {
-  const fitting = templatesForZone(zone).filter((t) => templateFits(t, lengthMm));
+  const fitting = templatesForZone(zone, extra).filter((t) => templateFits(t, lengthMm));
   if (fitting.length === 0) return null;
 
   // Ближе к середине своего диапазона — значит ряд для шаблона типичный.

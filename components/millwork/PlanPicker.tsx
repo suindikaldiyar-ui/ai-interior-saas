@@ -4,9 +4,11 @@ import { useEffect, useState } from 'react';
 import { formatMoney } from '@/lib/millwork/estimate';
 import { zoneProfile } from '@/lib/millwork/zones';
 import {
+  hasSchemeSizes,
   isMeasured,
   libraryBasis,
   planZone,
+  schemeBasis,
   type Complex,
   type FloorPlan,
   type ReadyProject,
@@ -156,6 +158,17 @@ export default function PlanPicker({ zone, value, onChange }: Props) {
             <p className="mt-3 text-[13px] leading-snug text-tape">
               {libraryBasis(chosenPlan)}. Проверьте на месте: подставленные
               величины помечены как допущения, и смета по ним предварительная.
+            </p>
+          ) : hasSchemeSizes(chosenPlan) &&
+            chosenPlan.derivedWalls.some((w) => w.zone === zone) ? (
+            /*
+             * Размеров с квартиры ещё нет, но есть снятые со схемы: они
+             * подставятся допущениями с допуском 100 мм. Это стартовая
+             * точка, а не замер, и сказано об этом прямо.
+             */
+            <p className="mt-3 text-[13px] leading-snug text-tape">
+              {schemeBasis(chosenPlan)}. Замер квартиры их заменит, и допуск
+              вернётся к обычному.
             </p>
           ) : measured ? (
             <p className="mt-3 text-[13px] leading-snug text-graphiteMw">

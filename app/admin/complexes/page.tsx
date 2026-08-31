@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import ComplexAdmin from '@/components/admin/ComplexAdmin';
 import OrgBootstrap from '@/components/admin/OrgBootstrap';
-import { fetchLibrary, fetchReady } from '@/lib/complexes';
+import { fetchLibrary, fetchReady, schemaNeedsMigration } from '@/lib/complexes';
 import { SUPABASE_READY } from '@/lib/supabase/config';
 import { currentOrg, currentUser, supabaseServer } from '@/lib/supabase/server';
 import type { ReadyProject } from '@/types/complexes';
@@ -59,7 +59,13 @@ export default async function ComplexesPage() {
         </div>
       </header>
 
-      <ComplexAdmin library={library} ready={ready} />
+      <ComplexAdmin
+        library={library}
+        ready={ready}
+        /* Пока миграция не применена, размеры со схемы сохранять некуда —
+           лучше сказать это прямо, чем показать непонятную ошибку базы. */
+        schemaOutdated={schemaNeedsMigration()}
+      />
     </main>
   );
 }
