@@ -12,6 +12,7 @@ import { runFingerprint } from './fingerprint';
 import { defaultFill } from './fill';
 import { SECTION_SPECS } from './sections';
 import { allowsAppliance, allowsSection, applianceRefusal, sectionRefusal } from './zones';
+import { MODULE_VARIANTS, applyVariant, variantsForModule } from './moduleVariants';
 import type {
   ApplianceKind,
   MillworkOp,
@@ -120,6 +121,8 @@ export function applyOps({ run, requirements, ops, openings = [] }: ApplyOpsInpu
   const warnings: string[] = [];
 
   const zone = requirements.zone ?? run.zone ?? 'kitchen';
+  /** Правки верхнего ряда: он пересобирается в конце, они применяются после. */
+  const upperEdits = new Map<string, NonNullable<Module['variant']>>();
 
   for (const op of ops) {
     /*
@@ -250,6 +253,42 @@ export function applyOps({ run, requirements, ops, openings = [] }: ApplyOpsInpu
         break;
       }
 
+      /*
+       * Смена варианта места: карго вместо дверцы, сушилка над мойкой.
+       * Проверяем ЗДЕСЬ тоже, а не только в интерфейсе: операция приходит
+       * и от модели, и из командной строки.
+       */
+      case 'set_variant': {
+        /*
+         * Вариант меняется и в нижнем ряду, и в верхнем: сушилка живёт
+         * наверху, карго внизу. Ищем в обоих, иначе половина каталога
+         * оказалась бы недоступной.
+         */
+        const at = modules.findIndex((m) => m.id === op.moduleId);
+        const upperUnit = at < 0
+          ? run.upperSegments.flatMap((segment) => segment.modules).find((m) => m.id === op.moduleId)
+          : null;
+
+        const target = at >= 0 ? modules[at] : upperUnit;
+        if (!target) {
+          warnings.push(`Модуль ${op.moduleId} не найден.`);
+          break;
+        }
+
+        const allowed = variantsForModule(target, { ...run, modules }, zone);
+        if (!allowed.some((spec) => spec.kind === op.variant)) {
+          warnings.push(
+            `${MODULE_VARIANTS[op.variant].title}: в это место не встаёт — ` +
+              `ширина ${target.widthMm} мм или не то место в ряду.`,
+          );
+          break;
+        }
+
+        if (at >= 0) modules[at] = applyVariant(modules[at], op.variant);
+        else upperEdits.set(target.id, op.variant);
+        break;
+      }
+
       case 'move_module': {
         const from = modules.findIndex((m) => m.id === op.moduleId);
         const to = modules.findIndex((m) => m.id === op.afterModuleId);
@@ -292,6 +331,20 @@ export function applyOps({ run, requirements, ops, openings = [] }: ApplyOpsInpu
     warnings,
   };
 
+  /*
+   * Верхний ряд пересобирается заново из нижнего, поэтому выбранные там
+   * варианты нужно вернуть. Идентификатор модуля выводится из позиции:
+   * не тронули низ — верхний модуль тот же, и сушилка над мойкой остаётся.
+   * Сдвинули низ — модуль другой, и выбор честно теряется.
+   */
+  const upperVariants = new Map([
+    ...run.upperSegments
+      .flatMap((segment) => segment.modules)
+      .filter((unit) => unit.variant)
+      .map((unit) => [unit.id, unit.variant!] as const),
+    ...Array.from(upperEdits.entries()),
+  ]);
+
   nextRun.upperSegments = options.hasUpper
     ? buildUpperRow(
         modules,
@@ -301,6 +354,14 @@ export function applyOps({ run, requirements, ops, openings = [] }: ApplyOpsInpu
         run.ceilingHeightMm,
       )
     : [];
+
+  nextRun.upperSegments = nextRun.upperSegments.map((segment) => ({
+    ...segment,
+    modules: segment.modules.map((unit) => {
+      const kept = upperVariants.get(unit.id);
+      return kept && !unit.appliance ? applyVariant(unit, kept) : unit;
+    }),
+  }));
 
   // Отпечаток пересчитывается вместе с составом — иначе смета и чертёж
   // разойдутся молча, а это ровно то, от чего он защищает.

@@ -59,6 +59,7 @@ import { DEFAULT_PRODUCTION } from '../types/catalog';
 import type { ZoneKind } from '../types/millwork';
 import { commIssues, layoutIssues, validateRun } from '../lib/millwork/validate';
 import {
+  CornerOverlapError,
   RunOverflowError,
   appliancesPlacedOnce,
   assertRunFits,
@@ -67,7 +68,9 @@ import {
 } from '../lib/millwork/invariants';
 import {
   APPLIANCE_SLOTS,
+  CORNER,
   CORNER_SIZE_MM,
+  moduleAppliances,
   GEOMETRY,
   MIN_WIDTH,
   STANDARD_WIDTHS,
@@ -100,6 +103,11 @@ import {
   type ReadyProject,
 } from '../types/complexes';
 import { limitByZone } from '../lib/complexes';
+import {
+  buildComposition,
+  linearComposition,
+  splitAppliances,
+} from '../lib/millwork/composition';
 import {
   calibrationDriftPercent,
   lengthMm as planLengthMm,
@@ -1095,6 +1103,199 @@ console.log('\nРучная расстановка');
   const asManual = sinkWaterConflicts(farSink, COMMS, true);
   check('автоматически — блокирующее', asAuto[0]?.severity === 'blocking');
   check('вручную — предупреждение', asManual[0]?.severity === 'clarify');
+}
+
+/* ─────────────────  Угловые и П-образные кухни  ───────────────── */
+
+console.log('\nКомпозиция: угол и П');
+{
+  const REQ_L: RunRequirements = { ...REQ, composition: 'corner_l' };
+  const WALLS = [
+    { id: 'w1', lengthMm: 3200 },
+    { id: 'w2', lengthMm: 2400 },
+  ];
+
+  const corner = buildComposition({
+    kind: 'corner_l',
+    walls: WALLS,
+    ceilingHeightMm: 2700,
+    requirements: REQ_L,
+  });
+
+  /*
+   * ГЛАВНЫЙ ИНВАРИАНТ УГЛА: второй ряд короче своей стены. Без этого
+   * модули в углу физически налезают друг на друга, и вскрывается это
+   * на монтаже — когда мебель уже распилена.
+   */
+  const [a, b] = corner.segments;
+  check('первый ряд занимает свою стену целиком', a.run.lengthMm === 3200);
+  check(
+    'второй ряд короче стены на глубину соседа и фальш-панель',
+    b.run.lengthMm === 2400 - ZONE_PROFILES.kitchen.depthMm - CORNER.falsePanelMm,
+    `${b.run.lengthMm} мм при стене ${b.wallLengthMm}`,
+  );
+
+  check(
+    'сумма ширин каждого ряда сходится со своей длиной',
+    corner.segments.every((segment) => runWidthSum(segment.run) === segment.run.lengthMm),
+  );
+
+  /*
+   * Приборы РАСПРЕДЕЛЯЮТСЯ, а не дублируются: мойка одна на всю кухню.
+   * Две мойки — это лишние деньги в смете и кухня, которой не бывает.
+   */
+  const placed = corner.segments.flatMap((segment) =>
+    segment.run.modules.flatMap((unit) => moduleAppliances(unit)),
+  );
+  const doubled = placed.filter((item, i) => placed.indexOf(item) !== i);
+  check('приборы между рядами не дублируются', doubled.length === 0, doubled.join(', '));
+  check('мойка одна на всю кухню', placed.filter((x) => x.startsWith('sink')).length === 1);
+
+  // Пеналы на короткой стене, мокрая группа на длинной — рабочий треугольник.
+  const shortWall = corner.segments[1].run.modules.map((m) => m.appliance);
+  check(
+    'пеналы ушли на короткую стену',
+    shortWall.includes('fridge') && shortWall.includes('oven'),
+    shortWall.filter(Boolean).join(', '),
+  );
+  const longWall = corner.segments[0].run.modules.map((m) => m.appliance);
+  check(
+    'мойка и варочная — на длинной',
+    longWall.includes('sink600') && longWall.includes('hob'),
+    longWall.filter(Boolean).join(', '),
+  );
+
+  /* ── Два решения угла ── */
+
+  const withModule = buildComposition({
+    kind: 'corner_l',
+    walls: WALLS,
+    ceilingHeightMm: 2700,
+    requirements: { ...REQ_L, cornerSolution: 'corner_module' },
+  });
+
+  check(
+    'угловой модуль занимает 900 и по второй стене тоже',
+    withModule.segments[1].run.lengthMm === 2400 - CORNER_SIZE_MM,
+    `${withModule.segments[1].run.lengthMm} мм`,
+  );
+  check(
+    'и стоит в углу первого ряда',
+    withModule.segments[0].run.modules.some((m) => m.kind === 'corner_base'),
+  );
+  check(
+    'при фальш-панели углового модуля нет вовсе',
+    !corner.segments[0].run.modules.some((m) => m.kind === 'corner_base'),
+  );
+  check(
+    'по умолчанию угол решается фальш-панелью: она дешевле',
+    corner.corners[0].solution === 'false_panel',
+  );
+  check(
+    'у угла названы петля и зазор',
+    corner.corners[0].hingeAngleDeg === CORNER.hingeAngleDeg &&
+      corner.corners[0].frontGapMm === CORNER.frontGapMm,
+    `петля ${corner.corners[0].hingeAngleDeg}°, зазор ${corner.corners[0].frontGapMm} мм`,
+  );
+
+  /*
+   * Смена решения угла — это другая мебель и другие деньги: чертёж,
+   * смета и рендер обязаны это заметить.
+   */
+  check(
+    'отпечаток композиции меняется вместе с решением угла',
+    withModule.fingerprint !== corner.fingerprint,
+    `${corner.fingerprint} против ${withModule.fingerprint}`,
+  );
+
+  /* ── Детерминизм ── */
+
+  const again = buildComposition({
+    kind: 'corner_l',
+    walls: WALLS,
+    ceilingHeightMm: 2700,
+    requirements: REQ_L,
+  });
+  check('два прогона дают одну композицию', again.fingerprint === corner.fingerprint);
+  check(
+    'и побайтово те же ряды',
+    JSON.stringify(again.segments.map((s) => s.run.modules)) ===
+      JSON.stringify(corner.segments.map((s) => s.run.modules)),
+  );
+
+  /* ── Стена короче глубины соседа ── */
+
+  let overlapped = false;
+  try {
+    buildComposition({
+      kind: 'corner_l',
+      walls: [
+        { id: 'w1', lengthMm: 3200 },
+        { id: 'w2', lengthMm: 600 },
+      ],
+      ceilingHeightMm: 2700,
+      requirements: REQ_L,
+    });
+  } catch (err) {
+    overlapped = err instanceof CornerOverlapError;
+  }
+  check('наложение в углу — исключение, а не предупреждение', overlapped);
+
+  // Одна стена вместо двух: угол по одной стене не собирается вовсе.
+  let refusedShape = false;
+  try {
+    buildComposition({
+      kind: 'corner_l',
+      walls: [{ id: 'w1', lengthMm: 3200 }],
+      ceilingHeightMm: 2700,
+      requirements: REQ_L,
+    });
+  } catch {
+    refusedShape = true;
+  }
+  check('угол по одной стене не собирается', refusedShape);
+
+  /* ── П-образная ── */
+
+  const uShape = buildComposition({
+    kind: 'u_shape',
+    walls: [
+      { id: 'w1', lengthMm: 3200 },
+      { id: 'w2', lengthMm: 2600 },
+      { id: 'w3', lengthMm: 3000 },
+    ],
+    ceilingHeightMm: 2700,
+    requirements: { ...REQ, composition: 'u_shape' },
+  });
+
+  check('П-образная собирается из трёх рядов', uShape.segments.length === 3);
+  check('и имеет два угла', uShape.corners.length === 2);
+  check(
+    'каждый ряд сходится со своей длиной',
+    uShape.segments.every((segment) => runWidthSum(segment.run) === segment.run.lengthMm),
+  );
+
+  const narrow = buildComposition({
+    kind: 'u_shape',
+    walls: [
+      { id: 'w1', lengthMm: 3200 },
+      { id: 'w2', lengthMm: 1600 },
+      { id: 'w3', lengthMm: 3000 },
+    ],
+    ceilingHeightMm: 2700,
+    requirements: { ...REQ, composition: 'u_shape' },
+  });
+  check(
+    'узкий проход между рядами назван последствием',
+    narrow.warnings.some((w) => w.includes('не разойтись')),
+    narrow.warnings.join(' | ') || 'предупреждений нет',
+  );
+
+  /* ── Прямой ряд как композиция ── */
+
+  const linear = linearComposition(buildRun(baseInput));
+  check('прямой ряд — тоже композиция', linear.segments.length === 1 && linear.corners.length === 0);
+  check('и у него свой отпечаток', linear.fingerprint.length === 8);
 }
 
 /* ─────────────────────  Состав по зоне  ───────────────────── */

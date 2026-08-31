@@ -11,6 +11,7 @@ import {
 } from './modules';
 import { assertRunFits, runWidthSum } from './invariants';
 import { defaultFill } from './fill';
+import { CARGO_MAX_MM, CARGO_MIN_MM, applyVariant } from './moduleVariants';
 import { SECTION_SPECS, sectionSpec } from './sections';
 import { isSectionZone, zoneProfile } from './zones';
 import { runFingerprint } from './fingerprint';
@@ -46,6 +47,24 @@ import type {
  */
 function moduleId(kind: ModuleKind, offsetMm: number, appliance?: ApplianceKind): string {
   return `${kind}-${offsetMm}${appliance ? `-${appliance}` : ''}`;
+}
+
+/**
+ * УЗКОЕ МЕСТО — ЭТО КАРГО, А НЕ ЗАГЛУШКА.
+ *
+ * Раскладка честно закрывала остаток 150–400 мм узкой дверцей, за которой
+ * ничего нет: клиент платит за мёртвое место. В цеху туда ставят
+ * выдвижную бутылочницу — модуль, который продаётся.
+ *
+ * Уже 150 мм карго не бывает: механизм не влезает, и такой огрызок
+ * по-прежнему прирастает к соседу.
+ */
+function cargoWhereNarrow(modules: Module[]): Module[] {
+  return modules.map((unit) => {
+    if (unit.appliance || unit.section || unit.kind !== 'base') return unit;
+    if (unit.widthMm < CARGO_MIN_MM || unit.widthMm > CARGO_MAX_MM) return unit;
+    return applyVariant(unit, 'cargo');
+  });
 }
 
 /**
@@ -858,7 +877,7 @@ export function buildRun(input: BuildRunInput): Run {
   );
 
   // Промежутки между якорями закрываем стандартными ширинами.
-  const modules: Module[] = [...cornerModules];
+  let modules: Module[] = [...cornerModules];
   let at = cursor;
 
   for (const { anchor, startMm } of placed) {
@@ -926,6 +945,8 @@ export function buildRun(input: BuildRunInput): Run {
     modules.push(makeModule('corner_base', CORNER_SIZE_MM, at));
     at += CORNER_SIZE_MM;
   }
+
+  modules = cargoWhereNarrow(modules);
 
   const upperSegments = requirements.options.hasUpper
     ? buildUpperRow(modules, usable, openings, requirements, ceilingHeightMm)
@@ -1010,6 +1031,16 @@ export function buildUpperRow(
   const hob = baseModules.find((m) => m.appliance === 'hob');
   const wantsHood = req.appliances.includes('hood');
 
+  /*
+   * Над мойкой — свой шкаф той же ширины.
+   *
+   * Так кухни и собирают: в шкаф над мойкой ставят сушилку, и он обязан
+   * совпадать с мойкой по ширине. Раньше верхний ряд заполнялся широкими
+   * стандартами, накрывал мойку модулем на 1025 мм, и сушилку было
+   * некуда поставить — вариант существовал, а места под него не было.
+   */
+  const sink = baseModules.find((m) => m.appliance?.startsWith('sink'));
+
   const segments: UpperSegment[] = [];
 
   for (const interval of free) {
@@ -1024,13 +1055,32 @@ export function buildUpperRow(
       hob.offsetMm >= interval.from &&
       hob.offsetMm + hob.widthMm <= interval.to;
 
+    /*
+     * Якоря верхнего ряда слева направо: сушилка над мойкой и вытяжка
+     * над варочной. Между ними ряд добирается стандартными ширинами —
+     * тем же `fillGap`, что и внизу.
+     */
+    const anchors: { fromMm: number; widthMm: number; appliance?: ApplianceKind }[] = [];
+
+    const inside = (unit: Module) =>
+      unit.offsetMm >= interval.from && unit.offsetMm + unit.widthMm <= interval.to;
+
+    if (sink && inside(sink)) {
+      anchors.push({ fromMm: sink.offsetMm, widthMm: sink.widthMm });
+    }
     if (hoodInside && hob) {
-      for (const width of fillGap(hob.offsetMm - at)) {
+      anchors.push({ fromMm: hob.offsetMm, widthMm: hob.widthMm, appliance: 'hood' });
+    }
+
+    anchors.sort((a, b) => a.fromMm - b.fromMm);
+
+    for (const anchor of anchors) {
+      for (const width of fillGap(anchor.fromMm - at)) {
         modules.push(makeModule('upper', width, at));
         at += width;
       }
-      modules.push(makeModule('upper', hob.widthMm, at, 'hood'));
-      at += hob.widthMm;
+      modules.push(makeModule('upper', anchor.widthMm, at, anchor.appliance));
+      at += anchor.widthMm;
     }
 
     for (const width of fillGap(interval.to - at)) {

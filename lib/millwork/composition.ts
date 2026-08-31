@@ -1,3 +1,20 @@
+import { buildRun } from './layout';
+import { CORNER, CORNER_SIZE_MM, MIN_WIDTH } from './modules';
+import { compositionFingerprint } from './fingerprint';
+import { assertCornerFits } from './invariants';
+import { zoneProfile } from './zones';
+import type {
+  ApplianceKind,
+  CommPoint,
+  Composition,
+  CompositionKind,
+  CornerJoin,
+  Opening,
+  Run,
+  RunRequirements,
+  RunSegment,
+} from '@/types/millwork';
+
 /* ─────────────────────────  Форма композиции  ───────────────────────── */
 
 export type RunShape = 'linear' | 'corner_l';
@@ -69,3 +86,245 @@ export function assertShapeMatches(prompt: string, shape: RunShape): void {
     );
   }
 }
+
+
+/* ─────────────────────  Сборка угловой композиции  ───────────────────── */
+
+/** Метки рядов: цех и клиент говорят «стена А», а не «сегмент 0». */
+const SEGMENT_LABELS = ['Стена А', 'Стена Б', 'Стена В'];
+
+/** Сколько стен нужно этой форме. */
+export function segmentCount(kind: CompositionKind): number {
+  return kind === 'u_shape' ? 3 : kind === 'corner_l' ? 2 : 1;
+}
+
+export interface CompositionWall {
+  id: string;
+  lengthMm: number;
+  openings?: Opening[];
+}
+
+export interface BuildCompositionInput {
+  id?: string;
+  kind: CompositionKind;
+  /** Стены замера по порядку обхода. Лишние не используются. */
+  walls: CompositionWall[];
+  ceilingHeightMm: number;
+  requirements: RunRequirements;
+  comms?: CommPoint[];
+}
+
+/**
+ * Приборы РАСПРЕДЕЛЯЮТСЯ, а не дублируются.
+ *
+ * Мойка одна на всю кухню, а не по одной на стену. Пеналы уходят на
+ * короткую стену, мокрая группа и варочная — на длинную: это рабочий
+ * треугольник, а не предпочтение. Вытяжка едет за варочной сама.
+ */
+export function splitAppliances(
+  appliances: ApplianceKind[],
+  usableMm: number[],
+): ApplianceKind[][] {
+  const out: ApplianceKind[][] = usableMm.map(() => []);
+  if (usableMm.length === 0) return out;
+  if (usableMm.length === 1) return [[...appliances]];
+
+  const order = usableMm
+    .map((length, index) => ({ length, index }))
+    .sort((a, b) => b.length - a.length || a.index - b.index);
+
+  const longest = order[0].index;
+  const shortest = order[order.length - 1].index;
+  // У П-образной варочная уходит на третью стену: между мойкой и пеналами.
+  const middle = order.length > 2 ? order[1].index : longest;
+
+  const wanted = new Set(appliances);
+  const put = (appliance: ApplianceKind, at: number) => {
+    if (wanted.has(appliance)) out[at].push(appliance);
+  };
+
+  // Пеналы держат короткую стену: они не требуют рабочей поверхности рядом.
+  put('fridge', shortest);
+  put('oven', shortest);
+  put('microwave', shortest);
+
+  // Мокрая группа — на самую длинную: там помещается и мойка, и посудомойка.
+  put('sink600', longest);
+  put('sink800', longest);
+  put('dishwasher45', longest);
+  put('dishwasher60', longest);
+
+  put('hob', middle);
+  // Вытяжка обязана висеть над варочной — значит и в том же ряду.
+  put('hood', middle);
+
+  return out;
+}
+
+/**
+ * СБОРКА КОМПОЗИЦИИ.
+ *
+ * Главный инвариант: при стыке под 90° второй ряд короче своей стены
+ * на глубину первого. Без этого модули в углу физически налезают друг
+ * на друга — а это переделка на объекте, поэтому нарушение здесь
+ * исключение, а не предупреждение.
+ */
+export function buildComposition(input: BuildCompositionInput): Composition {
+  const { kind, requirements, ceilingHeightMm } = input;
+  const zone = zoneProfile(requirements.zone);
+  const depthMm = zone.depthMm;
+
+  const need = segmentCount(kind);
+  const walls = input.walls.slice(0, need);
+  const warnings: string[] = [];
+
+  if (walls.length < need) {
+    throw new Error(
+      `Форма «${kind}» требует ${need} стен, а в замере их ${walls.length}. ` +
+        'Собирать угол по одной стене нельзя: вторая половина будет выдуманной.',
+    );
+  }
+
+  /*
+   * Каждый следующий ряд теряет глубину предыдущего. Считаем это ДО
+   * раскладки: buildRun должен получить уже полезную длину, иначе он
+   * честно разложит модули по всей стене — и они окажутся в углу
+   * поверх соседних.
+   */
+  const solution: CornerJoin['solution'] = requirements.cornerSolution ?? 'false_panel';
+
+  const usable = walls.map((wall, i) => {
+    if (i === 0) return Math.max(0, Math.round(wall.lengthMm));
+
+    /*
+     * Сколько второй ряд теряет в углу.
+     *
+     * Угловой модуль — квадрат 900 × 900: он занимает 900 и вдоль своей
+     * стены, и вдоль соседней. Считать здесь глубину ряда (560) значит
+     * налезть на него на 340 мм — ровно та ошибка, которую замечают
+     * на монтаже, когда мебель уже распилена.
+     *
+     * Фальш-панель угол не занимает: там мёртвая зона глубиной ряда,
+     * плюс сама панель, отодвигающая фасад от чужого фасада.
+     */
+    const lost =
+      solution === 'corner_module'
+        ? CORNER_SIZE_MM
+        : depthMm + CORNER.falsePanelMm;
+
+    const value = Math.round(wall.lengthMm) - lost;
+
+    assertCornerFits({
+      label: SEGMENT_LABELS[i] ?? `Стена ${i + 1}`,
+      wallLengthMm: Math.round(wall.lengthMm),
+      lostMm: lost,
+      minWidthMm: MIN_WIDTH,
+    });
+
+    return value;
+  });
+
+  /*
+   * П-образная кухня с узким проходом — это кухня, в которой не
+   * разойтись. Предупреждаем блокирующе: переделывать её будут уже
+   * на объекте.
+   */
+  if (kind === 'u_shape') {
+    const aisle = Math.round(walls[1].lengthMm) - 2 * depthMm;
+    if (aisle < CORNER.minAisleMm) {
+      warnings.push(
+        `Проход между рядами ${Math.max(0, aisle)} мм — меньше ${CORNER.minAisleMm} мм. ` +
+          'В такой кухне не разойтись вдвоём и не открыть ящик напротив.',
+      );
+    }
+  }
+
+  const perSegment = splitAppliances(requirements.appliances, usable);
+
+  const segments: RunSegment[] = walls.map((wall, i) => {
+    /*
+     * Угловой модуль стоит В УГЛУ и принадлежит первому ряду: он и есть
+     * доступ в угол. При фальш-панели угол остаётся мёртвой зоной, и
+     * модуля там нет вовсе.
+     */
+    const cornerAt =
+      solution === 'corner_module' && i < walls.length - 1 ? ('end' as const) : null;
+
+    const run = buildRun({
+      id: `${input.id ?? 'composition'}-${i}`,
+      lengthMm: usable[i],
+      ceilingHeightMm,
+      requirements: { ...requirements, appliances: perSegment[i] },
+      openings: wall.openings ?? [],
+      comms: input.comms ?? [],
+      cornerAt,
+    });
+
+    warnings.push(...run.warnings.map((w) => `${SEGMENT_LABELS[i]}: ${w}`));
+
+    return {
+      id: `seg-${i}`,
+      label: SEGMENT_LABELS[i] ?? `Стена ${i + 1}`,
+      wallId: wall.id,
+      angleDeg: i === 0 ? 0 : 90,
+      wallLengthMm: Math.round(wall.lengthMm),
+      run,
+    };
+  });
+
+  const corners: CornerJoin[] = segments.slice(1).map((segment, i) => ({
+    fromSegmentId: segments[i].id,
+    toSegmentId: segment.id,
+    solution,
+    falsePanelMm: solution === 'false_panel' ? CORNER.falsePanelMm : undefined,
+    hingeAngleDeg: CORNER.hingeAngleDeg,
+    frontGapMm: CORNER.frontGapMm,
+  }));
+
+  return {
+    kind,
+    segments,
+    corners,
+    fingerprint: compositionFingerprint({ segments, corners }),
+    warnings,
+  };
+}
+
+/** Общая длина столешницы: сумма полезных длин всех рядов. */
+export function compositionLengthMm(composition: Composition): number {
+  return composition.segments.reduce((sum, segment) => sum + segment.run.lengthMm, 0);
+}
+
+/** Все модули композиции слева направо по сегментам. */
+export function compositionModules(composition: Composition): Run['modules'] {
+  return composition.segments.flatMap((segment) => segment.run.modules);
+}
+
+/** Длины сторон для промпта рендера: они же подписи на чертеже. */
+export function compositionSidesMm(composition: Composition): number[] {
+  return composition.segments.map((segment) => segment.run.lengthMm);
+}
+
+/** Один прямой ряд как композиция: остальной код работает с ней одинаково. */
+export function linearComposition(run: Run, wallId = 'w1'): Composition {
+  const segments: RunSegment[] = [
+    {
+      id: 'seg-0',
+      label: SEGMENT_LABELS[0],
+      wallId,
+      angleDeg: 0,
+      wallLengthMm: run.lengthMm,
+      run,
+    },
+  ];
+
+  return {
+    kind: 'linear',
+    segments,
+    corners: [],
+    fingerprint: compositionFingerprint({ segments, corners: [] }),
+    warnings: [],
+  };
+}
+
+export { CORNER_SIZE_MM };

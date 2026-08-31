@@ -125,6 +125,39 @@ export function manualAnchorCost(
   return { dropped, missingMm };
 }
 
+/**
+ * Стык двух рядов под 90°.
+ *
+ * Второй ряд ОБЯЗАН быть короче своей стены на глубину первого — иначе
+ * модули в углу физически налезают друг на друга. Это не предупреждение:
+ * наложение в углу вскрывается на монтаже, когда мебель уже распилена.
+ */
+export class CornerOverlapError extends Error {
+  constructor(
+    readonly label: string,
+    readonly wallLengthMm: number,
+    readonly lostMm: number,
+  ) {
+    super(
+      `${label}: стена ${wallLengthMm} мм, а после стыка с соседним рядом ` +
+        `остаётся ${wallLengthMm - lostMm} мм — модули встали бы в углу друг на друга.`,
+    );
+    this.name = 'CornerOverlapError';
+  }
+}
+
+export function assertCornerFits(input: {
+  label: string;
+  wallLengthMm: number;
+  /** Глубина соседнего ряда плюс фальш-панель, если она есть. */
+  lostMm: number;
+  minWidthMm: number;
+}): void {
+  if (input.wallLengthMm - input.lostMm < input.minWidthMm) {
+    throw new CornerOverlapError(input.label, input.wallLengthMm, input.lostMm);
+  }
+}
+
 /** Сколько раз каждый прибор попал в ряд. В норме — ровно один. */
 export function appliancesPlacedOnce(run: Run): Map<string, number> {
   const counts = new Map<string, number>();

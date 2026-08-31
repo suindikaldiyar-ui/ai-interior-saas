@@ -8,7 +8,10 @@ import ThemeToggle from '@/components/ThemeToggle';
 import BeforeAfter from './BeforeAfter';
 import CommandBar from './CommandBar';
 import DrawingSheet from './DrawingSheet';
-import ElevationDrawing, { type DrawingMode } from './ElevationDrawing';
+import ElevationDrawing, {
+  type DrawingMode,
+  type VariantOption,
+} from './ElevationDrawing';
 import EstimateSheet from './EstimateSheet';
 import MaterialsStep from './MaterialsStep';
 import PanelList from './PanelList';
@@ -23,6 +26,9 @@ import SurveySheet from './SurveySheet';
 import TemplatePicker from './TemplatePicker';
 import type { RateTable } from '@/lib/millwork/estimate';
 import { applyOps } from '@/lib/millwork/ops';
+import { buildEstimate } from '@/lib/millwork/estimate';
+import { currentVariant, variantsForModule } from '@/lib/millwork/moduleVariants';
+import { allModules } from '@/lib/millwork/layout';
 import { buildRun } from '@/lib/millwork/layout';
 import { manualAnchorCost } from '@/lib/millwork/invariants';
 import { APPLIANCE_SLOTS } from '@/lib/millwork/modules';
@@ -70,6 +76,7 @@ import type {
   ApplianceKind,
   CommPoint,
   MillworkOp,
+  ModuleVariantKind,
   Module,
   ModuleFill,
   Opening,
@@ -609,6 +616,57 @@ export default function Workspace(props: WorkspaceProps) {
     setMoveNotice(null);
   };
 
+  /**
+   * ВАРИАНТЫ ВЫБРАННОГО МЕСТА И РАЗНИЦА В ЦЕНЕ.
+   *
+   * Разницу считаем настоящим пересчётом: применяем вариант тем же
+   * `applyOps` и считаем ту же смету. Прикинуть «плюс механизм» по
+   * прайсу было бы дешевле, но тогда цифра на чертеже разошлась бы
+   * с итогом внизу экрана — а клиент видит обе.
+   */
+  const variantOptions = useMemo<VariantOption[]>(() => {
+    if (!selectedId) return [];
+
+    const unit = allModules(active.run).find((m) => m.id === selectedId);
+    if (!unit) return [];
+
+    const specs = variantsForModule(unit, active.run, zone);
+    // Один вариант — это не выбор, а надпись. Меню не показываем вовсе.
+    if (specs.length < 2) return [];
+
+    const now = currentVariant(unit);
+    const base = buildEstimate(active.run, variantKey, input.rates, disabled[variantKey]).total;
+
+    return specs.map((spec) => {
+      let deltaKzt = 0;
+
+      if (spec.kind !== now) {
+        try {
+          const next = applyOps({
+            run: active.run,
+            requirements,
+            ops: [{ op: 'set_variant', moduleId: unit.id, variant: spec.kind }],
+            openings: input.openings,
+          });
+          deltaKzt = Math.round(
+            buildEstimate(next, variantKey, input.rates, disabled[variantKey]).total - base,
+          );
+        } catch {
+          // Вариант, который не собирается, просто идёт без цены.
+          deltaKzt = 0;
+        }
+      }
+
+      return {
+        kind: spec.kind,
+        title: spec.title,
+        hint: spec.hint,
+        deltaKzt,
+        active: spec.kind === now,
+      };
+    });
+  }, [selectedId, active.run, zone, requirements, input.rates, input.openings, disabled, variantKey]);
+
   const runOps = useCallback(
     (ops: MillworkOp[]) => {
       if (ops.length === 0) return;
@@ -630,6 +688,12 @@ export default function Workspace(props: WorkspaceProps) {
     },
     [active, requirements, props.openings, flash],
   );
+
+  /** Выбор варианта идёт тем же путём, что и любая правка состава. */
+  const chooseVariant = (kind: ModuleVariantKind) => {
+    if (!selectedId) return;
+    runOps([{ op: 'set_variant', moduleId: selectedId, variant: kind }]);
+  };
 
   const sendCommand = useCallback(
     async (text: string) => {
@@ -1410,6 +1474,8 @@ export default function Workspace(props: WorkspaceProps) {
                     mode={drawingMode}
                     onFillChange={changeFill}
                     onMoveAppliance={moveAppliance}
+                    variants={variantOptions}
+                    onVariant={chooseVariant}
                   />
                 ) : (
                   <PlanDrawing

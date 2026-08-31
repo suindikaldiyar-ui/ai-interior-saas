@@ -63,6 +63,14 @@ export const TYPICAL_PRICE_LIST: TypicalRate[] = [
   { estimateKey: 'led_niche', article: 'LIV-LED', name: 'Подсветка ниши LED', categoryKey: 'living', unit: 'running_meter', price: 8500 },
   { estimateKey: 'sink_cutout', article: 'BAT-CUTOUT', name: 'Вырез под раковину', categoryKey: 'bath', unit: 'piece', price: 12000 },
   { estimateKey: 'glass_front', article: 'DSP-GLASS', name: 'Стеклянная дверь в раме', categoryKey: 'materials', unit: 'm2', price: 48000 },
+  /* Варианты мест: механизм идёт отдельной строкой, корпус у них обычный. */
+  { estimateKey: 'cargo_150', article: 'HW-CARGO-150', name: 'Карго узкое (бутылочница)', categoryKey: 'hardware', unit: 'piece', price: 42000 },
+  { estimateKey: 'cargo_300', article: 'HW-CARGO-300', name: 'Карго 300 мм', categoryKey: 'hardware', unit: 'piece', price: 56000 },
+  { estimateKey: 'cargo_tall', article: 'HW-CARGO-TALL', name: 'Карго высокое (пенал)', categoryKey: 'hardware', unit: 'piece', price: 145000 },
+  { estimateKey: 'dish_dryer', article: 'HW-DRYER', name: 'Сушилка в верхний шкаф', categoryKey: 'hardware', unit: 'piece', price: 18000 },
+  { estimateKey: 'lift_aventos', article: 'HW-LIFT-AV', name: 'Подъёмник верхнего фасада (Aventos)', categoryKey: 'hardware', unit: 'piece', price: 24000 },
+  { estimateKey: 'sink_base', article: 'MOD-SINK-BASE', name: 'Модуль под мойку (без дна, вырез)', categoryKey: 'services', unit: 'piece', price: 8000 },
+  { estimateKey: 'carousel_corner', article: 'HW-CAROUSEL', name: 'Карусель угловая', categoryKey: 'hardware', unit: 'piece', price: 78000 },
   { estimateKey: 'led_display', article: 'DSP-LED', name: 'Подсветка витрины LED', categoryKey: 'hardware', unit: 'running_meter', price: 9500 },
 
   { estimateKey: 'ldsp_carcass', article: 'MAT-LDSP-16', name: 'Корпус ЛДСП 16 мм', categoryKey: 'materials', unit: 'm2', price: 9500 },

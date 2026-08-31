@@ -16,7 +16,14 @@ import {
   removeShelf,
   snapTo32,
 } from '@/lib/millwork/fill';
-import type { ApplianceKind, Module, ModuleFill, Run } from '@/types/millwork';
+import { formatMoney } from '@/lib/millwork/estimate';
+import type {
+  ApplianceKind,
+  Module,
+  ModuleFill,
+  ModuleVariantKind,
+  Run,
+} from '@/types/millwork';
 
 /**
  * Вид спереди — главный документ для производства.
@@ -57,6 +64,23 @@ type Props = {
    * она совпала с его планом.
    */
   onMoveAppliance?: (appliance: ApplianceKind, centerMm: number) => void;
+  /**
+   * Варианты для выбранного места и цена относительно текущего.
+   *
+   * Считает их рабочее место: там есть и ставки каталога, и смета.
+   * Чертёж только показывает — и показывает ровно там, где стоит палец.
+   */
+  variants?: VariantOption[];
+  onVariant?: (kind: ModuleVariantKind) => void;
+};
+
+export type VariantOption = {
+  kind: ModuleVariantKind;
+  title: string;
+  hint: string;
+  /** Разница в цене относительно текущего варианта, ₸. */
+  deltaKzt: number;
+  active: boolean;
 };
 
 /** Шаг привязки при переносе: мебель делают с точностью до полсантиметра. */
@@ -479,6 +503,8 @@ export default function ElevationDrawing({
   mode = 'fronts',
   onFillChange,
   onMoveAppliance,
+  variants = [],
+  onVariant,
 }: Props) {
   const changed = useMemo(() => new Set(changedIds), [changedIds]);
 
@@ -870,7 +896,17 @@ export default function ElevationDrawing({
     );
   };
 
-  return (
+  /*
+   * Меню вариантов. Позиция считается от того же viewBox, что и чертёж,
+   * в процентах — svg тянется по ширине контейнера, и абсолютные пиксели
+   * разъехались бы на первом же изменении окна.
+   */
+  const selected = allModulesOf(run).find((unit) => unit.id === selectedModuleId) ?? null;
+  const menuLeft = selected
+    ? ((PADDING_LEFT + (selected.offsetMm + selected.widthMm / 2) * scale) / svgWidth) * 100
+    : 0;
+
+  const drawing = (
     <svg
       viewBox={`0 0 ${svgWidth} ${svgHeight}`}
       width="100%"
@@ -1010,6 +1046,68 @@ export default function ElevationDrawing({
       </g>
     </svg>
   );
+
+  /*
+   * Без вариантов — просто чертёж, без лишней обёртки: он печатается,
+   * и лишний div в листе А4 ни к чему.
+   */
+  if (variants.length === 0 || !onVariant) return drawing;
+
+  return (
+    <div className="relative">
+      {drawing}
+
+      {/*
+        * ВЫБОР ТАМ, ГДЕ СТОИТ ПАЛЕЦ. Выпадающий список в стороне заставил бы
+        * замерщика переводить взгляд с чертежа на панель и обратно — а он
+        * показывает этот экран клиенту.
+        */}
+      <div
+        className="absolute z-10 w-[240px] -translate-x-1/2 print:hidden"
+        style={{ left: `${menuLeft}%`, top: '4%' }}
+      >
+        <div className="mw-panel-flat bg-sheet shadow-[0_1px_2px_rgba(0,0,0,.28)]">
+          <p className="mw-label mb-1">Что здесь стоит</p>
+          <div className="grid gap-1">
+            {variants.map((option) => (
+              <button
+                key={option.kind}
+                type="button"
+                onClick={() => onVariant(option.kind)}
+                aria-pressed={option.active}
+                className={`mw-btn w-full justify-start text-left ${
+                  option.active ? 'mw-btn-primary' : 'mw-btn-ghost'
+                }`}
+              >
+                <span className="block">
+                  {option.title}
+                  {/*
+                    * Разница в цене, а не сумма: клиент на встрече решает
+                    * «стоит ли эта дверца лишних восемнадцати тысяч»,
+                    * а не сравнивает два шестизначных числа.
+                    */}
+                  {!option.active && option.deltaKzt !== 0 && (
+                    <span className="mw-num ml-1 text-graphiteMw">
+                      {option.deltaKzt > 0 ? '+' : '−'}
+                      {formatMoney(Math.abs(option.deltaKzt))} ₸
+                    </span>
+                  )}
+                </span>
+                <span className="mt-0.5 block text-[13px] leading-snug text-graphiteMw">
+                  {option.hint}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Все модули ряда: выбранный может быть и в верхнем. */
+function allModulesOf(run: Run): Module[] {
+  return [...run.modules, ...run.upperSegments.flatMap((segment) => segment.modules)];
 }
 
 export { APPLIANCE_SLOTS };

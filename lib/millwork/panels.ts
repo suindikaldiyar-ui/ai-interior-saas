@@ -1,5 +1,6 @@
 import { moduleCarcassHeightMm, moduleDepthMm } from './fill';
 import { BUILT_IN_FRIDGE_FRONTS, GEOMETRY } from './modules';
+import { hasBottom } from './moduleVariants';
 import { DEFAULT_PRODUCTION, type ProductionSettings } from '@/types/catalog';
 import type { Module, Panel, PanelTotals, Run } from '@/types/millwork';
 
@@ -89,16 +90,22 @@ function modulePanels(
     grain: 'along',
   });
 
-  push({
-    name: 'Дно',
-    material,
-    lengthMm: inner,
-    widthMm: depthMm,
-    qty: 1,
-    edges: { long: 1, short: 0 },
-    edgeType: thick,
-    grain: 'across',
-  });
+  /*
+   * У модуля под мойку дна нет: там сифон. Деталь не должна попасть
+   * в раскрой — цех распилит лист и выбросит его.
+   */
+  if (hasBottom(unit)) {
+    push({
+      name: 'Дно',
+      material,
+      lengthMm: inner,
+      widthMm: depthMm,
+      qty: 1,
+      edges: { long: 1, short: 0 },
+      edgeType: thick,
+      grain: 'across',
+    });
+  }
 
   push({
     name: unit.kind === 'base' || unit.kind === 'corner_base' ? 'Планки верхние' : 'Крыша',

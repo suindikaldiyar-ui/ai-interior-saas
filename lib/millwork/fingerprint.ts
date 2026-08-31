@@ -63,6 +63,8 @@ function extrasPart(unit: Module): string | undefined {
     unit.column ? `${unit.column.bottom}<${unit.column.top}` : '',
     unit.builtIn ? 'built_in' : '',
     unit.section ?? '',
+    // Карго вместо дверцы — другая мебель и другие деньги.
+    unit.variant ?? '',
   ].filter(Boolean);
 
   return parts.length > 0 ? parts.join(',') : undefined;
@@ -91,6 +93,34 @@ export function runFingerprint(run: Pick<Run, 'modules' | 'upperSegments'>): str
     ...run.modules,
     ...run.upperSegments.flatMap((s) => s.modules),
   ]);
+}
+
+/**
+ * Отпечаток всей композиции.
+ *
+ * Считается от отпечатков сегментов И от решения угла: сменил фальш-панель
+ * на угловой модуль — это другая мебель и другие деньги, и чертёж со сметой
+ * обязаны об этом знать.
+ */
+export function compositionFingerprint(composition: {
+  segments: { run: Pick<Run, 'modules' | 'upperSegments' | 'lengthMm'> }[];
+  corners: { solution: string; falsePanelMm?: number; hingeAngleDeg?: number }[];
+}): string {
+  const text = [
+    ...composition.segments.map(
+      (segment) => `${segment.run.lengthMm}:${runFingerprint(segment.run)}`,
+    ),
+    ...composition.corners.map(
+      (corner) => `${corner.solution}/${corner.falsePanelMm ?? 0}/${corner.hingeAngleDeg ?? 0}`,
+    ),
+  ].join('|');
+
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, '0');
 }
 
 export class ConfigurationMismatchError extends Error {

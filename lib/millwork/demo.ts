@@ -80,6 +80,14 @@ export const DEMO_RATES: RateTable = {
   // Витрина: стекло в раме и лента по контуру.
   glass_front: 48000,
   led_display: 9500,
+  // Механизмы вариантов: карго, сушилка, подъёмник, карусель.
+  cargo_150: 42000,
+  cargo_300: 56000,
+  cargo_tall: 145000,
+  dish_dryer: 18000,
+  lift_aventos: 24000,
+  sink_base: 8000,
+  carousel_corner: 78000,
 
   ldsp_carcass: 9500,
   hdf_back: 2200,

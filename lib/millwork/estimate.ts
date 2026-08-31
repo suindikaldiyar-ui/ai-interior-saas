@@ -8,6 +8,7 @@ import {
 } from './modules';
 import { allModules } from './layout';
 import { SLIDING_DOOR, displayLedMeters, sectionSpec, slidingDoorCount } from './sections';
+import { MODULE_VARIANTS, hasBottom, isSinkBase, variantEstimateKeys } from './moduleVariants';
 import { zoneProfile } from './zones';
 import type {
   Estimate,
@@ -55,7 +56,12 @@ function carcassAreaM2(unit: Module, ceilingHeightMm: number, upperToCeiling: bo
   const w = unit.widthMm;
 
   const sides = 2 * h * d;
-  const horizontals = 2 * w * d;
+  /*
+   * У модуля под мойку ДНА НЕТ: там сифон. Это не мелочь оформления —
+   * лишний лист ЛДСП в каждой кухне складывается в деньги, а в раскрое
+   * появляется деталь, которую цех выбросит.
+   */
+  const horizontals = (hasBottom(unit) ? 2 : 1) * w * d;
   const shelf = unit.frontType === 'drawers' ? 0 : w * d;
 
   return (sides + horizontals + shelf) / MM2_IN_M2;
@@ -437,6 +443,30 @@ export function buildEstimateDrafts(run: Run): Draft[] {
     );
   }
 
+  /*
+   * Статьи вариантов: механизм карго, сушилка, подъёмник, карусель.
+   * Корпус у них обычный — отдельной строкой идёт именно механизм,
+   * иначе он растворится в стоимости ЛДСП и пропадёт из сметы.
+   */
+  for (const unit of modules) {
+    for (const key of variantEstimateKeys(unit)) {
+      const spec = MODULE_VARIANTS[unit.variant!];
+      drafts.push({
+        key,
+        title: `${spec.title} (${unit.widthMm} мм)`,
+        unit: key === 'glass_front' ? 'm2' : 'pcs',
+        quantity:
+          key === 'glass_front'
+            ? round2(
+                (unit.widthMm *
+                  moduleHeightMm(unit.kind, { upperToCeiling, ceilingHeightMm: ceiling })) /
+                  MM2_IN_M2,
+              )
+            : 1,
+      });
+    }
+  }
+
   drafts.push(...sectionDrafts(run));
 
   /*
@@ -458,6 +488,20 @@ export function buildEstimateDrafts(run: Run): Draft[] {
 
   if (modules.some((m) => m.appliance === 'sink600' || m.appliance === 'sink800')) {
     drafts.push({ key: 'faucet', title: 'Смеситель', unit: 'pcs', quantity: 1 });
+  }
+
+  /*
+   * Модуль под мойку — отдельная работа: бездонный корпус и вырез под
+   * сифон. Она есть в каждой кухне и раньше не считалась вовсе.
+   */
+  const sinkBases = modules.filter(isSinkBase).length;
+  if (sinkBases > 0) {
+    drafts.push({
+      key: 'sink_base',
+      title: 'Модуль под мойку (без дна, вырез)',
+      unit: 'pcs',
+      quantity: sinkBases,
+    });
   }
 
   /*

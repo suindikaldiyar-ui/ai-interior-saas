@@ -97,6 +97,25 @@ export type ApplianceKind =
 
 export type FrontType = 'door' | 'drawers' | 'none' | 'appliance';
 
+/** Начинка конкретного места. Каталог — в lib/millwork/moduleVariants.ts. */
+export type ModuleVariantKind =
+  | 'door'
+  | 'drawers'
+  | 'drawers_door'
+  | 'cargo'
+  | 'sink_base'
+  | 'hob_base'
+  | 'corner_carousel'
+  | 'open_base'
+  | 'upper_door'
+  | 'upper_glass'
+  | 'upper_dryer'
+  | 'upper_lift'
+  | 'upper_open'
+  | 'tall_shelves'
+  | 'tall_cargo'
+  | 'tall_rod';
+
 /**
  * Секция — это НАЧИНКА модуля в зонах, где нет техники.
  *
@@ -199,6 +218,14 @@ export interface Module {
   /** Два прибора в одном пенале: духовка и микроволновка. */
   column?: ApplianceColumn;
   /**
+   * Начинка места: карго, под мойку, сушилка, подъёмник, стекло.
+   *
+   * Это НЕ новый тип модуля: ширину и позицию по-прежнему считает
+   * раскладка. Вариант решает, что стоит в этом конкретном месте —
+   * ровно так же, как в цеху.
+   */
+  variant?: ModuleVariantKind;
+  /**
    * Техника закрыта фасадом заподлицо. У отдельностоящего холодильника
    * фасада нет вовсе — ни в 3D, ни в смете, ни в детализировке.
    */
@@ -286,6 +313,61 @@ export interface Run {
   fingerprint: string;
 }
 
+/* ─────────────────────────  Композиция  ───────────────────────── */
+
+/**
+ * ФОРМА ГАРНИТУРА.
+ *
+ * `Run` — это ОДИН ПРЯМОЙ РЯД вдоль одной стены, и таким он остаётся.
+ * Угловая кухня — это два таких ряда, соединённых углом; П-образная — три.
+ * Композиция их связывает, а раскладку каждого по-прежнему считает
+ * `buildRun`: вторая ветка раскладки разошлась бы с первой на первой же
+ * правке, и клиент увидел бы не ту мебель, что цех.
+ */
+export type CompositionKind = 'linear' | 'corner_l' | 'u_shape';
+
+export interface RunSegment {
+  id: string;
+  /** Метка для чертежа и разговора: «Стена А», «Стена Б». */
+  label: string;
+  /** Стена замера, вдоль которой стоит ряд. */
+  wallId: string;
+  /** Поворот относительно предыдущего сегмента. Для Г-образной 90. */
+  angleDeg: number;
+  /** Полная длина стены: из неё вычитается глубина соседнего ряда. */
+  wallLengthMm: number;
+  run: Run;
+}
+
+/**
+ * Как решён угол.
+ *
+ * Фальш-панель нужна не для красоты: без неё фасад углового модуля при
+ * открывании упирается в перпендикулярный фасад. Панель отодвигает его,
+ * а петли на 155° или 175° дают двери раскрыться.
+ */
+export interface CornerJoin {
+  fromSegmentId: string;
+  toSegmentId: string;
+  solution: 'corner_module' | 'false_panel';
+  /** Ширина фальш-панели, мм. */
+  falsePanelMm?: number;
+  /** Угол раскрытия петли. */
+  hingeAngleDeg?: 155 | 175;
+  /** Зазор фасада у угла, мм: там он больше обычного. */
+  frontGapMm: number;
+}
+
+export interface Composition {
+  kind: CompositionKind;
+  segments: RunSegment[];
+  corners: CornerJoin[];
+  /** Отпечаток всей композиции: по нему сверяются чертёж, смета, 3D и рендер. */
+  fingerprint: string;
+  /** Что не собралось: стена короче глубины соседа, прибор не поместился. */
+  warnings: string[];
+}
+
 export interface RunRequirements {
   /** Зона квартиры: от неё зависят габариты и состав статей сметы. */
   zone?: ZoneKind;
@@ -311,6 +393,10 @@ export interface RunRequirements {
   fridgeType?: FridgeType;
   /** Витрина со стеклянными полками и подсветкой в торце ряда. */
   glassDisplay?: boolean;
+  /** Форма гарнитура: один ряд, угол или П. */
+  composition?: CompositionKind;
+  /** Чем решать угол. По умолчанию фальш-панель: она дешевле. */
+  cornerSolution?: CornerJoin['solution'];
   /**
    * Опции, которые человек выбрал руками.
    *
@@ -380,6 +466,8 @@ export type MillworkOp =
   | { op: 'set_fronts'; moduleId: string; drawerCount: number }
   /** Сменить начинку модуля в зонах без техники: штанга вместо полок. */
   | { op: 'set_section'; moduleId: string; section: SectionKind }
+  /** Сменить вариант места: карго вместо дверцы, сушилка над мойкой. */
+  | { op: 'set_variant'; moduleId: string; variant: ModuleVariantKind }
   | { op: 'move_module'; moduleId: string; afterModuleId: string }
   | { op: 'set_option'; key: 'upperToCeiling' | 'hardwareClass' | 'countertop' | 'hasUpper' | 'hasCornice'; value: string | boolean };
 
