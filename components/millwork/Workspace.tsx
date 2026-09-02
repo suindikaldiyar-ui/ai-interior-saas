@@ -19,6 +19,7 @@ import PlanDrawing from './PlanDrawing';
 import RenderPanel from './RenderPanel';
 import ArrangementCards from './ArrangementCards';
 import RunEditor, { type CompositionPatch } from './RunEditor';
+import SolutionGallery from './SolutionGallery';
 import StepBar, { type StepKey } from './StepBar';
 import { openablePartIds } from './cabinet3d/Cabinet3D';
 import SurveyPanel from './SurveyPanel';
@@ -245,6 +246,21 @@ export default function Workspace(props: WorkspaceProps) {
   );
   /** Почему последняя правка не применилась. */
   const [moveNotice, setMoveNotice] = useState<string | null>(null);
+
+  /**
+   * Снимок перед выбором решения.
+   *
+   * Замерщик перебирает решения при клиенте и должен иметь возможность
+   * вернуться к тому, что понравилось. Живёт до следующего выбора: это
+   * «отменить последнее», а не история правок.
+   */
+  const [previous, setPrevious] = useState<{
+    templateId: string | null;
+    name: string;
+    composition: CompositionPatch;
+    manualAnchors: NonNullable<RunRequirements['manualAnchors']>;
+    editedRuns: Partial<Record<VariantKey, Run>>;
+  } | null>(null);
 
   /*
    * Правки состава поверх шаблона: техника, колонна, встройка, витрина и
@@ -688,6 +704,106 @@ export default function Workspace(props: WorkspaceProps) {
     },
     [active, requirements, props.openings, flash],
   );
+
+  /**
+   * ВЫБОР ГОТОВОГО РЕШЕНИЯ.
+   *
+   * Решение — это набор секций и опций, а НЕ своя раскладка: ширины
+   * по-прежнему считает `buildRun` по длине стены. Иначе макет на карточке
+   * разошёлся бы с чертежом после выбора.
+   *
+   * Ручная расстановка и варианты модулей сбрасываются: в новом решении
+   * на этих местах стоит другая мебель. Говорим об этом словами — молча
+   * потерянная правка читается как поломка.
+   */
+  const pickSolution = (template: RunTemplate) => {
+    const hadManual = Object.keys(manualAnchors).length > 0;
+    const hadEdits = Object.keys(editedRuns).length > 0;
+
+    setPrevious({
+      templateId,
+      name: template.name,
+      composition,
+      manualAnchors,
+      editedRuns,
+    });
+
+    dirty.current = true;
+    setTemplateId(template.id);
+    setComposition({});
+    setManualAnchors({});
+    setEditedRuns({});
+    setSelectedId(null);
+
+    const notes = [
+      `Решение «${template.name}» собрано на стене ${input.lengthMm} мм.`,
+      hadManual ? 'Ручная расстановка сброшена — это другое решение, а не правка текущего.' : null,
+      hadEdits ? 'Варианты модулей сброшены: на этих местах теперь другая мебель.' : null,
+    ].filter(Boolean);
+
+    setMoveNotice(notes.join(' '));
+  };
+
+  /**
+   * СВОЁ РЕШЕНИЕ КОМПАНИИ.
+   *
+   * Сохраняется НАБОР — техника, секции, двери, опции, — а не собранный
+   * ряд: на другой стене решение обязано собраться заново по её длине.
+   * Диапазон длин берём от текущей стены с запасом в обе стороны:
+   * «наша базовая на 2700» должна предлагаться и на 2600, и на 3000.
+   */
+  const saveOwnSolution = async (name: string) => {
+    const template = {
+      id: `own-${Date.now().toString(36)}`,
+      name,
+      hint: 'Решение компании',
+      zone,
+      layout: 'linear' as const,
+      minLengthMm: Math.max(600, Math.round(input.lengthMm * 0.8)),
+      maxLengthMm: Math.round(input.lengthMm * 1.25),
+      appliances: requirements.appliances,
+      sections: requirements.sections,
+      doorSystem: requirements.doorSystem,
+      tallSide: requirements.tallSide,
+      options: requirements.options,
+    };
+
+    try {
+      const res = await fetch('/api/orgs/templates', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ template }),
+      });
+      const data = await res.json().catch(() => ({}));
+
+      /*
+       * Список решений приезжает с сервера при открытии объекта, поэтому
+       * своё появится в галерее со следующего захода. Говорим об этом
+       * прямо, а не делаем вид, что оно уже там.
+       */
+      setMoveNotice(
+        res.ok
+          ? `Решение «${name}» сохранено. В галерее оно появится при следующем открытии объекта, первым и с пометкой «ваше».`
+          : (data.error ?? 'Решение не сохранилось.'),
+      );
+    } catch {
+      setMoveNotice('Сети нет — решение не сохранилось.');
+    }
+  };
+
+  /** Вернуть то, что было до последнего выбора решения. */
+  const undoSolution = () => {
+    if (!previous) return;
+
+    dirty.current = true;
+    setTemplateId(previous.templateId);
+    setComposition(previous.composition);
+    setManualAnchors(previous.manualAnchors);
+    setEditedRuns(previous.editedRuns);
+    setSelectedId(null);
+    setPrevious(null);
+    setMoveNotice('Вернули то, что было до выбора решения.');
+  };
 
   /**
    * Выбор варианта идёт тем же путём, что и любая правка состава, но
@@ -1389,6 +1505,34 @@ export default function Workspace(props: WorkspaceProps) {
                 {/* Отпечаток — сверка для нас, а не разговор с клиентом. */}
                 {debug && ` Отпечаток ${active.run.fingerprint}.`}
               </p>
+            )}
+
+            {/*
+              * ГАЛЕРЕЯ РЯДОМ С ЧЕРТЕЖОМ, а не на отдельном шаге: клиент
+              * спрашивает «а по-другому можно?» именно здесь, глядя на
+              * чертёж, и ответ должен быть в одно нажатие.
+              */}
+            {resultView === 'facade' && (
+              <div className="mt-4">
+                <SolutionGallery
+                  zone={zone}
+                  lengthMm={input.lengthMm}
+                  ceilingHeightMm={input.ceilingHeightMm}
+                  openings={input.openings}
+                  comms={input.comms}
+                  rates={input.rates}
+                  options={requirements.options}
+                  variantKey={variantKey}
+                  disabledKeys={disabled[variantKey]}
+                  orgTemplates={props.orgTemplates}
+                  currentFingerprint={active.run.fingerprint}
+                  currentTotal={active.estimate.total}
+                  onPick={pickSolution}
+                  onUndo={undoSolution}
+                  undoLabel={previous?.name ?? null}
+                  onSaveOwn={props.projectId ? saveOwnSolution : undefined}
+                />
+              </div>
             )}
 
             {/* Эскиз в двух видах: фасады клиенту, разрез цеху. */}

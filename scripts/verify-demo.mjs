@@ -213,9 +213,19 @@ try {
   await page.getByRole('button', { name: /Шаблон/ }).click();
   await sleep(400);
 
+  /*
+   * Решений на зону стало до десятка — вместе с галереей у чертежа:
+   * на встрече клиент спрашивает «а по-другому можно?», и вариантов
+   * должно быть столько же, сколько в голове у мебельщика. Но каталогом
+   * этот экран быть не должен: верхняя граница осталась.
+   */
   const templateCards = page.locator('main button[aria-pressed]');
   const templateCount = await templateCards.count();
-  check('шаблонов на выбор — набор, а не список', templateCount === 6, `${templateCount} шт.`);
+  check(
+    'решений на выбор хватает и это не бесконечный каталог',
+    templateCount >= 4 && templateCount <= 12,
+    `${templateCount} шт.`,
+  );
 
   check(
     'у шаблона написано, в какой ряд он встанет',
@@ -250,13 +260,33 @@ try {
   await page.getByRole('button', { name: /Результат/ }).click();
   await sleep(700);
 
-  // Комплектация одна: выбор из трёх бюджетов с экрана убран.
-  const priceButtons = await page.evaluate(() =>
-    Array.from(document.querySelectorAll('main button[aria-pressed]')).filter((b) =>
-      (b.textContent ?? '').includes('₸'),
-    ).length,
+  /*
+   * Комплектация одна: выбор из трёх БЮДЖЕТОВ с экрана убран (SINGLE_VARIANT).
+   *
+   * Карточки с ценами при этом на экране есть — это галерея готовых
+   * РЕШЕНИЙ, разная мебель, а не три цены одной и той же. Проверяем
+   * именно бюджеты по названиям стратегий, иначе правило запрещало бы
+   * ровно то, ради чего галерея и сделана.
+   */
+  const budgetButtons = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('main button[aria-pressed]')).filter((b) => {
+      const text = b.textContent ?? '';
+      return /Базовый|Оптимальный|Премиум/.test(text) && text.includes('₸');
+    }).length,
   );
-  check('карточек с бюджетами на экране нет', priceButtons === 0, `карточек: ${priceButtons}`);
+  check('карточек с бюджетами на экране нет', budgetButtons === 0, `карточек: ${budgetButtons}`);
+
+  const solutionCards = await page.evaluate(
+    () =>
+      document.querySelectorAll(
+        'section:has(> div > button) button[aria-pressed]',
+      ).length,
+  );
+  check(
+    'галерея решений стоит рядом с чертежом',
+    solutionCards >= 2,
+    `карточек решений: ${solutionCards}`,
+  );
 
   const oneTotal = await page.evaluate(() => {
     const row = Array.from(document.querySelectorAll('button')).find((b) =>

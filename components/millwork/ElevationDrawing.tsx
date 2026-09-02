@@ -72,6 +72,16 @@ type Props = {
    */
   variants?: VariantOption[];
   onVariant?: (kind: ModuleVariantKind) => void;
+  /**
+   * Макет для галереи решений: тот же чертёж, только маленький.
+   *
+   * Без размерных цепочек, высотных отметок и подписей — только контуры
+   * модулей и их начинка. Отдельной «картинки решения» не существует
+   * НАМЕРЕННО: нарисованный макет разошёлся бы с настоящим чертежом
+   * на первой же правке раскладки, а новое решение требовало бы работы
+   * художника.
+   */
+  compact?: boolean;
 };
 
 export type VariantOption = {
@@ -505,6 +515,7 @@ export default function ElevationDrawing({
   onMoveAppliance,
   variants = [],
   onVariant,
+  compact = false,
 }: Props) {
   const changed = useMemo(() => new Set(changedIds), [changedIds]);
 
@@ -525,11 +536,14 @@ export default function ElevationDrawing({
   const ceiling = run.ceilingHeightMm;
   // Масштаб подбирается так, чтобы ряд любой длины уместился по ширине листа.
   const drawWidth = 640;
+  // В макете поля под высотные отметки и цепочку не нужны вовсе.
+  const padLeft = compact ? 6 : PADDING_LEFT;
+  const chainHeight = compact ? 6 : CHAIN_HEIGHT;
   const scale = drawWidth / Math.max(run.lengthMm, 1);
   const heightScale = scale;
 
-  const svgHeight = PADDING_TOP + ceiling * heightScale + CHAIN_HEIGHT + 16;
-  const svgWidth = PADDING_LEFT + drawWidth + PADDING_RIGHT;
+  const svgHeight = PADDING_TOP + ceiling * heightScale + chainHeight + 16;
+  const svgWidth = padLeft + drawWidth + (compact ? 6 : PADDING_RIGHT);
 
   /** Пол внизу, потолок вверху: экранный Y растёт вниз. */
   const yOf = (mm: number) => PADDING_TOP + (ceiling - mm) * heightScale;
@@ -598,7 +612,7 @@ export default function ElevationDrawing({
     const viewW = svg.viewBox.baseVal.width || box.width;
     const toMm = (clientX: number) => {
       const localX = ((clientX - box.left) / box.width) * viewW;
-      return Math.round((localX - PADDING_LEFT) / scale);
+      return Math.round((localX - padLeft) / scale);
     };
 
     const half = unit.widthMm / 2;
@@ -616,9 +630,9 @@ export default function ElevationDrawing({
       const rect = ghostRect.current;
       const label = ghostLabel.current;
       if (ghost.current) ghost.current.style.display = '';
-      if (rect) rect.setAttribute('x', String(PADDING_LEFT + (centerMm - half) * scale));
+      if (rect) rect.setAttribute('x', String(padLeft + (centerMm - half) * scale));
       if (label) {
-        label.setAttribute('x', String(PADDING_LEFT + centerMm * scale));
+        label.setAttribute('x', String(padLeft + centerMm * scale));
         label.textContent = `${Math.round(centerMm - half)} мм от угла`;
       }
     };
@@ -655,7 +669,7 @@ export default function ElevationDrawing({
   };
 
   const renderModule = (unit: Module, isUpper: boolean) => {
-    const x = PADDING_LEFT + unit.offsetMm * scale;
+    const x = padLeft + unit.offsetMm * scale;
     const w = unit.widthMm * scale;
 
     const bounds = sectionZone
@@ -903,37 +917,55 @@ export default function ElevationDrawing({
    */
   const selected = allModulesOf(run).find((unit) => unit.id === selectedModuleId) ?? null;
   const menuLeft = selected
-    ? ((PADDING_LEFT + (selected.offsetMm + selected.widthMm / 2) * scale) / svgWidth) * 100
+    ? ((padLeft + (selected.offsetMm + selected.widthMm / 2) * scale) / svgWidth) * 100
     : 0;
+
+  /*
+   * Макет обрезается по мебели: пустая стена до потолка занимает половину
+   * карточки и ничего не сообщает. Кадрируем viewBox, а не масштаб —
+   * геометрия остаётся той же, что в полном чертеже.
+   */
+  const topMm = compact
+    ? Math.max(
+        BASE_TOTAL_H,
+        run.options.hasUpper ? upperTop : 0,
+        ...allModulesOf(run).map((unit) =>
+          unit.kind === 'tall' ? moduleHeightMm('tall') : 0,
+        ),
+      )
+    : ceiling;
+
+  const viewTop = compact ? yOf(topMm) - 6 : 0;
+  const viewHeight = compact ? yOf(0) - yOf(topMm) + 12 : svgHeight;
 
   const drawing = (
     <svg
-      viewBox={`0 0 ${svgWidth} ${svgHeight}`}
+      viewBox={`0 ${viewTop} ${svgWidth} ${viewHeight}`}
       width="100%"
       role="img"
       aria-label={`Фасадный чертёж ряда ${run.lengthMm} мм`}
     >
       {/* Контур помещения: пол и потолок */}
       <line
-        x1={PADDING_LEFT - 12}
+        x1={padLeft - (compact ? 0 : 12)}
         y1={yOf(0)}
-        x2={PADDING_LEFT + drawWidth + 8}
+        x2={padLeft + drawWidth + (compact ? 0 : 8)}
         y2={yOf(0)}
         stroke="var(--ink)"
         strokeWidth={1.2}
       />
       <line
-        x1={PADDING_LEFT - 12}
+        x1={padLeft - (compact ? 0 : 12)}
         y1={yOf(ceiling)}
-        x2={PADDING_LEFT + drawWidth + 8}
+        x2={padLeft + drawWidth + (compact ? 0 : 8)}
         y2={yOf(ceiling)}
         stroke="var(--ink)"
         strokeWidth={0.6}
         strokeDasharray="4 3"
       />
 
-      {/* Высотные отметки слева */}
-      {marks.map(([mm, label]) => (
+      {/* Высотные отметки слева. В макете их нет: он читается силуэтом. */}
+      {!compact && marks.map(([mm, label]) => (
         <g key={label}>
           <line
             x1={PADDING_LEFT - 12}
@@ -995,7 +1027,13 @@ export default function ElevationDrawing({
         * только во время переноса: замерщик должен видеть, куда прибор
         * встанет, ДО того как отпустит.
         */}
-      <g ref={ghost} style={{ display: 'none' }} pointerEvents="none">
+      {/* Подсветка переноса: в макете галереи её нет — там ничего не тянут. */}
+      <g
+        ref={ghost}
+        style={{ display: 'none' }}
+        pointerEvents="none"
+        visibility={compact ? 'hidden' : undefined}
+      >
         <rect
           ref={ghostRect}
           x={PADDING_LEFT}
@@ -1028,7 +1066,8 @@ export default function ElevationDrawing({
       )}
 
       {/* Размерная цепочка — та же, что под лентой модулей и на плане */}
-      <g transform={`translate(${PADDING_LEFT}, ${PADDING_TOP + ceiling * heightScale + 8})`}>
+      {!compact && (
+      <g transform={`translate(${padLeft}, ${PADDING_TOP + ceiling * heightScale + 8})`}>
         <DimensionChain
           segments={run.modules.map((m) => ({
             id: m.id,
@@ -1044,6 +1083,7 @@ export default function ElevationDrawing({
           onSelect={onSelect}
         />
       </g>
+      )}
     </svg>
   );
 

@@ -51,3 +51,60 @@ export async function POST(request: Request) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true, saved: clean.length });
 }
+
+/**
+ * Добавить ОДНО решение к уже сохранённым.
+ *
+ * Замерщик нажимает «Сохранить как решение» прямо на объекте, при клиенте.
+ * POST переписывает весь список целиком — из конфигуратора так нельзя:
+ * он не знает про остальные решения компании и стёр бы их.
+ */
+export async function PUT(request: Request) {
+  const supabase = supabaseServer();
+  if (!supabase) {
+    return NextResponse.json({ error: 'Supabase не настроен.' }, { status: 503 });
+  }
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: 'Требуется вход.' }, { status: 401 });
+
+  const org = await currentOrg();
+  if (!org) return NextResponse.json({ error: 'Нет организации.' }, { status: 400 });
+
+  const body = (await request.json().catch(() => ({}))) as { template?: unknown };
+  const [template] = parseOrgTemplates([body.template]);
+
+  if (!template) {
+    return NextResponse.json(
+      { error: 'Решение не сохранено: в нём нет ни техники, ни секций.' },
+      { status: 400 },
+    );
+  }
+
+  const { data: current } = await supabase
+    .from('orgs')
+    .select('run_templates')
+    .eq('id', org.id)
+    .maybeSingle();
+
+  const existing = parseOrgTemplates(current?.run_templates).map((t) => ({
+    ...t,
+    id: t.id.replace(/^org:/, ''),
+  }));
+
+  const clean = { ...template, id: template.id.replace(/^org:/, '') };
+
+  // Одноимённое решение заменяется, а не двоится: «наша базовая» одна.
+  const next = [...existing.filter((t) => t.name !== clean.name), clean];
+
+  const { error } = await supabase
+    .from('orgs')
+    .update({ run_templates: next })
+    .eq('id', org.id);
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  return NextResponse.json({ ok: true, saved: next.length, template: clean });
+}

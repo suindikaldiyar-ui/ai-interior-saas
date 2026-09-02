@@ -15,12 +15,18 @@ import { buildEstimate, recalcTotal } from '../lib/millwork/estimate';
 import {
   DEFAULT_STRATEGIES,
   MAIN_VARIANT,
+  withStrategy,
   MAX_ARRANGEMENTS,
   buildArrangements,
   buildVariants,
   mostDifferent,
 } from '../lib/millwork/variants';
-import { RUN_TEMPLATES, requirementsFromTemplate, templateFits } from '../lib/millwork/templates';
+import {
+  RUN_TEMPLATES,
+  parseOrgTemplates,
+  requirementsFromTemplate,
+  templateFits,
+} from '../lib/millwork/templates';
 import {
   ZONE_ORDER,
   ZONE_PROFILES,
@@ -1109,6 +1115,138 @@ console.log('\nРучная расстановка');
   const asManual = sinkWaterConflicts(farSink, COMMS, true);
   check('автоматически — блокирующее', asAuto[0]?.severity === 'blocking');
   check('вручную — предупреждение', asManual[0]?.severity === 'clarify');
+}
+
+/* ─────────────────────  Галерея решений  ───────────────────── */
+
+console.log('\nГалерея решений');
+{
+  const WALL = 3200;
+
+  /*
+   * Карточка галереи собирается ТЕМ ЖЕ `buildRun`, что и чертёж после
+   * выбора. Отдельной «картинки решения» не существует намеренно: она
+   * разошлась бы с чертежом на первой же правке раскладки.
+   */
+  const mainStrategy = DEFAULT_STRATEGIES.find((s) => s.key === MAIN_VARIANT)!;
+
+  /*
+   * Карточка собирается ровно так же, как галерея: с комплектацией.
+   * Считай её без стратегии — и проверка перестанет видеть то, что видит
+   * пользователь: два решения, дающие одну и ту же мебель.
+   */
+  const cardRun = (template: (typeof RUN_TEMPLATES)[number]) =>
+    buildRun({
+      lengthMm: WALL,
+      ceilingHeightMm: 2700,
+      requirements: withStrategy(requirementsFromTemplate(template), mainStrategy),
+      openings: [],
+      comms: [],
+    });
+
+  const fitting = templatesForZone('kitchen').filter((t) => templateFits(t, WALL));
+  check('на стене 3200 мм есть из чего выбрать', fitting.length >= 3, `${fitting.length} решений`);
+
+  const picked = fitting[0];
+  const preview = cardRun(picked);
+  const afterPick = buildRun({
+    lengthMm: WALL,
+    ceilingHeightMm: 2700,
+    requirements: withStrategy(requirementsFromTemplate(picked), mainStrategy),
+    openings: [],
+    comms: [],
+  });
+
+  check(
+    'макет карточки совпадает с чертежом после выбора',
+    preview.fingerprint === afterPick.fingerprint,
+    `${preview.fingerprint} против ${afterPick.fingerprint}`,
+  );
+
+  /*
+   * Решение, которое не собирается на этой стене, не показывается вовсе:
+   * карточка, которая не соберётся, хуже её отсутствия.
+   */
+  const tooLong = templatesForZone('kitchen').find((t) => t.minLengthMm > WALL);
+  if (tooLong) {
+    check(
+      'решение длиннее стены в галерею не попадает',
+      !templateFits(tooLong, WALL),
+      `${tooLong.name}: от ${tooLong.minLengthMm} мм`,
+    );
+  }
+
+  // Десяток решений на зону: столько же, сколько в голове у мебельщика.
+  for (const zone of ZONE_ORDER) {
+    const list = templatesForZone(zone);
+    check(
+      `${zoneProfile(zone).title}: решений хватает на разговор`,
+      list.length >= 4,
+      `${list.length} шт.`,
+    );
+  }
+
+  /*
+   * Ни одного чужого решения: в спальне не бывает кухонных, и наоборот.
+   * То же правило, что на шаге «Состав».
+   */
+  check(
+    'в спальне нет кухонных решений',
+    templatesForZone('bedroom').every((t) => t.appliances.length === 0),
+    templatesForZone('bedroom').map((t) => t.name).join(', '),
+  );
+  check(
+    'а на кухне — шкафных',
+    templatesForZone('kitchen').every((t) => (t.sections ?? []).length === 0),
+  );
+
+  /* ── Разные решения — разная мебель ── */
+
+  const prints = fitting.map((t) => cardRun(t).fingerprint);
+  check(
+    'разные карточки дают разную мебель',
+    new Set(prints).size === prints.length,
+    prints.join(' '),
+  );
+
+  const totals = fitting.map((t) => buildEstimate(cardRun(t), MAIN_VARIANT, DEMO_RATES).total);
+  check('у каждой карточки своя цена', new Set(totals).size === totals.length);
+  check(
+    'и разница с текущим считается той же сметой',
+    Math.round(totals[1] - totals[0]) !== 0,
+    `${Math.round(totals[1] - totals[0])} ₸`,
+  );
+
+  /* ── Своё решение компании ── */
+
+  const own = parseOrgTemplates([
+    {
+      id: 'own-1',
+      name: 'Наша базовая',
+      zone: 'bedroom',
+      minLengthMm: 1600,
+      maxLengthMm: 3600,
+      appliances: [],
+      sections: ['hanging_long', 'shelves', 'drawers'],
+      doorSystem: 'sliding',
+      tallSide: 'left',
+    },
+  ]);
+
+  /*
+   * Решение без техники раньше молча пропадало при сохранении: разбор
+   * требовал приборов. Шкаф собирается секциями — и это тоже решение.
+   */
+  check('своё решение без техники сохраняется', own.length === 1, `${own.length}`);
+  check('и остаётся в своей зоне', own[0]?.zone === 'bedroom');
+  check('вместе с составом секций', (own[0]?.sections ?? []).length === 3);
+  check('и системой дверей', own[0]?.doorSystem === 'sliding');
+  check('оно идёт первым в списке зоны', templatesForZone('bedroom', own)[0]?.id === own[0]?.id);
+
+  const emptyOne = parseOrgTemplates([
+    { id: 'x', name: 'Пустое', minLengthMm: 1000, maxLengthMm: 2000, appliances: [], sections: [] },
+  ]);
+  check('решение без техники и без секций не сохраняется', emptyOne.length === 0);
 }
 
 /* ─────────────────────  Варианты мест  ───────────────────── */
