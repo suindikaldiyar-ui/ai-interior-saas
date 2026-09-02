@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type * as THREE from 'three';
 import { useSlide } from './useSlide';
 import { useTouchTarget } from './useTouchTarget';
@@ -33,6 +33,13 @@ type Props = {
   gap: number;
   /** Ручка-профиль по верхней кромке вместо накладной скобы. */
   integratedHandle: boolean;
+  /**
+   * Створка поехала или встала.
+   *
+   * Пока она стоит закрытой, её рисует общая отрисовка ряда; поехала —
+   * ряд убирает её из своей пачки, чтобы не было двух дверей сразу.
+   */
+  onActive?: (id: string, active: boolean) => void;
 };
 
 /** Распахнутая дверь: 90°. */
@@ -52,9 +59,28 @@ export default function InteractiveDoor({
   parts,
   gap,
   integratedHandle,
+  onActive,
 }: Props) {
   const group = useRef<THREE.Group>(null);
   const touch = useRef<THREE.Mesh>(null);
+
+  /*
+   * Закрытая дверь рисуется НЕ ЗДЕСЬ: она уходит в общую отрисовку ряда
+   * одним вызовом вместе с остальными фасадами. Свой меш появляется на
+   * время открывания и держится, пока дверь не встанет обратно, — иначе
+   * створка исчезала бы на полпути.
+   */
+  const [active, setActive] = useState(open);
+  const openRef = useRef(open);
+  openRef.current = open;
+
+  useEffect(() => {
+    if (open) setActive(true);
+  }, [open]);
+
+  useEffect(() => {
+    onActive?.(id, active);
+  }, [id, active, onActive]);
 
   // Зона касания не меньше 44 px на экране: полотно 200 мм на телефоне
   // само по себе восемь пикселей.
@@ -71,6 +97,9 @@ export default function InteractiveDoor({
     apply: (value) => {
       const el = group.current;
       if (el) el.rotation.y = value;
+    },
+    onSettle: () => {
+      if (!openRef.current) setActive(false);
     },
   });
 
@@ -89,6 +118,13 @@ export default function InteractiveDoor({
         name={`part:${id}`}
         geometry={parts.box}
         material={parts.hit}
+        /*
+         * Зона касания не рисуется вовсе. Прозрачный меш всё равно уходит
+         * в рендер: тринадцать модулей давали больше тридцати вызовов
+         * отрисовки на то, чего не видно. Луч указателя невидимые объекты
+         * по-прежнему находит — проверено кликом по мебели.
+         */
+        visible={false}
         position={[panelX, 0, 0]}
         scale={[width, height, 0.06]}
         onClick={(event) => {
@@ -108,7 +144,12 @@ export default function InteractiveDoor({
         * Полотно стоит ВПЕРЕДИ корпуса и уже проёма на два зазора: тёмная
         * щель между фасадами — главный признак мебели. Без неё ряд читается
         * как крашеная стена.
+        *
+        * Рисуется, только пока створка открыта или едет: закрытая уходит
+        * в общую отрисовку ряда.
         */}
+      {active && (
+        <>
       <mesh
         geometry={parts.box}
         material={parts.front}
@@ -139,6 +180,8 @@ export default function InteractiveDoor({
           ]}
           scale={[0.016, Math.min(0.22, height * 0.4), 0.016]}
         />
+      )}
+        </>
       )}
     </group>
   );

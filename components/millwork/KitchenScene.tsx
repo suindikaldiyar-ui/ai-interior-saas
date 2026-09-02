@@ -54,12 +54,17 @@ type Props = {
   onItemId?: (id: string) => void;
   /** Выделение общее с чертежом: выбранный модуль подсвечен и в сцене. */
   selectedModuleId?: string | null;
+  onSelectModule?: (moduleId: string) => void;
+  /** Ширина, вытянутая прямо в сцене. */
+  onWidth?: (moduleId: string, widthMm: number) => void;
 };
 
 export default function KitchenScene({
   run,
   ceilingHeightMm,
   selectedModuleId,
+  onSelectModule,
+  onWidth,
   roomDepthM = DEFAULT_ROOM_DEPTH_M,
   hidden = false,
   interactive = false,
@@ -205,7 +210,16 @@ export default function KitchenScene({
 
   return (
     <div className="relative h-full w-full">
-      <RoomCanvas frameloop={hidden ? 'demand' : 'always'}>
+      {/*
+        * `demand` и на видимой сцене: мебель стоит, пока её не тронули, и
+        * рисовать шестьдесят одинаковых кадров в секунду незачем. Каждое
+        * движение — двери, ящики, перелёт камеры — само зовёт `invalidate`.
+        *
+        * Тени — контактной плоскостью, без карт: второй проход по каждому
+        * мешу стоит на планшете половины кадра, а мебель на полу держит
+        * именно контактная тень.
+        */}
+      <RoomCanvas frameloop="demand" shadows={false} dpr={[1, 1.75]} environment="apartment">
         {interactive && (
           <Cabinet3D
             run={run}
@@ -214,6 +228,9 @@ export default function KitchenScene({
             roomDepthM={depthM}
             view={view}
             onFraming={keepFraming}
+            selectedModuleId={selectedModuleId}
+            onSelectModule={onSelectModule}
+            onWidth={onWidth}
           />
         )}
       </RoomCanvas>

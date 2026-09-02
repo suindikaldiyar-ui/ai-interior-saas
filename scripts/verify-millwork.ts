@@ -61,6 +61,9 @@ import {
 import { buildPanels, panelTotals } from '../lib/millwork/panels';
 import { panelsCsvFile, panelsToCsv } from '../lib/millwork/csv-export';
 import { runFingerprint } from '../lib/millwork/fingerprint';
+import { surfaceFinish, surfaceLook } from '../lib/millwork/surfaces';
+import { GROUP_ORDER, estimateGroups, groupsTotal } from '../lib/millwork/estimateGroups';
+import { carcassBoxes, moduleBoxes } from '../lib/millwork/cabinetBoxes';
 import { DEFAULT_PRODUCTION } from '../types/catalog';
 import type { ZoneKind } from '../types/millwork';
 import { commIssues, layoutIssues, validateRun } from '../lib/millwork/validate';
@@ -2715,6 +2718,187 @@ console.log('\nОтраслевые стандарты');
     'стандартные ширины идут по возрастанию без дублей',
     STANDARD_WIDTHS.every((w, i) => i === 0 || w > STANDARD_WIDTHS[i - 1]),
   );
+}
+
+
+/* ─────────────────────────  Поверхности: цвет, фактура, текстура  ───────────────────────── */
+
+console.log('\nМатериал меняется мгновенно');
+{
+  const fallback = { color: '#B9B2A4', roughness: 0.72 };
+
+  const none = surfaceLook(null, fallback);
+  check('без артикула поверхность красится цветом по умолчанию',
+    none.color === '#B9B2A4' && none.textureUrl === null && none.fromCatalog === false);
+
+  const entry = {
+    id: 'x',
+    org_id: 'o',
+    category_id: 'c',
+    article: 'ART-1',
+    name_ru: 'Фасад графит',
+    name_kk: '',
+    description: '',
+    price: 1000,
+    unit: 'm2',
+    dimensions: {},
+    tiling: { moduleSize: [0.6, 0.7] },
+    meta: { color: '#2E3236', finish: 'gloss' },
+    is_active: true,
+    category: {
+      id: 'c',
+      org_id: 'o',
+      key: 'kitchen',
+      name_ru: '',
+      name_kk: '',
+      applies_to: 'zone',
+      unit: 'm2',
+      sort_order: 0,
+      is_active: true,
+    },
+    assets: [],
+  } as unknown as Parameters<typeof surfaceLook>[0];
+
+  const gloss = surfaceLook(entry, fallback, [1.2, 0.7]);
+  check('цвет берётся из артикула', gloss.color === '#2E3236');
+  check('глянец блестит сильнее матового', gloss.roughness < fallback.roughness);
+  check('фактура читается из meta.finish', surfaceFinish(entry) === 'gloss');
+  check('раскладка даёт число повторов', gloss.repeat[0] >= 1 && gloss.repeat[1] >= 1);
+
+  const milled = surfaceLook(
+    { ...entry, meta: { color: '#EFEAE0', finish: 'milled' } } as typeof entry,
+    fallback,
+  );
+  check('фрезерованный фасад просит рельеф, а не цвет', milled.milled === true);
+
+  const broken = surfaceLook(
+    { ...entry, meta: { color: 'графит', finish: 'какая-то' } } as typeof entry,
+    fallback,
+  );
+  check('мусор в meta не красит мебель в чёрное',
+    broken.color === fallback.color && broken.roughness === fallback.roughness);
+}
+
+/* ─────────────────────────  Корпус числами: одна геометрия на сцену  ───────────────────────── */
+
+console.log('\nКорпус описан числами');
+{
+  const run = buildRun(baseInput);
+
+  const unit = run.modules[0];
+  const place = { x: 0, y: 0.1, heightM: 0.82, depthM: 0.56, thicknessM: 0.016 };
+
+  const carcass = carcassBoxes(unit, place);
+  check('у корпуса есть боковины, дно, крыша и задняя стенка', carcass.length >= 5);
+  check('корпус стоит на своём месте, а не в начале координат',
+    carcass.every((box) => box.position[1] >= place.y - 0.001));
+
+  const all = moduleBoxes(unit, place, {
+    gapM: 0.003,
+    frontThicknessM: 0.018,
+    integratedHandles: false,
+    cutaway: false,
+  });
+  check('фасады считаются вместе с корпусом', all.some((box) => box.material === 'front'));
+  check('у подвижных деталей есть идентификатор',
+    all.filter((box) => box.material === 'front').every((box) => Boolean(box.part)));
+
+  const cut = moduleBoxes(unit, place, {
+    gapM: 0.003,
+    frontThicknessM: 0.018,
+    integratedHandles: false,
+    cutaway: true,
+  });
+  check('в разрезе фасадов нет вовсе', cut.every((box) => box.material !== 'front'));
+
+  const twice = moduleBoxes(unit, place, {
+    gapM: 0.003,
+    frontThicknessM: 0.018,
+    integratedHandles: false,
+    cutaway: false,
+  });
+  check('один и тот же модуль даёт одни и те же числа',
+    JSON.stringify(twice) === JSON.stringify(all));
+}
+
+
+/* ─────────────────────────  Смета в пять групп  ───────────────────────── */
+
+console.log('\nСмета сворачивается в пять групп');
+{
+  const run = buildRun(baseInput);
+  const estimate = buildEstimate(run, 'optimal', DEMO_RATES);
+  const groups = estimateGroups(estimate);
+
+  check('групп не больше пяти', groups.length <= 5, `${groups.length}`);
+  check('пустых групп не показываем', groups.every((g) => g.lines.length > 0));
+  check(
+    'сумма групп сходится с итогом до тенге',
+    Math.round(groupsTotal(groups)) === Math.round(estimate.total),
+    `группы ${Math.round(groupsTotal(groups))}, итог ${Math.round(estimate.total)}`,
+  );
+  check(
+    'порядок групп постоянный',
+    groups.every((g, i) => GROUP_ORDER.indexOf(g.key) >= (i === 0 ? 0 : GROUP_ORDER.indexOf(groups[i - 1].key))),
+  );
+  check(
+    'ни одна статья не потерялась',
+    groups.reduce((sum, g) => sum + g.lines.length, 0) === estimate.lines.length,
+  );
+  check('доставка и монтаж — своя группа', groups.some((g) => g.key === 'delivery'));
+  check(
+    'техника не смешана с корпусом',
+    groups
+      .find((g) => g.key === 'appliances')
+      ?.lines.every((l) => l.key.startsWith('appliance_') || l.key === 'sink_base' || l.key === 'faucet') !== false,
+  );
+
+  // Снятая галочка не должна оставаться в группе: клиент видит обе цифры.
+  const withoutDelivery = buildEstimate(run, 'optimal', DEMO_RATES, ['delivery_install']);
+  const off = estimateGroups(withoutDelivery);
+  check(
+    'снятая строка выпадает и из группы, и из итога',
+    Math.round(groupsTotal(off)) === Math.round(withoutDelivery.total),
+  );
+}
+
+/* ─────────────────────────  Ширина тянется шагом 50 мм  ───────────────────────── */
+
+console.log('\nШирина тянется в сцене');
+{
+  const run = buildRun(baseInput);
+  const unit = run.modules.find((m) => !m.appliance);
+
+  if (!unit) {
+    check('в ряду есть модуль без техники', false);
+  } else {
+    const step = 50;
+    /*
+     * Тянем в МЕНЬШУЮ сторону: рост может не поместиться в стену, и тогда
+     * проверялась бы только отбивка, а не сама правка.
+     */
+    const wanted = Math.max(MIN_WIDTH, Math.round((unit.widthMm - 137) / step) * step);
+    check('шаг перетаскивания кратен 50 мм', wanted % step === 0);
+
+    const over = widthOverflowMm(run, unit.id, wanted, MIN_WIDTH);
+    if (over === 0) {
+      const next = applyOps({
+        run,
+        requirements: REQ,
+        ops: [{ op: 'set_width', moduleId: unit.id, widthMm: wanted }],
+        openings: OPENINGS,
+      });
+      const moved = next.modules.find((m) => m.id === unit.id);
+      check('вытянутая ширина применилась целиком', moved?.widthMm === wanted, `${moved?.widthMm}`);
+      check(
+        'ряд по-прежнему сходится со стеной',
+        runWidthSum(next) === next.lengthMm,
+        `${runWidthSum(next)} против ${next.lengthMm}`,
+      );
+    } else {
+      check('перебор ширины отклоняется до применения', over > 0);
+    }
+  }
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

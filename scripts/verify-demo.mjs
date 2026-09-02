@@ -161,9 +161,28 @@ try {
 
   await totalRow.click();
   await sleep(400);
+
+  /*
+   * Смета открывается ПЯТЬЮ ГРУППАМИ, а не тридцатью позициями: клиенту
+   * кромка ПВХ и эксцентрики не говорят ничего. Ставки и галочки живут
+   * под кнопкой «Подробно» — там же, где печатная смета.
+   */
+  const groupsShown = await page.evaluate(() =>
+    ['Корпус и фасады', 'Фурнитура', 'Доставка и монтаж'].filter((title) =>
+      (document.body.textContent ?? '').includes(title),
+    ).length,
+  );
+  check('смета открывается пятью группами', groupsShown === 3, `групп на экране: ${groupsShown}`);
+  check(
+    'ставок и галочек в кратком виде нет',
+    (await page.locator('input[type="checkbox"]').count()) === 0,
+  );
+
+  await page.getByRole('button', { name: 'Подробно', exact: true }).click();
+  await sleep(400);
   const boxes = page.locator('input[type="checkbox"]');
   const boxCount = await boxes.count();
-  check('смета открывается тапом', boxCount > 3, `строк: ${boxCount}`);
+  check('«Подробно» показывает статьи со ставками', boxCount > 3, `строк: ${boxCount}`);
 
   const beforeToggle = await totalText();
   await boxes.nth(2).uncheck();

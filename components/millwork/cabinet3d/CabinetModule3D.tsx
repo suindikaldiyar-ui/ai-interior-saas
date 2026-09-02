@@ -2,7 +2,6 @@
 
 import InteractiveDoor from './InteractiveDoor';
 import InteractiveDrawer from './InteractiveDrawer';
-import { columnNiches } from '@/lib/millwork/fill';
 import type { CabinetParts } from './parts';
 import type { Module } from '@/types/millwork';
 
@@ -35,6 +34,8 @@ type Props = {
   cutaway: boolean;
   /** Подсветка витрины горит. Перед захватом кадра гаснет. */
   displayLit?: boolean;
+  /** Деталь поехала: ряд убирает её из общей отрисовки. */
+  onActive?: (id: string, active: boolean) => void;
 };
 
 /** Штанга: труба 25 мм — то, что реально ставят в шкаф. */
@@ -65,6 +66,7 @@ export default function CabinetModule3D({
   onToggle,
   cutaway,
   displayLit = true,
+  onActive,
 }: Props) {
   const widthM = unit.widthMm / MM;
   const fill = unit.fill;
@@ -86,71 +88,16 @@ export default function CabinetModule3D({
     !unit.column &&
     (VISIBLE_APPLIANCES.has(unit.appliance as string) || unit.builtIn === false);
 
-  // Колонна: два прибора один над другим, каждый в своей нише.
-  const niches = unit.column ? columnNiches(unit, heightM * MM) : [];
   const isDisplay = unit.section === 'glass_display';
 
   return (
     <group position={[x, y, 0]}>
-      {/* Боковины */}
-      <mesh
-        geometry={parts.box}
-        material={parts.carcass}
-        position={[thicknessM / 2, heightM / 2, -depthM / 2]}
-        scale={[thicknessM, heightM, depthM]}
-        receiveShadow
-      />
-      <mesh
-        geometry={parts.box}
-        material={parts.carcass}
-        position={[widthM - thicknessM / 2, heightM / 2, -depthM / 2]}
-        scale={[thicknessM, heightM, depthM]}
-        receiveShadow
-      />
-
-      {/* Дно и крыша */}
-      <mesh
-        geometry={parts.box}
-        material={parts.carcass}
-        position={[widthM / 2, thicknessM / 2, -depthM / 2]}
-        scale={[innerW, thicknessM, depthM]}
-      />
-      <mesh
-        geometry={parts.box}
-        material={parts.carcass}
-        position={[widthM / 2, heightM - thicknessM / 2, -depthM / 2]}
-        scale={[innerW, thicknessM, depthM]}
-      />
-
-      {/* Задняя стенка */}
-      <mesh
-        geometry={parts.box}
-        material={parts.carcass}
-        position={[widthM / 2, heightM / 2, -depthM + 0.004]}
-        scale={[widthM, heightM, 0.004]}
-      />
-
-      {/* Полки — ровно на тех высотах, что стоят на чертеже. */}
-      {fill?.shelves.map((mm) => (
-        <mesh
-          key={`shelf-${mm}`}
-          geometry={parts.box}
-          material={parts.carcass}
-          position={[widthM / 2, mm / MM, -depthM / 2 - 0.01]}
-          scale={[innerW - 0.002, thicknessM, innerDepth]}
-          receiveShadow
-        />
-      ))}
-
-      {/* Вертикальная перегородка */}
-      {fill && fill.dividerMm > 0 && (
-        <mesh
-          geometry={parts.box}
-          material={parts.carcass}
-          position={[fill.dividerMm / MM, heightM / 2, -depthM / 2 - 0.01]}
-          scale={[thicknessM, heightM - 2 * thicknessM, innerDepth]}
-        />
-      )}
+      {/*
+        * Корпуса здесь нет НАМЕРЕННО: боковины, дно, крыша, задняя стенка,
+        * полки и перегородка уходят числами в `carcassBoxes` и рисуются
+        * одним `InstancedMesh` на весь ряд. Сотня неподвижных коробок —
+        * это сотня вызовов отрисовки на мебель, которая не двигается.
+        */}
 
       {/* Штанги: труба поперёк секции. */}
       {fill?.rodsMm.map((mm) => (
@@ -165,51 +112,11 @@ export default function CabinetModule3D({
       ))}
 
       {/*
-        * Техника: тёмный блок в нише, а не плита во всю ширину. Утопленный
-        * на два сантиметра, он оставляет видимой кромку корпуса — иначе
-        * колонна читается как чёрный монолит, а не как встроенный прибор.
+        * Техники здесь тоже нет: тёмные блоки приборов и ниши колонны
+        * считает `applianceBoxes` и рисует общая отрисовка ряда. Ниши
+        * по-прежнему берутся из `columnNiches` — той же функции, что
+        * рисует чертёж.
         */}
-      {visibleAppliance && (
-        <>
-          <mesh
-            geometry={parts.box}
-            material={parts.appliance}
-            position={[widthM / 2, heightM / 2, -depthM / 2 + 0.01]}
-            scale={[widthM - 0.05, heightM - 0.05, depthM - 0.06]}
-            castShadow
-          />
-          {/* Панель управления: по ней прибор узнаётся без подписи. */}
-          <mesh
-            geometry={parts.box}
-            material={parts.metal}
-            position={[widthM / 2, heightM - 0.09, -depthM / 2 + 0.03]}
-            scale={[widthM - 0.09, 0.02, 0.01]}
-          />
-        </>
-      )}
-
-      {/*
-        * КОЛОННА: две тёмные врезки в одном пенале, на своих высотах.
-        * Ниши берутся из `columnNiches` — той же функции, что рисует
-        * чертёж: посчитай их здесь заново, и 3D разойдётся с эскизом.
-        */}
-      {niches.map((niche) => {
-        const nicheH = (niche.toMm - niche.fromMm) / MM;
-        return (
-          <mesh
-            key={niche.appliance}
-            geometry={parts.box}
-            material={parts.appliance}
-            position={[
-              widthM / 2,
-              (niche.fromMm / MM) + nicheH / 2,
-              -depthM / 2 + 0.01,
-            ]}
-            scale={[widthM - 0.05, nicheH - 0.02, depthM - 0.06]}
-            castShadow
-          />
-        );
-      })}
 
       {/*
         * ВИТРИНА: стеклянная дверь в раме и лента по контуру. Подсветка
@@ -250,7 +157,7 @@ export default function CabinetModule3D({
         </>
       )}
 
-      {/* Ящики: каждый едет сам. */}
+      {/* Ящики: каждый едет сам, пока едет. */}
       {!unit.appliance &&
         fill?.drawerHeights.map((frontMm, i) => {
           // Высоты идут сверху вниз, а сцена считает от пола.
@@ -274,6 +181,7 @@ export default function CabinetModule3D({
               cutaway={cutaway}
               gap={gapM}
               integratedHandle={integratedHandles}
+              onActive={onActive}
             />
           );
         })}
@@ -323,6 +231,7 @@ export default function CabinetModule3D({
               parts={parts}
               gap={gapM}
               integratedHandle={integratedHandles}
+              onActive={onActive}
             />
           );
         })}

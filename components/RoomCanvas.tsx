@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import React, { Suspense, useEffect, useMemo, useState } from 'react';
 import * as THREE from 'three';
 import { Canvas, useThree } from '@react-three/fiber';
 import {
@@ -423,6 +423,45 @@ function Lighting({ room }: { room: RoomConfig }) {
 }
 
 /**
+ * ОКРУЖЕНИЕ КОНФИГУРАТОРА: пресет «apartment», но с запасным аэродромом.
+ *
+ * Готовый пресет даёт мебели узнаваемый комнатный свет — тёплое окно с
+ * одной стороны, холодная стена с другой, — и на фасадах появляются
+ * отражения, ради которых 3D и смотрят. Но HDRI он тянет из сети, и без
+ * интернета сцена виснет на загрузке (ловушка 3). Поэтому пресет живёт
+ * под границей ошибок и под `Suspense`: не загрузился — остаётся своё
+ * окружение, и замерщик в новостройке без связи этого даже не заметит.
+ */
+function ApartmentEnvironment() {
+  return (
+    <EnvironmentBoundary fallback={<StudioEnvironment />}>
+      <Suspense fallback={<StudioEnvironment />}>
+        <Environment preset="apartment" background={false} />
+      </Suspense>
+    </EnvironmentBoundary>
+  );
+}
+
+/**
+ * Падение загрузки HDRI не должно ронять весь канвас: без границы ошибок
+ * оборванная сеть гасит сцену целиком, а не свет в ней.
+ */
+class EnvironmentBoundary extends React.Component<
+  { fallback: React.ReactNode; children: React.ReactNode },
+  { failed: boolean }
+> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  render() {
+    return this.state.failed ? this.props.fallback : this.props.children;
+  }
+}
+
+/**
  * Собственное окружение вместо preset="apartment": preset тянет HDRI из сети,
  * и без интернета сцена виснет на загрузке.
  */
@@ -584,7 +623,13 @@ function useHotkeys() {
 
 /* ─────────────────────────  Сцена  ───────────────────────── */
 
-function Scene({ children }: { children?: React.ReactNode }) {
+function Scene({
+  children,
+  environment,
+}: {
+  children?: React.ReactNode;
+  environment: 'studio' | 'apartment';
+}) {
   const room = useInteriorStore((s) => s.room);
   const items = useInteriorStore((s) => s.items);
   const showGrid = useInteriorStore((s) => s.showGrid);
@@ -599,7 +644,7 @@ function Scene({ children }: { children?: React.ReactNode }) {
       <fog attach="fog" args={['#1B1D1F', span * 2.4, span * 6]} />
 
       <Lighting room={room} />
-      <StudioEnvironment />
+      {environment === 'apartment' ? <ApartmentEnvironment /> : <StudioEnvironment />}
 
       <Room room={room} showCeiling={showCeiling} />
 
@@ -665,9 +710,26 @@ export default function RoomCanvas({
    * Захват всё равно вызывает `gl.render` сам.
    */
   frameloop = 'always',
+  /*
+   * Карты теней или контактная тень плоскостью.
+   *
+   * Мягкие тени стоят второго прохода отрисовки по каждому мешу — на
+   * планшете это половина кадра. Мебель стоит на полу от КОНТАКТНОЙ тени,
+   * а не от карты: она одна и рисуется однажды.
+   */
+  shadows = true,
+  /*
+   * Потолок плотности пикселей. Ретина-планшет умножает площадь отрисовки
+   * вчетверо, а разницы между 1.75 и 2 на мебели не видно.
+   */
+  dpr = [1, 2],
+  environment = 'studio',
   children,
 }: {
   frameloop?: 'always' | 'demand';
+  shadows?: boolean;
+  dpr?: [number, number];
+  environment?: 'studio' | 'apartment';
   children?: React.ReactNode;
 } = {}) {
   const selectItem = useInteriorStore((s) => s.selectItem);
@@ -679,8 +741,8 @@ export default function RoomCanvas({
   return (
     <Canvas
       frameloop={frameloop}
-      shadows="soft"
-      dpr={[1, 2]}
+      shadows={shadows ? 'soft' : false}
+      dpr={dpr}
       camera={{ position: [5.2, 3.6, 6.4], fov: 42, near: 0.1, far: 200 }}
       gl={{ antialias: true, preserveDrawingBuffer: true }}
       onCreated={({ gl }) => {
@@ -691,7 +753,7 @@ export default function RoomCanvas({
       }}
       onPointerMissed={() => selectItem(null)}
     >
-      <Scene>{children}</Scene>
+      <Scene environment={environment}>{children}</Scene>
     </Canvas>
   );
 }

@@ -1,11 +1,16 @@
 'use client';
 
-import { useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import CabinetModule3D from './CabinetModule3D';
+import InstancedBoxes from './InstancedBoxes';
+import ModuleHandles from './ModuleHandles';
 import SceneCamera, { type OrthoProjection } from './SceneCamera';
-import { useCabinetParts } from './parts';
+import { moduleBoxes, type BoxMaterial, type PartBox } from '@/lib/millwork/cabinetBoxes';
+import { useCabinetParts, useSurfaceLook } from './parts';
+import { surfaceLook } from '@/lib/millwork/surfaces';
+import { APRON_TARGET, COUNTERTOP_TARGET, FACADE_TARGET } from '@/types/catalog';
 import { moduleCarcassHeightMm } from '@/lib/millwork/fill';
 import { GEOMETRY } from '@/lib/millwork/modules';
 import { zoneProfile } from '@/lib/millwork/zones';
@@ -43,6 +48,15 @@ type Props = {
    * Null означает «сейчас перспектива», и слой прячется.
    */
   onFraming?: (framing: OrthoProjection | null) => void;
+  /**
+   * Выделение общее с чертежом: выбрал модуль в сцене — он подсвечен и в
+   * эскизе. Два независимых выделения на одной мебели читались бы как две
+   * разные мебели.
+   */
+  selectedModuleId?: string | null;
+  onSelectModule?: (moduleId: string) => void;
+  /** Ширина, вытянутая в сцене. Шаг — 50 мм. */
+  onWidth?: (moduleId: string, widthMm: number) => void;
 };
 
 export default function Cabinet3D({
@@ -54,6 +68,9 @@ export default function Cabinet3D({
   counterColor = '#3C3B37',
   view = DEFAULT_SCENE_VIEW,
   onFraming,
+  selectedModuleId,
+  onSelectModule,
+  onWidth,
 }: Props) {
   const groupRef = useRef<THREE.Group>(null);
   const openParts = useInteriorStore((s) => s.openParts);
@@ -75,12 +92,59 @@ export default function Cabinet3D({
     };
   }, []);
 
+  /*
+   * АРТИКУЛ КАТАЛОГА ВИДЕН СРАЗУ.
+   *
+   * Выбрал фасад на шаге «Материалы» — в сцене он уже такой: цвет
+   * присваивается материалу, текстура приезжает из Storage через кэш.
+   * Ждать пересборки сцены на встрече с клиентом нельзя.
+   */
+  const selections = useInteriorStore((s) => s.selections);
+  const catalog = useInteriorStore((s) => s.catalog);
+
+  const entryFor = (target: string) => {
+    const id = selections[target];
+    return (id && catalog.find((e) => e.id === id)) || null;
+  };
+
+  const facadeLook = surfaceLook(
+    entryFor(FACADE_TARGET),
+    { color: facadeColor, roughness: 0.72 },
+    [0.6, 0.7],
+  );
+  const counterLook = surfaceLook(
+    entryFor(COUNTERTOP_TARGET),
+    { color: counterColor, roughness: 0.28, metalness: 0.04 },
+    [run.lengthMm / MM, 0.6],
+  );
+  const apronLook = surfaceLook(
+    entryFor(APRON_TARGET),
+    { color: '#D8D2C6', roughness: 0.35 },
+    [run.lengthMm / MM, 0.6],
+  );
+
   const parts = useCabinetParts(
     useMemo(
       () => ({ facade: facadeColor, carcass: '#B9B2A4', counter: counterColor }),
       [facadeColor, counterColor],
     ),
+    { facade: facadeLook, counter: counterLook },
   );
+
+  /*
+   * Фартук — это СТЕНА, а не мебель: он и живёт отдельным мешем за
+   * пределами гарнитура. Материал у него свой, чтобы плитка не тянула за
+   * собой цвет столешницы.
+   */
+  const apronMaterial = useMemo(
+    () => new THREE.MeshStandardMaterial({ color: '#D8D2C6', roughness: 0.35 }),
+    [],
+  );
+  useSurfaceLook(apronMaterial, apronLook, {
+    color: '#D8D2C6',
+    roughness: 0.35,
+    metalness: 0,
+  });
 
   const zone = zoneProfile(run.zone);
   const thicknessM = production.carcassMm / MM;
@@ -145,10 +209,96 @@ export default function Cabinet3D({
   const originX = -Math.min(lengthM, roomWidthM) / 2;
   const originZ = -roomDepthM / 2 + depthM;
 
+  /*
+   * ВСЯ НЕПОДВИЖНАЯ МЕБЕЛЬ ОДНИМ СПИСКОМ.
+   *
+   * Корпуса, закрытые фасады, ручки и техника считаются на смену состава,
+   * а не каждый кадр: раскладка меняется по нажатию. Дальше они собираются
+   * по материалам в четыре пачки — четыре вызова отрисовки на весь ряд
+   * вместо сотни.
+   */
+  const boxes = useMemo(
+    () =>
+      [...modules, ...uppers].flatMap((entry) =>
+        moduleBoxes(
+          entry.unit,
+          {
+            x: entry.x,
+            y: entry.y,
+            heightM: entry.heightM,
+            depthM: entry.depthM,
+            thicknessM,
+          },
+          { gapM, frontThicknessM, integratedHandles: Boolean(run.options.integratedHandles), cutaway },
+        ),
+      ),
+    [modules, uppers, thicknessM, gapM, frontThicknessM, run.options.integratedHandles, cutaway],
+  );
+
+  /*
+   * Что сейчас едет своим мешем. Закрытая дверь живёт в общей пачке,
+   * открытая — отдельно; держать её в обеих значило бы показать клиенту
+   * две двери на одном месте.
+   */
+  const [activeParts, setActiveParts] = useState<string[]>([]);
+
+  const handleActive = useCallback((id: string, active: boolean) => {
+    setActiveParts((prev) => {
+      const has = prev.includes(id);
+      if (active === has) return prev;
+      return active ? [...prev, id] : prev.filter((p) => p !== id);
+    });
+  }, []);
+
+  /*
+   * Клик по мебели делает ДВА дела: открывает деталь и выделяет её модуль.
+   * Выделение — то же, что на чертеже, поэтому идентификатор модуля
+   * достаётся из идентификатора детали: `<модуль>:door:0`.
+   */
+  const handleToggle = useCallback(
+    (partId: string) => {
+      const moduleId = partId.split(':')[0];
+      if (moduleId) onSelectModule?.(moduleId);
+      toggleOpenPart(partId);
+    },
+    [onSelectModule, toggleOpenPart],
+  );
+
+  const grouped = useMemo(() => {
+    const active = new Set(activeParts);
+    const groups: Record<BoxMaterial, PartBox[]> = {
+      carcass: [],
+      front: [],
+      metal: [],
+      appliance: [],
+    };
+    for (const box of boxes) {
+      if (box.part && active.has(box.part)) continue;
+      groups[box.material].push(box);
+    }
+    return groups;
+  }, [boxes, activeParts]);
+
+  const selected = useMemo(() => {
+    if (!selectedModuleId) return null;
+    const entry = [...modules, ...uppers].find((e) => e.unit.id === selectedModuleId);
+    return entry ? { entry } : null;
+  }, [selectedModuleId, modules, uppers]);
+
   const hasCountertop = zone.hasCountertop;
   const counterTopY = GEOMETRY.base.plinthH + GEOMETRY.base.carcassH;
 
+  /*
+   * Фартук: полоса стены между столешницей и верхним рядом. Именно её
+   * клиент выбирает на шаге «Материалы» третьей строкой, и без неё выбор
+   * плитки ничего не менял в сцене.
+   */
+  const apronBottom = (counterTopY + GEOMETRY.base.countertopH) / MM;
+  const apronTop = GEOMETRY.upper.bottomFromFloor / MM;
+  const apronH = Math.max(0, apronTop - apronBottom);
+
   return (
+    <>
     <group ref={groupRef} position={[originX, 0, originZ]}>
       <SceneProbe group={groupRef} />
       <SceneCamera
@@ -171,6 +321,24 @@ export default function Cabinet3D({
         receiveShadow
       />
 
+      {/*
+        * Четыре пачки: корпус, фасады, металл, техника. Всё, что стоит
+        * на месте, рисуется четырьмя вызовами вместо сотни.
+        */}
+      <InstancedBoxes
+        boxes={grouped.carcass}
+        geometry={parts.box}
+        material={parts.carcass}
+        receiveShadow
+      />
+      <InstancedBoxes boxes={grouped.front} geometry={parts.box} material={parts.front} />
+      <InstancedBoxes boxes={grouped.metal} geometry={parts.box} material={parts.metal} />
+      <InstancedBoxes
+        boxes={grouped.appliance}
+        geometry={parts.box}
+        material={parts.appliance}
+      />
+
       {[...modules, ...uppers].map((entry) => (
         <CabinetModule3D
           key={entry.unit.id}
@@ -185,11 +353,29 @@ export default function Cabinet3D({
           thicknessM={thicknessM}
           parts={parts}
           openParts={openParts}
-          onToggle={toggleOpenPart}
+          onToggle={handleToggle}
           cutaway={cutaway}
           displayLit={displayLit}
+          onActive={handleActive}
         />
       ))}
+
+      {/*
+        * Выделенный модуль: рамка и ручка ширины. Ручка есть только у
+        * обычных модулей — ширину техники диктует прибор, и тянуть её
+        * значит обещать то, чего не бывает.
+        */}
+      {selected && onWidth && !selected.entry.unit.appliance && (
+        <ModuleHandles
+          x={selected.entry.x}
+          y={selected.entry.y}
+          widthM={selected.entry.unit.widthMm / MM}
+          heightM={selected.entry.heightM}
+          depthM={selected.entry.depthM}
+          widthMm={selected.entry.unit.widthMm}
+          onWidth={(widthMm) => onWidth(selected.entry.unit.id, widthMm)}
+        />
+      )}
 
       {/*
         * Столешница: сплошная плита поверх нижнего ряда, шире корпуса на
@@ -233,6 +419,22 @@ export default function Cabinet3D({
         />
       )}
     </group>
+
+    {/*
+      * Фартук живёт ВНЕ гарнитура: это отделка стены, а не мебель. В смете
+      * он идёт своей строкой, и в сцене тоже стоит отдельно.
+      */}
+    {hasCountertop && apronH > 0 && (
+      <group position={[originX, 0, originZ]}>
+        <mesh
+          geometry={parts.box}
+          material={apronMaterial}
+          position={[lengthM / 2, apronBottom + apronH / 2, -depthM + 0.003]}
+          scale={[lengthM, apronH, 0.004]}
+        />
+      </group>
+    )}
+    </>
   );
 }
 
@@ -252,19 +454,73 @@ function SceneProbe({ group }: { group: React.RefObject<THREE.Group> }) {
       __mwPartPoint?: (id: string) => { x: number; y: number } | null;
     };
 
+    /*
+     * Считаем ВИДИМОЕ. Зоны касания — невидимые меши: в отрисовку они не
+     * идут вовсе, и мерить нагрузку по ним значит мерить не то.
+     */
     const count = (root: THREE.Object3D | null) => {
       let meshes = 0;
       const materials = new Set<string>();
       root?.traverse((object) => {
         const mesh = object as unknown as { isMesh?: boolean; material?: { uuid?: string } };
-        if (!mesh.isMesh) return;
+        if (!mesh.isMesh || !object.visible) return;
         meshes += 1;
         if (mesh.material?.uuid) materials.add(mesh.material.uuid);
       });
       return { meshes, materials: materials.size };
     };
 
-    w.__mwScene = () => ({ cabinet: count(group.current), scene: count(scene) });
+    /**
+     * Вызовы отрисовки ИМЕННО ГАРНИТУРА.
+     *
+     * Общее число по сцене мерит заодно комнату, окно и контактную тень —
+     * по нему не понять, чего стоит мебель. Поэтому на один кадр всё, кроме
+     * ряда, прячется, кадр рисуется, число снимается и видимость
+     * возвращается на место.
+     */
+    (w as { __mwCabinetCalls?: () => number | null }).__mwCabinetCalls = () => {
+      const root = group.current;
+      if (!root) return null;
+
+      const path = new Set<THREE.Object3D>();
+      for (let node: THREE.Object3D | null = root; node; node = node.parent) path.add(node);
+
+      const restore: [THREE.Object3D, boolean][] = [];
+      const hideSiblings = (node: THREE.Object3D) => {
+        for (const child of node.children) {
+          if (child === root) continue;
+          if (path.has(child)) {
+            hideSiblings(child);
+            continue;
+          }
+          restore.push([child, child.visible]);
+          child.visible = false;
+        }
+      };
+      hideSiblings(scene);
+
+      try {
+        gl.info.reset();
+        gl.render(scene, camera);
+        return gl.info.render.calls;
+      } finally {
+        for (const [object, visible] of restore) object.visible = visible;
+        gl.render(scene, camera);
+      }
+    };
+
+    /*
+     * Вызовы отрисовки — единственное честное число про нагрузку: кадры
+     * в секунду в headless мерить нельзя (ловушка 97), а вызовы считает
+     * сам рендерер и от GPU они не зависят.
+     */
+    w.__mwScene = () => ({
+      cabinet: count(group.current),
+      scene: count(scene),
+      calls: gl.info.render.calls,
+      triangles: gl.info.render.triangles,
+      programs: gl.info.programs?.length ?? 0,
+    });
 
     /** Какие элементы вообще открываются: проверке нужно во что целиться. */
     (w as { __mwOpenableIds?: () => string[] }).__mwOpenableIds = () => {
@@ -374,6 +630,22 @@ function SceneProbe({ group }: { group: React.RefObject<THREE.Group> }) {
       };
     };
 
+    /** Экранная точка ручки ширины: проверке нужно за что тянуть. */
+    (w as { __mwGripPoint?: () => { x: number; y: number } | null }).__mwGripPoint = () => {
+      const target = group.current?.getObjectByName('module-grip');
+      if (!target) return null;
+
+      const point = new THREE.Vector3();
+      target.getWorldPosition(point);
+      point.project(camera);
+
+      const box = gl.domElement.getBoundingClientRect();
+      return {
+        x: box.left + ((point.x + 1) / 2) * box.width,
+        y: box.top + ((1 - point.y) / 2) * box.height,
+      };
+    };
+
     /** Экранные координаты элемента: проверка кликает по мебели, а не наугад. */
     w.__mwPartPoint = (id: string) => {
       const target = group.current?.getObjectByName(`part:${id}`);
@@ -397,6 +669,8 @@ function SceneProbe({ group }: { group: React.RefObject<THREE.Group> }) {
       delete (w as { __mwPartSize?: unknown }).__mwPartSize;
       delete (w as { __mwRunBox?: unknown }).__mwRunBox;
       delete (w as { __mwProject?: unknown }).__mwProject;
+      delete (w as { __mwCabinetCalls?: unknown }).__mwCabinetCalls;
+      delete (w as { __mwGripPoint?: unknown }).__mwGripPoint;
     };
   }, [scene, camera, gl, group]);
 

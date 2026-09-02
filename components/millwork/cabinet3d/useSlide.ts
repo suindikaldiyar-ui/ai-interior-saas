@@ -79,6 +79,14 @@ export type SlideOptions = {
   apply: (value: number) => void;
   /** Стартовое значение: с него начинается первый кадр. */
   initial?: number;
+  /**
+   * Элемент доехал и встал.
+   *
+   * По этому событию закрытая дверца возвращается в общую отрисовку:
+   * пока она едет, у неё свой меш, а стоящая рисуется вместе со всеми
+   * одним вызовом.
+   */
+  onSettle?: () => void;
 };
 
 /**
@@ -87,7 +95,7 @@ export type SlideOptions = {
  * Возвращать ничего не нужно: значение отдаётся через `apply`, а объект
  * three двигается напрямую — React в кадре не участвует.
  */
-export function useSlide({ target, apply, initial = target }: SlideOptions): void {
+export function useSlide({ target, apply, initial = target, onSettle }: SlideOptions): void {
   const value = useRef(initial);
   const moving = useRef(false);
   const invalidate = useThree((state) => state.invalidate);
@@ -101,6 +109,7 @@ export function useSlide({ target, apply, initial = target }: SlideOptions): voi
         apply(target);
         moving.current = false;
         movingCount = Math.max(0, movingCount - 1);
+        onSettle?.();
         // Последний кадр после остановки: иначе элемент замрёт в миллиметре
         // от цели, и это будет видно на кадре захвата.
         requestFrame(invalidate);

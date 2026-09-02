@@ -28,11 +28,15 @@ import TemplatePicker from './TemplatePicker';
 import type { RateTable } from '@/lib/millwork/estimate';
 import { applyOps } from '@/lib/millwork/ops';
 import { buildEstimate } from '@/lib/millwork/estimate';
-import { currentVariant, variantsForModule } from '@/lib/millwork/moduleVariants';
+import {
+  MODULE_VARIANTS,
+  currentVariant,
+  variantsForModule,
+} from '@/lib/millwork/moduleVariants';
 import { allModules } from '@/lib/millwork/layout';
 import { buildRun } from '@/lib/millwork/layout';
-import { manualAnchorCost } from '@/lib/millwork/invariants';
-import { APPLIANCE_SLOTS } from '@/lib/millwork/modules';
+import { manualAnchorCost, widthOverflowMm } from '@/lib/millwork/invariants';
+import { APPLIANCE_SLOTS, MAX_WIDTH, MIN_WIDTH } from '@/lib/millwork/modules';
 import { composeVariants, workspaceInput } from '@/lib/millwork/workspace';
 import {
   MAIN_VARIANT,
@@ -191,6 +195,8 @@ export default function Workspace(props: WorkspaceProps) {
     props.initialState?.selectedVariant ?? MAIN_VARIANT,
   );
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  /** Жёлтая строка под сценой: правку не отменяем, но о последствии говорим. */
+  const [sceneNotice, setSceneNotice] = useState<string | null>(null);
   // Технические подписи включаются адресом ?debug=1, см. lib/debug.ts
   const debug = useDebug();
 
@@ -804,6 +810,47 @@ export default function Workspace(props: WorkspaceProps) {
     setPrevious(null);
     setMoveNotice('Вернули то, что было до выбора решения.');
   };
+
+  /**
+   * ШИРИНА ТЯНЕТСЯ В СЦЕНЕ.
+   *
+   * Шаг 50 мм: пальцем миллиметр не поставить, а цех считает пятёрками.
+   *
+   * Инвариант «ряд не длиннее стены» проверяется ДО применения и правку
+   * отклоняет — иначе `rebalance` тихо ужмёт соседей, и клиент увидит не
+   * тот состав, который заказывал. А вот нарушение правила НАЧИНКИ —
+   * карго шире четырёхсот, стекло шире девятисот — только предупреждение:
+   * ширину заказчик выбрал сам, и отменять её за него нельзя.
+   */
+  const dragWidth = useCallback(
+    (moduleId: string, widthMm: number) => {
+      const unit = allModules(active.run).find((m) => m.id === moduleId);
+      if (!unit) return;
+
+      const wanted = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, widthMm));
+      if (wanted === unit.widthMm) return;
+
+      const over = widthOverflowMm(active.run, moduleId, wanted, MIN_WIDTH);
+      if (over > 0) {
+        setSceneNotice(`Не помещается: ряд вышел бы за стену на ${over} мм.`);
+        return;
+      }
+
+      const spec = MODULE_VARIANTS[currentVariant(unit)];
+      setSceneNotice(
+        !spec.anyWidth && (wanted < spec.minWidthMm || wanted > spec.maxWidthMm)
+          ? `${spec.title} шириной ${wanted} мм не бывает: механизм рассчитан ` +
+              `на ${spec.minWidthMm}–${spec.maxWidthMm} мм. Ширину оставили — ` +
+              'решать вам, но в цехе это переделка.'
+          : null,
+      );
+
+      runOps([{ op: 'set_width', moduleId, widthMm: wanted }]);
+      // Выделение переживает правку: замерщик тянет ширину подряд.
+      setSelectedId(moduleId);
+    },
+    [active.run, runOps],
+  );
 
   /**
    * Выбор варианта идёт тем же путём, что и любая правка состава, но
@@ -1441,6 +1488,8 @@ export default function Workspace(props: WorkspaceProps) {
                 production={props.production}
                 view={sceneView}
                 selectedModuleId={selectedId}
+                onSelectModule={setSelectedId}
+                onWidth={dragWidth}
                 onItemId={setKitchenItemId}
               />
             </div>
@@ -1499,9 +1548,48 @@ export default function Workspace(props: WorkspaceProps) {
                   </button>
                 ))}
 
+                {/*
+                  * ВАРИАНТ ВЫБИРАЕТСЯ ТАМ, ГДЕ СМОТРЯТ. Список тот же, что
+                  * на чертеже, и считается тем же пересчётом: цифра под
+                  * сценой обязана сойтись с итогом внизу экрана.
+                  */}
+                {variantOptions.length > 0 && (
+                  <div className="w-full">
+                    <p className="mb-2 text-[13px] text-graphiteMw">
+                      Что бывает в этом месте:
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {variantOptions.map((option) => (
+                        <button
+                          key={option.kind}
+                          type="button"
+                          onClick={() => chooseVariant(option.kind)}
+                          aria-pressed={option.active}
+                          className={`mw-btn ${option.active ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+                          title={option.hint}
+                        >
+                          {option.title}
+                          {option.deltaKzt !== 0 && !option.active && (
+                            <span className="ml-2 text-[13px] text-graphiteMw">
+                              {option.deltaKzt > 0 ? '+' : '−'}
+                              {Math.abs(option.deltaKzt).toLocaleString('ru-RU')} ₸
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {sceneNotice && (
+                  <p className="w-full rounded-[var(--r-control)] bg-tape/15 px-4 py-3 text-[13px] leading-snug text-tape">
+                    {sceneNotice}
+                  </p>
+                )}
+
                 <p className="w-full text-[13px] leading-snug text-graphiteMw">
                   {sceneView === 'perspective'
-                    ? 'Нажмите на ящик или дверцу — откроется.'
+                    ? 'Нажмите на ящик или дверцу — откроется. Выбранный модуль тянется за ручку сбоку: ширина идёт шагом 50 мм.'
                     : 'Это та же модель, что в 3D: размеры сняты с неё, а не нарисованы отдельно.'}
                 </p>
               </div>

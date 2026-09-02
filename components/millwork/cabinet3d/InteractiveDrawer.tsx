@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type * as THREE from 'three';
 import { useSlide } from './useSlide';
 import { useTouchTarget } from './useTouchTarget';
@@ -33,6 +33,8 @@ type Props = {
   cutaway: boolean;
   gap: number;
   integratedHandle: boolean;
+  /** Ящик поехал или встал: задвинутый рисуется вместе со всем рядом. */
+  onActive?: (id: string, active: boolean) => void;
 };
 
 export default function InteractiveDrawer({
@@ -49,9 +51,26 @@ export default function InteractiveDrawer({
   cutaway,
   gap,
   integratedHandle,
+  onActive,
 }: Props) {
   const group = useRef<THREE.Group>(null);
   const touch = useRef<THREE.Mesh>(null);
+
+  /*
+   * Задвинутый ящик рисуется вместе со всем рядом одним вызовом. Свой
+   * меш живёт только пока ящик выехал или едет обратно.
+   */
+  const [active, setActive] = useState(open);
+  const openRef = useRef(open);
+  openRef.current = open;
+
+  useEffect(() => {
+    if (open) setActive(true);
+  }, [open]);
+
+  useEffect(() => {
+    onActive?.(id, active);
+  }, [id, active, onActive]);
 
   useSlide({
     target: open ? DRAWER_TRAVEL_M : 0,
@@ -59,6 +78,9 @@ export default function InteractiveDrawer({
     apply: (value) => {
       const el = group.current;
       if (el) el.position.z = value;
+    },
+    onSettle: () => {
+      if (!openRef.current) setActive(false);
     },
   });
 
@@ -81,6 +103,13 @@ export default function InteractiveDrawer({
         position={[0, 0, depth / 2]}
         geometry={parts.box}
         material={parts.hit}
+        /*
+         * Зона касания не рисуется вовсе. Прозрачный меш всё равно уходит
+         * в рендер: тринадцать модулей давали больше тридцати вызовов
+         * отрисовки на то, чего не видно. Луч указателя невидимые объекты
+         * по-прежнему находит — проверено кликом по мебели.
+         */
+        visible={false}
         scale={[width, height, depth]}
         onClick={(event) => {
           event.stopPropagation();
@@ -95,7 +124,12 @@ export default function InteractiveDrawer({
         }}
       />
 
-      {/* Короб: дно, две боковины, задняя стенка. */}
+      {/*
+        * Короб: дно, две боковины, задняя стенка. Как и фронт, рисуется
+        * только пока ящик выехал: задвинутый живёт в общей отрисовке.
+        */}
+      {active && (
+        <>
       <mesh
         geometry={parts.box}
         material={parts.carcass}
@@ -148,6 +182,8 @@ export default function InteractiveDrawer({
               scale={[Math.min(0.26, width * 0.5), 0.016, 0.016]}
             />
           )}
+        </>
+      )}
         </>
       )}
     </group>

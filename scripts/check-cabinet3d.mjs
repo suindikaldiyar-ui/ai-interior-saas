@@ -113,6 +113,11 @@ try {
     `  канвас ${scene.w}×${scene.h} · гарнитур: мешей ${counts?.cabinet.meshes}, материалов ` +
       `${counts?.cabinet.materials} · вся сцена: мешей ${counts?.scene.meshes}, материалов ${counts?.scene.materials}`,
   );
+  const cabinetCalls = await page.evaluate(() => window.__mwCabinetCalls?.() ?? null);
+  console.log(
+    `  вызовов отрисовки: гарнитур ${cabinetCalls} · вся сцена ${counts?.calls} · ` +
+      `треугольников ${counts?.triangles} · программ ${counts?.programs}`,
+  );
   // Софтверный WebGL рисует кадр долго: снимку нужен запас по времени.
   await page.screenshot({ path: `${OUT}/closed.png`, timeout: 120_000 });
 
@@ -126,15 +131,16 @@ try {
 
   const defaultView = await page.evaluate(() =>
     [...document.querySelectorAll('button')]
-      .filter((b) => ['Спереди', 'Три четверти', 'Сверху'].includes((b.textContent ?? '').trim()))
+      .filter((b) => b.hasAttribute('data-scene-view'))
+      .map((b) => b)
       .map((b) => `${(b.textContent ?? '').trim()}=${b.getAttribute('aria-pressed')}`)
       .join(' · '),
   );
   console.log('  ракурс по умолчанию:', defaultView);
 
   // Ракурсы: по умолчанию три четверти, переключатель работает.
-  for (const view of ['Спереди', 'Сверху', 'Три четверти']) {
-    const btn = page.getByRole('button', { name: view, exact: true });
+  for (const view of ['elevation', 'plan', 'perspective']) {
+    const btn = page.locator(`button[data-scene-view="${view}"]`);
     const pressed = await btn.getAttribute('aria-pressed');
     console.log(`  ракурс «${view}»: до нажатия aria-pressed=${pressed}`);
     await btn.click({ force: true });

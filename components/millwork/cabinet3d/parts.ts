@@ -1,7 +1,10 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import * as THREE from 'three';
+import { milledNormalMap } from './milledNormal';
+import { loadTexture } from '@/lib/textureCache';
+import type { SurfaceLook } from '@/lib/millwork/surfaces';
 
 /**
  * ОБЩИЕ ГЕОМЕТРИЯ И МАТЕРИАЛЫ.
@@ -45,8 +48,20 @@ export type CabinetPalette = {
   counter: string;
 };
 
-export function useCabinetParts(palette: CabinetPalette): CabinetParts {
-  return useMemo(() => {
+/**
+ * МАТЕРИАЛЫ СОЗДАЮТСЯ ОДИН РАЗ И ДАЛЬШЕ ТОЛЬКО МЕНЯЮТСЯ.
+ *
+ * Клиент на встрече перебирает фасады подряд: белый, дуб, графит. Новый
+ * материал на каждое нажатие — это перекомпиляция шейдера и заметная
+ * задержка на планшете, а старые материалы ещё и остаются в памяти.
+ * Поэтому цвет, шероховатость и текстура присваиваются существующим
+ * материалам, а сами материалы живут, пока живёт сцена.
+ */
+export function useCabinetParts(
+  palette: CabinetPalette,
+  looks?: { facade?: SurfaceLook; counter?: SurfaceLook },
+): CabinetParts {
+  const parts = useMemo(() => {
     const box = new THREE.BoxGeometry(1, 1, 1);
     const cylinder = new THREE.CylinderGeometry(0.5, 0.5, 1, 12);
 
@@ -105,5 +120,101 @@ export function useCabinetParts(palette: CabinetPalette): CabinetParts {
       // не пропускает, поэтому материал прозрачный, а не выключенный.
       hit: new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }),
     };
-  }, [palette.carcass, palette.facade, palette.counter]);
+    // Материалы не пересобираются НИКОГДА: цвет и текстура меняются
+    // присвоением ниже.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* ── Цвета: присвоение, а не новый материал ── */
+  useEffect(() => {
+    parts.carcass.color.set(darken(palette.carcass, 0.08));
+    parts.plinth.color.set(darken(palette.carcass, 0.15));
+  }, [parts, palette.carcass]);
+
+  useSurfaceLook(parts.front, looks?.facade, {
+    color: palette.facade,
+    roughness: 0.72,
+    metalness: 0,
+  });
+
+  useSurfaceLook(parts.counter, looks?.counter, {
+    color: palette.counter,
+    roughness: 0.28,
+    metalness: 0.04,
+  });
+
+  return parts;
+}
+
+/**
+ * Вид одной поверхности на существующем материале.
+ *
+ * Цвет и шероховатость применяются СРАЗУ — они ничего не грузят. Текстура
+ * артикула приезжает из Storage через кэш и встаёт, когда придёт: до этого
+ * поверхность уже своего цвета, а не серая заглушка.
+ */
+export function useSurfaceLook(
+  material: THREE.MeshStandardMaterial,
+  look: SurfaceLook | undefined,
+  fallback: { color: string; roughness: number; metalness: number },
+): void {
+  const color = look?.color ?? fallback.color;
+  const roughness = look?.roughness ?? fallback.roughness;
+  const metalness = look?.metalness ?? fallback.metalness;
+  const textureUrl = look?.textureUrl ?? null;
+  const milled = Boolean(look?.milled);
+  const repeatX = look?.repeat[0] ?? 1;
+  const repeatY = look?.repeat[1] ?? 1;
+
+  useEffect(() => {
+    material.color.set(color);
+    material.roughness = roughness;
+    material.metalness = metalness;
+  }, [material, color, roughness, metalness]);
+
+  /* ── Фрезеровка: рельеф, а не цвет ── */
+  useEffect(() => {
+    const normal = milled ? milledNormalMap() : null;
+    if (material.normalMap === normal) return;
+    material.normalMap = normal;
+    // Смена карты — это другой шейдер, здесь пересборка обязательна.
+    material.needsUpdate = true;
+  }, [material, milled]);
+
+  /* ── Текстура артикула ── */
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!textureUrl) {
+      if (material.map) {
+        material.map = null;
+        material.needsUpdate = true;
+      }
+      return;
+    }
+
+    loadTexture(textureUrl)
+      .then((texture) => {
+        if (cancelled) return;
+        /*
+         * Текстура одна на URL и лежит в кэше, поэтому повторы ставим на
+         * клоне: две поверхности с разным числом повторов не должны
+         * драться за одну и ту же картинку.
+         */
+        const own = texture.clone();
+        own.needsUpdate = true;
+        own.wrapS = THREE.RepeatWrapping;
+        own.wrapT = THREE.RepeatWrapping;
+        own.repeat.set(repeatX, repeatY);
+        material.map = own;
+        material.needsUpdate = true;
+      })
+      .catch(() => {
+        // Файл не отдался — остаётся цвет. Пустая поверхность хуже цвета.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [material, textureUrl, repeatX, repeatY]);
 }
