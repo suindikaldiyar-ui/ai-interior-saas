@@ -1440,6 +1440,7 @@ export default function Workspace(props: WorkspaceProps) {
                 interactive
                 production={props.production}
                 view={sceneView}
+                selectedModuleId={selectedId}
                 onItemId={setKitchenItemId}
               />
             </div>
@@ -1479,10 +1480,16 @@ export default function Workspace(props: WorkspaceProps) {
                   </button>
                 ))}
 
-                {/* Ракурс: фронтальный вид плоский, объём даёт «три четверти». */}
+                {/*
+                  * Чертёж, план и объём — это одна модель с трёх точек
+                  * съёмки, а не три экрана. Переключение анимируется:
+                  * клиент видит, как чертёж разворачивается в комнату.
+                  */}
+                <span className="self-center text-[13px] text-graphiteMw">Вид:</span>
                 {(Object.keys(SCENE_VIEW_LABEL) as SceneView[]).map((value) => (
                   <button
                     key={value}
+                    data-scene-view={value}
                     type="button"
                     onClick={() => setSceneView(value)}
                     aria-pressed={sceneView === value}
@@ -1493,7 +1500,9 @@ export default function Workspace(props: WorkspaceProps) {
                 ))}
 
                 <p className="w-full text-[13px] leading-snug text-graphiteMw">
-                  Нажмите на ящик или дверцу — откроется.
+                  {sceneView === 'perspective'
+                    ? 'Нажмите на ящик или дверцу — откроется.'
+                    : 'Это та же модель, что в 3D: размеры сняты с неё, а не нарисованы отдельно.'}
                 </p>
               </div>
             )}

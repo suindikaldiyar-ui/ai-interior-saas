@@ -82,6 +82,14 @@ type Props = {
    * художника.
    */
   compact?: boolean;
+  /**
+   * Слой поверх сцены.
+   *
+   * Тот же чертёж, но лёгкий: контуры модулей приглушены, а контур
+   * помещения не рисуется вовсе — пол и потолок в кадре уже есть,
+   * и вторая линия поверх первой читается как расфокус.
+   */
+  overlay?: boolean;
 };
 
 export type VariantOption = {
@@ -516,6 +524,7 @@ export default function ElevationDrawing({
   variants = [],
   onVariant,
   compact = false,
+  overlay = false,
 }: Props) {
   const changed = useMemo(() => new Set(changedIds), [changedIds]);
 
@@ -945,24 +954,28 @@ export default function ElevationDrawing({
       role="img"
       aria-label={`Фасадный чертёж ряда ${run.lengthMm} мм`}
     >
-      {/* Контур помещения: пол и потолок */}
-      <line
-        x1={padLeft - (compact ? 0 : 12)}
-        y1={yOf(0)}
-        x2={padLeft + drawWidth + (compact ? 0 : 8)}
-        y2={yOf(0)}
-        stroke="var(--ink)"
-        strokeWidth={1.2}
-      />
-      <line
-        x1={padLeft - (compact ? 0 : 12)}
-        y1={yOf(ceiling)}
-        x2={padLeft + drawWidth + (compact ? 0 : 8)}
-        y2={yOf(ceiling)}
-        stroke="var(--ink)"
-        strokeWidth={0.6}
-        strokeDasharray="4 3"
-      />
+      {/* Контур помещения: пол и потолок. Поверх сцены они уже есть. */}
+      {!overlay && (
+        <>
+          <line
+            x1={padLeft - (compact ? 0 : 12)}
+            y1={yOf(0)}
+            x2={padLeft + drawWidth + (compact ? 0 : 8)}
+            y2={yOf(0)}
+            stroke="var(--ink)"
+            strokeWidth={1.2}
+          />
+          <line
+            x1={padLeft - (compact ? 0 : 12)}
+            y1={yOf(ceiling)}
+            x2={padLeft + drawWidth + (compact ? 0 : 8)}
+            y2={yOf(ceiling)}
+            stroke="var(--ink)"
+            strokeWidth={0.6}
+            strokeDasharray="4 3"
+          />
+        </>
+      )}
 
       {/* Высотные отметки слева. В макете их нет: он читается силуэтом. */}
       {!compact && marks.map(([mm, label]) => (
@@ -998,29 +1011,33 @@ export default function ElevationDrawing({
       ))}
 
       {/* Цоколь и столешница — контуром, а не заливкой: сплошная плашка
-          на печати схлопывается в чёрную полосу, а на синьке не читается. */}
-      <rect
-        x={PADDING_LEFT}
-        y={yOf(GEOMETRY.base.plinthH)}
-        width={drawWidth}
-        height={yOf(0) - yOf(GEOMETRY.base.plinthH)}
-        fill="none"
-        stroke="var(--blueprint)"
-        strokeWidth={0.5}
-      />
-
-      {/* Столешница есть не в каждой зоне: в шкафу её нет вовсе. */}
-      {(!sectionZone || zone.hasCountertop) && (
+          на печати схлопывается в чёрную полосу, а на синьке не читается.
+          Поверх сцены они приглушены вместе с модулями: линия в полную
+          силу поверх настоящей столешницы читается как вторая мебель. */}
+      <g opacity={overlay ? 0.55 : 1}>
         <rect
           x={PADDING_LEFT}
-          y={yOf(sectionZone ? zoneTop : BASE_TOTAL_H)}
+          y={yOf(GEOMETRY.base.plinthH)}
           width={drawWidth}
-          height={GEOMETRY.base.countertopH * heightScale}
+          height={yOf(0) - yOf(GEOMETRY.base.plinthH)}
           fill="none"
           stroke="var(--blueprint)"
-          strokeWidth={1}
+          strokeWidth={0.5}
         />
-      )}
+
+        {/* Столешница есть не в каждой зоне: в шкафу её нет вовсе. */}
+        {(!sectionZone || zone.hasCountertop) && (
+          <rect
+            x={PADDING_LEFT}
+            y={yOf(sectionZone ? zoneTop : BASE_TOTAL_H)}
+            width={drawWidth}
+            height={GEOMETRY.base.countertopH * heightScale}
+            fill="none"
+            stroke="var(--blueprint)"
+            strokeWidth={1}
+          />
+        )}
+      </g>
 
       {/*
         * Подсветка будущего места прибора. Живёт над рядом и показывается
@@ -1058,12 +1075,14 @@ export default function ElevationDrawing({
         </text>
       </g>
 
-      {run.modules.map((m) => renderModule(m, false))}
-      {run.upperSegments.flatMap((segment) =>
-        segment.modules.map((m) =>
-          renderModule({ ...m, offsetMm: m.offsetMm }, true),
-        ),
-      )}
+      <g opacity={overlay ? 0.55 : 1}>
+        {run.modules.map((m) => renderModule(m, false))}
+        {run.upperSegments.flatMap((segment) =>
+          segment.modules.map((m) =>
+            renderModule({ ...m, offsetMm: m.offsetMm }, true),
+          ),
+        )}
+      </g>
 
       {/* Размерная цепочка — та же, что под лентой модулей и на плане */}
       {!compact && (

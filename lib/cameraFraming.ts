@@ -43,40 +43,122 @@ export function heroCamera(room: RoomConfig): CameraFraming {
  * По умолчанию «три четверти»: фронтальный вид плоский, из него не понять
  * ни глубины, ни свеса столешницы, а мебель продаётся именно объёмом.
  */
-export type SceneView = 'front' | 'three-quarter' | 'top';
+/**
+ * ЧЕРТЁЖ, ПЛАН И 3D — ЭТО ОДНА МОДЕЛЬ, СНЯТАЯ С ТРЁХ ТОЧЕК.
+ *
+ * Раньше чертёж был SVG, а сцена — отдельной вещью, и переключение между
+ * ними было переходом между экранами. Теперь это движение камеры: клиент
+ * смотрит на чертёж, замерщик проводит пальцем — и чертёж на глазах
+ * разворачивается в комнату.
+ *
+ * `elevation` и `plan` снимаются ОРТОГОНАЛЬНОЙ камерой: только она даёт
+ * линейное соответствие метров и пикселей, а значит и совпадение с
+ * размерной цепочкой поверх кадра.
+ */
+export type SceneView = 'elevation' | 'plan' | 'perspective';
 
+/*
+ * Подписи называют ТОЧКУ СЪЁМКИ, а не документ: «План» и «3D» уже есть
+ * во вкладках результата, и два одинаковых слова на одном экране читаются
+ * как две разные вещи, которые почему-то называются одинаково.
+ */
 export const SCENE_VIEW_LABEL: Record<SceneView, string> = {
-  front: 'Спереди',
-  'three-quarter': 'Три четверти',
-  top: 'Сверху',
+  elevation: 'Как чертёж',
+  plan: 'Сверху',
+  perspective: 'Три четверти',
 };
 
-export const DEFAULT_SCENE_VIEW: SceneView = 'three-quarter';
+/** Ортогональные виды: у них своя камера, и размеры на них совпадают. */
+export const ORTHOGRAPHIC_VIEWS: SceneView[] = ['elevation', 'plan'];
+
+export function isOrthographic(view: SceneView): boolean {
+  return ORTHOGRAPHIC_VIEWS.includes(view);
+}
+
+export const DEFAULT_SCENE_VIEW: SceneView = 'perspective';
+
+/**
+ * Кадрирование ортогонального вида.
+ *
+ * Возвращает центр кадра в мировых координатах и то, сколько пикселей
+ * приходится на метр. По этим же числам позиционируется слой размеров
+ * поверх сцены — иначе цепочка разъедется с мебелью, а разъехавшийся
+ * размер хуже отсутствующего.
+ */
+export type OrthoFraming = {
+  /** Центр кадра в мировых координатах. */
+  center: [number, number, number];
+  /** Куда смотрит камера. */
+  position: [number, number, number];
+  target: [number, number, number];
+  /** Габарит кадра в метрах: по нему считается zoom под размер канваса. */
+  frameWidthM: number;
+  frameHeightM: number;
+};
+
+/** Запас по краям кадра: мебель не должна упираться в границу. */
+const ORTHO_PADDING = 1.12;
+
+export function orthoFraming(
+  room: RoomConfig,
+  view: SceneView,
+  runWidthM = room.width,
+): OrthoFraming {
+  if (view === 'plan') {
+    // Строго сверху: план читается только отвесным взглядом.
+    return {
+      center: [0, 0, 0],
+      position: [0, round2(room.height + 4), 0.0001],
+      target: [0, 0, 0],
+      frameWidthM: Math.max(runWidthM, room.width) * ORTHO_PADDING,
+      frameHeightM: room.depth * ORTHO_PADDING,
+    };
+  }
+
+  /*
+   * Фронт: строго спереди, без наклона. Это и есть чертёж — ровно то же,
+   * что рисует `ElevationDrawing`, только средствами сцены.
+   */
+  const centerY = room.height / 2;
+  return {
+    center: [0, centerY, 0],
+    position: [0, round2(centerY), round2(room.depth / 2 + 6)],
+    target: [0, round2(centerY), round2(-room.depth / 2)],
+    frameWidthM: Math.max(runWidthM, 0.5) * ORTHO_PADDING,
+    frameHeightM: room.height * ORTHO_PADDING,
+  };
+}
+
+/**
+ * Сколько пикселей в метре при таком кадре и таком канвасе.
+ *
+ * Кадр вписывается по меньшей стороне: иначе мебель вылезет за край
+ * на узком экране.
+ */
+export function orthoZoom(
+  framing: OrthoFraming,
+  sizePx: { width: number; height: number },
+): number {
+  const byWidth = sizePx.width / framing.frameWidthM;
+  const byHeight = sizePx.height / framing.frameHeightM;
+  return Math.max(1, Math.min(byWidth, byHeight));
+}
 
 /**
  * Точка съёмки под каждый вид. Ряд стоит у северной стены, поэтому камера
  * всегда стоит южнее и смотрит на него.
  */
 export function sceneCamera(room: RoomConfig, view: SceneView): CameraFraming {
-  const runY = 1.1;
   const distance = clamp(room.width * 0.9, 2.2, 6.5);
 
-  if (view === 'front') {
-    return {
-      position: [0, round2(Math.min(1.6, room.height - 0.4)), round2(distance * 1.35)],
-      target: [0, runY, -room.depth / 2],
-      fov: FOV_RUN,
-    };
-  }
-
-  if (view === 'top') {
-    // Не строго сверху: отвесный вид превращает ряд в план, а план у нас
-    // уже есть отдельным чертежом.
-    return {
-      position: [round2(room.width * 0.15), round2(room.height + 1.4), round2(distance * 0.75)],
-      target: [0, 0.6, round2(-room.depth / 2 + 0.4)],
-      fov: FOV_RUN,
-    };
+  /*
+   * Ортогональные виды здесь не считаются: у них своя камера и своё
+   * кадрирование (`orthoFraming`). Перспективная точка нужна только для
+   * анимации перехода — с неё камера уезжает и на неё возвращается.
+   */
+  if (isOrthographic(view)) {
+    const ortho = orthoFraming(room, view);
+    return { position: ortho.position, target: ortho.target, fov: FOV_RUN };
   }
 
   /*

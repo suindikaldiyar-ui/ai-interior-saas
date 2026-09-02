@@ -1,11 +1,12 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { KITCHEN } from '@/lib/kitchen';
 import { moduleHeightMm } from '@/lib/millwork/modules';
 import { useInteriorStore } from '@/store/useInteriorStore';
 import Cabinet3D from './cabinet3d/Cabinet3D';
+import type { OrthoProjection } from './cabinet3d/SceneCamera';
 import type { SceneView } from '@/lib/cameraFraming';
 import type { ProductionSettings } from '@/types/catalog';
 import type { Run } from '@/types/millwork';
@@ -17,6 +18,8 @@ import type { Run } from '@/types/millwork';
  * `KitchenUnit` по `meta.runModules`. Своей разбивки здесь нет — иначе клиент
  * увидел бы в 3D одну кухню, а подписал бы другую.
  */
+
+import DimensionLayer from './DimensionLayer';
 
 const RoomCanvas = dynamic(() => import('@/components/RoomCanvas'), {
   ssr: false,
@@ -49,11 +52,14 @@ type Props = {
   hidden?: boolean;
   /** Идентификатор созданного объекта — по нему вешается выбор материалов. */
   onItemId?: (id: string) => void;
+  /** Выделение общее с чертежом: выбранный модуль подсвечен и в сцене. */
+  selectedModuleId?: string | null;
 };
 
 export default function KitchenScene({
   run,
   ceilingHeightMm,
+  selectedModuleId,
   roomDepthM = DEFAULT_ROOM_DEPTH_M,
   hidden = false,
   interactive = false,
@@ -170,20 +176,61 @@ export default function KitchenScene({
     onItemId?.(id);
   }, [run, ceilingHeightMm, roomDepthM, interactive, onItemId]);
 
+  /*
+   * Кадрирование приходит из сцены ГОТОВОЙ ПРОЕКЦИЕЙ. Мерить канвас здесь
+   * своим наблюдателем нельзя: R3F меряет его своим, два замера расходятся
+   * на несколько пикселей — и размерная цепочка повисает над полом.
+   */
+  const [framing, setFraming] = useState<OrthoProjection | null>(null);
+
+  /*
+   * Последнее кадрирование не выбрасывается: при уходе в объём сцена
+   * отдаёт null, и слой исчез бы рывком в первом же кадре перелёта.
+   * Замерший чертёж, который гаснет за четверть секунды, читается как
+   * «размеры сняты с этой модели», а мигание — как поломка.
+   */
+  const keepFraming = useCallback((next: OrthoProjection | null) => {
+    if (next) setFraming(next);
+  }, []);
+
   const lengthM = run.lengthMm / 1000;
   const depthM = Math.max(roomDepthM, KITCHEN.baseDepth + 1.2);
 
+  /*
+   * Ряд стоит по центру комнаты — ровно так его ставит `Cabinet3D`, —
+   * поэтому его левый край известен и здесь. По этому числу слой
+   * размеров ложится на мебель.
+   */
+  const originXM = -lengthM / 2;
+
   return (
-    <RoomCanvas frameloop={hidden ? 'demand' : 'always'}>
-      {interactive && (
-        <Cabinet3D
+    <div className="relative h-full w-full">
+      <RoomCanvas frameloop={hidden ? 'demand' : 'always'}>
+        {interactive && (
+          <Cabinet3D
+            run={run}
+            production={production}
+            roomWidthM={lengthM}
+            roomDepthM={depthM}
+            view={view}
+            onFraming={keepFraming}
+          />
+        )}
+      </RoomCanvas>
+
+      {/*
+        * Размеры живут НАД сценой, а не внутри неё: это чертёжная графика,
+        * и рисовать её мешами значило бы городить второй чертёж.
+        */}
+      {interactive && !hidden && (
+        <DimensionLayer
           run={run}
-          production={production}
-          roomWidthM={lengthM}
-          roomDepthM={depthM}
-          view={view}
+          framing={framing}
+          originXM={originXM}
+          visible={view === 'elevation' && framing !== null}
+          selectedModuleId={selectedModuleId}
         />
       )}
-    </RoomCanvas>
+    </div>
   );
 }

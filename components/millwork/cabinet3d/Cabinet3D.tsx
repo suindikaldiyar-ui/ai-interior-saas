@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import CabinetModule3D from './CabinetModule3D';
-import SceneCamera from './SceneCamera';
+import SceneCamera, { type OrthoProjection } from './SceneCamera';
 import { useCabinetParts } from './parts';
 import { moduleCarcassHeightMm } from '@/lib/millwork/fill';
 import { GEOMETRY } from '@/lib/millwork/modules';
@@ -36,8 +36,13 @@ type Props = {
   roomDepthM: number;
   facadeColor?: string;
   counterColor?: string;
-  /** Ракурс: спереди, три четверти или сверху. */
+  /** Ракурс: чертёж, план или три четверти. */
   view?: SceneView;
+  /**
+   * Кадрирование ортогонального вида — для слоя размеров поверх сцены.
+   * Null означает «сейчас перспектива», и слой прячется.
+   */
+  onFraming?: (framing: OrthoProjection | null) => void;
 };
 
 export default function Cabinet3D({
@@ -48,6 +53,7 @@ export default function Cabinet3D({
   facadeColor = '#D8D6D2',
   counterColor = '#3C3B37',
   view = DEFAULT_SCENE_VIEW,
+  onFraming,
 }: Props) {
   const groupRef = useRef<THREE.Group>(null);
   const openParts = useInteriorStore((s) => s.openParts);
@@ -148,6 +154,8 @@ export default function Cabinet3D({
       <SceneCamera
         room={{ width: roomWidthM, depth: roomDepthM, height: run.ceilingHeightMm / MM }}
         view={view}
+        runWidthM={lengthM}
+        onFraming={onFraming}
       />
 
       {/*
@@ -291,6 +299,81 @@ function SceneProbe({ group }: { group: React.RefObject<THREE.Group> }) {
       return { w: Math.round(Math.abs(b.x - a.x)), h: Math.round(Math.abs(b.y - a.y)) };
     };
 
+    /**
+     * Габарит всего ряда в экранных пикселях.
+     *
+     * По нему проверяется главное обещание слоя: на виде «Чертёж» размерная
+     * цепочка ложится на мебель, а не рядом с ней. Считать это глазами по
+     * скриншоту нельзя — расхождение в три пикселя видно только числом.
+     */
+    (
+      w as {
+        __mwRunBox?: () => { left: number; right: number; top: number; bottom: number } | null;
+      }
+    ).__mwRunBox = () => {
+      const root = group.current;
+      if (!root) return null;
+
+      /*
+       * Зоны касания в габарит НЕ входят: они раздуты до 44 px на экране
+       * и торчат за края ряда. Считать по ним — мерить не мебель, а
+       * место, куда можно ткнуть пальцем.
+       */
+      const box = new THREE.Box3();
+      root.traverse((object) => {
+        const mesh = object as unknown as { isMesh?: boolean };
+        if (!mesh.isMesh || object.name.startsWith('part:')) return;
+        box.expandByObject(object);
+      });
+      if (box.isEmpty()) return null;
+      const rect = gl.domElement.getBoundingClientRect();
+      const xs: number[] = [];
+      const ys: number[] = [];
+
+      for (const cx of [box.min.x, box.max.x]) {
+        for (const cy of [box.min.y, box.max.y]) {
+          for (const cz of [box.min.z, box.max.z]) {
+            const p = new THREE.Vector3(cx, cy, cz).project(camera);
+            xs.push(rect.left + ((p.x + 1) / 2) * rect.width);
+            ys.push(rect.top + ((1 - p.y) / 2) * rect.height);
+          }
+        }
+      }
+
+      return {
+        left: Math.min(...xs),
+        right: Math.max(...xs),
+        top: Math.min(...ys),
+        bottom: Math.max(...ys),
+        /*
+         * Тип и поворот камеры: вид «как чертёж» обязан быть настоящим
+         * фасадом. Полтора градуса наклона глазами не видно, а размеры
+         * с мебели уже съезжают.
+         */
+        cameraType: camera.type,
+        cameraRot: [camera.rotation.x, camera.rotation.y, camera.rotation.z],
+      };
+    };
+
+    /** Свежая проекция активной камеры: с ней сверяется слой размеров. */
+    (
+      w as { __mwProject?: () => { pxPerMetre: number; originX: number; originY: number } }
+    ).__mwProject = () => {
+      const rect = gl.domElement.getBoundingClientRect();
+      const at = (x: number, y: number) => {
+        const p = new THREE.Vector3(x, y, 0).project(camera);
+        return { x: ((p.x + 1) / 2) * rect.width, y: ((1 - p.y) / 2) * rect.height };
+      };
+      const origin = at(0, 0);
+      const up = at(0, 1);
+      const right = at(1, 0);
+      return {
+        pxPerMetre: Math.max(Math.abs(origin.y - up.y), Math.abs(origin.x - right.x)),
+        originX: origin.x,
+        originY: origin.y,
+      };
+    };
+
     /** Экранные координаты элемента: проверка кликает по мебели, а не наугад. */
     w.__mwPartPoint = (id: string) => {
       const target = group.current?.getObjectByName(`part:${id}`);
@@ -312,6 +395,8 @@ function SceneProbe({ group }: { group: React.RefObject<THREE.Group> }) {
       delete w.__mwPartPoint;
       delete (w as { __mwOpenableIds?: unknown }).__mwOpenableIds;
       delete (w as { __mwPartSize?: unknown }).__mwPartSize;
+      delete (w as { __mwRunBox?: unknown }).__mwRunBox;
+      delete (w as { __mwProject?: unknown }).__mwProject;
     };
   }, [scene, camera, gl, group]);
 
