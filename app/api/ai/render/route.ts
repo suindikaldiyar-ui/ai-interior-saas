@@ -12,6 +12,9 @@ import {
 import { APPLIANCE_SLOTS } from '@/lib/millwork/modules';
 import type { RunModuleLike } from '@/lib/kitchen';
 import {
+  BASE_ROW_TITLE,
+  NO_UPPER_ROW,
+  UPPER_ROW_TITLE,
   assertCompositionMatches,
   describeFronts,
   frontRules,
@@ -276,10 +279,13 @@ function buildMillworkBlock(items: RenderRequest['items']): string {
     ).flatMap((segment) => (segment.units ?? []) as RunModuleLike[]);
 
     const fronts = [
-      frontsBlock(`НИЖНИЙ РЯД, стена ${wallMm} мм, слева направо`, modules as RunModuleLike[]),
+      frontsBlock(
+        `${BASE_ROW_TITLE}, стена ${wallMm} мм, слева направо`,
+        modules as RunModuleLike[],
+      ),
       upperUnits.length > 0
-        ? frontsBlock('ВЕРХНИЙ РЯД, слева направо', upperUnits)
-        : 'ВЕРХНЕГО РЯДА НЕТ: стена над столешницей открыта.',
+        ? frontsBlock(`${UPPER_ROW_TITLE}, слева направо`, upperUnits)
+        : NO_UPPER_ROW,
     ].join('\n\n');
 
     lines.push(
@@ -694,14 +700,28 @@ export async function POST(request: Request) {
      * доверия клиента, поэтому расхождение падает здесь, а не всплывает
      * на картинке.
      */
-    const runOfBody = (((body.items ?? []).find((item) => item.type === 'kitchen_unit')?.meta as
+    const metaOfBody = (body.items ?? []).find((item) => item.type === 'kitchen_unit')?.meta as
       | Record<string, unknown>
-      | undefined)?.runModules ?? []) as RunModuleLike[];
+      | undefined;
 
-    if (runOfBody.length > 0) {
+    const baseOfBody = (metaOfBody?.runModules ?? []) as RunModuleLike[];
+    /*
+     * Верхний ряд считается СУММОЙ модулей по участкам: промпт описывает
+     * оба ряда, и сверка «всех строк против нижнего ряда» падала ложно —
+     * тринадцать строк против семи модулей.
+     */
+    const upperOfBody = ((metaOfBody?.runUppers ?? []) as UpperLike[]).flatMap(
+      (segment) => (segment.units ?? []) as RunModuleLike[],
+    );
+
+    if (baseOfBody.length > 0) {
       assertCompositionMatches(prompt, {
-        moduleCount: runOfBody.length,
-        drawerFronts: describeFronts(runOfBody).reduce((sum, f) => sum + f.drawerFronts, 0),
+        baseCount: baseOfBody.length,
+        upperCount: upperOfBody.length,
+        drawerFronts: describeFronts([...baseOfBody, ...upperOfBody]).reduce(
+          (sum, f) => sum + f.drawerFronts,
+          0,
+        ),
       });
     }
 

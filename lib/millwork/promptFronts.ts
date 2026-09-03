@@ -132,12 +132,55 @@ export function describeFronts(modules: RunModuleLike[]): FrontDescription[] {
     .map(describeFront);
 }
 
+/**
+ * Заголовки рядов.
+ *
+ * По ним же промпт потом РАЗБИРАЕТСЯ обратно при сверке: заголовок и
+ * разборщик обязаны знать друг о друге, иначе сверка считает строки не
+ * того ряда и падает на верном составе.
+ */
+export const BASE_ROW_TITLE = 'НИЖНИЙ РЯД';
+export const UPPER_ROW_TITLE = 'ВЕРХНИЙ РЯД';
+export const NO_UPPER_ROW = 'ВЕРХНЕГО РЯДА НЕТ: стена над столешницей открыта.';
+
 /** Строки блока: «0–600 пенал: холодильник встроенный…». */
 export function frontsBlock(title: string, modules: RunModuleLike[]): string {
   const rows = describeFronts(modules).map(
     (f) => `  ${f.fromMm}–${f.toMm} ${f.text}`,
   );
   return `${title}:\n${rows.join('\n')}`;
+}
+
+/** Строка описания модуля: два пробела, диапазон, текст. */
+const FRONT_ROW = /^ {2}\d+–\d+ /;
+
+/**
+ * Сколько модулей описано в каждом ряду.
+ *
+ * Считаем ПО РЯДАМ, а не всё подряд: в промпте два блока, и общая сумма
+ * строк не сходится ни с нижним рядом, ни с верхним. Именно на этом сверка
+ * падала ложно — «в промпте 13 модулей, а в ряду 7».
+ */
+export function countFrontRows(prompt: string): { base: number; upper: number } {
+  const counts = { base: 0, upper: 0 };
+  let current: 'base' | 'upper' | null = null;
+
+  for (const line of prompt.split('\n')) {
+    const trimmed = line.trim();
+
+    if (trimmed.startsWith(BASE_ROW_TITLE)) {
+      current = 'base';
+      continue;
+    }
+    if (trimmed.startsWith(UPPER_ROW_TITLE) || trimmed.startsWith('ВЕРХНЕГО РЯДА НЕТ')) {
+      current = 'upper';
+      continue;
+    }
+
+    if (current && FRONT_ROW.test(line)) counts[current] += 1;
+  }
+
+  return counts;
 }
 
 /**
@@ -162,32 +205,51 @@ export function frontRules(moduleCount: number): string {
 которых нет в списке выше. Не убирать те, что есть.`;
 }
 
+/** Чего ждём от промпта: по модулю в каждом ряду. */
+export type CompositionExpect = {
+  /** Нижний ряд: `run.modules`. */
+  baseCount: number;
+  /** Верхний ряд: сумма модулей по всем `run.upperSegments`. */
+  upperCount: number;
+  /** Сколько ящичных фронтов в составе — по обоим рядам. */
+  drawerFronts: number;
+};
+
 /**
  * Сверка состава перед отправкой.
  *
- * Число модулей и число ящичных фронтов в тексте промпта обязано совпасть
- * с `Run`. Расхождение — исключение на сборке запроса, а не сюрприз на
- * картинке: рендер стоит денег, а неверная картинка стоит доверия.
+ * Число описанных модулей обязано совпасть с рядом — С КАЖДЫМ ОТДЕЛЬНО.
+ * Считать всё подряд нельзя: промпт описывает два ряда, и сумма не сходится
+ * ни с одним из них. Ошибка называет ряд поимённо, иначе на неё смотрят и
+ * не понимают, где искать.
+ *
+ * Расхождение — исключение на сборке запроса, а не сюрприз на картинке:
+ * рендер стоит денег, а неверная картинка стоит доверия.
  */
-export function assertCompositionMatches(
-  prompt: string,
-  expect: { moduleCount: number; drawerFronts: number },
-): void {
-  const rows = prompt.split('\n').filter((line) => /^\s{2}\d+–\d+\s/.test(line));
+export function assertCompositionMatches(prompt: string, expect: CompositionExpect): void {
+  const rows = countFrontRows(prompt);
 
-  if (rows.length !== expect.moduleCount) {
+  if (rows.base !== expect.baseCount) {
     throw new Error(
-      `В промпте описано ${rows.length} модулей, а в ряду ${expect.moduleCount} — ` +
+      `Нижний ряд: в промпте описано ${rows.base} модулей, а в ряду ${expect.baseCount} — ` +
         'клиенту нарисовали бы другой гарнитур.',
     );
   }
 
-  const drawerRows = rows.filter((line) => /ЯЩИК/i.test(line)).length;
-  const expectedRows = expect.drawerFronts > 0 ? 1 : 0;
-
-  if (drawerRows === 0 && expectedRows > 0) {
+  if (rows.upper !== expect.upperCount) {
     throw new Error(
-      'В ряду есть ящики, а в промпте о них не сказано ни слова — ' +
+      `Верхний ряд: в промпте описано ${rows.upper} модулей, а в ряду ${expect.upperCount} — ` +
+        'клиенту нарисовали бы другой гарнитур.',
+    );
+  }
+
+  const drawerRows = prompt
+    .split('\n')
+    .filter((line) => FRONT_ROW.test(line) && /ЯЩИК/i.test(line)).length;
+
+  if (drawerRows === 0 && expect.drawerFronts > 0) {
+    throw new Error(
+      'В составе есть ящики, а в промпте о них не сказано ни слова — ' +
         'модель нарисует сплошные дверцы.',
     );
   }
