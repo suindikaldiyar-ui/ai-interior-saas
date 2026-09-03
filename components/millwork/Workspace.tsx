@@ -8,14 +8,10 @@ import ThemeToggle from '@/components/ThemeToggle';
 import BeforeAfter from './BeforeAfter';
 import CommandBar from './CommandBar';
 import DrawingSheet from './DrawingSheet';
-import ElevationDrawing, {
-  type DrawingMode,
-  type VariantOption,
-} from './ElevationDrawing';
+import type { DrawingMode, VariantOption } from './ElevationDrawing';
 import EstimateSheet from './EstimateSheet';
 import MaterialsStep from './MaterialsStep';
 import PanelList from './PanelList';
-import PlanDrawing from './PlanDrawing';
 import RenderPanel from './RenderPanel';
 import ArrangementCards from './ArrangementCards';
 import RunEditor, { type CompositionPatch } from './RunEditor';
@@ -119,7 +115,7 @@ const KitchenScene = dynamic(() => import('./KitchenScene'), {
 const CatalogLoader = dynamic(() => import('@/components/CatalogLoader'), { ssr: false });
 
 /** Чем смотреть результат. Чертёж плотный намеренно — это документ. */
-type ResultView = 'facade' | 'plan' | 'scene' | 'panels';
+type ResultView = 'facade' | 'scene' | 'panels';
 
 const STEP_HINT: Record<StepKey, string> = {
   survey: 'Меряем по низу стены, у пола: вверху стены новостройки кривые.',
@@ -1383,7 +1379,12 @@ export default function Workspace(props: WorkspaceProps) {
               * Сравнение — главный экран продажи, а не иллюстрация к чертежу.
               * Клиент смотрит на свою квартиру с кухней; чертёж, план и смета
               * нужны потом и живут ниже.
+              *
+              * В ПЕЧАТЬ ОНО НЕ ИДЁТ. Документ — это лист: сравнение занимало
+              * первую страницу целиком, и чертёж уезжал на вторую, хотя
+              * помещался на одну.
               */}
+            <div className="print:hidden">
             <BeforeAfter
               photo={roomPhoto}
               render={activeRender}
@@ -1405,7 +1406,9 @@ export default function Workspace(props: WorkspaceProps) {
               }
             />
 
-            <div className="mt-5">
+            </div>
+
+            <div className="mt-5 print:hidden">
               <RenderPanel
                 variants={variants}
                 roomPhoto={roomPhoto}
@@ -1425,9 +1428,14 @@ export default function Workspace(props: WorkspaceProps) {
             {/* Ниже — документы: чертёж, план и техническая сцена. */}
             <div className="mt-6 flex flex-wrap gap-2 print:hidden">
               {(
+                /*
+                  * «План» отдельной вкладкой больше нет: он лежит на том же
+                  * листе, что фасад и разрезы. Отдельный экран под один вид
+                  * заставлял держать в голове то, что должно быть перед
+                  * глазами.
+                  */
                 [
                   ['facade', 'Чертёж'],
-                  ['plan', 'План'],
                   ['scene', '3D'],
                   ['panels', 'Детализировка'],
                 ] as [ResultView, string][]
@@ -1703,6 +1711,12 @@ export default function Workspace(props: WorkspaceProps) {
                   : 'mt-4'
               }
             >
+              {/*
+                * ЛИСТ, А НЕ ОДИН ВИД: фасад, оба разреза и план сразу,
+                * у каждого своя подпись и свой масштаб. Фасад остаётся
+                * живым — полки тянутся, техника переносится, варианты
+                * выбираются прямо на нём.
+                */}
               <DrawingSheet
                 title={props.title}
                 zone={props.zone}
@@ -1711,30 +1725,21 @@ export default function Workspace(props: WorkspaceProps) {
                 variantTitle={active.title}
                 pending={resolution?.stats.pending.map((p) => p.where) ?? []}
                 notes={survey?.clientNotes}
-              >
-                {resultView !== 'plan' ? (
-                  <ElevationDrawing
-                    run={active.run}
-                    assumedTotal={assumedTotal}
-                    selectedModuleId={selectedId}
-                    onSelect={setSelectedId}
-                    changedIds={changedIds}
-                    mode={drawingMode}
-                    onFillChange={changeFill}
-                    onMoveAppliance={moveAppliance}
-                    variants={variantOptions}
-                    onVariant={chooseVariant}
-                  />
-                ) : (
-                  <PlanDrawing
-                    run={active.run}
-                    comms={input.comms}
-                    issues={issues}
-                    selectedModuleId={selectedId}
-                    onSelect={setSelectedId}
-                  />
-                )}
-              </DrawingSheet>
+                run={active.run}
+                comms={input.comms}
+                issues={issues}
+                elevation={{
+                  assumedTotal,
+                  selectedModuleId: selectedId,
+                  onSelect: setSelectedId,
+                  changedIds,
+                  mode: drawingMode,
+                  onFillChange: changeFill,
+                  onMoveAppliance: moveAppliance,
+                  variants: variantOptions,
+                  onVariant: chooseVariant,
+                }}
+              />
             </div>
           </>
         )}
@@ -1749,7 +1754,8 @@ export default function Workspace(props: WorkspaceProps) {
                   onClick={() => {
                     if (w.moduleId) setSelectedId(w.moduleId);
                     setWarningAt(w.atMm ?? null);
-                    if (step === 'result') setResultView('plan');
+                    // Предупреждение ведёт на лист: план теперь там же.
+                    if (step === 'result') setResultView('facade');
                   }}
                   className="w-full rounded-[var(--r-control)] bg-navy px-4 py-3 text-left text-[13px] leading-snug text-graphiteMw"
                 >

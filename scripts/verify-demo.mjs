@@ -321,9 +321,17 @@ try {
     (await page.getByRole('button', { name: 'Добавить фото помещения' }).count()) === 1,
   );
 
+  /*
+   * Кнопок под сравнением стало две: «Чертёж» открывает ЛИСТ, на котором
+   * и план, и разрезы, — отдельная кнопка под один вид больше не нужна.
+   */
   check(
-    'чертёж, план и 3D — тремя кнопками ниже сравнения',
-    (await page.getByRole('button', { name: /^(Чертёж|План|3D)$/ }).count()) === 3,
+    'чертёж и 3D — кнопками ниже сравнения',
+    (await page.getByRole('button', { name: /^(Чертёж|3D)$/ }).count()) === 2,
+  );
+  check(
+    'отдельной кнопки «План» больше нет: план на листе',
+    (await page.getByRole('button', { name: 'План', exact: true }).count()) === 0,
   );
 
   await page.getByRole('button', { name: 'Чертёж', exact: true }).click();
@@ -347,9 +355,26 @@ try {
     `максимальный размер на чертеже: ${totalDim}`,
   );
 
-  await page.getByRole('button', { name: 'План', exact: true }).click();
-  await sleep(400);
-  check('план рисуется', (await page.locator('svg').count()) > 0);
+  /*
+   * Отдельной вкладки «План» больше нет: план лежит на ТОМ ЖЕ листе, что
+   * фасад и разрезы. Проверяем состав листа, а не переключение экранов.
+   */
+  const sheetViews = await page.evaluate(() =>
+    [...document.querySelectorAll('[data-view]')].map((el) => el.getAttribute('data-view')),
+  );
+  check(
+    'на одном листе фасад, разрезы и план',
+    ['elevation', 'section', 'section-inside', 'plan'].every((id) => sheetViews.includes(id)),
+    sheetViews.join(', '),
+  );
+  check(
+    'у каждого вида на листе подпись и масштаб',
+    await page.evaluate(() =>
+      [...document.querySelectorAll('[data-view] figcaption')].every((el) =>
+        /1:\d+/.test(el.textContent ?? ''),
+      ),
+    ),
+  );
   check(
     'на плане подписаны коммуникации',
     (await page.getByText('проход', { exact: false }).count()) > 0,
@@ -369,7 +394,11 @@ try {
     `модулей в сцене: ${sceneModules}`,
   );
 
-  const cards = await page.locator('figure').count();
+  /*
+   * Виды чертёжного листа — тоже `figure`, поэтому считаем именно карточки
+   * рендера: у них нет `data-view`.
+   */
+  const cards = await page.locator('figure:not([data-view])').count();
   check('карточка рендера одна, а не набор миниатюр', cards === 1, `карточек: ${cards}`);
   check(
     'без фото сказано прямо, что клиент увидит настроение, а не квартиру',
