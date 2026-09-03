@@ -100,7 +100,9 @@ export type FrontType = 'door' | 'drawers' | 'none' | 'appliance';
 /** Начинка конкретного места. Каталог — в lib/millwork/moduleVariants.ts. */
 export type ModuleVariantKind =
   | 'door'
+  | 'door_two'
   | 'drawers'
+  | 'drawers_four'
   | 'drawers_door'
   | 'cargo'
   | 'sink_base'
@@ -109,12 +111,17 @@ export type ModuleVariantKind =
   | 'open_base'
   | 'upper_door'
   | 'upper_glass'
+  | 'upper_display'
   | 'upper_dryer'
   | 'upper_lift'
   | 'upper_open'
+  | 'upper_micro'
   | 'tall_shelves'
   | 'tall_cargo'
-  | 'tall_rod';
+  | 'tall_rod'
+  | 'tall_oven_micro'
+  | 'tall_fridge'
+  | 'tall_display';
 
 /**
  * Секция — это НАЧИНКА модуля в зонах, где нет техники.

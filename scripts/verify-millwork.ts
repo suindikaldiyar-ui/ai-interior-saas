@@ -76,6 +76,12 @@ import {
 import { buildLeaders, layoutLeaders } from '../lib/millwork/leaders';
 import { positionCode, projectPositions } from '../lib/millwork/positions';
 import { frontGlyph, glyphSignature } from '../lib/millwork/frontGlyph';
+import {
+  assertCompositionMatches,
+  describeFronts,
+  frontRules,
+  frontsBlock,
+} from '../lib/millwork/promptFronts';
 import { MODULE_VARIANTS, applyVariant } from '../lib/millwork/moduleVariants';
 import { axonometryExtentMm, buildAxonometry, project } from '../lib/millwork/axonometry';
 import { carcassBoxes, moduleBoxes } from '../lib/millwork/cabinetBoxes';
@@ -3158,6 +3164,118 @@ console.log('\nКаждый вариант виден на чертеже');
   const once = glyphSignature(frontGlyph(display, 'fronts'));
   const twice = glyphSignature(frontGlyph(display, 'fronts'));
   check('рисунок варианта детерминирован', once === twice);
+}
+
+
+/* ─────────────────────────  Промпт визуализации  ───────────────────────── */
+
+console.log('\nВизуализация видит то же, что чертёж');
+{
+  const run = buildRun(baseInput);
+
+  // Мета сцены: ровно те поля, что уезжают в запрос на отрисовку.
+  const meta = run.modules.map((unit) => ({
+    widthMm: unit.widthMm,
+    offsetMm: unit.offsetMm,
+    kind: unit.kind,
+    appliance: unit.appliance,
+    column: unit.column ? { top: unit.column.top, bottom: unit.column.bottom } : undefined,
+    builtIn: unit.builtIn,
+    section: unit.section,
+    frontType: unit.frontType,
+    drawerCount: unit.drawerCount,
+    variant: unit.variant,
+  }));
+
+  const fronts = describeFronts(meta);
+  check('описан каждый модуль ряда', fronts.length === run.modules.length,
+    `${fronts.length} против ${run.modules.length}`);
+  check(
+    'у каждого модуля назван диапазон по стене',
+    fronts.every((f) => f.toMm > f.fromMm),
+  );
+  check(
+    'диапазоны идут подряд, без разрывов и нахлёстов',
+    fronts.every((f, i) => i === 0 || f.fromMm === fronts[i - 1].toMm),
+  );
+
+  const block = frontsBlock('НИЖНИЙ РЯД', meta);
+  check('блок читается строками «от–до»', /\n {2}\d+–\d+ /.test(block));
+  check('мойка описана мойкой', /мойка/i.test(block));
+
+  /* Витрина и ящики называются прямо. */
+  const withDisplay = [
+    { widthMm: 600, offsetMm: 0, kind: 'upper', frontType: 'door', variant: 'upper_display' },
+    { widthMm: 600, offsetMm: 600, kind: 'base', frontType: 'drawers', drawerCount: 3 },
+  ];
+  const displayBlock = frontsBlock('ВЕРХНИЙ РЯД', withDisplay);
+  check('витрина названа витриной, а не шкафом', /ВИТРИНА/.test(displayBlock), displayBlock);
+  check('подсветка витрины названа включённой', /подсветка ВКЛЮЧЕНА/.test(displayBlock));
+  check('ящики названы ящиками', /3 ЯЩИКА/.test(displayBlock));
+
+  /* Верхний ряд описывается так же помодульно: витрина живёт именно там. */
+  const upperMeta = run.upperSegments.flatMap((segment) =>
+    segment.modules.map((unit) => ({
+      widthMm: unit.widthMm,
+      offsetMm: unit.offsetMm,
+      kind: unit.kind,
+      appliance: unit.appliance,
+      frontType: unit.frontType,
+      drawerCount: unit.drawerCount,
+      variant: unit.variant,
+    })),
+  );
+  const upperBlock = frontsBlock('ВЕРХНИЙ РЯД', upperMeta);
+  const NEWLINE = String.fromCharCode(10);
+  const ROW_RE = new RegExp('^ {2}\\d+.\\d+ ');
+  check(
+    'верхний ряд описан помодульно',
+    upperMeta.length > 0 && upperBlock.split(NEWLINE).some((line) => ROW_RE.test(line)),
+    `модулей наверху: ${upperMeta.length}`,
+  );
+  check('вытяжка наверху названа', /вытяжка/i.test(upperBlock));
+
+  const withDisplayUpper = upperMeta.map((u, i) =>
+    i === 0 ? { ...u, variant: 'upper_display', appliance: undefined } : u,
+  );
+  check(
+    'поставленная наверху витрина доезжает до промпта',
+    /ВИТРИНА/.test(frontsBlock('ВЕРХНИЙ РЯД', withDisplayUpper)),
+  );
+
+  const rules = frontRules(run.modules.length);
+  check('правило про ящики есть в тексте', /ЯЩИКИ И ДВЕРЦЫ РАЗЛИЧАЮТСЯ/.test(rules));
+  check('правило про витрины есть в тексте', /ОТКРЫТЫМИ/.test(rules));
+  check('правило про неизменность состава называет число', rules.includes(`${run.modules.length}`));
+
+  /* Сверка перед отправкой ловит расхождение. */
+  const goodPrompt = `${frontsBlock('НИЖНИЙ РЯД', meta)}\n\n${rules}`;
+  let threw = false;
+  try {
+    assertCompositionMatches(goodPrompt, {
+      moduleCount: meta.length,
+      drawerFronts: fronts.reduce((sum, f) => sum + f.drawerFronts, 0),
+    });
+  } catch {
+    threw = true;
+  }
+  check('верный промпт проходит сверку', !threw);
+
+  let caught = '';
+  try {
+    assertCompositionMatches(goodPrompt, { moduleCount: meta.length + 2, drawerFronts: 0 });
+  } catch (error) {
+    caught = (error as Error).message;
+  }
+  check('расхождение по числу модулей падает исключением', caught.length > 0, caught.slice(0, 60));
+
+  let caughtDrawers = '';
+  try {
+    assertCompositionMatches('  0–600 глухой фасад', { moduleCount: 1, drawerFronts: 3 });
+  } catch (error) {
+    caughtDrawers = (error as Error).message;
+  }
+  check('потерянные ящики падают исключением', caughtDrawers.length > 0, caughtDrawers.slice(0, 60));
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

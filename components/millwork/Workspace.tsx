@@ -8,7 +8,10 @@ import ThemeToggle from '@/components/ThemeToggle';
 import BeforeAfter from './BeforeAfter';
 import CommandBar from './CommandBar';
 import DrawingSheet from './DrawingSheet';
-import type { DrawingMode, VariantOption } from './ElevationDrawing';
+import VariantStrip, { type VariantPreview } from './VariantStrip';
+import { applyVariant } from '@/lib/millwork/moduleVariants';
+import { moduleHeightMm } from '@/lib/millwork/modules';
+import type { DrawingMode } from './ElevationDrawing';
 import EstimateSheet from './EstimateSheet';
 import MaterialsStep from './MaterialsStep';
 import PanelList from './PanelList';
@@ -644,7 +647,14 @@ export default function Workspace(props: WorkspaceProps) {
    * прайсу было бы дешевле, но тогда цифра на чертеже разошлась бы
    * с итогом внизу экрана — а клиент видит обе.
    */
-  const variantOptions = useMemo<VariantOption[]>(() => {
+  /** Как называется выбранный модуль: подпись над лентой превью. */
+  const selectedLabel = useMemo(() => {
+    if (!selectedId) return null;
+    const unit = allModules(active.run).find((m) => m.id === selectedId);
+    return unit ? `${unit.label} ${unit.widthMm} мм` : null;
+  }, [selectedId, active.run]);
+
+  const variantOptions = useMemo<VariantPreview[]>(() => {
     if (!selectedId) return [];
 
     const unit = allModules(active.run).find((m) => m.id === selectedId);
@@ -677,10 +687,20 @@ export default function Workspace(props: WorkspaceProps) {
         }
       }
 
+      /*
+       * Карточка рисует НАСТОЯЩИЙ модуль с применённым вариантом — тем же
+       * кодом, что и большой чертёж. Заготовленная иконка разошлась бы
+       * с чертежом на первой же правке.
+       */
       return {
         kind: spec.kind,
         title: spec.title,
         hint: spec.hint,
+        unit: applyVariant(unit, spec.kind),
+        heightMm: moduleHeightMm(unit.kind, {
+          upperToCeiling: active.run.options.upperToCeiling,
+          ceilingHeightMm: active.run.ceilingHeightMm,
+        }),
         deltaKzt,
         active: spec.kind === now,
       };
@@ -1559,37 +1579,13 @@ export default function Workspace(props: WorkspaceProps) {
                 ))}
 
                 {/*
-                  * ВАРИАНТ ВЫБИРАЕТСЯ ТАМ, ГДЕ СМОТРЯТ. Список тот же, что
-                  * на чертеже, и считается тем же пересчётом: цифра под
+                  * ВАРИАНТ ВЫБИРАЕТСЯ ТАМ, ГДЕ СМОТРЯТ. Лента та же, что под
+                  * чертежом, и цена считается тем же пересчётом: цифра под
                   * сценой обязана сойтись с итогом внизу экрана.
                   */}
-                {variantOptions.length > 0 && (
-                  <div className="w-full">
-                    <p className="mb-2 text-[13px] text-graphiteMw">
-                      Что бывает в этом месте:
-                    </p>
-                    <div className="flex flex-wrap gap-2">
-                      {variantOptions.map((option) => (
-                        <button
-                          key={option.kind}
-                          type="button"
-                          onClick={() => chooseVariant(option.kind)}
-                          aria-pressed={option.active}
-                          className={`mw-btn ${option.active ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
-                          title={option.hint}
-                        >
-                          {option.title}
-                          {option.deltaKzt !== 0 && !option.active && (
-                            <span className="ml-2 text-[13px] text-graphiteMw">
-                              {option.deltaKzt > 0 ? '+' : '−'}
-                              {Math.abs(option.deltaKzt).toLocaleString('ru-RU')} ₸
-                            </span>
-                          )}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                <div className="w-full">
+                  <VariantStrip options={variantOptions} onPick={chooseVariant} />
+                </div>
 
                 {sceneNotice && (
                   <p className="w-full rounded-[var(--r-control)] bg-tape/15 px-4 py-3 text-[13px] leading-snug text-tape">
@@ -1706,6 +1702,23 @@ export default function Workspace(props: WorkspaceProps) {
               </div>
             )}
 
+            {/*
+              * ЛЕНТА ПРЕВЬЮ РЯДОМ С ЧЕРТЕЖОМ. Меню названий внутри чертежа
+              * закрывало мебель и требовало читать, а не смотреть; лента
+              * под листом уезжала бы за экран — на листе шесть видов.
+              * Карточки — настоящие мини-чертежи, и лента не закрывается
+              * после выбора: замерщик перебирает их подряд при клиенте.
+              */}
+            {resultView === 'facade' && (
+              <div className="mt-4 print:hidden">
+                <VariantStrip
+                  options={variantOptions}
+                  onPick={chooseVariant}
+                  moduleLabel={selectedLabel ?? undefined}
+                />
+              </div>
+            )}
+
             <div
               className={
                 resultView === 'scene' || resultView === 'panels'
@@ -1741,10 +1754,9 @@ export default function Workspace(props: WorkspaceProps) {
                   mode: drawingMode,
                   onFillChange: changeFill,
                   onMoveAppliance: moveAppliance,
-                  variants: variantOptions,
-                  onVariant: chooseVariant,
                 }}
               />
+
             </div>
           </>
         )}

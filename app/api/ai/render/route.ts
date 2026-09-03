@@ -11,6 +11,12 @@ import {
 } from '@/lib/millwork/composition';
 import { APPLIANCE_SLOTS } from '@/lib/millwork/modules';
 import type { RunModuleLike } from '@/lib/kitchen';
+import {
+  assertCompositionMatches,
+  describeFronts,
+  frontRules,
+  frontsBlock,
+} from '@/lib/millwork/promptFronts';
 import type { ApplianceKind, SectionKind } from '@/types/millwork';
 import type { FurnitureItem, RoomConfig } from '@/types/interior';
 import {
@@ -70,7 +76,14 @@ type TableRow = {
 
 /** Промпту нужны только подписи образцов, сами картинки уходят отдельными частями. */
 type SwatchLabel = { label: string };
-type UpperLike = { fromMm: number; toMm: number; count: number; appliances?: string[] };
+type UpperLike = {
+  fromMm: number;
+  toMm: number;
+  count: number;
+  appliances?: string[];
+  /** Модули участка: по ним промпт описывает витрины, сушилки и подъёмники. */
+  units?: RunModuleLike[];
+};
 
 /** Образец каталога вместе с номером картинки, если он попал в лимит. */
 type PlacedCatalogRef = CatalogReference & { imageIndex: number | null };
@@ -248,8 +261,31 @@ function buildMillworkBlock(items: RenderRequest['items']): string {
             .join(', ')}. На остальной длине стены верхних шкафов НЕТ — разрыв сделан намеренно, там окно или вытяжной участок. Не достраивай ряд до сплошного.`
       : '';
 
+    /*
+     * ПОМОДУЛЬНОЕ ОПИСАНИЕ С ФРОНТАМИ. Список ширин говорил, ЧТО стоит,
+     * но не говорил, что у модуля за фасадом: модель рисовала всё
+     * сплошными дверцами, и ящики с витриной пропадали с картинки.
+     */
+    const wallMm = (modules as RunModuleLike[]).reduce(
+      (sum, m) => sum + (Number(m.widthMm) || 0),
+      0,
+    );
+
+    const upperUnits = (
+      ((item.meta as Record<string, unknown> | undefined)?.runUppers ?? []) as UpperLike[]
+    ).flatMap((segment) => (segment.units ?? []) as RunModuleLike[]);
+
+    const fronts = [
+      frontsBlock(`НИЖНИЙ РЯД, стена ${wallMm} мм, слева направо`, modules as RunModuleLike[]),
+      upperUnits.length > 0
+        ? frontsBlock('ВЕРХНИЙ РЯД, слева направо', upperUnits)
+        : 'ВЕРХНЕГО РЯДА НЕТ: стена над столешницей открыта.',
+    ].join('\n\n');
+
     lines.push(
       `# СОСТАВ ГАРНИТУРА «${item.label}» — слева направо, воспроизвести буквально
+${fronts}
+
 ${parts.join('\n')}
 Всего модулей: ${modules.length}. Ширины сходятся с чертежом, по которому клиенту посчитали смету.
 ${upperLine}
@@ -308,6 +344,13 @@ function buildPrompt(
   const shape: RunShape = runModules.some((m) => String(m.kind).startsWith('corner'))
     ? 'corner_l'
     : 'linear';
+  /*
+   * Правила про ящики, витрины и неизменность состава идут в
+   * `GEOMETRY_LOCK` ДО описания стиля: стиль модель читает как пожелание,
+   * а `GEOMETRY_LOCK` — как ограничение, и порядок здесь имеет значение.
+   */
+  const rules = frontRules(runModules.length);
+
   const composition = compositionBlock({
     shape,
     lengthMm: Math.round(
@@ -364,6 +407,8 @@ ${
     ? `# GEOMETRY_LOCK — фотография клиента главнее всего
 ${composition}
 
+${rules}
+
 Ты не рисуешь новую комнату. Ты показываешь, как В ЭТОМ САМОМ помещении
 встанет спроектированный гарнитур. Клиент обязан узнать свою квартиру.
 
@@ -411,6 +456,8 @@ ${composition}
 `
     : `# GEOMETRY_LOCK — воспроизвести буквально, без единого отклонения
 ${composition}
+
+${rules}
 
 - Пропорции комнаты, положение и длина каждой стены — точно как в [IMAGE 1].
 - Положение, размер и форма окна, высота подоконника — без изменений.
@@ -640,6 +687,23 @@ export async function POST(request: Request) {
       ? 'corner_l'
       : 'linear';
     assertShapeMatches(prompt, shapeOfRun);
+
+    /*
+     * И сверка СОСТАВА: число модулей и наличие ящиков в тексте промпта
+     * обязано совпасть с рядом. Рендер стоит денег, а неверная картинка —
+     * доверия клиента, поэтому расхождение падает здесь, а не всплывает
+     * на картинке.
+     */
+    const runOfBody = (((body.items ?? []).find((item) => item.type === 'kitchen_unit')?.meta as
+      | Record<string, unknown>
+      | undefined)?.runModules ?? []) as RunModuleLike[];
+
+    if (runOfBody.length > 0) {
+      assertCompositionMatches(prompt, {
+        moduleCount: runOfBody.length,
+        drawerFronts: describeFronts(runOfBody).reduce((sum, f) => sum + f.drawerFronts, 0),
+      });
+    }
 
     // Каждое изображение подписано текстовой частью прямо перед собой —
     // это лечит перепутывание атрибутов, когда картинок больше пяти.

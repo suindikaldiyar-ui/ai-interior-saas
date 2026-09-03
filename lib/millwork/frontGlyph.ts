@@ -109,6 +109,26 @@ export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts'): GlyphEleme
       }
       break;
 
+    case 'door_two':
+      // Две створки: шов посередине и свои диагонали на каждой.
+      if (mode === 'fronts') {
+        elements.push({ kind: 'panel' });
+        elements.push({ kind: 'split' });
+        elements.push({ kind: 'swing', hinge: 'left' });
+        elements.push({ kind: 'swing', hinge: 'right' });
+      } else {
+        elements.push({ kind: 'shelf', count: shelfCount(unit, 2) });
+      }
+      break;
+
+    case 'drawers_four':
+      if (mode === 'fronts') drawers(4);
+      else {
+        elements.push({ kind: 'drawer', index: 0, count: 4 });
+        elements.push({ kind: 'shelf', count: 3 });
+      }
+      break;
+
     case 'drawers':
       if (mode === 'fronts') drawers(Math.max(2, unit.drawerCount || 3));
       else elements.push({ kind: 'drawer', index: 0, count: Math.max(2, unit.drawerCount || 3) });
@@ -181,6 +201,25 @@ export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts'): GlyphEleme
       elements.push({ kind: 'led' });
       break;
 
+    case 'upper_display':
+      /*
+       * Витрина с подсветкой отличается от «стекла в раме» именно
+       * подсветкой и стеклянными полками: это другие деньги в смете,
+       * значит и рисунок обязан быть другим.
+       */
+      elements.push({ kind: 'frame' });
+      if (mode === 'fronts') elements.push({ kind: 'glass' });
+      elements.push({ kind: 'shelf', count: shelfCount(unit, 3) });
+      elements.push({ kind: 'led' });
+      elements.push({ kind: 'open' });
+      break;
+
+    case 'upper_micro':
+      // Ниша под микроволновку: открытый проём и полка под прибор.
+      elements.push({ kind: 'open' });
+      elements.push({ kind: 'niche', count: 1 });
+      break;
+
     case 'upper_dryer':
       if (mode === 'fronts') {
         elements.push({ kind: 'panel' });
@@ -209,6 +248,29 @@ export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts'): GlyphEleme
       elements.push({ kind: 'shelf', count: shelfCount(unit, 4) });
       break;
 
+    case 'tall_oven_micro':
+      // Колонна: два прибора один над другим, между ними полка.
+      if (mode === 'fronts') elements.push({ kind: 'panel' });
+      elements.push({ kind: 'niche', count: 2 });
+      elements.push({ kind: 'shelf', count: 1 });
+      break;
+
+    case 'tall_fridge':
+      // Встроенный холодильник: сплошной фасад заподлицо и одна врезка.
+      if (mode === 'fronts') {
+        elements.push({ kind: 'panel' });
+        elements.push({ kind: 'swing', hinge: hinge(unit) });
+      }
+      elements.push({ kind: 'niche', count: 1 });
+      break;
+
+    case 'tall_display':
+      elements.push({ kind: 'frame' });
+      if (mode === 'fronts') elements.push({ kind: 'glass' });
+      elements.push({ kind: 'shelf', count: shelfCount(unit, 4) });
+      elements.push({ kind: 'led' });
+      break;
+
     case 'tall_cargo':
       elements.push({ kind: 'panel' });
       elements.push({ kind: 'cargo' });
@@ -229,7 +291,7 @@ export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts'): GlyphEleme
    * Их считает `columnNiches` — та же функция, что строит 3D и наполнение,
    * здесь нужно только их число.
    */
-  if (unit.column) {
+  if (unit.column && !elements.some((el) => el.kind === 'niche')) {
     const count = [unit.column.top, unit.column.bottom].filter(Boolean).length;
     elements.push({ kind: 'niche', count });
   }

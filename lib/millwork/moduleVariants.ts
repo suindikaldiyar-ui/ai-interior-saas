@@ -76,6 +76,20 @@ export const MODULE_VARIANTS: Record<ModuleVariantKind, ModuleVariantSpec> = {
     frontType: 'door',
     anyWidth: true,
   },
+  /*
+   * Двустворчатый модуль — отдельный вариант, а не «дверца пошире».
+   * Петель вдвое больше, и в цеху это другая позиция.
+   */
+  door_two: {
+    kind: 'door_two',
+    title: 'Две дверцы',
+    hint: 'шов посередине, петли с двух сторон',
+    row: 'base',
+    minWidthMm: 600,
+    maxWidthMm: 1200,
+    frontType: 'door',
+    anyWidth: true,
+  },
   drawers: {
     kind: 'drawers',
     title: 'Ящики',
@@ -85,6 +99,16 @@ export const MODULE_VARIANTS: Record<ModuleVariantKind, ModuleVariantSpec> = {
     maxWidthMm: 900,
     frontType: 'drawers',
     drawerCount: 3,
+  },
+  drawers_four: {
+    kind: 'drawers_four',
+    title: 'Четыре ящика',
+    hint: 'мелкая посуда и приборы: четыре фронта',
+    row: 'base',
+    minWidthMm: 400,
+    maxWidthMm: 900,
+    frontType: 'drawers',
+    drawerCount: 4,
   },
   drawers_door: {
     kind: 'drawers_door',
@@ -169,7 +193,38 @@ export const MODULE_VARIANTS: Record<ModuleVariantKind, ModuleVariantSpec> = {
     minWidthMm: 300,
     maxWidthMm: 900,
     frontType: 'door',
+    /*
+     * Ограничение в 900 мм — это про ОДНУ створку: шире неё стекло
+     * провисает. На модуле 1200 мм ставят две по 600, и запрещать
+     * витрину там значит запрещать нормальную мебель.
+     */
+    anyWidth: true,
     estimateKeys: ['glass_front'],
+  },
+  /*
+   * Витрина с подсветкой — не то же, что стекло в раме: там лента по
+   * контуру и стеклянные полки, и это отдельные деньги в смете.
+   */
+  upper_display: {
+    kind: 'upper_display',
+    title: 'Витрина с подсветкой',
+    hint: 'стеклянные полки, лента по контуру',
+    row: 'upper',
+    minWidthMm: 300,
+    maxWidthMm: 900,
+    frontType: 'door',
+    // Та же причина, что у «стекла в раме»: предел на створку, не на модуль.
+    anyWidth: true,
+    estimateKeys: ['glass_front', 'led_display'],
+  },
+  upper_micro: {
+    kind: 'upper_micro',
+    title: 'Ниша под микроволновку',
+    hint: 'открытая ниша, розетка внутри',
+    row: 'upper',
+    minWidthMm: 500,
+    maxWidthMm: 600,
+    frontType: 'none',
   },
   upper_dryer: {
     kind: 'upper_dryer',
@@ -212,6 +267,34 @@ export const MODULE_VARIANTS: Record<ModuleVariantKind, ModuleVariantSpec> = {
     maxWidthMm: 600,
     frontType: 'door',
     anyWidth: true,
+  },
+  tall_oven_micro: {
+    kind: 'tall_oven_micro',
+    title: 'Духовка с СВЧ',
+    hint: 'два прибора в одной колонне',
+    row: 'tall',
+    minWidthMm: 600,
+    maxWidthMm: 600,
+    frontType: 'door',
+  },
+  tall_fridge: {
+    kind: 'tall_fridge',
+    title: 'Холодильник',
+    hint: 'встроенный, фасад заподлицо',
+    row: 'tall',
+    minWidthMm: 600,
+    maxWidthMm: 600,
+    frontType: 'door',
+  },
+  tall_display: {
+    kind: 'tall_display',
+    title: 'Витрина',
+    hint: 'стеклянная дверь во всю высоту',
+    row: 'tall',
+    minWidthMm: 400,
+    maxWidthMm: 600,
+    frontType: 'door',
+    estimateKeys: ['glass_front', 'led_display'],
   },
   tall_cargo: {
     kind: 'tall_cargo',
@@ -349,12 +432,20 @@ export function variantsForModule(
 export function applyVariant(unit: Module, kind: ModuleVariantKind): Module {
   const spec = MODULE_VARIANTS[kind];
 
+  /*
+   * Число створок задаёт САМ вариант там, где он про створки: «две дверцы»
+   * это две дверцы и на 600 мм тоже. В остальных случаях решает ширина —
+   * шкаф 1200 мм одной створкой не делают.
+   */
+  const doorCount =
+    spec.frontType !== 'door' ? 0 : kind === 'door_two' ? 2 : unit.widthMm > 600 ? 2 : 1;
+
   return {
     ...unit,
     variant: kind,
     frontType: spec.frontType,
     drawerCount: spec.frontType === 'drawers' ? (spec.drawerCount ?? 3) : 0,
-    doorCount: spec.frontType === 'door' ? (unit.widthMm > 600 ? 2 : 1) : 0,
+    doorCount,
     label: spec.title,
     fill: undefined,
   };

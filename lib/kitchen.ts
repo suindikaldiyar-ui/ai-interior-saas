@@ -436,6 +436,14 @@ export type RunModuleLike = {
   builtIn?: boolean;
   frontType?: string;
   drawerCount?: number;
+  /**
+   * Вариант модуля: витрина, карго, сушилка, подъёмник.
+   *
+   * Без него промпт визуализации не мог сказать, что за фасадом, и модель
+   * рисовала всё сплошными дверцами: на чертеже витрина с подсветкой, на
+   * картинке — обычный шкаф.
+   */
+  variant?: string;
 };
 
 export function modulesFromRun(

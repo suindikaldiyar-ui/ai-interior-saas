@@ -147,6 +147,9 @@ export default function KitchenScene({
           builtIn: unit.builtIn,
           // Начинка модуля: в шкафу роль решает не прибор, а секция.
           section: unit.section,
+          // Вариант: витрина, карго, сушилка. По нему промпт описывает,
+          // что за фасадом — иначе модель рисует сплошные дверцы.
+          variant: unit.variant,
           frontType: unit.frontType,
           drawerCount: unit.drawerCount,
         })),
@@ -159,6 +162,21 @@ export default function KitchenScene({
           fromMm: segment.fromMm,
           toMm: segment.toMm,
           count: segment.modules.length,
+          /*
+           * ПОМОДУЛЬНО, а не только участком. Витрина, сушилка и подъёмник
+           * живут в верхнем ряду, и без их описания модель рисовала там
+           * сплошные дверцы: на чертеже витрина с подсветкой, на картинке
+           * обычный шкаф.
+           */
+          units: segment.modules.map((unit) => ({
+            widthMm: unit.widthMm,
+            offsetMm: unit.offsetMm,
+            kind: unit.kind,
+            appliance: unit.appliance,
+            frontType: unit.frontType,
+            drawerCount: unit.drawerCount,
+            variant: unit.variant,
+          })),
           /*
            * Вытяжка живёт в верхнем ряду, а не в списке модулей ряда.
            * Без неё в промпте модель рисовала над варочной обычный шкаф —
