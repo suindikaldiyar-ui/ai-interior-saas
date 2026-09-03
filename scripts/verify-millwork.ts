@@ -75,6 +75,8 @@ import {
 } from '../lib/millwork/sheet';
 import { buildLeaders, layoutLeaders } from '../lib/millwork/leaders';
 import { positionCode, projectPositions } from '../lib/millwork/positions';
+import { frontGlyph, glyphSignature } from '../lib/millwork/frontGlyph';
+import { MODULE_VARIANTS, applyVariant } from '../lib/millwork/moduleVariants';
 import { axonometryExtentMm, buildAxonometry, project } from '../lib/millwork/axonometry';
 import { carcassBoxes, moduleBoxes } from '../lib/millwork/cabinetBoxes';
 import { DEFAULT_PRODUCTION } from '../types/catalog';
@@ -3043,6 +3045,119 @@ console.log('\nНумерация позиций');
     'два одинаковых номера на объекте невозможны',
     new Set(positions.map((p) => p.code)).size === positions.length,
   );
+}
+
+
+/* ─────────────────────────  Варианты на чертеже  ───────────────────────── */
+
+console.log('\nКаждый вариант виден на чертеже');
+{
+  const run = buildRun(baseInput);
+  const base = run.modules.find((m) => !m.appliance) ?? run.modules[0];
+  const upper = run.upperSegments[0]?.modules[0] ?? base;
+  const tall = run.modules.find((m) => m.kind === 'tall') ?? base;
+
+  const hostFor = (row: string) => (row === 'upper' ? upper : row === 'tall' ? tall : base);
+
+  /*
+   * Сравниваем варианты ВНУТРИ РЯДА. Клиент выбирает из того, что бывает
+   * в этом месте, и различаться должны именно они. Открытая полка наверху
+   * и открытая секция внизу — это одна и та же мебель на разной высоте:
+   * выдумывать им разный рисунок значит врать в обе стороны.
+   */
+  const signatures = new Map<string, string>();
+  const insideSignatures = new Map<string, string>();
+
+  for (const spec of Object.values(MODULE_VARIANTS)) {
+    const host = hostFor(spec.row);
+    const unit = applyVariant({ ...host, appliance: undefined, column: undefined }, spec.kind);
+
+    const fronts = `${spec.row}:${glyphSignature(frontGlyph(unit, 'fronts'))}`;
+    const inside = `${spec.row}:${glyphSignature(frontGlyph(unit, 'inside'))}`;
+
+    check(`вариант «${spec.title}» что-то рисует`, fronts.length > 0, fronts);
+    check(`вариант «${spec.title}» виден и в разрезе`, inside.length > 0, inside);
+
+    const twinFront = signatures.get(fronts);
+    check(
+      `вариант «${spec.title}» не выглядит как другой в своём ряду`,
+      twinFront === undefined,
+      twinFront ? `совпал с «${twinFront}»: ${fronts}` : fronts,
+    );
+    signatures.set(fronts, spec.title);
+
+    const twinInside = insideSignatures.get(inside);
+    check(
+      `в разрезе «${spec.title}» отличается от других в своём ряду`,
+      twinInside === undefined,
+      twinInside ? `совпал с «${twinInside}»: ${inside}` : inside,
+    );
+    insideSignatures.set(inside, spec.title);
+  }
+
+  /* Витрина: стекло, полки сквозь него и подсветка — все три обязательны. */
+  const display = applyVariant({ ...upper, appliance: undefined }, 'upper_glass');
+  const displayFront = frontGlyph(display, 'fronts');
+  check(
+    'у витрины есть стекло, рама, полки и подсветка',
+    ['glass', 'frame', 'shelf', 'led'].every((kind) =>
+      displayFront.some((el) => el.kind === kind),
+    ),
+    glyphSignature(displayFront),
+  );
+  check(
+    'стекло не закрашено сплошной заливкой',
+    displayFront.filter((el) => el.kind === 'glass').length === 1,
+  );
+  check(
+    'в разрезе витрины полки остаются, а стекла нет',
+    frontGlyph(display, 'inside').some((el) => el.kind === 'shelf') &&
+      !frontGlyph(display, 'inside').some((el) => el.kind === 'glass'),
+  );
+
+  /* Ящики рисуются ящиками: три фронта — это три фронта, а не одна дверца. */
+  const drawers = applyVariant({ ...base, appliance: undefined, drawerCount: 3 }, 'drawers');
+  const drawerGlyph = frontGlyph(drawers, 'fronts');
+  check(
+    'три ящика рисуются тремя фронтами',
+    drawerGlyph.filter((el) => el.kind === 'drawer').length === 3,
+    glyphSignature(drawerGlyph),
+  );
+  check(
+    'у ящиков нет диагоналей открывания',
+    !drawerGlyph.some((el) => el.kind === 'swing'),
+  );
+
+  /* Наполнение вариантов видно в разрезе. */
+  const cargo = applyVariant({ ...base, appliance: undefined }, 'cargo');
+  check('у карго в разрезе видны корзины', frontGlyph(cargo, 'inside').some((el) => el.kind === 'shelf'));
+  check('у карго есть стрелка выдвижения', frontGlyph(cargo, 'fronts').some((el) => el.kind === 'cargo'));
+
+  const dryer = applyVariant({ ...upper, appliance: undefined }, 'upper_dryer');
+  check('у сушилки видна решётка', frontGlyph(dryer, 'inside').some((el) => el.kind === 'dryer'));
+
+  const sink = applyVariant({ ...base, appliance: undefined }, 'sink_base');
+  check('под мойкой пунктирный вырез чаши', frontGlyph(sink, 'fronts').some((el) => el.kind === 'sinkCut'));
+
+  const lift = applyVariant({ ...upper, appliance: undefined }, 'upper_lift');
+  check('у подъёмника дуга вверх', frontGlyph(lift, 'fronts').some((el) => el.kind === 'lift'));
+
+  /* Колонна и вытяжка добавляются поверх варианта. */
+  const hood = run.upperSegments.flatMap((s) => s.modules).find((m) => m.appliance === 'hood');
+  if (hood) {
+    check('у вытяжки нарисован воздуховод', frontGlyph(hood, 'fronts').some((el) => el.kind === 'hoodDuct'));
+  }
+
+  const column = run.modules.find((m) => m.column);
+  if (column) {
+    check('у колонны нарисованы обе врезки',
+      frontGlyph(column, 'fronts').some((el) => el.kind === 'niche' && el.count === 2));
+  }
+
+  /* Рисунок не зависит от того, сколько раз его попросили. */
+  const once = glyphSignature(frontGlyph(display, 'fronts'));
+  const twice = glyphSignature(frontGlyph(display, 'fronts'));
+  check('рисунок варианта детерминирован', once === twice);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

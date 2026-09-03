@@ -254,6 +254,16 @@ export function currentVariant(unit: Module): ModuleVariantKind {
   if (row === 'upper') return unit.frontType === 'none' ? 'upper_open' : 'upper_door';
   if (row === 'tall') return 'tall_shelves';
   if (unit.kind === 'corner_base') return 'corner_carousel';
+
+  /*
+   * ПРИБОР РЕШАЕТ ЗА СЕБЯ. Модуль под мойкой — это подмоечный модуль, даже
+   * если вариант не выбирали руками: у него нет дна и в столешнице вырез.
+   * Пока это выводилось только из явного выбора, чертёж рисовал мойку
+   * обычной дверцей, и клиент видел не ту мебель, которую заказывал.
+   */
+  if (unit.appliance?.startsWith('sink')) return 'sink_base';
+  if (unit.appliance === 'hob') return 'hob_base';
+
   if (unit.frontType === 'none') return 'open_base';
   return unit.frontType === 'drawers' ? 'drawers' : 'door';
 }

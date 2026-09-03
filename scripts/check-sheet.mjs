@@ -193,6 +193,30 @@ async function main() {
   );
   ok('легенда коммуникаций есть на плане', symbols.legend > 0);
 
+  /*
+   * Варианты видны НА ЧЕРТЕЖЕ, а не только в описании: у мойки пунктирный
+   * вырез чаши, у варочной полоса панели, у вытяжки воздуховод. Раньше всё
+   * это рисовалось одинаковыми прямоугольниками.
+   */
+  const variantMarks = await page.evaluate(() => {
+    const kinds = [...document.querySelectorAll('[data-symbol]')].map((el) =>
+      el.getAttribute('data-symbol'),
+    );
+    return {
+      sink: kinds.filter((k) => k === 'sink').length,
+      hob: kinds.filter((k) => k === 'hob').length,
+      hood: kinds.filter((k) => k === 'hood').length,
+      glyphs: document.querySelectorAll('[data-glyph]').length,
+    };
+  });
+
+  ok(
+    'у мойки, варочной и вытяжки свои знаки на чертеже',
+    variantMarks.sink > 0 && variantMarks.hob > 0 && variantMarks.hood > 0,
+    `мойка ${variantMarks.sink} · варочная ${variantMarks.hob} · вытяжка ${variantMarks.hood}`,
+  );
+  ok('каждый модуль рисуется по описанию варианта', variantMarks.glyphs > 5, `модулей: ${variantMarks.glyphs}`);
+
   /* ── 2. Масштаб на бумаге ── */
   await page.emulateMedia({ media: 'print' });
   await sleep(600);

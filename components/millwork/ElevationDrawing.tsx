@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useRef } from 'react';
 import DimensionChain from './DimensionChain';
 import LeaderLines from './LeaderLines';
-import { DrawerMark, LiftMark, SwingMark, TipOnMark } from './DrawingSymbols';
+import FrontGlyph from './FrontGlyph';
+import { TipOnMark } from './DrawingSymbols';
 import type { LeaderAnchor } from '@/lib/millwork/leaders';
 import { APPLIANCE_SLOTS, BASE_TOTAL_H, GEOMETRY, moduleHeightMm } from '@/lib/millwork/modules';
 import { sectionSpec } from '@/lib/millwork/sections';
@@ -185,8 +186,11 @@ function HingeMark({
           : undefined
       }
     >
-      <SwingMark x={x} y={yTop} width={width} height={height} hinge={hinge === 'right' ? 'right' : 'left'} />
-      {/* Прозрачная область под клик: по двум линиям пальцем не попасть. */}
+      {/*
+        * Сами диагонали рисует `FrontGlyph` — по описанию варианта. Здесь
+        * остаётся только область под клик: по двум линиям пальцем не
+        * попасть, а два рисунка одного знака рано или поздно разъедутся.
+        */}
       <rect x={x} y={yTop} width={width} height={height} fill="transparent" />
       <title>{hinge === 'left' ? 'Петли слева' : 'Петли справа'}</title>
     </g>
@@ -776,23 +780,13 @@ export default function ElevationDrawing({
           />
         )}
 
-        {/* Фасады: разделители дверей и ящиков — цех считает по ним петли. */}
-        {mode === 'fronts' && unit.frontType === 'drawers' &&
-          Array.from({ length: unit.drawerCount - 1 }, (_, i) => {
-            const step = h / unit.drawerCount;
-            const y = yTop + step * (i + 1);
-            return (
-              <line
-                key={i}
-                x1={x}
-                y1={y}
-                x2={x + w}
-                y2={y}
-                stroke="var(--blueprint)"
-                strokeWidth={0.4}
-              />
-            );
-          })}
+        {/*
+          * ФАСАД ПО ОПИСАНИЮ. Что именно видно у этого модуля — створка,
+          * ящики, стекло витрины с полками и подсветкой, решётка сушилки —
+          * решает `frontGlyph`, одна чистая функция на весь чертёж. Приёмка
+          * сверяет по ней же, что два разных варианта не выглядят одинаково.
+          */}
+        <FrontGlyph unit={unit} mode={mode} x={x} y={yTop} width={w} height={h} />
 
         {mode === 'fronts' && unit.frontType === 'door' && unit.doorCount === 2 && (
           <line
@@ -806,24 +800,17 @@ export default function ElevationDrawing({
         )}
 
         {/*
-          * ОТРАСЛЕВЫЕ ЗНАКИ на фасаде: ящик — линия со стрелкой вперёд,
-          * подъёмник — дуга вверх, фасад без ручки — точка «Tip-on».
-          * Мебельщик читает их не глядя на подписи.
+          * Фасад без ручки: точка «Tip-on». Ящики, подъёмник, стекло и
+          * прочее рисует `FrontGlyph` — по описанию варианта.
           */}
-        {mode === 'fronts' && unit.frontType === 'drawers' && (
-          <DrawerMark x={x} y={yTop} width={w} height={h} />
-        )}
-        {mode === 'fronts' && unit.variant === 'upper_lift' && (
-          <LiftMark x={x} y={yTop} width={w} height={h} />
-        )}
         {mode === 'fronts' && run.options.integratedHandles && unit.frontType === 'door' && (
           <TipOnMark x={x} y={yTop} width={w} />
         )}
 
         {/*
-          * Направление открывания диагоналями. Одна метка — и цех не
-          * ошибётся стороной петель; это отраслевое обозначение, его не
-          * нужно объяснять.
+          * Направление открывания диагоналями остаётся отдельной меткой:
+          * по клику она меняет сторону петель, а `FrontGlyph` — рисунок
+          * без обработчиков.
           */}
         {mode === 'fronts' && unit.frontType === 'door' && unit.fill && (
           <HingeMark
