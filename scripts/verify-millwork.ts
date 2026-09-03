@@ -77,7 +77,11 @@ import { buildLeaders, layoutLeaders } from '../lib/millwork/leaders';
 import { positionCode, projectPositions } from '../lib/millwork/positions';
 import { frontGlyph, glyphSignature } from '../lib/millwork/frontGlyph';
 import {
+  BASE_ROW_TITLE,
+  NO_UPPER_ROW,
+  UPPER_ROW_TITLE,
   assertCompositionMatches,
+  countFrontRows,
   describeFronts,
   frontRules,
   frontsBlock,
@@ -3248,30 +3252,101 @@ console.log('\nВизуализация видит то же, что чертё�
   check('правило про витрины есть в тексте', /ОТКРЫТЫМИ/.test(rules));
   check('правило про неизменность состава называет число', rules.includes(`${run.modules.length}`));
 
-  /* Сверка перед отправкой ловит расхождение. */
-  const goodPrompt = `${frontsBlock('НИЖНИЙ РЯД', meta)}\n\n${rules}`;
-  let threw = false;
+  /*
+   * СВЕРКА СЧИТАЕТ РЯДЫ ПОРОЗНЬ.
+   *
+   * Промпт описывает оба ряда, а `run.modules` — это только нижний. Пока
+   * сверка складывала все строки подряд, она падала на верном составе:
+   * «в промпте 13 модулей, а в ряду 7».
+   */
+  const drawerFronts = describeFronts([...meta, ...upperMeta]).reduce(
+    (sum, f) => sum + f.drawerFronts,
+    0,
+  );
+
+  const bothRows = [
+    frontsBlock(`${BASE_ROW_TITLE}, стена ${run.lengthMm} мм, слева направо`, meta),
+    frontsBlock(`${UPPER_ROW_TITLE}, слева направо`, upperMeta),
+    rules,
+  ].join('\n\n');
+
+  const counted = countFrontRows(bothRows);
+  check(
+    'строки считаются по своему ряду',
+    counted.base === meta.length && counted.upper === upperMeta.length,
+    `низ ${counted.base}/${meta.length}, верх ${counted.upper}/${upperMeta.length}`,
+  );
+
+  let threw = '';
   try {
-    assertCompositionMatches(goodPrompt, {
-      moduleCount: meta.length,
+    assertCompositionMatches(bothRows, {
+      baseCount: meta.length,
+      upperCount: upperMeta.length,
+      drawerFronts,
+    });
+  } catch (error) {
+    threw = (error as Error).message;
+  }
+  check('состав с верхним рядом проходит сверку', threw === '', threw.slice(0, 80));
+
+  let caughtBase = '';
+  try {
+    assertCompositionMatches(bothRows, {
+      baseCount: meta.length + 2,
+      upperCount: upperMeta.length,
+      drawerFronts,
+    });
+  } catch (error) {
+    caughtBase = (error as Error).message;
+  }
+  check(
+    'подменённый нижний ряд падает и называет себя',
+    caughtBase.startsWith('Нижний ряд'),
+    caughtBase.slice(0, 70),
+  );
+
+  let caughtUpper = '';
+  try {
+    assertCompositionMatches(bothRows, {
+      baseCount: meta.length,
+      upperCount: upperMeta.length + 1,
+      drawerFronts,
+    });
+  } catch (error) {
+    caughtUpper = (error as Error).message;
+  }
+  check(
+    'подменённый верхний ряд падает и называет себя',
+    caughtUpper.startsWith('Верхний ряд'),
+    caughtUpper.slice(0, 70),
+  );
+
+  /* Ряд без верхних шкафов — тоже верный состав. */
+  const withoutUpper = [
+    frontsBlock(`${BASE_ROW_TITLE}, стена ${run.lengthMm} мм, слева направо`, meta),
+    NO_UPPER_ROW,
+    rules,
+  ].join('\n\n');
+
+  let threwEmpty = '';
+  try {
+    assertCompositionMatches(withoutUpper, {
+      baseCount: meta.length,
+      upperCount: 0,
       drawerFronts: fronts.reduce((sum, f) => sum + f.drawerFronts, 0),
     });
-  } catch {
-    threw = true;
-  }
-  check('верный промпт проходит сверку', !threw);
-
-  let caught = '';
-  try {
-    assertCompositionMatches(goodPrompt, { moduleCount: meta.length + 2, drawerFronts: 0 });
   } catch (error) {
-    caught = (error as Error).message;
+    threwEmpty = (error as Error).message;
   }
-  check('расхождение по числу модулей падает исключением', caught.length > 0, caught.slice(0, 60));
+  check('состав без верхнего ряда проходит сверку', threwEmpty === '', threwEmpty.slice(0, 80));
 
   let caughtDrawers = '';
   try {
-    assertCompositionMatches('  0–600 глухой фасад', { moduleCount: 1, drawerFronts: 3 });
+    assertCompositionMatches(`${BASE_ROW_TITLE}:\n  0–600 глухой фасад\n\n${NO_UPPER_ROW}`, {
+      baseCount: 1,
+      upperCount: 0,
+      drawerFronts: 3,
+    });
   } catch (error) {
     caughtDrawers = (error as Error).message;
   }
