@@ -61,8 +61,12 @@ export function fitScale(
  * и воздух справа — они масштабируются вместе с ним, иначе размерная цепочка
  * поедет относительно рисунка.
  */
-export function viewWidthMm(realWidthMm: number, den: number): number {
-  return (realWidthMm / den) * (DRAW_FIELD.total / DRAW_FIELD.draw);
+export function viewWidthMm(
+  realWidthMm: number,
+  den: number,
+  totalUnits: number = DRAW_FIELD.total,
+): number {
+  return (realWidthMm / den) * (totalUnits / DRAW_FIELD.draw);
 }
 
 /* ─────────────────────────  Форматы листа  ───────────────────────── */
@@ -218,6 +222,35 @@ export function fitComposition(
 
   const den = STANDARD_SCALES[STANDARD_SCALES.length - 1];
   return last ?? { den, pages: paginate(build(den), format) };
+}
+
+/**
+ * МАСШТАБ ВИДА, КОТОРЫЙ ПРИСТРАИВАЕТСЯ К ГОТОВОМУ ЛИСТУ.
+ *
+ * Аксонометрия — не метрический вид: по ней не мерят, она отвечает на
+ * вопрос «как это стоит вместе». Тянуть из-за неё весь лист в 1:50 значит
+ * испортить те виды, по которым как раз мерят. Поэтому у неё свой масштаб:
+ * самый крупный, при котором лист ещё складывается в одну страницу.
+ */
+export function fitExtra(
+  base: SheetView[],
+  build: (den: ScaleDenominator) => SheetView[],
+  format: SheetFormat,
+): { den: ScaleDenominator; pages: SheetPage[] } {
+  const field = sheetField(format);
+  let last: { den: ScaleDenominator; pages: SheetPage[] } | null = null;
+
+  for (const den of STANDARD_SCALES) {
+    const extra = build(den);
+    if (extra.some((view) => view.widthMm > field.width)) continue;
+
+    const pages = paginate([...base, ...extra], format);
+    last = { den, pages };
+    if (pages.length === 1) return last;
+  }
+
+  const den = STANDARD_SCALES[STANDARD_SCALES.length - 1];
+  return last ?? { den, pages: paginate([...base, ...build(den)], format) };
 }
 
 /** «Лист 2 из 3» — на каждом листе свой номер, штамп одинаковый. */

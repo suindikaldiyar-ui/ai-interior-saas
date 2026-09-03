@@ -1,14 +1,24 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import ElevationDrawing from './ElevationDrawing';
+import ElevationDrawing, { elevationSpanUnits } from './ElevationDrawing';
+import { buildLeaders } from '@/lib/millwork/leaders';
+import { useInteriorStore } from '@/store/useInteriorStore';
+import { APRON_TARGET, COUNTERTOP_TARGET, FACADE_TARGET } from '@/types/catalog';
 import PlanDrawing from './PlanDrawing';
+import AxonometryDrawing from './AxonometryDrawing';
 import SectionDrawing, { sectionSizeMm } from './SectionDrawing';
+import { axonometryExtentMm } from '@/lib/millwork/axonometry';
+import { DEFAULT_PRODUCTION, type ProductionSettings } from '@/types/catalog';
 import SheetLayout, { type SheetViewNode } from './SheetLayout';
+import SheetNotes from './SheetNotes';
+import { PRODUCT_TITLE, positionCode } from '@/lib/millwork/positions';
+import { scaleLabel } from '@/lib/millwork/sheet';
 import {
   DRAW_FIELD,
   chooseFormat,
   fitComposition,
+  fitExtra,
   viewWidthMm,
   type ScaleDenominator,
 } from '@/lib/millwork/sheet';
@@ -52,7 +62,8 @@ type Props = {
   zone: string;
   measuredBy: string;
   measuredAt: string;
-  variantTitle: string;
+  /** Комплектация: в штампе она идёт вместе с названием изделия. */
+  variantTitle?: string;
   /** Что осталось незамеренным. Внизу листа это обязательная строка. */
   pending?: string[];
   /** Пожелания со слов клиента — примечания чертежа. */
@@ -60,8 +71,19 @@ type Props = {
   run: Run;
   comms: CommPoint[];
   issues?: LayoutIssue[];
+  /** Толщины и зазоры цеха: аксонометрия строится по ним же. */
+  production?: ProductionSettings;
   /** Правки идут по фасаду: он остаётся живым, а не картинкой на листе. */
   elevation?: ElevationHandlers;
+  /** Заказчик — в штамп: лист уходит и ему тоже. */
+  client?: string;
+  /** Компания: логотип и телефон в штампе. */
+  company?: { name?: string; phone?: string; logoUrl?: string | null };
+  /**
+   * Номер позиции по объекту. Нумерация сквозная: два «поз.1» на объекте —
+   * это спор бригад при разгрузке.
+   */
+  position?: number;
 };
 
 export default function DrawingSheet({
@@ -69,23 +91,46 @@ export default function DrawingSheet({
   zone,
   measuredBy,
   measuredAt,
-  variantTitle,
   pending = [],
   notes,
   run,
   comms,
   issues = [],
+  production = DEFAULT_PRODUCTION,
   elevation = {},
+  client,
+  company,
+  position = 1,
 }: Props) {
   /*
    * Габариты видов В НАТУРЕ: из них считается масштаб. У фасада и плана
    * поля вокруг рисунка заданы в условных единицах, поэтому переводим их
    * в миллиметры мебели тем же коэффициентом, что и сам рисунок.
    */
+  /*
+   * МАТЕРИАЛЫ БЕРУТСЯ ИЗ КАТАЛОГА КОМПАНИИ вместе с артикулом. Не выбран —
+   * в выноске идёт общее описание, и по нему видно, что материал ещё не
+   * согласован: это честнее, чем подставить правдоподобное название.
+   */
+  const selections = useInteriorStore((s) => s.selections);
+  const catalog = useInteriorStore((s) => s.catalog);
+  const entryFor = (target: string) => {
+    const id = selections[target];
+    return (id && catalog.find((e) => e.id === id)) || null;
+  };
+
+  const leaders = buildLeaders(run, {
+    facade: entryFor(FACADE_TARGET),
+    counter: entryFor(COUNTERTOP_TARGET),
+    apron: entryFor(APRON_TARGET),
+  });
+
+  const elevationSpan = elevationSpanUnits(true);
+
   const mmPerUnit = run.lengthMm / DRAW_FIELD.draw;
 
   const elevationReal = {
-    width: run.lengthMm * (DRAW_FIELD.total / DRAW_FIELD.draw),
+    width: run.lengthMm * (elevationSpan / DRAW_FIELD.draw),
     height: run.ceilingHeightMm + ELEVATION_MARGIN_UNITS * mmPerUnit,
   };
 
@@ -96,8 +141,13 @@ export default function DrawingSheet({
   };
 
   const sectionReal = sectionSizeMm(run);
+  const axonReal = axonometryExtentMm(run, 'closed', {
+    thicknessMm: production.carcassMm,
+    frontMm: production.frontMm,
+    gapMm: production.frontGapMm,
+  });
 
-  const format = chooseFormat({ lengthMm: run.lengthMm, views: 4 });
+  const format = chooseFormat({ lengthMm: run.lengthMm, views: 6 });
 
   /*
    * ОДИН МАСШТАБ НА ВЕСЬ ЛИСТ. Так делает проектировщик: глаз
@@ -109,7 +159,7 @@ export default function DrawingSheet({
     {
       id: 'elevation',
       title: 'Фасад ряда',
-      widthMm: viewWidthMm(run.lengthMm, den),
+      widthMm: viewWidthMm(run.lengthMm, den, elevationSpan),
       heightMm: elevationReal.height / den,
     },
     {
@@ -134,10 +184,36 @@ export default function DrawingSheet({
     },
   ];
 
+  /*
+   * Метрические виды — в ОДНОМ масштабе: по ним мерят, и глаз должен
+   * перестраиваться один раз.
+   */
   const { den } = fitComposition(sizesFor, format);
 
+  /*
+   * Аксонометрия пристраивается к готовому листу в СВОЁМ масштабе. По ней
+   * не мерят, и тянуть из-за неё фасад с планом в 1:50 значит испортить
+   * ровно те виды, ради которых лист и печатают.
+   */
+  const axonSizesFor = (axonDen: ScaleDenominator) => [
+    {
+      id: 'axon',
+      title: 'Аксонометрия',
+      widthMm: axonReal.width / axonDen,
+      heightMm: axonReal.height / axonDen,
+    },
+    {
+      id: 'axon-inside',
+      title: 'Аксонометрия · наполнение',
+      widthMm: axonReal.width / axonDen,
+      heightMm: axonReal.height / axonDen,
+    },
+  ];
+
+  const axon = fitExtra(sizesFor(den), axonSizesFor, format);
+
   const render: Record<string, ReactNode> = {
-    elevation: <ElevationDrawing run={run} {...elevation} />,
+    elevation: <ElevationDrawing run={run} {...elevation} leaders={leaders} />,
     section: <SectionDrawing run={run} />,
     'section-inside': <SectionDrawing run={run} inside />,
     plan: (
@@ -149,13 +225,18 @@ export default function DrawingSheet({
         onSelect={elevation.onSelect}
       />
     ),
+    axon: <AxonometryDrawing run={run} production={production} />,
+    'axon-inside': <AxonometryDrawing run={run} mode="inside" production={production} />,
   };
 
-  const views: SheetViewNode[] = sizesFor(den).map((view) => ({
-    ...view,
-    scaleDen: den,
-    render: render[view.id],
-  }));
+  const views: SheetViewNode[] = [
+    ...sizesFor(den).map((view) => ({ ...view, scaleDen: den, render: render[view.id] })),
+    ...axonSizesFor(axon.den).map((view) => ({
+      ...view,
+      scaleDen: axon.den,
+      render: render[view.id],
+    })),
+  ];
 
   return (
     <div className="mw-sheet mx-auto w-full p-4 sm:p-6 print:border-0 print:p-0 print:shadow-none">
@@ -163,88 +244,25 @@ export default function DrawingSheet({
         format={format}
         views={views}
         footer={({ label }) => (
-          <Footer
-            title={title}
-            zone={zone}
-            measuredBy={measuredBy}
-            measuredAt={measuredAt}
-            variantTitle={variantTitle}
+          <SheetNotes
+            fields={{
+              object: title,
+              product: PRODUCT_TITLE[run.zone ?? 'kitchen'] ?? zone,
+              position: positionCode(position),
+              author: measuredBy,
+              client,
+              date: measuredAt,
+              scale: scaleLabel(den),
+              sheet: label,
+              company: company?.name,
+              phone: company?.phone,
+              logoUrl: company?.logoUrl ?? null,
+            }}
             pending={pending}
             notes={notes}
-            sheetLabel={label}
           />
         )}
       />
-    </div>
-  );
-}
-
-/**
- * Примечания и штамп. Повторяются на КАЖДОМ листе: второй лист без штампа
- * на объекте становится ничьим — по нему не найти ни объект, ни замерщика.
- */
-function Footer({
-  title,
-  zone,
-  measuredBy,
-  measuredAt,
-  variantTitle,
-  pending,
-  notes,
-  sheetLabel,
-}: {
-  title: string;
-  zone: string;
-  measuredBy: string;
-  measuredAt: string;
-  variantTitle: string;
-  pending: string[];
-  notes?: string;
-  sheetLabel: string;
-}): ReactNode {
-  return (
-    <>
-      {/*
-        * Строка внизу листа обязательна: чертёж уходит на производство и
-        * клиенту, и оба должны видеть, где размеры сняты, а где приняты.
-        */}
-      <p className="mt-3 text-[10px] leading-snug">
-        {pending.length > 0 ? (
-          <span className="text-tape">
-            Позиции, требующие уточнения на объекте: {pending.join('; ')}.
-          </span>
-        ) : (
-          <span className="text-graphiteMw">Все размеры сняты на объекте.</span>
-        )}
-      </p>
-
-      {notes?.trim() && (
-        <p className="mt-1 whitespace-pre-wrap text-[10px] leading-snug text-graphiteMw">
-          Примечания со слов клиента: {notes.trim()}
-        </p>
-      )}
-
-      {/* Штамп */}
-      <div className="mt-4 flex flex-wrap items-end justify-end gap-x-6 gap-y-1 border-t border-cyan/40 pt-2">
-        <div className="mr-auto text-[10px] uppercase tracking-[0.14em] text-cyan">
-          InteriorAI Studio
-        </div>
-        <Stamp label="Объект" value={title} />
-        <Stamp label="Зона" value={zone} />
-        <Stamp label="Замерщик" value={measuredBy} />
-        <Stamp label="Дата" value={measuredAt} mono />
-        <Stamp label="Вариант" value={variantTitle} />
-        <Stamp label="Лист" value={sheetLabel} mono />
-      </div>
-    </>
-  );
-}
-
-function Stamp({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div>
-      <div className="text-[9px] uppercase tracking-[0.14em] text-graphiteMw">{label}</div>
-      <div className={`text-[11px] ${mono ? 'mw-num' : ''}`}>{value}</div>
     </div>
   );
 }

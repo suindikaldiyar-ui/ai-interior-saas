@@ -1,6 +1,7 @@
 'use client';
 
 import DimensionChain from './DimensionChain';
+import { CommLegend, COMM_SYMBOL } from './DrawingSymbols';
 import { GEOMETRY, moduleDepthMm } from '@/lib/millwork/modules';
 import type { CommPoint, LayoutIssue, Run } from '@/types/millwork';
 
@@ -27,14 +28,20 @@ const PADDING_LEFT = 74;
 const PADDING_TOP = 34;
 const DRAW_WIDTH = 640;
 
+/**
+ * ЗНАК КОММУНИКАЦИИ, А НЕ БУКВА.
+ *
+ * Буква «В» в кружке — ребус: вода, вентиляция или выключатель. Условные
+ * знаки читаются мгновенно, а расшифровывает их легенда в углу листа.
+ */
 const COMM_MARK: Record<CommPoint['kind'], string> = {
-  water_supply: 'В',
-  sewer: 'К',
-  gas: 'Г',
-  ventilation: 'ВЕ',
-  socket: 'Р',
-  switch: 'Вк',
-  radiator: 'РД',
+  water_supply: COMM_SYMBOL.water_supply.mark,
+  sewer: COMM_SYMBOL.sewer.mark,
+  gas: COMM_SYMBOL.gas.mark,
+  ventilation: COMM_SYMBOL.ventilation.mark,
+  socket: COMM_SYMBOL.socket.mark,
+  switch: COMM_SYMBOL.switch.mark,
+  radiator: COMM_SYMBOL.radiator.mark,
 };
 
 export default function PlanDrawing({
@@ -50,7 +57,15 @@ export default function PlanDrawing({
   const depthPx = maxDepth * scale;
   const walkwayPx = Math.min(walkwayMm * scale, 90);
 
-  const svgHeight = PADDING_TOP + depthPx + walkwayPx + 78;
+  /*
+   * Внизу плана живёт легенда: без неё знаки коммуникаций приходится
+   * угадывать, а угадывают их на объекте и не всегда верно.
+   */
+  const legendKinds = comms.map((c) => c.kind);
+  const legendRows = legendKinds.filter((kind, i) => legendKinds.indexOf(kind) === i).length;
+  const legendHeight = legendRows > 0 ? 14 + legendRows * 12 : 0;
+
+  const svgHeight = PADDING_TOP + depthPx + walkwayPx + 78 + legendHeight;
   const svgWidth = PADDING_LEFT + DRAW_WIDTH + 26;
 
   // Стена сверху, фронт снизу — как смотрит замерщик, стоя в комнате.
@@ -243,6 +258,13 @@ export default function PlanDrawing({
           onSelect={onSelect}
         />
       </g>
+
+      {/* Легенда коммуникаций: знаки расшифровываются один раз на листе. */}
+      <CommLegend
+        kinds={comms.map((c) => c.kind)}
+        x={PADDING_LEFT}
+        y={svgHeight - legendHeight + 4}
+      />
     </svg>
   );
 }

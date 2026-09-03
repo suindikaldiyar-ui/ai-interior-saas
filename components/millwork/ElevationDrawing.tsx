@@ -2,6 +2,9 @@
 
 import { useEffect, useMemo, useRef } from 'react';
 import DimensionChain from './DimensionChain';
+import LeaderLines from './LeaderLines';
+import { DrawerMark, LiftMark, SwingMark, TipOnMark } from './DrawingSymbols';
+import type { LeaderAnchor } from '@/lib/millwork/leaders';
 import { APPLIANCE_SLOTS, BASE_TOTAL_H, GEOMETRY, moduleHeightMm } from '@/lib/millwork/modules';
 import { sectionSpec } from '@/lib/millwork/sections';
 import { zoneHeightMm, zoneProfile } from '@/lib/millwork/zones';
@@ -83,6 +86,11 @@ type Props = {
    */
   compact?: boolean;
   /**
+   * Выноски с материалами. Пусто — чертёж прежний: на экране они лишние,
+   * а на листе без них нельзя заказать материал.
+   */
+  leaders?: LeaderAnchor[];
+  /**
    * Слой поверх сцены.
    *
    * Тот же чертёж, но лёгкий: контуры модулей приглушены, а контур
@@ -104,6 +112,19 @@ export type VariantOption = {
 /** Шаг привязки при переносе: мебель делают с точностью до полсантиметра. */
 const MOVE_STEP_MM = 50;
 
+/**
+ * Поле под выноски с каждой стороны.
+ *
+ * Полки живут ВНЕ рисунка: заведи их внутрь — они лягут на мебель и на
+ * размерную цепочку, а выноска поверх размера читается как ошибка.
+ */
+export const LEADER_MARGIN_UNITS = 250;
+
+/** Полная ширина вида в условных единицах — по ней лист считает масштаб. */
+export function elevationSpanUnits(withLeaders: boolean): number {
+  return 740 + (withLeaders ? LEADER_MARGIN_UNITS * 2 : 0);
+}
+
 const PADDING_LEFT = 74;
 const PADDING_RIGHT = 26;
 const PADDING_TOP = 22;
@@ -123,8 +144,14 @@ const APPLIANCE_MARK: Record<string, string> = {
 };
 
 /**
- * Метка направления открывания: треугольник в углу двери со стороны ручки.
- * Клик по метке меняет сторону — числа замерщик не вводит.
+ * НАПРАВЛЕНИЕ ОТКРЫВАНИЯ — ДИАГОНАЛЯМИ, КАК В ОТРАСЛИ.
+ *
+ * Раньше здесь стоял треугольник: понятный, но выдуманный нами. Мебельщик
+ * читает лист по привычным знакам — распашной фасад показывают диагоналями,
+ * сходящимися на петельной стороне. По вершине сразу видно, куда открывается
+ * дверь, и объяснять ничего не нужно.
+ *
+ * Клик по метке по-прежнему меняет сторону: числа замерщик не вводит.
  */
 function HingeMark({
   hinge,
@@ -146,21 +173,8 @@ function HingeMark({
   // У двух дверей стороны очевидны: левая налево, правая направо.
   if (doorCount !== 1 || hinge === 'none') return null;
 
-  const size = Math.min(12, width / 3);
-  const midY = yTop + height / 2;
-  // Вершина треугольника смотрит на петлю, основание — на ручку.
-  const points =
-    hinge === 'left'
-      ? `${x + 2},${midY} ${x + 2 + size},${midY - size / 2} ${x + 2 + size},${midY + size / 2}`
-      : `${x + width - 2},${midY} ${x + width - 2 - size},${midY - size / 2} ${x + width - 2 - size},${midY + size / 2}`;
-
   return (
-    <polygon
-      points={points}
-      fill="var(--blueprint)"
-      fillOpacity={0.55}
-      stroke="var(--blueprint)"
-      strokeWidth={0.4}
+    <g
       style={{ cursor: onFlip ? 'pointer' : 'default' }}
       onClick={
         onFlip
@@ -171,8 +185,11 @@ function HingeMark({
           : undefined
       }
     >
+      <SwingMark x={x} y={yTop} width={width} height={height} hinge={hinge === 'right' ? 'right' : 'left'} />
+      {/* Прозрачная область под клик: по двум линиям пальцем не попасть. */}
+      <rect x={x} y={yTop} width={width} height={height} fill="transparent" />
       <title>{hinge === 'left' ? 'Петли слева' : 'Петли справа'}</title>
-    </polygon>
+    </g>
   );
 }
 
@@ -525,6 +542,7 @@ export default function ElevationDrawing({
   onVariant,
   compact = false,
   overlay = false,
+  leaders = [],
 }: Props) {
   const changed = useMemo(() => new Set(changedIds), [changedIds]);
 
@@ -788,7 +806,22 @@ export default function ElevationDrawing({
         )}
 
         {/*
-          * Треугольник направления открывания. Одна метка — и цех не
+          * ОТРАСЛЕВЫЕ ЗНАКИ на фасаде: ящик — линия со стрелкой вперёд,
+          * подъёмник — дуга вверх, фасад без ручки — точка «Tip-on».
+          * Мебельщик читает их не глядя на подписи.
+          */}
+        {mode === 'fronts' && unit.frontType === 'drawers' && (
+          <DrawerMark x={x} y={yTop} width={w} height={h} />
+        )}
+        {mode === 'fronts' && unit.variant === 'upper_lift' && (
+          <LiftMark x={x} y={yTop} width={w} height={h} />
+        )}
+        {mode === 'fronts' && run.options.integratedHandles && unit.frontType === 'door' && (
+          <TipOnMark x={x} y={yTop} width={w} />
+        )}
+
+        {/*
+          * Направление открывания диагоналями. Одна метка — и цех не
           * ошибётся стороной петель; это отраслевое обозначение, его не
           * нужно объяснять.
           */}
@@ -947,9 +980,18 @@ export default function ElevationDrawing({
   const viewTop = compact ? yOf(topMm) - 6 : 0;
   const viewHeight = compact ? yOf(0) - yOf(topMm) + 12 : svgHeight;
 
+  /*
+   * С выносками вид шире: слева и справа появляются поля под полки.
+   * Лист знает об этом из `elevationSpanUnits` — иначе масштаб на бумаге
+   * посчитается по старой ширине и разойдётся с подписью.
+   */
+  const withLeaders = !compact && !overlay && leaders.length > 0;
+  const viewLeft = withLeaders ? -LEADER_MARGIN_UNITS : 0;
+  const viewWidth = svgWidth + (withLeaders ? LEADER_MARGIN_UNITS * 2 : 0);
+
   const drawing = (
     <svg
-      viewBox={`0 ${viewTop} ${svgWidth} ${viewHeight}`}
+      viewBox={`${viewLeft} ${viewTop} ${viewWidth} ${viewHeight}`}
       width="100%"
       role="img"
       aria-label={`Фасадный чертёж ряда ${run.lengthMm} мм`}
@@ -1083,6 +1125,31 @@ export default function ElevationDrawing({
           ),
         )}
       </g>
+
+      {/*
+        * Выноски рисуются ПОСЛЕ мебели: линия к детали должна лежать
+        * поверх неё, иначе точка теряется в контуре модуля.
+        */}
+      {withLeaders && (
+        <LeaderLines
+          anchors={leaders}
+          lengthMm={run.lengthMm}
+          ceilingMm={ceiling}
+          scale={{
+            xOf: (mm) => padLeft + mm * scale,
+            yOf,
+            drawLeft: padLeft,
+            drawRight: padLeft + drawWidth,
+            marginUnits: LEADER_MARGIN_UNITS * 0.94,
+            /*
+             * Кегль 9: при 11 длинная подпись («Корпус ЛДСП 16 мм, кромка
+             * ПВХ 0.4 мм») вылезала из поля и ложилась на высотные отметки
+             * чертежа — читалось как ошибка построения.
+             */
+            fontSize: 9,
+          }}
+        />
+      )}
 
       {/* Размерная цепочка — та же, что под лентой модулей и на плане */}
       {!compact && (

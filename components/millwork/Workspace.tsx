@@ -164,6 +164,8 @@ export type WorkspaceProps = {
   orgTemplates?: RunTemplate[];
   /** Настройки цеха: толщины и зазоры, от них зависит детализировка. */
   production?: ProductionSettings;
+  /** Компания: логотип и телефон уходят в штамп чертежа. */
+  company?: { name?: string; phone?: string; logoUrl?: string | null };
   /**
    * Замер объекта. Пока он не завершён, конфигуратор открывается на панели
    * «Замер»: замерщик вносит размер и сразу видит, что там встанет.
@@ -1728,6 +1730,9 @@ export default function Workspace(props: WorkspaceProps) {
                 run={active.run}
                 comms={input.comms}
                 issues={issues}
+                production={props.production}
+                client={props.clientName}
+                company={props.company}
                 elevation={{
                   assumedTotal,
                   selectedModuleId: selectedId,

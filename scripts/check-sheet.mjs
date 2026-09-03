@@ -85,8 +85,10 @@ async function main() {
 
   const ids = views.map((v) => v.id);
   ok(
-    'на листе фасад, оба разреза и план',
-    ['elevation', 'section', 'section-inside', 'plan'].every((id) => ids.includes(id)),
+    'на листе фасад, разрезы, план и аксонометрия',
+    ['elevation', 'section', 'section-inside', 'plan', 'axon', 'axon-inside'].every((id) =>
+      ids.includes(id),
+    ),
     ids.join(', '),
   );
   ok(
@@ -120,6 +122,77 @@ async function main() {
 
   await page.screenshot({ path: `${OUT}/screen.png` });
 
+  /* ── Выноски: есть, не пересекаются и не лезут на размеры ── */
+  const leaders = await page.evaluate(() => {
+    const group = document.querySelector('[data-leaders]');
+    if (!group) return null;
+    const texts = [...group.querySelectorAll('text')].map((t) => ({
+      text: (t.textContent ?? '').trim(),
+      box: t.getBoundingClientRect(),
+    }));
+
+    let overlaps = 0;
+    for (let i = 0; i < texts.length; i += 1) {
+      for (let j = i + 1; j < texts.length; j += 1) {
+        const a = texts[i].box;
+        const b = texts[j].box;
+        const hit = a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+        if (hit) overlaps += 1;
+      }
+    }
+
+    const pairs = [];
+    for (let i = 0; i < texts.length; i += 1) {
+      for (let j = i + 1; j < texts.length; j += 1) {
+        const a = texts[i].box;
+        const b = texts[j].box;
+        if (a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom) {
+          pairs.push(`${texts[i].text.slice(0, 18)} ↔ ${texts[j].text.slice(0, 18)}`);
+        }
+      }
+    }
+
+    return {
+      count: texts.length,
+      overlaps,
+      pairs,
+      sample: texts.slice(0, 3).map((t) => t.text),
+    };
+  });
+
+  if (!leaders) {
+    ok('на фасаде есть выноски с материалами', false, 'выносок нет');
+  } else {
+    ok(
+      'на фасаде есть выноски с материалами',
+      leaders.count >= 5,
+      `${leaders.count} шт. · ${leaders.sample.join(' | ')}`,
+    );
+    ok('выноски не наезжают друг на друга', leaders.overlaps === 0, `пересечений: ${leaders.overlaps}`);
+    if (leaders.overlaps > 0) console.log('  пары:', leaders.pairs.join(' · '));
+  }
+
+  /* ── Отраслевые обозначения ── */
+  const symbols = await page.evaluate(() => {
+    const kinds = [...document.querySelectorAll('[data-symbol]')].map((el) =>
+      el.getAttribute('data-symbol'),
+    );
+    const count = (kind) => kinds.filter((k) => k === kind).length;
+    return {
+      swing: count('swing'),
+      drawer: count('drawer'),
+      legend: count('legend'),
+      all: kinds.filter((k, i) => kinds.indexOf(k) === i),
+    };
+  });
+
+  ok(
+    'распашные фасады показаны диагоналями',
+    symbols.swing > 0,
+    `диагоналей: ${symbols.swing} · знаки: ${symbols.all.join(', ')}`,
+  );
+  ok('легенда коммуникаций есть на плане', symbols.legend > 0);
+
   /* ── 2. Масштаб на бумаге ── */
   await page.emulateMedia({ media: 'print' });
   await sleep(600);
@@ -142,7 +215,8 @@ async function main() {
   } else {
     const { pxPerMm, elevation } = measured;
     // Ширина мебели на бумаге = ширина вида минус поля под отметки.
-    const runOnPaperMm = (elevation.widthPx / pxPerMm) * FIELD_RATIO;
+    // С выносками вид шире: поле рисунка — это 640 единиц из 1120.
+    const runOnPaperMm = (elevation.widthPx / pxPerMm) * (640 / 1240);
     const expected = DEMO_RUN_MM / elevation.den;
 
     console.log(
@@ -174,6 +248,27 @@ async function main() {
 
   ok('в штампе есть номер листа', stamp.labels.every(Boolean), stamp.labels.join(' · '));
   ok('штамп заполнен', stamp.hasObject, `листов: ${stamp.pages}`);
+
+  /* ── Примечания и позиция ── */
+  const notes = await page.evaluate(() => {
+    const text = document.body.textContent ?? '';
+    const lists = [...document.querySelectorAll('[data-sheet-page] ol')];
+    return {
+      items: lists.map((ol) => ol.querySelectorAll('li').length),
+      hasMillimetres: text.includes('Все размеры даны в миллиметрах'),
+      hasWalls: text.includes('чистовой отделки стен'),
+      position: (text.match(/МИ-поз\.\d+/) ?? [''])[0],
+      product: text.includes('Кухонный гарнитур'),
+    };
+  });
+
+  ok(
+    'девять примечаний на каждом листе',
+    notes.items.length > 0 && notes.items.every((n) => n >= 9),
+    `по листам: ${notes.items.join(', ')}`,
+  );
+  ok('примечания называют то, ради чего они есть', notes.hasMillimetres && notes.hasWalls);
+  ok('в штампе стоит позиция и изделие', Boolean(notes.position) && notes.product, notes.position);
 
   await page.screenshot({ path: `${OUT}/print.png`, fullPage: true });
   await page.emulateMedia({ media: 'screen' });

@@ -63,6 +63,19 @@ import { panelsCsvFile, panelsToCsv } from '../lib/millwork/csv-export';
 import { runFingerprint } from '../lib/millwork/fingerprint';
 import { surfaceFinish, surfaceLook } from '../lib/millwork/surfaces';
 import { GROUP_ORDER, estimateGroups, groupsTotal } from '../lib/millwork/estimateGroups';
+import {
+  STANDARD_SCALES,
+  chooseFormat,
+  fitComposition,
+  paginate,
+  scaleLabel,
+  sheetField,
+  sheetNumber,
+  viewWidthMm,
+} from '../lib/millwork/sheet';
+import { buildLeaders, layoutLeaders } from '../lib/millwork/leaders';
+import { positionCode, projectPositions } from '../lib/millwork/positions';
+import { axonometryExtentMm, buildAxonometry, project } from '../lib/millwork/axonometry';
 import { carcassBoxes, moduleBoxes } from '../lib/millwork/cabinetBoxes';
 import { DEFAULT_PRODUCTION } from '../types/catalog';
 import type { ZoneKind } from '../types/millwork';
@@ -2899,6 +2912,137 @@ console.log('\nШирина тянется в сцене');
       check('перебор ширины отклоняется до применения', over > 0);
     }
   }
+}
+
+
+/* ─────────────────────────  Чертёжный лист  ───────────────────────── */
+
+console.log('\nЧертёжный лист');
+{
+  const den = 25;
+  check('масштаб подписывается как в отрасли', scaleLabel(den) === '1:25');
+  check(
+    'при 1:25 тысяча миллиметров мебели — сорок миллиметров бумаги',
+    Math.abs(1000 / den - 40) < 0.001,
+  );
+  check(
+    'ширина вида считается вместе с полями',
+    Math.abs(viewWidthMm(3200, 25) - (3200 / 25) * (740 / 640)) < 0.001,
+  );
+  check(
+    'масштабы только стандартные',
+    STANDARD_SCALES.every((d) => [10, 20, 25, 30, 50].includes(d)),
+  );
+
+  const field = sheetField('A3');
+  check('поле A3 — 400 на 231 мм', field.width === 400 && field.height > 200);
+  check('короткий ряд печатается на A4', chooseFormat({ lengthMm: 1800, views: 3 }) === 'A4');
+  check('обычный состав идёт на A3', chooseFormat({ lengthMm: 3200, views: 6 }) === 'A3');
+
+  /* Компоновка выбирает самый крупный масштаб, при котором лист один. */
+  const sizesFor = (d: number) => [
+    { id: 'a', title: 'Фасад', widthMm: 3200 / d, heightMm: 2700 / d },
+    { id: 'b', title: 'Разрез', widthMm: 1100 / d, heightMm: 2900 / d },
+  ];
+  const fitted = fitComposition(sizesFor as never, 'A3');
+  check('лист складывается в одну страницу', fitted.pages.length === 1, `листов: ${fitted.pages.length}`);
+  check('масштаб выбран самый крупный из возможных', fitted.den <= 25, `1:${fitted.den}`);
+
+  /* Что не влезло — уходит на следующий лист, а не ужимается. */
+  const many = Array.from({ length: 8 }, (_, i) => ({
+    id: `v${i}`,
+    title: 'Вид',
+    widthMm: 390,
+    heightMm: 120,
+  }));
+  const pages = paginate(many, 'A3');
+  check('лишние виды уходят на следующий лист', pages.length > 1, `листов: ${pages.length}`);
+  check('нумерация листов сквозная', sheetNumber(1, pages.length) === `Лист 2 из ${pages.length}`);
+  check(
+    'ни один вид не потерялся при разбивке',
+    pages.reduce((sum, page) => sum + page.views.length, 0) === many.length,
+  );
+}
+
+/* ─────────────────────────  Выноски  ───────────────────────── */
+
+console.log('\nВыноски с материалами');
+{
+  const run = buildRun(baseInput);
+  const anchors = buildLeaders(run);
+
+  check('выноски есть на все главные детали', anchors.length >= 6, `${anchors.length} шт.`);
+  check(
+    'без артикула сказано, что материал не согласован',
+    anchors.some((a) => a.text.includes('не согласован')),
+  );
+  check(
+    'подписи не повторяются',
+    new Set(anchors.map((a) => a.id)).size === anchors.length,
+  );
+
+  const layout = layoutLeaders(anchors, { lengthMm: run.lengthMm, ceilingMm: run.ceilingHeightMm });
+  const check_side = (list: typeof layout.left) => {
+    const sorted = [...list].sort((a, b) => b.shelfYMm - a.shelfYMm);
+    for (let i = 1; i < sorted.length; i += 1) {
+      if (Math.abs(sorted[i].shelfYMm - sorted[i - 1].shelfYMm) < 1) return false;
+    }
+    return true;
+  };
+  check('полки выносок не садятся друг на друга', check_side(layout.left) && check_side(layout.right));
+  check(
+    'полки не выходят за высоту помещения',
+    [...layout.left, ...layout.right].every(
+      (l) => l.shelfYMm > 0 && l.shelfYMm < run.ceilingHeightMm,
+    ),
+  );
+
+  const again = buildLeaders(run);
+  check('выноски детерминированы', JSON.stringify(again) === JSON.stringify(anchors));
+}
+
+/* ─────────────────────────  Аксонометрия  ───────────────────────── */
+
+console.log('\nАксонометрия');
+{
+  const run = buildRun(baseInput);
+  const prod = { thicknessMm: 16, frontMm: 16, gapMm: 3 };
+
+  const first = buildAxonometry(run, 'closed', prod);
+  const second = buildAxonometry(run, 'closed', prod);
+  check('тот же ряд даёт тот же рисунок', JSON.stringify(first) === JSON.stringify(second));
+  check('рисунок не пустой', first.faces.length > 30, `граней: ${first.faces.length}`);
+
+  const inside = buildAxonometry(run, 'inside', prod);
+  check('вид «внутри» отличается от закрытого', inside.faces.length !== first.faces.length);
+
+  const carcass = buildAxonometry(run, 'carcass', prod);
+  check('в корпусе нет ни фасадов, ни техники',
+    carcass.faces.every((f) => f.material === 'carcass' || f.material === 'metal'));
+
+  const p0 = project(0, 0, 0);
+  const px = project(1, 0, 0);
+  const py = project(0, 1, 0);
+  check('высота на бумаге идёт вверх', py.y < p0.y);
+  check('длина идёт вправо и вниз', px.x > p0.x && px.y > p0.y);
+
+  const extent = axonometryExtentMm(run, 'closed', prod);
+  check('габарит аксонометрии шире ряда', extent.width > run.lengthMm);
+  check('и не выше потолка вдвое', extent.height < run.ceilingHeightMm * 2);
+}
+
+/* ─────────────────────────  Позиции  ───────────────────────── */
+
+console.log('\nНумерация позиций');
+{
+  check('позиция подписывается по отрасли', positionCode(3) === 'МИ-поз.3');
+  const positions = projectPositions(['kitchen', 'bedroom', 'hallway']);
+  check('нумерация сквозная по объекту', positions.map((p) => p.index).join(',') === '1,2,3');
+  check('изделие названо изделием, а не помещением', positions[0].title === 'Кухонный гарнитур');
+  check(
+    'два одинаковых номера на объекте невозможны',
+    new Set(positions.map((p) => p.code)).size === positions.length,
+  );
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
