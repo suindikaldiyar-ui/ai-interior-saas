@@ -1,9 +1,9 @@
-'use client';
-
 import Link from 'next/link';
+import LoginForm from '@/components/LoginForm';
 import ThemeToggle from '@/components/ThemeToggle';
-import { useState } from 'react';
-import { supabaseBrowser } from '@/lib/supabase/client';
+import { orgBySlug } from '@/lib/org';
+
+export const dynamic = 'force-dynamic';
 
 /**
  * Вход по ссылке на почту.
@@ -11,49 +11,37 @@ import { supabaseBrowser } from '@/lib/supabase/client';
  * Паролей нет намеренно: замерщик открывает приложение в квартире, стоя,
  * с планшетом в одной руке. Вводить туда пароль неудобно, а восстанавливать
  * забытый — тем более. Одно поле и одна кнопка.
+ *
+ * БРЕНД КОМПАНИИ ПРИХОДИТ СЛАГОМ В АДРЕСЕ (`/login?org=kuhni-plus`), а не
+ * по хосту: все компании живут на одной платформе, поддоменов им никто не
+ * выдавал, и `orgByHost` нашёл бы здесь либо ничего, либо чужую компанию.
+ * Ссылку с этим параметром ставит демо-страница — человек приходит с неё и
+ * обязан увидеть тот же логотип, а не платформенный.
+ *
+ * Серверный компонент: логотип и цвет уходят в первый же HTML, без мигания
+ * платформенным брендом и без запроса из браузера.
  */
-export default function LoginPage() {
-  const [email, setEmail] = useState('');
-  const [sent, setSent] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const supabase = supabaseBrowser();
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!supabase) {
-      setError('Supabase не настроен: добавьте ключи в .env.local.');
-      return;
-    }
-
-    setBusy(true);
-    setError(null);
-
-    /*
-     * Куда вернуть после письма. Читаем из адреса, а не через useSearchParams:
-     * хук заставил бы обернуть страницу в Suspense ради одной строки.
-     */
-    const requested = new URLSearchParams(window.location.search).get('next');
-    const next = requested?.startsWith('/') ? requested : '/projects';
-
-    const { error: authError } = await supabase.auth.signInWithOtp({
-      email: email.trim(),
-      options: {
-        emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`,
-      },
-    });
-
-    setBusy(false);
-    if (authError) setError(authError.message);
-    else setSent(true);
-  };
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: { org?: string };
+}) {
+  const org = searchParams.org ? await orgBySlug(searchParams.org) : null;
+  const accent = org?.accent_color || null;
 
   return (
-    <main className="mw-root flex min-h-screen items-center justify-center px-4">
+    <main
+      className="mw-root flex min-h-screen items-center justify-center px-4"
+      style={accent ? { ['--patina' as string]: accent, ['--brand' as string]: accent } : undefined}
+    >
       <div className="w-full max-w-sm">
         <div className="mb-1 flex items-center justify-between">
-          <p className="mw-label">InteriorAI Studio</p>
+          {org?.logo_url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={org.logo_url} alt={org.name} className="h-7 object-contain" />
+          ) : (
+            <p className="mw-label">{org?.name ?? 'InteriorAI Studio'}</p>
+          )}
           <ThemeToggle />
         </div>
         <h1 className="mw-title mb-1">Вход в кабинет</h1>
@@ -61,50 +49,20 @@ export default function LoginPage() {
           Пришлём ссылку на почту — пароль не нужен.
         </p>
 
-        {sent ? (
-          <div className="mw-panel">
-            <p className="text-[15px] leading-snug">
-              Ссылка отправлена на {email}. Откройте письмо на этом же устройстве.
-            </p>
-            <button
-              type="button"
-              onClick={() => setSent(false)}
-              className="mw-btn mw-btn-ghost mt-3"
-            >
-              Отправить ещё раз
-            </button>
-          </div>
+        <LoginForm />
+
+        {org ? (
+          <Link
+            href={`/demo/${encodeURIComponent(org.slug)}`}
+            className="mw-btn mw-btn-ghost mt-4 w-full"
+          >
+            Вернуться к демонстрации
+          </Link>
         ) : (
-          <form onSubmit={submit} className="mw-panel">
-            <label className="block">
-              <span className="mw-label">Рабочая почта</span>
-              <input
-                type="email"
-                required
-                autoComplete="email"
-                inputMode="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="name@company.kz"
-                className="mw-field mt-2"
-              />
-            </label>
-
-            <button
-              type="submit"
-              disabled={busy || !email.trim()}
-              className="mw-btn mw-btn-lg mw-btn-primary mt-3 w-full"
-            >
-              {busy ? 'Отправляем…' : 'Прислать ссылку для входа'}
-            </button>
-
-            {error && <p className="mt-3 text-[13px] text-alert">{error}</p>}
-          </form>
+          <Link href="/demo" className="mw-btn mw-btn-ghost mt-4 w-full">
+            Посмотреть демонстрацию без входа
+          </Link>
         )}
-
-        <Link href="/demo" className="mw-btn mw-btn-ghost mt-4 w-full">
-          Посмотреть демонстрацию без входа
-        </Link>
       </div>
     </main>
   );

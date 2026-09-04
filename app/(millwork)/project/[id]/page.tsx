@@ -9,6 +9,7 @@ import { missingRequiredRates, ratesFromCatalog } from '@/lib/millwork/rates';
 import { DEFAULT_REQUIREMENTS, workspaceInput } from '@/lib/millwork/workspace';
 import { parseOrgTemplates } from '@/lib/millwork/templates';
 import { productionSettings } from '@/types/catalog';
+import { isDemoPlan } from '@/lib/plan';
 import { loadProject, projectTitle } from '@/lib/projects';
 import { PROJECTS_BUCKET, storageUrl } from '@/lib/supabase/config';
 import { SUPABASE_READY } from '@/lib/supabase/config';
@@ -110,6 +111,7 @@ export default async function ProjectPage({ params }: { params: { id: string } }
       orgTemplates={parseOrgTemplates(orgRow?.run_templates)}
       production={productionSettings(orgRow?.production)}
       ratesMissing={missingRequiredRates(rates).length > 0}
+      demoPlan={isDemoPlan(org.plan)}
     />
   );
 }

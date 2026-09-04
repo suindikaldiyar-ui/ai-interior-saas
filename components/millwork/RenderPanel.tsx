@@ -30,6 +30,14 @@ type Props = {
   onRerender: (variant: Variant) => void;
   /** Без фотографии рендер рисует чужие стены — говорим об этом прямо. */
   roomPhoto?: string | null;
+  /**
+   * Демонстрационный доступ: живая отрисовка выключена.
+   *
+   * Кнопку убираем НЕ ВМЕСТО серверного отказа, а вместе с ним
+   * (`lib/aiAccess.ts`): кнопка, отвечающая красной строкой, на встрече с
+   * компанией выглядит хуже, чем её отсутствие с объяснением.
+   */
+  demoPlan?: boolean;
 };
 
 export default function RenderPanel({
@@ -42,6 +50,7 @@ export default function RenderPanel({
   onRender,
   onRerender,
   roomPhoto,
+  demoPlan = false,
 }: Props) {
   const debug = useDebug();
 
@@ -69,10 +78,17 @@ export default function RenderPanel({
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-3">
-        <button type="button" onClick={onRender} disabled={busy} className="mw-btn mw-btn-primary">
-          {busy ? 'Снимаем кадр…' : started ? 'Отрисовать заново' : 'Отрисовать кухню'}
-        </button>
-        {!roomPhoto && (
+        {demoPlan ? (
+          <p className="text-[13px] leading-snug text-graphiteMw">
+            В демонстрационном доступе живая отрисовка выключена. Готовая
+            визуализация лежит на вашей демо-странице.
+          </p>
+        ) : (
+          <button type="button" onClick={onRender} disabled={busy} className="mw-btn mw-btn-primary">
+            {busy ? 'Снимаем кадр…' : started ? 'Отрисовать заново' : 'Отрисовать кухню'}
+          </button>
+        )}
+        {!demoPlan && !roomPhoto && (
           <p className="text-[13px] leading-snug text-tape">
             Без фото помещения клиент увидит настроение, а не свою квартиру.
           </p>

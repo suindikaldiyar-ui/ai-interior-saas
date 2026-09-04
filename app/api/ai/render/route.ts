@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { generationBlocked } from '@/lib/aiAccess';
 import { geminiHeaders, geminiUrl, imageModel, parseImageResponse } from '@/lib/gemini';
 import { getEntry } from '@/lib/furnitureCatalog';
 import { PHOTOGRAPHY, getStyle, optionsBlock, styleBlock } from '@/lib/renderStyles';
@@ -597,6 +598,17 @@ async function callImageModel(
  * Роут не бросает исключение ни при каких обстоятельствах.
  */
 export async function POST(request: Request) {
+  /*
+   * Демо-организация до модели не доходит. Одна строка, и она СЕРВЕРНАЯ:
+   * спрятанной кнопки недостаточно — публичную демо-страницу открывает кто
+   * угодно сколько угодно раз, а каждый запрос стоит денег.
+   *
+   * Организации нет или тариф не демо — возвращает null, и дальше всё идёт
+   * ровно как раньше, ни одной строкой ниже это не заметно.
+   */
+  const blocked = await generationBlocked('визуализация');
+  if (blocked) return blocked;
+
   const started = Date.now();
   let styleId = 'unknown';
 

@@ -150,6 +150,15 @@ export type WorkspaceProps = {
   initialState?: MillworkState | null;
   /** Ставки каталога не заполнены — считать смету нечем. */
   ratesMissing?: boolean;
+  /**
+   * Демонстрационный доступ организации (`plan='demo'`).
+   *
+   * Живая отрисовка у неё выключена НА СЕРВЕРЕ (`lib/aiAccess.ts`); здесь
+   * мы только не показываем кнопку, которая всё равно ответит отказом.
+   * Одно без другого не работает: спрятанная кнопка — не защита, а
+   * работающая кнопка с красной строкой — плохая демонстрация.
+   */
+  demoPlan?: boolean;
   /** Фотография помещения клиента: основа рендера. */
   roomPhoto?: string | null;
   /**
@@ -1417,14 +1426,16 @@ export default function Workspace(props: WorkspaceProps) {
               emptyAction={
                 /* Кнопка прямо в пустой половине: под сравнением её не видно
                    без прокрутки, и рендер выглядит неработающим. */
-                <button
-                  type="button"
-                  onClick={() => void render.render()}
-                  disabled={render.busy}
-                  className="mw-btn mw-btn-lg mw-btn-primary text-[17px]"
-                >
-                  {render.busy ? 'Снимаем кадр…' : 'Отрисовать кухню'}
-                </button>
+                props.demoPlan ? undefined : (
+                  <button
+                    type="button"
+                    onClick={() => void render.render()}
+                    disabled={render.busy}
+                    className="mw-btn mw-btn-lg mw-btn-primary text-[17px]"
+                  >
+                    {render.busy ? 'Снимаем кадр…' : 'Отрисовать кухню'}
+                  </button>
+                )
               }
             />
 
@@ -1432,6 +1443,7 @@ export default function Workspace(props: WorkspaceProps) {
 
             <div className="mt-5 print:hidden">
               <RenderPanel
+                demoPlan={props.demoPlan}
                 variants={variants}
                 roomPhoto={roomPhoto}
                 onOpen={setZoom}

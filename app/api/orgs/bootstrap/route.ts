@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { seedOrg } from '@/lib/orgSeed';
 import { supabaseServer, supabaseService } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
@@ -79,5 +80,37 @@ export async function POST(request: Request) {
     );
   }
 
-  return NextResponse.json({ ok: true, orgId: org.id });
+  /*
+   * КАТАЛОГ И ДЕМО-ОБЪЕКТ ЗАПОЛНЯЮТСЯ СРАЗУ.
+   *
+   * Главная опасность первого визита — пустой продукт: смета считает по
+   * ставкам каталога, ставок нет, на экране нули, и компания решает, что
+   * инструмент не работает. Прайс типовой и подписан как ориентир, а
+   * демо-объект — готовая кухня с чертежом и сметой, которую можно
+   * открыть и показать, ничего не вводя.
+   *
+   * Сервисным ключом: членство только что создано, и полагаться на то,
+   * что политика уже видит нового участника, здесь незачем.
+   *
+   * Ошибка сида не отменяет создание организации: без каталога она
+   * работает, а вот без организации не работает ничего. Поэтому пишем
+   * результат в ответ и не роняем запрос.
+   */
+  const seeded = await seedOrg(service, org.id);
+
+  return NextResponse.json({
+    ok: true,
+    orgId: org.id,
+    catalog: {
+      added: seeded.catalog.added,
+      categories: seeded.catalog.addedCategories,
+      error: seeded.catalog.error ?? null,
+    },
+    demo: {
+      created: seeded.demo.created,
+      projectId: seeded.demo.projectId ?? null,
+      total: seeded.demo.total ?? null,
+      error: seeded.demo.error ?? null,
+    },
+  });
 }

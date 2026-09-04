@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { generationBlocked } from '@/lib/aiAccess';
 import {
   geminiHeaders,
   geminiUrl,
@@ -279,6 +280,17 @@ function normalizeOps(raw: unknown, zone: ZoneKind): { ops: MillworkOp[]; refuse
 }
 
 export async function POST(request: Request) {
+  /*
+   * Демо-организация до модели не доходит. Одна строка, и она СЕРВЕРНАЯ:
+   * спрятанной кнопки недостаточно — публичную демо-страницу открывает кто
+   * угодно сколько угодно раз, а каждый запрос стоит денег.
+   *
+   * Организации нет или тариф не демо — возвращает null, и дальше всё идёт
+   * ровно как раньше, ни одной строкой ниже это не заметно.
+   */
+  const blocked = await generationBlocked('изменение состава голосом');
+  if (blocked) return blocked;
+
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     return fail('GEMINI_API_KEY не задан — текстовое редактирование недоступно.');

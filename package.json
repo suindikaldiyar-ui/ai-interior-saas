@@ -18,7 +18,10 @@
     "test:millwork": "tsx scripts/verify-millwork.ts",
     "test:survey": "tsx scripts/verify-survey.ts",
     "test:render": "node scripts/verify-render-live.mjs",
-    "test:demo": "node scripts/verify-demo.mjs"
+    "test:demo": "node scripts/verify-demo.mjs",
+    "seed:orgs": "tsx scripts/seed-orgs.ts",
+    "org:create": "tsx scripts/org-create.ts",
+    "demo:render": "node scripts/demo-render.mjs"
   },
   "dependencies": {
     "@react-three/drei": "^9.122.0",

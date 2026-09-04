@@ -1,3 +1,8 @@
+import {
+  TYPICAL_CATEGORIES,
+  TYPICAL_PRICE_LIST,
+  orphanTypicalRates,
+} from './millwork/rates';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   isKitchen,
@@ -93,6 +98,140 @@ export type EnsureResult = {
   created: number;
   error?: string;
 };
+
+/* ─────────────────────────  Типовой прайс  ───────────────────────── */
+
+export type SeedResult = {
+  /** Сколько позиций добавлено. */
+  added: number;
+  /** Сколько категорий пришлось завести. */
+  addedCategories: number;
+  /** Сколько позиций пропущено: такой артикул уже есть. */
+  skipped: number;
+  error?: string;
+};
+
+/**
+ * ТИПОВОЙ ПРАЙС В КАТАЛОГ ОРГАНИЗАЦИИ.
+ *
+ * Главная опасность демонстрации — ПУСТАЯ СМЕТА. Компания открывает
+ * продукт, видит нули вместо цен и решает, что он не работает. Поэтому
+ * прайс заводится сразу при создании организации, а не ждёт, пока кто-то
+ * найдёт кнопку.
+ *
+ * Это ОРИЕНТИР, а не цены компании, и интерфейс говорит об этом прямо:
+ * у каждой позиции стоит `meta.typical`, по которому каталог показывает
+ * пометку «типовая» и строку «замените на свои».
+ *
+ * Порядок обязателен: СНАЧАЛА КАТЕГОРИИ, ПОТОМ ТОВАРЫ. `category_id`
+ * объявлен NOT NULL, и на пустом каталоге вставка падала целиком.
+ * Существующие категории и артикулы не трогаем: своя цена компании
+ * главнее любого среднего значения.
+ */
+export async function seedTypicalCatalog(
+  supabase: SupabaseClient,
+  orgId: string,
+): Promise<SeedResult> {
+  const empty = { added: 0, addedCategories: 0, skipped: 0 };
+
+  /*
+   * Прайс уехал вперёд категорий — это наша ошибка, а не пользователя.
+   * Говорим прямо, вместо того чтобы уронить вставку на NOT NULL.
+   */
+  const orphans = orphanTypicalRates();
+  if (orphans.length > 0) {
+    const keys = Array.from(new Set(orphans.map((r) => r.categoryKey))).join(', ');
+    return {
+      ...empty,
+      error:
+        `В типовом прайсе ${orphans.length} позиций без категории: ${keys}. ` +
+        'Это ошибка прайса, а не каталога.',
+    };
+  }
+
+  const categories = await ensureCategories(supabase, orgId, TYPICAL_CATEGORIES);
+  if (categories.error) {
+    return { ...empty, error: `Не удалось завести категории: ${categories.error}` };
+  }
+
+  const { data: existing, error: itemsError } = await supabase
+    .from('catalog_items')
+    .select('article')
+    .eq('org_id', orgId);
+
+  if (itemsError) {
+    return {
+      ...empty,
+      addedCategories: categories.created,
+      error: `Нет доступа к каталогу: ${itemsError.message}`,
+    };
+  }
+
+  const known = new Set((existing ?? []).map((i) => String(i.article)));
+
+  /*
+   * Товар без найденной категории не вставляем НИКОГДА: строка с пустым
+   * `category_id` роняет весь батч, и пользователь остаётся вообще без
+   * прайса — ровно то, с чего началась эта поломка.
+   */
+  const payload = TYPICAL_PRICE_LIST.filter((r) => !known.has(r.article)).flatMap((r) => {
+    const categoryId = categories.byKey.get(r.categoryKey);
+    if (!categoryId) return [];
+
+    return [
+      {
+        org_id: orgId,
+        category_id: categoryId,
+        article: r.article,
+        name_ru: r.name,
+        price: r.price,
+        unit: r.unit,
+        meta: { estimateKey: r.estimateKey, typical: true },
+        is_active: true,
+      },
+    ];
+  });
+
+  const skipped = TYPICAL_PRICE_LIST.length - payload.length;
+
+  if (payload.length === 0) {
+    return { added: 0, addedCategories: categories.created, skipped };
+  }
+
+  const { data, error } = await supabase.from('catalog_items').insert(payload).select('id');
+
+  if (error) {
+    return {
+      added: 0,
+      addedCategories: categories.created,
+      skipped,
+      error: `Не удалось загрузить прайс: ${error.message}`,
+    };
+  }
+
+  return { added: data?.length ?? 0, addedCategories: categories.created, skipped };
+}
+
+/**
+ * Цена стала своей.
+ *
+ * Пометка «типовая» держится ровно до первой правки цены: компания
+ * поставила своё число — значит, это уже её прайс, и напоминать ей об
+ * ориентире больше незачем.
+ */
+export function priceMetaAfterEdit(
+  meta: Record<string, unknown> | null | undefined,
+  priceChanged: boolean,
+): Record<string, unknown> {
+  const next = { ...(meta ?? {}) };
+  if (priceChanged) delete next.typical;
+  return next;
+}
+
+/** Прайс ещё типовой: по этому признаку каталог показывает свою строку. */
+export function hasTypicalPrices(items: { meta?: Record<string, unknown> | null }[]): boolean {
+  return items.some((item) => item.meta?.typical === true);
+}
 
 /**
  * Завести недостающие категории и вернуть карту «ключ → id».

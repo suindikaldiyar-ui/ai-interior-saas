@@ -72,6 +72,30 @@ export async function publicOrg(): Promise<Org | null> {
   return (data ?? []).length === 1 ? ((data as Org[])[0] ?? null) : null;
 }
 
+/**
+ * Организация по слагу — для ПУБЛИЧНОЙ демо-страницы.
+ *
+ * Слаг и есть адрес: `/demo/kuhni-plus`. Ищем именно по нему, а не по хосту:
+ * все компании живут на одной платформе, поддоменов им никто не выдавал, и
+ * `orgByHost` нашёл бы здесь либо ничего, либо чужую организацию.
+ *
+ * Сервисным ключом и по СПИСКУ ПОЛЕЙ, как остальные публичные страницы:
+ * анонимной политики у orgs нет вовсе, а `select *` отдал бы наружу всё,
+ * что появится в таблице завтра.
+ */
+export async function orgBySlug(slug: string): Promise<Org | null> {
+  const service = supabaseService();
+  if (!service || !slug.trim()) return null;
+
+  const { data } = await service
+    .from('orgs')
+    .select(ORG_FIELDS)
+    .eq('slug', slug.trim().toLowerCase())
+    .maybeSingle();
+
+  return (data as Org) ?? null;
+}
+
 export async function orgById(id: string): Promise<Org | null> {
   const service = supabaseService();
   if (!service) return null;

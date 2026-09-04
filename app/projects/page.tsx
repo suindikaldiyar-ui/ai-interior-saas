@@ -89,6 +89,12 @@ export default async function ProjectsPage() {
             Каталог
           </Link>
           <Link
+            href="/admin/branding"
+            className="mw-touch flex items-center border border-navyLine px-3 text-[13px] uppercase tracking-[0.1em] text-graphiteMw hover:border-cyan hover:text-textMw"
+          >
+            Бренд
+          </Link>
+          <Link
             href="/measure"
             className="mw-touch flex items-center border border-cyanBright bg-cyanBright px-3 text-[13px] uppercase tracking-[0.1em] text-navyDeep"
           >
