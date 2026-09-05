@@ -1,5 +1,7 @@
 'use client';
 
+import type { ReactNode } from 'react';
+
 /**
  * ПРИМЕЧАНИЯ И ШТАМП.
  *
@@ -57,11 +59,17 @@ type Props = {
   pending?: string[];
   /** Пожелания со слов клиента. */
   notes?: string;
+  /**
+   * Блок условных обозначений: образцы заливок и материалы каталога.
+   * Стоит РЯДОМ с примечаниями и повторяется на каждом листе, как и они.
+   */
+  children?: ReactNode;
 };
 
-export default function SheetNotes({ fields, pending = [], notes }: Props) {
+export default function SheetNotes({ fields, pending = [], notes, children }: Props) {
   return (
-    <div className="mt-4 flex flex-wrap items-start gap-x-8 gap-y-4">
+    <div className="mt-4">
+    <div className="flex flex-wrap items-start gap-x-8 gap-y-4">
       {/* ── Примечания ── */}
       <div className="min-w-[52%] flex-1">
         <div className="mb-1 text-[9px] uppercase tracking-[0.14em] text-graphiteMw">
@@ -129,6 +137,9 @@ export default function SheetNotes({ fields, pending = [], notes }: Props) {
           </tbody>
         </table>
       </div>
+    </div>
+
+      {children}
     </div>
   );
 }

@@ -23,10 +23,29 @@ type Props = {
   y: number;
   width: number;
   height: number;
+  /**
+   * Множитель толщины линий.
+   *
+   * Толщины здесь заданы в единицах чертежа и держат ОТНОСИТЕЛЬНУЮ
+   * иерархию: шов тоньше створки, створка тоньше контура. На бумаге же
+   * толщина обязана быть абсолютной — 0.5 мм при любом масштабе. Поэтому
+   * лист передаёт множитель, привязанный к 0.5 мм: иерархия сохраняется,
+   * а линия становится настоящей чертёжной.
+   */
+  lineScale?: number;
 };
 
-export default function FrontGlyph({ unit, mode, x, y, width, height }: Props) {
+export default function FrontGlyph({
+  unit,
+  mode,
+  x,
+  y,
+  width,
+  height,
+  lineScale = 1,
+}: Props) {
   const elements = frontGlyph(unit, mode);
+  const k = lineScale;
 
   return (
     <g data-glyph={unit.id}>
@@ -45,7 +64,7 @@ export default function FrontGlyph({ unit, mode, x, y, width, height }: Props) {
                 x2={x + width / 2}
                 y2={y + height}
                 stroke={LINE}
-                strokeWidth={0.4}
+                strokeWidth={0.4 * k}
               />
             );
 
@@ -70,10 +89,10 @@ export default function FrontGlyph({ unit, mode, x, y, width, height }: Props) {
             return (
               <g key={i} data-symbol="drawer">
                 {el.index > 0 && (
-                  <line x1={x} y1={top} x2={x + width} y2={top} stroke={LINE} strokeWidth={0.4} />
+                  <line x1={x} y1={top} x2={x + width} y2={top} stroke={LINE} strokeWidth={0.4 * k} />
                 )}
                 {/* Стрелка вперёд: по ней ящик не спутать со створкой. */}
-                <g stroke={LINE} strokeWidth={0.5} fill="none" opacity={0.8}>
+                <g stroke={LINE} strokeWidth={0.5 * k} fill="none" opacity={0.8}>
                   <line
                     x1={x + width * 0.34}
                     y1={top + step / 2}
@@ -101,7 +120,7 @@ export default function FrontGlyph({ unit, mode, x, y, width, height }: Props) {
                 height={Math.max(2, height - 6)}
                 fill="none"
                 stroke={LINE}
-                strokeWidth={0.8}
+                strokeWidth={0.8 * k}
                 data-symbol="frame"
               />
             );
@@ -113,7 +132,7 @@ export default function FrontGlyph({ unit, mode, x, y, width, height }: Props) {
              * превращается в обычный шкаф.
              */
             return (
-              <g key={i} data-symbol="glass" stroke={LINE} strokeWidth={0.4} opacity={0.7}>
+              <g key={i} data-symbol="glass" stroke={LINE} strokeWidth={0.4 * k} opacity={0.7}>
                 <line
                   x1={x + 6}
                   y1={y + height - 8}
@@ -133,15 +152,15 @@ export default function FrontGlyph({ unit, mode, x, y, width, height }: Props) {
             const step = height / (el.count + 1);
             return (
               <g key={i} data-symbol="shelf">
-                {Array.from({ length: el.count }, (_, k) => (
+                {Array.from({ length: el.count }, (_, row) => (
                   <line
-                    key={k}
+                    key={row}
                     x1={x + 4}
-                    y1={y + step * (k + 1)}
+                    y1={y + step * (row + 1)}
                     x2={x + width - 4}
-                    y2={y + step * (k + 1)}
+                    y2={y + step * (row + 1)}
                     stroke={LINE}
-                    strokeWidth={0.45}
+                    strokeWidth={0.45 * k}
                     opacity={mode === 'fronts' ? 0.55 : 1}
                   />
                 ))}
@@ -153,14 +172,14 @@ export default function FrontGlyph({ unit, mode, x, y, width, height }: Props) {
             // Волна по нижней кромке: подсветка витрины светит вниз.
             const step = Math.max(4, width / 8);
             const parts = [`M${x + 4} ${y + height - 3}`];
-            for (let k = 0; k < 4; k += 1) parts.push(`q ${step / 2} -3 ${step} 0`);
+            for (let wave = 0; wave < 4; wave += 1) parts.push(`q ${step / 2} -3 ${step} 0`);
             return (
               <path
                 key={i}
                 d={parts.join(' ')}
                 fill="none"
                 stroke={LINE}
-                strokeWidth={0.5}
+                strokeWidth={0.5 * k}
                 data-symbol="led"
               />
             );
@@ -180,7 +199,7 @@ export default function FrontGlyph({ unit, mode, x, y, width, height }: Props) {
                 height={Math.max(1, height - 3)}
                 fill="none"
                 stroke={LINE}
-                strokeWidth={0.35}
+                strokeWidth={0.35 * k}
                 strokeDasharray="3 2"
                 data-symbol="open"
               />
@@ -189,7 +208,7 @@ export default function FrontGlyph({ unit, mode, x, y, width, height }: Props) {
           case 'cargo':
             // Вертикальная стрелка выдвижения: карго едет на себя.
             return (
-              <g key={i} data-symbol="cargo" stroke={LINE} strokeWidth={0.5} fill="none">
+              <g key={i} data-symbol="cargo" stroke={LINE} strokeWidth={0.5 * k} fill="none">
                 <line x1={x + width / 2} y1={y + height - 6} x2={x + width / 2} y2={y + 8} />
                 <path
                   d={`M${x + width / 2 - 2.5} ${y + 12} L${x + width / 2} ${y + 8} L${
@@ -203,13 +222,13 @@ export default function FrontGlyph({ unit, mode, x, y, width, height }: Props) {
             // Решётка сушилки пунктиром: две полки в клетку.
             const cells = 4;
             return (
-              <g key={i} data-symbol="dryer" stroke={LINE} strokeWidth={0.35} strokeDasharray="2 2">
-                {Array.from({ length: cells }, (_, k) => (
+              <g key={i} data-symbol="dryer" stroke={LINE} strokeWidth={0.35 * k} strokeDasharray="2 2">
+                {Array.from({ length: cells }, (_, cell) => (
                   <line
-                    key={k}
-                    x1={x + 5 + ((width - 10) / cells) * k}
+                    key={cell}
+                    x1={x + 5 + ((width - 10) / cells) * cell}
                     y1={y + height * 0.35}
-                    x2={x + 5 + ((width - 10) / cells) * k}
+                    x2={x + 5 + ((width - 10) / cells) * cell}
                     y2={y + height * 0.75}
                   />
                 ))}
@@ -234,7 +253,7 @@ export default function FrontGlyph({ unit, mode, x, y, width, height }: Props) {
                 rx={2}
                 fill="none"
                 stroke={LINE}
-                strokeWidth={0.4}
+                strokeWidth={0.4 * k}
                 strokeDasharray="3 2"
                 data-symbol="sink"
               />
@@ -252,14 +271,14 @@ export default function FrontGlyph({ unit, mode, x, y, width, height }: Props) {
                 fill={LINE}
                 fillOpacity={0.35}
                 stroke={LINE}
-                strokeWidth={0.4}
+                strokeWidth={0.4 * k}
                 data-symbol="hob"
               />
             );
 
           case 'hoodDuct':
             return (
-              <g key={i} data-symbol="hood" stroke={LINE} strokeWidth={0.4} strokeDasharray="3 2">
+              <g key={i} data-symbol="hood" stroke={LINE} strokeWidth={0.4 * k} strokeDasharray="3 2">
                 <line x1={x + width / 2 - 5} y1={y} x2={x + width / 2 - 5} y2={y - 14} />
                 <line x1={x + width / 2 + 5} y1={y} x2={x + width / 2 + 5} y2={y - 14} />
               </g>
@@ -275,7 +294,7 @@ export default function FrontGlyph({ unit, mode, x, y, width, height }: Props) {
                   x2={x + width - 4}
                   y2={y + height * 0.18}
                   stroke={LINE}
-                  strokeWidth={1.1}
+                  strokeWidth={1.1 * k}
                 />
                 <circle cx={x + 6} cy={y + height * 0.18} r={1.4} fill={LINE} />
                 <circle cx={x + width - 6} cy={y + height * 0.18} r={1.4} fill={LINE} />

@@ -21,6 +21,10 @@ import {
   snapTo32,
 } from '@/lib/millwork/fill';
 import { formatMoney } from '@/lib/millwork/estimate';
+import SheetDefs from './SheetDefs';
+import { PositionMark } from './SectionDrawing';
+import { moduleNumbers, POSITION_CIRCLE_MM } from '@/lib/millwork/positions';
+import { LINE_MM, PAPER_FILL, hatchId, lineWidths, unitsPerPaperMm } from '@/lib/millwork/sheetStyle';
 import type {
   ApplianceKind,
   Module,
@@ -99,6 +103,15 @@ type Props = {
    * а на листе без них нельзя заказать материал.
    */
   leaders?: LeaderAnchor[];
+  /**
+   * Ширина вида на бумаге, миллиметры. Из неё считаются толщины линий.
+   *
+   * Без неё вид остаётся прежним: экранный чертёж и оверлей над сценой
+   * бумагой не являются, и подгонять их под миллиметры незачем.
+   */
+  paperWidthMm?: number;
+  /** Номера позиций модулей: те же, что в разрезе и в детализировке. */
+  positions?: Map<string, number>;
   /**
    * Слой поверх сцены.
    *
@@ -222,6 +235,7 @@ function ModuleInside({
   heightMm,
   onFillChange,
   onFillReject,
+  k = 1,
 }: {
   unit: Module;
   x: number;
@@ -231,6 +245,8 @@ function ModuleInside({
   heightMm: number;
   onFillChange?: (moduleId: string, fill: ModuleFill) => void;
   onFillReject?: (reason: string) => void;
+  /** Множитель толщины линий: на бумаге они абсолютные, на экране прежние. */
+  k?: number;
 }) {
   const fill = unit.fill;
   const drag = useRef<(() => void) | null>(null);
@@ -307,7 +323,7 @@ function ModuleInside({
         height={Math.max(0, height - 4)}
         fill="none"
         stroke="var(--blueprint)"
-        strokeWidth={0.4}
+        strokeWidth={0.4 * k}
         strokeDasharray="3 2"
       />
 
@@ -348,7 +364,7 @@ function ModuleInside({
             x2={inner.x + inner.width}
             y2={yAt(mm)}
             stroke="var(--blueprint)"
-            strokeWidth={1.2}
+            strokeWidth={1.2 * k}
             style={{ cursor: editable ? 'ns-resize' : 'default' }}
             onPointerDown={
               editable
@@ -422,7 +438,7 @@ function ModuleInside({
           x2={x + fill.dividerMm * (width / Math.max(unit.widthMm, 1))}
           y2={yTop + height - 2}
           stroke="var(--blueprint)"
-          strokeWidth={1.2}
+          strokeWidth={1.2 * k}
           style={{ cursor: editable ? 'ew-resize' : 'default' }}
           onPointerDown={
             editable
@@ -468,7 +484,7 @@ function ModuleInside({
             x2={inner.x + inner.width - 6}
             y2={yAt(mm)}
             stroke="var(--blueprint)"
-            strokeWidth={0.8}
+            strokeWidth={0.8 * k}
             strokeDasharray="6 3"
           />
           <circle
@@ -477,7 +493,7 @@ function ModuleInside({
             r={3}
             fill="none"
             stroke="var(--blueprint)"
-            strokeWidth={0.8}
+            strokeWidth={0.8 * k}
           />
           <text
             className="mw-num"
@@ -508,7 +524,7 @@ function ModuleInside({
                 height={Math.max(0, boxH - 2)}
                 fill="none"
                 stroke="var(--blueprint)"
-                strokeWidth={0.6}
+                strokeWidth={0.6 * k}
               />
               <text
                 className="mw-num"
@@ -529,7 +545,7 @@ function ModuleInside({
                   x2={inner.x + inner.width}
                   y2={top + boxH}
                   stroke="transparent"
-                  strokeWidth={6}
+                  strokeWidth={6 * k}
                   style={{ cursor: 'ns-resize' }}
                   onPointerDown={(event) => {
                     const startMm = (yTop + height - event.clientY) / scaleY;
@@ -582,6 +598,8 @@ export default function ElevationDrawing({
   compact = false,
   overlay = false,
   leaders = [],
+  paperWidthMm,
+  positions,
 }: Props) {
   const changed = useMemo(() => new Set(changedIds), [changedIds]);
 
@@ -785,16 +803,50 @@ export default function ElevationDrawing({
           * лента вариантов не открывалась вовсе.
           */}
         <rect x={x} y={yTop} width={w} height={h} fill="transparent" />
+        {/*
+          * ЗАЛИВКА ПО ТИПУ ЭЛЕМЕНТА.
+          *
+          * Проволочный каркас глаз не разбирал: корпус, глухой фасад,
+          * витрина и техника выглядели одинаково, и лист читался схемой.
+          * Различия сделаны СВЕТЛОТОЙ и ШТРИХОВКОЙ, а не цветом: лист
+          * печатают на обычном принтере в цеху.
+          *
+          * Контур рисуется ПОВЕРХ заливки (`paint-order`), иначе заливка
+          * съедает половину его толщины и линия становится тоньше нормы.
+          */}
         <rect
+          data-fill
           x={x}
           y={yTop}
           width={w}
           height={h}
-          fill={active ? 'var(--tape)' : 'none'}
-          fillOpacity={active ? 0.28 : 0}
+          fill={paper ? paperFill(unit, isDisplay) : 'none'}
           stroke="var(--blueprint)"
-          strokeWidth={active ? 1.4 : 0.8}
+          strokeWidth={active ? 1.4 * k : 0.8 * k}
         />
+        {/* Стекло: редкая диагональная штриховка поверх белого поля. */}
+        {paper > 0 && glassFront(unit, isDisplay) && (
+          <rect
+            x={x}
+            y={yTop}
+            width={w}
+            height={h}
+            fill={`url(#${hatchId('elevation', 'glass')})`}
+            stroke="none"
+          />
+        )}
+        {/* Выделение — тонкой подсветкой, чтобы не пачкать бумагу. */}
+        {active && (
+          <rect
+            x={x}
+            y={yTop}
+            width={w}
+            height={h}
+            fill="var(--tape)"
+            fillOpacity={paper ? 0.16 : 0.28}
+            stroke="none"
+          />
+        )}
 
         {/* Наполнение: полки, штанги, ящики. Фасады на этом виде не рисуются. */}
         {mode === 'inside' && (
@@ -807,6 +859,7 @@ export default function ElevationDrawing({
             heightMm={moduleCarcassHeightMm(unit, run)}
             onFillChange={onFillChange}
             onFillReject={onFillReject}
+            k={k}
           />
         )}
 
@@ -816,7 +869,44 @@ export default function ElevationDrawing({
           * решает `frontGlyph`, одна чистая функция на весь чертёж. Приёмка
           * сверяет по ней же, что два разных варианта не выглядят одинаково.
           */}
-        <FrontGlyph unit={unit} mode={mode} x={x} y={yTop} width={w} height={h} />
+        <FrontGlyph
+          unit={unit}
+          mode={mode}
+          x={x}
+          y={yTop}
+          width={w}
+          height={h}
+          lineScale={k}
+        />
+
+        {/*
+          * НОМЕР ПОЗИЦИИ МОДУЛЯ. Тот же номер стоит в разрезе и в
+          * детализировке — по нему цех сверяет деталь с чертежом.
+          * На макете решения и в оверлее над сценой его нет: там это
+          * не документ, а картинка.
+          */}
+        {paper > 0 && (
+          <PositionMark
+            n={numbers.get(unit.id) ?? 0}
+            cx={x + w / 2}
+            /*
+             * КРУЖОК НЕ ЗАКРЫВАЕТ РИСУНОК ФАСАДА.
+             *
+             * В геометрическом центре он садился ровно на створку, ящики и
+             * стекло — а у карго 150 мм перекрывал модуль целиком. Поэтому
+             * широкий модуль получает кружок ВНИЗУ, где фасад пустой, а
+             * узкий — выноской НАД модулем: внутри него места нет вовсе.
+             */
+            cy={
+              w >= NARROW_MODULE_UNITS
+                ? yTop + h - (POSITION_CIRCLE_MM / 2) * u * 1.5
+                : yTop - (POSITION_CIRCLE_MM / 2) * u * 1.6
+            }
+            leaderTo={w >= NARROW_MODULE_UNITS ? undefined : yTop}
+            u={u}
+            lw={lw.inner}
+          />
+        )}
 
         {mode === 'fronts' && unit.frontType === 'door' && unit.doorCount === 2 && (
           <line
@@ -825,7 +915,7 @@ export default function ElevationDrawing({
             x2={x + w / 2}
             y2={yTop + h}
             stroke="var(--blueprint)"
-            strokeWidth={0.4}
+            strokeWidth={0.4 * k}
           />
         )}
 
@@ -877,7 +967,7 @@ export default function ElevationDrawing({
                 height={nicheH}
                 fill="none"
                 stroke="var(--blueprint)"
-                strokeWidth={0.6}
+                strokeWidth={0.6 * k}
               />
               <text
                 x={x + w / 2}
@@ -916,7 +1006,7 @@ export default function ElevationDrawing({
               height={Math.max(0, h - 6)}
               fill="none"
               stroke="var(--blueprint)"
-              strokeWidth={0.4}
+              strokeWidth={0.4 * k}
             />
             <text
               x={x + w / 2}
@@ -938,7 +1028,7 @@ export default function ElevationDrawing({
               r={Math.min(11, w / 2 - 2)}
               fill="none"
               stroke="var(--blueprint)"
-              strokeWidth={0.8}
+              strokeWidth={0.8 * k}
             />
             <text
               x={x + w / 2}
@@ -1006,6 +1096,27 @@ export default function ElevationDrawing({
   const viewLeft = withLeaders ? -LEADER_MARGIN_UNITS : 0;
   const viewWidth = svgWidth + (withLeaders ? LEADER_MARGIN_UNITS * 2 : 0);
 
+  /*
+   * ТОЛЩИНЫ ЛИНИЙ В МИЛЛИМЕТРАХ БУМАГИ.
+   *
+   * `k` — множитель, привязанный к основной линии: старые толщины держали
+   * верную ОТНОСИТЕЛЬНУЮ иерархию (шов тоньше створки, створка тоньше
+   * контура), но были константами в единицах вида — то есть на бумаге
+   * менялись вместе с масштабом. Привязываем контур модуля к 0.5 мм и
+   * тянем остальное за ним: иерархия сохраняется, толщина становится
+   * настоящей.
+   *
+   * Нет ширины бумаги — вид рисуется на экране или лежит поверх сцены,
+   * и `k = 1` оставляет его ровно таким, каким он был.
+   */
+  const paper = paperWidthMm && !compact && !overlay ? paperWidthMm : 0;
+  const u = paper ? unitsPerPaperMm(viewWidth, paper) : 0;
+  const lw = lineWidths(u || 1);
+  const k = paper ? (LINE_MM.contour * u) / 0.8 : 1;
+  const numbers = positions ?? moduleNumbers(run);
+  /** Модуль уже 250 мм — номер уходит на выноску над ним. */
+  const NARROW_MODULE_UNITS = narrowThreshold(run.lengthMm, drawWidth);
+
   const drawing = (
     <svg
       viewBox={`${viewLeft} ${viewTop} ${viewWidth} ${viewHeight}`}
@@ -1013,6 +1124,19 @@ export default function ElevationDrawing({
       role="img"
       aria-label={`Фасадный чертёж ряда ${run.lengthMm} мм`}
     >
+      {paper > 0 && (
+        <>
+          <SheetDefs view="elevation" u={u} roles={['glass']} />
+          {/* Бумага под видом: лист белый и на экране тоже. */}
+          <rect
+            x={viewLeft}
+            y={viewTop}
+            width={viewWidth}
+            height={viewHeight}
+            fill={PAPER_FILL.paper}
+          />
+        </>
+      )}
       {/* Контур помещения: пол и потолок. Поверх сцены они уже есть. */}
       {!overlay && (
         <>
@@ -1022,7 +1146,7 @@ export default function ElevationDrawing({
             x2={padLeft + drawWidth + (compact ? 0 : 8)}
             y2={yOf(0)}
             stroke="var(--ink)"
-            strokeWidth={1.2}
+            strokeWidth={1.2 * k}
           />
           <line
             x1={padLeft - (compact ? 0 : 12)}
@@ -1030,7 +1154,7 @@ export default function ElevationDrawing({
             x2={padLeft + drawWidth + (compact ? 0 : 8)}
             y2={yOf(ceiling)}
             stroke="var(--ink)"
-            strokeWidth={0.6}
+            strokeWidth={0.6 * k}
             strokeDasharray="4 3"
           />
         </>
@@ -1045,7 +1169,7 @@ export default function ElevationDrawing({
             x2={PADDING_LEFT}
             y2={yOf(mm)}
             stroke="var(--blueprint)"
-            strokeWidth={0.5}
+            strokeWidth={0.5 * k}
           />
           <text
             className="mw-num"
@@ -1081,7 +1205,7 @@ export default function ElevationDrawing({
           height={yOf(0) - yOf(GEOMETRY.base.plinthH)}
           fill="none"
           stroke="var(--blueprint)"
-          strokeWidth={0.5}
+          strokeWidth={0.5 * k}
         />
 
         {/* Столешница есть не в каждой зоне: в шкафу её нет вовсе. */}
@@ -1093,7 +1217,7 @@ export default function ElevationDrawing({
             height={GEOMETRY.base.countertopH * heightScale}
             fill="none"
             stroke="var(--blueprint)"
-            strokeWidth={1}
+            strokeWidth={1 * k}
           />
         )}
       </g>
@@ -1119,7 +1243,7 @@ export default function ElevationDrawing({
           fill="var(--tape)"
           fillOpacity={0.22}
           stroke="var(--tape)"
-          strokeWidth={1}
+          strokeWidth={1 * k}
         />
         <text
           ref={ghostLabel}
@@ -1249,6 +1373,41 @@ export default function ElevationDrawing({
 }
 
 /** Все модули ряда: выбранный может быть и в верхнем. */
+/**
+ * Узкий модуль: кружок позиции внутрь не помещается.
+ *
+ * 250 мм мебели в единицах чертежа. Ряд рисуется в поле `DRAW_FIELD.draw`
+ * единиц, поэтому порог зависит от длины ряда и считается на месте.
+ */
+function narrowThreshold(lengthMm: number, drawWidth: number): number {
+  return (250 / Math.max(1, lengthMm)) * drawWidth;
+}
+
+/**
+ * Заливка модуля по типу элемента.
+ *
+ * Читается СВЕТЛОТОЙ, а не цветом: лист печатают чёрно-белым.
+ *   техника        — серая, темнее корпуса
+ *   открытая ниша  — без заливки, видно нутро
+ *   стекло и фасад — белые, стекло дополнительно штрихуется
+ *   всё остальное  — светло-серый корпус ЛДСП
+ */
+function paperFill(unit: Module, isDisplay: boolean): string {
+  if (unit.appliance && !unit.builtIn) return PAPER_FILL.appliance;
+  if (unit.appliance) return PAPER_FILL.appliance;
+  if (unit.frontType === 'none') return PAPER_FILL.open;
+  if (glassFront(unit, isDisplay)) return PAPER_FILL.glass;
+  if (unit.frontType === 'door' || unit.frontType === 'drawers') return PAPER_FILL.front;
+  return PAPER_FILL.carcass;
+}
+
+/** Прозрачный фасад: витрина, стекло в раме, стеклянная секция. */
+function glassFront(unit: Module, isDisplay: boolean): boolean {
+  if (isDisplay) return true;
+  const kind = unit.variant;
+  return kind === 'upper_glass' || kind === 'upper_display' || kind === 'tall_display';
+}
+
 function allModulesOf(run: Run): Module[] {
   return [...run.modules, ...run.upperSegments.flatMap((segment) => segment.modules)];
 }

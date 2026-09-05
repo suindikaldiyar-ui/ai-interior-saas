@@ -119,6 +119,14 @@ export type SheetView = {
   heightMm: number;
   /** Начинать с новой строки: так идёт план под фасадом. */
   breakRow?: boolean;
+  /**
+   * Начинать НОВЫЙ ЛИСТ.
+   *
+   * Аксонометрия — не метрический вид: по ней не мерят, и делить лист с
+   * фасадом и разрезами ей незачем. Отдельный лист держит первый чистым:
+   * на нём только то, по чему снимают размеры.
+   */
+  breakPage?: boolean;
 };
 
 export type SheetPage = { views: SheetView[] };
@@ -126,8 +134,18 @@ export type SheetPage = { views: SheetView[] };
 /** Высота подписи вида на бумаге: строка заголовка плюс воздух под ней. */
 export const VIEW_CAPTION_MM = 7;
 
-/** Промежуток между видами на листе. */
-export const VIEW_GAP_MM = 8;
+/**
+ * ПОЛЯ ВОКРУГ ВИДА — не меньше 15 мм бумаги.
+ *
+ * Восьми не хватало: виды стояли впритык, размерные цепи одного залезали
+ * в поле соседнего, и лист читался как интерфейс, где всё прижато друг
+ * к другу. На бумаге между блоками нужен воздух — по нему глаз и понимает,
+ * что это два разных вида, а не один сложный.
+ *
+ * Не помещается — уменьшается МАСШТАБ вида, а не поля: поля здесь такая же
+ * часть документа, как рамка и штамп.
+ */
+export const VIEW_GAP_MM = 15;
 
 /**
  * Раскладка видов по листам.
@@ -167,6 +185,9 @@ export function paginate(views: SheetView[], format: SheetFormat): SheetPage[] {
     const height = view.heightMm + VIEW_CAPTION_MM;
     const width = view.widthMm;
 
+    // Вид, который открывает лист, закрывает предыдущий целиком.
+    if (view.breakPage && page.length + row.length > 0) closePage();
+
     const fitsRow =
       !view.breakRow &&
       row.length > 0 &&
@@ -193,35 +214,72 @@ export function paginate(views: SheetView[], format: SheetFormat): SheetPage[] {
 }
 
 /**
- * ОДИН МАСШТАБ НА ЛИСТ.
+ * ОДИН МАСШТАБ НА ЛИСТ, И ОН НЕ МЕЛЬЧЕ 1:30.
  *
  * У проектировщика на листе один масштаб на все метрические виды: глаз
  * перестраивается один раз, и размеры сравниваются между видами напрямую.
- * Поэтому масштаб выбирается не по каждому виду отдельно, а по всей
- * компоновке: берём самый крупный стандартный, при котором лист ещё
- * складывается в одну страницу.
+ * Это правило осталось.
  *
- * Не сложился ни один — отдаём самый мелкий и разбиваем на листы честно.
+ * А вот второе — «самый крупный масштаб, при котором лист ОДИН» — отменено.
+ * Оно экономило бумагу за счёт читаемости: раскладка «один вид — один блок»
+ * не складывается на A3 в одну страницу крупнее 1:50, и фасад трёхметровой
+ * кухни занимал 124 мм на поле в 400 мм. Формально один лист, а по существу
+ * крошечный рисунок в море пустой бумаги — ровно то, из-за чего чертёж и
+ * не выглядел документом.
+ *
+ * ДЕЙСТВУЮЩЕЕ ПРАВИЛО: масштаб НЕ МЕЛЬЧЕ `MIN_SCALE_DEN`, а листов столько,
+ * сколько нужно. Комплект из двух-трёх листов — норма отрасли; нечитаемый
+ * лист нормой не является. Среди допустимых берём тот, что даёт меньше
+ * листов, при равенстве — более крупный.
+ *
+ * Предел уступает ровно одному обстоятельству: вид, который не влезает в
+ * ширину поля, был бы ОБРЕЗАН. Обрезанный чертёж хуже мелкого, поэтому
+ * ради него масштаб уходит за 1:30.
  */
+/**
+ * Предел мелкости: 1:30.
+ *
+ * Мельче лист перестаёт читаться как документ — по нему не снять размер
+ * и не разглядеть наполнение. Уступает только обрезанию вида.
+ */
+export const MIN_SCALE_DEN: ScaleDenominator = 30;
+
 export function fitComposition(
   build: (den: ScaleDenominator) => SheetView[],
   format: SheetFormat,
 ): { den: ScaleDenominator; pages: SheetPage[] } {
-  let last: { den: ScaleDenominator; pages: SheetPage[] } | null = null;
+  const field = sheetField(format);
+
+  /** Вид шире поля был бы обрезан — такой масштаб не годится ни при чём. */
+  const fits = (views: SheetView[]) => views.every((view) => view.widthMm <= field.width);
+
+  let best: { den: ScaleDenominator; pages: SheetPage[] } | null = null;
 
   for (const den of STANDARD_SCALES) {
+    if (den > MIN_SCALE_DEN) break;
+
     const views = build(den);
-    const field = sheetField(format);
-    // Вид шире поля не спасёт никакая раскладка: это уже другой масштаб.
-    if (views.some((view) => view.widthMm > field.width)) continue;
+    if (!fits(views)) continue;
 
     const pages = paginate(views, format);
-    last = { den, pages };
-    if (pages.length === 1) return last;
+    // Меньше листов лучше; при равенстве выигрывает первый, то есть
+    // самый крупный — ряд идёт от крупного к мелкому.
+    if (!best || pages.length < best.pages.length) best = { den, pages };
+  }
+
+  if (best) return best;
+
+  /*
+   * Крупнее 1:30 ничего не поместилось по ШИРИНЕ: очень длинный ряд.
+   * Уходим мельче предела — обрезанный вид хуже мелкого.
+   */
+  for (const den of STANDARD_SCALES) {
+    const views = build(den);
+    if (fits(views)) return { den, pages: paginate(views, format) };
   }
 
   const den = STANDARD_SCALES[STANDARD_SCALES.length - 1];
-  return last ?? { den, pages: paginate(build(den), format) };
+  return { den, pages: paginate(build(den), format) };
 }
 
 /**
@@ -238,19 +296,30 @@ export function fitExtra(
   format: SheetFormat,
 ): { den: ScaleDenominator; pages: SheetPage[] } {
   const field = sheetField(format);
-  let last: { den: ScaleDenominator; pages: SheetPage[] } | null = null;
 
   for (const den of STANDARD_SCALES) {
     const extra = build(den);
-    if (extra.some((view) => view.widthMm > field.width)) continue;
-
-    const pages = paginate([...base, ...extra], format);
-    last = { den, pages };
-    if (pages.length === 1) return last;
+    /*
+     * Объёмный вид стоит на СВОЁМ листе, поэтому критерий простой: влезть
+     * в поле целиком. Раньше здесь ждали, что весь комплект сложится в одну
+     * страницу, — с отдельным листом под аксонометрию это не случается
+     * никогда, и масштаб молча падал до самого мелкого из ряда.
+     */
+    const fitsField = extra.every(
+      (view) => view.widthMm <= field.width && view.heightMm + VIEW_CAPTION_MM <= field.height,
+    );
+    /*
+     * Оба объёмных вида — ОДНОЙ ПАРОЙ на одном листе: закрытый и с
+     * наполнением читают, сравнивая друг с другом. Разнеси их по листам —
+     * и сравнивать придётся, листая.
+     */
+    if (fitsField && paginate(extra, format).length === 1) {
+      return { den, pages: paginate([...base, ...extra], format) };
+    }
   }
 
   const den = STANDARD_SCALES[STANDARD_SCALES.length - 1];
-  return last ?? { den, pages: paginate([...base, ...build(den)], format) };
+  return { den, pages: paginate([...base, ...build(den)], format) };
 }
 
 /** «Лист 2 из 3» — на каждом листе свой номер, штамп одинаковый. */

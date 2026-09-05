@@ -3,6 +3,7 @@
 import { useMemo } from 'react';
 import { buildAxonometry, type AxonometryMode } from '@/lib/millwork/axonometry';
 import type { ProductionSettings } from '@/types/catalog';
+import { LINE_MM, unitsPerPaperMm } from '@/lib/millwork/sheetStyle';
 import type { Run } from '@/types/millwork';
 
 /**
@@ -22,6 +23,8 @@ type Props = {
   run: Run;
   mode?: AxonometryMode;
   production: ProductionSettings;
+  /** Ширина вида на бумаге: из неё считаются толщины линий. */
+  paperWidthMm?: number;
 };
 
 /** Светлота грани: верх светлее, бок темнее — так объём читается без цвета. */
@@ -39,7 +42,12 @@ const HATCH: Record<string, string | null> = {
   appliance: 'axon-hatch-appliance',
 };
 
-export default function AxonometryDrawing({ run, mode = 'closed', production }: Props) {
+export default function AxonometryDrawing({
+  run,
+  mode = 'closed',
+  production,
+  paperWidthMm,
+}: Props) {
   const axon = useMemo(
     () =>
       buildAxonometry(run, mode, {
@@ -54,8 +62,24 @@ export default function AxonometryDrawing({ run, mode = 'closed', production }: 
   const width = axon.bounds.maxX - axon.bounds.minX + pad * 2;
   const height = axon.bounds.maxY - axon.bounds.minY + pad * 2;
 
-  /** Толщина ребра в единицах вида: на бумаге это волосяная линия. */
-  const stroke = Math.max(width, height) / 900;
+  /**
+   * ТОЛЩИНА РЕБРА В МИЛЛИМЕТРАХ БУМАГИ.
+   *
+   * `viewBox` здесь в МЕТРАХ, поэтому пересчёт идёт через ту же ширину на
+   * бумаге, что и у остальных видов: `width / paperWidthMm` — это метров
+   * на миллиметр бумаги. Переводить сам `viewBox` в миллиметры было бы
+   * дороже и опаснее: пришлось бы умножать каждую координату из
+   * `buildAxonometry`, то есть трогать геометрию.
+   *
+   * Остальные толщины заданы долями от этой (0.8 и 0.6), поэтому привязка
+   * основной к 0.5 мм сохраняет всю иерархию.
+   *
+   * Без ширины бумаги остаётся прежняя прикидка «одна девятисотая габарита»:
+   * на экране вид ни к какой бумаге не привязан.
+   */
+  const stroke = paperWidthMm
+    ? LINE_MM.contour * unitsPerPaperMm(width, paperWidthMm)
+    : Math.max(width, height) / 900;
 
   return (
     <svg

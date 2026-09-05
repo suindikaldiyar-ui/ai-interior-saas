@@ -3,6 +3,7 @@
 import DimensionChain from './DimensionChain';
 import { CommLegend, COMM_SYMBOL } from './DrawingSymbols';
 import { GEOMETRY, moduleDepthMm } from '@/lib/millwork/modules';
+import { LINE_MM, unitsPerPaperMm } from '@/lib/millwork/sheetStyle';
 import type { CommPoint, LayoutIssue, Run } from '@/types/millwork';
 
 /**
@@ -22,6 +23,8 @@ type Props = {
   onSelect?: (moduleId: string) => void;
   /** Ширина прохода перед фронтом, мм. */
   walkwayMm?: number;
+  /** Ширина вида на бумаге: из неё считаются толщины линий. */
+  paperWidthMm?: number;
 };
 
 const PADDING_LEFT = 74;
@@ -48,6 +51,7 @@ export default function PlanDrawing({
   run,
   comms,
   issues,
+  paperWidthMm,
   selectedModuleId,
   onSelect,
   walkwayMm = 1000,
@@ -67,6 +71,15 @@ export default function PlanDrawing({
 
   const svgHeight = PADDING_TOP + depthPx + walkwayPx + 78 + legendHeight;
   const svgWidth = PADDING_LEFT + DRAW_WIDTH + 26;
+
+  /*
+   * Толщины на бумаге. Множитель привязан к основной линии плана (0.8
+   * единицы): относительная иерархия сохраняется, а на бумаге контур
+   * становится ровно 0.5 мм при любом масштабе.
+   */
+  const paper = paperWidthMm ?? 0;
+  const u = paper ? unitsPerPaperMm(svgWidth, paper) : 0;
+  const k = paper ? (LINE_MM.contour * u) / 0.8 : 1;
 
   // Стена сверху, фронт снизу — как смотрит замерщик, стоя в комнате.
   const wallY = PADDING_TOP;
@@ -91,7 +104,7 @@ export default function PlanDrawing({
         height={10}
         fill="var(--concrete-deep)"
         stroke="var(--ink)"
-        strokeWidth={0.8}
+        strokeWidth={0.8 * k}
       />
       <text className="mw-label" x={PADDING_LEFT - 14} y={wallY - 14} textAnchor="start" fontSize={8}>
         стена
@@ -141,7 +154,7 @@ export default function PlanDrawing({
                   x2={x + w / 2}
                   y2={wallY + d + 16}
                   stroke="var(--alert)"
-                  strokeWidth={1}
+                  strokeWidth={1 * k}
                 />
                 <polygon
                   points={`${x + w / 2},${wallY + d + 16} ${x + w / 2 + 12},${wallY + d + 20} ${x + w / 2},${wallY + d + 24}`}
@@ -161,7 +174,7 @@ export default function PlanDrawing({
         height={depthPx}
         fill="none"
         stroke="var(--blueprint)"
-        strokeWidth={0.5}
+        strokeWidth={0.5 * k}
         strokeDasharray="3 2"
       />
 
@@ -173,7 +186,7 @@ export default function PlanDrawing({
           x2={PADDING_LEFT - 22}
           y2={wallY + depthPx}
           stroke="var(--blueprint)"
-          strokeWidth={0.8}
+          strokeWidth={0.8 * k}
         />
         <text
           className="mw-num"
@@ -198,10 +211,10 @@ export default function PlanDrawing({
               x2={x}
               y2={wallY + depthPx + 6}
               stroke="var(--graphite-mw)"
-              strokeWidth={0.4}
+              strokeWidth={0.4 * k}
               strokeDasharray="2 2"
             />
-            <circle cx={x} cy={wallY - 5} r={6} fill="var(--sheet)" stroke="var(--ink)" strokeWidth={0.8} />
+            <circle cx={x} cy={wallY - 5} r={6} fill="var(--sheet)" stroke="var(--ink)" strokeWidth={0.8 * k} />
             <text x={x} y={wallY - 2.5} textAnchor="middle" fontSize={6} fill="var(--ink)">
               {COMM_MARK[point.kind]}
             </text>
@@ -228,7 +241,7 @@ export default function PlanDrawing({
           height={walkwayPx}
           fill="none"
           stroke="var(--graphite-mw)"
-          strokeWidth={0.4}
+          strokeWidth={0.4 * k}
           strokeDasharray="5 4"
         />
         <text

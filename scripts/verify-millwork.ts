@@ -67,6 +67,7 @@ import {
   STANDARD_SCALES,
   chooseFormat,
   fitComposition,
+  MIN_SCALE_DEN,
   paginate,
   scaleLabel,
   sheetField,
@@ -2999,14 +3000,46 @@ console.log('\nЧертёжный лист');
   check('короткий ряд печатается на A4', chooseFormat({ lengthMm: 1800, views: 3 }) === 'A4');
   check('обычный состав идёт на A3', chooseFormat({ lengthMm: 3200, views: 6 }) === 'A3');
 
-  /* Компоновка выбирает самый крупный масштаб, при котором лист один. */
+  /*
+   * ПРАВИЛО ВЫБОРА МАСШТАБА ИЗМЕНИЛОСЬ.
+   *
+   * Было: «самый крупный масштаб, при котором лист ОДИН». Оно экономило
+   * бумагу за счёт читаемости — раскладка «один вид — один блок» не
+   * складывается на A3 в одну страницу крупнее 1:50, и фасад трёхметровой
+   * кухни выходил 124 мм на поле в 400 мм.
+   *
+   * Стало: «масштаб не мельче 1:30, листов столько, сколько нужно».
+   * Поэтому проверяем ПРЕДЕЛ МЕЛКОСТИ, а не число листов.
+   */
   const sizesFor = (d: number) => [
     { id: 'a', title: 'Фасад', widthMm: 3200 / d, heightMm: 2700 / d },
     { id: 'b', title: 'Разрез', widthMm: 1100 / d, heightMm: 2900 / d },
   ];
   const fitted = fitComposition(sizesFor as never, 'A3');
-  check('лист складывается в одну страницу', fitted.pages.length === 1, `листов: ${fitted.pages.length}`);
-  check('масштаб выбран самый крупный из возможных', fitted.den <= 25, `1:${fitted.den}`);
+  check(
+    'масштаб не мельче предела',
+    fitted.den <= MIN_SCALE_DEN,
+    `1:${fitted.den} при пределе 1:${MIN_SCALE_DEN}`,
+  );
+  check(
+    'листов столько, сколько нужно — и все виды на них есть',
+    fitted.pages.flatMap((page) => page.views).length === 2,
+    `листов: ${fitted.pages.length}`,
+  );
+
+  /*
+   * Предел уступает ОБРЕЗАНИЮ: вид шире поля не спасёт никакая раскладка,
+   * и ради него масштаб уходит мельче 1:30.
+   */
+  const huge = (d: number) => [
+    { id: 'a', title: 'Фасад', widthMm: 18000 / d, heightMm: 2700 / d },
+  ];
+  const wide = fitComposition(huge as never, 'A3');
+  check(
+    'ради необрезанного вида масштаб уходит за предел',
+    wide.den > MIN_SCALE_DEN && 18000 / wide.den <= sheetField('A3').width,
+    `1:${wide.den}, ширина ${(18000 / wide.den).toFixed(0)} мм`,
+  );
 
   /* Что не влезло — уходит на следующий лист, а не ужимается. */
   const many = Array.from({ length: 8 }, (_, i) => ({

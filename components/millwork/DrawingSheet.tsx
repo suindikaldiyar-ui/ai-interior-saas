@@ -12,7 +12,8 @@ import { axonometryExtentMm } from '@/lib/millwork/axonometry';
 import { DEFAULT_PRODUCTION, type ProductionSettings } from '@/types/catalog';
 import SheetLayout, { type SheetViewNode } from './SheetLayout';
 import SheetNotes from './SheetNotes';
-import { PRODUCT_TITLE, positionCode } from '@/lib/millwork/positions';
+import { PRODUCT_TITLE, moduleNumbers, positionCode } from '@/lib/millwork/positions';
+import SheetLegend, { type LegendMaterial } from './SheetLegend';
 import { scaleLabel } from '@/lib/millwork/sheet';
 import {
   DRAW_FIELD,
@@ -133,6 +134,27 @@ export default function DrawingSheet({
    * модуля показывать нечего. Подпись «Разрез с наполнением» над пустым
    * корпусом — обещание, которого вид не выполняет.
    */
+  /*
+   * Номера модулей считаются ОДИН раз на лист и раздаются видам: фасад,
+   * разрез и детализировка обязаны показывать один и тот же номер, иначе
+   * цех сверяет деталь не с той позицией.
+   */
+  const positions = moduleNumbers(run);
+
+  /*
+   * МАТЕРИАЛЫ ЛЕГЕНДЫ — ИЗ КАТАЛОГА, а не из списка в коде. Тот же
+   * источник, что у выносок: не выбран артикул — так и написано.
+   */
+  const legendMaterials: LegendMaterial[] = (
+    [
+      ['Фасады', entryFor(FACADE_TARGET)],
+      ['Столешница', entryFor(COUNTERTOP_TARGET)],
+      ['Фартук', entryFor(APRON_TARGET)],
+    ] as const
+  ).flatMap(([where, entry]) =>
+    entry ? [{ where, name: entry.name_ru, article: entry.article }] : [],
+  );
+
   const pickedRow = findModuleRow(run, elevation.selectedModuleId);
   const insideTitle = !pickedRow
     ? 'Разрез: модуль не выбран'
@@ -170,18 +192,38 @@ export default function DrawingSheet({
    * напрямую. Выбирается самый крупный, при котором лист складывается
    * в одну страницу.
    */
+  /*
+   * РАСКЛАДКА ЛИСТА: ОДИН ВИД — ОДИН БЛОК.
+   *
+   *   ┌──────────────────────────────────────┐
+   *   │ Фасад ряда           — весь верх     │
+   *   ├──────────────────────────────────────┤
+   *   │ Разрез  │  Разрез с наполнением      │
+   *   ├──────────────────────────────────────┤
+   *   │ План                                 │
+   *   └──────────────────────────────────────┘
+   *
+   * Раньше три вида жались в одну полосу и выходили мелкими. Фасад —
+   * главный вид, по нему читают изделие, и делить с ним строку нечему.
+   * Разрезы читаются парой и потому стоят рядом. План — своей строкой.
+   *
+   * `breakRow` начинает новую строку; фасад и план стоят в своих строках
+   * поодиночке, потому что строку начинает и следующий за ними вид.
+   */
   const sizesFor = (den: ScaleDenominator) => [
     {
       id: 'elevation',
       title: 'Фасад ряда',
       widthMm: viewWidthMm(run.lengthMm, den, elevationSpan),
       heightMm: elevationReal.height / den,
+      breakRow: true,
     },
     {
       id: 'section',
       title: 'Разрез боковой',
       widthMm: sectionReal.width / den,
       heightMm: sectionReal.height / den,
+      breakRow: true,
     },
     {
       id: 'section-inside',
@@ -194,7 +236,7 @@ export default function DrawingSheet({
       title: 'План',
       widthMm: viewWidthMm(run.lengthMm, den),
       heightMm: planReal.height / den,
-      // План встаёт под фасадом, а не сбоку от разреза: так их и читают.
+      // План встаёт под разрезами, а не сбоку: так их и читают.
       breakRow: true,
     },
   ];
@@ -216,6 +258,12 @@ export default function DrawingSheet({
       title: 'Аксонометрия',
       widthMm: axonReal.width / axonDen,
       heightMm: axonReal.height / axonDen,
+      /*
+       * Объём — на ОТДЕЛЬНОМ листе. Первый лист остаётся чистым: на нём
+       * только виды, по которым снимают размеры. По аксонометрии не мерят,
+       * и место рядом с фасадом она занимает зря.
+       */
+      breakPage: true,
     },
     {
       id: 'axon-inside',
@@ -227,11 +275,38 @@ export default function DrawingSheet({
 
   const axon = fitExtra(sizesFor(den), axonSizesFor, format);
 
+  /*
+   * ШИРИНА ВИДА НА БУМАГЕ — ЕДИНСТВЕННЫЙ МОСТ К ТОЛЩИНАМ ЛИНИЙ.
+   *
+   * Толщины заданы в миллиметрах бумаги (`LINE_MM`), а рисуются виды в
+   * своих единицах: у фасада это условные единицы поля, у разреза —
+   * натурные миллиметры. Пересчёт возможен только здесь, где известно и
+   * то, и другое: вид шириной `viewBox` печатается полосой `widthMm`.
+   *
+   * Без него контур при 1:25 и при 1:50 выглядел бы разной толщины — то
+   * есть ровно так же неверно, как размер, снятый не в масштабе.
+   */
+  const paperWidth = new Map(sizesFor(den).map((view) => [view.id, view.widthMm]));
+  const axonWidth = new Map(axonSizesFor(axon.den).map((view) => [view.id, view.widthMm]));
+
   const render: Record<string, ReactNode> = {
-    elevation: <ElevationDrawing run={run} {...elevation} leaders={leaders} />,
-    section: <SectionDrawing run={run} />,
+    elevation: (
+      <ElevationDrawing
+        run={run}
+        {...elevation}
+        leaders={leaders}
+        paperWidthMm={paperWidth.get('elevation')}
+        positions={positions}
+      />
+    ),
+    section: <SectionDrawing run={run} paperWidthMm={paperWidth.get('section')} />,
     'section-inside': (
-      <SectionDrawing run={run} inside selectedModuleId={elevation.selectedModuleId} />
+      <SectionDrawing
+        run={run}
+        inside
+        selectedModuleId={elevation.selectedModuleId}
+        paperWidthMm={paperWidth.get('section-inside')}
+      />
     ),
     plan: (
       <PlanDrawing
@@ -240,10 +315,24 @@ export default function DrawingSheet({
         issues={issues}
         selectedModuleId={elevation.selectedModuleId}
         onSelect={elevation.onSelect}
+        paperWidthMm={paperWidth.get('plan')}
       />
     ),
-    axon: <AxonometryDrawing run={run} production={production} />,
-    'axon-inside': <AxonometryDrawing run={run} mode="inside" production={production} />,
+    axon: (
+      <AxonometryDrawing
+        run={run}
+        production={production}
+        paperWidthMm={axonWidth.get('axon')}
+      />
+    ),
+    'axon-inside': (
+      <AxonometryDrawing
+        run={run}
+        mode="inside"
+        production={production}
+        paperWidthMm={axonWidth.get('axon-inside')}
+      />
+    ),
   };
 
   const views: SheetViewNode[] = [
@@ -256,7 +345,14 @@ export default function DrawingSheet({
   ];
 
   return (
-    <div className="mw-sheet mx-auto w-full p-4 sm:p-6 print:border-0 print:p-0 print:shadow-none">
+    /*
+     * ЛИСТ ЛЕЖИТ НА ТЁМНОМ ИНТЕРФЕЙСЕ, КАК БУМАГА НА СТОЛЕ.
+     *
+     * `mw-paper` переопределяет цвета чертежа НА КОНТЕЙНЕРЕ: белый фон,
+     * чёрные линии — и на экране тоже, а не только в печати. За его
+     * пределами приложение остаётся тёмным.
+     */
+    <div className="mw-paper mw-sheet mx-auto w-full p-4 sm:p-6 print:border-0 print:p-0 print:shadow-none">
       <SheetLayout
         format={format}
         views={views}
@@ -277,7 +373,9 @@ export default function DrawingSheet({
             }}
             pending={pending}
             notes={notes}
-          />
+          >
+            <SheetLegend materials={legendMaterials} />
+          </SheetNotes>
         )}
       />
     </div>

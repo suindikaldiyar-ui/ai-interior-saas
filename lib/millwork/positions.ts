@@ -1,4 +1,4 @@
-import type { ZoneKind } from '@/types/millwork';
+import type { Module, Run, ZoneKind } from '@/types/millwork';
 
 /**
  * НУМЕРАЦИЯ ПОЗИЦИЙ.
@@ -58,3 +58,31 @@ export function projectPositions(zones: ZoneKind[]): ProjectPosition[] {
     title: PRODUCT_TITLE[zone],
   }));
 }
+
+/* ─────────────────────────  Номера модулей на видах  ───────────────────────── */
+
+/**
+ * НОМЕР МОДУЛЯ — то, по чему цех сверяет деталь с чертежом.
+ *
+ * `МИ-поз.N` нумерует ИЗДЕЛИЕ на объекте, а внутри изделия свои номера у
+ * модулей: их пишут в кружке прямо на виде, и по ним читают детализировку.
+ * Без номера на виде список деталей приходится сопоставлять по подписи
+ * («Карго», «Дверца») — а таких подписей на ряде несколько одинаковых.
+ *
+ * Порядок фиксирован: нижний ряд слева направо, затем верхний слева
+ * направо. Номер попадает в подписанные документы, поэтому он обязан
+ * получаться из состава детерминированно, а не из счётчика отрисовки.
+ */
+export function moduleNumbers(run: Pick<Run, 'modules' | 'upperSegments'>): Map<string, number> {
+  const ordered: Module[] = [
+    ...[...run.modules].sort((a, b) => a.offsetMm - b.offsetMm),
+    ...run.upperSegments
+      .flatMap((segment) => segment.modules)
+      .sort((a, b) => a.offsetMm - b.offsetMm),
+  ];
+
+  return new Map(ordered.map((unit, i) => [unit.id, i + 1]));
+}
+
+/** Диаметр кружка позиции на бумаге, миллиметры. Отраслевой размер. */
+export const POSITION_CIRCLE_MM = 7;
