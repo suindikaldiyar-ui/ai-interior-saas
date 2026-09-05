@@ -355,13 +355,33 @@ export function applyOps({ run, requirements, ops, openings = [] }: ApplyOpsInpu
       )
     : [];
 
-  nextRun.upperSegments = nextRun.upperSegments.map((segment) => ({
-    ...segment,
-    modules: segment.modules.map((unit) => {
+  /*
+   * ВЕРХНИЙ РЯД ТОЖЕ ПОЛУЧАЕТ НАПОЛНЕНИЕ.
+   *
+   * `buildUpperRow` его не считает — это делает `buildRun` отдельным
+   * проходом по обоим рядам, — а здесь верхний ряд пересобирается сам по
+   * себе. Без этой строки после ЛЮБОЙ правки все верхние модули оставались
+   * без `fill`: полки пропадали из раскроя (цех недопиливал), из разреза
+   * «с наполнением» и из 3D. В смете это не было видно, потому что она
+   * считала по одной полке на модуль независимо от `fill`, — маскировка
+   * держалась ровно до того дня, когда смету научили читать данные.
+   *
+   * `applyVariant` обнуляет `fill` намеренно (у карго и сушилки начинка
+   * своя), поэтому пересчёт идёт ПОСЛЕ восстановления вариантов.
+   */
+  nextRun.upperSegments = nextRun.upperSegments.map((segment) => {
+    const restored = segment.modules.map((unit) => {
       const kept = upperVariants.get(unit.id);
       return kept && !unit.appliance ? applyVariant(unit, kept) : unit;
-    }),
-  }));
+    });
+
+    return {
+      ...segment,
+      modules: restored.map((unit, i) =>
+        unit.fill ? unit : { ...unit, fill: defaultFill(unit, shell, i, restored.length) },
+      ),
+    };
+  });
 
   // Отпечаток пересчитывается вместе с составом — иначе смета и чертёж
   // разойдутся молча, а это ровно то, от чего он защищает.

@@ -18,6 +18,12 @@ export function ratesFromCatalog(items: CatalogEntryFull[]): RateTable {
 /** Статьи, без которых смета бессмысленна. */
 export const REQUIRED_RATE_KEYS = [
   'ldsp_carcass',
+  /*
+   * Полки — отдельная статья, и без ставки они посчитались бы по нулю.
+   * Молчаливый ноль здесь опаснее пустой сметы: цех пилит полки в каждом
+   * модуле, а в сумме их нет, и расхождение всплывает на производстве.
+   */
+  'shelf_panel',
   'front_panel',
   'pvc_edge',
   'countertop_ldsp',

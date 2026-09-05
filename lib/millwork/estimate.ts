@@ -47,7 +47,14 @@ const round3 = (v: number) => Math.round(v * 1000) / 1000;
 /* ─────────────────────────  Раскрой  ───────────────────────── */
 
 /**
- * Площадь деталей ЛДСП на модуль: два бока, дно, крыша и одна полка.
+ * КОРОБКА модуля: два бока, дно, крыша и вертикальная перегородка.
+ *
+ * ПОЛОК ЗДЕСЬ НЕТ НАМЕРЕННО — они считаются отдельной строкой по
+ * `fill.shelves`. Раньше сюда входила РОВНО ОДНА полка на модуль,
+ * захардкоженная, и это расходилось с раскроем в обе стороны сразу:
+ * в шкафу с открытыми полками цех пилил 22 детали, а клиент платил за 4;
+ * в тумбе с ящиками клиент платил за полку, которой в раскрое нет.
+ *
  * Задняя стенка идёт ХДФ и считается отдельной статьёй.
  */
 function carcassAreaM2(unit: Module, ceilingHeightMm: number, upperToCeiling: boolean): number {
@@ -62,9 +69,28 @@ function carcassAreaM2(unit: Module, ceilingHeightMm: number, upperToCeiling: bo
    * появляется деталь, которую цех выбросит.
    */
   const horizontals = (hasBottom(unit) ? 2 : 1) * w * d;
-  const shelf = unit.frontType === 'drawers' ? 0 : w * d;
 
-  return (sides + horizontals + shelf) / MM2_IN_M2;
+  /*
+   * Вертикальная перегородка: деталь во всю высоту корпуса. В раскрой она
+   * попадала, а в смету не входила вовсе — замерщик протягивал её на
+   * чертеже, и цех пилил лист, за который никто не заплатил.
+   */
+  const divider = unit.fill?.dividerMm ? h * d : 0;
+
+  return (sides + horizontals + divider) / MM2_IN_M2;
+}
+
+/**
+ * Полки модуля — СТОЛЬКО, СКОЛЬКО ИХ В `fill`.
+ *
+ * Один источник на смету, чертёж, 3D и раскрой. Второй расчёт здесь и был
+ * причиной расхождения: цех получал на распил другое количество деталей,
+ * чем то, за которое заплатил клиент.
+ */
+function shelfAreaM2(unit: Module): number {
+  const count = unit.fill?.shelves.length ?? 0;
+  if (count === 0) return 0;
+  return (count * unit.widthMm * moduleDepthMm(unit.kind)) / MM2_IN_M2;
 }
 
 function backPanelAreaM2(unit: Module, ceilingHeightMm: number, upperToCeiling: boolean): number {
@@ -163,41 +189,46 @@ function sectionDrafts(run: Run): Draft[] {
     const widthM = round3(unit.widthMm / MM_IN_M);
 
     switch (unit.section) {
+      /*
+       * ШТАНГИ — ИЗ `fill.rodsMm`, а не из вида секции.
+       *
+       * Раньше число выводилось из названия: `hanging_long` — одна,
+       * `hanging_double` — две. Сегодня это совпадает с `fill`, но это
+       * ДВА независимых источника, и расходятся такие пары молча. Плюс
+       * штанга, которую замерщик добавил руками, не оплачивалась вовсе.
+       */
       case 'hanging_long':
+      case 'hanging_double': {
+        const rods = unit.fill?.rodsMm.length || (unit.section === 'hanging_double' ? 2 : 1);
         drafts.push(
-          { key: 'wardrobe_rod', title: 'Штанга для одежды', unit: 'mp', quantity: widthM },
-          { key: 'rod_holder', title: 'Держатели штанги', unit: 'pcs', quantity: 2 },
+          {
+            key: 'wardrobe_rod',
+            title: 'Штанга для одежды',
+            unit: 'mp',
+            quantity: round2(widthM * rods),
+          },
+          { key: 'rod_holder', title: 'Держатели штанги', unit: 'pcs', quantity: 2 * rods },
         );
-        break;
-
-      case 'hanging_double':
-        // Две штанги в одной секции: 1000 сверху и 900 снизу.
-        drafts.push(
-          { key: 'wardrobe_rod', title: 'Штанга для одежды', unit: 'mp', quantity: round2(widthM * 2) },
-          { key: 'rod_holder', title: 'Держатели штанги', unit: 'pcs', quantity: 4 },
-        );
-        break;
-
-      case 'shelves':
-      case 'open': {
-        // Шаг полок 350 мм: сколько их влезает по высоте секции.
-        const usableH = spec.heightMm > 0 ? spec.heightMm : heightMm;
-        const count = Math.max(1, Math.floor(usableH / 350));
-        drafts.push({
-          key: 'shelf_panel',
-          title: 'Полки',
-          unit: 'm2',
-          quantity: round2(count * widthM * (zone.depthMm / MM_IN_M)),
-        });
         break;
       }
+
+      /*
+       * Полки секций СЧИТАЮТСЯ ВЫШЕ, вместе со всеми остальными, по
+       * `fill.shelves`. Здесь стоял второй расчёт — «шаг 350 мм, сколько
+       * влезет», — и он не только расходился с раскроем, но и шёл ПОВЕРХ
+       * полки, уже заложенной в корпус: одни и те же полки клиент
+       * оплачивал дважды.
+       */
+      case 'shelves':
+      case 'open':
+        break;
 
       case 'drawers':
         drafts.push({
           key: 'drawer_box',
           title: 'Ящики в сборе',
           unit: 'set',
-          quantity: unit.drawerCount || spec.drawerCount,
+          quantity: unit.fill?.drawerHeights.length || unit.drawerCount || spec.drawerCount,
         });
         break;
 
@@ -294,6 +325,7 @@ export function buildEstimateDrafts(run: Run): Draft[] {
   );
 
   let carcass = 0;
+  let shelves = 0;
   let backs = 0;
   let fronts = 0;
   let edge = 0;
@@ -304,6 +336,7 @@ export function buildEstimateDrafts(run: Run): Draft[] {
 
   for (const unit of modules) {
     carcass += carcassAreaM2(unit, ceiling, upperToCeiling);
+    shelves += shelfAreaM2(unit);
     backs += backPanelAreaM2(unit, ceiling, upperToCeiling);
     fronts += frontAreaM2(unit, ceiling, upperToCeiling);
     edge += edgeBandingMm(unit, ceiling, upperToCeiling);
@@ -319,8 +352,14 @@ export function buildEstimateDrafts(run: Run): Draft[] {
     }
 
     if (unit.frontType === 'drawers') {
-      slides += unit.drawerCount;
-      handles += unit.drawerCount;
+      /*
+       * Число ящиков — из `fill`: высоты фронтов уходят в раскрой, а
+       * `drawerCount` рядом с ними лишь копия. Разойдутся — цех сделает
+       * на ящик больше или меньше, чем оплачено.
+       */
+      const drawers = unit.fill?.drawerHeights.length || unit.drawerCount;
+      slides += drawers;
+      handles += drawers;
     }
 
     /*
@@ -355,6 +394,15 @@ export function buildEstimateDrafts(run: Run): Draft[] {
 
   const drafts: Draft[] = [
     { key: carcassKey, title: carcassTitle, unit: 'm2', quantity: round2(carcass) },
+    /*
+     * ПОЛКИ ОТДЕЛЬНОЙ СТРОКОЙ — одна на весь ряд, по `fill.shelves`.
+     *
+     * Строка есть всегда, даже при нуле: пропадёт при нуле — и «полок нет»
+     * станет неотличимо от «полки забыли посчитать». Ровно так эта ошибка
+     * и прожила: в корпус была зашита одна полка на модуль, и её никто
+     * не видел.
+     */
+    { key: 'shelf_panel', title: 'Полки', unit: 'm2', quantity: round2(shelves) },
     { key: 'hdf_back', title: 'Задние стенки ХДФ', unit: 'm2', quantity: round2(backs) },
     { key: 'front_panel', title: 'Фасады', unit: 'm2', quantity: round2(fronts) },
     { key: 'pvc_edge', title: 'Кромка ПВХ', unit: 'mp', quantity: round2(edge / MM_IN_M) },

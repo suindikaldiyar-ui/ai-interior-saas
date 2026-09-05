@@ -94,6 +94,11 @@ import SectionDrawing from '../components/millwork/SectionDrawing';
 import PlanDrawing from '../components/millwork/PlanDrawing';
 import AxonometryDrawing from '../components/millwork/AxonometryDrawing';
 import { describeFront, interiorVisible } from '../lib/millwork/promptFronts';
+import {
+  REQUIRED_RATE_KEYS,
+  TYPICAL_PRICE_LIST,
+  missingRequiredRates,
+} from '../lib/millwork/rates';
 import { axonometryExtentMm, buildAxonometry, project } from '../lib/millwork/axonometry';
 import { carcassBoxes, moduleBoxes } from '../lib/millwork/cabinetBoxes';
 import { DEFAULT_PRODUCTION } from '../types/catalog';
@@ -3211,6 +3216,142 @@ console.log('\nКаждый вариант виден на чертеже');
   const once = glyphSignature(frontGlyph(display, 'fronts'));
   const twice = glyphSignature(frontGlyph(display, 'fronts'));
   check('рисунок варианта детерминирован', once === twice);
+}
+
+
+/* ──────────────  Правка наполнения обязана менять смету  ────────────── */
+
+/*
+ * ТОТ ЖЕ КЛАСС, ЧТО И СЕКЦИЯ ПРО ЛИСТ, но с другой стороны.
+ *
+ * Там данные менялись, а картинка нет. Здесь данные менялись, а СУММА нет:
+ * `carcassAreaM2` считала РОВНО ОДНУ полку на модуль независимо от того,
+ * сколько их в `fill`. Цех получал на распил другое количество деталей,
+ * чем то, за которое заплатил клиент, — и обе цифры видны одному человеку.
+ *
+ * Правило простое и проверяется буквально: изменилось число деталей в
+ * раскрое — обязана измениться сумма. Не изменилось — обязана остаться.
+ */
+
+console.log('\nПравка наполнения меняет смету');
+{
+  const run = buildRun(baseInput);
+  const target = allModules(run).find((u) => u.fill && u.kind !== 'filler' && !u.appliance);
+
+  if (!target) {
+    check('в ряду есть модуль с наполнением', false, 'не нашли ни одного');
+  } else {
+    const heightMm = moduleCarcassHeightMm(target, run);
+
+    const withFill = (source: Run, fill: Module['fill']): Run => {
+      const patch = (list: Module[]) =>
+        list.map((u) => (u.id === target.id ? { ...u, fill } : u));
+      return {
+        ...source,
+        modules: patch(source.modules),
+        upperSegments: source.upperSegments.map((seg) => ({
+          ...seg,
+          modules: patch(seg.modules),
+        })),
+      };
+    };
+
+    /** Сколько деталей уходит в цех. */
+    const partCount = (r: Run) => buildPanels({ run: r }).reduce((sum, p) => sum + p.qty, 0);
+    const total = (r: Run) => buildEstimate(r, 'optimal', DEMO_RATES).total;
+
+    const base = { parts: partCount(run), sum: total(run) };
+
+    const edits: { name: string; run: Run }[] = [
+      {
+        name: 'подвинули полку',
+        run: withFill(run, moveShelf(target.fill!, 0, target.fill!.shelves[0] + 192, heightMm).fill),
+      },
+      { name: 'сняли полку', run: withFill(run, removeShelf(target.fill!, 0)) },
+      { name: 'добавили полку', run: withFill(run, addShelf(target.fill!, 544, heightMm).fill) },
+      {
+        name: 'протянули перегородку',
+        run: withFill(run, { ...target.fill!, dividerMm: Math.round(target.widthMm / 2) }),
+      },
+    ];
+
+    for (const edit of edits) {
+      const parts = partCount(edit.run);
+      const sum = total(edit.run);
+      const partsChanged = parts !== base.parts;
+      const sumChanged = sum !== base.sum;
+
+      check(
+        `${edit.name}: деталей ${base.parts}→${parts}, сумма ${partsChanged ? 'обязана измениться' : 'обязана остаться'}`,
+        partsChanged === sumChanged,
+        partsChanged === sumChanged
+          ? `${base.sum} → ${sum}`
+          : partsChanged
+            ? 'ЦЕХ ПИЛИТ ДРУГОЕ КОЛИЧЕСТВО, А КЛИЕНТ ПЛАТИТ ТУ ЖЕ СУММУ'
+            : `сумма поехала без изменения раскроя: ${base.sum} → ${sum}`,
+      );
+    }
+
+    // Направление тоже проверяем: меньше деталей — дешевле, больше — дороже.
+    const fewer = total(withFill(run, removeShelf(target.fill!, 0)));
+    const more = total(withFill(run, addShelf(target.fill!, 544, heightMm).fill));
+    check('снятая полка удешевляет смету', fewer < base.sum, `${base.sum} → ${fewer}`);
+    check('добавленная полка удорожает смету', more > base.sum, `${base.sum} → ${more}`);
+
+    /*
+     * ГЛАВНАЯ СВЕРКА: число полок в смете и в раскрое — одно и то же,
+     * на каждом шаблоне и на каждой длине. Именно оно и разъезжалось.
+     */
+    let mismatched = 0;
+    let configs = 0;
+
+    for (const t of RUN_TEMPLATES) {
+      for (const len of [t.minLengthMm, Math.round((t.minLengthMm + t.maxLengthMm) / 2)]) {
+        let sample: Run;
+        try {
+          sample = buildRun({
+            ...baseInput,
+            lengthMm: len,
+            requirements: requirementsFromTemplate(t, DEMO_REQUIREMENTS.options),
+          });
+        } catch {
+          continue;
+        }
+
+        configs += 1;
+        const cut = buildPanels({ run: sample })
+          .filter((panel) => panel.name === 'Полка')
+          .reduce((sum, panel) => sum + panel.qty, 0);
+        const inFill = allModules(sample).reduce(
+          (sum, u) => sum + (u.fill?.shelves.length ?? 0),
+          0,
+        );
+        if (cut !== inFill) mismatched += 1;
+      }
+    }
+
+    check(
+      'полок в смете столько же, сколько в раскрое — на всех шаблонах',
+      mismatched === 0 && configs > 20,
+      `конфигураций ${configs}, расхождений ${mismatched}`,
+    );
+
+    /*
+     * Ставка полок обязана быть в списке обязательных: без неё строка
+     * посчиталась бы по нулю, и полки снова стали бы бесплатными — только
+     * теперь молча и целиком.
+     */
+    check(
+      'ставка полок объявлена обязательной',
+      (REQUIRED_RATE_KEYS as readonly string[]).includes('shelf_panel'),
+    );
+    check(
+      'в типовом прайсе все обязательные ставки есть',
+      missingRequiredRates(
+        Object.fromEntries(TYPICAL_PRICE_LIST.map((r) => [r.estimateKey, r.price])),
+      ).length === 0,
+    );
+  }
 }
 
 
