@@ -87,6 +87,13 @@ import {
   frontsBlock,
 } from '../lib/millwork/promptFronts';
 import { MODULE_VARIANTS, applyVariant } from '../lib/millwork/moduleVariants';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import ElevationDrawing from '../components/millwork/ElevationDrawing';
+import SectionDrawing from '../components/millwork/SectionDrawing';
+import PlanDrawing from '../components/millwork/PlanDrawing';
+import AxonometryDrawing from '../components/millwork/AxonometryDrawing';
+import { describeFront, interiorVisible } from '../lib/millwork/promptFronts';
 import { axonometryExtentMm, buildAxonometry, project } from '../lib/millwork/axonometry';
 import { carcassBoxes, moduleBoxes } from '../lib/millwork/cabinetBoxes';
 import { DEFAULT_PRODUCTION } from '../types/catalog';
@@ -117,7 +124,16 @@ import {
   DEMO_RATES,
   DEMO_REQUIREMENTS,
 } from '../lib/millwork/demo';
-import type { CommPoint, Opening, RunRequirements, SectionKind } from '../types/millwork';
+import type {
+  CommPoint,
+  Module,
+  ModuleVariantKind,
+  Opening,
+  Run,
+  RunRequirements,
+  SectionKind,
+} from '../types/millwork';
+import { allModules } from '../lib/millwork/layout';
 import {
   DEFAULT_TOLERANCE_MM,
   MAX_READY_PER_ZONE,
@@ -3195,6 +3211,220 @@ console.log('\nКаждый вариант виден на чертеже');
   const once = glyphSignature(frontGlyph(display, 'fronts'));
   const twice = glyphSignature(frontGlyph(display, 'fronts'));
   check('рисунок варианта детерминирован', once === twice);
+}
+
+
+/* ──────────────  Правка наполнения обязана менять лист  ────────────── */
+
+/*
+ * ТРЕТИЙ РАЗ ОДИН И ТОТ ЖЕ КЛАСС ОШИБКИ: данные меняются, картинка нет.
+ *
+ * Сначала пенал терял `kind` и приезжал в 3D нижним модулем. Потом разные
+ * варианты выглядели на чертеже одинаково. Теперь разрез «с наполнением»
+ * рисовал полки по выдуманным долям 0.33 / 0.66 и не менялся никогда.
+ *
+ * Общее у всех трёх одно: проверялись ЧИСЛА, а не то, что нарисовано.
+ * Поэтому здесь виды РИСУЮТСЯ по-настоящему и сравнивается разметка до и
+ * после правки.
+ *
+ * Проверяется не «хоть что-то поменялось», а ТАБЛИЦА ОЖИДАНИЙ по каждому
+ * виду. Так ловится и регресс (вид перестал реагировать), и сюрприз (вид,
+ * которому нутро не видно, вдруг начал его показывать).
+ */
+
+console.log('\nПравка наполнения меняет лист');
+{
+  const run = buildRun(baseInput);
+  const target = allModules(run).find((u) => u.fill && u.kind !== 'filler' && !u.appliance);
+
+  if (!target) {
+    check('в ряду есть модуль с наполнением', false, 'не нашли ни одного');
+  } else {
+    const heightMm = moduleCarcassHeightMm(target, run);
+
+    /** Ровно то, что делает `changeFill` в рабочем месте. */
+    const withFill = (source: Run, fill: Module['fill']): Run => {
+      const patch = (list: Module[]) =>
+        list.map((u) => (u.id === target.id ? { ...u, fill } : u));
+      return {
+        ...source,
+        modules: patch(source.modules),
+        upperSegments: source.upperSegments.map((seg) => ({
+          ...seg,
+          modules: patch(seg.modules),
+        })),
+      };
+    };
+
+    /**
+     * Все виды листа. `shows` — показывает ли вид наполнение.
+     *
+     * `false` здесь не отговорка, а утверждение: у фасада с закрытыми
+     * дверцами и у плана сверху нутра не видно физически. Начнёт меняться —
+     * тест упадёт, и правильно сделает: значит на чертеже появились полки
+     * сквозь дверцу.
+     */
+    const views: { name: string; shows: boolean; render: (r: Run) => string }[] = [
+      {
+        name: 'фасад · с фасадами',
+        shows: false,
+        render: (r) => renderToStaticMarkup(createElement(ElevationDrawing, { run: r, mode: 'fronts' })),
+      },
+      {
+        name: 'фасад · внутри',
+        shows: true,
+        render: (r) => renderToStaticMarkup(createElement(ElevationDrawing, { run: r, mode: 'inside' })),
+      },
+      {
+        name: 'разрез боковой',
+        shows: false,
+        render: (r) => renderToStaticMarkup(createElement(SectionDrawing, { run: r })),
+      },
+      {
+        name: 'разрез с наполнением',
+        shows: true,
+        render: (r) =>
+          renderToStaticMarkup(
+            createElement(SectionDrawing, { run: r, inside: true, selectedModuleId: target.id }),
+          ),
+      },
+      {
+        name: 'план',
+        shows: false,
+        render: (r) =>
+          renderToStaticMarkup(createElement(PlanDrawing, { run: r, comms: [], issues: [] })),
+      },
+      {
+        name: 'аксонометрия · наполнение',
+        shows: true,
+        render: (r) =>
+          renderToStaticMarkup(
+            createElement(AxonometryDrawing, { run: r, mode: 'inside', production: DEFAULT_PRODUCTION }),
+          ),
+      },
+      {
+        name: 'детализировка',
+        shows: true,
+        render: (r) => JSON.stringify(buildPanels({ run: r })),
+      },
+    ];
+
+    /*
+     * Снятие и добавление меняют СОСТАВ деталей, сдвиг — только положение.
+     * Поэтому детализировка на сдвиг не реагирует: в раскрое лежат размеры
+     * и количество, а не высота присадки.
+     */
+    const edits: { name: string; run: Run; countChanges: boolean }[] = [
+      {
+        name: 'подвинули полку',
+        run: withFill(run, moveShelf(target.fill!, 0, target.fill!.shelves[0] + 192, heightMm).fill),
+        countChanges: false,
+      },
+      { name: 'сняли полку', run: withFill(run, removeShelf(target.fill!, 0)), countChanges: true },
+      {
+        name: 'добавили полку',
+        run: withFill(run, addShelf(target.fill!, 544, heightMm).fill),
+        countChanges: true,
+      },
+    ];
+
+    for (const edit of edits) {
+      check(
+        `${edit.name}: ряд действительно изменился`,
+        runFingerprint(edit.run) !== run.fingerprint,
+        `${run.fingerprint} → ${runFingerprint(edit.run)}`,
+      );
+    }
+
+    let reacted = 0;
+
+    for (const view of views) {
+      const before = view.render(run);
+
+      for (const edit of edits) {
+        const changed = view.render(edit.run) !== before;
+        const expected = view.shows && (view.name !== 'детализировка' || edit.countChanges);
+        if (changed) reacted += 1;
+
+        check(
+          `${view.name} · ${edit.name}: ${expected ? 'вид меняется' : 'вид не меняется'}`,
+          changed === expected,
+          changed === expected
+            ? ''
+            : expected
+              ? 'ДАННЫЕ ИЗМЕНИЛИСЬ, А КАРТИНКА НЕТ — вид рисует мимо fill'
+              : 'вид показал нутро там, где его не видно — полки сквозь фасад',
+        );
+      }
+    }
+
+    /*
+     * Главный инвариант секции: правка, меняющая отпечаток, обязана быть
+     * ВИДНА хоть где-то. Пройди она молча — клиент подписал бы одно,
+     * а цех сделал другое.
+     */
+    check(
+      'ни одна правка наполнения не проходит для листа незаметно',
+      reacted >= edits.length,
+      `видимых изменений: ${reacted}`,
+    );
+
+    /* ── Промпт: наполнение только там, где его видно ── */
+    const like = (u: Module) => ({
+      widthMm: u.widthMm,
+      offsetMm: u.offsetMm,
+      kind: u.kind,
+      appliance: u.appliance,
+      variant: u.variant,
+      frontType: u.frontType,
+      drawerCount: u.drawerCount,
+      fill: u.fill
+        ? { shelves: u.fill.shelves, rodsMm: u.fill.rodsMm, drawerHeights: u.fill.drawerHeights }
+        : undefined,
+    });
+
+    const bare = { ...target, appliance: undefined, column: undefined } as Module;
+    const openNiche = like({ ...bare, variant: 'upper_open', frontType: 'none' } as Module);
+    const solidDoor = like({ ...bare, variant: 'door', frontType: 'door' } as Module);
+
+    const shelves = openNiche.fill?.shelves ?? [];
+    const nicheText = describeFront(openNiche).text;
+
+    check(
+      'у открытой ниши полки названы числом и высотами',
+      nicheText.includes(`РОВНО ${shelves.length}`) &&
+        shelves.every((mm) => nicheText.includes(String(mm))),
+      nicheText.slice(0, 95),
+    );
+    check(
+      'за глухим фасадом полки в промпт НЕ уходят',
+      !/РОВНО \d+ полк/.test(describeFront(solidDoor).text),
+      describeFront(solidDoor).text.slice(0, 70),
+    );
+    check(
+      'наполнение видно только у прозрачных и открытых модулей',
+      interiorVisible(openNiche) && !interiorVisible(solidDoor),
+    );
+
+    /*
+     * Признак прозрачности живёт на спецификации варианта, а рисунок стекла —
+     * в `frontGlyph`. Два списка обязаны совпадать: разойдутся — промпт
+     * опишет полки там, где чертёж рисует глухую панель.
+     */
+    const kinds = Object.keys(MODULE_VARIANTS) as ModuleVariantKind[];
+    const glassByGlyph = kinds
+      .filter((kind) =>
+        frontGlyph(applyVariant(bare, kind), 'fronts').some((el) => el.kind === 'glass'),
+      )
+      .sort();
+    const glassBySpec = kinds.filter((kind) => MODULE_VARIANTS[kind].transparentFront).sort();
+
+    check(
+      'прозрачные варианты в промпте и на чертеже — один список',
+      JSON.stringify(glassByGlyph) === JSON.stringify(glassBySpec),
+      `рисунок: ${glassByGlyph.join(',')} | спецификация: ${glassBySpec.join(',')}`,
+    );
+  }
 }
 
 

@@ -444,6 +444,14 @@ export type RunModuleLike = {
    * картинке — обычный шкаф.
    */
   variant?: string;
+  /**
+   * Наполнение модуля: полки, штанги, фронты ящиков.
+   *
+   * Нужно промпту визуализации: замерщик двигает полки, а модель без этих
+   * чисел расставляет свои. Описывается ТОЛЬКО там, где наполнение видно
+   * снаружи — см. `interiorVisible` в `promptFronts`.
+   */
+  fill?: { shelves: number[]; rodsMm: number[]; drawerHeights: number[] };
 };
 
 export function modulesFromRun(

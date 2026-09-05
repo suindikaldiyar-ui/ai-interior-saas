@@ -15,7 +15,7 @@
     "test:capture": "node scripts/verify-capture.mjs",
     "test:catalog": "tsx scripts/verify-catalog.ts",
     "test:rls": "node scripts/verify-rls.mjs",
-    "test:millwork": "tsx scripts/verify-millwork.ts",
+    "test:millwork": "tsx --tsconfig tsconfig.scripts.json scripts/verify-millwork.ts",
     "test:survey": "tsx scripts/verify-survey.ts",
     "test:render": "node scripts/verify-render-live.mjs",
     "test:demo": "node scripts/verify-demo.mjs",

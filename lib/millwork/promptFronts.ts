@@ -36,18 +36,25 @@ function applianceTitle(kind: string | undefined): string {
  */
 function variantText(variant: ModuleVariantKind, unit: RunModuleLike): string | null {
   switch (variant) {
+    /*
+     * У прозрачных и открытых модулей текст описывает ТОЛЬКО ФАСАД.
+     * Что внутри — говорит `fillText` по числам из `fill`. Раньше здесь
+     * стояло «внутри стеклянные полки», и на пустой секции промпт
+     * противоречил сам себе: «видны полки» и «полок нет вовсе» в одной
+     * строке. Модель разрешает такое противоречие в свою пользу.
+     */
     case 'upper_glass':
-      return 'СТЕКЛЯННАЯ ДВЕРЬ В РАМЕ: прозрачное стекло, сквозь него видны полки';
+      return 'СТЕКЛЯННАЯ ДВЕРЬ В РАМЕ: прозрачное стекло, нутро видно насквозь';
     case 'upper_display':
       return (
-        'ВИТРИНА: прозрачная стеклянная дверь в раме, внутри стеклянные полки, ' +
-        'LED-лента по контуру, подсветка ВКЛЮЧЕНА'
+        'ВИТРИНА: прозрачная стеклянная дверь в раме, LED-лента по контуру, ' +
+        'подсветка ВКЛЮЧЕНА, нутро видно насквозь'
       );
     case 'tall_display':
-      return 'ВИТРИНА во всю высоту: стеклянная дверь, полки видны, подсветка включена';
+      return 'ВИТРИНА во всю высоту: стеклянная дверь в раме, подсветка включена';
     case 'upper_open':
     case 'open_base':
-      return 'ОТКРЫТАЯ НИША без фасада: видны полки и то, что на них стоит';
+      return 'ОТКРЫТАЯ НИША без фасада: нутро видно целиком';
     case 'upper_micro':
       return 'открытая ниша под микроволновку: прибор стоит внутри, дверцы нет';
     case 'cargo':
@@ -74,12 +81,91 @@ function variantText(variant: ModuleVariantKind, unit: RunModuleLike): string | 
   }
 }
 
+/* ─────────────────  Наполнение: только там, где его видно  ───────────────── */
+
+/**
+ * ВИДНО ЛИ НАПОЛНЕНИЕ СНАРУЖИ.
+ *
+ * Это главный вопрос всего блока. За глухим фасадом полок НЕ ВИДНО, и если
+ * написать их в промпт, модель нарисует полки СКВОЗЬ ДВЕРЦУ — рентген
+ * вместо кухни. Поэтому наполнение описывается ровно там, где оно
+ * физически видно, и различается это двумя фактами из данных:
+ *
+ *   1. `frontType === 'none'` — фасада нет вовсе: открытая ниша, ниша под
+ *      микроволновку, открытая полка;
+ *   2. `MODULE_VARIANTS[variant].transparentFront` — фасад прозрачный:
+ *      витрина и стекло в раме. Одного `frontType` тут мало: у витрины он
+ *      `door`, ровно как у глухой створки.
+ *
+ * Второй признак живёт НА СПЕЦИФИКАЦИИ ВАРИАНТА, а не списком здесь: список
+ * в промпте разъехался бы с чертежом на первом же новом варианте. Что он
+ * совпадает с рисунком (`frontGlyph` даёт стекло ровно у этих вариантов),
+ * проверяет приёмка.
+ */
+export function interiorVisible(unit: RunModuleLike): boolean {
+  // Прибор занимает модуль целиком: полок за ним нет и быть не может.
+  if (unit.appliance || unit.column) return false;
+  if (unit.frontType === 'none') return true;
+
+  const variant = unit.variant as ModuleVariantKind | undefined;
+  return Boolean(variant && MODULE_VARIANTS[variant]?.transparentFront);
+}
+
+function shelfWord(count: number): string {
+  if (count === 1) return 'полка';
+  return count >= 2 && count <= 4 ? 'полки' : 'полок';
+}
+
+/**
+ * Наполнение числами.
+ *
+ * ЗАПРЕТ НАЗЫВАЕТСЯ ЧИСЛОМ, А НЕ СЛОВОМ. «С полками» модель читает как
+ * приглашение расставить столько, сколько ей покажется правильным; «ровно
+ * 2 полки на высотах 352 и 704 мм» — как ограничение. Числа берутся из
+ * `fill` и руками здесь не пишутся.
+ *
+ * Пустая открытая ниша называется пустой ЯВНО: молчание про полки в нише
+ * модель заполняет полками.
+ */
+export function fillText(unit: RunModuleLike): string | null {
+  if (!interiorVisible(unit)) return null;
+
+  const fill = unit.fill;
+  if (!fill) return null;
+
+  const parts: string[] = [];
+
+  if (fill.shelves.length > 0) {
+    const heights = fill.shelves.join(', ');
+    parts.push(
+      `РОВНО ${fill.shelves.length} ${shelfWord(fill.shelves.length)} ` +
+        `на ${fill.shelves.length === 1 ? 'высоте' : 'высотах'} ${heights} мм от дна модуля`,
+    );
+  } else {
+    // Молчание про полки в открытой нише модель заполняет полками.
+    parts.push('полок НЕТ ВОВСЕ — секция пустая');
+  }
+
+  if (fill.rodsMm.length > 0) {
+    parts.push(
+      `${fill.rodsMm.length === 1 ? 'штанга' : `штанг ${fill.rodsMm.length}`} ` +
+        `на ${fill.rodsMm.join(', ')} мм`,
+    );
+  }
+
+  return `внутри ${parts.join(', ')}`;
+}
+
 /** Описание одного модуля: диапазон по стене и что видно снаружи. */
 export function describeFront(unit: RunModuleLike): FrontDescription {
   const from = Math.round(unit.offsetMm);
   const to = Math.round(unit.offsetMm + unit.widthMm);
 
-  const drawerCount = Number(unit.drawerCount ?? 0);
+  /*
+   * Число ящиков берём из `fill`, если оно там есть: высоты фронтов —
+   * то же, что уходит в раскрой, а `drawerCount` рядом с ним лишь копия.
+   */
+  const drawerCount = unit.fill?.drawerHeights.length || Number(unit.drawerCount ?? 0);
   const variant = unit.variant as ModuleVariantKind | undefined;
 
   let text: string;
@@ -122,7 +208,14 @@ export function describeFront(unit: RunModuleLike): FrontDescription {
     text = 'глухой фасад — цельная панель во всю высоту модуля';
   }
 
-  return { fromMm: from, toMm: to, text, drawerFronts };
+  /*
+   * Наполнение приклеивается ПОСЛЕ описания фасада и только там, где его
+   * видно. У глухого фасада строка остаётся прежней — иначе модель
+   * нарисует полки сквозь дверцу.
+   */
+  const inside = fillText(unit);
+
+  return { fromMm: from, toMm: to, text: inside ? `${text}; ${inside}` : text, drawerFronts };
 }
 
 /** Все модули ряда, сверху вниз по рядам и слева направо. */
@@ -199,6 +292,16 @@ export function frontRules(moduleCount: number): string {
 ОТКРЫТЫЕ СЕКЦИИ И ВИТРИНЫ ОСТАЮТСЯ ОТКРЫТЫМИ.
 Витрина — прозрачная дверь в раме, сквозь неё видны полки и подсветка.
 Закрыть её глухим фасадом — ошибка. Открытая ниша остаётся без дверцы.
+
+НАПОЛНЕНИЕ — ПО ЧИСЛАМ, А НЕ ПО ВКУСУ.
+Где выше сказано «внутри РОВНО N полок на высотах …» — полок ровно N и
+на этих высотах. Не добавлять и не убирать ни одной. Где сказано
+«полок НЕТ ВОВСЕ» — секция пустая, полок в ней не рисовать.
+
+ЗА ГЛУХИМ ФАСАДОМ НИЧЕГО НЕ ВИДНО.
+Если у модуля не названо, что внутри, — значит фасад непрозрачный, и
+внутренности не показываются вовсе. Полки, видимые сквозь дверцу, —
+ошибка: это рентген, а не кухня.
 
 СОСТАВ НЕ ДОПОЛНЯЕТСЯ.
 Модулей ровно ${moduleCount}. Не добавлять шкафы, полки, ниши и приборы,

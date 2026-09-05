@@ -152,6 +152,18 @@ export default function KitchenScene({
           variant: unit.variant,
           frontType: unit.frontType,
           drawerCount: unit.drawerCount,
+          /*
+           * Наполнение: точные полки и штанги. Без них модель расставляет
+           * свои, и клиент видит на картинке не то, что двигал на чертеже.
+           * В промпт они попадут только у модулей с видимым нутром.
+           */
+          fill: unit.fill
+            ? {
+                shelves: unit.fill.shelves,
+                rodsMm: unit.fill.rodsMm,
+                drawerHeights: unit.fill.drawerHeights,
+              }
+            : undefined,
         })),
         /*
          * Верхний ряд отдельным списком: по одному clay-кадру модель
@@ -176,6 +188,18 @@ export default function KitchenScene({
             frontType: unit.frontType,
             drawerCount: unit.drawerCount,
             variant: unit.variant,
+            /*
+             * Наполнение: точные полки и штанги. Без них модель расставляет
+             * свои, и клиент видит на картинке не то, что двигал на чертеже.
+             * В промпт они попадут только у модулей с видимым нутром.
+             */
+            fill: unit.fill
+              ? {
+                  shelves: unit.fill.shelves,
+                  rodsMm: unit.fill.rodsMm,
+                  drawerHeights: unit.fill.drawerHeights,
+                }
+              : undefined,
           })),
           /*
            * Вытяжка живёт в верхнем ряду, а не в списке модулей ряда.

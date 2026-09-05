@@ -56,6 +56,20 @@ export type ModuleVariantSpec = {
    * по этому полю деталь пропадает из раскроя и из площади ЛДСП.
    */
   noBottom?: boolean;
+  /**
+   * ФАСАД ПРОЗРАЧНЫЙ: сквозь него видно наполнение.
+   *
+   * `frontType` этого не различает — у витрины он `door`, ровно как у
+   * глухой створки. А разница принципиальная для визуализации: за глухим
+   * фасадом полок НЕ ВИДНО, и стоит описать их в промпте — модель начнёт
+   * рисовать полки сквозь дверцы.
+   *
+   * Признак живёт здесь, рядом с `frontType`, а не списком в промпте:
+   * второй список разъехался бы с первым на первом же новом варианте.
+   * Совпадение с рисунком чертежа (`frontGlyph` рисует стекло ровно у этих
+   * вариантов) сверяет приёмка, а не надежда.
+   */
+  transparentFront?: boolean;
 };
 
 /**
@@ -193,6 +207,8 @@ export const MODULE_VARIANTS: Record<ModuleVariantKind, ModuleVariantSpec> = {
     minWidthMm: 300,
     maxWidthMm: 900,
     frontType: 'door',
+    // Сквозь стекло наполнение видно — значит его описываем и в промпте.
+    transparentFront: true,
     /*
      * Ограничение в 900 мм — это про ОДНУ створку: шире неё стекло
      * провисает. На модуле 1200 мм ставят две по 600, и запрещать
@@ -213,6 +229,8 @@ export const MODULE_VARIANTS: Record<ModuleVariantKind, ModuleVariantSpec> = {
     minWidthMm: 300,
     maxWidthMm: 900,
     frontType: 'door',
+    // Сквозь стекло наполнение видно — значит его описываем и в промпте.
+    transparentFront: true,
     // Та же причина, что у «стекла в раме»: предел на створку, не на модуль.
     anyWidth: true,
     estimateKeys: ['glass_front', 'led_display'],
@@ -294,6 +312,8 @@ export const MODULE_VARIANTS: Record<ModuleVariantKind, ModuleVariantSpec> = {
     minWidthMm: 400,
     maxWidthMm: 600,
     frontType: 'door',
+    // Сквозь стекло наполнение видно — значит его описываем и в промпте.
+    transparentFront: true,
     estimateKeys: ['glass_front', 'led_display'],
   },
   tall_cargo: {
