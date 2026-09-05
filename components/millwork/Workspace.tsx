@@ -21,7 +21,6 @@ import ArrangementCards from './ArrangementCards';
 import RunEditor, { type CompositionPatch } from './RunEditor';
 import SolutionGallery from './SolutionGallery';
 import StepBar, { type StepKey } from './StepBar';
-import { openablePartIds } from './cabinet3d/Cabinet3D';
 import SurveyPanel from './SurveyPanel';
 import SurveySheet from './SurveySheet';
 import TemplatePicker from './TemplatePicker';
@@ -66,7 +65,6 @@ import {
 import type { ProductionSettings } from '@/types/catalog';
 import {
   DEFAULT_SCENE_VIEW,
-  SCENE_VIEW_LABEL,
   type SceneView,
 } from '@/lib/cameraFraming';
 import type { RunAngle } from '@/types/render';
@@ -108,6 +106,24 @@ import type {
  * открываться быстро — замерщик стоит с планшетом в чужой квартире.
  */
 const KitchenScene = dynamic(() => import('./KitchenScene'), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-full items-center justify-center text-[13px] text-graphiteMw">
+      Собираем сцену…
+    </div>
+  ),
+});
+
+/*
+ * Техническая аксонометрия — то, что видит замерщик на виде «3D».
+ *
+ * Она заменила интерьерную сцену В ИНТЕРФЕЙСЕ, но не в продукте: старая
+ * `KitchenScene` осталась смонтированной за экраном, потому что именно она
+ * регистрирует захват кадра (`registerCapture` внутри `RoomCanvas`) и даёт
+ * clay-проход для промпта визуализации. Вырви её — генерация перестанет
+ * работать, а узнается это только на первой отрисовке у клиента.
+ */
+const TechnicalScene = dynamic(() => import('./cabinet3d/TechnicalScene'), {
   ssr: false,
   loading: () => (
     <div className="flex h-full items-center justify-center text-[13px] text-graphiteMw">
@@ -242,17 +258,19 @@ export default function Workspace(props: WorkspaceProps) {
    * него не видно ни глубины, ни свеса столешницы, а мебель продаётся
    * именно объёмом.
    */
-  const [sceneView, setSceneView] = useState<SceneView>(DEFAULT_SCENE_VIEW);
+  /*
+   * Ракурс скрытой сцены зафиксирован: её больше никто не смотрит, она
+   * только снимает clay-кадр. Переключатель точек съёмки жил при
+   * интерьерном виде и вместе с ним ушёл.
+   */
+  const sceneView: SceneView = DEFAULT_SCENE_VIEW;
   const [estimateOpen, setEstimateOpen] = useState(false);
   const [renderAngle, setRenderAngle] = useState<RunAngle>('front');
   /*
    * Стиль выбирает человек, а не таблица комплектаций: бюджет и вкус —
    * разные вещи. Выбор живёт в состоянии объекта и переживает закрытие.
    */
-  const openParts = useInteriorStore((s) => s.openParts);
   const cutaway = useInteriorStore((s) => s.cutaway);
-  const setOpenParts = useInteriorStore((s) => s.setOpenParts);
-  const closeAllParts = useInteriorStore((s) => s.closeAllParts);
   const setCutaway = useInteriorStore((s) => s.setCutaway);
 
   const [renderStyle, setRenderStyle] = useState<string>(
@@ -1544,19 +1562,29 @@ export default function Workspace(props: WorkspaceProps) {
               * `display:none` не годится — канвас нулевого размера не рисуется.
               */}
             <CatalogLoader />
+
+            {/*
+              * СТАРАЯ СЦЕНА ОСТАЁТСЯ — ЗА ЭКРАНОМ И НАВСЕГДА.
+              *
+              * Из интерфейса замерщика она ушла: интерьерная кухня со светом
+              * и тенями отвечала на вопрос «как это будет выглядеть», а на
+              * встрече спрашивают «как это устроено». Но снимает clay-кадр
+              * для визуализации именно она — `RoomCanvas` внутри неё
+              * регистрирует `captureScene`. Поэтому сцена смонтирована
+              * ВСЕГДА, независимо от выбранного вида.
+              *
+              * `display:none` по-прежнему не годится: канвас нулевого
+              * размера не рисуется, и захват снял бы пустоту.
+              */}
             <div
-              className={
-                resultView === 'scene'
-                  ? 'mt-4 h-[460px] overflow-hidden rounded-[var(--r-panel)] bg-navyDeep print:hidden'
-                  : 'mw-scene-hidden fixed left-[-3000px] top-0 h-[220px] w-[340px] opacity-0'
-              }
-              aria-hidden={resultView !== 'scene'}
+              className="mw-scene-hidden fixed left-[-3000px] top-0 h-[220px] w-[340px] opacity-0"
+              aria-hidden
             >
               <KitchenScene
                 run={active.run}
                 ceilingHeightMm={props.ceilingHeightMm}
                 roomDepthM={props.roomDepthM}
-                hidden={resultView !== 'scene'}
+                hidden
                 interactive
                 production={props.production}
                 view={sceneView}
@@ -1566,28 +1594,34 @@ export default function Workspace(props: WorkspaceProps) {
                 onItemId={setKitchenItemId}
               />
             </div>
+
+            {/* Техническая аксонометрия: только изделие, без комнаты. */}
+            {resultView === 'scene' && (
+              <div className="mt-4 h-[460px] overflow-hidden rounded-[var(--r-panel)] bg-sheet print:hidden">
+                <TechnicalScene
+                  run={active.run}
+                  production={props.production}
+                  selectedModuleId={selectedId}
+                  onSelectModule={setSelectedId}
+                  cutaway={cutaway}
+                />
+              </div>
+            )}
             {resultView === 'scene' && (
               <div className="mt-3 flex flex-wrap items-center gap-2 print:hidden">
-                <button
-                  type="button"
-                  onClick={() => setOpenParts(openablePartIds(active.run))}
-                  className="mw-btn mw-btn-primary"
-                >
-                  Открыть всё
-                </button>
-                <button
-                  type="button"
-                  onClick={closeAllParts}
-                  disabled={openParts.length === 0}
-                  className="mw-btn mw-btn-ghost"
-                >
-                  Закрыть всё
-                </button>
-
-                {/* Разрез убирает фасады совсем: наполнение видно целиком. */}
+                {/*
+                  * РАЗРЕЗ — единственный переключатель, который остался.
+                  *
+                  * «Открыть всё», «Закрыть всё» и три точки съёмки жили при
+                  * интерьерной сцене: там дверцы распахивались, а камера
+                  * переезжала между чертёжным, планом и тремя четвертями.
+                  * Технический вид крутится свободно, и возвращает его
+                  * кнопка «Исходный ракурс» в самой сцене — держать рядом
+                  * кнопки, которые ничего не меняют, значит врать интерфейсом.
+                  */}
                 {(
                   [
-                    [false, 'Только фасады'],
+                    [false, 'С фасадами'],
                     [true, 'Разрез'],
                   ] as [boolean, string][]
                 ).map(([value, label]) => (
@@ -1599,25 +1633,6 @@ export default function Workspace(props: WorkspaceProps) {
                     className={`mw-btn ${cutaway === value ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
                   >
                     {label}
-                  </button>
-                ))}
-
-                {/*
-                  * Чертёж, план и объём — это одна модель с трёх точек
-                  * съёмки, а не три экрана. Переключение анимируется:
-                  * клиент видит, как чертёж разворачивается в комнату.
-                  */}
-                <span className="self-center text-[13px] text-graphiteMw">Вид:</span>
-                {(Object.keys(SCENE_VIEW_LABEL) as SceneView[]).map((value) => (
-                  <button
-                    key={value}
-                    data-scene-view={value}
-                    type="button"
-                    onClick={() => setSceneView(value)}
-                    aria-pressed={sceneView === value}
-                    className={`mw-btn ${sceneView === value ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
-                  >
-                    {SCENE_VIEW_LABEL[value]}
                   </button>
                 ))}
 
@@ -1637,9 +1652,9 @@ export default function Workspace(props: WorkspaceProps) {
                 )}
 
                 <p className="w-full text-[13px] leading-snug text-graphiteMw">
-                  {sceneView === 'perspective'
-                    ? 'Нажмите на ящик или дверцу — откроется. Выбранный модуль тянется за ручку сбоку: ширина идёт шагом 50 мм.'
-                    : 'Это та же модель, что в 3D: размеры сняты с неё, а не нарисованы отдельно.'}
+                  Технический вид: только изделие, без комнаты и света. Тяните —
+                  повернётся, двумя пальцами — приблизится. Нажмите на модуль,
+                  чтобы выбрать его и поменять начинку.
                 </p>
               </div>
             )}
