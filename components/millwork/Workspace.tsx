@@ -16,6 +16,7 @@ import EstimateSheet from './EstimateSheet';
 import MaterialsStep from './MaterialsStep';
 import PanelList from './PanelList';
 import RenderPanel from './RenderPanel';
+import { DEMO_QUOTA_HINT, DEMO_QUOTA_SPENT } from '@/lib/plan';
 import ArrangementCards from './ArrangementCards';
 import RunEditor, { type CompositionPatch } from './RunEditor';
 import SolutionGallery from './SolutionGallery';
@@ -159,6 +160,14 @@ export type WorkspaceProps = {
    * работающая кнопка с красной строкой — плохая демонстрация.
    */
   demoPlan?: boolean;
+  /**
+   * Единственная визуализация демо-режима уже потрачена.
+   *
+   * Приходит с сервера, посчитанная по строкам `ai_generations`. Это
+   * ПОДСКАЗКА, а не защита: отказывает роут (`lib/aiAccess.ts`), здесь мы
+   * только не даём человеку нажать кнопку, которая ответит отказом.
+   */
+  demoRenderSpent?: boolean;
   /** Фотография помещения клиента: основа рендера. */
   roomPhoto?: string | null;
   /**
@@ -358,6 +367,18 @@ export default function Workspace(props: WorkspaceProps) {
   const renderVariants = useInteriorStore((s) => s.renderVariants);
   const activeRender =
     renderVariants.find((v) => v.styleId === renderStyle)?.image ?? null;
+
+  /*
+   * КВОТА ПОТРАЧЕНА — по факту, а не по счётчику.
+   *
+   * С сервера приходит состояние на момент открытия; успешная отрисовка
+   * прямо сейчас добавляется к нему, иначе кнопка осталась бы рабочей до
+   * перезагрузки. Считаем именно КАРТИНКУ: упавшая попытка квоту не жжёт,
+   * и запрещать после неё было бы враньём.
+   */
+  const demoSpent =
+    Boolean(props.demoPlan) &&
+    (Boolean(props.demoRenderSpent) || renderVariants.some((v) => v.status === 'done'));
   /*
    * ОСНОВА ДЛЯ КОМПОНОВОК: состав без того, чем компоновки друг от друга
    * отличаются, — без стороны пеналов и без ручных позиций.
@@ -516,6 +537,9 @@ export default function Workspace(props: WorkspaceProps) {
    * смета и рендер обязаны увидеть одну и ту же мебель.
    */
   const changeFill = (moduleId: string, fill: ModuleFill) => {
+    // Правку приняли — прошлый отказ больше не про эту мебель.
+    setMoveNotice(null);
+
     const patch = (list: Module[]) =>
       list.map((unit) => (unit.id === moduleId ? { ...unit, fill } : unit));
 
@@ -1426,16 +1450,22 @@ export default function Workspace(props: WorkspaceProps) {
               emptyAction={
                 /* Кнопка прямо в пустой половине: под сравнением её не видно
                    без прокрутки, и рендер выглядит неработающим. */
-                props.demoPlan ? undefined : (
+                <div className="flex flex-col items-center gap-2">
                   <button
                     type="button"
                     onClick={() => void render.render()}
-                    disabled={render.busy}
+                    disabled={render.busy || demoSpent}
                     className="mw-btn mw-btn-lg mw-btn-primary text-[17px]"
                   >
                     {render.busy ? 'Снимаем кадр…' : 'Отрисовать кухню'}
                   </button>
-                )
+                  {/* Цена клика названа ДО нажатия, а не после отказа. */}
+                  {props.demoPlan && (
+                    <p className="max-w-[34ch] text-center text-[13px] leading-snug text-graphiteMw">
+                      {demoSpent ? DEMO_QUOTA_SPENT : DEMO_QUOTA_HINT}
+                    </p>
+                  )}
+                </div>
               }
             />
 
@@ -1444,6 +1474,7 @@ export default function Workspace(props: WorkspaceProps) {
             <div className="mt-5 print:hidden">
               <RenderPanel
                 demoPlan={props.demoPlan}
+                demoSpent={demoSpent}
                 variants={variants}
                 roomPhoto={roomPhoto}
                 onOpen={setZoom}
@@ -1765,6 +1796,12 @@ export default function Workspace(props: WorkspaceProps) {
                   changedIds,
                   mode: drawingMode,
                   onFillChange: changeFill,
+                  /*
+                   * Отказ идёт в ту же строку, что и отклонённый перенос
+                   * прибора: это одно и то же событие для замерщика —
+                   * «правку не приняли, и вот почему».
+                   */
+                  onFillReject: setMoveNotice,
                   onMoveAppliance: moveAppliance,
                 }}
               />

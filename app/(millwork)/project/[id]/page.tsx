@@ -10,6 +10,7 @@ import { DEFAULT_REQUIREMENTS, workspaceInput } from '@/lib/millwork/workspace';
 import { parseOrgTemplates } from '@/lib/millwork/templates';
 import { productionSettings } from '@/types/catalog';
 import { isDemoPlan } from '@/lib/plan';
+import { demoRenderSpent } from '@/lib/aiAccess';
 import { loadProject, projectTitle } from '@/lib/projects';
 import { PROJECTS_BUCKET, storageUrl } from '@/lib/supabase/config';
 import { SUPABASE_READY } from '@/lib/supabase/config';
@@ -58,6 +59,13 @@ export default async function ProjectPage({ params }: { params: { id: string } }
     supabase.from('orgs').select('run_templates, production').eq('id', org.id).maybeSingle(),
   ]);
   const rates = ratesFromCatalog(catalog);
+
+  /*
+   * Демонстрационный доступ: кнопка отрисовки приходит уже в правильном
+   * виде, а не мигает рабочей и потом гаснет. Считается по строкам
+   * `ai_generations`, а не по флагу на организации.
+   */
+  const demo = isDemoPlan(org.plan);
 
   const measurement = project.measurements as Measurement;
   const requirements = project.millwork?.requirements ?? DEFAULT_REQUIREMENTS;
@@ -111,7 +119,8 @@ export default async function ProjectPage({ params }: { params: { id: string } }
       orgTemplates={parseOrgTemplates(orgRow?.run_templates)}
       production={productionSettings(orgRow?.production)}
       ratesMissing={missingRequiredRates(rates).length > 0}
-      demoPlan={isDemoPlan(org.plan)}
+      demoPlan={demo}
+      demoRenderSpent={demo ? await demoRenderSpent(org.id, org.plan) : false}
     />
   );
 }

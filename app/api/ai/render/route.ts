@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { generationBlocked } from '@/lib/aiAccess';
+import { reserveGeneration } from '@/lib/aiAccess';
 import { geminiHeaders, geminiUrl, imageModel, parseImageResponse } from '@/lib/gemini';
 import { getEntry } from '@/lib/furnitureCatalog';
 import { PHOTOGRAPHY, getStyle, optionsBlock, styleBlock } from '@/lib/renderStyles';
@@ -599,16 +599,44 @@ async function callImageModel(
  */
 export async function POST(request: Request) {
   /*
-   * Демо-организация до модели не доходит. Одна строка, и она СЕРВЕРНАЯ:
-   * спрятанной кнопки недостаточно — публичную демо-страницу открывает кто
-   * угодно сколько угодно раз, а каждый запрос стоит денег.
+   * КВОТА ДЕМОНСТРАЦИОННОГО ДОСТУПА.
    *
-   * Организации нет или тариф не демо — возвращает null, и дальше всё идёт
-   * ровно как раньше, ни одной строкой ниже это не заметно.
+   * Место резервируется ЗДЕСЬ, до единой строки обработки и задолго до
+   * вызова модели: второй одновременный клик упирается в уникальный индекс
+   * в базе, а не в проверку в коде, которую оба клика проходят.
+   *
+   * Для обычной организации `reserveGeneration` возвращает `ticket: null`,
+   * не делает ни одной записи и ни одного лишнего запроса — ниже всё идёт
+   * ровно как раньше.
    */
-  const blocked = await generationBlocked('визуализация');
-  if (blocked) return blocked;
+  const gate = await reserveGeneration('render');
+  if (gate.denied) return gate.denied;
 
+  const startedAt = Date.now();
+  const response = await renderPost(request);
+
+  /*
+   * УСПЕХ — ЭТО КАРТИНКА В ОТВЕТЕ, а не код 200: роут не бросает исключений
+   * и на все свои неудачи отвечает двухсоткой с полем `error`. Считать
+   * успехом статус ответа значило бы сжигать квоту на «ключ не задан».
+   *
+   * Ответ читаем КЛОНОМ: тело `response` уходит клиенту нетронутым.
+   */
+  if (gate.ticket) {
+    let image = false;
+    try {
+      image = Boolean(((await response.clone().json()) as RenderResponse)?.image);
+    } catch {
+      /* тело не разобралось — считаем неудачей, квота не сгорит */
+    }
+    await gate.ticket.settle(image, { durationMs: Date.now() - startedAt });
+  }
+
+  return response;
+}
+
+/** Старое тело роута целиком. Ни один его путь возврата не изменился. */
+async function renderPost(request: Request): Promise<NextResponse> {
   const started = Date.now();
   let styleId = 'unknown';
 

@@ -1,6 +1,7 @@
 'use client';
 
 import { useDebug } from '@/lib/debug';
+import { DEMO_QUOTA_HINT, DEMO_QUOTA_SPENT } from '@/lib/plan';
 import { RENDER_CHOICES } from '@/lib/millwork/render';
 import { getStyle } from '@/lib/renderStyles';
 import { formatMoney } from '@/lib/millwork/estimate';
@@ -38,6 +39,8 @@ type Props = {
    * компанией выглядит хуже, чем её отсутствие с объяснением.
    */
   demoPlan?: boolean;
+  /** Единственная визуализация демо-режима уже потрачена. */
+  demoSpent?: boolean;
 };
 
 export default function RenderPanel({
@@ -51,6 +54,7 @@ export default function RenderPanel({
   onRerender,
   roomPhoto,
   demoPlan = false,
+  demoSpent = false,
 }: Props) {
   const debug = useDebug();
 
@@ -78,15 +82,19 @@ export default function RenderPanel({
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-3">
-        {demoPlan ? (
-          <p className="text-[13px] leading-snug text-graphiteMw">
-            В демонстрационном доступе живая отрисовка выключена. Готовая
-            визуализация лежит на вашей демо-странице.
+        <button
+          type="button"
+          onClick={onRender}
+          disabled={busy || demoSpent}
+          className="mw-btn mw-btn-primary"
+        >
+          {busy ? 'Снимаем кадр…' : started ? 'Отрисовать заново' : 'Отрисовать кухню'}
+        </button>
+        {/* Цена клика названа ДО нажатия, а не после отказа. */}
+        {demoPlan && (
+          <p className="max-w-[42ch] text-[13px] leading-snug text-graphiteMw">
+            {demoSpent ? DEMO_QUOTA_SPENT : DEMO_QUOTA_HINT}
           </p>
-        ) : (
-          <button type="button" onClick={onRender} disabled={busy} className="mw-btn mw-btn-primary">
-            {busy ? 'Снимаем кадр…' : started ? 'Отрисовать заново' : 'Отрисовать кухню'}
-          </button>
         )}
         {!demoPlan && !roomPhoto && (
           <p className="text-[13px] leading-snug text-tape">

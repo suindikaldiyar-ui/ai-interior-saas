@@ -2624,7 +2624,7 @@ console.log('\nНаполнение: система 32');
     modules: run.modules.map((unit, i) =>
       // Берём модуль, у которого полка есть: у ниши под технику её нет.
       i === run.modules.findIndex((m) => (m.fill?.shelves.length ?? 0) > 0) && unit.fill
-        ? { ...unit, fill: moveShelf(unit.fill, 0, 500, moduleCarcassHeightMm(unit, run)) }
+        ? { ...unit, fill: moveShelf(unit.fill, 0, 500, moduleCarcassHeightMm(unit, run)).fill }
         : unit,
     ),
   };
@@ -2636,8 +2636,35 @@ console.log('\nНаполнение: система 32');
 
   // Ограничения правок: полка не липнет к соседней, ящик не выходит за пределы.
   const fill = { shelves: [352, 704], dividerMm: 0, rodsMm: [], drawerHeights: [], hinge: 'none' as const };
-  check('полку нельзя поставить вплотную к соседней', moveShelf(fill, 0, 690, 2000).shelves[0] === 352);
-  check('полка добавляется на свободное место', addShelf(fill, 1200, 2000).shelves.length === 3);
+  const tooClose = moveShelf(fill, 0, 690, 2000);
+  check('полку нельзя поставить вплотную к соседней', tooClose.fill.shelves[0] === 352);
+  /*
+   * ОТКАЗ ОБЯЗАН НАЗВАТЬ ПРИЧИНУ. Молчаливый отказ — та самая поломка:
+   * замерщик тянет полку, ничего не происходит, и объяснить это нечем.
+   */
+  check(
+    'отказ по соседней полке объясняет себя',
+    Boolean(tooClose.rejected) && tooClose.rejected!.includes('704'),
+    tooClose.rejected ?? 'молчит',
+  );
+
+  const tooHigh = addShelf(fill, 1990, 2000);
+  check(
+    'полка выше корпуса отклоняется и объясняет себя',
+    tooHigh.fill.shelves.length === 2 && Boolean(tooHigh.rejected),
+    tooHigh.rejected ?? 'молчит',
+  );
+
+  const tooLow = addShelf(fill, 10, 2000);
+  check(
+    'полка ниже дна отклоняется и объясняет себя',
+    tooLow.fill.shelves.length === 2 && Boolean(tooLow.rejected),
+    tooLow.rejected ?? 'молчит',
+  );
+
+  const added = addShelf(fill, 1200, 2000);
+  check('полка добавляется на свободное место', added.fill.shelves.length === 3);
+  check('принятая правка молчит', added.rejected === undefined);
   check('полка убирается', removeShelf(fill, 0).shelves.length === 1);
 
   const drawers = {

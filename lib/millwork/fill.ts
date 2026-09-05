@@ -326,28 +326,80 @@ export function hingeSide(unit: Module, index: number, total: number): ModuleFil
 /* ─────────────────────────  Правки наполнения  ───────────────────────── */
 
 /** Полка садится на систему 32 и не ближе трёх шагов к соседней. */
-export function moveShelf(fill: ModuleFill, indexAt: number, toMm: number, heightMm: number): ModuleFill {
+/**
+ * Результат правки полки.
+ *
+ * ОТКАЗ НАЗЫВАЕТ ПРИЧИНУ. Раньше `clampShelf` возвращал `null`, а обёртки
+ * молча отдавали ТОТ ЖЕ `fill`: замерщик тянул полку, отпускал, и не
+ * происходило ничего — ни движения, ни объяснения. Инструмент, который
+ * молча не слушается, читается как сломанный.
+ */
+export type ShelfEdit = {
+  /** Принято — новое наполнение; отклонено — прежнее, без изменений. */
+  fill: ModuleFill;
+  /** Пусто, если правка принята. Иначе — последствие, а не факт. */
+  rejected?: string;
+};
+
+export function moveShelf(
+  fill: ModuleFill,
+  indexAt: number,
+  toMm: number,
+  heightMm: number,
+): ShelfEdit {
   const others = fill.shelves.filter((_, i) => i !== indexAt);
-  const snapped = clampShelf(snapTo32(toMm), others, heightMm);
-  if (snapped === null) return fill;
-  return { ...fill, shelves: [...others, snapped].sort((a, b) => a - b) };
+  const spot = clampShelf(snapTo32(toMm), others, heightMm);
+  if ('reason' in spot) return { fill, rejected: spot.reason };
+  return { fill: { ...fill, shelves: [...others, spot.mm].sort((a, b) => a - b) } };
 }
 
-export function addShelf(fill: ModuleFill, atMm: number, heightMm: number): ModuleFill {
-  const snapped = clampShelf(snapTo32(atMm), fill.shelves, heightMm);
-  if (snapped === null) return fill;
-  return { ...fill, shelves: [...fill.shelves, snapped].sort((a, b) => a - b) };
+export function addShelf(fill: ModuleFill, atMm: number, heightMm: number): ShelfEdit {
+  const spot = clampShelf(snapTo32(atMm), fill.shelves, heightMm);
+  if ('reason' in spot) return { fill, rejected: spot.reason };
+  return { fill: { ...fill, shelves: [...fill.shelves, spot.mm].sort((a, b) => a - b) } };
 }
 
+/** Снять полку можно всегда: отказывать тут не в чем. */
 export function removeShelf(fill: ModuleFill, indexAt: number): ModuleFill {
   return { ...fill, shelves: fill.shelves.filter((_, i) => i !== indexAt) };
 }
 
-/** Допустимо ли ставить полку сюда. Возвращает высоту либо null. */
-function clampShelf(mm: number, others: number[], heightMm: number): number | null {
-  if (mm < MIN_SHELF_GAP_MM || mm > heightMm - MIN_SHELF_GAP_MM) return null;
-  if (others.some((other) => Math.abs(other - mm) < MIN_SHELF_GAP_MM)) return null;
-  return mm;
+/**
+ * Допустимо ли ставить полку сюда.
+ *
+ * Формулировки называют ПОСЛЕДСТВИЕ: «нечего будет поставить» вместо
+ * «нарушен минимальный зазор». Замерщик читает это при клиенте, и слово
+ * «зазор» здесь означает только то, что он что-то сделал не так.
+ */
+function clampShelf(
+  mm: number,
+  others: number[],
+  heightMm: number,
+): { mm: number } | { reason: string } {
+  if (mm < MIN_SHELF_GAP_MM) {
+    return {
+      reason: `Ниже ${MIN_SHELF_GAP_MM} мм от дна полка не встанет — под неё ничего не положить.`,
+    };
+  }
+
+  if (mm > heightMm - MIN_SHELF_GAP_MM) {
+    return {
+      reason:
+        `Выше ${heightMm - MIN_SHELF_GAP_MM} мм полку не закрепить: ` +
+        `корпус кончается на ${heightMm} мм.`,
+    };
+  }
+
+  const near = others.find((other) => Math.abs(other - mm) < MIN_SHELF_GAP_MM);
+  if (near !== undefined) {
+    return {
+      reason:
+        `Слишком близко к полке на ${near} мм: между ними останется ` +
+        `меньше ${MIN_SHELF_GAP_MM} мм, туда ничего не поставить.`,
+    };
+  }
+
+  return { mm };
 }
 
 /** Перегородка ходит шагом 32 мм и не подходит к боковине ближе 150 мм. */

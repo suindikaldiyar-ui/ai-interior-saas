@@ -60,6 +60,14 @@ type Props = {
   /** Правка наполнения перетаскиванием. Без неё вид «внутри» только читается. */
   onFillChange?: (moduleId: string, fill: ModuleFill) => void;
   /**
+   * Правку не приняли — и вот почему.
+   *
+   * Отдельный канал от `onFillChange`: отказ не меняет наполнение, поэтому
+   * сообщить о нём тем же вызовом нечем. Молчать нельзя — замерщик тянет
+   * полку, ничего не происходит, и инструмент выглядит сломанным.
+   */
+  onFillReject?: (reason: string) => void;
+  /**
    * Перенос прибора мышью: центр от левого края ряда, мм.
    *
    * Алгоритм ставит мойку к воде, а варочную не у края — верные умолчания.
@@ -213,6 +221,7 @@ function ModuleInside({
   height,
   heightMm,
   onFillChange,
+  onFillReject,
 }: {
   unit: Module;
   x: number;
@@ -221,6 +230,7 @@ function ModuleInside({
   height: number;
   heightMm: number;
   onFillChange?: (moduleId: string, fill: ModuleFill) => void;
+  onFillReject?: (reason: string) => void;
 }) {
   const fill = unit.fill;
   const drag = useRef<(() => void) | null>(null);
@@ -321,7 +331,9 @@ function ModuleInside({
             const viewH = svg.viewBox.baseVal.height || box.height;
             const localY = ((event.clientY - box.top) / box.height) * viewH;
             const mm = Math.round((yTop + height - localY) / scaleY);
-            onFillChange?.(unit.id, addShelf(fill, mm, heightMm));
+            const edit = addShelf(fill, mm, heightMm);
+            if (edit.rejected) onFillReject?.(edit.rejected);
+            else onFillChange?.(unit.id, edit.fill);
           }}
         />
       )}
@@ -343,18 +355,40 @@ function ModuleInside({
                 ? (event) => {
                     const line = event.currentTarget as SVGLineElement;
                     const label = line.parentElement?.querySelector('text');
+                    /** Нарисовать полку на этой высоте, минуя React. */
+                    const paint = (value: number) => {
+                      line.setAttribute('y1', String(yAt(value)));
+                      line.setAttribute('y2', String(yAt(value)));
+                      if (label) {
+                        label.setAttribute('y', String(yAt(value) - 3));
+                        label.textContent = String(value);
+                      }
+                    };
+
                     startDrag(
                       event,
+                      (value) => paint(snapTo32(value)),
                       (value) => {
-                        const snapped = snapTo32(value);
-                        line.setAttribute('y1', String(yAt(snapped)));
-                        line.setAttribute('y2', String(yAt(snapped)));
-                        if (label) {
-                          label.setAttribute('y', String(yAt(snapped) - 3));
-                          label.textContent = String(snapped);
-                        }
+                        /*
+                         * СНАЧАЛА ВЕРНУЛИ КАК БЫЛО, ПОТОМ ПРИМЕНЯЕМ.
+                         *
+                         * Во время жеста линия ездит мимо React: его дерево
+                         * всё ещё держит исходную высоту. Отклонённая правка
+                         * менять пропы не будет, React ничего не тронет — и
+                         * линия останется там, куда её дотянули, показывая
+                         * положение, которого в данных нет. Это ложь чертежа,
+                         * и лечится она возвратом, а не перерисовкой сверху.
+                         *
+                         * На принятой правке возврат ничего не стоит: React
+                         * тут же перепишет высоту на новую, и его дерево
+                         * совпадает с тем, что в DOM.
+                         */
+                        paint(mm);
+
+                        const edit = moveShelf(fill, i, value, heightMm);
+                        if (edit.rejected) onFillReject?.(edit.rejected);
+                        else onFillChange?.(unit.id, edit.fill);
                       },
-                      (value) => onFillChange?.(unit.id, moveShelf(fill, i, value, heightMm)),
                     );
                   }
                 : undefined
@@ -541,6 +575,7 @@ export default function ElevationDrawing({
   changedIds = [],
   mode = 'fronts',
   onFillChange,
+  onFillReject,
   onMoveAppliance,
   variants = [],
   onVariant,
@@ -771,6 +806,7 @@ export default function ElevationDrawing({
             height={h}
             heightMm={moduleCarcassHeightMm(unit, run)}
             onFillChange={onFillChange}
+            onFillReject={onFillReject}
           />
         )}
 

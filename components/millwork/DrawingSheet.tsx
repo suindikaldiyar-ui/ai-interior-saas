@@ -7,7 +7,7 @@ import { useInteriorStore } from '@/store/useInteriorStore';
 import { APRON_TARGET, COUNTERTOP_TARGET, FACADE_TARGET } from '@/types/catalog';
 import PlanDrawing from './PlanDrawing';
 import AxonometryDrawing from './AxonometryDrawing';
-import SectionDrawing, { sectionSizeMm } from './SectionDrawing';
+import SectionDrawing, { findModuleRow, hasFilling, sectionSizeMm } from './SectionDrawing';
 import { axonometryExtentMm } from '@/lib/millwork/axonometry';
 import { DEFAULT_PRODUCTION, type ProductionSettings } from '@/types/catalog';
 import SheetLayout, { type SheetViewNode } from './SheetLayout';
@@ -52,6 +52,7 @@ type ElevationHandlers = {
   changedIds?: string[];
   mode?: DrawingMode;
   onFillChange?: Parameters<typeof ElevationDrawing>[0]['onFillChange'];
+  onFillReject?: Parameters<typeof ElevationDrawing>[0]['onFillReject'];
   onMoveAppliance?: Parameters<typeof ElevationDrawing>[0]['onMoveAppliance'];
   variants?: VariantOption[];
   onVariant?: (kind: VariantOption['kind']) => void;
@@ -125,6 +126,20 @@ export default function DrawingSheet({
     apron: entryFor(APRON_TARGET),
   });
 
+  /*
+   * ПОДПИСЬ ВИДА НАЗЫВАЕТ ТО, ЧТО НА ВИДЕ ЕСТЬ.
+   *
+   * Разрез один на ряд, а наполнение у каждого модуля своё: без выбранного
+   * модуля показывать нечего. Подпись «Разрез с наполнением» над пустым
+   * корпусом — обещание, которого вид не выполняет.
+   */
+  const pickedRow = findModuleRow(run, elevation.selectedModuleId);
+  const insideTitle = !pickedRow
+    ? 'Разрез: модуль не выбран'
+    : hasFilling(pickedRow.unit)
+      ? `Разрез с наполнением · ${pickedRow.unit.label}`
+      : `Разрез без наполнения · ${pickedRow.unit.label}`;
+
   const elevationSpan = elevationSpanUnits(true);
 
   const mmPerUnit = run.lengthMm / DRAW_FIELD.draw;
@@ -170,7 +185,7 @@ export default function DrawingSheet({
     },
     {
       id: 'section-inside',
-      title: 'Разрез с наполнением',
+      title: insideTitle,
       widthMm: sectionReal.width / den,
       heightMm: sectionReal.height / den,
     },
@@ -215,7 +230,9 @@ export default function DrawingSheet({
   const render: Record<string, ReactNode> = {
     elevation: <ElevationDrawing run={run} {...elevation} leaders={leaders} />,
     section: <SectionDrawing run={run} />,
-    'section-inside': <SectionDrawing run={run} inside />,
+    'section-inside': (
+      <SectionDrawing run={run} inside selectedModuleId={elevation.selectedModuleId} />
+    ),
     plan: (
       <PlanDrawing
         run={run}
