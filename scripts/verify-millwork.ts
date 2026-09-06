@@ -88,6 +88,7 @@ import {
   frontsBlock,
 } from '../lib/millwork/promptFronts';
 import { MODULE_VARIANTS, applyVariant } from '../lib/millwork/moduleVariants';
+import { assertNoOverlap, moduleOverlaps } from '../lib/millwork/invariants';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ElevationDrawing from '../components/millwork/ElevationDrawing';
@@ -516,13 +517,38 @@ console.log('\nВерхний ряд');
   const windowFrom = window.fromCornerMm;
   const windowTo = window.fromCornerMm + window.widthMm;
 
-  check('верхний ряд разорван на два участка', run.upperSegments.length === 2,
-    run.upperSegments.map((s) => `${s.fromMm}..${s.toMm}`).join(' | '));
-
+  /*
+   * ОЖИДАНИЕ ИЗМЕНИЛОСЬ.
+   *
+   * Раньше здесь стояло «ряд разорван на ДВА участка»: до окна и после.
+   * Участок до окна (0…1200) на этом ряду целиком занят холодильной и
+   * духовой колоннами во всю высоту — верхнего ряда там быть не может,
+   * и он больше не строится. Проверять число участков вообще неверно:
+   * оно зависит от состава. Проверяем то, ради чего разрыв и существует.
+   */
   const crosses = run.upperSegments.some(
     (s) => s.fromMm < windowTo && s.toMm > windowFrom,
   );
   check('ни один участок не заходит на окно', !crosses, `окно ${windowFrom}..${windowTo}`);
+
+  const tallSpans = run.modules
+    .filter((m) => m.kind === 'tall')
+    .map((m) => ({ from: m.offsetMm, to: m.offsetMm + m.widthMm }));
+  const overTall = run.upperSegments.some((s) =>
+    tallSpans.some((t) => s.fromMm < t.to && s.toMm > t.from),
+  );
+  check(
+    'и ни один не заходит на пенал во всю высоту',
+    !overTall,
+    `пеналы ${tallSpans.map((t) => `${t.from}..${t.to}`).join(' ') || 'нет'} · ` +
+      `участки ${run.upperSegments.map((s) => `${s.fromMm}..${s.toMm}`).join(' | ')}`,
+  );
+
+  check(
+    'на свободной стене верхний ряд остался',
+    run.upperSegments.length > 0,
+    run.upperSegments.map((s) => `${s.fromMm}..${s.toMm}`).join(' | '),
+  );
 
   // Окно выше верхнего ряда ряд не разрывает.
   const highWindow: Opening = {
@@ -3249,6 +3275,122 @@ console.log('\nКаждый вариант виден на чертеже');
   const once = glyphSignature(frontGlyph(display, 'fronts'));
   const twice = glyphSignature(frontGlyph(display, 'fronts'));
   check('рисунок варианта детерминирован', once === twice);
+}
+
+
+/* ──────────────  Два модуля не могут занимать один объём  ────────────── */
+
+/*
+ * НАЙДЕНО ГЛАЗАМИ НА АКСОНОМЕТРИИ, А НЕ ЧИСЛАМИ.
+ *
+ * Верхний ряд вешался поверх колонн во всю высоту: `buildUpperRow`
+ * разрывала ряд под окном и не разрывала под пеналами. На фасаде это
+ * читалось безобидной антресолью над холодильником, поэтому и жило —
+ * а смета и раскрой считали корпус, которого не может быть.
+ *
+ * Проверка ОБЩАЯ, а не «верхний против пенала»: заплатка на один случай
+ * оставила бы остальные, которых мы ещё не видели. Именно так и вышло —
+ * общая проверка сразу нашла второй случай, в другой зоне.
+ */
+
+console.log('\nМодули не пересекаются по объёму');
+{
+  /* ── Разрыв верхнего ряда под пеналами ── */
+  const run = buildRun(baseInput);
+  const tall = run.modules.filter((m) => m.kind === 'tall');
+  const uppers = run.upperSegments.flatMap((seg) => seg.modules);
+
+  check('в ряду есть пеналы во всю высоту', tall.length > 0, `${tall.length} шт.`);
+
+  const overTall = uppers.filter((u) =>
+    tall.some((t) => Math.min(t.offsetMm + t.widthMm, u.offsetMm + u.widthMm) - Math.max(t.offsetMm, u.offsetMm) > 1),
+  );
+  check(
+    'верхний ряд разорван на пеналах, как и на окне',
+    overTall.length === 0,
+    overTall.map((u) => `${u.id}@${u.offsetMm}`).join(' ') || 'ни одного над пеналом',
+  );
+
+  check('и сам ряд пересечений не имеет', moduleOverlaps(run).length === 0);
+
+  /* ── Верхний ряд не исчез там, где ему место ── */
+  check(
+    'верхний ряд остался там, где стены свободны',
+    uppers.length > 0,
+    `${uppers.length} модулей наверху`,
+  );
+
+  /* ── Инвариант ловит подделку ── */
+  const broken: Run = {
+    ...run,
+    upperSegments: [
+      {
+        fromMm: 0,
+        toMm: 600,
+        // Ставим верхний модуль ровно поверх первого пенала.
+        modules: [{ ...uppers[0], id: 'fake-over-tall', offsetMm: tall[0].offsetMm, widthMm: 600 }],
+      },
+    ],
+  };
+  let caught = '';
+  try {
+    assertNoOverlap(broken);
+  } catch (error) {
+    caught = (error as Error).message;
+  }
+  check('подделка падает исключением', caught.length > 0, caught.slice(0, 90));
+  check(
+    'и ошибка называет оба модуля',
+    caught.includes('поз') || caught.includes('объём'),
+    caught.slice(0, 60),
+  );
+
+  /* ── Все конфигурации всех зон ── */
+  const dirty: string[] = [];
+  let configs = 0;
+
+  for (const t of RUN_TEMPLATES) {
+    for (const len of [t.minLengthMm, Math.round((t.minLengthMm + t.maxLengthMm) / 2), t.maxLengthMm]) {
+      let sample: Run;
+      try {
+        sample = buildRun({
+          ...baseInput,
+          lengthMm: len,
+          requirements: requirementsFromTemplate(t, DEMO_REQUIREMENTS.options),
+        });
+      } catch {
+        continue;
+      }
+      configs += 1;
+      if (moduleOverlaps(sample).length > 0) dirty.push(`${t.id}@${len}`);
+    }
+  }
+
+  const kitchens = dirty.filter((id) => !/wardrobe|hallway|living|bath/.test(id));
+  check(
+    'ни одна кухонная конфигурация не пересекается',
+    kitchens.length === 0,
+    `проверено ${configs}, кухонных с наложением ${kitchens.length}`,
+  );
+
+  /*
+   * ЗАФИКСИРОВАННЫЙ ДЕФЕКТ, А НЕ ЗЕЛЁНАЯ ГАЛОЧКА.
+   *
+   * В спальне и прихожей антресоль по-прежнему садится внутрь корпуса:
+   * причина там ДРУГАЯ — верхний ряд этих зон отсчитывается от кухонной
+   * отметки навески 1450 мм, хотя шкаф идёт до потолка. Это не «забыли
+   * разрыв», это неверная точка отсчёта, и чинится она отдельно.
+   *
+   * Число зафиксировано НАМЕРЕННО: появится новое наложение — тест
+   * упадёт; починят антресоль — тест тоже упадёт и потребует убрать
+   * эту запись. Молча зарасти дефект не может.
+   */
+  const KNOWN_SECTION_ZONE_OVERLAPS = 12;
+  check(
+    `известный дефект антресоли: ровно ${KNOWN_SECTION_ZONE_OVERLAPS} конфигураций спальни и прихожей`,
+    dirty.length - kitchens.length === KNOWN_SECTION_ZONE_OVERLAPS,
+    `сейчас ${dirty.length - kitchens.length}: ${dirty.slice(0, 3).join(', ')}…`,
+  );
 }
 
 

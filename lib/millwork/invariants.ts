@@ -1,5 +1,6 @@
-import { moduleAppliances } from './modules';
-import type { Run } from '@/types/millwork';
+import { GEOMETRY, moduleAppliances, moduleHeightMm } from './modules';
+import { zoneProfile } from './zones';
+import type { Module, Run } from '@/types/millwork';
 
 /**
  * Инварианты ряда. Файл намеренно не зависит ни от чего, кроме отраслевых
@@ -169,4 +170,116 @@ export function appliancesPlacedOnce(run: Run): Map<string, number> {
     }
   }
   return counts;
+}
+
+
+/* ────────────────  Два модуля в одном объёме  ──────────────── */
+
+/**
+ * Габарит модуля в миллиметрах: где он стоит и сколько занимает.
+ *
+ * Числа те же, что у сцены и у аксонометрии (`runModuleBoxes`): низ ряда
+ * от цоколя, верхний ряд от отметки навески, глубина по ряду. Считать
+ * габарит здесь второй формулой значило бы проверять не ту мебель,
+ * которую рисуем.
+ */
+function moduleBox(unit: Module, run: Run, upper: boolean) {
+  const heightMm = moduleHeightMm(unit.kind, {
+    upperToCeiling: run.options.upperToCeiling,
+    ceilingHeightMm: run.ceilingHeightMm,
+  });
+  const depth = upper
+    ? GEOMETRY.upper.depth
+    : (zoneProfile(run.zone ?? 'kitchen').depthMm ?? GEOMETRY.base.depth);
+  const y0 = upper ? GEOMETRY.upper.bottomFromFloor : GEOMETRY.base.plinthH;
+
+  return {
+    id: unit.id,
+    label: unit.label || unit.kind,
+    x0: unit.offsetMm,
+    x1: unit.offsetMm + unit.widthMm,
+    y0,
+    y1: y0 + heightMm,
+    // Перёд у обоих рядов на нуле, корпус уходит от зрителя.
+    z0: -depth,
+    z1: 0,
+  };
+}
+
+export type ModuleOverlap = {
+  a: string;
+  b: string;
+  message: string;
+};
+
+/** Пересечение по всем трём осям сразу — иначе это соседи, а не наложение. */
+function overlapOf(a: ReturnType<typeof moduleBox>, b: ReturnType<typeof moduleBox>) {
+  const x = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0);
+  const y = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0);
+  const z = Math.min(a.z1, b.z1) - Math.max(a.z0, b.z0);
+  // Миллиметр допуска: касание торцами соседних модулей — это не наложение.
+  return x > 1 && y > 1 && z > 1 ? { x, y, z } : null;
+}
+
+/**
+ * Кто с кем пересекается по объёму.
+ *
+ * Возвращает список, а не бросает: приёмке нужно перечислить все случаи
+ * разом, а не падать на первом.
+ */
+export function moduleOverlaps(run: Run): ModuleOverlap[] {
+  const boxes = [
+    ...run.modules.map((unit) => moduleBox(unit, run, false)),
+    ...run.upperSegments.flatMap((segment) =>
+      segment.modules.map((unit) => moduleBox(unit, run, true)),
+    ),
+  ];
+
+  const found: ModuleOverlap[] = [];
+
+  for (let i = 0; i < boxes.length; i += 1) {
+    for (let j = i + 1; j < boxes.length; j += 1) {
+      const hit = overlapOf(boxes[i], boxes[j]);
+      if (!hit) continue;
+
+      found.push({
+        a: boxes[i].id,
+        b: boxes[j].id,
+        message:
+          `«${boxes[i].label}» и «${boxes[j].label}» занимают один объём: ` +
+          `перекрытие ${Math.round(hit.x)}×${Math.round(hit.y)}×${Math.round(hit.z)} мм.`,
+      });
+    }
+  }
+
+  return found;
+}
+
+export class ModuleOverlapError extends Error {
+  constructor(readonly overlaps: ModuleOverlap[]) {
+    super(
+      `Два модуля в одном объёме: ${overlaps.map((o) => o.message).join(' ')} ` +
+        'Такую мебель нельзя ни собрать, ни повесить, а смета и раскрой ' +
+        'посчитают корпус дважды.',
+    );
+    this.name = 'ModuleOverlapError';
+  }
+}
+
+/**
+ * НИ ОДИН МОДУЛЬ НЕ ПЕРЕСЕКАЕТСЯ С ДРУГИМ.
+ *
+ * Проверка ОБЩАЯ, а не «верхний против пенала». Частный случай нашёлся
+ * так: верхний ряд вешался поверх колонн во всю высоту — механизм разрыва
+ * применялся к окну и не применялся к пеналам. Заплатка на этот случай
+ * оставила бы все остальные, которых мы ещё не видели.
+ *
+ * Это ИСКЛЮЧЕНИЕ, а не предупреждение, по тому же правилу, что и
+ * `assertRunFits`: мебель, которую нельзя собрать, не должна доехать ни до
+ * чертежа, ни до сметы. На фасаде наложение читается безобидной
+ * антресолью — глазами такое не ловится, только счётом.
+ */
+export function assertNoOverlap(run: Run): void {
+  const overlaps = moduleOverlaps(run);
+  if (overlaps.length > 0) throw new ModuleOverlapError(overlaps);
 }

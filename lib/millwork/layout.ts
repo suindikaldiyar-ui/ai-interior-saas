@@ -8,6 +8,7 @@ import {
   frontPlan,
   isStandardWidth,
   largestStandardUpTo,
+  moduleHeightMm,
 } from './modules';
 import { assertRunFits, runWidthSum } from './invariants';
 import { defaultFill } from './fill';
@@ -1012,9 +1013,43 @@ export function buildUpperRow(
   req: RunRequirements,
   ceilingHeightMm: number,
 ): UpperSegment[] {
-  const blockers = blockingOpenings(openings, ceilingHeightMm, req.options)
-    .map((o) => ({ from: o.fromCornerMm, to: o.fromCornerMm + o.widthMm }))
-    .sort((a, b) => a.from - b.from);
+  /*
+   * ЧТО ЗАНИМАЕТ МЕСТО ВЕРХНЕГО РЯДА.
+   *
+   * Окна — не единственное. Пенал во всю высоту доходит до 2400, а
+   * верхний ряд навешивается с 1450: повесить над ним шкаф значит
+   * поставить два корпуса в один объём. Раньше механизм разрыва
+   * применялся только к проёмам, и верхний модуль на 1200 мм спокойно
+   * вставал поверх холодильной и духовой колонн.
+   *
+   * На фасаде это читалось безобидной антресолью над колоннами, поэтому
+   * и жило: глазами наложение не ловится, только счётом. А смета и
+   * раскрой считали корпус, которого не может быть.
+   *
+   * Признак ГЕОМЕТРИЧЕСКИЙ, а не по типу модуля: перекрывает всё, что
+   * поднимается выше отметки навески. Новый вид высокого модуля —
+   * витрина-пенал, гардеробная колонна — попадёт под правило сам.
+   */
+  const upperBottom = GEOMETRY.upper.bottomFromFloor;
+  const tallSpans = baseModules
+    .filter((unit) => {
+      const top =
+        GEOMETRY.base.plinthH +
+        moduleHeightMm(unit.kind, {
+          upperToCeiling: req.options.upperToCeiling,
+          ceilingHeightMm,
+        });
+      return top > upperBottom;
+    })
+    .map((unit) => ({ from: unit.offsetMm, to: unit.offsetMm + unit.widthMm }));
+
+  const blockers = [
+    ...blockingOpenings(openings, ceilingHeightMm, req.options).map((o) => ({
+      from: o.fromCornerMm,
+      to: o.fromCornerMm + o.widthMm,
+    })),
+    ...tallSpans,
+  ].sort((a, b) => a.from - b.from);
 
   // Свободные интервалы = длина ряда минус участки окон.
   const free: { from: number; to: number }[] = [];
