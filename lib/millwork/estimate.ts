@@ -4,9 +4,9 @@ import {
   hingesPerDoor,
   moduleAppliances,
   moduleDepthMm,
-  moduleHeightMm,
 } from './modules';
 import { allModules } from './layout';
+import { moduleCarcassHeightMm } from './fill';
 import { SLIDING_DOOR, displayLedMeters, sectionSpec, slidingDoorCount } from './sections';
 import { MODULE_VARIANTS, hasBottom, isSinkBase, variantEstimateKeys } from './moduleVariants';
 import { zoneProfile } from './zones';
@@ -57,8 +57,8 @@ const round3 = (v: number) => Math.round(v * 1000) / 1000;
  *
  * Задняя стенка идёт ХДФ и считается отдельной статьёй.
  */
-function carcassAreaM2(unit: Module, ceilingHeightMm: number, upperToCeiling: boolean): number {
-  const h = moduleHeightMm(unit.kind, { upperToCeiling, ceilingHeightMm });
+function carcassAreaM2(unit: Module, run: Run): number {
+  const h = moduleCarcassHeightMm(unit, run);
   const d = moduleDepthMm(unit.kind);
   const w = unit.widthMm;
 
@@ -93,13 +93,13 @@ function shelfAreaM2(unit: Module): number {
   return (count * unit.widthMm * moduleDepthMm(unit.kind)) / MM2_IN_M2;
 }
 
-function backPanelAreaM2(unit: Module, ceilingHeightMm: number, upperToCeiling: boolean): number {
-  const h = moduleHeightMm(unit.kind, { upperToCeiling, ceilingHeightMm });
+function backPanelAreaM2(unit: Module, run: Run): number {
+  const h = moduleCarcassHeightMm(unit, run);
   return (h * unit.widthMm) / MM2_IN_M2;
 }
 
 /** Площадь фасадов. У техники фасада нет — она приходит со своей панелью. */
-function frontAreaM2(unit: Module, ceilingHeightMm: number, upperToCeiling: boolean): number {
+function frontAreaM2(unit: Module, run: Run): number {
   /*
    * Встроенный холодильник закрыт фасадом заподлицо — это плита ЛДСП или
    * МДФ во всю высоту пенала, и стоит она заметных денег. Отдельностоящий
@@ -107,12 +107,12 @@ function frontAreaM2(unit: Module, ceilingHeightMm: number, upperToCeiling: bool
    * измеряется десятками тысяч, поэтому это отдельные строки.
    */
   if (unit.builtIn) {
-    const h = moduleHeightMm(unit.kind, { upperToCeiling, ceilingHeightMm });
+    const h = moduleCarcassHeightMm(unit, run);
     return (unit.widthMm * h) / MM2_IN_M2;
   }
 
   if (unit.frontType === 'appliance' || unit.frontType === 'none') return 0;
-  const h = moduleHeightMm(unit.kind, { upperToCeiling, ceilingHeightMm });
+  const h = moduleCarcassHeightMm(unit, run);
   return (unit.widthMm * h) / MM2_IN_M2;
 }
 
@@ -120,8 +120,8 @@ function frontAreaM2(unit: Module, ceilingHeightMm: number, upperToCeiling: bool
  * Кромка ПВХ клеится по видимым торцам: периметр каждого фасада плюс
  * передние торцы корпуса. Это самая недооценённая статья в ручных сметах.
  */
-function edgeBandingMm(unit: Module, ceilingHeightMm: number, upperToCeiling: boolean): number {
-  const h = moduleHeightMm(unit.kind, { upperToCeiling, ceilingHeightMm });
+function edgeBandingMm(unit: Module, run: Run): number {
+  const h = moduleCarcassHeightMm(unit, run);
   const w = unit.widthMm;
 
   if (unit.builtIn) {
@@ -316,8 +316,11 @@ function sectionDrafts(run: Run): Draft[] {
 }
 
 export function buildEstimateDrafts(run: Run): Draft[] {
-  const upperToCeiling = run.options.upperToCeiling;
-  const ceiling = run.ceilingHeightMm;
+  /*
+   * Высоту и потолок больше не разбираем по кусочкам: всё, что считает
+   * габарит, берёт `moduleCarcassHeightMm(unit, run)` — ту же функцию,
+   * что чертёж и деталировка.
+   */
   const modules = allModules(run);
 
   const baseModules = run.modules.filter(
@@ -335,14 +338,14 @@ export function buildEstimateDrafts(run: Run): Draft[] {
   let handles = 0;
 
   for (const unit of modules) {
-    carcass += carcassAreaM2(unit, ceiling, upperToCeiling);
+    carcass += carcassAreaM2(unit, run);
     shelves += shelfAreaM2(unit);
-    backs += backPanelAreaM2(unit, ceiling, upperToCeiling);
-    fronts += frontAreaM2(unit, ceiling, upperToCeiling);
-    edge += edgeBandingMm(unit, ceiling, upperToCeiling);
+    backs += backPanelAreaM2(unit, run);
+    fronts += frontAreaM2(unit, run);
+    edge += edgeBandingMm(unit, run);
 
     if (unit.frontType === 'door') {
-      const h = moduleHeightMm(unit.kind, { upperToCeiling, ceilingHeightMm: ceiling });
+      const h = moduleCarcassHeightMm(unit, run);
       // Верхние шкафы чаще делают на подъёмниках, нижние — на петлях.
       if (unit.kind === 'upper' || unit.kind === 'corner_upper') {
         lifts += unit.doorCount;
@@ -368,7 +371,7 @@ export function buildEstimateDrafts(run: Run): Draft[] {
      * бы столько же, сколько отдельностоящий, — а разница ощутимая.
      */
     if (unit.builtIn) {
-      const h = moduleHeightMm(unit.kind, { upperToCeiling, ceilingHeightMm: ceiling });
+      const h = moduleCarcassHeightMm(unit, run);
       hinges += BUILT_IN_FRIDGE_FRONTS * hingesPerDoor(h / BUILT_IN_FRIDGE_FRONTS);
       handles += BUILT_IN_FRIDGE_FRONTS;
     }
@@ -473,7 +476,7 @@ export function buildEstimateDrafts(run: Run): Draft[] {
    */
   for (const unit of modules) {
     if (unit.section !== 'glass_display') continue;
-    const h = moduleHeightMm(unit.kind, { upperToCeiling, ceilingHeightMm: ceiling });
+    const h = moduleCarcassHeightMm(unit, run);
 
     drafts.push(
       {
@@ -506,9 +509,7 @@ export function buildEstimateDrafts(run: Run): Draft[] {
         quantity:
           key === 'glass_front'
             ? round2(
-                (unit.widthMm *
-                  moduleHeightMm(unit.kind, { upperToCeiling, ceilingHeightMm: ceiling })) /
-                  MM2_IN_M2,
+                (unit.widthMm * moduleCarcassHeightMm(unit, run)) / MM2_IN_M2,
               )
             : 1,
       });

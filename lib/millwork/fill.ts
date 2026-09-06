@@ -1,6 +1,6 @@
-import { APPLIANCE_COLUMN, GEOMETRY, moduleHeightMm, nicheHeightMm } from './modules';
+import { APPLIANCE_COLUMN, GEOMETRY, standardHeightMm, nicheHeightMm } from './modules';
 import { sectionSpec } from './sections';
-import { zoneHeightMm, zoneProfile } from './zones';
+import { upperRowBottomMm, zoneHeightMm, zoneProfile } from './zones';
 import type { ApplianceKind, Module, ModuleFill, Run, ZoneKind } from '@/types/millwork';
 
 /**
@@ -91,9 +91,20 @@ export const MIN_DIVIDER_EDGE_MM = 150;
  * Высота КОРПУСА модуля: от дна до крыши, без цоколя и столешницы.
  * По ней считается и наполнение, и детализировка.
  */
-export function moduleCarcassHeightMm(unit: Module, run: Pick<Run, 'zone' | 'ceilingHeightMm' | 'options'>): number {
+export function moduleCarcassHeightMm(
+  unit: Module,
+  run: Pick<Run, 'zone' | 'ceilingHeightMm' | 'options'> & Partial<Pick<Run, 'upperSegments'>>,
+): number {
   const zone = zoneProfile(run.zone);
   const top = zoneHeightMm(run.zone, run.ceilingHeightMm);
+
+  /*
+   * Шкаф до потолка ДЕЛИТ высоту с антресолью, а не занимает её всю.
+   * Пока корпус доходил до потолка сам, антресоли было некуда встать —
+   * и она садилась внутрь него.
+   */
+  const bodyTop = hasMezzanine(run) ? mezzanineBottomMm(run) : top;
+  const fullBody = Math.max(GEOMETRY.base.carcassH, bodyTop - GEOMETRY.base.plinthH);
 
   if (unit.section) {
     const spec = sectionSpec(unit.section);
@@ -104,22 +115,50 @@ export function moduleCarcassHeightMm(unit: Module, run: Pick<Run, 'zone' | 'cei
      * отсеком под полки — это не шкаф, а стеллаж. Число в спецификации
      * секции задаёт чистую высоту под штангой, а не высоту корпуса.
      */
-    if (spec.moduleKind === 'tall') {
-      return Math.max(GEOMETRY.base.carcassH, top - GEOMETRY.base.plinthH);
-    }
+    if (spec.moduleKind === 'tall') return fullBody;
 
+    // Антресоль — её собственные 500 мм, а не кухонные 720.
     if (spec.heightMm > 0) return spec.heightMm;
-    return Math.max(GEOMETRY.base.carcassH, top - GEOMETRY.base.plinthH);
+    return fullBody;
   }
 
-  if (zone.kind !== 'kitchen') {
-    return Math.max(GEOMETRY.base.carcassH, top - GEOMETRY.base.plinthH);
-  }
+  if (zone.kind !== 'kitchen') return fullBody;
 
-  return moduleHeightMm(unit.kind, {
+  return standardHeightMm(unit.kind, {
     upperToCeiling: run.options.upperToCeiling,
     ceilingHeightMm: run.ceilingHeightMm,
   });
+}
+
+/** В ряду есть антресоль: она забирает верх, и корпус под неё укорачивается. */
+export function hasMezzanine(run: Partial<Pick<Run, 'upperSegments'>>): boolean {
+  return (run.upperSegments ?? []).some((segment) =>
+    segment.modules.some((unit) => unit.section === 'mezzanine'),
+  );
+}
+
+/** Низ антресоли: потолок зоны минус её собственная высота. */
+export function mezzanineBottomMm(
+  run: Pick<Run, 'zone' | 'ceilingHeightMm'>,
+): number {
+  return upperRowBottomMm(
+    run.zone,
+    run.ceilingHeightMm,
+    sectionSpec('mezzanine').heightMm,
+  );
+}
+
+/**
+ * ОТМЕТКА НИЗА ВЕРХНЕГО РЯДА ДЛЯ ЭТОГО РЯДА.
+ *
+ * Одна функция на сцену, аксонометрию, чертёж, смету и инвариант. Высота
+ * верхнего модуля берётся у него самого — у антресоли она своя.
+ */
+export function upperBottomFor(
+  unit: Module,
+  run: Pick<Run, 'zone' | 'ceilingHeightMm' | 'options' | 'upperSegments'>,
+): number {
+  return upperRowBottomMm(run.zone, run.ceilingHeightMm, moduleCarcassHeightMm(unit, run));
 }
 
 /** Глубина корпуса модуля в этой зоне. */

@@ -10,7 +10,7 @@ import CommandBar from './CommandBar';
 import DrawingSheet from './DrawingSheet';
 import VariantStrip, { type VariantPreview } from './VariantStrip';
 import { applyVariant } from '@/lib/millwork/moduleVariants';
-import { moduleHeightMm } from '@/lib/millwork/modules';
+import { moduleCarcassHeightMm } from '@/lib/millwork/fill';
 import type { DrawingMode } from './ElevationDrawing';
 import EstimateSheet from './EstimateSheet';
 import MaterialsStep from './MaterialsStep';
@@ -748,10 +748,7 @@ export default function Workspace(props: WorkspaceProps) {
         title: spec.title,
         hint: spec.hint,
         unit: applyVariant(unit, spec.kind),
-        heightMm: moduleHeightMm(unit.kind, {
-          upperToCeiling: active.run.options.upperToCeiling,
-          ceilingHeightMm: active.run.ceilingHeightMm,
-        }),
+        heightMm: moduleCarcassHeightMm(unit, active.run),
         deltaKzt,
         active: spec.kind === now,
       };

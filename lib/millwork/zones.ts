@@ -22,6 +22,21 @@ export type ZoneProfile = {
   depthMm: number;
   /** Высота ряда: число в мм либо «до потолка». */
   height: number | 'ceiling';
+  /**
+   * ОТКУДА НАЧИНАЕТСЯ ВЕРХНИЙ РЯД, мм от пола.
+   *
+   * У кухни это отраслевые 1450: между столешницей и низом навесных
+   * шкафов стоит фартук, и высота его известна.
+   *
+   * У зон-секций верхнего ряда в кухонном смысле нет вовсе — там
+   * антресоль, и она садится НА ШКАФ СВЕРХУ, а не на фиксированную
+   * отметку. Поэтому число здесь не задаётся: его считает
+   * `upperRowBottomMm` от потолка вниз, на высоту самой антресоли.
+   *
+   * Раньше 1450 применялось во всех зонах без разбора, и антресоль
+   * оказывалась внутри шкафа, который идёт до потолка.
+   */
+  upperBottomMm?: number;
   /** Что за мебель тут стоит — одной строкой для замерщика. */
   hint: string;
   /**
@@ -63,6 +78,8 @@ export const ZONE_PROFILES: Record<ZoneKind, ZoneProfile> = {
     title: 'Кухня',
     depthMm: 560,
     height: 'ceiling',
+    // Фартук между столешницей и навесными шкафами — отраслевые 1450.
+    upperBottomMm: 1450,
     hint: 'Нижний и верхний ряд, техника, мойка, столешница',
     facadeTitle: 'Фасады кухни',
     yours: 'Ваша кухня',
@@ -202,6 +219,28 @@ export const ZONE_DRAFT_NOTE =
 export function zoneHeightMm(kind: ZoneKind | undefined | null, ceilingHeightMm: number): number {
   const profile = zoneProfile(kind);
   return profile.height === 'ceiling' ? ceilingHeightMm : profile.height;
+}
+
+/**
+ * ОТМЕТКА НИЗА ВЕРХНЕГО РЯДА.
+ *
+ * Одна точка отсчёта на весь продукт: сцена, аксонометрия, чертёж, смета
+ * и инвариант обязаны ставить верхний ряд на одну и ту же высоту.
+ *
+ *   кухня      — 1450 из профиля: над столешницей, за фартуком;
+ *   остальные  — потолок минус высота антресоли: она садится НА шкаф.
+ *
+ * Кухонная константа в спальне давала 1450 при шкафе до 2700 — антресоль
+ * попадала внутрь корпуса, и смета считала два корпуса в одном объёме.
+ */
+export function upperRowBottomMm(
+  kind: ZoneKind | undefined | null,
+  ceilingHeightMm: number,
+  upperHeightMm: number,
+): number {
+  const profile = zoneProfile(kind);
+  if (profile.upperBottomMm !== undefined) return profile.upperBottomMm;
+  return Math.max(0, zoneHeightMm(kind, ceilingHeightMm) - upperHeightMm);
 }
 
 /* ─────────────────  Что бывает в этой зоне, а что нет  ───────────────── */

@@ -6,7 +6,7 @@ import LeaderLines from './LeaderLines';
 import FrontGlyph from './FrontGlyph';
 import { TipOnMark } from './DrawingSymbols';
 import type { LeaderAnchor } from '@/lib/millwork/leaders';
-import { APPLIANCE_SLOTS, BASE_TOTAL_H, GEOMETRY, moduleHeightMm } from '@/lib/millwork/modules';
+import { APPLIANCE_SLOTS, BASE_TOTAL_H, GEOMETRY, standardHeightMm } from '@/lib/millwork/modules';
 import { sectionSpec } from '@/lib/millwork/sections';
 import { zoneHeightMm, zoneProfile } from '@/lib/millwork/zones';
 import {
@@ -767,7 +767,7 @@ export default function ElevationDrawing({
      * В секционных зонах высоту уже посчитала сама секция: штанга под
      * пальто и обувница — это разные высоты, а не «пенал».
      */
-    const tallTop = !sectionZone && unit.kind === 'tall' ? moduleHeightMm('tall') : top;
+    const tallTop = !sectionZone && unit.kind === 'tall' ? standardHeightMm('tall') : top;
     const yTop = yOf(tallTop);
     const h = yOf(bottom) - yTop;
 
@@ -1079,7 +1079,7 @@ export default function ElevationDrawing({
         BASE_TOTAL_H,
         run.options.hasUpper ? upperTop : 0,
         ...allModulesOf(run).map((unit) =>
-          unit.kind === 'tall' ? moduleHeightMm('tall') : 0,
+          unit.kind === 'tall' ? standardHeightMm('tall') : 0,
         ),
       )
     : ceiling;

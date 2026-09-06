@@ -7,7 +7,7 @@ import {
   snapToStandard,
 } from './modules';
 import { buildUpperRow, fillGap } from './layout';
-import { assertRunFits, widthOverflowMm } from './invariants';
+import { assertNoOverlap, assertRunFits, widthOverflowMm } from './invariants';
 import { runFingerprint } from './fingerprint';
 import { defaultFill } from './fill';
 import { SECTION_SPECS } from './sections';
@@ -389,6 +389,8 @@ export function applyOps({ run, requirements, ops, openings = [] }: ApplyOpsInpu
 
   // Тот же инвариант, что и в buildRun: правки не могут вывести ряд за стену.
   assertRunFits(nextRun);
+  // Два модуля в одном объёме собрать нельзя, а смета посчитает их дважды.
+  assertNoOverlap(nextRun);
 
   return nextRun;
 }

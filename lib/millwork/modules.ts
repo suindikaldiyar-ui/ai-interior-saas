@@ -193,7 +193,22 @@ export function snapToStandard(widthMm: number): number {
 }
 
 /** Высота модуля по типу — нужна и чертежу, и расчёту кромки. */
-export function moduleHeightMm(kind: ModuleKind, options?: { upperToCeiling?: boolean; ceilingHeightMm?: number }): number {
+/**
+ * СТАНДАРТНАЯ ВЫСОТА ПО ВИДУ МОДУЛЯ — И ТОЛЬКО.
+ *
+ * Отраслевой стандарт: нижний 720, верхний 720 (или до потолка), пенал
+ * 2300. Про зону и про секцию эта функция НЕ ЗНАЕТ и знать не должна.
+ *
+ * ИЗМЕРЯТЬ ЕЮ РЕАЛЬНЫЙ МОДУЛЬ НЕЛЬЗЯ. Для этого есть
+ * `moduleCarcassHeightMm(unit, run)`: она учитывает зону и секцию, а сюда
+ * приходит только в последнем шаге, для кухни без секции.
+ *
+ * Раньше обе назывались похоже, и половина кода мерила ими одно и то же:
+ * шкаф до потолка выходил 2600 у чертежа и 2300 у сцены — расхождение
+ * в 300 мм, из-за которого антресоль садилась внутрь корпуса. Имя
+ * `standardHeightMm` выбрано так, чтобы перепутать было нельзя.
+ */
+export function standardHeightMm(kind: ModuleKind, options?: { upperToCeiling?: boolean; ceilingHeightMm?: number }): number {
   switch (kind) {
     case 'base':
     case 'corner_base':

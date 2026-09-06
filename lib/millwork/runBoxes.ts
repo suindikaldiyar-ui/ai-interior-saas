@@ -1,5 +1,6 @@
 import { moduleBoxes, type PartBox } from './cabinetBoxes';
-import { GEOMETRY, moduleHeightMm } from './modules';
+import { GEOMETRY } from './modules';
+import { moduleCarcassHeightMm, upperBottomFor } from './fill';
 import { zoneProfile } from './zones';
 import type { Module, Run } from '@/types/millwork';
 
@@ -73,14 +74,11 @@ export function runModuleBoxes(run: Run, options: RunBoxOptions): RunBoxes {
   const modules: ModuleBoxes[] = [];
 
   const place = (unit: Module, upper: boolean): void => {
-    const heightMm = moduleHeightMm(unit.kind, {
-      upperToCeiling: run.options.upperToCeiling,
-      ceilingHeightMm: run.ceilingHeightMm,
-    });
+    const heightMm = moduleCarcassHeightMm(unit, run);
 
     const placement = {
       x: unit.offsetMm / MM,
-      y: upper ? GEOMETRY.upper.bottomFromFloor / MM : GEOMETRY.base.plinthH / MM,
+      y: upper ? upperBottomFor(unit, run) / MM : GEOMETRY.base.plinthH / MM,
       heightM: heightMm / MM,
       depthM: upper ? GEOMETRY.upper.depth / MM : depthM,
       thicknessM,

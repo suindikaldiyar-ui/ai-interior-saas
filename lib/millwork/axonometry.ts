@@ -1,5 +1,6 @@
 import { carcassBoxes, moduleBoxes, type BoxMaterial, type PartBox } from './cabinetBoxes';
-import { GEOMETRY, moduleHeightMm } from './modules';
+import { GEOMETRY } from './modules';
+import { moduleCarcassHeightMm, upperBottomFor } from './fill';
 import { zoneProfile } from './zones';
 import type { Run } from '@/types/millwork';
 
@@ -135,14 +136,12 @@ export function buildAxonometry(
   const boxes: PartBox[] = [];
 
   const place = (unit: (typeof run.modules)[number], offsetMm: number, upper: boolean) => {
-    const heightMm = moduleHeightMm(unit.kind, {
-      upperToCeiling: run.options.upperToCeiling,
-      ceilingHeightMm: run.ceilingHeightMm,
-    });
+    // Высота и отметка — из ОДНОГО источника с чертежом и сметой.
+    const heightMm = moduleCarcassHeightMm(unit, run);
 
     const placement = {
       x: offsetMm / MM,
-      y: upper ? GEOMETRY.upper.bottomFromFloor / MM : GEOMETRY.base.plinthH / MM,
+      y: upper ? upperBottomFor(unit, run) / MM : GEOMETRY.base.plinthH / MM,
       heightM: heightMm / MM,
       depthM: upper ? GEOMETRY.upper.depth / MM : depthM,
       thicknessM,

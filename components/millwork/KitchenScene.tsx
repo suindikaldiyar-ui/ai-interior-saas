@@ -3,7 +3,7 @@
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { KITCHEN } from '@/lib/kitchen';
-import { moduleHeightMm } from '@/lib/millwork/modules';
+import { moduleCarcassHeightMm } from '@/lib/millwork/fill';
 import { useInteriorStore } from '@/store/useInteriorStore';
 import Cabinet3D from './cabinet3d/Cabinet3D';
 import type { OrthoProjection } from './cabinet3d/SceneCamera';
@@ -131,10 +131,7 @@ export default function KitchenScene({
           offsetMm: unit.offsetMm,
           // Пенал остаётся пеналом, и высота у него та же, что на чертеже.
           kind: unit.kind,
-          heightMm: moduleHeightMm(unit.kind, {
-            upperToCeiling: run.options.upperToCeiling,
-            ceilingHeightMm: run.ceilingHeightMm,
-          }),
+          heightMm: moduleCarcassHeightMm(unit, run),
           appliance: unit.appliance,
           /*
            * Колонна и встройка: без них модель дорисовывает по-своему —

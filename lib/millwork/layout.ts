@@ -8,10 +8,9 @@ import {
   frontPlan,
   isStandardWidth,
   largestStandardUpTo,
-  moduleHeightMm,
 } from './modules';
-import { assertRunFits, runWidthSum } from './invariants';
-import { defaultFill } from './fill';
+import { assertNoOverlap, assertRunFits, runWidthSum } from './invariants';
+import { defaultFill, moduleCarcassHeightMm } from './fill';
 import { CARGO_MAX_MM, CARGO_MIN_MM, applyVariant } from './moduleVariants';
 import { SECTION_SPECS, sectionSpec } from './sections';
 import { isSectionZone, zoneProfile } from './zones';
@@ -687,6 +686,8 @@ function buildSectionRun(input: BuildRunInput): Run {
   };
 
   assertRunFits(run);
+  // Два модуля в одном объёме собрать нельзя, а смета посчитает их дважды.
+  assertNoOverlap(run);
   return run;
 }
 
@@ -978,6 +979,8 @@ export function buildRun(input: BuildRunInput): Run {
 
   // Жёсткий инвариант: ряд, не помещающийся в стену, наружу не выходит.
   assertRunFits(run);
+  // Два модуля в одном объёме собрать нельзя, а смета посчитает их дважды.
+  assertNoOverlap(run);
 
   return run;
 }
@@ -1030,17 +1033,10 @@ export function buildUpperRow(
    * поднимается выше отметки навески. Новый вид высокого модуля —
    * витрина-пенал, гардеробная колонна — попадёт под правило сам.
    */
+  const shell = { zone: req.zone, ceilingHeightMm, options: req.options, upperSegments: [] };
   const upperBottom = GEOMETRY.upper.bottomFromFloor;
   const tallSpans = baseModules
-    .filter((unit) => {
-      const top =
-        GEOMETRY.base.plinthH +
-        moduleHeightMm(unit.kind, {
-          upperToCeiling: req.options.upperToCeiling,
-          ceilingHeightMm,
-        });
-      return top > upperBottom;
-    })
+    .filter((unit) => GEOMETRY.base.plinthH + moduleCarcassHeightMm(unit, shell) > upperBottom)
     .map((unit) => ({ from: unit.offsetMm, to: unit.offsetMm + unit.widthMm }));
 
   const blockers = [
