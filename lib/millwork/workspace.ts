@@ -8,6 +8,7 @@ import type {
   VariantKey,
 } from '@/types/millwork';
 import { buildEstimate, recalcTotal, type RateTable } from './estimate';
+import type { ProductionSettings } from '@/types/catalog';
 import { buildVariants } from './variants';
 
 /**
@@ -43,6 +44,7 @@ export type WorkspaceSeed = {
   /** Стена, вдоль которой стоит ряд. По умолчанию — самая длинная. */
   wallId?: string | null;
   cornerAt?: 'start' | 'end' | null;
+  production?: ProductionSettings;
 };
 
 export type WorkspaceInput = {
@@ -59,6 +61,12 @@ export type WorkspaceInput = {
   cornerAt: 'start' | 'end' | null;
   /** Глубина помещения для 3D: соседняя стена, если она есть в замере. */
   roomDepthM: number;
+  /**
+   * Настройки цеха. Едут вместе с входными данными, потому что смета
+   * считает количества по ТОМУ ЖЕ списку деталей, что уходит в цех:
+   * у компании своя толщина плиты, и разойтись им нельзя.
+   */
+  production?: ProductionSettings;
 };
 
 /** Рабочая стена: указанная явно либо самая длинная в замере. */
@@ -104,6 +112,7 @@ export function workspaceInput(seed: WorkspaceSeed): WorkspaceInput {
     rates: seed.rates,
     cornerAt: seed.cornerAt ?? null,
     roomDepthM: roomDepth(seed.measurement, wall.id),
+    production: seed.production,
   };
 }
 
@@ -128,6 +137,7 @@ export function composeVariants(
     rates: input.rates,
     cornerAt: input.cornerAt,
     disabledKeys: disabled,
+    production: input.production,
   });
 
   return base.map((variant) => {
@@ -135,7 +145,14 @@ export function composeVariants(
     if (!edited) return variant;
 
     const estimate = recalcTotal(
-      buildEstimate(edited, variant.key, input.rates, disabled[variant.key]),
+      buildEstimate(
+        edited,
+        variant.key,
+        input.rates,
+        disabled[variant.key],
+        undefined,
+        input.production,
+      ),
       disabled[variant.key],
     );
     return { ...variant, run: edited, estimate };

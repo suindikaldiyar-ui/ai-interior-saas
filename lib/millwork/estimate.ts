@@ -3,18 +3,18 @@ import {
   BUILT_IN_FRIDGE_FRONTS,
   hingesPerDoor,
   moduleAppliances,
-  moduleDepthMm,
 } from './modules';
 import { allModules } from './layout';
 import { moduleCarcassHeightMm } from './fill';
+import { buildPanels, panelMaterials } from './panels';
+import { DEFAULT_PRODUCTION, type ProductionSettings } from '@/types/catalog';
 import { SLIDING_DOOR, displayLedMeters, sectionSpec, slidingDoorCount } from './sections';
-import { MODULE_VARIANTS, hasBottom, isSinkBase, variantEstimateKeys } from './moduleVariants';
+import { MODULE_VARIANTS, isSinkBase, variantEstimateKeys } from './moduleVariants';
 import { zoneProfile } from './zones';
 import type {
   Estimate,
   EstimateLine,
   EstimateUnit,
-  Module,
   Run,
   VariantKey,
 } from '@/types/millwork';
@@ -46,103 +46,25 @@ const round3 = (v: number) => Math.round(v * 1000) / 1000;
 
 /* ─────────────────────────  Раскрой  ───────────────────────── */
 
-/**
- * КОРОБКА модуля: два бока, дно, крыша и вертикальная перегородка.
+/*
+ * КОЛИЧЕСТВА МАТЕРИАЛОВ БЕРУТСЯ ИЗ ДЕТАЛИРОВКИ, А НЕ СЧИТАЮТСЯ ЗАНОВО.
  *
- * ПОЛОК ЗДЕСЬ НЕТ НАМЕРЕННО — они считаются отдельной строкой по
- * `fill.shelves`. Раньше сюда входила РОВНО ОДНА полка на модуль,
- * захардкоженная, и это расходилось с раскроем в обе стороны сразу:
- * в шкафу с открытыми полками цех пилил 22 детали, а клиент платил за 4;
- * в тумбе с ящиками клиент платил за полку, которой в раскрое нет.
+ * Здесь стояли четыре собственные формулы: площадь корпуса габаритным
+ * прямоугольником, задняя стенка, фасады и кромка по числу створок. Рядом
+ * `buildPanels` выдавала настоящие детали с настоящими торцами — и две
+ * цифры расходились. На шкафе-купе и в прихожей кромки в раскрое было
+ * на 13 % больше, чем в смете: цех клеил, компания за это не брала.
  *
- * Задняя стенка идёт ХДФ и считается отдельной статьёй.
- */
-function carcassAreaM2(unit: Module, run: Run): number {
-  const h = moduleCarcassHeightMm(unit, run);
-  const d = moduleDepthMm(unit.kind);
-  const w = unit.widthMm;
-
-  const sides = 2 * h * d;
-  /*
-   * У модуля под мойку ДНА НЕТ: там сифон. Это не мелочь оформления —
-   * лишний лист ЛДСП в каждой кухне складывается в деньги, а в раскрое
-   * появляется деталь, которую цех выбросит.
-   */
-  const horizontals = (hasBottom(unit) ? 2 : 1) * w * d;
-
-  /*
-   * Вертикальная перегородка: деталь во всю высоту корпуса. В раскрой она
-   * попадала, а в смету не входила вовсе — замерщик протягивал её на
-   * чертеже, и цех пилил лист, за который никто не заплатил.
-   */
-  const divider = unit.fill?.dividerMm ? h * d : 0;
-
-  return (sides + horizontals + divider) / MM2_IN_M2;
-}
-
-/**
- * Полки модуля — СТОЛЬКО, СКОЛЬКО ИХ В `fill`.
+ * Это был ПЯТЫЙ случай одного класса подряд — два расчёта одной величины,
+ * которые молча разъезжаются. До него были полки, корпус, высота и состав
+ * верхнего ряда. Поэтому лечение то же: второй расчёт удалён, а не
+ * приведён к первому. Источник один — тот список деталей, который уходит
+ * в цех.
  *
- * Один источник на смету, чертёж, 3D и раскрой. Второй расчёт здесь и был
- * причиной расхождения: цех получал на распил другое количество деталей,
- * чем то, за которое заплатил клиент.
+ * `edgeBandingMm` удалена целиком: своего смысла у неё не было. Она
+ * описывала те же видимые торцы, что и `Panel.edges`, только грубее —
+ * периметром модуля вместо периметра каждой детали.
  */
-function shelfAreaM2(unit: Module): number {
-  const count = unit.fill?.shelves.length ?? 0;
-  if (count === 0) return 0;
-  return (count * unit.widthMm * moduleDepthMm(unit.kind)) / MM2_IN_M2;
-}
-
-function backPanelAreaM2(unit: Module, run: Run): number {
-  const h = moduleCarcassHeightMm(unit, run);
-  return (h * unit.widthMm) / MM2_IN_M2;
-}
-
-/** Площадь фасадов. У техники фасада нет — она приходит со своей панелью. */
-function frontAreaM2(unit: Module, run: Run): number {
-  /*
-   * Встроенный холодильник закрыт фасадом заподлицо — это плита ЛДСП или
-   * МДФ во всю высоту пенала, и стоит она заметных денег. Отдельностоящий
-   * не даёт в смету ни фасада, ни петель: разница между вариантами
-   * измеряется десятками тысяч, поэтому это отдельные строки.
-   */
-  if (unit.builtIn) {
-    const h = moduleCarcassHeightMm(unit, run);
-    return (unit.widthMm * h) / MM2_IN_M2;
-  }
-
-  if (unit.frontType === 'appliance' || unit.frontType === 'none') return 0;
-  const h = moduleCarcassHeightMm(unit, run);
-  return (unit.widthMm * h) / MM2_IN_M2;
-}
-
-/**
- * Кромка ПВХ клеится по видимым торцам: периметр каждого фасада плюс
- * передние торцы корпуса. Это самая недооценённая статья в ручных сметах.
- */
-function edgeBandingMm(unit: Module, run: Run): number {
-  const h = moduleCarcassHeightMm(unit, run);
-  const w = unit.widthMm;
-
-  if (unit.builtIn) {
-    // Корпус плюс периметр каждой створки фасада встройки.
-    const doorH = h / BUILT_IN_FRIDGE_FRONTS;
-    return 2 * (h + w) + BUILT_IN_FRIDGE_FRONTS * 2 * (doorH + w);
-  }
-
-  if (unit.frontType === 'appliance' || unit.frontType === 'none') {
-    return 2 * (h + w);
-  }
-
-  const fronts = unit.frontType === 'drawers' ? unit.drawerCount : unit.doorCount;
-  const frontHeight = unit.frontType === 'drawers' ? h / Math.max(1, unit.drawerCount) : h;
-  const frontWidth = unit.frontType === 'door' ? w / Math.max(1, unit.doorCount) : w;
-
-  const frontEdges = fronts * 2 * (frontHeight + frontWidth);
-  const carcassEdges = 2 * (h + w);
-
-  return frontEdges + carcassEdges;
-}
 
 /* ─────────────────────────  Сборка строк  ───────────────────────── */
 
@@ -315,7 +237,10 @@ function sectionDrafts(run: Run): Draft[] {
   return drafts;
 }
 
-export function buildEstimateDrafts(run: Run): Draft[] {
+export function buildEstimateDrafts(
+  run: Run,
+  production: ProductionSettings = DEFAULT_PRODUCTION,
+): Draft[] {
   /*
    * Высоту и потолок больше не разбираем по кусочкам: всё, что считает
    * габарит, берёт `moduleCarcassHeightMm(unit, run)` — ту же функцию,
@@ -327,23 +252,19 @@ export function buildEstimateDrafts(run: Run): Draft[] {
     (m) => m.kind === 'base' || m.kind === 'corner_base' || m.kind === 'filler',
   );
 
-  let carcass = 0;
-  let shelves = 0;
-  let backs = 0;
-  let fronts = 0;
-  let edge = 0;
+  /*
+   * ОДИН ВЫЗОВ ВМЕСТО ЧЕТЫРЁХ ФОРМУЛ. `production` тот же, что у листа
+   * раскроя: у компании своя толщина плиты, и посчитай смета по умолчанию,
+   * пока цех пилит по 18 мм — расхождение вернулось бы той же дверью.
+   */
+  const materials = panelMaterials(buildPanels({ run, production }));
+
   let hinges = 0;
   let slides = 0;
   let lifts = 0;
   let handles = 0;
 
   for (const unit of modules) {
-    carcass += carcassAreaM2(unit, run);
-    shelves += shelfAreaM2(unit);
-    backs += backPanelAreaM2(unit, run);
-    fronts += frontAreaM2(unit, run);
-    edge += edgeBandingMm(unit, run);
-
     if (unit.frontType === 'door') {
       const h = moduleCarcassHeightMm(unit, run);
       // Верхние шкафы чаще делают на подъёмниках, нижние — на петлях.
@@ -396,7 +317,7 @@ export function buildEstimateDrafts(run: Run): Draft[] {
   const carcassTitle = zone.moistureProof ? 'Корпус влагостойкий ЛДСП' : 'Корпус ЛДСП';
 
   const drafts: Draft[] = [
-    { key: carcassKey, title: carcassTitle, unit: 'm2', quantity: round2(carcass) },
+    { key: carcassKey, title: carcassTitle, unit: 'm2', quantity: materials.carcassM2 },
     /*
      * ПОЛКИ ОТДЕЛЬНОЙ СТРОКОЙ — одна на весь ряд, по `fill.shelves`.
      *
@@ -405,10 +326,10 @@ export function buildEstimateDrafts(run: Run): Draft[] {
      * и прожила: в корпус была зашита одна полка на модуль, и её никто
      * не видел.
      */
-    { key: 'shelf_panel', title: 'Полки', unit: 'm2', quantity: round2(shelves) },
-    { key: 'hdf_back', title: 'Задние стенки ХДФ', unit: 'm2', quantity: round2(backs) },
-    { key: 'front_panel', title: 'Фасады', unit: 'm2', quantity: round2(fronts) },
-    { key: 'pvc_edge', title: 'Кромка ПВХ', unit: 'mp', quantity: round2(edge / MM_IN_M) },
+    { key: 'shelf_panel', title: 'Полки', unit: 'm2', quantity: materials.shelfM2 },
+    { key: 'hdf_back', title: 'Задние стенки ХДФ', unit: 'm2', quantity: materials.backM2 },
+    { key: 'front_panel', title: 'Фасады', unit: 'm2', quantity: materials.frontM2 },
+    { key: 'pvc_edge', title: 'Кромка ПВХ', unit: 'mp', quantity: materials.edgeM },
   ];
 
   if (zone.hasCountertop && zone.moistureProof) {
@@ -460,8 +381,8 @@ export function buildEstimateDrafts(run: Run): Draft[] {
     },
     // Четыре регулируемые опоры на каждый нижний модуль.
     { key: 'leg_support', title: 'Опоры регулируемые', unit: 'pcs', quantity: baseModules.length * 4 },
-    { key: 'fasteners', title: 'Крепёж и эксцентрики', unit: 'percent', quantity: round2(carcass) },
-    { key: 'cutting', title: 'Распил и присадка', unit: 'm2', quantity: round2(carcass + fronts) },
+    { key: 'fasteners', title: 'Крепёж и эксцентрики', unit: 'percent', quantity: materials.carcassM2 },
+    { key: 'cutting', title: 'Распил и присадка', unit: 'm2', quantity: round2(materials.carcassM2 + materials.shelfM2 + materials.frontM2) },
   );
 
   if (run.options.hasCornice) {
@@ -596,8 +517,14 @@ export function buildEstimate(
   rates: RateTable,
   disabledKeys: string[] = [],
   calculatedAt = '1970-01-01T00:00:00.000Z',
+  /*
+   * Настройки цеха — те же, что у листа раскроя. Умолчание общее с
+   * `buildPanels`: разойтись они могут только если кто-то передаст
+   * production в одну функцию и не передаст в другую.
+   */
+  production: ProductionSettings = DEFAULT_PRODUCTION,
 ): Estimate {
-  const drafts = buildEstimateDrafts(run);
+  const drafts = buildEstimateDrafts(run, production);
   const disabled = new Set(disabledKeys);
   const priceSnapshot: Record<string, number> = {};
 

@@ -716,7 +716,7 @@ export default function Workspace(props: WorkspaceProps) {
     if (specs.length < 2) return [];
 
     const now = currentVariant(unit);
-    const base = buildEstimate(active.run, variantKey, input.rates, disabled[variantKey]).total;
+    const base = buildEstimate(active.run, variantKey, input.rates, disabled[variantKey], undefined, props.production).total;
 
     return specs.map((spec) => {
       let deltaKzt = 0;
@@ -730,7 +730,8 @@ export default function Workspace(props: WorkspaceProps) {
             openings: input.openings,
           });
           deltaKzt = Math.round(
-            buildEstimate(next, variantKey, input.rates, disabled[variantKey]).total - base,
+            buildEstimate(next, variantKey, input.rates, disabled[variantKey], undefined, props.production)
+              .total - base,
           );
         } catch {
           // Вариант, который не собирается, просто идёт без цены.

@@ -265,3 +265,76 @@ export function panelTotals(panels: Panel[]): PanelTotals {
 
 /** Высота цоколя: он идёт отдельной строкой заказа, а не деталью модуля. */
 export const PLINTH_HEIGHT_MM = GEOMETRY.base.plinthH;
+
+
+/* ────────────────  Материалы для сметы — ИЗ ДЕТАЛИРОВКИ  ──────────────── */
+
+/**
+ * Сколько чего заказывать — по тем же деталям, что уходят в цех.
+ *
+ * ЕДИНСТВЕННЫЙ ИСТОЧНИК КОЛИЧЕСТВ. Смета раньше считала площади и кромку
+ * своими формулами: корпус как габаритный прямоугольник, кромку — по числу
+ * створок. Деталировка тем временем выдавала настоящие детали с настоящими
+ * торцами, и две цифры расходились: на шкафе-купе и в прихожей кромки в
+ * раскрое было на 13 % больше, чем в смете. Цех клеил, компания не брала
+ * за это денег.
+ *
+ * Разбивка идёт по МАТЕРИАЛУ и ИМЕНИ детали — по тем же полям, что читает
+ * технолог в списке на раскрой:
+ *
+ *   полки        — своя статья, у них своя ставка
+ *   ХДФ          — задние стенки
+ *   «Фасад …»    — фасады и фронты ящиков, включая фасад встройки
+ *   остальное    — корпус ЛДСП
+ *
+ * Кромка складывается вся: и толстая по видимым торцам, и тонкая по
+ * скрытым. Разделять их в смете незачем — статья одна.
+ */
+export type PanelMaterials = {
+  /** Корпус ЛДСП без полок: боковины, дно, крыша, перегородки, доборы. */
+  carcassM2: number;
+  /** Полки — отдельной статьёй, как и в смете. */
+  shelfM2: number;
+  backM2: number;
+  frontM2: number;
+  /** Кромка, погонные метры. */
+  edgeM: number;
+  /** Деталей всего — по нему сверяется, что список тот же. */
+  count: number;
+};
+
+/** Имя детали-полки в раскрое. По нему полки уходят в свою статью сметы. */
+export const SHELF_PANEL_NAME = 'Полка';
+
+export function panelMaterials(panels: Panel[]): PanelMaterials {
+  let carcassM2 = 0;
+  let shelfM2 = 0;
+  let backM2 = 0;
+  let frontM2 = 0;
+  let edgeM = 0;
+  let count = 0;
+
+  for (const panel of panels) {
+    const areaM2 = (panel.lengthMm * panel.widthMm * panel.qty) / 1_000_000;
+    count += panel.qty;
+
+    if (panel.material.startsWith('ХДФ')) backM2 += areaM2;
+    else if (panel.material.startsWith('Фасад')) frontM2 += areaM2;
+    else if (panel.name === SHELF_PANEL_NAME) shelfM2 += areaM2;
+    else carcassM2 += areaM2;
+
+    edgeM +=
+      ((panel.edges.long * panel.lengthMm + panel.edges.short * panel.widthMm) / 1000) *
+      panel.qty;
+  }
+
+  const r2 = (v: number) => Math.round(v * 100) / 100;
+  return {
+    carcassM2: r2(carcassM2),
+    shelfM2: r2(shelfM2),
+    backM2: r2(backM2),
+    frontM2: r2(frontM2),
+    edgeM: r2(edgeM),
+    count,
+  };
+}

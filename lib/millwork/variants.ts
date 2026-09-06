@@ -1,5 +1,6 @@
 import { buildRun, type BuildRunInput } from './layout';
 import { buildEstimate, type RateTable } from './estimate';
+import type { ProductionSettings } from '@/types/catalog';
 import { APPLIANCE_SLOTS } from './modules';
 import type {
   ApplianceKind,
@@ -96,6 +97,8 @@ export function activeStrategies(all: VariantStrategy[] = DEFAULT_STRATEGIES): V
 export interface BuildVariantsInput extends Omit<BuildRunInput, 'requirements'> {
   requirements: RunRequirements;
   rates: RateTable;
+  /** Настройки цеха: смета обязана считать по той же плите, что и раскрой. */
+  production?: ProductionSettings;
   strategies?: VariantStrategy[];
   disabledKeys?: Record<VariantKey, string[]>;
   calculatedAt?: string;
@@ -140,6 +143,7 @@ export function buildVariants(input: BuildVariantsInput): Variant[] {
       input.rates,
       input.disabledKeys?.[strategy.key] ?? [],
       input.calculatedAt,
+      input.production,
     );
 
     return {

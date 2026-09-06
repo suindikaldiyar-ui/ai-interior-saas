@@ -89,6 +89,8 @@ import {
 } from '../lib/millwork/promptFronts';
 import { MODULE_VARIANTS, applyVariant } from '../lib/millwork/moduleVariants';
 import { assertNoOverlap, moduleOverlaps } from '../lib/millwork/invariants';
+import { panelMaterials } from '../lib/millwork/panels';
+import type { ProductionSettings } from '../types/catalog';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ElevationDrawing from '../components/millwork/ElevationDrawing';
@@ -3275,6 +3277,102 @@ console.log('\nКаждый вариант виден на чертеже');
   const once = glyphSignature(frontGlyph(display, 'fronts'));
   const twice = glyphSignature(frontGlyph(display, 'fronts'));
   check('рисунок варианта детерминирован', once === twice);
+}
+
+
+/* ──────────  Смета и раскрой считают одни и те же материалы  ────────── */
+
+/*
+ * ПЯТЫЙ СЛУЧАЙ ОДНОГО КЛАССА — и последний из известных.
+ *
+ * Смета считала площади и кромку своими формулами, деталировка — по
+ * настоящим деталям. Кромки в раскрое оказывалось на 13 % больше, чем в
+ * смете: цех клеил, компания за это не брала денег.
+ *
+ * Теперь количество берётся ТОЛЬКО из деталировки. Этот тест держит
+ * равенство: разойдутся — значит кто-то снова завёл второй расчёт.
+ */
+
+console.log('\nСмета берёт количества из раскроя');
+{
+  /** Статья сметы → величина деталировки. */
+  const PAIRS: [string, keyof ReturnType<typeof panelMaterials>][] = [
+    ['ldsp_carcass', 'carcassM2'],
+    ['ldsp_moisture', 'carcassM2'],
+    ['shelf_panel', 'shelfM2'],
+    ['hdf_back', 'backM2'],
+    ['front_panel', 'frontM2'],
+    ['pvc_edge', 'edgeM'],
+  ];
+
+  const mismatched: string[] = [];
+  let configs = 0;
+  let compared = 0;
+
+  for (const t of RUN_TEMPLATES) {
+    for (const len of [t.minLengthMm, Math.round((t.minLengthMm + t.maxLengthMm) / 2), t.maxLengthMm]) {
+      let sample: Run;
+      try {
+        sample = buildRun({
+          ...baseInput,
+          lengthMm: len,
+          requirements: requirementsFromTemplate(t, DEMO_REQUIREMENTS.options),
+        });
+      } catch {
+        continue;
+      }
+
+      configs += 1;
+      const estimate = buildEstimate(sample, 'optimal', DEMO_RATES);
+      const cut = panelMaterials(buildPanels({ run: sample }));
+
+      for (const [key, field] of PAIRS) {
+        const line = estimate.lines.find((l) => l.key === key);
+        if (!line) continue;
+        compared += 1;
+        if (Math.abs(line.quantity - cut[field]) > 0.01) {
+          mismatched.push(`${t.id}@${len} ${key}: смета ${line.quantity} ≠ раскрой ${cut[field]}`);
+        }
+      }
+    }
+  }
+
+  check(
+    'кромка, ЛДСП, полки, фасады и задние стенки совпадают с раскроем',
+    mismatched.length === 0,
+    mismatched.length === 0
+      ? `конфигураций ${configs}, сверок ${compared}`
+      : `ЦЕХ КЛЕИТ И ПИЛИТ ОДНО, КЛИЕНТ ПЛАТИТ ДРУГОЕ — ${mismatched.slice(0, 3).join(' | ')}`,
+  );
+
+  check('сверено больше сотни величин', compared > 100, `${compared}`);
+
+  /*
+   * НАСТРОЙКИ ЦЕХА ДОХОДЯТ ДО СМЕТЫ.
+   *
+   * У компании своя толщина плиты. Считай смета по умолчанию, пока цех
+   * пилит по 18 мм — расхождение вернулось бы той же дверью, только тише:
+   * на тестах с умолчаниями оно бы не всплыло вовсе.
+   */
+  const run = buildRun(baseInput);
+  // 18 мм вместо 16 — реальная альтернатива, а не выдуманная толщина.
+  const thick: ProductionSettings = { ...DEFAULT_PRODUCTION, carcassMm: 18 };
+  const byDefault = buildEstimate(run, 'optimal', DEMO_RATES);
+  const byThick = buildEstimate(run, 'optimal', DEMO_RATES, [], undefined, thick);
+
+  check(
+    'толщина плиты компании меняет смету',
+    byDefault.total !== byThick.total,
+    `${byDefault.total} → ${byThick.total} при плите 18 мм`,
+  );
+
+  const cutThick = panelMaterials(buildPanels({ run, production: thick }));
+  const lineThick = byThick.lines.find((l) => l.key === 'pvc_edge');
+  check(
+    'и смета сходится с раскроем на ЕЁ настройках, а не на умолчаниях',
+    Math.abs((lineThick?.quantity ?? 0) - cutThick.edgeM) < 0.01,
+    `смета ${lineThick?.quantity} · раскрой ${cutThick.edgeM}`,
+  );
 }
 
 
