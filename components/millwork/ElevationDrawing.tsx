@@ -135,6 +135,15 @@ export type VariantOption = {
 const MOVE_STEP_MM = 50;
 
 /**
+ * Сколько пикселей считается дрожанием руки, а не переносом.
+ *
+ * Ниже этого порога отпускание — это выбор модуля. Планшет и палец дают
+ * разброс в несколько пикселей на каждом касании, и без порога любое
+ * нажатие на технику переставляло бы ряд.
+ */
+const MOVE_SLOP_PX = 6;
+
+/**
  * Поле под выноски с каждой стороны.
  *
  * Полки живут ВНЕ рисунка: заведи их внутрь — они лягут на мебель и на
@@ -710,6 +719,22 @@ export default function ElevationDrawing({
     let last = snap(unit.offsetMm + half);
     let frame: number | null = null;
 
+    /*
+     * КЛИК — ЭТО ВЫБОР, А НЕ ПЕРЕНОС.
+     *
+     * Раньше `onEnd` применял перенос всегда, даже когда палец не сдвинулся
+     * ни на пиксель: нажатие на холодильник записывало ему ручную позицию,
+     * а ручная позиция раскладывается ПЕРВОЙ и переставляет остальной ряд.
+     * Замерщик нажимал на модуль, чтобы его выбрать, — и кухня под ним
+     * тихо перекладывалась: между мойкой и посудомойкой появлялась
+     * доборная планка в 25 мм, а верхний шкаф в торце исчезал.
+     *
+     * Это та же ловушка, что с тапом в 3D-сцене: движение и выбор нельзя
+     * различать по одному только факту отпускания.
+     */
+    const startX = event.clientX;
+    let dragged = false;
+
     const paint = (centerMm: number) => {
       const rect = ghostRect.current;
       const label = ghostLabel.current;
@@ -722,6 +747,7 @@ export default function ElevationDrawing({
     };
 
     const onMove = (e: PointerEvent) => {
+      if (Math.abs(e.clientX - startX) > MOVE_SLOP_PX) dragged = true;
       const mm = snap(toMm(e.clientX) - grabOffset);
       if (frame !== null) return;
       frame = requestAnimationFrame(() => {
@@ -733,7 +759,8 @@ export default function ElevationDrawing({
 
     const onEnd = () => {
       moveCleanup.current?.();
-      onMoveAppliance(unit.appliance as ApplianceKind, last);
+      // Не сдвинули — значит просто выбрали модуль. Ряд не трогаем.
+      if (dragged) onMoveAppliance(unit.appliance as ApplianceKind, last);
     };
 
     window.addEventListener('pointermove', onMove);

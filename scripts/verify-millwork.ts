@@ -25,6 +25,7 @@ import {
   RUN_TEMPLATES,
   parseOrgTemplates,
   requirementsFromTemplate,
+  templateById,
   templateFits,
 } from '../lib/millwork/templates';
 import {
@@ -90,6 +91,8 @@ import {
 import { MODULE_VARIANTS, applyVariant } from '../lib/millwork/moduleVariants';
 import { assertNoOverlap, moduleOverlaps } from '../lib/millwork/invariants';
 import { panelMaterials } from '../lib/millwork/panels';
+import { visibleVariantCount } from '../lib/millwork/frontGlyph';
+import { DEMO_TEMPLATE_ID } from '../lib/millwork/demoProject';
 import type { ProductionSettings } from '../types/catalog';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -212,8 +215,17 @@ const REQ: RunRequirements = {
 const OPENINGS: Opening[] = DEMO_OPENINGS;
 const COMMS: CommPoint[] = DEMO_COMMS;
 
+/*
+ * ДЛИНА БЕРЁТСЯ У ДЕМО-РЯДА, а не задаётся здесь числом.
+ *
+ * Проёмы и коммуникации приёмка и так берёт из демо-данных. Держать рядом
+ * с ними СВОЮ длину значит собирать ряд, которого нигде не существует:
+ * когда демо-стена выросла с 3200 до 3800, окно и вывод воды переехали
+ * вместе с ней, а длина осталась старой — и вытяжка пропала из ряда,
+ * потому что над варочной не осталось свободной стены.
+ */
 const baseInput = {
-  lengthMm: 3200,
+  lengthMm: DEMO_PROJECT.lengthMm,
   ceilingHeightMm: 2700,
   requirements: REQ,
   openings: OPENINGS,
@@ -1130,12 +1142,21 @@ console.log('\nРучная расстановка');
   }
   check('шестьдесят позиций подряд не ломают ряд', overflow === 0, `сбоев: ${overflow}`);
 
-  // Правка, из-за которой прибор перестаёт помещаться, не применяется.
+  /*
+   * ТЕСНЫЙ РЯД СОБИРАЕТСЯ ЗДЕСЬ, а не берётся у демонстрации.
+   *
+   * Раньше сценарий «прибору не хватило места» держался на том, что
+   * демо-стена 3200 мм была забита техникой вплотную. Стена выросла до
+   * 3800 — и выпадать стало нечему: проверка позеленела, перестав что-либо
+   * проверять. Тесноту, которую тест изучает, он обязан создавать сам.
+   */
+  const narrow = { ...baseInput, lengthMm: 2400 };
+  const narrowAuto = buildRun(narrow);
   const tight = buildRun({
-    ...baseInput,
+    ...narrow,
     requirements: { ...REQ, manualAnchors: { hob: 700 } },
   });
-  const cost = manualAnchorCost(auto, tight);
+  const cost = manualAnchorCost(narrowAuto, tight);
   check(
     'выпавшие приборы названы до применения',
     cost.dropped.length > 0,
@@ -2405,7 +2426,14 @@ console.log('\nКомпоновки');
 console.log('\nКолонна, встройка и витрина');
 {
   const REQ_MW: RunRequirements = { ...REQ, appliances: [...REQ.appliances, 'microwave'] };
-  const long = { ...baseInput, lengthMm: 3600 };
+  /*
+   * БЕЗ ОКНА. Этот блок про то, что витрина не выталкивает технику
+   * (ловушка 109), и мерить он должен только конкуренцию за ширину.
+   * С окном в ряду терялась вытяжка — но не из-за витрины, а потому что
+   * варочная уезжала под проём, а над проёмом верхнего ряда нет. Проверка
+   * падала на постороннем поводе и рассказывала не о том.
+   */
+  const long = { ...baseInput, lengthMm: 3600, openings: [] };
 
   const withColumn = buildRun({ ...long, requirements: REQ_MW });
   const column = withColumn.modules.find((m) => m.column);
@@ -3277,6 +3305,85 @@ console.log('\nКаждый вариант виден на чертеже');
   const once = glyphSignature(frontGlyph(display, 'fronts'));
   const twice = glyphSignature(frontGlyph(display, 'fronts'));
   check('рисунок варианта детерминирован', once === twice);
+}
+
+
+/* ──────────────  Демо-объект остаётся демонстрируемым  ────────────── */
+
+/*
+ * ГЛАВНЫЙ ХОД ВСТРЕЧИ: нажать на модуль, поменять его на витрину,
+ * показать новую сумму. Он держится на том, что у модулей демо-ряда
+ * ЕСТЬ выбор и что выбор ВИДЕН.
+ *
+ * Однажды он молча перестал работать: ряд 3200 мм забился техникой
+ * вплотную, все модули стали либо под прибор, либо узким карго — и лента
+ * вариантов не показывалась вовсе. Заметили это не на демонстрации только
+ * потому, что случайно полезли смотреть другое.
+ *
+ * Считаем не число вариантов, а число РАЗНЫХ РИСУНКОВ фасада: «две
+ * дверцы» на модуле 1200 мм выглядят ровно как обычная дверца, и такой
+ * выбор на встрече не показать.
+ */
+
+console.log('\nДемо-объект можно показать');
+{
+  const demo = buildRun({
+    lengthMm: DEMO_PROJECT.lengthMm,
+    ceilingHeightMm: DEMO_MEASUREMENT.ceilingHeightMm,
+    requirements: requirementsFromTemplate(
+      templateById(DEMO_TEMPLATE_ID)!,
+      DEMO_REQUIREMENTS.options,
+    ),
+    openings: DEMO_MEASUREMENT.walls[0].openings,
+    comms: DEMO_MEASUREMENT.comms,
+    cornerAt: null,
+  });
+
+  const uppers = demo.upperSegments.flatMap((segment) => segment.modules);
+  check('в демо-ряду есть верхний ряд', uppers.length > 0, `${uppers.length} модулей наверху`);
+
+  const visible = allModules(demo).filter(
+    (unit) => visibleVariantCount(unit, demo, demo.zone) >= 2,
+  );
+
+  check(
+    'у демо-объекта не меньше трёх модулей с ВИДИМЫМ выбором',
+    visible.length >= 3,
+    `${visible.length}: ${visible.map((u) => `${u.id}(${u.widthMm})`).join(' ') || 'ни одного'}`,
+  );
+
+  /*
+   * Одного заметного на глаз мало назвать числом: витрина, открытая полка
+   * и ящики вместо дверцы — это то, на что клиент реагирует. Проверяем,
+   * что такой вариант в ряду действительно предлагается.
+   */
+  const striking = allModules(demo).some((unit) =>
+    variantsForModule(unit, demo, demo.zone).some((spec) =>
+      ['upper_display', 'upper_open', 'open_base', 'drawers_four'].includes(spec.kind),
+    ),
+  );
+  check('и среди них есть заметный: витрина, открытая полка или ящики', striking);
+
+  // Техника на месте: демонстрируем кухню, а не витрину возможностей.
+  for (const appliance of ['fridge', 'oven', 'sink600', 'hob', 'hood'] as const) {
+    check(
+      `техника на месте: ${APPLIANCE_SLOTS[appliance].title}`,
+      allModules(demo).some((u) => u.appliance === appliance),
+    );
+  }
+
+  check('модули демо-ряда не пересекаются', moduleOverlaps(demo).length === 0);
+
+  /*
+   * Сумма в правдоподобных пределах для кухни такой длины. Границы широкие
+   * намеренно: это защита от нуля и от порядка, а не от копеек.
+   */
+  const total = buildEstimate(demo, 'optimal', DEMO_RATES).total;
+  check(
+    'смета демо-ряда правдоподобна',
+    total > 1_000_000 && total < 3_000_000,
+    `${Math.round(total).toLocaleString('ru')} ₸ на ${DEMO_PROJECT.lengthMm} мм`,
+  );
 }
 
 

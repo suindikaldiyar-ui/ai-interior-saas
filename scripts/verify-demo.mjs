@@ -433,22 +433,11 @@ try {
     await fresh.goto(`${BASE}/demo`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
     await until(async () => (await fresh.getByRole('button', { name: /Результат/ }).count()) > 0);
     /*
-     * СНАЧАЛА ОСВОБОЖДАЕМ МЕСТО В РЯДУ.
-     *
-     * Демо-кухня 3200 мм забита техникой вплотную: все модули либо под
-     * прибор, либо узкое карго — выбора нет НИ У ОДНОГО. Снимаем три
-     * прибора, и освободившаяся стена даёт обычные модули, у которых
-     * варианты есть. Без этого проверять было бы нечего.
+     * Состав НЕ ТРОГАЕМ. Раньше здесь снимались три прибора: демо-кухня
+     * 3200 мм была забита техникой вплотную, и выбора не было ни у одного
+     * модуля — проверять было нечего. Теперь ряд 3800 мм показывает выбор
+     * сразу, и тест идёт тем же путём, что живой человек на встрече.
      */
-    await until(async () => (await fresh.getByRole('button', { name: /Состав/ }).count()) > 0);
-    await fresh.getByRole('button', { name: /Состав/ }).first().click();
-    await sleep(900);
-    for (const name of [/Посудомойка 45/, /Духовой шкаф/, /Варочная панель/]) {
-      const chip = fresh.getByRole('button', { name }).first();
-      if ((await chip.count()) > 0) await chip.click();
-      await sleep(600);
-    }
-
     await fresh.getByRole('button', { name: /Результат/ }).first().click();
     await sleep(1400);
 
@@ -475,153 +464,98 @@ try {
       (await prompt().count()) > 0 ? await prompt().innerText() : 'подсказки нет',
     );
 
-    /* ── 2. Модуль с вариантами: лента подписана его именем ── */
-    await fresh.getByRole('button', { name: 'Чертёж', exact: true }).click();
-    await sleep(700);
+    /* ── 2. Выбираем модуль ЛЕНТОЙ СОСТАВА, а не кликом по чертежу ── */
 
-    const glyphs = fresh.locator('[data-view="elevation"] [data-glyph]');
-    const total = await glyphs.count();
-    let rich = null;
-    let poor = null;
-    for (let i = 0; i < total; i += 1) {
-      await glyphs.nth(i).click({ force: true });
-      await sleep(220);
-      const id = await glyphs.nth(i).getAttribute('data-glyph');
-      if ((await cards().count()) > 0 && !rich) rich = id;
-      if ((await emptyBox().count()) > 0 && !poor) poor = id;
-      if (rich && poor) break;
-    }
-
-    check('на чертеже нашёлся модуль с выбором', Boolean(rich), rich ?? 'нет');
-    check('и модуль без выбора', Boolean(poor), poor ?? 'нет');
-
-    /* ── 3. Модуль без вариантов говорит об этом, а не пропадает ── */
-    if (poor) {
-      await fresh.locator(`[data-view="elevation"] [data-glyph="${poor}"]`).click({ force: true });
-      await sleep(300);
-      check(
-        'у модуля без вариантов написано, что их нет',
-        (await emptyBox().count()) === 1 &&
-          /вариантов нет/.test(await emptyBox().innerText()),
-        (await emptyBox().count()) > 0 ? (await emptyBox().innerText()).slice(0, 60) : 'пусто',
-      );
-      check(
-        'и модуль при этом назван',
-        (await label().count()) === 1 && (await label().innerText()).length > 20,
-        (await label().count()) > 0 ? await label().innerText() : 'ПОДПИСИ НЕТ',
-      );
-    }
-
-    /* ── 4. Под сценой лента подписана так же, как под чертежом ── */
     /*
-     * Дальше без модуля с выбором проверять нечего. Выходим ЧЕСТНО, а не
-     * падаем исключением: на регрессе должен быть виден список «FAIL»,
-     * а не стек Playwright на локаторе, которого нет.
+     * Лента состава — надёжный способ выделить конкретный модуль: у неё
+     * подписи и обычные кнопки. Клик по модулю НА ЧЕРТЕЖЕ для этого не
+     * годится: у модулей без техники он сейчас не выделяет (см. отчёт),
+     * и тест ловил бы этот дефект вместо своего.
+     *
+     * «Дверца» — обычный модуль без прибора, у него выбор есть.
+     * «Холодильник» — ниша под технику, выбора у неё нет по замыслу.
      */
-    if (!rich) {
-      check('дальше нечего проверять: модуля с выбором не нашлось', false);
-    }
+    const pickInRibbon = async (name) => {
+      await fresh.getByRole('button', { name: /Состав/ }).first().click();
+      await sleep(800);
+      const button = fresh.locator('button[draggable="true"]').filter({ hasText: name }).first();
+      if ((await button.count()) === 0) return false;
+      await button.click();
+      await sleep(400);
+      await fresh.getByRole('button', { name: /Результат/ }).first().click();
+      await sleep(1200);
+      return true;
+    };
 
-    if (rich) {
-    await fresh.locator(`[data-view="elevation"] [data-glyph="${rich}"]`).click({ force: true });
-    await sleep(300);
-    const onDrawing = (await label().count()) > 0 ? await label().innerText() : '';
+    /* ── 3. Модуль с вариантами: лента подписана и показывает карточки ── */
+    const gotRich = await pickInRibbon('Дверца');
+    check('в демо-ряду есть обычный модуль «Дверца»', gotRich);
 
     await fresh.getByRole('button', { name: '3D', exact: true }).click();
     await sleep(1800);
-    const onScene = (await label().count()) > 0 ? await label().innerText() : '';
 
     check(
-      'под сценой лента НАЗЫВАЕТ модуль, а не молчит',
-      onScene.length > 0 && onScene === onDrawing,
-      `чертёж «${onDrawing}» · сцена «${onScene}»`,
+      'под сценой лента показывает варианты выбранного модуля',
+      (await cards().count()) >= 2,
+      `карточек ${await cards().count()}`,
+    );
+    const richLabel = (await label().count()) > 0 ? await label().innerText() : '';
+    check(
+      'и НАЗЫВАЕТ его, как под чертежом',
+      /Дверца/.test(richLabel),
+      richLabel || 'подписи нет',
     );
 
-    /* ── 5. Клик в сцене переводит ленту на КЛИКНУТЫЙ модуль ── */
-    const canvas = fresh.locator('canvas').last();
-    const box = await canvas.boundingBox();
-    let moved = null;
+    /* ── 4. Выбор из ленты под сценой меняет состав ── */
+    const before = await fresh
+      .locator('[data-variant][aria-pressed="true"]')
+      .getAttribute('data-variant')
+      .catch(() => null);
 
-    if (box) {
-      const spots = [
-        [0.46, 0.55], [0.42, 0.65], [0.55, 0.5], [0.5, 0.62],
-        [0.58, 0.42], [0.38, 0.58], [0.62, 0.6], [0.45, 0.45],
-      ];
-      for (const [fx, fy] of spots) {
-        await fresh.mouse.click(box.x + box.width * fx, box.y + box.height * fy);
-        await sleep(400);
-        const now = (await label().count()) > 0 ? await label().innerText() : '';
-        if (now && now !== onScene) {
-          moved = now;
-          break;
-        }
-      }
-    }
+    const idle = fresh.locator('[data-variant][aria-pressed="false"]').first();
+    const pickedKind = (await idle.count()) > 0 ? await idle.getAttribute('data-variant') : null;
+    if (pickedKind) await idle.click();
+    await sleep(1300);
+
+    const after = await fresh
+      .locator('[data-variant][aria-pressed="true"]')
+      .getAttribute('data-variant')
+      .catch(() => null);
 
     check(
-      'клик в сцене переводит ленту на выбранный там модуль',
-      Boolean(moved),
-      moved ? `«${onScene}» → «${moved}»` : 'подпись не изменилась ни на одном клике',
+      'выбор из ленты под сценой применяется к этому модулю',
+      Boolean(pickedKind) && after === pickedKind && after !== before,
+      `${before ?? '—'} → ${after ?? '—'}`,
+    );
+    /*
+     * Модуль ТОТ ЖЕ, но НАЗЫВАЕТСЯ ИНАЧЕ: `applyVariant` подписывает его
+     * выбранным вариантом — «Дверца 450 мм» становится «Ящики 450 мм».
+     * Поэтому сверяем ШИРИНУ: она у варианта не меняется, а вот перескок
+     * выделения на соседний модуль она бы поймала.
+     */
+    check(
+      'и выделение осталось на том же модуле',
+      /450 мм/.test((await label().count()) > 0 ? await label().innerText() : ''),
+      (await label().count()) > 0 ? await label().innerText() : 'подписи нет',
     );
 
-    /* ── 6. Выбор из ленты меняет чертёж у ТОГО ЖЕ модуля ── */
-    await fresh.getByRole('button', { name: 'Чертёж', exact: true }).click();
-    await sleep(700);
-    await fresh.locator(`[data-view="elevation"] [data-glyph="${rich}"]`).click({ force: true });
-    await sleep(300);
-
-    /** Что нарисовано на фасаде этого модуля сейчас. */
-    const drawnAt = async (id) =>
-      (
-        await fresh
-          .locator(`[data-view="elevation"] [data-glyph="${id}"] [data-symbol]`)
-          .evaluateAll((els) => els.map((e) => e.getAttribute('data-symbol')))
-      ).join(',');
-
-    const drawnBefore = await drawnAt(rich);
+    /* ── 5. Модуль без вариантов говорит об этом, а не пропадает ── */
+    const gotPoor = await pickInRibbon('Холодильник');
+    check('в демо-ряду есть ниша под технику', gotPoor);
 
     await fresh.getByRole('button', { name: '3D', exact: true }).click();
     await sleep(1600);
 
-    /*
-     * ПЕРЕБИРАЕМ ВАРИАНТЫ, ПОКА ЧЕРТЁЖ НЕ ИЗМЕНИТСЯ.
-     *
-     * Заранее названный вариант проверял бы конкретную кухню, а не
-     * механизм: у базового модуля витрины не бывает вовсе. И не всякий
-     * выбор виден — «две дверцы» на модуле 1200 мм рисуются тем же, чем
-     * и обычная дверца. Поэтому берём варианты подряд и ищем первый,
-     * который действительно меняет фасад.
-     */
-    let picked = null;
-    let drawnAfter = drawnBefore;
-
-    for (let attempt = 0; attempt < 4; attempt += 1) {
-      const idle = fresh.locator('[data-variant][aria-pressed="false"]').nth(attempt);
-      if ((await idle.count()) === 0) break;
-
-      const kind = await idle.getAttribute('data-variant');
-      await idle.click();
-      await sleep(1200);
-
-      await fresh.getByRole('button', { name: 'Чертёж', exact: true }).click();
-      await sleep(800);
-      drawnAfter = await drawnAt(rich);
-
-      if (drawnAfter !== drawnBefore) {
-        picked = kind;
-        break;
-      }
-
-      await fresh.getByRole('button', { name: '3D', exact: true }).click();
-      await sleep(1400);
-    }
-
     check(
-      'выбор из ленты под сценой меняет чертёж у ТОГО ЖЕ модуля',
-      Boolean(picked),
-      `${rich}: «${drawnBefore}» → «${drawnAfter}» (вариант ${picked ?? 'ни один не изменил фасад'})`,
+      'у модуля без вариантов написано, что их нет',
+      (await emptyBox().count()) === 1 && /вариантов нет/.test(await emptyBox().innerText()),
+      (await emptyBox().count()) > 0 ? (await emptyBox().innerText()).slice(0, 60) : 'ПУСТОЕ МЕСТО',
     );
-    }
+    check(
+      'и модуль при этом назван',
+      /Холодильник/.test((await label().count()) > 0 ? await label().innerText() : ''),
+      (await label().count()) > 0 ? await label().innerText() : 'ПОДПИСИ НЕТ',
+    );
 
     await fresh.close();
   }

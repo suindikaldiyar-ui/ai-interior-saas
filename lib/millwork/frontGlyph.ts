@@ -1,4 +1,4 @@
-import { currentVariant } from './moduleVariants';
+import { applyVariant, variantsForModule, currentVariant } from './moduleVariants';
 import type { Module, ModuleVariantKind } from '@/types/millwork';
 
 /**
@@ -300,4 +300,34 @@ export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts'): GlyphEleme
   if (unit.appliance === 'hood') elements.push({ kind: 'hoodDuct' });
 
   return elements;
+}
+
+
+/* ────────────────  Видимый выбор  ──────────────── */
+
+/**
+ * СКОЛЬКО РАЗНЫХ РИСУНКОВ ФАСАДА даёт этот модуль.
+ *
+ * Число вариантов само по себе ничего не значит для встречи: «две дверцы»
+ * на модуле 1200 мм рисуются тем же, чем обычная дверца — раскладка и так
+ * делает две створки шире 600 мм. Клиент выбирает ГЛАЗАМИ, и считать надо
+ * то, что видно.
+ *
+ * По этому числу приёмка держит демо-объект: если в нём не останется
+ * модулей с видимым выбором, главный ход демонстрации — нажать на модуль
+ * и поменять его на витрину — молча перестанет работать. Ровно так это
+ * однажды и случилось.
+ */
+export function visibleVariantCount(
+  unit: Module,
+  run: Parameters<typeof variantsForModule>[1],
+  zone: Parameters<typeof variantsForModule>[2],
+): number {
+  const specs = variantsForModule(unit, run, zone);
+  if (specs.length < 2) return 0;
+
+  const drawings = new Set(
+    specs.map((spec) => glyphSignature(frontGlyph(applyVariant(unit, spec.kind), 'fronts'))),
+  );
+  return drawings.size;
 }

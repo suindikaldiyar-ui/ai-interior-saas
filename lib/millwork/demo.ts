@@ -7,8 +7,23 @@ import { DEFAULT_REQUIREMENTS } from './workspace';
  * человек, — готовая кухня с тремя посчитанными вариантами, а не пустой экран
  * с предложением что-нибудь ввести.
  *
- * Кухня 3200 мм: мойка под окном, посудомойка рядом, варочная с вытяжкой
- * за оконным пролётом, холодильник и духовая колонна в торце.
+ * Кухня 3800 мм: холодильник и духовая колонна в левом торце, рабочая
+ * поверхность, мойка под окном, посудомойка рядом с ней, варочная с
+ * вытяжкой и шкаф в правом торце.
+ *
+ * ДЛИНА ВЫБРАНА ПОД ДЕМОНСТРАЦИЮ, а не наугад. На 3200 мм ряд забивался
+ * техникой вплотную: все модули оказывались либо под прибор, либо узким
+ * карго, и выбора не было НИ У ОДНОГО — лента вариантов на демонстрации
+ * не показывалась вовсе. А это главный ход встречи: нажать на модуль,
+ * поменять на витрину, показать новую сумму.
+ *
+ * Лишние 600 мм дают четыре верхних модуля и обычные нижние, у которых
+ * выбор есть и он ВИДЕН: у шкафа в торце шесть разных рисунков фасада,
+ * включая витрину с подсветкой. Кухня при этом осталась обычной —
+ * подгонки под витрину возможностей мебельщик здесь не увидит.
+ *
+ * Число модулей с видимым выбором держит приёмка: `npm run test:millwork`
+ * падает, если их станет меньше трёх.
  *
  * Помещение Г-образное — вторая стена 1800 мм есть в замере. Конфигуратор
  * пока собирает ОДИН ряд, поэтому угловой модуль в него не заводится:
@@ -21,28 +36,31 @@ export const DEMO_OPENINGS: Opening[] = [
   {
     id: 'win-1',
     kind: 'window',
-    fromCornerMm: 1200,
-    widthMm: 1000,
+    // Окно 900 мм — обычное кухонное. Мойка встаёт под него.
+    fromCornerMm: 1500,
+    widthMm: 900,
     sillMm: 850,
     heightMm: 1400,
   },
 ];
 
 export const DEMO_COMMS: CommPoint[] = [
-  { id: 'c-water', kind: 'water_supply', wallId: 'w1', fromCornerMm: 1700, heightMm: 400, note: 'вывод под мойку' },
-  { id: 'c-sewer', kind: 'sewer', wallId: 'w1', fromCornerMm: 1720, heightMm: 300 },
-  { id: 'c-vent', kind: 'ventilation', wallId: 'w1', fromCornerMm: 2750, heightMm: 2250 },
+  // Вывод воды под окном: мойка садится напротив него.
+  { id: 'c-water', kind: 'water_supply', wallId: 'w1', fromCornerMm: 1950, heightMm: 400, note: 'вывод под мойку' },
+  { id: 'c-sewer', kind: 'sewer', wallId: 'w1', fromCornerMm: 1970, heightMm: 300 },
+  // Вентканал над варочной: туда уходит вытяжка.
+  { id: 'c-vent', kind: 'ventilation', wallId: 'w1', fromCornerMm: 3000, heightMm: 2250 },
   { id: 'c-sock-1', kind: 'socket', wallId: 'w1', fromCornerMm: 300, heightMm: 1100, note: 'холодильник' },
   { id: 'c-sock-2', kind: 'socket', wallId: 'w1', fromCornerMm: 900, heightMm: 600, note: 'духовой шкаф' },
-  { id: 'c-sock-3', kind: 'socket', wallId: 'w1', fromCornerMm: 2750, heightMm: 1100, note: 'варочная и вытяжка' },
-  { id: 'c-sock-4', kind: 'socket', wallId: 'w1', fromCornerMm: 2225, heightMm: 600, note: 'посудомойка' },
+  { id: 'c-sock-3', kind: 'socket', wallId: 'w1', fromCornerMm: 3000, heightMm: 1100, note: 'варочная и вытяжка' },
+  { id: 'c-sock-4', kind: 'socket', wallId: 'w1', fromCornerMm: 2450, heightMm: 600, note: 'посудомойка' },
 ];
 
 export const DEMO_MEASUREMENT: Measurement = {
   id: 'demo',
   ceilingHeightMm: 2700,
   walls: [
-    { id: 'w1', lengthMm: 3200, angleDeg: 90, openings: DEMO_OPENINGS },
+    { id: 'w1', lengthMm: 3800, angleDeg: 90, openings: DEMO_OPENINGS },
     { id: 'w2', lengthMm: 1800, angleDeg: 90, openings: [] },
   ],
   comms: DEMO_COMMS,
@@ -128,7 +146,7 @@ export const DEMO_RATES: RateTable = {
 export const DEMO_PROJECT = {
   title: 'ЖК Апельсин, кв. 42',
   zone: 'Кухня',
-  lengthMm: 3200,
+  lengthMm: 3800,
   ceilingHeightMm: 2700,
   /** Угловой модуль сюда не заводится — см. комментарий к файлу. */
   cornerAt: null,

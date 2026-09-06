@@ -47,7 +47,7 @@ export const DEMO_SEED_KEY = 'demo-v1';
  */
 export const DEMO_MEASURED_AT = DEMO_MEASUREMENT.measuredAt;
 
-/** Ряд 3200 мм с духовой колонной: 3200 лежит внутри 3000…4200. */
+/** Ряд 3800 мм с духовой колонной: 3800 лежит внутри 3000…4200. */
 export const DEMO_TEMPLATE_ID = 'linear-column';
 
 export const DEMO_CLIENT = {
