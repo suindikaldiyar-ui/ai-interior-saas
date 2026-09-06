@@ -9,7 +9,7 @@ import {
 import { buildUpperRow, fillGap } from './layout';
 import { assertNoOverlap, assertRunFits, widthOverflowMm } from './invariants';
 import { runFingerprint } from './fingerprint';
-import { defaultFill } from './fill';
+import { defaultFill, hingeSide } from './fill';
 import { SECTION_SPECS } from './sections';
 import { allowsAppliance, allowsSection, applianceRefusal, sectionRefusal } from './zones';
 import { MODULE_VARIANTS, applyVariant, variantsForModule } from './moduleVariants';
@@ -149,7 +149,41 @@ export function applyOps({ run, requirements, ops, openings = [] }: ApplyOpsInpu
         const width = op.appliance
           ? APPLIANCE_SLOTS[op.appliance].widthMm
           : snapToStandard(op.widthMm ?? 600);
+
+        /*
+         * В СВОБОДНОЙ СБОРКЕ МЕСТО НЕ РАСТЯГИВАЕТСЯ.
+         *
+         * В раскладке по шаблону `rebalance` потом ужмёт соседей и всё
+         * сойдётся. Здесь соседей никто не трогает, поэтому модуль,
+         * которому не хватает стены, не добавляется вовсе — и отказ
+         * называет, сколько миллиметров не хватило. Иначе `assertRunFits`
+         * уронил бы ВСЮ правку исключением, а человек всего лишь нажал
+         * «добавить».
+         */
+        if (requirements.mode === 'free') {
+          const busy = modules.reduce((sum, m) => sum + m.widthMm, 0);
+          const short = busy + width - run.lengthMm;
+          if (short > 0) {
+            warnings.push(
+              `Не хватает ${short} мм: свободно ${run.lengthMm - busy} мм, ` +
+                `а модуль ${width} мм.`,
+            );
+            break;
+          }
+        }
+
         const created = makePlainModule(op.kind, width, op.appliance);
+
+        /*
+         * Холодильник, добавленный руками, встраивается по тем же
+         * умолчаниям, что и поставленный раскладкой (`planAnchors`).
+         * Иначе один и тот же состав стоил бы разных денег и выглядел
+         * по-разному в зависимости от того, как его собрали.
+         */
+        if (op.appliance === 'fridge') {
+          created.builtIn = (requirements.fridgeType ?? 'built_in') === 'built_in';
+        }
+
         const at = op.afterModuleId
           ? modules.findIndex((m) => m.id === op.afterModuleId)
           : modules.length - 1;
@@ -197,7 +231,27 @@ export function applyOps({ run, requirements, ops, openings = [] }: ApplyOpsInpu
           break;
         }
 
-        const over = widthOverflowMm({ modules, lengthMm: run.lengthMm }, op.moduleId, wanted, MIN_WIDTH);
+        /*
+         * ПРОВЕРКА ПОМЕЩАЕМОСТИ РАЗНАЯ В ДВУХ РЕЖИМАХ.
+         *
+         * `widthOverflowMm` считает МИНИМАЛЬНО возможную сумму: техника и
+         * пеналы держат габарит, обычные модули ужимаются до `MIN_WIDTH`.
+         * Это верно для шаблона — там `rebalance` действительно ужмёт
+         * соседей и всё сойдётся.
+         *
+         * В свободной сборке соседей никто не трогает, и та же проверка
+         * пропускала правку, после которой ряд вылезал за стену: дальше
+         * `assertRunFits` роняла ВСЮ правку исключением — то есть рабочее
+         * место человека — вместо отказа с числом. Поэтому здесь сумма
+         * считается по фактическим ширинам.
+         */
+        const over =
+          requirements.mode === 'free'
+            ? modules.reduce((sum, m) => sum + m.widthMm, 0) -
+              modules[at].widthMm +
+              wanted -
+              run.lengthMm
+            : widthOverflowMm({ modules, lengthMm: run.lengthMm }, op.moduleId, wanted, MIN_WIDTH);
         if (over > 0) {
           warnings.push(`${wanted} мм не помещается: ряд длиннее стены на ${over} мм.`);
           break;
@@ -312,16 +366,44 @@ export function applyOps({ run, requirements, ops, openings = [] }: ApplyOpsInpu
     }
   }
 
-  modules = rebalance(modules, run.lengthMm);
+  /*
+   * ПЕРЕЗАПОЛНЕНИЕ ТОЛЬКО В РЕЖИМЕ ШАБЛОНА.
+   *
+   * `rebalance` дозаполняет недостачу стандартными модулями и снимает
+   * излишек с соседей — для раскладки по шаблону это правильно: ряд там
+   * обязан сходиться со стеной до миллиметра.
+   *
+   * В свободной сборке это отнимает у человека контроль: удалил модуль —
+   * на его месте немедленно вырос другой; потянул ширину — соседи молча
+   * ужались. Поэтому здесь ряд остаётся ровно таким, каким его собрали,
+   * а незаполненный остаток показывается числом.
+   */
+  const free = requirements.mode === 'free';
+  modules = free ? reindex(modules) : rebalance(modules, run.lengthMm);
 
   /*
    * Наполнение пересчитывается там, где оно слетело со сменой секции:
    * чертёж, смета и детализировка обязаны видеть одну мебель.
    */
   const shell = { zone, ceilingHeightMm: run.ceilingHeightMm, options };
-  modules = modules.map((unit, i) =>
-    unit.fill ? unit : { ...unit, fill: defaultFill(unit, shell, i, modules.length) },
-  );
+  modules = modules.map((unit, i) => {
+    if (!unit.fill) return { ...unit, fill: defaultFill(unit, shell, i, modules.length) };
+
+    /*
+     * СТОРОНА ПЕТЕЛЬ ВЫВОДИТСЯ ИЗ МЕСТА В РЯДУ, а не запоминается.
+     *
+     * Полки и ящики — выбор человека, их пересчитывать нельзя. А сторона
+     * открывания зависит только от того, где модуль стоит: створки
+     * распахиваются от середины ряда наружу. Добавили модуль слева —
+     * соседи поехали, и петли обязаны переехать с ними.
+     *
+     * Без этого один и тот же состав давал разные отпечатки: собранный
+     * по шаблону и собранный руками отличались стороной петель, потому
+     * что при ручной сборке она застывала на момент добавления.
+     */
+    const hinge = hingeSide(unit, i, modules.length);
+    return unit.fill.hinge === hinge ? unit : { ...unit, fill: { ...unit.fill, hinge } };
+  });
 
   const nextRun: Run = {
     ...run,

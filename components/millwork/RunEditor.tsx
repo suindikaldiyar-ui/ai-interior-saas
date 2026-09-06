@@ -67,6 +67,15 @@ type Props = {
   requirements?: RunRequirements;
   /** Правка состава. Без неё панель только читается. */
   onComposition?: (patch: CompositionPatch) => void;
+  /**
+   * Свободная сборка: ряд собирает человек, а не раскладка.
+   *
+   * Разница в двух вещах. Техника здесь ДОБАВЛЯЕТ МОДУЛЬ операцией, а не
+   * меняет требования: требования пересобрали бы ряд с нуля и стёрли всё,
+   * что человек уже поставил. И незаполненный остаток тут не недостача,
+   * а «ещё не собрано» — его показывают числом.
+   */
+  freeMode?: boolean;
 };
 
 /**
@@ -95,6 +104,7 @@ export default function RunEditor({
   onOps,
   requirements,
   onComposition,
+  freeMode = false,
 }: Props) {
   const [dragId, setDragId] = useState<string | null>(null);
   const free = freeSpaceMm(run);
@@ -159,14 +169,57 @@ export default function RunEditor({
    * Списки берутся из профиля зоны, а не из константы экрана: четыре
    * независимых списка разъехались бы на первой же правке.
    */
-  const appliances = APPLIANCE_ORDER.filter((a) => zoneAppliances(zone).includes(a));
+  /*
+   * ВЫТЯЖКА В СВОБОДНОЙ СБОРКЕ НЕ СТАВИТСЯ РУКАМИ.
+   *
+   * Она живёт в ВЕРХНЕМ ряду и едет за варочной сама — верхний ряд
+   * пересобирается из нижнего после каждой правки. Поставленная модулем
+   * в нижний ряд, она встала бы на пол рядом с тумбами; отдельная вытяжка
+   * не над плитой — это ошибка монтажа, а не свобода выбора.
+   */
+  const appliances = APPLIANCE_ORDER.filter(
+    (a) => zoneAppliances(zone).includes(a) && !(freeMode && a === 'hood'),
+  );
   const sections = profile.sections;
 
-  const wanted = new Set(requirements?.appliances ?? []);
+  /*
+   * Что считается «прибор выбран». В свободной сборке правда — это ряд:
+   * требований там нет вовсе, и подсвечивать по ним значило бы врать.
+   */
+  const wanted = new Set(
+    freeMode
+      ? (run.modules.map((unit) => unit.appliance).filter(Boolean) as ApplianceKind[])
+      : (requirements?.appliances ?? []),
+  );
   const chosenSections = requirements?.sections ?? profile.defaultSections;
   const wantedSections = new Set(chosenSections);
 
   const toggleAppliance = (appliance: ApplianceKind) => {
+    /*
+     * В СВОБОДНОЙ СБОРКЕ ПРИБОР — ЭТО МОДУЛЬ, а не строка требований.
+     *
+     * Требования пересобирают ряд целиком: нажми человек «холодильник»
+     * после того, как поставил пять модулей, — раскладка сложила бы всё
+     * заново по-своему. Поэтому здесь ровно та же операция, что у кнопки
+     * «+ Модуль», и место под прибор проверяется тем же правилом.
+     */
+    if (freeMode) {
+      const placed = run.modules.find((unit) => unit.appliance === appliance);
+      onOps(
+        placed
+          ? [{ op: 'remove_module', moduleId: placed.id }]
+          : [
+              {
+                op: 'add_module',
+                kind: APPLIANCE_SLOTS[appliance].kind,
+                appliance,
+                afterModuleId: selectedModuleId ?? undefined,
+              },
+            ],
+      );
+      return;
+    }
+
     if (!onComposition || !requirements) return;
     const next = wanted.has(appliance)
       ? requirements.appliances.filter((a) => a !== appliance)
@@ -324,11 +377,26 @@ export default function RunEditor({
 
       <div className="mb-2 flex items-baseline justify-between">
         <span className="text-[15px] font-medium">Состав ряда</span>
+        {/*
+          * ОСТАТОК ЧИТАЕТСЯ ПО-РАЗНОМУ В ДВУХ РЕЖИМАХ.
+          *
+          * В раскладке по шаблону ряд обязан сойтись со стеной, и любой
+          * остаток там — недостача: красный. В свободной сборке ряд растёт
+          * постепенно, и тот же остаток означает «ещё не собрано». Красная
+          * цифра на пустой стене выглядела бы поломкой, а это нормальное
+          * начало работы.
+          */}
         <span
           className="mw-num text-[13px]"
-          style={{ color: free === 0 ? 'var(--graphite-mw)' : 'var(--alert)' }}
+          style={{
+            color: free === 0 || freeMode ? 'var(--graphite-mw)' : 'var(--alert)',
+          }}
         >
-          {free === 0 ? 'место занято полностью' : `осталось ${free} мм`}
+          {free === 0
+            ? 'место занято полностью'
+            : freeMode
+              ? `свободно ${free} мм`
+              : `осталось ${free} мм`}
         </span>
       </div>
 
@@ -337,6 +405,19 @@ export default function RunEditor({
         * На телефоне пропорция сохраняется, а лента прокручивается вбок:
         * это единственное место, где горизонтальная прокрутка уместна.
         */}
+      {/*
+        * ПУСТАЯ СТЕНА ОБЪЯСНЯЕТ СЕБЯ.
+        *
+        * Пустая лента и ноль в смете читаются как «не загрузилось».
+        * Здесь это законное начало: стена есть, мебели пока нет.
+        */}
+      {run.modules.length === 0 && (
+        <p className="mb-2 text-[13px] leading-snug text-graphiteMw" data-empty-run>
+          Стена {run.lengthMm} мм пустая: мебели нет, и смета поэтому нулевая.
+          Добавьте первый модуль — кнопкой ниже или прибором из состава.
+        </p>
+      )}
+
       <div className="flex w-full gap-1 overflow-x-auto pb-1">
         {run.modules.map((unit) => {
           const active = unit.id === selectedModuleId;
@@ -621,6 +702,43 @@ export default function RunEditor({
               </label>
             )}
           </div>
+        </div>
+      )}
+
+      {/*
+        * СВОБОДНОЕ МЕСТО — ЧИСЛОМ.
+        *
+        * В свободной сборке недобор это не поломка, а «ещё не собрано»:
+        * человек ставит модули постепенно. Молчаливый пробел на чертеже
+        * читался бы как ошибка расчёта, поэтому остаток назван прямо, и
+        * рядом стоят ширины, которые в него ещё влезают.
+        */}
+      {freeMode && (
+        <div className="mt-3" data-free-space>
+          {free >= MIN_WIDTH && (
+            <div className="flex flex-wrap gap-1">
+              {STANDARD_WIDTHS.filter((widthMm) => widthMm <= free).map((widthMm) => (
+                <button
+                  key={widthMm}
+                  type="button"
+                  data-add-width={widthMm}
+                  onClick={() =>
+                    onOps([
+                      {
+                        op: 'add_module',
+                        kind: 'base',
+                        widthMm,
+                        afterModuleId: selectedModuleId ?? undefined,
+                      },
+                    ])
+                  }
+                  className="mw-btn mw-btn-ghost"
+                >
+                  + {widthMm}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

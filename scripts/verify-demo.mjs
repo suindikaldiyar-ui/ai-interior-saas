@@ -933,6 +933,81 @@ try {
     `полей замера: ${keptWalls}`,
   );
 
+
+  /* ── Свободная сборка: пустая стена и первый модуль ── */
+
+  /*
+   * Шаблон остаётся быстрым стартом, но перестаёт быть единственным путём:
+   * мебельщик со своим дизайном начинает с пустой стены. Проверяется, что
+   * пустой ряд ОБЪЯСНЯЕТ СЕБЯ словами (пустая лента и ноль в смете иначе
+   * читаются как «не загрузилось») и что первый модуль встаёт одним тапом.
+   */
+  {
+    const own = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    await own.goto(`${BASE}/demo`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+    await until(async () => (await own.getByRole('button', { name: /Шаблон/ }).count()) > 0);
+
+    await own.getByRole('button', { name: /Шаблон/ }).first().click();
+    await sleep(500);
+    check(
+      'рядом с готовыми решениями предлагают собрать самому',
+      (await own.locator('[data-free-mode]').count()) === 1,
+    );
+
+    await own.locator('[data-free-mode]').click();
+    await sleep(900);
+
+    const emptyNote = own.locator('[data-empty-run]');
+    check(
+      'пустая стена объясняет себя словами, а не пустотой',
+      (await emptyNote.count()) === 1 && /пустая/.test(await emptyNote.innerText()),
+      (await emptyNote.count()) > 0 ? (await emptyNote.innerText()).slice(0, 60) : 'ПУСТОЕ МЕСТО',
+    );
+    check(
+      'и свободное место названо числом',
+      (await own.getByText(/свободно \d+ мм/).count()) > 0,
+    );
+
+    const widths = own.locator('[data-add-width]');
+    check(
+      'ширины, которые ещё влезают, стоят рядом',
+      (await widths.count()) > 0,
+      `${await widths.count()} шт.`,
+    );
+
+    await own.locator('[data-add-width="600"]').click();
+    await sleep(900);
+    const ribbonNow = await own.locator('button[draggable="true"]').count();
+    check('первый модуль встаёт на пустую стену одним тапом', ribbonNow === 1, `модулей ${ribbonNow}`);
+
+    /*
+     * «+» ставит МЕСТО, а чем оно будет — показывает лента вариантов
+     * этого модуля: она и есть выбор из MODULE_VARIANTS по зоне и ширине.
+     * Поэтому добавленный модуль обязан быть сразу выделен.
+     */
+    check(
+      'добавленный модуль сразу выделен',
+      (await own.getByRole('button', { name: 'Удалить', exact: true }).count()) === 1,
+    );
+    check(
+      'и видно, из чего это место может быть',
+      (await own.locator('[data-variant]').count()) > 1,
+      `вариантов ${await own.locator('[data-variant]').count()}`,
+    );
+
+    // Прибор добавляется тем же способом — из того же списка состава.
+    await own.getByRole('button', { name: 'Холодильник', exact: true }).first().click();
+    await sleep(900);
+    const withFridge = await own.locator('button[draggable="true"]').count();
+    check(
+      'прибор из состава тоже становится модулем',
+      withFridge === 2,
+      `модулей ${withFridge}`,
+    );
+
+    await own.close();
+  }
+
   await survey.context().setOffline(false);
   await survey.close();
 

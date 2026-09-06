@@ -90,6 +90,7 @@ import {
 } from '../lib/millwork/promptFronts';
 import { MODULE_VARIANTS, applyVariant } from '../lib/millwork/moduleVariants';
 import { assertNoOverlap, moduleOverlaps } from '../lib/millwork/invariants';
+import { configurationFingerprint } from '../lib/millwork/fingerprint';
 import { panelMaterials } from '../lib/millwork/panels';
 import { visibleVariantCount } from '../lib/millwork/frontGlyph';
 import { DEMO_TEMPLATE_ID } from '../lib/millwork/demoProject';
@@ -138,6 +139,7 @@ import {
 } from '../lib/millwork/demo';
 import type {
   CommPoint,
+  MillworkOp,
   Module,
   ModuleVariantKind,
   Opening,
@@ -4124,6 +4126,195 @@ console.log('\nВизуализация видит то же, что чертё�
     caughtDrawers = (error as Error).message;
   }
   check('потерянные ящики падают исключением', caughtDrawers.length > 0, caughtDrawers.slice(0, 60));
+}
+
+
+/* ──────────────  Свободная сборка: человек собирает сам  ────────────── */
+
+/*
+ * Шаблон остаётся быстрым стартом, но перестаёт быть единственным путём.
+ * Проверяется ровно то, что отличает свободную сборку от раскладки:
+ * пустая стена — законное состояние, место после удаления НЕ
+ * перезаполняется, ряд имеет право не сходиться, а отказ называет
+ * миллиметры. И при этом ОДИН И ТОТ ЖЕ состав, собранный руками и
+ * собранный шаблоном, обязан дать один отпечаток — иначе чертёж, смета,
+ * раскрой и 3D разъедутся по способу сборки.
+ */
+console.log('\nСвободная сборка');
+{
+  const FREE: RunRequirements = { ...REQ, mode: 'free', appliances: [] };
+  const shell = { ...baseInput, requirements: FREE };
+  const step = (run: Run, ops: MillworkOp[]) =>
+    applyOps({ run, requirements: FREE, ops, openings: OPENINGS });
+
+  /* 1. Пустая стена — законное состояние, а не поломка. */
+  const empty = buildRun(shell);
+  const emptyEstimate = buildEstimate(empty, 'optimal', DEMO_RATES);
+  check('пустая стена собирается в ряд без модулей', empty.modules.length === 0);
+  check(
+    'смета пустого ряда — ноль, а не «почти ноль»',
+    emptyEstimate.total === 0,
+    `${emptyEstimate.total} ₸`,
+  );
+  check(
+    'свободное место пустой стены равно всей стене',
+    empty.residualMm === empty.lengthMm,
+    `${empty.residualMm}/${empty.lengthMm} мм`,
+  );
+  check('пустой ряд не нарушает непересечение', moduleOverlaps(empty).length === 0);
+
+  /* 2. Модули и техника добавляются операциями. */
+  let run = step(empty, [{ op: 'add_module', kind: 'tall', appliance: 'fridge' }]);
+  run = step(run, [
+    { op: 'add_module', kind: 'base', widthMm: 600, afterModuleId: run.modules[0].id },
+  ]);
+  run = step(run, [
+    { op: 'add_module', kind: 'base', appliance: 'sink600', afterModuleId: run.modules[1].id },
+  ]);
+  run = step(run, [
+    { op: 'add_module', kind: 'base', widthMm: 450, afterModuleId: run.modules[2].id },
+  ]);
+  check(
+    'модули и техника встают на пустую стену операциями',
+    run.modules.length === 4 && run.modules.some((unit) => unit.appliance === 'fridge'),
+    `модулей ${run.modules.length}`,
+  );
+  check(
+    'занятое место считается по собранному, а не по стене',
+    run.residualMm === run.lengthMm - runWidthSum(run),
+    `свободно ${run.residualMm} мм`,
+  );
+  check('собранный руками ряд не пересекается', moduleOverlaps(run).length === 0);
+
+  /* 3. Удаление освобождает место, и оно НЕ перезаполняется. */
+  const removed = step(run, [{ op: 'remove_module', moduleId: run.modules[1].id }]);
+  check(
+    'удаление освобождает место и не перезаполняет его',
+    removed.modules.length === run.modules.length - 1 &&
+      removed.residualMm === run.residualMm + 600,
+    `${run.modules.length} → ${removed.modules.length}, свободно ${removed.residualMm} мм`,
+  );
+
+  /* 4. Ширина: границы соблюдаются, соседей никто не трогает. */
+  /* Ширину техники диктует прибор — тянуть можно только обычный модуль. */
+  const target = removed.modules.find((unit) => !unit.appliance)!;
+  const neighbours = removed.modules
+    .filter((unit) => unit.id !== target.id)
+    .map((unit) => `${unit.id}:${unit.widthMm}`)
+    .join(' ');
+  const widened = step(removed, [
+    { op: 'set_width', moduleId: target.id, widthMm: 900 },
+  ]);
+  check(
+    'ширина меняется, а соседи остаются как были',
+    widened.modules
+      .filter((unit) => unit.id !== target.id)
+      .map((unit) => `${unit.id}:${unit.widthMm}`)
+      .join(' ') === neighbours,
+  );
+  for (const bad of [100, 1400]) {
+    const refused = step(removed, [
+      { op: 'set_width', moduleId: target.id, widthMm: bad },
+    ]);
+    check(
+      `ширина ${bad} мм отклоняется с объяснением`,
+      refused.warnings.some((w) => /от 150 до 1200/.test(w)),
+      refused.warnings[0] ?? 'принято молча',
+    );
+  }
+
+  /*
+   * Ширина, которая не влезает в ОСТАТОК, отклоняется числом и не роняет
+   * правку. `widthOverflowMm` считает минимальную сумму — с соседями,
+   * ужатыми до `MIN_WIDTH`; в свободной сборке соседей никто не ужимает,
+   * и такая проверка пропускала правку, после которой `assertRunFits`
+   * роняла исключением всё рабочее место человека.
+   */
+  let tight = buildRun(shell);
+  for (let i = 0; i < 6; i += 1) {
+    tight = step(tight, [{ op: 'add_module', kind: 'base', widthMm: 600 }]);
+  }
+  let threwOnWiden = '';
+  let widenRefused = null as Run | null;
+  try {
+    widenRefused = step(tight, [
+      { op: 'set_width', moduleId: tight.modules[0].id, widthMm: 1200 },
+    ]);
+  } catch (error) {
+    threwOnWiden = (error as Error).message;
+  }
+  check(
+    'ширина сверх остатка не роняет правку исключением',
+    threwOnWiden === '',
+    threwOnWiden.slice(0, 70),
+  );
+  check(
+    'а отклоняется с превышением в миллиметрах',
+    Boolean(widenRefused) &&
+      runWidthSum(widenRefused!) <= widenRefused!.lengthMm &&
+      widenRefused!.warnings.some((w) => /ряд длиннее стены на \d+ мм/.test(w)),
+    widenRefused?.warnings[0] ?? 'отказа нет',
+  );
+
+  /* 5. Ряд длиннее стены не собирается, и отказ назван в миллиметрах. */
+  let crowded = buildRun(shell);
+  for (let i = 0; i < 8; i += 1) {
+    crowded = step(crowded, [{ op: 'add_module', kind: 'base', widthMm: 600 }]);
+  }
+  check(
+    'модуль, которому не хватает стены, не добавляется',
+    runWidthSum(crowded) <= crowded.lengthMm,
+    `${runWidthSum(crowded)}/${crowded.lengthMm} мм`,
+  );
+  check(
+    'и отказ называет нехватку числом',
+    crowded.warnings.some((w) => /Не хватает \d+ мм/.test(w)),
+    crowded.warnings[0] ?? 'отказа нет',
+  );
+
+  /* 6. Один состав — один отпечаток, как бы его ни собрали. */
+  const freeTemplate = templateById('linear-column')!;
+  const templateReq = requirementsFromTemplate(freeTemplate, REQ.options);
+  const template = buildRun({ ...baseInput, requirements: templateReq });
+  let byHand = buildRun(shell);
+  let after: string | undefined;
+  for (const unit of template.modules) {
+    byHand = step(byHand, [
+      {
+        op: 'add_module',
+        kind: unit.kind,
+        widthMm: unit.widthMm,
+        appliance: unit.appliance,
+        afterModuleId: after,
+      },
+    ]);
+    after = byHand.modules[byHand.modules.length - 1].id;
+  }
+  const fpTemplate = configurationFingerprint(template.modules);
+  const fpHand = configurationFingerprint(byHand.modules);
+  check(
+    'тот же состав, собранный руками, даёт тот же отпечаток',
+    fpTemplate === fpHand,
+    `${fpTemplate} · ${fpHand}`,
+  );
+
+  /* 7. Шаблоны работают ровно как раньше. */
+  check(
+    'ряд из шаблона по-прежнему сходится со стеной до миллиметра',
+    template.residualMm === 0 && runWidthSum(template) === template.lengthMm,
+    `${runWidthSum(template)}/${template.lengthMm} мм`,
+  );
+  const shrunk = applyOps({
+    run: template,
+    requirements: templateReq,
+    ops: [{ op: 'remove_module', moduleId: template.modules[2].id }],
+    openings: OPENINGS,
+  });
+  check(
+    'и перезаполнение места в режиме шаблона осталось',
+    shrunk.residualMm === 0 && runWidthSum(shrunk) === shrunk.lengthMm,
+    `${runWidthSum(shrunk)}/${shrunk.lengthMm} мм`,
+  );
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

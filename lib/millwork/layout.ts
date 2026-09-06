@@ -691,6 +691,30 @@ function buildSectionRun(input: BuildRunInput): Run {
   return run;
 }
 
+/**
+ * Пустой ряд: стена есть, мебели нет.
+ *
+ * Собирается той же сборкой `Run`, что и любой другой, чтобы чертёж,
+ * смета, раскрой и 3D работали с ним без единой оговорки. Отпечаток у
+ * пустого ряда свой и устойчивый — на нём тоже держится сверка.
+ */
+function emptyRun(input: BuildRunInput, usable: number): Run {
+  const run: Run = {
+    id: input.id ?? 'run',
+    zone: input.requirements.zone ?? 'kitchen',
+    doorSystem: 'hinged',
+    lengthMm: usable,
+    ceilingHeightMm: input.ceilingHeightMm,
+    modules: [],
+    upperSegments: [],
+    options: input.requirements.options,
+    residualMm: usable,
+    warnings: [],
+    fingerprint: runFingerprint({ modules: [], upperSegments: [] }),
+  };
+  return run;
+}
+
 export function buildRun(input: BuildRunInput): Run {
   const {
     lengthMm,
@@ -706,6 +730,16 @@ export function buildRun(input: BuildRunInput): Run {
 
   const warnings: string[] = [];
   const usable = Math.max(0, Math.round(lengthMm));
+
+  /*
+   * СВОБОДНАЯ СБОРКА НАЧИНАЕТСЯ С ПУСТОЙ СТЕНЫ.
+   *
+   * Раскладывать здесь нечего: состав человек соберёт сам через `applyOps`
+   * — теми же операциями, что правят ряд из шаблона. Пустой ряд это не
+   * ошибка и не промежуточное состояние: смета по нему ноль, и так и
+   * написано.
+   */
+  if (requirements.mode === 'free') return emptyRun(input, usable);
 
   /*
    * Угол: соседний ряд укорачивается на глубину примыкающего, поэтому

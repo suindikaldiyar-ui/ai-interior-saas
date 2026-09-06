@@ -323,6 +323,18 @@ export default function Workspace(props: WorkspaceProps) {
   const [templateId, setTemplateId] = useState<string | null>(
     props.initialState?.templateId ?? props.templateId ?? null,
   );
+
+  /*
+   * СВОБОДНАЯ СБОРКА.
+   *
+   * Шаблон остаётся быстрым стартом, но перестаёт быть единственным путём:
+   * мебельщик спрашивает «сможешь сделать мой дизайн», и ответ на это —
+   * пустая стена, которую он наполняет сам. Признак живёт рядом с
+   * `templateId` и исключает его: либо готовое решение, либо своё.
+   */
+  const [freeMode, setFreeMode] = useState(
+    props.initialState?.requirements?.mode === 'free',
+  );
   const [disabled, setDisabled] = useState<Record<VariantKey, string[]>>({
     basic: props.initialState?.disabled?.basic ?? [],
     optimal: props.initialState?.disabled?.optimal ?? [],
@@ -433,8 +445,15 @@ export default function Workspace(props: WorkspaceProps) {
       ? requirementsFromTemplate(template, props.requirements.options)
       : props.requirements;
 
+    /*
+     * В свободной сборке техника НЕ подставляется: стена пустая, и всё,
+     * что на ней появится, ставит человек. Иначе «собрать самому» начиналось
+     * бы с чужого холодильника.
+     */
     const next: RunRequirements = {
       ...base,
+      mode: freeMode ? 'free' : 'template',
+      ...(freeMode ? { appliances: composition.appliances ?? [], sections: [] } : {}),
       appliances: composition.appliances ?? base.appliances,
       sections: composition.sections ?? base.sections,
       doorSystem: composition.doorSystem ?? base.doorSystem,
@@ -455,7 +474,7 @@ export default function Workspace(props: WorkspaceProps) {
     };
 
     return Object.keys(manualAnchors).length > 0 ? { ...next, manualAnchors } : next;
-  }, [template, props.requirements, manualAnchors, composition]);
+  }, [template, props.requirements, manualAnchors, composition, freeMode]);
 
   const input = useMemo(() => {
     if (!resolution) {
@@ -768,7 +787,28 @@ export default function Workspace(props: WorkspaceProps) {
       });
       dirty.current = true;
       setEditedRuns((prev) => ({ ...prev, [active.key]: next }));
-      setSelectedId(null);
+
+      /*
+       * ДОБАВЛЕННЫЙ МОДУЛЬ СРАЗУ ВЫДЕЛЕН.
+       *
+       * «+» ставит МЕСТО, а чем оно будет — карго, ящиками, витриной —
+       * показывает лента вариантов выбранного модуля, отфильтрованная по
+       * зоне и ширине. Без выделения человек ставит модуль и не видит, из
+       * чего теперь выбирать: два шага вместо одного жеста.
+       *
+       * Индекс считается от операции, а не поиском «нового id»: `reindex`
+       * выводит идентификаторы из позиции, и после вставки их меняет сразу
+       * несколько модулей.
+       */
+      const added = ops.length === 1 && ops[0].op === 'add_module' ? ops[0] : null;
+      if (added) {
+        const at = added.afterModuleId
+          ? active.run.modules.findIndex((m) => m.id === added.afterModuleId)
+          : active.run.modules.length - 1;
+        setSelectedId(next.modules[at + 1]?.id ?? null);
+      } else {
+        setSelectedId(null);
+      }
       flash(
         next.modules
           .filter((m) => before.get(m.id) !== m.widthMm)
@@ -1351,6 +1391,44 @@ export default function Workspace(props: WorkspaceProps) {
 
         {step === 'template' && (
           <>
+            {/*
+              * СОБРАТЬ САМОМУ — рядом с галереей, а не вместо неё.
+              *
+              * Готовое решение закрывает девять случаев из десяти, и
+              * убирать его нельзя. Но десятый — это мебельщик со своим
+              * дизайном, и до сих пор ему было нечего ответить.
+              */}
+            <div className="mb-4 flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                data-free-mode
+                /*
+                 * Это ДЕЙСТВИЕ, а не переключатель, и `aria-pressed` тут
+                 * не просто лишний: `aria-pressed` на этом экране означает
+                 * «карточка решения», и приёмка отбирает карточки именно
+                 * по нему. Кнопка с тем же признаком встала первой в
+                 * список решений — и «выбрать первое решение» выбирало
+                 * пустую стену.
+                 */
+                data-active={freeMode ? '1' : undefined}
+                onClick={() => {
+                  dirty.current = true;
+                  setFreeMode(true);
+                  setTemplateId(null);
+                  setEditedRuns({});
+                  setComposition({});
+                  setStep('compose');
+                }}
+                className={`mw-btn ${freeMode ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+              >
+                Собрать самому
+              </button>
+              <span className="text-[13px] leading-snug text-graphiteMw">
+                Пустая стена {input.lengthMm} мм: добавляйте модули сами.
+                Готовое решение ниже — быстрый старт.
+              </span>
+            </div>
+
             <TemplatePicker
               lengthMm={input.lengthMm}
               zone={zone}
@@ -1358,6 +1436,7 @@ export default function Workspace(props: WorkspaceProps) {
               selectedId={templateId}
               onSelect={(t: RunTemplate) => {
                 dirty.current = true;
+                setFreeMode(false);
                 setTemplateId(t.id);
                 // Правки предыдущего состава к новому шаблону не относятся.
                 setEditedRuns({});
@@ -1413,7 +1492,27 @@ export default function Workspace(props: WorkspaceProps) {
               onOps={runOps}
               requirements={requirements}
               onComposition={changeComposition}
+              freeMode={freeMode}
             />
+
+            {/*
+              * ЧЕМ БУДЕТ ЭТО МЕСТО — РЕШАЕТСЯ ЗДЕСЬ ЖЕ.
+              *
+              * «+» ставит место, а лента показывает, что в нём бывает:
+              * тот же список `MODULE_VARIANTS`, отфильтрованный по зоне и
+              * ширине, и та же разница в цене, что под чертежом. Раньше
+              * лента жила только на «Результате» — модуль добавляли на
+              * одном экране, а выбирали его начинку на другом.
+              */}
+            <div className="mt-4">
+              <VariantStrip
+                options={variantOptions}
+                onPick={chooseVariant}
+                moduleLabel={selectedLabel}
+                pickPrompt="Нажмите на модуль в ленте, чтобы поменять его начинку."
+              />
+            </div>
+
             {moveNotice && (
               <p className="mt-3 rounded-[var(--r-control)] bg-navy px-4 py-3 text-[13px] leading-snug text-graphiteMw">
                 {moveNotice}
