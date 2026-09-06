@@ -1640,7 +1640,18 @@ export default function Workspace(props: WorkspaceProps) {
                   * сценой обязана сойтись с итогом внизу экрана.
                   */}
                 <div className="w-full">
-                  <VariantStrip options={variantOptions} onPick={chooseVariant} />
+                  {/*
+                    * Лента та же, что под чертежом, И ПОДПИСАНА ТАК ЖЕ.
+                    * Выделение общее с чертежом и переживает переключение
+                    * вида — значит лента обязана называть модуль вслух,
+                    * иначе выбор уходит туда, куда человек не смотрит.
+                    */}
+                  <VariantStrip
+                    options={variantOptions}
+                    onPick={chooseVariant}
+                    moduleLabel={selectedLabel}
+                    pickPrompt="Нажмите на модуль в сцене, чтобы поменять его начинку."
+                  />
                 </div>
 
                 {sceneNotice && (
@@ -1770,7 +1781,8 @@ export default function Workspace(props: WorkspaceProps) {
                 <VariantStrip
                   options={variantOptions}
                   onPick={chooseVariant}
-                  moduleLabel={selectedLabel ?? undefined}
+                  moduleLabel={selectedLabel}
+                  pickPrompt="Нажмите на модуль на чертеже, чтобы поменять его начинку."
                 />
               </div>
             )}

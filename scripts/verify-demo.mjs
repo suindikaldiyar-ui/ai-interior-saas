@@ -413,6 +413,219 @@ try {
     'без фото сравнивать нечего — предлагается добавить снимок',
     (await page.getByRole('button', { name: 'Добавить фото помещения' }).count()) === 1,
   );
+
+  /* ────────  Лента вариантов под сценой знает, к какому модулю относится  ──────── */
+
+  /*
+   * ВЗАМЕН ТАВТОЛОГИИ.
+   *
+   * Прошлая проверка вызывала `applyOps` дважды с одинаковыми аргументами
+   * и сравнивала отпечатки. Совпадение было гарантировано арифметически,
+   * и на сломанном интерфейсе она оставалась зелёной.
+   *
+   * Здесь гоняется сам интерфейс. Ловится ровно та поломка, из-за которой
+   * тест и написан: лента жила от `selectedId`, который мог остаться
+   * с чертежа, и не называла модуль — человек жал «Витрину», а она уходила
+   * туда, куда он не смотрит.
+   */
+  {
+    const fresh = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    await fresh.goto(`${BASE}/demo`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+    await until(async () => (await fresh.getByRole('button', { name: /Результат/ }).count()) > 0);
+    /*
+     * СНАЧАЛА ОСВОБОЖДАЕМ МЕСТО В РЯДУ.
+     *
+     * Демо-кухня 3200 мм забита техникой вплотную: все модули либо под
+     * прибор, либо узкое карго — выбора нет НИ У ОДНОГО. Снимаем три
+     * прибора, и освободившаяся стена даёт обычные модули, у которых
+     * варианты есть. Без этого проверять было бы нечего.
+     */
+    await until(async () => (await fresh.getByRole('button', { name: /Состав/ }).count()) > 0);
+    await fresh.getByRole('button', { name: /Состав/ }).first().click();
+    await sleep(900);
+    for (const name of [/Посудомойка 45/, /Духовой шкаф/, /Варочная панель/]) {
+      const chip = fresh.getByRole('button', { name }).first();
+      if ((await chip.count()) > 0) await chip.click();
+      await sleep(600);
+    }
+
+    await fresh.getByRole('button', { name: /Результат/ }).first().click();
+    await sleep(1400);
+
+    const strip = () => fresh.locator('[data-variant-strip]');
+    const cards = () => fresh.locator('[data-variant]');
+    const label = () => fresh.locator('[data-variant-label]');
+    const prompt = () => fresh.locator('[data-variant-prompt]');
+    const emptyBox = () => fresh.locator('[data-variant-empty]');
+
+    /* ── 1. Ничего не выделено → ленты нет, есть подсказка ── */
+    await fresh.getByRole('button', { name: '3D', exact: true }).click();
+    await until(async () => (await fresh.locator('canvas').count()) > 0, 30_000);
+    await sleep(1500);
+
+    check(
+      'без выделения ленты нет',
+      (await strip().count()) === 0 && (await cards().count()) === 0,
+      `лент ${await strip().count()}, карточек ${await cards().count()}`,
+    );
+    check(
+      'и вместо неё сказано, что делать',
+      (await prompt().count()) === 1 &&
+        /Нажмите на модуль в сцене/.test(await prompt().innerText()),
+      (await prompt().count()) > 0 ? await prompt().innerText() : 'подсказки нет',
+    );
+
+    /* ── 2. Модуль с вариантами: лента подписана его именем ── */
+    await fresh.getByRole('button', { name: 'Чертёж', exact: true }).click();
+    await sleep(700);
+
+    const glyphs = fresh.locator('[data-view="elevation"] [data-glyph]');
+    const total = await glyphs.count();
+    let rich = null;
+    let poor = null;
+    for (let i = 0; i < total; i += 1) {
+      await glyphs.nth(i).click({ force: true });
+      await sleep(220);
+      const id = await glyphs.nth(i).getAttribute('data-glyph');
+      if ((await cards().count()) > 0 && !rich) rich = id;
+      if ((await emptyBox().count()) > 0 && !poor) poor = id;
+      if (rich && poor) break;
+    }
+
+    check('на чертеже нашёлся модуль с выбором', Boolean(rich), rich ?? 'нет');
+    check('и модуль без выбора', Boolean(poor), poor ?? 'нет');
+
+    /* ── 3. Модуль без вариантов говорит об этом, а не пропадает ── */
+    if (poor) {
+      await fresh.locator(`[data-view="elevation"] [data-glyph="${poor}"]`).click({ force: true });
+      await sleep(300);
+      check(
+        'у модуля без вариантов написано, что их нет',
+        (await emptyBox().count()) === 1 &&
+          /вариантов нет/.test(await emptyBox().innerText()),
+        (await emptyBox().count()) > 0 ? (await emptyBox().innerText()).slice(0, 60) : 'пусто',
+      );
+      check(
+        'и модуль при этом назван',
+        (await label().count()) === 1 && (await label().innerText()).length > 20,
+        (await label().count()) > 0 ? await label().innerText() : 'ПОДПИСИ НЕТ',
+      );
+    }
+
+    /* ── 4. Под сценой лента подписана так же, как под чертежом ── */
+    /*
+     * Дальше без модуля с выбором проверять нечего. Выходим ЧЕСТНО, а не
+     * падаем исключением: на регрессе должен быть виден список «FAIL»,
+     * а не стек Playwright на локаторе, которого нет.
+     */
+    if (!rich) {
+      check('дальше нечего проверять: модуля с выбором не нашлось', false);
+    }
+
+    if (rich) {
+    await fresh.locator(`[data-view="elevation"] [data-glyph="${rich}"]`).click({ force: true });
+    await sleep(300);
+    const onDrawing = (await label().count()) > 0 ? await label().innerText() : '';
+
+    await fresh.getByRole('button', { name: '3D', exact: true }).click();
+    await sleep(1800);
+    const onScene = (await label().count()) > 0 ? await label().innerText() : '';
+
+    check(
+      'под сценой лента НАЗЫВАЕТ модуль, а не молчит',
+      onScene.length > 0 && onScene === onDrawing,
+      `чертёж «${onDrawing}» · сцена «${onScene}»`,
+    );
+
+    /* ── 5. Клик в сцене переводит ленту на КЛИКНУТЫЙ модуль ── */
+    const canvas = fresh.locator('canvas').last();
+    const box = await canvas.boundingBox();
+    let moved = null;
+
+    if (box) {
+      const spots = [
+        [0.46, 0.55], [0.42, 0.65], [0.55, 0.5], [0.5, 0.62],
+        [0.58, 0.42], [0.38, 0.58], [0.62, 0.6], [0.45, 0.45],
+      ];
+      for (const [fx, fy] of spots) {
+        await fresh.mouse.click(box.x + box.width * fx, box.y + box.height * fy);
+        await sleep(400);
+        const now = (await label().count()) > 0 ? await label().innerText() : '';
+        if (now && now !== onScene) {
+          moved = now;
+          break;
+        }
+      }
+    }
+
+    check(
+      'клик в сцене переводит ленту на выбранный там модуль',
+      Boolean(moved),
+      moved ? `«${onScene}» → «${moved}»` : 'подпись не изменилась ни на одном клике',
+    );
+
+    /* ── 6. Выбор из ленты меняет чертёж у ТОГО ЖЕ модуля ── */
+    await fresh.getByRole('button', { name: 'Чертёж', exact: true }).click();
+    await sleep(700);
+    await fresh.locator(`[data-view="elevation"] [data-glyph="${rich}"]`).click({ force: true });
+    await sleep(300);
+
+    /** Что нарисовано на фасаде этого модуля сейчас. */
+    const drawnAt = async (id) =>
+      (
+        await fresh
+          .locator(`[data-view="elevation"] [data-glyph="${id}"] [data-symbol]`)
+          .evaluateAll((els) => els.map((e) => e.getAttribute('data-symbol')))
+      ).join(',');
+
+    const drawnBefore = await drawnAt(rich);
+
+    await fresh.getByRole('button', { name: '3D', exact: true }).click();
+    await sleep(1600);
+
+    /*
+     * ПЕРЕБИРАЕМ ВАРИАНТЫ, ПОКА ЧЕРТЁЖ НЕ ИЗМЕНИТСЯ.
+     *
+     * Заранее названный вариант проверял бы конкретную кухню, а не
+     * механизм: у базового модуля витрины не бывает вовсе. И не всякий
+     * выбор виден — «две дверцы» на модуле 1200 мм рисуются тем же, чем
+     * и обычная дверца. Поэтому берём варианты подряд и ищем первый,
+     * который действительно меняет фасад.
+     */
+    let picked = null;
+    let drawnAfter = drawnBefore;
+
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const idle = fresh.locator('[data-variant][aria-pressed="false"]').nth(attempt);
+      if ((await idle.count()) === 0) break;
+
+      const kind = await idle.getAttribute('data-variant');
+      await idle.click();
+      await sleep(1200);
+
+      await fresh.getByRole('button', { name: 'Чертёж', exact: true }).click();
+      await sleep(800);
+      drawnAfter = await drawnAt(rich);
+
+      if (drawnAfter !== drawnBefore) {
+        picked = kind;
+        break;
+      }
+
+      await fresh.getByRole('button', { name: '3D', exact: true }).click();
+      await sleep(1400);
+    }
+
+    check(
+      'выбор из ленты под сценой меняет чертёж у ТОГО ЖЕ модуля',
+      Boolean(picked),
+      `${rich}: «${drawnBefore}» → «${drawnAfter}» (вариант ${picked ?? 'ни один не изменил фасад'})`,
+    );
+    }
+
+    await fresh.close();
+  }
+
   // Сцена нужна только для захвата кадра: на любом виде, кроме 3D, она уезжает
   // за экран — но остаётся смонтированной, иначе снимать кадр будет нечем.
   await page.getByRole('button', { name: 'Чертёж', exact: true }).click();

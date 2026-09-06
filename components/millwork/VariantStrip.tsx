@@ -37,21 +37,70 @@ export type VariantPreview = {
 type Props = {
   options: VariantPreview[];
   onPick: (kind: ModuleVariantKind) => void;
-  /** Что выбрано сейчас — подпись над лентой. */
-  moduleLabel?: string;
+  /**
+   * ЧЕЙ ЭТО ВЫБОР. Пусто — не выбрано ничего.
+   *
+   * Подпись обязательна везде, где лента показывается. Без неё лента
+   * молча метит в модуль, который мог остаться выделенным с другого
+   * вида: человек жмёт «Витрину», а она уходит туда, куда он не смотрит.
+   */
+  moduleLabel?: string | null;
+  /**
+   * Что написать, когда модуль не выбран.
+   *
+   * Пусто — не показываем ничего. Там, где выделение делается прямо на
+   * этом экране, пустое место читается как «сломалось»: подсказка
+   * называет действие.
+   */
+  pickPrompt?: string;
 };
 
 /** Размер карточки: схема читается с расстояния вытянутой руки. */
 const CARD_W = 96;
 const CARD_H = 108;
 
-export default function VariantStrip({ options, onPick, moduleLabel }: Props) {
-  if (options.length === 0) return null;
+export default function VariantStrip({
+  options,
+  onPick,
+  moduleLabel,
+  pickPrompt,
+}: Props) {
+  /*
+   * ТРИ СОСТОЯНИЯ, И НИ ОДНО ИЗ НИХ НЕ ПУСТОЕ МЕСТО.
+   *
+   * Раньше их было два, и оба выглядели одинаково — лента просто
+   * исчезала. Отличить «ничего не выбрано» от «у этого модуля выбора
+   * нет» было нельзя, а таких модулей десять из одиннадцати: замерщик
+   * жал на модуль, ничего не появлялось, и это читалось как несработавший
+   * клик.
+   */
+  if (!moduleLabel) {
+    if (!pickPrompt) return null;
+    return (
+      <p className="mw-label" data-variant-prompt>
+        {pickPrompt}
+      </p>
+    );
+  }
+
+  if (options.length === 0) {
+    return (
+      <div className="print:hidden" data-variant-strip data-variant-empty>
+        <p className="mw-label mb-1" data-variant-label>
+          Что здесь бывает: {moduleLabel}
+        </p>
+        <p className="text-[13px] leading-snug text-graphiteMw">
+          У этого модуля вариантов нет: в этом месте и такой ширине бывает
+          только он.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="print:hidden" data-variant-strip>
-      <p className="mw-label mb-2">
-        Что здесь бывает{moduleLabel ? `: ${moduleLabel}` : ''}
+      <p className="mw-label mb-2" data-variant-label>
+        Что здесь бывает: {moduleLabel}
       </p>
 
       {/*
