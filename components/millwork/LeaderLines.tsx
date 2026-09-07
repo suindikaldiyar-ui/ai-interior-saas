@@ -36,7 +36,17 @@ type Props = {
 export default function LeaderLines({ anchors, lengthMm, ceilingMm, scale }: Props) {
   if (anchors.length === 0) return null;
 
-  const { left, right } = layoutLeaders(anchors, { lengthMm, ceilingMm });
+  /*
+   * ЗАЗОР МЕЖДУ ПОЛКАМИ — ЭТО ВЫСОТА СТРОКИ, ПЕРЕСЧИТАННАЯ В МОДЕЛЬ.
+   *
+   * Раскладка работает в миллиметрах мебели, а наложение случается в
+   * единицах листа: полка это текст кеглем `fontSize`. Пересчёт возможен
+   * только здесь, где известны обе величины, — ровно как у толщин линий.
+   */
+  const unitsPerMm = Math.abs(scale.yOf(0) - scale.yOf(1000)) / 1000;
+  const minGapMm = unitsPerMm > 0 ? (scale.fontSize * 1.35) / unitsPerMm : 0;
+
+  const { left, right } = layoutLeaders(anchors, { lengthMm, ceilingMm, minGapMm });
   const line = 'var(--blueprint)';
 
   const draw = (side: 'left' | 'right', list: ReturnType<typeof layoutLeaders>['left']) =>
@@ -49,7 +59,18 @@ export default function LeaderLines({ anchors, lengthMm, ceilingMm, scale }: Pro
        * Полка уходит в поле за рисунком: слева — влево от чертежа, справа —
        * вправо. Излом ставится на границе поля, дальше идёт горизонталь.
        */
-      const edge = side === 'left' ? scale.drawLeft - scale.marginUnits * 0.55 : scale.drawRight + scale.marginUnits * 0.55;
+      /*
+       * ИЗЛОМ СТОИТ НА ГРАНИЦЕ РИСУНКА, А НЕ В ПОЛЕ ПОДПИСЕЙ.
+       *
+       * Он был внутри поля на 55% его ширины — то есть диагональ заходила
+       * туда, где лежат ЧУЖИЕ подписи, и резала их. Измерением отрезков
+       * это дало четыре настоящих пересечения; по габаритам линий их не
+       * видно вовсе, потому что габарит диагонали накрывает пол-листа.
+       *
+       * Поле подписей принадлежит подписям: за границей рисунка идут
+       * только горизонтальные полки, а они разведены по высоте на строку.
+       */
+      const edge = side === 'left' ? scale.drawLeft : scale.drawRight;
       const shelfEnd = side === 'left' ? scale.drawLeft - scale.marginUnits : scale.drawRight + scale.marginUnits;
 
       return (

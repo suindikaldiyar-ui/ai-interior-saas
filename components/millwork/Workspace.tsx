@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useDebug } from '@/lib/debug';
 import { useInteriorStore } from '@/store/useInteriorStore';
 import dynamic from 'next/dynamic';
 import ThemeToggle from '@/components/ThemeToggle';
@@ -10,6 +9,9 @@ import CommandBar from './CommandBar';
 import DrawingSheet from './DrawingSheet';
 import VariantStrip, { type VariantPreview } from './VariantStrip';
 import FrontMaterialPicker from './FrontMaterialPicker';
+import RunSchematic from './RunSchematic';
+import { compressPhoto } from '@/lib/photo';
+import FrontSwatchCards from './FrontSwatchCards';
 import {
   RUN_DESIGNS,
   designAvailability,
@@ -130,19 +132,11 @@ const KitchenScene = dynamic(() => import('./KitchenScene'), {
  * clay-проход для промпта визуализации. Вырви её — генерация перестанет
  * работать, а узнается это только на первой отрисовке у клиента.
  */
-const TechnicalScene = dynamic(() => import('./cabinet3d/TechnicalScene'), {
-  ssr: false,
-  loading: () => (
-    <div className="flex h-full items-center justify-center text-[13px] text-graphiteMw">
-      Собираем сцену…
-    </div>
-  ),
-});
 
 const CatalogLoader = dynamic(() => import('@/components/CatalogLoader'), { ssr: false });
 
 /** Чем смотреть результат. Чертёж плотный намеренно — это документ. */
-type ResultView = 'facade' | 'scene' | 'panels';
+type ResultView = 'facade' | 'panels';
 
 const STEP_HINT: Record<StepKey, string> = {
   survey: 'Меряем по низу стены, у пола: вверху стены новостройки кривые.',
@@ -240,8 +234,6 @@ export default function Workspace(props: WorkspaceProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   /** Жёлтая строка под сценой: правку не отменяем, но о последствии говорим. */
   const [sceneNotice, setSceneNotice] = useState<string | null>(null);
-  // Технические подписи включаются адресом ?debug=1, см. lib/debug.ts
-  const debug = useDebug();
 
   /*
    * Первый шаг — тот, где работа ещё не сделана: незавершённый замер ведёт
@@ -274,12 +266,6 @@ export default function Workspace(props: WorkspaceProps) {
   const sceneView: SceneView = DEFAULT_SCENE_VIEW;
   const [estimateOpen, setEstimateOpen] = useState(false);
   const [renderAngle, setRenderAngle] = useState<RunAngle>('front');
-  /*
-   * Стиль выбирает человек, а не таблица комплектаций: бюджет и вкус —
-   * разные вещи. Выбор живёт в состоянии объекта и переживает закрытие.
-   */
-  const cutaway = useInteriorStore((s) => s.cutaway);
-  const setCutaway = useInteriorStore((s) => s.setCutaway);
 
   const [renderStyle, setRenderStyle] = useState<string>(
     isRenderStyle(props.initialState?.renderStyle)
@@ -1363,22 +1349,25 @@ export default function Workspace(props: WorkspaceProps) {
   /* ── Шаги ── */
 
   /**
-   * СЦЕНА — ОДНА НА ВЕСЬ ЭКРАН РАБОТЫ.
+   * СЦЕНА ЖИВЁТ ТОЛЬКО РАДИ КАДРА.
    *
-   * На конфигураторе она стоит слева и её видно; на остальных шагах —
-   * уезжает за экран, но остаётся смонтированной: именно она снимает
-   * clay-кадр для визуализации (`RoomCanvas` внутри регистрирует
-   * `captureScene`), а канвас нулевого размера не рисуется вовсе.
+   * Из интерфейса три.js убран целиком: рабочий экран рисует вектор, и
+   * он рассказывает о мебели всё, что решается на встрече. Но снимает
+   * clay-кадр для визуализации именно эта сцена — `RoomCanvas` внутри
+   * регистрирует `captureScene`, — а без кадра нет ни сравнения
+   * «до и после», ни генерации.
    *
-   * Элемент ОДИН и тот же, поэтому правка состава или материала не
-   * пересоздаёт канвас — и поворот сцены переживает любую правку.
+   * Поэтому она смонтирована ВСЕГДА и всегда за экраном. `display:none`
+   * не годится: канвас нулевого размера не рисуется, и захват снял бы
+   * пустоту. `frameloop="demand"` означает, что кадров она не рисует,
+   * пока их не попросят: в обычной работе нагрузки нет.
    */
   const sceneSlot = (
     <KitchenScene
       run={active.run}
       ceilingHeightMm={props.ceilingHeightMm}
       roomDepthM={props.roomDepthM}
-      hidden={step !== 'studio'}
+      hidden
       interactive
       production={props.production}
       view={sceneView}
@@ -1689,8 +1678,15 @@ export default function Workspace(props: WorkspaceProps) {
                 * ровно на те 11 px, из-за которых её приходится
                 * прокручивать. Вычитаем полосы, а не подбираем долю.
                 */}
-              <div className="h-[46vh] min-h-[260px] overflow-hidden rounded-[var(--r-panel)] bg-sheet lg:h-[calc(100vh-320px)]">
-                {sceneSlot}
+              <div className="h-[46vh] min-h-[260px] lg:h-[calc(100vh-320px)]">
+                <RunSchematic
+                  run={active.run}
+                  comms={props.comms}
+                  selectedModuleId={selectedId}
+                  onSelect={setSelectedId}
+                  onMoveModule={freeMode ? moveModule : undefined}
+                  changedIds={changedIds}
+                />
               </div>
 
               {sceneNotice && (
@@ -1702,6 +1698,62 @@ export default function Workspace(props: WorkspaceProps) {
 
             {/* ── Панель выбора ── */}
             <div className="min-w-0">
+              {/*
+                * ФОТО ПОМЕЩЕНИЯ — ПЕРВЫМ БЛОКОМ.
+                *
+                * Это обязательный шаг продажи, а не настройка: без снимка
+                * нет сравнения «до и после» и нет визуализации — клиент
+                * видит настроение вместо своей квартиры. Внизу панели его
+                * приходилось искать прокруткой при клиенте, а значит его
+                * не делали.
+                *
+                * Как только фото есть, блок сворачивается в строку: место
+                * наверху дорогое, и держать там готовое дело незачем.
+                */}
+              <div className="mb-4" data-photo-first>
+                {roomPhoto ? (
+                  <button
+                    type="button"
+                    onClick={() => setZoom(roomPhoto)}
+                    className="mw-btn mw-btn-ghost !h-auto w-full !justify-start gap-3 !p-2"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={roomPhoto}
+                      alt="Помещение клиента"
+                      className="h-12 w-16 rounded-[6px] object-cover"
+                    />
+                    <span className="text-[13px] leading-snug text-graphiteMw">
+                      Фото помещения есть — клиент увидит свою квартиру
+                    </span>
+                  </button>
+                ) : (
+                  <div className="rounded-[var(--r-control)] bg-alert/10 p-3">
+                    <p className="mb-2 text-[13px] leading-snug text-alert">
+                      Без фото помещения клиент увидит настроение, а не свою
+                      квартиру: сравнения «до и после» не будет.
+                    </p>
+                    <label className="mw-btn mw-btn-primary inline-flex cursor-pointer">
+                      Добавить фото помещения
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={async (event) => {
+                          const file = event.target.files?.[0];
+                          if (!file) return;
+                          // Сжатие идёт НА КЛИЕНТЕ: 4–12 МБ с телефона не
+                          // должны уезжать ни в Storage, ни в модель.
+                          const compressed = await compressPhoto(file);
+                          dirty.current = true;
+                          setRoomPhoto(compressed.dataUrl);
+                        }}
+                      />
+                    </label>
+                  </div>
+                )}
+              </div>
+
               {/*
                 * Варианты выбранного модуля — ПЕРВЫМИ.
                 *
@@ -1718,11 +1770,21 @@ export default function Workspace(props: WorkspaceProps) {
 
               {selectedUnit && !selectedUnit.appliance && (
                 <div className="mt-3">
-                  <FrontMaterialPicker
-                    unit={selectedUnit}
-                    onOps={runOps}
-                    onRefuse={setSceneNotice}
-                  />
+                  {/*
+                    * Сначала ОБРАЗЦЫ — клиент выбирает материал глазами, как
+                    * в салоне. Атрибуты (конструкция, фактура) идут ниже:
+                    * ими уточняют выбранное, а не начинают выбор.
+                    */}
+                  <p className="mw-label mb-2">Материал фасада · {selectedUnit.label}</p>
+                  <FrontSwatchCards unit={selectedUnit} onOps={runOps} />
+
+                  <div className="mt-3">
+                    <FrontMaterialPicker
+                      unit={selectedUnit}
+                      onOps={runOps}
+                      onRefuse={setSceneNotice}
+                    />
+                  </div>
                 </div>
               )}
 
@@ -1808,7 +1870,6 @@ export default function Workspace(props: WorkspaceProps) {
                   }}
                   angle={renderAngle}
                   onAngleChange={setRenderAngle}
-                  onOpenPhoto={setZoom}
                 />
               </div>
 
@@ -1890,9 +1951,13 @@ export default function Workspace(props: WorkspaceProps) {
                   * заставлял держать в голове то, что должно быть перед
                   * глазами.
                   */
+                /*
+                  * Вкладки «3D» больше нет: три.js ушёл из интерфейса
+                  * целиком. Схему клиент смотрит в конфигураторе, а здесь
+                  * лежат документы для цеха — лист и детализировка.
+                  */
                 [
                   ['facade', 'Чертёж'],
-                  ['scene', '3D'],
                   ['panels', 'Детализировка'],
                 ] as [ResultView, string][]
               ).map(([key, label]) => (
@@ -1949,119 +2014,9 @@ export default function Workspace(props: WorkspaceProps) {
               * `display:none` по-прежнему не годится: канвас нулевого
               * размера не рисуется, и захват снял бы пустоту.
               */}
-            {/*
-              * На «Результате» сцена уезжает за экран, но остаётся
-              * смонтированной: кадр для визуализации снимает именно она.
-              * В конфигураторе тот же самый элемент стоит слева и виден.
-              */}
-            <div
-              className="mw-scene-hidden fixed left-[-3000px] top-0 h-[220px] w-[340px] opacity-0"
-              aria-hidden
-            >
-              {sceneSlot}
-            </div>
+
 
             {/* Техническая аксонометрия: только изделие, без комнаты. */}
-            {resultView === 'scene' && (
-              <div className="mt-4 h-[460px] overflow-hidden rounded-[var(--r-panel)] bg-sheet print:hidden">
-                <TechnicalScene
-                  run={active.run}
-                  production={props.production}
-                  selectedModuleId={selectedId}
-                  onSelectModule={setSelectedId}
-                  cutaway={cutaway}
-                />
-              </div>
-            )}
-            {resultView === 'scene' && (
-              <div className="mt-3 flex flex-wrap items-center gap-2 print:hidden">
-                {/*
-                  * РАЗРЕЗ — единственный переключатель, который остался.
-                  *
-                  * «Открыть всё», «Закрыть всё» и три точки съёмки жили при
-                  * интерьерной сцене: там дверцы распахивались, а камера
-                  * переезжала между чертёжным, планом и тремя четвертями.
-                  * Технический вид крутится свободно, и возвращает его
-                  * кнопка «Исходный ракурс» в самой сцене — держать рядом
-                  * кнопки, которые ничего не меняют, значит врать интерфейсом.
-                  */}
-                {(
-                  [
-                    [false, 'С фасадами'],
-                    [true, 'Разрез'],
-                  ] as [boolean, string][]
-                ).map(([value, label]) => (
-                  <button
-                    key={label}
-                    type="button"
-                    onClick={() => setCutaway(value)}
-                    aria-pressed={cutaway === value}
-                    className={`mw-btn ${cutaway === value ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
-                  >
-                    {label}
-                  </button>
-                ))}
-
-                {/*
-                  * ВАРИАНТ ВЫБИРАЕТСЯ ТАМ, ГДЕ СМОТРЯТ. Лента та же, что под
-                  * чертежом, и цена считается тем же пересчётом: цифра под
-                  * сценой обязана сойтись с итогом внизу экрана.
-                  */}
-                <div className="w-full">
-                  {/*
-                    * Лента та же, что под чертежом, И ПОДПИСАНА ТАК ЖЕ.
-                    * Выделение общее с чертежом и переживает переключение
-                    * вида — значит лента обязана называть модуль вслух,
-                    * иначе выбор уходит туда, куда человек не смотрит.
-                    */}
-                  <VariantStrip
-                    options={variantOptions}
-                    onPick={chooseVariant}
-                    moduleLabel={selectedLabel}
-                    pickPrompt="Нажмите на модуль в сцене, чтобы поменять его начинку."
-                  />
-
-                  {/*
-                    * МАТЕРИАЛ ВЫБИРАЕТСЯ ЗДЕСЬ ЖЕ.
-                    *
-                    * Клиент выбирает материал глазами, по сцене. Уводить
-                    * его за этим на другой шаг — значит показывать фасад
-                    * там, где мебели не видно.
-                    */}
-                  {selectedUnit && !selectedUnit.appliance && (
-                    <div className="mt-3">
-                      <FrontMaterialPicker
-                        unit={selectedUnit}
-                        onOps={runOps}
-                        onRefuse={setSceneNotice}
-                      />
-                    </div>
-                  )}
-                </div>
-
-                {sceneNotice && (
-                  <p className="w-full rounded-[var(--r-control)] bg-tape/15 px-4 py-3 text-[13px] leading-snug text-tape">
-                    {sceneNotice}
-                  </p>
-                )}
-
-                <p className="w-full text-[13px] leading-snug text-graphiteMw">
-                  Технический вид: только изделие, без комнаты и света. Тяните —
-                  повернётся, двумя пальцами — приблизится. Нажмите на модуль,
-                  чтобы выбрать его и поменять начинку.
-                </p>
-              </div>
-            )}
-
-            {resultView === 'scene' && (
-              <p className="mt-2 text-[13px] leading-snug text-graphiteMw">
-                Гарнитур собран из тех же {active.run.modules.length} модулей, что
-                чертёж и смета.
-                {/* Отпечаток — сверка для нас, а не разговор с клиентом. */}
-                {debug && ` Отпечаток ${active.run.fingerprint}.`}
-              </p>
-            )}
-
             {/*
               * ГАЛЕРЕЯ РЯДОМ С ЧЕРТЕЖОМ, а не на отдельном шаге: клиент
               * спрашивает «а по-другому можно?» именно здесь, глядя на
@@ -2174,9 +2129,7 @@ export default function Workspace(props: WorkspaceProps) {
 
             <div
               className={
-                resultView === 'scene' || resultView === 'panels'
-                  ? 'mt-4 hidden print:block'
-                  : 'mt-4'
+                resultView === 'panels' ? 'mt-4 hidden print:block' : 'mt-4'
               }
             >
               {/*
@@ -2261,6 +2214,21 @@ export default function Workspace(props: WorkspaceProps) {
           </ul>
         )}
       </main>
+
+      {/*
+        * СЦЕНА ЗА ЭКРАНОМ — НА ВСЕХ ШАГАХ СРАЗУ.
+        *
+        * Раньше она монтировалась внутри «Результата», и до него её не
+        * существовало вовсе. Теперь съёмка кадра возможна с любого шага,
+        * а главное — сцена не пересоздаётся при переходах: контекст
+        * WebGL поднимается один раз за сеанс.
+        */}
+      <div
+        className="mw-scene-hidden fixed left-[-3000px] top-0 h-[220px] w-[340px] opacity-0"
+        aria-hidden
+      >
+        {sceneSlot}
+      </div>
 
       {/* ── Низ экрана: зона большого пальца ── */}
       <footer className="border-t border-navyLine/60 bg-navyDeep px-4 pb-4 pt-3 print:hidden">

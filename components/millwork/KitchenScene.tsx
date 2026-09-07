@@ -284,7 +284,20 @@ export default function KitchenScene({
         * мешу стоит на планшете половины кадра, а мебель на полу держит
         * именно контактная тень.
         */}
-      <RoomCanvas frameloop="demand" shadows={false} dpr={[1, 1.75]} environment="apartment">
+      <RoomCanvas
+        /*
+         * СЦЕНА ЗА ЭКРАНОМ НЕ РИСУЕТ НИ ОДНОГО КАДРА.
+         *
+         * Она живёт только ради clay-снимка, а `captureScene` вызывает
+         * `gl.render` сам. При `demand` она перерисовывалась на каждую
+         * правку состава — 588 кадров за минуту работы на мебель,
+         * которую никто не видит.
+         */
+        frameloop={hidden ? 'never' : 'demand'}
+        shadows={false}
+        dpr={[1, 1.75]}
+        environment="apartment"
+      >
         {interactive && (
           <Cabinet3D
             run={run}

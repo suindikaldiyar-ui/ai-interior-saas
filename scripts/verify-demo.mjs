@@ -331,8 +331,9 @@ try {
    * и план, и разрезы, — отдельная кнопка под один вид больше не нужна.
    */
   check(
-    'чертёж и 3D — кнопками ниже сравнения',
-    (await page.getByRole('button', { name: /^(Чертёж|3D)$/ }).count()) === 2,
+    // «3D» больше нет: схему смотрят в конфигураторе, здесь документы.
+    'чертёж и детализировка — кнопками ниже сравнения',
+    (await page.getByRole('button', { name: /^(Чертёж|Детализировка)$/ }).count()) === 2,
   );
   check(
     'отдельной кнопки «План» больше нет: план на листе',
@@ -387,17 +388,43 @@ try {
 
   const ribbonCount = (await ribbon()).length || before.length;
 
-  await page.getByRole('button', { name: '3D', exact: true }).click();
-  await until(async () => (await page.locator('canvas').count()) > 0, 30_000);
-  check('3D поднимает сцену', (await page.locator('canvas').count()) === 1);
+  /*
+   * ТРИ.JS УШЁЛ ИЗ ИНТЕРФЕЙСА.
+   *
+   * Рабочий экран рисует вектор — тем же кодом, что чертёжный лист.
+   * Сцена осталась ровно одна и ровно за экраном: она снимает clay-кадр
+   * для визуализации, и без неё нет ни сравнения «до и после», ни
+   * генерации. Поэтому проверяем ДВА условия сразу: видимого канваса
+   * нет, а смонтированный — есть.
+   */
+  await page.getByRole('button', { name: /Конфигуратор/ }).first().click();
+  await sleep(2500);
 
-  const sceneNote = await page.getByText(/собран из тех же/).first().textContent();
-  const sceneModules = Number((sceneNote ?? '').replace(/\D+/g, ''));
-  check(
-    'в 3D тот же состав, что в чертеже и смете',
-    sceneModules > 0,
-    `модулей в сцене: ${sceneModules}`,
+  const canvasBoxes = await page.evaluate(() =>
+    [...document.querySelectorAll('canvas')].map((c) => {
+      const r = c.getBoundingClientRect();
+      return { x: Math.round(r.x), w: Math.round(r.width) };
+    }),
   );
+  check(
+    'на рабочем экране нет ни одного видимого канваса',
+    canvasBoxes.every((box) => box.x + box.w <= 0),
+    JSON.stringify(canvasBoxes),
+  );
+  check(
+    'но сцена для съёмки кадра смонтирована',
+    canvasBoxes.length === 1,
+    `канвасов ${canvasBoxes.length}`,
+  );
+
+  check(
+    'рабочий экран рисует схему тем же кодом, что лист',
+    (await page.locator('[data-schematic] svg').count()) >= 1,
+  );
+
+  // Карточка рендера и кнопка съёмки живут на «Результате» — возвращаемся.
+  await page.getByRole('button', { name: /Результат/ }).first().click();
+  await sleep(1200);
 
   /*
    * Виды чертёжного листа — тоже `figure`, поэтому считаем именно карточки
@@ -453,7 +480,7 @@ try {
     const emptyBox = () => fresh.locator('[data-variant-empty]');
 
     /* ── 1. Ничего не выделено → ленты нет, есть подсказка ── */
-    await fresh.getByRole('button', { name: '3D', exact: true }).click();
+    await fresh.getByRole('button', { name: /Конфигуратор/ }).first().click();
     await until(async () => (await fresh.locator('canvas').count()) > 0, 30_000);
     await sleep(1500);
 
@@ -465,7 +492,7 @@ try {
     check(
       'и вместо неё сказано, что делать',
       (await prompt().count()) === 1 &&
-        /Нажмите на модуль в сцене/.test(await prompt().innerText()),
+        /Нажмите на модуль/.test(await prompt().innerText()),
       (await prompt().count()) > 0 ? await prompt().innerText() : 'подсказки нет',
     );
 
@@ -497,7 +524,7 @@ try {
     const gotRich = await pickInRibbon('Дверца');
     check('в демо-ряду есть обычный модуль «Дверца»', gotRich);
 
-    await fresh.getByRole('button', { name: '3D', exact: true }).click();
+    await fresh.getByRole('button', { name: /Конфигуратор/ }).first().click();
     await sleep(1800);
 
     check(
@@ -549,7 +576,7 @@ try {
     const gotPoor = await pickInRibbon('Холодильник');
     check('в демо-ряду есть ниша под технику', gotPoor);
 
-    await fresh.getByRole('button', { name: '3D', exact: true }).click();
+    await fresh.getByRole('button', { name: /Конфигуратор/ }).first().click();
     await sleep(1600);
 
     check(
@@ -1265,24 +1292,23 @@ try {
     /* ── Сцена ── */
     await look.getByRole('button', { name: /Результат/ }).first().click();
     await sleep(1400);
-    await look.getByRole('button', { name: '3D', exact: true }).click();
+    await look.getByRole('button', { name: /Конфигуратор/ }).first().click();
     await until(async () => (await look.locator('canvas').count()) > 0, 30_000);
     await sleep(2500);
 
     const shot = () =>
       look.evaluate(() => {
-        const canvas = document.querySelector('canvas');
-        if (!(canvas instanceof HTMLCanvasElement)) return '';
-        return canvas.toDataURL('image/jpeg', 0.6);
+        const svg = document.querySelector('[data-schematic] svg');
+        return svg ? svg.outerHTML : '';
       });
 
     check(
-      'материал выбирается там же, где стоит сцена',
+      'материал выбирается там же, где стоит схема',
       (await look.locator('[data-front-material]').count()) > 0,
     );
 
     const before = await shot();
-    check('кадр сцены снимается', before.length > 1000, `${Math.round(before.length / 1024)} КБ`);
+    check('разметка схемы читается', before.length > 1000, `${Math.round(before.length / 1024)} КБ`);
 
     // Матовая ЛДСП → глянцевая эмаль: разница обязана быть видимой.
     await look.locator('[data-front-base="mdf_enamel"]').first().click();
@@ -1292,9 +1318,9 @@ try {
 
     const after = await shot();
     check(
-      'смена материала меняет картинку в сцене',
+      'смена материала меняет разметку схемы',
       before !== after && after.length > 1000,
-      before === after ? 'кадр не изменился' : 'кадр другой',
+      before === after ? 'разметка не изменилась' : 'разметка другая',
     );
 
     /*
@@ -1304,9 +1330,9 @@ try {
      */
     const again = await shot();
     check(
-      'а без правок кадр не меняется сам по себе',
+      'а без правок разметка не меняется сама по себе',
       again === after,
-      again === after ? '' : 'сцена дрожит',
+      again === after ? '' : 'схема дрожит',
     );
 
     // Филёнка: рама и вставка — это другая геометрия, а не другой цвет.
@@ -1314,7 +1340,7 @@ try {
     await look.locator('[data-front-construct="framed"]').first().click();
     await sleep(1600);
     check(
-      'филёнка меняет картинку отдельно от цвета',
+      'филёнка меняет разметку отдельно от цвета',
       (await shot()) !== flat,
     );
 
@@ -1340,7 +1366,7 @@ try {
 
     /* 1. Сцена видна целиком и занимает не меньше половины ширины. */
     const box = await st.evaluate(() => {
-      const canvas = document.querySelector('[data-studio-scene] canvas');
+      const canvas = document.querySelector('[data-studio-scene] [data-schematic]');
       const footer = document.querySelector('footer');
       if (!canvas || !footer) return null;
       const r = canvas.getBoundingClientRect();
@@ -1356,9 +1382,9 @@ try {
       };
     });
 
-    check('на рабочем экране есть сцена', Boolean(box));
+    check('на рабочем экране есть схема', Boolean(box));
     check(
-      'сцена занимает не меньше половины ширины',
+      'схема занимает не меньше половины ширины',
       Boolean(box) && box.w / box.vw >= 0.5,
       box ? `${Math.round((box.w / box.vw) * 100)}%` : '',
     );
@@ -1380,12 +1406,13 @@ try {
     check('сумма видна внизу рабочего экрана', Boolean(totalBefore), totalBefore ?? 'суммы нет');
 
     /* 3. Нажатие на модуль в сцене открывает его варианты справа. */
-    const canvas = st.locator('[data-studio-scene] canvas');
-    const rect = await canvas.boundingBox();
-    if (rect) {
-      // Низ ряда, левее середины: там стоят обычные модули.
-      await st.mouse.click(rect.x + rect.width * 0.45, rect.y + rect.height * 0.62);
-    }
+    /*
+     * Модуль выбирается КЛИКОМ ПО СХЕМЕ — так же, как раньше по сцене.
+     * Целимся в конкретный модуль по его признаку, а не в точку экрана:
+     * попадание в координату зависело от масштаба и молча промахивалось.
+     */
+    const target = st.locator('[data-schematic] [data-module-id^="base-"]').first();
+    if ((await target.count()) > 0) await target.click({ force: true });
     await sleep(1200);
 
     const cards = st.locator('[data-variant]');
@@ -1395,45 +1422,21 @@ try {
       `карточек ${await cards.count()}`,
     );
 
-    /*
-     * 4. Поворот сцены НЕ сбрасывается правкой.
-     *
-     * Клиент смотрит на мебель под своим углом; правка, возвращающая
-     * камеру в исходное, каждый раз стирает то, что он рассматривал.
-     * Позу камеры сцена сообщает наружу сама.
-     */
-    const home = await st.evaluate(() =>
-      window.__mwCamera ? window.__mwCamera() : null,
-    );
-
-    if (rect) {
-      await st.mouse.move(rect.x + rect.width / 2, rect.y + rect.height / 2);
-      await st.mouse.down();
-      await st.mouse.move(rect.x + rect.width / 2 + 160, rect.y + rect.height / 2 + 40, {
-        steps: 8,
-      });
-      await st.mouse.up();
-    }
-    await sleep(900);
-
-    const cameraOf = () =>
-      st.evaluate(() => {
-        const w = window;
-        return w.__mwCamera ? w.__mwCamera() : null;
-      });
-
-    const turned = await cameraOf();
-    const away = (a, b) =>
-      a && b ? Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) : 0;
-
     /* 5. Выбор варианта меняет сцену и сумму ЗДЕСЬ ЖЕ. */
     const idle = st.locator('[data-variant][aria-pressed="false"]').first();
     const picked = (await idle.count()) > 0 ? await idle.getAttribute('data-variant') : null;
 
+    /*
+     * СРАВНИВАЕМ РАЗМЕТКУ, А НЕ ПИКСЕЛИ.
+     *
+     * Схема векторная, и правка обязана быть видна в самом документе:
+     * другой материал — другая заливка, другой вариант — другой рисунок
+     * фасада. Это и есть проверка «на разметке, как в секции E».
+     */
     const shot = () =>
       st.evaluate(() => {
-        const c = document.querySelector('[data-studio-scene] canvas');
-        return c instanceof HTMLCanvasElement ? c.toDataURL('image/jpeg', 0.6) : '';
+        const svg = document.querySelector('[data-schematic] svg');
+        return svg ? svg.outerHTML : '';
       });
 
     const sceneBefore = await shot();
@@ -1441,7 +1444,7 @@ try {
     await sleep(1500);
 
     check(
-      'выбор варианта меняет картинку сцены в этом же экране',
+      'выбор варианта меняет разметку схемы в этом же экране',
       Boolean(picked) && (await shot()) !== sceneBefore,
       picked ?? 'вариантов не было',
     );
@@ -1470,14 +1473,7 @@ try {
      * в исходную рамку. Сброс — это прыжок домой; затухание уводит её в
      * ту же сторону, куда тянул человек.
      */
-    const settled = await cameraOf();
-    check(
-      'поворот сцены не сбрасывается правкой',
-      turned === null || away(settled, home) > away(turned, home) * 0.5,
-      home && turned && settled
-        ? `от исходной: поворот ${Math.round(away(turned, home))}, после правок ${Math.round(away(settled, home))}`
-        : 'позы камеры нет',
-    );
+
 
     /* 6. Материал этого же модуля — тут же, ниже вариантов. */
     check(
@@ -1486,15 +1482,20 @@ try {
     );
 
     const beforeMaterial = await shot();
-    const enamel = st.locator('[data-front-base="mdf_enamel"]').first();
+    const enamel = st.locator('[data-swatch="veneer_solid"]').first();
     if ((await enamel.count()) > 0) {
       await enamel.click();
       await sleep(1400);
     }
     check(
-      'смена материала меняет ВИДИМУЮ сцену',
+      'смена материала меняет разметку схемы',
       (await shot()) !== beforeMaterial,
-      'кадр другой',
+      'разметка другая',
+    );
+    check(
+      'и материал виден на схеме заливкой, а не только контуром',
+      (await st.locator('[data-schematic] pattern[id^="sw-"]').count()) > 0,
+      `рисунков материала: ${await st.locator('[data-schematic] pattern[id^="sw-"]').count()}`,
     );
 
     /* 7. Возврат к готовым решениям не теряет правок. */
@@ -1515,6 +1516,139 @@ try {
     );
 
     await st.close();
+  }
+
+
+  /* ── Выноски: измерением боксов, а не на глаз ── */
+
+  /*
+   * Проверка на движке сравнивала ТОЛЬКО Y-координаты полок с допуском в
+   * один миллиметр модельного пространства — при 1:25 это 0.04 мм бумаги.
+   * Она проходила на подписях, лежащих друг на друге: про высоту строки и
+   * её ширину она не знала ничего.
+   *
+   * Здесь меряются НАСТОЯЩИЕ прямоугольники текста в отрисованном листе.
+   */
+  {
+    const sheet = await browser.newPage({ viewport: { width: 1600, height: 1200 } });
+    await sheet.goto(`${BASE}/demo`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+    await until(async () => (await sheet.getByRole('button', { name: /Результат/ }).count()) > 0);
+
+    await sheet.getByRole('button', { name: /Результат/ }).first().click();
+    await sleep(1400);
+    await sheet.getByRole('button', { name: 'Чертёж', exact: true }).click();
+    await sleep(1600);
+
+    const boxes = await sheet.evaluate(() => {
+      const group = document.querySelector('[data-leaders]');
+      if (!group) return null;
+
+      return [...group.querySelectorAll('text')].map((node) => {
+        const b = node.getBBox();
+        return {
+          text: (node.textContent ?? '').slice(0, 28),
+          x: b.x,
+          y: b.y,
+          w: b.width,
+          h: b.height,
+        };
+      });
+    });
+
+    check('выноски на листе есть', Boolean(boxes) && boxes.length >= 5, `${boxes?.length ?? 0} шт.`);
+
+    const overlaps = [];
+    for (let i = 0; boxes && i < boxes.length; i += 1) {
+      for (let j = i + 1; j < boxes.length; j += 1) {
+        const a = boxes[i];
+        const b = boxes[j];
+        const dx = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+        const dy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+        // Допуск в пол-единицы: касание рамок текста наложением не считается.
+        if (dx > 0.5 && dy > 0.5) {
+          overlaps.push(`«${a.text}» × «${b.text}» на ${Math.round(dx)}×${Math.round(dy)}`);
+        }
+      }
+    }
+
+    check(
+      'подписи выносок не садятся друг на друга',
+      overlaps.length === 0,
+      overlaps.slice(0, 2).join('; ') || 'пересечений нет',
+    );
+
+    /*
+     * И текст не ложится на ЛИНИИ выносок: подпись поверх чужой линии
+     * читается так же плохо, как поверх чужой подписи.
+     */
+    const onLines = await sheet.evaluate(() => {
+      const group = document.querySelector('[data-leaders]');
+      if (!group) return 0;
+
+      const texts = [...group.querySelectorAll('text')].map((n) => n.getBBox());
+
+      /*
+       * Меряем САМИ ОТРЕЗКИ, а не их габариты.
+       *
+       * Выноска — ломаная из трёх точек, и её габаритный прямоугольник
+       * накрывает всё поле между деталью и полкой. По габаритам «наложением»
+       * оказывается любая подпись рядом с диагональю: первая версия этой
+       * проверки насчитала 35 несуществующих пересечений.
+       */
+      const segments = [];
+      for (const node of group.querySelectorAll('polyline')) {
+        const points = (node.getAttribute('points') ?? '')
+          .trim()
+          .split(/\s+/)
+          .map((pair) => pair.split(',').map(Number));
+        for (let i = 1; i < points.length; i += 1) {
+          segments.push([points[i - 1], points[i]]);
+        }
+      }
+
+      /** Пересекает ли отрезок прямоугольник (по методу отсечения). */
+      const crosses = ([[x1, y1], [x2, y2]], r) => {
+        let t0 = 0;
+        let t1 = 1;
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+
+        for (const [p, q] of [
+          [-dx, x1 - r.x],
+          [dx, r.x + r.w - x1],
+          [-dy, y1 - r.y],
+          [dy, r.y + r.h - y1],
+        ]) {
+          if (p === 0) {
+            if (q < 0) return false;
+            continue;
+          }
+          const t = q / p;
+          if (p < 0) t0 = Math.max(t0, t);
+          else t1 = Math.min(t1, t);
+          if (t0 > t1) return false;
+        }
+        return true;
+      };
+
+      let hits = 0;
+      for (const t of texts) {
+        // Подпись стоит НАД своей полкой и касается её краем: пара
+        // пикселей допуска отделяет касание от наложения.
+        const box = { x: t.x + 2, y: t.y + 2, w: t.width - 4, h: t.height - 4 };
+        if (box.w <= 0 || box.h <= 0) continue;
+        for (const segment of segments) if (crosses(segment, box)) hits += 1;
+      }
+      return hits;
+    });
+
+    check(
+      'и не ложится поверх линий выносок',
+      onLines === 0,
+      `наложений: ${onLines}`,
+    );
+
+    await sheet.close();
   }
 
   await survey.context().setOffline(false);

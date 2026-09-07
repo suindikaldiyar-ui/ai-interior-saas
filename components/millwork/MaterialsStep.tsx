@@ -30,7 +30,6 @@ type Props = {
   onPhotoChange: (dataUrl: string | null) => void;
   angle: RunAngle;
   onAngleChange: (angle: RunAngle) => void;
-  onOpenPhoto?: (dataUrl: string) => void;
 };
 
 const ANGLES: RunAngle[] = ['front', 'left', 'right'];
@@ -42,7 +41,6 @@ export default function MaterialsStep({
   onPhotoChange,
   angle,
   onAngleChange,
-  onOpenPhoto,
 }: Props) {
   const photoInput = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
@@ -145,24 +143,16 @@ export default function MaterialsStep({
       <section className="mw-panel">
         <h3 className="text-[17px] font-medium">Фото помещения</h3>
         <p className="mt-1 text-[13px] leading-snug text-graphiteMw">
-          С него берутся окна, двери и ракурс. Из сцены — только гарнитур.
+          С него берутся окна, двери и ракурс. Из схемы — только гарнитур.
         </p>
 
-        <div className="mt-4">
-          {roomPhoto ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={roomPhoto}
-              alt="Помещение клиента"
-              onClick={() => onOpenPhoto?.(roomPhoto)}
-              className="aspect-[3/2] w-full cursor-zoom-in rounded-[var(--r-control)] object-cover"
-            />
-          ) : (
-            <div className="flex aspect-[3/2] w-full items-center justify-center rounded-[var(--r-control)] border border-dashed border-navyLine px-6 text-center text-[15px] leading-snug text-tape">
-              Без фото клиент увидит настроение, а не свою квартиру
-            </div>
-          )}
-        </div>
+        {/*
+          * ПРЕВЬЮ ЗДЕСЬ НЕТ: снимок живёт ПЕРВЫМ блоком панели.
+          *
+          * Он обязательный шаг продажи, и внизу его искали прокруткой при
+          * клиенте — значит не делали вовсе. Второй превью того же фото в
+          * той же панели читается как второе фото.
+          */}
 
         <div className="mt-4 flex flex-wrap gap-2">
           <button

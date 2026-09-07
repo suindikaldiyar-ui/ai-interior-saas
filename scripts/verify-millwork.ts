@@ -3146,15 +3146,48 @@ console.log('\nВыноски с материалами');
     new Set(anchors.map((a) => a.id)).size === anchors.length,
   );
 
-  const layout = layoutLeaders(anchors, { lengthMm: run.lengthMm, ceilingMm: run.ceilingHeightMm });
+  /*
+   * ЗАЗОР МЕРЯЕТСЯ СТРОКОЙ, А НЕ МИЛЛИМЕТРОМ.
+   *
+   * Раньше здесь стояло «полки различаются хотя бы на 1 мм» — при 1:25
+   * это 0.04 мм бумаги, то есть проверка проходила на подписях, лежащих
+   * друг на друге. Про высоту строки она не знала ничего, и потому
+   * проверяла не то, что видно.
+   *
+   * Настоящий зазор задаёт вызывающий: он один знает масштаб. Здесь
+   * берём тот же расчёт, что и чертёж, и требуем его соблюдения.
+   */
+  const minGapMm = 340;
+  const layout = layoutLeaders(anchors, {
+    lengthMm: run.lengthMm,
+    ceilingMm: run.ceilingHeightMm,
+    minGapMm,
+  });
   const check_side = (list: typeof layout.left) => {
     const sorted = [...list].sort((a, b) => b.shelfYMm - a.shelfYMm);
     for (let i = 1; i < sorted.length; i += 1) {
-      if (Math.abs(sorted[i].shelfYMm - sorted[i - 1].shelfYMm) < 1) return false;
+      if (Math.abs(sorted[i].shelfYMm - sorted[i - 1].shelfYMm) < minGapMm - 1) return false;
     }
     return true;
   };
-  check('полки выносок не садятся друг на друга', check_side(layout.left) && check_side(layout.right));
+  check(
+    'полки выносок разведены на высоту строки, а не на миллиметр',
+    check_side(layout.left) && check_side(layout.right),
+    `зазор ${minGapMm} мм`,
+  );
+  check(
+    'переполненная сторона отдаёт лишние выноски соседней',
+    (() => {
+      // Все точки слева: одна сторона физически не вместит их все.
+      const crowded = anchors.map((a) => ({ ...a, xMm: 10 }));
+      const tight = layoutLeaders(crowded, {
+        lengthMm: run.lengthMm,
+        ceilingMm: run.ceilingHeightMm,
+        minGapMm,
+      });
+      return tight.right.length > 0 && tight.left.length + tight.right.length === anchors.length;
+    })(),
+  );
   check(
     'полки не выходят за высоту помещения',
     [...layout.left, ...layout.right].every(

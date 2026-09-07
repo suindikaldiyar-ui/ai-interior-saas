@@ -81,13 +81,14 @@ try {
   await page.goto(`${BASE}/demo`, { waitUntil: 'networkidle' });
   await sleep(700);
 
-  // Результат: сравнение вверху, 3D — один из трёх видов ниже.
+  /*
+   * Вкладки «3D» больше нет: три.js ушёл из интерфейса, а сцена уехала
+   * за экран и живёт только ради кадра. Именно поэтому проверка и важна:
+   * снять кадр неоткуда, если сцену размонтировали.
+   */
   await page.getByRole('button', { name: /Результат/ }).click();
-  await sleep(600);
-
-  await page.getByRole('button', { name: '3D', exact: true }).click();
-  await sleep(3500);
-  await page.screenshot({ path: '.capture-check/millwork-3d.png' });
+  await sleep(1200);
+  await page.screenshot({ path: '.capture-check/millwork-result.png' });
 
   await page.getByRole('button', { name: /Отрисовать кухню/ }).click();
 

@@ -180,10 +180,37 @@ export type LeaderLayout = {
  */
 export function layoutLeaders(
   anchors: LeaderAnchor[],
-  options: { lengthMm: number; ceilingMm: number; stepMm?: number },
+  options: {
+    lengthMm: number;
+    ceilingMm: number;
+    stepMm?: number;
+    /**
+     * Минимальный просвет между полками В МИЛЛИМЕТРАХ МОДЕЛИ.
+     *
+     * Считает его ВЫЗЫВАЮЩИЙ, потому что только он знает масштаб: полка —
+     * это строка текста высотой в кегль, и «не наложиться» означает
+     * разойтись на высоту строки НА БУМАГЕ, а не на миллиметр мебели.
+     *
+     * Без него раскладка расставляла полки «поровну по высоте» и считала
+     * задачу решённой: при восьми выносках на стену 2700 мм это давало
+     * ~340 мм модели, то есть 13 мм бумаги при 1:25 — а строка занимает
+     * 9. Проходило впритык, а на ряде повыше подписи наезжали.
+     */
+    minGapMm?: number;
+  },
 ): LeaderLayout {
   const { lengthMm, ceilingMm } = options;
   const step = options.stepMm ?? Math.max(180, Math.round(ceilingMm / 12));
+  const minGap = Math.max(1, options.minGapMm ?? 0);
+
+  const top = ceilingMm - step / 2;
+  const bottom = step / 2;
+
+  /**
+   * Сколько полок помещается на одной стороне, не наезжая друг на друга.
+   * Это не предпочтение, а вместимость поля: выше потолка полка не встанет.
+   */
+  const capacity = Math.max(1, Math.floor((top - bottom) / minGap) + 1);
 
   const left: PlacedLeader[] = [];
   const right: PlacedLeader[] = [];
@@ -197,18 +224,42 @@ export function layoutLeaders(
   }
 
   /*
+   * ПЕРЕПОЛНЕННАЯ СТОРОНА ОТДАЁТ ЛИШНЕЕ СОСЕДНЕЙ.
+   *
+   * Сторона выбирается по положению детали — это правильно, пока полок
+   * немного. Когда все восемь материалов оказываются слева, никакая
+   * раскладка их не разведёт: поле кончается. Переносим лишние вправо,
+   * начиная с самых нижних (у них путь до чужого поля короче), — подпись
+   * на другой стороне читается, наложенная не читается вовсе.
+   */
+  const rebalance = (from: PlacedLeader[], to: PlacedLeader[], side: 'left' | 'right') => {
+    while (from.length > capacity && to.length < capacity) {
+      from.sort((a, b) => b.yMm - a.yMm);
+      const moved = from.pop();
+      if (!moved) break;
+      moved.side = side;
+      to.push(moved);
+    }
+  };
+
+  rebalance(left, right, 'right');
+  rebalance(right, left, 'left');
+
+  /*
    * Полки раскладываются РАВНОМЕРНО по высоте листа сверху вниз, в порядке
    * высоты точек. Раскладка «от точки и ниже с шагом» упиралась в пол:
    * последние три выноски садились на одну высоту, и подписи наезжали друг
    * на друга — ровно то, чего в чертеже быть не должно.
+   *
+   * Зазор при этом НЕ МЕНЬШЕ строки текста: равномерность сама по себе
+   * ничего не гарантирует, она лишь делит то место, которое есть.
    */
   const spread = (list: PlacedLeader[]) => {
     list.sort((a, b) => b.yMm - a.yMm);
     if (list.length === 0) return;
 
-    const top = ceilingMm - step / 2;
-    const bottom = step / 2;
-    const gap = list.length > 1 ? Math.min(step, (top - bottom) / (list.length - 1)) : 0;
+    const even = list.length > 1 ? (top - bottom) / (list.length - 1) : 0;
+    const gap = list.length > 1 ? Math.max(minGap, Math.min(step, even)) : 0;
 
     list.forEach((leader, i) => {
       leader.shelfYMm = top - gap * i;

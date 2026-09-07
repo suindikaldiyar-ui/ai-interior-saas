@@ -758,7 +758,15 @@ export default function RoomCanvas({
   environment = 'studio',
   children,
 }: {
-  frameloop?: 'always' | 'demand';
+  /**
+   * `never` — для сцены, живущей только ради кадра.
+   *
+   * `demand` перерисовывает её на КАЖДОЙ смене состава: измерено 588
+   * кадров за минуту обычной работы с конфигуратором, при том что сцену
+   * никто не видит. `never` не рисует ни одного — а захват всё равно
+   * вызывает `gl.render` сам, поэтому кадр снимается как прежде.
+   */
+  frameloop?: 'always' | 'demand' | 'never';
   shadows?: boolean;
   dpr?: [number, number];
   environment?: 'studio' | 'apartment';

@@ -9,6 +9,9 @@ import type { LeaderAnchor } from '@/lib/millwork/leaders';
 import { APPLIANCE_SLOTS, BASE_TOTAL_H, GEOMETRY, standardHeightMm } from '@/lib/millwork/modules';
 import { sectionSpec } from '@/lib/millwork/sections';
 import { moveConflict } from '@/lib/millwork/freeRun';
+import { moduleSwatch } from '@/lib/millwork/frontSwatch';
+import { frontOf } from '@/lib/millwork/frontMaterial';
+import FrontSwatchDefs, { swatchId } from './FrontSwatchDefs';
 import { zoneHeightMm, zoneProfile } from '@/lib/millwork/zones';
 import {
   addShelf,
@@ -91,6 +94,14 @@ type Props = {
    */
   onMoveModule?: (moduleId: string, offsetMm: number) => void;
   /**
+   * Показывать МАТЕРИАЛ фасада, а не только его контур.
+   *
+   * Это режим рабочего экрана, а не листа: на бумаге заливка идёт по типу
+   * элемента и печатается чёрно-белой (слой 26), а клиент на встрече
+   * должен видеть, что перед ним дуб, а не абстрактная панель.
+   */
+  showMaterial?: boolean;
+  /**
    * Варианты для выбранного места и цена относительно текущего.
    *
    * Считает их рабочее место: там есть и ставки каталога, и смета.
@@ -159,7 +170,7 @@ const MOVE_SLOP_PX = 6;
  * Полки живут ВНЕ рисунка: заведи их внутрь — они лягут на мебель и на
  * размерную цепочку, а выноска поверх размера читается как ошибка.
  */
-export const LEADER_MARGIN_UNITS = 250;
+export const LEADER_MARGIN_UNITS = 290;
 
 /** Полная ширина вида в условных единицах — по ней лист считает масштаб. */
 export function elevationSpanUnits(withLeaders: boolean): number {
@@ -613,6 +624,7 @@ export default function ElevationDrawing({
   onFillReject,
   onMoveAppliance,
   onMoveModule,
+  showMaterial = false,
   variants = [],
   onVariant,
   compact = false,
@@ -822,6 +834,20 @@ export default function ElevationDrawing({
     paint(last);
   };
 
+  /*
+   * Заливка материалом. У техники без фасада её нет: там нечему быть
+   * дубом, и красить нишу под холодильник значит врать.
+   */
+  /** Филёнчатый ли фасад: у техники без створки его нет вовсе. */
+  const framedFront = (unit: Module): boolean =>
+    (!unit.appliance || Boolean(unit.builtIn)) && frontOf(unit).construct === 'framed';
+
+  const materialFill = (unit: Module): string | null => {
+    if (!showMaterial) return null;
+    const swatch = moduleSwatch(unit);
+    return swatch ? `url(#${swatchId(swatch)})` : null;
+  };
+
   const renderModule = (unit: Module, isUpper: boolean) => {
     const x = padLeft + unit.offsetMm * scale;
     const w = unit.widthMm * scale;
@@ -906,10 +932,37 @@ export default function ElevationDrawing({
           y={yTop}
           width={w}
           height={h}
-          fill={paper ? paperFill(unit, isDisplay) : 'none'}
+          fill={
+            showMaterial && materialFill(unit)
+              ? materialFill(unit)!
+              : paper
+                ? paperFill(unit, isDisplay)
+                : 'none'
+          }
           stroke="var(--blueprint)"
           strokeWidth={active ? 1.4 * k : 0.8 * k}
         />
+        {/*
+          * ФИЛЁНКА ВИДНА НА СХЕМЕ.
+          *
+          * В раскрое филёнчатый фасад — это ДВЕ детали, рама и вставка.
+          * На схеме он до этого выглядел ровно как цельный: клиент
+          * выбирал классику, а видел гладкую панель. Рисуем так же, как
+          * делают: обвязка по контуру и утопленная вставка внутри.
+          */}
+        {showMaterial && framedFront(unit) && (
+          <rect
+            data-framed
+            x={x + Math.min(w, h) * 0.12}
+            y={yTop + Math.min(w, h) * 0.12}
+            width={Math.max(0, w - Math.min(w, h) * 0.24)}
+            height={Math.max(0, h - Math.min(w, h) * 0.24)}
+            fill="none"
+            stroke="var(--blueprint)"
+            strokeWidth={0.6 * k}
+            opacity={0.75}
+          />
+        )}
         {/* Стекло: редкая диагональная штриховка поверх белого поля. */}
         {paper > 0 && glassFront(unit, isDisplay) && (
           <rect
@@ -1210,6 +1263,23 @@ export default function ElevationDrawing({
       role="img"
       aria-label={`Фасадный чертёж ряда ${run.lengthMm} мм`}
     >
+      {/*
+        * РИСУНКИ МАТЕРИАЛОВ — ВНЕ БУМАЖНОГО РЕЖИМА.
+        *
+        * Они жили под `paper > 0`, то есть только на листе, а рабочая
+        * схема бумагой не является и ширины в миллиметрах не передаёт:
+        * заливка ссылалась на рисунок, которого в документе нет, и фасад
+        * оставался пустым контуром. По одному рисунку на МАТЕРИАЛ, а не
+        * на модуль: ряд одного цвета — это одна заливка.
+        */}
+      {showMaterial && (
+        <FrontSwatchDefs
+          swatches={[...run.modules, ...run.upperSegments.flatMap((seg) => seg.modules)]
+            .map((unit) => moduleSwatch(unit))
+            .filter((swatch): swatch is NonNullable<typeof swatch> => Boolean(swatch))}
+        />
+      )}
+
       {paper > 0 && (
         <>
           <SheetDefs view="elevation" u={u} roles={['glass']} />
@@ -1367,7 +1437,17 @@ export default function ElevationDrawing({
             yOf,
             drawLeft: padLeft,
             drawRight: padLeft + drawWidth,
-            marginUnits: LEADER_MARGIN_UNITS * 0.94,
+            /*
+             * ПОЛЕ ОТДАЁТСЯ ПОДПИСЯМ ЦЕЛИКОМ.
+             *
+             * Урезанное на 6% поле было уже самой длинной подписи
+             * («Корпус ЛДСП 16 мм, кромка ПВХ 0.4 мм» — 236 единиц при
+             * поле 235), и хвост строки вылезал на чертёж, пересекая
+             * излом соседней выноски. Ширина вида уже считает полное поле
+             * (`elevationSpanUnits`), поэтому масштаб листа от этого не
+             * едет — едет только то, что подпись помещается.
+             */
+            marginUnits: LEADER_MARGIN_UNITS,
             /*
              * Кегль 9: при 11 длинная подпись («Корпус ЛДСП 16 мм, кромка
              * ПВХ 0.4 мм») вылезала из поля и ложилась на высотные отметки
