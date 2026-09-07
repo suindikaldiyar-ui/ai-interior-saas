@@ -586,6 +586,19 @@ function SceneProbe({ group }: { group: React.RefObject<THREE.Group> }) {
       programs: gl.info.programs?.length ?? 0,
     });
 
+    /*
+     * ПОЗА КАМЕРЫ — для проверки «поворот не сбрасывается правкой».
+     *
+     * Клиент рассматривает мебель под своим углом, и правка, возвращающая
+     * камеру в исходное, каждый раз стирает то, на что он смотрел. Глазами
+     * это ловится только если заметить; числом — всегда.
+     */
+    (w as { __mwCamera?: () => number[] }).__mwCamera = () => [
+      camera.position.x * 1000,
+      camera.position.y * 1000,
+      camera.position.z * 1000,
+    ];
+
     /** Какие элементы вообще открываются: проверке нужно во что целиться. */
     (w as { __mwOpenableIds?: () => string[] }).__mwOpenableIds = () => {
       const ids: string[] = [];

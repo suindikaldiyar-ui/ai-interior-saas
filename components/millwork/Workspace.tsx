@@ -147,8 +147,9 @@ type ResultView = 'facade' | 'scene' | 'panels';
 const STEP_HINT: Record<StepKey, string> = {
   survey: 'Меряем по низу стены, у пола: вверху стены новостройки кривые.',
   template: 'Выберите типовое решение — длина подставится из замера.',
-  compose: 'Правьте состав голосом или руками: чертёж и смета пересчитаются сразу.',
-  materials: 'Фото помещения и артикул каталога нужны, чтобы клиент узнал свою квартиру.',
+  studio:
+    'Нажмите на модуль в сцене: справа его варианты и материал, внизу — сумма. ' +
+    'Всё пересчитывается на месте.',
   result: 'Тяните шторку: слева квартира клиента, справа его кухня.',
 };
 
@@ -251,7 +252,7 @@ export default function Workspace(props: WorkspaceProps) {
     startSurvey && !startSurvey.finishedAt
       ? 'survey'
       : (props.initialState?.templateId ?? props.templateId)
-        ? 'compose'
+        ? 'studio'
         : 'template',
   );
   const [resultView, setResultView] = useState<ResultView>('facade');
@@ -1361,13 +1362,40 @@ export default function Workspace(props: WorkspaceProps) {
 
   /* ── Шаги ── */
 
+  /**
+   * СЦЕНА — ОДНА НА ВЕСЬ ЭКРАН РАБОТЫ.
+   *
+   * На конфигураторе она стоит слева и её видно; на остальных шагах —
+   * уезжает за экран, но остаётся смонтированной: именно она снимает
+   * clay-кадр для визуализации (`RoomCanvas` внутри регистрирует
+   * `captureScene`), а канвас нулевого размера не рисуется вовсе.
+   *
+   * Элемент ОДИН и тот же, поэтому правка состава или материала не
+   * пересоздаёт канвас — и поворот сцены переживает любую правку.
+   */
+  const sceneSlot = (
+    <KitchenScene
+      run={active.run}
+      ceilingHeightMm={props.ceilingHeightMm}
+      roomDepthM={props.roomDepthM}
+      hidden={step !== 'studio'}
+      interactive
+      production={props.production}
+      view={sceneView}
+      selectedModuleId={selectedId}
+      onSelectModule={setSelectedId}
+      onWidth={dragWidth}
+      onMoveModule={freeMode ? moveModule : undefined}
+      onItemId={setKitchenItemId}
+    />
+  );
+
   const steps = [
     ...(survey
       ? [{ key: 'survey' as StepKey, title: 'Замер', done: Boolean(survey.finishedAt) }]
       : []),
-    { key: 'template' as StepKey, title: 'Шаблон', done: Boolean(templateId) },
-    { key: 'compose' as StepKey, title: 'Состав', done: Boolean(templateId) },
-    { key: 'materials' as StepKey, title: 'Материалы', done: Boolean(roomPhoto) },
+    { key: 'template' as StepKey, title: 'Решение', done: Boolean(templateId) },
+    { key: 'studio' as StepKey, title: 'Конфигуратор', done: Boolean(templateId) },
     { key: 'result' as StepKey, title: 'Результат', done: false },
   ];
 
@@ -1378,17 +1406,15 @@ export default function Workspace(props: WorkspaceProps) {
 
   const nextLabel =
     step === 'survey'
-      ? 'К шаблону'
+      ? 'К решениям'
       : step === 'template'
-        ? 'К составу'
-        : step === 'compose'
-          ? 'К материалам'
-          : step === 'materials'
-            ? 'Показать результат'
-            : 'Отправить клиенту';
+        ? 'В конфигуратор'
+        : step === 'studio'
+          ? 'К результату'
+          : 'Отправить клиенту';
 
   const nextDisabled =
-    (step === 'template' && !templateId) || (step === 'result' && (blocked || !props.projectId));
+    (step === 'template' && !templateId && !freeMode) || (step === 'result' && (blocked || !props.projectId));
 
   const onNext = () => {
     if (step === 'result') {
@@ -1535,7 +1561,7 @@ export default function Workspace(props: WorkspaceProps) {
                   setTemplateId(null);
                   setEditedRuns({});
                   setComposition({});
-                  setStep('compose');
+                  setStep('studio');
                 }}
                 className={`mw-btn ${freeMode ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
               >
@@ -1606,7 +1632,7 @@ export default function Workspace(props: WorkspaceProps) {
                 // Правки предыдущего состава к новому шаблону не относятся.
                 setEditedRuns({});
                 setComposition({});
-                setStep('compose');
+                setStep('studio');
               }}
             />
             {!templateId && suggested && (
@@ -1629,115 +1655,168 @@ export default function Workspace(props: WorkspaceProps) {
           </p>
         )}
 
-        {step === 'compose' && (
-          <>
-            {arrangements.length > 1 && (
-              <div className="mb-4">
-                <ArrangementCards
-                  arrangements={arrangements}
-                  /*
-                    * Активна та карточка, чей ряд сейчас на экране. Сверяем
-                    * отпечатком: правил состав руками — не активна ни одна,
-                    * и это честно.
-                    */
-                  activeKey={
-                    arrangements.find((a) => a.run.fingerprint === active.run.fingerprint)?.key ??
-                    null
-                  }
-                  onSelect={chooseArrangement}
-                />
-              </div>
-            )}
-
-            <RunEditor
-              run={active.run}
-              zone={zone}
-              selectedModuleId={selectedId}
-              onSelect={setSelectedId}
-              onOps={runOps}
-              requirements={requirements}
-              onComposition={changeComposition}
-              freeMode={freeMode}
-            />
-
+        {/*
+          * ОДИН РАБОЧИЙ ЭКРАН.
+          *
+          * «Состав» и «Материалы» были разными шагами, и замерщик не видел,
+          * что меняется, пока не перейдёт дальше, — а клиент сидит рядом и
+          * ждёт. Теперь слева сцена, справа панель: нажал на модуль —
+          * справа его варианты и материал, выбрал — сцена поменялась
+          * тут же, сумма внизу пересчиталась.
+          *
+          * Чертёж сюда НЕ переехал: он для цеха, и живёт на «Результате».
+          */}
+        {step === 'studio' && (
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px]" data-studio>
             {/*
-              * ГОТОВЫЕ ДИЗАЙНЫ.
+              * СЦЕНА ВИДНА ЦЕЛИКОМ И СРАЗУ.
               *
-              * Мебельщик показывает клиенту не атрибуты материала, а
-              * решения, которые уже делал, и называет их словами.
-              * Недоступные не прячутся: замерщик должен знать, ЧЕГО не
-              * хватает в каталоге, — иначе он идёт спрашивать нас.
+              * `sticky` держит её на месте, пока прокручивается панель:
+              * клиент смотрит на мебель, а не на то, как замерщик листает
+              * список. Высота от вьюпорта, чтобы на планшете сцена не
+              * съедала экран и не уезжала под сгиб.
               */}
-            <div className="mt-4" data-designs>
-              <p className="mw-label mb-2">Готовые дизайны</p>
-              <div className="flex flex-wrap gap-1">
-                {RUN_DESIGNS.map((design) => {
-                  const availability = designAvailability(design, input.rates);
-                  return (
-                    <button
-                      key={design.id}
-                      type="button"
-                      data-design={design.id}
-                      data-available={availability.available ? '1' : '0'}
-                      title={
-                        availability.available ? designSummary(design) : availability.reason
-                      }
-                      onClick={() => applyDesign(design.id)}
-                      className={`mw-btn ${availability.available ? 'mw-btn-ghost' : 'mw-btn-ghost opacity-50'}`}
-                    >
-                      {design.name}
-                    </button>
-                  );
-                })}
+            <div
+              className="lg:sticky lg:top-4 lg:self-start"
+              data-studio-scene
+            >
+              {/*
+                * ВЫСОТА СЦЕНЫ — ОТ СВОБОДНОГО МЕСТА, А НЕ ДОЛЯ ВЬЮПОРТА.
+                *
+                * Над сценой шапка со шагами, под ней подвал с суммой; обе
+                * полосы фиксированной высоты. `68vh` при 900 px экрана
+                * давал 612 px при доступных 601 — сцена уезжала под подвал
+                * ровно на те 11 px, из-за которых её приходится
+                * прокручивать. Вычитаем полосы, а не подбираем долю.
+                */}
+              <div className="h-[46vh] min-h-[260px] overflow-hidden rounded-[var(--r-panel)] bg-sheet lg:h-[calc(100vh-320px)]">
+                {sceneSlot}
               </div>
+
+              {sceneNotice && (
+                <p className="mt-2 rounded-[var(--r-control)] bg-tape/15 px-3 py-2 text-[13px] leading-snug text-tape">
+                  {sceneNotice}
+                </p>
+              )}
             </div>
 
-            {/*
-              * ЧЕМ БУДЕТ ЭТО МЕСТО — РЕШАЕТСЯ ЗДЕСЬ ЖЕ.
-              *
-              * «+» ставит место, а лента показывает, что в нём бывает:
-              * тот же список `MODULE_VARIANTS`, отфильтрованный по зоне и
-              * ширине, и та же разница в цене, что под чертежом. Раньше
-              * лента жила только на «Результате» — модуль добавляли на
-              * одном экране, а выбирали его начинку на другом.
-              */}
-            <div className="mt-4">
+            {/* ── Панель выбора ── */}
+            <div className="min-w-0">
+              {/*
+                * Варианты выбранного модуля — ПЕРВЫМИ.
+                *
+                * Это то, ради чего в сцену и нажимают: миниатюра, название,
+                * разница в цене. Без выделения лента сама говорит, что
+                * делать, и не занимает место молча.
+                */}
               <VariantStrip
                 options={variantOptions}
                 onPick={chooseVariant}
                 moduleLabel={selectedLabel}
-                pickPrompt="Нажмите на модуль в ленте, чтобы поменять его начинку."
+                pickPrompt="Нажмите на модуль в сцене, чтобы поменять его начинку."
               />
+
+              {selectedUnit && !selectedUnit.appliance && (
+                <div className="mt-3">
+                  <FrontMaterialPicker
+                    unit={selectedUnit}
+                    onOps={runOps}
+                    onRefuse={setSceneNotice}
+                  />
+                </div>
+              )}
+
+              {moveNotice && (
+                <p className="mt-3 rounded-[var(--r-control)] bg-navy px-4 py-3 text-[13px] leading-snug text-graphiteMw">
+                  {moveNotice}
+                </p>
+              )}
+
+              <div className="mt-4">
+                <RunEditor
+                  run={active.run}
+                  zone={zone}
+                  selectedModuleId={selectedId}
+                  onSelect={setSelectedId}
+                  onOps={runOps}
+                  requirements={requirements}
+                  onComposition={changeComposition}
+                  freeMode={freeMode}
+                />
+              </div>
+
+              {/*
+                * ГОТОВЫЕ ДИЗАЙНЫ.
+                *
+                * Один тап кладёт материал на весь ряд. Недоступные не
+                * прячутся: замерщик должен знать, чего не хватает в
+                * каталоге, — иначе он идёт спрашивать нас.
+                */}
+              <div className="mt-4" data-designs>
+                <p className="mw-label mb-2">Готовые дизайны</p>
+                <div className="flex flex-wrap gap-1">
+                  {RUN_DESIGNS.map((design) => {
+                    const availability = designAvailability(design, input.rates);
+                    return (
+                      <button
+                        key={design.id}
+                        type="button"
+                        data-design={design.id}
+                        data-available={availability.available ? '1' : '0'}
+                        title={
+                          availability.available
+                            ? designSummary(design)
+                            : availability.reason
+                        }
+                        onClick={() => applyDesign(design.id)}
+                        className={`mw-btn ${availability.available ? 'mw-btn-ghost' : 'mw-btn-ghost opacity-50'}`}
+                      >
+                        {design.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/*
+                * Компоновки и материалы объекта — ниже состава: их трогают
+                * реже, чем варианты модуля, а место наверху дороже.
+                */}
+              {arrangements.length > 1 && (
+                <div className="mt-4">
+                  <ArrangementCards
+                    arrangements={arrangements}
+                    activeKey={
+                      arrangements.find(
+                        (a) => a.run.fingerprint === active.run.fingerprint,
+                      )?.key ?? null
+                    }
+                    onSelect={chooseArrangement}
+                  />
+                </div>
+              )}
+
+              <div className="mt-4">
+                <CatalogLoader />
+                <MaterialsStep
+                  zone={zone}
+                  kitchenItemId={kitchenItemId}
+                  roomPhoto={roomPhoto}
+                  onPhotoChange={(next) => {
+                    dirty.current = true;
+                    setRoomPhoto(next);
+                  }}
+                  angle={renderAngle}
+                  onAngleChange={setRenderAngle}
+                  onOpenPhoto={setZoom}
+                />
+              </div>
+
+              <div className="mt-4">
+                <CommandBar onSubmit={sendCommand} busy={busy} lastReply={reply} />
+              </div>
             </div>
-
-            {moveNotice && (
-              <p className="mt-3 rounded-[var(--r-control)] bg-navy px-4 py-3 text-[13px] leading-snug text-graphiteMw">
-                {moveNotice}
-              </p>
-            )}
-
-            <div className="mt-4">
-              <CommandBar onSubmit={sendCommand} busy={busy} lastReply={reply} />
-            </div>
-          </>
-        )}
-
-        {step === 'materials' && (
-          <>
-            <CatalogLoader />
-            <MaterialsStep
-              zone={zone}
-              kitchenItemId={kitchenItemId}
-              roomPhoto={roomPhoto}
-              onPhotoChange={(next) => {
-                dirty.current = true;
-                setRoomPhoto(next);
-              }}
-              angle={renderAngle}
-              onAngleChange={setRenderAngle}
-              onOpenPhoto={setZoom}
-            />
-          </>
+          </div>
         )}
 
         {step === 'result' && (
@@ -1757,7 +1836,7 @@ export default function Workspace(props: WorkspaceProps) {
               render={activeRender}
               title="Ваша кухня"
               heightClass="h-[70vh] min-h-[320px]"
-              onAddPhoto={() => setStep('materials')}
+              onAddPhoto={() => setStep('studio')}
               onOpen={setZoom}
               emptyAction={
                 /* Кнопка прямо в пустой половине: под сравнением её не видно
@@ -1870,24 +1949,16 @@ export default function Workspace(props: WorkspaceProps) {
               * `display:none` по-прежнему не годится: канвас нулевого
               * размера не рисуется, и захват снял бы пустоту.
               */}
+            {/*
+              * На «Результате» сцена уезжает за экран, но остаётся
+              * смонтированной: кадр для визуализации снимает именно она.
+              * В конфигураторе тот же самый элемент стоит слева и виден.
+              */}
             <div
               className="mw-scene-hidden fixed left-[-3000px] top-0 h-[220px] w-[340px] opacity-0"
               aria-hidden
             >
-              <KitchenScene
-                run={active.run}
-                ceilingHeightMm={props.ceilingHeightMm}
-                roomDepthM={props.roomDepthM}
-                hidden
-                interactive
-                production={props.production}
-                view={sceneView}
-                selectedModuleId={selectedId}
-                onSelectModule={setSelectedId}
-                onWidth={dragWidth}
-                onMoveModule={freeMode ? moveModule : undefined}
-                onItemId={setKitchenItemId}
-              />
+              {sceneSlot}
             </div>
 
             {/* Техническая аксонометрия: только изделие, без комнаты. */}

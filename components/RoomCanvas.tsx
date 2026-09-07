@@ -2,7 +2,7 @@
 
 import React, { Suspense, useEffect, useMemo, useState } from 'react';
 import * as THREE from 'three';
-import { Canvas, useThree } from '@react-three/fiber';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import {
   ContactShadows,
   Environment,
@@ -690,6 +690,8 @@ function Scene({
       <SelectionGizmo />
       <SceneCapture />
 
+      <DampingSettler />
+
       <OrbitControls
         makeDefault
         enableDamping
@@ -701,6 +703,36 @@ function Scene({
       />
     </>
   );
+}
+
+/**
+ * ИНЕРЦИЯ ЗАТУХАНИЯ ДОВОДИТСЯ ДО КОНЦА.
+ *
+ * `enableDamping` продолжает двигать камеру ПОСЛЕ отпускания мыши — но
+ * только в тех кадрах, которые кто-то нарисовал. При `frameloop="demand"`
+ * кадров после отпускания нет, и инерция замирает на полпути: дальше она
+ * доезжает по одному шагу на КАЖДУЮ правку состава или материала.
+ *
+ * Со стороны это выглядит так, будто правка сбрасывает поворот сцены:
+ * клиент рассматривает мебель под своим углом, замерщик меняет фасад — и
+ * камера уползает. Ловилось только числом: за четыре действия камера
+ * сдвинулась с −4752 на −4412 по X и с −745 на −2149 по Z.
+ *
+ * Поэтому пока затухание живо, просим следующий кадр сами — ровно так же,
+ * как это делает техническая сцена.
+ */
+function DampingSettler() {
+  const controls = useThree((state) => state.controls) as
+    | { update?: () => boolean }
+    | null;
+  const invalidate = useThree((state) => state.invalidate);
+
+  useFrame(() => {
+    // `update()` возвращает true, пока камера ещё движется затуханием.
+    if (controls?.update?.()) invalidate();
+  });
+
+  return null;
 }
 
 export default function RoomCanvas({

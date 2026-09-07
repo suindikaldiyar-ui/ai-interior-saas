@@ -12,7 +12,6 @@ import { widthOverflowMm } from '@/lib/millwork/invariants';
 import { freeSpaceMm } from '@/lib/millwork/layout';
 import { widestGapMm } from '@/lib/millwork/freeRun';
 import { variantsToAdd } from '@/lib/millwork/moduleVariants';
-import FrontMaterialPicker from './FrontMaterialPicker';
 import { SECTION_SPECS } from '@/lib/millwork/sections';
 import {
   zoneAppliances,
@@ -449,15 +448,11 @@ export default function RunEditor({
         * это единственное место, где горизонтальная прокрутка уместна.
         */}
       {/*
-        * Материал фасада — общим компонентом: тот же выбор стоит под
-        * сценой, и два места обязаны показывать одно.
+        * Материала фасада здесь НЕТ намеренно: он стоит выше, прямо под
+        * лентой вариантов выбранного модуля — там, где смотрят на сцену.
+        * Два экземпляра одного выбора на одном экране читаются как две
+        * разные настройки, а приёмка находила по десять кнопок вместо пяти.
         */}
-      {selected && !selected.appliance && (
-        <div className="mb-3">
-          <FrontMaterialPicker unit={selected} onOps={onOps} onRefuse={setNotice} />
-        </div>
-      )}
-
       {notice && (
         <p
           data-editor-notice

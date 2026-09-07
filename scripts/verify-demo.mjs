@@ -123,10 +123,15 @@ try {
   const stepTitles = await page
     .locator('nav[aria-label="Шаги работы"] button')
     .allInnerTexts();
+  /*
+   * Шагов стало три: «Состав» и «Материалы» слились в один рабочий экран.
+   * Замерщик правил состав на одном шаге, а результат видел на другом —
+   * клиент при этом сидит рядом и ждёт.
+   */
   check(
     'вместо вкладок — последовательность шагов',
-    stepTitles.length >= 4 &&
-      stepTitles.join(' ').includes('Шаблон') &&
+    stepTitles.length >= 3 &&
+      stepTitles.join(' ').includes('Конфигуратор') &&
       stepTitles.join(' ').includes('Результат'),
     stepTitles.map((t) => t.replace(/\s+/g, ' ').trim()).join(' · '),
   );
@@ -139,7 +144,7 @@ try {
   check(
     'на экране одна главная кнопка и одна вторичная',
     (await page.getByRole('button', { name: 'Назад', exact: true }).count()) === 1 &&
-      (await page.getByRole('button', { name: 'К материалам', exact: true }).count()) === 1,
+      (await page.getByRole('button', { name: 'К результату', exact: true }).count()) === 1,
   );
 
   /* ── 2. Смета живёт строкой, а не панелью ── */
@@ -227,9 +232,9 @@ try {
     `${before[0]?.replace(/\s+/g, ' ')} → ${after[0]?.replace(/\s+/g, ' ')}`,
   );
 
-  /* ── 4. Шаблоны ── */
+  /* ── 4. Готовые решения ── */
 
-  await page.getByRole('button', { name: /Шаблон/ }).click();
+  await page.getByRole('button', { name: /Решение/ }).click();
   await sleep(400);
 
   /*
@@ -477,7 +482,7 @@ try {
      * «Холодильник» — ниша под технику, выбора у неё нет по замыслу.
      */
     const pickInRibbon = async (name) => {
-      await fresh.getByRole('button', { name: /Состав/ }).first().click();
+      await fresh.getByRole('button', { name: /Конфигуратор/ }).first().click();
       await sleep(800);
       const button = fresh.locator('button[draggable="true"]').filter({ hasText: name }).first();
       if ((await button.count()) === 0) return false;
@@ -575,9 +580,9 @@ try {
     }),
   );
 
-  /* ── 6. Материалы: фото и артикул ── */
+  /* ── 6. Материалы: фото и артикул — в панели рабочего экрана ── */
 
-  await page.getByRole('button', { name: /Материалы/ }).click();
+  await page.getByRole('button', { name: /Конфигуратор/ }).click();
   await sleep(500);
 
   check(
@@ -946,9 +951,9 @@ try {
   {
     const own = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
     await own.goto(`${BASE}/demo`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
-    await until(async () => (await own.getByRole('button', { name: /Шаблон/ }).count()) > 0);
+    await until(async () => (await own.getByRole('button', { name: /Решение/ }).count()) > 0);
 
-    await own.getByRole('button', { name: /Шаблон/ }).first().click();
+    await own.getByRole('button', { name: /Решение/ }).first().click();
     await sleep(500);
     check(
       'рядом с готовыми решениями предлагают собрать самому',
@@ -1026,9 +1031,9 @@ try {
       hasTouch: true,
     });
     await hand.goto(`${BASE}/demo`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
-    await until(async () => (await hand.getByRole('button', { name: /Шаблон/ }).count()) > 0);
+    await until(async () => (await hand.getByRole('button', { name: /Решение/ }).count()) > 0);
 
-    await hand.getByRole('button', { name: /Шаблон/ }).first().click();
+    await hand.getByRole('button', { name: /Решение/ }).first().click();
     await sleep(500);
     await hand.locator('[data-free-mode]').click();
     await sleep(900);
@@ -1161,7 +1166,7 @@ try {
     );
 
     /* ── Возврат собранного ряда ── */
-    await hand.getByRole('button', { name: /Шаблон/ }).first().click();
+    await hand.getByRole('button', { name: /Решение/ }).first().click();
     await sleep(600);
     const built = await hand.locator('main button[aria-pressed]:not([disabled])').count();
     if (built > 0) {
@@ -1174,7 +1179,7 @@ try {
       (await hand.getByText(/собранный руками/).count()) > 0,
     );
 
-    await hand.getByRole('button', { name: /Шаблон/ }).first().click();
+    await hand.getByRole('button', { name: /Решение/ }).first().click();
     await sleep(600);
     const undo = hand.locator('[data-undo-free]');
     check('и даёт вернуть его одной кнопкой', (await undo.count()) === 1);
@@ -1182,7 +1187,7 @@ try {
     if ((await undo.count()) === 1) {
       await undo.click();
       await sleep(1000);
-      await hand.getByRole('button', { name: /Состав/ }).first().click();
+      await hand.getByRole('button', { name: /Конфигуратор/ }).first().click();
       await sleep(800);
       check(
         'возврат восстанавливает именно ручной ряд',
@@ -1210,7 +1215,7 @@ try {
     await until(async () => (await look.getByRole('button', { name: /Результат/ }).count()) > 0);
 
     // Выделяем модуль лентой состава — надёжнее, чем попадать в мебель.
-    await look.getByRole('button', { name: /Состав/ }).first().click();
+    await look.getByRole('button', { name: /Конфигуратор/ }).first().click();
     await sleep(800);
     await look
       .locator('button[draggable="true"]')
@@ -1314,6 +1319,202 @@ try {
     );
 
     await look.close();
+  }
+
+
+  /* ── Один рабочий экран: слева сцена, справа панель ── */
+
+  /*
+   * «Состав» и «Материалы» были отдельными шагами, и замерщик не видел,
+   * что меняется, пока не перейдёт дальше, — а клиент сидит рядом. Здесь
+   * проверяется ровно то, ради чего экран собран в один: правка видна НА
+   * МЕСТЕ, без перехода, и поворот сцены при этом не сбрасывается.
+   */
+  {
+    const st = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await st.goto(`${BASE}/demo`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+    await until(async () => (await st.getByRole('button', { name: /Конфигуратор/ }).count()) > 0);
+
+    await st.getByRole('button', { name: /Конфигуратор/ }).first().click();
+    await sleep(3000);
+
+    /* 1. Сцена видна целиком и занимает не меньше половины ширины. */
+    const box = await st.evaluate(() => {
+      const canvas = document.querySelector('[data-studio-scene] canvas');
+      const footer = document.querySelector('footer');
+      if (!canvas || !footer) return null;
+      const r = canvas.getBoundingClientRect();
+      const f = footer.getBoundingClientRect();
+      return {
+        x: r.x,
+        y: r.y,
+        w: r.width,
+        h: r.height,
+        vw: window.innerWidth,
+        footerTop: f.top,
+        scrollW: document.documentElement.scrollWidth,
+      };
+    });
+
+    check('на рабочем экране есть сцена', Boolean(box));
+    check(
+      'сцена занимает не меньше половины ширины',
+      Boolean(box) && box.w / box.vw >= 0.5,
+      box ? `${Math.round((box.w / box.vw) * 100)}%` : '',
+    );
+    check(
+      'и видна целиком, без прокрутки к ней',
+      Boolean(box) && box.y >= 0 && box.y + box.h <= box.footerTop + 1,
+      box ? `низ ${Math.round(box.y + box.h)}, подвал с ${Math.round(box.footerTop)}` : '',
+    );
+    check(
+      'горизонтальной прокрутки нет',
+      Boolean(box) && box.scrollW <= box.vw,
+      box ? `${box.scrollW} при ${box.vw}` : '',
+    );
+
+    /* 2. Сумма видна на этом же экране. */
+    const footerText = () => st.locator('footer').innerText();
+    const money = (text) => (text.match(/([\d\s ]{5,})\s*₸/) ?? [])[1]?.replace(/\s| /g, '');
+    const totalBefore = money(await footerText());
+    check('сумма видна внизу рабочего экрана', Boolean(totalBefore), totalBefore ?? 'суммы нет');
+
+    /* 3. Нажатие на модуль в сцене открывает его варианты справа. */
+    const canvas = st.locator('[data-studio-scene] canvas');
+    const rect = await canvas.boundingBox();
+    if (rect) {
+      // Низ ряда, левее середины: там стоят обычные модули.
+      await st.mouse.click(rect.x + rect.width * 0.45, rect.y + rect.height * 0.62);
+    }
+    await sleep(1200);
+
+    const cards = st.locator('[data-variant]');
+    check(
+      'нажатие на модуль в сцене открывает его варианты справа',
+      (await cards.count()) > 0,
+      `карточек ${await cards.count()}`,
+    );
+
+    /*
+     * 4. Поворот сцены НЕ сбрасывается правкой.
+     *
+     * Клиент смотрит на мебель под своим углом; правка, возвращающая
+     * камеру в исходное, каждый раз стирает то, что он рассматривал.
+     * Позу камеры сцена сообщает наружу сама.
+     */
+    const home = await st.evaluate(() =>
+      window.__mwCamera ? window.__mwCamera() : null,
+    );
+
+    if (rect) {
+      await st.mouse.move(rect.x + rect.width / 2, rect.y + rect.height / 2);
+      await st.mouse.down();
+      await st.mouse.move(rect.x + rect.width / 2 + 160, rect.y + rect.height / 2 + 40, {
+        steps: 8,
+      });
+      await st.mouse.up();
+    }
+    await sleep(900);
+
+    const cameraOf = () =>
+      st.evaluate(() => {
+        const w = window;
+        return w.__mwCamera ? w.__mwCamera() : null;
+      });
+
+    const turned = await cameraOf();
+    const away = (a, b) =>
+      a && b ? Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) : 0;
+
+    /* 5. Выбор варианта меняет сцену и сумму ЗДЕСЬ ЖЕ. */
+    const idle = st.locator('[data-variant][aria-pressed="false"]').first();
+    const picked = (await idle.count()) > 0 ? await idle.getAttribute('data-variant') : null;
+
+    const shot = () =>
+      st.evaluate(() => {
+        const c = document.querySelector('[data-studio-scene] canvas');
+        return c instanceof HTMLCanvasElement ? c.toDataURL('image/jpeg', 0.6) : '';
+      });
+
+    const sceneBefore = await shot();
+    if (picked) await idle.click();
+    await sleep(1500);
+
+    check(
+      'выбор варианта меняет картинку сцены в этом же экране',
+      Boolean(picked) && (await shot()) !== sceneBefore,
+      picked ?? 'вариантов не было',
+    );
+    check(
+      'и шаг при этом не сменился',
+      (await st.locator('[data-studio-scene]').count()) === 1,
+    );
+
+    const totalAfter = money(await footerText());
+    check(
+      'сумма внизу пересчиталась на месте',
+      Boolean(totalAfter) && totalAfter !== totalBefore,
+      `${totalBefore} → ${totalAfter}`,
+    );
+
+    /*
+     * ТОЧНОГО РАВЕНСТВА ЗДЕСЬ БЫТЬ НЕ МОЖЕТ.
+     *
+     * У камеры включено затухание (`enableDamping`), и в headless сцена
+     * рисует 1–2 кадра в секунду (ловушка 97) — инерция доезжает не за
+     * полсекунды, как на живой машине, а за десятки. Сравнивать позу
+     * до и после побайтово значит проверять скорость софтверного
+     * растеризатора, а не продукт.
+     *
+     * Проверяем то, что действительно ломается: камера не ВОЗВРАЩАЕТСЯ
+     * в исходную рамку. Сброс — это прыжок домой; затухание уводит её в
+     * ту же сторону, куда тянул человек.
+     */
+    const settled = await cameraOf();
+    check(
+      'поворот сцены не сбрасывается правкой',
+      turned === null || away(settled, home) > away(turned, home) * 0.5,
+      home && turned && settled
+        ? `от исходной: поворот ${Math.round(away(turned, home))}, после правок ${Math.round(away(settled, home))}`
+        : 'позы камеры нет',
+    );
+
+    /* 6. Материал этого же модуля — тут же, ниже вариантов. */
+    check(
+      'материал фасада выбирается на этом же экране',
+      (await st.locator('[data-front-material]').count()) > 0,
+    );
+
+    const beforeMaterial = await shot();
+    const enamel = st.locator('[data-front-base="mdf_enamel"]').first();
+    if ((await enamel.count()) > 0) {
+      await enamel.click();
+      await sleep(1400);
+    }
+    check(
+      'смена материала меняет ВИДИМУЮ сцену',
+      (await shot()) !== beforeMaterial,
+      'кадр другой',
+    );
+
+    /* 7. Возврат к готовым решениям не теряет правок. */
+    const totalWithEdits = money(await footerText());
+    await st.getByRole('button', { name: /Решение/ }).first().click();
+    await sleep(900);
+    check(
+      'к готовым решениям можно вернуться',
+      (await st.locator('main button[aria-pressed]').count()) > 0,
+    );
+
+    await st.getByRole('button', { name: /Конфигуратор/ }).first().click();
+    await sleep(2000);
+    check(
+      'и правки при возврате не потеряны',
+      money(await footerText()) === totalWithEdits,
+      `${totalWithEdits} → ${money(await footerText())}`,
+    );
+
+    await st.close();
   }
 
   await survey.context().setOffline(false);
