@@ -9,6 +9,13 @@ import BeforeAfter from './BeforeAfter';
 import CommandBar from './CommandBar';
 import DrawingSheet from './DrawingSheet';
 import VariantStrip, { type VariantPreview } from './VariantStrip';
+import FrontMaterialPicker from './FrontMaterialPicker';
+import {
+  RUN_DESIGNS,
+  designAvailability,
+  designOps,
+  designSummary,
+} from '@/lib/millwork/designs';
 import { applyVariant } from '@/lib/millwork/moduleVariants';
 import { moduleCarcassHeightMm } from '@/lib/millwork/fill';
 import type { DrawingMode } from './ElevationDrawing';
@@ -623,6 +630,43 @@ export default function Workspace(props: WorkspaceProps) {
    * упереться в стоящий рядом модуль это нормальный ход событий, а не
    * поломка.
    */
+  /**
+   * ГОТОВЫЙ ДИЗАЙН НА ВЕСЬ РЯД.
+   *
+   * Один тап кладёт фасады низа и верха, столешницу и ручки. Идёт теми же
+   * операциями, что и поштучная правка, поэтому после дизайна замерщик
+   * правит модуль за модулем, и его правка сильнее: она применяется
+   * позже и переписывает то, что положил дизайн.
+   */
+  const applyDesign = (designId: string) => {
+    const design = RUN_DESIGNS.find((d) => d.id === designId);
+    if (!design) return;
+
+    const availability = designAvailability(design, input.rates);
+    if (!availability.available) {
+      setMoveNotice(availability.reason);
+      return;
+    }
+
+    const uppers = active.run.upperSegments
+      .flatMap((segment) => segment.modules)
+      .map((unit) => unit.id);
+
+    const next = applyOps({
+      run: active.run,
+      requirements,
+      ops: designOps(design, uppers),
+      openings: props.openings,
+    });
+
+    dirty.current = true;
+    setEditedRuns((prev) => ({ ...prev, [active.key]: next }));
+    setMoveNotice(
+      next.warnings[0] ??
+        `Дизайн «${design.name}» применён ко всему ряду. Отдельный модуль можно поменять — правка сильнее дизайна.`,
+    );
+  };
+
   const moveModule = (moduleId: string, offsetMm: number) => {
     const next = applyOps({
       run: active.run,
@@ -765,6 +809,12 @@ export default function Workspace(props: WorkspaceProps) {
     return unit ? `${unit.label} ${unit.widthMm} мм` : null;
   }, [selectedId, active.run]);
 
+  /** Выделенный модуль целиком: материал показывается по нему. */
+  const selectedUnit = useMemo(
+    () => (selectedId ? allModules(active.run).find((m) => m.id === selectedId) ?? null : null),
+    [selectedId, active.run],
+  );
+
   const variantOptions = useMemo<VariantPreview[]>(() => {
     if (!selectedId) return [];
 
@@ -841,6 +891,26 @@ export default function Workspace(props: WorkspaceProps) {
        * выводит идентификаторы из позиции, и после вставки их меняет сразу
        * несколько модулей.
        */
+      /*
+       * ВЫДЕЛЕНИЕ ПЕРЕЖИВАЕТ ПЕРЕБОР МАТЕРИАЛОВ.
+       *
+       * Клиент на встрече щёлкает фасады подряд: ЛДСП, эмаль, глянец,
+       * филёнка. Снятое выделение убирало панель материала после ПЕРВОГО
+       * нажатия — дальше нажимать было не на что. Правка начинки ведёт
+       * себя так же (`chooseVariant`), и материал не должен отличаться.
+       *
+       * Габарит и позицию такие операции не меняют, поэтому и
+       * идентификатор модуля остаётся прежним.
+       */
+      const keepsSelection = ops.every(
+        (op) => op.op === 'set_front' || op.op === 'set_variant' || op.op === 'set_section',
+      );
+      if (keepsSelection) {
+        setSelectedId(selectedId);
+        flash(next.modules.filter((m) => before.get(m.id) !== m.widthMm).map((m) => m.id));
+        return;
+      }
+
       const added = ops.length === 1 && ops[0].op === 'add_module' ? ops[0] : null;
       if (added) {
         const at = added.afterModuleId
@@ -856,7 +926,7 @@ export default function Workspace(props: WorkspaceProps) {
           .map((m) => m.id),
       );
     },
-    [active, requirements, props.openings, flash],
+    [active, requirements, props.openings, flash, selectedId],
   );
 
   /**
@@ -1591,6 +1661,38 @@ export default function Workspace(props: WorkspaceProps) {
             />
 
             {/*
+              * ГОТОВЫЕ ДИЗАЙНЫ.
+              *
+              * Мебельщик показывает клиенту не атрибуты материала, а
+              * решения, которые уже делал, и называет их словами.
+              * Недоступные не прячутся: замерщик должен знать, ЧЕГО не
+              * хватает в каталоге, — иначе он идёт спрашивать нас.
+              */}
+            <div className="mt-4" data-designs>
+              <p className="mw-label mb-2">Готовые дизайны</p>
+              <div className="flex flex-wrap gap-1">
+                {RUN_DESIGNS.map((design) => {
+                  const availability = designAvailability(design, input.rates);
+                  return (
+                    <button
+                      key={design.id}
+                      type="button"
+                      data-design={design.id}
+                      data-available={availability.available ? '1' : '0'}
+                      title={
+                        availability.available ? designSummary(design) : availability.reason
+                      }
+                      onClick={() => applyDesign(design.id)}
+                      className={`mw-btn ${availability.available ? 'mw-btn-ghost' : 'mw-btn-ghost opacity-50'}`}
+                    >
+                      {design.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/*
               * ЧЕМ БУДЕТ ЭТО МЕСТО — РЕШАЕТСЯ ЗДЕСЬ ЖЕ.
               *
               * «+» ставит место, а лента показывает, что в нём бывает:
@@ -1847,6 +1949,23 @@ export default function Workspace(props: WorkspaceProps) {
                     moduleLabel={selectedLabel}
                     pickPrompt="Нажмите на модуль в сцене, чтобы поменять его начинку."
                   />
+
+                  {/*
+                    * МАТЕРИАЛ ВЫБИРАЕТСЯ ЗДЕСЬ ЖЕ.
+                    *
+                    * Клиент выбирает материал глазами, по сцене. Уводить
+                    * его за этим на другой шаг — значит показывать фасад
+                    * там, где мебели не видно.
+                    */}
+                  {selectedUnit && !selectedUnit.appliance && (
+                    <div className="mt-3">
+                      <FrontMaterialPicker
+                        unit={selectedUnit}
+                        onOps={runOps}
+                        onRefuse={setSceneNotice}
+                      />
+                    </div>
+                  )}
                 </div>
 
                 {sceneNotice && (

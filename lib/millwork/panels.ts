@@ -1,6 +1,13 @@
 import { moduleCarcassHeightMm, moduleDepthMm } from './fill';
 import { BUILT_IN_FRIDGE_FRONTS, GEOMETRY } from './modules';
 import { hasBottom } from './moduleVariants';
+import {
+  FRAME_WIDTH_MM,
+  frontMaterialName,
+  frontOf,
+  hasEdgeBanding,
+  isFramed,
+} from './frontMaterial';
 import { DEFAULT_PRODUCTION, type ProductionSettings } from '@/types/catalog';
 import type { Module, Panel, PanelTotals, Run } from '@/types/millwork';
 
@@ -161,22 +168,78 @@ function modulePanels(
   const gap = production.frontGapMm;
 
   /*
+   * ДЕТАЛИ ОДНОГО ФАСАДА — ОДНО МЕСТО НА ВСЕ ТРИ СЛУЧАЯ.
+   *
+   * Створка, фронт ящика и фасад встройки отличаются только размером, а
+   * правила материала у них общие:
+   *
+   *   эмаль и плёнка — БЕЗ КРОМКИ. Эмаль ложится сплошным слоем, плёнка
+   *     запрессовывается с загибом на торцы: клеить на них ПВХ некуда.
+   *     Смета считает из раскроя, поэтому исчезнувшая строка забирает с
+   *     собой и метры, и деньги — второй раз нигде править не нужно.
+   *
+   *   филёнчатый — ДВЕ ДЕТАЛИ. Рама и вставка режутся отдельно и из
+   *     разного. Одна панель означала бы, что цех сделает гладкий фасад,
+   *     а узнает об этом на сборке.
+   */
+  const spec = frontOf(unit);
+  const edged = hasEdgeBanding(spec);
+  const frontMaterial = frontMaterialName(spec, production.frontMm);
+
+  const pushFront = (
+    name: string,
+    lengthMm: number,
+    widthMm: number,
+    qty: number,
+  ) => {
+    const edges = edged ? { long: 2, short: 2 } : { long: 0, short: 0 };
+
+    if (!isFramed(spec)) {
+      push({
+        name,
+        material: frontMaterial,
+        lengthMm,
+        widthMm,
+        qty,
+        edges,
+        edgeType: thick,
+        grain: 'along',
+      });
+      return;
+    }
+
+    push({
+      name: `${name}: рама`,
+      material: frontMaterial,
+      lengthMm,
+      widthMm,
+      qty,
+      edges,
+      edgeType: thick,
+      grain: 'along',
+    });
+    push({
+      name: `${name}: вставка`,
+      material: frontMaterial,
+      // Вставка садится в паз обвязки: минус рама с двух сторон.
+      lengthMm: Math.max(0, lengthMm - 2 * FRAME_WIDTH_MM),
+      widthMm: Math.max(0, widthMm - 2 * FRAME_WIDTH_MM),
+      qty,
+      // Вставка целиком внутри рамы: видимых торцов у неё нет.
+      edges: { long: 0, short: 0 },
+      edgeType: thick,
+      grain: 'along',
+    });
+  };
+
+  /*
    * Встроенный холодильник закрыт фасадом заподлицо: две створки во всю
    * высоту пенала. Без этих деталей раскрой уедет — фасад есть в смете,
    * а в цех уходит лист без него.
    */
   if (unit.builtIn) {
     const doorHeight = Math.round((heightMm - gap * (BUILT_IN_FRIDGE_FRONTS + 1)) / BUILT_IN_FRIDGE_FRONTS);
-    push({
-      name: 'Фасад встройки',
-      material: `Фасад ${production.frontMm}`,
-      lengthMm: doorHeight,
-      widthMm: unit.widthMm - gap,
-      qty: BUILT_IN_FRIDGE_FRONTS,
-      edges: { long: 2, short: 2 },
-      edgeType: thick,
-      grain: 'along',
-    });
+    pushFront('Фасад встройки', doorHeight, unit.widthMm - gap, BUILT_IN_FRIDGE_FRONTS);
     return panels;
   }
 
@@ -184,32 +247,14 @@ function modulePanels(
 
   if (unit.frontType === 'door' && unit.doorCount > 0) {
     const doorWidth = Math.round((unit.widthMm - gap * (unit.doorCount + 1)) / unit.doorCount);
-    push({
-      name: 'Фасад',
-      material: `Фасад ${production.frontMm}`,
-      lengthMm: heightMm - gap,
-      widthMm: doorWidth,
-      qty: unit.doorCount,
-      // У фасада видны все четыре торца.
-      edges: { long: 2, short: 2 },
-      edgeType: thick,
-      grain: 'along',
-    });
+    // У фасада видны все четыре торца — если кромка на нём вообще есть.
+    pushFront('Фасад', heightMm - gap, doorWidth, unit.doorCount);
   }
 
   if (unit.frontType === 'drawers') {
     const heights = unit.fill?.drawerHeights ?? [];
     for (const front of heights) {
-      push({
-        name: 'Фронт ящика',
-        material: `Фасад ${production.frontMm}`,
-        lengthMm: front - gap,
-        widthMm: unit.widthMm - gap,
-        qty: 1,
-        edges: { long: 2, short: 2 },
-        edgeType: thick,
-        grain: 'along',
-      });
+      pushFront('Фронт ящика', front - gap, unit.widthMm - gap, 1);
     }
   }
 

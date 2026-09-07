@@ -95,6 +95,13 @@ import {
   variantsToAdd,
 } from '../lib/millwork/moduleVariants';
 import { gapsIn } from '../lib/millwork/freeRun';
+import { FRAME_WIDTH_MM, frontConflict } from '../lib/millwork/frontMaterial';
+import {
+  RUN_DESIGNS,
+  designAvailability,
+  designOps,
+  designSummary,
+} from '../lib/millwork/designs';
 import { assertNoOverlap, moduleOverlaps } from '../lib/millwork/invariants';
 import { configurationFingerprint } from '../lib/millwork/fingerprint';
 import { panelMaterials } from '../lib/millwork/panels';
@@ -145,6 +152,7 @@ import {
 } from '../lib/millwork/demo';
 import type {
   CommPoint,
+  FrontSpec,
   MillworkOp,
   Module,
   ModuleVariantKind,
@@ -4457,6 +4465,263 @@ console.log('\nПеренос модуля вдоль ряда');
     'угол в свободной сборке отказывает словами, а не пустым рядом',
     /нельзя собрать вручную/.test(cornerRefusal),
     cornerRefusal.slice(0, 80),
+  );
+}
+
+
+/* ──────────────  Материал фасада: технология, раскрой, деньги  ────────────── */
+
+/*
+ * Три независимых атрибута — база, конструкция, фактура — независимы не до
+ * конца, и правила здесь не декоративные: ЛДСП пилится прямыми, эмаль не
+ * кромится, филёнка режется двумя деталями. Продать фасад, которого цех не
+ * сделает, хуже, чем не продать ничего.
+ */
+console.log('\nМатериал фасада');
+{
+  const shell = { ...baseInput };
+  const step = (run: Run, ops: MillworkOp[]) =>
+    applyOps({ run, requirements: REQ, ops, openings: OPENINGS });
+  const run = buildRun(shell);
+
+  const edgeOf = (r: Run) => panelMaterials(buildPanels({ run: r })).edgeM;
+  const edgeLine = (r: Run) =>
+    buildEstimate(r, 'optimal', DEMO_RATES).lines.find((line) => /кром/i.test(line.title));
+
+  /* 1. ЛДСП пилится только прямыми. */
+  for (const construct of ['radius', 'framed'] as const) {
+    const refused = step(run, [
+      { op: 'set_front', moduleId: 'all', front: { base: 'ldsp', construct, finish: 'matte' } },
+    ]);
+    check(
+      `ЛДСП + ${construct === 'radius' ? 'радиус' : 'филёнка'} отклоняется`,
+      configurationFingerprint(refused.modules) === configurationFingerprint(run.modules),
+    );
+    check(
+      'и отказ объясняет причину, а не запрещает',
+      refused.warnings.some((w) => /пилится только прямыми/.test(w)),
+      refused.warnings[0] ?? 'отказа нет',
+    );
+  }
+
+  /* 2. Радиус гнут только из МДФ и шпона. */
+  const acrylicRadius = step(run, [
+    {
+      op: 'set_front',
+      moduleId: 'all',
+      front: { base: 'acrylic', construct: 'radius', finish: 'gloss' },
+    },
+  ]);
+  check(
+    'радиус из акрила отклоняется и называет, из чего он бывает',
+    acrylicRadius.warnings.some((w) => /гнут из МДФ или шпона/.test(w)),
+    acrylicRadius.warnings[0] ?? 'принято',
+  );
+  for (const base of ['mdf_film', 'mdf_enamel', 'veneer_solid'] as const) {
+    const ok = step(run, [
+      { op: 'set_front', moduleId: 'all', front: { base, construct: 'radius', finish: 'matte' } },
+    ]);
+    check(`радиус из ${base} принимается`, ok.warnings.length === 0, ok.warnings[0] ?? '');
+  }
+
+  /* 3. Эмаль и плёнка убирают кромку фасада из раскроя И из сметы. */
+  const before = { edge: edgeOf(run), line: edgeLine(run) };
+  check('у ЛДСП кромка фасада есть', before.edge > 0 && Boolean(before.line));
+
+  for (const base of ['mdf_enamel', 'mdf_film'] as const) {
+    const painted = step(run, [
+      { op: 'set_front', moduleId: 'all', front: { base, construct: 'solid', finish: 'gloss' } },
+    ]);
+    const fronts = buildPanels({ run: painted }).filter((panel) =>
+      panel.material.startsWith('Фасад'),
+    );
+    check(
+      `${base}: у фасадов в раскрое НЕТ строки кромки`,
+      fronts.every((panel) => panel.edges.long === 0 && panel.edges.short === 0),
+      `${fronts.length} деталей фасада`,
+    );
+    const after = { edge: edgeOf(painted), line: edgeLine(painted) };
+    check(
+      'и метраж кромки в раскрое стал меньше',
+      after.edge < before.edge,
+      `${before.edge} → ${after.edge} м`,
+    );
+    check(
+      'и смета это видит: она считает из раскроя',
+      Boolean(after.line) &&
+        Boolean(before.line) &&
+        after.line!.quantity === after.edge &&
+        after.line!.total < before.line!.total,
+      `${before.line?.total ?? 0} → ${after.line?.total ?? 0} ₸`,
+    );
+  }
+
+  /* 4. Филёнчатый даёт две детали вместо одной. */
+  const plain = buildPanels({ run }).filter((panel) => panel.material.startsWith('Фасад'));
+  const framedRun = step(run, [
+    {
+      op: 'set_front',
+      moduleId: 'all',
+      front: { base: 'mdf_enamel', construct: 'framed', finish: 'matte' },
+    },
+  ]);
+  const framed = buildPanels({ run: framedRun }).filter((panel) =>
+    panel.material.startsWith('Фасад'),
+  );
+  check(
+    'филёнчатый фасад даёт вдвое больше деталей',
+    framed.length === plain.length * 2,
+    `${plain.length} → ${framed.length}`,
+  );
+  check(
+    'и это именно рама и вставка',
+    framed.some((panel) => /рама/.test(panel.name)) &&
+      framed.some((panel) => /вставка/.test(panel.name)),
+    framed
+      .slice(0, 2)
+      .map((panel) => panel.name)
+      .join(', '),
+  );
+  const frame = framed.find((panel) => /рама/.test(panel.name))!;
+  const insert = framed.find((panel) => /вставка/.test(panel.name))!;
+  check(
+    'вставка меньше рамы на обвязку с двух сторон',
+    insert.lengthMm === frame.lengthMm - 2 * FRAME_WIDTH_MM &&
+      insert.widthMm === frame.widthMm - 2 * FRAME_WIDTH_MM,
+    `рама ${frame.lengthMm}×${frame.widthMm}, вставка ${insert.lengthMm}×${insert.widthMm}`,
+  );
+
+  /* 5. Материал входит в отпечаток. */
+  const keys = new Set(
+    [
+      run,
+      step(run, [
+        {
+          op: 'set_front',
+          moduleId: 'all',
+          front: { base: 'mdf_enamel', construct: 'solid', finish: 'gloss' },
+        },
+      ]),
+      framedRun,
+      step(run, [
+        {
+          op: 'set_front',
+          moduleId: 'all',
+          front: { base: 'veneer_solid', construct: 'solid', finish: 'textured' },
+        },
+      ]),
+    ].map((r) => configurationFingerprint(r.modules)),
+  );
+  check('разный материал — разный отпечаток', keys.size === 4, `${keys.size} из 4`);
+
+  /* 6. Готовые дизайны. */
+  const uppers = run.upperSegments.flatMap((segment) => segment.modules).map((unit) => unit.id);
+  check('готовых дизайнов от шести до восьми', RUN_DESIGNS.length >= 6 && RUN_DESIGNS.length <= 8, `${RUN_DESIGNS.length}`);
+  check(
+    'у каждого человеческое имя и состав одной строкой',
+    RUN_DESIGNS.every((design) => design.name.length > 3 && designSummary(design).includes('столешница')),
+  );
+  check(
+    'все дизайны собраны из рабочих сочетаний',
+    RUN_DESIGNS.every(
+      (design) => frontConflict(design.lower) === null && frontConflict(design.upper) === null,
+    ),
+  );
+
+  const applied = RUN_DESIGNS.map((design) => {
+    const next = applyOps({
+      run,
+      requirements: REQ,
+      ops: designOps(design, uppers),
+      openings: OPENINGS,
+    });
+    return { design, run: next, total: buildEstimate(next, 'optimal', DEMO_RATES).total };
+  });
+
+  check(
+    'применение дизайна меняет отпечаток',
+    applied.every(
+      (a) => configurationFingerprint(a.run.modules) !== configurationFingerprint(run.modules),
+    ),
+  );
+  check(
+    'и смету: дешёвый и дорогой дизайн стоят по-разному',
+    new Set(applied.map((a) => Math.round(a.total))).size >= 4,
+    applied.map((a) => Math.round(a.total)).join(', '),
+  );
+  check(
+    'дизайн доезжает до промпта материалом, а не только цветом',
+    describeFronts(
+      applied.find((a) => a.design.id === 'classic-framed')!.run.modules as never,
+    ).some((d) => /ФИЛЁНЧАТЫЙ/.test(d.text) && /обвязка/.test(d.text)),
+  );
+  check(
+    'и филёнка описана рамой и вставкой отдельно',
+    describeFronts(
+      applied.find((a) => a.design.id === 'classic-framed')!.run.modules as never,
+    ).some((d) => /вставка/.test(d.text) && /НЕ гладкая панель/.test(d.text)),
+  );
+
+  /* 7. Дизайн без позиции в каталоге недоступен и называет её. */
+  const poorRates = {
+    front_panel: DEMO_RATES.front_panel,
+    countertop_ldsp: DEMO_RATES.countertop_ldsp,
+    wall_panel: DEMO_RATES.wall_panel,
+    handle_standard: DEMO_RATES.handle_standard,
+  } as typeof DEMO_RATES;
+
+  const gloss = RUN_DESIGNS.find((design) => design.id === 'enamel-gloss')!;
+  const poor = designAvailability(gloss, poorRates);
+  check('дизайн без позиции в каталоге недоступен', poor.available === false);
+  check(
+    'и отказ называет саму позицию, а не «дизайн недоступен»',
+    poor.available === false && /Столешница кварцевый агломерат/.test(poor.reason),
+    poor.available === false ? poor.reason.slice(0, 70) : '',
+  );
+  check(
+    'похожая позиция молча не подставляется',
+    poor.available === false && poor.missing.includes('countertop_quartz'),
+  );
+  check(
+    'а дизайн, собранный из того, что есть, доступен',
+    designAvailability(RUN_DESIGNS.find((d) => d.id === 'white-basic')!, poorRates).available,
+  );
+
+  /* 8. Ручная правка сильнее дизайна и переживает пересчёт. */
+  const withDesign = applied.find((a) => a.design.id === 'enamel-gloss')!.run;
+  const target = withDesign.modules.find((unit) => !unit.appliance)!;
+  const hand: FrontSpec = {
+    base: 'veneer_solid',
+    construct: 'solid',
+    finish: 'textured',
+    colorHex: '#9A7449',
+  };
+  const edited = step(withDesign, [{ op: 'set_front', moduleId: target.id, front: hand }]);
+  check(
+    'ручная правка после дизайна применяется к своему модулю',
+    edited.modules.find((unit) => unit.id === target.id)?.front?.base === 'veneer_solid',
+  );
+  check(
+    'и соседей не трогает',
+    edited.modules
+      .filter((unit) => unit.id !== target.id && !unit.appliance)
+      .every((unit) => unit.front?.base === 'mdf_enamel'),
+  );
+
+  const recalculated = step(edited, [
+    { op: 'set_width', moduleId: target.id, widthMm: target.widthMm },
+  ]);
+  check(
+    'и переживает пересчёт ряда',
+    recalculated.modules.find((unit) => unit.id === target.id)?.front?.base === 'veneer_solid',
+  );
+
+  /* 9. Встроенный холодильник закрыт фасадом ряда, а не своим. */
+  const fridge = withDesign.modules.find((unit) => unit.appliance === 'fridge' && unit.builtIn);
+  check(
+    'фасад встройки идёт тем же материалом, что весь ряд',
+    fridge?.front?.base === 'mdf_enamel',
+    fridge?.front?.base ?? 'материала нет',
   );
 }
 

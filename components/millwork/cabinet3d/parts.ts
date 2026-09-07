@@ -5,6 +5,9 @@ import * as THREE from 'three';
 import { milledNormalMap } from './milledNormal';
 import { loadTexture } from '@/lib/textureCache';
 import type { SurfaceLook } from '@/lib/millwork/surfaces';
+import { DEFAULT_FRONT, frontKey } from '@/lib/millwork/frontMaterial';
+import type { FrontSpec } from '@/types/millwork';
+import { useThree } from '@react-three/fiber';
 
 /**
  * ОБЩИЕ ГЕОМЕТРИЯ И МАТЕРИАЛЫ.
@@ -218,3 +221,96 @@ export function useSurfaceLook(
     };
   }, [material, textureUrl, repeatX, repeatY]);
 }
+
+
+/* ────────────────  Материал фасада виден сразу  ──────────────── */
+
+/**
+ * ШЕРОХОВАТОСТЬ ПО ФАКТУРЕ.
+ *
+ * Разница обязана быть ЗАМЕТНОЙ, а не тонкой: клиент на встрече сравнивает
+ * глянец с матом на планшете, при комнатном свете, за две секунды. 0.06
+ * отражает окно почти зеркально, 0.78 не бликует вовсе — между ними видно
+ * невооружённым глазом, в отличие от «0.4 против 0.5».
+ */
+const FRONT_ROUGHNESS: Record<FrontSpec['finish'], number> = {
+  gloss: 0.06,
+  matte: 0.78,
+  textured: 0.62,
+};
+
+/**
+ * Небольшая «металличность» глянца.
+ *
+ * Чистый диэлектрик с нулевой шероховатостью на схематичной сцене
+ * выглядит просто светлым пятном: блик появляется, когда есть что
+ * отражать. Это не физика краски, а способ показать разницу.
+ */
+const FRONT_METALNESS: Record<FrontSpec['finish'], number> = {
+  gloss: 0.16,
+  matte: 0,
+  textured: 0.02,
+};
+
+/** Цвет фасада: из каталога, если артикул выбран, иначе цвет сцены. */
+function frontColor(spec: FrontSpec, fallback: string): string {
+  return /^#[0-9a-f]{6}$/i.test(spec.colorHex ?? '') ? spec.colorHex! : fallback;
+}
+
+/**
+ * МАТЕРИАЛЫ ФАСАДОВ ПО КЛЮЧАМ.
+ *
+ * У каждого модуля свой фасад, но материалов ровно столько, сколько РАЗНЫХ
+ * фасадов в ряду: модули с одинаковым материалом рисуются одной пачкой.
+ * Материал под ключом создаётся ОДИН раз и дальше только меняется —
+ * пересоздание это перекомпиляция шейдера и задержка ровно в тот момент,
+ * когда клиент перебирает варианты.
+ *
+ * `frameloop="demand"`: сцена не перерисовывается сама. После присвоения
+ * цвета и шероховатости кадр запрашивается явно, иначе материал сменится
+ * в памяти, а на экране останется прежний.
+ */
+export function useFrontMaterials(
+  specs: Map<string, FrontSpec>,
+  fallbackColor: string,
+): Map<string, THREE.MeshStandardMaterial> {
+  const invalidate = useThree((state) => state.invalidate);
+  const cache = useMemo(() => new Map<string, THREE.MeshStandardMaterial>(), []);
+
+  const materials = useMemo(() => {
+    const out = new Map<string, THREE.MeshStandardMaterial>();
+    for (const [key, spec] of Array.from(specs.entries())) {
+      let material = cache.get(key);
+      if (!material) {
+        material = new THREE.MeshStandardMaterial();
+        cache.set(key, material);
+      }
+      out.set(key, material);
+      void spec;
+    }
+    return out;
+  }, [specs, cache]);
+
+  useEffect(() => {
+    for (const [key, spec] of Array.from(specs.entries())) {
+      const material = materials.get(key);
+      if (!material) continue;
+      material.color.set(frontColor(spec, fallbackColor));
+      material.roughness = FRONT_ROUGHNESS[spec.finish];
+      material.metalness = FRONT_METALNESS[spec.finish];
+    }
+    invalidate();
+  }, [specs, materials, fallbackColor, invalidate]);
+
+  useEffect(
+    () => () => {
+      for (const material of Array.from(cache.values())) material.dispose();
+    },
+    [cache],
+  );
+
+  return materials;
+}
+
+/** Ключ фасада по умолчанию: им рисуется всё, у чего материал не задан. */
+export const DEFAULT_FRONT_KEY = frontKey(DEFAULT_FRONT);

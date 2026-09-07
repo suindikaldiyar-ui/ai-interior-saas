@@ -8,7 +8,9 @@ import InstancedBoxes from './InstancedBoxes';
 import ModuleHandles from './ModuleHandles';
 import SceneCamera, { type OrthoProjection } from './SceneCamera';
 import { moduleBoxes, type BoxMaterial, type PartBox } from '@/lib/millwork/cabinetBoxes';
-import { useCabinetParts, useSurfaceLook } from './parts';
+import { useCabinetParts, useFrontMaterials, useSurfaceLook } from './parts';
+import { DEFAULT_FRONT, frontKey, frontOf } from '@/lib/millwork/frontMaterial';
+import type { FrontSpec } from '@/types/millwork';
 import { surfaceLook } from '@/lib/millwork/surfaces';
 import { APRON_TARGET, COUNTERTOP_TARGET, FACADE_TARGET } from '@/types/catalog';
 import { moduleCarcassHeightMm } from '@/lib/millwork/fill';
@@ -275,12 +277,45 @@ export default function Cabinet3D({
       metal: [],
       appliance: [],
     };
+    /*
+     * Фасады собираются В ПАЧКИ ПО МАТЕРИАЛУ, а не в одну.
+     *
+     * Материал теперь у каждого модуля свой, но пачек ровно столько,
+     * сколько РАЗНЫХ фасадов в ряду: у типовой кухни это одна-две, и
+     * число вызовов отрисовки не растёт с числом модулей.
+     */
+    const fronts = new Map<string, PartBox[]>();
+
     for (const box of boxes) {
       if (box.part && active.has(box.part)) continue;
+      if (box.material === 'front') {
+        const key = box.frontKey ?? frontKey(DEFAULT_FRONT);
+        const list = fronts.get(key);
+        if (list) list.push(box);
+        else fronts.set(key, [box]);
+        continue;
+      }
       groups[box.material].push(box);
     }
-    return groups;
+    return { groups, fronts };
   }, [boxes, activeParts]);
+
+  /*
+   * Какие фасады сейчас в ряду. Спецификации берутся из модулей, а не
+   * из ключей: ключ говорит, что материалы разные, а цвет и фактуру
+   * знает только сама спецификация.
+   */
+  const frontSpecs = useMemo(() => {
+    const map = new Map<string, FrontSpec>();
+    for (const entry of [...modules, ...uppers]) {
+      const spec = frontOf(entry.unit);
+      map.set(frontKey(spec), spec);
+    }
+    if (map.size === 0) map.set(frontKey(DEFAULT_FRONT), DEFAULT_FRONT);
+    return map;
+  }, [modules, uppers]);
+
+  const frontMaterials = useFrontMaterials(frontSpecs, facadeColor);
 
   const selected = useMemo(() => {
     if (!selectedModuleId) return null;
@@ -329,15 +364,27 @@ export default function Cabinet3D({
         * на месте, рисуется четырьмя вызовами вместо сотни.
         */}
       <InstancedBoxes
-        boxes={grouped.carcass}
+        boxes={grouped.groups.carcass}
         geometry={parts.box}
         material={parts.carcass}
         receiveShadow
       />
-      <InstancedBoxes boxes={grouped.front} geometry={parts.box} material={parts.front} />
-      <InstancedBoxes boxes={grouped.metal} geometry={parts.box} material={parts.metal} />
+      {/*
+        * По пачке на материал фасада. Ключ в `key` обязателен: число
+        * экземпляров задаётся при создании буфера, и сменившийся состав
+        * пачки требует нового меша (ловушка 180).
+        */}
+      {Array.from(grouped.fronts.entries()).map(([key, list]) => (
+        <InstancedBoxes
+          key={key}
+          boxes={list}
+          geometry={parts.box}
+          material={frontMaterials.get(key) ?? parts.front}
+        />
+      ))}
+      <InstancedBoxes boxes={grouped.groups.metal} geometry={parts.box} material={parts.metal} />
       <InstancedBoxes
-        boxes={grouped.appliance}
+        boxes={grouped.groups.appliance}
         geometry={parts.box}
         material={parts.appliance}
       />
@@ -360,6 +407,7 @@ export default function Cabinet3D({
           cutaway={cutaway}
           displayLit={displayLit}
           onActive={handleActive}
+          frontMaterial={frontMaterials.get(frontKey(frontOf(entry.unit)))}
         />
       ))}
 

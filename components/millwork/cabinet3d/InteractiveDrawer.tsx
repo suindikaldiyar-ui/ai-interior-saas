@@ -29,6 +29,13 @@ type Props = {
   depth: number;
   thickness: number;
   parts: CabinetParts;
+  /**
+   * Материал ЭТОГО фасада.
+   *
+   * У каждого модуля он свой, а `parts.front` — общий на сцену: открытая
+   * створка иначе меняла бы цвет в момент открывания.
+   */
+  frontMaterial?: THREE.MeshStandardMaterial;
   /** Разрез: фасады убраны, видно короб ящика. */
   cutaway: boolean;
   gap: number;
@@ -48,6 +55,7 @@ export default function InteractiveDrawer({
   depth,
   thickness,
   parts,
+  frontMaterial,
   cutaway,
   gap,
   integratedHandle,
@@ -160,7 +168,7 @@ export default function InteractiveDrawer({
         <>
           <mesh
             geometry={parts.box}
-            material={parts.front}
+            material={frontMaterial ?? parts.front}
             position={[0, 0, depth / 2 + thickness / 2]}
             scale={[width - 2 * gap, height - 2 * gap, thickness]}
             castShadow

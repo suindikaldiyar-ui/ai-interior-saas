@@ -204,6 +204,26 @@ export interface ModuleFill {
   hinge: 'left' | 'right' | 'none';
 }
 
+/**
+ * МАТЕРИАЛ ФАСАДА: три независимых атрибута.
+ *
+ * Независимы не до конца — ЛДСП не гнётся, эмаль не кромится, — и все
+ * правила живут в одном месте: `lib/millwork/frontMaterial.ts`.
+ */
+export type FrontBase = 'ldsp' | 'mdf_film' | 'mdf_enamel' | 'acrylic' | 'veneer_solid';
+export type FrontConstruct = 'solid' | 'framed' | 'radius';
+export type FrontFinish = 'gloss' | 'matte' | 'textured';
+
+export interface FrontSpec {
+  base: FrontBase;
+  construct: FrontConstruct;
+  finish: FrontFinish;
+  /** Цвет из каталога, `#rrggbb`. Пусто — цвет по умолчанию. */
+  colorHex?: string;
+  /** Артикул каталога компании. По нему выноска называет товар. */
+  itemId?: string;
+}
+
 export interface Module {
   id: string;
   kind: ModuleKind;
@@ -237,6 +257,14 @@ export interface Module {
    * фасада нет вовсе — ни в 3D, ни в смете, ни в детализировке.
    */
   builtIn?: boolean;
+  /**
+   * Материал фасада ЭТОГО модуля.
+   *
+   * Пусто — фасад по умолчанию (ЛДСП, цельный, мат): так выглядят все
+   * ряды, собранные до появления материалов, и отпечаток у них не меняется.
+   * Верх и низ могут отличаться — готовые дизайны этим и пользуются.
+   */
+  front?: FrontSpec;
   label: string;
 }
 
@@ -508,12 +536,17 @@ export type MillworkOp =
   /** Сменить вариант места: карго вместо дверцы, сушилка над мойкой. */
   | { op: 'set_variant'; moduleId: string; variant: ModuleVariantKind }
   /**
+   * Материал фасада. `moduleId: 'all'` — весь ряд: так применяется
+   * готовый дизайн, и так же он потом правится поштучно.
+   */
+  | { op: 'set_front'; moduleId: string; front: FrontSpec }
+  /**
    * Перенос модуля. `afterModuleId` — перестановка в порядке (так правит
    * модель); `offsetMm` — перенос на место вдоль ряда, шагом 50 мм: так
    * двигает модуль рука в свободной сборке. Соседи не раздвигаются.
    */
   | { op: 'move_module'; moduleId: string; afterModuleId?: string; offsetMm?: number }
-  | { op: 'set_option'; key: 'upperToCeiling' | 'hardwareClass' | 'countertop' | 'hasUpper' | 'hasCornice'; value: string | boolean };
+  | { op: 'set_option'; key: 'upperToCeiling' | 'hardwareClass' | 'countertop' | 'hasUpper' | 'hasCornice' | 'integratedHandles'; value: string | boolean };
 
 export interface MillworkRequest {
   message: string;

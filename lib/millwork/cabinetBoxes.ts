@@ -1,4 +1,5 @@
 import { columnNiches } from '@/lib/millwork/fill';
+import { FRAME_WIDTH_MM, frontKey, frontOf, isFramed } from './frontMaterial';
 import type { Module } from '@/types/millwork';
 
 /**
@@ -32,6 +33,14 @@ export type BoxMaterial = 'carcass' | 'front' | 'metal' | 'appliance';
 
 export type PartBox = BoxDraw & {
   material: BoxMaterial;
+  /**
+   * Какой именно фасад. Модули с ОДИНАКОВЫМ материалом обязаны попадать
+   * в одну пачку отрисовки: ключ и есть признак этой пачки. Без него
+   * ряд из тринадцати модулей снова стал бы тринадцатью вызовами.
+   *
+   * У корпуса, металла и техники ключа нет — там материал один на сцену.
+   */
+  frontKey?: string;
   /**
    * Идентификатор подвижной детали. Пока дверца закрыта, она рисуется
    * вместе со всеми одним вызовом; открылась — уходит из общей отрисовки
@@ -187,12 +196,49 @@ export function doorBoxes(
         scale: [0.016, Math.min(0.22, heightM * 0.4), 0.016],
       };
 
+  const spec = frontOf(unit);
+  const key = frontKey(spec);
+  const w = doorW - 2 * gap;
+  const h = heightM - 2 * gap;
+
+  /*
+   * ФИЛЁНКА — ЭТО РАМА И ВСТАВКА, А НЕ ГЛАДКАЯ ПАНЕЛЬ.
+   *
+   * В раскрое филёнчатый фасад уже даёт две детали; сцена обязана
+   * показывать то же самое, иначе клиент выбирает по картинке одно, а
+   * подписывает раскрой на другое. Рисуется так же, как делается: четыре
+   * бруска обвязки по контуру и вставка, утопленная внутрь.
+   */
+  if (isFramed(spec)) {
+    const frame = FRAME_WIDTH_MM / MM;
+    const bar = Math.min(frame, Math.min(w, h) / 3);
+    const insetZ = thickness * 0.45;
+
+    return [
+      // Обвязка: верх, низ, левая и правая стойки.
+      { material: 'front', part, frontKey: key, position: [cx, cy + h / 2 - bar / 2, thickness / 2], scale: [w, bar, thickness] },
+      { material: 'front', part, frontKey: key, position: [cx, cy - h / 2 + bar / 2, thickness / 2], scale: [w, bar, thickness] },
+      { material: 'front', part, frontKey: key, position: [cx - w / 2 + bar / 2, cy, thickness / 2], scale: [bar, h - 2 * bar, thickness] },
+      { material: 'front', part, frontKey: key, position: [cx + w / 2 - bar / 2, cy, thickness / 2], scale: [bar, h - 2 * bar, thickness] },
+      // Вставка: тоньше и глубже — отсюда и видна филёнка.
+      {
+        material: 'front',
+        part,
+        frontKey: key,
+        position: [cx, cy, insetZ / 2],
+        scale: [w - 2 * bar, h - 2 * bar, insetZ],
+      },
+      handle,
+    ];
+  }
+
   return [
     {
       material: 'front',
       part,
+      frontKey: key,
       position: [cx, cy, thickness / 2],
-      scale: [doorW - 2 * gap, heightM - 2 * gap, thickness],
+      scale: [w, h, thickness],
     },
     handle,
   ];
@@ -260,6 +306,7 @@ export function drawerBoxes(
   boxes.push({
     material: 'front',
     part,
+    frontKey: frontKey(frontOf(unit)),
     position: [cx, cy, innerDepth / 2 + thickness / 2],
     scale: [widthM - 2 * gap, height - 2 * gap, thickness],
   });

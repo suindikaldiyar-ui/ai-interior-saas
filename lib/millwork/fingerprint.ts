@@ -1,3 +1,4 @@
+import { frontPart } from './frontMaterial';
 import type { Module, Run } from '@/types/millwork';
 
 /**
@@ -65,6 +66,13 @@ function extrasPart(unit: Module): string | undefined {
     unit.section ?? '',
     // Карго вместо дверцы — другая мебель и другие деньги.
     unit.variant ?? '',
+    /*
+     * Материал фасада. Эмаль вместо ЛДСП — это другая мебель, другой
+     * раскрой (кромки нет) и другие деньги. Умолчание в отпечаток не
+     * пишется намеренно: иначе изменились бы отпечатки всех рядов,
+     * собранных до появления материалов.
+     */
+    frontPart(unit.front) ?? '',
   ].filter(Boolean);
 
   return parts.length > 0 ? parts.join(',') : undefined;

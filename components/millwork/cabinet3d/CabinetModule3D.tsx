@@ -1,5 +1,7 @@
 'use client';
 
+import * as THREE from 'three';
+
 import InteractiveDoor from './InteractiveDoor';
 import InteractiveDrawer from './InteractiveDrawer';
 import type { CabinetParts } from './parts';
@@ -36,6 +38,8 @@ type Props = {
   displayLit?: boolean;
   /** Деталь поехала: ряд убирает её из общей отрисовки. */
   onActive?: (id: string, active: boolean) => void;
+  /** Материал фасада этого модуля: у подвижных створок он тот же. */
+  frontMaterial?: THREE.MeshStandardMaterial;
 };
 
 /** Штанга: труба 25 мм — то, что реально ставят в шкаф. */
@@ -67,6 +71,7 @@ export default function CabinetModule3D({
   cutaway,
   displayLit = true,
   onActive,
+  frontMaterial,
 }: Props) {
   const widthM = unit.widthMm / MM;
   const fill = unit.fill;
@@ -182,6 +187,7 @@ export default function CabinetModule3D({
               gap={gapM}
               integratedHandle={integratedHandles}
               onActive={onActive}
+              frontMaterial={frontMaterial}
             />
           );
         })}
@@ -232,6 +238,7 @@ export default function CabinetModule3D({
               gap={gapM}
               integratedHandle={integratedHandles}
               onActive={onActive}
+              frontMaterial={frontMaterial}
             />
           );
         })}

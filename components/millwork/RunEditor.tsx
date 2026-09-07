@@ -12,6 +12,7 @@ import { widthOverflowMm } from '@/lib/millwork/invariants';
 import { freeSpaceMm } from '@/lib/millwork/layout';
 import { widestGapMm } from '@/lib/millwork/freeRun';
 import { variantsToAdd } from '@/lib/millwork/moduleVariants';
+import FrontMaterialPicker from './FrontMaterialPicker';
 import { SECTION_SPECS } from '@/lib/millwork/sections';
 import {
   zoneAppliances,
@@ -447,6 +448,16 @@ export default function RunEditor({
         * На телефоне пропорция сохраняется, а лента прокручивается вбок:
         * это единственное место, где горизонтальная прокрутка уместна.
         */}
+      {/*
+        * Материал фасада — общим компонентом: тот же выбор стоит под
+        * сценой, и два места обязаны показывать одно.
+        */}
+      {selected && !selected.appliance && (
+        <div className="mb-3">
+          <FrontMaterialPicker unit={selected} onOps={onOps} onRefuse={setNotice} />
+        </div>
+      )}
+
       {notice && (
         <p
           data-editor-notice

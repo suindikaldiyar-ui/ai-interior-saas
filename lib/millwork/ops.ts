@@ -10,6 +10,7 @@ import { buildUpperRow, fillGap } from './layout';
 import { assertNoOverlap, assertRunFits, widthOverflowMm } from './invariants';
 import { runFingerprint } from './fingerprint';
 import { defaultFill, hingeSide } from './fill';
+import { frontConflict } from './frontMaterial';
 import {
   moveConflict,
   moveRefusal,
@@ -130,6 +131,9 @@ export function applyOps({ run, requirements, ops, openings = [] }: ApplyOpsInpu
   const zone = requirements.zone ?? run.zone ?? 'kitchen';
   /** Правки верхнего ряда: он пересобирается в конце, они применяются после. */
   const upperEdits = new Map<string, NonNullable<Module['variant']>>();
+  /** То же для материала фасада: верх и низ могут отличаться. */
+  const upperFronts = new Map<string, NonNullable<Module['front']>>();
+  let upperFrontAll: Module['front'] | null = null;
 
   for (const op of ops) {
     /*
@@ -449,6 +453,50 @@ export function applyOps({ run, requirements, ops, openings = [] }: ApplyOpsInpu
         break;
       }
 
+      case 'set_front': {
+        /*
+         * ПРАВИЛА ТЕХНОЛОГИИ ПРОВЕРЯЮТСЯ ДО ПРИМЕНЕНИЯ.
+         *
+         * ЛДСП не гнётся, радиус бывает только из МДФ и шпона. Отказ
+         * называет ПРИЧИНУ — её замерщик перескажет клиенту слово в слово,
+         * а «недопустимая комбинация» пересказать нельзя. Правку при этом
+         * не роняем: человек всего лишь нажал на материал.
+         */
+        const conflict = frontConflict(op.front);
+        if (conflict) {
+          warnings.push(conflict);
+          break;
+        }
+
+        /*
+         * `all` — весь ряд: так ложится готовый дизайн. Поштучная правка
+         * идёт той же операцией по одному модулю и потому всегда сильнее:
+         * она применяется после и переписывает то, что положил дизайн.
+         */
+        if (op.moduleId === 'all') {
+          /*
+           * Встроенный холодильник ЗАКРЫТ НАСТОЯЩИМ ФАСАДОМ, и он обязан
+           * совпадать с рядом: иначе среди эмали окажется одна створка
+           * ЛДСП — заметная на кухне сразу, а в раскрое ещё и с кромкой,
+           * которой у остальных нет. У прочей техники фасада нет вовсе.
+           */
+          modules = modules.map((unit) =>
+            unit.appliance && !unit.builtIn ? unit : { ...unit, front: op.front },
+          );
+          upperFrontAll = op.front;
+          break;
+        }
+
+        const at = modules.findIndex((m) => m.id === op.moduleId);
+        if (at < 0) {
+          // Модуль верхнего ряда: он пересобирается в конце, правка ждёт.
+          upperFronts.set(op.moduleId, op.front);
+          break;
+        }
+        modules[at] = { ...modules[at], front: op.front };
+        break;
+      }
+
       case 'set_option': {
         if (op.key === 'hardwareClass' && typeof op.value === 'string') {
           options.hardwareClass = op.value as Run['options']['hardwareClass'];
@@ -547,10 +595,26 @@ export function applyOps({ run, requirements, ops, openings = [] }: ApplyOpsInpu
    * `applyVariant` обнуляет `fill` намеренно (у карго и сушилки начинка
    * своя), поэтому пересчёт идёт ПОСЛЕ восстановления вариантов.
    */
+  /*
+   * Материал верхнего ряда переживает пересборку так же, как варианты:
+   * по идентификатору модуля. Сдвинули низ — верхний модуль другой, и
+   * материал честно возвращается к тому, что задано на весь ряд.
+   */
+  const upperFrontKept = new Map([
+    ...run.upperSegments
+      .flatMap((segment) => segment.modules)
+      .filter((unit) => unit.front)
+      .map((unit) => [unit.id, unit.front!] as const),
+    ...Array.from(upperFronts.entries()),
+  ] as const);
+
   nextRun.upperSegments = nextRun.upperSegments.map((segment) => {
     const restored = segment.modules.map((unit) => {
       const kept = upperVariants.get(unit.id);
-      return kept && !unit.appliance ? applyVariant(unit, kept) : unit;
+      const withVariant = kept && !unit.appliance ? applyVariant(unit, kept) : unit;
+      const front = upperFronts.get(unit.id) ?? upperFrontAll ?? upperFrontKept.get(unit.id);
+      const closed = !withVariant.appliance || withVariant.builtIn;
+      return front && closed ? { ...withVariant, front } : withVariant;
     });
 
     return {

@@ -2,7 +2,14 @@ import { APPLIANCE_SLOTS } from './modules';
 import { MODULE_VARIANTS } from './moduleVariants';
 import { sectionSpec } from './sections';
 import type { RunModuleLike } from '@/lib/kitchen';
-import type { ApplianceKind, ModuleVariantKind, SectionKind } from '@/types/millwork';
+import { FRONT_BASES, FRONT_FINISHES, FRAME_WIDTH_MM } from './frontMaterial';
+import type {
+  ApplianceKind,
+  FrontBase,
+  FrontFinish,
+  ModuleVariantKind,
+  SectionKind,
+} from '@/types/millwork';
 
 /**
  * ЧТО У КАЖДОГО МОДУЛЯ ЗА ФАСАДОМ — СЛОВАМИ ДЛЯ ВИЗУАЛИЗАЦИИ.
@@ -214,8 +221,47 @@ export function describeFront(unit: RunModuleLike): FrontDescription {
    * нарисует полки сквозь дверцу.
    */
   const inside = fillText(unit);
+  const material = materialText(unit);
 
-  return { fromMm: from, toMm: to, text: inside ? `${text}; ${inside}` : text, drawerFronts };
+  const parts = [text, inside, material].filter(Boolean);
+  return { fromMm: from, toMm: to, text: parts.join('; '), drawerFronts };
+}
+
+/**
+ * МАТЕРИАЛ ФАСАДА СЛОВАМИ.
+ *
+ * Наполнение промпт описывает числами — полки по высотам, ящики по числу
+ * фронтов. Материал до сих пор не описывался вовсе, и модель красила
+ * гарнитур по своему усмотрению: клиент выбрал эмаль, а на картинке
+ * ламинат под дерево.
+ *
+ * Филёнчатый описывается РАМОЙ И ВСТАВКОЙ отдельно, с шириной обвязки:
+ * «филёнчатый фасад» модель рисует гладкой панелью с намёком на кант.
+ */
+function materialText(unit: RunModuleLike): string {
+  const front = unit.front;
+  if (!front) return '';
+
+  // Прибор без фасада материала не имеет: описывать нечего.
+  if (unit.appliance && unit.builtIn === false) return '';
+
+  const base = FRONT_BASES[front.base as FrontBase]?.title ?? front.base;
+  const finish = FRONT_FINISHES[front.finish as FrontFinish]?.title.toLowerCase() ?? front.finish;
+  const color = /^#[0-9a-f]{6}$/i.test(front.colorHex ?? '') ? `, цвет ${front.colorHex}` : '';
+
+  if (front.construct === 'framed') {
+    return (
+      `материал: ${base}, ФИЛЁНЧАТЫЙ — обвязка (рама) шириной ${FRAME_WIDTH_MM} мм по контуру ` +
+      `и утопленная вставка внутри неё, поверхность ${finish}${color}. ` +
+      'НЕ гладкая панель: рама и вставка лежат в разных плоскостях'
+    );
+  }
+
+  if (front.construct === 'radius') {
+    return `материал: ${base}, РАДИУСНЫЙ — фасад гнутый по дуге, поверхность ${finish}${color}`;
+  }
+
+  return `материал: ${base}, цельная гладкая панель, поверхность ${finish}${color}`;
 }
 
 /** Все модули ряда, сверху вниз по рядам и слева направо. */

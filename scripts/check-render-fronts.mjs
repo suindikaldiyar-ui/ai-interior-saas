@@ -108,6 +108,27 @@ async function main() {
 
   console.log(picked ? '  состав: витрина с подсветкой поставлена' : '  ПЛОХО витрину поставить не удалось');
 
+  /*
+   * ── Материал: готовый дизайн на весь ряд ──
+   *
+   * Филёнчатая эмаль — самый требовательный случай: без описания рамы и
+   * вставки модель рисует гладкую панель. Ставим её ДО отрисовки, иначе
+   * живой прогон подтверждает только наполнение.
+   */
+  // Дизайны живут на шаге состава — туда и обратно.
+  await page.getByRole('button', { name: /Состав/ }).first().click();
+  await sleep(900);
+  const design = page.locator('[data-design="classic-framed"]');
+  if ((await design.count()) > 0) {
+    await design.first().click();
+    await sleep(1200);
+    console.log('  материал: филёнчатая эмаль применена ко всему ряду');
+  } else {
+    console.log('  ПЛОХО кнопки дизайна нет');
+  }
+  await page.getByRole('button', { name: /Результат/ }).first().click();
+  await sleep(1400);
+
   /* ── Чертёж этого состава — для сверки глазами ── */
   const sheet = page.locator('[data-view="elevation"]').first();
   await sheet.screenshot({ path: `${OUT}/drawing.png` }).catch(() => undefined);

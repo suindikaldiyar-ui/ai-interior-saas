@@ -153,6 +153,19 @@ export default function KitchenScene({
           frontType: unit.frontType,
           drawerCount: unit.drawerCount,
           /*
+           * Материал фасада: база, конструкция, фактура, цвет. Наполнение
+           * промпт описывает числами, а материал до этого не описывался
+           * вовсе — и модель красила гарнитур по своему усмотрению.
+           */
+          front: unit.front
+            ? {
+                base: unit.front.base,
+                construct: unit.front.construct,
+                finish: unit.front.finish,
+                colorHex: unit.front.colorHex,
+              }
+            : undefined,
+          /*
            * Наполнение: точные полки и штанги. Без них модель расставляет
            * свои, и клиент видит на картинке не то, что двигал на чертеже.
            * В промпт они попадут только у модулей с видимым нутром.
@@ -188,6 +201,16 @@ export default function KitchenScene({
             frontType: unit.frontType,
             drawerCount: unit.drawerCount,
             variant: unit.variant,
+            // Верх может быть другого материала, чем низ: так собраны
+            // половина готовых дизайнов.
+            front: unit.front
+              ? {
+                  base: unit.front.base,
+                  construct: unit.front.construct,
+                  finish: unit.front.finish,
+                  colorHex: unit.front.colorHex,
+                }
+              : undefined,
             /*
              * Наполнение: точные полки и штанги. Без них модель расставляет
              * свои, и клиент видит на картинке не то, что двигал на чертеже.

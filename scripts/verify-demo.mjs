@@ -1193,6 +1193,129 @@ try {
     await hand.close();
   }
 
+
+  /* ── Материал: выбрал — увидел в сцене ── */
+
+  /*
+   * Главное в этом заходе и единственное, что нельзя проверить на движке:
+   * фасад в сцене обязан поменяться НЕМЕДЛЕННО. `frameloop="demand"` не
+   * перерисовывает кадр сам — материал сменился бы в памяти, а на экране
+   * остался прежний, и никакой расчёт этого не заметил бы.
+   *
+   * Поэтому сравниваются ПИКСЕЛИ канваса: снимок до и снимок после.
+   */
+  {
+    const look = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    await look.goto(`${BASE}/demo`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+    await until(async () => (await look.getByRole('button', { name: /Результат/ }).count()) > 0);
+
+    // Выделяем модуль лентой состава — надёжнее, чем попадать в мебель.
+    await look.getByRole('button', { name: /Состав/ }).first().click();
+    await sleep(800);
+    await look
+      .locator('button[draggable="true"]')
+      .filter({ hasText: 'Дверца' })
+      .first()
+      .click();
+    await sleep(500);
+
+    check(
+      'у выделенного модуля есть выбор материала',
+      (await look.locator('[data-front-material]').count()) > 0,
+    );
+    check(
+      'и в нём три независимых атрибута',
+      (await look.locator('[data-front-base]').count()) === 5 &&
+        (await look.locator('[data-front-finish]').count()) === 3,
+      `баз ${await look.locator('[data-front-base]').count()}, фактур ${await look
+        .locator('[data-front-finish]')
+        .count()}`,
+    );
+
+    /*
+     * ЛДСП пилится только прямыми: радиуса и филёнки у неё нет в списке
+     * вовсе. Серая кнопка была бы вопросом «почему нельзя», а задать его
+     * на встрече с клиентом некому.
+     */
+    await look.locator('[data-front-base="ldsp"]').first().click();
+    await sleep(400);
+    check(
+      'у ЛДСП в списке только цельный фасад',
+      (await look.locator('[data-front-construct]').count()) === 1,
+      `конструкций ${await look.locator('[data-front-construct]').count()}`,
+    );
+    check(
+      'и рядом сказано почему',
+      (await look.getByText(/только цельный/).count()) > 0,
+    );
+
+    await look.locator('[data-front-base="mdf_enamel"]').first().click();
+    await sleep(600);
+    check(
+      'у эмали появляются филёнка и радиус',
+      (await look.locator('[data-front-construct]').count()) === 3,
+      `конструкций ${await look.locator('[data-front-construct]').count()}`,
+    );
+
+    /* ── Сцена ── */
+    await look.getByRole('button', { name: /Результат/ }).first().click();
+    await sleep(1400);
+    await look.getByRole('button', { name: '3D', exact: true }).click();
+    await until(async () => (await look.locator('canvas').count()) > 0, 30_000);
+    await sleep(2500);
+
+    const shot = () =>
+      look.evaluate(() => {
+        const canvas = document.querySelector('canvas');
+        if (!(canvas instanceof HTMLCanvasElement)) return '';
+        return canvas.toDataURL('image/jpeg', 0.6);
+      });
+
+    check(
+      'материал выбирается там же, где стоит сцена',
+      (await look.locator('[data-front-material]').count()) > 0,
+    );
+
+    const before = await shot();
+    check('кадр сцены снимается', before.length > 1000, `${Math.round(before.length / 1024)} КБ`);
+
+    // Матовая ЛДСП → глянцевая эмаль: разница обязана быть видимой.
+    await look.locator('[data-front-base="mdf_enamel"]').first().click();
+    await sleep(1200);
+    await look.locator('[data-front-finish="gloss"]').first().click();
+    await sleep(1500);
+
+    const after = await shot();
+    check(
+      'смена материала меняет картинку в сцене',
+      before !== after && after.length > 1000,
+      before === after ? 'кадр не изменился' : 'кадр другой',
+    );
+
+    /*
+     * И это именно перерисовка, а не случайный дребезг: два снимка подряд
+     * без единого действия обязаны совпасть. Без этой пары предыдущая
+     * проверка проходила бы на любой мигающей сцене.
+     */
+    const again = await shot();
+    check(
+      'а без правок кадр не меняется сам по себе',
+      again === after,
+      again === after ? '' : 'сцена дрожит',
+    );
+
+    // Филёнка: рама и вставка — это другая геометрия, а не другой цвет.
+    const flat = await shot();
+    await look.locator('[data-front-construct="framed"]').first().click();
+    await sleep(1600);
+    check(
+      'филёнка меняет картинку отдельно от цвета',
+      (await shot()) !== flat,
+    );
+
+    await look.close();
+  }
+
   await survey.context().setOffline(false);
   await survey.close();
 

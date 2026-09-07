@@ -29,6 +29,13 @@ type Props = {
   depth: number;
   thickness: number;
   parts: CabinetParts;
+  /**
+   * Материал ЭТОГО фасада.
+   *
+   * У каждого модуля он свой, а `parts.front` — общий на сцену: открытая
+   * створка иначе меняла бы цвет в момент открывания.
+   */
+  frontMaterial?: THREE.MeshStandardMaterial;
   /** Зазор вокруг полотна, метры. По нему читается щель между фасадами. */
   gap: number;
   /** Ручка-профиль по верхней кромке вместо накладной скобы. */
@@ -57,6 +64,7 @@ export default function InteractiveDoor({
   depth,
   thickness,
   parts,
+  frontMaterial,
   gap,
   integratedHandle,
   onActive,
@@ -152,7 +160,7 @@ export default function InteractiveDoor({
         <>
       <mesh
         geometry={parts.box}
-        material={parts.front}
+        material={frontMaterial ?? parts.front}
         position={[panelX, 0, thickness / 2]}
         scale={[width - 2 * gap, height - 2 * gap, thickness]}
         castShadow
