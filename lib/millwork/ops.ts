@@ -10,6 +10,13 @@ import { buildUpperRow, fillGap } from './layout';
 import { assertNoOverlap, assertRunFits, widthOverflowMm } from './invariants';
 import { runFingerprint } from './fingerprint';
 import { defaultFill, hingeSide } from './fill';
+import {
+  moveConflict,
+  moveRefusal,
+  placeFree,
+  placementFor,
+  snapMove,
+} from './freeRun';
 import { SECTION_SPECS } from './sections';
 import { allowsAppliance, allowsSection, applianceRefusal, sectionRefusal } from './zones';
 import { MODULE_VARIANTS, applyVariant, variantsForModule } from './moduleVariants';
@@ -184,6 +191,36 @@ export function applyOps({ run, requirements, ops, openings = [] }: ApplyOpsInpu
           created.builtIn = (requirements.fridgeType ?? 'built_in') === 'built_in';
         }
 
+
+        /*
+         * В СВОБОДНОЙ СБОРКЕ У МОДУЛЯ ЕСТЬ МЕСТО, А НЕ ТОЛЬКО ПОРЯДОК.
+         *
+         * Удалённый посреди ряда модуль оставляет дырку там, где стоял:
+         * ряд не схлопывается. Значит добавлять надо В ПРОМЕЖУТОК —
+         * сначала за выделенным модулем, куда человек и показывал, потом
+         * в первый подходящий слева направо.
+         */
+        if (requirements.mode === 'free') {
+          const at0 = placementFor(modules, run.lengthMm, width, op.afterModuleId);
+          if (at0 === null) {
+            warnings.push(
+              `Некуда поставить модуль ${width} мм: ` +
+                `свободные места ряда уже, чем он.`,
+            );
+            break;
+          }
+          created.offsetMm = at0;
+          /*
+           * Вариант применяется ЗДЕСЬ ЖЕ, одной операцией.
+           *
+           * Иначе «+» ставит пустое место, а начинку ему выбирают вторым
+           * жестом на другом экране — и половина модулей остаётся
+           * дверцами просто потому, что второй жест никто не сделал.
+           */
+          modules.push(op.variant ? applyVariant(created, op.variant) : created);
+          break;
+        }
+
         const at = op.afterModuleId
           ? modules.findIndex((m) => m.id === op.afterModuleId)
           : modules.length - 1;
@@ -255,6 +292,31 @@ export function applyOps({ run, requirements, ops, openings = [] }: ApplyOpsInpu
         if (over > 0) {
           warnings.push(`${wanted} мм не помещается: ряд длиннее стены на ${over} мм.`);
           break;
+        }
+
+        /*
+         * И НЕ НАЕЗЖАЕТ НА СОСЕДА.
+         *
+         * Проверка выше отвечает только за стену: в свободной сборке
+         * между модулями бывает пустое место, и «в стену помещается» не
+         * значит «здесь помещается». Растущий модуль съел бы соседа,
+         * а `assertRunFits` уронила бы всю правку исключением.
+         */
+        if (requirements.mode === 'free') {
+          const grown = { ...modules[at], widthMm: wanted };
+          const conflict = moveConflict(
+            modules.map((m) => (m.id === grown.id ? grown : m)),
+            grown.id,
+            grown.offsetMm,
+            run.lengthMm,
+          );
+          if (conflict) {
+            warnings.push(
+              `${wanted} мм не встают: справа «${conflict.blockedBy.label}», ` +
+                `не хватает ${conflict.overlapMm} мм.`,
+            );
+            break;
+          }
         }
 
         modules[at] = { ...modules[at], widthMm: wanted };
@@ -344,6 +406,40 @@ export function applyOps({ run, requirements, ops, openings = [] }: ApplyOpsInpu
       }
 
       case 'move_module': {
+        /*
+         * ДВА ВИДА ПЕРЕНОСА.
+         *
+         * `afterModuleId` — перестановка в ПОРЯДКЕ: так правит модель и
+         * так двигали модули в раскладке по шаблону, где позиция всё равно
+         * пересчитается из суммы ширин.
+         *
+         * `offsetMm` — перенос НА МЕСТО, и это то, что делает рука
+         * мебельщика в свободной сборке: модуль едет вдоль ряда шагом
+         * 50 мм и встаёт туда, где пусто. Соседи при этом не двигаются.
+         */
+        if (op.offsetMm !== undefined) {
+          const at = modules.findIndex((m) => m.id === op.moduleId);
+          if (at < 0) {
+            warnings.push(`Модуль ${op.moduleId} не найден.`);
+            break;
+          }
+
+          const unit = modules[at];
+          const wanted = Math.min(
+            Math.max(0, snapMove(op.offsetMm)),
+            Math.max(0, run.lengthMm - unit.widthMm),
+          );
+
+          const conflict = moveConflict(modules, unit.id, wanted, run.lengthMm);
+          if (conflict) {
+            warnings.push(moveRefusal(conflict));
+            break;
+          }
+
+          modules[at] = { ...unit, offsetMm: wanted };
+          break;
+        }
+
         const from = modules.findIndex((m) => m.id === op.moduleId);
         const to = modules.findIndex((m) => m.id === op.afterModuleId);
         if (from < 0 || to < 0 || from === to) break;
@@ -379,7 +475,7 @@ export function applyOps({ run, requirements, ops, openings = [] }: ApplyOpsInpu
    * а незаполненный остаток показывается числом.
    */
   const free = requirements.mode === 'free';
-  modules = free ? reindex(modules) : rebalance(modules, run.lengthMm);
+  modules = free ? placeFree(modules) : rebalance(modules, run.lengthMm);
 
   /*
    * Наполнение пересчитывается там, где оно слетело со сменой секции:

@@ -88,7 +88,13 @@ import {
   frontRules,
   frontsBlock,
 } from '../lib/millwork/promptFronts';
-import { MODULE_VARIANTS, applyVariant } from '../lib/millwork/moduleVariants';
+import {
+  MODULE_VARIANTS,
+  applyVariant,
+  currentVariant,
+  variantsToAdd,
+} from '../lib/millwork/moduleVariants';
+import { gapsIn } from '../lib/millwork/freeRun';
 import { assertNoOverlap, moduleOverlaps } from '../lib/millwork/invariants';
 import { configurationFingerprint } from '../lib/millwork/fingerprint';
 import { panelMaterials } from '../lib/millwork/panels';
@@ -4314,6 +4320,143 @@ console.log('\nСвободная сборка');
     'и перезаполнение места в режиме шаблона осталось',
     shrunk.residualMm === 0 && runWidthSum(shrunk) === shrunk.lengthMm,
     `${runWidthSum(shrunk)}/${shrunk.lengthMm} мм`,
+  );
+}
+
+
+/* ──────────────  Перетаскивание модулей в свободной сборке  ────────────── */
+
+/*
+ * Мебельщик собирает ряд так, как привык: ставит и двигает. Здесь
+ * проверяется то, что отличает перенос от перестановки в списке: у модуля
+ * есть МЕСТО, соседи при переносе не двигаются, занятое место отказывает
+ * числом, а шаг — 50 мм, тот же, что у ширины.
+ */
+console.log('\nПеренос модуля вдоль ряда');
+{
+  const FREE: RunRequirements = { ...REQ, mode: 'free', appliances: [] };
+  const shell = { ...baseInput, requirements: FREE };
+  const step = (run: Run, ops: MillworkOp[]) =>
+    applyOps({ run, requirements: FREE, ops, openings: OPENINGS });
+
+  let run = buildRun(shell);
+  run = step(run, [{ op: 'add_module', kind: 'tall', appliance: 'fridge' }]);
+  run = step(run, [{ op: 'add_module', kind: 'base', widthMm: 450 }]);
+
+  const order = (r: Run) => r.modules.map((m) => m.label).join(' → ');
+  const before = order(run);
+  const fpBefore = configurationFingerprint(run.modules);
+
+  /* 1. Перенос меняет порядок модулей и отпечаток. */
+  const fridge = run.modules.find((m) => m.appliance === 'fridge')!;
+  const moved = step(run, [{ op: 'move_module', moduleId: fridge.id, offsetMm: 2000 }]);
+  check(
+    'перетаскивание меняет порядок модулей',
+    order(moved) !== before,
+    `${before}  ⇒  ${order(moved)}`,
+  );
+  check(
+    'и отпечаток вместе с ним',
+    configurationFingerprint(moved.modules) !== fpBefore,
+    `${fpBefore} → ${configurationFingerprint(moved.modules)}`,
+  );
+  check('перенос не рождает пересечений', moduleOverlaps(moved).length === 0);
+
+  /* 2. Соседи не раздвигаются: место, где стоял модуль, остаётся пустым. */
+  check(
+    'соседи стоят на своих местах, а на прежнем — пусто',
+    moved.modules.find((m) => m.widthMm === 450)?.offsetMm === 600 &&
+      gapsIn(moved.modules, moved.lengthMm).some((g) => g.fromMm === 0),
+    gapsIn(moved.modules, moved.lengthMm)
+      .map((g) => `${g.fromMm}–${g.toMm}`)
+      .join(', '),
+  );
+
+  /* 3. Занятое место отказывает с расстоянием. */
+  const onto = step(moved, [
+    { op: 'move_module', moduleId: moved.modules[1].id, offsetMm: 600 },
+  ]);
+  check(
+    'перенос в занятое место отклоняется',
+    onto.modules.find((m) => m.appliance === 'fridge')?.offsetMm === 2000,
+  );
+  check(
+    'и отказ называет перекрытие в миллиметрах',
+    onto.warnings.some((w) => /перекрытие \d+ мм/.test(w)),
+    onto.warnings[0] ?? 'отказа нет',
+  );
+  check(
+    'и подсказывает ближайшее свободное место',
+    onto.warnings.some((w) => /Ближайшее свободное место — \d+ мм/.test(w)),
+    onto.warnings[0] ?? '',
+  );
+
+  /* 4. Шаг 50 мм и стена как граница. */
+  const odd = step(run, [{ op: 'move_module', moduleId: fridge.id, offsetMm: 2437 }]);
+  check(
+    'позиция садится на шаг 50 мм',
+    odd.modules.find((m) => m.appliance === 'fridge')?.offsetMm === 2450,
+    `${odd.modules.find((m) => m.appliance === 'fridge')?.offsetMm} мм`,
+  );
+  const past = step(run, [{ op: 'move_module', moduleId: fridge.id, offsetMm: 99_000 }]);
+  const at = past.modules.find((m) => m.appliance === 'fridge')!;
+  check(
+    'за стену модуль не уезжает',
+    at.offsetMm + at.widthMm <= past.lengthMm,
+    `${at.offsetMm}+${at.widthMm} при стене ${past.lengthMm}`,
+  );
+
+  /* 5. «+» ставит ГОТОВЫЙ модуль: вариант приезжает вместе с ним. */
+  const ready = step(buildRun(shell), [
+    { op: 'add_module', kind: 'base', widthMm: 400, variant: 'cargo' },
+  ]);
+  check(
+    '«+» ставит готовый модуль за один жест',
+    ready.modules.length === 1 && currentVariant(ready.modules[0]) === 'cargo',
+    ready.modules[0] ? `${ready.modules[0].label} ${ready.modules[0].widthMm}` : 'пусто',
+  );
+
+  const offer = variantsToAdd('kitchen', 3800);
+  check(
+    'на пустое место предлагают готовые модули, а не ширины',
+    offer.length >= 4 && offer.every((o) => o.widthMm >= 150),
+    offer.map((o) => `${o.spec.title} ${o.widthMm}`).join(', '),
+  );
+  check(
+    'ниши под приборы среди них нет: прибор приходит из состава',
+    offer.every((o) => !o.spec.impliesAppliance),
+  );
+  check(
+    'узкое место предлагает только то, что в него влезает',
+    variantsToAdd('kitchen', 200).every((o) => o.spec.minWidthMm <= 200),
+    variantsToAdd('kitchen', 200).map((o) => o.spec.title).join(', ') || 'ничего',
+  );
+  check(
+    'в спальне кухонных модулей не предлагают',
+    variantsToAdd('bedroom', 3000).every((o) => !['cargo', 'sink_base'].includes(o.spec.kind)),
+    variantsToAdd('bedroom', 3000).map((o) => o.spec.title).join(', '),
+  );
+
+  /* 6. Угол вручную не собирается, и отказ это объясняет. */
+  let cornerRefusal = '';
+  try {
+    buildComposition({
+      kind: 'corner_l',
+      requirements: FREE,
+      ceilingHeightMm: 2700,
+      walls: [
+        { id: 'a', lengthMm: 3000, openings: [] },
+        { id: 'b', lengthMm: 2400, openings: [] },
+      ],
+      comms: [],
+    });
+  } catch (error) {
+    cornerRefusal = (error as Error).message;
+  }
+  check(
+    'угол в свободной сборке отказывает словами, а не пустым рядом',
+    /нельзя собрать вручную/.test(cornerRefusal),
+    cornerRefusal.slice(0, 80),
   );
 }
 

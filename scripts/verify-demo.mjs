@@ -468,9 +468,10 @@ try {
 
     /*
      * Лента состава — надёжный способ выделить конкретный модуль: у неё
-     * подписи и обычные кнопки. Клик по модулю НА ЧЕРТЕЖЕ для этого не
-     * годится: у модулей без техники он сейчас не выделяет (см. отчёт),
-     * и тест ловил бы этот дефект вместо своего.
+     * подписи и обычные кнопки, и не нужно попадать пальцем в мебель на
+     * листе. Клик по чертежу проверяется отдельно, в разделе свободной
+     * сборки: раньше он не работал у модулей без техники — указатель
+     * перехватывали выноски.
      *
      * «Дверца» — обычный модуль без прибора, у него выбор есть.
      * «Холодильник» — ниша под технику, выбора у неё нет по замыслу.
@@ -1006,6 +1007,190 @@ try {
     );
 
     await own.close();
+  }
+
+
+  /* ── Свободная сборка: перетаскивание и возврат ── */
+
+  /*
+   * Три ловушки, каждая из которых уже стоила времени: порог против тапа
+   * (клик по технике переставлял кухню), эмулированный указатель, на
+   * котором `setPointerCapture` бросает исключение, и `frameloop="demand"`
+   * в сцене. Проверяются они здесь, в настоящем браузере: на движке
+   * порога не существует вовсе — он живёт в пикселях.
+   */
+  {
+    const hand = await browser.newPage({
+      viewport: { width: 1440, height: 1000 },
+      // Планшет замерщика: указатель эмулированный, как на объекте.
+      hasTouch: true,
+    });
+    await hand.goto(`${BASE}/demo`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+    await until(async () => (await hand.getByRole('button', { name: /Шаблон/ }).count()) > 0);
+
+    await hand.getByRole('button', { name: /Шаблон/ }).first().click();
+    await sleep(500);
+    await hand.locator('[data-free-mode]').click();
+    await sleep(900);
+
+    /* «+» ставит ГОТОВЫЙ модуль, а не пустое место. */
+    const ready = hand.locator('[data-add-variant]');
+    check(
+      '«+» предлагает готовые модули, а не только ширины',
+      (await ready.count()) >= 4,
+      `${await ready.count()} шт.`,
+    );
+
+    const cargo = hand.locator('[data-add-variant="cargo"]');
+    const cargoLabel = (await cargo.count()) > 0 ? await cargo.innerText() : '';
+    check(
+      'и подписаны модулем с шириной: «Карго 400»',
+      /Карго\s*\d+/.test(cargoLabel),
+      cargoLabel || 'нет карго',
+    );
+
+    await cargo.click();
+    await sleep(900);
+    check(
+      'один жест — и в ряду стоит именно этот модуль',
+      (await hand.locator('button[draggable="true"]').filter({ hasText: 'Карго' }).count()) === 1,
+    );
+
+    /* Ходовые ширины на виду, остальные за «ещё». */
+    const shown = await hand.locator('[data-add-width]').count();
+    check('ширин на виду немного', shown > 0 && shown <= 6, `${shown} шт.`);
+    await hand.locator('[data-more-widths]').click();
+    await sleep(400);
+    check(
+      'а за «ещё» открываются остальные',
+      (await hand.locator('[data-add-width]').count()) > shown,
+      `${shown} → ${await hand.locator('[data-add-width]').count()}`,
+    );
+
+    // Ставим второй модуль, чтобы было что двигать и во что упираться.
+    await hand.locator('[data-add-variant="drawers"]').click();
+    await sleep(900);
+
+    /* ── Перетаскивание на чертеже ── */
+    await hand.getByRole('button', { name: /Результат/ }).first().click();
+    await sleep(1400);
+    await hand.getByRole('button', { name: 'Чертёж', exact: true }).click();
+    await sleep(900);
+
+    /*
+     * Позиции модулей НИЖНЕГО ряда прямо с листа. Верхний ряд руками не
+     * двигают — он пересобирается из нижнего.
+     */
+    const orderOf = async () =>
+      hand.evaluate(() =>
+        Array.from(document.querySelectorAll('[data-module-id^="base-"]'))
+          .map((el) => el.getAttribute('data-module-offset'))
+          .join(','),
+      );
+
+    /*
+     * Тянем ПОСЛЕДНИЙ модуль нижнего ряда и вправо: справа от него пустая
+     * стена, поэтому жест обязан пройти. Первый модуль упёрся бы в соседа
+     * — это тоже верное поведение, но проверяется оно на движке, где
+     * расстояние известно точно.
+     */
+    const target = hand.locator('[data-module-id^="base-"]').last();
+    /*
+     * Лист длиннее окна: без прокрутки модуль лежит ниже видимой области,
+     * а мышь Playwright работает в координатах ОКНА — жест уходил мимо
+     * чертежа и «ничего не двигалось» при полностью рабочем коде.
+     */
+    await target.scrollIntoViewIfNeeded();
+    await sleep(400);
+    const box = await target.boundingBox();
+
+    /*
+     * ТАП — ЭТО ВЫБОР, А НЕ ПЕРЕНОС.
+     *
+     * Нажатие без движения не должно двигать ряд ни на миллиметр: именно
+     * так клик по холодильнику однажды переставлял всю кухню.
+     */
+    const beforeTap = await orderOf();
+    if (box) {
+      await hand.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await hand.mouse.down();
+      await hand.mouse.move(box.x + box.width / 2 + 2, box.y + box.height / 2);
+      await hand.mouse.up();
+    }
+    await sleep(700);
+    check('тап по модулю не двигает его', (await orderOf()) === beforeTap);
+
+    /*
+     * ЗАТО ВЫДЕЛЯЕТ — и это тот самый давний дефект «клик по модулю без
+     * техники ничего не делает». Причина была не в модуле: поверх него
+     * лежали ВЫНОСКИ, и линия с обводкой ловила указатель по всей длине.
+     * У техники зона захвата шире, поэтому в неё удавалось попасть мимо
+     * выноски — отсюда и «выделяется только техника».
+     */
+    check(
+      'а выделяет: обычный модуль на чертеже отзывается на нажатие',
+      (await hand.locator('[data-variant]').count()) > 0 ||
+        (await hand.getByRole('button', { name: 'Удалить', exact: true }).count()) === 1,
+    );
+
+    /*
+     * А перетаскивание — двигает. Мышь Playwright — это ровно тот
+     * эмулированный указатель, на котором `setPointerCapture` бросает
+     * исключение: обработчик обязан работать без него.
+     */
+    if (box) {
+      await hand.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await hand.mouse.down();
+      for (let i = 1; i <= 6; i += 1) {
+        await hand.mouse.move(box.x + box.width / 2 + i * 40, box.y + box.height / 2);
+        await sleep(60);
+      }
+      await hand.mouse.up();
+    }
+    await sleep(1000);
+    const afterDrag = await orderOf();
+    check(
+      'перетаскивание работает на эмулированном указателе',
+      afterDrag !== beforeTap,
+      `${beforeTap} ⇒ ${afterDrag}`,
+    );
+    check(
+      'и модуль встал на шаг 50 мм',
+      afterDrag.split(',').every((mm) => Number(mm) % 50 === 0),
+      afterDrag,
+    );
+
+    /* ── Возврат собранного ряда ── */
+    await hand.getByRole('button', { name: /Шаблон/ }).first().click();
+    await sleep(600);
+    const built = await hand.locator('main button[aria-pressed]:not([disabled])').count();
+    if (built > 0) {
+      await hand.locator('main button[aria-pressed]:not([disabled])').first().click();
+      await sleep(900);
+    }
+
+    check(
+      'уход в шаблон говорит, что собранный ряд заменён',
+      (await hand.getByText(/собранный руками/).count()) > 0,
+    );
+
+    await hand.getByRole('button', { name: /Шаблон/ }).first().click();
+    await sleep(600);
+    const undo = hand.locator('[data-undo-free]');
+    check('и даёт вернуть его одной кнопкой', (await undo.count()) === 1);
+
+    if ((await undo.count()) === 1) {
+      await undo.click();
+      await sleep(1000);
+      await hand.getByRole('button', { name: /Состав/ }).first().click();
+      await sleep(800);
+      check(
+        'возврат восстанавливает именно ручной ряд',
+        (await hand.locator('button[draggable="true"]').filter({ hasText: 'Карго' }).count()) === 1,
+      );
+    }
+
+    await hand.close();
   }
 
   await survey.context().setOffline(false);

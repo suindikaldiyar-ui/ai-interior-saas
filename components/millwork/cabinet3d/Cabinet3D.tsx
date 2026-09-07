@@ -57,6 +57,8 @@ type Props = {
   onSelectModule?: (moduleId: string) => void;
   /** Ширина, вытянутая в сцене. Шаг — 50 мм. */
   onWidth?: (moduleId: string, widthMm: number) => void;
+  /** Перенос модуля вдоль ряда: свободная сборка. */
+  onMoveModule?: (moduleId: string, offsetMm: number) => void;
 };
 
 export default function Cabinet3D({
@@ -71,6 +73,7 @@ export default function Cabinet3D({
   selectedModuleId,
   onSelectModule,
   onWidth,
+  onMoveModule,
 }: Props) {
   const groupRef = useRef<THREE.Group>(null);
   const openParts = useInteriorStore((s) => s.openParts);
@@ -365,7 +368,12 @@ export default function Cabinet3D({
         * обычных модулей — ширину техники диктует прибор, и тянуть её
         * значит обещать то, чего не бывает.
         */}
-      {selected && onWidth && !selected.entry.unit.appliance && (
+      {/*
+        * Ручки у выделенного модуля. Ширина не тянется у техники — её
+        * габарит диктует прибор; перенос доступен и ей: холодильник
+        * двигают по стене так же, как всё остальное.
+        */}
+      {selected && (onWidth || onMoveModule) && (
         <ModuleHandles
           x={selected.entry.x}
           y={selected.entry.y}
@@ -373,7 +381,15 @@ export default function Cabinet3D({
           heightM={selected.entry.heightM}
           depthM={selected.entry.depthM}
           widthMm={selected.entry.unit.widthMm}
-          onWidth={(widthMm) => onWidth(selected.entry.unit.id, widthMm)}
+          onWidth={(widthMm) =>
+            !selected.entry.unit.appliance && onWidth?.(selected.entry.unit.id, widthMm)
+          }
+          offsetMm={selected.entry.unit.offsetMm}
+          onMove={
+            onMoveModule
+              ? (mm) => onMoveModule(selected.entry.unit.id, mm)
+              : undefined
+          }
         />
       )}
 

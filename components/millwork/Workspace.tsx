@@ -303,6 +303,16 @@ export default function Workspace(props: WorkspaceProps) {
     composition: CompositionPatch;
     manualAnchors: NonNullable<RunRequirements['manualAnchors']>;
     editedRuns: Partial<Record<VariantKey, Run>>;
+    /**
+     * Режим сборки на момент снимка.
+     *
+     * Без него «вернуть» возвращало состав, но не путь: человек собирал
+     * ряд руками двадцать минут, уходил в готовое решение, нажимал
+     * «вернуть» — и получал шаблон с чужой раскладкой.
+     */
+    freeMode: boolean;
+    /** Сколько модулей было собрано руками: это и есть цена ухода. */
+    freeModules: number;
   } | null>(null);
 
   /*
@@ -604,6 +614,37 @@ export default function Workspace(props: WorkspaceProps) {
    * Молча выбросить посудомойку нельзя — клиент увидел бы не тот состав,
    * который заказывал.
    */
+  /**
+   * ПЕРЕНОС МОДУЛЯ ВДОЛЬ РЯДА — свободная сборка.
+   *
+   * Идёт через `applyOps`, как и всё остальное в свободной сборке: второй
+   * путь записи развёл бы отпечаток, а с ним чертёж, смету, раскрой и 3D.
+   * Отказ — не исключение, а строка: соседи не раздвигаются, поэтому
+   * упереться в стоящий рядом модуль это нормальный ход событий, а не
+   * поломка.
+   */
+  const moveModule = (moduleId: string, offsetMm: number) => {
+    const next = applyOps({
+      run: active.run,
+      requirements,
+      ops: [{ op: 'move_module', moduleId, offsetMm }],
+      openings: props.openings,
+    });
+
+    if (next.warnings.length > 0) {
+      setMoveNotice(next.warnings[0]);
+      return;
+    }
+
+    setMoveNotice(null);
+    dirty.current = true;
+    setEditedRuns((prev) => ({ ...prev, [active.key]: next }));
+    // Идентификатор выводится из позиции: подвинули — модуль стал другим id.
+    setSelectedId(
+      next.modules.find((m) => m.offsetMm === Math.round(offsetMm / 50) * 50)?.id ?? null,
+    );
+  };
+
   const moveAppliance = (appliance: ApplianceKind, centerMm: number) => {
     const next = { ...manualAnchors, [appliance]: centerMm };
 
@@ -839,6 +880,8 @@ export default function Workspace(props: WorkspaceProps) {
       composition,
       manualAnchors,
       editedRuns,
+      freeMode,
+      freeModules: freeMode ? active.run.modules.length : 0,
     });
 
     dirty.current = true;
@@ -910,12 +953,17 @@ export default function Workspace(props: WorkspaceProps) {
 
     dirty.current = true;
     setTemplateId(previous.templateId);
+    setFreeMode(previous.freeMode);
     setComposition(previous.composition);
     setManualAnchors(previous.manualAnchors);
     setEditedRuns(previous.editedRuns);
     setSelectedId(null);
+    setMoveNotice(
+      previous.freeModules > 0
+        ? `Вернули ряд, собранный руками: ${previous.freeModules} модулей.`
+        : 'Вернули то, что было до выбора решения.',
+    );
     setPrevious(null);
-    setMoveNotice('Вернули то, что было до выбора решения.');
   };
 
   /**
@@ -1427,7 +1475,30 @@ export default function Workspace(props: WorkspaceProps) {
                 Пустая стена {input.lengthMm} мм: добавляйте модули сами.
                 Готовое решение ниже — быстрый старт.
               </span>
+
+              {/*
+                * Отказ и предупреждение живут рядом с тем, на что нажали.
+                * Раньше эта строка стояла только на шаге состава — уход
+                * в шаблон СООБЩАЛ о замене ряда туда, где сообщение уже
+                * никто не видит.
+                */}
+              {previous?.freeMode && previous.freeModules > 0 && (
+                <button
+                  type="button"
+                  data-undo-free
+                  onClick={undoSolution}
+                  className="mw-btn mw-btn-ghost ml-auto"
+                >
+                  Вернуть собранный ряд
+                </button>
+              )}
             </div>
+
+            {moveNotice && (
+              <p className="mb-4 rounded-[var(--r-control)] bg-navy px-4 py-3 text-[13px] leading-snug text-graphiteMw">
+                {moveNotice}
+              </p>
+            )}
 
             <TemplatePicker
               lengthMm={input.lengthMm}
@@ -1435,6 +1506,30 @@ export default function Workspace(props: WorkspaceProps) {
               orgTemplates={props.orgTemplates}
               selectedId={templateId}
               onSelect={(t: RunTemplate) => {
+                /*
+                 * СОБРАННЫЙ РУКАМИ РЯД НЕ ИСЧЕЗАЕТ МОЛЧА.
+                 *
+                 * Человек собирал его двадцать минут, а готовое решение
+                 * считает раскладку заново — от ручной сборки не остаётся
+                 * ничего. Один клик не должен стоить этой работы, поэтому
+                 * снимок кладётся ДО замены, а рядом встаёт «вернуть».
+                 */
+                if (freeMode && active.run.modules.length > 0) {
+                  setPrevious({
+                    templateId,
+                    name: t.name,
+                    composition,
+                    manualAnchors,
+                    editedRuns,
+                    freeMode: true,
+                    freeModules: active.run.modules.length,
+                  });
+                  setMoveNotice(
+                    `Ряд, собранный руками (${active.run.modules.length} модулей), ` +
+                      `заменён решением «${t.name}». Вернуть — кнопкой на шаге «Шаблон».`,
+                  );
+                }
+
                 dirty.current = true;
                 setFreeMode(false);
                 setTemplateId(t.id);
@@ -1688,6 +1783,7 @@ export default function Workspace(props: WorkspaceProps) {
                 selectedModuleId={selectedId}
                 onSelectModule={setSelectedId}
                 onWidth={dragWidth}
+                onMoveModule={freeMode ? moveModule : undefined}
                 onItemId={setKitchenItemId}
               />
             </div>
@@ -1926,7 +2022,14 @@ export default function Workspace(props: WorkspaceProps) {
                    * «правку не приняли, и вот почему».
                    */
                   onFillReject: setMoveNotice,
-                  onMoveAppliance: moveAppliance,
+                  /*
+                   * В раскладке по шаблону двигают ПРИБОР (ручная позиция,
+                   * ряд пересобирается), в свободной сборке — МОДУЛЬ по
+                   * месту. Оба сразу невозможны: жест один, и он должен
+                   * означать одно.
+                   */
+                  onMoveAppliance: freeMode ? undefined : moveAppliance,
+                  onMoveModule: freeMode ? moveModule : undefined,
                 }}
               />
 

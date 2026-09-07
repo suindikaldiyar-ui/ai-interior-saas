@@ -174,6 +174,23 @@ export function buildComposition(input: BuildCompositionInput): Composition {
   const zone = zoneProfile(requirements.zone);
   const depthMm = zone.depthMm;
 
+  /*
+   * СВОБОДНАЯ СБОРКА УГЛОВ ПОКА НЕ УМЕЕТ.
+   *
+   * `buildRun` в свободном режиме возвращает пустой ряд — это законное
+   * состояние для одной прямой стены, но композиция из таких сегментов
+   * дала бы угловую кухню без единого модуля и с посчитанным углом.
+   * Отказ здесь честнее пустого результата: молчаливая пустота выглядит
+   * поломкой, а не «этого мы ещё не сделали».
+   */
+  if (requirements.mode === 'free' && kind !== 'linear') {
+    throw new Error(
+      `Форму «${kind}» пока нельзя собрать вручную: свободная сборка ` +
+        'работает на одной прямой стене. Возьмите готовое решение — ' +
+        'угол и П-образную считает раскладка.',
+    );
+  }
+
   const need = segmentCount(kind);
   const walls = input.walls.slice(0, need);
   const warnings: string[] = [];

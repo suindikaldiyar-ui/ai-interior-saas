@@ -8,6 +8,7 @@ import { TipOnMark } from './DrawingSymbols';
 import type { LeaderAnchor } from '@/lib/millwork/leaders';
 import { APPLIANCE_SLOTS, BASE_TOTAL_H, GEOMETRY, standardHeightMm } from '@/lib/millwork/modules';
 import { sectionSpec } from '@/lib/millwork/sections';
+import { moveConflict } from '@/lib/millwork/freeRun';
 import { zoneHeightMm, zoneProfile } from '@/lib/millwork/zones';
 import {
   addShelf,
@@ -80,6 +81,15 @@ type Props = {
    * она совпала с его планом.
    */
   onMoveAppliance?: (appliance: ApplianceKind, centerMm: number) => void;
+  /**
+   * Перенос ЛЮБОГО модуля вдоль ряда — свободная сборка.
+   *
+   * В раскладке по шаблону двигают только приборы: остальное считает
+   * `buildRun`, и подвинутая дверца всё равно вернулась бы на своё место
+   * при ближайшем пересчёте. В свободной сборке место модуля — это то,
+   * что человек задал руками, и двигается всё.
+   */
+  onMoveModule?: (moduleId: string, offsetMm: number) => void;
   /**
    * Варианты для выбранного места и цена относительно текущего.
    *
@@ -602,6 +612,7 @@ export default function ElevationDrawing({
   onFillChange,
   onFillReject,
   onMoveAppliance,
+  onMoveModule,
   variants = [],
   onVariant,
   compact = false,
@@ -695,7 +706,14 @@ export default function ElevationDrawing({
 
   /** Перенос прибора: подсветка будущего места и расстояние от левого угла. */
   const startMove = (event: React.PointerEvent, unit: Module) => {
-    if (!onMoveAppliance || !unit.appliance) return;
+    /*
+     * Свободная сборка двигает МОДУЛЬ по месту, раскладка по шаблону —
+     * ПРИБОР по ручной позиции. Жест один и тот же, порог и подсветка
+     * общие; разъезжаться этим двум путям нельзя, иначе на одном из них
+     * снова заведётся клик, переставляющий кухню.
+     */
+    const byModule = Boolean(onMoveModule);
+    if (!byModule && (!onMoveAppliance || !unit.appliance)) return;
     event.stopPropagation();
 
     const svg = (event.currentTarget as SVGGraphicsElement).ownerSVGElement;
@@ -715,6 +733,18 @@ export default function ElevationDrawing({
       const clamped = Math.min(Math.max(mm, half), Math.max(half, run.lengthMm - half));
       return Math.round(clamped / MOVE_STEP_MM) * MOVE_STEP_MM;
     };
+
+    /*
+     * ЗАНЯТОЕ МЕСТО ВИДНО ДО ОТПУСКАНИЯ.
+     *
+     * Соседи не раздвигаются, поэтому половина перетаскиваний упирается в
+     * стоящий рядом модуль. Узнать об этом из отказа ПОСЛЕ отпускания —
+     * значит тянуть наугад; подсветка меняет цвет прямо под пальцем.
+     */
+    const busyAt = (centerMm: number) =>
+      byModule
+        ? moveConflict(run.modules, unit.id, centerMm - half, run.lengthMm)
+        : null;
 
     let last = snap(unit.offsetMm + half);
     let frame: number | null = null;
@@ -738,11 +768,22 @@ export default function ElevationDrawing({
     const paint = (centerMm: number) => {
       const rect = ghostRect.current;
       const label = ghostLabel.current;
+      const busy = busyAt(centerMm);
+      const paint = busy ? 'var(--alert)' : 'var(--tape)';
+
       if (ghost.current) ghost.current.style.display = '';
-      if (rect) rect.setAttribute('x', String(padLeft + (centerMm - half) * scale));
+      if (rect) {
+        rect.setAttribute('x', String(padLeft + (centerMm - half) * scale));
+        rect.setAttribute('width', String(unit.widthMm * scale));
+        rect.setAttribute('fill', paint);
+        rect.setAttribute('stroke', paint);
+      }
       if (label) {
         label.setAttribute('x', String(padLeft + centerMm * scale));
-        label.textContent = `${Math.round(centerMm - half)} мм от угла`;
+        label.setAttribute('fill', paint);
+        label.textContent = busy
+          ? `занято: ${busy.blockedBy.label}`
+          : `${Math.round(centerMm - half)} мм от угла`;
       }
     };
 
@@ -760,7 +801,9 @@ export default function ElevationDrawing({
     const onEnd = () => {
       moveCleanup.current?.();
       // Не сдвинули — значит просто выбрали модуль. Ряд не трогаем.
-      if (dragged) onMoveAppliance(unit.appliance as ApplianceKind, last);
+      if (!dragged) return;
+      if (byModule) onMoveModule?.(unit.id, last - half);
+      else onMoveAppliance?.(unit.appliance as ApplianceKind, last);
     };
 
     window.addEventListener('pointermove', onMove);
@@ -811,11 +854,27 @@ export default function ElevationDrawing({
      * Вытяжка не перетаскивается: она обязана висеть над варочной и едет
      * за ней сама. Отдельная вытяжка — это ошибка монтажа, а не свобода.
      */
-    const movable = Boolean(onMoveAppliance && unit.appliance && unit.appliance !== 'hood');
+    const movable = isUpper
+      ? false
+      : onMoveModule
+        ? // Верхний ряд пересобирается из нижнего, его не двигают руками.
+          true
+        : Boolean(onMoveAppliance && unit.appliance && unit.appliance !== 'hood');
 
     return (
       <g
         key={`${isUpper ? 'u' : 'b'}-${unit.id}`}
+        /*
+         * Опознавательный признак модуля на чертеже. Нужен приёмке:
+         * перенос проверяется по СОСТАВУ и ПОРЯДКУ на самом листе, а не
+         * по состоянию внутри React — именно так ловится расхождение
+         * между тем, что посчитано, и тем, что человек видит.
+         *
+         * В макетах галереи его нет намеренно: там ДЕСЯТОК чертежей на
+         * одном экране, и признак ловил бы модули всех решений сразу.
+         */
+        data-module-id={compact ? undefined : unit.id}
+        data-module-offset={compact ? undefined : unit.offsetMm}
         onClick={onSelect ? () => onSelect(unit.id) : undefined}
         onPointerDown={movable ? (event) => startMove(event, unit) : undefined}
         style={{ cursor: movable ? 'ew-resize' : onSelect ? 'pointer' : 'default' }}

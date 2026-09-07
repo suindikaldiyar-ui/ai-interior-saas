@@ -486,7 +486,19 @@ export interface Variant {
 /* ─────────────────────────  Операции AI  ───────────────────────── */
 
 export type MillworkOp =
-  | { op: 'add_module'; kind: ModuleKind; widthMm?: number; afterModuleId?: string; appliance?: ApplianceKind }
+  /**
+   * Добавить модуль. `variant` задаёт НАЧИНКУ сразу: «+» в свободной
+   * сборке ставит готовый модуль (карго 400, витрину 600), а не пустое
+   * место, которому потом выбирают назначение вторым жестом.
+   */
+  | {
+      op: 'add_module';
+      kind: ModuleKind;
+      widthMm?: number;
+      afterModuleId?: string;
+      appliance?: ApplianceKind;
+      variant?: ModuleVariantKind;
+    }
   | { op: 'remove_module'; moduleId: string }
   | { op: 'replace_module'; moduleId: string; kind: ModuleKind; appliance?: ApplianceKind }
   | { op: 'set_width'; moduleId: string; widthMm: number }
@@ -495,7 +507,12 @@ export type MillworkOp =
   | { op: 'set_section'; moduleId: string; section: SectionKind }
   /** Сменить вариант места: карго вместо дверцы, сушилка над мойкой. */
   | { op: 'set_variant'; moduleId: string; variant: ModuleVariantKind }
-  | { op: 'move_module'; moduleId: string; afterModuleId: string }
+  /**
+   * Перенос модуля. `afterModuleId` — перестановка в порядке (так правит
+   * модель); `offsetMm` — перенос на место вдоль ряда, шагом 50 мм: так
+   * двигает модуль рука в свободной сборке. Соседи не раздвигаются.
+   */
+  | { op: 'move_module'; moduleId: string; afterModuleId?: string; offsetMm?: number }
   | { op: 'set_option'; key: 'upperToCeiling' | 'hardwareClass' | 'countertop' | 'hasUpper' | 'hasCornice'; value: string | boolean };
 
 export interface MillworkRequest {

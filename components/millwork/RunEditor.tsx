@@ -10,6 +10,8 @@ import {
 } from '@/lib/millwork/modules';
 import { widthOverflowMm } from '@/lib/millwork/invariants';
 import { freeSpaceMm } from '@/lib/millwork/layout';
+import { widestGapMm } from '@/lib/millwork/freeRun';
+import { variantsToAdd } from '@/lib/millwork/moduleVariants';
 import { SECTION_SPECS } from '@/lib/millwork/sections';
 import {
   zoneAppliances,
@@ -82,6 +84,16 @@ type Props = {
  * Порядок техники на экране: слева направо, как её обычно и ставят.
  * САМ НАБОР приходит из зоны — в шкафу-купе приборов нет вовсе.
  */
+/**
+ * ХОДОВЫЕ ШИРИНЫ.
+ *
+ * Стандартов пятнадцать, и все пятнадцать в одну строку — это каталог, а
+ * не выбор: глаз читает такой ряд дольше, чем занимает сама постановка
+ * модуля. Эти шесть закрывают почти всё, что ставят каждый день,
+ * остальные живут за «ещё» — они никуда не делись, но не мешают.
+ */
+const COMMON_WIDTHS = [300, 400, 450, 600, 800, 900];
+
 const APPLIANCE_ORDER: ApplianceKind[] = [
   'fridge',
   'oven',
@@ -107,7 +119,23 @@ export default function RunEditor({
   freeMode = false,
 }: Props) {
   const [dragId, setDragId] = useState<string | null>(null);
+  const [allWidths, setAllWidths] = useState(false);
+  /**
+   * Отказ, который объясняет мир.
+   *
+   * Живёт здесь, а не в родителе: это ответ на нажатие в ЭТОЙ панели, и
+   * показывать его надо рядом с тем, на что нажали.
+   */
+  const [notice, setNotice] = useState<string | null>(null);
   const free = freeSpaceMm(run);
+  /*
+   * СВОБОДНОЕ МЕСТО И САМЫЙ ШИРОКИЙ ПРОМЕЖУТОК — РАЗНЫЕ ВЕЛИЧИНЫ.
+   *
+   * В свободной сборке дырки остаются там, где были: «свободно 900 мм»
+   * может означать три щели по 300. Предлагать по общей сумме значит
+   * обещать модуль, которому некуда встать.
+   */
+  const gap = widestGapMm(run.modules, run.lengthMm);
   const selected = run.modules.find((m) => m.id === selectedModuleId) ?? null;
 
   /*
@@ -177,9 +205,7 @@ export default function RunEditor({
    * в нижний ряд, она встала бы на пол рядом с тумбами; отдельная вытяжка
    * не над плитой — это ошибка монтажа, а не свобода выбора.
    */
-  const appliances = APPLIANCE_ORDER.filter(
-    (a) => zoneAppliances(zone).includes(a) && !(freeMode && a === 'hood'),
-  );
+  const appliances = APPLIANCE_ORDER.filter((a) => zoneAppliances(zone).includes(a));
   const sections = profile.sections;
 
   /*
@@ -204,6 +230,22 @@ export default function RunEditor({
      * «+ Модуль», и место под прибор проверяется тем же правилом.
      */
     if (freeMode) {
+      /*
+       * ВЫТЯЖКА ОБЪЯСНЯЕТ СЕБЯ, А НЕ ПРОПАДАЕТ.
+       *
+       * Она живёт в ВЕРХНЕМ ряду и едет за варочной сама — верхний ряд
+       * пересобирается из нижнего. Поставленная модулем в нижний ряд, она
+       * встала бы на пол рядом с тумбами. Молча скрытый чип читается как
+       * «кнопка не работает»; отказ называет мир, как отказы зон.
+       */
+      setNotice(null);
+      if (appliance === 'hood') {
+        setNotice(
+          'Вытяжка ставится над варочной панелью: она в верхнем ряду и едет за ней сама.',
+        );
+        return;
+      }
+
       const placed = run.modules.find((unit) => unit.appliance === appliance);
       onOps(
         placed
@@ -405,6 +447,15 @@ export default function RunEditor({
         * На телефоне пропорция сохраняется, а лента прокручивается вбок:
         * это единственное место, где горизонтальная прокрутка уместна.
         */}
+      {notice && (
+        <p
+          data-editor-notice
+          className="mb-2 rounded-[var(--r-control)] bg-tape/15 px-3 py-2 text-[13px] leading-snug text-tape"
+        >
+          {notice}
+        </p>
+      )}
+
       {/*
         * ПУСТАЯ СТЕНА ОБЪЯСНЯЕТ СЕБЯ.
         *
@@ -715,29 +766,97 @@ export default function RunEditor({
         */}
       {freeMode && (
         <div className="mt-3" data-free-space>
-          {free >= MIN_WIDTH && (
-            <div className="flex flex-wrap gap-1">
-              {STANDARD_WIDTHS.filter((widthMm) => widthMm <= free).map((widthMm) => (
-                <button
-                  key={widthMm}
-                  type="button"
-                  data-add-width={widthMm}
-                  onClick={() =>
-                    onOps([
-                      {
-                        op: 'add_module',
-                        kind: 'base',
-                        widthMm,
-                        afterModuleId: selectedModuleId ?? undefined,
-                      },
-                    ])
-                  }
-                  className="mw-btn mw-btn-ghost"
-                >
-                  + {widthMm}
-                </button>
-              ))}
-            </div>
+          {gap >= MIN_WIDTH ? (
+            <>
+              {/*
+                * ГОТОВЫЙ МОДУЛЬ ЗА ОДИН ЖЕСТ.
+                *
+                * Раньше «+» ставил пустое место заданной ширины, и чем оно
+                * будет, выбиралось вторым жестом в ленте вариантов. Здесь
+                * сразу «Карго 400» и «Витрина 600»: мебельщик думает
+                * модулями, а не миллиметрами, и второй жест делали не все.
+                *
+                * Список — тот же `MODULE_VARIANTS`, что и в ленте, по зоне
+                * и по СВОБОДНОМУ месту: обещать вариант, которому не
+                * хватает стены, нельзя.
+                */}
+              <div className="flex flex-wrap gap-1">
+                {variantsToAdd(zone, gap).map(({ spec, widthMm }) => (
+                  <button
+                    key={spec.kind}
+                    type="button"
+                    data-add-variant={spec.kind}
+                    title={spec.hint}
+                    onClick={() =>
+                      onOps([
+                        {
+                          op: 'add_module',
+                          kind: spec.row === 'tall' ? 'tall' : 'base',
+                          widthMm,
+                          variant: spec.kind,
+                          afterModuleId: selectedModuleId ?? undefined,
+                        },
+                      ])
+                    }
+                    className="mw-btn mw-btn-ghost"
+                  >
+                    {spec.title} {widthMm}
+                  </button>
+                ))}
+              </div>
+
+              {/*
+                * Ширина отдельной строкой: тот же модуль, но своей ширины.
+                * Ходовые на виду, остальные за «ещё».
+                */}
+              <div className="mt-2 flex flex-wrap items-center gap-1">
+                <span className="mw-label mr-1">Своя ширина</span>
+                {(allWidths ? STANDARD_WIDTHS : COMMON_WIDTHS)
+                  .filter((widthMm) => widthMm <= gap)
+                  .map((widthMm) => (
+                    <button
+                      key={widthMm}
+                      type="button"
+                      data-add-width={widthMm}
+                      onClick={() =>
+                        onOps([
+                          {
+                            op: 'add_module',
+                            kind: 'base',
+                            widthMm,
+                            afterModuleId: selectedModuleId ?? undefined,
+                          },
+                        ])
+                      }
+                      className="mw-btn mw-btn-ghost"
+                    >
+                      {widthMm}
+                    </button>
+                  ))}
+                {!allWidths && (
+                  <button
+                    type="button"
+                    data-more-widths
+                    onClick={() => setAllWidths(true)}
+                    className="mw-btn mw-btn-ghost"
+                  >
+                    ещё
+                  </button>
+                )}
+              </div>
+            </>
+          ) : (
+            free > 0 && (
+              /*
+                * Место есть, но оно раздроблено: под модуль не годится ни
+                * один промежуток. Молчать здесь нельзя — «свободно 400 мм»
+                * без единой кнопки читается как поломка.
+                */
+              <p className="text-[13px] leading-snug text-graphiteMw">
+                Свободные места ряда уже {MIN_WIDTH} мм: подвиньте модули
+                или освободите место, чтобы поставить ещё один.
+              </p>
+            )
           )}
         </div>
       )}

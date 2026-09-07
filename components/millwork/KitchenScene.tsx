@@ -57,6 +57,8 @@ type Props = {
   onSelectModule?: (moduleId: string) => void;
   /** Ширина, вытянутая прямо в сцене. */
   onWidth?: (moduleId: string, widthMm: number) => void;
+  /** Перенос модуля вдоль ряда: свободная сборка. */
+  onMoveModule?: (moduleId: string, offsetMm: number) => void;
 };
 
 export default function KitchenScene({
@@ -65,6 +67,7 @@ export default function KitchenScene({
   selectedModuleId,
   onSelectModule,
   onWidth,
+  onMoveModule,
   roomDepthM = DEFAULT_ROOM_DEPTH_M,
   hidden = false,
   interactive = false,
@@ -270,6 +273,7 @@ export default function KitchenScene({
             selectedModuleId={selectedModuleId}
             onSelectModule={onSelectModule}
             onWidth={onWidth}
+            onMoveModule={onMoveModule}
           />
         )}
       </RoomCanvas>

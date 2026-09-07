@@ -70,6 +70,20 @@ export type ModuleVariantSpec = {
    * вариантов) сверяет приёмка, а не надежда.
    */
   transparentFront?: boolean;
+  /**
+   * ВАРИАНТ — ЭТО НИША ПОД ПРИБОР.
+   *
+   * Колонна «духовка + СВЧ» и холодильник существуют только вместе со
+   * своим прибором: поставленные как начинка, они дают модуль, который
+   * ВЫГЛЯДИТ нишей, но прибора в себе не несёт — в смете его нет, в
+   * раскрое ниша есть, а на объекте в неё нечего ставить.
+   *
+   * Поэтому такие варианты не предлагаются на пустое место: приборы
+   * приходят из состава, где у них есть и габарит, и цена. Признак живёт
+   * здесь, рядом с самим вариантом, а не списком в интерфейсе — второй
+   * список разошёлся бы с первым на первом же новом приборе.
+   */
+  impliesAppliance?: boolean;
 };
 
 /**
@@ -294,6 +308,7 @@ export const MODULE_VARIANTS: Record<ModuleVariantKind, ModuleVariantSpec> = {
     minWidthMm: 600,
     maxWidthMm: 600,
     frontType: 'door',
+    impliesAppliance: true,
   },
   tall_fridge: {
     kind: 'tall_fridge',
@@ -303,6 +318,7 @@ export const MODULE_VARIANTS: Record<ModuleVariantKind, ModuleVariantSpec> = {
     minWidthMm: 600,
     maxWidthMm: 600,
     frontType: 'door',
+    impliesAppliance: true,
   },
   tall_display: {
     kind: 'tall_display',
@@ -440,6 +456,52 @@ export function variantsForModule(
 
     return true;
   });
+}
+
+/**
+ * ЧТО МОЖНО ПОСТАВИТЬ НА ПУСТОЕ МЕСТО.
+ *
+ * `variantsForModule` отвечает на вопрос «чем может быть ЭТОТ модуль», и
+ * для пустой стены не годится: модуля ещё нет. Здесь тот же каталог и те
+ * же правила зоны, но мерка другая — сколько СВОБОДНОГО места осталось.
+ *
+ * Возвращает вариант вместе с шириной, с которой его ставят: «+» обязан
+ * поставить ГОТОВЫЙ модуль за один жест, а не пустое место, которому
+ * потом назначают роль.
+ */
+export function variantsToAdd(
+  zone: ZoneKind,
+  freeWidthMm: number,
+): { spec: ModuleVariantSpec; widthMm: number }[] {
+  const profile = zoneProfile(zone);
+
+  return Object.values(MODULE_VARIANTS)
+    .filter((spec) => {
+      // Верхний ряд пересобирается из нижнего, руками его не ставят.
+      if (spec.row === 'upper') return false;
+      // Место только под приборы: их ставят из состава, а не отсюда.
+      if (spec.place && spec.place !== 'any') return false;
+      // Ниша без прибора — это модуль, за который никто не заплатит.
+      if (spec.impliesAppliance) return false;
+      if (spec.zones && !spec.zones.includes(zone)) return false;
+      if (!spec.zones && profile.kind !== 'kitchen' && spec.row !== 'tall') return false;
+      return spec.minWidthMm <= freeWidthMm;
+    })
+    .map((spec) => ({
+      spec,
+      /*
+       * Ширина по умолчанию: привычная для этого варианта, но не больше
+       * того, что осталось. 600 мм — шаг, на котором строится почти вся
+       * корпусная мебель, поэтому он и берётся за основу.
+       */
+      widthMm: Math.min(
+        freeWidthMm,
+        // Ходовые 600, но в границах варианта: карго шире 400 не бывает,
+        // а штанга уже 900 не вешается. Не максимум — максимум это предел,
+        // а не то, что ставят каждый день.
+        Math.max(spec.minWidthMm, Math.min(600, spec.maxWidthMm)),
+      ),
+    }));
 }
 
 /**
