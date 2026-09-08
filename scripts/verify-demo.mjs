@@ -1651,6 +1651,91 @@ try {
     await sheet.close();
   }
 
+
+  /* ── Материал виден на КАЖДОМ модуле, а не «хотя бы на одном» ── */
+
+  /*
+   * Раскрой и смета фасад у приборных модулей уже видели, а схема — нет:
+   * панель материала не показывалась для модуля с техникой вовсе
+   * (`!selectedUnit.appliance`), и нажать было некуда. Две ветки решали
+   * один вопрос и разошлись — тот же класс, что мы ловим шестой раз.
+   *
+   * Поэтому проверка перебирает ВСЕ модули ряда и сверяет заливку с
+   * выбранным материалом. «Хотя бы один покрашен» прошло бы и на
+   * сломанном.
+   */
+  {
+    const fill = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await fill.goto(`${BASE}/demo`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+    await until(async () => (await fill.getByRole('button', { name: /Конфигуратор/ }).count()) > 0);
+
+    await fill.getByRole('button', { name: /Конфигуратор/ }).first().click();
+    await sleep(2500);
+
+    const fills = () =>
+      fill.evaluate(() =>
+        [...document.querySelectorAll('[data-schematic] [data-module-id]')].map((node) => ({
+          id: node.getAttribute('data-module-id'),
+          fill: node.querySelector('rect[data-fill]')?.getAttribute('fill') ?? '',
+        })),
+      );
+
+    const before = await fills();
+    check('на схеме есть модули', before.length >= 7, `${before.length} шт.`);
+
+    // Готовый дизайн красит весь ряд одним нажатием.
+    const design = fill.locator('[data-design="veneer-stone"]');
+    if ((await design.count()) > 0) {
+      await design.click();
+      await sleep(1800);
+    }
+
+    const after = await fills();
+    const distinct = new Set(after.map((row) => row.fill));
+
+    check(
+      'после выбора материала КАЖДЫЙ модуль залит им же',
+      after.length > 0 && distinct.size === 1 && !after.some((row) => row.fill === ''),
+      distinct.size === 1
+        ? `${after.length} модулей, заливка ${[...distinct][0]}`
+        : `разных заливок ${distinct.size}: ${[...distinct].join(' | ')}`,
+    );
+    check(
+      'и материал действительно сменился',
+      after[0]?.fill !== before[0]?.fill,
+      `${before[0]?.fill} → ${after[0]?.fill}`,
+    );
+
+    /*
+     * Приборные модули — отдельной строкой: именно они и оставались
+     * серыми. Их в демо-ряду пять, и каждый обязан быть в общем списке.
+     */
+    const appliances = after.filter((row) => /fridge|oven|sink|dishwasher|hob|hood/.test(row.id ?? ''));
+    check(
+      'модули с техникой покрашены наравне с остальными',
+      appliances.length >= 4 && appliances.every((row) => row.fill === after[0].fill),
+      `${appliances.length} приборных: ${appliances.map((r) => r.id).join(', ')}`,
+    );
+
+    /* Панель материала открывается и у модуля с техникой. */
+    const sink = fill.locator('[data-schematic] [data-module-id*="sink"]').first();
+    if ((await sink.count()) > 0) {
+      await sink.click({ force: true });
+      await sleep(1000);
+    }
+    check(
+      'у модуля с техникой открывается выбор материала',
+      (await fill.locator('[data-front-material]').count()) > 0,
+    );
+    check(
+      'и образцы у него тоже есть',
+      (await fill.locator('[data-swatch]').count()) >= 5,
+      `образцов ${await fill.locator('[data-swatch]').count()}`,
+    );
+
+    await fill.close();
+  }
+
   await survey.context().setOffline(false);
   await survey.close();
 

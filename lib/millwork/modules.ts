@@ -253,6 +253,27 @@ export function standardHeightMm(kind: ModuleKind, options?: { upperToCeiling?: 
       }
       return GEOMETRY.upper.carcassH;
     case 'tall':
+      /*
+       * «ДО ПОТОЛКА» ПОДНИМАЕТ И ПЕНАЛЫ.
+       *
+       * Опция поднимала только верхний ряд, и при потолке 3000 пенал
+       * холодильника кончался на 2400 — над ним оставалось 600 мм
+       * пустоты. Физически так не делают: если кухня до потолка, то до
+       * потолка идёт всё, иначе это не кухня до потолка, а кухня с
+       * дыркой над холодильником.
+       *
+       * В отрасли бывают два решения — пенал во всю высоту и пенал плюс
+       * антресоль. Здесь сделано первое: одно число вместо отдельного
+       * модуля сверху. Второе нужно там, где боковина выше листа ЛДСП
+       * (2750 мм) — это дальнейшая работа, и её ограничение названо в
+       * отчёте, а не спрятано.
+       */
+      if (options?.upperToCeiling && options.ceilingHeightMm) {
+        return Math.max(
+          GEOMETRY.tall.heights[1],
+          options.ceilingHeightMm - GEOMETRY.base.plinthH,
+        );
+      }
       return GEOMETRY.tall.heights[1];
     default:
       return GEOMETRY.base.carcassH;

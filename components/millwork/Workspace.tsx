@@ -10,6 +10,7 @@ import DrawingSheet from './DrawingSheet';
 import VariantStrip, { type VariantPreview } from './VariantStrip';
 import FrontMaterialPicker from './FrontMaterialPicker';
 import RunSchematic from './RunSchematic';
+import { hasFacade } from '@/lib/millwork/applianceFront';
 import { compressPhoto } from '@/lib/photo';
 import FrontSwatchCards from './FrontSwatchCards';
 import {
@@ -1792,7 +1793,16 @@ export default function Workspace(props: WorkspaceProps) {
                 pickPrompt="Нажмите на модуль в сцене, чтобы поменять его начинку."
               />
 
-              {selectedUnit && !selectedUnit.appliance && (
+              {/*
+                * ПАНЕЛЬ МАТЕРИАЛА — ДЛЯ ВСЕГО, ЧТО ЗАКРЫТО ФАСАДОМ.
+                *
+                * Условие было `!selectedUnit.appliance`: выделяешь мойку
+                * или колонну — панель не появляется вовсе, нажать некуда,
+                * и модуль остаётся прежнего цвета. Раскрой и смета к тому
+                * моменту фасад у него уже видели; расходилась ровно эта
+                * ветка — вторая копия правила «прибор ли это».
+                */}
+              {selectedUnit && hasFacade(selectedUnit) && (
                 <div className="mt-3">
                   {/*
                     * Сначала ОБРАЗЦЫ — клиент выбирает материал глазами, как

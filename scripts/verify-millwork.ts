@@ -4850,7 +4850,29 @@ console.log('\nМодуль с техникой — тоже мебель');
     `${panelMaterials(buildPanels({ run })).edgeM} → ${panelMaterials(buildPanels({ run: enamel })).edgeM} м`,
   );
 
-  /* 4. «До потолка» — до потолка, до миллиметра. */
+  /*
+   * 4. «До потолка» — до потолка, до миллиметра, у САМОГО ВЫСОКОГО.
+   *
+   * Проверка смотрела только верхний ряд — потому и была зелёной, пока
+   * пеналы стояли стандартной высоты: при потолке 3000 над колонной
+   * холодильника оставалось 600 мм пустоты, а верхний ряд рядом честно
+   * доходил до верха. Мерить надо ряд целиком.
+   */
+  const highest = (r: Run) =>
+    Math.max(
+      ...[
+        ...r.modules.map(
+          (unit) =>
+            (unit.kind === 'upper' || unit.kind === 'corner_upper'
+              ? upperBottomFor(unit, r)
+              : GEOMETRY.base.plinthH) + moduleCarcassHeightMm(unit, r),
+        ),
+        ...r.upperSegments
+          .flatMap((segment) => segment.modules)
+          .map((unit) => upperBottomFor(unit, r) + moduleCarcassHeightMm(unit, r)),
+      ],
+    );
+
   for (const ceilingHeightMm of [2500, 2700, 3000, 3200]) {
     const toCeiling = buildRun({
       ...baseInput,
@@ -4861,16 +4883,46 @@ console.log('\nМодуль с техникой — тоже мебель');
         lockedOptions: ['upperToCeiling'],
       },
     });
-    const uppers = toCeiling.upperSegments.flatMap((segment) => segment.modules);
-    const top = Math.max(
-      ...uppers.map((unit) => upperBottomFor(unit, toCeiling) + moduleCarcassHeightMm(unit, toCeiling)),
-    );
+    const top = highest(toCeiling);
     check(
-      `«до потолка» при ${ceilingHeightMm}: верх равен потолку`,
-      uppers.length > 0 && top === ceilingHeightMm,
+      `«до потолка» при ${ceilingHeightMm}: верх САМОГО ВЫСОКОГО равен потолку`,
+      top === ceilingHeightMm,
       `верх ${top}, зазор ${ceilingHeightMm - top} мм`,
     );
+
+    const tall = toCeiling.modules.filter((unit) => unit.kind === 'tall');
+    check(
+      `и пеналы при ${ceilingHeightMm} подняты вместе с рядом`,
+      tall.length > 0 &&
+        tall.every(
+          (unit) =>
+            GEOMETRY.base.plinthH + moduleCarcassHeightMm(unit, toCeiling) === ceilingHeightMm,
+        ),
+      tall
+        .map((unit) => GEOMETRY.base.plinthH + moduleCarcassHeightMm(unit, toCeiling))
+        .join(', '),
+    );
+    check(
+      `и ряд при ${ceilingHeightMm} не пересекается сам с собой`,
+      moduleOverlaps(toCeiling).length === 0,
+    );
   }
+
+  // Без опции пеналы остаются стандартными: «до потолка» — это выбор.
+  const standard = buildRun({
+    ...baseInput,
+    ceilingHeightMm: 3000,
+    requirements: {
+      ...REQ,
+      options: { ...REQ.options, upperToCeiling: false },
+      lockedOptions: ['upperToCeiling'],
+    },
+  });
+  check(
+    'без опции ряд до потолка не тянется',
+    highest(standard) < 3000,
+    `верх ${highest(standard)}`,
+  );
 
   /*
    * И стратегия комплектации его не перебивает. Это ловушка 108: замок

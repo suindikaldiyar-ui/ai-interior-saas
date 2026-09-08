@@ -2,6 +2,7 @@
 
 import { FRONT_BASES, constructsFor, frontOf } from '@/lib/millwork/frontMaterial';
 import { frontSwatch, shade } from '@/lib/millwork/frontSwatch';
+import { hasFacade } from '@/lib/millwork/applianceFront';
 import type { FrontBase, MillworkOp, Module } from '@/types/millwork';
 
 /**
@@ -26,6 +27,9 @@ type Props = {
 };
 
 export default function FrontSwatchCards({ unit, onOps, images }: Props) {
+  // Тот же признак, что у раскроя: что закрыто фасадом, то и красится.
+  if (!hasFacade(unit)) return null;
+
   const current = frontOf(unit);
 
   return (

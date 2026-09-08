@@ -11,6 +11,7 @@ import { sectionSpec } from '@/lib/millwork/sections';
 import { moveConflict } from '@/lib/millwork/freeRun';
 import { moduleSwatch } from '@/lib/millwork/frontSwatch';
 import { frontOf } from '@/lib/millwork/frontMaterial';
+import { hasFacade } from '@/lib/millwork/applianceFront';
 import FrontSwatchDefs, { swatchId } from './FrontSwatchDefs';
 import { zoneHeightMm, zoneProfile } from '@/lib/millwork/zones';
 import {
@@ -838,9 +839,9 @@ export default function ElevationDrawing({
    * Заливка материалом. У техники без фасада её нет: там нечему быть
    * дубом, и красить нишу под холодильник значит врать.
    */
-  /** Филёнчатый ли фасад: у техники без створки его нет вовсе. */
+  /** Филёнчатый ли фасад. Признак «есть ли фасад» — общий на продукт. */
   const framedFront = (unit: Module): boolean =>
-    (!unit.appliance || Boolean(unit.builtIn)) && frontOf(unit).construct === 'framed';
+    hasFacade(unit) && frontOf(unit).construct === 'framed';
 
   const materialFill = (unit: Module): string | null => {
     if (!showMaterial) return null;
@@ -863,7 +864,18 @@ export default function ElevationDrawing({
      * В секционных зонах высоту уже посчитала сама секция: штанга под
      * пальто и обувница — это разные высоты, а не «пенал».
      */
-    const tallTop = !sectionZone && unit.kind === 'tall' ? standardHeightMm('tall') : top;
+    /*
+     * ВЫСОТА ПЕНАЛА — ИЗ ОБЩЕЙ ФУНКЦИИ, А НЕ СВОЯ.
+     *
+     * Здесь стоял вызов `standardHeightMm('tall')` БЕЗ опций ряда: чертёж
+     * не знал ни про «до потолка», ни про потолок замера, и рисовал пенал
+     * стандартной высоты, что бы ни считала раскладка. Вторая ветка того
+     * же расчёта — ровно тот класс ошибки, что мы ловим шестой раз.
+     */
+    const tallTop =
+      !sectionZone && unit.kind === 'tall'
+        ? GEOMETRY.base.plinthH + moduleCarcassHeightMm(unit, run)
+        : top;
     const yTop = yOf(tallTop);
     const h = yOf(bottom) - yTop;
 

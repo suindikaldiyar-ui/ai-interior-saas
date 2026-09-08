@@ -8,6 +8,7 @@ import {
   frontConflict,
   frontOf,
 } from '@/lib/millwork/frontMaterial';
+import { hasFacade } from '@/lib/millwork/applianceFront';
 import type {
   FrontBase,
   FrontConstruct,
@@ -38,7 +39,12 @@ type Props = {
 };
 
 export default function FrontMaterialPicker({ unit, onOps, onRefuse, compact }: Props) {
-  if (!unit || unit.appliance) return null;
+  /*
+   * Материал есть у всего, что закрыто фасадом: у мойки под чашей
+   * створка, у колонны фасады над нишей и под ней. Нет его только у
+   * отдельностоящего прибора — он виден целиком.
+   */
+  if (!unit || !hasFacade(unit)) return null;
 
   const current = frontOf(unit);
 
