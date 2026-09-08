@@ -1,5 +1,6 @@
 import {
   APPLIANCE_SLOTS,
+  applianceWidthMm,
   CORNER_SIZE_MM,
   GEOMETRY,
   MIN_WIDTH,
@@ -148,7 +149,7 @@ function planAnchors(
     appliance: ApplianceKind,
     extra: { columnWith?: ApplianceKind; builtIn?: boolean } = {},
   ) => {
-    const width = APPLIANCE_SLOTS[appliance].widthMm;
+    const width = applianceWidthMm(appliance, req.applianceSizes);
     const center = tallLeft ? tallCursor + width / 2 : tallCursor - width / 2;
     anchors.push({
       kind: 'tall',
@@ -181,7 +182,7 @@ function planAnchors(
 
   let sinkCenter = lengthMm * 0.35;
   if (sinkKind) {
-    const width = APPLIANCE_SLOTS[sinkKind].widthMm;
+    const width = applianceWidthMm(sinkKind, req.applianceSizes);
     const water = commOffset(comms, 'water_supply');
     // Мойка садится напротив вывода воды: перенос коммуникации на объекте
     // стоит дороже, чем сдвиг модуля на бумаге.
@@ -199,8 +200,8 @@ function planAnchors(
   }
 
   if (dishKind && sinkKind) {
-    const width = APPLIANCE_SLOTS[dishKind].widthMm;
-    const sinkWidth = APPLIANCE_SLOTS[sinkKind].widthMm;
+    const width = applianceWidthMm(dishKind, req.applianceSizes);
+    const sinkWidth = applianceWidthMm(sinkKind, req.applianceSizes);
     // Вплотную к мойке — общий узел водоснабжения и слива.
     const rightSide = sinkCenter + sinkWidth / 2 + width <= lengthMm;
     anchors.push({
@@ -218,7 +219,7 @@ function planAnchors(
     const width = APPLIANCE_SLOTS.hob.widthMm;
     const low = HOB_EDGE_CLEARANCE_MM + width / 2;
     const high = Math.max(low, lengthMm - HOB_EDGE_CLEARANCE_MM - width / 2);
-    const sinkWidth = sinkKind ? APPLIANCE_SLOTS[sinkKind].widthMm : 0;
+    const sinkWidth = sinkKind ? applianceWidthMm(sinkKind, req.applianceSizes) : 0;
 
     /*
      * Плита отходит от мойки на рабочий зазор. Если справа места нет,
@@ -417,7 +418,10 @@ function makeModule(
  * её ширину считать нельзя: иначе витрина или обычный модуль отказались
  * бы вставать там, где место есть.
  */
-export function applianceRowWidthMm(appliances: ApplianceKind[]): number {
+export function applianceRowWidthMm(
+  appliances: ApplianceKind[],
+  sizes?: RunRequirements['applianceSizes'],
+): number {
   const wanted = new Set(appliances);
   const column = wanted.has('oven') && wanted.has('microwave');
 
@@ -426,7 +430,7 @@ export function applianceRowWidthMm(appliances: ApplianceKind[]): number {
     // Вытяжка висит в верхнем ряду и места на стене не занимает.
     if (appliance === 'hood') continue;
     if (appliance === 'microwave' && column) continue;
-    sum += APPLIANCE_SLOTS[appliance].widthMm;
+    sum += applianceWidthMm(appliance, sizes);
   }
   return sum;
 }
@@ -766,7 +770,7 @@ export function buildRun(input: BuildRunInput): Run {
 
   if (wantsDisplay) {
     const width = SECTION_SPECS.glass_display.preferredWidthMm;
-    if (limit - cursor - width >= applianceRowWidthMm(requirements.appliances)) {
+    if (limit - cursor - width >= applianceRowWidthMm(requirements.appliances, requirements.applianceSizes)) {
       display = { widthMm: width, side: requirements.tallSide === 'left' ? 'end' : 'start' };
     } else {
       warnings.push(`Витрина ${width} мм: не помещается — технике не остаётся места.`);

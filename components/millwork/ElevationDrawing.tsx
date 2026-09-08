@@ -873,7 +873,22 @@ export default function ElevationDrawing({
      * должен видеть, где какая ниша и какой она высоты.
      */
     const niches = unit.column ? columnNiches(unit, moduleCarcassHeightMm(unit, run)) : [];
-    const mark = unit.appliance && niches.length === 0 ? APPLIANCE_MARK[unit.appliance] : null;
+    /*
+     * ВСТРОЕННЫЙ ПРИБОР — ЭТО ШКАФ, А НЕ ПРИБОРНЫЙ БЛОК.
+     *
+     * Холодильник за фасадом заподлицо снаружи выглядит пеналом: створка
+     * того же материала, что у соседей, и та же ручка. Буква в кружке над
+     * ним говорила обратное — «здесь прибор», — и клиент видел в ряду
+     * серую вставку там, где стоит обычная на вид мебель.
+     *
+     * Отдельностоящий прибор — наоборот: он виден целиком, фасада у него
+     * нет, и знак остаётся. Различие уже лежит в данных (`builtIn`), и
+     * рисунок обязан его показывать.
+     */
+    const mark =
+      unit.appliance && niches.length === 0 && unit.builtIn !== true
+        ? APPLIANCE_MARK[unit.appliance]
+        : null;
     const isDisplay = unit.section === 'glass_display';
 
     /*
@@ -1559,7 +1574,12 @@ function narrowThreshold(lengthMm: number, drawWidth: number): number {
  *   всё остальное  — светло-серый корпус ЛДСП
  */
 function paperFill(unit: Module, isDisplay: boolean): string {
-  if (unit.appliance && !unit.builtIn) return PAPER_FILL.appliance;
+  /*
+   * Встроенный прибор закрыт фасадом — и на листе он фасад: цех клеит
+   * кромку и вешает петли на створку, а не на холодильник. Виден
+   * целиком только отдельностоящий, он и остаётся приборной заливкой.
+   */
+  if (unit.appliance && unit.builtIn === true) return PAPER_FILL.front;
   if (unit.appliance) return PAPER_FILL.appliance;
   if (unit.frontType === 'none') return PAPER_FILL.open;
   if (glassFront(unit, isDisplay)) return PAPER_FILL.glass;

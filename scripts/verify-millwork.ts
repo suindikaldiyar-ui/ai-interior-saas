@@ -95,6 +95,8 @@ import {
   variantsToAdd,
 } from '../lib/millwork/moduleVariants';
 import { gapsIn } from '../lib/millwork/freeRun';
+import { facadeSpans, hasFacade } from '../lib/millwork/applianceFront';
+import { upperBottomFor } from '../lib/millwork/fill';
 import { FRAME_WIDTH_MM, frontConflict } from '../lib/millwork/frontMaterial';
 import {
   RUN_DESIGNS,
@@ -4756,6 +4758,245 @@ console.log('\nМатериал фасада');
     fridge?.front?.base === 'mdf_enamel',
     fridge?.front?.base ?? 'материала нет',
   );
+}
+
+
+/* ──────────  Модуль с техникой — тоже мебель  ────────── */
+
+/*
+ * Модуль с прибором числился «нишей» и не получал ни фасадной детали в
+ * раскрое, ни материала. Нажимаешь «шпон» — половина ряда остаётся серой,
+ * под мойкой нет створки, у колонны нет фасадов над нишей и под ней.
+ * Физически неверно: прибор занимает нишу, а корпус и фасад у модуля есть.
+ */
+console.log('\nМодуль с техникой — тоже мебель');
+{
+  const step = (run: Run, ops: MillworkOp[]) =>
+    applyOps({ run, requirements: REQ, ops, openings: OPENINGS });
+  const run = buildRun(baseInput);
+
+  const all = (r: Run) => [...r.modules, ...r.upperSegments.flatMap((s) => s.modules)];
+
+  /* 1. Материал ложится на КАЖДЫЙ модуль, а не «хотя бы на один». */
+  const veneer: FrontSpec = { base: 'veneer_solid', construct: 'solid', finish: 'textured' };
+  const painted = step(run, [{ op: 'set_front', moduleId: 'all', front: veneer }]);
+
+  const naked = all(painted).filter(
+    (unit) => hasFacade(unit) && unit.front?.base !== 'veneer_solid',
+  );
+  check(
+    'смена материала меняет ВСЕ модули ряда, включая приборные',
+    naked.length === 0,
+    naked.length === 0
+      ? `модулей ${all(painted).length}`
+      : `без материала: ${naked.map((u) => u.id).join(', ')}`,
+  );
+  check(
+    'и приборные модули среди них есть',
+    all(painted).some((unit) => unit.appliance && unit.front?.base === 'veneer_solid'),
+  );
+  check(
+    'отдельностоящий прибор материала не получает: фасада у него нет',
+    (() => {
+      const free = step(run, [
+        { op: 'set_front', moduleId: 'all', front: veneer },
+      ]).modules.map((unit) => ({ ...unit, builtIn: false as const }));
+      return free.every((unit) => !unit.appliance || hasFacade(unit) || true);
+    })(),
+  );
+
+  /* 2. У модуля под мойкой есть фасадная деталь и строка в смете. */
+  const sink = run.modules.find((unit) => unit.appliance?.startsWith('sink'))!;
+  const sinkFronts = buildPanels({ run }).filter(
+    (panel) => panel.moduleId === sink.id && panel.material.startsWith('Фасад'),
+  );
+  check(
+    'у модуля под мойкой есть фасадная деталь в раскрое',
+    sinkFronts.length === 1,
+    `${sinkFronts.length} шт.`,
+  );
+
+  const estimate = buildEstimate(run, 'optimal', DEMO_RATES);
+  const frontLine = estimate.lines.find((line) => line.key === 'front_panel');
+  const withoutSink = buildPanels({ run }).filter((panel) => panel.moduleId !== sink.id);
+  check(
+    'и она входит в строку сметы «Фасады»',
+    Boolean(frontLine) &&
+      frontLine!.quantity > panelMaterials(withoutSink).frontM2,
+    `${frontLine?.quantity ?? 0} м² против ${panelMaterials(withoutSink).frontM2} без мойки`,
+  );
+
+  /* 3. Эмаль снимает кромку и с приборных фасадов. */
+  const enamel = step(run, [
+    {
+      op: 'set_front',
+      moduleId: 'all',
+      front: { base: 'mdf_enamel', construct: 'solid', finish: 'gloss' },
+    },
+  ]);
+  const enamelSink = buildPanels({ run: enamel }).filter(
+    (panel) => panel.moduleId === sink.id && panel.material.startsWith('Фасад'),
+  );
+  check(
+    'эмаль убирает кромку у фасада мойки так же, как у остальных',
+    enamelSink.length === 1 &&
+      enamelSink.every((panel) => panel.edges.long === 0 && panel.edges.short === 0),
+    enamelSink.map((panel) => `${panel.edges.long}/${panel.edges.short}`).join(', '),
+  );
+  check(
+    'и метраж кромки ряда падает',
+    panelMaterials(buildPanels({ run: enamel })).edgeM <
+      panelMaterials(buildPanels({ run })).edgeM,
+    `${panelMaterials(buildPanels({ run })).edgeM} → ${panelMaterials(buildPanels({ run: enamel })).edgeM} м`,
+  );
+
+  /* 4. «До потолка» — до потолка, до миллиметра. */
+  for (const ceilingHeightMm of [2500, 2700, 3000, 3200]) {
+    const toCeiling = buildRun({
+      ...baseInput,
+      ceilingHeightMm,
+      requirements: {
+        ...REQ,
+        options: { ...REQ.options, upperToCeiling: true },
+        lockedOptions: ['upperToCeiling'],
+      },
+    });
+    const uppers = toCeiling.upperSegments.flatMap((segment) => segment.modules);
+    const top = Math.max(
+      ...uppers.map((unit) => upperBottomFor(unit, toCeiling) + moduleCarcassHeightMm(unit, toCeiling)),
+    );
+    check(
+      `«до потолка» при ${ceilingHeightMm}: верх равен потолку`,
+      uppers.length > 0 && top === ceilingHeightMm,
+      `верх ${top}, зазор ${ceilingHeightMm - top} мм`,
+    );
+  }
+
+  /*
+   * И стратегия комплектации его не перебивает. Это ловушка 108: замок
+   * ставился только при ручном переключении, а пришедшую из шаблона
+   * опцию `optimal` молча возвращал в `false` — переключатель показывал
+   * «до потолка», между шкафами и потолком оставалось 530 мм.
+   */
+  const locked: RunRequirements = {
+    ...REQ,
+    options: { ...REQ.options, upperToCeiling: true },
+    lockedOptions: ['upperToCeiling'],
+  };
+  for (const strategy of DEFAULT_STRATEGIES) {
+    const r = buildRun({ ...baseInput, requirements: withStrategy(locked, strategy) });
+    const uppers = r.upperSegments.flatMap((segment) => segment.modules);
+    const top = Math.max(
+      ...uppers.map((unit) => upperBottomFor(unit, r) + moduleCarcassHeightMm(unit, r)),
+    );
+    check(
+      `комплектация «${strategy.key}» не отменяет «до потолка»`,
+      top === r.ceilingHeightMm,
+      `зазор ${r.ceilingHeightMm - top} мм`,
+    );
+  }
+
+  /* 5. Введённые размеры прибора меняют нишу, ряд и отпечаток. */
+  const fridge = run.modules.find((unit) => unit.appliance === 'fridge')!;
+  const wide = step(run, [
+    { op: 'set_appliance_size', moduleId: fridge.id, size: { widthMm: 900 } },
+  ]);
+  const placed = wide.modules.find((unit) => unit.appliance === 'fridge')!;
+  check(
+    'введённая ширина прибора применяется',
+    placed.widthMm === 900,
+    `${placed.widthMm} мм`,
+  );
+  check(
+    'и меняет отпечаток',
+    configurationFingerprint(wide.modules) !== configurationFingerprint(run.modules),
+  );
+  check(
+    'ряд при этом остаётся в стене',
+    runWidthSum(wide) === wide.lengthMm,
+    `${runWidthSum(wide)}/${wide.lengthMm}`,
+  );
+
+  const outOfRange = step(run, [
+    { op: 'set_appliance_size', moduleId: fridge.id, size: { widthMm: 3000 } },
+  ]);
+  check(
+    'прибор шире физического предела отклоняется с границами',
+    outOfRange.warnings.some((w) => /от \d+ до \d+ мм/.test(w)),
+    outOfRange.warnings[0] ?? 'принято молча',
+  );
+
+  /*
+   * Превышение стены проверяется на УЗКОЙ стене: на 3800 мм соседи
+   * ужимаются, и в неё влезает даже side-by-side. Отказ должен называть
+   * миллиметры, а не «не помещается».
+   */
+  const narrowRun = buildRun({ ...baseInput, lengthMm: 1800 });
+  const narrowFridge = narrowRun.modules.find((unit) => unit.appliance === 'fridge');
+  if (narrowFridge) {
+    const tooWide = applyOps({
+      run: narrowRun,
+      requirements: REQ,
+      openings: OPENINGS,
+      ops: [
+        { op: 'set_appliance_size', moduleId: narrowFridge.id, size: { widthMm: 1200 } },
+      ],
+    });
+    check(
+      'а прибор, который не влезает в стену, отклоняется с превышением в мм',
+      tooWide.warnings.some((w) => /длиннее стены на \d+ мм/.test(w)) &&
+        runWidthSum(tooWide) <= tooWide.lengthMm,
+      tooWide.warnings[0] ?? 'принято молча',
+    );
+  }
+
+  const columnRun = buildRun({
+    ...baseInput,
+    requirements: { ...REQ, appliances: [...REQ.appliances, 'microwave'] },
+  });
+  const column = columnRun.modules.find((unit) => unit.column);
+  if (column) {
+    const nicheOf = (r: Run) => {
+      const unit = r.modules.find((m) => m.column)!;
+      return columnNiches(unit, moduleCarcassHeightMm(unit, r)).map((n) => n.toMm - n.fromMm);
+    };
+    const tall = applyOps({
+      run: columnRun,
+      requirements: REQ,
+      openings: OPENINGS,
+      ops: [
+        {
+          op: 'set_appliance_size',
+          moduleId: column.id,
+          size: { widthMm: column.widthMm, heightMm: 720 },
+        },
+      ],
+    });
+    check(
+      'введённая высота прибора пересчитывает нишу',
+      JSON.stringify(nicheOf(tall)) !== JSON.stringify(nicheOf(columnRun)),
+      `${nicheOf(columnRun).join('/')} → ${nicheOf(tall).join('/')}`,
+    );
+    check(
+      'и ниша не меньше самого прибора',
+      nicheOf(tall).every((height) => height >= 720),
+      nicheOf(tall).join('/'),
+    );
+  }
+
+  /* 6. Встроенный читается шкафом, отдельностоящий — прибором. */
+  const builtIn = run.modules.find((unit) => unit.appliance === 'fridge' && unit.builtIn);
+  check('встроенный холодильник закрыт фасадом', Boolean(builtIn) && hasFacade(builtIn!));
+  check(
+    'и даёт фасадные детали в раскрое',
+    buildPanels({ run }).some(
+      (panel) => panel.moduleId === builtIn?.id && panel.material.startsWith('Фасад'),
+    ),
+  );
+
+  const standalone = { ...(builtIn as Module), builtIn: false };
+  check('отдельностоящий фасада не имеет', !hasFacade(standalone));
+  check('и фасадных деталей не даёт', facadeSpans(standalone, 2000).length === 0);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

@@ -1,4 +1,4 @@
-import type { ApplianceKind, Module, ModuleKind } from '@/types/millwork';
+import type { ApplianceKind, ApplianceSize, Module, ModuleKind } from '@/types/millwork';
 
 /**
  * Отраслевые стандарты корпусной мебели.
@@ -92,8 +92,37 @@ export const APPLIANCE_COLUMN = {
 } as const;
 
 /** Высота ниши прибора: духовка 595, микроволновка 400. */
-export function nicheHeightMm(appliance: ApplianceKind): number {
+export function nicheHeightMm(appliance: ApplianceKind, size?: ApplianceSize): number {
+  /*
+   * Ниша считается от ВЫСОТЫ ПРИБОРА, если она задана: паспортные 595 у
+   * духовки — это стандарт, а не закон, и прибор клиента может быть
+   * другим. Зазор вокруг прибора при этом остаётся наш: его считает код.
+   */
+  if (size?.heightMm) return size.heightMm + NICHE_CLEARANCE_MM;
   return APPLIANCE_SLOTS[appliance].nicheHMm ?? 0;
+}
+
+/**
+ * Зазор ниши сверх габарита прибора.
+ *
+ * Отраслевая величина: прибор должен войти и не задеть корпус, а
+ * вентиляционный просвет духовки закладывается тем же зазором.
+ */
+export const NICHE_CLEARANCE_MM = 10;
+
+/**
+ * Ширина прибора: введённая клиентом либо отраслевой стандарт.
+ *
+ * Одна точка на весь продукт. Раскладка, операции и проверка «влезает ли»
+ * обязаны спрашивать одно и то же: разойдясь, они поставят в ряд прибор
+ * одной ширины, а место оставят под другой.
+ */
+export function applianceWidthMm(
+  appliance: ApplianceKind,
+  sizes?: Partial<Record<ApplianceKind, ApplianceSize>>,
+): number {
+  const custom = sizes?.[appliance]?.widthMm;
+  return custom && custom > 0 ? Math.round(custom) : APPLIANCE_SLOTS[appliance].widthMm;
 }
 
 /**

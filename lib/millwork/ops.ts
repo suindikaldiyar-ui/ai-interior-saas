@@ -1,5 +1,6 @@
 import {
   APPLIANCE_SLOTS,
+  applianceWidthMm,
   MAX_WIDTH,
   MIN_WIDTH,
   frontPlan,
@@ -11,6 +12,7 @@ import { assertNoOverlap, assertRunFits, widthOverflowMm } from './invariants';
 import { runFingerprint } from './fingerprint';
 import { defaultFill, hingeSide } from './fill';
 import { frontConflict } from './frontMaterial';
+import { hasFacade } from './applianceFront';
 import {
   moveConflict,
   moveRefusal,
@@ -158,7 +160,7 @@ export function applyOps({ run, requirements, ops, openings = [] }: ApplyOpsInpu
     switch (op.op) {
       case 'add_module': {
         const width = op.appliance
-          ? APPLIANCE_SLOTS[op.appliance].widthMm
+          ? applianceWidthMm(op.appliance, requirements.applianceSizes)
           : snapToStandard(op.widthMm ?? 600);
 
         /*
@@ -246,7 +248,7 @@ export function applyOps({ run, requirements, ops, openings = [] }: ApplyOpsInpu
           break;
         }
         const width = op.appliance
-          ? APPLIANCE_SLOTS[op.appliance].widthMm
+          ? applianceWidthMm(op.appliance, requirements.applianceSizes)
           : modules[at].widthMm;
         modules[at] = makePlainModule(op.kind, width, op.appliance);
         break;
@@ -475,13 +477,18 @@ export function applyOps({ run, requirements, ops, openings = [] }: ApplyOpsInpu
          */
         if (op.moduleId === 'all') {
           /*
-           * Встроенный холодильник ЗАКРЫТ НАСТОЯЩИМ ФАСАДОМ, и он обязан
-           * совпадать с рядом: иначе среди эмали окажется одна створка
-           * ЛДСП — заметная на кухне сразу, а в раскрое ещё и с кромкой,
-           * которой у остальных нет. У прочей техники фасада нет вовсе.
+           * МАТЕРИАЛ ЛОЖИТСЯ НА ВСЁ, ЧТО ЗАКРЫТО ФАСАДОМ.
+           *
+           * Приборные модули исключались целиком — и ряд красился
+           * наполовину: под мойкой, под варочной и в колонне оставался
+           * прежний цвет. Прибор занимает нишу, но створка под ним из
+           * того же материала, что соседние.
+           *
+           * Не красится ровно одно: отдельностоящий прибор. У него фасада
+           * нет вовсе, и материал ему приписывать не за что.
            */
           modules = modules.map((unit) =>
-            unit.appliance && !unit.builtIn ? unit : { ...unit, front: op.front },
+            hasFacade(unit) ? { ...unit, front: op.front } : unit,
           );
           upperFrontAll = op.front;
           break;
@@ -494,6 +501,65 @@ export function applyOps({ run, requirements, ops, openings = [] }: ApplyOpsInpu
           break;
         }
         modules[at] = { ...modules[at], front: op.front };
+        break;
+      }
+
+      case 'set_appliance_size': {
+        /*
+         * ГАБАРИТ ПРИБОРА ВВОДИТСЯ, ЗАЗОРЫ ОСТАЮТСЯ НАШИ.
+         *
+         * Ширина холодильника бывает 550, 600, 700 и 900 у side-by-side —
+         * это факт прибора, а не предпочтение. Ниша пересчитывается от
+         * введённой высоты (`nicheHeightMm`), а зазор вокруг прибора
+         * по-прежнему считает код: человек вводит ТО, ЧТО ИЗМЕРИЛ.
+         *
+         * Отказ, если ряд от новой ширины вылезает за стену, называет
+         * превышение в миллиметрах — тем же механизмом, что и правка
+         * ширины обычного модуля.
+         */
+        const at = modules.findIndex((m) => m.id === op.moduleId);
+        if (at < 0) {
+          warnings.push(`Модуль ${op.moduleId} не найден.`);
+          break;
+        }
+
+        const unit = modules[at];
+        if (!unit.appliance && !unit.column) {
+          warnings.push(`${unit.label}: это не прибор, у него своя ширина.`);
+          break;
+        }
+
+        const wanted = Math.round(op.size.widthMm);
+        if (!Number.isFinite(wanted) || wanted < MIN_WIDTH || wanted > MAX_WIDTH) {
+          warnings.push(`Ширина прибора — от ${MIN_WIDTH} до ${MAX_WIDTH} мм.`);
+          break;
+        }
+
+        /*
+         * ПРАВИЛО ТО ЖЕ, ЧТО У ШИРИНЫ ОБЫЧНОГО МОДУЛЯ.
+         *
+         * В раскладке по шаблону соседи ужимаются `rebalance`, и считать
+         * надо минимально возможную сумму — иначе холодильник шириной 700
+         * не встал бы никогда: ряд из шаблона всегда занят до миллиметра.
+         * В свободной сборке соседей никто не трогает, и сумма считается
+         * по факту.
+         */
+        const over =
+          requirements.mode === 'free'
+            ? modules.reduce((sum, m) => sum + m.widthMm, 0) - unit.widthMm + wanted - run.lengthMm
+            : widthOverflowMm({ modules, lengthMm: run.lengthMm }, unit.id, wanted, MIN_WIDTH);
+        if (over > 0) {
+          warnings.push(
+            `${unit.label} шириной ${wanted} мм не помещается: ряд длиннее стены на ${over} мм.`,
+          );
+          break;
+        }
+
+        modules[at] = {
+          ...unit,
+          widthMm: wanted,
+          applianceSize: { ...op.size, widthMm: wanted },
+        };
         break;
       }
 
@@ -613,8 +679,7 @@ export function applyOps({ run, requirements, ops, openings = [] }: ApplyOpsInpu
       const kept = upperVariants.get(unit.id);
       const withVariant = kept && !unit.appliance ? applyVariant(unit, kept) : unit;
       const front = upperFronts.get(unit.id) ?? upperFrontAll ?? upperFrontKept.get(unit.id);
-      const closed = !withVariant.appliance || withVariant.builtIn;
-      return front && closed ? { ...withVariant, front } : withVariant;
+      return front && hasFacade(withVariant) ? { ...withVariant, front } : withVariant;
     });
 
     return {

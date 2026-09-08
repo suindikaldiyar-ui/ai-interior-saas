@@ -609,10 +609,64 @@ export default function RunEditor({
               />
 
               {selected.appliance ? (
-                <span className="mt-1 block text-[13px] leading-tight text-graphiteMw">
-                  {selected.widthMm} — ширина прибора «
-                  {APPLIANCE_SLOTS[selected.appliance].title}»
-                </span>
+                /*
+                 * РАЗМЕРЫ ПРИБОРА ВВОДЯТСЯ.
+                 *
+                 * Ширина была фиксированной — 600 у холодильника, — а у
+                 * клиента он бывает 550, 700 и 900 у side-by-side. Ниша
+                 * пересчитывается от введённого, а ЗАЗОРЫ вокруг прибора
+                 * остаются отраслевыми: их считает код, человек вводит
+                 * то, что измерил.
+                 */
+                <div className="mt-1" data-appliance-size>
+                  <span className="block text-[13px] leading-tight text-graphiteMw">
+                    Прибор «{APPLIANCE_SLOTS[selected.appliance].title}» — свои размеры:
+                  </span>
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {(
+                      [
+                        ['widthMm', 'Ш', selected.widthMm],
+                        ['heightMm', 'В', selected.applianceSize?.heightMm ?? 0],
+                        ['depthMm', 'Г', selected.applianceSize?.depthMm ?? 0],
+                      ] as const
+                    ).map(([key, label, value]) => (
+                      <label key={key} className="flex items-center gap-1 text-[13px]">
+                        {label}
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          data-appliance-field={key}
+                          defaultValue={value || ''}
+                          placeholder="—"
+                          onBlur={(event) => {
+                            const raw = Number(event.target.value);
+                            const size = {
+                              widthMm: selected.applianceSize?.widthMm ?? selected.widthMm,
+                              heightMm: selected.applianceSize?.heightMm,
+                              depthMm: selected.applianceSize?.depthMm,
+                              [key]: Number.isFinite(raw) && raw > 0 ? Math.round(raw) : undefined,
+                            };
+                            if (!size.widthMm) return;
+                            onOps([
+                              {
+                                op: 'set_appliance_size',
+                                moduleId: selected.id,
+                                size: size as NonNullable<Module['applianceSize']>,
+                              },
+                            ]);
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') (event.target as HTMLInputElement).blur();
+                          }}
+                          className="mw-num mw-touch w-[64px] border border-blueprint/40 bg-field px-1.5 text-[13px]"
+                        />
+                      </label>
+                    ))}
+                  </div>
+                  <span className="mt-1 block text-[13px] leading-tight text-graphiteMw">
+                    Зазоры вокруг прибора добавит расчёт.
+                  </span>
+                </div>
               ) : (
                 <>
                   <span className="mt-1 flex flex-wrap gap-[3px]">

@@ -224,6 +224,22 @@ export interface FrontSpec {
   itemId?: string;
 }
 
+/**
+ * РАЗМЕРЫ КОНКРЕТНОГО ПРИБОРА.
+ *
+ * `APPLIANCE_SLOTS` держит отраслевой стандарт — с него и начинается
+ * разговор. Но приборы у клиентов разные: холодильник бывает 550, 600,
+ * 700 и side-by-side 900, духовка под столешницу и в колонну — разной
+ * высоты. Габарит берётся отсюда, а ЗАЗОРЫ вокруг него остаются
+ * отраслевыми: их считает код, а не человек.
+ */
+export interface ApplianceSize {
+  widthMm: number;
+  /** Высота корпуса прибора. Из неё считается ниша. */
+  heightMm?: number;
+  depthMm?: number;
+}
+
 export interface Module {
   id: string;
   kind: ModuleKind;
@@ -265,6 +281,14 @@ export interface Module {
    * Верх и низ могут отличаться — готовые дизайны этим и пользуются.
    */
   front?: FrontSpec;
+  /**
+   * Размеры прибора, введённые руками.
+   *
+   * Живут НА МОДУЛЕ, а не только в требованиях: ниша, раскрой, чертёж и
+   * отпечаток обязаны видеть тот же прибор, что заказан. Пусто —
+   * отраслевой стандарт из `APPLIANCE_SLOTS`.
+   */
+  applianceSize?: ApplianceSize;
   label: string;
 }
 
@@ -419,6 +443,8 @@ export interface Composition {
 export type RunMode = 'template' | 'free';
 
 export interface RunRequirements {
+  /** Размеры приборов клиента: холодильник 700, side-by-side 900. */
+  applianceSizes?: Partial<Record<ApplianceKind, ApplianceSize>>;
   /** Зона квартиры: от неё зависят габариты и состав статей сметы. */
   zone?: ZoneKind;
   /**
@@ -540,6 +566,8 @@ export type MillworkOp =
    * готовый дизайн, и так же он потом правится поштучно.
    */
   | { op: 'set_front'; moduleId: string; front: FrontSpec }
+  /** Габарит прибора: ниша пересчитывается, зазоры остаются отраслевыми. */
+  | { op: 'set_appliance_size'; moduleId: string; size: ApplianceSize }
   /**
    * Перенос модуля. `afterModuleId` — перестановка в порядке (так правит
    * модель); `offsetMm` — перенос на место вдоль ряда, шагом 50 мм: так

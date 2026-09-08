@@ -73,6 +73,13 @@ function extrasPart(unit: Module): string | undefined {
      * собранных до появления материалов.
      */
     frontPart(unit.front) ?? '',
+    /*
+     * Габарит прибора. Холодильник 700 вместо 600 — это другая ниша,
+     * другой раскрой и другие деньги: отпечаток обязан их различать.
+     */
+    unit.applianceSize
+      ? `app${unit.applianceSize.widthMm}x${unit.applianceSize.heightMm ?? 0}x${unit.applianceSize.depthMm ?? 0}`
+      : '',
   ].filter(Boolean);
 
   return parts.length > 0 ? parts.join(',') : undefined;

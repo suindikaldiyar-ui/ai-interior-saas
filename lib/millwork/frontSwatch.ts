@@ -1,4 +1,5 @@
 import { FRONT_BASES, frontOf } from './frontMaterial';
+import { hasFacade } from './applianceFront';
 import type { FrontBase, FrontFinish, FrontSpec, Module } from '@/types/millwork';
 
 /**
@@ -94,7 +95,8 @@ export function frontSwatch(spec: FrontSpec, imageUrl: string | null = null): Fr
 
 /** Образец модуля: у техники без фасада его нет вовсе. */
 export function moduleSwatch(unit: Module, imageUrl: string | null = null): FrontSwatch | null {
-  if (unit.appliance && !unit.builtIn) return null;
+  // Признак один на весь продукт: что закрыто фасадом, то и красится.
+  if (!hasFacade(unit)) return null;
   return frontSwatch(frontOf(unit), imageUrl);
 }
 

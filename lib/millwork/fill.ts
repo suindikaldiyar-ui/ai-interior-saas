@@ -52,14 +52,20 @@ export function snapUp32(mm: number): number {
  * паспортной, а не ниже.
  */
 export function columnNiches(
-  unit: Pick<Module, 'column'>,
+  unit: Pick<Module, 'column' | 'applianceSize'>,
   carcassHeightMm: number,
 ): { appliance: ApplianceKind; fromMm: number; toMm: number }[] {
   const column = unit.column;
   if (!column) return [];
 
-  const bottomH = nicheHeightMm(column.bottom as ApplianceKind);
-  const topH = nicheHeightMm(column.top as ApplianceKind);
+  /*
+   * Высота ниши — от размера ЭТОГО прибора, если он введён. Паспортные
+   * 595 у духовки это стандарт, а не закон: прибор клиента может быть
+   * другим, и ниша под него обязана пересчитаться.
+   */
+  const size = (unit as Pick<Module, 'applianceSize'>).applianceSize;
+  const bottomH = nicheHeightMm(column.bottom as ApplianceKind, size);
+  const topH = nicheHeightMm(column.top as ApplianceKind, size);
 
   // Низкий пенал: приборы садятся от дна, иначе верхний упрётся в крышу.
   const needed = bottomH + topH + APPLIANCE_COLUMN.shelfMm;

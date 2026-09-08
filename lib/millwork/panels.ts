@@ -1,6 +1,7 @@
 import { moduleCarcassHeightMm, moduleDepthMm } from './fill';
 import { BUILT_IN_FRIDGE_FRONTS, GEOMETRY } from './modules';
 import { hasBottom } from './moduleVariants';
+import { facadeSpans, hasFacade } from './applianceFront';
 import {
   FRAME_WIDTH_MM,
   frontMaterialName,
@@ -237,13 +238,31 @@ function modulePanels(
    * высоту пенала. Без этих деталей раскрой уедет — фасад есть в смете,
    * а в цех уходит лист без него.
    */
-  if (unit.builtIn) {
+  if (unit.builtIn && hasFacade(unit)) {
     const doorHeight = Math.round((heightMm - gap * (BUILT_IN_FRIDGE_FRONTS + 1)) / BUILT_IN_FRIDGE_FRONTS);
     pushFront('Фасад встройки', doorHeight, unit.widthMm - gap, BUILT_IN_FRIDGE_FRONTS);
     return panels;
   }
 
-  if (isAppliance) return panels;
+  /*
+   * ПРИБОРНЫЙ МОДУЛЬ ТОЖЕ ЗАКРЫТ ФАСАДОМ.
+   *
+   * Раньше здесь стоял безусловный выход: модуль с техникой не получал ни
+   * одной фасадной детали. Из-за этого под мойкой не было створки, под
+   * варочной — ящиков, у колонны — фасадов над нишей и под ней. Цех не
+   * видел их в раскрое, смета не брала за них денег, а материал к ним не
+   * применялся вовсе: нажимаешь «шпон» — половина ряда остаётся серой.
+   *
+   * Участки считает `facadeSpans` — по тем же нишам, что `columnNiches`.
+   * Второй формулой их считать нельзя: разойдясь, раскрой начнёт пилить
+   * фасад поверх духовки.
+   */
+  if (isAppliance) {
+    for (const span of facadeSpans(unit, heightMm)) {
+      pushFront('Фасад', span.heightMm - gap, unit.widthMm - gap, 1);
+    }
+    return panels;
+  }
 
   if (unit.frontType === 'door' && unit.doorCount > 0) {
     const doorWidth = Math.round((unit.widthMm - gap * (unit.doorCount + 1)) / unit.doorCount);

@@ -440,7 +440,19 @@ export default function Workspace(props: WorkspaceProps) {
         ...base.options,
         upperToCeiling: composition.upperToCeiling ?? base.options.upperToCeiling,
       },
-      lockedOptions: composition.upperToCeiling === undefined ? undefined : ['upperToCeiling'],
+      /*
+       * ВЫСОТА ВЕРХНЕГО РЯДА ЗАПЕРТА ВСЕГДА.
+       *
+       * Замок ставился только тогда, когда человек трогал переключатель
+       * руками. Пришла опция из шаблона или из умолчаний — стратегия
+       * комплектации молча возвращала своё: `optimal` ставит
+       * `upperToCeiling: false`, и переключатель показывал «до потолка»,
+       * а между шкафами и потолком оставалось 530 мм.
+       *
+       * Значение в `options` — это ответ, кто бы его ни дал. Стратегии
+       * незачем спорить с видимым переключателем (ловушка 108).
+       */
+      lockedOptions: ['upperToCeiling'],
     } as RunRequirements;
   }, [template, props.requirements, composition]);
 
@@ -474,7 +486,19 @@ export default function Workspace(props: WorkspaceProps) {
        * нажимается, а верхний ряд остаётся стандартным — стратегия
        * `optimal` перекрывает эту опцию своей.
        */
-      lockedOptions: composition.upperToCeiling === undefined ? undefined : ['upperToCeiling'],
+      /*
+       * ВЫСОТА ВЕРХНЕГО РЯДА ЗАПЕРТА ВСЕГДА.
+       *
+       * Замок ставился только тогда, когда человек трогал переключатель
+       * руками. Пришла опция из шаблона или из умолчаний — стратегия
+       * комплектации молча возвращала своё: `optimal` ставит
+       * `upperToCeiling: false`, и переключатель показывал «до потолка»,
+       * а между шкафами и потолком оставалось 530 мм.
+       *
+       * Значение в `options` — это ответ, кто бы его ни дал. Стратегии
+       * незачем спорить с видимым переключателем (ловушка 108).
+       */
+      lockedOptions: ['upperToCeiling'],
     };
 
     return Object.keys(manualAnchors).length > 0 ? { ...next, manualAnchors } : next;
