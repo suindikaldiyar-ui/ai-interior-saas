@@ -96,6 +96,14 @@ import {
 } from '../lib/millwork/moduleVariants';
 import { gapsIn } from '../lib/millwork/freeRun';
 import { facadeSpans, hasFacade } from '../lib/millwork/applianceFront';
+import {
+  TYPICAL_PALETTE,
+  paletteFor,
+  paletteFromCatalog,
+  typicalColorItem,
+} from '../lib/millwork/palette';
+import { frontOf } from '../lib/millwork/frontMaterial';
+import type { CatalogEntryFull } from '../types/catalog';
 import { moduleDepthMm, upperBottomFor } from '../lib/millwork/fill';
 import { FRAME_WIDTH_MM, frontConflict } from '../lib/millwork/frontMaterial';
 import {
@@ -5256,6 +5264,201 @@ console.log('\nМодуль с техникой — тоже мебель');
   const standalone = { ...(builtIn as Module), builtIn: false };
   check('отдельностоящий фасада не имеет', !hasFacade(standalone));
   check('и фасадных деталей не даёт', facadeSpans(standalone, 2000).length === 0);
+}
+
+
+/* ──────────────  Палитра цветов — из каталога организации  ────────────── */
+
+/*
+ * Цвета лежали в коде: восемь шестнадцатеричных чисел в готовых дизайнах.
+ * Это цвета НАШИ, а не компании — у неё свой поставщик, свой прайс и свои
+ * декоры. Показать клиенту декор, которого компания не продаёт, значит
+ * принять заказ, который она не выполнит.
+ */
+console.log('\nПалитра цветов компании');
+{
+  /** Товар каталога в том виде, в каком его отдаёт база. */
+  const item = (
+    id: string,
+    article: string,
+    name: string,
+    meta: Record<string, unknown>,
+    price = 20000,
+  ) =>
+    ({
+      id,
+      org_id: 'org',
+      category_id: 'cat',
+      article,
+      name_ru: name,
+      name_kk: name,
+      description: '',
+      price,
+      unit: 'm2',
+      dimensions: {},
+      tiling: {},
+      meta,
+      is_active: true,
+      category: {
+        id: 'cat',
+        org_id: 'org',
+        key: 'materials',
+        name_ru: 'Материалы',
+        name_kk: 'Материалы',
+        applies_to: 'object',
+        unit: 'm2',
+        sort_order: 0,
+        is_active: true,
+      },
+      assets: [],
+    }) as unknown as CatalogEntryFull;
+
+  /* 1. Палитра читается из каталога, а не из кода. */
+  const alpha = [
+    item('a1', 'ALFA-01', 'Альфа белый', { frontBase: 'mdf_enamel', color: '#FFFFFF' }),
+    item('a2', 'ALFA-02', 'Альфа графит', { frontBase: 'mdf_enamel', color: '#333333' }),
+    item('a3', 'ALFA-03', 'Альфа дуб', { frontBase: 'ldsp', color: '#B08A57' }),
+    // Ставка сметы — не цвет: у неё нет ни базы, ни цвета.
+    item('a4', 'MAT-LDSP', 'Корпус ЛДСП', { estimateKey: 'ldsp' }),
+  ];
+  const beta = [
+    item('b1', 'BETA-11', 'Бета слоновая кость', { frontBase: 'mdf_enamel', color: '#E6D2B5' }),
+    item('b2', 'BETA-12', 'Бета зелёный', { frontBase: 'mdf_enamel', color: '#89AC76' }),
+  ];
+
+  const alphaColors = paletteFromCatalog(alpha);
+  const betaColors = paletteFromCatalog(beta);
+
+  check(
+    'палитра собирается из каталога организации',
+    alphaColors.length === 3,
+    `${alphaColors.length} цветов из ${alpha.length} позиций`,
+  );
+  check(
+    'ставка сметы цветом не считается',
+    alphaColors.every((color) => color.article !== 'MAT-LDSP'),
+  );
+  check(
+    'ДВЕ организации видят РАЗНЫЕ цвета',
+    alphaColors.every((a) => !betaColors.some((b) => b.itemId === a.itemId)) &&
+      betaColors.length === 2,
+    `${alphaColors.map((c) => c.article).join(', ')} против ${betaColors
+      .map((c) => c.article)
+      .join(', ')}`,
+  );
+  check(
+    'цвета фильтруются по базе фасада',
+    paletteFor(alphaColors, 'mdf_enamel').length === 2 &&
+      paletteFor(alphaColors, 'ldsp').length === 1 &&
+      paletteFor(alphaColors, 'acrylic').length === 0,
+    `эмаль ${paletteFor(alphaColors, 'mdf_enamel').length}, ЛДСП ${paletteFor(alphaColors, 'ldsp').length}`,
+  );
+  check(
+    'порядок цветов устойчив',
+    JSON.stringify(paletteFromCatalog(alpha)) === JSON.stringify(paletteFromCatalog([...alpha].reverse())),
+  );
+
+  /* 2. Мусор в каталоге не становится цветом. */
+  const dirty = paletteFromCatalog([
+    item('x1', 'X-1', 'Без цвета', { frontBase: 'mdf_enamel' }),
+    item('x2', 'X-2', 'Кривой цвет', { frontBase: 'mdf_enamel', color: 'красный' }),
+    item('x3', 'X-3', 'Чужая база', { frontBase: 'плита', color: '#FFFFFF' }),
+  ]);
+  check('позиция без цвета или с мусором в палитру не попадает', dirty.length === 0, `${dirty.length}`);
+
+  /* 3. Типовая палитра помечена ориентиром. */
+  check(
+    'в типовой палитре есть RAL и ходовые декоры',
+    TYPICAL_PALETTE.length >= 12 &&
+      TYPICAL_PALETTE.some((color) => /RAL/.test(color.name)) &&
+      new Set(TYPICAL_PALETTE.map((color) => color.base)).size >= 4,
+    `${TYPICAL_PALETTE.length} цветов, баз ${new Set(TYPICAL_PALETTE.map((c) => c.base)).size}`,
+  );
+  check(
+    'и каждая её позиция помечена типовой',
+    TYPICAL_PALETTE.every((color) => typicalColorItem(color).meta.typical === true),
+  );
+  check(
+    'типовой цвет отличим от своего',
+    (() => {
+      const mixed = paletteFromCatalog([
+        item('t1', 'CLR-RAL-9003', 'RAL 9003', {
+          frontBase: 'mdf_enamel',
+          color: '#F4F4F0',
+          typical: true,
+        }),
+        item('o1', 'OWN-1', 'Наш белый', { frontBase: 'mdf_enamel', color: '#FFFFFF' }),
+      ]);
+      return mixed.filter((color) => color.typical).length === 1;
+    })(),
+  );
+  check(
+    'артикулы типовой палитры не пересекаются с типовым прайсом',
+    TYPICAL_PALETTE.every(
+      (color) => !TYPICAL_PRICE_LIST.some((rate) => rate.article === color.article),
+    ),
+  );
+
+  /* 4. Выбор цвета пишет артикул и меняет отпечаток. */
+  const run = buildRun(baseInput);
+  const target = run.modules.find((unit) => !unit.appliance)!;
+  const color = alphaColors[0];
+
+  const painted = applyOps({
+    run,
+    requirements: REQ,
+    openings: OPENINGS,
+    ops: [
+      {
+        op: 'set_front',
+        moduleId: target.id,
+        front: {
+          ...frontOf(target),
+          colorHex: color.colorHex,
+          itemId: color.itemId,
+        },
+      },
+    ],
+  });
+
+  const unit = painted.modules.find((m) => m.id === target.id)!;
+  check('выбор цвета пишет артикул в модуль', unit.front?.itemId === color.itemId, unit.front?.itemId);
+  check('и цвет', unit.front?.colorHex === color.colorHex, unit.front?.colorHex);
+  check(
+    'и меняет отпечаток',
+    configurationFingerprint(painted.modules) !== configurationFingerprint(run.modules),
+  );
+
+  /*
+   * ДВА ДЕКОРА ОДНОГО ЦВЕТА — РАЗНЫЕ ТОВАРЫ.
+   *
+   * «Дуб сонома» и «дуб крафт» на схеме одинаковы, а в заказе это разные
+   * плиты и разные деньги: без артикула в отпечатке подписанная смета
+   * разошлась бы с тем, что уехало в цех.
+   */
+  const twin = applyOps({
+    run,
+    requirements: REQ,
+    openings: OPENINGS,
+    ops: [
+      {
+        op: 'set_front',
+        moduleId: target.id,
+        front: { ...frontOf(target), colorHex: color.colorHex, itemId: 'other-article' },
+      },
+    ],
+  });
+  check(
+    'два артикула одного цвета различаются отпечатком',
+    configurationFingerprint(twin.modules) !== configurationFingerprint(painted.modules),
+  );
+
+  check(
+    'ряд без выбранного цвета отпечаток не меняет',
+    configurationFingerprint(
+      applyOps({ run, requirements: REQ, openings: OPENINGS, ops: [] }).modules,
+    ) === configurationFingerprint(run.modules),
+  );
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

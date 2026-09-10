@@ -11,6 +11,7 @@ import VariantStrip, { type VariantPreview } from './VariantStrip';
 import FrontMaterialPicker from './FrontMaterialPicker';
 import RunSchematic from './RunSchematic';
 import { hasFacade } from '@/lib/millwork/applianceFront';
+import { paletteFromCatalog } from '@/lib/millwork/palette';
 import { compressPhoto } from '@/lib/photo';
 import FrontSwatchCards from './FrontSwatchCards';
 import {
@@ -820,6 +821,16 @@ export default function Workspace(props: WorkspaceProps) {
     const unit = allModules(active.run).find((m) => m.id === selectedId);
     return unit ? `${unit.label} ${unit.widthMm} мм` : null;
   }, [selectedId, active.run]);
+
+  /**
+   * ПАЛИТРА ЭТОЙ ОРГАНИЗАЦИИ.
+   *
+   * Каталог уже лежит в сторе — тот же, из которого берутся ставки и
+   * текстуры. Второго источника цветов нет: список в коде показывал бы
+   * клиенту декоры, которых компания не продаёт.
+   */
+  const catalog = useInteriorStore((s) => s.catalog);
+  const palette = useMemo(() => paletteFromCatalog(catalog), [catalog]);
 
   /** Выделенный модуль целиком: материал показывается по нему. */
   const selectedUnit = useMemo(
@@ -1817,6 +1828,7 @@ export default function Workspace(props: WorkspaceProps) {
                       unit={selectedUnit}
                       onOps={runOps}
                       onRefuse={setSceneNotice}
+                      palette={palette}
                     />
                   </div>
                 </div>

@@ -11,6 +11,7 @@ import {
   runningMeters,
 } from './kitchen';
 import { catalogUrl } from './supabase/config';
+import { TYPICAL_PALETTE, typicalColorItem } from './millwork/palette';
 import {
   UNIT_LABEL,
   isSurfaceKind,
@@ -174,7 +175,23 @@ export async function seedTypicalCatalog(
    * `category_id` роняет весь батч, и пользователь остаётся вообще без
    * прайса — ровно то, с чего началась эта поломка.
    */
-  const payload = TYPICAL_PRICE_LIST.filter((r) => !known.has(r.article)).flatMap((r) => {
+  /*
+   * Строка каталога одной формы для прайса и для палитры: у первой в
+   * `meta` ключ сметы, у второй база и цвет. Общий тип — то, что
+   * принимает вставка.
+   */
+  type SeedRow = {
+    org_id: string;
+    category_id: string;
+    article: string;
+    name_ru: string;
+    price: number;
+    unit: string;
+    meta: Record<string, unknown>;
+    is_active: boolean;
+  };
+
+  const payload: SeedRow[] = TYPICAL_PRICE_LIST.filter((r) => !known.has(r.article)).flatMap((r) => {
     const categoryId = categories.byKey.get(r.categoryKey);
     if (!categoryId) return [];
 
@@ -192,7 +209,40 @@ export async function seedTypicalCatalog(
     ];
   });
 
-  const skipped = TYPICAL_PRICE_LIST.length - payload.length;
+  /*
+   * ПАЛИТРА ЦВЕТОВ ИДЁТ ТЕМ ЖЕ ПУТЁМ, ЧТО ПРАЙС.
+   *
+   * Цвет — это ТОВАР, а не отдельная сущность (ловушка 19): он живёт в
+   * `catalog_items` с остальными и отличается только `meta.frontBase`
+   * и `meta.color`. Отдельная таблица под палитру сделала бы платформу
+   * неуниверсальной ровно так же, как таблица под кухни.
+   *
+   * Помечен `typical: true` — то же, что у прайса: компания обязана
+   * видеть, где её товар, а где наш пример. Заведённое ею не трогаем.
+   */
+  const colors = TYPICAL_PALETTE.filter((c) => !known.has(c.article)).flatMap((color) => {
+    const item = typicalColorItem(color);
+    const categoryId = categories.byKey.get(item.categoryKey);
+    if (!categoryId) return [];
+
+    return [
+      {
+        org_id: orgId,
+        category_id: categoryId,
+        article: item.article,
+        name_ru: item.name_ru,
+        price: item.price,
+        unit: item.unit,
+        meta: item.meta,
+        is_active: true,
+      },
+    ];
+  });
+
+  payload.push(...colors);
+
+  const skipped =
+    TYPICAL_PRICE_LIST.length + TYPICAL_PALETTE.length - payload.length;
 
   if (payload.length === 0) {
     return { added: 0, addedCategories: categories.created, skipped };

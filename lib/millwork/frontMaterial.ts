@@ -132,7 +132,15 @@ export function frontMaterialName(spec: FrontSpec, thicknessMm: number): string 
  * иначе ряд из тринадцати модулей снова станет тринадцатью вызовами.
  */
 export function frontKey(spec: FrontSpec): string {
-  return `${spec.base}/${spec.construct}/${spec.finish}/${spec.colorHex ?? '-'}`;
+  /*
+   * АРТИКУЛ ВХОДИТ В КЛЮЧ.
+   *
+   * Два декора компании могут совпасть по шестнадцатеричному цвету —
+   * «дуб сонома» и «дуб крафт» на схеме одинаковы, а в заказе это разные
+   * плиты и разные деньги. Без артикула отпечаток их не различал бы, и
+   * подписанная смета разошлась бы с тем, что уехало в цех.
+   */
+  return `${spec.base}/${spec.construct}/${spec.finish}/${spec.colorHex ?? '-'}/${spec.itemId ?? '-'}`;
 }
 
 /**

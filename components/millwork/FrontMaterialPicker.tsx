@@ -9,6 +9,7 @@ import {
   frontOf,
 } from '@/lib/millwork/frontMaterial';
 import { hasFacade } from '@/lib/millwork/applianceFront';
+import { paletteFor, type PaletteColor } from '@/lib/millwork/palette';
 import type {
   FrontBase,
   FrontConstruct,
@@ -35,10 +36,24 @@ type Props = {
   onOps: (ops: MillworkOp[]) => void;
   /** Отказ показывается там, где нажали: у ленты и у сцены он свой. */
   onRefuse?: (message: string) => void;
+  /**
+   * Палитра ЭТОЙ организации: артикул, название, цвет, образец.
+   *
+   * Пусто — цветов у компании не заведено, и об этом сказано словами.
+   * Своего списка цветов у компонента нет: показывать общий значило бы
+   * обещать клиенту декор, которого у компании нет.
+   */
+  palette?: PaletteColor[];
   compact?: boolean;
 };
 
-export default function FrontMaterialPicker({ unit, onOps, onRefuse, compact }: Props) {
+export default function FrontMaterialPicker({
+  unit,
+  onOps,
+  onRefuse,
+  compact,
+  palette = [],
+}: Props) {
   /*
    * Материал есть у всего, что закрыто фасадом: у мойки под чашей
    * створка, у колонны фасады над нишей и под ней. Нет его только у
@@ -124,6 +139,85 @@ export default function FrontMaterialPicker({ unit, onOps, onRefuse, compact }: 
           </span>
         )}
       </div>
+
+      {/*
+        * ЦВЕТ — ИЗ КАТАЛОГА КОМПАНИИ.
+        *
+        * Клиент работает с МДФ и просит цвет. Цвета лежали в коде —
+        * восемь чисел в готовых дизайнах, — и это цвета НАШИ: у компании
+        * свой поставщик и свои декоры. Выбор пишет артикул (`itemId`), и
+        * по нему выноска чертежа называет товар, а смета берёт цену.
+        */}
+      {(() => {
+        const colors = paletteFor(palette, current.base);
+        if (colors.length === 0) {
+          return (
+            <p className="mb-2 text-[13px] leading-snug text-graphiteMw" data-palette-empty>
+              Цвета для «{FRONT_BASES[current.base].title}» в каталоге не заведены.
+              Клиент увидит цвет по умолчанию, а не ваш декор.
+            </p>
+          );
+        }
+
+        return (
+          <div className="mb-2" data-palette>
+            <div className="flex flex-wrap gap-1">
+              {colors.map((color) => {
+                const active = current.itemId === color.itemId;
+                return (
+                  <button
+                    key={color.itemId}
+                    type="button"
+                    data-palette-color={color.article}
+                    data-typical={color.typical ? '1' : '0'}
+                    aria-pressed={active}
+                    title={`${color.name} · ${color.article}${color.typical ? ' · типовая' : ''}`}
+                    onClick={() =>
+                      onOps([
+                        {
+                          op: 'set_front',
+                          moduleId: unit.id,
+                          front: {
+                            ...current,
+                            colorHex: color.colorHex,
+                            itemId: color.itemId,
+                          },
+                        },
+                      ])
+                    }
+                    className="mw-btn mw-btn-ghost !h-auto !w-auto !p-1"
+                    style={{
+                      outline: active ? '2px solid var(--accent)' : undefined,
+                      outlineOffset: '-2px',
+                    }}
+                  >
+                    <span
+                      className="block h-7 w-7 rounded-[5px]"
+                      style={{
+                        background: color.imageUrl
+                          ? `center/cover url(${color.imageUrl}), ${color.colorHex}`
+                          : color.colorHex,
+                      }}
+                    />
+                  </button>
+                );
+              })}
+            </div>
+
+            {/*
+              * Типовая палитра подписана ориентиром — ровно как типовой
+              * прайс: компания обязана видеть, где её товар, а где наш
+              * пример. Молча выданная чужая палитра — это обещание
+              * цвета, которого у неё нет.
+              */}
+            {colors.some((color) => color.typical) && (
+              <p className="mt-1 text-[13px] leading-snug text-graphiteMw">
+                Часть цветов — типовая палитра. Замените на свои в каталоге.
+              </p>
+            )}
+          </div>
+        );
+      })()}
 
       <div className="flex flex-wrap gap-1">
         {(Object.keys(FRONT_FINISHES) as FrontFinish[]).map((finish) => (
