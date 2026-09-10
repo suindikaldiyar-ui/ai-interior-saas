@@ -31,6 +31,15 @@ type Props = {
   issues?: LayoutIssue[];
   selectedModuleId: string | null;
   onSelect: (moduleId: string) => void;
+  /**
+   * Соседняя стена угла: рисуется КОНТУРОМ, без материала и без правки.
+   *
+   * Работа идёт по одной стене, но угол — это две: не видя соседнюю,
+   * человек не понимает, где именно угол и куда упирается ряд. Контур
+   * отвечает на это и не спорит с активным рядом за внимание.
+   */
+  neighbour?: Run | null;
+  neighbourLabel?: string;
   /** Свободная сборка: модуль тянется вдоль ряда. */
   onMoveModule?: (moduleId: string, offsetMm: number) => void;
   changedIds?: string[];
@@ -42,6 +51,8 @@ export default function RunSchematic({
   run,
   comms,
   issues = [],
+  neighbour = null,
+  neighbourLabel,
   selectedModuleId,
   onSelect,
   onMoveModule,
@@ -77,6 +88,19 @@ export default function RunSchematic({
         * разговора. `min-h-0` обязателен — без него флекс-элемент не даёт
         * себя сжать, и низ схемы уезжает под панель.
         */}
+      {/*
+        * Соседняя стена — над активной, вполовину меньше и приглушённо:
+        * это справка «вот где угол», а не второй предмет работы.
+        */}
+      {neighbour && neighbour.modules.length > 0 && (
+        <div className="mb-2 rounded-[var(--r-panel)] bg-sheet/60 p-2" data-neighbour>
+          <p className="mw-label mb-1">{neighbourLabel ?? 'Соседняя стена'} — в углу</p>
+          <div className="h-[84px] [&>svg]:h-full [&>svg]:w-full">
+            <ElevationDrawing run={neighbour} compact />
+          </div>
+        </div>
+      )}
+
       <div className="min-h-0 flex-1 overflow-hidden rounded-[var(--r-panel)] bg-sheet p-2">
         <div className="mw-schematic h-full [&>svg]:h-full [&>svg]:w-full">
           {view === 'front' ? (

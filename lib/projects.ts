@@ -1,5 +1,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { Measurement, Run, RunRequirements, VariantKey } from '@/types/millwork';
+import type {
+  CompositionKind,
+  Measurement,
+  Run,
+  RunRequirements,
+  VariantKey,
+} from '@/types/millwork';
 import type { Survey } from '@/types/survey';
 
 /**
@@ -45,6 +51,23 @@ export type MillworkState = {
   /** Состав по каждому варианту: правки замерщика сохраняются, а не теряются. */
   runs?: Partial<Record<VariantKey, Run>>;
   selectedVariant?: VariantKey;
+  /**
+   * УГЛОВАЯ И П-ОБРАЗНАЯ КУХНЯ ЦЕЛИКОМ.
+   *
+   * `runs` хранит РАБОЧУЮ стену — на ней держится всё, что было до
+   * углов. Соседние стены жили только в памяти вкладки: замерщик
+   * собирал угловую кухню, показывал клиенту, закрывал объект — и
+   * второй ряд пропадал молча. Это потеря работы, а не неудобство.
+   *
+   * Поля необязательные, и в этом весь расчёт совместимости: у прямых
+   * кухонь, сохранённых до этой правки, их просто нет — форма читается
+   * как `linear`, и объект открывается ровно как прежде. Переписывать
+   * старые строки не нужно.
+   */
+  shape?: CompositionKind;
+  cornerSolution?: 'corner_module' | 'false_panel';
+  /** Ряды соседних стен по индексу: 1 — стена Б, 2 — стена В. */
+  wallRuns?: Record<string, Run>;
   /** Снятые галочки сметы по вариантам. */
   disabled?: Partial<Record<VariantKey, string[]>>;
   /** Снимок ставок на момент расчёта. */

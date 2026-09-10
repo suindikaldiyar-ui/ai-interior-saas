@@ -15,6 +15,7 @@ import { runFingerprint } from './fingerprint';
 import { defaultFill, hingeSide } from './fill';
 import { frontConflict } from './frontMaterial';
 import { MAX_APPLIANCE_DEPTH_MM, moduleDepthMm } from './fill';
+import { CORNER } from './modules';
 import { MAX_MEZZANINE_MM, MIN_MEZZANINE_MM } from './sections';
 import { hasFacade } from './applianceFront';
 import {
@@ -127,9 +128,23 @@ export interface ApplyOpsInput {
   requirements: RunRequirements;
   ops: MillworkOp[];
   openings?: Opening[];
+  /**
+   * Глубина помещения, мм. Без неё проверяется только габарит мебели.
+   *
+   * Предел 700 мм — это про мебель: глубже прибор не встраивают. Но
+   * человеку важно другое — сколько останется НА ПРОХОД: между рядом и
+   * противоположной стеной должно быть, где разойтись.
+   */
+  roomDepthMm?: number;
 }
 
-export function applyOps({ run, requirements, ops, openings = [] }: ApplyOpsInput): Run {
+export function applyOps({
+  run,
+  requirements,
+  ops,
+  openings = [],
+  roomDepthMm,
+}: ApplyOpsInput): Run {
   let modules = [...run.modules];
   let options = { ...run.options };
   const warnings: string[] = [];
@@ -618,12 +633,31 @@ export function applyOps({ run, requirements, ops, openings = [] }: ApplyOpsInpu
           applianceSizes: sizes,
         };
 
-        const pushed = moduleDepthMm(modules[at], zone) - moduleDepthMm(unit, zone);
+        const nextDepth = moduleDepthMm(modules[at], zone);
+        const pushed = nextDepth - moduleDepthMm(unit, zone);
         if (pushed > 0) {
           warnings.push(
             `${unit.label}: прибор глубиной ${depth} мм — модуль вышел вперёд на ${pushed} мм. ` +
               'Столешница над ним идёт той же глубины.',
           );
+        }
+
+        /*
+         * ПРОХОД ВАЖНЕЕ ГАБАРИТА.
+         *
+         * Предел 700 мм — про мебель: глубже прибор не встраивают. А
+         * человеку важно, сколько осталось между рядом и тем, что
+         * напротив: 480 мм это не проход, там не разойтись вдвоём и не
+         * открыть ящик. Предупреждаем ПОСЛЕДСТВИЕМ, а не числом.
+         */
+        if (roomDepthMm && roomDepthMm > 0) {
+          const aisle = Math.round(roomDepthMm - nextDepth);
+          if (aisle < CORNER.minAisleMm) {
+            warnings.push(
+              `После этого между рядом и противоположной стеной останется ${Math.max(0, aisle)} мм: ` +
+                'не разойтись вдвоём и не открыть ящик напротив.',
+            );
+          }
         }
         break;
       }

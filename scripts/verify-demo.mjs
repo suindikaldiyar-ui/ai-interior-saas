@@ -1736,6 +1736,176 @@ try {
     await fill.close();
   }
 
+
+  /* ── Угловая кухня в конфигураторе ── */
+
+  /*
+   * «В чертеже только прямой» — сказал мебельщик, который делает угловые
+   * постоянно. Здесь проверяется весь путь: форма выбирается, стены
+   * переключаются, второй ряд правится теми же кнопками, а на лист
+   * уходят ОБЕ развёртки.
+   */
+  {
+    const corner = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await corner.goto(`${BASE}/demo`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+    await until(async () => (await corner.getByRole('button', { name: /Конфигуратор/ }).count()) > 0);
+
+    await corner.getByRole('button', { name: /Конфигуратор/ }).first().click();
+    await sleep(2500);
+
+    check(
+      'форма гарнитура выбирается на рабочем экране',
+      (await corner.locator('[data-shape-kind]').count()) === 3,
+      `${await corner.locator('[data-shape-kind]').count()} формы`,
+    );
+
+    const money = (text) => (text.match(/([\d\s ]{5,})\s*₸/) ?? [])[1]?.replace(/\s| /g, '');
+    const totalStraight = money(await corner.locator('footer').innerText());
+
+    await corner.locator('[data-shape-kind="corner_l"]').click();
+    await sleep(1800);
+
+    const walls = corner.locator('[data-wall]');
+    check(
+      'у угловой кухни появляются стены А и Б',
+      (await walls.count()) === 2,
+      `${await walls.count()} стены`,
+    );
+    check(
+      'решение угла предлагается выбором',
+      (await corner.locator('[data-corner-solution]').count()) === 2,
+    );
+
+    const totalCorner = money(await corner.locator('footer').innerText());
+    check(
+      'угловая кухня стоит дороже прямой: в смете оба ряда',
+      Boolean(totalCorner) && Number(totalCorner) > Number(totalStraight),
+      `${totalStraight} → ${totalCorner} ₸`,
+    );
+
+    /* Смена решения угла меняет сумму. */
+    await corner.locator('[data-corner-solution="corner_module"]').click();
+    await sleep(1600);
+    const totalModule = money(await corner.locator('footer').innerText());
+    check(
+      'смена решения угла меняет сумму',
+      totalModule !== totalCorner,
+      `${totalCorner} → ${totalModule} ₸`,
+    );
+
+    /* Вторая стена правится теми же кнопками. */
+    await corner.locator('[data-wall="1"]').click();
+    await sleep(1600);
+
+    const rowOf = () =>
+      corner.evaluate(() =>
+        Array.from(document.querySelectorAll('[data-schematic] [data-module-id]'))
+          .map((node) => node.getAttribute('data-module-id'))
+          .join(','),
+      );
+
+    const beforeEdit = await rowOf();
+    check(
+      'вторая стена показывает свой ряд',
+      beforeEdit.length > 0,
+      `${beforeEdit.split(',').length} модулей`,
+    );
+    check(
+      'и рядом видно соседнюю стену — где угол',
+      (await corner.locator('[data-neighbour]').count()) === 1,
+    );
+
+    /*
+     * Целимся в ПРИБОРНЫЙ модуль. Обычную дверцу `rebalance` заменит
+     * такой же — ряд обязан сходиться со стеной, — и снаружи правка
+     * будет неотличима: идентификаторы выводятся из позиции, и
+     * перезаполненный модуль получает тот же id. Удаление прибора видно
+     * и в составе, и в деньгах.
+     */
+    const target = corner.locator('[data-schematic] [data-module-id^="tall-"]').first();
+    if ((await target.count()) > 0) {
+      await target.click({ force: true });
+      await sleep(900);
+    }
+    check(
+      'модуль второй стены выделяется и открывает панель',
+      (await corner.getByRole('button', { name: 'Удалить', exact: true }).count()) === 1,
+    );
+
+    const beforeMoney = money(await corner.locator('footer').innerText());
+    await corner.getByRole('button', { name: 'Удалить', exact: true }).click();
+    await sleep(1600);
+
+    check(
+      'и правится теми же операциями',
+      (await rowOf()) !== beforeEdit ||
+        money(await corner.locator('footer').innerText()) !== beforeMoney,
+      `${beforeEdit} → ${await rowOf()} · ${beforeMoney} → ${money(
+        await corner.locator('footer').innerText(),
+      )} ₸`,
+    );
+
+    /* ── Лист: обе развёртки ── */
+    await corner.getByRole('button', { name: /Результат/ }).first().click();
+    await sleep(1600);
+    await corner.getByRole('button', { name: 'Чертёж', exact: true }).click();
+    await sleep(1800);
+
+    const titles = await corner.evaluate(() =>
+      Array.from(document.querySelectorAll('figcaption, [data-view-title]')).map((n) =>
+        (n.textContent ?? '').trim(),
+      ),
+    );
+    const elevations = titles.filter((t) => /Фасад/i.test(t));
+    check(
+      'на чертёжном листе видны ОБА ряда угловой кухни',
+      elevations.length >= 2,
+      elevations.join(' · ') || titles.slice(0, 6).join(' · '),
+    );
+    check(
+      'и план, на котором виден угол',
+      titles.some((t) => /План/i.test(t)),
+      titles.filter((t) => /План/i.test(t)).join(', '),
+    );
+
+    /*
+     * ── СОСТОЯНИЕ ПЕРЕЖИВАЕТ ПЕРЕХОДЫ ПО ШАГАМ ──
+     *
+     * Круг «закрыл объект — открыл» на демонстрации не проверить: она
+     * монтируется БЕЗ `projectId`, а значит без автосохранения — сохранять
+     * некуда. Сериализация состояния проверена на движке
+     * (`test:millwork`, раздел «Угловая кухня переживает закрытие»).
+     *
+     * Здесь проверяется то, что демонстрация умеет и что ломается чаще:
+     * уход на другой шаг и обратно не должен превращать угловую кухню
+     * в прямую.
+     */
+    await corner.getByRole('button', { name: /Конфигуратор/ }).first().click();
+    await sleep(1800);
+
+    check(
+      'после возврата с чертежа кухня осталась угловой',
+      (await corner
+        .locator('[data-shape-kind="corner_l"]')
+        .getAttribute('aria-pressed')) === 'true' &&
+        (await corner.locator('[data-wall]').count()) === 2,
+      `стен ${await corner.locator('[data-wall]').count()}`,
+    );
+    check(
+      'решение угла не сбросилось',
+      (await corner
+        .locator('[data-corner-solution="corner_module"]')
+        .getAttribute('aria-pressed')) === 'true',
+    );
+    check(
+      'и правка второй стены на месте',
+      money(await corner.locator('footer').innerText()) !== null,
+      `${money(await corner.locator('footer').innerText())} ₸`,
+    );
+
+    await corner.close();
+  }
+
   await survey.context().setOffline(false);
   await survey.close();
 

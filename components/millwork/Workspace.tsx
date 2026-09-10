@@ -12,6 +12,11 @@ import FrontMaterialPicker from './FrontMaterialPicker';
 import RunSchematic from './RunSchematic';
 import { hasFacade } from '@/lib/millwork/applianceFront';
 import { paletteFromCatalog } from '@/lib/millwork/palette';
+import { buildComposition } from '@/lib/millwork/composition';
+import { compositionOf, mergeEstimates, wallLabel } from '@/lib/millwork/walls';
+
+/** Решение угла: модуль 900×900 или фальш-панель. */
+type CornerSolution = 'corner_module' | 'false_panel';
 import { compressPhoto } from '@/lib/photo';
 import FrontSwatchCards from './FrontSwatchCards';
 import {
@@ -88,6 +93,7 @@ import { shareUrl, whatsappLink, type MillworkState } from '@/lib/projects';
 import { runFingerprint } from '@/lib/millwork/fingerprint';
 import type {
   ApplianceKind,
+  CompositionKind,
   CommPoint,
   MillworkOp,
   ModuleVariantKind,
@@ -338,6 +344,41 @@ export default function Workspace(props: WorkspaceProps) {
    * пустая стена, которую он наполняет сам. Признак живёт рядом с
    * `templateId` и исключает его: либо готовое решение, либо своё.
    */
+  /*
+   * ФОРМА ГАРНИТУРА И АКТИВНАЯ СТЕНА.
+   *
+   * Угловая кухня — половина заказов, и до сих пор руками её было не
+   * собрать: рабочее место знало ровно один ряд. Теперь форма выбирается
+   * здесь, а стены переключаются: работа идёт по одной, но обе видны на
+   * схеме — соседняя контуром, чтобы было видно, где угол.
+   *
+   * Раскладку по-прежнему считает `buildRun`, правки идут через
+   * `applyOps`. Второго пути записи не появляется.
+   */
+  const [shape, setShape] = useState<CompositionKind>(
+    props.initialState?.shape ?? 'linear',
+  );
+  const [wallIndex, setWallIndex] = useState(0);
+  const [cornerSolution, setCornerSolution] = useState<CornerSolution>(
+    props.initialState?.cornerSolution ?? 'false_panel',
+  );
+  /**
+   * Правки соседних стен: у стены А для этого есть `editedRuns`.
+   *
+   * Восстанавливаются из сохранённого состояния, как и всё остальное:
+   * объект обязан открыться ровно таким, каким его закрыли (ловушка 42).
+   * Ключи в базе строковые — JSON других не знает.
+   */
+  const [editedWalls, setEditedWalls] = useState<Record<number, Run>>(() => {
+    const saved = props.initialState?.wallRuns ?? {};
+    const out: Record<number, Run> = {};
+    for (const [key, run] of Object.entries(saved)) {
+      const index = Number(key);
+      if (Number.isInteger(index) && index > 0) out[index] = run;
+    }
+    return out;
+  });
+
   const [freeMode, setFreeMode] = useState(
     props.initialState?.requirements?.mode === 'free',
   );
@@ -584,10 +625,129 @@ export default function Workspace(props: WorkspaceProps) {
     styleId: renderStyle,
   });
 
+  /*
+   * СТЕНЫ ДЛЯ КОМПОЗИЦИИ.
+   *
+   * Первая — рабочая стена ряда, она уже посчитана. Остальные берутся из
+   * замера по кругу: длина соседней стены это факт обмера, а не догадка.
+   * Замера нет — берём глубину помещения, ту же, из которой строится 3D.
+   */
+  const walls = useMemo(() => {
+    const measured = (survey?.walls ?? [])
+      .map((wall) => ({
+        id: wall.id,
+        lengthMm: wall.lengthMm.state === 'unknown' ? 0 : Math.round(wall.lengthMm.value),
+        openings: [] as typeof props.openings,
+      }))
+      .filter((wall) => wall.lengthMm > 0);
+
+    const first = { id: 'a', lengthMm: input.lengthMm, openings: props.openings };
+    const rest = measured.filter((wall) => wall.lengthMm !== input.lengthMm);
+    const fallback = Math.round((props.roomDepthM ?? 0) * 1000);
+
+    const list = [first, ...rest];
+    while (list.length < 3 && fallback > 0) {
+      list.push({ id: `w${list.length}`, lengthMm: fallback, openings: [] });
+    }
+    return list;
+  }, [survey, input.lengthMm, props.openings, props.roomDepthM]);
+
+  /**
+   * Композиция: та же, что собирает шаблон, и тем же кодом.
+   *
+   * Разваливается на исключении — угол по одной стене не собрать, и это
+   * честнее пустого результата. Ловим и говорим словами.
+   */
+  const layout = useMemo(() => {
+    if (shape === 'linear') return null;
+    try {
+      return buildComposition({
+        id: 'ws',
+        kind: shape,
+        requirements: { ...requirements, cornerSolution },
+        ceilingHeightMm: input.ceilingHeightMm,
+        walls,
+        comms: props.comms,
+      });
+    } catch {
+      return null;
+    }
+  }, [shape, requirements, cornerSolution, input.ceilingHeightMm, walls, props.comms]);
+
   const active = variants.find((v) => v.key === variantKey) ?? variants[0];
+
+  /*
+   * АКТИВНЫЙ РЯД — ТОТ, ЧЬЯ СТЕНА ВЫБРАНА.
+   *
+   * Стена А это `active.run`: на ней держится всё, что уже работает —
+   * комплектации, компоновки, сохранение. Соседние стены живут своими
+   * рядами и правятся ТЕМИ ЖЕ операциями.
+   */
+  const segments = useMemo(() => {
+    if (!layout) return [active.run];
+    return layout.segments.map((segment, i) =>
+      i === 0 ? active.run : (editedWalls[i] ?? segment.run),
+    );
+  }, [layout, active.run, editedWalls]);
+
+  const wall = Math.min(wallIndex, segments.length - 1);
+  const activeRun = segments[wall] ?? active.run;
+  /** Соседний ряд: на схеме он идёт контуром, чтобы был виден угол. */
+  const neighbourRun = layout ? (segments[wall === 0 ? 1 : wall - 1] ?? null) : null;
+
+  /**
+   * СМЕТА ВСЕГО ОБЪЕКТА, А НЕ ОДНОЙ СТЕНЫ.
+   *
+   * Складываются сметы рядов — по ключу статьи, тем же, по которому они
+   * группируются в пять групп. Второй расчёт угловой кухни разошёлся бы
+   * с первым на первой же правке ставок.
+   */
+  /**
+   * ОТПЕЧАТОК ОБЪЕКТА — ОТ КОМПОЗИЦИИ, А НЕ ОТ ОДНОЙ СТЕНЫ.
+   *
+   * Главное правило продукта: чертёж, смета, раскрой и рендер сверяются
+   * ОДНИМ числом. Пока угловая кухня несла отпечаток стены А, правка на
+   * стене Б его не меняла — смета и лист могли разъехаться молча.
+   *
+   * У прямой кухни это по-прежнему отпечаток ряда: один ряд — одно
+   * число, и отпечатки сохранённых объектов не едут.
+   */
+  const objectFingerprint = useMemo(() => {
+    if (!layout) return active.run.fingerprint;
+    return compositionOf(layout, segments).fingerprint;
+  }, [layout, segments, active.run.fingerprint]);
+
+  const estimate = useMemo(() => {
+    if (!layout) return active.estimate;
+    return mergeEstimates(
+      segments.map((run, i) =>
+        i === 0
+          ? active.estimate
+          : buildEstimate(
+              run,
+              variantKey,
+              input.rates,
+              disabled[variantKey],
+              undefined,
+              props.production,
+            ),
+      ),
+    );
+  }, [layout, segments, active.estimate, variantKey, input.rates, disabled, props.production]);
+
+  /*
+   * Смета объекта несёт отпечаток ОБЪЕКТА. Иначе она подписана числом
+   * одной стены, а посчитана по всем — ровно то расхождение, от которого
+   * отпечаток и защищает.
+   */
+  const objectEstimate = useMemo(
+    () => (layout ? { ...estimate, fingerprint: objectFingerprint } : estimate),
+    [estimate, layout, objectFingerprint],
+  );
+
   const issues = useMemo(
-    () => validateRun(active.run, props.comms),
-    [active.run, props.comms],
+    () => validateRun(activeRun, props.comms),
+    [activeRun, props.comms],
   );
 
   const flash = useCallback((ids: string[]) => {
@@ -670,6 +830,7 @@ export default function Workspace(props: WorkspaceProps) {
       requirements,
       ops: designOps(design, uppers),
       openings: props.openings,
+      roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
     });
 
     dirty.current = true;
@@ -686,6 +847,7 @@ export default function Workspace(props: WorkspaceProps) {
       requirements,
       ops: [{ op: 'move_module', moduleId, offsetMm }],
       openings: props.openings,
+      roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
     });
 
     if (next.warnings.length > 0) {
@@ -892,15 +1054,21 @@ export default function Workspace(props: WorkspaceProps) {
   const runOps = useCallback(
     (ops: MillworkOp[]) => {
       if (ops.length === 0) return;
-      const before = new Map(active.run.modules.map((m) => [m.id, m.widthMm]));
+      const before = new Map(activeRun.modules.map((m) => [m.id, m.widthMm]));
       const next = applyOps({
-        run: active.run,
+        run: activeRun,
         requirements,
         ops,
         openings: props.openings,
+        roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
       });
       dirty.current = true;
-      setEditedRuns((prev) => ({ ...prev, [active.key]: next }));
+      /*
+       * Правка уходит в ТУ стену, которая выбрана. Операция одна и та
+       * же — меняется только, чей ряд она правит.
+       */
+      if (wall === 0) setEditedRuns((prev) => ({ ...prev, [active.key]: next }));
+      else setEditedWalls((prev) => ({ ...prev, [wall]: next }));
 
       /*
        * ДОБАВЛЕННЫЙ МОДУЛЬ СРАЗУ ВЫДЕЛЕН.
@@ -949,7 +1117,7 @@ export default function Workspace(props: WorkspaceProps) {
           .map((m) => m.id),
       );
     },
-    [active, requirements, props.openings, flash, selectedId],
+    [active, activeRun, wall, requirements, props.openings, props.roomDepthM, flash, selectedId],
   );
 
   /**
@@ -1209,6 +1377,16 @@ export default function Workspace(props: WorkspaceProps) {
       const state: MillworkState = {
         survey: survey ?? undefined,
         templateId,
+        /*
+         * Форма, решение угла и ряды соседних стен. Без них угловая
+         * кухня открывалась бы прямой, а работа замерщика по второй
+         * стене пропадала бы молча.
+         */
+        shape,
+        cornerSolution,
+        wallRuns: Object.fromEntries(
+          Object.entries(editedWalls).map(([index, run]) => [String(index), run]),
+        ),
         requirements,
         runs: editedRuns,
         selectedVariant: variantKey,
@@ -1254,6 +1432,11 @@ export default function Workspace(props: WorkspaceProps) {
     };
   }, [
     editedRuns,
+    // Соседние стены сохраняются наравне с рабочей: без них угловая
+    // кухня открылась бы прямой.
+    editedWalls,
+    shape,
+    cornerSolution,
     disabled,
     variantKey,
     renderStyle,
@@ -1716,7 +1899,11 @@ export default function Workspace(props: WorkspaceProps) {
                 */}
               <div className="h-[46vh] min-h-[260px] lg:h-[calc(100vh-320px)]">
                 <RunSchematic
-                  run={active.run}
+                  run={activeRun}
+                  neighbour={neighbourRun}
+                  neighbourLabel={
+                    layout ? wallLabel(wall === 0 ? 1 : wall - 1) : undefined
+                  }
                   comms={props.comms}
                   selectedModuleId={selectedId}
                   onSelect={setSelectedId}
@@ -1734,6 +1921,116 @@ export default function Workspace(props: WorkspaceProps) {
 
             {/* ── Панель выбора ── */}
             <div className="min-w-0">
+              {/*
+                * ФОРМА ГАРНИТУРА И СТЕНЫ.
+                *
+                * «В чертеже только прямой» — сказал мебельщик, который
+                * делает угловые постоянно. Форма выбирается здесь, стены
+                * переключаются рядом: работа идёт по одной, но соседняя
+                * видна на схеме контуром — иначе не понять, где угол.
+                */}
+              <div className="mb-4" data-shape>
+                <p className="mw-label mb-1">Форма</p>
+                <div className="flex flex-wrap gap-1">
+                  {(
+                    [
+                      ['linear', 'Прямая'],
+                      ['corner_l', 'Угловая'],
+                      ['u_shape', 'П-образная'],
+                    ] as [CompositionKind, string][]
+                  ).map(([kind, title]) => (
+                    <button
+                      key={kind}
+                      type="button"
+                      data-shape-kind={kind}
+                      aria-pressed={shape === kind}
+                      onClick={() => {
+                        dirty.current = true;
+                        setShape(kind);
+                        setWallIndex(0);
+                        setSelectedId(null);
+                      }}
+                      className={`mw-btn ${shape === kind ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+                    >
+                      {title}
+                    </button>
+                  ))}
+                </div>
+
+                {shape !== 'linear' && !layout && (
+                  <p className="mt-1 text-[13px] leading-snug text-alert">
+                    Для этой формы нужны замеры соседних стен: угол по одной
+                    стене не собрать — вторая половина была бы выдуманной.
+                  </p>
+                )}
+
+                {layout && (
+                  <>
+                    <div className="mt-2 flex flex-wrap gap-1" data-walls>
+                      {layout.segments.map((segment, i) => (
+                        <button
+                          key={segment.id}
+                          type="button"
+                          data-wall={i}
+                          aria-pressed={wall === i}
+                          onClick={() => {
+                            setWallIndex(i);
+                            setSelectedId(null);
+                          }}
+                          className={`mw-btn ${wall === i ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+                        >
+                          {wallLabel(i)} · {segment.run.lengthMm}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/*
+                      * РЕШЕНИЕ УГЛА — ЭТО ДЕНЬГИ И ДОСТУП.
+                      *
+                      * Угловой модуль 900×900 даёт доступ в угол и стоит
+                      * корпуса с каруселью; фальш-панель 100 мм отдаёт
+                      * угол под мёртвую зону и стоит панели с угловыми
+                      * петлями. Второй ряд при этом теряет РАЗНОЕ место —
+                      * 900 против глубины ряда, — поэтому и состав, и
+                      * сумма меняются вместе с решением.
+                      */}
+                    <div className="mt-2" data-corner>
+                      <p className="mw-label mb-1">Угол</p>
+                      <div className="flex flex-wrap gap-1">
+                        {(
+                          [
+                            ['false_panel', 'Фальш-панель 100 мм', 'угол мёртвый, петли 175°, зазор 12 мм'],
+                            ['corner_module', 'Угловой модуль 900', 'карусель, доступ в угол, дороже'],
+                          ] as [CornerSolution, string, string][]
+                        ).map(([solution, title, hint]) => (
+                          <button
+                            key={solution}
+                            type="button"
+                            data-corner-solution={solution}
+                            aria-pressed={cornerSolution === solution}
+                            title={hint}
+                            onClick={() => {
+                              dirty.current = true;
+                              setCornerSolution(solution);
+                              setEditedWalls({});
+                              setSelectedId(null);
+                            }}
+                            className={`mw-btn ${cornerSolution === solution ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+                          >
+                            {title}
+                          </button>
+                        ))}
+                      </div>
+                      <p className="mt-1 text-[13px] leading-snug text-graphiteMw">
+                        {cornerSolution === 'false_panel'
+                          ? `Угол отдан под мёртвую зону: ${wallLabel(1)} короче стены на глубину ряда и панель.`
+                          : `Карусель в углу: ${wallLabel(1)} короче стены на 900 мм — столько занимает угловой модуль.`}
+                      </p>
+                    </div>
+                  </>
+                )}
+              </div>
+
               {/*
                 * ФОТО ПОМЕЩЕНИЯ — ПЕРВЫМ БЛОКОМ.
                 *
@@ -1842,7 +2139,7 @@ export default function Workspace(props: WorkspaceProps) {
 
               <div className="mt-4">
                 <RunEditor
-                  run={active.run}
+                  run={activeRun}
                   zone={zone}
                   selectedModuleId={selectedId}
                   onSelect={setSelectedId}
@@ -2198,6 +2495,21 @@ export default function Workspace(props: WorkspaceProps) {
                 production={props.production}
                 client={props.clientName}
                 company={props.company}
+                /*
+                 * Угловая кухня уходит в цех ЦЕЛИКОМ: развёртка каждой
+                 * стены со своими размерами плюс общий план, где виден
+                 * угол. Половина кухни на листе — это половина заказа.
+                 */
+                otherRuns={
+                  layout
+                    ? layout.segments
+                        .slice(1)
+                        .map((segment, i) => ({
+                          label: wallLabel(i + 1),
+                          run: segments[i + 1] ?? segment.run,
+                        }))
+                    : []
+                }
                 elevation={{
                   assumedTotal,
                   selectedModuleId: selectedId,
@@ -2287,7 +2599,7 @@ export default function Workspace(props: WorkspaceProps) {
 
         <div className="mb-3">
           <EstimateSheet
-            estimate={active.estimate}
+            estimate={objectEstimate}
             /* Комплектация одна, поэтому строка итога называет ЗОНУ:
                «Ваша кухня» в спальне читается как чужой проект. */
             variantTitle={SINGLE_VARIANT ? zoneProfile(zone).yours : active.title}

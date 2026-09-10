@@ -61,6 +61,17 @@ type ElevationHandlers = {
 };
 
 type Props = {
+  /**
+   * СОСЕДНИЕ РЯДЫ УГЛОВОЙ КУХНИ.
+   *
+   * Лист рисовал ровно один ряд, и угловая кухня приезжала в цех
+   * половиной себя. Каждый ряд идёт СВОЕЙ развёрткой со своими
+   * размерами — сводить их в один вид нельзя: стены перпендикулярны, и
+   * общая размерная цепочка по ним ничего не значит.
+   *
+   * План при этом один: на нём угол и виден.
+   */
+  otherRuns?: { label: string; run: Run }[];
   title: string;
   zone: string;
   measuredBy: string;
@@ -90,6 +101,7 @@ type Props = {
 };
 
 export default function DrawingSheet({
+  otherRuns = [],
   title,
   zone,
   measuredBy,
@@ -214,11 +226,23 @@ export default function DrawingSheet({
   const sizesFor = (den: ScaleDenominator) => [
     {
       id: 'elevation',
-      title: 'Фасад ряда',
+      title: otherRuns.length > 0 ? 'Фасад: стена А' : 'Фасад ряда',
       widthMm: viewWidthMm(run.lengthMm, den, elevationSpan),
       heightMm: elevationReal.height / den,
       breakRow: true,
     },
+    /*
+     * Развёртка каждой соседней стены — своим видом и своей строкой.
+     * Масштаб общий на лист (ловушка 197): по развёрткам МЕРЯТ, и разный
+     * масштаб у двух половин одной кухни читается как ошибка построения.
+     */
+    ...otherRuns.map((other, i) => ({
+      id: `elevation-${i + 1}`,
+      title: `Фасад: ${other.label.toLowerCase()}`,
+      widthMm: viewWidthMm(other.run.lengthMm, den, elevationSpan),
+      heightMm: elevationReal.height / den,
+      breakRow: true,
+    })),
     {
       id: 'section',
       title: 'Разрез боковой',
@@ -299,6 +323,19 @@ export default function DrawingSheet({
         paperWidthMm={paperWidth.get('elevation')}
         positions={positions}
       />
+    ),
+    ...Object.fromEntries(
+      otherRuns.map((other, i) => [
+        `elevation-${i + 1}`,
+        <ElevationDrawing
+          key={`elev-${i}`}
+          run={other.run}
+          selectedModuleId={elevation.selectedModuleId}
+          onSelect={elevation.onSelect}
+          leaders={[]}
+          paperWidthMm={paperWidth.get(`elevation-${i + 1}`)}
+        />,
+      ]),
     ),
     section: <SectionDrawing run={run} paperWidthMm={paperWidth.get('section')} />,
     'section-inside': (

@@ -103,6 +103,8 @@ import {
   typicalColorItem,
 } from '../lib/millwork/palette';
 import { frontOf } from '../lib/millwork/frontMaterial';
+import { compositionOf, mergeEstimates } from '../lib/millwork/walls';
+import type { MillworkState } from '../lib/projects';
 import type { CatalogEntryFull } from '../types/catalog';
 import { moduleDepthMm, upperBottomFor } from '../lib/millwork/fill';
 import { FRAME_WIDTH_MM, frontConflict } from '../lib/millwork/frontMaterial';
@@ -4488,26 +4490,34 @@ console.log('\nПеренос модуля вдоль ряда');
     variantsToAdd('bedroom', 3000).map((o) => o.spec.title).join(', '),
   );
 
-  /* 6. Угол вручную не собирается, и отказ это объясняет. */
-  let cornerRefusal = '';
-  try {
-    buildComposition({
-      kind: 'corner_l',
-      requirements: FREE,
-      ceilingHeightMm: 2700,
-      walls: [
-        { id: 'a', lengthMm: 3000, openings: [] },
-        { id: 'b', lengthMm: 2400, openings: [] },
-      ],
-      comms: [],
-    });
-  } catch (error) {
-    cornerRefusal = (error as Error).message;
-  }
+  /*
+   * 6. Угол СОБИРАЕТСЯ вручную.
+   *
+   * Раньше здесь стоял отказ: свободная сборка углов не умела, и
+   * композиция из пустых сегментов выглядела бы поломкой. Теперь пустые
+   * стены — законное начало и для угла: место в углу урезано с самого
+   * начала, а модули человек ставит сам.
+   */
+  const freeCorner = buildComposition({
+    kind: 'corner_l',
+    requirements: FREE,
+    ceilingHeightMm: 2700,
+    walls: [
+      { id: 'a', lengthMm: 3000, openings: [] },
+      { id: 'b', lengthMm: 2400, openings: [] },
+    ],
+    comms: [],
+  });
   check(
-    'угол в свободной сборке отказывает словами, а не пустым рядом',
-    /нельзя собрать вручную/.test(cornerRefusal),
-    cornerRefusal.slice(0, 80),
+    'угол в свободной сборке собирается из пустых стен',
+    freeCorner.segments.length === 2 &&
+      freeCorner.segments.every((segment) => segment.run.modules.length === 0),
+    `сегментов ${freeCorner.segments.length}`,
+  );
+  check(
+    'и место в углу урезано до первого модуля',
+    freeCorner.segments[1].run.lengthMm < freeCorner.segments[1].wallLengthMm,
+    `${freeCorner.segments[1].run.lengthMm} из ${freeCorner.segments[1].wallLengthMm} мм`,
   );
 }
 
@@ -5458,6 +5468,413 @@ console.log('\nПалитра цветов компании');
     configurationFingerprint(
       applyOps({ run, requirements: REQ, openings: OPENINGS, ops: [] }).modules,
     ) === configurationFingerprint(run.modules),
+  );
+}
+
+
+/* ──────────────  Угловые и П-образные руками  ────────────── */
+
+/*
+ * «В чертеже только прямой» — сказал мебельщик, который делает угловые
+ * постоянно. `buildComposition` умел собрать угол по шаблону, но руками
+ * второй ряд был не правим, а свободная сборка отказывала вовсе.
+ */
+console.log('\nУгол собирается руками');
+{
+  const WALLS = [
+    { id: 'a', lengthMm: 3800, openings: [] as Opening[] },
+    { id: 'b', lengthMm: 2400, openings: [] as Opening[] },
+    { id: 'c', lengthMm: 3000, openings: [] as Opening[] },
+  ];
+  const FREE: RunRequirements = { ...REQ, mode: 'free', appliances: [] };
+
+  const build = (kind: 'corner_l' | 'u_shape', req: RunRequirements, solution?: 'corner_module' | 'false_panel') =>
+    buildComposition({
+      id: 'test',
+      kind,
+      requirements: solution ? { ...req, cornerSolution: solution } : req,
+      ceilingHeightMm: 2700,
+      walls: WALLS,
+      comms: COMMS,
+    });
+
+  /* 1. Свободная сборка угла больше не отказывает. */
+  const freeCorner = build('corner_l', FREE);
+  check(
+    'угол собирается со ВСЕХ пустых стен',
+    freeCorner.segments.length === 2 &&
+      freeCorner.segments.every((segment) => segment.run.modules.length === 0),
+    `сегментов ${freeCorner.segments.length}`,
+  );
+  check(
+    'и место в углу урезано с самого начала',
+    freeCorner.segments[1].run.lengthMm < freeCorner.segments[1].wallLengthMm,
+    `${freeCorner.segments[1].run.lengthMm} из ${freeCorner.segments[1].wallLengthMm} мм`,
+  );
+
+  /* 2. Модули ставятся на каждую стену теми же операциями. */
+  const step = (run: Run, ops: MillworkOp[]) =>
+    applyOps({ run, requirements: FREE, ops, openings: [] });
+
+  const built = freeCorner.segments.map((segment) => {
+    let run = segment.run;
+    for (const width of [600, 600, 450]) {
+      run = step(run, [{ op: 'add_module', kind: 'base', widthMm: width }]);
+    }
+    return run;
+  });
+  check(
+    'модули встают на каждую стену',
+    built.every((run) => run.modules.length === 3),
+    built.map((run) => run.modules.length).join('/'),
+  );
+  check(
+    'и каждый ряд остаётся в своей стене',
+    built.every((run, i) => runWidthSum(run) <= freeCorner.segments[i].run.lengthMm),
+    built.map((run, i) => `${runWidthSum(run)}/${freeCorner.segments[i].run.lengthMm}`).join(' · '),
+  );
+  check(
+    'ни один ряд не пересекается сам с собой',
+    built.every((run) => moduleOverlaps(run).length === 0),
+  );
+
+  /* 3. Ряд из шаблона сходится со своей стеной до миллиметра. */
+  const corner = build('corner_l', REQ);
+  check(
+    'оба ряда шаблона сходятся со своими стенами',
+    corner.segments.every((segment) => runWidthSum(segment.run) === segment.run.lengthMm),
+    corner.segments.map((s) => `${runWidthSum(s.run)}/${s.run.lengthMm}`).join(' · '),
+  );
+
+  /* 4. Решение угла меняет место, отпечаток и смету. */
+  const panel = build('corner_l', REQ, 'false_panel');
+  const module900 = build('corner_l', REQ, 'corner_module');
+
+  check(
+    'решение угла меняет полезную длину второго ряда',
+    panel.segments[1].run.lengthMm !== module900.segments[1].run.lengthMm,
+    `${panel.segments[1].run.lengthMm} против ${module900.segments[1].run.lengthMm} мм`,
+  );
+  check(
+    'и угловой модуль забирает ровно 900 мм',
+    module900.segments[1].wallLengthMm - module900.segments[1].run.lengthMm === 900,
+    `${module900.segments[1].wallLengthMm - module900.segments[1].run.lengthMm} мм`,
+  );
+  check(
+    'смена решения угла меняет отпечаток',
+    panel.fingerprint !== module900.fingerprint,
+    `${panel.fingerprint} → ${module900.fingerprint}`,
+  );
+
+  const sumOf = (composition: typeof panel) =>
+    mergeEstimates(
+      composition.segments.map((segment) =>
+        buildEstimate(segment.run, 'optimal', DEMO_RATES),
+      ),
+    ).total;
+  check(
+    'и меняет смету',
+    Math.round(sumOf(panel)) !== Math.round(sumOf(module900)),
+    `${Math.round(sumOf(panel)).toLocaleString('ru')} против ${Math.round(sumOf(module900)).toLocaleString('ru')} ₸`,
+  );
+
+  /* 5. Ряды двух стен не пересекаются ни при одном решении. */
+  for (const [name, composition] of [
+    ['фальш-панель', panel],
+    ['угловой модуль', module900],
+  ] as const) {
+    check(
+      `при решении «${name}» ряды не налезают друг на друга`,
+      composition.segments.every(
+        (segment) => runWidthSum(segment.run) <= segment.run.lengthMm,
+      ) &&
+        composition.segments.every((segment) => moduleOverlaps(segment.run).length === 0),
+    );
+    check(
+      `и второй ряд короче своей стены на занятое в углу`,
+      composition.segments[1].run.lengthMm < composition.segments[1].wallLengthMm,
+      `${composition.segments[1].wallLengthMm - composition.segments[1].run.lengthMm} мм`,
+    );
+  }
+
+  /* 6. П-образная — три ряда. */
+  const uShape = build('u_shape', REQ);
+  check('П-образная собирается из трёх рядов', uShape.segments.length === 3);
+  check(
+    'и каждый ряд сходится со своей стеной',
+    uShape.segments.every((segment) => runWidthSum(segment.run) === segment.run.lengthMm),
+    uShape.segments.map((s) => `${runWidthSum(s.run)}/${s.run.lengthMm}`).join(' · '),
+  );
+
+  /* 7. Техника не дублируется между рядами. */
+  for (const [name, composition] of [
+    ['угловая', corner],
+    ['П-образная', uShape],
+  ] as const) {
+    const counts = new Map<string, number>();
+    for (const segment of composition.segments) {
+      for (const unit of [
+        ...segment.run.modules,
+        ...segment.run.upperSegments.flatMap((s) => s.modules),
+      ]) {
+        for (const appliance of moduleAppliances(unit)) {
+          counts.set(appliance, (counts.get(appliance) ?? 0) + 1);
+        }
+      }
+    }
+    const doubled = Array.from(counts.entries()).filter(([, n]) => n > 1);
+    check(
+      `${name}: каждый прибор ровно один`,
+      doubled.length === 0,
+      doubled.length === 0
+        ? Array.from(counts.keys()).join(', ')
+        : `дубли: ${doubled.map(([a, n]) => `${a}×${n}`).join(', ')}`,
+    );
+    check(
+      `${name}: мойка одна на кухню`,
+      Array.from(counts.keys()).filter((a) => a.startsWith('sink')).length <= 1,
+    );
+  }
+
+  /* 8. Узкий проход П-образной — предупреждение по последствию. */
+  const tight = buildComposition({
+    id: 'tight',
+    kind: 'u_shape',
+    requirements: REQ,
+    ceilingHeightMm: 2700,
+    walls: [
+      { id: 'a', lengthMm: 3800, openings: [] },
+      { id: 'b', lengthMm: 1900, openings: [] },
+      { id: 'c', lengthMm: 3000, openings: [] },
+    ],
+    comms: COMMS,
+  });
+  check(
+    'узкий проход назван последствием, а не числом',
+    tight.warnings.some((w) => /не разойтись вдвоём/.test(w)),
+    tight.warnings.find((w) => /проход/i.test(w)) ?? 'молча',
+  );
+
+  /* 9. Глубина прибора проверяется против комнаты. */
+  const straight = buildRun(baseInput);
+  const fridgeUnit = straight.modules.find((unit) => unit.appliance === 'fridge')!;
+  const cramped = applyOps({
+    run: straight,
+    requirements: REQ,
+    openings: OPENINGS,
+    // Комната 1100 мм в глубину: после ряда 660 останется 440 на проход.
+    roomDepthMm: 1100,
+    ops: [
+      {
+        op: 'set_appliance_size',
+        moduleId: fridgeUnit.id,
+        appliance: 'fridge',
+        size: { widthMm: 600, depthMm: 640 },
+      },
+    ],
+  });
+  check(
+    'глубина прибора проверяется против КОМНАТЫ, а не только габарита',
+    cramped.warnings.some((w) => /не разойтись вдвоём/.test(w)),
+    cramped.warnings.find((w) => /останется/.test(w)) ?? 'молча',
+  );
+  check(
+    'в просторной комнате о проходе не предупреждают',
+    !applyOps({
+      run: straight,
+      requirements: REQ,
+      openings: OPENINGS,
+      roomDepthMm: 4000,
+      ops: [
+        {
+          op: 'set_appliance_size',
+          moduleId: fridgeUnit.id,
+          appliance: 'fridge',
+          size: { widthMm: 600, depthMm: 640 },
+        },
+      ],
+    }).warnings.some((w) => /не разойтись/.test(w)),
+  );
+}
+
+
+/* ──────────────  Композиция переживает закрытие объекта  ────────────── */
+
+/*
+ * Соседние стены жили только в памяти вкладки: замерщик собирал угловую
+ * кухню, показывал клиенту, закрывал объект — и второй ряд пропадал
+ * молча. Это потеря работы, а не неудобство.
+ *
+ * Здесь проверяется КРУГ: собрали → сериализовали, как в базу → прочли
+ * обратно → всё на месте, и отпечаток тот же.
+ */
+console.log('\nУгловая кухня переживает закрытие');
+{
+  const WALLS = [
+    { id: 'a', lengthMm: 3800, openings: [] as Opening[] },
+    { id: 'b', lengthMm: 2400, openings: [] as Opening[] },
+    { id: 'c', lengthMm: 3000, openings: [] as Opening[] },
+  ];
+
+  const build = (kind: 'corner_l' | 'u_shape', solution: 'corner_module' | 'false_panel') =>
+    buildComposition({
+      id: 'save',
+      kind,
+      requirements: { ...REQ, cornerSolution: solution },
+      ceilingHeightMm: 2700,
+      walls: WALLS,
+      comms: COMMS,
+    });
+
+  /* Собираем угол и правим ОБЕ стены: материал и состав. */
+  const base = build('corner_l', 'false_panel');
+  const veneer: FrontSpec = { base: 'veneer_solid', construct: 'solid', finish: 'textured' };
+
+  const runs = base.segments.map((segment) =>
+    applyOps({
+      run: segment.run,
+      requirements: REQ,
+      openings: [],
+      ops: [{ op: 'set_front', moduleId: 'all', front: veneer }],
+    }),
+  );
+
+  const built = compositionOf(base, runs);
+  check(
+    'материал лёг на обе стены',
+    built.segments.every((segment) =>
+      segment.run.modules
+        .filter((unit) => hasFacade(unit))
+        .every((unit) => unit.front?.base === 'veneer_solid'),
+    ),
+  );
+
+  /*
+   * СОСТОЯНИЕ УХОДИТ В БАЗУ ЧЕРЕЗ JSON.
+   *
+   * Проверять надо именно так: `structuredClone` сохранил бы то, чего
+   * JSON не знает — `undefined`, `Map`, ключи-числа. Ровно на этом
+   * ломаются круговые проверки, которые «проходят».
+   */
+  const state: MillworkState = {
+    templateId: 'linear-column',
+    requirements: REQ,
+    runs: { optimal: runs[0] },
+    selectedVariant: 'optimal',
+    shape: 'corner_l',
+    cornerSolution: 'false_panel',
+    wallRuns: { '1': runs[1] },
+    savedAt: new Date('2026-03-12T10:00:00Z').toISOString(),
+  };
+
+  const reopened = JSON.parse(JSON.stringify(state)) as MillworkState;
+
+  check('форма сохраняется', reopened.shape === 'corner_l', reopened.shape);
+  check(
+    'решение угла сохраняется',
+    reopened.cornerSolution === 'false_panel',
+    reopened.cornerSolution,
+  );
+  check(
+    'ряд соседней стены сохраняется целиком',
+    (reopened.wallRuns?.['1']?.modules.length ?? 0) === runs[1].modules.length,
+    `${reopened.wallRuns?.['1']?.modules.length ?? 0} из ${runs[1].modules.length}`,
+  );
+  check(
+    'и материал на ней тот же',
+    (reopened.wallRuns?.['1']?.modules ?? [])
+      .filter((unit) => hasFacade(unit))
+      .every((unit) => unit.front?.base === 'veneer_solid'),
+  );
+
+  /* Отпечаток после перезагрузки — тот же. */
+  const restored = compositionOf(build('corner_l', reopened.cornerSolution ?? 'false_panel'), [
+    reopened.runs?.optimal as Run,
+    reopened.wallRuns?.['1'] as Run,
+  ]);
+  check(
+    'отпечаток композиции после перезагрузки совпадает',
+    restored.fingerprint === built.fingerprint,
+    `${built.fingerprint} → ${restored.fingerprint}`,
+  );
+
+  /* Отпечаток объекта МЕНЯЕТСЯ от правки любой стены, а не только первой. */
+  const editedSecond = compositionOf(base, [
+    runs[0],
+    applyOps({
+      run: runs[1],
+      requirements: REQ,
+      openings: [],
+      ops: [{ op: 'remove_module', moduleId: runs[1].modules[0].id }],
+    }),
+  ]);
+  check(
+    'правка ВТОРОЙ стены меняет отпечаток объекта',
+    editedSecond.fingerprint !== built.fingerprint,
+    `${built.fingerprint} → ${editedSecond.fingerprint}`,
+  );
+  check(
+    'а отпечаток первой стены при этом прежний',
+    editedSecond.segments[0].run.fingerprint === built.segments[0].run.fingerprint,
+  );
+
+  /* П-образная сохраняется тремя стенами. */
+  const u = build('u_shape', 'false_panel');
+  const uState: MillworkState = {
+    shape: 'u_shape',
+    cornerSolution: 'false_panel',
+    runs: { optimal: u.segments[0].run },
+    wallRuns: { '1': u.segments[1].run, '2': u.segments[2].run },
+  };
+  const uBack = JSON.parse(JSON.stringify(uState)) as MillworkState;
+  check(
+    'П-образная сохраняется тремя стенами',
+    Object.keys(uBack.wallRuns ?? {}).length === 2 &&
+      Boolean(uBack.runs?.optimal) &&
+      (uBack.wallRuns?.['2']?.modules.length ?? 0) > 0,
+    `рабочая + ${Object.keys(uBack.wallRuns ?? {}).join(', ')}`,
+  );
+  check(
+    'и её отпечаток после перезагрузки тот же',
+    compositionOf(u, [
+      uBack.runs?.optimal as Run,
+      uBack.wallRuns?.['1'] as Run,
+      uBack.wallRuns?.['2'] as Run,
+    ]).fingerprint === u.fingerprint,
+  );
+
+  /*
+   * СТАРЫЕ ОБЪЕКТЫ ОТКРЫВАЮТСЯ.
+   *
+   * Совместимость решена ЧТЕНИЕМ, а не переписыванием строк: новых полей
+   * у прямых кухонь просто нет, и отсутствие читается как «прямая».
+   * Миграция базы не нужна вовсе — а значит и нечему упасть на половине.
+   */
+  const old = JSON.parse(
+    JSON.stringify({
+      templateId: 'linear-column',
+      requirements: REQ,
+      runs: { optimal: buildRun(baseInput) },
+      selectedVariant: 'optimal',
+      savedAt: '2026-01-10T09:00:00Z',
+    }),
+  ) as MillworkState;
+
+  check(
+    'у объекта, созданного до правки, формы нет',
+    old.shape === undefined && old.wallRuns === undefined,
+  );
+  check(
+    'и он читается как прямая кухня',
+    (old.shape ?? 'linear') === 'linear' &&
+      Object.keys(old.wallRuns ?? {}).length === 0 &&
+      (old.runs?.optimal?.modules.length ?? 0) > 0,
+    `модулей ${old.runs?.optimal?.modules.length ?? 0}`,
+  );
+  check(
+    'его отпечаток остаётся отпечатком РЯДА, а не композиции',
+    old.runs?.optimal?.fingerprint === buildRun(baseInput).fingerprint,
+    old.runs?.optimal?.fingerprint,
   );
 }
 
