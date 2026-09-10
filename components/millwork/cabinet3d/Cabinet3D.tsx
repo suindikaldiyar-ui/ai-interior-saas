@@ -61,6 +61,21 @@ type Props = {
   onWidth?: (moduleId: string, widthMm: number) => void;
   /** Перенос модуля вдоль ряда: свободная сборка. */
   onMoveModule?: (moduleId: string, offsetMm: number) => void;
+  /**
+   * Ставит ли этот ряд камеру.
+   *
+   * У угловой кухни рядов два, а камера в сцене ОДНА: два ракурса на
+   * один канвас — это две проекции, спорящие за одну матрицу. Ряд-сосед
+   * камеру не ставит.
+   */
+  camera?: boolean;
+  /**
+   * Где стоит ряд и куда развёрнут — для угловой и П-образной.
+   *
+   * Ряд по-прежнему считает `buildRun` вдоль своей стены от нуля; здесь
+   * только поворот вокруг угла. Второй раскладки не появляется.
+   */
+  placement?: { xM: number; zM: number; rotationYDeg: number };
 };
 
 export default function Cabinet3D({
@@ -76,6 +91,8 @@ export default function Cabinet3D({
   onSelectModule,
   onWidth,
   onMoveModule,
+  camera = true,
+  placement,
 }: Props) {
   const groupRef = useRef<THREE.Group>(null);
   const openParts = useInteriorStore((s) => s.openParts);
@@ -337,14 +354,24 @@ export default function Cabinet3D({
 
   return (
     <>
-    <group ref={groupRef} position={[originX, 0, originZ]}>
+    <group
+      ref={groupRef}
+      position={[
+        placement ? placement.xM : originX,
+        0,
+        placement ? placement.zM : originZ,
+      ]}
+      rotation={[0, placement ? (placement.rotationYDeg * Math.PI) / 180 : 0, 0]}
+    >
       <SceneProbe group={groupRef} />
-      <SceneCamera
-        room={{ width: roomWidthM, depth: roomDepthM, height: run.ceilingHeightMm / MM }}
-        view={view}
-        runWidthM={lengthM}
-        onFraming={onFraming}
-      />
+      {camera && (
+        <SceneCamera
+          room={{ width: roomWidthM, depth: roomDepthM, height: run.ceilingHeightMm / MM }}
+          view={view}
+          runWidthM={lengthM}
+          onFraming={onFraming}
+        />
+      )}
 
       {/*
         * Цоколь: одна планка на весь ряд, утопленная на 50 мм и темнее

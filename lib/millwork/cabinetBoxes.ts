@@ -1,6 +1,7 @@
-import { columnNiches } from '@/lib/millwork/fill';
+import { columnNiches, moduleCarcassHeightMm } from '@/lib/millwork/fill';
+import { GEOMETRY } from './modules';
 import { FRAME_WIDTH_MM, frontKey, frontOf, isFramed } from './frontMaterial';
-import type { Module } from '@/types/millwork';
+import type { Module, Run } from '@/types/millwork';
 
 /**
  * КОРПУС МОДУЛЯ ЧИСЛАМИ.
@@ -397,4 +398,72 @@ export function moduleBoxes(
   }
 
   return boxes;
+}
+
+
+/* ────────────────  Весь ряд одним списком  ──────────────── */
+
+/**
+ * КОРОБКИ ВСЕГО РЯДА — ОДНА ФУНКЦИЯ НА ВСЮ СЦЕНУ.
+ *
+ * Раскладка модулей по высоте и глубине считалась внутри `Cabinet3D`,
+ * и всё, что хотело те же габариты — рёбра, аксонометрия, инвариант —
+ * считало их заново. Вторая формула тех же чисел рано или поздно
+ * разъезжается с первой: этот класс ошибки мы ловили шесть раз.
+ */
+export function runBoxes(
+  run: Run,
+  options: {
+    zoneDepthMm: number;
+    thicknessMm: number;
+    frontThicknessMm: number;
+    gapMm: number;
+    cutaway?: boolean;
+  },
+): PartBox[] {
+  const depthM = options.zoneDepthMm / MM;
+  const plinthM = GEOMETRY.base.plinthH / MM;
+
+  const placed = [
+    ...run.modules.map((unit) => {
+      const isUpper = unit.kind === 'upper' || unit.kind === 'corner_upper';
+      return {
+        unit,
+        x: unit.offsetMm / MM,
+        // Верхние висят, нижние стоят на цоколе.
+        y: isUpper ? GEOMETRY.upper.bottomFromFloor / MM : plinthM,
+        heightM: moduleCarcassHeightMm(unit, run) / MM,
+        depthM: isUpper ? GEOMETRY.upper.depth / MM : depthM,
+      };
+    }),
+    ...run.upperSegments.flatMap((segment) =>
+      segment.modules.map((unit) => ({
+        unit,
+        // `offsetMm` у верхних модулей уже абсолютный (ловушка 92).
+        x: unit.offsetMm / MM,
+        y: GEOMETRY.upper.bottomFromFloor / MM,
+        heightM: moduleCarcassHeightMm(unit, run) / MM,
+        depthM: GEOMETRY.upper.depth / MM,
+      })),
+    ),
+  ];
+
+  return placed.flatMap((entry) =>
+    moduleBoxes(
+      entry.unit,
+      {
+        x: entry.x,
+        y: entry.y,
+        heightM: entry.heightM,
+        depthM: entry.depthM,
+        thicknessM: options.thicknessMm / MM,
+      },
+      {
+        gapM: options.gapMm / MM,
+        frontThicknessM: options.frontThicknessMm / MM,
+        integratedHandles: Boolean(run.options.integratedHandles),
+        cutaway: Boolean(options.cutaway),
+      },
+    ),
+  );
 }

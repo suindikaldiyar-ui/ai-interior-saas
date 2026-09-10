@@ -1906,6 +1906,181 @@ try {
     await corner.close();
   }
 
+
+  /* ── 3D вернулась: САПР-вид рядом со схемой ── */
+
+  /*
+   * Сцену убирали не зря: скрытая рисовала 588 кадров в минуту мебели,
+   * которую никто не видел. Причина найдена и устранена (`frameloop`
+   * never у скрытой), и сцена вернулась — но требование к ней жёсткое,
+   * поэтому здесь и меряется, а не описывается словами.
+   */
+  {
+    const cad = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await cad.goto(`${BASE}/demo`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+    await until(async () => (await cad.getByRole('button', { name: /Конфигуратор/ }).count()) > 0);
+
+    await cad.getByRole('button', { name: /Конфигуратор/ }).first().click();
+    await sleep(2200);
+
+    check(
+      'сцена вернулась переключателем рядом со схемой',
+      (await cad.locator('[data-schematic-tab]').count()) === 3,
+      `${await cad.locator('[data-schematic-tab]').count()} вида`,
+    );
+
+    await cad.locator('[data-schematic-tab="scene"]').click();
+    await sleep(3500);
+
+    /* 1. Экран: не меньше 70% ширины и видна целиком. */
+    const box = await cad.evaluate(() => {
+      const canvas = document.querySelector('[data-scene] canvas');
+      const footer = document.querySelector('footer');
+      if (!canvas || !footer) return null;
+      const r = canvas.getBoundingClientRect();
+      const f = footer.getBoundingClientRect();
+      return { x: r.x, y: r.y, w: r.width, h: r.height, vw: window.innerWidth, footerTop: f.top };
+    });
+
+    check('сцена на экране есть', Boolean(box));
+    check(
+      'и занимает не меньше 70% ширины',
+      Boolean(box) && box.w / box.vw >= 0.7,
+      box ? `${Math.round((box.w / box.vw) * 100)}%` : '',
+    );
+    check(
+      'и видна целиком, без прокрутки к ней',
+      Boolean(box) && box.y >= 0 && box.y + box.h <= box.footerTop + 1,
+      box ? `низ ${Math.round(box.y + box.h)}, подвал с ${Math.round(box.footerTop)}` : '',
+    );
+    check(
+      'видимый канвас ровно один: скрытая сцена за экраном',
+      await cad.evaluate(
+        () =>
+          [...document.querySelectorAll('canvas')].filter((c) => {
+            const r = c.getBoundingClientRect();
+            return r.x + r.width > 0;
+          }).length === 1,
+      ),
+    );
+
+    /* 2. Объекты и кадры — числом. */
+    const scene = await cad.evaluate(() => (window.__mwScene ? window.__mwScene() : null));
+    check(
+      'ряд рисуется десятком вызовов, а не сотней',
+      Boolean(scene) && scene.calls <= 24,
+      scene ? `вызовов ${scene.calls}, мешей ${scene.scene.meshes}, треугольников ${scene.triangles}` : '',
+    );
+
+    const frames = () =>
+      cad.evaluate(() => (window.__mwCadFrames ? window.__mwCadFrames() : null));
+    const idleStart = await frames();
+    await sleep(4000);
+    check(
+      'в покое сцена не рисует кадров вовсе',
+      (await frames()) === idleStart,
+      `${idleStart} → ${await frames()} за 4 с покоя`,
+    );
+
+    /* 3. Клик выделяет, промах — нет. */
+    /*
+     * Состояние сцены ЧИСЛАМИ, а не снимком канваса: без
+     * `preserveDrawingBuffer` WebGL отдаёт очищенный буфер, и два
+     * «одинаковых» кадра не доказывают ничего.
+     */
+    const shot = () =>
+      cad.evaluate(() =>
+        window.__mwCadState ? JSON.stringify(window.__mwCadState()) : '',
+      );
+
+    let picked = false;
+    for (const fy of [0.4, 0.5, 0.6, 0.7]) {
+      for (const fx of [0.3, 0.45, 0.6, 0.75]) {
+        await cad.mouse.click(box.x + box.w * fx, box.y + box.h * fy);
+        await sleep(450);
+        if ((await cad.locator('[data-front-material]').count()) > 0) {
+          picked = true;
+          break;
+        }
+      }
+      if (picked) break;
+    }
+
+    check('клик по мебели выделяет модуль и открывает панель', picked);
+
+    /*
+     * Промах НЕ снимает выделение: замерщик тыкает мимо на планшете
+     * постоянно, и пропадающая панель читается как сбой.
+     */
+    await cad.mouse.click(box.x + 12, box.y + 12);
+    await sleep(700);
+    check(
+      'промах мимо мебели не снимает выделение',
+      (await cad.locator('[data-front-material]').count()) > 0,
+    );
+
+    /* 4. Смена материала меняет картинку сцены. */
+    const beforeMaterial = await shot();
+    const swatch = cad.locator('[data-swatch="veneer_solid"]').first();
+    if ((await swatch.count()) > 0) {
+      await swatch.click();
+      await sleep(1600);
+    }
+    check(
+      'смена материала меняет разметку сцены',
+      (await shot()) !== beforeMaterial,
+      `${JSON.parse(beforeMaterial || '{}').fronts?.join(', ')} → ${
+        JSON.parse((await shot()) || '{}').fronts?.join(', ')
+      }`,
+    );
+
+    /* 5. Ракурсы. */
+    check(
+      'ракурсов пять и есть «Вернуть вид»',
+      (await cad.locator('[data-angle]').count()) === 5 &&
+        (await cad.locator('[data-angle-home]').count()) === 1,
+      `${await cad.locator('[data-angle]').count()} ракурсов`,
+    );
+
+    const beforeAngle = await shot();
+    await cad.locator('[data-angle="plan"]').click();
+    await sleep(2200);
+    check(
+      'смена ракурса переставляет камеру',
+      JSON.stringify(JSON.parse((await shot()) || '{}').camera) !==
+        JSON.stringify(JSON.parse(beforeAngle || '{}').camera),
+      `${JSON.parse(beforeAngle || '{}').camera} → ${JSON.parse((await shot()) || '{}').camera}`,
+    );
+
+    await cad.locator('[data-angle="free"]').click();
+    await sleep(1500);
+
+    /* 6. Во весь экран. */
+    await cad.locator('[data-fullscreen-toggle]').click();
+    await sleep(1200);
+    const wide = await cad.evaluate(() => {
+      const canvas = document.querySelector('[data-scene] canvas');
+      return canvas ? canvas.getBoundingClientRect().width / window.innerWidth : 0;
+    });
+    check('«На весь экран» разворачивает сцену поверх всего', wide > 0.9, `${Math.round(wide * 100)}%`);
+    await cad.locator('[data-fullscreen-toggle]').click();
+    await sleep(900);
+
+    /* 7. Угловая кухня: оба ряда в одной сцене. */
+    const straight = await cad.evaluate(() => (window.__mwScene ? window.__mwScene() : null));
+    await cad.locator('[data-shape-kind="corner_l"]').click();
+    await sleep(3000);
+    const cornerScene = await cad.evaluate(() => (window.__mwScene ? window.__mwScene() : null));
+
+    check(
+      'угловая кухня показывает в сцене ОБА ряда',
+      Boolean(cornerScene) && cornerScene.scene.meshes > straight.scene.meshes,
+      `мешей ${straight?.scene.meshes} → ${cornerScene?.scene.meshes}, вызовов ${straight?.calls} → ${cornerScene?.calls}`,
+    );
+
+    await cad.close();
+  }
+
   await survey.context().setOffline(false);
   await survey.close();
 

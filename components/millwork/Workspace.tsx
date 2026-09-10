@@ -11,9 +11,11 @@ import VariantStrip, { type VariantPreview } from './VariantStrip';
 import FrontMaterialPicker from './FrontMaterialPicker';
 import RunSchematic from './RunSchematic';
 import { hasFacade } from '@/lib/millwork/applianceFront';
+import { frontOf } from '@/lib/millwork/frontMaterial';
 import { paletteFromCatalog } from '@/lib/millwork/palette';
 import { buildComposition } from '@/lib/millwork/composition';
 import { compositionOf, mergeEstimates, wallLabel } from '@/lib/millwork/walls';
+import { CORNER, CORNER_SIZE_MM } from '@/lib/millwork/modules';
 
 /** Решение угла: модуль 900×900 или фальш-панель. */
 type CornerSolution = 'corner_module' | 'false_panel';
@@ -744,6 +746,47 @@ export default function Workspace(props: WorkspaceProps) {
     () => (layout ? { ...estimate, fingerprint: objectFingerprint } : estimate),
     [estimate, layout, objectFingerprint],
   );
+
+  /**
+   * РЯДЫ ДЛЯ СЦЕНЫ: УГОЛ СОБИРАЕТСЯ ЗДЕСЬ, А НЕ В СЦЕНЕ.
+   *
+   * Сцена не считает раскладку — она её показывает. Каждый ряд
+   * по-прежнему собран `buildRun` вдоль своей стены от нуля; здесь
+   * только поворот вокруг угла и смещение на то, что угол занял.
+   *
+   * Ряд Б развёрнут на 90° и начинается ТАМ, ГДЕ КОНЧАЕТСЯ занятое
+   * первым: при фальш-панели это глубина ряда плюс панель, при угловом
+   * модуле — 900 мм. Те же числа, что урезали его полезную длину, иначе
+   * ряды в сцене разъедутся с тем, что посчитала смета.
+   */
+  const sceneRows = useMemo(() => {
+    const depthM = zoneProfile(zone).depthMm / 1000;
+    if (!layout) return segments.map((run) => ({ run }));
+
+    const lostM =
+      cornerSolution === 'corner_module' ? CORNER_SIZE_MM / 1000 : depthM + CORNER.falsePanelMm / 1000;
+
+    return segments.map((run, i) => {
+      if (i === 0) return { run };
+
+      /*
+       * Каждый следующий ряд поворачивается ещё на 90° и стартует от
+       * дальнего края предыдущего. Для П-образной это даёт две стойки
+       * и перемычку между ними.
+       */
+      const prev = segments[i - 1];
+      const prevLenM = prev.lengthMm / 1000;
+
+      return {
+        run,
+        placement: {
+          xM: i === 1 ? prevLenM / 2 : -prevLenM / 2,
+          zM: i === 1 ? -lostM : -lostM,
+          rotationYDeg: i === 1 ? -90 : 90,
+        },
+      };
+    });
+  }, [layout, segments, cornerSolution, zone]);
 
   const issues = useMemo(
     () => validateRun(activeRun, props.comms),
@@ -1900,6 +1943,15 @@ export default function Workspace(props: WorkspaceProps) {
               <div className="h-[46vh] min-h-[260px] lg:h-[calc(100vh-320px)]">
                 <RunSchematic
                   run={activeRun}
+                  sceneRows={sceneRows}
+                  production={props.production}
+                  roomWidthM={Math.max(input.lengthMm / 1000, 2)}
+                  roomDepthM={props.roomDepthM}
+                  facadeColor={
+                    frontOf(
+                      activeRun.modules.find((unit) => hasFacade(unit)) ?? activeRun.modules[0] ?? {},
+                    ).colorHex
+                  }
                   neighbour={neighbourRun}
                   neighbourLabel={
                     layout ? wallLabel(wall === 0 ? 1 : wall - 1) : undefined

@@ -55,7 +55,7 @@ export function heroCamera(room: RoomConfig): CameraFraming {
  * линейное соответствие метров и пикселей, а значит и совпадение с
  * размерной цепочкой поверх кадра.
  */
-export type SceneView = 'elevation' | 'plan' | 'perspective';
+export type SceneView = 'elevation' | 'plan' | 'perspective' | 'left' | 'right';
 
 /*
  * Подписи называют ТОЧКУ СЪЁМКИ, а не документ: «План» и «3D» уже есть
@@ -63,13 +63,15 @@ export type SceneView = 'elevation' | 'plan' | 'perspective';
  * как две разные вещи, которые почему-то называются одинаково.
  */
 export const SCENE_VIEW_LABEL: Record<SceneView, string> = {
-  elevation: 'Как чертёж',
+  elevation: 'Спереди',
   plan: 'Сверху',
   perspective: 'Три четверти',
+  left: 'Слева',
+  right: 'Справа',
 };
 
 /** Ортогональные виды: у них своя камера, и размеры на них совпадают. */
-export const ORTHOGRAPHIC_VIEWS: SceneView[] = ['elevation', 'plan'];
+export const ORTHOGRAPHIC_VIEWS: SceneView[] = ['elevation', 'plan', 'left', 'right'];
 
 export function isOrthographic(view: SceneView): boolean {
   return ORTHOGRAPHIC_VIEWS.includes(view);
@@ -112,6 +114,25 @@ export function orthoFraming(
       target: [0, 0, 0],
       frameWidthM: Math.max(runWidthM, room.width) * ORTHO_PADDING,
       frameHeightM: room.depth * ORTHO_PADDING,
+    };
+  }
+
+  /*
+   * СБОКУ: взгляд вдоль стены, торец ряда к зрителю.
+   *
+   * По нему видно глубину, свес столешницы и вынос верхнего ряда — то,
+   * чего не видно ни спереди, ни сверху. У угловой кухни это ещё и
+   * единственный вид, на котором читается второй ряд.
+   */
+  if (view === 'left' || view === 'right') {
+    const side = view === 'left' ? -1 : 1;
+    const centerSide = room.height / 2;
+    return {
+      center: [0, centerSide, 0],
+      position: [round2(side * (room.width / 2 + 6)), round2(centerSide), 0],
+      target: [round2(-side * room.width), round2(centerSide), 0],
+      frameWidthM: Math.max(room.depth, 0.5) * ORTHO_PADDING,
+      frameHeightM: room.height * ORTHO_PADDING,
     };
   }
 
