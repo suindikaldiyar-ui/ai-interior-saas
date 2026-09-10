@@ -1,10 +1,14 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import ElevationDrawing from './ElevationDrawing';
 import PlanDrawing from './PlanDrawing';
 import type { SceneRow } from './cabinet3d/CadScene';
+import { openablePartIds } from './cabinet3d/Cabinet3D';
+import DimensionLayer from './DimensionLayer';
+import type { OrthoProjection } from './cabinet3d/SceneCamera';
+import { useInteriorStore } from '@/store/useInteriorStore';
 
 /*
  * Сцена — только `dynamic(ssr:false)`: WebGL на сервере нет, а
@@ -115,6 +119,36 @@ export default function RunSchematic({
    */
   const [full, setFull] = useState(false);
 
+  /*
+   * ОТКРЫТЬ ВСЁ — ЭТО ТО, РАДИ ЧЕГО СМОТРЯТ 3D.
+   *
+   * Клиент не читает чертёж, но открытый ящик понимает без объяснений.
+   * Механизм жил давно (`InteractiveDoor`, `useSlide`, `openablePartIds`),
+   * а нажать на него было негде.
+   *
+   * Список открываемого считает ОДНА функция по тем же `fill`, из
+   * которых считается раскрой: второй перебор дал бы в сцене не те
+   * ящики, что уедут в цех.
+   */
+  /**
+   * Кадрирование ортокамеры: по нему размерные цепи ложатся на мебель.
+   *
+   * Держим в состоянии, а не в ref: слой размеров — обычная разметка над
+   * канвасом, и перерисовать её надо ровно тогда, когда камера встала.
+   */
+  const [framing, setFraming] = useState<OrthoProjection | null>(null);
+
+  const setOpenParts = useInteriorStore((state) => state.setOpenParts);
+  const openParts = useInteriorStore((state) => state.openParts);
+
+  /** Ряд под цепями: активная стена. У соседних свои размеры на листе. */
+  const rows0 = (sceneRows.length > 0 ? sceneRows : [{ run }])[0];
+
+  const openable = useMemo(
+    () => (sceneRows.length > 0 ? sceneRows : [{ run }]).flatMap((row) => openablePartIds(row.run)),
+    [sceneRows, run],
+  );
+
   return (
     <div
       className={
@@ -143,6 +177,28 @@ export default function RunSchematic({
             {title}
           </button>
         ))}
+
+        {view === 'scene' && openable.length > 0 && (
+          <>
+            <button
+              type="button"
+              data-open-all
+              onClick={() => setOpenParts(openable)}
+              className="mw-btn mw-btn-ghost"
+            >
+              Открыть всё
+            </button>
+            <button
+              type="button"
+              data-close-all
+              disabled={openParts.length === 0}
+              onClick={() => setOpenParts([])}
+              className="mw-btn mw-btn-ghost"
+            >
+              Закрыть всё
+            </button>
+          </>
+        )}
 
         {view === 'scene' && (
           <button
@@ -218,9 +274,10 @@ export default function RunSchematic({
         }`}
       >
         {view === 'scene' ? (
-          <div className="h-full w-full" data-scene>
+          <div className="relative h-full w-full" data-scene>
             <CadScene
               key={homeKey}
+              onFraming={setFraming}
               rows={sceneRows.length > 0 ? sceneRows : [{ run }]}
               production={production}
               roomWidthM={roomWidthM}
@@ -230,6 +287,24 @@ export default function RunSchematic({
               orbit={angle === 'free'}
               selectedModuleId={selectedModuleId}
               onSelectModule={onSelect}
+            />
+
+            {/*
+              * РАЗМЕРНЫЕ ЦЕПИ — ТОТ ЖЕ ЧЕРТЁЖ, ПОЛОЖЕННЫЙ НА КАДР.
+              *
+              * Второй раз рисовать цепочку нечем: разошедшийся размер
+              * хуже отсутствующего. Поверх сцены ложится ТОТ ЖЕ
+              * `ElevationDrawing`, что уходит в печать (ловушка 170).
+              *
+              * Виден слой только на прямых ракурсах: на повёрнутой
+              * мебели горизонтальный размер измеряет не ту длину.
+              */}
+            <DimensionLayer
+              run={rows0.run}
+              framing={framing}
+              originXM={-rows0.run.lengthMm / 2000}
+              visible={angle === 'elevation' && framing !== null}
+              selectedModuleId={selectedModuleId}
             />
           </div>
         ) : (

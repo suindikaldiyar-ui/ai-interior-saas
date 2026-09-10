@@ -6,6 +6,7 @@ import { milledNormalMap } from './milledNormal';
 import { loadTexture } from '@/lib/textureCache';
 import type { SurfaceLook } from '@/lib/millwork/surfaces';
 import { DEFAULT_FRONT, frontKey } from '@/lib/millwork/frontMaterial';
+import { frontSwatch } from '@/lib/millwork/frontSwatch';
 import type { FrontSpec } from '@/types/millwork';
 import { useThree } from '@react-three/fiber';
 
@@ -252,9 +253,21 @@ const FRONT_METALNESS: Record<FrontSpec['finish'], number> = {
   textured: 0.02,
 };
 
-/** Цвет фасада: из каталога, если артикул выбран, иначе цвет сцены. */
+/**
+ * ЦВЕТ ФАСАДА — ОДНА ФОРМУЛА НА СЦЕНУ И НА СХЕМУ.
+ *
+ * Здесь стояла своя: «артикул выбран — его цвет, иначе цвет сцены». А
+ * схема считала иначе — `frontSwatch`: «иначе типовой цвет ЭТОЙ БАЗЫ».
+ * Расхождение видно сразу, как только человек берёт базу без артикула:
+ * акрил на схеме тёмный, а в сцене бежевый, потому что запасной цвет
+ * один на все базы.
+ *
+ * Восьмой случай того же класса — две формулы одной величины. Считает
+ * `frontSwatch`, сцена только спрашивает.
+ */
 function frontColor(spec: FrontSpec, fallback: string): string {
-  return /^#[0-9a-f]{6}$/i.test(spec.colorHex ?? '') ? spec.colorHex! : fallback;
+  const color = frontSwatch(spec).color;
+  return /^#[0-9a-f]{6}$/i.test(color) ? color : fallback;
 }
 
 /**

@@ -11,6 +11,7 @@ import { frontKey, frontOf } from '@/lib/millwork/frontMaterial';
 import type { ProductionSettings } from '@/types/catalog';
 import type { Run } from '@/types/millwork';
 import type { SceneView } from '@/lib/cameraFraming';
+import type { OrthoProjection } from './SceneCamera';
 
 /**
  * САПР-ВИД, А НЕ ФОТОРЕАЛИЗМ.
@@ -48,6 +49,15 @@ type Props = {
   onSelectModule: (moduleId: string) => void;
   onWidth?: (moduleId: string, widthMm: number) => void;
   onMoveModule?: (moduleId: string, offsetMm: number) => void;
+  /**
+   * Кадрирование ортокамеры — для слоя размеров НАД сценой.
+   *
+   * Размерные цепи не рисуются мешами: это чертёжная графика, и рисовать
+   * её в сцене значило бы городить второй чертёж. Слой ложится сверху и
+   * берёт проекцию отсюда — `null` означает «сейчас перспектива», и
+   * цепи прячутся: на повёрнутой мебели размер по горизонтали врёт.
+   */
+  onFraming?: (framing: OrthoProjection | null) => void;
 };
 
 const MM = 1000;
@@ -65,6 +75,7 @@ export default function CadScene({
   onSelectModule,
   onWidth,
   onMoveModule,
+  onFraming,
 }: Props) {
   return (
     <Canvas
@@ -105,6 +116,7 @@ export default function CadScene({
            * две проекции, спорящие за одну матрицу.
            */
           camera={i === 0}
+          onFraming={i === 0 ? onFraming : undefined}
           placement={row.placement}
           selectedModuleId={selectedModuleId}
           onSelectModule={onSelectModule}

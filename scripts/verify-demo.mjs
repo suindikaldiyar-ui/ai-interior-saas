@@ -2081,6 +2081,159 @@ try {
     await cad.close();
   }
 
+
+  /* ── Сцена: цвет помодульно, открывание, размеры, три ряда ── */
+
+  {
+    const s3 = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await s3.goto(`${BASE}/demo`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+    await until(async () => (await s3.getByRole('button', { name: /Конфигуратор/ }).count()) > 0);
+
+    await s3.getByRole('button', { name: /Конфигуратор/ }).first().click();
+    await sleep(2200);
+    await s3.locator('[data-schematic-tab="scene"]').click();
+    await sleep(3200);
+
+    const state = () => s3.evaluate(() => (window.__mwCadState ? window.__mwCadState() : null));
+    const scene = () => s3.evaluate(() => (window.__mwScene ? window.__mwScene() : null));
+
+    /* 1. Двухцветный дизайн — две пачки, а не одна краска. */
+    const beforeDesign = await scene();
+    const design = s3.locator('[data-design="oak-graphite"]');
+    if ((await design.count()) > 0) {
+      await design.click();
+      await sleep(2500);
+    }
+    const twoTone = await state();
+    const afterDesign = await scene();
+
+    check(
+      'двухцветный дизайн даёт в сцене ДВЕ пачки фасадов',
+      Boolean(twoTone) && twoTone.fronts.length === 2,
+      twoTone ? twoTone.fronts.join(' · ') : '',
+    );
+    check(
+      'и пачек стало больше, а не перекрасилась одна',
+      Boolean(afterDesign) && afterDesign.cabinet.materials > beforeDesign.cabinet.materials,
+      `материалов ${beforeDesign?.cabinet.materials} → ${afterDesign?.cabinet.materials}`,
+    );
+
+    /*
+     * Смена материала ОДНОГО модуля не трогает соседа: у него свой ключ
+     * и своя пачка. Ловится числом ключей, а не глазами.
+     */
+    const canvasBox = await s3.evaluate(() => {
+      const c = document.querySelector('[data-scene] canvas');
+      if (!c) return null;
+      const r = c.getBoundingClientRect();
+      return { x: r.x, y: r.y, w: r.width, h: r.height };
+    });
+
+    let picked = false;
+    if (canvasBox) {
+      for (const fy of [0.55, 0.45, 0.65, 0.35]) {
+        for (const fx of [0.35, 0.5, 0.65, 0.25]) {
+          await s3.mouse.click(canvasBox.x + canvasBox.w * fx, canvasBox.y + canvasBox.h * fy);
+          await sleep(450);
+          if ((await s3.locator('[data-swatch]').count()) > 0) {
+            picked = true;
+            break;
+          }
+        }
+        if (picked) break;
+      }
+    }
+    check('клик по мебели в сцене открывает материал модуля', picked);
+
+    const swatch = s3.locator('[data-swatch="acrylic"]').first();
+    if ((await swatch.count()) > 0) {
+      await swatch.click();
+      await sleep(1800);
+    }
+    const three = await state();
+    check(
+      'смена материала одного модуля не трогает соседей',
+      Boolean(three) && three.fronts.length === 3,
+      three ? `${three.fronts.length} материала: ${three.fronts.join(' · ')}` : '',
+    );
+
+    /* 2. Открыть всё / Закрыть всё. */
+    check(
+      'в сцене есть «Открыть всё» и «Закрыть всё»',
+      (await s3.locator('[data-open-all]').count()) === 1 &&
+        (await s3.locator('[data-close-all]').count()) === 1,
+    );
+
+    const openCount = () => s3.evaluate(() => (window.__mwOpenParts ? window.__mwOpenParts() : -1));
+    await s3.locator('[data-open-all]').click();
+    await sleep(1800);
+    const opened = await openCount();
+    check('«Открыть всё» открывает мебель', opened > 0, `${opened} элементов`);
+
+    await s3.locator('[data-close-all]').click();
+    await sleep(1400);
+    check('«Закрыть всё» закрывает', (await openCount()) === 0, `${await openCount()}`);
+
+    /* 3. Размерные цепи над сценой на прямом ракурсе. */
+    await s3.locator('[data-angle="elevation"]').click();
+    await sleep(2600);
+    const layer = s3.locator('[data-dim-layer]');
+    check(
+      'над сценой есть слой размеров',
+      (await layer.count()) === 1,
+    );
+    check(
+      'на прямом ракурсе он показан',
+      (await layer.getAttribute('aria-hidden')) === 'false',
+      `aria-hidden ${await layer.getAttribute('aria-hidden')}`,
+    );
+    check(
+      'и в нём подписи со стрелками, а не голые цифры',
+      (await s3.locator('[data-dim-layer] text').count()) > 0 &&
+        (await s3.locator('[data-dim-layer] line, [data-dim-layer] path').count()) > 0,
+      `подписей ${await s3.locator('[data-dim-layer] text').count()}`,
+    );
+
+    await s3.locator('[data-angle="free"]').click();
+    await sleep(2000);
+    /*
+     * На перспективе проекции нет вовсе — слой уходит из разметки, а не
+     * гаснет: рисовать цепь без ортопроекции значит рисовать неверную
+     * длину. Проверяем ПОСЛЕДСТВИЕ: цепей на экране нет.
+     */
+    const rotated = await s3.locator('[data-dim-layer]').count();
+    check(
+      'на повёрнутой мебели цепей нет: там размер по горизонтали врёт',
+      rotated === 0 || (await layer.getAttribute('aria-hidden')) === 'true',
+      rotated === 0 ? 'слоя нет: проекции нет' : 'слой погашен',
+    );
+
+    /* 4. П-образная: три ряда в одной сцене. */
+    const straight = await scene();
+    await s3.locator('[data-shape-kind="u_shape"]').click();
+    await sleep(3200);
+    const uShape = await state();
+    const uScene = await scene();
+
+    check(
+      'П-образная показывает в сцене ТРИ ряда',
+      Boolean(uShape) && uShape.rows === 3,
+      uShape ? `рядов ${uShape.rows}` : '',
+    );
+    check(
+      'и мебели в сцене стало больше',
+      Boolean(uScene) && uScene.scene.meshes > straight.scene.meshes,
+      `мешей ${straight?.scene.meshes} → ${uScene?.scene.meshes}, вызовов ${straight?.calls} → ${uScene?.calls}`,
+    );
+    check(
+      'три стены переключаются',
+      (await s3.locator('[data-wall]').count()) === 3,
+      `${await s3.locator('[data-wall]').count()} стены`,
+    );
+
+    await s3.close();
+  }
+
   await survey.context().setOffline(false);
   await survey.close();
 

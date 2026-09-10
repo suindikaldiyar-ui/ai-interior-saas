@@ -2977,6 +2977,39 @@ console.log('\nКорпус описан числами');
   });
   check('один и тот же модуль даёт одни и те же числа',
     JSON.stringify(twice) === JSON.stringify(all));
+
+  /*
+   * ПОЛКИ В СЦЕНЕ — ТЕ ЖЕ, ЧТО В РАСКРОЕ.
+   *
+   * Открытый шкаф — это то, ради чего клиент смотрит 3D, и внутри
+   * обязано стоять наполнение, а не условная разбивка: на разрезе мы уже
+   * ловили доли высоты вместо настоящих полок. Источник один —
+   * `fill.shelves`, поэтому сверяется КАЖДАЯ высота, а не их число.
+   */
+  const cutList = buildPanels({ run });
+  let shelfChecked = 0;
+
+  for (const unit of run.modules) {
+    const shelves = unit.fill?.shelves ?? [];
+    if (shelves.length === 0) continue;
+
+    const boxes = carcassBoxes(unit, place);
+    const missing = shelves.filter(
+      (mm) => !boxes.some((box) => Math.abs(box.position[1] - (place.y + mm / 1000)) < 0.0005),
+    );
+    const inCut = cutList
+      .filter((part) => part.moduleId === unit.id && part.name === 'Полка')
+      .reduce((sum, part) => sum + part.qty, 0);
+
+    check(
+      `полки модуля «${unit.label}» стоят в сцене на высотах наполнения`,
+      missing.length === 0 && inCut === shelves.length,
+      `наполнение ${shelves.join(', ')} мм · в раскрое ${inCut}`,
+    );
+    shelfChecked += 1;
+  }
+
+  check('и проверять было что', shelfChecked > 0, `модулей с полками ${shelfChecked}`);
 }
 
 
