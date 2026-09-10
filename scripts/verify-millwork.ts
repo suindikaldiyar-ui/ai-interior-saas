@@ -96,7 +96,7 @@ import {
 } from '../lib/millwork/moduleVariants';
 import { gapsIn } from '../lib/millwork/freeRun';
 import { facadeSpans, hasFacade } from '../lib/millwork/applianceFront';
-import { upperBottomFor } from '../lib/millwork/fill';
+import { moduleDepthMm, upperBottomFor } from '../lib/millwork/fill';
 import { FRAME_WIDTH_MM, frontConflict } from '../lib/millwork/frontMaterial';
 import {
   RUN_DESIGNS,
@@ -4948,17 +4948,13 @@ console.log('\nМодуль с техникой — тоже мебель');
     );
   }
 
-  /* 5. Введённые размеры прибора меняют нишу, ряд и отпечаток. */
+  /* 5. Размеры вводятся ДЛЯ КАЖДОГО ПРИБОРА отдельно. */
   const fridge = run.modules.find((unit) => unit.appliance === 'fridge')!;
   const wide = step(run, [
-    { op: 'set_appliance_size', moduleId: fridge.id, size: { widthMm: 900 } },
+    { op: 'set_appliance_size', moduleId: fridge.id, appliance: 'fridge', size: { widthMm: 900 } },
   ]);
   const placed = wide.modules.find((unit) => unit.appliance === 'fridge')!;
-  check(
-    'введённая ширина прибора применяется',
-    placed.widthMm === 900,
-    `${placed.widthMm} мм`,
-  );
+  check('введённая ширина прибора применяется', placed.widthMm === 900, `${placed.widthMm} мм`);
   check(
     'и меняет отпечаток',
     configurationFingerprint(wide.modules) !== configurationFingerprint(run.modules),
@@ -4968,9 +4964,18 @@ console.log('\nМодуль с техникой — тоже мебель');
     runWidthSum(wide) === wide.lengthMm,
     `${runWidthSum(wide)}/${wide.lengthMm}`,
   );
+  /*
+   * Соседи ужимаются — это нормальная мебельная работа, — но НЕ МОЛЧА:
+   * иначе клиент увидит на чертеже не тот состав, который заказывал.
+   */
+  check(
+    'и ужатие соседей названо числом',
+    wide.warnings.some((w) => /ужались на \d+ мм/.test(w)),
+    wide.warnings[0] ?? 'молча',
+  );
 
   const outOfRange = step(run, [
-    { op: 'set_appliance_size', moduleId: fridge.id, size: { widthMm: 3000 } },
+    { op: 'set_appliance_size', moduleId: fridge.id, appliance: 'fridge', size: { widthMm: 3000 } },
   ]);
   check(
     'прибор шире физического предела отклоняется с границами',
@@ -4978,11 +4983,6 @@ console.log('\nМодуль с техникой — тоже мебель');
     outOfRange.warnings[0] ?? 'принято молча',
   );
 
-  /*
-   * Превышение стены проверяется на УЗКОЙ стене: на 3800 мм соседи
-   * ужимаются, и в неё влезает даже side-by-side. Отказ должен называть
-   * миллиметры, а не «не помещается».
-   */
   const narrowRun = buildRun({ ...baseInput, lengthMm: 1800 });
   const narrowFridge = narrowRun.modules.find((unit) => unit.appliance === 'fridge');
   if (narrowFridge) {
@@ -4991,7 +4991,12 @@ console.log('\nМодуль с техникой — тоже мебель');
       requirements: REQ,
       openings: OPENINGS,
       ops: [
-        { op: 'set_appliance_size', moduleId: narrowFridge.id, size: { widthMm: 1200 } },
+        {
+          op: 'set_appliance_size',
+          moduleId: narrowFridge.id,
+          appliance: 'fridge',
+          size: { widthMm: 1200 },
+        },
       ],
     });
     check(
@@ -5002,6 +5007,13 @@ console.log('\nМодуль с техникой — тоже мебель');
     );
   }
 
+  /*
+   * КОЛОННА: ДВА ПРИБОРА — ДВА НАБОРА ГАБАРИТОВ.
+   *
+   * Размер лежал на МОДУЛЕ, и духовка с микроволновкой получали одну
+   * высоту на двоих: микроволновке доставалась духовочная ниша, и в
+   * пенале оставалось двадцать сантиметров пустоты.
+   */
   const columnRun = buildRun({
     ...baseInput,
     requirements: { ...REQ, appliances: [...REQ.appliances, 'microwave'] },
@@ -5010,9 +5022,15 @@ console.log('\nМодуль с техникой — тоже мебель');
   if (column) {
     const nicheOf = (r: Run) => {
       const unit = r.modules.find((m) => m.column)!;
-      return columnNiches(unit, moduleCarcassHeightMm(unit, r)).map((n) => n.toMm - n.fromMm);
+      return new Map(
+        columnNiches(unit, moduleCarcassHeightMm(unit, r)).map((niche) => [
+          niche.appliance,
+          niche.toMm - niche.fromMm,
+        ]),
+      );
     };
-    const tall = applyOps({
+
+    let sized = applyOps({
       run: columnRun,
       requirements: REQ,
       openings: OPENINGS,
@@ -5020,19 +5038,208 @@ console.log('\nМодуль с техникой — тоже мебель');
         {
           op: 'set_appliance_size',
           moduleId: column.id,
+          appliance: 'oven',
           size: { widthMm: column.widthMm, heightMm: 720 },
         },
       ],
     });
+    sized = applyOps({
+      run: sized,
+      requirements: REQ,
+      openings: OPENINGS,
+      ops: [
+        {
+          op: 'set_appliance_size',
+          moduleId: sized.modules.find((m) => m.column)!.id,
+          appliance: 'microwave',
+          size: { widthMm: column.widthMm, heightMm: 380 },
+        },
+      ],
+    });
+
+    const niches = nicheOf(sized);
     check(
-      'введённая высота прибора пересчитывает нишу',
-      JSON.stringify(nicheOf(tall)) !== JSON.stringify(nicheOf(columnRun)),
-      `${nicheOf(columnRun).join('/')} → ${nicheOf(tall).join('/')}`,
+      'в колонне духовка и микроволновка дают РАЗНЫЕ ниши',
+      niches.get('oven') !== niches.get('microwave'),
+      `духовка ${niches.get('oven')}, микроволновка ${niches.get('microwave')}`,
     );
     check(
-      'и ниша не меньше самого прибора',
-      nicheOf(tall).every((height) => height >= 720),
-      nicheOf(tall).join('/'),
+      'и каждая ниша не меньше своего прибора',
+      (niches.get('oven') ?? 0) >= 720 && (niches.get('microwave') ?? 0) >= 380,
+      `${niches.get('oven')}/${niches.get('microwave')}`,
+    );
+    check(
+      'введённая высота пересчитала нишу',
+      JSON.stringify(Array.from(niches)) !== JSON.stringify(Array.from(nicheOf(columnRun))),
+      `${Array.from(nicheOf(columnRun).values()).join('/')} → ${Array.from(niches.values()).join('/')}`,
+    );
+    check(
+      'габарит каждого прибора попал в отпечаток',
+      configurationFingerprint(sized.modules) !== configurationFingerprint(columnRun.modules),
+    );
+    check(
+      'чужой прибор в этот модуль не пишется',
+      applyOps({
+        run: columnRun,
+        requirements: REQ,
+        openings: OPENINGS,
+        ops: [
+          {
+            op: 'set_appliance_size',
+            moduleId: column.id,
+            appliance: 'sink600',
+            size: { widthMm: 600 },
+          },
+        ],
+      }).warnings.some((w) => /в этом модуле нет/.test(w)),
+    );
+  }
+
+  /*
+   * ГЛУБИНА ПРИБОРА РАБОТАЕТ.
+   *
+   * Поле существовало, в отпечаток входило и не делало НИЧЕГО: глубину
+   * корпуса задавал профиль зоны, и холодильник 640 мм выпирал бы за
+   * фасад. Теперь модуль едет вперёд — либо прибор отклоняется.
+   */
+  const deepRun = step(run, [
+    {
+      op: 'set_appliance_size',
+      moduleId: fridge.id,
+      appliance: 'fridge',
+      size: { widthMm: 600, depthMm: 640 },
+    },
+  ]);
+  const deepUnit = deepRun.modules.find((unit) => unit.appliance === 'fridge')!;
+  check(
+    'глубина прибора отодвигает модуль от стены',
+    moduleDepthMm(deepUnit, 'kitchen') > moduleDepthMm(fridge, 'kitchen') &&
+      moduleDepthMm(deepUnit, 'kitchen') >= 640,
+    `${moduleDepthMm(fridge, 'kitchen')} → ${moduleDepthMm(deepUnit, 'kitchen')} мм`,
+  );
+  check(
+    'и выступ назван числом',
+    deepRun.warnings.some((w) => /вперёд на \d+ мм/.test(w)),
+    deepRun.warnings[0] ?? 'молча',
+  );
+  check(
+    'раскрой видит глубокий корпус',
+    buildPanels({ run: deepRun }).some(
+      (panel) => panel.moduleId === deepUnit.id && panel.name === 'Боковина' && panel.widthMm >= 640,
+    ),
+  );
+  check(
+    'а прибор глубже предельного отклоняется с числом',
+    step(run, [
+      {
+        op: 'set_appliance_size',
+        moduleId: fridge.id,
+        appliance: 'fridge',
+        size: { widthMm: 600, depthMm: 800 },
+      },
+    ]).warnings.some((w) => /больше предельной \d+ мм/.test(w)),
+  );
+
+  /*
+   * АНТРЕСОЛЬ — ОТДЕЛЬНАЯ ПОЗИЦИЯ.
+   *
+   * Была признаком верхнего ряда: ни снять отдельно, ни выбрать материал.
+   */
+  const withMezz = step(run, [{ op: 'set_mezzanine', heightMm: 400 }]);
+  const mezzModules = withMezz.upperSegments
+    .flatMap((segment) => segment.modules)
+    .filter((unit) => unit.section === 'mezzanine');
+
+  check('антресоль добавляется отдельной позицией', mezzModules.length > 0, `${mezzModules.length} шт.`);
+  check(
+    'у неё своя высота',
+    mezzModules.every((unit) => moduleCarcassHeightMm(unit, withMezz) === 400),
+    mezzModules.map((unit) => moduleCarcassHeightMm(unit, withMezz)).join(', '),
+  );
+  check(
+    'верхний ряд при этом остаётся на месте',
+    withMezz.upperSegments
+      .flatMap((segment) => segment.modules)
+      .filter((unit) => unit.section !== 'mezzanine').length ===
+      run.upperSegments.flatMap((segment) => segment.modules).length,
+  );
+  check('и ничего не пересекается', moduleOverlaps(withMezz).length === 0);
+  check(
+    'антресоль стоит в раскрое и в смете',
+    buildPanels({ run: withMezz }).some((panel) => panel.moduleLabel === 'Антресоль') &&
+      buildEstimate(withMezz, 'optimal', DEMO_RATES).total >
+        buildEstimate(run, 'optimal', DEMO_RATES).total,
+    `${Math.round(buildEstimate(run, 'optimal', DEMO_RATES).total)} → ${Math.round(
+      buildEstimate(withMezz, 'optimal', DEMO_RATES).total,
+    )} ₸`,
+  );
+  check(
+    'ей выбирают материал, как всем',
+    (() => {
+      const painted = applyOps({
+        run: withMezz,
+        requirements: REQ,
+        openings: OPENINGS,
+        ops: [
+          {
+            op: 'set_front',
+            moduleId: 'all',
+            front: { base: 'veneer_solid', construct: 'solid', finish: 'textured' },
+          },
+        ],
+      });
+      return painted.upperSegments
+        .flatMap((segment) => segment.modules)
+        .filter((unit) => unit.section === 'mezzanine')
+        .every((unit) => unit.front?.base === 'veneer_solid');
+    })(),
+  );
+
+  const withoutMezz = step(withMezz, [{ op: 'set_mezzanine', heightMm: null }]);
+  check(
+    'и снимается отдельно от верхнего ряда',
+    withoutMezz.upperSegments
+      .flatMap((segment) => segment.modules)
+      .filter((unit) => unit.section === 'mezzanine').length === 0 &&
+      withoutMezz.upperSegments.flatMap((segment) => segment.modules).length ===
+        run.upperSegments.flatMap((segment) => segment.modules).length,
+  );
+  check(
+    'высота антресоли имеет границы',
+    step(run, [{ op: 'set_mezzanine', heightMm: 100 }]).warnings.some((w) =>
+      /от \d+ до \d+ мм/.test(w),
+    ),
+  );
+
+  /*
+   * ФРОНТЫ ПОД ВАРОЧНОЙ: столько же, сколько на чертеже.
+   *
+   * Чертёж рисовал два ящика, промпт называл два, а в раскрой уходила
+   * ОДНА глухая панель на всю высоту.
+   */
+  const hob = run.modules.find((unit) => unit.appliance === 'hob');
+  if (hob) {
+    const drawn = frontGlyph(hob).filter((element) => element.kind === 'drawer').length;
+    const cut = buildPanels({ run }).filter(
+      (panel) => panel.moduleId === hob.id && panel.material.startsWith('Фасад'),
+    );
+    check(
+      'под варочной в раскрое столько фронтов, сколько на чертеже',
+      drawn > 0 && cut.length === drawn,
+      `на чертеже ${drawn}, в раскрое ${cut.length}`,
+    );
+    check(
+      'и это фронты ящиков, а не глухая панель',
+      cut.every((panel) => /Фронт ящика/.test(panel.name)),
+      cut.map((panel) => panel.name).join(', '),
+    );
+    check(
+      'сумма фронтов сходится с высотой модуля',
+      Math.abs(
+        (hob.fill?.drawerHeights ?? []).reduce((sum, mm) => sum + mm, 0) -
+          moduleCarcassHeightMm(hob, run),
+      ) <= 1,
+      `${(hob.fill?.drawerHeights ?? []).join('+')} против ${moduleCarcassHeightMm(hob, run)}`,
     );
   }
 

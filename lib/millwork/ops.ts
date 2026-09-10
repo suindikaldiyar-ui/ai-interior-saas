@@ -1,5 +1,7 @@
 import {
   APPLIANCE_SLOTS,
+  GEOMETRY,
+  moduleAppliances,
   applianceWidthMm,
   MAX_WIDTH,
   MIN_WIDTH,
@@ -12,6 +14,8 @@ import { assertNoOverlap, assertRunFits, widthOverflowMm } from './invariants';
 import { runFingerprint } from './fingerprint';
 import { defaultFill, hingeSide } from './fill';
 import { frontConflict } from './frontMaterial';
+import { MAX_APPLIANCE_DEPTH_MM, moduleDepthMm } from './fill';
+import { MAX_MEZZANINE_MM, MIN_MEZZANINE_MM } from './sections';
 import { hasFacade } from './applianceFront';
 import {
   moveConflict,
@@ -136,6 +140,8 @@ export function applyOps({ run, requirements, ops, openings = [] }: ApplyOpsInpu
   /** То же для материала фасада: верх и низ могут отличаться. */
   const upperFronts = new Map<string, NonNullable<Module['front']>>();
   let upperFrontAll: Module['front'] | null = null;
+  /** Антресоль ряда: отдельная позиция, переживает пересборку верха. */
+  let mezzanine = run.mezzanine ?? null;
 
   for (const op of ops) {
     /*
@@ -529,6 +535,12 @@ export function applyOps({ run, requirements, ops, openings = [] }: ApplyOpsInpu
           break;
         }
 
+        // Прибор обязан стоять В ЭТОМ модуле: чужой габарит сюда не пишут.
+        if (!moduleAppliances(unit).includes(op.appliance)) {
+          warnings.push(`${unit.label}: прибора «${op.appliance}» в этом модуле нет.`);
+          break;
+        }
+
         const wanted = Math.round(op.size.widthMm);
         if (!Number.isFinite(wanted) || wanted < MIN_WIDTH || wanted > MAX_WIDTH) {
           warnings.push(`Ширина прибора — от ${MIN_WIDTH} до ${MAX_WIDTH} мм.`);
@@ -555,11 +567,105 @@ export function applyOps({ run, requirements, ops, openings = [] }: ApplyOpsInpu
           break;
         }
 
+        /*
+         * СОСЕДИ УЖИМАЮТСЯ НЕ МОЛЧА.
+         *
+         * В раскладке по шаблону ряд сходится со стеной до миллиметра,
+         * поэтому расширение прибора всегда за чей-то счёт: `rebalance`
+         * снимет разницу с обычных модулей. Это нормальная мебельная
+         * работа, но человек обязан узнать о ней ЧИСЛОМ — иначе клиент
+         * увидит на чертеже не тот состав, который заказывал.
+         */
+        const grew = wanted - unit.widthMm;
+        if (requirements.mode !== 'free' && grew > 0) {
+          warnings.push(
+            `${unit.label}: ${wanted} мм вместо ${unit.widthMm}. ` +
+              `Соседние модули ужались на ${grew} мм.`,
+          );
+        }
+
+        /*
+         * ГЛУБИНА ПРИБОРА ОТОДВИГАЕТ МОДУЛЬ.
+         *
+         * Холодильник 640 мм не влезает в корпус 560: он выпирает на
+         * восемьдесят миллиметров, и об этот выступ бьются коленом. Либо
+         * корпус едет вперёд вместе со столешницей, либо прибор не
+         * подходит — и тогда отказ называет, на сколько.
+         */
+        const depth = Math.round(op.size.depthMm ?? 0);
+        if (depth > MAX_APPLIANCE_DEPTH_MM) {
+          warnings.push(
+            `Глубина ${depth} мм больше предельной ${MAX_APPLIANCE_DEPTH_MM} мм: ` +
+              `такой прибор в корпусный ряд не встраивают, он выступит на ` +
+              `${depth - MAX_APPLIANCE_DEPTH_MM} мм за габарит мебели.`,
+          );
+          break;
+        }
+
+        const sizes = { ...(unit.applianceSizes ?? {}) };
+        sizes[op.appliance] = { ...op.size, widthMm: wanted };
+
         modules[at] = {
           ...unit,
-          widthMm: wanted,
-          applianceSize: { ...op.size, widthMm: wanted },
+          /*
+           * Ширина модуля — самая широкая из введённых: в колонне
+           * приборы стоят один над другим, и корпус обязан вместить оба.
+           */
+          widthMm: Math.max(
+            wanted,
+            ...Object.values(sizes).map((size) => size?.widthMm ?? 0),
+          ),
+          applianceSizes: sizes,
         };
+
+        const pushed = moduleDepthMm(modules[at], zone) - moduleDepthMm(unit, zone);
+        if (pushed > 0) {
+          warnings.push(
+            `${unit.label}: прибор глубиной ${depth} мм — модуль вышел вперёд на ${pushed} мм. ` +
+              'Столешница над ним идёт той же глубины.',
+          );
+        }
+        break;
+      }
+
+      case 'set_mezzanine': {
+        /*
+         * АНТРЕСОЛЬ — ОТДЕЛЬНАЯ ПОЗИЦИЯ СОСТАВА.
+         *
+         * Раньше она была признаком верхнего ряда: ни снять её отдельно,
+         * ни выбрать ей материал было нельзя, хотя мебельщик продаёт её
+         * отдельной строкой. Теперь это элемент со своей высотой —
+         * добавляется и убирается сама по себе, а материал ей выбирают
+         * тем же `set_front`, что и всем.
+         */
+        if (op.heightMm === null) {
+          mezzanine = null;
+          break;
+        }
+
+        const wanted = Math.round(op.heightMm);
+        if (!Number.isFinite(wanted) || wanted < MIN_MEZZANINE_MM || wanted > MAX_MEZZANINE_MM) {
+          warnings.push(
+            `Высота антресоли — от ${MIN_MEZZANINE_MM} до ${MAX_MEZZANINE_MM} мм.`,
+          );
+          break;
+        }
+
+        /*
+         * Антресоль садится НА верхний ряд, и вдвоём они обязаны влезть
+         * между отметкой навески и потолком. Иначе это не антресоль, а
+         * шкаф, задавивший тот, на котором стоит.
+         */
+        const room = run.ceilingHeightMm - GEOMETRY.upper.bottomFromFloor;
+        if (wanted + GEOMETRY.upper.carcassH > room) {
+          warnings.push(
+            `Антресоль ${wanted} мм не встаёт: над верхним рядом остаётся ` +
+              `${room - GEOMETRY.upper.carcassH} мм до потолка.`,
+          );
+          break;
+        }
+
+        mezzanine = { heightMm: wanted };
         break;
       }
 
@@ -689,6 +795,64 @@ export function applyOps({ run, requirements, ops, openings = [] }: ApplyOpsInpu
       ),
     };
   });
+
+  /*
+   * АНТРЕСОЛЬ ДОБАВЛЯЕТСЯ ПОСЛЕ ВЕРХНЕГО РЯДА.
+   *
+   * Верхний ряд пересобирается из нижнего на каждой правке, и антресоль
+   * обязана пережить пересборку — вместе со своим материалом. Поэтому
+   * она хранится на РЯДУ, а сегмент собирается здесь, поверх готового
+   * верха: своя высота, свои модули, своя строка в раскрое и смете.
+   */
+  nextRun.mezzanine = mezzanine ?? undefined;
+  if (mezzanine) {
+    const kept = new Map(
+      run.upperSegments
+        .flatMap((segment) => segment.modules)
+        .filter((unit) => unit.section === 'mezzanine' && unit.front)
+        .map((unit) => [unit.id, unit.front!] as const),
+    );
+
+    const spans = nextRun.upperSegments.filter((segment) =>
+      segment.modules.some((unit) => unit.section !== 'mezzanine'),
+    );
+
+    const built = spans.map((segment) => ({
+      fromMm: segment.fromMm,
+      toMm: segment.toMm,
+      modules: segment.modules.map((unit) => {
+        const mezz: Module = {
+          ...unit,
+          id: `mezz-${unit.offsetMm}`,
+          section: 'mezzanine',
+          variant: undefined,
+          appliance: undefined,
+          column: undefined,
+          frontType: 'door',
+          doorCount: 1,
+          drawerCount: 0,
+          fill: undefined,
+          label: 'Антресоль',
+        };
+        const front = kept.get(mezz.id) ?? upperFrontAll ?? unit.front;
+        return front ? { ...mezz, front } : mezz;
+      }),
+    }));
+
+    nextRun.upperSegments = [
+      ...nextRun.upperSegments.filter((segment) =>
+        segment.modules.some((unit) => unit.section !== 'mezzanine'),
+      ),
+      ...built,
+    ];
+
+    nextRun.upperSegments = nextRun.upperSegments.map((segment) => ({
+      ...segment,
+      modules: segment.modules.map((unit, i) =>
+        unit.fill ? unit : { ...unit, fill: defaultFill(unit, nextRun, i, segment.modules.length) },
+      ),
+    }));
+  }
 
   // Отпечаток пересчитывается вместе с составом — иначе смета и чертёж
   // разойдутся молча, а это ровно то, от чего он защищает.

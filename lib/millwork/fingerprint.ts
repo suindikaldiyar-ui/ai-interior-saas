@@ -77,12 +77,32 @@ function extrasPart(unit: Module): string | undefined {
      * Габарит прибора. Холодильник 700 вместо 600 — это другая ниша,
      * другой раскрой и другие деньги: отпечаток обязан их различать.
      */
-    unit.applianceSize
-      ? `app${unit.applianceSize.widthMm}x${unit.applianceSize.heightMm ?? 0}x${unit.applianceSize.depthMm ?? 0}`
-      : '',
+    /*
+     * Габариты приборов — ВСЕ, по одному на прибор, в устойчивом порядке.
+     * Духовка 595 рядом с микроволновкой 380 это другие ниши, другой
+     * раскрой и другие деньги, чем две по 595.
+     */
+    applianceSizesPart(unit),
   ].filter(Boolean);
 
   return parts.length > 0 ? parts.join(',') : undefined;
+}
+
+/** Габариты приборов строкой: ключи отсортированы, порядок не плавает. */
+function applianceSizesPart(unit: Module): string {
+  const sizes = unit.applianceSizes;
+  if (!sizes) return '';
+
+  return Object.keys(sizes)
+    .sort()
+    .map((key) => {
+      const size = sizes[key as keyof typeof sizes];
+      return size
+        ? `${key}:${size.widthMm}x${size.heightMm ?? 0}x${size.depthMm ?? 0}`
+        : '';
+    })
+    .filter(Boolean)
+    .join('+');
 }
 
 /** Устойчивый хеш: порядок полей фиксирован, случайности нет. */

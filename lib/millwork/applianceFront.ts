@@ -92,7 +92,7 @@ function nicheOf(unit: Module, heightMm: number): FacadeSpan[] {
   const appliance = moduleAppliances(unit)[0];
   if (!appliance || unit.kind !== 'tall') return [];
 
-  const niche = nicheHeightMm(appliance, unit.applianceSize);
+  const niche = nicheHeightMm(appliance, unit.applianceSizes?.[appliance]);
   if (!niche) return [];
 
   /*

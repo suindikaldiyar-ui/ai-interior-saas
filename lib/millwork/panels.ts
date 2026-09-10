@@ -258,6 +258,22 @@ function modulePanels(
    * фасад поверх духовки.
    */
   if (isAppliance) {
+    /*
+     * ФРОНТЫ ПОД ПРИБОРОМ РАСКЛАДЫВАЮТСЯ ТАК ЖЕ, КАК У ОБЫЧНОГО МОДУЛЯ.
+     *
+     * Под варочной панелью стоят ящики: чертёж рисовал два фронта и
+     * промпт называл два, а сюда уходила ОДНА глухая панель на всю
+     * высоту — цех собрал бы не ту мебель. Высоты берутся из `fill`,
+     * того же, что читают чертёж и 3D; второй расклад развёл бы их.
+     */
+    const drawers = unit.fill?.drawerHeights ?? [];
+    if (drawers.length > 0) {
+      for (const front of drawers) {
+        pushFront('Фронт ящика', front - gap, unit.widthMm - gap, 1);
+      }
+      return panels;
+    }
+
     for (const span of facadeSpans(unit, heightMm)) {
       pushFront('Фасад', span.heightMm - gap, unit.widthMm - gap, 1);
     }

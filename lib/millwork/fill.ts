@@ -1,4 +1,5 @@
 import { APPLIANCE_COLUMN, GEOMETRY, standardHeightMm, nicheHeightMm } from './modules';
+import { MODULE_VARIANTS, currentVariant } from './moduleVariants';
 import { sectionSpec } from './sections';
 import { upperRowBottomMm, zoneHeightMm, zoneProfile } from './zones';
 import type { ApplianceKind, Module, ModuleFill, Run, ZoneKind } from '@/types/millwork';
@@ -52,20 +53,22 @@ export function snapUp32(mm: number): number {
  * паспортной, а не ниже.
  */
 export function columnNiches(
-  unit: Pick<Module, 'column' | 'applianceSize'>,
+  unit: Pick<Module, 'column' | 'applianceSizes'>,
   carcassHeightMm: number,
 ): { appliance: ApplianceKind; fromMm: number; toMm: number }[] {
   const column = unit.column;
   if (!column) return [];
 
   /*
-   * Высота ниши — от размера ЭТОГО прибора, если он введён. Паспортные
-   * 595 у духовки это стандарт, а не закон: прибор клиента может быть
-   * другим, и ниша под него обязана пересчитаться.
+   * Высота ниши — от размера ЭТОГО прибора, КАЖДОГО своего. Паспортные
+   * 595 у духовки это стандарт, а не закон, и прибор клиента может быть
+   * другим; но главное — приборов в колонне два, и высота у них разная.
+   * Один размер на модуль давал микроволновке духовочную нишу, и в
+   * пенале появлялось двадцать сантиметров пустоты.
    */
-  const size = (unit as Pick<Module, 'applianceSize'>).applianceSize;
-  const bottomH = nicheHeightMm(column.bottom as ApplianceKind, size);
-  const topH = nicheHeightMm(column.top as ApplianceKind, size);
+  const sizes = unit.applianceSizes;
+  const bottomH = nicheHeightMm(column.bottom as ApplianceKind, sizes?.[column.bottom as ApplianceKind]);
+  const topH = nicheHeightMm(column.top as ApplianceKind, sizes?.[column.top as ApplianceKind]);
 
   // Низкий пенал: приборы садятся от дна, иначе верхний упрётся в крышу.
   const needed = bottomH + topH + APPLIANCE_COLUMN.shelfMm;
@@ -99,7 +102,8 @@ export const MIN_DIVIDER_EDGE_MM = 150;
  */
 export function moduleCarcassHeightMm(
   unit: Module,
-  run: Pick<Run, 'zone' | 'ceilingHeightMm' | 'options'> & Partial<Pick<Run, 'upperSegments'>>,
+  run: Pick<Run, 'zone' | 'ceilingHeightMm' | 'options'> &
+    Partial<Pick<Run, 'upperSegments' | 'mezzanine'>>,
 ): number {
   const zone = zoneProfile(run.zone);
   const top = zoneHeightMm(run.zone, run.ceilingHeightMm);
@@ -123,35 +127,68 @@ export function moduleCarcassHeightMm(
      */
     if (spec.moduleKind === 'tall') return fullBody;
 
-    // Антресоль — её собственные 500 мм, а не кухонные 720.
+    /*
+     * Антресоль — её собственная высота, а не кухонные 720. И не всегда
+     * отраслевые 500: её продают отдельной позицией, и высоту заказчик
+     * выбирает под свой потолок.
+     */
+    if (unit.section === 'mezzanine') return mezzanineHeightMm(run);
     if (spec.heightMm > 0) return spec.heightMm;
     return fullBody;
   }
 
   if (zone.kind !== 'kitchen') return fullBody;
 
-  return standardHeightMm(unit.kind, {
+  const standard = standardHeightMm(unit.kind, {
     upperToCeiling: run.options.upperToCeiling,
     ceilingHeightMm: run.ceilingHeightMm,
   });
+
+  /*
+   * ВЕРХНИЙ РЯД УСТУПАЕТ МЕСТО АНТРЕСОЛИ.
+   *
+   * Кухонная ветка считала высоту одной формулой и про антресоль не
+   * знала вовсе: поставленная сверху, антресоль занимала ТОТ ЖЕ объём,
+   * что шкафы под ней, — инвариант непересечения ловил это исключением.
+   * Антресоль садится НА шкаф, значит шкаф кончается там, где она
+   * начинается. Отметка одна на весь продукт — `mezzanineBottomMm`.
+   */
+  const upperRow = unit.kind === 'upper' || unit.kind === 'corner_upper';
+  if (upperRow && hasMezzanine(run)) {
+    const room = mezzanineBottomMm(run) - GEOMETRY.upper.bottomFromFloor;
+    return Math.max(0, Math.min(standard, room));
+  }
+
+  return standard;
 }
 
 /** В ряду есть антресоль: она забирает верх, и корпус под неё укорачивается. */
-export function hasMezzanine(run: Partial<Pick<Run, 'upperSegments'>>): boolean {
+export function hasMezzanine(
+  run: Partial<Pick<Run, 'upperSegments' | 'mezzanine'>>,
+): boolean {
+  if (run.mezzanine) return true;
   return (run.upperSegments ?? []).some((segment) =>
     segment.modules.some((unit) => unit.section === 'mezzanine'),
   );
 }
 
+/**
+ * Высота антресоли этого ряда: своя, если задана, иначе отраслевая.
+ *
+ * Одна функция на весь продукт: высоту спрашивают наполнение, раскрой,
+ * чертёж и инвариант непересечения. Второе число развело бы антресоль
+ * с тем местом, которое под неё оставил верхний ряд.
+ */
+export function mezzanineHeightMm(run: Partial<Pick<Run, 'mezzanine'>>): number {
+  const own = run.mezzanine?.heightMm;
+  return own && own > 0 ? Math.round(own) : sectionSpec('mezzanine').heightMm;
+}
+
 /** Низ антресоли: потолок зоны минус её собственная высота. */
 export function mezzanineBottomMm(
-  run: Pick<Run, 'zone' | 'ceilingHeightMm'>,
+  run: Pick<Run, 'zone' | 'ceilingHeightMm'> & Partial<Pick<Run, 'mezzanine'>>,
 ): number {
-  return upperRowBottomMm(
-    run.zone,
-    run.ceilingHeightMm,
-    sectionSpec('mezzanine').heightMm,
-  );
+  return upperRowBottomMm(run.zone, run.ceilingHeightMm, mezzanineHeightMm(run));
 }
 
 /**
@@ -170,11 +207,41 @@ export function upperBottomFor(
 /** Глубина корпуса модуля в этой зоне. */
 export function moduleDepthMm(unit: Module, zone: ZoneKind | undefined): number {
   const profile = zoneProfile(zone);
-  if (profile.kind !== 'kitchen') return profile.depthMm;
-  return unit.kind === 'upper' || unit.kind === 'corner_upper'
-    ? GEOMETRY.upper.depth
-    : GEOMETRY.base.depth;
+  const standard =
+    profile.kind !== 'kitchen'
+      ? profile.depthMm
+      : unit.kind === 'upper' || unit.kind === 'corner_upper'
+        ? GEOMETRY.upper.depth
+        : GEOMETRY.base.depth;
+
+  /*
+   * ГЛУБОКИЙ ПРИБОР ОТОДВИГАЕТ КОРПУС.
+   *
+   * Стандартная глубина — это то, с чего начинается разговор, а не
+   * закон: холодильник 640 мм в корпус 560 не встанет. Раньше введённая
+   * глубина лежала в данных и не делала ничего — модуль оставался
+   * прежним, а прибор на чертеже выпирал бы за фасад.
+   *
+   * Зазор сзади наш: прибору нужен просвет на вентиляцию и подводку.
+   */
+  const deepest = Math.max(
+    0,
+    ...Object.values(unit.applianceSizes ?? {}).map((size) => size?.depthMm ?? 0),
+  );
+
+  return deepest > 0 ? Math.max(standard, deepest + APPLIANCE_BACK_GAP_MM) : standard;
 }
+
+/** Просвет за прибором: вентиляция и подводка. Из интерфейса не меняется. */
+export const APPLIANCE_BACK_GAP_MM = 20;
+
+/**
+ * Глубже этого прибор в корпусный ряд не встраивают.
+ *
+ * Столешница глубиной 600 мм со свесом закрывает корпус до 700; всё, что
+ * глубже, выпирает в проход, и об этот выступ бьются коленом.
+ */
+export const MAX_APPLIANCE_DEPTH_MM = 700;
 
 /* ─────────────────────────  Наполнение по умолчанию  ───────────────────────── */
 
@@ -267,7 +334,24 @@ export function defaultFill(
     return { ...empty, shelves: dedupe(shelves) };
   }
 
-  // У техники и доборной планки наполнения нет: внутри прибор или пустота.
+  /*
+   * ПОД ВАРОЧНОЙ — ЯЩИКИ, И ОНИ НАСТОЯЩИЕ.
+   *
+   * У техники «внутри прибор», но фасад под ней — обычные ящики: чертёж
+   * рисовал два фронта, промпт называл два, а в раскрое лежала ОДНА
+   * глухая панель на всю высоту. Цех получил бы её и собрал не ту мебель.
+   *
+   * Число фронтов задаёт вариант места (`hob_base` — два), тот же, что
+   * читает `frontGlyph`. Высоты раскладываются здесь, и дальше их видят
+   * все: раскрой, чертёж, промпт и 3D.
+   */
+  if (unit.appliance && !unit.column) {
+    const spec = MODULE_VARIANTS[currentVariant(unit)];
+    const count = spec?.frontType === 'drawers' ? (spec.drawerCount ?? 0) : 0;
+    if (count > 0) return { ...empty, drawerHeights: drawerHeights(heightMm, count) };
+  }
+
+  // У прочей техники и доборной планки наполнения нет: внутри прибор.
   if (unit.appliance || unit.kind === 'filler') return empty;
 
   const hinge = hingeSide(unit, index, total);

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import {
   APPLIANCE_SLOTS,
+  moduleAppliances,
   MAX_WIDTH,
   MIN_WIDTH,
   STANDARD_WIDTHS,
@@ -12,7 +13,7 @@ import { widthOverflowMm } from '@/lib/millwork/invariants';
 import { freeSpaceMm } from '@/lib/millwork/layout';
 import { widestGapMm } from '@/lib/millwork/freeRun';
 import { variantsToAdd } from '@/lib/millwork/moduleVariants';
-import { SECTION_SPECS } from '@/lib/millwork/sections';
+import { DEFAULT_MEZZANINE_MM, SECTION_SPECS } from '@/lib/millwork/sections';
 import {
   zoneAppliances,
   zoneOptions,
@@ -20,6 +21,7 @@ import {
 } from '@/lib/millwork/zones';
 import type {
   ApplianceKind,
+  ApplianceSize,
   DoorSystem,
   FridgeType,
   MillworkOp,
@@ -368,6 +370,57 @@ export default function RunEditor({
                   </button>
                 ))}
               </div>
+
+              {/*
+                * АНТРЕСОЛЬ — ОТДЕЛЬНАЯ ПОЗИЦИЯ, А НЕ СВОЙСТВО ВЕРХНЕГО РЯДА.
+                *
+                * Мебельщик продаёт её отдельной строкой: своя высота, свой
+                * материал, своя цена. Пока она была признаком ряда, ни
+                * снять её отдельно, ни покрасить было нельзя.
+                */}
+              <div className="mt-2" data-mezzanine>
+                <span className="mw-label">Антресоль</span>
+                <div className="mt-1 flex flex-wrap items-center gap-1">
+                  <button
+                    type="button"
+                    data-mezzanine-toggle
+                    aria-pressed={Boolean(run.mezzanine)}
+                    onClick={() =>
+                      onOps([
+                        {
+                          op: 'set_mezzanine',
+                          heightMm: run.mezzanine ? null : DEFAULT_MEZZANINE_MM,
+                        },
+                      ])
+                    }
+                    className={`mw-btn ${run.mezzanine ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+                  >
+                    {run.mezzanine ? 'Убрать' : 'Добавить'}
+                  </button>
+
+                  {run.mezzanine && (
+                    <label className="flex items-center gap-1 text-[13px]">
+                      Высота
+                      <input
+                        type="number"
+                        inputMode="numeric"
+                        data-mezzanine-height
+                        defaultValue={run.mezzanine.heightMm}
+                        onBlur={(event) => {
+                          const raw = Number(event.target.value);
+                          if (!Number.isFinite(raw) || raw <= 0) return;
+                          onOps([{ op: 'set_mezzanine', heightMm: Math.round(raw) }]);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter')
+                            (event.target as HTMLInputElement).blur();
+                        }}
+                        className="mw-num mw-touch w-[72px] border border-blueprint/40 bg-field px-1.5 text-[13px]"
+                      />
+                    </label>
+                  )}
+                </div>
+              </div>
             </div>
           )}
 
@@ -610,60 +663,76 @@ export default function RunEditor({
 
               {selected.appliance ? (
                 /*
-                 * РАЗМЕРЫ ПРИБОРА ВВОДЯТСЯ.
+                 * РАЗМЕРЫ ВВОДЯТСЯ ДЛЯ КАЖДОГО ПРИБОРА ОТДЕЛЬНО.
                  *
-                 * Ширина была фиксированной — 600 у холодильника, — а у
-                 * клиента он бывает 550, 700 и 900 у side-by-side. Ниша
-                 * пересчитывается от введённого, а ЗАЗОРЫ вокруг прибора
+                 * В колонне приборов два, и габариты у них разные:
+                 * духовка 595, микроволновка 380. Один набор полей на
+                 * модуль давал им одну нишу на двоих — микроволновка
+                 * получала духовочную высоту, и в пенале оставалось
+                 * двадцать сантиметров пустоты.
+                 *
+                 * Ниша считается от введённого, а ЗАЗОРЫ вокруг прибора
                  * остаются отраслевыми: их считает код, человек вводит
                  * то, что измерил.
                  */
-                <div className="mt-1" data-appliance-size>
+                <div className="mt-1 grid gap-2" data-appliance-size>
+                  {moduleAppliances(selected).map((appliance) => {
+                    const size = selected.applianceSizes?.[appliance];
+                    return (
+                      <div key={appliance} data-appliance={appliance}>
+                        <span className="block text-[13px] leading-tight text-graphiteMw">
+                          {APPLIANCE_SLOTS[appliance].title} — свои размеры:
+                        </span>
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {(
+                            [
+                              ['widthMm', 'Ш', size?.widthMm ?? selected.widthMm],
+                              ['heightMm', 'В', size?.heightMm ?? 0],
+                              ['depthMm', 'Г', size?.depthMm ?? 0],
+                            ] as const
+                          ).map(([key, label, value]) => (
+                            <label key={key} className="flex items-center gap-1 text-[13px]">
+                              {label}
+                              <input
+                                type="number"
+                                inputMode="numeric"
+                                data-appliance-field={key}
+                                defaultValue={value || ''}
+                                placeholder="—"
+                                onBlur={(event) => {
+                                  const raw = Number(event.target.value);
+                                  const next = {
+                                    widthMm: size?.widthMm ?? selected.widthMm,
+                                    heightMm: size?.heightMm,
+                                    depthMm: size?.depthMm,
+                                    [key]:
+                                      Number.isFinite(raw) && raw > 0
+                                        ? Math.round(raw)
+                                        : undefined,
+                                  };
+                                  if (!next.widthMm) return;
+                                  onOps([
+                                    {
+                                      op: 'set_appliance_size',
+                                      moduleId: selected.id,
+                                      appliance,
+                                      size: next as ApplianceSize,
+                                    },
+                                  ]);
+                                }}
+                                onKeyDown={(event) => {
+                                  if (event.key === 'Enter')
+                                    (event.target as HTMLInputElement).blur();
+                                }}
+                                className="mw-num mw-touch w-[64px] border border-blueprint/40 bg-field px-1.5 text-[13px]"
+                              />
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
                   <span className="block text-[13px] leading-tight text-graphiteMw">
-                    Прибор «{APPLIANCE_SLOTS[selected.appliance].title}» — свои размеры:
-                  </span>
-                  <div className="mt-1 flex flex-wrap gap-1">
-                    {(
-                      [
-                        ['widthMm', 'Ш', selected.widthMm],
-                        ['heightMm', 'В', selected.applianceSize?.heightMm ?? 0],
-                        ['depthMm', 'Г', selected.applianceSize?.depthMm ?? 0],
-                      ] as const
-                    ).map(([key, label, value]) => (
-                      <label key={key} className="flex items-center gap-1 text-[13px]">
-                        {label}
-                        <input
-                          type="number"
-                          inputMode="numeric"
-                          data-appliance-field={key}
-                          defaultValue={value || ''}
-                          placeholder="—"
-                          onBlur={(event) => {
-                            const raw = Number(event.target.value);
-                            const size = {
-                              widthMm: selected.applianceSize?.widthMm ?? selected.widthMm,
-                              heightMm: selected.applianceSize?.heightMm,
-                              depthMm: selected.applianceSize?.depthMm,
-                              [key]: Number.isFinite(raw) && raw > 0 ? Math.round(raw) : undefined,
-                            };
-                            if (!size.widthMm) return;
-                            onOps([
-                              {
-                                op: 'set_appliance_size',
-                                moduleId: selected.id,
-                                size: size as NonNullable<Module['applianceSize']>,
-                              },
-                            ]);
-                          }}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Enter') (event.target as HTMLInputElement).blur();
-                          }}
-                          className="mw-num mw-touch w-[64px] border border-blueprint/40 bg-field px-1.5 text-[13px]"
-                        />
-                      </label>
-                    ))}
-                  </div>
-                  <span className="mt-1 block text-[13px] leading-tight text-graphiteMw">
                     Зазоры вокруг прибора добавит расчёт.
                   </span>
                 </div>

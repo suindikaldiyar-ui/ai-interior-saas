@@ -282,13 +282,16 @@ export interface Module {
    */
   front?: FrontSpec;
   /**
-   * Размеры прибора, введённые руками.
+   * Размеры приборов, введённые руками, — ПО ПРИБОРУ, а не по модулю.
    *
-   * Живут НА МОДУЛЕ, а не только в требованиях: ниша, раскрой, чертёж и
-   * отпечаток обязаны видеть тот же прибор, что заказан. Пусто —
-   * отраслевой стандарт из `APPLIANCE_SLOTS`.
+   * В колонне приборов ДВА, и габариты у них разные: духовка 595, а
+   * микроволновка 380. Один набор на модуль давал им одну нишу на двоих —
+   * микроволновка получала духовочную высоту, и в пенале появлялось
+   * пустое место на двадцать сантиметров.
+   *
+   * Пусто — отраслевой стандарт из `APPLIANCE_SLOTS`.
    */
-  applianceSize?: ApplianceSize;
+  applianceSizes?: Partial<Record<ApplianceKind, ApplianceSize>>;
   label: string;
 }
 
@@ -365,6 +368,14 @@ export interface Run {
   modules: Module[];
   upperSegments: UpperSegment[];
   options: RunOptions;
+  /**
+   * Антресоль над верхним рядом. Пусто — её нет вовсе.
+   *
+   * Живёт на ряду, а не в требованиях: `applyOps` пересобирает верхний
+   * ряд после каждой правки, и антресоль обязана пережить пересборку
+   * вместе со своим материалом.
+   */
+  mezzanine?: MezzanineSpec;
   /** Сумма ширин и зазоров минус длина ряда. Обязана быть нулевой. */
   residualMm: number;
   warnings: string[];
@@ -415,6 +426,19 @@ export interface CornerJoin {
   hingeAngleDeg?: 155 | 175;
   /** Зазор фасада у угла, мм: там он больше обычного. */
   frontGapMm: number;
+}
+
+/**
+ * АНТРЕСОЛЬ — САМОСТОЯТЕЛЬНЫЙ ЭЛЕМЕНТ, А НЕ СВОЙСТВО ВЕРХНЕГО РЯДА.
+ *
+ * Мебельщик продаёт её отдельной позицией: у неё своя высота, свой
+ * материал и своя цена, и заказывают её не всегда. Пока она была
+ * признаком верхнего ряда, ни выбрать ей материал, ни снять её отдельно
+ * было нельзя.
+ */
+export interface MezzanineSpec {
+  /** Своя высота корпуса, мм. Пусто — отраслевая из спецификации секции. */
+  heightMm: number;
 }
 
 export interface Composition {
@@ -566,14 +590,28 @@ export type MillworkOp =
    * готовый дизайн, и так же он потом правится поштучно.
    */
   | { op: 'set_front'; moduleId: string; front: FrontSpec }
-  /** Габарит прибора: ниша пересчитывается, зазоры остаются отраслевыми. */
-  | { op: 'set_appliance_size'; moduleId: string; size: ApplianceSize }
+  /**
+   * Габарит КОНКРЕТНОГО прибора: ниша пересчитывается, зазоры остаются
+   * отраслевыми. `appliance` обязателен — в колонне приборов два, и
+   * «размер модуля» там ничего не значит.
+   */
+  | {
+      op: 'set_appliance_size';
+      moduleId: string;
+      appliance: ApplianceKind;
+      size: ApplianceSize;
+    }
   /**
    * Перенос модуля. `afterModuleId` — перестановка в порядке (так правит
    * модель); `offsetMm` — перенос на место вдоль ряда, шагом 50 мм: так
    * двигает модуль рука в свободной сборке. Соседи не раздвигаются.
    */
   | { op: 'move_module'; moduleId: string; afterModuleId?: string; offsetMm?: number }
+  /**
+   * Антресоль как отдельная позиция состава: добавить со своей высотой
+   * либо снять. Материал ей выбирают тем же `set_front`, что и всем.
+   */
+  | { op: 'set_mezzanine'; heightMm: number | null }
   | { op: 'set_option'; key: 'upperToCeiling' | 'hardwareClass' | 'countertop' | 'hasUpper' | 'hasCornice' | 'integratedHandles'; value: string | boolean };
 
 export interface MillworkRequest {

@@ -266,3 +266,18 @@ export function displayLedMeters(widthMm: number, heightMm: number): number {
 export function sectionSpec(kind: SectionKind): SectionSpec {
   return SECTION_SPECS[kind];
 }
+
+
+/**
+ * ГРАНИЦЫ ВЫСОТЫ АНТРЕСОЛИ.
+ *
+ * Ниже 300 мм в неё нечего положить — это декоративный карниз, а не
+ * позиция сметы; выше 900 мм до неё не дотянуться без стремянки, и
+ * мебельщик такую не продаёт. Отраслевые числа: из интерфейса не
+ * меняются, как и `GEOMETRY`.
+ */
+export const MIN_MEZZANINE_MM = 300;
+export const MAX_MEZZANINE_MM = 900;
+
+/** С какой высоты начинается разговор об антресоли: отраслевая. */
+export const DEFAULT_MEZZANINE_MM = SECTION_SPECS.mezzanine.heightMm;
