@@ -92,10 +92,18 @@ export const TYPICAL_PRICE_LIST: TypicalRate[] = [
   { estimateKey: 'hinge_standard', article: 'HW-HINGE-STD', name: 'Петля стандарт', categoryKey: 'hardware', unit: 'piece', price: 900 },
   { estimateKey: 'hinge_soft_close', article: 'HW-HINGE-SC', name: 'Петля с доводчиком', categoryKey: 'hardware', unit: 'piece', price: 1800 },
   { estimateKey: 'hinge_blum', article: 'HW-HINGE-BLUM', name: 'Петля Blum', categoryKey: 'hardware', unit: 'piece', price: 3400 },
+  /*
+   * Петля 175° — угловая. Обычная в углу упирается в перпендикулярный
+   * фасад, и дверь открывается наполовину; это не наценка за красоту, а
+   * условие того, что углом можно пользоваться.
+   */
+  { estimateKey: 'hinge_corner_175', article: 'HW-HINGE-175', name: 'Петля угловая 175°', categoryKey: 'hardware', unit: 'piece', price: 2600 },
   { estimateKey: 'slide_standard', article: 'HW-SLIDE-STD', name: 'Направляющие стандарт', categoryKey: 'hardware', unit: 'set', price: 3200 },
   { estimateKey: 'slide_soft_close', article: 'HW-SLIDE-SC', name: 'Направляющие с доводчиком', categoryKey: 'hardware', unit: 'set', price: 6500 },
   { estimateKey: 'slide_blum', article: 'HW-SLIDE-BLUM', name: 'Направляющие Blum Tandembox', categoryKey: 'hardware', unit: 'set', price: 14000 },
   { estimateKey: 'lift_mechanism', article: 'HW-LIFT', name: 'Подъёмник верхнего фасада', categoryKey: 'hardware', unit: 'piece', price: 7800 },
+  // Откидной фасад: механизм-ограничитель. Петли к нему идут своей строкой.
+  { estimateKey: 'flap_mechanism', article: 'HW-FLAP', name: 'Механизм откидного фасада', categoryKey: 'hardware', unit: 'piece', price: 9500 },
   { estimateKey: 'handle_standard', article: 'HW-HANDLE', name: 'Ручка накладная', categoryKey: 'hardware', unit: 'piece', price: 1200 },
   { estimateKey: 'handle_integrated', article: 'HW-HANDLE-PROFILE', name: 'Ручка-профиль', categoryKey: 'hardware', unit: 'running_meter', price: 6500 },
   { estimateKey: 'leg_support', article: 'HW-LEG', name: 'Опора регулируемая', categoryKey: 'hardware', unit: 'piece', price: 300 },

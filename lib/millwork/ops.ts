@@ -13,6 +13,7 @@ import { buildUpperRow, fillGap } from './layout';
 import { assertNoOverlap, assertRunFits, widthOverflowMm } from './invariants';
 import { runFingerprint } from './fingerprint';
 import { defaultFill, hingeSide } from './fill';
+import { isMechanism, openingRejection } from './opening';
 import { frontConflict } from './frontMaterial';
 import { MAX_APPLIANCE_DEPTH_MM, moduleDepthMm } from './fill';
 import { CORNER } from './modules';
@@ -30,6 +31,7 @@ import { allowsAppliance, allowsSection, applianceRefusal, sectionRefusal } from
 import { MODULE_VARIANTS, applyVariant, variantsForModule } from './moduleVariants';
 import type {
   ApplianceKind,
+  FrontOpening,
   MillworkOp,
   Module,
   ModuleKind,
@@ -152,6 +154,13 @@ export function applyOps({
   const zone = requirements.zone ?? run.zone ?? 'kitchen';
   /** Правки верхнего ряда: он пересобирается в конце, они применяются после. */
   const upperEdits = new Map<string, NonNullable<Module['variant']>>();
+  /**
+   * Выбранные направления открывания: id модуля → направление.
+   *
+   * Верхний ряд пересобирается из нижнего на каждой правке, и выбор
+   * человека обязан её пережить — как переживают её варианты и материал.
+   */
+  const openingEdits = new Map<string, FrontOpening>();
   /** То же для материала фасада: верх и низ могут отличаться. */
   const upperFronts = new Map<string, NonNullable<Module['front']>>();
   let upperFrontAll: Module['front'] | null = null;
@@ -662,6 +671,62 @@ export function applyOps({
         break;
       }
 
+      case 'set_opening': {
+        /*
+         * НАПРАВЛЕНИЕ ОТКРЫВАНИЯ.
+         *
+         * Ложится в `fill.hinge` — туда же, куда его кладёт умолчание.
+         * Второго поля под механизм нет намеренно: подъёмник, откидной и
+         * сторона петель — ответы на ОДИН вопрос, и хранить их порознь
+         * значит однажды получить фасад, который на чертеже распашной, а
+         * в смете на газлифте.
+         */
+        const at = modules.findIndex((m) => m.id === op.moduleId);
+        const upperUnit =
+          at < 0
+            ? run.upperSegments
+                .flatMap((segment) => segment.modules)
+                .find((m) => m.id === op.moduleId)
+            : null;
+
+        const target = at >= 0 ? modules[at] : upperUnit;
+        if (!target) {
+          warnings.push(`Модуль ${op.moduleId} не найден.`);
+          break;
+        }
+
+        const rejection = openingRejection(target, op.opening);
+        if (rejection) {
+          warnings.push(rejection);
+          break;
+        }
+
+        /*
+         * Механизм ставится на ОДИН фасад. Две створки с одним подъёмником
+         * не бывают, поэтому створки объединяются — и это последствие, о
+         * котором говорят словами, а не молча меняют состав.
+         */
+        const merge = isMechanism(op.opening) && target.doorCount > 1;
+        if (merge) {
+          warnings.push(
+            `«${target.label}»: две створки объединены в один фасад ${target.widthMm} мм — ` +
+              'механизм ставится на фасад, а не на створку.',
+          );
+        }
+
+        const edited: Module = {
+          ...target,
+          doorCount: merge ? 1 : target.doorCount,
+          fill: target.fill
+            ? { ...target.fill, hinge: op.opening, openingChosen: true }
+            : target.fill,
+        };
+
+        if (at >= 0) modules[at] = edited;
+        openingEdits.set(target.id, op.opening);
+        break;
+      }
+
       case 'set_mezzanine': {
         /*
          * АНТРЕСОЛЬ — ОТДЕЛЬНАЯ ПОЗИЦИЯ СОСТАВА.
@@ -751,6 +816,14 @@ export function applyOps({
      * по шаблону и собранный руками отличались стороной петель, потому
      * что при ручной сборке она застывала на момент добавления.
      */
+    /*
+     * ВЫБРАННОЕ НАПРАВЛЕНИЕ ПЕРЕСЧЁТ НЕ ТРОГАЕТ. Умолчание вправе
+     * переехать вместе с модулем, выбор человека — нет: подъёмник,
+     * молча ставший распашным от того, что слева добавили тумбу, — это
+     * другая мебель и другие деньги.
+     */
+    if (unit.fill.openingChosen) return unit;
+
     const hinge = hingeSide(unit, i, modules.length);
     return unit.fill.hinge === hinge ? unit : { ...unit, fill: { ...unit.fill, hinge } };
   });
@@ -814,6 +887,19 @@ export function applyOps({
     ...Array.from(upperFronts.entries()),
   ] as const);
 
+  /*
+   * Направление открывания верхнего ряда переживает пересборку так же,
+   * как варианты и материал: по идентификатору модуля. Иначе выбранный
+   * подъёмник возвращался бы к петлям от правки на соседней тумбе.
+   */
+  const upperOpenings = new Map([
+    ...run.upperSegments
+      .flatMap((segment) => segment.modules)
+      .filter((unit) => unit.fill?.openingChosen)
+      .map((unit) => [unit.id, unit.fill!.hinge] as const),
+    ...Array.from(openingEdits.entries()),
+  ] as const);
+
   nextRun.upperSegments = nextRun.upperSegments.map((segment) => {
     const restored = segment.modules.map((unit) => {
       const kept = upperVariants.get(unit.id);
@@ -824,9 +910,20 @@ export function applyOps({
 
     return {
       ...segment,
-      modules: restored.map((unit, i) =>
-        unit.fill ? unit : { ...unit, fill: defaultFill(unit, shell, i, restored.length) },
-      ),
+      modules: restored.map((unit, i) => {
+        const withFill = unit.fill
+          ? unit
+          : { ...unit, fill: defaultFill(unit, shell, i, restored.length) };
+
+        const opening = upperOpenings.get(withFill.id);
+        if (!opening || openingRejection(withFill, opening)) return withFill;
+
+        return {
+          ...withFill,
+          doorCount: isMechanism(opening) ? 1 : withFill.doorCount,
+          fill: { ...withFill.fill!, hinge: opening, openingChosen: true },
+        };
+      }),
     };
   });
 

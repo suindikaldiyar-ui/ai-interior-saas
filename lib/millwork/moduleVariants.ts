@@ -52,6 +52,14 @@ export type ModuleVariantSpec = {
    */
   anyWidth?: boolean;
   /**
+   * Фасад ВЫДВИГАЕТСЯ целиком, а не открывается.
+   *
+   * У карго нет петель вовсе: полотно едет на направляющих вместе с
+   * корзинами. Пока признак отсутствовал, смета считала карго петли, а
+   * чертёж пытался нарисовать ему сторону открывания.
+   */
+  pullOut?: boolean;
+  /**
    * У модуля под мойку ДНА НЕТ: там сифон. Это не деталь оформления —
    * по этому полю деталь пропадает из раскроя и из площади ЛДСП.
    */
@@ -156,6 +164,7 @@ export const MODULE_VARIANTS: Record<ModuleVariantKind, ModuleVariantSpec> = {
     minWidthMm: 150,
     maxWidthMm: 400,
     frontType: 'door',
+    pullOut: true,
     estimateKeys: ['cargo_150'],
   },
   sink_base: {
@@ -277,7 +286,12 @@ export const MODULE_VARIANTS: Record<ModuleVariantKind, ModuleVariantSpec> = {
     minWidthMm: 400,
     maxWidthMm: 1200,
     frontType: 'door',
-    estimateKeys: ['lift_aventos'],
+    /*
+     * Статьи здесь НЕТ намеренно. Подъёмник — это направление открывания,
+     * и считает его `openingHardware` по `fill.hinge`. Пока ключ стоял и
+     * тут, вариант «Подъёмник» приносил механизм ДВАЖДЫ: один раз собой,
+     * второй — верхним рядом.
+     */
   },
   upper_open: {
     kind: 'upper_open',
@@ -340,6 +354,7 @@ export const MODULE_VARIANTS: Record<ModuleVariantKind, ModuleVariantSpec> = {
     minWidthMm: 300,
     maxWidthMm: 600,
     frontType: 'door',
+    pullOut: true,
     estimateKeys: ['cargo_tall'],
   },
   tall_rod: {
@@ -520,7 +535,20 @@ export function applyVariant(unit: Module, kind: ModuleVariantKind): Module {
    * шкаф 1200 мм одной створкой не делают.
    */
   const doorCount =
-    spec.frontType !== 'door' ? 0 : kind === 'door_two' ? 2 : unit.widthMm > 600 ? 2 : 1;
+    spec.frontType !== 'door'
+      ? 0
+      : kind === 'door_two'
+        ? 2
+        : /*
+           * У подъёмника створка ОДНА: ради широкого цельного фасада он и
+           * нужен, и механизм считается на фасад. Две створки с одним
+           * подъёмником — это мебель, которой не бывает.
+           */
+          kind === 'upper_lift'
+          ? 1
+          : unit.widthMm > 600
+            ? 2
+            : 1;
 
   return {
     ...unit,

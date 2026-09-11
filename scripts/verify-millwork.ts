@@ -106,7 +106,10 @@ import { frontOf } from '../lib/millwork/frontMaterial';
 import { compositionOf, mergeEstimates } from '../lib/millwork/walls';
 import type { MillworkState } from '../lib/projects';
 import type { CatalogEntryFull } from '../types/catalog';
-import { moduleDepthMm, upperBottomFor } from '../lib/millwork/fill';
+import { bearsCountertop, moduleDepthMm, upperBottomFor } from '../lib/millwork/fill';
+import { openingOf, openingRejection } from '../lib/millwork/opening';
+import { openingAssumptions } from '../lib/millwork/warnings';
+import { standsOnFloor } from '../lib/millwork/modules';
 import { FRAME_WIDTH_MM, frontConflict } from '../lib/millwork/frontMaterial';
 import {
   RUN_DESIGNS,
@@ -133,7 +136,7 @@ import {
   missingRequiredRates,
 } from '../lib/millwork/rates';
 import { axonometryExtentMm, buildAxonometry, project } from '../lib/millwork/axonometry';
-import { carcassBoxes, moduleBoxes } from '../lib/millwork/cabinetBoxes';
+import { carcassBoxes, doorPivot, moduleBoxes } from '../lib/millwork/cabinetBoxes';
 import { DEFAULT_PRODUCTION } from '../types/catalog';
 import type { ZoneKind } from '../types/millwork';
 import { commIssues, layoutIssues, validateRun } from '../lib/millwork/validate';
@@ -1657,6 +1660,27 @@ console.log('\nКомпозиция: угол и П');
   check(
     'при фальш-панели углового модуля нет вовсе',
     !corner.segments[0].run.modules.some((m) => m.kind === 'corner_base'),
+  );
+
+  /*
+   * УГЛОВАЯ ПЕТЛЯ — ОТДЕЛЬНАЯ СТРОКА, А НЕ НАЦЕНКА.
+   *
+   * Обычная петля в углу упирается в перпендикулярный фасад, и дверь
+   * открывается наполовину. До этой строки карусель в углу считалась по
+   * цене обычной петли — а это другая деталь и другие деньги.
+   */
+  const cornerEstimate = buildEstimate(withModule.segments[0].run, 'optimal', DEMO_RATES);
+  const cornerHinges = cornerEstimate.lines.find((l) => l.key === 'hinge_corner_175');
+  check(
+    'угловой модуль приносит петли 175° своей строкой',
+    Boolean(cornerHinges) && cornerHinges!.quantity > 0,
+    cornerHinges ? `${cornerHinges.quantity} шт. · ${cornerHinges.total} ₸` : 'строки нет',
+  );
+  check(
+    'у фальш-панели угловых петель нет: углового модуля там нет вовсе',
+    (buildEstimate(corner.segments[0].run, 'optimal', DEMO_RATES).lines.find(
+      (l) => l.key === 'hinge_corner_175',
+    )?.quantity ?? 0) === 0,
   );
   check(
     'по умолчанию угол решается фальш-панелью: она дешевле',
@@ -5908,6 +5932,296 @@ console.log('\nУгловая кухня переживает закрытие')
     'его отпечаток остаётся отпечатком РЯДА, а не композиции',
     old.runs?.optimal?.fingerprint === buildRun(baseInput).fingerprint,
     old.runs?.optimal?.fingerprint,
+  );
+}
+
+
+/* ─────────────────────────  Направление открывания  ───────────────────────── */
+
+console.log('\nНаправление открывания считает фурнитуру');
+{
+  const run = buildRun(baseInput);
+  const estimate = buildEstimate(run, 'optimal', DEMO_RATES);
+  const upperModules = run.upperSegments.flatMap((s) => s.modules);
+
+  /*
+   * ГЛАВНОЕ: ВЕРХНИЙ РЯД БОЛЬШЕ НЕ НА ГАЗЛИФТАХ ПО УМОЛЧАНИЮ.
+   *
+   * Смета выводила фурнитуру из ряда: «верхний — значит подъёмник». Три
+   * фасада демо-кухни получали механизм по 7 800 ₸ поверх петель по 900 ₸,
+   * хотя направление никто не выбирал. Это расход мебельщика, и видит он
+   * такое первым.
+   */
+  check(
+    'по умолчанию верхний ряд распашной, а не на подъёмниках',
+    !estimate.lines.some((l) => l.key.startsWith('lift_') && l.quantity > 0),
+    estimate.lines
+      .filter((l) => l.key.startsWith('lift_'))
+      .map((l) => `${l.key} ${l.quantity}`)
+      .join(' · ') || 'строк подъёмника нет',
+  );
+  check(
+    'и петли посчитаны у всех распашных фасадов, включая верхние',
+    (estimate.lines.find((l) => l.key === 'hinge_standard')?.quantity ?? 0) > 0,
+    `петель ${estimate.lines.find((l) => l.key === 'hinge_standard')?.quantity}`,
+  );
+
+  /* Умолчание называет себя умолчанием — словами, а не молчанием. */
+  const assumedWarning = openingAssumptions(run);
+  check(
+    'о посчитанном по умолчанию сказано словами',
+    assumedWarning.length === 1 && assumedWarning[0].message.includes('не выбрано'),
+    assumedWarning[0]?.message,
+  );
+
+  /* ── Выбор подъёмника ── */
+  const upper = upperModules.find((m) => m.frontType === 'door')!;
+  check('в верхнем ряду есть распашной модуль', Boolean(upper), upper?.label);
+
+  const lifted = applyOps({
+    run,
+    requirements: REQ,
+    ops: [{ op: 'set_opening', moduleId: upper.id, opening: 'lift' }],
+    openings: OPENINGS,
+  });
+  const liftedUnit = lifted.upperSegments
+    .flatMap((s) => s.modules)
+    .find((m) => m.id === upper.id);
+
+  check(
+    'подъёмник записался в то же поле, где живёт сторона петель',
+    liftedUnit?.fill?.hinge === 'lift' && liftedUnit?.fill?.openingChosen === true,
+    `hinge=${liftedUnit?.fill?.hinge}, выбрано=${liftedUnit?.fill?.openingChosen}`,
+  );
+
+  check(
+    'смена направления меняет отпечаток',
+    lifted.fingerprint !== run.fingerprint,
+    `${run.fingerprint} → ${lifted.fingerprint}`,
+  );
+
+  const liftedEstimate = buildEstimate(lifted, 'optimal', DEMO_RATES);
+  check(
+    'и меняет смету',
+    liftedEstimate.total !== estimate.total,
+    `${estimate.total} → ${liftedEstimate.total} ₸`,
+  );
+
+  const liftLine = liftedEstimate.lines.find((l) => l.key.startsWith('lift_'));
+  check(
+    'фурнитура направления идёт ОТДЕЛЬНОЙ строкой',
+    Boolean(liftLine) && liftLine!.quantity === 1,
+    liftLine ? `${liftLine.key} ${liftLine.quantity} шт. · ${liftLine.total} ₸` : 'строки нет',
+  );
+
+  /*
+   * Газлифт и петля — разные деньги, и разница видна в итоге. Ради этого
+   * числа всё и делалось: считать механизм по ряду значило продавать
+   * клиенту фурнитуру, которую он не выбирал.
+   */
+  const hingesBefore = estimate.lines.find((l) => l.key === 'hinge_standard')?.quantity ?? 0;
+  const hingesAfter = liftedEstimate.lines.find((l) => l.key === 'hinge_standard')?.quantity ?? 0;
+  check(
+    'подъёмник и петля дают РАЗНЫЕ суммы',
+    liftedEstimate.total > estimate.total && hingesAfter < hingesBefore,
+    `петель ${hingesBefore} → ${hingesAfter}, итог ${estimate.total} → ${liftedEstimate.total} ₸`,
+  );
+
+  /* Выбор переживает правку соседей: верхний ряд пересобирается из нижнего. */
+  const plainBase = lifted.modules.find((m) => !m.appliance && m.kind === 'base')!;
+  const afterEdit = applyOps({
+    run: lifted,
+    requirements: REQ,
+    ops: [{ op: 'set_front', moduleId: plainBase.id, front: { base: 'mdf_enamel', construct: 'solid', finish: 'matte' } }],
+    openings: OPENINGS,
+  });
+  check(
+    'выбранное направление переживает пересборку верхнего ряда',
+    afterEdit.upperSegments.flatMap((s) => s.modules).find((m) => m.id === upper.id)?.fill
+      ?.hinge === 'lift',
+  );
+
+  /* ── Откидной ── */
+  const flapped = applyOps({
+    run,
+    requirements: REQ,
+    ops: [{ op: 'set_opening', moduleId: upper.id, opening: 'flap' }],
+    openings: OPENINGS,
+  });
+  const flapEstimate = buildEstimate(flapped, 'optimal', DEMO_RATES);
+  const flapLine = flapEstimate.lines.find((l) => l.key === 'flap_mechanism');
+  check(
+    'откидной фасад приносит свой механизм',
+    Boolean(flapLine) && flapLine!.quantity === 1,
+    flapLine ? `${flapLine.quantity} шт. · ${flapLine.total} ₸` : 'строки нет',
+  );
+  check(
+    'и остаётся на петлях: полотно висит на них снизу',
+    (flapEstimate.lines.find((l) => l.key === 'hinge_standard')?.quantity ?? 0) === hingesBefore,
+    `петель ${flapEstimate.lines.find((l) => l.key === 'hinge_standard')?.quantity}`,
+  );
+
+  /* ── Отказ: механизм в нижнем ряду ── */
+  const base = run.modules.find((m) => m.frontType === 'door')!;
+  const refused = applyOps({
+    run,
+    requirements: REQ,
+    ops: [{ op: 'set_opening', moduleId: base.id, opening: 'lift' }],
+    openings: OPENINGS,
+  });
+  check(
+    'подъёмник в нижнем ряду отклоняется',
+    refused.modules.find((m) => m.id === base.id)?.fill?.hinge !== 'lift' &&
+      refused.fingerprint === run.fingerprint,
+  );
+  check(
+    'и отказ объясняет ПОСЛЕДСТВИЕ, а не запрещает',
+    (refused.warnings ?? []).some(
+      (w) => w.includes('столешниц') || w.includes('рабочее место'),
+    ),
+    (refused.warnings ?? [])[0],
+  );
+  check(
+    'ящикам направление не выбирают вовсе',
+    Boolean(
+      openingRejection({ ...base, frontType: 'drawers' }, 'left')?.includes('выдвигаются'),
+    ),
+  );
+
+  /*
+   * ДИАГОНАЛЬ НА ЧЕРТЕЖЕ СОВПАДАЕТ С ВЫБОРОМ У КАЖДОГО МОДУЛЯ.
+   *
+   * «Хотя бы у одного» — это проверка, которая пропускает ровно ту
+   * ошибку, ради которой написана: рисунок и данные расходятся не везде,
+   * а в одном месте.
+   */
+  let drawn = 0;
+  const wrong: string[] = [];
+
+  for (const t of RUN_TEMPLATES) {
+    for (const len of [1800, 2400, 3200, 3800, 4200]) {
+      const requirements = requirementsFromTemplate(t, DEMO_REQUIREMENTS.options);
+      let sample: Run;
+      try {
+        sample = buildRun({ ...baseInput, lengthMm: len, requirements });
+      } catch {
+        continue;
+      }
+
+      const target = sample.upperSegments
+        .flatMap((s) => s.modules)
+        .find((m) => m.frontType === 'door');
+
+      const withLift = applyOps({
+        run: sample,
+        requirements,
+        ops: target
+          ? [{ op: 'set_opening' as const, moduleId: target.id, opening: 'lift' as const }]
+          : [],
+        openings: OPENINGS,
+      });
+
+      for (const unit of [
+        ...withLift.modules,
+        ...withLift.upperSegments.flatMap((s) => s.modules),
+      ]) {
+        if (unit.frontType !== 'door' || !hasFacade(unit)) continue;
+
+        const { opening } = openingOf(unit);
+        const signature = glyphSignature(frontGlyph(unit, 'fronts'));
+        drawn += 1;
+
+        const drawnRight =
+          opening === 'none'
+            ? // Карго выдвигается: ни диагонали, ни дуги у него быть не должно.
+              !signature.includes('swing') &&
+              !signature.includes('lift') &&
+              !signature.includes('flap')
+            : opening === 'lift'
+            ? signature.includes('lift')
+            : opening === 'flap'
+              ? signature.includes('flap')
+              : opening === 'double'
+                ? signature.includes('swing:left') && signature.includes('swing:right')
+                : signature.includes(`swing:${opening}`);
+
+        if (!drawnRight) wrong.push(`${t.id}@${len} ${unit.id}: ${opening} ≠ ${signature}`);
+      }
+    }
+  }
+
+  check(
+    'рисунок открывания совпадает с выбором у КАЖДОГО модуля',
+    wrong.length === 0 && drawn > 100,
+    `сверено ${drawn} фасадов, расхождений ${wrong.length}${wrong[0] ? `: ${wrong[0]}` : ''}`,
+  );
+
+  /*
+   * ОТКРЫТЫЙ ФАСАД УХОДИТ НАРУЖУ, А НЕ В КОРПУС.
+   *
+   * Ось у каждого направления своя: у распашного — петельный край, у
+   * подъёмника — верхний, у откидного — нижний. Ошибись знаком угла, и
+   * полотно провалится внутрь шкафа: глазами это видно сразу, а числом
+   * ловится до того, как кто-нибудь откроет сцену.
+   */
+  for (const dir of ['left', 'right', 'lift', 'flap'] as const) {
+    const w = 0.6;
+    const h = 0.72;
+    const pivot = doorPivot(dir, 0, 0.1, w, h);
+
+    // Центр полотна после поворота на открытие.
+    const [px, py, pz] = pivot.panel;
+    const c = Math.cos(pivot.angle);
+    const sn = Math.sin(pivot.angle);
+    const local =
+      pivot.axis === 'x'
+        ? [px, py * c - pz * sn, py * sn + pz * c]
+        : [px * c + pz * sn, py, -px * sn + pz * c];
+
+    const world = [
+      pivot.origin[0] + local[0],
+      pivot.origin[1] + local[1],
+      pivot.origin[2] + local[2],
+    ];
+
+    check(
+      `открытый фасад «${dir}» уходит наружу, а не в корпус`,
+      world[2] > 0.05,
+      `центр полотна z = ${world[2].toFixed(3)} м`,
+    );
+    check(
+      `и ось «${dir}» стоит на передней плоскости корпуса`,
+      pivot.origin[2] === 0,
+    );
+  }
+
+  check(
+    'у подъёмника ось сверху, у откидного снизу — это разные механизмы',
+    doorPivot('lift', 0, 0.1, 0.6, 0.72).origin[1] >
+      doorPivot('flap', 0, 0.1, 0.6, 0.72).origin[1],
+    `${doorPivot('lift', 0, 0.1, 0.6, 0.72).origin[1]} против ${doorPivot('flap', 0, 0.1, 0.6, 0.72).origin[1]}`,
+  );
+
+  /* ── Что ещё считалось из вида модуля ── */
+  const legs = estimate.lines.find((l) => l.key === 'leg_support')!;
+  const floor = run.modules.filter((m) => standsOnFloor(m));
+  check(
+    'опоры стоят под ВСЕМ, что стоит на полу, включая пеналы',
+    legs.quantity === floor.length * 4,
+    `${legs.quantity} опор на ${floor.length} напольных модулей`,
+  );
+
+  const counter = estimate.lines.find((l) => l.key.startsWith('countertop_'))!;
+  const bearing = run.modules.filter((m) => bearsCountertop(m, run));
+  check(
+    'столешница считается по тем модулям, которые её несут',
+    Math.abs(counter.quantity - bearing.reduce((s, m) => s + m.widthMm, 0) / 1000) < 0.01,
+    `${counter.quantity} м против длины ряда ${run.lengthMm / 1000} м`,
+  );
+  check(
+    'и колонна её на себе не несёт',
+    !run.modules.filter((m) => m.kind === 'tall').some((m) => bearsCountertop(m, run)),
+    `пеналов ${run.modules.filter((m) => m.kind === 'tall').length}`,
   );
 }
 

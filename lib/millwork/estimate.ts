@@ -3,9 +3,11 @@ import {
   BUILT_IN_FRIDGE_FRONTS,
   hingesPerDoor,
   moduleAppliances,
+  standsOnFloor,
 } from './modules';
 import { allModules } from './layout';
-import { moduleCarcassHeightMm } from './fill';
+import { bearsCountertop, moduleCarcassHeightMm } from './fill';
+import { CORNER_HINGE_TITLE, liftKey, openingHardware } from './opening';
 import { buildPanels, panelMaterials } from './panels';
 import { DEFAULT_PRODUCTION, type ProductionSettings } from '@/types/catalog';
 import { SLIDING_DOOR, displayLedMeters, sectionSpec, slidingDoorCount } from './sections';
@@ -248,9 +250,15 @@ export function buildEstimateDrafts(
    */
   const modules = allModules(run);
 
-  const baseModules = run.modules.filter(
-    (m) => m.kind === 'base' || m.kind === 'corner_base' || m.kind === 'filler',
-  );
+  /*
+   * ОПОРЫ — У ВСЕГО, ЧТО СТОИТ НА ПОЛУ.
+   *
+   * Здесь стоял список видов: base, corner_base, filler. Пенал в него не
+   * попадал — а он стоит на полу ровно так же, и опоры под ним те же
+   * четыре. Вопрос-то не «какого вида модуль», а «стоит ли он на полу»,
+   * и ответ на него теперь один на продукт.
+   */
+  const floorModules = run.modules.filter((unit) => standsOnFloor(unit));
 
   /*
    * ОДИН ВЫЗОВ ВМЕСТО ЧЕТЫРЁХ ФОРМУЛ. `production` тот же, что у листа
@@ -259,22 +267,32 @@ export function buildEstimateDrafts(
    */
   const materials = panelMaterials(buildPanels({ run, production }));
 
-  let hinges = 0;
+  /*
+   * ФУРНИТУРА СЧИТАЕТСЯ ИЗ ВЫБРАННОГО НАПРАВЛЕНИЯ, А НЕ ИЗ РЯДА.
+   *
+   * Здесь стояло «верхний ряд — значит подъёмник»: каждый верхний фасад
+   * получал газлифт за 7 800 ₸ поверх петель за 900 ₸, хотя большинство
+   * верхних шкафов делают распашными. Число бралось из догадки о ряде, а
+   * не из данных о мебели — и мебельщик видел это первым, потому что это
+   * его расход.
+   *
+   * Теперь всё считает `openingHardware` по `fill.hinge` — тому же полю,
+   * по которому чертёж рисует диагональ, а сцена вращает фасад.
+   */
+  const hardware = openingHardware(
+    modules.map((unit, index) => ({
+      unit,
+      heightMm: moduleCarcassHeightMm(unit, run),
+      index,
+      total: modules.length,
+    })),
+  );
+
+  let hinges = hardware.hinges;
   let slides = 0;
-  let lifts = 0;
-  let handles = 0;
+  let handles = hardware.handles;
 
   for (const unit of modules) {
-    if (unit.frontType === 'door') {
-      const h = moduleCarcassHeightMm(unit, run);
-      // Верхние шкафы чаще делают на подъёмниках, нижние — на петлях.
-      if (unit.kind === 'upper' || unit.kind === 'corner_upper') {
-        lifts += unit.doorCount;
-      }
-      hinges += unit.doorCount * hingesPerDoor(h);
-      handles += unit.doorCount;
-    }
-
     if (unit.frontType === 'drawers') {
       /*
        * Число ящиков — из `fill`: высоты фронтов уходят в раскрой, а
@@ -314,7 +332,21 @@ export function buildEstimateDrafts(
    */
   const counterMp = round3(
     run.modules
-      .filter((unit) => unit.kind !== 'upper' && unit.kind !== 'corner_upper')
+      .filter((unit) => bearsCountertop(unit, run))
+      .reduce((sum, unit) => sum + unit.widthMm, 0) / MM_IN_M,
+  );
+
+  /*
+   * ДЛИНА РЯДА И ДЛИНА СТОЛЕШНИЦЫ — РАЗНЫЕ ВЕЛИЧИНЫ.
+   *
+   * Ручка-профиль идёт по фасадам, а карниз — по верху ряда: колонна
+   * холодильника фасад имеет, а столешницы на себе не несёт. Пока обе
+   * длины брались из одной переменной, поправка столешницы утащила бы за
+   * собой и ручку — а её никто не просил менять.
+   */
+  const frontRowMp = round3(
+    run.modules
+      .filter((unit) => standsOnFloor(unit))
       .reduce((sum, unit) => sum + unit.widthMm, 0) / MM_IN_M,
   );
 
@@ -387,22 +419,52 @@ export function buildEstimateDrafts(
 
   drafts.push(
     { key: `hinge_${run.options.hardwareClass}`, title: `Петли (${hardwareTitle(run.options.hardwareClass)})`, unit: 'pcs', quantity: hinges },
+    /*
+     * Угловая петля 175° — отдельная строка, а не наценка: обычная петля
+     * в углу упирается в перпендикулярный фасад, и это переделка на
+     * объекте. Строка появляется, только если угловые модули есть.
+     */
+    ...(hardware.cornerHinges > 0
+      ? [
+          {
+            key: 'hinge_corner_175',
+            title: CORNER_HINGE_TITLE,
+            unit: 'pcs' as const,
+            quantity: hardware.cornerHinges,
+          },
+        ]
+      : []),
     { key: `slide_${run.options.hardwareClass}`, title: `Направляющие (${hardwareTitle(run.options.hardwareClass)})`, unit: 'set', quantity: slides },
-    { key: 'lift_mechanism', title: 'Подъёмники верхних фасадов', unit: 'pcs', quantity: lifts },
+    {
+      key: liftKey(run.options.hardwareClass),
+      title: 'Подъёмник фасада',
+      unit: 'pcs',
+      quantity: hardware.lifts,
+    },
+    ...(hardware.flaps > 0
+      ? [
+          {
+            key: 'flap_mechanism',
+            title: 'Механизм откидного фасада',
+            unit: 'pcs' as const,
+            quantity: hardware.flaps,
+          },
+        ]
+      : []),
     {
       key: run.options.integratedHandles ? 'handle_integrated' : 'handle_standard',
       title: run.options.integratedHandles ? 'Ручка-профиль' : 'Ручки',
       unit: run.options.integratedHandles ? 'mp' : 'pcs',
-      quantity: run.options.integratedHandles ? counterMp : handles,
+      quantity: run.options.integratedHandles ? frontRowMp : handles,
     },
     // Четыре регулируемые опоры на каждый нижний модуль.
-    { key: 'leg_support', title: 'Опоры регулируемые', unit: 'pcs', quantity: baseModules.length * 4 },
+    { key: 'leg_support', title: 'Опоры регулируемые', unit: 'pcs', quantity: floorModules.length * 4 },
     { key: 'fasteners', title: 'Крепёж и эксцентрики', unit: 'percent', quantity: materials.carcassM2 },
     { key: 'cutting', title: 'Распил и присадка', unit: 'm2', quantity: round2(materials.carcassM2 + materials.shelfM2 + materials.frontM2) },
   );
 
   if (run.options.hasCornice) {
-    drafts.push({ key: 'cornice', title: 'Антресоль до потолка', unit: 'mp', quantity: counterMp });
+    drafts.push({ key: 'cornice', title: 'Антресоль до потолка', unit: 'mp', quantity: frontRowMp });
   }
 
   /*

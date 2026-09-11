@@ -1,6 +1,6 @@
 'use client';
 
-import { LiftMark, SwingMark } from './DrawingSymbols';
+import { FlapMark, LiftMark, SwingMark } from './DrawingSymbols';
 import { frontGlyph, type GlyphMode } from '@/lib/millwork/frontGlyph';
 import type { Module } from '@/types/millwork';
 
@@ -240,6 +240,9 @@ export default function FrontGlyph({
 
           case 'lift':
             return <LiftMark key={i} x={x} y={y} width={width} height={height} />;
+
+          case 'flap':
+            return <FlapMark key={i} x={x} y={y} width={width} height={height} />;
 
           case 'sinkCut':
             // Чаша мойки пунктиром сверху: у модуля нет дна, там сифон.

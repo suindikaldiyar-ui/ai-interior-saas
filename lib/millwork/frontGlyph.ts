@@ -1,4 +1,5 @@
 import { applyVariant, variantsForModule, currentVariant } from './moduleVariants';
+import { openingOf } from './opening';
 import type { Module, ModuleVariantKind } from '@/types/millwork';
 
 /**
@@ -40,6 +41,8 @@ export type GlyphElement =
   | { kind: 'dryer' }
   /** Дуга подъёмника со стрелкой вверх. */
   | { kind: 'lift' }
+  /** Дуга откидного фасада со стрелкой вниз. */
+  | { kind: 'flap' }
   /** Пунктирный вырез чаши мойки сверху. */
   | { kind: 'sinkCut' }
   /** Полоса варочной панели над укороченным ящиком. */
@@ -72,8 +75,33 @@ function shelfCount(unit: Module, fallback: number): number {
   return fromFill > 0 ? fromFill : fallback;
 }
 
-function hinge(unit: Module): 'left' | 'right' {
-  return unit.fill?.hinge === 'right' ? 'right' : 'left';
+/**
+ * ОТКРЫВАНИЕ РИСУЕТСЯ ИЗ ТОГО ЖЕ ПОЛЯ, ПО КОТОРОМУ СЧИТАЕТСЯ ФУРНИТУРА.
+ *
+ * Диагональ на чертеже — это указание цеху, с какой стороны сверлить, а
+ * дуга — какой механизм заказать. Выведи их отдельной формулой, и лист
+ * начнёт обещать одно, а смета оплачивать другое.
+ */
+function pushOpening(unit: Module, elements: GlyphElement[]): void {
+  const { opening } = openingOf(unit);
+
+  if (opening === 'lift') {
+    elements.push({ kind: 'lift' });
+    return;
+  }
+  if (opening === 'flap') {
+    elements.push({ kind: 'flap' });
+    return;
+  }
+  if (opening === 'double') {
+    elements.push({ kind: 'split' });
+    elements.push({ kind: 'swing', hinge: 'left' });
+    elements.push({ kind: 'swing', hinge: 'right' });
+    return;
+  }
+  if (opening === 'left' || opening === 'right') {
+    elements.push({ kind: 'swing', hinge: opening });
+  }
 }
 
 /**
@@ -97,13 +125,7 @@ export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts'): GlyphEleme
     case 'door':
       if (mode === 'fronts') {
         elements.push({ kind: 'panel' });
-        if (unit.doorCount >= 2) {
-          elements.push({ kind: 'split' });
-          elements.push({ kind: 'swing', hinge: 'left' });
-          elements.push({ kind: 'swing', hinge: 'right' });
-        } else {
-          elements.push({ kind: 'swing', hinge: hinge(unit) });
-        }
+        pushOpening(unit, elements);
       } else {
         elements.push({ kind: 'shelf', count: shelfCount(unit, 1) });
       }
@@ -113,9 +135,7 @@ export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts'): GlyphEleme
       // Две створки: шов посередине и свои диагонали на каждой.
       if (mode === 'fronts') {
         elements.push({ kind: 'panel' });
-        elements.push({ kind: 'split' });
-        elements.push({ kind: 'swing', hinge: 'left' });
-        elements.push({ kind: 'swing', hinge: 'right' });
+        pushOpening(unit, elements);
       } else {
         elements.push({ kind: 'shelf', count: shelfCount(unit, 2) });
       }
@@ -139,7 +159,7 @@ export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts'): GlyphEleme
       if (mode === 'fronts') {
         elements.push({ kind: 'drawer', index: 0, count: 1 });
         elements.push({ kind: 'panel' });
-        elements.push({ kind: 'swing', hinge: hinge(unit) });
+        pushOpening(unit, elements);
       } else {
         elements.push({ kind: 'drawer', index: 0, count: 1 });
         elements.push({ kind: 'shelf', count: shelfCount(unit, 1) });
@@ -156,7 +176,7 @@ export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts'): GlyphEleme
     case 'sink_base':
       if (mode === 'fronts') {
         elements.push({ kind: 'panel' });
-        elements.push({ kind: 'swing', hinge: hinge(unit) });
+        pushOpening(unit, elements);
       }
       // Пунктирная чаша сверху — по ней видно, что дна у модуля нет.
       elements.push({ kind: 'sinkCut' });
@@ -169,7 +189,7 @@ export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts'): GlyphEleme
 
     case 'corner_carousel':
       elements.push({ kind: 'panel' });
-      elements.push({ kind: 'swing', hinge: hinge(unit) });
+      pushOpening(unit, elements);
       elements.push({ kind: 'shelf', count: 2 });
       break;
 
@@ -182,8 +202,7 @@ export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts'): GlyphEleme
     case 'upper_door':
       if (mode === 'fronts') {
         elements.push({ kind: 'panel' });
-        if (unit.doorCount >= 2) elements.push({ kind: 'split' });
-        elements.push({ kind: 'swing', hinge: hinge(unit) });
+        pushOpening(unit, elements);
       } else {
         elements.push({ kind: 'shelf', count: shelfCount(unit, 1) });
       }
@@ -223,14 +242,18 @@ export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts'): GlyphEleme
     case 'upper_dryer':
       if (mode === 'fronts') {
         elements.push({ kind: 'panel' });
-        elements.push({ kind: 'swing', hinge: hinge(unit) });
+        pushOpening(unit, elements);
       }
       elements.push({ kind: 'dryer' });
       break;
 
     case 'upper_lift':
       elements.push({ kind: 'panel' });
-      elements.push({ kind: 'lift' });
+      /*
+       * Дугу рисует то же поле, что и у остальных: вариант «Подъёмник»
+       * пишет направление в `fill`, и второго признака у него нет.
+       */
+      pushOpening(unit, elements);
       if (mode === 'inside') elements.push({ kind: 'shelf', count: shelfCount(unit, 1) });
       break;
 
@@ -243,7 +266,7 @@ export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts'): GlyphEleme
     case 'tall_shelves':
       if (mode === 'fronts') {
         elements.push({ kind: 'panel' });
-        elements.push({ kind: 'swing', hinge: hinge(unit) });
+        pushOpening(unit, elements);
       }
       elements.push({ kind: 'shelf', count: shelfCount(unit, 4) });
       break;
@@ -259,7 +282,7 @@ export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts'): GlyphEleme
       // Встроенный холодильник: сплошной фасад заподлицо и одна врезка.
       if (mode === 'fronts') {
         elements.push({ kind: 'panel' });
-        elements.push({ kind: 'swing', hinge: hinge(unit) });
+        pushOpening(unit, elements);
       }
       elements.push({ kind: 'niche', count: 1 });
       break;
@@ -280,7 +303,7 @@ export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts'): GlyphEleme
     case 'tall_rod':
       if (mode === 'fronts') {
         elements.push({ kind: 'panel' });
-        elements.push({ kind: 'swing', hinge: hinge(unit) });
+        pushOpening(unit, elements);
       }
       elements.push({ kind: 'rod' });
       break;

@@ -1,4 +1,6 @@
 import { APPLIANCE_SLOTS } from './modules';
+import { moduleCarcassHeightMm } from './fill';
+import { openingHardware } from './opening';
 import type { CommPoint, LayoutIssue, Opening, Run } from '@/types/millwork';
 import type { SurveyStats } from '@/types/survey';
 
@@ -249,6 +251,47 @@ export function vanityWaterConflicts(run: Run | null, comms: CommPoint[]): Surve
 }
 
 /** Незамеренное и принятое по умолчанию — жёлтым, с последствием. */
+/**
+ * НАПРАВЛЕНИЕ, КОТОРОЕ НИКТО НЕ ВЫБИРАЛ, НАЗЫВАЕТ СЕБЯ УМОЛЧАНИЕМ.
+ *
+ * Живёт ОТДЕЛЬНО от `collectWarnings` намеренно. Экран замера держит не
+ * больше двух строк, и место там принадлежит тому, что происходит на
+ * объекте: невнесённая розетка — это монтажник, который не знает, куда
+ * её выводить. Умолчание открывания — вопрос не замера, а денег, и
+ * стоять оно должно там, где показана сумма.
+ *
+ * Верхний фасад делают и распашным, и на подъёмнике, и это разные деньги:
+ * механизм идёт в смете своей строкой. Пока продукт молча решал за
+ * человека («верхний ряд — значит подъёмник»), мебельщик видел в смете
+ * расход, которого не заказывал. Теперь умолчание — петли, и о нём
+ * сказано вслух: подъёмник ставится выбором.
+ */
+export function openingAssumptions(run: Run | null): SurveyWarning[] {
+  if (!run) return [];
+
+  const modules = [...run.modules, ...run.upperSegments.flatMap((s) => s.modules)];
+  const hardware = openingHardware(
+    modules.map((unit, index) => ({
+      unit,
+      heightMm: moduleCarcassHeightMm(unit, run),
+      index,
+      total: modules.length,
+    })),
+  );
+
+  if (hardware.assumed.length === 0) return [];
+
+  return [
+    {
+      id: 'opening-assumed',
+      severity: 'clarify' as const,
+      message:
+        `Направление открывания не выбрано у ${hardware.assumed.length} верхних модулей: ` +
+        'посчитаны распашными на петлях. Подъёмник — другой механизм и отдельная строка в смете.',
+    },
+  ];
+}
+
 export function surveyWarnings(stats: SurveyStats): SurveyWarning[] {
   const pending = stats.pending.map((p, i) => ({
     id: `pending-${i}`,

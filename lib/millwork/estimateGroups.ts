@@ -81,7 +81,8 @@ function groupOf(line: EstimateLine): EstimateGroupKey {
     key.startsWith('hinge_') ||
     key.startsWith('slide_') ||
     key.startsWith('handle_') ||
-    key === 'lift_mechanism' ||
+    key.startsWith('lift_') ||
+    key === 'flap_mechanism' ||
     key === 'leg_support' ||
     key === 'fasteners' ||
     key === 'sliding_system' ||

@@ -12,6 +12,7 @@ import { moveConflict } from '@/lib/millwork/freeRun';
 import { moduleSwatch } from '@/lib/millwork/frontSwatch';
 import { frontOf } from '@/lib/millwork/frontMaterial';
 import { hasFacade } from '@/lib/millwork/applianceFront';
+import { OPENING_TITLE } from '@/lib/millwork/opening';
 import FrontSwatchDefs, { swatchId } from './FrontSwatchDefs';
 import { zoneHeightMm, zoneProfile } from '@/lib/millwork/zones';
 import {
@@ -225,12 +226,14 @@ function HingeMark({
 }) {
   // У двух дверей стороны очевидны: левая налево, правая направо.
   if (doorCount !== 1 || hinge === 'none') return null;
+  // У механизма сторон нет вовсе: дуга вверх или вниз, менять нечего.
+  const mechanism = hinge === 'lift' || hinge === 'flap';
 
   return (
     <g
-      style={{ cursor: onFlip ? 'pointer' : 'default' }}
+      style={{ cursor: onFlip && !mechanism ? 'pointer' : 'default' }}
       onClick={
-        onFlip
+        onFlip && !mechanism
           ? (event) => {
               event.stopPropagation();
               onFlip();
@@ -244,7 +247,7 @@ function HingeMark({
         * попасть, а два рисунка одного знака рано или поздно разъедутся.
         */}
       <rect x={x} y={yTop} width={width} height={height} fill="transparent" />
-      <title>{hinge === 'left' ? 'Петли слева' : 'Петли справа'}</title>
+      <title>{OPENING_TITLE[hinge]}</title>
     </g>
   );
 }

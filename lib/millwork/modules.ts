@@ -194,6 +194,23 @@ export function hingesPerDoor(doorHeightMm: number): number {
   return doorHeightMm > 1200 ? 3 : 2;
 }
 
+/**
+ * ГДЕ МОДУЛЬ ЖИВЁТ — ОДНА ФУНКЦИЯ НА ПРОДУКТ.
+ *
+ * «Верхний ли это ряд» спрашивали в пяти местах и в каждом писали своё
+ * `kind === 'upper' || kind === 'corner_upper'`. Пока условие совпадало,
+ * это было незаметно; стоило появиться антресоли — и части продукта
+ * начали отвечать по-разному.
+ */
+export function isUpperRow(unit: { kind: ModuleKind; section?: string }): boolean {
+  return unit.kind === 'upper' || unit.kind === 'corner_upper' || unit.section === 'mezzanine';
+}
+
+/** Модуль стоит на полу: у него есть опоры и он держит на себе столешницу. */
+export function standsOnFloor(unit: { kind: ModuleKind; section?: string }): boolean {
+  return !isUpperRow(unit);
+}
+
 export function isStandardWidth(widthMm: number): boolean {
   return (STANDARD_WIDTHS as readonly number[]).includes(widthMm);
 }

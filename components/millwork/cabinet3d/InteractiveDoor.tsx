@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import type * as THREE from 'three';
 import { useSlide } from './useSlide';
 import { useTouchTarget } from './useTouchTarget';
+import { doorPivot } from '@/lib/millwork/cabinetBoxes';
 import type { CabinetParts } from './parts';
 
 /**
@@ -19,8 +20,12 @@ type Props = {
   id: string;
   open: boolean;
   onToggle: (id: string) => void;
-  /** Сторона петель. Совпадает с треугольником на чертеже. */
-  hinge: 'left' | 'right';
+  /**
+   * Куда открывается фасад. То же поле, что рисует диагональ на чертеже
+   * и по которому смета считает фурнитуру: сцена показывает мебель, а не
+   * придумывает вторую.
+   */
+  opening: 'left' | 'right' | 'lift' | 'flap';
   /** Габариты в метрах, начало координат — левый нижний угол корпуса. */
   x: number;
   y: number;
@@ -49,14 +54,12 @@ type Props = {
   onActive?: (id: string, active: boolean) => void;
 };
 
-/** Распахнутая дверь: 90°. */
-const OPEN_ANGLE = Math.PI / 2;
 
 export default function InteractiveDoor({
   id,
   open,
   onToggle,
-  hinge,
+  opening,
   x,
   y,
   width,
@@ -95,32 +98,31 @@ export default function InteractiveDoor({
   useTouchTarget(touch, { width, height, depth: 0.06 });
   void depth;
 
-  // Петля слева — дверь уходит влево, то есть поворот положительный.
-  const sign = hinge === 'left' ? 1 : -1;
-  const target = open ? sign * OPEN_ANGLE : 0;
+  const pivot = doorPivot(opening, x, y, width, height);
+  const target = open ? pivot.angle : 0;
 
   useSlide({
     target,
     initial: target,
     apply: (value) => {
       const el = group.current;
-      if (el) el.rotation.y = value;
+      if (!el) return;
+      if (pivot.axis === 'x') el.rotation.x = value;
+      else el.rotation.y = value;
     },
     onSettle: () => {
       if (!openRef.current) setActive(false);
     },
   });
 
-  // Ось вращения стоит на петельном крае, полотно смещено внутрь группы.
-  const hingeX = hinge === 'left' ? x : x + width;
-  const panelX = hinge === 'left' ? width / 2 : -width / 2;
+  const [panelX, panelY] = pivot.panel;
   return (
     /*
      * Ось вращения стоит на ПЕРЕДНЕЙ плоскости корпуса (z = 0): модуль
      * нарисован от нуля вглубь, и петля живёт именно здесь. Смещать группу
      * на половину глубины нельзя — дверь оторвётся от шкафа.
      */
-    <group ref={group} position={[hingeX, y + height / 2, 0]}>
+    <group ref={group} position={pivot.origin}>
       <mesh
         ref={touch}
         name={`part:${id}`}
@@ -133,7 +135,7 @@ export default function InteractiveDoor({
          * по-прежнему находит — проверено кликом по мебели.
          */
         visible={false}
-        position={[panelX, 0, 0]}
+        position={[panelX, panelY, 0]}
         scale={[width, height, 0.06]}
         onClick={(event) => {
           event.stopPropagation();
@@ -161,7 +163,7 @@ export default function InteractiveDoor({
       <mesh
         geometry={parts.box}
         material={frontMaterial ?? parts.front}
-        position={[panelX, 0, thickness / 2]}
+        position={[panelX, panelY, thickness / 2]}
         scale={[width - 2 * gap, height - 2 * gap, thickness]}
         castShadow
       />
@@ -174,16 +176,32 @@ export default function InteractiveDoor({
         <mesh
           geometry={parts.box}
           material={parts.metal}
-          position={[panelX, height / 2 - gap - 0.01, thickness + 0.004]}
+          position={[panelX, panelY + height / 2 - gap - 0.01, thickness + 0.004]}
           scale={[width - 2 * gap, 0.02, 0.015]}
+        />
+      ) : opening === 'lift' || opening === 'flap' ? (
+        /*
+         * У механизма ручка на СВОБОДНОМ крае — за него и берутся: у
+         * подъёмника снизу, у откидного сверху. Скоба сбоку читалась бы
+         * как распашная дверь, а это другая мебель.
+         */
+        <mesh
+          geometry={parts.box}
+          material={parts.metal}
+          position={[
+            panelX,
+            panelY + (opening === 'lift' ? -height / 2 + 0.04 : height / 2 - 0.04),
+            thickness + 0.012,
+          ]}
+          scale={[Math.min(0.24, width * 0.5), 0.016, 0.016]}
         />
       ) : (
         <mesh
           geometry={parts.box}
           material={parts.metal}
           position={[
-            panelX + (hinge === 'left' ? width / 2 - 0.05 : -width / 2 + 0.05),
-            0,
+            panelX + (opening === 'left' ? width / 2 - 0.05 : -width / 2 + 0.05),
+            panelY,
             thickness + 0.012,
           ]}
           scale={[0.016, Math.min(0.22, height * 0.4), 0.016]}

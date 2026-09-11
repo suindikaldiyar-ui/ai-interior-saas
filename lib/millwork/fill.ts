@@ -1,5 +1,12 @@
-import { APPLIANCE_COLUMN, GEOMETRY, standardHeightMm, nicheHeightMm } from './modules';
+import {
+  APPLIANCE_COLUMN,
+  GEOMETRY,
+  standardHeightMm,
+  nicheHeightMm,
+  standsOnFloor,
+} from './modules';
 import { MODULE_VARIANTS, currentVariant } from './moduleVariants';
+import { defaultOpening } from './opening';
 import { sectionSpec } from './sections';
 import { upperRowBottomMm, zoneHeightMm, zoneProfile } from './zones';
 import type { ApplianceKind, Module, ModuleFill, Run, ZoneKind } from '@/types/millwork';
@@ -205,6 +212,28 @@ export function upperBottomFor(
 }
 
 /** Глубина корпуса модуля в этой зоне. */
+/**
+ * НЕСЁТ ЛИ МОДУЛЬ СТОЛЕШНИЦУ.
+ *
+ * Вопрос физический, и ответ на него — высота, а не вид модуля. Раньше
+ * из метража столешницы вычитали верхний ряд по `kind`, а пенал в нём не
+ * значился: столешница «ложилась» поверх колонны холодильника, и клиент
+ * платил за 1.2 погонных метра камня, которых не будет. Фартук за той же
+ * колонной считался так же.
+ *
+ * Модуль несёт столешницу, если стоит на полу и кончается НИЖЕ верхнего
+ * ряда: на то, что выше, положить её нельзя.
+ */
+export function bearsCountertop(
+  unit: Module,
+  run: Parameters<typeof moduleCarcassHeightMm>[1],
+): boolean {
+  if (!standsOnFloor(unit)) return false;
+  return (
+    GEOMETRY.base.plinthH + moduleCarcassHeightMm(unit, run) < GEOMETRY.upper.bottomFromFloor
+  );
+}
+
 export function moduleDepthMm(unit: Module, zone: ZoneKind | undefined): number {
   const profile = zoneProfile(zone);
   const standard =
@@ -354,6 +383,10 @@ export function defaultFill(
   // У прочей техники и доборной планки наполнения нет: внутри прибор.
   if (unit.appliance || unit.kind === 'filler') return empty;
 
+  /*
+   * Направление — из `defaultOpening`, включая подъёмник: вариант места
+   * «Подъёмник» и есть выбор направления, и решает это одна функция.
+   */
   const hinge = hingeSide(unit, index, total);
 
   if (unit.section) {
@@ -439,17 +472,18 @@ export function defaultFill(
 }
 
 /**
- * Сторона открывания.
+ * Направление открывания по умолчанию.
  *
- * Первый модуль ряда открывается наружу от центра, дальше стороны
- * чередуются: так двери не бьются друг о друга. У модуля шире 600 мм две
- * двери, и обозначать одну сторону бессмысленно.
+ * Считает его `defaultOpening` — одна функция на продукт. Здесь остаётся
+ * только вызов: сторона петель, подъёмник и откидной живут в одном поле,
+ * и выводить их двумя формулами значило бы завести ту же беду заново.
+ *
+ * Раньше у двустворчатого модуля здесь стояло `'none'` — и одно значение
+ * означало сразу две разные вещи: «фасада нет вовсе» и «сторон две».
+ * Теперь это `'double'`, и данные говорят сами за себя.
  */
 export function hingeSide(unit: Module, index: number, total: number): ModuleFill['hinge'] {
-  if (unit.doorCount >= 2) return 'none';
-  if (unit.frontType !== 'door') return 'none';
-  const fromLeft = index < total / 2;
-  return (fromLeft ? index % 2 === 0 : index % 2 !== 0) ? 'left' : 'right';
+  return defaultOpening(unit, index, total);
 }
 
 /* ─────────────────────────  Правки наполнения  ───────────────────────── */
@@ -567,9 +601,23 @@ export function moveDrawerBoundary(
   return { ...fill, drawerHeights: heights };
 }
 
+/**
+ * Клик по диагонали меняет сторону петель.
+ *
+ * Меняет РОВНО сторону: подъёмник и откидной переключаются выбором
+ * направления, а не этим жестом — иначе нажатие на дугу молча превратило
+ * бы механизм за десять тысяч в обычную петлю.
+ *
+ * И это ВЫБОР человека: дальше пересчёт стороны по месту в ряду его не
+ * трогает.
+ */
 export function flipHinge(fill: ModuleFill): ModuleFill {
-  if (fill.hinge === 'none') return fill;
-  return { ...fill, hinge: fill.hinge === 'left' ? 'right' : 'left' };
+  if (fill.hinge !== 'left' && fill.hinge !== 'right') return fill;
+  return {
+    ...fill,
+    hinge: fill.hinge === 'left' ? 'right' : 'left',
+    openingChosen: true,
+  };
 }
 
 /** Наполнение ряда: считается один раз и живёт вместе с модулями. */

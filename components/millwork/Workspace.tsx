@@ -9,12 +9,14 @@ import CommandBar from './CommandBar';
 import DrawingSheet from './DrawingSheet';
 import VariantStrip, { type VariantPreview } from './VariantStrip';
 import FrontMaterialPicker from './FrontMaterialPicker';
+import OpeningPicker from './OpeningPicker';
 import RunSchematic from './RunSchematic';
 import { hasFacade } from '@/lib/millwork/applianceFront';
 import { frontOf } from '@/lib/millwork/frontMaterial';
 import { paletteFromCatalog } from '@/lib/millwork/palette';
 import { buildComposition } from '@/lib/millwork/composition';
 import { compositionOf, mergeEstimates, wallLabel } from '@/lib/millwork/walls';
+import { openingAssumptions } from '@/lib/millwork/warnings';
 import { CORNER, CORNER_SIZE_MM } from '@/lib/millwork/modules';
 
 /** Решение угла: модуль 900×900 или фальш-панель. */
@@ -719,6 +721,19 @@ export default function Workspace(props: WorkspaceProps) {
     return compositionOf(layout, segments).fingerprint;
   }, [layout, segments, active.run.fingerprint]);
 
+  /*
+   * ЧТО В СМЕТЕ ПОСЧИТАНО УМОЛЧАНИЕМ.
+   *
+   * Направление открывания у верхних фасадов раньше выводилось из ряда:
+   * каждый получал газлифт, хотя никто его не выбирал. Теперь умолчание —
+   * петли, и оно названо вслух РЯДОМ С СУММОЙ: цена этого умолчания
+   * именно там и видна.
+   */
+  const estimateAssumptions = useMemo(
+    () => segments.flatMap((run) => openingAssumptions(run)).map((w) => w.message),
+    [segments],
+  );
+
   const estimate = useMemo(() => {
     if (!layout) return active.estimate;
     return mergeEstimates(
@@ -1137,7 +1152,16 @@ export default function Workspace(props: WorkspaceProps) {
        * идентификатор модуля остаётся прежним.
        */
       const keepsSelection = ops.every(
-        (op) => op.op === 'set_front' || op.op === 'set_variant' || op.op === 'set_section',
+        (op) =>
+          op.op === 'set_front' ||
+          op.op === 'set_variant' ||
+          op.op === 'set_section' ||
+          /*
+           * Направление перебирают подряд при клиенте: «а если вверх? а
+           * если петли справа?». Снятое выделение убирает панель после
+           * первого же нажатия — дальше нажимать не на что (ловушка 249).
+           */
+          op.op === 'set_opening',
       );
       if (keepsSelection) {
         setSelectedId(selectedId);
@@ -2180,6 +2204,19 @@ export default function Workspace(props: WorkspaceProps) {
                       palette={palette}
                     />
                   </div>
+
+                  {/*
+                    * Направление открывания стоит рядом с материалом: это
+                    * такой же выбор про ЭТОТ фасад, и спрашивают о нём в
+                    * тот же момент разговора.
+                    */}
+                  <div className="mt-3">
+                    <OpeningPicker
+                      unit={selectedUnit}
+                      onOps={runOps}
+                      onRefuse={setSceneNotice}
+                    />
+                  </div>
                 </div>
               )}
 
@@ -2660,6 +2697,7 @@ export default function Workspace(props: WorkspaceProps) {
             open={estimateOpen}
             onOpenChange={setEstimateOpen}
             preliminary={preliminary}
+            assumptions={estimateAssumptions}
           />
         </div>
 

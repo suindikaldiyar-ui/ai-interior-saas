@@ -68,6 +68,36 @@ export function LiftMark({
   );
 }
 
+/**
+ * ОТКИДНОЙ ФАСАД: дуга и стрелка ВНИЗ.
+ *
+ * Знак зеркален подъёмнику намеренно: направление читается по стрелке,
+ * не глядя, — а два разных механизма с одинаковым знаком цех различать
+ * не обязан.
+ */
+export function FlapMark({
+  x,
+  y,
+  width,
+  height,
+}: {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}) {
+  const cx = x + width / 2;
+  const bottom = y + height - 4;
+  const top = y + 3;
+
+  return (
+    <g stroke={LINE} strokeWidth={0.5} fill="none" opacity={0.8} data-symbol="flap">
+      <path d={`M${cx} ${top} Q ${cx + width * 0.3} ${(top + bottom) / 2} ${cx} ${bottom}`} />
+      <path d={`M${cx - 3} ${bottom - 4} L${cx} ${bottom} L${cx + 3} ${bottom - 4}`} />
+    </g>
+  );
+}
+
 /** Tip-on: точка и подпись. Ручки на фасаде нет, и это надо сказать. */
 export function TipOnMark({ x, y, width }: { x: number; y: number; width: number }) {
   const cx = x + width / 2;

@@ -29,6 +29,13 @@ type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   preliminary?: boolean;
+  /**
+   * Что в смете посчитано умолчанием, а не выбором.
+   *
+   * Сегодня это направление открывания: подъёмник стоит в разы дороже
+   * петли, и молча посчитанный он читается как выбранный.
+   */
+  assumptions?: string[];
 };
 
 export default function EstimateSheet({
@@ -39,6 +46,7 @@ export default function EstimateSheet({
   open,
   onOpenChange,
   preliminary,
+  assumptions = [],
 }: Props) {
   /*
    * Подробный вид — это ТА ЖЕ смета, а не второй расчёт: группы только
@@ -116,6 +124,16 @@ export default function EstimateSheet({
                 Точная — когда все величины сняты на объекте.
               </p>
             )}
+
+            {assumptions.map((line) => (
+              <p
+                key={line}
+                data-estimate-assumption
+                className="px-4 pb-2 text-[13px] leading-snug text-tape"
+              >
+                {line}
+              </p>
+            ))}
 
             <div className="max-h-[52vh] overflow-y-auto">
               {detailed ? (

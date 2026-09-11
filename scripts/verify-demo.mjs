@@ -2082,6 +2082,85 @@ try {
   }
 
 
+
+  /* ── Направление открывания выбирается и меняет деньги ── */
+
+  {
+    const op = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await op.goto(`${BASE}/demo`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+    await until(async () => (await op.getByRole('button', { name: /Конфигуратор/ }).count()) > 0);
+    await op.getByRole('button', { name: /Конфигуратор/ }).first().click();
+    await sleep(2200);
+    await op.locator('[data-schematic-tab="front"]').click();
+    await sleep(1200);
+
+    const money = (text) => (text.match(/([\d\s ]{5,})\s*₸/) ?? [])[1]?.replace(/\s| /g, '');
+    const footerText = () => op.locator('footer').innerText();
+
+    /* Верхний модуль: там механизм возможен, и там он стоит денег. */
+    const upper = op.locator('[data-schematic] [data-module-id^="upper-"]').first();
+    await upper.scrollIntoViewIfNeeded();
+    await upper.click({ force: true });
+    await sleep(1000);
+
+    const picker = op.locator('[data-opening-picker]');
+    check('у выбранного модуля есть выбор направления', (await picker.count()) === 1);
+
+    check(
+      'и сказано, что направление посчитано по умолчанию',
+      (await op.locator('[data-opening-assumed]').count()) === 1,
+      (await op.locator('[data-opening-assumed]').innerText().catch(() => '')).slice(0, 80),
+    );
+
+    check(
+      'подъёмник наверху предлагается',
+      (await op.locator('[data-opening="lift"]').count()) === 1,
+    );
+
+    const before = money(await footerText());
+    await op.locator('[data-opening="lift"]').click();
+    await sleep(1600);
+    const after = money(await footerText());
+
+    check(
+      'выбор подъёмника меняет сумму: газлифт и петля — разные деньги',
+      Boolean(before) && Boolean(after) && before !== after,
+      `${before} ₸ → ${after} ₸`,
+    );
+    check(
+      'выбранное направление перестаёт быть умолчанием',
+      (await op.locator('[data-opening-assumed]').count()) === 0,
+    );
+    check(
+      'и подъёмник отмечен выбранным',
+      (await op.locator('[data-opening="lift"]').getAttribute('data-active')) === '1',
+    );
+
+    /*
+     * Внизу механизма не бывает: фасад пошёл бы вверх и упёрся в
+     * столешницу. Кнопки там нет вовсе — серая кнопка это вопрос
+     * «почему нельзя», а задавать его при клиенте некому.
+     */
+    const base = op.locator('[data-schematic] [data-module-id^="base-"]').first();
+    await base.scrollIntoViewIfNeeded();
+    await base.click({ force: true });
+    await sleep(1000);
+
+    check(
+      'в нижнем ряду подъёмник не предлагается вовсе',
+      (await op.locator('[data-opening-picker]').count()) === 1 &&
+        (await op.locator('[data-opening="lift"]').count()) === 0,
+      `кнопок направления ${await op.locator('[data-opening]').count()}`,
+    );
+    check(
+      'а стороны петель предлагаются',
+      (await op.locator('[data-opening="left"]').count()) === 1 &&
+        (await op.locator('[data-opening="right"]').count()) === 1,
+    );
+
+    await op.close();
+  }
+
   /* ── Сцена: цвет помодульно, открывание, размеры, три ряда ── */
 
   {

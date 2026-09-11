@@ -4,6 +4,7 @@ import * as THREE from 'three';
 
 import InteractiveDoor from './InteractiveDoor';
 import InteractiveDrawer from './InteractiveDrawer';
+import { openingOf } from '@/lib/millwork/opening';
 import type { CabinetParts } from './parts';
 import type { Module } from '@/types/millwork';
 
@@ -208,17 +209,21 @@ export default function CabinetModule3D({
           const id = `${unit.id}:door:${i}`;
 
           /*
-           * У двустворчатого модуля стороны очевидны: левая створка на левой
-           * петле, правая на правой. У одностворчатого сторону задаёт `fill`,
-           * и она обязана совпасть с треугольником на чертеже.
+           * НАПРАВЛЕНИЕ БЕРЁТСЯ ИЗ ТЕХ ЖЕ ДАННЫХ, ЧТО РИСУЮТ ЧЕРТЁЖ.
+           *
+           * У двух створок стороны очевидны: левая на левой петле, правая
+           * на правой. У одной — то, что выбрано: сторона петель,
+           * подъёмник или откидной. Своей формулы у сцены нет, иначе
+           * фасад открывался бы не туда, куда указывает диагональ.
            */
-          const hinge =
+          const { opening } = openingOf(unit);
+          const doorOpening =
             doors > 1
               ? i === 0
                 ? ('left' as const)
                 : ('right' as const)
-              : fill?.hinge === 'right'
-                ? ('right' as const)
+              : opening === 'lift' || opening === 'flap' || opening === 'right'
+                ? opening
                 : ('left' as const);
 
           return (
@@ -227,7 +232,7 @@ export default function CabinetModule3D({
               id={id}
               open={isOpen(id)}
               onToggle={onToggle}
-              hinge={hinge}
+              opening={doorOpening}
               x={i * doorW}
               y={0}
               width={doorW}

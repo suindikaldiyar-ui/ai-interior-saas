@@ -1,6 +1,7 @@
 import { columnNiches, moduleCarcassHeightMm } from '@/lib/millwork/fill';
 import { GEOMETRY } from './modules';
 import { FRAME_WIDTH_MM, frontKey, frontOf, isFramed } from './frontMaterial';
+import { openingOf } from './opening';
 import type { Module, Run } from '@/types/millwork';
 
 /**
@@ -140,15 +141,88 @@ export function hasVisibleAppliance(unit: Module): boolean {
   );
 }
 
+/**
+ * Куда открывается ЭТА створка.
+ *
+ * У двух створок стороны очевидны. У одной — то, что выбрано, и берётся
+ * оно из `openingOf`: сцена, чертёж и смета обязаны читать одно поле,
+ * иначе фасад откроется не туда, куда указывает диагональ на листе.
+ */
+export function doorOpening(
+  unit: Module,
+  index: number,
+  doors: number,
+): 'left' | 'right' | 'lift' | 'flap' {
+  if (doors > 1) return index === 0 ? 'left' : 'right';
+  const { opening } = openingOf(unit);
+  if (opening === 'lift' || opening === 'flap' || opening === 'right') return opening;
+  return 'left';
+}
+
 /** Сторона петель у одностворчатого модуля — та же, что на чертеже. */
 export function doorHinge(unit: Module, index: number, doors: number): 'left' | 'right' {
-  if (doors > 1) return index === 0 ? 'left' : 'right';
-  return unit.fill?.hinge === 'right' ? 'right' : 'left';
+  const opening = doorOpening(unit, index, doors);
+  return opening === 'right' ? 'right' : 'left';
 }
 
 /** Сколько створок у модуля: тот же расчёт, что в сцене и на чертеже. */
 export function doorCount(unit: Module): number {
   return Math.max(1, unit.doorCount);
+}
+
+/** Распахнутая створка: 90°. */
+export const OPEN_ANGLE = Math.PI / 2;
+
+/**
+ * ГДЕ СТОИТ ОСЬ И ВОКРУГ ЧЕГО ИДЁТ ПОВОРОТ.
+ *
+ * Все четыре оси лежат на ПЕРЕДНЕЙ плоскости корпуса (z = 0) и на краю
+ * полотна: у распашного — на петельном, у подъёмника — на верхнем, у
+ * откидного — на нижнем. Знак угла подобран так, чтобы фасад уходил
+ * ВПЕРЁД, наружу: тот же поворот в другую сторону утапливает полотно в
+ * корпус, и мебель на глазах разваливается.
+ */
+export function doorPivot(
+  opening: 'left' | 'right' | 'lift' | 'flap',
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+) {
+  if (opening === 'lift') {
+    return {
+      axis: 'x' as const,
+      angle: -OPEN_ANGLE,
+      origin: [x + width / 2, y + height, 0] as [number, number, number],
+      panel: [0, -height / 2, 0] as [number, number, number],
+    };
+  }
+  if (opening === 'flap') {
+    return {
+      axis: 'x' as const,
+      angle: OPEN_ANGLE,
+      origin: [x + width / 2, y, 0] as [number, number, number],
+      panel: [0, height / 2, 0] as [number, number, number],
+    };
+  }
+
+  /*
+   * ЗНАК ПОВОРОТА У РАСПАШНОГО.
+   *
+   * Корпус нарисован ОТ НУЛЯ ВГЛУБЬ (z от 0 до −depth), комната — со
+   * стороны +z. Поворот вокруг Y на +90° уводит полотно в −z, то есть
+   * СКВОЗЬ корпус: дверь открывалась внутрь шкафа. Глазами это заметно
+   * только если открыть створку, а нажать на неё до вчерашнего дня было
+   * негде — поэтому и жило. Ловится числом: центр открытого полотна
+   * обязан оказаться перед фасадом, а не за ним.
+   */
+  const left = opening === 'left';
+  return {
+    axis: 'y' as const,
+    angle: left ? -OPEN_ANGLE : OPEN_ANGLE,
+    origin: [left ? x : x + width, y + height / 2, 0] as [number, number, number],
+    panel: [left ? width / 2 : -width / 2, 0, 0] as [number, number, number],
+  };
 }
 
 /**
@@ -179,6 +253,14 @@ export function doorBoxes(
   const cy = y + heightM / 2;
   const part = unit.id + ':door:' + index;
 
+  /*
+   * У механизма ручка на СВОБОДНОМ крае: у подъёмника снизу, у откидного
+   * сверху. Закрытая створка рисуется здесь, открытая — своим мешем; обе
+   * обязаны показывать одну и ту же мебель, поэтому правило одно.
+   */
+  const opening = doorOpening(unit, index, doors);
+  const mechanism = opening === 'lift' || opening === 'flap';
+
   const handle: PartBox = integratedHandles
     ? {
         material: 'metal',
@@ -186,16 +268,27 @@ export function doorBoxes(
         position: [cx, cy + heightM / 2 - gap - 0.01, thickness + 0.004],
         scale: [doorW - 2 * gap, 0.02, 0.015],
       }
-    : {
+    : mechanism
+      ? {
+          material: 'metal',
+          part,
+          position: [
+            cx,
+            cy + (opening === 'lift' ? -heightM / 2 + 0.04 : heightM / 2 - 0.04),
+            thickness + 0.012,
+          ],
+          scale: [Math.min(0.24, doorW * 0.5), 0.016, 0.016],
+        }
+      : {
         material: 'metal',
         part,
-        position: [
-          cx + (hinge === 'left' ? doorW / 2 - 0.05 : -doorW / 2 + 0.05),
-          cy,
-          thickness + 0.012,
-        ],
-        scale: [0.016, Math.min(0.22, heightM * 0.4), 0.016],
-      };
+          position: [
+            cx + (hinge === 'left' ? doorW / 2 - 0.05 : -doorW / 2 + 0.05),
+            cy,
+            thickness + 0.012,
+          ],
+          scale: [0.016, Math.min(0.22, heightM * 0.4), 0.016],
+        };
 
   const spec = frontOf(unit);
   const key = frontKey(spec);
