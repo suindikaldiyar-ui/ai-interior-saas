@@ -2083,6 +2083,236 @@ try {
 
 
 
+
+  /* ── Рабочий экран: группы кнопок, ракурсы, пределы камеры ── */
+
+  {
+    const sc = await browser.newPage({ viewport: { width: 1180, height: 820 } });
+    await sc.goto(`${BASE}/demo`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+    await until(async () => (await sc.getByRole('button', { name: /Конфигуратор/ }).count()) > 0);
+    await sc.getByRole('button', { name: /Конфигуратор/ }).first().click();
+    await sleep(2200);
+    await sc.locator('[data-schematic-tab="scene"]').click();
+    await sleep(3200);
+
+    const state = () => sc.evaluate(() => (window.__mwCadState ? window.__mwCadState() : null));
+    const fit = () => sc.evaluate(() => (window.__mwCadFit ? window.__mwCadFit() : null));
+
+    /* 1. Кнопки собраны по смыслу и не съедают высоту сцены. */
+    check(
+      'кнопки верхней панели собраны в группы',
+      (await sc.locator('[data-group]').count()) === 3,
+      `групп ${await sc.locator('[data-group]').count()}`,
+    );
+
+    const toolbar = await sc.evaluate(() => {
+      const bar = document.querySelector('[data-toolbar]');
+      const canvas = document.querySelector('[data-scene] canvas');
+      if (!bar || !canvas) return null;
+      const b = bar.getBoundingClientRect();
+      const c = canvas.getBoundingClientRect();
+      const rows = new Set(
+        [...bar.querySelectorAll('button')].map((el) => Math.round(el.getBoundingClientRect().top)),
+      );
+      return { barH: b.height, rows: rows.size, sceneH: c.height, vh: window.innerHeight };
+    });
+
+    check(
+      'на планшетной ширине панель не расползается в три ряда',
+      Boolean(toolbar) && toolbar.rows <= 2,
+      toolbar ? `рядов кнопок ${toolbar.rows}, высота панели ${Math.round(toolbar.barH)} px` : '',
+    );
+    check(
+      'и сцена занимает не меньше 60% высоты экрана',
+      Boolean(toolbar) && toolbar.sceneH / toolbar.vh >= 0.6,
+      toolbar ? `${Math.round((toolbar.sceneH / toolbar.vh) * 100)}%` : '',
+    );
+
+    /* 2. Чертёжный слой выключен по умолчанию и включается кнопкой. */
+    await sc.locator('[data-angle="elevation"]').click();
+    await sleep(2400);
+    check(
+      'чертёжный слой по умолчанию выключен',
+      (await sc.locator('[data-dim-layer]').count()) === 0 ||
+        (await sc.locator('[data-dim-layer]').getAttribute('aria-hidden')) === 'true',
+      `слоёв ${await sc.locator('[data-dim-layer]').count()}`,
+    );
+    check('и кнопка «Размеры» есть', (await sc.locator('[data-dims-toggle]').count()) === 1);
+
+    await sc.locator('[data-dims-toggle]').click();
+    await sleep(1400);
+    check(
+      'по кнопке слой появляется',
+      (await sc.locator('[data-dim-layer] text').count()) > 0,
+      `подписей ${await sc.locator('[data-dim-layer] text').count()}`,
+    );
+
+    await sc.locator('[data-angle="free"]').click();
+    await sleep(1600);
+    check(
+      'на перспективе слой не показывается даже включённым',
+      (await sc.locator('[data-dim-layer]').count()) === 0 ||
+        (await sc.locator('[data-dim-layer]').getAttribute('aria-hidden')) === 'true',
+    );
+    await sc.locator('[data-dims-toggle]').click();
+    await sleep(600);
+
+    /* 3. П-образная: фронтальный ракурс показывает ОДНУ стену. */
+    await sc.locator('[data-shape-kind="u_shape"]').click();
+    await sleep(3000);
+    await sc.locator('[data-angle="free"]').click();
+    await sleep(1800);
+
+    check(
+      'в свободном ракурсе видны все три стены',
+      (await state())?.rows === 3,
+      `рядов ${(await state())?.rows}`,
+    );
+
+    for (const angle of ['elevation', 'left', 'right']) {
+      await sc.locator(`[data-angle="${angle}"]`).click();
+      await sleep(1800);
+      check(
+        `ракурс «${angle}» показывает одну стену, а не ленту из трёх`,
+        (await state())?.rows === 1,
+        `рядов ${(await state())?.rows}`,
+      );
+    }
+
+    await sc.locator('[data-angle="plan"]').click();
+    await sleep(1800);
+    check(
+      '«Сверху» показывает все стены: это план',
+      (await state())?.rows === 3,
+      `рядов ${(await state())?.rows}`,
+    );
+
+    /*
+     * 4. ЗАМЕРЩИК НЕ ДОЛЖЕН УМЕТЬ СЕБЯ ПОТЕРЯТЬ.
+     *
+     * Проверяется крайними значениями: поворот на 360° по обеим осям,
+     * зум в оба предела, панорама во все стороны. После каждого шага
+     * габарит мебели обязан пересекаться с кадром.
+     */
+    await sc.locator('[data-angle="free"]').click();
+    await sleep(2000);
+
+    const box = await sc.evaluate(() => {
+      const c = document.querySelector('[data-scene] canvas');
+      const r = c.getBoundingClientRect();
+      return { x: r.x, y: r.y, w: r.width, h: r.height };
+    });
+    const cx = box.x + box.w / 2;
+    const cy = box.y + box.h / 2;
+
+    const drag = async (dx, dy, button = 'left') => {
+      await sc.mouse.move(cx, cy);
+      await sc.mouse.down({ button });
+      for (let i = 1; i <= 6; i += 1) {
+        await sc.mouse.move(cx + (dx * i) / 6, cy + (dy * i) / 6);
+        await sleep(30);
+      }
+      await sc.mouse.up({ button });
+      await sleep(260);
+    };
+
+    const lost = [];
+    const record = async (what) => {
+      const now = await fit();
+      if (!now || !now.visible) lost.push(`${what}: ${now ? now.box.join(' ') : 'нет данных'}`);
+    };
+
+    // Поворот на 360° по горизонтали и по вертикали, шагами.
+    for (let step = 0; step < 8; step += 1) {
+      await drag(box.w * 0.35, 0);
+      await record(`поворот вбок ${(step + 1) * 45}°`);
+    }
+    for (let step = 0; step < 8; step += 1) {
+      await drag(0, box.h * 0.35);
+      await record(`поворот вверх-вниз ${step + 1}`);
+    }
+
+    // Зум в оба предела.
+    for (let step = 0; step < 12; step += 1) {
+      await sc.mouse.move(cx, cy);
+      await sc.mouse.wheel(0, 400);
+      await sleep(120);
+    }
+    await record('зум наружу до предела');
+    for (let step = 0; step < 24; step += 1) {
+      await sc.mouse.move(cx, cy);
+      await sc.mouse.wheel(0, -400);
+      await sleep(120);
+    }
+    await record('зум внутрь до предела');
+
+    // Панорама во все стороны правой кнопкой.
+    for (const [dx, dy] of [
+      [box.w, 0],
+      [-box.w * 2, 0],
+      [box.w, box.h],
+      [0, -box.h * 2],
+    ]) {
+      await drag(dx, dy, 'right');
+      await record(`панорама ${dx},${dy}`);
+    }
+
+    check(
+      'при любом вращении, зуме и панораме мебель остаётся в кадре',
+      lost.length === 0,
+      lost.length === 0 ? 'проверено 22 крайних положения' : lost.slice(0, 2).join(' · '),
+    );
+
+    /* 5. Пустая стена не рисует случайную геометрию. */
+    await sc.locator('[data-shape-kind="linear"]').click();
+    await sleep(2000);
+    /*
+     * «Собрать самому» живёт на шаге «Решение»: пустая стена — это
+     * начало сборки, а не состояние конфигуратора.
+     */
+    await sc.getByRole('button', { name: /Решение/ }).first().click();
+    await sleep(1500);
+
+    const free = sc.getByRole('button', { name: 'Собрать самому' }).first();
+    if ((await free.count()) > 0) {
+      await free.scrollIntoViewIfNeeded();
+      await free.click();
+      /*
+       * Уход в свободную сборку пересобирает рабочий экран, и вкладка
+       * возвращается к схеме. Ждём саму вкладку, а не таймер: на
+       * загруженной машине она появляется позже, чем истекает пауза.
+       */
+      await sc.getByRole('button', { name: /Конфигуратор/ }).first().click();
+      await until(async () => (await sc.locator('[data-schematic-tab="scene"]').count()) > 0);
+      await sc.locator('[data-schematic-tab="scene"]').click();
+      await until(async () => (await sc.locator('[data-scene] canvas').count()) > 0);
+      await sleep(2500);
+    }
+
+    const emptyScene = await sc.evaluate(() => (window.__mwScene ? window.__mwScene() : null));
+    const emptyWords = await sc.locator('[data-scene-empty]').count();
+    if (emptyWords > 0) {
+      check(
+        'пустая стена не рисует мебель, а говорит словами',
+        emptyScene !== null && emptyScene.cabinet.meshes === 0,
+        `мешей гарнитура ${emptyScene?.cabinet.meshes}`,
+      );
+    } else {
+      /*
+       * Слов нет — значит и мебели быть не должно: пустая сцена обязана
+       * либо говорить, либо не показывать ничего. Молчащая сцена с
+       * плоскими панелями — это третий вариант, и он-то и был дефектом.
+       */
+      check(
+        'пустая стена ничего не рисует',
+        emptyScene !== null && emptyScene.cabinet.meshes === 0,
+        `мешей гарнитура ${emptyScene?.cabinet.meshes}, слов нет`,
+      );
+    }
+
+    await sc.close();
+  }
+
   /* ── Направление открывания выбирается и меняет деньги ── */
 
   {
@@ -2256,6 +2486,9 @@ try {
     /* 3. Размерные цепи над сценой на прямом ракурсе. */
     await s3.locator('[data-angle="elevation"]').click();
     await sleep(2600);
+    // Слой чертежа теперь по кнопке: сам собой он поверх 3D не появляется.
+    await s3.locator('[data-dims-toggle]').click();
+    await sleep(1200);
     const layer = s3.locator('[data-dim-layer]');
     check(
       'над сценой есть слой размеров',

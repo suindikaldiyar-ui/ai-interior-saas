@@ -138,15 +138,60 @@ export default function RunSchematic({
    */
   const [framing, setFraming] = useState<OrthoProjection | null>(null);
 
+  /*
+   * ЧЕРТЁЖНЫЙ СЛОЙ — ПО КНОПКЕ, А НЕ САМ СОБОЙ.
+   *
+   * Размерные линии поверх 3D читаются плохо: видно и мебель, и чертёж
+   * сразу, а вместе они не складываются ни во что. Кнопка «Размеры»
+   * рядом с ракурсами, по умолчанию ВЫКЛЮЧЕНА; на перспективе слой не
+   * показывается вовсе — там горизонтальный размер меряет не ту длину.
+   */
+  const [dims, setDims] = useState(false);
+
   const setOpenParts = useInteriorStore((state) => state.setOpenParts);
   const openParts = useInteriorStore((state) => state.openParts);
 
-  /** Ряд под цепями: активная стена. У соседних свои размеры на листе. */
-  const rows0 = (sceneRows.length > 0 ? sceneRows : [{ run }])[0];
+  const allRows = useMemo(
+    () => (sceneRows.length > 0 ? sceneRows : [{ run }]),
+    [sceneRows, run],
+  );
+
+  /**
+   * ФРОНТАЛЬНЫЙ РАКУРС ПОКАЗЫВАЕТ ОДНУ СТЕНУ.
+   *
+   * П-образная кухня в виде «Спереди» разворачивалась в плоскую ленту:
+   * три перпендикулярные стены выстраивались в строку и уезжали за край
+   * экрана. Развёртки трёх стен в одной проекции не существует — это и
+   * на чертеже отдельные виды (ловушка 292).
+   *
+   * Поэтому фронтальные ракурсы берут ту стену, что выбрана
+   * переключателем, и берут её БЕЗ поворота вокруг угла: вид спереди на
+   * повёрнутый ряд показывал бы его торцом. «Сверху» — это план, там
+   * видны все стены разом, и «Свободный» тоже.
+   */
+  const rows = useMemo(() => {
+    if (angle === 'plan' || angle === 'free') return allRows;
+    const active = allRows.find((row) => row.run.id === run.id) ?? allRows[0];
+    return [{ run: active.run }];
+  }, [allRows, angle, run.id]);
+
+  /** Ряд под цепями: тот, что сейчас в кадре. */
+  const rows0 = rows[0];
 
   const openable = useMemo(
-    () => (sceneRows.length > 0 ? sceneRows : [{ run }]).flatMap((row) => openablePartIds(row.run)),
-    [sceneRows, run],
+    () => allRows.flatMap((row) => openablePartIds(row.run)),
+    [allRows],
+  );
+
+  /** Пустая стена: мебели нет, и сцена говорит об этом словами. */
+  const empty = useMemo(
+    () =>
+      rows.every(
+        (row) =>
+          row.run.modules.length === 0 &&
+          row.run.upperSegments.every((segment) => segment.modules.length === 0),
+      ),
+    [rows],
   );
 
   return (
@@ -158,58 +203,75 @@ export default function RunSchematic({
       data-schematic-view={view}
       data-fullscreen={full ? '1' : '0'}
     >
-      <div className="mb-2 flex gap-1">
-        {(
-          [
-            ['scene', '3D'],
-            ['front', 'Схема'],
-            ['plan', 'План'],
-          ] as const
-        ).map(([key, title]) => (
-          <button
-            key={key}
-            type="button"
-            data-schematic-tab={key}
-            aria-pressed={view === key}
-            onClick={() => setView(key)}
-            className={`mw-btn ${view === key ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
-          >
-            {title}
-          </button>
-        ))}
-
-        {view === 'scene' && openable.length > 0 && (
-          <>
+      {/*
+        * ПАНЕЛЬ СОБРАНА ПО СМЫСЛУ, А НЕ ПО ПОРЯДКУ ПОЯВЛЕНИЯ.
+        *
+        * Было подряд: 3D · Схема · План · Открыть всё · Закрыть всё ·
+        * Свернуть — и вторым рядом ракурсы. Разные по смыслу кнопки
+        * вперемешку читаются как один длинный список, в котором каждый
+        * раз ищешь нужную.
+        *
+        * Группы: ЧТО показываем · КАК смотрим · ЧТО делаем · и отдельно
+        * справа «Свернуть». Группы разделены зазором, а не линиями:
+        * линия в один пиксель на планшете не читается вовсе.
+        */}
+      <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1" data-toolbar>
+        <div className="flex gap-1" data-group="view">
+          {(
+            [
+              ['scene', '3D'],
+              ['front', 'Схема'],
+              ['plan', 'План'],
+            ] as const
+          ).map(([key, title]) => (
             <button
+              key={key}
               type="button"
-              data-open-all
-              onClick={() => setOpenParts(openable)}
-              className="mw-btn mw-btn-ghost"
+              data-schematic-tab={key}
+              aria-pressed={view === key}
+              onClick={() => setView(key)}
+              className={`mw-btn ${view === key ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
             >
-              Открыть всё
+              {title}
             </button>
-            <button
-              type="button"
-              data-close-all
-              disabled={openParts.length === 0}
-              onClick={() => setOpenParts([])}
-              className="mw-btn mw-btn-ghost"
-            >
-              Закрыть всё
-            </button>
-          </>
-        )}
+          ))}
+        </div>
 
         {view === 'scene' && (
-          <button
-            type="button"
-            data-fullscreen-toggle
-            onClick={() => setFull((on) => !on)}
-            className="mw-btn mw-btn-ghost ml-auto"
-          >
-            {full ? 'Свернуть' : 'На весь экран'}
-          </button>
+          <div className="flex gap-1" data-group="do">
+            {openable.length > 0 && (
+              <>
+                <button
+                  type="button"
+                  data-open-all
+                  onClick={() => setOpenParts(openable)}
+                  className="mw-btn mw-btn-ghost"
+                >
+                  Открыть всё
+                </button>
+                <button
+                  type="button"
+                  data-close-all
+                  disabled={openParts.length === 0}
+                  onClick={() => setOpenParts([])}
+                  className="mw-btn mw-btn-ghost"
+                >
+                  Закрыть всё
+                </button>
+              </>
+            )}
+            <button
+              type="button"
+              data-dims-toggle
+              aria-pressed={dims}
+              onClick={() => setDims((on) => !on)}
+              className={`mw-btn ${dims ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+            >
+              Размеры
+            </button>
+          </div>
         )}
+
       </div>
 
       {/*
@@ -232,38 +294,6 @@ export default function RunSchematic({
       )}
 
       {/*
-        * Ракурсы — только у сцены: у плоских видов точка съёмки одна и
-        * менять её нечем.
-        */}
-      {view === 'scene' && (
-        <div className="mb-2 flex flex-wrap gap-1" data-angles>
-          {ANGLES.map(([key, title]) => (
-            <button
-              key={key}
-              type="button"
-              data-angle={key}
-              aria-pressed={angle === key}
-              onClick={() => setAngle(key)}
-              className={`mw-btn ${angle === key ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
-            >
-              {title}
-            </button>
-          ))}
-          <button
-            type="button"
-            data-angle-home
-            onClick={() => {
-              setAngle('free');
-              setHomeKey((n) => n + 1);
-            }}
-            className="mw-btn mw-btn-ghost"
-          >
-            Вернуть вид
-          </button>
-        </div>
-      )}
-
-      {/*
         * У сцены поля нет: она обязана занимать не меньше 70% ширины
         * экрана, и восемь пикселей отступа с каждой стороны — это ровно
         * та разница, из-за которой она в требование не попадает.
@@ -278,7 +308,7 @@ export default function RunSchematic({
             <CadScene
               key={homeKey}
               onFraming={setFraming}
-              rows={sceneRows.length > 0 ? sceneRows : [{ run }]}
+              rows={rows}
               production={production}
               roomWidthM={roomWidthM}
               roomDepthM={roomDepthM}
@@ -303,9 +333,78 @@ export default function RunSchematic({
               run={rows0.run}
               framing={framing}
               originXM={-rows0.run.lengthMm / 2000}
-              visible={angle === 'elevation' && framing !== null}
+              visible={dims && angle === 'elevation' && framing !== null}
               selectedModuleId={selectedModuleId}
             />
+
+            {/*
+              * КАК СМОТРИМ — НА САМОЙ СЦЕНЕ.
+              *
+              * Ракурсы относятся к сцене и живут поверх неё, а не строкой
+              * над ней. Причина не в красоте: тринадцать кнопок в одной
+              * полосе переносились на планшете в три ряда и съедали у
+              * сцены полторы сотни пикселей — те самые, из-за которых
+              * мебель приходилось прокручивать.
+              */}
+            {/*
+              * «Во весь экран» — отдельно и справа, как и просили, но на
+              * самой сцене: в полосе кнопок он занимал место, которого
+              * не хватало ей же.
+              */}
+            <button
+              type="button"
+              data-fullscreen-toggle
+              onClick={() => setFull((on) => !on)}
+              className="mw-btn mw-btn-ghost absolute right-2 top-2 bg-navyDeep/80"
+            >
+              {full ? 'Свернуть' : 'На весь экран'}
+            </button>
+
+            <div
+              className="absolute bottom-2 left-2 flex flex-wrap gap-1 rounded-[var(--r-panel)] bg-navyDeep/80 p-1"
+              data-group="angle"
+              data-angles
+            >
+              {ANGLES.map(([key, title]) => (
+                <button
+                  key={key}
+                  type="button"
+                  data-angle={key}
+                  aria-pressed={angle === key}
+                  onClick={() => setAngle(key)}
+                  className={`mw-btn ${angle === key ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+                >
+                  {title}
+                </button>
+              ))}
+              <button
+                type="button"
+                data-angle-home
+                onClick={() => {
+                  setAngle('free');
+                  setHomeKey((n) => n + 1);
+                }}
+                className="mw-btn mw-btn-ghost"
+              >
+                Вернуть вид
+              </button>
+            </div>
+
+            {/*
+              * Пустая стена — законное состояние, и читается оно как
+              * поломка, если сцена молчит. Здесь она говорит.
+              */}
+            {empty && (
+              <div
+                className="pointer-events-none absolute inset-0 flex items-center justify-center p-6"
+                data-scene-empty
+              >
+                <p className="max-w-[320px] text-center text-[15px] leading-snug text-graphiteMw">
+                  Мебели пока нет. Выберите готовое решение или соберите ряд сами —
+                  сцена покажет то, что соберётся.
+                </p>
+              </div>
+            )}
           </div>
         ) : (
         <div className="mw-schematic h-full [&>svg]:h-full [&>svg]:w-full">

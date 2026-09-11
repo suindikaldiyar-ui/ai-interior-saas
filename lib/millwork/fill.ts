@@ -1,5 +1,6 @@
 import {
   APPLIANCE_COLUMN,
+  FRIDGE_MEZZANINE_MIN_MM,
   GEOMETRY,
   standardHeightMm,
   nicheHeightMm,
@@ -91,6 +92,33 @@ export function columnNiches(
   ];
 }
 
+/**
+ * ВЫСОТА ВЕРХА ДУХОВКИ ОТ ПОЛА.
+ *
+ * Правило клиента звучало как «верх верхней ниши не выше 1500 мм», но
+ * последствие в нём названо про духовку: горячий противень. Проверено на
+ * раскладке: микроволновка НАД духовкой встаёт на 1828 мм — так её и
+ * собирают все, и предупреждать об этом значило бы кричать на каждой
+ * кухне, а такие строки перестают читать целиком.
+ *
+ * Поэтому меряем то, ради чего правило и есть: духовку. Поднятая выше
+ * пояса — это ожог, а не неудобство. Предупреждение ЖЁЛТОЕ, раскладка
+ * применяется: замерщик главнее алгоритма, но знать обязан.
+ *
+ * Считает высоты та же `columnNiches`, что строит ниши: второй список
+ * разошёлся бы с первым на первой же правке.
+ */
+export function ovenReachMm(
+  unit: Module,
+  run: Parameters<typeof moduleCarcassHeightMm>[1],
+): number | null {
+  if (!unit.column) return null;
+  const niches = columnNiches(unit, moduleCarcassHeightMm(unit, run));
+  const oven = niches.find((niche) => niche.appliance === 'oven');
+  if (!oven) return null;
+  return GEOMETRY.base.plinthH + oven.toMm;
+}
+
 /** Полки ближе трёх шагов друг к другу бессмысленны: туда ничего не встанет. */
 export const MIN_SHELF_GAP_MM = SYSTEM32_STEP_MM * 3;
 
@@ -109,8 +137,8 @@ export const MIN_DIVIDER_EDGE_MM = 150;
  */
 export function moduleCarcassHeightMm(
   unit: Module,
-  run: Pick<Run, 'zone' | 'ceilingHeightMm' | 'options'> &
-    Partial<Pick<Run, 'upperSegments' | 'mezzanine'>>,
+  run: Pick<Run, 'zone' | 'ceilingHeightMm'> &
+    Partial<Pick<Run, 'options' | 'upperSegments' | 'mezzanine' | 'modules'>>,
 ): number {
   const zone = zoneProfile(run.zone);
   const top = zoneHeightMm(run.zone, run.ceilingHeightMm);
@@ -139,7 +167,22 @@ export function moduleCarcassHeightMm(
      * отраслевые 500: её продают отдельной позицией, и высоту заказчик
      * выбирает под свой потолок.
      */
-    if (unit.section === 'mezzanine') return mezzanineHeightMm(run);
+    if (unit.section === 'mezzanine') {
+      /*
+       * Антресоль над КОЛОННОЙ занимает всё, что осталось над ней: её
+       * высоту не выбирают, она следует из высоты колонны и потолка.
+       * Антресоль над верхним рядом — своя высота, её выбирает заказчик.
+       */
+      const base = mezzanineBaseOf(unit, run);
+      if (base) {
+        const top = zoneHeightMm(run.zone, run.ceilingHeightMm);
+        return Math.max(
+          0,
+          top - GEOMETRY.base.plinthH - moduleCarcassHeightMm(base, run),
+        );
+      }
+      return mezzanineHeightMm(run);
+    }
     if (spec.heightMm > 0) return spec.heightMm;
     return fullBody;
   }
@@ -147,7 +190,7 @@ export function moduleCarcassHeightMm(
   if (zone.kind !== 'kitchen') return fullBody;
 
   const standard = standardHeightMm(unit.kind, {
-    upperToCeiling: run.options.upperToCeiling,
+    upperToCeiling: run.options?.upperToCeiling,
     ceilingHeightMm: run.ceilingHeightMm,
   });
 
@@ -161,9 +204,20 @@ export function moduleCarcassHeightMm(
    * начинается. Отметка одна на весь продукт — `mezzanineBottomMm`.
    */
   const upperRow = unit.kind === 'upper' || unit.kind === 'corner_upper';
-  if (upperRow && hasMezzanine(run)) {
-    const room = mezzanineBottomMm(run) - GEOMETRY.upper.bottomFromFloor;
-    return Math.max(0, Math.min(standard, room));
+  if (upperRow) return upperRowHeightMm(run);
+
+  /*
+   * НАД ХОЛОДИЛЬНИКОМ ОСТАЁТСЯ МЕСТО ПОД АНТРЕСОЛЬ.
+   *
+   * Пенал холодильника доходил до потолка. В отрасли так не делают:
+   * фактическая высота холодильника всегда меньше паспортной, и над ним
+   * оставляют кладовку. Колонна кончается на 300 мм ниже — и эти 300 мм
+   * становятся модулем, а не пустотой.
+   */
+  if (unit.appliance === 'fridge') {
+    const top = zoneHeightMm(run.zone, run.ceilingHeightMm);
+    const cap = top - GEOMETRY.base.plinthH - FRIDGE_MEZZANINE_MIN_MM;
+    return Math.max(GEOMETRY.base.carcassH, Math.min(standard, cap));
   }
 
   return standard;
@@ -171,11 +225,24 @@ export function moduleCarcassHeightMm(
 
 /** В ряду есть антресоль: она забирает верх, и корпус под неё укорачивается. */
 export function hasMezzanine(
-  run: Partial<Pick<Run, 'upperSegments' | 'mezzanine'>>,
+  run: Partial<Pick<Run, 'upperSegments' | 'mezzanine' | 'modules'>> &
+    Pick<Run, 'zone' | 'ceilingHeightMm'>,
 ): boolean {
   if (run.mezzanine) return true;
+
+  /*
+   * АНТРЕСОЛЬ НАД ВЕРХНИМ РЯДОМ И АНТРЕСОЛЬ НАД КОЛОННОЙ — РАЗНЫЕ ВЕЩИ.
+   *
+   * Первая делит высоту с верхним рядом: он кончается там, где она
+   * начинается. Вторая стоит на крыше колонны и верхнего ряда не
+   * касается вовсе — над колонной его нет. Считай их одинаково, и
+   * кладовка над холодильником отняла бы полметра у шкафов на другом
+   * конце кухни.
+   */
   return (run.upperSegments ?? []).some((segment) =>
-    segment.modules.some((unit) => unit.section === 'mezzanine'),
+    segment.modules.some(
+      (unit) => unit.section === 'mezzanine' && mezzanineBaseOf(unit, run) === null,
+    ),
   );
 }
 
@@ -193,9 +260,89 @@ export function mezzanineHeightMm(run: Partial<Pick<Run, 'mezzanine'>>): number 
 
 /** Низ антресоли: потолок зоны минус её собственная высота. */
 export function mezzanineBottomMm(
-  run: Pick<Run, 'zone' | 'ceilingHeightMm'> & Partial<Pick<Run, 'mezzanine'>>,
+  run: Pick<Run, 'zone' | 'ceilingHeightMm'> &
+    Partial<Pick<Run, 'mezzanine' | 'options'>>,
 ): number {
-  return upperRowBottomMm(run.zone, run.ceilingHeightMm, mezzanineHeightMm(run));
+  const profile = zoneProfile(run.zone);
+
+  /*
+   * Зона, где верх ВИСИТ ОТ ПОТОЛКА (шкаф-купе, прихожая): антресоль там
+   * верхняя полоса, и низ её считается от её же высоты.
+   */
+  if (profile.upperBottomMm === undefined) {
+    return upperRowBottomMm(run.zone, run.ceilingHeightMm, mezzanineHeightMm(run));
+  }
+
+  /*
+   * КУХНЯ: АНТРЕСОЛЬ САДИТСЯ НА ВЕРХНИЙ РЯД, А НЕ НА ЕГО ОТМЕТКУ.
+   *
+   * Здесь стояла та же формула, что и выше, — а отметка навески на кухне
+   * ФИКСИРОВАНА (1450). Выходило `низ антресоли = низ верхнего ряда`, и
+   * высота верхнего ряда считалась как «до антресоли», то есть НОЛЬ:
+   * заказанная антресоль молча стирала верхние шкафы, оставляя от них
+   * детали нулевого размера в раскрое. Проверка этого не видела —
+   * антресоль в смете была, а про шкафы под ней никто не спрашивал.
+   */
+  return profile.upperBottomMm + upperRowHeightMm(run);
+}
+
+/**
+ * ВЫСОТА ВЕРХНЕГО РЯДА: С АНТРЕСОЛЬЮ ОН ДЕЛИТ ВЫСОТУ С НЕЙ.
+ *
+ * Одна функция на габарит, отметки и инвариант непересечения. Без
+ * антресоли это стандартные 720 либо «до потолка»; с антресолью — то же
+ * самое минус её высота.
+ */
+export function upperRowHeightMm(
+  run: Pick<Run, 'zone' | 'ceilingHeightMm'> &
+    Partial<Pick<Run, 'mezzanine' | 'options' | 'upperSegments'>>,
+): number {
+  const profile = zoneProfile(run.zone);
+  const bottom = profile.upperBottomMm ?? GEOMETRY.upper.bottomFromFloor;
+  const top = zoneHeightMm(run.zone, run.ceilingHeightMm);
+  const mezzanine = hasMezzanine(run) ? mezzanineHeightMm(run) : 0;
+
+  if (run.options?.upperToCeiling) {
+    return Math.max(GEOMETRY.upper.carcassH, top - bottom - mezzanine);
+  }
+  return GEOMETRY.upper.carcassH;
+}
+
+/**
+ * НА ЧЁМ СТОИТ ЭТА АНТРЕСОЛЬ.
+ *
+ * Антресоль бывает двух видов, и различаются они только опорой: над
+ * верхним рядом — на нём, над колонной холодильника — на её крыше.
+ * Опора выводится из ГЕОМЕТРИИ, а не из признака на модуле: напольный
+ * модуль под тем же местом ряда, который поднимается выше отметки
+ * навески, и есть колонна.
+ */
+export function mezzanineBaseOf(
+  unit: Module,
+  run: Pick<Run, 'zone' | 'ceilingHeightMm'> &
+    Partial<Pick<Run, 'mezzanine' | 'options' | 'modules' | 'upperSegments'>>,
+): Module | null {
+  if (unit.section !== 'mezzanine') return null;
+  const bottom = zoneProfile(run.zone).upperBottomMm ?? GEOMETRY.upper.bottomFromFloor;
+
+  /*
+   * Высота опоры считается на ГОЛОМ ряде — без антресоли и верхних
+   * сегментов. Высота напольного модуля от них и не зависит, а вот
+   * спросить их здесь значило бы позвать `hasMezzanine`, который сам
+   * спрашивает опору: два вопроса, ждущие ответа друг друга.
+   */
+  const bare = { zone: run.zone, ceilingHeightMm: run.ceilingHeightMm, options: run.options };
+
+  return (
+    (run.modules ?? []).find((below) => {
+      if (!standsOnFloor(below)) return false;
+      const overlaps =
+        below.offsetMm < unit.offsetMm + unit.widthMm &&
+        unit.offsetMm < below.offsetMm + below.widthMm;
+      if (!overlaps) return false;
+      return GEOMETRY.base.plinthH + moduleCarcassHeightMm(below, bare) > bottom;
+    }) ?? null
+  );
 }
 
 /**
@@ -206,8 +353,16 @@ export function mezzanineBottomMm(
  */
 export function upperBottomFor(
   unit: Module,
-  run: Pick<Run, 'zone' | 'ceilingHeightMm' | 'options' | 'upperSegments'>,
+  run: Pick<Run, 'zone' | 'ceilingHeightMm' | 'options' | 'upperSegments'> &
+    Partial<Pick<Run, 'mezzanine' | 'modules'>>,
 ): number {
+  if (unit.section === 'mezzanine') {
+    const base = mezzanineBaseOf(unit, run);
+    // Антресоль стоит НА своей опоре: на колонне — на её крыше.
+    if (base) return GEOMETRY.base.plinthH + moduleCarcassHeightMm(base, run);
+    return mezzanineBottomMm(run);
+  }
+
   return upperRowBottomMm(run.zone, run.ceilingHeightMm, moduleCarcassHeightMm(unit, run));
 }
 

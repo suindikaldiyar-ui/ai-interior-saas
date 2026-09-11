@@ -1,5 +1,6 @@
-import { APPLIANCE_SLOTS } from './modules';
-import { moduleCarcassHeightMm } from './fill';
+import { APPLIANCE_COLUMN, APPLIANCE_SLOTS, FRIDGE_MEZZANINE_MIN_MM } from './modules';
+import { moduleCarcassHeightMm, ovenReachMm } from './fill';
+import { fridgeRoomMm } from './layout';
 import { openingHardware } from './opening';
 import type { CommPoint, LayoutIssue, Opening, Run } from '@/types/millwork';
 import type { SurveyStats } from '@/types/survey';
@@ -292,6 +293,57 @@ export function openingAssumptions(run: Run | null): SurveyWarning[] {
   ];
 }
 
+/**
+ * ПРАВИЛА МЕБЕЛЬЩИКА, КОТОРЫЕ ВИДНЫ ГЛАЗАМИ НА ОБЪЕКТЕ.
+ *
+ * Оба про эргономику, и оба жёлтые: раскладка применяется, но замерщик
+ * обязан знать последствие. Считаются они из ТЕХ ЖЕ функций, что строят
+ * ниши и высоты, — отдельный список высот разошёлся бы с раскладкой на
+ * первой же правке.
+ */
+export function ergonomicWarnings(run: Run | null): SurveyWarning[] {
+  if (!run) return [];
+  const found: SurveyWarning[] = [];
+
+  for (const unit of run.modules) {
+    /*
+     * Духовка в колонне не выше пояса: из поднятой выше горячий
+     * противень не вынуть. Меряется духовка, а не верхняя ниша вообще —
+     * микроволновка над духовкой стоит выше всегда, и так её и собирают.
+     */
+    const reach = ovenReachMm(unit, run);
+    if (reach !== null && reach > APPLIANCE_COLUMN.maxReachMm) {
+      found.push({
+        id: `column-reach-${unit.id}`,
+        severity: 'clarify',
+        moduleId: unit.id,
+        message:
+          `Верх духовки на ${Math.round(reach)} мм — горячий противень оттуда не вынуть. ` +
+          `Выше ${APPLIANCE_COLUMN.maxReachMm} мм духовку не поднимают.`,
+      });
+    }
+
+    /*
+     * Над холодильником обязана встать антресоль. Не встаёт — это не
+     * придирка к сантиметрам, а потерянная кладовка и пенал, до верха
+     * которого не дотянуться.
+     */
+    const room = fridgeRoomMm(unit, run);
+    if (room !== null && room < FRIDGE_MEZZANINE_MIN_MM) {
+      found.push({
+        id: `fridge-mezzanine-${unit.id}`,
+        severity: 'clarify',
+        moduleId: unit.id,
+        message:
+          `Над холодильником останется ${Math.max(0, Math.round(room))} мм: ` +
+          `антресоль не встанет, нужна высота от ${FRIDGE_MEZZANINE_MIN_MM}.`,
+      });
+    }
+  }
+
+  return found;
+}
+
 export function surveyWarnings(stats: SurveyStats): SurveyWarning[] {
   const pending = stats.pending.map((p, i) => ({
     id: `pending-${i}`,
@@ -336,6 +388,7 @@ export function collectWarnings(input: {
     ...sinkWaterConflicts(input.run, input.comms, input.manualSink),
     ...vanityWaterConflicts(input.run, input.comms),
     ...manualPlacementWarnings(input.run, input.hoodRequested),
+    ...ergonomicWarnings(input.run),
     ...fromIssues,
     ...(input.stats ? surveyWarnings(input.stats) : []),
   ];

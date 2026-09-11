@@ -77,6 +77,16 @@ export default function CadScene({
   onMoveModule,
   onFraming,
 }: Props) {
+  /*
+   * ГАБАРИТ МЕБЕЛИ, А НЕ КОМНАТЫ.
+   *
+   * По нему ставятся пределы вращения, зума и панорамы: что бы человек
+   * ни сделал мышью или пальцем, мебель остаётся в кадре. Замерщик не
+   * должен уметь себя потерять — терялся он именно здесь, потому что
+   * камера крутилась вокруг центра комнаты, а не вокруг мебели.
+   */
+  const bounds = useMemo(() => sceneBounds(rows), [rows]);
+
   return (
     <Canvas
       /*
@@ -140,41 +150,85 @@ export default function CadScene({
         <shadowMaterial opacity={0} />
       </mesh>
 
-      {orbit && <OrbitScene />}
+      {orbit && <OrbitScene bounds={bounds} />}
       <FrameProbe rows={rows} />
     </Canvas>
   );
 }
 
 /**
- * Свободный ракурс.
+ * СВОБОДНЫЙ РАКУРС, ИЗ КОТОРОГО НЕЛЬЗЯ ВЫПАСТЬ.
  *
- * Один палец крутит, два приближают. Затухание доводится кадрами —
- * при `frameloop="demand"` после отпускания кадров нет вовсе, и инерция
+ * Один палец крутит, два приближают. Затухание доводится кадрами — при
+ * `frameloop="demand"` после отпускания кадров нет вовсе, и инерция
  * замирала бы на полпути, доезжая потом по шагу на каждую правку.
+ *
+ * Все четыре предела считаются от ГАБАРИТА МЕБЕЛИ:
+ *
+ * · под пол не уйти и сцену не перевернуть — полярный угол зажат;
+ * · дальше четырёх радиусов не отъехать: мебель не станет точкой;
+ * · ближе 0.8 радиуса не подъехать: камера не окажется внутри корпуса;
+ * · панорама не уводит центр дальше половины радиуса от мебели.
+ *
+ * Последнее — не «на глаз»: цель зажимается ПОСЛЕ каждого изменения, и
+ * потому мебель остаётся в кадре при любом жесте, а не при аккуратном.
  */
-function OrbitScene() {
-  const controls = useRef<{ update: () => boolean } | null>(null);
+function OrbitScene({
+  bounds,
+}: {
+  bounds: { center: [number, number, number]; radius: number };
+}) {
+  const controls = useRef<
+    { update: () => boolean; target: THREE.Vector3 } | null
+  >(null);
   const invalidate = useThree((state) => state.invalidate);
+  const center = useMemo(() => new THREE.Vector3(...bounds.center), [bounds.center]);
 
   useFrame(() => {
     if (controls.current?.update()) invalidate();
   });
 
+  /* Мебель сменилась — центр вращения переезжает вместе с ней. */
+  useEffect(() => {
+    const orbit = controls.current;
+    if (!orbit) return;
+    orbit.target.copy(center);
+    orbit.update();
+    invalidate();
+  }, [center, invalidate]);
+
+  const leash = bounds.radius * 0.5;
+
   return (
     <OrbitControls
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ref={controls as any}
-      enablePan={false}
+      enablePan
       enableDamping
       dampingFactor={0.12}
-      minDistance={1.2}
-      maxDistance={12}
-      // Под пол камера не уходит: снизу мебели нет.
+      target={bounds.center}
+      minDistance={bounds.radius * 0.8}
+      maxDistance={bounds.radius * 4}
+      // Ни под пол, ни вверх ногами: и то, и другое читается как поломка.
+      minPolarAngle={0.12}
       maxPolarAngle={Math.PI / 2 - 0.02}
-      onChange={() => invalidate()}
+      onChange={() => {
+        const orbit = controls.current;
+        if (orbit) {
+          orbit.target.set(
+            clamp(orbit.target.x, center.x - leash, center.x + leash),
+            clamp(orbit.target.y, center.y - leash, center.y + leash),
+            clamp(orbit.target.z, center.z - leash, center.z + leash),
+          );
+        }
+        invalidate();
+      }}
     />
   );
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 /**
@@ -192,6 +246,7 @@ function FrameProbe({ rows }: { rows: SceneRow[] }) {
     const w = window as unknown as {
       __mwCadFrames?: () => number;
       __mwCadState?: () => { fronts: string[]; rows: number; camera: number[] };
+      __mwCadFit?: () => { visible: boolean; inFront: number; box: number[] };
     };
     w.__mwCadFrames = () => gl.info.render.frame;
 
@@ -203,6 +258,57 @@ function FrameProbe({ rows }: { rows: SceneRow[] }) {
      * «одинаковых» кадра ничего не доказывают. Поэтому сравнивается то,
      * что сцена реально рисует, — материалы фасадов и поза камеры.
      */
+    /*
+     * МЕБЕЛЬ В КАДРЕ — ПРОВЕРЯЕТСЯ ЧИСЛОМ, А НЕ ГЛАЗАМИ.
+     *
+     * Требование «замерщик не должен уметь себя потерять» звучит как
+     * впечатление, но измеряется просто: габарит мебели проецируется
+     * камерой и обязан пересекаться с кадром. Прогоняется это крайними
+     * значениями — поворот на 360°, зум в оба предела, панорама во все
+     * стороны, — а не аккуратным движением мыши.
+     */
+    w.__mwCadFit = () => {
+      const bounds = sceneBounds(rows);
+      const corners: THREE.Vector3[] = [];
+      const [cx, cy, cz] = bounds.center;
+      const r = bounds.radius / Math.sqrt(3);
+
+      for (const dx of [-r, r]) {
+        for (const dy of [-r, r]) {
+          for (const dz of [-r, r]) {
+            corners.push(new THREE.Vector3(cx + dx, cy + dy, cz + dz));
+          }
+        }
+      }
+
+      camera.updateMatrixWorld();
+      let minX = Infinity;
+      let maxX = -Infinity;
+      let minY = Infinity;
+      let maxY = -Infinity;
+      let inFront = 0;
+
+      for (const corner of corners) {
+        const view = corner.clone().applyMatrix4(camera.matrixWorldInverse);
+        // Точка позади камеры проецируется зеркально — её не считаем.
+        if (view.z > -0.01) continue;
+        inFront += 1;
+
+        const ndc = corner.clone().project(camera);
+        minX = Math.min(minX, ndc.x);
+        maxX = Math.max(maxX, ndc.x);
+        minY = Math.min(minY, ndc.y);
+        maxY = Math.max(maxY, ndc.y);
+      }
+
+      const visible = inFront > 0 && maxX > -1 && minX < 1 && maxY > -1 && minY < 1;
+      return {
+        visible,
+        inFront,
+        box: [minX, maxX, minY, maxY].map((v) => Math.round(v * 100) / 100),
+      };
+    };
+
     w.__mwCadState = () => ({
       fronts: Array.from(
         new Set(
@@ -222,18 +328,64 @@ function FrameProbe({ rows }: { rows: SceneRow[] }) {
     return () => {
       delete w.__mwCadFrames;
       delete w.__mwCadState;
+      delete w.__mwCadFit;
     };
   }, [gl, camera, rows]);
 
   return null;
 }
 
-/** Все рёбра всех рядов одним `LineSegments`. */
-function RunEdges({ rows }: { rows: SceneRow[] }) {
-  const geometry = useMemo(() => {
-    const points: number[] = [];
+/**
+ * ГАБАРИТ ВСЕЙ СЦЕНЫ — ОДИН РАСЧЁТ НА РЁБРА И НА КАМЕРУ.
+ *
+ * Камера, её пределы и рамка кадра меряются по мебели, а не по комнате:
+ * у угловой и П-образной кухни ряды стоят вокруг угла, и центр комнаты
+ * мебели не центр. Пока предел считался от комнаты, поворот уносил
+ * мебель за край кадра — и вернуть её можно было только кнопкой.
+ */
+export function sceneBounds(rows: SceneRow[]): {
+  center: [number, number, number];
+  radius: number;
+  empty: boolean;
+} {
+  let minX = Infinity;
+  let minY = Infinity;
+  let minZ = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let maxZ = -Infinity;
 
-    for (const row of rows) {
+  for (const point of rowCorners(rows)) {
+    minX = Math.min(minX, point[0]);
+    maxX = Math.max(maxX, point[0]);
+    minY = Math.min(minY, point[1]);
+    maxY = Math.max(maxY, point[1]);
+    minZ = Math.min(minZ, point[2]);
+    maxZ = Math.max(maxZ, point[2]);
+  }
+
+  if (!Number.isFinite(minX)) {
+    return { center: [0, 1, 0], radius: 1.5, empty: true };
+  }
+
+  const center: [number, number, number] = [
+    (minX + maxX) / 2,
+    (minY + maxY) / 2,
+    (minZ + maxZ) / 2,
+  ];
+  const radius = Math.max(
+    0.8,
+    Math.hypot(maxX - minX, maxY - minY, maxZ - minZ) / 2,
+  );
+
+  return { center, radius, empty: false };
+}
+
+/** Вершины всех коробок всех рядов, уже повёрнутые и смещённые. */
+function rowCorners(rows: SceneRow[]): [number, number, number][] {
+  const points: [number, number, number][] = [];
+
+  for (const row of rows) {
       const boxes = runBoxes(row.run, {
         zoneDepthMm: GEOMETRY.base.depth,
         thicknessMm: 16,
@@ -254,27 +406,38 @@ function RunEdges({ rows }: { rows: SceneRow[] }) {
         const hy = sy / 2;
         const hz = sz / 2;
 
-        // Восемь вершин коробки, потом двенадцать её рёбер.
-        const corners: [number, number, number][] = [];
         for (const ox of [-hx, hx]) {
           for (const oy of [-hy, hy]) {
             for (const oz of [-hz, hz]) {
               const x = px + ox;
               const y = py + oy;
               const z = pz + oz;
-              corners.push([x * cos + z * sin + dx, y, -x * sin + z * cos + dz]);
+              points.push([x * cos + z * sin + dx, y, -x * sin + z * cos + dz]);
             }
           }
         }
+      }
+  }
 
-        const edges: [number, number][] = [
-          [0, 1], [2, 3], [4, 5], [6, 7],
-          [0, 2], [1, 3], [4, 6], [5, 7],
-          [0, 4], [1, 5], [2, 6], [3, 7],
-        ];
-        for (const [a, b] of edges) {
-          points.push(...corners[a], ...corners[b]);
-        }
+  return points;
+}
+
+/** Все рёбра всех рядов одним `LineSegments`. */
+function RunEdges({ rows }: { rows: SceneRow[] }) {
+  const geometry = useMemo(() => {
+    const points: number[] = [];
+    const corners = rowCorners(rows);
+
+    // Двенадцать рёбер на каждые восемь вершин коробки.
+    const edges: [number, number][] = [
+      [0, 1], [2, 3], [4, 5], [6, 7],
+      [0, 2], [1, 3], [4, 6], [5, 7],
+      [0, 4], [1, 5], [2, 6], [3, 7],
+    ];
+
+    for (let at = 0; at + 8 <= corners.length; at += 8) {
+      for (const [a, b] of edges) {
+        points.push(...corners[at + a], ...corners[at + b]);
       }
     }
 

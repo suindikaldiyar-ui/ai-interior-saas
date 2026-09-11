@@ -1,6 +1,8 @@
 import {
   APPLIANCE_SLOTS,
+  FRIDGE_MEZZANINE_MIN_MM,
   GEOMETRY,
+  NICHE_CLEARANCE_MM,
   moduleAppliances,
   applianceWidthMm,
   MAX_WIDTH,
@@ -12,7 +14,8 @@ import {
 import { buildUpperRow, fillGap } from './layout';
 import { assertNoOverlap, assertRunFits, widthOverflowMm } from './invariants';
 import { runFingerprint } from './fingerprint';
-import { defaultFill, hingeSide } from './fill';
+import { defaultFill, hingeSide, mezzanineBaseOf } from './fill';
+import { zoneHeightMm } from './zones';
 import { isMechanism, openingRejection } from './opening';
 import { frontConflict } from './frontMaterial';
 import { MAX_APPLIANCE_DEPTH_MM, moduleDepthMm } from './fill';
@@ -536,6 +539,26 @@ export function applyOps({
 
       case 'set_appliance_size': {
         /*
+         * НАД ХОЛОДИЛЬНИКОМ ОБЯЗАНА ВСТАТЬ АНТРЕСОЛЬ.
+         *
+         * Колонна кончается на 300 мм ниже потолка — это место мебельщик
+         * оставляет под кладовку. Холодильник выше этого в ряд не
+         * встаёт, и сказать об этом надо ЧИСЛОМ: «останется 180 мм».
+         */
+        if (op.appliance === 'fridge' && op.size.heightMm) {
+          const top = zoneHeightMm(zone, run.ceilingHeightMm);
+          const left = top - GEOMETRY.base.plinthH - (op.size.heightMm + NICHE_CLEARANCE_MM);
+          if (left < FRIDGE_MEZZANINE_MIN_MM) {
+            warnings.push(
+              `Холодильник ${op.size.heightMm} мм: над ним останется ${Math.max(0, Math.round(left))} мм — ` +
+                `антресоль не встанет, нужна высота от ${FRIDGE_MEZZANINE_MIN_MM}.`,
+            );
+            break;
+          }
+        }
+
+
+        /*
          * ГАБАРИТ ПРИБОРА ВВОДИТСЯ, ЗАЗОРЫ ОСТАЮТСЯ НАШИ.
          *
          * Ширина холодильника бывает 550, 600, 700 и 900 у side-by-side —
@@ -944,6 +967,18 @@ export function applyOps({
         .map((unit) => [unit.id, unit.front!] as const),
     );
 
+    /*
+     * Антресоль над КОЛОННОЙ здесь не пересобирается: её строит
+     * `buildUpperRow` вместе с верхним рядом, и высота у неё своя — то,
+     * что осталось над холодильником. Пересобирать надо только ту, что
+     * лежит на верхнем ряду.
+     */
+    const columnMezzanine = nextRun.upperSegments.filter((segment) =>
+      segment.modules.some(
+        (unit) => unit.section === 'mezzanine' && mezzanineBaseOf(unit, nextRun) !== null,
+      ),
+    );
+
     const spans = nextRun.upperSegments.filter((segment) =>
       segment.modules.some((unit) => unit.section !== 'mezzanine'),
     );
@@ -974,6 +1009,7 @@ export function applyOps({
       ...nextRun.upperSegments.filter((segment) =>
         segment.modules.some((unit) => unit.section !== 'mezzanine'),
       ),
+      ...columnMezzanine,
       ...built,
     ];
 

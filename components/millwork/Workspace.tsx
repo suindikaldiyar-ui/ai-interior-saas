@@ -1964,7 +1964,13 @@ export default function Workspace(props: WorkspaceProps) {
                 * ровно на те 11 px, из-за которых её приходится
                 * прокручивать. Вычитаем полосы, а не подбираем долю.
                 */}
-              <div className="h-[46vh] min-h-[260px] lg:h-[calc(100vh-320px)]">
+              {/*
+                * Полосы над и под сценой стали тоньше (подвал в одну
+                * строку, ракурсы уехали на сцену) — значит и вычитать
+                * надо меньше. Доля вьюпорта тут по-прежнему ни при чём:
+                * считаем от того, что действительно занято.
+                */}
+              <div className="h-[52vh] min-h-[260px] lg:h-[calc(100vh-248px)]">
                 <RunSchematic
                   run={activeRun}
                   sceneRows={sceneRows}
@@ -2686,7 +2692,16 @@ export default function Workspace(props: WorkspaceProps) {
           </p>
         )}
 
-        <div className="mb-3">
+        {/*
+          * ПОДВАЛ В ОДНУ СТРОКУ.
+          *
+          * Сумма и кнопки стояли друг под другом и занимали 137 px из
+          * 820 на планшете — сцена не дотягивала до шести десятых
+          * экрана. Вместе они читаются так же: сумма слева, действие
+          * справа; на узком экране строка честно переносится.
+          */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="min-w-[220px] flex-1">
           <EstimateSheet
             estimate={objectEstimate}
             /* Комплектация одна, поэтому строка итога называет ЗОНУ:
@@ -2699,9 +2714,9 @@ export default function Workspace(props: WorkspaceProps) {
             preliminary={preliminary}
             assumptions={estimateAssumptions}
           />
-        </div>
+          </div>
 
-        <div className="flex gap-2">
+          <div className="flex gap-2">
           <button
             type="button"
             onClick={goBack}
@@ -2723,6 +2738,7 @@ export default function Workspace(props: WorkspaceProps) {
           >
             {nextLabel}
           </button>
+          </div>
         </div>
       </footer>
 

@@ -2,6 +2,7 @@ import {
   APPLIANCE_SLOTS,
   applianceWidthMm,
   CORNER_SIZE_MM,
+  FRIDGE_MEZZANINE_MIN_MM,
   GEOMETRY,
   MIN_WIDTH,
   STANDARD_WIDTHS,
@@ -14,7 +15,7 @@ import { assertNoOverlap, assertRunFits, runWidthSum } from './invariants';
 import { defaultFill, moduleCarcassHeightMm } from './fill';
 import { CARGO_MAX_MM, CARGO_MIN_MM, applyVariant } from './moduleVariants';
 import { SECTION_SPECS, sectionSpec } from './sections';
-import { isSectionZone, zoneProfile } from './zones';
+import { isSectionZone, zoneHeightMm, zoneProfile } from './zones';
 import { runFingerprint } from './fingerprint';
 import type {
   ApplianceColumn,
@@ -1162,7 +1163,56 @@ export function buildUpperRow(
     }
   }
 
+  /*
+   * НАД КОЛОННОЙ ХОЛОДИЛЬНИКА — АНТРЕСОЛЬ, А НЕ ПУСТОТА.
+   *
+   * Фактическая высота холодильника всегда меньше паспортной, и мебельщик
+   * оставляет над ним кладовку. Место над колонной верхний ряд занять не
+   * может — оно заблокировано ею же, — поэтому антресоль встаёт своим
+   * сегментом ровно по ширине колонны.
+   *
+   * Это настоящий модуль: у него есть корпус, фасад и детали в раскрое.
+   * Пустое место в смете не стоит ничего, а кладовка стоит.
+   */
+  for (const unit of baseModules) {
+    if (unit.appliance !== 'fridge') continue;
+
+    const top = GEOMETRY.base.plinthH + moduleCarcassHeightMm(unit, shell);
+    const room = zoneHeightMm(req.zone, ceilingHeightMm) - top;
+    if (room < FRIDGE_MEZZANINE_MIN_MM) continue;
+
+    const mezzanine = makeModule('upper', unit.widthMm, unit.offsetMm);
+    mezzanine.id = `mezz-${unit.offsetMm}`;
+    mezzanine.section = 'mezzanine';
+    mezzanine.label = 'Антресоль над холодильником';
+    mezzanine.frontType = 'door';
+    mezzanine.doorCount = 1;
+    mezzanine.drawerCount = 0;
+    if (unit.front) mezzanine.front = unit.front;
+
+    segments.push({
+      fromMm: unit.offsetMm,
+      toMm: unit.offsetMm + unit.widthMm,
+      modules: [mezzanine],
+    });
+  }
+
   return segments;
+}
+
+/**
+ * Сколько места остаётся над колонной холодильника.
+ *
+ * Меньше `FRIDGE_MEZZANINE_MIN_MM` — антресоль не встанет, и об этом
+ * говорят числом, а не молчанием.
+ */
+export function fridgeRoomMm(
+  unit: Module,
+  run: Parameters<typeof moduleCarcassHeightMm>[1],
+): number | null {
+  if (unit.appliance !== 'fridge') return null;
+  const top = GEOMETRY.base.plinthH + moduleCarcassHeightMm(unit, run);
+  return zoneHeightMm(run.zone, run.ceilingHeightMm) - top;
 }
 
 /* ─────────────────────────  Помощь интерфейсу  ───────────────────────── */

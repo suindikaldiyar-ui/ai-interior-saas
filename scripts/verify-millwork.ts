@@ -106,10 +106,20 @@ import { frontOf } from '../lib/millwork/frontMaterial';
 import { compositionOf, mergeEstimates } from '../lib/millwork/walls';
 import type { MillworkState } from '../lib/projects';
 import type { CatalogEntryFull } from '../types/catalog';
-import { bearsCountertop, moduleDepthMm, upperBottomFor } from '../lib/millwork/fill';
+import {
+  bearsCountertop,
+  mezzanineBaseOf,
+  moduleDepthMm,
+  upperBottomFor,
+} from '../lib/millwork/fill';
 import { openingOf, openingRejection } from '../lib/millwork/opening';
-import { openingAssumptions } from '../lib/millwork/warnings';
-import { standsOnFloor } from '../lib/millwork/modules';
+import { ovenReachMm } from '../lib/millwork/fill';
+import { ergonomicWarnings, openingAssumptions } from '../lib/millwork/warnings';
+import {
+  APPLIANCE_COLUMN,
+  FRIDGE_MEZZANINE_MIN_MM,
+  standsOnFloor,
+} from '../lib/millwork/modules';
 import { FRAME_WIDTH_MM, frontConflict } from '../lib/millwork/frontMaterial';
 import {
   RUN_DESIGNS,
@@ -579,7 +589,17 @@ console.log('\nВерхний ряд');
   const tallSpans = run.modules
     .filter((m) => m.kind === 'tall')
     .map((m) => ({ from: m.offsetMm, to: m.offsetMm + m.widthMm }));
-  const overTall = run.upperSegments.some((s) =>
+
+  /*
+   * Антресоль над колонной — НЕ верхний ряд. Она стоит на крыше пенала,
+   * над ним, и занимать его объём не может по построению: её низ это его
+   * верх. Верхний ряд действительно над пеналом не строится, и проверять
+   * надо именно его.
+   */
+  const upperRowSegments = run.upperSegments.filter((seg) =>
+    seg.modules.some((unit) => unit.section !== 'mezzanine'),
+  );
+  const overTall = upperRowSegments.some((s) =>
     tallSpans.some((t) => s.fromMm < t.to && s.toMm > t.from),
   );
   check(
@@ -605,10 +625,13 @@ console.log('\nВерхний ряд');
     heightMm: 300,
   };
   const solid = buildRun({ ...baseInput, openings: [highWindow] });
+  const solidRow = solid.upperSegments.filter((seg) =>
+    seg.modules.some((unit) => unit.section !== 'mezzanine'),
+  );
   check(
     'окно выше шкафов ряд не разрывает',
-    solid.upperSegments.length === 1,
-    `участков: ${solid.upperSegments.length}`,
+    solidRow.length === 1,
+    `участков: ${solidRow.length}`,
   );
 
   const noUpper = buildRun({
@@ -3625,8 +3648,15 @@ console.log('\nМодули не пересекаются по объёму');
 
   check('в ряду есть пеналы во всю высоту', tall.length > 0, `${tall.length} шт.`);
 
-  const overTall = uppers.filter((u) =>
-    tall.some((t) => Math.min(t.offsetMm + t.widthMm, u.offsetMm + u.widthMm) - Math.max(t.offsetMm, u.offsetMm) > 1),
+  const overTall = uppers.filter(
+    (u) =>
+      u.section !== 'mezzanine' &&
+      tall.some(
+        (t) =>
+          Math.min(t.offsetMm + t.widthMm, u.offsetMm + u.widthMm) -
+            Math.max(t.offsetMm, u.offsetMm) >
+          1,
+      ),
   );
   check(
     'верхний ряд разорван на пеналах, как и на окне',
@@ -4966,16 +4996,34 @@ console.log('\nМодуль с техникой — тоже мебель');
     );
 
     const tall = toCeiling.modules.filter((unit) => unit.kind === 'tall');
+    const topOf = (unit: Module) =>
+      GEOMETRY.base.plinthH + moduleCarcassHeightMm(unit, toCeiling);
+
+    /*
+     * «До потолка» поднимает пеналы — КРОМЕ колонны холодильника. Над ней
+     * мебельщик всегда оставляет кладовку: фактическая высота холодильника
+     * меньше паспортной, а до самого потолка всё равно не дотянуться.
+     * Место это не пропадает — оно становится антресолью.
+     */
     check(
       `и пеналы при ${ceilingHeightMm} подняты вместе с рядом`,
       tall.length > 0 &&
-        tall.every(
-          (unit) =>
-            GEOMETRY.base.plinthH + moduleCarcassHeightMm(unit, toCeiling) === ceilingHeightMm,
+        tall.every((unit) =>
+          unit.appliance === 'fridge'
+            ? topOf(unit) === ceilingHeightMm - FRIDGE_MEZZANINE_MIN_MM
+            : topOf(unit) === ceilingHeightMm,
         ),
-      tall
-        .map((unit) => GEOMETRY.base.plinthH + moduleCarcassHeightMm(unit, toCeiling))
-        .join(', '),
+      tall.map((unit) => `${unit.appliance ?? unit.kind} ${topOf(unit)}`).join(', '),
+    );
+    check(
+      `и над холодильником при ${ceilingHeightMm} стоит антресоль`,
+      toCeiling.upperSegments
+        .flatMap((segment) => segment.modules)
+        .some(
+          (unit) =>
+            unit.section === 'mezzanine' &&
+            moduleCarcassHeightMm(unit, toCeiling) >= FRIDGE_MEZZANINE_MIN_MM,
+        ),
     );
     check(
       `и ряд при ${ceilingHeightMm} не пересекается сам с собой`,
@@ -4993,11 +5041,21 @@ console.log('\nМодуль с техникой — тоже мебель');
       lockedOptions: ['upperToCeiling'],
     },
   });
-  check(
-    'без опции ряд до потолка не тянется',
-    highest(standard) < 3000,
-    `верх ${highest(standard)}`,
+  /*
+   * Меряем ВЕРХНИЙ РЯД. Антресоль над холодильником доходит до потолка
+   * всегда — это кладовка, а не «кухня до потолка»: она занимает то, что
+   * осталось над колонной, и опция к ней отношения не имеет.
+   */
+  const rowTop = Math.max(
+    ...standard.modules.map(
+      (unit) => GEOMETRY.base.plinthH + moduleCarcassHeightMm(unit, standard),
+    ),
+    ...standard.upperSegments
+      .flatMap((segment) => segment.modules)
+      .filter((unit) => unit.section !== 'mezzanine')
+      .map((unit) => upperBottomFor(unit, standard) + moduleCarcassHeightMm(unit, standard)),
   );
+  check('без опции ряд до потолка не тянется', rowTop < 3000, `верх ряда ${rowTop}`);
 
   /*
    * И стратегия комплектации его не перебивает. Это ловушка 108: замок
@@ -5221,9 +5279,20 @@ console.log('\nМодуль с техникой — тоже мебель');
    * Была признаком верхнего ряда: ни снять отдельно, ни выбрать материал.
    */
   const withMezz = step(run, [{ op: 'set_mezzanine', heightMm: 400 }]);
-  const mezzModules = withMezz.upperSegments
-    .flatMap((segment) => segment.modules)
-    .filter((unit) => unit.section === 'mezzanine');
+
+  /*
+   * Антресолей теперь бывает две: заказанная НАД ВЕРХНИМ РЯДОМ и
+   * обязательная НАД КОЛОННОЙ холодильника. Опора у них разная, и высота
+   * тоже: у первой своя, у второй — остаток над колонной.
+   */
+  const overRow = (r: Run) =>
+    r.upperSegments
+      .flatMap((segment) => segment.modules)
+      .filter((unit) => unit.section === 'mezzanine' && mezzanineBaseOf(unit, r) === null);
+  const rowModules = (r: Run) =>
+    r.upperSegments.flatMap((segment) => segment.modules).filter((u) => u.section !== 'mezzanine');
+
+  const mezzModules = overRow(withMezz);
 
   check('антресоль добавляется отдельной позицией', mezzModules.length > 0, `${mezzModules.length} шт.`);
   check(
@@ -5233,10 +5302,8 @@ console.log('\nМодуль с техникой — тоже мебель');
   );
   check(
     'верхний ряд при этом остаётся на месте',
-    withMezz.upperSegments
-      .flatMap((segment) => segment.modules)
-      .filter((unit) => unit.section !== 'mezzanine').length ===
-      run.upperSegments.flatMap((segment) => segment.modules).length,
+    rowModules(withMezz).length === rowModules(run).length,
+    `${rowModules(run).length} → ${rowModules(withMezz).length}`,
   );
   check('и ничего не пересекается', moduleOverlaps(withMezz).length === 0);
   check(
@@ -5273,11 +5340,14 @@ console.log('\nМодуль с техникой — тоже мебель');
   const withoutMezz = step(withMezz, [{ op: 'set_mezzanine', heightMm: null }]);
   check(
     'и снимается отдельно от верхнего ряда',
+    overRow(withoutMezz).length === 0 &&
+      rowModules(withoutMezz).length === rowModules(run).length,
+  );
+  check(
+    'а кладовка над холодильником остаётся: она не выбор, а правило',
     withoutMezz.upperSegments
       .flatMap((segment) => segment.modules)
-      .filter((unit) => unit.section === 'mezzanine').length === 0 &&
-      withoutMezz.upperSegments.flatMap((segment) => segment.modules).length ===
-        run.upperSegments.flatMap((segment) => segment.modules).length,
+      .some((unit) => unit.section === 'mezzanine'),
   );
   check(
     'высота антресоли имеет границы',
@@ -6222,6 +6292,163 @@ console.log('\nНаправление открывания считает фур
     'и колонна её на себе не несёт',
     !run.modules.filter((m) => m.kind === 'tall').some((m) => bearsCountertop(m, run)),
     `пеналов ${run.modules.filter((m) => m.kind === 'tall').length}`,
+  );
+}
+
+
+/* ───────────────────  Правила мебельщика: холодильник и колонна  ─────────────────── */
+
+console.log('\nПравила мебельщика держит геометрия');
+{
+  const run = buildRun(baseInput);
+  const fridge = run.modules.find((unit) => unit.appliance === 'fridge')!;
+  const above = run.upperSegments
+    .flatMap((segment) => segment.modules)
+    .filter((unit) => unit.section === 'mezzanine' && mezzanineBaseOf(unit, run) !== null);
+
+  check('в ряду есть колонна холодильника', Boolean(fridge), fridge?.label);
+
+  /*
+   * НАД ХОЛОДИЛЬНИКОМ ВСЕГДА ОСТАЁТСЯ МЕСТО, И ОНО — МОДУЛЬ.
+   *
+   * Пенал до потолка не делают: фактическая высота холодильника меньше
+   * паспортной, а до верха всё равно не дотянуться. Место становится
+   * кладовкой — значит у него есть корпус, фасад и детали в раскрое.
+   */
+  check(
+    'над холодильником стоит антресоль, а не пустота',
+    above.length === 1,
+    above.map((unit) => unit.label).join(', ') || 'нет',
+  );
+  check(
+    'и она не ниже 300 мм',
+    above.length === 1 && moduleCarcassHeightMm(above[0], run) >= FRIDGE_MEZZANINE_MIN_MM,
+    above[0] ? `${moduleCarcassHeightMm(above[0], run)} мм` : '',
+  );
+  check(
+    'она стоит РОВНО на крыше колонны',
+    above.length === 1 &&
+      upperBottomFor(above[0], run) ===
+        GEOMETRY.base.plinthH + moduleCarcassHeightMm(fridge, run),
+    above[0] ? `низ ${upperBottomFor(above[0], run)}` : '',
+  );
+  check(
+    'и по ширине совпадает с колонной',
+    above.length === 1 &&
+      above[0].offsetMm === fridge.offsetMm &&
+      above[0].widthMm === fridge.widthMm,
+  );
+  check('и ничего не пересекает', moduleOverlaps(run).length === 0);
+
+  /* Она в раскрое отдельными деталями и в смете отдельными деньгами. */
+  const parts = buildPanels({ run }).filter((panel) => panel.moduleId === above[0]?.id);
+  check(
+    'у неё свои детали в раскрое',
+    parts.length >= 4 && parts.some((panel) => panel.name.includes('Фасад')),
+    parts.map((panel) => panel.name).join(', '),
+  );
+
+  const withoutRule = buildRun({
+    ...baseInput,
+    requirements: { ...REQ, appliances: REQ.appliances.filter((a) => a !== 'fridge') },
+  });
+  check(
+    'без холодильника такой антресоли нет вовсе',
+    withoutRule.upperSegments
+      .flatMap((segment) => segment.modules)
+      .every((unit) => unit.section !== 'mezzanine'),
+  );
+
+  /*
+   * ОТКАЗ НАЗЫВАЕТ ЧИСЛО.
+   *
+   * Холодильник выше того, что оставляет правило, в ряд не встаёт — и
+   * сказать об этом надо миллиметрами, а не «не помещается».
+   */
+  const tooTall = applyOps({
+    run,
+    requirements: REQ,
+    openings: OPENINGS,
+    ops: [
+      {
+        op: 'set_appliance_size',
+        moduleId: fridge.id,
+        appliance: 'fridge',
+        size: { widthMm: 600, heightMm: 2450 },
+      },
+    ],
+  });
+  check(
+    'слишком высокий холодильник отклоняется',
+    (tooTall.warnings ?? []).some((w) => /останется \d+ мм/.test(w)),
+    (tooTall.warnings ?? [])[0],
+  );
+  check(
+    'и раскладка от отказа не меняется',
+    tooTall.fingerprint === run.fingerprint,
+  );
+
+  /*
+   * ДУХОВКА И СВЧ ДРУГ НАД ДРУГОМ — НЕ ВЫШЕ ПОЯСА.
+   *
+   * Предупреждение ЖЁЛТОЕ: раскладка применяется. Замерщик главнее
+   * алгоритма, но последствие должен знать — это ожог, а не неудобство.
+   */
+  const columnRun = buildRun({
+    ...baseInput,
+    requirements: { ...REQ, appliances: [...REQ.appliances, 'microwave' as const] },
+  });
+  const column = columnRun.modules.find((unit) => unit.column);
+  check('в ряду есть колонна из двух приборов', Boolean(column), column?.label);
+
+  const reach = column ? ovenReachMm(column, columnRun) : null;
+  check(
+    'верх духовки считается от пола',
+    reach !== null && reach > 0,
+    `${reach} мм`,
+  );
+  check(
+    'микроволновка сверху духовку не поднимает: так их и собирают',
+    reach !== null && reach <= APPLIANCE_COLUMN.maxReachMm,
+    `${reach} мм при пределе ${APPLIANCE_COLUMN.maxReachMm}`,
+  );
+
+  const high = applyOps({
+    run: columnRun,
+    requirements: REQ,
+    openings: OPENINGS,
+    ops: [
+      {
+        op: 'set_appliance_size',
+        moduleId: column!.id,
+        appliance: 'oven',
+        size: { widthMm: 600, heightMm: 900 },
+      },
+    ],
+  });
+  const highColumn = high.modules.find((unit) => unit.column)!;
+  const highReach = ovenReachMm(highColumn, high)!;
+
+  check(
+    'высокая духовка поднимает свой верх выше предела',
+    highReach > APPLIANCE_COLUMN.maxReachMm,
+    `${Math.round(highReach)} мм при пределе ${APPLIANCE_COLUMN.maxReachMm}`,
+  );
+  check(
+    'раскладка при этом ПРИМЕНЯЕТСЯ: замерщик главнее',
+    high.fingerprint !== columnRun.fingerprint,
+    `${columnRun.fingerprint} → ${high.fingerprint}`,
+  );
+
+  const said = ergonomicWarnings(high);
+  check(
+    'и предупреждение называет последствие, а не факт',
+    said.some((w) => w.severity === 'clarify' && w.message.includes('противень')),
+    said[0]?.message,
+  );
+  check(
+    'на обычной колонне этого предупреждения нет',
+    !ergonomicWarnings(columnRun).some((w) => w.message.includes('противень')),
   );
 }
 

@@ -340,7 +340,18 @@ export default function Cabinet3D({
     return entry ? { entry } : null;
   }, [selectedModuleId, modules, uppers]);
 
-  const hasCountertop = zone.hasCountertop;
+  /*
+   * ПУСТОЙ РЯД НЕ РИСУЕТ НИЧЕГО.
+   *
+   * До выбора компоновки в сцене стояли две плоские панели и каркас:
+   * столешница и фартук на мебель, которой ещё нет. Клиент видел «что-то
+   * недогрузилось», а замерщик — обещание, которого никто не давал.
+   * Пустая стена — законное состояние (слой 29), и говорит о себе она
+   * словами, а не случайной геометрией.
+   */
+  const assembled =
+    run.modules.length > 0 || run.upperSegments.some((segment) => segment.modules.length > 0);
+  const hasCountertop = zone.hasCountertop && assembled;
   const counterTopY = GEOMETRY.base.plinthH + GEOMETRY.base.carcassH;
 
   /*
@@ -377,14 +388,20 @@ export default function Cabinet3D({
         * Цоколь: одна планка на весь ряд, утопленная на 50 мм и темнее
         * корпуса. Это и даёт нижнюю тень, из-за которой мебель стоит на
         * полу, а не лежит на нём.
+        *
+        * Под несобранным рядом его нет: цоколь без мебели — это планка
+        * поперёк пустой стены, та самая «случайная геометрия», из-за
+        * которой пустая сцена читалась как недогруженная.
         */}
-      <mesh
-        geometry={parts.box}
-        material={parts.plinth}
-        position={[lengthM / 2, plinthM / 2, -depthM / 2 - plinthSetbackM / 2]}
-        scale={[lengthM, plinthM, depthM - plinthSetbackM]}
-        receiveShadow
-      />
+      {assembled && (
+        <mesh
+          geometry={parts.box}
+          material={parts.plinth}
+          position={[lengthM / 2, plinthM / 2, -depthM / 2 - plinthSetbackM / 2]}
+          scale={[lengthM, plinthM, depthM - plinthSetbackM]}
+          receiveShadow
+        />
+      )}
 
       {/*
         * Четыре пачки: корпус, фасады, металл, техника. Всё, что стоит
