@@ -248,6 +248,17 @@ export default function Workspace(props: WorkspaceProps) {
   const [sceneNotice, setSceneNotice] = useState<string | null>(null);
 
   /*
+   * КАКОЙ ВИД ПОКАЗАН И СПРЯТАНА ЛИ ПАНЕЛЬ.
+   *
+   * Панель уезжает в 3D и возвращается кнопкой. Два поля, а не одно:
+   * «показан 3D» — факт вида, «панель спрятана» — решение человека, и
+   * вернув её однажды, он не должен возвращать её на каждом переключении.
+   */
+  const [schematicView, setSchematicView] = useState<'front' | 'plan' | 'scene'>('front');
+  const [panelHidden, setPanelHidden] = useState(true);
+  const wideScene = schematicView === 'scene' && panelHidden;
+
+  /*
    * Первый шаг — тот, где работа ещё не сделана: незавершённый замер ведёт
    * на замер, невыбранный шаблон — на шаблон, всё остальное — на состав.
    */
@@ -1942,7 +1953,25 @@ export default function Workspace(props: WorkspaceProps) {
           * Чертёж сюда НЕ переехал: он для цеха, и живёт на «Результате».
           */}
         {step === 'studio' && (
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px]" data-studio>
+          /*
+            * 3D ЗАНИМАЕТ ВЕСЬ ЭКРАН.
+            *
+            * В 3D мебель смотрят, а не правят списком: панель рядом
+            * отнимала треть ширины, и гарнитур выходил мелким. На схеме и
+            * плане панель остаётся — там работают с составом.
+            *
+            * Панель не размонтируется, а прячется: её состояние (выбранный
+            * модуль, открытые карточки) обязано пережить переключение вида.
+            */
+          <div
+            className={
+              wideScene
+                ? 'grid gap-4'
+                : 'grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px]'
+            }
+            data-studio
+            data-wide-scene={wideScene ? '1' : '0'}
+          >
             {/*
               * СЦЕНА ВИДНА ЦЕЛИКОМ И СРАЗУ.
               *
@@ -1955,6 +1984,7 @@ export default function Workspace(props: WorkspaceProps) {
               className="lg:sticky lg:top-4 lg:self-start"
               data-studio-scene
             >
+
               {/*
                 * ВЫСОТА СЦЕНЫ — ОТ СВОБОДНОГО МЕСТА, А НЕ ДОЛЯ ВЬЮПОРТА.
                 *
@@ -1972,6 +2002,15 @@ export default function Workspace(props: WorkspaceProps) {
                 */}
               <div className="h-[52vh] min-h-[260px] lg:h-[calc(100vh-248px)]">
                 <RunSchematic
+                  onViewChange={setSchematicView}
+                  /*
+                   * Панель прячется и возвращается ОДНОЙ кнопкой, и стоит
+                   * она в полосе сцены: своей строкой она отнимала у сцены
+                   * полсотни пикселей — ровно тех, из-за которых мебель
+                   * уезжала под подвал.
+                   */
+                  panelHidden={panelHidden}
+                  onTogglePanel={() => setPanelHidden((on) => !on)}
                   run={activeRun}
                   sceneRows={sceneRows}
                   production={props.production}
@@ -2002,7 +2041,7 @@ export default function Workspace(props: WorkspaceProps) {
             </div>
 
             {/* ── Панель выбора ── */}
-            <div className="min-w-0">
+            <div className={`min-w-0 ${wideScene ? 'hidden' : ''}`} data-studio-panel>
               {/*
                 * ФОРМА ГАРНИТУРА И СТЕНЫ.
                 *

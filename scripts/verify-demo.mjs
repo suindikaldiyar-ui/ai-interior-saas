@@ -2019,6 +2019,15 @@ try {
       (await cad.locator('[data-front-material]').count()) > 0,
     );
 
+    /*
+     * Панель в 3D спрятана намеренно: мебель смотрят во всю ширину.
+     * Правят её, вернув панель, — так же, как это делает человек.
+     */
+    if ((await cad.locator('[data-studio-panel].hidden').count()) > 0) {
+      await cad.locator('[data-panel-toggle]').click();
+      await sleep(1200);
+    }
+
     /* 4. Смена материала меняет картинку сцены. */
     const beforeMaterial = await shot();
     const swatch = cad.locator('[data-swatch="veneer_solid"]').first();
@@ -2083,6 +2092,234 @@ try {
 
 
 
+
+
+  /* ── Сцена выглядит мебелью, а не каркасом ── */
+
+  {
+    const lk = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await lk.goto(`${BASE}/demo`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+    await until(async () => (await lk.getByRole('button', { name: /Конфигуратор/ }).count()) > 0);
+    await lk.getByRole('button', { name: /Конфигуратор/ }).first().click();
+    await sleep(2200);
+    await lk.locator('[data-schematic-tab="scene"]').click();
+    await sleep(3200);
+
+    const look = () => lk.evaluate(() => (window.__mwCadLook ? window.__mwCadLook() : null));
+    const state = () => lk.evaluate(() => (window.__mwCadState ? window.__mwCadState() : null));
+    const scene = () => lk.evaluate(() => (window.__mwScene ? window.__mwScene() : null));
+
+    /*
+     * 1. «СКВОЗЬ МЕБЕЛЬ НЕ ВИДНО» — ЭТО ЧИСЛО, А НЕ ВПЕЧАТЛЕНИЕ.
+     *
+     * Прозрачных материалов у мебели быть не должно ни одного: именно
+     * сквозь них видно стену и соседние модули, и ряд читается каркасом.
+     */
+    const fronts = await look();
+    check(
+      'в режиме «Фасады» прозрачных материалов у мебели нет',
+      Boolean(fronts) && fronts.transparent === 0,
+      fronts ? `непрозрачных ${fronts.opaque}, прозрачных ${fronts.transparent}` : '',
+    );
+
+    /*
+     * Рёбра лежат НА мебели. Здесь была самая дорогая двойная формула:
+     * меши ставились по комнате, рёбра по нулю, и рядом с гарнитуром
+     * висел проволочный двойник в двух метрах.
+     */
+    check(
+      'рёбра совпадают с мебелью, а не висят рядом',
+      Boolean(fronts) && fronts.edgeDrift !== null && fronts.edgeDrift < 0.01,
+      fronts ? `расхождение ${fronts.edgeDrift} м` : '',
+    );
+
+    /* 2. Переключатель режима меняет разметку сцены. */
+    check('переключатель «Фасады / Каркас» есть', (await lk.locator('[data-scene-mode]').count()) === 1);
+    check(
+      'и по умолчанию показаны фасады',
+      (await lk.locator('[data-scene-mode]').getAttribute('data-scene-mode')) === 'fronts',
+    );
+
+    await lk.locator('[data-scene-mode]').click();
+    await sleep(2000);
+    const frame = await look();
+
+    check(
+      '«Каркас» делает корпус просвечивающим',
+      Boolean(frame) && frame.transparent > 0,
+      frame ? `прозрачных ${frame.transparent}` : '',
+    );
+    check(
+      'и показывает рёбра внутренних деталей',
+      Boolean(frame) && frame.edgePoints > fronts.edgePoints,
+      `точек рёбер ${fronts?.edgePoints} → ${frame?.edgePoints}`,
+    );
+
+    await lk.locator('[data-scene-mode]').click();
+    await sleep(1600);
+    check(
+      'возврат в «Фасады» снова закрывает мебель',
+      (await look())?.transparent === 0,
+    );
+
+    /* 3. 3D занимает весь экран, панель возвращается кнопкой. */
+    const width = () =>
+      lk.evaluate(() => {
+        const c = document.querySelector('[data-scene] canvas');
+        return c ? c.getBoundingClientRect().width / window.innerWidth : 0;
+      });
+
+    check(
+      '«3D» разворачивает сцену на всю ширину',
+      (await width()) >= 0.9,
+      `${Math.round((await width()) * 100)}% ширины`,
+    );
+    check(
+      'панель при этом спрятана, а не размонтирована',
+      (await lk.locator('[data-studio-panel]').count()) === 1 &&
+        (await lk.locator('[data-studio-panel].hidden').count()) === 1,
+    );
+
+    await lk.locator('[data-panel-toggle]').click();
+    await sleep(1200);
+    check(
+      'кнопка возвращает панель',
+      (await lk.locator('[data-studio-panel].hidden').count()) === 0 && (await width()) < 0.9,
+      `${Math.round((await width()) * 100)}% ширины`,
+    );
+
+    /*
+     * 4. ЦВЕТ ИЗ ПАЛИТРЫ ОРГАНИЗАЦИИ ВИДЕН В СЦЕНЕ.
+     *
+     * Правка идёт так же, как рукой: панель возвращается кнопкой, модуль
+     * выбирается на схеме, цвет — в палитре компании. Потом снова 3D — и
+     * фасад обязан быть ЭТИМ цветом, а не типовым.
+     */
+    const beforeColor = await state();
+
+    if ((await lk.locator('[data-studio-panel].hidden').count()) > 0) {
+      await lk.locator('[data-panel-toggle]').click();
+      await sleep(1000);
+    }
+    await lk.locator('[data-schematic-tab="front"]').click();
+    await sleep(1200);
+
+    const target = lk.locator('[data-schematic] [data-module-id^="base-"]').first();
+    if ((await target.count()) > 0) {
+      await target.scrollIntoViewIfNeeded();
+      await target.click({ force: true });
+      await sleep(1000);
+    }
+
+    const palette = lk.locator('[data-palette-color]');
+    const hasPalette = (await palette.count()) > 0;
+    if (hasPalette) {
+      await palette.first().click();
+      await sleep(1400);
+    }
+
+    check(
+      'у организации есть своя палитра цветов',
+      hasPalette || (await lk.locator('[data-palette-empty]').count()) > 0,
+      hasPalette ? `${await palette.count()} цветов` : 'палитра пуста, и это сказано словами',
+    );
+
+    /* 5. Холодильник: встроенный и отдельностоящий — разная мебель. */
+    const fridge = lk.locator('[data-schematic] [data-module-id^="tall-"]').first();
+    let fridgeSwitched = false;
+    if ((await fridge.count()) > 0) {
+      await fridge.scrollIntoViewIfNeeded();
+      await fridge.click({ force: true });
+      await sleep(900);
+      const freeButton = lk.getByRole('button', { name: 'Отдельностоящий' }).first();
+      if ((await freeButton.count()) > 0) {
+        await freeButton.click();
+        await sleep(1600);
+        fridgeSwitched = true;
+      }
+    }
+
+    await lk.locator('[data-schematic-tab="scene"]').click();
+    await sleep(2600);
+    const afterColor = await state();
+
+    if (hasPalette) {
+      check(
+        'цвет из палитры организации доезжает до сцены',
+        Boolean(afterColor) &&
+          afterColor.fronts.join('|') !== beforeColor.fronts.join('|') &&
+          afterColor.fronts.some((key) => /#[0-9a-f]{6}/i.test(key)),
+        afterColor ? afterColor.fronts.join(' · ') : '',
+      );
+    }
+
+    if (fridgeSwitched) {
+      const freeLook = await look();
+      await lk.locator('[data-panel-toggle]').click();
+      await sleep(900);
+      await lk.locator('[data-schematic-tab="front"]').click();
+      await sleep(1200);
+      await fridge.click({ force: true });
+      await sleep(800);
+      await lk.getByRole('button', { name: 'Встроенный' }).first().click();
+      await sleep(1600);
+      await lk.locator('[data-schematic-tab="scene"]').click();
+      await sleep(2600);
+      const builtLook = await look();
+
+      /*
+       * Считать меши тут нельзя: мебель рисуется пачками ПО МАТЕРИАЛУ, и
+       * исчезнувший фасад пачку не убирает. Разница видна в коробках: у
+       * встроенного есть фасад, у отдельностоящего — сам прибор.
+       */
+      check(
+        'встроенный закрыт фасадом, отдельностоящий виден прибором',
+        Boolean(freeLook) &&
+          Boolean(builtLook) &&
+          builtLook.boxes.front > freeLook.boxes.front &&
+          freeLook.boxes.appliance > builtLook.boxes.appliance,
+        `фасадов ${freeLook?.boxes.front} → ${builtLook?.boxes.front}, ` +
+          `приборов ${freeLook?.boxes.appliance} → ${builtLook?.boxes.appliance}`,
+      );
+    }
+
+    /* 6. Прямая, угловая и П-образная рисуются одним кодом. */
+    const straight = await scene();
+
+    // Форма выбирается в панели — значит панель на экране.
+    if ((await lk.locator('[data-studio-panel].hidden').count()) > 0) {
+      await lk.locator('[data-panel-toggle]').click();
+      await sleep(1000);
+    }
+    await lk.locator('[data-shape-kind="corner_l"]').click();
+    await sleep(3000);
+    const corner = await scene();
+    const cornerLook = await look();
+
+    await lk.locator('[data-shape-kind="u_shape"]').click();
+    await sleep(3200);
+    const uShape = await scene();
+    const uLook = await look();
+
+    const stepA = corner.scene.materials - straight.scene.materials;
+    const stepB = uShape.scene.materials - corner.scene.materials;
+    check(
+      'каждая следующая стена добавляет РОВНО столько же, сколько предыдущая',
+      stepA === stepB && stepA > 0,
+      `материалов ${straight.scene.materials} → ${corner.scene.materials} → ${uShape.scene.materials}`,
+    );
+    check(
+      'и у всех форм рёбра лежат на мебели',
+      cornerLook.edgeDrift < 0.01 && uLook.edgeDrift < 0.01,
+      `угловая ${cornerLook.edgeDrift} м, П-образная ${uLook.edgeDrift} м`,
+    );
+    check(
+      'и ни у одной нет прозрачной мебели',
+      cornerLook.transparent === 0 && uLook.transparent === 0,
+    );
+
+    await lk.close();
+  }
 
   /* ── Рабочий экран: группы кнопок, ракурсы, пределы камеры ── */
 
@@ -2158,6 +2395,10 @@ try {
     await sleep(600);
 
     /* 3. П-образная: фронтальный ракурс показывает ОДНУ стену. */
+    if ((await sc.locator('[data-studio-panel].hidden').count()) > 0) {
+      await sc.locator('[data-panel-toggle]').click();
+      await sleep(1000);
+    }
     await sc.locator('[data-shape-kind="u_shape"]').click();
     await sleep(3000);
     await sc.locator('[data-angle="free"]').click();
@@ -2264,6 +2505,10 @@ try {
     );
 
     /* 5. Пустая стена не рисует случайную геометрию. */
+    if ((await sc.locator('[data-studio-panel].hidden').count()) > 0) {
+      await sc.locator('[data-panel-toggle]').click();
+      await sleep(1000);
+    }
     await sc.locator('[data-shape-kind="linear"]').click();
     await sleep(2000);
     /*
@@ -2405,6 +2650,15 @@ try {
 
     const state = () => s3.evaluate(() => (window.__mwCadState ? window.__mwCadState() : null));
     const scene = () => s3.evaluate(() => (window.__mwScene ? window.__mwScene() : null));
+
+    /*
+     * Дизайны и материалы живут в панели, а в 3D она спрятана: мебель
+     * смотрят во всю ширину. Возвращаем её так же, как это делает рука.
+     */
+    if ((await s3.locator('[data-studio-panel].hidden').count()) > 0) {
+      await s3.locator('[data-panel-toggle]').click();
+      await sleep(1200);
+    }
 
     /* 1. Двухцветный дизайн — две пачки, а не одна краска. */
     const beforeDesign = await scene();

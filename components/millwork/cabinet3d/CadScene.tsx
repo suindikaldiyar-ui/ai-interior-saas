@@ -12,6 +12,7 @@ import type { ProductionSettings } from '@/types/catalog';
 import type { Run } from '@/types/millwork';
 import type { SceneView } from '@/lib/cameraFraming';
 import type { OrthoProjection } from './SceneCamera';
+import { useInteriorStore } from '@/store/useInteriorStore';
 
 /**
  * САПР-ВИД, А НЕ ФОТОРЕАЛИЗМ.
@@ -62,6 +63,28 @@ type Props = {
 
 const MM = 1000;
 
+/**
+ * ГДЕ СТОИТ РЯД — ОДНА ФУНКЦИЯ НА СЦЕНУ.
+ *
+ * Здесь была самая дорогая из найденных двойных формул: меши ряда
+ * ставились ПО КОМНАТЕ (`-roomWidth/2`, `-roomDepth/2 + depth`), а рёбра —
+ * по нулю, потому что у первого ряда нет `placement`. Измерено на
+ * демо-кухне: рёбра уезжали на 1.90 м вбок и 0.94 м вперёд, и рядом с
+ * мебелью висел проволочный двойник. Именно он и читается как «сцена
+ * выглядит каркасом».
+ *
+ * Теперь размещение считается ОДИН раз и отдаётся всем: ряд лежит от
+ * −L/2 до +L/2, фасады на z = 0, корпус уходит в −z. Это та же система
+ * координат, в которой слой размеров кладёт цепи на мебель.
+ */
+export function rowPlacement(row: SceneRow): {
+  xM: number;
+  zM: number;
+  rotationYDeg: number;
+} {
+  return row.placement ?? { xM: -row.run.lengthMm / (2 * MM), zM: 0, rotationYDeg: 0 };
+}
+
 export default function CadScene({
   rows,
   production,
@@ -86,6 +109,15 @@ export default function CadScene({
    * камера крутилась вокруг центра комнаты, а не вокруг мебели.
    */
   const bounds = useMemo(() => sceneBounds(rows), [rows]);
+
+  /*
+   * КАРКАС ВМЕСТО ФАСАДОВ — ОДИН ПРИЗНАК НА ВСЮ СЦЕНУ.
+   *
+   * Тот же `cutaway`, по которому `Cabinet3D` снимает фасады: заводить
+   * рядом второй флаг про то же самое значило бы однажды получить
+   * сцену, где фасады сняты, а рёбра думают, что они на месте.
+   */
+  const frame = useInteriorStore((state) => state.cutaway);
 
   return (
     <Canvas
@@ -127,7 +159,7 @@ export default function CadScene({
            */
           camera={i === 0}
           onFraming={i === 0 ? onFraming : undefined}
-          placement={row.placement}
+          placement={rowPlacement(row)}
           selectedModuleId={selectedModuleId}
           onSelectModule={onSelectModule}
           onWidth={i === 0 ? onWidth : undefined}
@@ -142,7 +174,7 @@ export default function CadScene({
         * объектов и столько же вызовов отрисовки. Здесь вершины сложены
         * в один буфер и пересобираются только при смене состава.
         */}
-      <RunEdges rows={rows} />
+      <RunEdges rows={rows} inside={frame} />
 
       {/* Мягкая тень под рядом: она и ставит мебель на пол. */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.001, 0]}>
@@ -241,12 +273,20 @@ function clamp(value: number, min: number, max: number): number {
 function FrameProbe({ rows }: { rows: SceneRow[] }) {
   const gl = useThree((state) => state.gl);
   const camera = useThree((state) => state.camera);
+  const scene = useThree((state) => state.scene);
 
   useEffect(() => {
     const w = window as unknown as {
       __mwCadFrames?: () => number;
       __mwCadState?: () => { fronts: string[]; rows: number; camera: number[] };
       __mwCadFit?: () => { visible: boolean; inFront: number; box: number[] };
+      __mwCadLook?: () => {
+        opaque: number;
+        transparent: number;
+        edgeDrift: number | null;
+        edgePoints: number;
+        boxes: Record<string, number>;
+      };
     };
     w.__mwCadFrames = () => gl.info.render.frame;
 
@@ -309,6 +349,88 @@ function FrameProbe({ rows }: { rows: SceneRow[] }) {
       };
     };
 
+    /*
+     * СКВОЗЬ МЕБЕЛЬ НЕ ВИДНО — ЧИСЛОМ, А НЕ НА ГЛАЗ.
+     *
+     * «Выглядит каркасом» — это впечатление, но у него есть измеримые
+     * причины: прозрачные материалы и рёбра, лежащие не там, где мебель.
+     * Здесь считается и то, и другое: сколько видимых мешей прозрачны и
+     * насколько буфер рёбер совпадает с габаритом мебели.
+     */
+    w.__mwCadLook = () => {
+      let opaque = 0;
+      let transparent = 0;
+      const seen = new Set<string>();
+
+      scene.traverse((object) => {
+        const mesh = object as THREE.Mesh;
+        if (!mesh.isMesh || mesh.visible === false) return;
+        const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        for (const material of materials) {
+          if (!material) continue;
+          const m = material as THREE.Material & { opacity?: number };
+          if (seen.has(m.uuid)) continue;
+          seen.add(m.uuid);
+
+          /*
+           * Тень на полу — не мебель, а зона касания невидима вовсе:
+           * считать их прозрачностью мебели значило бы мерить не то.
+           */
+          if (m.type === 'ShadowMaterial') continue;
+          if ((m.opacity ?? 1) === 0) continue;
+
+          if (m.transparent && (m.opacity ?? 1) < 0.95) transparent += 1;
+          else opaque += 1;
+        }
+      });
+
+      const bounds = sceneBounds(rows);
+      const lines: THREE.LineSegments[] = [];
+      scene.traverse((object) => {
+        const line = object as THREE.LineSegments;
+        if (line.isLineSegments) lines.push(line);
+      });
+
+      const edges = lines[0];
+      const sphere = edges ? edges.geometry.boundingSphere : null;
+      const drift = sphere
+        ? Math.hypot(
+            sphere.center.x - bounds.center[0],
+            sphere.center.y - bounds.center[1],
+            sphere.center.z - bounds.center[2],
+          )
+        : null;
+
+      /*
+       * СКОЛЬКО ЧЕГО НАРИСОВАНО — ПО МАТЕРИАЛАМ.
+       *
+       * Меши считать бесполезно: мебель рисуется пачками по материалу, и
+       * пропавший фасад пачку не убирает. А вот коробок в пачке
+       * становится меньше — это и есть разница между встроенным
+       * холодильником и отдельностоящим.
+       */
+      const tally: Record<string, number> = {};
+      for (const row of rows) {
+        for (const box of runBoxes(row.run, {
+          zoneDepthMm: GEOMETRY.base.depth,
+          thicknessMm: 16,
+          frontThicknessMm: 18,
+          gapMm: 3,
+        })) {
+          tally[box.material] = (tally[box.material] ?? 0) + 1;
+        }
+      }
+
+      return {
+        opaque,
+        transparent,
+        /** На сколько метров буфер рёбер разошёлся с мебелью. */
+        edgeDrift: drift === null ? null : Math.round(drift * 1000) / 1000,
+        edgePoints: edges ? edges.geometry.getAttribute('position').count : 0,
+        boxes: tally,
+      };
+    };
+
     w.__mwCadState = () => ({
       fronts: Array.from(
         new Set(
@@ -329,8 +451,9 @@ function FrameProbe({ rows }: { rows: SceneRow[] }) {
       delete w.__mwCadFrames;
       delete w.__mwCadState;
       delete w.__mwCadFit;
+      delete w.__mwCadLook;
     };
-  }, [gl, camera, rows]);
+  }, [gl, camera, scene, rows]);
 
   return null;
 }
@@ -355,7 +478,7 @@ export function sceneBounds(rows: SceneRow[]): {
   let maxY = -Infinity;
   let maxZ = -Infinity;
 
-  for (const point of rowCorners(rows)) {
+  for (const point of rowCorners(rows, false)) {
     minX = Math.min(minX, point[0]);
     maxX = Math.max(maxX, point[0]);
     minY = Math.min(minY, point[1]);
@@ -381,8 +504,14 @@ export function sceneBounds(rows: SceneRow[]): {
   return { center, radius, empty: false };
 }
 
-/** Вершины всех коробок всех рядов, уже повёрнутые и смещённые. */
-function rowCorners(rows: SceneRow[]): [number, number, number][] {
+/**
+ * Вершины коробок всех рядов, уже повёрнутые и смещённые.
+ *
+ * `inside` — включать ли внутренние детали. В режиме «Фасады» их не
+ * видно за дверью, и рёбра по ним превращают мебель в чертёж; в режиме
+ * «Каркас» они и есть предмет разговора.
+ */
+function rowCorners(rows: SceneRow[], inside = true): [number, number, number][] {
   const points: [number, number, number][] = [];
 
   for (const row of rows) {
@@ -391,13 +520,14 @@ function rowCorners(rows: SceneRow[]): [number, number, number][] {
         thicknessMm: 16,
         frontThicknessMm: 18,
         gapMm: 3,
-      });
+      }).filter((box) => inside || !box.inside);
 
-      const angle = ((row.placement?.rotationYDeg ?? 0) * Math.PI) / 180;
+      const place = rowPlacement(row);
+      const angle = (place.rotationYDeg * Math.PI) / 180;
       const cos = Math.cos(angle);
       const sin = Math.sin(angle);
-      const dx = row.placement?.xM ?? 0;
-      const dz = row.placement?.zM ?? 0;
+      const dx = place.xM;
+      const dz = place.zM;
 
       for (const box of boxes) {
         const [px, py, pz] = box.position;
@@ -422,11 +552,17 @@ function rowCorners(rows: SceneRow[]): [number, number, number][] {
   return points;
 }
 
-/** Все рёбра всех рядов одним `LineSegments`. */
-function RunEdges({ rows }: { rows: SceneRow[] }) {
+/**
+ * Все рёбра всех рядов одним `LineSegments`.
+ *
+ * В режиме «Фасады» — только внешний контур деталей: мебель обязана
+ * читаться мебелью, а не проволокой. В «Каркасе» — всё, включая полки и
+ * короба ящиков: там их и смотрят.
+ */
+function RunEdges({ rows, inside }: { rows: SceneRow[]; inside: boolean }) {
   const geometry = useMemo(() => {
     const points: number[] = [];
-    const corners = rowCorners(rows);
+    const corners = rowCorners(rows, inside);
 
     // Двенадцать рёбер на каждые восемь вершин коробки.
     const edges: [number, number][] = [
@@ -445,7 +581,7 @@ function RunEdges({ rows }: { rows: SceneRow[] }) {
     buffer.setAttribute('position', new THREE.BufferAttribute(new Float32Array(points), 3));
     buffer.computeBoundingSphere();
     return buffer;
-  }, [rows]);
+  }, [rows, inside]);
 
   return (
     <lineSegments geometry={geometry} renderOrder={2}>

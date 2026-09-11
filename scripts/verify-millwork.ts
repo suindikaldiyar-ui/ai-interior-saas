@@ -102,7 +102,8 @@ import {
   paletteFromCatalog,
   typicalColorItem,
 } from '../lib/millwork/palette';
-import { frontOf } from '../lib/millwork/frontMaterial';
+import { frontKey, frontOf } from '../lib/millwork/frontMaterial';
+import { frontSwatch } from '../lib/millwork/frontSwatch';
 import { compositionOf, mergeEstimates } from '../lib/millwork/walls';
 import type { MillworkState } from '../lib/projects';
 import type { CatalogEntryFull } from '../types/catalog';
@@ -146,7 +147,7 @@ import {
   missingRequiredRates,
 } from '../lib/millwork/rates';
 import { axonometryExtentMm, buildAxonometry, project } from '../lib/millwork/axonometry';
-import { carcassBoxes, doorPivot, moduleBoxes } from '../lib/millwork/cabinetBoxes';
+import { carcassBoxes, doorPivot, moduleBoxes, runBoxes } from '../lib/millwork/cabinetBoxes';
 import { DEFAULT_PRODUCTION } from '../types/catalog';
 import type { ZoneKind } from '../types/millwork';
 import { commIssues, layoutIssues, validateRun } from '../lib/millwork/validate';
@@ -6449,6 +6450,230 @@ console.log('\nПравила мебельщика держит геометри
   check(
     'на обычной колонне этого предупреждения нет',
     !ergonomicWarnings(columnRun).some((w) => w.message.includes('противень')),
+  );
+}
+
+
+/* ───────────────────  Холодильник: встройка против отдельностоящего  ─────────────────── */
+
+console.log('\nВстроенный и отдельностоящий холодильник — разная мебель');
+{
+  const builtIn = buildRun(baseInput);
+  const free = buildRun({
+    ...baseInput,
+    requirements: { ...REQ, fridgeType: 'freestanding' },
+  });
+
+  const fridgeOf = (run: Run) => run.modules.find((unit) => unit.appliance === 'fridge')!;
+  const partsOf = (run: Run) =>
+    buildPanels({ run }).filter((panel) => panel.moduleId === fridgeOf(run).id);
+
+  check('встроенный холодильник так и помечен', fridgeOf(builtIn).builtIn === true);
+  check('отдельностоящий — тоже', fridgeOf(free).builtIn === false);
+
+  /*
+   * РАЗНИЦА ДОЛЖНА ДОЕХАТЬ ДО РАСКРОЯ.
+   *
+   * Встроенный закрыт фасадом заподлицо — фасадные детали у него есть.
+   * Отдельностоящий стоит на виду, фасада у него нет вовсе, и пилить его
+   * означало бы отдать в цех деталь, которую выбросят.
+   */
+  const builtInFronts = partsOf(builtIn).filter((panel) => panel.name.includes('Фасад'));
+  const freeFronts = partsOf(free).filter((panel) => panel.name.includes('Фасад'));
+
+  check(
+    'у встроенного есть фасадные детали в раскрое',
+    builtInFronts.length > 0,
+    builtInFronts.map((panel) => `${panel.name} ${panel.lengthMm}×${panel.widthMm}`).join(', '),
+  );
+  check(
+    'у отдельностоящего их нет вовсе',
+    freeFronts.length === 0,
+    `${freeFronts.length} деталей`,
+  );
+  check(
+    'и сцена видит ту же разницу тем же признаком',
+    hasFacade(fridgeOf(builtIn)) && !hasFacade(fridgeOf(free)),
+  );
+
+  const withFronts = buildEstimate(builtIn, 'optimal', DEMO_RATES);
+  const without = buildEstimate(free, 'optimal', DEMO_RATES);
+  check(
+    'и деньги разные: фасад и петли встройки чего-то стоят',
+    withFronts.total > without.total,
+    `${Math.round(without.total)} → ${Math.round(withFronts.total)} ₸`,
+  );
+
+  /*
+   * ОДИН КОД ОТРИСОВКИ НА ВСЕ ФОРМЫ.
+   *
+   * Угол — это два таких же ряда, П — три, и коробки им считает та же
+   * `runBoxes`. Проверяется не «похоже», а совпадением: ряд, поставленный
+   * в угол, даёт ровно те же коробки, что он же сам по себе. Отличается
+   * только место, и место считает ОДНА функция (`rowPlacement`).
+   */
+  const straight = runBoxes(builtIn, {
+    zoneDepthMm: GEOMETRY.base.depth,
+    thicknessMm: 16,
+    frontThicknessMm: 18,
+    gapMm: 3,
+  });
+
+  const corner = buildComposition({
+    kind: 'corner_l',
+    walls: [
+      { id: 'a', lengthMm: DEMO_PROJECT.lengthMm },
+      { id: 'b', lengthMm: 2400 },
+    ],
+    ceilingHeightMm: 2700,
+    requirements: REQ,
+  });
+
+  const cornerFirst = runBoxes(corner.segments[0].run, {
+    zoneDepthMm: GEOMETRY.base.depth,
+    thicknessMm: 16,
+    frontThicknessMm: 18,
+    gapMm: 3,
+  });
+
+  check(
+    'ряд в углу собирается тем же кодом, что прямой',
+    cornerFirst.length > 0 &&
+      cornerFirst.every((box) => box.material !== undefined) &&
+      straight.every((box) => box.material !== undefined),
+    `прямой ${straight.length} коробок, угловой ${cornerFirst.length}`,
+  );
+
+  const second = runBoxes(corner.segments[1].run, {
+    zoneDepthMm: GEOMETRY.base.depth,
+    thicknessMm: 16,
+    frontThicknessMm: 18,
+    gapMm: 3,
+  });
+  const materialsOf = (boxes: typeof straight) =>
+    Array.from(new Set(boxes.map((box) => box.material)));
+  check(
+    'и второй ряд угла — тоже: у него те же материалы коробок',
+    materialsOf(second).length > 0 &&
+      materialsOf(second).every((material) => materialsOf(straight).includes(material)),
+    materialsOf(second).join(', '),
+  );
+
+  /*
+   * ВНУТРЕННОСТИ ПОМЕЧЕНЫ. По этому признаку сцена решает, рисовать ли
+   * по ним рёбра: линии по полкам сквозь закрытый фасад и превращают
+   * мебель в проволоку.
+   */
+  const inside = straight.filter((box) => box.inside);
+  check(
+    'полки и короба ящиков помечены как внутренние',
+    inside.length > 0,
+    `${inside.length} внутренних из ${straight.length}`,
+  );
+  check(
+    'а фасады и столешница — нет',
+    straight.filter((box) => box.material === 'front').every((box) => !box.inside),
+  );
+}
+
+
+/* ───────────────────  Цвет каталога доезжает до сцены  ─────────────────── */
+
+console.log('\nЦвет из палитры организации виден в сцене');
+{
+  /*
+   * Палитра — это ПОЗИЦИИ КАТАЛОГА организации (слой 34). Проверяется не
+   * то, что она читается, а то, что выбранный цвет доезжает до сцены:
+   * между каталогом и фасадом в 3D стоят `frontSwatch` и материалы, и
+   * ровно там однажды разъехались две формулы цвета.
+   */
+  const items: CatalogEntryFull[] = [
+    {
+      id: 'itm-graphite',
+      orgId: 'org',
+      categoryId: 'cat',
+      article: 'MDF-GRAPHITE',
+      name_ru: 'МДФ графит',
+      unit: 'm2',
+      price: 42000,
+      appliesTo: 'zone',
+      meta: { frontBase: 'mdf_enamel', color: '#3A3D40' },
+      assets: [],
+    } as unknown as CatalogEntryFull,
+    {
+      id: 'itm-oak',
+      orgId: 'org',
+      categoryId: 'cat',
+      article: 'MDF-OAK',
+      name_ru: 'МДФ дуб сонома',
+      unit: 'm2',
+      price: 39000,
+      appliesTo: 'zone',
+      meta: { frontBase: 'mdf_enamel', color: '#B79768' },
+      assets: [],
+    } as unknown as CatalogEntryFull,
+  ];
+
+  const palette = paletteFromCatalog(items);
+  check('палитра читается из позиций каталога', palette.length === 2, `${palette.length} цвета`);
+
+  const forBase = paletteFor(palette, 'mdf_enamel');
+  check('и отдаётся по базе фасада', forBase.length === 2, forBase.map((c) => c.name).join(', '));
+
+  const run = buildRun(baseInput);
+  const unit = run.modules.find((m) => m.frontType === 'door')!;
+  const color = forBase[0];
+
+  const painted = applyOps({
+    run,
+    requirements: REQ,
+    openings: OPENINGS,
+    ops: [
+      {
+        op: 'set_front',
+        moduleId: unit.id,
+        front: {
+          base: 'mdf_enamel',
+          construct: 'solid',
+          finish: 'matte',
+          colorHex: color.colorHex,
+          itemId: color.itemId,
+        },
+      },
+    ],
+  });
+
+  const after = painted.modules.find((m) => m.id === unit.id)!;
+  check(
+    'выбор цвета пишет и цвет, и артикул',
+    after.front?.colorHex === color.colorHex && after.front?.itemId === color.itemId,
+    `${after.front?.colorHex} · ${after.front?.itemId}`,
+  );
+
+  /*
+   * ЦВЕТ В СЦЕНЕ — ТОТ ЖЕ, ЧТО В КАТАЛОГЕ.
+   *
+   * Сцена берёт его через `frontSwatch` — ту же функцию, по которой
+   * красится схема. Своя формула здесь однажды уже стояла, и акрил без
+   * артикула выходил на схеме тёмным, а в сцене бежевым (ловушка 307).
+   */
+  check(
+    'и сцена показывает ИМЕННО этот цвет',
+    frontSwatch(frontOf(after)).color.toLowerCase() === color.colorHex.toLowerCase(),
+    `${frontSwatch(frontOf(after)).color} против ${color.colorHex}`,
+  );
+
+  check(
+    'отпечаток от выбора цвета меняется',
+    painted.fingerprint !== run.fingerprint,
+    `${run.fingerprint} → ${painted.fingerprint}`,
+  );
+
+  /* Два декора одного цвета — разные товары, и ключ материала их различает. */
+  const sameColor = { ...forBase[0], itemId: 'itm-other', article: 'MDF-OTHER' };
+  check(
+    'два декора одного цвета различаются артикулом',
+    frontKey({ ...frontOf(after), itemId: sameColor.itemId }) !== frontKey(frontOf(after)),
   );
 }
 

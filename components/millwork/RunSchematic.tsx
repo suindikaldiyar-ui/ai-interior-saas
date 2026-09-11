@@ -70,6 +70,16 @@ type Props = {
   /** Свободная сборка: модуль тянется вдоль ряда. */
   onMoveModule?: (moduleId: string, offsetMm: number) => void;
   changedIds?: string[];
+  /**
+   * Какой вид показан сейчас.
+   *
+   * Рабочее место по нему убирает панель: 3D нужен во всю ширину, а на
+   * схеме и плане панель остаётся на месте.
+   */
+  onViewChange?: (view: 'front' | 'plan' | 'scene') => void;
+  /** Панель рабочего места спрятана: в 3D сцена занимает всё. */
+  panelHidden?: boolean;
+  onTogglePanel?: () => void;
 };
 
 type View = 'front' | 'plan' | 'scene';
@@ -106,6 +116,9 @@ export default function RunSchematic({
   onSelect,
   onMoveModule,
   changedIds,
+  onViewChange,
+  panelHidden,
+  onTogglePanel,
 }: Props) {
   const [view, setView] = useState<View>('front');
   const [angle, setAngle] = useState<Angle>('free');
@@ -150,6 +163,15 @@ export default function RunSchematic({
 
   const setOpenParts = useInteriorStore((state) => state.setOpenParts);
   const openParts = useInteriorStore((state) => state.openParts);
+
+  /*
+   * ФАСАДЫ ИЛИ КАРКАС — ТОТ ЖЕ `cutaway`, ЧТО СНИМАЕТ ФАСАДЫ В СЦЕНЕ.
+   *
+   * Второй флаг про то же самое однажды разошёлся бы с первым: фасады
+   * сняты, а рёбра думают, что на месте.
+   */
+  const frame = useInteriorStore((state) => state.cutaway);
+  const setFrame = useInteriorStore((state) => state.setCutaway);
 
   const allRows = useMemo(
     () => (sceneRows.length > 0 ? sceneRows : [{ run }]),
@@ -229,7 +251,10 @@ export default function RunSchematic({
               type="button"
               data-schematic-tab={key}
               aria-pressed={view === key}
-              onClick={() => setView(key)}
+              onClick={() => {
+              setView(key);
+              onViewChange?.(key);
+            }}
               className={`mw-btn ${view === key ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
             >
               {title}
@@ -260,6 +285,31 @@ export default function RunSchematic({
                 </button>
               </>
             )}
+            {onTogglePanel && (
+              <button
+                type="button"
+                data-panel-toggle
+                aria-pressed={!panelHidden}
+                onClick={onTogglePanel}
+                className="mw-btn mw-btn-ghost"
+              >
+                {panelHidden ? 'Показать панель' : 'Скрыть панель'}
+              </button>
+            )}
+            <button
+              type="button"
+              data-scene-mode={frame ? 'frame' : 'fronts'}
+              aria-pressed={frame}
+              onClick={() => setFrame(!frame)}
+              className={`mw-btn ${frame ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+              title={
+                frame
+                  ? 'Показана начинка: полки, ящики, штанги'
+                  : 'Показана готовая мебель: фасады закрыты'
+              }
+            >
+              {frame ? 'Каркас' : 'Фасады'}
+            </button>
             <button
               type="button"
               data-dims-toggle

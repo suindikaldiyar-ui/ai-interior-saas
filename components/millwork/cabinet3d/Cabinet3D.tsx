@@ -151,6 +151,7 @@ export default function Cabinet3D({
       [facadeColor, counterColor],
     ),
     { facade: facadeLook, counter: counterLook },
+    cutaway,
   );
 
   /*

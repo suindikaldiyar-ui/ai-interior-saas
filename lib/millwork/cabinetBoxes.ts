@@ -28,6 +28,8 @@ const MM = 1000;
 export type BoxDraw = {
   position: [number, number, number];
   scale: [number, number, number];
+  /** Деталь стоит ВНУТРИ корпуса: за закрытым фасадом её не видно. */
+  inside?: boolean;
 };
 
 /** Материал коробки: по нему они собираются в группы отрисовки. */
@@ -71,9 +73,25 @@ export function carcassBoxes(unit: Module, place: ModulePlacement): BoxDraw[] {
   const innerW = Math.max(0.05, widthM - 2 * thicknessM);
   const innerDepth = depthM - thicknessM;
 
-  const at = (dx: number, dy: number, dz: number, w: number, h: number, d: number): BoxDraw => ({
+  const at = (
+    dx: number,
+    dy: number,
+    dz: number,
+    w: number,
+    h: number,
+    d: number,
+    inside = false,
+  ): BoxDraw => ({
     position: [x + dx, y + dy, dz],
     scale: [w, h, d],
+    /*
+     * ДЕТАЛЬ ВНУТРИ ИЛИ СНАРУЖИ.
+     *
+     * Полка и перегородка стоят за закрытым фасадом: их не видно, пока
+     * дверь не открыли. Рёбра по ним рисовать нельзя — именно из-за
+     * внутренних линий сплошная мебель читается каркасом.
+     */
+    inside,
   });
 
   const boxes: BoxDraw[] = [
@@ -94,7 +112,7 @@ export function carcassBoxes(unit: Module, place: ModulePlacement): BoxDraw[] {
    */
   for (const mm of fill?.shelves ?? []) {
     boxes.push(
-      at(widthM / 2, mm / MM, -depthM / 2 - 0.01, innerW - 0.002, thicknessM, innerDepth),
+      at(widthM / 2, mm / MM, -depthM / 2 - 0.01, innerW - 0.002, thicknessM, innerDepth, true),
     );
   }
 
@@ -108,6 +126,7 @@ export function carcassBoxes(unit: Module, place: ModulePlacement): BoxDraw[] {
         thicknessM,
         heightM - 2 * thicknessM,
         innerDepth,
+        true,
       ),
     );
   }
@@ -368,28 +387,32 @@ export function drawerBoxes(
   const inner = Math.max(0.05, widthM - 2 * thickness);
 
   const boxes: PartBox[] = [
-    // Короб: дно, две боковины, задняя стенка.
+    // Короб: дно, две боковины, задняя стенка. Всё это ВНУТРИ модуля.
     {
       material: 'carcass',
       part,
+      inside: true,
       position: [cx, cy - boxH / 2 + thickness / 2, 0],
       scale: [inner, thickness, innerDepth * 0.9],
     },
     {
       material: 'carcass',
       part,
+      inside: true,
       position: [cx - inner / 2, cy, 0],
       scale: [thickness, boxH, innerDepth * 0.9],
     },
     {
       material: 'carcass',
       part,
+      inside: true,
       position: [cx + inner / 2, cy, 0],
       scale: [thickness, boxH, innerDepth * 0.9],
     },
     {
       material: 'carcass',
       part,
+      inside: true,
       position: [cx, cy, -innerDepth * 0.45],
       scale: [inner, boxH, thickness],
     },

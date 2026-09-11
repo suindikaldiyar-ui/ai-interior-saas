@@ -64,6 +64,14 @@ export type CabinetPalette = {
 export function useCabinetParts(
   palette: CabinetPalette,
   looks?: { facade?: SurfaceLook; counter?: SurfaceLook },
+  /**
+   * Режим «Каркас»: корпус просвечивает, видно полки и ящики насквозь.
+   *
+   * В режиме «Фасады» всё непрозрачно — сквозь мебель не должно быть
+   * видно ни стены, ни соседнего модуля, иначе ряд читается проволокой,
+   * а не мебелью.
+   */
+  frame = false,
 ): CabinetParts {
   const parts = useMemo(() => {
     const box = new THREE.BoxGeometry(1, 1, 1);
@@ -77,30 +85,54 @@ export function useCabinetParts(
        * здесь не нужны, их показывает рендер. Поэтому все поверхности
        * матовые и нейтральные, а читается мебель формой и тенями.
        */
+      /*
+       * СМЕЩЕНИЕ ГРАНЕЙ ПОД РЁБРА.
+       *
+       * Рёбра лежат ровно на плоскостях деталей, и без смещения половина
+       * из них проваливается в грань, а половина проступает СКВОЗЬ
+       * соседнюю: получается проволочная сетка поверх сплошной мебели.
+       * `polygonOffset` отодвигает грань на доли пикселя вглубь — линия
+       * рисуется по краю, а не спорит с ним.
+       */
       carcass: new THREE.MeshStandardMaterial({
         color: darken(palette.carcass, 0.08),
         roughness: 0.72,
         metalness: 0,
+        polygonOffset: true,
+        polygonOffsetFactor: 1,
+        polygonOffsetUnits: 1,
       }),
       front: new THREE.MeshStandardMaterial({
         color: palette.facade,
         roughness: 0.72,
         metalness: 0,
+        polygonOffset: true,
+        polygonOffsetFactor: 1,
+        polygonOffsetUnits: 1,
       }),
       counter: new THREE.MeshStandardMaterial({
         color: palette.counter,
         roughness: 0.28,
         metalness: 0.04,
+        polygonOffset: true,
+        polygonOffsetFactor: 1,
+        polygonOffsetUnits: 1,
       }),
       plinth: new THREE.MeshStandardMaterial({
         color: darken(palette.carcass, 0.15),
         roughness: 0.8,
         metalness: 0,
+        polygonOffset: true,
+        polygonOffsetFactor: 1,
+        polygonOffsetUnits: 1,
       }),
       appliance: new THREE.MeshStandardMaterial({
         color: '#2A2C2E',
         roughness: 0.34,
         metalness: 0.5,
+        polygonOffset: true,
+        polygonOffsetFactor: 1,
+        polygonOffsetUnits: 1,
       }),
       metal: new THREE.MeshStandardMaterial({
         color: '#9AA0A6',
@@ -128,6 +160,22 @@ export function useCabinetParts(
     // присвоением ниже.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /*
+   * РЕЖИМ МЕНЯЕТСЯ ПРИСВОЕНИЕМ.
+   *
+   * Новый материал на каждое переключение — это перекомпиляция шейдера
+   * ровно в тот момент, когда клиент смотрит на экран (ловушка 184).
+   * `needsUpdate` обязателен: прозрачность меняет саму программу.
+   */
+  useEffect(() => {
+    for (const material of [parts.carcass, parts.plinth]) {
+      material.transparent = frame;
+      material.opacity = frame ? 0.38 : 1;
+      material.depthWrite = !frame;
+      material.needsUpdate = true;
+    }
+  }, [parts, frame]);
 
   /* ── Цвета: присвоение, а не новый материал ── */
   useEffect(() => {
