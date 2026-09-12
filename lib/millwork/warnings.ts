@@ -1,5 +1,5 @@
 import { APPLIANCE_COLUMN, APPLIANCE_SLOTS, FRIDGE_MEZZANINE_MIN_MM } from './modules';
-import { moduleCarcassHeightMm, ovenReachMm } from './fill';
+import { columnNichesSumMm, moduleCarcassHeightMm } from './fill';
 import { fridgeRoomMm } from './layout';
 import { openingHardware } from './opening';
 import type { CommPoint, LayoutIssue, Opening, Run } from '@/types/millwork';
@@ -307,19 +307,19 @@ export function ergonomicWarnings(run: Run | null): SurveyWarning[] {
 
   for (const unit of run.modules) {
     /*
-     * Духовка в колонне не выше пояса: из поднятой выше горячий
-     * противень не вынуть. Меряется духовка, а не верхняя ниша вообще —
-     * микроволновка над духовкой стоит выше всегда, и так её и собирают.
+     * Духовка и микроволновка друг над другом: вместе не выше 1500 мм.
+     * Правило про ГАБАРИТ ПАРЫ, а не про отметку верха — пара выше
+     * полутора метров в колонну уже не ставится по-человечески.
      */
-    const reach = ovenReachMm(unit, run);
-    if (reach !== null && reach > APPLIANCE_COLUMN.maxReachMm) {
+    const pair = columnNichesSumMm(unit, run);
+    if (pair !== null && pair > APPLIANCE_COLUMN.maxPairMm) {
       found.push({
         id: `column-reach-${unit.id}`,
         severity: 'clarify',
         moduleId: unit.id,
         message:
-          `Верх духовки на ${Math.round(reach)} мм — горячий противень оттуда не вынуть. ` +
-          `Выше ${APPLIANCE_COLUMN.maxReachMm} мм духовку не поднимают.`,
+          `Духовка и микроволновка вместе — ${Math.round(pair)} мм, ` +
+          `это больше ${APPLIANCE_COLUMN.maxPairMm} мм: такую пару в одну колонну не ставят.`,
       });
     }
 

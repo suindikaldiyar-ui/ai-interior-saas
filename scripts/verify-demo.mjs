@@ -2061,7 +2061,7 @@ try {
       `${JSON.parse(beforeAngle || '{}').camera} → ${JSON.parse((await shot()) || '{}').camera}`,
     );
 
-    await cad.locator('[data-angle="free"]').click();
+    await cad.locator('[data-angle="iso"]').click();
     await sleep(1500);
 
     /* 6. Во весь экран. */
@@ -2224,7 +2224,35 @@ try {
       hasPalette ? `${await palette.count()} цветов` : 'палитра пуста, и это сказано словами',
     );
 
+    /*
+     * Цвет смотрим ДО правки состава: смена типа холодильника меняет
+     * ТРЕБОВАНИЯ, а не модуль, и ряд пересобирается целиком — поштучные
+     * правки при этом честно сбрасываются. Приёмка обязана идти в том же
+     * порядке, что и рука: сначала посмотреть, потом менять состав.
+     */
+    await lk.locator('[data-schematic-tab="scene"]').click();
+    await sleep(2600);
+    const afterColor = await state();
+
+    if (hasPalette) {
+      check(
+        'цвет из палитры организации доезжает до сцены',
+        Boolean(afterColor) &&
+          afterColor.fronts.join('|') !== beforeColor.fronts.join('|') &&
+          afterColor.fronts.some((key) => /#[0-9a-f]{6}/i.test(key)),
+        afterColor ? afterColor.fronts.join(' · ') : '',
+      );
+    }
+
     /* 5. Холодильник: встроенный и отдельностоящий — разная мебель. */
+    // Правим там же, где правит рука: панель на экране, вид — схема.
+    if ((await lk.locator('[data-studio-panel].hidden').count()) > 0) {
+      await lk.locator('[data-panel-toggle]').click();
+      await sleep(900);
+    }
+    await lk.locator('[data-schematic-tab="front"]').click();
+    await sleep(1200);
+
     const fridge = lk.locator('[data-schematic] [data-module-id^="tall-"]').first();
     let fridgeSwitched = false;
     if ((await fridge.count()) > 0) {
@@ -2241,17 +2269,6 @@ try {
 
     await lk.locator('[data-schematic-tab="scene"]').click();
     await sleep(2600);
-    const afterColor = await state();
-
-    if (hasPalette) {
-      check(
-        'цвет из палитры организации доезжает до сцены',
-        Boolean(afterColor) &&
-          afterColor.fronts.join('|') !== beforeColor.fronts.join('|') &&
-          afterColor.fronts.some((key) => /#[0-9a-f]{6}/i.test(key)),
-        afterColor ? afterColor.fronts.join(' · ') : '',
-      );
-    }
 
     if (fridgeSwitched) {
       const freeLook = await look();
@@ -2316,6 +2333,42 @@ try {
     check(
       'и ни у одной нет прозрачной мебели',
       cornerLook.transparent === 0 && uLook.transparent === 0,
+    );
+
+    /*
+     * 7. МЕБЕЛЬ СТОИТ В КОМНАТЕ, А НЕ В ПУСТОТЕ.
+     *
+     * Пол и стены — не украшение: ряд ПРИМЫКАЕТ к ним, и потому
+     * читается стоящим. Стены ставятся по рядам, поэтому их столько же,
+     * сколько стен у композиции.
+     */
+    const room = () =>
+      lk.evaluate(() => (window.__mwCadRoom ? window.__mwCadRoom() : null));
+
+    const uRoom = await room();
+    check(
+      'у П-образной в сцене пол и три стены',
+      Boolean(uRoom) && uRoom.floors === 1 && uRoom.walls === 3,
+      uRoom ? `полов ${uRoom.floors}, стен ${uRoom.walls}` : 'комнаты нет',
+    );
+    check(
+      'и ни одна стена не режет мебель',
+      Boolean(uRoom) && uRoom.intersects === 0,
+      uRoom ? `пересечений ${uRoom.intersects}` : '',
+    );
+
+    await lk.locator('[data-shape-kind="linear"]').click();
+    await sleep(2600);
+    const straightRoom = await room();
+    check(
+      'у прямой — пол и одна стена за рядом',
+      Boolean(straightRoom) && straightRoom.floors === 1 && straightRoom.walls === 1,
+      straightRoom ? `полов ${straightRoom.floors}, стен ${straightRoom.walls}` : '',
+    );
+    check(
+      'и она тоже не режет мебель',
+      Boolean(straightRoom) && straightRoom.intersects === 0,
+      straightRoom ? `пересечений ${straightRoom.intersects}` : '',
     );
 
     await lk.close();
@@ -2384,7 +2437,7 @@ try {
       `подписей ${await sc.locator('[data-dim-layer] text').count()}`,
     );
 
-    await sc.locator('[data-angle="free"]').click();
+    await sc.locator('[data-angle="iso"]').click();
     await sleep(1600);
     check(
       'на перспективе слой не показывается даже включённым',
@@ -2401,7 +2454,7 @@ try {
     }
     await sc.locator('[data-shape-kind="u_shape"]').click();
     await sleep(3000);
-    await sc.locator('[data-angle="free"]').click();
+    await sc.locator('[data-angle="iso"]').click();
     await sleep(1800);
 
     check(
@@ -2429,13 +2482,20 @@ try {
     );
 
     /*
-     * 4. ЗАМЕРЩИК НЕ ДОЛЖЕН УМЕТЬ СЕБЯ ПОТЕРЯТЬ.
+     * 4. КАМЕРУ НЕЛЬЗЯ СДВИНУТЬ РУКОЙ.
      *
-     * Проверяется крайними значениями: поворот на 360° по обеим осям,
-     * зум в оба предела, панорама во все стороны. После каждого шага
-     * габарит мебели обязан пересекаться с кадром.
+     * Свободное вращение убрано, и проверка изменилась вместе с
+     * причиной. Прежняя меряла, пересекается ли габарит мебели с кадром,
+     * — и была зелёной, пока человек ломал вид руками: камера внутри
+     * шкафа тоже «пересекается с кадром». Читаемость — это угол и
+     * расстояние, а их при свободном вращении гарантировать нечем.
+     *
+     * Теперь проверяется то, что стало правдой: поза камеры не меняется
+     * ни от протаскивания, ни от правой кнопки, а каждый из пяти
+     * ракурсов вмещает мебель ЦЕЛИКОМ — габарит внутри кадра, а не
+     * пересекается с ним.
      */
-    await sc.locator('[data-angle="free"]').click();
+    await sc.locator('[data-angle="iso"]').click();
     await sleep(2000);
 
     const box = await sc.evaluate(() => {
@@ -2446,6 +2506,8 @@ try {
     const cx = box.x + box.w / 2;
     const cy = box.y + box.h / 2;
 
+    const pose = () => sc.evaluate(() => (window.__mwCadState ? window.__mwCadState().camera : null));
+
     const drag = async (dx, dy, button = 'left') => {
       await sc.mouse.move(cx, cy);
       await sc.mouse.down({ button });
@@ -2454,54 +2516,47 @@ try {
         await sleep(30);
       }
       await sc.mouse.up({ button });
-      await sleep(260);
+      await sleep(300);
     };
 
-    const lost = [];
-    const record = async (what) => {
+    const poseBefore = await pose();
+    await drag(box.w * 0.4, box.h * 0.3);
+    await drag(-box.w * 0.5, -box.h * 0.4);
+    await drag(box.w * 0.6, 0, 'right');
+    const poseAfter = await pose();
+
+    check(
+      'камеру нельзя сдвинуть ни мышью, ни правой кнопкой',
+      JSON.stringify(poseBefore) === JSON.stringify(poseAfter),
+      `${JSON.stringify(poseBefore)} → ${JSON.stringify(poseAfter)}`,
+    );
+
+    check(
+      'ракурса «Свободный» нет вовсе',
+      (await sc.locator('[data-angle="free"]').count()) === 0 &&
+        (await sc.locator('[data-angle]').count()) === 5,
+      `${await sc.locator('[data-angle]').count()} ракурсов`,
+    );
+
+    /*
+     * Каждый из пяти ракурсов показывает мебель ЦЕЛИКОМ: габарит лежит
+     * внутри кадра, а не задевает его краем.
+     */
+    const cut = [];
+    for (const angle of ['elevation', 'left', 'right', 'plan', 'iso']) {
+      await sc.locator(`[data-angle="${angle}"]`).click();
+      await sleep(2000);
       const now = await fit();
-      if (!now || !now.visible) lost.push(`${what}: ${now ? now.box.join(' ') : 'нет данных'}`);
-    };
-
-    // Поворот на 360° по горизонтали и по вертикали, шагами.
-    for (let step = 0; step < 8; step += 1) {
-      await drag(box.w * 0.35, 0);
-      await record(`поворот вбок ${(step + 1) * 45}°`);
-    }
-    for (let step = 0; step < 8; step += 1) {
-      await drag(0, box.h * 0.35);
-      await record(`поворот вверх-вниз ${step + 1}`);
-    }
-
-    // Зум в оба предела.
-    for (let step = 0; step < 12; step += 1) {
-      await sc.mouse.move(cx, cy);
-      await sc.mouse.wheel(0, 400);
-      await sleep(120);
-    }
-    await record('зум наружу до предела');
-    for (let step = 0; step < 24; step += 1) {
-      await sc.mouse.move(cx, cy);
-      await sc.mouse.wheel(0, -400);
-      await sleep(120);
-    }
-    await record('зум внутрь до предела');
-
-    // Панорама во все стороны правой кнопкой.
-    for (const [dx, dy] of [
-      [box.w, 0],
-      [-box.w * 2, 0],
-      [box.w, box.h],
-      [0, -box.h * 2],
-    ]) {
-      await drag(dx, dy, 'right');
-      await record(`панорама ${dx},${dy}`);
+      const [x0, x1, y0, y1] = now?.box ?? [9, 9, 9, 9];
+      if (!now || x0 < -1 || x1 > 1 || y0 < -1 || y1 > 1) {
+        cut.push(`${angle}: ${now ? now.box.join(' ') : 'нет данных'}`);
+      }
     }
 
     check(
-      'при любом вращении, зуме и панораме мебель остаётся в кадре',
-      lost.length === 0,
-      lost.length === 0 ? 'проверено 22 крайних положения' : lost.slice(0, 2).join(' · '),
+      'каждый из пяти ракурсов показывает мебель целиком',
+      cut.length === 0,
+      cut.length === 0 ? 'пять ракурсов, габарит внутри кадра' : cut.join(' · '),
     );
 
     /* 5. Пустая стена не рисует случайную геометрию. */
@@ -2760,7 +2815,7 @@ try {
       `подписей ${await s3.locator('[data-dim-layer] text').count()}`,
     );
 
-    await s3.locator('[data-angle="free"]').click();
+    await s3.locator('[data-angle="iso"]').click();
     await sleep(2000);
     /*
      * На перспективе проекции нет вовсе — слой уходит из разметки, а не

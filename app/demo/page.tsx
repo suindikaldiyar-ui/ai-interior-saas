@@ -1,3 +1,4 @@
+import DemoCatalog from '@/components/millwork/DemoCatalog';
 import Workspace from '@/components/millwork/Workspace';
 import {
   DEMO_MEASUREMENT,
@@ -26,5 +27,15 @@ export default function DemoPage() {
   });
 
   // Демонстрация открывается готовой конфигурацией, а не выбором шаблона.
-  return <Workspace {...input} templateId="linear-column" />;
+  return (
+    <>
+      {/*
+        * Каталог демонстрации — типовая палитра, та же, что компания
+        * получает в первый день. Без неё выбор цвета честно писал «цветов
+        * не заведено», а на встрече это читается как отсутствие функции.
+        */}
+      <DemoCatalog />
+      <Workspace {...input} templateId="linear-column" />
+    </>
+  );
 }

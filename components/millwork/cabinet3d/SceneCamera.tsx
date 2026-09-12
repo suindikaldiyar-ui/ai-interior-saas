@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import {
@@ -55,6 +55,14 @@ type Props = {
   view: SceneView;
   /** Ширина ряда: по ней кадрируется ортогональный вид. */
   runWidthM?: number;
+  /**
+   * ЦЕНТР ГАБАРИТА МЕБЕЛИ — ТУДА СМОТРИТ КАМЕРА.
+   *
+   * Раньше кадр целился в середину комнаты, а мебель стоит там, где её
+   * поставил `rowPlacement`. У прямой кухни это почти совпадало, у
+   * угловой и П-образной — нет, и гарнитур вылезал за кадр.
+   */
+  focusM?: [number, number, number];
   /** Кадрирование изменилось — слою размеров нужно пересчитать себя. */
   onFraming?: (framing: OrthoProjection | null) => void;
 };
@@ -70,13 +78,26 @@ function easeInOut(t: number): number {
   return t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2;
 }
 
-export default function SceneCamera({ room, view, runWidthM, onFraming }: Props) {
+export default function SceneCamera({ room, view, runWidthM, focusM, onFraming }: Props) {
   /*
    * Габариты разбираются на числа НАМЕРЕННО: `room` приходит объектным
    * литералом и на каждой перерисовке новый. Зависимость от объекта
    * перезапускала бы перелёт каждый кадр, и камера не долетала бы никогда.
    */
   const { width: roomWidth, depth: roomDepth, height: roomHeight } = room;
+
+  /*
+   * Точка прицела разбирается на числа по той же причине, что и
+   * габариты: массив приходит новым на каждой перерисовке, и зависимость
+   * от него перезапускала бы перелёт каждый кадр.
+   */
+  const focusX = focusM?.[0] ?? 0;
+  const focusY = focusM?.[1] ?? roomHeight / 2;
+  const focusZ = focusM?.[2] ?? 0;
+  const focus = useMemo(
+    () => [focusX, focusY, focusZ] as [number, number, number],
+    [focusX, focusY, focusZ],
+  );
 
   const perspective = useThree((state) => state.camera);
   const controls = useThree((state) => state.controls) as OrbitLike | null;
@@ -121,7 +142,7 @@ export default function SceneCamera({ room, view, runWidthM, onFraming }: Props)
     }
 
     const size3 = { width: roomWidth, depth: roomDepth, height: roomHeight } as RoomConfig;
-    const framing = orthoFraming(size3, view, runWidthM ?? roomWidth);
+    const framing = orthoFraming(size3, view, runWidthM ?? roomWidth, focus);
     const zoom = orthoZoom(framing, size);
 
     // Кадр строится в пикселях: тогда метр на экране — это ровно `zoom`
@@ -209,6 +230,7 @@ export default function SceneCamera({ room, view, runWidthM, onFraming }: Props)
     const framing = sceneCamera(
       { width: roomWidth, depth: roomDepth, height: roomHeight } as RoomConfig,
       view,
+      focus,
     );
     const to = new THREE.Vector3(...framing.position);
     const toTarget = new THREE.Vector3(...framing.target);

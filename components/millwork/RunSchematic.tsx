@@ -96,7 +96,7 @@ const ANGLES = [
   ['left', 'Слева'],
   ['right', 'Справа'],
   ['plan', 'Сверху'],
-  ['free', 'Свободный'],
+  ['iso', 'Общий вид'],
 ] as const;
 
 type Angle = (typeof ANGLES)[number][0];
@@ -121,7 +121,7 @@ export default function RunSchematic({
   onTogglePanel,
 }: Props) {
   const [view, setView] = useState<View>('front');
-  const [angle, setAngle] = useState<Angle>('free');
+  const [angle, setAngle] = useState<Angle>('iso');
   /** Счётчик «Вернуть вид»: смена ключа ставит камеру заново. */
   const [homeKey, setHomeKey] = useState(0);
   /**
@@ -189,10 +189,10 @@ export default function RunSchematic({
    * Поэтому фронтальные ракурсы берут ту стену, что выбрана
    * переключателем, и берут её БЕЗ поворота вокруг угла: вид спереди на
    * повёрнутый ряд показывал бы его торцом. «Сверху» — это план, там
-   * видны все стены разом, и «Свободный» тоже.
+   * видны все стены разом, и на общем виде тоже.
    */
   const rows = useMemo(() => {
-    if (angle === 'plan' || angle === 'free') return allRows;
+    if (angle === 'plan' || angle === 'iso') return allRows;
     const active = allRows.find((row) => row.run.id === run.id) ?? allRows[0];
     return [{ run: active.run }];
   }, [allRows, angle, run.id]);
@@ -363,8 +363,13 @@ export default function RunSchematic({
               roomWidthM={roomWidthM}
               roomDepthM={roomDepthM}
               facadeColor={facadeColor}
-              view={angle === 'free' ? 'perspective' : angle}
-              orbit={angle === 'free'}
+              view={angle}
+              /*
+               * Зум разрешён только на общем виде: на ортогональных
+               * ракурсах масштаб задаёт кадрирование, и подкрученный
+               * рукой он развёл бы цепи размеров с мебелью.
+               */
+              orbit={angle === 'iso'}
               selectedModuleId={selectedModuleId}
               onSelectModule={onSelect}
             />
@@ -431,7 +436,7 @@ export default function RunSchematic({
                 type="button"
                 data-angle-home
                 onClick={() => {
-                  setAngle('free');
+                  setAngle('iso');
                   setHomeKey((n) => n + 1);
                 }}
                 className="mw-btn mw-btn-ghost"

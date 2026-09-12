@@ -75,6 +75,14 @@ type Props = {
    * Ряд по-прежнему считает `buildRun` вдоль своей стены от нуля; здесь
    * только поворот вокруг угла. Второй раскладки не появляется.
    */
+  /**
+   * Центр габарита мебели: туда целится камера.
+   *
+   * Считает его `sceneBounds` — та же функция, что задаёт пределы зума.
+   * Ряд стоит там, где его поставил `rowPlacement`, и кадрироваться он
+   * обязан по себе, а не по комнате.
+   */
+  focusM?: [number, number, number];
   placement?: { xM: number; zM: number; rotationYDeg: number };
 };
 
@@ -92,6 +100,7 @@ export default function Cabinet3D({
   onWidth,
   onMoveModule,
   camera = true,
+  focusM,
   placement,
 }: Props) {
   const groupRef = useRef<THREE.Group>(null);
@@ -381,6 +390,7 @@ export default function Cabinet3D({
           room={{ width: roomWidthM, depth: roomDepthM, height: run.ceilingHeightMm / MM }}
           view={view}
           runWidthM={lengthM}
+          focusM={focusM}
           onFraming={onFraming}
         />
       )}

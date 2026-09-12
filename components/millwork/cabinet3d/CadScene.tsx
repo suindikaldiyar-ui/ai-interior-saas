@@ -44,7 +44,12 @@ type Props = {
   facadeColor?: string;
   counterColor?: string;
   view: SceneView;
-  /** Свободный ракурс: вращение мышью и пальцем. */
+  /**
+   * Можно ли подкручивать зум.
+   *
+   * Вращения нет ни на одном ракурсе — см. `ZoomOnly`. Имя прежнее,
+   * потому что его знают все вызывающие; смысл сузился до зума.
+   */
   orbit: boolean;
   selectedModuleId: string | null;
   onSelectModule: (moduleId: string) => void;
@@ -110,6 +115,20 @@ export default function CadScene({
    */
   const bounds = useMemo(() => sceneBounds(rows), [rows]);
 
+  /**
+   * ГАБАРИТ СЪЁМКИ: мебель плюс поле вокруг.
+   *
+   * По нему кадрируются все пять ракурсов. Поле в 30 см — это воздух
+   * вокруг гарнитура: кадр впритык читается как обрезанный.
+   */
+  const shot = useMemo(
+    () => ({
+      width: Math.max(1.5, bounds.size[0] + 0.6),
+      depth: Math.max(1.5, bounds.size[2] + 0.6),
+    }),
+    [bounds],
+  );
+
   /*
    * КАРКАС ВМЕСТО ФАСАДОВ — ОДИН ПРИЗНАК НА ВСЮ СЦЕНУ.
    *
@@ -118,6 +137,30 @@ export default function CadScene({
    * сцену, где фасады сняты, а рёбра думают, что они на месте.
    */
   const frame = useInteriorStore((state) => state.cutaway);
+
+  /*
+   * Материалы комнаты — ОДИН экземпляр на сцену, а не по одному на
+   * стену: иначе каждая новая стена добавляла бы свою пачку отрисовки, и
+   * счёт материалов перестал бы совпадать у прямой, угловой и П-образной.
+   */
+  const roomMaterials = useMemo(
+    () => ({
+      floor: new THREE.MeshStandardMaterial({
+        color: '#D9D4CA',
+        roughness: 0.95,
+        metalness: 0,
+      }),
+      wall: new THREE.MeshStandardMaterial({
+        color: '#E9E5DC',
+        roughness: 0.98,
+        metalness: 0,
+        // Изнутри комнаты видна лицевая сторона, снаружи стена исчезает —
+        // так же, как в комнате студии (ловушка 10).
+        side: THREE.FrontSide,
+      }),
+    }),
+    [],
+  );
 
   return (
     <Canvas
@@ -148,8 +191,6 @@ export default function CadScene({
           key={row.run.id || i}
           run={row.run}
           production={production}
-          roomWidthM={roomWidthM}
-          roomDepthM={roomDepthM}
           facadeColor={facadeColor}
           counterColor={counterColor}
           view={view}
@@ -159,6 +200,22 @@ export default function CadScene({
            */
           camera={i === 0}
           onFraming={i === 0 ? onFraming : undefined}
+          /*
+           * Камеру ставит первый ряд, а кадрирует её ГАБАРИТ ВСЕЙ
+           * мебели: у угловой и П-образной центр гарнитура лежит не там,
+           * где центр первого ряда, и кадр по нему обрезал бы соседние
+           * стены.
+           */
+          focusM={i === 0 ? bounds.center : undefined}
+          /*
+           * КАМЕРЕ — ГАБАРИТ СЪЁМКИ, КОМНАТЕ — ГАБАРИТ КОМНАТЫ.
+           *
+           * Это разные величины, и путать их нельзя: кадр обязан вмещать
+           * МЕБЕЛЬ, а пол и стены рисуются по помещению. Пока кадр считался
+           * по комнате, на общем виде гарнитур вылезал за край.
+           */
+          roomWidthM={i === 0 ? shot.width : roomWidthM}
+          roomDepthM={i === 0 ? shot.depth : roomDepthM}
           placement={rowPlacement(row)}
           selectedModuleId={selectedModuleId}
           onSelectModule={onSelectModule}
@@ -174,6 +231,12 @@ export default function CadScene({
         * объектов и столько же вызовов отрисовки. Здесь вершины сложены
         * в один буфер и пересобираются только при смене состава.
         */}
+      <RoomShell
+        rows={rows}
+        ceilingHeightMm={rows[0]?.run.ceilingHeightMm ?? 2700}
+        materials={roomMaterials}
+      />
+
       <RunEdges rows={rows} inside={frame} />
 
       {/* Мягкая тень под рядом: она и ставит мебель на пол. */}
@@ -182,37 +245,36 @@ export default function CadScene({
         <shadowMaterial opacity={0} />
       </mesh>
 
-      {orbit && <OrbitScene bounds={bounds} />}
+      {orbit && <ZoomOnly bounds={bounds} />}
       <FrameProbe rows={rows} />
     </Canvas>
   );
 }
 
 /**
- * СВОБОДНЫЙ РАКУРС, ИЗ КОТОРОГО НЕЛЬЗЯ ВЫПАСТЬ.
+ * ВРАЩЕНИЯ НЕТ ВОВСЕ — ТОЛЬКО ЗУМ.
  *
- * Один палец крутит, два приближают. Затухание доводится кадрами — при
- * `frameloop="demand"` после отпускания кадров нет вовсе, и инерция
- * замирала бы на полпути, доезжая потом по шагу на каждую правку.
+ * Свободный ракурс убран, и это не упрощение, а починка. Мебель на
+ * скриншотах «разваливалась»: ряды разлетались, панели висели. Геометрия
+ * при этом была верной — в фиксированных ракурсах всё стояло, — ломалась
+ * КАМЕРА: рукой её уводили внутрь корпуса, под пол, за мебель, и сцена
+ * переставала читаться.
  *
- * Все четыре предела считаются от ГАБАРИТА МЕБЕЛИ:
+ * Проверка «мебель остаётся в кадре» этого не видела и увидеть не могла:
+ * она меряла ПЕРЕСЕЧЕНИЕ габарита с кадром, а камера внутри шкафа даёт
+ * пересечение и зелёную строку. Читаемость — это угол и расстояние, а их
+ * при свободном вращении гарантировать нечем. Поэтому убрана причина, а
+ * не проверка: у мебельных САПР свободного вращения нет тоже.
  *
- * · под пол не уйти и сцену не перевернуть — полярный угол зажат;
- * · дальше четырёх радиусов не отъехать: мебель не станет точкой;
- * · ближе 0.8 радиуса не подъехать: камера не окажется внутри корпуса;
- * · панорама не уводит центр дальше половины радиуса от мебели.
- *
- * Последнее — не «на глаз»: цель зажимается ПОСЛЕ каждого изменения, и
- * потому мебель остаётся в кадре при любом жесте, а не при аккуратном.
+ * Остаётся зум в узких пределах: от 0.9 до 2.2 габарита мебели. Ближе —
+ * камера внутри фасада, дальше — гарнитур становится точкой.
  */
-function OrbitScene({
+function ZoomOnly({
   bounds,
 }: {
   bounds: { center: [number, number, number]; radius: number };
 }) {
-  const controls = useRef<
-    { update: () => boolean; target: THREE.Vector3 } | null
-  >(null);
+  const controls = useRef<{ update: () => boolean; target: THREE.Vector3 } | null>(null);
   const invalidate = useThree((state) => state.invalidate);
   const center = useMemo(() => new THREE.Vector3(...bounds.center), [bounds.center]);
 
@@ -220,7 +282,6 @@ function OrbitScene({
     if (controls.current?.update()) invalidate();
   });
 
-  /* Мебель сменилась — центр вращения переезжает вместе с ней. */
   useEffect(() => {
     const orbit = controls.current;
     if (!orbit) return;
@@ -229,38 +290,24 @@ function OrbitScene({
     invalidate();
   }, [center, invalidate]);
 
-  const leash = bounds.radius * 0.5;
-
   return (
     <OrbitControls
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ref={controls as any}
-      enablePan
-      enableDamping
-      dampingFactor={0.12}
+      /*
+       * Ни вращения, ни панорамы. Ракурс выбирается кнопкой — пятью
+       * фиксированными точками съёмки, как виды на чертёжном листе.
+       */
+      enableRotate={false}
+      enablePan={false}
+      enableZoom
+      enableDamping={false}
       target={bounds.center}
-      minDistance={bounds.radius * 0.8}
-      maxDistance={bounds.radius * 4}
-      // Ни под пол, ни вверх ногами: и то, и другое читается как поломка.
-      minPolarAngle={0.12}
-      maxPolarAngle={Math.PI / 2 - 0.02}
-      onChange={() => {
-        const orbit = controls.current;
-        if (orbit) {
-          orbit.target.set(
-            clamp(orbit.target.x, center.x - leash, center.x + leash),
-            clamp(orbit.target.y, center.y - leash, center.y + leash),
-            clamp(orbit.target.z, center.z - leash, center.z + leash),
-          );
-        }
-        invalidate();
-      }}
+      minDistance={bounds.radius * 0.9}
+      maxDistance={bounds.radius * 2.2}
+      onChange={() => invalidate()}
     />
   );
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
 }
 
 /**
@@ -274,12 +321,20 @@ function FrameProbe({ rows }: { rows: SceneRow[] }) {
   const gl = useThree((state) => state.gl);
   const camera = useThree((state) => state.camera);
   const scene = useThree((state) => state.scene);
+  /*
+   * Камера читается В МОМЕНТ ЗАМЕРА, а не из замыкания: активная камера
+   * меняется на каждом ракурсе (орто на видах-чертежах, перспектива на
+   * общем), и замеренная по старой ссылке проверка отвечает про камеру,
+   * которой уже нет на экране.
+   */
+  const get = useThree((state) => state.get);
 
   useEffect(() => {
     const w = window as unknown as {
       __mwCadFrames?: () => number;
       __mwCadState?: () => { fronts: string[]; rows: number; camera: number[] };
       __mwCadFit?: () => { visible: boolean; inFront: number; box: number[] };
+      __mwCadRoom?: () => { floors: number; walls: number; intersects: number };
       __mwCadLook?: () => {
         opaque: number;
         transparent: number;
@@ -308,20 +363,29 @@ function FrameProbe({ rows }: { rows: SceneRow[] }) {
      * стороны, — а не аккуратным движением мыши.
      */
     w.__mwCadFit = () => {
+      /*
+       * НАСТОЯЩАЯ КОРОБКА, А НЕ КУБ ПО РАДИУСУ.
+       *
+       * Здесь стоял куб со стороной в диагональ габарита: для ряда
+       * 3.8 × 2.7 × 0.56 он был втрое толще мебели по глубине, и на
+       * плане проверка «вылезает за кадр» срабатывала на кадре, в
+       * котором мебель стоит целиком. Меряем то, что нарисовано.
+       */
       const bounds = sceneBounds(rows);
       const corners: THREE.Vector3[] = [];
       const [cx, cy, cz] = bounds.center;
-      const r = bounds.radius / Math.sqrt(3);
+      const [sx, sy, sz] = bounds.size;
 
-      for (const dx of [-r, r]) {
-        for (const dy of [-r, r]) {
-          for (const dz of [-r, r]) {
+      for (const dx of [-sx / 2, sx / 2]) {
+        for (const dy of [-sy / 2, sy / 2]) {
+          for (const dz of [-sz / 2, sz / 2]) {
             corners.push(new THREE.Vector3(cx + dx, cy + dy, cz + dz));
           }
         }
       }
 
-      camera.updateMatrixWorld();
+      const live = get().camera;
+      live.updateMatrixWorld();
       let minX = Infinity;
       let maxX = -Infinity;
       let minY = Infinity;
@@ -329,12 +393,12 @@ function FrameProbe({ rows }: { rows: SceneRow[] }) {
       let inFront = 0;
 
       for (const corner of corners) {
-        const view = corner.clone().applyMatrix4(camera.matrixWorldInverse);
+        const view = corner.clone().applyMatrix4(live.matrixWorldInverse);
         // Точка позади камеры проецируется зеркально — её не считаем.
         if (view.z > -0.01) continue;
         inFront += 1;
 
-        const ndc = corner.clone().project(camera);
+        const ndc = corner.clone().project(live);
         minX = Math.min(minX, ndc.x);
         maxX = Math.max(maxX, ndc.x);
         minY = Math.min(minY, ndc.y);
@@ -345,6 +409,9 @@ function FrameProbe({ rows }: { rows: SceneRow[] }) {
       return {
         visible,
         inFront,
+        type: live.type,
+        zoom: Math.round(live.zoom * 100) / 100,
+        distance: Math.round(live.position.distanceTo(new THREE.Vector3(...bounds.center)) * 100) / 100,
         box: [minX, maxX, minY, maxY].map((v) => Math.round(v * 100) / 100),
       };
     };
@@ -431,6 +498,48 @@ function FrameProbe({ rows }: { rows: SceneRow[] }) {
       };
     };
 
+    /*
+     * КОМНАТА: СКОЛЬКО ПЛОСКОСТЕЙ И НЕ РЕЖУТ ЛИ ОНИ МЕБЕЛЬ.
+     *
+     * «Стены не пересекают мебель» — это не впечатление: плоскость
+     * толщины не имеет, но точка ЗА ней уже внутри стены. Считаем углы
+     * габарита каждого ряда и смотрим, не оказался ли хоть один по ту
+     * сторону своей стены.
+     */
+    w.__mwCadRoom = () => {
+      const room = scene.getObjectByName('room');
+      let floors = 0;
+      let walls = 0;
+
+      room?.traverse((object) => {
+        const mesh = object as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        // Пол уложен поворотом на −90° вокруг X, стены стоят вертикально.
+        if (Math.abs(mesh.rotation.x) > 1) floors += 1;
+        else walls += 1;
+      });
+
+      let intersects = 0;
+      for (const row of rows) {
+        const place = rowPlacement(row);
+        const angle = (place.rotationYDeg * Math.PI) / 180;
+        const normal = new THREE.Vector3(Math.sin(angle), 0, Math.cos(angle));
+        const wallPoint = new THREE.Vector3(
+          place.xM - (GEOMETRY.base.depth / MM + 0.02) * Math.sin(angle),
+          0,
+          place.zM - (GEOMETRY.base.depth / MM + 0.02) * Math.cos(angle),
+        );
+
+        for (const corner of rowCorners([row], true)) {
+          const point = new THREE.Vector3(...corner);
+          // Отрицательное расстояние — точка за стеной, то есть в ней.
+          if (point.clone().sub(wallPoint).dot(normal) < -0.001) intersects += 1;
+        }
+      }
+
+      return { floors, walls, intersects };
+    };
+
     w.__mwCadState = () => ({
       fronts: Array.from(
         new Set(
@@ -452,8 +561,9 @@ function FrameProbe({ rows }: { rows: SceneRow[] }) {
       delete w.__mwCadState;
       delete w.__mwCadFit;
       delete w.__mwCadLook;
+      delete w.__mwCadRoom;
     };
-  }, [gl, camera, scene, rows]);
+  }, [gl, camera, scene, get, rows]);
 
   return null;
 }
@@ -468,6 +578,7 @@ function FrameProbe({ rows }: { rows: SceneRow[] }) {
  */
 export function sceneBounds(rows: SceneRow[]): {
   center: [number, number, number];
+  size: [number, number, number];
   radius: number;
   empty: boolean;
 } {
@@ -488,7 +599,7 @@ export function sceneBounds(rows: SceneRow[]): {
   }
 
   if (!Number.isFinite(minX)) {
-    return { center: [0, 1, 0], radius: 1.5, empty: true };
+    return { center: [0, 1, 0], size: [2, 2, 2], radius: 1.5, empty: true };
   }
 
   const center: [number, number, number] = [
@@ -501,7 +612,8 @@ export function sceneBounds(rows: SceneRow[]): {
     Math.hypot(maxX - minX, maxY - minY, maxZ - minZ) / 2,
   );
 
-  return { center, radius, empty: false };
+  const size: [number, number, number] = [maxX - minX, maxY - minY, maxZ - minZ];
+  return { center, size, radius, empty: false };
 }
 
 /**
@@ -550,6 +662,100 @@ function rowCorners(rows: SceneRow[], inside = true): [number, number, number][]
   }
 
   return points;
+}
+
+/**
+ * КОМНАТА ИЗ ПЛОСКОСТЕЙ: ПОЛ И СТЕНЫ.
+ *
+ * Мебель, висящая в пустоте, читается развалившейся — глазу не за что
+ * зацепиться, и он не понимает, где верх, где низ и где угол. У мебельных
+ * САПР под гарнитуром всегда пол и две стены, и это не украшение: ряд
+ * ПРИМЫКАЕТ к чему-то, и потому стоит.
+ *
+ * Стены ставятся ПО РЯДАМ, а не по форме из настроек: у каждого ряда своя
+ * стена за спиной, и прямая кухня получает одну, угловая две, П-образная
+ * три — сама собой, тем же `rowPlacement`, который ставит мебель. Второй
+ * формулы «где стена» в продукте нет.
+ *
+ * Ни окон, ни дверей, ни мебели комнаты: это фон, а не визуализация.
+ * Показывает её рендер, и показывает по фотографии клиента.
+ */
+function RoomShell({
+  rows,
+  ceilingHeightMm,
+  materials,
+}: {
+  rows: SceneRow[];
+  ceilingHeightMm: number;
+  materials: { floor: THREE.Material; wall: THREE.Material };
+}) {
+  const planes = useMemo(() => {
+    const heightM = ceilingHeightMm / MM;
+    const bounds = sceneBounds(rows);
+
+    /*
+     * Пол накрывает всю мебель с запасом в полметра: подрезанный по
+     * габариту, он читается ковриком, а не полом.
+     */
+    const spanX = Math.max(4, bounds.radius * 2 + 1);
+    const spanZ = Math.max(3, bounds.radius * 2 + 1);
+
+    const walls = rows.map((row) => {
+      const place = rowPlacement(row);
+      const lengthM = row.run.lengthMm / MM;
+      const depthM = GEOMETRY.base.depth / MM;
+      const angle = (place.rotationYDeg * Math.PI) / 180;
+
+      /*
+       * Стена стоит ЗА рядом, на два сантиметра дальше задней стенки:
+       * плоскость толщины не имеет, и совпадение с корпусом дало бы
+       * мерцание, а не примыкание.
+       */
+      const localZ = -depthM - 0.02;
+      const cos = Math.cos(angle);
+      const sin = Math.sin(angle);
+      const cx = lengthM / 2;
+
+      return {
+        key: row.run.id || String(place.xM),
+        position: [
+          cx * cos + localZ * sin + place.xM,
+          heightM / 2,
+          -cx * sin + localZ * cos + place.zM,
+        ] as [number, number, number],
+        rotationY: angle,
+        width: lengthM,
+      };
+    });
+
+    return { spanX, spanZ, heightM, walls, center: bounds.center };
+  }, [rows, ceilingHeightMm]);
+
+  return (
+    <group name="room">
+      {/* Пол: светлая плоскость под всей мебелью. */}
+      <mesh
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[planes.center[0], 0, planes.center[2]]}
+        material={materials.floor}
+        receiveShadow
+      >
+        <planeGeometry args={[planes.spanX, planes.spanZ]} />
+      </mesh>
+
+      {planes.walls.map((wall) => (
+        <mesh
+          key={wall.key}
+          position={wall.position}
+          rotation={[0, wall.rotationY, 0]}
+          material={materials.wall}
+          receiveShadow
+        >
+          <planeGeometry args={[wall.width, planes.heightM]} />
+        </mesh>
+      ))}
+    </group>
+  );
 }
 
 /**

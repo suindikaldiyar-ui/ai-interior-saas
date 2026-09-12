@@ -55,7 +55,7 @@ export function heroCamera(room: RoomConfig): CameraFraming {
  * линейное соответствие метров и пикселей, а значит и совпадение с
  * размерной цепочкой поверх кадра.
  */
-export type SceneView = 'elevation' | 'plan' | 'perspective' | 'left' | 'right';
+export type SceneView = 'elevation' | 'plan' | 'perspective' | 'left' | 'right' | 'iso';
 
 /*
  * Подписи называют ТОЧКУ СЪЁМКИ, а не документ: «План» и «3D» уже есть
@@ -66,6 +66,7 @@ export const SCENE_VIEW_LABEL: Record<SceneView, string> = {
   elevation: 'Спереди',
   plan: 'Сверху',
   perspective: 'Три четверти',
+  iso: 'Общий вид',
   left: 'Слева',
   right: 'Справа',
 };
@@ -73,8 +74,20 @@ export const SCENE_VIEW_LABEL: Record<SceneView, string> = {
 /** Ортогональные виды: у них своя камера, и размеры на них совпадают. */
 export const ORTHOGRAPHIC_VIEWS: SceneView[] = ['elevation', 'plan', 'left', 'right'];
 
+/**
+ * ОБЩИЙ ВИД — ТОЖЕ ОРТОГОНАЛЬНЫЙ.
+ *
+ * Изометрия у мебельных САПР ортогональная: постоянный угол, никакой
+ * перспективы. И это не только про вид — это убирает целый класс беды.
+ * Пока общий вид был перспективным, на экране жили ДВЕ камеры, и
+ * переключение между ними спорило с элементами управления: возвращаясь с
+ * плана на общий вид, сцена оставалась на ортокамере ПЛАНА с её
+ * масштабом — мебель на экране разъезжалась, хотя геометрия была верной.
+ *
+ * Одна камера на все пять ракурсов — и спорить стало нечему.
+ */
 export function isOrthographic(view: SceneView): boolean {
-  return ORTHOGRAPHIC_VIEWS.includes(view);
+  return view !== 'perspective';
 }
 
 export const DEFAULT_SCENE_VIEW: SceneView = 'perspective';
@@ -105,13 +118,53 @@ export function orthoFraming(
   room: RoomConfig,
   view: SceneView,
   runWidthM = room.width,
+  /**
+   * КУДА СМОТРИМ.
+   *
+   * Кадр центрировался на середине КОМНАТЫ, а мебель стоит там, где её
+   * поставил `rowPlacement`: у стены, а у угловой и П-образной — вокруг
+   * угла. Совпадало это только у прямой кухни в комнате-коробке, и то
+   * случайно: на общем виде гарнитур вылезал за кадр на сорок процентов.
+   *
+   * Точка прицела приходит снаружи — это центр габарита МЕБЕЛИ, и
+   * считает его `sceneBounds`, та же функция, что задаёт пределы зума.
+   */
+  focus: [number, number, number] = [0, room.height / 2, 0],
 ): OrthoFraming {
+  const [fx, fy, fz] = focus;
+
+  if (view === 'iso') {
+    /*
+     * ИЗОМЕТРИЯ: 30° по горизонтали, 30° по вертикали — те же числа, по
+     * которым строится печатная аксонометрия (`lib/millwork/axonometry`).
+     * Угол постоянный: вращения нет, и кадр обязан вмещать мебель сам.
+     *
+     * Кадр по ширине — это ширина плюс глубина, спроецированные под 30°;
+     * по высоте — высота мебели плюс та же проекция основания.
+     */
+    const cos30 = Math.cos(Math.PI / 6);
+    const sin30 = Math.sin(Math.PI / 6);
+    const away = Math.max(room.width, room.depth, room.height) * 2 + 4;
+
+    return {
+      center: [fx, fy, fz],
+      position: [
+        round2(fx + away * cos30),
+        round2(fy + away * sin30),
+        round2(fz + away * cos30),
+      ],
+      target: [round2(fx), round2(fy), round2(fz)],
+      frameWidthM: (room.width + room.depth) * cos30 * ORTHO_PADDING,
+      frameHeightM: (room.height + (room.width + room.depth) * sin30) * ORTHO_PADDING,
+    };
+  }
+
   if (view === 'plan') {
     // Строго сверху: план читается только отвесным взглядом.
     return {
-      center: [0, 0, 0],
-      position: [0, round2(room.height + 4), 0.0001],
-      target: [0, 0, 0],
+      center: [fx, 0, fz],
+      position: [fx, round2(room.height + 4), fz + 0.0001],
+      target: [fx, 0, fz],
       frameWidthM: Math.max(runWidthM, room.width) * ORTHO_PADDING,
       frameHeightM: room.depth * ORTHO_PADDING,
     };
@@ -126,11 +179,11 @@ export function orthoFraming(
    */
   if (view === 'left' || view === 'right') {
     const side = view === 'left' ? -1 : 1;
-    const centerSide = room.height / 2;
+    const centerSide = fy;
     return {
-      center: [0, centerSide, 0],
-      position: [round2(side * (room.width / 2 + 6)), round2(centerSide), 0],
-      target: [round2(-side * room.width), round2(centerSide), 0],
+      center: [fx, centerSide, fz],
+      position: [round2(fx + side * (room.width / 2 + 6)), round2(centerSide), fz],
+      target: [round2(fx - side * room.width), round2(centerSide), fz],
       frameWidthM: Math.max(room.depth, 0.5) * ORTHO_PADDING,
       frameHeightM: room.height * ORTHO_PADDING,
     };
@@ -140,11 +193,11 @@ export function orthoFraming(
    * Фронт: строго спереди, без наклона. Это и есть чертёж — ровно то же,
    * что рисует `ElevationDrawing`, только средствами сцены.
    */
-  const centerY = room.height / 2;
+  const centerY = fy;
   return {
-    center: [0, centerY, 0],
-    position: [0, round2(centerY), round2(room.depth / 2 + 6)],
-    target: [0, round2(centerY), round2(-room.depth / 2)],
+    center: [fx, centerY, fz],
+    position: [fx, round2(centerY), round2(fz + room.depth / 2 + 6)],
+    target: [fx, round2(centerY), round2(fz - room.depth / 2)],
     frameWidthM: Math.max(runWidthM, 0.5) * ORTHO_PADDING,
     frameHeightM: room.height * ORTHO_PADDING,
   };
@@ -169,7 +222,11 @@ export function orthoZoom(
  * Точка съёмки под каждый вид. Ряд стоит у северной стены, поэтому камера
  * всегда стоит южнее и смотрит на него.
  */
-export function sceneCamera(room: RoomConfig, view: SceneView): CameraFraming {
+export function sceneCamera(
+  room: RoomConfig,
+  view: SceneView,
+  focus: [number, number, number] = [0, room.height / 2, 0],
+): CameraFraming {
   const distance = clamp(room.width * 0.9, 2.2, 6.5);
 
   /*
@@ -178,7 +235,7 @@ export function sceneCamera(room: RoomConfig, view: SceneView): CameraFraming {
    * анимации перехода — с неё камера уезжает и на неё возвращается.
    */
   if (isOrthographic(view)) {
-    const ortho = orthoFraming(room, view);
+    const ortho = orthoFraming(room, view, room.width, focus);
     return { position: ortho.position, target: ortho.target, fov: FOV_RUN };
   }
 
@@ -187,15 +244,25 @@ export function sceneCamera(room: RoomConfig, view: SceneView): CameraFraming {
    * 1.6 м, лёгкий наклон вниз. Так видны и фасады, и глубина, и свес
    * столешницы — то, ради чего 3D вообще смотрят.
    */
+  /*
+   * ОБЩИЙ ВИД: постоянный угол, как у печатной аксонометрии.
+   *
+   * Свободного вращения нет — точка съёмки фиксирована, и потому она
+   * обязана вмещать мебель целиком САМА. Отход считается от габарита:
+   * половина кадра делится на тангенс половины угла обзора, и к этому
+   * добавляется запас в четверть.
+   */
+  const [fx, fy, fz] = focus;
+  const half = Math.max(room.width, room.height) / 2;
+  const back = Math.max(distance * 1.25, (half / Math.tan((FOV_RUN * Math.PI) / 360)) * 1.25);
+
   return {
     position: [
-      round2(-room.width / 3),
-      round2(Math.min(1.6, room.height - 0.4)),
-      // Ряд должен войти в кадр целиком: с более близкой точки середина
-      // видна, а концы ряда обрезаны, и сверить с чертежом нечего.
-      round2(distance * 1.25),
+      round2(fx - room.width / 3),
+      round2(fy + room.height * 0.45),
+      round2(fz + back),
     ],
-    target: [round2(room.width * 0.05), 1.05, round2(-room.depth / 2 + 0.3)],
+    target: [round2(fx), round2(fy), round2(fz)],
     fov: FOV_RUN,
   };
 }

@@ -1,3 +1,5 @@
+import { TYPICAL_PALETTE, typicalColorItem } from './palette';
+import type { CatalogCategory, CatalogEntryFull } from '@/types/catalog';
 import type { CommPoint, Measurement, Opening, RunRequirements } from '@/types/millwork';
 import type { RateTable } from './estimate';
 import { DEFAULT_REQUIREMENTS } from './workspace';
@@ -153,3 +155,53 @@ export const DEMO_PROJECT = {
   /** Угловой модуль сюда не заводится — см. комментарий к файлу. */
   cornerAt: null,
 };
+
+/**
+ * КАТАЛОГ ДЕМОНСТРАЦИИ: ТИПОВАЯ ПАЛИТРА ЦЕЛИКОМ.
+ *
+ * У демонстрации нет организации, а палитра цветов читается из каталога
+ * ОРГАНИЗАЦИИ (слой 34): каталог оставался пустым, и выбор цвета честно
+ * писал «цветов не заведено». Правда — но на встрече это читается как
+ * отсутствие функции.
+ *
+ * Берётся ТА ЖЕ типовая палитра, которую `seedTypicalCatalog` кладёт
+ * компании в первый день, и вся целиком: двадцать позиций с пометкой
+ * «типовая». Второго списка цветов в продукте нет и быть не должно —
+ * иначе демо начнёт показывать не тот товар, который продают.
+ *
+ * Позиция каталога — это товар ЦЕЛИКОМ, вместе с категорией: `applies_to`
+ * лежит на ней, и без категории чтение каталога падает в первом фильтре.
+ */
+const DEMO_CATEGORY: CatalogCategory = {
+  id: 'demo-materials',
+  org_id: 'demo',
+  key: 'materials',
+  name_ru: 'Материалы и цвета',
+  name_kk: 'Материалы и цвета',
+  applies_to: 'zone',
+  unit: 'm2',
+  sort_order: 0,
+  is_active: true,
+};
+
+export const DEMO_CATALOG: CatalogEntryFull[] = TYPICAL_PALETTE.map((color, index) => {
+  const seed = typicalColorItem(color);
+
+  return {
+    id: `demo-color-${index}`,
+    org_id: 'demo',
+    category_id: DEMO_CATEGORY.id,
+    article: seed.article,
+    name_ru: seed.name_ru,
+    name_kk: seed.name_kk,
+    description: '',
+    price: seed.price,
+    unit: seed.unit,
+    dimensions: {},
+    tiling: {},
+    meta: seed.meta,
+    is_active: true,
+    category: DEMO_CATEGORY,
+    assets: [],
+  };
+});

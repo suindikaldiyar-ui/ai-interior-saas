@@ -114,7 +114,7 @@ import {
   upperBottomFor,
 } from '../lib/millwork/fill';
 import { openingOf, openingRejection } from '../lib/millwork/opening';
-import { ovenReachMm } from '../lib/millwork/fill';
+import { columnNichesSumMm } from '../lib/millwork/fill';
 import { ergonomicWarnings, openingAssumptions } from '../lib/millwork/warnings';
 import {
   APPLIANCE_COLUMN,
@@ -169,6 +169,7 @@ import {
   STANDARD_WIDTHS,
 } from '../lib/millwork/modules';
 import {
+  DEMO_CATALOG,
   DEMO_COMMS,
   DEMO_MEASUREMENT,
   DEMO_OPENINGS,
@@ -6402,16 +6403,23 @@ console.log('\nПравила мебельщика держит геометри
   const column = columnRun.modules.find((unit) => unit.column);
   check('в ряду есть колонна из двух приборов', Boolean(column), column?.label);
 
-  const reach = column ? ovenReachMm(column, columnRun) : null;
+  /*
+   * ПРАВИЛО ПРО ГАБАРИТ ПАРЫ, А НЕ ПРО ОТМЕТКУ ВЕРХА.
+   *
+   * Считается СУММА заявленных высот ниш духовки и микроволновки. В
+   * прошлый раз я прочитал правило как «верх духовки от пола» — число
+   * получалось другое, и ловило оно другие модули.
+   */
+  const pair = column ? columnNichesSumMm(column, columnRun) : null;
   check(
-    'верх духовки считается от пола',
-    reach !== null && reach > 0,
-    `${reach} мм`,
+    'суммарная высота двух ниш считается',
+    pair !== null && pair > 0,
+    `${pair} мм`,
   );
   check(
-    'микроволновка сверху духовку не поднимает: так их и собирают',
-    reach !== null && reach <= APPLIANCE_COLUMN.maxReachMm,
-    `${reach} мм при пределе ${APPLIANCE_COLUMN.maxReachMm}`,
+    'обычная пара «духовка + СВЧ» в предел укладывается',
+    pair !== null && pair <= APPLIANCE_COLUMN.maxPairMm,
+    `${pair} мм при пределе ${APPLIANCE_COLUMN.maxPairMm}`,
   );
 
   const high = applyOps({
@@ -6423,17 +6431,18 @@ console.log('\nПравила мебельщика держит геометри
         op: 'set_appliance_size',
         moduleId: column!.id,
         appliance: 'oven',
-        size: { widthMm: 600, heightMm: 900 },
+        // Духовка 1100 мм: с нишей микроволновки пара выходит за 1500.
+        size: { widthMm: 600, heightMm: 1100 },
       },
     ],
   });
   const highColumn = high.modules.find((unit) => unit.column)!;
-  const highReach = ovenReachMm(highColumn, high)!;
+  const highPair = columnNichesSumMm(highColumn, high)!;
 
   check(
-    'высокая духовка поднимает свой верх выше предела',
-    highReach > APPLIANCE_COLUMN.maxReachMm,
-    `${Math.round(highReach)} мм при пределе ${APPLIANCE_COLUMN.maxReachMm}`,
+    'высокая духовка выводит пару за предел',
+    highPair > APPLIANCE_COLUMN.maxPairMm,
+    `${Math.round(highPair)} мм при пределе ${APPLIANCE_COLUMN.maxPairMm}`,
   );
   check(
     'раскладка при этом ПРИМЕНЯЕТСЯ: замерщик главнее',
@@ -6443,13 +6452,22 @@ console.log('\nПравила мебельщика держит геометри
 
   const said = ergonomicWarnings(high);
   check(
-    'и предупреждение называет последствие, а не факт',
-    said.some((w) => w.severity === 'clarify' && w.message.includes('противень')),
-    said[0]?.message,
+    'и предупреждение называет ЧИСЛО, а не факт',
+    said.some(
+      (w) =>
+        w.severity === 'clarify' &&
+        w.message.includes('вместе') &&
+        /\d{4} мм/.test(w.message),
+    ),
+    said.find((w) => w.message.includes('вместе'))?.message,
+  );
+  check(
+    'раскладка при этом применяется: предупреждение жёлтое',
+    said.every((w) => w.severity !== 'blocking'),
   );
   check(
     'на обычной колонне этого предупреждения нет',
-    !ergonomicWarnings(columnRun).some((w) => w.message.includes('противень')),
+    !ergonomicWarnings(columnRun).some((w) => w.message.includes('вместе')),
   );
 }
 
@@ -6616,6 +6634,30 @@ console.log('\nЦвет из палитры организации виден в
 
   const palette = paletteFromCatalog(items);
   check('палитра читается из позиций каталога', palette.length === 2, `${palette.length} цвета`);
+
+  /*
+   * ДЕМОНСТРАЦИЯ ТОЖЕ С ЦВЕТАМИ.
+   *
+   * У демо нет организации, и каталог оставался пустым: выбор цвета
+   * честно писал «цветов не заведено», а на встрече это читается как
+   * отсутствие функции. Берётся ТА ЖЕ типовая палитра, что уходит
+   * компании в первый день, — второго списка цветов в продукте нет.
+   */
+  const demo = paletteFromCatalog(DEMO_CATALOG);
+  check(
+    'в демо-каталоге вся типовая палитра',
+    demo.length === TYPICAL_PALETTE.length && demo.length === 20,
+    `${demo.length} цветов`,
+  );
+  check(
+    'и все они помечены типовыми: это не товар компании',
+    demo.every((color) => color.typical),
+  );
+  check(
+    'палитра демо покрывает все базы фасадов',
+    new Set(demo.map((color) => color.base)).size >= 4,
+    Array.from(new Set(demo.map((color) => color.base))).join(', '),
+  );
 
   const forBase = paletteFor(palette, 'mdf_enamel');
   check('и отдаётся по базе фасада', forBase.length === 2, forBase.map((c) => c.name).join(', '));
