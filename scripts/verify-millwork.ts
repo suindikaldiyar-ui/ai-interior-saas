@@ -114,7 +114,7 @@ import {
   upperBottomFor,
 } from '../lib/millwork/fill';
 import { openingOf, openingRejection } from '../lib/millwork/opening';
-import { columnNichesSumMm } from '../lib/millwork/fill';
+import { columnNichesSumMm, ovenBottomMm } from '../lib/millwork/fill';
 import { ergonomicWarnings, openingAssumptions } from '../lib/millwork/warnings';
 import {
   APPLIANCE_COLUMN,
@@ -6951,6 +6951,197 @@ console.log('\nФасады, створки и ручки');
     'и пара приборов по-прежнему в пределе',
     (columnNichesSumMm(column, columnRun) ?? 0) <= APPLIANCE_COLUMN.maxPairMm,
     `${columnNichesSumMm(column, columnRun)} мм`,
+  );
+}
+
+
+/* ───────────────────  Приборы принадлежат кухне, а не ряду  ─────────────────── */
+
+console.log('\nПрибор один на кухню, и у него есть стена');
+{
+  const WALLS_AB = [
+    { id: 'a', lengthMm: DEMO_PROJECT.lengthMm },
+    { id: 'b', lengthMm: 2400 },
+  ];
+
+  const corner = buildComposition({
+    kind: 'corner_l',
+    walls: WALLS_AB,
+    ceilingHeightMm: 2700,
+    requirements: REQ,
+    comms: COMMS,
+  });
+
+  /*
+   * РАЗДАЧА ВИДНА СНАРУЖИ.
+   *
+   * Рабочее место собирает стену А своими средствами, и без списка
+   * приборов стены оно собирало её из ПОЛНОГО набора: холодильник
+   * появлялся дважды — один раз на стене А, второй на той, куда его
+   * отдала раздача. Проверка на данных этого не видела: она меряла
+   * `buildComposition`, который раздаёт правильно, а расходился — шов
+   * между композицией и экраном.
+   */
+  const share = corner.segments.flatMap((segment) => segment.appliances);
+  const doubledShare = share.filter((item, i) => share.indexOf(item) !== i);
+
+  check(
+    'композиция называет приборы КАЖДОЙ стены',
+    corner.segments.every((segment) => Array.isArray(segment.appliances)),
+    corner.segments.map((segment) => `${segment.label}: ${segment.appliances.join(',') || '—'}`).join(' · '),
+  );
+  check('и ни один прибор не назван дважды', doubledShare.length === 0, doubledShare.join(', '));
+  check(
+    'раздача совпадает с тем, что реально встало',
+    corner.segments.every((segment) =>
+      segment.run.modules
+        .flatMap((unit) => moduleAppliances(unit))
+        .every((appliance) => segment.appliances.includes(appliance)),
+    ),
+  );
+
+  /*
+   * ПЕРЕНОС НА ДРУГУЮ СТЕНУ — ОДНА ПРАВКА СОСТАВА.
+   *
+   * Прибор принадлежит кухне: у него есть стена, и меняется она выбором,
+   * а не удалением с одной стены и добавлением на другую.
+   */
+  const fridgeWall = corner.segments.findIndex((segment) =>
+    segment.appliances.includes('fridge'),
+  );
+  check('холодильник стоит на одной стене', fridgeWall >= 0, `стена ${fridgeWall}`);
+
+  const other = fridgeWall === 0 ? 1 : 0;
+  const moved = buildComposition({
+    kind: 'corner_l',
+    walls: WALLS_AB,
+    ceilingHeightMm: 2700,
+    requirements: {
+      ...REQ,
+      applianceWalls: { fridge: other },
+      applianceSizes: { fridge: { widthMm: 700, heightMm: 1900, depthMm: 640 } },
+    },
+    comms: COMMS,
+  });
+
+  check(
+    'перенос ставит прибор на выбранную стену',
+    moved.segments[other].appliances.includes('fridge') &&
+      !moved.segments[fridgeWall].appliances.includes('fridge'),
+    moved.segments.map((segment) => `${segment.label}: ${segment.appliances.join(',') || '—'}`).join(' · '),
+  );
+
+  const movedUnit = moved.segments[other].run.modules.find(
+    (unit) => unit.appliance === 'fridge',
+  );
+  check(
+    'и настройки прибора переезжают вместе с ним',
+    movedUnit?.applianceSizes?.fridge?.widthMm === 700 &&
+      movedUnit?.applianceSizes?.fridge?.heightMm === 1900,
+    JSON.stringify(movedUnit?.applianceSizes?.fridge),
+  );
+  check(
+    'прибор по-прежнему один на кухню',
+    moved.segments.flatMap((segment) => segment.appliances).filter((a) => a === 'fridge')
+      .length === 1,
+  );
+
+  /* Удаление прибора убирает его со всех стен сразу. */
+  const without = buildComposition({
+    kind: 'corner_l',
+    walls: WALLS_AB,
+    ceilingHeightMm: 2700,
+    requirements: { ...REQ, appliances: REQ.appliances.filter((a) => a !== 'fridge') },
+    comms: COMMS,
+  });
+
+  check(
+    'удаление прибора убирает его со ВСЕХ стен',
+    without.segments.every(
+      (segment) =>
+        !segment.appliances.includes('fridge') &&
+        !segment.run.modules.some((unit) => unit.appliance === 'fridge'),
+    ),
+  );
+
+  /*
+   * ДУХОВКА И СВЧ МЕНЯЮТСЯ МЕСТАМИ.
+   *
+   * Порядок в колонне — это разная присадка и разные полки-опоры, а
+   * значит другой раскрой и другие деньги.
+   */
+  const columnBase = {
+    ...baseInput,
+    requirements: { ...REQ, appliances: [...REQ.appliances, 'microwave' as const] },
+  };
+
+  const microTop = buildRun({
+    ...columnBase,
+    requirements: { ...columnBase.requirements, columnTop: 'microwave' as const },
+  });
+  const ovenTop = buildRun({
+    ...columnBase,
+    requirements: { ...columnBase.requirements, columnTop: 'oven' as const },
+  });
+
+  const topOf = (run: Run) => run.modules.find((unit) => unit.column)?.column?.top;
+  check('порядок в колонне меняется', topOf(microTop) === 'microwave' && topOf(ovenTop) === 'oven');
+  check(
+    'смена порядка меняет отпечаток',
+    microTop.fingerprint !== ovenTop.fingerprint,
+    `${microTop.fingerprint} → ${ovenTop.fingerprint}`,
+  );
+  /*
+   * СМЕТА ОТ ПЕРЕСТАНОВКИ НЕ МЕНЯЕТСЯ — И ЭТО ПРАВДА, А НЕ ДЕФЕКТ.
+   *
+   * Поменялись местами два прибора; деталей в раскрое столько же и
+   * тех же размеров — полки-опоры те же, корпус тот же. Отпечаток при
+   * этом обязан измениться: мебель РАЗНАЯ, присадка на другой высоте, и
+   * чертёж с раскроем должны это видеть.
+   */
+  check(
+    'а смета не меняется: деталей столько же и тех же размеров',
+    Math.round(buildEstimate(microTop, 'optimal', DEMO_RATES).total) ===
+      Math.round(buildEstimate(ovenTop, 'optimal', DEMO_RATES).total),
+    `${Math.round(buildEstimate(microTop, 'optimal', DEMO_RATES).total)} ₸ в обоих порядках`,
+  );
+  check(
+    'но опоры ниш стоят на РАЗНЫХ высотах',
+    JSON.stringify(
+      microTop.modules.find((unit) => unit.column)?.fill?.shelves,
+    ) !== JSON.stringify(ovenTop.modules.find((unit) => unit.column)?.fill?.shelves),
+    `${JSON.stringify(microTop.modules.find((u) => u.column)?.fill?.shelves)} против ` +
+      `${JSON.stringify(ovenTop.modules.find((u) => u.column)?.fill?.shelves)}`,
+  );
+
+  /*
+   * ПРАВИЛА КОЛОННЫ ПРИ ЛЮБОМ ПОРЯДКЕ.
+   *
+   * Умолчание ставит духовку низом на 580 мм — ниже пояса, как просил
+   * клиент. Поставленная СВЕРХУ, она поднимается неизбежно: под ней
+   * микроволновка. Запрещать это нельзя — так тоже собирают, — но
+   * сказать словами обязаны.
+   */
+  for (const [name, run] of [['СВЧ сверху', microTop], ['духовка сверху', ovenTop]] as const) {
+    const column = run.modules.find((unit) => unit.column)!;
+    check(
+      `${name}: пара ниш в пределе`,
+      (columnNichesSumMm(column, run) ?? 0) <= APPLIANCE_COLUMN.maxPairMm,
+      `${columnNichesSumMm(column, run)} мм`,
+    );
+  }
+
+  check(
+    'по умолчанию духовка низом не выше 600 мм',
+    (ovenBottomMm(microTop.modules.find((unit) => unit.column)!, microTop) ?? 0) <= 600,
+    `${ovenBottomMm(microTop.modules.find((unit) => unit.column)!, microTop)} мм`,
+  );
+  check(
+    'поднятая духовка не запрещается, но говорит о себе числом',
+    ergonomicWarnings(ovenTop).some(
+      (w) => w.severity === 'clarify' && /Низ духовки на \d+ мм/.test(w.message),
+    ),
+    ergonomicWarnings(ovenTop).find((w) => w.message.includes('Низ духовки'))?.message,
   );
 }
 

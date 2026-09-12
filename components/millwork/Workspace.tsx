@@ -55,7 +55,12 @@ import {
 import { allModules } from '@/lib/millwork/layout';
 import { buildRun } from '@/lib/millwork/layout';
 import { manualAnchorCost, widthOverflowMm } from '@/lib/millwork/invariants';
-import { APPLIANCE_SLOTS, MAX_WIDTH, MIN_WIDTH } from '@/lib/millwork/modules';
+import {
+  APPLIANCE_SLOTS,
+  MAX_WIDTH,
+  MIN_WIDTH,
+  moduleAppliances,
+} from '@/lib/millwork/modules';
 import { composeVariants, workspaceInput } from '@/lib/millwork/workspace';
 import {
   MAIN_VARIANT,
@@ -493,6 +498,8 @@ export default function Workspace(props: WorkspaceProps) {
       columnTop: composition.columnTop ?? base.columnTop,
       fridgeType: composition.fridgeType ?? base.fridgeType,
       glassDisplay: composition.glassDisplay ?? base.glassDisplay,
+      applianceWalls: composition.applianceWalls ?? base.applianceWalls,
+      applianceSizes: composition.applianceSizes ?? base.applianceSizes,
       manualAnchors: {},
       options: {
         ...base.options,
@@ -535,6 +542,14 @@ export default function Workspace(props: WorkspaceProps) {
       columnTop: composition.columnTop ?? base.columnTop,
       fridgeType: composition.fridgeType ?? base.fridgeType,
       glassDisplay: composition.glassDisplay ?? base.glassDisplay,
+      /*
+       * Прибор принадлежит КУХНЕ: и стена, на которой он стоит, и его
+       * габариты живут в составе композиции, а не в ряду. Иначе перенос
+       * на другую стену терял бы введённые размеры — прибор переезжал
+       * бы паспортным, а не тем, что замерили.
+       */
+      applianceWalls: composition.applianceWalls ?? base.applianceWalls,
+      applianceSizes: composition.applianceSizes ?? base.applianceSizes,
       options: {
         ...base.options,
         upperToCeiling: composition.upperToCeiling ?? base.options.upperToCeiling,
@@ -562,6 +577,91 @@ export default function Workspace(props: WorkspaceProps) {
     return Object.keys(manualAnchors).length > 0 ? { ...next, manualAnchors } : next;
   }, [template, props.requirements, manualAnchors, composition, freeMode]);
 
+  /**
+   * ДЛИНА РАБОЧЕЙ СТЕНЫ — ОТДЕЛЬНО ОТ СОСТАВА.
+   *
+   * Её даёт замер, и приборы на неё не влияют. Считаем её раньше всего
+   * остального: от неё зависят и список стен, и раздача приборов по
+   * стенам, а они, в свою очередь, нужны для сборки самой стены А.
+   * Без этого получается круг: состав ждёт длину, длина ждёт состав.
+   */
+  const runLengthMm = useMemo(() => {
+    if (!resolution) return props.lengthMm;
+    const seed = workspaceInput({
+      title: props.title,
+      zone: props.zone,
+      measurement: resolution.measurement,
+      requirements: props.requirements,
+      rates: props.rates,
+      wallId: resolution.runWallId,
+      cornerAt: props.cornerAt ?? null,
+    });
+    return seed.lengthMm > 0 ? seed.lengthMm : props.lengthMm;
+  }, [resolution, props]);
+
+  /** Стены композиции: рабочая плюс соседние из замера. */
+  const walls = useMemo(() => {
+    const measured = (survey?.walls ?? [])
+      .map((wall) => ({
+        id: wall.id,
+        lengthMm: wall.lengthMm.state === 'unknown' ? 0 : Math.round(wall.lengthMm.value),
+        openings: [] as typeof props.openings,
+      }))
+      .filter((wall) => wall.lengthMm > 0);
+
+    const first = { id: 'a', lengthMm: runLengthMm, openings: props.openings };
+    const rest = measured.filter((wall) => wall.lengthMm !== runLengthMm);
+    const fallback = Math.round((props.roomDepthM ?? 0) * 1000);
+
+    const list = [first, ...rest];
+    while (list.length < 3 && fallback > 0) {
+      list.push({ id: `w${list.length}`, lengthMm: fallback, openings: [] });
+    }
+    return list;
+  }, [survey, runLengthMm, props.openings, props.roomDepthM]);
+
+  /** Высота потолка: нужна и композиции, и сборке стены А. */
+  const ceilingMm = useMemo(
+    () => resolution?.measurement?.ceilingHeightMm ?? props.ceilingHeightMm,
+    [resolution, props.ceilingHeightMm],
+  );
+
+  /**
+   * КОМПОЗИЦИЯ СЧИТАЕТСЯ ДО СБОРКИ СТЕНЫ А.
+   *
+   * Она и раздаёт приборы по стенам: холодильник один, и стоит он на
+   * одной стене. Рабочее место раньше собирало стену А своими
+   * средствами — из ПОЛНОГО набора требований, — и холодильник
+   * появлялся дважды: на стене А и на той, куда его отдала раздача.
+   * Удалить его можно было только вместе с тем, что стоит на главной.
+   *
+   * Раздача ОДНА и живёт в композиции. Считать её здесь второй раз —
+   * это ровно тот класс ошибки, от которого продукт лечится уже
+   * одиннадцатый раз: два расчёта одной величины расходятся молча.
+   */
+  const layout = useMemo(() => {
+    if (shape === 'linear') return null;
+    try {
+      return buildComposition({
+        id: 'ws',
+        kind: shape,
+        requirements: { ...requirements, cornerSolution },
+        ceilingHeightMm: ceilingMm,
+        walls,
+        comms: props.comms,
+      });
+    } catch {
+      return null;
+    }
+  }, [shape, requirements, cornerSolution, ceilingMm, walls, props.comms]);
+
+  /** Требования СТЕНЫ А: её доля приборов из композиции, а не весь набор. */
+  const wallRequirements = useMemo(
+    () =>
+      layout ? { ...requirements, appliances: layout.segments[0].appliances } : requirements,
+    [layout, requirements],
+  );
+
   const input = useMemo(() => {
     if (!resolution) {
       return {
@@ -571,7 +671,7 @@ export default function Workspace(props: WorkspaceProps) {
         measuredAt: props.measuredAt,
         lengthMm: props.lengthMm,
         ceilingHeightMm: props.ceilingHeightMm,
-        requirements,
+        requirements: wallRequirements,
         openings: props.openings,
         comms: props.comms,
         rates: props.rates,
@@ -584,7 +684,7 @@ export default function Workspace(props: WorkspaceProps) {
       title: props.title,
       zone: props.zone,
       measurement: resolution.measurement,
-      requirements,
+      requirements: wallRequirements,
       rates: props.rates,
       wallId: resolution.runWallId,
       cornerAt: props.cornerAt ?? null,
@@ -592,7 +692,7 @@ export default function Workspace(props: WorkspaceProps) {
 
     // Пока стены не введены, ряд брать неоткуда — держим габарит из пропсов.
     return seed.lengthMm > 0 ? seed : { ...seed, lengthMm: props.lengthMm };
-  }, [resolution, requirements, props]);
+  }, [resolution, wallRequirements, props]);
 
   /*
    * Компоновки: две-три расстановки ОДНОЙ кухни из одного замера. Считаются
@@ -647,25 +747,7 @@ export default function Workspace(props: WorkspaceProps) {
    * замера по кругу: длина соседней стены это факт обмера, а не догадка.
    * Замера нет — берём глубину помещения, ту же, из которой строится 3D.
    */
-  const walls = useMemo(() => {
-    const measured = (survey?.walls ?? [])
-      .map((wall) => ({
-        id: wall.id,
-        lengthMm: wall.lengthMm.state === 'unknown' ? 0 : Math.round(wall.lengthMm.value),
-        openings: [] as typeof props.openings,
-      }))
-      .filter((wall) => wall.lengthMm > 0);
 
-    const first = { id: 'a', lengthMm: input.lengthMm, openings: props.openings };
-    const rest = measured.filter((wall) => wall.lengthMm !== input.lengthMm);
-    const fallback = Math.round((props.roomDepthM ?? 0) * 1000);
-
-    const list = [first, ...rest];
-    while (list.length < 3 && fallback > 0) {
-      list.push({ id: `w${list.length}`, lengthMm: fallback, openings: [] });
-    }
-    return list;
-  }, [survey, input.lengthMm, props.openings, props.roomDepthM]);
 
   /**
    * Композиция: та же, что собирает шаблон, и тем же кодом.
@@ -673,21 +755,7 @@ export default function Workspace(props: WorkspaceProps) {
    * Разваливается на исключении — угол по одной стене не собрать, и это
    * честнее пустого результата. Ловим и говорим словами.
    */
-  const layout = useMemo(() => {
-    if (shape === 'linear') return null;
-    try {
-      return buildComposition({
-        id: 'ws',
-        kind: shape,
-        requirements: { ...requirements, cornerSolution },
-        ceilingHeightMm: input.ceilingHeightMm,
-        walls,
-        comms: props.comms,
-      });
-    } catch {
-      return null;
-    }
-  }, [shape, requirements, cornerSolution, input.ceilingHeightMm, walls, props.comms]);
+
 
   const active = variants.find((v) => v.key === variantKey) ?? variants[0];
 
@@ -1064,18 +1132,27 @@ export default function Workspace(props: WorkspaceProps) {
   const palette = useMemo(() => paletteFromCatalog(catalog), [catalog]);
 
   /** Выделенный модуль целиком: материал показывается по нему. */
+  /*
+   * ВЫДЕЛЕННЫЙ МОДУЛЬ ИЩЕТСЯ В ВЫБРАННОЙ СТЕНЕ, А НЕ В ПЕРВОЙ.
+   *
+   * Искали в `active.run` — это всегда стена А. Модуль стены Б
+   * выделялся на схеме, но панель под ним оставалась пустой: материал,
+   * открывание, ручка и перенос прибора были недоступны на всех стенах,
+   * кроме главной. Тот же шов, из-за которого дублировалась техника.
+   */
   const selectedUnit = useMemo(
-    () => (selectedId ? allModules(active.run).find((m) => m.id === selectedId) ?? null : null),
-    [selectedId, active.run],
+    () => (selectedId ? allModules(activeRun).find((m) => m.id === selectedId) ?? null : null),
+    [selectedId, activeRun],
   );
 
   const variantOptions = useMemo<VariantPreview[]>(() => {
     if (!selectedId) return [];
 
-    const unit = allModules(active.run).find((m) => m.id === selectedId);
+    // Варианты места — тоже у ВЫБРАННОЙ стены, а не у первой.
+    const unit = allModules(activeRun).find((m) => m.id === selectedId);
     if (!unit) return [];
 
-    const specs = variantsForModule(unit, active.run, zone);
+    const specs = variantsForModule(unit, activeRun, zone);
     // Один вариант — это не выбор, а надпись. Меню не показываем вовсе.
     if (specs.length < 2) return [];
 
@@ -1120,9 +1197,67 @@ export default function Workspace(props: WorkspaceProps) {
     });
   }, [selectedId, active.run, zone, requirements, input.rates, input.openings, disabled, variantKey]);
 
+  /**
+   * ПЕРЕНОС ПРИБОРА НА ДРУГУЮ СТЕНУ.
+   *
+   * Одна правка состава кухни, а не удаление и добавление: прибор
+   * принадлежит кухне. Вместе с ним переезжают введённые габариты —
+   * иначе замерщик мерил бы холодильник дважды.
+   */
+  const moveApplianceToWall = useCallback(
+    (appliance: ApplianceKind, toWall: number) => {
+      const unit = allModules(activeRun).find((m) =>
+        moduleAppliances(m).includes(appliance),
+      );
+
+      changeComposition({
+        applianceWalls: { ...(composition.applianceWalls ?? {}), [appliance]: toWall },
+        applianceSizes: unit?.applianceSizes?.[appliance]
+          ? {
+              ...(composition.applianceSizes ?? {}),
+              [appliance]: unit.applianceSizes[appliance],
+            }
+          : composition.applianceSizes,
+      });
+
+      setMoveNotice(
+        `${APPLIANCE_SLOTS[appliance].title} переехал на ${wallLabel(toWall).toLowerCase()}. ` +
+          'Размеры прибора переехали вместе с ним.',
+      );
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [activeRun, composition],
+  );
+
   const runOps = useCallback(
     (ops: MillworkOp[]) => {
       if (ops.length === 0) return;
+
+      /*
+       * УДАЛЁННЫЙ ПРИБОР УХОДИТ С КУХНИ ЦЕЛИКОМ.
+       *
+       * Он принадлежит композиции, а не ряду: убрать его с одной стены и
+       * оставить на другой — это не удаление, а переезд, которого никто
+       * не просил.
+       */
+      const removedAppliances = ops.flatMap((op) => {
+        if (op.op !== 'remove_module') return [];
+        const unit = allModules(activeRun).find((m) => m.id === op.moduleId);
+        return unit ? moduleAppliances(unit) : [];
+      });
+
+      if (removedAppliances.length > 0 && layout) {
+        changeComposition({
+          appliances: requirements.appliances.filter(
+            (item) => !removedAppliances.includes(item),
+          ),
+        });
+        setMoveNotice(
+          `${removedAppliances.map((a) => APPLIANCE_SLOTS[a].title).join(', ')}: ` +
+            'убран со всей кухни — прибор один на все стены.',
+        );
+        return;
+      }
       const before = new Map(activeRun.modules.map((m) => [m.id, m.widthMm]));
       const next = applyOps({
         run: activeRun,
@@ -2249,6 +2384,39 @@ export default function Workspace(props: WorkspaceProps) {
                       palette={palette}
                     />
                   </div>
+
+                  {/*
+                    * ПРИБОР ПЕРЕЕЗЖАЕТ НА ДРУГУЮ СТЕНУ ОДНОЙ КНОПКОЙ.
+                    *
+                    * Он принадлежит кухне, а не ряду: удалять его на одной
+                    * стене и добавлять на другой — это два действия там,
+                    * где человек делает одно, и половина настроек по
+                    * дороге теряется.
+                    */}
+                  {layout && moduleAppliances(selectedUnit).length > 0 && (
+                    <div className="mt-3" data-appliance-move>
+                      <p className="mw-label mb-2">
+                        Прибор стоит на {wallLabel(wall).toLowerCase()}
+                      </p>
+                      <div className="flex flex-wrap gap-1">
+                        {layout.segments.map((segment, i) =>
+                          i === wall ? null : (
+                            <button
+                              key={segment.id}
+                              type="button"
+                              data-move-appliance={i}
+                              onClick={() =>
+                                moveApplianceToWall(moduleAppliances(selectedUnit)[0], i)
+                              }
+                              className="mw-btn mw-btn-ghost"
+                            >
+                              Перенести на {wallLabel(i).toLowerCase()}
+                            </button>
+                          ),
+                        )}
+                      </div>
+                    </div>
+                  )}
 
                   {/*
                     * Направление открывания стоит рядом с материалом: это

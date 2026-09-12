@@ -365,7 +365,19 @@ function makeModule(
   offsetMm: number,
   appliance?: ApplianceKind,
   drawersRequested?: number,
-  extra: { columnWith?: ApplianceKind; builtIn?: boolean; columnTop?: 'microwave' | 'oven' } = {},
+  extra: {
+    columnWith?: ApplianceKind;
+    builtIn?: boolean;
+    columnTop?: 'microwave' | 'oven';
+    /**
+     * Введённые габариты приборов кухни.
+     *
+     * Прибор принадлежит кухне, а не ряду: перенесённый на другую стену,
+     * он обязан приехать туда ТЕМ ЖЕ, что замерили. Иначе холодильник
+     * 700 мм после переезда снова становится паспортным.
+     */
+    sizes?: RunRequirements['applianceSizes'];
+  } = {},
 ): Module {
   const spec = appliance ? APPLIANCE_SLOTS[appliance] : null;
   const fronts = appliance
@@ -388,10 +400,18 @@ function makeModule(
     column = { moduleId: id, top: resolvedTop, bottom };
   }
 
+  /* Габариты ЭТОГО модуля: только те приборы, что в нём стоят. */
+  const mine = [appliance, extra.columnWith].filter(Boolean) as ApplianceKind[];
+  const applianceSizes = mine.reduce<NonNullable<Module['applianceSizes']>>((acc, kind2) => {
+    const size = extra.sizes?.[kind2];
+    return size ? { ...acc, [kind2]: size } : acc;
+  }, {});
+
   return {
     id,
     column,
     builtIn: extra.builtIn,
+    applianceSizes: Object.keys(applianceSizes).length > 0 ? applianceSizes : undefined,
     kind,
     widthMm,
     offsetMm,
@@ -931,6 +951,7 @@ export function buildRun(input: BuildRunInput): Run {
         columnWith: anchor.columnWith,
         builtIn: anchor.builtIn,
         columnTop: requirements.columnTop,
+        sizes: requirements.applianceSizes,
       }),
     );
     at += anchor.widthMm;

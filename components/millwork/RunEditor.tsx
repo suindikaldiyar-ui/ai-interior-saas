@@ -51,6 +51,16 @@ export type CompositionPatch = {
   fridgeType?: FridgeType;
   glassDisplay?: boolean;
   upperToCeiling?: boolean;
+  /**
+   * НА КАКОЙ СТЕНЕ СТОИТ ПРИБОР.
+   *
+   * Перенос прибора на другую стену — это ОДНА правка состава кухни, а
+   * не удаление на одной стене и добавление на другой: приборы
+   * принадлежат кухне, а не ряду.
+   */
+  applianceWalls?: Partial<Record<ApplianceKind, number>>;
+  /** Введённые габариты приборов: они переезжают вместе с прибором. */
+  applianceSizes?: Partial<Record<ApplianceKind, ApplianceSize>>;
 };
 
 /**

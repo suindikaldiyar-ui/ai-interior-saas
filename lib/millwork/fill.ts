@@ -116,6 +116,24 @@ export function columnNiches(
  * Высоты берёт та же `columnNiches`, что строит ниши: второй список
  * разошёлся бы с первым на первой же правке.
  */
+/**
+ * НА КАКОЙ ВЫСОТЕ ОТ ПОЛА НАЧИНАЕТСЯ ДУХОВКА.
+ *
+ * Умолчание ставит её низом на 580 мм — ниже пояса, как просил клиент.
+ * Но порядок приборов в колонне выбирает человек, и духовка СВЕРХУ
+ * поднимается неизбежно: под ней микроволновка. Запрещать это нельзя —
+ * так тоже собирают; сказать словами обязаны.
+ */
+export function ovenBottomMm(
+  unit: Module,
+  run: Parameters<typeof moduleCarcassHeightMm>[1],
+): number | null {
+  if (!unit.column) return null;
+  const niches = columnNiches(unit, moduleCarcassHeightMm(unit, run));
+  const oven = niches.find((niche) => niche.appliance === 'oven');
+  return oven ? GEOMETRY.base.plinthH + oven.fromMm : null;
+}
+
 export function columnNichesSumMm(
   unit: Module,
   run: Parameters<typeof moduleCarcassHeightMm>[1],

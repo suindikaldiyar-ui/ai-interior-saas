@@ -1,5 +1,5 @@
 import { buildRun } from './layout';
-import { CORNER, CORNER_SIZE_MM, MIN_WIDTH } from './modules';
+import { CORNER, CORNER_SIZE_MM, MIN_WIDTH, moduleAppliances } from './modules';
 import { compositionFingerprint } from './fingerprint';
 import { assertCornerFits } from './invariants';
 import { zoneProfile } from './zones';
@@ -124,6 +124,11 @@ export interface BuildCompositionInput {
 export function splitAppliances(
   appliances: ApplianceKind[],
   usableMm: number[],
+  /**
+   * Выбор человека: прибор → стена. Он сильнее рабочего треугольника —
+   * замерщик видит квартиру, а правило видит только длины стен.
+   */
+  walls?: Partial<Record<ApplianceKind, number>>,
 ): ApplianceKind[][] {
   const out: ApplianceKind[][] = usableMm.map(() => []);
   if (usableMm.length === 0) return out;
@@ -140,7 +145,17 @@ export function splitAppliances(
 
   const wanted = new Set(appliances);
   const put = (appliance: ApplianceKind, at: number) => {
-    if (wanted.has(appliance)) out[at].push(appliance);
+    if (!wanted.has(appliance)) return;
+
+    /*
+     * ПЕРЕНЕСЁННЫЙ ПРИБОР ИДЁТ ТУДА, КУДА ЕГО ПОСТАВИЛИ.
+     *
+     * Правило рабочего треугольника остаётся умолчанием: оно верно, пока
+     * человек не сказал иначе. Сказал — слушаем его, а не длины стен.
+     */
+    const chosen = walls?.[appliance];
+    const at2 = chosen !== undefined && chosen >= 0 && chosen < out.length ? chosen : at;
+    out[at2].push(appliance);
   };
 
   // Пеналы держат короткую стену: они не требуют рабочей поверхности рядом.
@@ -253,7 +268,11 @@ export function buildComposition(input: BuildCompositionInput): Composition {
     }
   }
 
-  const perSegment = splitAppliances(requirements.appliances, usable);
+  const perSegment = splitAppliances(
+    requirements.appliances,
+    usable,
+    requirements.applianceWalls,
+  );
 
   const segments: RunSegment[] = walls.map((wall, i) => {
     /*
@@ -282,6 +301,7 @@ export function buildComposition(input: BuildCompositionInput): Composition {
       wallId: wall.id,
       angleDeg: i === 0 ? 0 : 90,
       wallLengthMm: Math.round(wall.lengthMm),
+      appliances: perSegment[i],
       run,
     };
   });
@@ -328,6 +348,8 @@ export function linearComposition(run: Run, wallId = 'w1'): Composition {
       wallId,
       angleDeg: 0,
       wallLengthMm: run.lengthMm,
+      // Одна стена — значит все приборы ряда на ней.
+      appliances: run.modules.flatMap((unit) => moduleAppliances(unit)),
       run,
     },
   ];

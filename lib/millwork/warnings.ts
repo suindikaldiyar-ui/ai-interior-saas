@@ -1,5 +1,5 @@
 import { APPLIANCE_COLUMN, APPLIANCE_SLOTS, FRIDGE_MEZZANINE_MIN_MM } from './modules';
-import { columnNichesSumMm, moduleCarcassHeightMm } from './fill';
+import { columnNichesSumMm, moduleCarcassHeightMm, ovenBottomMm } from './fill';
 import { fridgeRoomMm } from './layout';
 import { openingHardware } from './opening';
 import type { CommPoint, LayoutIssue, Opening, Run } from '@/types/millwork';
@@ -320,6 +320,23 @@ export function ergonomicWarnings(run: Run | null): SurveyWarning[] {
         message:
           `Духовка и микроволновка вместе — ${Math.round(pair)} мм, ` +
           `это больше ${APPLIANCE_COLUMN.maxPairMm} мм: такую пару в одну колонну не ставят.`,
+      });
+    }
+
+    /*
+     * Духовка, поднятая выше пояса: так бывает, когда человек ставит её
+     * СВЕРХУ в колонне. Это его выбор — раскладка применяется, — но
+     * последствие он знать обязан.
+     */
+    const ovenFloor = ovenBottomMm(unit, run);
+    if (ovenFloor !== null && ovenFloor > APPLIANCE_COLUMN.baseFromFloorMm) {
+      found.push({
+        id: `oven-high-${unit.id}`,
+        severity: 'clarify',
+        moduleId: unit.id,
+        message:
+          `Низ духовки на ${Math.round(ovenFloor)} мм — выше пояса. ` +
+          'Горячий противень оттуда не вынуть; ниже она встаёт, если СВЧ поставить сверху.',
       });
     }
 

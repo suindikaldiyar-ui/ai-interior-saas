@@ -2094,6 +2094,139 @@ try {
 
 
 
+
+  /* ── Техника не дублируется между стенами — в интерфейсе ── */
+
+  {
+    const ap = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await ap.goto(`${BASE}/demo`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+    await until(async () => (await ap.getByRole('button', { name: /Конфигуратор/ }).count()) > 0);
+    await ap.getByRole('button', { name: /Конфигуратор/ }).first().click();
+    await sleep(2200);
+
+    /**
+     * Приборы стены ГЛАЗАМИ ПОЛЬЗОВАТЕЛЯ: по подписям модулей на схеме.
+     *
+     * Проверка на данных смотрела `buildComposition` — и была зелёной,
+     * пока экран собирал стену А своими средствами из полного набора.
+     * Считать надо там, куда смотрит человек.
+     */
+    const applianceIds = async () =>
+      (await ap.locator('[data-schematic] [data-module-id]').evaluateAll((els) =>
+        els.map((el) => el.getAttribute('data-module-id') ?? ''),
+      ))
+        .map((id) => id.split('-').slice(2).join('-'))
+        .filter(Boolean);
+
+    const countAcrossWalls = async () => {
+      const walls = await ap.locator('[data-wall]').count();
+      const seen = new Map();
+      for (let i = 0; i < walls; i += 1) {
+        await ap.locator('[data-wall]').nth(i).click();
+        await sleep(1600);
+        for (const appliance of await applianceIds()) {
+          seen.set(appliance, (seen.get(appliance) ?? 0) + 1);
+        }
+      }
+      return seen;
+    };
+
+    for (const [shape, title] of [
+      ['corner_l', 'угловая'],
+      ['u_shape', 'П-образная'],
+    ]) {
+      await ap.locator(`[data-shape-kind="${shape}"]`).click();
+      await sleep(2600);
+
+      const seen = await countAcrossWalls();
+      const doubled = [...seen.entries()].filter(([, n]) => n > 1);
+
+      check(
+        `${title}: каждый прибор ровно один — на экране, а не в данных`,
+        doubled.length === 0 && seen.size > 0,
+        doubled.length === 0
+          ? [...seen.keys()].join(', ')
+          : `дубли: ${doubled.map(([a, n]) => `${a}×${n}`).join(', ')}`,
+      );
+    }
+
+    /*
+     * ПЕРЕНОС ПРИБОРА НА ДРУГУЮ СТЕНУ — ОДНА КНОПКА.
+     */
+    await ap.locator('[data-shape-kind="corner_l"]').click();
+    await sleep(2600);
+
+    const wallOf = async (appliance) => {
+      const walls = await ap.locator('[data-wall]').count();
+      for (let i = 0; i < walls; i += 1) {
+        await ap.locator('[data-wall]').nth(i).click();
+        await sleep(1500);
+        if ((await applianceIds()).includes(appliance)) return i;
+      }
+      return -1;
+    };
+
+    const fridgeWall = await wallOf('fridge');
+    check('холодильник стоит на одной стене', fridgeWall >= 0, `стена ${fridgeWall}`);
+
+    await ap.locator('[data-wall]').nth(fridgeWall).click();
+    await sleep(1500);
+    const fridgeModule = ap.locator('[data-schematic] [data-module-id$="-fridge"]').first();
+    await fridgeModule.scrollIntoViewIfNeeded();
+    await fridgeModule.click({ force: true });
+    await sleep(1200);
+
+    check(
+      'у прибора есть кнопка переноса на другую стену',
+      (await ap.locator('[data-move-appliance]').count()) > 0,
+      `${await ap.locator('[data-move-appliance]').count()} кнопок`,
+    );
+
+    await ap.locator('[data-move-appliance]').first().click();
+    await sleep(2600);
+
+    const movedWall = await wallOf('fridge');
+    check(
+      'перенос ставит холодильник на другую стену',
+      movedWall >= 0 && movedWall !== fridgeWall,
+      `стена ${fridgeWall} → ${movedWall}`,
+    );
+
+    const seenAfter = await countAcrossWalls();
+    check(
+      'и после переноса он по-прежнему один',
+      (seenAfter.get('fridge') ?? 0) === 1,
+      `холодильников ${seenAfter.get('fridge') ?? 0}`,
+    );
+
+    /*
+     * УДАЛЕНИЕ УБИРАЕТ ПРИБОР СО ВСЕХ СТЕН.
+     */
+    await ap.locator('[data-wall]').nth(movedWall).click();
+    await sleep(1500);
+    const target = ap.locator('[data-schematic] [data-module-id$="-fridge"]').first();
+    await target.scrollIntoViewIfNeeded();
+    await target.click({ force: true });
+    await sleep(1000);
+
+    const removeButton = ap.getByRole('button', { name: /Удалить/ }).first();
+    if ((await removeButton.count()) > 0) {
+      await removeButton.click();
+      await sleep(2600);
+
+      const seenGone = await countAcrossWalls();
+      check(
+        'удаление убирает холодильник со ВСЕХ стен',
+        (seenGone.get('fridge') ?? 0) === 0,
+        `холодильников осталось ${seenGone.get('fridge') ?? 0}`,
+      );
+    } else {
+      check('кнопка удаления модуля есть', false, 'кнопки нет');
+    }
+
+    await ap.close();
+  }
+
   /* ── Сцена выглядит мебелью, а не каркасом ── */
 
   {
@@ -2318,11 +2451,30 @@ try {
     const uShape = await scene();
     const uLook = await look();
 
-    const stepA = corner.scene.materials - straight.scene.materials;
-    const stepB = uShape.scene.materials - corner.scene.materials;
+    /*
+     * ОДИН КОД — ЭТО ОДНИ И ТЕ ЖЕ ПАЧКИ МАТЕРИАЛОВ, А НЕ ОДИНАКОВЫЙ ИХ
+     * ПРИРОСТ.
+     *
+     * Раньше сверялся прирост: каждая стена добавляла ровно столько же
+     * пачек. Это держалось на том, что стены были ОДИНАКОВЫМИ — и
+     * перестало быть правдой, когда приборы разъехались по стенам:
+     * теперь на одной стене мойка с варочной, на другой холодильник, и
+     * набор пачек у них честно разный.
+     *
+     * Проверяется то, что действительно означает «один код отрисовки»:
+     * мебель всех форм собрана из одних и тех же видов коробок, и каждая
+     * добавленная стена что-то рисует.
+     */
+    const kindsOf = (look) => Object.keys(look?.boxes ?? {}).sort().join(',');
     check(
-      'каждая следующая стена добавляет РОВНО столько же, сколько предыдущая',
-      stepA === stepB && stepA > 0,
+      'у всех трёх форм мебель собрана из одних и тех же пачек',
+      kindsOf(cornerLook) === kindsOf(uLook) && kindsOf(cornerLook).length > 0,
+      `${kindsOf(cornerLook)} против ${kindsOf(uLook)}`,
+    );
+    check(
+      'и каждая добавленная стена рисует мебель, а не пустоту',
+      corner.scene.materials > straight.scene.materials &&
+        uShape.scene.materials > corner.scene.materials,
       `материалов ${straight.scene.materials} → ${corner.scene.materials} → ${uShape.scene.materials}`,
     );
     check(
