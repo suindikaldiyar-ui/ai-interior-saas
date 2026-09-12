@@ -5,7 +5,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import Cabinet3D from './Cabinet3D';
-import { runBoxes } from '@/lib/millwork/cabinetBoxes';
+import { moduleBoxes, runBoxes, runPlaces } from '@/lib/millwork/cabinetBoxes';
 import { GEOMETRY } from '@/lib/millwork/modules';
 import { frontKey, frontOf } from '@/lib/millwork/frontMaterial';
 import type { ProductionSettings } from '@/types/catalog';
@@ -245,37 +245,44 @@ export default function CadScene({
         <shadowMaterial opacity={0} />
       </mesh>
 
-      {orbit && <ZoomOnly bounds={bounds} />}
+      {orbit && <OrbitScene bounds={bounds} />}
       <FrameProbe rows={rows} />
     </Canvas>
   );
 }
 
 /**
- * ВРАЩЕНИЯ НЕТ ВОВСЕ — ТОЛЬКО ЗУМ.
+ * ОБЩИЙ ВИД КРУТИТСЯ, НО ПОТЕРЯТЬ ЕГО НЕЛЬЗЯ.
  *
- * Свободный ракурс убран, и это не упрощение, а починка. Мебель на
- * скриншотах «разваливалась»: ряды разлетались, панели висели. Геометрия
- * при этом была верной — в фиксированных ракурсах всё стояло, — ломалась
- * КАМЕРА: рукой её уводили внутрь корпуса, под пол, за мебель, и сцена
- * переставала читаться.
+ * Мебельщик просит крутить мебель — и правильно просит: угол, под
+ * которым стоит клиент, он показывает рукой. Свободное вращение при этом
+ * однажды уже сломало вид: камеру уводили внутрь корпуса и под пол.
  *
- * Проверка «мебель остаётся в кадре» этого не видела и увидеть не могла:
- * она меряла ПЕРЕСЕЧЕНИЕ габарита с кадром, а камера внутри шкафа даёт
- * пересечение и зелёную строку. Читаемость — это угол и расстояние, а их
- * при свободном вращении гарантировать нечем. Поэтому убрана причина, а
- * не проверка: у мебельных САПР свободного вращения нет тоже.
+ * Поэтому вращение вернулось с ЖЁСТКИМИ пределами, и держатся они на
+ * двух вещах.
  *
- * Остаётся зум в узких пределах: от 0.9 до 2.2 габарита мебели. Ближе —
- * камера внутри фасада, дальше — гарнитур становится точкой.
+ * Первая — камера ОРТОГОНАЛЬНАЯ. У неё масштаб не зависит от расстояния,
+ * поэтому «мебель целиком в кадре» — свойство ЗУМА, а не угла: подобрал
+ * предел один раз, и он верен на всех 360°.
+ *
+ * Вторая — предел зума считается от габарита мебели, причём от её
+ * ДИАГОНАЛИ: при повороте на 45° в кадр ложится именно она. Отсюда
+ * `minZoom`: мельче нельзя, потому что дальше мебель станет точкой;
+ * `maxZoom` — крупнее нельзя, потому что тогда угол найдётся, на котором
+ * край уедет за рамку.
+ *
+ * Наклон ограничен снизу полом и сверху видом отвесно вниз: под пол не
+ * уйти и вверх ногами не перевернуться.
  */
-function ZoomOnly({
+function OrbitScene({
   bounds,
 }: {
-  bounds: { center: [number, number, number]; radius: number };
+  bounds: { center: [number, number, number]; size: [number, number, number] };
 }) {
   const controls = useRef<{ update: () => boolean; target: THREE.Vector3 } | null>(null);
   const invalidate = useThree((state) => state.invalidate);
+  // Размер канваса меряет сам R3F: «влезает» у ортокамеры считается в пикселях.
+  const size = useThree((state) => state.size);
   const center = useMemo(() => new THREE.Vector3(...bounds.center), [bounds.center]);
 
   useFrame(() => {
@@ -290,21 +297,39 @@ function ZoomOnly({
     invalidate();
   }, [center, invalidate]);
 
+  /*
+   * Что обязано влезть при ЛЮБОМ повороте: по горизонтали — диагональ
+   * основания, по вертикали — высота плюс та же диагональ, положенная
+   * набок при наклоне сверху.
+   */
+  const [sx, sy, sz] = bounds.size;
+  const spanX = Math.max(0.5, Math.hypot(sx, sz));
+  const spanY = Math.max(0.5, sy + Math.hypot(sx, sz) * 0.5);
+
+  // Ортокамера кадрируется в пикселях: зум — это пиксели на метр.
+  const fitZoom = Math.min(size.width / (spanX * 1.15), size.height / (spanY * 1.15));
+
   return (
     <OrbitControls
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ref={controls as any}
-      /*
-       * Ни вращения, ни панорамы. Ракурс выбирается кнопкой — пятью
-       * фиксированными точками съёмки, как виды на чертёжном листе.
-       */
-      enableRotate={false}
+      enableRotate
       enablePan={false}
       enableZoom
       enableDamping={false}
       target={bounds.center}
-      minDistance={bounds.radius * 0.9}
-      maxDistance={bounds.radius * 2.2}
+      /* Полные 360° вокруг вертикали: ограничения по азимуту нет вовсе. */
+      minPolarAngle={0.05}
+      maxPolarAngle={Math.PI / 2 - 0.02}
+      /*
+       * Зум у ортокамеры — это ПИКСЕЛИ НА МЕТР: больше зум — крупнее
+       * мебель и меньше её влезает. Поэтому приблизить нельзя дальше
+       * `fitZoom` — это и есть «габарит целиком в кадре при любом
+       * повороте», — а отдалить дальше чем вдвое незачем: мебель
+       * превращается в точку.
+       */
+      minZoom={fitZoom / 2}
+      maxZoom={fitZoom}
       onChange={() => invalidate()}
     />
   );
@@ -335,7 +360,9 @@ function FrameProbe({ rows }: { rows: SceneRow[] }) {
       __mwCadState?: () => { fronts: string[]; rows: number; camera: number[] };
       __mwCadFit?: () => { visible: boolean; inFront: number; box: number[] };
       __mwCadRoom?: () => { floors: number; walls: number; intersects: number };
+      __mwCadModules?: () => { drawn: number; ids: string[] };
       __mwCadLook?: () => {
+        frontColors: string[];
         opaque: number;
         transparent: number;
         edgeDrift: number | null;
@@ -488,7 +515,26 @@ function FrameProbe({ rows }: { rows: SceneRow[] }) {
         }
       }
 
+      /*
+       * ЦВЕТ ФАСАДА — ТОТ, ЧТО НА ЭКРАНЕ.
+       *
+       * Ключ материала («ldsp/solid/matte/#C3A177/...») говорит, что цвет
+       * ДОЛЖЕН быть таким. Это не то же самое, что цвет, которым мебель
+       * покрашена: между ключом и экраном стоят `frontSwatch` и сам
+       * материал. Здесь читается цвет материала — с той стороны, с
+       * которой на мебель смотрит клиент.
+       */
+      const frontColors: string[] = [];
+      scene.traverse((object) => {
+        const mesh = object as THREE.Mesh;
+        if (!mesh.isMesh || mesh.visible === false) return;
+        if (!mesh.name.startsWith('front:')) return;
+        const material = mesh.material as THREE.MeshStandardMaterial;
+        if (material?.color) frontColors.push(`#${material.color.getHexString()}`);
+      });
+
       return {
+        frontColors: Array.from(new Set(frontColors)).sort(),
         opaque,
         transparent,
         /** На сколько метров буфер рёбер разошёлся с мебелью. */
@@ -540,6 +586,41 @@ function FrameProbe({ rows }: { rows: SceneRow[] }) {
       return { floors, walls, intersects };
     };
 
+    /*
+     * СКОЛЬКО МОДУЛЕЙ НАРИСОВАНО.
+     *
+     * Считаются те, что дали хотя бы одну коробку: модуль без коробок
+     * невидим, сколько бы его ни было в данных. Именно так пропала из
+     * сцены антресоль — она была в ряду, но рисовалась внутри колонны.
+     */
+    w.__mwCadModules = () => {
+      const drawn = new Set<string>();
+
+      for (const row of rows) {
+        const places = runPlaces(row.run, {
+          depthM: GEOMETRY.base.depth / MM,
+          plinthM: GEOMETRY.base.plinthH / MM,
+        });
+
+        for (const place of places) {
+          const boxes = moduleBoxes(
+            place.unit,
+            {
+              x: place.x,
+              y: place.y,
+              heightM: place.heightM,
+              depthM: place.depthM,
+              thicknessM: 0.016,
+            },
+            { gapM: 0.003, frontThicknessM: 0.018, integratedHandles: false, cutaway: false },
+          );
+          if (boxes.length > 0) drawn.add(place.unit.id);
+        }
+      }
+
+      return { drawn: drawn.size, ids: Array.from(drawn).sort() };
+    };
+
     w.__mwCadState = () => ({
       fronts: Array.from(
         new Set(
@@ -562,6 +643,7 @@ function FrameProbe({ rows }: { rows: SceneRow[] }) {
       delete w.__mwCadFit;
       delete w.__mwCadLook;
       delete w.__mwCadRoom;
+      delete w.__mwCadModules;
     };
   }, [gl, camera, scene, get, rows]);
 

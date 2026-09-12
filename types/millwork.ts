@@ -219,7 +219,25 @@ export interface ModuleFill {
    * замолкает, потому что спрашивать больше не о чем.
    */
   openingChosen?: boolean;
+  /**
+   * ЧЕМ ОТКРЫВАЮТ: скоба, профиль или нажатие.
+   *
+   * Это разная фурнитура и разные деньги, поэтому выбор лежит на модуле,
+   * а не один на весь ряд. Пусто — ручка по умолчанию ряда
+   * (`options.integratedHandles`): у рядов, собранных до этого выбора,
+   * ничего не меняется и отпечаток не едет.
+   */
+  handle?: HandleKind;
 }
+
+/**
+ * ТРИ СПОСОБА ОТКРЫТЬ ФАСАД.
+ *
+ * `bar` — накладная скоба, `profile` — врезная ручка-профиль по кромке,
+ * `none` — без ручки, нажатием (push-to-open). Последнее не «ничего»: за
+ * ним стоит механизм, и в смете он идёт своей строкой.
+ */
+export type HandleKind = 'bar' | 'profile' | 'none';
 
 /**
  * НАПРАВЛЕНИЕ ОТКРЫВАНИЯ.
@@ -648,6 +666,8 @@ export type MillworkOp =
    * раскрою и смете.
    */
   | { op: 'set_opening'; moduleId: string; opening: FrontOpening }
+  /** Чем открывают фасад: скоба, профиль или нажатие. */
+  | { op: 'set_handle'; moduleId: string; handle: HandleKind }
   | { op: 'set_option'; key: 'upperToCeiling' | 'hardwareClass' | 'countertop' | 'hasUpper' | 'hasCornice' | 'integratedHandles'; value: string | boolean };
 
 export interface MillworkRequest {

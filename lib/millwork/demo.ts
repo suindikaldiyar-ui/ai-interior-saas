@@ -130,6 +130,7 @@ export const DEMO_RATES: RateTable = {
   flap_mechanism: 9500,
   handle_standard: 1200,
   handle_integrated: 6500,
+  push_to_open: 4200,
   leg_support: 300,
   fasteners: 12,
   cutting: 1800,

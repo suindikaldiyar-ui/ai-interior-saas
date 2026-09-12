@@ -80,9 +80,18 @@ export function columnNiches(
 
   // Низкий пенал: приборы садятся от дна, иначе верхний упрётся в крышу.
   const needed = bottomH + topH + APPLIANCE_COLUMN.shelfMm;
-  const base = snapUp32(
-    Math.max(0, Math.min(APPLIANCE_COLUMN.baseMm, carcassHeightMm - needed)),
-  );
+  /*
+   * Отметка низа духовки задана ОТ ПОЛА, а ниши считаются от дна
+   * корпуса: вычитаем цоколь. Забыть его — значит поднять пару приборов
+   * на сто миллиметров и получить ту самую духовку на уровне груди.
+   *
+   * `snapUp32` округляет вверх, поэтому берём ближайшее отверстие СНИЗУ
+   * от предела: ниша может стать ниже предела, но не выше него.
+   */
+  const wanted = Math.max(0, APPLIANCE_COLUMN.baseFromFloorMm - GEOMETRY.base.plinthH);
+  const capped = Math.max(0, Math.min(wanted, carcassHeightMm - needed));
+  const snapped = snapUp32(capped);
+  const base = snapped > capped ? Math.max(0, snapped - SYSTEM32_STEP_MM) : snapped;
 
   const boundary = snapUp32(base + bottomH);
 

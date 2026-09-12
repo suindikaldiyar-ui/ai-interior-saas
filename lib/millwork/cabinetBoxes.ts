@@ -1,4 +1,4 @@
-import { columnNiches, moduleCarcassHeightMm } from '@/lib/millwork/fill';
+import { columnNiches, moduleCarcassHeightMm, upperBottomFor } from '@/lib/millwork/fill';
 import { GEOMETRY } from './modules';
 import { FRAME_WIDTH_MM, frontKey, frontOf, isFramed } from './frontMaterial';
 import { openingOf } from './opening';
@@ -280,7 +280,15 @@ export function doorBoxes(
   const opening = doorOpening(unit, index, doors);
   const mechanism = opening === 'lift' || opening === 'flap';
 
-  const handle: PartBox = integratedHandles
+  /*
+   * ЧЕМ ОТКРЫВАЮТ — ВЫБОР МОДУЛЯ, А НЕ ОПЦИЯ РЯДА.
+   *
+   * Скоба, врезной профиль или нажатие. «Без ручки» рисуется буквально:
+   * на фасаде нет ничего, и это видно — именно за этим её и выбирают.
+   */
+  const kind = unit.fill?.handle ?? (integratedHandles ? 'profile' : 'bar');
+
+  const handle: PartBox = kind === 'profile'
     ? {
         material: 'metal',
         part,
@@ -322,12 +330,14 @@ export function doorBoxes(
    * подписывает раскрой на другое. Рисуется так же, как делается: четыре
    * бруска обвязки по контуру и вставка, утопленная внутрь.
    */
+  const withHandle = (parts: PartBox[]) => (kind === 'none' ? parts : [...parts, handle]);
+
   if (isFramed(spec)) {
     const frame = FRAME_WIDTH_MM / MM;
     const bar = Math.min(frame, Math.min(w, h) / 3);
     const insetZ = thickness * 0.45;
 
-    return [
+    return withHandle([
       // Обвязка: верх, низ, левая и правая стойки.
       { material: 'front', part, frontKey: key, position: [cx, cy + h / 2 - bar / 2, thickness / 2], scale: [w, bar, thickness] },
       { material: 'front', part, frontKey: key, position: [cx, cy - h / 2 + bar / 2, thickness / 2], scale: [w, bar, thickness] },
@@ -341,11 +351,10 @@ export function doorBoxes(
         position: [cx, cy, insetZ / 2],
         scale: [w - 2 * bar, h - 2 * bar, insetZ],
       },
-      handle,
-    ];
+    ]);
   }
 
-  return [
+  return withHandle([
     {
       material: 'front',
       part,
@@ -353,8 +362,7 @@ export function doorBoxes(
       position: [cx, cy, thickness / 2],
       scale: [w, h, thickness],
     },
-    handle,
-  ];
+  ]);
 }
 
 /** Ящик в задвинутом положении: короб, фронт и ручка. */
@@ -527,6 +535,48 @@ export function moduleBoxes(
  * считало их заново. Вторая формула тех же чисел рано или поздно
  * разъезжается с первой: этот класс ошибки мы ловили шесть раз.
  */
+/**
+ * ГДЕ СТОИТ КАЖДЫЙ МОДУЛЬ РЯДА — ОДНА ФУНКЦИЯ НА ПРОДУКТ.
+ *
+ * Отметка низа верхнего ряда была вписана числом в трёх местах: здесь, в
+ * сцене и в инварианте непересечения. Числа совпадали, пока верхний ряд
+ * был один, и разошлись на антресоли: `upperBottomFor` знает, что она
+ * стоит на крыше колонны холодильника (2400 мм), а сцена рисовала её по
+ * отметке навески (1450) — ВНУТРИ холодильника.
+ *
+ * На экране это выглядело двумя дефектами сразу: «маленькая дверца
+ * посередине холодильника» и «антресоли не видно в 3D». Одиннадцатый
+ * случай одного класса.
+ */
+export function runPlaces(
+  run: Run,
+  size: { depthM: number; plinthM: number },
+): { unit: Module; x: number; y: number; heightM: number; depthM: number }[] {
+  return [
+    ...run.modules.map((unit) => {
+      const isUpper = unit.kind === 'upper' || unit.kind === 'corner_upper';
+      return {
+        unit,
+        x: unit.offsetMm / MM,
+        // Верхние висят, нижние стоят на цоколе.
+        y: isUpper ? upperBottomFor(unit, run) / MM : size.plinthM,
+        heightM: moduleCarcassHeightMm(unit, run) / MM,
+        depthM: isUpper ? GEOMETRY.upper.depth / MM : size.depthM,
+      };
+    }),
+    ...run.upperSegments.flatMap((segment) =>
+      segment.modules.map((unit) => ({
+        unit,
+        // `offsetMm` у верхних модулей уже абсолютный (ловушка 92).
+        x: unit.offsetMm / MM,
+        y: upperBottomFor(unit, run) / MM,
+        heightM: moduleCarcassHeightMm(unit, run) / MM,
+        depthM: GEOMETRY.upper.depth / MM,
+      })),
+    ),
+  ];
+}
+
 export function runBoxes(
   run: Run,
   options: {
@@ -540,29 +590,7 @@ export function runBoxes(
   const depthM = options.zoneDepthMm / MM;
   const plinthM = GEOMETRY.base.plinthH / MM;
 
-  const placed = [
-    ...run.modules.map((unit) => {
-      const isUpper = unit.kind === 'upper' || unit.kind === 'corner_upper';
-      return {
-        unit,
-        x: unit.offsetMm / MM,
-        // Верхние висят, нижние стоят на цоколе.
-        y: isUpper ? GEOMETRY.upper.bottomFromFloor / MM : plinthM,
-        heightM: moduleCarcassHeightMm(unit, run) / MM,
-        depthM: isUpper ? GEOMETRY.upper.depth / MM : depthM,
-      };
-    }),
-    ...run.upperSegments.flatMap((segment) =>
-      segment.modules.map((unit) => ({
-        unit,
-        // `offsetMm` у верхних модулей уже абсолютный (ловушка 92).
-        x: unit.offsetMm / MM,
-        y: GEOMETRY.upper.bottomFromFloor / MM,
-        heightM: moduleCarcassHeightMm(unit, run) / MM,
-        depthM: GEOMETRY.upper.depth / MM,
-      })),
-    ),
-  ];
+  const placed = runPlaces(run, { depthM, plinthM });
 
   return placed.flatMap((entry) =>
     moduleBoxes(

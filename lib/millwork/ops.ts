@@ -35,6 +35,7 @@ import { MODULE_VARIANTS, applyVariant, variantsForModule } from './moduleVarian
 import type {
   ApplianceKind,
   FrontOpening,
+  HandleKind,
   MillworkOp,
   Module,
   ModuleKind,
@@ -164,6 +165,8 @@ export function applyOps({
    * человека обязан её пережить — как переживают её варианты и материал.
    */
   const openingEdits = new Map<string, FrontOpening>();
+  /** Выбранные ручки: верхний ряд пересобирается, выбор обязан пережить. */
+  const handleEdits = new Map<string, HandleKind>();
   /** То же для материала фасада: верх и низ могут отличаться. */
   const upperFronts = new Map<string, NonNullable<Module['front']>>();
   let upperFrontAll: Module['front'] | null = null;
@@ -750,6 +753,46 @@ export function applyOps({
         break;
       }
 
+      case 'set_handle': {
+        /*
+         * ЧЕМ ОТКРЫВАЮТ ЭТОТ ФАСАД.
+         *
+         * Ложится в то же наполнение, что и направление открывания:
+         * скоба, профиль и нажатие — это фурнитура фасада, и хранить её
+         * порознь значит однажды нарисовать скобу там, где в смете
+         * механизм.
+         */
+        const at = modules.findIndex((m) => m.id === op.moduleId);
+        const upperUnit =
+          at < 0
+            ? run.upperSegments
+                .flatMap((segment) => segment.modules)
+                .find((m) => m.id === op.moduleId)
+            : null;
+
+        const target = at >= 0 ? modules[at] : upperUnit;
+        if (!target) {
+          warnings.push(`Модуль ${op.moduleId} не найден.`);
+          break;
+        }
+
+        if (!hasFacade(target)) {
+          warnings.push(
+            `У «${target.label}» фасада нет вовсе: ручку вешать не на что.`,
+          );
+          break;
+        }
+
+        const edited: Module = {
+          ...target,
+          fill: target.fill ? { ...target.fill, handle: op.handle } : target.fill,
+        };
+
+        if (at >= 0) modules[at] = edited;
+        handleEdits.set(target.id, op.handle);
+        break;
+      }
+
       case 'set_mezzanine': {
         /*
          * АНТРЕСОЛЬ — ОТДЕЛЬНАЯ ПОЗИЦИЯ СОСТАВА.
@@ -923,6 +966,14 @@ export function applyOps({
     ...Array.from(openingEdits.entries()),
   ] as const);
 
+  const upperHandles = new Map([
+    ...run.upperSegments
+      .flatMap((segment) => segment.modules)
+      .filter((unit) => unit.fill?.handle)
+      .map((unit) => [unit.id, unit.fill!.handle!] as const),
+    ...Array.from(handleEdits.entries()),
+  ] as const);
+
   nextRun.upperSegments = nextRun.upperSegments.map((segment) => {
     const restored = segment.modules.map((unit) => {
       const kept = upperVariants.get(unit.id);
@@ -938,13 +989,19 @@ export function applyOps({
           ? unit
           : { ...unit, fill: defaultFill(unit, shell, i, restored.length) };
 
-        const opening = upperOpenings.get(withFill.id);
-        if (!opening || openingRejection(withFill, opening)) return withFill;
+        const handle = upperHandles.get(withFill.id);
+        const withHandle =
+          handle && withFill.fill
+            ? { ...withFill, fill: { ...withFill.fill, handle } }
+            : withFill;
+
+        const opening = upperOpenings.get(withHandle.id);
+        if (!opening || openingRejection(withHandle, opening)) return withHandle;
 
         return {
-          ...withFill,
-          doorCount: isMechanism(opening) ? 1 : withFill.doorCount,
-          fill: { ...withFill.fill!, hinge: opening, openingChosen: true },
+          ...withHandle,
+          doorCount: isMechanism(opening) ? 1 : withHandle.doorCount,
+          fill: { ...withHandle.fill!, hinge: opening, openingChosen: true },
         };
       }),
     };

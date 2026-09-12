@@ -1,6 +1,6 @@
-import { CORNER, hingesPerDoor, isUpperRow } from './modules';
+import { BUILT_IN_FRIDGE_FRONTS, CORNER, hingesPerDoor, isUpperRow } from './modules';
 import { MODULE_VARIANTS } from './moduleVariants';
-import type { FrontOpening, Module, Run } from '@/types/millwork';
+import type { FrontOpening, HandleKind, Module, Run } from '@/types/millwork';
 
 /**
  * НАПРАВЛЕНИЕ ОТКРЫВАНИЯ — ОДНО МЕСТО НА ВЕСЬ ПРОДУКТ.
@@ -178,6 +178,36 @@ export function openingsFor(unit: Module): FrontOpening[] {
   );
 }
 
+/* ─────────────────────────  Ручки  ───────────────────────── */
+
+export const HANDLE_TITLE: Record<HandleKind, string> = {
+  bar: 'Скоба',
+  profile: 'Профиль',
+  none: 'Без ручки',
+};
+
+export const HANDLE_HINT: Record<HandleKind, string> = {
+  bar: 'накладная ручка-скоба',
+  profile: 'врезной профиль по кромке фасада',
+  none: 'нажатием: push-to-open, ручки на фасаде нет',
+};
+
+/**
+ * ЧЕМ ОТКРЫВАЮТ ЭТОТ ФАСАД.
+ *
+ * Выбор лежит на модуле; пусто — умолчание ряда. Спрашивают одну
+ * функцию: сцена рисует по ней ручку, смета считает по ней фурнитуру, и
+ * разойтись им негде.
+ */
+export function handleOf(
+  unit: Module,
+  run: Pick<Run, 'options'>,
+): { handle: HandleKind; assumed: boolean } {
+  const chosen = unit.fill?.handle;
+  if (chosen) return { handle: chosen, assumed: false };
+  return { handle: run.options.integratedHandles ? 'profile' : 'bar', assumed: true };
+}
+
 /* ─────────────────────────  Фурнитура  ───────────────────────── */
 
 /**
@@ -195,6 +225,13 @@ export function openingsFor(unit: Module): FrontOpening[] {
  */
 export type OpeningHardware = {
   hinges: number;
+  /**
+   * Ручки по типам: скоб и нажимных механизмов — штуками, профиля —
+   * миллиметрами кромки, по которой он режется.
+   */
+  handleBar: number;
+  handleProfileMm: number;
+  handlePush: number;
   /** Петли 175° для угловых модулей: фальш-панель и карусель без них не открываются. */
   cornerHinges: number;
   lifts: number;
@@ -206,9 +243,14 @@ export type OpeningHardware = {
 
 export function openingHardware(
   units: { unit: Module; heightMm: number; index?: number; total?: number }[],
+  /** Ряд нужен ради умолчания ручки: оно живёт в опциях ряда. */
+  run: Pick<Run, 'options'> = { options: {} as Run['options'] },
 ): OpeningHardware {
   const result: OpeningHardware = {
     hinges: 0,
+    handleBar: 0,
+    handleProfileMm: 0,
+    handlePush: 0,
     cornerHinges: 0,
     lifts: 0,
     flaps: 0,
@@ -216,7 +258,30 @@ export function openingHardware(
     assumed: [],
   };
 
+  /** Ручки на фасадах: сколько и какого типа. */
+  const addHandles = (unit: Module, fronts: number) => {
+    const { handle } = handleOf(unit, run);
+    if (handle === 'bar') result.handleBar += fronts;
+    else if (handle === 'profile') result.handleProfileMm += unit.widthMm;
+    else result.handlePush += fronts;
+    result.handles += fronts;
+  };
+
   for (const { unit, heightMm, index = 0, total = 1 } of units) {
+    /*
+     * ЯЩИКИ И ФАСАДЫ ВСТРОЙКИ — ТОЖЕ ФАСАДЫ.
+     *
+     * За них тоже берутся рукой: у ящика ручка на каждом фронте, у
+     * встроенного холодильника — на каждой створке. Пока ручки считались
+     * отдельной строкой по опции ряда, это было незаметно; теперь тип
+     * ручки выбирают помодульно, и считать их надо там же, где остальную
+     * фурнитуру фасада.
+     */
+    if (unit.frontType === 'drawers') {
+      addHandles(unit, unit.fill?.drawerHeights.length || unit.drawerCount);
+    }
+    if (unit.builtIn) addHandles(unit, BUILT_IN_FRIDGE_FRONTS);
+
     if (unit.frontType !== 'door') continue;
 
     const { opening, assumed, basis } = openingOf(unit, index, total);
@@ -225,7 +290,7 @@ export function openingHardware(
        * Фасад есть, петель нет — это карго. Ручка ему всё равно нужна:
        * за неё выдвигают.
        */
-      result.handles += 1;
+      addHandles(unit, 1);
       continue;
     }
 
@@ -252,7 +317,14 @@ export function openingHardware(
       result.hinges += hingesPerDoor(heightMm);
     }
 
-    result.handles += isMechanism(opening) ? 1 : doors;
+    /*
+     * РУЧКА — РАЗНАЯ ФУРНИТУРА И РАЗНЫЕ ДЕНЬГИ.
+     *
+     * Скоба считается штуками на фасад, профиль — миллиметрами кромки
+     * (он режется по ширине модуля), нажимной механизм — штуками: за
+     * «без ручки» стоит механизм, а не пустота.
+     */
+    addHandles(unit, isMechanism(opening) ? 1 : doors);
 
     /*
      * О чём молчать нельзя, а о чём не стоит говорить.

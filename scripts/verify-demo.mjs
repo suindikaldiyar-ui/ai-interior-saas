@@ -2336,6 +2336,49 @@ try {
     );
 
     /*
+     * 6.5 МОДУЛЕЙ В СЦЕНЕ СТОЛЬКО ЖЕ, СКОЛЬКО НА СХЕМЕ.
+     *
+     * Два места рисуют одну мебель, и разъезжаются они молча: антресоль
+     * была на схеме и пропадала из 3D, потому что сцена ставила её по
+     * отметке навески верхнего ряда вместо крыши колонны.
+     */
+    await lk.locator('[data-shape-kind="linear"]').click();
+    await sleep(2600);
+    await lk.locator('[data-schematic-tab="front"]').click();
+    await sleep(1600);
+    const onSheet = await lk.locator('[data-schematic] [data-module-id]').count();
+
+    await lk.locator('[data-schematic-tab="scene"]').click();
+    await sleep(2600);
+    const inScene = await lk.evaluate(() =>
+      window.__mwCadModules ? window.__mwCadModules() : null,
+    );
+
+    check(
+      'модулей в сцене столько же, сколько на схеме',
+      Boolean(inScene) && inScene.drawn === onSheet,
+      `схема ${onSheet}, сцена ${inScene?.drawn}`,
+    );
+    check(
+      'и антресоль среди них',
+      Boolean(inScene) && inScene.ids.some((id) => id.startsWith('mezz-')),
+      inScene ? inScene.ids.filter((id) => id.startsWith('mezz-')).join(', ') || 'нет' : '',
+    );
+
+    /*
+     * 6.6 ЦВЕТ ВИДЕН В СЦЕНЕ — ЦВЕТОМ МАТЕРИАЛА, А НЕ КЛЮЧОМ.
+     *
+     * Ключ материала говорит, каким цвет ДОЛЖЕН быть. Здесь читается то,
+     * чем мебель покрашена на экране.
+     */
+    const colorsNow = (await look())?.frontColors ?? [];
+    check(
+      'фасады в сцене покрашены цветом каталога, а не серым',
+      colorsNow.length > 0 && colorsNow.some((hex) => hex.toLowerCase() !== '#b9b2a4'),
+      colorsNow.join(' · '),
+    );
+
+    /*
      * 7. МЕБЕЛЬ СТОИТ В КОМНАТЕ, А НЕ В ПУСТОТЕ.
      *
      * Пол и стены — не украшение: ряд ПРИМЫКАЕТ к ним, и потому
@@ -2344,6 +2387,20 @@ try {
      */
     const room = () =>
       lk.evaluate(() => (window.__mwCadRoom ? window.__mwCadRoom() : null));
+
+    /*
+     * Форму выбираем явно: проверка меряет стены ИМЕННО П-образной, а
+     * предыдущий шаг мог оставить прямую. Полагаться на порядок шагов —
+     * значит однажды померить не ту мебель.
+     */
+    if ((await lk.locator('[data-studio-panel].hidden').count()) > 0) {
+      await lk.locator('[data-panel-toggle]').click();
+      await sleep(900);
+    }
+    await lk.locator('[data-shape-kind="u_shape"]').click();
+    await sleep(3000);
+    await lk.locator('[data-schematic-tab="scene"]').click();
+    await sleep(2600);
 
     const uRoom = await room();
     check(
@@ -2482,18 +2539,17 @@ try {
     );
 
     /*
-     * 4. КАМЕРУ НЕЛЬЗЯ СДВИНУТЬ РУКОЙ.
+     * 4. МЕБЕЛЬ КРУТИТСЯ, НО ПОТЕРЯТЬ ЕЁ НЕЛЬЗЯ.
      *
-     * Свободное вращение убрано, и проверка изменилась вместе с
-     * причиной. Прежняя меряла, пересекается ли габарит мебели с кадром,
-     * — и была зелёной, пока человек ломал вид руками: камера внутри
-     * шкафа тоже «пересекается с кадром». Читаемость — это угол и
-     * расстояние, а их при свободном вращении гарантировать нечем.
+     * Вращение вернулось по просьбе мебельщика — угол, под которым
+     * стоит клиент, он показывает рукой. Держат его два предела:
+     * камера ортогональная (масштаб не зависит от угла) и зум ограничен
+     * по ДИАГОНАЛИ габарита — той, что ложится в кадр при повороте на
+     * 45°.
      *
-     * Теперь проверяется то, что стало правдой: поза камеры не меняется
-     * ни от протаскивания, ни от правой кнопки, а каждый из пяти
-     * ракурсов вмещает мебель ЦЕЛИКОМ — габарит внутри кадра, а не
-     * пересекается с ним.
+     * Проверяется крайними значениями: полный оборот шагом 30°, наклон
+     * в оба предела, зум в оба предела. И требование строже прежнего:
+     * габарит обязан быть ВНУТРИ кадра, а не пересекаться с ним.
      */
     await sc.locator('[data-angle="iso"]').click();
     await sleep(2000);
@@ -2506,35 +2562,77 @@ try {
     const cx = box.x + box.w / 2;
     const cy = box.y + box.h / 2;
 
-    const pose = () => sc.evaluate(() => (window.__mwCadState ? window.__mwCadState().camera : null));
-
-    const drag = async (dx, dy, button = 'left') => {
+    const drag = async (dx, dy) => {
       await sc.mouse.move(cx, cy);
-      await sc.mouse.down({ button });
-      for (let i = 1; i <= 6; i += 1) {
-        await sc.mouse.move(cx + (dx * i) / 6, cy + (dy * i) / 6);
-        await sleep(30);
+      await sc.mouse.down();
+      for (let i = 1; i <= 5; i += 1) {
+        await sc.mouse.move(cx + (dx * i) / 5, cy + (dy * i) / 5);
+        await sleep(25);
       }
-      await sc.mouse.up({ button });
-      await sleep(300);
+      await sc.mouse.up();
+      await sleep(200);
     };
 
-    const poseBefore = await pose();
-    await drag(box.w * 0.4, box.h * 0.3);
-    await drag(-box.w * 0.5, -box.h * 0.4);
-    await drag(box.w * 0.6, 0, 'right');
-    const poseAfter = await pose();
+    const outside = [];
+    const record = async (what) => {
+      const now = await fit();
+      const [x0, x1, y0, y1] = now?.box ?? [9, 9, 9, 9];
+      if (!now || x0 < -1 || x1 > 1 || y0 < -1 || y1 > 1) {
+        outside.push(`${what}: ${now ? now.box.join(' ') : 'нет данных'}`);
+      }
+    };
 
-    check(
-      'камеру нельзя сдвинуть ни мышью, ни правой кнопкой',
-      JSON.stringify(poseBefore) === JSON.stringify(poseAfter),
-      `${JSON.stringify(poseBefore)} → ${JSON.stringify(poseAfter)}`,
+    const spun = await sc.evaluate(() => (window.__mwCadState ? window.__mwCadState().camera : null));
+    for (let i = 0; i < 12; i += 1) {
+      await drag(box.w * 0.12, 0);
+      await record(`поворот ${(i + 1) * 30}°`);
+    }
+    const afterSpin = await sc.evaluate(() =>
+      window.__mwCadState ? window.__mwCadState().camera : null,
     );
 
     check(
-      'ракурса «Свободный» нет вовсе',
-      (await sc.locator('[data-angle="free"]').count()) === 0 &&
-        (await sc.locator('[data-angle]').count()) === 5,
+      'мебель крутится: камера обошла вокруг',
+      JSON.stringify(spun) !== JSON.stringify(afterSpin),
+      `${JSON.stringify(spun)} → ${JSON.stringify(afterSpin)}`,
+    );
+
+    for (let i = 0; i < 6; i += 1) await drag(0, box.h * 0.25);
+    await record('наклон вниз до предела');
+    for (let i = 0; i < 12; i += 1) await drag(0, -box.h * 0.25);
+    await record('наклон вверх до предела');
+
+    for (let i = 0; i < 14; i += 1) {
+      await sc.mouse.move(cx, cy);
+      await sc.mouse.wheel(0, 400);
+      await sleep(90);
+    }
+    await record('зум наружу до предела');
+    for (let i = 0; i < 28; i += 1) {
+      await sc.mouse.move(cx, cy);
+      await sc.mouse.wheel(0, -400);
+      await sleep(90);
+    }
+    await record('зум внутрь до предела');
+
+    check(
+      'при любом вращении, наклоне и зуме габарит ВНУТРИ кадра',
+      outside.length === 0,
+      outside.length === 0 ? '16 крайних положений, ни одного вылета' : outside.slice(0, 2).join(' · '),
+    );
+
+    await sc.locator('[data-angle-home]').click();
+    await sleep(2000);
+    check(
+      '«Вернуть вид» возвращает камеру на место',
+      JSON.stringify(await sc.evaluate(() =>
+        window.__mwCadState ? window.__mwCadState().camera : null,
+      )) === JSON.stringify(spun),
+    );
+
+    check(
+      'ракурсов по-прежнему пять',
+      (await sc.locator('[data-angle]').count()) === 5,
       `${await sc.locator('[data-angle]').count()} ракурсов`,
     );
 

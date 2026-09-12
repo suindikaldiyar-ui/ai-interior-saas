@@ -286,11 +286,11 @@ export function buildEstimateDrafts(
       index,
       total: modules.length,
     })),
+    run,
   );
 
   let hinges = hardware.hinges;
   let slides = 0;
-  let handles = hardware.handles;
 
   for (const unit of modules) {
     if (unit.frontType === 'drawers') {
@@ -301,7 +301,6 @@ export function buildEstimateDrafts(
        */
       const drawers = unit.fill?.drawerHeights.length || unit.drawerCount;
       slides += drawers;
-      handles += drawers;
     }
 
     /*
@@ -312,7 +311,6 @@ export function buildEstimateDrafts(
     if (unit.builtIn) {
       const h = moduleCarcassHeightMm(unit, run);
       hinges += BUILT_IN_FRIDGE_FRONTS * hingesPerDoor(h / BUILT_IN_FRIDGE_FRONTS);
-      handles += BUILT_IN_FRIDGE_FRONTS;
     }
   }
 
@@ -451,12 +449,46 @@ export function buildEstimateDrafts(
           },
         ]
       : []),
-    {
-      key: run.options.integratedHandles ? 'handle_integrated' : 'handle_standard',
-      title: run.options.integratedHandles ? 'Ручка-профиль' : 'Ручки',
-      unit: run.options.integratedHandles ? 'mp' : 'pcs',
-      quantity: run.options.integratedHandles ? frontRowMp : handles,
-    },
+    /*
+     * РУЧКИ — ТРИ РАЗНЫЕ СТРОКИ, А НЕ ОДНА НА ВЕСЬ РЯД.
+     *
+     * Скоба, врезной профиль и нажимной механизм — разная фурнитура и
+     * разные деньги; выбирают их помодульно. Пока строка была одна и
+     * зависела от опции ряда, выбор на модуле в смету не попадал вовсе.
+     *
+     * Строка появляется, только если такая ручка в ряду есть: «Ручки: 0»
+     * читается как забытая позиция (ловушка 195).
+     */
+    ...(hardware.handleBar > 0
+      ? [
+          {
+            key: 'handle_standard',
+            title: 'Ручки накладные',
+            unit: 'pcs' as const,
+            quantity: hardware.handleBar,
+          },
+        ]
+      : []),
+    ...(hardware.handleProfileMm > 0
+      ? [
+          {
+            key: 'handle_integrated',
+            title: 'Ручка-профиль',
+            unit: 'mp' as const,
+            quantity: round3(hardware.handleProfileMm / MM_IN_M),
+          },
+        ]
+      : []),
+    ...(hardware.handlePush > 0
+      ? [
+          {
+            key: 'push_to_open',
+            title: 'Механизм push-to-open',
+            unit: 'pcs' as const,
+            quantity: hardware.handlePush,
+          },
+        ]
+      : []),
     // Четыре регулируемые опоры на каждый нижний модуль.
     { key: 'leg_support', title: 'Опоры регулируемые', unit: 'pcs', quantity: floorModules.length * 4 },
     { key: 'fasteners', title: 'Крепёж и эксцентрики', unit: 'percent', quantity: materials.carcassM2 },

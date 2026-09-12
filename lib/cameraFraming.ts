@@ -90,6 +90,17 @@ export function isOrthographic(view: SceneView): boolean {
   return view !== 'perspective';
 }
 
+/**
+ * ВИД-ЧЕРТЁЖ: КАМЕРА СТОИТ НАМЕРТВО.
+ *
+ * Спереди, сбоку и сверху — это документы: сдвинутая камера увела бы
+ * размерную цепочку от мебели, а размер мимо мебели хуже его отсутствия.
+ * Общий вид тоже ортогональный, но он не документ — его крутят руками.
+ */
+export function isFixedView(view: SceneView): boolean {
+  return isOrthographic(view) && view !== 'iso';
+}
+
 export const DEFAULT_SCENE_VIEW: SceneView = 'perspective';
 
 /**

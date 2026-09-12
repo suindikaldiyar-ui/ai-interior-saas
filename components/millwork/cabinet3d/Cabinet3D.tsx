@@ -13,13 +13,13 @@ import { DEFAULT_FRONT, frontKey, frontOf } from '@/lib/millwork/frontMaterial';
 import type { FrontSpec } from '@/types/millwork';
 import { surfaceLook } from '@/lib/millwork/surfaces';
 import { APRON_TARGET, COUNTERTOP_TARGET, FACADE_TARGET } from '@/types/catalog';
-import { moduleCarcassHeightMm } from '@/lib/millwork/fill';
+import { runPlaces } from '@/lib/millwork/cabinetBoxes';
 import { GEOMETRY } from '@/lib/millwork/modules';
 import { zoneProfile } from '@/lib/millwork/zones';
 import { useInteriorStore } from '@/store/useInteriorStore';
 import { DEFAULT_PRODUCTION, type ProductionSettings } from '@/types/catalog';
 import { DEFAULT_SCENE_VIEW, type SceneView } from '@/lib/cameraFraming';
-import type { Run } from '@/types/millwork';
+import type { Module, Run } from '@/types/millwork';
 
 /**
  * Интерактивный гарнитур.
@@ -85,6 +85,11 @@ type Props = {
   focusM?: [number, number, number];
   placement?: { xM: number; zM: number; rotationYDeg: number };
 };
+
+/** Модуль из верхнего сегмента: у него своя отметка низа. */
+function isUpperSegment(run: Run, unit: Module): boolean {
+  return run.upperSegments.some((segment) => segment.modules.some((m) => m.id === unit.id));
+}
 
 export default function Cabinet3D({
   run,
@@ -194,42 +199,27 @@ export default function Cabinet3D({
    * пересчитывать нечего, а `useMemo` тут не украшение — ряд из семи
    * модулей это десятки мешей.
    */
-  const modules = useMemo(
-    () =>
-      run.modules.map((unit) => {
-        const heightMm = moduleCarcassHeightMm(unit, run);
-        const isUpper = unit.kind === 'upper' || unit.kind === 'corner_upper';
-
-        return {
-          unit,
-          x: unit.offsetMm / MM,
-          // Верхние висят, нижние стоят на цоколе.
-          y: isUpper
-            ? GEOMETRY.upper.bottomFromFloor / MM
-            : unit.section
-              ? plinthM
-              : plinthM,
-          heightM: heightMm / MM,
-          depthM: isUpper ? GEOMETRY.upper.depth / MM : depthM,
-        };
-      }),
+  /*
+   * РАСКЛАДКА РЯДА — ИЗ ОДНОЙ ФУНКЦИИ.
+   *
+   * Здесь стояла своя копия: где модуль по высоте, какой у него верх,
+   * какая глубина. Пока верхний ряд был один, копия совпадала с той, по
+   * которой считаются коробки; на антресоли они разошлись, и антресоль
+   * оказалась нарисованной внутри холодильника.
+   */
+  const places = useMemo(
+    () => runPlaces(run, { depthM, plinthM }),
     [run, depthM, plinthM],
   );
 
+  const modules = useMemo(
+    () => places.filter((place) => !isUpperSegment(run, place.unit)),
+    [places, run],
+  );
+
   const uppers = useMemo(
-    () =>
-      run.upperSegments.flatMap((segment) =>
-        segment.modules.map((unit) => ({
-          unit,
-          // offsetMm у верхних модулей уже абсолютный: прибавлять начало
-          // сегмента нельзя, иначе ряд уезжает за стену.
-          x: unit.offsetMm / MM,
-          y: GEOMETRY.upper.bottomFromFloor / MM,
-          heightM: moduleCarcassHeightMm(unit, run) / MM,
-          depthM: GEOMETRY.upper.depth / MM,
-        })),
-      ),
-    [run],
+    () => places.filter((place) => isUpperSegment(run, place.unit)),
+    [places, run],
   );
 
   const lengthM = run.lengthMm / MM;
@@ -432,6 +422,12 @@ export default function Cabinet3D({
       {Array.from(grouped.fronts.entries()).map(([key, list]) => (
         <InstancedBoxes
           key={key}
+          /*
+           * Имя пачки — признак «это фасад». По нему приёмка читает ЦВЕТ
+           * МАТЕРИАЛА со сцены: ключ говорит, каким цвет должен быть, а
+           * материал — какой он на экране, и это разные утверждения.
+           */
+          name={`front:${key}`}
           boxes={list}
           geometry={parts.box}
           material={frontMaterials.get(key) ?? parts.front}

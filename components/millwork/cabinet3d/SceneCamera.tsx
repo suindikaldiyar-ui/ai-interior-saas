@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import {
+  isFixedView,
   isOrthographic,
   orthoFraming,
   orthoZoom,
@@ -178,7 +179,8 @@ export default function SceneCamera({ room, view, runWidthM, focusM, onFraming }
   const publishProjection = () => {
     const ortho = orthoRef.current;
     const pose = orthoPose.current;
-    if (!ortho || !pose || !isOrthographic(view)) return;
+    // Позу держим только у видов-чертежей: общий вид крутят руками.
+    if (!ortho || !pose || !isFixedView(view)) return;
 
     // Возвращаем камеру на место ПЕРЕД замером: чертёж обязан быть
     // фасадом, а не почти-фасадом.
@@ -262,7 +264,7 @@ export default function SceneCamera({ room, view, runWidthM, focusM, onFraming }
       if (isOrthographic(view) && orthoRef.current) {
         set({ camera: orthoRef.current });
       }
-      if (controls) controls.enabled = !isOrthographic(view);
+      if (controls) controls.enabled = !isFixedView(view);
       invalidate();
       return;
     }
@@ -310,7 +312,7 @@ export default function SceneCamera({ room, view, runWidthM, focusM, onFraming }
        * размерную цепочку от мебели, а размер мимо мебели хуже, чем
        * его отсутствие. Крутится только «3D».
        */
-      if (controls) controls.enabled = !isOrthographic(state.view);
+      if (controls) controls.enabled = !isFixedView(state.view);
       // Прибыли — на видах-чертежах включаем ортокамеру.
       if (isOrthographic(state.view) && orthoRef.current) {
         set({ camera: orthoRef.current });

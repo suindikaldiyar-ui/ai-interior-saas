@@ -147,7 +147,13 @@ import {
   missingRequiredRates,
 } from '../lib/millwork/rates';
 import { axonometryExtentMm, buildAxonometry, project } from '../lib/millwork/axonometry';
-import { carcassBoxes, doorPivot, moduleBoxes, runBoxes } from '../lib/millwork/cabinetBoxes';
+import {
+  carcassBoxes,
+  doorPivot,
+  moduleBoxes,
+  runBoxes,
+  runPlaces,
+} from '../lib/millwork/cabinetBoxes';
 import { DEFAULT_PRODUCTION } from '../types/catalog';
 import type { ZoneKind } from '../types/millwork';
 import { commIssues, layoutIssues, validateRun } from '../lib/millwork/validate';
@@ -6716,6 +6722,235 @@ console.log('\nЦвет из палитры организации виден в
   check(
     'два декора одного цвета различаются артикулом',
     frontKey({ ...frontOf(after), itemId: sameColor.itemId }) !== frontKey(frontOf(after)),
+  );
+}
+
+
+/* ───────────────────  Фасады стоят на месте, ручки считаются  ─────────────────── */
+
+console.log('\nФасады, створки и ручки');
+{
+  const run = buildRun(baseInput);
+  const places = runPlaces(run, {
+    depthM: GEOMETRY.base.depth / 1000,
+    plinthM: GEOMETRY.base.plinthH / 1000,
+  });
+
+  check('раскладка ряда отдаёт все модули', places.length === allModules(run).length,
+    `${places.length} мест на ${allModules(run).length} модулей`);
+
+  /*
+   * ЗАКРЫТЫЙ ФАСАД ЛЕЖИТ НА ПЕРЕДНЕЙ ПЛОСКОСТИ СВОЕГО КОРПУСА.
+   *
+   * Проверялось только ОТКРЫТОЕ положение — куда уходит створка. А на
+   * скриншоте разъехались закрытые: фасад в стороне от корпуса читается
+   * как развалившаяся мебель, и увидеть это можно было только глазами.
+   * Теперь меряется каждый модуль: центр фасада по толщине, края внутри
+   * корпуса, низ и верх у всех створок модуля общие.
+   */
+  const off: string[] = [];
+  const uneven: string[] = [];
+  let fronts = 0;
+
+  for (const place of places) {
+    const boxes = moduleBoxes(
+      place.unit,
+      {
+        x: place.x,
+        y: place.y,
+        heightM: place.heightM,
+        depthM: place.depthM,
+        thicknessM: 0.016,
+      },
+      { gapM: 0.003, frontThicknessM: 0.018, integratedHandles: false, cutaway: false },
+    );
+
+    const mine = boxes.filter((box) => box.material === 'front');
+    if (mine.length === 0) continue;
+    fronts += mine.length;
+
+    for (const box of mine) {
+      const [bx, by, bz] = box.position;
+      const [bw, bh, bd] = box.scale;
+
+      // Передняя плоскость корпуса — ноль по Z; фасад стоит ПЕРЕД ней.
+      const onPlane = Math.abs(bz - bd / 2) < 0.0005;
+      const insideX =
+        bx - bw / 2 >= place.x - 0.0005 &&
+        bx + bw / 2 <= place.x + place.unit.widthMm / 1000 + 0.0005;
+      const insideY =
+        by - bh / 2 >= place.y - 0.0005 && by + bh / 2 <= place.y + place.heightM + 0.0005;
+
+      if (!onPlane || !insideX || !insideY) {
+        off.push(`${place.unit.id}: z=${bz.toFixed(3)} x=${bx.toFixed(3)} y=${by.toFixed(3)}`);
+      }
+    }
+
+    /*
+     * СТВОРКИ ОДНОГО МОДУЛЯ ИМЕЮТ ОБЩИЙ ВЕРХ И ОБЩИЙ НИЗ.
+     *
+     * Филёнка даёт несколько деталей одной створки, поэтому сравниваются
+     * не все коробки, а полные полотна — те, что во всю высоту фасада.
+     */
+    const panels = mine.filter((box) => box.scale[1] > place.heightM * 0.5);
+    const tops = new Set(panels.map((box) => Math.round((box.position[1] + box.scale[1] / 2) * 1000)));
+    const bottoms = new Set(panels.map((box) => Math.round((box.position[1] - box.scale[1] / 2) * 1000)));
+    if (tops.size > 1 || bottoms.size > 1) {
+      uneven.push(
+        `${place.unit.id}: верх ${Array.from(tops).join('/')}, низ ${Array.from(bottoms).join('/')}`,
+      );
+    }
+  }
+
+  check(
+    'закрытый фасад каждого модуля лежит на передней плоскости корпуса',
+    off.length === 0 && fronts > 0,
+    off.length === 0 ? `${fronts} фасадов, отклонение 0` : off.slice(0, 2).join(' · '),
+  );
+  check(
+    'створки одного модуля имеют общий верх и общий низ',
+    uneven.length === 0,
+    uneven.length === 0 ? 'все створки выровнены' : uneven.slice(0, 2).join(' · '),
+  );
+
+  /*
+   * В КОЛОННЕ ХОЛОДИЛЬНИКА РОВНО ОДИН ФАСАД НА НИШУ.
+   *
+   * На скриншоте посередине холодильника была нарисована лишняя дверца:
+   * антресоль над колонной ставилась по отметке навески верхнего ряда
+   * (1450 мм) вместо крыши колонны (2400). Одна раскладка на сцену и на
+   * коробки это закрыла — проверяем числом, что фасад там один.
+   */
+  const fridgePlace = places.find((place) => place.unit.appliance === 'fridge')!;
+  const fridgeBoxes = moduleBoxes(
+    fridgePlace.unit,
+    {
+      x: fridgePlace.x,
+      y: fridgePlace.y,
+      heightM: fridgePlace.heightM,
+      depthM: fridgePlace.depthM,
+      thicknessM: 0.016,
+    },
+    { gapM: 0.003, frontThicknessM: 0.018, integratedHandles: false, cutaway: false },
+  ).filter((box) => box.material === 'front');
+
+  check(
+    'у колонны холодильника ровно один фасад',
+    fridgeBoxes.length === 1,
+    `${fridgeBoxes.length} фасадных коробок`,
+  );
+
+  const mezzanine = places.find((place) => place.unit.section === 'mezzanine')!;
+  check(
+    'антресоль стоит НАД колонной, а не внутри неё',
+    Boolean(mezzanine) &&
+      mezzanine.y >= fridgePlace.y + fridgePlace.heightM - 0.001,
+    mezzanine ? `низ антресоли ${mezzanine.y.toFixed(2)} м, верх колонны ${(fridgePlace.y + fridgePlace.heightM).toFixed(2)} м` : '',
+  );
+
+  /* ── Ручки: три типа, три строки, разные деньги ── */
+  const door = run.modules.find((unit) => unit.frontType === 'door')!;
+  const withHandle = (handle: 'bar' | 'profile' | 'none') =>
+    applyOps({
+      run,
+      requirements: REQ,
+      openings: OPENINGS,
+      ops: [{ op: 'set_handle', moduleId: door.id, handle }],
+    });
+
+  const bar = withHandle('bar');
+  const profile = withHandle('profile');
+  const push = withHandle('none');
+
+  check(
+    'выбор ручки ложится в наполнение модуля',
+    push.modules.find((unit) => unit.id === door.id)?.fill?.handle === 'none',
+  );
+  check(
+    'и меняет отпечаток: это другая фурнитура',
+    push.fingerprint !== run.fingerprint && profile.fingerprint !== push.fingerprint,
+    `${run.fingerprint} → ${push.fingerprint}`,
+  );
+
+  const lineOf = (r: Run, key: string) =>
+    buildEstimate(r, 'optimal', DEMO_RATES).lines.find((line) => line.key === key);
+
+  check(
+    'накладная ручка идёт штуками',
+    (lineOf(bar, 'handle_standard')?.quantity ?? 0) > 0,
+    `${lineOf(bar, 'handle_standard')?.quantity} шт.`,
+  );
+  check(
+    'врезной профиль — погонными метрами',
+    (lineOf(profile, 'handle_integrated')?.quantity ?? 0) > 0,
+    `${lineOf(profile, 'handle_integrated')?.quantity} м`,
+  );
+  check(
+    '«без ручки» — это механизм push-to-open, а не пустота',
+    (lineOf(push, 'push_to_open')?.quantity ?? 0) > 0,
+    `${lineOf(push, 'push_to_open')?.quantity} шт. · ${lineOf(push, 'push_to_open')?.total} ₸`,
+  );
+
+  const totals = [bar, profile, push].map(
+    (r) => Math.round(buildEstimate(r, 'optimal', DEMO_RATES).total),
+  );
+  check(
+    'три типа ручек дают три разные суммы',
+    new Set(totals).size === 3,
+    totals.join(' · '),
+  );
+
+  /* ── Ручка видна в сцене: у «без ручки» её коробки нет ── */
+  const handleBoxes = (r: Run) => {
+    const unit = allModules(r).find((m) => m.id === door.id)!;
+    const place = runPlaces(r, {
+      depthM: GEOMETRY.base.depth / 1000,
+      plinthM: GEOMETRY.base.plinthH / 1000,
+    }).find((entry) => entry.unit.id === door.id)!;
+
+    return moduleBoxes(
+      unit,
+      {
+        x: place.x,
+        y: place.y,
+        heightM: place.heightM,
+        depthM: place.depthM,
+        thicknessM: 0.016,
+      },
+      { gapM: 0.003, frontThicknessM: 0.018, integratedHandles: false, cutaway: false },
+    ).filter((box) => box.material === 'metal');
+  };
+
+  check(
+    'скоба нарисована, а у «без ручки» на фасаде ничего нет',
+    handleBoxes(bar).length > 0 && handleBoxes(push).length === 0,
+    `скоб ${handleBoxes(bar).length}, при нажатии ${handleBoxes(push).length}`,
+  );
+  check(
+    'врезной профиль рисуется иначе, чем скоба',
+    handleBoxes(profile).length > 0 &&
+      JSON.stringify(handleBoxes(profile)) !== JSON.stringify(handleBoxes(bar)),
+  );
+
+  /* ── Духовка опущена ── */
+  const columnRun = buildRun({
+    ...baseInput,
+    requirements: { ...REQ, appliances: [...REQ.appliances, 'microwave' as const] },
+  });
+  const column = columnRun.modules.find((unit) => unit.column)!;
+  const niches = columnNiches(column, moduleCarcassHeightMm(column, columnRun));
+  const oven = niches.find((niche) => niche.appliance === 'oven')!;
+  const ovenFloor = GEOMETRY.base.plinthH + oven.fromMm;
+
+  check(
+    'низ духовки не выше 600 мм от пола',
+    ovenFloor <= 600,
+    `${ovenFloor} мм`,
+  );
+  check(
+    'и пара приборов по-прежнему в пределе',
+    (columnNichesSumMm(column, columnRun) ?? 0) <= APPLIANCE_COLUMN.maxPairMm,
+    `${columnNichesSumMm(column, columnRun)} мм`,
   );
 }
 

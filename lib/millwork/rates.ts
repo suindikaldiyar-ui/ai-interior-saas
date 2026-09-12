@@ -106,6 +106,8 @@ export const TYPICAL_PRICE_LIST: TypicalRate[] = [
   { estimateKey: 'flap_mechanism', article: 'HW-FLAP', name: 'Механизм откидного фасада', categoryKey: 'hardware', unit: 'piece', price: 9500 },
   { estimateKey: 'handle_standard', article: 'HW-HANDLE', name: 'Ручка накладная', categoryKey: 'hardware', unit: 'piece', price: 1200 },
   { estimateKey: 'handle_integrated', article: 'HW-HANDLE-PROFILE', name: 'Ручка-профиль', categoryKey: 'hardware', unit: 'running_meter', price: 6500 },
+  // Без ручки — это не отсутствие фурнитуры, а механизм на каждый фасад.
+  { estimateKey: 'push_to_open', article: 'HW-PUSH', name: 'Механизм push-to-open', categoryKey: 'hardware', unit: 'piece', price: 4200 },
   { estimateKey: 'leg_support', article: 'HW-LEG', name: 'Опора регулируемая', categoryKey: 'hardware', unit: 'piece', price: 300 },
   { estimateKey: 'fasteners', article: 'HW-FASTENERS', name: 'Крепёж и эксцентрики (% от корпуса)', categoryKey: 'hardware', unit: 'piece', price: 12 },
   { estimateKey: 'cutting', article: 'SRV-CUT', name: 'Распил и присадка', categoryKey: 'services', unit: 'm2', price: 1800 },

@@ -28,6 +28,8 @@ type Props = {
   material: THREE.Material;
   castShadow?: boolean;
   receiveShadow?: boolean;
+  /** Имя меша: по нему приёмка находит пачку в графе сцены. */
+  name?: string;
 };
 
 export default function InstancedBoxes({
@@ -36,6 +38,7 @@ export default function InstancedBoxes({
   material,
   castShadow = false,
   receiveShadow = false,
+  name,
 }: Props) {
   const ref = useRef<THREE.InstancedMesh>(null);
   const invalidate = useThree((state) => state.invalidate);
@@ -80,6 +83,7 @@ export default function InstancedBoxes({
   return (
     <instancedMesh
       ref={ref}
+      name={name}
       /*
        * Число экземпляров задаётся при создании буфера, поэтому меняем
        * его вместе с составом через `key`: R3F пересоздаст меш, а не

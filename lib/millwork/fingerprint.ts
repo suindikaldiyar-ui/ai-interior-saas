@@ -55,6 +55,8 @@ function fillPart(unit: Module): string | undefined {
     fill.rodsMm.join('.'),
     fill.drawerHeights.join('.'),
     fill.hinge,
+    // Умолчание не пишется: ряды, собранные до выбора ручек, не едут.
+    fill.handle ?? '',
   ].join('/');
 }
 

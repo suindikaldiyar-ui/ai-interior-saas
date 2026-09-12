@@ -2258,6 +2258,7 @@ export default function Workspace(props: WorkspaceProps) {
                   <div className="mt-3">
                     <OpeningPicker
                       unit={selectedUnit}
+                      run={activeRun}
                       onOps={runOps}
                       onRefuse={setSceneNotice}
                     />

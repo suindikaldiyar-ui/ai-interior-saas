@@ -1,13 +1,16 @@
 'use client';
 
 import {
+  HANDLE_HINT,
+  HANDLE_TITLE,
   OPENING_HINT,
   OPENING_TITLE,
+  handleOf,
   openingOf,
   openingRejection,
   openingsFor,
 } from '@/lib/millwork/opening';
-import type { FrontOpening, MillworkOp, Module } from '@/types/millwork';
+import type { FrontOpening, HandleKind, MillworkOp, Module, Run } from '@/types/millwork';
 
 /**
  * КУДА ОТКРЫВАЕТСЯ ФАСАД.
@@ -25,16 +28,19 @@ import type { FrontOpening, MillworkOp, Module } from '@/types/millwork';
 
 type Props = {
   unit: Module;
+  /** Ряд нужен ради умолчания ручки: оно живёт в опциях ряда. */
+  run: Pick<Run, 'options'>;
   onOps: (ops: MillworkOp[]) => void;
   /** Отказ и последствия — теми же словами, что у материала фасада. */
   onRefuse?: (message: string) => void;
 };
 
-export default function OpeningPicker({ unit, onOps, onRefuse }: Props) {
+export default function OpeningPicker({ unit, run, onOps, onRefuse }: Props) {
   const allowed = openingsFor(unit);
   if (allowed.length === 0) return null;
 
   const { opening, assumed, basis } = openingOf(unit);
+  const { handle } = handleOf(unit, run);
 
   return (
     <div data-opening-picker>
@@ -80,6 +86,34 @@ export default function OpeningPicker({ unit, onOps, onRefuse }: Props) {
           Не выбрано — считаем по умолчанию: {basis}.
         </p>
       )}
+
+      {/*
+        * ЧЕМ ОТКРЫВАЮТ — ТУТ ЖЕ.
+        *
+        * Скоба, врезной профиль или нажатие. Это разная фурнитура и
+        * разные деньги, и спрашивают о ней в тот же момент разговора,
+        * что и о направлении.
+        */}
+      <p className="mw-label mb-2 mt-3">Ручка</p>
+      <div className="flex flex-wrap gap-1">
+        {(['bar', 'profile', 'none'] as HandleKind[]).map((value) => {
+          const active = value === handle;
+          return (
+            <button
+              key={value}
+              type="button"
+              data-handle={value}
+              data-active={active ? '1' : '0'}
+              aria-pressed={active}
+              title={HANDLE_HINT[value]}
+              onClick={() => onOps([{ op: 'set_handle', moduleId: unit.id, handle: value }])}
+              className={`mw-btn ${active ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+            >
+              {HANDLE_TITLE[value]}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
