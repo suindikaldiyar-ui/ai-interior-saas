@@ -12,7 +12,7 @@ import {
   isStandardWidth,
   snapToStandard,
 } from './modules';
-import { buildUpperRow, fillGap } from './layout';
+import { buildUpperRow, fillGap, moduleId } from './layout';
 import {
   assertNoOverlap,
   assertRunFits,
@@ -67,13 +67,14 @@ import type {
  * остаётся воспроизводимой.
  */
 
-function reindex(modules: Module[]): Module[] {
+function reindex(modules: Module[], wallId?: string): Module[] {
   let offset = 0;
   return modules.map((unit) => {
     const next: Module = {
       ...unit,
       offsetMm: offset,
-      id: `${unit.kind}-${offset}${unit.appliance ? `-${unit.appliance}` : ''}`,
+      // Третья копия формулы жила здесь.
+      id: moduleId(unit.kind, offset, unit.appliance, wallId),
       isFiller: unit.kind === 'filler' || !isStandardWidth(unit.widthMm),
     };
     offset += unit.widthMm;
@@ -86,17 +87,17 @@ function reindex(modules: Module[]): Module[] {
  * Недостачу закрываем стандартными модулями, излишек снимаем с обычных
  * модулей — технику трогать нельзя, у неё габарит фиксирован.
  */
-function rebalance(modules: Module[], lengthMm: number): Module[] {
+function rebalance(modules: Module[], lengthMm: number, wallId?: string): Module[] {
   const sum = modules.reduce((acc, m) => acc + m.widthMm, 0);
   let diff = lengthMm - sum;
 
-  if (diff === 0) return reindex(modules);
+  if (diff === 0) return reindex(modules, wallId);
 
   if (diff > 0) {
     const added = fillGap(diff).map((widthMm) =>
-      makePlainModule('base', widthMm),
+      makePlainModule('base', widthMm, wallId),
     );
-    return reindex([...modules, ...added]);
+    return reindex([...modules, ...added], wallId);
   }
 
   // Излишек: ужимаем и удаляем обычные модули, начиная с последнего.
@@ -115,12 +116,14 @@ function rebalance(modules: Module[], lengthMm: number): Module[] {
     }
   }
 
-  return reindex(result);
+  return reindex(result, wallId);
 }
 
 function makePlainModule(
   kind: ModuleKind,
   widthMm: number,
+  /** Стена ряда: она же идентичность модуля. */
+  wallId?: string,
   appliance?: ApplianceKind,
   /**
    * Состав кухни: исполнения приборов и замеренные габариты.
@@ -144,7 +147,8 @@ function makePlainModule(
     : {};
 
   return {
-    id: `${kind}-0${appliance ? `-${appliance}` : ''}`,
+    // Четвёртая копия. Место у модуля, поставленного руками, — ноль.
+    id: moduleId(kind, 0, appliance, wallId),
     applianceSizes:
       appliance && Object.keys(merged).length > 0 ? { [appliance]: merged } : undefined,
     kind,
@@ -263,7 +267,7 @@ export function applyOps({
           }
         }
 
-        const created = makePlainModule(op.kind, width, op.appliance, requirements);
+        const created = makePlainModule(op.kind, width, run.wallId, op.appliance, requirements);
 
         /*
          * Холодильник, добавленный руками, встраивается по тем же
@@ -328,7 +332,7 @@ export function applyOps({
         const width = op.appliance
           ? applianceWidthMm(op.appliance, requirements.applianceSizes)
           : modules[at].widthMm;
-        modules[at] = makePlainModule(op.kind, width, op.appliance);
+        modules[at] = makePlainModule(op.kind, width, run.wallId, op.appliance);
         break;
       }
 
@@ -902,7 +906,7 @@ export function applyOps({
    * а незаполненный остаток показывается числом.
    */
   const free = requirements.mode === 'free';
-  modules = free ? placeFree(modules) : rebalance(modules, run.lengthMm);
+  modules = free ? placeFree(modules, run.wallId) : rebalance(modules, run.lengthMm, run.wallId);
 
   /*
    * Наполнение пересчитывается там, где оно слетело со сменой секции:
@@ -1130,7 +1134,7 @@ export function applyOps({
       modules: segment.modules.filter((unit) => !underBeam(unit)).map((unit) => {
         const mezz: Module = {
           ...unit,
-          id: `mezz-${unit.offsetMm}`,
+          id: moduleId('mezz', unit.offsetMm, undefined, nextRun.wallId),
           section: 'mezzanine',
           variant: undefined,
           appliance: undefined,

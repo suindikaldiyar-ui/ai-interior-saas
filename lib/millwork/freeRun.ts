@@ -1,3 +1,4 @@
+import { moduleId } from './layout';
 import { isStandardWidth } from './modules';
 import type { Module } from '@/types/millwork';
 
@@ -39,12 +40,13 @@ export function snapMove(mm: number): number {
  * и отпечаток, и нумерация позиций. Идентификатор по-прежнему выводится из
  * позиции и роли: пересчитали ряд — тот же модуль получил тот же id.
  */
-export function placeFree(modules: Module[]): Module[] {
+export function placeFree(modules: Module[], wallId?: string): Module[] {
   return [...modules]
     .sort((a, b) => a.offsetMm - b.offsetMm)
     .map((unit) => ({
       ...unit,
-      id: `${unit.kind}-${unit.offsetMm}${unit.appliance ? `-${unit.appliance}` : ''}`,
+      // Строку собирает `moduleId` — здесь была её вторая копия.
+      id: moduleId(unit.kind, unit.offsetMm, unit.appliance, wallId),
       isFiller: unit.kind === 'filler' || !isStandardWidth(unit.widthMm),
     }));
 }

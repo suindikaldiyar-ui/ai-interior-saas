@@ -343,6 +343,8 @@ export function buildComposition(input: BuildCompositionInput): Composition {
       comms: input.comms ?? [],
       cornerAt,
       production: input.production,
+      // Стена замера едет в ряд: она же идентичность его модулей.
+      wallId: wall.id,
     });
 
     warnings.push(...run.warnings.map((w) => `${SEGMENT_LABELS[i]}: ${w}`));

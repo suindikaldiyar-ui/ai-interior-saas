@@ -106,7 +106,7 @@ import {
 } from '../lib/millwork/palette';
 import { frontKey, frontOf } from '../lib/millwork/frontMaterial';
 import { frontSwatch } from '../lib/millwork/frontSwatch';
-import { compositionOf, mergeEstimates } from '../lib/millwork/walls';
+import { compositionOf, mergeEstimates, wallLabel } from '../lib/millwork/walls';
 import type { MillworkState } from '../lib/projects';
 import type { CatalogEntryFull } from '../types/catalog';
 import {
@@ -8772,6 +8772,204 @@ console.log('\nЦех А: 900 и 40 на всех видах сразу');
       `${Math.round((upperSpot?.y ?? 0) * 1000)} мм`,
     );
   }
+}
+
+/* ───────────────────  Идентификатор модуля уникален по ОБЪЕКТУ  ─────────────────── */
+
+console.log('\nМодуль стены А и модуль стены Б — разные модули');
+{
+  /*
+   * `moduleId` собирается из вида и СМЕЩЕНИЯ ВНУТРИ РЯДА
+   * (`${kind}-${offsetMm}`), и ряда в нём нет. У двух стен одинаковые
+   * начала: модуль в нуле стены А и модуль в нуле стены Б получают один
+   * и тот же `base-0`.
+   *
+   * Любое состояние, ключённое по id, прикладывается тогда сразу к
+   * обоим: открытая дверца, выделение, выбранный вариант. Открываешь
+   * антресоль на стене А — открывается и на стене Б.
+   */
+  const walls = (ls: number[]) =>
+    ls.map((lengthMm, i) => ({ id: `w${i}`, lengthMm, openings: [] }));
+
+  const shapes: { title: string; kind: CompositionKind; ls: number[] }[] = [
+    { title: 'прямая', kind: 'linear', ls: [3800] },
+    { title: 'угловая', kind: 'corner_l', ls: [3800, 1800] },
+    { title: 'П-образная', kind: 'u_shape', ls: [3800, 1800, 2400] },
+  ];
+
+  for (const shape of shapes) {
+    const runs =
+      shape.kind === 'linear'
+        ? [
+            buildRun({
+              lengthMm: shape.ls[0],
+              ceilingHeightMm: 2700,
+              requirements: REQ,
+              openings: [],
+              comms: COMMS,
+            }),
+          ]
+        : buildComposition({
+            kind: shape.kind,
+            walls: walls(shape.ls),
+            ceilingHeightMm: 2700,
+            requirements: REQ,
+            comms: COMMS,
+          }).segments.map((segment) => segment.run);
+
+    const modules = runs.flatMap((run) => allModules(run));
+
+    /*
+     * Ноль модулей — это не «проверять нечего», это пустой объект.
+     * Падаем здесь, а не проходим по пустому списку.
+     */
+    check(
+      `${shape.title}: в объекте есть модули`,
+      runs.length === shape.ls.length && modules.length > 0,
+      `рядов ${runs.length}, модулей ${modules.length}` +
+        (modules.length === 0 ? ' — ПУСТО' : ''),
+    );
+    if (modules.length === 0) continue;
+
+    /* ── Идентификаторы уникальны ПО ОБЪЕКТУ, а не по ряду ── */
+    const seen = new Map<string, number>();
+    for (const unit of modules) seen.set(unit.id, (seen.get(unit.id) ?? 0) + 1);
+    const collisions = Array.from(seen.entries()).filter(([, count]) => count > 1);
+
+    check(
+      `${shape.title}: идентификаторы модулей уникальны по объекту`,
+      collisions.length === 0,
+      collisions.length === 0
+        ? `${modules.length} модулей, ${seen.size} идентификаторов`
+        : `СТОЛКНОВЕНИЙ ${collisions.length}: ` +
+          collisions.map(([id, count]) => `${id}×${count}`).slice(0, 5).join(' '),
+    );
+
+    /*
+     * Состояние по id не протекает между рядами — проверяем ВСЕ пары.
+     * Сравнивать только первые два ряда мало: в П-образной сталкиваются
+     * стена А и стена В, а А с Б расходятся случайно — потому что на Б
+     * первым встал прибор, и суффикс у него свой.
+     */
+    if (runs.length > 1) {
+      const parts = runs.map((run) => openablePartIds(run));
+      const leaks: string[] = [];
+
+      for (let i = 0; i < parts.length; i += 1) {
+        for (let j = i + 1; j < parts.length; j += 1) {
+          const both = parts[j].filter((id) => parts[i].includes(id));
+          if (both.length > 0) {
+            leaks.push(`${wallLabel(i)}×${wallLabel(j)}: ${both.slice(0, 3).join(' ')}`);
+          }
+        }
+      }
+
+      /*
+       * ВЫБРАННЫЙ ВАРИАНТ ТОЖЕ КЛЮЧУЕТСЯ ПО id.
+       *
+       * Правка идёт операцией `set_variant` с идентификатором модуля.
+       * Совпади он у двух рядов — и карго встало бы сразу на двух
+       * стенах, а в смете появился бы механизм, которого никто не
+       * заказывал.
+       */
+      /*
+       * Вариант берём ИЗ СПИСКА, который движок для этого места и
+       * предлагает: «карго» в модуле 1200 мм не бывает, и отказ движка
+       * доказывал бы не то, что мы проверяем.
+       */
+      const target = runs[0].modules.find(
+        (unit) => !unit.appliance && variantsForModule(unit, runs[0]).length > 0,
+      );
+      const pick = target ? variantsForModule(target, runs[0])[0].kind : null;
+      if (target && pick) {
+        const beforeB = runs[1].modules.map((unit) => unit.variant ?? '-').join(',');
+        const editedA = applyOps({
+          run: runs[0],
+          requirements: REQ,
+          ops: [{ op: 'set_variant', moduleId: target.id, variant: pick }],
+          openings: [],
+        });
+        const afterB = runs[1].modules.map((unit) => unit.variant ?? '-').join(',');
+
+        check(
+          `${shape.title}: выбор варианта на одном ряду не трогает другой`,
+          editedA.modules.some((unit) => unit.variant === pick) && beforeB === afterB,
+          `на А встал «${pick}», стена Б до «${beforeB}», после «${afterB}»`,
+        );
+      } else {
+        check(`${shape.title}: есть модуль под правку варианта`, false, 'ОБЫЧНОГО МОДУЛЯ НЕТ');
+      }
+
+      check(
+        `${shape.title}: открывание одного ряда не трогает другой`,
+        parts.every((list) => list.length > 0) && leaks.length === 0,
+        parts.some((list) => list.length === 0)
+          ? 'ОТКРЫВАЕМЫХ ЧАСТЕЙ НЕТ'
+          : leaks.length === 0
+            ? `ключей по рядам: ${parts.map((l) => l.length).join('/')}`
+            : `ОБЩИЕ КЛЮЧИ — ${leaks.join(' | ')}`,
+      );
+    }
+  }
+
+  /* ── Длина стены из замера доезжает до композиции ── */
+  const survey = emptySurvey();
+  survey.ceilingHeightMm = measured(2700);
+  survey.walls = [
+    { id: 'w1', lengthMm: measured(3800), turn: 'right', turnDeg: 90, isRunWall: true, openings: [] },
+    { id: 'w2', lengthMm: measured(1800), turn: 'right', turnDeg: 90, openings: [] },
+  ];
+
+  const measurement = resolveSurvey(survey).measurement;
+  const fromSurvey = measurement.walls.map((wall) => wall.lengthMm);
+
+  check(
+    'замер отдаёт длины обеих стен',
+    fromSurvey.length === 2 && fromSurvey[0] === 3800 && fromSurvey[1] === 1800,
+    fromSurvey.join(' + ') || 'СТЕН НЕТ',
+  );
+
+  const built = buildComposition({
+    kind: 'corner_l',
+    walls: measurement.walls.map((wall) => ({
+      id: wall.id,
+      lengthMm: wall.lengthMm,
+      openings: wall.openings ?? [],
+    })),
+    ceilingHeightMm: 2700,
+    requirements: REQ,
+    comms: [],
+  });
+
+  check(
+    'длина стены из замера равна длине стены в композиции',
+    built.segments.length === 2 &&
+      built.segments.every((segment, i) => segment.wallLengthMm === fromSurvey[i]),
+    built.segments.map((s) => `${s.label}: ${s.wallLengthMm}`).join(' · '),
+  );
+
+  /*
+   * ДВЕ СТЕНЫ ОДНОЙ ДЛИНЫ — ЭТО НОРМА, А НЕ ДУБЛЬ.
+   *
+   * Квадратная кухня 3000×3000 — обычная планировка. Композиция обязана
+   * принять обе стены и не схлопнуть их в одну.
+   */
+  const square = buildComposition({
+    kind: 'corner_l',
+    walls: [
+      { id: 'w1', lengthMm: 3000, openings: [] },
+      { id: 'w2', lengthMm: 3000, openings: [] },
+    ],
+    ceilingHeightMm: 2700,
+    requirements: REQ,
+    comms: [],
+  });
+  check(
+    'две стены одинаковой длины остаются двумя стенами',
+    square.segments.length === 2 &&
+      square.segments.every((segment) => segment.wallLengthMm === 3000),
+    square.segments.map((s) => `${s.label}: ${s.wallLengthMm}`).join(' · '),
+  );
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

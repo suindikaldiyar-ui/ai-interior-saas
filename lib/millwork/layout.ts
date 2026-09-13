@@ -58,12 +58,45 @@ import type {
  */
 
 /**
- * Идентификатор модуля выводится из позиции и роли, а не из счётчика:
- * при пересчёте тот же модуль получает тот же id, и выделение на чертеже
- * не слетает.
+ * ИДЕНТИФИКАТОР МОДУЛЯ — ОДНА ФУНКЦИЯ НА ПРОДУКТ.
+ *
+ * Выводится из позиции и роли, а не из счётчика: при пересчёте тот же
+ * модуль получает тот же id, и выделение на чертеже не слетает.
+ *
+ * И выводится ещё из СТЕНЫ. Формула жила в пяти копиях и ряда не знала,
+ * поэтому модуль в нуле стены А и модуль в нуле стены В получали один и
+ * тот же `base-0`. Открывание, выделение и выбранный вариант ключуются
+ * по id в общем сторе на всю сцену — и открытая дверца на стене А
+ * открывалась на стене В.
+ *
+ * Идентичность ряда — СТЕНА ЗАМЕРА (`Run.wallId`), а не номер ряда в
+ * композиции: номер меняется при смене формы (прямая → угловая → П), и
+ * привязка поехала бы у сохранённых проектов. Стена же остаётся той же
+ * стеной, какой бы формы ни была кухня.
+ *
+ * Разделитель `@`, а не `:` — намеренно: по двоеточию сцена отрезает
+ * модуль от детали (`Cabinet3D.tsx`, `partId.split(':')[0]`), и второе
+ * двоеточие сломало бы выделение.
  */
-function moduleId(kind: ModuleKind, offsetMm: number, appliance?: ApplianceKind): string {
-  return `${kind}-${offsetMm}${appliance ? `-${appliance}` : ''}`;
+export function moduleId(
+  kind: ModuleKind | 'mezz',
+  offsetMm: number,
+  appliance?: ApplianceKind,
+  wallId?: string,
+): string {
+  return withWall(`${kind}-${offsetMm}${appliance ? `-${appliance}` : ''}`, wallId);
+}
+
+/**
+ * Метка стены на готовом идентификаторе.
+ *
+ * Формат знает только эта строка — и `moduleId` зовёт её же. Ряд без
+ * стены (прямая кухня, демонстрация, объекты, сохранённые до этого слоя)
+ * остаётся с прежним id до символа: столкнуться внутри одного ряда
+ * идентификаторам негде.
+ */
+export function withWall(id: string, wallId?: string): string {
+  return wallId ? `${id}@${wallId}` : id;
 }
 
 /**
@@ -390,6 +423,18 @@ function describeFronts(doorCount: number, drawerCount: number): string {
   return 'Дверца';
 }
 
+/**
+ * Метка стены на всех модулях ряда.
+ *
+ * Один проход в конце сборки вместо шестнадцати правок в местах, где
+ * модуль создаётся: строку по-прежнему собирает `moduleId`, здесь к
+ * готовой только дописывается стена — разойтись им негде.
+ */
+function onWall<T extends { id: string }>(units: T[], wallId?: string): T[] {
+  if (!wallId) return units;
+  return units.map((unit) => ({ ...unit, id: withWall(unit.id, wallId) }));
+}
+
 function makeModule(
   kind: ModuleKind,
   widthMm: number,
@@ -540,6 +585,11 @@ export interface BuildRunInput {
   openings?: Opening[];
   /** Ряд примыкает к соседнему — на этом краю встаёт угловой модуль. */
   cornerAt?: 'start' | 'end' | null;
+  /**
+   * Стена замера, вдоль которой стоит ряд. Попадает в идентификаторы его
+   * модулей: без неё модули разных стен делят один id.
+   */
+  wallId?: string;
   /**
    * Школа цеха: глубины и высоты ряда. Пусто — умолчания продукта.
    *
@@ -781,14 +831,21 @@ function buildSectionRun(input: BuildRunInput): Run {
   withFill(modules, shell);
   for (const segment of upperSegments) withFill(segment.modules, shell);
 
+  const walledModules = onWall(modules, input.wallId);
+  const walled = upperSegments.map((segment) => ({
+    ...segment,
+    modules: onWall(segment.modules, input.wallId),
+  }));
+
   const run: Run = {
     id: input.id ?? 'run',
     zone: requirements.zone ?? 'kitchen',
     doorSystem,
     lengthMm: usable,
     ceilingHeightMm,
-    modules,
-    upperSegments,
+    modules: walledModules,
+    upperSegments: walled,
+    wallId: input.wallId,
     options: requirements.options,
     beams: beams.length > 0 ? beams : undefined,
     production: input.production,
@@ -823,6 +880,7 @@ function emptyRun(input: BuildRunInput, usable: number): Run {
     upperSegments: [],
     options: input.requirements.options,
     production: input.production,
+    wallId: input.wallId,
     residualMm: usable,
     warnings: [],
     fingerprint: runFingerprint({ modules: [], upperSegments: [] }),
@@ -1135,6 +1193,12 @@ export function buildRun(input: BuildRunInput): Run {
   withFill(modules, kitchenShell);
   for (const segment of upperSegments) withFill(segment.modules, kitchenShell);
 
+  modules = onWall(modules, input.wallId);
+  const walledUppers = upperSegments.map((segment) => ({
+    ...segment,
+    modules: onWall(segment.modules, input.wallId),
+  }));
+
   const run: Run = {
     id: input.id ?? 'run',
     // Зона едет с рядом дальше: от неё зависит состав статей сметы.
@@ -1143,7 +1207,8 @@ export function buildRun(input: BuildRunInput): Run {
     lengthMm: usable,
     ceilingHeightMm,
     modules,
-    upperSegments,
+    upperSegments: walledUppers,
+    wallId: input.wallId,
     options: requirements.options,
     beams: beams.length > 0 ? beams : undefined,
     production: input.production,
@@ -1426,7 +1491,7 @@ export function buildUpperRow(
     if (room < FRIDGE_MEZZANINE_MIN_MM) continue;
 
     const mezzanine = makeModule('upper', unit.widthMm, unit.offsetMm);
-    mezzanine.id = `mezz-${unit.offsetMm}`;
+    mezzanine.id = moduleId('mezz', unit.offsetMm);
     mezzanine.section = 'mezzanine';
     mezzanine.label = 'Антресоль над холодильником';
     mezzanine.frontType = 'door';
