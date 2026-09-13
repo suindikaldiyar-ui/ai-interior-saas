@@ -1,6 +1,14 @@
 'use client';
 
 import SheetDefs from './SheetDefs';
+import {
+  carcassHeightMm,
+  countertopMm,
+  plinthMm,
+  upperBottomMm,
+  workTopMm,
+} from '@/lib/millwork/shop';
+import { rowStandardDepthMm } from '@/lib/millwork/fill';
 import { GEOMETRY } from '@/lib/millwork/modules';
 import { moduleNumbers, POSITION_CIRCLE_MM } from '@/lib/millwork/positions';
 import {
@@ -89,7 +97,12 @@ export function findModuleRow(
 
 /** Габарит разреза в натуре — по нему считается масштаб на листе. */
 export function sectionSizeMm(run: Run): { width: number; height: number } {
-  const depth = Math.max(GEOMETRY.base.depth, GEOMETRY.base.countertopDepth) + 40;
+  /*
+   * Свес столешницы (`countertopDepth`) остаётся отраслевой константой —
+   * в настройки цеха он не вынесен. А глубина корпуса — школа цеха.
+   */
+  const depth =
+    Math.max(rowStandardDepthMm(run.zone, 'base', run.production), GEOMETRY.base.countertopDepth) + 40;
   return {
     width: PAD_LEFT + depth + PAD_RIGHT,
     height: PAD_TOP + run.ceilingHeightMm + PAD_BOTTOM,
@@ -111,13 +124,25 @@ export default function SectionDrawing({
   /** Стена слева, перёд мебели справа. */
   const xOf = (mm: number) => PAD_LEFT + mm;
 
-  const base = GEOMETRY.base;
-  const upper = GEOMETRY.upper;
+  /*
+   * ШКОЛА ЦЕХА, А НЕ АЛИАС НА GEOMETRY.
+   *
+   * Здесь стояло `const base = GEOMETRY.base` — и за этим алиасом
+   * пряталась ЧЕТВЁРТАЯ копия рабочей поверхности:
+   * `base.plinthH + base.carcassH + base.countertopH`. Разрез показывал
+   * 858 цеху с боковиной 760, пока фасад рядом показывал 900.
+   */
+  const shop = run.production;
+  const plinth = plinthMm(shop);
+  const carcass = carcassHeightMm(shop);
+  const counterH = countertopMm(shop);
+  const upperBottom = upperBottomMm(shop);
+  const upperDepth = rowStandardDepthMm(run.zone, 'upper', shop);
 
-  const baseDepth = zone.depthMm ?? base.depth;
-  const counterTop = base.plinthH + base.carcassH + base.countertopH;
+  const baseDepth = rowStandardDepthMm(run.zone, 'base', shop);
+  const counterTop = workTopMm(shop);
   const hasUpper = run.upperSegments.length > 0;
-  const upperTop = run.options.upperToCeiling ? ceiling : upper.bottomFromFloor + upper.carcassH;
+  const upperTop = run.options.upperToCeiling ? ceiling : upperBottom + GEOMETRY.upper.carcassH;
 
   const line = 'var(--blueprint)';
 
@@ -140,9 +165,9 @@ export default function SectionDrawing({
    */
   const picked = inside ? findModuleRow(run, selectedModuleId) : null;
   const pickedFill = picked && hasFilling(picked.unit) ? picked.unit.fill! : null;
-  const fillDatum = picked?.upper ? upper.bottomFromFloor : base.plinthH;
+  const fillDatum = picked?.upper ? upperBottom : plinth;
   const fillFrom = xOf(16);
-  const fillTo = xOf((picked?.upper ? upper.depth : baseDepth) - 16);
+  const fillTo = xOf((picked?.upper ? upperDepth : baseDepth) - 16);
 
   return (
     <svg
@@ -180,9 +205,9 @@ export default function SectionDrawing({
       <rect
         data-fill
         x={xOf(50)}
-        y={yOf(base.plinthH)}
+        y={yOf(plinth)}
         width={baseDepth - 50}
-        height={base.plinthH}
+        height={plinth}
         fill={PAPER_FILL.carcass}
         stroke={line}
         strokeWidth={lw.inner}
@@ -196,9 +221,9 @@ export default function SectionDrawing({
       <rect
         data-fill
         x={xOf(0)}
-        y={yOf(base.plinthH + base.carcassH)}
+        y={yOf(plinth + carcass)}
         width={baseDepth}
-        height={base.carcassH}
+        height={carcass}
         fill={inside ? cut : PAPER_FILL.carcass}
         stroke={line}
         strokeWidth={lw.contour}
@@ -227,9 +252,9 @@ export default function SectionDrawing({
         <rect
           data-fill
           x={xOf(baseDepth)}
-          y={yOf(base.plinthH + base.carcassH)}
-          width={base.frontDepth}
-          height={base.carcassH}
+          y={yOf(plinth + carcass)}
+          width={GEOMETRY.base.frontDepth}
+          height={carcass}
           fill={PAPER_FILL.front}
           stroke={line}
           strokeWidth={lw.contour}
@@ -242,8 +267,8 @@ export default function SectionDrawing({
           data-fill
           x={xOf(0)}
           y={yOf(counterTop)}
-          width={base.countertopDepth}
-          height={base.countertopH}
+          width={GEOMETRY.base.countertopDepth}
+          height={counterH}
           // Столешница в разрезе — тёмная узкая полоса: по ней ряд читается
           // кухней с одного взгляда.
           fill={PAPER_FILL.countertop}
@@ -259,8 +284,8 @@ export default function SectionDrawing({
             data-fill
             x={xOf(0)}
             y={yOf(upperTop)}
-            width={upper.depth}
-            height={upperTop - upper.bottomFromFloor}
+            width={upperDepth}
+            height={upperTop - upperBottom}
             fill={inside ? cut : PAPER_FILL.carcass}
             stroke={line}
             strokeWidth={lw.contour}
@@ -285,9 +310,9 @@ export default function SectionDrawing({
       {hasUpper && (
         <Vertical
           from={counterTop}
-          to={upper.bottomFromFloor}
+          to={upperBottom}
           x={-160}
-          label={`${upper.bottomFromFloor - counterTop}`}
+          label={`${upperBottom - counterTop}`}
           yOf={yOf}
           xOf={xOf}
           lw={lw.dimension}
@@ -305,7 +330,7 @@ export default function SectionDrawing({
         <PositionMark
           n={numbers.get(picked.unit.id) ?? 0}
           cx={xOf(baseDepth / 2)}
-          cy={yOf(picked.upper ? upperTop + 90 : base.plinthH + base.carcassH + 90)}
+          cy={yOf(picked.upper ? upperTop + 90 : plinth + carcass + 90)}
           u={u}
           lw={lw.inner}
         />
@@ -320,7 +345,7 @@ export default function SectionDrawing({
         <text
           className="mw-num"
           x={xOf(baseDepth / 2)}
-          y={yOf(base.plinthH + base.carcassH / 2)}
+          y={yOf(plinth + carcass / 2)}
           fontSize={62}
           fill="var(--graphite-mw)"
           textAnchor="middle"
@@ -335,9 +360,9 @@ export default function SectionDrawing({
       {zone.hasCountertop && (
         <Horizontal
           from={0}
-          to={base.countertopDepth}
+          to={GEOMETRY.base.countertopDepth}
           y={-140}
-          label={`${base.countertopDepth}`}
+          label={`${GEOMETRY.base.countertopDepth}`}
           yOf={yOf}
           xOf={xOf}
           lw={lw.dimension}

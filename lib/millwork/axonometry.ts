@@ -1,6 +1,5 @@
 import { carcassBoxes, moduleBoxes, type BoxMaterial, type PartBox } from './cabinetBoxes';
 import { countertopMm, plinthMm, rowDepthMm, workTopMm } from './shop';
-import { GEOMETRY } from './modules';
 import { moduleCarcassHeightMm, moduleDepthMm, upperBottomFor } from './fill';
 import { zoneProfile } from './zones';
 import type { Run } from '@/types/millwork';

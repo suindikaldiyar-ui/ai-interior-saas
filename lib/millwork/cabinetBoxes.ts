@@ -2,7 +2,6 @@ import { columnNiches, moduleCarcassHeightMm, upperBottomFor } from '@/lib/millw
 import { plinthMm, rowDepthMm } from './shop';
 import { moduleDepthMm } from './fill';
 import type { ProductionSettings } from '@/types/catalog';
-import { GEOMETRY } from './modules';
 import { FRAME_WIDTH_MM, frontKey, frontOf, isFramed } from './frontMaterial';
 import { openingOf } from './opening';
 import type { Module, Run } from '@/types/millwork';

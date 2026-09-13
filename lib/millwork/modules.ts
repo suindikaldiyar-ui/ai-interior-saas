@@ -16,7 +16,7 @@ export const STANDARD_WIDTHS = [
 export const MIN_WIDTH = STANDARD_WIDTHS[0];
 export const MAX_WIDTH = STANDARD_WIDTHS[STANDARD_WIDTHS.length - 1];
 
-import { carcassHeightMm, upperBottomMm } from './shop';
+import { carcassHeightMm, plinthMm, upperBottomMm } from './shop';
 import type { ProductionSettings } from '@/types/catalog';
 
 export const GEOMETRY = {
@@ -48,9 +48,14 @@ export const GEOMETRY = {
   gapBetweenModules: 3,
 } as const;
 
-/** Полная высота нижнего ряда со столешницей. */
-export const BASE_TOTAL_H =
-  GEOMETRY.base.plinthH + GEOMETRY.base.carcassH + GEOMETRY.base.countertopH; // 858
+/*
+ * `BASE_TOTAL_H` (858) ЖИЛА ЗДЕСЬ.
+ *
+ * Рабочая поверхность — величина ЦЕХА, а не продукта: она считается
+ * формулой `workTopMm(production)` в `shop.ts`, и другого места у неё
+ * нет. Экспортированная константа была вторым ответом на тот же вопрос
+ * и давала 858 тому, у кого боковина 760.
+ */
 
 export type ApplianceSpec = {
   widthMm: number;
@@ -493,12 +498,12 @@ export function standardHeightMm(
       if (options?.upperToCeiling && options.ceilingHeightMm) {
         return Math.max(
           GEOMETRY.tall.heights[1],
-          options.ceilingHeightMm - GEOMETRY.base.plinthH,
+          options.ceilingHeightMm - plinthMm(shop),
         );
       }
       return GEOMETRY.tall.heights[1];
     default:
-      return GEOMETRY.base.carcassH;
+      return carcassHeightMm(shop);
   }
 }
 

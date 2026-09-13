@@ -15,10 +15,11 @@ import {
   mezzanineDepthMm,
   plinthMm,
   rowDepthMm,
+  upperBottomMm,
 } from './shop';
 import type { ProductionSettings } from '@/types/catalog';
 import { upperRowBottomMm, zoneHeightMm, zoneProfile } from './zones';
-import type { ApplianceKind, Module, ModuleFill, Run, ZoneKind } from '@/types/millwork';
+import type { ApplianceKind, Module, ModuleFill, ModuleKind, Run, ZoneKind } from '@/types/millwork';
 
 /**
  * ЧТО ВНУТРИ МОДУЛЯ.
@@ -395,7 +396,13 @@ export function upperRowHeightMm(
   run: Pick<Run, 'zone' | 'ceilingHeightMm'> &
     Partial<Pick<Run, 'mezzanine' | 'options' | 'upperSegments' | 'production'>>,
 ): number {
-  const profile = zoneProfile(run.zone);
+  /*
+   * Зона по-прежнему решает, где низ верхнего ряда, — просто спрашивают
+   * её теперь ОДИН уровень ниже: `upperRowBottomMm` сама берёт профиль и
+   * отвечает «рабочая поверхность плюс фартук» на кухне, своё число там,
+   * где оно объявлено, и «потолок минус высота» там, где верх висит.
+   * Местная копия профиля осталась без читателей.
+   */
   const bottom = upperRowBottomMm(run.zone, run.ceilingHeightMm, 0, run.production);
   const top = zoneHeightMm(run.zone, run.ceilingHeightMm);
   const mezzanine = hasMezzanine(run) ? mezzanineHeightMm(run) : 0;
@@ -518,8 +525,38 @@ export function bearsCountertop(
 ): boolean {
   if (!standsOnFloor(unit)) return false;
   return (
-    plinthMm(run.production) + moduleCarcassHeightMm(unit, run) < GEOMETRY.upper.bottomFromFloor
+    /*
+     * Отметка навески БЕРЁТСЯ У ЦЕХА, но остаётся кухонной: это граница
+     * «нижний ряд или уже не нижний», одна на все зоны. Зонная отметка
+     * здесь не годится — в санузле она равна высоте тумбы, и тумба
+     * переставала нести собственную столешницу.
+     */
+    plinthMm(run.production) + moduleCarcassHeightMm(unit, run) <
+    upperBottomMm(run.production)
   );
+}
+
+/**
+ * СТАНДАРТНАЯ ГЛУБИНА РЯДА В ЭТОЙ ЗОНЕ — ОДИН ОТВЕТ НА ПРОДУКТ.
+ *
+ * На кухне глубину задаёт ШКОЛА ЦЕХА, в остальных зонах — профиль зоны
+ * (там глубина это часть самой зоны: 600 под механизм дверей-купе, 450
+ * под раковину). Разрез спрашивал это своей строкой — и профиль кухни
+ * перебивал настройку, так что цех с глубиной 550 видел на разрезе 560.
+ *
+ * Поправку на глубокий прибор добавляет `moduleDepthMm`: она про
+ * конкретный модуль, а это — про ряд.
+ */
+export function rowStandardDepthMm(
+  zone: ZoneKind | undefined,
+  kind: ModuleKind,
+  production?: ProductionSettings,
+  section?: Module['section'],
+): number {
+  const profile = zoneProfile(zone);
+  if (profile.kind !== 'kitchen') return profile.depthMm;
+  if (section === 'mezzanine') return mezzanineDepthMm(production);
+  return rowDepthMm(kind, production);
 }
 
 export function moduleDepthMm(
@@ -528,13 +565,11 @@ export function moduleDepthMm(
   /** Школа цеха: глубины рядов принадлежат ей, а не коду. */
   production?: ProductionSettings,
 ): number {
-  const profile = zoneProfile(zone);
-  const standard =
-    profile.kind !== 'kitchen'
-      ? profile.depthMm
-      : unit.section === 'mezzanine'
-        ? mezzanineDepthMm(production)
-        : rowDepthMm(unit.kind, production);
+  /*
+   * Зону спрашивают на уровень ниже: `rowStandardDepthMm` решает, чья
+   * глубина в этой зоне главнее — школы цеха или профиля зоны.
+   */
+  const standard = rowStandardDepthMm(zone, unit.kind, production, unit.section);
 
   /*
    * ГЛУБОКИЙ ПРИБОР ОТОДВИГАЕТ КОРПУС.

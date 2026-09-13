@@ -1,4 +1,11 @@
-import { APPLIANCE_SLOTS, GEOMETRY } from './modules';
+import {
+  carcassHeightMm,
+  countertopMm,
+  plinthMm,
+  upperBottomMm,
+  workTopMm,
+} from './shop';
+import { APPLIANCE_SLOTS } from './modules';
 import { zoneProfile } from './zones';
 import type { CatalogEntryFull } from '@/types/catalog';
 import type { Run } from '@/types/millwork';
@@ -59,14 +66,20 @@ export function buildLeaders(run: Run, sources: MaterialSources = {}): LeaderAnc
   if (base.length === 0) return anchors;
 
   const total = run.lengthMm;
-  const counterTop = GEOMETRY.base.plinthH + GEOMETRY.base.carcassH + GEOMETRY.base.countertopH;
+  /*
+   * Рабочая поверхность — ФОРМУЛА цеха, и живёт она в одном месте.
+   * Здесь стояла её третья копия, собранная вручную: у цеха с боковиной
+   * 760 выноска показывала бы 858 там, где чертёж показывает 900.
+   */
+  const shop = run.production;
+  const counterTop = workTopMm(shop);
 
   /* ── Фасады: середина второго модуля, чтобы линия не шла через край ── */
   const facadeAt = base[Math.min(1, base.length - 1)];
   anchors.push({
     id: 'facade',
     xMm: facadeAt.offsetMm + facadeAt.widthMm / 2,
-    yMm: GEOMETRY.base.plinthH + GEOMETRY.base.carcassH * 0.45,
+    yMm: plinthMm(shop) + carcassHeightMm(shop) * 0.45,
     text:
       fromCatalog(sources.facade, 'Фасад') ??
       'Фасад МДФ, эмаль матовая — артикул не согласован',
@@ -76,7 +89,7 @@ export function buildLeaders(run: Run, sources: MaterialSources = {}): LeaderAnc
   anchors.push({
     id: 'carcass',
     xMm: base[0].offsetMm + 8,
-    yMm: GEOMETRY.base.plinthH + GEOMETRY.base.carcassH * 0.75,
+    yMm: plinthMm(shop) + carcassHeightMm(shop) * 0.75,
     text:
       fromCatalog(sources.carcass, 'Корпус') ??
       'Корпус ЛДСП 16 мм, кромка ПВХ 0.4 мм',
@@ -87,7 +100,7 @@ export function buildLeaders(run: Run, sources: MaterialSources = {}): LeaderAnc
     anchors.push({
       id: 'counter',
       xMm: Math.round(total * 0.62),
-      yMm: counterTop - GEOMETRY.base.countertopH / 2,
+      yMm: counterTop - countertopMm(shop) / 2,
       text:
         fromCatalog(sources.counter, 'Столешница') ??
         'Столешница постформинг 38 мм, кромка в цвет',
@@ -96,7 +109,7 @@ export function buildLeaders(run: Run, sources: MaterialSources = {}): LeaderAnc
     anchors.push({
       id: 'apron',
       xMm: Math.round(total * 0.45),
-      yMm: Math.round((counterTop + GEOMETRY.upper.bottomFromFloor) / 2),
+      yMm: Math.round((counterTop + upperBottomMm(shop)) / 2),
       text: fromCatalog(sources.apron, 'Фартук') ?? 'Фартук: стеновая панель, артикул не согласован',
     });
   }
@@ -105,15 +118,15 @@ export function buildLeaders(run: Run, sources: MaterialSources = {}): LeaderAnc
   anchors.push({
     id: 'plinth',
     xMm: Math.round(total * 0.28),
-    yMm: Math.round(GEOMETRY.base.plinthH / 2),
-    text: `Цоколь алюминий, высота ${GEOMETRY.base.plinthH}`,
+    yMm: Math.round(plinthMm(shop) / 2),
+    text: `Цоколь алюминий, высота ${plinthMm(shop)}`,
   });
 
   /* ── Ручки ── */
   anchors.push({
     id: 'handle',
     xMm: facadeAt.offsetMm + facadeAt.widthMm - 40,
-    yMm: GEOMETRY.base.plinthH + GEOMETRY.base.carcassH - 30,
+    yMm: plinthMm(shop) + carcassHeightMm(shop) - 30,
     text: handleText(run),
   });
 
@@ -137,8 +150,8 @@ export function buildLeaders(run: Run, sources: MaterialSources = {}): LeaderAnc
         xMm: unit.offsetMm + unit.widthMm / 2,
         yMm:
           unit.kind === 'upper'
-            ? GEOMETRY.upper.bottomFromFloor + 260
-            : GEOMETRY.base.plinthH + GEOMETRY.base.carcassH * 0.6,
+            ? upperBottomMm(shop) + 260
+            : plinthMm(shop) + carcassHeightMm(shop) * 0.6,
         text: `${builtIn ? 'Встроенный' : 'Отдельностоящий'} ${slot.title.toLowerCase()}`,
       });
     }
@@ -149,7 +162,7 @@ export function buildLeaders(run: Run, sources: MaterialSources = {}): LeaderAnc
     anchors.push({
       id: 'led',
       xMm: Math.round(total * 0.8),
-      yMm: GEOMETRY.upper.bottomFromFloor - 20,
+      yMm: upperBottomMm(shop) - 20,
       text: 'Подсветка LED под верхним рядом',
     });
   }

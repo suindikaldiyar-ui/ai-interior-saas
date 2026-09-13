@@ -7,7 +7,12 @@ import FrontGlyph from './FrontGlyph';
 import { TipOnMark } from './DrawingSymbols';
 import type { LeaderAnchor } from '@/lib/millwork/leaders';
 import { APPLIANCE_SLOTS, GEOMETRY } from '@/lib/millwork/modules';
-import { workTopMm } from '@/lib/millwork/shop';
+import {
+  countertopMm,
+  plinthMm,
+  upperBottomMm,
+  workTopMm,
+} from '@/lib/millwork/shop';
 import { sectionSpec } from '@/lib/millwork/sections';
 import { moveConflict } from '@/lib/millwork/freeRun';
 import { moduleSwatch } from '@/lib/millwork/frontSwatch';
@@ -676,7 +681,7 @@ export default function ElevationDrawing({
   /** Пол внизу, потолок вверху: экранный Y растёт вниз. */
   const yOf = (mm: number) => PADDING_TOP + (ceiling - mm) * heightScale;
 
-  const upperBottom = GEOMETRY.upper.bottomFromFloor;
+  const upperBottom = upperBottomMm(run.production);
   const upperTop = run.options.upperToCeiling
     ? ceiling
     : upperBottom + GEOMETRY.upper.carcassH;
@@ -693,14 +698,14 @@ export default function ElevationDrawing({
   const marks: [number, string][] = sectionZone
     ? [
         [0, 'пол'],
-        [GEOMETRY.base.plinthH, 'цоколь'],
+        [plinthMm(run.production), 'цоколь'],
         ...(zone.hasCountertop ? ([[zoneTop, 'столешница']] as [number, string][]) : []),
         ...(zone.hasCountertop ? [] : ([[zoneTop, 'верх ряда']] as [number, string][])),
         [ceiling, 'потолок'],
       ]
     : [
         [0, 'пол'],
-        [GEOMETRY.base.plinthH, 'цоколь'],
+        [plinthMm(run.production), 'цоколь'],
         [workTop, 'столешница'],
         ...(run.options.hasUpper
           ? ([
@@ -722,10 +727,10 @@ export default function ElevationDrawing({
     }
 
     if (spec && spec.heightMm > 0 && spec.moduleKind === 'base') {
-      return { top: spec.heightMm, bottom: GEOMETRY.base.plinthH };
+      return { top: spec.heightMm, bottom: plinthMm(run.production) };
     }
 
-    return { top: zoneTop, bottom: GEOMETRY.base.plinthH };
+    return { top: zoneTop, bottom: plinthMm(run.production) };
   };
 
   /** Перенос прибора: подсветка будущего места и расстояние от левого угла. */
@@ -885,7 +890,7 @@ export default function ElevationDrawing({
      */
     const tallTop =
       !sectionZone && unit.kind === 'tall'
-        ? GEOMETRY.base.plinthH + moduleCarcassHeightMm(unit, run)
+        ? plinthMm(run.production) + moduleCarcassHeightMm(unit, run)
         : top;
     const yTop = yOf(tallTop);
     const h = yOf(bottom) - yTop;
@@ -1459,9 +1464,9 @@ export default function ElevationDrawing({
       <g opacity={overlay ? 0.55 : 1}>
         <rect
           x={PADDING_LEFT}
-          y={yOf(GEOMETRY.base.plinthH)}
+          y={yOf(plinthMm(run.production))}
           width={drawWidth}
-          height={yOf(0) - yOf(GEOMETRY.base.plinthH)}
+          height={yOf(0) - yOf(plinthMm(run.production))}
           fill="none"
           stroke="var(--blueprint)"
           strokeWidth={0.5 * k}
@@ -1473,7 +1478,7 @@ export default function ElevationDrawing({
             x={PADDING_LEFT}
             y={yOf(sectionZone ? zoneTop : workTop)}
             width={drawWidth}
-            height={GEOMETRY.base.countertopH * heightScale}
+            height={countertopMm(run.production) * heightScale}
             fill="none"
             stroke="var(--blueprint)"
             strokeWidth={1 * k}

@@ -8636,5 +8636,143 @@ console.log('\nДве школы цеха дают две разные мебе�
   );
 }
 
+/* ───────────────────  Одна величина — одно число на всех видах  ─────────────────── */
+
+console.log('\nЦех А: 900 и 40 на всех видах сразу');
+{
+  /*
+   * Величина, вынесенная в настройки цеха, не имеет права читаться из
+   * `GEOMETRY` нигде. Копия формулы рабочей поверхности жила в выносках
+   * и давала 858 цеху с боковиной 760 — при том, что чертёж рядом
+   * показывал 900. Разошедшийся размер хуже отсутствующего: по нему
+   * сверлят присадку.
+   */
+  const shopA: ProductionSettings = {
+    ...DEFAULT_PRODUCTION,
+    depths: { baseMm: 550, upperMm: 350, mezzanineMm: 550 },
+    heights: { plinthMm: 100, carcassMm: 760, countertopMm: 40, apronMm: 600 },
+  };
+
+  const run = buildRun({
+    lengthMm: 3800,
+    ceilingHeightMm: 2700,
+    requirements: REQ,
+    openings: [],
+    comms: COMMS,
+    production: shopA,
+  });
+
+  const cut = buildPanels({ run, production: shopA });
+  const leaders = buildLeaders(run);
+
+  /*
+   * Ноль выносок или ноль панелей — это не «проверять нечего», это
+   * пустой лист. Падаем здесь, а не проходим по пустому списку.
+   */
+  check(
+    'цех А: выноски и раскрой не пустые',
+    leaders.length > 0 && cut.length > 0,
+    `выносок ${leaders.length}, деталей ${cut.length}` +
+      (leaders.length === 0 || cut.length === 0 ? ' — ПУСТО' : ''),
+  );
+  if (leaders.length === 0 || cut.length === 0) {
+    check('цех А: дальше мерить нечем', false, 'СЕЛЕКТОР ВЕРНУЛ НОЛЬ');
+  } else {
+    /* ── Выноска рабочей поверхности ── */
+    const counterLeader = leaders.find((leader) => /Столешница/i.test(leader.text));
+    check(
+      'цех А: выноска столешницы стоит на рабочей поверхности цеха',
+      Boolean(counterLeader) &&
+        Math.abs((counterLeader?.yMm ?? 0) - (workTopMm(shopA) - shopA.heights.countertopMm / 2)) <= 1,
+      counterLeader
+        ? `${counterLeader.yMm} мм при рабочей поверхности ${workTopMm(shopA)}`
+        : 'ВЫНОСКИ СТОЛЕШНИЦЫ НЕТ',
+    );
+    check(
+      'цех А: выноска цоколя называет высоту цеха',
+      leaders.some((leader) => leader.text.includes(`высота ${shopA.heights.plinthMm}`)),
+      leaders.find((leader) => /Цоколь/i.test(leader.text))?.text ?? 'ВЫНОСКИ ЦОКОЛЯ НЕТ',
+    );
+
+    /*
+     * 900, а не 858: выноска фартука стоит ровно посередине между
+     * рабочей поверхностью и низом навесных, и обе величины — формулы.
+     */
+    const apronLeader = leaders.find((leader) => /фартук|Фартук/.test(leader.text));
+    check(
+      'цех А: выноска фартука посередине между 900 и 1500',
+      Boolean(apronLeader) &&
+        Math.abs(
+          (apronLeader?.yMm ?? 0) - Math.round((workTopMm(shopA) + upperBottomMm(shopA)) / 2),
+        ) <= 1,
+      apronLeader
+        ? `${apronLeader.yMm} мм при ${workTopMm(shopA)}…${upperBottomMm(shopA)}`
+        : 'ВЫНОСКИ ФАРТУКА НЕТ',
+    );
+    check(
+      'цех А: рабочая поверхность 900, а не 858',
+      workTopMm(shopA) === 900 && upperBottomMm(shopA) === 1500,
+      `${workTopMm(shopA)} / ${upperBottomMm(shopA)}`,
+    );
+
+    /* ── Толщина столешницы: чертёж, разрез, сцена ── */
+    const elevation = renderToStaticMarkup(createElement(ElevationDrawing, { run }));
+    const section = renderToStaticMarkup(createElement(SectionDrawing, { run }));
+
+    check(
+      'цех А: чертёж подписывает рабочую поверхность 900',
+      elevation.includes('900'),
+      elevation.includes('900') ? '900 на листе' : '900 НА ЛИСТЕ НЕТ',
+    );
+    check(
+      'цех А: разрез рисуется по глубине цеха',
+      section.includes(String(shopA.depths.baseMm)),
+      section.includes(String(shopA.depths.baseMm))
+        ? `${shopA.depths.baseMm} в разрезе`
+        : `${shopA.depths.baseMm} В РАЗРЕЗЕ НЕТ`,
+    );
+
+    /* ── Попарное сравнение: чертёж против сцены, чертёж против раскроя ── */
+    const places = runPlaces(run);
+    const base = run.modules.find((unit) => !unit.appliance && unit.kind === 'base');
+    const spot = places.find((row) => row.unit.id === base?.id);
+    const side = base
+      ? cut.find((row) => row.moduleId === base.id && row.name === 'Боковина')
+      : undefined;
+
+    check(
+      'цех А: чертёж против сцены — низ корпуса совпадает',
+      Boolean(spot) && Math.round((spot?.y ?? 0) * 1000) === shopA.heights.plinthMm,
+      `сцена ${Math.round((spot?.y ?? 0) * 1000)} мм, цоколь цеха ${shopA.heights.plinthMm}`,
+    );
+    check(
+      'цех А: чертёж против раскроя — высота боковины совпадает',
+      Boolean(side) && side!.lengthMm === shopA.heights.carcassMm,
+      side ? `${side.lengthMm} мм при боковине ${shopA.heights.carcassMm}` : 'БОКОВИНЫ НЕТ',
+    );
+    check(
+      'цех А: сцена против раскроя — глубина совпадает',
+      Boolean(spot && side) && Math.round((spot?.depthM ?? 0) * 1000) === side!.widthMm,
+      `сцена ${Math.round((spot?.depthM ?? 0) * 1000)} мм, раскрой ${side?.widthMm} мм`,
+    );
+
+    /*
+     * Отметка навески — одно число на раскладку, чертёж и сцену. У цеха
+     * с фартуком 600 это 1500, и разойтись им негде.
+     */
+    const upperUnit = allModules(run).find(
+      (unit) => unit.kind === 'upper' && unit.section !== 'mezzanine',
+    );
+    const upperSpot = places.find((row) => row.unit.id === upperUnit?.id);
+    check(
+      'цех А: низ навесных 1500 и в раскладке, и в сцене',
+      Boolean(upperSpot) &&
+        Math.round((upperSpot?.y ?? 0) * 1000) === upperBottomMm(shopA) &&
+        upperBottomMm(shopA) === 1500,
+      `${Math.round((upperSpot?.y ?? 0) * 1000)} мм`,
+    );
+  }
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

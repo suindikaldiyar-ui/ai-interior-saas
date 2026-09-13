@@ -1,5 +1,5 @@
 import { moduleCarcassHeightMm, moduleDepthMm } from './fill';
-import { BUILT_IN_FRIDGE_FRONTS, GEOMETRY } from './modules';
+import { BUILT_IN_FRIDGE_FRONTS } from './modules';
 import { hasBottom } from './moduleVariants';
 import { facadeSpans, hasFacade } from './applianceFront';
 import {
@@ -353,11 +353,13 @@ export function panelTotals(panels: Panel[]): PanelTotals {
 }
 
 /** Высота цоколя: он идёт отдельной строкой заказа, а не деталью модуля. */
-/**
- * Высота цоколя по умолчанию — для тех, у кого ряда под рукой нет.
- * У ряда она своя: `plinthMm(run.production)`.
+/*
+ * `PLINTH_HEIGHT_MM` ЖИЛА ЗДЕСЬ.
+ *
+ * Высота цоколя — величина цеха (`plinthMm(run.production)`), и читателей
+ * у этого экспорта не осталось. Оставленный, он однажды дал бы кому-то
+ * сто миллиметров там, где у цеха сто двадцать.
  */
-export const PLINTH_HEIGHT_MM = GEOMETRY.base.plinthH;
 
 
 /* ────────────────  Материалы для сметы — ИЗ ДЕТАЛИРОВКИ  ──────────────── */

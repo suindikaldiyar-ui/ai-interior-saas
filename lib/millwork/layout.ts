@@ -29,7 +29,7 @@ import {
 import { SECTION_SPECS, sectionSpec } from './sections';
 import { isSectionZone, zoneHeightMm, zoneProfile } from './zones';
 import { beamBottomMm, beamsOnRun, ceilingOverSpanMm } from './ceiling';
-import { upperBottomMm } from './shop';
+import { plinthMm, upperBottomMm } from './shop';
 import type { ProductionSettings } from '@/types/catalog';
 import { runFingerprint } from './fingerprint';
 import type {
@@ -146,6 +146,8 @@ function planAnchors(
   comms: CommPoint[],
   openings: Opening[] = [],
   offsetMm = 0,
+  /** Школа цеха: от неё зависит, какое окно перекрывает верхний ряд. */
+  production?: ProductionSettings,
 ): Anchor[] {
   const anchors: Anchor[] = [];
   /*
@@ -275,7 +277,7 @@ function planAnchors(
      * вытяжки. Сдвигаем её из оконного пролёта, если вытяжка заказана.
      */
     if (has('hood')) {
-      desired = clearOfWindows(desired, width, openings, offsetMm, low, high);
+      desired = clearOfWindows(desired, width, openings, offsetMm, low, high, production);
     }
 
     anchors.push({
@@ -319,10 +321,12 @@ function clearOfWindows(
   offsetMm: number,
   lowMm: number,
   highMm: number,
+  /** Школа цеха: отметка навески — её, а не отраслевая константа. */
+  production?: ProductionSettings,
 ): number {
   const spans = openings
     .filter((o) => o.kind === 'window' || o.kind === 'arch')
-    .filter((o) => o.sillMm + o.heightMm > GEOMETRY.upper.bottomFromFloor)
+    .filter((o) => o.sillMm + o.heightMm > upperBottomMm(production))
     // Проёмы заданы от угла стены, а якоря — от начала полезного участка.
     .map((o) => ({ from: o.fromCornerMm - offsetMm, to: o.fromCornerMm + o.widthMm - offsetMm }))
     .sort((a, b) => a.from - b.from);
@@ -899,7 +903,14 @@ export function buildRun(input: BuildRunInput): Run {
   }
 
   const span = Math.max(0, limit - cursor);
-  const anchors = planAnchors(span, requirements, comms, openings, cursor).map((a) => ({
+  const anchors = planAnchors(
+    span,
+    requirements,
+    comms,
+    openings,
+    cursor,
+    input.production,
+  ).map((a) => ({
     ...a,
     desiredCenterMm: a.desiredCenterMm + cursor,
   }));
@@ -1204,8 +1215,10 @@ function blockingOpenings(
   openings: Opening[],
   ceilingHeightMm: number,
   options: { upperToCeiling: boolean },
+  /** Школа цеха: полоса верхнего ряда начинается с её отметки навески. */
+  production?: ProductionSettings,
 ): Opening[] {
-  const bottom = GEOMETRY.upper.bottomFromFloor;
+  const bottom = upperBottomMm(production);
   const top = options.upperToCeiling
     ? ceilingHeightMm
     : bottom + GEOMETRY.upper.carcassH;
@@ -1258,7 +1271,7 @@ export function buildUpperRow(
   };
   const upperBottom = upperBottomMm(production);
   const tallSpans = baseModules
-    .filter((unit) => GEOMETRY.base.plinthH + moduleCarcassHeightMm(unit, shell) > upperBottom)
+    .filter((unit) => plinthMm(shell.production) + moduleCarcassHeightMm(unit, shell) > upperBottom)
     .map((unit) => ({ from: unit.offsetMm, to: unit.offsetMm + unit.widthMm }));
 
   /*
@@ -1276,7 +1289,7 @@ export function buildUpperRow(
   const beamBlockers = beamBlockedSpans(beams, ceilingHeightMm, upperBottom);
 
   const blockers = [
-    ...blockingOpenings(openings, ceilingHeightMm, req.options).map((o) => ({
+    ...blockingOpenings(openings, ceilingHeightMm, req.options, production).map((o) => ({
       from: o.fromCornerMm,
       to: o.fromCornerMm + o.widthMm,
     })),
@@ -1399,7 +1412,7 @@ export function buildUpperRow(
   for (const unit of baseModules) {
     if (unit.appliance !== 'fridge') continue;
 
-    const top = GEOMETRY.base.plinthH + moduleCarcassHeightMm(unit, shell);
+    const top = plinthMm(shell.production) + moduleCarcassHeightMm(unit, shell);
     /*
      * Потолок НАД КОЛОННОЙ, а не потолок зоны: под ригелем кладовки
      * может не остаться вовсе, и выдать её значило бы поставить модуль
@@ -1442,7 +1455,7 @@ export function fridgeRoomMm(
   run: Parameters<typeof moduleCarcassHeightMm>[1],
 ): number | null {
   if (unit.appliance !== 'fridge') return null;
-  const top = GEOMETRY.base.plinthH + moduleCarcassHeightMm(unit, run);
+  const top = plinthMm(run.production) + moduleCarcassHeightMm(unit, run);
   return zoneHeightMm(run.zone, run.ceilingHeightMm) - top;
 }
 

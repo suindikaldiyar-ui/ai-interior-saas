@@ -5,6 +5,7 @@ import {
   GEOMETRY,
 } from './modules';
 import { beamDropMm } from './ceiling';
+import { upperBottomMm } from './shop';
 import { columnNichesSumMm, moduleCarcassHeightMm, ovenBottomMm } from './fill';
 import { fridgeRoomMm } from './layout';
 import { openingHardware } from './opening';
@@ -369,7 +370,7 @@ export function beamWarnings(run: Run | null): SurveyWarning[] {
      * выступа» значит соврать замерщику про то, что он видит.
      */
     const leftUnderBeam =
-      run.ceilingHeightMm - drop - GEOMETRY.upper.bottomFromFloor;
+      run.ceilingHeightMm - drop - upperBottomMm(run.production);
     const broken =
       leftUnderBeam < GEOMETRY.upper.minCarcassH &&
       under.filter((unit) => unit.kind === 'upper').length === 0 &&

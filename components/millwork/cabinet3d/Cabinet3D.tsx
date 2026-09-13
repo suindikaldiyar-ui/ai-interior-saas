@@ -19,7 +19,13 @@ import type { FrontSpec } from '@/types/millwork';
 import { surfaceLook } from '@/lib/millwork/surfaces';
 import { APRON_TARGET, COUNTERTOP_TARGET, FACADE_TARGET } from '@/types/catalog';
 import { runPlaces } from '@/lib/millwork/cabinetBoxes';
-import { GEOMETRY } from '@/lib/millwork/modules';
+import {
+  countertopMm,
+  plinthMm,
+  rowDepthMm,
+  upperBottomMm,
+  workTopMm,
+} from '@/lib/millwork/shop';
 import { zoneProfile } from '@/lib/millwork/zones';
 import { useInteriorStore } from '@/store/useInteriorStore';
 import { DEFAULT_PRODUCTION, type ProductionSettings } from '@/types/catalog';
@@ -224,7 +230,7 @@ export default function Cabinet3D({
   const frontThicknessM = production.frontMm / MM;
   const gapM = production.frontGapMm / MM;
   const depthM = zone.depthMm / MM;
-  const plinthM = GEOMETRY.base.plinthH / MM;
+  const plinthM = plinthMm(run.production) / MM;
   /** Цоколь утоплен: по нижней тени шкаф «стоит», а не лежит на полу. */
   const plinthSetbackM = 0.05;
   /** Столешница свисает вперёд — по свесу читается торцевая полоса. */
@@ -388,15 +394,19 @@ export default function Cabinet3D({
   const assembled =
     run.modules.length > 0 || run.upperSegments.some((segment) => segment.modules.length > 0);
   const hasCountertop = zone.hasCountertop && assembled;
-  const counterTopY = GEOMETRY.base.plinthH + GEOMETRY.base.carcassH;
+  /*
+   * Верх корпуса под столешницей: рабочая поверхность минус её толщина.
+   * Слагаемые принадлежат цеху, и собирать их здесь второй раз нельзя.
+   */
+  const counterTopY = workTopMm(run.production) - countertopMm(run.production);
 
   /*
    * Фартук: полоса стены между столешницей и верхним рядом. Именно её
    * клиент выбирает на шаге «Материалы» третьей строкой, и без неё выбор
    * плитки ничего не менял в сцене.
    */
-  const apronBottom = (counterTopY + GEOMETRY.base.countertopH) / MM;
-  const apronTop = GEOMETRY.upper.bottomFromFloor / MM;
+  const apronBottom = workTopMm(run.production) / MM;
+  const apronTop = upperBottomMm(run.production) / MM;
   const apronH = Math.max(0, apronTop - apronBottom);
 
   return (
@@ -539,12 +549,12 @@ export default function Cabinet3D({
           material={parts.counter}
           position={[
             lengthM / 2,
-            (counterTopY + GEOMETRY.base.countertopH / 2) / MM,
+            (counterTopY + countertopMm(run.production) / 2) / MM,
             -depthM / 2 + counterOverhangM / 2 + frontThicknessM / 2,
           ]}
           scale={[
             lengthM,
-            GEOMETRY.base.countertopH / MM,
+            countertopMm(run.production) / MM,
             depthM + counterOverhangM + frontThicknessM,
           ]}
           castShadow
@@ -563,10 +573,10 @@ export default function Cabinet3D({
           material={parts.plinth}
           position={[
             lengthM / 2,
-            GEOMETRY.upper.bottomFromFloor / MM - 0.004,
-            -GEOMETRY.upper.depth / MM / 2,
+            upperBottomMm(run.production) / MM - 0.004,
+            -rowDepthMm('upper', run.production) / MM / 2,
           ]}
-          scale={[lengthM, 0.008, GEOMETRY.upper.depth / MM]}
+          scale={[lengthM, 0.008, rowDepthMm('upper', run.production) / MM]}
         />
       )}
     </group>

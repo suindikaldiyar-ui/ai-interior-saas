@@ -20,6 +20,7 @@ import {
   widthOverflowMm,
 } from './invariants';
 import { runFingerprint } from './fingerprint';
+import { plinthMm, upperBottomMm } from './shop';
 import { ceilingOverSpanMm } from './ceiling';
 import {
   defaultFill,
@@ -591,7 +592,7 @@ export function applyOps({
          */
         if (op.appliance === 'fridge' && op.size.heightMm) {
           const top = zoneHeightMm(zone, run.ceilingHeightMm);
-          const left = top - GEOMETRY.base.plinthH - (op.size.heightMm + NICHE_CLEARANCE_MM);
+          const left = top - plinthMm(run.production) - (op.size.heightMm + NICHE_CLEARANCE_MM);
           if (left < FRIDGE_MEZZANINE_MIN_MM) {
             warnings.push(
               `Холодильник ${op.size.heightMm} мм: над ним останется ${Math.max(0, Math.round(left))} мм — ` +
@@ -862,7 +863,7 @@ export function applyOps({
          * между отметкой навески и потолком. Иначе это не антресоль, а
          * шкаф, задавивший тот, на котором стоит.
          */
-        const room = run.ceilingHeightMm - GEOMETRY.upper.bottomFromFloor;
+        const room = run.ceilingHeightMm - upperBottomMm(run.production);
         if (wanted + GEOMETRY.upper.carcassH > room) {
           warnings.push(
             `Антресоль ${wanted} мм не встаёт: над верхним рядом остаётся ` +

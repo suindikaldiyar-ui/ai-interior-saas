@@ -1,6 +1,6 @@
 import { ceilingOverSpanMm } from './ceiling';
 import { plinthMm, rowDepthMm } from './shop';
-import { GEOMETRY, moduleAppliances } from './modules';
+import { moduleAppliances } from './modules';
 import { moduleCarcassHeightMm, upperBottomFor } from './fill';
 import { zoneProfile } from './zones';
 import type { Module, Run } from '@/types/millwork';

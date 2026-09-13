@@ -6,8 +6,8 @@ import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import Cabinet3D from './Cabinet3D';
 import { beamDropMm } from '@/lib/millwork/ceiling';
+import { plinthMm, rowDepthMm } from '@/lib/millwork/shop';
 import { moduleBoxes, runBoxes, runPlaces } from '@/lib/millwork/cabinetBoxes';
-import { GEOMETRY } from '@/lib/millwork/modules';
 import { frontKey, frontOf } from '@/lib/millwork/frontMaterial';
 import type { ProductionSettings } from '@/types/catalog';
 import type { Run } from '@/types/millwork';
@@ -515,7 +515,7 @@ function FrameProbe({ rows }: { rows: SceneRow[] }) {
       const tally: Record<string, number> = {};
       for (const row of rows) {
         for (const box of runBoxes(row.run, {
-          zoneDepthMm: GEOMETRY.base.depth,
+          zoneDepthMm: rowDepthMm('base', row.run.production),
           thicknessMm: 16,
           frontThicknessMm: 18,
           gapMm: 3,
@@ -586,9 +586,9 @@ function FrameProbe({ rows }: { rows: SceneRow[] }) {
         const angle = (place.rotationYDeg * Math.PI) / 180;
         const normal = new THREE.Vector3(Math.sin(angle), 0, Math.cos(angle));
         const wallPoint = new THREE.Vector3(
-          place.xM - (GEOMETRY.base.depth / MM + 0.02) * Math.sin(angle),
+          place.xM - (rowDepthMm('base', row.run.production) / MM + 0.02) * Math.sin(angle),
           0,
-          place.zM - (GEOMETRY.base.depth / MM + 0.02) * Math.cos(angle),
+          place.zM - (rowDepthMm('base', row.run.production) / MM + 0.02) * Math.cos(angle),
         );
 
         for (const corner of rowCorners([row], true)) {
@@ -641,10 +641,8 @@ function FrameProbe({ rows }: { rows: SceneRow[] }) {
       const drawn = new Set<string>();
 
       for (const row of rows) {
-        const places = runPlaces(row.run, {
-          depthM: GEOMETRY.base.depth / MM,
-          plinthM: GEOMETRY.base.plinthH / MM,
-        });
+        // Габарит не подставляем: `runPlaces` берёт школу цеха у ряда.
+        const places = runPlaces(row.run);
 
         for (const place of places) {
           const boxes = moduleBoxes(
@@ -754,7 +752,7 @@ function rowCorners(rows: SceneRow[], inside = true): [number, number, number][]
 
   for (const row of rows) {
       const boxes = runBoxes(row.run, {
-        zoneDepthMm: GEOMETRY.base.depth,
+        zoneDepthMm: rowDepthMm('base', row.run.production),
         thicknessMm: 16,
         frontThicknessMm: 18,
         gapMm: 3,
@@ -829,7 +827,7 @@ function RoomShell({
     const walls = rows.map((row) => {
       const place = rowPlacement(row);
       const lengthM = row.run.lengthMm / MM;
-      const depthM = GEOMETRY.base.depth / MM;
+      const depthM = rowDepthMm('base', row.run.production) / MM;
       const angle = (place.rotationYDeg * Math.PI) / 180;
 
       /*
@@ -869,7 +867,7 @@ function RoomShell({
       const angle = (place.rotationYDeg * Math.PI) / 180;
       const cos = Math.cos(angle);
       const sin = Math.sin(angle);
-      const depthM = GEOMETRY.base.depth / MM;
+      const depthM = rowDepthMm('base', row.run.production) / MM;
 
       return (row.run.beams ?? []).map((beam) => {
         const dropM = beamDropMm(beam) / MM;
@@ -979,6 +977,6 @@ function RunEdges({ rows, inside }: { rows: SceneRow[]; inside: boolean }) {
 
 /** Высота ряда: по ней ставится камера «Спереди». */
 export function rowHeightM(run: Run): number {
-  return (GEOMETRY.base.plinthH + run.ceilingHeightMm) / MM;
+  return (plinthMm(run.production) + run.ceilingHeightMm) / MM;
 }
 
