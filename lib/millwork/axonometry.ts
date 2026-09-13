@@ -1,6 +1,7 @@
 import { carcassBoxes, moduleBoxes, type BoxMaterial, type PartBox } from './cabinetBoxes';
+import { countertopMm, plinthMm, rowDepthMm, workTopMm } from './shop';
 import { GEOMETRY } from './modules';
-import { moduleCarcassHeightMm, upperBottomFor } from './fill';
+import { moduleCarcassHeightMm, moduleDepthMm, upperBottomFor } from './fill';
 import { zoneProfile } from './zones';
 import type { Run } from '@/types/millwork';
 
@@ -122,7 +123,7 @@ export function buildAxonometry(
   production: { thicknessMm: number; frontMm: number; gapMm: number },
 ): Axonometry {
   const zone = zoneProfile(run.zone ?? 'kitchen');
-  const depthM = (zone.depthMm ?? GEOMETRY.base.depth) / MM;
+  const depthM = (zone.depthMm ?? rowDepthMm('base', run.production)) / MM;
   const thicknessM = production.thicknessMm / MM;
 
   const options = {
@@ -141,9 +142,9 @@ export function buildAxonometry(
 
     const placement = {
       x: offsetMm / MM,
-      y: upper ? upperBottomFor(unit, run) / MM : GEOMETRY.base.plinthH / MM,
+      y: upper ? upperBottomFor(unit, run) / MM : plinthMm(run.production) / MM,
       heightM: heightMm / MM,
-      depthM: upper ? GEOMETRY.upper.depth / MM : depthM,
+      depthM: upper ? moduleDepthMm(unit, run.zone, run.production) / MM : depthM,
       thicknessM,
     };
 
@@ -170,18 +171,18 @@ export function buildAxonometry(
   const lengthM = run.lengthMm / MM;
   boxes.push({
     material: 'carcass',
-    position: [lengthM / 2, GEOMETRY.base.plinthH / MM / 2, -depthM / 2 - 0.025],
-    scale: [lengthM, GEOMETRY.base.plinthH / MM, depthM - 0.05],
+    position: [lengthM / 2, plinthMm(run.production) / MM / 2, -depthM / 2 - 0.025],
+    scale: [lengthM, plinthMm(run.production) / MM, depthM - 0.05],
   });
 
   // Столешница поверх нижнего ряда — по ней ряд читается кухней.
   if (zone.hasCountertop) {
     const counterY =
-      (GEOMETRY.base.plinthH + GEOMETRY.base.carcassH + GEOMETRY.base.countertopH / 2) / MM;
+      (workTopMm(run.production) - countertopMm(run.production) / 2) / MM;
     boxes.push({
       material: 'metal',
       position: [lengthM / 2, counterY, -depthM / 2 + 0.0125],
-      scale: [lengthM, GEOMETRY.base.countertopH / MM, depthM + 0.025],
+      scale: [lengthM, countertopMm(run.production) / MM, depthM + 0.025],
     });
   }
 

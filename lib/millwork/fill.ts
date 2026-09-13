@@ -10,6 +10,13 @@ import { MODULE_VARIANTS, currentVariant } from './moduleVariants';
 import { defaultOpening } from './opening';
 import { sectionSpec } from './sections';
 import { ceilingOverModuleMm } from './ceiling';
+import {
+  carcassHeightMm,
+  mezzanineDepthMm,
+  plinthMm,
+  rowDepthMm,
+} from './shop';
+import type { ProductionSettings } from '@/types/catalog';
 import { upperRowBottomMm, zoneHeightMm, zoneProfile } from './zones';
 import type { ApplianceKind, Module, ModuleFill, Run, ZoneKind } from '@/types/millwork';
 
@@ -64,6 +71,8 @@ export function snapUp32(mm: number): number {
 export function columnNiches(
   unit: Pick<Module, 'column' | 'applianceSizes'>,
   carcassHeightMm: number,
+  /** Школа цеха: отметка низа духовки задана ОТ ПОЛА, а цоколь свой. */
+  production?: ProductionSettings,
 ): { appliance: ApplianceKind; fromMm: number; toMm: number }[] {
   const column = unit.column;
   if (!column) return [];
@@ -89,7 +98,7 @@ export function columnNiches(
    * `snapUp32` округляет вверх, поэтому берём ближайшее отверстие СНИЗУ
    * от предела: ниша может стать ниже предела, но не выше него.
    */
-  const wanted = Math.max(0, APPLIANCE_COLUMN.baseFromFloorMm - GEOMETRY.base.plinthH);
+  const wanted = Math.max(0, APPLIANCE_COLUMN.baseFromFloorMm - plinthMm(production));
   const capped = Math.max(0, Math.min(wanted, carcassHeightMm - needed));
   const snapped = snapUp32(capped);
   const base = snapped > capped ? Math.max(0, snapped - SYSTEM32_STEP_MM) : snapped;
@@ -130,9 +139,9 @@ export function ovenBottomMm(
   run: Parameters<typeof moduleCarcassHeightMm>[1],
 ): number | null {
   if (!unit.column) return null;
-  const niches = columnNiches(unit, moduleCarcassHeightMm(unit, run));
+  const niches = columnNiches(unit, moduleCarcassHeightMm(unit, run), run.production);
   const oven = niches.find((niche) => niche.appliance === 'oven');
-  return oven ? GEOMETRY.base.plinthH + oven.fromMm : null;
+  return oven ? plinthMm(run.production) + oven.fromMm : null;
 }
 
 export function columnNichesSumMm(
@@ -140,7 +149,7 @@ export function columnNichesSumMm(
   run: Parameters<typeof moduleCarcassHeightMm>[1],
 ): number | null {
   if (!unit.column) return null;
-  const niches = columnNiches(unit, moduleCarcassHeightMm(unit, run));
+  const niches = columnNiches(unit, moduleCarcassHeightMm(unit, run), run.production);
   if (niches.length < 2) return null;
   return niches.reduce((sum, niche) => sum + (niche.toMm - niche.fromMm), 0);
 }
@@ -164,7 +173,7 @@ export const MIN_DIVIDER_EDGE_MM = 150;
 export function moduleCarcassHeightMm(
   unit: Module,
   run: Pick<Run, 'zone' | 'ceilingHeightMm'> &
-    Partial<Pick<Run, 'options' | 'upperSegments' | 'mezzanine' | 'modules' | 'beams'>>,
+    Partial<Pick<Run, 'options' | 'upperSegments' | 'mezzanine' | 'modules' | 'beams' | 'production'>>,
 ): number {
   const zone = zoneProfile(run.zone);
   const top = zoneHeightMm(run.zone, run.ceilingHeightMm);
@@ -185,7 +194,7 @@ export function moduleCarcassHeightMm(
    * и она садилась внутрь него.
    */
   const bodyTop = hasMezzanine(run) ? mezzanineBottomMm(run) : top;
-  const fullBody = Math.max(GEOMETRY.base.carcassH, bodyTop - GEOMETRY.base.plinthH);
+  const fullBody = Math.max(carcassHeightMm(run.production), bodyTop - plinthMm(run.production));
 
   if (unit.section) {
     const spec = sectionSpec(unit.section);
@@ -213,7 +222,7 @@ export function moduleCarcassHeightMm(
       if (base) {
         const top = zoneHeightMm(run.zone, run.ceilingHeightMm);
         return capped(
-          Math.max(0, top - GEOMETRY.base.plinthH - moduleCarcassHeightMm(base, run)),
+          Math.max(0, top - plinthMm(run.production) - moduleCarcassHeightMm(base, run)),
         );
       }
       return capped(mezzanineHeightMm(run));
@@ -227,6 +236,7 @@ export function moduleCarcassHeightMm(
   const standard = standardHeightMm(unit.kind, {
     upperToCeiling: run.options?.upperToCeiling,
     ceilingHeightMm: run.ceilingHeightMm,
+    production: run.production,
   });
 
   /*
@@ -251,8 +261,8 @@ export function moduleCarcassHeightMm(
    */
   if (unit.appliance === 'fridge') {
     const top = zoneHeightMm(run.zone, run.ceilingHeightMm);
-    const cap = top - GEOMETRY.base.plinthH - FRIDGE_MEZZANINE_MIN_MM;
-    return capped(Math.max(GEOMETRY.base.carcassH, Math.min(standard, cap)));
+    const cap = top - plinthMm(run.production) - FRIDGE_MEZZANINE_MIN_MM;
+    return capped(Math.max(carcassHeightMm(run.production), Math.min(standard, cap)));
   }
 
   return capped(standard);
@@ -269,19 +279,19 @@ export function moduleCarcassHeightMm(
 function bottomFromFloorMm(
   unit: Module,
   run: Pick<Run, 'zone' | 'ceilingHeightMm'> &
-    Partial<Pick<Run, 'options' | 'upperSegments' | 'mezzanine' | 'modules' | 'beams'>>,
+    Partial<Pick<Run, 'options' | 'upperSegments' | 'mezzanine' | 'modules' | 'beams' | 'production'>>,
 ): number {
   if (unit.section === 'mezzanine') {
     const base = mezzanineBaseOf(unit, run);
-    if (base) return GEOMETRY.base.plinthH + moduleCarcassHeightMm(base, run);
+    if (base) return plinthMm(run.production) + moduleCarcassHeightMm(base, run);
     return mezzanineBottomMm(run);
   }
 
   if (unit.kind === 'upper' || unit.kind === 'corner_upper') {
-    return zoneProfile(run.zone).upperBottomMm ?? GEOMETRY.upper.bottomFromFloor;
+    return upperRowBottomMm(run.zone, run.ceilingHeightMm, 0, run.production);
   }
 
-  return GEOMETRY.base.plinthH;
+  return plinthMm(run.production);
 }
 
 /**
@@ -296,7 +306,7 @@ function capByCeiling(
   heightMm: number,
   unit: Module,
   run: Pick<Run, 'zone' | 'ceilingHeightMm'> &
-    Partial<Pick<Run, 'options' | 'upperSegments' | 'mezzanine' | 'modules' | 'beams'>>,
+    Partial<Pick<Run, 'options' | 'upperSegments' | 'mezzanine' | 'modules' | 'beams' | 'production'>>,
 ): number {
   if (!run.beams || run.beams.length === 0) return heightMm;
 
@@ -308,7 +318,7 @@ function capByCeiling(
 
 /** В ряду есть антресоль: она забирает верх, и корпус под неё укорачивается. */
 export function hasMezzanine(
-  run: Partial<Pick<Run, 'upperSegments' | 'mezzanine' | 'modules'>> &
+  run: Partial<Pick<Run, 'upperSegments' | 'mezzanine' | 'modules' | 'production'>> &
     Pick<Run, 'zone' | 'ceilingHeightMm'>,
 ): boolean {
   if (run.mezzanine) return true;
@@ -336,7 +346,7 @@ export function hasMezzanine(
  * чертёж и инвариант непересечения. Второе число развело бы антресоль
  * с тем местом, которое под неё оставил верхний ряд.
  */
-export function mezzanineHeightMm(run: Partial<Pick<Run, 'mezzanine'>>): number {
+export function mezzanineHeightMm(run: Partial<Pick<Run, 'mezzanine' | 'production'>>): number {
   const own = run.mezzanine?.heightMm;
   return own && own > 0 ? Math.round(own) : sectionSpec('mezzanine').heightMm;
 }
@@ -344,7 +354,7 @@ export function mezzanineHeightMm(run: Partial<Pick<Run, 'mezzanine'>>): number 
 /** Низ антресоли: потолок зоны минус её собственная высота. */
 export function mezzanineBottomMm(
   run: Pick<Run, 'zone' | 'ceilingHeightMm'> &
-    Partial<Pick<Run, 'mezzanine' | 'options'>>,
+    Partial<Pick<Run, 'mezzanine' | 'options' | 'production'>>,
 ): number {
   const profile = zoneProfile(run.zone);
 
@@ -353,7 +363,12 @@ export function mezzanineBottomMm(
    * верхняя полоса, и низ её считается от её же высоты.
    */
   if (profile.upperBottomMm === undefined) {
-    return upperRowBottomMm(run.zone, run.ceilingHeightMm, mezzanineHeightMm(run));
+    return upperRowBottomMm(
+      run.zone,
+      run.ceilingHeightMm,
+      mezzanineHeightMm(run),
+      run.production,
+    );
   }
 
   /*
@@ -366,7 +381,7 @@ export function mezzanineBottomMm(
    * детали нулевого размера в раскрое. Проверка этого не видела —
    * антресоль в смете была, а про шкафы под ней никто не спрашивал.
    */
-  return profile.upperBottomMm + upperRowHeightMm(run);
+  return upperRowBottomMm(run.zone, run.ceilingHeightMm, 0, run.production) + upperRowHeightMm(run);
 }
 
 /**
@@ -378,10 +393,10 @@ export function mezzanineBottomMm(
  */
 export function upperRowHeightMm(
   run: Pick<Run, 'zone' | 'ceilingHeightMm'> &
-    Partial<Pick<Run, 'mezzanine' | 'options' | 'upperSegments'>>,
+    Partial<Pick<Run, 'mezzanine' | 'options' | 'upperSegments' | 'production'>>,
 ): number {
   const profile = zoneProfile(run.zone);
-  const bottom = profile.upperBottomMm ?? GEOMETRY.upper.bottomFromFloor;
+  const bottom = upperRowBottomMm(run.zone, run.ceilingHeightMm, 0, run.production);
   const top = zoneHeightMm(run.zone, run.ceilingHeightMm);
   const mezzanine = hasMezzanine(run) ? mezzanineHeightMm(run) : 0;
 
@@ -420,10 +435,10 @@ export function upperRowHeightMm(
 export function mezzanineBaseOf(
   unit: Module,
   run: Pick<Run, 'zone' | 'ceilingHeightMm'> &
-    Partial<Pick<Run, 'mezzanine' | 'options' | 'modules' | 'upperSegments' | 'beams'>>,
+    Partial<Pick<Run, 'mezzanine' | 'options' | 'modules' | 'upperSegments' | 'beams' | 'production'>>,
 ): Module | null {
   if (unit.section !== 'mezzanine') return null;
-  const bottom = zoneProfile(run.zone).upperBottomMm ?? GEOMETRY.upper.bottomFromFloor;
+  const bottom = upperRowBottomMm(run.zone, run.ceilingHeightMm, 0, run.production);
 
   /*
    * Высота опоры считается на ГОЛОМ ряде — без антресоли и верхних
@@ -453,7 +468,7 @@ export function mezzanineBaseOf(
         below.offsetMm < unit.offsetMm + unit.widthMm &&
         unit.offsetMm < below.offsetMm + below.widthMm;
       if (!overlaps) return false;
-      return GEOMETRY.base.plinthH + moduleCarcassHeightMm(below, bare) > bottom;
+      return plinthMm(run.production) + moduleCarcassHeightMm(below, bare) > bottom;
     }) ?? null
   );
 }
@@ -467,16 +482,21 @@ export function mezzanineBaseOf(
 export function upperBottomFor(
   unit: Module,
   run: Pick<Run, 'zone' | 'ceilingHeightMm' | 'options' | 'upperSegments'> &
-    Partial<Pick<Run, 'mezzanine' | 'modules'>>,
+    Partial<Pick<Run, 'mezzanine' | 'modules' | 'production'>>,
 ): number {
   if (unit.section === 'mezzanine') {
     const base = mezzanineBaseOf(unit, run);
     // Антресоль стоит НА своей опоре: на колонне — на её крыше.
-    if (base) return GEOMETRY.base.plinthH + moduleCarcassHeightMm(base, run);
+    if (base) return plinthMm(run.production) + moduleCarcassHeightMm(base, run);
     return mezzanineBottomMm(run);
   }
 
-  return upperRowBottomMm(run.zone, run.ceilingHeightMm, moduleCarcassHeightMm(unit, run));
+  return upperRowBottomMm(
+    run.zone,
+    run.ceilingHeightMm,
+    moduleCarcassHeightMm(unit, run),
+    run.production,
+  );
 }
 
 /** Глубина корпуса модуля в этой зоне. */
@@ -498,18 +518,23 @@ export function bearsCountertop(
 ): boolean {
   if (!standsOnFloor(unit)) return false;
   return (
-    GEOMETRY.base.plinthH + moduleCarcassHeightMm(unit, run) < GEOMETRY.upper.bottomFromFloor
+    plinthMm(run.production) + moduleCarcassHeightMm(unit, run) < GEOMETRY.upper.bottomFromFloor
   );
 }
 
-export function moduleDepthMm(unit: Module, zone: ZoneKind | undefined): number {
+export function moduleDepthMm(
+  unit: Module,
+  zone: ZoneKind | undefined,
+  /** Школа цеха: глубины рядов принадлежат ей, а не коду. */
+  production?: ProductionSettings,
+): number {
   const profile = zoneProfile(zone);
   const standard =
     profile.kind !== 'kitchen'
       ? profile.depthMm
-      : unit.kind === 'upper' || unit.kind === 'corner_upper'
-        ? GEOMETRY.upper.depth
-        : GEOMETRY.base.depth;
+      : unit.section === 'mezzanine'
+        ? mezzanineDepthMm(production)
+        : rowDepthMm(unit.kind, production);
 
   /*
    * ГЛУБОКИЙ ПРИБОР ОТОДВИГАЕТ КОРПУС.
@@ -608,7 +633,7 @@ export function defaultFill(
    * правки давали разные полки на одном и том же модуле.
    */
   run: Pick<Run, 'zone' | 'ceilingHeightMm' | 'options'> &
-    Partial<Pick<Run, 'beams' | 'mezzanine' | 'upperSegments' | 'modules'>>,
+    Partial<Pick<Run, 'beams' | 'mezzanine' | 'upperSegments' | 'modules' | 'production'>>,
   /** Индекс модуля в ряду: от него зависит сторона открывания. */
   index = 0,
   total = 1,
@@ -628,7 +653,7 @@ export function defaultFill(
    * под противни, выше верхней — полка, если место есть.
    */
   if (unit.column) {
-    const niches = columnNiches(unit, heightMm);
+    const niches = columnNiches(unit, heightMm, run.production);
     const shelves = [
       niches[0].fromMm,
       niches[1].fromMm,

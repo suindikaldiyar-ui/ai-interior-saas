@@ -16,6 +16,9 @@ export const STANDARD_WIDTHS = [
 export const MIN_WIDTH = STANDARD_WIDTHS[0];
 export const MAX_WIDTH = STANDARD_WIDTHS[STANDARD_WIDTHS.length - 1];
 
+import { carcassHeightMm, upperBottomMm } from './shop';
+import type { ProductionSettings } from '@/types/catalog';
+
 export const GEOMETRY = {
   base: {
     carcassH: 720,
@@ -447,18 +450,27 @@ export function snapToStandard(widthMm: number): number {
  * в 300 мм, из-за которого антресоль садилась внутрь корпуса. Имя
  * `standardHeightMm` выбрано так, чтобы перепутать было нельзя.
  */
-export function standardHeightMm(kind: ModuleKind, options?: { upperToCeiling?: boolean; ceilingHeightMm?: number }): number {
+export function standardHeightMm(
+  kind: ModuleKind,
+  options?: {
+    upperToCeiling?: boolean;
+    ceilingHeightMm?: number;
+    /** Школа цеха: боковина и отметка навески принадлежат ей. */
+    production?: ProductionSettings;
+  },
+): number {
+  const shop = options?.production;
   switch (kind) {
     case 'base':
     case 'corner_base':
     case 'filler':
-      return GEOMETRY.base.carcassH;
+      return carcassHeightMm(shop);
     case 'upper':
     case 'corner_upper':
       if (options?.upperToCeiling && options.ceilingHeightMm) {
         return Math.max(
           GEOMETRY.upper.carcassH,
-          options.ceilingHeightMm - GEOMETRY.upper.bottomFromFloor,
+          options.ceilingHeightMm - upperBottomMm(shop),
         );
       }
       return GEOMETRY.upper.carcassH;
@@ -490,8 +502,12 @@ export function standardHeightMm(kind: ModuleKind, options?: { upperToCeiling?: 
   }
 }
 
-export function moduleDepthMm(kind: ModuleKind): number {
-  if (kind === 'upper' || kind === 'corner_upper') return GEOMETRY.upper.depth;
-  if (kind === 'tall') return GEOMETRY.tall.depth;
-  return GEOMETRY.base.depth;
-}
+/*
+ * ВТОРАЯ ГЛУБИНА МОДУЛЯ ЖИЛА ЗДЕСЬ.
+ *
+ * Эта функция знала только вид модуля: ни школы цеха, ни глубокого
+ * прибора, ни антресоли. План рисовал по ней, а раскрой — по
+ * `moduleDepthMm` из `fill.ts`, и на первой же нестандартной глубине они
+ * показывали разную мебель. Осталась одна — в `fill.ts`, та, что режет
+ * раскрой.
+ */

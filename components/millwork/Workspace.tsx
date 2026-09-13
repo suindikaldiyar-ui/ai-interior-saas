@@ -671,8 +671,9 @@ export default function Workspace(props: WorkspaceProps) {
       ceilingHeightMm: ceilingMm,
       walls,
       comms: props.comms,
+      production: props.production,
     });
-  }, [shape, requirements, cornerSolution, ceilingMm, walls, props.comms]);
+  }, [shape, requirements, cornerSolution, ceilingMm, walls, props.comms, props.production]);
 
   /** Композиция, которая СОБРАЛАСЬ. Отказ сюда не проходит. */
   const layout = useMemo(
@@ -704,6 +705,7 @@ export default function Workspace(props: WorkspaceProps) {
         comms: props.comms,
         rates: props.rates,
         cornerAt: props.cornerAt ?? null,
+        production: props.production,
         roomDepthM: props.roomDepthM ?? 3.2,
       };
     }
@@ -716,6 +718,7 @@ export default function Workspace(props: WorkspaceProps) {
       rates: props.rates,
       wallId: resolution.runWallId,
       cornerAt: props.cornerAt ?? null,
+      production: props.production,
     });
 
     // Пока стены не введены, ряд брать неоткуда — держим габарит из пропсов.

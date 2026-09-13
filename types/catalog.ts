@@ -239,6 +239,67 @@ export type ProductionSettings = {
    * припуски, просто заведены раньше.
    */
   allowances: PartAllowances;
+  /**
+   * ГЛУБИНЫ РЯДОВ — ШКОЛА ЦЕХА, А НЕ ОТРАСЛЕВОЙ СТАНДАРТ.
+   *
+   * Один мебельщик работает на 550/350, другой на 600/300. Захардкоженные
+   * числа делают раскрой неверным для половины клиентов, а неверный
+   * раскрой хуже отсутствующего: по нему распилят плиту.
+   */
+  depths: RowDepths;
+  /**
+   * ВЫСОТЫ РЯДА. Здесь лежат только ПЕРВИЧНЫЕ величины.
+   *
+   * Рабочая поверхность и низ верхнего ряда — ПРОИЗВОДНЫЕ, и в настройках
+   * их нет вовсе: они считаются формулой (`workTopMm`, `upperBottomMm`).
+   * Положи их сюда полем — и появится второе место, где 900 и 1500 живут
+   * своей жизнью, расходясь с цоколем и боковиной.
+   */
+  heights: RowHeights;
+};
+
+/** Глубина корпуса по рядам, мм. */
+export type RowDepths = {
+  /** Нижний ряд. От него же считается глубина колонны прибора. */
+  baseMm: number;
+  /** Верхний ряд. */
+  upperMm: number;
+  /**
+   * Антресоль. У мебельщика она идёт по глубине НИЖНЕГО ряда, а не
+   * верхнего: сверху её не видно, зато в неё кладут то, что не влезло.
+   * Поэтому это своё число, а не «как у верхнего».
+   */
+  mezzanineMm: number;
+};
+
+/** Первичные высоты ряда, мм. Производные из них считаются формулой. */
+export type RowHeights = {
+  /** Цоколь: на нём стоит корпус. */
+  plinthMm: number;
+  /** Боковина нижнего корпуса. */
+  carcassMm: number;
+  /** Толщина столешницы. */
+  countertopMm: number;
+  /** Фартук: полоса стены от столешницы до низа навесных. */
+  apronMm: number;
+};
+
+export const DEFAULT_DEPTHS: RowDepths = {
+  baseMm: 560,
+  upperMm: 320,
+  mezzanineMm: 320,
+};
+
+export const DEFAULT_HEIGHTS: RowHeights = {
+  plinthMm: 100,
+  carcassMm: 720,
+  countertopMm: 38,
+  /*
+   * 592 — это не отраслевое число, а РАЗНИЦА: прежние 1450 минус прежние
+   * 858. Умолчание обязано воспроизводить то, что было, до миллиметра —
+   * иначе поедут все сохранённые проекты.
+   */
+  apronMm: 592,
 };
 
 /**
@@ -276,6 +337,8 @@ export const DEFAULT_PRODUCTION: ProductionSettings = {
   frontGapMm: 4,
   visibleEdgeMm: 2,
   allowances: DEFAULT_ALLOWANCES,
+  depths: DEFAULT_DEPTHS,
+  heights: DEFAULT_HEIGHTS,
 };
 
 /** Настройки организации с подстановкой значений по умолчанию. */
@@ -297,7 +360,31 @@ export function productionSettings(raw: unknown): ProductionSettings {
     frontGapMm: pick('frontGapMm', [3, 4]),
     visibleEdgeMm: pick('visibleEdgeMm', [1, 2]),
     allowances: allowances(value.allowances),
+    depths: {
+      baseMm: size(value.depths?.baseMm, DEFAULT_DEPTHS.baseMm, 300, 900),
+      upperMm: size(value.depths?.upperMm, DEFAULT_DEPTHS.upperMm, 150, 600),
+      mezzanineMm: size(value.depths?.mezzanineMm, DEFAULT_DEPTHS.mezzanineMm, 150, 900),
+    },
+    heights: {
+      plinthMm: size(value.heights?.plinthMm, DEFAULT_HEIGHTS.plinthMm, 0, 250),
+      carcassMm: size(value.heights?.carcassMm, DEFAULT_HEIGHTS.carcassMm, 400, 1000),
+      countertopMm: size(value.heights?.countertopMm, DEFAULT_HEIGHTS.countertopMm, 10, 120),
+      apronMm: size(value.heights?.apronMm, DEFAULT_HEIGHTS.apronMm, 300, 900),
+    },
   };
+}
+
+/**
+ * Габарит компании с подстановкой умолчания.
+ *
+ * Границы физические, а не «правильные»: 550 и 600 одинаково законны, а
+ * вот глубина 40 мм — это мусор из базы, а не школа цеха.
+ */
+function size(raw: unknown, fallback: number, minMm: number, maxMm: number): number {
+  const given = Number(raw);
+  return Number.isFinite(given) && given >= minMm && given <= maxMm
+    ? Math.round(given)
+    : fallback;
 }
 
 /**

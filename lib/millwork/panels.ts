@@ -65,7 +65,7 @@ function modulePanels(
 ): Panel[] {
   // Доборная планка — это одна деталь, а не корпус.
   const heightMm = moduleCarcassHeightMm(unit, run);
-  const depthMm = moduleDepthMm(unit, run.zone);
+  const depthMm = moduleDepthMm(unit, run.zone, run.production);
   const t = production.carcassMm;
   const allow = production.allowances ?? DEFAULT_ALLOWANCES;
   const inner = unit.widthMm - 2 * t;
@@ -353,6 +353,10 @@ export function panelTotals(panels: Panel[]): PanelTotals {
 }
 
 /** Высота цоколя: он идёт отдельной строкой заказа, а не деталью модуля. */
+/**
+ * Высота цоколя по умолчанию — для тех, у кого ряда под рукой нет.
+ * У ряда она своя: `plinthMm(run.production)`.
+ */
 export const PLINTH_HEIGHT_MM = GEOMETRY.base.plinthH;
 
 

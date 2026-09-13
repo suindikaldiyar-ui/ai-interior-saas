@@ -1,4 +1,7 @@
 import { columnNiches, moduleCarcassHeightMm, upperBottomFor } from '@/lib/millwork/fill';
+import { plinthMm, rowDepthMm } from './shop';
+import { moduleDepthMm } from './fill';
+import type { ProductionSettings } from '@/types/catalog';
 import { GEOMETRY } from './modules';
 import { FRAME_WIDTH_MM, frontKey, frontOf, isFramed } from './frontMaterial';
 import { openingOf } from './opening';
@@ -492,7 +495,12 @@ export function drawerBoxes(
  * Ниши колонны берутся из `columnNiches` — той же функции, что рисует
  * чертёж: посчитай их здесь заново, и 3D разойдётся с эскизом.
  */
-export function applianceBoxes(unit: Module, place: ModulePlacement): PartBox[] {
+export function applianceBoxes(
+  unit: Module,
+  place: ModulePlacement,
+  /** Школа цеха: отметка низа духовки считается от пола, цоколь свой. */
+  production?: ProductionSettings,
+): PartBox[] {
   const { x, y, heightM, depthM } = place;
   const widthM = unit.widthMm / MM;
   const boxes: PartBox[] = [];
@@ -511,7 +519,7 @@ export function applianceBoxes(unit: Module, place: ModulePlacement): PartBox[] 
     });
   }
 
-  for (const niche of unit.column ? columnNiches(unit, heightM * MM) : []) {
+  for (const niche of unit.column ? columnNiches(unit, heightM * MM, production) : []) {
     const nicheH = (niche.toMm - niche.fromMm) / MM;
     boxes.push({
       material: 'appliance',
@@ -533,13 +541,15 @@ export function moduleBoxes(
   unit: Module,
   place: ModulePlacement,
   options: FrontOptions,
+  /** Школа цеха: её берут ниши колонны и всё, что считается от пола. */
+  production?: ProductionSettings,
 ): PartBox[] {
   const boxes: PartBox[] = carcassBoxes(unit, place).map((box) => ({
     ...box,
     material: 'carcass' as const,
   }));
 
-  boxes.push(...applianceBoxes(unit, place));
+  boxes.push(...applianceBoxes(unit, place, production));
 
   const isDisplay = unit.section === 'glass_display';
 
@@ -590,8 +600,18 @@ export function moduleBoxes(
  */
 export function runPlaces(
   run: Run,
-  size: { depthM: number; plinthM: number },
+  /*
+   * Габарит ряда. Не задан — берётся ШКОЛА ЦЕХА этого ряда: глубина
+   * нижнего ряда и высота цоколя принадлежат ей, а не вызывающему.
+   * Раньше каждый вызывающий подставлял их сам из `GEOMETRY`, и стоило
+   * цеху сменить глубину, как сцена осталась бы на прежней.
+   */
+  size?: { depthM: number; plinthM: number },
 ): { unit: Module; x: number; y: number; heightM: number; depthM: number }[] {
+  const shop = {
+    depthM: size?.depthM ?? rowDepthMm('base', run.production) / MM,
+    plinthM: size?.plinthM ?? plinthMm(run.production) / MM,
+  };
   return [
     ...run.modules.map((unit) => {
       const isUpper = unit.kind === 'upper' || unit.kind === 'corner_upper';
@@ -599,9 +619,9 @@ export function runPlaces(
         unit,
         x: unit.offsetMm / MM,
         // Верхние висят, нижние стоят на цоколе.
-        y: isUpper ? upperBottomFor(unit, run) / MM : size.plinthM,
+        y: isUpper ? upperBottomFor(unit, run) / MM : shop.plinthM,
         heightM: moduleCarcassHeightMm(unit, run) / MM,
-        depthM: isUpper ? GEOMETRY.upper.depth / MM : size.depthM,
+        depthM: isUpper ? rowDepthMm('upper', run.production) / MM : shop.depthM,
       };
     }),
     ...run.upperSegments.flatMap((segment) =>
@@ -611,7 +631,8 @@ export function runPlaces(
         x: unit.offsetMm / MM,
         y: upperBottomFor(unit, run) / MM,
         heightM: moduleCarcassHeightMm(unit, run) / MM,
-        depthM: GEOMETRY.upper.depth / MM,
+        // Антресоль идёт СВОЕЙ глубиной: у мебельщика она по нижнему ряду.
+        depthM: moduleDepthMm(unit, run.zone, run.production) / MM,
       })),
     ),
   ];
@@ -628,7 +649,7 @@ export function runBoxes(
   },
 ): PartBox[] {
   const depthM = options.zoneDepthMm / MM;
-  const plinthM = GEOMETRY.base.plinthH / MM;
+  const plinthM = plinthMm(run.production) / MM;
 
   const placed = runPlaces(run, { depthM, plinthM });
 

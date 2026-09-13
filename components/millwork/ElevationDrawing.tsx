@@ -6,7 +6,8 @@ import LeaderLines from './LeaderLines';
 import FrontGlyph from './FrontGlyph';
 import { TipOnMark } from './DrawingSymbols';
 import type { LeaderAnchor } from '@/lib/millwork/leaders';
-import { APPLIANCE_SLOTS, BASE_TOTAL_H, GEOMETRY, standardHeightMm } from '@/lib/millwork/modules';
+import { APPLIANCE_SLOTS, GEOMETRY } from '@/lib/millwork/modules';
+import { workTopMm } from '@/lib/millwork/shop';
 import { sectionSpec } from '@/lib/millwork/sections';
 import { moveConflict } from '@/lib/millwork/freeRun';
 import { moduleSwatch } from '@/lib/millwork/frontSwatch';
@@ -654,6 +655,12 @@ export default function ElevationDrawing({
 
   useEffect(() => () => moveCleanup.current?.(), []);
 
+  /*
+   * Рабочая поверхность — ФОРМУЛА цеха, а не константа: цоколь плюс
+   * боковина плюс столешница. Прежняя `BASE_TOTAL_H` была той же
+   * суммой, только слагаемые принадлежали коду.
+   */
+  const workTop = workTopMm(run.production);
   const ceiling = run.ceilingHeightMm;
   // Масштаб подбирается так, чтобы ряд любой длины уместился по ширине листа.
   const drawWidth = 640;
@@ -694,7 +701,7 @@ export default function ElevationDrawing({
     : [
         [0, 'пол'],
         [GEOMETRY.base.plinthH, 'цоколь'],
-        [BASE_TOTAL_H, 'столешница'],
+        [workTop, 'столешница'],
         ...(run.options.hasUpper
           ? ([
               [upperBottom, 'низ верхних'],
@@ -859,7 +866,7 @@ export default function ElevationDrawing({
 
     const bounds = sectionZone
       ? sectionBounds(unit, isUpper)
-      : { top: isUpper ? upperTop : BASE_TOTAL_H, bottom: isUpper ? upperBottom : 0 };
+      : { top: isUpper ? upperTop : workTop, bottom: isUpper ? upperBottom : 0 };
     const top = bounds.top;
     const bottom = bounds.bottom;
 
@@ -888,7 +895,7 @@ export default function ElevationDrawing({
      * У колонны приборов два, и один кружок посреди пенала соврал бы: цех
      * должен видеть, где какая ниша и какой она высоты.
      */
-    const niches = unit.column ? columnNiches(unit, moduleCarcassHeightMm(unit, run)) : [];
+    const niches = unit.column ? columnNiches(unit, moduleCarcassHeightMm(unit, run), run.production) : [];
     /*
      * ВСТРОЕННЫЙ ПРИБОР — ЭТО ШКАФ, А НЕ ПРИБОРНЫЙ БЛОК.
      *
@@ -1246,10 +1253,12 @@ export default function ElevationDrawing({
    */
   const topMm = compact
     ? Math.max(
-        BASE_TOTAL_H,
+        workTop,
         run.options.hasUpper ? upperTop : 0,
         ...allModulesOf(run).map((unit) =>
-          unit.kind === 'tall' ? standardHeightMm('tall') : 0,
+          // Высоту пенала считает та же функция, что и раскладка: со
+          // школой цеха и опциями ряда, а не «просто пенал».
+          unit.kind === 'tall' ? moduleCarcassHeightMm(unit, run) : 0,
         ),
       )
     : ceiling;
@@ -1462,7 +1471,7 @@ export default function ElevationDrawing({
         {(!sectionZone || zone.hasCountertop) && (
           <rect
             x={PADDING_LEFT}
-            y={yOf(sectionZone ? zoneTop : BASE_TOTAL_H)}
+            y={yOf(sectionZone ? zoneTop : workTop)}
             width={drawWidth}
             height={GEOMETRY.base.countertopH * heightScale}
             fill="none"
@@ -1487,9 +1496,9 @@ export default function ElevationDrawing({
         <rect
           ref={ghostRect}
           x={PADDING_LEFT}
-          y={yOf(BASE_TOTAL_H)}
+          y={yOf(workTop)}
           width={600 * scale}
-          height={yOf(0) - yOf(BASE_TOTAL_H)}
+          height={yOf(0) - yOf(workTop)}
           fill="var(--tape)"
           fillOpacity={0.22}
           stroke="var(--tape)"
@@ -1499,7 +1508,7 @@ export default function ElevationDrawing({
           ref={ghostLabel}
           className="mw-num"
           x={PADDING_LEFT}
-          y={yOf(BASE_TOTAL_H) - 6}
+          y={yOf(workTop) - 6}
           textAnchor="middle"
           fontSize={9}
           fill="var(--tape)"

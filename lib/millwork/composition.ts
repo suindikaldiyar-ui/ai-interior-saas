@@ -3,6 +3,8 @@ import { CORNER, CORNER_SIZE_MM, MIN_WIDTH, moduleAppliances } from './modules';
 import { compositionFingerprint } from './fingerprint';
 import { assertCornerFits } from './invariants';
 import { zoneProfile } from './zones';
+import { rowDepthMm } from './shop';
+import type { ProductionSettings } from '@/types/catalog';
 import type {
   ApplianceKind,
   CommPoint,
@@ -112,6 +114,8 @@ export interface BuildCompositionInput {
   ceilingHeightMm: number;
   requirements: RunRequirements;
   comms?: CommPoint[];
+  /** Школа цеха: глубины и высоты. Едет в каждый ряд композиции. */
+  production?: ProductionSettings;
 }
 
 /**
@@ -231,7 +235,13 @@ export function tryBuildComposition(input: BuildCompositionInput): CompositionAt
 export function buildComposition(input: BuildCompositionInput): Composition {
   const { kind, requirements, ceilingHeightMm } = input;
   const zone = zoneProfile(requirements.zone);
-  const depthMm = zone.depthMm;
+  /*
+   * Глубина ряда в углу — ШКОЛА ЦЕХА, а не профиль зоны: от неё зависит,
+   * сколько занял в углу соседний ряд (`cornerLostMm`), а значит и
+   * полезная длина следующей стены.
+   */
+  const depthMm =
+    zone.kind === 'kitchen' ? rowDepthMm('base', input.production) : zone.depthMm;
 
   /*
    * СВОБОДНАЯ СБОРКА УГЛОВ РАБОТАЕТ.
@@ -332,6 +342,7 @@ export function buildComposition(input: BuildCompositionInput): Composition {
       openings: wall.openings ?? [],
       comms: input.comms ?? [],
       cornerAt,
+      production: input.production,
     });
 
     warnings.push(...run.warnings.map((w) => `${SEGMENT_LABELS[i]}: ${w}`));

@@ -3,10 +3,15 @@
 import { useState } from 'react';
 import {
   DEFAULT_ALLOWANCES,
+  DEFAULT_DEPTHS,
+  DEFAULT_HEIGHTS,
   DEFAULT_PRODUCTION,
   type PartAllowances,
   type ProductionSettings,
+  type RowDepths,
+  type RowHeights,
 } from '@/types/catalog';
+import { upperBottomMm, workTopMm } from '@/lib/millwork/shop';
 
 /**
  * Настройки цеха.
@@ -106,6 +111,28 @@ const ALLOWANCES: { key: keyof PartAllowances; title: string; hint: string }[] =
     title: 'Задняя стенка вкладная',
     hint: 'Меньше габарита модуля по высоте и по ширине',
   },
+];
+
+/** Глубины рядов: школа цеха, а не отраслевой стандарт. */
+const DEPTHS: { key: keyof RowDepths; title: string; hint: string }[] = [
+  { key: 'baseMm', title: 'Нижний ряд', hint: 'По ней же идёт колонна прибора' },
+  { key: 'upperMm', title: 'Верхний ряд', hint: 'Навесные шкафы' },
+  { key: 'mezzanineMm', title: 'Антресоль', hint: 'У многих — по нижнему ряду' },
+];
+
+/**
+ * ВЫСОТЫ — ТОЛЬКО ПЕРВИЧНЫЕ.
+ *
+ * Рабочей поверхности и низа верхнего ряда здесь нет и быть не может:
+ * это СУММЫ, и считает их одна формула. Поле «рабочая поверхность» рядом
+ * с цоколем и боковиной означало бы третье число, которое расходится с
+ * первыми двумя молча.
+ */
+const HEIGHTS: { key: keyof RowHeights; title: string; hint: string }[] = [
+  { key: 'plinthMm', title: 'Цоколь', hint: 'На нём стоит корпус' },
+  { key: 'carcassMm', title: 'Боковина нижнего', hint: 'Высота корпуса без цоколя' },
+  { key: 'countertopMm', title: 'Столешница', hint: 'Толщина' },
+  { key: 'apronMm', title: 'Фартук', hint: 'От столешницы до низа навесных' },
 ];
 
 export default function ProductionAdmin({ initial }: Props) {
@@ -212,6 +239,84 @@ export default function ProductionAdmin({ initial }: Props) {
                 </label>
               ))}
             </div>
+          </div>
+
+          {/*
+            * ГЛУБИНЫ И ВЫСОТЫ РЯДА — ШКОЛА ЦЕХА.
+            *
+            * «550/350, цоколь 100, боковина 760, столешница 40» — так
+            * работает один мебельщик; у другого 600/300 и 720/38.
+            * Захардкоженные числа делали раскрой неверным для половины.
+            */}
+          <div className="mt-6 border-t border-navyLine/60 pt-4" data-row-geometry>
+            <p className="text-[15px] font-medium">Глубины рядов</p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-3">
+              {DEPTHS.map((field) => (
+                <label key={field.key} className="block">
+                  <span className="mw-label">{field.title}</span>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    data-depth={field.key}
+                    value={value.depths?.[field.key] ?? DEFAULT_DEPTHS[field.key]}
+                    onChange={(event) =>
+                      setValue((prev) => ({
+                        ...prev,
+                        depths: {
+                          ...(prev.depths ?? DEFAULT_DEPTHS),
+                          [field.key]: Number(event.target.value),
+                        },
+                      }))
+                    }
+                    className="mw-field mt-1 w-full"
+                  />
+                  <span className="mt-0.5 block text-[13px] leading-snug text-graphiteMw">
+                    {field.hint}
+                  </span>
+                </label>
+              ))}
+            </div>
+
+            <p className="mt-5 text-[15px] font-medium">Высоты ряда</p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              {HEIGHTS.map((field) => (
+                <label key={field.key} className="block">
+                  <span className="mw-label">{field.title}</span>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    data-height={field.key}
+                    value={value.heights?.[field.key] ?? DEFAULT_HEIGHTS[field.key]}
+                    onChange={(event) =>
+                      setValue((prev) => ({
+                        ...prev,
+                        heights: {
+                          ...(prev.heights ?? DEFAULT_HEIGHTS),
+                          [field.key]: Number(event.target.value),
+                        },
+                      }))
+                    }
+                    className="mw-field mt-1 w-full"
+                  />
+                  <span className="mt-0.5 block text-[13px] leading-snug text-graphiteMw">
+                    {field.hint}
+                  </span>
+                </label>
+              ))}
+            </div>
+
+            {/*
+              * ПРОИЗВОДНЫЕ ПОКАЗЫВАЮТСЯ, НО НЕ ВВОДЯТСЯ.
+              *
+              * Мебельщик проверяет их глазами: «900 и 1500 — да, моё».
+              * Ввести их нельзя намеренно: это суммы, и second-guessing
+              * суммы развёл бы её со слагаемыми.
+              */}
+            <p className="mt-3 text-[13px] leading-snug text-graphiteMw" data-derived>
+              Рабочая поверхность {workTopMm(value)} мм — цоколь плюс боковина плюс
+              столешница. Низ навесных {upperBottomMm(value)} мм — рабочая поверхность
+              плюс фартук. Оба считаются, вводить их негде.
+            </p>
           </div>
 
           <div className="mt-5 flex flex-wrap items-center gap-3">

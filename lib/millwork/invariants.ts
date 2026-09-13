@@ -1,4 +1,5 @@
 import { ceilingOverSpanMm } from './ceiling';
+import { plinthMm, rowDepthMm } from './shop';
 import { GEOMETRY, moduleAppliances } from './modules';
 import { moduleCarcassHeightMm, upperBottomFor } from './fill';
 import { zoneProfile } from './zones';
@@ -188,9 +189,9 @@ export function appliancesPlacedOnce(run: Run): Map<string, number> {
 function moduleBox(unit: Module, run: Run, upper: boolean) {
   const heightMm = moduleCarcassHeightMm(unit, run);
   const depth = upper
-    ? GEOMETRY.upper.depth
-    : (zoneProfile(run.zone ?? 'kitchen').depthMm ?? GEOMETRY.base.depth);
-  const y0 = upper ? upperBottomFor(unit, run) : GEOMETRY.base.plinthH;
+    ? rowDepthMm('upper', run.production)
+    : (zoneProfile(run.zone ?? 'kitchen').depthMm ?? rowDepthMm('base', run.production));
+  const y0 = upper ? upperBottomFor(unit, run) : plinthMm(run.production);
 
   return {
     id: unit.id,

@@ -142,6 +142,7 @@ import {
 } from '../lib/millwork/invariants';
 import { configurationFingerprint } from '../lib/millwork/fingerprint';
 import { panelMaterials, SHELF_PANEL_NAME } from '../lib/millwork/panels';
+import { upperBottomMm, workTopMm } from '../lib/millwork/shop';
 import { visibleVariantCount } from '../lib/millwork/frontGlyph';
 import { DEMO_TEMPLATE_ID } from '../lib/millwork/demoProject';
 import { createElement } from 'react';
@@ -241,6 +242,7 @@ import {
 import { limitByZone } from '../lib/complexes';
 import {
   buildComposition,
+  cornerLostMm,
   linearComposition,
   splitAppliances,
   tryBuildComposition,
@@ -8442,6 +8444,195 @@ console.log('\nУпавшая сборка говорит словами, а н�
     built.state === 'built'
       ? built.composition.segments.map((s) => `${s.label}: ${s.run.modules.length}`).join(' · ')
       : `ОТКАЗ: ${built.state === 'refused' ? built.reason.slice(0, 80) : ''}`,
+  );
+}
+
+/* ───────────────────  Глубины и высоты — школа цеха  ─────────────────── */
+
+console.log('\nДве школы цеха дают две разные мебели');
+{
+  /*
+   * «Глубина 550, верх 350, антресоль 550, цоколь 100, боковина 760,
+   * столешница 40, фартук 600» — так работает один мебельщик; у другого
+   * 600/300 и 720/38/592. Это не отраслевой стандарт, а школа цеха, и
+   * захардкоженные числа делали раскрой неверным для половины клиентов.
+   *
+   * ПРОИЗВОДНЫЕ НЕ ХРАНЯТСЯ: рабочая поверхность и низ навесных считаются
+   * формулой из первичных величин, и ни 858, ни 900, ни 1450, ни 1500 не
+   * лежат в продукте отдельным числом.
+   */
+  const shopA: ProductionSettings = {
+    ...DEFAULT_PRODUCTION,
+    depths: { baseMm: 550, upperMm: 350, mezzanineMm: 550 },
+    heights: { plinthMm: 100, carcassMm: 760, countertopMm: 40, apronMm: 600 },
+  };
+  const shopB: ProductionSettings = {
+    ...DEFAULT_PRODUCTION,
+    depths: { baseMm: 600, upperMm: 300, mezzanineMm: 600 },
+    heights: { plinthMm: 100, carcassMm: 720, countertopMm: 38, apronMm: 592 },
+  };
+
+  const runOf = (production: ProductionSettings) =>
+    buildRun({
+      lengthMm: 3800,
+      ceilingHeightMm: 2700,
+      requirements: REQ,
+      openings: [],
+      comms: COMMS,
+      production,
+    });
+
+  for (const [name, shop, worktop, upper] of [
+    ['цех А', shopA, 900, 1500],
+    ['цех Б', shopB, 858, 1450],
+  ] as const) {
+    const run = runOf(shop);
+    const cut = buildPanels({ run, production: shop });
+
+    /*
+     * Ноль деталей — это не «проверять нечего», это пустой лист раскроя.
+     * Падаем здесь, а не проходим по пустому списку.
+     */
+    check(
+      `${name}: раскрой не пустой`,
+      cut.length > 0 && run.modules.length > 0,
+      `деталей ${cut.length}, модулей ${run.modules.length}` +
+        (cut.length === 0 ? ' — ПУСТО' : ''),
+    );
+    if (cut.length === 0) continue;
+
+    /* ── Производные считаются формулой, а не берутся константой ── */
+    check(
+      `${name}: рабочая поверхность = цоколь + боковина + столешница`,
+      workTopMm(shop) ===
+        shop.heights.plinthMm + shop.heights.carcassMm + shop.heights.countertopMm &&
+        workTopMm(shop) === worktop,
+      `${workTopMm(shop)} мм`,
+    );
+    check(
+      `${name}: низ навесных = рабочая поверхность + фартук`,
+      upperBottomMm(shop) === workTopMm(shop) + shop.heights.apronMm &&
+        upperBottomMm(shop) === upper,
+      `${upperBottomMm(shop)} мм`,
+    );
+
+    /* ── Раскрой режет по настройке организации ── */
+    const sideOf = (kind: 'base' | 'upper') => {
+      const unit = run.modules.find((m) => m.kind === kind && !m.appliance)
+        ?? allModules(run).find((m) => m.kind === kind && !m.appliance);
+      const panel = unit
+        ? cut.find((row) => row.moduleId === unit.id && row.name === 'Боковина')
+        : undefined;
+      return { unit, panel };
+    };
+
+    const base = sideOf('base');
+    check(
+      `${name}: боковина нижнего — глубина и высота цеха`,
+      Boolean(base.panel) &&
+        base.panel!.widthMm === shop.depths.baseMm &&
+        base.panel!.lengthMm === shop.heights.carcassMm,
+      base.panel
+        ? `${base.panel.lengthMm}×${base.panel.widthMm} мм`
+        : 'БОКОВИНЫ НИЖНЕГО НЕТ',
+    );
+
+    const upperUnit = allModules(run).find(
+      (m) => m.kind === 'upper' && !m.appliance && m.section !== 'mezzanine',
+    );
+    const upperSide = upperUnit
+      ? cut.find((row) => row.moduleId === upperUnit.id && row.name === 'Боковина')
+      : undefined;
+    check(
+      `${name}: боковина верхнего — глубина верхнего ряда цеха`,
+      Boolean(upperSide) && upperSide!.widthMm === shop.depths.upperMm,
+      upperSide ? `${upperSide.lengthMm}×${upperSide.widthMm} мм` : 'БОКОВИНЫ ВЕРХНЕГО НЕТ',
+    );
+
+    /* ── Антресоль идёт по глубине НИЖНЕГО ряда ── */
+    const mezz = allModules(run).find((m) => m.section === 'mezzanine');
+    const mezzSide = mezz
+      ? cut.find((row) => row.moduleId === mezz.id && row.name === 'Боковина')
+      : undefined;
+    check(
+      `${name}: антресоль по глубине равна настройке антресоли`,
+      Boolean(mezzSide) && mezzSide!.widthMm === shop.depths.mezzanineMm,
+      mezzSide ? `${mezzSide.widthMm} мм при настройке ${shop.depths.mezzanineMm}` : 'АНТРЕСОЛИ НЕТ',
+    );
+
+    /* ── Сцена, чертёж и смета показывают ТЕ ЖЕ числа ── */
+    const places = runPlaces(run);
+    const sceneBase = places.find((spot) => spot.unit.id === base.unit?.id);
+    check(
+      `${name}: сцена ставит нижний ряд на цоколь цеха`,
+      Boolean(sceneBase) && Math.round((sceneBase?.y ?? 0) * 1000) === shop.heights.plinthMm,
+      `${Math.round((sceneBase?.y ?? 0) * 1000)} мм`,
+    );
+    check(
+      `${name}: сцена берёт ту же глубину, что раскрой`,
+      Boolean(sceneBase) &&
+        Math.round((sceneBase?.depthM ?? 0) * 1000) === base.panel?.widthMm,
+      `${Math.round((sceneBase?.depthM ?? 0) * 1000)} мм против ${base.panel?.widthMm}`,
+    );
+
+    const sceneUpper = places.find((spot) => spot.unit.id === upperUnit?.id);
+    check(
+      `${name}: сцена вешает верхний ряд на расчётной отметке`,
+      Boolean(sceneUpper) && Math.round((sceneUpper?.y ?? 0) * 1000) === upperBottomMm(shop),
+      `${Math.round((sceneUpper?.y ?? 0) * 1000)} мм при формуле ${upperBottomMm(shop)}`,
+    );
+
+    const svg = renderToStaticMarkup(createElement(ElevationDrawing, { run }));
+    check(
+      `${name}: чертёж подписывает ту же рабочую поверхность`,
+      svg.includes(String(worktop)),
+      svg.includes(String(worktop)) ? `${worktop} на листе` : `${worktop} НА ЛИСТЕ НЕТ`,
+    );
+
+    const estimate = buildEstimate(run, MAIN_VARIANT, DEMO_RATES, [], undefined, shop);
+    const carcass = estimate.lines.find((l) => l.key === 'ldsp_carcass');
+    check(
+      `${name}: смета берёт метры из этого же раскроя`,
+      Boolean(carcass) &&
+        Math.abs((carcass?.quantity ?? 0) - panelMaterials(cut).carcassM2) < 0.01,
+      `смета ${carcass?.quantity} м², раскрой ${panelMaterials(cut).carcassM2} м²`,
+    );
+  }
+
+  /* ── Две школы дают РАЗНЫЙ раскрой и разные деньги ── */
+  const cutA = buildPanels({ run: runOf(shopA), production: shopA });
+  const cutB = buildPanels({ run: runOf(shopB), production: shopB });
+  check(
+    'две организации с разными глубинами дают разный раскрой',
+    JSON.stringify(cutA) !== JSON.stringify(cutB) &&
+      panelMaterials(cutA).carcassM2 !== panelMaterials(cutB).carcassM2,
+    `${panelMaterials(cutA).carcassM2} м² против ${panelMaterials(cutB).carcassM2} м²`,
+  );
+
+  /* ── Умолчание не поехало ни на миллиметр ── */
+  check(
+    'умолчания продукта = прежние числа кода',
+    workTopMm(DEFAULT_PRODUCTION) === 858 &&
+      upperBottomMm(DEFAULT_PRODUCTION) === 1450 &&
+      DEFAULT_PRODUCTION.depths.baseMm === 560 &&
+      DEFAULT_PRODUCTION.depths.upperMm === 320,
+    `${workTopMm(DEFAULT_PRODUCTION)} / ${upperBottomMm(DEFAULT_PRODUCTION)} / ` +
+      `${DEFAULT_PRODUCTION.depths.baseMm} / ${DEFAULT_PRODUCTION.depths.upperMm}`,
+  );
+  check(
+    'ряд без настроек собирается ровно как ряд с умолчаниями',
+    JSON.stringify(
+      buildPanels({ run: buildRun({ lengthMm: 3800, ceilingHeightMm: 2700, requirements: REQ, openings: [], comms: COMMS }) }),
+    ) === JSON.stringify(buildPanels({ run: runOf(DEFAULT_PRODUCTION), production: DEFAULT_PRODUCTION })),
+  );
+
+  /* ── Угол пересчитывается вслед за глубиной ── */
+  check(
+    'занятое в углу следует за глубиной цеха',
+    cornerLostMm('false_panel', shopA.depths.baseMm) === 650 &&
+      cornerLostMm('false_panel', shopB.depths.baseMm) === 700,
+    `А ${cornerLostMm('false_panel', shopA.depths.baseMm)} · ` +
+      `Б ${cornerLostMm('false_panel', shopB.depths.baseMm)}`,
   );
 }
 

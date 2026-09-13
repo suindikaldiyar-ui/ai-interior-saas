@@ -1,6 +1,7 @@
 import { moduleBoxes, type PartBox } from './cabinetBoxes';
+import { countertopMm, plinthMm, rowDepthMm, workTopMm } from './shop';
 import { GEOMETRY } from './modules';
-import { moduleCarcassHeightMm, upperBottomFor } from './fill';
+import { moduleCarcassHeightMm, moduleDepthMm, upperBottomFor } from './fill';
 import { zoneProfile } from './zones';
 import type { Module, Run } from '@/types/millwork';
 
@@ -61,7 +62,7 @@ export type RunBoxOptions = {
 
 export function runModuleBoxes(run: Run, options: RunBoxOptions): RunBoxes {
   const zone = zoneProfile(run.zone ?? 'kitchen');
-  const depthM = (zone.depthMm ?? GEOMETRY.base.depth) / MM;
+  const depthM = (zone.depthMm ?? rowDepthMm('base', run.production)) / MM;
   const thicknessM = options.thicknessMm / MM;
 
   const frontOptions = {
@@ -78,9 +79,9 @@ export function runModuleBoxes(run: Run, options: RunBoxOptions): RunBoxes {
 
     const placement = {
       x: unit.offsetMm / MM,
-      y: upper ? upperBottomFor(unit, run) / MM : GEOMETRY.base.plinthH / MM,
+      y: upper ? upperBottomFor(unit, run) / MM : plinthMm(run.production) / MM,
       heightM: heightMm / MM,
-      depthM: upper ? GEOMETRY.upper.depth / MM : depthM,
+      depthM: upper ? moduleDepthMm(unit, run.zone, run.production) / MM : depthM,
       thicknessM,
     };
 
@@ -106,19 +107,19 @@ export function runModuleBoxes(run: Run, options: RunBoxOptions): RunBoxes {
   const shared: PartBox[] = [
     {
       material: 'carcass',
-      position: [lengthM / 2, GEOMETRY.base.plinthH / MM / 2, -depthM / 2 - 0.025],
-      scale: [lengthM, GEOMETRY.base.plinthH / MM, depthM - 0.05],
+      position: [lengthM / 2, plinthMm(run.production) / MM / 2, -depthM / 2 - 0.025],
+      scale: [lengthM, plinthMm(run.production) / MM, depthM - 0.05],
     },
   ];
 
   // Столешница поверх нижнего ряда — по ней ряд читается кухней.
   if (zone.hasCountertop) {
     const counterY =
-      (GEOMETRY.base.plinthH + GEOMETRY.base.carcassH + GEOMETRY.base.countertopH / 2) / MM;
+      (workTopMm(run.production) - countertopMm(run.production) / 2) / MM;
     shared.push({
       material: 'metal',
       position: [lengthM / 2, counterY, -depthM / 2 + 0.0125],
-      scale: [lengthM, GEOMETRY.base.countertopH / MM, depthM + 0.025],
+      scale: [lengthM, countertopMm(run.production) / MM, depthM + 0.025],
     });
   }
 

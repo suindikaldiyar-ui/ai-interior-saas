@@ -1,3 +1,5 @@
+import { upperBottomMm } from './shop';
+import type { ProductionSettings } from '@/types/catalog';
 import { APPLIANCE_SLOTS } from './modules';
 import { SECTION_SPECS } from './sections';
 import type { ApplianceKind, DoorSystem, SectionKind, ZoneKind } from '@/types/millwork';
@@ -36,7 +38,7 @@ export type ZoneProfile = {
    * Раньше 1450 применялось во всех зонах без разбора, и антресоль
    * оказывалась внутри шкафа, который идёт до потолка.
    */
-  upperBottomMm?: number;
+  upperBottomMm?: number | 'worktop';
   /** Что за мебель тут стоит — одной строкой для замерщика. */
   hint: string;
   /**
@@ -78,8 +80,12 @@ export const ZONE_PROFILES: Record<ZoneKind, ZoneProfile> = {
     title: 'Кухня',
     depthMm: 560,
     height: 'ceiling',
-    // Фартук между столешницей и навесными шкафами — отраслевые 1450.
-    upperBottomMm: 1450,
+    /*
+     * Отметка навески на кухне ФИКСИРОВАНА — но не числом: это рабочая
+     * поверхность плюс фартук, и оба слагаемых принадлежат цеху.
+     * `upperBottomMm: 'worktop'` означает «спроси формулу», а не «1450».
+     */
+    upperBottomMm: 'worktop',
     hint: 'Нижний и верхний ряд, техника, мойка, столешница',
     facadeTitle: 'Фасады кухни',
     yours: 'Ваша кухня',
@@ -237,8 +243,11 @@ export function upperRowBottomMm(
   kind: ZoneKind | undefined | null,
   ceilingHeightMm: number,
   upperHeightMm: number,
+  /** Школа цеха: на кухне отметка навески считается из её высот. */
+  production?: ProductionSettings,
 ): number {
   const profile = zoneProfile(kind);
+  if (profile.upperBottomMm === 'worktop') return upperBottomMm(production);
   if (profile.upperBottomMm !== undefined) return profile.upperBottomMm;
   return Math.max(0, zoneHeightMm(kind, ceilingHeightMm) - upperHeightMm);
 }

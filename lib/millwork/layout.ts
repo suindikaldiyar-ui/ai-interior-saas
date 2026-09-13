@@ -29,6 +29,8 @@ import {
 import { SECTION_SPECS, sectionSpec } from './sections';
 import { isSectionZone, zoneHeightMm, zoneProfile } from './zones';
 import { beamBottomMm, beamsOnRun, ceilingOverSpanMm } from './ceiling';
+import { upperBottomMm } from './shop';
+import type { ProductionSettings } from '@/types/catalog';
 import { runFingerprint } from './fingerprint';
 import type {
   ApplianceColumn,
@@ -534,6 +536,13 @@ export interface BuildRunInput {
   openings?: Opening[];
   /** Ряд примыкает к соседнему — на этом краю встаёт угловой модуль. */
   cornerAt?: 'start' | 'end' | null;
+  /**
+   * Школа цеха: глубины и высоты ряда. Пусто — умолчания продукта.
+   *
+   * Едет С РЯДОМ дальше (`Run.production`): высоту и глубину модуля
+   * считают функции, которым видно только `unit` и `run`.
+   */
+  production?: ProductionSettings;
 }
 
 /* ─────────────────────  Ряд из секций (не кухня)  ───────────────────── */
@@ -763,6 +772,7 @@ function buildSectionRun(input: BuildRunInput): Run {
     ceilingHeightMm,
     options: requirements.options,
     beams,
+    production: input.production,
   };
   withFill(modules, shell);
   for (const segment of upperSegments) withFill(segment.modules, shell);
@@ -777,6 +787,7 @@ function buildSectionRun(input: BuildRunInput): Run {
     upperSegments,
     options: requirements.options,
     beams: beams.length > 0 ? beams : undefined,
+    production: input.production,
     residualMm: usable - at,
     warnings,
     fingerprint: runFingerprint({ modules, upperSegments, beams }),
@@ -807,6 +818,7 @@ function emptyRun(input: BuildRunInput, usable: number): Run {
     modules: [],
     upperSegments: [],
     options: input.requirements.options,
+    production: input.production,
     residualMm: usable,
     warnings: [],
     fingerprint: runFingerprint({ modules: [], upperSegments: [] }),
@@ -1099,7 +1111,7 @@ export function buildRun(input: BuildRunInput): Run {
   const beams = beamsOnRun(openings, usable);
 
   const upperSegments = requirements.options.hasUpper
-    ? buildUpperRow(modules, usable, openings, requirements, ceilingHeightMm)
+    ? buildUpperRow(modules, usable, openings, requirements, ceilingHeightMm, input.production)
     : [];
 
   const kitchenShell = {
@@ -1107,6 +1119,7 @@ export function buildRun(input: BuildRunInput): Run {
     ceilingHeightMm,
     options: requirements.options,
     beams,
+    production: input.production,
   };
   withFill(modules, kitchenShell);
   for (const segment of upperSegments) withFill(segment.modules, kitchenShell);
@@ -1122,6 +1135,7 @@ export function buildRun(input: BuildRunInput): Run {
     upperSegments,
     options: requirements.options,
     beams: beams.length > 0 ? beams : undefined,
+    production: input.production,
     residualMm: usable - at,
     warnings,
     fingerprint: runFingerprint({ modules, upperSegments, beams }),
@@ -1213,6 +1227,8 @@ export function buildUpperRow(
   openings: Opening[],
   req: RunRequirements,
   ceilingHeightMm: number,
+  /** Школа цеха: от неё зависит отметка навески и высота верхнего ряда. */
+  production?: ProductionSettings,
 ): UpperSegment[] {
   /*
    * ЧТО ЗАНИМАЕТ МЕСТО ВЕРХНЕГО РЯДА.
@@ -1238,8 +1254,9 @@ export function buildUpperRow(
     options: req.options,
     upperSegments: [],
     beams,
+    production,
   };
-  const upperBottom = GEOMETRY.upper.bottomFromFloor;
+  const upperBottom = upperBottomMm(production);
   const tallSpans = baseModules
     .filter((unit) => GEOMETRY.base.plinthH + moduleCarcassHeightMm(unit, shell) > upperBottom)
     .map((unit) => ({ from: unit.offsetMm, to: unit.offsetMm + unit.widthMm }));

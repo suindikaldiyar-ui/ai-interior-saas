@@ -2,7 +2,8 @@
 
 import DimensionChain from './DimensionChain';
 import { CommLegend, COMM_SYMBOL } from './DrawingSymbols';
-import { GEOMETRY, moduleDepthMm } from '@/lib/millwork/modules';
+import { GEOMETRY } from '@/lib/millwork/modules';
+import { moduleDepthMm } from '@/lib/millwork/fill';
 import { LINE_MM, unitsPerPaperMm } from '@/lib/millwork/sheetStyle';
 import type { CommPoint, LayoutIssue, Run } from '@/types/millwork';
 
@@ -114,7 +115,12 @@ export default function PlanDrawing({
       {run.modules.map((unit) => {
         const x = PADDING_LEFT + unit.offsetMm * scale;
         const w = unit.widthMm * scale;
-        const d = moduleDepthMm(unit.kind) * scale;
+        /*
+         * Глубина берётся ТОЙ ЖЕ функцией, что режет раскрой: своя копия
+         * по виду модуля не знала ни школы цеха, ни глубокого прибора, и
+         * план показывал не ту мебель, которую пилят.
+         */
+        const d = moduleDepthMm(unit, run.zone, run.production) * scale;
         const active = selectedModuleId === unit.id;
         const issue = errorAt.get(unit.id);
 
