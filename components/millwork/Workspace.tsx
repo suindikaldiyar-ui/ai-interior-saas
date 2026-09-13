@@ -14,13 +14,24 @@ import RunSchematic from './RunSchematic';
 import { hasFacade } from '@/lib/millwork/applianceFront';
 import { frontOf } from '@/lib/millwork/frontMaterial';
 import { paletteFromCatalog } from '@/lib/millwork/palette';
-import { buildComposition } from '@/lib/millwork/composition';
 import { compositionOf, mergeEstimates, wallLabel } from '@/lib/millwork/walls';
+import { runPlacements, tryBuildComposition } from '@/lib/millwork/composition';
 import { openingAssumptions } from '@/lib/millwork/warnings';
-import { CORNER, CORNER_SIZE_MM } from '@/lib/millwork/modules';
 
 /** Решение угла: модуль 900×900 или фальш-панель. */
 type CornerSolution = 'corner_module' | 'false_panel';
+
+/**
+ * Как форма называется человеку — одна таблица на экран.
+ *
+ * Её же читает список выбора формы: два списка названий разъезжаются на
+ * первой правке, и замерщик видит «u_shape» в предупреждении.
+ */
+const SHAPE_TITLE: Record<CompositionKind, string> = {
+  linear: 'Прямая',
+  corner_l: 'Угловая',
+  u_shape: 'П-образная',
+};
 import { compressPhoto } from '@/lib/photo';
 import FrontSwatchCards from './FrontSwatchCards';
 import {
@@ -642,21 +653,35 @@ export default function Workspace(props: WorkspaceProps) {
    * это ровно тот класс ошибки, от которого продукт лечится уже
    * одиннадцатый раз: два расчёта одной величины расходятся молча.
    */
-  const layout = useMemo(() => {
+  const layoutAttempt = useMemo(() => {
     if (shape === 'linear') return null;
-    try {
-      return buildComposition({
-        id: 'ws',
-        kind: shape,
-        requirements: { ...requirements, cornerSolution },
-        ceilingHeightMm: ceilingMm,
-        walls,
-        comms: props.comms,
-      });
-    } catch {
-      return null;
-    }
+
+    /*
+     * УПАВШАЯ СБОРКА — ЭТО НЕ «ФОРМЫ НЕТ».
+     *
+     * Здесь стоял `catch { return null }`: угловая, которая не сошлась,
+     * молча превращалась в прямую, и замерщик видел пустоту без причины.
+     * Теперь наружу уходит состояние с причиной; исключение при этом не
+     * ослаблено — оно просто получило слова.
+     */
+    return tryBuildComposition({
+      id: 'ws',
+      kind: shape,
+      requirements: { ...requirements, cornerSolution },
+      ceilingHeightMm: ceilingMm,
+      walls,
+      comms: props.comms,
+    });
   }, [shape, requirements, cornerSolution, ceilingMm, walls, props.comms]);
+
+  /** Композиция, которая СОБРАЛАСЬ. Отказ сюда не проходит. */
+  const layout = useMemo(
+    () => (layoutAttempt?.state === 'built' ? layoutAttempt.composition : null),
+    [layoutAttempt],
+  );
+
+  /** Не собралось — и вот почему. Пусто — либо собралось, либо не просили. */
+  const refusal = layoutAttempt?.state === 'refused' ? layoutAttempt : null;
 
   /** Требования СТЕНЫ А: её доля приборов из композиции, а не весь набор. */
   const wallRequirements = useMemo(
@@ -845,44 +870,31 @@ export default function Workspace(props: WorkspaceProps) {
   );
 
   /**
-   * РЯДЫ ДЛЯ СЦЕНЫ: УГОЛ СОБИРАЕТСЯ ЗДЕСЬ, А НЕ В СЦЕНЕ.
+   * РЯДЫ ДЛЯ СЦЕНЫ: МЕСТО СЧИТАЕТ ДВИЖОК, А НЕ ЭКРАН.
    *
-   * Сцена не считает раскладку — она её показывает. Каждый ряд
-   * по-прежнему собран `buildRun` вдоль своей стены от нуля; здесь
-   * только поворот вокруг угла и смещение на то, что угол занял.
+   * Сцена не считает раскладку — она её показывает. Здесь была СВОЯ
+   * формула места («от половины длины предыдущего»), а у сцены был свой
+   * запасной вариант для первого ряда и ещё один у фартука внутри
+   * `Cabinet3D`. На одном ряду расхождение не видно; на двух стык уезжал
+   * на 91 мм, на трёх третий ряд уходил за стену А и висел в воздухе.
    *
-   * Ряд Б развёрнут на 90° и начинается ТАМ, ГДЕ КОНЧАЕТСЯ занятое
-   * первым: при фальш-панели это глубина ряда плюс панель, при угловом
-   * модуле — 900 мм. Те же числа, что урезали его полезную длину, иначе
-   * ряды в сцене разъедутся с тем, что посчитала смета.
+   * Теперь место считает `runPlacements` — тем же `cornerLostMm`, что
+   * урезал полезную длину ряда. Одна функция на сцену, рёбра, комнату,
+   * габарит для камеры и приёмку.
    */
   const sceneRows = useMemo(() => {
-    const depthM = zoneProfile(zone).depthMm / 1000;
-    if (!layout) return segments.map((run) => ({ run }));
-
-    const lostM =
-      cornerSolution === 'corner_module' ? CORNER_SIZE_MM / 1000 : depthM + CORNER.falsePanelMm / 1000;
-
-    return segments.map((run, i) => {
-      if (i === 0) return { run };
-
-      /*
-       * Каждый следующий ряд поворачивается ещё на 90° и стартует от
-       * дальнего края предыдущего. Для П-образной это даёт две стойки
-       * и перемычку между ними.
-       */
-      const prev = segments[i - 1];
-      const prevLenM = prev.lengthMm / 1000;
-
-      return {
-        run,
-        placement: {
-          xM: i === 1 ? prevLenM / 2 : -prevLenM / 2,
-          zM: i === 1 ? -lostM : -lostM,
-          rotationYDeg: i === 1 ? -90 : 90,
-        },
-      };
+    /*
+     * Прямая кухня идёт тем же путём: место первого ряда — это первый
+     * элемент того же списка. Запасной вариант внутри сцены оставался бы
+     * вторым ответом на тот же вопрос, а их и так было три.
+     */
+    const places = runPlacements({
+      runs: segments,
+      solution: cornerSolution,
+      depthMm: zoneProfile(zone).depthMm,
     });
+
+    return segments.map((run, i) => ({ run, placement: places[i] }));
   }, [layout, segments, cornerSolution, zone]);
 
   const issues = useMemo(
@@ -1572,10 +1584,37 @@ export default function Workspace(props: WorkspaceProps) {
    * в общем списке они тонут среди уточнений. Остальные схлопываются
    * по повторам, и на экране их не больше трёх.
    */
-  const blockingWarnings = warnings.filter((w) => w.severity === 'blocking');
-  const softWarnings = groupWarnings(warnings.filter((w) => w.severity === 'clarify'));
+  /*
+   * НЕ СОБРАЛОСЬ — ЭТО БЛОКИРУЮЩЕЕ, а не «нет формы».
+   *
+   * Идёт тем же каналом, что и остальные блокирующие: красной полосой
+   * над главной кнопкой (ловушка 58) — и тем же каналом запирает
+   * «Дальше». Второго состояния композиции при этом не заводится:
+   * строка выводится из попытки сборки и нигде не хранится.
+   */
+  const warningsWithRefusal = useMemo(
+    () =>
+      refusal
+        ? [
+            {
+              id: 'composition-refused',
+              severity: 'blocking' as const,
+              message:
+                `${SHAPE_TITLE[shape] ?? 'Композиция'} не сошлась. ${refusal.reason} ` +
+                'Пока не сойдётся, отправить её клиенту нельзя.',
+            },
+            ...warnings,
+          ]
+        : warnings,
+    [refusal, warnings, shape],
+  );
+
+  const blockingWarnings = warningsWithRefusal.filter((w) => w.severity === 'blocking');
+  const softWarnings = groupWarnings(
+    warningsWithRefusal.filter((w) => w.severity === 'clarify'),
+  );
   const { shown: shownSoft, hidden: hiddenSoft } = splitWarnings(softWarnings);
-  const blocked = hasBlocking(warnings);
+  const blocked = hasBlocking(warningsWithRefusal);
   const preliminary = resolution ? isEstimatePreliminary(resolution.stats) : false;
 
   /*
@@ -1585,6 +1624,19 @@ export default function Workspace(props: WorkspaceProps) {
    */
   useEffect(() => {
     if (!props.projectId || !dirty.current) return;
+
+    /*
+     * НЕСОБРАВШУЮСЯ КОМПОЗИЦИЮ НЕ СОХРАНЯЕМ.
+     *
+     * Объект обязан открыться таким, каким его закрыли (ловушка 42) — но
+     * состояние, которое не собирается, открывать нечем: при следующем
+     * входе он снова упадёт, уже без человека рядом. Сохранение ждёт,
+     * пока замерщик сведёт углы; состояние в шапке говорит об этом.
+     */
+    if (refusal) {
+      setSaveState('error');
+      return;
+    }
 
     if (saveTimer.current) clearTimeout(saveTimer.current);
     setSaveState('saving');
@@ -1648,6 +1700,8 @@ export default function Workspace(props: WorkspaceProps) {
     };
   }, [
     editedRuns,
+    // Отказ сборки запирает запись: снялся — запись обязана проснуться.
+    refusal,
     // Соседние стены сохраняются наравне с рабочей: без них угловая
     // кухня открылась бы прямой.
     editedWalls,
@@ -1837,8 +1891,14 @@ export default function Workspace(props: WorkspaceProps) {
           ? 'К результату'
           : 'Отправить клиенту';
 
+  /*
+   * Несобравшуюся композицию нельзя ни показать клиенту, ни сохранить:
+   * «Дальше» заперто на ЛЮБОМ шаге, а не только на результате.
+   */
   const nextDisabled =
-    (step === 'template' && !templateId && !freeMode) || (step === 'result' && (blocked || !props.projectId));
+    Boolean(refusal) ||
+    (step === 'template' && !templateId && !freeMode) ||
+    (step === 'result' && (blocked || !props.projectId));
 
   const onNext = () => {
     if (step === 'result') {
@@ -2191,13 +2251,8 @@ export default function Workspace(props: WorkspaceProps) {
               <div className="mb-4" data-shape>
                 <p className="mw-label mb-1">Форма</p>
                 <div className="flex flex-wrap gap-1">
-                  {(
-                    [
-                      ['linear', 'Прямая'],
-                      ['corner_l', 'Угловая'],
-                      ['u_shape', 'П-образная'],
-                    ] as [CompositionKind, string][]
-                  ).map(([kind, title]) => (
+                  {(Object.entries(SHAPE_TITLE) as [CompositionKind, string][]).map(
+                    ([kind, title]) => (
                     <button
                       key={kind}
                       type="button"
@@ -2913,6 +2968,22 @@ export default function Workspace(props: WorkspaceProps) {
           */}
         <div className="flex flex-wrap items-center gap-2">
           <div className="min-w-[220px] flex-1">
+          {/*
+            * ЦЕНЫ ПРИ «НЕ СОБРАЛОСЬ» НЕТ ВОВСЕ.
+            *
+            * Показать сумму от неполной раскладки хуже, чем не показать
+            * ничего: клиент запомнит первую названную цифру, а собрана
+            * она по мебели, которой не существует. На её месте — та же
+            * причина словами, что и в красной полосе.
+            */}
+          {refusal ? (
+            <p
+              data-composition-refused
+              className="text-[15px] leading-snug text-alert"
+            >
+              Цены нет: {SHAPE_TITLE[shape] ?? 'композиция'} не сошлась.
+            </p>
+          ) : (
           <EstimateSheet
             estimate={objectEstimate}
             /* Комплектация одна, поэтому строка итога называет ЗОНУ:
@@ -2925,6 +2996,7 @@ export default function Workspace(props: WorkspaceProps) {
             preliminary={preliminary}
             assumptions={estimateAssumptions}
           />
+          )}
           </div>
 
           <div className="flex gap-2">

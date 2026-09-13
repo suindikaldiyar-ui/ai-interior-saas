@@ -121,6 +121,18 @@ export default function Cabinet3D({
   placement,
 }: Props) {
   const groupRef = useRef<THREE.Group>(null);
+  const invalidate = useThree((state) => state.invalidate);
+
+  /*
+   * СМЕНА МЕСТА РЯДА ПЕРЕРИСОВЫВАЕТ КАДР ЯВНО.
+   *
+   * `frameloop="demand"`: без этого ряд переедет в графе сцены, а на
+   * экране останется прежний кадр — и правку можно счесть несработавшей
+   * (ловушка 250, тот же случай, что со сменой материала).
+   */
+  useEffect(() => {
+    invalidate();
+  }, [invalidate, placement?.xM, placement?.zM, placement?.rotationYDeg]);
   const openParts = useInteriorStore((s) => s.openParts);
   const cutaway = useInteriorStore((s) => s.cutaway);
   // Подсветка витрины: гаснет перед захватом кадра, см. lib/millwork/capture.ts
@@ -563,8 +575,23 @@ export default function Cabinet3D({
       * Фартук живёт ВНЕ гарнитура: это отделка стены, а не мебель. В смете
       * он идёт своей строкой, и в сцене тоже стоит отдельно.
       */}
+    {/*
+      * Фартук стоит ТАМ ЖЕ, ГДЕ РЯД.
+      *
+      * Здесь была третья формула места: группа фартука бралась «по
+      * комнате» (`originX`/`originZ`) и `placement` не читала вовсе —
+      * на стенах Б и В он оставался у первого ряда, неповёрнутый, и
+      * читался как «часть мебели висит в воздухе».
+      */}
     {hasCountertop && apronH > 0 && (
-      <group position={[originX, 0, originZ]}>
+      <group
+        position={[
+          placement ? placement.xM : originX,
+          0,
+          placement ? placement.zM : originZ,
+        ]}
+        rotation={[0, placement ? (placement.rotationYDeg * Math.PI) / 180 : 0, 0]}
+      >
         <mesh
           geometry={parts.box}
           material={apronMaterial}

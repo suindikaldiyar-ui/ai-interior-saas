@@ -184,6 +184,50 @@ export function splitAppliances(
  * на друга — а это переделка на объекте, поэтому нарушение здесь
  * исключение, а не предупреждение.
  */
+/**
+ * ПОПЫТКА СОБРАТЬ КОМПОЗИЦИЮ: СОБРАЛОСЬ ИЛИ НЕ СОБРАЛОСЬ С ПРИЧИНОЙ.
+ *
+ * Рабочий экран ловил исключение сборки и возвращал `null` — то есть
+ * говорил «формы нет». Это разные вещи: «композиции не просили» и
+ * «композиция не сошлась». Слитые в одно, они показывают замерщику
+ * пустоту вместо причины, а он стоит в квартире и объясняет её клиенту.
+ *
+ * Наружу уходит СОСТОЯНИЕ. У отказа нет `composition` — значит нечего
+ * положить ни в чертёж, ни в смету: цену от несобравшейся раскладки
+ * показать физически не из чего, и это свойство типа, а не дисциплина
+ * вызывающего.
+ *
+ * Исключения при этом не глушатся и не ослабляются: `CornerOverlapError`
+ * и `ModuleOverlapError` по-прежнему летят из `buildComposition`, просто
+ * здесь они превращаются в состояние, у которого есть слова.
+ */
+export type CompositionAttempt =
+  | { state: 'built'; composition: Composition }
+  | {
+      state: 'refused';
+      /** Имя исключения и текст — для отчёта и приёмки. */
+      error: string;
+      /** Одна строка словами для замерщика: что именно не сошлось. */
+      reason: string;
+    };
+
+export function tryBuildComposition(input: BuildCompositionInput): CompositionAttempt {
+  try {
+    return { state: 'built', composition: buildComposition(input) };
+  } catch (error) {
+    const name = error instanceof Error ? error.name : 'Error';
+    const text = error instanceof Error ? error.message : String(error);
+
+    /*
+     * Текст исключения в этом слое уже написан словами и называет
+     * последствие («Такую мебель нельзя ни собрать, ни повесить»).
+     * Переписывать его здесь значило бы завести второй словарь причин,
+     * который разойдётся с первым.
+     */
+    return { state: 'refused', error: `${name}: ${text}`, reason: text.trim() };
+  }
+}
+
 export function buildComposition(input: BuildCompositionInput): Composition {
   const { kind, requirements, ceilingHeightMm } = input;
   const zone = zoneProfile(requirements.zone);
@@ -236,10 +280,7 @@ export function buildComposition(input: BuildCompositionInput): Composition {
      * Фальш-панель угол не занимает: там мёртвая зона глубиной ряда,
      * плюс сама панель, отодвигающая фасад от чужого фасада.
      */
-    const lost =
-      solution === 'corner_module'
-        ? CORNER_SIZE_MM
-        : depthMm + CORNER.falsePanelMm;
+    const lost = cornerLostMm(solution, depthMm);
 
     const value = Math.round(wall.lengthMm) - lost;
 
@@ -364,3 +405,113 @@ export function linearComposition(run: Run, wallId = 'w1'): Composition {
 }
 
 export { CORNER_SIZE_MM };
+
+/* ─────────────────────────  Где стоит каждый ряд  ───────────────────────── */
+
+/** Мировое место ряда: точка начала в метрах и поворот вокруг вертикали. */
+export type RunPlacement = {
+  xM: number;
+  zM: number;
+  rotationYDeg: number;
+};
+
+/**
+ * ГДЕ СТОИТ КАЖДЫЙ РЯД КОМПОЗИЦИИ — ОДНА ФУНКЦИЯ НА ПРОДУКТ.
+ *
+ * Формула жила в рабочем экране (`Workspace.sceneRows`), а у сцены был
+ * СВОЙ запасной вариант для первого ряда и ещё один — у фартука внутри
+ * `Cabinet3D`. На одном ряду расхождения не видно, на двух и трёх видно
+ * сразу: ряды не стыкуются, между ними разрывы.
+ *
+ * Здесь она одна, и зовут её все: сцена, рёбра, комната, габарит для
+ * камеры и приёмка. Числа те же, что урезали полезную длину
+ * (`usable` выше), иначе сцена показывает не ту мебель, что посчитала
+ * смета.
+ */
+export function runPlacements(input: {
+  /** Ряды композиции слева направо: их ПОЛЕЗНЫЕ длины, а не длины стен. */
+  runs: Pick<Run, 'lengthMm'>[];
+  /** Решение угла: от него зависит, сколько занято в углу. */
+  solution: CornerJoin['solution'];
+  /** Глубина ряда этой зоны, мм. */
+  depthMm: number;
+}): RunPlacement[] {
+  const lostM = cornerLostMm(input.solution, input.depthMm) / MM_IN_M;
+  const depthM = input.depthMm / MM_IN_M;
+
+  const places: RunPlacement[] = [];
+
+  /*
+   * Ряды идут ЦЕПОЧКОЙ, как стены в замере: каждый следующий начинается
+   * там, где кончился предыдущий, повёрнутый на прямой угол.
+   *
+   * Раньше место считалось «от половины длины предыдущего»: у второго
+   * ряда получалось `xM = L/2`, то есть его СПИНКА уезжала за стену на
+   * глубину ряда, а начало — на панель назад. На угловой это давало
+   * 91 мм расхождения в стыке, на П-образной 2635 мм: третий ряд уходил
+   * за стену А и висел в воздухе.
+   *
+   * Считаем через две точки, которые имеют физический смысл:
+   *   P — начало ряда У СТЕНЫ, E — его конец у стены.
+   *   E(i) = P(i) + длина · направление
+   *   P(i+1) = E(i) + занято_в_углу · направление(i+1)
+   * Отсюда и начало координат ряда: P минус глубина по нормали.
+   */
+  let point: [number, number] = [0, 0];
+
+  for (let i = 0; i < input.runs.length; i += 1) {
+    const lengthM = input.runs[i].lengthMm / MM_IN_M;
+
+    /*
+     * Каждый следующий ряд поворачивает на прямой угол в одну сторону:
+     * А вдоль +x, Б вдоль +z, В обратно вдоль −x. Для П-образной это
+     * даёт две стойки и перемычку между ними.
+     */
+    const rotationYDeg = -90 * i;
+    const a = (rotationYDeg * Math.PI) / 180;
+    const cos = Math.cos(a);
+    const sin = Math.sin(a);
+
+    /*
+     * Куда идёт длина ряда и куда смотрят его фасады — в мировых осях.
+     * Стена за спиной: начало координат ряда лежит на глубину ВПЕРЁД от
+     * точки у стены, потому что локальный ноль по z — это фасад.
+     */
+    const dir: [number, number] = [cos, -sin];
+    const facade: [number, number] = [sin, cos];
+
+    if (i === 0) {
+      // Первый ряд стоит по центру: от −L/2 до +L/2, фасады на z = 0.
+      point = [-lengthM / 2, -depthM];
+    } else {
+      point = [point[0] + lostM * dir[0], point[1] + lostM * dir[1]];
+    }
+
+    places.push({
+      xM: point[0] + depthM * facade[0],
+      zM: point[1] + depthM * facade[1],
+      rotationYDeg,
+    });
+
+    // Конец ряда у стены — начало отсчёта для следующего угла.
+    point = [point[0] + lengthM * dir[0], point[1] + lengthM * dir[1]];
+  }
+
+  return places;
+}
+
+/**
+ * СКОЛЬКО ЗАНЯТО В УГЛУ — одно число на раскладку и на сцену.
+ *
+ * Угловой модуль — квадрат 900 × 900: он занимает 900 и вдоль своей
+ * стены, и вдоль соседней. Фальш-панель угол не занимает: там мёртвая
+ * зона глубиной ряда плюс сама панель.
+ */
+export function cornerLostMm(
+  solution: CornerJoin['solution'],
+  depthMm: number,
+): number {
+  return solution === 'corner_module' ? CORNER_SIZE_MM : depthMm + CORNER.falsePanelMm;
+}
+
+const MM_IN_M = 1000;

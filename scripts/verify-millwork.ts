@@ -53,6 +53,7 @@ import {
   SYSTEM32_STEP_MM,
   addShelf,
   columnNiches,
+  mezzanineBottomMm,
   moduleCarcassHeightMm,
   moveDrawerBoundary,
   moveShelf,
@@ -172,7 +173,10 @@ import {
   productionSettings,
   type ProductionSettings,
 } from '../types/catalog';
-import type { ZoneKind } from '../types/millwork';
+import type {
+  CompositionKind,
+  ZoneKind,
+} from '../types/millwork';
 import { commIssues, layoutIssues, validateRun } from '../lib/millwork/validate';
 import {
   CornerOverlapError,
@@ -239,6 +243,7 @@ import {
   buildComposition,
   linearComposition,
   splitAppliances,
+  tryBuildComposition,
 } from '../lib/millwork/composition';
 import {
   CARGO_MAX_MM,
@@ -288,6 +293,35 @@ function drawerBoxCount(unit: Module, run: Run): number {
       .map((box) => box.part)
       .filter((id): id is string => Boolean(id) && id!.includes(':drawer:')),
   ).size;
+}
+
+/**
+ * КОНФИГУРАЦИИ, КОТОРЫЕ НЕ СОБРАЛИСЬ.
+ *
+ * Раньше здесь стоял `catch { continue; }`: набор молча пропускал ряд,
+ * который упал исключением, и считал только то, что собралось. Так тихо
+ * ушли 99 конфигураций → 98 и 486 сверок → 481, а вместе с ними —
+ * настоящий дефект шкафа под ригелем.
+ *
+ * Прибор, который сам решает, что мерить, — не прибор. Не собралось —
+ * это падение с ИМЕНЕМ конфигурации и ТЕКСТОМ ошибки; список копится
+ * здесь и проверяется в конце набора.
+ */
+const buildFailures: string[] = [];
+
+function buildSample(label: string, input: Parameters<typeof buildRun>[0]): Run | null {
+  try {
+    return buildRun(input);
+  } catch (error) {
+    const message = (error as Error).message.split('\n')[0];
+    buildFailures.push(`${label} — ${(error as Error).name}: ${message.slice(0, 150)}`);
+    return null;
+  }
+}
+
+/** Тенге с копейками: те же два знака, что держит смета. */
+function round2(value: number): number {
+  return Math.round(value * 100) / 100;
 }
 
 function check(name: string, condition: boolean, detail = '') {
@@ -417,26 +451,36 @@ console.log('\nИнвариант «ряд помещается в стену»'
   }
   check('наложение модулей бросает исключение', overlapThrew);
 
-  let overflow = 0;
+  const overflows: string[] = [];
   for (let lengthMm = 300; lengthMm <= 6000; lengthMm += 50) {
     try {
       const r = buildRun({ ...baseInput, lengthMm });
-      if (runWidthSum(r) > lengthMm) overflow++;
-    } catch {
-      overflow++;
+      if (runWidthSum(r) > lengthMm) {
+        overflows.push(`${lengthMm}: сумма ${runWidthSum(r)} > длины`);
+      }
+    } catch (error) {
+      overflows.push(`${lengthMm}: ${(error as Error).name}`);
     }
   }
-  check('115 длин подряд собираются без превышения', overflow === 0, `сбоев: ${overflow}`);
+  const overflow = overflows.length;
+  check(
+    '115 длин подряд собираются без превышения',
+    overflow === 0,
+    overflow === 0 ? 'сбоев: 0' : overflows.slice(0, 3).join(' | '),
+  );
 
-  let cornerOverflow = 0;
+  const cornerOverflows: string[] = [];
   for (let lengthMm = 1200; lengthMm <= 6000; lengthMm += 50) {
     try {
       const r = buildRun({ ...baseInput, lengthMm, cornerAt: 'end' });
-      if (runWidthSum(r) > lengthMm) cornerOverflow++;
-    } catch {
-      cornerOverflow++;
+      if (runWidthSum(r) > lengthMm) {
+        cornerOverflows.push(`${lengthMm}: сумма ${runWidthSum(r)} > длины`);
+      }
+    } catch (error) {
+      cornerOverflows.push(`${lengthMm}: ${(error as Error).name}`);
     }
   }
+  const cornerOverflow = cornerOverflows.length;
   check('с угловым модулем инвариант тоже держится', cornerOverflow === 0, `сбоев: ${cornerOverflow}`);
 
   const wide = applyOps({
@@ -1235,17 +1279,21 @@ console.log('\nРучная расстановка');
 
   // Инвариант «ряд помещается в стену» ручная расстановка не отменяет.
   let overflow = 0;
+  const manualFailures: string[] = [];
   for (let centerMm = 300; centerMm <= 3200; centerMm += 50) {
     try {
       const run = buildRun({
         ...baseInput,
         requirements: { ...REQ, manualAnchors: { hob: centerMm } },
       });
-      if (runWidthSum(run) !== run.lengthMm) overflow++;
-    } catch {
-      overflow++;
+      if (runWidthSum(run) !== run.lengthMm) {
+        manualFailures.push(`${centerMm}: сумма ${runWidthSum(run)} ≠ ${run.lengthMm}`);
+      }
+    } catch (error) {
+      manualFailures.push(`${centerMm}: ${(error as Error).name}`);
     }
   }
+  overflow = manualFailures.length;
   check('шестьдесят позиций подряд не ломают ряд', overflow === 0, `сбоев: ${overflow}`);
 
   /*
@@ -3793,16 +3841,12 @@ console.log('\nСмета берёт количества из раскроя');
 
   for (const t of RUN_TEMPLATES) {
     for (const len of [t.minLengthMm, Math.round((t.minLengthMm + t.maxLengthMm) / 2), t.maxLengthMm]) {
-      let sample: Run;
-      try {
-        sample = buildRun({
-          ...baseInput,
-          lengthMm: len,
-          requirements: requirementsFromTemplate(t, DEMO_REQUIREMENTS.options),
-        });
-      } catch {
-        continue;
-      }
+      const sample = buildSample(`${t.id}@${len}`, {
+        ...baseInput,
+        lengthMm: len,
+        requirements: requirementsFromTemplate(t, DEMO_REQUIREMENTS.options),
+      });
+      if (!sample) continue;
 
       configs += 1;
       const estimate = buildEstimate(sample, 'optimal', DEMO_RATES);
@@ -3827,7 +3871,34 @@ console.log('\nСмета берёт количества из раскроя');
       : `ЦЕХ КЛЕИТ И ПИЛИТ ОДНО, КЛИЕНТ ПЛАТИТ ДРУГОЕ — ${mismatched.slice(0, 3).join(' | ')}`,
   );
 
-  check('сверено больше сотни величин', compared > 100, `${compared}`);
+  /*
+   * ЧИСЛО СВЕРОК ОБЪЯВЛЕНО, А НЕ ВЫВЕДЕНО ИЗ ТОГО, ЧТО СОБРАЛОСЬ.
+   *
+   * «Сверено больше сотни» не заметило, как 99 конфигураций стали 98, а
+   * 486 сверок — 481: дефект шкафа под ригелем прятался ровно в этой
+   * разнице. Прибор обязан знать, сколько он меряет, и падать, когда
+   * померил меньше.
+   *
+   * Числа растут вместе с шаблонами: добавили шаблон — подняли и здесь,
+   * осознанно и одной строкой.
+   */
+  const EXPECTED_CONFIGS = 99;
+  const EXPECTED_COMPARED = 486;
+
+  check(
+    `конфигураций не меньше объявленных ${EXPECTED_CONFIGS}`,
+    configs >= EXPECTED_CONFIGS,
+    configs >= EXPECTED_CONFIGS
+      ? `${configs}`
+      : `ПОМЕРИЛИ МЕНЬШЕ: ${configs} против ${EXPECTED_CONFIGS} — конфигурация потерялась`,
+  );
+  check(
+    `сверок не меньше объявленных ${EXPECTED_COMPARED}`,
+    compared >= EXPECTED_COMPARED,
+    compared >= EXPECTED_COMPARED
+      ? `${compared}`
+      : `ПОМЕРИЛИ МЕНЬШЕ: ${compared} против ${EXPECTED_COMPARED}`,
+  );
 
   /*
    * НАСТРОЙКИ ЦЕХА ДОХОДЯТ ДО СМЕТЫ.
@@ -3938,16 +4009,12 @@ console.log('\nМодули не пересекаются по объёму');
 
   for (const t of RUN_TEMPLATES) {
     for (const len of [t.minLengthMm, Math.round((t.minLengthMm + t.maxLengthMm) / 2), t.maxLengthMm]) {
-      let sample: Run;
-      try {
-        sample = buildRun({
-          ...baseInput,
-          lengthMm: len,
-          requirements: requirementsFromTemplate(t, DEMO_REQUIREMENTS.options),
-        });
-      } catch {
-        continue;
-      }
+      const sample = buildSample(`${t.id}@${len}`, {
+        ...baseInput,
+        lengthMm: len,
+        requirements: requirementsFromTemplate(t, DEMO_REQUIREMENTS.options),
+      });
+      if (!sample) continue;
       configs += 1;
       if (moduleOverlaps(sample).length > 0) dirty.push(`${t.id}@${len}`);
     }
@@ -4064,16 +4131,12 @@ console.log('\nПравка наполнения меняет смету');
 
     for (const t of RUN_TEMPLATES) {
       for (const len of [t.minLengthMm, Math.round((t.minLengthMm + t.maxLengthMm) / 2)]) {
-        let sample: Run;
-        try {
-          sample = buildRun({
-            ...baseInput,
-            lengthMm: len,
-            requirements: requirementsFromTemplate(t, DEMO_REQUIREMENTS.options),
-          });
-        } catch {
-          continue;
-        }
+        const sample = buildSample(`${t.id}@${len}`, {
+          ...baseInput,
+          lengthMm: len,
+          requirements: requirementsFromTemplate(t, DEMO_REQUIREMENTS.options),
+        });
+        if (!sample) continue;
 
         configs += 1;
         const cut = buildPanels({ run: sample })
@@ -6405,12 +6468,8 @@ console.log('\nНаправление открывания считает фур
   for (const t of RUN_TEMPLATES) {
     for (const len of [1800, 2400, 3200, 3800, 4200]) {
       const requirements = requirementsFromTemplate(t, DEMO_REQUIREMENTS.options);
-      let sample: Run;
-      try {
-        sample = buildRun({ ...baseInput, lengthMm: len, requirements });
-      } catch {
-        continue;
-      }
+      const sample = buildSample(`${t.id}@${len}`, { ...baseInput, lengthMm: len, requirements });
+      if (!sample) continue;
 
       const target = sample.upperSegments
         .flatMap((s) => s.modules)
@@ -7931,6 +7990,458 @@ console.log('\nРигель на потолке');
       (b) => b.fromCornerMm + b.widthMm <= first.lengthMm,
     ),
     (first.beams ?? []).map((b) => `${b.fromCornerMm}+${b.widthMm} при ${first.lengthMm}`).join(' '),
+  );
+}
+
+/* ───────────────────  Объектная сумма: слияние смет по стенам  ─────────────────── */
+
+console.log('\nСмета объекта — сумма стен, а не второй расчёт');
+{
+  /*
+   * ИТОГ СТРОКИ СЧИТАЕТСЯ ОДИН РАЗ — при расчёте стены.
+   *
+   * Слияние пересчитывало его из `quantity × rate`, и у процентной
+   * статьи это давало бессмыслицу: у крепежа `rate` — ПРОЦЕНТЫ (12), а
+   * не цена за метр. На угловой кухне 20 258 + 7 148 превращались в
+   * 288 ₸, и цех недосчитывался крепежа на каждом объекте из двух стен.
+   */
+  const objectOf = (wallsMm: number[]) => {
+    const requirements: RunRequirements = REQ;
+
+    const runs =
+      wallsMm.length === 1
+        ? [
+            buildRun({
+              lengthMm: wallsMm[0],
+              ceilingHeightMm: 2700,
+              requirements,
+              openings: [],
+              comms: [],
+            }),
+          ]
+        : buildComposition({
+            kind: wallsMm.length === 2 ? 'corner_l' : 'u_shape',
+            walls: wallsMm.map((lengthMm, i) => ({ id: `w${i}`, lengthMm, openings: [] })),
+            ceilingHeightMm: 2700,
+            requirements,
+            comms: [],
+          }).segments.map((segment) => segment.run);
+
+    const parts = runs.map((run) => buildEstimate(run, MAIN_VARIANT, DEMO_RATES));
+    return { parts, merged: mergeEstimates(parts) };
+  };
+
+  const shapes: { title: string; walls: number[] }[] = [
+    { title: 'одна стена', walls: [3800] },
+    { title: 'две стены', walls: [3800, 1140] },
+    { title: 'три стены', walls: [3800, 1140, 1740] },
+  ];
+
+  for (const shape of shapes) {
+    const { parts, merged } = objectOf(shape.walls);
+
+    /*
+     * Пустая смета — это не «проверять нечего», это ноль в документе,
+     * который увидит клиент. Падаем здесь, а не проходим по пустому.
+     */
+    check(
+      `${shape.title}: смета объекта не пустая`,
+      parts.length === shape.walls.length &&
+        parts.every((part) => part.lines.length > 0) &&
+        merged.lines.length > 0,
+      `стен ${parts.length}, строк ${merged.lines.length}, ` +
+        `по стенам ${parts.map((p) => p.lines.length).join('/')}`,
+    );
+
+    /* Обычная статья: сумма объекта — это сумма по стенам, до тенге. */
+    const plain = merged.lines.filter(
+      (line) => line.unit !== 'percent' && !line.key.startsWith('delivery'),
+    );
+    const drift = plain
+      .map((line) => {
+        const byWalls = parts.reduce(
+          (sum, part) => sum + (part.lines.find((l) => l.key === line.key)?.total ?? 0),
+          0,
+        );
+        return { key: line.key, object: line.total, byWalls };
+      })
+      .filter((row) => Math.abs(row.object - row.byWalls) > 0.5);
+
+    check(
+      `${shape.title}: обычные статьи сходятся со стенами до тенге`,
+      plain.length > 0 && drift.length === 0,
+      plain.length === 0
+        ? 'ОБЫЧНЫХ СТАТЕЙ НЕ НАШЛОСЬ ВОВСЕ'
+        : drift.length === 0
+          ? `сверено статей ${plain.length}`
+          : drift.map((r) => `${r.key}: объект ${r.object} ≠ стены ${r.byWalls}`).join(' '),
+    );
+
+    /*
+     * ПРОЦЕНТНАЯ СТАТЬЯ СЧИТАЕТСЯ ОТ ОБЪЕКТНОЙ БАЗЫ.
+     *
+     * У крепежа база — стоимость корпуса ЛДСП, та же, что в
+     * `buildEstimate`. Складывать проценты стен нельзя: 12 % плюс 12 %
+     * это не 24 %.
+     */
+    const fasteners = merged.lines.find((line) => line.key === 'fasteners');
+    const carcass = merged.lines.find((line) => line.key === 'ldsp_carcass');
+    const expected = round2(((carcass?.total ?? 0) * (fasteners?.rate ?? 0)) / 100);
+
+    check(
+      `${shape.title}: крепёж — процент от корпуса ОБЪЕКТА`,
+      Boolean(fasteners && carcass) && Math.abs((fasteners?.total ?? 0) - expected) <= 1,
+      fasteners
+        ? `${fasteners.total} ₸ при ${fasteners.rate} % от корпуса ${carcass?.total} ₸ (ждали ${expected})`
+        : 'СТРОКИ КРЕПЕЖА НЕТ',
+    );
+
+    /*
+     * РАЗОВАЯ СТАТЬЯ — ОДНА НА ОБЪЕКТ, И СЧИТАЕТСЯ ОТ ОБЪЕКТНОЙ БАЗЫ.
+     *
+     * Везут и монтируют весь объект, а не первую его стену: раньше
+     * дедуп оставлял строку стены А как есть, и восемь процентов
+     * считались от одной стены из трёх.
+     */
+    const deliveryLines = merged.lines.filter((line) => line.key.startsWith('delivery'));
+    const subtotal = round2(
+      merged.lines
+        .filter((line) => line.enabled && !line.key.startsWith('delivery'))
+        .reduce((sum, line) => sum + line.total, 0),
+    );
+    const delivery = deliveryLines[0];
+    const wantDelivery = round2((subtotal * (delivery?.rate ?? 0)) / 100);
+
+    check(
+      `${shape.title}: доставка одной строкой от объектной базы`,
+      deliveryLines.length === 1 && Math.abs((delivery?.total ?? 0) - wantDelivery) <= 1,
+      delivery
+        ? `строк ${deliveryLines.length}, ${delivery.total} ₸ при ${delivery.rate} % от ${subtotal} ₸`
+        : 'СТРОКИ ДОСТАВКИ НЕТ',
+    );
+
+    check(
+      `${shape.title}: итог объекта — сумма включённых строк`,
+      Math.abs(
+        merged.total -
+          round2(merged.lines.filter((l) => l.enabled).reduce((sum, l) => sum + l.total, 0)),
+      ) <= 1,
+      `${merged.total} ₸`,
+    );
+  }
+
+  /*
+   * КОНТРОЛЬ РЕГРЕССИИ: объект из ОДНОЙ стены не меняется ни на тенге.
+   *
+   * Слияние одной сметы обязано отдать её саму — иначе правка объектной
+   * суммы переписала бы все прямые кухни, которых она не касается.
+   */
+  const singles = [2400, 3200, 3800, 4200].map((lengthMm) => {
+    const run = buildRun({
+      lengthMm,
+      ceilingHeightMm: 2700,
+      requirements: REQ,
+      openings: [],
+      comms: [],
+    });
+    const one = buildEstimate(run, MAIN_VARIANT, DEMO_RATES);
+    return { lengthMm, one, merged: mergeEstimates([one]) };
+  });
+
+  check(
+    'одностенный объект не поехал ни на тенге',
+    singles.length > 0 &&
+      singles.every(
+        (row) =>
+          row.merged.total === row.one.total &&
+          row.merged.lines.length === row.one.lines.length &&
+          row.merged.lines.every(
+            (line, i) =>
+              line.key === row.one.lines[i].key &&
+              line.total === row.one.lines[i].total &&
+              line.quantity === row.one.lines[i].quantity,
+          ),
+      ),
+    singles.map((row) => `${row.lengthMm}: ${Math.round(row.one.total)}`).join(' · '),
+  );
+}
+
+/* ───────────────────  Прибор меряет всё, а не то, что собралось  ─────────────────── */
+
+console.log('\nНи одна конфигурация не пропущена');
+{
+  /*
+   * Набор, который сам решает, что мерить, — не прибор. Каждая
+   * конфигурация обязана СОБРАТЬСЯ; не собралась — падение с именем и
+   * текстом ошибки, а не молчаливый `continue`.
+   */
+  check(
+    'все конфигурации шаблонов собрались',
+    buildFailures.length === 0,
+    buildFailures.length === 0
+      ? 'падений нет'
+      : `${buildFailures.length} шт.: ` + buildFailures.join('  ·  '),
+  );
+}
+
+/* ───────────────────  Антресоль шкафа под ригелем  ─────────────────── */
+
+console.log('\nАнтресоль стоит на объявленной опоре');
+{
+  /*
+   * ОПОРА АНТРЕСОЛИ — КОЛОННА ПРИБОРА, А НЕ ЛЮБОЙ ВЫСОКИЙ МОДУЛЬ.
+   *
+   * В шкафу-купе и в прихожей секции стоят от пола до потолка, и каждая
+   * из них считалась «колонной». Антресоль получала высоту «остаток над
+   * опорой» — то есть НОЛЬ — и садилась на потолок: четыре детали
+   * нулевого размера в раскрое, которых инвариант непересечения не
+   * видел, потому что у нуля нет объёма.
+   *
+   * Под ригелем одна секция укорачивалась, опора у её антресоли
+   * пропадала, та падала на объявленную полосу и врезалась в соседнюю
+   * секцию во всю высоту. Это и роняло `wardrobe-mezzanine@4000` —
+   * молча, через `catch { continue; }`.
+   */
+  const beam: Opening = {
+    id: 'beam-test',
+    kind: 'beam',
+    fromCornerMm: 2400,
+    widthMm: 1000,
+    sillMm: 0,
+    heightMm: 600,
+  };
+
+  const cases: { id: string; lengthMm: number }[] = [
+    { id: 'wardrobe-mezzanine', lengthMm: 4000 },
+    { id: 'wardrobe-hinged', lengthMm: 4200 },
+    { id: 'wardrobe-mezzanine', lengthMm: 4200 },
+    { id: 'hallway-mezzanine', lengthMm: 3800 },
+  ];
+
+  for (const one of cases) {
+    const template = RUN_TEMPLATES.find((t) => t.id === one.id);
+    if (!template) {
+      check(`${one.id}: шаблон найден`, false, 'ШАБЛОНА С ТАКИМ ИМЕНЕМ НЕТ');
+      continue;
+    }
+
+    const requirements = requirementsFromTemplate(template, DEMO_REQUIREMENTS.options);
+
+    for (const [where, openings] of [
+      ['ровный потолок', [] as Opening[]],
+      ['под ригелем', [beam]],
+    ] as const) {
+      const label = `${one.id}@${one.lengthMm} · ${where}`;
+
+      let run: Run | null = null;
+      let threw = '';
+      try {
+        run = buildRun({
+          lengthMm: one.lengthMm,
+          ceilingHeightMm: 2700,
+          requirements,
+          openings: [...openings],
+          comms: [],
+        });
+      } catch (error) {
+        threw = `${(error as Error).name}: ${(error as Error).message.slice(0, 110)}`;
+      }
+
+      check(`${label}: собирается`, threw === '' && run !== null, threw || 'собрался');
+      if (!run) continue;
+
+      const mezzanines = allModules(run).filter((unit) => unit.section === 'mezzanine');
+      const sections = run.modules;
+
+      /*
+       * Ноль модулей — это не «проверять нечего»: это пустой шкаф.
+       * Падаем здесь, а не проходим по пустому списку.
+       */
+      check(
+        `${label}: в ряду есть секции и антресоль`,
+        sections.length > 0 && mezzanines.length > 0,
+        `секций ${sections.length}, антресолей ${mezzanines.length}` +
+          (sections.length === 0 || mezzanines.length === 0 ? ' — ПУСТО' : ''),
+      );
+      if (mezzanines.length === 0) continue;
+
+      /*
+       * Низ антресоли равен ОБЪЯВЛЕННОЙ опоре: полосе антресоли этого
+       * ряда. Считает её одна функция, та же, что урезала секции под ней.
+       */
+      const declared = mezzanineBottomMm(run);
+      const wrong = mezzanines
+        .map((unit) => ({ unit, y: upperBottomFor(unit, run!) }))
+        .filter((row) => Math.abs(row.y - declared) > 1);
+
+      check(
+        `${label}: низ антресоли равен объявленной полосе ${declared} мм`,
+        wrong.length === 0,
+        wrong.length === 0
+          ? `антресолей ${mezzanines.length}, все на ${declared}`
+          : wrong.map((row) => `${row.unit.offsetMm}: ${row.y}`).join(' '),
+      );
+
+      check(
+        `${label}: у антресоли есть высота, а не ноль`,
+        mezzanines.every((unit) => moduleCarcassHeightMm(unit, run!) > 0),
+        mezzanines.map((unit) => moduleCarcassHeightMm(unit, run!)).join('/'),
+      );
+
+      check(
+        `${label}: секции кончаются там, где начинается антресоль`,
+        sections.every(
+          (unit) =>
+            GEOMETRY.base.plinthH + moduleCarcassHeightMm(unit, run!) <= declared + 1,
+        ),
+        sections
+          .map((unit) => GEOMETRY.base.plinthH + moduleCarcassHeightMm(unit, run!))
+          .join('/'),
+      );
+
+      check(`${label}: пересечений модулей нет`, moduleOverlaps(run).length === 0,
+        moduleOverlaps(run).map((o) => o.message).join(' ').slice(0, 120) || 'нет');
+    }
+  }
+
+  /*
+   * Кухня не поехала: там опора настоящая — колонна холодильника, и
+   * антресоль над ней по-прежнему берёт остаток над её крышей.
+   */
+  const kitchen = buildRun({
+    lengthMm: 3800,
+    ceilingHeightMm: 2700,
+    requirements: { ...REQ, appliances: ['fridge', 'oven', 'sink600', 'hob', 'hood'] },
+    openings: [],
+    comms: COMMS,
+  });
+  const overFridge = allModules(kitchen).find(
+    (unit) => unit.section === 'mezzanine' && mezzanineBaseOf(unit, kitchen) !== null,
+  );
+  const column = kitchen.modules.find((unit) => unit.appliance === 'fridge');
+
+  check(
+    'над колонной холодильника опора осталась колонной',
+    Boolean(overFridge && column) &&
+      mezzanineBaseOf(overFridge!, kitchen)?.id === column?.id &&
+      upperBottomFor(overFridge!, kitchen) ===
+        GEOMETRY.base.plinthH + moduleCarcassHeightMm(column!, kitchen),
+    overFridge
+      ? `${overFridge.label}: низ ${upperBottomFor(overFridge, kitchen)}, ` +
+        `высота ${moduleCarcassHeightMm(overFridge, kitchen)}`
+      : 'АНТРЕСОЛИ НАД КОЛОННОЙ НЕТ',
+  );
+}
+
+/* ───────────────────  «Не собралось» — это состояние, а не пустота  ─────────────────── */
+
+console.log('\nУпавшая сборка говорит словами, а не молчит');
+{
+  /*
+   * Рабочий экран ловил исключение сборки и возвращал `null` — то есть
+   * «формы нет». Замерщик видел пустоту и не знал почему, а объект при
+   * этом уходил в сохранение.
+   *
+   * Проверка идёт ТЕМ ЖЕ публичным путём, что и экран: `tryBuildComposition`.
+   */
+  const attemptOf = (kind: CompositionKind, wallsMm: number[], requirements: RunRequirements) =>
+    tryBuildComposition({
+      kind,
+      walls: wallsMm.map((lengthMm, i) => ({ id: `w${i}`, lengthMm, openings: [] })),
+      ceilingHeightMm: 2700,
+      requirements,
+      comms: [],
+    });
+
+  /*
+   * Стена Б короче того, что занял в углу ряд А: 600 − 660 уходит в
+   * минус, и `assertCornerFits` бросает `CornerOverlapError`. Ровно эта
+   * конфигурация и пряталась за `catch { return null }`.
+   */
+  const refused = attemptOf('corner_l', [3200, 600], REQ);
+
+  check(
+    'несобравшаяся композиция возвращает состояние «не собралось»',
+    refused.state === 'refused',
+    refused.state,
+  );
+  check(
+    'и причина не пустая: имя исключения и текст',
+    refused.state === 'refused' &&
+      refused.reason.trim().length > 0 &&
+      /Error/.test(refused.error),
+    refused.state === 'refused' ? `${refused.error.slice(0, 110)}` : 'ПРИЧИНЫ НЕТ',
+  );
+  check(
+    'причина написана словами, а не кодом',
+    refused.state === 'refused' && /[а-яё]/i.test(refused.reason),
+    refused.state === 'refused' ? refused.reason.slice(0, 110) : '',
+  );
+
+  /*
+   * ЦЕНЫ В ЭТОМ СОСТОЯНИИ НЕТ ВОВСЕ — и это свойство типа, а не
+   * дисциплина вызывающего: у отказа нет композиции, значит нечего
+   * положить ни в смету, ни в чертёж.
+   */
+  check(
+    'у отказа нет композиции, а значит и цены',
+    refused.state === 'refused' && !('composition' in refused),
+    refused.state === 'refused' ? 'композиции нет' : 'КОМПОЗИЦИЯ ЕСТЬ',
+  );
+
+  /*
+   * ПУСТАЯ КОМПОЗИЦИЯ — ДРУГОЕ СОСТОЯНИЕ.
+   *
+   * Свободная сборка начинается с пустых стен: это законный, собравшийся
+   * результат с нулевой сметой. Слить его с отказом значило бы показать
+   * замерщику «не сошлось» там, где он ещё просто не начал.
+   */
+  const emptyReq: RunRequirements = { ...REQ, mode: 'free', appliances: [], sections: [] };
+  const empty = attemptOf('corner_l', [3200, 1800], emptyReq);
+
+  check(
+    'пустая композиция собирается, а не отказывает',
+    empty.state === 'built',
+    empty.state === 'built'
+      ? `сегментов ${empty.composition.segments.length}`
+      : `ОТКАЗ: ${empty.state === 'refused' ? empty.reason.slice(0, 80) : ''}`,
+  );
+
+  if (empty.state !== 'built') {
+    check('пустая композиция отдала сегменты', false, 'СЕГМЕНТОВ НЕТ');
+  } else {
+    const modules = empty.composition.segments.reduce(
+      (sum, segment) => sum + segment.run.modules.length,
+      0,
+    );
+    const price = mergeEstimates(
+      empty.composition.segments.map((segment) =>
+        buildEstimate(segment.run, MAIN_VARIANT, DEMO_RATES),
+      ),
+    ).total;
+
+    check(
+      'и она пустая именно мебелью, а не состоянием',
+      empty.composition.segments.length === 2 && modules === 0 && price === 0,
+      `сегментов ${empty.composition.segments.length}, модулей ${modules}, смета ${price} ₸`,
+    );
+    check(
+      'состояние «пустая» не равно состоянию «не собралось»',
+      empty.state !== refused.state,
+      `${empty.state} против ${refused.state}`,
+    );
+  }
+
+  /* Собравшаяся композиция по-прежнему отдаёт мебель и цену. */
+  const built = attemptOf('corner_l', [3800, 1800], REQ);
+  check(
+    'собравшаяся композиция отдаёт мебель',
+    built.state === 'built' &&
+      built.composition.segments.length === 2 &&
+      built.composition.segments.every((segment) => segment.run.modules.length > 0),
+    built.state === 'built'
+      ? built.composition.segments.map((s) => `${s.label}: ${s.run.modules.length}`).join(' · ')
+      : `ОТКАЗ: ${built.state === 'refused' ? built.reason.slice(0, 80) : ''}`,
   );
 }
 

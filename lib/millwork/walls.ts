@@ -1,3 +1,4 @@
+import { recalcTotal } from './estimate';
 import { compositionFingerprint } from './fingerprint';
 import type { Composition, Estimate, EstimateLine, Run } from '@/types/millwork';
 
@@ -28,9 +29,11 @@ export function wallLabel(index: number): string {
  * калькулятор: он разошёлся бы с первым на первой же правке ставок, и
  * клиенту показали бы одну сумму, а в цех уехала другая.
  *
- * Строки складываются ПО КЛЮЧУ статьи — по тому же, по которому смета
- * группируется в пять групп: количество суммируется, ставка берётся
- * общая (она одна на организацию), итог пересчитывается из них.
+ * ИТОГ СТРОКИ СЧИТАЕТСЯ ОДИН РАЗ — при расчёте стены (`buildEstimate`).
+ * Здесь он только СКЛАДЫВАЕТСЯ. Раньше слияние пересчитывало его из
+ * `quantity × rate` — и это был тот самый второй калькулятор: у
+ * процентной статьи `rate` это ПРОЦЕНТЫ, а не цена за единицу, и крепёж
+ * на угловой кухне схлопывался с 27 406 ₸ до 288 ₸ (24.04 × 12).
  *
  * Разовые статьи объекта — доставка, замер, монтажная бригада — не
  * удваиваются: их платят за объект, а не за стену.
@@ -48,8 +51,15 @@ export function mergeEstimates(parts: Estimate[]): Estimate {
     for (const line of part.lines) {
       const once = ONCE_PER_OBJECT.some((key) => line.key.startsWith(key));
       if (once) {
+        /*
+         * Разовая статья остаётся ОДНА. Её величину пересчитает
+         * `recalcTotal` — от объектной базы, а не от базы первой стены:
+         * везут и монтируют весь объект, а не его половину.
+         */
         if (seenOnce.has(line.key)) continue;
         seenOnce.add(line.key);
+        byKey.set(line.key, { ...line });
+        continue;
       }
 
       const before = byKey.get(line.key);
@@ -58,29 +68,38 @@ export function mergeEstimates(parts: Estimate[]): Estimate {
         continue;
       }
 
-      const quantity = round2(before.quantity + line.quantity);
       byKey.set(line.key, {
         ...before,
-        quantity,
-        total: Math.round(quantity * before.rate),
+        quantity: round2(before.quantity + line.quantity),
+        // Складываем посчитанное, а не считаем заново.
+        total: round2(before.total + line.total),
         // Пропавшая ставка на любой из стен — пропавшая ставка на объекте.
         missingRate: before.missingRate || line.missingRate,
       });
     }
   }
 
-  const lines = Array.from(byKey.values());
-  const total = lines
-    .filter((line) => line.enabled)
-    .reduce((sum, line) => sum + line.total, 0);
-
-  return {
+  const merged: Estimate = {
     ...first,
-    lines,
-    total: Math.round(total),
+    lines: Array.from(byKey.values()),
+    total: 0,
     preliminary: parts.some((part) => part.preliminary),
     priceSnapshot: Object.assign({}, ...parts.map((part) => part.priceSnapshot)),
   };
+
+  /*
+   * ПРОЦЕНТ ОБЪЕКТА СЧИТАЕТСЯ ОТ ОБЪЕКТНОЙ БАЗЫ, И СЧИТАЕТ ЕГО ТА ЖЕ
+   * ФУНКЦИЯ, ЧТО ПРИ РАСЧЁТЕ ОДНОЙ СТЕНЫ.
+   *
+   * `recalcTotal` уже умеет ровно это: подытог по всем строкам, кроме
+   * доставки, и доставка процентом от него. Написать это здесь второй
+   * раз значило бы завести второй расчёт того же числа — то есть ровно
+   * то, от чего эта правка избавляется.
+   */
+  return recalcTotal(
+    merged,
+    merged.lines.filter((line) => !line.enabled).map((line) => line.key),
+  );
 }
 
 function round2(value: number): number {
