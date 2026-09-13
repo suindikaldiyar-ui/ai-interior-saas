@@ -1,6 +1,6 @@
 import { recalcTotal } from './estimate';
 import { compositionFingerprint } from './fingerprint';
-import type { Composition, Estimate, EstimateLine, Run } from '@/types/millwork';
+import type { Composition, Estimate, EstimateLine, Opening, Run } from '@/types/millwork';
 
 /**
  * НЕСКОЛЬКО СТЕН НА ОДНОМ РАБОЧЕМ ЭКРАНЕ.
@@ -196,4 +196,79 @@ export function wallMismatchMessage(mismatch: WallMismatch): string {
     : `${mismatch.label}: ряд собран на ${mismatch.runLengthMm} мм, а на стене ` +
       `${mismatch.usableMm} мм — ${diff} мм стены останутся пустыми. ` +
       'Пересоберите эту стену, чтобы мебель встала во всю длину.';
+}
+
+/* ────────────────────  Какие стены уходят в композицию  ──────────────────── */
+
+/** Стена композиции: столько, сколько нужно `buildComposition`. */
+export type SelectedWall = { id: string; lengthMm: number; openings: Opening[] };
+
+/**
+ * СТЕНЫ ОТБИРАЮТСЯ ПО ИДЕНТИФИКАТОРУ, А НЕ ПО ДЛИНЕ.
+ *
+ * Рабочее место вычитало соседние стены ЗНАЧЕНИЕМ — брало все, чья длина
+ * не равна длине рабочей стены. Пока стены разные, это совпадает с
+ * правдой, и потому держалось долго:
+ *
+ *   А=3800, Б=1140  →  3800 и 1140                            ✓
+ *   А=3800, Б=3800  →  Б выпадала как «та же самая»            ✗
+ *   А=3000, Б=3000  →  выпадали обе, композиция вся выдумана   ✗
+ *
+ * На место выпавших вставала глубина помещения — величина, которой в
+ * замере нет вовсе. Клиент видел её на экране как размер своей стены.
+ *
+ * Идентичность у стены есть с захода про id модуля (`wallId`), и она
+ * устойчива: длина меняется, идентификатор — нет.
+ *
+ * Функция живёт здесь, а не на экране, ровно по правилу слоя 42:
+ * проверять надо ТО, что показано человеку, а не похожий пересчёт рядом.
+ */
+export function compositionWalls(input: {
+  /** Стены разрешённого замера по порядку обхода. */
+  measured: { id: string; lengthMm: number; openings?: Opening[] }[];
+  /** Идентификатор рабочей стены — той, вдоль которой стоит ряд. */
+  runWallId?: string;
+  /** Длина рабочей стены. Её считает `workspaceInput`, а не этот отбор. */
+  runLengthMm: number;
+  /** Проёмы рабочей стены. */
+  runOpenings: Opening[];
+}): SelectedWall[] {
+  const measured = input.measured
+    .filter((wall) => wall.lengthMm > 0)
+    .map((wall) => ({
+      id: wall.id,
+      lengthMm: Math.round(wall.lengthMm),
+      openings: wall.openings ?? [],
+    }));
+
+  const at = measured.findIndex((wall) => wall.id === input.runWallId);
+
+  const first: SelectedWall = {
+    id: measured[at]?.id ?? input.runWallId ?? 'a',
+    lengthMm: Math.round(input.runLengthMm),
+    openings: input.runOpenings,
+  };
+
+  /*
+   * ОБХОД ИДЁТ ОТ РАБОЧЕЙ СТЕНЫ В ОДНУ СТОРОНУ.
+   *
+   * Стены замера лежат по порядку обхода — у каждой записан поворот к
+   * следующей. Композиция ставит ряды цепочкой, поэтому соседом стены А
+   * обязана быть та, что стоит за ней В ЗАМЕРЕ, а не та, что просто
+   * осталась в списке.
+   *
+   * Отметил замерщик рядом вторую стену из трёх — раньше выходило
+   * «Б, А, В»: Стена В оказывалась соседом стены А через комнату.
+   * Сдвигом порядка получается «Б, В, А» — обход в ту же сторону,
+   * какой его и вёл человек. Отмечена первая (обычный случай) — сдвиг
+   * ничего не меняет вовсе.
+   */
+  const rest = at >= 0 ? [...measured.slice(at + 1), ...measured.slice(0, at)] : measured;
+
+  /*
+   * Стену, которой в замере нет, придумывать нечем и не из чего: кухня
+   * 11.85 м² бывает и 3200 × 3700, и 2900 × 4100. Не хватило — об этом
+   * скажет отказ композиции, назвав стену по имени.
+   */
+  return [first, ...rest.filter((wall) => wall.id !== first.id)];
 }

@@ -3,6 +3,7 @@ import { CORNER, CORNER_SIZE_MM, MIN_WIDTH, moduleAppliances } from './modules';
 import { compositionFingerprint } from './fingerprint';
 import { assertCornerFits } from './invariants';
 import { rowStandardDepthMm } from './fill';
+import { wallLabel } from './walls';
 import type { ProductionSettings } from '@/types/catalog';
 import type {
   ApplianceKind,
@@ -93,7 +94,25 @@ export function assertShapeMatches(prompt: string, shape: RunShape): void {
 /* ─────────────────────  Сборка угловой композиции  ───────────────────── */
 
 /** Метки рядов: цех и клиент говорят «стена А», а не «сегмент 0». */
-const SEGMENT_LABELS = ['Стена А', 'Стена Б', 'Стена В'];
+/**
+ * КАК ФОРМА НАЗЫВАЕТСЯ ЧЕЛОВЕКУ.
+ *
+ * Лежит здесь, а не на экране: отказ композиции пишется тоже здесь, и
+ * вторая таблица названий дала бы замерщику «u_shape» в одном месте и
+ * «П-образная» в другом.
+ */
+export const SHAPE_TITLE: Record<CompositionKind, string> = {
+  linear: 'Прямая',
+  corner_l: 'Угловая',
+  u_shape: 'П-образная',
+};
+
+/** Сколько стен эта форма ставит под мебель, словами. */
+export const SHAPE_WALLS: Record<CompositionKind, string> = {
+  linear: 'одну стену',
+  corner_l: 'две стены',
+  u_shape: 'три стены',
+};
 
 /** Сколько стен нужно этой форме. */
 export function segmentCount(kind: CompositionKind): number {
@@ -259,10 +278,27 @@ export function buildComposition(input: BuildCompositionInput): Composition {
   const walls = input.walls.slice(0, need);
   const warnings: string[] = [];
 
+  /*
+   * НЕ ХВАТАЕТ СТЕНЫ — ЭТО ИМЯ, А НЕ СЧЁТ.
+   *
+   * «Требует 3 стен, а в замере их 2» замерщик прочитает и пойдёт
+   * искать, какой именно. Он стоит в квартире с рулеткой: назвать надо
+   * ту стену, которую ему сейчас мерить.
+   *
+   * Придумать её длину нельзя ни из глубины помещения, ни из соседней:
+   * кухня 11.85 м² бывает и 3200 × 3700, и 2900 × 4100, а смету считает
+   * длина ряда.
+   */
   if (walls.length < need) {
+    const missing = Array.from({ length: need - walls.length }, (_, i) =>
+      wallLabel(walls.length + i),
+    ).join(' и ');
+
     throw new Error(
-      `Форма «${kind}» требует ${need} стен, а в замере их ${walls.length}. ` +
-        'Собирать угол по одной стене нельзя: вторая половина будет выдуманной.',
+      `${SHAPE_TITLE[kind]} ставит мебель на ${SHAPE_WALLS[kind]}, ` +
+        `а в замере их ${walls.length}: не хватает ${missing}. ` +
+        'Добавьте её в замер — длину такой стены выдумать нельзя, ' +
+        'по ней считается и раскрой, и цена.',
     );
   }
 
@@ -293,7 +329,7 @@ export function buildComposition(input: BuildCompositionInput): Composition {
     const value = Math.round(wall.lengthMm) - lost;
 
     assertCornerFits({
-      label: SEGMENT_LABELS[i] ?? `Стена ${i + 1}`,
+      label: wallLabel(i),
       wallLengthMm: Math.round(wall.lengthMm),
       lostMm: lost,
       minWidthMm: MIN_WIDTH,
@@ -345,11 +381,11 @@ export function buildComposition(input: BuildCompositionInput): Composition {
       wallId: wall.id,
     });
 
-    warnings.push(...run.warnings.map((w) => `${SEGMENT_LABELS[i]}: ${w}`));
+    warnings.push(...run.warnings.map((w) => `${wallLabel(i)}: ${w}`));
 
     return {
       id: `seg-${i}`,
-      label: SEGMENT_LABELS[i] ?? `Стена ${i + 1}`,
+      label: wallLabel(i),
       wallId: wall.id,
       angleDeg: i === 0 ? 0 : 90,
       wallLengthMm: Math.round(wall.lengthMm),
@@ -396,7 +432,7 @@ export function linearComposition(run: Run, wallId = 'w1'): Composition {
   const segments: RunSegment[] = [
     {
       id: 'seg-0',
-      label: SEGMENT_LABELS[0],
+      label: wallLabel(0),
       wallId,
       angleDeg: 0,
       wallLengthMm: run.lengthMm,

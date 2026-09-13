@@ -108,11 +108,13 @@ import { frontKey, frontOf } from '../lib/millwork/frontMaterial';
 import { frontSwatch } from '../lib/millwork/frontSwatch';
 import {
   compositionOf,
+  compositionWalls,
   mergeEstimates,
   wallLabel,
   wallMismatchMessage,
   wallMismatches,
 } from '../lib/millwork/walls';
+import { workingWall } from '../lib/millwork/workspace';
 import type { MillworkState } from '../lib/projects';
 import type { CatalogEntryFull } from '../types/catalog';
 import {
@@ -250,6 +252,7 @@ import {
   buildComposition,
   cornerLostMm,
   linearComposition,
+  segmentCount,
   splitAppliances,
   tryBuildComposition,
 } from '../lib/millwork/composition';
@@ -9085,6 +9088,220 @@ console.log('\nСохранённый ряд сверяется с длиной 
         { ...stale, lengthMm: fresh[1].lengthMm + 1 },
         fresh[2],
       ]).length === 0,
+    );
+  }
+}
+
+/* ─────────────  Стены отбираются по идентификатору, а не по длине  ───────────── */
+
+/**
+ * СИМПТОМ 3: ДЛИНА СТЕНЫ ИЗ ЗАМЕРА НЕ ДОЕЗЖАЛА ДО КОНФИГУРАТОРА.
+ *
+ * Проверка выше кормила `buildComposition` напрямую и была зелёной:
+ * расходилась не композиция, а ШОВ перед ней — отбор соседних стен на
+ * рабочем экране. Он вычитал их ЗНАЧЕНИЕМ:
+ *
+ *   measured.filter(w => w.lengthMm !== runLengthMm)
+ *
+ * Две стены одной длины — обычная планировка, и на ней отбор терял
+ * вторую, а на её место вставала глубина помещения: величина, которой в
+ * замере нет вовсе. Меряем ровно шов — `compositionWalls`.
+ */
+console.log('\nСтены отбираются по идентификатору, а не по длине');
+{
+  const wallsOf = (lengths: number[]) =>
+    lengths.map((lengthMm, i) => ({
+      id: `w${i + 1}`,
+      lengthMm: measured(lengthMm),
+      turn: 'right' as const,
+      turnDeg: 90,
+      isRunWall: i === 0,
+      openings: [],
+    }));
+
+  /** Замер → тот же отбор, что делает рабочий экран. */
+  const selectOf = (lengths: number[], roomDepthMm = 3200) => {
+    const survey = emptySurvey();
+    survey.ceilingHeightMm = measured(2700);
+    survey.walls = wallsOf(lengths);
+
+    const resolution = resolveSurvey(survey);
+    const run = workingWall(resolution.measurement, resolution.runWallId);
+
+    return {
+      resolution,
+      roomDepthMm,
+      selected: compositionWalls({
+        measured: resolution.measurement.walls,
+        runWallId: resolution.runWallId,
+        runLengthMm: run.lengthMm,
+        runOpenings: run.openings,
+      }),
+    };
+  };
+
+  /*
+   * Ноль стен — это не «проверять нечего», это пустой конфигуратор.
+   * Падаем здесь, а не молча проходим по пустому списку.
+   */
+  const probe = selectOf([3800, 1140]);
+  check(
+    'отбор вообще что-то вернул',
+    probe.selected.length === 2,
+    probe.selected.length === 0
+      ? 'СЕЛЕКТОР ВЕРНУЛ НОЛЬ СТЕН — мерить нечего'
+      : probe.selected.map((w) => w.lengthMm).join(' + '),
+  );
+
+  if (probe.selected.length === 0) {
+    check('дальше мерить нечем', false, 'ОТБОР ПУСТ');
+  } else {
+    /* ── Две стены одной длины: раньше вторая выпадала ── */
+    const same = selectOf([3800, 3800]);
+    check(
+      'А=3800 и Б=3800 дают РОВНО две стены, а не три',
+      same.selected.length === 2 && same.selected.every((wall) => wall.lengthMm === 3800),
+      `${same.selected.length} шт.: ${same.selected.map((w) => w.lengthMm).join(' + ')}`,
+    );
+
+    check(
+      'и идентификаторы у них разные — это две стены, а не одна дважды',
+      new Set(same.selected.map((wall) => wall.id)).size === 2,
+      same.selected.map((w) => w.id).join(' · '),
+    );
+
+    /* ── Квадратная 3000×3000: глубина помещения больше не подставляется ── */
+    const square = selectOf([3000, 3000], 3200);
+    check(
+      'квадратная 3000×3000 не подставляет ничего из глубины помещения',
+      square.selected.length === 2 && square.selected.every((wall) => wall.lengthMm === 3000),
+      square.selected.map((w) => w.lengthMm).join(' + '),
+    );
+
+    check(
+      'и в списке нет длины, которой нет в замере',
+      square.selected.every((wall) =>
+        square.resolution.measurement.walls.some((m) => m.lengthMm === wall.lengthMm),
+      ),
+      `глубина помещения ${square.roomDepthMm} мм в отборе: ` +
+        (square.selected.some((w) => w.lengthMm === square.roomDepthMm) ? 'ЕСТЬ' : 'нет'),
+    );
+
+    /* ── Три одинаковые стены остаются тремя ── */
+    const three = selectOf([3000, 3000, 3000]);
+    check(
+      'три одинаковые стены 3000/3000/3000 остаются тремя',
+      three.selected.length === 3 &&
+        three.selected.every((wall) => wall.lengthMm === 3000) &&
+        new Set(three.selected.map((wall) => wall.id)).size === 3,
+      `${three.selected.length} шт.: ${three.selected.map((w) => `${w.id}=${w.lengthMm}`).join(' ')}`,
+    );
+
+    const u = buildComposition({
+      kind: 'u_shape',
+      walls: three.selected,
+      ceilingHeightMm: 2700,
+      requirements: REQ,
+      comms: [],
+    });
+    check(
+      'и П-образная собирается на них тремя рядами',
+      u.segments.length === 3,
+      u.segments.map((seg) => `${seg.label}: ${seg.wallLengthMm}`).join(' · '),
+    );
+
+    /* ── Длина каждой стены равна замеренной до миллиметра ── */
+    const mixed = selectOf([3800, 1740, 3800]);
+    const built = buildComposition({
+      kind: 'u_shape',
+      walls: mixed.selected,
+      ceilingHeightMm: 2700,
+      requirements: REQ,
+      comms: [],
+    });
+    const drift = built.segments
+      .map((seg, i) => ({ seg, from: mixed.resolution.measurement.walls[i] }))
+      .filter(({ seg, from }) => !from || seg.wallLengthMm !== from.lengthMm);
+
+    check(
+      'длина каждой стены в композиции равна длине из замера',
+      drift.length === 0 && built.segments.length === 3,
+      drift.length > 0
+        ? drift
+            .map(({ seg, from }) => `${seg.label}: ${seg.wallLengthMm} против ${from?.lengthMm}`)
+            .join(' ')
+        : built.segments.map((seg) => `${seg.label}: ${seg.wallLengthMm}`).join(' · '),
+    );
+
+    /* ── Не хватило стены: отказ словами, а не выдуманная длина ── */
+    const alone = selectOf([3800]);
+    const refused = tryBuildComposition({
+      kind: 'corner_l',
+      walls: alone.selected,
+      ceilingHeightMm: 2700,
+      requirements: REQ,
+      comms: [],
+    });
+
+    check(
+      'форма, которой не хватает стены, НЕ собирается',
+      refused.state === 'refused',
+      refused.state === 'refused' ? refused.reason : 'СОБРАЛАСЬ НА ВЫДУМАННОЙ СТЕНЕ',
+    );
+
+    check(
+      'и отказ называет, какой именно стены не хватает',
+      refused.state === 'refused' &&
+        /Стена Б/.test(refused.reason) &&
+        /Угловая/.test(refused.reason),
+      refused.state === 'refused' ? refused.reason : 'ПРИЧИНЫ НЕТ',
+    );
+
+    /* ── Обратное направление: замеренная стена не исчезает из списка ── */
+    const extra = selectOf([3800, 1740, 3000, 2500]);
+    check(
+      'стена, которой форма не займёт, из отбора не пропадает',
+      extra.selected.length === 4,
+      `в замере 4, в отборе ${extra.selected.length} — лишних для угловой: ` +
+        extra.selected
+          .slice(segmentCount('corner_l'))
+          .map((w) => w.lengthMm)
+          .join(' '),
+    );
+
+    /* ── Рабочая стена остаётся первой, какой бы её ни отметили ── */
+    const survey = emptySurvey();
+    survey.ceilingHeightMm = measured(2700);
+    survey.walls = wallsOf([3000, 3000, 3000]).map((wall, i) => ({
+      ...wall,
+      isRunWall: i === 1,
+    }));
+    const resolution = resolveSurvey(survey);
+    const run = workingWall(resolution.measurement, resolution.runWallId);
+    const picked = compositionWalls({
+      measured: resolution.measurement.walls,
+      runWallId: resolution.runWallId,
+      runLengthMm: run.lengthMm,
+      runOpenings: run.openings,
+    });
+
+    check(
+      'рабочая стена идёт первой и не задваивается',
+      picked.length === 3 &&
+        picked[0].id === resolution.runWallId &&
+        new Set(picked.map((wall) => wall.id)).size === 3,
+      `${resolution.runWallId} → ${picked.map((w) => w.id).join(' ')}`,
+    );
+
+    /*
+     * И соседом стены А идёт та, что стоит ЗА НЕЙ в замере: обход в ту
+     * же сторону, какой его вёл замерщик. «Б, А, В» делало соседом
+     * стены А стену через комнату.
+     */
+    check(
+      'обход идёт от рабочей стены в одну сторону',
+      picked.map((wall) => wall.id).join(' ') === 'w2 w3 w1',
+      picked.map((w) => w.id).join(' '),
     );
   }
 }

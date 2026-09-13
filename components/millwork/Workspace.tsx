@@ -16,28 +16,24 @@ import { frontOf } from '@/lib/millwork/frontMaterial';
 import { paletteFromCatalog } from '@/lib/millwork/palette';
 import {
   compositionOf,
+  compositionWalls,
   mergeEstimates,
   wallLabel,
   wallMismatchMessage,
   wallMismatches,
 } from '@/lib/millwork/walls';
-import { runPlacements, tryBuildComposition } from '@/lib/millwork/composition';
+import {
+  SHAPE_TITLE,
+  SHAPE_WALLS,
+  runPlacements,
+  segmentCount,
+  tryBuildComposition,
+} from '@/lib/millwork/composition';
 import { openingAssumptions } from '@/lib/millwork/warnings';
 
 /** Решение угла: модуль 900×900 или фальш-панель. */
 type CornerSolution = 'corner_module' | 'false_panel';
 
-/**
- * Как форма называется человеку — одна таблица на экран.
- *
- * Её же читает список выбора формы: два списка названий разъезжаются на
- * первой правке, и замерщик видит «u_shape» в предупреждении.
- */
-const SHAPE_TITLE: Record<CompositionKind, string> = {
-  linear: 'Прямая',
-  corner_l: 'Угловая',
-  u_shape: 'П-образная',
-};
 import { compressPhoto } from '@/lib/photo';
 import FrontSwatchCards from './FrontSwatchCards';
 import {
@@ -129,6 +125,7 @@ import type {
   Run,
   RunRequirements,
   VariantKey,
+  WallSegment,
 } from '@/types/millwork';
 
 /**
@@ -193,6 +190,12 @@ export type WorkspaceProps = {
   comms: CommPoint[];
   rates: RateTable;
   cornerAt?: 'start' | 'end' | null;
+  /**
+   * Стены замера по порядку обхода. Живой замер (`survey`) главнее: его
+   * правят прямо сейчас. Без него берём то, с чем объект открыли.
+   */
+  measuredWalls?: WallSegment[];
+  runWallId?: string;
   /** Глубина помещения для 3D: вторая стена замера. */
   roomDepthM?: number;
   /** Объект в базе. Без него конфигуратор работает как витрина, без сохранения. */
@@ -619,26 +622,43 @@ export default function Workspace(props: WorkspaceProps) {
     return seed.lengthMm > 0 ? seed.lengthMm : props.lengthMm;
   }, [resolution, props]);
 
-  /** Стены композиции: рабочая плюс соседние из замера. */
-  const walls = useMemo(() => {
-    const measured = (survey?.walls ?? [])
-      .map((wall) => ({
-        id: wall.id,
-        lengthMm: wall.lengthMm.state === 'unknown' ? 0 : Math.round(wall.lengthMm.value),
-        openings: [] as typeof props.openings,
-      }))
-      .filter((wall) => wall.lengthMm > 0);
-
-    const first = { id: 'a', lengthMm: runLengthMm, openings: props.openings };
-    const rest = measured.filter((wall) => wall.lengthMm !== runLengthMm);
-    const fallback = Math.round((props.roomDepthM ?? 0) * 1000);
-
-    const list = [first, ...rest];
-    while (list.length < 3 && fallback > 0) {
-      list.push({ id: `w${list.length}`, lengthMm: fallback, openings: [] });
-    }
-    return list;
-  }, [survey, runLengthMm, props.openings, props.roomDepthM]);
+  /**
+   * СТЕНЫ КОМПОЗИЦИИ: ОТБОР ПО ИДЕНТИФИКАТОРУ, А НЕ ПО ДЛИНЕ.
+   *
+   * Соседние стены отбирались вычитанием ЗНАЧЕНИЯ: всё, что не равно
+   * длине рабочей стены. Пока стены были разные, это совпадало с
+   * правдой; на двух одинаковых рассыпалось:
+   *
+   *   замер А=3800, Б=1140  →  в композицию 3800 и 1140        ✓
+   *   замер А=3800, Б=3800  →  Б выпадала, и на её место
+   *                            вставала глубина помещения      ✗
+   *
+   * На квадратной кухне 3000 × 3000 выпадали ОБЕ, и композиция целиком
+   * состояла из выдуманных стен. Идентичность у стены есть с захода про
+   * id модуля — `runWallId`; ею и отбираем.
+   *
+   * Глубины помещения здесь больше нет вовсе: стену, которой в замере
+   * нет, система не придумывает. Не хватило — об этом говорит отказ
+   * композиции, и говорит словами, какой именно стены не хватает.
+   */
+  const walls = useMemo(
+    () =>
+      compositionWalls({
+        /*
+         * Живой замер главнее: его правят прямо сейчас. Нет его —
+         * стены пришли с объектом (`workspaceInput`). Отбор при этом
+         * ОДИН: два источника данных, одна функция над ними.
+         *
+         * Оттуда же проёмы соседних стен: окно на стене Б рвёт верхний
+         * ряд так же, как на стене А, и терять его по дороге нечего ради.
+         */
+        measured: resolution?.measurement.walls ?? props.measuredWalls ?? [],
+        runWallId: resolution?.runWallId ?? props.runWallId,
+        runLengthMm,
+        runOpenings: props.openings,
+      }),
+    [resolution, props.measuredWalls, props.runWallId, runLengthMm, props.openings],
+  );
 
   /** Высота потолка: нужна и композиции, и сборке стены А. */
   const ceilingMm = useMemo(
@@ -712,6 +732,8 @@ export default function Workspace(props: WorkspaceProps) {
         rates: props.rates,
         cornerAt: props.cornerAt ?? null,
         production: props.production,
+        measuredWalls: props.measuredWalls ?? [],
+        runWallId: props.runWallId ?? 'a',
         roomDepthM: props.roomDepthM ?? 3.2,
       };
     }
@@ -1619,6 +1641,26 @@ export default function Workspace(props: WorkspaceProps) {
    * «Дальше». Второго состояния композиции при этом не заводится:
    * строка выводится из попытки сборки и нигде не хранится.
    */
+  /**
+   * СТЕНА ЗАМЕРЕНА, А МЕБЕЛИ НА НЕЙ НЕТ.
+   *
+   * Обратная сторона того же отбора. Замерщик стены не «обводит» — он
+   * добавляет каждую руками и вписывает длину, то есть зачем-то её
+   * мерил. Форма при этом берёт первые `segmentCount` штук, а хвост
+   * списка молча оставался за бортом: прямая на замере из двух стен
+   * показывала ряд на одной и ни слова про вторую.
+   *
+   * Не блокирующее: форму выбирает человек, и кухня вдоль одной стены
+   * в комнате с четырьмя стенами — норма. Но названо оно должно быть.
+   */
+  const idleWalls = useMemo(() => {
+    const used = segmentCount(shape);
+    return walls.slice(used).map((wall, i) => ({
+      label: wallLabel(used + i),
+      lengthMm: wall.lengthMm,
+    }));
+  }, [walls, shape]);
+
   const warningsWithRefusal = useMemo(
     () => [
       ...(refusal
@@ -1643,9 +1685,24 @@ export default function Workspace(props: WorkspaceProps) {
         severity: 'blocking' as const,
         message: wallMismatchMessage(mismatch),
       })),
+      /* Замерена, но не работает — одной строкой на все такие стены. */
+      ...(idleWalls.length > 0
+        ? [
+            {
+              id: 'walls-idle',
+              severity: 'clarify' as const,
+              message:
+                `${idleWalls.map((w) => `${w.label} (${w.lengthMm} мм)`).join(' и ')} ` +
+                `${idleWalls.length > 1 ? 'замерены' : 'замерена'}, но мебели ` +
+                `${idleWalls.length > 1 ? 'на них' : 'на ней'} нет: ` +
+                `${SHAPE_TITLE[shape]} ставит мебель на ${SHAPE_WALLS[shape]}. ` +
+                'Смените форму, если мебель идёт и туда.',
+            },
+          ]
+        : []),
       ...warnings,
     ],
-    [refusal, warnings, shape, mismatches],
+    [refusal, warnings, shape, mismatches, idleWalls],
   );
 
   /**

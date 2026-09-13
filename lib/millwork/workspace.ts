@@ -6,6 +6,7 @@ import type {
   RunRequirements,
   Variant,
   VariantKey,
+  WallSegment,
 } from '@/types/millwork';
 import { buildEstimate, recalcTotal, type RateTable } from './estimate';
 import type { ProductionSettings } from '@/types/catalog';
@@ -59,6 +60,21 @@ export type WorkspaceInput = {
   comms: CommPoint[];
   rates: RateTable;
   cornerAt: 'start' | 'end' | null;
+  /**
+   * ВСЕ СТЕНЫ ЗАМЕРА, А НЕ ТОЛЬКО РАБОЧАЯ.
+   *
+   * `lengthMm` и `openings` выше — это стена ряда. Угловая и П-образная
+   * стоят на соседних, и до сих пор конфигуратор доставал их только из
+   * живого замера: у демонстрации и у объектов, открытых без него,
+   * соседних стен не было вовсе, и на их место вставала глубина
+   * помещения — величина, которой в замере нет.
+   *
+   * Отбор здесь не делается: его делает `compositionWalls`, одна на
+   * экран и на приёмку.
+   */
+  measuredWalls: WallSegment[];
+  /** Идентификатор рабочей стены: по нему отбираются соседние. */
+  runWallId: string;
   /** Глубина помещения для 3D: соседняя стена, если она есть в замере. */
   roomDepthM: number;
   /**
@@ -111,6 +127,8 @@ export function workspaceInput(seed: WorkspaceSeed): WorkspaceInput {
     comms: seed.measurement.comms.filter((c) => c.wallId === wall.id),
     rates: seed.rates,
     cornerAt: seed.cornerAt ?? null,
+    measuredWalls: seed.measurement.walls,
+    runWallId: wall.id,
     roomDepthM: roomDepth(seed.measurement, wall.id),
     production: seed.production,
   };
