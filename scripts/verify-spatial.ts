@@ -22,9 +22,13 @@ import {
   type RunPlacement,
 } from '../lib/millwork/composition';
 import { buildRun } from '../lib/millwork/layout';
+import type { Run } from '../types/millwork';
 import { runPlaces } from '../lib/millwork/cabinetBoxes';
 import { GEOMETRY } from '../lib/millwork/modules';
 import { zoneProfile } from '../lib/millwork/zones';
+import { DEFAULT_PRODUCTION, type ProductionSettings } from '../types/catalog';
+import { rowStandardDepthMm } from '../lib/millwork/fill';
+import { wallMismatches } from '../lib/millwork/walls';
 import { DEMO_REQUIREMENTS } from '../lib/millwork/demo';
 import type { CompositionKind, RunRequirements } from '../types/millwork';
 
@@ -219,7 +223,8 @@ console.log('\nКомпозиция в мировых координатах');
     const places = runPlacements({
       runs: segments.map((segment) => segment.run),
       solution,
-      depthMm: DEPTH_MM,
+      zone: 'kitchen',
+      production: DEFAULT_PRODUCTION,
     });
 
     return {
@@ -404,6 +409,189 @@ console.log('\nКомпозиция в мировых координатах');
     );
   }
 
+}
+
+/* ═════════════  П замыкается, и угол считается одной глубиной  ═════════════ */
+
+/**
+ * П-ОБРАЗНАЯ ЗАМЫКАЕТСЯ: СТЕНА В СТОИТ НАПРОТИВ СТЕНЫ А.
+ *
+ * Место рядов считается цепочкой от `run.lengthMm`. Ряд, собранный на
+ * другой длине стены, сдвигал всё, что за ним: между стеной А и стеной В
+ * открывалась пустота 680 мм, и П переставала быть П.
+ *
+ * И вторая, независимая расходимость: занятое в углу считалось из ДВУХ
+ * глубин — школы цеха в раскладке и профиля зоны в сцене. На умолчаниях
+ * обе давали 560, у цеха с 550 ряд уезжал на десять миллиметров.
+ */
+console.log('\nП замыкается, и угол считается одной глубиной');
+{
+  const TOL_M = 0.001;
+
+  const shopA: ProductionSettings = {
+    ...DEFAULT_PRODUCTION,
+    depths: { baseMm: 550, upperMm: 350, mezzanineMm: 550 },
+    heights: { plinthMm: 100, carcassMm: 760, countertopMm: 40, apronMm: 600 },
+  };
+
+  const worldOf = (production: ProductionSettings) => {
+    const layout = buildComposition({
+      kind: 'u_shape',
+      walls: [3800, 1140, 1740].map((lengthMm, i) => ({
+        id: `w${i}`,
+        lengthMm,
+        openings: [],
+      })),
+      ceilingHeightMm: 2700,
+      requirements: DEMO_REQUIREMENTS,
+      comms: [],
+      production,
+    });
+
+    const runs = layout.segments.map((segment) => segment.run);
+    const places = runPlacements({
+      runs,
+      solution: DEMO_REQUIREMENTS.cornerSolution ?? 'false_panel',
+      zone: 'kitchen',
+      production,
+    });
+
+    const depthM = rowStandardDepthMm('kitchen', 'base', production) / 1000;
+    const world = (i: number, xM: number, zM: number) => {
+      const a = (places[i].rotationYDeg * Math.PI) / 180;
+      const cos = Math.cos(a);
+      const sin = Math.sin(a);
+      return [xM * cos + zM * sin + places[i].xM, -xM * sin + zM * cos + places[i].zM] as const;
+    };
+
+    const boxes = runs.map((run, i) => {
+      const L = run.lengthMm / 1000;
+      const pts = [world(i, 0, 0), world(i, L, 0), world(i, 0, -depthM), world(i, L, -depthM)];
+      return {
+        minX: Math.min(...pts.map((q) => q[0])),
+        maxX: Math.max(...pts.map((q) => q[0])),
+        minZ: Math.min(...pts.map((q) => q[1])),
+        maxZ: Math.max(...pts.map((q) => q[1])),
+      };
+    });
+
+    return { layout, runs, places, boxes, depthM, world };
+  };
+
+  for (const [name, production] of [
+    ['умолчания (560)', DEFAULT_PRODUCTION],
+    ['цех А (550)', shopA],
+  ] as const) {
+    const { layout, runs, boxes, depthM, world } = worldOf(production);
+
+    /*
+     * Ноль рядов — это не «проверять нечего», это пустой экран.
+     * Падаем здесь, а не проходим по пустому списку.
+     */
+    check(
+      `${name}: три ряда собрались`,
+      runs.length === 3 && runs.every((run) => run.lengthMm > 0),
+      runs.length === 0 ? 'РЯДОВ НЕТ ВОВСЕ' : runs.map((run) => run.lengthMm).join(' + '),
+    );
+    if (runs.length !== 3) continue;
+
+    /* ── Занятое в углу одинаково в раскладке и в сцене ── */
+    const declared = cornerLostMm(
+      DEMO_REQUIREMENTS.cornerSolution ?? 'false_panel',
+      rowStandardDepthMm('kitchen', 'base', production),
+    );
+    const fromLayout = layout.segments[1].wallLengthMm - layout.segments[1].run.lengthMm;
+
+    check(
+      `${name}: занятое в углу одно на раскладку и на сцену`,
+      fromLayout === declared,
+      `раскладка ${fromLayout} мм, сцена ${declared} мм`,
+    );
+
+    /* ── Стена В стоит НАПРОТИВ стены А, а не за 680 мм от неё ── */
+    const aisleMm = Math.round((boxes[2].minZ - boxes[0].maxZ) * 1000);
+    check(
+      `${name}: П замыкается — проход между А и В, а не пустота`,
+      aisleMm >= 0 && aisleMm < 100,
+      `между А и В ${aisleMm} мм`,
+    );
+
+    /* ── Габариты не пересекаются, стыки сходятся ── */
+    const overlaps: string[] = [];
+    for (let i = 0; i < boxes.length; i += 1) {
+      for (let j = i + 1; j < boxes.length; j += 1) {
+        const dx = Math.min(boxes[i].maxX, boxes[j].maxX) - Math.max(boxes[i].minX, boxes[j].minX);
+        const dz = Math.min(boxes[i].maxZ, boxes[j].maxZ) - Math.max(boxes[i].minZ, boxes[j].minZ);
+        if (dx > TOL_M && dz > TOL_M) overlaps.push(`${i}×${j}`);
+      }
+    }
+    check(`${name}: габариты рядов не пересекаются`, overlaps.length === 0, overlaps.join(' '));
+
+    const joints: string[] = [];
+    for (let i = 1; i < runs.length; i += 1) {
+      const from = world(i - 1, runs[i - 1].lengthMm / 1000, -depthM);
+      const to = world(i, 0, -depthM);
+      const gapMm = Math.hypot(to[0] - from[0], to[1] - from[1]) * 1000;
+      if (Math.abs(gapMm - declared) > 1) {
+        joints.push(`${i - 1}→${i}: ${Math.round(gapMm)} при ${declared}`);
+      }
+    }
+    check(`${name}: стыки сходятся с объявленным углом до 1 мм`, joints.length === 0, joints.join(' '));
+  }
+
+  /*
+   * И то же самое числом: ряд, собранный на другой длине, расхождение
+   * ПОКАЗЫВАЕТ, а не встаёт молча.
+   */
+  const { layout, runs } = worldOf(DEFAULT_PRODUCTION);
+  const stale = buildRun({
+    lengthMm: 1140,
+    ceilingHeightMm: 2700,
+    requirements: DEMO_REQUIREMENTS,
+    openings: [],
+    comms: [],
+  });
+
+  const found = wallMismatches(layout, [runs[0], stale, runs[2]]);
+
+  check(
+    'ряд, собранный на 1140 при стене 480, не проходит молча',
+    found.length === 1,
+    found.map((m) => `${m.label}: ${m.runLengthMm} при ${m.usableMm}`).join(' ') ||
+      'РАСХОЖДЕНИЕ НЕ НАЙДЕНО',
+  );
+
+  /*
+   * И число из сообщения на экране — это НЕ фигура речи, а та самая
+   * пустота в сцене: «сдвинет соседний ряд на 660 мм» означает, что
+   * между стеной А и стеной В станет 20 + 660 = 680 мм.
+   */
+  const aisleOf = (rs: Pick<Run, 'lengthMm'>[]) => {
+    const places = runPlacements({
+      runs: rs,
+      solution: DEMO_REQUIREMENTS.cornerSolution ?? 'false_panel',
+      zone: 'kitchen',
+      production: DEFAULT_PRODUCTION,
+    });
+    const depthM = rowStandardDepthMm('kitchen', 'base', DEFAULT_PRODUCTION) / 1000;
+
+    /* Ряд занимает по Z полосу от фасада (z места) до задней стенки. */
+    const band = (i: number) => {
+      const back = places[i].zM - depthM * Math.cos((places[i].rotationYDeg * Math.PI) / 180);
+      return [Math.min(places[i].zM, back), Math.max(places[i].zM, back)] as const;
+    };
+
+    return Math.round((band(2)[0] - band(0)[1]) * 1000);
+  };
+
+  const good = aisleOf(runs);
+  const broken = aisleOf([runs[0], stale, runs[2]]);
+
+  check(
+    'сдвиг из сообщения — это и есть пустота в сцене',
+    found.length === 1 && broken - good === Math.abs(found[0].runLengthMm - found[0].usableMm),
+    `было бы ${broken} мм вместо ${good} мм — сдвиг ${broken - good} мм`,
+  );
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

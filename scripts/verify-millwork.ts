@@ -106,7 +106,13 @@ import {
 } from '../lib/millwork/palette';
 import { frontKey, frontOf } from '../lib/millwork/frontMaterial';
 import { frontSwatch } from '../lib/millwork/frontSwatch';
-import { compositionOf, mergeEstimates, wallLabel } from '../lib/millwork/walls';
+import {
+  compositionOf,
+  mergeEstimates,
+  wallLabel,
+  wallMismatchMessage,
+  wallMismatches,
+} from '../lib/millwork/walls';
 import type { MillworkState } from '../lib/projects';
 import type { CatalogEntryFull } from '../types/catalog';
 import {
@@ -8970,6 +8976,117 @@ console.log('\nМодуль стены А и модуль стены Б — ра
       square.segments.every((segment) => segment.wallLengthMm === 3000),
     square.segments.map((s) => `${s.label}: ${s.wallLengthMm}`).join(' · '),
   );
+}
+
+/* ───────────────────  Ряд не сходится со своей стеной  ─────────────────── */
+
+console.log('\nСохранённый ряд сверяется с длиной стены');
+{
+  /*
+   * Соседние стены восстанавливаются из сохранённого состояния дословно
+   * и с текущей стеной не сверялись: замерщик поправил стену Б с 1800 на
+   * 1140, полезная длина стала 480, а ряд остался на 1140. Место рядов
+   * считается цепочкой от `run.lengthMm`, поэтому всё, что стоит ЗА
+   * этим рядом, уезжало на разницу — на П-образной между стеной А и
+   * стеной В открывалась пустота 680 мм.
+   */
+  const walls = (ls: number[]) =>
+    ls.map((lengthMm, i) => ({ id: `w${i}`, lengthMm, openings: [] }));
+
+  const layout = buildComposition({
+    kind: 'u_shape',
+    walls: walls([3800, 1140, 1740]),
+    ceilingHeightMm: 2700,
+    requirements: REQ,
+    comms: COMMS,
+  });
+
+  const fresh = layout.segments.map((segment) => segment.run);
+
+  check(
+    'композиция собралась и ряды есть',
+    fresh.length === 3 && fresh.every((run) => run.lengthMm > 0),
+    fresh.length === 0 ? 'РЯДОВ НЕТ' : fresh.map((run) => run.lengthMm).join(' + '),
+  );
+  if (fresh.length !== 3) {
+    check('дальше мерить нечем', false, 'СЕЛЕКТОР ВЕРНУЛ НОЛЬ РЯДОВ');
+  } else {
+    check(
+      'свежая композиция расхождений не даёт',
+      wallMismatches(layout, fresh).length === 0,
+      wallMismatches(layout, fresh).map((m) => m.label).join(' ') || 'расхождений нет',
+    );
+
+    /* Ряд, собранный на полной стене 1140, при полезных 480. */
+    const stale = buildRun({
+      lengthMm: 1140,
+      ceilingHeightMm: 2700,
+      requirements: REQ,
+      openings: [],
+      comms: COMMS,
+    });
+    const withStale = [fresh[0], stale, fresh[2]];
+    const found = wallMismatches(layout, withStale);
+
+    check(
+      'ряд на 1140 при стене 480 расхождение ПОКАЗЫВАЕТ',
+      found.length === 1 &&
+        found[0].index === 1 &&
+        found[0].runLengthMm === 1140 &&
+        found[0].usableMm === 480,
+      found.length === 0
+        ? 'РАСХОЖДЕНИЕ НЕ НАЙДЕНО — ряд встал молча'
+        : `${found[0].label}: ряд ${found[0].runLengthMm} при стене ${found[0].usableMm}`,
+    );
+
+    check(
+      'и названо оно последствием, а не фактом',
+      found.length === 1 &&
+        /не встанет и сдвинет соседний ряд на 660 мм/.test(wallMismatchMessage(found[0])) &&
+        /Пересоберите/.test(wallMismatchMessage(found[0])),
+      found.length > 0 ? wallMismatchMessage(found[0]) : 'СООБЩЕНИЯ НЕТ',
+    );
+
+    /* Короткий ряд на длинной стене — то же расхождение с другой стороны. */
+    const short = buildRun({
+      lengthMm: 300,
+      ceilingHeightMm: 2700,
+      requirements: { ...REQ, mode: 'free', appliances: [], sections: [] },
+      openings: [],
+      comms: [],
+    });
+    check(
+      'ряд короче стены тоже расхождение, и сказано про пустое место',
+      wallMismatches(layout, [fresh[0], short, fresh[2]]).length === 1 &&
+        /останутся пустыми/.test(
+          wallMismatchMessage(wallMismatches(layout, [fresh[0], short, fresh[2]])[0]),
+        ),
+      wallMismatchMessage(wallMismatches(layout, [fresh[0], short, fresh[2]])[0]),
+    );
+
+    /*
+     * У БЛОКИРУЮЩЕГО СОСТОЯНИЯ ЕСТЬ ВЫХОД.
+     *
+     * «Пересобрать стену» снимает ПРАВКУ, а под ней лежит ряд, который
+     * композиция только что посчитала на текущей полезной длине. Второго
+     * места сборки не появляется — и расхождение уходит.
+     */
+    check(
+      'снятая правка возвращает ряд, сходящийся со стеной',
+      wallMismatches(layout, [withStale[0], layout.segments[1].run, withStale[2]]).length === 0,
+      `под правкой ряд ${layout.segments[1].run.lengthMm} при стене ${fresh[1].lengthMm}`,
+    );
+
+    /* Допуск миллиметровый: округление не должно поднимать тревогу. */
+    check(
+      'миллиметр разницы расхождением не считается',
+      wallMismatches(layout, [
+        fresh[0],
+        { ...stale, lengthMm: fresh[1].lengthMm + 1 },
+        fresh[2],
+      ]).length === 0,
+    );
+  }
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

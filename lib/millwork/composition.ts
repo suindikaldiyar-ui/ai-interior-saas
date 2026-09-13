@@ -2,8 +2,7 @@ import { buildRun } from './layout';
 import { CORNER, CORNER_SIZE_MM, MIN_WIDTH, moduleAppliances } from './modules';
 import { compositionFingerprint } from './fingerprint';
 import { assertCornerFits } from './invariants';
-import { zoneProfile } from './zones';
-import { rowDepthMm } from './shop';
+import { rowStandardDepthMm } from './fill';
 import type { ProductionSettings } from '@/types/catalog';
 import type {
   ApplianceKind,
@@ -15,6 +14,7 @@ import type {
   Run,
   RunRequirements,
   RunSegment,
+  ZoneKind,
 } from '@/types/millwork';
 
 /* ─────────────────────────  Форма композиции  ───────────────────────── */
@@ -234,14 +234,12 @@ export function tryBuildComposition(input: BuildCompositionInput): CompositionAt
 
 export function buildComposition(input: BuildCompositionInput): Composition {
   const { kind, requirements, ceilingHeightMm } = input;
-  const zone = zoneProfile(requirements.zone);
   /*
    * Глубина ряда в углу — ШКОЛА ЦЕХА, а не профиль зоны: от неё зависит,
    * сколько занял в углу соседний ряд (`cornerLostMm`), а значит и
    * полезная длина следующей стены.
    */
-  const depthMm =
-    zone.kind === 'kitchen' ? rowDepthMm('base', input.production) : zone.depthMm;
+  const depthMm = rowStandardDepthMm(requirements.zone, 'base', input.production);
 
   /*
    * СВОБОДНАЯ СБОРКА УГЛОВ РАБОТАЕТ.
@@ -446,11 +444,23 @@ export function runPlacements(input: {
   runs: Pick<Run, 'lengthMm'>[];
   /** Решение угла: от него зависит, сколько занято в углу. */
   solution: CornerJoin['solution'];
-  /** Глубина ряда этой зоны, мм. */
-  depthMm: number;
+  /**
+   * Зона и школа цеха — ГЛУБИНУ СЧИТАЕТ ЭТА ФУНКЦИЯ САМА.
+   *
+   * Раньше сюда передавали готовое число, и рабочий экран передавал
+   * глубину ПРОФИЛЯ ЗОНЫ, пока раскладка брала глубину ЦЕХА: на
+   * умолчаниях обе давали 560, а у цеха с 550 занятое в углу выходило
+   * 650 в раскладке и 660 в сцене — ряд уезжал на десять миллиметров.
+   *
+   * Теперь подставить чужое число просто негде: и раскладка, и сцена
+   * зовут одну `rowStandardDepthMm`.
+   */
+  zone: ZoneKind | undefined;
+  production?: ProductionSettings;
 }): RunPlacement[] {
-  const lostM = cornerLostMm(input.solution, input.depthMm) / MM_IN_M;
-  const depthM = input.depthMm / MM_IN_M;
+  const depthMm = rowStandardDepthMm(input.zone, 'base', input.production);
+  const lostM = cornerLostMm(input.solution, depthMm) / MM_IN_M;
+  const depthM = depthMm / MM_IN_M;
 
   const places: RunPlacement[] = [];
 

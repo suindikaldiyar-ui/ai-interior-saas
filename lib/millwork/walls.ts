@@ -128,3 +128,72 @@ export function compositionOf(
     fingerprint: compositionFingerprint({ segments, corners: base.corners }),
   };
 }
+
+/* ─────────────────────  Ряд, собранный на другой стене  ───────────────────── */
+
+/** Ряд не сходится со своей стеной: собран на одной длине, стоит на другой. */
+export type WallMismatch = {
+  /** Номер стены в композиции. */
+  index: number;
+  label: string;
+  /** Длина, на которой ряд собран. */
+  runLengthMm: number;
+  /** Полезная длина стены сейчас — то, что осталось после угла. */
+  usableMm: number;
+};
+
+/**
+ * РЯД, СОБРАННЫЙ НА ДРУГОЙ ДЛИНЕ, — ЭТО УСТАРЕВШЕЕ СОСТОЯНИЕ, А НЕ ФАКТ.
+ *
+ * Соседние стены восстанавливаются из сохранённого состояния дословно и
+ * с текущей стеной не сверяются. Замерщик поправил стену Б с 1800 на
+ * 1140 — полезная длина стала 480, а ряд остался на 1140. Дальше хуже:
+ * место рядов считается цепочкой от `run.lengthMm`, поэтому всё, что
+ * стоит ЗА этим рядом, уезжает на разницу. На П-образной между стеной А
+ * и стеной В открывалась пустота 680 мм, и угол переставал замыкаться.
+ *
+ * Расхождение здесь ВЫВОДИТСЯ сравнением, а не хранится флагом: флаг
+ * пришлось бы сбрасывать, и он разошёлся бы с длиной на первой правке.
+ */
+export function wallMismatches(
+  layout: { segments: { label: string; run: Pick<Run, 'lengthMm'> }[] },
+  runs: Pick<Run, 'lengthMm'>[],
+): WallMismatch[] {
+  const found: WallMismatch[] = [];
+
+  layout.segments.forEach((segment, index) => {
+    const run = runs[index];
+    if (!run) return;
+
+    const usableMm = segment.run.lengthMm;
+    if (Math.abs(run.lengthMm - usableMm) <= 1) return;
+
+    found.push({
+      index,
+      label: segment.label ?? wallLabel(index),
+      runLengthMm: run.lengthMm,
+      usableMm,
+    });
+  });
+
+  return found;
+}
+
+/**
+ * Одна строка словами: что именно не сходится и чем это кончится.
+ *
+ * Последствие, а не факт: «ряд 1140 при стене 480» замерщик прочитает и
+ * не поймёт, чем это ему грозит.
+ */
+export function wallMismatchMessage(mismatch: WallMismatch): string {
+  const diff = Math.abs(mismatch.runLengthMm - mismatch.usableMm);
+  const longer = mismatch.runLengthMm > mismatch.usableMm;
+
+  return longer
+    ? `${mismatch.label}: ряд собран на ${mismatch.runLengthMm} мм, а на стене осталось ` +
+      `${mismatch.usableMm} мм — он не встанет и сдвинет соседний ряд на ${diff} мм. ` +
+      'Пересоберите эту стену: правки по ней придётся сделать заново.'
+    : `${mismatch.label}: ряд собран на ${mismatch.runLengthMm} мм, а на стене ` +
+      `${mismatch.usableMm} мм — ${diff} мм стены останутся пустыми. ` +
+      'Пересоберите эту стену, чтобы мебель встала во всю длину.';
+}

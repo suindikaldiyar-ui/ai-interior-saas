@@ -14,7 +14,13 @@ import RunSchematic from './RunSchematic';
 import { hasFacade } from '@/lib/millwork/applianceFront';
 import { frontOf } from '@/lib/millwork/frontMaterial';
 import { paletteFromCatalog } from '@/lib/millwork/palette';
-import { compositionOf, mergeEstimates, wallLabel } from '@/lib/millwork/walls';
+import {
+  compositionOf,
+  mergeEstimates,
+  wallLabel,
+  wallMismatchMessage,
+  wallMismatches,
+} from '@/lib/millwork/walls';
 import { runPlacements, tryBuildComposition } from '@/lib/millwork/composition';
 import { openingAssumptions } from '@/lib/millwork/warnings';
 
@@ -894,11 +900,29 @@ export default function Workspace(props: WorkspaceProps) {
     const places = runPlacements({
       runs: segments,
       solution: cornerSolution,
-      depthMm: zoneProfile(zone).depthMm,
+      zone,
+      production: props.production,
     });
 
     return segments.map((run, i) => ({ run, placement: places[i] }));
-  }, [layout, segments, cornerSolution, zone]);
+  }, [layout, segments, cornerSolution, zone, props.production]);
+
+  /**
+   * РЯД, СОБРАННЫЙ НА ДРУГОЙ ДЛИНЕ СТЕНЫ.
+   *
+   * Соседние стены восстанавливаются из сохранённого состояния дословно
+   * (`editedWalls`) и с текущей стеной не сверяются. Правка стены в
+   * замере оставляла ряд прежней длины, а место рядов считается цепочкой
+   * от `run.lengthMm` — и всё, что за ним, уезжало на разницу.
+   *
+   * Здесь ничего не хранится: расхождение СРАВНИВАЕТСЯ каждый раз —
+   * длина ряда против полезной длины стены, которую только что посчитала
+   * композиция.
+   */
+  const mismatches = useMemo(
+    () => (layout ? wallMismatches(layout, segments) : []),
+    [layout, segments],
+  );
 
   const issues = useMemo(
     () => validateRun(activeRun, props.comms),
@@ -1596,8 +1620,8 @@ export default function Workspace(props: WorkspaceProps) {
    * строка выводится из попытки сборки и нигде не хранится.
    */
   const warningsWithRefusal = useMemo(
-    () =>
-      refusal
+    () => [
+      ...(refusal
         ? [
             {
               id: 'composition-refused',
@@ -1606,13 +1630,60 @@ export default function Workspace(props: WorkspaceProps) {
                 `${SHAPE_TITLE[shape] ?? 'Композиция'} не сошлась. ${refusal.reason} ` +
                 'Пока не сойдётся, отправить её клиенту нельзя.',
             },
-            ...warnings,
           ]
-        : warnings,
-    [refusal, warnings, shape],
+        : []),
+      /*
+       * Ряд, не сходящийся со своей стеной, — блокирующее, и идёт оно
+       * тем же каналом: красной полосой над главной кнопкой. Молча
+       * поставить длинный ряд на короткую стену нельзя — на объекте это
+       * мебель, которая не встаёт.
+       */
+      ...mismatches.map((mismatch) => ({
+        id: `wall-stale-${mismatch.index}`,
+        severity: 'blocking' as const,
+        message: wallMismatchMessage(mismatch),
+      })),
+      ...warnings,
+    ],
+    [refusal, warnings, shape, mismatches],
+  );
+
+  /**
+   * ПЕРЕСБОРКА ОДНОЙ СТЕНЫ.
+   *
+   * Ряд, не сходящийся со стеной, блокирует отправку — и у этого
+   * состояния обязан быть выход, иначе объект заперт навсегда, а это
+   * хуже самого расхождения.
+   *
+   * Пересборка — это снятие ПРАВКИ: под ней лежит ряд, только что
+   * посчитанный композицией на текущей полезной длине. Второго места,
+   * где собирался бы ряд, не появляется.
+   *
+   * Правки по этой стене при этом теряются, и сказано об этом ЗАРАНЕЕ —
+   * в самой красной полосе, до нажатия: замерщик главнее алгоритма, и
+   * решает он.
+   */
+  const rebuildWall = useCallback(
+    (index: number) => {
+      dirty.current = true;
+      /* Стена А правится через `editedRuns`, соседние — через `editedWalls`. */
+      if (index === 0) setEditedRuns({});
+      else
+        setEditedWalls((prev) => {
+          const next = { ...prev };
+          delete next[index];
+          return next;
+        });
+      setSelectedId(null);
+    },
+    [],
   );
 
   const blockingWarnings = warningsWithRefusal.filter((w) => w.severity === 'blocking');
+  /** Расхождение, о котором сейчас говорит красная полоса, — если это оно. */
+  const staleShown = mismatches.find(
+    (mismatch) => `wall-stale-${mismatch.index}` === blockingWarnings[0]?.id,
+  );
   const softWarnings = groupWarnings(
     warningsWithRefusal.filter((w) => w.severity === 'clarify'),
   );
@@ -1636,7 +1707,7 @@ export default function Workspace(props: WorkspaceProps) {
      * входе он снова упадёт, уже без человека рядом. Сохранение ждёт,
      * пока замерщик сведёт углы; состояние в шапке говорит об этом.
      */
-    if (refusal) {
+    if (refusal || mismatches.length > 0) {
       setSaveState('error');
       return;
     }
@@ -1705,6 +1776,7 @@ export default function Workspace(props: WorkspaceProps) {
     editedRuns,
     // Отказ сборки запирает запись: снялся — запись обязана проснуться.
     refusal,
+    mismatches,
     // Соседние стены сохраняются наравне с рабочей: без них угловая
     // кухня открылась бы прямой.
     editedWalls,
@@ -1900,6 +1972,7 @@ export default function Workspace(props: WorkspaceProps) {
    */
   const nextDisabled =
     Boolean(refusal) ||
+    mismatches.length > 0 ||
     (step === 'template' && !templateId && !freeMode) ||
     (step === 'result' && (blocked || !props.projectId));
 
@@ -2955,10 +3028,22 @@ export default function Workspace(props: WorkspaceProps) {
       {/* ── Низ экрана: зона большого пальца ── */}
       <footer className="border-t border-navyLine/60 bg-navyDeep px-4 pb-4 pt-3 print:hidden">
         {blockingWarnings.length > 0 && (
-          <p className="mb-3 rounded-[var(--r-control)] bg-alert/15 px-4 py-3 text-[15px] leading-snug text-alert">
-            {blockingWarnings[0].message}
-            {blockingWarnings.length > 1 && ` И ещё ${blockingWarnings.length - 1}.`}
-          </p>
+          <div className="mb-3 rounded-[var(--r-control)] bg-alert/15 px-4 py-3">
+            <p className="text-[15px] leading-snug text-alert">
+              {blockingWarnings[0].message}
+              {blockingWarnings.length > 1 && ` И ещё ${blockingWarnings.length - 1}.`}
+            </p>
+            {staleShown && (
+              <button
+                type="button"
+                data-rebuild-wall={staleShown.index}
+                onClick={() => rebuildWall(staleShown.index)}
+                className="mw-btn mw-btn-ghost mt-2"
+              >
+                Пересобрать {staleShown.label.toLowerCase()}
+              </button>
+            )}
+          </div>
         )}
 
         {/*
@@ -2979,12 +3064,14 @@ export default function Workspace(props: WorkspaceProps) {
             * она по мебели, которой не существует. На её месте — та же
             * причина словами, что и в красной полосе.
             */}
-          {refusal ? (
+          {refusal || mismatches.length > 0 ? (
             <p
               data-composition-refused
               className="text-[15px] leading-snug text-alert"
             >
-              Цены нет: {SHAPE_TITLE[shape] ?? 'композиция'} не сошлась.
+              {refusal
+                ? `Цены нет: ${SHAPE_TITLE[shape] ?? 'композиция'} не сошлась.`
+                : `Цены нет: ${mismatches[0].label} собрана на другой длине стены.`}
             </p>
           ) : (
           <EstimateSheet
