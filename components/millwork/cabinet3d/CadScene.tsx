@@ -6,7 +6,8 @@ import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import Cabinet3D from './Cabinet3D';
 import { beamDropMm } from '@/lib/millwork/ceiling';
-import { plinthMm, rowDepthMm } from '@/lib/millwork/shop';
+import { plinthMm } from '@/lib/millwork/shop';
+import { rowStandardDepthMm } from '@/lib/millwork/fill';
 import { moduleBoxes, runBoxes, runPlaces } from '@/lib/millwork/cabinetBoxes';
 import { frontKey, frontOf } from '@/lib/millwork/frontMaterial';
 import type { ProductionSettings } from '@/types/catalog';
@@ -515,7 +516,6 @@ function FrameProbe({ rows }: { rows: SceneRow[] }) {
       const tally: Record<string, number> = {};
       for (const row of rows) {
         for (const box of runBoxes(row.run, {
-          zoneDepthMm: rowDepthMm('base', row.run.production),
           thicknessMm: 16,
           frontThicknessMm: 18,
           gapMm: 3,
@@ -586,9 +586,9 @@ function FrameProbe({ rows }: { rows: SceneRow[] }) {
         const angle = (place.rotationYDeg * Math.PI) / 180;
         const normal = new THREE.Vector3(Math.sin(angle), 0, Math.cos(angle));
         const wallPoint = new THREE.Vector3(
-          place.xM - (rowDepthMm('base', row.run.production) / MM + 0.02) * Math.sin(angle),
+          place.xM - (rowStandardDepthMm(row.run.zone, 'base', row.run.production) / MM + 0.02) * Math.sin(angle),
           0,
-          place.zM - (rowDepthMm('base', row.run.production) / MM + 0.02) * Math.cos(angle),
+          place.zM - (rowStandardDepthMm(row.run.zone, 'base', row.run.production) / MM + 0.02) * Math.cos(angle),
         );
 
         for (const corner of rowCorners([row], true)) {
@@ -752,7 +752,6 @@ function rowCorners(rows: SceneRow[], inside = true): [number, number, number][]
 
   for (const row of rows) {
       const boxes = runBoxes(row.run, {
-        zoneDepthMm: rowDepthMm('base', row.run.production),
         thicknessMm: 16,
         frontThicknessMm: 18,
         gapMm: 3,
@@ -827,7 +826,7 @@ function RoomShell({
     const walls = rows.map((row) => {
       const place = rowPlacement(row);
       const lengthM = row.run.lengthMm / MM;
-      const depthM = rowDepthMm('base', row.run.production) / MM;
+      const depthM = rowStandardDepthMm(row.run.zone, 'base', row.run.production) / MM;
       const angle = (place.rotationYDeg * Math.PI) / 180;
 
       /*
@@ -867,7 +866,7 @@ function RoomShell({
       const angle = (place.rotationYDeg * Math.PI) / 180;
       const cos = Math.cos(angle);
       const sin = Math.sin(angle);
-      const depthM = rowDepthMm('base', row.run.production) / MM;
+      const depthM = rowStandardDepthMm(row.run.zone, 'base', row.run.production) / MM;
 
       return (row.run.beams ?? []).map((beam) => {
         const dropM = beamDropMm(beam) / MM;

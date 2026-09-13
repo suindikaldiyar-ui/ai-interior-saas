@@ -27,7 +27,8 @@ import { runPlaces } from '../lib/millwork/cabinetBoxes';
 import { GEOMETRY } from '../lib/millwork/modules';
 import { zoneProfile } from '../lib/millwork/zones';
 import { DEFAULT_PRODUCTION, type ProductionSettings } from '../types/catalog';
-import { rowStandardDepthMm } from '../lib/millwork/fill';
+import { moduleDepthMm, rowStandardDepthMm } from '../lib/millwork/fill';
+import { applyOps } from '../lib/millwork/ops';
 import { wallMismatches } from '../lib/millwork/walls';
 import { DEMO_REQUIREMENTS } from '../lib/millwork/demo';
 import type { CompositionKind, RunRequirements } from '../types/millwork';
@@ -245,10 +246,7 @@ console.log('\nКомпозиция в мировых координатах');
         const xs = corners.map((c) => c[0]);
         const zs = corners.map((c) => c[1]);
 
-        const places3d = runPlaces(run, {
-          depthM,
-          plinthM: GEOMETRY.base.plinthH / 1000,
-        });
+        const places3d = runPlaces(run);
 
         return {
           label: segment.label ?? `Стена ${i + 1}`,
@@ -592,6 +590,185 @@ console.log('\nП замыкается, и угол считается одно�
     found.length === 1 && broken - good === Math.abs(found[0].runLengthMm - found[0].usableMm),
     `было бы ${broken} мм вместо ${good} мм — сдвиг ${broken - good} мм`,
   );
+}
+
+/* ══════════════  Задняя плоскость каждого ряда лежит на стене  ══════════════ */
+
+/**
+ * МЕБЕЛЬ СТОИТ У СТЕНЫ, А НЕ ВИСИТ ЗАПОДЛИЦО С ФАСАДОМ.
+ *
+ * Ряд рисуется от ФАСАДА: локальный ноль по z — передняя плоскость, и
+ * корпус уходит в минус на свою глубину. Пока глубина у всех была одна,
+ * это совпадало с правдой; на верхнем ряду разошлось — мельче становился
+ * не перёд, а ЗАД, и верхние шкафы висели в 240 мм от стены, выровненные
+ * по фасаду с нижними.
+ *
+ * Разрез и план всё это время рисовали от стены. Расходилась не мебель,
+ * а сцена с чертежом — и на экране это читалось как «левая часть
+ * выступает вперёд».
+ *
+ * Здесь меряется то, что видно: где задняя и передняя плоскость каждого
+ * вида модуля относительно СВОЕЙ стены.
+ */
+console.log('\nЗадняя плоскость каждого ряда лежит на стене');
+{
+  const shopA: ProductionSettings = {
+    ...DEFAULT_PRODUCTION,
+    depths: { baseMm: 550, upperMm: 350, mezzanineMm: 550 },
+    heights: { plinthMm: 100, carcassMm: 760, countertopMm: 40, apronMm: 600 },
+  };
+
+  for (const [shopName, production] of [
+    ['цех 560/320', DEFAULT_PRODUCTION],
+    ['цех 550/350', shopA],
+  ] as const) {
+    const layout = buildComposition({
+      kind: 'corner_l',
+      walls: [
+        { id: 'w1', lengthMm: 3800, openings: [] },
+        { id: 'w2', lengthMm: 1800, openings: [] },
+      ],
+      ceilingHeightMm: 2700,
+      requirements: DEMO_REQUIREMENTS,
+      comms: [],
+      production,
+    });
+
+    /* Антресоль: четвёртая глубина в том же ряду. */
+    const runs = layout.segments.map((segment, i) =>
+      i === 0
+        ? applyOps({
+            run: segment.run,
+            requirements: { ...DEMO_REQUIREMENTS, cornerSolution: 'false_panel' },
+            ops: [{ op: 'set_mezzanine', heightMm: 400 }],
+            openings: [],
+          })
+        : segment.run,
+    );
+
+    const places = runPlacements({
+      runs,
+      solution: 'false_panel',
+      zone: 'kitchen',
+      production,
+    });
+
+    /*
+     * Ноль рядов — это пустая сцена, а не «проверять нечего».
+     * Падаем здесь, а не проходим по пустому списку.
+     */
+    check(
+      `${shopName}: ряды для замера есть`,
+      runs.length === 2 && runs.every((run) => run.modules.length > 0),
+      runs.length === 0
+        ? 'СЕЛЕКТОР ВЕРНУЛ НОЛЬ РЯДОВ — мерить нечего'
+        : runs.map((run) => `${run.lengthMm} мм, ${run.modules.length} мод.`).join(' · '),
+    );
+    if (runs.length !== 2 || runs.some((run) => run.modules.length === 0)) continue;
+
+    const rowDepthMm = rowStandardDepthMm('kitchen', 'base', production);
+
+    runs.forEach((run, i) => {
+      const place = places[i];
+      const a = (place.rotationYDeg * Math.PI) / 180;
+      /* Нормаль фасада ряда в мировых осях: на стене Б глубина идёт по x. */
+      const normal: [number, number] = [Math.sin(a), Math.cos(a)];
+      /* Стена ряда — на глубину НАЗАД от плоскости места. */
+      const wall: [number, number] = [
+        place.xM - (rowDepthMm / 1000) * normal[0],
+        place.zM - (rowDepthMm / 1000) * normal[1],
+      ];
+
+      /** Отступ точки от СВОЕЙ стены вдоль нормали ряда, мм. */
+      const fromWall = (localZ: number) =>
+        Math.round(
+          ((place.xM + localZ * normal[0] - wall[0]) * normal[0] +
+            (place.zM + localZ * normal[1] - wall[1]) * normal[1]) *
+            1000,
+        );
+
+      const label = layout.segments[i].label;
+      const seen = new Map<string, { depthMm: number; back: number; front: number }>();
+
+      for (const entry of runPlaces(run)) {
+        const kind =
+          entry.unit.section === 'mezzanine'
+            ? 'антресоль'
+            : entry.unit.column || entry.unit.appliance
+              ? 'колонна'
+              : entry.unit.kind === 'upper' || entry.unit.kind === 'corner_upper'
+                ? 'верхний'
+                : 'нижний';
+        if (seen.has(kind)) continue;
+
+        seen.set(kind, {
+          depthMm: Math.round(entry.depthM * 1000),
+          back: fromWall(entry.zM - entry.depthM),
+          front: fromWall(entry.zM),
+        });
+      }
+
+      const rows = Array.from(seen.entries());
+
+      /* ── Задние плоскости — все на стене ── */
+      const offWall = rows.filter(([, v]) => v.back !== 0);
+      check(
+        `${shopName} · ${label}: зад каждого ряда на стене`,
+        rows.length >= 3 && offWall.length === 0,
+        rows.length < 3
+          ? `ВИДОВ МОДУЛЕЙ ВСЕГО ${rows.length}`
+          : offWall.length > 0
+            ? offWall.map(([k, v]) => `${k} висит в ${v.back} мм от стены`).join(' · ')
+            : rows.map(([k, v]) => `${k} ${v.depthMm}`).join(' · '),
+      );
+
+      /* ── Передние плоскости разные, ровно на разницу глубин ── */
+      const wrongFront = rows.filter(([, v]) => v.front !== v.depthMm);
+      check(
+        `${shopName} · ${label}: перёд уведён ровно на глубину`,
+        wrongFront.length === 0,
+        wrongFront.length > 0
+          ? wrongFront.map(([k, v]) => `${k}: перёд ${v.front} при глубине ${v.depthMm}`).join(' · ')
+          : rows.map(([k, v]) => `${k} ${v.front}`).join(' · '),
+      );
+
+      const upper = seen.get('верхний');
+      const base = seen.get('нижний');
+      if (upper && base) {
+        check(
+          `${shopName} · ${label}: верхний ряд мельче нижнего, и это видно спереди`,
+          base.front - upper.front === base.depthMm - upper.depthMm &&
+            base.front > upper.front,
+          `нижний ${base.depthMm} → перёд ${base.front}, верхний ${upper.depthMm} → перёд ${upper.front}`,
+        );
+      }
+
+      /* ── Чертёж и план считают те же миллиметры ── */
+      const drift: string[] = [];
+      for (const entry of runPlaces(run)) {
+        /* План рисует прямоугольник от стены высотой `moduleDepthMm`. */
+        const onPlan = moduleDepthMm(entry.unit, run.zone, run.production);
+        if (Math.round(entry.depthM * 1000) !== onPlan) {
+          drift.push(`${entry.unit.id}: сцена ${Math.round(entry.depthM * 1000)}, план ${onPlan}`);
+        }
+      }
+      /* Разрез рисует ряды от стены своими глубинами школы цеха. */
+      const sectionBase = rowStandardDepthMm(run.zone, 'base', run.production);
+      const sectionUpper = rowStandardDepthMm(run.zone, 'upper', run.production);
+      if (base && base.depthMm !== sectionBase) {
+        drift.push(`нижний: сцена ${base.depthMm}, разрез ${sectionBase}`);
+      }
+      if (upper && upper.depthMm !== sectionUpper) {
+        drift.push(`верхний: сцена ${upper.depthMm}, разрез ${sectionUpper}`);
+      }
+
+      check(
+        `${shopName} · ${label}: сцена, план и разрез сходятся до миллиметра`,
+        drift.length === 0,
+        drift.join(' · ') || `нижний ${sectionBase} · верхний ${sectionUpper}`,
+      );
+    });
+  }
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

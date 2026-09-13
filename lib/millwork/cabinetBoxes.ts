@@ -1,6 +1,6 @@
 import { columnNiches, moduleCarcassHeightMm, upperBottomFor } from '@/lib/millwork/fill';
-import { plinthMm, rowDepthMm } from './shop';
-import { moduleDepthMm } from './fill';
+import { plinthMm } from './shop';
+import { moduleDepthMm, rowStandardDepthMm } from './fill';
 import type { ProductionSettings } from '@/types/catalog';
 import { FRAME_WIDTH_MM, frontKey, frontOf, isFramed } from './frontMaterial';
 import { openingOf } from './opening';
@@ -63,6 +63,17 @@ export type ModulePlacement = {
   heightM: number;
   depthM: number;
   thicknessM: number;
+  /**
+   * СМЕЩЕНИЕ ФАСАДА ОТ ПЛОСКОСТИ РЯДА, метры. Ноль — фасад в плоскости
+   * нижнего ряда; минус — модуль мельче и его фасад стоит ГЛУБЖЕ.
+   *
+   * Нужно оно ровно затем, чтобы задняя плоскость легла на стену. Ряд
+   * рисуется от фасада (локальный ноль по z), и без этого смещения
+   * мельче становился не перёд, а зад: верхний ряд висел в 240 мм от
+   * стены, заподлицо с нижним. Разрез и план всё это время рисовали
+   * правильно — от стены.
+   */
+  zM?: number;
 };
 
 export function carcassBoxes(unit: Module, place: ModulePlacement): BoxDraw[] {
@@ -570,7 +581,24 @@ export function moduleBoxes(
     for (let i = 0; i < doorCount(unit); i += 1) boxes.push(...doorBoxes(unit, place, i, options));
   }
 
-  return boxes;
+  /*
+   * СДВИГ ПО ГЛУБИНЕ — ОДИН РАЗ, НА ВСЕ КОРОБКИ МОДУЛЯ.
+   *
+   * Корпус, фасад, ящики, ручки и прибор считаются от локального нуля
+   * (фасада). Раздавать им смещение поимённо значило бы завести пять
+   * мест, где его можно забыть; здесь оно применяется к готовому списку.
+   */
+  const zM = place.zM ?? 0;
+  if (zM === 0) return boxes;
+
+  return boxes.map((box) => ({
+    ...box,
+    position: [box.position[0], box.position[1], box.position[2] + zM] as [
+      number,
+      number,
+      number,
+    ],
+  }));
 }
 
 
@@ -599,58 +627,70 @@ export function moduleBoxes(
  */
 export function runPlaces(
   run: Run,
+): {
+  unit: Module;
+  x: number;
+  y: number;
+  heightM: number;
+  depthM: number;
+  zM: number;
+}[] {
   /*
-   * Габарит ряда. Не задан — берётся ШКОЛА ЦЕХА этого ряда: глубина
-   * нижнего ряда и высота цоколя принадлежат ей, а не вызывающему.
-   * Раньше каждый вызывающий подставлял их сам из `GEOMETRY`, и стоило
-   * цеху сменить глубину, как сцена осталась бы на прежней.
+   * ГЛУБИНА РЯДА — ОДНА, И ПОДСТАВИТЬ ЧУЖУЮ НЕГДЕ.
+   *
+   * Здесь стоял параметр `size.depthM`, и каждый вызывающий передавал
+   * СВОЁ число: сцена — глубину профиля зоны (560), рёбра — глубину
+   * школы цеха (550), приёмка — `GEOMETRY.base.depth`. У цеха с 550 ряд
+   * в сцене на десять миллиметров уходил в стену, а рёбра при этом
+   * лежали правильно. Тот же класс, что и две глубины угла.
    */
-  size?: { depthM: number; plinthM: number },
-): { unit: Module; x: number; y: number; heightM: number; depthM: number }[] {
-  const shop = {
-    depthM: size?.depthM ?? rowDepthMm('base', run.production) / MM,
-    plinthM: size?.plinthM ?? plinthMm(run.production) / MM,
+  const rowDepthM = rowStandardDepthMm(run.zone, 'base', run.production) / MM;
+  const plinthM = plinthMm(run.production) / MM;
+
+  const isUpper = (unit: Module) => unit.kind === 'upper' || unit.kind === 'corner_upper';
+
+  /*
+   * ЗАДНЯЯ ПЛОСКОСТЬ ЛЮБОГО МОДУЛЯ ЛЕЖИТ НА СТЕНЕ.
+   *
+   * Мебель стоит у стены, а не висит в воздухе: разная глубина уводит
+   * вперёд ПЕРЕДНЮЮ плоскость. Ряд нарисован от фасада (локальный ноль
+   * по z), поэтому модуль мельче ряда отъезжает назад ровно на разницу.
+   */
+  const place = (unit: Module) => {
+    const depthMm = moduleDepthMm(unit, run.zone, run.production);
+    return {
+      unit,
+      // `offsetMm` у верхних модулей уже абсолютный (ловушка 92).
+      x: unit.offsetMm / MM,
+      // Верхние висят, нижние стоят на цоколе.
+      y: isUpper(unit) ? upperBottomFor(unit, run) / MM : plinthM,
+      heightM: moduleCarcassHeightMm(unit, run) / MM,
+      depthM: depthMm / MM,
+      zM: depthMm / MM - rowDepthM,
+    };
   };
+
   return [
-    ...run.modules.map((unit) => {
-      const isUpper = unit.kind === 'upper' || unit.kind === 'corner_upper';
-      return {
-        unit,
-        x: unit.offsetMm / MM,
-        // Верхние висят, нижние стоят на цоколе.
-        y: isUpper ? upperBottomFor(unit, run) / MM : shop.plinthM,
-        heightM: moduleCarcassHeightMm(unit, run) / MM,
-        depthM: isUpper ? rowDepthMm('upper', run.production) / MM : shop.depthM,
-      };
-    }),
-    ...run.upperSegments.flatMap((segment) =>
-      segment.modules.map((unit) => ({
-        unit,
-        // `offsetMm` у верхних модулей уже абсолютный (ловушка 92).
-        x: unit.offsetMm / MM,
-        y: upperBottomFor(unit, run) / MM,
-        heightM: moduleCarcassHeightMm(unit, run) / MM,
-        // Антресоль идёт СВОЕЙ глубиной: у мебельщика она по нижнему ряду.
-        depthM: moduleDepthMm(unit, run.zone, run.production) / MM,
-      })),
-    ),
+    ...run.modules.map(place),
+    /*
+     * Антресоль идёт СВОЕЙ глубиной: у мебельщика она по нижнему ряду.
+     * Спрашивает её та же `moduleDepthMm`, что и всех остальных.
+     */
+    ...run.upperSegments.flatMap((segment) => segment.modules.map(place)),
   ];
 }
 
 export function runBoxes(
   run: Run,
   options: {
-    zoneDepthMm: number;
     thicknessMm: number;
     frontThicknessMm: number;
     gapMm: number;
     cutaway?: boolean;
   },
 ): PartBox[] {
-  const depthM = options.zoneDepthMm / MM;
-  const plinthM = plinthMm(run.production) / MM;
-
-  const placed = runPlaces(run, { depthM, plinthM });
+  /* Глубину ряда считает `runPlaces`: передать её снаружи больше нельзя. */
+  const placed = runPlaces(run);
 
   return placed.flatMap((entry) =>
     moduleBoxes(
@@ -660,6 +700,7 @@ export function runBoxes(
         y: entry.y,
         heightM: entry.heightM,
         depthM: entry.depthM,
+        zM: entry.zM,
         thicknessM: options.thicknessMm / MM,
       },
       {

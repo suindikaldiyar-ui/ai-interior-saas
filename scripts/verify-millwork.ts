@@ -287,10 +287,7 @@ let passed = 0;
 
 /** Сколько выдвижных ящиков нарисовано у модуля — по коробкам сцены. */
 function drawerBoxCount(unit: Module, run: Run): number {
-  const place = runPlaces(run, {
-    depthM: GEOMETRY.base.depth / 1000,
-    plinthM: GEOMETRY.base.plinthH / 1000,
-  }).find((p) => p.unit.id === unit.id);
+  const place = runPlaces(run).find((p) => p.unit.id === unit.id);
   if (!place) return 0;
 
   const boxes = moduleBoxes(
@@ -6833,7 +6830,6 @@ console.log('\nВстроенный и отдельностоящий холод
    * только место, и место считает ОДНА функция (`rowPlacement`).
    */
   const straight = runBoxes(builtIn, {
-    zoneDepthMm: GEOMETRY.base.depth,
     thicknessMm: 16,
     frontThicknessMm: 18,
     gapMm: 3,
@@ -6850,7 +6846,6 @@ console.log('\nВстроенный и отдельностоящий холод
   });
 
   const cornerFirst = runBoxes(corner.segments[0].run, {
-    zoneDepthMm: GEOMETRY.base.depth,
     thicknessMm: 16,
     frontThicknessMm: 18,
     gapMm: 3,
@@ -6865,7 +6860,6 @@ console.log('\nВстроенный и отдельностоящий холод
   );
 
   const second = runBoxes(corner.segments[1].run, {
-    zoneDepthMm: GEOMETRY.base.depth,
     thicknessMm: 16,
     frontThicknessMm: 18,
     gapMm: 3,
@@ -7027,10 +7021,7 @@ console.log('\nЦвет из палитры организации виден в
 console.log('\nФасады, створки и ручки');
 {
   const run = buildRun(baseInput);
-  const places = runPlaces(run, {
-    depthM: GEOMETRY.base.depth / 1000,
-    plinthM: GEOMETRY.base.plinthH / 1000,
-  });
+  const places = runPlaces(run);
 
   check('раскладка ряда отдаёт все модули', places.length === allModules(run).length,
     `${places.length} мест на ${allModules(run).length} модулей`);
@@ -7199,10 +7190,7 @@ console.log('\nФасады, створки и ручки');
   /* ── Ручка видна в сцене: у «без ручки» её коробки нет ── */
   const handleBoxes = (r: Run) => {
     const unit = allModules(r).find((m) => m.id === door.id)!;
-    const place = runPlaces(r, {
-      depthM: GEOMETRY.base.depth / 1000,
-      plinthM: GEOMETRY.base.plinthH / 1000,
-    }).find((entry) => entry.unit.id === door.id)!;
+    const place = runPlaces(r).find((entry) => entry.unit.id === door.id)!;
 
     return moduleBoxes(
       unit,
@@ -7648,7 +7636,7 @@ console.log('\nЯщики под варочной выдвигаются');
    * сцене нет.
    */
   const movable = (run: Run) =>
-    runPlaces(run, { depthM: GEOMETRY.base.depth / 1000, plinthM: GEOMETRY.base.plinthH / 1000 })
+    runPlaces(run)
       .flatMap((place) =>
         moduleBoxes(
           place.unit,

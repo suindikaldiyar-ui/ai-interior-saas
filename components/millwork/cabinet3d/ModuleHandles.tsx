@@ -44,6 +44,8 @@ type Props = {
   widthM: number;
   heightM: number;
   depthM: number;
+  /** Смещение фасада от плоскости ряда — то же, что у самого модуля. */
+  zM?: number;
   /** Ширина в миллиметрах: от неё считается шаг перетаскивания. */
   widthMm: number;
   onWidth: (widthMm: number) => void;
@@ -65,6 +67,7 @@ export default function ModuleHandles({
   widthM,
   heightM,
   depthM,
+  zM = 0,
   widthMm,
   onWidth,
   offsetMm = 0,
@@ -197,7 +200,8 @@ export default function ModuleHandles({
   };
 
   return (
-    <group>
+    /* Тот же сдвиг по глубине, что у самого модуля: рамка вокруг него. */
+    <group position={[0, 0, zM]}>
       {/* Рамка выделения: то же выделение, что на чертеже. */}
       <group ref={ghost}>
         <lineSegments

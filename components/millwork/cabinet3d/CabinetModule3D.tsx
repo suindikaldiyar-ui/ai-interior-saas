@@ -31,6 +31,12 @@ type Props = {
   y: number;
   heightM: number;
   depthM: number;
+  /**
+   * Смещение фасада от плоскости ряда: то же число, что у неподвижных
+   * коробок (`ModulePlacement.zM`). Своего у подвижных быть не может —
+   * открытая дверца уехала бы от собственного корпуса.
+   */
+  zM?: number;
   thicknessM: number;
   parts: CabinetParts;
   openParts: string[];
@@ -66,6 +72,7 @@ export default function CabinetModule3D({
   y,
   heightM,
   depthM,
+  zM = 0,
   thicknessM,
   parts,
   openParts,
@@ -98,7 +105,7 @@ export default function CabinetModule3D({
   const isDisplay = unit.section === 'glass_display';
 
   return (
-    <group position={[x, y, 0]}>
+    <group position={[x, y, zM]}>
       {/*
         * Корпуса здесь нет НАМЕРЕННО: боковины, дно, крыша, задняя стенка,
         * полки и перегородка уходят числами в `carcassBoxes` и рисуются

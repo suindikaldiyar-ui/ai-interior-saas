@@ -19,10 +19,10 @@ import type { FrontSpec } from '@/types/millwork';
 import { surfaceLook } from '@/lib/millwork/surfaces';
 import { APRON_TARGET, COUNTERTOP_TARGET, FACADE_TARGET } from '@/types/catalog';
 import { runPlaces } from '@/lib/millwork/cabinetBoxes';
+import { rowStandardDepthMm } from '@/lib/millwork/fill';
 import {
   countertopMm,
   plinthMm,
-  rowDepthMm,
   upperBottomMm,
   workTopMm,
 } from '@/lib/millwork/shop';
@@ -229,7 +229,16 @@ export default function Cabinet3D({
   const thicknessM = production.carcassMm / MM;
   const frontThicknessM = production.frontMm / MM;
   const gapM = production.frontGapMm / MM;
-  const depthM = zone.depthMm / MM;
+  /*
+   * ГЛУБИНА РЯДА — ТОТ ЖЕ ОТВЕТ, ЧТО У РАСКЛАДКИ И У РАЗРЕЗА.
+   *
+   * Здесь стоял профиль зоны (`zone.depthMm`), и он не знал школы цеха:
+   * у цеха с глубиной 550 место ряда считалось по 550, а корпуса
+   * рисовались по 560 — весь нижний ряд уходил в стену на десять
+   * миллиметров. Решение про глубину одно, и живёт оно в
+   * `rowStandardDepthMm`.
+   */
+  const depthM = rowStandardDepthMm(run.zone, 'base', run.production) / MM;
   const plinthM = plinthMm(run.production) / MM;
   /** Цоколь утоплен: по нижней тени шкаф «стоит», а не лежит на полу. */
   const plinthSetbackM = 0.05;
@@ -249,10 +258,7 @@ export default function Cabinet3D({
    * которой считаются коробки; на антресоли они разошлись, и антресоль
    * оказалась нарисованной внутри холодильника.
    */
-  const places = useMemo(
-    () => runPlaces(run, { depthM, plinthM }),
-    [run, depthM, plinthM],
-  );
+  const places = useMemo(() => runPlaces(run), [run]);
 
   const modules = useMemo(
     () => places.filter((place) => !isUpperSegment(run, place.unit)),
@@ -497,6 +503,7 @@ export default function Cabinet3D({
           y={entry.y}
           heightM={entry.heightM}
           depthM={entry.depthM}
+          zM={entry.zM}
           thicknessM={thicknessM}
           parts={parts}
           openParts={openParts}
@@ -525,6 +532,7 @@ export default function Cabinet3D({
           widthM={selected.entry.unit.widthMm / MM}
           heightM={selected.entry.heightM}
           depthM={selected.entry.depthM}
+          zM={selected.entry.zM}
           widthMm={selected.entry.unit.widthMm}
           onWidth={(widthMm) =>
             !selected.entry.unit.appliance && onWidth?.(selected.entry.unit.id, widthMm)
@@ -571,12 +579,17 @@ export default function Cabinet3D({
         <mesh
           geometry={parts.box}
           material={parts.plinth}
+          /*
+           * Ниша идёт ПО ВЕРХНЕМУ РЯДУ и вместе с ним лежит у стены:
+           * нарисованная заподлицо с нижним, она висела бы в воздухе
+           * там, где верхних шкафов уже нет.
+           */
           position={[
             lengthM / 2,
             upperBottomMm(run.production) / MM - 0.004,
-            -rowDepthMm('upper', run.production) / MM / 2,
+            -depthM + rowStandardDepthMm(run.zone, 'upper', run.production) / MM / 2,
           ]}
-          scale={[lengthM, 0.008, rowDepthMm('upper', run.production) / MM]}
+          scale={[lengthM, 0.008, rowStandardDepthMm(run.zone, 'upper', run.production) / MM]}
         />
       )}
     </group>
