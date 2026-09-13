@@ -1,3 +1,4 @@
+import { ceilingOverSpanMm } from './ceiling';
 import { GEOMETRY, moduleAppliances } from './modules';
 import { moduleCarcassHeightMm, upperBottomFor } from './fill';
 import { zoneProfile } from './zones';
@@ -280,4 +281,66 @@ export class ModuleOverlapError extends Error {
 export function assertNoOverlap(run: Run): void {
   const overlaps = moduleOverlaps(run);
   if (overlaps.length > 0) throw new ModuleOverlapError(overlaps);
+}
+
+/* ────────────────  Мебель под потолком  ──────────────── */
+
+export type BeamHit = {
+  moduleId: string;
+  message: string;
+};
+
+/**
+ * НИ ОДИН МОДУЛЬ НЕ ПРОХОДИТ СКВОЗЬ РИГЕЛЬ.
+ *
+ * Выступ на потолке — физическое препятствие: шкаф, который по расчёту
+ * заходит в него на сорок миллиметров, на объекте просто не встанет, а
+ * узнают об этом, когда он уже распилен и привезён.
+ *
+ * Габарит берётся ТОТ ЖЕ, что у проверки непересечения модулей, а
+ * доступная высота — та же `ceilingOverSpanMm`, по которой считалась
+ * высота корпуса. Вторая формула здесь означала бы проверку не той
+ * мебели, которую собрали.
+ */
+export function beamHits(run: Run): BeamHit[] {
+  if (!run.beams || run.beams.length === 0) return [];
+
+  const boxes = [
+    ...run.modules.map((unit) => moduleBox(unit, run, false)),
+    ...run.upperSegments.flatMap((segment) =>
+      segment.modules.map((unit) => moduleBox(unit, run, true)),
+    ),
+  ];
+
+  const found: BeamHit[] = [];
+
+  for (const box of boxes) {
+    const ceiling = ceilingOverSpanMm(box.x0, box.x1, run.beams, run.ceilingHeightMm);
+    const over = Math.round(box.y1 - ceiling);
+    if (over <= 0) continue;
+
+    found.push({
+      moduleId: box.id,
+      message:
+        `«${box.label}» заходит в выступ на потолке на ${over} мм: ` +
+        `верх модуля на ${Math.round(box.y1)} мм, а потолок там ${Math.round(ceiling)} мм.`,
+    });
+  }
+
+  return found;
+}
+
+export class BeamOverlapError extends Error {
+  constructor(readonly hits: BeamHit[]) {
+    super(
+      `Мебель упирается в выступ на потолке: ${hits.map((h) => h.message).join(' ')} ` +
+        'Такой шкаф не встанет на объекте, а в цех он уедет распиленным.',
+    );
+    this.name = 'BeamOverlapError';
+  }
+}
+
+export function assertUnderCeiling(run: Run): void {
+  const hits = beamHits(run);
+  if (hits.length > 0) throw new BeamOverlapError(hits);
 }

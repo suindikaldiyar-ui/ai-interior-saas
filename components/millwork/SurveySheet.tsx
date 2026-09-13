@@ -1,5 +1,6 @@
 'use client';
 
+import { OPENING_KIND_TITLE } from '@/types/millwork';
 import {
   COMM_TITLE,
   STEP_TITLE,
@@ -27,15 +28,6 @@ type Props = {
   onContinue: () => void;
   /** Вернуться к конкретному шагу и дозамерить. */
   onRemeasure?: () => void;
-};
-
-const OPENING_TITLE: Record<string, string> = {
-  window: 'Окно',
-  door: 'Дверь',
-  arch: 'Арка',
-  niche: 'Ниша',
-  column: 'Колонна',
-  pipe_box: 'Короб',
 };
 
 function show(value: number | undefined, dashed: boolean) {
@@ -101,7 +93,7 @@ export default function SurveySheet({
             {survey.walls.flatMap((wall, i) =>
               wall.openings.map((opening) => (
                 <li key={opening.id} className="text-[12px]">
-                  {OPENING_TITLE[opening.kind] ?? opening.kind}, стена {i + 1}:{' '}
+                  {OPENING_KIND_TITLE[opening.kind] ?? opening.kind}, стена {i + 1}:{' '}
                   {show(valueOf(opening.fromCornerMm), opening.fromCornerMm.state === 'assumed')} /{' '}
                   {show(valueOf(opening.widthMm), opening.widthMm.state === 'assumed')} /{' '}
                   {show(valueOf(opening.sillMm), opening.sillMm.state === 'assumed')} мм

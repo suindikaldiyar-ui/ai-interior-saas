@@ -13,9 +13,20 @@ import {
   snapToStandard,
 } from './modules';
 import { buildUpperRow, fillGap } from './layout';
-import { assertNoOverlap, assertRunFits, widthOverflowMm } from './invariants';
+import {
+  assertNoOverlap,
+  assertRunFits,
+  assertUnderCeiling,
+  widthOverflowMm,
+} from './invariants';
 import { runFingerprint } from './fingerprint';
-import { defaultFill, hingeSide, mezzanineBaseOf } from './fill';
+import { ceilingOverSpanMm } from './ceiling';
+import {
+  defaultFill,
+  hingeSide,
+  mezzanineBaseOf,
+  mezzanineBottomMm,
+} from './fill';
 import { zoneHeightMm } from './zones';
 import { isMechanism, openingRejection } from './opening';
 import { frontConflict } from './frontMaterial';
@@ -896,7 +907,17 @@ export function applyOps({
    * Наполнение пересчитывается там, где оно слетело со сменой секции:
    * чертёж, смета и детализировка обязаны видеть одну мебель.
    */
-  const shell = { zone, ceilingHeightMm: run.ceilingHeightMm, options };
+  /*
+   * Ригели — часть оболочки ряда наравне с высотой потолка: без них
+   * наполнение считается по НЕУРЕЗАННОЙ высоте, и полки под балкой
+   * встают не туда, где корпус кончается.
+   */
+  const shell = {
+    zone,
+    ceilingHeightMm: run.ceilingHeightMm,
+    options,
+    beams: run.beams,
+  };
   modules = modules.map((unit, i) => {
     if (!unit.fill) return { ...unit, fill: defaultFill(unit, shell, i, modules.length) };
 
@@ -946,11 +967,24 @@ export function applyOps({
     ...Array.from(upperEdits.entries()),
   ]);
 
+  /*
+   * РИГЕЛИ БЕРУТСЯ У РЯДА, А НЕ У ВЫЗЫВАЮЩЕГО.
+   *
+   * Высоту модулей урезает `run.beams`, и разрыв ряда обязан считаться
+   * по НИМ ЖЕ. Придёт вызов без проёмов — и получится ряд, где шкаф под
+   * балкой урезан до двухсот миллиметров, а разрыва нет: две половины
+   * одного правила, разошедшиеся на пустом месте.
+   */
+  const withBeams = [
+    ...openings.filter((opening) => opening.kind !== 'beam'),
+    ...(run.beams ?? []),
+  ];
+
   nextRun.upperSegments = options.hasUpper
     ? buildUpperRow(
         modules,
         run.lengthMm,
-        openings,
+        withBeams,
         { ...requirements, options },
         run.ceilingHeightMm,
       )
@@ -1070,10 +1104,29 @@ export function applyOps({
       segment.modules.some((unit) => unit.section !== 'mezzanine'),
     );
 
+    /*
+     * ПОД РИГЕЛЕМ АНТРЕСОЛИ МОЖЕТ НЕ БЫТЬ ВОВСЕ.
+     *
+     * Она идёт верхней полосой, у самого потолка, и выступ съедает её
+     * первой: низ антресоли лежит ВЫШЕ низа балки, и никакая высота её
+     * туда не впишет. Это тот же разрыв ряда, что на окне, — только
+     * этажом выше.
+     */
+    const mezzBottom = mezzanineBottomMm(nextRun);
+    const underBeam = (unit: Module) =>
+      ceilingOverSpanMm(
+        unit.offsetMm,
+        unit.offsetMm + unit.widthMm,
+        nextRun.beams,
+        nextRun.ceilingHeightMm,
+      ) -
+        mezzBottom <
+      GEOMETRY.upper.minCarcassH;
+
     const built = spans.map((segment) => ({
       fromMm: segment.fromMm,
       toMm: segment.toMm,
-      modules: segment.modules.map((unit) => {
+      modules: segment.modules.filter((unit) => !underBeam(unit)).map((unit) => {
         const mezz: Module = {
           ...unit,
           id: `mezz-${unit.offsetMm}`,
@@ -1097,7 +1150,8 @@ export function applyOps({
         segment.modules.some((unit) => unit.section !== 'mezzanine'),
       ),
       ...columnMezzanine,
-      ...built,
+      // Участок, где антресоль не встала, сегментом не считается вовсе.
+      ...built.filter((segment) => segment.modules.length > 0),
     ];
 
     nextRun.upperSegments = nextRun.upperSegments.map((segment) => ({
@@ -1116,6 +1170,8 @@ export function applyOps({
   assertRunFits(nextRun);
   // Два модуля в одном объёме собрать нельзя, а смета посчитает их дважды.
   assertNoOverlap(nextRun);
+  // И не упирается в выступ на потолке: такой шкаф не встанет на объекте.
+  assertUnderCeiling(nextRun);
 
   return nextRun;
 }

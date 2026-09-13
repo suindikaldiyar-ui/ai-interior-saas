@@ -9,6 +9,7 @@ import {
 import { MODULE_VARIANTS, currentVariant } from './moduleVariants';
 import { defaultOpening } from './opening';
 import { sectionSpec } from './sections';
+import { ceilingOverModuleMm } from './ceiling';
 import { upperRowBottomMm, zoneHeightMm, zoneProfile } from './zones';
 import type { ApplianceKind, Module, ModuleFill, Run, ZoneKind } from '@/types/millwork';
 
@@ -163,10 +164,20 @@ export const MIN_DIVIDER_EDGE_MM = 150;
 export function moduleCarcassHeightMm(
   unit: Module,
   run: Pick<Run, 'zone' | 'ceilingHeightMm'> &
-    Partial<Pick<Run, 'options' | 'upperSegments' | 'mezzanine' | 'modules'>>,
+    Partial<Pick<Run, 'options' | 'upperSegments' | 'mezzanine' | 'modules' | 'beams'>>,
 ): number {
   const zone = zoneProfile(run.zone);
   const top = zoneHeightMm(run.zone, run.ceilingHeightMm);
+
+  /*
+   * РИГЕЛЬ ОПУСКАЕТ ПОТОЛОК НАД ЭТИМ МЕСТОМ.
+   *
+   * Ограничитель применяется ОДИН раз и ко ВСЕМ веткам сразу: у шкафа,
+   * пенала, антресоли и секции шкафа-купе высота считается по-разному, а
+   * упираются они в один и тот же выступ. Разложи проверку по веткам —
+   * и первая же новая ветка высоты пройдёт сквозь балку.
+   */
+  const capped = (heightMm: number) => capByCeiling(heightMm, unit, run);
 
   /*
    * Шкаф до потолка ДЕЛИТ высоту с антресолью, а не занимает её всю.
@@ -185,7 +196,7 @@ export function moduleCarcassHeightMm(
      * отсеком под полки — это не шкаф, а стеллаж. Число в спецификации
      * секции задаёт чистую высоту под штангой, а не высоту корпуса.
      */
-    if (spec.moduleKind === 'tall') return fullBody;
+    if (spec.moduleKind === 'tall') return capped(fullBody);
 
     /*
      * Антресоль — её собственная высота, а не кухонные 720. И не всегда
@@ -201,18 +212,17 @@ export function moduleCarcassHeightMm(
       const base = mezzanineBaseOf(unit, run);
       if (base) {
         const top = zoneHeightMm(run.zone, run.ceilingHeightMm);
-        return Math.max(
-          0,
-          top - GEOMETRY.base.plinthH - moduleCarcassHeightMm(base, run),
+        return capped(
+          Math.max(0, top - GEOMETRY.base.plinthH - moduleCarcassHeightMm(base, run)),
         );
       }
-      return mezzanineHeightMm(run);
+      return capped(mezzanineHeightMm(run));
     }
-    if (spec.heightMm > 0) return spec.heightMm;
-    return fullBody;
+    if (spec.heightMm > 0) return capped(spec.heightMm);
+    return capped(fullBody);
   }
 
-  if (zone.kind !== 'kitchen') return fullBody;
+  if (zone.kind !== 'kitchen') return capped(fullBody);
 
   const standard = standardHeightMm(unit.kind, {
     upperToCeiling: run.options?.upperToCeiling,
@@ -229,7 +239,7 @@ export function moduleCarcassHeightMm(
    * начинается. Отметка одна на весь продукт — `mezzanineBottomMm`.
    */
   const upperRow = unit.kind === 'upper' || unit.kind === 'corner_upper';
-  if (upperRow) return upperRowHeightMm(run);
+  if (upperRow) return capped(upperRowHeightMm(run));
 
   /*
    * НАД ХОЛОДИЛЬНИКОМ ОСТАЁТСЯ МЕСТО ПОД АНТРЕСОЛЬ.
@@ -242,10 +252,58 @@ export function moduleCarcassHeightMm(
   if (unit.appliance === 'fridge') {
     const top = zoneHeightMm(run.zone, run.ceilingHeightMm);
     const cap = top - GEOMETRY.base.plinthH - FRIDGE_MEZZANINE_MIN_MM;
-    return Math.max(GEOMETRY.base.carcassH, Math.min(standard, cap));
+    return capped(Math.max(GEOMETRY.base.carcassH, Math.min(standard, cap)));
   }
 
-  return standard;
+  return capped(standard);
+}
+
+/**
+ * НИЗ МОДУЛЯ ОТ ПОЛА — для потолочного ограничителя.
+ *
+ * Это НЕ вторая раскладка по высоте: `runPlaces` ставит модули, зная их
+ * высоту, а здесь высота ещё считается, и спросить у неё нельзя. Поэтому
+ * берётся только отметка НАЧАЛА — та, что от высоты модуля не зависит:
+ * цоколь у напольных, отметка навески у верхних, крыша опоры у антресоли.
+ */
+function bottomFromFloorMm(
+  unit: Module,
+  run: Pick<Run, 'zone' | 'ceilingHeightMm'> &
+    Partial<Pick<Run, 'options' | 'upperSegments' | 'mezzanine' | 'modules' | 'beams'>>,
+): number {
+  if (unit.section === 'mezzanine') {
+    const base = mezzanineBaseOf(unit, run);
+    if (base) return GEOMETRY.base.plinthH + moduleCarcassHeightMm(base, run);
+    return mezzanineBottomMm(run);
+  }
+
+  if (unit.kind === 'upper' || unit.kind === 'corner_upper') {
+    return zoneProfile(run.zone).upperBottomMm ?? GEOMETRY.upper.bottomFromFloor;
+  }
+
+  return GEOMETRY.base.plinthH;
+}
+
+/**
+ * Высота, урезанная выступом на потолке.
+ *
+ * Ноль — законный ответ: под ригелем может не остаться места вовсе. Тогда
+ * модуля там быть не должно, и убирает его раскладка (`buildUpperRow`
+ * разрывает ряд), а не эта функция: молча выданный корпус нулевой высоты
+ * уехал бы в раскрой отдельной строкой.
+ */
+function capByCeiling(
+  heightMm: number,
+  unit: Module,
+  run: Pick<Run, 'zone' | 'ceilingHeightMm'> &
+    Partial<Pick<Run, 'options' | 'upperSegments' | 'mezzanine' | 'modules' | 'beams'>>,
+): number {
+  if (!run.beams || run.beams.length === 0) return heightMm;
+
+  const ceiling = ceilingOverModuleMm(unit, run);
+  if (ceiling >= zoneHeightMm(run.zone, run.ceilingHeightMm)) return heightMm;
+
+  return Math.max(0, Math.min(heightMm, ceiling - bottomFromFloorMm(unit, run)));
 }
 
 /** В ряду есть антресоль: она забирает верх, и корпус под неё укорачивается. */
@@ -345,7 +403,7 @@ export function upperRowHeightMm(
 export function mezzanineBaseOf(
   unit: Module,
   run: Pick<Run, 'zone' | 'ceilingHeightMm'> &
-    Partial<Pick<Run, 'mezzanine' | 'options' | 'modules' | 'upperSegments'>>,
+    Partial<Pick<Run, 'mezzanine' | 'options' | 'modules' | 'upperSegments' | 'beams'>>,
 ): Module | null {
   if (unit.section !== 'mezzanine') return null;
   const bottom = zoneProfile(run.zone).upperBottomMm ?? GEOMETRY.upper.bottomFromFloor;
@@ -356,7 +414,12 @@ export function mezzanineBaseOf(
    * спросить их здесь значило бы позвать `hasMezzanine`, который сам
    * спрашивает опору: два вопроса, ждущие ответа друг друга.
    */
-  const bare = { zone: run.zone, ceilingHeightMm: run.ceilingHeightMm, options: run.options };
+  const bare = {
+    zone: run.zone,
+    ceilingHeightMm: run.ceilingHeightMm,
+    options: run.options,
+    beams: run.beams,
+  };
 
   return (
     (run.modules ?? []).find((below) => {
@@ -513,7 +576,14 @@ function drawerHeights(heightMm: number, count: number): number[] {
  */
 export function defaultFill(
   unit: Module,
-  run: Pick<Run, 'zone' | 'ceilingHeightMm' | 'options'>,
+  /*
+   * Ригели входят в оболочку явно: без них наполнение считается по
+   * НЕУРЕЗАННОЙ высоте, и полки под балкой встают выше, чем кончается
+   * корпус. Ловилось это только отпечатком — раскладка и пересчёт после
+   * правки давали разные полки на одном и том же модуле.
+   */
+  run: Pick<Run, 'zone' | 'ceilingHeightMm' | 'options'> &
+    Partial<Pick<Run, 'beams' | 'mezzanine' | 'upperSegments' | 'modules'>>,
   /** Индекс модуля в ряду: от него зависит сторона открывания. */
   index = 0,
   total = 1,

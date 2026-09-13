@@ -1,3 +1,4 @@
+import { OPENING_KIND_TITLE } from './millwork';
 import type { CommKind, Measurement, OpeningKind, WallSegment } from './millwork';
 
 /**
@@ -248,15 +249,6 @@ export type SurveyStats = {
   assumptions: Assumption[];
 };
 
-const OPENING_TITLE: Record<OpeningKind, string> = {
-  window: 'окно',
-  door: 'дверь',
-  arch: 'арка',
-  niche: 'ниша',
-  column: 'колонна',
-  pipe_box: 'короб',
-};
-
 export const COMM_TITLE: Record<CommKind, string> = {
   water_supply: 'вывод воды',
   sewer: 'канализация',
@@ -313,7 +305,7 @@ export function surveyStats(survey: Survey): SurveyStats {
     );
 
     wall.openings.forEach((opening) => {
-      const where = `Стена ${i + 1} · ${OPENING_TITLE[opening.kind]}`;
+      const where = `Стена ${i + 1} · ${OPENING_KIND_TITLE[opening.kind].toLowerCase()}`;
       note(opening.fromCornerMm, `${where} · привязка`, 'разрыв верхнего ряда встанет не туда', true);
       note(opening.widthMm, `${where} · ширина`, 'разрыв верхнего ряда встанет не туда', true);
       note(opening.heightMm, `${where} · высота`, 'верхние шкафы могут упереться в проём', false);

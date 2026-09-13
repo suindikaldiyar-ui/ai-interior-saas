@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { OPENING_KIND_TITLE } from '@/types/millwork';
 import type {
   CommKind,
   CommPoint,
@@ -17,15 +18,6 @@ import type {
  * Ошибка замера дороже всего остального вместе взятого, поэтому схема
  * обновляется сразу: замерщик видит, что ввёл, не отходя от стены.
  */
-
-const OPENING_LABEL: Record<OpeningKind, string> = {
-  window: 'Окно',
-  door: 'Дверь',
-  arch: 'Арка',
-  niche: 'Ниша',
-  column: 'Колонна',
-  pipe_box: 'Короб',
-};
 
 const COMM_LABEL: Record<CommKind, string> = {
   water_supply: 'Вода',
@@ -140,7 +132,7 @@ export default function MeasurementForm({ initial, onSubmit, submitLabel = 'Со
                       {opening.widthMm}
                     </text>
                     <text x={x + w / 2} y={isDoor ? 62 : 46} textAnchor="middle" fontSize={7} fill="var(--graphite-mw)">
-                      {OPENING_LABEL[opening.kind]}
+                      {OPENING_KIND_TITLE[opening.kind]}
                     </text>
                   </g>
                 );
@@ -253,14 +245,14 @@ export default function MeasurementForm({ initial, onSubmit, submitLabel = 'Со
 
               <div className="mw-label mb-1 mt-3">Проёмы и препятствия</div>
               <div className="mb-2 flex flex-wrap gap-1">
-                {(Object.keys(OPENING_LABEL) as OpeningKind[]).map((kind) => (
+                {(Object.keys(OPENING_KIND_TITLE) as OpeningKind[]).map((kind) => (
                   <button
                     key={kind}
                     type="button"
                     onClick={() => addOpening(kind)}
                     className="mw-touch border border-blueprint/35 px-2 text-[13px]"
                   >
-                    + {OPENING_LABEL[kind]}
+                    + {OPENING_KIND_TITLE[kind]}
                   </button>
                 ))}
               </div>
@@ -268,7 +260,7 @@ export default function MeasurementForm({ initial, onSubmit, submitLabel = 'Со
               {wall.openings.map((opening) => (
                 <div key={opening.id} className="mb-2 border border-blueprint/20 p-2">
                   <div className="mb-1 flex items-baseline justify-between">
-                    <span className="text-[13px]">{OPENING_LABEL[opening.kind]}</span>
+                    <span className="text-[13px]">{OPENING_KIND_TITLE[opening.kind]}</span>
                     <button
                       type="button"
                       onClick={() =>

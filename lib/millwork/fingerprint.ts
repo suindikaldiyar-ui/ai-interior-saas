@@ -1,3 +1,4 @@
+import { beamsPart } from './ceiling';
 import { frontPart } from './frontMaterial';
 import type { Module, Run } from '@/types/millwork';
 
@@ -125,11 +126,34 @@ export function configurationFingerprint(modules: Module[]): string {
   return hash.toString(16).padStart(8, '0');
 }
 
-export function runFingerprint(run: Pick<Run, 'modules' | 'upperSegments'>): string {
-  return configurationFingerprint([
+/**
+ * Отпечаток ряда.
+ *
+ * Ригели входят в него наравне с модулями: ряд под выступом — ДРУГАЯ
+ * мебель, шкафы там ниже, и в раскрое это другие детали. Считать их
+ * через высоты модулей нельзя — высот в отпечатке нет вовсе, и добавить
+ * их значило бы сдвинуть отпечатки всех сохранённых рядов разом.
+ *
+ * Пустой список не пишется (ловушка 246): у рядов без ригелей отпечаток
+ * остаётся прежним до символа.
+ */
+export function runFingerprint(
+  run: Pick<Run, 'modules' | 'upperSegments'> & Partial<Pick<Run, 'beams'>>,
+): string {
+  const modules = configurationFingerprint([
     ...run.modules,
     ...run.upperSegments.flatMap((s) => s.modules),
   ]);
+
+  const beams = beamsPart(run.beams);
+  if (!beams) return modules;
+
+  let hash = 0x811c9dc5;
+  for (const ch of `${modules}|${beams}`) {
+    hash ^= ch.charCodeAt(0);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, '0');
 }
 
 /**

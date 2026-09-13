@@ -12,7 +12,12 @@ import {
   isStandardWidth,
   largestStandardUpTo,
 } from './modules';
-import { assertNoOverlap, assertRunFits, runWidthSum } from './invariants';
+import {
+  assertNoOverlap,
+  assertRunFits,
+  assertUnderCeiling,
+  runWidthSum,
+} from './invariants';
 import { defaultFill, moduleCarcassHeightMm } from './fill';
 import {
   BOTTLE_MAX_MM,
@@ -23,6 +28,7 @@ import {
 } from './moduleVariants';
 import { SECTION_SPECS, sectionSpec } from './sections';
 import { isSectionZone, zoneHeightMm, zoneProfile } from './zones';
+import { beamBottomMm, beamsOnRun, ceilingOverSpanMm } from './ceiling';
 import { runFingerprint } from './fingerprint';
 import type {
   ApplianceColumn,
@@ -623,7 +629,7 @@ function planSections(
 }
 
 function buildSectionRun(input: BuildRunInput): Run {
-  const { lengthMm, ceilingHeightMm, requirements, cornerAt = null } = input;
+  const { lengthMm, ceilingHeightMm, requirements, openings = [], cornerAt = null } = input;
 
   const warnings: string[] = [];
   const usable = Math.max(0, Math.round(lengthMm));
@@ -713,25 +719,50 @@ function buildSectionRun(input: BuildRunInput): Run {
   const upperSegments: UpperSegment[] = [];
   if (hasMezzanine && usable > 0) {
     const spec = SECTION_SPECS.mezzanine;
-    const mezzanine: Module[] = [];
-    let mAt = 0;
-    for (const width of fillGap(usable)) {
-      const unit = makeModule('upper', Math.min(width, spec.maxWidthMm), mAt);
-      unit.section = 'mezzanine';
-      unit.label = spec.title;
-      mezzanine.push(unit);
-      mAt += unit.widthMm;
+
+    /*
+     * Под ригелем антресоли может не остаться места вовсе: она идёт
+     * верхней полосой, у самого потолка, и выступ съедает её первой.
+     * Разрыв тот же, что у верхнего ряда кухни, — и считает его та же
+     * функция.
+     */
+    const beamsHere = beamsOnRun(openings, usable);
+    const mezzanineBottom = Math.max(
+      0,
+      zoneHeightMm(requirements.zone, ceilingHeightMm) - spec.heightMm,
+    );
+    const blocked = beamBlockedSpans(beamsHere, ceilingHeightMm, mezzanineBottom);
+
+    for (const span of freeSpans(usable, blocked)) {
+      const width = span.to - span.from;
+      if (width < MIN_WIDTH) continue;
+
+      const mezzanine: Module[] = [];
+      let mAt = span.from;
+      for (const piece of fillGap(width)) {
+        const unit = makeModule('upper', Math.min(piece, spec.maxWidthMm), mAt);
+        unit.section = 'mezzanine';
+        unit.label = spec.title;
+        mezzanine.push(unit);
+        mAt += unit.widthMm;
+      }
+      if (mAt < span.to && mezzanine.length > 0) {
+        mezzanine[mezzanine.length - 1].widthMm += span.to - mAt;
+      }
+      if (mezzanine.length > 0) {
+        upperSegments.push({ fromMm: span.from, toMm: span.to, modules: mezzanine });
+      }
     }
-    if (mAt < usable && mezzanine.length > 0) {
-      mezzanine[mezzanine.length - 1].widthMm += usable - mAt;
-    }
-    upperSegments.push({ fromMm: 0, toMm: usable, modules: mezzanine });
   }
+
+  // Ригели обрезаются по длине ряда и дальше едут с ним: см. кухонную ветку.
+  const beams = beamsOnRun(openings, usable);
 
   const shell = {
     zone: requirements.zone ?? 'kitchen',
     ceilingHeightMm,
     options: requirements.options,
+    beams,
   };
   withFill(modules, shell);
   for (const segment of upperSegments) withFill(segment.modules, shell);
@@ -745,14 +776,17 @@ function buildSectionRun(input: BuildRunInput): Run {
     modules,
     upperSegments,
     options: requirements.options,
+    beams: beams.length > 0 ? beams : undefined,
     residualMm: usable - at,
     warnings,
-    fingerprint: runFingerprint({ modules, upperSegments }),
+    fingerprint: runFingerprint({ modules, upperSegments, beams }),
   };
 
   assertRunFits(run);
   // Два модуля в одном объёме собрать нельзя, а смета посчитает их дважды.
   assertNoOverlap(run);
+  // Мебель, упирающаяся в выступ на потолке, не встанет на объекте.
+  assertUnderCeiling(run);
   return run;
 }
 
@@ -1058,6 +1092,12 @@ export function buildRun(input: BuildRunInput): Run {
 
   modules = cargoWhereNarrow(modules);
 
+  /*
+   * РИГЕЛИ ОБРЕЗАЮТСЯ ПО ДЛИНЕ РЯДА и дальше едут вместе с ним: высоту
+   * модуля считает одна функция, и видит она только `unit` и `run`.
+   */
+  const beams = beamsOnRun(openings, usable);
+
   const upperSegments = requirements.options.hasUpper
     ? buildUpperRow(modules, usable, openings, requirements, ceilingHeightMm)
     : [];
@@ -1066,6 +1106,7 @@ export function buildRun(input: BuildRunInput): Run {
     zone: requirements.zone ?? 'kitchen',
     ceilingHeightMm,
     options: requirements.options,
+    beams,
   };
   withFill(modules, kitchenShell);
   for (const segment of upperSegments) withFill(segment.modules, kitchenShell);
@@ -1080,20 +1121,69 @@ export function buildRun(input: BuildRunInput): Run {
     modules,
     upperSegments,
     options: requirements.options,
+    beams: beams.length > 0 ? beams : undefined,
     residualMm: usable - at,
     warnings,
-    fingerprint: runFingerprint({ modules, upperSegments }),
+    fingerprint: runFingerprint({ modules, upperSegments, beams }),
   };
 
   // Жёсткий инвариант: ряд, не помещающийся в стену, наружу не выходит.
   assertRunFits(run);
   // Два модуля в одном объёме собрать нельзя, а смета посчитает их дважды.
   assertNoOverlap(run);
+  // Мебель, упирающаяся в выступ на потолке, не встанет на объекте.
+  assertUnderCeiling(run);
 
   return run;
 }
 
 /* ─────────────────────────  Верхний ряд  ───────────────────────── */
+
+/**
+ * СВОБОДНЫЕ УЧАСТКИ РЯДА = длина минус занятое.
+ *
+ * Механизм разрыва один на все причины: окно, пенал во всю высоту,
+ * ригель на потолке. Заведи второй — и первая же новая причина начнёт
+ * рвать ряд по своим правилам, а сойтись они обязаны.
+ */
+export function freeSpans(
+  lengthMm: number,
+  blockers: { from: number; to: number }[],
+): { from: number; to: number }[] {
+  const free: { from: number; to: number }[] = [];
+  let start = 0;
+
+  for (const blocker of [...blockers].sort((a, b) => a.from - b.from)) {
+    if (blocker.from > start) {
+      free.push({ from: start, to: Math.min(blocker.from, lengthMm) });
+    }
+    start = Math.max(start, blocker.to);
+  }
+  if (start < lengthMm) free.push({ from: start, to: lengthMm });
+
+  return free;
+}
+
+/**
+ * Участки, где под ригелем не остаётся полезного модуля.
+ *
+ * Под выступом шкаф просто ниже — это считает `moduleCarcassHeightMm`.
+ * Но если свес съел столько, что осталось меньше полезного корпуса,
+ * ставить его там нельзя: полка не встанет, а фасад с петлями будет
+ * стоить как у нормального.
+ */
+export function beamBlockedSpans(
+  beams: Opening[],
+  ceilingHeightMm: number,
+  bottomFromFloorMm: number,
+  minHeightMm = GEOMETRY.upper.minCarcassH,
+): { from: number; to: number }[] {
+  return beams
+    .filter(
+      (beam) => beamBottomMm(beam, ceilingHeightMm) - bottomFromFloorMm < minHeightMm,
+    )
+    .map((beam) => ({ from: beam.fromCornerMm, to: beam.fromCornerMm + beam.widthMm }));
+}
 
 /** Окна, которые пересекают полосу верхнего ряда по высоте. */
 function blockingOpenings(
@@ -1141,30 +1231,44 @@ export function buildUpperRow(
    * поднимается выше отметки навески. Новый вид высокого модуля —
    * витрина-пенал, гардеробная колонна — попадёт под правило сам.
    */
-  const shell = { zone: req.zone, ceilingHeightMm, options: req.options, upperSegments: [] };
+  const beams = beamsOnRun(openings, lengthMm);
+  const shell = {
+    zone: req.zone,
+    ceilingHeightMm,
+    options: req.options,
+    upperSegments: [],
+    beams,
+  };
   const upperBottom = GEOMETRY.upper.bottomFromFloor;
   const tallSpans = baseModules
     .filter((unit) => GEOMETRY.base.plinthH + moduleCarcassHeightMm(unit, shell) > upperBottom)
     .map((unit) => ({ from: unit.offsetMm, to: unit.offsetMm + unit.widthMm }));
+
+  /*
+   * РИГЕЛЬ, ПОД КОТОРЫМ ШКАФА НЕ ПОЛУЧИТСЯ, РАЗРЫВАЕТ РЯД — КАК ОКНО.
+   *
+   * Выступ на потолке не запрещает верхний ряд: под ним шкаф просто ниже,
+   * и высоту урезает `moduleCarcassHeightMm`. Но если свес съел столько,
+   * что осталось меньше полезного шкафа, корпус там ставить нельзя: полка
+   * не встанет, а фасад с петлями будет стоить как у нормального.
+   *
+   * Признак тот же, что у окна, — участок ряда, на котором верхнего ряда
+   * нет. Второго механизма разрыва заводить нельзя: он разошёлся бы с
+   * первым на первой же правке.
+   */
+  const beamBlockers = beamBlockedSpans(beams, ceilingHeightMm, upperBottom);
 
   const blockers = [
     ...blockingOpenings(openings, ceilingHeightMm, req.options).map((o) => ({
       from: o.fromCornerMm,
       to: o.fromCornerMm + o.widthMm,
     })),
+    ...beamBlockers,
     ...tallSpans,
   ].sort((a, b) => a.from - b.from);
 
-  // Свободные интервалы = длина ряда минус участки окон.
-  const free: { from: number; to: number }[] = [];
-  let start = 0;
-  for (const blocker of blockers) {
-    if (blocker.from > start) {
-      free.push({ from: start, to: Math.min(blocker.from, lengthMm) });
-    }
-    start = Math.max(start, blocker.to);
-  }
-  if (start < lengthMm) free.push({ from: start, to: lengthMm });
+  // Свободные интервалы = длина ряда минус занятые участки.
+  const free = freeSpans(lengthMm, blockers);
 
   // Вытяжка обязана висеть строго над варочной панелью.
   const hob = baseModules.find((m) => m.appliance === 'hob');
@@ -1279,7 +1383,16 @@ export function buildUpperRow(
     if (unit.appliance !== 'fridge') continue;
 
     const top = GEOMETRY.base.plinthH + moduleCarcassHeightMm(unit, shell);
-    const room = zoneHeightMm(req.zone, ceilingHeightMm) - top;
+    /*
+     * Потолок НАД КОЛОННОЙ, а не потолок зоны: под ригелем кладовки
+     * может не остаться вовсе, и выдать её значило бы поставить модуль
+     * в балку.
+     */
+    const ceiling = Math.min(
+      zoneHeightMm(req.zone, ceilingHeightMm),
+      ceilingOverSpanMm(unit.offsetMm, unit.offsetMm + unit.widthMm, beams, ceilingHeightMm),
+    );
+    const room = ceiling - top;
     if (room < FRIDGE_MEZZANINE_MIN_MM) continue;
 
     const mezzanine = makeModule('upper', unit.widthMm, unit.offsetMm);

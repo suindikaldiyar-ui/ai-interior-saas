@@ -1,4 +1,10 @@
-import { APPLIANCE_COLUMN, APPLIANCE_SLOTS, FRIDGE_MEZZANINE_MIN_MM } from './modules';
+import {
+  APPLIANCE_COLUMN,
+  APPLIANCE_SLOTS,
+  FRIDGE_MEZZANINE_MIN_MM,
+  GEOMETRY,
+} from './modules';
+import { beamDropMm } from './ceiling';
 import { columnNichesSumMm, moduleCarcassHeightMm, ovenBottomMm } from './fill';
 import { fridgeRoomMm } from './layout';
 import { openingHardware } from './opening';
@@ -294,6 +300,98 @@ export function openingAssumptions(run: Run | null): SurveyWarning[] {
 }
 
 /**
+ * ВЫСТУП НА ПОТОЛКЕ — ПОСЛЕДСТВИЕМ, А НЕ ФАКТОМ.
+ *
+ * «Ригель 120 мм на 1200 мм» замерщик и так видит в замере. Знать ему
+ * надо другое: что под ним шкаф ниже и верх ряда там не сойдётся с
+ * остальными — это первое, о чём спросит клиент, глядя на чертёж.
+ *
+ * Насколько ниже — считается ТОЙ ЖЕ функцией высоты, что строит раскрой:
+ * своя арифметика «потолок минус свес» разошлась бы с ней на первом же
+ * ряде до потолка.
+ *
+ * Жёлтое, не блокирующее: так делают, и это нормальная мебель. Молчать
+ * при этом нельзя — разница высот на фасаде выглядит ошибкой цеха.
+ */
+export function beamWarnings(run: Run | null): SurveyWarning[] {
+  if (!run || !run.beams || run.beams.length === 0) return [];
+
+  const modules = [...run.modules, ...run.upperSegments.flatMap((s) => s.modules)];
+  const out: SurveyWarning[] = [];
+
+  for (const beam of run.beams) {
+    const drop = beamDropMm(beam);
+
+    /*
+     * Насколько модуль ниже соседа — по факту раскроя, а не по свесу:
+     * шкаф мог и не доставать до выступа, и тогда говорить не о чем.
+     */
+    const under = modules.filter(
+      (unit) =>
+        unit.offsetMm < beam.fromCornerMm + beam.widthMm &&
+        beam.fromCornerMm < unit.offsetMm + unit.widthMm,
+    );
+    const outside = modules.filter(
+      (unit) =>
+        unit.kind === 'upper' &&
+        (unit.offsetMm >= beam.fromCornerMm + beam.widthMm ||
+          unit.offsetMm + unit.widthMm <= beam.fromCornerMm),
+    );
+
+    const lowest = Math.min(
+      ...under.filter((u) => u.kind === 'upper').map((u) => moduleCarcassHeightMm(u, run)),
+    );
+    const usual = Math.max(
+      ...outside.map((u) => moduleCarcassHeightMm(u, run)),
+      0,
+    );
+    const shorter = Number.isFinite(lowest) && usual > lowest ? Math.round(usual - lowest) : 0;
+
+    if (shorter > 0) {
+      out.push({
+        id: `beam-${beam.id}`,
+        severity: 'clarify',
+        message:
+          `Под выступом шкаф ниже на ${shorter} мм — верх ряда там не сойдётся ` +
+          'с остальными.',
+        atMm: beam.fromCornerMm,
+      });
+      continue;
+    }
+
+    /*
+     * Верхнего ряда под выступом нет вовсе: ряд разорван. Это тоже
+     * последствие, и объяснить его надо до того, как клиент спросит,
+     * почему в середине кухни дыра.
+     *
+     * Причина обязана быть В РИГЕЛЕ. Под колонной холодильника верхнего
+     * ряда нет и без всякой балки — сказать там «ряд разрывается из-за
+     * выступа» значит соврать замерщику про то, что он видит.
+     */
+    const leftUnderBeam =
+      run.ceilingHeightMm - drop - GEOMETRY.upper.bottomFromFloor;
+    const broken =
+      leftUnderBeam < GEOMETRY.upper.minCarcassH &&
+      under.filter((unit) => unit.kind === 'upper').length === 0 &&
+      run.options.hasUpper &&
+      modules.some((unit) => unit.kind === 'upper');
+
+    if (broken) {
+      out.push({
+        id: `beam-${beam.id}`,
+        severity: 'clarify',
+        message:
+          `Выступ опускается на ${drop} мм: под ним верхнего шкафа не будет вовсе — ` +
+          `осталось меньше ${GEOMETRY.upper.minCarcassH} мм, ряд там разрывается.`,
+        atMm: beam.fromCornerMm,
+      });
+    }
+  }
+
+  return out;
+}
+
+/**
  * ПРАВИЛА МЕБЕЛЬЩИКА, КОТОРЫЕ ВИДНЫ ГЛАЗАМИ НА ОБЪЕКТЕ.
  *
  * Оба про эргономику, и оба жёлтые: раскладка применяется, но замерщик
@@ -406,6 +504,7 @@ export function collectWarnings(input: {
     ...vanityWaterConflicts(input.run, input.comms),
     ...manualPlacementWarnings(input.run, input.hoodRequested),
     ...ergonomicWarnings(input.run),
+    ...beamWarnings(input.run),
     ...fromIssues,
     ...(input.stats ? surveyWarnings(input.stats) : []),
   ];

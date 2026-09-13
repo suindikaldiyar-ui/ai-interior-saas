@@ -12,6 +12,7 @@ import { moveConflict } from '@/lib/millwork/freeRun';
 import { moduleSwatch } from '@/lib/millwork/frontSwatch';
 import { frontOf } from '@/lib/millwork/frontMaterial';
 import { hasFacade } from '@/lib/millwork/applianceFront';
+import { beamDropMm } from '@/lib/millwork/ceiling';
 import { OPENING_TITLE } from '@/lib/millwork/opening';
 import FrontSwatchDefs, { swatchId } from './FrontSwatchDefs';
 import { zoneHeightMm, zoneProfile } from '@/lib/millwork/zones';
@@ -1378,6 +1379,69 @@ export default function ElevationDrawing({
           </text>
         </g>
       ))}
+
+      {/*
+        * РИГЕЛЬ НА ПОТОЛКЕ.
+        *
+        * Цех и замерщик обязаны видеть, ПОЧЕМУ в этом месте шкаф ниже:
+        * без выступа на чертеже разная высота фасадов читается ошибкой
+        * построения, и первый же вопрос на приёмке — «а это что у вас
+        * тут не сошлось».
+        *
+        * Рисуется штриховкой, а не заливкой: лист печатают чёрно-белым,
+        * и сплошная плашка там схлопывается. Числа берутся из тех же
+        * `run.beams`, по которым урезана высота модулей, — второй
+        * источник разошёлся бы с мебелью.
+        */}
+      {(run.beams ?? []).length > 0 && (
+        <g data-beams>
+          <defs>
+            <pattern
+              id="mw-beam-hatch"
+              width={7}
+              height={7}
+              patternUnits="userSpaceOnUse"
+              patternTransform="rotate(45)"
+            >
+              <line x1={0} y1={0} x2={0} y2={7} stroke="var(--blueprint)" strokeWidth={0.8} />
+            </pattern>
+          </defs>
+
+          {(run.beams ?? []).map((beam) => {
+            const drop = beamDropMm(beam);
+            const x = padLeft + beam.fromCornerMm * scale;
+            const w = beam.widthMm * scale;
+            const y = yOf(ceiling);
+            const h = yOf(ceiling - drop) - y;
+
+            return (
+              <g key={beam.id} data-beam={beam.id} pointerEvents="none">
+                <rect
+                  x={x}
+                  y={y}
+                  width={w}
+                  height={h}
+                  fill="url(#mw-beam-hatch)"
+                  stroke="var(--blueprint)"
+                  strokeWidth={0.8 * k}
+                />
+                {!compact && h > 9 && (
+                  <text
+                    className="mw-num"
+                    x={x + w / 2}
+                    y={y + h / 2 + 3}
+                    textAnchor="middle"
+                    fontSize={9}
+                    fill="var(--ink)"
+                  >
+                    Ригель {drop}
+                  </text>
+                )}
+              </g>
+            );
+          })}
+        </g>
+      )}
 
       {/* Цоколь и столешница — контуром, а не заливкой: сплошная плашка
           на печати схлопывается в чёрную полосу, а на синьке не читается.

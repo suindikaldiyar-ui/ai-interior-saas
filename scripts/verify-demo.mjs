@@ -2580,6 +2580,43 @@ try {
       straightRoom ? `пересечений ${straightRoom.intersects}` : '',
     );
 
+    /*
+     * РИГЕЛЬ ВИДЕН В СЦЕНЕ, И РЯД В НЕГО НЕ УПИРАЕТСЯ.
+     *
+     * Замерщику и цеху надо знать, ПОЧЕМУ в этом месте шкаф ниже: без
+     * выступа на экране разная высота фасадов читается ошибкой сборки.
+     * Считается по нарисованному — габарит самой балки против вершин
+     * коробок ряда, а не по данным, из которых она построена.
+     */
+    check(
+      'выступ на потолке нарисован в сцене',
+      Boolean(straightRoom) && straightRoom.beams === 1,
+      straightRoom ? `выступов ${straightRoom.beams}` : '',
+    );
+    check(
+      'и мебель в него не упирается',
+      Boolean(straightRoom) && straightRoom.beamHits === 0,
+      straightRoom ? `вершин внутри балки ${straightRoom.beamHits}` : '',
+    );
+
+    /* И на схеме он тоже есть: чертёж уходит в цех, а сцена — нет. */
+    await lk.locator('[data-schematic-tab="front"]').click();
+    await sleep(1200);
+    /*
+     * У SVG-группы нет `innerText` — это не HTML-элемент, и Playwright
+     * честно падает на нём исключением. Текст со свеса берётся
+     * `textContent`, он есть у любого узла.
+     */
+    const beamText = ((await lk.locator('[data-beams]').count()) > 0
+      ? await lk.locator('[data-beams]').textContent()
+      : '') ?? '';
+    check(
+      'и на фасадной схеме он нарисован со свесом',
+      (await lk.locator('[data-beams] [data-beam]').count()) === 1 &&
+        beamText.includes('Ригель'),
+      beamText.replace(/\s+/g, ' ').trim() || 'группы нет',
+    );
+
     await lk.close();
   }
 

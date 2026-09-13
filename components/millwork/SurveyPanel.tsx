@@ -6,6 +6,7 @@ import SurveyPlan from './SurveyPlan';
 import { compressPhoto } from '@/lib/photo';
 import { dictate } from '@/lib/speech';
 import { buildRun } from '@/lib/millwork/layout';
+import { GEOMETRY } from '@/lib/millwork/modules';
 import { DEFAULT_REQUIREMENTS } from '@/lib/millwork/workspace';
 import {
   COMM_TITLE,
@@ -20,6 +21,7 @@ import {
   type SurveyStep,
   type SurveyWall,
 } from '@/types/survey';
+import { OPENING_KIND_TITLE } from '@/types/millwork';
 import type { CommKind, Module, OpeningKind, Run } from '@/types/millwork';
 
 /**
@@ -39,16 +41,43 @@ type Props = {
   highlightAtMm?: number | null;
 };
 
-const OPENING_KINDS: OpeningKind[] = ['window', 'door', 'niche', 'pipe_box', 'column'];
-const OPENING_TITLE: Record<OpeningKind, string> = {
-  window: 'Окно',
-  door: 'Дверь',
-  arch: 'Арка',
-  niche: 'Ниша',
-  column: 'Колонна',
-  pipe_box: 'Короб',
-};
+const OPENING_KINDS: OpeningKind[] = [
+  'window',
+  'door',
+  'niche',
+  'pipe_box',
+  'column',
+  /*
+   * Ригель — такой же объект стены, как окно, только сверху. Заводится
+   * там же и теми же тремя числами: от угла, ширина и свес.
+   */
+  'beam',
+];
 
+/**
+ * КАКИЕ ВЕЛИЧИНЫ МЕРЯЮТ У ЭТОГО ОБЪЕКТА.
+ *
+ * У ригеля низа от пола нет: он висит на потолке, и замерщик меряет
+ * СВЕС, а не отметку — до потолка он рулеткой не достаёт. Показать ему
+ * поле «Низ от пола» значит попросить число, которого он не знает, и
+ * получить выдуманное.
+ */
+function openingFields(kind: OpeningKind): [ 'fromCornerMm' | 'widthMm' | 'heightMm' | 'sillMm', string ][] {
+  if (kind === 'beam') {
+    return [
+      ['fromCornerMm', 'От левого угла'],
+      ['widthMm', 'Ширина'],
+      ['heightMm', 'Опускается от потолка'],
+    ];
+  }
+
+  return [
+    ['fromCornerMm', 'От левого угла'],
+    ['widthMm', 'Ширина'],
+    ['heightMm', 'Высота'],
+    ['sillMm', 'Низ от пола'],
+  ];
+}
 const COMM_KINDS: CommKind[] = [
   'water_supply',
   'sewer',
@@ -300,7 +329,7 @@ export default function SurveyPanel({
                   >
                     {OPENING_KINDS.map((k) => (
                       <option key={k} value={k}>
-                        {OPENING_TITLE[k]}
+                        {OPENING_KIND_TITLE[k]}
                       </option>
                     ))}
                   </select>
@@ -319,14 +348,7 @@ export default function SurveyPanel({
                 </div>
 
                 <div className="grid grid-cols-2 gap-2">
-                  {(
-                    [
-                      ['fromCornerMm', 'От левого угла'],
-                      ['widthMm', 'Ширина'],
-                      ['heightMm', 'Высота'],
-                      ['sillMm', 'Низ от пола'],
-                    ] as const
-                  ).map(([field, label]) => (
+                  {openingFields(opening.kind).map(([field, label]) => (
                     <KnownField
                       key={field}
                       label={label}
@@ -342,6 +364,14 @@ export default function SurveyPanel({
                     />
                   ))}
                 </div>
+
+                {opening.kind === 'beam' && (
+                  <p className="mt-1 text-[13px] leading-snug text-graphiteMw">
+                    Под выступом верхний ряд и пеналы будут ниже на эту
+                    величину. Если под ним останется меньше{' '}
+                    {GEOMETRY.upper.minCarcassH} мм, ряд там разорвётся.
+                  </p>
+                )}
               </div>
             ))}
 

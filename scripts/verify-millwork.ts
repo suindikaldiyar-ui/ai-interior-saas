@@ -116,7 +116,12 @@ import {
 } from '../lib/millwork/fill';
 import { openingOf, openingRejection } from '../lib/millwork/opening';
 import { columnNichesSumMm, ovenBottomMm } from '../lib/millwork/fill';
-import { ergonomicWarnings, openingAssumptions } from '../lib/millwork/warnings';
+import { beamDropMm } from '../lib/millwork/ceiling';
+import {
+  beamWarnings,
+  ergonomicWarnings,
+  openingAssumptions,
+} from '../lib/millwork/warnings';
 import {
   APPLIANCE_COLUMN,
   FRIDGE_MEZZANINE_MIN_MM,
@@ -129,7 +134,11 @@ import {
   designOps,
   designSummary,
 } from '../lib/millwork/designs';
-import { assertNoOverlap, moduleOverlaps } from '../lib/millwork/invariants';
+import {
+  assertNoOverlap,
+  beamHits,
+  moduleOverlaps,
+} from '../lib/millwork/invariants';
 import { configurationFingerprint } from '../lib/millwork/fingerprint';
 import { panelMaterials, SHELF_PANEL_NAME } from '../lib/millwork/panels';
 import { visibleVariantCount } from '../lib/millwork/frontGlyph';
@@ -249,7 +258,9 @@ import {
 import { buildAutoProjects } from '../lib/millwork/autoProject';
 import { slugify, uniqueSlug } from '../lib/slug';
 import {
+  emptySurvey,
   isEstimatePreliminary,
+  measured,
   resolveSurvey,
   surveyFromMeasurement,
   surveyStats,
@@ -7671,6 +7682,256 @@ console.log('\nЯщики под варочной выдвигаются');
 
     check(`${name}: створок в сцене столько же, сколько фасадов в раскрое`, mismatch === '', mismatch);
   }
+}
+
+/* ───────────────────  Ригель: выступ на потолке  ─────────────────── */
+
+console.log('\nРигель на потолке');
+{
+  /*
+   * РИГЕЛЬ — ЭТО ОБЪЕКТ ЗАМЕРА, КОТОРЫЙ ДОЕЗЖАЕТ ДО РАСКРОЯ.
+   *
+   * В квартире по потолку идёт балка или короб, и шкафы под ним в полную
+   * высоту не встают. Система считала потолок ровным: ряд упирался в
+   * выступ, а узнавали об этом на монтаже — когда мебель уже распилена.
+   */
+  const beam = (fromCornerMm: number, widthMm: number, dropMm: number): Opening => ({
+    id: `beam-${fromCornerMm}`,
+    kind: 'beam',
+    fromCornerMm,
+    widthMm,
+    sillMm: 0,
+    heightMm: dropMm,
+  });
+
+  const toCeiling: RunRequirements = {
+    ...REQ,
+    options: { ...REQ.options, upperToCeiling: true },
+    lockedOptions: ['upperToCeiling'],
+  };
+  const shell = { lengthMm: 3800, ceilingHeightMm: 2700, comms: COMMS };
+
+  const flat = buildRun({ ...shell, requirements: toCeiling, openings: [] });
+  const ribbed = buildRun({
+    ...shell,
+    requirements: toCeiling,
+    openings: [beam(1200, 900, 300)],
+  });
+
+  /* ── 1. Замер доезжает до раскладки ── */
+
+  const survey = emptySurvey();
+  survey.ceilingHeightMm = measured(2700);
+  survey.walls = [
+    {
+      id: 'w1',
+      lengthMm: measured(3800),
+      turn: 'right',
+      turnDeg: 90,
+      isRunWall: true,
+      openings: [
+        {
+          id: 'op-beam',
+          kind: 'beam',
+          fromCornerMm: measured(1200),
+          widthMm: measured(900),
+          heightMm: measured(300),
+          sillMm: measured(0),
+        },
+      ],
+    },
+  ];
+
+  const resolved = resolveSurvey(survey).measurement;
+  const fromSurvey = (resolved.walls[0].openings ?? []).filter(
+    (opening) => opening.kind === 'beam',
+  );
+  check(
+    'ригель из замера доезжает до входных данных ряда',
+    fromSurvey.length === 1 &&
+      fromSurvey[0].fromCornerMm === 1200 &&
+      fromSurvey[0].widthMm === 900 &&
+      beamDropMm(fromSurvey[0]) === 300,
+    JSON.stringify(fromSurvey[0] ?? null),
+  );
+
+  const surveyed = buildRun({
+    ...shell,
+    requirements: toCeiling,
+    openings: resolved.walls[0].openings ?? [],
+  });
+  check(
+    'и ряд собирается с ним: ригель лежит на ряду',
+    (surveyed.beams ?? []).length === 1 && surveyed.fingerprint === ribbed.fingerprint,
+    `${surveyed.fingerprint} · ${ribbed.fingerprint}`,
+  );
+
+  /* ── 2. Верхний ряд под ним ниже, и это видно в раскрое ── */
+
+  const underBeam = (run: Run) =>
+    allModules(run).filter(
+      (unit) =>
+        unit.kind === 'upper' &&
+        unit.offsetMm < 2100 &&
+        unit.offsetMm + unit.widthMm > 1200 &&
+        unit.section !== 'mezzanine',
+    );
+
+  const tallUnder = underBeam(ribbed).map((unit) => moduleCarcassHeightMm(unit, ribbed));
+  const tallFlat = underBeam(flat).map((unit) => moduleCarcassHeightMm(unit, flat));
+  check(
+    'верхний ряд под выступом ниже ровно на его свес',
+    tallUnder.length > 0 &&
+      tallFlat.length > 0 &&
+      Math.max(...tallFlat) - Math.max(...tallUnder) === 300,
+    `${Math.max(...tallFlat)} → ${Math.max(...tallUnder)} мм`,
+  );
+
+  const sideOf = (run: Run, id: string) =>
+    buildPanels({ run }).find(
+      (panel) => panel.moduleId === id && panel.name === 'Боковина',
+    )?.lengthMm;
+
+  const sampleId = underBeam(ribbed)[0]?.id ?? '';
+  check(
+    'и раскрой пилит боковину именно такой высоты',
+    sideOf(ribbed, sampleId) === moduleCarcassHeightMm(underBeam(ribbed)[0], ribbed),
+    `боковина ${sideOf(ribbed, sampleId)} мм`,
+  );
+  check(
+    'ригель меняет отпечаток: ряд под ним — другая мебель',
+    ribbed.fingerprint !== flat.fingerprint,
+    `${flat.fingerprint} → ${ribbed.fingerprint}`,
+  );
+  check(
+    'а без ригеля отпечаток прежний: умолчание в него не пишется',
+    buildRun({ ...shell, requirements: toCeiling, openings: [] }).fingerprint ===
+      flat.fingerprint,
+  );
+
+  /* ── 3. Ряд не пересекает ригель ── */
+
+  const drops = [120, 300, 600, 900, 1000, 1300];
+  const hits = drops
+    .map((drop) => {
+      const run = buildRun({
+        ...shell,
+        requirements: toCeiling,
+        openings: [beam(1200, 900, drop)],
+      });
+      return { drop, hits: beamHits(run) };
+    })
+    .filter((row) => row.hits.length > 0);
+
+  check(
+    'ни один модуль не заходит в выступ — на любом свесе',
+    hits.length === 0,
+    hits.map((row) => `${row.drop}: ${row.hits[0].message}`).join(' ') || 'пересечений нет',
+  );
+
+  /*
+   * Разрыв ряда, как на окне: под выступом, который оставил меньше
+   * полезного шкафа, верхнего ряда нет вовсе.
+   */
+  const deep = buildRun({
+    ...shell,
+    requirements: toCeiling,
+    openings: [beam(1200, 900, 1000)],
+  });
+  check(
+    'осталось меньше полезного шкафа — ряд под выступом разрывается',
+    !allModules(deep).some(
+      (unit) =>
+        unit.kind === 'upper' &&
+        unit.section !== 'mezzanine' &&
+        unit.offsetMm < 2100 &&
+        unit.offsetMm + unit.widthMm > 1200,
+    ),
+    deep.upperSegments.map((seg) => `${seg.fromMm}..${seg.toMm}`).join(' '),
+  );
+  check(
+    'а пока места хватает — шкаф просто ниже, и он остаётся',
+    allModules(
+      buildRun({ ...shell, requirements: toCeiling, openings: [beam(1200, 900, 900)] }),
+    ).some(
+      (unit) =>
+        unit.kind === 'upper' && unit.offsetMm >= 1200 && unit.offsetMm + unit.widthMm <= 2100,
+    ),
+  );
+
+  /* ── 4. Ригель нарисован на чертеже ── */
+
+  const svg = renderToStaticMarkup(createElement(ElevationDrawing, { run: ribbed }));
+  check(
+    'ригель нарисован на фасадном чертеже',
+    svg.includes('data-beams') && svg.includes('data-beam="beam-1200"'),
+    svg.includes('data-beams') ? 'группа есть' : 'группы нет',
+  );
+  check(
+    'и подписан свесом, а не просто заштрихован',
+    svg.includes('Ригель 300'),
+  );
+  check(
+    'на ровном потолке ничего лишнего не рисуется',
+    !renderToStaticMarkup(createElement(ElevationDrawing, { run: flat })).includes('data-beams'),
+  );
+
+  /* ── 5. Предупреждение последствием ── */
+
+  const said = beamWarnings(ribbed);
+  check(
+    'выступ объясняется ПОСЛЕДСТВИЕМ, а не фактом',
+    said.length === 1 &&
+      said[0].severity === 'clarify' &&
+      /Под выступом шкаф ниже на 300 мм/.test(said[0].message) &&
+      said[0].message.includes('не сойдётся'),
+    said[0]?.message,
+  );
+  check(
+    'а разрыв ряда назван разрывом',
+    beamWarnings(deep).some((w) => /ряд там разрывается/.test(w.message)),
+    beamWarnings(deep)[0]?.message,
+  );
+  check(
+    'на ровном потолке продукт молчит',
+    beamWarnings(flat).length === 0,
+  );
+
+  /*
+   * Ригель едет через правки состава: `applyOps` пересобирает верхний ряд
+   * и обязан считать разрыв по ТОМУ ЖЕ ригелю, что урезал высоту.
+   */
+  const edited = applyOps({
+    run: ribbed,
+    requirements: toCeiling,
+    ops: [{ op: 'set_width', moduleId: ribbed.modules[ribbed.modules.length - 1].id, widthMm: 500 }],
+    openings: [],
+  });
+  check(
+    'правка состава не теряет ригель и не ломает высоты',
+    (edited.beams ?? []).length === 1 && beamHits(edited).length === 0,
+    `ригелей ${(edited.beams ?? []).length}, пересечений ${beamHits(edited).length}`,
+  );
+
+  /* Угловая кухня: ригель обрезается по длине своего ряда. */
+  const corner = buildComposition({
+    kind: 'corner_l',
+    walls: [
+      { id: 'a', lengthMm: 3800, openings: [beam(3400, 1200, 300)] },
+      { id: 'b', lengthMm: 2400, openings: [] },
+    ],
+    ceilingHeightMm: 2700,
+    requirements: toCeiling,
+    comms: COMMS,
+  });
+  const first = corner.segments[0].run;
+  check(
+    'в угловой ригель обрезан по полезной длине ряда',
+    (first.beams ?? []).every(
+      (b) => b.fromCornerMm + b.widthMm <= first.lengthMm,
+    ),
+    (first.beams ?? []).map((b) => `${b.fromCornerMm}+${b.widthMm} при ${first.lengthMm}`).join(' '),
+  );
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

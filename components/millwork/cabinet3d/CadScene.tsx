@@ -5,6 +5,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import Cabinet3D from './Cabinet3D';
+import { beamDropMm } from '@/lib/millwork/ceiling';
 import { moduleBoxes, runBoxes, runPlaces } from '@/lib/millwork/cabinetBoxes';
 import { GEOMETRY } from '@/lib/millwork/modules';
 import { frontKey, frontOf } from '@/lib/millwork/frontMaterial';
@@ -359,7 +360,15 @@ function FrameProbe({ rows }: { rows: SceneRow[] }) {
       __mwCadFrames?: () => number;
       __mwCadState?: () => { fronts: string[]; rows: number; camera: number[] };
       __mwCadFit?: () => { visible: boolean; inFront: number; box: number[] };
-      __mwCadRoom?: () => { floors: number; walls: number; intersects: number };
+      __mwCadRoom?: () => {
+        floors: number;
+        walls: number;
+        /** Выступов на потолке нарисовано. */
+        beams: number;
+        /** Вершин мебели ВЫШЕ низа балки, то есть внутри неё. */
+        beamHits: number;
+        intersects: number;
+      };
       __mwCadModules?: () => { drawn: number; ids: string[] };
       __mwCadLook?: () => {
         frontColors: string[];
@@ -557,9 +566,15 @@ function FrameProbe({ rows }: { rows: SceneRow[] }) {
       let floors = 0;
       let walls = 0;
 
+      let beams = 0;
+
       room?.traverse((object) => {
         const mesh = object as THREE.Mesh;
         if (!mesh.isMesh) return;
+        if (mesh.name.startsWith('beam:')) {
+          beams += 1;
+          return;
+        }
         // Пол уложен поворотом на −90° вокруг X, стены стоят вертикально.
         if (Math.abs(mesh.rotation.x) > 1) floors += 1;
         else walls += 1;
@@ -583,7 +598,36 @@ function FrameProbe({ rows }: { rows: SceneRow[] }) {
         }
       }
 
-      return { floors, walls, intersects };
+      /*
+       * РЯД НЕ ПЕРЕСЕКАЕТ РИГЕЛЬ.
+       *
+       * Меряется по НАРИСОВАННОМУ: берётся габарит самой балки в сцене и
+       * вершины коробок ряда. Проверка по числам живёт в движке
+       * (`beamHits` в инвариантах), а эта отвечает на другой вопрос —
+       * то же ли самое видно на экране.
+       */
+      let beamHits = 0;
+      const beamBoxes: THREE.Box3[] = [];
+      room?.traverse((object) => {
+        const mesh = object as THREE.Mesh;
+        if (!mesh.isMesh || !mesh.name.startsWith('beam:')) return;
+        beamBoxes.push(new THREE.Box3().setFromObject(mesh));
+      });
+
+      if (beamBoxes.length > 0) {
+        const corners = rowCorners(rows, true).map((corner) => new THREE.Vector3(...corner));
+        for (const box of beamBoxes) {
+          for (const point of corners) {
+            // Допуск в миллиметр: касание низа балки — это не пересечение.
+            if (point.y <= box.min.y + 0.001) continue;
+            if (point.x < box.min.x + 0.001 || point.x > box.max.x - 0.001) continue;
+            if (point.z < box.min.z - 0.001 || point.z > box.max.z + 0.001) continue;
+            beamHits += 1;
+          }
+        }
+      }
+
+      return { floors, walls, beams, beamHits, intersects };
     };
 
     /*
@@ -810,7 +854,44 @@ function RoomShell({
       };
     });
 
-    return { spanX, spanZ, heightM, walls, center: bounds.center };
+    /*
+     * РИГЕЛЬ — ЧАСТЬ КОМНАТЫ, А НЕ МЕБЕЛИ.
+     *
+     * Он принадлежит потолку, поэтому и живёт в группе комнаты: попади
+     * он в габарит гарнитура, и камера начала бы кадрировать балку, а
+     * счётчик мешей мебели — считать её мебелью.
+     *
+     * Числа те же `run.beams`, по которым урезана высота модулей: ряд
+     * обязан упираться в то, что видно на экране.
+     */
+    const beams = rows.flatMap((row) => {
+      const place = rowPlacement(row);
+      const angle = (place.rotationYDeg * Math.PI) / 180;
+      const cos = Math.cos(angle);
+      const sin = Math.sin(angle);
+      const depthM = GEOMETRY.base.depth / MM;
+
+      return (row.run.beams ?? []).map((beam) => {
+        const dropM = beamDropMm(beam) / MM;
+        const widthM = beam.widthMm / MM;
+        const cx = (beam.fromCornerMm + beam.widthMm / 2) / MM;
+        // Балка идёт от стены вперёд на глубину ряда: под ней и стоит мебель.
+        const localZ = -depthM / 2;
+
+        return {
+          key: `${row.run.id}-${beam.id}`,
+          position: [
+            cx * cos + localZ * sin + place.xM,
+            heightM - dropM / 2,
+            -cx * sin + localZ * cos + place.zM,
+          ] as [number, number, number],
+          rotationY: angle,
+          size: [widthM, dropM, depthM] as [number, number, number],
+        };
+      });
+    });
+
+    return { spanX, spanZ, heightM, walls, beams, center: bounds.center };
   }, [rows, ceilingHeightMm]);
 
   return (
@@ -834,6 +915,19 @@ function RoomShell({
           receiveShadow
         >
           <planeGeometry args={[wall.width, planes.heightM]} />
+        </mesh>
+      ))}
+
+      {/* Выступ на потолке: объём, в который мебель упирается. */}
+      {planes.beams.map((beam) => (
+        <mesh
+          key={beam.key}
+          name={`beam:${beam.key}`}
+          position={beam.position}
+          rotation={[0, beam.rotationY, 0]}
+          material={materials.wall}
+        >
+          <boxGeometry args={beam.size} />
         </mesh>
       ))}
     </group>
