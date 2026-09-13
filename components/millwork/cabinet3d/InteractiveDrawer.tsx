@@ -108,7 +108,7 @@ export default function InteractiveDrawer({
       <mesh
         ref={touch}
         name={`part:${id}`}
-        position={[0, 0, depth / 2]}
+        position={[0, 0, -depth / 2]}
         geometry={parts.box}
         material={parts.hit}
         /*
@@ -141,25 +141,25 @@ export default function InteractiveDrawer({
       <mesh
         geometry={parts.box}
         material={parts.carcass}
-        position={[0, -boxH / 2 + thickness / 2, 0]}
+        position={[0, -boxH / 2 + thickness / 2, -depth / 2]}
         scale={[inner, thickness, depth * 0.9]}
       />
       <mesh
         geometry={parts.box}
         material={parts.carcass}
-        position={[-inner / 2, 0, 0]}
+        position={[-inner / 2, 0, -depth / 2]}
         scale={[thickness, boxH, depth * 0.9]}
       />
       <mesh
         geometry={parts.box}
         material={parts.carcass}
-        position={[inner / 2, 0, 0]}
+        position={[inner / 2, 0, -depth / 2]}
         scale={[thickness, boxH, depth * 0.9]}
       />
       <mesh
         geometry={parts.box}
         material={parts.carcass}
-        position={[0, 0, -depth * 0.45]}
+        position={[0, 0, -depth / 2 - depth * 0.45]}
         scale={[inner, boxH, thickness]}
       />
 
@@ -169,7 +169,7 @@ export default function InteractiveDrawer({
           <mesh
             geometry={parts.box}
             material={frontMaterial ?? parts.front}
-            position={[0, 0, depth / 2 + thickness / 2]}
+            position={[0, 0, thickness / 2]}
             scale={[width - 2 * gap, height - 2 * gap, thickness]}
             castShadow
           />
@@ -179,14 +179,14 @@ export default function InteractiveDrawer({
             <mesh
               geometry={parts.box}
               material={parts.metal}
-              position={[0, height / 2 - gap - 0.01, depth / 2 + thickness + 0.004]}
+              position={[0, height / 2 - gap - 0.01, thickness + 0.004]}
               scale={[width - 2 * gap, 0.02, 0.015]}
             />
           ) : (
             <mesh
               geometry={parts.box}
               material={parts.metal}
-              position={[0, 0, depth / 2 + thickness + 0.012]}
+              position={[0, 0, thickness + 0.012]}
               scale={[Math.min(0.26, width * 0.5), 0.016, 0.016]}
             />
           )}

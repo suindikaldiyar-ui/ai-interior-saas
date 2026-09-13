@@ -95,6 +95,7 @@ import {
   variantsToAdd,
 } from '../lib/millwork/moduleVariants';
 import { gapsIn } from '../lib/millwork/freeRun';
+import { BOTTLE_MAX_MM, variantEstimateKeys } from '../lib/millwork/moduleVariants';
 import { facadeSpans, hasFacade } from '../lib/millwork/applianceFront';
 import {
   TYPICAL_PALETTE,
@@ -130,10 +131,9 @@ import {
 } from '../lib/millwork/designs';
 import { assertNoOverlap, moduleOverlaps } from '../lib/millwork/invariants';
 import { configurationFingerprint } from '../lib/millwork/fingerprint';
-import { panelMaterials } from '../lib/millwork/panels';
+import { panelMaterials, SHELF_PANEL_NAME } from '../lib/millwork/panels';
 import { visibleVariantCount } from '../lib/millwork/frontGlyph';
 import { DEMO_TEMPLATE_ID } from '../lib/millwork/demoProject';
-import type { ProductionSettings } from '../types/catalog';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ElevationDrawing from '../components/millwork/ElevationDrawing';
@@ -149,12 +149,20 @@ import {
 import { axonometryExtentMm, buildAxonometry, project } from '../lib/millwork/axonometry';
 import {
   carcassBoxes,
+  doorCount,
   doorPivot,
+  hasVisibleAppliance,
   moduleBoxes,
+  openablePartIds,
   runBoxes,
   runPlaces,
 } from '../lib/millwork/cabinetBoxes';
-import { DEFAULT_PRODUCTION } from '../types/catalog';
+import {
+  DEFAULT_ALLOWANCES,
+  DEFAULT_PRODUCTION,
+  productionSettings,
+  type ProductionSettings,
+} from '../types/catalog';
 import type { ZoneKind } from '../types/millwork';
 import { commIssues, layoutIssues, validateRun } from '../lib/millwork/validate';
 import {
@@ -167,6 +175,9 @@ import {
 } from '../lib/millwork/invariants';
 import {
   APPLIANCE_SLOTS,
+  applianceTypeOf,
+  applianceWidthMm,
+  nicheHeightMm,
   CORNER,
   CORNER_SIZE_MM,
   moduleAppliances,
@@ -184,6 +195,7 @@ import {
   DEMO_REQUIREMENTS,
 } from '../lib/millwork/demo';
 import type {
+  ApplianceKind,
   CommPoint,
   FrontSpec,
   MillworkOp,
@@ -245,6 +257,27 @@ import {
 
 let failed = 0;
 let passed = 0;
+
+/** Сколько выдвижных ящиков нарисовано у модуля — по коробкам сцены. */
+function drawerBoxCount(unit: Module, run: Run): number {
+  const place = runPlaces(run, {
+    depthM: GEOMETRY.base.depth / 1000,
+    plinthM: GEOMETRY.base.plinthH / 1000,
+  }).find((p) => p.unit.id === unit.id);
+  if (!place) return 0;
+
+  const boxes = moduleBoxes(
+    place.unit,
+    { x: place.x, y: place.y, heightM: place.heightM, depthM: place.depthM, thicknessM: 0.016 },
+    { gapM: 0.003, frontThicknessM: 0.018, integratedHandles: false, cutaway: false },
+  );
+
+  return new Set(
+    boxes
+      .map((box) => box.part)
+      .filter((id): id is string => Boolean(id) && id!.includes(':drawer:')),
+  ).size;
+}
 
 function check(name: string, condition: boolean, detail = '') {
   if (condition) {
@@ -1467,18 +1500,130 @@ console.log('\nВарианты мест');
 
   /* ── Карго вместо мёртвого места ── */
 
+  /*
+   * УЗКИЙ ОСТАТОК — БУТЫЛОЧНИЦА ИЛИ КАРГО, СМОТРЯ ПО ШИРИНЕ.
+   *
+   * До 200 мм карго не бывает: механизм не влезает. Там ставят
+   * бутылочницу — полное выдвижение и корзины под бутылки, другая
+   * фурнитура и другие деньги. Называть одно другим значит подписать
+   * клиента не на тот механизм.
+   */
   const narrow = run.modules.find((m) => !m.appliance && m.widthMm <= CARGO_MAX_MM);
+  const expected = (narrow?.widthMm ?? 0) <= BOTTLE_MAX_MM ? 'bottle' : 'cargo';
+
   check(
-    'узкий остаток стал карго, а не глухой дверцей',
-    narrow?.variant === 'cargo',
+    'узкий остаток стал выдвижным, а не глухой дверцей',
+    narrow?.variant === expected,
     `${narrow?.widthMm} мм · ${narrow?.label}`,
   );
-  check('и подписан как карго', narrow?.label === 'Карго');
+  check(
+    'и подписан тем, чем является',
+    narrow?.label === (expected === 'bottle' ? 'Бутылочница' : 'Карго'),
+    narrow?.label,
+  );
 
   const estimate = buildEstimate(run, MAIN_VARIANT, DEMO_RATES);
-  const cargoLine = estimate.lines.find((l) => l.key === 'cargo_150');
-  check('механизм карго попал в смету', (cargoLine?.quantity ?? 0) > 0,
-    `${cargoLine?.quantity} шт · ${cargoLine?.total} ₸`);
+  const mechanismKeys = narrow ? variantEstimateKeys(narrow) : [];
+  const mechanismLine = estimate.lines.find((l) => mechanismKeys.includes(l.key));
+  check(
+    'механизм этого модуля попал в смету',
+    (mechanismLine?.quantity ?? 0) > 0,
+    `${mechanismLine?.key}: ${mechanismLine?.quantity} шт · ${mechanismLine?.total} ₸`,
+  );
+
+  /* Бутылочница и карго — разные механизмы и разные деньги. */
+  // Ряд 2550 мм оставляет ровно 150 мм — ширину бутылочницы.
+  const bottleRun = buildRun({
+    ...baseInput,
+    lengthMm: 2550,
+    openings: [],
+  });
+  const bottleUnit = bottleRun.modules.find((m) => m.variant === 'bottle');
+  const cargoUnit = run.modules.find((m) => m.variant === 'cargo');
+
+  check(
+    'бутылочница и карго — разные варианты каталога',
+    MODULE_VARIANTS.bottle.title !== MODULE_VARIANTS.cargo.title &&
+      JSON.stringify(MODULE_VARIANTS.bottle.estimateKeys) !==
+        JSON.stringify(MODULE_VARIANTS.cargo.estimateKeys),
+    `${MODULE_VARIANTS.bottle.title} ${MODULE_VARIANTS.bottle.estimateKeys} · ` +
+      `${MODULE_VARIANTS.cargo.title} ${MODULE_VARIANTS.cargo.estimateKeys}`,
+  );
+  check(
+    'и стоят по-разному',
+    DEMO_RATES.bottle_pullout !== DEMO_RATES.cargo_300,
+    `${DEMO_RATES.bottle_pullout} против ${DEMO_RATES.cargo_300} ₸`,
+  );
+  check(
+    'бутылочница появляется на своей ширине',
+    Boolean(bottleUnit) && bottleUnit!.widthMm <= BOTTLE_MAX_MM,
+    bottleUnit ? `${bottleUnit.widthMm} мм · ${bottleUnit.label}` : 'не появилась',
+  );
+  check(
+    'и приносит СВОЙ механизм, а не карго',
+    buildEstimate(bottleRun, MAIN_VARIANT, DEMO_RATES).lines.some(
+      (line) => line.key === 'bottle_pullout' && line.quantity > 0,
+    ) &&
+      !buildEstimate(bottleRun, MAIN_VARIANT, DEMO_RATES).lines.some((line) =>
+        line.key.startsWith('cargo_'),
+      ),
+    buildEstimate(bottleRun, MAIN_VARIANT, DEMO_RATES)
+      .lines.filter((line) => line.key === 'bottle_pullout')
+      .map((line) => `${line.quantity} шт · ${line.total} ₸`)
+      .join(''),
+  );
+  check(
+    'и в раскрое у неё есть свои детали',
+    buildPanels({ run: bottleRun }).some((panel) => panel.moduleId === bottleUnit?.id),
+    `${buildPanels({ run: bottleRun }).filter((p) => p.moduleId === bottleUnit?.id).length} деталей`,
+  );
+
+  /*
+   * КАТАЛОГ МОДУЛЕЙ: бутылочницу ставят руками, а не только получают
+   * остатком. Место под неё — щель 150–200 мм, куда обычный модуль не
+   * встаёт вовсе; в широкий промежуток она не предлагается: 400 мм
+   * бутылочницы не бывает, там карго.
+   */
+  const narrowCatalog = variantsToAdd('kitchen', 180).map((v) => v.spec.kind);
+  const wideCatalog = variantsToAdd('kitchen', 900).map((v) => v.spec.kind);
+  check(
+    'бутылочница есть в каталоге модулей',
+    narrowCatalog.includes('bottle'),
+    narrowCatalog.join(', ') || 'каталог пуст',
+  );
+  check(
+    'в щель 180 мм карго не предлагается, а бутылочница предлагается',
+    narrowCatalog.includes('bottle') && !narrowCatalog.includes('cargo'),
+    `в 180 мм: ${narrowCatalog.join(', ')}`,
+  );
+  /*
+   * В широкий промежуток она тоже предлагается — но СВОЕЙ ширины: в 900 мм
+   * ставят бутылочницу 200 и рядом что-то ещё, а не бутылочницу на 900,
+   * которой не бывает.
+   */
+  const wideBottle = variantsToAdd('kitchen', 900).find((v) => v.spec.kind === 'bottle');
+  check(
+    'в широком промежутке она предлагается своей ширины, а не на весь промежуток',
+    wideBottle?.widthMm === BOTTLE_MAX_MM,
+    `${wideBottle?.widthMm} мм при промежутке 900 · ${wideCatalog.length} вариантов`,
+  );
+
+  const freeReq: RunRequirements = { ...REQ, mode: 'free', appliances: [], sections: [] };
+  const bottleAdded = applyOps({
+    run: buildRun({ ...baseInput, lengthMm: 3200, requirements: freeReq, openings: [] }),
+    requirements: freeReq,
+    ops: [{ op: 'add_module', kind: 'base', widthMm: 180, variant: 'bottle' }],
+  });
+  const added = bottleAdded.modules.find((m) => m.variant === 'bottle');
+  check(
+    'поставленная руками бутылочница несёт свой механизм в смету',
+    Boolean(added) &&
+      buildEstimate(bottleAdded, MAIN_VARIANT, DEMO_RATES).lines.some(
+        (line) => line.key === 'bottle_pullout' && line.quantity > 0,
+      ),
+    added ? `${added.widthMm} мм · ${added.label}` : 'не встала',
+  );
+  void cargoUnit;
 
   // Уже 150 мм карго не бывает: такой огрызок прирастает к соседу.
   const tiny = buildRun({
@@ -2904,6 +3049,76 @@ console.log('\nДетализировка');
     'зазор фасада берётся из настроек цеха',
     Boolean(front3 && front4) && front3!.lengthMm === front4!.lengthMm + 1,
     `${front4?.lengthMm} → ${front3?.lengthMm}`,
+  );
+
+  /*
+   * ПРИПУСКИ — НАСТРОЙКА ЦЕХА, А НЕ КОНСТАНТА КОДА.
+   *
+   * «Модуль 900 — столешница минус 40, что-то ещё минус 60»: у каждой
+   * компании свои числа, и захардкоженные они делают раскрой неверным
+   * для половины клиентов. Проверяем ровно то, что важно мебельщику:
+   * ДВЕ ОРГАНИЗАЦИИ С РАЗНЫМИ ПРИПУСКАМИ ПОЛУЧАЮТ РАЗНЫЙ РАСКРОЙ.
+   */
+  const orgA: ProductionSettings = {
+    ...DEFAULT_PRODUCTION,
+    allowances: { shelfSideMm: 2, shelfDepthMm: 20, dividerDepthMm: 20, backInsetMm: 8 },
+  };
+  const orgB: ProductionSettings = {
+    ...DEFAULT_PRODUCTION,
+    allowances: { shelfSideMm: 6, shelfDepthMm: 50, dividerDepthMm: 40, backInsetMm: 14 },
+  };
+
+  const cutA = buildPanels({ run, production: orgA });
+  const cutB = buildPanels({ run, production: orgB });
+
+  const shelfA = cutA.find((panel) => panel.name === SHELF_PANEL_NAME);
+  const shelfB = cutB.find((panel) => panel.name === SHELF_PANEL_NAME);
+  check(
+    'полка уже проёма ровно на припуск организации',
+    Boolean(shelfA && shelfB) && shelfB!.lengthMm === shelfA!.lengthMm - 4,
+    `А ${shelfA?.lengthMm} мм · Б ${shelfB?.lengthMm} мм`,
+  );
+  check(
+    'глубина полки идёт из припуска организации',
+    Boolean(shelfA && shelfB) && shelfB!.widthMm === shelfA!.widthMm - 30,
+    `А ${shelfA?.widthMm} мм · Б ${shelfB?.widthMm} мм`,
+  );
+
+  const backA = cutA.find((panel) => panel.name.startsWith('Задняя'));
+  const backB = cutB.find((panel) => panel.name.startsWith('Задняя'));
+  check(
+    'вкладная задняя стенка садится по припуску организации',
+    Boolean(backA && backB) &&
+      backB!.lengthMm === backA!.lengthMm - 6 &&
+      backB!.widthMm === backA!.widthMm - 6,
+    `А ${backA?.lengthMm} мм · Б ${backB?.lengthMm} мм`,
+  );
+
+  check(
+    'две организации с разными припусками дают разный раскрой',
+    JSON.stringify(cutA) !== JSON.stringify(cutB) &&
+      panelMaterials(cutA).shelfM2 !== panelMaterials(cutB).shelfM2 &&
+      panelMaterials(cutA).backM2 !== panelMaterials(cutB).backM2,
+    `полки ${panelMaterials(cutA).shelfM2} → ${panelMaterials(cutB).shelfM2} м², ` +
+      `ХДФ ${panelMaterials(cutA).backM2} → ${panelMaterials(cutB).backM2} м²`,
+  );
+
+  /*
+   * Одни и те же припуски дают один раскрой — иначе настройка стала бы
+   * источником плавающих чисел, а не источником правды.
+   */
+  check(
+    'те же припуски дают тот же раскрой',
+    JSON.stringify(buildPanels({ run, production: orgB })) === JSON.stringify(cutB),
+  );
+
+  // Припуски приезжают из базы мусором чаще, чем числами.
+  const parsed = productionSettings({ ...orgB, allowances: { shelfSideMm: -5, shelfDepthMm: 33 } });
+  check(
+    'отрицательный припуск не принимается, заданный — принимается',
+    parsed.allowances.shelfSideMm === DEFAULT_ALLOWANCES.shelfSideMm &&
+      parsed.allowances.shelfDepthMm === 33,
+    JSON.stringify(parsed.allowances),
   );
 
   // Выгрузка для раскроя: разделитель, колонки и кириллица без искажений.
@@ -7143,6 +7358,319 @@ console.log('\nПрибор один на кухню, и у него есть с
     ),
     ergonomicWarnings(ovenTop).find((w) => w.message.includes('Низ духовки'))?.message,
   );
+}
+
+/* ───────────────────  Исполнение прибора: тип даёт габариты  ─────────────────── */
+
+console.log('\nТипы техники: своя ширина и своя ниша');
+{
+  /*
+   * ТИП — ЭТО НАБОР УМОЛЧАНИЙ, А НЕ НОВЫЙ ПРИБОР.
+   *
+   * Мебельщик заказывает не «вытяжку», а купольную; не «варочную», а
+   * газовую. Пока тип был один на прибор, ширину и нишу приходилось
+   * вводить руками каждый раз — а «каждый раз» означает «иногда забыли».
+   */
+  const base = { lengthMm: 3800, ceilingHeightMm: 2700, openings: [], comms: [] };
+  const withType = (types: NonNullable<RunRequirements['applianceTypes']>) =>
+    buildRun({
+      ...base,
+      requirements: {
+        ...REQ,
+        appliances: ['fridge', 'sink600', 'hob', 'hood'] as ApplianceKind[],
+        applianceTypes: types,
+      },
+    });
+
+  check(
+    'у каждого типа своя ширина',
+    applianceWidthMm('hood', undefined, { hood: 'hood_dome' }) === 900 &&
+      applianceWidthMm('hood', undefined, { hood: 'hood_builtin' }) === 600,
+    `купольная ${applianceWidthMm('hood', undefined, { hood: 'hood_dome' })} мм · ` +
+      `встроенная ${applianceWidthMm('hood', undefined, { hood: 'hood_builtin' })} мм`,
+  );
+
+  const nicheOf = (id: string) =>
+    nicheHeightMm('microwave', undefined, applianceTypeOf('microwave', { microwave: id }));
+  check(
+    'и своя ниша',
+    nicheOf('microwave_table') !== nicheOf('microwave_builtin'),
+    `настольная ${nicheOf('microwave_table')} мм · встроенная ${nicheOf('microwave_builtin')} мм`,
+  );
+
+  /*
+   * Умолчание — первый тип списка, и оно обязано совпасть с прежним
+   * отраслевым стандартом: иначе новый слой молча пересчитал бы всем
+   * сохранённым кухням ширины приборов.
+   */
+  check(
+    'умолчание типа совпадает с отраслевым стандартом',
+    (['hob', 'oven', 'hood', 'microwave'] as ApplianceKind[]).every(
+      (kind) => applianceWidthMm(kind) === APPLIANCE_SLOTS[kind].widthMm,
+    ),
+    (['hob', 'oven', 'hood', 'microwave'] as ApplianceKind[])
+      .map((k) => `${k} ${applianceWidthMm(k)}`)
+      .join(' · '),
+  );
+
+  const dome = withType({ hood: 'hood_dome' });
+  const builtin = withType({ hood: 'hood_builtin' });
+
+  const hoodOf = (r: Run) => allModules(r).find((unit) => unit.appliance === 'hood');
+
+  check(
+    'ширина модуля вытяжки приходит из типа',
+    (hoodOf(dome)?.widthMm ?? 0) === 900 && (hoodOf(builtin)?.widthMm ?? 0) === 600,
+    `купольная ${hoodOf(dome)?.widthMm} мм · встроенная ${hoodOf(builtin)?.widthMm} мм`,
+  );
+  check(
+    'купольная вытяжка меняет ряд, а не только подпись',
+    dome.fingerprint !== builtin.fingerprint,
+    `${builtin.fingerprint} → ${dome.fingerprint}`,
+  );
+
+  /*
+   * ЗАМЕРЕННОЕ СИЛЬНЕЕ ТИПОВОГО. Тип — это то, что обычно бывает; замер —
+   * то, что стоит у клиента на кухне. Иначе введённый габарит молча
+   * возвращался бы к типовому, а это самая дорогая ошибка из возможных.
+   */
+  check(
+    'замеренная ширина сильнее типовой',
+    applianceWidthMm('hood', { hood: { widthMm: 700 } }, { hood: 'hood_dome' }) === 700,
+    `${applianceWidthMm('hood', { hood: { widthMm: 700 } }, { hood: 'hood_dome' })} мм`,
+  );
+
+  const gas = withType({ hob: 'hob_gas' });
+  const electric = withType({ hob: 'hob_electric' });
+  check(
+    'газовая и электрическая — разная глубина прибора',
+    applianceTypeOf('hob', { hob: 'hob_gas' })?.depthMm !==
+      applianceTypeOf('hob', { hob: 'hob_electric' })?.depthMm,
+    `газ ${applianceTypeOf('hob', { hob: 'hob_gas' })?.depthMm} мм · ` +
+      `электро ${applianceTypeOf('hob', { hob: 'hob_electric' })?.depthMm} мм`,
+  );
+  check(
+    'а ряд от смены варочной не разваливается',
+    gas.modules.length === electric.modules.length &&
+      gas.modules.reduce((sum, unit) => sum + unit.widthMm, 0) ===
+        electric.modules.reduce((sum, unit) => sum + unit.widthMm, 0),
+    `${gas.modules.length} модулей, ${gas.modules.reduce((sum, u) => sum + u.widthMm, 0)} мм`,
+  );
+
+  /*
+   * Тип доезжает до модуля ГАБАРИТАМИ, а не идентификатором: раскрой и
+   * смета читают миллиметры, и второго словаря типов у них быть не должно.
+   */
+  check(
+    'тип доезжает до модуля габаритами',
+    (hoodOf(dome)?.applianceSizes?.hood?.widthMm ?? 0) === 900,
+    JSON.stringify(hoodOf(dome)?.applianceSizes?.hood ?? null),
+  );
+
+  // Детерминизм: тип не должен приносить плавающих чисел.
+  check(
+    'тот же тип даёт тот же ряд',
+    withType({ hood: 'hood_dome' }).fingerprint === dome.fingerprint,
+  );
+
+  /*
+   * УМОЛЧАНИЕ В ДАННЫЕ НЕ ПИШЕТСЯ (ловушка 246).
+   *
+   * Записанное, оно сдвинуло бы отпечатки ВСЕХ сохранённых кухонь разом
+   * и потянуло бы за собой раскрой: паспортная глубина духовки 560 + 20
+   * просвета отодвигает пенал на 20 мм, и в смете появляются метры,
+   * которых не было. Измерено: 1 650 499 ₸ → 1 651 667 ₸ на демо-ряду,
+   * при том что человек ничего не выбирал.
+   */
+  const none = withType({});
+  const explicitDefault = withType({ hob: 'hob_electric', hood: 'hood_builtin' });
+  check(
+    'типовое исполнение не меняет ни отпечаток, ни раскрой',
+    none.fingerprint === explicitDefault.fingerprint &&
+      JSON.stringify(buildPanels({ run: none })) ===
+        JSON.stringify(buildPanels({ run: explicitDefault })),
+    `${none.fingerprint} · ${explicitDefault.fingerprint}`,
+  );
+  check(
+    'и габариты типового прибора в модуль не пишутся',
+    allModules(none)
+      .filter((unit) => unit.appliance)
+      .every((unit) => unit.applianceSizes === undefined),
+    JSON.stringify(
+      allModules(none)
+        .filter((unit) => unit.applianceSizes)
+        .map((unit) => `${unit.label}: ${JSON.stringify(unit.applianceSizes)}`),
+    ),
+  );
+  check(
+    'а выбранное — пишется: это другая мебель',
+    hoodOf(dome)?.applianceSizes?.hood !== undefined &&
+      dome.fingerprint !== none.fingerprint,
+    JSON.stringify(hoodOf(dome)?.applianceSizes?.hood ?? null),
+  );
+
+  // Неизвестный тип — это не поломка: остаётся типовое исполнение.
+  check(
+    'мусор в типе не роняет расчёт',
+    applianceWidthMm('hood', undefined, { hood: 'нет-такого' }) ===
+      applianceWidthMm('hood', undefined, { hood: 'hood_builtin' }),
+    `${applianceWidthMm('hood', undefined, { hood: 'нет-такого' })} мм`,
+  );
+}
+
+/* ───────────────────  Фронт у модуля один: створки ИЛИ ящики  ─────────────────── */
+
+console.log('\nЯщики под варочной выдвигаются');
+{
+  /*
+   * ЯЩИКИ ПОД ВАРОЧНОЙ — ОБЫЧНЫЕ ЯЩИКИ.
+   *
+   * Модуль под варочной панелью числился «нишей», и сцена оставляла там
+   * глухую панель: на чертеже два фронта, в раскрое два фронта, а взяться
+   * за них нельзя. Прибор занимает нишу сверху, под ним ящики (слой 34),
+   * и выдвигаются они так же, как у соседей.
+   */
+  const kitchen = buildRun({
+    lengthMm: 3800,
+    ceilingHeightMm: 2700,
+    requirements: {
+      ...REQ,
+      appliances: ['fridge', 'sink600', 'dishwasher45', 'hob', 'hood', 'oven'] as ApplianceKind[],
+    },
+    openings: [],
+    comms: COMMS,
+  });
+
+  const hob = kitchen.modules.find((unit) => unit.appliance === 'hob')!;
+  const drawerIds = openablePartIds(kitchen).filter((id) => id.startsWith(`${hob.id}:drawer:`));
+
+  check(
+    'у модуля под варочной есть фронты ящиков',
+    (hob.fill?.drawerHeights.length ?? 0) > 0,
+    JSON.stringify(hob.fill?.drawerHeights),
+  );
+  check(
+    'и столько же ящиков в сцене',
+    drawerBoxCount(hob, kitchen) === hob.fill!.drawerHeights.length,
+    `${drawerBoxCount(hob, kitchen)} ящиков в сцене`,
+  );
+  check(
+    '«Открыть всё» знает про них',
+    drawerIds.length === hob.fill!.drawerHeights.length,
+    drawerIds.join(', ') || 'ни одного',
+  );
+
+  /*
+   * ОТКРЫВАЕТСЯ РОВНО ТО, ЧТО НАРИСОВАНО. Два списка — «что рисуем» и
+   * «что открываем» — расходились молча: ящики под варочной рисовались и
+   * не открывались, а у ящичного модуля числилась створка, которой в
+   * сцене нет.
+   */
+  const movable = (run: Run) =>
+    runPlaces(run, { depthM: GEOMETRY.base.depth / 1000, plinthM: GEOMETRY.base.plinthH / 1000 })
+      .flatMap((place) =>
+        moduleBoxes(
+          place.unit,
+          {
+            x: place.x,
+            y: place.y,
+            heightM: place.heightM,
+            depthM: place.depthM,
+            thicknessM: 0.016,
+          },
+          { gapM: 0.003, frontThicknessM: 0.018, integratedHandles: false, cutaway: false },
+        ),
+      )
+      .map((box) => box.part)
+      .filter((id): id is string => Boolean(id));
+
+  const drawn = new Set(movable(kitchen));
+  const openable = new Set(openablePartIds(kitchen));
+  check(
+    'список открываемого совпадает с нарисованным',
+    openablePartIds(kitchen).every((id) => drawn.has(id)) &&
+      Array.from(drawn).every((id) => openable.has(id)),
+    `нарисовано ${drawn.size}, открывается ${openable.size}`,
+  );
+
+  /*
+   * СТВОРКИ ПОВЕРХ ЯЩИКОВ НЕ БЫВАЕТ.
+   *
+   * `Math.max(1, doorCount)` подставлял створку там, где её нет в данных,
+   * — и вешал её на фронты ящиков и на открытую секцию. В раскрое ни
+   * той, ни другой нет, то есть сцена показывала мебель, которой цех не
+   * сделает. В демо таких модулей нет, поэтому этого никто не видел.
+   */
+  const freeReq2: RunRequirements = { ...REQ, mode: 'free', appliances: [], sections: [] };
+  const hand = applyOps({
+    run: buildRun({
+      lengthMm: 3600,
+      ceilingHeightMm: 2700,
+      requirements: freeReq2,
+      openings: [],
+      comms: [],
+    }),
+    requirements: freeReq2,
+    ops: [
+      { op: 'add_module', kind: 'base', widthMm: 600, variant: 'drawers' },
+      { op: 'add_module', kind: 'base', widthMm: 600, variant: 'open_base' },
+      { op: 'add_module', kind: 'base', widthMm: 600, variant: 'door' },
+    ],
+  });
+
+  const drawersUnit = hand.modules.find((unit) => unit.frontType === 'drawers')!;
+  const openUnit = hand.modules.find((unit) => unit.frontType === 'none')!;
+  const doorUnit = hand.modules.find((unit) => unit.frontType === 'door')!;
+
+  check(
+    'у ящичного модуля створок нет ни одной',
+    doorCount(drawersUnit) === 0 &&
+      !openablePartIds(hand).some((id) => id === `${drawersUnit.id}:door:0`),
+    `${doorCount(drawersUnit)} створок при ${drawersUnit.fill?.drawerHeights.length} ящиках`,
+  );
+  check(
+    'у открытой секции створки тоже нет',
+    doorCount(openUnit) === 0,
+    `${doorCount(openUnit)} створок`,
+  );
+  check(
+    'а у дверцы она есть',
+    doorCount(doorUnit) === 1,
+    `${doorCount(doorUnit)} створка`,
+  );
+
+  /*
+   * И ГЛАВНОЕ: СЦЕНА СОГЛАСНА С РАСКРОЕМ. Фасадных деталей в раскрое
+   * столько же, сколько створок нарисовано, — иначе клиент выбирает
+   * глазами одно, а цех пилит другое.
+   */
+  for (const [name, run] of [['кухня', kitchen], ['собранный руками ряд', hand]] as const) {
+    const cut = buildPanels({ run });
+    let mismatch = '';
+
+    for (const unit of allModules(run)) {
+      const facades = cut
+        .filter((panel) => panel.moduleId === unit.id && panel.name === 'Фасад')
+        .reduce((sum, panel) => sum + panel.qty, 0);
+      const scene = doorCount(unit);
+
+      /*
+       * Фасад колонны режется участками над нишей и под ней: там своя
+       * раскладка, и створок в сцене у колонны нет вовсе.
+       *
+       * ВСТРОЕННЫЙ ХОЛОДИЛЬНИК — ИЗВЕСТНОЕ РАСХОЖДЕНИЕ, И ОНО НАЗВАНО.
+       * В раскрое у него две створки друг над другом (дверь камеры и
+       * дверь морозильника, `BUILT_IN_FRIDGE_FRONTS`), а сцена рисует
+       * одно полотно во всю высоту: створки в ней раскладываются только
+       * В РЯД, вертикальной раскладки у неё нет вовсе. Число деталей и
+       * петель в смете при этом верное — расходится картинка.
+       */
+      if (unit.column || hasVisibleAppliance(unit) || unit.builtIn) continue;
+      if (facades !== scene) mismatch = `${unit.label}: раскрой ${facades}, сцена ${scene}`;
+    }
+
+    check(`${name}: створок в сцене столько же, сколько фасадов в раскрое`, mismatch === '', mismatch);
+  }
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

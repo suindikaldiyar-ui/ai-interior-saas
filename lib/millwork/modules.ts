@@ -122,14 +122,161 @@ export const APPLIANCE_COLUMN = {
  */
 export const FRIDGE_MEZZANINE_MIN_MM = 300;
 
+/**
+ * ТИПЫ ПРИБОРОВ: ХОДОВЫЕ ИСПОЛНЕНИЯ.
+ *
+ * Мебельщик не заказывает «варочную» — он заказывает газовую или
+ * электрическую, и у них разные вырезы; вытяжка бывает встроенной,
+ * наклонной и купольной, и это разные ширины и разные ниши. Пока тип
+ * был один на прибор, всё это приходилось держать в голове и вводить
+ * руками каждый раз.
+ *
+ * Тип — это НАБОР УМОЛЧАНИЙ, а не новый прибор: `ApplianceKind` остаётся
+ * прежним, и ни зоны, ни шаблоны, ни промпт о нём не знают. Введённый
+ * руками габарит по-прежнему сильнее типа: `applianceSizes` — это то,
+ * что замерили, а тип — то, что обычно бывает.
+ */
+export type ApplianceType = {
+  id: string;
+  title: string;
+  /** Ширина прибора, мм. */
+  widthMm: number;
+  /** Высота ниши, мм. Пусто — ниша прибору не нужна. */
+  nicheHMm?: number;
+  /** Глубина прибора, мм: от неё зависит глубина корпуса. */
+  depthMm?: number;
+  /** Одна строка про то, чем этот тип отличается. */
+  hint?: string;
+};
+
+export const APPLIANCE_TYPES: Partial<Record<ApplianceKind, ApplianceType[]>> = {
+  hob: [
+    {
+      id: 'hob_electric',
+      title: 'Электрическая',
+      widthMm: 600,
+      depthMm: 520,
+      hint: 'стеклокерамика или индукция: вырез 560×490',
+    },
+    {
+      id: 'hob_gas',
+      title: 'Газовая',
+      widthMm: 600,
+      depthMm: 510,
+      hint: 'решётки и вырез под конфорки; рядом нужен газовый вывод',
+    },
+  ],
+  oven: [
+    {
+      id: 'oven_builtin',
+      title: 'Встроенная',
+      widthMm: 600,
+      nicheHMm: 595,
+      depthMm: 560,
+      hint: 'в колонну или под столешницу, ниша 595 мм',
+    },
+    {
+      id: 'oven_free',
+      title: 'Отдельностоящая',
+      widthMm: 600,
+      depthMm: 600,
+      hint: 'плита целиком: ниши нет, между модулями остаётся проём',
+    },
+  ],
+  hood: [
+    {
+      id: 'hood_builtin',
+      title: 'Встроенная',
+      widthMm: 600,
+      nicheHMm: 300,
+      depthMm: 300,
+      hint: 'прячется в шкаф, снаружи видна только панель',
+    },
+    {
+      id: 'hood_slant',
+      title: 'Наклонная',
+      widthMm: 600,
+      depthMm: 380,
+      hint: 'стоит вместо шкафа над варочной',
+    },
+    {
+      id: 'hood_dome',
+      title: 'Купольная',
+      widthMm: 900,
+      depthMm: 500,
+      hint: 'шире варочной; верхний ряд разрывается под неё',
+    },
+  ],
+  microwave: [
+    {
+      id: 'microwave_builtin',
+      title: 'Встроенная',
+      widthMm: 600,
+      nicheHMm: 400,
+      depthMm: 560,
+      hint: 'в колонну с духовкой, ниша 380–450 мм',
+    },
+    {
+      id: 'microwave_table',
+      title: 'Настольная',
+      widthMm: 500,
+      nicheHMm: 320,
+      depthMm: 400,
+      hint: 'ставится в открытую нишу, ниша выше прибора на вентиляцию',
+    },
+  ],
+};
+
+/**
+ * ВЫБРАННОЕ исполнение прибора — или ничего, если оно типовое.
+ *
+ * Умолчание в данные НЕ ПИШЕТСЯ (ловушка 246). Запиши — и габариты
+ * типового прибора попадут в каждый модуль: отпечатки всех сохранённых
+ * кухонь поедут разом, а глубина корпуса потянется за паспортной
+ * глубиной прибора (духовка 560 + 20 просвета отодвинули бы пенал на
+ * 20 мм и добавили метров в раскрой). Типовые числа и так знают
+ * `applianceWidthMm` и `nicheHeightMm` — им незачем лежать в модуле.
+ *
+ * В модуль едет только то, что ВЫБРАЛИ: газовая вместо электрической,
+ * купольная вместо встроенной. Это другая мебель, и отпечаток обязан
+ * её различать.
+ */
+export function chosenApplianceType(
+  appliance: ApplianceKind,
+  chosen?: Partial<Record<ApplianceKind, string>>,
+): ApplianceType | null {
+  const list = APPLIANCE_TYPES[appliance];
+  if (!list || list.length === 0) return null;
+
+  const type = list.find((item) => item.id === chosen?.[appliance]);
+  return type && type !== list[0] ? type : null;
+}
+
+/** Тип прибора по выбору; пусто — первый в списке, он же типовой. */
+export function applianceTypeOf(
+  appliance: ApplianceKind,
+  chosen?: Partial<Record<ApplianceKind, string>>,
+): ApplianceType | null {
+  const list = APPLIANCE_TYPES[appliance];
+  if (!list || list.length === 0) return null;
+  const id = chosen?.[appliance];
+  return list.find((type) => type.id === id) ?? list[0];
+}
+
 /** Высота ниши прибора: духовка 595, микроволновка 400. */
-export function nicheHeightMm(appliance: ApplianceKind, size?: ApplianceSize): number {
+export function nicheHeightMm(
+  appliance: ApplianceKind,
+  size?: ApplianceSize,
+  /** Тип прибора: у купольной вытяжки и настольной СВЧ ниша своя. */
+  type?: ApplianceType | null,
+): number {
   /*
    * Ниша считается от ВЫСОТЫ ПРИБОРА, если она задана: паспортные 595 у
    * духовки — это стандарт, а не закон, и прибор клиента может быть
    * другим. Зазор вокруг прибора при этом остаётся наш: его считает код.
    */
   if (size?.heightMm) return size.heightMm + NICHE_CLEARANCE_MM;
+  if (type?.nicheHMm) return type.nicheHMm;
   return APPLIANCE_SLOTS[appliance].nicheHMm ?? 0;
 }
 
@@ -151,9 +298,18 @@ export const NICHE_CLEARANCE_MM = 10;
 export function applianceWidthMm(
   appliance: ApplianceKind,
   sizes?: Partial<Record<ApplianceKind, ApplianceSize>>,
+  /**
+   * Выбранные типы приборов. Купольная вытяжка шире встроенной, и
+   * ширина обязана прийти оттуда, а не из головы замерщика.
+   */
+  types?: Partial<Record<ApplianceKind, string>>,
 ): number {
   const custom = sizes?.[appliance]?.widthMm;
-  return custom && custom > 0 ? Math.round(custom) : APPLIANCE_SLOTS[appliance].widthMm;
+  if (custom && custom > 0) return Math.round(custom);
+
+  // Замеренное сильнее типового, типовое сильнее общего умолчания.
+  const type = applianceTypeOf(appliance, types);
+  return type?.widthMm ?? APPLIANCE_SLOTS[appliance].widthMm;
 }
 
 /**

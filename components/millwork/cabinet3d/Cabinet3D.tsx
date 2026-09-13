@@ -7,7 +7,12 @@ import CabinetModule3D from './CabinetModule3D';
 import InstancedBoxes from './InstancedBoxes';
 import ModuleHandles from './ModuleHandles';
 import SceneCamera, { type OrthoProjection } from './SceneCamera';
-import { moduleBoxes, type BoxMaterial, type PartBox } from '@/lib/millwork/cabinetBoxes';
+import {
+  moduleBoxes,
+  openablePartIds,
+  type BoxMaterial,
+  type PartBox,
+} from '@/lib/millwork/cabinetBoxes';
 import { useCabinetParts, useFrontMaterials, useSurfaceLook } from './parts';
 import { DEFAULT_FRONT, frontKey, frontOf } from '@/lib/millwork/frontMaterial';
 import type { FrontSpec } from '@/types/millwork';
@@ -32,6 +37,13 @@ import type { Module, Run } from '@/types/millwork';
  * И она закрывает главный пробел: клиент не умеет читать чертёж, но
  * открытый ящик понимает без объяснений.
  */
+
+/*
+ * Список открываемого лежит рядом с коробками сцены: это одно и то же
+ * знание — что нарисовано подвижным. Здесь он только переэкспортируется,
+ * чтобы панель над сценой не тянула три.js ради одного списка.
+ */
+export { openablePartIds };
 
 const MM = 1000;
 
@@ -121,10 +133,22 @@ export default function Cabinet3D({
    * не видно, а именно оно тут и проверяется. Только чтение.
    */
   useEffect(() => {
-    const w = window as unknown as { __mwOpenParts?: () => number };
+    const w = window as unknown as {
+      __mwOpenParts?: () => number;
+      __mwOpenIds?: () => string[];
+    };
     w.__mwOpenParts = () => useInteriorStore.getState().openParts.length;
+    /*
+     * ЧТО ИМЕННО ОТКРЫТО, А НЕ СКОЛЬКО.
+     *
+     * «Ящики под варочной не открываются» числом не ловится: элементов
+     * открылось много, а нужных среди них не было. Приёмка спрашивает
+     * идентификаторы — в них есть и модуль, и роль детали.
+     */
+    w.__mwOpenIds = () => [...useInteriorStore.getState().openParts];
     return () => {
       delete w.__mwOpenParts;
+      delete w.__mwOpenIds;
     };
   }, []);
 
@@ -813,21 +837,4 @@ function SceneProbe({ group }: { group: React.RefObject<THREE.Group> }) {
   }, [scene, camera, gl, group]);
 
   return null;
-}
-
-/** Все открываемые элементы ряда: по ним работает «Открыть всё». */
-export function openablePartIds(run: Run): string[] {
-  const ids: string[] = [];
-
-  for (const unit of [...run.modules, ...run.upperSegments.flatMap((s) => s.modules)]) {
-    if (unit.appliance) continue;
-
-    unit.fill?.drawerHeights.forEach((_, i) => ids.push(`${unit.id}:drawer:${i}`));
-
-    if (unit.frontType === 'door') {
-      for (let i = 0; i < unit.doorCount; i++) ids.push(`${unit.id}:door:${i}`);
-    }
-  }
-
-  return ids;
 }

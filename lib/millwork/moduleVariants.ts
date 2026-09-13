@@ -156,16 +156,35 @@ export const MODULE_VARIANTS: Record<ModuleVariantKind, ModuleVariantSpec> = {
     frontType: 'drawers',
     drawerCount: 2,
   },
+  /**
+   * БУТЫЛОЧНИЦА — СВОЙ МОДУЛЬ, А НЕ УЗКОЕ КАРГО.
+   *
+   * Узкий выдвижной на 150–200 мм: направляющие полного выдвижения и
+   * две-три корзины под бутылки. Карго — другой механизм и другие
+   * деньги, и называть одно другим значит подписать клиента на не ту
+   * фурнитуру.
+   */
+  bottle: {
+    kind: 'bottle',
+    title: 'Бутылочница',
+    hint: 'узкий выдвижной на полном выдвижении, корзины под бутылки',
+    row: 'base',
+    minWidthMm: 150,
+    maxWidthMm: 200,
+    frontType: 'door',
+    pullOut: true,
+    estimateKeys: ['bottle_pullout'],
+  },
   cargo: {
     kind: 'cargo',
     title: 'Карго',
-    hint: 'выдвижная бутылочница в узкое место',
+    hint: 'выдвижные полки под бакалею',
     row: 'base',
-    minWidthMm: 150,
+    minWidthMm: 200,
     maxWidthMm: 400,
     frontType: 'door',
     pullOut: true,
-    estimateKeys: ['cargo_150'],
+    estimateKeys: ['cargo_300'],
   },
   sink_base: {
     kind: 'sink_base',
@@ -369,7 +388,12 @@ export const MODULE_VARIANTS: Record<ModuleVariantKind, ModuleVariantSpec> = {
   },
 };
 
-/** Карго уже этого не бывает: механизм не влезает. */
+/**
+ * Узкий остаток становится БУТЫЛОЧНИЦЕЙ, а не карго: это разные
+ * механизмы, и уже 200 мм карго не бывает вовсе — механизм не влезает.
+ */
+export const BOTTLE_MIN_MM = MODULE_VARIANTS.bottle.minWidthMm;
+export const BOTTLE_MAX_MM = MODULE_VARIANTS.bottle.maxWidthMm;
 export const CARGO_MIN_MM = MODULE_VARIANTS.cargo.minWidthMm;
 export const CARGO_MAX_MM = MODULE_VARIANTS.cargo.maxWidthMm;
 

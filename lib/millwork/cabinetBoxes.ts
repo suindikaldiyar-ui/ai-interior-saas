@@ -184,8 +184,26 @@ export function doorHinge(unit: Module, index: number, doors: number): 'left' | 
   return opening === 'right' ? 'right' : 'left';
 }
 
-/** Сколько створок у модуля: тот же расчёт, что в сцене и на чертеже. */
+/**
+ * СКОЛЬКО СТВОРОК У МОДУЛЯ — ОДИН РАСЧЁТ НА СЦЕНУ, РЁБРА И ОТКРЫВАНИЕ.
+ *
+ * Фронт у модуля ОДИН: либо створки, либо ящики, либо его нет вовсе.
+ * `Math.max(1, …)` подставлял створку там, где число не проставлено, —
+ * и заодно вешал её поверх ящиков: у ящичного модуля `doorCount` ноль,
+ * и сцена рисовала ему дверь во всю высоту прямо на фронтах ящиков, а у
+ * открытой секции — дверь на открытой секции.
+ *
+ * В раскрое ни той, ни другой нет (`panels.ts` смотрит `frontType`), то
+ * есть сцена показывала мебель, которой цех не сделает. В демо ящичных
+ * и открытых модулей не было, поэтому этого никто не видел — ровно так
+ * же пряталась их геометрия по Z.
+ *
+ * Приборный модуль — исключение, и оно осознанное: у мойки и встроенного
+ * холодильника `frontType = 'appliance'`, но фасад у них есть (слой 33),
+ * и число створок в данных не проставлено.
+ */
 export function doorCount(unit: Module): number {
+  if (unit.frontType === 'drawers' || unit.frontType === 'none') return 0;
   return Math.max(1, unit.doorCount);
 }
 
@@ -394,34 +412,47 @@ export function drawerBoxes(
   const boxH = Math.max(0.06, height - 0.04);
   const inner = Math.max(0.05, widthM - 2 * thickness);
 
+  /*
+   * ЯЩИК СТОИТ В КОРПУСЕ, А НЕ ПЕРЕД НИМ.
+   *
+   * Здесь была своя система координат: короб центрировался на НУЛЕ, то
+   * есть на передней плоскости корпуса, и наполовину торчал наружу, а
+   * фронт улетал на пол-глубины вперёд — закрытый ящик рисовался
+   * выехавшим на 270 мм. В демо-кухне ящичных модулей нет, поэтому это
+   * жило незамеченным, пока под варочной не появились настоящие ящики.
+   *
+   * Теперь как у дверей: фасад на нуле, корпус уходит в −z.
+   */
+  const boxZ = -innerDepth / 2;
+
   const boxes: PartBox[] = [
     // Короб: дно, две боковины, задняя стенка. Всё это ВНУТРИ модуля.
     {
       material: 'carcass',
       part,
       inside: true,
-      position: [cx, cy - boxH / 2 + thickness / 2, 0],
+      position: [cx, cy - boxH / 2 + thickness / 2, boxZ],
       scale: [inner, thickness, innerDepth * 0.9],
     },
     {
       material: 'carcass',
       part,
       inside: true,
-      position: [cx - inner / 2, cy, 0],
+      position: [cx - inner / 2, cy, boxZ],
       scale: [thickness, boxH, innerDepth * 0.9],
     },
     {
       material: 'carcass',
       part,
       inside: true,
-      position: [cx + inner / 2, cy, 0],
+      position: [cx + inner / 2, cy, boxZ],
       scale: [thickness, boxH, innerDepth * 0.9],
     },
     {
       material: 'carcass',
       part,
       inside: true,
-      position: [cx, cy, -innerDepth * 0.45],
+      position: [cx, cy, boxZ - innerDepth * 0.45],
       scale: [inner, boxH, thickness],
     },
   ];
@@ -432,7 +463,7 @@ export function drawerBoxes(
     material: 'front',
     part,
     frontKey: frontKey(frontOf(unit)),
-    position: [cx, cy, innerDepth / 2 + thickness / 2],
+    position: [cx, cy, thickness / 2],
     scale: [widthM - 2 * gap, height - 2 * gap, thickness],
   });
 
@@ -441,13 +472,13 @@ export function drawerBoxes(
       ? {
           material: 'metal',
           part,
-          position: [cx, cy + height / 2 - gap - 0.01, innerDepth / 2 + thickness + 0.004],
+          position: [cx, cy + height / 2 - gap - 0.01, thickness + 0.004],
           scale: [widthM - 2 * gap, 0.02, 0.015],
         }
       : {
           material: 'metal',
           part,
-          position: [cx, cy, innerDepth / 2 + thickness + 0.012],
+          position: [cx, cy, thickness + 0.012],
           scale: [Math.min(0.26, widthM * 0.5), 0.016, 0.016],
         },
   );
@@ -512,10 +543,19 @@ export function moduleBoxes(
 
   const isDisplay = unit.section === 'glass_display';
 
-  if (!unit.appliance) {
-    const drawers = unit.fill?.drawerHeights.length ?? 0;
-    for (let i = 0; i < drawers; i += 1) boxes.push(...drawerBoxes(unit, place, i, options));
-  }
+  /*
+   * ЯЩИКИ ЕСТЬ У ВСЕХ, У КОГО ЕСТЬ ФРОНТЫ ЯЩИКОВ.
+   *
+   * Условия «нет прибора» и «прибор не виден» одинаково не годятся:
+   * варочная ВИДНА — она лежит сверху, — а под ней обычные ящики, и в
+   * раскрое они есть (слой 34). Сцена оставляла там глухую панель,
+   * которая не открывается ни на один жест.
+   *
+   * Спрашиваем то, что и значит «здесь есть ящики»: фронты в наполнении.
+   * Их считает `defaultFill`, и по ним же режется раскрой.
+   */
+  const drawers = unit.column ? 0 : (unit.fill?.drawerHeights.length ?? 0);
+  for (let i = 0; i < drawers; i += 1) boxes.push(...drawerBoxes(unit, place, i, options));
 
   if (!options.cutaway && !hasVisibleAppliance(unit) && !unit.column && !isDisplay) {
     for (let i = 0; i < doorCount(unit); i += 1) boxes.push(...doorBoxes(unit, place, i, options));
@@ -610,4 +650,32 @@ export function runBoxes(
       },
     ),
   );
+}
+
+/** Все открываемые элементы ряда: по ним работает «Открыть всё». */
+export function openablePartIds(run: Run): string[] {
+  const ids: string[] = [];
+
+  for (const unit of [...run.modules, ...run.upperSegments.flatMap((s) => s.modules)]) {
+    /*
+     * ОТКРЫВАЕТСЯ РОВНО ТО, ЧТО НАРИСОВАНО.
+     *
+     * Здесь стоял свой список: «нет прибора» плюс `frontType === 'door'`.
+     * Он расходился с `CabinetModule3D` в обе стороны — ящики под
+     * варочной рисовались и не открывались («Открыть всё» их не знало),
+     * а у ящичного модуля числились створки, которых в сцене нет.
+     *
+     * Условия теперь ровно те же, что у отрисовки: `drawerHeights`
+     * у неколонных модулей и `doorCount` — тот же, что считает
+     * `cabinetBoxes`.
+     */
+    if (!unit.column) {
+      unit.fill?.drawerHeights.forEach((_, i) => ids.push(`${unit.id}:drawer:${i}`));
+    }
+
+    if (hasVisibleAppliance(unit) || unit.column || unit.section === 'glass_display') continue;
+    for (let i = 0; i < doorCount(unit); i++) ids.push(`${unit.id}:door:${i}`);
+  }
+
+  return ids;
 }

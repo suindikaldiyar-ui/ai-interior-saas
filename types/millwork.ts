@@ -105,6 +105,7 @@ export type ModuleVariantKind =
   | 'drawers_four'
   | 'drawers_door'
   | 'cargo'
+  | 'bottle'
   | 'sink_base'
   | 'hob_base'
   | 'corner_carousel'
@@ -563,6 +564,15 @@ export interface RunRequirements {
    * Ключ — прибор, значение — номер стены композиции.
    */
   applianceWalls?: Partial<Record<ApplianceKind, number>>;
+  /**
+   * ИСПОЛНЕНИЕ ПРИБОРА: газовая или электрическая, встроенная или
+   * отдельностоящая, наклонная или купольная.
+   *
+   * Это набор умолчаний по габаритам и нише, а не новый прибор: сам
+   * `ApplianceKind` остаётся прежним, и списки зон о типах не знают.
+   * Замеренный габарит сильнее типа.
+   */
+  applianceTypes?: Partial<Record<ApplianceKind, string>>;
   /** Витрина со стеклянными полками и подсветкой в торце ряда. */
   glassDisplay?: boolean;
   /** Форма гарнитура: один ряд, угол или П. */

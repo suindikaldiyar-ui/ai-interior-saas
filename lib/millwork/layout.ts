@@ -1,6 +1,7 @@
 import {
   APPLIANCE_SLOTS,
   applianceWidthMm,
+  chosenApplianceType,
   CORNER_SIZE_MM,
   FRIDGE_MEZZANINE_MIN_MM,
   GEOMETRY,
@@ -13,7 +14,13 @@ import {
 } from './modules';
 import { assertNoOverlap, assertRunFits, runWidthSum } from './invariants';
 import { defaultFill, moduleCarcassHeightMm } from './fill';
-import { CARGO_MAX_MM, CARGO_MIN_MM, applyVariant } from './moduleVariants';
+import {
+  BOTTLE_MAX_MM,
+  BOTTLE_MIN_MM,
+  CARGO_MAX_MM,
+  CARGO_MIN_MM,
+  applyVariant,
+} from './moduleVariants';
 import { SECTION_SPECS, sectionSpec } from './sections';
 import { isSectionZone, zoneHeightMm, zoneProfile } from './zones';
 import { runFingerprint } from './fingerprint';
@@ -64,6 +71,16 @@ function moduleId(kind: ModuleKind, offsetMm: number, appliance?: ApplianceKind)
 function cargoWhereNarrow(modules: Module[]): Module[] {
   return modules.map((unit) => {
     if (unit.appliance || unit.section || unit.kind !== 'base') return unit;
+
+    /*
+     * До 200 мм это БУТЫЛОЧНИЦА: полное выдвижение и корзины под
+     * бутылки. Карго на такой ширине не бывает — механизм не влезает, а
+     * называть одно другим значит поставить клиенту не ту фурнитуру и
+     * не ту цену.
+     */
+    if (unit.widthMm >= BOTTLE_MIN_MM && unit.widthMm <= BOTTLE_MAX_MM) {
+      return applyVariant(unit, 'bottle');
+    }
     if (unit.widthMm < CARGO_MIN_MM || unit.widthMm > CARGO_MAX_MM) return unit;
     return applyVariant(unit, 'cargo');
   });
@@ -150,7 +167,7 @@ function planAnchors(
     appliance: ApplianceKind,
     extra: { columnWith?: ApplianceKind; builtIn?: boolean } = {},
   ) => {
-    const width = applianceWidthMm(appliance, req.applianceSizes);
+    const width = applianceWidthMm(appliance, req.applianceSizes, req.applianceTypes);
     const center = tallLeft ? tallCursor + width / 2 : tallCursor - width / 2;
     anchors.push({
       kind: 'tall',
@@ -183,7 +200,7 @@ function planAnchors(
 
   let sinkCenter = lengthMm * 0.35;
   if (sinkKind) {
-    const width = applianceWidthMm(sinkKind, req.applianceSizes);
+    const width = applianceWidthMm(sinkKind, req.applianceSizes, req.applianceTypes);
     const water = commOffset(comms, 'water_supply');
     // Мойка садится напротив вывода воды: перенос коммуникации на объекте
     // стоит дороже, чем сдвиг модуля на бумаге.
@@ -201,8 +218,8 @@ function planAnchors(
   }
 
   if (dishKind && sinkKind) {
-    const width = applianceWidthMm(dishKind, req.applianceSizes);
-    const sinkWidth = applianceWidthMm(sinkKind, req.applianceSizes);
+    const width = applianceWidthMm(dishKind, req.applianceSizes, req.applianceTypes);
+    const sinkWidth = applianceWidthMm(sinkKind, req.applianceSizes, req.applianceTypes);
     // Вплотную к мойке — общий узел водоснабжения и слива.
     const rightSide = sinkCenter + sinkWidth / 2 + width <= lengthMm;
     anchors.push({
@@ -220,7 +237,9 @@ function planAnchors(
     const width = APPLIANCE_SLOTS.hob.widthMm;
     const low = HOB_EDGE_CLEARANCE_MM + width / 2;
     const high = Math.max(low, lengthMm - HOB_EDGE_CLEARANCE_MM - width / 2);
-    const sinkWidth = sinkKind ? applianceWidthMm(sinkKind, req.applianceSizes) : 0;
+    const sinkWidth = sinkKind
+    ? applianceWidthMm(sinkKind, req.applianceSizes, req.applianceTypes)
+    : 0;
 
     /*
      * Плита отходит от мойки на рабочий зазор. Если справа места нет,
@@ -377,6 +396,11 @@ function makeModule(
      * 700 мм после переезда снова становится паспортным.
      */
     sizes?: RunRequirements['applianceSizes'];
+    /**
+     * Исполнение приборов кухни: газовая или электрическая, встроенная
+     * или отдельностоящая. Габариты и ниша приходят оттуда.
+     */
+    types?: RunRequirements['applianceTypes'];
   } = {},
 ): Module {
   const spec = appliance ? APPLIANCE_SLOTS[appliance] : null;
@@ -404,7 +428,21 @@ function makeModule(
   const mine = [appliance, extra.columnWith].filter(Boolean) as ApplianceKind[];
   const applianceSizes = mine.reduce<NonNullable<Module['applianceSizes']>>((acc, kind2) => {
     const size = extra.sizes?.[kind2];
-    return size ? { ...acc, [kind2]: size } : acc;
+    const type = chosenApplianceType(kind2, extra.types);
+
+    /*
+     * Замеренное сильнее типового: тип даёт умолчания, а замер — факт.
+     * Ниша при этом считается из высоты прибора, поэтому высоту типа
+     * кладём в модуль так же, как замеренную.
+     */
+    const merged = {
+      ...(type
+        ? { widthMm: type.widthMm, heightMm: type.nicheHMm, depthMm: type.depthMm }
+        : {}),
+      ...(size ?? {}),
+    };
+
+    return Object.keys(merged).length > 0 ? { ...acc, [kind2]: merged } : acc;
   }, {});
 
   return {
@@ -442,6 +480,8 @@ function makeModule(
 export function applianceRowWidthMm(
   appliances: ApplianceKind[],
   sizes?: RunRequirements['applianceSizes'],
+  /** Исполнение прибора: у него своя ширина, и резерв считается по ней. */
+  types?: RunRequirements['applianceTypes'],
 ): number {
   const wanted = new Set(appliances);
   const column = wanted.has('oven') && wanted.has('microwave');
@@ -451,7 +491,7 @@ export function applianceRowWidthMm(
     // Вытяжка висит в верхнем ряду и места на стене не занимает.
     if (appliance === 'hood') continue;
     if (appliance === 'microwave' && column) continue;
-    sum += applianceWidthMm(appliance, sizes);
+    sum += applianceWidthMm(appliance, sizes, types);
   }
   return sum;
 }
@@ -791,7 +831,14 @@ export function buildRun(input: BuildRunInput): Run {
 
   if (wantsDisplay) {
     const width = SECTION_SPECS.glass_display.preferredWidthMm;
-    if (limit - cursor - width >= applianceRowWidthMm(requirements.appliances, requirements.applianceSizes)) {
+    if (
+      limit - cursor - width >=
+      applianceRowWidthMm(
+        requirements.appliances,
+        requirements.applianceSizes,
+        requirements.applianceTypes,
+      )
+    ) {
       display = { widthMm: width, side: requirements.tallSide === 'left' ? 'end' : 'start' };
     } else {
       warnings.push(`Витрина ${width} мм: не помещается — технике не остаётся места.`);
@@ -952,6 +999,7 @@ export function buildRun(input: BuildRunInput): Run {
         builtIn: anchor.builtIn,
         columnTop: requirements.columnTop,
         sizes: requirements.applianceSizes,
+        types: requirements.applianceTypes,
       }),
     );
     at += anchor.widthMm;
@@ -1160,17 +1208,49 @@ export function buildUpperRow(
       anchors.push({ fromMm: sink.offsetMm, widthMm: sink.widthMm });
     }
     if (hoodInside && hob) {
-      anchors.push({ fromMm: hob.offsetMm, widthMm: hob.widthMm, appliance: 'hood' });
+      /*
+       * ШИРИНА ВЫТЯЖКИ — ЕЁ СОБСТВЕННАЯ, А НЕ ШИРИНА ВАРОЧНОЙ.
+       *
+       * Встроенная прячется в шкаф над варочной и совпадает с ней —
+       * отсюда и бралась ширина. Купольная шире: 900 над варочной 600 —
+       * обычное решение, и верхний ряд под неё разрывается. Пока ширина
+       * приходила от варочной, выбор купольной ничего не менял ни в
+       * раскладке, ни в смете: тип был подписью, а не габаритом.
+       */
+      const own = applianceWidthMm('hood', req.applianceSizes, req.applianceTypes);
+      const wide = Math.min(
+        Math.max(own, hob.widthMm),
+        interval.to - interval.from,
+      );
+
+      // Вытяжка стоит по центру варочной — и не вылезает из участка.
+      const centre = hob.offsetMm + hob.widthMm / 2;
+      const from = Math.round(
+        Math.min(Math.max(centre - wide / 2, interval.from), interval.to - wide),
+      );
+
+      anchors.push({ fromMm: from, widthMm: wide, appliance: 'hood' });
     }
 
     anchors.sort((a, b) => a.fromMm - b.fromMm);
 
     for (const anchor of anchors) {
-      for (const width of fillGap(anchor.fromMm - at)) {
+      // Якоря могут почти сойтись: широкая вытяжка подходит к шкафу мойки.
+      for (const width of fillGap(Math.max(0, anchor.fromMm - at))) {
         modules.push(makeModule('upper', width, at));
         at += width;
       }
-      modules.push(makeModule('upper', anchor.widthMm, at, anchor.appliance));
+      /*
+       * Габариты прибора едут вместе с модулем и в верхний ряд: вытяжка
+       * живёт здесь, и раскрой с 3D читают миллиметры отсюда, а не из
+       * второго словаря типов.
+       */
+      modules.push(
+        makeModule('upper', anchor.widthMm, at, anchor.appliance, undefined, {
+          sizes: req.applianceSizes,
+          types: req.applianceTypes,
+        }),
+      );
       at += anchor.widthMm;
     }
 

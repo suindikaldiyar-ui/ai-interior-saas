@@ -4,6 +4,7 @@ import {
   GEOMETRY,
   NICHE_CLEARANCE_MM,
   moduleAppliances,
+  chosenApplianceType,
   applianceWidthMm,
   MAX_WIDTH,
   MIN_WIDTH,
@@ -105,10 +106,35 @@ function rebalance(modules: Module[], lengthMm: number): Module[] {
   return reindex(result);
 }
 
-function makePlainModule(kind: ModuleKind, widthMm: number, appliance?: ApplianceKind): Module {
+function makePlainModule(
+  kind: ModuleKind,
+  widthMm: number,
+  appliance?: ApplianceKind,
+  /**
+   * Состав кухни: исполнения приборов и замеренные габариты.
+   *
+   * Модуль, поставленный РУКОЙ, обязан получить те же умолчания, что и
+   * поставленный раскладкой: иначе один и тот же состав даёт два разных
+   * отпечатка, и собранная руками кухня считается по другим числам
+   * (ловушка 231).
+   */
+  req?: Pick<RunRequirements, 'applianceSizes' | 'applianceTypes'>,
+): Module {
   const fronts = appliance ? { doorCount: 0, drawerCount: 0 } : frontPlan(kind, widthMm);
+
+  const type = appliance ? chosenApplianceType(appliance, req?.applianceTypes) : null;
+  const size = appliance ? req?.applianceSizes?.[appliance] : undefined;
+  const merged = appliance
+    ? {
+        ...(type ? { widthMm: type.widthMm, heightMm: type.nicheHMm, depthMm: type.depthMm } : {}),
+        ...(size ?? {}),
+      }
+    : {};
+
   return {
     id: `${kind}-0${appliance ? `-${appliance}` : ''}`,
+    applianceSizes:
+      appliance && Object.keys(merged).length > 0 ? { [appliance]: merged } : undefined,
     kind,
     widthMm,
     offsetMm: 0,
@@ -196,7 +222,11 @@ export function applyOps({
     switch (op.op) {
       case 'add_module': {
         const width = op.appliance
-          ? applianceWidthMm(op.appliance, requirements.applianceSizes)
+          ? applianceWidthMm(
+              op.appliance,
+              requirements.applianceSizes,
+              requirements.applianceTypes,
+            )
           : snapToStandard(op.widthMm ?? 600);
 
         /*
@@ -221,7 +251,7 @@ export function applyOps({
           }
         }
 
-        const created = makePlainModule(op.kind, width, op.appliance);
+        const created = makePlainModule(op.kind, width, op.appliance, requirements);
 
         /*
          * Холодильник, добавленный руками, встраивается по тем же

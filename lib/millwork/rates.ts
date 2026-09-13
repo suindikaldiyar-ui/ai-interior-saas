@@ -70,7 +70,7 @@ export const TYPICAL_PRICE_LIST: TypicalRate[] = [
   { estimateKey: 'sink_cutout', article: 'BAT-CUTOUT', name: 'Вырез под раковину', categoryKey: 'bath', unit: 'piece', price: 12000 },
   { estimateKey: 'glass_front', article: 'DSP-GLASS', name: 'Стеклянная дверь в раме', categoryKey: 'materials', unit: 'm2', price: 48000 },
   /* Варианты мест: механизм идёт отдельной строкой, корпус у них обычный. */
-  { estimateKey: 'cargo_150', article: 'HW-CARGO-150', name: 'Карго узкое (бутылочница)', categoryKey: 'hardware', unit: 'piece', price: 42000 },
+  { estimateKey: 'bottle_pullout', article: 'HW-BOTTLE', name: 'Бутылочница (полное выдвижение, корзины)', categoryKey: 'hardware', unit: 'piece', price: 38000 },
   { estimateKey: 'cargo_300', article: 'HW-CARGO-300', name: 'Карго 300 мм', categoryKey: 'hardware', unit: 'piece', price: 56000 },
   { estimateKey: 'cargo_tall', article: 'HW-CARGO-TALL', name: 'Карго высокое (пенал)', categoryKey: 'hardware', unit: 'piece', price: 145000 },
   { estimateKey: 'dish_dryer', article: 'HW-DRYER', name: 'Сушилка в верхний шкаф', categoryKey: 'hardware', unit: 'piece', price: 18000 },

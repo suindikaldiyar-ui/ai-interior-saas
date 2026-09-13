@@ -1,7 +1,12 @@
 'use client';
 
 import { useState } from 'react';
-import { DEFAULT_PRODUCTION, type ProductionSettings } from '@/types/catalog';
+import {
+  DEFAULT_ALLOWANCES,
+  DEFAULT_PRODUCTION,
+  type PartAllowances,
+  type ProductionSettings,
+} from '@/types/catalog';
 
 /**
  * Настройки цеха.
@@ -79,6 +84,30 @@ const FIELDS = [
   } as Field<'visibleEdgeMm'>,
 ];
 
+/** Припуски: деталь → на сколько она меньше габарита. */
+const ALLOWANCES: { key: keyof PartAllowances; title: string; hint: string }[] = [
+  {
+    key: 'shelfSideMm',
+    title: 'Полка, по ширине',
+    hint: 'Уже проёма между боковинами',
+  },
+  {
+    key: 'shelfDepthMm',
+    title: 'Полка, по глубине',
+    hint: 'Мельче глубины корпуса',
+  },
+  {
+    key: 'dividerDepthMm',
+    title: 'Перегородка, по глубине',
+    hint: 'Мельче глубины корпуса',
+  },
+  {
+    key: 'backInsetMm',
+    title: 'Задняя стенка вкладная',
+    hint: 'Меньше габарита модуля по высоте и по ширине',
+  },
+];
+
 export default function ProductionAdmin({ initial }: Props) {
   const [value, setValue] = useState<ProductionSettings>(initial);
   const [busy, setBusy] = useState(false);
@@ -138,6 +167,51 @@ export default function ProductionAdmin({ initial }: Props) {
                 </div>
               </div>
             ))}
+          </div>
+
+          {/*
+            * ПРИПУСКИ — ЧИСЛАМИ, А НЕ ВЫБОРОМ ИЗ ДВУХ.
+            *
+            * «Модуль 900 — столешница минус 40, что-то ещё минус 60»:
+            * у каждого цеха эти числа свои, и списком их не покрыть.
+            * Поле принимает миллиметры, рядом написано, какой детали
+            * оно касается и от чего отсчитывается.
+            */}
+          <div className="mt-6 border-t border-navyLine/60 pt-4" data-allowances>
+            <p className="text-[15px] font-medium">Припуски деталей</p>
+            <p className="mt-0.5 text-[13px] leading-snug text-graphiteMw">
+              Насколько деталь меньше габарита. Заводятся один раз — дальше
+              раскрой считается по ним.
+            </p>
+
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              {ALLOWANCES.map((field) => (
+                <label key={field.key} className="block">
+                  <span className="mw-label">{field.title}</span>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min={0}
+                    max={200}
+                    data-allowance={field.key}
+                    value={value.allowances?.[field.key] ?? DEFAULT_ALLOWANCES[field.key]}
+                    onChange={(event) =>
+                      setValue((prev) => ({
+                        ...prev,
+                        allowances: {
+                          ...(prev.allowances ?? DEFAULT_ALLOWANCES),
+                          [field.key]: Number(event.target.value),
+                        },
+                      }))
+                    }
+                    className="mw-field mt-1 w-full"
+                  />
+                  <span className="mt-0.5 block text-[13px] leading-snug text-graphiteMw">
+                    {field.hint}
+                  </span>
+                </label>
+              ))}
+            </div>
           </div>
 
           <div className="mt-5 flex flex-wrap items-center gap-3">

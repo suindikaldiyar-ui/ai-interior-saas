@@ -226,6 +226,46 @@ export type ProductionSettings = {
   frontGapMm: 3 | 4;
   /** Видимая кромка, мм. Скрытая всегда 0.4. */
   visibleEdgeMm: 1 | 2;
+  /**
+   * ПРИПУСКИ ДЕТАЛЕЙ — НАСКОЛЬКО ДЕТАЛЬ МЕНЬШЕ ГАБАРИТА.
+   *
+   * «Модуль 900 — столешница минус 40, что-то ещё минус 60»: у каждого
+   * цеха эти числа свои, и захардкоженные они делают раскрой неверным
+   * для половины клиентов — а неверный раскрой хуже его отсутствия, по
+   * нему распилят плиту.
+   *
+   * Заводятся один раз в `/admin/production`, дальше раскрой считается
+   * по ним. Толщины, зазор фасада и кромка лежат рядом — они тоже
+   * припуски, просто заведены раньше.
+   */
+  allowances: PartAllowances;
+};
+
+/**
+ * Уменьшение детали относительно габарита модуля, мм.
+ *
+ * Названия — по деталям раскроя, а не по абстракциям: технолог узнаёт
+ * свои числа в лицо.
+ */
+export type PartAllowances = {
+  /** Полка уже проёма: иначе не встанет. */
+  shelfSideMm: number;
+  /** Полка мельче глубины корпуса: она чуть глубже фасада не бывает. */
+  shelfDepthMm: number;
+  /** Перегородка мельче глубины корпуса. */
+  dividerDepthMm: number;
+  /**
+   * Задняя стенка при ВКЛАДНОМ монтаже: садится в паз, поэтому меньше
+   * габарита модуля на эту величину по высоте и по ширине.
+   */
+  backInsetMm: number;
+};
+
+export const DEFAULT_ALLOWANCES: PartAllowances = {
+  shelfSideMm: 2,
+  shelfDepthMm: 20,
+  dividerDepthMm: 20,
+  backInsetMm: 8,
 };
 
 export const DEFAULT_PRODUCTION: ProductionSettings = {
@@ -235,6 +275,7 @@ export const DEFAULT_PRODUCTION: ProductionSettings = {
   backMount: 'inset',
   frontGapMm: 4,
   visibleEdgeMm: 2,
+  allowances: DEFAULT_ALLOWANCES,
 };
 
 /** Настройки организации с подстановкой значений по умолчанию. */
@@ -255,6 +296,32 @@ export function productionSettings(raw: unknown): ProductionSettings {
     backMount: pick('backMount', ['inset', 'overlay']),
     frontGapMm: pick('frontGapMm', [3, 4]),
     visibleEdgeMm: pick('visibleEdgeMm', [1, 2]),
+    allowances: allowances(value.allowances),
+  };
+}
+
+/**
+ * Припуски компании с подстановкой умолчаний.
+ *
+ * Число принимается любое неотрицательное в разумных пределах: у цеха
+ * свои нормы, и подрезать их «правильными» значениями — это ровно тот
+ * захардкоженный раскрой, от которого настройка и уводит. Мусор при
+ * этом не принимается: отрицательная полка длиннее проёма.
+ */
+export function allowances(raw: unknown): PartAllowances {
+  const value = (raw ?? {}) as Partial<PartAllowances>;
+  const mm = (key: keyof PartAllowances): number => {
+    const given = Number(value[key]);
+    return Number.isFinite(given) && given >= 0 && given <= 200
+      ? Math.round(given)
+      : DEFAULT_ALLOWANCES[key];
+  };
+
+  return {
+    shelfSideMm: mm('shelfSideMm'),
+    shelfDepthMm: mm('shelfDepthMm'),
+    dividerDepthMm: mm('dividerDepthMm'),
+    backInsetMm: mm('backInsetMm'),
   };
 }
 

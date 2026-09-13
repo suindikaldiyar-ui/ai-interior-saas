@@ -2,6 +2,7 @@
 
 import * as THREE from 'three';
 
+import { doorCount } from '@/lib/millwork/cabinetBoxes';
 import InteractiveDoor from './InteractiveDoor';
 import InteractiveDrawer from './InteractiveDrawer';
 import { openingOf } from '@/lib/millwork/opening';
@@ -164,7 +165,12 @@ export default function CabinetModule3D({
       )}
 
       {/* Ящики: каждый едет сам, пока едет. */}
-      {!unit.appliance &&
+      {/*
+        * Ящики выдвигаются и под варочной: прибор занимает нишу, а под
+        * ним обычные ящики. Условие «нет прибора» оставляло их глухой
+        * панелью, которая не открывается ни на один жест.
+        */}
+      {!unit.column &&
         fill?.drawerHeights.map((frontMm, i) => {
           // Высоты идут сверху вниз, а сцена считает от пола.
           const above = fill.drawerHeights.slice(0, i).reduce((sum, h) => sum + h, 0);
@@ -203,8 +209,8 @@ export default function CabinetModule3D({
         !visibleAppliance &&
         !unit.column &&
         !isDisplay &&
-        Array.from({ length: Math.max(1, unit.doorCount) }, (_, i) => {
-          const doors = Math.max(1, unit.doorCount);
+        Array.from({ length: doorCount(unit) }, (_, i) => {
+          const doors = doorCount(unit);
           const doorW = widthM / doors;
           const id = `${unit.id}:door:${i}`;
 

@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 import {
   APPLIANCE_SLOTS,
+  APPLIANCE_TYPES,
+  applianceTypeOf,
   moduleAppliances,
   MAX_WIDTH,
   MIN_WIDTH,
@@ -61,6 +63,8 @@ export type CompositionPatch = {
   applianceWalls?: Partial<Record<ApplianceKind, number>>;
   /** Введённые габариты приборов: они переезжают вместе с прибором. */
   applianceSizes?: Partial<Record<ApplianceKind, ApplianceSize>>;
+  /** Исполнение прибора: газовая или электрическая, наклонная или купольная. */
+  applianceTypes?: Partial<Record<ApplianceKind, string>>;
 };
 
 /**
@@ -347,6 +351,35 @@ export default function RunEditor({
               </p>
             </>
           )}
+
+          {/*
+            * ИСПОЛНЕНИЕ ПРИБОРА — РЯДОМ С СОСТАВОМ, А НЕ В ПАНЕЛИ МОДУЛЯ.
+            *
+            * Мебельщик заказывает не «варочную», а газовую или
+            * электрическую; вытяжка бывает встроенной, наклонной и
+            * купольной. Прибор принадлежит КУХНЕ, а не ряду (слой 42), и
+            * его исполнение тоже: вытяжка живёт в верхнем ряду, который
+            * пересобирается из нижнего, и в панели модуля её было бы не
+            * выбрать вовсе.
+            */}
+          {appliances.length > 0 &&
+            appliances
+              .filter((appliance) => wanted.has(appliance))
+              .map((appliance) => (
+                <ApplianceTypePicker
+                  key={appliance}
+                  appliance={appliance}
+                  chosen={requirements.applianceTypes}
+                  onPick={(id) =>
+                    onComposition({
+                      applianceTypes: {
+                        ...(requirements.applianceTypes ?? {}),
+                        [appliance]: id,
+                      },
+                    })
+                  }
+                />
+              ))}
 
           {wanted.has('oven') && wanted.has('microwave') && (
             <p className="mt-2 text-[13px] leading-snug text-graphiteMw">
@@ -1027,6 +1060,62 @@ export default function RunEditor({
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+
+/**
+ * ИСПОЛНЕНИЕ ПРИБОРА: ГАЗОВАЯ ИЛИ ЭЛЕКТРИЧЕСКАЯ.
+ *
+ * Тип — это набор умолчаний по габаритам и нише, а не новый прибор.
+ * Поэтому выбор живёт в требованиях к ряду рядом с составом техники, а
+ * не в модуле: прибор один на кухню, и его исполнение тоже.
+ *
+ * Замеренный габарит по-прежнему сильнее типа — про это сказано прямо,
+ * иначе замерщик решит, что кнопка ничего не делает.
+ */
+function ApplianceTypePicker({
+  appliance,
+  chosen,
+  onPick,
+}: {
+  appliance: ApplianceKind;
+  chosen?: Partial<Record<ApplianceKind, string>>;
+  onPick: (id: string) => void;
+}) {
+  const list = APPLIANCE_TYPES[appliance];
+  if (!list || list.length < 2) return null;
+
+  const current = applianceTypeOf(appliance, chosen);
+
+  return (
+    <div className="mt-3" data-appliance-types={appliance}>
+      <span className="mw-label">{APPLIANCE_SLOTS[appliance].title}: исполнение</span>
+      <div className="mt-1 flex flex-wrap gap-1">
+        {list.map((type) => {
+          const on = current?.id === type.id;
+          return (
+            <button
+              key={type.id}
+              type="button"
+              onClick={() => onPick(type.id)}
+              aria-pressed={on}
+              data-appliance-type={type.id}
+              className={`mw-btn ${on ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+            >
+              {type.title}
+            </button>
+          );
+        })}
+      </div>
+      {current && (
+        <p className="mt-1 text-[13px] leading-snug text-graphiteMw">
+          {current.hint} · {current.widthMm} мм
+          {current.nicheHMm ? `, ниша ${current.nicheHMm} мм` : ', ниши не нужно'}.
+          Замеренный габарит сильнее.
+        </p>
+      )}
     </div>
   );
 }

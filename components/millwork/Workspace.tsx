@@ -349,6 +349,7 @@ export default function Workspace(props: WorkspaceProps) {
     columnTop: props.initialState?.requirements?.columnTop,
     fridgeType: props.initialState?.requirements?.fridgeType,
     glassDisplay: props.initialState?.requirements?.glassDisplay,
+    applianceTypes: props.initialState?.requirements?.applianceTypes,
     upperToCeiling: props.initialState?.requirements?.options?.upperToCeiling,
   });
 
@@ -500,6 +501,7 @@ export default function Workspace(props: WorkspaceProps) {
       glassDisplay: composition.glassDisplay ?? base.glassDisplay,
       applianceWalls: composition.applianceWalls ?? base.applianceWalls,
       applianceSizes: composition.applianceSizes ?? base.applianceSizes,
+      applianceTypes: composition.applianceTypes ?? base.applianceTypes,
       manualAnchors: {},
       options: {
         ...base.options,
@@ -550,6 +552,7 @@ export default function Workspace(props: WorkspaceProps) {
        */
       applianceWalls: composition.applianceWalls ?? base.applianceWalls,
       applianceSizes: composition.applianceSizes ?? base.applianceSizes,
+      applianceTypes: composition.applianceTypes ?? base.applianceTypes,
       options: {
         ...base.options,
         upperToCeiling: composition.upperToCeiling ?? base.options.upperToCeiling,

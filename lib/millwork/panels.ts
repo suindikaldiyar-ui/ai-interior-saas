@@ -9,7 +9,11 @@ import {
   hasEdgeBanding,
   isFramed,
 } from './frontMaterial';
-import { DEFAULT_PRODUCTION, type ProductionSettings } from '@/types/catalog';
+import {
+  DEFAULT_ALLOWANCES,
+  DEFAULT_PRODUCTION,
+  type ProductionSettings,
+} from '@/types/catalog';
 import type { Module, Panel, PanelTotals, Run } from '@/types/millwork';
 
 /**
@@ -26,12 +30,16 @@ import type { Module, Panel, PanelTotals, Run } from '@/types/millwork';
  * между боковинами.
  */
 
-/** Зазор полки от передней кромки боковины: полка чуть глубже не ставится. */
-const SHELF_DEPTH_BACK_MM = 20;
-/** Полка уже проёма на пару миллиметров, иначе не встанет. */
-const SHELF_SIDE_GAP_MM = 2;
-/** Припуск задней стенки при вкладном монтаже. */
-const BACK_INSET_MM = 8;
+/*
+ * ПРИПУСКИ ПРИШЛИ ИЗ НАСТРОЕК ЦЕХА.
+ *
+ * Здесь стояли три числа: полка уже проёма на 2 мм, полка мельче
+ * глубины на 20, задняя стенка вкладная минус 8. У каждого цеха они
+ * свои — мебельщик называет их первыми, когда смотрит чужой раскрой, —
+ * и захардкоженные они делают детализировку неверной для половины
+ * клиентов. Теперь они в `ProductionSettings.allowances`, рядом с
+ * толщинами и зазором фасада, которые тоже припуски.
+ */
 
 export type PanelInput = {
   run: Run;
@@ -59,6 +67,7 @@ function modulePanels(
   const heightMm = moduleCarcassHeightMm(unit, run);
   const depthMm = moduleDepthMm(unit, run.zone);
   const t = production.carcassMm;
+  const allow = production.allowances ?? DEFAULT_ALLOWANCES;
   const inner = unit.widthMm - 2 * t;
   const thick = edgeType(production);
 
@@ -131,8 +140,8 @@ function modulePanels(
     push({
       name: 'Полка',
       material,
-      lengthMm: inner - SHELF_SIDE_GAP_MM,
-      widthMm: depthMm - SHELF_DEPTH_BACK_MM,
+      lengthMm: inner - allow.shelfSideMm,
+      widthMm: depthMm - allow.shelfDepthMm,
       qty: shelves,
       edges: { long: 1, short: 0 },
       edgeType: thick,
@@ -145,7 +154,7 @@ function modulePanels(
       name: 'Перегородка вертикальная',
       material,
       lengthMm: heightMm - 2 * t,
-      widthMm: depthMm - SHELF_DEPTH_BACK_MM,
+      widthMm: depthMm - allow.dividerDepthMm,
       qty: 1,
       edges: { long: 1, short: 0 },
       edgeType: thick,
@@ -154,7 +163,7 @@ function modulePanels(
   }
 
   // Задняя стенка: вкладная садится в паз, накладная кроется по габариту.
-  const backInset = production.backMount === 'inset' ? BACK_INSET_MM : 0;
+  const backInset = production.backMount === 'inset' ? allow.backInsetMm : 0;
   push({
     name: 'Задняя стенка',
     material: `ХДФ ${production.backMm}`,

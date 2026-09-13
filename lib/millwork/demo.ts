@@ -101,7 +101,7 @@ export const DEMO_RATES: RateTable = {
   glass_front: 48000,
   led_display: 9500,
   // Механизмы вариантов: карго, сушилка, подъёмник, карусель.
-  cargo_150: 42000,
+  bottle_pullout: 38000,
   cargo_300: 56000,
   cargo_tall: 145000,
   dish_dryer: 18000,

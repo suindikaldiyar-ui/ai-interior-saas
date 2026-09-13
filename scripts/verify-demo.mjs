@@ -3033,10 +3033,39 @@ try {
     );
 
     const openCount = () => s3.evaluate(() => (window.__mwOpenParts ? window.__mwOpenParts() : -1));
+    const openIds = () => s3.evaluate(() => (window.__mwOpenIds ? window.__mwOpenIds() : []));
     await s3.locator('[data-open-all]').click();
     await sleep(1800);
     const opened = await openCount();
     check('«Открыть всё» открывает мебель', opened > 0, `${opened} элементов`);
+
+    /*
+     * ЯЩИКИ ПОД ВАРОЧНОЙ ВЫДВИГАЮТСЯ.
+     *
+     * Модуль под варочной панелью числился «нишей»: на чертеже два
+     * фронта, в раскрое два фронта, а в сцене глухая панель, за которую
+     * не взяться. Числом элементов это не ловилось — открывалось много,
+     * а нужных среди них не было, — поэтому спрашиваем именно их.
+     */
+    const openedIds = await openIds();
+    const hobDrawers = openedIds.filter((id) => id.includes('hob') && id.includes(':drawer:'));
+    check(
+      'ящики под варочной выдвигаются в сцене',
+      hobDrawers.length > 0,
+      hobDrawers.join(', ') || `среди ${openedIds.length} открытых их нет`,
+    );
+
+    /*
+     * И это не «в данных открылось»: деталь ДВИГАЕТСЯ. Выехавший ящик
+     * уходит из общей отрисовки и едет своим мешем — значит мешей в
+     * сцене становится больше, чем было при закрытой мебели.
+     */
+    const movedScene = await scene();
+    check(
+      'выехавшие детали едут своими мешами, а не остаются в общей пачке',
+      Boolean(movedScene) && movedScene.cabinet.meshes > afterDesign.cabinet.meshes,
+      `мешей ${afterDesign?.cabinet.meshes} → ${movedScene?.cabinet.meshes}`,
+    );
 
     await s3.locator('[data-close-all]').click();
     await sleep(1400);
