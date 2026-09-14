@@ -5,7 +5,7 @@ import {
   GEOMETRY,
 } from './modules';
 import { beamDropMm } from './ceiling';
-import { upperBottomMm } from './shop';
+import { plinthMm, upperBottomMm } from './shop';
 import { columnNichesSumMm, moduleCarcassHeightMm, ovenBottomMm } from './fill';
 import { fridgeRoomMm } from './layout';
 import { openingHardware } from './opening';
@@ -371,11 +371,35 @@ export function beamWarnings(run: Run | null): SurveyWarning[] {
      */
     const leftUnderBeam =
       run.ceilingHeightMm - drop - upperBottomMm(run.production);
+
+    /*
+     * ПРИЧИНА ОБЯЗАНА БЫТЬ В РИГЕЛЕ, НО СПРАШИВАТЬ НАДО ПРО ЭТО МЕСТО.
+     *
+     * Здесь стояло `modules.some(kind === 'upper')` — «где-то в ряду
+     * верхний шкаф остался». Ригель во всю стену убирает ВЕСЬ верхний
+     * ряд, и это условие становилось ложным ровно тогда, когда сказать
+     * было важнее всего: ряд пропадал молча. Замерено на демо-ряду —
+     * свес 1000 на всю стену: верхних модулей 0, деталей 38 вместо 67,
+     * слов НЕТ.
+     *
+     * Спрашиваем то, что и значит «здесь стоял бы шкаф»: под ригелем
+     * есть модуль, который НЕ поднимается выше отметки навески. Над
+     * колонной холодильника верхнего ряда нет и без всякой балки —
+     * сказать там «ряд разрывается из-за выступа» значило бы соврать
+     * замерщику про то, что он видит.
+     */
+    const upperBottom = upperBottomMm(run.production);
+    const wouldCarryUpper = under.some(
+      (unit) =>
+        unit.kind !== 'upper' &&
+        plinthMm(run.production) + moduleCarcassHeightMm(unit, run) <= upperBottom,
+    );
+
     const broken =
       leftUnderBeam < GEOMETRY.upper.minCarcassH &&
       under.filter((unit) => unit.kind === 'upper').length === 0 &&
       run.options.hasUpper &&
-      modules.some((unit) => unit.kind === 'upper');
+      wouldCarryUpper;
 
     if (broken) {
       out.push({

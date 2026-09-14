@@ -1,6 +1,6 @@
 import { ceilingOverSpanMm } from './ceiling';
 import { plinthMm, rowDepthMm } from './shop';
-import { moduleAppliances } from './modules';
+import { GEOMETRY, moduleAppliances } from './modules';
 import { moduleCarcassHeightMm, upperBottomFor } from './fill';
 import { zoneProfile } from './zones';
 import type { Module, Run } from '@/types/millwork';
@@ -341,7 +341,53 @@ export class BeamOverlapError extends Error {
   }
 }
 
+/**
+ * МОДУЛЬ, РАЗДАВЛЕННЫЙ РИГЕЛЕМ, — ЭТО НЕ «ШКАФ НИЖЕ».
+ *
+ * Высоту под выступом урезает `capByCeiling`, и ноль там — законный
+ * ответ: под ригелем может не остаться места вовсе. Убрать такой модуль
+ * обязана раскладка — `buildUpperRow` разрывает верхний ряд ровно так
+ * же, как под окном.
+ *
+ * НИЖНИЙ ряд не разрывается никем: мойку и варочную из кухни не выкинешь.
+ * И пока этого не было сказано, ригель до пола давал корпуса нулевой
+ * высоты, которые уезжали в раскрой отдельными строками. Замерено на
+ * демо-ряду, свес 2600: семь модулей высотой 0 и двадцать деталей с
+ * неположительным размером — по ним распилили бы плиту.
+ *
+ * Высоту спрашиваем ТУ ЖЕ, что уходит в раскрой, а предел — тот же
+ * `GEOMETRY.upper.minCarcassH`, по которому рвётся верхний ряд: второго
+ * числа «полезный минимум» в продукте нет.
+ */
+export function beamCrushes(run: Run): BeamHit[] {
+  if (!run.beams || run.beams.length === 0) return [];
+
+  const found: BeamHit[] = [];
+
+  for (const unit of run.modules) {
+    const heightMm = moduleCarcassHeightMm(unit, run);
+    if (heightMm >= GEOMETRY.upper.minCarcassH) continue;
+
+    const ceiling = ceilingOverSpanMm(
+      unit.offsetMm,
+      unit.offsetMm + unit.widthMm,
+      run.beams,
+      run.ceilingHeightMm,
+    );
+
+    found.push({
+      moduleId: unit.id,
+      message:
+        `под выступом на «${unit.label}» остаётся ${Math.round(heightMm)} мм — ` +
+        `корпуса ниже ${GEOMETRY.upper.minCarcassH} мм не бывает. ` +
+        `Потолок там ${Math.round(ceiling)} мм: мебель под этот выступ не встаёт.`,
+    });
+  }
+
+  return found;
+}
+
 export function assertUnderCeiling(run: Run): void {
-  const hits = beamHits(run);
+  const hits = [...beamHits(run), ...beamCrushes(run)];
   if (hits.length > 0) throw new BeamOverlapError(hits);
 }

@@ -19,8 +19,11 @@ import {
   buildComposition,
   cornerLostMm,
   runPlacements,
+  tryBuildComposition,
   type RunPlacement,
 } from '../lib/millwork/composition';
+import { ceilingOverSpanMm } from '../lib/millwork/ceiling';
+import type { Opening } from '../types/millwork';
 import { buildRun } from '../lib/millwork/layout';
 import type { Run } from '../types/millwork';
 import { runPlaces } from '../lib/millwork/cabinetBoxes';
@@ -768,6 +771,152 @@ console.log('\nЗадняя плоскость каждого ряда лежи�
         drift.join(' · ') || `нижний ${sectionBase} · верхний ${sectionUpper}`,
       );
     });
+  }
+}
+
+/* ═══════════════  Композиция под ригелем не рассыпается  ═══════════════ */
+
+/**
+ * РИГЕЛЬ НЕ ЛОМАЕТ КОМПОЗИЦИЮ.
+ *
+ * Выступ на потолке меняет высоты, а не места: ряды стоят там же, габариты
+ * не пересекаются, и ответа ровно два — собралась либо отказ словами.
+ * Третьего (молчаливой пустоты, ряда без модулей, корпуса нулевой высоты)
+ * быть не должно.
+ */
+console.log('\nКомпозиция под ригелем не рассыпается');
+{
+  const TOL_M = 0.001;
+
+  const shopA: ProductionSettings = {
+    ...DEFAULT_PRODUCTION,
+    depths: { baseMm: 550, upperMm: 350, mezzanineMm: 550 },
+    heights: { plinthMm: 100, carcassMm: 760, countertopMm: 40, apronMm: 600 },
+  };
+
+  const beam = (fromCornerMm: number, widthMm: number, dropMm: number): Opening => ({
+    id: `b-${fromCornerMm}-${widthMm}-${dropMm}`,
+    kind: 'beam',
+    fromCornerMm,
+    widthMm,
+    sillMm: 0,
+    heightMm: dropMm,
+  });
+
+  const PLACES: [string, Opening][] = [
+    ['у края', beam(0, 600, 300)],
+    ['посередине', beam(1600, 600, 300)],
+    ['на стыке модулей', beam(1200, 600, 300)],
+    ['над колонной прибора', beam(0, 1200, 600)],
+  ];
+
+  for (const [shopName, production] of [
+    ['цех 560/320', DEFAULT_PRODUCTION],
+    ['цех 550/350', shopA],
+  ] as const) {
+    for (const [where, b] of PLACES) {
+      const attempt = tryBuildComposition({
+        kind: 'u_shape',
+        walls: [
+          { id: 'w1', lengthMm: 3800, openings: [b] },
+          { id: 'w2', lengthMm: 1800, openings: [] },
+          { id: 'w3', lengthMm: 1740, openings: [b] },
+        ],
+        ceilingHeightMm: 2700,
+        requirements: DEMO_REQUIREMENTS,
+        comms: [],
+        production,
+      });
+
+      /* ── Ответа два: собралась либо отказ СЛОВАМИ ── */
+      check(
+        `${shopName} · ${where}: композиция собралась либо отказала словами`,
+        attempt.state === 'built' ||
+          (attempt.state === 'refused' && attempt.reason.trim().length > 20),
+        attempt.state === 'refused' ? `отказ: ${attempt.reason.slice(0, 90)}` : 'собралась',
+      );
+
+      if (attempt.state !== 'built') continue;
+
+      const runs = attempt.composition.segments.map((segment) => segment.run);
+
+      /*
+       * Ноль модулей — это молчаливая пустота, то самое третье состояние.
+       * Падаем здесь, а не проходим по пустому списку.
+       */
+      const empty = runs.filter((run) => run.modules.length === 0);
+      check(
+        `${shopName} · ${where}: пустых рядов нет`,
+        runs.length === 3 && empty.length === 0,
+        runs.length === 0
+          ? 'СЕЛЕКТОР ВЕРНУЛ НОЛЬ РЯДОВ'
+          : empty.length > 0
+            ? `РЯДОВ БЕЗ МОДУЛЕЙ: ${empty.length}`
+            : runs.map((run) => run.modules.length).join(' + '),
+      );
+      if (empty.length > 0) continue;
+
+      /* ── Габариты рядов не пересекаются ── */
+      const places = runPlacements({
+        runs,
+        solution: DEMO_REQUIREMENTS.cornerSolution ?? 'false_panel',
+        zone: 'kitchen',
+        production,
+      });
+      const depthM = rowStandardDepthMm('kitchen', 'base', production) / 1000;
+
+      const boxes = runs.map((run, i) => {
+        const a = (places[i].rotationYDeg * Math.PI) / 180;
+        const cos = Math.cos(a);
+        const sin = Math.sin(a);
+        const at = (x: number, z: number) =>
+          [x * cos + z * sin + places[i].xM, -x * sin + z * cos + places[i].zM] as const;
+        const L = run.lengthMm / 1000;
+        const pts = [at(0, 0), at(L, 0), at(0, -depthM), at(L, -depthM)];
+        return {
+          minX: Math.min(...pts.map((q) => q[0])),
+          maxX: Math.max(...pts.map((q) => q[0])),
+          minZ: Math.min(...pts.map((q) => q[1])),
+          maxZ: Math.max(...pts.map((q) => q[1])),
+        };
+      });
+
+      const hits: string[] = [];
+      for (let i = 0; i < boxes.length; i += 1) {
+        for (let j = i + 1; j < boxes.length; j += 1) {
+          const dx = Math.min(boxes[i].maxX, boxes[j].maxX) - Math.max(boxes[i].minX, boxes[j].minX);
+          const dz = Math.min(boxes[i].maxZ, boxes[j].maxZ) - Math.max(boxes[i].minZ, boxes[j].minZ);
+          if (dx > TOL_M && dz > TOL_M) hits.push(`${i}×${j}`);
+        }
+      }
+
+      check(
+        `${shopName} · ${where}: габариты рядов не пересекаются`,
+        hits.length === 0,
+        hits.join(' ') || `мест ${places.length}`,
+      );
+
+      /* ── Высота модулей под ригелем не больше низа ригеля ── */
+      const drift: string[] = [];
+      runs.forEach((run, i) => {
+        for (const entry of runPlaces(run)) {
+          const ceiling = ceilingOverSpanMm(
+            entry.unit.offsetMm,
+            entry.unit.offsetMm + entry.unit.widthMm,
+            run.beams,
+            run.ceilingHeightMm,
+          );
+          const top = Math.round((entry.y + entry.heightM) * 1000);
+          if (top > ceiling) drift.push(`ряд ${i} ${entry.unit.id}: верх ${top} при потолке ${ceiling}`);
+        }
+      });
+
+      check(
+        `${shopName} · ${where}: ни один модуль не заходит в ригель`,
+        drift.length === 0,
+        drift.join(' · ') || 'все под выступом',
+      );
+    }
   }
 }
 

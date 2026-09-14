@@ -373,7 +373,15 @@ export function buildComposition(input: BuildCompositionInput): Composition {
       lengthMm: usable[i],
       ceilingHeightMm,
       requirements: { ...requirements, appliances: perSegment[i] },
-      openings: wall.openings ?? [],
+      /*
+       * Проёмы этой стены, пересчитанные от начала РЯДА: угол занят
+       * соседним рядом, и отметки замера сдвинуты на него.
+       */
+      openings: openingsOnRun(
+        wall.openings,
+        Math.round(wall.lengthMm) - usable[i],
+        usable[i],
+      ),
       comms: input.comms ?? [],
       cornerAt,
       production: input.production,
@@ -452,6 +460,52 @@ export function linearComposition(run: Run, wallId = 'w1'): Composition {
 }
 
 export { CORNER_SIZE_MM };
+
+/**
+ * ПРОЁМЫ СТЕНЫ — В КООРДИНАТЫ РЯДА.
+ *
+ * Замерщик меряет окно, дверь и ригель ОТ УГЛА СТЕНЫ. Ряд на этой стене
+ * начинается не от угла: там стоит соседний ряд, и он занял `lostMm`.
+ * Раскладка же считает всё от начала РЯДА.
+ *
+ * Пока перевода не было, на стене Б всё уезжало на длину угла:
+ *
+ *   стена 1800, угол занял 660, полезная 1140
+ *   ригель замера 1200+600  →  в ряд не попадал ВОВСЕ (обрезался по 1140)
+ *   ригель замера  600+600  →  вставал на 600+540 вместо 0+540
+ *   ригель замера    0+600  →  вставал на 0+600, хотя физически он в углу
+ *
+ * То же самое происходило с окном: верхний ряд рвался не там, где окно.
+ * Ригель при этом — ФАКТ ОБМЕРА, и двигать его алгоритм не вправе; он
+ * обязан лишь пересчитать отметку в систему координат ряда.
+ *
+ * Обрезка по длине ряда тут же: то, что осталось за углом, к этому ряду
+ * не относится — его закрывает соседний.
+ */
+export function openingsOnRun(
+  openings: Opening[] | undefined,
+  lostMm: number,
+  lengthMm: number,
+): Opening[] {
+  const moved: Opening[] = [];
+
+  for (const opening of openings ?? []) {
+    const from = opening.fromCornerMm - lostMm;
+    const to = from + opening.widthMm;
+
+    const clippedFrom = Math.max(0, from);
+    const clippedTo = Math.min(lengthMm, to);
+    if (clippedTo - clippedFrom <= 0) continue;
+
+    moved.push({
+      ...opening,
+      fromCornerMm: Math.round(clippedFrom),
+      widthMm: Math.round(clippedTo - clippedFrom),
+    });
+  }
+
+  return moved;
+}
 
 /* ─────────────────────────  Где стоит каждый ряд  ───────────────────────── */
 

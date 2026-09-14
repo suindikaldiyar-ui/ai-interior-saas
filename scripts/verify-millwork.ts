@@ -125,7 +125,7 @@ import {
 } from '../lib/millwork/fill';
 import { openingOf, openingRejection } from '../lib/millwork/opening';
 import { columnNichesSumMm, ovenBottomMm } from '../lib/millwork/fill';
-import { beamDropMm } from '../lib/millwork/ceiling';
+import { beamBottomMm, beamDropMm } from '../lib/millwork/ceiling';
 import {
   beamWarnings,
   ergonomicWarnings,
@@ -9454,6 +9454,192 @@ console.log('\nВысота прибора доезжает до колонны'
           (m) => plinthMm(m.run.production) + moduleCarcassHeightMm(colOf(m.run), m.run) <= rowTop,
         ),
       `верх колонны ${plinthMm(tall.production) + moduleCarcassHeightMm(tallCol, tall)} при потолке ${rowTop}`,
+    );
+  }
+}
+
+/* ──────────────  Ригель: где замерен, там и стоит  ────────────── */
+
+/**
+ * РИГЕЛЬ — ФАКТ ОБМЕРА, АЛГОРИТМ ЕГО НЕ ДВИГАЕТ.
+ *
+ * Замерщик меряет выступ ОТ УГЛА СТЕНЫ. Ряд на этой стене начинается не
+ * от угла — там стоит соседний ряд, и он занял свои миллиметры. Перевода
+ * между этими системами координат не было вовсе, и на стене Б всё
+ * уезжало на длину угла:
+ *
+ *   стена 1800, угол занял 660, полезная 1140
+ *   замер 1200+600  →  в ряд не попадал ВОВСЕ
+ *   замер  600+600  →  вставал на 600+540 вместо 0+540
+ *
+ * То же самое происходило с окном: верхний ряд рвался не там, где окно.
+ */
+console.log('\nРигель: где замерен, там и стоит');
+{
+  const CEILING = 2700;
+  const beam = (fromCornerMm: number, widthMm: number, dropMm: number): Opening => ({
+    id: `b-${fromCornerMm}-${widthMm}-${dropMm}`,
+    kind: 'beam',
+    fromCornerMm,
+    widthMm,
+    sillMm: 0,
+    heightMm: dropMm,
+  });
+
+  const shopA: ProductionSettings = {
+    ...DEFAULT_PRODUCTION,
+    depths: { baseMm: 550, upperMm: 350, mezzanineMm: 550 },
+    heights: { plinthMm: 100, carcassMm: 760, countertopMm: 40, apronMm: 600 },
+  };
+
+  for (const [shopName, production] of [
+    ['цех 560/320', DEFAULT_PRODUCTION],
+    ['цех 550/350', shopA],
+  ] as const) {
+    /* ── Стена Б: отметка замера переезжает в координаты ряда ── */
+    const drift: string[] = [];
+    let checked = 0;
+
+    for (const at of [600, 1000, 1200, 1500]) {
+      const attempt = tryBuildComposition({
+        kind: 'corner_l',
+        walls: [
+          { id: 'w1', lengthMm: 3800, openings: [] },
+          { id: 'w2', lengthMm: 1800, openings: [beam(at, 300, 300)] },
+        ],
+        ceilingHeightMm: CEILING,
+        requirements: REQ,
+        comms: COMMS,
+        production,
+      });
+
+      if (attempt.state === 'refused') {
+        drift.push(`${at}: ОТКАЗ ${attempt.reason}`);
+        continue;
+      }
+
+      const segment = attempt.composition.segments[1];
+      const lost = segment.wallLengthMm - segment.run.lengthMm;
+      const want = Math.max(0, at - lost);
+      const got = (segment.run.beams ?? [])[0];
+      checked += 1;
+
+      if (!got || got.fromCornerMm !== want) {
+        drift.push(`замер ${at} (угол ${lost}) → ${got ? got.fromCornerMm : 'НИЧЕГО'}, ждали ${want}`);
+      }
+    }
+
+    check(
+      `${shopName}: ригель стены Б встаёт там, где его замерили`,
+      checked === 4 && drift.length === 0,
+      checked < 4 ? `ПРОВЕРЕНО ТОЛЬКО ${checked} ИЗ 4 · ${drift.join(' · ')}` : drift.join(' · ') || '600 1000 1200 1500 — все на месте',
+    );
+
+    /* ── Ригель в четырёх местах прямого ряда ── */
+    const places: [string, Opening][] = [
+      ['у края', beam(0, 600, 300)],
+      ['посередине', beam(1600, 600, 300)],
+      ['на стыке модулей', beam(1200, 600, 300)],
+      ['над колонной прибора', beam(0, 1200, 600)],
+    ];
+
+    for (const [where, b] of places) {
+      const run = buildRun({
+        lengthMm: DEMO_PROJECT.lengthMm,
+        ceilingHeightMm: CEILING,
+        requirements: REQ,
+        openings: [b],
+        comms: COMMS,
+        production,
+      });
+
+      /*
+       * Ноль модулей — это пустой ряд, а не «проверять нечего».
+       * Падаем здесь, а не проходим по пустому списку.
+       */
+      const all = [...run.modules, ...run.upperSegments.flatMap((seg) => seg.modules)];
+      check(
+        `${shopName} · ${where}: ряд под ригелем собрался`,
+        run.modules.length > 0 && all.length > 0,
+        run.modules.length === 0 ? 'МОДУЛЕЙ НЕТ ВОВСЕ' : `${run.modules.length} + ${all.length - run.modules.length}`,
+      );
+      if (run.modules.length === 0) continue;
+
+      /* ── Ни один модуль не выше низа ригеля ── */
+      const bottom = beamBottomMm(b, CEILING);
+      const over = runPlaces(run)
+        .filter(
+          (entry) =>
+            entry.unit.offsetMm < b.fromCornerMm + b.widthMm &&
+            b.fromCornerMm < entry.unit.offsetMm + entry.unit.widthMm,
+        )
+        .filter((entry) => Math.round((entry.y + entry.heightM) * 1000) > bottom);
+
+      check(
+        `${shopName} · ${where}: высота модулей под ригелем не больше его низа`,
+        over.length === 0,
+        over.length > 0
+          ? over.map((e) => `${e.unit.id} верх ${Math.round((e.y + e.heightM) * 1000)} при ${bottom}`).join(' · ')
+          : `низ ригеля ${bottom} мм`,
+      );
+
+      /* ── Раскрой и смета считаются от той же высоты ── */
+      const panels = buildPanels({ run, production });
+      const bad = panels.filter((panel) => panel.lengthMm <= 0 || panel.widthMm <= 0);
+      const sides = new Map(
+        runPlaces(run).map((entry) => [entry.unit.id, Math.round(entry.heightM * 1000)]),
+      );
+      const cutDrift = panels
+        .filter((panel) => /бокови/i.test(panel.name) && sides.has(panel.moduleId))
+        .filter((panel) => panel.lengthMm !== sides.get(panel.moduleId));
+
+      check(
+        `${shopName} · ${where}: раскрой считается от той же высоты`,
+        bad.length === 0 && cutDrift.length === 0 && panels.length > 0,
+        bad.length > 0
+          ? `${bad.length} ДЕТАЛЕЙ С НЕПОЛОЖИТЕЛЬНЫМ РАЗМЕРОМ`
+          : cutDrift.length > 0
+            ? cutDrift.map((p) => `${p.moduleId}: боковина ${p.lengthMm} при корпусе ${sides.get(p.moduleId)}`).join(' · ')
+            : `${panels.length} деталей`,
+      );
+    }
+
+    /* ── Под ригелем мебель не встаёт: слова, а не молчание ── */
+    const killed = buildRun({
+      lengthMm: DEMO_PROJECT.lengthMm,
+      ceilingHeightMm: CEILING,
+      requirements: REQ,
+      openings: [beam(0, DEMO_PROJECT.lengthMm, 1200)],
+      comms: COMMS,
+      production,
+    });
+
+    check(
+      `${shopName}: ригель во всю стену убирает верхний ряд НЕ МОЛЧА`,
+      killed.upperSegments.reduce((n, seg) => n + seg.modules.length, 0) === 0 &&
+        beamWarnings(killed).some((w) => /ряд там разрывается/.test(w.message)),
+      beamWarnings(killed).map((w) => w.message).join(' | ') || 'СЛОВ НЕТ',
+    );
+
+    /* ── Ригель до пола: отказ словами, а не корпуса нулевой высоты ── */
+    let crushed = '';
+    try {
+      buildRun({
+        lengthMm: DEMO_PROJECT.lengthMm,
+        ceilingHeightMm: CEILING,
+        requirements: REQ,
+        openings: [beam(0, DEMO_PROJECT.lengthMm, 2600)],
+        comms: COMMS,
+        production,
+      });
+    } catch (error) {
+      crushed = (error as Error).message;
+    }
+
+    check(
+      `${shopName}: ригель до пола отказывает словами, а не нулевыми корпусами`,
+      /корпуса ниже \d+ мм не бывает/.test(crushed),
+      crushed ? crushed.slice(0, 120) : 'СОБРАЛОСЬ МОЛЧА',
     );
   }
 }
