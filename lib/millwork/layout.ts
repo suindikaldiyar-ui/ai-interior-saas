@@ -430,7 +430,7 @@ function describeFronts(doorCount: number, drawerCount: number): string {
  * модуль создаётся: строку по-прежнему собирает `moduleId`, здесь к
  * готовой только дописывается стена — разойтись им негде.
  */
-function onWall<T extends { id: string }>(units: T[], wallId?: string): T[] {
+export function onWall<T extends { id: string }>(units: T[], wallId?: string): T[] {
   if (!wallId) return units;
   return units.map((unit) => ({ ...unit, id: withWall(unit.id, wallId) }));
 }

@@ -114,7 +114,7 @@ import {
   wallMismatchMessage,
   wallMismatches,
 } from '../lib/millwork/walls';
-import { workingWall } from '../lib/millwork/workspace';
+import { composeVariants, workingWall } from '../lib/millwork/workspace';
 import type { MillworkState } from '../lib/projects';
 import type { CatalogEntryFull } from '../types/catalog';
 import {
@@ -9778,6 +9778,172 @@ console.log('\nКоммуникация принадлежит своей сте
       'мойка садится напротив СВОЕГО вывода воды',
       own !== null && Math.abs(own - 1650) <= 300,
       own === null ? 'МОЙКИ НЕТ' : `центр мойки ${own} при выводе 1650`,
+    );
+  }
+}
+
+/* ───────────  Ключи открывания на пути ЭКРАНА, а не сборки  ─────────── */
+
+/**
+ * ТЕСТ БЫЛ ЗЕЛЁНЫМ НА СЛОМАННОМ ПРОДУКТЕ.
+ *
+ * Проверка уникальности id ходила по `buildComposition`, а там метку
+ * стены получают ВСЕ ряды, включая первый. Экран собирает первый ряд
+ * иначе — через `composeVariants`, — и метки у него не было вовсе;
+ * соседние приходят из `editedWalls`, то есть после `applyOps`.
+ *
+ * Меряем ровно тот путь, которым идёт экран, и ровно тот ключ, который
+ * строится в момент клика: `${unit.id}:door:${i}`
+ * (CabinetModule3D.tsx:222).
+ */
+console.log('\nКлючи открывания на пути экрана');
+{
+  const CEILING = 2700;
+  const WALLS = [
+    { id: 'w1', lengthMm: 3800, openings: [] },
+    { id: 'w2', lengthMm: 1800, openings: [] },
+  ];
+
+  const layout = buildComposition({
+    kind: 'corner_l',
+    walls: WALLS,
+    ceilingHeightMm: CEILING,
+    requirements: REQ,
+    comms: COMMS,
+  });
+
+  /* Стена А — так, как её строит рабочий экран. */
+  const wallA = composeVariants(
+    {
+      title: 'x',
+      zone: 'kitchen',
+      measuredBy: '',
+      measuredAt: '',
+      lengthMm: layout.segments[0].run.lengthMm,
+      ceilingHeightMm: CEILING,
+      requirements: { ...REQ, appliances: layout.segments[0].appliances },
+      openings: [],
+      comms: layout.segments[0].comms,
+      rates: DEMO_RATES,
+      cornerAt: null,
+      measuredWalls: [],
+      measuredComms: COMMS,
+      runWallId: 'w1',
+      roomDepthM: 3,
+    },
+    { basic: [], optimal: [], premium: [] },
+    {},
+  ).find((variant) => variant.key === 'optimal')!.run;
+
+  /* Соседняя стена — так, как её кладёт в `editedWalls` правка. */
+  const withMezz = (run: Run) =>
+    applyOps({
+      run,
+      requirements: REQ,
+      ops: [{ op: 'set_mezzanine', heightMm: 400 }],
+      openings: [],
+    });
+
+  const editedA = withMezz(wallA);
+  const editedB = withMezz(layout.segments[1].run);
+
+  const allOf = (run: Run) => [
+    ...run.modules,
+    ...run.upperSegments.flatMap((segment) => segment.modules),
+  ];
+
+  /*
+   * Ноль модулей или ноль антресолей — это не «проверять нечего»:
+   * симптом живёт именно на антресолях. Падаем здесь.
+   */
+  const mezzOf = (run: Run) =>
+    run.upperSegments.flatMap((s) => s.modules).filter((u) => u.section === 'mezzanine');
+
+  check(
+    'на обеих стенах есть модули и антресоли',
+    allOf(editedA).length > 0 &&
+      allOf(editedB).length > 0 &&
+      mezzOf(editedA).length > 0 &&
+      mezzOf(editedB).length > 0,
+    allOf(editedA).length === 0 || allOf(editedB).length === 0
+      ? 'СЕЛЕКТОР ВЕРНУЛ НОЛЬ МОДУЛЕЙ'
+      : mezzOf(editedA).length === 0 || mezzOf(editedB).length === 0
+        ? 'АНТРЕСОЛЕЙ НЕТ — симптом мерить не на чем'
+        : `А: ${allOf(editedA).length} мод., ${mezzOf(editedA).length} антр. · ` +
+          `Б: ${allOf(editedB).length} мод., ${mezzOf(editedB).length} антр.`,
+  );
+
+  if (mezzOf(editedA).length === 0 || mezzOf(editedB).length === 0) {
+    check('дальше мерить нечем', false, 'АНТРЕСОЛЕЙ НЕ ПОЛУЧИЛОСЬ');
+  } else {
+    /* ── Метка стены есть у КАЖДОГО модуля обоих рядов ── */
+    for (const [label, run, wallId] of [
+      ['стена А', editedA, 'w1'],
+      ['стена Б', editedB, 'w2'],
+    ] as [string, Run, string][]) {
+      const bare = allOf(run).filter((unit) => !unit.id.endsWith(`@${wallId}`));
+      check(
+        `${label}: метка стены есть у каждого модуля, включая верхний ряд`,
+        bare.length === 0,
+        bare.length > 0
+          ? `БЕЗ МЕТКИ: ${bare.map((u) => u.id).join(', ')}`
+          : `${allOf(run).length} модулей с @${wallId}`,
+      );
+    }
+
+    /*
+     * ГЛАВНОЕ: ключ строится ровно так, как в момент клика.
+     * Совпал — значит одна створка открывает две.
+     */
+    const keysOf = (run: Run) =>
+      allOf(run).flatMap((unit) =>
+        Array.from({ length: Math.max(1, unit.doorCount ?? 1) }, (_, i) => `${unit.id}:door:${i}`),
+      );
+
+    const keysA = new Set(keysOf(editedA));
+    const shared = keysOf(editedB).filter((key) => keysA.has(key));
+
+    check(
+      'ключи открывания двух стен не пересекаются',
+      shared.length === 0,
+      shared.length > 0 ? `ОБЩИЕ КЛЮЧИ: ${shared.join(', ')}` : `${keysA.size} + ${keysOf(editedB).length}`,
+    );
+
+    /* ── И то же самое списком «Открыть всё» ── */
+    const openA = new Set(openablePartIds(editedA));
+    const leaks = openablePartIds(editedB).filter((key) => openA.has(key));
+    check(
+      '«Открыть всё» одной стены не трогает другую',
+      leaks.length === 0,
+      leaks.length > 0 ? `ОБЩИЕ: ${leaks.join(', ')}` : `${openA.size} + ${openablePartIds(editedB).length}`,
+    );
+
+    /* ── Антресоли отдельно: симптом назван именно про них ── */
+    const mezzA = new Set(mezzOf(editedA).map((u) => u.id));
+    const mezzShared = mezzOf(editedB).filter((u) => mezzA.has(u.id));
+    check(
+      'антресоли двух стен — разные модули',
+      mezzShared.length === 0,
+      mezzShared.length > 0
+        ? `ОБЩИЕ ID: ${mezzShared.map((u) => u.id).join(', ')}`
+        : `А: ${Array.from(mezzA).join(',')} · Б: ${mezzOf(editedB).map((u) => u.id).join(',')}`,
+    );
+
+    /* ── Ряд из старого сохранения не делит ключи со стеной А ── */
+    const legacy: Run = {
+      ...layout.segments[1].run,
+      wallId: undefined,
+      modules: layout.segments[1].run.modules.map((u) => ({ ...u, id: u.id.split('@')[0] })),
+      upperSegments: layout.segments[1].run.upperSegments.map((seg) => ({
+        ...seg,
+        modules: seg.modules.map((u) => ({ ...u, id: u.id.split('@')[0] })),
+      })),
+    };
+    const legacyShared = keysOf(withMezz(legacy)).filter((key) => keysA.has(key));
+    check(
+      'ряд из старого сохранения не делит ключи со стеной А',
+      legacyShared.length === 0,
+      legacyShared.length > 0 ? `ОБЩИЕ КЛЮЧИ: ${legacyShared.join(', ')}` : 'пересечений нет',
     );
   }
 }

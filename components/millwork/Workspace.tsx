@@ -59,6 +59,7 @@ import SurveySheet from './SurveySheet';
 import TemplatePicker from './TemplatePicker';
 import type { RateTable } from '@/lib/millwork/estimate';
 import { applyOps } from '@/lib/millwork/ops';
+import { onWall } from '@/lib/millwork/layout';
 import { buildEstimate } from '@/lib/millwork/estimate';
 import {
   MODULE_VARIANTS,
@@ -847,9 +848,37 @@ export default function Workspace(props: WorkspaceProps) {
    */
   const segments = useMemo(() => {
     if (!layout) return [active.run];
-    return layout.segments.map((segment, i) =>
-      i === 0 ? active.run : (editedWalls[i] ?? segment.run),
-    );
+
+    return layout.segments.map((segment, i) => {
+      if (i === 0) return active.run;
+
+      const saved = editedWalls[i];
+      if (!saved) return segment.run;
+
+      /*
+       * РЯД ИЗ СОХРАНЕНИЯ ПОЛУЧАЕТ ИДЕНТИЧНОСТЬ СВОЕЙ СТЕНЫ.
+       *
+       * Объекты, сохранённые до захода про id, лежат без метки стены.
+       * Восстановленные дословно, они снова делят ключи открывания со
+       * стеной А — и антресоли двух стен открываются вместе. Какая это
+       * стена, композиция знает: метка не выдумывается, а берётся у
+       * сегмента, на месте которого ряд стоит.
+       *
+       * Клеймит та же `onWall`, что и сборка: второй формулы метки
+       * в продукте нет.
+       */
+      if (saved.wallId) return saved;
+
+      return {
+        ...saved,
+        wallId: segment.wallId,
+        modules: onWall(saved.modules, segment.wallId),
+        upperSegments: saved.upperSegments.map((upper) => ({
+          ...upper,
+          modules: onWall(upper.modules, segment.wallId),
+        })),
+      };
+    });
   }, [layout, active.run, editedWalls]);
 
   const wall = Math.min(wallIndex, segments.length - 1);

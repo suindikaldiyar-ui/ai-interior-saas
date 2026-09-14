@@ -12,7 +12,7 @@ import {
   isStandardWidth,
   snapToStandard,
 } from './modules';
-import { buildUpperRow, fillGap, moduleId } from './layout';
+import { buildUpperRow, fillGap, moduleId, onWall } from './layout';
 import {
   assertNoOverlap,
   assertRunFits,
@@ -985,6 +985,18 @@ export function applyOps({
     ...(run.beams ?? []),
   ];
 
+  /*
+   * ВЕРХНИЙ РЯД ПОСЛЕ ПРАВКИ КЛЕЙМИТСЯ ТАК ЖЕ, КАК НИЖНИЙ.
+   *
+   * `buildRun` ставит метку стены на ОБА ряда (`onWall`), а здесь
+   * верхний пересобирался и метку терял: у ряда стены Б выходило
+   * «низ base-600@w2, верх upper-600» — полосатый ряд, половина
+   * которого делит ключи с другой стеной.
+   *
+   * На экране это и был симптом «антресоли двух стен открываются
+   * вместе»: ключ открывания строится из `unit.id`, и у немеченых
+   * модулей он совпадал. Замерено: общий ключ `mezz-0:door:0`.
+   */
   nextRun.upperSegments = options.hasUpper
     ? buildUpperRow(
         modules,
@@ -992,7 +1004,7 @@ export function applyOps({
         withBeams,
         { ...requirements, options },
         run.ceilingHeightMm,
-      )
+      ).map((segment) => ({ ...segment, modules: onWall(segment.modules, run.wallId) }))
     : [];
 
   /*
