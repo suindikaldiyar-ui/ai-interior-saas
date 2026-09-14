@@ -346,15 +346,27 @@ export function beamWarnings(run: Run | null): SurveyWarning[] {
       ...outside.map((u) => moduleCarcassHeightMm(u, run)),
       0,
     );
-    const shorter = Number.isFinite(lowest) && usual > lowest ? Math.round(usual - lowest) : 0;
+    /*
+     * СТУПЕНЬ СЧИТАЕТСЯ В ОБЕ СТОРОНЫ.
+     *
+     * Раньше здесь мерялось только «насколько НИЖЕ»: шкаф под выступом
+     * был стандартных 720 мм и всегда оказывался ниже соседей. Теперь он
+     * прижимается к низу ригеля, и при мелком свесе становится ВЫШЕ их —
+     * ступень та же, видно её так же, а слов не было вовсе.
+     *
+     * Замерено: свес 200 на демо-ряду — верх под выступом 2500 против
+     * 2170 у соседей, разница 330 мм, и экран молчал.
+     */
+    const step = Number.isFinite(lowest) && usual > 0 ? Math.round(usual - lowest) : 0;
 
-    if (shorter > 0) {
+    if (step !== 0) {
+      const lower = step > 0;
       out.push({
         id: `beam-${beam.id}`,
         severity: 'clarify',
         message:
-          `Под выступом шкаф ниже на ${shorter} мм — верх ряда там не сойдётся ` +
-          'с остальными.',
+          `Под выступом шкаф ${lower ? 'ниже' : 'выше'} на ${Math.abs(step)} мм — ` +
+          'верх ряда там не сойдётся с остальными.',
         atMm: beam.fromCornerMm,
       });
       continue;

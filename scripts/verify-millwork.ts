@@ -10085,5 +10085,202 @@ console.log('\nГенерация знает, сколько рядов в ко�
   }
 }
 
+/* ───────────  Верхний ряд прижимается к низу ригеля  ─────────── */
+
+/**
+ * ШКАФ ПОД ВЫСТУПОМ СТОИТ ВПЛОТНУЮ К НЕМУ.
+ *
+ * Прошлый заход закрепил ЗАПРЕТ: модуль не выше низа ригеля. Но `min` —
+ * это предел, а не цель, и в стандартном режиме шкаф оставался ровно
+ * 720 мм: под выступом висела щель, которую не вымыть и в которую
+ * ничего не положить.
+ *
+ *   свес 200 → низ ригеля 2500, верх шкафа 2170, щель 330 мм
+ *   свес 300 → низ ригеля 2400, верх шкафа 2170, щель 230 мм
+ *   свес 500 → низ ригеля 2200, верх шкафа 2170, щель  30 мм
+ *
+ * Режим «до потолка» щели не давал — но не потому, что считал от ригеля:
+ * он считал от потолка и обрезался тем же `min`. Совпадение результата,
+ * а не общая формула.
+ */
+console.log('\nВерхний ряд прижимается к низу ригеля');
+{
+  const CEILING = 2700;
+  const beam = (fromCornerMm: number, widthMm: number, dropMm: number): Opening => ({
+    id: `b-${fromCornerMm}-${widthMm}-${dropMm}`,
+    kind: 'beam',
+    fromCornerMm,
+    widthMm,
+    sillMm: 0,
+    heightMm: dropMm,
+  });
+
+  const shopA: ProductionSettings = {
+    ...DEFAULT_PRODUCTION,
+    depths: { baseMm: 550, upperMm: 350, mezzanineMm: 550 },
+    heights: { plinthMm: 100, carcassMm: 760, countertopMm: 40, apronMm: 600 },
+  };
+
+  const toCeiling: RunRequirements = {
+    ...REQ,
+    options: { ...REQ.options, upperToCeiling: true },
+  };
+
+  /** Верхний ряд (без антресоли) под участком ригеля. */
+  const uppersUnder = (run: Run, b: Opening) =>
+    runPlaces(run)
+      .filter(
+        (entry) =>
+          (entry.unit.kind === 'upper' || entry.unit.kind === 'corner_upper') &&
+          entry.unit.section !== 'mezzanine',
+      )
+      .filter(
+        (entry) =>
+          entry.unit.offsetMm < b.fromCornerMm + b.widthMm &&
+          b.fromCornerMm < entry.unit.offsetMm + entry.unit.widthMm,
+      );
+
+  for (const [shopName, production] of [
+    ['цех 560/320', DEFAULT_PRODUCTION],
+    ['цех 550/350', shopA],
+  ] as const) {
+    for (const [modeName, req] of [
+      ['стандартный', REQ],
+      ['до потолка', toCeiling],
+    ] as [string, RunRequirements][]) {
+      const gaps: string[] = [];
+      let measured = 0;
+
+      for (const drop of [200, 300, 500]) {
+        const b = beam(1600, 600, drop);
+        const run = buildRun({
+          lengthMm: DEMO_PROJECT.lengthMm,
+          ceilingHeightMm: CEILING,
+          requirements: req,
+          openings: [b],
+          comms: COMMS,
+          production,
+        });
+
+        const under = uppersUnder(run, b);
+        if (under.length === 0) {
+          gaps.push(`свес ${drop}: ПОД РИГЕЛЕМ НЕТ МОДУЛЕЙ`);
+          continue;
+        }
+
+        const bottom = beamBottomMm(b, CEILING);
+        for (const entry of under) {
+          measured += 1;
+          const top = Math.round((entry.y + entry.heightM) * 1000);
+          if (Math.abs(bottom - top) > 1) {
+            gaps.push(`свес ${drop}: низ ${bottom}, верх ${top}, зазор ${bottom - top}`);
+          }
+        }
+      }
+
+      /*
+       * Ноль модулей — это не «зазора нет», это мерить нечего.
+       * Падаем здесь, а не проходим по пустому списку.
+       */
+      check(
+        `${shopName} · ${modeName}: под ригелем есть что мерить`,
+        measured > 0,
+        measured === 0 ? 'СЕЛЕКТОР ВЕРНУЛ НОЛЬ МОДУЛЕЙ' : `${measured} модулей под выступом`,
+      );
+
+      check(
+        `${shopName} · ${modeName}: верх модуля равен низу ригеля`,
+        measured > 0 && gaps.length === 0,
+        gaps.join(' · ') || 'зазора нет ни на одном свесе',
+      );
+    }
+
+    /* ── Ригель на части стены: два уровня, и оба без зазора ── */
+    const b = beam(1600, 600, 300);
+    const run = buildRun({
+      lengthMm: DEMO_PROJECT.lengthMm,
+      ceilingHeightMm: CEILING,
+      requirements: REQ,
+      openings: [b],
+      comms: COMMS,
+      production,
+    });
+
+    const row = runPlaces(run).filter(
+      (entry) =>
+        (entry.unit.kind === 'upper' || entry.unit.kind === 'corner_upper') &&
+        entry.unit.section !== 'mezzanine',
+    );
+    const overlaps = (entry: (typeof row)[number]) =>
+      entry.unit.offsetMm < b.fromCornerMm + b.widthMm &&
+      b.fromCornerMm < entry.unit.offsetMm + entry.unit.widthMm;
+
+    const underTops = new Set(row.filter(overlaps).map((e) => Math.round((e.y + e.heightM) * 1000)));
+    const asideTops = new Set(
+      row.filter((e) => !overlaps(e)).map((e) => Math.round((e.y + e.heightM) * 1000)),
+    );
+
+    check(
+      `${shopName}: ригель на части стены даёт два уровня в одном ряду`,
+      underTops.size === 1 &&
+        asideTops.size === 1 &&
+        Array.from(underTops)[0] !== Array.from(asideTops)[0],
+      row.length === 0
+        ? 'ВЕРХНЕГО РЯДА НЕТ ВОВСЕ'
+        : `под выступом ${Array.from(underTops).join('/')} · рядом ${Array.from(asideTops).join('/')}`,
+    );
+
+    check(
+      `${shopName}: под выступом зазора нет, рядом стандартная высота`,
+      Array.from(underTops)[0] === beamBottomMm(b, CEILING),
+      `низ ригеля ${beamBottomMm(b, CEILING)} · верх под ним ${Array.from(underTops).join('/')}`,
+    );
+
+    /* ── Ступень названа словами, в ту сторону, в какую она есть ── */
+    check(
+      `${shopName}: ступень под выступом названа словами`,
+      beamWarnings(run).some((w) => /шкаф (выше|ниже) на \d+ мм/.test(w.message)),
+      beamWarnings(run).map((w) => w.message).join(' | ') || 'СЛОВ НЕТ',
+    );
+
+    /* ── Раскрой считает ту же высоту, что сцена и чертёж ── */
+    const heights = new Map(
+      runPlaces(run).map((entry) => [entry.unit.id, Math.round(entry.heightM * 1000)]),
+    );
+    const drift = buildPanels({ run, production })
+      .filter((panel) => /бокови/i.test(panel.name) && heights.has(panel.moduleId))
+      .filter((panel) => panel.lengthMm !== heights.get(panel.moduleId));
+
+    check(
+      `${shopName}: высота из раскроя равна высоте в сцене и на чертеже`,
+      drift.length === 0,
+      drift.length > 0
+        ? drift.map((p) => `${p.moduleId}: боковина ${p.lengthMm} при корпусе ${heights.get(p.moduleId)}`).join(' · ')
+        : `${heights.size} модулей сходятся`,
+    );
+
+    /* ── Слишком низкий ригель по-прежнему отказывает словами ── */
+    let refused = '';
+    try {
+      buildRun({
+        lengthMm: DEMO_PROJECT.lengthMm,
+        ceilingHeightMm: CEILING,
+        requirements: REQ,
+        openings: [beam(0, DEMO_PROJECT.lengthMm, 2600)],
+        comms: COMMS,
+        production,
+      });
+    } catch (error) {
+      refused = (error as Error).message;
+    }
+
+    check(
+      `${shopName}: слишком низкий ригель отказывает словами`,
+      /корпуса ниже \d+ мм не бывает/.test(refused),
+      refused ? refused.slice(0, 110) : 'СОБРАЛОСЬ МОЛЧА',
+    );
+  }
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

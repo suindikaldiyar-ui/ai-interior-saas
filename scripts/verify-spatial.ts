@@ -920,5 +920,97 @@ console.log('\nКомпозиция под ригелем не рассыпае�
   }
 }
 
+/* ═══════════  Между шкафом и ригелем в сцене нет щели  ═══════════ */
+
+/**
+ * ЗАЗОР МЕРЯЕТСЯ ТАМ, ГДЕ ЕГО ВИДНО.
+ *
+ * Высоту модуля считает `moduleCarcassHeightMm`, место по вертикали —
+ * `runPlaces`. Сцена берёт оба числа; щель между верхом шкафа и низом
+ * выступа — это их разность, и меряется она теми же местами, по которым
+ * рисуется мебель.
+ */
+console.log('\nМежду шкафом и ригелем в сцене нет щели');
+{
+  const CEILING = 2700;
+
+  const shopA: ProductionSettings = {
+    ...DEFAULT_PRODUCTION,
+    depths: { baseMm: 550, upperMm: 350, mezzanineMm: 550 },
+    heights: { plinthMm: 100, carcassMm: 760, countertopMm: 40, apronMm: 600 },
+  };
+
+  const beam = (fromCornerMm: number, widthMm: number, dropMm: number): Opening => ({
+    id: `b-${fromCornerMm}-${widthMm}-${dropMm}`,
+    kind: 'beam',
+    fromCornerMm,
+    widthMm,
+    sillMm: 0,
+    heightMm: dropMm,
+  });
+
+  for (const [shopName, production] of [
+    ['цех 560/320', DEFAULT_PRODUCTION],
+    ['цех 550/350', shopA],
+  ] as const) {
+    for (const drop of [200, 300, 500]) {
+      const b = beam(1600, 600, drop);
+
+      const layout = buildComposition({
+        kind: 'corner_l',
+        walls: [
+          { id: 'w1', lengthMm: 3800, openings: [b] },
+          { id: 'w2', lengthMm: 1800, openings: [] },
+        ],
+        ceilingHeightMm: CEILING,
+        requirements: DEMO_REQUIREMENTS,
+        comms: [],
+        production,
+      });
+
+      const run = layout.segments[0].run;
+      const bottomMm = CEILING - drop;
+
+      const under = runPlaces(run)
+        .filter(
+          (entry) =>
+            (entry.unit.kind === 'upper' || entry.unit.kind === 'corner_upper') &&
+            entry.unit.section !== 'mezzanine',
+        )
+        .filter(
+          (entry) =>
+            entry.unit.offsetMm < b.fromCornerMm + b.widthMm &&
+            b.fromCornerMm < entry.unit.offsetMm + entry.unit.widthMm,
+        );
+
+      /*
+       * Ноль модулей под выступом — мерить нечего, и это падение,
+       * а не «зазора нет».
+       */
+      check(
+        `${shopName} · свес ${drop}: под выступом есть модули`,
+        under.length > 0,
+        under.length === 0 ? 'СЕЛЕКТОР ВЕРНУЛ НОЛЬ МОДУЛЕЙ' : `${under.length} шт.`,
+      );
+      if (under.length === 0) continue;
+
+      const gaps = under.map((entry) => Math.round(bottomMm - (entry.y + entry.heightM) * 1000));
+
+      check(
+        `${shopName} · свес ${drop}: щели между шкафом и выступом нет`,
+        gaps.every((gap) => Math.abs(gap) <= 1),
+        `низ ригеля ${bottomMm} · зазоры ${gaps.join('/')} мм`,
+      );
+
+      /* Запрет прошлого захода держится: выше низа ригеля никто не лезет. */
+      check(
+        `${shopName} · свес ${drop}: и никто не заходит В выступ`,
+        gaps.every((gap) => gap >= -1),
+        `зазоры ${gaps.join('/')} мм`,
+      );
+    }
+  }
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
