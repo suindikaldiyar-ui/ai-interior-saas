@@ -252,6 +252,8 @@ import { limitByZone } from '../lib/complexes';
 import {
   buildComposition,
   cornerLostMm,
+  assertShapeMatches,
+  compositionBlock,
   linearComposition,
   segmentCount,
   splitAppliances,
@@ -9944,6 +9946,141 @@ console.log('\nКлючи открывания на пути экрана');
       'ряд из старого сохранения не делит ключи со стеной А',
       legacyShared.length === 0,
       legacyShared.length > 0 ? `ОБЩИЕ КЛЮЧИ: ${legacyShared.join(', ')}` : 'пересечений нет',
+    );
+  }
+}
+
+/* ────────────  Генерация знает, сколько рядов в композиции  ──────────── */
+
+/**
+ * ВИЗУАЛИЗАЦИЯ ПОКАЗЫВАЛА ОДНУ СТЕНУ И ЗАПРЕЩАЛА ОСТАЛЬНЫЕ.
+ *
+ * Кадр снимается со сцены, собранной из ОДНОГО ряда, а форму промпт
+ * выводил из типов модулей этого ряда: «угловая тогда, когда есть
+ * угловой модуль». У угловой на фальш-панели углового модуля нет вовсе —
+ * угол отдан под мёртвую зону, — и форма выходила «прямая».
+ *
+ * То есть модель не додумывала: ей ПРЯМО писали «Второго ряда нет. На
+ * перпендикулярных стенах мебели нет вовсе». Замерено: композиция 2 ряда
+ * и 16 модулей, в запрос уходил 1 ряд, 12 модулей и запрет на остальные.
+ *
+ * Живых запросов здесь нет: меряется текст, который уедет в модель.
+ */
+console.log('\nГенерация знает, сколько рядов в композиции');
+{
+  const CEILING = 2700;
+
+  const shapes: [string, CompositionKind, { id: string; lengthMm: number; openings: Opening[] }[]][] = [
+    ['прямая', 'linear', [{ id: 'w1', lengthMm: 3800, openings: [] }]],
+    [
+      'угловая',
+      'corner_l',
+      [
+        { id: 'w1', lengthMm: 3800, openings: [] },
+        { id: 'w2', lengthMm: 1800, openings: [] },
+      ],
+    ],
+    [
+      'П-образная',
+      'u_shape',
+      [
+        { id: 'w1', lengthMm: 3800, openings: [] },
+        { id: 'w2', lengthMm: 1800, openings: [] },
+        { id: 'w3', lengthMm: 1740, openings: [] },
+      ],
+    ],
+  ];
+
+  for (const [title, kind, walls] of shapes) {
+    const layout = buildComposition({
+      kind,
+      walls,
+      ceilingHeightMm: CEILING,
+      requirements: REQ,
+      comms: COMMS,
+    });
+
+    const runs = layout.segments.map((segment) => segment.run);
+
+    /*
+     * Ноль рядов — это пустая генерация, а не «проверять нечего».
+     * Падаем здесь, а не проходим по пустому списку.
+     */
+    check(
+      `${title}: ряды композиции есть`,
+      runs.length === walls.length && runs.every((run) => run.modules.length > 0),
+      runs.length === 0
+        ? 'СЕЛЕКТОР ВЕРНУЛ НОЛЬ РЯДОВ'
+        : runs.map((run) => `${run.lengthMm}×${run.modules.length}`).join(' + '),
+    );
+    if (runs.length === 0) continue;
+
+    /*
+     * То, что кладёт в мету сцены рабочий экран, и то, что читает из неё
+     * маршрут рендера. Числа руками здесь не пишутся.
+     */
+    const rowsMm = runs.map((run) => run.lengthMm);
+    const framed = runs[0];
+    const framedModules = [
+      ...framed.modules,
+      ...framed.upperSegments.flatMap((segment) => segment.modules),
+    ];
+
+    const block = compositionBlock({
+      shape: kind,
+      lengthMm: rowsMm[0],
+      moduleCount: framedModules.length,
+      rowsMm,
+    });
+
+    /* ── Все ряды названы, а не один ── */
+    const missing = rowsMm.filter((mm) => !block.includes(String(mm)));
+    check(
+      `${title}: в запрос уходят все ряды композиции`,
+      missing.length === 0,
+      missing.length > 0
+        ? `В ЗАПРОСЕ НЕТ РЯДОВ: ${missing.join(', ')} · ${block.split(String.fromCharCode(10))[0]}`
+        : block.split(String.fromCharCode(10))[0],
+    );
+
+    /* ── Число рядов в запросе равно числу рядов в композиции ── */
+    if (rowsMm.length > 1) {
+      check(
+        `${title}: число рядов в запросе равно числу рядов в композиции`,
+        block.includes(`РЯДОВ ${rowsMm.length}`),
+        block.split(String.fromCharCode(10))[0],
+      );
+
+      /* ── Ряд, не попавший в кадр, НАЗВАН, а не пропущен ── */
+      check(
+        `${title}: не попавший в кадр ряд назван словами`,
+        /в кадр НЕ ПОПАЛИ/.test(block) && /дорисовывать их НЕЛЬЗЯ/.test(block),
+        block.includes('НЕ ПОПАЛИ') ? 'сказано' : `СЛОВ НЕТ: ${block}`,
+      );
+
+      /* ── И запрета на существующую мебель больше нет ── */
+      check(
+        `${title}: промпт не запрещает то, что посчитано`,
+        !/Второго ряда нет/.test(block) && !/мебели нет вовсе/.test(block),
+        /Второго ряда нет|мебели нет вовсе/.test(block) ? `ЗАПРЕТ В ПРОМПТЕ: ${block}` : 'запрета нет',
+      );
+    } else {
+      /* Прямая: запрет на угол обязан остаться — он там правда. */
+      check(
+        'прямая: запрет на второй ряд остался',
+        /Второго ряда нет/.test(block),
+        block.split(String.fromCharCode(10))[0],
+      );
+      assertShapeMatches(block, 'linear');
+      check('прямая: сверка формы проходит', true, 'углов в тексте нет');
+    }
+
+    /* ── Длина в кадре — длина РЯДА, а не сумма ширин двух рядов ── */
+    const sumOfWidths = framedModules.reduce((sum, unit) => sum + unit.widthMm, 0);
+    check(
+      `${title}: длина в кадре — длина ряда, а не сумма ширин`,
+      block.includes(`до ${rowsMm[0]} мм`) && sumOfWidths !== rowsMm[0],
+      `ряд ${rowsMm[0]} мм, сумма ширин модулей ${sumOfWidths} мм`,
     );
   }
 }

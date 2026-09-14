@@ -1727,6 +1727,31 @@ export default function Workspace(props: WorkspaceProps) {
     }));
   }, [walls, shape]);
 
+  /**
+   * ЧТО ИМЕННО ПОКАЖЕТ ВИЗУАЛИЗАЦИЯ.
+   *
+   * Кадр для генерации снимается со сцены, собранной из ОДНОГО ряда
+   * (`KitchenScene run={active.run}`): в него попадает стена А. Смета и
+   * чертёж при этом считают всю композицию.
+   *
+   * Клиенту показывают то, что посчитано, — а если показать всё физически
+   * нечем, об этом говорят словами. Молча выданная картинка одной стены
+   * читается как «вот ваша кухня», и разницу клиент находит на монтаже.
+   */
+  const renderCoverage = useMemo(() => {
+    if (segments.length < 2) return null;
+
+    const rest = segments
+      .slice(1)
+      .map((_, i) => wallLabel(i + 1))
+      .join(' и ');
+
+    return (
+      `На визуализации будет только ${wallLabel(0).toLowerCase()}: кадр снимается с одного ряда. ` +
+      `${rest} посчитаны и есть на чертеже, но в картинку не попадут.`
+    );
+  }, [segments]);
+
   const warningsWithRefusal = useMemo(
     () => [
       ...(refusal
@@ -2052,6 +2077,15 @@ export default function Workspace(props: WorkspaceProps) {
   const sceneSlot = (
     <KitchenScene
       run={active.run}
+      /*
+       * Форма — из композиции, а не из состава первого ряда. Рендер
+       * иначе считает её сам и на угловой с фальш-панелью получает
+       * «прямую»: углового модуля в ней нет вовсе.
+       */
+      composition={{
+        kind: shape,
+        rowsMm: segments.map((segment) => segment.lengthMm),
+      }}
       ceilingHeightMm={props.ceilingHeightMm}
       roomDepthM={props.roomDepthM}
       hidden
@@ -2814,6 +2848,18 @@ export default function Workspace(props: WorkspaceProps) {
                   >
                     {render.busy ? 'Снимаем кадр…' : 'Отрисовать кухню'}
                   </button>
+                  {/*
+                    * Что попадёт в кадр — сказано ДО нажатия, а не после
+                    * того, как клиент не нашёл на картинке вторую стену.
+                    */}
+                  {renderCoverage && (
+                    <p
+                      data-render-coverage
+                      className="max-w-[34ch] text-center text-[13px] leading-snug text-graphiteMw"
+                    >
+                      {renderCoverage}
+                    </p>
+                  )}
                   {/* Цена клика названа ДО нажатия, а не после отказа. */}
                   {props.demoPlan && (
                     <p className="max-w-[34ch] text-center text-[13px] leading-snug text-graphiteMw">

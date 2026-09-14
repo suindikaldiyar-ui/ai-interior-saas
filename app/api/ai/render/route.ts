@@ -344,13 +344,27 @@ function buildPrompt(
   );
 
   /*
-   * Форма берётся из состава, а не из описания: угловой она считается
-   * тогда и только тогда, когда в ряду есть угловой модуль.
+   * ФОРМА БЕРЁТСЯ У КОМПОЗИЦИИ, А НЕ СЧИТАЕТСЯ ЗДЕСЬ ЗАНОВО.
+   *
+   * Здесь стоял второй расчёт: «угловая тогда, когда в ряду есть угловой
+   * модуль». У угловой кухни на фальш-панели углового модуля НЕТ — угол
+   * отдан под мёртвую зону, — и форма выходила «прямая». Промпт после
+   * этого прямо запрещал второй ряд, который в смете и на чертеже есть.
+   *
+   * Композиция знает свою форму сама и кладёт её в мету сцены.
    */
   const runModules = (kitchenMeta?.runModules ?? []) as RunModuleLike[];
-  const shape: RunShape = runModules.some((m) => String(m.kind).startsWith('corner'))
-    ? 'corner_l'
-    : 'linear';
+  const shape: RunShape = ((): RunShape => {
+    const declared = String(kitchenMeta?.layout ?? 'linear');
+    return declared === 'u_shape' || declared === 'corner_l' ? declared : 'linear';
+  })();
+
+  /** Полезные длины всех рядов композиции: в кадре только первый. */
+  const compositionRows = (
+    Array.isArray(kitchenMeta?.compositionRowsMm) ? kitchenMeta.compositionRowsMm : []
+  )
+    .map((mm) => Math.round(Number(mm) || 0))
+    .filter((mm) => mm > 0);
   /*
    * Правила про ящики, витрины и неизменность состава идут в
    * `GEOMETRY_LOCK` ДО описания стиля: стиль модель читает как пожелание,
@@ -358,12 +372,20 @@ function buildPrompt(
    */
   const rules = frontRules(runModules.length);
 
+  /*
+   * Длина ряда В КАДРЕ — это длина ряда, а не сумма ширин всех модулей:
+   * верхний ряд идёт над нижним, и сложенные вместе они давали 7600 мм
+   * на стене 3800.
+   */
+  const framedLengthMm =
+    compositionRows[0] ??
+    Math.round(runModules.reduce((sum, m) => sum + (Number(m.widthMm) || 0), 0));
+
   const composition = compositionBlock({
     shape,
-    lengthMm: Math.round(
-      runModules.reduce((sum, m) => sum + (Number(m.widthMm) || 0), 0),
-    ),
+    lengthMm: framedLengthMm,
     moduleCount: runModules.length,
+    rowsMm: compositionRows.length > 0 ? compositionRows : undefined,
   });
   const withImages = catalogRefs.filter((r) => r.imageIndex !== null);
   const imageIndexOfReference = (i: number) => i + baseImages + 1 + withImages.length;

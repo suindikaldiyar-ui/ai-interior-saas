@@ -4,6 +4,7 @@ import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { KITCHEN } from '@/lib/kitchen';
 import { moduleCarcassHeightMm } from '@/lib/millwork/fill';
+import type { RunShape } from '@/lib/millwork/composition';
 import { useInteriorStore } from '@/store/useInteriorStore';
 import Cabinet3D from './cabinet3d/Cabinet3D';
 import type { OrthoProjection } from './cabinet3d/SceneCamera';
@@ -48,6 +49,15 @@ type Props = {
   production?: ProductionSettings;
   /** Ракурс интерактивной сцены. */
   view?: SceneView;
+  /**
+   * ФОРМА ВСЕЙ КОМПОЗИЦИИ, а не того, что попало в кадр.
+   *
+   * Сцена собирается из ОДНОГО `Run` — в кадр попадает стена А. Форму
+   * при этом знает композиция, и передать её сюда обязательно: иначе
+   * рендер выводит форму из типов модулей первого ряда и на угловой
+   * кухне с фальш-панелью получает «прямую» — углового модуля там нет.
+   */
+  composition?: { kind: RunShape; rowsMm: number[] };
   /** Сцена за экраном: держим её живой, но без непрерывной отрисовки. */
   hidden?: boolean;
   /** Идентификатор созданного объекта — по нему вешается выбор материалов. */
@@ -73,6 +83,7 @@ export default function KitchenScene({
   interactive = false,
   production,
   view,
+  composition,
   onItemId,
 }: Props) {
   const itemIdRef = useRef<string | null>(null);
@@ -107,7 +118,9 @@ export default function KitchenScene({
         depth: KITCHEN.baseDepth,
       },
       meta: {
-        layout: 'linear',
+        /* Форма ВСЕЙ композиции: в кадре только первый её ряд. */
+        layout: composition?.kind ?? 'linear',
+        compositionRowsMm: composition?.rowsMm ?? [run.lengthMm],
         // Меш этого объекта рисует Cabinet3D — см. KitchenUnit.
         interactive,
         // По нему рендер сверяет, что снимает ту же кухню, что в смете.
