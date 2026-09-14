@@ -150,7 +150,7 @@ import {
 } from '../lib/millwork/invariants';
 import { configurationFingerprint } from '../lib/millwork/fingerprint';
 import { panelMaterials, SHELF_PANEL_NAME } from '../lib/millwork/panels';
-import { upperBottomMm, workTopMm } from '../lib/millwork/shop';
+import { plinthMm, upperBottomMm, workTopMm } from '../lib/millwork/shop';
 import { visibleVariantCount } from '../lib/millwork/frontGlyph';
 import { DEMO_TEMPLATE_ID } from '../lib/millwork/demoProject';
 import { createElement } from 'react';
@@ -199,6 +199,7 @@ import {
   APPLIANCE_SLOTS,
   applianceTypeOf,
   applianceWidthMm,
+  NICHE_CLEARANCE_MM,
   nicheHeightMm,
   CORNER,
   CORNER_SIZE_MM,
@@ -9290,6 +9291,169 @@ console.log('\nСтены отбираются по идентификатору
       'обход идёт от рабочей стены в одну сторону',
       picked.map((wall) => wall.id).join(' ') === 'w2 w3 w1',
       picked.map((w) => w.id).join(' '),
+    );
+  }
+}
+
+/* ────────────────  Высота прибора доезжает до колонны  ──────────────── */
+
+/**
+ * ВВЕДЁННАЯ ВЫСОТА ХОЛОДИЛЬНИКА НЕ ДЕЛАЛА НИЧЕГО.
+ *
+ * Размер доезжал до модуля (`applianceSizes`) и менял отпечаток, а
+ * высоту корпуса считала своя формула — высота пенала ряда. Колонна
+ * оставалась 2300 мм при любом приборе, и раскрой с ней: боковина
+ * 2300×560 при холодильнике 1400. Поле лежало в данных и не меняло ни
+ * одной детали — ловушка 280 ещё раз.
+ *
+ * `ops.ts` при этом уже считал по ДРУГОЙ формуле: отказывая слишком
+ * высокому холодильнику, он мерил «высота + просвет». Два места, одна
+ * величина, и второе её не исполняло.
+ */
+console.log('\nВысота прибора доезжает до колонны');
+{
+  const CEILING = 2700;
+  const base = buildRun({
+    lengthMm: DEMO_PROJECT.lengthMm,
+    ceilingHeightMm: CEILING,
+    requirements: REQ,
+    openings: OPENINGS,
+    comms: COMMS,
+  });
+
+  const fridge = base.modules.find((unit) => unit.appliance === 'fridge');
+
+  /*
+   * Ноль модулей или ноль приборов — это не «проверять нечего», это
+   * пустой ряд. Падаем здесь, а не проходим по пустому списку.
+   */
+  check(
+    'в ряду есть колонна холодильника',
+    base.modules.length > 0 && Boolean(fridge),
+    base.modules.length === 0
+      ? 'МОДУЛЕЙ НЕТ ВОВСЕ'
+      : fridge
+        ? `${fridge.id} «${fridge.label}»`
+        : 'ПРИБОРА НЕТ: мерить нечего',
+  );
+
+  if (!fridge) {
+    check('дальше мерить нечем', false, 'КОЛОННЫ ХОЛОДИЛЬНИКА В РЯДУ НЕТ');
+  } else {
+    const setHeight = (heightMm: number) =>
+      applyOps({
+        run: base,
+        requirements: REQ,
+        ops: [
+          {
+            op: 'set_appliance_size',
+            moduleId: fridge.id,
+            appliance: 'fridge',
+            size: { widthMm: fridge.widthMm, heightMm },
+          },
+        ],
+        openings: OPENINGS,
+      });
+
+    const colOf = (run: Run) => run.modules.find((unit) => unit.appliance === 'fridge')!;
+    const sideOf = (run: Run) =>
+      buildPanels({ run }).find(
+        (panel) => panel.moduleId === colOf(run).id && /бокови/i.test(panel.name),
+      );
+
+    const was = moduleCarcassHeightMm(fridge, base);
+
+    /* ── Высота меняется в раскладке ── */
+    const moved = [1400, 1800, 2000].map((heightMm) => {
+      const run = setHeight(heightMm);
+      return { heightMm, got: moduleCarcassHeightMm(colOf(run), run), run };
+    });
+
+    check(
+      'смена высоты прибора меняет высоту колонны',
+      moved.every((m) => m.got !== was) && new Set(moved.map((m) => m.got)).size === 3,
+      `было ${was} · ${moved.map((m) => `${m.heightMm}→${m.got}`).join(' · ')}`,
+    );
+
+    /* ── Просвет объявлен, а не подобран ── */
+    check(
+      'высота колонны = высота прибора + объявленный просвет',
+      moved.every((m) => m.got === m.heightMm + NICHE_CLEARANCE_MM),
+      moved
+        .map((m) => `${m.heightMm} + ${NICHE_CLEARANCE_MM} = ${m.heightMm + NICHE_CLEARANCE_MM}, корпус ${m.got}`)
+        .join(' · '),
+    );
+
+    check(
+      'и ниша считается той же формулой, что корпус',
+      moved.every(
+        (m) => nicheHeightMm('fridge', { widthMm: fridge.widthMm, heightMm: m.heightMm }) === m.got,
+      ),
+      moved
+        .map((m) => `${m.heightMm}: ниша ${nicheHeightMm('fridge', { widthMm: fridge.widthMm, heightMm: m.heightMm })}`)
+        .join(' · '),
+    );
+
+    /* ── Та же высота в раскрое ── */
+    const cutDrift = moved.filter((m) => sideOf(m.run)?.lengthMm !== m.got);
+    check(
+      'та же высота приходит в раскрой',
+      cutDrift.length === 0 && moved.every((m) => Boolean(sideOf(m.run))),
+      cutDrift.length > 0
+        ? cutDrift.map((m) => `${m.heightMm}: боковина ${sideOf(m.run)?.lengthMm} при корпусе ${m.got}`).join(' · ')
+        : moved.map((m) => `${m.heightMm}: боковина ${sideOf(m.run)?.lengthMm}`).join(' · '),
+    );
+
+    /*
+     * Чертёж рисует модуль ТОЙ ЖЕ `moduleCarcassHeightMm`
+     * (ElevationDrawing.tsx:1041) — своей ветки высоты у него нет с
+     * тех пор, как её убрали в слое 33. Сверяем это вызовом.
+     */
+    check(
+      'и та же высота уходит в чертёж',
+      moved.every((m) => moduleCarcassHeightMm(colOf(m.run), m.run) === sideOf(m.run)?.lengthMm),
+      moved.map((m) => `${m.heightMm}: чертёж ${moduleCarcassHeightMm(colOf(m.run), m.run)}`).join(' · '),
+    );
+
+    /* ── И в смету ── */
+    const money = (run: Run) => Math.round(buildEstimate(run, 'optimal', DEMO_RATES, []).total);
+    const sums = moved.map((m) => money(m.run));
+    check(
+      'и та же высота меняет смету',
+      new Set([money(base), ...sums]).size === 4,
+      `${money(base)} → ${sums.join(' → ')} ₸`,
+    );
+
+    /* ── Умолчание не пишется: ряд без введённой высоты не поехал ── */
+    check(
+      'без введённой высоты колонна прежняя',
+      moduleCarcassHeightMm(fridge, base) === was && was === 2300,
+      `${was} мм`,
+    );
+
+    /* ── Высокий прибор не проходит молча ── */
+    const tall = setHeight(2450);
+    const tallCol = colOf(tall);
+    const rowTop = CEILING;
+    const toppedOut =
+      plinthMm(tall.production) + moduleCarcassHeightMm(tallCol, tall) <= rowTop;
+
+    check(
+      'холодильник 2450 при потолке 2700 не проходит молча',
+      tallCol.applianceSizes?.fridge === undefined &&
+        (tall.warnings ?? []).some((w) => /антресоль не встанет/.test(w)),
+      tallCol.applianceSizes?.fridge
+        ? 'РАЗМЕР ЗАПИСАН МОЛЧА'
+        : ((tall.warnings ?? []).find((w) => /антресоль/.test(w)) ?? 'ОТКАЗА НЕТ'),
+    );
+
+    check(
+      'и колонна в любом случае остаётся внутри высоты ряда',
+      toppedOut &&
+        moved.every(
+          (m) => plinthMm(m.run.production) + moduleCarcassHeightMm(colOf(m.run), m.run) <= rowTop,
+        ),
+      `верх колонны ${plinthMm(tall.production) + moduleCarcassHeightMm(tallCol, tall)} при потолке ${rowTop}`,
     );
   }
 }

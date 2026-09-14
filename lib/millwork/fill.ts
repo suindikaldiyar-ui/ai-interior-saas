@@ -263,7 +263,34 @@ export function moduleCarcassHeightMm(
   if (unit.appliance === 'fridge') {
     const top = zoneHeightMm(run.zone, run.ceilingHeightMm);
     const cap = top - plinthMm(run.production) - FRIDGE_MEZZANINE_MIN_MM;
-    return capped(Math.max(carcassHeightMm(run.production), Math.min(standard, cap)));
+
+    /*
+     * ВЫСОТА КОЛОННЫ СЛЕДУЕТ ЗА ВЫСОТОЙ ПРИБОРА.
+     *
+     * Здесь стоял только `standard` — высота пенала ряда, — и введённая
+     * высота холодильника не делала НИЧЕГО: корпус оставался 2300 мм при
+     * любом приборе, и раскрой с ним. Поле лежало в данных, меняло
+     * отпечаток и не меняло ни одной детали (ловушка 280).
+     *
+     * `ops.ts` при этом уже считал по другой формуле: отказывая слишком
+     * высокому холодильнику, он мерил `высота + просвет` и обещал, что
+     * над колонной останется столько-то. Два места, одна величина — и
+     * второе её не исполняло.
+     *
+     * Ниша считается ОДНОЙ функцией на продукт (`nicheHeightMm`), она же
+     * добавляет просвет. Второй формулы «высота плюс десять» здесь не
+     * появляется.
+     *
+     * Не введено — остаётся `standard`: умолчание в данные не пишется, и
+     * отпечатки рядов, собранных до этого, не едут (ловушка 246).
+     */
+    const measured = unit.applianceSizes?.fridge?.heightMm
+      ? nicheHeightMm('fridge', unit.applianceSizes.fridge)
+      : null;
+
+    return capped(
+      Math.max(carcassHeightMm(run.production), Math.min(measured ?? standard, cap)),
+    );
   }
 
   return capped(standard);
