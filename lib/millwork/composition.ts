@@ -5,6 +5,7 @@ import { assertCornerFits } from './invariants';
 import { rowStandardDepthMm } from './fill';
 import { wallLabel } from './walls';
 import type { ProductionSettings } from '@/types/catalog';
+import { COMM_TITLE } from '@/types/survey';
 import type {
   ApplianceKind,
   CommPoint,
@@ -361,6 +362,30 @@ export function buildComposition(input: BuildCompositionInput): Composition {
 
   const segments: RunSegment[] = walls.map((wall, i) => {
     /*
+     * Коммуникации ЭТОЙ стены, пересчитанные от начала ряда. Чужие сюда
+     * не попадают вовсе: у коммуникации есть своя стена, и спрашивают
+     * именно её.
+     */
+    const lostHere = Math.round(wall.lengthMm) - usable[i];
+    const wallComms = commsOnRun(input.comms, wall.id, lostHere, usable[i]);
+
+    /*
+     * Попавшее в угол не пропадает молча: этот кусок стены закрыт
+     * соседним рядом, и привязать к нему мойку ЭТОГО ряда нельзя.
+     */
+    for (const comm of wallComms.inCorner) {
+      /*
+       * Подлежащее — «точка»: у видов коммуникаций разный род, и
+       * «канализация попал в угол» читается как машинный текст.
+       */
+      warnings.push(
+        `${wallLabel(i)}: точка «${COMM_TITLE[comm.kind]}» на ${comm.fromCornerMm} мм от угла ` +
+          `попала в угол — там стоит соседний ряд. Мебель этой стены начинается ` +
+          `с ${lostHere} мм, и привязать к этой точке её нельзя.`,
+      );
+    }
+
+    /*
      * Угловой модуль стоит В УГЛУ и принадлежит первому ряду: он и есть
      * доступ в угол. При фальш-панели угол остаётся мёртвой зоной, и
      * модуля там нет вовсе.
@@ -377,12 +402,8 @@ export function buildComposition(input: BuildCompositionInput): Composition {
        * Проёмы этой стены, пересчитанные от начала РЯДА: угол занят
        * соседним рядом, и отметки замера сдвинуты на него.
        */
-      openings: openingsOnRun(
-        wall.openings,
-        Math.round(wall.lengthMm) - usable[i],
-        usable[i],
-      ),
-      comms: input.comms ?? [],
+      openings: openingsOnRun(wall.openings, lostHere, usable[i]),
+      comms: wallComms.kept,
       cornerAt,
       production: input.production,
       // Стена замера едет в ряд: она же идентичность его модулей.
@@ -398,6 +419,7 @@ export function buildComposition(input: BuildCompositionInput): Composition {
       angleDeg: i === 0 ? 0 : 90,
       wallLengthMm: Math.round(wall.lengthMm),
       appliances: perSegment[i],
+      comms: wallComms.kept,
       run,
     };
   });
@@ -444,6 +466,11 @@ export function linearComposition(run: Run, wallId = 'w1'): Composition {
       wallId,
       angleDeg: 0,
       wallLengthMm: run.lengthMm,
+      /*
+       * Прямая кухня: угол ничего не занял, перевод тождественный —
+       * коммуникации ряда и есть коммуникации стены.
+       */
+      comms: [],
       // Одна стена — значит все приборы ряда на ней.
       appliances: run.modules.flatMap((unit) => moduleAppliances(unit)),
       run,
@@ -460,6 +487,46 @@ export function linearComposition(run: Run, wallId = 'w1'): Composition {
 }
 
 export { CORNER_SIZE_MM };
+
+/**
+ * ОТМЕТКА СТЕНЫ — В КООРДИНАТЫ РЯДА. ОДНА ФОРМУЛА НА ВСЁ, ЧТО ЗАМЕРЕНО.
+ *
+ * Замерщик меряет от УГЛА СТЕНЫ — и окно, и ригель, и вывод воды. Ряд на
+ * этой стене начинается не от угла: там стоит соседний ряд, и он занял
+ * `lostMm`. Перевод между этими системами координат один, и живёт он
+ * здесь: вторая такая формула разошлась бы с первой на первой правке —
+ * этот класс ошибки продукт ловит уже двенадцатый раз.
+ *
+ * `null` означает «этот участок стены закрыт соседним рядом»: к ЭТОМУ
+ * ряду отметка не относится. Выбрасывать её молча нельзя — замерщик её
+ * зачем-то мерил; кто её получил, тот про неё и говорит.
+ *
+ * Проём — отрезок, и он выживает, если после обрезки от него осталась
+ * длина. Коммуникация — ТОЧКА (`widthMm` нет вовсе), и она выживает,
+ * если попала в пределы ряда: обрезать точку не во что.
+ */
+export function markOnRun(
+  mark: { fromCornerMm: number; widthMm?: number },
+  lostMm: number,
+  lengthMm: number,
+): { fromCornerMm: number; widthMm: number } | null {
+  const width = mark.widthMm ?? 0;
+  const from = mark.fromCornerMm - lostMm;
+
+  if (width === 0) {
+    if (from < 0 || from > lengthMm) return null;
+    return { fromCornerMm: Math.round(from), widthMm: 0 };
+  }
+
+  const clippedFrom = Math.max(0, from);
+  const clippedTo = Math.min(lengthMm, from + width);
+  if (clippedTo - clippedFrom <= 0) return null;
+
+  return {
+    fromCornerMm: Math.round(clippedFrom),
+    widthMm: Math.round(clippedTo - clippedFrom),
+  };
+}
 
 /**
  * ПРОЁМЫ СТЕНЫ — В КООРДИНАТЫ РЯДА.
@@ -490,21 +557,47 @@ export function openingsOnRun(
   const moved: Opening[] = [];
 
   for (const opening of openings ?? []) {
-    const from = opening.fromCornerMm - lostMm;
-    const to = from + opening.widthMm;
-
-    const clippedFrom = Math.max(0, from);
-    const clippedTo = Math.min(lengthMm, to);
-    if (clippedTo - clippedFrom <= 0) continue;
-
-    moved.push({
-      ...opening,
-      fromCornerMm: Math.round(clippedFrom),
-      widthMm: Math.round(clippedTo - clippedFrom),
-    });
+    const at = markOnRun(opening, lostMm, lengthMm);
+    if (!at) continue;
+    moved.push({ ...opening, ...at });
   }
 
   return moved;
+}
+
+/**
+ * КОММУНИКАЦИИ ЭТОЙ СТЕНЫ — В КООРДИНАТЫ РЯДА.
+ *
+ * Каждый сегмент получал ВСЕ коммуникации объекта: ни отбора по стене,
+ * ни перевода отметки. Ряд стены Б садил мойку на вывод воды стены А —
+ * и своего вывода не видел вовсе, потому что до композиции доезжали
+ * только коммуникации рабочей стены.
+ *
+ * Стена у коммуникации своя (`CommPoint.wallId`), и отбор идёт по ней —
+ * не по совпадению чисел, как это было со стенами (симптом 3).
+ *
+ * Отдельно возвращаем то, что попало в угол: этот кусок стены закрыт
+ * соседним рядом, и к мойке ЭТОГО ряда вывод не привязать. Замерщик
+ * обязан узнать об этом словами, а не по пропавшему предупреждению.
+ */
+export function commsOnRun(
+  comms: CommPoint[] | undefined,
+  wallId: string,
+  lostMm: number,
+  lengthMm: number,
+): { kept: CommPoint[]; inCorner: CommPoint[] } {
+  const kept: CommPoint[] = [];
+  const inCorner: CommPoint[] = [];
+
+  for (const comm of comms ?? []) {
+    if (comm.wallId !== wallId) continue;
+
+    const at = markOnRun(comm, lostMm, lengthMm);
+    if (at) kept.push({ ...comm, fromCornerMm: at.fromCornerMm });
+    else inCorner.push(comm);
+  }
+
+  return { kept, inCorner };
 }
 
 /* ─────────────────────────  Где стоит каждый ряд  ───────────────────────── */

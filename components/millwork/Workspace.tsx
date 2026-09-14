@@ -195,6 +195,8 @@ export type WorkspaceProps = {
    * правят прямо сейчас. Без него берём то, с чем объект открыли.
    */
   measuredWalls?: WallSegment[];
+  /** Коммуникации всего замера: композиция разбирает их по стенам. */
+  measuredComms?: CommPoint[];
   runWallId?: string;
   /** Глубина помещения для 3D: вторая стена замера. */
   roomDepthM?: number;
@@ -696,10 +698,27 @@ export default function Workspace(props: WorkspaceProps) {
       requirements: { ...requirements, cornerSolution },
       ceilingHeightMm: ceilingMm,
       walls,
-      comms: props.comms,
+      /*
+       * ВЕСЬ ЗАМЕР, А НЕ ТОЧКИ РАБОЧЕЙ СТЕНЫ.
+       *
+       * Отбор по стене и перевод отметки — работа композиции
+       * (`commsOnRun`). Отфильтруй здесь — и ряд стены Б останется без
+       * своего вывода воды, как это и было.
+       */
+      comms: resolution?.measurement.comms ?? props.measuredComms ?? props.comms,
       production: props.production,
     });
-  }, [shape, requirements, cornerSolution, ceilingMm, walls, props.comms, props.production]);
+  }, [
+    shape,
+    requirements,
+    cornerSolution,
+    ceilingMm,
+    walls,
+    resolution,
+    props.measuredComms,
+    props.comms,
+    props.production,
+  ]);
 
   /** Композиция, которая СОБРАЛАСЬ. Отказ сюда не проходит. */
   const layout = useMemo(
@@ -733,6 +752,7 @@ export default function Workspace(props: WorkspaceProps) {
         cornerAt: props.cornerAt ?? null,
         production: props.production,
         measuredWalls: props.measuredWalls ?? [],
+        measuredComms: props.measuredComms ?? props.comms,
         runWallId: props.runWallId ?? 'a',
         roomDepthM: props.roomDepthM ?? 3.2,
       };
@@ -946,9 +966,21 @@ export default function Workspace(props: WorkspaceProps) {
     [layout, segments],
   );
 
+  /**
+   * КОММУНИКАЦИИ ВЫБРАННОЙ СТЕНЫ.
+   *
+   * `props.comms` — точки РАБОЧЕЙ стены: их отобрал `workspaceInput`.
+   * На стене Б проверка сверяла её ряд с чужим выводом воды и молчала
+   * про свой. Композиция уже разложила точки по стенам — берём оттуда.
+   */
+  const activeComms = useMemo(
+    () => layout?.segments[wall]?.comms ?? props.comms,
+    [layout, wall, props.comms],
+  );
+
   const issues = useMemo(
-    () => validateRun(activeRun, props.comms),
-    [activeRun, props.comms],
+    () => validateRun(activeRun, activeComms),
+    [activeRun, activeComms],
   );
 
   const flash = useCallback((ids: string[]) => {
@@ -1608,9 +1640,14 @@ export default function Workspace(props: WorkspaceProps) {
     () =>
       collectWarnings({
         issues,
-        run: active.run,
+        /*
+         * Ряд и коммуникации — ОДНОЙ стены, той, что выбрана. Прежде
+         * сюда шёл ряд стены А с точками стены А, пока на экране стояла
+         * стена Б: предупреждение про мойку описывало не ту мебель.
+         */
+        run: activeRun,
         openings: input.openings,
-        comms: input.comms,
+        comms: activeComms,
         stats: resolution?.stats ?? null,
         // Как только замерщик взял расстановку в свои руки, расхождение
         // с водой становится предупреждением, а не запретом: он видел
@@ -1618,7 +1655,7 @@ export default function Workspace(props: WorkspaceProps) {
         manualSink: Object.keys(manualAnchors).length > 0,
         hoodRequested: requirements.appliances.includes('hood'),
       }),
-    [issues, active.run, input.openings, input.comms, resolution, manualAnchors, requirements],
+    [issues, activeRun, input.openings, activeComms, resolution, manualAnchors, requirements],
   );
 
   /*

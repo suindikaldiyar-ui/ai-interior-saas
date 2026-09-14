@@ -73,6 +73,15 @@ export type WorkspaceInput = {
    * экран и на приёмку.
    */
   measuredWalls: WallSegment[];
+  /**
+   * ВСЕ КОММУНИКАЦИИ ЗАМЕРА, А НЕ ТОЛЬКО РАБОЧЕЙ СТЕНЫ.
+   *
+   * `comms` выше — точки стены ряда, и это правильно для прямой кухни.
+   * У композиции стен несколько, и каждой нужны СВОИ: отбирает их
+   * `commsOnRun` по `CommPoint.wallId`. Пока сюда доезжали только точки
+   * рабочей стены, ряд стены Б своего вывода воды не видел вовсе.
+   */
+  measuredComms: CommPoint[];
   /** Идентификатор рабочей стены: по нему отбираются соседние. */
   runWallId: string;
   /** Глубина помещения для 3D: соседняя стена, если она есть в замере. */
@@ -128,6 +137,7 @@ export function workspaceInput(seed: WorkspaceSeed): WorkspaceInput {
     rates: seed.rates,
     cornerAt: seed.cornerAt ?? null,
     measuredWalls: seed.measurement.walls,
+    measuredComms: seed.measurement.comms,
     runWallId: wall.id,
     roomDepthM: roomDepth(seed.measurement, wall.id),
     production: seed.production,

@@ -9644,5 +9644,143 @@ console.log('\nРигель: где замерен, там и стоит');
   }
 }
 
+/* ─────────────  Коммуникация принадлежит своей стене  ───────────── */
+
+/**
+ * ВЫВОД ВОДЫ СО СТЕНЫ А ВИДЕЛ РЯД СТЕНЫ Б.
+ *
+ * Композиция раздавала каждому сегменту ВЕСЬ список: ни отбора по стене,
+ * ни перевода отметки. Мойка стены Б садилась на вывод стены А, а своего
+ * вывода этот ряд не видел вовсе — до композиции доезжали только точки
+ * рабочей стены.
+ *
+ * Перевод — та же `markOnRun`, что переводит проёмы и ригель: вторая
+ * формула разошлась бы с первой на первой правке.
+ */
+console.log('\nКоммуникация принадлежит своей стене');
+{
+  const CEILING = 2700;
+  const comm = (
+    id: string,
+    kind: CommPoint['kind'],
+    wallId: string,
+    fromCornerMm: number,
+  ): CommPoint => ({ id, kind, wallId, fromCornerMm, heightMm: 600 });
+
+  const WALLS = [
+    { id: 'w1', lengthMm: 3800, openings: [] },
+    { id: 'w2', lengthMm: 1800, openings: [] },
+  ];
+
+  const all: CommPoint[] = [
+    comm('a-water', 'water_supply', 'w1', 1650),
+    comm('b-water', 'water_supply', 'w2', 1500),
+    comm('b-corner', 'sewer', 'w2', 200),
+  ];
+
+  const built = buildComposition({
+    kind: 'corner_l',
+    walls: WALLS,
+    ceilingHeightMm: CEILING,
+    requirements: REQ,
+    comms: all,
+  });
+
+  const [segA, segB] = built.segments;
+  const lostB = segB.wallLengthMm - segB.run.lengthMm;
+
+  /*
+   * Ноль коммуникаций — это не «проверять нечего», это замер без точек.
+   * Падаем здесь, а не проходим по пустому списку.
+   */
+  check(
+    'коммуникации разошлись по стенам',
+    segA.comms.length > 0 && segB.comms.length > 0,
+    segA.comms.length === 0 || segB.comms.length === 0
+      ? `СЕЛЕКТОР ВЕРНУЛ НОЛЬ КОММУНИКАЦИЙ: А=${segA.comms.length}, Б=${segB.comms.length}`
+      : `А: ${segA.comms.map((c) => c.id).join(',')} · Б: ${segB.comms.map((c) => c.id).join(',')}`,
+  );
+
+  if (segA.comms.length === 0 || segB.comms.length === 0) {
+    check('дальше мерить нечем', false, 'КОММУНИКАЦИЙ В СЕГМЕНТАХ НЕТ');
+  } else {
+    /* ── Чужая стена не видна ── */
+    check(
+      'коммуникация со стены А не видна ряду стены Б',
+      segB.comms.every((c) => c.wallId === 'w2') && segA.comms.every((c) => c.wallId === 'w1'),
+      `А: ${segA.comms.map((c) => c.wallId).join(',')} · Б: ${segB.comms.map((c) => c.wallId).join(',')}`,
+    );
+
+    /* ── Координата = замер минус занятое углом ── */
+    const water = segB.comms.find((c) => c.id === 'b-water');
+    check(
+      'координата в ряду равна замеренной минус занятое углом',
+      Boolean(water) && water!.fromCornerMm === 1500 - lostB,
+      water
+        ? `замер 1500, угол занял ${lostB} → ${water.fromCornerMm} (ждали ${1500 - lostB})`
+        : 'ТОЧКИ НЕТ',
+    );
+
+    /* ── Попавшее в угол названо словами, а не выброшено молча ── */
+    check(
+      'коммуникация, попавшая в угол, названа словами',
+      !segB.comms.some((c) => c.id === 'b-corner') &&
+        built.warnings.some((w) => /попала в угол/.test(w) && /Стена Б/.test(w)),
+      built.warnings.find((w) => /попала в угол/.test(w)) ?? 'СЛОВ НЕТ',
+    );
+
+    /* ── Предупреждение про мойку: на своей стене да, на чужой нет ── */
+    const sinkOf = (run: Run) => run.modules.find((u) => u.appliance === 'sink600');
+    const saidFor = (run: Run, comms: CommPoint[]) =>
+      validateRun(run, comms).filter((issue) => /вывод воды/.test(issue.message));
+
+    check(
+      'на стене А мойка есть, и её проверяют своим выводом',
+      Boolean(sinkOf(segA.run)) && saidFor(segA.run, segA.comms).length === 0,
+      sinkOf(segA.run)
+        ? saidFor(segA.run, segA.comms).map((i) => i.message).join(' | ') || 'расхождений нет'
+        : 'МОЙКИ НА СТЕНЕ А НЕТ',
+    );
+
+    /*
+     * А вот чужой вывод обязан дать расхождение: 1650 мм стены А против
+     * мойки стены Б — это и есть та ошибка, что жила в продукте.
+     */
+    const foreign = saidFor(segA.run, [comm('x', 'water_supply', 'w2', 100)]);
+    check(
+      'чужой вывод воды виден как расхождение, а не как норма',
+      foreign.length > 0,
+      foreign.map((i) => i.message).join(' | ') || 'РАСХОЖДЕНИЯ НЕТ',
+    );
+
+    /* ── Прямая кухня: перевод тождественный ── */
+    const straight = buildComposition({
+      kind: 'linear',
+      walls: [{ id: 'w1', lengthMm: 3800, openings: [] }],
+      ceilingHeightMm: CEILING,
+      requirements: REQ,
+      comms: all,
+    });
+    const kept = straight.segments[0].comms;
+    check(
+      'на прямой кухне перевод тождественный',
+      kept.length === 1 && kept[0].id === 'a-water' && kept[0].fromCornerMm === 1650,
+      kept.map((c) => `${c.id}@${c.fromCornerMm}`).join(' ') || 'ТОЧЕК НЕТ',
+    );
+
+    /* ── И раскладка мойки от своей воды, а не от чужой ── */
+    const centerOfSink = (run: Run) => {
+      const unit = sinkOf(run);
+      return unit ? unit.offsetMm + unit.widthMm / 2 : null;
+    };
+    const own = centerOfSink(straight.segments[0].run);
+    check(
+      'мойка садится напротив СВОЕГО вывода воды',
+      own !== null && Math.abs(own - 1650) <= 300,
+      own === null ? 'МОЙКИ НЕТ' : `центр мойки ${own} при выводе 1650`,
+    );
+  }
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
