@@ -84,8 +84,25 @@ export default function FrontGlyph({
           }
 
           case 'drawer': {
-            const step = height / el.count;
-            const top = y + step * el.index;
+            /*
+             * ВЫСОТА ФРОНТА — ЕГО СОБСТВЕННАЯ, А НЕ ДОЛЯ МОДУЛЯ.
+             *
+             * Здесь стояло `height / el.count` — равные доли. Два ящика
+             * 140 + 580 выходили на чертеже как 360 + 360: клиент видел
+             * мебель, которой цех не сделает. Высоты приходят из того же
+             * наполнения, по которому режется раскрой; здесь они лишь
+             * переводятся в масштаб рисунка.
+             *
+             * Пусто — модуля ещё нет (превью варианта), и доли равные.
+             */
+            const total = el.heights?.reduce((sum, h) => sum + h, 0) ?? 0;
+            const step =
+              el.heights && total > 0 ? (el.heights[el.index] / total) * height : height / el.count;
+            const above =
+              el.heights && total > 0
+                ? (el.heights.slice(0, el.index).reduce((sum, h) => sum + h, 0) / total) * height
+                : (height / el.count) * el.index;
+            const top = y + above;
             return (
               <g key={i} data-symbol="drawer">
                 {el.index > 0 && (

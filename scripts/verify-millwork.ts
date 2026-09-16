@@ -10553,5 +10553,159 @@ console.log('\nЗамер: наполнение нижнего модуля');
   }
 }
 
+/* ──────────  Чертёж рисует те же фронты, что уходят в раскрой  ────────── */
+
+/**
+ * ТРЕТИЙ ИСТОЧНИК ЧИСЛА ЯЩИКОВ БЫЛ В ГЛИФЕ.
+ *
+ * Раскрой и смета уже читают одно (`fill.drawerHeights`), а чертёж считал
+ * своё: `Math.max(2, unit.drawerCount || 3)` — один ящик рисовался двумя.
+ * И высоты были равными долями: два фронта 140 + 580 выходили на листе
+ * как 360 + 360.
+ *
+ * На деньги это не влияло, а клиент смотрит именно на чертёж.
+ */
+console.log('\nЧертёж рисует те же фронты, что уходят в раскрой');
+{
+  const widthMm = 600;
+  const freeReq: RunRequirements = { ...REQ, mode: 'free', appliances: [], sections: [] };
+
+  const seed = applyOps({
+    run: buildRun({
+      lengthMm: widthMm,
+      ceilingHeightMm: 2700,
+      requirements: freeReq,
+      openings: [],
+      comms: [],
+    }),
+    requirements: freeReq,
+    ops: [{ op: 'add_module', kind: 'base', widthMm }],
+    openings: [],
+  });
+
+  const seeded = seed.modules[0];
+  check(
+    'модуль для замера есть',
+    Boolean(seeded),
+    seeded ? `${seeded.id} ${seeded.widthMm} мм` : 'МОДУЛЬ НЕ СОБРАЛСЯ',
+  );
+
+  if (!seeded) {
+    check('дальше мерить нечем', false, 'МОДУЛЯ НЕТ');
+  } else {
+    const withDrawers = (n: number) =>
+      applyOps({
+        run: seed,
+        requirements: freeReq,
+        ops: [{ op: 'set_fronts', moduleId: seeded.id, drawerCount: n }],
+        openings: [],
+      });
+
+    const drift: string[] = [];
+    const heightDrift: string[] = [];
+    let measured = 0;
+
+    for (const n of [1, 2, 3]) {
+      const run = withDrawers(n);
+      const unit = run.modules[0];
+
+      /* Раскрой: фронты ящиков этого модуля, сверху вниз. */
+      const cut = buildPanels({ run })
+        .filter((panel) => panel.moduleId === unit.id && /Фронт ящика/i.test(panel.name))
+        .map((panel) => panel.lengthMm);
+
+      /* Чертёж: те же фронты глазами `FrontGlyph`. */
+      const drawn = frontGlyph(unit, 'fronts').filter((el) => el.kind === 'drawer') as {
+        kind: 'drawer';
+        index: number;
+        count: number;
+        heights?: number[];
+      }[];
+
+      /*
+       * Ноль фронтов — это не «нечего рисовать», это модуль, заказанный
+       * с ящиками и оставшийся без них. Падаем здесь.
+       */
+      if (cut.length === 0 || drawn.length === 0) {
+        drift.push(
+          cut.length === 0
+            ? `${n} ящика: СЕЛЕКТОР ВЕРНУЛ НОЛЬ ФРОНТОВ В РАСКРОЕ`
+            : `${n} ящика: СЕЛЕКТОР ВЕРНУЛ НОЛЬ ФРОНТОВ НА ЧЕРТЕЖЕ`,
+        );
+        continue;
+      }
+
+      measured += 1;
+
+      if (drawn.length !== cut.length) {
+        drift.push(`${n} ящика: чертёж ${drawn.length}, раскрой ${cut.length}`);
+      }
+
+      /*
+       * Высоты сверяются с раскроем ДО МИЛЛИМЕТРА. В раскрое из высоты
+       * фронта вычтен зазор фасада — сверяем по нему же, иначе сравнение
+       * было бы с другой величиной.
+       */
+      const gap = DEFAULT_PRODUCTION.frontGapMm;
+      const fromGlyph = drawn[0]?.heights ?? [];
+      const expected = (unit.fill?.drawerHeights ?? []).map((h) => h - gap);
+
+      if (fromGlyph.length !== expected.length) {
+        heightDrift.push(`${n}: высот на чертеже ${fromGlyph.length}, в наполнении ${expected.length}`);
+      } else {
+        for (let i = 0; i < expected.length; i += 1) {
+          if (fromGlyph[i] - gap !== cut[i]) {
+            heightDrift.push(`${n}[${i}]: чертёж ${fromGlyph[i] - gap}, раскрой ${cut[i]}`);
+          }
+        }
+      }
+    }
+
+    check(
+      'число фронтов на чертеже равно числу в раскрое',
+      measured === 3 && drift.length === 0,
+      drift.join(' · ') || '1→1 2→2 3→3',
+    );
+
+    check(
+      'высоты фронтов на чертеже равны высотам в раскрое до миллиметра',
+      measured === 3 && heightDrift.length === 0,
+      heightDrift.join(' · ') ||
+        [1, 2, 3]
+          .map((n) => `${n}: ${(withDrawers(n).modules[0].fill?.drawerHeights ?? []).join('+')}`)
+          .join(' · '),
+    );
+
+    /* ── Модуль с дверцей ящиков не рисует ── */
+    const asDoor = applyOps({
+      run: withDrawers(3),
+      requirements: freeReq,
+      ops: [{ op: 'set_fronts', moduleId: seeded.id, drawerCount: 0 }],
+      openings: [],
+    }).modules[0];
+
+    check(
+      'модуль с дверцей ящиков не рисует',
+      frontGlyph(asDoor, 'fronts').every((el) => el.kind !== 'drawer') &&
+        frontGlyph(asDoor, 'fronts').some((el) => el.kind === 'panel'),
+      frontGlyph(asDoor, 'fronts').map((el) => el.kind).join('|'),
+    );
+
+    /* ── Выдуманного числа больше нет: пустое наполнение — пустой фасад ── */
+    const bare: Module = {
+      ...withDrawers(3).modules[0],
+      variant: 'drawers',
+      fill: { shelves: [], dividerMm: 0, rodsMm: [], drawerHeights: [], hinge: 'none' },
+    };
+    const bareDrawn = frontGlyph(bare, 'fronts').filter((el) => el.kind === 'drawer');
+
+    check(
+      'без фронтов чертёж не выдумывает ящики',
+      bareDrawn.length === MODULE_VARIANTS.drawers.drawerCount,
+      `нарисовано ${bareDrawn.length}, объявлено вариантом ${MODULE_VARIANTS.drawers.drawerCount}`,
+    );
+  }
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

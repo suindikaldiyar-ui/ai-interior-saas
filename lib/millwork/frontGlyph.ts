@@ -1,4 +1,9 @@
-import { applyVariant, variantsForModule, currentVariant } from './moduleVariants';
+import {
+  MODULE_VARIANTS,
+  applyVariant,
+  variantsForModule,
+  currentVariant,
+} from './moduleVariants';
 import { openingOf } from './opening';
 import type { Module, ModuleVariantKind } from '@/types/millwork';
 
@@ -23,8 +28,17 @@ export type GlyphElement =
   | { kind: 'swing'; hinge: 'left' | 'right' }
   /** Шов между двумя створками. */
   | { kind: 'split' }
-  /** Горизонтальный фронт ящика: со швом сверху и снизу. */
-  | { kind: 'drawer'; index: number; count: number }
+  /**
+   * Горизонтальный фронт ящика: со швом сверху и снизу.
+   *
+   * `heights` — высоты ВСЕХ фронтов модуля, мм, сверху вниз: те самые,
+   * по которым режется раскрой. Без них рисунок делил модуль поровну, и
+   * два ящика 140 + 580 выходили на чертеже как 360 + 360 — клиент видел
+   * мебель, которой цех не сделает.
+   *
+   * Пусто — модуля ещё нет (превью варианта в ленте), и доли равные.
+   */
+  | { kind: 'drawer'; index: number; count: number; heights?: number[] }
   /** Незакрашенное поле стекла: заливка на печати схлопывается в плашку. */
   | { kind: 'glass' }
   /** Рама витрины по периметру. */
@@ -60,7 +74,9 @@ export type GlyphMode = 'fronts' | 'inside';
 export function glyphSignature(elements: GlyphElement[]): string {
   return elements
     .map((el) => {
-      if (el.kind === 'drawer') return `drawer:${el.index}/${el.count}`;
+      if (el.kind === 'drawer') {
+        return `drawer:${el.index}/${el.count}${el.heights ? `:${el.heights.join('+')}` : ''}`;
+      }
       if (el.kind === 'shelf') return `shelf:${el.count}`;
       if (el.kind === 'niche') return `niche:${el.count}`;
       if (el.kind === 'swing') return `swing:${el.hinge}`;
@@ -116,8 +132,37 @@ export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts'): GlyphEleme
   const variant: ModuleVariantKind = currentVariant(unit);
   const elements: GlyphElement[] = [];
 
-  const drawers = (count: number) => {
-    for (let i = 0; i < count; i += 1) elements.push({ kind: 'drawer', index: i, count });
+  /**
+   * СКОЛЬКО ФРОНТОВ РИСОВАТЬ — ТА ЖЕ ВЕЛИЧИНА, ЧТО В РАСКРОЕ.
+   *
+   * Наполнение (`fill.drawerHeights`) — единственный ответ: по нему
+   * режутся фронты и по нему же считаются направляющие. Здесь стояло
+   * своё число — `Math.max(2, unit.drawerCount || 3)`, — и один ящик
+   * рисовался двумя.
+   *
+   * Модуля ещё нет — наполнения тоже (лента превью строит модуль через
+   * `applyVariant`, а он снимает `fill`). Тогда берём число, ОБЪЯВЛЕННОЕ
+   * САМИМ ВАРИАНТОМ: из него же `defaultFill` и построит высоты, когда
+   * модуль появится. Третьего числа не заводим.
+   */
+  const declared = MODULE_VARIANTS[variant]?.drawerCount ?? 0;
+  const heights = unit.fill?.drawerHeights ?? [];
+  const frontCount = heights.length > 0 ? heights.length : declared;
+
+  const drawers = (count = frontCount) => {
+    /*
+     * Фронтов нет и вариант их не объявляет — не рисуем ничего.
+     * Выдуманный ящик на чертеже клиент примет за факт, а в раскрое его
+     * нет: пустое поле модуля честнее придуманного.
+     */
+    for (let i = 0; i < count; i += 1) {
+      elements.push({
+        kind: 'drawer',
+        index: i,
+        count,
+        heights: heights.length === count ? heights : undefined,
+      });
+    }
   };
 
   switch (variant) {
@@ -142,16 +187,18 @@ export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts'): GlyphEleme
       break;
 
     case 'drawers_four':
-      if (mode === 'fronts') drawers(4);
+      if (mode === 'fronts') drawers();
       else {
-        elements.push({ kind: 'drawer', index: 0, count: 4 });
+        if (frontCount > 0) elements.push({ kind: 'drawer', index: 0, count: frontCount });
         elements.push({ kind: 'shelf', count: 3 });
       }
       break;
 
     case 'drawers':
-      if (mode === 'fronts') drawers(Math.max(2, unit.drawerCount || 3));
-      else elements.push({ kind: 'drawer', index: 0, count: Math.max(2, unit.drawerCount || 3) });
+      if (mode === 'fronts') drawers();
+      else if (frontCount > 0) {
+        elements.push({ kind: 'drawer', index: 0, count: frontCount });
+      }
       break;
 
     case 'drawers_door':
@@ -183,7 +230,12 @@ export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts'): GlyphEleme
       break;
 
     case 'hob_base':
-      if (mode === 'fronts') drawers(2);
+      /*
+       * Под варочной фронты те же, что в раскрое: верхний укорочен под
+       * панель. Числа «2» здесь больше нет — его объявляет вариант, а
+       * высоты приходят из наполнения.
+       */
+      if (mode === 'fronts') drawers();
       elements.push({ kind: 'hobStrip' });
       break;
 
