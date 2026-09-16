@@ -415,11 +415,37 @@ export function applyOps({
         const at = modules.findIndex((m) => m.id === op.moduleId);
         if (at < 0 || modules[at].appliance) break;
         const fronts = frontPlan(modules[at].kind, modules[at].widthMm, op.drawerCount);
+
+        /*
+         * СМЕНИЛИСЬ ФРОНТЫ — НАПОЛНЕНИЕ ПЕРЕСОБИРАЕТСЯ.
+         *
+         * Операция писала число (`drawerCount`) и не трогала `fill`, а
+         * `fill.drawerHeights` — это и есть фронты: по ним режется раскрой.
+         * Наполнение оставалось прежним, от дверцы: полка на месте, высот
+         * фронтов нет вовсе.
+         *
+         * Замерено на модуле 600: «три ящика» давали НОЛЬ фронтов в
+         * раскрое и ТРИ направляющие в смете. Цех получал фурнитуру, к
+         * которой нечего прикрутить, а клиент за неё платил.
+         *
+         * Второго места расчёта не появляется: высоты считает та же
+         * `defaultFill`, которую `applyOps` зовёт ниже для модулей без
+         * наполнения. Здесь мы лишь снимаем устаревшее — ровно так же,
+         * как это делает `applyVariant` (moduleVariants.ts: `fill: undefined`).
+         *
+         * Не изменилось ничего — наполнение не трогаем: полки, которые
+         * замерщик двигал руками, переживают повторное нажатие.
+         */
+        const stale =
+          fronts.drawerCount !== modules[at].drawerCount ||
+          fronts.doorCount !== modules[at].doorCount;
+
         modules[at] = {
           ...modules[at],
           frontType: fronts.drawerCount > 0 ? 'drawers' : 'door',
           drawerCount: fronts.drawerCount,
           doorCount: fronts.doorCount,
+          fill: stale ? undefined : modules[at].fill,
         };
         break;
       }

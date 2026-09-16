@@ -10354,7 +10354,13 @@ console.log('\nЗамер: наполнение нижнего модуля');
   } else {
     console.log('  ящиков  фронты (высоты)            детали короба   направляющих   сумма');
 
-    const rows: { drawers: number; fronts: number; boxParts: number; slides: number }[] = [];
+    const rows: {
+      drawers: number;
+      fronts: number;
+      boxParts: number;
+      slides: number;
+      total: number;
+    }[] = [];
 
     for (const drawers of [1, 2, 3]) {
       const run = boxOf(drawers)!;
@@ -10377,6 +10383,7 @@ console.log('\nЗамер: наполнение нижнего модуля');
         fronts: fronts.length,
         boxParts: boxParts.length,
         slides: slideLine?.quantity ?? 0,
+        total: Math.round(estimate.total),
       });
 
       console.log(
@@ -10390,24 +10397,85 @@ console.log('\nЗамер: наполнение нижнего модуля');
     }
 
     /*
-     * ЗАФИКСИРОВАНО: `set_fronts` НЕ ПЕРЕСОБИРАЕТ НАПОЛНЕНИЕ.
+     * ЧИСЛО ЯЩИКОВ — ОДНА ВЕЛИЧИНА.
      *
-     * Число ящиков в поле меняется (`drawerCount`), а `fill.drawerHeights`
-     * остаётся пустым: `applyOps` зовёт `defaultFill` только там, где
-     * наполнения НЕТ ВОВСЕ, а у модуля оно уже было — от дверцы.
+     * Здесь стояла проверка, ЗАКРЕПЛЯВШАЯ дефект: `set_fronts` писал
+     * число (`drawerCount`) и не трогал `fill`, а `fill.drawerHeights` —
+     * это и есть фронты, по ним режется раскрой. Наполнение оставалось
+     * от дверцы: полка на месте, высот фронтов нет.
      *
-     * Следствие измерено ниже: фронтов в раскрое ноль, полка от дверцы
-     * остаётся, а направляющие в смете считаются по `drawerCount` — три
-     * штуки оплачены, ни одного фронта не распилено.
+     * Замерено было так: «три ящика» → НОЛЬ фронтов в раскрое и ТРИ
+     * направляющие в смете. Цех получал фурнитуру, к которой нечего
+     * прикрутить, клиент за неё платил.
      *
-     * Заход измерительный: проверка ЗАКРЕПЛЯЕТ сегодняшнее поведение.
-     * Починят — она упадёт, и это правильно: тогда её надо переписать
-     * на требование, а не на факт.
+     * Теперь это требование, а не факт.
      */
+    const frontDrift = rows.filter((row) => row.fronts !== row.drawers);
     check(
-      'ДЕФЕКТ ЗАФИКСИРОВАН: set_fronts не даёт фронтов в раскрое',
-      rows.every((row) => row.fronts === 0),
-      rows.map((r) => `${r.drawers} ящика → ${r.fronts} фронтов`).join(' · '),
+      'фронтов в раскрое столько же, сколько заказано ящиков',
+      frontDrift.length === 0,
+      frontDrift.length > 0
+        ? frontDrift.map((r) => `${r.drawers} ящика → ${r.fronts} фронтов`).join(' · ')
+        : rows.map((r) => `${r.drawers}→${r.fronts}`).join(' '),
+    );
+
+    /* ── Направляющих ровно столько, сколько ФРОНТОВ В РАСКРОЕ ── */
+    const slideDrift = rows.filter((row) => row.slides !== row.fronts);
+    check(
+      'направляющих в смете столько же, сколько фронтов в раскрое',
+      slideDrift.length === 0,
+      slideDrift.length > 0
+        ? slideDrift.map((r) => `раскрой ${r.fronts}, смета ${r.slides}`).join(' · ')
+        : rows.map((r) => `${r.fronts}=${r.slides}`).join(' '),
+    );
+
+    /*
+     * ФУРНИТУРЫ БЕЗ ПАНЕЛЕЙ И ПАНЕЛЕЙ БЕЗ ФУРНИТУРЫ НЕ БЫВАЕТ.
+     *
+     * Ноль с одной стороны при ненуле с другой — это ровно тот дефект,
+     * что стоил трёх оплаченных направляющих. Ноль с обеих сторон здесь
+     * тоже не ответ: модуль заказан с ящиками, мерить есть что.
+     */
+    const orphan = rows.filter(
+      (row) => row.fronts === 0 || row.slides === 0 || row.fronts !== row.slides,
+    );
+    check(
+      'ни фурнитуры без панелей, ни панелей без фурнитуры',
+      orphan.length === 0,
+      orphan.length > 0
+        ? orphan
+            .map((r) =>
+              r.fronts === 0
+                ? `${r.drawers} ящика: СЕЛЕКТОР ВЕРНУЛ НОЛЬ ПАНЕЛЕЙ при ${r.slides} направляющих`
+                : r.slides === 0
+                  ? `${r.drawers} ящика: СЕЛЕКТОР ВЕРНУЛ НОЛЬ ФУРНИТУРЫ при ${r.fronts} панелях`
+                  : `${r.drawers} ящика: раскрой ${r.fronts}, смета ${r.slides}`,
+            )
+            .join(' · ')
+        : rows.map((r) => `${r.drawers}: ${r.fronts}/${r.slides}`).join(' · '),
+    );
+
+    /* ── Смена числа ящиков двигает и раскрой, и смету ── */
+    check(
+      'смена числа ящиков меняет и раскрой, и смету',
+      new Set(rows.map((r) => r.fronts)).size === rows.length &&
+        new Set(rows.map((r) => r.total)).size === rows.length,
+      rows.map((r) => `${r.drawers}: ${r.fronts} фронтов, ${r.total} ₸`).join(' · '),
+    );
+
+    /* ── Сумма высот фронтов сходится с корпусом на каждом числе ── */
+    const sumDrift: string[] = [];
+    for (const drawers of [1, 2, 3]) {
+      const run = boxOf(drawers)!;
+      const unit = run.modules[0];
+      const sum = (unit.fill?.drawerHeights ?? []).reduce((a, b) => a + b, 0);
+      const carcass = moduleCarcassHeightMm(unit, run);
+      if (sum !== carcass) sumDrift.push(`${drawers}: ${sum} против ${carcass}`);
+    }
+    check(
+      'сумма высот фронтов равна высоте корпуса при любом числе ящиков',
+      sumDrift.length === 0,
+      sumDrift.join(' · ') || 'сходится на 1, 2 и 3',
     );
 
     /*
@@ -10436,16 +10504,6 @@ console.log('\nЗамер: наполнение нижнего модуля');
       (variantUnit.fill?.drawerHeights ?? []).reduce((a, b) => a + b, 0) ===
         moduleCarcassHeightMm(variantUnit, viaVariant),
       `${(variantUnit.fill?.drawerHeights ?? []).reduce((a, b) => a + b, 0)} против ${moduleCarcassHeightMm(variantUnit, viaVariant)}`,
-    );
-
-    /* ── Направляющих столько, сколько ящиков ── */
-    const slideDrift = rows.filter((row) => row.slides !== row.drawers);
-    check(
-      'направляющих в смете столько же, сколько ящиков',
-      slideDrift.length === 0,
-      slideDrift.length > 0
-        ? slideDrift.map((r) => `${r.drawers} ящика → ${r.slides} направляющих`).join(' · ')
-        : rows.map((r) => `${r.drawers}→${r.slides}`).join(' '),
     );
 
     /*
