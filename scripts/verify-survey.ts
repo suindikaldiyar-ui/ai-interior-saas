@@ -317,7 +317,7 @@ const many = collectWarnings({
 });
 const split = splitWarnings(many);
 check(
-  'на экране одновременно не больше трёх',
+  'на экране одновременно не больше двух',
   split.shown.length <= VISIBLE_WARNINGS && split.hidden === many.length - split.shown.length,
   `видно ${split.shown.length}, скрыто ${split.hidden}`,
 );

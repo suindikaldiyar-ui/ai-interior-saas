@@ -123,7 +123,7 @@ import {
   moduleDepthMm,
   upperBottomFor,
 } from '../lib/millwork/fill';
-import { openingOf, openingRejection } from '../lib/millwork/opening';
+import { openingOf, openingRejection, openingsFor } from '../lib/millwork/opening';
 import { columnNichesSumMm, ovenBottomMm } from '../lib/millwork/fill';
 import { beamBottomMm, beamDropMm } from '../lib/millwork/ceiling';
 import {
@@ -10279,6 +10279,219 @@ console.log('\nВерхний ряд прижимается к низу риге
       /корпуса ниже \d+ мм не бывает/.test(refused),
       refused ? refused.slice(0, 110) : 'СОБРАЛОСЬ МОЛЧА',
     );
+  }
+}
+
+/* ──────────  ЗАМЕР: что считается у ящиков нижнего модуля  ────────── */
+
+/**
+ * ИЗМЕРИТЕЛЬНЫЙ БЛОК, А НЕ ТРЕБОВАНИЕ.
+ *
+ * Он не чинит и ничего не требует — он фиксирует, что в продукте есть
+ * СЕГОДНЯ: сколько фасадов у модуля с N ящиками, какие детали короба
+ * попадают в раскрой, сколько направляющих уходит в смету и во что это
+ * обходится. Цифры нужны до правки: три ящика вместо дверцы — это
+ * десяток новых деталей, и до заходa надо знать, каких из них нет.
+ */
+console.log('\nЗамер: наполнение нижнего модуля');
+{
+  const widthMm = 600;
+
+  /** Одиночный модуль 600 мм с заданным числом ящиков. */
+  const boxOf = (drawers: number) => {
+    const run = buildRun({
+      lengthMm: widthMm,
+      ceilingHeightMm: 2700,
+      requirements: {
+        ...REQ,
+        mode: 'free',
+        appliances: [],
+        sections: [],
+      },
+      openings: [],
+      comms: [],
+    });
+
+    const added = applyOps({
+      run,
+      requirements: { ...REQ, mode: 'free', appliances: [], sections: [] },
+      ops: [
+        { op: 'add_module', kind: 'base', widthMm },
+      ],
+      openings: [],
+    });
+
+    const unit = added.modules[0];
+    if (!unit) return null;
+
+    return applyOps({
+      run: added,
+      requirements: { ...REQ, mode: 'free', appliances: [], sections: [] },
+      ops: [{ op: 'set_fronts', moduleId: unit.id, drawerCount: drawers }],
+      openings: [],
+    });
+  };
+
+  const probe = boxOf(3);
+  const probeUnit = probe?.modules[0];
+
+  /*
+   * Ноль панелей — это не «нечего мерить», это сломанный замер.
+   * Падаем здесь, а не печатаем пустую таблицу.
+   */
+  check(
+    'модуль для замера собрался и дал детали',
+    Boolean(probeUnit) && buildPanels({ run: probe! }).length > 0,
+    !probeUnit
+      ? 'МОДУЛЬ НЕ СОБРАЛСЯ'
+      : buildPanels({ run: probe! }).length === 0
+        ? 'СЕЛЕКТОР ВЕРНУЛ НОЛЬ ПАНЕЛЕЙ'
+        : `${buildPanels({ run: probe! }).length} деталей`,
+  );
+
+  if (!probeUnit || buildPanels({ run: probe! }).length === 0) {
+    check('дальше мерить нечем', false, 'ПАНЕЛЕЙ НЕТ');
+  } else {
+    console.log('  ящиков  фронты (высоты)            детали короба   направляющих   сумма');
+
+    const rows: { drawers: number; fronts: number; boxParts: number; slides: number }[] = [];
+
+    for (const drawers of [1, 2, 3]) {
+      const run = boxOf(drawers)!;
+      const unit = run.modules[0];
+      const panels = buildPanels({ run });
+
+      const fronts = panels.filter((panel) => /Фронт ящика/i.test(panel.name));
+      /*
+       * Детали КОРОБА ящика: дно, задняя, боковины. Ищем их по имени —
+       * если такого имени в раскрое нет, значит их не считают вовсе.
+       */
+      const boxParts = panels.filter((panel) => /короб|ящик(?!а)/i.test(panel.name));
+
+      const estimate = buildEstimate(run, 'optimal', DEMO_RATES, []);
+      const slideLine = estimate.lines.find((line) => line.key.startsWith('slide_'));
+      const boxLine = estimate.lines.find((line) => line.key === 'drawer_box');
+
+      rows.push({
+        drawers,
+        fronts: fronts.length,
+        boxParts: boxParts.length,
+        slides: slideLine?.quantity ?? 0,
+      });
+
+      console.log(
+        `  ${String(drawers).padStart(6)}  ` +
+          `${String(fronts.length).padStart(2)} шт. ${(unit.fill?.drawerHeights ?? []).join('+').padEnd(18)}` +
+          `${String(boxParts.length).padStart(8)}      ` +
+          `${String(slideLine?.quantity ?? 0).padStart(6)}` +
+          `${boxLine ? ` (+${boxLine.title})` : ''}` +
+          `   ${Math.round(estimate.total)} ₸`,
+      );
+    }
+
+    /*
+     * ЗАФИКСИРОВАНО: `set_fronts` НЕ ПЕРЕСОБИРАЕТ НАПОЛНЕНИЕ.
+     *
+     * Число ящиков в поле меняется (`drawerCount`), а `fill.drawerHeights`
+     * остаётся пустым: `applyOps` зовёт `defaultFill` только там, где
+     * наполнения НЕТ ВОВСЕ, а у модуля оно уже было — от дверцы.
+     *
+     * Следствие измерено ниже: фронтов в раскрое ноль, полка от дверцы
+     * остаётся, а направляющие в смете считаются по `drawerCount` — три
+     * штуки оплачены, ни одного фронта не распилено.
+     *
+     * Заход измерительный: проверка ЗАКРЕПЛЯЕТ сегодняшнее поведение.
+     * Починят — она упадёт, и это правильно: тогда её надо переписать
+     * на требование, а не на факт.
+     */
+    check(
+      'ДЕФЕКТ ЗАФИКСИРОВАН: set_fronts не даёт фронтов в раскрое',
+      rows.every((row) => row.fronts === 0),
+      rows.map((r) => `${r.drawers} ящика → ${r.fronts} фронтов`).join(' · '),
+    );
+
+    /*
+     * А через готовый вариант (`set_variant`) тот же модуль наполнение
+     * получает: два пути, один работает, второй нет.
+     */
+    const viaVariant = applyOps({
+      run: boxOf(1)!,
+      requirements: { ...REQ, mode: 'free', appliances: [], sections: [] },
+      ops: [{ op: 'set_variant', moduleId: boxOf(1)!.modules[0].id, variant: 'drawers' }],
+      openings: [],
+    });
+    const variantUnit = viaVariant.modules[0];
+    const variantFronts = buildPanels({ run: viaVariant }).filter((panel) =>
+      /Фронт ящика/i.test(panel.name),
+    );
+
+    check(
+      'через готовый вариант наполнение и фронты появляются',
+      (variantUnit.fill?.drawerHeights.length ?? 0) === 3 && variantFronts.length === 3,
+      `наполнение [${(variantUnit.fill?.drawerHeights ?? []).join(',')}] · фронтов ${variantFronts.length}`,
+    );
+
+    check(
+      'и сумма высот фронтов равна высоте корпуса',
+      (variantUnit.fill?.drawerHeights ?? []).reduce((a, b) => a + b, 0) ===
+        moduleCarcassHeightMm(variantUnit, viaVariant),
+      `${(variantUnit.fill?.drawerHeights ?? []).reduce((a, b) => a + b, 0)} против ${moduleCarcassHeightMm(variantUnit, viaVariant)}`,
+    );
+
+    /* ── Направляющих столько, сколько ящиков ── */
+    const slideDrift = rows.filter((row) => row.slides !== row.drawers);
+    check(
+      'направляющих в смете столько же, сколько ящиков',
+      slideDrift.length === 0,
+      slideDrift.length > 0
+        ? slideDrift.map((r) => `${r.drawers} ящика → ${r.slides} направляющих`).join(' · ')
+        : rows.map((r) => `${r.drawers}→${r.slides}`).join(' '),
+    );
+
+    /*
+     * ДЕТАЛЕЙ КОРОБА В РАСКРОЕ НЕТ — и это ЗАФИКСИРОВАНО, а не исправлено.
+     * Дно, задняя и две боковины ящика не режутся: в смету он входит
+     * готовым комплектом (направляющие), а не деталями плиты.
+     */
+    check(
+      'деталей короба ящика в раскрое нет — так сегодня',
+      rows.every((row) => row.boxParts === 0),
+      rows.map((r) => `${r.drawers}→${r.boxParts}`).join(' '),
+    );
+
+    /*
+     * Число ящиков живёт в ДВУХ местах: `fill.drawerHeights` (раскрой,
+     * сцена, смета) и `unit.drawerCount` (чертёжный глиф). Фиксируем,
+     * расходятся они или пока совпадают.
+     */
+    const glyphDrift: string[] = [];
+    for (const drawers of [1, 2, 3]) {
+      const run = boxOf(drawers)!;
+      const unit = run.modules[0];
+      const fromFill = unit.fill?.drawerHeights.length ?? 0;
+      const fromGlyph = Math.max(2, unit.drawerCount || 3);
+      if (fromFill !== fromGlyph) glyphDrift.push(`${drawers}: наполнение ${fromFill}, глиф ${fromGlyph}`);
+    }
+    console.log(
+      `  два источника числа ящиков: ${glyphDrift.join(' · ') || 'сходятся на 1, 2 и 3'}`,
+    );
+
+    /* ── Направление открывания: у каких вариантов оно предлагается ── */
+    const openings = (['door', 'drawers', 'sink_base', 'hob_base', 'cargo'] as const).map(
+      (kind) => {
+        const run = boxOf(2)!;
+        const unit = { ...run.modules[0], variant: kind } as Module;
+        const spec = MODULE_VARIANTS[kind];
+        const shaped: Module = {
+          ...unit,
+          frontType: spec.frontType === 'none' ? 'none' : spec.frontType,
+          drawerCount: spec.drawerCount ?? 0,
+          doorCount: spec.frontType === 'door' ? 1 : 0,
+        };
+        return `${kind}: ${openingsFor(shaped).join('/') || 'НЕТ'}`;
+      },
+    );
+    console.log(`  открывание предлагается → ${openings.join(' · ')}`);
   }
 }
 
