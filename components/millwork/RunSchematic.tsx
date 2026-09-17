@@ -3,6 +3,7 @@
 import dynamic from 'next/dynamic';
 import { useMemo, useState } from 'react';
 import ElevationDrawing from './ElevationDrawing';
+import { wallLabel } from '@/lib/millwork/walls';
 import PlanDrawing from './PlanDrawing';
 import type { SceneRow } from './cabinet3d/CadScene';
 import { openablePartIds } from './cabinet3d/Cabinet3D';
@@ -334,7 +335,13 @@ export default function RunSchematic({
         * Соседняя стена — над активной, вполовину меньше и приглушённо:
         * это справка «вот где угол», а не второй предмет работы.
         */}
-      {neighbour && neighbour.modules.length > 0 && (
+      {/*
+        * На фасадной схеме соседняя стена теперь нарисована наравне с
+        * активной, и эта справка стала её второй копией — а заодно
+        * съедала у схемы сотню пикселей высоты. На плане и в сцене
+        * показан по-прежнему один ряд, там она остаётся.
+        */}
+      {view !== 'front' && neighbour && neighbour.modules.length > 0 && (
         <div className="mb-2 rounded-[var(--r-panel)] bg-sheet/60 p-2" data-neighbour>
           <p className="mw-label mb-1">{neighbourLabel ?? 'Соседняя стена'} — в углу</p>
           <div className="h-[84px] [&>svg]:h-full [&>svg]:w-full">
@@ -464,14 +471,61 @@ export default function RunSchematic({
         ) : (
         <div className="mw-schematic h-full [&>svg]:h-full [&>svg]:w-full">
           {view === 'front' ? (
-            <ElevationDrawing
-              run={run}
-              selectedModuleId={selectedModuleId}
-              onSelect={onSelect}
-              onMoveModule={onMoveModule}
-              changedIds={changedIds}
-              showMaterial
-            />
+            /*
+             * ВСЕ СТЕНЫ КОМПОЗИЦИИ — РЯДОМ, ОТДЕЛЬНЫМИ БЛОКАМИ.
+             *
+             * Одна стена за раз означала, что угловую кухню целиком
+             * замерщик не видел ни разу: сравнить ряды глазами было
+             * негде. Склеивать их в одну ленту нельзя — развёртки трёх
+             * перпендикулярных стен в одной проекции не существует
+             * (ловушка 292), поэтому у каждой стены свой блок, своя
+             * размерная цепь и свой верхний ряд.
+             *
+             * МАСШТАБ ОДИН НА ВСЕ БЛОКИ. Ширина блока пропорциональна
+             * длине его стены (`flexGrow`), и миллиметр везде занимает
+             * одинаково: стена 1140 выходит втрое короче стены 3800 —
+             * так, как оно и есть. Растяни каждый блок по своей ширине,
+             * и короткая стена стала бы вровень с длинной — это тот же
+             * обман, от которого лист защищает один масштаб на странице
+             * (ловушка 197).
+             */
+            <div className="flex h-full gap-3">
+              {allRows.map((row, i) => (
+                <div
+                  key={row.run.id}
+                  data-wall-block={i}
+                  data-wall-length={row.run.lengthMm}
+                  aria-current={row.run.id === run.id ? 'true' : undefined}
+                  className="flex min-w-0 flex-col"
+                  style={{ flexGrow: row.run.lengthMm, flexBasis: 0 }}
+                >
+                  {allRows.length > 1 && (
+                    <p
+                      className={`mw-label mb-1 shrink-0 ${
+                        row.run.id === run.id ? 'text-cyan' : ''
+                      }`}
+                    >
+                      {wallLabel(i)} · {row.run.lengthMm}
+                    </p>
+                  )}
+                  <div className="min-h-0 flex-1 [&>svg]:h-full [&>svg]:w-full">
+                    <ElevationDrawing
+                      run={row.run}
+                      selectedModuleId={selectedModuleId}
+                      onSelect={onSelect}
+                      /*
+                       * Тянуть модуль можно только в активной стене:
+                       * перенос пишется операцией в ОДИН ряд, и жест на
+                       * чужой стене ушёл бы правкой не туда.
+                       */
+                      onMoveModule={row.run.id === run.id ? onMoveModule : undefined}
+                      changedIds={changedIds}
+                      showMaterial
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
           ) : (
             <PlanDrawing
               run={run}

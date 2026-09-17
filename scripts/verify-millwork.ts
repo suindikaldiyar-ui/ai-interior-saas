@@ -117,7 +117,12 @@ import {
 } from '../lib/millwork/walls';
 import { composeVariants, workingWall, workspaceInput } from '../lib/millwork/workspace';
 import { screenState } from '../lib/millwork/screen';
-import { keepSelection, moduleOfPart, selectionState } from '../lib/millwork/selection';
+import {
+  keepSelection,
+  moduleOfPart,
+  selectionState,
+  wallOfModule,
+} from '../lib/millwork/selection';
 import type { MillworkState } from '../lib/projects';
 import type { CatalogEntryFull } from '../types/catalog';
 import {
@@ -3369,6 +3374,141 @@ console.log('\nВыбранный модуль');
     selectionState(removed, keepSelection(removed, first.id)).title === null,
     String(selectionState(removed, keepSelection(removed, first.id)).title),
   );
+}
+
+/* ═══════════  Все стены на одной схеме  ═══════════ */
+
+/**
+ * КОМПОЗИЦИЯ ЦЕЛИКОМ ПЕРЕД ГЛАЗАМИ.
+ *
+ * Схема показывала одну стену за раз, и угловую кухню замерщик не видел
+ * ни разу целиком: сравнить ряды было негде. Теперь на схему приходят
+ * ВСЕ ряды композиции — отдельными блоками, каждый со своей длиной.
+ *
+ * Мерим тем же, чем рабочее место: список рядов композиции (`segments`
+ * экрана — это `composition.segments[i].run`) и `wallOfModule`, который
+ * решает, чья стена стала активной при нажатии.
+ */
+console.log('\nВсе стены на одной схеме');
+{
+  const CEILING = 2700;
+  const WALLS_3 = [
+    { id: 'w1', lengthMm: 3800, openings: [] as Opening[] },
+    { id: 'w2', lengthMm: 1140, openings: [] as Opening[] },
+    { id: 'w3', lengthMm: 1740, openings: [] as Opening[] },
+  ];
+
+  const composed = (kind: CompositionKind, walls: typeof WALLS_3) =>
+    tryBuildComposition({
+      kind,
+      walls,
+      ceilingHeightMm: CEILING,
+      requirements: REQ,
+      comms: COMMS,
+    });
+
+  const corner = composed('corner_l', [WALLS_3[0], WALLS_3[1]]);
+  const uShape = composed('u_shape', WALLS_3);
+
+  check(
+    'композиции для схемы собрались — рисовать есть что',
+    corner.state === 'built' && uShape.state === 'built',
+    corner.state === 'built' && uShape.state === 'built'
+      ? `угловая ${corner.composition.segments.length} · П-образная ${uShape.composition.segments.length}`
+      : 'КОМПОЗИЦИЯ НЕ СОБРАЛАСЬ — схему проверять не на чем',
+  );
+
+  if (corner.state !== 'built' || uShape.state !== 'built') {
+    check('дальше мерить нечем', false, 'НЕТ СОБРАННОЙ КОМПОЗИЦИИ');
+  } else {
+    /** Ряды, которые уходят на схему: тот же список, что и в сцену. */
+    const rowsOf = (built: typeof corner.composition) =>
+      built.segments.map((segment) => segment.run);
+
+    const cornerRows = rowsOf(corner.composition);
+    const uRows = rowsOf(uShape.composition);
+
+    check(
+      'на схему угловой приходят два ряда, П-образной — три',
+      cornerRows.length === 2 && uRows.length === 3,
+      cornerRows.length === 0 || uRows.length === 0
+        ? 'СЕЛЕКТОР ВЕРНУЛ НОЛЬ РЯДОВ — рисовать нечего'
+        : `угловая ${cornerRows.length} · П-образная ${uRows.length}`,
+    );
+
+    check(
+      'ни один ряд не пустой: блок без мебели читался бы как несобравшаяся схема',
+      uRows.every((run) => run.modules.length > 0),
+      uRows.map((run) => `${run.lengthMm}:${run.modules.length}`).join(' · '),
+    );
+
+    /*
+     * Длина блока — длина ЕГО стены. Масштаб на схеме один на все блоки,
+     * и ширина блока пропорциональна этому числу: подмени его общей
+     * длиной, и короткая стена встала бы вровень с длинной.
+     */
+    check(
+      'у каждого блока своя длина стены, а не общая на композицию',
+      uRows[0].lengthMm === 3800 &&
+        uRows[1].lengthMm === uShape.composition.segments[1].run.lengthMm &&
+        uRows[2].lengthMm === uShape.composition.segments[2].run.lengthMm &&
+        new Set(uRows.map((run) => run.lengthMm)).size > 1,
+      uRows.map((run) => run.lengthMm).join(' · '),
+    );
+
+    /*
+     * Полезная длина соседних стен короче замеренной — угол занял своё
+     * (слой 17). Проверяем, что блок несёт именно полезную длину: по ней
+     * собран ряд, и она же задаёт ширину блока на схеме.
+     */
+    check(
+      'соседняя стена приходит полезной длиной, а не замеренной',
+      uRows[1].lengthMm < 1140 && uRows[1].lengthMm === uShape.composition.segments[1].run.lengthMm,
+      `замер 1140 → полезных ${uRows[1].lengthMm} мм`,
+    );
+
+    /* ─── Выделение сквозное по композиции ─── */
+
+    const second = uRows[1].modules[0];
+    check(
+      'во втором ряду есть модуль, который можно выбрать',
+      Boolean(second),
+      second ? `${second.id} · ${second.widthMm} мм` : 'ВТОРОЙ РЯД ПУСТ — выбирать нечего',
+    );
+
+    const hits = uRows.flatMap((run) => allModules(run)).filter((m) => m.id === second.id);
+    check(
+      'выделен ровно один модуль на всю композицию',
+      hits.length === 1,
+      `совпадений по композиции ${hits.length}` +
+        (hits.length === 1 ? '' : ' — ИДЕНТИФИКАТОР НЕ УНИКАЛЕН МЕЖДУ СТЕНАМИ'),
+    );
+
+    /*
+     * Нажатие на чужой стене делает её активной: правка уходит в ОДИН
+     * ряд, и операция по модулю другой стены в нём не найдётся.
+     */
+    const at = wallOfModule(uRows, second.id);
+    check(
+      'нажатие на модуле второго ряда называет свою стену',
+      at === 1,
+      at === null ? 'МОДУЛЬ НЕ НАЙДЕН НИ В ОДНОМ РЯДУ' : `стена ${at}`,
+    );
+
+    const panel = selectionState(uRows[at ?? 0], second.id);
+    check(
+      'модуль из второго ряда находится панелью и получает заголовок',
+      panel.unit?.id === second.id && Boolean(panel.title) && panel.number !== null,
+      panel.unit ? `${panel.title}` : 'ПАНЕЛЬ МОДУЛЬ НЕ НАШЛА',
+    );
+
+    check(
+      'модуль первой стены при этом остаётся за первой',
+      wallOfModule(uRows, uRows[0].modules[0].id) === 0 &&
+        wallOfModule(uRows, 'нет-такого-модуля') === null,
+      `первая → ${wallOfModule(uRows, uRows[0].modules[0].id)} · чужой → ${wallOfModule(uRows, 'нет-такого-модуля')}`,
+    );
+  }
 }
 
 /* ═══════════  Сквозной номер детали  ═══════════ */

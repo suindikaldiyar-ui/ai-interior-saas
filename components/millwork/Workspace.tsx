@@ -58,7 +58,7 @@ import TemplatePicker from './TemplatePicker';
 import type { RateTable } from '@/lib/millwork/estimate';
 import { applyOps } from '@/lib/millwork/ops';
 import { screenState } from '@/lib/millwork/screen';
-import { keepSelection, selectionState } from '@/lib/millwork/selection';
+import { keepSelection, selectionState, wallOfModule } from '@/lib/millwork/selection';
 import { onWall } from '@/lib/millwork/layout';
 import { buildEstimate } from '@/lib/millwork/estimate';
 import {
@@ -1252,6 +1252,26 @@ export default function Workspace(props: WorkspaceProps) {
     () => selectionState(activeRun, selectedId),
     [activeRun, selectedId],
   );
+
+  /**
+   * ВЫБОР МОДУЛЯ — ОДИН ЖЕСТ НА ВСЮ КОМПОЗИЦИЮ.
+   *
+   * Схема показывает все стены разом, и нажать можно в любом блоке. Но
+   * правка уходит в АКТИВНУЮ стену: `applyOps` правит один ряд, и
+   * операция по модулю чужой стены в нём не найдётся — панель открылась
+   * бы, а кнопки в ней молча не работали. Поэтому нажатие переносит и
+   * активную стену тоже: выбрал модуль — выбрал стену, на которой он
+   * стоит. Обратного порядка не бывает: человек нажимает на МЕБЕЛЬ, а не
+   * на вкладку.
+   */
+  const selectModule = useCallback(
+    (moduleId: string | null) => {
+      const at = wallOfModule(segments, moduleId);
+      if (at !== null) setWallIndex(at);
+      setSelectedId(moduleId);
+    },
+    [segments],
+  );
   const selectedLabel = selection.caption;
 
   /**
@@ -2040,7 +2060,7 @@ export default function Workspace(props: WorkspaceProps) {
       production={props.production}
       view={sceneView}
       selectedModuleId={selectedId}
-      onSelectModule={setSelectedId}
+      onSelectModule={selectModule}
       onWidth={dragWidth}
       onMoveModule={freeMode ? moveModule : undefined}
       onItemId={setKitchenItemId}
@@ -2409,7 +2429,7 @@ export default function Workspace(props: WorkspaceProps) {
                   }
                   comms={props.comms}
                   selectedModuleId={selectedId}
-                  onSelect={setSelectedId}
+                  onSelect={selectModule}
                   onMoveModule={freeMode ? moveModule : undefined}
                   changedIds={changedIds}
                 />
@@ -2711,7 +2731,7 @@ export default function Workspace(props: WorkspaceProps) {
                   run={activeRun}
                   zone={zone}
                   selectedModuleId={selectedId}
-                  onSelect={setSelectedId}
+                  onSelect={selectModule}
                   onOps={runOps}
                   requirements={requirements}
                   onComposition={changeComposition}
@@ -3094,7 +3114,7 @@ export default function Workspace(props: WorkspaceProps) {
                 elevation={{
                   assumedTotal,
                   selectedModuleId: selectedId,
-                  onSelect: setSelectedId,
+                  onSelect: selectModule,
                   changedIds,
                   mode: drawingMode,
                   onFillChange: changeFill,
@@ -3127,7 +3147,7 @@ export default function Workspace(props: WorkspaceProps) {
                 <button
                   type="button"
                   onClick={() => {
-                    if (w.moduleId) setSelectedId(w.moduleId);
+                    if (w.moduleId) selectModule(w.moduleId);
                     setWarningAt(w.atMm ?? null);
                     // Предупреждение ведёт на лист: план теперь там же.
                     if (step === 'result') setResultView('facade');
