@@ -126,6 +126,8 @@ export default function PanelList({
         <table className="w-full border-collapse text-[11px]">
           <thead>
             <tr className="border-b border-blueprint/40 text-left">
+              {/* Номер — первым, как в выгрузке: цех читает оба листа рядом. */}
+              <th className="mw-num py-1 pr-2 font-medium">№</th>
               <th className="py-1 pr-2 font-medium">Деталь</th>
               <th className="py-1 pr-2 font-medium">Материал</th>
               <th className="mw-num py-1 pr-2 text-right font-medium">Длина</th>
@@ -140,12 +142,13 @@ export default function PanelList({
             {groups.map(([moduleId, group]) => (
               <>
                 <tr key={`${moduleId}-head`} className="border-b border-blueprint/20">
-                  <td colSpan={7} className="pt-2 text-[11px] font-medium text-cyan">
+                  <td colSpan={8} className="pt-2 text-[11px] font-medium text-cyan">
                     {group.label}
                   </td>
                 </tr>
                 {group.panels.map((panel, i) => (
                   <tr key={`${moduleId}-${panel.name}-${i}`} className="border-b border-blueprint/15">
+                    <td className="mw-num py-1 pr-2">{panel.number}</td>
                     <td className="py-1 pr-2">{panel.name}</td>
                     <td className="py-1 pr-2">{panel.material}</td>
                     <td className="mw-num py-1 pr-2 text-right">{panel.lengthMm}</td>
@@ -167,7 +170,7 @@ export default function PanelList({
 
           <tfoot>
             <tr className="border-t border-blueprint/50">
-              <td colSpan={7} className="pt-2">
+              <td colSpan={8} className="pt-2">
                 <div className="mw-num flex flex-wrap gap-x-5 gap-y-1 text-[11px]">
                   <span>деталей {totals.count}</span>
                   <span>ЛДСП {totals.ldspM2} м²</span>

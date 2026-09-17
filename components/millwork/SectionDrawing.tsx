@@ -9,6 +9,7 @@ import {
   workTopMm,
 } from '@/lib/millwork/shop';
 import { rowStandardDepthMm } from '@/lib/millwork/fill';
+import { SHELF_PANEL_NAME, panelNumberOf } from '@/lib/millwork/panels';
 import { GEOMETRY } from '@/lib/millwork/modules';
 import { moduleNumbers, POSITION_CIRCLE_MM } from '@/lib/millwork/positions';
 import {
@@ -19,7 +20,7 @@ import {
   unitsPerPaperMm,
 } from '@/lib/millwork/sheetStyle';
 import { zoneProfile } from '@/lib/millwork/zones';
-import type { Module, ModuleFill, Run } from '@/types/millwork';
+import type { Module, ModuleFill, Panel, Run } from '@/types/millwork';
 
 /**
  * БОКОВОЙ РАЗРЕЗ.
@@ -63,6 +64,14 @@ type Props = {
    * 1:25 и при 1:50 выглядел бы разной толщины.
    */
   paperWidthMm?: number;
+  /**
+   * Детали ряда — ЧТОБЫ ПОДПИСАТЬ ПОЛКУ ЕЁ НОМЕРОМ.
+   *
+   * Список приходит с листа и считается там один раз: свой `buildPanels`
+   * здесь был бы второй деталировкой, а разрез обязан показывать тот же
+   * номер, что уехал в цех.
+   */
+  panels?: Panel[];
 };
 
 /**
@@ -113,6 +122,7 @@ export default function SectionDrawing({
   run,
   inside = false,
   selectedModuleId,
+  panels = [],
   paperWidthMm,
 }: Props) {
   const zone = zoneProfile(run.zone ?? 'kitchen');
@@ -164,6 +174,13 @@ export default function SectionDrawing({
    * низ ряда — цоколь внизу, отметка навески наверху.
    */
   const picked = inside ? findModuleRow(run, selectedModuleId) : null;
+
+  /*
+   * Полок в модуле несколько, а деталь одна: в раскрое это одна строка
+   * с количеством. Поэтому подпись у всех полок разреза одна и та же —
+   * номер той самой строки.
+   */
+  const shelfNumber = picked ? panelNumberOf(panels, picked.unit.id, SHELF_PANEL_NAME) : null;
   const pickedFill = picked && hasFilling(picked.unit) ? picked.unit.fill! : null;
   const fillDatum = picked?.upper ? upperBottom : plinth;
   const fillFrom = xOf(16);
@@ -236,6 +253,7 @@ export default function SectionDrawing({
         */}
       {pickedFill && !picked!.upper && (
         <Filling
+          shelfNumber={shelfNumber}
           fill={pickedFill}
           datumMm={fillDatum}
           x1={fillFrom}
@@ -292,6 +310,7 @@ export default function SectionDrawing({
           />
           {pickedFill && picked!.upper && (
             <Filling
+              shelfNumber={shelfNumber}
               fill={pickedFill}
               datumMm={fillDatum}
               x1={fillFrom}
@@ -381,6 +400,7 @@ export default function SectionDrawing({
  * кружок, а не линия: так её и рисуют в мебельных чертежах.
  */
 function Filling({
+  shelfNumber,
   fill,
   datumMm,
   x1,
@@ -390,6 +410,8 @@ function Filling({
   inner,
   labelSize,
 }: {
+  /** Номер детали «Полка» этого модуля. Полок несколько, деталь одна. */
+  shelfNumber: string | null;
   fill: ModuleFill;
   datumMm: number;
   x1: number;
@@ -419,7 +441,7 @@ function Filling({
             fontSize={labelSize}
             fill="var(--graphite-mw)"
           >
-            {mm}
+            {shelfNumber ? `${shelfNumber} · ${mm}` : mm}
           </text>
         </g>
       ))}

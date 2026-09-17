@@ -3,6 +3,7 @@
 import type { ReactNode } from 'react';
 import ElevationDrawing, { elevationSpanUnits } from './ElevationDrawing';
 import { buildLeaders } from '@/lib/millwork/leaders';
+import { buildPanels } from '@/lib/millwork/panels';
 import { useInteriorStore } from '@/store/useInteriorStore';
 import { APRON_TARGET, COUNTERTOP_TARGET, FACADE_TARGET } from '@/types/catalog';
 import PlanDrawing from './PlanDrawing';
@@ -134,7 +135,17 @@ export default function DrawingSheet({
     return (id && catalog.find((e) => e.id === id)) || null;
   };
 
-  const leaders = buildLeaders(run, {
+  /*
+   * ДЕТАЛИ СЧИТАЮТСЯ ОДИН РАЗ НА ЛИСТ — как и номера модулей ниже.
+   *
+   * Выноска, разрез и детализировка обязаны показывать один номер
+   * детали: посчитай список в каждом виде своим вызовом, и при разных
+   * настройках цеха цех получит на чертеже одну «3.2», а в раскрое
+   * другую.
+   */
+  const panels = buildPanels({ run, production });
+
+  const leaders = buildLeaders(run, panels, {
     facade: entryFor(FACADE_TARGET),
     counter: entryFor(COUNTERTOP_TARGET),
     apron: entryFor(APRON_TARGET),
@@ -337,10 +348,13 @@ export default function DrawingSheet({
         />,
       ]),
     ),
-    section: <SectionDrawing run={run} paperWidthMm={paperWidth.get('section')} />,
+    section: (
+      <SectionDrawing run={run} panels={panels} paperWidthMm={paperWidth.get('section')} />
+    ),
     'section-inside': (
       <SectionDrawing
         run={run}
+        panels={panels}
         inside
         selectedModuleId={elevation.selectedModuleId}
         paperWidthMm={paperWidth.get('section-inside')}

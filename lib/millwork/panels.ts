@@ -14,6 +14,7 @@ import {
   DEFAULT_PRODUCTION,
   type ProductionSettings,
 } from '@/types/catalog';
+import { moduleNumbers } from './positions';
 import type { Module, Panel, PanelTotals, Run } from '@/types/millwork';
 
 /**
@@ -46,6 +47,19 @@ export type PanelInput = {
   production?: ProductionSettings;
 };
 
+/**
+ * ИМЕНА ДЕТАЛЕЙ — ОДНА ТАБЛИЦА НА ПРОДУКТ.
+ *
+ * По имени деталь находит вид, который её рисует: разрез ищет полку,
+ * выноска — фасад и боковину. Строка, набранная в двух местах, молча
+ * разъезжается, и вид перестаёт находить деталь — ровно та связь
+ * подписью, от которой уводит номер.
+ */
+export const SIDE_PANEL_NAME = 'Боковина';
+/** Имя детали-полки в раскрое. По нему полки уходят в свою статью сметы. */
+export const SHELF_PANEL_NAME = 'Полка';
+export const FACADE_PANEL_NAME = 'Фасад';
+
 /** Кромка: видимые торцы толстой, скрытые — тонкой. */
 function edgeType(production: ProductionSettings): Panel['edgeType'] {
   return production.visibleEdgeMm === 1 ? '1' : '2';
@@ -62,6 +76,7 @@ function modulePanels(
   unit: Module,
   run: Run,
   production: ProductionSettings,
+  moduleNumber: number,
 ): Panel[] {
   // Доборная планка — это одна деталь, а не корпус.
   const heightMm = moduleCarcassHeightMm(unit, run);
@@ -75,8 +90,25 @@ function modulePanels(
   const material = `ЛДСП ${t}`;
   const panels: Panel[] = [];
 
-  const push = (panel: Omit<Panel, 'moduleId' | 'moduleLabel'>) =>
-    panels.push({ moduleId: unit.id, moduleLabel: label, ...panel });
+  /*
+   * НОМЕР ДЕТАЛИ РОЖДАЕТСЯ ЗДЕСЬ — там же, где сама деталь.
+   *
+   * `<номер модуля>.<номер детали в модуле>`: первая половина уже стоит
+   * на чертеже в кружке (`moduleNumbers`), вторая — порядок деталей
+   * ВНУТРИ модуля, который задан этой функцией и от других модулей не
+   * зависит вовсе. Поэтому добавленный или удалённый сосед не сдвигает
+   * номера чужих деталей, а пересчёт того же состава даёт те же номера.
+   *
+   * Второй формулы номера в продукте нет: чертёж, разрез, детализировка,
+   * раскрой и CSV читают это поле.
+   */
+  const push = (panel: Omit<Panel, 'moduleId' | 'moduleLabel' | 'number'>) =>
+    panels.push({
+      moduleId: unit.id,
+      moduleLabel: label,
+      number: `${moduleNumber}.${panels.length + 1}`,
+      ...panel,
+    });
 
   if (unit.kind === 'filler') {
     push({
@@ -96,7 +128,7 @@ function modulePanels(
   const isAppliance = Boolean(unit.appliance);
 
   push({
-    name: 'Боковина',
+    name: SIDE_PANEL_NAME,
     material,
     lengthMm: heightMm,
     widthMm: depthMm,
@@ -138,7 +170,7 @@ function modulePanels(
   const shelves = unit.fill?.shelves.length ?? 0;
   if (shelves > 0) {
     push({
-      name: 'Полка',
+      name: SHELF_PANEL_NAME,
       material,
       lengthMm: inner - allow.shelfSideMm,
       widthMm: depthMm - allow.shelfDepthMm,
@@ -284,7 +316,7 @@ function modulePanels(
     }
 
     for (const span of facadeSpans(unit, heightMm)) {
-      pushFront('Фасад', span.heightMm - gap, unit.widthMm - gap, 1);
+      pushFront(FACADE_PANEL_NAME, span.heightMm - gap, unit.widthMm - gap, 1);
     }
     return panels;
   }
@@ -292,7 +324,7 @@ function modulePanels(
   if (unit.frontType === 'door' && unit.doorCount > 0) {
     const doorWidth = Math.round((unit.widthMm - gap * (unit.doorCount + 1)) / unit.doorCount);
     // У фасада видны все четыре торца — если кромка на нём вообще есть.
-    pushFront('Фасад', heightMm - gap, doorWidth, unit.doorCount);
+    pushFront(FACADE_PANEL_NAME, heightMm - gap, doorWidth, unit.doorCount);
   }
 
   if (unit.frontType === 'drawers') {
@@ -308,7 +340,46 @@ function modulePanels(
 /** Все детали ряда, сгруппированные по модулям слева направо. */
 export function buildPanels({ run, production = DEFAULT_PRODUCTION }: PanelInput): Panel[] {
   const modules = [...run.modules, ...run.upperSegments.flatMap((s) => s.modules)];
-  return modules.flatMap((unit) => modulePanels(unit, run, production));
+
+  /*
+   * Номер модуля считается ОДИН раз на ряд той же функцией, что рисует
+   * кружок на чертеже. Своя нумерация здесь означала бы, что деталь
+   * «3.2» лежит у модуля, который на чертеже подписан четвёркой.
+   */
+  const numbers = moduleNumbers(run);
+
+  return modules.flatMap((unit) => {
+    const number = numbers.get(unit.id);
+
+    /*
+     * Модуль без номера — это разошедшиеся список деталей и нумерация,
+     * а не повод подставить ноль: по детали с выдуманным номером цех
+     * распилит плиту.
+     */
+    if (number === undefined) {
+      throw new Error(
+        `Модуль ${unit.id} есть в списке деталей и отсутствует в нумерации модулей: ` +
+          'номер детали выводить не из чего.',
+      );
+    }
+
+    return modulePanels(unit, run, production, number);
+  });
+}
+
+/**
+ * Номер детали по модулю и названию — для видов, которые рисуют деталь.
+ *
+ * Разрез подписывает полку, выноска — фасад и боковину. Оба ЧИТАЮТ номер
+ * отсюда: посчитай его на месте, и вид разойдётся с раскроем ровно так,
+ * как расходилась подпись.
+ */
+export function panelNumberOf(
+  panels: Panel[],
+  moduleId: string,
+  name: string,
+): string | null {
+  return panels.find((p) => p.moduleId === moduleId && p.name === name)?.number ?? null;
 }
 
 /**
@@ -397,9 +468,6 @@ export type PanelMaterials = {
   /** Деталей всего — по нему сверяется, что список тот же. */
   count: number;
 };
-
-/** Имя детали-полки в раскрое. По нему полки уходят в свою статью сметы. */
-export const SHELF_PANEL_NAME = 'Полка';
 
 export function panelMaterials(panels: Panel[]): PanelMaterials {
   let carcassM2 = 0;

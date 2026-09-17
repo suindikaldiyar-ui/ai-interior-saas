@@ -7,8 +7,9 @@ import {
 } from './shop';
 import { APPLIANCE_SLOTS } from './modules';
 import { zoneProfile } from './zones';
+import { FACADE_PANEL_NAME, SIDE_PANEL_NAME, panelNumberOf } from './panels';
 import type { CatalogEntryFull } from '@/types/catalog';
-import type { Run } from '@/types/millwork';
+import type { Panel, Run } from '@/types/millwork';
 
 /**
  * ВЫНОСКИ С МАТЕРИАЛАМИ.
@@ -29,6 +30,14 @@ export type LeaderAnchor = {
   xMm: number;
   yMm: number;
   text: string;
+  /**
+   * Номер детали, на которую показывает линия, — тот же, что в раскрое.
+   *
+   * Пусто там, где выноска подписывает не деталь раскроя (столешница
+   * идёт погонными метрами, цоколь — алюминий, техника — прибор).
+   * Выдуманного номера здесь не бывает: по нему распилили бы плиту.
+   */
+  panel?: string | null;
 };
 
 export type MaterialSources = {
@@ -45,6 +54,16 @@ function fromCatalog(entry: CatalogEntryFull | null | undefined, prefix: string)
   return `${prefix}: ${entry.name_ru}${article ? ` · ${article}` : ''}`;
 }
 
+/**
+ * «Фасад 2.6» — подпись с номером детали, если деталь у выноски есть.
+ *
+ * Номер не выдумывается: у ниши под технику фасада нет вовсе, и подпись
+ * там остаётся прежней.
+ */
+function numbered(word: string, number: string | null): string {
+  return number ? `${word} ${number}` : word;
+}
+
 /** Ручка описывается тем, что видно на фасаде, а не артикулом фурнитуры. */
 function handleText(run: Run): string {
   if (run.options.integratedHandles) return 'Профиль-ручка по верхней кромке фасада';
@@ -58,7 +77,20 @@ function handleText(run: Run): string {
  * развести полки без пересечений. Порядок постоянный — чертёж обязан быть
  * одинаковым при каждом открытии.
  */
-export function buildLeaders(run: Run, sources: MaterialSources = {}): LeaderAnchor[] {
+/**
+ * Выноски по ряду.
+ *
+ * `panels` приходит СНАРУЖИ и считается один раз на лист: свой вызов
+ * `buildPanels` здесь означал бы вторую деталировку — с другими
+ * настройками цеха она дала бы другие номера, чем те, что уехали в цех.
+ * Аргумент обязательный и стоит вторым: со значением по умолчанию номер
+ * молча пропадал бы у того, кто про него забыл.
+ */
+export function buildLeaders(
+  run: Run,
+  panels: Panel[],
+  sources: MaterialSources = {},
+): LeaderAnchor[] {
   const zone = zoneProfile(run.zone ?? 'kitchen');
   const anchors: LeaderAnchor[] = [];
 
@@ -76,23 +108,27 @@ export function buildLeaders(run: Run, sources: MaterialSources = {}): LeaderAnc
 
   /* ── Фасады: середина второго модуля, чтобы линия не шла через край ── */
   const facadeAt = base[Math.min(1, base.length - 1)];
+  const facadeNumber = panelNumberOf(panels, facadeAt.id, FACADE_PANEL_NAME);
   anchors.push({
     id: 'facade',
     xMm: facadeAt.offsetMm + facadeAt.widthMm / 2,
     yMm: plinthMm(shop) + carcassHeightMm(shop) * 0.45,
+    panel: facadeNumber,
     text:
-      fromCatalog(sources.facade, 'Фасад') ??
-      'Фасад МДФ, эмаль матовая — артикул не согласован',
+      fromCatalog(sources.facade, numbered('Фасад', facadeNumber)) ??
+      `${numbered('Фасад', facadeNumber)}: МДФ, эмаль матовая — артикул не согласован`,
   });
 
   /* ── Корпус: боковина крайнего модуля ── */
+  const sideNumber = panelNumberOf(panels, base[0].id, SIDE_PANEL_NAME);
   anchors.push({
     id: 'carcass',
     xMm: base[0].offsetMm + 8,
     yMm: plinthMm(shop) + carcassHeightMm(shop) * 0.75,
+    panel: sideNumber,
     text:
-      fromCatalog(sources.carcass, 'Корпус') ??
-      'Корпус ЛДСП 16 мм, кромка ПВХ 0.4 мм',
+      fromCatalog(sources.carcass, numbered('Корпус', sideNumber)) ??
+      `${numbered('Корпус', sideNumber)}: ЛДСП 16 мм, кромка ПВХ 0.4 мм`,
   });
 
   /* ── Столешница и фартук: только там, где они есть ── */

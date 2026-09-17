@@ -77,7 +77,7 @@ import {
   viewWidthMm,
 } from '../lib/millwork/sheet';
 import { buildLeaders, layoutLeaders } from '../lib/millwork/leaders';
-import { positionCode, projectPositions } from '../lib/millwork/positions';
+import { moduleNumbers, positionCode, projectPositions } from '../lib/millwork/positions';
 import { frontGlyph, glyphSignature } from '../lib/millwork/frontGlyph';
 import {
   BASE_ROW_TITLE,
@@ -161,7 +161,13 @@ import {
   moduleOverlaps,
 } from '../lib/millwork/invariants';
 import { configurationFingerprint } from '../lib/millwork/fingerprint';
-import { panelMaterials, SHELF_PANEL_NAME } from '../lib/millwork/panels';
+import {
+  FACADE_PANEL_NAME,
+  SHELF_PANEL_NAME,
+  SIDE_PANEL_NAME,
+  panelMaterials,
+  panelNumberOf,
+} from '../lib/millwork/panels';
 import { plinthMm, upperBottomMm, workTopMm } from '../lib/millwork/shop';
 import { visibleVariantCount } from '../lib/millwork/frontGlyph';
 import { DEMO_TEMPLATE_ID } from '../lib/millwork/demoProject';
@@ -3209,7 +3215,11 @@ console.log('\nДетализировка');
   // Выгрузка для раскроя: разделитель, колонки и кириллица без искажений.
   const csv = panelsToCsv(panels);
   const head = csv.split('\r\n')[0];
-  check('в CSV десять колонок через точку с запятой', head.split(';').length === 10, head);
+  check(
+    'в CSV одиннадцать колонок и номер детали первой',
+    head.split(';').length === 11 && head.split(';')[0] === 'Номер',
+    head,
+  );
 
   const cp = panelsCsvFile(panels, 'windows-1251');
   const decoded = new TextDecoder('windows-1251').decode(cp.bytes);
@@ -3218,6 +3228,190 @@ console.log('\nДетализировка');
   const utf = panelsCsvFile(panels, 'utf-8');
   check('в UTF-8 файле есть BOM для Excel',
     utf.bytes[0] === 0xef && utf.bytes[1] === 0xbb && utf.bytes[2] === 0xbf);
+}
+
+/* ═══════════  Сквозной номер детали  ═══════════ */
+
+/**
+ * СВЯЗЬ МЕЖДУ ВИДАМИ ШЛА ПОДПИСЬЮ.
+ *
+ * «Дверца» в ряду встречается несколько раз, и цех сверял деталь с
+ * чертежом по названию: распилить не ту деталь стоит листа плиты.
+ * Номер рождается вместе с деталью (`buildPanels`), а чертёж, разрез,
+ * детализировка, раскрой и выгрузка его ЧИТАЮТ.
+ */
+console.log('\nСквозной номер детали');
+{
+  const run = buildRun(baseInput);
+  const panels = buildPanels({ run });
+
+  /*
+   * Ноль деталей — это не «нечего проверять», это пустой раскрой.
+   * Падаем здесь, а не проходим по пустому списку с зелёной строкой.
+   */
+  check(
+    'раскрой не пуст — номера есть на чём мерить',
+    panels.length > 0,
+    panels.length === 0 ? 'РАСКРОЙ ПУСТ — номера проверять не на чем' : `${panels.length} деталей`,
+  );
+
+  const numbers = panels.map((panel) => panel.number).filter((n) => Boolean(n && n.trim()));
+  check(
+    'номер есть у каждой детали, и номеров столько же, сколько деталей',
+    panels.length > 0 && numbers.length === panels.length,
+    numbers.length === 0
+      ? 'НОМЕРОВ НЕТ ВОВСЕ — связь видов снова держится на подписи'
+      : `деталей ${panels.length} · номеров ${numbers.length}`,
+  );
+
+  const unique = new Set(numbers);
+  check(
+    'номера уникальны по объекту, а не внутри модуля',
+    panels.length > 0 && unique.size === panels.length,
+    `номеров ${numbers.length} · различных ${unique.size}` +
+      (unique.size === numbers.length ? '' : ' — ПОВТОР'),
+  );
+
+  /*
+   * Первая половина номера — номер модуля, тот самый, что стоит в кружке
+   * на чертеже. Иначе деталь «3.2» лежала бы у модуля, подписанного
+   * четвёркой, и цех искал бы её не там.
+   */
+  const marks = moduleNumbers(run);
+  const wrong = panels.filter((panel) => panel.number.split('.')[0] !== String(marks.get(panel.moduleId)));
+  check(
+    'номер детали начинается с номера её модуля — того, что в кружке на чертеже',
+    panels.length > 0 && wrong.length === 0,
+    wrong.length === 0
+      ? `${panels.length} деталей, все при своём модуле`
+      : `${wrong.length} деталей не при своём модуле: ${wrong[0].number} против ${marks.get(wrong[0].moduleId)}`,
+  );
+
+  /* ─── Один и тот же номер во всех видах ─── */
+
+  const csvRows = panelsToCsv(panels).split('\r\n').slice(1).filter(Boolean);
+  const csvNumbers = csvRows.map((row) => row.split(';')[0]);
+  check(
+    'номер в выгрузке для раскроя — тот же, что в деталировке',
+    csvNumbers.length === panels.length &&
+      panels.every((panel, i) => csvNumbers[i] === panel.number),
+    `строк ${csvNumbers.length} · деталей ${panels.length} · первая ${csvNumbers[0]} против ${panels[0]?.number}`,
+  );
+
+  /*
+   * Чертёж и разрез спрашивают номер той же функцией, которой их
+   * спрашивают компоненты: выноска — `buildLeaders`, разрез —
+   * `panelNumberOf` по имени детали из одной таблицы.
+   */
+  const leaders = buildLeaders(run, panels);
+  const carcass = leaders.find((leader) => leader.id === 'facade-less') ??
+    leaders.find((leader) => leader.id === 'carcass');
+  const sideNumber = panelNumberOf(panels, run.modules[0].id, SIDE_PANEL_NAME);
+
+  check(
+    'выноска на чертеже несёт номер той детали, на которую показывает',
+    Boolean(carcass?.panel) && carcass?.panel === sideNumber && Boolean(sideNumber),
+    sideNumber === null
+      ? 'У ПЕРВОГО МОДУЛЯ НЕТ БОКОВИНЫ — выноске не на что показывать'
+      : `выноска ${carcass?.panel} · раскрой ${sideNumber}`,
+  );
+
+  check(
+    'и текст выноски называет этот же номер словами',
+    Boolean(carcass && sideNumber && carcass.text.includes(sideNumber)),
+    carcass?.text ?? 'ВЫНОСКИ НЕТ',
+  );
+
+  /*
+   * У боковины ПЕРВОГО модуля номер структурно всегда «1.1», поэтому
+   * проверка выше не отличает чтение от вписанной константы. Отличает
+   * следующая: выноска фасада показывает на ДРУГОЙ модуль, и две
+   * выноски обязаны нести разные номера.
+   */
+  const facadeLeader = leaders.find((leader) => leader.id === 'facade');
+  check(
+    'выноска фасада берёт номер из того же раскроя',
+    Boolean(facadeLeader) &&
+      facadeLeader!.panel ===
+        panelNumberOf(panels, run.modules[Math.min(1, run.modules.length - 1)].id, FACADE_PANEL_NAME),
+    `выноска ${facadeLeader?.panel} · раскрой ${panelNumberOf(panels, run.modules[Math.min(1, run.modules.length - 1)].id, FACADE_PANEL_NAME)}`,
+  );
+
+  check(
+    'две выноски на разные детали несут разные номера',
+    Boolean(carcass?.panel && facadeLeader?.panel) && carcass?.panel !== facadeLeader?.panel,
+    `корпус ${carcass?.panel} · фасад ${facadeLeader?.panel}`,
+  );
+
+  /* Разрез подписывает полку тем же номером, что уедет в цех. */
+  const shelfUnit = run.modules.find((unit) => (unit.fill?.shelves.length ?? 0) > 0);
+  const sectionNumber = shelfUnit ? panelNumberOf(panels, shelfUnit.id, SHELF_PANEL_NAME) : null;
+  const shelfPanel = shelfUnit
+    ? panels.find((panel) => panel.moduleId === shelfUnit.id && panel.name === SHELF_PANEL_NAME)
+    : undefined;
+
+  check(
+    'в разрезе полка подписана номером своей детали из раскроя',
+    Boolean(shelfUnit && sectionNumber) && sectionNumber === shelfPanel?.number,
+    !shelfUnit
+      ? 'НИ У ОДНОГО МОДУЛЯ НЕТ ПОЛОК — разрез подписывать нечем'
+      : `разрез ${sectionNumber} · раскрой ${shelfPanel?.number}`,
+  );
+
+  /* ─── Повторная сборка того же проекта ─── */
+
+  const again = buildPanels({ run: buildRun(baseInput) });
+  check(
+    'повторная сборка того же проекта даёт те же номера',
+    again.length === panels.length &&
+      panels.every((panel, i) => again[i].number === panel.number),
+    `деталей ${panels.length} → ${again.length} · первая ${panels[0]?.number} → ${again[0]?.number}`,
+  );
+
+  /* ─── Добавление модуля в конец ряда ─── */
+
+  /*
+   * Свободная сборка: модуль встаёт туда, куда его поставил человек, и
+   * соседей никто не двигает. Именно здесь видно, выведен номер из
+   * состава или из индекса в массиве.
+   */
+  const FREE_NUM: RunRequirements = { ...REQ, mode: 'free', appliances: [], sections: [] };
+  const freeShell = { ...baseInput, requirements: FREE_NUM };
+  const stepNum = (from: Run, ops: MillworkOp[]) =>
+    applyOps({ run: from, requirements: FREE_NUM, ops, openings: OPENINGS });
+
+  let freeRun = stepNum(buildRun(freeShell), [{ op: 'add_module', kind: 'base', widthMm: 600 }]);
+  freeRun = stepNum(freeRun, [
+    { op: 'add_module', kind: 'base', widthMm: 450, afterModuleId: freeRun.modules[0].id },
+  ]);
+
+  const before = buildPanels({ run: freeRun });
+  const grown = stepNum(freeRun, [
+    {
+      op: 'add_module',
+      kind: 'base',
+      widthMm: 400,
+      afterModuleId: freeRun.modules[freeRun.modules.length - 1].id,
+    },
+  ]);
+  const after = buildPanels({ run: grown });
+
+  check(
+    'модуль действительно добавился в конец ряда',
+    before.length > 0 && after.length > before.length && grown.modules.length === freeRun.modules.length + 1,
+    before.length === 0
+      ? 'СВОБОДНЫЙ РЯД ПУСТ — добавлять не к чему'
+      : `модулей ${freeRun.modules.length} → ${grown.modules.length} · деталей ${before.length} → ${after.length}`,
+  );
+
+  const moved = before.filter((panel, i) => after[i]?.number !== panel.number);
+  check(
+    'добавление модуля в конец ряда не меняет номера прежних деталей',
+    before.length > 0 && moved.length === 0,
+    moved.length === 0
+      ? `${before.length} прежних деталей сохранили номера`
+      : `${moved.length} деталей перенумеровано: ${moved[0].number} стал ${after[before.indexOf(moved[0])]?.number}`,
+  );
 }
 
 /* ─────────────────────────  Стандарты не параметризуются  ───────────────────────── */
@@ -3534,7 +3728,7 @@ console.log('\nЧертёжный лист');
 console.log('\nВыноски с материалами');
 {
   const run = buildRun(baseInput);
-  const anchors = buildLeaders(run);
+  const anchors = buildLeaders(run, buildPanels({ run }));
 
   check('выноски есть на все главные детали', anchors.length >= 6, `${anchors.length} шт.`);
   check(
@@ -3595,7 +3789,7 @@ console.log('\nВыноски с материалами');
     ),
   );
 
-  const again = buildLeaders(run);
+  const again = buildLeaders(run, buildPanels({ run }));
   check('выноски детерминированы', JSON.stringify(again) === JSON.stringify(anchors));
 }
 
@@ -8678,7 +8872,7 @@ console.log('\nЦех А: 900 и 40 на всех видах сразу');
   });
 
   const cut = buildPanels({ run, production: shopA });
-  const leaders = buildLeaders(run);
+  const leaders = buildLeaders(run, cut);
 
   /*
    * Ноль выносок или ноль панелей — это не «проверять нечего», это

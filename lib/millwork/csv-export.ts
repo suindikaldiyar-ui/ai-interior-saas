@@ -12,6 +12,12 @@ import type { Panel } from '@/types/millwork';
 export type CsvEncoding = 'windows-1251' | 'utf-8';
 
 export const CSV_HEADER = [
+  /*
+   * Номер детали идёт ПЕРВОЙ колонкой: по нему деталь на распиловочном
+   * столе сверяют с чертежом. Подпись «Дверца» в ряду встречается
+   * несколько раз, номер — ни разу.
+   */
+  'Номер',
   'Наименование',
   'Материал',
   'Длина',
@@ -51,6 +57,7 @@ export function panelsToCsv(panels: Panel[]): string {
   const rows = panels.map((panel) => {
     const [d1, d2, s1, s2] = edgeCells(panel);
     return [
+      panel.number,
       `${panel.moduleLabel} · ${panel.name}`,
       panel.material,
       panel.lengthMm,
