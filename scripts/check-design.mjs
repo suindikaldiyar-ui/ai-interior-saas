@@ -135,11 +135,19 @@ async function run(browser, { width, height, theme }) {
   await page.goto(`${BASE}/demo`, { waitUntil: 'networkidle' });
   await sleep(900);
 
+  /*
+     * ШАГИ НАЗЫВАЮТСЯ ТАК, КАК НА ЭКРАНЕ.
+     *
+     * Здесь стояли «Шаблон · Состав · Материалы» — это имена до слоя 31,
+     * когда состав и материалы были отдельными шагами. Кнопок с такими
+     * именами на экране нет, `btn.count()` возвращал ноль, и снимки
+     * молча не делались: инструмент глазной проверки годами не показывал
+     * рабочий экран, где живёт сцена.
+     */
   for (const [label, step] of [
     ['survey', 'Замер'],
-    ['template', 'Шаблон'],
-    ['compose', 'Состав'],
-    ['materials', 'Материалы'],
+    ['template', 'Решение'],
+    ['studio', 'Конфигуратор'],
   ]) {
     const btn = page.getByRole('button', { name: new RegExp(step) }).first();
     if (await btn.count()) {

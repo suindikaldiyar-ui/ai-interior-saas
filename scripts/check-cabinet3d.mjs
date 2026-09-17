@@ -51,8 +51,15 @@ async function openScene(page, width, height) {
   await fetch(`${BASE}/demo`).catch(() => undefined);
   await page.goto(`${BASE}/demo`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
   await sleep(3500);
+  /*
+   * ПЕРЕКЛЮЧАТЕЛЬ 3D ЖИВЁТ НА «КОНФИГУРАТОРЕ», А НЕ НА «РЕЗУЛЬТАТЕ».
+   *
+   * Скрипт уходил на «Результат» и искал там кнопку «3D» — с тех пор,
+   * как вид переехал в полосу схемы (слой 36), её там нет вовсе, и
+   * прогон падал по таймауту, так и не дойдя до сцены.
+   */
   await page
-    .getByRole('button', { name: /Результат/ })
+    .getByRole('button', { name: /Конфигуратор/ })
     .first()
     .click({ timeout: 90_000 });
   await sleep(900);
@@ -129,9 +136,16 @@ try {
   await page.screenshot({ path: `${OUT}/open-all.png`, timeout: 120_000 });
   console.log(`  кадров в секунду: покой ${before} · «Открыть всё» ${during}`);
 
+  /*
+   * РАКУРСЫ ПОМЕЧЕНЫ `data-angle`, А НЕ `data-scene-view`.
+   *
+   * Имена ракурсов тоже другие: вместо «elevation · plan · perspective»
+   * сегодня пять фиксированных точек съёмки (слой 40), и свободного
+   * вращения среди них нет вовсе.
+   */
   const defaultView = await page.evaluate(() =>
     [...document.querySelectorAll('button')]
-      .filter((b) => b.hasAttribute('data-scene-view'))
+      .filter((b) => b.hasAttribute('data-angle'))
       .map((b) => b)
       .map((b) => `${(b.textContent ?? '').trim()}=${b.getAttribute('aria-pressed')}`)
       .join(' · '),
@@ -139,8 +153,8 @@ try {
   console.log('  ракурс по умолчанию:', defaultView);
 
   // Ракурсы: по умолчанию три четверти, переключатель работает.
-  for (const view of ['elevation', 'plan', 'perspective']) {
-    const btn = page.locator(`button[data-scene-view="${view}"]`);
+  for (const view of ['elevation', 'plan', 'iso']) {
+    const btn = page.locator(`button[data-angle="${view}"]`);
     const pressed = await btn.getAttribute('aria-pressed');
     console.log(`  ракурс «${view}»: до нажатия aria-pressed=${pressed}`);
     await btn.click({ force: true });
@@ -148,15 +162,22 @@ try {
     const fps = await page.evaluate(fpsProbe);
     console.log(`    после переключения: ${fps} кадров/с`);
     await page
-      .locator('canvas')
+      .locator('[data-schematic] canvas')
+      .first()
       .screenshot({ path: `${OUT}/view-${view}.png`, timeout: 60_000 })
       .catch((e) => console.log('    снимок не снялся:', e.message.slice(0, 60)));
   }
 
-  await page.getByRole('button', { name: 'Разрез', exact: true }).click({ force: true });
+  /*
+   * «Разрез» с тех пор зовётся «Каркас» — и подпись на кнопке показывает
+   * ТЕКУЩЕЕ состояние, а не будущее: при фасадах на ней написано
+   * «Фасады». Ищем по признаку, а не по слову, иначе проверка зависит от
+   * того, в каком состоянии её застали.
+   */
+  await page.locator('button[data-scene-mode]').first().click({ force: true });
   await sleep(1200);
   await page.screenshot({ path: `${OUT}/cutaway.png`, timeout: 120_000 });
-  await page.getByRole('button', { name: 'Только фасады', exact: true }).click({ force: true });
+  await page.locator('button[data-scene-mode]').first().click({ force: true });
   await sleep(600);
 
   await page.getByRole('button', { name: 'Закрыть всё', exact: true }).click({ force: true });
@@ -164,7 +185,7 @@ try {
   await page.screenshot({ path: `${OUT}/closed-again.png`, timeout: 120_000 });
 
   /* ── Клик по мебели ── */
-  const canvasBox = await page.locator('canvas').boundingBox();
+  const canvasBox = await page.locator('[data-schematic] canvas').first().boundingBox();
   /*
    * Кликаем ПО МЕБЕЛИ, а не наугад: элемент проецируется на экран, и клик
    * идёт в его точку. Слепая сетка проверяла бы кадрирование камеры, а не
@@ -243,10 +264,10 @@ try {
     isMobile: true,
   });
   await openScene(phone, 390, 844);
-  const phoneBox = await phone.locator('canvas').boundingBox();
+  const phoneBox = await phone.locator('[data-schematic] canvas').first().boundingBox();
   // Сцена лежит ниже сравнения: на телефоне её надо привести в кадр,
   // иначе проекция даёт точку за пределами окна и клик уходит в никуда.
-  await phone.locator('canvas').scrollIntoViewIfNeeded();
+  await phone.locator('[data-schematic] canvas').first().scrollIntoViewIfNeeded();
   await sleep(800);
 
   const phonePart = await phone.evaluate(() => {

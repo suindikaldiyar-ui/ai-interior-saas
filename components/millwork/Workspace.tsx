@@ -1799,6 +1799,46 @@ export default function Workspace(props: WorkspaceProps) {
       : mismatches.find((mismatch) => mismatch.index === screen.rebuildWall);
   const softWarnings = groupWarnings(screen.clarify);
   const { shown: shownSoft, hidden: hiddenSoft } = splitWarnings(softWarnings);
+
+  /**
+   * СПИСОК УТОЧНЕНИЙ — ОДНА РАЗМЕТКА НА ДВА МЕСТА.
+   *
+   * На рабочем экране он стоит в правой панели, на остальных шагах — под
+   * содержимым. Разметка при этом одна: вторая копия разошлась бы с
+   * первой на первой же правке текста или поведения нажатия.
+   */
+  const softList = softWarnings.length > 0 && (
+    <ul className="mt-5 grid gap-2 print:hidden" data-soft-warnings>
+      {(showAllWarnings ? softWarnings : shownSoft).map((w) => (
+        <li key={w.id}>
+          <button
+            type="button"
+            onClick={() => {
+              if (w.moduleId) selectModule(w.moduleId);
+              setWarningAt(w.atMm ?? null);
+              // Предупреждение ведёт на лист: план теперь там же.
+              if (step === 'result') setResultView('facade');
+            }}
+            className="w-full rounded-[var(--r-control)] bg-navy px-4 py-3 text-left text-[13px] leading-snug text-graphiteMw"
+          >
+            <span className="mr-2 text-tape">●</span>
+            {w.message}
+          </button>
+        </li>
+      ))}
+      {hiddenSoft > 0 && !showAllWarnings && (
+        <li>
+          <button
+            type="button"
+            onClick={() => setShowAllWarnings(true)}
+            className="text-[13px] text-graphiteMw underline"
+          >
+            ещё {hiddenSoft}
+          </button>
+        </li>
+      )}
+    </ul>
+  );
   /*
    * Блокирующие канал уже отобрал (`screen.blocking`). Спрашивать тот же
    * массив вторым способом незачем: ответ один, а мест, где он может
@@ -2185,10 +2225,40 @@ export default function Workspace(props: WorkspaceProps) {
       )}
 
       {/* ── Один экран — одна задача ── */}
-      <main className="min-h-0 flex-1 overflow-y-auto px-4 pb-6">
-        <p className="mb-4 text-[13px] leading-snug text-graphiteMw print:hidden">
-          {STEP_HINT[step]}
-        </p>
+      {/*
+        * ВЫСОТУ ОСТАТКА СЧИТАЕТ РАСКЛАДКА, А НЕ ЧЕЛОВЕК.
+        *
+        * Корень — `h-screen flex-col`, шапка и подвал стоят своей
+        * высотой, и сколько осталось между ними, браузер уже знает:
+        * `flex-1`. Второй ответ на тот же вопрос лежал ниже числом
+        * (`calc(100vh - 248px)`) — его приходилось пересчитывать руками
+        * каждый раз, когда полосы становились тоньше, и после двух таких
+        * заходов он снова врал.
+        */}
+      <main
+        className={`flex min-h-0 flex-1 flex-col overflow-y-auto px-4 ${
+          /*
+           * На рабочем экране сетка занимает остаток целиком, и поле
+           * снизу — это 24 px, снятые у сцены ни за чем: под ней сразу
+           * подвал со своим отступом.
+           */
+          step === 'studio' ? 'pb-6 lg:pb-0' : 'pb-6'
+        }`}
+      >
+        {/*
+          * ОДНА ИНСТРУКЦИЯ — ОДНО МЕСТО (ловушка 257).
+          *
+          * На рабочем экране подсказка повторяла слово в слово то, что
+          * говорит лента вариантов над панелью: «Нажмите на модуль в
+          * сцене…». Две копии одной фразы стоили сцене 34 px высоты и
+          * ничего не добавляли — лента говорит это там, где человек
+          * ищет ответ, и убирается сама, как только модуль выбран.
+          */}
+        {step !== 'studio' && (
+          <p className="mb-4 text-[13px] leading-snug text-graphiteMw print:hidden">
+            {STEP_HINT[step]}
+          </p>
+        )}
 
         {step === 'survey' &&
           survey &&
@@ -2366,11 +2436,11 @@ export default function Workspace(props: WorkspaceProps) {
             * модуль, открытые карточки) обязано пережить переключение вида.
             */
           <div
-            className={
+            className={`lg:min-h-0 lg:flex-1 ${
               wideScene
                 ? 'grid gap-4'
                 : 'grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px]'
-            }
+            }`}
             data-studio
             data-wide-scene={wideScene ? '1' : '0'}
           >
@@ -2382,10 +2452,24 @@ export default function Workspace(props: WorkspaceProps) {
               * список. Высота от вьюпорта, чтобы на планшете сцена не
               * съедала экран и не уезжала под сгиб.
               */}
-            <div
-              className="lg:sticky lg:top-4 lg:self-start"
-              data-studio-scene
-            >
+            {/*
+              * Колонка сцены РАСТЯГИВАЕТСЯ на всю высоту сетки.
+              *
+              * Здесь стояло `sticky` с `self-start`: колонка прилипала к
+              * верху и высоту брала по содержимому — то есть по тому
+              * самому числу ниже. Раз сетка теперь ровно в остаток, липнуть
+              * не к чему: панель прокручивается внутри своей колонки,
+              * сцена стоит на месте сама.
+              */}
+            {/*
+              * `min-w-0` — ЭТО НЕ КОСМЕТИКА.
+              *
+              * R3F ставит канвасу инлайновую ширину в пикселях, и без
+              * этого трек сетки растёт до неё вместо того, чтобы дать
+              * канвасу сжаться: замерено на 390 px — блок сцены 518 px,
+              * то есть шире экрана на 128.
+              */}
+            <div className="min-h-0 min-w-0 lg:h-full" data-studio-scene>
 
               {/*
                 * ВЫСОТА СЦЕНЫ — ОТ СВОБОДНОГО МЕСТА, А НЕ ДОЛЯ ВЬЮПОРТА.
@@ -2402,7 +2486,17 @@ export default function Workspace(props: WorkspaceProps) {
                 * надо меньше. Доля вьюпорта тут по-прежнему ни при чём:
                 * считаем от того, что действительно занято.
                 */}
-              <div className="h-[52vh] min-h-[260px] lg:h-[calc(100vh-248px)]">
+              {/*
+                * УЗКИЙ ЭКРАН — СВОЯ ВЫСОТА, И ЭТО НЕ ТО ЖЕ САМОЕ.
+                *
+                * На планшете в портрете под сценой идёт панель состава, и
+                * отдать сцене весь экран значит спрятать работу под сгиб.
+                * Поэтому там доля вьюпорта с нижним пределом: 52vh на
+                * 1024 px — это 532 px, сцена остаётся сценой, а не полосой.
+                * На широком экране колонки стоят рядом, и сцене достаётся
+                * ровно остаток — его считает `flex-1` выше.
+                */}
+              <div className="h-[52vh] min-h-[260px] lg:h-full lg:min-h-[420px]">
                 <RunSchematic
                   onViewChange={setSchematicView}
                   /*
@@ -2443,7 +2537,22 @@ export default function Workspace(props: WorkspaceProps) {
             </div>
 
             {/* ── Панель выбора ── */}
-            <div className={`min-w-0 ${wideScene ? 'hidden' : ''}`} data-studio-panel>
+            {/*
+              * Панель прокручивается ВНУТРИ своей колонки, а не тянет за
+              * собой страницу: сцена рядом обязана остаться на месте,
+              * пока замерщик листает состав.
+              */}
+            <div
+              className={`min-w-0 lg:h-full lg:overflow-y-auto ${wideScene ? 'hidden' : ''}`}
+              data-studio-panel
+            >
+              {/*
+                * Уточнения — первыми в панели: они про тот самый состав,
+                * который правят ниже, и замерщик показывает этот экран
+                * клиенту. Высоту у сцены они больше не отнимают: панель
+                * прокручивается сама.
+                */}
+              {softList}
               {/*
                 * ФОРМА ГАРНИТУРА И СТЕНЫ.
                 *
@@ -3139,39 +3248,18 @@ export default function Workspace(props: WorkspaceProps) {
           </>
         )}
 
-        {/* ── Предупреждения: не больше двух, повторы схлопнуты ── */}
-        {softWarnings.length > 0 && (
-          <ul className="mt-5 grid gap-2 print:hidden">
-            {(showAllWarnings ? softWarnings : shownSoft).map((w) => (
-              <li key={w.id}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (w.moduleId) selectModule(w.moduleId);
-                    setWarningAt(w.atMm ?? null);
-                    // Предупреждение ведёт на лист: план теперь там же.
-                    if (step === 'result') setResultView('facade');
-                  }}
-                  className="w-full rounded-[var(--r-control)] bg-navy px-4 py-3 text-left text-[13px] leading-snug text-graphiteMw"
-                >
-                  <span className="mr-2 text-tape">●</span>
-                  {w.message}
-                </button>
-              </li>
-            ))}
-            {hiddenSoft > 0 && !showAllWarnings && (
-              <li>
-                <button
-                  type="button"
-                  onClick={() => setShowAllWarnings(true)}
-                  className="text-[13px] text-graphiteMw underline"
-                >
-                  ещё {hiddenSoft}
-                </button>
-              </li>
-            )}
-          </ul>
-        )}
+        {/*
+          * УТОЧНЕНИЯ НЕ ОТНИМАЮТ ВЫСОТУ У СЦЕНЫ.
+          *
+          * Стоя последними в `main`, они забирали у неё свою высоту:
+          * замерено 92 px на 1440 и 145 px на 390. На рабочем экране они
+          * переехали в правую панель — туда, где человек и правит состав,
+          * о котором они говорят, и где своя прокрутка.
+          *
+          * Блокирующего это не касается вовсе: красная полоса и кнопка
+          * пересборки живут в подвале и видны без прокрутки всегда.
+          */}
+        {step !== 'studio' && softList}
       </main>
 
       {/*

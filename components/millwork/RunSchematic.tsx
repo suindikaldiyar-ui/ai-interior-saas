@@ -220,7 +220,9 @@ export default function RunSchematic({
   return (
     <div
       className={
-        full ? 'fixed inset-0 z-50 flex flex-col bg-navyDeep p-4' : 'flex h-full flex-col'
+        full
+          ? 'fixed inset-0 z-50 flex flex-col bg-navyDeep p-4'
+          : 'relative flex h-full min-w-0 flex-col'
       }
       data-schematic
       data-schematic-view={view}
@@ -238,8 +240,41 @@ export default function RunSchematic({
         * справа «Свернуть». Группы разделены зазором, а не линиями:
         * линия в один пиксель на планшете не читается вовсе.
         */}
-      <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1" data-toolbar>
-        <div className="flex gap-1" data-group="view">
+      {/*
+        * УПРАВЛЕНИЕ СЦЕНОЙ ЖИВЁТ НА СЦЕНЕ (ловушка 327).
+        *
+        * Своей строкой полоса стоила сцене 52 px: кнопка 44 плюс отступ.
+        * Ракурсы по этой же причине уехали на сцену раньше — теперь за
+        * ними уходит и полоса вида. В 3D сверху пустой фон, и она там
+        * никому не мешает; на схеме и плане рисунок занимает лист
+        * целиком, поэтому там полоса остаётся строкой над ним.
+        *
+        * Замерено на 1440×900: канвас 469 → 691 px.
+        */}
+      <div
+        className={
+          view === 'scene'
+            ? /*
+               * НАЛОЖЕНИЕ — ТОЛЬКО ТАМ, ГДЕ ОНО ПОМЕЩАЕТСЯ.
+               *
+               * Полоса шириной 526 px на экране 390 висела бы за краем.
+               * До `md` она остаётся обычной строкой и переносится по
+               * ширине; с `md` — ложится на сцену и возвращает ей 52 px.
+               */
+              /*
+               * На узком экране полоса ПРОКРУЧИВАЕТСЯ, а не переносится.
+               * Перенос давал три ряда и забирал у сцены 196 px из 439 —
+               * замерено; одна строка со сдвигом вбок стоит сцене 52 px.
+               */
+              'mb-2 flex items-center gap-x-4 gap-y-1 overflow-x-auto ' +
+              'md:absolute md:left-2 md:top-2 md:z-10 md:mb-0 md:max-w-[calc(100%-1rem)] ' +
+              'md:flex-wrap md:overflow-visible ' +
+              'md:rounded-[var(--r-panel)] md:bg-navyDeep/80 md:p-1'
+            : 'mb-2 flex flex-wrap items-center gap-x-4 gap-y-1'
+        }
+        data-toolbar
+      >
+        <div className="flex shrink-0 gap-1" data-group="view">
           {(
             [
               ['scene', '3D'],
@@ -264,7 +299,13 @@ export default function RunSchematic({
         </div>
 
         {view === 'scene' && (
-          <div className="flex gap-1" data-group="do">
+          /*
+           * Группа переносится по ширине так же, как вся полоса. Без
+           * этого пять кнопок «что делаем» держали строку в 518 px и
+           * уезжали за правый край экрана 390: сама полоса перенос
+           * умела, а группа внутри неё — нет.
+           */
+          <div className="flex shrink-0 flex-wrap gap-1" data-group="do">
             {openable.length > 0 && (
               <>
                 <button
@@ -422,8 +463,17 @@ export default function RunSchematic({
               {full ? 'Свернуть' : 'На весь экран'}
             </button>
 
+            {/*
+              * На узком экране ракурсы идут ОДНОЙ строкой со сдвигом
+              * вбок. Перенос давал три ряда поверх мебели — на 390 px
+              * они закрывали гарнитур больше, чем показывали его.
+              */}
             <div
-              className="absolute bottom-2 left-2 flex flex-wrap gap-1 rounded-[var(--r-panel)] bg-navyDeep/80 p-1"
+              className={
+                'absolute bottom-2 left-2 right-2 flex gap-1 overflow-x-auto ' +
+                'rounded-[var(--r-panel)] bg-navyDeep/80 p-1 ' +
+                'md:right-auto md:flex-wrap md:overflow-visible'
+              }
               data-group="angle"
               data-angles
             >
