@@ -117,6 +117,7 @@ import {
 } from '../lib/millwork/walls';
 import { composeVariants, workingWall, workspaceInput } from '../lib/millwork/workspace';
 import { screenState } from '../lib/millwork/screen';
+import { keepSelection, moduleOfPart, selectionState } from '../lib/millwork/selection';
 import type { MillworkState } from '../lib/projects';
 import type { CatalogEntryFull } from '../types/catalog';
 import {
@@ -3228,6 +3229,146 @@ console.log('\nДетализировка');
   const utf = panelsCsvFile(panels, 'utf-8');
   check('в UTF-8 файле есть BOM для Excel',
     utf.bytes[0] === 0xef && utf.bytes[1] === 0xbb && utf.bytes[2] === 0xbf);
+}
+
+/* ═══════════  Выбранный модуль  ═══════════ */
+
+/**
+ * ОДНО ВЫДЕЛЕНИЕ НА ВСЕ ВИДЫ.
+ *
+ * Модуль выбирают нажатием в сцене, на схеме и в ленте состава — и все
+ * три жеста обязаны привести к ОДНОМУ модулю. Второе выделение на той же
+ * мебели читается как две разные мебели (ловушка 188).
+ *
+ * Мерим тем, что читает экран: `selectionState` и `keepSelection` — те же
+ * функции, которые зовёт рабочее место. Сам жест (нажатие по SVG) живёт в
+ * браузере, и его проверяет `check-scene-edit.mjs`; здесь проверяется
+ * РЕШЕНИЕ, к которому жест приводит.
+ */
+console.log('\nВыбранный модуль');
+{
+  const run = buildRun(baseInput);
+
+  check(
+    'ряд собран — выделять есть что',
+    run.modules.length > 0,
+    run.modules.length === 0
+      ? 'РЯД ПУСТ — выделение проверять не на чем'
+      : `модулей ${run.modules.length}, сверху ${run.upperSegments.flatMap((s) => s.modules).length}`,
+  );
+
+  const unit = run.modules[1] ?? run.modules[0];
+
+  /*
+   * Схема отдаёт идентификатор модуля, сцена — идентификатор ДЕТАЛИ
+   * (`<модуль>:door:0`). Разбирает его одно правило на продукт, поэтому
+   * оба жеста приходят в одно состояние.
+   */
+  const fromSchematic = unit.id;
+  const fromScene = moduleOfPart(`${unit.id}:door:0`);
+
+  check(
+    'клик по модулю на схеме и клик по детали в сцене дают одно выделение',
+    Boolean(fromScene) && fromScene === fromSchematic,
+    fromScene === null
+      ? 'РАЗБОР ИДЕНТИФИКАТОРА ВЕРНУЛ ПУСТО — сцена выделять не сможет'
+      : `схема ${fromSchematic} · сцена ${fromScene}`,
+  );
+
+  const picked = selectionState(run, fromScene);
+  check(
+    'и по этому идентификатору находится один и тот же модуль',
+    picked.unit?.id === unit.id && picked.unit?.widthMm === unit.widthMm,
+    picked.unit ? `${picked.unit.id} · ${picked.unit.widthMm} мм` : 'МОДУЛЬ НЕ НАЙДЕН',
+  );
+
+  const hits = allModules(run).filter((module) => module.id === fromSchematic);
+  check(
+    'выделен ровно один модуль, а не несколько',
+    hits.length === 1,
+    `совпадений ${hits.length}` + (hits.length === 1 ? '' : ' — ИДЕНТИФИКАТОР НЕ УНИКАЛЕН'),
+  );
+
+  /* ─── Верхний модуль выделяется наравне с нижним ─── */
+
+  const upper = run.upperSegments.flatMap((segment) => segment.modules)[0];
+  const upperPick = upper ? selectionState(run, upper.id) : null;
+  check(
+    'верхний модуль тоже находится: панель ищет во всех рядах',
+    Boolean(upper) && upperPick?.unit?.id === upper?.id && Boolean(upperPick?.title),
+    !upper
+      ? 'ВЕРХНЕГО РЯДА НЕТ — выделение наверху мерить не на чем'
+      : `${upperPick?.title}`,
+  );
+
+  /* ─── Заголовок панели называет номер ─── */
+
+  const marks = moduleNumbers(run);
+  const number = marks.get(unit.id);
+
+  check(
+    'заголовок панели называет номер выбранного модуля и его ширину',
+    Boolean(number) &&
+      picked.number === number &&
+      picked.title === `Модуль ${number} · ${unit.widthMm} мм`,
+    number === undefined
+      ? 'У МОДУЛЯ НЕТ НОМЕРА — заголовку называть нечего'
+      : `${picked.title} (номер ряда ${number})`,
+  );
+
+  check(
+    'ничего не выбрано — заголовка нет вовсе, а не «Модуль undefined»',
+    selectionState(run, null).title === null &&
+      selectionState(run, 'нет-такого-модуля').title === null,
+    `${selectionState(run, null).title} · ${selectionState(run, 'нет-такого-модуля').title}`,
+  );
+
+  /* ─── Выделение и пересборка ряда ─── */
+
+  /*
+   * Ширина правится у ПЕРВОГО модуля: его отметка от угла не меняется,
+   * значит не меняется и идентификатор — модуль остался тем же, и панель
+   * под ним обязана остаться открытой (ловушка 249).
+   */
+  const first = run.modules.find((module) => !module.appliance) ?? run.modules[0];
+  const widened = applyOps({
+    run,
+    requirements: REQ,
+    ops: [{ op: 'set_width', moduleId: first.id, widthMm: first.widthMm + 50 }],
+    openings: OPENINGS,
+  });
+
+  check(
+    'правка ширины действительно пересобрала ряд',
+    widened.fingerprint !== run.fingerprint,
+    `${run.fingerprint} → ${widened.fingerprint}`,
+  );
+
+  check(
+    'выделение переживает пересборку, если модуль остался',
+    keepSelection(widened, first.id) === first.id,
+    `${first.id} → ${keepSelection(widened, first.id)}`,
+  );
+
+  const removed = applyOps({
+    run,
+    requirements: REQ,
+    ops: [{ op: 'remove_module', moduleId: first.id }],
+    openings: OPENINGS,
+  });
+
+  check(
+    'и снимается, если модуль исчез',
+    keepSelection(removed, first.id) === null &&
+      allModules(removed).every((module) => module.id !== first.id),
+    `${first.id} → ${keepSelection(removed, first.id)}`,
+  );
+
+  check(
+    'снятое выделение не оставляет заголовка',
+    selectionState(removed, keepSelection(removed, first.id)).title === null,
+    String(selectionState(removed, keepSelection(removed, first.id)).title),
+  );
 }
 
 /* ═══════════  Сквозной номер детали  ═══════════ */

@@ -20,6 +20,7 @@ import { surfaceLook } from '@/lib/millwork/surfaces';
 import { APRON_TARGET, COUNTERTOP_TARGET, FACADE_TARGET } from '@/types/catalog';
 import { runPlaces } from '@/lib/millwork/cabinetBoxes';
 import { rowStandardDepthMm } from '@/lib/millwork/fill';
+import { moduleOfPart } from '@/lib/millwork/selection';
 import {
   countertopMm,
   plinthMm,
@@ -327,7 +328,7 @@ export default function Cabinet3D({
    */
   const handleToggle = useCallback(
     (partId: string) => {
-      const moduleId = partId.split(':')[0];
+      const moduleId = moduleOfPart(partId);
       if (moduleId) onSelectModule?.(moduleId);
       toggleOpenPart(partId);
     },

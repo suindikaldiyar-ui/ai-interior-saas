@@ -81,6 +81,15 @@ type Props = {
   selectedModuleId: string | null;
   onSelect: (moduleId: string | null) => void;
   onOps: (ops: MillworkOp[]) => void;
+  /**
+   * Заголовок выбранного модуля: «Модуль 3 · 600 мм».
+   *
+   * Приходит СВЕРХУ, потому что считает его `selectionState` — одна
+   * функция на всю панель. Своя строка здесь означала бы вторую формулу
+   * того же заголовка, и номер в ней однажды разошёлся бы с кружком на
+   * чертеже.
+   */
+  selectionTitle?: string | null;
   /** Требования, по которым собран ряд: из них видно состав техники. */
   requirements?: RunRequirements;
   /** Правка состава. Без неё панель только читается. */
@@ -130,6 +139,7 @@ export default function RunEditor({
   selectedModuleId,
   onSelect,
   onOps,
+  selectionTitle,
   requirements,
   onComposition,
   freeMode = false,
@@ -610,7 +620,14 @@ export default function RunEditor({
       {selected && (
         <div className="mw-panel mt-3">
           <div className="mb-3 flex items-baseline justify-between">
-            <span className="text-[15px] font-medium">Модуль {selected.widthMm} мм</span>
+            {/*
+              * Номер стоит ПЕРЕД шириной: «Дверца 600 мм» в ряду
+              * встречается несколько раз, а «Модуль 3» — ни разу. По
+              * этому же номеру цех сверяет деталь с чертежом.
+              */}
+            <span className="text-[15px] font-medium">
+              {selectionTitle ?? `Модуль ${selected.widthMm} мм`}
+            </span>
             <button
               type="button"
               onClick={() => onOps([{ op: 'remove_module', moduleId: selected.id }])}

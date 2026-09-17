@@ -58,6 +58,7 @@ import TemplatePicker from './TemplatePicker';
 import type { RateTable } from '@/lib/millwork/estimate';
 import { applyOps } from '@/lib/millwork/ops';
 import { screenState } from '@/lib/millwork/screen';
+import { keepSelection, selectionState } from '@/lib/millwork/selection';
 import { onWall } from '@/lib/millwork/layout';
 import { buildEstimate } from '@/lib/millwork/estimate';
 import {
@@ -1237,12 +1238,21 @@ export default function Workspace(props: WorkspaceProps) {
    * прайсу было бы дешевле, но тогда цифра на чертеже разошлась бы
    * с итогом внизу экрана — а клиент видит обе.
    */
-  /** Как называется выбранный модуль: подпись над лентой превью. */
-  const selectedLabel = useMemo(() => {
-    if (!selectedId) return null;
-    const unit = allModules(active.run).find((m) => m.id === selectedId);
-    return unit ? `${unit.label} ${unit.widthMm} мм` : null;
-  }, [selectedId, active.run]);
+  /**
+   * ВЫБРАННЫЙ МОДУЛЬ — ОДНО СОСТОЯНИЕ, СЧИТАННОЕ ОДИН РАЗ.
+   *
+   * Подпись ленты искала модуль в `active.run` — это ВСЕГДА стена А, —
+   * а панель под ней в выбранной стене: на стене Б лента оставалась без
+   * подписи при выделенном модуле. Тот же шов, что дублировал технику.
+   *
+   * Номер, заголовок и подпись считает `selectionState`: в разметке от
+   * них остаётся только чтение.
+   */
+  const selection = useMemo(
+    () => selectionState(activeRun, selectedId),
+    [activeRun, selectedId],
+  );
+  const selectedLabel = selection.caption;
 
   /**
    * ПАЛИТРА ЭТОЙ ОРГАНИЗАЦИИ.
@@ -1263,10 +1273,7 @@ export default function Workspace(props: WorkspaceProps) {
    * открывание, ручка и перенос прибора были недоступны на всех стенах,
    * кроме главной. Тот же шов, из-за которого дублировалась техника.
    */
-  const selectedUnit = useMemo(
-    () => (selectedId ? allModules(activeRun).find((m) => m.id === selectedId) ?? null : null),
-    [selectedId, activeRun],
-  );
+  const selectedUnit = selection.unit;
 
   const variantOptions = useMemo<VariantPreview[]>(() => {
     if (!selectedId) return [];
@@ -1420,24 +1427,6 @@ export default function Workspace(props: WorkspaceProps) {
        * Габарит и позицию такие операции не меняют, поэтому и
        * идентификатор модуля остаётся прежним.
        */
-      const keepsSelection = ops.every(
-        (op) =>
-          op.op === 'set_front' ||
-          op.op === 'set_variant' ||
-          op.op === 'set_section' ||
-          /*
-           * Направление перебирают подряд при клиенте: «а если вверх? а
-           * если петли справа?». Снятое выделение убирает панель после
-           * первого же нажатия — дальше нажимать не на что (ловушка 249).
-           */
-          op.op === 'set_opening',
-      );
-      if (keepsSelection) {
-        setSelectedId(selectedId);
-        flash(next.modules.filter((m) => before.get(m.id) !== m.widthMm).map((m) => m.id));
-        return;
-      }
-
       const added = ops.length === 1 && ops[0].op === 'add_module' ? ops[0] : null;
       if (added) {
         const at = added.afterModuleId
@@ -1445,7 +1434,16 @@ export default function Workspace(props: WorkspaceProps) {
           : active.run.modules.length - 1;
         setSelectedId(next.modules[at + 1]?.id ?? null);
       } else {
-        setSelectedId(null);
+        /*
+         * ВЫДЕЛЕНИЕ РЕШАЕТСЯ ФАКТОМ, А НЕ СПИСКОМ ОПЕРАЦИЙ.
+         *
+         * Здесь стоял перечень «какие правки выделение сохраняют», и он
+         * отвечал догадкой: потянул ширину — модуль остался на месте, а
+         * панель под ним закрывалась, и перебирать дальше было нечего
+         * (ловушка 249). Теперь спрашиваем ряд: модуль на месте —
+         * выделение остаётся, исчез — снимается.
+         */
+        setSelectedId(keepSelection(next, selectedId));
       }
       flash(
         next.modules
@@ -2588,6 +2586,29 @@ export default function Workspace(props: WorkspaceProps) {
               </div>
 
               {/*
+                * ЗАГОЛОВОК ПАНЕЛИ НАЗЫВАЕТ ВЫБРАННЫЙ МОДУЛЬ.
+                *
+                * Ниже идут материал, открывание, ручка и поля состава — и
+                * все они про ОДИН модуль. Без заголовка панель читается
+                * общим списком настроек ряда, и замерщик правит вслепую:
+                * «Дверца» в ряду встречается несколько раз, номер — ни
+                * разу. Номер тот же, что в кружке на чертеже и в раскрое.
+                *
+                * Стоит он выше ленты вариантов, потому что относится ко
+                * всей панели, а лента — только к начинке. И работает для
+                * верхнего модуля тоже: `selectionState` ищет во всех рядах.
+                */}
+              {selection.title && (
+                <p
+                  data-selected-module={selection.unit?.id}
+                  data-selected-number={selection.number ?? undefined}
+                  className="mb-2 text-[17px] font-medium leading-none"
+                >
+                  {selection.title}
+                </p>
+              )}
+
+              {/*
                 * Варианты выбранного модуля — ПЕРВЫМИ.
                 *
                 * Это то, ради чего в сцену и нажимают: миниатюра, название,
@@ -2686,6 +2707,7 @@ export default function Workspace(props: WorkspaceProps) {
 
               <div className="mt-4">
                 <RunEditor
+                  selectionTitle={selection.title}
                   run={activeRun}
                   zone={zone}
                   selectedModuleId={selectedId}
