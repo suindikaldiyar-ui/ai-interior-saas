@@ -90,6 +90,18 @@ type Props = {
    * чертеже.
    */
   selectionTitle?: string | null;
+  /**
+   * КАКУЮ ГРУППУ ПОЛЕЙ ПОКАЗЫВАТЬ.
+   *
+   * `layout` — что стоит в ряду: лента модулей, ширина, тип, техника,
+   * добавить и убрать. `build` — что внутри модуля: число фронтов и
+   * секция.
+   *
+   * Компонент один на обе группы намеренно: правка идёт через те же
+   * `applyOps`, и второй такой компонент означал бы второй путь записи
+   * в состав (ловушка 231).
+   */
+  fields?: 'layout' | 'build';
   /** Требования, по которым собран ряд: из них видно состав техники. */
   requirements?: RunRequirements;
   /** Правка состава. Без неё панель только читается. */
@@ -140,6 +152,7 @@ export default function RunEditor({
   onSelect,
   onOps,
   selectionTitle,
+  fields = 'layout',
   requirements,
   onComposition,
   freeMode = false,
@@ -163,6 +176,10 @@ export default function RunEditor({
    */
   const gap = widestGapMm(run.modules, run.lengthMm);
   const selected = run.modules.find((m) => m.id === selectedModuleId) ?? null;
+
+  /** Поля раскладки и поля конструкции — разные шаги одной панели. */
+  const onLayout = fields === 'layout';
+  const hide = (show: boolean) => (show ? '' : 'hidden');
 
   /*
    * Ширина вводится числом: корпусную мебель делают на заказ, и сама
@@ -313,7 +330,16 @@ export default function RunEditor({
         * сначала решают, что в кухне есть, потом двигают модули.
         */}
       {requirements && onComposition && (
-        <div className="mw-panel mb-3">
+        /*
+         * СОСТАВ РЯДА — ЭТО РАСКЛАДКА.
+         *
+         * Техника, секции, витрина, антресоль и верхний ряд отвечают на
+         * один вопрос: что в этом ряду стоит. Система дверей (купе или
+         * распашные) стоит здесь же — она тоже про ряд целиком, а не про
+         * фасад выбранного модуля, и разводить их по разным шагам значило
+         * бы искать половину состава на другом экране.
+         */
+        <div className={`mw-panel mb-3 ${hide(onLayout)}`}>
           {/* Кухня собирается приборами, шкаф — секциями. */}
           {appliances.length > 0 ? (
             <>
@@ -523,7 +549,7 @@ export default function RunEditor({
         </div>
       )}
 
-      <div className="mb-2 flex items-baseline justify-between">
+      <div className={`mb-2 flex items-baseline justify-between ${hide(onLayout)}`}>
         <span className="text-[15px] font-medium">Состав ряда</span>
         {/*
           * ОСТАТОК ЧИТАЕТСЯ ПО-РАЗНОМУ В ДВУХ РЕЖИМАХ.
@@ -581,7 +607,7 @@ export default function RunEditor({
         </p>
       )}
 
-      <div className="flex w-full gap-1 overflow-x-auto pb-1">
+      <div className={`flex w-full gap-1 overflow-x-auto pb-1 ${hide(onLayout)}`}>
         {run.modules.map((unit) => {
           const active = unit.id === selectedModuleId;
           return (
@@ -631,7 +657,7 @@ export default function RunEditor({
             <button
               type="button"
               onClick={() => onOps([{ op: 'remove_module', moduleId: selected.id }])}
-              className="mw-btn mw-btn-ghost text-alert"
+              className={`mw-btn mw-btn-ghost text-alert ${hide(onLayout)}`}
             >
               Удалить
             </button>
@@ -643,7 +669,7 @@ export default function RunEditor({
             * приседая; но у половины заказов наоборот.
             */}
           {selected.column && onComposition && (
-            <div className="mb-3">
+            <div className={`mb-3 ${hide(onLayout)}`}>
               <span className="mw-label">Колонна</span>
               <div className="mt-1 flex flex-wrap items-center gap-2">
                 <span className="text-[13px] text-graphiteMw">
@@ -671,7 +697,7 @@ export default function RunEditor({
             * умолчание в коде.
             */}
           {selected.appliance === 'fridge' && onComposition && (
-            <div className="mb-3">
+            <div className={`mb-3 ${hide(onLayout)}`}>
               <span className="mw-label">Холодильник</span>
               <div className="mt-1 flex flex-wrap gap-1">
                 {(
@@ -703,7 +729,7 @@ export default function RunEditor({
           )}
 
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <label className="col-span-2 block">
+            <label className={`col-span-2 block ${hide(onLayout)}`}>
               <span className="mw-label">Ширина, мм</span>
               <input
                 type="number"
@@ -834,7 +860,7 @@ export default function RunEditor({
               )}
             </label>
 
-            <label className="block">
+            <label className={`block ${hide(!onLayout)}`}>
               <span className="mw-label">Фасад</span>
               <select
                 value={selected.frontType === 'drawers' ? selected.drawerCount : 0}
@@ -861,7 +887,7 @@ export default function RunEditor({
               * раковину — это не «выбор пользователя», а свойство секции.
               */}
             {appliances.length > 0 && (
-              <label className="block">
+              <label className={`block ${hide(onLayout)}`}>
                 <span className="mw-label">Тип</span>
                 <select
                   value={selected.kind}
@@ -890,7 +916,7 @@ export default function RunEditor({
               * показать кнопку, которая ничего не делает.
               */}
             {appliances.length > 0 ? (
-              <label className="block">
+              <label className={`block ${hide(onLayout)}`}>
                 <span className="mw-label">Техника</span>
                 <select
                   value={selected.appliance ?? ''}
@@ -916,7 +942,7 @@ export default function RunEditor({
                 </select>
               </label>
             ) : (
-              <label className="block">
+              <label className={`block ${hide(!onLayout)}`}>
                 <span className="mw-label">Секция</span>
                 <select
                   value={selected.section ?? ''}
@@ -954,7 +980,7 @@ export default function RunEditor({
         * рядом стоят ширины, которые в него ещё влезают.
         */}
       {freeMode && (
-        <div className="mt-3" data-free-space>
+        <div className={`mt-3 ${hide(onLayout)}`} data-free-space>
           {gap >= MIN_WIDTH ? (
             <>
               {/*
@@ -1050,7 +1076,8 @@ export default function RunEditor({
         </div>
       )}
 
-      <div className="mt-2 flex flex-wrap gap-1">
+      {/* «+ Модуль» и «+ Пенал» ставят модуль в ряд — это раскладка. */}
+      <div className={`mt-2 flex flex-wrap gap-1 ${hide(onLayout)}`}>
         <button
           type="button"
           onClick={() =>

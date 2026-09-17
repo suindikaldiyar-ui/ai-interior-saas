@@ -51,7 +51,19 @@ import { DEMO_QUOTA_HINT, DEMO_QUOTA_SPENT } from '@/lib/plan';
 import ArrangementCards from './ArrangementCards';
 import RunEditor, { type CompositionPatch } from './RunEditor';
 import SolutionGallery from './SolutionGallery';
-import StepBar, { type StepKey } from './StepBar';
+import StepBar from './StepBar';
+import {
+  STEP_HINT,
+  STEP_NEXT_LABEL,
+  STEP_TITLE,
+  isStudio,
+  nextStep,
+  prevStep,
+  shows,
+  stepOrder,
+  type StepField,
+  type StepKey,
+} from '@/lib/millwork/steps';
 import SurveyPanel from './SurveyPanel';
 import SurveySheet from './SurveySheet';
 import TemplatePicker from './TemplatePicker';
@@ -59,6 +71,18 @@ import type { RateTable } from '@/lib/millwork/estimate';
 import { applyOps } from '@/lib/millwork/ops';
 import { screenState } from '@/lib/millwork/screen';
 import { keepSelection, selectionState, wallOfModule } from '@/lib/millwork/selection';
+/*
+ * Отметки цеха показываются теми же функциями, по которым собран ряд:
+ * показанное число обязано совпадать с тем, по которому пилят.
+ */
+import {
+  apronMm,
+  countertopMm,
+  plinthMm,
+  upperBottomMm,
+  workTopMm,
+} from '@/lib/millwork/shop';
+import { rowStandardDepthMm } from '@/lib/millwork/fill';
 import { onWall } from '@/lib/millwork/layout';
 import { buildEstimate } from '@/lib/millwork/estimate';
 import {
@@ -169,14 +193,6 @@ const CatalogLoader = dynamic(() => import('@/components/CatalogLoader'), { ssr:
 /** Чем смотреть результат. Чертёж плотный намеренно — это документ. */
 type ResultView = 'facade' | 'panels';
 
-const STEP_HINT: Record<StepKey, string> = {
-  survey: 'Меряем по низу стены, у пола: вверху стены новостройки кривые.',
-  template: 'Выберите типовое решение — длина подставится из замера.',
-  studio:
-    'Нажмите на модуль в сцене: справа его варианты и материал, внизу — сумма. ' +
-    'Всё пересчитывается на месте.',
-  result: 'Тяните шторку: слева квартира клиента, справа его кухня.',
-};
 
 export type WorkspaceProps = {
   title: string;
@@ -294,7 +310,7 @@ export default function Workspace(props: WorkspaceProps) {
     startSurvey && !startSurvey.finishedAt
       ? 'survey'
       : (props.initialState?.templateId ?? props.templateId)
-        ? 'studio'
+        ? 'layout'
         : 'template',
   );
   const [resultView, setResultView] = useState<ResultView>('facade');
@@ -1295,6 +1311,16 @@ export default function Workspace(props: WorkspaceProps) {
    */
   const selectedUnit = selection.unit;
 
+  /**
+   * БЛОК ПАНЕЛИ ПРЯЧЕТСЯ, А НЕ РАЗМОНТИРУЕТСЯ.
+   *
+   * Переход между шагами не должен ронять состояние: открытая карточка
+   * материала, положение прокрутки, поднятая сцена — всё это обязано
+   * пережить переход (ловушка 335). Поэтому блоки гасятся классом, а
+   * какие именно — решает одна таблица `STEP_FIELDS`, а не разметка.
+   */
+  const onStep = (field: StepField) => (shows(step, field) ? '' : 'hidden');
+
   const variantOptions = useMemo<VariantPreview[]>(() => {
     if (!selectedId) return [];
 
@@ -2107,28 +2133,31 @@ export default function Workspace(props: WorkspaceProps) {
     />
   );
 
-  const steps = [
-    ...(survey
-      ? [{ key: 'survey' as StepKey, title: 'Замер', done: Boolean(survey.finishedAt) }]
-      : []),
-    { key: 'template' as StepKey, title: 'Решение', done: Boolean(templateId) },
-    { key: 'studio' as StepKey, title: 'Конфигуратор', done: Boolean(templateId) },
-    { key: 'result' as StepKey, title: 'Результат', done: false },
-  ];
+  /*
+   * ПРОЙДЕННОЕ СЧИТАЕТСЯ, А НЕ ЗАПОМИНАЕТСЯ.
+   *
+   * Отметка «✓» на шаге означает ФАКТ: замер закончен, решение выбрано,
+   * ряд собран, материал выбран. Флаг «человек тут побывал» обещал бы
+   * сделанную работу там, где её нет, — то же правило, что у
+   * `isMeasured` и `zoneReadiness`.
+   */
+  const order = stepOrder(Boolean(survey));
+  const done: Record<StepKey, boolean> = {
+    survey: Boolean(survey?.finishedAt),
+    template: Boolean(templateId),
+    sizes: walls.length > 0 && ceilingMm > 0,
+    layout: activeRun.modules.length > 0,
+    build: activeRun.modules.some((unit) => unit.fill?.openingChosen),
+    materials: Boolean(kitchenItemId),
+    result: false,
+  };
 
-  const order = steps.map((s) => s.key);
-  const index = Math.max(0, order.indexOf(step));
-  const goNext = () => setStep(order[Math.min(order.length - 1, index + 1)]);
-  const goBack = () => setStep(order[Math.max(0, index - 1)]);
+  const steps = order.map((key) => ({ key, title: STEP_TITLE[key], done: done[key] }));
 
-  const nextLabel =
-    step === 'survey'
-      ? 'К решениям'
-      : step === 'template'
-        ? 'В конфигуратор'
-        : step === 'studio'
-          ? 'К результату'
-          : 'Отправить клиенту';
+  const goNext = () => setStep(nextStep(order, step));
+  const goBack = () => setStep(prevStep(order, step));
+
+  const nextLabel = STEP_NEXT_LABEL[step];
 
   /*
    * Несобравшуюся композицию нельзя ни показать клиенту, ни сохранить:
@@ -2242,7 +2271,7 @@ export default function Workspace(props: WorkspaceProps) {
            * снизу — это 24 px, снятые у сцены ни за чем: под ней сразу
            * подвал со своим отступом.
            */
-          step === 'studio' ? 'pb-6 lg:pb-0' : 'pb-6'
+          isStudio(step) ? 'pb-6 lg:pb-0' : 'pb-6'
         }`}
       >
         {/*
@@ -2254,7 +2283,7 @@ export default function Workspace(props: WorkspaceProps) {
           * ничего не добавляли — лента говорит это там, где человек
           * ищет ответ, и убирается сама, как только модуль выбран.
           */}
-        {step !== 'studio' && (
+        {!isStudio(step) && (
           <p className="mb-4 text-[13px] leading-snug text-graphiteMw print:hidden">
             {STEP_HINT[step]}
           </p>
@@ -2319,7 +2348,7 @@ export default function Workspace(props: WorkspaceProps) {
                   setTemplateId(null);
                   setEditedRuns({});
                   setComposition({});
-                  setStep('studio');
+                  setStep('layout');
                 }}
                 className={`mw-btn ${freeMode ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
               >
@@ -2390,7 +2419,7 @@ export default function Workspace(props: WorkspaceProps) {
                 // Правки предыдущего состава к новому шаблону не относятся.
                 setEditedRuns({});
                 setComposition({});
-                setStep('studio');
+                setStep('layout');
               }}
             />
             {!templateId && suggested && (
@@ -2424,7 +2453,7 @@ export default function Workspace(props: WorkspaceProps) {
           *
           * Чертёж сюда НЕ переехал: он для цеха, и живёт на «Результате».
           */}
-        {step === 'studio' && (
+        {isStudio(step) && (
           /*
             * 3D ЗАНИМАЕТ ВЕСЬ ЭКРАН.
             *
@@ -2561,7 +2590,7 @@ export default function Workspace(props: WorkspaceProps) {
                 * переключаются рядом: работа идёт по одной, но соседняя
                 * видна на схеме контуром — иначе не понять, где угол.
                 */}
-              <div className="mb-4" data-shape>
+              <div className={`mb-4 ${onStep('walls')}`} data-shape>
                 <p className="mw-label mb-1">Форма</p>
                 <div className="flex flex-wrap gap-1">
                   {(Object.entries(SHAPE_TITLE) as [CompositionKind, string][]).map(
@@ -2659,6 +2688,44 @@ export default function Workspace(props: WorkspaceProps) {
               </div>
 
               {/*
+                * ОТМЕТКИ ЦЕХА — ПОКА ТОЛЬКО ПОКАЗАНЫ.
+                *
+                * Числа берутся у `shop.ts` — у той же функции, по которой
+                * собран ряд и посчитан раскрой. Второй формулы здесь нет
+                * и быть не может: показанная на экране отметка обязана
+                * совпадать с той, по которой пилят.
+                *
+                * Правятся они в настройках производства: школа цеха
+                * принадлежит компании, а не проекту.
+                */}
+              <div className={`mb-4 ${onStep('shop')}`} data-shop-sizes>
+                <p className="mw-label mb-2">Отметки цеха</p>
+                <dl className="mw-num grid gap-x-4 gap-y-1 text-[13px] sm:grid-cols-2">
+                  {(
+                    [
+                      ['Потолок', ceilingMm],
+                      ['Рабочая поверхность', workTopMm(props.production)],
+                      ['Столешница', countertopMm(props.production)],
+                      ['Фартук', apronMm(props.production)],
+                      ['Цоколь', plinthMm(props.production)],
+                      ['Низ верхнего ряда', upperBottomMm(props.production)],
+                      ['Глубина нижнего', rowStandardDepthMm(zone, 'base', props.production)],
+                      ['Глубина верхнего', rowStandardDepthMm(zone, 'upper', props.production)],
+                    ] as [string, number][]
+                  ).map(([title, mm]) => (
+                    <div key={title} className="flex justify-between gap-2">
+                      <dt className="text-graphiteMw">{title}</dt>
+                      <dd>{mm}</dd>
+                    </div>
+                  ))}
+                </dl>
+                <p className="mt-2 text-[13px] leading-snug text-graphiteMw">
+                  Миллиметры. Толщины, зазоры и глубины — школа цеха: они одни
+                  на все проекты компании и правятся в настройках производства.
+                </p>
+              </div>
+
+              {/*
                 * ФОТО ПОМЕЩЕНИЯ — ПЕРВЫМ БЛОКОМ.
                 *
                 * Это обязательный шаг продажи, а не настройка: без снимка
@@ -2670,7 +2737,7 @@ export default function Workspace(props: WorkspaceProps) {
                 * Как только фото есть, блок сворачивается в строку: место
                 * наверху дорогое, и держать там готовое дело незачем.
                 */}
-              <div className="mb-4" data-photo-first>
+              <div className={`mb-4 ${onStep('photo')}`} data-photo-first>
                 {roomPhoto ? (
                   <button
                     type="button"
@@ -2744,12 +2811,14 @@ export default function Workspace(props: WorkspaceProps) {
                 * разница в цене. Без выделения лента сама говорит, что
                 * делать, и не занимает место молча.
                 */}
-              <VariantStrip
-                options={variantOptions}
-                onPick={chooseVariant}
-                moduleLabel={selectedLabel}
-                pickPrompt="Нажмите на модуль в сцене, чтобы поменять его начинку."
-              />
+              <div className={onStep('variants')}>
+                <VariantStrip
+                  options={variantOptions}
+                  onPick={chooseVariant}
+                  moduleLabel={selectedLabel}
+                  pickPrompt="Нажмите на модуль в сцене, чтобы поменять его начинку."
+                />
+              </div>
 
               {/*
                 * ПАНЕЛЬ МАТЕРИАЛА — ДЛЯ ВСЕГО, ЧТО ЗАКРЫТО ФАСАДОМ.
@@ -2767,16 +2836,18 @@ export default function Workspace(props: WorkspaceProps) {
                     * в салоне. Атрибуты (конструкция, фактура) идут ниже:
                     * ими уточняют выбранное, а не начинают выбор.
                     */}
-                  <p className="mw-label mb-2">Материал фасада · {selectedUnit.label}</p>
-                  <FrontSwatchCards unit={selectedUnit} onOps={runOps} />
+                  <div className={onStep('front')}>
+                    <p className="mw-label mb-2">Материал фасада · {selectedUnit.label}</p>
+                    <FrontSwatchCards unit={selectedUnit} onOps={runOps} />
 
-                  <div className="mt-3">
-                    <FrontMaterialPicker
-                      unit={selectedUnit}
-                      onOps={runOps}
-                      onRefuse={setSceneNotice}
-                      palette={palette}
-                    />
+                    <div className="mt-3">
+                      <FrontMaterialPicker
+                        unit={selectedUnit}
+                        onOps={runOps}
+                        onRefuse={setSceneNotice}
+                        palette={palette}
+                      />
+                    </div>
                   </div>
 
                   {/*
@@ -2788,7 +2859,7 @@ export default function Workspace(props: WorkspaceProps) {
                     * дороге теряется.
                     */}
                   {layout && moduleAppliances(selectedUnit).length > 0 && (
-                    <div className="mt-3" data-appliance-move>
+                    <div className={`mt-3 ${onStep('appliance-wall')}`} data-appliance-move>
                       <p className="mw-label mb-2">
                         Прибор стоит на {lowerWall(wallLabel(wall), 'prepositional')}
                       </p>
@@ -2817,7 +2888,7 @@ export default function Workspace(props: WorkspaceProps) {
                     * такой же выбор про ЭТОТ фасад, и спрашивают о нём в
                     * тот же момент разговора.
                     */}
-                  <div className="mt-3">
+                  <div className={`mt-3 ${onStep('opening')}`}>
                     <OpeningPicker
                       unit={selectedUnit}
                       run={activeRun}
@@ -2834,8 +2905,14 @@ export default function Workspace(props: WorkspaceProps) {
                 </p>
               )}
 
-              <div className="mt-4">
+              <div className={`mt-4 ${shows(step, 'modules') || shows(step, 'filling') ? '' : 'hidden'}`}>
                 <RunEditor
+                  /*
+                   * Лента модулей и ширина — РАСКЛАДКА, число фронтов и
+                   * секция — КОНСТРУКЦИЯ. Компонент один: делить его на
+                   * два значило бы завести второй путь правки состава.
+                   */
+                  fields={shows(step, 'modules') ? 'layout' : 'build'}
                   selectionTitle={selection.title}
                   run={activeRun}
                   zone={zone}
@@ -2855,7 +2932,7 @@ export default function Workspace(props: WorkspaceProps) {
                 * прячутся: замерщик должен знать, чего не хватает в
                 * каталоге, — иначе он идёт спрашивать нас.
                 */}
-              <div className="mt-4" data-designs>
+              <div className={`mt-4 ${onStep('designs')}`} data-designs>
                 <p className="mw-label mb-2">Готовые дизайны</p>
                 <div className="flex flex-wrap gap-1">
                   {RUN_DESIGNS.map((design) => {
@@ -2886,7 +2963,7 @@ export default function Workspace(props: WorkspaceProps) {
                 * реже, чем варианты модуля, а место наверху дороже.
                 */}
               {arrangements.length > 1 && (
-                <div className="mt-4">
+                <div className={`mt-4 ${onStep('arrangements')}`}>
                   <ArrangementCards
                     arrangements={arrangements}
                     activeKey={
@@ -2899,7 +2976,7 @@ export default function Workspace(props: WorkspaceProps) {
                 </div>
               )}
 
-              <div className="mt-4">
+              <div className={`mt-4 ${onStep('catalog')}`}>
                 <CatalogLoader />
                 <MaterialsStep
                   zone={zone}
@@ -2914,7 +2991,12 @@ export default function Workspace(props: WorkspaceProps) {
                 />
               </div>
 
-              <div className="mt-4">
+              {/*
+                * Командная строка правит СОСТАВ: «убери посудомойку»,
+                * «поставь карго 400». Поэтому она на раскладке, рядом с
+                * лентой модулей, а не отдельным местом внизу панели.
+                */}
+              <div className={`mt-4 ${onStep('command')}`}>
                 <CommandBar onSubmit={sendCommand} busy={busy} lastReply={reply} />
               </div>
             </div>
@@ -2938,7 +3020,7 @@ export default function Workspace(props: WorkspaceProps) {
               render={activeRender}
               title="Ваша кухня"
               heightClass="h-[70vh] min-h-[320px]"
-              onAddPhoto={() => setStep('studio')}
+              onAddPhoto={() => setStep('layout')}
               onOpen={setZoom}
               emptyAction={
                 /* Кнопка прямо в пустой половине: под сравнением её не видно
@@ -3259,7 +3341,7 @@ export default function Workspace(props: WorkspaceProps) {
           * Блокирующего это не касается вовсе: красная полоса и кнопка
           * пересборки живут в подвале и видны без прокрутки всегда.
           */}
-        {step !== 'studio' && softList}
+        {!isStudio(step) && softList}
       </main>
 
       {/*
@@ -3359,7 +3441,7 @@ export default function Workspace(props: WorkspaceProps) {
           <button
             type="button"
             onClick={goBack}
-            disabled={index === 0}
+            disabled={order.indexOf(step) <= 0}
             className="mw-btn mw-btn-lg mw-btn-ghost"
           >
             Назад

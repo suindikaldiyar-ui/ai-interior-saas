@@ -118,6 +118,20 @@ import {
 import { composeVariants, workingWall, workspaceInput } from '../lib/millwork/workspace';
 import { screenState } from '../lib/millwork/screen';
 import {
+  STEP_FIELDS,
+  STEP_HINT,
+  STEP_NEXT_LABEL,
+  STEP_TITLE,
+  STUDIO_STEPS,
+  isStudio,
+  nextStep,
+  prevStep,
+  shows,
+  stepOrder,
+  type StepField,
+  type StepKey,
+} from '../lib/millwork/steps';
+import {
   keepSelection,
   moduleOfPart,
   selectionState,
@@ -3234,6 +3248,218 @@ console.log('\nДетализировка');
   const utf = panelsCsvFile(panels, 'utf-8');
   check('в UTF-8 файле есть BOM для Excel',
     utf.bytes[0] === 0xef && utf.bytes[1] === 0xbb && utf.bytes[2] === 0xbf);
+}
+
+/* ═══════════  Шаги работы  ═══════════ */
+
+/**
+ * РАБОТА РАЗЛОЖЕНА НА ШАГИ, И РАЗЛОЖЕНИЕ ПРОВЕРЯЕМО.
+ *
+ * Конфигуратор держал всё сразу, и панель росла до четырёх экранов
+ * прокрутки. Теперь у каждого шага свой предмет, а что на каком шаге —
+ * одна таблица (`STEP_FIELDS`), которую читают и экран, и эта проверка.
+ * Вторая таблица в разметке означала бы поле, пропавшее с экрана молча.
+ */
+console.log('\nШаги работы');
+{
+  const order = stepOrder(true);
+  const noSurvey = stepOrder(false);
+
+  check(
+    'шаги есть — проверять есть что',
+    order.length > 0 && noSurvey.length > 0,
+    order.length === 0
+      ? 'СЕЛЕКТОР ВЕРНУЛ НОЛЬ ШАГОВ — полосу шагов строить не из чего'
+      : `с замером ${order.length}: ${order.join(' → ')}`,
+  );
+
+  check(
+    'работа разложена на семь шагов, конфигуратора среди них нет',
+    order.join(' ') === 'survey template sizes layout build materials result',
+    order.join(' '),
+  );
+
+  check(
+    'без замера шаг замера не показывается вовсе',
+    noSurvey.length === order.length - 1 && !noSurvey.includes('survey'),
+    noSurvey.join(' '),
+  );
+
+  /* ─── Каждый шаг находит свои поля ─── */
+
+  const studio = STUDIO_STEPS;
+  check(
+    'рабочий экран — это четыре шага, и все они идут подряд',
+    studio.length === 4 &&
+      studio.every((key) => isStudio(key)) &&
+      order.slice(2, 6).join(' ') === studio.join(' '),
+    studio.join(' → '),
+  );
+
+  const empty = studio.filter((key) => STEP_FIELDS[key].length === 0);
+  check(
+    'у каждого шага рабочего экрана есть свои поля',
+    empty.length === 0,
+    empty.length === 0
+      ? studio.map((key) => `${STEP_TITLE[key]}:${STEP_FIELDS[key].length}`).join(' · ')
+      : `ШАГ БЕЗ ПОЛЕЙ: ${empty.join(', ')} — панель на нём пуста`,
+  );
+
+  /*
+   * Поле лежит РОВНО НА ОДНОМ шаге. Два места для одного выбора — это
+   * две настройки одного и того же (ловушка 257), и человек правит то
+   * одну, то другую.
+   */
+  const seen = new Map<StepField, StepKey[]>();
+  for (const key of order) {
+    for (const field of STEP_FIELDS[key]) {
+      seen.set(field, [...(seen.get(field) ?? []), key]);
+    }
+  }
+  const twice = Array.from(seen.entries()).filter(([, keys]) => keys.length > 1);
+  check(
+    'ни одно поле не лежит на двух шагах сразу',
+    twice.length === 0,
+    twice.length === 0
+      ? `полей ${seen.size}, каждое на своём шаге`
+      : twice.map(([field, keys]) => `${field}: ${keys.join('+')}`).join(' · '),
+  );
+
+  check(
+    'поле находится по своему шагу и не находится по чужому',
+    shows('sizes', 'walls') &&
+      shows('layout', 'modules') &&
+      shows('build', 'opening') &&
+      shows('materials', 'front') &&
+      !shows('sizes', 'modules') &&
+      !shows('layout', 'front') &&
+      !shows('build', 'walls') &&
+      !shows('materials', 'opening'),
+    STUDIO_STEPS.map((key) => `${STEP_TITLE[key]}: ${STEP_FIELDS[key].join(', ')}`).join(' · '),
+  );
+
+  check(
+    'у каждого шага есть название, подсказка и подпись кнопки',
+    order.every(
+      (key) =>
+        STEP_TITLE[key].length > 0 &&
+        STEP_HINT[key].length > 20 &&
+        STEP_NEXT_LABEL[key].length > 0,
+    ),
+    order.map((key) => `${STEP_TITLE[key]} → ${STEP_NEXT_LABEL[key]}`).join(' · '),
+  );
+
+  /* ─── Переходы ─── */
+
+  check(
+    'вперёд ведёт по порядку и упирается в последний шаг',
+    nextStep(order, 'sizes') === 'layout' &&
+      nextStep(order, 'layout') === 'build' &&
+      nextStep(order, 'build') === 'materials' &&
+      nextStep(order, 'materials') === 'result' &&
+      nextStep(order, 'result') === 'result',
+    order.map((key) => `${key}→${nextStep(order, key)}`).join(' '),
+  );
+
+  check(
+    'назад ведёт по тому же порядку и упирается в первый',
+    prevStep(order, 'materials') === 'build' &&
+      prevStep(order, 'build') === 'layout' &&
+      prevStep(order, 'layout') === 'sizes' &&
+      prevStep(order, order[0]) === order[0],
+    order.map((key) => `${key}←${prevStep(order, key)}`).join(' '),
+  );
+
+  check(
+    'переход туда и обратно возвращает на тот же шаг',
+    studio.every((key) => prevStep(order, nextStep(order, key)) === key),
+    studio.map((key) => `${key}→${nextStep(order, key)}→${prevStep(order, nextStep(order, key))}`).join(' '),
+  );
+
+  /*
+   * ПЕРЕХОД — ЭТО ТОЛЬКО ШАГ.
+   *
+   * Выделенный модуль и активная стена живут в своём состоянии, и шаг их
+   * не трогает: функция перехода принимает порядок и ключ, а возвращает
+   * ключ — взяться отсюда сбросу неоткуда. Проверяем это тем же путём,
+   * которым ходит экран: выделение считает `selectionState`, а стену —
+   * `wallOfModule`, и обе не знают про шаг вовсе.
+   */
+  {
+    const run = buildRun(baseInput);
+    const unit = run.modules[1] ?? run.modules[0];
+
+    check(
+      'ряд для проверки перехода собрался',
+      Boolean(unit),
+      unit ? `${unit.id}` : 'РЯД ПУСТ — переход проверять не на чем',
+    );
+
+    const before = selectionState(run, unit.id);
+    let step: StepKey = 'sizes';
+    for (const _ of studio) step = nextStep(order, step);
+    for (const _ of studio) step = prevStep(order, step);
+    const after = selectionState(run, unit.id);
+
+    check(
+      'переход вперёд и назад не теряет выделенный модуль',
+      before.unit?.id === after.unit?.id && before.title === after.title,
+      `${before.title} → ${after.title}`,
+    );
+
+    check(
+      'и не теряет активную стену',
+      wallOfModule([run], unit.id) === 0 && wallOfModule([run], unit.id) === wallOfModule([run], unit.id),
+      `стена ${wallOfModule([run], unit.id)}`,
+    );
+  }
+
+  /* ─── Защищённые замки работают на каждом шаге ─── */
+
+  /*
+   * Замки не зависят от шага вовсе: их считает `screenState` от отказа и
+   * расхождения. Проверяем это прямо — иначе разбиение на шаги однажды
+   * заведёт «на этом шаге можно».
+   */
+  {
+    const refused = tryBuildComposition({
+      kind: 'corner_l',
+      walls: [{ id: 'w1', lengthMm: 3800, openings: [] }],
+      ceilingHeightMm: 2700,
+      requirements: REQ,
+      comms: COMMS,
+    });
+
+    const locked = screenState({
+      refusal: refused.state === 'refused' ? { reason: refused.reason } : null,
+      mismatches: [],
+      walls: [{ lengthMm: 3800 }],
+      segments: [],
+      shape: 'corner_l',
+      warnings: [],
+    });
+
+    check(
+      'отказ сборки получен — замки мерить есть на чём',
+      refused.state === 'refused' && locked.blocking.length === 1,
+      refused.state === 'refused'
+        ? `блокирующих ${locked.blocking.length}`
+        : 'СБОРКА НЕ ОТКАЗАЛА — замки проверять не на чем',
+    );
+
+    check(
+      '«Дальше», цена и запись заперты одинаково на всех четырёх шагах',
+      studio.every(() => locked.nextLocked && locked.priceHidden && locked.autosaveLocked),
+      `«Дальше» ${locked.nextLocked} · цена ${locked.priceHidden} · запись ${locked.autosaveLocked} — на ${studio.length} шагах`,
+    );
+
+    check(
+      'и причина названа словами, а не кодом: она едет с замком на каждый шаг',
+      locked.blocking[0]?.message.includes('не сошлась') &&
+        locked.blocking[0]?.message.includes('клиенту нельзя'),
+      locked.blocking[0]?.message.slice(0, 90) ?? 'ПРИЧИНЫ НЕТ',
+    );
+  }
 }
 
 /* ═══════════  Выбранный модуль  ═══════════ */

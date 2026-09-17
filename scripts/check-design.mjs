@@ -147,7 +147,10 @@ async function run(browser, { width, height, theme }) {
   for (const [label, step] of [
     ['survey', 'Замер'],
     ['template', 'Решение'],
-    ['studio', 'Конфигуратор'],
+    ['sizes', 'Размеры'],
+    ['layout', 'Раскладка'],
+    ['build', 'Конструкция'],
+    ['materials', 'Материалы'],
   ]) {
     const btn = page.getByRole('button', { name: new RegExp(step) }).first();
     if (await btn.count()) {
