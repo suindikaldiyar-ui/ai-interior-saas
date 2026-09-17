@@ -17,6 +17,7 @@ import { paletteFromCatalog } from '@/lib/millwork/palette';
 import {
   compositionOf,
   compositionWalls,
+  lowerWall,
   mergeEstimates,
   wallLabel,
   wallMismatches,
@@ -85,7 +86,6 @@ import { validateRun } from '@/lib/millwork/validate';
 import {
   collectWarnings,
   groupWarnings,
-  hasBlocking,
   splitWarnings,
 } from '@/lib/millwork/warnings';
 import {
@@ -1344,7 +1344,7 @@ export default function Workspace(props: WorkspaceProps) {
       });
 
       setMoveNotice(
-        `${APPLIANCE_SLOTS[appliance].title} переехал на ${wallLabel(toWall).toLowerCase()}. ` +
+        `${APPLIANCE_SLOTS[appliance].title} переехал на ${lowerWall(wallLabel(toWall), 'accusative')}. ` +
           'Размеры прибора переехали вместе с ним.',
       );
     },
@@ -1741,7 +1741,6 @@ export default function Workspace(props: WorkspaceProps) {
     [refusal, mismatches, walls, segments, shape, warnings],
   );
 
-  const warningsWithRefusal = screen.channel;
 
   /**
    * ПЕРЕСБОРКА ОДНОЙ СТЕНЫ.
@@ -1780,11 +1779,14 @@ export default function Workspace(props: WorkspaceProps) {
     screen.rebuildWall === null
       ? undefined
       : mismatches.find((mismatch) => mismatch.index === screen.rebuildWall);
-  const softWarnings = groupWarnings(
-    warningsWithRefusal.filter((w) => w.severity === 'clarify'),
-  );
+  const softWarnings = groupWarnings(screen.clarify);
   const { shown: shownSoft, hidden: hiddenSoft } = splitWarnings(softWarnings);
-  const blocked = hasBlocking(warningsWithRefusal);
+  /*
+   * Блокирующие канал уже отобрал (`screen.blocking`). Спрашивать тот же
+   * массив вторым способом незачем: ответ один, а мест, где он может
+   * разойтись, становится два.
+   */
+  const blocked = screen.blocking.length > 0;
   const preliminary = resolution ? isEstimatePreliminary(resolution.stats) : false;
 
   /*
@@ -2638,7 +2640,7 @@ export default function Workspace(props: WorkspaceProps) {
                   {layout && moduleAppliances(selectedUnit).length > 0 && (
                     <div className="mt-3" data-appliance-move>
                       <p className="mw-label mb-2">
-                        Прибор стоит на {wallLabel(wall).toLowerCase()}
+                        Прибор стоит на {lowerWall(wallLabel(wall), 'prepositional')}
                       </p>
                       <div className="flex flex-wrap gap-1">
                         {layout.segments.map((segment, i) =>
@@ -2652,7 +2654,7 @@ export default function Workspace(props: WorkspaceProps) {
                               }
                               className="mw-btn mw-btn-ghost"
                             >
-                              Перенести на {wallLabel(i).toLowerCase()}
+                              Перенести на {lowerWall(wallLabel(i), 'accusative')}
                             </button>
                           ),
                         )}
@@ -3151,8 +3153,22 @@ export default function Workspace(props: WorkspaceProps) {
           <div className="mb-3 rounded-[var(--r-control)] bg-alert/15 px-4 py-3">
             <p className="text-[15px] leading-snug text-alert">
               {blockingWarnings[0].message}
-              {blockingWarnings.length > 1 && ` И ещё ${blockingWarnings.length - 1}.`}
             </p>
+            {/*
+              * ВТОРОЕ БЛОКИРУЮЩЕЕ НАЗЫВАЕТСЯ, А НЕ СЧИТАЕТСЯ.
+              *
+              * Ловушка 51 разрешает на экране две строки, и «И ещё 1.»
+              * рядом с кнопкой про стену Б не говорит, о какой стене
+              * речь: замерщик видит кнопку и не знает, к чему она.
+              * Третье и дальше остаются счётчиком — десяток строк
+              * превращается в фон, который не читает никто.
+              */}
+            {blockingWarnings.length > 1 && (
+              <p className="mt-1 text-[15px] leading-snug text-alert">
+                {blockingWarnings[1].message}
+                {blockingWarnings.length > 2 && ` И ещё ${blockingWarnings.length - 2}.`}
+              </p>
+            )}
             {staleShown && (
               <button
                 type="button"
@@ -3160,7 +3176,7 @@ export default function Workspace(props: WorkspaceProps) {
                 onClick={() => rebuildWall(staleShown.index)}
                 className="mw-btn mw-btn-ghost mt-2"
               >
-                Пересобрать {staleShown.label.toLowerCase()}
+                Пересобрать {lowerWall(staleShown.label, 'accusative')}
               </button>
             )}
           </div>
@@ -3190,7 +3206,7 @@ export default function Workspace(props: WorkspaceProps) {
               className="text-[15px] leading-snug text-alert"
             >
               {refusal
-                ? `Цены нет: ${SHAPE_TITLE[shape] ?? 'композиция'} не сошлась.`
+                ? `Цены нет: ${SHAPE_TITLE[shape]} не сошлась.`
                 : `Цены нет: ${mismatches[0].label} собрана на другой длине стены.`}
             </p>
           ) : (

@@ -109,6 +109,7 @@ import { frontSwatch } from '../lib/millwork/frontSwatch';
 import {
   compositionOf,
   compositionWalls,
+  lowerWall,
   mergeEstimates,
   wallLabel,
   wallMismatchMessage,
@@ -11327,6 +11328,13 @@ console.log('\nЗащищённое поведение рабочего экра
       `отказ ${onRefusal.autosaveLocked} · расхождение ${onMismatch.autosaveLocked} · обычная ${onNormal.autosaveLocked}`,
     );
 
+    /*
+     * Форму называет `SHAPE_TITLE`, и ответ у неё один на обе строки
+     * канала — и у отказа, и у пустой стены. Запасного «Композиция»
+     * здесь нет: таблица полна по `CompositionKind`, а выдуманное
+     * название формы — это то же production-critical значение из
+     * воздуха, только в словах.
+     */
     check(
       'отказ идёт в канал блокирующим и называет форму словами',
       onRefusal.blocking.length === 1 &&
@@ -11350,12 +11358,67 @@ console.log('\nЗащищённое поведение рабочего экра
       `блокирующих ${onNormal.blocking.length}`,
     );
 
+    /*
+     * Канал делится по классу в ОДНОМ месте. Уточнения отбирались
+     * компонентом своим `filter` по тому же массиву — половина деления
+     * жила в разметке и проверялась ничем.
+     */
+    check(
+      'уточнения отбираются тем же каналом, что и блокирующие',
+      onRefusal.clarify.every((w) => w.severity === 'clarify') &&
+        onRefusal.blocking.length + onRefusal.clarify.length ===
+          onRefusal.channel.filter((w) => w.severity !== 'info').length,
+      `блокирующих ${onRefusal.blocking.length} · уточнений ${onRefusal.clarify.length} · канал ${onRefusal.channel.length}`,
+    );
+
     check(
       'кнопка пересборки указывает на ту стену, о которой говорит полоса',
       onMismatch.rebuildWall === mismatches[0]?.index &&
         onRefusal.rebuildWall === null &&
         onNormal.rebuildWall === null,
       `расхождение → ${onMismatch.rebuildWall} · отказ → ${onRefusal.rebuildWall} · обычная → ${onNormal.rebuildWall}`,
+    );
+
+    /*
+     * ОБА СОСТОЯНИЯ СРАЗУ.
+     *
+     * Отказ встаёт в канал первым, расхождение за ним. Пока кнопка
+     * искала себя по ПЕРВОМУ блокирующему, выход пропадал ровно в этой
+     * паре: объект оставался запертым без единого способа выйти —
+     * то самое, от чего уходили в заходе про `editedWalls`.
+     */
+    const onBoth = screenState({
+      refusal: refused.state === 'refused' ? { reason: refused.reason } : null,
+      mismatches,
+      walls: wallsOf(narrowLayout),
+      segments: narrowLayout.segments.map((segment) => segment.run),
+      shape: 'corner_l',
+      warnings: [],
+    });
+
+    check(
+      'отказ и расхождение пришли вместе — оба в канале и оба блокирующие',
+      onBoth.blocking.length === 2 &&
+        onBoth.blocking[0].id === 'composition-refused' &&
+        onBoth.blocking[1].id === `wall-stale-${mismatches[0]?.index}`,
+      mismatches.length === 0 || refused.state !== 'refused'
+        ? 'ПАРЕ СОСТОЯНИЙ ВЗЯТЬСЯ НЕОТКУДА — проверять нечего'
+        : onBoth.blocking.map((w) => w.id).join(' · ') || 'КАНАЛ ПУСТ',
+    );
+
+    check(
+      'и выход из расхождения при этом не пропадает: кнопка нашла свою стену',
+      onBoth.rebuildWall === mismatches[0]?.index,
+      mismatches.length === 0
+        ? 'СЕЛЕКТОР ВЕРНУЛ НОЛЬ РАСХОЖДЕНИЙ — кнопке не на что указывать'
+        : `кнопка → ${onBoth.rebuildWall} · ждали ${mismatches[0].index} · первое блокирующее ${onBoth.blocking[0]?.id}`,
+    );
+
+    check(
+      'кнопка указывает на стену, а не на отказ: отказ пересборкой не лечится',
+      onBoth.rebuildWall !== null &&
+        `wall-stale-${onBoth.rebuildWall}` !== onBoth.blocking[0]?.id,
+      `${onBoth.blocking[0]?.id} ≠ wall-stale-${onBoth.rebuildWall}`,
     );
 
     /* ─── Потеря правок названа ДО нажатия ─── */
@@ -11428,19 +11491,108 @@ console.log('\nЗащищённое поведение рабочего экра
 
     /* ─── В визуализацию попадёт один ряд ─── */
 
+    /*
+     * Строку читает клиент, поэтому проверяется не наличие слов, а сама
+     * фраза: буква стены остаётся заглавной («стена А», не «стена а» —
+     * строчная читается союзом), и число согласовано с одной соседней
+     * стеной («посчитана … не попадёт»).
+     */
     check(
       'строка про визуализацию называет, что в кадр попадёт только стена А',
       Boolean(onNormal.renderCoverageNote) &&
-        /только стена а/i.test(onNormal.renderCoverageNote ?? '') &&
-        /Стена Б/.test(onNormal.renderCoverageNote ?? '') &&
-        /в картинку не попадут/.test(onNormal.renderCoverageNote ?? ''),
+        /только стена А:/.test(onNormal.renderCoverageNote ?? '') &&
+        /кадр снимается с одного ряда/.test(onNormal.renderCoverageNote ?? ''),
       onNormal.renderCoverageNote ?? 'СТРОКИ НЕТ',
+    );
+
+    check(
+      'и про ОДНУ соседнюю стену говорит в единственном числе',
+      /Стена Б посчитана и есть на чертеже, но в картинку не попадёт\./.test(
+        onNormal.renderCoverageNote ?? '',
+      ),
+      onNormal.renderCoverageNote ?? 'СТРОКИ НЕТ',
+    );
+
+    /* У П-образной соседних стен две — и число меняется вместе с ними. */
+    const uShape = tryBuildComposition({
+      kind: 'u_shape',
+      walls: [WALLS[0], WALLS[1], { id: 'w3', lengthMm: 1800, openings: [] }],
+      ceilingHeightMm: CEILING,
+      requirements: REQ,
+      comms: COMMS,
+    });
+
+    check(
+      'П-образная для замера множественного числа собралась',
+      uShape.state === 'built' && uShape.composition.segments.length === 3,
+      uShape.state === 'built'
+        ? `${uShape.composition.segments.length} сегмента`
+        : 'СОБРАТЬСЯ НЕ СМОГЛА — множественное число мерить не на чем',
+    );
+
+    const onU =
+      uShape.state === 'built'
+        ? screenState({
+            refusal: null,
+            mismatches: [],
+            walls: wallsOf(uShape.composition),
+            segments: uShape.composition.segments.map((segment) => segment.run),
+            shape: 'u_shape',
+            warnings: [],
+          })
+        : null;
+
+    check(
+      'две соседние стены — множественное число и обе названы',
+      /Стена Б и Стена В посчитаны и есть на чертеже, но в картинку не попадут\./.test(
+        onU?.renderCoverageNote ?? '',
+      ),
+      onU === null ? 'П-ОБРАЗНОЙ НЕТ — мерить нечем' : (onU.renderCoverageNote ?? 'СТРОКИ НЕТ'),
     );
 
     check(
       'у прямой кухни строки про визуализацию нет вовсе',
       asLinear.renderCoverageNote === null,
       String(asLinear.renderCoverageNote),
+    );
+
+    check(
+      'строка про пустую стену её тоже называет — в уточнениях, а не только в канале',
+      asLinear.clarify.length === 1 && asLinear.clarify[0].id === 'walls-idle',
+      asLinear.clarify.map((w) => w.id).join(' · ') || 'УТОЧНЕНИЙ НЕТ',
+    );
+
+    /* ─── Падеж стены: фразы, которые замерщик показывает клиенту ─── */
+
+    /*
+     * `toLowerCase()` целиком давал «стена б»: слово и обозначение
+     * опускались вместе, и фраза читалась оборванной на союзе. Падеж
+     * при этом у каждой фразы свой — «Пересобрать стену Б», но «Прибор
+     * стоит на стене Б», — и один на всех был бы неверен по-русски
+     * ровно там, где экран показывают клиенту.
+     */
+    const wallB = wallLabel(1);
+    check(
+      'стена в середине фразы: слово строчное, буква заглавная',
+      lowerWall(wallB) === 'стена Б' &&
+        lowerWall(wallB, 'accusative') === 'стену Б' &&
+        lowerWall(wallB, 'prepositional') === 'стене Б',
+      `${lowerWall(wallB)} · ${lowerWall(wallB, 'accusative')} · ${lowerWall(wallB, 'prepositional')}`,
+    );
+
+    check(
+      'кнопка пересборки называет стену винительным падежом',
+      `Пересобрать ${lowerWall(mismatches[0]?.label ?? wallB, 'accusative')}` ===
+        'Пересобрать стену Б',
+      `Пересобрать ${lowerWall(mismatches[0]?.label ?? wallB, 'accusative')}`,
+    );
+
+    check(
+      'перенос прибора — тоже винительный, а место прибора — предложный',
+      `${APPLIANCE_SLOTS.fridge.title} переехал на ${lowerWall(wallB, 'accusative')}.` ===
+        `${APPLIANCE_SLOTS.fridge.title} переехал на стену Б.` &&
+        `Прибор стоит на ${lowerWall(wallB, 'prepositional')}` === 'Прибор стоит на стене Б',
+      `${APPLIANCE_SLOTS.fridge.title} переехал на ${lowerWall(wallB, 'accusative')}. · Прибор стоит на ${lowerWall(wallB, 'prepositional')} · Перенести на ${lowerWall(wallB, 'accusative')}`,
     );
 
     /* ─── 7. ПОЛНОЕ · ступень под выступом названа в обе стороны ─── */

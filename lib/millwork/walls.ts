@@ -22,6 +22,34 @@ export function wallLabel(index: number): string {
   return WALL_LABELS[index] ?? `Стена ${index + 1}`;
 }
 
+/** Падеж, в котором стена стоит во фразе. */
+export type WallCase = 'nominative' | 'accusative' | 'prepositional';
+
+/** Слово «стена» по падежам. Буква стены не склоняется — это обозначение. */
+const WALL_WORD: Record<WallCase, string> = {
+  nominative: 'стена',
+  accusative: 'стену',
+  prepositional: 'стене',
+};
+
+/**
+ * «Стена Б» В СЕРЕДИНЕ ФРАЗЫ.
+ *
+ * Строчным делается только слово, буква остаётся заглавной: `toLowerCase()`
+ * целиком давал «стена б», и фраза читалась оборванной на союзе. Падеж
+ * задаёт вызывающий — «Пересобрать стену Б», но «Прибор стоит на стене Б»;
+ * подставить один падеж во все места значит написать по-русски неверно
+ * ровно там, где замерщик показывает экран клиенту.
+ *
+ * Склоняется НАЗВАНИЕ, а не индекс: название по-прежнему выдаёт
+ * `wallLabel`, и второго источника имени стены не появляется.
+ */
+export function lowerWall(label: string, wordCase: WallCase = 'nominative'): string {
+  const space = label.indexOf(' ');
+  if (space < 0) return label.toLowerCase();
+  return `${WALL_WORD[wordCase]}${label.slice(space)}`;
+}
+
 /**
  * СМЕТА КОМПОЗИЦИИ — СУММА СМЕТ РЯДОВ, А НЕ ВТОРОЙ РАСЧЁТ.
  *

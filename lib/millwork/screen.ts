@@ -1,5 +1,5 @@
 import { SHAPE_TITLE, SHAPE_WALLS, segmentCount } from './composition';
-import { wallLabel, wallMismatchMessage, type WallMismatch } from './walls';
+import { lowerWall, wallLabel, wallMismatchMessage, type WallMismatch } from './walls';
 import type { SurveyWarning } from './warnings';
 import type { CompositionKind } from '@/types/millwork';
 
@@ -49,6 +49,8 @@ export type ScreenState = {
   channel: SurveyWarning[];
   /** Блокирующие: красная полоса над главной кнопкой. */
   blocking: SurveyWarning[];
+  /** Уточнения: жёлтый список под ними. */
+  clarify: SurveyWarning[];
   /** Цены нет вовсе: показать сумму по мебели, которой нет, нельзя. */
   priceHidden: boolean;
   /** Защищённая часть замка «Дальше». Шаги мастера сюда не входят. */
@@ -62,6 +64,13 @@ export type ScreenState = {
   /** Строка про то, что в визуализацию попадёт один ряд. */
   renderCoverageNote: string | null;
 };
+
+/**
+ * Ключ расхождения в канале. Собирается и разбирается здесь же: две
+ * копии строки расходятся молча, и кнопка пересборки просто перестаёт
+ * находить свою стену.
+ */
+const STALE_PREFIX = 'wall-stale-';
 
 export function screenState(input: ScreenInput): ScreenState {
   const { refusal, mismatches, walls, segments, shape, warnings } = input;
@@ -95,15 +104,20 @@ export function screenState(input: ScreenInput): ScreenState {
    * стена А. Смета и чертёж при этом считают всю композицию. Молча
    * выданная картинка одной стены читается как «вот ваша кухня», и
    * разницу клиент находит на монтаже.
+   *
+   * Число согласуется с длиной хвоста: у угловой соседняя стена одна, и
+   * «Стена Б посчитаны» читается как недописанная строка — а строку эту
+   * замерщик показывает клиенту.
    */
+  const rest = segments.slice(1).map((_, i) => wallLabel(i + 1));
+  const many = rest.length > 1;
+
   const renderCoverageNote =
-    segments.length < 2
+    rest.length === 0
       ? null
-      : `На визуализации будет только ${wallLabel(0).toLowerCase()}: кадр снимается с одного ряда. ` +
-        `${segments
-          .slice(1)
-          .map((_, i) => wallLabel(i + 1))
-          .join(' и ')} посчитаны и есть на чертеже, но в картинку не попадут.`;
+      : `На визуализации будет только ${lowerWall(wallLabel(0))}: кадр снимается с одного ряда. ` +
+        `${rest.join(' и ')} ${many ? 'посчитаны' : 'посчитана'} и есть на чертеже, ` +
+        `но в картинку ${many ? 'не попадут' : 'не попадёт'}.`;
 
   /*
    * ЕДИНЫЙ КАНАЛ.
@@ -120,13 +134,13 @@ export function screenState(input: ScreenInput): ScreenState {
             id: 'composition-refused',
             severity: 'blocking' as const,
             message:
-              `${SHAPE_TITLE[shape] ?? 'Композиция'} не сошлась. ${refusal.reason} ` +
+              `${SHAPE_TITLE[shape]} не сошлась. ${refusal.reason} ` +
               'Пока не сойдётся, отправить её клиенту нельзя.',
           },
         ]
       : []),
     ...mismatches.map((mismatch) => ({
-      id: `wall-stale-${mismatch.index}`,
+      id: `${STALE_PREFIX}${mismatch.index}`,
       severity: 'blocking' as const,
       message: wallMismatchMessage(mismatch),
     })),
@@ -136,17 +150,31 @@ export function screenState(input: ScreenInput): ScreenState {
     ...warnings,
   ];
 
+  /*
+   * Канал делится по классу ОДИН раз и в одном месте. Половина деления
+   * жила здесь, половина — в компоненте своим `filter` по тому же
+   * массиву: разъехаться им нечем, но и повода спрашивать один список
+   * двумя способами тоже нет.
+   */
   const blocking = channel.filter((w) => w.severity === 'blocking');
+  const clarify = channel.filter((w) => w.severity === 'clarify');
 
   /*
    * ПЕРЕСБОРКА ОДНОЙ СТЕНЫ.
    *
    * У блокирующего состояния обязан быть выход, иначе объект заперт
-   * навсегда. Кнопка относится к тому расхождению, о котором сейчас
-   * говорит полоса, — к первому блокирующему, если это оно.
+   * навсегда. Кнопка ищет ПЕРВОЕ РАСХОЖДЕНИЕ В КАНАЛЕ, а не первое
+   * блокирующее вообще: отказ сборки встаёт в канал раньше расхождений,
+   * и привязка к позиции убирала выход ровно тогда, когда состояний
+   * пришло два, — то есть когда он нужнее всего.
+   *
+   * Пересборкой стены лечится только расхождение: отказ означает, что
+   * композиции нет вовсе, и своей кнопки у него не бывает. Поэтому
+   * ищется расхождение, а не «первое, у чего есть выход».
    */
+  const staleId = blocking.find((w) => w.id.startsWith(STALE_PREFIX))?.id;
   const stale = mismatches.find(
-    (mismatch) => `wall-stale-${mismatch.index}` === blocking[0]?.id,
+    (mismatch) => `${STALE_PREFIX}${mismatch.index}` === staleId,
   );
 
   /*
@@ -160,6 +188,7 @@ export function screenState(input: ScreenInput): ScreenState {
   return {
     channel,
     blocking,
+    clarify,
     priceHidden: locked,
     nextLocked: locked,
     autosaveLocked: locked,

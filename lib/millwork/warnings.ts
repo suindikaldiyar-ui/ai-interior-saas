@@ -603,9 +603,6 @@ export function groupWarnings(warnings: SurveyWarning[]): GroupedWarning[] {
   );
 }
 
-export function hasBlocking(warnings: SurveyWarning[]): boolean {
-  return warnings.some((w) => w.severity === 'blocking');
-}
 
 /** На экране — не больше трёх. Остальные сворачиваются в «ещё N». */
 export function splitWarnings(warnings: SurveyWarning[], max = VISIBLE_WARNINGS) {
