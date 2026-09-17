@@ -19,14 +19,11 @@ import {
   compositionWalls,
   mergeEstimates,
   wallLabel,
-  wallMismatchMessage,
   wallMismatches,
 } from '@/lib/millwork/walls';
 import {
   SHAPE_TITLE,
-  SHAPE_WALLS,
   runPlacements,
-  segmentCount,
   tryBuildComposition,
 } from '@/lib/millwork/composition';
 import { openingAssumptions } from '@/lib/millwork/warnings';
@@ -59,6 +56,7 @@ import SurveySheet from './SurveySheet';
 import TemplatePicker from './TemplatePicker';
 import type { RateTable } from '@/lib/millwork/estimate';
 import { applyOps } from '@/lib/millwork/ops';
+import { screenState } from '@/lib/millwork/screen';
 import { onWall } from '@/lib/millwork/layout';
 import { buildEstimate } from '@/lib/millwork/estimate';
 import {
@@ -1719,82 +1717,31 @@ export default function Workspace(props: WorkspaceProps) {
    * Не блокирующее: форму выбирает человек, и кухня вдоль одной стены
    * в комнате с четырьмя стенами — норма. Но названо оно должно быть.
    */
-  const idleWalls = useMemo(() => {
-    const used = segmentCount(shape);
-    return walls.slice(used).map((wall, i) => ({
-      label: wallLabel(used + i),
-      lengthMm: wall.lengthMm,
-    }));
-  }, [walls, shape]);
-
   /**
-   * ЧТО ИМЕННО ПОКАЖЕТ ВИЗУАЛИЗАЦИЯ.
+   * РЕШЕНИЯ ЭКРАНА СЧИТАЕТ `screenState`, А НЕ ЭТОТ КОМПОНЕНТ.
    *
-   * Кадр для генерации снимается со сцены, собранной из ОДНОГО ряда
-   * (`KitchenScene run={active.run}`): в него попадает стена А. Смета и
-   * чертёж при этом считают всю композицию.
+   * Канал предупреждений, замок цены, замок «Дальше», замок записи,
+   * кнопка пересборки и обе строки — про пустую стену и про то, что в
+   * кадр попадёт один ряд, — жили прямо в разметке и в `useMemo`, и
+   * поэтому не проверялись ничем.
    *
-   * Клиенту показывают то, что посчитано, — а если показать всё физически
-   * нечем, об этом говорят словами. Молча выданная картинка одной стены
-   * читается как «вот ваша кухня», и разницу клиент находит на монтаже.
+   * Условия и тексты перенесены дословно. Считать их здесь второй раз
+   * нельзя: это ровно тот второй расчёт, от которого продукт уходит.
    */
-  const renderCoverage = useMemo(() => {
-    if (segments.length < 2) return null;
-
-    const rest = segments
-      .slice(1)
-      .map((_, i) => wallLabel(i + 1))
-      .join(' и ');
-
-    return (
-      `На визуализации будет только ${wallLabel(0).toLowerCase()}: кадр снимается с одного ряда. ` +
-      `${rest} посчитаны и есть на чертеже, но в картинку не попадут.`
-    );
-  }, [segments]);
-
-  const warningsWithRefusal = useMemo(
-    () => [
-      ...(refusal
-        ? [
-            {
-              id: 'composition-refused',
-              severity: 'blocking' as const,
-              message:
-                `${SHAPE_TITLE[shape] ?? 'Композиция'} не сошлась. ${refusal.reason} ` +
-                'Пока не сойдётся, отправить её клиенту нельзя.',
-            },
-          ]
-        : []),
-      /*
-       * Ряд, не сходящийся со своей стеной, — блокирующее, и идёт оно
-       * тем же каналом: красной полосой над главной кнопкой. Молча
-       * поставить длинный ряд на короткую стену нельзя — на объекте это
-       * мебель, которая не встаёт.
-       */
-      ...mismatches.map((mismatch) => ({
-        id: `wall-stale-${mismatch.index}`,
-        severity: 'blocking' as const,
-        message: wallMismatchMessage(mismatch),
-      })),
-      /* Замерена, но не работает — одной строкой на все такие стены. */
-      ...(idleWalls.length > 0
-        ? [
-            {
-              id: 'walls-idle',
-              severity: 'clarify' as const,
-              message:
-                `${idleWalls.map((w) => `${w.label} (${w.lengthMm} мм)`).join(' и ')} ` +
-                `${idleWalls.length > 1 ? 'замерены' : 'замерена'}, но мебели ` +
-                `${idleWalls.length > 1 ? 'на них' : 'на ней'} нет: ` +
-                `${SHAPE_TITLE[shape]} ставит мебель на ${SHAPE_WALLS[shape]}. ` +
-                'Смените форму, если мебель идёт и туда.',
-            },
-          ]
-        : []),
-      ...warnings,
-    ],
-    [refusal, warnings, shape, mismatches, idleWalls],
+  const screen = useMemo(
+    () =>
+      screenState({
+        refusal,
+        mismatches,
+        walls,
+        segments,
+        shape,
+        warnings,
+      }),
+    [refusal, mismatches, walls, segments, shape, warnings],
   );
+
+  const warningsWithRefusal = screen.channel;
 
   /**
    * ПЕРЕСБОРКА ОДНОЙ СТЕНЫ.
@@ -1827,11 +1774,12 @@ export default function Workspace(props: WorkspaceProps) {
     [],
   );
 
-  const blockingWarnings = warningsWithRefusal.filter((w) => w.severity === 'blocking');
+  const blockingWarnings = screen.blocking;
   /** Расхождение, о котором сейчас говорит красная полоса, — если это оно. */
-  const staleShown = mismatches.find(
-    (mismatch) => `wall-stale-${mismatch.index}` === blockingWarnings[0]?.id,
-  );
+  const staleShown =
+    screen.rebuildWall === null
+      ? undefined
+      : mismatches.find((mismatch) => mismatch.index === screen.rebuildWall);
   const softWarnings = groupWarnings(
     warningsWithRefusal.filter((w) => w.severity === 'clarify'),
   );
@@ -1855,7 +1803,7 @@ export default function Workspace(props: WorkspaceProps) {
      * входе он снова упадёт, уже без человека рядом. Сохранение ждёт,
      * пока замерщик сведёт углы; состояние в шапке говорит об этом.
      */
-    if (refusal || mismatches.length > 0) {
+    if (screen.autosaveLocked) {
       setSaveState('error');
       return;
     }
@@ -1923,8 +1871,7 @@ export default function Workspace(props: WorkspaceProps) {
   }, [
     editedRuns,
     // Отказ сборки запирает запись: снялся — запись обязана проснуться.
-    refusal,
-    mismatches,
+    screen.autosaveLocked,
     // Соседние стены сохраняются наравне с рабочей: без них угловая
     // кухня открылась бы прямой.
     editedWalls,
@@ -2127,9 +2074,13 @@ export default function Workspace(props: WorkspaceProps) {
    * Несобравшуюся композицию нельзя ни показать клиенту, ни сохранить:
    * «Дальше» заперто на ЛЮБОМ шаге, а не только на результате.
    */
+  /*
+   * Защищённая часть замка — в `screen.nextLocked`: отказ сборки и ряд,
+   * не сходящийся со стеной. Шаги мастера и наличие объекта в базе к
+   * этому поведению не относятся и остаются здесь.
+   */
   const nextDisabled =
-    Boolean(refusal) ||
-    mismatches.length > 0 ||
+    screen.nextLocked ||
     (step === 'template' && !templateId && !freeMode) ||
     (step === 'result' && (blocked || !props.projectId));
 
@@ -2852,12 +2803,12 @@ export default function Workspace(props: WorkspaceProps) {
                     * Что попадёт в кадр — сказано ДО нажатия, а не после
                     * того, как клиент не нашёл на картинке вторую стену.
                     */}
-                  {renderCoverage && (
+                  {screen.renderCoverageNote && (
                     <p
                       data-render-coverage
                       className="max-w-[34ch] text-center text-[13px] leading-snug text-graphiteMw"
                     >
-                      {renderCoverage}
+                      {screen.renderCoverageNote}
                     </p>
                   )}
                   {/* Цена клика названа ДО нажатия, а не после отказа. */}
@@ -3233,7 +3184,7 @@ export default function Workspace(props: WorkspaceProps) {
             * она по мебели, которой не существует. На её месте — та же
             * причина словами, что и в красной полосе.
             */}
-          {refusal || mismatches.length > 0 ? (
+          {screen.priceHidden ? (
             <p
               data-composition-refused
               className="text-[15px] leading-snug text-alert"

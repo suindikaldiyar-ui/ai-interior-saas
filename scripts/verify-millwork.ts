@@ -115,6 +115,7 @@ import {
   wallMismatches,
 } from '../lib/millwork/walls';
 import { composeVariants, workingWall, workspaceInput } from '../lib/millwork/workspace';
+import { screenState } from '../lib/millwork/screen';
 import type { MillworkState } from '../lib/projects';
 import type { CatalogEntryFull } from '../types/catalog';
 import {
@@ -9062,13 +9063,18 @@ console.log('\nСохранённый ряд сверяется с длиной 
       openings: [],
       comms: [],
     });
+    /*
+     * Ноль расхождений — это сломанная сверка, а не «всё сошлось».
+     * Читать `[0]` из пустого списка нельзя: прогон падал бы
+     * исключением вместо внятной строки.
+     */
+    const shorter = wallMismatches(layout, [fresh[0], short, fresh[2]]);
     check(
       'ряд короче стены тоже расхождение, и сказано про пустое место',
-      wallMismatches(layout, [fresh[0], short, fresh[2]]).length === 1 &&
-        /останутся пустыми/.test(
-          wallMismatchMessage(wallMismatches(layout, [fresh[0], short, fresh[2]])[0]),
-        ),
-      wallMismatchMessage(wallMismatches(layout, [fresh[0], short, fresh[2]])[0]),
+      shorter.length === 1 && /останутся пустыми/.test(wallMismatchMessage(shorter[0])),
+      shorter.length === 0
+        ? 'СЕЛЕКТОР ВЕРНУЛ НОЛЬ РАСХОЖДЕНИЙ — короткий ряд прошёл молча'
+        : wallMismatchMessage(shorter[0]),
     );
 
     /*
@@ -11109,6 +11115,394 @@ console.log('\nКаталог фурнитуры организации');
       'а с подтверждёнными размерами состояние другое',
       hasMountingData(measuredMount),
       `Ø${measuredMount.mounting.holeDiameterMm} глубина ${measuredMount.mounting.holeDepthMm}`,
+    );
+  }
+}
+
+/* ═══════════  Защищённое поведение рабочего экрана  ═══════════ */
+
+/**
+ * СЕТЬ ПОД ТО, ЧТО ЖИВЁТ ТОЛЬКО В ОБОЛОЧКЕ.
+ *
+ * За последние заходы в `Workspace.tsx` сложилось поведение, которого не
+ * видно ни в одной формуле: отказ сборки словами, запертая цена, единый
+ * канал блокирующих, названная потеря правок. Снести оболочку сегодня —
+ * и пропажа не будет замечена ничем.
+ *
+ * ГРАНИЦА ПОКРЫТИЯ НАЗВАНА ЧЕСТНО. Проверки ниже делятся на два класса:
+ *
+ *   ПОЛНОЕ — поведение живёт в `lib`, и тест падает, если оно исчезнет.
+ *   ВХОД   — поведение собрано в JSX из значений, посчитанных в `lib`.
+ *            Тест держит ВХОД: если движок перестанет давать отказ или
+ *            расхождение, экран нечем будет показать. Само чтение этого
+ *            входа разметкой сеть пока не ловит — для этого нужна одна
+ *            правка продукта, названная в отчёте.
+ *
+ * Вёрстку тесты не трогают: ни классов, ни цветов, ни порядка. Иначе
+ * переработка оболочки падала бы на косметике, и сеть отключили бы.
+ */
+console.log('\nЗащищённое поведение рабочего экрана');
+{
+  const CEILING = 2700;
+  const WALLS = [
+    { id: 'w1', lengthMm: 3800, openings: [] as Opening[] },
+    { id: 'w2', lengthMm: 1800, openings: [] as Opening[] },
+  ];
+
+  const beam = (fromCornerMm: number, widthMm: number, dropMm: number): Opening => ({
+    id: `b-${fromCornerMm}`,
+    kind: 'beam',
+    fromCornerMm,
+    widthMm,
+    sillMm: 0,
+    heightMm: dropMm,
+  });
+
+  /* ─── 1. ПОЛНОЕ · CompositionAttempt: отказ со словами, а не null ─── */
+
+  const refused = tryBuildComposition({
+    kind: 'corner_l',
+    walls: [WALLS[0]],
+    ceilingHeightMm: CEILING,
+    requirements: REQ,
+    comms: COMMS,
+  });
+
+  check(
+    'отказ сборки — состояние с причиной, а не null и не пустая композиция',
+    refused.state === 'refused' &&
+      typeof refused.reason === 'string' &&
+      refused.reason.trim().length > 20,
+    refused.state === 'refused'
+      ? refused.reason.slice(0, 90)
+      : 'СБОРКА НЕ ОТКАЗАЛА — показывать будет нечего',
+  );
+
+  check(
+    'и причина названа словами, а не кодом ошибки',
+    refused.state === 'refused' &&
+      /[а-яё]{4,}/i.test(refused.reason) &&
+      !/Error|undefined|null|at /.test(refused.reason),
+    refused.state === 'refused' ? refused.reason.slice(0, 90) : 'ПРИЧИНЫ НЕТ',
+  );
+
+  const built = tryBuildComposition({
+    kind: 'corner_l',
+    walls: WALLS,
+    ceilingHeightMm: CEILING,
+    requirements: REQ,
+    comms: COMMS,
+  });
+
+  check(
+    'собравшаяся композиция отказом не притворяется',
+    built.state === 'built' && built.composition.segments.length === 2,
+    built.state === 'built'
+      ? `${built.composition.segments.length} сегмента`
+      : 'СОБРАТЬСЯ НЕ СМОГЛА',
+  );
+
+  if (built.state !== 'built') {
+    check('дальше мерить нечем', false, 'КОМПОЗИЦИЯ НЕ СОБРАЛАСЬ');
+  } else {
+    const layout = built.composition;
+    const segments = layout.segments.map((segment) => segment.run);
+
+    /* ─── 2. ВХОД · цена прячется по двум условиям, и оба измеримы ─── */
+
+    /*
+     * Расхождение берём на стене, где оно возникает: стена 1140, угол
+     * съел 660, полезных 480 — а ряд собран на все 1140. На стене 1800
+     * полезная длина как раз 1140, и расхождения там нет вовсе.
+     */
+    const narrow = tryBuildComposition({
+      kind: 'corner_l',
+      walls: [WALLS[0], { id: 'w2', lengthMm: 1140, openings: [] }],
+      ceilingHeightMm: CEILING,
+      requirements: REQ,
+      comms: COMMS,
+    });
+
+    check(
+      'узкая стена для замера расхождения собралась',
+      narrow.state === 'built',
+      narrow.state === 'built'
+        ? `полезная ${narrow.composition.segments[1].run.lengthMm} мм при стене 1140`
+        : 'СОБРАТЬСЯ НЕ СМОГЛА — расхождение мерить не на чем',
+    );
+
+    const narrowLayout = narrow.state === 'built' ? narrow.composition : layout;
+    const stale = buildRun({
+      lengthMm: 1140,
+      ceilingHeightMm: CEILING,
+      requirements: REQ,
+      openings: [],
+      comms: COMMS,
+    });
+    const mismatches = wallMismatches(narrowLayout, [
+      narrowLayout.segments[0].run,
+      stale,
+    ]);
+
+    /*
+     * Ноль расхождений — это сломанная сверка, а не «всё сошлось»: ряд
+     * 1140 на полезных 480 обязан её поднять. Падаем внятной строкой, а
+     * не исключением на `mismatches[0]`.
+     */
+    check(
+      'вход для решений есть: отказ и расхождение — два измеримых состояния',
+      refused.state === 'refused' && mismatches.length === 1,
+      mismatches.length === 0
+        ? 'СЕЛЕКТОР ВЕРНУЛ НОЛЬ РАСХОЖДЕНИЙ — ряд 1140 на полезных 480 прошёл молча'
+        : `отказ: ${refused.state} · расхождений: ${mismatches.length}`,
+    );
+
+    check(
+      'и при собравшейся композиции без правок ни одного из них нет',
+      wallMismatches(layout, segments).length === 0,
+      `расхождений ${wallMismatches(layout, segments).length}`,
+    );
+
+    /* ═══ РЕШЕНИЯ ЭКРАНА · то, что раньше жило в разметке ═══ */
+
+    const wallsOf = (from: typeof layout) =>
+      from.segments.map((segment) => ({ lengthMm: segment.wallLengthMm }));
+
+    /** Экран при отказе сборки. */
+    const onRefusal = screenState({
+      refusal: refused.state === 'refused' ? { reason: refused.reason } : null,
+      mismatches: [],
+      walls: wallsOf(layout),
+      segments,
+      shape: 'corner_l',
+      warnings: [],
+    });
+
+    /** Экран при ряде, не сходящемся со стеной. */
+    const onMismatch = screenState({
+      refusal: null,
+      mismatches,
+      walls: wallsOf(narrowLayout),
+      segments: narrowLayout.segments.map((segment) => segment.run),
+      shape: 'corner_l',
+      warnings: [],
+    });
+
+    /** Экран при обычной собравшейся композиции. */
+    const onNormal = screenState({
+      refusal: null,
+      mismatches: [],
+      walls: wallsOf(layout),
+      segments,
+      shape: 'corner_l',
+      warnings: [],
+    });
+
+    /*
+     * Пустой вход — это не «всё в порядке», это нечем мерить решения.
+     */
+    check(
+      'три сценария экрана посчитаны и различимы',
+      onRefusal.channel.length > 0 && onMismatch.channel.length > 0 && mismatches.length > 0,
+      onRefusal.channel.length === 0 || onMismatch.channel.length === 0
+        ? 'СЕЛЕКТОР ВЕРНУЛ НОЛЬ СОСТОЯНИЙ — решения экрана мерить не на чем'
+        : `отказ ${onRefusal.channel.length} · расхождение ${onMismatch.channel.length} · обычный ${onNormal.channel.length}`,
+    );
+
+    check(
+      'цена спрятана при отказе и при расхождении, показана при обычной сборке',
+      onRefusal.priceHidden && onMismatch.priceHidden && !onNormal.priceHidden,
+      `отказ ${onRefusal.priceHidden} · расхождение ${onMismatch.priceHidden} · обычная ${onNormal.priceHidden}`,
+    );
+
+    check(
+      '«Дальше» заперто теми же двумя состояниями',
+      onRefusal.nextLocked && onMismatch.nextLocked && !onNormal.nextLocked,
+      `отказ ${onRefusal.nextLocked} · расхождение ${onMismatch.nextLocked} · обычная ${onNormal.nextLocked}`,
+    );
+
+    check(
+      'автосохранение не пишет при отказе и при расхождении',
+      onRefusal.autosaveLocked && onMismatch.autosaveLocked && !onNormal.autosaveLocked,
+      `отказ ${onRefusal.autosaveLocked} · расхождение ${onMismatch.autosaveLocked} · обычная ${onNormal.autosaveLocked}`,
+    );
+
+    check(
+      'отказ идёт в канал блокирующим и называет форму словами',
+      onRefusal.blocking.length === 1 &&
+        onRefusal.blocking[0].id === 'composition-refused' &&
+        /Угловая не сошлась/.test(onRefusal.blocking[0].message) &&
+        /отправить её клиенту нельзя/.test(onRefusal.blocking[0].message),
+      onRefusal.blocking[0]?.message.slice(0, 100) ?? 'КАНАЛ ПУСТ',
+    );
+
+    check(
+      'расхождение идёт тем же каналом и тоже блокирующим',
+      onMismatch.blocking.length === 1 &&
+        onMismatch.blocking[0].id === `wall-stale-${mismatches[0]?.index}` &&
+        onMismatch.blocking[0].severity === 'blocking',
+      onMismatch.blocking[0]?.id ?? 'КАНАЛ ПУСТ',
+    );
+
+    check(
+      'у обычной сборки блокирующих нет вовсе',
+      onNormal.blocking.length === 0,
+      `блокирующих ${onNormal.blocking.length}`,
+    );
+
+    check(
+      'кнопка пересборки указывает на ту стену, о которой говорит полоса',
+      onMismatch.rebuildWall === mismatches[0]?.index &&
+        onRefusal.rebuildWall === null &&
+        onNormal.rebuildWall === null,
+      `расхождение → ${onMismatch.rebuildWall} · отказ → ${onRefusal.rebuildWall} · обычная → ${onNormal.rebuildWall}`,
+    );
+
+    /* ─── Потеря правок названа ДО нажатия ─── */
+
+    const message = mismatches[0] ? wallMismatchMessage(mismatches[0]) : '';
+    check(
+      'кнопка пересборки называет потерю правок ДО нажатия',
+      /правки по ней придётся сделать заново/i.test(message),
+      message,
+    );
+
+    check(
+      'и называет последствие числом, а не просто «не сходится»',
+      /\d+\s*мм/.test(message) && /сдвинет соседний ряд/.test(message),
+      message.slice(0, 110),
+    );
+
+    const short = buildRun({
+      lengthMm: 300,
+      ceilingHeightMm: CEILING,
+      requirements: { ...REQ, mode: 'free', appliances: [], sections: [] },
+      openings: [],
+      comms: [],
+    });
+    const shortFound = wallMismatches(layout, [segments[0], short]);
+    check(
+      'короткий ряд объясняется своим последствием, а не тем же текстом',
+      shortFound.length === 1 && /останутся пустыми/.test(wallMismatchMessage(shortFound[0])),
+      shortFound.length === 0
+        ? 'СЕЛЕКТОР ВЕРНУЛ НОЛЬ РАСХОЖДЕНИЙ на коротком ряду'
+        : wallMismatchMessage(shortFound[0]).slice(0, 100),
+    );
+
+    /* ─── Замеренная стена без мебели ─── */
+
+    /*
+     * Две стены в замере, прямая форма — вторая остаётся без мебели, и
+     * строка обязана назвать её по имени и числом.
+     */
+    const asLinear = screenState({
+      refusal: null,
+      mismatches: [],
+      walls: wallsOf(layout),
+      segments: [segments[0]],
+      shape: 'linear',
+      warnings: [],
+    });
+
+    check(
+      'замеренная стена без мебели названа именем, длиной и формой',
+      Boolean(asLinear.idleWallsNote) &&
+        /Стена Б \(1800 мм\)/.test(asLinear.idleWallsNote ?? '') &&
+        /замерена, но мебели на ней нет/.test(asLinear.idleWallsNote ?? '') &&
+        /Прямая ставит мебель на одну стену/.test(asLinear.idleWallsNote ?? ''),
+      asLinear.idleWallsNote ?? 'СТРОКИ НЕТ',
+    );
+
+    check(
+      'и она идёт уточнением, а не блокирующим',
+      asLinear.channel.some((w) => w.id === 'walls-idle' && w.severity === 'clarify') &&
+        asLinear.blocking.length === 0,
+      asLinear.channel.map((w) => `${w.id}:${w.severity}`).join(' ') || 'КАНАЛ ПУСТ',
+    );
+
+    check(
+      'у угловой обе стены заняты — строки нет',
+      onNormal.idleWallsNote === null,
+      String(onNormal.idleWallsNote),
+    );
+
+    /* ─── В визуализацию попадёт один ряд ─── */
+
+    check(
+      'строка про визуализацию называет, что в кадр попадёт только стена А',
+      Boolean(onNormal.renderCoverageNote) &&
+        /только стена а/i.test(onNormal.renderCoverageNote ?? '') &&
+        /Стена Б/.test(onNormal.renderCoverageNote ?? '') &&
+        /в картинку не попадут/.test(onNormal.renderCoverageNote ?? ''),
+      onNormal.renderCoverageNote ?? 'СТРОКИ НЕТ',
+    );
+
+    check(
+      'у прямой кухни строки про визуализацию нет вовсе',
+      asLinear.renderCoverageNote === null,
+      String(asLinear.renderCoverageNote),
+    );
+
+    /* ─── 7. ПОЛНОЕ · ступень под выступом названа в обе стороны ─── */
+
+    const withBeam = (drop: number) =>
+      buildRun({
+        lengthMm: DEMO_PROJECT.lengthMm,
+        ceilingHeightMm: CEILING,
+        requirements: REQ,
+        openings: [beam(1600, 600, drop)],
+        comms: COMMS,
+      });
+
+    const up = beamWarnings(withBeam(300));
+    const down = beamWarnings(withBeam(900));
+
+    check(
+      'ступень под выступом названа, когда шкаф ВЫШЕ соседей',
+      up.length > 0 && /шкаф выше на \d+ мм/.test(up[0].message),
+      up.length > 0 ? up[0].message : 'СЛОВ НЕТ',
+    );
+
+    check(
+      'и когда НИЖЕ — тем же каналом, другим словом',
+      down.length > 0 && /шкаф ниже на \d+ мм/.test(down[0].message),
+      down.length > 0 ? down[0].message : 'СЛОВ НЕТ',
+    );
+
+    check(
+      'ряд без выступа о ступени молчит',
+      beamWarnings(
+        buildRun({
+          lengthMm: DEMO_PROJECT.lengthMm,
+          ceilingHeightMm: CEILING,
+          requirements: REQ,
+          openings: [],
+          comms: COMMS,
+        }),
+      ).length === 0,
+      'без ригеля предупреждений нет',
+    );
+
+    /* ─── 8. ПОЛНОЕ · единый канал: у каждого состояния есть текст ─── */
+
+    /*
+     * Блокирующие идут одной полосой, и это значит одно: у КАЖДОГО
+     * состояния, которое её зажигает, есть строка словами. Пустая строка
+     * в этом канале — красная полоса без объяснения.
+     */
+    const channel: [string, string][] = [
+      ['отказ сборки', refused.state === 'refused' ? refused.reason : ''],
+      ['расхождение со стеной', message],
+      ['ступень под выступом', up[0]?.message ?? ''],
+    ];
+
+    const mute = channel.filter(([, text]) => text.trim().length < 20);
+    check(
+      'у каждого состояния единого канала есть текст словами',
+      mute.length === 0 && channel.length === 3,
+      mute.length > 0
+        ? `БЕЗ ТЕКСТА: ${mute.map(([name]) => name).join(', ')}`
+        : channel.map(([name]) => name).join(' · '),
     );
   }
 }
