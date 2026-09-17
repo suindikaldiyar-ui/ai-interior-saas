@@ -46,7 +46,7 @@ export default function LeaderLines({ anchors, lengthMm, ceilingMm, scale }: Pro
   const unitsPerMm = Math.abs(scale.yOf(0) - scale.yOf(1000)) / 1000;
   const minGapMm = unitsPerMm > 0 ? (scale.fontSize * 1.35) / unitsPerMm : 0;
 
-  const { left, right } = layoutLeaders(anchors, { lengthMm, ceilingMm, minGapMm });
+  const { left, right, hidden } = layoutLeaders(anchors, { lengthMm, ceilingMm, minGapMm });
   const line = 'var(--blueprint)';
 
   const draw = (side: 'left' | 'right', list: ReturnType<typeof layoutLeaders>['left']) =>
@@ -115,6 +115,26 @@ export default function LeaderLines({ anchors, lengthMm, ceilingMm, scale }: Pro
     <g data-leaders pointerEvents="none">
       {draw('left', left)}
       {draw('right', right)}
+
+      {/*
+        * ЧТО НЕ ПОМЕСТИЛОСЬ — НАЗВАНО ЧИСЛОМ.
+        *
+        * Подпись внахлёст не читается, поэтому лишние выноски не
+        * рисуются. Молча пропавшая подпись читается как забытый
+        * материал, а материал никуда не делся: он в легенде листа.
+        */}
+      {hidden.length > 0 && (
+        <text
+          data-leaders-hidden={hidden.length}
+          x={scale.drawLeft - scale.marginUnits}
+          y={scale.yOf(0)}
+          fontSize={scale.fontSize}
+          fill={line}
+          textAnchor="start"
+        >
+          ещё {hidden.length} — в легенде листа
+        </text>
+      )}
     </g>
   );
 }

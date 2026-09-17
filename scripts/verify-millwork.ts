@@ -4074,6 +4074,272 @@ console.log('\nВыноски с материалами');
   check('выноски детерминированы', JSON.stringify(again) === JSON.stringify(anchors));
 }
 
+/* ═══════════  Раскладка выносок  ═══════════ */
+
+/**
+ * ВЫНОСКИ НЕ ПЕРЕСЕКАЮТСЯ — НИ ПОЛКАМИ, НИ ЛИНИЯМИ.
+ *
+ * Раскладка разводила ПОЛКИ по высоте и на этом останавливалась, а линия
+ * от детали к полке шла своей диагональю: восемь диагоналей из разных
+ * точек в одну кромку — это веер, который режет и себя, и чужие подписи.
+ * Проверка при этом была зелёной: она смотрела на полки.
+ *
+ * Меряем то, что видно на листе: отрезки, а не габариты. Габарит
+ * диагонали накрывает пол-листа, и по нему первая версия проверки
+ * насчитала 35 несуществующих пересечений (ловушка 264).
+ */
+console.log('\nРаскладка выносок');
+{
+  /** Пересекаются ли отрезки. Касание общим концом пересечением не считаем. */
+  const crosses = (
+    a1: { x: number; y: number },
+    a2: { x: number; y: number },
+    b1: { x: number; y: number },
+    b2: { x: number; y: number },
+  ): boolean => {
+    const side = (p: { x: number; y: number }, q: { x: number; y: number }, r: { x: number; y: number }) =>
+      Math.sign((q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x));
+
+    const d1 = side(a1, a2, b1);
+    const d2 = side(a1, a2, b2);
+    const d3 = side(b1, b2, a1);
+    const d4 = side(b1, b2, a2);
+
+    // Общий конец — это излом соседних выносок на одной кромке, не наложение.
+    const shares = (p: { x: number; y: number }, q: { x: number; y: number }) =>
+      Math.abs(p.x - q.x) < 0.5 && Math.abs(p.y - q.y) < 0.5;
+    if (shares(a1, b1) || shares(a1, b2) || shares(a2, b1) || shares(a2, b2)) return false;
+
+    return d1 !== d2 && d3 !== d4;
+  };
+
+  /** Линия выноски в миллиметрах ряда: точка на детали → излом на кромке. */
+  const lineOf = (leader: { xMm: number; yMm: number; shelfYMm: number; side: string }, lengthMm: number) => ({
+    from: { x: leader.xMm, y: leader.yMm },
+    to: { x: leader.side === 'left' ? 0 : lengthMm, y: leader.shelfYMm },
+  });
+
+  const cases: { title: string; run: Run; production: ProductionSettings }[] = [];
+
+  for (const [school, production] of [
+    ['цех по умолчанию', DEFAULT_PRODUCTION],
+    [
+      'цех А 550/350',
+      {
+        ...DEFAULT_PRODUCTION,
+        depths: { baseMm: 550, upperMm: 350, mezzanineMm: 550 },
+        heights: { plinthMm: 100, carcassMm: 760, countertopMm: 40, apronMm: 600 },
+      } as ProductionSettings,
+    ],
+  ] as const) {
+    cases.push({
+      title: `демо-ряд · ${school}`,
+      run: buildRun({ ...baseInput, production }),
+      production,
+    });
+
+    const corner = tryBuildComposition({
+      kind: 'corner_l',
+      walls: [
+        { id: 'w1', lengthMm: 3800, openings: [] },
+        { id: 'w2', lengthMm: 1740, openings: [] },
+      ],
+      ceilingHeightMm: 2700,
+      requirements: REQ,
+      comms: COMMS,
+      production,
+    });
+
+    if (corner.state === 'built') {
+      corner.composition.segments.forEach((segment, i) => {
+        cases.push({
+          title: `угловая, стена ${i + 1} · ${school}`,
+          run: segment.run,
+          production,
+        });
+      });
+    }
+  }
+
+  check(
+    'ряды для проверки собрались — выноски есть на чём мерить',
+    cases.length >= 6,
+    cases.length === 0 ? 'РЯДОВ НЕТ — раскладку проверять не на чем' : `рядов ${cases.length}`,
+  );
+
+  const report: string[] = [];
+  let shelfHits = 0;
+  let lineHits = 0;
+  let farHits = 0;
+  let emptyCase = '';
+
+  for (const one of cases) {
+    const anchors = buildLeaders(one.run, buildPanels({ run: one.run, production: one.production }));
+    if (anchors.length === 0) {
+      emptyCase = one.title;
+      continue;
+    }
+
+    /*
+     * Зазор тот же, что считает лист: строка текста, пересчитанная в
+     * миллиметры модели. 340 мм — то, что даёт 1:25 на демо-ряду.
+     */
+    const minGapMm = 340;
+    const layout = layoutLeaders(anchors, {
+      lengthMm: one.run.lengthMm,
+      ceilingMm: one.run.ceilingHeightMm,
+      minGapMm,
+    });
+
+    const placed = [...layout.left, ...layout.right];
+
+    // Полки одной стороны — горизонтали в одном поле: пересекаются при совпадении высоты.
+    let shelves = 0;
+    for (const side of [layout.left, layout.right]) {
+      for (let i = 0; i < side.length; i += 1) {
+        for (let j = i + 1; j < side.length; j += 1) {
+          if (Math.abs(side[i].shelfYMm - side[j].shelfYMm) < minGapMm - 1) shelves += 1;
+        }
+      }
+    }
+
+    let lines = 0;
+    for (let i = 0; i < placed.length; i += 1) {
+      for (let j = i + 1; j < placed.length; j += 1) {
+        const a = lineOf(placed[i], one.run.lengthMm);
+        const b = lineOf(placed[j], one.run.lengthMm);
+        if (crosses(a.from, a.to, b.from, b.to)) lines += 1;
+      }
+    }
+
+    /*
+     * НАД СКОЛЬКИМИ МОДУЛЯМИ ИДЁТ ЛИНИЯ.
+     *
+     * Ноль здесь невозможен и обещать его нельзя: точка выноски стоит НА
+     * детали внутри ряда, полка — в поле за рисунком, и между ними лежит
+     * мебель. Это число не проверка, а мера: по нему видно, что выноска
+     * уходит в БЛИЖАЙШЕЕ поле, а не через весь ряд.
+     */
+    let overModules = 0;
+    for (const leader of placed) {
+      const edge = leader.side === 'left' ? 0 : one.run.lengthMm;
+      const from = Math.min(leader.xMm, edge);
+      const to = Math.max(leader.xMm, edge);
+      overModules += one.run.modules.filter(
+        (unit) => unit.offsetMm + unit.widthMm > from && unit.offsetMm < to,
+      ).length;
+    }
+
+    /*
+     * Выноска уходит на ДАЛЬНЮЮ сторону только тогда, когда её
+     * собственная сторона уже полна: иначе линия шла бы через весь ряд
+     * без всякой нужды, а это и есть длинная линия, которая режет чужие.
+     */
+    const farSide = placed.filter(
+      (leader) => (leader.xMm < one.run.lengthMm / 2 ? 'left' : 'right') !== leader.side,
+    );
+    const ownSideFull =
+      farSide.length === 0 ||
+      layout.left.length + layout.right.length + layout.hidden.length > anchors.length - 1;
+
+    shelfHits += shelves;
+    lineHits += lines;
+    if (!ownSideFull) farHits += 1;
+
+    report.push(
+      `${one.title}: выносок ${placed.length}, полок ✕${shelves}, линий ✕${lines}, ` +
+        `над модулями ${overModules}, на дальней стороне ${farSide.length}, скрыто ${layout.hidden.length}`,
+    );
+  }
+
+  check(
+    'ни один ряд не остался без выносок',
+    emptyCase === '',
+    emptyCase === '' ? 'выноски есть у всех' : `ПУСТО: ${emptyCase} — мерить нечего`,
+  );
+
+  check(
+    'полки выносок не пересекаются попарно',
+    shelfHits === 0,
+    shelfHits === 0 ? 'наложений нет' : `наложений полок ${shelfHits}`,
+  );
+
+  check(
+    'линии от детали к полке не пересекаются попарно',
+    lineHits === 0,
+    lineHits === 0 ? 'пересечений нет' : `пересечений линий ${lineHits}`,
+  );
+
+  check(
+    'выноска уходит в ближнее поле, пока своё не переполнено',
+    farHits === 0,
+    farHits === 0 ? 'через весь ряд никто не тянется' : `рядов с ненужным переносом ${farHits}`,
+  );
+
+  /*
+   * ПЕРЕПОЛНЕНИЕ НЕ НАЛЕЗАЕТ, А НАЗЫВАЕТСЯ.
+   *
+   * Сорок выносок на стену 2700 мм не поместятся ни при какой раскладке:
+   * поле кончается. Раньше `spread` делил место поровну и уводил нижние
+   * полки под обрез листа — молча. Теперь лишние не рисуются, и лист
+   * говорит числом, сколько подписей ушло в легенду.
+   */
+  {
+    const one = cases[0];
+    const anchors = buildLeaders(one.run, buildPanels({ run: one.run, production: one.production }));
+    const many = Array.from({ length: 40 }, (_, i) => ({
+      ...anchors[i % anchors.length],
+      id: `many-${i}`,
+      xMm: (one.run.lengthMm * (i % 7)) / 7,
+    }));
+
+    const minGapMm = 340;
+    const tight = layoutLeaders(many, {
+      lengthMm: one.run.lengthMm,
+      ceilingMm: one.run.ceilingHeightMm,
+      minGapMm,
+    });
+
+    const drawn = [...tight.left, ...tight.right];
+
+    check(
+      'сорок выносок не налезают: лишние уходят в легенду и сосчитаны',
+      tight.hidden.length > 0 &&
+        drawn.length + tight.hidden.length === many.length &&
+        drawn.every((l) => l.shelfYMm > 0 && l.shelfYMm < one.run.ceilingHeightMm),
+      `нарисовано ${drawn.length}, в легенду ${tight.hidden.length} из ${many.length}`,
+    );
+
+    let tightCross = 0;
+    for (let i = 0; i < drawn.length; i += 1) {
+      for (let j = i + 1; j < drawn.length; j += 1) {
+        const a = lineOf(drawn[i], one.run.lengthMm);
+        const b = lineOf(drawn[j], one.run.lengthMm);
+        if (crosses(a.from, a.to, b.from, b.to)) tightCross += 1;
+      }
+    }
+
+    check(
+      'и то, что осталось на листе, по-прежнему не пересекается',
+      tightCross === 0,
+      tightCross === 0 ? 'пересечений нет' : `пересечений ${tightCross}`,
+    );
+
+    const again = layoutLeaders(many, {
+      lengthMm: one.run.lengthMm,
+      ceilingMm: one.run.ceilingHeightMm,
+      minGapMm,
+    });
+    check(
+      'раскладка выносок детерминирована: тот же лист — та же раскладка',
+      JSON.stringify(again) === JSON.stringify(tight),
+      `${tight.left.length}/${tight.right.length}/${tight.hidden.length}`,
+    );
+  }
+
+  for (const line of report) console.log(`       ${line}`);
+}
+
 /* ─────────────────────────  Аксонометрия  ───────────────────────── */
 
 console.log('\nАксонометрия');
