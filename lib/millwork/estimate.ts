@@ -9,7 +9,8 @@ import { allModules } from './layout';
 import { bearsCountertop, moduleCarcassHeightMm } from './fill';
 import { CORNER_HINGE_TITLE, liftKey, openingHardware } from './opening';
 import { buildPanels, panelMaterials } from './panels';
-import { DEFAULT_PRODUCTION, type ProductionSettings } from '@/types/catalog';
+import { DEFAULT_PRODUCTION, type HardwareItem, type ProductionSettings } from '@/types/catalog';
+import { resolveHardware } from './hardware';
 import { SLIDING_DOOR, displayLedMeters, sectionSpec, slidingDoorCount } from './sections';
 import { MODULE_VARIANTS, isSinkBase, variantEstimateKeys } from './moduleVariants';
 import { zoneProfile } from './zones';
@@ -17,6 +18,7 @@ import type {
   Estimate,
   EstimateLine,
   EstimateUnit,
+  Module,
   Run,
   VariantKey,
 } from '@/types/millwork';
@@ -41,6 +43,17 @@ type Draft = {
   title: string;
   unit: EstimateUnit;
   quantity: number;
+  /**
+   * ЦЕНА ВЫБРАННОЙ ПОЗИЦИИ КАТАЛОГА.
+   *
+   * Заполняется только там, где у модуля выбрана СВОЯ фурнитура: цена
+   * тогда берётся у позиции (`CatalogItem.price`), а не у типовой ставки
+   * статьи. Копией она нигде не лежит — сюда приходит по ссылке
+   * `Module.hardwareItemId` и дальше не хранится.
+   *
+   * Пусто — как раньше: ставка из `RateTable` по ключу статьи.
+   */
+  rate?: number;
 };
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
@@ -242,6 +255,12 @@ function sectionDrafts(run: Run): Draft[] {
 export function buildEstimateDrafts(
   run: Run,
   production: ProductionSettings = DEFAULT_PRODUCTION,
+  /**
+   * Фурнитура организации. Пусто — расчёт ровно такой, каким был до
+   * каталога: ни одна существующая смета от появления параметра не
+   * меняется.
+   */
+  hardwareItems: Map<string, HardwareItem> = new Map(),
 ): Draft[] {
   /*
    * Высоту и потолок больше не разбираем по кусочкам: всё, что считает
@@ -292,7 +311,45 @@ export function buildEstimateDrafts(
   let hinges = hardware.hinges;
   let slides = 0;
 
+  /**
+   * ВЫБРАННАЯ ФУРНИТУРА СЧИТАЕТСЯ СВОЕЙ СТРОКОЙ.
+   *
+   * Модуль, у которого выбрана позиция каталога, уходит из общей строки
+   * ряда в свою: там цена этой позиции. Количество при этом ТО ЖЕ — оно
+   * приходит из `openingHardware.byModule` и из числа фронтов, то есть
+   * из состава ряда. Каталог задаёт цену, а не второе количество.
+   *
+   * Ссылка не разрешилась (позицию удалили, отключили, открыли в другой
+   * организации, цена не задана) — модуль остаётся в общей строке и
+   * считается как раньше. Молчаливого нуля здесь нет: расхождение
+   * называет `hardwareWarnings` словами.
+   */
+  const picked = new Map<string, { item: HardwareItem; hinges: number; slides: number }>();
+
+  const pickOf = (unit: Module) => {
+    const link = resolveHardware(unit, hardwareItems);
+    if (link.state !== 'resolved') return null;
+
+    const seen = picked.get(link.item.id);
+    if (seen) return seen;
+
+    const fresh = { item: link.item, hinges: 0, slides: 0 };
+    picked.set(link.item.id, fresh);
+    return fresh;
+  };
+
   for (const unit of modules) {
+    const pick = pickOf(unit);
+    if (pick) {
+      /*
+       * Петли этого модуля — из того же разреза, что и итог ряда: числа
+       * накоплены одним циклом, и вычитание не может увести их в минус.
+       */
+      const own = hardware.byModule[unit.id]?.hinges ?? 0;
+      pick.hinges += own;
+      hinges -= own;
+    }
+
     if (unit.frontType === 'drawers') {
       /*
        * ЧИСЛО ЯЩИКОВ — ОДНА ВЕЛИЧИНА, И ЖИВЁТ ОНА В `fill`.
@@ -307,7 +364,8 @@ export function buildEstimateDrafts(
        * не получается в принципе.
        */
       const drawers = unit.fill?.drawerHeights.length ?? 0;
-      slides += drawers;
+      if (pick) pick.slides += drawers;
+      else slides += drawers;
     }
 
     /*
@@ -496,6 +554,34 @@ export function buildEstimateDrafts(
           },
         ]
       : []),
+    /*
+     * ВЫБРАННАЯ ФУРНИТУРА — ОТДЕЛЬНЫМИ СТРОКАМИ, ПО ЦЕНЕ КАТАЛОГА.
+     *
+     * Строка появляется только там, где позиция выбрана и разрешилась:
+     * у рядов без выбора этих строк нет вовсе, и сумма у них прежняя.
+     */
+    ...Array.from(picked.values()).flatMap((pick) => {
+      const rows: Draft[] = [];
+      if (pick.hinges > 0) {
+        rows.push({
+          key: `hardware_${pick.item.id}`,
+          title: `${pick.item.name} (петли)`,
+          unit: 'pcs',
+          quantity: pick.hinges,
+          rate: pick.item.price,
+        });
+      }
+      if (pick.slides > 0) {
+        rows.push({
+          key: `hardware_${pick.item.id}_slides`,
+          title: `${pick.item.name} (направляющие)`,
+          unit: 'set',
+          quantity: pick.slides,
+          rate: pick.item.price,
+        });
+      }
+      return rows;
+    }),
     // Четыре регулируемые опоры на каждый нижний модуль.
     { key: 'leg_support', title: 'Опоры регулируемые', unit: 'pcs', quantity: floorModules.length * 4 },
     { key: 'fasteners', title: 'Крепёж и эксцентрики', unit: 'percent', quantity: materials.carcassM2 },
@@ -640,13 +726,21 @@ export function buildEstimate(
    * production в одну функцию и не передаст в другую.
    */
   production: ProductionSettings = DEFAULT_PRODUCTION,
+  /** Фурнитура организации: цены выбранных позиций. Пусто — как раньше. */
+  hardwareItems: Map<string, HardwareItem> = new Map(),
 ): Estimate {
-  const drafts = buildEstimateDrafts(run, production);
+  const drafts = buildEstimateDrafts(run, production, hardwareItems);
   const disabled = new Set(disabledKeys);
   const priceSnapshot: Record<string, number> = {};
 
   const lines: EstimateLine[] = drafts.map((draft) => {
-    const rate = rates[draft.key] ?? 0;
+    /*
+     * Цена позиции каталога сильнее типовой ставки статьи: её выбрала
+     * организация именно для этого модуля. Второго места хранения при
+     * этом не появляется — в снимок цен она попадает тем же полем, что
+     * и остальные, и подписанный документ её удержит (ловушка 30).
+     */
+    const rate = draft.rate ?? rates[draft.key] ?? 0;
     priceSnapshot[draft.key] = rate;
 
     // Крепёж задаётся процентом от стоимости корпуса, а не ценой за м².
@@ -667,7 +761,7 @@ export function buildEstimate(
       rate,
       total,
       enabled: !disabled.has(draft.key),
-      missingRate: rates[draft.key] === undefined,
+      missingRate: draft.rate === undefined && rates[draft.key] === undefined,
     };
   });
 

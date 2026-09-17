@@ -126,6 +126,127 @@ export type CatalogEntryFull = CatalogItem & {
   assets: CatalogAsset[];
 };
 
+/* ─────────────────────────  Фурнитура организации  ───────────────────────── */
+
+/**
+ * ФУРНИТУРА — ЭТО ТОВАР КАТАЛОГА, А НЕ ВТОРАЯ ТАБЛИЦА.
+ *
+ * Петли, направляющие, крепёж и наполнение живут там же, где фасады и
+ * столешницы: одна `catalog_items` плюс поля `meta` (ловушка 19). Второй
+ * справочник под фурнитуру означал бы второй источник цен, а цена у
+ * позиции одна — `CatalogItem.price`.
+ *
+ * Здесь только ОПИСАНИЕ товара: чей бренд, какая модель, с доводчиком
+ * или без. Сколько их нужно — считает раскрой и состав ряда, и второго
+ * счёта каталог не заводит.
+ */
+export type HardwareCategory = 'hinge' | 'slide' | 'fastener' | 'filling' | 'other';
+
+export const HARDWARE_BRANDS = ['blum', 'hettich', 'hafele', 'boyard', 'gtv', 'dtc'] as const;
+export type HardwareBrand = (typeof HARDWARE_BRANDS)[number];
+
+/** Направляющие: телескоп, тандем, боксы. */
+export type SlideKind = 'telescopic' | 'tandem' | 'boxes';
+
+/** Крепёж: конфирмат, минификс, шкант, саморез. */
+export type FastenerKind = 'confirmat' | 'minifix' | 'dowel' | 'screw';
+
+/** Наполнение: штанга, карго, сушилка. */
+export type FillingKind = 'rod' | 'cargo' | 'dryer';
+
+/** Прочее: опоры, ручки, полкодержатели, подсветка. */
+export type OtherHardwareKind = 'legs' | 'handles' | 'shelf_supports' | 'led';
+
+/** Штуками или погонными метрами. */
+export type HardwarePricingUnit = 'piece' | 'meter';
+
+/**
+ * МОНТАЖНЫЕ РАЗМЕРЫ — ХРАНИЛИЩЕ ПОД БУДУЩУЮ ПРИСАДКУ.
+ *
+ * `null` здесь означает «подтверждённых данных нет», и это не то же
+ * самое, что ноль: по нулю цех просверлит отверстие на кромке. Пока
+ * значение не подтверждено производителем, присадка по этой позиции НЕ
+ * рассчитывается и операция сверления не создаётся.
+ *
+ * Поля заведены заранее, чтобы присадке было куда лечь, но в этом заходе
+ * их не читает никто: расчёт присадки не тронут.
+ */
+export type MountingData = {
+  /** Диаметр отверстия, мм. */
+  holeDiameterMm: number | null;
+  /** Глубина отверстия, мм. */
+  holeDepthMm: number | null;
+  /** Отступ от кромки детали, мм. */
+  edgeOffsetMm: number | null;
+  /** Отступ первого отверстия, мм. */
+  firstHoleOffsetMm: number | null;
+  /** Шаг между отверстиями, мм. */
+  pitchMm: number | null;
+  /** Отступ сверху, мм. */
+  topOffsetMm: number | null;
+  /** Отступ снизу, мм. */
+  bottomOffsetMm: number | null;
+  /** Присадка направляющей от дна, мм. */
+  runnerOffsetMm: number | null;
+  /** Прочие размеры производителя: имя → миллиметры. */
+  extra: Record<string, number | null>;
+};
+
+/** Ни одного подтверждённого размера: ровно это лежит у новой позиции. */
+export const EMPTY_MOUNTING: MountingData = {
+  holeDiameterMm: null,
+  holeDepthMm: null,
+  edgeOffsetMm: null,
+  firstHoleOffsetMm: null,
+  pitchMm: null,
+  topOffsetMm: null,
+  bottomOffsetMm: null,
+  runnerOffsetMm: null,
+  extra: {},
+};
+
+/** Описание фурнитуры в `meta` товара каталога. */
+export type HardwareMeta = {
+  category: HardwareCategory;
+  brand?: HardwareBrand;
+  /** Модель или тип производителя: «Clip top», «Tandembox antaro». */
+  model?: string;
+  /** Петля: с доводчиком или без. */
+  softClose?: boolean;
+  slideKind?: SlideKind;
+  fastenerKind?: FastenerKind;
+  fillingKind?: FillingKind;
+  otherKind?: OtherHardwareKind;
+  pricingUnit?: HardwarePricingUnit;
+  /**
+   * Валюта хранится, но НЕ пересчитывается: перевода курсов в продукте
+   * нет, и вводить его ради поля значило бы завести переключатель,
+   * который ничего не меняет (ловушка 148). Сегодня всё в тенге.
+   */
+  currency?: string;
+  mounting?: Partial<MountingData>;
+};
+
+/**
+ * Позиция каталога, прочитанная как фурнитура.
+ *
+ * `active` берётся у самого товара (`is_active`), а не дублируется в
+ * `meta`: два признака «включено» разошлись бы на первой же правке.
+ */
+export type HardwareItem = {
+  id: string;
+  orgId: string;
+  name: string;
+  article: string;
+  /** Цена позиции. Единственное место, где она лежит. */
+  price: number;
+  active: boolean;
+  /** Ключ статьи сметы: по нему позиция попадает в расчёт. */
+  estimateKey: string;
+  hardware: HardwareMeta;
+  mounting: MountingData;
+};
+
 /* ─────────────────────────  Цели назначения  ───────────────────────── */
 
 /**

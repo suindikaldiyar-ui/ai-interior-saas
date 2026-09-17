@@ -7,6 +7,11 @@
  */
 
 import { decodeCsvBuffer, normalizeUnit, parseCatalogCsv, parseCsv } from '../lib/csv';
+import {
+  hardwareByCategory,
+  hardwareCatalog,
+  hasMountingData,
+} from '../lib/millwork/hardware';
 import { buildSpec, quantityFor, specTotal, surfaceArea } from '../lib/catalog';
 import { roomFromAnalysis } from '../lib/roomFromAnalysis';
 import {
@@ -341,6 +346,145 @@ console.log('\nТиповой прайс');
     'обязательные статьи сметы в прайсе есть',
     REQUIRED_RATE_KEYS.every((key) => estimateKeys.includes(key)),
     REQUIRED_RATE_KEYS.filter((key) => !estimateKeys.includes(key)).join(', '),
+  );
+}
+
+/* ───────────  Фурнитура — позиции того же каталога  ─────────── */
+
+/**
+ * ВТОРОЙ ТАБЛИЦЫ ПОД ФУРНИТУРУ НЕТ.
+ *
+ * Петли и направляющие лежат в `catalog_items` рядом с фасадами: одна
+ * таблица плюс поля `meta` (ловушка 19). Здесь проверяется чтение этих
+ * полей — что позиция распознаётся как фурнитура, что цена берётся у
+ * товара, и что монтажные размеры у новой позиции ПУСТЫ.
+ */
+console.log('\nФурнитура в каталоге организации');
+{
+  const entry = (id: string, meta: Record<string, unknown>, price = 3400, active = true) =>
+    ({
+      id,
+      org_id: 'org-1',
+      category_id: 'cat-hw',
+      article: id.toUpperCase(),
+      name_ru: 'Петля Blum Clip top',
+      name_kk: '',
+      description: '',
+      price,
+      unit: 'piece',
+      dimensions: {},
+      tiling: {},
+      meta,
+      is_active: active,
+      category: { id: 'cat-hw', org_id: 'org-1', key: 'hardware', name_ru: 'Фурнитура', name_kk: '', applies_to: 'object', unit: 'piece', sort: 0 },
+      assets: [],
+    }) as unknown as CatalogEntryFull;
+
+  const items = [
+    entry('hw-blum', {
+      estimateKey: 'hinge_standard',
+      hardware: { category: 'hinge', brand: 'blum', model: 'Clip top', softClose: true },
+    }),
+    entry('hw-slide', {
+      estimateKey: 'slide_standard',
+      hardware: { category: 'slide', brand: 'hettich', slideKind: 'tandem' },
+    }, 14000),
+    /* Обычный товар без описания фурнитуры: фурнитурой он не считается. */
+    entry('front-ldsp', { estimateKey: 'front_panel' }, 26000),
+  ];
+
+  const catalog = hardwareCatalog(items);
+
+  /*
+   * Пустой каталог — это не «фурнитуры нет», это ненайденные позиции.
+   * Падаем здесь, а не проходим по пустой карте.
+   */
+  check(
+    'фурнитура читается из позиций каталога',
+    catalog.size === 2,
+    catalog.size === 0
+      ? 'СЕЛЕКТОР ВЕРНУЛ НОЛЬ ПОЗИЦИЙ ФУРНИТУРЫ'
+      : `${catalog.size} из ${items.length} позиций`,
+  );
+
+  check(
+    'товар без описания фурнитурой не считается',
+    !catalog.has('front-ldsp'),
+    catalog.has('front-ldsp') ? 'ФАСАД ПОПАЛ В ФУРНИТУРУ' : 'фасад остался фасадом',
+  );
+
+  const blum = catalog.get('hw-blum');
+  check(
+    'бренд, модель и доводчик читаются как поля, а не как часть ключа',
+    blum?.hardware.brand === 'blum' &&
+      blum?.hardware.model === 'Clip top' &&
+      blum?.hardware.softClose === true,
+    `${blum?.hardware.brand} · ${blum?.hardware.model} · доводчик ${blum?.hardware.softClose}`,
+  );
+
+  check(
+    'цена берётся у товара, второго места хранения нет',
+    blum?.price === 3400,
+    `${blum?.price} ₸`,
+  );
+
+  check(
+    'направляющие различаются типом',
+    catalog.get('hw-slide')?.hardware.slideKind === 'tandem',
+    String(catalog.get('hw-slide')?.hardware.slideKind),
+  );
+
+  /* ── Монтажные размеры у новой позиции ПУСТЫ ── */
+  check(
+    'у новой позиции монтажных размеров нет — присадка не рассчитывается',
+    blum ? !hasMountingData(blum) : false,
+    blum
+      ? `Ø${blum.mounting.holeDiameterMm} глубина ${blum.mounting.holeDepthMm} шаг ${blum.mounting.pitchMm}`
+      : 'ПОЗИЦИИ НЕТ',
+  );
+
+  const withMount = hardwareCatalog([
+    entry('hw-measured', {
+      estimateKey: 'hinge_standard',
+      hardware: {
+        category: 'hinge',
+        brand: 'blum',
+        mounting: { holeDiameterMm: 35, holeDepthMm: 13 },
+      },
+    }),
+  ]).get('hw-measured');
+
+  check(
+    'подтверждённые размеры читаются, неподтверждённые остаются null',
+    withMount?.mounting.holeDiameterMm === 35 &&
+      withMount?.mounting.holeDepthMm === 13 &&
+      withMount?.mounting.pitchMm === null &&
+      withMount?.mounting.edgeOffsetMm === null,
+    `Ø${withMount?.mounting.holeDiameterMm} · глубина ${withMount?.mounting.holeDepthMm} · ` +
+      `шаг ${withMount?.mounting.pitchMm} · отступ ${withMount?.mounting.edgeOffsetMm}`,
+  );
+
+  check(
+    'мусор вместо размера не становится нулём',
+    hardwareCatalog([
+      entry('hw-junk', {
+        estimateKey: 'hinge_standard',
+        hardware: { category: 'hinge', mounting: { holeDiameterMm: 'тридцать пять' } },
+      }),
+    ]).get('hw-junk')?.mounting.holeDiameterMm === null,
+    'строка вместо числа → null, а не 0',
+  );
+
+  /* ── Отключённая позиция не попадает в выбор ── */
+  const withOff = hardwareCatalog([
+    entry('hw-off', { estimateKey: 'hinge_standard', hardware: { category: 'hinge' } }, 900, false),
+    items[0],
+  ]);
+  check(
+    'отключённая позиция в выбор не предлагается',
+    hardwareByCategory(withOff, 'hinge').length === 1 &&
+      hardwareByCategory(withOff, 'hinge')[0].id === 'hw-blum',
+    hardwareByCategory(withOff, 'hinge').map((i) => i.id).join(' ') || 'пусто',
   );
 }
 

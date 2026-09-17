@@ -239,6 +239,29 @@ export type OpeningHardware = {
   handles: number;
   /** Модули, у которых направление не выбрано: смета говорит о них словами. */
   assumed: { label: string; opening: FrontOpening; basis: string }[];
+  /**
+   * ТО ЖЕ САМОЕ, РАЗЛОЖЕННОЕ ПО МОДУЛЯМ.
+   *
+   * Нужно там, где у модуля выбрана СВОЯ фурнитура из каталога: её цена
+   * берётся у позиции, а не у общей ставки ряда, и посчитать штуки
+   * отдельно от общего итога нельзя — они разойдутся.
+   *
+   * Поэтому это не второй счёт, а тот же: числа накапливаются В ТОМ ЖЕ
+   * ЦИКЛЕ и теми же прибавками, что и итоги выше. Сумма разреза по
+   * модулям равна итогу по построению.
+   */
+  byModule: Record<string, ModuleHardware>;
+};
+
+/** Фурнитура одного модуля: те же величины, что в итоге ряда. */
+export type ModuleHardware = {
+  hinges: number;
+  cornerHinges: number;
+  lifts: number;
+  flaps: number;
+  handleBar: number;
+  handleProfileMm: number;
+  handlePush: number;
 };
 
 export function openingHardware(
@@ -256,18 +279,54 @@ export function openingHardware(
     flaps: 0,
     handles: 0,
     assumed: [],
+    byModule: {},
+  };
+
+  /**
+   * Разрез по модулям заполняется ТЕМИ ЖЕ прибавками, что и итог: любая
+   * правка правила меняет оба числа разом, и разойтись им негде.
+   */
+  let current: ModuleHardware = {
+    hinges: 0,
+    cornerHinges: 0,
+    lifts: 0,
+    flaps: 0,
+    handleBar: 0,
+    handleProfileMm: 0,
+    handlePush: 0,
+  };
+  const add = (field: keyof ModuleHardware, value: number) => {
+    current[field] += value;
+    if (field === 'handleProfileMm') result.handleProfileMm += value;
+    else if (field === 'handleBar') result.handleBar += value;
+    else if (field === 'handlePush') result.handlePush += value;
+    else if (field === 'cornerHinges') result.cornerHinges += value;
+    else if (field === 'lifts') result.lifts += value;
+    else if (field === 'flaps') result.flaps += value;
+    else result.hinges += value;
   };
 
   /** Ручки на фасадах: сколько и какого типа. */
   const addHandles = (unit: Module, fronts: number) => {
     const { handle } = handleOf(unit, run);
-    if (handle === 'bar') result.handleBar += fronts;
-    else if (handle === 'profile') result.handleProfileMm += unit.widthMm;
-    else result.handlePush += fronts;
+    if (handle === 'bar') add('handleBar', fronts);
+    else if (handle === 'profile') add('handleProfileMm', unit.widthMm);
+    else add('handlePush', fronts);
     result.handles += fronts;
   };
 
   for (const { unit, heightMm, index = 0, total = 1 } of units) {
+    current = {
+      hinges: 0,
+      cornerHinges: 0,
+      lifts: 0,
+      flaps: 0,
+      handleBar: 0,
+      handleProfileMm: 0,
+      handlePush: 0,
+    };
+    result.byModule[unit.id] = current;
+
     /*
      * ЯЩИКИ И ФАСАДЫ ВСТРОЙКИ — ТОЖЕ ФАСАДЫ.
      *
@@ -299,8 +358,8 @@ export function openingHardware(
 
     if (isSwing(opening)) {
       const perDoor = hingesPerDoor(heightMm);
-      if (isCorner) result.cornerHinges += doors * perDoor;
-      else result.hinges += doors * perDoor;
+      if (isCorner) add('cornerHinges', doors * perDoor);
+      else add('hinges', doors * perDoor);
     }
 
     if (opening === 'lift') {
@@ -309,12 +368,12 @@ export function openingHardware(
        * Число створок здесь не умножается — модуль с подъёмником имеет
        * одну створку, и операция это обеспечивает.
        */
-      result.lifts += 1;
+      add('lifts', 1);
     }
 
     if (opening === 'flap') {
-      result.flaps += 1;
-      result.hinges += hingesPerDoor(heightMm);
+      add('flaps', 1);
+      add('hinges', hingesPerDoor(heightMm));
     }
 
     /*

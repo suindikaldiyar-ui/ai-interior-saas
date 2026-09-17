@@ -114,7 +114,7 @@ import {
   wallMismatchMessage,
   wallMismatches,
 } from '../lib/millwork/walls';
-import { composeVariants, workingWall } from '../lib/millwork/workspace';
+import { composeVariants, workingWall, workspaceInput } from '../lib/millwork/workspace';
 import type { MillworkState } from '../lib/projects';
 import type { CatalogEntryFull } from '../types/catalog';
 import {
@@ -123,7 +123,17 @@ import {
   moduleDepthMm,
   upperBottomFor,
 } from '../lib/millwork/fill';
-import { openingOf, openingRejection, openingsFor } from '../lib/millwork/opening';
+import {
+  openingHardware,
+  openingOf,
+  openingRejection,
+  openingsFor,
+} from '../lib/millwork/opening';
+import {
+  hardwareWarnings,
+  hasMountingData,
+  resolveHardware,
+} from '../lib/millwork/hardware';
 import { columnNichesSumMm, ovenBottomMm } from '../lib/millwork/fill';
 import { beamBottomMm, beamDropMm } from '../lib/millwork/ceiling';
 import {
@@ -179,7 +189,9 @@ import {
 import {
   DEFAULT_ALLOWANCES,
   DEFAULT_PRODUCTION,
+  EMPTY_MOUNTING,
   productionSettings,
+  type HardwareItem,
   type ProductionSettings,
 } from '../types/catalog';
 import type {
@@ -228,6 +240,7 @@ import type {
   Run,
   RunRequirements,
   SectionKind,
+  VariantKey,
 } from '../types/millwork';
 import { allModules } from '../lib/millwork/layout';
 import {
@@ -10703,6 +10716,399 @@ console.log('\nЧертёж рисует те же фронты, что уход
       'без фронтов чертёж не выдумывает ящики',
       bareDrawn.length === MODULE_VARIANTS.drawers.drawerCount,
       `нарисовано ${bareDrawn.length}, объявлено вариантом ${MODULE_VARIANTS.drawers.drawerCount}`,
+    );
+  }
+}
+
+/* ─────────  Число ящиков меняется НА ПУТИ ЭКРАНА, а не только в движке  ───────── */
+
+/**
+ * ТЕСТ ОБЯЗАН ИДТИ ДОРОГОЙ ЭКРАНА.
+ *
+ * Прошлые проверки звали `applyOps` на ряде, собранном тут же. Экран
+ * идёт иначе: `workspaceInput` → `composeVariants` → `activeRun` →
+ * `runOps` пишет в `editedRuns` → `composeVariants` СНОВА. Между этими
+ * шагами ряд пересобирается, идентификаторы выводятся заново, а
+ * наполнение обязано доехать до раскроя и до чертежа.
+ *
+ * Здесь пройден весь этот круг, и модуль берётся тем же селектором, что
+ * у панели состава: `run.modules.find((m) => m.id === selectedModuleId)`
+ * (RunEditor.tsx:155).
+ */
+console.log('\nЧисло ящиков меняется на пути экрана');
+{
+  const input = workspaceInput({
+    title: DEMO_PROJECT.title,
+    zone: DEMO_PROJECT.zone,
+    measurement: DEMO_MEASUREMENT,
+    requirements: REQ,
+    rates: DEMO_RATES,
+    wallId: 'w1',
+    cornerAt: DEMO_PROJECT.cornerAt,
+  });
+  const disabled = { basic: [], optimal: [], premium: [] } as Record<VariantKey, string[]>;
+
+  /** Ровно то, что читает экран: активный ряд выбранной комплектации. */
+  let editedRuns: Partial<Record<VariantKey, Run>> = {};
+  const activeRun = () =>
+    composeVariants(input, disabled, editedRuns).find((v) => v.key === 'optimal')!.run;
+
+  /* Тот же селектор, что у панели состава. */
+  const selected = activeRun().modules.find(
+    (unit) => !unit.appliance && unit.kind === 'base' && !unit.column,
+  );
+
+  check(
+    'на экране есть модуль, у которого поле «Фасад» доступно',
+    Boolean(selected),
+    selected
+      ? `${selected.id} ${selected.widthMm} мм`
+      : 'СЕЛЕКТОР ВЕРНУЛ НОЛЬ МОДУЛЕЙ — менять число ящиков не у чего',
+  );
+
+  if (!selected) {
+    check('дальше мерить нечем', false, 'ОБЫЧНОГО МОДУЛЯ В РЯДУ НЕТ');
+  } else {
+    const drift: string[] = [];
+
+    for (const n of [3, 1, 2]) {
+      /* Ровно то, что делает `runOps`: applyOps от activeRun → editedRuns. */
+      const next = applyOps({
+        run: activeRun(),
+        requirements: REQ,
+        ops: [{ op: 'set_fronts', moduleId: selected.id, drawerCount: n }],
+        openings: input.openings,
+      });
+      editedRuns = { ...editedRuns, optimal: next };
+
+      /* И читаем ТО, что после этого показывает экран. */
+      const shown = activeRun();
+      const unit = shown.modules.find((m) => m.id === selected.id);
+      if (!unit) {
+        drift.push(`${n}: модуль ${selected.id} ПРОПАЛ из ряда после правки`);
+        continue;
+      }
+
+      const cut = buildPanels({ run: shown }).filter(
+        (panel) => panel.moduleId === unit.id && /Фронт ящика/i.test(panel.name),
+      );
+      const drawn = frontGlyph(unit, 'fronts').filter((el) => el.kind === 'drawer');
+
+      if ((unit.fill?.drawerHeights.length ?? 0) !== n) {
+        drift.push(`${n}: наполнение [${(unit.fill?.drawerHeights ?? []).join(',')}]`);
+      }
+      if (cut.length !== n) drift.push(`${n}: в раскрое ${cut.length} фронтов`);
+      if (drawn.length !== n) drift.push(`${n}: на чертеже ${drawn.length} фронтов`);
+    }
+
+    check(
+      'смена числа в поле доезжает до наполнения, раскроя и чертежа',
+      drift.length === 0,
+      drift.join(' · ') || '3 → 1 → 2, наполнение = раскрой = чертёж',
+    );
+
+    /* ── Возврат к дверце тем же полем ── */
+    const backToDoor = applyOps({
+      run: activeRun(),
+      requirements: REQ,
+      ops: [{ op: 'set_fronts', moduleId: selected.id, drawerCount: 0 }],
+      openings: input.openings,
+    });
+    editedRuns = { ...editedRuns, optimal: backToDoor };
+    const door = activeRun().modules.find((m) => m.id === selected.id)!;
+
+    check(
+      'возврат к дверце убирает ящики отовсюду',
+      door.frontType === 'door' &&
+        (door.fill?.drawerHeights.length ?? 0) === 0 &&
+        frontGlyph(door, 'fronts').every((el) => el.kind !== 'drawer'),
+      `frontType=${door.frontType} fill=[${(door.fill?.drawerHeights ?? []).join(',')}]`,
+    );
+  }
+
+  /*
+   * ОПЕРАЦИЯ, КОТОРАЯ НЕ СРАБОТАЛА, НЕ МОЛЧИТ.
+   *
+   * Молчаливый выход — это ровно то, как выглядит «правка не
+   * применилась»: человек меняет число и не получает ни результата, ни
+   * причины. Найти её из интерфейса нельзя, потому что её никто не назвал.
+   */
+  const ghost = applyOps({
+    run: activeRun(),
+    requirements: REQ,
+    ops: [{ op: 'set_fronts', moduleId: 'base-999@w1', drawerCount: 3 }],
+    openings: input.openings,
+  });
+  check(
+    'правка несуществующего модуля названа словами, а не пропущена молча',
+    (ghost.warnings ?? []).some((w) => /не найден/.test(w)),
+    (ghost.warnings ?? []).join(' | ') || 'МОЛЧА',
+  );
+
+  const appliance = activeRun().modules.find((unit) => unit.appliance && !unit.column);
+  check(
+    'на приборном модуле поле объясняет, почему число задаёт не оно',
+    Boolean(appliance) &&
+      (
+        applyOps({
+          run: activeRun(),
+          requirements: REQ,
+          ops: [{ op: 'set_fronts', moduleId: appliance!.id, drawerCount: 3 }],
+          openings: input.openings,
+        }).warnings ?? []
+      ).some((w) => /задаёт прибор и место/.test(w)),
+    appliance
+      ? (
+          applyOps({
+            run: activeRun(),
+            requirements: REQ,
+            ops: [{ op: 'set_fronts', moduleId: appliance.id, drawerCount: 3 }],
+            openings: input.openings,
+          }).warnings ?? []
+        ).join(' | ') || 'МОЛЧА'
+      : 'ПРИБОРНОГО МОДУЛЯ НЕТ',
+  );
+}
+
+/* ────────────  Каталог фурнитуры организации задаёт ЦЕНУ  ──────────── */
+
+/**
+ * ФУРНИТУРА — ТОВАР КАТАЛОГА, А НЕ ВТОРАЯ ТАБЛИЦА.
+ *
+ * Организация выбирает бренд и модель, смета берёт цену у позиции. Что
+ * каталог НЕ делает: не считает количество (его знает состав ряда) и не
+ * хранит цену копией в модуле — модуль держит только ссылку.
+ */
+console.log('\nКаталог фурнитуры организации');
+{
+  /** Позиция каталога как фурнитура: те же поля, что у товара. */
+  const hw = (
+    id: string,
+    name: string,
+    price: number,
+    extra: Record<string, unknown> = {},
+  ): HardwareItem => ({
+    id,
+    orgId: 'org-1',
+    name,
+    article: id.toUpperCase(),
+    price,
+    active: true,
+    estimateKey: 'hinge_standard',
+    hardware: { category: 'hinge', ...(extra.hardware as object) },
+    mounting: EMPTY_MOUNTING,
+    ...extra,
+  });
+
+  const blum = hw('hw-blum', 'Петля Blum Clip top', 3400, {
+    hardware: { category: 'hinge', brand: 'blum', model: 'Clip top', softClose: true },
+  });
+  const hettich = hw('hw-hettich', 'Петля Hettich Sensys', 2100, {
+    hardware: { category: 'hinge', brand: 'hettich', model: 'Sensys', softClose: true },
+  });
+
+  const catalogOf = (...items: HardwareItem[]) =>
+    new Map(items.map((item) => [item.id, item]));
+
+  const baseRun = buildRun({
+    lengthMm: DEMO_PROJECT.lengthMm,
+    ceilingHeightMm: 2700,
+    requirements: REQ,
+    openings: OPENINGS,
+    comms: COMMS,
+  });
+
+  /** Ряд, в котором у одного модуля выбрана позиция каталога. */
+  const withPick = (itemId: string): Run => ({
+    ...baseRun,
+    modules: baseRun.modules.map((unit) =>
+      unit.id === target?.id ? { ...unit, hardwareItemId: itemId } : unit,
+    ),
+  });
+
+  const target = baseRun.modules.find(
+    (unit) => !unit.appliance && unit.frontType === 'door' && unit.doorCount > 0,
+  );
+
+  /*
+   * TEST 5: пустой селектор — это падение, а не успешный сценарий.
+   */
+  check(
+    'в ряду есть модуль с распашным фасадом и каталог не пуст',
+    Boolean(target) && catalogOf(blum, hettich).size === 2,
+    !target
+      ? 'СЕЛЕКТОР ВЕРНУЛ НОЛЬ МОДУЛЕЙ С ПЕТЛЯМИ'
+      : `${target.id} · позиций в каталоге ${catalogOf(blum, hettich).size}`,
+  );
+
+  if (!target) {
+    check('дальше мерить нечем', false, 'МОДУЛЯ С ПЕТЛЯМИ НЕТ');
+  } else {
+    const totalOf = (run: Run, catalog: Map<string, HardwareItem>) =>
+      Math.round(buildEstimate(run, 'optimal', DEMO_RATES, [], undefined, undefined, catalog).total);
+
+    /* ── TEST 6: без каталога и без ссылки сумма прежняя ДО ТЕНГЕ ── */
+    const before = Math.round(buildEstimate(baseRun, 'optimal', DEMO_RATES, []).total);
+    check(
+      'без каталога смета прежняя до тенге',
+      totalOf(baseRun, new Map()) === before,
+      `${before} ₸ = ${totalOf(baseRun, new Map())} ₸`,
+    );
+
+    /*
+     * И тот же ряд, открытый с каталогом, но БЕЗ ссылки в модуле —
+     * это проект, сохранённый до появления каталога.
+     */
+    check(
+      'проект без hardwareItemId с каталогом даёт ту же сумму',
+      totalOf(baseRun, catalogOf(blum, hettich)) === before,
+      `${before} ₸ = ${totalOf(baseRun, catalogOf(blum, hettich))} ₸`,
+    );
+
+    /* ── TEST 1: смена бренда меняет сумму по цене каталога ── */
+    const withBlum = totalOf(withPick('hw-blum'), catalogOf(blum, hettich));
+    const withHettich = totalOf(withPick('hw-hettich'), catalogOf(blum, hettich));
+
+    check(
+      'смена бренда петли меняет сумму по цене каталога',
+      withBlum !== withHettich && withBlum > withHettich,
+      `Blum ${withBlum} ₸ · Hettich ${withHettich} ₸ · разница ${withBlum - withHettich}`,
+    );
+
+    /*
+     * Разница обязана быть РОВНО разницей цен, умноженной на число
+     * петель: иначе каталог считает не то количество.
+     */
+    const lineOf = (run: Run, catalog: Map<string, HardwareItem>, id: string) =>
+      buildEstimate(run, 'optimal', DEMO_RATES, [], undefined, undefined, catalog).lines.find(
+        (line) => line.key === `hardware_${id}`,
+      );
+
+    const blumLine = lineOf(withPick('hw-blum'), catalogOf(blum, hettich), 'hw-blum');
+    const hettichLine = lineOf(withPick('hw-hettich'), catalogOf(blum, hettich), 'hw-hettich');
+
+    /*
+     * Сверяем СТРОКУ, а не итог: на итог сверху ложится доставка
+     * процентом (8 % в типовом прайсе), и разница в нём равна разнице
+     * строк, умноженной на этот процент. Требование же — про цену
+     * позиции: её и меряем там, где она стоит.
+     */
+    check(
+      'разница строк равна разнице цен на то же число петель',
+      Boolean(blumLine && hettichLine) &&
+        blumLine!.quantity === hettichLine!.quantity &&
+        blumLine!.total - hettichLine!.total ===
+          (blum.price - hettich.price) * blumLine!.quantity,
+      blumLine && hettichLine
+        ? `петель ${blumLine.quantity} · ${blumLine.total} − ${hettichLine.total} = ` +
+          `${blumLine.total - hettichLine.total} при (${blum.price} − ${hettich.price}) × ${blumLine.quantity}`
+        : 'СТРОКИ КАТАЛОГА НЕТ',
+    );
+
+    /* И итог двигается ровно на эту разницу плюс доставка процентом. */
+    const delivery = DEMO_RATES.delivery_install ?? 0;
+    check(
+      'итог двигается на ту же разницу плюс доставка',
+      Boolean(blumLine && hettichLine) &&
+        withBlum - withHettich ===
+          Math.round((blumLine!.total - hettichLine!.total) * (1 + delivery / 100)),
+      `${withBlum - withHettich} ₸ = ${blumLine && hettichLine ? blumLine.total - hettichLine.total : 0} × ${1 + delivery / 100}`,
+    );
+
+    /* ── TEST 2: количество приходит из состава ряда, а не из каталога ── */
+    const fromRun = openingHardware(
+      [...withPick('hw-blum').modules].map((unit, i, all) => ({
+        unit,
+        heightMm: moduleCarcassHeightMm(unit, baseRun),
+        index: i,
+        total: all.length,
+      })),
+      baseRun,
+    ).byModule[target.id]?.hinges;
+
+    check(
+      'количество петель берётся из состава ряда, а не из каталога',
+      Boolean(blumLine) && blumLine?.quantity === fromRun,
+      `из ряда ${fromRun}, в строке каталога ${blumLine?.quantity}`,
+    );
+
+    check(
+      'и цена в строке — цена позиции каталога',
+      blumLine?.rate === blum.price,
+      `${blumLine?.rate} ₸ при цене позиции ${blum.price} ₸`,
+    );
+
+    /* ── TEST 3: позиция без цены не даёт тихий ноль ── */
+    const priceless = hw('hw-none', 'Петля без цены', 0, {
+      hardware: { category: 'hinge', brand: 'boyard' },
+    });
+    const link = resolveHardware(
+      { hardwareItemId: 'hw-none', label: target.label },
+      catalogOf(priceless),
+    );
+
+    check(
+      'позиция без цены названа словами, а не посчитана нулём',
+      link.state === 'priceless' && /цена не задана/.test(link.reason),
+      link.state === 'priceless' ? link.reason : `состояние «${link.state}»`,
+    );
+
+    check(
+      'и сумма при этом остаётся прежней, а не падает до нуля',
+      totalOf(withPick('hw-none'), catalogOf(priceless)) === before,
+      `${totalOf(withPick('hw-none'), catalogOf(priceless))} ₸ при прежних ${before} ₸`,
+    );
+
+    /* ── Ссылка, которая не разрешилась: удалена, отключена, чужая ── */
+    const off = { ...blum, active: false };
+    const cases: [string, Map<string, HardwareItem>, string][] = [
+      ['позиции нет в каталоге', catalogOf(hettich), 'не найдена'],
+      ['позиция отключена', catalogOf(off), 'отключена в каталоге'],
+    ];
+
+    for (const [title, catalog, words] of cases) {
+      const state = resolveHardware(
+        { hardwareItemId: 'hw-blum', label: target.label },
+        catalog,
+      );
+      check(
+        `${title}: сказано словами и сумма прежняя`,
+        state.state !== 'resolved' &&
+          'reason' in state &&
+          new RegExp(words).test(state.reason) &&
+          totalOf(withPick('hw-blum'), catalog) === before,
+        'reason' in state
+          ? `${state.reason.slice(0, 80)} · ${totalOf(withPick('hw-blum'), catalog)} ₸`
+          : 'ОТКАЗА НЕТ',
+      );
+    }
+
+    /* ── Предупреждения схлопываются: один вопрос к каталогу ── */
+    const many: Run = {
+      ...baseRun,
+      modules: baseRun.modules.map((unit) => ({ ...unit, hardwareItemId: 'hw-gone' })),
+    };
+    check(
+      'десять модулей с одной пропавшей позицией дают одну строку',
+      hardwareWarnings(many, catalogOf(blum)).length === 1,
+      `${hardwareWarnings(many, catalogOf(blum)).length} строк`,
+    );
+
+    /* ── TEST 4: без монтажных размеров присадка не создаётся ── */
+    check(
+      'у новой позиции монтажных размеров нет',
+      !hasMountingData(blum),
+      `mounting: ${JSON.stringify(blum.mounting.holeDiameterMm)} · присадка не рассчитывается`,
+    );
+
+    const measuredMount = {
+      ...blum,
+      mounting: { ...EMPTY_MOUNTING, holeDiameterMm: 35, holeDepthMm: 13 },
+    };
+    check(
+      'а с подтверждёнными размерами состояние другое',
+      hasMountingData(measuredMount),
+      `Ø${measuredMount.mounting.holeDiameterMm} глубина ${measuredMount.mounting.holeDepthMm}`,
     );
   }
 }
