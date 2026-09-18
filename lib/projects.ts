@@ -7,6 +7,7 @@ import type {
   VariantKey,
 } from '@/types/millwork';
 import type { Survey } from '@/types/survey';
+import type { ProductionOverrides } from '@/types/catalog';
 
 /**
  * Объекты компании.
@@ -48,6 +49,17 @@ export type MillworkState = {
   templateId?: string | null;
   /** Состав техники и опции ряда — их выбирал замерщик, пересобирать нельзя. */
   requirements?: RunRequirements;
+  /**
+   * ОТМЕТКИ ЭТОГО ОБЪЕКТА — ТОЛЬКО ИЗМЕНЁННЫЕ.
+   *
+   * Поля здесь нет — значит его не трогали, и число читается у
+   * организации: цех поменял свой стандарт, и объект поехал следом.
+   * Копия всего набора заморозила бы его на старом числе молча.
+   *
+   * Разрешает «объект или организация» ровно одна функция —
+   * `productionFor` в `shop.ts`.
+   */
+  production?: ProductionOverrides;
   /** Состав по каждому варианту: правки замерщика сохраняются, а не теряются. */
   runs?: Partial<Record<VariantKey, Run>>;
   selectedVariant?: VariantKey;

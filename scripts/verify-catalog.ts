@@ -1,3 +1,5 @@
+import { OBJECT_MARKS, productionFor, withMark } from '../lib/millwork/shop';
+import { DEFAULT_PRODUCTION, type ProductionSettings } from '../types/catalog';
 /**
  * Приёмка фазы 3 — та её часть, что проверяется без живого Supabase:
  * разбор выгрузок из 1С, расчёт спецификации, правила «фото → комната».
@@ -485,6 +487,74 @@ console.log('\nФурнитура в каталоге организации');
     hardwareByCategory(withOff, 'hinge').length === 1 &&
       hardwareByCategory(withOff, 'hinge')[0].id === 'hw-blum',
     hardwareByCategory(withOff, 'hinge').map((i) => i.id).join(' ') || 'пусто',
+  );
+}
+
+/* ═══════════  Отметки объекта наследуются от организации  ═══════════ */
+
+/**
+ * НАСТРОЙКА ОРГАНИЗАЦИИ — ИСТОЧНИК, ОБЪЕКТ — ТОЛЬКО ПРАВКИ.
+ *
+ * Здесь это проверяется со стороны каталога: `ProductionSettings` живёт
+ * в `orgs.production`, и объект обязан её ЧИТАТЬ, а не копировать. Копия
+ * заморозила бы объект на старом стандарте цеха молча — раскрой поехал
+ * бы не тогда, когда человек что-то решил.
+ */
+console.log('\nОтметки объекта');
+{
+  const org: ProductionSettings = {
+    ...DEFAULT_PRODUCTION,
+    heights: { plinthMm: 100, carcassMm: 720, countertopMm: 38, apronMm: 592 },
+    depths: { baseMm: 560, upperMm: 320, mezzanineMm: 560 },
+  };
+
+  check(
+    'у организации есть отметки — наследовать есть что',
+    org.heights.carcassMm > 0 && org.depths.baseMm > 0,
+    org.heights.carcassMm === 0
+      ? 'У ОРГАНИЗАЦИИ НЕТ ОТМЕТОК — наследовать нечего'
+      : `боковина ${org.heights.carcassMm} · глубина ${org.depths.baseMm}`,
+  );
+
+  check(
+    'объект без правок — это отметки организации до числа',
+    JSON.stringify(productionFor(org, undefined)) === JSON.stringify(org),
+    `${productionFor(org, undefined).heights.carcassMm} мм`,
+  );
+
+  const marks = [...OBJECT_MARKS];
+  const own = withMark(undefined, marks.find((m) => m.key === 'baseMm')!, 600);
+  check(
+    'объект хранит только изменённое поле, а не весь набор',
+    JSON.stringify(own) === JSON.stringify({ depths: { baseMm: 600 } }),
+    JSON.stringify(own),
+  );
+
+  const later: ProductionSettings = {
+    ...org,
+    heights: { ...org.heights, carcassMm: 760 },
+    depths: { ...org.depths, upperMm: 350 },
+  };
+
+  check(
+    'цех поменял своё — объект поехал следом там, где не правил',
+    productionFor(later, own).heights.carcassMm === 760 &&
+      productionFor(later, own).depths.upperMm === 350,
+    `боковина ${productionFor(later, own).heights.carcassMm} · верх ${productionFor(later, own).depths.upperMm}`,
+  );
+
+  check(
+    'а там, где правил, остался на своём',
+    productionFor(later, own).depths.baseMm === 600,
+    `глубина нижнего ${productionFor(later, own).depths.baseMm} при цеховой ${later.depths.baseMm}`,
+  );
+
+  check(
+    'припуски, толщины и кромка остаются школой цеха: объект их не правит',
+    JSON.stringify(productionFor(later, own).allowances) === JSON.stringify(later.allowances) &&
+      productionFor(later, own).carcassMm === later.carcassMm &&
+      productionFor(later, own).visibleEdgeMm === later.visibleEdgeMm,
+    marks.map((m) => `${m.group}.${m.key}`).join(' '),
   );
 }
 

@@ -117,6 +117,7 @@ import {
 } from '../lib/millwork/walls';
 import { composeVariants, workingWall, workspaceInput } from '../lib/millwork/workspace';
 import { screenState } from '../lib/millwork/screen';
+import { OBJECT_MARKS, markOwn, productionFor, withMark } from '../lib/millwork/shop';
 import {
   STEP_FIELDS,
   STEP_HINT,
@@ -3257,6 +3258,197 @@ console.log('\nДетализировка');
   const utf = panelsCsvFile(panels, 'utf-8');
   check('в UTF-8 файле есть BOM для Excel',
     utf.bytes[0] === 0xef && utf.bytes[1] === 0xbb && utf.bytes[2] === 0xbf);
+}
+
+/* ═══════════  Отметки объекта  ═══════════ */
+
+/**
+ * ОБЪЕКТ НАСЛЕДУЕТ ОТМЕТКИ, А НЕ КОПИРУЕТ ИХ.
+ *
+ * На объекте потолок ниже, фартук другой, цоколь иной — и править их
+ * надо здесь, а не на всю организацию. Но копия всего набора заморозила
+ * бы объект на старом стандарте цеха: цех перешёл с боковины 720 на 760,
+ * а объекты, собранные до этого, остались на 720 — молча, без следа в
+ * интерфейсе.
+ *
+ * Поэтому объект хранит ТОЛЬКО изменённое, а разрешает «объект или
+ * организация» ровно одна функция — `productionFor`.
+ */
+console.log('\nОтметки объекта');
+{
+  const org: ProductionSettings = {
+    ...DEFAULT_PRODUCTION,
+    heights: { plinthMm: 100, carcassMm: 720, countertopMm: 38, apronMm: 592 },
+    depths: { baseMm: 560, upperMm: 320, mezzanineMm: 560 },
+  };
+
+  const marks = [...OBJECT_MARKS];
+  check(
+    'отметки цеха есть — наследовать есть что',
+    marks.length === 7 && org.heights.carcassMm === 720,
+    marks.length === 0
+      ? 'СЕЛЕКТОР ВЕРНУЛ НОЛЬ ОТМЕТОК — править на объекте нечего'
+      : `правится ${marks.length}: ${marks.map((m) => m.title).join(', ')}`,
+  );
+
+  /* ─── Объект без своих отметок читает организацию ─── */
+
+  const plain = productionFor(org, undefined);
+  check(
+    'объект без своих отметок — это отметки организации, до числа',
+    JSON.stringify(plain.heights) === JSON.stringify(org.heights) &&
+      JSON.stringify(plain.depths) === JSON.stringify(org.depths),
+    `${plain.heights.carcassMm} · ${plain.depths.baseMm}`,
+  );
+
+  const runOf = (production: ProductionSettings) =>
+    buildRun({ ...baseInput, production });
+
+  const plainRun = runOf(plain);
+  const orgRun = runOf(org);
+  check(
+    'и даёт тот же ряд и ту же смету, что и раньше',
+    plainRun.fingerprint === orgRun.fingerprint &&
+      buildEstimate(plainRun, 'optimal', DEMO_RATES).total ===
+        buildEstimate(orgRun, 'optimal', DEMO_RATES).total,
+    `${plainRun.fingerprint} · ${buildEstimate(plainRun, 'optimal', DEMO_RATES).total} ₸`,
+  );
+
+  /* ─── Правка на объекте двигает всё сразу ─── */
+
+  const plinth = marks.find((m) => m.key === 'plinthMm')!;
+  const own = withMark(undefined, plinth, 150);
+  const ownProduction = productionFor(org, own);
+
+  check(
+    'объект хранит ТОЛЬКО изменённое: одно поле, а не весь набор',
+    JSON.stringify(own) === JSON.stringify({ heights: { plinthMm: 150 } }),
+    JSON.stringify(own),
+  );
+
+  check(
+    'изменённое читается у объекта, остальное — у организации',
+    ownProduction.heights.plinthMm === 150 &&
+      ownProduction.heights.carcassMm === org.heights.carcassMm &&
+      ownProduction.depths.baseMm === org.depths.baseMm,
+    `цоколь ${ownProduction.heights.plinthMm} · боковина ${ownProduction.heights.carcassMm}`,
+  );
+
+  const ownRun = runOf(ownProduction);
+  const ownPanels = buildPanels({ run: ownRun, production: ownProduction });
+  const plainPanels = buildPanels({ run: plainRun, production: plain });
+
+  check(
+    'поднятый цоколь поехал в раскрой: боковина стала другой деталью',
+    ownPanels.some(
+      (panel, i) => panel.name === 'Боковина' && panel.lengthMm !== plainPanels[i]?.lengthMm,
+    ) || ownRun.fingerprint !== plainRun.fingerprint,
+    `раскрой ${plainPanels[0]?.lengthMm} → ${ownPanels[0]?.lengthMm} мм`,
+  );
+
+  check(
+    'и в смету',
+    buildEstimate(ownRun, 'optimal', DEMO_RATES).total !==
+      buildEstimate(plainRun, 'optimal', DEMO_RATES).total,
+    `${buildEstimate(plainRun, 'optimal', DEMO_RATES).total} → ${buildEstimate(ownRun, 'optimal', DEMO_RATES).total} ₸`,
+  );
+
+  check(
+    'и в чертёж со сценой: отметки ряда считаются по нему же',
+    workTopMm(ownProduction) === workTopMm(plain) + 50 &&
+      upperBottomMm(ownProduction) === upperBottomMm(plain) + 50,
+    `рабочая поверхность ${workTopMm(plain)} → ${workTopMm(ownProduction)} · низ верхних ${upperBottomMm(plain)} → ${upperBottomMm(ownProduction)}`,
+  );
+
+  /*
+   * ПУСТОЕ ПОЛЕ — ЭТО «НЕ ТРОГАЛИ», А НЕ «НОЛЬ».
+   *
+   * Отметка, лежащая в объекте со значением `undefined`, обязана читаться
+   * у организации. Поверхностное слияние (`{...org, ...own}`) затёрло бы
+   * её этим `undefined`, и цоколь стал бы `undefined` мм: раскрой считал
+   * бы по NaN, а увидели бы это только на распиле.
+   */
+  const blank = { heights: { plinthMm: undefined, carcassMm: 800 } };
+  check(
+    'отметка со значением «пусто» читается у организации, а не затирает её',
+    productionFor(org, blank).heights.plinthMm === org.heights.plinthMm &&
+      productionFor(org, blank).heights.carcassMm === 800 &&
+      Number.isFinite(workTopMm(productionFor(org, blank))),
+    `цоколь ${productionFor(org, blank).heights.plinthMm} при цеховом ${org.heights.plinthMm} · боковина ${productionFor(org, blank).heights.carcassMm}`,
+  );
+
+  /* ─── Цех поменял стандарт ─── */
+
+  /*
+   * ГЛАВНОЕ СВОЙСТВО НАСЛЕДОВАНИЯ. Объект без своей правки едет за цехом,
+   * объект со своей — остаётся на своей. Копия всего набора дала бы
+   * обратное: замерли бы оба.
+   */
+  const orgLater: ProductionSettings = {
+    ...org,
+    heights: { ...org.heights, carcassMm: 760 },
+  };
+
+  check(
+    'цех поменял боковину — объект без своей правки поехал следом',
+    productionFor(orgLater, undefined).heights.carcassMm === 760 &&
+      workTopMm(productionFor(orgLater, undefined)) === workTopMm(plain) + 40,
+    `${plain.heights.carcassMm} → ${productionFor(orgLater, undefined).heights.carcassMm}`,
+  );
+
+  const ownCarcass = withMark(undefined, marks.find((m) => m.key === 'carcassMm')!, 700);
+  check(
+    'а объект со своей правкой остался на своей',
+    productionFor(orgLater, ownCarcass).heights.carcassMm === 700 &&
+      productionFor(org, ownCarcass).heights.carcassMm === 700,
+    `своя ${productionFor(orgLater, ownCarcass).heights.carcassMm} при цеховой ${orgLater.heights.carcassMm}`,
+  );
+
+  check(
+    'и правку можно снять: отметка снова читается у цеха',
+    markOwn(plinth, own) &&
+      !markOwn(plinth, withMark(own, plinth, null)) &&
+      productionFor(orgLater, withMark(own, plinth, null)).heights.plinthMm === 100,
+    `снятая отметка → ${productionFor(orgLater, withMark(own, plinth, null)).heights.plinthMm} мм`,
+  );
+
+  /* ─── Производные не хранятся ─── */
+
+  check(
+    'производные считаются формулой, а не лежат полем',
+    !Object.keys(org.heights).includes('workTopMm') &&
+      !Object.keys(org.heights).includes('upperBottomMm') &&
+      workTopMm(org) === org.heights.plinthMm + org.heights.carcassMm + org.heights.countertopMm &&
+      upperBottomMm(org) === workTopMm(org) + org.heights.apronMm,
+    `рабочая поверхность ${workTopMm(org)} = ${org.heights.plinthMm} + ${org.heights.carcassMm} + ${org.heights.countertopMm}`,
+  );
+
+  check(
+    'у производных нет поля на объекте: править их нечем',
+    !marks.some((m) => m.key.includes('workTop') || m.key.includes('upperBottom')),
+    marks.map((m) => m.key).join(' '),
+  );
+
+  /* ─── Правка, ломающая ряд ─── */
+
+  /*
+   * Отметка меняет ГАБАРИТ: боковина 900 при потолке 2700 поднимает
+   * рабочую поверхность так, что верхний ряд упирается в потолок. Ряд
+   * при этом обязан отказаться словами, а не молча собраться неверным.
+   */
+  const tall = productionFor(org, withMark(undefined, marks.find((m) => m.key === 'carcassMm')!, 900));
+  let refusedWords = '';
+  try {
+    buildRun({ ...baseInput, ceilingHeightMm: 2200, production: tall });
+  } catch (error) {
+    refusedWords = error instanceof Error ? error.message : String(error);
+  }
+
+  check(
+    'правка, ломающая ряд, отказывает словами, а не собирает неверное',
+    refusedWords.length > 10 && /[а-яё]{4,}/i.test(refusedWords),
+    refusedWords ? refusedWords.slice(0, 100) : 'РЯД СОБРАЛСЯ — поломку никто не заметил',
+  );
 }
 
 /* ═══════════  Правая панель  ═══════════ */

@@ -75,14 +75,20 @@ import { keepSelection, selectionState, wallOfModule } from '@/lib/millwork/sele
  * Отметки цеха показываются теми же функциями, по которым собран ряд:
  * показанное число обязано совпадать с тем, по которому пилят.
  */
+/*
+ * Производные показываются теми же функциями, что их считают: своей
+ * арифметики «цоколь плюс боковина» на экране нет.
+ */
 import {
-  apronMm,
-  countertopMm,
-  plinthMm,
+  OBJECT_MARKS,
+  markOwn,
+  markValue,
+  productionFor,
   upperBottomMm,
+  withMark,
   workTopMm,
+  type ObjectMark,
 } from '@/lib/millwork/shop';
-import { rowStandardDepthMm } from '@/lib/millwork/fill';
 import { onWall } from '@/lib/millwork/layout';
 import { buildEstimate } from '@/lib/millwork/estimate';
 import {
@@ -124,7 +130,7 @@ import {
   templateById,
   type RunTemplate,
 } from '@/lib/millwork/templates';
-import type { ProductionSettings } from '@/types/catalog';
+import type { ProductionOverrides, ProductionSettings } from '@/types/catalog';
 import {
   DEFAULT_SCENE_VIEW,
   type SceneView,
@@ -287,6 +293,31 @@ export default function Workspace(props: WorkspaceProps) {
     props.initialState?.selectedVariant ?? MAIN_VARIANT,
   );
   const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  /**
+   * ОТМЕТКИ ЭТОГО ОБЪЕКТА — ТОЛЬКО ИЗМЕНЁННЫЕ.
+   *
+   * Всё, чего здесь нет, читается у организации и едет за её настройкой.
+   * Копия всего набора заморозила бы объект на старом стандарте цеха
+   * молча: раскрой поехал бы не тогда, когда человек что-то решил.
+   */
+  const [ownMarks, setOwnMarks] = useState<ProductionOverrides | undefined>(
+    props.initialState?.production,
+  );
+  const [marksNotice, setMarksNotice] = useState<string | null>(null);
+
+  /**
+   * ОТМЕТКИ, ПО КОТОРЫМ СЧИТАЕТСЯ ВСЁ.
+   *
+   * Разрешение «объект или организация» происходит РОВНО ЗДЕСЬ, один раз
+   * на экран, и дальше вниз едет уже разрешённый набор: ряд, раскрой,
+   * смета, чертёж и сцена спрашивают отметку той же `shopOf`, что и
+   * раньше, и получают один ответ. Второй такой развилки в продукте нет.
+   */
+  const production = useMemo(
+    () => productionFor(props.production, ownMarks),
+    [props.production, ownMarks],
+  );
   /** Жёлтая строка под сценой: правку не отменяем, но о последствии говорим. */
   const [sceneNotice, setSceneNotice] = useState<string | null>(null);
 
@@ -722,7 +753,7 @@ export default function Workspace(props: WorkspaceProps) {
        * своего вывода воды, как это и было.
        */
       comms: resolution?.measurement.comms ?? props.measuredComms ?? props.comms,
-      production: props.production,
+      production: production,
     });
   }, [
     shape,
@@ -733,7 +764,7 @@ export default function Workspace(props: WorkspaceProps) {
     resolution,
     props.measuredComms,
     props.comms,
-    props.production,
+    production,
   ]);
 
   /** Композиция, которая СОБРАЛАСЬ. Отказ сюда не проходит. */
@@ -766,7 +797,7 @@ export default function Workspace(props: WorkspaceProps) {
         comms: props.comms,
         rates: props.rates,
         cornerAt: props.cornerAt ?? null,
-        production: props.production,
+        production: production,
         measuredWalls: props.measuredWalls ?? [],
         measuredComms: props.measuredComms ?? props.comms,
         runWallId: props.runWallId ?? 'a',
@@ -782,7 +813,7 @@ export default function Workspace(props: WorkspaceProps) {
       rates: props.rates,
       wallId: resolution.runWallId,
       cornerAt: props.cornerAt ?? null,
-      production: props.production,
+      production: production,
     });
 
     // Пока стены не введены, ряд брать неоткуда — держим габарит из пропсов.
@@ -948,11 +979,11 @@ export default function Workspace(props: WorkspaceProps) {
               input.rates,
               disabled[variantKey],
               undefined,
-              props.production,
+              production,
             ),
       ),
     );
-  }, [layout, segments, active.estimate, variantKey, input.rates, disabled, props.production]);
+  }, [layout, segments, active.estimate, variantKey, input.rates, disabled, production]);
 
   /*
    * Смета объекта несёт отпечаток ОБЪЕКТА. Иначе она подписана числом
@@ -987,11 +1018,11 @@ export default function Workspace(props: WorkspaceProps) {
       runs: segments,
       solution: cornerSolution,
       zone,
-      production: props.production,
+      production: production,
     });
 
     return segments.map((run, i) => ({ run, placement: places[i] }));
-  }, [layout, segments, cornerSolution, zone, props.production]);
+  }, [layout, segments, cornerSolution, zone, production]);
 
   /**
    * РЯД, СОБРАННЫЙ НА ДРУГОЙ ДЛИНЕ СТЕНЫ.
@@ -1312,6 +1343,51 @@ export default function Workspace(props: WorkspaceProps) {
   const selectedUnit = selection.unit;
 
   /**
+   * ПРАВКА ОТМЕТКИ ПРОВЕРЯЕТСЯ ДО ПРИМЕНЕНИЯ.
+   *
+   * Отметка меняет ГАБАРИТ мебели: поднял цоколь и боковину — верхний
+   * ряд уехал вверх и упёрся в потолок или в ригель, и `buildRun`
+   * честно бросит исключение. Ронять этим рабочее место нельзя:
+   * человек всего лишь ввёл число.
+   *
+   * Поэтому ряд собирается на НОВЫХ отметках заранее, и если он не
+   * встал — правка не применяется, а причина уходит тем же каналом, что
+   * и остальные отказы: строкой, которую видно рядом с полем.
+   */
+  const changeMark = useCallback(
+    (mark: ObjectMark, valueMm: number | null) => {
+      const next = withMark(ownMarks, mark, valueMm);
+      const nextProduction = productionFor(props.production, next);
+
+      try {
+        buildRun({
+          lengthMm: input.lengthMm,
+          ceilingHeightMm: ceilingMm,
+          requirements,
+          openings: input.openings,
+          comms: input.comms,
+          production: nextProduction,
+        });
+      } catch (error) {
+        setMarksNotice(
+          `${mark.title} ${valueMm ?? ''}: ряд на этих отметках не собирается. ` +
+            `${error instanceof Error ? error.message : ''}`.trim(),
+        );
+        return;
+      }
+
+      dirty.current = true;
+      setOwnMarks(next);
+      setMarksNotice(
+        valueMm === null
+          ? `${mark.title}: снова как у цеха — ${markValue(mark, productionFor(props.production, next))} мм. Раскрой и смета пересчитаны.`
+          : `${mark.title}: ${valueMm} мм на этом объекте. Пересчитаны детали, смета, чертёж и сцена.`,
+      );
+    },
+    [ownMarks, props.production, input, ceilingMm, requirements, zone],
+  );
+
+  /**
    * БЛОК ПАНЕЛИ ПРЯЧЕТСЯ, А НЕ РАЗМОНТИРУЕТСЯ.
    *
    * Переход между шагами не должен ронять состояние: открытая карточка
@@ -1333,7 +1409,7 @@ export default function Workspace(props: WorkspaceProps) {
     if (specs.length < 2) return [];
 
     const now = currentVariant(unit);
-    const base = buildEstimate(active.run, variantKey, input.rates, disabled[variantKey], undefined, props.production).total;
+    const base = buildEstimate(active.run, variantKey, input.rates, disabled[variantKey], undefined, production).total;
 
     return specs.map((spec) => {
       let deltaKzt = 0;
@@ -1347,7 +1423,7 @@ export default function Workspace(props: WorkspaceProps) {
             openings: input.openings,
           });
           deltaKzt = Math.round(
-            buildEstimate(next, variantKey, input.rates, disabled[variantKey], undefined, props.production)
+            buildEstimate(next, variantKey, input.rates, disabled[variantKey], undefined, production)
               .total - base,
           );
         } catch {
@@ -1912,6 +1988,11 @@ export default function Workspace(props: WorkspaceProps) {
           Object.entries(editedWalls).map(([index, run]) => [String(index), run]),
         ),
         requirements,
+        /*
+         * Только изменённое: объект без своей правки читает организацию
+         * и едет за её настройкой.
+         */
+        production: ownMarks,
         runs: editedRuns,
         selectedVariant: variantKey,
         renderStyle,
@@ -1958,6 +2039,8 @@ export default function Workspace(props: WorkspaceProps) {
     editedRuns,
     // Отказ сборки запирает запись: снялся — запись обязана проснуться.
     screen.autosaveLocked,
+    // Отметки объекта — часть его состояния наравне с составом.
+    ownMarks,
     // Соседние стены сохраняются наравне с рабочей: без них угловая
     // кухня открылась бы прямой.
     editedWalls,
@@ -2123,7 +2206,7 @@ export default function Workspace(props: WorkspaceProps) {
       roomDepthM={props.roomDepthM}
       hidden
       interactive
-      production={props.production}
+      production={production}
       view={sceneView}
       selectedModuleId={selectedId}
       onSelectModule={selectModule}
@@ -2538,7 +2621,7 @@ export default function Workspace(props: WorkspaceProps) {
                   onTogglePanel={() => setPanelHidden((on) => !on)}
                   run={activeRun}
                   sceneRows={sceneRows}
-                  production={props.production}
+                  production={production}
                   roomWidthM={Math.max(input.lengthMm / 1000, 2)}
                   roomDepthM={props.roomDepthM}
                   facadeColor={
@@ -2714,18 +2797,93 @@ export default function Workspace(props: WorkspaceProps) {
                 * принадлежит компании, а не проекту.
                 */}
               <div className={`mb-4 ${onStep('shop')}`} data-shop-sizes>
-                <p className="mw-label mb-2">Отметки цеха</p>
-                <dl className="mw-num grid gap-x-4 gap-y-1 text-[13px] sm:grid-cols-2">
+                <p className="mw-label mb-2">Отметки объекта</p>
+
+                {/*
+                  * ПОЛЕ ПУСТОЕ — ЗНАЧИТ «КАК У ЦЕХА».
+                  *
+                  * В поле стоит число, по которому считается ряд, но своим
+                  * оно становится только когда его ввели: у нетронутой
+                  * отметки рядом нет пометки, и она едет за настройкой
+                  * организации. «Как у цеха» возвращает её обратно —
+                  * снимает поле, а не пишет в него сегодняшнее число.
+                  */}
+                <div className="grid gap-3">
+                  {OBJECT_MARKS.map((mark) => {
+                    const own = markOwn(mark, ownMarks);
+                    return (
+                      <label key={mark.key} className="block" data-mark={mark.key}>
+                        <span className="mw-label flex items-baseline justify-between gap-2">
+                          <span>
+                            {mark.title}
+                            {own && <span className="ml-1 text-cyan">· свой</span>}
+                          </span>
+                          {own && (
+                            <button
+                              type="button"
+                              data-mark-reset={mark.key}
+                              onClick={() => changeMark(mark, null)}
+                              className="text-[13px] text-graphiteMw underline"
+                            >
+                              как у цеха
+                            </button>
+                          )}
+                        </span>
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          min={mark.min}
+                          max={mark.max}
+                          step={1}
+                          defaultValue={markValue(mark, production)}
+                          key={`${mark.key}-${markValue(mark, production)}`}
+                          onBlur={(event) => {
+                            const raw = Number(event.target.value);
+                            if (!Number.isFinite(raw)) return;
+                            if (raw === markValue(mark, production)) return;
+                            if (raw < mark.min || raw > mark.max) {
+                              setMarksNotice(
+                                `${mark.title}: от ${mark.min} до ${mark.max} мм — ` +
+                                  'за этими границами мебель не собирается.',
+                              );
+                              event.target.value = String(markValue(mark, production));
+                              return;
+                            }
+                            changeMark(mark, raw);
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') (event.target as HTMLInputElement).blur();
+                          }}
+                          className="mw-num mw-touch mt-1 w-full border border-blueprint/40 bg-field px-1.5 text-[13px]"
+                        />
+                      </label>
+                    );
+                  })}
+                </div>
+
+                {marksNotice && (
+                  <p
+                    data-marks-notice
+                    className="mt-2 rounded-[var(--r-control)] bg-tape/15 px-3 py-2 text-[13px] leading-snug text-tape"
+                  >
+                    {marksNotice}
+                  </p>
+                )}
+
+                {/*
+                  * ПРОИЗВОДНЫЕ ПОКАЗАНЫ, НО ПОЛЯ У НИХ НЕТ.
+                  *
+                  * Рабочая поверхность — это цоколь плюс боковина плюс
+                  * столешница, низ верхних — она же плюс фартук. Заведи им
+                  * поле, и они разойдутся со слагаемыми на первой правке,
+                  * а по разошедшемуся размеру сверлят присадку.
+                  */}
+                <dl className="mw-num mt-3 grid gap-x-4 gap-y-1 text-[13px] sm:grid-cols-2">
                   {(
                     [
                       ['Потолок', ceilingMm],
-                      ['Рабочая поверхность', workTopMm(props.production)],
-                      ['Столешница', countertopMm(props.production)],
-                      ['Фартук', apronMm(props.production)],
-                      ['Цоколь', plinthMm(props.production)],
-                      ['Низ верхнего ряда', upperBottomMm(props.production)],
-                      ['Глубина нижнего', rowStandardDepthMm(zone, 'base', props.production)],
-                      ['Глубина верхнего', rowStandardDepthMm(zone, 'upper', props.production)],
+                      ['Рабочая поверхность', workTopMm(production)],
+                      ['Низ верхнего ряда', upperBottomMm(production)],
                     ] as [string, number][]
                   ).map(([title, mm]) => (
                     <div key={title} className="flex justify-between gap-2">
@@ -2735,8 +2893,10 @@ export default function Workspace(props: WorkspaceProps) {
                   ))}
                 </dl>
                 <p className="mt-2 text-[13px] leading-snug text-graphiteMw">
-                  Миллиметры. Толщины, зазоры и глубины — школа цеха: они одни
-                  на все проекты компании и правятся в настройках производства.
+                  Миллиметры. Рабочая поверхность и низ верхних — производные:
+                  они считаются формулой и поля не имеют. Толщины, зазоры,
+                  припуски и кромка остаются школой цеха и правятся в
+                  настройках производства.
                 </p>
               </div>
 
@@ -3243,7 +3403,7 @@ export default function Workspace(props: WorkspaceProps) {
                   zone={props.zone}
                   measuredBy={props.measuredBy}
                   measuredAt={props.measuredAt}
-                  production={props.production}
+                  production={production}
                 />
               </div>
             )}
@@ -3288,7 +3448,7 @@ export default function Workspace(props: WorkspaceProps) {
                 run={active.run}
                 comms={input.comms}
                 issues={issues}
-                production={props.production}
+                production={production}
                 client={props.clientName}
                 company={props.company}
                 /*
