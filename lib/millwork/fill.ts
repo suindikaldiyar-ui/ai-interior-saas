@@ -688,6 +688,46 @@ function dedupe(values: number[]): number[] {
 }
 
 /**
+ * НА СКОЛЬКО УКОРОЧЕН ВЕРХНИЙ ФРОНТ, мм.
+ *
+ * Это НЕ габарит варочной панели и не её посадочный размер: число стоит
+ * у ВСЕХ многоящичных модулей — под варочной, под столешницей, в любой
+ * тумбе, — и означает «узкий верхний ящик под мелочи». Оно было вписано
+ * прямо в раскладку; здесь оно названо, чтобы у него не завелось второй
+ * копии рядом с проверкой «встают ли ящики».
+ *
+ * ЧЕГО ЗДЕСЬ НЕТ: сколько места забирает под столешницей САМА варочная
+ * панель. В каталоге приборов у неё есть ширина и глубина
+ * (`APPLIANCE_TYPES.hob`), а высоты ниши — `nicheHMm`, как у духовки, —
+ * нет вовсе. Пока цех её не подтвердил, считать верхний ящик от прибора
+ * нечем, и подставлять сюда другое число значило бы выдумать присадку.
+ */
+const TOP_DRAWER_MM = 140;
+
+/**
+ * ВСТАЮТ ЛИ СТОЛЬКО ЯЩИКОВ В ЭТУ ВЫСОТУ.
+ *
+ * Тот же расчёт, по которому режутся фронты, — и он же отвечает на
+ * вопрос отказа. Вторая формула здесь означала бы, что предупреждение
+ * называет одно число, а раскрой режет по другому.
+ */
+export function drawerFit(
+  heightMm: number,
+  count: number,
+): { fits: boolean; topMm: number; restMm: number; eachMm: number } {
+  const topMm = Math.min(MAX_DRAWER_MM, Math.max(MIN_DRAWER_MM, TOP_DRAWER_MM));
+
+  if (count <= 0) return { fits: false, topMm, restMm: heightMm, eachMm: 0 };
+  if (count === 1) {
+    return { fits: heightMm >= MIN_DRAWER_MM, topMm: heightMm, restMm: heightMm, eachMm: heightMm };
+  }
+
+  const restMm = heightMm - topMm;
+  const eachMm = Math.floor(restMm / (count - 1));
+  return { fits: eachMm >= MIN_DRAWER_MM, topMm, restMm, eachMm };
+}
+
+/**
  * Высоты фронтов ящиков сверху вниз.
  *
  * Стандартный набор нижнего модуля: узкий верхний под мелочи и три равных
@@ -698,9 +738,7 @@ function drawerHeights(heightMm: number, count: number): number[] {
   if (count <= 0) return [];
   if (count === 1) return [heightMm];
 
-  const top = Math.min(MAX_DRAWER_MM, Math.max(MIN_DRAWER_MM, 140));
-  const rest = heightMm - top;
-  const each = Math.floor(rest / (count - 1));
+  const { topMm: top, eachMm: each } = drawerFit(heightMm, count);
   const heights = [top, ...Array.from({ length: count - 1 }, () => each)];
 
   // Остаток от деления кладём в нижний фронт: он самый большой.
@@ -768,7 +806,21 @@ export function defaultFill(
    */
   if (unit.appliance && !unit.column) {
     const spec = MODULE_VARIANTS[currentVariant(unit)];
-    const count = spec?.frontType === 'drawers' ? (spec.drawerCount ?? 0) : 0;
+    const byPlace = spec?.frontType === 'drawers' ? (spec.drawerCount ?? 0) : 0;
+
+    /*
+     * ВЫБРАННОЕ ЧЕЛОВЕКОМ СИЛЬНЕЕ УМОЛЧАНИЯ МЕСТА.
+     *
+     * Вариант места говорит, сколько ящиков под варочной БЫВАЕТ обычно
+     * (`hob_base` — два). Но это умолчание, а не габарит: клиент просит
+     * три, и три там делают. Пока здесь стоял только `byPlace`, правка
+     * доезжала до модуля и тут же затиралась пересборкой наполнения —
+     * со стороны это выглядело как «поле не работает».
+     *
+     * Влезут ли они, решено раньше, в `applyOps`: туда же уходит отказ
+     * с числом. Здесь только раскладка.
+     */
+    const count = unit.drawerCount > 0 ? unit.drawerCount : byPlace;
     if (count > 0) return { ...empty, drawerHeights: drawerHeights(heightMm, count) };
   }
 

@@ -31,7 +31,13 @@ import {
 import { zoneHeightMm } from './zones';
 import { isMechanism, openingRejection } from './opening';
 import { frontConflict } from './frontMaterial';
-import { MAX_APPLIANCE_DEPTH_MM, moduleDepthMm } from './fill';
+import {
+  MAX_APPLIANCE_DEPTH_MM,
+  MIN_DRAWER_MM,
+  drawerFit,
+  moduleCarcassHeightMm,
+  moduleDepthMm,
+} from './fill';
 import { CORNER } from './modules';
 import { MAX_MEZZANINE_MM, MIN_MEZZANINE_MM } from './sections';
 import { hasFacade } from './applianceFront';
@@ -432,19 +438,70 @@ export function applyOps({
         }
 
         /*
-         * У приборного модуля фронты задаёт ВАРИАНТ МЕСТА: под варочной
-         * их два, и верхний укорочен под панель (слой 43). Поле на
-         * экране для него заперто, но операция приходит и голосом.
+         * ЯЩИКИ ЕСТЬ У ТОГО, У КОГО ЕСТЬ ФРОНТЫ ЯЩИКОВ.
+         *
+         * Здесь стоял отказ ВСЕМ приборным модулям разом, и под варочной
+         * он был неверен: прибор занимает место сверху корпуса, а ящики
+         * под ним — обычные, и число их ничем не продиктовано. Клиент
+         * просит три, и три там делают.
+         *
+         * Спрашивается то же, что спрашивает сцена и раскрой
+         * (`fill.drawerHeights`), а не тип модуля: у мойки, посудомойки и
+         * встроенного холодильника фронтов ящиков нет — фасад там задаёт
+         * прибор, и отказ остаётся. В колонне их тоже нет: она поделена
+         * нишами.
          */
-        if (modules[at].appliance) {
+        const hasDrawers =
+          !modules[at].column && (modules[at].fill?.drawerHeights.length ?? 0) > 0;
+
+        if (modules[at].appliance && !hasDrawers) {
           warnings.push(
-            `«${modules[at].label}»: число фронтов здесь задаёт прибор и место, ` +
-              'а не поле — под варочной их два, и верхний укорочен под панель.',
+            `«${modules[at].label}»: фасад здесь задаёт прибор, а не поле — ` +
+              'ящиков под ним нет.',
+          );
+          break;
+        }
+
+        /*
+         * НЕ ВЛЕЗЛО — ОТКАЗ С ЧИСЛОМ, А НЕ МОЛЧА.
+         *
+         * Высоту делит та же `drawerFit`, по которой режутся фронты:
+         * назови отказ своей арифметикой — и он будет обещать другое
+         * число, чем получит цех.
+         */
+        const carcassMm = moduleCarcassHeightMm(modules[at], {
+          ...run,
+          zone,
+          production: run.production,
+        });
+        const fit = drawerFit(carcassMm, op.drawerCount);
+
+        if (op.drawerCount > 0 && !fit.fits) {
+          warnings.push(
+            `${op.drawerCount} ящиков не встанут: у «${modules[at].label}» под ` +
+              `верхним фронтом остаётся ${fit.restMm} мм, на ящик нужно от ` +
+              `${MIN_DRAWER_MM} мм — вышло бы по ${fit.eachMm} мм.`,
           );
           break;
         }
 
         const fronts = frontPlan(modules[at].kind, modules[at].widthMm, op.drawerCount);
+
+        /*
+         * ОБРЕЗАЛИ ЧИСЛО — СКАЗАЛИ ОБ ЭТОМ.
+         *
+         * `frontPlan` держит отраслевой потолок на число фронтов в одном
+         * модуле. Потолок правильный, а молчание — нет: человек ставил
+         * шесть, получал пять и не узнавал об этом ниоткуда. Это тот же
+         * молчаливый обрез, от которого уводит отказ выше, только он
+         * применяется, а не отклоняется.
+         */
+        if (op.drawerCount > 0 && fronts.drawerCount < op.drawerCount) {
+          warnings.push(
+            `Больше ${fronts.drawerCount} ящиков в один модуль не ставят: ` +
+              `у «${modules[at].label}» стало ${fronts.drawerCount}, а не ${op.drawerCount}.`,
+          );
+        }
 
         /*
          * СМЕНИЛИСЬ ФРОНТЫ — НАПОЛНЕНИЕ ПЕРЕСОБИРАЕТСЯ.
@@ -472,7 +529,19 @@ export function applyOps({
 
         modules[at] = {
           ...modules[at],
-          frontType: fronts.drawerCount > 0 ? 'drawers' : 'door',
+          /*
+           * ПРИБОРНЫЙ МОДУЛЬ ОСТАЁТСЯ ПРИБОРНЫМ.
+           *
+           * `frontType: 'appliance'` говорит, что нишу занимает прибор, —
+           * от него зависят и фасад, и вырез, и подпись. Ящики под
+           * варочной этого не отменяют: меняется их ЧИСЛО, а не то, что
+           * сверху стоит панель.
+           */
+          frontType: modules[at].appliance
+            ? modules[at].frontType
+            : fronts.drawerCount > 0
+              ? 'drawers'
+              : 'door',
           drawerCount: fronts.drawerCount,
           doorCount: fronts.doorCount,
           fill: stale ? undefined : modules[at].fill,

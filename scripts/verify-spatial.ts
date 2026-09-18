@@ -26,7 +26,13 @@ import { ceilingOverSpanMm } from '../lib/millwork/ceiling';
 import type { Opening } from '../types/millwork';
 import { buildRun } from '../lib/millwork/layout';
 import type { Run } from '../types/millwork';
-import { moduleBoxes, runPlaces } from '../lib/millwork/cabinetBoxes';
+import { moduleBoxes, runBoxes, runPlaces } from '../lib/millwork/cabinetBoxes';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import ElevationDrawing from '../components/millwork/ElevationDrawing';
+import PlanDrawing from '../components/millwork/PlanDrawing';
+import SectionDrawing from '../components/millwork/SectionDrawing';
+import { axonometryBoxes } from '../lib/millwork/axonometry';
 import { GEOMETRY } from '../lib/millwork/modules';
 import { zoneProfile } from '../lib/millwork/zones';
 import { DEFAULT_PRODUCTION, type ProductionSettings } from '../types/catalog';
@@ -1174,6 +1180,195 @@ console.log('\nАнтресоль на стене');
         ? `${places.length} модулей у стены ${-rowDepthMm} мм`
         : `${drifted.length} мимо: ${drifted[0].place.unit.id} на ${drifted[0].back} мм`,
     );
+  }
+}
+
+/* ═══════════  Антресоль видна на всех четырёх видах  ═══════════ */
+
+/**
+ * ОДНА МЕБЕЛЬ НА СЦЕНЕ, ЧЕРТЕЖЕ, РАЗРЕЗЕ И ПЛАНЕ.
+ *
+ * Сцена научилась ставить антресоль на стену, а чертёж — нет: он считает
+ * место своей формулой и рисует её на отметке навески, то есть внутри
+ * колонны холодильника. Со стороны это читается как «антресоли на чертеже
+ * нет», хотя объект там есть.
+ *
+ * Меряется РАЗМЕТКА, которую выдаёт каждый вид, а не картинка: отметки и
+ * плоскости выходят наружу атрибутами и сверяются с `runPlaces` — той
+ * единственной функцией, которая отвечает, где стоит модуль.
+ */
+console.log('\nАнтресоль на всех четырёх видах');
+{
+  const shops = [
+    ['цех 560/320/560', { baseMm: 560, upperMm: 320, mezzanineMm: 560 }],
+    /* Глубина антресоли не равна ни нижнему ряду, ни верхнему. */
+    ['цех 600/300/500', { baseMm: 600, upperMm: 300, mezzanineMm: 500 }],
+  ] as const;
+
+  /** Атрибут нарисованного объекта: ищем по идентификатору модуля. */
+  const attrOf = (html: string, moduleId: string, name: string): number | null => {
+    const at = html.indexOf(`data-module-id="${moduleId}"`);
+    if (at < 0) return null;
+
+    /*
+     * РОВНО ОДИН ТЕГ, А НЕ ОКНО ВОКРУГ.
+     *
+     * Первая версия брала ±500 символов и находила атрибут СОСЕДНЕГО
+     * прямоугольника: план отвечал «перёд 320» там, где у антресоли 560.
+     * Ошибка была в приборе, а не в продукте — ровно тот случай, когда
+     * непроверенная проверка обвиняет исправный код.
+     */
+    const open = html.lastIndexOf('<', at);
+    const close = html.indexOf('>', at);
+    if (open < 0 || close < 0) return null;
+
+    const tag = html.slice(open, close);
+    const found = tag.match(new RegExp(`${name}="(-?[0-9.]+)"`));
+    return found ? Number(found[1]) : null;
+  };
+
+  for (const [title, depths] of shops) {
+    const production: ProductionSettings = { ...DEFAULT_PRODUCTION, depths };
+    const run = buildRun({
+      lengthMm: 3800,
+      ceilingHeightMm: 2700,
+      requirements: DEMO_REQUIREMENTS,
+      openings: [],
+      comms: [],
+      production,
+    });
+
+    const places = runPlaces(run);
+    const mezz = places.find((place) => place.unit.section === 'mezzanine');
+    const rowDepth = rowStandardDepthMm(run.zone, 'base', run.production);
+
+    check(
+      `${title}: антресоль есть в ряду — виды проверять есть на чём`,
+      Boolean(mezz),
+      mezz
+        ? `${mezz.unit.id}, глубина ${Math.round(mezz.depthM * 1000)} мм`
+        : 'НОЛЬ АНТРЕСОЛЕЙ В РЯДУ — проверять нечего',
+    );
+    if (!mezz) continue;
+
+    /** Где антресоль стоит по единственной функции — эталон для всех видов. */
+    const trueBottom = Math.round(mezz.y * 1000);
+    const trueTop = Math.round((mezz.y + mezz.heightM) * 1000);
+    const trueDepth = Math.round(mezz.depthM * 1000);
+
+    const views: Record<string, string> = {};
+    let rendered = 0;
+    const elements: [string, React.ReactElement][] = [
+      ['фасад', React.createElement(ElevationDrawing, { run } as never)],
+      ['план', React.createElement(PlanDrawing, { run, comms: [], issues: [] } as never)],
+      ['разрез', React.createElement(SectionDrawing, { run } as never)],
+    ];
+
+    for (const [name, element] of elements) {
+      try {
+        views[name] = renderToStaticMarkup(element);
+        rendered += 1;
+      } catch (error) {
+        views[name] = '';
+        console.error(`       ${name} не отрисовался: ${(error as Error).message.slice(0, 120)}`);
+      }
+    }
+
+    check(
+      `${title}: все три плоских вида отрисовались`,
+      rendered === 3,
+      rendered === 3 ? 'фасад, план, разрез' : `ОТРИСОВАЛОСЬ ${rendered} ИЗ 3 — мерить не на чем`,
+    );
+
+    /* ── Антресоль есть как ОБЪЕКТ на каждом виде ── */
+
+    const missing = (['фасад', 'план', 'разрез'] as const).filter(
+      (name) => !views[name].includes(`data-module-id="${mezz.unit.id}"`),
+    );
+
+    check(
+      `${title}: антресоль нарисована объектом на фасаде, плане и в разрезе`,
+      missing.length === 0,
+      missing.length === 0 ? 'есть на всех трёх' : `НЕТ КАК ОБЪЕКТА: ${missing.join(', ')}`,
+    );
+
+    /* ── Фасад: отметки те же, что у сцены ── */
+
+    const drawnBottom = attrOf(views['фасад'], mezz.unit.id, 'data-bottom-mm');
+    const drawnTop = attrOf(views['фасад'], mezz.unit.id, 'data-top-mm');
+
+    check(
+      `${title}: на фасаде антресоль стоит там же, где в сцене`,
+      drawnBottom !== null &&
+        drawnTop !== null &&
+        Math.abs(drawnBottom - trueBottom) <= 1 &&
+        Math.abs(drawnTop - trueTop) <= 1,
+      drawnBottom === null || drawnTop === null
+        ? 'НЕТ ОТМЕТОК У АНТРЕСОЛИ НА ФАСАДЕ'
+        : `чертёж ${drawnBottom}…${drawnTop} · сцена ${trueBottom}…${trueTop} · ниже на ${trueBottom - drawnBottom} мм`,
+    );
+
+    /* ── План и разрез: зад на стене, перёд уводит глубина ── */
+
+    for (const name of ['план', 'разрез'] as const) {
+      const back = attrOf(views[name], mezz.unit.id, 'data-back-mm');
+      const front = attrOf(views[name], mezz.unit.id, 'data-front-mm');
+
+      check(
+        `${title}: в виде «${name}» зад антресоли на стене, перёд на её глубине`,
+        back !== null && front !== null && back === 0 && Math.abs(front - trueDepth) <= 1,
+        back === null || front === null
+          ? `НЕТ ПЛОСКОСТЕЙ У АНТРЕСОЛИ В ВИДЕ «${name}»`
+          : `зад ${back} перёд ${front} при глубине ${trueDepth} мм и ряде ${rowDepth} мм`,
+      );
+    }
+
+    /* ── Аксонометрия листа строится из тех же коробок, что сцена ── */
+
+    const axoBoxes = axonometryBoxes(run, 'closed', { thicknessMm: 16, frontMm: 18, gapMm: 3 });
+    const boxes = runBoxes(run, { thicknessMm: 16, frontThicknessMm: 18, gapMm: 3 });
+
+    /*
+     * Полоса антресоли по высоте единственная в ряду, поэтому коробки
+     * отбираются по ней: сравнивать спроецированные грани бесполезно —
+     * на бумаге от миллиметров натуры не остаётся ничего.
+     */
+    const inMezzBand = (box: (typeof boxes)[number]) =>
+      box.position[1] > mezz.y + 0.01 && box.position[1] < mezz.y + mezz.heightM - 0.01;
+
+    const backOf = (list: typeof boxes) => {
+      const band = list.filter(inMezzBand);
+      if (band.length === 0) return null;
+      return Math.round(Math.min(...band.map((box) => box.position[2] - box.scale[2] / 2)) * 1000);
+    };
+
+    const axoBack = backOf(axoBoxes);
+    const sceneBack = backOf(boxes);
+
+    check(
+      `${title}: коробки антресоли есть и на листе, и в сцене`,
+      axoBack !== null && sceneBack !== null,
+      axoBack === null || sceneBack === null
+        ? 'НОЛЬ КОРОБОК АНТРЕСОЛИ — сравнивать нечего'
+        : `лист ${axoBack} мм · сцена ${sceneBack} мм`,
+    );
+
+    check(
+      `${title}: на аксонометрии листа зад антресоли лежит на стене`,
+      axoBack !== null && Math.abs(axoBack + rowDepth) <= 3,
+      axoBack === null
+        ? 'НЕТ КОРОБОК АНТРЕСОЛИ НА ЛИСТЕ'
+        : `лист ${axoBack} мм при стене ${-rowDepth} мм · расхождение ${Math.abs(axoBack + rowDepth)} мм`,
+    );
+
+    check(
+      `${title}: лист и сцена ставят антресоль в одно место`,
+      axoBack !== null && sceneBack !== null && Math.abs(axoBack - sceneBack) <= 1,
+      axoBack === null || sceneBack === null
+        ? 'НЕТ КОРОБОК'
+        : `расхождение ${Math.abs(axoBack - sceneBack)} мм`,
+    );
+
   }
 }
 

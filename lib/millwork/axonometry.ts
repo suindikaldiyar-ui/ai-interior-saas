@@ -1,6 +1,12 @@
-import { carcassBoxes, moduleBoxes, type BoxMaterial, type PartBox } from './cabinetBoxes';
-import { countertopMm, plinthMm, rowDepthMm, workTopMm } from './shop';
-import { moduleCarcassHeightMm, moduleDepthMm, upperBottomFor } from './fill';
+import {
+  carcassBoxes,
+  moduleBoxes,
+  runPlaces,
+  type BoxMaterial,
+  type PartBox,
+} from './cabinetBoxes';
+import { countertopMm, plinthMm, workTopMm } from './shop';
+import { rowStandardDepthMm } from './fill';
 import { zoneProfile } from './zones';
 import type { Run } from '@/types/millwork';
 
@@ -116,13 +122,32 @@ export type Axonometry = {
  * Коробки берутся из общей геометрии: закрытый вид — фасады на месте,
  * «внутри» — фасады сняты и видно полки, «корпус» — только каркас.
  */
-export function buildAxonometry(
+/**
+ * КОРОБКИ ЛИСТА ДО ПРОЕКЦИИ — ОТДЕЛЬНО ОТ РИСОВАНИЯ.
+ *
+ * Спроецированную грань измерить нельзя: у неё есть только точки на
+ * бумаге, а вопрос «лежит ли задняя плоскость антресоли на стене»
+ * задаётся в миллиметрах натуры. Приёмка спрашивала габарит рисунка и
+ * получала ответ про цоколь со столешницей — то есть меряла не то, что
+ * проверяла, и молчала при расхождении в 240 мм.
+ *
+ * Здесь те же коробки, из которых строятся грани, только до проекции.
+ */
+export function axonometryBoxes(
   run: Run,
   mode: AxonometryMode,
   production: { thicknessMm: number; frontMm: number; gapMm: number },
-): Axonometry {
+): PartBox[] {
   const zone = zoneProfile(run.zone ?? 'kitchen');
-  const depthM = (zone.depthMm ?? rowDepthMm('base', run.production)) / MM;
+  /*
+   * ГЛУБИНА РЯДА — ШКОЛА ЦЕХА, А НЕ ПРОФИЛЬ ЗОНЫ.
+   *
+   * Здесь стояло `zone.depthMm ?? rowDepthMm('base', …)`: профиль шёл
+   * ПРЕЖДЕ настроек организации, и у цеха с глубиной 600 объёмный вид
+   * рисовал ряд по 560 — на 40 мм мельче того, что уедет в раскрой.
+   * Тот же разбор уже был у сцены (слой 39) и здесь просто не доехал.
+   */
+  const depthM = rowStandardDepthMm(run.zone, 'base', run.production) / MM;
   const thicknessM = production.thicknessMm / MM;
 
   const options = {
@@ -135,29 +160,27 @@ export function buildAxonometry(
 
   const boxes: PartBox[] = [];
 
-  const place = (unit: (typeof run.modules)[number], offsetMm: number, upper: boolean) => {
-    // Высота и отметка — из ОДНОГО источника с чертежом и сметой.
-    const heightMm = moduleCarcassHeightMm(unit, run);
-
+  /*
+   * ГДЕ СТОИТ МОДУЛЬ — СПРАШИВАЕМ, А НЕ СЧИТАЕМ.
+   *
+   * Здесь была ТРЕТЬЯ раскладка ряда: своя отметка низа, своя глубина и
+   * `zM`, которого не было вовсе. Из-за последнего задняя плоскость
+   * висящих рядов определялась их СОБСТВЕННОЙ глубиной, а не стеной:
+   * верхний ряд и антресоль выходили заподлицо с нижним по ФАСАДУ. На
+   * листе это ровно та ошибка, за которую чертёж не принимают.
+   *
+   * Теперь место берётся у `runPlaces` — у той же функции, по которой
+   * стоит сцена и идут рёбра. Второго ответа на этот вопрос в продукте
+   * не осталось.
+   */
+  for (const entry of runPlaces(run)) {
     const placement = {
-      x: offsetMm / MM,
-      y: upper ? upperBottomFor(unit, run) / MM : plinthMm(run.production) / MM,
-      heightM: heightMm / MM,
-      depthM: upper ? moduleDepthMm(unit, run.zone, run.production) / MM : depthM,
+      x: entry.x,
+      y: entry.y,
+      heightM: entry.heightM,
+      depthM: entry.depthM,
+      zM: entry.zM,
       thicknessM,
-      /*
-       * НОЛЬ ЗДЕСЬ — ЭТО ТО, ЧТО ЛИСТ ПЕЧАТАЕТ СЕГОДНЯ, И ОНО НЕ ТРОГАЕТСЯ.
-       *
-       * Раскладка у печатной аксонометрии своя: глубина берётся из профиля
-       * зоны (`zone.depthMm`) прежде школы цеха, а смещения по глубине нет
-       * вовсе — верхний ряд и антресоль выходят заподлицо с нижним по
-       * ФАСАДУ, а не по стене. Числа те же, что были: `zM` здесь всегда
-       * подразумевался нулём, теперь он написан.
-       *
-       * Правка этого — правка ЧЕРТЕЖА, и она делается отдельной задачей:
-       * лист уходит в цех, и двигать на нём мебель мимоходом нельзя.
-       */
-      zM: 0,
     };
 
     /*
@@ -165,18 +188,13 @@ export function buildAxonometry(
      * Остальные виды берут полный состав модуля.
      */
     if (mode === 'carcass') {
-      for (const box of carcassBoxes(unit, placement)) {
+      for (const box of carcassBoxes(entry.unit, placement)) {
         boxes.push({ ...box, material: 'carcass' });
       }
-      return;
+      continue;
     }
 
-    boxes.push(...moduleBoxes(unit, placement, options));
-  };
-
-  for (const unit of run.modules) place(unit, unit.offsetMm, false);
-  for (const segment of run.upperSegments) {
-    for (const unit of segment.modules) place(unit, unit.offsetMm, true);
+    boxes.push(...moduleBoxes(entry.unit, placement, options, run.production));
   }
 
   // Цоколь одной планкой: без него ряд висит в воздухе.
@@ -198,7 +216,20 @@ export function buildAxonometry(
     });
   }
 
-  const faces = boxes.flatMap(boxFaces).sort((a, b) => a.depth - b.depth);
+  return boxes;
+}
+
+/**
+ * Ряд в изометрии: те же коробки, положенные на бумагу.
+ */
+export function buildAxonometry(
+  run: Run,
+  mode: AxonometryMode,
+  production: { thicknessMm: number; frontMm: number; gapMm: number },
+): Axonometry {
+  const faces = axonometryBoxes(run, mode, production)
+    .flatMap(boxFaces)
+    .sort((a, b) => a.depth - b.depth);
 
   const xs = faces.flatMap((f) => f.points.map((p) => p.x));
   const ys = faces.flatMap((f) => f.points.map((p) => p.y));

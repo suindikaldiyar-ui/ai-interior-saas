@@ -2,8 +2,9 @@
 
 import DimensionChain from './DimensionChain';
 import { CommLegend, COMM_SYMBOL } from './DrawingSymbols';
-import { GEOMETRY } from '@/lib/millwork/modules';
+import { GEOMETRY, isUpperRow } from '@/lib/millwork/modules';
 import { moduleDepthMm } from '@/lib/millwork/fill';
+import { runPlaces } from '@/lib/millwork/cabinetBoxes';
 import { LINE_MM, unitsPerPaperMm } from '@/lib/millwork/sheetStyle';
 import type { CommPoint, LayoutIssue, Run } from '@/types/millwork';
 
@@ -111,6 +112,45 @@ export default function PlanDrawing({
         стена
       </text>
 
+      {/*
+        * ВЕРХНИЙ РЯД И АНТРЕСОЛЬ — ПУНКТИРОМ НАД ПЛОСКОСТЬЮ РЕЗА.
+        *
+        * План секут выше столешницы и ниже навесных, поэтому всё, что
+        * висит, показывают пунктиром: так его читают и в мебельном, и в
+        * строительном чертеже. Здесь их не было вовсе — а антресоль
+        * глубже верхнего ряда, и её вынос вперёд виден ТОЛЬКО на плане.
+        *
+        * Место и глубина берутся у `runPlaces` — той же функции, по
+        * которой стоит сцена: своя формула здесь означала бы план, не
+        * совпадающий с мебелью.
+        */}
+      {runPlaces(run)
+        .filter((place) => isUpperRow(place.unit))
+        .map((place) => {
+          const x = PADDING_LEFT + place.unit.offsetMm * scale;
+          const w = place.unit.widthMm * scale;
+          const d = Math.round(place.depthM * 1000) * scale;
+
+          return (
+            <rect
+              key={`upper-${place.unit.id}`}
+              data-module-id={place.unit.id}
+              /* Задняя плоскость у всех рядов одна — стена. */
+              data-back-mm={0}
+              data-front-mm={Math.round(place.depthM * 1000)}
+              x={x}
+              y={wallY}
+              width={w}
+              height={d}
+              fill="none"
+              stroke="var(--blueprint)"
+              strokeWidth={0.6}
+              strokeDasharray="4 3"
+              opacity={0.75}
+            />
+          );
+        })}
+
       {/* Модули сверху вниз: глубина от стены */}
       {run.modules.map((unit) => {
         const x = PADDING_LEFT + unit.offsetMm * scale;
@@ -127,6 +167,14 @@ export default function PlanDrawing({
         return (
           <g
             key={unit.id}
+            data-module-id={unit.id}
+            /*
+             * Плоскости в миллиметрах от стены: задняя обязана быть нулём
+             * у всех рядов, переднюю уводит глубина. Приёмка сверяет эти
+             * числа с `runPlaces`, а не смотрит на картинку.
+             */
+            data-back-mm={0}
+            data-front-mm={Math.round(moduleDepthMm(unit, run.zone, run.production))}
             onClick={onSelect ? () => onSelect(unit.id) : undefined}
             style={{ cursor: onSelect ? 'pointer' : 'default' }}
           >

@@ -117,6 +117,7 @@ import {
 } from '../lib/millwork/walls';
 import { composeVariants, workingWall, workspaceInput } from '../lib/millwork/workspace';
 import { screenState } from '../lib/millwork/screen';
+import { MIN_DRAWER_MM } from '../lib/millwork/fill';
 import { plinthColor, counterColor, roleColors } from '../lib/millwork/sceneColors';
 import { OBJECT_MARKS, markOwn, productionFor, withMark } from '../lib/millwork/shop';
 import {
@@ -12387,28 +12388,54 @@ console.log('\nЧисло ящиков меняется на пути экран
     (ghost.warnings ?? []).join(' | ') || 'МОЛЧА',
   );
 
-  const appliance = activeRun().modules.find((unit) => unit.appliance && !unit.column);
+  /*
+   * ПРАВИЛО ПРОВЕРЯЕТСЯ С ОБЕИХ СТОРОН.
+   *
+   * Раньше здесь стоял один случай: «у приборного модуля число фронтов
+   * задаёт место». Он был верен для мойки и холодильника и НЕ верен для
+   * варочной — под ней обычные ящики, и число их выбирает человек.
+   * Проверка, знающая только запрет, зелёная и на продукте, который
+   * запрещает всё подряд.
+   */
+  const dictated = activeRun().modules.find(
+    (unit) => unit.appliance && !unit.column && (unit.fill?.drawerHeights.length ?? 0) === 0,
+  );
+  const freeDrawers = activeRun().modules.find(
+    (unit) => unit.appliance && !unit.column && (unit.fill?.drawerHeights.length ?? 0) > 0,
+  );
+
+  const frontsWarnings = (moduleId: string, count: number) =>
+    (
+      applyOps({
+        run: activeRun(),
+        requirements: REQ,
+        ops: [{ op: 'set_fronts', moduleId, drawerCount: count }],
+        openings: input.openings,
+      }).warnings ?? []
+    );
+
   check(
-    'на приборном модуле поле объясняет, почему число задаёт не оно',
-    Boolean(appliance) &&
-      (
-        applyOps({
-          run: activeRun(),
-          requirements: REQ,
-          ops: [{ op: 'set_fronts', moduleId: appliance!.id, drawerCount: 3 }],
-          openings: input.openings,
-        }).warnings ?? []
-      ).some((w) => /задаёт прибор и место/.test(w)),
-    appliance
-      ? (
-          applyOps({
-            run: activeRun(),
-            requirements: REQ,
-            ops: [{ op: 'set_fronts', moduleId: appliance.id, drawerCount: 3 }],
-            openings: input.openings,
-          }).warnings ?? []
-        ).join(' | ') || 'МОЛЧА'
-      : 'ПРИБОРНОГО МОДУЛЯ НЕТ',
+    'оба вида приборных модулей в ряду есть — правило проверять есть на чём',
+    Boolean(dictated) && Boolean(freeDrawers),
+    !dictated
+      ? 'НЕТ МОДУЛЯ, ГДЕ ФАСАД ЗАДАЁТ ПРИБОР'
+      : !freeDrawers
+        ? 'НЕТ МОДУЛЯ С ЯЩИКАМИ ПОД ПРИБОРОМ'
+        : `${dictated.label} · ${freeDrawers.label}`,
+  );
+
+  check(
+    'там, где фасад задаёт прибор, поле объясняет это словами',
+    Boolean(dictated) && frontsWarnings(dictated!.id, 3).some((w) => /задаёт прибор/.test(w)),
+    dictated ? frontsWarnings(dictated.id, 3).join(' | ') || 'МОЛЧА' : 'ПРИБОРНОГО МОДУЛЯ НЕТ',
+  );
+
+  check(
+    'а под варочной три ящика проходят без отказа',
+    Boolean(freeDrawers) && frontsWarnings(freeDrawers!.id, 3).length === 0,
+    freeDrawers
+      ? frontsWarnings(freeDrawers.id, 3).join(' | ') || 'отказа нет'
+      : 'МОДУЛЯ С ЯЩИКАМИ ПОД ПРИБОРОМ НЕТ',
   );
 }
 
@@ -13190,6 +13217,155 @@ console.log('\nЗащищённое поведение рабочего экра
       mute.length > 0
         ? `БЕЗ ТЕКСТА: ${mute.map(([name]) => name).join(', ')}`
         : channel.map(([name]) => name).join(' · '),
+    );
+  }
+}
+
+/* ═══════════  Ящики под варочной панелью  ═══════════ */
+
+/**
+ * ПОД ВАРОЧНОЙ ЯЩИКИ ТАКИЕ ЖЕ, КАК ВЕЗДЕ.
+ *
+ * Прибор занимает место СВЕРХУ корпуса, поэтому верхний фронт укорочен, —
+ * но само число ящиков ничем не продиктовано: клиент просит три, и три
+ * там делают. Поле было заперто, а операция отказывала словами.
+ *
+ * Цепочка меряется целиком: число ящиков → фронты в раскрое →
+ * направляющие в смете → сумма. Оборванная посередине, она даёт цеху
+ * фурнитуру без панелей или панели без фурнитуры.
+ */
+console.log('\nЯщики под варочной панелью');
+{
+  const run = buildRun(baseInput);
+  const hob = run.modules.find((unit) => unit.appliance === 'hob');
+
+  check(
+    'модуль под варочной есть — проверять есть на чём',
+    Boolean(hob),
+    hob ? `${hob.label}, ширина ${hob.widthMm} мм` : 'МОДУЛЯ ПОД ВАРОЧНОЙ НЕТ — проверять нечего',
+  );
+
+  if (hob) {
+    const carcassMm = moduleCarcassHeightMm(hob, run);
+
+    /** Ряд с заданным числом ящиков под варочной — тем же путём, что экран. */
+    const withDrawers = (count: number) =>
+      applyOps({
+        run,
+        requirements: DEMO_REQUIREMENTS,
+        ops: [{ op: 'set_fronts', moduleId: hob.id, drawerCount: count }],
+      });
+
+    /** Сколько фронтов ящика уходит в раскрой у этого модуля. */
+    const frontsInCut = (r: Run) =>
+      buildPanels({ run: r })
+        .filter((panel) => panel.moduleId === hob.id && panel.name === 'Фронт ящика')
+        .reduce((sum, panel) => sum + panel.qty, 0);
+
+    /** Сколько направляющих выписала смета всему ряду. */
+    const slidesInEstimate = (r: Run) =>
+      buildEstimate(r, MAIN_VARIANT, DEMO_RATES)
+        .lines.filter((line) => line.key.startsWith('slide_'))
+        .reduce((sum, line) => sum + line.quantity, 0);
+
+    const two = withDrawers(2);
+    const three = withDrawers(3);
+
+    const twoUnit = two.modules.find((unit) => unit.id === hob.id)!;
+    const threeUnit = three.modules.find((unit) => unit.id === hob.id)!;
+
+    check(
+      'два и три ящика доезжают до модуля, а не отбрасываются молча',
+      (twoUnit.fill?.drawerHeights.length ?? 0) === 2 &&
+        (threeUnit.fill?.drawerHeights.length ?? 0) === 3,
+      `два → ${twoUnit.fill?.drawerHeights.length ?? 0} фронтов [${twoUnit.fill?.drawerHeights.join('/')}] · три → ${threeUnit.fill?.drawerHeights.length ?? 0} [${threeUnit.fill?.drawerHeights.join('/')}]`,
+    );
+
+    check(
+      'сумма высот фронтов сходится с высотой корпуса до миллиметра',
+      [twoUnit, threeUnit].every(
+        (unit) =>
+          (unit.fill?.drawerHeights ?? []).reduce((sum, h) => sum + h, 0) === carcassMm,
+      ),
+      `корпус ${carcassMm} · два ${(twoUnit.fill?.drawerHeights ?? []).reduce((a, b) => a + b, 0)} · три ${(threeUnit.fill?.drawerHeights ?? []).reduce((a, b) => a + b, 0)}`,
+    );
+
+    check(
+      'верхний фронт укорочен на одну и ту же величину при любом числе ящиков',
+      (twoUnit.fill?.drawerHeights[0] ?? 0) === (threeUnit.fill?.drawerHeights[0] ?? -1),
+      `два → ${twoUnit.fill?.drawerHeights[0]} мм · три → ${threeUnit.fill?.drawerHeights[0]} мм`,
+    );
+
+    /* ── Раскрой ── */
+
+    const cutTwo = frontsInCut(two);
+    const cutThree = frontsInCut(three);
+
+    check(
+      'фронты в раскрое есть — цепочку проверять есть на чём',
+      cutTwo > 0 && cutThree > 0,
+      cutTwo === 0 || cutThree === 0
+        ? 'НОЛЬ ФРОНТОВ В РАСКРОЕ — цепочка оборвана на первом же шаге'
+        : `два → ${cutTwo} · три → ${cutThree}`,
+    );
+
+    check(
+      'фронтов в раскрое ровно столько, сколько ящиков',
+      cutTwo === 2 && cutThree === 3,
+      `два → ${cutTwo} фронтов · три → ${cutThree} фронтов`,
+    );
+
+    /* ── Смета ── */
+
+    const slidesTwo = slidesInEstimate(two);
+    const slidesThree = slidesInEstimate(three);
+    const slidesBase = slidesInEstimate(run);
+
+    check(
+      'направляющие в смете есть — фурнитуру проверять есть на чём',
+      slidesTwo > 0 && slidesThree > 0,
+      slidesTwo === 0 || slidesThree === 0
+        ? 'НОЛЬ НАПРАВЛЯЮЩИХ В СМЕТЕ — фронты нарезаны, а вешать их не на что'
+        : `два → ${slidesTwo} · три → ${slidesThree}`,
+    );
+
+    check(
+      'третий ящик добавляет ровно одну направляющую',
+      slidesThree - slidesTwo === 1,
+      `ряд как есть ${slidesBase} · два ${slidesTwo} · три ${slidesThree}`,
+    );
+
+    const totalTwo = buildEstimate(two, MAIN_VARIANT, DEMO_RATES).total;
+    const totalThree = buildEstimate(three, MAIN_VARIANT, DEMO_RATES).total;
+
+    check(
+      'третий ящик меняет сумму: за него платят',
+      totalThree > totalTwo,
+      `два ${Math.round(totalTwo)} ₸ · три ${Math.round(totalThree)} ₸ · разница ${Math.round(totalThree - totalTwo)} ₸`,
+    );
+
+    /* ── Отказ называет число ── */
+
+    const tooMany = Math.ceil(carcassMm / MIN_DRAWER_MM) + 2;
+    const refused = withDrawers(tooMany);
+    const refusal = refused.warnings.find((text) => text.includes('ящик'));
+
+    check(
+      `${tooMany} ящиков не встают — отказ словами, а не молча`,
+      Boolean(refusal),
+      refusal ?? 'ОТКАЗА НЕТ ВОВСЕ — правка пропала молча',
+    );
+
+    check(
+      'в отказе есть число, а не только слова',
+      Boolean(refusal && /[0-9]/.test(refusal)),
+      refusal ?? 'ОТКАЗА НЕТ',
+    );
+
+    check(
+      'отказ ничего не сломал: модуль остался с прежними ящиками',
+      (refused.modules.find((unit) => unit.id === hob.id)?.fill?.drawerHeights.length ?? 0) > 0,
+      `осталось ${refused.modules.find((unit) => unit.id === hob.id)?.fill?.drawerHeights.length ?? 0} фронтов`,
     );
   }
 }

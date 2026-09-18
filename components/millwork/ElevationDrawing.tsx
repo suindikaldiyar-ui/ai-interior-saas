@@ -14,6 +14,7 @@ import {
   workTopMm,
 } from '@/lib/millwork/shop';
 import { sectionSpec } from '@/lib/millwork/sections';
+import { runPlaces } from '@/lib/millwork/cabinetBoxes';
 import { moveConflict } from '@/lib/millwork/freeRun';
 import { moduleSwatch } from '@/lib/millwork/frontSwatch';
 import { frontOf } from '@/lib/millwork/frontMaterial';
@@ -716,6 +717,30 @@ export default function ElevationDrawing({
         [ceiling, 'потолок'],
       ];
 
+  /**
+   * ГДЕ СТОИТ КАЖДЫЙ МОДУЛЬ — ТА ЖЕ ФУНКЦИЯ, ЧТО У СЦЕНЫ.
+   *
+   * Отметки верхнего ряда чертёж считал своими двумя числами
+   * (`upperBottom`/`upperTop`), одинаковыми для всего ряда. Пока верхний
+   * ряд был один, они совпадали с раскладкой; на антресоли разошлись:
+   * она стоит на крыше колонны холодильника, а чертёж рисовал её на
+   * отметке навески — на 950 мм ниже, ВНУТРИ колонны. Со стороны это и
+   * читается как «антресоли на чертеже нет».
+   *
+   * `runPlaces` отвечает на этот вопрос один раз на продукт: по ней
+   * стоит сцена, по ней идут рёбра, по ней теперь и лист.
+   */
+  const placeOf = useMemo(() => {
+    const map = new Map<string, { bottomMm: number; topMm: number }>();
+    for (const place of runPlaces(run)) {
+      map.set(place.unit.id, {
+        bottomMm: Math.round(place.y * 1000),
+        topMm: Math.round((place.y + place.heightM) * 1000),
+      });
+    }
+    return map;
+  }, [run]);
+
   /** Верх и низ модуля секционной зоны: у каждой секции своя высота. */
   const sectionBounds = (unit: Module, isUpper: boolean): { top: number; bottom: number } => {
     const spec = unit.section ? sectionSpec(unit.section) : null;
@@ -869,9 +894,17 @@ export default function ElevationDrawing({
     const x = padLeft + unit.offsetMm * scale;
     const w = unit.widthMm * scale;
 
+    /*
+     * Нижний ряд рисуется от ПОЛА до рабочей поверхности: на фасаде видны
+     * цоколь и столешница, и это не раскладка модуля, а вид изделия.
+     * А вот верхний ряд висит, и где именно — знает `runPlaces`.
+     */
+    const placed = isUpper ? placeOf.get(unit.id) : undefined;
     const bounds = sectionZone
       ? sectionBounds(unit, isUpper)
-      : { top: isUpper ? upperTop : workTop, bottom: isUpper ? upperBottom : 0 };
+      : placed
+        ? { top: placed.topMm, bottom: placed.bottomMm }
+        : { top: isUpper ? upperTop : workTop, bottom: isUpper ? upperBottom : 0 };
     const top = bounds.top;
     const bottom = bounds.bottom;
 
@@ -944,6 +977,16 @@ export default function ElevationDrawing({
          */
         data-module-id={compact ? undefined : unit.id}
         data-module-offset={compact ? undefined : unit.offsetMm}
+        /*
+         * ОТМЕТКИ, ПО КОТОРЫМ МОДУЛЬ НАРИСОВАН — ПРИБОР, А НЕ УКРАШЕНИЕ.
+         *
+         * «Антресоли на чертеже не видно» проверить глазами нельзя: она
+         * там есть, просто нарисована на 950 мм ниже своего места, внутри
+         * колонны холодильника. Приёмка меряет ровно эти два числа и
+         * сверяет их с тем, что считает `runPlaces` для сцены.
+         */
+        data-bottom-mm={compact ? undefined : Math.round(bottom)}
+        data-top-mm={compact ? undefined : Math.round(tallTop)}
         onClick={onSelect ? () => onSelect(unit.id) : undefined}
         onPointerDown={movable ? (event) => startMove(event, unit) : undefined}
         style={{ cursor: movable ? 'ew-resize' : onSelect ? 'pointer' : 'default' }}

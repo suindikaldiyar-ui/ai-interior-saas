@@ -10,7 +10,7 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test:spatial": "tsx scripts/verify-spatial.ts",
+    "test:spatial": "tsx --tsconfig tsconfig.scripts.json scripts/verify-spatial.ts",
     "verify": "npm run typecheck && npm run test:spatial && npm run test:catalog && npm run test:millwork && npm run test:survey && npm run build && npm run test:capture && npm run test:demo",
     "test:capture": "node scripts/verify-capture.mjs",
     "test:catalog": "tsx scripts/verify-catalog.ts",

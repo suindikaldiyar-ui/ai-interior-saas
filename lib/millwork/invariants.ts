@@ -1,8 +1,7 @@
 import { ceilingOverSpanMm } from './ceiling';
-import { plinthMm, rowDepthMm } from './shop';
+import { plinthMm } from './shop';
 import { GEOMETRY, moduleAppliances } from './modules';
-import { moduleCarcassHeightMm, upperBottomFor } from './fill';
-import { zoneProfile } from './zones';
+import { moduleCarcassHeightMm, moduleDepthMm, upperBottomFor } from './fill';
 import type { Module, Run } from '@/types/millwork';
 
 /**
@@ -188,9 +187,22 @@ export function appliancesPlacedOnce(run: Run): Map<string, number> {
  */
 function moduleBox(unit: Module, run: Run, upper: boolean) {
   const heightMm = moduleCarcassHeightMm(unit, run);
-  const depth = upper
-    ? rowDepthMm('upper', run.production)
-    : (zoneProfile(run.zone ?? 'kitchen').depthMm ?? rowDepthMm('base', run.production));
+
+  /*
+   * ГЛУБИНА — ТА ЖЕ, ЧТО У РАСКРОЯ, А НЕ ПРОФИЛЬ ЗОНЫ.
+   *
+   * Здесь стояло «верхний ряд — `rowDepthMm('upper')`, остальное —
+   * `zone.depthMm ?? …`», и оба ответа расходились с той мебелью, которую
+   * мы на самом деле строим. Замерено на демо-ряду: у цеха с глубиной
+   * 600 весь нижний ряд проверялся по 560 (−40 мм), а антресоль — по
+   * глубине верхнего ряда вместо своей настройки (−200 мм при школе
+   * 600/300/500 и −240 при 560/320/560).
+   *
+   * Инвариант, меряющий не ту мебель, хуже его отсутствия: он зелёный
+   * там, где шкафы заходят друг в друга. Габарит обязан быть ТОТ ЖЕ, что
+   * ушёл в раскрой, — его и спрашиваем.
+   */
+  const depth = moduleDepthMm(unit, run.zone, run.production);
   const y0 = upper ? upperBottomFor(unit, run) : plinthMm(run.production);
 
   return {

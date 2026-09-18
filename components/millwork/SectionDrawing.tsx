@@ -9,8 +9,9 @@ import {
   workTopMm,
 } from '@/lib/millwork/shop';
 import { rowStandardDepthMm } from '@/lib/millwork/fill';
+import { runPlaces } from '@/lib/millwork/cabinetBoxes';
 import { SHELF_PANEL_NAME, panelNumberOf } from '@/lib/millwork/panels';
-import { GEOMETRY } from '@/lib/millwork/modules';
+import { GEOMETRY, isUpperRow } from '@/lib/millwork/modules';
 import { moduleNumbers, POSITION_CIRCLE_MM } from '@/lib/millwork/positions';
 import {
   PAPER_FILL,
@@ -152,6 +153,35 @@ export default function SectionDrawing({
   const baseDepth = rowStandardDepthMm(run.zone, 'base', shop);
   const counterTop = workTopMm(shop);
   const hasUpper = run.upperSegments.length > 0;
+
+  /*
+   * ПОЛОСЫ ВИСЯЩИХ РЯДОВ — ИЗ ТОЙ ЖЕ ФУНКЦИИ, ЧТО СТАВИТ СЦЕНУ.
+   *
+   * Разрез рисовал ОДИН прямоугольник верхнего ряда: одна отметка, одна
+   * глубина на всё, что висит. Антресоли в нём не было вовсе — а она и
+   * висит выше, и глубже (у неё глубина нижнего ряда, школа цеха). На
+   * разрезе её вынос вперёд виден лучше, чем на любом другом виде,
+   * и именно его там не показывали.
+   *
+   * Полосы схлопываются по тройке «низ · верх · глубина»: четыре шкафа
+   * одного ряда — это одна линия на разрезе, а не четыре наложенных.
+   */
+  const upperBands = (() => {
+    const bands = new Map<string, { bottomMm: number; topMm: number; depthMm: number; id: string }>();
+
+    for (const place of runPlaces(run)) {
+      if (!isUpperRow(place.unit)) continue;
+
+      const bottomMm = Math.round(place.y * 1000);
+      const topMm = Math.round((place.y + place.heightM) * 1000);
+      const depthMm = Math.round(place.depthM * 1000);
+      const key = `${bottomMm}:${topMm}:${depthMm}`;
+
+      if (!bands.has(key)) bands.set(key, { bottomMm, topMm, depthMm, id: place.unit.id });
+    }
+
+    return Array.from(bands.values());
+  })();
   const upperTop = run.options.upperToCeiling ? ceiling : upperBottom + GEOMETRY.upper.carcassH;
 
   const line = 'var(--blueprint)';
@@ -298,16 +328,26 @@ export default function SectionDrawing({
       {/* Верхний ряд. */}
       {hasUpper && (
         <>
-          <rect
-            data-fill
-            x={xOf(0)}
-            y={yOf(upperTop)}
-            width={upperDepth}
-            height={upperTop - upperBottom}
-            fill={inside ? cut : PAPER_FILL.carcass}
-            stroke={line}
-            strokeWidth={lw.contour}
-          />
+          {upperBands.map((band) => (
+            <rect
+              key={band.id}
+              data-fill
+              /*
+               * Плоскости наружу: приёмка сверяет их с `runPlaces`, а не
+               * смотрит на картинку. Задняя у всех рядов — стена, ноль.
+               */
+              data-module-id={band.id}
+              data-back-mm={0}
+              data-front-mm={band.depthMm}
+              x={xOf(0)}
+              y={yOf(band.topMm)}
+              width={band.depthMm}
+              height={band.topMm - band.bottomMm}
+              fill={inside ? cut : PAPER_FILL.carcass}
+              stroke={line}
+              strokeWidth={lw.contour}
+            />
+          ))}
           {pickedFill && picked!.upper && (
             <Filling
               shelfNumber={shelfNumber}

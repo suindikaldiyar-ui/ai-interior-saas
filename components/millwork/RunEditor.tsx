@@ -872,8 +872,22 @@ export default function RunEditor({
             <label className={`block ${hide(!onLayout)}`}>
               <span className="mw-label">Фасад</span>
               <select
-                value={selected.frontType === 'drawers' ? selected.drawerCount : 0}
-                disabled={Boolean(selected.appliance)}
+                value={
+                  selected.fill?.drawerHeights.length ||
+                  (selected.frontType === 'drawers' ? selected.drawerCount : 0)
+                }
+                /*
+                 * ЗАПЕРТО ТАМ, ГДЕ ФАСАД ЗАДАЁТ ПРИБОР, А НЕ У ВСЕЙ ТЕХНИКИ.
+                 *
+                 * Под варочной панелью ящики обычные, и клиент просит три.
+                 * Условие то же, что в `applyOps`: есть фронты ящиков —
+                 * поле живое. У мойки и посудомойки их нет, и там оно
+                 * по-прежнему заперто.
+                 */
+                disabled={
+                  Boolean(selected.appliance) &&
+                  !(!selected.column && (selected.fill?.drawerHeights.length ?? 0) > 0)
+                }
                 onChange={(e) =>
                   onOps([
                     { op: 'set_fronts', moduleId: selected.id, drawerCount: Number(e.target.value) },
