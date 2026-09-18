@@ -117,6 +117,7 @@ import {
 } from '../lib/millwork/walls';
 import { composeVariants, workingWall, workspaceInput } from '../lib/millwork/workspace';
 import { screenState } from '../lib/millwork/screen';
+import { plinthColor, counterColor, roleColors } from '../lib/millwork/sceneColors';
 import { OBJECT_MARKS, markOwn, productionFor, withMark } from '../lib/millwork/shop';
 import {
   STEP_FIELDS,
@@ -3258,6 +3259,182 @@ console.log('\nДетализировка');
   const utf = panelsCsvFile(panels, 'utf-8');
   check('в UTF-8 файле есть BOM для Excel',
     utf.bytes[0] === 0xef && utf.bytes[1] === 0xbb && utf.bytes[2] === 0xbf);
+}
+
+/* ═══════════  Сцена читается как САПР  ═══════════ */
+
+/**
+ * ДЕТАЛЬ УЗНАЁТСЯ ЦВЕТОМ, ПРИБОР — ФОРМОЙ.
+ *
+ * Сцена была одного серого: корпус, фасад, полка и прибор различались
+ * только положением. Прибор при этом рисовался чёрным блоком, и духовка
+ * от посудомойки отличалась высотой — клиент видел стену плит.
+ *
+ * Меряем то, что видно: цвет по роли и число коробок у прибора.
+ */
+console.log('\nСцена читается как САПР');
+{
+  const palette = { facade: '#D8D2C6', carcass: '#CFC8BA', counter: '#3A3D40' };
+  const colors = roleColors(palette);
+  const roles = Object.keys(colors) as (keyof typeof colors)[];
+
+  check(
+    'роли есть — цвет проверять есть на чём',
+    roles.length >= 6,
+    roles.length === 0
+      ? 'СЕЛЕКТОР ВЕРНУЛ НОЛЬ РОЛЕЙ — красить нечего'
+      : `ролей ${roles.length}: ${roles.join(', ')}`,
+  );
+
+  const all = [...roles.map((role) => colors[role]), plinthColor(palette), counterColor(palette)];
+  check(
+    'у каждой роли свой цвет: ни один не совпадает с соседним',
+    new Set(all).size === all.length,
+    roles.map((role) => `${role} ${colors[role]}`).join(' · ') +
+      ` · цоколь ${plinthColor(palette)} · столешница ${counterColor(palette)}`,
+  );
+
+  /*
+   * Различимость — это РАССТОЯНИЕ между тонами, а не «не равно». Два
+   * цвета, отличающиеся на единицу канала, на экране одинаковы, и
+   * проверка «не равны» была бы зелёной на сплошной серой плите.
+   */
+  const rgb = (hex: string) => [
+    parseInt(hex.slice(1, 3), 16),
+    parseInt(hex.slice(3, 5), 16),
+    parseInt(hex.slice(5, 7), 16),
+  ];
+  const far = (a: string, b: string) =>
+    Math.max(...rgb(a).map((c, i) => Math.abs(c - rgb(b)[i])));
+
+  check(
+    'корпус, внутренности и цоколь различаются глазом, а не на единицу канала',
+    far(colors.carcass, colors.inner) >= 20 &&
+      far(colors.carcass, plinthColor(palette)) >= 15 &&
+      far(colors.inner, plinthColor(palette)) >= 30,
+    `корпус↔внутренности ${far(colors.carcass, colors.inner)} · корпус↔цоколь ${far(colors.carcass, plinthColor(palette))}`,
+  );
+
+  /*
+   * СНЯТЫЙ МАТЕРИАЛ НЕ ДЕЛАЕТ СЦЕНУ СЕРОЙ.
+   *
+   * Артикул красит фасад и столешницу; без него берётся палитра по
+   * умолчанию — и роли обязаны различаться всё равно, иначе «мебель ещё
+   * не выбрана» выглядит как «мебель не загрузилась».
+   */
+  const plain = { facade: '#CFC8BA', carcass: '#CFC8BA', counter: '#CFC8BA' };
+  const plainColors = roleColors(plain);
+  check(
+    'при одном материале на всё части всё равно различимы по роли',
+    new Set([
+      plainColors.carcass,
+      plainColors.inner,
+      plainColors.appliance,
+      plainColors.metal,
+      plinthColor(plain),
+    ]).size === 5 && far(plainColors.carcass, plainColors.inner) >= 20,
+    `корпус ${plainColors.carcass} · внутри ${plainColors.inner} · цоколь ${plinthColor(plain)}`,
+  );
+
+  /* ─── Рёбра: каждая коробка даёт свои двенадцать ─── */
+
+  const run = buildRun(baseInput);
+  const boxes = runBoxes(run, { thicknessMm: 16, frontThicknessMm: 18, gapMm: 3 });
+
+  check(
+    'коробки ряда есть — рёбра строить из чего',
+    boxes.length > 0,
+    boxes.length === 0 ? 'НОЛЬ КОРОБОК — рёбра строить не из чего' : `коробок ${boxes.length}`,
+  );
+
+  check(
+    'ни одна коробка не вырождена: у ребра нулевой длины нет',
+    boxes.every((box) => box.scale.every((side) => side > 0.0005)),
+    `наименьшая сторона ${Math.min(...boxes.flatMap((b) => b.scale)).toFixed(4)} м`,
+  );
+
+  /*
+   * Буфер рёбер строится по ВСЕМ коробкам ряда и фильтрует только
+   * внутренние (в режиме «Фасады» их не видно за дверью). Новые
+   * части — стекло и металл прибора — внутренними не помечены, значит
+   * рёбра у них есть.
+   */
+  const outside = boxes.filter((box) => !box.inside);
+  check(
+    'рёбра считаются по всем коробкам, а роль их не отсеивает',
+    outside.length > 0 &&
+      outside.length < boxes.length &&
+      new Set(boxes.map((box) => box.material)).size >= 4,
+    `видимых ${outside.length} из ${boxes.length} · ролей в ряду ${new Set(boxes.map((b) => b.material)).size}`,
+  );
+
+  /* ─── Прибор — не блок ─── */
+
+  /*
+   * Колонна «духовка + СВЧ» — самая частая высокая секция, и именно на
+   * ней видно, узнаётся ли прибор: две ниши подряд, и каждая должна
+   * читаться своим лицом, а не общей чёрной плитой.
+   */
+  const columnRun = buildRun({
+    ...baseInput,
+    requirements: {
+      ...REQ,
+      appliances: ['fridge', 'oven', 'microwave', 'hob', 'hood', 'sink600'],
+    },
+  });
+  const column = columnRun.modules.find((unit) => unit.column);
+  const applianceBoxesOf = (from: typeof run) =>
+    runBoxes(from, { thicknessMm: 16, frontThicknessMm: 18, gapMm: 3 }).filter(
+      (box) => box.material === 'appliance' || box.material === 'glass',
+    );
+
+  check(
+    'в ряду есть колонна приборов — узнаваемость проверять есть на чём',
+    Boolean(column),
+    column ? `${column.label}` : 'КОЛОННЫ НЕТ — приборы проверять не на чем',
+  );
+
+  const columnBoxes = applianceBoxesOf(columnRun);
+  check(
+    'прибор рисуется не одним блоком: у него есть дверца и стекло',
+    columnBoxes.length > 2 && columnBoxes.some((box) => box.material === 'glass'),
+    `коробок прибора ${columnBoxes.length}, из них стекло ${columnBoxes.filter((b) => b.material === 'glass').length}`,
+  );
+
+  check(
+    'у варочной панели конфорки, а не одна плоскость',
+    runBoxes(columnRun, { thicknessMm: 16, frontThicknessMm: 18, gapMm: 3 }).filter(
+      (box) => box.material === 'metal',
+    ).length >= 4,
+    `металлических деталей в ряду ${runBoxes(columnRun, { thicknessMm: 16, frontThicknessMm: 18, gapMm: 3 }).filter((b) => b.material === 'metal').length}`,
+  );
+
+  /* ─── Ручка ─── */
+
+  const withHandle = run.modules.find((unit) => unit.fill?.drawerHeights.length === 0 && unit.doorCount > 0);
+  const metalOf = (unit: Module) =>
+    moduleBoxes(
+      unit,
+      { x: 0, y: 0, heightM: 0.72, depthM: 0.56, thicknessM: 0.016 },
+      { gapM: 0.003, frontThicknessM: 0.018, integratedHandles: false, cutaway: false },
+    ).filter((box) => box.material === 'metal').length;
+
+  check(
+    'модуль со створкой найден — ручку проверять есть на чём',
+    Boolean(withHandle),
+    withHandle ? `${withHandle.label}` : 'МОДУЛЯ СО СТВОРКОЙ НЕТ — ручку проверять не на чем',
+  );
+
+  if (withHandle) {
+    const bar = { ...withHandle, fill: { ...withHandle.fill!, handle: 'bar' as const } };
+    const none = { ...withHandle, fill: { ...withHandle.fill!, handle: 'none' as const } };
+
+    check(
+      'ручка есть у модуля с выбранной ручкой и пропадает при «без ручки»',
+      metalOf(bar) > metalOf(none) && metalOf(none) === 0,
+      `скоба ${metalOf(bar)} · без ручки ${metalOf(none)}`,
+    );
+  }
 }
 
 /* ═══════════  Отметки объекта  ═══════════ */

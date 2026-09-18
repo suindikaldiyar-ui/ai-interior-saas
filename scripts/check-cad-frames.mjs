@@ -46,8 +46,8 @@ try {
   browser = await chromium.launch({ args: ['--enable-unsafe-swiftshader', '--use-angle=swiftshader', '--ignore-gpu-blocklist'] });
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   await page.goto(`${BASE}/demo`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
-  await until(async () => (await page.getByRole('button', { name: /Конфигуратор/ }).count()) > 0);
-  await page.getByRole('button', { name: /Конфигуратор/ }).first().click();
+  await until(async () => (await page.getByRole('button', { name: /Раскладка/ }).count()) > 0);
+  await page.getByRole('button', { name: /Раскладка/ }).first().click();
   await sleep(2500);
   await page.locator('[data-schematic-tab="scene"]').click();
   await sleep(3500);
@@ -69,7 +69,7 @@ try {
   const start = Date.now();
   const from = await frames();
   let actions = 0;
-  const angles = ['elevation', 'left', 'right', 'plan', 'free'];
+  const angles = ['elevation', 'left', 'right', 'plan', 'iso'];
 
   while (Date.now() - start < 60_000) {
     for (const a of angles) {
@@ -85,12 +85,21 @@ try {
 
     await page.mouse.click(box.x + box.w * 0.4, box.y + box.h * 0.55); actions++;
     await sleep(500);
-    const sw = page.locator('[data-swatch]');
+    /*
+     * Образцы материала живут на шаге «Материалы» (работа разложена на
+     * четыре шага), и на «Раскладке» их не видно. Перебор материалов —
+     * самая частая трата кадров, поэтому идём туда и возвращаемся.
+     */
+    await page.getByRole('button', { name: /Материалы/ }).first().click(); actions++;
+    await sleep(500);
+    const sw = page.locator('[data-swatch]:visible');
     const n = await sw.count();
     if (n > 1) { await sw.nth(actions % n).click(); actions++; await sleep(900); }
+    await page.getByRole('button', { name: /Раскладка/ }).first().click(); actions++;
+    await sleep(500);
 
     /* Вращение свободного ракурса — самая частая трата кадров. */
-    await page.locator('[data-angle="free"]').click(); actions++;
+    await page.locator('[data-angle="iso"]').click(); actions++;
     await page.mouse.move(box.x + box.w * 0.5, box.y + box.h * 0.5);
     await page.mouse.down();
     for (let i = 0; i < 12; i++) {

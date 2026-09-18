@@ -2,6 +2,7 @@ import { columnNiches, moduleCarcassHeightMm, upperBottomFor } from '@/lib/millw
 import { plinthMm } from './shop';
 import { moduleDepthMm, rowStandardDepthMm } from './fill';
 import type { ProductionSettings } from '@/types/catalog';
+import type { ApplianceKind } from '@/types/millwork';
 import { FRAME_WIDTH_MM, frontKey, frontOf, isFramed } from './frontMaterial';
 import { openingOf } from './opening';
 import type { Module, Run } from '@/types/millwork';
@@ -35,7 +36,18 @@ export type BoxDraw = {
 };
 
 /** Материал коробки: по нему они собираются в группы отрисовки. */
-export type BoxMaterial = 'carcass' | 'front' | 'metal' | 'appliance';
+/**
+ * РОЛЬ ДЕТАЛИ В СЦЕНЕ — ЭТО И ЕСТЬ ЕЁ ЦВЕТ.
+ *
+ * Корпус, внутренности, фасад, металл, прибор и стекло различаются не
+ * подписью, а плотным цветом: в САПР-виде деталь узнают по тону, а не по
+ * тому, что на неё нажали. Пока внутренности шли ролью `carcass`, полка
+ * и боковина были одного цвета, и разрез читался сплошной плитой.
+ *
+ * Роль — не материал каталога: артикул красит ФАСАД (`frontKey`), а
+ * роль отвечает на другой вопрос — что это за деталь.
+ */
+export type BoxMaterial = 'carcass' | 'inner' | 'front' | 'metal' | 'appliance' | 'glass';
 
 export type PartBox = BoxDraw & {
   material: BoxMaterial;
@@ -500,7 +512,135 @@ export function drawerBoxes(
 }
 
 /**
- * Техника: тёмный блок в нише и панель управления.
+ * ЛИЦО ПРИБОРА: ТО, ПО ЧЕМУ ЕГО УЗНАЮТ.
+ *
+ * Прибор рисовался тёмным блоком, и духовка от посудомойки отличалась
+ * только высотой: клиент видел стену чёрных плит и спрашивал, что это.
+ *
+ * Узнаётся прибор ГЕОМЕТРИЕЙ, а не текстурой: у духовки стекло и панель
+ * управления, у варочной — конфорки, у холодильника — две дверцы с
+ * ручками. Ничего сверх габарита здесь не выдумывается: все доли
+ * считаются от той же ширины и высоты ниши, которые уже посчитаны
+ * `columnNiches` и `applianceSizes`.
+ *
+ * ПРИСАДКИ ЗДЕСЬ НЕТ И НЕ БУДЕТ, пока цех не даст монтажные размеры:
+ * выдуманное отверстие в сцене — испорченная деталь в цехе.
+ */
+function applianceFace(
+  kind: ApplianceKind | undefined,
+  x: number,
+  y: number,
+  widthM: number,
+  heightM: number,
+  depthM: number,
+): PartBox[] {
+  const cx = x + widthM / 2;
+  const cy = y + heightM / 2;
+  /** Лицевая плоскость ниши: всё, что видно, лежит на ней. */
+  const faceZ = -depthM / 2 + 0.01;
+  const boxes: PartBox[] = [];
+
+  /** Корпус прибора — общий у всех: тёмный объём в нише. */
+  const body = (h = heightM, center = cy): PartBox => ({
+    material: 'appliance',
+    position: [cx, center, faceZ],
+    scale: [widthM - 0.05, h - 0.02, depthM - 0.06],
+  });
+
+  if (kind === 'hob') {
+    /*
+     * Варочная лежит СВЕРХУ, а не стоит фасадом: видно её плоскость и
+     * конфорки. Четыре конфорки у панели 600 — отраслевая раскладка, и
+     * их положение считается от ширины, а не вписано числом.
+     */
+    const top = y + heightM - 0.01;
+    boxes.push({
+      material: 'appliance',
+      position: [cx, top, faceZ],
+      scale: [widthM - 0.04, 0.02, depthM - 0.06],
+    });
+
+    const stepX = (widthM - 0.16) / 2;
+    const stepZ = (depthM - 0.2) / 2;
+    for (const sx of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        boxes.push({
+          material: 'metal',
+          position: [cx + sx * stepX * 0.5, top + 0.012, faceZ + sz * stepZ * 0.5],
+          scale: [widthM * 0.26, 0.006, widthM * 0.26],
+        });
+      }
+    }
+    return boxes;
+  }
+
+  if (kind === 'hood') {
+    // Вытяжка: корпус и светлая полоса фильтра по нижней кромке.
+    boxes.push(body());
+    boxes.push({
+      material: 'metal',
+      position: [cx, y + 0.02, faceZ + 0.02],
+      scale: [widthM - 0.09, 0.02, depthM * 0.5],
+    });
+    return boxes;
+  }
+
+  if (kind === 'fridge') {
+    /*
+     * Холодильник — ДВЕ дверцы: камера сверху, морозильник снизу. Доля
+     * взята не с потолка: у отдельностоящего морозильник занимает
+     * примерно треть высоты, и раскрой встроенного делит фасад так же
+     * (`BUILT_IN_FRIDGE_FRONTS`).
+     */
+    const freezer = heightM * 0.33;
+    const gap = 0.012;
+
+    boxes.push(body(heightM - freezer - gap, y + freezer + gap + (heightM - freezer - gap) / 2));
+    boxes.push(body(freezer, y + freezer / 2));
+
+    for (const doorTop of [y + freezer + gap + (heightM - freezer - gap) - 0.12, y + freezer - 0.1]) {
+      boxes.push({
+        material: 'metal',
+        position: [cx + widthM / 2 - 0.06, doorTop, faceZ + depthM / 2 - 0.02],
+        scale: [0.016, Math.min(0.22, heightM * 0.2), 0.016],
+      });
+    }
+    return boxes;
+  }
+
+  // Духовка, СВЧ, посудомойка: дверца со стеклом, панель и ручка.
+  boxes.push(body());
+
+  const panelH = Math.min(0.06, heightM * 0.16);
+  boxes.push({
+    material: 'metal',
+    position: [cx, y + heightM - panelH / 2 - 0.01, faceZ + depthM / 2 - 0.02],
+    scale: [widthM - 0.09, panelH * 0.4, 0.012],
+  });
+
+  boxes.push({
+    material: 'metal',
+    position: [cx, y + heightM - panelH - 0.03, faceZ + depthM / 2 - 0.015],
+    scale: [widthM - 0.12, 0.016, 0.016],
+  });
+
+  /*
+   * Стекло дверцы. У посудомойки его нет: дверца глухая, и рисовать
+   * окно там значит показать прибор, которого не привезут.
+   */
+  if (kind !== 'dishwasher45' && kind !== 'dishwasher60') {
+    boxes.push({
+      material: 'glass',
+      position: [cx, y + (heightM - panelH) / 2, faceZ + depthM / 2 - 0.012],
+      scale: [widthM - 0.16, Math.max(0.04, (heightM - panelH) * 0.62), 0.008],
+    });
+  }
+
+  return boxes;
+}
+
+/**
+ * Техника: узнаваемое лицо прибора в нише.
  *
  * Ниши колонны берутся из `columnNiches` — той же функции, что рисует
  * чертёж: посчитай их здесь заново, и 3D разойдётся с эскизом.
@@ -516,26 +656,21 @@ export function applianceBoxes(
   const boxes: PartBox[] = [];
 
   if (hasVisibleAppliance(unit)) {
-    boxes.push({
-      material: 'appliance',
-      position: [x + widthM / 2, y + heightM / 2, -depthM / 2 + 0.01],
-      scale: [widthM - 0.05, heightM - 0.05, depthM - 0.06],
-    });
-    // Панель управления: по ней прибор узнаётся без подписи.
-    boxes.push({
-      material: 'metal',
-      position: [x + widthM / 2, y + heightM - 0.09, -depthM / 2 + 0.03],
-      scale: [widthM - 0.09, 0.02, 0.01],
-    });
+    boxes.push(...applianceFace(unit.appliance, x, y, widthM, heightM, depthM));
   }
 
   for (const niche of unit.column ? columnNiches(unit, heightM * MM, production) : []) {
     const nicheH = (niche.toMm - niche.fromMm) / MM;
-    boxes.push({
-      material: 'appliance',
-      position: [x + widthM / 2, y + niche.fromMm / MM + nicheH / 2, -depthM / 2 + 0.01],
-      scale: [widthM - 0.05, nicheH - 0.02, depthM - 0.06],
-    });
+    boxes.push(
+      ...applianceFace(
+        niche.appliance,
+        x,
+        y + niche.fromMm / MM,
+        widthM,
+        nicheH,
+        depthM,
+      ),
+    );
   }
 
   return boxes;
@@ -554,9 +689,15 @@ export function moduleBoxes(
   /** Школа цеха: её берут ниши колонны и всё, что считается от пола. */
   production?: ProductionSettings,
 ): PartBox[] {
+  /*
+   * Полки, перегородки и короба ящиков уже помечены в данных
+   * (`BoxDraw.inside`) — по этому же признаку сцена решает, вести ли по
+   * ним рёбра. Цвет берётся оттуда же: второго признака «это внутри»
+   * заводить нельзя, он разойдётся с первым.
+   */
   const boxes: PartBox[] = carcassBoxes(unit, place).map((box) => ({
     ...box,
-    material: 'carcass' as const,
+    material: (box.inside ? 'inner' : 'carcass') as BoxMaterial,
   }));
 
   boxes.push(...applianceBoxes(unit, place, production));

@@ -7,6 +7,12 @@ import { loadTexture } from '@/lib/textureCache';
 import type { SurfaceLook } from '@/lib/millwork/surfaces';
 import { DEFAULT_FRONT, frontKey } from '@/lib/millwork/frontMaterial';
 import { frontSwatch } from '@/lib/millwork/frontSwatch';
+/*
+ * Цвет по роли — одна таблица на продукт: сцена её ЧИТАЕТ. Свои
+ * `darken`/`lighten` здесь означали бы вторую палитру, и проверка
+ * мерила бы не то, что на экране.
+ */
+import { plinthColor, roleColors } from '@/lib/millwork/sceneColors';
 import type { FrontSpec } from '@/types/millwork';
 import { useThree } from '@react-three/fiber';
 
@@ -25,6 +31,8 @@ export type CabinetParts = {
   box: THREE.BoxGeometry;
   cylinder: THREE.CylinderGeometry;
   carcass: THREE.MeshStandardMaterial;
+  /** Внутренности: полки, перегородки, короба ящиков, задняя стенка. */
+  inner: THREE.MeshStandardMaterial;
   front: THREE.MeshStandardMaterial;
   counter: THREE.MeshStandardMaterial;
   /** Цоколь: тот же материал, что корпус, но темнее на 15%. */
@@ -95,8 +103,20 @@ export function useCabinetParts(
        * рисуется по краю, а не спорит с ним.
        */
       carcass: new THREE.MeshStandardMaterial({
-        color: darken(palette.carcass, 0.08),
+        color: roleColors(palette).carcass,
         roughness: 0.72,
+        metalness: 0,
+        polygonOffset: true,
+        polygonOffsetFactor: 1,
+        polygonOffsetUnits: 1,
+      }),
+      /*
+       * ВНУТРЕННОСТИ СВЕТЛЕЕ КОРПУСА — на два шага, а не на оттенок:
+       * при повороте на 45° разница в один процент не читается вовсе.
+       */
+      inner: new THREE.MeshStandardMaterial({
+        color: roleColors(palette).inner,
+        roughness: 0.78,
         metalness: 0,
         polygonOffset: true,
         polygonOffsetFactor: 1,
@@ -119,7 +139,7 @@ export function useCabinetParts(
         polygonOffsetUnits: 1,
       }),
       plinth: new THREE.MeshStandardMaterial({
-        color: darken(palette.carcass, 0.15),
+        color: plinthColor(palette),
         roughness: 0.8,
         metalness: 0,
         polygonOffset: true,
@@ -127,7 +147,7 @@ export function useCabinetParts(
         polygonOffsetUnits: 1,
       }),
       appliance: new THREE.MeshStandardMaterial({
-        color: '#2A2C2E',
+        color: roleColors(palette).appliance,
         roughness: 0.34,
         metalness: 0.5,
         polygonOffset: true,
@@ -135,7 +155,7 @@ export function useCabinetParts(
         polygonOffsetUnits: 1,
       }),
       metal: new THREE.MeshStandardMaterial({
-        color: '#9AA0A6',
+        color: roleColors(palette).metal,
         roughness: 0.35,
         metalness: 0.85,
       }),
@@ -179,7 +199,8 @@ export function useCabinetParts(
 
   /* ── Цвета: присвоение, а не новый материал ── */
   useEffect(() => {
-    parts.carcass.color.set(darken(palette.carcass, 0.08));
+    parts.carcass.color.set(roleColors(palette).carcass);
+    parts.inner.color.set(roleColors(palette).inner);
     parts.plinth.color.set(darken(palette.carcass, 0.15));
   }, [parts, palette.carcass]);
 

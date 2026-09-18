@@ -339,9 +339,11 @@ export default function Cabinet3D({
     const active = new Set(activeParts);
     const groups: Record<BoxMaterial, PartBox[]> = {
       carcass: [],
+      inner: [],
       front: [],
       metal: [],
       appliance: [],
+      glass: [],
     };
     /*
      * Фасады собираются В ПАЧКИ ПО МАТЕРИАЛУ, а не в одну.
@@ -486,7 +488,22 @@ export default function Cabinet3D({
           material={frontMaterials.get(key) ?? parts.front}
         />
       ))}
+      {/*
+        * ВНУТРЕННОСТИ — СВОЯ ПАЧКА, А НЕ ЧАСТЬ КОРПУСА.
+        *
+        * Полки и короба ящиков шли ролью корпуса и его же цветом. Своя
+        * пачка стоит одного вызова отрисовки и делает разрез читаемым:
+        * видно, где стенка, а где полка.
+        */}
+      <InstancedBoxes
+        boxes={grouped.groups.inner}
+        geometry={parts.box}
+        material={parts.inner}
+        receiveShadow
+      />
       <InstancedBoxes boxes={grouped.groups.metal} geometry={parts.box} material={parts.metal} />
+      {/* Стекло дверцы прибора: по нему духовка узнаётся с трёх метров. */}
+      <InstancedBoxes boxes={grouped.groups.glass} geometry={parts.box} material={parts.glass} />
       <InstancedBoxes
         boxes={grouped.groups.appliance}
         geometry={parts.box}
