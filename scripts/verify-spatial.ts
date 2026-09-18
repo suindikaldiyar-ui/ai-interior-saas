@@ -36,8 +36,9 @@ import { axonometryBoxes } from '../lib/millwork/axonometry';
 import { GEOMETRY } from '../lib/millwork/modules';
 import { zoneProfile } from '../lib/millwork/zones';
 import { DEFAULT_PRODUCTION, type ProductionSettings } from '../types/catalog';
-import { moduleDepthMm, rowStandardDepthMm } from '../lib/millwork/fill';
+import { mezzanineBaseOf, moduleDepthMm, rowStandardDepthMm } from '../lib/millwork/fill';
 import { applyOps } from '../lib/millwork/ops';
+import { buildPanels } from '../lib/millwork/panels';
 import { wallMismatches } from '../lib/millwork/walls';
 import { DEMO_REQUIREMENTS } from '../lib/millwork/demo';
 import type { CompositionKind, RunRequirements } from '../types/millwork';
@@ -1369,6 +1370,177 @@ console.log('\nАнтресоль на всех четырёх видах');
         : `расхождение ${Math.abs(axoBack - sceneBack)} мм`,
     );
 
+  }
+}
+
+/* ═══════════  Правка антресоли доезжает во все виды  ═══════════ */
+
+/**
+ * ОДНА ПРАВКА — ОДНО ЧИСЛО ВО ВСЕХ СЕМИ МЕСТАХ.
+ *
+ * Антресоль стала рядом, который правится. Значит правка обязана
+ * приехать туда же, куда приезжает правка нижнего ряда: в сцену, на
+ * фасад, в разрез, на план, в раскрой и в смету. Место и глубину везде
+ * считает `runPlaces` — второй формулы после прошлого захода не осталось,
+ * и эта проверка держит её отсутствие.
+ */
+console.log('\nПравка антресоли во всех видах');
+{
+  const production: ProductionSettings = {
+    ...DEFAULT_PRODUCTION,
+    depths: { baseMm: 600, upperMm: 300, mezzanineMm: 500 },
+  };
+
+  const built = buildRun({
+    lengthMm: 3800,
+    ceilingHeightMm: 2700,
+    requirements: DEMO_REQUIREMENTS,
+    openings: [],
+    comms: [],
+    production,
+  });
+
+  const withMezz = applyOps({
+    run: built,
+    requirements: DEMO_REQUIREMENTS,
+    ops: [{ op: 'set_mezzanine', heightMm: 400 }],
+  });
+
+  const own = (r: typeof withMezz) =>
+    r.upperSegments
+      .flatMap((segment) => segment.modules)
+      .filter((unit) => unit.section === 'mezzanine' && mezzanineBaseOf(unit, r) === null);
+
+  const before = own(withMezz);
+
+  check(
+    'заказанная антресоль собралась — правку проверять есть на чём',
+    before.length > 1,
+    before.length === 0
+      ? 'НОЛЬ МОДУЛЕЙ ЗАКАЗАННОЙ АНТРЕСОЛИ — править нечего'
+      : `модулей ${before.length}: ${before.map((u) => u.id).join(', ')}`,
+  );
+
+  if (before.length > 1) {
+    const target = before[1];
+    const wantMm = target.widthMm > 400 ? target.widthMm - 150 : target.widthMm + 150;
+
+    const edited = applyOps({
+      run: withMezz,
+      requirements: DEMO_REQUIREMENTS,
+      ops: [{ op: 'set_width', moduleId: target.id, widthMm: wantMm }],
+    });
+
+    const after = own(edited).find((unit) => unit.offsetMm === target.offsetMm);
+
+    check(
+      'ширина доехала до состава ряда',
+      after?.widthMm === wantMm,
+      `было ${target.widthMm} · просили ${wantMm} · стало ${after?.widthMm ?? 'МОДУЛЯ НЕТ'}`,
+    );
+
+    if (after) {
+      /* ── 1. Сцена ── */
+
+      const place = runPlaces(edited).find((entry) => entry.unit.id === after.id);
+      const rowDepth = rowStandardDepthMm(edited.zone, 'base', edited.production);
+
+      check(
+        'модуль есть в раскладке сцены',
+        Boolean(place),
+        place ? `${place.unit.id} ширина ${Math.round(place.unit.widthMm)}` : 'В СЦЕНЕ МОДУЛЯ НЕТ',
+      );
+
+      check(
+        'в сцене у него новая ширина и задняя плоскость на стене',
+        Boolean(place) &&
+          place!.unit.widthMm === wantMm &&
+          Math.abs(Math.round((place!.zM - place!.depthM) * 1000) + rowDepth) <= 1,
+        place
+          ? `ширина ${place.unit.widthMm} · зад ${Math.round((place.zM - place.depthM) * 1000)} при стене ${-rowDepth}`
+          : 'НЕТ МЕСТА',
+      );
+
+      const boxes = runBoxes(edited, { thicknessMm: 16, frontThicknessMm: 18, gapMm: 3 });
+
+      check(
+        'коробки сцены у него есть',
+        boxes.length > 0 && Boolean(place),
+        boxes.length === 0 ? 'НОЛЬ КОРОБОК В СЦЕНЕ' : `коробок в ряду ${boxes.length}`,
+      );
+
+      /* ── 2. Фасад, разрез, план ── */
+
+      const views: Record<string, string> = {};
+      const elements: [string, React.ReactElement][] = [
+        ['фасад', React.createElement(ElevationDrawing, { run: edited } as never)],
+        ['план', React.createElement(PlanDrawing, { run: edited, comms: [], issues: [] } as never)],
+        ['разрез', React.createElement(SectionDrawing, { run: edited } as never)],
+      ];
+      for (const [name, element] of elements) {
+        try {
+          views[name] = renderToStaticMarkup(element);
+        } catch {
+          views[name] = '';
+        }
+      }
+
+      /*
+       * ФАСАД И ПЛАН ПОКАЗЫВАЮТ МОДУЛЬ, РАЗРЕЗ — ПОЛОСУ.
+       *
+       * Боковой срез идёт поперёк ряда: модули, стоящие на разном
+       * расстоянии от угла, в него не попадают, и требовать там
+       * конкретный идентификатор значит требовать вид, которого не
+       * бывает. Разрез несёт ГЛУБИНУ полосы — её и меряем.
+       */
+      const drawn = (['фасад', 'план'] as const).filter((name) =>
+        views[name].includes(`data-module-id="${after.id}"`),
+      );
+
+      check(
+        'правленый модуль нарисован на фасаде и на плане',
+        drawn.length === 2,
+        drawn.length === 2
+          ? 'есть на обоих'
+          : `НЕТ НА ВИДАХ: ${(['фасад', 'план'] as const).filter((n) => !drawn.includes(n)).join(', ')}`,
+      );
+
+      const mezzDepth = Math.round(place!.depthM * 1000);
+      const bandFront = views['разрез'].match(
+        /data-back-mm="0"[^>]*data-front-mm="(\d+)"/g,
+      );
+      const bandDepths = (bandFront ?? []).map((tag) =>
+        Number(tag.match(/data-front-mm="(\d+)"/)![1]),
+      );
+
+      check(
+        'в разрезе есть полоса антресоли со своей глубиной',
+        bandDepths.includes(mezzDepth),
+        bandDepths.length === 0
+          ? 'НОЛЬ ПОЛОС ВИСЯЩИХ РЯДОВ В РАЗРЕЗЕ — мерить нечего'
+          : `полосы ${bandDepths.join('/')} мм при антресоли ${mezzDepth} мм`,
+      );
+
+      /* ── 3. Раскрой ── */
+
+      const fronts = buildPanels({ run: edited }).filter(
+        (panel) => panel.moduleId === after.id && panel.name === 'Фасад',
+      );
+
+      check(
+        'фасад правленого модуля есть в раскрое',
+        fronts.length > 0,
+        fronts.length === 0 ? 'НОЛЬ ФАСАДОВ В РАСКРОЕ' : `${fronts.length} шт., ширина ${fronts[0].widthMm} мм`,
+      );
+
+      check(
+        'и его ширина в раскрое следует за правкой',
+        fronts.length > 0 && Math.abs(fronts[0].widthMm - wantMm) < 20,
+        fronts.length === 0
+          ? 'НЕТ ФАСАДА'
+          : `раскрой ${fronts[0].widthMm} мм при модуле ${wantMm} мм`,
+      );
+    }
   }
 }
 

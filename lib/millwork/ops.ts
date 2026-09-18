@@ -221,6 +221,86 @@ export function applyOps({
   /** Антресоль ряда: отдельная позиция, переживает пересборку верха. */
   let mezzanine = run.mezzanine ?? null;
 
+  /**
+   * МОДУЛИ АНТРЕСОЛИ — РЯД, А НЕ ПРОИЗВОДНАЯ.
+   *
+   * Они пересобирались из верхнего ряда на каждой правке, и потому не
+   * правились вовсе: ширина бралась от того, что стоит под ними, число
+   * створок — тоже, удалить один модуль было нельзя. Замерено на
+   * демо-ряду: правка ширины нижнего модуля меняла 3 идентификатора
+   * антресоли из 5, и вместе с ними пропадало всё, что к ним привязано.
+   *
+   * Теперь это обычный массив рядом с `modules`: правки ложатся НА
+   * МОДУЛЬ и едут вместе с ним, как у нижнего ряда. Второго хранилища не
+   * появляется — модули лежат там же, где лежали, в `upperSegments`.
+   *
+   * Автосборка осталась ровно на первое появление: пусто — собираем из
+   * верхнего ряда, есть — держим.
+   *
+   * Антресоль НАД КОЛОННОЙ сюда не входит: её высота следует из остатка
+   * над холодильником, и строит её `buildUpperRow` вместе с верхом.
+   */
+  let mezzModules: Module[] = run.upperSegments
+    .flatMap((segment) => segment.modules)
+    .filter((unit) => unit.section === 'mezzanine' && mezzanineBaseOf(unit, run) === null);
+
+  /**
+   * ЛЕВЫЙ КРАЙ ПОЛОСЫ АНТРЕСОЛИ — ОДНО ЧИСЛО НА ВСЮ ПРАВКУ.
+   *
+   * Антресоль лежит полосой НАД ВЕРХНИМ РЯДОМ, а он начинается после
+   * колонны: у демо-ряда это 1200 мм. Сброс в ноль загонял её на место
+   * кладовки над холодильником — та тоже `mezz-`, и `assertNoOverlap`
+   * поймал это исключением: «перекрытие 300×300×320 мм».
+   *
+   * Брать край у ПЕРВОГО оставшегося модуля тоже нельзя: удалили первый —
+   * и вся полоса уехала вправо, а освободившееся место оказалось слева,
+   * где его не занять. Край запоминается один раз, до правок.
+   */
+  const mezzOriginMm = mezzModules.length > 0
+    ? Math.min(...mezzModules.map((unit) => unit.offsetMm))
+    : 0;
+
+  /** Идентификатор модуля антресоли: та же функция, роль `mezz`. */
+  const reindexMezz = (list: Module[]): Module[] => {
+    const sorted = [...list].sort((a, b) => a.offsetMm - b.offsetMm);
+    let offset = mezzOriginMm;
+
+    return sorted.map((unit) => {
+      const next: Module = {
+        ...unit,
+        offsetMm: offset,
+        id: moduleId('mezz', offset, undefined, run.wallId),
+      };
+      offset += unit.widthMm;
+      return next;
+    });
+  };
+
+  /**
+   * Правый край ряда антресоли после правки.
+   *
+   * Отказ называет число и НИЧЕГО не меняет: `assertRunFits` за спиной
+   * бросает исключение, а человек всего лишь потянул ширину.
+   */
+  const mezzFits = (list: Module[]): number =>
+    mezzOriginMm + list.reduce((sum, unit) => sum + unit.widthMm, 0);
+
+  /**
+   * ПРАВКА ЛОЖИТСЯ НА МОДУЛЬ АНТРЕСОЛИ, А НЕ В КАРТУ.
+   *
+   * Верхний ряд пересобирается каждый раз, поэтому его правки живут в
+   * картах `id → значение` и применяются после пересборки. Антресоль
+   * больше не пересобирается — её модули держатся, — и правка едет
+   * ВМЕСТЕ С МОДУЛЕМ, ровно как у нижнего ряда. Третьего способа
+   * хранения не появляется: карты остаются картами верхнего ряда.
+   */
+  const editMezz = (id: string, change: (unit: Module) => Module): boolean => {
+    const at = mezzModules.findIndex((m) => m.id === id);
+    if (at < 0) return false;
+    mezzModules = mezzModules.map((unit, i) => (i === at ? change(unit) : unit));
+    return true;
+  };
+
   for (const op of ops) {
     /*
      * НИ ОДНОГО ЧУЖОГО ЭЛЕМЕНТА, откуда бы операция ни пришла — из ленты
@@ -243,6 +323,50 @@ export function applyOps({
 
     switch (op.op) {
       case 'add_module': {
+        /*
+         * ДОБАВЛЯЕМ ТУДА, ГДЕ СТОИТ СОСЕД.
+         *
+         * `afterModuleId` указывает на модуль антресоли — значит человек
+         * добавляет в антресоль. Без этого «+» рядом с антресолью ставил
+         * модуль в НИЖНИЙ ряд, а антресоль просто пересобиралась: со
+         * стороны это выглядело как «добавилось не туда».
+         */
+        const afterMezz = op.afterModuleId
+          ? mezzModules.findIndex((m) => m.id === op.afterModuleId)
+          : -1;
+
+        if (afterMezz >= 0) {
+          const widthMm = Math.max(MIN_WIDTH, Math.round(op.widthMm ?? MIN_WIDTH));
+          const neighbour = mezzModules[afterMezz];
+          const fresh: Module = {
+            ...neighbour,
+            id: moduleId('mezz', neighbour.offsetMm + neighbour.widthMm, undefined, run.wallId),
+            offsetMm: neighbour.offsetMm + neighbour.widthMm,
+            widthMm,
+            variant: undefined,
+            front: undefined,
+            fill: undefined,
+          };
+
+          const next = [
+            ...mezzModules.slice(0, afterMezz + 1),
+            fresh,
+            ...mezzModules.slice(afterMezz + 1),
+          ];
+          const sum = mezzFits(next);
+
+          if (sum > run.lengthMm) {
+            warnings.push(
+              `Модуль ${widthMm} мм в антресоль не встаёт: она займёт ${sum} мм ` +
+                `при стене ${run.lengthMm} мм — не хватает ${sum - run.lengthMm} мм.`,
+            );
+            break;
+          }
+
+          mezzModules = reindexMezz(next);
+          break;
+        }
+
         const width = op.appliance
           ? applianceWidthMm(
               op.appliance,
@@ -323,6 +447,12 @@ export function applyOps({
       }
 
       case 'remove_module': {
+        const mezzAt = mezzModules.findIndex((m) => m.id === op.moduleId);
+        if (mezzAt >= 0) {
+          mezzModules = reindexMezz(mezzModules.filter((_, i) => i !== mezzAt));
+          break;
+        }
+
         const at = modules.findIndex((m) => m.id === op.moduleId);
         if (at >= 0) modules.splice(at, 1);
         else warnings.push(`Модуль ${op.moduleId} не найден.`);
@@ -343,6 +473,39 @@ export function applyOps({
       }
 
       case 'set_width': {
+        /*
+         * ШИРИНА МОДУЛЯ АНТРЕСОЛИ ПРАВИТСЯ ТАМ ЖЕ, ГДЕ ШИРИНА НИЖНЕГО.
+         *
+         * Соседи не ужимаются: антресоль — не шаблонный ряд, ей не надо
+         * сходиться со стеной до миллиметра. Она едет вправо вслед за
+         * правкой, и если хвост вылезает за стену — отказ с числом.
+         */
+        const mezzAt = mezzModules.findIndex((m) => m.id === op.moduleId);
+        if (mezzAt >= 0) {
+          const wanted = Math.round(op.widthMm);
+          if (!Number.isFinite(wanted) || wanted < MIN_WIDTH) {
+            warnings.push(`Ширина модуля антресоли — от ${MIN_WIDTH} мм.`);
+            break;
+          }
+
+          const next = mezzModules.map((unit, i) =>
+            i === mezzAt ? { ...unit, widthMm: wanted } : unit,
+          );
+          const sum = mezzFits(next);
+
+          if (sum > run.lengthMm) {
+            warnings.push(
+              `«${mezzModules[mezzAt].label}» шириной ${wanted} мм не встаёт: ` +
+                `антресоль займёт ${sum} мм при стене ${run.lengthMm} мм — ` +
+                `не хватает ${sum - run.lengthMm} мм.`,
+            );
+            break;
+          }
+
+          mezzModules = reindexMezz(next);
+          break;
+        }
+
         const at = modules.findIndex((m) => m.id === op.moduleId);
         if (at < 0) break;
         if (modules[at].appliance) {
@@ -598,27 +761,72 @@ export function applyOps({
           ? run.upperSegments.flatMap((segment) => segment.modules).find((m) => m.id === op.moduleId)
           : null;
 
-        const target = at >= 0 ? modules[at] : upperUnit;
+        const mezzUnit = mezzModules.find((m) => m.id === op.moduleId);
+        const target = at >= 0 ? modules[at] : (mezzUnit ?? upperUnit);
         if (!target) {
           warnings.push(`Модуль ${op.moduleId} не найден.`);
           break;
         }
 
+        /*
+         * НЕИЗВЕСТНЫЙ ВАРИАНТ — ОТКАЗ СЛОВАМИ, А НЕ ИСКЛЮЧЕНИЕ.
+         *
+         * Строка отказа читала `MODULE_VARIANTS[op.variant].title` ДО
+         * того, как убедиться, что такой вариант есть: операция с чужим
+         * ключом роняла `applyOps` целиком с «Cannot read properties of
+         * undefined». Операция приходит и от модели, и из командной
+         * строки — уронить весь пересчёт она не имеет права.
+         */
+        const spec = MODULE_VARIANTS[op.variant];
+        if (!spec) {
+          warnings.push(`Варианта «${op.variant}» в каталоге мест нет.`);
+          break;
+        }
+
         const allowed = variantsForModule(target, { ...run, modules }, zone);
-        if (!allowed.some((spec) => spec.kind === op.variant)) {
+        if (!allowed.some((v) => v.kind === op.variant)) {
           warnings.push(
-            `${MODULE_VARIANTS[op.variant].title}: в это место не встаёт — ` +
+            `${spec.title}: в это место не встаёт — ` +
               `ширина ${target.widthMm} мм или не то место в ряду.`,
           );
           break;
         }
 
         if (at >= 0) modules[at] = applyVariant(modules[at], op.variant);
+        else if (editMezz(target.id, (unit) => applyVariant(unit, op.variant))) break;
         else upperEdits.set(target.id, op.variant);
         break;
       }
 
       case 'move_module': {
+        /*
+         * ПЕРЕСТАНОВКА ВНУТРИ АНТРЕСОЛИ.
+         *
+         * Меняются местами два модуля ряда, ширины едут вместе с ними —
+         * это и значит «поменять местами» у мебельщика. Перенос между
+         * рядами не бывает: антресоль висит своей полосой.
+         */
+        const moveMezz = mezzModules.findIndex((m) => m.id === op.moduleId);
+        if (moveMezz >= 0) {
+          const toMezz = op.afterModuleId
+            ? mezzModules.findIndex((m) => m.id === op.afterModuleId)
+            : -1;
+
+          if (toMezz < 0) {
+            warnings.push(
+              `Модуль антресоли переносится только внутри антресоли: ` +
+                `соседа ${op.afterModuleId ?? '—'} в ней нет.`,
+            );
+            break;
+          }
+
+          const moved = [...mezzModules];
+          const [taken] = moved.splice(moveMezz, 1);
+          moved.splice(toMezz, 0, taken);
+          mezzModules = reindexMezz(moved);
+          break;
+        }
+
         /*
          * ДВА ВИДА ПЕРЕНОСА.
          *
@@ -697,13 +905,21 @@ export function applyOps({
           modules = modules.map((unit) =>
             hasFacade(unit) ? { ...unit, front: op.front } : unit,
           );
+          /* Антресоль — такой же ряд: материал на весь объект красит и её. */
+          mezzModules = mezzModules.map((unit) =>
+            hasFacade(unit) ? { ...unit, front: op.front } : unit,
+          );
           upperFrontAll = op.front;
           break;
         }
 
         const at = modules.findIndex((m) => m.id === op.moduleId);
         if (at < 0) {
-          // Модуль верхнего ряда: он пересобирается в конце, правка ждёт.
+          /*
+           * Антресоль держится и правится на месте; верхний ряд
+           * пересобирается, и его правка ждёт в карте.
+           */
+          if (editMezz(op.moduleId, (unit) => ({ ...unit, front: op.front }))) break;
           upperFronts.set(op.moduleId, op.front);
           break;
         }
@@ -879,11 +1095,17 @@ export function applyOps({
          * в смете на газлифте.
          */
         const at = modules.findIndex((m) => m.id === op.moduleId);
+        /*
+         * Антресоль ищется в СВОЕЙ, уже поправленной копии: в
+         * `run.upperSegments` лежит состояние до операций этой пачки, и
+         * вторая правка того же модуля затёрла бы первую.
+         */
         const upperUnit =
           at < 0
-            ? run.upperSegments
+            ? (mezzModules.find((m) => m.id === op.moduleId) ??
+              run.upperSegments
                 .flatMap((segment) => segment.modules)
-                .find((m) => m.id === op.moduleId)
+                .find((m) => m.id === op.moduleId))
             : null;
 
         const target = at >= 0 ? modules[at] : upperUnit;
@@ -920,7 +1142,8 @@ export function applyOps({
         };
 
         if (at >= 0) modules[at] = edited;
-        openingEdits.set(target.id, op.opening);
+        else if (editMezz(target.id, () => edited)) break;
+        else openingEdits.set(target.id, op.opening);
         break;
       }
 
@@ -934,11 +1157,17 @@ export function applyOps({
          * механизм.
          */
         const at = modules.findIndex((m) => m.id === op.moduleId);
+        /*
+         * Антресоль ищется в СВОЕЙ, уже поправленной копии: в
+         * `run.upperSegments` лежит состояние до операций этой пачки, и
+         * вторая правка того же модуля затёрла бы первую.
+         */
         const upperUnit =
           at < 0
-            ? run.upperSegments
+            ? (mezzModules.find((m) => m.id === op.moduleId) ??
+              run.upperSegments
                 .flatMap((segment) => segment.modules)
-                .find((m) => m.id === op.moduleId)
+                .find((m) => m.id === op.moduleId))
             : null;
 
         const target = at >= 0 ? modules[at] : upperUnit;
@@ -960,7 +1189,8 @@ export function applyOps({
         };
 
         if (at >= 0) modules[at] = edited;
-        handleEdits.set(target.id, op.handle);
+        else if (editMezz(target.id, () => edited)) break;
+        else handleEdits.set(target.id, op.handle);
         break;
       }
 
@@ -1265,27 +1495,78 @@ export function applyOps({
         mezzBottom <
       GEOMETRY.upper.minCarcassH;
 
-    const built = spans.map((segment) => ({
-      fromMm: segment.fromMm,
-      toMm: segment.toMm,
-      modules: segment.modules.filter((unit) => !underBeam(unit)).map((unit) => {
-        const mezz: Module = {
-          ...unit,
-          id: moduleId('mezz', unit.offsetMm, undefined, nextRun.wallId),
-          section: 'mezzanine',
-          variant: undefined,
-          appliance: undefined,
-          column: undefined,
-          frontType: 'door',
-          doorCount: 1,
-          drawerCount: 0,
-          fill: undefined,
-          label: 'Антресоль',
-        };
-        const front = kept.get(mezz.id) ?? upperFrontAll ?? unit.front;
-        return front ? { ...mezz, front } : mezz;
-      }),
-    }));
+    /*
+     * АВТОСБОРКА — ТОЛЬКО НА ПЕРВОЕ ПОЯВЛЕНИЕ.
+     *
+     * Пока антресоль пересобиралась из верхнего ряда каждый раз, править
+     * её было нельзя в принципе: любая правка жила ровно до следующей
+     * операции. Теперь собранный ряд ДЕРЖИТСЯ — со своими ширинами,
+     * створками, полками и материалами, — и пересобирается только когда
+     * его нет вовсе: сняли антресоль и поставили заново.
+     *
+     * Замерщик от этого ничего не теряет: первое появление по-прежнему
+     * даёт готовый ряд по верхнему, собирать с нуля не приходится.
+     */
+    const grown =
+      mezzModules.length > 0
+        ? mezzModules
+        : spans.flatMap((segment) =>
+            segment.modules.map((unit) => {
+              const mezz: Module = {
+                ...unit,
+                id: moduleId('mezz', unit.offsetMm, undefined, nextRun.wallId),
+                section: 'mezzanine',
+                variant: undefined,
+                appliance: undefined,
+                column: undefined,
+                frontType: 'door',
+                doorCount: 1,
+                drawerCount: 0,
+                fill: undefined,
+                label: 'Антресоль',
+              };
+              const front = kept.get(mezz.id) ?? upperFrontAll ?? unit.front;
+              return front ? { ...mezz, front } : mezz;
+            }),
+          );
+
+    /*
+     * РИГЕЛЬ ПРОВЕРЯЕТСЯ И У ДЕРЖАННОГО РЯДА.
+     *
+     * Выступ на потолке съедает антресоль первой: её низ лежит выше низа
+     * балки, и никакая высота её туда не впишет. Балку могли внести ПОСЛЕ
+     * того, как ряд собрали, — держать под ней модуль значит уехать в цех
+     * с деталью, которая не встанет.
+     */
+    const standing = grown.filter((unit) => !underBeam(unit));
+
+    /*
+     * СЪЕДЕННЫЙ ВЫСТУПОМ МОДУЛЬ НАЗЫВАЕТСЯ СЛОВАМИ.
+     *
+     * Пока антресоль пересобиралась каждый раз, под ригелем её просто не
+     * появлялось — и сказать было не о чем. Теперь ряд держится, и
+     * правка, толкнувшая хвост под выступ, УБИРАЕТ там модуль. Молча это
+     * выглядит как «добавил, а ничего не появилось»: замерщик решит, что
+     * кнопка не работает, и нажмёт ещё раз.
+     */
+    if (standing.length < grown.length) {
+      const lost = grown.length - standing.length;
+      warnings.push(
+        `Под выступом на потолке антресоли нет: ${lost} ` +
+          `${lost === 1 ? 'модуль убран' : 'модуля убрано'} — её низ выше низа ригеля, ` +
+          'и никакая высота её туда не впишет.',
+      );
+    }
+
+    const built = standing.length > 0
+      ? [
+          {
+            fromMm: standing[0].offsetMm,
+            toMm: standing[standing.length - 1].offsetMm + standing[standing.length - 1].widthMm,
+            modules: standing,
+          },
+        ]
+      : [];
 
     nextRun.upperSegments = [
       ...nextRun.upperSegments.filter((segment) =>

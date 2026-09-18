@@ -12,6 +12,7 @@ import {
   isStandardWidth,
 } from '@/lib/millwork/modules';
 import { widthOverflowMm } from '@/lib/millwork/invariants';
+import { moduleById } from '@/lib/millwork/selection';
 import { freeSpaceMm } from '@/lib/millwork/layout';
 import { widestGapMm } from '@/lib/millwork/freeRun';
 import { variantsToAdd } from '@/lib/millwork/moduleVariants';
@@ -175,7 +176,16 @@ export default function RunEditor({
    * обещать модуль, которому некуда встать.
    */
   const gap = widestGapMm(run.modules, run.lengthMm);
-  const selected = run.modules.find((m) => m.id === selectedModuleId) ?? null;
+  /*
+   * ВЫДЕЛЕННЫЙ МОДУЛЬ ИЩЕТСЯ ТОЙ ЖЕ ФУНКЦИЕЙ, ЧТО И ВЕЗДЕ.
+   *
+   * Здесь стоял `run.modules.find` — только нижний ряд. Панель материала
+   * и открывания при этом работала для верхних (она берёт модуль из
+   * `selectionState`), а ширина, «Удалить» и «+» — нет: выделил
+   * антресоль, поля пустые. Движок её правку принимает, экран до него
+   * не доходил.
+   */
+  const selected = moduleById(run, selectedModuleId);
 
   /** Поля раскладки и поля конструкции — разные шаги одной панели. */
   const onLayout = fields === 'layout';

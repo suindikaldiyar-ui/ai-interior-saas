@@ -153,6 +153,7 @@ export type ModuleVariantKind =
   | 'corner_carousel'
   | 'open_base'
   | 'upper_door'
+  | 'upper_door_two'
   | 'upper_glass'
   | 'upper_display'
   | 'upper_dryer'

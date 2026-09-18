@@ -36,18 +36,29 @@ export type SelectionState = {
 /** Пусто во всех полях: ничего не выбрано либо модуль исчез. */
 const NOTHING: SelectionState = { unit: null, number: null, title: null, caption: null };
 
+/**
+ * МОДУЛЬ ПО ИДЕНТИФИКАТОРУ — ОДНА ФУНКЦИЯ НА ПРОДУКТ.
+ *
+ * Ищем ВО ВСЕХ РЯДАХ, а не в нижнем. Верхний модуль и антресоль
+ * выделяются на схеме и в сцене наравне с нижним, и панель ширины,
+ * материала, открывания и вариантов работает для них. Ищи только в
+ * `run.modules` — и выделенный наверху шкаф оставит панель пустой:
+ * нажал, подсветилось, а править нечем.
+ *
+ * Своя копия этого поиска жила в `RunEditor` (`run.modules.find`) и была
+ * УЖЕ этой: движок правку антресоли принимал, а поле ширины, «Удалить» и
+ * «+» для неё оставались мёртвыми. Второго ответа на вопрос «какой
+ * модуль выделен» в продукте быть не должно.
+ */
+export function moduleById(run: Run, id: string | null | undefined): Module | null {
+  if (!id) return null;
+  return allModules(run).find((module) => module.id === id) ?? null;
+}
+
 export function selectionState(run: Run, selectedId: string | null | undefined): SelectionState {
   if (!selectedId) return NOTHING;
 
-  /*
-   * ИЩЕМ ВО ВСЕХ РЯДАХ, А НЕ В НИЖНЕМ.
-   *
-   * Верхний модуль выделяется на схеме и в сцене наравне с нижним, и
-   * панель материала, открывания и вариантов работает для него. Ищи
-   * только в `run.modules` — и выделенный наверху шкаф оставит панель
-   * пустой: нажал, подсветилось, а править нечем.
-   */
-  const unit = allModules(run).find((module) => module.id === selectedId) ?? null;
+  const unit = moduleById(run, selectedId);
   if (!unit) return NOTHING;
 
   const number = moduleNumbers(run).get(unit.id) ?? null;

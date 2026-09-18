@@ -117,7 +117,6 @@ import {
 } from '../lib/millwork/walls';
 import { composeVariants, workingWall, workspaceInput } from '../lib/millwork/workspace';
 import { screenState } from '../lib/millwork/screen';
-import { MIN_DRAWER_MM } from '../lib/millwork/fill';
 import { plinthColor, counterColor, roleColors } from '../lib/millwork/sceneColors';
 import { OBJECT_MARKS, markOwn, productionFor, withMark } from '../lib/millwork/shop';
 import {
@@ -144,6 +143,7 @@ import type { MillworkState } from '../lib/projects';
 import type { CatalogEntryFull } from '../types/catalog';
 import {
   bearsCountertop,
+  MIN_DRAWER_MM,
   mezzanineBaseOf,
   moduleDepthMm,
   upperBottomFor,
@@ -13366,6 +13366,387 @@ console.log('\nЯщики под варочной панелью');
       'отказ ничего не сломал: модуль остался с прежними ящиками',
       (refused.modules.find((unit) => unit.id === hob.id)?.fill?.drawerHeights.length ?? 0) > 0,
       `осталось ${refused.modules.find((unit) => unit.id === hob.id)?.fill?.drawerHeights.length ?? 0} фронтов`,
+    );
+  }
+}
+
+/* ═══════════  Антресоль — самостоятельный ряд  ═══════════ */
+
+/**
+ * АНТРЕСОЛЬ ПРАВИТСЯ, КАК ОБЫЧНЫЙ РЯД.
+ *
+ * Она пересобиралась из нижнего ряда на каждой правке и своих модулей не
+ * хранила: ширина бралась от того, что стоит под ней, число створок —
+ * тоже, удалить один модуль было нельзя, свой материал задать нельзя.
+ * Автосборка при первом появлении остаётся — замерщик не собирает
+ * антресоль с нуля, — но дальше это ряд, а не производная.
+ */
+console.log('\nАнтресоль — самостоятельный ряд');
+{
+  /*
+   * РЯД БЕЗ РИГЕЛЯ: здесь меряется правка антресоли, а не правило балки.
+   *
+   * В демо-ряду по потолку идёт короб вентиляции, и добавленный модуль
+   * уезжает под него — это ВЕРНОЕ поведение (слой 44), но оно перекрывает
+   * то, ради чего написана проверка. Правило балки проверяется отдельно,
+   * ниже, своим числом.
+   */
+  const mezzInput = { ...baseInput, openings: [] };
+
+  const withMezz = (heightMm = 400) =>
+    applyOps({
+      run: buildRun(mezzInput),
+      requirements: DEMO_REQUIREMENTS,
+      ops: [{ op: 'set_mezzanine', heightMm }],
+    });
+
+  /*
+   * ВСЕ модули антресоли — вместе с кладовкой над холодильником: по ним
+   * считается, сколько их в ряду.
+   */
+  const mezzOf = (r: Run) =>
+    r.upperSegments.flatMap((segment) => segment.modules).filter((u) => u.section === 'mezzanine');
+
+  /*
+   * ЗАКАЗАННАЯ антресоль — та, что правится. Кладовка над колонной
+   * холодильника стоит на её крыше, высоту ей задаёт остаток, и правит её
+   * не человек (`mezzanineBaseOf` отличает опору). Взять её целью значит
+   * мерить не то, что проверяешь: первая версия этой проверки так и
+   * делала и объявляла дефектом отсутствие правки там, где её и не должно
+   * быть.
+   */
+  const ownMezz = (r: Run) => mezzOf(r).filter((u) => mezzanineBaseOf(u, r) === null);
+
+  const base = withMezz();
+  const start = ownMezz(base);
+
+  check(
+    'антресоль собралась сама при первом появлении',
+    start.length > 0,
+    start.length === 0
+      ? 'НОЛЬ МОДУЛЕЙ АНТРЕСОЛИ — править нечего'
+      : `модулей ${start.length}: ${start.map((u) => u.id).join(', ')}`,
+  );
+
+  if (start.length > 1) {
+    const target = start[1];
+    const edit = (run: Run, ops: MillworkOp[]) =>
+      applyOps({ run, requirements: DEMO_REQUIREMENTS, ops });
+    const find = (r: Run, id: string) => mezzOf(r).find((u) => u.id === id);
+
+    /* ── 1. Ширина доезжает до раскроя и сметы ── */
+
+    /*
+     * ШИРИНА-МЕТКА, КОТОРОЙ В РЯДУ НЕТ САМО ПО СЕБЕ.
+     *
+     * Первая версия брала «минус 150» и получала 450 — ровно ту ширину,
+     * которую раскладка и так раздаёт соседям. Проверка «после правки
+     * нижнего ряда модуль шириной 450 нашёлся» была ЗЕЛЁНОЙ на коде, где
+     * правка не применялась вовсе: нашёлся чужой модуль. Совпадение
+     * результата — не формула. Метка 337 мм в раскладке не встречается:
+     * стандарты кратны пятидесяти.
+     */
+    const wantMm = 337;
+    const narrow = edit(base, [{ op: 'set_width', moduleId: target.id, widthMm: wantMm }]);
+    const narrowUnit = mezzOf(narrow).find((u) => u.offsetMm === target.offsetMm);
+
+    check(
+      'ширина модуля антресоли меняется',
+      narrowUnit?.widthMm === wantMm,
+      `было ${target.widthMm} · просили ${wantMm} · стало ${narrowUnit?.widthMm ?? 'МОДУЛЯ НЕТ'}`,
+    );
+
+    const panelWidth = (r: Run, offsetMm: number) => {
+      const unit = mezzOf(r).find((u) => u.offsetMm === offsetMm);
+      if (!unit) return null;
+      const front = buildPanels({ run: r }).find(
+        (panel) => panel.moduleId === unit.id && panel.name === 'Фасад',
+      );
+      return front ? front.widthMm : null;
+    };
+
+    check(
+      'новая ширина доехала до раскроя',
+      panelWidth(narrow, target.offsetMm) !== null &&
+        panelWidth(narrow, target.offsetMm) !== panelWidth(base, target.offsetMm),
+      `фасад в раскрое ${panelWidth(base, target.offsetMm) ?? 'НЕТ'} → ${panelWidth(narrow, target.offsetMm) ?? 'НЕТ'} мм`,
+    );
+
+    const total = (r: Run) => buildEstimate(r, MAIN_VARIANT, DEMO_RATES).total;
+    check(
+      'и до сметы',
+      Math.round(total(narrow)) !== Math.round(total(base)),
+      `${Math.round(total(base))} → ${Math.round(total(narrow))} ₸`,
+    );
+
+    /* ── 2. Число створок ── */
+
+    const wide = ownMezz(base).find((u) => u.widthMm >= 600) ?? target;
+    let twoDoors = base;
+    try {
+      twoDoors = edit(base, [
+        { op: 'set_variant', moduleId: wide.id, variant: 'upper_door_two' as ModuleVariantKind },
+      ]);
+    } catch (error) {
+      console.error(`       set_variant упал: ${(error as Error).message.slice(0, 90)}`);
+    }
+    const twoUnit = mezzOf(twoDoors).find((u) => u.offsetMm === wide.offsetMm);
+
+    check(
+      'створок становится две',
+      twoUnit?.doorCount === 2,
+      `было ${wide.doorCount} · стало ${twoUnit?.doorCount ?? 'МОДУЛЯ НЕТ'}`,
+    );
+
+    const frontsOf = (r: Run, offsetMm: number) => {
+      const unit = mezzOf(r).find((u) => u.offsetMm === offsetMm);
+      if (!unit) return 0;
+      return buildPanels({ run: r })
+        .filter((panel) => panel.moduleId === unit.id && panel.name === 'Фасад')
+        .reduce((sum, panel) => sum + panel.qty, 0);
+    };
+
+    check(
+      'фронтов в раскрое столько же, сколько створок',
+      frontsOf(twoDoors, wide.offsetMm) === 2 && frontsOf(base, wide.offsetMm) === 1,
+      `одна створка → ${frontsOf(base, wide.offsetMm)} фасадов · две → ${frontsOf(twoDoors, wide.offsetMm)}`,
+    );
+
+    const hinges = (r: Run) =>
+      buildEstimate(r, MAIN_VARIANT, DEMO_RATES)
+        .lines.filter((line) => line.key.startsWith('hinge'))
+        .reduce((sum, line) => sum + line.quantity, 0);
+
+    check(
+      'петель в смете стало больше ровно на вторую створку',
+      hinges(twoDoors) > hinges(base),
+      `одна створка ${hinges(base)} · две ${hinges(twoDoors)}`,
+    );
+
+    /* ── 3. Удаление ── */
+
+    const removed = edit(base, [{ op: 'remove_module', moduleId: target.id }]);
+    /*
+     * УДАЛЕНИЕ ПРОВЕРЯЕТСЯ ШИРИНОЙ РЯДА, А НЕ ИДЕНТИФИКАТОРОМ.
+     *
+     * Идентификатор выводится из позиции, и после удаления соседний
+     * модуль встаёт на освободившееся место и получает ТОТ ЖЕ `mezz-1200`.
+     * Проверка «модуля с таким id больше нет» была бы красной на верном
+     * продукте — ловушка 291 ровно про это.
+     */
+    const rowWidth = (r: Run) => ownMezz(r).reduce((sum, u) => sum + u.widthMm, 0);
+
+    check(
+      'модуль антресоли удаляется, и ряд стал короче ровно на его ширину',
+      ownMezz(removed).length === start.length - 1 &&
+        rowWidth(base) - rowWidth(removed) === target.widthMm,
+      `модулей ${start.length} → ${ownMezz(removed).length} · ширина ряда ` +
+        `${rowWidth(base)} → ${rowWidth(removed)} при модуле ${target.widthMm} мм`,
+    );
+
+    check(
+      'соседи после удаления целы',
+      ownMezz(removed).every((u) => u.widthMm > 0) && ownMezz(removed).length > 0,
+      ownMezz(removed).map((u) => `${u.id}(${u.widthMm})`).join(' ') || 'НОЛЬ СОСЕДЕЙ',
+    );
+
+    /* ── 4. Добавление слева и справа ── */
+
+    /*
+     * ДОБАВЛЯЕМ ТУДА, ГДЕ ЕСТЬ МЕСТО.
+     *
+     * Автосборка занимает стену целиком, поэтому «плюс» в полный ряд —
+     * это отказ, а не добавление, и он проверяется своим числом выше.
+     * Здесь меряется само добавление: сначала снимаем модуль, потом
+     * ставим свой.
+     */
+    const freed = edit(base, [{ op: 'remove_module', moduleId: target.id }]);
+    const freedStart = ownMezz(freed);
+    const anchor = freedStart[freedStart.length - 1];
+
+    const right = edit(freed, [
+      { op: 'add_module', kind: 'upper', widthMm: 300, afterModuleId: anchor.id },
+    ]);
+    /*
+     * Добавление проверяется ДВУМЯ числами: модулей антресоли стало
+     * больше И нижний ряд не тронут. Одно первое число зелёное и тогда,
+     * когда модуль уехал вниз, а антресоль просто пересобралась.
+     */
+    check(
+      'модуль добавляется справа от выбранного, а нижний ряд не трогается',
+      ownMezz(right).length === freedStart.length + 1 &&
+        right.modules.map((u) => u.id).join() === base.modules.map((u) => u.id).join(),
+      `антресоль ${freedStart.length} → ${ownMezz(right).length} · низ ${base.modules.length} → ${right.modules.length}` +
+        (right.modules.map((u) => u.id).join() === base.modules.map((u) => u.id).join()
+          ? ''
+          : ' · НИЗ ИЗМЕНИЛСЯ'),
+    );
+
+    const left = edit(freed, [
+      { op: 'add_module', kind: 'upper', widthMm: 300, afterModuleId: freedStart[0].id },
+    ]);
+
+    /*
+     * Добавленный слева обязан ВСТАТЬ МЕЖДУ соседями, а не уехать в
+     * конец: порядок по offset строго возрастающий, и второй модуль —
+     * это именно новый, шириной 300.
+     */
+    const leftRow = ownMezz(left);
+
+    check(
+      'и слева: добавленный встаёт между соседями, а не в конец',
+      leftRow.length === freedStart.length + 1 &&
+        leftRow.every((u, i, all) => i === 0 || all[i - 1].offsetMm < u.offsetMm) &&
+        leftRow[1]?.widthMm === 300 &&
+        left.modules.map((u) => u.id).join() === base.modules.map((u) => u.id).join(),
+      leftRow.map((u) => `${u.offsetMm}(${u.widthMm})`).join(' '),
+    );
+
+    /* ── 5. Правка переживает пересборку при том же id ── */
+
+    const kept = edit(narrow, [{ op: 'set_option', key: 'hasCornice', value: true }]);
+    const keptUnit = mezzOf(kept).find((u) => u.offsetMm === target.offsetMm);
+    check(
+      'правка ширины переживает следующую правку ряда',
+      keptUnit?.widthMm === wantMm,
+      `после пересборки ${keptUnit?.widthMm ?? 'МОДУЛЯ НЕТ'} мм при ${wantMm}`,
+    );
+
+    /* ── 6. Правка ширины НИЖНЕГО модуля слева ── */
+
+    /*
+     * Нужен ОБЫЧНЫЙ нижний модуль ЛЕВЕЕ правленого: сдвиг проверяется
+     * им. В демо-ряду левее антресоли стоят только колонны, поэтому
+     * берётся ближайший нижний без прибора, какой есть.
+     */
+    const below = base.modules.find((u) => !u.appliance && !u.column);
+
+    check(
+      'под антресолью есть обычный нижний модуль — сдвиг проверять есть на чём',
+      Boolean(below),
+      below ? `${below.id} ширина ${below.widthMm}` : 'НЕТ НИЖНЕГО МОДУЛЯ СЛЕВА — сдвиг не проверить',
+    );
+
+    if (below) {
+      const shifted = edit(narrow, [
+        { op: 'set_width', moduleId: below.id, widthMm: below.widthMm - 150 },
+      ]);
+      const survivor = mezzOf(shifted).find((u) => u.widthMm === wantMm);
+
+      check(
+        'правка антресоли переживает правку ширины нижнего модуля слева',
+        Boolean(survivor),
+        survivor
+          ? `найдена: ${survivor.id} шириной ${wantMm} мм`
+          : `ПОТЕРЯНА: ${mezzOf(shifted).map((u) => `${u.id}(${u.widthMm})`).join(' ')}`,
+      );
+    }
+
+    /* ── 7. Отказ словами с числом ── */
+
+    const broken = edit(base, [
+      { op: 'set_width', moduleId: target.id, widthMm: mezzInput.lengthMm },
+    ]);
+    const refusal = (broken.warnings ?? []).find((text) => /[0-9]/.test(text));
+
+    check(
+      'правка, ломающая ряд антресоли, отказывает словами с числом',
+      Boolean(refusal),
+      refusal ?? 'ОТКАЗА НЕТ ВОВСЕ — правка пропала молча',
+    );
+
+    check(
+      'и ряд от отказа не сломался',
+      ownMezz(broken).length === start.length,
+      `модулей ${ownMezz(broken).length} при ${start.length}`,
+    );
+
+    /* ── 8. Материал отдельно от ряда ── */
+
+    const painted = edit(base, [
+      {
+        op: 'set_front',
+        moduleId: target.id,
+        front: { base: 'mdf_enamel', construct: 'solid', finish: 'gloss', colorHex: '#B5533F' },
+      },
+    ]);
+    const paintedUnit = ownMezz(painted).find((u) => u.offsetMm === target.offsetMm);
+    const neighbour = ownMezz(painted).find((u) => u.offsetMm !== target.offsetMm);
+
+    check(
+      'у модуля антресоли свой материал, отличный от соседей',
+      paintedUnit?.front?.base === 'mdf_enamel' &&
+        frontKey(frontOf(paintedUnit!)) !== frontKey(frontOf(neighbour!)),
+      `модуль ${paintedUnit?.front?.base ?? 'БЕЗ СВОЕГО'} · сосед ${neighbour?.front?.base ?? 'ряд'}`,
+    );
+
+    const paintedBoxes = runBoxes(painted, {
+      thicknessMm: 16,
+      frontThicknessMm: 18,
+      gapMm: 3,
+    }).filter((box) => box.material === 'front');
+
+    check(
+      'и в сцене он своей пачкой: ключей фасада больше одного',
+      new Set(paintedBoxes.map((box) => box.frontKey)).size > 1,
+      `ключей фасада ${new Set(paintedBoxes.map((b) => b.frontKey)).size} при ${paintedBoxes.length} фасадах`,
+    );
+
+    const paintedPanels = buildPanels({ run: painted }).filter(
+      (panel) => panel.moduleId === paintedUnit?.id && panel.name === 'Фасад',
+    );
+
+    /*
+     * «Материал заполнен» — не проверка: он заполнен всегда. Проверяется
+     * то, ради чего правка делалась: в раскрое он ОТЛИЧАЕТСЯ от соседского.
+     */
+    const neighbourPanels = buildPanels({ run: painted }).filter(
+      (panel) => panel.moduleId === neighbour?.id && panel.name === 'Фасад',
+    );
+
+    /* ── Ригель: модуль под выступом убирается, и это сказано ── */
+
+    const beamed = applyOps({
+      run: buildRun(baseInput),
+      requirements: DEMO_REQUIREMENTS,
+      ops: [{ op: 'set_mezzanine', heightMm: 400 }],
+    });
+    const beamedCount = mezzOf(beamed).length;
+
+    const pushed = applyOps({
+      run: beamed,
+      requirements: DEMO_REQUIREMENTS,
+      ops: [
+        {
+          op: 'add_module',
+          kind: 'upper',
+          widthMm: 300,
+          afterModuleId: mezzOf(beamed)[1]?.id ?? 'нет',
+        },
+      ],
+    });
+    const beamWarning = (pushed.warnings ?? []).find((text) => /выступ/.test(text));
+
+    check(
+      'в ряду с ригелем антресоль есть — правило балки проверять есть на чём',
+      beamedCount > 0,
+      beamedCount === 0 ? 'НОЛЬ АНТРЕСОЛЕЙ ПОД РИГЕЛЕМ — проверять нечего' : `${beamedCount} модулей`,
+    );
+
+    check(
+      'модуль, уехавший под выступ, убран и об этом сказано словами',
+      Boolean(beamWarning),
+      beamWarning ?? 'МОЛЧА: под ригель уехало, а слов нет',
+    );
+
+    check(
+      'и в раскрое его материал отличается от соседского',
+      paintedPanels.length > 0 &&
+        neighbourPanels.length > 0 &&
+        paintedPanels[0].material !== neighbourPanels[0].material,
+      paintedPanels.length === 0 || neighbourPanels.length === 0
+        ? 'НОЛЬ ФАСАДОВ В РАСКРОЕ — сравнивать нечего'
+        : `модуль «${paintedPanels[0].material}» · сосед «${neighbourPanels[0].material}»`,
     );
   }
 }
