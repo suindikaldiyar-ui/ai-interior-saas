@@ -318,13 +318,22 @@ import {
 import { buildAutoProjects } from '../lib/millwork/autoProject';
 import { slugify, uniqueSlug } from '../lib/slug';
 import {
+  UNKNOWN,
   emptySurvey,
   isEstimatePreliminary,
   measured,
+  newWall,
   resolveSurvey,
   surveyFromMeasurement,
   surveyStats,
 } from '../types/survey';
+import {
+  VISIBLE_WARNINGS,
+  groupWarnings,
+  splitWarnings,
+  surveyWarnings,
+  type SurveyWarning,
+} from '../lib/millwork/warnings';
 
 let failed = 0;
 let passed = 0;
@@ -3248,6 +3257,189 @@ console.log('\nДетализировка');
   const utf = panelsCsvFile(panels, 'utf-8');
   check('в UTF-8 файле есть BOM для Excel',
     utf.bytes[0] === 0xef && utf.bytes[1] === 0xbb && utf.bytes[2] === 0xbf);
+}
+
+/* ═══════════  Правая панель  ═══════════ */
+
+/**
+ * УТОЧНЕНИЯ НЕ ЗАДАВЛИВАЮТ НАСТРОЙКИ МОДУЛЯ.
+ *
+ * Шесть жёлтых строк заняли панель целиком, а «Модуль 6 · 600 мм» и его
+ * поля оказались ниже сгиба. Причин было две, и обе видно числом:
+ * схлопывание ключевало по ТЕКСТУ и три строки об одном окне не сводило,
+ * а сам список стоял первым блоком панели.
+ */
+console.log('\nПравая панель');
+{
+  /*
+   * Замер с незамеренным окном и незамеренной розеткой — ровно тот
+   * случай, о котором речь: у окна три величины, у розетки две.
+   */
+  const base = emptySurvey();
+  const wall = { ...newWall(0), lengthMm: measured(3800) };
+  const raw = {
+    ...base,
+    ceilingHeightMm: measured(2700),
+    walls: [
+      {
+        ...wall,
+        openings: [
+          {
+            id: 'o1',
+            kind: 'window' as const,
+            fromCornerMm: UNKNOWN,
+            widthMm: UNKNOWN,
+            heightMm: UNKNOWN,
+            sillMm: measured(900),
+          },
+        ],
+      },
+    ],
+    comms: [
+      {
+        id: 'c1',
+        kind: 'socket' as const,
+        wallId: 'w1',
+        fromCornerMm: UNKNOWN,
+        heightMm: UNKNOWN,
+      },
+    ],
+  };
+
+  const stats = surveyStats(raw);
+  const plain = surveyWarnings(stats);
+
+  check(
+    'незамеренные величины дали уточнения — схлопывать есть что',
+    plain.length >= 5,
+    plain.length === 0
+      ? 'СЕЛЕКТОР ВЕРНУЛ НОЛЬ УТОЧНЕНИЙ — схлопывание проверять не на чем'
+      : `строк до схлопывания ${plain.length}`,
+  );
+
+  const grouped = groupWarnings(plain);
+
+  check(
+    'три строки об одном окне сходятся в одну',
+    grouped.filter((w) => w.message.includes('окно')).length === 1,
+    grouped
+      .filter((w) => w.message.includes('окно'))
+      .map((w) => w.message)
+      .join(' | ') || 'ПРО ОКНО НЕ СКАЗАНО НИЧЕГО',
+  );
+
+  const window = grouped.find((w) => w.message.includes('окно'));
+  check(
+    'и общая строка называет объект, все три величины и последствие',
+    Boolean(window) &&
+      /Стена 1 · окно: не замерены/.test(window!.message) &&
+      /привязка/.test(window!.message) &&
+      /ширина/.test(window!.message) &&
+      /высота/.test(window!.message) &&
+      /разрыв верхнего ряда встанет не туда/.test(window!.message),
+    window?.message ?? 'СТРОКИ НЕТ',
+  );
+
+  check(
+    'сами строки не пропали: они внутри и видны по тапу',
+    window?.count === 3 && window?.members.length === 3,
+    `в группе ${window?.count} · внутри ${window?.members.length}`,
+  );
+
+  check(
+    'две строки про розетку — тоже одна',
+    grouped.filter((w) => w.message.includes('розетка')).length === 1,
+    grouped
+      .filter((w) => w.message.includes('розетка'))
+      .map((w) => w.message)
+      .join(' | ') || 'ПРО РОЗЕТКУ НЕ СКАЗАНО НИЧЕГО',
+  );
+
+  check(
+    'разные объекты не сливаются в одну строку',
+    grouped.length >= 2 &&
+      new Set(grouped.map((w) => w.message)).size === grouped.length,
+    grouped.map((w) => w.message.slice(0, 40)).join(' · '),
+  );
+
+  /* ─── На экране не больше двух ─── */
+
+  const { shown, hidden } = splitWarnings(grouped);
+  check(
+    'на экране не больше двух, остальные за счётчиком',
+    shown.length <= VISIBLE_WARNINGS && shown.length + hidden === grouped.length,
+    `показано ${shown.length} из ${grouped.length}, за «ещё» ${hidden}`,
+  );
+
+  /*
+   * Схлопывание по ТЕКСТУ никуда не делось: шесть одинаковых строк о
+   * шести модулях по-прежнему одна. Объект сильнее текста, но текст
+   * остаётся, когда объекта нет.
+   */
+  const same: SurveyWarning[] = Array.from({ length: 6 }, (_, i) => ({
+    id: `socket-${i}`,
+    severity: 'clarify' as const,
+    message: `Розетка не отмечена (модуль «Дверца ${i}»).`,
+  }));
+  check(
+    'шесть одинаковых строк о разных модулях — по-прежнему одна',
+    groupWarnings(same).length === 1 && groupWarnings(same)[0].count === 6,
+    groupWarnings(same)[0]?.message ?? 'ПУСТО',
+  );
+
+  /* ─── Порядок панели ─── */
+
+  /*
+   * Порядок блоков — это разметка, и Node её не видит. Проверяем то, что
+   * решает порядок: настройки модуля есть у КАЖДОГО шага рабочего
+   * экрана, а уточнения не принадлежат ни одному — значит они не могут
+   * встать между шагом и его полями.
+   */
+  check(
+    'настройки модуля есть на каждом шаге рабочего экрана',
+    STUDIO_STEPS.every((key) => STEP_FIELDS[key].length > 0),
+    STUDIO_STEPS.map((key) => `${key}:${STEP_FIELDS[key].length}`).join(' · '),
+  );
+
+  const asField = Object.values(STEP_FIELDS).flat();
+  check(
+    'уточнения не значатся полем ни одного шага: их место — конец панели',
+    !asField.includes('warnings' as never),
+    `полей всего ${asField.length}`,
+  );
+
+  /* ─── Блокирующее осталось в подвале ─── */
+
+  const refusedPanel = tryBuildComposition({
+    kind: 'corner_l',
+    walls: [{ id: 'w1', lengthMm: 3800, openings: [] }],
+    ceilingHeightMm: 2700,
+    requirements: REQ,
+    comms: COMMS,
+  });
+
+  const panelScreen = screenState({
+    refusal: refusedPanel.state === 'refused' ? { reason: refusedPanel.reason } : null,
+    mismatches: [],
+    walls: [{ lengthMm: 3800 }],
+    segments: [],
+    shape: 'corner_l',
+    warnings: plain,
+  });
+
+  check(
+    'блокирующее идёт своим каналом, а не в списке уточнений',
+    panelScreen.blocking.length === 1 &&
+      panelScreen.clarify.every((w) => w.severity === 'clarify') &&
+      !panelScreen.clarify.some((w) => w.id === 'composition-refused'),
+    `блокирующих ${panelScreen.blocking.length} · уточнений ${panelScreen.clarify.length}`,
+  );
+
+  check(
+    'и уточнения при этом никуда не пропали',
+    panelScreen.clarify.length >= plain.length,
+    `уточнений ${panelScreen.clarify.length} при ${plain.length} на входе`,
+  );
 }
 
 /* ═══════════  Шаги работы  ═══════════ */

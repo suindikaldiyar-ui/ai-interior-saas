@@ -728,8 +728,17 @@ export default function RunEditor({
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <label className={`col-span-2 block ${hide(onLayout)}`}>
+          {/*
+            * КАЖДОЕ ПОЛЕ НА СВОЕЙ СТРОКЕ.
+            *
+            * Поля стояли сеткой в четыре колонки, и после разделения на
+            * шаги в ней оставалось то одно поле, то два: подпись и
+            * контрол сжимались в четверть ширины, а читались как один
+            * сплошной ряд кнопок. Колонка на поле — это подпись над
+            * своим контролом, и её видно.
+            */}
+          <div className="grid gap-3">
+            <label className={`block ${hide(onLayout)}`}>
               <span className="mw-label">Ширина, мм</span>
               <input
                 type="number"

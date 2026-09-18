@@ -50,9 +50,24 @@ export function resolveAssumed<T>(
   return isKnown(k) ? k : assumed(fallback, basis);
 }
 
+/**
+ * ОБЪЕКТ И ПОЛЕ — ОТДЕЛЬНО ОТ СТРОКИ.
+ *
+ * `where` — это «Стена 1 · окно · привязка», одна строка для замерного
+ * листа. Но на экране три таких строки об ОДНОМ окне должны сойтись в
+ * одну, а склеенный текст для этого разобрать нельзя: разбор строки —
+ * та же связь подписью, от которой продукт уходит.
+ *
+ * Поэтому объект («Стена 1 · окно») и поле («привязка») лежат рядом
+ * готовыми: их и так собирает тот, кто строит `where`.
+ */
 export type Assumption = {
   /** Где именно принято допущение: «Стена 1 · окно · высота подоконника». */
   where: string;
+  /** Чьё это допущение: «Стена 1 · окно». */
+  subject: string;
+  /** Какая величина: «привязка». Пусто — у объекта она одна. */
+  field?: string;
   basis: string;
   /** Влияет ли на количество материала — от этого зависит статус сметы. */
   affectsQuantity: boolean;
@@ -60,6 +75,10 @@ export type Assumption = {
 
 export type Pending = {
   where: string;
+  /** Чей это замер: «Стена 1 · окно». */
+  subject: string;
+  /** Какая величина: «привязка». Пусто — у объекта она одна. */
+  field?: string;
   /** Что произойдёт, если не уточнить. Формулировка называет последствие. */
   consequence: string;
 };
@@ -281,17 +300,36 @@ export function surveyStats(survey: Survey): SurveyStats {
     assumptions: [],
   };
 
-  const note = (k: Known<unknown> | undefined, where: string, consequence: string, affects: boolean) => {
+  /*
+   * Строка `where` собирается ЗДЕСЬ, а не у каждого вызова: раньше
+   * `${where} · привязка` набиралось на месте по четыре раза подряд, и
+   * объект от поля было уже не отделить.
+   */
+  const note = (
+    k: Known<unknown> | undefined,
+    subject: string,
+    field: string | undefined,
+    consequence: string,
+    affects: boolean,
+  ) => {
+    const where = field ? `${subject} · ${field}` : subject;
     count(stats, k);
-    if (!k || k.state === 'unknown') stats.pending.push({ where, consequence });
+    if (!k || k.state === 'unknown') stats.pending.push({ where, subject, field, consequence });
     else if (k.state === 'assumed') {
-      stats.assumptions.push({ where, basis: k.basis, affectsQuantity: affects });
+      stats.assumptions.push({
+        where,
+        subject,
+        field,
+        basis: k.basis,
+        affectsQuantity: affects,
+      });
     }
   };
 
   note(
     survey.ceilingHeightMm,
     'Высота потолка',
+    undefined,
     'верхний ряд и антресоль посчитаны по стандарту — на объекте может не встать',
     true,
   );
@@ -299,26 +337,27 @@ export function surveyStats(survey: Survey): SurveyStats {
   survey.walls.forEach((wall, i) => {
     note(
       wall.lengthMm,
-      `Стена ${i + 1} · длина`,
+      `Стена ${i + 1}`,
+      'длина',
       'длина ряда взята приблизительно — смета изменится после замера',
       true,
     );
 
     wall.openings.forEach((opening) => {
       const where = `Стена ${i + 1} · ${OPENING_KIND_TITLE[opening.kind].toLowerCase()}`;
-      note(opening.fromCornerMm, `${where} · привязка`, 'разрыв верхнего ряда встанет не туда', true);
-      note(opening.widthMm, `${where} · ширина`, 'разрыв верхнего ряда встанет не туда', true);
-      note(opening.heightMm, `${where} · высота`, 'верхние шкафы могут упереться в проём', false);
+      note(opening.fromCornerMm, where, 'привязка', 'разрыв верхнего ряда встанет не туда', true);
+      note(opening.widthMm, where, 'ширина', 'разрыв верхнего ряда встанет не туда', true);
+      note(opening.heightMm, where, 'высота', 'верхние шкафы могут упереться в проём', false);
       if (opening.kind === 'window') {
-        note(opening.sillMm, `${where} · подоконник`, 'столешница может упереться в подоконник', false);
+        note(opening.sillMm, where, 'подоконник', 'столешница может упереться в подоконник', false);
       }
     });
   });
 
   survey.comms.forEach((comm) => {
     const where = `${COMM_TITLE[comm.kind]}`;
-    note(comm.fromCornerMm, `${where} · привязка`, 'монтажник не будет знать, где выводить', false);
-    note(comm.heightMm, `${where} · высота`, 'монтажник не будет знать, где выводить', false);
+    note(comm.fromCornerMm, where, 'привязка', 'монтажник не будет знать, где выводить', false);
+    note(comm.heightMm, where, 'высота', 'монтажник не будет знать, где выводить', false);
   });
 
   return stats;

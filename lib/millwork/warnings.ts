@@ -30,6 +30,27 @@ export type SurveyWarning = {
   /** Куда смотреть на плане. */
   atMm?: number;
   moduleId?: string;
+  /**
+   * ИЗ ЧЕГО СОБРАТЬ ОДНУ СТРОКУ, КОГДА ИХ НЕСКОЛЬКО ОБ ОДНОМ.
+   *
+   * Три строки про одно окно — привязку, ширину и высоту — это один
+   * вопрос к замеру, а не три проблемы. Схлопывание по ТЕКСТУ их не
+   * видит: тексты разные. Поэтому объект, поле и последствие приходят
+   * готовыми от того, кто предупреждение построил.
+   *
+   * Пусто — предупреждение схлопывается по-старому, по совпадению
+   * текста (шесть «розетка не отмечена» на шести модулях).
+   */
+  collapse?: {
+    /** Ключ объекта: «Стена 1 · окно». Разные ключи не сливаются. */
+    key: string;
+    /** Начало общей строки: «Стена 1 · окно: не замерены». */
+    head: string;
+    /** Что именно перечисляется: «привязка». */
+    item: string;
+    /** Хвост общей строки — последствие, а не факт. */
+    tail: string;
+  };
 };
 
 /** Сколько предупреждений видно одновременно. Остальные — под «ещё N». */
@@ -497,16 +518,43 @@ export function ergonomicWarnings(run: Run | null): SurveyWarning[] {
 }
 
 export function surveyWarnings(stats: SurveyStats): SurveyWarning[] {
+  /*
+   * ТЕКСТ ОДНОЙ СТРОКИ НЕ МЕНЯЕТСЯ.
+   *
+   * Меняется только то, что рядом с ним лежит `collapse`: из него
+   * собирается ОБЩАЯ строка, когда таких предупреждений об одном
+   * объекте несколько. Одно — читается как раньше, слово в слово.
+   */
   const pending = stats.pending.map((p, i) => ({
     id: `pending-${i}`,
     severity: 'clarify' as const,
     message: `${p.where} не замерено — ${p.consequence}.`,
+    ...(p.field
+      ? {
+          collapse: {
+            key: `pending:${p.subject}`,
+            head: `${p.subject}: не замерены`,
+            item: p.field,
+            tail: p.consequence,
+          },
+        }
+      : {}),
   }));
 
   const assumptions = stats.assumptions.map((a, i) => ({
     id: `assumed-${i}`,
     severity: 'clarify' as const,
     message: `${a.where}: принято по умолчанию (${a.basis}) — уточните на объекте.`,
+    ...(a.field
+      ? {
+          collapse: {
+            key: `assumed:${a.subject}`,
+            head: `${a.subject}: приняты по умолчанию`,
+            item: a.field,
+            tail: 'уточните на объекте',
+          },
+        }
+      : {}),
   }));
 
   return [...pending, ...assumptions];
@@ -574,6 +622,12 @@ export type GroupedWarning = SurveyWarning & {
 const MODULE_SUFFIX = /\s*\(модуль «[^»]*»\)\.?$/;
 
 function groupKey(w: SurveyWarning): string {
+  /*
+   * Объект сильнее текста: три разных текста об одном окне — это одна
+   * строка, а шесть одинаковых текстов о шести модулях — тоже одна.
+   * Первый случай текстом не ловится вовсе, второй — только текстом.
+   */
+  if (w.collapse) return `${w.severity}:${w.collapse.key}`;
   return `${w.severity}:${w.message.replace(MODULE_SUFFIX, '')}`;
 }
 
@@ -593,14 +647,35 @@ export function groupWarnings(warnings: SurveyWarning[]): GroupedWarning[] {
     existing.members.push(warning);
   }
 
-  return Array.from(groups.values()).map((group) =>
-    group.count === 1
-      ? group
-      : {
-          ...group,
-          message: `${group.message.replace(MODULE_SUFFIX, '')} — ${group.count} модуля.`,
-        },
-  );
+  return Array.from(groups.values()).map((group) => {
+    if (group.count === 1) return group;
+
+    /*
+     * Общая строка называет ОБЪЕКТ, перечисляет величины и кончается
+     * последствием: «Стена 1 · окно: не замерены привязка, ширина,
+     * высота — разрыв верхнего ряда встанет не туда». Сами строки никуда
+     * не деваются — они лежат в `members` и видны по тапу.
+     *
+     * Последствие берётся у ПЕРВОГО: у величин одного объекта оно одно
+     * и то же в подавляющем большинстве случаев, а перечислять два
+     * последствия в одной строке — это снова две строки.
+     */
+    if (group.collapse) {
+      const items = group.members
+        .map((member) => member.collapse?.item)
+        .filter((item): item is string => Boolean(item));
+
+      return {
+        ...group,
+        message: `${group.collapse.head} ${items.join(', ')} — ${group.collapse.tail}.`,
+      };
+    }
+
+    return {
+      ...group,
+      message: `${group.message.replace(MODULE_SUFFIX, '')} — ${group.count} модуля.`,
+    };
+  });
 }
 
 
