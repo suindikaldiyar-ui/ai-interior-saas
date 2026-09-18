@@ -117,6 +117,11 @@ import {
 } from '../lib/millwork/walls';
 import { composeVariants, workingWall, workspaceInput } from '../lib/millwork/workspace';
 import { screenState } from '../lib/millwork/screen';
+import {
+  actionEnabled,
+  moduleActions,
+  type ModuleActionKey,
+} from '../lib/millwork/moduleActions';
 import { plinthColor, counterColor, roleColors } from '../lib/millwork/sceneColors';
 import { OBJECT_MARKS, markOwn, productionFor, withMark } from '../lib/millwork/shop';
 import {
@@ -13749,6 +13754,542 @@ console.log('\nАнтресоль — самостоятельный ряд');
         : `модуль «${paintedPanels[0].material}» · сосед «${neighbourPanels[0].material}»`,
     );
   }
+}
+
+/* ═══════════  Верхний ряд — самостоятельный  ═══════════ */
+
+/**
+ * ВЕРХНИЙ РЯД ПРАВИТСЯ, КАК НИЖНИЙ.
+ *
+ * Он пересобирался из нижнего на каждой правке, и его правки жили в
+ * картах `id → значение`. Пока низ не трогали, карты срабатывали;
+ * стоило поменять ширину внизу — идентификатор верхнего модуля менялся
+ * вместе с его позицией, и правка терялась молча.
+ *
+ * Симптом замерщика: «выбираю холодильник — верх добавляется сам, и я не
+ * могу его сдвинуть, удалить, перекрасить».
+ */
+console.log('\nВерхний ряд — самостоятельный');
+{
+  /* Ряд без ригеля: здесь меряется правка, а не правило балки. */
+  const upperInput = { ...baseInput, openings: [] };
+
+  const upperOf = (r: Run) =>
+    r.upperSegments
+      .flatMap((segment) => segment.modules)
+      .filter((u) => u.section !== 'mezzanine');
+
+  const base = buildRun(upperInput);
+  const start = upperOf(base);
+
+  check(
+    'верхний ряд собрался сам — правку проверять есть на чём',
+    start.length > 1,
+    start.length === 0
+      ? 'НОЛЬ МОДУЛЕЙ ВЕРХНЕГО РЯДА — править нечего'
+      : `модулей ${start.length}: ${start.map((u) => u.id).join(', ')}`,
+  );
+
+  if (start.length > 1) {
+    const edit = (run: Run, ops: MillworkOp[]) =>
+      applyOps({ run, requirements: REQ, ops, openings: upperInput.openings });
+
+    const target = start[1];
+
+    /*
+     * ШИРИНА-МЕТКА, КОТОРОЙ РАСКЛАДКА НЕ РАЗДАЁТ САМА.
+     *
+     * На антресоли «минус 150» дало 450 — ровно ту ширину, которую
+     * раскладка выдаёт соседям, и проверка была зелёной на сломанном
+     * коде. Стандарты кратны пятидесяти, 337 среди них не встречается.
+     */
+    const wantMm = 337;
+
+    /* ── 1. Ширина доезжает до раскроя и сметы ── */
+
+    const narrow = edit(base, [{ op: 'set_width', moduleId: target.id, widthMm: wantMm }]);
+    const narrowUnit = upperOf(narrow).find((u) => u.widthMm === wantMm);
+
+    check(
+      'ширина модуля верхнего ряда меняется',
+      Boolean(narrowUnit),
+      narrowUnit
+        ? `было ${target.widthMm} · стало ${narrowUnit.widthMm}`
+        : `МОДУЛЯ ШИРИНОЙ ${wantMm} НЕТ: ${upperOf(narrow).map((u) => u.widthMm).join('/')}`,
+    );
+
+    const frontWidth = (r: Run, id: string) => {
+      const panel = buildPanels({ run: r }).find(
+        (p) => p.moduleId === id && p.name === 'Фасад',
+      );
+      return panel ? panel.widthMm : null;
+    };
+
+    check(
+      'новая ширина доехала до раскроя',
+      Boolean(narrowUnit) &&
+        frontWidth(narrow, narrowUnit!.id) !== null &&
+        Math.abs(frontWidth(narrow, narrowUnit!.id)! - wantMm) < 20,
+      narrowUnit
+        ? `фасад в раскрое ${frontWidth(narrow, narrowUnit.id) ?? 'НЕТ'} мм при модуле ${wantMm} мм`
+        : 'МОДУЛЯ НЕТ',
+    );
+
+    const total = (r: Run) => Math.round(buildEstimate(r, MAIN_VARIANT, DEMO_RATES).total);
+    check(
+      'и до сметы',
+      total(narrow) !== total(base),
+      `${total(base)} → ${total(narrow)} ₸`,
+    );
+
+    /* ── 2. Число створок ── */
+
+    const wide = start.find((u) => u.widthMm >= 600 && !u.appliance) ?? target;
+    let twoDoors = base;
+    try {
+      twoDoors = edit(base, [
+        { op: 'set_variant', moduleId: wide.id, variant: 'upper_door_two' as ModuleVariantKind },
+      ]);
+    } catch (error) {
+      console.error(`       set_variant упал: ${(error as Error).message.slice(0, 90)}`);
+    }
+    const twoUnit = upperOf(twoDoors).find((u) => u.id === wide.id);
+
+    check(
+      'створок у верхнего модуля становится две',
+      twoUnit?.doorCount === 2,
+      `было ${wide.doorCount} · стало ${twoUnit?.doorCount ?? 'МОДУЛЯ НЕТ'}`,
+    );
+
+    const frontsOf = (r: Run, id: string) =>
+      buildPanels({ run: r })
+        .filter((p) => p.moduleId === id && p.name === 'Фасад')
+        .reduce((sum, p) => sum + p.qty, 0);
+
+    check(
+      'фронтов в раскрое столько же, сколько створок',
+      frontsOf(base, wide.id) === 1 && frontsOf(twoDoors, wide.id) === 2,
+      `одна створка → ${frontsOf(base, wide.id)} · две → ${frontsOf(twoDoors, wide.id)}`,
+    );
+
+    const hinges = (r: Run) =>
+      buildEstimate(r, MAIN_VARIANT, DEMO_RATES)
+        .lines.filter((l) => l.key.startsWith('hinge'))
+        .reduce((sum, l) => sum + l.quantity, 0);
+
+    check(
+      'петель в смете стало больше ровно на вторую створку',
+      hinges(twoDoors) > hinges(base),
+      `одна ${hinges(base)} · две ${hinges(twoDoors)}`,
+    );
+
+    /* ── 3. Удаление ── */
+
+    const rowWidth = (r: Run) => upperOf(r).reduce((sum, u) => sum + u.widthMm, 0);
+    const removed = edit(base, [{ op: 'remove_module', moduleId: target.id }]);
+
+    check(
+      'модуль верхнего ряда удаляется, и ряд стал короче на его ширину',
+      upperOf(removed).length === start.length - 1 &&
+        rowWidth(base) - rowWidth(removed) === target.widthMm,
+      `модулей ${start.length} → ${upperOf(removed).length} · ширина ряда ${rowWidth(base)} → ${rowWidth(removed)} при модуле ${target.widthMm}`,
+    );
+
+    check(
+      'соседи после удаления целы',
+      upperOf(removed).length > 0 && upperOf(removed).every((u) => u.widthMm > 0),
+      upperOf(removed).map((u) => `${u.id}(${u.widthMm})`).join(' ') || 'НОЛЬ СОСЕДЕЙ',
+    );
+
+    /* ── 4. Добавление слева и справа ── */
+
+    const freed = upperOf(removed);
+    const right = edit(removed, [
+      { op: 'add_module', kind: 'upper', widthMm: 300, afterModuleId: freed[freed.length - 1].id },
+    ]);
+
+    check(
+      'модуль добавляется справа, а нижний ряд не трогается',
+      upperOf(right).length === freed.length + 1 &&
+        right.modules.map((u) => u.id).join() === base.modules.map((u) => u.id).join(),
+      `верх ${freed.length} → ${upperOf(right).length} · низ ${base.modules.length} → ${right.modules.length}` +
+        (right.modules.map((u) => u.id).join() === base.modules.map((u) => u.id).join()
+          ? ''
+          : ' · НИЗ ИЗМЕНИЛСЯ'),
+    );
+
+    const left = edit(removed, [
+      { op: 'add_module', kind: 'upper', widthMm: 300, afterModuleId: freed[0].id },
+    ]);
+
+    check(
+      'и слева: добавленный встаёт между соседями, а не в конец',
+      upperOf(left).length === freed.length + 1 &&
+        upperOf(left)[1]?.widthMm === 300 &&
+        left.modules.map((u) => u.id).join() === base.modules.map((u) => u.id).join(),
+      upperOf(left).map((u) => `${u.offsetMm}(${u.widthMm})`).join(' '),
+    );
+
+    /* ── 5. Материал отдельно от ряда ── */
+
+    const painted = edit(base, [
+      {
+        op: 'set_front',
+        moduleId: target.id,
+        front: { base: 'mdf_enamel', construct: 'solid', finish: 'gloss', colorHex: '#B5533F' },
+      },
+    ]);
+    const paintedUnit = upperOf(painted).find((u) => u.id === target.id);
+    const neighbour = upperOf(painted).find((u) => u.id !== target.id);
+
+    check(
+      'у модуля верхнего ряда свой материал, отличный от соседей',
+      paintedUnit?.front?.base === 'mdf_enamel' &&
+        frontKey(frontOf(paintedUnit!)) !== frontKey(frontOf(neighbour!)),
+      `модуль ${paintedUnit?.front?.base ?? 'БЕЗ СВОЕГО'} · сосед ${neighbour?.front?.base ?? 'ряд'}`,
+    );
+
+    const paintedBoxes = runBoxes(painted, {
+      thicknessMm: 16,
+      frontThicknessMm: 18,
+      gapMm: 3,
+    }).filter((b) => b.material === 'front');
+
+    check(
+      'и в сцене он своей пачкой',
+      new Set(paintedBoxes.map((b) => b.frontKey)).size > 1,
+      `ключей фасада ${new Set(paintedBoxes.map((b) => b.frontKey)).size} при ${paintedBoxes.length} фасадах`,
+    );
+
+    const mine = buildPanels({ run: painted }).find(
+      (p) => p.moduleId === target.id && p.name === 'Фасад',
+    );
+    const his = buildPanels({ run: painted }).find(
+      (p) => p.moduleId === neighbour?.id && p.name === 'Фасад',
+    );
+
+    check(
+      'и в раскрое его материал отличается от соседского',
+      Boolean(mine) && Boolean(his) && mine!.material !== his!.material,
+      !mine || !his
+        ? 'НОЛЬ ФАСАДОВ В РАСКРОЕ — сравнивать нечего'
+        : `модуль «${mine.material}» · сосед «${his.material}»`,
+    );
+
+    /* ── 6. Правка переживает правку ширины НИЖНЕГО модуля ── */
+
+    const below = base.modules.find((u) => !u.appliance && !u.column);
+
+    check(
+      'обычный нижний модуль есть — сдвиг проверять есть на чём',
+      Boolean(below),
+      below ? `${below.id} ширина ${below.widthMm}` : 'НЕТ ОБЫЧНОГО НИЖНЕГО МОДУЛЯ',
+    );
+
+    if (below) {
+      /*
+       * ПРОПУСКА ЗДЕСЬ БЫТЬ НЕ ДОЛЖНО.
+       *
+       * Первая версия входила сюда только при `narrowUnit` — то есть
+       * молчала ровно тогда, когда правка не применилась вовсе. Проверка,
+       * которая пропускает себя на сломанном продукте, не проверка.
+       */
+      const shifted = edit(narrow, [
+        { op: 'set_width', moduleId: below.id, widthMm: below.widthMm - 150 },
+      ]);
+      const survivor = upperOf(shifted).find((u) => u.widthMm === wantMm);
+
+      check(
+        'правка верхнего ряда переживает правку ширины нижнего модуля',
+        Boolean(survivor),
+        survivor
+          ? `найден ${survivor.id} шириной ${wantMm} мм`
+          : `ПОТЕРЯНА: ${upperOf(shifted).map((u) => `${u.id}(${u.widthMm})`).join(' ')}`,
+      );
+    }
+
+    /* ── 7. Сценарий холодильника ── */
+
+    const noFridge: RunRequirements = {
+      ...REQ,
+      appliances: REQ.appliances.filter((a) => a !== 'fridge'),
+    };
+    const before = buildRun({ ...upperInput, requirements: noFridge });
+
+    const withFridge = applyOps({
+      run: before,
+      requirements: noFridge,
+      ops: [{ op: 'add_module', kind: 'tall', widthMm: 600, appliance: 'fridge' }],
+      openings: upperInput.openings,
+    });
+
+    check(
+      'холодильник встал, и верх собрался сам',
+      upperOf(withFridge).length > 0 &&
+        withFridge.modules.some((u) => u.appliance === 'fridge'),
+      upperOf(withFridge).length === 0
+        ? 'ВЕРХ НЕ СОБРАЛСЯ — сценарий проверять не на чем'
+        : `верхних ${upperOf(withFridge).length}, холодильник есть`,
+    );
+
+    const upperAfterFridge = upperOf(withFridge);
+    if (upperAfterFridge.length > 1) {
+      const pick = upperAfterFridge[1];
+      const touched = applyOps({
+        run: withFridge,
+        requirements: noFridge,
+        openings: upperInput.openings,
+        ops: [
+          { op: 'set_width', moduleId: pick.id, widthMm: wantMm },
+          {
+            op: 'set_front',
+            moduleId: pick.id,
+            front: { base: 'mdf_enamel', construct: 'solid', finish: 'gloss' },
+          },
+        ],
+      });
+
+      const held = upperOf(touched).find((u) => u.widthMm === wantMm);
+
+      check(
+        'модуль верха подвинут и перекрашен — правка держится',
+        Boolean(held) && held!.front?.base === 'mdf_enamel',
+        held
+          ? `${held.id}: ширина ${held.widthMm}, материал ${held.front?.base ?? 'БЕЗ СВОЕГО'}`
+          : `ПРАВКА ПОТЕРЯНА: ${upperOf(touched).map((u) => `${u.id}(${u.widthMm})`).join(' ')}`,
+      );
+    }
+
+    /* ── 8. Витрина и кладовка над колонной ── */
+
+    const withDisplay = edit(base, [
+      { op: 'set_variant', moduleId: wide.id, variant: 'upper_glass' as ModuleVariantKind },
+    ]);
+
+    check(
+      'витрина ставится на модуль верхнего ряда',
+      upperOf(withDisplay).some((u) => u.variant === 'upper_glass'),
+      upperOf(withDisplay).map((u) => `${u.id}:${u.variant ?? '—'}`).join(' '),
+    );
+
+    const storage = base.upperSegments
+      .flatMap((segment) => segment.modules)
+      .filter((u) => u.section === 'mezzanine' && mezzanineBaseOf(u, base) !== null);
+
+    check(
+      'кладовка над колонной холодильника на месте',
+      storage.length > 0,
+      storage.length === 0
+        ? 'КЛАДОВКИ НАД КОЛОННОЙ НЕТ — она строится из колонны'
+        : storage.map((u) => `${u.id}(${u.widthMm})`).join(' '),
+    );
+
+    const afterEdit = edit(base, [{ op: 'set_width', moduleId: target.id, widthMm: wantMm }]);
+    const storageAfter = afterEdit.upperSegments
+      .flatMap((segment) => segment.modules)
+      .filter((u) => u.section === 'mezzanine' && mezzanineBaseOf(u, afterEdit) !== null);
+
+    check(
+      'и правка верхнего ряда её не ломает',
+      storageAfter.length === storage.length,
+      `было ${storage.length} · стало ${storageAfter.length}`,
+    );
+
+    /* ── 9. Отказ словами с числом ── */
+
+    const broken = edit(base, [
+      { op: 'set_width', moduleId: target.id, widthMm: upperInput.lengthMm },
+    ]);
+    const refusal = (broken.warnings ?? []).find((t) => /[0-9]/.test(t));
+
+    check(
+      'правка, ломающая верхний ряд, отказывает словами с числом',
+      Boolean(refusal),
+      refusal ?? 'ОТКАЗА НЕТ ВОВСЕ — правка пропала молча',
+    );
+  }
+}
+
+/* ═══════════  Кнопки панели работают на любом ряду  ═══════════ */
+
+/**
+ * ОДИН СПИСОК ДЕЙСТВИЙ НА ЛЮБОЙ РЯД.
+ *
+ * Движок принимал правку нижнего ряда, верхнего и антресоли, а кнопки
+ * собирались только для нижнего: «+ слева» и «+ справа» добавляли в
+ * `run.modules`, «поменять местами» не было вовсе. Панель ходит через
+ * `moduleActions`, и приёмка спрашивает ТУ ЖЕ функцию — иначе она мерила
+ * бы движок, а человек нажимает кнопки.
+ */
+console.log('\nКнопки панели на любом ряду');
+{
+  const panelInput = { ...baseInput, openings: [] };
+  const run = applyOps({
+    run: buildRun(panelInput),
+    requirements: REQ,
+    ops: [{ op: 'set_mezzanine', heightMm: 400 }],
+    openings: panelInput.openings,
+  });
+
+  const hanging = run.upperSegments.flatMap((segment) => segment.modules);
+  const rows: [string, Module | undefined][] = [
+    ['нижний', run.modules.find((u) => !u.appliance && !u.column)],
+    ['верхний', hanging.filter((u) => u.section !== 'mezzanine' && !u.appliance)[1]],
+    ['антресоль', hanging.filter((u) => u.section === 'mezzanine')[1]],
+  ];
+
+  check(
+    'модуль нашёлся в каждом из трёх рядов',
+    rows.every(([, unit]) => Boolean(unit)),
+    rows.map(([name, unit]) => `${name}: ${unit?.id ?? 'НЕТ МОДУЛЯ'}`).join(' · '),
+  );
+
+  const WANT: ModuleActionKey[] = [
+    'add_left',
+    'add_right',
+    'replace',
+    'remove',
+    'move_left',
+    'move_right',
+  ];
+
+  for (const [name, unit] of rows) {
+    if (!unit) continue;
+
+    const actions = moduleActions(run, unit.id);
+
+    check(
+      `${name}: панель даёт все шесть действий`,
+      actions.length === WANT.length && WANT.every((key) => actions.some((a) => a.key === key)),
+      actions.length === 0
+        ? `НОЛЬ ДЕЙСТВИЙ У МОДУЛЯ ${unit.id} — нажимать нечено`
+        : `действий ${actions.length}: ${actions.map((a) => a.key).join(', ')}`,
+    );
+
+    const usable = actions.filter((a) => actionEnabled(a));
+
+    /*
+     * ОТКАЗ НАЗЫВАЕТ ДЕЙСТВИЕ И СЛОВА, а не только «не сработало»:
+     * иначе на красной строке нечего чинить.
+     */
+    const broke = usable
+      .map((action) => ({
+        action,
+        warnings:
+          applyOps({
+            run,
+            requirements: REQ,
+            ops: action.ops,
+            openings: panelInput.openings,
+          }).warnings ?? [],
+      }))
+      .filter((entry) => entry.warnings.length > 0);
+
+    /*
+     * ДОСТУПНОЕ ДЕЙСТВИЕ ЛИБО ПРИМЕНЯЕТСЯ, ЛИБО ОТКАЗЫВАЕТ ЧИСЛОМ.
+     *
+     * «Добавить» в заполненный ряд — законный отказ: места нет, и он
+     * назван в миллиметрах. Требовать «ни одного предупреждения» значит
+     * требовать, чтобы ряд молча вылезал за стену. Запрещено другое —
+     * молчание: кнопка нажата, а не произошло ничего и никто не сказал
+     * почему.
+     */
+    const silent = broke.filter((entry) => !/[0-9]/.test(entry.warnings[0]));
+    const applied = usable.length - broke.length;
+
+    check(
+      `${name}: доступное действие применяется или отказывает числом`,
+      usable.length > 0 && silent.length === 0,
+      usable.length === 0
+        ? `НИ ОДНО ДЕЙСТВИЕ НЕ ДОСТУПНО У ${unit.id}`
+        : silent.length > 0
+          ? `БЕЗ ЧИСЛА: ${silent.map((e) => `${e.action.key}: ${e.warnings[0].slice(0, 70)}`).join(' · ')}`
+          : `применилось ${applied}, отказало числом ${broke.length}`,
+    );
+
+    /*
+     * СОСЕД БЕРЁТСЯ ИЗ СВОЕГО РЯДА.
+     *
+     * Проверка «отказ содержит цифру» этого не ловит: в отказе «соседа
+     * mezz-0 в ней нет» цифра есть — она из идентификатора. Меряем
+     * структуру: всё, на что ссылается действие, обязано лежать в том же
+     * ряду, что и сам модуль.
+     */
+    /*
+     * РЯД СЧИТАЕТСЯ ЗАНОВО, А НЕ БЕРЁТСЯ У ПРОВЕРЯЕМОЙ ФУНКЦИИ.
+     *
+     * Первая версия звала `rowOfModule` — ту самую, которую и проверяет.
+     * Круг: слей ряды в одну кучу, и проверка останется зелёной, потому
+     * что «свой ряд» станет той же кучей. Проверено откатом: слитые ряды
+     * её не роняли. Здесь ряды собираются по тому же признаку, по
+     * которому их различает движок — опоре (`mezzanineBaseOf`).
+     */
+    const engineRow = (m: Module): string => {
+      if (run.modules.some((x) => x.id === m.id)) return 'низ';
+      if (m.section !== 'mezzanine') return 'верх';
+      return mezzanineBaseOf(m, run) === null ? 'антресоль' : 'кладовка';
+    };
+    const myRow = engineRow(unit);
+    const rowIds = new Set(
+      [...run.modules, ...run.upperSegments.flatMap((sg) => sg.modules)]
+        .filter((m) => engineRow(m) === myRow)
+        .map((m) => m.id),
+    );
+    const foreign = actions
+      .flatMap((action) =>
+        action.ops
+          .map((op) => ('afterModuleId' in op ? op.afterModuleId : undefined))
+          .filter((id): id is string => Boolean(id))
+          .map((id) => ({ key: action.key, id })),
+      )
+      .filter((ref) => !rowIds.has(ref.id));
+
+    check(
+      `${name}: действие ссылается на соседа из СВОЕГО ряда`,
+      foreign.length === 0,
+      foreign.length === 0
+        ? `соседей из чужих рядов нет · в ряду ${rowIds.size}`
+        : `ЧУЖОЙ СОСЕД: ${foreign.map((f) => `${f.key} → ${f.id}`).join(' · ')}`,
+    );
+
+    check(
+      `${name}: недоступное действие называет причину`,
+      actions.filter((a) => !actionEnabled(a)).every((a) => Boolean(a.refusal)),
+      actions
+        .filter((a) => !actionEnabled(a))
+        .map((a) => `${a.key}: ${a.refusal ?? 'БЕЗ ПРИЧИНЫ'}`)
+        .join(' · ') || 'все доступны',
+    );
+  }
+
+  /* ── Приборный модуль: кнопка, которая не сработает, заперта ── */
+
+  const appliance = run.modules.find((u) => u.appliance && !u.column);
+
+  check(
+    'приборный модуль в ряду есть — запрет проверять есть на чём',
+    Boolean(appliance),
+    appliance ? `${appliance.label}` : 'ПРИБОРНОГО МОДУЛЯ НЕТ',
+  );
+
+  if (appliance) {
+    const actions = moduleActions(run, appliance.id);
+    const moves = actions.filter((a) => a.key === 'move_left' || a.key === 'move_right');
+
+    check(
+      'у приборного модуля сдвиг заперт и объяснён словами',
+      moves.length === 2 && moves.every((a) => !actionEnabled(a) && Boolean(a.refusal)),
+      moves.map((a) => `${a.key}: ${a.refusal ?? 'БЕЗ ПРИЧИНЫ'}`).join(' · ') || 'СДВИГА НЕТ В СПИСКЕ',
+    );
+  }
+
+  /* ── Zero-result: чужой идентификатор не даёт ни одной кнопки ── */
+
+  check(
+    'у несуществующего модуля кнопок нет вовсе',
+    moduleActions(run, 'нет-такого-модуля').length === 0,
+    `действий ${moduleActions(run, 'нет-такого-модуля').length}`,
+  );
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

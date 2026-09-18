@@ -13,6 +13,7 @@ import {
 } from '@/lib/millwork/modules';
 import { widthOverflowMm } from '@/lib/millwork/invariants';
 import { moduleById } from '@/lib/millwork/selection';
+import { actionEnabled, moduleActions } from '@/lib/millwork/moduleActions';
 import { freeSpaceMm } from '@/lib/millwork/layout';
 import { widestGapMm } from '@/lib/millwork/freeRun';
 import { variantsToAdd } from '@/lib/millwork/moduleVariants';
@@ -664,13 +665,52 @@ export default function RunEditor({
             <span className="text-[15px] font-medium">
               {selectionTitle ?? `Модуль ${selected.widthMm} мм`}
             </span>
-            <button
-              type="button"
-              onClick={() => onOps([{ op: 'remove_module', moduleId: selected.id }])}
-              className={`mw-btn mw-btn-ghost text-alert ${hide(onLayout)}`}
-            >
-              Удалить
-            </button>
+          </div>
+
+          {/*
+            * ДЕЙСТВИЯ НАД МОДУЛЕМ — ОДИН СПИСОК НА ЛЮБОЙ РЯД.
+            *
+            * Кнопки собирались поштучно и только для нижнего ряда:
+            * «+ слева» и «+ справа» добавляли в `run.modules`, «поменять
+            * местами» не было вовсе. Движок правку любого ряда принимал,
+            * а экран до него не доходил.
+            *
+            * Что можно с этим модулем, отвечает `moduleActions` — она же
+            * называет причину, когда нельзя. Серая кнопка без объяснения
+            * это вопрос «почему нельзя», а задавать его при клиенте
+            * некому (ловушка 159): поэтому у запертой кнопки есть `title`
+            * с причиной, и та же причина уходит в строку под рядом.
+            */}
+          <div className={`mb-3 ${hide(onLayout)}`}>
+            <span className="mw-label">Модуль</span>
+            <div className="mt-1 flex flex-wrap gap-[6px]">
+              {moduleActions(run, selected.id).map((action) => {
+                const can = actionEnabled(action);
+                return (
+                  <button
+                    key={action.key}
+                    type="button"
+                    data-module-action={action.key}
+                    disabled={!can}
+                    title={action.refusal}
+                    onClick={can ? () => onOps(action.ops) : undefined}
+                    className={`mw-btn mw-btn-ghost text-[13px] disabled:opacity-40 ${
+                      action.key === 'remove' ? 'text-alert' : ''
+                    }`}
+                  >
+                    {action.title}
+                  </button>
+                );
+              })}
+            </div>
+            {moduleActions(run, selected.id)
+              .filter((action) => action.refusal && !actionEnabled(action))
+              .slice(0, 1)
+              .map((action) => (
+                <span key={action.key} className="mt-1 block text-[13px] text-graphiteMw">
+                  {action.refusal}
+                </span>
+              ))}
           </div>
 
           {/*

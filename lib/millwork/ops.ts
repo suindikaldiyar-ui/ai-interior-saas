@@ -53,8 +53,6 @@ import { allowsAppliance, allowsSection, applianceRefusal, sectionRefusal } from
 import { MODULE_VARIANTS, applyVariant, variantsForModule } from './moduleVariants';
 import type {
   ApplianceKind,
-  FrontOpening,
-  HandleKind,
   MillworkOp,
   Module,
   ModuleKind,
@@ -204,19 +202,35 @@ export function applyOps({
   const warnings: string[] = [];
 
   const zone = requirements.zone ?? run.zone ?? 'kitchen';
-  /** Правки верхнего ряда: он пересобирается в конце, они применяются после. */
-  const upperEdits = new Map<string, NonNullable<Module['variant']>>();
   /**
-   * Выбранные направления открывания: id модуля → направление.
+   * МОДУЛИ ВЕРХНЕГО РЯДА — РЯД, А НЕ ПРОИЗВОДНАЯ.
    *
-   * Верхний ряд пересобирается из нижнего на каждой правке, и выбор
-   * человека обязан её пережить — как переживают её варианты и материал.
+   * Он пересобирался из нижнего на каждой правке, а правки жили в картах
+   * `id → значение` и применялись после пересборки. Пока низ не трогали,
+   * карты срабатывали; стоило поменять ширину внизу — идентификатор
+   * верхнего модуля менялся вместе с позицией, и правка терялась МОЛЧА.
+   * Замерено на демо-ряду: правка ширины нижнего модуля не оставляла от
+   * правки верхнего ничего.
+   *
+   * Теперь это обычный массив рядом с `modules` и `mezzModules`: правка
+   * ложится НА МОДУЛЬ и едет вместе с ним. Карты `upperEdits`,
+   * `upperFronts`, `openingEdits` и `handleEdits` после этого не нужны и
+   * убраны — второго хранилища не появляется.
+   *
+   * Кладовка над колонной сюда не входит: её высота следует из остатка
+   * над холодильником, и строит её `buildUpperRow` заново каждый раз.
    */
-  const openingEdits = new Map<string, FrontOpening>();
-  /** Выбранные ручки: верхний ряд пересобирается, выбор обязан пережить. */
-  const handleEdits = new Map<string, HandleKind>();
-  /** То же для материала фасада: верх и низ могут отличаться. */
-  const upperFronts = new Map<string, NonNullable<Module['front']>>();
+  let upperModules: Module[] = run.upperSegments
+    .flatMap((segment) => segment.modules)
+    .filter((unit) => unit.section !== 'mezzanine');
+  /**
+   * Материал на ВЕСЬ объект: так ложится готовый дизайн.
+   *
+   * Это единственное, что осталось от прежних карт верхнего ряда, и это
+   * не хранилище правок, а одно значение на операцию `set_front` с
+   * `moduleId: 'all'`: применить его надо и к тем модулям, которые
+   * появятся автосборкой ниже по ходу этого же вызова.
+   */
   let upperFrontAll: Module['front'] | null = null;
   /** Антресоль ряда: отдельная позиция, переживает пересборку верха. */
   let mezzanine = run.mezzanine ?? null;
@@ -284,6 +298,45 @@ export function applyOps({
    */
   const mezzFits = (list: Module[]): number =>
     mezzOriginMm + list.reduce((sum, unit) => sum + unit.widthMm, 0);
+
+  /**
+   * ЛЕВЫЙ КРАЙ ВЕРХНЕГО РЯДА — ОДНО ЧИСЛО НА ВСЮ ПРАВКУ.
+   *
+   * Тот же разбор, что у антресоли: брать край у первого оставшегося
+   * модуля нельзя — удалили первый, и весь ряд уехал вправо, а
+   * освободившееся место оказалось слева, где его не занять.
+   */
+  const upperOriginMm = upperModules.length > 0
+    ? Math.min(...upperModules.map((unit) => unit.offsetMm))
+    : 0;
+
+  /** Идентификатор модуля верхнего ряда: та же функция, что у остальных. */
+  const reindexUpper = (list: Module[]): Module[] => {
+    const sorted = [...list].sort((a, b) => a.offsetMm - b.offsetMm);
+    let offset = upperOriginMm;
+
+    return sorted.map((unit) => {
+      const next: Module = {
+        ...unit,
+        offsetMm: offset,
+        id: moduleId(unit.kind, offset, unit.appliance, run.wallId),
+      };
+      offset += unit.widthMm;
+      return next;
+    });
+  };
+
+  /** Правый край верхнего ряда после правки: по нему считается отказ. */
+  const upperFits = (list: Module[]): number =>
+    upperOriginMm + list.reduce((sum, unit) => sum + unit.widthMm, 0);
+
+  /** Правка ложится на модуль верхнего ряда — как у нижнего и у антресоли. */
+  const editUpper = (id: string, change: (unit: Module) => Module): boolean => {
+    const at = upperModules.findIndex((m) => m.id === id);
+    if (at < 0) return false;
+    upperModules = upperModules.map((unit, i) => (i === at ? change(unit) : unit));
+    return true;
+  };
 
   /**
    * ПРАВКА ЛОЖИТСЯ НА МОДУЛЬ АНТРЕСОЛИ, А НЕ В КАРТУ.
@@ -364,6 +417,46 @@ export function applyOps({
           }
 
           mezzModules = reindexMezz(next);
+          break;
+        }
+
+        const afterUpper = op.afterModuleId
+          ? upperModules.findIndex((m) => m.id === op.afterModuleId)
+          : -1;
+
+        if (afterUpper >= 0) {
+          const widthMm = Math.max(MIN_WIDTH, Math.round(op.widthMm ?? MIN_WIDTH));
+          const neighbour = upperModules[afterUpper];
+          const fresh: Module = {
+            ...neighbour,
+            id: moduleId('upper', neighbour.offsetMm + neighbour.widthMm, undefined, run.wallId),
+            offsetMm: neighbour.offsetMm + neighbour.widthMm,
+            widthMm,
+            kind: 'upper',
+            appliance: undefined,
+            column: undefined,
+            variant: undefined,
+            front: undefined,
+            fill: undefined,
+            label: 'Верхний шкаф',
+          };
+
+          const next = [
+            ...upperModules.slice(0, afterUpper + 1),
+            fresh,
+            ...upperModules.slice(afterUpper + 1),
+          ];
+          const edge = upperFits(next);
+
+          if (edge > run.lengthMm) {
+            warnings.push(
+              `Модуль ${widthMm} мм в верхний ряд не встаёт: он займёт ${edge} мм ` +
+                `при стене ${run.lengthMm} мм — не хватает ${edge - run.lengthMm} мм.`,
+            );
+            break;
+          }
+
+          upperModules = reindexUpper(next);
           break;
         }
 
@@ -453,6 +546,12 @@ export function applyOps({
           break;
         }
 
+        const upperGone = upperModules.findIndex((m) => m.id === op.moduleId);
+        if (upperGone >= 0) {
+          upperModules = reindexUpper(upperModules.filter((_, i) => i !== upperGone));
+          break;
+        }
+
         const at = modules.findIndex((m) => m.id === op.moduleId);
         if (at >= 0) modules.splice(at, 1);
         else warnings.push(`Модуль ${op.moduleId} не найден.`);
@@ -460,6 +559,34 @@ export function applyOps({
       }
 
       case 'replace_module': {
+        /*
+         * ЗАМЕНА РАБОТАЕТ НА ЛЮБОМ РЯДУ.
+         *
+         * Она искала только в нижнем: кнопка «Заменить» на верхнем модуле
+         * и на антресоли отвечала «Модуль не найден». Ширина и место при
+         * замене остаются — меняется то, ЧТО там стоит; поэтому новый
+         * модуль садится на прежнее место тем же `reindex`.
+         */
+        const swap = (unit: Module): Module => {
+          const width = op.appliance
+            ? applianceWidthMm(op.appliance, requirements.applianceSizes)
+            : unit.widthMm;
+          return {
+            ...makePlainModule(op.kind, width, run.wallId, op.appliance),
+            offsetMm: unit.offsetMm,
+            section: unit.section,
+          };
+        };
+
+        if (editMezz(op.moduleId, swap)) {
+          mezzModules = reindexMezz(mezzModules);
+          break;
+        }
+        if (editUpper(op.moduleId, swap)) {
+          upperModules = reindexUpper(upperModules);
+          break;
+        }
+
         const at = modules.findIndex((m) => m.id === op.moduleId);
         if (at < 0) {
           warnings.push(`Модуль ${op.moduleId} не найден.`);
@@ -503,6 +630,45 @@ export function applyOps({
           }
 
           mezzModules = reindexMezz(next);
+          break;
+        }
+
+        /*
+         * ШИРИНА МОДУЛЯ ВЕРХНЕГО РЯДА — ТЕМ ЖЕ ПРАВИЛОМ.
+         *
+         * Соседи не ужимаются: верхний ряд не обязан сходиться со стеной
+         * до миллиметра — он и так разрывается на окне, над колонной и
+         * под ригелем. Хвост вылез за стену — отказ с числом.
+         */
+        const upperAt = upperModules.findIndex((m) => m.id === op.moduleId);
+        if (upperAt >= 0) {
+          const unit = upperModules[upperAt];
+
+          if (unit.appliance) {
+            warnings.push(
+              `«${unit.label}»: ширину здесь задаёт прибор, а не поле.`,
+            );
+            break;
+          }
+
+          const wanted = Math.round(op.widthMm);
+          if (!Number.isFinite(wanted) || wanted < MIN_WIDTH) {
+            warnings.push(`Ширина модуля верхнего ряда — от ${MIN_WIDTH} мм.`);
+            break;
+          }
+
+          const next = upperModules.map((m, i) => (i === upperAt ? { ...m, widthMm: wanted } : m));
+          const edge = upperFits(next);
+
+          if (edge > run.lengthMm) {
+            warnings.push(
+              `«${unit.label}» шириной ${wanted} мм не встаёт: верхний ряд займёт ` +
+                `${edge} мм при стене ${run.lengthMm} мм — не хватает ${edge - run.lengthMm} мм.`,
+            );
+            break;
+          }
+
+          upperModules = reindexUpper(next);
           break;
         }
 
@@ -757,8 +923,9 @@ export function applyOps({
          * оказалась бы недоступной.
          */
         const at = modules.findIndex((m) => m.id === op.moduleId);
+        /* Оба висящих ряда держатся: ищем в их ТЕКУЩИХ копиях. */
         const upperUnit = at < 0
-          ? run.upperSegments.flatMap((segment) => segment.modules).find((m) => m.id === op.moduleId)
+          ? upperModules.find((m) => m.id === op.moduleId)
           : null;
 
         const mezzUnit = mezzModules.find((m) => m.id === op.moduleId);
@@ -794,7 +961,7 @@ export function applyOps({
 
         if (at >= 0) modules[at] = applyVariant(modules[at], op.variant);
         else if (editMezz(target.id, (unit) => applyVariant(unit, op.variant))) break;
-        else upperEdits.set(target.id, op.variant);
+        else if (editUpper(target.id, (unit) => applyVariant(unit, op.variant))) break;
         break;
       }
 
@@ -824,6 +991,27 @@ export function applyOps({
           const [taken] = moved.splice(moveMezz, 1);
           moved.splice(toMezz, 0, taken);
           mezzModules = reindexMezz(moved);
+          break;
+        }
+
+        const moveUpper = upperModules.findIndex((m) => m.id === op.moduleId);
+        if (moveUpper >= 0) {
+          const toUpper = op.afterModuleId
+            ? upperModules.findIndex((m) => m.id === op.afterModuleId)
+            : -1;
+
+          if (toUpper < 0) {
+            warnings.push(
+              `Модуль верхнего ряда переставляется только внутри верхнего ряда: ` +
+                `соседа ${op.afterModuleId ?? '—'} в нём нет.`,
+            );
+            break;
+          }
+
+          const moved = [...upperModules];
+          const [taken] = moved.splice(moveUpper, 1);
+          moved.splice(toUpper, 0, taken);
+          upperModules = reindexUpper(moved);
           break;
         }
 
@@ -905,8 +1093,11 @@ export function applyOps({
           modules = modules.map((unit) =>
             hasFacade(unit) ? { ...unit, front: op.front } : unit,
           );
-          /* Антресоль — такой же ряд: материал на весь объект красит и её. */
+          /* Висящие ряды — такие же ряды: материал на весь объект красит и их. */
           mezzModules = mezzModules.map((unit) =>
+            hasFacade(unit) ? { ...unit, front: op.front } : unit,
+          );
+          upperModules = upperModules.map((unit) =>
             hasFacade(unit) ? { ...unit, front: op.front } : unit,
           );
           upperFrontAll = op.front;
@@ -920,7 +1111,8 @@ export function applyOps({
            * пересобирается, и его правка ждёт в карте.
            */
           if (editMezz(op.moduleId, (unit) => ({ ...unit, front: op.front }))) break;
-          upperFronts.set(op.moduleId, op.front);
+          if (editUpper(op.moduleId, (unit) => ({ ...unit, front: op.front }))) break;
+          warnings.push(`Модуль ${op.moduleId} не найден: материал менять не у чего.`);
           break;
         }
         modules[at] = { ...modules[at], front: op.front };
@@ -1103,9 +1295,7 @@ export function applyOps({
         const upperUnit =
           at < 0
             ? (mezzModules.find((m) => m.id === op.moduleId) ??
-              run.upperSegments
-                .flatMap((segment) => segment.modules)
-                .find((m) => m.id === op.moduleId))
+              upperModules.find((m) => m.id === op.moduleId))
             : null;
 
         const target = at >= 0 ? modules[at] : upperUnit;
@@ -1143,7 +1333,7 @@ export function applyOps({
 
         if (at >= 0) modules[at] = edited;
         else if (editMezz(target.id, () => edited)) break;
-        else openingEdits.set(target.id, op.opening);
+        else if (editUpper(target.id, () => edited)) break;
         break;
       }
 
@@ -1165,9 +1355,7 @@ export function applyOps({
         const upperUnit =
           at < 0
             ? (mezzModules.find((m) => m.id === op.moduleId) ??
-              run.upperSegments
-                .flatMap((segment) => segment.modules)
-                .find((m) => m.id === op.moduleId))
+              upperModules.find((m) => m.id === op.moduleId))
             : null;
 
         const target = at >= 0 ? modules[at] : upperUnit;
@@ -1190,7 +1378,7 @@ export function applyOps({
 
         if (at >= 0) modules[at] = edited;
         else if (editMezz(target.id, () => edited)) break;
-        else handleEdits.set(target.id, op.handle);
+        else if (editUpper(target.id, () => edited)) break;
         break;
       }
 
@@ -1314,20 +1502,6 @@ export function applyOps({
   };
 
   /*
-   * Верхний ряд пересобирается заново из нижнего, поэтому выбранные там
-   * варианты нужно вернуть. Идентификатор модуля выводится из позиции:
-   * не тронули низ — верхний модуль тот же, и сушилка над мойкой остаётся.
-   * Сдвинули низ — модуль другой, и выбор честно теряется.
-   */
-  const upperVariants = new Map([
-    ...run.upperSegments
-      .flatMap((segment) => segment.modules)
-      .filter((unit) => unit.variant)
-      .map((unit) => [unit.id, unit.variant!] as const),
-    ...Array.from(upperEdits.entries()),
-  ]);
-
-  /*
    * РИГЕЛИ БЕРУТСЯ У РЯДА, А НЕ У ВЫЗЫВАЮЩЕГО.
    *
    * Высоту модулей урезает `run.beams`, и разрыв ряда обязан считаться
@@ -1352,7 +1526,15 @@ export function applyOps({
    * вместе»: ключ открывания строится из `unit.id`, и у немеченых
    * модулей он совпадал. Замерено: общий ключ `mezz-0:door:0`.
    */
-  nextRun.upperSegments = options.hasUpper
+  /*
+   * ГДЕ ВЕРХНИЙ РЯД МОЖЕТ СТОЯТЬ — ОТВЕЧАЕТ `buildUpperRow`.
+   *
+   * Он и раньше был единственным, кто это знает: окно, колонна во всю
+   * высоту и ригель разрывают ряд одной и той же `freeSpans`. Второй
+   * формулы «где можно» здесь не появляется — свежая сборка зовётся
+   * ровно за этим, а ЧТО там стоит, берётся из держанного ряда.
+   */
+  const fresh = options.hasUpper
     ? buildUpperRow(
         modules,
         run.lengthMm,
@@ -1363,85 +1545,121 @@ export function applyOps({
     : [];
 
   /*
+   * КЛАДОВКА НАД КОЛОННОЙ ПЕРЕСОБИРАЕТСЯ ВСЕГДА.
+   *
+   * Её высота следует из остатка над холодильником, а не из выбора
+   * человека: подняли холодильник — кладовка стала ниже. Держать её
+   * значило бы показывать модуль, которого над этой колонной уже нет.
+   */
+  const freshStorage = fresh.filter((segment) =>
+    segment.modules.some((unit) => unit.section === 'mezzanine'),
+  );
+
+  /*
+   * АВТОСБОРКА — ТОЛЬКО НА ПЕРВОЕ ПОЯВЛЕНИЕ.
+   *
+   * Пусто — берём свежий ряд целиком; есть — держим свой. Дальше ряд
+   * правится как обычный, и правка едет вместе с модулем.
+   */
+  const grownUpper =
+    upperModules.length > 0
+      ? upperModules
+      : fresh
+          .filter((segment) => segment.modules.every((unit) => unit.section !== 'mezzanine'))
+          .flatMap((segment) => segment.modules);
+
+  /*
+   * ДЕРЖАННЫЙ РЯД ОБРЕЗАЕТСЯ ПО МЕСТАМ, ГДЕ ОН МОЖЕТ БЫТЬ.
+   *
+   * Низ правится и после того, как верх собрали: поставили колонну —
+   * над ней шкафа быть не может, внесли ригель — под ним тоже. Габарит
+   * тот же, что проверяет `assertNoOverlap`, поэтому выброшенный модуль
+   * это не косметика, а мебель, которая не встанет.
+   */
+  const allowed = fresh
+    .filter((segment) => segment.modules.every((unit) => unit.section !== 'mezzanine'))
+    .map((segment) => ({ fromMm: segment.fromMm, toMm: segment.toMm }));
+
+  const spanOf = (unit: Module) =>
+    allowed.find(
+      (span) => unit.offsetMm >= span.fromMm && unit.offsetMm + unit.widthMm <= span.toMm,
+    ) ?? null;
+
+  const standingUpper = options.hasUpper ? grownUpper.filter((unit) => spanOf(unit)) : [];
+
+  if (standingUpper.length < grownUpper.length && options.hasUpper) {
+    const lost = grownUpper.length - standingUpper.length;
+    warnings.push(
+      `Верхнего ряда там больше нет: ${lost} ` +
+        `${lost === 1 ? 'модуль убран' : 'модуля убрано'} — место заняла колонна, ` +
+        'проём или выступ на потолке.',
+    );
+  }
+
+  /*
+   * Ряд раскладывается по тем же участкам, что и свежая сборка: модули
+   * одного участка идут подряд от его левого края.
+   */
+  const bySpan = new Map<number, Module[]>();
+  for (const unit of standingUpper) {
+    const span = spanOf(unit)!;
+    bySpan.set(span.fromMm, [...(bySpan.get(span.fromMm) ?? []), unit]);
+  }
+
+  const keptSegments = allowed
+    .map((span) => {
+      const list = (bySpan.get(span.fromMm) ?? []).sort((a, b) => a.offsetMm - b.offsetMm);
+      let offset = span.fromMm;
+
+      return {
+        fromMm: span.fromMm,
+        toMm: span.toMm,
+        modules: list.map((unit) => {
+          const next: Module = {
+            ...unit,
+            offsetMm: offset,
+            id: moduleId(unit.kind, offset, unit.appliance, run.wallId),
+          };
+          offset += unit.widthMm;
+          return next;
+        }),
+      };
+    })
+    .filter((segment) => segment.modules.length > 0);
+
+  nextRun.upperSegments = [...keptSegments, ...freshStorage];
+
+  /*
    * ВЕРХНИЙ РЯД ТОЖЕ ПОЛУЧАЕТ НАПОЛНЕНИЕ.
    *
    * `buildUpperRow` его не считает — это делает `buildRun` отдельным
-   * проходом по обоим рядам, — а здесь верхний ряд пересобирается сам по
-   * себе. Без этой строки после ЛЮБОЙ правки все верхние модули оставались
-   * без `fill`: полки пропадали из раскроя (цех недопиливал), из разреза
-   * «с наполнением» и из 3D. В смете это не было видно, потому что она
-   * считала по одной полке на модуль независимо от `fill`, — маскировка
-   * держалась ровно до того дня, когда смету научили читать данные.
+   * проходом по обоим рядам. Без этой строки после ЛЮБОЙ правки все
+   * верхние модули оставались без `fill`: полки пропадали из раскроя
+   * (цех недопиливал), из разреза «с наполнением» и из 3D.
    *
-   * `applyVariant` обнуляет `fill` намеренно (у карго и сушилки начинка
-   * своя), поэтому пересчёт идёт ПОСЛЕ восстановления вариантов.
+   * ВОССТАНАВЛИВАТЬ БОЛЬШЕ НЕЧЕГО. Материал, вариант, ручка и
+   * направление открывания лежат НА МОДУЛЕ и приехали сюда вместе с ним:
+   * ряд держится, а не пересобирается. Четыре карты `id → значение`,
+   * которые их возвращали, убраны — они были обходом того, что ряд
+   * выводился из нижнего.
+   *
+   * Осталось одно: материал, заданный на ВЕСЬ объект (`moduleId: 'all'`).
+   * Он применяется и к модулям, которые появились автосборкой в этом же
+   * вызове, — их на момент операции ещё не существовало.
    */
-  /*
-   * Материал верхнего ряда переживает пересборку так же, как варианты:
-   * по идентификатору модуля. Сдвинули низ — верхний модуль другой, и
-   * материал честно возвращается к тому, что задано на весь ряд.
-   */
-  const upperFrontKept = new Map([
-    ...run.upperSegments
-      .flatMap((segment) => segment.modules)
-      .filter((unit) => unit.front)
-      .map((unit) => [unit.id, unit.front!] as const),
-    ...Array.from(upperFronts.entries()),
-  ] as const);
+  nextRun.upperSegments = nextRun.upperSegments.map((segment) => ({
+    ...segment,
+    modules: segment.modules.map((unit, i) => {
+      const painted =
+        upperFrontAll && hasFacade(unit) && !unit.front
+          ? { ...unit, front: upperFrontAll }
+          : unit;
 
-  /*
-   * Направление открывания верхнего ряда переживает пересборку так же,
-   * как варианты и материал: по идентификатору модуля. Иначе выбранный
-   * подъёмник возвращался бы к петлям от правки на соседней тумбе.
-   */
-  const upperOpenings = new Map([
-    ...run.upperSegments
-      .flatMap((segment) => segment.modules)
-      .filter((unit) => unit.fill?.openingChosen)
-      .map((unit) => [unit.id, unit.fill!.hinge] as const),
-    ...Array.from(openingEdits.entries()),
-  ] as const);
-
-  const upperHandles = new Map([
-    ...run.upperSegments
-      .flatMap((segment) => segment.modules)
-      .filter((unit) => unit.fill?.handle)
-      .map((unit) => [unit.id, unit.fill!.handle!] as const),
-    ...Array.from(handleEdits.entries()),
-  ] as const);
-
-  nextRun.upperSegments = nextRun.upperSegments.map((segment) => {
-    const restored = segment.modules.map((unit) => {
-      const kept = upperVariants.get(unit.id);
-      const withVariant = kept && !unit.appliance ? applyVariant(unit, kept) : unit;
-      const front = upperFronts.get(unit.id) ?? upperFrontAll ?? upperFrontKept.get(unit.id);
-      return front && hasFacade(withVariant) ? { ...withVariant, front } : withVariant;
-    });
-
-    return {
-      ...segment,
-      modules: restored.map((unit, i) => {
-        const withFill = unit.fill
-          ? unit
-          : { ...unit, fill: defaultFill(unit, shell, i, restored.length) };
-
-        const handle = upperHandles.get(withFill.id);
-        const withHandle =
-          handle && withFill.fill
-            ? { ...withFill, fill: { ...withFill.fill, handle } }
-            : withFill;
-
-        const opening = upperOpenings.get(withHandle.id);
-        if (!opening || openingRejection(withHandle, opening)) return withHandle;
-
-        return {
-          ...withHandle,
-          doorCount: isMechanism(opening) ? 1 : withHandle.doorCount,
-          fill: { ...withHandle.fill!, hinge: opening, openingChosen: true },
-        };
-      }),
-    };
-  });
+      return painted.fill
+        ? painted
+        : { ...painted, fill: defaultFill(painted, shell, i, segment.modules.length) };
+    }),
+  }));
 
   /*
    * АНТРЕСОЛЬ ДОБАВЛЯЕТСЯ ПОСЛЕ ВЕРХНЕГО РЯДА.
