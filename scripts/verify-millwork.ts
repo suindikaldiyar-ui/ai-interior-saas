@@ -347,7 +347,8 @@ function drawerBoxCount(unit: Module, run: Run): number {
 
   const boxes = moduleBoxes(
     place.unit,
-    { x: place.x, y: place.y, heightM: place.heightM, depthM: place.depthM, thicknessM: 0.016 },
+    /* Считаем ЛОКАЛЬНУЮ геометрию модуля: место в ряду меряет test:spatial. */
+    { x: place.x, y: place.y, heightM: place.heightM, depthM: place.depthM, zM: 0, thicknessM: 0.016 },
     { gapM: 0.003, frontThicknessM: 0.018, integratedHandles: false, cutaway: false },
   );
 
@@ -3415,7 +3416,7 @@ console.log('\nСцена читается как САПР');
   const metalOf = (unit: Module) =>
     moduleBoxes(
       unit,
-      { x: 0, y: 0, heightM: 0.72, depthM: 0.56, thicknessM: 0.016 },
+      { x: 0, y: 0, heightM: 0.72, depthM: 0.56, zM: 0, thicknessM: 0.016 },
       { gapM: 0.003, frontThicknessM: 0.018, integratedHandles: false, cutaway: false },
     ).filter((box) => box.material === 'metal').length;
 
@@ -4561,7 +4562,7 @@ console.log('\nКорпус описан числами');
   const run = buildRun(baseInput);
 
   const unit = run.modules[0];
-  const place = { x: 0, y: 0.1, heightM: 0.82, depthM: 0.56, thicknessM: 0.016 };
+  const place = { x: 0, y: 0.1, heightM: 0.82, depthM: 0.56, zM: 0, thicknessM: 0.016 };
 
   const carcass = carcassBoxes(unit, place);
   check('у корпуса есть боковины, дно, крыша и задняя стенка', carcass.length >= 5);
@@ -8593,6 +8594,8 @@ console.log('\nФасады, створки и ручки');
         y: place.y,
         heightM: place.heightM,
         depthM: place.depthM,
+        /* Ноль: здесь меряется передняя плоскость САМОГО корпуса. */
+        zM: 0,
         thicknessM: 0.016,
       },
       { gapM: 0.003, frontThicknessM: 0.018, integratedHandles: false, cutaway: false },
@@ -8662,6 +8665,7 @@ console.log('\nФасады, створки и ручки');
       y: fridgePlace.y,
       heightM: fridgePlace.heightM,
       depthM: fridgePlace.depthM,
+      zM: 0,
       thicknessM: 0.016,
     },
     { gapM: 0.003, frontThicknessM: 0.018, integratedHandles: false, cutaway: false },
@@ -8745,6 +8749,8 @@ console.log('\nФасады, створки и ручки');
         y: place.y,
         heightM: place.heightM,
         depthM: place.depthM,
+        /* Ноль: здесь меряется передняя плоскость САМОГО корпуса. */
+        zM: 0,
         thicknessM: 0.016,
       },
       { gapM: 0.003, frontThicknessM: 0.018, integratedHandles: false, cutaway: false },
@@ -9191,6 +9197,7 @@ console.log('\nЯщики под варочной выдвигаются');
             y: place.y,
             heightM: place.heightM,
             depthM: place.depthM,
+            zM: 0,
             thicknessM: 0.016,
           },
           { gapM: 0.003, frontThicknessM: 0.018, integratedHandles: false, cutaway: false },

@@ -8,7 +8,7 @@ import InstancedBoxes from './InstancedBoxes';
 import ModuleHandles from './ModuleHandles';
 import SceneCamera, { type OrthoProjection } from './SceneCamera';
 import {
-  moduleBoxes,
+  runBoxes,
   openablePartIds,
   type BoxMaterial,
   type PartBox,
@@ -288,22 +288,30 @@ export default function Cabinet3D({
    * по материалам в четыре пачки — четыре вызова отрисовки на весь ряд
    * вместо сотни.
    */
+  /*
+   * ГЛУБИНА МОДУЛЯ СЧИТАЕТСЯ ОДИН РАЗ — В `runBoxes`.
+   *
+   * Здесь стоял свой обход `moduleBoxes`, и в нём НЕ ПЕРЕДАВАЛСЯ `zM` —
+   * смещение модуля по глубине. Без него каждая коробка вставала от
+   * своего фасада, то есть задняя плоскость определялась СОБСТВЕННОЙ
+   * глубиной модуля, а не стеной. Замерено на демо-ряду: верхний ряд и
+   * антресоль висели на 240 мм впереди стены (цех 550/350 — на 200), при
+   * том, что рёбра, рамка выделения и открытая дверца — все они идут
+   * через `zM` — стояли на месте. Мебель разъезжалась сама с собой.
+   *
+   * Правило то же, что у раскроя: задняя плоскость лежит на стене, а
+   * разная глубина уводит ПЕРЕДНЮЮ. Отвечает на это `runPlaces` внутри
+   * `runBoxes`, и второго ответа здесь больше нет.
+   */
   const boxes = useMemo(
     () =>
-      [...modules, ...uppers].flatMap((entry) =>
-        moduleBoxes(
-          entry.unit,
-          {
-            x: entry.x,
-            y: entry.y,
-            heightM: entry.heightM,
-            depthM: entry.depthM,
-            thicknessM,
-          },
-          { gapM, frontThicknessM, integratedHandles: Boolean(run.options.integratedHandles), cutaway },
-        ),
-      ),
-    [modules, uppers, thicknessM, gapM, frontThicknessM, run.options.integratedHandles, cutaway],
+      runBoxes(run, {
+        thicknessMm: production.carcassMm,
+        frontThicknessMm: production.frontMm,
+        gapMm: production.frontGapMm,
+        cutaway,
+      }),
+    [run, production.carcassMm, production.frontMm, production.frontGapMm, cutaway],
   );
 
   /*

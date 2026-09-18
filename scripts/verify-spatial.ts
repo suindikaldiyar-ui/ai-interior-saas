@@ -26,7 +26,7 @@ import { ceilingOverSpanMm } from '../lib/millwork/ceiling';
 import type { Opening } from '../types/millwork';
 import { buildRun } from '../lib/millwork/layout';
 import type { Run } from '../types/millwork';
-import { runPlaces } from '../lib/millwork/cabinetBoxes';
+import { moduleBoxes, runPlaces } from '../lib/millwork/cabinetBoxes';
 import { GEOMETRY } from '../lib/millwork/modules';
 import { zoneProfile } from '../lib/millwork/zones';
 import { DEFAULT_PRODUCTION, type ProductionSettings } from '../types/catalog';
@@ -1009,6 +1009,171 @@ console.log('\nМежду шкафом и ригелем в сцене нет щ
         `зазоры ${gaps.join('/')} мм`,
       );
     }
+  }
+}
+
+/* ═══════════  Антресоль стоит на стене во всех режимах  ═══════════ */
+
+/**
+ * ЗАДНЯЯ ПЛОСКОСТЬ КАЖДОГО МОДУЛЯ ЛЕЖИТ НА СТЕНЕ.
+ *
+ * Мебель стоит у стены, а не висит в воздухе: разная глубина уводит
+ * вперёд ПЕРЕДНЮЮ плоскость, а задняя остаётся на месте. На антресоли
+ * это видно лучше всего — у неё глубина НИЖНЕГО ряда, то есть она
+ * глубже соседей сверху, и место ей задаёт настройка цеха.
+ *
+ * Меряется то, что рисует сцена: коробки, собранные из `runPlaces`. Пока
+ * место модуля считалось двумя формулами — одна со смещением по глубине,
+ * другая без, — верхний ряд с антресолью уезжал на 240 мм вперёд от
+ * стены, а рёбра оставались на месте.
+ */
+console.log('\nАнтресоль на стене');
+{
+  const shops = [
+    ['цех 560/320/560', { baseMm: 560, upperMm: 320, mezzanineMm: 560 }],
+    ['цех 550/350/550', { baseMm: 550, upperMm: 350, mezzanineMm: 550 }],
+    /*
+     * ТРЕТЬЯ ШКОЛА — ТА, ГДЕ ПРОВЕРКА ВООБЩЕ ЧТО-ТО ЗНАЧИТ.
+     *
+     * У первых двух глубина антресоли совпадает с нижним рядом, поэтому
+     * смещение по глубине у неё ноль: она стоит правильно и при верной
+     * формуле, и при забытой. Совпадение результата — не формула. Здесь
+     * антресоль не равна ни нижнему ряду, ни верхнему, и забытое
+     * смещение уводит её от стены на 100 мм.
+     */
+    ['цех 600/300/500', { baseMm: 600, upperMm: 300, mezzanineMm: 500 }],
+    /* И умолчание продукта: у него антресоль идёт по верхнему ряду. */
+    ['умолчание 560/320/320', DEFAULT_PRODUCTION.depths],
+  ] as const;
+
+  /** Толщины цеха берём одни на оба режима: сравниваем место, а не плиту. */
+  const shopBox = { thicknessM: 0.016 };
+  const frontOptions = (cutaway: boolean) => ({
+    gapM: 0.003,
+    frontThicknessM: 0.018,
+    integratedHandles: false,
+    cutaway,
+  });
+
+  for (const [title, depths] of shops) {
+    const production: ProductionSettings = { ...DEFAULT_PRODUCTION, depths };
+
+    const run = buildRun({
+      lengthMm: 3800,
+      ceilingHeightMm: 2700,
+      requirements: DEMO_REQUIREMENTS,
+      openings: [],
+      comms: [],
+      production,
+    });
+
+    const places = runPlaces(run);
+    const mezz = places.filter((place) => place.unit.section === 'mezzanine');
+
+    /*
+     * НОЛЬ МОДУЛЕЙ И НОЛЬ АНТРЕСОЛЕЙ — ЭТО ПАДЕНИЕ, А НЕ «ПРОВЕРЯТЬ
+     * НЕЧЕГО». Пустой селектор в проверке места означает, что мерить
+     * нечем, и молчаливый пропуск сделал бы её зелёной на сломанном.
+     */
+    check(
+      `${title}: ряд собран и антресоль в нём есть`,
+      places.length > 0 && mezz.length > 0,
+      places.length === 0
+        ? 'НОЛЬ МОДУЛЕЙ В РЯДУ — место мерить не на чем'
+        : mezz.length === 0
+          ? 'НОЛЬ АНТРЕСОЛЕЙ В РЯДУ — проверять нечего'
+          : `модулей ${places.length}, антресолей ${mezz.length}`,
+    );
+    if (places.length === 0 || mezz.length === 0) continue;
+
+    const rowDepthMm = rowStandardDepthMm(run.zone, 'base', run.production);
+
+    /** Задняя плоскость модуля в миллиметрах: перед минус глубина. */
+    const backMm = (place: (typeof places)[number]) =>
+      Math.round((place.zM - place.depthM) * 1000);
+
+    const wrong = places.filter((place) => Math.abs(backMm(place) + rowDepthMm) > 1);
+    check(
+      `${title}: задняя плоскость каждого модуля лежит на стене`,
+      wrong.length === 0,
+      wrong.length === 0
+        ? `${places.length} модулей, задняя у всех ${-rowDepthMm} мм`
+        : `${wrong.length} мимо стены, первый ${wrong[0].unit.id}: ${backMm(wrong[0])} против ${-rowDepthMm} мм`,
+    );
+
+    check(
+      `${title}: и у антресоли тоже, до миллиметра`,
+      mezz.every((place) => Math.abs(backMm(place) + rowDepthMm) <= 1),
+      `антресоль ${backMm(mezz[0])} мм при стене ${-rowDepthMm} мм`,
+    );
+
+    check(
+      `${title}: глубина антресоли — настройка организации, а не глубина верхнего ряда`,
+      mezz.every((place) => Math.abs(place.depthM * 1000 - depths.mezzanineMm) < 0.5),
+      `${Math.round(mezz[0].depthM * 1000)} мм при настройке ${depths.mezzanineMm} и верхнем ряде ${depths.upperMm}`,
+    );
+
+    /*
+     * ОБЫЧНОЕ 3D И «КАРКАС» — ОДНО МЕСТО.
+     *
+     * В «Каркасе» фасады сняты и корпус просвечивает, но мебель от этого
+     * никуда не двигается. Меряются коробки обоих режимов той же
+     * функцией, которой их строит сцена.
+     */
+    const backOfBoxes = (place: (typeof places)[number], cutaway: boolean) => {
+      const boxes = moduleBoxes(
+        place.unit,
+        {
+          x: place.x,
+          y: place.y,
+          heightM: place.heightM,
+          depthM: place.depthM,
+          zM: place.zM,
+          ...shopBox,
+        },
+        frontOptions(cutaway),
+        production,
+      );
+      if (boxes.length === 0) return null;
+      return Math.round(Math.min(...boxes.map((box) => box.position[2] - box.scale[2] / 2)) * 1000);
+    };
+
+    const plain = backOfBoxes(mezz[0], false);
+    const frame = backOfBoxes(mezz[0], true);
+
+    check(
+      `${title}: коробки антресоли есть в обоих режимах`,
+      plain !== null && frame !== null,
+      plain === null || frame === null
+        ? 'НОЛЬ КОРОБОК У АНТРЕСОЛИ — сравнивать режимы не на чем'
+        : `обычное 3D ${plain} мм · «Каркас» ${frame} мм`,
+    );
+
+    check(
+      `${title}: в «Каркасе» антресоль стоит там же, где в обычном 3D`,
+      plain !== null && frame !== null && Math.abs(plain - frame) <= 1,
+      plain === null || frame === null
+        ? 'НЕТ КОРОБОК'
+        : `расхождение ${Math.abs(plain - frame)} мм`,
+    );
+
+    /*
+     * И ЗАДНЯЯ ПЛОСКОСТЬ КОРОБОК — ТОЖЕ СТЕНА, А НЕ СОБСТВЕННАЯ ГЛУБИНА.
+     *
+     * Допуск 5 мм: задняя стенка вкладная, полка мельче корпуса — числа
+     * отличаются на миллиметры конструкции, а не на глубину ряда.
+     */
+    const drifted = places
+      .map((place) => ({ place, back: backOfBoxes(place, false) }))
+      .filter((entry) => entry.back === null || Math.abs(entry.back + rowDepthMm) > 5);
+
+    check(
+      `${title}: коробки всего ряда упираются в стену, а не в свою глубину`,
+      drifted.length === 0,
+      drifted.length === 0
+        ? `${places.length} модулей у стены ${-rowDepthMm} мм`
+        : `${drifted.length} мимо: ${drifted[0].place.unit.id} на ${drifted[0].back} мм`,
+    );
   }
 }
 
