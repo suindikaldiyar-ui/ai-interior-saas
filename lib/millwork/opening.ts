@@ -264,6 +264,21 @@ export type ModuleHardware = {
   handlePush: number;
 };
 
+/**
+ * СКОЛЬКО НАПРАВЛЯЮЩИХ У МОДУЛЯ.
+ *
+ * Спрашиваются ФРОНТЫ В НАПОЛНЕНИИ, а не тип фасада: под варочной панелью
+ * ящики есть, а `frontType` там `appliance` — ровно на этом смета однажды
+ * не выписала направляющих под уже нарезанные фронты (ловушка 358).
+ * Колонна исключена: там ниши приборов, а не ящики.
+ *
+ * Функция одна на продукт: смета и сборочный лист обязаны показывать
+ * цеху одно число комплектов.
+ */
+export function drawerSlides(unit: Module): number {
+  return unit.column ? 0 : (unit.fill?.drawerHeights.length ?? 0);
+}
+
 export function openingHardware(
   units: { unit: Module; heightMm: number; index?: number; total?: number }[],
   /** Ряд нужен ради умолчания ручки: оно живёт в опциях ряда. */
@@ -339,7 +354,23 @@ export function openingHardware(
     if (unit.frontType === 'drawers') {
       addHandles(unit, unit.fill?.drawerHeights.length || unit.drawerCount);
     }
-    if (unit.builtIn) addHandles(unit, BUILT_IN_FRIDGE_FRONTS);
+    if (unit.builtIn) {
+      addHandles(unit, BUILT_IN_FRIDGE_FRONTS);
+      /*
+       * ПЕТЛИ ВСТРОЙКИ СЧИТАЮТСЯ ЗДЕСЬ, А НЕ В СМЕТЕ.
+       *
+       * Они лежали отдельной строкой внутри `buildEstimate`, и разрез по
+       * модулям (`byModule`) о них не знал: сборочный лист встроенного
+       * холодильника показывал две ручки и НИ ОДНОЙ петли, хотя в смете
+       * их четыре. Это тот же класс, что и направляющие под варочной, —
+       * величина посчитана в двух местах, и слабое место там, куда
+       * смотрит цех.
+       *
+       * Числа не меняются: смета берёт ту же сумму, только теперь из
+       * одного расчёта.
+       */
+      add('hinges', BUILT_IN_FRIDGE_FRONTS * hingesPerDoor(heightMm / BUILT_IN_FRIDGE_FRONTS));
+    }
 
     if (unit.frontType !== 'door') continue;
 

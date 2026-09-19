@@ -72,6 +72,35 @@ export default function PanelList({
     if (!selectedPanel) return null;
     return allModules(run).find((unit) => unit.id === selectedPanel.moduleId) ?? null;
   }, [run, selectedPanel]);
+
+  /*
+   * КАКИЕ МОДУЛИ ПЕЧАТАТЬ.
+   *
+   * Такого механизма в продукте не было вовсе: печаталась вся страница
+   * целиком, а сборочный чертёж в печать не шёл. Цех берёт лист в руки по
+   * одному модулю, поэтому выбор — список с галочками, и по умолчанию
+   * отмечено всё, у чего есть детали корпуса: молчаливо напечатать один
+   * модуль из двенадцати хуже, чем напечатать лишнее.
+   *
+   * Второго состояния для этого не заводится: отмеченные лежат набором
+   * идентификаторов, а сам состав модулей по-прежнему считает `allModules`.
+   */
+  const printable = useMemo(
+    () =>
+      allModules(run).filter((unit) =>
+        panels.some((panel) => panel.moduleId === unit.id),
+      ),
+    [run, panels],
+  );
+
+  const [printIds, setPrintIds] = useState<string[] | null>(null);
+  const chosen = printIds ?? printable.map((unit) => unit.id);
+
+  const togglePrint = (id: string) =>
+    setPrintIds((prev) => {
+      const base = prev ?? printable.map((unit) => unit.id);
+      return base.includes(id) ? base.filter((v) => v !== id) : [...base, id];
+    });
   const totals = useMemo(() => panelTotals(panels), [panels]);
 
   /** Детали идут группами по модулям: технолог читает лист сверху вниз. */
@@ -137,6 +166,41 @@ export default function PanelList({
           Печать листа
         </button>
       </div>
+
+      {/*
+        * ВЫБОР МОДУЛЕЙ НА ПЕЧАТЬ.
+        *
+        * На экране это список с галочками, в печать он не идёт сам
+        * (`print:hidden`) — печатаются отмеченные листы ниже.
+        */}
+      {printable.length > 0 && (
+        <div className="mb-3 print:hidden" data-print-picker>
+          <span className="mw-label">Сборочные листы на печать</span>
+          <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
+            {/* Цель касания 44 px: галочку жмут пальцем на планшете. */}
+            {printable.map((unit) => (
+              <label
+                key={unit.id}
+                className="mw-touch flex items-center gap-1.5 text-[13px]"
+              >
+                <input
+                  type="checkbox"
+                  className="h-[18px] w-[18px]"
+                  data-print-module={unit.id}
+                  checked={chosen.includes(unit.id)}
+                  onChange={() => togglePrint(unit.id)}
+                />
+                <span>
+                  {unit.label} {unit.widthMm}
+                </span>
+              </label>
+            ))}
+          </div>
+          <p className="mt-1 text-[13px] text-graphiteMw">
+            Отмечено {chosen.length} из {printable.length}: один модуль — один лист.
+          </p>
+        </div>
+      )}
 
       <div className="mw-sheet overflow-x-auto p-4" data-doc>
         <div className="mb-3 flex flex-wrap items-baseline gap-x-4 gap-y-1">
@@ -250,6 +314,31 @@ export default function PanelList({
             <PartCard panel={selectedPanel} />
           </div>
         )}
+
+        {/*
+          * СБОРОЧНЫЕ ЛИСТЫ — ОДИН МОДУЛЬ, ОДИН ЛИСТ.
+          *
+          * На экране блок свёрнут в ничто, а в печати разворачивается:
+          * лист раскроя и сборочные листы уходят в цех одной пачкой, но
+          * каждый берут в руки отдельно. `break-after-page` у каждого —
+          * это и есть «один модуль — один лист»; без него два модуля
+          * склеиваются на одной странице и второй обрезается пополам.
+          */}
+        <div className="hidden print:block" data-assembly-print>
+          {printable
+            .filter((unit) => chosen.includes(unit.id))
+            .map((unit) => (
+              <div key={unit.id} className="break-after-page break-inside-avoid pt-3">
+                <ModuleAssembly
+                  run={run}
+                  unit={unit}
+                  panels={panels}
+                  production={production}
+                  stamp={{ title, zone, measuredBy, measuredAt }}
+                />
+              </div>
+            ))}
+        </div>
 
         {!selectedPanel && (
           <p className="mt-3 text-[13px] text-graphiteMw print:hidden">

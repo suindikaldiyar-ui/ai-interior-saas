@@ -131,6 +131,7 @@ import React from 'react';
 import MillingPicker from '../components/millwork/MillingPicker';
 import { useInteriorStore } from '../store/useInteriorStore';
 import ModuleAssembly from '../components/millwork/ModuleAssembly';
+import PanelList from '../components/millwork/PanelList';
 import PartCard from '../components/millwork/PartCard';
 import {
   MILLING_SCOPES,
@@ -15458,6 +15459,392 @@ console.log('\nМесто детали в деталировке');
       allPlaced ? 'все на местах' : 'ЕСТЬ ДЕТАЛИ БЕЗ МЕСТА',
     );
   }
+}
+
+/* ═══════════  Сборочный лист модуля  ═══════════ */
+
+/**
+ * ЛИСТ, КОТОРЫЙ УХОДИТ В ЦЕХ, А НЕ КАРТИНКА РЯДОМ С ТАБЛИЦЕЙ.
+ *
+ * Сборочный чертёж рисовал модуль плоско, спереди, с номерами поверх
+ * деталей: сборщик видел прямоугольники друг на друге и не видел, что за
+ * чем стоит. Производственный лист отвечает иначе — объёмом, выносками
+ * по краю, цепью габарита, таблицами деталей и фурнитуры и штампом.
+ *
+ * Меряется здесь ровно это, и меряется в разметке: как читает её глаз.
+ */
+console.log('\n' + 'Сборочный лист модуля');
+{
+  const run = buildRun(baseInput);
+  const panels = buildPanels({ run });
+  const places = runPlaces(run);
+
+  const CARCASS_PARTS = new Set([
+    SIDE_PANEL_NAME,
+    BOTTOM_PANEL_NAME,
+    TOP_PANEL_NAME,
+    TOP_RAIL_PANEL_NAME,
+    SHELF_PANEL_NAME,
+    DIVIDER_PANEL_NAME,
+    BACK_PANEL_NAME,
+  ]);
+
+  const shelved = places.find(
+    (place) =>
+      panels.some((p) => p.moduleId === place.unit.id && p.name === SHELF_PANEL_NAME),
+  );
+
+  check(
+    'модуль с полкой есть — лист строить есть на чём',
+    Boolean(shelved),
+    shelved ? `${shelved.unit.label} ${shelved.unit.widthMm} мм` : 'МОДУЛЯ С ПОЛКОЙ НЕТ',
+  );
+
+  const unit = shelved!.unit;
+  const place = shelved!;
+
+  const sheet = renderToStaticMarkup(
+    React.createElement(ModuleAssembly, { run, unit, panels } as never),
+  );
+
+  /* ── 1. Выноска на каждую деталь корпуса, номера те же ── */
+
+  const mine = panels.filter((p) => p.moduleId === unit.id);
+  const carcass = mine.filter((p) => CARCASS_PARTS.has(p.name));
+  const leaders = Array.from(sheet.matchAll(/data-leader="([^"]+)"/g)).map((m) => m[1]);
+
+  check(
+    'детали корпуса есть — выноски вешать есть на что',
+    carcass.length > 0,
+    carcass.length === 0
+      ? 'НОЛЬ ДЕТАЛЕЙ КОРПУСА У МОДУЛЯ — выноску вешать не на что'
+      : `деталей корпуса ${carcass.length}`,
+  );
+
+  check(
+    'на листе выноска на КАЖДУЮ деталь корпуса',
+    leaders.length === carcass.length && leaders.length > 0,
+    leaders.length === 0
+      ? 'НОЛЬ ВЫНОСОК НА ЛИСТЕ — подписывать нечем'
+      : `выносок ${leaders.length} при ${carcass.length} деталях корпуса: ${carcass
+          .map((p) => p.number)
+          .join(', ')}`,
+  );
+
+  const csv = panelsToCsv(panels);
+  const strayLeaders = leaders.filter(
+    (number) =>
+      !carcass.some((p) => p.number === number) || !csv.includes(number),
+  );
+
+  check(
+    'номер выноски совпадает с таблицей, раскроем и CSV',
+    strayLeaders.length === 0 && leaders.length > 0,
+    strayLeaders.length === 0
+      ? `${leaders.length} номеров сошлись: ${leaders.join(', ')}`
+      : `ЧУЖИЕ НОМЕРА: ${strayLeaders.join(', ')}`,
+  );
+
+  /* ── 2. Линии выносок не пересекаются попарно ── */
+
+  type Seg = { n: string; x1: number; y1: number; x2: number; y2: number };
+  const num = (tag: string, name: string) => {
+    const m = tag.match(new RegExp(name + '="([-0-9.]+)"'));
+    return m ? Number(m[1]) : NaN;
+  };
+
+  const segs: Seg[] = Array.from(sheet.matchAll(/<line[^>]*data-leader-line="[^"]*"[^>]*>/g)).map(
+    (m) => {
+      const tag = m[0];
+      return {
+        n: (tag.match(/data-leader-line="([^"]+)"/) ?? ['', '?'])[1],
+        x1: num(tag, 'x1'),
+        y1: num(tag, 'y1'),
+        x2: num(tag, 'x2'),
+        y2: num(tag, 'y2'),
+      };
+    },
+  );
+
+  /*
+   * Выноска — ДВА отрезка: диагональ от детали к излому и горизонтальная
+   * полка до кружка. Так она и нарисована на чертёжном листе, и так её
+   * разводит `uncross`: он двигает полки, а не ломает линию пополам.
+   */
+  check(
+    'линии выносок нарисованы — пересечения считать есть на чём',
+    segs.length === carcass.length * 2 &&
+      segs.length > 0 &&
+      segs.every((v) => Number.isFinite(v.x1)),
+    segs.length === 0
+      ? 'НОЛЬ ЛИНИЙ ВЫНОСОК НА ЛИСТЕ'
+      : `отрезков ${segs.length} при ${carcass.length} выносках (ждём по два)`,
+  );
+
+  /** Пересекаются ли отрезки. Общий конец пересечением не считается. */
+  const cross = (a: Seg, b: Seg) => {
+    const side = (px: number, py: number, qx: number, qy: number, rx: number, ry: number) =>
+      Math.sign((qx - px) * (ry - py) - (qy - py) * (rx - px));
+    return (
+      side(a.x1, a.y1, a.x2, a.y2, b.x1, b.y1) !== side(a.x1, a.y1, a.x2, a.y2, b.x2, b.y2) &&
+      side(b.x1, b.y1, b.x2, b.y2, a.x1, a.y1) !== side(b.x1, b.y1, b.x2, b.y2, a.x2, a.y2)
+    );
+  };
+
+  /*
+   * Сравниваем РАЗНЫЕ выноски: у одной свои два отрезка сходятся в изломе
+   * общим концом, и общий конец пересечением не считается — иначе тест
+   * ловил бы собственную ломаную и молчал бы о настоящих перекрестьях.
+   */
+  const crossed: string[] = [];
+  for (let i = 0; i < segs.length; i += 1) {
+    for (let j = i + 1; j < segs.length; j += 1) {
+      if (segs[i].n === segs[j].n) continue;
+      if (cross(segs[i], segs[j])) crossed.push(`${segs[i].n}×${segs[j].n}`);
+    }
+  }
+
+  check(
+    'линии выносок не пересекаются НИ ОДНОЙ парой',
+    crossed.length === 0 && segs.length > 1,
+    segs.length < 2
+      ? `ЛИНИЙ ${segs.length}: пересечения проверять не на чём`
+      : crossed.length === 0
+        ? `отрезков ${segs.length}, проверено пар ${
+            (segs.length * (segs.length - 1)) / 2 - segs.length / 2
+          }, пересечений 0`
+        : `ПЕРЕСЕКАЮТСЯ: ${crossed.join(' · ')}`,
+  );
+
+  /* ── 3. Габарит листа равен габариту из runPlaces ── */
+
+  const want = `${unit.widthMm}×${Math.round(place.heightM * 1000)}×${Math.round(
+    place.depthM * 1000,
+  )}`;
+  const shown = (sheet.match(/data-extent="([^"]+)"/) ?? [])[1] ?? null;
+
+  check(
+    'габарит на листе равен габариту модуля из runPlaces',
+    shown === want,
+    shown === null ? 'ГАБАРИТА НА ЛИСТЕ НЕТ ВОВСЕ' : `на листе ${shown}, runPlaces ${want}`,
+  );
+
+  /* ── 4. Ящики отдельными видами ── */
+
+  const hob = run.modules.find((u) => u.appliance === 'hob');
+
+  check(
+    'модуль с ящиками есть — виды ящиков проверять есть на чём',
+    Boolean(hob),
+    hob ? hob.label : 'МОДУЛЯ С ЯЩИКАМИ НЕТ',
+  );
+
+  const drawersOf = (markup: string) =>
+    (markup.match(/data-drawer-view="/g) ?? []).length;
+
+  if (hob) {
+    const three = applyOps({
+      run,
+      requirements: REQ,
+      ops: [{ op: 'set_fronts', moduleId: hob.id, drawerCount: 3 }],
+    });
+    const cut = buildPanels({ run: three });
+    const unitThree = three.modules.find((u) => u.id === hob.id)!;
+
+    const drawerSheet = renderToStaticMarkup(
+      React.createElement(ModuleAssembly, {
+        run: three,
+        unit: unitThree,
+        panels: cut,
+      } as never),
+    );
+
+    check(
+      'три заказанных ящика дают три вида ящиков',
+      drawersOf(drawerSheet) === 3,
+      `заказано 3, видов ${drawersOf(drawerSheet)}`,
+    );
+
+    const doorUnit = run.modules.find(
+      (u) => u.frontType === 'door' && !u.appliance && (u.fill?.drawerHeights.length ?? 0) === 0,
+    );
+
+    check(
+      'модуль с дверцей есть — «ни одного вида» проверять есть на чём',
+      Boolean(doorUnit),
+      doorUnit ? doorUnit.label : 'МОДУЛЯ С ДВЕРЦЕЙ БЕЗ ЯЩИКОВ НЕТ',
+    );
+
+    if (doorUnit) {
+      const doorSheet = renderToStaticMarkup(
+        React.createElement(ModuleAssembly, { run, unit: doorUnit, panels } as never),
+      );
+
+      check(
+        'а модуль с дверцей не даёт ни одного вида ящика',
+        drawersOf(doorSheet) === 0,
+        `видов ${drawersOf(doorSheet)}`,
+      );
+    }
+  }
+
+  /* ── 5. Фурнитура листа равна фурнитуре сметы для этого модуля ── */
+
+  const allUnits = [...run.modules, ...run.upperSegments.flatMap((s) => s.modules)];
+  const hw = openingHardware(
+    allUnits.map((u, i) => ({
+      unit: u,
+      heightMm: moduleCarcassHeightMm(u, run),
+      index: i,
+      total: allUnits.length,
+    })),
+    run,
+  );
+
+  const withHardware = places.filter((pl) => {
+    const mineHw = hw.byModule[pl.unit.id];
+    if (!mineHw) return false;
+    return (
+      Object.values(mineHw).some((v) => v > 0) ||
+      (pl.unit.column ? 0 : (pl.unit.fill?.drawerHeights.length ?? 0)) > 0
+    );
+  });
+
+  check(
+    'модули с фурнитурой есть — сверять есть с чем',
+    withHardware.length > 0,
+    withHardware.length === 0
+      ? 'НИ У ОДНОГО МОДУЛЯ НЕТ ФУРНИТУРЫ — сверять нечего'
+      : `модулей с фурнитурой ${withHardware.length} из ${places.length}`,
+  );
+
+  /*
+   * СВЕРЯЕМСЯ СО СМЕТОЙ, А НЕ С ТЕМ ЖЕ ИСТОЧНИКОМ.
+   *
+   * Первая версия сравнивала лист с `openingHardware.byModule` — то есть
+   * с тем самым расчётом, из которого лист и берёт числа. Такая проверка
+   * зелена всегда, включая случай, когда фурнитура не посчитана вовсе:
+   * ноль на листе равен нулю в разрезе. Ровно этот круг уже ловился на
+   * `rowOfModule`.
+   *
+   * Поэтому складываем фурнитуру ВСЕХ листов ряда и сверяем с позициями
+   * СМЕТЫ — с числами, которые уходят клиенту. Расходиться им нельзя: в
+   * цех едет лист, а платят по смете.
+   */
+  const sheetTotals = new Map<string, number>();
+
+  for (const pl of places) {
+    const hwSheet = renderToStaticMarkup(
+      React.createElement(ModuleAssembly, { run, unit: pl.unit, panels } as never),
+    );
+    for (const m of Array.from(
+      hwSheet.matchAll(/data-hardware="([^"]+)" data-qty="([-0-9.]+)"/g),
+    )) {
+      sheetTotals.set(m[1], (sheetTotals.get(m[1]) ?? 0) + Number(m[2]));
+    }
+  }
+
+  const estimate = buildEstimate(run, MAIN_VARIANT, DEMO_RATES);
+  const lineQty = (prefix: string) =>
+    estimate.lines
+      .filter((l) => l.key.startsWith(prefix))
+      .reduce((sum, l) => sum + l.quantity, 0);
+
+  /** Ручки скобой и нажимные идут в смете одной статьёй «Ручки накладные». */
+  const handlesOnSheet =
+    (sheetTotals.get('handleBar') ?? 0) + (sheetTotals.get('handlePush') ?? 0);
+
+  const pairs: [string, number, number][] = [
+    ['петли', (sheetTotals.get('hinges') ?? 0) + (sheetTotals.get('cornerHinges') ?? 0), lineQty('hinge_')],
+    ['направляющие', sheetTotals.get('slides') ?? 0, lineQty('slide_')],
+    ['ручки', handlesOnSheet, lineQty('handle_')],
+  ];
+
+  check(
+    'фурнитура на листах есть — сверять есть что',
+    sheetTotals.size > 0 && pairs.some(([, , want]) => want > 0),
+    sheetTotals.size === 0
+      ? 'НА ЛИСТАХ НЕТ НИ ОДНОЙ СТРОКИ ФУРНИТУРЫ'
+      : `строк на листах ${sheetTotals.size}`,
+  );
+
+  const hwWrong = pairs.filter(([, got, want]) => got !== want);
+
+  check(
+    'фурнитура листов сходится со сметой до штуки',
+    hwWrong.length === 0,
+    hwWrong.length === 0
+      ? pairs.map(([n, got]) => `${n} ${got}`).join(' · ')
+      : `РАСХОЖДЕНИЕ: ${hwWrong.map(([n, got, want]) => `${n}: листы ${got}, смета ${want}`).join(' · ')}`,
+  );
+
+  /*
+   * И РАЗРЕЗ ПО МОДУЛЯМ НЕ МОЛЧИТ ТАМ, ГДЕ ФУРНИТУРА ЕСТЬ.
+   *
+   * Сумма могла бы сойтись при пустом листе одного модуля и двойном счёте
+   * у соседа. Поэтому отдельно: у каждого модуля, которому фурнитура
+   * нужна, на листе она есть.
+   */
+  const silent: string[] = [];
+  for (const pl of withHardware) {
+    const hwSheet = renderToStaticMarkup(
+      React.createElement(ModuleAssembly, { run, unit: pl.unit, panels } as never),
+    );
+    if (!/data-hardware="/.test(hwSheet)) silent.push(pl.unit.label);
+  }
+
+  check(
+    'у каждого модуля с фурнитурой она названа на его листе',
+    silent.length === 0 && withHardware.length > 0,
+    silent.length === 0
+      ? `листов с фурнитурой ${withHardware.length}`
+      : `МОЛЧАТ: ${silent.join(', ')}`,
+  );
+
+  /* ── 6. Лист печатается ── */
+
+  const list = renderToStaticMarkup(
+    React.createElement(PanelList, {
+      run,
+      title: 'Проверка печати',
+      production: DEFAULT_PRODUCTION,
+    } as never),
+  );
+
+  const at = list.indexOf('data-assembly-print');
+  const tag = at < 0 ? '' : list.slice(list.lastIndexOf('<', at), list.indexOf('>', at) + 1);
+  const rootTag = list.slice(0, list.indexOf('>') + 1);
+
+  check(
+    'сборочные листы есть в разметке деталировки',
+    at >= 0,
+    at >= 0 ? 'блок найден' : 'БЛОКА СБОРОЧНЫХ ЛИСТОВ В ДЕТАЛИРОВКЕ НЕТ',
+  );
+
+  check(
+    'и он НЕ скрыт при печати',
+    at >= 0 && !tag.includes('print:hidden') && !rootTag.includes('print:hidden'),
+    at < 0
+      ? 'БЛОКА НЕТ'
+      : tag.includes('print:hidden')
+        ? `БЛОК СКРЫТ ПРИ ПЕЧАТИ: ${tag}`
+        : 'печатается',
+  );
+
+  /*
+   * ОДИН МОДУЛЬ — ОДИН ЛИСТ. Два модуля на одной странице означают, что
+   * в цеху один из них обрежется пополам: лист берут в руки по одному.
+   */
+  const sheets = (list.match(/data-assembly-sheet="/g) ?? []).length;
+  const breaks = (list.match(/break-after-page|break-inside-avoid/g) ?? []).length;
+
+  check(
+    'один модуль — один лист: у каждого свой разрыв страницы',
+    sheets > 0 && breaks >= sheets,
+    sheets === 0
+      ? 'НОЛЬ СБОРОЧНЫХ ЛИСТОВ В ПЕЧАТИ'
+      : `листов ${sheets}, разрывов ${breaks}`,
+  );
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

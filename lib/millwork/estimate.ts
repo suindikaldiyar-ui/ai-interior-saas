@@ -1,13 +1,11 @@
 import {
   APPLIANCE_SLOTS,
-  BUILT_IN_FRIDGE_FRONTS,
-  hingesPerDoor,
   moduleAppliances,
   standsOnFloor,
 } from './modules';
 import { allModules } from './layout';
 import { bearsCountertop, moduleCarcassHeightMm } from './fill';
-import { CORNER_HINGE_TITLE, liftKey, openingHardware } from './opening';
+import { CORNER_HINGE_TITLE, drawerSlides, liftKey, openingHardware } from './opening';
 import { buildPanels, panelMaterials } from './panels';
 import { DEFAULT_PRODUCTION, type HardwareItem, type ProductionSettings } from '@/types/catalog';
 import { resolveHardware } from './hardware';
@@ -384,20 +382,18 @@ export function buildEstimateDrafts(
        * Условия ровно те же, что у отрисовки и у раскроя: фронты в
        * наполнении и не колонна.
        */
-      const drawers = unit.column ? 0 : (unit.fill?.drawerHeights.length ?? 0);
+      const drawers = drawerSlides(unit);
       if (pick) pick.slides += drawers;
       else slides += drawers;
     }
 
     /*
-     * Петли для встройки: фасад висит на дверце прибора, а не на корпусе,
-     * и комплект у них свой. Без этой строки встроенный холодильник стоил
-     * бы столько же, сколько отдельностоящий, — а разница ощутимая.
+     * Петли для встройки — фасад висит на дверце прибора, а не на
+     * корпусе, и комплект у них свой — считает `openingHardware` вместе
+     * с остальной фурнитурой фасада. Здесь стоял второй их подсчёт, и
+     * из-за него разрез по модулям показывал встроенный холодильник без
+     * единой петли.
      */
-    if (unit.builtIn) {
-      const h = moduleCarcassHeightMm(unit, run);
-      hinges += BUILT_IN_FRIDGE_FRONTS * hingesPerDoor(h / BUILT_IN_FRIDGE_FRONTS);
-    }
   }
 
   // Столешница: длина ряда плюс запил на угол, если ряд угловой.

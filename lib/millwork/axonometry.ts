@@ -220,6 +220,37 @@ export function axonometryBoxes(
 }
 
 /**
+ * ЛЮБЫЕ КОРОБКИ НА БУМАГЕ — ОДНОЙ ПРОЕКЦИЕЙ.
+ *
+ * Изометрия нужна не только ряду: сборочный лист показывает тем же углом
+ * ОДИН модуль и каждый его ящик. Второй проекции для этого не заводится —
+ * 30°/30° живут в одном месте, и объёмный вид на листе раскроя не может
+ * разойтись с объёмным видом на сборочном.
+ *
+ * `includeOrigin` — про ряд: у него начало координат это пол и левый край
+ * стены, и габарит рисунка считается вместе с ними. У отдельного модуля
+ * начала координат в кадре нет вовсе, и ноль раздул бы поле на всю высоту
+ * от пола.
+ */
+export function axonometryOf(boxes: PartBox[], includeOrigin = false): Axonometry {
+  const faces = boxes.flatMap(boxFaces).sort((a, b) => a.depth - b.depth);
+
+  const xs = faces.flatMap((f) => f.points.map((p) => p.x));
+  const ys = faces.flatMap((f) => f.points.map((p) => p.y));
+  const zero = includeOrigin ? [0] : [];
+
+  return {
+    faces,
+    bounds: {
+      minX: Math.min(...xs, ...zero),
+      minY: Math.min(...ys, ...zero),
+      maxX: Math.max(...xs, ...zero),
+      maxY: Math.max(...ys, ...zero),
+    },
+  };
+}
+
+/**
  * Ряд в изометрии: те же коробки, положенные на бумагу.
  */
 export function buildAxonometry(
@@ -227,22 +258,7 @@ export function buildAxonometry(
   mode: AxonometryMode,
   production: { thicknessMm: number; frontMm: number; gapMm: number },
 ): Axonometry {
-  const faces = axonometryBoxes(run, mode, production)
-    .flatMap(boxFaces)
-    .sort((a, b) => a.depth - b.depth);
-
-  const xs = faces.flatMap((f) => f.points.map((p) => p.x));
-  const ys = faces.flatMap((f) => f.points.map((p) => p.y));
-
-  return {
-    faces,
-    bounds: {
-      minX: Math.min(...xs, 0),
-      minY: Math.min(...ys, 0),
-      maxX: Math.max(...xs, 0),
-      maxY: Math.max(...ys, 0),
-    },
-  };
+  return axonometryOf(axonometryBoxes(run, mode, production), true);
 }
 
 /**
