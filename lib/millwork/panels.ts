@@ -1,4 +1,5 @@
 import { moduleCarcassHeightMm, moduleDepthMm } from './fill';
+import { millingLink, type MillingItem } from './milling';
 import { BUILT_IN_FRIDGE_FRONTS } from './modules';
 import { hasBottom } from './moduleVariants';
 import { facadeSpans, hasFacade } from './applianceFront';
@@ -45,6 +46,11 @@ import type { Module, Panel, PanelTotals, Run } from '@/types/millwork';
 export type PanelInput = {
   run: Run;
   production?: ProductionSettings;
+  /**
+   * Фрезеровки организации. Пусто — раскрой ровно такой, каким был до
+   * каталога: ни один сохранённый лист от появления параметра не едет.
+   */
+  milling?: Map<string, MillingItem>;
 };
 
 /**
@@ -77,6 +83,7 @@ function modulePanels(
   run: Run,
   production: ProductionSettings,
   moduleNumber: number,
+  milling?: Map<string, MillingItem>,
 ): Panel[] {
   // Доборная планка — это одна деталь, а не корпус.
   const heightMm = moduleCarcassHeightMm(unit, run);
@@ -226,7 +233,26 @@ function modulePanels(
    */
   const spec = frontOf(unit);
   const edged = hasEdgeBanding(spec);
-  const frontMaterial = frontMaterialName(spec, production.frontMm);
+
+  /*
+   * ФРЕЗЕРОВКА НАЗВАНА В МАТЕРИАЛЕ ДЕТАЛИ.
+   *
+   * Лист раскроя уходит в цех, и по нему фрезеруют. «Фасад Эмаль 16» и
+   * «Фасад Эмаль 16, фрезеровка Модерн» — это разные операции и разные
+   * деньги; молчание здесь означает фасад, который приедет ровным.
+   *
+   * Название берётся из ТОЙ ЖЕ позиции каталога, что считает смета:
+   * второго имени фрезеровки в продукте нет.
+   */
+  const millingName = (() => {
+    if (!milling) return null;
+    const link = millingLink(unit, run, milling);
+    return link.state === 'resolved' || link.state === 'priceless' ? link.item.name : null;
+  })();
+
+  const frontMaterial = millingName
+    ? `${frontMaterialName(spec, production.frontMm)}, фрезеровка ${millingName}`
+    : frontMaterialName(spec, production.frontMm);
 
   const pushFront = (
     name: string,
@@ -338,7 +364,7 @@ function modulePanels(
 }
 
 /** Все детали ряда, сгруппированные по модулям слева направо. */
-export function buildPanels({ run, production = DEFAULT_PRODUCTION }: PanelInput): Panel[] {
+export function buildPanels({ run, production = DEFAULT_PRODUCTION, milling }: PanelInput): Panel[] {
   const modules = [...run.modules, ...run.upperSegments.flatMap((s) => s.modules)];
 
   /*
@@ -363,7 +389,7 @@ export function buildPanels({ run, production = DEFAULT_PRODUCTION }: PanelInput
       );
     }
 
-    return modulePanels(unit, run, production, number);
+    return modulePanels(unit, run, production, number, milling);
   });
 }
 

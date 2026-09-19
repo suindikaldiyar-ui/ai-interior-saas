@@ -7,9 +7,10 @@ import {
 } from './shop';
 import { APPLIANCE_SLOTS } from './modules';
 import { zoneProfile } from './zones';
+import { millingLink, type MillingItem } from './milling';
 import { FACADE_PANEL_NAME, SIDE_PANEL_NAME, panelNumberOf } from './panels';
 import type { CatalogEntryFull } from '@/types/catalog';
-import type { Panel, Run } from '@/types/millwork';
+import type { Module, Panel, Run } from '@/types/millwork';
 
 /**
  * ВЫНОСКИ С МАТЕРИАЛАМИ.
@@ -46,6 +47,24 @@ export type MaterialSources = {
   counter?: CatalogEntryFull | null;
   apron?: CatalogEntryFull | null;
 };
+
+/**
+ * «, фрезеровка Модерн» — хвост подписи фасада.
+ *
+ * Пусто, если фрезеровки нет или позиция не разрешилась: выдуманного
+ * названия в чертеже не бывает, по нему фрезеровали бы не то.
+ */
+function millingSuffix(
+  unit: Module,
+  run: Run,
+  catalog: Map<string, MillingItem>,
+): string {
+  if (catalog.size === 0) return '';
+  const link = millingLink(unit, run, catalog);
+  return link.state === 'resolved' || link.state === 'priceless'
+    ? `, фрезеровка ${link.item.name}`
+    : '';
+}
 
 /** «Дуб натуральный · ЛДСП-2041» — название и артикул вместе. */
 function fromCatalog(entry: CatalogEntryFull | null | undefined, prefix: string): string | null {
@@ -90,6 +109,11 @@ export function buildLeaders(
   run: Run,
   panels: Panel[],
   sources: MaterialSources = {},
+  /**
+   * Фрезеровки организации. Пусто — лист ровно такой, каким был: ни один
+   * сохранённый чертёж от появления параметра не едет.
+   */
+  milling: Map<string, MillingItem> = new Map(),
 ): LeaderAnchor[] {
   const zone = zoneProfile(run.zone ?? 'kitchen');
   const anchors: LeaderAnchor[] = [];
@@ -115,8 +139,19 @@ export function buildLeaders(
     yMm: plinthMm(shop) + carcassHeightMm(shop) * 0.45,
     panel: facadeNumber,
     text:
-      fromCatalog(sources.facade, numbered('Фасад', facadeNumber)) ??
-      `${numbered('Фасад', facadeNumber)}: МДФ, эмаль матовая — артикул не согласован`,
+      (fromCatalog(sources.facade, numbered('Фасад', facadeNumber)) ??
+        `${numbered('Фасад', facadeNumber)}: МДФ, эмаль матовая — артикул не согласован`) +
+      /*
+       * ФРЕЗЕРОВКА НАЗВАНА ТУТ ЖЕ, А НЕ ОТДЕЛЬНОЙ ВЫНОСКОЙ.
+       *
+       * Она свойство ЭТОГО фасада, как и его материал: второй выноской
+       * на том же полотне она читалась бы как вторая деталь, а полок на
+       * листе и так не хватает (ловушка 208).
+       *
+       * Название берётся из той же позиции каталога, что считает смета и
+       * называет деталировка.
+       */
+      millingSuffix(facadeAt, run, milling),
   });
 
   /* ── Корпус: боковина крайнего модуля ── */

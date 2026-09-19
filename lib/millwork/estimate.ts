@@ -14,13 +14,14 @@ import { resolveHardware } from './hardware';
 import { SLIDING_DOOR, displayLedMeters, sectionSpec, slidingDoorCount } from './sections';
 import { MODULE_VARIANTS, isSinkBase, variantEstimateKeys } from './moduleVariants';
 import { zoneProfile } from './zones';
+import { millingLink, type MillingItem } from './milling';
 import type {
   Estimate,
   EstimateLine,
   EstimateUnit,
   Module,
   Run,
-  VariantKey,
+  VariantKey, Panel,
 } from '@/types/millwork';
 
 /**
@@ -261,6 +262,12 @@ export function buildEstimateDrafts(
    * меняется.
    */
   hardwareItems: Map<string, HardwareItem> = new Map(),
+  /**
+   * Фрезеровки организации. Пусто — смета ровно такая, какой была до
+   * каталога фрезеровок: ни одна сохранённая от появления параметра не
+   * меняется.
+   */
+  millingItems: Map<string, MillingItem> = new Map(),
 ): Draft[] {
   /*
    * Высоту и потолок больше не разбираем по кусочкам: всё, что считает
@@ -284,7 +291,15 @@ export function buildEstimateDrafts(
    * раскроя: у компании своя толщина плиты, и посчитай смета по умолчанию,
    * пока цех пилит по 18 мм — расхождение вернулось бы той же дверью.
    */
-  const materials = panelMaterials(buildPanels({ run, production }));
+  /*
+   * ПАНЕЛИ НАРЕЗАЮТСЯ ОДИН РАЗ НА СМЕТУ.
+   *
+   * Из них считается и площадь материалов, и площадь фрезеровки: второй
+   * вызов `buildPanels` с другими аргументами дал бы две раскладки одной
+   * мебели.
+   */
+  const panels = buildPanels({ run, production, milling: millingItems });
+  const materials = panelMaterials(panels);
 
   /*
    * ФУРНИТУРА СЧИТАЕТСЯ ИЗ ВЫБРАННОГО НАПРАВЛЕНИЯ, А НЕ ИЗ РЯДА.
@@ -446,6 +461,22 @@ export function buildEstimateDrafts(
     { key: 'shelf_panel', title: 'Полки', unit: 'm2', quantity: materials.shelfM2 },
     { key: 'hdf_back', title: 'Задние стенки ХДФ', unit: 'm2', quantity: materials.backM2 },
     { key: 'front_panel', title: 'Фасады', unit: 'm2', quantity: materials.frontM2 },
+    /*
+     * ФРЕЗЕРОВКА — СВОЯ СТРОКА, И ПЛОЩАДЬ У НЕЁ ИЗ РАСКРОЯ.
+     *
+     * Второго расчёта площади здесь нет: панели уже нарезаны, и их
+     * площадь складывается тем же способом, что и в `panelMaterials`.
+     * Считать её заново значило бы развести статью фрезеровки со строкой
+     * «Фасады» на первой же правке припуска.
+     *
+     * Строка на КАЖДУЮ фрезеровку отдельно: у низа Модерн, у верха
+     * Александрия — это две операции и две цены, и сложить их в одну
+     * строку значит показать клиенту среднюю цену, которой нет.
+     *
+     * Позиция без цены строки не даёт вовсе — ноль здесь не «бесплатно»,
+     * а «цену не задали», и говорит об этом `millingWarnings`.
+     */
+    ...millingDrafts(run, panels, millingItems),
     { key: 'pvc_edge', title: 'Кромка ПВХ', unit: 'mp', quantity: materials.edgeM },
   ];
 
@@ -720,6 +751,54 @@ function hardwareTitle(kind: Run['options']['hardwareClass']): string {
 /** Доставка и монтаж считаются процентом от подытога, а не от корпуса. */
 export const DELIVERY_KEY = 'delivery_install';
 
+/**
+ * Строки фрезеровки: по одной на каждую применённую позицию каталога.
+ *
+ * Площадь берётся из УЖЕ НАРЕЗАННЫХ панелей и группируется по модулю:
+ * какая фрезеровка у модуля, отвечает `millingFor` внутри `millingLink` —
+ * та же функция, что называет её в деталировке и на чертеже.
+ */
+function millingDrafts(
+  run: Run,
+  panels: Panel[],
+  catalog: Map<string, MillingItem>,
+): Draft[] {
+  if (catalog.size === 0) return [];
+
+  const byModule = new Map<string, Module>();
+  for (const unit of [...run.modules, ...run.upperSegments.flatMap((s) => s.modules)]) {
+    byModule.set(unit.id, unit);
+  }
+
+  /** Площадь фасадов, разложенная по позиции фрезеровки. */
+  const areaByMilling = new Map<string, { item: MillingItem; m2: number }>();
+
+  for (const panel of panels) {
+    if (!panel.material.startsWith('Фасад')) continue;
+
+    const unit = byModule.get(panel.moduleId);
+    if (!unit) continue;
+
+    const link = millingLink(unit, run, catalog);
+    if (link.state !== 'resolved') continue;
+
+    const areaM2 = (panel.lengthMm * panel.widthMm * panel.qty) / 1_000_000;
+    const at = areaByMilling.get(link.item.id);
+    if (at) at.m2 += areaM2;
+    else areaByMilling.set(link.item.id, { item: link.item, m2: areaM2 });
+  }
+
+  return Array.from(areaByMilling.values())
+    .sort((a, b) => a.item.name.localeCompare(b.item.name, 'ru'))
+    .map(({ item, m2 }) => ({
+      key: `front_milling_${item.id}`,
+      title: `Фрезеровка «${item.name}»`,
+      unit: 'm2' as const,
+      quantity: Math.round(m2 * 100) / 100,
+      rate: item.price,
+    }));
+}
+
 export function buildEstimate(
   run: Run,
   variant: VariantKey,
@@ -734,8 +813,10 @@ export function buildEstimate(
   production: ProductionSettings = DEFAULT_PRODUCTION,
   /** Фурнитура организации: цены выбранных позиций. Пусто — как раньше. */
   hardwareItems: Map<string, HardwareItem> = new Map(),
+  /** Фрезеровки организации: цены выбранных позиций. Пусто — как раньше. */
+  millingItems: Map<string, MillingItem> = new Map(),
 ): Estimate {
-  const drafts = buildEstimateDrafts(run, production, hardwareItems);
+  const drafts = buildEstimateDrafts(run, production, hardwareItems, millingItems);
   const disabled = new Set(disabledKeys);
   const priceSnapshot: Record<string, number> = {};
 

@@ -118,6 +118,12 @@ import {
 import { composeVariants, workingWall, workspaceInput } from '../lib/millwork/workspace';
 import { screenState } from '../lib/millwork/screen';
 import {
+  millingFor,
+  millingScopeOf,
+  millingWarnings,
+  type MillingItem,
+} from '../lib/millwork/milling';
+import {
   actionEnabled,
   moduleActions,
   type ModuleActionKey,
@@ -14289,6 +14295,229 @@ console.log('\nКнопки панели на любом ряду');
     'у несуществующего модуля кнопок нет вовсе',
     moduleActions(run, 'нет-такого-модуля').length === 0,
     `действий ${moduleActions(run, 'нет-такого-модуля').length}`,
+  );
+}
+
+/* ═══════════  Фрезеровка доезжает до сметы и деталировки  ═══════════ */
+
+/**
+ * ОДНА ФРЕЗЕРОВКА НА ЧЕТЫРЕ МЕСТА.
+ *
+ * Выбор, который виден только на экране выбора, — это переключатель,
+ * который ничего не меняет (ловушка 148). Фрезеровка обязана доехать в
+ * смету (цена за м²), в сцену (профиль на фасаде), на чертёж (выноска
+ * материала) и в деталировку (у панели фасада названа фрезеровка).
+ *
+ * Площадь при этом НЕ считается заново: её знает раскрой, и второй
+ * расчёт разошёлся бы с ним на первой же правке.
+ */
+console.log('\nФрезеровка фасада в смете и деталировке');
+{
+  const CAT: Map<string, MillingItem> = new Map([
+    [
+      'mil-modern',
+      {
+        id: 'mil-modern',
+        name: 'Модерн',
+        article: 'MIL-MODERN',
+        price: 4500,
+        active: true,
+        milling: { profile: 'M10 20 L90 20 L90 80 L10 80 Z', typical: false },
+      },
+    ],
+    [
+      'mil-free',
+      {
+        id: 'mil-free',
+        name: 'Ампир',
+        article: 'MIL-EMPIRE',
+        price: 0,
+        active: true,
+        milling: { profile: 'M10 20 L90 20', typical: false },
+      },
+    ],
+  ]);
+
+  const plain = buildRun(baseInput);
+  const withMilling: Run = { ...plain, milling: { base: 'mil-modern' } };
+
+  const facades = [...plain.modules, ...plain.upperSegments.flatMap((sg) => sg.modules)].filter(
+    (u) => hasFacade(u),
+  );
+
+  check(
+    'в ряду есть фасады — фрезеровку проверять есть на чём',
+    facades.length > 0,
+    facades.length === 0 ? 'НОЛЬ ФАСАДОВ В РЯДУ — фрезеровать нечего' : `фасадов ${facades.length}`,
+  );
+
+  /* ── 1. Наследование «как у нижних» ── */
+
+  const byScope = new Map<string, string | null>();
+  for (const unit of facades) byScope.set(millingScopeOf(unit), millingFor(unit, withMilling));
+
+  check(
+    'полос в ряду больше одной — наследование проверять есть на чём',
+    byScope.size > 1,
+    byScope.size === 0
+      ? 'НОЛЬ ПОЛОС — наследование не проверить'
+      : Array.from(byScope.keys()).join(', '),
+  );
+
+  check(
+    'назначенное нижнему ряду наследуют все полосы: «как у нижних»',
+    facades.every((u) => millingFor(u, withMilling) === 'mil-modern'),
+    Array.from(byScope.entries()).map(([k, v]) => `${k}: ${v ?? 'нет'}`).join(' · '),
+  );
+
+  const upperOwn: Run = { ...plain, milling: { base: 'mil-modern', upper: 'mil-free' } };
+  const upperUnit = facades.find((u) => millingScopeOf(u) === 'upper');
+  const baseUnit = facades.find((u) => millingScopeOf(u) === 'base');
+
+  check(
+    'своя фрезеровка полосы сильнее унаследованной',
+    Boolean(upperUnit) &&
+      Boolean(baseUnit) &&
+      millingFor(upperUnit!, upperOwn) === 'mil-free' &&
+      millingFor(baseUnit!, upperOwn) === 'mil-modern',
+    !upperUnit || !baseUnit
+      ? 'НЕТ МОДУЛЕЙ ОБЕИХ ПОЛОС'
+      : `верх ${millingFor(upperUnit, upperOwn)} · низ ${millingFor(baseUnit, upperOwn)}`,
+  );
+
+  const moduleOwn: Run = {
+    ...upperOwn,
+    modules: plain.modules.map((u) =>
+      u.id === baseUnit?.id ? { ...u, front: { ...frontOf(u), millingId: 'mil-free' } } : u,
+    ),
+  };
+  const picked = moduleOwn.modules.find((u) => u.id === baseUnit?.id)!;
+
+  check(
+    'выбор на модуле сильнее полосы',
+    millingFor(picked, moduleOwn) === 'mil-free',
+    `модуль ${millingFor(picked, moduleOwn)} · его полоса ${millingFor(baseUnit!, moduleOwn)}`,
+  );
+
+  /* ── 2. Смета ── */
+
+  const lineOf = (r: Run) =>
+    buildEstimate(r, MAIN_VARIANT, DEMO_RATES, [], undefined, undefined, undefined, CAT)
+      .lines.find((l) => l.key.startsWith('front_milling'));
+
+  const plainLine = lineOf(plain);
+  const millLine = lineOf(withMilling);
+
+  check(
+    'без фрезеровки строки в смете нет вовсе',
+    !plainLine,
+    plainLine ? `ЛИШНЯЯ СТРОКА: ${plainLine.title} ${plainLine.quantity}` : 'строки нет',
+  );
+
+  check(
+    'с фрезеровкой строка появляется и названа',
+    Boolean(millLine) && /Модерн/.test(millLine?.title ?? ''),
+    millLine ? `${millLine.title} · ${millLine.quantity} м² · ${millLine.rate} ₸` : 'СТРОКИ НЕТ',
+  );
+
+  /* ── 3. Площадь — из раскроя, а не вторым расчётом ── */
+
+  const fromCut = panelMaterials(buildPanels({ run: withMilling })).frontM2;
+
+  check(
+    'площадь в статье фрезеровки равна площади фасадов из раскроя',
+    Boolean(millLine) && Math.abs((millLine?.quantity ?? 0) - fromCut) < 0.01,
+    `статья ${millLine?.quantity ?? 'НЕТ'} м² · раскрой ${fromCut} м²`,
+  );
+
+  check(
+    'фрезеровка меняет сумму сметы',
+    Math.round(buildEstimate(withMilling, MAIN_VARIANT, DEMO_RATES, [], undefined, undefined, undefined, CAT).total) !==
+      Math.round(buildEstimate(plain, MAIN_VARIANT, DEMO_RATES).total),
+    `${Math.round(buildEstimate(plain, MAIN_VARIANT, DEMO_RATES).total)} → ${Math.round(
+      buildEstimate(withMilling, MAIN_VARIANT, DEMO_RATES, [], undefined, undefined, undefined, CAT).total,
+    )} ₸`,
+  );
+
+  /* ── 4. Позиция без цены не даёт нулевую строку молча ── */
+
+  const freeRun: Run = { ...plain, milling: { base: 'mil-free' } };
+  const freeLine = lineOf(freeRun);
+  const freeWarnings = millingWarnings(freeRun, CAT);
+
+  check(
+    'позиция без цены не даёт нулевой строки',
+    !freeLine,
+    freeLine ? `НУЛЕВАЯ СТРОКА: ${freeLine.title} ${freeLine.total}` : 'строки нет',
+  );
+
+  check(
+    'и молчанием это не заканчивается: сказано словами',
+    freeWarnings.some((w) => /цена не задана/.test(w.message)),
+    freeWarnings.map((w) => w.message).join(' | ') || 'МОЛЧА: ни одного слова',
+  );
+
+  check(
+    'повторы схлопываются: один вопрос к каталогу, а не десять',
+    freeWarnings.length === 1,
+    `предупреждений ${freeWarnings.length} при ${facades.length} фасадах`,
+  );
+
+  /* ── 5. Операция назначения ── */
+
+  const assigned = applyOps({
+    run: plain,
+    requirements: REQ,
+    ops: [{ op: 'set_milling', millingId: 'mil-modern', scope: 'upper' }],
+  });
+
+  check(
+    'операция назначает фрезеровку полосе',
+    assigned.milling?.upper === 'mil-modern',
+    `run.milling = ${JSON.stringify(assigned.milling ?? null)}`,
+  );
+
+  const target = plain.modules.find((u) => hasFacade(u))!;
+  const onModule = applyOps({
+    run: plain,
+    requirements: REQ,
+    ops: [{ op: 'set_milling', millingId: 'mil-modern', moduleId: target.id }],
+  });
+
+  check(
+    'и одному фасаду — в его же front, туда же, где материал',
+    onModule.modules.find((u) => u.id === target.id)?.front?.millingId === 'mil-modern',
+    `${target.label}: ${onModule.modules.find((u) => u.id === target.id)?.front?.millingId ?? 'НЕТ'}`,
+  );
+
+  const bothAddresses = applyOps({
+    run: plain,
+    requirements: REQ,
+    ops: [{ op: 'set_milling', millingId: 'mil-modern', moduleId: target.id, scope: 'base' }],
+  });
+
+  check(
+    'два адреса в одной правке — отказ словами, а не молчаливый выбор',
+    (bothAddresses.warnings ?? []).some((w) => /полосе, либо модулю/.test(w)),
+    (bothAddresses.warnings ?? []).join(' | ') || 'МОЛЧА',
+  );
+
+  /* ── 6. Деталировка ── */
+
+  const cutPlain = buildPanels({ run: plain }).filter((p) => p.name === 'Фасад');
+  const cutMill = buildPanels({ run: withMilling, milling: CAT }).filter((p) => p.name === 'Фасад');
+
+  check(
+    'фасады в раскрое есть — деталировку проверять есть на чём',
+    cutPlain.length > 0 && cutMill.length > 0,
+    cutPlain.length === 0 ? 'НОЛЬ ФАСАДОВ В РАСКРОЕ' : `фасадов ${cutMill.length}`,
+  );
+
+  check(
+    'у панели фасада названа фрезеровка, а без неё — нет',
+    cutMill.some((p) => /Модерн/.test(p.material)) &&
+      cutPlain.every((p) => !/Модерн/.test(p.material)),
+    `с фрезеровкой «${cutMill[0]?.material}» · без «${cutPlain[0]?.material}»`,
   );
 }
 

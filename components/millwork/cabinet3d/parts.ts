@@ -380,7 +380,30 @@ export function useFrontMaterials(
       material.color.set(frontColor(spec, fallbackColor));
       material.roughness = FRONT_ROUGHNESS[spec.finish];
       material.metalness = FRONT_METALNESS[spec.finish];
+
+      /*
+       * ФРЕЗЕРОВАННЫЙ ФАСАД ВИДЕН РЕЛЬЕФОМ, А НЕ ЦВЕТОМ.
+       *
+       * Профиль — это углубление в плоскости, и на плоском цвете его не
+       * показать: клиент не отличит Модерн от ровного фасада, а платит за
+       * разное. Карта нормалей рисуется на канвасе прямо здесь
+       * (`milledNormal.ts`) — файл пришлось бы тянуть из сети, а сцена
+       * обязана работать в квартире без интернета.
+       *
+       * Пачки уже разделены: `frontKey` включает фрезеровку, поэтому
+       * фасад с Модерном и без него — два разных материала, а не один.
+       */
+      const normal = spec.millingId ? milledNormalMap() : null;
+      if (material.normalMap !== normal) {
+        material.normalMap = normal;
+        // Смена карты — это другой шейдер, пересборка обязательна.
+        material.needsUpdate = true;
+      }
     }
+    /*
+     * `frameloop="demand"`: без явного кадра рельеф сменится в памяти, а
+     * на экране останется прежний фасад (ловушка 250).
+     */
     invalidate();
   }, [specs, materials, fallbackColor, invalidate]);
 

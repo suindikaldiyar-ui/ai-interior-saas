@@ -22,6 +22,7 @@ import {
 import { runFingerprint } from './fingerprint';
 import { plinthMm, upperBottomMm } from './shop';
 import { ceilingOverSpanMm } from './ceiling';
+import { NO_MILLING_ID } from './milling';
 import {
   defaultFill,
   hingeSide,
@@ -30,7 +31,7 @@ import {
 } from './fill';
 import { zoneHeightMm } from './zones';
 import { isMechanism, openingRejection } from './opening';
-import { frontConflict } from './frontMaterial';
+import { frontConflict, frontOf } from './frontMaterial';
 import {
   MAX_APPLIANCE_DEPTH_MM,
   MIN_DRAWER_MM,
@@ -234,6 +235,14 @@ export function applyOps({
   let upperFrontAll: Module['front'] | null = null;
   /** Антресоль ряда: отдельная позиция, переживает пересборку верха. */
   let mezzanine = run.mezzanine ?? null;
+
+  /**
+   * Фрезеровка, назначенная полосам объекта.
+   *
+   * Лежит на РЯДУ рядом с антресолью и ригелями по той же причине: её
+   * читают функции, которые видят только `unit` и `run`.
+   */
+  let milling: Run['milling'] = run.milling ? { ...run.milling } : undefined;
 
   /**
    * МОДУЛИ АНТРЕСОЛИ — РЯД, А НЕ ПРОИЗВОДНАЯ.
@@ -1423,6 +1432,51 @@ export function applyOps({
         break;
       }
 
+      case 'set_milling': {
+        /*
+         * ФРЕЗЕРОВКА: ПОЛОСЕ ИЛИ ОДНОМУ ФАСАДУ.
+         *
+         * Полоса ложится на РЯД (`run.milling`), модуль — в его же
+         * `front`, туда же, где лежит материал. Наследование читает одна
+         * функция `millingFor`, и второго места хранения не появляется.
+         *
+         * `millingId: null` — это ВЫБОР «ровный фасад», а не отсутствие
+         * выбора: на полосе он перебивает унаследованное от низа.
+         */
+        if (op.moduleId && op.scope) {
+          warnings.push(
+            'Фрезеровка назначается либо полосе, либо модулю: ' +
+              'два адреса в одной правке — это два разных решения.',
+          );
+          break;
+        }
+
+        const value = op.millingId ?? NO_MILLING_ID;
+
+        if (op.moduleId) {
+          const paint = (unit: Module): Module => ({
+            ...unit,
+            front: { ...frontOf(unit), millingId: value },
+          });
+
+          const at = modules.findIndex((m) => m.id === op.moduleId);
+          if (at >= 0) {
+            modules[at] = paint(modules[at]);
+            break;
+          }
+          if (editMezz(op.moduleId, paint)) break;
+          if (editUpper(op.moduleId, paint)) break;
+
+          warnings.push(`Модуль ${op.moduleId} не найден: фрезеровать нечего.`);
+          break;
+        }
+
+        /* Без адреса — весь объект: то же, что `moduleId: 'all'` у материала. */
+        const scope = op.scope ?? 'base';
+        milling = { ...milling, [scope]: value };
+        break;
+      }
+
       case 'set_option': {
         if (op.key === 'hardwareClass' && typeof op.value === 'string') {
           options.hardwareClass = op.value as Run['options']['hardwareClass'];
@@ -1669,6 +1723,7 @@ export function applyOps({
    * она хранится на РЯДУ, а сегмент собирается здесь, поверх готового
    * верха: своя высота, свои модули, своя строка в раскрое и смете.
    */
+  nextRun.milling = milling;
   nextRun.mezzanine = mezzanine ?? undefined;
   if (mezzanine) {
     const kept = new Map(

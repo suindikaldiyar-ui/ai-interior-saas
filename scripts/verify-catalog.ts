@@ -1,5 +1,12 @@
 import { OBJECT_MARKS, productionFor, withMark } from '../lib/millwork/shop';
 import { DEFAULT_PRODUCTION, type ProductionSettings } from '../types/catalog';
+import {
+  TYPICAL_MILLING,
+  millingCatalog,
+  millingChoices,
+  millingOf,
+  typicalMillingItem,
+} from '../lib/millwork/milling';
 /**
  * Приёмка фазы 3 — та её часть, что проверяется без живого Supabase:
  * разбор выгрузок из 1С, расчёт спецификации, правила «фото → комната».
@@ -555,6 +562,94 @@ console.log('\nОтметки объекта');
       productionFor(later, own).carcassMm === later.carcassMm &&
       productionFor(later, own).visibleEdgeMm === later.visibleEdgeMm,
     marks.map((m) => `${m.group}.${m.key}`).join(' '),
+  );
+}
+
+/* ═══════════  Фрезеровка фасада — позиция каталога  ═══════════ */
+
+/**
+ * ФРЕЗЕРОВКА ЖИВЁТ В `catalog_items`, А НЕ В КОДЕ.
+ *
+ * Отдельной таблицы под неё нет (ловушка 19): это товар с ценой за м², и
+ * отличает его `meta.milling.profile` — контур профиля. Товар без
+ * профиля фрезеровкой не считается вовсе: он остаётся ставкой сметы.
+ */
+console.log('\nФрезеровка фасада — позиция каталога');
+{
+  const entry = (over: Record<string, unknown>) =>
+    ({
+      id: 'mil-1',
+      org_id: 'org',
+      name_ru: 'Модерн',
+      article: 'MIL-MODERN',
+      price: 4500,
+      is_active: true,
+      meta: { milling: { profile: 'M10 20 L90 20', typical: false } },
+      ...over,
+    }) as never;
+
+  check(
+    'позиция с профилем читается фрезеровкой',
+    millingOf(entry({})) !== null,
+    millingOf(entry({}))
+      ? `${millingOf(entry({}))!.name} · ${millingOf(entry({}))!.price} ₸/м²`
+      : 'НЕ ПРОЧИТАЛАСЬ',
+  );
+
+  check(
+    'товар без профиля фрезеровкой не считается',
+    millingOf(entry({ meta: {} })) === null,
+    millingOf(entry({ meta: {} })) === null ? 'не фрезеровка' : 'ПРОЧИТАЛСЯ КАК ФРЕЗЕРОВКА',
+  );
+
+  check(
+    'отключённая позиция читается, но помечена отключённой',
+    millingOf(entry({ is_active: false }))?.active === false,
+    `active = ${millingOf(entry({ is_active: false }))?.active}`,
+  );
+
+  const catalog = millingCatalog([entry({}), entry({ id: 'mil-2', is_active: false })]);
+
+  check(
+    'каталог собрался — выбирать есть из чего',
+    catalog.size === 2,
+    catalog.size === 0 ? 'НОЛЬ ПОЗИЦИЙ ФРЕЗЕРОВКИ — выбирать не из чего' : `позиций ${catalog.size}`,
+  );
+
+  check(
+    'выбор показывает только включённые',
+    millingChoices(catalog).length === 1,
+    `из ${catalog.size} включённых ${millingChoices(catalog).length}`,
+  );
+
+  /* ── Стартовый набор ── */
+
+  check(
+    'стартовый набор — одиннадцать позиций, включая «без фрезеровки»',
+    TYPICAL_MILLING.length === 11 &&
+      TYPICAL_MILLING.some((m) => m.name === 'Без фрезеровки') &&
+      TYPICAL_MILLING.some((m) => m.name === 'Александрия'),
+    `${TYPICAL_MILLING.length}: ${TYPICAL_MILLING.map((m) => m.name).join(', ')}`,
+  );
+
+  check(
+    'у каждой стартовой позиции есть профиль',
+    TYPICAL_MILLING.every((m) => m.profile.trim().length > 0),
+    TYPICAL_MILLING.filter((m) => !m.profile.trim()).map((m) => m.name).join(', ') ||
+      'профиль есть у всех',
+  );
+
+  check(
+    'ЦЕН В СТАРТОВОМ НАБОРЕ НЕТ: они у каждого цеха свои',
+    TYPICAL_MILLING.every((m) => typicalMillingItem(m).price === 0),
+    TYPICAL_MILLING.map((m) => typicalMillingItem(m).price).filter((v) => v !== 0).join('/') ||
+      'все нулевые, цену задаёт компания',
+  );
+
+  check(
+    'стартовая позиция помечена типовой — это ориентир, а не прайс компании',
+    TYPICAL_MILLING.every((m) => typicalMillingItem(m).meta.milling.typical === true),
+    'все помечены',
   );
 }
 
