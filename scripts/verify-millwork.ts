@@ -117,7 +117,12 @@ import {
 } from '../lib/millwork/walls';
 import { composeVariants, workingWall, workspaceInput } from '../lib/millwork/workspace';
 import { screenState } from '../lib/millwork/screen';
+import React from 'react';
+import MillingPicker from '../components/millwork/MillingPicker';
 import {
+  MILLING_SCOPES,
+  millingCatalog,
+  millingChoices,
   millingFor,
   millingScopeOf,
   millingWarnings,
@@ -14518,6 +14523,197 @@ console.log('\nФрезеровка фасада в смете и деталир
     cutMill.some((p) => /Модерн/.test(p.material)) &&
       cutPlain.every((p) => !/Модерн/.test(p.material)),
     `с фрезеровкой «${cutMill[0]?.material}» · без «${cutPlain[0]?.material}»`,
+  );
+}
+
+/* ═══════════  Экран выбора фрезеровки  ═══════════ */
+
+/**
+ * ЭКРАН ПОКАЗЫВАЕТ ПОЗИЦИИ КАТАЛОГА, А НЕ СПИСОК В КОДЕ.
+ *
+ * Функция, которую замерщик не видит, — это не функция: прошлый заход
+ * собрал `MillingPicker` и не подключил его, и фрезеровка существовала
+ * только в тестах. Здесь меряется то, что видно на экране: карточки
+ * рисуются из каталога организации, выбор доезжает до модуля и до сметы,
+ * а позиция без цены названа словами.
+ *
+ * Проверка идёт ТЕМ ЖЕ ПУТЁМ, что экран: компонент отрисовывается, и
+ * карточки считаются в разметке — как считает их глаз.
+ */
+console.log('\nЭкран выбора фрезеровки');
+{
+  const entry = (over: Record<string, unknown>) =>
+    ({
+      id: 'mil-modern',
+      org_id: 'org',
+      name_ru: 'Модерн',
+      article: 'MIL-MODERN',
+      price: 4500,
+      is_active: true,
+      meta: { milling: { profile: 'M10 20 L90 20 L90 80 L10 80 Z', typical: false } },
+      ...over,
+    }) as never;
+
+  const catalog = millingCatalog([
+    entry({}),
+    entry({ id: 'mil-free', name_ru: 'Ампир', article: 'MIL-EMPIRE', price: 0 }),
+    entry({ id: 'mil-off', name_ru: 'Волна', article: 'MIL-WAVE', is_active: false }),
+  ]);
+
+  const run = buildRun(baseInput);
+
+  const render = (over: Record<string, unknown> = {}) =>
+    renderToStaticMarkup(
+      React.createElement(MillingPicker, {
+        run,
+        catalog,
+        onOps: () => {},
+        ...over,
+      } as never),
+    );
+
+  const html = render();
+  const cards = (html.match(/data-milling="/g) ?? []).length;
+
+  check(
+    'каталог непустой — экран проверять есть на чём',
+    catalog.size > 0,
+    catalog.size === 0 ? 'НОЛЬ ПОЗИЦИЙ В КАТАЛОГЕ — карточек не из чего строить' : `позиций ${catalog.size}`,
+  );
+
+  check(
+    'экран показывает карточку на каждую ВКЛЮЧЁННУЮ позицию',
+    cards === millingChoices(catalog).length && cards > 0,
+    cards === 0
+      ? 'НОЛЬ КАРТОЧЕК НА ЭКРАНЕ — выбирать нечего'
+      : `карточек ${cards} при ${millingChoices(catalog).length} включённых из ${catalog.size}`,
+  );
+
+  check(
+    'отключённая позиция на экран не выходит',
+    !html.includes('data-milling="mil-off"'),
+    html.includes('data-milling="mil-off"') ? 'ОТКЛЮЧЁННАЯ ВИДНА' : 'её нет',
+  );
+
+  check(
+    'у карточки есть профиль: рисунок, а не одно название',
+    (html.match(/<path /g) ?? []).length >= cards,
+    `контуров ${(html.match(/<path /g) ?? []).length} при ${cards} карточках`,
+  );
+
+  check(
+    'цена стоит на карточке, а не прячется',
+    html.includes('4 500 ₸/м²') || html.includes('4\u00a0500 ₸/м²'),
+    html.includes('₸/м²') ? 'цена видна' : 'ЦЕНЫ НА ЭКРАНЕ НЕТ',
+  );
+
+  /*
+   * ПРОВЕРЯЕМ САМУ КАРТОЧКУ, А НЕ ВЕСЬ ЭКРАН.
+   *
+   * Первая версия искала «0 ₸/м²» во всей разметке и падала на верном
+   * продукте: «4 500 ₸/м²» содержит эту подстроку. Берём разметку той
+   * карточки, о которой речь.
+   */
+  const cardOf = (id: string) => {
+    const at = html.indexOf(`data-milling="${id}"`);
+    if (at < 0) return '';
+    const end = html.indexOf('</button>', at);
+    return end < 0 ? '' : html.slice(at, end);
+  };
+
+  const freeCard = cardOf('mil-free');
+  const paidCard = cardOf('mil-modern');
+
+  check(
+    'карточки обеих позиций нашлись — цену проверять есть на чём',
+    freeCard.length > 0 && paidCard.length > 0,
+    freeCard.length === 0 || paidCard.length === 0
+      ? 'КАРТОЧКИ НЕ НАЙДЕНЫ В РАЗМЕТКЕ'
+      : 'нашлись обе',
+  );
+
+  check(
+    'позиция без цены названа словами, а не нулём',
+    freeCard.includes('цена не задана') && !freeCard.includes('₸/м²'),
+    freeCard.includes('цена не задана')
+      ? 'сказано словами'
+      : `МОЛЧА ИЛИ НУЛЁМ: ${freeCard.slice(-120)}`,
+  );
+
+  check(
+    'а позиция с ценой показывает именно её',
+    paidCard.includes('₸/м²') && !paidCard.includes('цена не задана'),
+    paidCard.includes('₸/м²') ? 'цена на карточке' : 'ЦЕНЫ НА КАРТОЧКЕ НЕТ',
+  );
+
+  /* ── Полосы и наследование ── */
+
+  for (const scope of MILLING_SCOPES) {
+    check(
+      `на экране есть назначение полосе «${scope.title}»`,
+      html.includes(`data-milling-scope="${scope.key}"`),
+      html.includes(`data-milling-scope="${scope.key}"`) ? 'есть' : 'ПОЛОСЫ НЕТ НА ЭКРАНЕ',
+    );
+  }
+
+  check(
+    'полоса без своей фрезеровки подписана «как у нижних»',
+    html.includes('как у нижних'),
+    html.includes('как у нижних') ? 'подписано' : 'ПОДПИСИ НЕТ',
+  );
+
+  /* ── Пустой каталог не выглядит поломкой ── */
+
+  const emptyHtml = renderToStaticMarkup(
+    React.createElement(MillingPicker, {
+      run,
+      catalog: new Map(),
+      onOps: () => {},
+    } as never),
+  );
+
+  check(
+    'пустой каталог объясняет себя словами, а не пустым местом',
+    /Фрезеровок в каталоге нет/.test(emptyHtml),
+    /Фрезеровок в каталоге нет/.test(emptyHtml) ? 'сказано словами' : 'ПУСТОЙ ЭКРАН БЕЗ ОБЪЯСНЕНИЯ',
+  );
+
+  /* ── Выбор доезжает до модуля и до сметы ── */
+
+  const target = run.modules.find((u) => hasFacade(u))!;
+  const picked = applyOps({
+    run,
+    requirements: REQ,
+    ops: [{ op: 'set_milling', millingId: 'mil-modern', moduleId: target.id }],
+  });
+
+  check(
+    'выбор карточки доезжает до модуля',
+    picked.modules.find((u) => u.id === target.id)?.front?.millingId === 'mil-modern',
+    `${target.label}: ${picked.modules.find((u) => u.id === target.id)?.front?.millingId ?? 'НЕТ'}`,
+  );
+
+  const before = Math.round(buildEstimate(run, MAIN_VARIANT, DEMO_RATES).total);
+  const after = Math.round(
+    buildEstimate(picked, MAIN_VARIANT, DEMO_RATES, [], undefined, undefined, undefined, catalog)
+      .total,
+  );
+
+  check(
+    'и до сметы',
+    after > before,
+    `${before} → ${after} ₸`,
+  );
+
+  /* ── Выбранная карточка помечена ── */
+
+  const markedHtml = render({ run: picked, selectedModuleId: target.id });
+
+  check(
+    'выбранная карточка отмечена на экране',
+    /data-milling="mil-modern" aria-pressed="true"/.test(markedHtml) ||
+      markedHtml.includes('aria-pressed="true"'),
+    markedHtml.includes('aria-pressed="true"') ? 'отмечена' : 'ПРИЗНАКА ВЫБРАННОЙ НЕТ',
   );
 }
 

@@ -1,4 +1,5 @@
 import { TYPICAL_PALETTE, typicalColorItem } from './palette';
+import { TYPICAL_MILLING, typicalMillingItem } from './milling';
 import type { CatalogCategory, CatalogEntryFull } from '@/types/catalog';
 import type { CommPoint, Measurement, Opening, RunRequirements } from '@/types/millwork';
 import type { RateTable } from './estimate';
@@ -202,6 +203,44 @@ const DEMO_CATEGORY: CatalogCategory = {
   is_active: true,
 };
 
+/**
+ * ДЕМОНСТРАЦИЯ ПОКАЗЫВАЕТ ТО ЖЕ, ЧТО ПОЛУЧИТ КОМПАНИЯ В ПЕРВЫЙ ДЕНЬ.
+ *
+ * Типовой прайс заводит и палитру, и фрезеровки; демо-каталог обязан
+ * показывать их обе. Иначе на встрече экран говорит «фрезеровок в
+ * каталоге нет» там, где у настоящей организации их одиннадцать, — и
+ * функция выглядит отсутствующей ровно так же, как выглядела палитра до
+ * слоя 40.
+ *
+ * Второго списка при этом не появляется: и там, и здесь один
+ * `TYPICAL_MILLING`.
+ */
+const DEMO_MILLING: CatalogEntryFull[] = TYPICAL_MILLING.map((milling, index) => {
+  const seed = typicalMillingItem(milling);
+
+  return {
+    id: `demo-milling-${index}`,
+    org_id: 'demo',
+    category_id: DEMO_CATEGORY.id,
+    article: seed.article,
+    name_ru: seed.name_ru,
+    name_kk: seed.name_kk,
+    description: '',
+    /*
+     * ЦЕНЫ НЕТ И В ДЕМО. Она у каждого цеха своя, и показать здесь
+     * выдуманное число значит назвать клиенту цену, которой нет.
+     */
+    price: seed.price,
+    unit: seed.unit,
+    dimensions: {},
+    tiling: {},
+    meta: seed.meta,
+    is_active: true,
+    category: DEMO_CATEGORY,
+    assets: [],
+  };
+});
+
 export const DEMO_CATALOG: CatalogEntryFull[] = TYPICAL_PALETTE.map((color, index) => {
   const seed = typicalColorItem(color);
 
@@ -223,3 +262,5 @@ export const DEMO_CATALOG: CatalogEntryFull[] = TYPICAL_PALETTE.map((color, inde
     assets: [],
   };
 });
+
+DEMO_CATALOG.push(...DEMO_MILLING);

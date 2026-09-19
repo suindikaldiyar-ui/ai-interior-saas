@@ -45,6 +45,8 @@ import { moduleCarcassHeightMm } from '@/lib/millwork/fill';
 import type { DrawingMode } from './ElevationDrawing';
 import EstimateSheet from './EstimateSheet';
 import MaterialsStep from './MaterialsStep';
+import MillingPicker from './MillingPicker';
+import { millingCatalog } from '@/lib/millwork/milling';
 import PanelList from './PanelList';
 import RenderPanel from './RenderPanel';
 import { DEMO_QUOTA_HINT, DEMO_QUOTA_SPENT } from '@/lib/plan';
@@ -1329,6 +1331,16 @@ export default function Workspace(props: WorkspaceProps) {
    * клиенту декоры, которых компания не продаёт.
    */
   const catalog = useInteriorStore((s) => s.catalog);
+
+  /*
+   * ФРЕЗЕРОВКИ ОРГАНИЗАЦИИ — ИЗ ТОГО ЖЕ КАТАЛОГА.
+   *
+   * Отдельной таблицы под них нет (ловушка 19): позиция отличается
+   * только `meta.milling.profile`. Собираем один раз на список товаров —
+   * пересборка на каждый рендер дала бы новую Map и перерисовку сетки
+   * карточек без единой правки.
+   */
+  const millingItems = useMemo(() => millingCatalog(catalog), [catalog]);
   const palette = useMemo(() => paletteFromCatalog(catalog), [catalog]);
 
   /** Выделенный модуль целиком: материал показывается по нему. */
@@ -3141,6 +3153,28 @@ export default function Workspace(props: WorkspaceProps) {
                   angle={renderAngle}
                   onAngleChange={setRenderAngle}
                 />
+
+                {/*
+                  * ФРЕЗЕРОВКА — РЯДОМ С ПАЛИТРОЙ ФАСАДА.
+                  *
+                  * Она отвечает на тот же вопрос, что материал: как будет
+                  * выглядеть фасад. Развести их по разным шагам значит
+                  * заставить замерщика переключаться между экранами,
+                  * держа в голове, что он уже выбрал (слой 31).
+                  *
+                  * Каталог доезжает тем же путём, что материалы и
+                  * фурнитура, — из стора (`useInteriorStore.catalog`),
+                  * который наполняет `CatalogLoader` выше. Второго
+                  * источника позиций нет.
+                  */}
+                <div className="mt-3">
+                  <MillingPicker
+                    run={active.run}
+                    catalog={millingItems}
+                    selectedModuleId={selectedId}
+                    onOps={runOps}
+                  />
+                </div>
               </div>
 
               {/*

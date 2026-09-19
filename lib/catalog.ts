@@ -12,6 +12,7 @@ import {
 } from './kitchen';
 import { catalogUrl } from './supabase/config';
 import { TYPICAL_PALETTE, typicalColorItem } from './millwork/palette';
+import { TYPICAL_MILLING, typicalMillingItem } from './millwork/milling';
 import {
   UNIT_LABEL,
   isSurfaceKind,
@@ -239,10 +240,45 @@ export async function seedTypicalCatalog(
     ];
   });
 
-  payload.push(...colors);
+  /*
+   * ФРЕЗЕРОВКИ ИДУТ ТЕМ ЖЕ ПУТЁМ — И БЕЗ ЦЕН.
+   *
+   * Названия отраслевые: их произносит мебельщик и узнаёт клиент. А цена
+   * фрезеровки у каждого цеха своя — зависит от станка, числа проходов и
+   * того, кто точит фрезу. Выдуманная цена уехала бы в подписанную
+   * смету, поэтому позиция заводится с нулём, а продукт читает ноль как
+   * «цену не задали» и говорит об этом словами.
+   *
+   * Это не забытое поле: `millingLink` на такой позиции возвращает
+   * `priceless`, строки в смете не появляется, а каталог просит задать
+   * цену за м². Тот же разбор, что у фурнитуры.
+   */
+  const millings = TYPICAL_MILLING.filter((m) => !known.has(m.article)).flatMap((milling) => {
+    const item = typicalMillingItem(milling);
+    const categoryId = categories.byKey.get(item.categoryKey);
+    if (!categoryId) return [];
+
+    return [
+      {
+        org_id: orgId,
+        category_id: categoryId,
+        article: item.article,
+        name_ru: item.name_ru,
+        price: item.price,
+        unit: item.unit,
+        meta: item.meta,
+        is_active: true,
+      },
+    ];
+  });
+
+  payload.push(...colors, ...millings);
 
   const skipped =
-    TYPICAL_PRICE_LIST.length + TYPICAL_PALETTE.length - payload.length;
+    TYPICAL_PRICE_LIST.length +
+    TYPICAL_PALETTE.length +
+    TYPICAL_MILLING.length -
+    payload.length;
 
   if (payload.length === 0) {
     return { added: 0, addedCategories: categories.created, skipped };
