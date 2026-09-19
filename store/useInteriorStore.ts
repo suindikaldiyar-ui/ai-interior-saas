@@ -134,6 +134,16 @@ export type InteriorState = {
   setOrgId: (id: string | null) => void;
   setProjectId: (id: string | null) => void;
   setCatalog: (catalog: CatalogEntryFull[]) => void;
+  /**
+   * ЦЕНА ПОЗИЦИИ КАТАЛОГА ПОМЕНЯЛАСЬ.
+   *
+   * Второго хранения цены это не заводит: `catalog` — та же копия
+   * `catalog_items`, что пришла из базы, и правится здесь ровно то поле,
+   * которое туда же и уходит. Нужно это ради ОДНОГО: смета обязана
+   * пересчитаться на месте, пока замерщик стоит рядом с клиентом, а не
+   * после перезагрузки страницы.
+   */
+  setCatalogPrice: (id: string, price: number) => void;
   setSelection: (targetKey: TargetKey, itemId: string | null) => void;
   clearSelections: () => void;
   setAnalysis: (analysis: RoomAnalysis | null) => void;
@@ -614,6 +624,11 @@ export const useInteriorStore = create<InteriorState>((set, get) => ({
   setOrgId: (id) => set({ orgId: id }),
   setProjectId: (id) => set({ projectId: id }),
   setCatalog: (catalog) => set({ catalog }),
+
+  setCatalogPrice: (id, price) =>
+    set((state) => ({
+      catalog: state.catalog.map((item) => (item.id === id ? { ...item, price } : item)),
+    })),
 
   setSelection: (targetKey, itemId) =>
     set((state) => {

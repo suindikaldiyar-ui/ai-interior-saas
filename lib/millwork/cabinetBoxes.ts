@@ -12,7 +12,8 @@ import {
 import { moduleDepthMm, rowStandardDepthMm } from './fill';
 import type { ProductionSettings } from '@/types/catalog';
 import type { ApplianceKind } from '@/types/millwork';
-import { FRAME_WIDTH_MM, frontKey, frontOf, isFramed } from './frontMaterial';
+import { FRAME_WIDTH_MM, frontKey, isFramed } from './frontMaterial';
+import { frontWithMilling } from './milling';
 import { openingOf } from './opening';
 import type { Module, Run } from '@/types/millwork';
 
@@ -216,6 +217,14 @@ export type FrontOptions = {
   frontThicknessM: number;
   integratedHandles: boolean;
   cutaway: boolean;
+  /**
+   * ФРЕЗЕРОВКА, НАЗНАЧЕННАЯ ПОЛОСАМ РЯДА.
+   *
+   * Едет сюда, а не берётся из модуля, по той же причине, что и высота
+   * антресоли: назначение полосе лежит на РЯДУ, и модуль о нём не знает.
+   * Пусто — у ряда полос не назначено, и фасад берёт только своё.
+   */
+  rowMilling?: Run['milling'];
 };
 
 /**
@@ -410,7 +419,7 @@ export function doorBoxes(
           scale: [0.016, Math.min(0.22, heightM * 0.4), 0.016],
         };
 
-  const spec = frontOf(unit);
+  const spec = frontWithMilling(unit, { milling: options.rowMilling });
   const key = frontKey(spec);
   const w = doorW - 2 * gap;
   const h = heightM - 2 * gap;
@@ -537,7 +546,7 @@ export function drawerBoxes(
   boxes.push({
     material: 'front',
     part,
-    frontKey: frontKey(frontOf(unit)),
+    frontKey: frontKey(frontWithMilling(unit, { milling: options.rowMilling })),
     position: [cx, cy, thickness / 2],
     scale: [widthM - 2 * gap, height - 2 * gap, thickness],
   });
@@ -898,6 +907,7 @@ export function runBoxes(
         gapM: options.gapMm / MM,
         frontThicknessM: options.frontThicknessMm / MM,
         integratedHandles: Boolean(run.options.integratedHandles),
+        rowMilling: run.milling,
         cutaway: Boolean(options.cutaway),
       },
     ),

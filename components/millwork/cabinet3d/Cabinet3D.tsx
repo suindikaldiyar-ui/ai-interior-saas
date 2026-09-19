@@ -14,7 +14,7 @@ import {
   type PartBox,
 } from '@/lib/millwork/cabinetBoxes';
 import { useCabinetParts, useFrontMaterials, useSurfaceLook } from './parts';
-import { DEFAULT_FRONT, frontKey, frontOf } from '@/lib/millwork/frontMaterial';
+import { DEFAULT_FRONT, frontKey } from '@/lib/millwork/frontMaterial';
 import type { FrontSpec } from '@/types/millwork';
 import { surfaceLook } from '@/lib/millwork/surfaces';
 import { APRON_TARGET, COUNTERTOP_TARGET, FACADE_TARGET } from '@/types/catalog';
@@ -28,6 +28,7 @@ import {
   workTopMm,
 } from '@/lib/millwork/shop';
 import { zoneProfile } from '@/lib/millwork/zones';
+import { frontWithMilling, millingCatalog } from '@/lib/millwork/milling';
 import { useInteriorStore } from '@/store/useInteriorStore';
 import { DEFAULT_PRODUCTION, type ProductionSettings } from '@/types/catalog';
 import { DEFAULT_SCENE_VIEW, type SceneView } from '@/lib/cameraFraming';
@@ -384,14 +385,20 @@ export default function Cabinet3D({
   const frontSpecs = useMemo(() => {
     const map = new Map<string, FrontSpec>();
     for (const entry of [...modules, ...uppers]) {
-      const spec = frontOf(entry.unit);
+      const spec = frontWithMilling(entry.unit, run);
       map.set(frontKey(spec), spec);
     }
     if (map.size === 0) map.set(frontKey(DEFAULT_FRONT), DEFAULT_FRONT);
     return map;
-  }, [modules, uppers]);
+  }, [modules, uppers, run]);
 
-  const frontMaterials = useFrontMaterials(frontSpecs, facadeColor);
+  /*
+   * ФРЕЗЕРОВКИ БЕРУТСЯ ИЗ КАТАЛОГА ОРГАНИЗАЦИИ — той же функцией, что
+   * строит карточки выбора. Второй список профилей означал бы фасад в
+   * сцене с одним рельефом и карточку с другим.
+   */
+  const millingItems = useMemo(() => millingCatalog(catalog), [catalog]);
+  const frontMaterials = useFrontMaterials(frontSpecs, facadeColor, millingItems);
 
   const selected = useMemo(() => {
     if (!selectedModuleId) return null;
@@ -537,7 +544,7 @@ export default function Cabinet3D({
           cutaway={cutaway}
           displayLit={displayLit}
           onActive={handleActive}
-          frontMaterial={frontMaterials.get(frontKey(frontOf(entry.unit)))}
+          frontMaterial={frontMaterials.get(frontKey(frontWithMilling(entry.unit, run)))}
         />
       ))}
 

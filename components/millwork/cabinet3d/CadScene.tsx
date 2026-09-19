@@ -9,7 +9,8 @@ import { beamDropMm } from '@/lib/millwork/ceiling';
 import { plinthMm } from '@/lib/millwork/shop';
 import { rowStandardDepthMm } from '@/lib/millwork/fill';
 import { moduleBoxes, runBoxes, runPlaces } from '@/lib/millwork/cabinetBoxes';
-import { frontKey, frontOf } from '@/lib/millwork/frontMaterial';
+import { frontKey } from '@/lib/millwork/frontMaterial';
+import { frontWithMilling } from '@/lib/millwork/milling';
 import type { ProductionSettings } from '@/types/catalog';
 import type { Run } from '@/types/millwork';
 import type { SceneView } from '@/lib/cameraFraming';
@@ -769,7 +770,7 @@ function FrameProbe({ rows }: { rows: SceneRow[] }) {
         new Set(
           rows.flatMap((row) =>
             [...row.run.modules, ...row.run.upperSegments.flatMap((s) => s.modules)].map((unit) =>
-              frontKey(frontOf(unit)),
+              frontKey(frontWithMilling(unit, row.run)),
             ),
           ),
         ),

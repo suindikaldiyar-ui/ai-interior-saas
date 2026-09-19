@@ -299,6 +299,24 @@ export async function seedTypicalCatalog(
 }
 
 /**
+ * ПРАВКА ПОЗИЦИИ КАТАЛОГА — ОДНА ДВЕРЬ.
+ *
+ * Цену фрезеровки вводят на карточке в конфигураторе, цену остального —
+ * в админке каталога. Это ОДНО И ТО ЖЕ действие над одной и той же
+ * строкой, и два запроса `update` в разных местах разъехались бы на
+ * первой же правке: один научился бы чистить пометку «типовая», второй
+ * нет. Возвращает текст ошибки или `null`.
+ */
+export async function patchCatalogItem(
+  supabase: SupabaseClient,
+  id: string,
+  patch: Record<string, unknown>,
+): Promise<string | null> {
+  const { error } = await supabase.from('catalog_items').update(patch).eq('id', id);
+  return error ? error.message : null;
+}
+
+/**
  * Цена стала своей.
  *
  * Пометка «типовая» держится ровно до первой правки цены: компания

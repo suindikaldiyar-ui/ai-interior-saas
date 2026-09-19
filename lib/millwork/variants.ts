@@ -1,6 +1,7 @@
 import { buildRun, type BuildRunInput } from './layout';
 import { buildEstimate, type RateTable } from './estimate';
 import type { ProductionSettings } from '@/types/catalog';
+import type { MillingItem } from './milling';
 import { APPLIANCE_SLOTS } from './modules';
 import type {
   ApplianceKind,
@@ -99,6 +100,16 @@ export interface BuildVariantsInput extends Omit<BuildRunInput, 'requirements'> 
   rates: RateTable;
   /** Настройки цеха: смета обязана считать по той же плите, что и раскрой. */
   production?: ProductionSettings;
+  /**
+   * ФРЕЗЕРОВКИ ОРГАНИЗАЦИИ: ЦЕНЫ ВЫБРАННЫХ ПОЗИЦИЙ.
+   *
+   * Каталог едет тем же путём, что и настройки цеха: смета обязана
+   * считать по ТОМУ ЖЕ прайсу, который замерщик видит на карточках.
+   * Пока его тут не было, введённая на карточке цена доезжала до
+   * каталога и не доезжала до суммы внизу экрана — поле, которое
+   * хранится и ни на что не влияет, это дефект.
+   */
+  milling?: Map<string, MillingItem>;
   strategies?: VariantStrategy[];
   disabledKeys?: Record<VariantKey, string[]>;
   calculatedAt?: string;
@@ -144,6 +155,8 @@ export function buildVariants(input: BuildVariantsInput): Variant[] {
       input.disabledKeys?.[strategy.key] ?? [],
       input.calculatedAt,
       input.production,
+      undefined,
+      input.milling,
     );
 
     return {

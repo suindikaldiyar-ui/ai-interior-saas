@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { previewUrl } from '@/lib/catalog';
+import { patchCatalogItem, previewUrl } from '@/lib/catalog';
 import { TYPICAL_PRICE_LIST } from '@/lib/millwork/rates';
 import { supabaseBrowser } from '@/lib/supabase/client';
 import {
@@ -138,8 +138,8 @@ export default function CatalogAdmin({ orgId, initialCategories, initialItems }:
     setItems((prev) =>
       prev.map((i) => (i.id === id ? ({ ...i, ...patch } as CatalogEntryFull) : i)),
     );
-    const { error } = await supabase.from('catalog_items').update(patch).eq('id', id);
-    if (error) setNotice(`Не удалось сохранить: ${error.message}`);
+    const error = await patchCatalogItem(supabase, id, patch);
+    if (error) setNotice(`Не удалось сохранить: ${error}`);
   };
 
   const removeItem = async (id: string) => {

@@ -1,5 +1,6 @@
 import type { CatalogEntryFull } from '@/types/catalog';
-import type { Module, Run } from '@/types/millwork';
+import type { FrontSpec, Module, Run } from '@/types/millwork';
+import { frontOf } from './frontMaterial';
 import { hasFacade } from './applianceFront';
 import { isUpperRow } from './modules';
 
@@ -27,8 +28,36 @@ import { isUpperRow } from './modules';
  * правке. Каталог задаёт ЦЕНУ, а не второе количество.
  */
 
+/**
+ * СЛОЙ ПРОФИЛЯ: замкнутый контур и его глубина.
+ *
+ * `depth` — ОТНОСИТЕЛЬНАЯ глубина: 0 — плоскость фасада, 1 — дно самой
+ * глубокой выборки этого профиля. Это «темнее/светлее», а не миллиметры:
+ * настоящей глубины фрезы в каталоге организации нет, и выдавать рисунок
+ * за размер значило бы назвать цеху число, которого никто не подтверждал.
+ */
+export type MillingLayer = { path: string; depth: number };
+
 /** Что именно фрезеровано и как это выглядит. */
 export type MillingMeta = {
+  /**
+   * ЧТО УТОПЛЕНО, А ЧТО ВЫСТУПАЕТ.
+   *
+   * Плоский контур не читается: «Верона» и «Ампир» — обе рамки в рамке,
+   * и на карточке они выглядели одинаково. Фрезеровку узнают по
+   * РЕЛЬЕФУ: где фреза сняла материал, там тень.
+   *
+   * Поэтому профиль описан слоями, а не одной строкой. Каждый слой —
+   * замкнутый контур и его глубина: 0 — плоскость фасада, 1 — дно самой
+   * глубокой выборки. Вид красит слой тем темнее, чем он глубже, и
+   * кладёт тень по верхней кромке — так рамка выглядит утопленной, а не
+   * нарисованной.
+   *
+   * Глубина здесь ОТНОСИТЕЛЬНАЯ и означает «темнее/светлее», а не
+   * миллиметры: настоящей глубины фрезы в каталоге нет, и выдавать
+   * рисунок за размер нельзя.
+   */
+  layers?: MillingLayer[];
   /**
    * КОНТУР ПРОФИЛЯ — ПУТЬ SVG, А НЕ ФОТОГРАФИЯ.
    *
@@ -78,8 +107,34 @@ export function millingOf(entry: CatalogEntryFull): MillingItem | null {
     article: entry.article ?? '',
     price: typeof entry.price === 'number' && Number.isFinite(entry.price) ? entry.price : 0,
     active: entry.is_active !== false,
-    milling: { profile, typical: meta?.typical === true },
+    milling: {
+      profile,
+      layers: Array.isArray(meta?.layers) ? meta.layers : [],
+      typical: meta?.typical === true,
+    },
   };
+}
+
+/**
+ * ФАСАД МОДУЛЯ С УЧЁТОМ ФРЕЗЕРОВКИ РЯДА.
+ *
+ * `frontOf` знает только то, что записано НА МОДУЛЕ, а фрезеровку
+ * назначают ещё и полосе («низ Модерн, верх ровный») — и лежит она на
+ * ряду. Сцена спрашивала `frontOf` напрямую и полосу не видела вовсе:
+ * замерщик выбирал фрезеровку по рядам, смета её считала, раскрой писал
+ * в название детали, а фасад в 3D оставался ровным.
+ *
+ * Это тот же класс ошибки, что ловушка 307: у одной величины оказалось
+ * два ответа, и слабый стоял там, куда смотрит клиент. Теперь ответ
+ * один — `millingFor`, а эта функция только надевает его на фасад.
+ */
+export function frontWithMilling(
+  unit: Module,
+  run: Pick<Run, 'milling'>,
+): FrontSpec {
+  const spec = frontOf(unit);
+  const id = millingFor(unit, run);
+  return id === (spec.millingId ?? null) ? spec : { ...spec, millingId: id ?? undefined };
 }
 
 /** Фрезеровки организации: ключ — идентификатор позиции. */
@@ -283,72 +338,141 @@ export function millingWarnings(
  * глубина фрезы. Это СЕЧЕНИЕ, а не узор на плоскости: мебельщик узнаёт
  * фрезеровку именно по нему.
  */
-export type TypicalMilling = { article: string; name: string; profile: string };
+export type TypicalMilling = {
+  article: string;
+  name: string;
+  layers: MillingLayer[];
+};
+
+/** Плоскость фасада в поле 100×100: слой нулевой глубины, он же контур. */
+const FACE: MillingLayer = { path: 'M4 4 H96 V96 H4 Z', depth: 0 };
+
+/**
+ * ПЛОСКИЙ КОНТУР ВЫВОДИТСЯ ИЗ СЛОЁВ, А НЕ ХРАНИТСЯ ВТОРЫМ РИСУНКОМ.
+ *
+ * Рисунок профиля один: слои. Держать рядом с ними отдельную строку
+ * контура значит завести вторую формулу одной величины — и однажды
+ * получить карточку с рельефом одной фрезеровки и выноску на листе с
+ * контуром другой.
+ *
+ * `profile` при этом остаётся: по нему позиция каталога ОПОЗНАЁТСЯ как
+ * фрезеровка (`millingOf`), и его рисуют там, где рельефа не нужно —
+ * на чёрно-белой печати листа.
+ */
+export function profileOf(layers: MillingLayer[]): string {
+  return layers.map((layer) => layer.path).join(' ');
+}
 
 export const TYPICAL_MILLING: TypicalMilling[] = [
   {
     article: 'MIL-NONE',
     name: 'Без фрезеровки',
-    profile: 'M10 20 L90 20 L90 80 L10 80 Z',
+    /* Одна плоскость фасада: фреза по нему не прошла вовсе. */
+    layers: [FACE],
   },
   {
     article: 'MIL-MODERN',
     name: 'Модерн',
-    profile: 'M10 20 L90 20 L90 80 L10 80 Z M22 32 L78 32 L78 68 L22 68 Z',
+    /* Одна прямая выборка: ровное поле, утопленное на всю глубину. */
+    layers: [FACE, { path: 'M18 18 H82 V82 H18 Z', depth: 1 }],
   },
   {
     article: 'MIL-ALEXANDRIA',
     name: 'Александрия',
-    profile:
-      'M10 20 L90 20 L90 80 L10 80 Z M20 30 L80 30 L80 70 L20 70 Z M28 38 Q50 30 72 38 L72 62 Q50 70 28 62 Z',
+    /* Ступень, а в ней ОВАЛЬНОЕ поле: узнаётся по скруглению. */
+    layers: [
+      FACE,
+      { path: 'M14 14 H86 V86 H14 Z', depth: 0.45 },
+      { path: 'M24 50 Q24 26 50 26 Q76 26 76 50 Q76 74 50 74 Q24 74 24 50 Z', depth: 1 },
+    ],
   },
   {
     article: 'MIL-EMPIRE',
     name: 'Ампир',
-    profile:
-      'M10 20 L90 20 L90 80 L10 80 Z M18 28 L82 28 L82 72 L18 72 Z M26 36 L74 36 L74 64 L26 64 Z M34 44 L66 44 L66 56 L34 56 Z',
+    /* ТРИ ступени подряд: классическая многоступенчатая рамка. */
+    layers: [
+      FACE,
+      { path: 'M12 12 H88 V88 H12 Z', depth: 0.3 },
+      { path: 'M22 22 H78 V78 H22 Z', depth: 0.6 },
+      { path: 'M32 32 H68 V68 H32 Z', depth: 1 },
+    ],
   },
   {
     article: 'MIL-WAVE',
     name: 'Волна',
-    profile: 'M10 20 L90 20 L90 80 L10 80 Z M18 50 Q32 30 46 50 Q60 70 74 50 Q82 40 86 46',
+    /* Волна идёт ПОЛОСОЙ поперёк фасада, а не линией по нему. */
+    layers: [
+      FACE,
+      { path: 'M14 14 H86 V86 H14 Z', depth: 0.35 },
+      { path: 'M14 60 Q32 28 50 60 Q68 92 86 60 V86 H14 Z', depth: 1 },
+    ],
   },
   {
     article: 'MIL-BLINDS',
     name: 'Жалюзи',
-    profile:
-      'M10 20 L90 20 L90 80 L10 80 Z M20 32 L80 32 M20 42 L80 42 M20 52 L80 52 M20 62 L80 62 M20 72 L80 72',
+    /* Четыре рейки во всю ширину поля, каждая — своя выборка. */
+    layers: [
+      FACE,
+      { path: 'M14 14 H86 V86 H14 Z', depth: 0.25 },
+      { path: 'M20 24 H80 V34 H20 Z', depth: 1 },
+      { path: 'M20 39 H80 V49 H20 Z', depth: 1 },
+      { path: 'M20 54 H80 V64 H20 Z', depth: 1 },
+      { path: 'M20 69 H80 V79 H20 Z', depth: 1 },
+    ],
   },
   {
     article: 'MIL-VENICE',
     name: 'Венеция',
-    profile:
-      'M10 20 L90 20 L90 80 L10 80 Z M22 30 L78 30 L78 70 L22 70 Z M22 30 L50 50 L78 30 M22 70 L50 50 L78 70',
+    /* РОМБ в рамке: диагонали, а не прямые — ни с чем не спутать. */
+    layers: [
+      FACE,
+      { path: 'M14 14 H86 V86 H14 Z', depth: 0.4 },
+      { path: 'M50 22 L78 50 L50 78 L22 50 Z', depth: 1 },
+    ],
   },
   {
     article: 'MIL-FLORENCE',
     name: 'Флоренсия',
-    profile:
-      'M10 20 L90 20 L90 80 L10 80 Z M20 30 L80 30 L80 70 L20 70 Z M50 34 Q64 50 50 66 Q36 50 50 34 Z',
+    /* Вертикальный ЛЕПЕСТОК по центру: острые концы сверху и снизу. */
+    layers: [
+      FACE,
+      { path: 'M14 14 H86 V86 H14 Z', depth: 0.35 },
+      { path: 'M50 18 Q72 50 50 82 Q28 50 50 18 Z', depth: 1 },
+    ],
   },
   {
     article: 'MIL-VALENCIA',
     name: 'Валенсия',
-    profile:
-      'M10 20 L90 20 L90 80 L10 80 Z M20 30 Q50 22 80 30 L80 70 Q50 78 20 70 Z',
+    /* Бочка: стороны выгнуты наружу, углов у поля нет вовсе. */
+    layers: [
+      FACE,
+      { path: 'M16 30 Q50 16 84 30 Q98 50 84 70 Q50 84 16 70 Q2 50 16 30 Z', depth: 1 },
+    ],
   },
   {
     article: 'MIL-VERONA',
     name: 'Верона',
-    profile:
-      'M10 20 L90 20 L90 80 L10 80 Z M20 30 L80 30 L80 70 L20 70 Z M30 40 L70 40 M30 50 L70 50 M30 60 L70 60',
+    /* ТРИ коротких штриха в узкой рамке — не рейки и не ступени. */
+    layers: [
+      FACE,
+      { path: 'M16 16 H84 V84 H16 Z', depth: 0.5 },
+      { path: 'M30 36 H70 V42 H30 Z', depth: 1 },
+      { path: 'M30 47 H70 V53 H30 Z', depth: 1 },
+      { path: 'M30 58 H70 V64 H30 Z', depth: 1 },
+    ],
   },
   {
     article: 'MIL-PROFILE',
     name: 'Профильный',
-    profile: 'M10 20 L90 20 L90 80 L10 80 Z M18 28 Q26 50 18 72 M82 28 Q74 50 82 72',
+    /* Две вертикальные канавки по краям, середина фасада не тронута. */
+    layers: [
+      FACE,
+      { path: 'M12 8 H26 V92 H12 Z', depth: 1 },
+      { path: 'M74 8 H88 V92 H74 Z', depth: 1 },
+    ],
   },
 ];
+
 
 /** Позиция типового набора в виде товара каталога. */
 export function typicalMillingItem(milling: TypicalMilling) {
@@ -366,7 +490,7 @@ export function typicalMillingItem(milling: TypicalMilling) {
     unit: 'm2' as const,
     categoryKey: 'materials',
     meta: {
-      milling: { profile: milling.profile, typical: true },
+      milling: { profile: profileOf(milling.layers), layers: milling.layers, typical: true },
     },
   };
 }

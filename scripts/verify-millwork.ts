@@ -129,15 +129,20 @@ import { composeVariants, workingWall, workspaceInput } from '../lib/millwork/wo
 import { screenState } from '../lib/millwork/screen';
 import React from 'react';
 import MillingPicker from '../components/millwork/MillingPicker';
+import { useInteriorStore } from '../store/useInteriorStore';
 import ModuleAssembly from '../components/millwork/ModuleAssembly';
 import PartCard from '../components/millwork/PartCard';
 import {
   MILLING_SCOPES,
+  TYPICAL_MILLING,
   millingCatalog,
   millingChoices,
   millingFor,
   millingScopeOf,
   millingWarnings,
+  frontWithMilling,
+  profileOf,
+  typicalMillingItem,
   type MillingItem,
 } from '../lib/millwork/milling';
 import {
@@ -14604,10 +14609,21 @@ console.log('\nЭкран выбора фрезеровки');
     `контуров ${(html.match(/<path /g) ?? []).length} при ${cards} карточках`,
   );
 
+  /*
+   * ЦЕНА ВВОДИТСЯ НА КАРТОЧКЕ, А НЕ ЧИТАЕТСЯ С НЕЁ.
+   *
+   * Раньше это была подпись, и проверка искала «4 500 ₸/м²» текстом.
+   * Теперь это поле: у каждой карточки своё, подписанное ₸/м². Второй
+   * подписи с тем же числом рядом с полем нет намеренно — два показа
+   * одной величины на одной карточке расходятся при первой же правке.
+   */
+  const fields = (html.match(/data-milling-price="/g) ?? []).length;
+  const units = (html.match(/₸\/м²/g) ?? []).length;
+
   check(
-    'цена стоит на карточке, а не прячется',
-    html.includes('4 500 ₸/м²') || html.includes('4\u00a0500 ₸/м²'),
-    html.includes('₸/м²') ? 'цена видна' : 'ЦЕНЫ НА ЭКРАНЕ НЕТ',
+    'цена вводится на карточке: поле у каждой и подписано ₸/м²',
+    fields === cards && units === cards && cards > 0,
+    `полей ${fields}, подписей ₸/м² ${units} при ${cards} карточках`,
   );
 
   /*
@@ -14617,11 +14633,16 @@ console.log('\nЭкран выбора фрезеровки');
    * продукте: «4 500 ₸/м²» содержит эту подстроку. Берём разметку той
    * карточки, о которой речь.
    */
-  const cardOf = (id: string) => {
-    const at = html.indexOf(`data-milling="${id}"`);
+  const cardOf = (id: string, markup = html) => {
+    const at = markup.indexOf(`data-milling-card="${id}"`);
     if (at < 0) return '';
-    const end = html.indexOf('</button>', at);
-    return end < 0 ? '' : html.slice(at, end);
+    /*
+     * Карточка кончается там, где начинается следующая: цена вышла из
+     * кнопки в своё поле, и срез до `</button>` мерил бы теперь половину
+     * карточки — ту, где цены нет вовсе.
+     */
+    const next = markup.indexOf('data-milling-card="', at + 1);
+    return next < 0 ? markup.slice(at) : markup.slice(at, next);
   };
 
   const freeCard = cardOf('mil-free');
@@ -14635,18 +14656,26 @@ console.log('\nЭкран выбора фрезеровки');
       : 'нашлись обе',
   );
 
+  /** Что стоит в поле цены этой карточки. Пусто — значит пусто. */
+  const priceValue = (card: string) => {
+    const m = card.match(/data-milling-price="[^"]*"[^>]*?value="([^"]*)"/);
+    return m ? m[1] : null;
+  };
+
   check(
     'позиция без цены названа словами, а не нулём',
-    freeCard.includes('цена не задана') && !freeCard.includes('₸/м²'),
+    freeCard.includes('цена не задана') && priceValue(freeCard) === '',
     freeCard.includes('цена не задана')
-      ? 'сказано словами'
-      : `МОЛЧА ИЛИ НУЛЁМ: ${freeCard.slice(-120)}`,
+      ? `сказано словами, поле пустое (${JSON.stringify(priceValue(freeCard))})`
+      : `МОЛЧА ИЛИ НУЛЁМ: ${freeCard.slice(-160)}`,
   );
 
   check(
     'а позиция с ценой показывает именно её',
-    paidCard.includes('₸/м²') && !paidCard.includes('цена не задана'),
-    paidCard.includes('₸/м²') ? 'цена на карточке' : 'ЦЕНЫ НА КАРТОЧКЕ НЕТ',
+    priceValue(paidCard) === '4500' && !paidCard.includes('цена не задана'),
+    priceValue(paidCard) === null
+      ? 'ПОЛЯ ЦЕНЫ НА КАРТОЧКЕ НЕТ'
+      : `в поле ${priceValue(paidCard)}`,
   );
 
   /* ── Полосы и наследование ── */
@@ -14717,6 +14746,418 @@ console.log('\nЭкран выбора фрезеровки');
     /data-milling="mil-modern" aria-pressed="true"/.test(markedHtml) ||
       markedHtml.includes('aria-pressed="true"'),
     markedHtml.includes('aria-pressed="true"') ? 'отмечена' : 'ПРИЗНАКА ВЫБРАННОЙ НЕТ',
+  );
+}
+
+/* ═══  Карточка фрезеровки: рельеф, цена и рельеф в сцене  ═══ */
+
+/**
+ * КАРТОЧКА ПОКАЗЫВАЕТ ФАСАД, ЦЕНА ВВОДИТСЯ В НЕЙ ЖЕ, СЦЕНА ВИДИТ ВЫБОР.
+ *
+ * Плоский контур одиннадцати позиций читался как четыре рамки в рамке:
+ * «Верона» и «Ампир» на карточке выглядели одинаково, и выбор
+ * превращался в выбор названия. Цена при этом жила только в админке
+ * каталога, а введённая там — не доезжала до суммы внизу экрана.
+ *
+ * Меряется ровно это: одиннадцать РАЗНЫХ рисунков, цена в поле карточки,
+ * позиция без цены выбирается и в смету не попадает, а выбор меняет
+ * материал фасада В СЦЕНЕ.
+ */
+console.log('\n' + 'Карточка фрезеровки: рельеф, цена, сцена');
+{
+  /* ── Одиннадцать позиций — одиннадцать разных рисунков ── */
+
+  check(
+    'позиции есть — рисунки сравнивать есть на чём',
+    TYPICAL_MILLING.length === 11,
+    TYPICAL_MILLING.length === 0
+      ? 'НОЛЬ ПОЗИЦИЙ В НАБОРЕ — сравнивать нечего'
+      : `позиций ${TYPICAL_MILLING.length}`,
+  );
+
+  const contours = TYPICAL_MILLING.map((m) => profileOf(m.layers));
+  const uniqueContours = new Set(contours);
+
+  check(
+    'у одиннадцати позиций одиннадцать РАЗНЫХ контуров, повторов нет',
+    uniqueContours.size === TYPICAL_MILLING.length && TYPICAL_MILLING.length > 0,
+    uniqueContours.size === TYPICAL_MILLING.length
+      ? `разных контуров ${uniqueContours.size} из ${TYPICAL_MILLING.length}`
+      : `ПОВТОРЫ: ${TYPICAL_MILLING.filter(
+          (m, i) => contours.indexOf(profileOf(m.layers)) !== i,
+        )
+          .map((m) => m.name)
+          .join(', ')}`,
+  );
+
+  /*
+   * КОНТУР МОЖЕТ РАЗЛИЧАТЬСЯ, А РИСУНОК — НЕТ.
+   *
+   * Рамка фасада есть у всех, и одного её достаточно, чтобы строки
+   * оказались разными при одинаковых на вид карточках. Поэтому сравнение
+   * идёт по ВЫБОРКАМ — по тому, что сняла фреза.
+   */
+  const cutsOf = (name: string) =>
+    JSON.stringify(
+      (TYPICAL_MILLING.find((m) => m.name === name)?.layers ?? []).filter((l) => l.depth > 0),
+    );
+
+  const FIVE = ['Верона', 'Ампир', 'Александрия', 'Венеция', 'Флоренсия'];
+  const samePairs: string[] = [];
+  for (let i = 0; i < FIVE.length; i += 1) {
+    for (let j = i + 1; j < FIVE.length; j += 1) {
+      if (cutsOf(FIVE[i]) === cutsOf(FIVE[j])) samePairs.push(`${FIVE[i]} = ${FIVE[j]}`);
+    }
+  }
+
+  check(
+    'пять похожих позиций различаются ВЫБОРКАМИ, а не только названием',
+    samePairs.length === 0 && FIVE.every((n) => cutsOf(n) !== '[]'),
+    samePairs.length > 0
+      ? `СОВПАДАЮТ: ${samePairs.join(' · ')}`
+      : FIVE.map((n) => `${n}: выборок ${JSON.parse(cutsOf(n)).length}`).join(' · '),
+  );
+
+  /* ── Экран рисует эти одиннадцать, и все они разные ── */
+
+  const typicalEntries = TYPICAL_MILLING.map((m, i) => {
+    const seed = typicalMillingItem(m);
+    return {
+      id: `typ-${i}`,
+      org_id: 'org',
+      name_ru: seed.name_ru,
+      article: seed.article,
+      price: 0,
+      is_active: true,
+      meta: seed.meta,
+    } as never;
+  });
+
+  const typicalCatalog = millingCatalog(typicalEntries);
+  const run = buildRun(baseInput);
+
+  const typicalHtml = renderToStaticMarkup(
+    React.createElement(MillingPicker, {
+      run,
+      catalog: typicalCatalog,
+      onOps: () => {},
+    } as never),
+  );
+
+  const slice = (id: string, markup: string) => {
+    const at = markup.indexOf(`data-milling-card="${id}"`);
+    if (at < 0) return '';
+    const next = markup.indexOf('data-milling-card="', at + 1);
+    return next < 0 ? markup.slice(at) : markup.slice(at, next);
+  };
+
+  const drawings = TYPICAL_MILLING.map((_, i) => {
+    const card = slice(`typ-${i}`, typicalHtml);
+    const from = card.indexOf('<svg');
+    const to = card.indexOf('</svg>');
+    return from < 0 || to < 0 ? '' : card.slice(from, to);
+  });
+
+  check(
+    'карточки нарисовались — сравнивать есть что',
+    drawings.length === TYPICAL_MILLING.length && drawings.every((d) => d.length > 0),
+    drawings.some((d) => d.length === 0)
+      ? `НЕТ РИСУНКА У ${drawings.filter((d) => !d).length} КАРТОЧЕК ИЗ ${drawings.length}`
+      : `рисунков ${drawings.length}`,
+  );
+
+  check(
+    'и одиннадцать карточек дают одиннадцать разных рисунков',
+    new Set(drawings).size === drawings.length && drawings.length > 0,
+    `разных рисунков ${new Set(drawings).size} из ${drawings.length}`,
+  );
+
+  /*
+   * РЕЛЬЕФ, А НЕ ОДНА ЛИНИЯ. Слой глубины — это заливка и тень; без него
+   * карточка снова становится контуром, и пять похожих позиций снова
+   * сливаются.
+   */
+  const withRelief = drawings.filter((d) => d.includes('data-milling-layer'));
+
+  check(
+    'фрезерованная позиция нарисована слоями с тенью, а не контуром',
+    withRelief.length === TYPICAL_MILLING.length - 1 &&
+      withRelief.every((d) => d.includes('stroke="#000"')),
+    `со слоями ${withRelief.length} из ${drawings.length} (без слоёв — «Без фрезеровки»)`,
+  );
+
+  /* ── Цена вводится в карточке и меняет итог сметы ── */
+
+  const priceless = millingCatalog([
+    {
+      id: 'mil-amp',
+      org_id: 'org',
+      name_ru: 'Ампир',
+      article: 'MIL-EMPIRE',
+      price: 0,
+      is_active: true,
+      meta: typicalMillingItem(TYPICAL_MILLING[3]).meta,
+    } as never,
+  ]);
+
+  const target = run.modules.find((u) => hasFacade(u))!;
+  const picked = applyOps({
+    run,
+    requirements: REQ,
+    ops: [{ op: 'set_milling', millingId: 'mil-amp', moduleId: target.id }],
+  });
+
+  const totalOf = (catalog: Map<string, MillingItem>) =>
+    Math.round(
+      buildEstimate(picked, MAIN_VARIANT, DEMO_RATES, [], undefined, undefined, undefined, catalog)
+        .total,
+    );
+
+  const linesOf = (catalog: Map<string, MillingItem>) =>
+    buildEstimate(picked, MAIN_VARIANT, DEMO_RATES, [], undefined, undefined, undefined, catalog)
+      .lines.filter((l) => l.key.startsWith('front_milling_'));
+
+  check(
+    'без цены строки фрезеровки в смете НЕТ',
+    linesOf(priceless).length === 0,
+    linesOf(priceless).length === 0
+      ? 'строки нет'
+      : `СТРОКА ЕСТЬ ПРИ НУЛЕВОЙ ЦЕНЕ: ${linesOf(priceless)[0].title}`,
+  );
+
+  check(
+    'и позиция без цены названа словами, а не промолчала',
+    millingWarnings(picked, priceless).some((w) => w.message.includes('цена не задана')),
+    millingWarnings(picked, priceless).map((w) => w.message).join(' | ') || 'МОЛЧА',
+  );
+
+  /*
+   * ВВОД ЦЕНЫ ИДЁТ ТЕМ ЖЕ ПУТЁМ, ЧТО ЭКРАН: карточка пишет цену в
+   * каталог вкладки (`setCatalogPrice`), конфигуратор собирает из него
+   * `millingCatalog`, и уже он уходит в смету. Проверка, дописавшая цену
+   * в Map руками, мерила бы не тот путь.
+   */
+  useInteriorStore.getState().setCatalog(
+    TYPICAL_MILLING.map((m, i) => {
+      const seed = typicalMillingItem(m);
+      return {
+        id: i === 3 ? 'mil-amp' : `typ-${i}`,
+        org_id: 'org',
+        name_ru: seed.name_ru,
+        article: seed.article,
+        price: 0,
+        is_active: true,
+        meta: seed.meta,
+      } as never;
+    }),
+  );
+  useInteriorStore.getState().setCatalogPrice('mil-amp', 7000);
+
+  const afterEntry = millingCatalog(useInteriorStore.getState().catalog);
+
+  check(
+    'введённая цена легла В ПОЗИЦИЮ КАТАЛОГА, а не рядом с ней',
+    afterEntry.get('mil-amp')?.price === 7000,
+    `«Ампир»: ${afterEntry.get('mil-amp')?.price ?? 'НЕТ В КАТАЛОГЕ'} ₸/м²`,
+  );
+
+  const before = totalOf(priceless);
+  const after = totalOf(afterEntry);
+  const line = linesOf(afterEntry)[0];
+
+  check(
+    'после ввода строка появилась в смете',
+    Boolean(line) && line.quantity > 0,
+    line ? `${line.title}: ${line.quantity} м² × ${line.rate} ₸` : 'СТРОКИ НЕТ',
+  );
+
+  /*
+   * ИТОГ ВЫРОС РОВНО НА ТО, ЧТО ДОБАВИЛОСЬ.
+   *
+   * Сравнение «разница равна строке» было бы неверным: доставка и монтаж
+   * считаются процентом от сметы и растут вместе с ней. Поэтому меряем
+   * иначе — какие строки вообще сдвинулись: строка фрезеровки и только
+   * процентные. Тронулось что-то ещё — фрезеровка задела чужие деньги.
+   */
+  const totalsOf = (catalog: Map<string, MillingItem>) =>
+    new Map(
+      buildEstimate(picked, MAIN_VARIANT, DEMO_RATES, [], undefined, undefined, undefined, catalog)
+        .lines.map((l) => [l.key, { total: Math.round(l.total), unit: l.unit }]),
+    );
+
+  const was = totalsOf(priceless);
+  const now = totalsOf(afterEntry);
+  const moved = Array.from(now.entries()).filter(([k, v]) => was.get(k)?.total !== v.total);
+  const percent = moved.filter(([k]) => k !== line?.key);
+  const percentDelta = percent.reduce(
+    (sum, [k, v]) => sum + (v.total - (was.get(k)?.total ?? 0)),
+    0,
+  );
+
+  check(
+    'и итог пересчитался: строка фрезеровки плюс процент от неё, больше ничего',
+    after > before &&
+      moved.some(([k]) => k === line?.key) &&
+      percent.every(([, v]) => v.unit === 'percent') &&
+      Math.abs(after - before - (Math.round(line?.total ?? 0) + percentDelta)) <= 1,
+    `${before} → ${after} ₸ (+${after - before}): строка ${Math.round(
+      line?.total ?? 0,
+    )} + процент ${percentDelta}; тронуто ${moved.map(([k]) => k).join(', ')}`,
+  );
+
+  /*
+   * А БЕЗ ЦЕНЫ ИТОГ НЕ ДВИГАЕТСЯ ВОВСЕ. «Не попала в смету» — это не
+   * только отсутствие строки: сдвинься итог хоть на тенге, клиент
+   * заплатил бы за позицию, цены которой никто не задавал.
+   */
+  check(
+    'позиция без цены не двигает итог ни на тенге',
+    totalOf(priceless) === totalOf(new Map()),
+    `без каталога ${totalOf(new Map())} ₸ · с позицией без цены ${totalOf(priceless)} ₸`,
+  );
+
+  /*
+   * ВТОРОГО ХРАНЕНИЯ ЦЕНЫ НЕТ. Модуль несёт ссылку на позицию каталога и
+   * ничего больше: копия цены в модуле означала бы, что переоценка
+   * каталога не доедет до сметы.
+   */
+  check(
+    'модуль хранит ссылку, а не цену',
+    JSON.stringify(picked).includes('mil-amp') && !JSON.stringify(picked).includes('7000'),
+    JSON.stringify(picked).includes('7000') ? 'ЦЕНА ЛЕЖИТ В МОДУЛЕ' : 'в модуле только ссылка',
+  );
+
+  /* ── Позиция без цены всё равно выбирается ── */
+
+  const pricelessHtml = renderToStaticMarkup(
+    React.createElement(MillingPicker, {
+      run,
+      catalog: priceless,
+      onOps: () => {},
+    } as never),
+  );
+
+  check(
+    'позицию без цены можно выбрать: кнопка не заперта',
+    pricelessHtml.includes('data-milling="mil-amp"') &&
+      !/data-milling="mil-amp"[^>]*disabled/.test(pricelessHtml),
+    pricelessHtml.includes('data-milling="mil-amp"')
+      ? 'карточка есть и не заперта'
+      : 'КАРТОЧКИ БЕЗ ЦЕНЫ НА ЭКРАНЕ НЕТ',
+  );
+
+  /* ── Выбор меняет материал фасада В СЦЕНЕ ── */
+
+  const keyBefore = frontKey(frontWithMilling(target, run));
+  const keyAfter = frontKey(frontWithMilling(picked.modules.find((u) => u.id === target.id)!, picked));
+
+  check(
+    'выбор фрезеровки меняет ключ материала фасада в сцене',
+    keyBefore !== keyAfter && keyAfter.includes('mil-amp'),
+    `${keyBefore} → ${keyAfter}`,
+  );
+
+  /*
+   * ФАСАДЫ РИСУЮТСЯ ПАЧКАМИ ПО КЛЮЧУ (ловушка 248). Значит у одного
+   * модуля с фрезеровкой обязана появиться СВОЯ пачка: останься ключ
+   * прежним — фрезерованный фасад рисовался бы материалом соседей, и
+   * рельефа на нём не было бы вовсе.
+   */
+  const packs = (r: typeof run) =>
+    new Set(allModules(r).filter(hasFacade).map((u) => frontKey(frontWithMilling(u, r)))).size;
+
+  check(
+    'и добавляет в сцену свою пачку фасадов',
+    packs(picked) === packs(run) + 1,
+    `пачек ${packs(run)} → ${packs(picked)}`,
+  );
+
+  /*
+   * МЕРЯЕМ КОРОБКИ, А НЕ ФОРМУЛУ РЯДОМ С НИМИ.
+   *
+   * Ключ фасада считается в двух шагах от экрана: сцена рисует то, что
+   * отдала `runBoxes`. Проверка, спросившая только `frontWithMilling`,
+   * была бы зелёной и тогда, когда коробки считают фрезеровку по-своему.
+   */
+  const boxKeys = (r: typeof run) =>
+    new Set(
+      runBoxes(r, { thicknessMm: 16, frontThicknessMm: 18, gapMm: 3 })
+        .filter((b) => b.material === 'front')
+        .map((b) => b.frontKey ?? ''),
+    );
+
+  check(
+    'коробки сцены несут фрезеровку в ключе фасада',
+    Array.from(boxKeys(picked)).some((k) => k.includes('mil-amp')) &&
+      !Array.from(boxKeys(run)).some((k) => k.includes('mil-amp')),
+    `было ${Array.from(boxKeys(run)).join(' · ')} → стало ${Array.from(boxKeys(picked)).join(' · ')}`,
+  );
+
+  /*
+   * НАЗНАЧЕНИЕ ПОЛОСЕ ОБЯЗАНО ДОЕХАТЬ ДО СЦЕНЫ ТОЖЕ.
+   *
+   * Замерщик говорит «низ Модерн», а не перечисляет модули: это лежит на
+   * РЯДЕ, и модуль о нём не знает. Сцена спрашивала только модуль — и
+   * фасад оставался ровным при выбранной по ряду фрезеровке.
+   */
+  const byRow = applyOps({
+    run,
+    requirements: REQ,
+    ops: [{ op: 'set_milling', millingId: 'mil-amp', scope: 'base' }],
+  });
+
+  check(
+    'фрезеровка, назначенная РЯДУ, доезжает до коробок сцены',
+    Array.from(boxKeys(byRow)).some((k) => k.includes('mil-amp')),
+    Array.from(boxKeys(byRow)).join(' · ') || 'ФАСАДНЫХ КОРОБОК НЕТ ВОВСЕ',
+  );
+
+  /* ── Экранный путь: composeVariants → смета внизу экрана ── */
+
+  /**
+   * ТЕСТ ИДЁТ ТЕМ ЖЕ ПУТЁМ, ЧТО ЭКРАН.
+   *
+   * Сумма внизу экрана считается не прямым вызовом `buildEstimate`, а
+   * цепочкой `composeVariants → buildVariants → buildEstimate`. Пока
+   * каталог фрезеровки не ехал по этой цепочке, введённая на карточке
+   * цена доезжала до каталога и НЕ доезжала до суммы — а меряй мы
+   * прямой вызов, проверка была бы зелёной.
+   */
+  const screenInput = (catalog: Map<string, MillingItem>) => ({
+    title: 'Проверка',
+    zone: 'kitchen',
+    measuredBy: '',
+    measuredAt: '',
+    lengthMm: baseInput.lengthMm,
+    ceilingHeightMm: baseInput.ceilingHeightMm,
+    requirements: REQ,
+    openings: [],
+    comms: [],
+    rates: DEMO_RATES,
+    cornerAt: null,
+    measuredWalls: [],
+    measuredComms: [],
+    runWallId: 'a',
+    roomDepthM: 3.2,
+    milling: catalog,
+  });
+
+  const screenTotal = (catalog: Map<string, MillingItem>) => {
+    const variants = composeVariants(
+      screenInput(catalog) as never,
+      { basic: [], optimal: [], premium: [] } as never,
+      { [MAIN_VARIANT]: picked } as never,
+    );
+    return Math.round(variants.find((v) => v.key === MAIN_VARIANT)!.estimate.total);
+  };
+
+  const screenBefore = screenTotal(priceless);
+  const screenAfter = screenTotal(afterEntry);
+
+  check(
+    'сумма ВНИЗУ ЭКРАНА пересчитывается от введённой цены',
+    screenAfter > screenBefore,
+    `${screenBefore} → ${screenAfter} ₸ (+${screenAfter - screenBefore})`,
   );
 }
 

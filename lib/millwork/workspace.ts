@@ -10,6 +10,7 @@ import type {
 } from '@/types/millwork';
 import { buildEstimate, recalcTotal, type RateTable } from './estimate';
 import type { ProductionSettings } from '@/types/catalog';
+import type { MillingItem } from './milling';
 import { buildVariants } from './variants';
 
 /**
@@ -46,6 +47,16 @@ export type WorkspaceSeed = {
   wallId?: string | null;
   cornerAt?: 'start' | 'end' | null;
   production?: ProductionSettings;
+  /**
+   * ФРЕЗЕРОВКИ ОРГАНИЗАЦИИ: ЦЕНЫ ВЫБРАННЫХ ПОЗИЦИЙ.
+   *
+   * Каталог едет тем же путём, что и настройки цеха: смета обязана
+   * считать по ТОМУ ЖЕ прайсу, который замерщик видит на карточках.
+   * Пока его тут не было, введённая на карточке цена доезжала до
+   * каталога и не доезжала до суммы внизу экрана — поле, которое
+   * хранится и ни на что не влияет, это дефект.
+   */
+  milling?: Map<string, MillingItem>;
 };
 
 export type WorkspaceInput = {
@@ -92,6 +103,16 @@ export type WorkspaceInput = {
    * у компании своя толщина плиты, и разойтись им нельзя.
    */
   production?: ProductionSettings;
+  /**
+   * ФРЕЗЕРОВКИ ОРГАНИЗАЦИИ: ЦЕНЫ ВЫБРАННЫХ ПОЗИЦИЙ.
+   *
+   * Каталог едет тем же путём, что и настройки цеха: смета обязана
+   * считать по ТОМУ ЖЕ прайсу, который замерщик видит на карточках.
+   * Пока его тут не было, введённая на карточке цена доезжала до
+   * каталога и не доезжала до суммы внизу экрана — поле, которое
+   * хранится и ни на что не влияет, это дефект.
+   */
+  milling?: Map<string, MillingItem>;
 };
 
 /** Рабочая стена: указанная явно либо самая длинная в замере. */
@@ -141,6 +162,7 @@ export function workspaceInput(seed: WorkspaceSeed): WorkspaceInput {
     runWallId: wall.id,
     roomDepthM: roomDepth(seed.measurement, wall.id),
     production: seed.production,
+    milling: seed.milling,
   };
 }
 
@@ -180,6 +202,7 @@ export function composeVariants(
     cornerAt: input.cornerAt,
     disabledKeys: disabled,
     production: input.production,
+    milling: input.milling,
   });
 
   return base.map((variant) => {
@@ -194,6 +217,8 @@ export function composeVariants(
         disabled[variant.key],
         undefined,
         input.production,
+        undefined,
+        input.milling,
       ),
       disabled[variant.key],
     );

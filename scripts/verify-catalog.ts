@@ -4,9 +4,12 @@ import {
   TYPICAL_MILLING,
   millingCatalog,
   millingChoices,
+  millingLink,
   millingOf,
+  profileOf,
   typicalMillingItem,
 } from '../lib/millwork/milling';
+import { patchCatalogItem } from '../lib/catalog';
 /**
  * Приёмка фазы 3 — та её часть, что проверяется без живого Supabase:
  * разбор выгрузок из 1С, расчёт спецификации, правила «фото → комната».
@@ -634,8 +637,8 @@ console.log('\nФрезеровка фасада — позиция катало
 
   check(
     'у каждой стартовой позиции есть профиль',
-    TYPICAL_MILLING.every((m) => m.profile.trim().length > 0),
-    TYPICAL_MILLING.filter((m) => !m.profile.trim()).map((m) => m.name).join(', ') ||
+    TYPICAL_MILLING.every((m) => profileOf(m.layers).trim().length > 0),
+    TYPICAL_MILLING.filter((m) => !profileOf(m.layers).trim()).map((m) => m.name).join(', ') ||
       'профиль есть у всех',
   );
 
@@ -653,5 +656,124 @@ console.log('\nФрезеровка фасада — позиция катало
   );
 }
 
-console.log(`\n${passed} passed, ${failed} failed\n`);
-process.exit(failed === 0 ? 0 : 1);
+/* ── Цена фрезеровки: одно место хранения ── */
+
+/**
+ * ЦЕНА ЛЕЖИТ В ПОЗИЦИИ КАТАЛОГА, И БОЛЬШЕ НИГДЕ.
+ *
+ * Её вводят в двух местах — в админке каталога и на карточке фрезеровки
+ * в конфигураторе, — и оба обязаны писать в ОДНУ строку `catalog_items`.
+ * Второе хранение означало бы, что переоценка каталога не доедет до
+ * сметы, а подписанный документ разойдётся с прайсом компании.
+ */
+async function millingPriceChecks() {
+  const item = (price: number) =>
+    ({
+      id: 'mil-1',
+      org_id: 'org',
+      name_ru: 'Ампир',
+      article: 'MIL-EMPIRE',
+      price,
+      is_active: true,
+      meta: typicalMillingItem(TYPICAL_MILLING[3]).meta,
+    }) as never;
+
+  check(
+    'цена читается ИЗ ПОЗИЦИИ каталога',
+    millingOf(item(7000))?.price === 7000,
+    `прочитано ${millingOf(item(7000))?.price ?? 'НИЧЕГО'} ₸/м²`,
+  );
+
+  /*
+   * В `meta` цены нет вовсе. Лежи она там — получилось бы два числа на
+   * одну величину, и правка одного молча оставляла бы второе прежним.
+   */
+  const meta = JSON.stringify(typicalMillingItem(TYPICAL_MILLING[3]).meta);
+
+  check(
+    'в meta позиции цены нет: второго места хранения не заведено',
+    !meta.includes('price') && !meta.includes('7000'),
+    meta.includes('price') ? `ЦЕНА В META: ${meta}` : 'в meta только профиль и слои',
+  );
+
+  /* ── Запись идёт тем же путём, что цены остального каталога ── */
+
+  const calls: { table: string; patch: unknown; id: unknown }[] = [];
+  const fake = {
+    from(table: string) {
+      return {
+        update(patch: unknown) {
+          return {
+            eq(_column: string, id: unknown) {
+              calls.push({ table, patch, id });
+              return Promise.resolve({ error: null });
+            },
+          };
+        },
+      };
+    },
+  } as never;
+
+  const saveError = await patchCatalogItem(fake, 'mil-1', { price: 7000 });
+
+  check(
+    'цена уходит в catalog_items той же правкой, что и остальной прайс',
+    calls.length === 1 &&
+      calls[0].table === 'catalog_items' &&
+      JSON.stringify(calls[0].patch) === '{"price":7000}' &&
+      calls[0].id === 'mil-1' &&
+      saveError === null,
+    calls.length === 0
+      ? 'ЗАПИСИ НЕ БЫЛО ВОВСЕ'
+      : `${calls[0].table}.update(${JSON.stringify(calls[0].patch)}) где id = ${calls[0].id}`,
+  );
+
+  const broke = await patchCatalogItem(
+    { from: () => ({ update: () => ({ eq: () => Promise.resolve({ error: { message: 'нет прав' } }) }) }) } as never,
+    'mil-1',
+    { price: 7000 },
+  );
+
+  check(
+    'несохранившаяся цена называется словами, а не теряется молча',
+    broke === 'нет прав',
+    broke === null ? 'ОШИБКА ПРОГЛОЧЕНА' : `сказано: ${broke}`,
+  );
+
+  /* ── Без цены позиция выбирается, но помечена ── */
+
+  const catalog = millingCatalog([item(0)]);
+  const unit = { id: 'm1', label: 'Дверца', widthMm: 600, front: { millingId: 'mil-1' } } as never;
+  const link = millingLink(unit, { milling: {} } as never, catalog);
+
+  check(
+    'позиция без цены остаётся в выборе — её можно выбрать',
+    millingChoices(catalog).length === 1,
+    `в выборе ${millingChoices(catalog).length} из ${catalog.size}`,
+  );
+
+  check(
+    'но названа словами: «цена не задана», а не нулём',
+    link.state === 'priceless' && link.reason.includes('цена не задана'),
+    link.state === 'priceless' ? link.reason : `СОСТОЯНИЕ ${link.state}`,
+  );
+
+  check(
+    'а с ценой та же позиция считается настоящей',
+    millingLink(unit, { milling: {} } as never, millingCatalog([item(7000)])).state === 'resolved',
+    millingLink(unit, { milling: {} } as never, millingCatalog([item(7000)])).state,
+  );
+}
+
+
+/*
+ * ХВОСТ ЖДЁТ АСИНХРОННЫЕ ПРОВЕРКИ.
+ *
+ * Запись цены в каталог — запрос, и ответ у него приходит промисом.
+ * Напечатай итог раньше — и проверка записи не попала бы в счёт:
+ * проверка, которая не считается, это не проверка.
+ */
+void millingPriceChecks().then(() => {
+  console.log(`\n${passed} passed, ${failed} failed\n`);
+  process.exit(failed === 0 ? 0 : 1);
+});

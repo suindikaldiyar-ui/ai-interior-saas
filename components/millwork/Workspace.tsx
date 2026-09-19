@@ -785,6 +785,25 @@ export default function Workspace(props: WorkspaceProps) {
     [layout, requirements],
   );
 
+  /**
+   * ПАЛИТРА ЭТОЙ ОРГАНИЗАЦИИ.
+   *
+   * Каталог уже лежит в сторе — тот же, из которого берутся ставки и
+   * текстуры. Второго источника цветов нет: список в коде показывал бы
+   * клиенту декоры, которых компания не продаёт.
+   */
+  const catalog = useInteriorStore((s) => s.catalog);
+
+  /*
+   * ФРЕЗЕРОВКИ ОРГАНИЗАЦИИ — ИЗ ТОГО ЖЕ КАТАЛОГА.
+   *
+   * Отдельной таблицы под них нет (ловушка 19): позиция отличается
+   * только `meta.milling.profile`. Собираем один раз на список товаров —
+   * пересборка на каждый рендер дала бы новую Map и перерисовку сетки
+   * карточек без единой правки.
+   */
+  const millingItems = useMemo(() => millingCatalog(catalog), [catalog]);
+
   const input = useMemo(() => {
     if (!resolution) {
       return {
@@ -804,6 +823,7 @@ export default function Workspace(props: WorkspaceProps) {
         measuredComms: props.measuredComms ?? props.comms,
         runWallId: props.runWallId ?? 'a',
         roomDepthM: props.roomDepthM ?? 3.2,
+        milling: millingItems,
       };
     }
 
@@ -816,11 +836,12 @@ export default function Workspace(props: WorkspaceProps) {
       wallId: resolution.runWallId,
       cornerAt: props.cornerAt ?? null,
       production: production,
+      milling: millingItems,
     });
 
     // Пока стены не введены, ряд брать неоткуда — держим габарит из пропсов.
     return seed.lengthMm > 0 ? seed : { ...seed, lengthMm: props.lengthMm };
-  }, [resolution, wallRequirements, props]);
+  }, [resolution, wallRequirements, props, millingItems]);
 
   /*
    * Компоновки: две-три расстановки ОДНОЙ кухни из одного замера. Считаются
@@ -982,10 +1003,12 @@ export default function Workspace(props: WorkspaceProps) {
               disabled[variantKey],
               undefined,
               production,
+              undefined,
+              millingItems,
             ),
       ),
     );
-  }, [layout, segments, active.estimate, variantKey, input.rates, disabled, production]);
+  }, [layout, segments, active.estimate, variantKey, input.rates, disabled, production, millingItems]);
 
   /*
    * Смета объекта несёт отпечаток ОБЪЕКТА. Иначе она подписана числом
@@ -1323,24 +1346,6 @@ export default function Workspace(props: WorkspaceProps) {
   );
   const selectedLabel = selection.caption;
 
-  /**
-   * ПАЛИТРА ЭТОЙ ОРГАНИЗАЦИИ.
-   *
-   * Каталог уже лежит в сторе — тот же, из которого берутся ставки и
-   * текстуры. Второго источника цветов нет: список в коде показывал бы
-   * клиенту декоры, которых компания не продаёт.
-   */
-  const catalog = useInteriorStore((s) => s.catalog);
-
-  /*
-   * ФРЕЗЕРОВКИ ОРГАНИЗАЦИИ — ИЗ ТОГО ЖЕ КАТАЛОГА.
-   *
-   * Отдельной таблицы под них нет (ловушка 19): позиция отличается
-   * только `meta.milling.profile`. Собираем один раз на список товаров —
-   * пересборка на каждый рендер дала бы новую Map и перерисовку сетки
-   * карточек без единой правки.
-   */
-  const millingItems = useMemo(() => millingCatalog(catalog), [catalog]);
   const palette = useMemo(() => paletteFromCatalog(catalog), [catalog]);
 
   /** Выделенный модуль целиком: материал показывается по нему. */
@@ -1421,7 +1426,16 @@ export default function Workspace(props: WorkspaceProps) {
     if (specs.length < 2) return [];
 
     const now = currentVariant(unit);
-    const base = buildEstimate(active.run, variantKey, input.rates, disabled[variantKey], undefined, production).total;
+    const base = buildEstimate(
+      active.run,
+      variantKey,
+      input.rates,
+      disabled[variantKey],
+      undefined,
+      production,
+      undefined,
+      millingItems,
+    ).total;
 
     return specs.map((spec) => {
       let deltaKzt = 0;
@@ -1435,8 +1449,16 @@ export default function Workspace(props: WorkspaceProps) {
             openings: input.openings,
           });
           deltaKzt = Math.round(
-            buildEstimate(next, variantKey, input.rates, disabled[variantKey], undefined, production)
-              .total - base,
+            buildEstimate(
+              next,
+              variantKey,
+              input.rates,
+              disabled[variantKey],
+              undefined,
+              production,
+              undefined,
+              millingItems,
+            ).total - base,
           );
         } catch {
           // Вариант, который не собирается, просто идёт без цены.
@@ -1459,7 +1481,7 @@ export default function Workspace(props: WorkspaceProps) {
         active: spec.kind === now,
       };
     });
-  }, [selectedId, active.run, zone, requirements, input.rates, input.openings, disabled, variantKey]);
+  }, [selectedId, active.run, zone, requirements, input.rates, input.openings, disabled, variantKey, production, millingItems]);
 
   /**
    * ПЕРЕНОС ПРИБОРА НА ДРУГУЮ СТЕНУ.

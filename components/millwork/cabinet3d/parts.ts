@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo } from 'react';
 import * as THREE from 'three';
-import { milledNormalMap } from './milledNormal';
+import { milledNormalMap, millingReliefMap } from './milledNormal';
+import type { MillingItem } from '@/lib/millwork/milling';
 import { loadTexture } from '@/lib/textureCache';
 import type { SurfaceLook } from '@/lib/millwork/surfaces';
 import { DEFAULT_FRONT, frontKey } from '@/lib/millwork/frontMaterial';
@@ -355,6 +356,14 @@ function frontColor(spec: FrontSpec, fallback: string): string {
 export function useFrontMaterials(
   specs: Map<string, FrontSpec>,
   fallbackColor: string,
+  /**
+   * ФРЕЗЕРОВКИ ОРГАНИЗАЦИИ — ТОТ ЖЕ КАТАЛОГ, ЧТО У КАРТОЧЕК.
+   *
+   * Сцена не держит своего списка профилей: карточка и фасад обязаны
+   * показывать один и тот же контур. Пусто — рельефа не будет, и это
+   * честнее выдуманного: профиль знает только каталог.
+   */
+  milling: Map<string, MillingItem> = new Map(),
 ): Map<string, THREE.MeshStandardMaterial> {
   const invalidate = useThree((state) => state.invalidate);
   const cache = useMemo(() => new Map<string, THREE.MeshStandardMaterial>(), []);
@@ -393,7 +402,10 @@ export function useFrontMaterials(
        * Пачки уже разделены: `frontKey` включает фрезеровку, поэтому
        * фасад с Модерном и без него — два разных материала, а не один.
        */
-      const normal = spec.millingId ? milledNormalMap() : null;
+      const item = spec.millingId ? milling.get(spec.millingId) : undefined;
+      const normal = item
+        ? millingReliefMap(item.id, item.milling.layers ?? [], item.milling.profile)
+        : null;
       if (material.normalMap !== normal) {
         material.normalMap = normal;
         // Смена карты — это другой шейдер, пересборка обязательна.
@@ -405,7 +417,7 @@ export function useFrontMaterials(
      * на экране останется прежний фасад (ловушка 250).
      */
     invalidate();
-  }, [specs, materials, fallbackColor, invalidate]);
+  }, [specs, materials, fallbackColor, milling, invalidate]);
 
   useEffect(
     () => () => {
