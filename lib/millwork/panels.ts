@@ -65,6 +65,42 @@ export const SIDE_PANEL_NAME = 'Боковина';
 /** Имя детали-полки в раскрое. По нему полки уходят в свою статью сметы. */
 export const SHELF_PANEL_NAME = 'Полка';
 export const FACADE_PANEL_NAME = 'Фасад';
+export const BOTTOM_PANEL_NAME = 'Дно';
+/** Крыша верхнего модуля и пенала — сплошная. */
+export const TOP_PANEL_NAME = 'Крыша';
+/** У нижнего модуля крыши нет: её заменяют две планки под столешницей. */
+export const TOP_RAIL_PANEL_NAME = 'Планки верхние';
+export const BACK_PANEL_NAME = 'Задняя стенка';
+export const DIVIDER_PANEL_NAME = 'Перегородка вертикальная';
+export const DRAWER_FRONT_PANEL_NAME = 'Фронт ящика';
+
+/**
+ * КАКИЕ ТОРЦЫ ДЕТАЛИ ОКЛЕЕНЫ — ОДИН ОТВЕТ НА ПРОДУКТ.
+ *
+ * В раскрое лежит ЧИСЛО торцов (`edges.long`, `edges.short`), а не их
+ * имена: цеху хватает «кромка Д1» — он знает, что у боковины видимый
+ * торец один и это передний. Виду детали этого мало: чтобы нарисовать
+ * кромку, надо знать, КАКАЯ сторона оклеена.
+ *
+ * Правило то же, что записано в раскрое словами: клеится СНАЧАЛА
+ * видимое. У длинных торцов видимый — передний, у коротких — верхний.
+ * Вторая кромка ложится на противоположный.
+ *
+ * Это не новая величина: числа остаются теми же, здесь только их
+ * раскладка по сторонам. Второй раз кромку никто не считает.
+ */
+export type EdgeSide = 'front' | 'back' | 'top' | 'bottom';
+
+export function edgeSides(panel: Pick<Panel, 'edges'>): EdgeSide[] {
+  const out: EdgeSide[] = [];
+  const long: EdgeSide[] = ['front', 'back'];
+  const short: EdgeSide[] = ['top', 'bottom'];
+
+  for (let i = 0; i < Math.min(panel.edges.long, long.length); i += 1) out.push(long[i]);
+  for (let i = 0; i < Math.min(panel.edges.short, short.length); i += 1) out.push(short[i]);
+
+  return out;
+}
 
 /** Кромка: видимые торцы толстой, скрытые — тонкой. */
 function edgeType(production: ProductionSettings): Panel['edgeType'] {
@@ -152,7 +188,7 @@ function modulePanels(
    */
   if (hasBottom(unit)) {
     push({
-      name: 'Дно',
+      name: BOTTOM_PANEL_NAME,
       material,
       lengthMm: inner,
       widthMm: depthMm,
@@ -164,7 +200,10 @@ function modulePanels(
   }
 
   push({
-    name: unit.kind === 'base' || unit.kind === 'corner_base' ? 'Планки верхние' : 'Крыша',
+    name:
+      unit.kind === 'base' || unit.kind === 'corner_base'
+        ? TOP_RAIL_PANEL_NAME
+        : TOP_PANEL_NAME,
     material,
     lengthMm: inner,
     widthMm: depthMm,
@@ -190,7 +229,7 @@ function modulePanels(
 
   if (unit.fill?.dividerMm) {
     push({
-      name: 'Перегородка вертикальная',
+      name: DIVIDER_PANEL_NAME,
       material,
       lengthMm: heightMm - 2 * t,
       widthMm: depthMm - allow.dividerDepthMm,
@@ -204,7 +243,7 @@ function modulePanels(
   // Задняя стенка: вкладная садится в паз, накладная кроется по габариту.
   const backInset = production.backMount === 'inset' ? allow.backInsetMm : 0;
   push({
-    name: 'Задняя стенка',
+    name: BACK_PANEL_NAME,
     material: `ХДФ ${production.backMm}`,
     lengthMm: heightMm - backInset,
     widthMm: unit.widthMm - backInset,

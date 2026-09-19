@@ -1,5 +1,14 @@
 import { columnNiches, moduleCarcassHeightMm, upperBottomFor } from '@/lib/millwork/fill';
 import { plinthMm } from './shop';
+import {
+  BACK_PANEL_NAME,
+  BOTTOM_PANEL_NAME,
+  DIVIDER_PANEL_NAME,
+  SHELF_PANEL_NAME,
+  SIDE_PANEL_NAME,
+  TOP_PANEL_NAME,
+  TOP_RAIL_PANEL_NAME,
+} from './panels';
 import { moduleDepthMm, rowStandardDepthMm } from './fill';
 import type { ProductionSettings } from '@/types/catalog';
 import type { ApplianceKind } from '@/types/millwork';
@@ -33,6 +42,18 @@ export type BoxDraw = {
   scale: [number, number, number];
   /** Деталь стоит ВНУТРИ корпуса: за закрытым фасадом её не видно. */
   inside?: boolean;
+  /**
+   * КАКОЙ ДЕТАЛЬЮ РАСКРОЯ ЭТА КОРОБКА ЯВЛЯЕТСЯ.
+   *
+   * Имя из той же таблицы, что у панели (`SIDE_PANEL_NAME` и соседи), —
+   * по нему деталировка находит место детали в модуле. Без него место
+   * пришлось бы выводить ВТОРОЙ формулой: сцена знает, где стоит
+   * боковина, а таблица знает только её размер, и связать их было нечем.
+   *
+   * Пусто у того, что деталью раскроя не является вовсе: прибор, ручка,
+   * короб ящика — это не распиленный лист.
+   */
+  panel?: string;
 };
 
 /** Материал коробки: по нему они собираются в группы отрисовки. */
@@ -114,9 +135,11 @@ export function carcassBoxes(unit: Module, place: ModulePlacement): BoxDraw[] {
     h: number,
     d: number,
     inside = false,
+    panel?: string,
   ): BoxDraw => ({
     position: [x + dx, y + dy, dz],
     scale: [w, h, d],
+    panel,
     /*
      * ДЕТАЛЬ ВНУТРИ ИЛИ СНАРУЖИ.
      *
@@ -127,15 +150,24 @@ export function carcassBoxes(unit: Module, place: ModulePlacement): BoxDraw[] {
     inside,
   });
 
+  /*
+   * ИМЕНА ТЕ ЖЕ, ЧТО В РАСКРОЕ.
+   *
+   * Крыша нижнего модуля называется «Планки верхние» — так её и режут, и
+   * так она подписана в детализировке. Своя строка здесь означала бы, что
+   * деталировка не найдёт место детали, которую сама же и напечатала.
+   */
+  const topName = unit.kind === 'base' || unit.kind === 'corner_base' ? TOP_RAIL_PANEL_NAME : TOP_PANEL_NAME;
+
   const boxes: BoxDraw[] = [
     // Боковины
-    at(thicknessM / 2, heightM / 2, -depthM / 2, thicknessM, heightM, depthM),
-    at(widthM - thicknessM / 2, heightM / 2, -depthM / 2, thicknessM, heightM, depthM),
+    at(thicknessM / 2, heightM / 2, -depthM / 2, thicknessM, heightM, depthM, false, SIDE_PANEL_NAME),
+    at(widthM - thicknessM / 2, heightM / 2, -depthM / 2, thicknessM, heightM, depthM, false, SIDE_PANEL_NAME),
     // Дно и крыша
-    at(widthM / 2, thicknessM / 2, -depthM / 2, innerW, thicknessM, depthM),
-    at(widthM / 2, heightM - thicknessM / 2, -depthM / 2, innerW, thicknessM, depthM),
+    at(widthM / 2, thicknessM / 2, -depthM / 2, innerW, thicknessM, depthM, false, BOTTOM_PANEL_NAME),
+    at(widthM / 2, heightM - thicknessM / 2, -depthM / 2, innerW, thicknessM, depthM, false, topName),
     // Задняя стенка
-    at(widthM / 2, heightM / 2, -depthM + 0.004, widthM, heightM, 0.004),
+    at(widthM / 2, heightM / 2, -depthM + 0.004, widthM, heightM, 0.004, false, BACK_PANEL_NAME),
   ];
 
   /*
@@ -145,7 +177,16 @@ export function carcassBoxes(unit: Module, place: ModulePlacement): BoxDraw[] {
    */
   for (const mm of fill?.shelves ?? []) {
     boxes.push(
-      at(widthM / 2, mm / MM, -depthM / 2 - 0.01, innerW - 0.002, thicknessM, innerDepth, true),
+      at(
+        widthM / 2,
+        mm / MM,
+        -depthM / 2 - 0.01,
+        innerW - 0.002,
+        thicknessM,
+        innerDepth,
+        true,
+        SHELF_PANEL_NAME,
+      ),
     );
   }
 
@@ -160,6 +201,7 @@ export function carcassBoxes(unit: Module, place: ModulePlacement): BoxDraw[] {
         heightM - 2 * thicknessM,
         innerDepth,
         true,
+        DIVIDER_PANEL_NAME,
       ),
     );
   }
@@ -860,6 +902,53 @@ export function runBoxes(
       },
     ),
   );
+}
+
+/**
+ * ГДЕ СТОИТ КАЖДАЯ ДЕТАЛЬ РАСКРОЯ — ОДНА ФУНКЦИЯ НА ПРОДУКТ.
+ *
+ * У панели координат нет вовсе: в раскрое лежат длина, ширина, кромка и
+ * номер, но не место. Деталировка была таблицей текстом именно поэтому —
+ * показать, где боковина стоит в модуле, было нечем.
+ *
+ * Место НЕ ВЫВОДИТСЯ здесь заново. Оно берётся у тех же коробок, которые
+ * рисует сцена: `runPlaces` ставит модуль, `carcassBoxes` раскладывает
+ * его детали, и каждая коробка с этого захода помечена именем своей
+ * детали (`BoxDraw.panel`). Седьмой формулы места не появляется — здесь
+ * только соединение двух списков по имени.
+ *
+ * Панель с `qty: 2` (боковина) получает ДВЕ коробки: в раскрое это одна
+ * строка на две одинаковые детали, а в модуле они стоят по разным краям.
+ *
+ * Чего в коробках нет и не будет:
+ *   • КРОМКА — она не объём, а свойство торца (`Panel.edges`). Вид детали
+ *     рисует её из данных панели, а не из сцены.
+ *   • ФАСАД ВСТРОЙКИ — в раскрое две створки друг над другом, сцена
+ *     рисует одно полотно: вертикальной раскладки створок у неё нет
+ *     вовсе (слой 43, известное расхождение).
+ */
+export type PanelPlace = {
+  /** Номер детали: тот же, что в таблице, раскрое и CSV. */
+  number: string;
+  name: string;
+  /** Коробки этой детали в координатах ряда. Пусто — места в сцене нет. */
+  boxes: BoxDraw[];
+};
+
+export function panelPlaces(
+  unit: Module,
+  place: ModulePlacement,
+  panels: { number: string; name: string; moduleId: string }[],
+): PanelPlace[] {
+  const boxes = carcassBoxes(unit, place);
+
+  return panels
+    .filter((panel) => panel.moduleId === unit.id)
+    .map((panel) => ({
+      number: panel.number,
+      name: panel.name,
+      boxes: boxes.filter((box) => box.panel === panel.name),
+    }));
 }
 
 /** Все открываемые элементы ряда: по ним работает «Открыть всё». */

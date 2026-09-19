@@ -2,6 +2,9 @@
 
 import { useMemo, useState } from 'react';
 import { buildPanels, panelTotals } from '@/lib/millwork/panels';
+import ModuleAssembly from './ModuleAssembly';
+import PartCard from './PartCard';
+import { allModules } from '@/lib/millwork/layout';
 import {
   panelsCsvFile,
   panelsFileName,
@@ -48,6 +51,27 @@ export default function PanelList({
   const [encoding, setEncoding] = useState<CsvEncoding>('windows-1251');
 
   const panels = useMemo(() => buildPanels({ run, production }), [run, production]);
+
+  /*
+   * ВЫБРАННАЯ ДЕТАЛЬ — ОДНО СОСТОЯНИЕ НА ТАБЛИЦУ И НА ЧЕРТЁЖ.
+   *
+   * Подсветка нужна в обе стороны: нажал строку — деталь подсветилась на
+   * модуле, нажал деталь на модуле — подсветилась строка. Два состояния
+   * дали бы две подсветки на одной детали — ровно то, от чего уводит
+   * общее выделение схемы и сцены (ловушка 188).
+   */
+  const [selectedNumber, setSelectedNumber] = useState<string | null>(null);
+
+  const selectedPanel = useMemo(
+    () => panels.find((panel) => panel.number === selectedNumber) ?? null,
+    [panels, selectedNumber],
+  );
+
+  /** Модуль выбранной детали: его и рисует сборочный чертёж. */
+  const selectedUnit = useMemo(() => {
+    if (!selectedPanel) return null;
+    return allModules(run).find((unit) => unit.id === selectedPanel.moduleId) ?? null;
+  }, [run, selectedPanel]);
   const totals = useMemo(() => panelTotals(panels), [panels]);
 
   /** Детали идут группами по модулям: технолог читает лист сверху вниз. */
@@ -147,7 +171,17 @@ export default function PanelList({
                   </td>
                 </tr>
                 {group.panels.map((panel, i) => (
-                  <tr key={`${moduleId}-${panel.name}-${i}`} className="border-b border-blueprint/15">
+                  <tr
+                    key={`${moduleId}-${panel.name}-${i}`}
+                    data-panel-row={panel.number}
+                    aria-selected={panel.number === selectedNumber}
+                    onClick={() =>
+                      setSelectedNumber((prev) => (prev === panel.number ? null : panel.number))
+                    }
+                    className={`cursor-pointer border-b border-blueprint/15 ${
+                      panel.number === selectedNumber ? 'bg-[var(--accent)]/15' : ''
+                    }`}
+                  >
                     <td className="mw-num py-1 pr-2">{panel.number}</td>
                     <td className="py-1 pr-2">{panel.name}</td>
                     <td className="py-1 pr-2">{panel.material}</td>
@@ -183,6 +217,45 @@ export default function PanelList({
             </tr>
           </tfoot>
         </table>
+
+        {/*
+          * СБОРОЧНЫЙ ЧЕРТЁЖ И КАРТОЧКА ДЕТАЛИ — ПОД ТАБЛИЦЕЙ.
+          *
+          * Таблица отвечает «что распилить», эти два вида — «куда оно
+          * встанет» и «как деталь вышла». Появляются они по выбору
+          * строки: показывать их всегда значило бы занять пол-листа
+          * модулем, который никто не спрашивал.
+          *
+          * В печать блок не идёт (`print:hidden`): лист раскроя — это
+          * таблица, и сборочный чертёж модуля печатают отдельно.
+          */}
+        {selectedPanel && selectedUnit && (
+          <div className="mt-4 grid gap-3 md:grid-cols-2 print:hidden" data-part-detail>
+            <div className="mw-panel">
+              <span className="mw-label">
+                Где стоит · {selectedUnit.label} {selectedUnit.widthMm} мм
+              </span>
+              <div className="mt-2">
+                <ModuleAssembly
+                  run={run}
+                  unit={selectedUnit}
+                  panels={panels}
+                  production={production}
+                  selectedNumber={selectedNumber}
+                  onSelect={(number) => setSelectedNumber(number)}
+                />
+              </div>
+            </div>
+
+            <PartCard panel={selectedPanel} />
+          </div>
+        )}
+
+        {!selectedPanel && (
+          <p className="mt-3 text-[13px] text-graphiteMw print:hidden">
+            Нажмите строку — покажем, где деталь стоит в модуле и как она вышла из листа.
+          </p>
+        )}
 
         {/*
           * Штамп: лист уходит в цех и должен отвечать на вопрос «чей это

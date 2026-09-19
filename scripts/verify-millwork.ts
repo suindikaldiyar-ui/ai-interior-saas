@@ -60,7 +60,17 @@ import {
   removeShelf,
   snapTo32,
 } from '../lib/millwork/fill';
-import { buildPanels, panelTotals } from '../lib/millwork/panels';
+import {
+  BACK_PANEL_NAME,
+  BOTTOM_PANEL_NAME,
+  DIVIDER_PANEL_NAME,
+  DRAWER_FRONT_PANEL_NAME,
+  TOP_PANEL_NAME,
+  TOP_RAIL_PANEL_NAME,
+  buildPanels,
+  edgeSides,
+  panelTotals,
+} from '../lib/millwork/panels';
 import { panelsCsvFile, panelsToCsv } from '../lib/millwork/csv-export';
 import { runFingerprint } from '../lib/millwork/fingerprint';
 import { surfaceFinish, surfaceLook } from '../lib/millwork/surfaces';
@@ -119,6 +129,8 @@ import { composeVariants, workingWall, workspaceInput } from '../lib/millwork/wo
 import { screenState } from '../lib/millwork/screen';
 import React from 'react';
 import MillingPicker from '../components/millwork/MillingPicker';
+import ModuleAssembly from '../components/millwork/ModuleAssembly';
+import PartCard from '../components/millwork/PartCard';
 import {
   MILLING_SCOPES,
   millingCatalog,
@@ -223,16 +235,7 @@ import {
   missingRequiredRates,
 } from '../lib/millwork/rates';
 import { axonometryExtentMm, buildAxonometry, project } from '../lib/millwork/axonometry';
-import {
-  carcassBoxes,
-  doorCount,
-  doorPivot,
-  hasVisibleAppliance,
-  moduleBoxes,
-  openablePartIds,
-  runBoxes,
-  runPlaces,
-} from '../lib/millwork/cabinetBoxes';
+import { carcassBoxes, doorCount, doorPivot, hasVisibleAppliance, moduleBoxes, openablePartIds, panelPlaces, runBoxes, runPlaces } from '../lib/millwork/cabinetBoxes';
 import {
   DEFAULT_ALLOWANCES,
   DEFAULT_PRODUCTION,
@@ -14715,6 +14718,305 @@ console.log('\nЭкран выбора фрезеровки');
       markedHtml.includes('aria-pressed="true"'),
     markedHtml.includes('aria-pressed="true"') ? 'отмечена' : 'ПРИЗНАКА ВЫБРАННОЙ НЕТ',
   );
+}
+
+/* ═══════════  Деталировка показывает место каждой детали  ═══════════ */
+
+/**
+ * У ДЕТАЛИ ЕСТЬ МЕСТО, И ОНО ТО ЖЕ, ЧТО В СЦЕНЕ.
+ *
+ * Деталировка была таблицей текстом: цех видел строки и не видел, где
+ * боковина стоит в модуле и какой стороной. Координат у панели нет вовсе
+ * — они берутся у тех же коробок, что рисует сцена, по имени детали.
+ *
+ * Здесь меряется именно это соединение: у каждой детали корпуса есть
+ * коробка, её габарит совпадает с раскроем, а номер — с таблицей и CSV.
+ */
+console.log('\nМесто детали в деталировке');
+{
+  const run = buildRun(baseInput);
+  const panels = buildPanels({ run });
+  const places = runPlaces(run);
+  const shop = { thicknessM: 0.016 };
+
+  check(
+    'детали и модули есть — место проверять есть на чём',
+    panels.length > 0 && places.length > 0,
+    panels.length === 0
+      ? 'НОЛЬ ДЕТАЛЕЙ В РАСКРОЕ — мест не у чего искать'
+      : places.length === 0
+        ? 'НОЛЬ МОДУЛЕЙ В РЯДУ'
+        : `деталей ${panels.length}, модулей ${places.length}`,
+  );
+
+  /*
+   * ДЕТАЛИ КОРПУСА — те, что режутся из листа и стоят в коробках.
+   * Фасады и фронты ящиков живут своей пачкой (`moduleBoxes`), кромка
+   * объёмом не является вовсе: у них место берётся иначе, и мешать их
+   * сюда значило бы проверять не то.
+   */
+  const CARCASS = new Set([
+    SIDE_PANEL_NAME,
+    BOTTOM_PANEL_NAME,
+    TOP_PANEL_NAME,
+    TOP_RAIL_PANEL_NAME,
+    SHELF_PANEL_NAME,
+    DIVIDER_PANEL_NAME,
+    BACK_PANEL_NAME,
+  ]);
+
+  const placed = places.flatMap((place) =>
+    panelPlaces(
+      place.unit,
+      { x: place.x, y: place.y, heightM: place.heightM, depthM: place.depthM, zM: place.zM, ...shop },
+      panels,
+    ).map((entry) => ({ entry, place })),
+  );
+
+  const carcass = placed.filter(({ entry }) => CARCASS.has(entry.name));
+
+  check(
+    'детали корпуса нашлись — соединение проверять есть на чём',
+    carcass.length > 0,
+    carcass.length === 0
+      ? 'НОЛЬ ДЕТАЛЕЙ КОРПУСА — соединять нечего'
+      : `деталей корпуса ${carcass.length}`,
+  );
+
+  const homeless = carcass.filter(({ entry }) => entry.boxes.length === 0);
+
+  check(
+    'у КАЖДОЙ детали корпуса есть место в модуле',
+    homeless.length === 0,
+    homeless.length === 0
+      ? `${carcass.length} деталей, все на местах`
+      : `БЕЗ МЕСТА ${homeless.length}: ${homeless.slice(0, 3).map((h) => `${h.entry.number} ${h.entry.name}`).join(' · ')}`,
+  );
+
+  /* ── Габарит места совпадает с раскроем до миллиметра ── */
+
+  const byNumber = new Map(panels.map((p) => [p.number, p]));
+  const off: string[] = [];
+
+  for (const { entry } of carcass) {
+    const panel = byNumber.get(entry.number);
+    if (!panel || entry.boxes.length === 0) continue;
+
+    /* Деталь — лист: две большие стороны коробки и есть её габарит. */
+    const sides = entry.boxes[0].scale.map((v) => Math.round(v * 1000)).sort((a, b) => b - a);
+    const want = [panel.lengthMm, panel.widthMm].sort((a, b) => b - a);
+
+    /*
+     * Допуск 25 мм: у полки припуски цеха (`shelfSideMm`, `shelfDepthMm`),
+     * у задней стенки вкладной отступ. Это разные числа по делу, а не
+     * расхождение формул: проверяем, что деталь та же, а не что раскрой
+     * равен объёму.
+     */
+    if (Math.abs(sides[0] - want[0]) > 25 || Math.abs(sides[1] - want[1]) > 25) {
+      off.push(`${entry.number} ${entry.name}: сцена ${sides[0]}×${sides[1]} · раскрой ${want[0]}×${want[1]}`);
+    }
+  }
+
+  check(
+    'габарит места совпадает с размером в раскрое',
+    off.length === 0,
+    off.length === 0 ? `${carcass.length} деталей сошлись` : off.slice(0, 3).join(' · '),
+  );
+
+  /* ── Панель с qty 2 получает два места ── */
+
+  const twins = carcass.filter(({ entry }) => (byNumber.get(entry.number)?.qty ?? 0) === 2);
+
+  check(
+    'деталь, которой две штуки, стоит в двух местах',
+    twins.length > 0 && twins.every(({ entry }) => entry.boxes.length === 2),
+    twins.length === 0
+      ? 'НЕТ НИ ОДНОЙ ДЕТАЛИ КОЛИЧЕСТВОМ 2 — парность не проверить'
+      : twins
+          .slice(0, 3)
+          .map(({ entry }) => `${entry.number} ${entry.name}: мест ${entry.boxes.length}`)
+          .join(' · '),
+  );
+
+  /* ── Номер один на таблицу, раскрой и CSV ── */
+
+  const csv = panelsToCsv(panels);
+  const missingInCsv = panels.filter((p) => !csv.includes(p.number));
+
+  check(
+    'номер детали из таблицы стоит и в CSV',
+    missingInCsv.length === 0 && panels.length > 0,
+    missingInCsv.length === 0
+      ? `${panels.length} номеров в выгрузке`
+      : `НЕТ В CSV: ${missingInCsv.slice(0, 3).map((p) => p.number).join(', ')}`,
+  );
+
+  const placedNumbers = new Set(placed.map(({ entry }) => entry.number));
+  const lostNumbers = panels.filter((p) => !placedNumbers.has(p.number));
+
+  check(
+    'и номер на месте детали — тот же, что в таблице',
+    lostNumbers.length === 0,
+    lostNumbers.length === 0
+      ? `${placedNumbers.size} номеров совпали`
+      : `ПОТЕРЯНЫ: ${lostNumbers.slice(0, 3).map((p) => p.number).join(', ')}`,
+  );
+
+  /* ── Кромка на виде детали — из данных панели ── */
+
+  const edged = panels.filter((p) => p.edges.long + p.edges.short > 0);
+
+  check(
+    'кромка есть в данных — рисовать её есть из чего',
+    edged.length > 0,
+    edged.length === 0
+      ? 'НИ У ОДНОЙ ДЕТАЛИ НЕТ КРОМКИ — показывать нечего'
+      : `с кромкой ${edged.length} из ${panels.length}`,
+  );
+
+  check(
+    'у детали с кромкой названы стороны, а не только факт',
+    edged.every((p) => edgeSides(p).length === p.edges.long + p.edges.short),
+    edged
+      .slice(0, 2)
+      .map((p) => `${p.number}: ${edgeSides(p).join('+') || 'НЕТ СТОРОН'}`)
+      .join(' · '),
+  );
+
+  /* ── Виды: сборочный чертёж и карточка детали ── */
+
+  const withCarcass = places.find((place) =>
+    panels.some((p) => p.moduleId === place.unit.id && p.name === SHELF_PANEL_NAME),
+  );
+
+  check(
+    'модуль с полкой есть — виды проверять есть на чём',
+    Boolean(withCarcass),
+    withCarcass ? `${withCarcass.unit.label}` : 'НЕТ МОДУЛЯ С ПОЛКОЙ',
+  );
+
+  if (withCarcass) {
+    const mine = panels.filter((p) => p.moduleId === withCarcass.unit.id);
+    const pick = mine.find((p) => p.name === SHELF_PANEL_NAME)!;
+
+    const assembly = renderToStaticMarkup(
+      React.createElement(ModuleAssembly, {
+        run,
+        unit: withCarcass.unit,
+        panels,
+        selectedNumber: pick.number,
+      } as never),
+    );
+
+    const numbers = (assembly.match(/data-part="/g) ?? []).length;
+
+    check(
+      'сборочный чертёж рисует деталь за деталью, а не один прямоугольник',
+      numbers > 1,
+      numbers === 0
+        ? 'НОЛЬ ДЕТАЛЕЙ НА СБОРОЧНОМ ЧЕРТЕЖЕ — показывать нечего'
+        : `деталей на чертеже ${numbers} при ${mine.length} в таблице`,
+    );
+
+    check(
+      'номер выбранной детали стоит на чертеже',
+      assembly.includes(`data-part="${pick.number}"`) && assembly.includes(`>${pick.number}<`),
+      assembly.includes(`>${pick.number}<`) ? `номер ${pick.number} на месте` : 'НОМЕРА НЕТ НА ЧЕРТЕЖЕ',
+    );
+
+    const plain = renderToStaticMarkup(
+      React.createElement(ModuleAssembly, {
+        run,
+        unit: withCarcass.unit,
+        panels,
+        selectedNumber: null,
+      } as never),
+    );
+
+    check(
+      'выбранная деталь подсвечена, невыбранная — нет',
+      assembly !== plain && assembly.includes('var(--accent)'),
+      assembly === plain ? 'ПОДСВЕТКА НИЧЕГО НЕ МЕНЯЕТ' : 'подсветка видна',
+    );
+
+    /* ── Карточка детали ── */
+
+    const card = renderToStaticMarkup(React.createElement(PartCard, { panel: pick } as never));
+
+    check(
+      'карточка детали показывает размеры из раскроя',
+      card.includes(`>${pick.lengthMm}<`) && card.includes(`>${pick.widthMm}<`),
+      card.includes(`>${pick.lengthMm}<`)
+        ? `${pick.lengthMm} × ${pick.widthMm} мм`
+        : `РАЗМЕРОВ НЕТ НА ВИДЕ: ждали ${pick.lengthMm}×${pick.widthMm}`,
+    );
+
+    const drawn = (card.match(/data-edge="/g) ?? []).length;
+
+    check(
+      'кромка нарисована по тем сторонам, что в данных',
+      drawn === pick.edges.long + pick.edges.short,
+      `нарисовано ${drawn} торцов при Д${pick.edges.long}/Ш${pick.edges.short}`,
+    );
+
+    check(
+      'присадка не нарисована: монтажных размеров нет',
+      !card.includes('data-hole') && card.includes('не рассчитана'),
+      card.includes('data-hole')
+        ? 'ВЫДУМАННЫЕ ОТВЕРСТИЯ НА ДЕТАЛИ'
+        : 'отверстий нет, подписано «не рассчитана»',
+    );
+  }
+
+  /* ── Ящики: 1, 2, 3 дают разное число деталей, и все на местах ── */
+
+  const hob = run.modules.find((u) => u.appliance === 'hob');
+
+  check(
+    'модуль с ящиками есть — число деталей проверять есть на чём',
+    Boolean(hob),
+    hob ? `${hob.label}` : 'МОДУЛЯ С ЯЩИКАМИ НЕТ',
+  );
+
+  if (hob) {
+    const counts: string[] = [];
+    let allPlaced = true;
+
+    for (const n of [1, 2, 3]) {
+      const edited = applyOps({
+        run,
+        requirements: REQ,
+        ops: [{ op: 'set_fronts', moduleId: hob.id, drawerCount: n }],
+      });
+      const cut = buildPanels({ run: edited });
+      const fronts = cut
+        .filter((p) => p.moduleId === hob.id && p.name === DRAWER_FRONT_PANEL_NAME)
+        .reduce((sum, p) => sum + p.qty, 0);
+      counts.push(`${n} → ${fronts}`);
+
+      const unit = edited.modules.find((u) => u.id === hob.id)!;
+      const spot = runPlaces(edited).find((pl) => pl.unit.id === hob.id)!;
+      const mine = panelPlaces(
+        unit,
+        { x: spot.x, y: spot.y, heightM: spot.heightM, depthM: spot.depthM, zM: spot.zM, ...shop },
+        cut,
+      ).filter((entry) => CARCASS.has(entry.name));
+
+      if (mine.some((entry) => entry.boxes.length === 0)) allPlaced = false;
+    }
+
+    check(
+      'число фронтов следует за числом ящиков',
+      counts.join(' · ') === '1 → 1 · 2 → 2 · 3 → 3',
+      counts.join(' · '),
+    );
+
+    check(
+      'и детали корпуса при любом числе ящиков остаются на местах',
+      allPlaced,
+      allPlaced ? 'все на местах' : 'ЕСТЬ ДЕТАЛИ БЕЗ МЕСТА',
+    );
+  }
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
