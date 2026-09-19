@@ -13,6 +13,7 @@ import { moduleDepthMm, rowStandardDepthMm } from './fill';
 import type { ProductionSettings } from '@/types/catalog';
 import type { ApplianceKind } from '@/types/millwork';
 import { FRAME_WIDTH_MM, frontKey, isFramed } from './frontMaterial';
+import { nicheFacadeSpans, type FacadeSpan } from './applianceFront';
 import { frontWithMilling } from './milling';
 import { openingOf } from './opening';
 import type { Module, Run } from '@/types/millwork';
@@ -291,6 +292,40 @@ export function doorCount(unit: Module): number {
   return Math.max(1, unit.doorCount);
 }
 
+
+/**
+ * СТВОРКИ МОДУЛЯ: сколько их и какой участок высоты закрывает каждая.
+ *
+ * Один ответ на отрисовку, на «Открыть всё» и на расчёт петель. Свой
+ * список у каждого — это ровно то расхождение, от которого уводит
+ * ловушка 360, и оно уже стоило нам дыры над духовкой: раскрой пилил
+ * два фасада, а сцена не рисовала ни одного.
+ *
+ * `span: null` — полотно во всю высоту модуля; горизонтальную разбивку
+ * (одна створка или две) держит `doorCount`, она в другой оси.
+ */
+export function doorLeaves(
+  unit: Module,
+  heightMm: number,
+): { index: number; span: FacadeSpan | null }[] {
+  if (unit.section === 'glass_display') return [];
+
+  /* Ящики и створки — разные фронты одного модуля, вместе их не бывает. */
+  if (!unit.column && (unit.fill?.drawerHeights.length ?? 0) > 0) return [];
+
+  /* Фасад разбит приборами — значит створка на каждом свободном участке. */
+  const spans = nicheFacadeSpans(unit, heightMm);
+  if (spans) return spans.map((span, index) => ({ index, span }));
+
+  /*
+   * Прибор виден целиком (варочная, вытяжка, отдельностоящий) — створки
+   * там нет: она закрыла бы то, ради чего прибор и покупают.
+   */
+  if (hasVisibleAppliance(unit) || unit.column) return [];
+
+  return Array.from({ length: doorCount(unit) }, (_, index) => ({ index, span: null }));
+}
+
 /** Распахнутая створка: 90°. */
 export const OPEN_ANGLE = Math.PI / 2;
 
@@ -358,17 +393,29 @@ export function doorBoxes(
   place: ModulePlacement,
   index: number,
   options: FrontOptions,
+  /**
+   * УЧАСТОК ВЫСОТЫ, ЕСЛИ ФАСАД РАЗБИТ ПРИБОРАМИ.
+   *
+   * У колонны створка закрывает не весь модуль, а свободный отрезок над
+   * нишей или под ней. Числа берутся у `nicheFacadeSpans` — у той же
+   * функции, по которой этот отрезок попал в раскрой; своей арифметики
+   * «высота минус ниша» здесь нет, иначе полотно уедет с детали.
+   */
+  span?: { fromMm: number; heightMm: number },
 ): PartBox[] {
   if (options.cutaway) return [];
 
-  const { x, y, heightM } = place;
-  const doors = doorCount(unit);
+  const { x } = place;
+  const y = span ? place.y + span.fromMm / MM : place.y;
+  const heightM = span ? span.heightMm / MM : place.heightM;
+  /* Участок закрывается ОДНИМ полотном: делить его ещё и по ширине незачем. */
+  const doors = span ? 1 : doorCount(unit);
   const widthM = unit.widthMm / MM;
   const doorW = widthM / doors;
-  const hinge = doorHinge(unit, index, doors);
+  const hinge = doorHinge(unit, span ? 0 : index, doors);
 
   const { gapM: gap, frontThicknessM: thickness, integratedHandles } = options;
-  const hingeX = x + index * doorW + (hinge === 'left' ? 0 : doorW);
+  const hingeX = x + (span ? 0 : index) * doorW + (hinge === 'left' ? 0 : doorW);
   const panelX = hinge === 'left' ? doorW / 2 : -doorW / 2;
   const cx = hingeX + panelX;
   const cy = y + heightM / 2;
@@ -761,7 +808,6 @@ export function moduleBoxes(
 
   boxes.push(...applianceBoxes(unit, place, production));
 
-  const isDisplay = unit.section === 'glass_display';
 
   /*
    * ЯЩИКИ ЕСТЬ У ВСЕХ, У КОГО ЕСТЬ ФРОНТЫ ЯЩИКОВ.
@@ -777,8 +823,18 @@ export function moduleBoxes(
   const drawers = unit.column ? 0 : (unit.fill?.drawerHeights.length ?? 0);
   for (let i = 0; i < drawers; i += 1) boxes.push(...drawerBoxes(unit, place, i, options));
 
-  if (!options.cutaway && !hasVisibleAppliance(unit) && !unit.column && !isDisplay) {
-    for (let i = 0; i < doorCount(unit); i += 1) boxes.push(...doorBoxes(unit, place, i, options));
+  if (!options.cutaway) {
+    /*
+     * СТВОРКИ СПРАШИВАЮТСЯ, А НЕ ВЫВОДЯТСЯ ЗДЕСЬ.
+     *
+     * Стояло условие «не видимый прибор И не колонна»: у колонны и у
+     * пенала с духовкой оно давало НОЛЬ фасадов, хотя раскрой резал для
+     * них два — над нишей и под ней. В цех уезжал корпус с открытой
+     * дырой в полметра, а на картинке её не было видно.
+     */
+    for (const leaf of doorLeaves(unit, Math.round(place.heightM * MM))) {
+      boxes.push(...doorBoxes(unit, place, leaf.index, options, leaf.span ?? undefined));
+    }
   }
 
   /*
@@ -982,8 +1038,9 @@ export function openablePartIds(run: Run): string[] {
       unit.fill?.drawerHeights.forEach((_, i) => ids.push(`${unit.id}:drawer:${i}`));
     }
 
-    if (hasVisibleAppliance(unit) || unit.column || unit.section === 'glass_display') continue;
-    for (let i = 0; i < doorCount(unit); i++) ids.push(`${unit.id}:door:${i}`);
+    for (const leaf of doorLeaves(unit, moduleCarcassHeightMm(unit, run))) {
+      ids.push(`${unit.id}:door:${leaf.index}`);
+    }
   }
 
   return ids;

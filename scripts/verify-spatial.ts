@@ -39,6 +39,13 @@ import { DEFAULT_PRODUCTION, type ProductionSettings } from '../types/catalog';
 import { mezzanineBaseOf, moduleDepthMm, rowStandardDepthMm } from '../lib/millwork/fill';
 import { applyOps } from '../lib/millwork/ops';
 import { buildPanels } from '../lib/millwork/panels';
+import MillingPicker from '../components/millwork/MillingPicker';
+import {
+  TYPICAL_MILLING,
+  millingCatalog,
+  typicalMillingItem,
+} from '../lib/millwork/milling';
+import { profileMm } from '../lib/millwork/relief';
 import { wallMismatches } from '../lib/millwork/walls';
 import { DEMO_REQUIREMENTS } from '../lib/millwork/demo';
 import type { CompositionKind, RunRequirements } from '../types/millwork';
@@ -1542,6 +1549,132 @@ console.log('\nПравка антресоли во всех видах');
       );
     }
   }
+}
+
+/* ═══  Профиль фрезеровки — доля фасада, а не миллиметры  ═══ */
+
+/**
+ * ОДИН РИСУНОК, РАЗНЫЕ МИЛЛИМЕТРЫ.
+ *
+ * Контур профиля ложится на полотно ЦЕЛИКОМ: в сцене текстура натянута
+ * один раз по каждой оси, на карточке поле профиля равно фасаду. Значит
+ * единица поля — это процент габарита, и одна и та же рамка на дверце
+ * 400 мм и на дверце 900 мм выходит разной ширины. Фиксированные
+ * миллиметры означали бы, что на узкой дверце филёнка съест полотно, а
+ * на широкой потеряется.
+ */
+console.log('\n' + 'Профиль фрезеровки масштабируется с фасадом');
+{
+  const REQ = {
+    zone: 'kitchen',
+    mode: 'template',
+    appliances: [],
+    options: {
+      hasUpper: false,
+      upperToCeiling: false,
+      hardwareClass: 'standard',
+      countertop: 'ldsp',
+      hasCornice: false,
+      integratedHandles: false,
+    },
+  } as never;
+
+  const millingEntry = {
+    id: 'mil-1',
+    org_id: 'org',
+    name_ru: 'Ампир',
+    article: 'MIL-EMPIRE',
+    price: 4500,
+    is_active: true,
+    meta: typicalMillingItem(TYPICAL_MILLING[3]).meta,
+  } as never;
+
+  const catalog = millingCatalog([millingEntry]);
+
+  check(
+    'каталог фрезеровки непустой — масштаб проверять есть на чём',
+    catalog.size > 0,
+    catalog.size === 0 ? 'НОЛЬ ПОЗИЦИЙ ФРЕЗЕРОВКИ' : `позиций` + ` ${catalog.size}`,
+  );
+
+  /** Доля профиля в миллиметрах по разметке карточки выбранного модуля. */
+  const unitMmOf = (widthMm: number) => {
+    const run = buildRun({ lengthMm: widthMm, ceilingHeightMm: 2700, requirements: REQ });
+    const unit = run.modules.find((m) => m.widthMm === widthMm) ?? run.modules[0];
+    if (!unit) return { html: '', unitMm: NaN, widthMm: 0, doors: 0 };
+
+    const html = renderToStaticMarkup(
+      React.createElement(MillingPicker, {
+        run,
+        catalog,
+        selectedModuleId: unit.id,
+        onOps: () => {},
+      } as never),
+    );
+
+    const m = html.match(/data-profile-unit-mm="([-0-9.]+)"/);
+    return {
+      html,
+      unitMm: m ? Number(m[1]) : NaN,
+      widthMm: unit.widthMm,
+      doors: Math.max(1, unit.doorCount || 1),
+    };
+  };
+
+  const narrow = unitMmOf(400);
+  const wide = unitMmOf(900);
+
+  check(
+    'карточка знает, какой фасад рисует',
+    Number.isFinite(narrow.unitMm) && Number.isFinite(wide.unitMm),
+    Number.isFinite(narrow.unitMm)
+      ? `узкий ${narrow.widthMm} мм · широкий ${wide.widthMm} мм`
+      : 'НА КАРТОЧКЕ НЕТ ДОЛИ ПРОФИЛЯ — масштаб взять неоткуда',
+  );
+
+  check(
+    'одна единица профиля — это процент ширины полотна',
+    narrow.unitMm === Math.round(profileMm(1, narrow.widthMm / narrow.doors) * 100) / 100 &&
+      wide.unitMm === Math.round(profileMm(1, wide.widthMm / wide.doors) * 100) / 100,
+    `узкий ${narrow.unitMm} мм/ед · широкий ${wide.unitMm} мм/ед`,
+  );
+
+  check(
+    'и на широком фасаде профиль КРУПНЕЕ, а не тот же',
+    wide.unitMm > narrow.unitMm && narrow.unitMm > 0,
+    narrow.unitMm === wide.unitMm
+      ? `ПРОФИЛЬ ОДИНАКОВ НА ОБОИХ: ${narrow.unitMm} мм/ед`
+      : `${narrow.widthMm} мм → ${narrow.unitMm} мм/ед · ${wide.widthMm} мм → ${wide.unitMm} мм/ед`,
+  );
+
+  /*
+   * РАМКА «АМПИРА» В МИЛЛИМЕТРАХ. Внешняя ступень профиля начинается на
+   * 12 единицах от края, то есть на 12 % ширины: это и есть тот размер,
+   * который уедет в цех как ширина обвязки.
+   */
+  const frameNarrow = profileMm(12, narrow.widthMm / narrow.doors);
+  const frameWide = profileMm(12, wide.widthMm / wide.doors);
+
+  check(
+    'рамка профиля считается в миллиметрах фасада',
+    Math.round(frameWide) > Math.round(frameNarrow),
+    `рамка «Ампира»: ${Math.round(frameNarrow)} мм на ${narrow.widthMm} · ${Math.round(
+      frameWide,
+    )} мм на ${wide.widthMm}`,
+  );
+
+  /* ── Пропорция фасада на карточке — настоящая ── */
+
+  const aspectOf = (html: string) => {
+    const m = html.match(/viewBox="0 0 100 ([0-9.]+)"/);
+    return m ? Number(m[1]) / 100 : NaN;
+  };
+
+  check(
+    'карточка рисует фасад в пропорции полотна, а не квадрат',
+    aspectOf(narrow.html) > 1.2 && aspectOf(wide.html) > 0.4,
+    `узкий ${aspectOf(narrow.html).toFixed(2)} · широкий ${aspectOf(wide.html).toFixed(2)}`,
+  );
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

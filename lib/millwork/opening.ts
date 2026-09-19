@@ -1,5 +1,6 @@
 import { BUILT_IN_FRIDGE_FRONTS, CORNER, hingesPerDoor, isUpperRow } from './modules';
 import { MODULE_VARIANTS } from './moduleVariants';
+import { nicheFacadeSpans } from './applianceFront';
 import type { FrontOpening, HandleKind, Module, Run } from '@/types/millwork';
 
 /**
@@ -370,6 +371,26 @@ export function openingHardware(
        * одного расчёта.
        */
       add('hinges', BUILT_IN_FRIDGE_FRONTS * hingesPerDoor(heightMm / BUILT_IN_FRIDGE_FRONTS));
+    }
+
+    /*
+     * ФАСАДЫ НАД ПРИБОРОМ И ПОД НИМ ТОЖЕ НА ЧЁМ-ТО ВИСЯТ.
+     *
+     * Свободные участки колонны и пенала с духовкой давно режутся в
+     * раскрое, а петель и ручек к ним не покупал никто: `frontType` там
+     * `appliance`, и расчёт уходил на `continue` строкой ниже. Цех
+     * получал два полотна, которые не на что повесить и не за что взять.
+     *
+     * Участки спрашиваются у `nicheFacadeSpans` — у той же функции, по
+     * которой они попали в раскрой и в сцену. Петель — по высоте самого
+     * участка: полотно 480 мм и полотно 796 мм держатся разным числом
+     * петель, и `hingesPerDoor` это уже знает.
+     */
+    const facades = nicheFacadeSpans(unit, heightMm);
+    if (facades) {
+      for (const facade of facades) add('hinges', hingesPerDoor(facade.heightMm));
+      addHandles(unit, facades.length);
+      continue;
     }
 
     if (unit.frontType !== 'door') continue;

@@ -12,6 +12,9 @@ import {
   type MillingScope,
 } from '@/lib/millwork/milling';
 import { moduleById } from '@/lib/millwork/selection';
+import { PROFILE_SPAN, layerShade, profileMm } from '@/lib/millwork/relief';
+import { moduleCarcassHeightMm } from '@/lib/millwork/fill';
+import { facadeSpans } from '@/lib/millwork/applianceFront';
 import { useInteriorStore } from '@/store/useInteriorStore';
 
 /**
@@ -46,41 +49,50 @@ type Props = {
   onOps: (ops: MillworkOp[]) => void;
 };
 
-/** Свет падает слева сверху: у выборки верх и лево в тени, низ и право на свету. */
-const LIGHT = 2.2;
-
 /**
- * ФАСАД С РЕЛЬЕФОМ В ПОЛЕ 100×100.
+ * ФАСАД С РЕЛЬЕФОМ, В ПРОПОРЦИЯХ НАСТОЯЩЕЙ ДВЕРЦЫ.
  *
- * Слой глубины 0 — плоскость фасада, её и видно как фасад. Слои глубже
- * нуля — то, что сняла фреза: заливка тем темнее, чем глубже, плюс тень
- * по верхней и левой кромке изнутри и блик по нижней и правой.
+ * Поле профиля — квадрат 100×100, а дверца квадратной не бывает: она
+ * примерно вдвое выше своей ширины. Поэтому поле РАСТЯГИВАЕТСЯ на фасад
+ * ровно так же, как в сцене текстура натягивается на полотно, — один раз
+ * по каждой оси. Карточка и мебель показывают один и тот же рисунок;
+ * вписывать квадрат в дверцу «без искажений» значило бы обещать клиенту
+ * филёнку, которой на его фасаде не будет.
  *
- * Тень рисуется ОБВОДКОЙ СО СМЕЩЕНИЕМ, обрезанной по самому контуру:
- * так она ложится по любой форме — и по прямоугольной ступени, и по
- * овалу, и по волне, — а фильтров SVG, которые печать поддерживает
- * через раз, здесь не нужно вовсе.
+ * Тени и блики берутся у `layerShade` — у той же модели света и глубины,
+ * по которой печётся карта нормалей. Второй модели тут нет.
  */
 function Relief({
   id,
   layers,
   profile,
   active,
+  aspect,
 }: {
   id: string;
   layers: MillingLayer[];
   profile: string;
   active: boolean;
+  /** Высота фасада к его ширине: 2 — обычная дверца. */
+  aspect: number;
 }) {
   const cuts = layers.filter((layer) => layer.depth > 0);
   const frame = active ? 'var(--accent)' : 'var(--blueprint)';
+  const H = PROFILE_SPAN * aspect;
 
   return (
-    <svg viewBox="0 0 100 100" className="block h-[84px] w-full" role="img" aria-hidden="true">
+    <svg
+      viewBox={`0 0 ${PROFILE_SPAN} ${H}`}
+      preserveAspectRatio="xMidYMid meet"
+      className="block h-[112px] w-full"
+      role="img"
+      aria-hidden="true"
+    >
       {/* Плоскость фасада: по ней и читается, что это фасад, а не схема */}
-      <rect x={2} y={2} width={96} height={96} fill="var(--sheet)" />
+      <rect x={0} y={0} width={PROFILE_SPAN} height={H} fill="var(--sheet)" />
+      <g transform={`scale(1 ${aspect})`}>
 
-      {cuts.length === 0 ? (
+        {cuts.length === 0 ? (
         /*
          * ПОЗИЦИЯ БЕЗ СЛОЁВ — ЭТО НЕ ОШИБКА.
          *
@@ -100,48 +112,50 @@ function Relief({
           data-milling-flat
         />
       ) : (
-        cuts.map((layer, i) => {
-          const clip = `mill-${id}-${i}`;
-          const depth = Math.min(1, Math.max(0, layer.depth));
+          cuts.map((layer, i) => {
+            const clip = `mill-${id}-${i}`;
+            const depth = Math.min(1, Math.max(0, layer.depth));
+            const shade = layerShade(depth);
 
-          return (
-            <g key={i} data-milling-layer={depth}>
-              <clipPath id={clip}>
-                <path d={layer.path} />
-              </clipPath>
-              <g clipPath={`url(#${clip})`}>
-                {/* Дно выборки: чем глубже, тем темнее */}
-                <path d={layer.path} fill="#000" fillOpacity={0.07 + depth * 0.15} />
-                {/* Тень по верхней и левой кромке — стенка, отвернувшаяся от света */}
-                <path
-                  d={layer.path}
-                  fill="none"
-                  stroke="#000"
-                  strokeOpacity={0.24 + depth * 0.22}
-                  strokeWidth={5}
-                  transform={`translate(${LIGHT} ${LIGHT})`}
-                />
-                {/* Блик по нижней и правой — стенка, обращённая к свету */}
-                <path
-                  d={layer.path}
-                  fill="none"
-                  stroke="#fff"
-                  strokeOpacity={0.3 + depth * 0.2}
-                  strokeWidth={4}
-                  transform={`translate(${-LIGHT} ${-LIGHT})`}
-                />
+            return (
+              <g key={i} data-milling-layer={depth}>
+                <clipPath id={clip}>
+                  <path d={layer.path} />
+                </clipPath>
+                <g clipPath={`url(#${clip})`}>
+                  {/* Дно выборки: чем глубже, тем темнее */}
+                  <path d={layer.path} fill="#000" fillOpacity={shade.floor} />
+                  {/* Стенка, отвёрнутая от света: верх и лево изнутри */}
+                  <path
+                    d={layer.path}
+                    fill="none"
+                    stroke="#000"
+                    strokeOpacity={shade.shadow}
+                    strokeWidth={shade.edge * 2}
+                    transform={`translate(${shade.edge} ${shade.edge})`}
+                  />
+                  {/* Стенка, обращённая к свету: низ и право */}
+                  <path
+                    d={layer.path}
+                    fill="none"
+                    stroke="#fff"
+                    strokeOpacity={shade.highlight}
+                    strokeWidth={shade.edge * 1.6}
+                    transform={`translate(${-shade.edge} ${-shade.edge})`}
+                  />
+                </g>
               </g>
-            </g>
-          );
-        })
-      )}
+            );
+          })
+        )}
+      </g>
 
       {/* Кромка фасада: она же метка выбранной карточки */}
       <rect
-        x={2}
-        y={2}
-        width={96}
-        height={96}
+        x={0.6}
+        y={0.6}
+        width={PROFILE_SPAN - 1.2}
+        height={H - 1.2}
         fill="none"
         stroke={frame}
         strokeWidth={active ? 3 : 1.5}
@@ -166,6 +180,44 @@ export default function MillingPicker({ run, catalog, selectedModuleId, onOps }:
    * бы не там, где клиент видит профиль.
    */
   const currentId = unit ? millingFor(unit, run) : (run.milling?.base ?? null);
+
+  /*
+   * ФАСАД НА КАРТОЧКЕ — ТОГО МОДУЛЯ, КОТОРЫЙ ВЫБРАН.
+   *
+   * Профиль ложится на полотно ЦЕЛИКОМ, поэтому его пропорция — это
+   * пропорция самого полотна: на дверце 600×720 рисунок один, на дверце
+   * 400×2000 совсем другой. Показывать всем один квадрат значит обещать
+   * филёнку, которой на этом фасаде не будет.
+   *
+   * Размеры берутся у тех же функций, что считают раскрой и сцену:
+   * высота участка — `facadeSpans`, ширина — ширина модуля, делённая на
+   * число створок. Ничего своего здесь не считается.
+   */
+  const facade = (() => {
+    /* Без выбранного модуля — обычная дверца: вдвое выше своей ширины. */
+    if (!unit) return { widthMm: 0, heightMm: 0, aspect: 2 };
+
+    const carcassMm = moduleCarcassHeightMm(unit, run);
+    const spans = facadeSpans(unit, carcassMm);
+    const heightMm = spans[0]?.heightMm ?? carcassMm;
+    const leaves = Math.max(1, unit.doorCount || 1);
+    const widthMm = Math.round(unit.widthMm / leaves);
+
+    return {
+      widthMm,
+      heightMm,
+      /*
+       * ПРОПОРЦИЯ НАСТОЯЩАЯ, НО В ЧИТАЕМЫХ ПРЕДЕЛАХ.
+       *
+       * Обычная дверца это 1:1.2…1:2, и такую карточка показывает как
+       * есть. Полотно колонны 600×2300 — это 1:3.8, и на карточке
+       * шириной в сто пикселей оно превращается в полоску, по которой
+       * профиль не выбрать вовсе. Сжимаем до 1:2.4: карточка — образец
+       * рисунка, а настоящую пропорцию показывают чертёж и сцена.
+       */
+      aspect: widthMm > 0 ? Math.min(2.4, Math.max(1, heightMm / widthMm)) : 2,
+    };
+  })();
 
   const apply = (millingId: string | null) => {
     onOps([
@@ -246,7 +298,21 @@ export default function MillingPicker({ run, catalog, selectedModuleId, onOps }:
   }
 
   return (
-    <div className="mw-panel" data-milling-picker>
+    <div
+      className="mw-panel"
+      data-milling-picker
+      /*
+       * ДОЛЯ ПРОФИЛЯ В МИЛЛИМЕТРАХ ЭТОГО ФАСАДА.
+       *
+       * Одна единица поля профиля — процент ширины полотна. На дверце 400
+       * это 4 мм, на дверце 900 — 9 мм: рисунок один, размеры разные, и
+       * так их и фрезеруют.
+       */
+      data-facade={facade.widthMm > 0 ? `${facade.widthMm}×${facade.heightMm}` : ''}
+      data-profile-unit-mm={
+        facade.widthMm > 0 ? Math.round(profileMm(1, facade.widthMm) * 100) / 100 : ''
+      }
+    >
       <div className="mb-2 flex items-baseline justify-between">
         <span className="mw-label">
           Фрезеровка{unit ? ` · ${unit.label}` : ' · весь объект'}
@@ -291,6 +357,7 @@ export default function MillingPicker({ run, catalog, selectedModuleId, onOps }:
                   layers={item.milling.layers ?? []}
                   profile={item.milling.profile}
                   active={active}
+                  aspect={facade.aspect}
                 />
                 <span className="text-[13px] leading-tight">{item.name}</span>
               </button>

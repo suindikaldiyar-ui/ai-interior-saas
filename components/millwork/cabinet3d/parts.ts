@@ -4,6 +4,7 @@ import { useEffect, useMemo } from 'react';
 import * as THREE from 'three';
 import { milledNormalMap, millingReliefMap } from './milledNormal';
 import type { MillingItem } from '@/lib/millwork/milling';
+import { RELIEF_NORMAL_SCALE } from '@/lib/millwork/relief';
 import { loadTexture } from '@/lib/textureCache';
 import type { SurfaceLook } from '@/lib/millwork/surfaces';
 import { DEFAULT_FRONT, frontKey } from '@/lib/millwork/frontMaterial';
@@ -411,6 +412,15 @@ export function useFrontMaterials(
         // Смена карты — это другой шейдер, пересборка обязательна.
         material.needsUpdate = true;
       }
+      /*
+       * ГЛУБИНА РЕЛЬЕФА НА МЕБЕЛИ.
+       *
+       * Карта нормалей шла с силой 1.0, и на общем виде профиль пропадал:
+       * фасад читался гладким, хотя клиент за фрезеровку платит. 1.6 —
+       * столько, чтобы «Ампир» был виден с общего вида и не превращался
+       * вблизи в штамповку.
+       */
+      material.normalScale.set(RELIEF_NORMAL_SCALE, RELIEF_NORMAL_SCALE);
     }
     /*
      * `frameloop="demand"`: без явного кадра рельеф сменится в памяти, а

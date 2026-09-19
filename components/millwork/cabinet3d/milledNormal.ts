@@ -2,6 +2,7 @@
 
 import * as THREE from 'three';
 import type { MillingLayer } from '@/lib/millwork/milling';
+import { PROFILE_SPAN, RELIEF_SLOPE, layerHeight } from '@/lib/millwork/relief';
 
 /**
  * ФРЕЗЕРОВАННЫЙ ФАСАД: ВЕРТИКАЛЬНЫЕ БОРОЗДКИ.
@@ -110,12 +111,14 @@ export function milledNormalMap(): THREE.CanvasTexture | null {
  * и выдавать наклон за размер нельзя.
  */
 
-/** Поле профиля: контуры каталога нарисованы в квадрате 100×100. */
-const PROFILE_SPAN = 100;
-/** Насколько круты стенки выборки. Подобрано на «Ампире»: ступени видны, шума нет. */
-const SLOPE = 2.6;
+/**
+ * Поле профиля, крутизна стенки и высота слоя — из общей модели рельефа
+ * (`relief.ts`). Карточка выбора считает тень теми же числами: две модели
+ * одного профиля дали бы клиенту одну картинку при выборе и другую на
+ * мебели.
+ */
 /** Радиус размытия высоты в пикселях: стенка перестаёт быть зазубриной. */
-const BLUR = 3;
+const BLUR = 2;
 
 const reliefCache = new Map<string, THREE.CanvasTexture | null>();
 
@@ -153,8 +156,8 @@ function drawRelief(layers: MillingLayer[], profile: string): THREE.CanvasTextur
 
   if (cuts.length > 0) {
     for (const layer of cuts) {
-      const depth = Math.min(1, Math.max(0, layer.depth));
-      const level = Math.round(255 * (1 - depth * 0.85));
+      /* Высота слоя — из общей модели: та же шкала, что красит карточку. */
+      const level = Math.round(255 * layerHeight(layer));
       ctx.fillStyle = `rgb(${level},${level},${level})`;
       ctx.fill(new Path2D(layer.path));
     }
@@ -192,8 +195,8 @@ function drawRelief(layers: MillingLayer[], profile: string): THREE.CanvasTextur
        * `CanvasTexture` картинка переворачивается при загрузке, и ось V
        * текстуры смотрит вверх по экрану — то есть против оси Y картинки.
        */
-      let nx = (-dx / 255) * SLOPE;
-      let ny = (dy / 255) * SLOPE;
+      let nx = (-dx / 255) * RELIEF_SLOPE;
+      let ny = (dy / 255) * RELIEF_SLOPE;
       let nz = 1;
       const len = Math.hypot(nx, ny, nz) || 1;
       nx /= len;

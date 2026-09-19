@@ -107,7 +107,7 @@ import {
 } from '../lib/millwork/moduleVariants';
 import { gapsIn } from '../lib/millwork/freeRun';
 import { BOTTLE_MAX_MM, variantEstimateKeys } from '../lib/millwork/moduleVariants';
-import { facadeSpans, hasFacade } from '../lib/millwork/applianceFront';
+import { MIN_FACADE_SPAN_MM, facadeSpans, hasFacade } from '../lib/millwork/applianceFront';
 import {
   TYPICAL_PALETTE,
   paletteFor,
@@ -15844,6 +15844,200 @@ console.log('\n' + 'Сборочный лист модуля');
     sheets === 0
       ? 'НОЛЬ СБОРОЧНЫХ ЛИСТОВ В ПЕЧАТИ'
       : `листов ${sheets}, разрывов ${breaks}`,
+  );
+}
+
+/* ═══════════  Фасады над приборами и под ними  ═══════════ */
+
+/**
+ * НАД ВЕРХНИМ ПРИБОРОМ И ПОД НИЖНИМ СТОИТ ФАСАД, А НЕ ДЫРА.
+ *
+ * Колонна «духовка + СВЧ» делится по высоте на четыре отрезка: свободно
+ * снизу, ниша духовки, ниша микроволновки, свободно сверху. Ниши
+ * закрывают приборы, а свободные отрезки — фасады: без них в цех уезжает
+ * корпус с открытой дырой в полметра.
+ *
+ * Отрезки считает `facadeSpans` по тем же нишам, что `columnNiches`.
+ * Второй формулы здесь быть не может: разойдясь с нишами, фасад уедет
+ * поверх духовки.
+ */
+console.log('\n' + 'Фасады над приборами и под ними');
+{
+  const withMicrowave: RunRequirements = {
+    ...REQ,
+    appliances: [...REQ.appliances, 'microwave'],
+  };
+  const run = buildRun({ ...baseInput, requirements: withMicrowave });
+  const panels = buildPanels({ run });
+  const places = runPlaces(run);
+
+  const column = places.find((place) => place.unit.column);
+
+  check(
+    'колонна приборов собралась — проверять есть на чём',
+    Boolean(column),
+    column
+      ? `${column.unit.label}: ${JSON.stringify(column.unit.column)}`
+      : 'КОЛОННЫ ПРИБОРОВ НЕТ — духовка и СВЧ не встали в один модуль',
+  );
+
+  if (column) {
+    const unit = column.unit;
+    const heightMm = moduleCarcassHeightMm(unit, run);
+    const niches = columnNiches(unit, heightMm, run.production);
+    const spans = facadeSpans(unit, heightMm);
+
+    check(
+      'ниши приборов есть — отрезки считать есть из чего',
+      niches.length === 2,
+      niches.length === 0
+        ? 'НОЛЬ НИШ В КОЛОННЕ'
+        : niches.map((n) => `${n.appliance} ${n.fromMm}..${n.toMm}`).join(' · '),
+    );
+
+    check(
+      'свободные отрезки есть — фасады вешать есть куда',
+      spans.length > 0,
+      spans.length === 0
+        ? 'НОЛЬ СВОБОДНЫХ ОТРЕЗКОВ — фасаду негде стоять'
+        : spans.map((sp) => `${sp.fromMm}..${sp.fromMm + sp.heightMm} = ${sp.heightMm}`).join(' · '),
+    );
+
+    /* ── 1. Число фасадов в раскрое равно числу свободных отрезков ── */
+
+    const facades = panels.filter(
+      (panel) => panel.moduleId === unit.id && panel.name === FACADE_PANEL_NAME,
+    );
+
+    check(
+      'каждый свободный отрезок выше минимума получил фасад в раскрое',
+      facades.length === spans.length && spans.length > 0,
+      facades.length === 0
+        ? 'НОЛЬ ФАСАДОВ В РАСКРОЕ У КОЛОННЫ — над приборами открытая дыра'
+        : `отрезков ${spans.length}, фасадов ${facades.length}: ${facades
+            .map((f) => `${f.number} ${f.lengthMm}×${f.widthMm}`)
+            .join(' · ')}`,
+    );
+
+    /* ── 4. Сумма высот сходится с высотой колонны до миллиметра ── */
+
+    const gapMm = DEFAULT_PRODUCTION.frontGapMm;
+    const nicheSum = niches.reduce((sum, n) => sum + (n.toMm - n.fromMm), 0);
+    const facadeSum = facades.reduce((sum, f) => sum + f.lengthMm, 0);
+    const gapsSum = facades.length * gapMm;
+    const total = nicheSum + facadeSum + gapsSum;
+
+    check(
+      'приборы + фасады + зазоры = высота колонны, до миллиметра',
+      total === heightMm,
+      `ниши ${nicheSum} + фасады ${facadeSum} + зазоры ${gapsSum} = ${total} при высоте ${heightMm}`,
+    );
+
+    /* ── 2. Петли и ручки этих фасадов попадают в смету ── */
+
+    const allUnits = [...run.modules, ...run.upperSegments.flatMap((sg) => sg.modules)];
+    const hw = openingHardware(
+      allUnits.map((u, index) => ({
+        unit: u,
+        heightMm: moduleCarcassHeightMm(u, run),
+        index,
+        total: allUnits.length,
+      })),
+      run,
+    );
+
+    const mine = hw.byModule[unit.id];
+
+    check(
+      'фасады колонны висят на петлях, и петли посчитаны',
+      (mine?.hinges ?? 0) >= facades.length * 2,
+      mine
+        ? `петель ${mine.hinges} при ${facades.length} фасадах`
+        : 'МОДУЛЯ НЕТ В РАЗРЕЗЕ ФУРНИТУРЫ',
+    );
+
+    check(
+      'и ручка есть у каждого фасада колонны',
+      (mine?.handleBar ?? 0) + (mine?.handlePush ?? 0) + ((mine?.handleProfileMm ?? 0) > 0 ? facades.length : 0) >=
+        facades.length,
+      mine
+        ? `скоб ${mine.handleBar} · нажимных ${mine.handlePush} · профиля ${mine.handleProfileMm} мм при ${facades.length} фасадах`
+        : 'МОДУЛЯ НЕТ В РАЗРЕЗЕ ФУРНИТУРЫ',
+    );
+
+    /* ── 3. Номера новых фасадов стоят на сборочном листе ── */
+
+    const sheet = renderToStaticMarkup(
+      React.createElement(ModuleAssembly, { run, unit, panels } as never),
+    );
+
+    const missing = facades.filter(
+      (f) => !sheet.includes(`data-assembly-row="${f.number}"`),
+    );
+
+    check(
+      'номера фасадов стоят на сборочном листе колонны',
+      missing.length === 0 && facades.length > 0,
+      facades.length === 0
+        ? 'ФАСАДОВ НЕТ ВОВСЕ — номеров на листе не будет'
+        : missing.length === 0
+          ? `${facades.map((f) => f.number).join(', ')} на листе`
+          : `НЕТ НА ЛИСТЕ: ${missing.map((f) => f.number).join(', ')}`,
+    );
+
+    /* ── И то же самое видно в сцене ── */
+
+    const boxes = moduleBoxes(
+      unit,
+      {
+        x: column.x,
+        y: column.y,
+        heightM: column.heightM,
+        depthM: column.depthM,
+        zM: column.zM,
+        thicknessM: 0.016,
+      },
+      { gapM: 0.003, frontThicknessM: 0.018, integratedHandles: false, cutaway: false },
+      run.production,
+    );
+
+    const fronts = boxes.filter((box) => box.material === 'front');
+
+    check(
+      'фасады колонны нарисованы и в сцене, а не только в раскрое',
+      fronts.length >= spans.length && spans.length > 0,
+      fronts.length === 0
+        ? 'В СЦЕНЕ У КОЛОННЫ НОЛЬ ФАСАДОВ — над приборами видно дыру'
+        : `коробок фасада ${fronts.length} при ${spans.length} отрезках`,
+    );
+
+    /*
+     * И НИ ОДИН ФАСАД НЕ НАКРЫВАЕТ НИШУ.
+     *
+     * Фасад поверх духовки — это распиленная впустую плита и прибор,
+     * который не открыть. Меряем перекрытие в миллиметрах.
+     */
+    const overlaps = fronts.filter((box) => {
+      const bottom = Math.round((box.position[1] - box.scale[1] / 2 - column.y) * 1000);
+      const top = Math.round((box.position[1] + box.scale[1] / 2 - column.y) * 1000);
+      return niches.some((n) => Math.min(top, n.toMm) - Math.max(bottom, n.fromMm) > 2);
+    });
+
+    check(
+      'и ни один фасад не заходит на нишу прибора',
+      overlaps.length === 0,
+      overlaps.length === 0
+        ? 'перекрытий с нишами нет'
+        : `ФАСАД ПОВЕРХ ПРИБОРА: ${overlaps.length} шт.`,
+    );
+  }
+
+  /* ── Огрызок ниже минимума фасада не получает, и это сказано ── */
+
+  check(
+    'минимум фасада объявлен одним числом',
+    MIN_FACADE_SPAN_MM > 0,
+    `минимум ${MIN_FACADE_SPAN_MM} мм`,
   );
 }
 
