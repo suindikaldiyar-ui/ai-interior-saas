@@ -5,8 +5,8 @@ import {
   currentVariant,
 } from './moduleVariants';
 import { handleOf, openingOf } from './opening';
-import { defaultHandlePlace } from './handlePlace';
-import type { HandlePlace, Module, ModuleVariantKind, Run } from '@/types/millwork';
+import { handleSpotOf, type HandleSpot } from './handlePlace';
+import type { Module, ModuleVariantKind, Run } from '@/types/millwork';
 
 /**
  * ЧТО ВИДНО НА ФАСАДЕ МОДУЛЯ.
@@ -60,7 +60,7 @@ export type GlyphElement =
    * `place` — то же поле `fill.handlePlace`, по которому ручку ставит
    * сцена. Второго правила «где ручка» в продукте нет.
    */
-  | { kind: 'handle'; place: HandlePlace }
+  | { kind: 'handle'; spot: HandleSpot }
   /** Вертикальная стрелка выдвижения — карго. */
   | { kind: 'cargo' }
   /** Решётка сушилки пунктиром. */
@@ -394,22 +394,14 @@ export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts'): GlyphEleme
    * фасада нет вовсе — брать не за что.
    */
   if (mode === 'fronts') {
-    const handle = handleOf(unit, { options: {} as Run['options'] });
+    const run = { options: {} as Run['options'] };
+    const handle = handleOf(unit, run);
     const fronts = elements.some(
       (el) => el.kind === 'panel' || el.kind === 'drawer' || el.kind === 'glass',
     );
 
     if (fronts && handle.handle !== 'none') {
-      elements.push({
-        kind: 'handle',
-        place:
-          unit.fill?.handlePlace ??
-          defaultHandlePlace(
-            handle.handle,
-            openingOf(unit).opening,
-            openingOf(unit).opening === 'right' ? 'right' : 'left',
-          ),
-      });
+      elements.push({ kind: 'handle', spot: handleSpotOf(unit, run) });
     }
   }
 

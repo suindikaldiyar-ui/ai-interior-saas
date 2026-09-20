@@ -24,7 +24,7 @@ import { plinthMm, upperBottomMm } from './shop';
 import { ceilingOverSpanMm } from './ceiling';
 import { NO_MILLING_ID } from './milling';
 import { NO_CARCASS_ID } from './carcassMaterial';
-import { HANDLE_PLACES, handlePlaceOrNull } from './handlePlace';
+import { HANDLE_LEVELS, HANDLE_TURNS, handleLevelOrNull, handleTurnOrNull } from './handlePlace';
 import {
   defaultFill,
   hingeSide,
@@ -1394,23 +1394,46 @@ export function applyOps({
         break;
       }
 
-      case 'set_handle_place': {
+      case 'set_handle_spot': {
         /*
-         * ГДЕ РУЧКА СТОИТ НА ПОЛОТНЕ.
+         * ВЫСОТА И ПОВОРОТ РУЧКИ — И ТОЛЬКО ОНИ.
          *
-         * Ложится туда же, где её тип, — в наполнение модуля: место и
-         * тип это одна фурнитура фасада, и хранить их порознь значит
-         * однажды нарисовать скобу там, где в смете механизм.
-         *
-         * Чужая строка местом не становится: неизвестное значение
-         * отклоняется словами, а не подставляется умолчанием.
+         * Стороны в правке нет намеренно: ручка стоит напротив петель, и
+         * менять её сторону — значит менять направление открывания. Если
+         * сторону всё же попросили, отвечаем словами: молча подставить
+         * противоположную значило бы сделать не то, о чём просили.
          */
-        const place = handlePlaceOrNull(op.place);
-        if (!place) {
+        if (op.place) {
+          const side = String(op.place).split('-')[0];
+          if (side === 'left' || side === 'right') {
+            warnings.push(
+              'Сторона ручки не выбирается: она стоит напротив петель, ' +
+                'иначе за неё не взяться, а открытая створка бьёт по руке. ' +
+                'Смените направление открывания — ручка переедет сама.',
+            );
+            break;
+          }
+        }
+
+        const level = op.level === undefined ? null : handleLevelOrNull(op.level);
+        const turn = op.turn === undefined ? null : handleTurnOrNull(op.turn);
+
+        if (op.level !== undefined && !level) {
           warnings.push(
-            `Положение ручки «${String(op.place)}» неизвестно: ` +
-              `бывают ${HANDLE_PLACES.map((p) => p.key).join(', ')}.`,
+            `Высота ручки «${String(op.level)}» неизвестна: ` +
+              `бывают ${HANDLE_LEVELS.map((l) => l.key).join(', ')}.`,
           );
+          break;
+        }
+        if (op.turn !== undefined && !turn) {
+          warnings.push(
+            `Поворот ручки «${String(op.turn)}» неизвестен: ` +
+              `бывают ${HANDLE_TURNS.map((t) => t.key).join(', ')}.`,
+          );
+          break;
+        }
+        if (!level && !turn) {
+          warnings.push('Правка ручки пустая: не задана ни высота, ни поворот.');
           break;
         }
 
@@ -1436,7 +1459,13 @@ export function applyOps({
 
         const edited: Module = {
           ...target,
-          fill: target.fill ? { ...target.fill, handlePlace: place } : target.fill,
+          fill: target.fill
+            ? {
+                ...target.fill,
+                ...(level ? { handleLevel: level } : {}),
+                ...(turn ? { handleTurn: turn } : {}),
+              }
+            : target.fill,
         };
 
         if (at >= 0) modules[at] = edited;

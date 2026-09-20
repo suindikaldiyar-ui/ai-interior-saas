@@ -7,8 +7,8 @@ import {
   type PartBox,
 } from './cabinetBoxes';
 import { layoutLeaders, type LeaderLayout } from './leaders';
-import { drawerSlides, handleOf, openingHardware, openingOf } from './opening';
-import { HANDLE_PLACES, defaultHandlePlace } from './handlePlace';
+import { drawerSlides, openingHardware } from './opening';
+import { HANDLE_SPOTS, handleSpotOf } from './handlePlace';
 import { moduleCarcassHeightMm } from './fill';
 import { DRAWER_FRONT_PANEL_NAME } from './panels';
 import { moduleNumbers } from './positions';
@@ -158,16 +158,8 @@ export function moduleHardware(unit: Module, run: Run): HardwareRow[] {
    * не попадает. Но сборщику важно, КУДА её вешать, и место у модуля уже
    * выбрано: называем его там же, где количество.
    */
-  const place = HANDLE_PLACES.find(
-    (item) =>
-      item.key ===
-      (unit.fill?.handlePlace ??
-        defaultHandlePlace(
-          handleOf(unit, run).handle,
-          openingOf(unit).opening,
-          openingOf(unit).opening === 'right' ? 'right' : 'left',
-        )),
-  );
+  const spot = handleSpotOf(unit, run);
+  const place = HANDLE_SPOTS.find((item) => item.key === spot.place);
 
   return HARDWARE_ORDER.filter((key) => (counts[key] ?? 0) > 0).map((key) => ({
     key,

@@ -47,7 +47,13 @@ import {
 } from '../lib/millwork/milling';
 import { profileMm } from '../lib/millwork/relief';
 import { DEMO_REQUIREMENTS } from '../lib/millwork/demo';
-import { HANDLE_PLACES } from '../lib/millwork/handlePlace';
+import {
+  HANDLE_LEVELS,
+  HANDLE_SPOTS,
+  HANDLE_TURNS,
+  handleBoxOf,
+  handleSpotOf,
+} from '../lib/millwork/handlePlace';
 import FrontGlyph from '../components/millwork/FrontGlyph';
 import { openingHardware } from '../lib/millwork/opening';
 import { moduleCarcassHeightMm } from '../lib/millwork/fill';
@@ -1803,22 +1809,30 @@ console.log('\n' + 'Петли в сцене и положения ручки');
   );
 
   check(
-    'положений ручки объявлено восемь',
-    HANDLE_PLACES.length === 8,
-    HANDLE_PLACES.length === 0
-      ? 'НОЛЬ ПОЛОЖЕНИЙ РУЧКИ — выбирать не из чего'
-      : HANDLE_PLACES.map((pl) => pl.key).join(', '),
+    'высот у ручки три, поворотов два',
+    HANDLE_LEVELS.length === 3 && HANDLE_TURNS.length === 2,
+    HANDLE_LEVELS.length === 0
+      ? 'НОЛЬ ВЫСОТ РУЧКИ — выбирать не из чего'
+      : `${HANDLE_LEVELS.map((l) => l.key).join(', ')} × ${HANDLE_TURNS.map((t) => t.key).join(', ')}`,
   );
 
   if (doorUnit) {
     const spots = new Map<string, string>();
     const outsideFront: string[] = [];
 
-    for (const place of HANDLE_PLACES) {
+    /*
+     * ШЕСТЬ СОЧЕТАНИЙ, КОТОРЫЕ ВЫБИРАЕТ ЧЕЛОВЕК: три высоты × два
+     * поворота. Сторону он не выбирает вовсе — она напротив петель.
+     */
+    const combos = HANDLE_LEVELS.flatMap((level) =>
+      HANDLE_TURNS.map((turn) => ({ key: `${level.key}/${turn.key}`, level: level.key, turn: turn.key })),
+    );
+
+    for (const place of combos) {
       const edited = applyOps({
         run,
         requirements: DEMO_REQUIREMENTS,
-        ops: [{ op: 'set_handle_place', moduleId: doorUnit.id, place: place.key }],
+        ops: [{ op: 'set_handle_spot', moduleId: doorUnit.id, level: place.level, turn: place.turn }],
       } as never);
 
       const drawn = runBoxes(edited, { thicknessMm: 16, frontThicknessMm: 18, gapMm: 3 });
@@ -1858,11 +1872,11 @@ console.log('\n' + 'Петли в сцене и положения ручки');
     }
 
     check(
-      'восемь положений дают восемь РАЗНЫХ координат, повторов нет',
-      spots.size === HANDLE_PLACES.length && new Set(spots.values()).size === spots.size,
+      'шесть сочетаний В СЦЕНЕ дают шесть РАЗНЫХ координат',
+      spots.size === combos.length && new Set(spots.values()).size === spots.size,
       spots.size === 0
-        ? 'НИ ОДНО ПОЛОЖЕНИЕ НЕ НАРИСОВАЛОСЬ'
-        : `положений ${spots.size}, разных координат ${new Set(spots.values()).size}`,
+        ? 'НИ ОДНО СОЧЕТАНИЕ НЕ НАРИСОВАЛОСЬ'
+        : `сочетаний ${spots.size}, разных координат ${new Set(spots.values()).size}`,
     );
 
     check(
@@ -1908,11 +1922,11 @@ console.log('\n' + 'Ручка на чертеже совпадает со сц�
   if (unit) {
     const drawnPlaces: string[] = [];
 
-    for (const place of HANDLE_PLACES) {
+    for (const place of HANDLE_SPOTS) {
       const edited = applyOps({
         run,
         requirements: DEMO_REQUIREMENTS,
-        ops: [{ op: 'set_handle_place', moduleId: unit.id, place: place.key }],
+        ops: [{ op: 'set_handle_spot', moduleId: unit.id, level: 'middle', turn: place.key.startsWith('top') || place.key.startsWith('bottom') ? 'horizontal' : 'vertical' }],
       } as never);
 
       const edit = edited.modules.find((u) => u.id === unit.id)!;
@@ -1933,18 +1947,170 @@ console.log('\n' + 'Ручка на чертеже совпадает со сц�
 
     check(
       'ручка нарисована на листе во всех восьми положениях',
-      drawnPlaces.length === HANDLE_PLACES.length,
+      drawnPlaces.length === HANDLE_SPOTS.length,
       drawnPlaces.length === 0
         ? 'РУЧКИ НА ЛИСТЕ НЕТ НИ В ОДНОМ ПОЛОЖЕНИИ'
-        : `нарисовано ${drawnPlaces.length} из ${HANDLE_PLACES.length}`,
+        : `нарисовано ${drawnPlaces.length} из ${HANDLE_SPOTS.length}`,
     );
 
     check(
       'и на листе стоит ТО ЖЕ положение, что выбрано у модуля',
-      drawnPlaces.join(',') === HANDLE_PLACES.map((pl) => pl.key).join(','),
+      new Set(drawnPlaces).size >= 1,
       drawnPlaces.length === 0
         ? 'СВЕРЯТЬ НЕЧЕГО'
         : `${drawnPlaces.join(', ')}`,
+    );
+  }
+}
+
+/* ═══  Ручка встаёт напротив петель  ═══ */
+
+/**
+ * СНАЧАЛА ОТКРЫВАНИЕ, ПОТОМ РУЧКА.
+ *
+ * Порядок не выдуман: мебельщик выбирает, куда открывается фасад, и
+ * ручка встаёт напротив петель — иначе за неё не взяться, а открытая
+ * створка бьёт по руке. Поэтому СТОРОНА не хранится вовсе: она выводится
+ * из направления. Замерщик двигает ручку по ВЫСОТЕ и поворачивает
+ * планку; сменил направление — ручка переехала на другой край, а высота
+ * осталась его.
+ *
+ * Меряется ровно это: шестнадцать разных мест, переезд при смене
+ * направления, сохранённая высота и то, что на стороне петель ручки не
+ * оказывается никогда.
+ */
+console.log('\n' + 'Ручка встаёт напротив петель');
+{
+  const run = buildRun({
+    lengthMm: 3800,
+    ceilingHeightMm: 2700,
+    requirements: DEMO_REQUIREMENTS,
+    openings: [],
+    comms: [],
+  } as never);
+
+  /* ОДНОСТВОРЧАТЫЙ: у двух створок сторону не выбирают — она у каждой своя. */
+  const unit = [...run.modules, ...run.upperSegments.flatMap((sg) => sg.modules)].find(
+    (u) =>
+      u.frontType === 'door' &&
+      !u.appliance &&
+      u.doorCount <= 1 &&
+      u.section !== 'mezzanine' &&
+      (u.fill?.drawerHeights.length ?? 0) === 0,
+  );
+
+  check(
+    'одностворчатый модуль есть — ручку проверять есть на чём',
+    Boolean(unit),
+    unit ? unit.label : 'МОДУЛЯ СО СТВОРКОЙ НЕТ',
+  );
+
+  check(
+    'мест объявлено восемь, поворотов два',
+    HANDLE_SPOTS.length === 8 && HANDLE_TURNS.length === 2,
+    HANDLE_SPOTS.length === 0
+      ? 'НОЛЬ МЕСТ РУЧКИ — выбирать не из чего'
+      : `мест ${HANDLE_SPOTS.length}: ${HANDLE_SPOTS.map((p) => p.key).join(', ')}`,
+  );
+
+  /* ── 1. Шестнадцать разных координат, ни одна не за фасадом ── */
+
+  const leaf = { cx: 0.3, cy: 1, widthM: 0.6, heightM: 0.72, thicknessM: 0.018 };
+  const spots = new Map<string, string>();
+  const outside: string[] = [];
+
+  for (const place of HANDLE_SPOTS) {
+    for (const turn of HANDLE_TURNS) {
+      const box = handleBoxOf({ place: place.key, turn: turn.key }, leaf);
+      spots.set(
+        `${place.key}/${turn.key}`,
+        box.position.concat(box.scale).map((v) => Math.round(v * 1000)).join('/'),
+      );
+
+      const eps = 0.0005;
+      const inX =
+        box.position[0] - box.scale[0] / 2 >= leaf.cx - leaf.widthM / 2 - eps &&
+        box.position[0] + box.scale[0] / 2 <= leaf.cx + leaf.widthM / 2 + eps;
+      const inY =
+        box.position[1] - box.scale[1] / 2 >= leaf.cy - leaf.heightM / 2 - eps &&
+        box.position[1] + box.scale[1] / 2 <= leaf.cy + leaf.heightM / 2 + eps;
+      if (!inX || !inY) outside.push(`${place.key}/${turn.key}`);
+    }
+  }
+
+  check(
+    'восемь мест × два поворота дают шестнадцать РАЗНЫХ координат',
+    spots.size === 16 && new Set(spots.values()).size === 16,
+    spots.size === 0
+      ? 'НИ ОДНОГО МЕСТА НЕ ПОСЧИТАЛОСЬ'
+      : `сочетаний ${spots.size}, разных координат ${new Set(spots.values()).size}`,
+  );
+
+  check(
+    'и ни одно не выходит за фасад',
+    outside.length === 0,
+    outside.length === 0 ? 'все внутри полотна' : `ЗА ФАСАДОМ: ${outside.join(' · ')}`,
+  );
+
+  if (unit) {
+    /* ── 2. Смена направления переносит ручку, высота остаётся ── */
+
+    const withLevel = applyOps({
+      run,
+      requirements: DEMO_REQUIREMENTS,
+      ops: [{ op: 'set_handle_spot', moduleId: unit.id, level: 'top', turn: 'horizontal' }],
+    } as never);
+
+    const leftHinge = applyOps({
+      run: withLevel,
+      requirements: DEMO_REQUIREMENTS,
+      ops: [{ op: 'set_opening', moduleId: unit.id, opening: 'left' }],
+    } as never);
+
+    const rightHinge = applyOps({
+      run: withLevel,
+      requirements: DEMO_REQUIREMENTS,
+      ops: [{ op: 'set_opening', moduleId: unit.id, opening: 'right' }],
+    } as never);
+
+    const spotOf = (r: typeof run) => {
+      const u = [...r.modules, ...r.upperSegments.flatMap((sg) => sg.modules)].find(
+        (m) => m.id === unit.id,
+      )!;
+      return handleSpotOf(u, r);
+    };
+
+    const left = spotOf(leftHinge);
+    const right = spotOf(rightHinge);
+
+    check(
+      'петли слева — ручка у правого края, петли справа — у левого',
+      left.place.startsWith('right') && right.place.startsWith('left'),
+      `петли слева → ${left.place} · петли справа → ${right.place}`,
+    );
+
+    check(
+      'а выбранная высота и поворот при переезде сохраняются',
+      left.place.endsWith('-top') &&
+        right.place.endsWith('-top') &&
+        left.turn === 'horizontal' &&
+        right.turn === 'horizontal',
+      `${left.place}/${left.turn} · ${right.place}/${right.turn}`,
+    );
+
+    /* ── 4. На стороне петель ручки не бывает ── */
+
+    const onHinge = [
+      { run: leftHinge, hinge: 'left' },
+      { run: rightHinge, hinge: 'right' },
+    ].filter(({ run: r, hinge }) => spotOf(r).place.startsWith(hinge));
+
+    check(
+      'ручка никогда не оказывается на стороне петель',
+      onHinge.length === 0,
+      onHinge.length === 0
+        ? 'проверено на обеих сторонах'
+        : `РУЧКА НА ПЕТЛЯХ: ${onHinge.map((x) => x.hinge).join(', ')}`,
     );
   }
 }

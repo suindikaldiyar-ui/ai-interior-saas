@@ -122,6 +122,7 @@ import {
   typicalColorItem,
 } from '../lib/millwork/palette';
 import { frontKey, frontOf } from '../lib/millwork/frontMaterial';
+import { handleSpotOf } from '../lib/millwork/handlePlace';
 import { frontSwatch } from '../lib/millwork/frontSwatch';
 import {
   compositionOf,
@@ -16107,15 +16108,15 @@ console.log('\n' + 'Ручка и материал корпуса');
       run,
       requirements: REQ,
       openings: OPENINGS,
-      ops: [{ op: 'set_handle_place', moduleId: doorUnit.id, place: 'bottom-along' }],
+      ops: [{ op: 'set_handle_spot', moduleId: doorUnit.id, level: 'bottom' }],
     } as never);
 
     const after = placed.modules.find((u) => u.id === doorUnit.id);
 
     check(
       'положение ручки легло на модуль',
-      after?.fill?.handlePlace === 'bottom-along',
-      `${doorUnit.label}: ${after?.fill?.handlePlace ?? 'НЕ ЛЕГЛО'}`,
+      after?.fill?.handleLevel === 'bottom',
+      `${doorUnit.label}: ${after?.fill?.handleLevel ?? 'НЕ ЛЕГЛО'}`,
     );
 
     /*
@@ -16134,8 +16135,8 @@ console.log('\n' + 'Ручка и материал корпуса');
 
     check(
       'и переживает пересборку ряда',
-      survived?.fill?.handlePlace === 'bottom-along',
-      `после пересборки: ${survived?.fill?.handlePlace ?? 'ПОТЕРЯНО'}`,
+      survived?.fill?.handleLevel === 'bottom',
+      `после пересборки: ${survived?.fill?.handleLevel ?? 'ПОТЕРЯНО'}`,
     );
 
     /* ── 7. Умолчание не двигает ни отпечаток, ни смету ── */
@@ -16486,6 +16487,172 @@ console.log('\n' + 'Раскрой, сцена и смета говорят од
       `${row.label}: раскрой ${row.cutLeaves}/${row.cutDrawers} · сцена ${row.sceneLeaves} · петель ${row.hinges} · ручек ${row.handles}`,
       row.cutLeaves === row.sceneLeaves || displays.has(row.label),
       '',
+    );
+  }
+}
+
+/* ═══  Механизмы, переезд ручки и отказ по стороне  ═══ */
+
+/**
+ * ПОДЪЁМНИК СНИЗУ, ОТКИДНОЙ СВЕРХУ, СТОРОНУ НЕ ВЫБИРАЮТ.
+ *
+ * У механизма ручка на СВОБОДНОМ крае: подъёмник идёт вверх, и браться
+ * за него надо снизу; откидной падает вниз — сверху. У распашной створки
+ * свободный край напротив петель, и выбрать его нельзя: такого поля нет.
+ * Попросили сторону — отвечаем словами, а не подставляем противоположную
+ * молча.
+ */
+console.log('\n' + 'Ручка: механизмы, переезд, отказ по стороне');
+{
+  const run = buildRun(baseInput);
+  const upper = run.upperSegments.flatMap((sg) => sg.modules).find(
+    (u) => u.frontType === 'door' && u.doorCount <= 1 && u.section !== 'mezzanine',
+  );
+
+  check(
+    'верхний модуль со створкой есть — механизмы проверять есть на чём',
+    Boolean(upper),
+    upper ? upper.label : 'ВЕРХНЕГО МОДУЛЯ СО СТВОРКОЙ НЕТ',
+  );
+
+  const spotIn = (r: typeof run, id: string) => {
+    const u = [...r.modules, ...r.upperSegments.flatMap((sg) => sg.modules)].find(
+      (m) => m.id === id,
+    );
+    return u ? handleSpotOf(u, r) : null;
+  };
+
+  if (upper) {
+    /* ── 3. Подъёмник снизу, откидной сверху ── */
+
+    const lifted = applyOps({
+      run,
+      requirements: REQ,
+      openings: OPENINGS,
+      ops: [{ op: 'set_opening', moduleId: upper.id, opening: 'lift' }],
+    } as never);
+
+    const flapped = applyOps({
+      run,
+      requirements: REQ,
+      openings: OPENINGS,
+      ops: [{ op: 'set_opening', moduleId: upper.id, opening: 'flap' }],
+    } as never);
+
+    check(
+      'подъёмник ставит ручку снизу',
+      spotIn(lifted, upper.id)?.place === 'bottom-center',
+      `${spotIn(lifted, upper.id)?.place ?? 'НЕ ПОСЧИТАЛОСЬ'}`,
+    );
+
+    check(
+      'откидной — сверху',
+      spotIn(flapped, upper.id)?.place === 'top-center',
+      `${spotIn(flapped, upper.id)?.place ?? 'НЕ ПОСЧИТАЛОСЬ'}`,
+    );
+
+    /* ── 5. Высота переживает пересборку ряда ── */
+
+    const raised = applyOps({
+      run,
+      requirements: REQ,
+      openings: OPENINGS,
+      ops: [{ op: 'set_handle_spot', moduleId: upper.id, level: 'bottom', turn: 'horizontal' }],
+    } as never);
+
+    check(
+      'высота и поворот легли на модуль',
+      spotIn(raised, upper.id)?.place.endsWith('-bottom') === true &&
+        spotIn(raised, upper.id)?.turn === 'horizontal',
+      `${spotIn(raised, upper.id)?.place}/${spotIn(raised, upper.id)?.turn}`,
+    );
+
+    const rebuilt = applyOps({
+      run: raised,
+      requirements: REQ,
+      openings: OPENINGS,
+      ops: [{ op: 'set_width', moduleId: upper.id, widthMm: upper.widthMm }],
+    } as never);
+
+    check(
+      'и переживают пересборку ряда',
+      spotIn(rebuilt, upper.id)?.place === spotIn(raised, upper.id)?.place &&
+        spotIn(rebuilt, upper.id)?.turn === spotIn(raised, upper.id)?.turn,
+      `до ${spotIn(raised, upper.id)?.place}/${spotIn(raised, upper.id)?.turn} · после ${spotIn(
+        rebuilt,
+        upper.id,
+      )?.place}/${spotIn(rebuilt, upper.id)?.turn}`,
+    );
+
+    /* ── 4. Сторону выбрать нельзя: отвечаем словами ── */
+
+    const refused = applyOps({
+      run,
+      requirements: REQ,
+      openings: OPENINGS,
+      ops: [{ op: 'set_handle_spot', moduleId: upper.id, place: 'left-top' }],
+    } as never);
+
+    check(
+      'сторону ручки выбрать нельзя, и отказ объясняет ПОЧЕМУ',
+      (refused.warnings ?? []).some((w) => w.includes('напротив петель')),
+      (refused.warnings ?? [])[0] ?? 'МОЛЧА ПРИНЯЛ СТОРОНУ',
+    );
+
+    check(
+      'и отказ ничего не сломал: ручка осталась на месте',
+      spotIn(refused, upper.id)?.place === spotIn(run, upper.id)?.place,
+      `${spotIn(run, upper.id)?.place} → ${spotIn(refused, upper.id)?.place}`,
+    );
+
+    /* ── 7. Умолчания не двигают ни смету, ни отпечаток ── */
+
+    const before = Math.round(buildEstimate(run, MAIN_VARIANT, DEMO_RATES).total);
+    const after = Math.round(buildEstimate(raised, MAIN_VARIANT, DEMO_RATES).total);
+
+    check(
+      'место ручки не меняет смету: это место, а не другая фурнитура',
+      before === after,
+      `${before} → ${after} ₸`,
+    );
+
+    check(
+      'и не входит в отпечаток',
+      run.fingerprint === raised.fingerprint,
+      `${run.fingerprint} → ${raised.fingerprint}`,
+    );
+  }
+
+  /* ── 6. Чертёж показывает ту же ручку, что сцена ── */
+
+  const drawn = run.modules.find((u) => u.frontType === 'door' && !u.appliance);
+
+  check(
+    'модуль со створкой для чертежа есть',
+    Boolean(drawn),
+    drawn ? drawn.label : 'МОДУЛЯ СО СТВОРКОЙ НЕТ',
+  );
+
+  if (drawn) {
+    const glyph = frontGlyph(drawn, 'fronts').find((el) => el.kind === 'handle');
+
+    check(
+      'на чертеже ручка есть',
+      Boolean(glyph),
+      glyph ? 'нарисована' : 'РУЧКИ НА ЧЕРТЕЖЕ НЕТ',
+    );
+
+    check(
+      'и стоит в том же месте, что в сцене',
+      glyph !== undefined &&
+        glyph.kind === 'handle' &&
+        glyph.spot.place === handleSpotOf(drawn, run).place &&
+        glyph.spot.turn === handleSpotOf(drawn, run).turn,
+      glyph && glyph.kind === 'handle'
+        ? `чертёж ${glyph.spot.place}/${glyph.spot.turn} · сцена ${
+            handleSpotOf(drawn, run).place
+          }/${handleSpotOf(drawn, run).turn}`
+        : 'СВЕРЯТЬ НЕЧЕГО',
     );
   }
 }

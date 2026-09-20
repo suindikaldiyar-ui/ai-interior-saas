@@ -1,68 +1,156 @@
-import type { FrontOpening, HandleKind, HandlePlace } from '@/types/millwork';
+import { handleOf, openingOf } from './opening';
+import type {
+  HandleLevel,
+  HandlePlace,
+  HandleSpotPlace,
+  HandleTurn,
+  Module,
+  Run,
+} from '@/types/millwork';
 
 /**
  * ГДЕ НА ФАСАДЕ СТОИТ РУЧКА.
  *
- * Тип ручки (скоба, профиль, нажатие) и её МЕСТО — разные вопросы. Тип
- * это фурнитура и деньги, место — как мебель выглядит и как за неё
- * берутся. Мебельщик ставит скобу и вверху, и внизу, и вдоль кромки, и
- * поперёк — а продукт выводил место из стороны петель и больше ничего
- * не спрашивал.
+ * СНАЧАЛА ВЫБИРАЕТСЯ ОТКРЫВАНИЕ, ПОТОМ СТАВИТСЯ РУЧКА — и не наоборот.
+ * Мебельщик решает, куда открывается створка, а ручка встаёт напротив
+ * петель сама: на петельной стороне за неё не взяться, а открытая дверца
+ * бьёт по руке. Это не предпочтение, это физика узла.
  *
- * ВОСЕМЬ ПОЛОЖЕНИЙ = ЧЕТЫРЕ КРОМКИ × ДВЕ ОРИЕНТАЦИИ.
+ * Отсюда главное следствие: СТОРОНА НЕ ХРАНИТСЯ. Она выводится из
+ * направления открывания, и выбрать её нельзя — не потому что запрещено,
+ * а потому что такого поля нет. Ручка на стороне петель в этом продукте
+ * не выражается вовсе.
  *
- *   верх / низ / левая / правая  — у какой кромки полотна лежит ручка
- *   вдоль / поперёк              — параллельно этой кромке или к ней
+ * Замерщик правит две вещи, и обе хранятся на модуле:
  *
- * «Вдоль верхней» — горизонтальная планка под верхней кромкой, так стоит
- * ручка-профиль. «Поперёк верхней» — вертикальная скоба, свисающая от
- * верхней кромки вниз: так делают на высоких фасадах. Раскладка выбрана
- * потому, что ею описывается всё, что встречается в цеху, и каждое
- * положение отличается от остальных и координатой, и ориентацией — то
- * есть его видно, а не только называется по-разному.
+ *   `fill.handleLevel`  высота: верх · середина · низ
+ *   `fill.handleTurn`   планка вертикально или горизонтально
  *
- * МЕСТО ЛЕЖИТ НА МОДУЛЕ, рядом с типом ручки (`fill.handlePlace`):
- * второго состояния не заводится, правка ложится туда же, куда ширина и
- * материал, и так же переживает пересборку ряда.
+ * Сменил направление — ручка переехала на другой край, а его высота и
+ * поворот остались: он выбирал их, а не сторону.
+ *
+ * ВОСЕМЬ МЕСТ = ТРИ ВЫСОТЫ НА ЛЕВОМ КРАЮ, ТРИ НА ПРАВОМ, ПЛЮС СЕРЕДИНА
+ * ВЕРХНЕЙ И НИЖНЕЙ КРОМКИ. Верхняя и нижняя достаются механизмам:
+ * подъёмнику ручка нужна снизу, откидному сверху — там свободный край.
  */
 
-export const HANDLE_PLACES: { key: HandlePlace; title: string }[] = [
-  { key: 'top-along', title: 'Сверху вдоль' },
-  { key: 'top-across', title: 'Сверху поперёк' },
-  { key: 'bottom-along', title: 'Снизу вдоль' },
-  { key: 'bottom-across', title: 'Снизу поперёк' },
-  { key: 'left-along', title: 'Слева вдоль' },
-  { key: 'left-across', title: 'Слева поперёк' },
-  { key: 'right-along', title: 'Справа вдоль' },
-  { key: 'right-across', title: 'Справа поперёк' },
+export const HANDLE_SPOTS: { key: HandleSpotPlace; title: string }[] = [
+  { key: 'left-top', title: 'Слева вверху' },
+  { key: 'left-middle', title: 'Слева посередине' },
+  { key: 'left-bottom', title: 'Слева внизу' },
+  { key: 'right-top', title: 'Справа вверху' },
+  { key: 'right-middle', title: 'Справа посередине' },
+  { key: 'right-bottom', title: 'Справа внизу' },
+  { key: 'top-center', title: 'Сверху по центру' },
+  { key: 'bottom-center', title: 'Снизу по центру' },
 ];
 
-const KEYS = new Set<string>(HANDLE_PLACES.map((place) => place.key));
+export const HANDLE_TURNS: { key: HandleTurn; title: string }[] = [
+  { key: 'vertical', title: 'Вертикально' },
+  { key: 'horizontal', title: 'Горизонтально' },
+];
 
-/** Известное положение или `null`: чужая строка местом ручки не становится. */
-export function handlePlaceOrNull(value: unknown): HandlePlace | null {
-  return typeof value === 'string' && KEYS.has(value) ? (value as HandlePlace) : null;
+export const HANDLE_LEVELS: { key: HandleLevel; title: string }[] = [
+  { key: 'top', title: 'Вверху' },
+  { key: 'middle', title: 'Посередине' },
+  { key: 'bottom', title: 'Внизу' },
+];
+
+const LEVELS = new Set<string>(HANDLE_LEVELS.map((level) => level.key));
+const TURNS = new Set<string>(HANDLE_TURNS.map((turn) => turn.key));
+const SPOTS = new Set<string>(HANDLE_SPOTS.map((spot) => spot.key));
+
+export function handleLevelOrNull(value: unknown): HandleLevel | null {
+  return typeof value === 'string' && LEVELS.has(value) ? (value as HandleLevel) : null;
+}
+
+export function handleTurnOrNull(value: unknown): HandleTurn | null {
+  return typeof value === 'string' && TURNS.has(value) ? (value as HandleTurn) : null;
+}
+
+export function handleSpotOrNull(value: unknown): HandleSpotPlace | null {
+  return typeof value === 'string' && SPOTS.has(value) ? (value as HandleSpotPlace) : null;
+}
+
+/** Куда ручка встала и как повёрнута планка. */
+export type HandleSpot = { place: HandleSpotPlace; turn: HandleTurn };
+
+/**
+ * СТАРОЕ ЗНАЧЕНИЕ ПЕРЕНОСИТСЯ ПО СМЫСЛУ, А НЕ СБРАСЫВАЕТСЯ.
+ *
+ * До этой правки место хранилось целиком — «четыре кромки × две
+ * ориентации» (`top-along`, `right-across` и соседи). Сторона в нём была
+ * ЧАСТЬЮ ЗНАЧЕНИЯ, и её приходится отбросить: теперь она выводится из
+ * петель, и сохранённая спорила бы с выводом на первой же смене
+ * направления.
+ *
+ * Потери от этого нет. Старая сторона сама выводилась из петель тем же
+ * правилом «напротив петельной», а высоты в прежней раскладке не было
+ * вовсе — все значения рисовались по середине кромки. Значит из старого
+ * значения переносится ровно то, что в нём было своего: ПОВОРОТ планки.
+ * Высота становится серединой — ею она и была.
+ */
+export function levelFromLegacy(place: HandlePlace | undefined): HandleTurn | null {
+  if (!place) return null;
+  if (place === 'left-along' || place === 'right-along') return 'vertical';
+  if (place === 'left-across' || place === 'right-across') return 'horizontal';
+  if (place === 'top-along' || place === 'bottom-along') return 'horizontal';
+  if (place === 'top-across' || place === 'bottom-across') return 'vertical';
+  return null;
 }
 
 /**
- * ПОЛОЖЕНИЕ ПО УМОЛЧАНИЮ — РОВНО ТО, ЧТО СТОЯЛО ДО ВЫБОРА.
+ * КУДА ВСТАЁТ РУЧКА ЭТОГО МОДУЛЯ.
  *
- * Профиль лежал по верхней кромке, подъёмник — по нижней, откидной — по
- * верхней, скоба — вертикально у края, противоположного петлям. Всё это
- * повторено здесь до последнего случая: ряд, собранный раньше, обязан
- * выглядеть так же, как выглядел, и отпечаток его не имеет права
- * поехать (ловушка 246).
+ * Сторона выводится, высота и поворот берутся у человека. Одна функция
+ * на сцену, чертёж и таблицу фурнитуры: три ответа на «где ручка»
+ * разъехались бы, а сборщик читает лист и смотрит на картинку рядом.
  */
-export function defaultHandlePlace(
-  kind: HandleKind,
-  opening: FrontOpening,
-  hinge: 'left' | 'right',
-): HandlePlace {
-  if (kind === 'profile') return 'top-along';
-  if (opening === 'lift') return 'bottom-along';
-  if (opening === 'flap') return 'top-along';
-  /* Скоба стоит у СВОБОДНОГО края: петли слева — ручка справа. */
-  return hinge === 'left' ? 'right-along' : 'left-along';
+export function handleSpotOf(
+  unit: Module,
+  run: Pick<Run, 'options'>,
+  /**
+   * Сторона петель ЭТОГО полотна.
+   *
+   * У двух створок стороны разные: левая на левой петле, правая на
+   * правой, — и ручка у каждой на своём свободном краю. Сцена знает это
+   * по индексу створки (`doorHinge`) и передаёт сюда; чертёж и таблица
+   * фурнитуры спрашивают модуль целиком и оставляют пустым.
+   */
+  hinge?: 'left' | 'right',
+): HandleSpot {
+  const { handle } = handleOf(unit, run);
+  const { opening } = openingOf(unit);
+
+  const level = handleLevelOrNull(unit.fill?.handleLevel) ?? 'middle';
+  const turn =
+    handleTurnOrNull(unit.fill?.handleTurn) ??
+    levelFromLegacy(unit.fill?.handlePlace) ??
+    null;
+
+  /*
+   * ПРОФИЛЬ ИДЁТ ПО ВЕРХНЕЙ КРОМКЕ ВСЕГДА.
+   *
+   * Врезная ручка-профиль режется по ширине фасада и стоит под его
+   * верхом — сторона петель ей безразлична. Так она и стояла до этой
+   * правки, и ряды, собранные раньше, не двигаются.
+   */
+  if (handle === 'profile') return { place: 'top-center', turn: turn ?? 'horizontal' };
+
+  /* У механизма ручка на СВОБОДНОМ крае: подъёмнику снизу, откидному сверху. */
+  if (opening === 'lift') return { place: 'bottom-center', turn: turn ?? 'horizontal' };
+  if (opening === 'flap') return { place: 'top-center', turn: turn ?? 'horizontal' };
+
+  /*
+   * РАСПАШНАЯ СТВОРКА: РУЧКА НАПРОТИВ ПЕТЕЛЬ.
+   *
+   * `openingOf` отвечает, с какой стороны петли; всё, что не «справа»,
+   * считается левым — так же, как решает сцена, когда вращает полотно.
+   */
+  const hingeRight = hinge ? hinge === 'right' : opening === 'right';
+  const side: 'left' | 'right' = hingeRight ? 'left' : 'right';
+
+  return { place: `${side}-${level}` as HandleSpotPlace, turn: turn ?? 'vertical' };
 }
 
 /** Что известно о полотне, чтобы поставить на него ручку. */
@@ -92,65 +180,51 @@ const BAR = 0.016;
  *
  * Считается ОДИН раз и здесь: сцена, чертёж и деталировка обязаны
  * показывать ручку в одном месте, а три формулы одного места разъедутся
- * на первой же правке — этот класс ошибки в продукте ловился больше
- * десяти раз.
+ * на первой же правке.
  *
- * Ручка не выходит за полотно ни в одном из восьми положений: длина
- * ограничена долей стороны, вдоль которой она лежит, а отступ от кромки
- * считается от меньшей стороны полотна — на узкой дверце он меньше, и
+ * Ручка не выходит за полотно ни в одном из шестнадцати сочетаний: длина
+ * планки ограничена долей стороны, вдоль которой она лежит, а отступ от
+ * кромки считается от МЕНЬШЕЙ стороны — на узкой дверце он меньше, и
  * планка не свисает.
  */
-export function handleBoxOf(place: HandlePlace, leaf: LeafGeometry): HandleBox {
+export function handleBoxOf(spot: HandleSpot, leaf: LeafGeometry): HandleBox {
   const { cx, cy, widthM, heightM, thicknessM } = leaf;
   const inset = Math.min(widthM, heightM) * EDGE_INSET;
   const z = thicknessM + BAR / 2;
 
-  /** Длина планки: доля стороны, вдоль которой она стоит. */
-  const along = (side: number) => Math.min(0.26, Math.max(0.06, side * 0.6));
-  /** Длина планки поперёк: короче, иначе она перекрывает половину полотна. */
-  const across = (side: number) => Math.min(0.18, Math.max(0.05, side * 0.32));
+  /** Длина планки: доля стороны, вдоль которой она стоит, но не больше поля. */
+  const span = (side: number) => Math.min(0.26, Math.max(0.06, side * 0.5));
 
-  switch (place) {
-    case 'top-along':
-      return {
-        position: [cx, cy + heightM / 2 - inset, z],
-        scale: [along(widthM), BAR, BAR],
-      };
-    case 'top-across':
-      return {
-        position: [cx, cy + heightM / 2 - inset - across(heightM) / 2, z],
-        scale: [BAR, across(heightM), BAR],
-      };
-    case 'bottom-along':
-      return {
-        position: [cx, cy - heightM / 2 + inset, z],
-        scale: [along(widthM), BAR, BAR],
-      };
-    case 'bottom-across':
-      return {
-        position: [cx, cy - heightM / 2 + inset + across(heightM) / 2, z],
-        scale: [BAR, across(heightM), BAR],
-      };
-    case 'left-along':
-      return {
-        position: [cx - widthM / 2 + inset, cy, z],
-        scale: [BAR, along(heightM), BAR],
-      };
-    case 'left-across':
-      return {
-        position: [cx - widthM / 2 + inset + across(widthM) / 2, cy, z],
-        scale: [across(widthM), BAR, BAR],
-      };
-    case 'right-along':
-      return {
-        position: [cx + widthM / 2 - inset, cy, z],
-        scale: [BAR, along(heightM), BAR],
-      };
-    case 'right-across':
-    default:
-      return {
-        position: [cx + widthM / 2 - inset - across(widthM) / 2, cy, z],
-        scale: [across(widthM), BAR, BAR],
-      };
-  }
+  /* Вертикальная планка длинная по Y, горизонтальная — по X. */
+  const scale: [number, number, number] =
+    spot.turn === 'vertical'
+      ? [BAR, Math.min(span(heightM), heightM - inset * 2), BAR]
+      : [Math.min(span(widthM), widthM - inset * 2), BAR, BAR];
+
+  const halfW = scale[0] / 2;
+  const halfH = scale[1] / 2;
+
+  /** Отступ от края: планка целиком внутри полотна при любом повороте. */
+  const edgeX = Math.max(inset, halfW);
+  const edgeY = Math.max(inset, halfH);
+
+  const x =
+    spot.place.startsWith('left')
+      ? cx - widthM / 2 + edgeX
+      : spot.place.startsWith('right')
+        ? cx + widthM / 2 - edgeX
+        : cx;
+
+  const y =
+    spot.place.endsWith('-top')
+      ? cy + heightM / 2 - edgeY
+      : spot.place.endsWith('-bottom')
+        ? cy - heightM / 2 + edgeY
+        : spot.place === 'top-center'
+          ? cy + heightM / 2 - edgeY
+          : spot.place === 'bottom-center'
+            ? cy - heightM / 2 + edgeY
+            : cy;
+
+  return { position: [x, y, z], scale };
 }

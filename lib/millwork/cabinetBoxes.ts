@@ -15,7 +15,7 @@ import type { ApplianceKind } from '@/types/millwork';
 import { FRAME_WIDTH_MM, frontKey, isFramed } from './frontMaterial';
 import { moduleFronts, type FacadeSpan } from './applianceFront';
 import { carcassKeyOf, type CarcassItem } from './carcassMaterial';
-import { defaultHandlePlace, handleBoxOf } from './handlePlace';
+import { handleBoxOf, handleSpotOf } from './handlePlace';
 
 /**
  * ОТСТУП ЧАШКИ ОТ КРОМКИ — УСЛОВНЫЙ, ДЛЯ КАРТИНКИ.
@@ -487,11 +487,10 @@ export function doorBoxes(
   const part = unit.id + ':door:' + index;
 
   /*
-   * У механизма ручка на СВОБОДНОМ крае: у подъёмника снизу, у откидного
-   * сверху. Закрытая створка рисуется здесь, открытая — своим мешем; обе
-   * обязаны показывать одну и ту же мебель, поэтому правило одно.
+   * Где ручка — отвечает `handleSpotOf` ниже: у механизма она на
+   * свободном крае, у распашной створки напротив петель. Правило одно на
+   * закрытую створку, открытую и на лист.
    */
-  const opening = doorOpening(unit, index, doors);
 
 
   /*
@@ -513,10 +512,13 @@ export function doorBoxes(
    * Умолчание повторяет прежние три случая до последнего, поэтому ряды,
    * собранные раньше, выглядят так же (`defaultHandlePlace`).
    */
-  const handleAt =
-    unit.fill?.handlePlace ?? defaultHandlePlace(kind, opening, hinge);
-
-  const geometry = handleBoxOf(handleAt, {
+  /*
+   * СТОРОНА ВЫВОДИТСЯ ИЗ ОТКРЫВАНИЯ, А НЕ ХРАНИТСЯ.
+   *
+   * Одна функция на сцену, чертёж и таблицу фурнитуры: сменилось
+   * направление — ручка переехала везде разом.
+   */
+  const geometry = handleBoxOf(handleSpotOf(unit, { options: { integratedHandles } } as Run, hinge), {
     cx,
     cy,
     widthM: doorW - 2 * gap,

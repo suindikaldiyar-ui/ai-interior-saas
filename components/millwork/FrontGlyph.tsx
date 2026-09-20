@@ -233,7 +233,7 @@ export default function FrontGlyph({
              * Полотно здесь — прямоугольник вида, поэтому в функцию идут
              * его центр и габарит в единицах листа.
              */
-            const box = handleBoxOf(el.place, {
+            const box = handleBoxOf(el.spot, {
               cx: x + width / 2,
               cy: y + height / 2,
               widthM: width,
@@ -248,7 +248,8 @@ export default function FrontGlyph({
               <rect
                 key={i}
                 data-symbol="handle"
-                data-handle-place={el.place}
+                data-handle-place={el.spot.place}
+                data-handle-turn={el.spot.turn}
                 x={box.position[0] - box.scale[0] / 2}
                 y={hy - box.scale[1] / 2}
                 width={Math.max(0.8 * k, box.scale[0])}

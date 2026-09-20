@@ -9,10 +9,13 @@ import {
   type CarcassItem,
   type CarcassScope,
 } from '@/lib/millwork/carcassMaterial';
-import { HANDLE_PLACES, defaultHandlePlace } from '@/lib/millwork/handlePlace';
+import {
+  HANDLE_LEVELS,
+  HANDLE_SPOTS,
+  HANDLE_TURNS,
+  handleSpotOf,
+} from '@/lib/millwork/handlePlace';
 import { moduleById } from '@/lib/millwork/selection';
-import { openingOf } from '@/lib/millwork/opening';
-import { handleOf } from '@/lib/millwork/opening';
 
 /**
  * МАТЕРИАЛ КОРПУСА И МЕСТО РУЧКИ.
@@ -178,39 +181,62 @@ export default function CarcassPicker({ run, catalog, selectedModuleId, onOps }:
         </div>
       )}
 
-      {/* ── Место ручки: восемь положений на выбранном модуле ── */}
+      {/* ── Ручка: высота и поворот. Сторона выводится из петель ── */}
       {unit && (
-        <div className="mt-3" data-handle-places>
+        <div className="mt-3" data-handle-spot>
           <span className="mw-label">Ручка на фасаде</span>
-          <div className="mt-1 grid grid-cols-2 gap-[6px] sm:grid-cols-4">
-            {HANDLE_PLACES.map((place) => {
-              const current =
-                unit.fill?.handlePlace ??
-                defaultHandlePlace(
-                  handleOf(unit, run).handle,
-                  openingOf(unit).opening,
-                  openingOf(unit).opening === 'right' ? 'right' : 'left',
-                );
 
-              return (
-                <button
-                  key={place.key}
-                  type="button"
-                  data-handle-place={place.key}
-                  aria-pressed={current === place.key}
-                  onClick={() =>
-                    onOps([
-                      { op: 'set_handle_place', moduleId: unit.id, place: place.key },
-                    ])
-                  }
-                  className={`mw-btn ${
-                    current === place.key ? 'mw-btn-primary' : 'mw-btn-ghost'
-                  }`}
-                >
-                  {place.title}
-                </button>
-              );
-            })}
+          {/*
+            * СТОРОНЫ В ВЫБОРЕ НЕТ НАМЕРЕННО.
+            *
+            * Ручка стоит напротив петель: на петельной стороне за неё не
+            * взяться, а открытая створка бьёт по руке. Поэтому сторона
+            * показана СЛОВАМИ — как следствие открывания, а не кнопкой.
+            */}
+          <p className="mt-1 text-[13px] text-graphiteMw" data-handle-side>
+            {HANDLE_SPOTS.find((item) => item.key === handleSpotOf(unit, run).place)?.title ??
+              'не определено'}
+            {' — напротив петель. Сменить сторону можно только направлением открывания.'}
+          </p>
+
+          <div className="mt-1 flex flex-wrap gap-[6px]">
+            {HANDLE_LEVELS.map((level) => (
+              <button
+                key={level.key}
+                type="button"
+                data-set-level={level.key}
+                aria-pressed={(unit.fill?.handleLevel ?? 'middle') === level.key}
+                onClick={() =>
+                  onOps([{ op: 'set_handle_spot', moduleId: unit.id, level: level.key }])
+                }
+                className={`mw-btn ${
+                  (unit.fill?.handleLevel ?? 'middle') === level.key
+                    ? 'mw-btn-primary'
+                    : 'mw-btn-ghost'
+                }`}
+              >
+                {level.title}
+              </button>
+            ))}
+          </div>
+
+          <div className="mt-1 flex flex-wrap gap-[6px]">
+            {HANDLE_TURNS.map((turn) => (
+              <button
+                key={turn.key}
+                type="button"
+                data-set-turn={turn.key}
+                aria-pressed={handleSpotOf(unit, run).turn === turn.key}
+                onClick={() =>
+                  onOps([{ op: 'set_handle_spot', moduleId: unit.id, turn: turn.key }])
+                }
+                className={`mw-btn ${
+                  handleSpotOf(unit, run).turn === turn.key ? 'mw-btn-primary' : 'mw-btn-ghost'
+                }`}
+              >
+                {turn.title}
+              </button>
+            ))}
           </div>
         </div>
       )}
