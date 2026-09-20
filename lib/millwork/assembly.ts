@@ -7,7 +7,8 @@ import {
   type PartBox,
 } from './cabinetBoxes';
 import { layoutLeaders, type LeaderLayout } from './leaders';
-import { drawerSlides, openingHardware } from './opening';
+import { drawerSlides, handleOf, openingHardware, openingOf } from './opening';
+import { HANDLE_PLACES, defaultHandlePlace } from './handlePlace';
 import { moduleCarcassHeightMm } from './fill';
 import { DRAWER_FRONT_PANEL_NAME } from './panels';
 import { moduleNumbers } from './positions';
@@ -150,9 +151,30 @@ export function moduleHardware(unit: Module, run: Run): HardwareRow[] {
     slides: drawerSlides(unit),
   };
 
+  /*
+   * У РУЧКИ НАЗВАНО ЕЁ МЕСТО.
+   *
+   * Ручка не деталь раскроя — номера у неё нет, и в таблицу деталей она
+   * не попадает. Но сборщику важно, КУДА её вешать, и место у модуля уже
+   * выбрано: называем его там же, где количество.
+   */
+  const place = HANDLE_PLACES.find(
+    (item) =>
+      item.key ===
+      (unit.fill?.handlePlace ??
+        defaultHandlePlace(
+          handleOf(unit, run).handle,
+          openingOf(unit).opening,
+          openingOf(unit).opening === 'right' ? 'right' : 'left',
+        )),
+  );
+
   return HARDWARE_ORDER.filter((key) => (counts[key] ?? 0) > 0).map((key) => ({
     key,
-    title: HARDWARE_TITLE[key].title,
+    title:
+      key.startsWith('handle') && place
+        ? `${HARDWARE_TITLE[key].title} · ${place.title.toLowerCase()}`
+        : HARDWARE_TITLE[key].title,
     qty: counts[key],
     unit: HARDWARE_TITLE[key].unit,
   }));

@@ -6,13 +6,14 @@ import {
 import { allModules } from './layout';
 import { bearsCountertop, moduleCarcassHeightMm } from './fill';
 import { CORNER_HINGE_TITLE, drawerSlides, liftKey, openingHardware } from './opening';
-import { buildPanels, panelMaterials } from './panels';
+import { buildPanels, panelMaterials, SHELF_PANEL_NAME} from './panels';
 import { DEFAULT_PRODUCTION, type HardwareItem, type ProductionSettings } from '@/types/catalog';
 import { resolveHardware } from './hardware';
 import { SLIDING_DOOR, displayLedMeters, sectionSpec, slidingDoorCount } from './sections';
 import { MODULE_VARIANTS, isSinkBase, variantEstimateKeys } from './moduleVariants';
 import { zoneProfile } from './zones';
 import { millingLink, type MillingItem } from './milling';
+import { carcassLink, type CarcassItem } from './carcassMaterial';
 import type {
   Estimate,
   EstimateLine,
@@ -266,6 +267,7 @@ export function buildEstimateDrafts(
    * меняется.
    */
   millingItems: Map<string, MillingItem> = new Map(),
+  carcassItems: Map<string, CarcassItem> = new Map(),
 ): Draft[] {
   /*
    * Высоту и потолок больше не разбираем по кусочкам: всё, что считает
@@ -445,7 +447,20 @@ export function buildEstimateDrafts(
   const carcassTitle = zone.moistureProof ? 'Корпус влагостойкий ЛДСП' : 'Корпус ЛДСП';
 
   const drafts: Draft[] = [
-    { key: carcassKey, title: carcassTitle, unit: 'm2', quantity: materials.carcassM2 },
+    /*
+     * КОРПУС ПО СТАВКЕ ЦЕХА — ТОЛЬКО ТО, ЧТО НЕ ПОКРАШЕНО ДЕКОРОМ.
+     *
+     * Площадь модулей с выбранным материалом уходит в свою строку по
+     * цене позиции каталога; здесь её вычитаем, иначе она оплачена
+     * дважды. Это тот же приём, что у выбранной фурнитуры: каталог
+     * задаёт ЦЕНУ, а количество приходит из раскроя.
+     */
+    {
+      key: carcassKey,
+      title: carcassTitle,
+      unit: 'm2',
+      quantity: round2(Math.max(0, materials.carcassM2 - pickedCarcassM2(run, panels, carcassItems))),
+    },
     /*
      * ПОЛКИ ОТДЕЛЬНОЙ СТРОКОЙ — одна на весь ряд, по `fill.shelves`.
      *
@@ -473,6 +488,7 @@ export function buildEstimateDrafts(
      * а «цену не задали», и говорит об этом `millingWarnings`.
      */
     ...millingDrafts(run, panels, millingItems),
+    ...carcassDrafts(run, panels, carcassItems),
     { key: 'pvc_edge', title: 'Кромка ПВХ', unit: 'mp', quantity: materials.edgeM },
   ];
 
@@ -748,6 +764,77 @@ function hardwareTitle(kind: Run['options']['hardwareClass']): string {
 export const DELIVERY_KEY = 'delivery_install';
 
 /**
+ * Площадь корпуса, у которого выбран СВОЙ материал.
+ *
+ * Считается из уже нарезанных панелей: второй расчёт площади ради новой
+ * статьи развёл бы смету с раскроем. Берутся те же детали, которые
+ * `panelMaterials` относит к корпусу.
+ */
+function carcassAreas(
+  run: Run,
+  panels: Panel[],
+  catalog: Map<string, CarcassItem>,
+): Map<string, { item: CarcassItem; m2: number }> {
+  const out = new Map<string, { item: CarcassItem; m2: number }>();
+  if (catalog.size === 0) return out;
+
+  const byModule = new Map<string, Module>();
+  for (const unit of [...run.modules, ...run.upperSegments.flatMap((s) => s.modules)]) {
+    byModule.set(unit.id, unit);
+  }
+
+  for (const panel of panels) {
+    if (panel.material.startsWith('ХДФ') || panel.material.startsWith('Фасад')) continue;
+    if (panel.name === SHELF_PANEL_NAME) continue;
+
+    const unit = byModule.get(panel.moduleId);
+    if (!unit) continue;
+
+    const link = carcassLink(unit, run, catalog);
+    if (link.state !== 'resolved') continue;
+
+    const areaM2 = (panel.lengthMm * panel.widthMm * panel.qty) / 1_000_000;
+    const at = out.get(link.item.id);
+    if (at) at.m2 += areaM2;
+    else out.set(link.item.id, { item: link.item, m2: areaM2 });
+  }
+
+  return out;
+}
+
+function pickedCarcassM2(
+  run: Run,
+  panels: Panel[],
+  catalog: Map<string, CarcassItem>,
+): number {
+  let sum = 0;
+  for (const { m2 } of Array.from(carcassAreas(run, panels, catalog).values())) sum += m2;
+  return round2(sum);
+}
+
+/**
+ * Строки корпуса своего декора: по одной на применённую позицию каталога.
+ *
+ * Площадь — из раскроя, цена — из позиции. Позиция без цены своей строки
+ * не даёт вовсе и остаётся в общей: корпус за ничего клиенту не выдаём.
+ */
+function carcassDrafts(
+  run: Run,
+  panels: Panel[],
+  catalog: Map<string, CarcassItem>,
+): Draft[] {
+  return Array.from(carcassAreas(run, panels, catalog).values())
+    .sort((a, b) => a.item.name.localeCompare(b.item.name, 'ru'))
+    .map(({ item, m2 }) => ({
+      key: `carcass_${item.id}`,
+      title: `Корпус «${item.name}»`,
+      unit: 'm2' as const,
+      quantity: Math.round(m2 * 100) / 100,
+      rate: item.price,
+    }));
+}
+
+/**
  * Строки фрезеровки: по одной на каждую применённую позицию каталога.
  *
  * Площадь берётся из УЖЕ НАРЕЗАННЫХ панелей и группируется по модулю:
@@ -811,8 +898,10 @@ export function buildEstimate(
   hardwareItems: Map<string, HardwareItem> = new Map(),
   /** Фрезеровки организации: цены выбранных позиций. Пусто — как раньше. */
   millingItems: Map<string, MillingItem> = new Map(),
+  /** Материалы корпуса организации: цены выбранных позиций. Пусто — как раньше. */
+  carcassItems: Map<string, CarcassItem> = new Map(),
 ): Estimate {
-  const drafts = buildEstimateDrafts(run, production, hardwareItems, millingItems);
+  const drafts = buildEstimateDrafts(run, production, hardwareItems, millingItems, carcassItems);
   const disabled = new Set(disabledKeys);
   const priceSnapshot: Record<string, number> = {};
 

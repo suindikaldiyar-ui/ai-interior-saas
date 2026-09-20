@@ -26,6 +26,7 @@ import {
 } from '@/lib/millwork/sheet';
 import { GEOMETRY } from '@/lib/millwork/modules';
 import type { CommPoint, LayoutIssue, Run } from '@/types/millwork';
+import type { CarcassItem } from '@/lib/millwork/carcassMaterial';
 import type { VariantOption } from './ElevationDrawing';
 import type { DrawingMode } from './ElevationDrawing';
 
@@ -88,6 +89,11 @@ type Props = {
   issues?: LayoutIssue[];
   /** Толщины и зазоры цеха: аксонометрия строится по ним же. */
   production?: ProductionSettings;
+  /**
+   * МАТЕРИАЛЫ КОРПУСА ОРГАНИЗАЦИИ: по ним лист называет декор корпуса.
+   * Пусто — обычная плита цеха, как и раньше.
+   */
+  carcass?: Map<string, CarcassItem>;
   /** Правки идут по фасаду: он остаётся живым, а не картинкой на листе. */
   elevation?: ElevationHandlers;
   /** Заказчик — в штамп: лист уходит и ему тоже. */
@@ -113,6 +119,7 @@ export default function DrawingSheet({
   comms,
   issues = [],
   production = DEFAULT_PRODUCTION,
+  carcass,
   elevation = {},
   client,
   company,
@@ -143,7 +150,7 @@ export default function DrawingSheet({
    * настройках цеха цех получит на чертеже одну «3.2», а в раскрое
    * другую.
    */
-  const panels = buildPanels({ run, production });
+  const panels = buildPanels({ run, production, carcass });
 
   const leaders = buildLeaders(run, panels, {
     facade: entryFor(FACADE_TARGET),

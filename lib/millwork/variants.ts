@@ -2,6 +2,7 @@ import { buildRun, type BuildRunInput } from './layout';
 import { buildEstimate, type RateTable } from './estimate';
 import type { ProductionSettings } from '@/types/catalog';
 import type { MillingItem } from './milling';
+import type { CarcassItem } from './carcassMaterial';
 import { APPLIANCE_SLOTS } from './modules';
 import type {
   ApplianceKind,
@@ -110,6 +111,14 @@ export interface BuildVariantsInput extends Omit<BuildRunInput, 'requirements'> 
    * хранится и ни на что не влияет, это дефект.
    */
   milling?: Map<string, MillingItem>;
+  /**
+   * МАТЕРИАЛЫ КОРПУСА ОРГАНИЗАЦИИ.
+   *
+   * Едут тем же путём, что фрезеровка и настройки цеха: смета считает по
+   * ТОМУ ЖЕ прайсу, который замерщик видит на карточках. Поле, которое
+   * хранится и не доезжает до суммы, — дефект.
+   */
+  carcass?: Map<string, CarcassItem>;
   strategies?: VariantStrategy[];
   disabledKeys?: Record<VariantKey, string[]>;
   calculatedAt?: string;
@@ -157,6 +166,7 @@ export function buildVariants(input: BuildVariantsInput): Variant[] {
       input.production,
       undefined,
       input.milling,
+      input.carcass,
     );
 
     return {

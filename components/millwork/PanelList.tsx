@@ -12,6 +12,7 @@ import {
 } from '@/lib/millwork/csv-export';
 import { DEFAULT_PRODUCTION, type ProductionSettings } from '@/types/catalog';
 import type { Panel, Run } from '@/types/millwork';
+import type { CarcassItem } from '@/lib/millwork/carcassMaterial';
 
 /**
  * Детализировка: лист, который уходит в цех.
@@ -32,6 +33,11 @@ type Props = {
   measuredBy?: string;
   measuredAt?: string;
   production?: ProductionSettings;
+  /**
+   * МАТЕРИАЛЫ КОРПУСА ОРГАНИЗАЦИИ: по ним деталировка называет декор.
+   * Пусто — корпус остаётся обычной плитой цеха, как и раньше.
+   */
+  carcass?: Map<string, CarcassItem>;
 };
 
 const GRAIN_LABEL: Record<Panel['grain'], string> = {
@@ -47,10 +53,14 @@ export default function PanelList({
   measuredBy = '',
   measuredAt = '',
   production = DEFAULT_PRODUCTION,
+  carcass,
 }: Props) {
   const [encoding, setEncoding] = useState<CsvEncoding>('windows-1251');
 
-  const panels = useMemo(() => buildPanels({ run, production }), [run, production]);
+  const panels = useMemo(
+    () => buildPanels({ run, production, carcass }),
+    [run, production, carcass],
+  );
 
   /*
    * ВЫБРАННАЯ ДЕТАЛЬ — ОДНО СОСТОЯНИЕ НА ТАБЛИЦУ И НА ЧЕРТЁЖ.

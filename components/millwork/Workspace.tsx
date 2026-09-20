@@ -46,7 +46,9 @@ import type { DrawingMode } from './ElevationDrawing';
 import EstimateSheet from './EstimateSheet';
 import MaterialsStep from './MaterialsStep';
 import MillingPicker from './MillingPicker';
+import CarcassPicker from './CarcassPicker';
 import { millingCatalog } from '@/lib/millwork/milling';
+import { carcassCatalog } from '@/lib/millwork/carcassMaterial';
 import PanelList from './PanelList';
 import RenderPanel from './RenderPanel';
 import { DEMO_QUOTA_HINT, DEMO_QUOTA_SPENT } from '@/lib/plan';
@@ -804,6 +806,14 @@ export default function Workspace(props: WorkspaceProps) {
    */
   const millingItems = useMemo(() => millingCatalog(catalog), [catalog]);
 
+  /*
+   * МАТЕРИАЛЫ КОРПУСА — ИЗ ТОГО ЖЕ КАТАЛОГА.
+   *
+   * Отдельной таблицы под них нет (ловушка 19): корпус красит тот же
+   * декор, что и фасад, разница только в том, куда он применён.
+   */
+  const carcassItems = useMemo(() => carcassCatalog(catalog), [catalog]);
+
   const input = useMemo(() => {
     if (!resolution) {
       return {
@@ -824,6 +834,7 @@ export default function Workspace(props: WorkspaceProps) {
         runWallId: props.runWallId ?? 'a',
         roomDepthM: props.roomDepthM ?? 3.2,
         milling: millingItems,
+        carcass: carcassItems,
       };
     }
 
@@ -837,11 +848,12 @@ export default function Workspace(props: WorkspaceProps) {
       cornerAt: props.cornerAt ?? null,
       production: production,
       milling: millingItems,
+      carcass: carcassItems,
     });
 
     // Пока стены не введены, ряд брать неоткуда — держим габарит из пропсов.
     return seed.lengthMm > 0 ? seed : { ...seed, lengthMm: props.lengthMm };
-  }, [resolution, wallRequirements, props, millingItems]);
+  }, [resolution, wallRequirements, props, millingItems, carcassItems]);
 
   /*
    * Компоновки: две-три расстановки ОДНОЙ кухни из одного замера. Считаются
@@ -1005,10 +1017,11 @@ export default function Workspace(props: WorkspaceProps) {
               production,
               undefined,
               millingItems,
+              carcassItems,
             ),
       ),
     );
-  }, [layout, segments, active.estimate, variantKey, input.rates, disabled, production, millingItems]);
+  }, [layout, segments, active.estimate, variantKey, input.rates, disabled, production, millingItems, carcassItems]);
 
   /*
    * Смета объекта несёт отпечаток ОБЪЕКТА. Иначе она подписана числом
@@ -1435,6 +1448,7 @@ export default function Workspace(props: WorkspaceProps) {
       production,
       undefined,
       millingItems,
+      carcassItems,
     ).total;
 
     return specs.map((spec) => {
@@ -1458,6 +1472,7 @@ export default function Workspace(props: WorkspaceProps) {
               production,
               undefined,
               millingItems,
+              carcassItems,
             ).total - base,
           );
         } catch {
@@ -1481,7 +1496,7 @@ export default function Workspace(props: WorkspaceProps) {
         active: spec.kind === now,
       };
     });
-  }, [selectedId, active.run, zone, requirements, input.rates, input.openings, disabled, variantKey, production, millingItems]);
+  }, [selectedId, active.run, zone, requirements, input.rates, input.openings, disabled, variantKey, production, millingItems, carcassItems]);
 
   /**
    * ПЕРЕНОС ПРИБОРА НА ДРУГУЮ СТЕНУ.
@@ -3190,6 +3205,13 @@ export default function Workspace(props: WorkspaceProps) {
                   * источника позиций нет.
                   */}
                 <div className="mt-3">
+                  <CarcassPicker
+                    run={active.run}
+                    catalog={carcassItems}
+                    selectedModuleId={selectedId}
+                    onOps={runOps}
+                  />
+
                   <MillingPicker
                     run={active.run}
                     catalog={millingItems}

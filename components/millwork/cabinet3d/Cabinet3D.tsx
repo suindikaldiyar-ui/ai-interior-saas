@@ -13,7 +13,7 @@ import {
   type BoxMaterial,
   type PartBox,
 } from '@/lib/millwork/cabinetBoxes';
-import { useCabinetParts, useFrontMaterials, useSurfaceLook } from './parts';
+import { useCabinetParts, useCarcassMaterials, useFrontMaterials, useSurfaceLook } from './parts';
 import { DEFAULT_FRONT, frontKey } from '@/lib/millwork/frontMaterial';
 import type { FrontSpec } from '@/types/millwork';
 import { surfaceLook } from '@/lib/millwork/surfaces';
@@ -29,6 +29,7 @@ import {
 } from '@/lib/millwork/shop';
 import { zoneProfile } from '@/lib/millwork/zones';
 import { frontWithMilling, millingCatalog } from '@/lib/millwork/milling';
+import { carcassCatalog } from '@/lib/millwork/carcassMaterial';
 import { useInteriorStore } from '@/store/useInteriorStore';
 import { DEFAULT_PRODUCTION, type ProductionSettings } from '@/types/catalog';
 import { DEFAULT_SCENE_VIEW, type SceneView } from '@/lib/cameraFraming';
@@ -304,15 +305,34 @@ export default function Cabinet3D({
    * разная глубина уводит ПЕРЕДНЮЮ. Отвечает на это `runPlaces` внутри
    * `runBoxes`, и второго ответа здесь больше нет.
    */
+  /*
+   * ДЕКОРЫ КОРПУСА — ИЗ ТОГО ЖЕ КАТАЛОГА, ЧТО И ФАСАДЫ.
+   *
+   * Ключ → цвет: по ключу собираются пачки отрисовки, по цвету красится
+   * материал. Второго списка декоров в сцене нет.
+   */
+  const carcassItems = useMemo(() => carcassCatalog(catalog), [catalog]);
+  const carcassColors = useMemo(() => {
+    const out = new Map<string, string>();
+    for (const item of Array.from(carcassItems.values())) {
+      out.set(`carcass/${item.id}`, item.colorHex);
+    }
+    return out;
+  }, [carcassItems]);
+
+  const carcassMaterials = useCarcassMaterials(carcassColors, false);
+  const innerMaterials = useCarcassMaterials(carcassColors, true);
+
   const boxes = useMemo(
     () =>
       runBoxes(run, {
+        carcass: carcassItems,
         thicknessMm: production.carcassMm,
         frontThicknessMm: production.frontMm,
         gapMm: production.frontGapMm,
         cutaway,
       }),
-    [run, production.carcassMm, production.frontMm, production.frontGapMm, cutaway],
+    [run, production.carcassMm, production.frontMm, production.frontGapMm, cutaway, carcassItems],
   );
 
   /*
@@ -362,6 +382,16 @@ export default function Cabinet3D({
      * число вызовов отрисовки не растёт с числом модулей.
      */
     const fronts = new Map<string, PartBox[]>();
+    /*
+     * КОРПУС ТОЖЕ ПАЧКАМИ ПО МАТЕРИАЛУ.
+     *
+     * Пока декор был один на продукт, корпус шёл одной пачкой роли. Свой
+     * декор у модуля — это другой материал, и рисуется он своей пачкой,
+     * как фасад: иначе белый корпус и графитовый оказались бы одного
+     * цвета, то есть клиент увидел бы не то, что заказал.
+     */
+    const carcass = new Map<string, PartBox[]>();
+    const inner = new Map<string, PartBox[]>();
 
     for (const box of boxes) {
       if (box.part && active.has(box.part)) continue;
@@ -372,9 +402,16 @@ export default function Cabinet3D({
         else fronts.set(key, [box]);
         continue;
       }
+      if ((box.material === 'carcass' || box.material === 'inner') && box.carcassKey) {
+        const bucket = box.material === 'inner' ? inner : carcass;
+        const list = bucket.get(box.carcassKey);
+        if (list) list.push(box);
+        else bucket.set(box.carcassKey, [box]);
+        continue;
+      }
       groups[box.material].push(box);
     }
-    return { groups, fronts };
+    return { groups, fronts, carcass, inner };
   }, [boxes, activeParts]);
 
   /*
@@ -398,6 +435,7 @@ export default function Cabinet3D({
    * сцене с одним рельефом и карточку с другим.
    */
   const millingItems = useMemo(() => millingCatalog(catalog), [catalog]);
+
   const frontMaterials = useFrontMaterials(frontSpecs, facadeColor, millingItems);
 
   const selected = useMemo(() => {
@@ -516,6 +554,27 @@ export default function Cabinet3D({
         material={parts.inner}
         receiveShadow
       />
+      {/* Корпус своего декора: по пачке на материал, как у фасадов. */}
+      {Array.from(grouped.carcass.entries()).map(([key, list]) => (
+        <InstancedBoxes
+          key={key}
+          name={`carcass:${key}`}
+          boxes={list}
+          geometry={parts.box}
+          material={carcassMaterials.get(key) ?? parts.carcass}
+          receiveShadow
+        />
+      ))}
+      {Array.from(grouped.inner.entries()).map(([key, list]) => (
+        <InstancedBoxes
+          key={`inner-${key}`}
+          name={`inner:${key}`}
+          boxes={list}
+          geometry={parts.box}
+          material={innerMaterials.get(key) ?? parts.inner}
+          receiveShadow
+        />
+      ))}
       <InstancedBoxes boxes={grouped.groups.metal} geometry={parts.box} material={parts.metal} />
       {/* Стекло дверцы прибора: по нему духовка узнаётся с трёх метров. */}
       <InstancedBoxes boxes={grouped.groups.glass} geometry={parts.box} material={parts.glass} />

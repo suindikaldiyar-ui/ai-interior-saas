@@ -272,7 +272,36 @@ export interface ModuleFill {
    * ничего не меняется и отпечаток не едет.
    */
   handle?: HandleKind;
+  /**
+   * ГДЕ РУЧКА СТОИТ НА ПОЛОТНЕ.
+   *
+   * Тип ручки и её место — разные вопросы: скобу ставят и сверху, и
+   * снизу, и вдоль кромки, и поперёк. Восемь положений перечислены в
+   * `handlePlace.ts`, там же умолчание — ровно то, что стояло до выбора.
+   *
+   * Пусто — положение по умолчанию: ряды, собранные раньше, не двигаются,
+   * и в отпечаток поле не входит (ловушка 246) — место ручки не меняет
+   * ни одной детали раскроя.
+   */
+  handlePlace?: HandlePlace;
 }
+
+/**
+ * ВОСЕМЬ ПОЛОЖЕНИЙ РУЧКИ: ЧЕТЫРЕ КРОМКИ × ДВЕ ОРИЕНТАЦИИ.
+ *
+ * «Вдоль» — планка параллельна своей кромке, «поперёк» — перпендикулярна
+ * ей. Этим описывается всё, что встречается в цеху, и каждое положение
+ * отличается от остальных координатой, а не только названием.
+ */
+export type HandlePlace =
+  | 'top-along'
+  | 'top-across'
+  | 'bottom-along'
+  | 'bottom-across'
+  | 'left-along'
+  | 'left-across'
+  | 'right-along'
+  | 'right-across';
 
 /**
  * ТРИ СПОСОБА ОТКРЫТЬ ФАСАД.
@@ -400,6 +429,17 @@ export interface Module {
    */
   front?: FrontSpec;
   /**
+   * МАТЕРИАЛ КОРПУСА ЭТОГО МОДУЛЯ: ссылка на позицию каталога.
+   *
+   * Внутри шкафа своя плита, и стоит она других денег: белый корпус под
+   * цветной фасад — самый частый заказ. Лежит ССЫЛКА, а не копия цены
+   * (ловушка 22): переоценка каталога обязана доехать до сметы.
+   *
+   * Пусто — корпус остаётся обычной плитой цеха, и ни одно число не
+   * меняется. Наследование по полосам читает `carcassFor`.
+   */
+  carcassItemId?: string;
+  /**
    * Размеры приборов, введённые руками, — ПО ПРИБОРУ, а не по модулю.
    *
    * В колонне приборов ДВА, и габариты у них разные: духовка 595, а
@@ -521,6 +561,14 @@ export interface Run {
    * функции, которые видят только `unit` и `run`.
    */
   milling?: Partial<Record<'base' | 'upper' | 'tall' | 'drawers' | 'mezzanine', string>>;
+  /**
+   * МАТЕРИАЛ КОРПУСА, НАЗНАЧЕННЫЙ РЯДАМ ОБЪЕКТА.
+   *
+   * Устроен ровно как `milling` и читается той же лестницей: модуль →
+   * полоса → низ (`carcassFor`). Вторая лестница наследования разошлась
+   * бы с первой на первом же ряду, где назначено и то, и другое.
+   */
+  carcass?: Partial<Record<'base' | 'upper' | 'tall' | 'drawers' | 'mezzanine', string>>;
   /**
    * РИГЕЛИ НАД ЭТИМ РЯДОМ, в координатах ряда.
    *
@@ -854,6 +902,17 @@ export type MillworkOp =
   | { op: 'set_opening'; moduleId: string; opening: FrontOpening }
   /** Чем открывают фасад: скоба, профиль или нажатие. */
   | { op: 'set_handle'; moduleId: string; handle: HandleKind }
+  | { op: 'set_handle_place'; moduleId: string; place: HandlePlace }
+  /**
+   * Материал корпуса: полосе или одному модулю, как фрезеровка.
+   * `itemId: null` — «как у цеха», то есть отказ от декора.
+   */
+  | {
+      op: 'set_carcass';
+      moduleId?: string;
+      scope?: 'base' | 'upper' | 'tall' | 'drawers' | 'mezzanine';
+      itemId: string | null;
+    }
   | { op: 'set_option'; key: 'upperToCeiling' | 'hardwareClass' | 'countertop' | 'hasUpper' | 'hasCornice' | 'integratedHandles'; value: string | boolean };
 
 export interface MillworkRequest {

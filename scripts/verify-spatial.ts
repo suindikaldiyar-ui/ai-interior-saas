@@ -46,8 +46,11 @@ import {
   typicalMillingItem,
 } from '../lib/millwork/milling';
 import { profileMm } from '../lib/millwork/relief';
-import { wallMismatches } from '../lib/millwork/walls';
 import { DEMO_REQUIREMENTS } from '../lib/millwork/demo';
+import { HANDLE_PLACES } from '../lib/millwork/handlePlace';
+import { openingHardware } from '../lib/millwork/opening';
+import { moduleCarcassHeightMm } from '../lib/millwork/fill';
+import { wallMismatches } from '../lib/millwork/walls';
 import type { CompositionKind, RunRequirements } from '../types/millwork';
 
 const room: RoomConfig = { ...DEFAULT_ROOM }; // 6 × 5 × 2.9
@@ -1675,6 +1678,198 @@ console.log('\n' + 'Профиль фрезеровки масштабирует
     aspectOf(narrow.html) > 1.2 && aspectOf(wide.html) > 0.4,
     `узкий ${aspectOf(narrow.html).toFixed(2)} · широкий ${aspectOf(wide.html).toFixed(2)}`,
   );
+}
+
+/* ═══  Петли в сцене и восемь положений ручки  ═══ */
+
+/**
+ * ПЕТЛЯ ВИДНА, И ЕЁ СТОЛЬКО ЖЕ, СКОЛЬКО КУПЛЕНО.
+ *
+ * Створка висела в воздухе: в смете петли были, в сцене их не было
+ * вовсе. Клиент видит открытую дверцу и пустую кромку — а платит за
+ * четыре петли.
+ *
+ * Место чашки от кромки — это ПРИСАДКА, и данных о ней нет: все поля
+ * `MountingData` равны null. Поэтому петля рисуется УЗЛОМ, а не
+ * координатой сверления, и проверяется здесь ровно то, что узел имеет
+ * право утверждать: петель столько же, сколько в смете, и все они лежат
+ * внутри своей створки.
+ */
+console.log('\n' + 'Петли в сцене и положения ручки');
+{
+  const run = buildRun({
+    lengthMm: 3800,
+    ceilingHeightMm: 2700,
+    requirements: DEMO_REQUIREMENTS,
+    openings: [],
+    comms: [],
+  } as never);
+
+  const boxes = runBoxes(run, { thicknessMm: 16, frontThicknessMm: 18, gapMm: 3 });
+  const hinges = boxes.filter((box) => box.node === 'hinge');
+
+  check(
+    'петли нарисованы в сцене',
+    hinges.length > 0,
+    hinges.length === 0
+      ? 'НОЛЬ ПЕТЕЛЬ В СЦЕНЕ — створка висит ни на чём'
+      : `петель ${hinges.length}`,
+  );
+
+  /* ── Столько же, сколько в смете, помодульно ── */
+
+  const all = [...run.modules, ...run.upperSegments.flatMap((sg) => sg.modules)];
+  const hw = openingHardware(
+    all.map((u, index) => ({
+      unit: u,
+      heightMm: moduleCarcassHeightMm(u, run),
+      index,
+      total: all.length,
+    })),
+    run,
+  );
+
+  const sceneByModule = new Map<string, number>();
+  for (const box of hinges) {
+    const id = box.part ? box.part.split(':')[0] : '';
+    sceneByModule.set(id, (sceneByModule.get(id) ?? 0) + 1);
+  }
+
+  const off: string[] = [];
+  for (const unit of all) {
+    const want = (hw.byModule[unit.id]?.hinges ?? 0) + (hw.byModule[unit.id]?.cornerHinges ?? 0);
+    const got = sceneByModule.get(unit.id) ?? 0;
+    if (want !== got) off.push(`${unit.label}: смета ${want}, сцена ${got}`);
+  }
+
+  check(
+    'петель в сцене столько же, сколько в смете, у КАЖДОГО модуля',
+    off.length === 0 && hinges.length > 0,
+    off.length === 0
+      ? `сверено модулей ${all.length}, петель ${hinges.length}`
+      : `РАСХОЖДЕНИЕ: ${off.slice(0, 3).join(' · ')}`,
+  );
+
+  /* ── Петля лежит внутри своей створки ── */
+
+  const leaves = new Map<string, { minY: number; maxY: number; minX: number; maxX: number }>();
+  for (const box of boxes) {
+    if (box.material !== 'front' || !box.part) continue;
+    const cur = leaves.get(box.part) ?? {
+      minY: Infinity,
+      maxY: -Infinity,
+      minX: Infinity,
+      maxX: -Infinity,
+    };
+    leaves.set(box.part, {
+      minY: Math.min(cur.minY, box.position[1] - box.scale[1] / 2),
+      maxY: Math.max(cur.maxY, box.position[1] + box.scale[1] / 2),
+      minX: Math.min(cur.minX, box.position[0] - box.scale[0] / 2),
+      maxX: Math.max(cur.maxX, box.position[0] + box.scale[0] / 2),
+    });
+  }
+
+  const outside = hinges.filter((box) => {
+    const leaf = box.part ? leaves.get(box.part) : undefined;
+    if (!leaf) return true;
+    const eps = 0.002;
+    return (
+      box.position[1] < leaf.minY - eps ||
+      box.position[1] > leaf.maxY + eps ||
+      box.position[0] < leaf.minX - eps ||
+      box.position[0] > leaf.maxX + eps
+    );
+  });
+
+  check(
+    'петли стоят на створке и не выходят за её габарит',
+    outside.length === 0 && hinges.length > 0,
+    outside.length === 0
+      ? `все ${hinges.length} внутри своих створок`
+      : `ЗА ГАБАРИТОМ: ${outside.length} из ${hinges.length}`,
+  );
+
+  /* ── Восемь положений ручки ── */
+
+  const doorUnit = run.modules.find(
+    (u) => u.frontType === 'door' && !u.appliance && (u.fill?.drawerHeights.length ?? 0) === 0,
+  );
+
+  check(
+    'модуль со створкой есть — положения ручки проверять есть на чём',
+    Boolean(doorUnit),
+    doorUnit ? doorUnit.label : 'МОДУЛЯ СО СТВОРКОЙ НЕТ',
+  );
+
+  check(
+    'положений ручки объявлено восемь',
+    HANDLE_PLACES.length === 8,
+    HANDLE_PLACES.length === 0
+      ? 'НОЛЬ ПОЛОЖЕНИЙ РУЧКИ — выбирать не из чего'
+      : HANDLE_PLACES.map((pl) => pl.key).join(', '),
+  );
+
+  if (doorUnit) {
+    const spots = new Map<string, string>();
+    const outsideFront: string[] = [];
+
+    for (const place of HANDLE_PLACES) {
+      const edited = applyOps({
+        run,
+        requirements: DEMO_REQUIREMENTS,
+        ops: [{ op: 'set_handle_place', moduleId: doorUnit.id, place: place.key }],
+      } as never);
+
+      const drawn = runBoxes(edited, { thicknessMm: 16, frontThicknessMm: 18, gapMm: 3 });
+      const handle = drawn.find(
+        (box) => box.node === 'handle' && box.part?.startsWith(doorUnit.id + ':door:'),
+      );
+
+      if (!handle) {
+        outsideFront.push(`${place.key}: РУЧКИ НЕТ ВОВСЕ`);
+        continue;
+      }
+
+      spots.set(
+        place.key,
+        [
+          Math.round(handle.position[0] * 1000),
+          Math.round(handle.position[1] * 1000),
+          Math.round(handle.scale[0] * 1000),
+          Math.round(handle.scale[1] * 1000),
+        ].join('/'),
+      );
+
+      const leaf = drawn.find(
+        (box) => box.material === 'front' && box.part === handle.part,
+      );
+      if (!leaf) continue;
+
+      const eps = 0.003;
+      const inX =
+        handle.position[0] - handle.scale[0] / 2 >= leaf.position[0] - leaf.scale[0] / 2 - eps &&
+        handle.position[0] + handle.scale[0] / 2 <= leaf.position[0] + leaf.scale[0] / 2 + eps;
+      const inY =
+        handle.position[1] - handle.scale[1] / 2 >= leaf.position[1] - leaf.scale[1] / 2 - eps &&
+        handle.position[1] + handle.scale[1] / 2 <= leaf.position[1] + leaf.scale[1] / 2 + eps;
+
+      if (!inX || !inY) outsideFront.push(`${place.key}: ЗА ФАСАДОМ`);
+    }
+
+    check(
+      'восемь положений дают восемь РАЗНЫХ координат, повторов нет',
+      spots.size === HANDLE_PLACES.length && new Set(spots.values()).size === spots.size,
+      spots.size === 0
+        ? 'НИ ОДНО ПОЛОЖЕНИЕ НЕ НАРИСОВАЛОСЬ'
+        : `положений ${spots.size}, разных координат ${new Set(spots.values()).size}`,
+    );
+
+    check(
+      'и ни в одном ручка не выходит за фасад',
+      outsideFront.length === 0,
+      outsideFront.length === 0 ? 'все внутри полотна' : outsideFront.join(' · '),
+    );
+  }
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

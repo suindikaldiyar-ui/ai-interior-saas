@@ -1,5 +1,6 @@
 import { moduleCarcassHeightMm, moduleDepthMm } from './fill';
 import { millingLink, type MillingItem } from './milling';
+import { carcassMaterialName, type CarcassItem } from './carcassMaterial';
 import { BUILT_IN_FRIDGE_FRONTS } from './modules';
 import { hasBottom } from './moduleVariants';
 import { facadeSpans, hasFacade } from './applianceFront';
@@ -51,6 +52,14 @@ export type PanelInput = {
    * каталога: ни один сохранённый лист от появления параметра не едет.
    */
   milling?: Map<string, MillingItem>;
+  /**
+   * МАТЕРИАЛЫ КОРПУСА ОРГАНИЗАЦИИ.
+   *
+   * Нужны, чтобы назвать декор в деталировке: «ЛДСП 16 · Графит» вместо
+   * «ЛДСП 16». Размеров и количеств каталог не трогает — он задаёт
+   * НАЗВАНИЕ и цену, а не второй раскрой.
+   */
+  carcass?: Map<string, CarcassItem>;
 };
 
 /**
@@ -120,6 +129,7 @@ function modulePanels(
   production: ProductionSettings,
   moduleNumber: number,
   milling?: Map<string, MillingItem>,
+  carcass?: Map<string, CarcassItem>,
 ): Panel[] {
   // Доборная планка — это одна деталь, а не корпус.
   const heightMm = moduleCarcassHeightMm(unit, run);
@@ -130,7 +140,14 @@ function modulePanels(
   const thick = edgeType(production);
 
   const label = unit.label || unit.kind;
-  const material = `ЛДСП ${t}`;
+  /*
+   * НАЗВАНИЕ МАТЕРИАЛА КОРПУСА — С ДЕКОРОМ, ЕСЛИ ОН ВЫБРАН.
+   *
+   * Толщина остаётся тем, что режут, декор добавляется к ней. Размеры и
+   * количества деталей каталог не трогает: он задаёт НАЗВАНИЕ и цену, а
+   * не второй раскрой.
+   */
+  const material = carcassMaterialName(`ЛДСП ${t}`, unit, run, carcass ?? new Map());
   const panels: Panel[] = [];
 
   /*
@@ -403,7 +420,7 @@ function modulePanels(
 }
 
 /** Все детали ряда, сгруппированные по модулям слева направо. */
-export function buildPanels({ run, production = DEFAULT_PRODUCTION, milling }: PanelInput): Panel[] {
+export function buildPanels({ run, production = DEFAULT_PRODUCTION, milling, carcass }: PanelInput): Panel[] {
   const modules = [...run.modules, ...run.upperSegments.flatMap((s) => s.modules)];
 
   /*
@@ -428,7 +445,7 @@ export function buildPanels({ run, production = DEFAULT_PRODUCTION, milling }: P
       );
     }
 
-    return modulePanels(unit, run, production, number, milling);
+    return modulePanels(unit, run, production, number, milling, carcass);
   });
 }
 

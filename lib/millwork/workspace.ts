@@ -11,6 +11,7 @@ import type {
 import { buildEstimate, recalcTotal, type RateTable } from './estimate';
 import type { ProductionSettings } from '@/types/catalog';
 import type { MillingItem } from './milling';
+import type { CarcassItem } from './carcassMaterial';
 import { buildVariants } from './variants';
 
 /**
@@ -57,6 +58,14 @@ export type WorkspaceSeed = {
    * хранится и ни на что не влияет, это дефект.
    */
   milling?: Map<string, MillingItem>;
+  /**
+   * МАТЕРИАЛЫ КОРПУСА ОРГАНИЗАЦИИ.
+   *
+   * Едут тем же путём, что фрезеровка и настройки цеха: смета считает по
+   * ТОМУ ЖЕ прайсу, который замерщик видит на карточках. Поле, которое
+   * хранится и не доезжает до суммы, — дефект.
+   */
+  carcass?: Map<string, CarcassItem>;
 };
 
 export type WorkspaceInput = {
@@ -113,6 +122,14 @@ export type WorkspaceInput = {
    * хранится и ни на что не влияет, это дефект.
    */
   milling?: Map<string, MillingItem>;
+  /**
+   * МАТЕРИАЛЫ КОРПУСА ОРГАНИЗАЦИИ.
+   *
+   * Едут тем же путём, что фрезеровка и настройки цеха: смета считает по
+   * ТОМУ ЖЕ прайсу, который замерщик видит на карточках. Поле, которое
+   * хранится и не доезжает до суммы, — дефект.
+   */
+  carcass?: Map<string, CarcassItem>;
 };
 
 /** Рабочая стена: указанная явно либо самая длинная в замере. */
@@ -163,6 +180,7 @@ export function workspaceInput(seed: WorkspaceSeed): WorkspaceInput {
     roomDepthM: roomDepth(seed.measurement, wall.id),
     production: seed.production,
     milling: seed.milling,
+    carcass: seed.carcass,
   };
 }
 
@@ -203,6 +221,7 @@ export function composeVariants(
     disabledKeys: disabled,
     production: input.production,
     milling: input.milling,
+    carcass: input.carcass,
   });
 
   return base.map((variant) => {
@@ -219,6 +238,7 @@ export function composeVariants(
         input.production,
         undefined,
         input.milling,
+        input.carcass,
       ),
       disabled[variant.key],
     );

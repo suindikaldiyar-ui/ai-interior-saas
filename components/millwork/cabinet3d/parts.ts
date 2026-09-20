@@ -14,7 +14,7 @@ import { frontSwatch } from '@/lib/millwork/frontSwatch';
  * `darken`/`lighten` здесь означали бы вторую палитру, и проверка
  * мерила бы не то, что на экране.
  */
-import { plinthColor, roleColors } from '@/lib/millwork/sceneColors';
+import { darkenHex, lightenHex, plinthColor, roleColors } from '@/lib/millwork/sceneColors';
 import type { FrontSpec } from '@/types/millwork';
 import { useThree } from '@react-three/fiber';
 
@@ -428,6 +428,64 @@ export function useFrontMaterials(
      */
     invalidate();
   }, [specs, materials, fallbackColor, milling, invalidate]);
+
+  useEffect(
+    () => () => {
+      for (const material of Array.from(cache.values())) material.dispose();
+    },
+    [cache],
+  );
+
+  return materials;
+}
+
+/**
+ * МАТЕРИАЛЫ КОРПУСА ПО КЛЮЧАМ.
+ *
+ * Внутри шкафа своя плита, и у неё свой декор: белый корпус под цветной
+ * фасад — самый частый заказ. Устроено как у фасадов: материал под
+ * ключом создаётся ОДИН раз и дальше только меняет цвет — пересоздание
+ * это перекомпиляция шейдера ровно в тот момент, когда клиент перебирает
+ * декоры (ловушка 248).
+ *
+ * `frameloop="demand"`: после смены цвета кадр запрашивается явно, иначе
+ * материал сменится в памяти, а на экране останется прежний (ловушка 250).
+ */
+export function useCarcassMaterials(
+  keys: Map<string, string>,
+  inner: boolean,
+): Map<string, THREE.MeshStandardMaterial> {
+  const invalidate = useThree((state) => state.invalidate);
+  const cache = useMemo(() => new Map<string, THREE.MeshStandardMaterial>(), []);
+
+  const materials = useMemo(() => {
+    const out = new Map<string, THREE.MeshStandardMaterial>();
+    for (const key of Array.from(keys.keys())) {
+      let material = cache.get(key);
+      if (!material) {
+        material = new THREE.MeshStandardMaterial({
+          roughness: 0.72,
+          metalness: 0,
+          polygonOffset: true,
+          polygonOffsetFactor: 1,
+          polygonOffsetUnits: 1,
+        });
+        cache.set(key, material);
+      }
+      out.set(key, material);
+    }
+    return out;
+  }, [keys, cache]);
+
+  useEffect(() => {
+    for (const [key, hex] of Array.from(keys.entries())) {
+      const material = materials.get(key);
+      if (!material) continue;
+      /* Внутренности светлее корпуса — та же таблица ролей, что и без декора. */
+      material.color.set(inner ? lightenHex(hex, 0.18) : darkenHex(hex, 0.08));
+    }
+    invalidate();
+  }, [keys, materials, inner, invalidate]);
 
   useEffect(
     () => () => {

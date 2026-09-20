@@ -109,6 +109,13 @@ import { gapsIn } from '../lib/millwork/freeRun';
 import { BOTTLE_MAX_MM, variantEstimateKeys } from '../lib/millwork/moduleVariants';
 import { MIN_FACADE_SPAN_MM, facadeSpans, hasFacade } from '../lib/millwork/applianceFront';
 import {
+  CARCASS_SCOPES,
+  carcassCatalog,
+  carcassFor,
+  carcassKeyOf,
+  carcassScopeOf,
+} from '../lib/millwork/carcassMaterial';
+import {
   TYPICAL_PALETTE,
   paletteFor,
   paletteFromCatalog,
@@ -16038,6 +16045,259 @@ console.log('\n' + 'Фасады над приборами и под ними');
     'минимум фасада объявлен одним числом',
     MIN_FACADE_SPAN_MM > 0,
     `минимум ${MIN_FACADE_SPAN_MM} мм`,
+  );
+}
+
+/* ═══  Ручка на месте, корпус своего материала  ═══ */
+
+/**
+ * ПОЛОЖЕНИЕ РУЧКИ И МАТЕРИАЛ КОРПУСА — ПРАВКИ МОДУЛЯ.
+ *
+ * Обе ложатся на модуль, как ширина и материал фасада, и обе обязаны
+ * пережить пересборку ряда: замерщик выбрал — значит выбрал, а не «до
+ * следующего пересчёта».
+ *
+ * Материал корпуса наследуется по полосам тем же механизмом, что
+ * фрезеровка: модуль → полоса → низ. Второй лестницы наследования в
+ * продукте нет.
+ */
+console.log('\n' + 'Ручка и материал корпуса');
+{
+  const run = buildRun(baseInput);
+
+  const doorUnit = run.modules.find(
+    (u) => u.frontType === 'door' && !u.appliance && (u.fill?.drawerHeights.length ?? 0) === 0,
+  );
+
+  check(
+    'модуль со створкой есть — правки проверять есть на чём',
+    Boolean(doorUnit),
+    doorUnit ? doorUnit.label : 'МОДУЛЯ СО СТВОРКОЙ НЕТ',
+  );
+
+  /* ── 4. Положение ручки переживает пересборку ряда ── */
+
+  if (doorUnit) {
+    /*
+     * Проёмы передаются в правку: без них `applyOps` пересобирает верхний
+     * ряд БЕЗ разрыва под окном, и сравнение «до и после» меряло бы не
+     * положение ручки, а потерянный проём.
+     */
+    const placed = applyOps({
+      run,
+      requirements: REQ,
+      openings: OPENINGS,
+      ops: [{ op: 'set_handle_place', moduleId: doorUnit.id, place: 'bottom-along' }],
+    } as never);
+
+    const after = placed.modules.find((u) => u.id === doorUnit.id);
+
+    check(
+      'положение ручки легло на модуль',
+      after?.fill?.handlePlace === 'bottom-along',
+      `${doorUnit.label}: ${after?.fill?.handlePlace ?? 'НЕ ЛЕГЛО'}`,
+    );
+
+    /*
+     * Пересборка — это любая правка состава: она перезаполняет место и
+     * пересчитывает наполнение. Выбор человека она трогать не имеет
+     * права (ловушка 314).
+     */
+    const rebuilt = applyOps({
+      run: placed,
+      requirements: REQ,
+      openings: OPENINGS,
+      ops: [{ op: 'set_width', moduleId: doorUnit.id, widthMm: doorUnit.widthMm + 50 }],
+    } as never);
+
+    const survived = rebuilt.modules.find((u) => u.id === doorUnit.id);
+
+    check(
+      'и переживает пересборку ряда',
+      survived?.fill?.handlePlace === 'bottom-along',
+      `после пересборки: ${survived?.fill?.handlePlace ?? 'ПОТЕРЯНО'}`,
+    );
+
+    /* ── 7. Умолчание не двигает ни отпечаток, ни смету ── */
+
+    const before = Math.round(buildEstimate(run, MAIN_VARIANT, DEMO_RATES).total);
+    const afterTotal = Math.round(buildEstimate(placed, MAIN_VARIANT, DEMO_RATES).total);
+
+    check(
+      'положение ручки не меняет смету: это место, а не другая фурнитура',
+      before === afterTotal,
+      `${before} → ${afterTotal} ₸`,
+    );
+
+    check(
+      'и не входит в отпечаток: состав ряда от него не меняется',
+      run.fingerprint === placed.fingerprint,
+      `${run.fingerprint} → ${placed.fingerprint}`,
+    );
+  }
+
+  /* ── 5. Материал корпуса отличается от материала фасада ── */
+
+  const carcassEntry = (id: string, name: string, price: number, color: string) =>
+    ({
+      id,
+      org_id: 'org',
+      name_ru: name,
+      article: id.toUpperCase(),
+      price,
+      unit: 'm2',
+      is_active: true,
+      meta: { frontBase: 'ldsp', color },
+    }) as never;
+
+  const catalog = carcassCatalog([
+    carcassEntry('car-white', 'Белый корпус', 4000, '#EFEFEA'),
+    carcassEntry('car-graphite', 'Графит корпус', 9000, '#3A3D40'),
+  ]);
+
+  check(
+    'каталог материалов корпуса непустой — выбирать есть из чего',
+    catalog.size === 2,
+    catalog.size === 0
+      ? 'НОЛЬ МАТЕРИАЛОВ КОРПУСА В КАТАЛОГЕ'
+      : `позиций ${catalog.size}`,
+  );
+
+  const target = run.modules.find((u) => hasFacade(u))!;
+  const painted = applyOps({
+    run,
+    requirements: REQ,
+    ops: [{ op: 'set_carcass', moduleId: target.id, itemId: 'car-graphite' }],
+  } as never);
+
+  const paintedUnit = painted.modules.find((u) => u.id === target.id);
+
+  check(
+    'материал корпуса лёг на модуль',
+    paintedUnit?.carcassItemId === 'car-graphite',
+    `${target.label}: ${paintedUnit?.carcassItemId ?? 'НЕ ЛЁГ'}`,
+  );
+
+  /* В деталировке — своё название, а не название фасада. */
+  const cut = buildPanels({ run: painted, carcass: catalog });
+  const mine = cut.filter((panel) => panel.moduleId === target.id);
+  const carcassNames = new Set(
+    mine.filter((p) => p.name === SIDE_PANEL_NAME).map((p) => p.material),
+  );
+  const frontNames = new Set(
+    mine.filter((p) => p.material.startsWith('Фасад')).map((p) => p.material),
+  );
+
+  check(
+    'в деталировке у корпуса СВОЁ название материала',
+    carcassNames.size === 1 && Array.from(carcassNames)[0].includes('Графит'),
+    carcassNames.size === 0
+      ? 'НЕТ НИ ОДНОЙ ДЕТАЛИ КОРПУСА'
+      : `корпус: ${Array.from(carcassNames).join(', ')} · фасад: ${Array.from(frontNames).join(', ') || 'нет'}`,
+  );
+
+  check(
+    'и оно НЕ совпадает с названием фасада',
+    Array.from(carcassNames).every((name) => !frontNames.has(name)),
+    `корпус ${Array.from(carcassNames).join(', ')} против фасада ${Array.from(frontNames).join(', ') || 'нет'}`,
+  );
+
+  /* В сцене — два разных ключа. */
+  const place = runPlaces(painted).find((pl) => pl.unit.id === target.id)!;
+  const sceneBoxes = moduleBoxes(
+    place.unit,
+    {
+      x: place.x,
+      y: place.y,
+      heightM: place.heightM,
+      depthM: place.depthM,
+      zM: place.zM,
+      thicknessM: 0.016,
+    },
+    {
+      gapM: 0.003,
+      frontThicknessM: 0.018,
+      integratedHandles: false,
+      cutaway: false,
+      rowMilling: painted.milling,
+      carcassKey: carcassKeyOf(place.unit, painted, catalog),
+    } as never,
+    painted.production,
+  );
+
+  const carcassKeys = new Set(
+    sceneBoxes.filter((b) => b.material === 'carcass' || b.material === 'inner').map((b) => b.carcassKey ?? ''),
+  );
+  const frontKeys = new Set(
+    sceneBoxes.filter((b) => b.material === 'front').map((b) => b.frontKey ?? ''),
+  );
+
+  check(
+    'в сцене у корпуса свой ключ материала, и он не равен фасадному',
+    carcassKeys.size > 0 &&
+      Array.from(carcassKeys)[0] !== '' &&
+      Array.from(carcassKeys).every((k) => !frontKeys.has(k)),
+    `корпус ${Array.from(carcassKeys).join(', ') || 'НЕТ КЛЮЧА'} · фасад ${Array.from(frontKeys).join(', ') || 'нет'}`,
+  );
+
+  /* Цена материала двигает итог. */
+  const cheap = applyOps({
+    run,
+    requirements: REQ,
+    ops: [{ op: 'set_carcass', moduleId: target.id, itemId: 'car-white' }],
+  } as never);
+
+  const totalOf = (r: typeof run) =>
+    Math.round(
+      buildEstimate(r, MAIN_VARIANT, DEMO_RATES, [], undefined, undefined, undefined, undefined, catalog)
+        .total,
+    );
+
+  check(
+    'сумма сметы меняется, если материалы корпуса разной цены',
+    totalOf(painted) !== totalOf(cheap) && totalOf(painted) > totalOf(cheap),
+    `белый 4 000 ₸/м² → ${totalOf(cheap)} · графит 9 000 ₸/м² → ${totalOf(painted)}`,
+  );
+
+  /* ── 6. Наследование по полосам ── */
+
+  const scoped = applyOps({
+    run,
+    requirements: REQ,
+    ops: [{ op: 'set_carcass', scope: 'base', itemId: 'car-white' }],
+  } as never);
+
+  const inherited = CARCASS_SCOPES.map((scope) => {
+    const unit = [...scoped.modules, ...scoped.upperSegments.flatMap((sg) => sg.modules)].find(
+      (u) => carcassScopeOf(u) === scope.key,
+    );
+    return { scope: scope.key, id: unit ? carcassFor(unit, scoped) : null, label: unit?.label };
+  });
+
+  const covered = inherited.filter((row) => row.id === 'car-white');
+
+  check(
+    'низ назначен — и его материал наследуют все полосы, у кого своего нет',
+    covered.length === inherited.filter((row) => row.label).length && covered.length > 0,
+    inherited
+      .map((row) => `${row.scope}: ${row.label ? (row.id ?? 'НЕ УНАСЛЕДОВАЛ') : 'нет модулей'}`)
+      .join(' · '),
+  );
+
+  const upperOwn = applyOps({
+    run: scoped,
+    requirements: REQ,
+    ops: [{ op: 'set_carcass', scope: 'upper', itemId: 'car-graphite' }],
+  } as never);
+
+  const upperUnit = upperOwn.upperSegments.flatMap((sg) => sg.modules)[0];
+
+  check(
+    'а назначенное полосе сильнее унаследованного от низа',
+    Boolean(upperUnit) && carcassFor(upperUnit, upperOwn) === 'car-graphite',
+    upperUnit
+      ? `${upperUnit.label}: ${carcassFor(upperUnit, upperOwn)}`
+      : 'ВЕРХНЕГО РЯДА НЕТ — наследование не проверить',
   );
 }
 

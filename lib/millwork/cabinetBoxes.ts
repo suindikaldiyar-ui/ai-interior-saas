@@ -14,8 +14,25 @@ import type { ProductionSettings } from '@/types/catalog';
 import type { ApplianceKind } from '@/types/millwork';
 import { FRAME_WIDTH_MM, frontKey, isFramed } from './frontMaterial';
 import { nicheFacadeSpans, type FacadeSpan } from './applianceFront';
+import { carcassKeyOf, type CarcassItem } from './carcassMaterial';
+import { defaultHandlePlace, handleBoxOf } from './handlePlace';
+
+/**
+ * ОТСТУП ЧАШКИ ОТ КРОМКИ — УСЛОВНЫЙ, ДЛЯ КАРТИНКИ.
+ *
+ * Взят как половина диаметра чашки плюс типовой зазор: чашка ⌀35 мм,
+ * значит её центр отстоит от кромки примерно на 22 мм. Это ИЗОБРАЖЕНИЕ
+ * УЗЛА, а не присадка: подтверждённого `edgeOffsetMm` в каталоге
+ * организации нет, и по этому числу сверлить нельзя.
+ */
+const HINGE_NODE_EDGE_MM = 22;
+/** Чашка ⌀35 мм — отраслевой стандарт, он же размер картинки. */
+const HINGE_CUP_M = 0.035;
+const HINGE_CUP_DEPTH_M = 0.012;
+/** Корпусная часть уходит вглубь шкафа: её видно, когда створка открыта. */
+const HINGE_ARM_DEPTH_M = 0.07;
 import { frontWithMilling } from './milling';
-import { openingOf } from './opening';
+import { leafHinges, openingHardware, openingOf } from './opening';
 import type { Module, Run } from '@/types/millwork';
 
 /**
@@ -56,6 +73,24 @@ export type BoxDraw = {
    * короб ящика — это не распиленный лист.
    */
   panel?: string;
+  /**
+   * УЗЕЛ, А НЕ ДЕТАЛЬ РАСКРОЯ.
+   *
+   * Петля и ручка — покупная фурнитура: их не режут из листа, у них нет
+   * номера в деталировке, и в раскрой они не уезжают. Признак нужен,
+   * чтобы их можно было посчитать и отличить от металла столешницы, и
+   * чтобы проверка могла спросить «петель в сцене столько же, сколько в
+   * смете».
+   */
+  node?: 'hinge' | 'hinge-arm' | 'handle';
+  /**
+   * КЛЮЧ МАТЕРИАЛА КОРПУСА.
+   *
+   * Пусто — корпус красится РОЛЬЮ, как и раньше. Заполнен — у него декор
+   * из каталога, и пачки отрисовки делятся по этому ключу так же, как
+   * фасады по `frontKey` (ловушка 248).
+   */
+  carcassKey?: string | null;
 };
 
 /** Материал коробки: по нему они собираются в группы отрисовки. */
@@ -218,6 +253,24 @@ export type FrontOptions = {
   frontThicknessM: number;
   integratedHandles: boolean;
   cutaway: boolean;
+  /**
+   * СКОЛЬКО ПЕТЕЛЬ КУПЛЕНО НА ЭТОТ МОДУЛЬ.
+   *
+   * Считает их `openingHardware` — та же функция, из которой смета
+   * выписывает позиции. Сцена НЕ считает петли сама: своя формула
+   * означала бы створку с тремя петлями на картинке и двумя в смете, а
+   * клиент их пересчитывает глазами.
+   *
+   * Пусто — петли не рисуются вовсе: значит, вызывающий не знает их
+   * числа, и выдумывать его здесь нельзя.
+   */
+  hinges?: number;
+  /**
+   * КЛЮЧ МАТЕРИАЛА КОРПУСА, если у модуля выбран свой декор.
+   *
+   * Пусто — корпус красится ролью, как и раньше.
+   */
+  carcassKey?: string | null;
   /**
    * ФРЕЗЕРОВКА, НАЗНАЧЕННАЯ ПОЛОСАМ РЯДА.
    *
@@ -427,7 +480,7 @@ export function doorBoxes(
    * обязаны показывать одну и ту же мебель, поэтому правило одно.
    */
   const opening = doorOpening(unit, index, doors);
-  const mechanism = opening === 'lift' || opening === 'flap';
+
 
   /*
    * ЧЕМ ОТКРЫВАЮТ — ВЫБОР МОДУЛЯ, А НЕ ОПЦИЯ РЯДА.
@@ -437,34 +490,76 @@ export function doorBoxes(
    */
   const kind = unit.fill?.handle ?? (integratedHandles ? 'profile' : 'bar');
 
-  const handle: PartBox = kind === 'profile'
-    ? {
-        material: 'metal',
-        part,
-        position: [cx, cy + heightM / 2 - gap - 0.01, thickness + 0.004],
-        scale: [doorW - 2 * gap, 0.02, 0.015],
-      }
-    : mechanism
-      ? {
-          material: 'metal',
-          part,
-          position: [
-            cx,
-            cy + (opening === 'lift' ? -heightM / 2 + 0.04 : heightM / 2 - 0.04),
-            thickness + 0.012,
-          ],
-          scale: [Math.min(0.24, doorW * 0.5), 0.016, 0.016],
-        }
-      : {
-        material: 'metal',
-        part,
-          position: [
-            cx + (hinge === 'left' ? doorW / 2 - 0.05 : -doorW / 2 + 0.05),
-            cy,
-            thickness + 0.012,
-          ],
-          scale: [0.016, Math.min(0.22, heightM * 0.4), 0.016],
-        };
+  /*
+   * ГДЕ РУЧКА — ВЫБОР МОДУЛЯ, А НЕ СЛЕДСТВИЕ СТОРОНЫ ПЕТЕЛЬ.
+   *
+   * Здесь стояли три ветки: профиль по верхней кромке, механизм по
+   * свободной, скоба вертикально у края напротив петель. Это ровно три
+   * из восьми положений — остальных пяти в продукте не было вовсе,
+   * хотя мебельщик ставит ручку и так, и поперёк.
+   *
+   * Умолчание повторяет прежние три случая до последнего, поэтому ряды,
+   * собранные раньше, выглядят так же (`defaultHandlePlace`).
+   */
+  const handleAt =
+    unit.fill?.handlePlace ?? defaultHandlePlace(kind, opening, hinge);
+
+  const geometry = handleBoxOf(handleAt, {
+    cx,
+    cy,
+    widthM: doorW - 2 * gap,
+    heightM: heightM - 2 * gap,
+    thicknessM: thickness,
+  });
+
+  const handle: PartBox = {
+    material: 'metal',
+    part,
+    node: 'handle',
+    position: geometry.position,
+    scale: geometry.scale,
+  };
+
+  /*
+   * ПЕТЛИ — УЗЕЛ, А НЕ КООРДИНАТА СВЕРЛЕНИЯ.
+   *
+   * Точного места чашки от кромки у нас нет: монтажных данных цеха в
+   * каталоге не существует, все поля `MountingData` равны null, и
+   * выдуманное отверстие в чертеже равно испорченной детали. Поэтому
+   * здесь рисуется ИЗОБРАЖЕНИЕ УЗЛА: чашка на полотне у петельной
+   * кромки, корпусная часть на боковине, по высоте — равномерно.
+   *
+   * `HINGE_NODE_EDGE_MM` — условный отступ картинки, а НЕ монтажный
+   * размер. Появится подтверждённый `edgeOffsetMm` — он встанет сюда
+   * одной строкой, и сцена не изменится ничем другим.
+   */
+  const hingeNodes: PartBox[] = [];
+  const count = Math.max(0, Math.round(options.hinges ?? 0));
+
+  for (let i = 0; i < count; i += 1) {
+    const edgeX =
+      hinge === 'left'
+        ? cx - doorW / 2 + HINGE_NODE_EDGE_MM / MM
+        : cx + doorW / 2 - HINGE_NODE_EDGE_MM / MM;
+    const at = y + (heightM * (i + 1)) / (count + 1);
+
+    /* Чашка живёт на ПОЛОТНЕ: открылась створка — уехала вместе с ней. */
+    hingeNodes.push({
+      material: 'metal',
+      part,
+      node: 'hinge',
+      position: [edgeX, at, -HINGE_CUP_DEPTH_M / 2],
+      scale: [HINGE_CUP_M, HINGE_CUP_M, HINGE_CUP_DEPTH_M],
+    });
+
+    /* Корпусная часть стоит на боковине и с места не двигается. */
+    hingeNodes.push({
+      material: 'metal',
+      node: 'hinge-arm',
+      position: [edgeX, at, -HINGE_ARM_DEPTH_M / 2 - HINGE_CUP_DEPTH_M],
+      scale: [HINGE_CUP_M * 1.2, HINGE_CUP_M * 0.4, HINGE_ARM_DEPTH_M],
+    });
+  }
 
   const spec = frontWithMilling(unit, { milling: options.rowMilling });
   const key = frontKey(spec);
@@ -479,7 +574,8 @@ export function doorBoxes(
    * подписывает раскрой на другое. Рисуется так же, как делается: четыре
    * бруска обвязки по контуру и вставка, утопленная внутрь.
    */
-  const withHandle = (parts: PartBox[]) => (kind === 'none' ? parts : [...parts, handle]);
+  const withHandle = (parts: PartBox[]) =>
+    kind === 'none' ? [...parts, ...hingeNodes] : [...parts, handle, ...hingeNodes];
 
   if (isFramed(spec)) {
     const frame = FRAME_WIDTH_MM / MM;
@@ -804,6 +900,8 @@ export function moduleBoxes(
   const boxes: PartBox[] = carcassBoxes(unit, place).map((box) => ({
     ...box,
     material: (box.inside ? 'inner' : 'carcass') as BoxMaterial,
+    /* Декор корпуса: пусто — красит роль, как и раньше. */
+    carcassKey: options.carcassKey ?? null,
   }));
 
   boxes.push(...applianceBoxes(unit, place, production));
@@ -832,9 +930,37 @@ export function moduleBoxes(
      * них два — над нишей и под ней. В цех уезжал корпус с открытой
      * дырой в полметра, а на картинке её не было видно.
      */
-    for (const leaf of doorLeaves(unit, Math.round(place.heightM * MM))) {
-      boxes.push(...doorBoxes(unit, place, leaf.index, options, leaf.span ?? undefined));
-    }
+    const leaves = doorLeaves(unit, Math.round(place.heightM * MM));
+
+    /*
+     * ПЕТЛИ РАСКЛАДЫВАЮТСЯ ПО ПОЛОТНАМ, А НЕ СЧИТАЮТСЯ ЗАНОВО.
+     *
+     * Сколько их куплено — знает смета, и это число приходит сюда целым.
+     * Каждому полотну достаётся столько, сколько держит его высота
+     * (`leafHinges` — та же функция, которой считала смета), а остаток
+     * ложится на первое: у встроенного холодильника смета берёт петли на
+     * ДВЕ створки, а сцена рисует одно полотно во всю высоту (известное
+     * расхождение слоя 43). Сумма при этом сходится всегда, и петель на
+     * картинке ровно столько, сколько в смете.
+     */
+    const total = Math.max(0, Math.round(options.hinges ?? 0));
+    const byLeaf = leaves.map((leaf) =>
+      leafHinges(leaf.span ? leaf.span.heightMm : Math.round(place.heightM * MM), openingOf(unit).opening),
+    );
+    const spread = byLeaf.reduce((sum, v) => sum + v, 0);
+    if (byLeaf.length > 0) byLeaf[0] += total - spread;
+
+    leaves.forEach((leaf, i) => {
+      boxes.push(
+        ...doorBoxes(
+          unit,
+          place,
+          leaf.index,
+          { ...options, hinges: Math.max(0, byLeaf[i] ?? 0) },
+          leaf.span ?? undefined,
+        ),
+      );
+    });
   }
 
   /*
@@ -943,10 +1069,33 @@ export function runBoxes(
     frontThicknessMm: number;
     gapMm: number;
     cutaway?: boolean;
+    /** Материалы корпуса организации: по ним корпус красится своим декором. */
+    carcass?: Map<string, CarcassItem>;
   },
 ): PartBox[] {
   /* Глубину ряда считает `runPlaces`: передать её снаружи больше нельзя. */
   const placed = runPlaces(run);
+
+  /*
+   * ПЕТЛИ СЧИТАЮТСЯ ОДИН РАЗ НА РЯД — ТОЙ ЖЕ ФУНКЦИЕЙ, ЧТО ИХ ПОКУПАЕТ.
+   *
+   * Направление открывания зависит от МЕСТА модуля в ряду (`index`,
+   * `total`), поэтому посчитать петли по одному модулю нельзя: у
+   * крайнего шкафа сторона другая. Берём разрез `byModule` — тот самый,
+   * из которого смета выписывает позиции.
+   */
+  const all = [...run.modules, ...run.upperSegments.flatMap((sg) => sg.modules)];
+  const hardware = openingHardware(
+    all.map((unit, index) => ({
+      unit,
+      heightMm: moduleCarcassHeightMm(unit, run),
+      index,
+      total: all.length,
+    })),
+    run,
+  );
+
+  const carcassItems = options.carcass ?? new Map<string, CarcassItem>();
 
   return placed.flatMap((entry) =>
     moduleBoxes(
@@ -965,7 +1114,12 @@ export function runBoxes(
         integratedHandles: Boolean(run.options.integratedHandles),
         rowMilling: run.milling,
         cutaway: Boolean(options.cutaway),
+        hinges:
+          (hardware.byModule[entry.unit.id]?.hinges ?? 0) +
+          (hardware.byModule[entry.unit.id]?.cornerHinges ?? 0),
+        carcassKey: carcassKeyOf(entry.unit, run, carcassItems),
       },
+      run.production,
     ),
   );
 }

@@ -276,6 +276,22 @@ export type ModuleHardware = {
  * Функция одна на продукт: смета и сборочный лист обязаны показывать
  * цеху одно число комплектов.
  */
+/**
+ * ПЕТЛИ ОДНОГО ПОЛОТНА.
+ *
+ * Подъёмник висит не на петлях — у него свой механизм, и петель там
+ * ноль. Всё остальное держится петлями по высоте полотна, и считает их
+ * `hingesPerDoor`.
+ *
+ * Функция одна на продукт: по ней смета покупает петли, а сцена их
+ * рисует. Своя формула в сцене означала бы створку с тремя петлями на
+ * картинке и двумя в смете — клиент считает их глазами.
+ */
+export function leafHinges(leafHeightMm: number, opening: FrontOpening): number {
+  if (opening === 'lift') return 0;
+  return hingesPerDoor(leafHeightMm);
+}
+
 export function drawerSlides(unit: Module): number {
   return unit.column ? 0 : (unit.fill?.drawerHeights.length ?? 0);
 }
@@ -370,7 +386,7 @@ export function openingHardware(
        * Числа не меняются: смета берёт ту же сумму, только теперь из
        * одного расчёта.
        */
-      add('hinges', BUILT_IN_FRIDGE_FRONTS * hingesPerDoor(heightMm / BUILT_IN_FRIDGE_FRONTS));
+      add('hinges', BUILT_IN_FRIDGE_FRONTS * leafHinges(heightMm / BUILT_IN_FRIDGE_FRONTS, 'left'));
     }
 
     /*
@@ -388,7 +404,9 @@ export function openingHardware(
      */
     const facades = nicheFacadeSpans(unit, heightMm);
     if (facades) {
-      for (const facade of facades) add('hinges', hingesPerDoor(facade.heightMm));
+      /* Свободные участки — обычные распашные полотна. */
+      const opening: FrontOpening = 'left';
+      for (const facade of facades) add('hinges', leafHinges(facade.heightMm, opening));
       addHandles(unit, facades.length);
       continue;
     }
@@ -409,7 +427,7 @@ export function openingHardware(
     const isCorner = unit.kind === 'corner_base' || unit.kind === 'corner_upper';
 
     if (isSwing(opening)) {
-      const perDoor = hingesPerDoor(heightMm);
+      const perDoor = leafHinges(heightMm, opening);
       if (isCorner) add('cornerHinges', doors * perDoor);
       else add('hinges', doors * perDoor);
     }
@@ -425,7 +443,7 @@ export function openingHardware(
 
     if (opening === 'flap') {
       add('flaps', 1);
-      add('hinges', hingesPerDoor(heightMm));
+      add('hinges', leafHinges(heightMm, opening));
     }
 
     /*

@@ -23,6 +23,8 @@ import { runFingerprint } from './fingerprint';
 import { plinthMm, upperBottomMm } from './shop';
 import { ceilingOverSpanMm } from './ceiling';
 import { NO_MILLING_ID } from './milling';
+import { NO_CARCASS_ID } from './carcassMaterial';
+import { HANDLE_PLACES, handlePlaceOrNull } from './handlePlace';
 import {
   defaultFill,
   hingeSide,
@@ -243,6 +245,7 @@ export function applyOps({
    * читают функции, которые видят только `unit` и `run`.
    */
   let milling: Run['milling'] = run.milling ? { ...run.milling } : undefined;
+  let carcass: Run['carcass'] = run.carcass ? { ...run.carcass } : undefined;
 
   /**
    * МОДУЛИ АНТРЕСОЛИ — РЯД, А НЕ ПРОИЗВОДНАЯ.
@@ -1391,6 +1394,96 @@ export function applyOps({
         break;
       }
 
+      case 'set_handle_place': {
+        /*
+         * ГДЕ РУЧКА СТОИТ НА ПОЛОТНЕ.
+         *
+         * Ложится туда же, где её тип, — в наполнение модуля: место и
+         * тип это одна фурнитура фасада, и хранить их порознь значит
+         * однажды нарисовать скобу там, где в смете механизм.
+         *
+         * Чужая строка местом не становится: неизвестное значение
+         * отклоняется словами, а не подставляется умолчанием.
+         */
+        const place = handlePlaceOrNull(op.place);
+        if (!place) {
+          warnings.push(
+            `Положение ручки «${String(op.place)}» неизвестно: ` +
+              `бывают ${HANDLE_PLACES.map((p) => p.key).join(', ')}.`,
+          );
+          break;
+        }
+
+        const at = modules.findIndex((m) => m.id === op.moduleId);
+        const upperUnit =
+          at < 0
+            ? (mezzModules.find((m) => m.id === op.moduleId) ??
+              upperModules.find((m) => m.id === op.moduleId))
+            : null;
+
+        const target = at >= 0 ? modules[at] : upperUnit;
+        if (!target) {
+          warnings.push(`Модуль ${op.moduleId} не найден.`);
+          break;
+        }
+
+        if (!hasFacade(target)) {
+          warnings.push(
+            `У «${target.label}» фасада нет вовсе: ручку ставить не на что.`,
+          );
+          break;
+        }
+
+        const edited: Module = {
+          ...target,
+          fill: target.fill ? { ...target.fill, handlePlace: place } : target.fill,
+        };
+
+        if (at >= 0) modules[at] = edited;
+        else if (editMezz(target.id, () => edited)) break;
+        else if (editUpper(target.id, () => edited)) break;
+        break;
+      }
+
+      case 'set_carcass': {
+        /*
+         * МАТЕРИАЛ КОРПУСА: ПОЛОСЕ ИЛИ ОДНОМУ МОДУЛЮ.
+         *
+         * Устроено ровно как фрезеровка: полоса ложится на РЯД
+         * (`run.carcass`), модуль — на себя (`carcassItemId`), а читает
+         * это одна лестница `carcassFor`. Второго места хранения не
+         * появляется, второй лестницы наследования — тоже.
+         */
+        if (op.moduleId && op.scope) {
+          warnings.push(
+            'Материал корпуса назначается либо полосе, либо модулю: ' +
+              'два адреса в одной правке — это два разных решения.',
+          );
+          break;
+        }
+
+        const value = op.itemId ?? NO_CARCASS_ID;
+
+        if (op.moduleId) {
+          const paint = (unit: Module): Module => ({ ...unit, carcassItemId: value });
+
+          const at = modules.findIndex((m) => m.id === op.moduleId);
+          if (at >= 0) {
+            modules[at] = paint(modules[at]);
+            break;
+          }
+          if (editMezz(op.moduleId, paint)) break;
+          if (editUpper(op.moduleId, paint)) break;
+
+          warnings.push(`Модуль ${op.moduleId} не найден: красить нечего.`);
+          break;
+        }
+
+        const scope = op.scope ?? 'base';
+        carcass = { ...carcass, [scope]: value };
+        break;
+      }
+
       case 'set_mezzanine': {
         /*
          * АНТРЕСОЛЬ — ОТДЕЛЬНАЯ ПОЗИЦИЯ СОСТАВА.
@@ -1724,6 +1817,7 @@ export function applyOps({
    * верха: своя высота, свои модули, своя строка в раскрое и смете.
    */
   nextRun.milling = milling;
+  nextRun.carcass = carcass;
   nextRun.mezzanine = mezzanine ?? undefined;
   if (mezzanine) {
     const kept = new Map(
