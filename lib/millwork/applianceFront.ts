@@ -1,4 +1,4 @@
-import { moduleAppliances, nicheHeightMm } from './modules';
+import { BUILT_IN_FRIDGE_FRONTS, moduleAppliances, nicheHeightMm } from './modules';
 import { columnNiches } from './fill';
 import type { Module } from '@/types/millwork';
 
@@ -102,6 +102,141 @@ export function nicheFacadeSpans(unit: Module, heightMm: number): FacadeSpan[] |
    * участок, и он всё равно свободный.
    */
   return spans.some((span) => span.heightMm < heightMm) ? spans : null;
+}
+
+/**
+ * ЧТО ФИЗИЧЕСКИ ВИСИТ НА ЭТОМ МОДУЛЕ — ОДИН ОТВЕТ НА ПРОДУКТ.
+ *
+ * До этого вопрос решался по `frontType`, и решался неверно. `frontType`
+ * говорит, ОТКУДА фронт взялся: раскладка поставила створку, ящики или
+ * прибор. На вопрос «что на модуле висит» он не отвечает вовсе — у мойки
+ * там `appliance`, а створка под чашей есть и в раскрое, и в сцене.
+ *
+ * Из этого корня вышла целая семья дефектов, и три из них стоили денег:
+ *
+ *   направляющие под варочной не выписывались   (`frontType === 'drawers'`)
+ *   петли и ручки фасадов колонны не выписывались (`frontType !== 'door'`)
+ *   петли мойки и посудомойки не выписывались     (то же условие)
+ *   ручки ящиков под варочной не выписывались     (`frontType === 'drawers'`)
+ *   фасад вытяжки резался, но не рисовался        (разные ветки у раскроя и сцены)
+ *
+ * Чинить их по одному значило бы завести шестую формулу вместо того,
+ * чтобы убрать пятую. Поэтому ответ ОДИН и опирается на ФАКТЫ:
+ *
+ *   ящики      — `fill.drawerHeights`, высоты фронтов, которые уже режутся
+ *   створки    — свободные участки (`nicheFacadeSpans`) либо `doorCount`
+ *   ничего     — прибор виден целиком или фронта нет вовсе
+ *
+ * `frontType` здесь читается ровно в одном месте и ровно как «какой
+ * фронт задуман»: `doorCount` уже отвечает нулём там, где фронт не
+ * створка. Это законно — незаконно было спрашивать его о фурнитуре.
+ */
+export type ModuleFronts = {
+  /** Полотна: каждый участок закрывается ОДНОЙ створкой. */
+  leaves: FacadeSpan[];
+  /** Фронты ящиков снизу вверх, миллиметры. */
+  drawers: number[];
+};
+
+export function moduleFronts(unit: Module, heightMm: number): ModuleFronts {
+  const empty: ModuleFronts = { leaves: [], drawers: [] };
+
+  /* Отдельностоящий прибор: он виден целиком, полотна перед ним нет. */
+  if (!hasFacade(unit)) return empty;
+
+  /*
+   * ФРОНТ У МОДУЛЯ ОДИН: СТВОРКИ ИЛИ ЯЩИКИ (ловушка 359).
+   *
+   * Ящики есть у того, у кого есть фронты ящиков, — а не у того, чей тип
+   * «ящичный»: под варочной панелью тип `appliance`, а ящики там есть, и
+   * в раскрое они режутся (ловушка 358).
+   */
+  const drawers = unit.column ? [] : (unit.fill?.drawerHeights ?? []);
+  if (drawers.length > 0) return { leaves: [], drawers: [...drawers] };
+
+  /* Фасад разбит приборами — створка на каждом свободном участке. */
+  const spans = nicheFacadeSpans(unit, heightMm);
+  if (spans) return { leaves: spans, drawers: [] };
+
+  /*
+   * ВСТРОЕННЫЙ ХОЛОДИЛЬНИК ЗАКРЫТ ДВУМЯ СТВОРКАМИ ДРУГ НАД ДРУГОМ.
+   *
+   * Дверь камеры и дверь морозильника — так его и собирают, и так он
+   * режется в раскрое (`BUILT_IN_FRIDGE_FRONTS`). Сцена рисовала одно
+   * полотно во всю высоту: у неё не было вертикальной раскладки вовсе, и
+   * это расхождение жило известным (слой 43). Теперь ответ один, и оно
+   * закрыто здесь, а не в трёх местах по-разному.
+   */
+  if (unit.builtIn) {
+    const leafH = heightMm / BUILT_IN_FRIDGE_FRONTS;
+    return {
+      leaves: Array.from({ length: BUILT_IN_FRIDGE_FRONTS }, (_, i) => ({
+        fromMm: leafH * i,
+        heightMm: leafH,
+      })),
+      drawers: [],
+    };
+  }
+
+  /*
+   * ВИТРИНА ЗАКРЫТА СТЕКЛОМ, А НЕ ГЛУХОЙ СТВОРКОЙ.
+   *
+   * Полотно у неё есть и в раскрое, и в фурнитуре — на петлях, как
+   * обычная дверца; рисует его сцена своим стеклом, а не этой пачкой.
+   */
+  if (hasVisibleWholeAppliance(unit) || unit.column) return empty;
+
+  const doors = doorCountOf(unit);
+  if (doors === 0) return empty;
+
+  return {
+    leaves: Array.from({ length: doors }, () => ({ fromMm: 0, heightMm })),
+    drawers: [],
+  };
+}
+
+/**
+ * МОЖЕТ ЛИ У МОДУЛЯ БЫТЬ РАСПАШНАЯ СТВОРКА — без высоты.
+ *
+ * Тот же вопрос, что и у `moduleFronts`, только без разбивки по
+ * участкам: направление открывания спрашивают и там, где наполнение ещё
+ * не посчитано. Модули с нишами сюда не попадают — их фурнитуру считает
+ * отдельная ветка по свободным участкам.
+ */
+export function hasSwingLeaf(unit: Module): boolean {
+  if (!hasFacade(unit)) return false;
+  if (!unit.column && (unit.fill?.drawerHeights.length ?? 0) > 0) return false;
+  if (hasVisibleWholeAppliance(unit) || unit.column) return false;
+  return doorCountOf(unit) > 0;
+}
+
+/**
+ * Прибор, который ВИДЕН ЦЕЛИКОМ: полотна перед ним не бывает.
+ *
+ * Варочная лежит в столешнице, вытяжка висит на виду, отдельностоящий
+ * прибор не закрывают вовсе. Колонна сюда не входит: у неё приборы в
+ * нишах, а над ними и под ними — обычные створки.
+ */
+const WHOLE_APPLIANCES = new Set(['oven', 'hob', 'hood', 'microwave']);
+
+export function hasVisibleWholeAppliance(unit: Module): boolean {
+  return (
+    Boolean(unit.appliance) &&
+    !unit.column &&
+    (WHOLE_APPLIANCES.has(unit.appliance as string) || unit.builtIn === false)
+  );
+}
+
+/**
+ * Сколько СТВОРОК задумано у модуля.
+ *
+ * Единственное место продукта, где читается `frontType`, и читается он
+ * по делу: «какой фронт задуман». Ящики и открытая секция дают ноль —
+ * там створки нет ни в раскрое, ни в сцене, ни в смете.
+ */
+function doorCountOf(unit: Module): number {
+  if (unit.frontType === 'drawers' || unit.frontType === 'none') return 0;
+  return Math.max(1, unit.doorCount);
 }
 
 /** Меньше этого фасад не делают: полоска в палец не деталь, а мусор. */

@@ -13,7 +13,7 @@ import { moduleDepthMm, rowStandardDepthMm } from './fill';
 import type { ProductionSettings } from '@/types/catalog';
 import type { ApplianceKind } from '@/types/millwork';
 import { FRAME_WIDTH_MM, frontKey, isFramed } from './frontMaterial';
-import { nicheFacadeSpans, type FacadeSpan } from './applianceFront';
+import { moduleFronts, type FacadeSpan } from './applianceFront';
 import { carcassKeyOf, type CarcassItem } from './carcassMaterial';
 import { defaultHandlePlace, handleBoxOf } from './handlePlace';
 
@@ -361,22 +361,34 @@ export function doorLeaves(
   unit: Module,
   heightMm: number,
 ): { index: number; span: FacadeSpan | null }[] {
+  /*
+   * ВИТРИНА ЗАКРЫТА СТЕКЛОМ, И РИСУЕТ ЕГО СВОЙ КОД.
+   *
+   * Полотно у неё есть — оно и режется, и висит на петлях, — но это
+   * стекло в раме, а не глухая панель: нарисуй её здесь, и клиент увидит
+   * закрытый ящик там, где заказывал витрину.
+   */
   if (unit.section === 'glass_display') return [];
 
-  /* Ящики и створки — разные фронты одного модуля, вместе их не бывает. */
-  if (!unit.column && (unit.fill?.drawerHeights.length ?? 0) > 0) return [];
-
-  /* Фасад разбит приборами — значит створка на каждом свободном участке. */
-  const spans = nicheFacadeSpans(unit, heightMm);
-  if (spans) return spans.map((span, index) => ({ index, span }));
-
   /*
-   * Прибор виден целиком (варочная, вытяжка, отдельностоящий) — створки
-   * там нет: она закрыла бы то, ради чего прибор и покупают.
+   * ЧТО ВИСИТ НА МОДУЛЕ — СПРАШИВАЕМ, А НЕ ВЫВОДИМ ЗДЕСЬ.
+   *
+   * Свой разбор «ящики, ниши, видимый прибор, `doorCount`» был ЧЕТВЁРТОЙ
+   * копией одного и того же: такие же ветки стояли в раскрое, в расчёте
+   * фурнитуры и в направлении открывания, и расходились они молча — у
+   * вытяжки фасад резался и не рисовался, у мойки висел без петель.
    */
-  if (hasVisibleAppliance(unit) || unit.column) return [];
+  const fronts = moduleFronts(unit, heightMm);
+  if (fronts.drawers.length > 0) return [];
 
-  return Array.from({ length: doorCount(unit) }, (_, index) => ({ index, span: null }));
+  return fronts.leaves.map((span, index) => ({
+    index,
+    /*
+     * Полотно во всю высоту модуля ставится без участка: так его рисует
+     * прежний код, и числа у него свои (зазор, ручка, петли).
+     */
+    span: span.fromMm === 0 && span.heightMm === heightMm ? null : span,
+  }));
 }
 
 /** Распахнутая створка: 90°. */

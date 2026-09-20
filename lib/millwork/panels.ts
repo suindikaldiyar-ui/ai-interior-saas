@@ -3,7 +3,7 @@ import { millingLink, type MillingItem } from './milling';
 import { carcassMaterialName, type CarcassItem } from './carcassMaterial';
 import { BUILT_IN_FRIDGE_FRONTS } from './modules';
 import { hasBottom } from './moduleVariants';
-import { facadeSpans, hasFacade } from './applianceFront';
+import { hasFacade, moduleFronts } from './applianceFront';
 import {
   FRAME_WIDTH_MM,
   frontMaterialName,
@@ -389,16 +389,20 @@ function modulePanels(
      * высоту — цех собрал бы не ту мебель. Высоты берутся из `fill`,
      * того же, что читают чертёж и 3D; второй расклад развёл бы их.
      */
-    const drawers = unit.fill?.drawerHeights ?? [];
-    if (drawers.length > 0) {
-      for (const front of drawers) {
-        pushFront('Фронт ящика', front - gap, unit.widthMm - gap, 1);
-      }
-      return panels;
-    }
+    /*
+     * ЧТО РЕЖЕТСЯ — ТО ЖЕ, ЧТО ВИСИТ.
+     *
+     * Здесь стояли свои ветки по фронтам и участкам. Спрашиваем один
+     * ответ: у вытяжки створки нет вовсе, и лист под неё больше не
+     * пилится, а у мойки она есть — и режется, и оплачивается петлями.
+     */
+    const fronts = moduleFronts(unit, heightMm);
 
-    for (const span of facadeSpans(unit, heightMm)) {
-      pushFront(FACADE_PANEL_NAME, span.heightMm - gap, unit.widthMm - gap, 1);
+    for (const front of fronts.drawers) {
+      pushFront('Фронт ящика', front - gap, unit.widthMm - gap, 1);
+    }
+    for (const leaf of fronts.leaves) {
+      pushFront(FACADE_PANEL_NAME, leaf.heightMm - gap, unit.widthMm - gap, 1);
     }
     return panels;
   }

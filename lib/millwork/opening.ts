@@ -1,6 +1,6 @@
-import { BUILT_IN_FRIDGE_FRONTS, CORNER, hingesPerDoor, isUpperRow } from './modules';
+import { CORNER, hingesPerDoor, isUpperRow } from './modules';
 import { MODULE_VARIANTS } from './moduleVariants';
-import { nicheFacadeSpans } from './applianceFront';
+import { moduleFronts, nicheFacadeSpans } from './applianceFront';
 import type { FrontOpening, HandleKind, Module, Run } from '@/types/millwork';
 
 /**
@@ -66,6 +66,17 @@ export function isSwing(opening: FrontOpening): boolean {
  * бились друг о друга.
  */
 export function defaultOpening(unit: Module, index = 0, total = 1): FrontOpening {
+  /*
+   * НАПРАВЛЕНИЕ — ЭТО ВЫБОР, И ОНО ЛЕЖИТ В ДАННЫХ.
+   *
+   * У приборного модуля раскладка направления не назначала, и здесь
+   * честный ответ «не назначено»: `fill.hinge` пишется отсюда и входит в
+   * отпечаток, а менять отпечатки всех сохранённых рядов ради подсчёта
+   * фурнитуры нельзя (ловушка 246).
+   *
+   * Фурнитуру это больше не ломает: `openingHardware` считает петли по
+   * ФАКТИЧЕСКИМ полотнам и различает «не назначено» и «выдвигается».
+   */
   if (unit.frontType !== 'door') return 'none';
 
   /*
@@ -145,7 +156,7 @@ export function openingRejection(unit: Module, opening: FrontOpening): string | 
   }
 
   if (unit.frontType !== 'door') {
-    return unit.frontType === 'drawers'
+    return unit.frontType === 'drawers' || (unit.fill?.drawerHeights.length ?? 0) > 0
       ? `«${name}» — ящики: они выдвигаются, а не открываются. Направление выбирают у распашного фасада.`
       : `У «${name}» распашного фасада нет: выбирать направление не у чего.`;
   }
@@ -368,26 +379,26 @@ export function openingHardware(
      * ручки выбирают помодульно, и считать их надо там же, где остальную
      * фурнитуру фасада.
      */
-    if (unit.frontType === 'drawers') {
-      addHandles(unit, unit.fill?.drawerHeights.length || unit.drawerCount);
+    /*
+     * ЧТО ВИСИТ НА МОДУЛЕ — ОДИН ОТВЕТ НА ПРОДУКТ.
+     *
+     * Стояло `frontType === 'drawers'`, и ручки ящиков под варочной
+     * панелью не покупал никто: тип фасада там `appliance`. Спрашиваем
+     * факты — фронты в наполнении и створки по участкам.
+     */
+    const fronts = moduleFronts(unit, heightMm);
+
+    if (fronts.drawers.length > 0) {
+      addHandles(unit, fronts.drawers.length);
     }
-    if (unit.builtIn) {
-      addHandles(unit, BUILT_IN_FRIDGE_FRONTS);
-      /*
-       * ПЕТЛИ ВСТРОЙКИ СЧИТАЮТСЯ ЗДЕСЬ, А НЕ В СМЕТЕ.
-       *
-       * Они лежали отдельной строкой внутри `buildEstimate`, и разрез по
-       * модулям (`byModule`) о них не знал: сборочный лист встроенного
-       * холодильника показывал две ручки и НИ ОДНОЙ петли, хотя в смете
-       * их четыре. Это тот же класс, что и направляющие под варочной, —
-       * величина посчитана в двух местах, и слабое место там, куда
-       * смотрит цех.
-       *
-       * Числа не меняются: смета берёт ту же сумму, только теперь из
-       * одного расчёта.
-       */
-      add('hinges', BUILT_IN_FRIDGE_FRONTS * leafHinges(heightMm / BUILT_IN_FRIDGE_FRONTS, 'left'));
-    }
+    /*
+     * ВСТРОЙКА ИДЁТ ОБЩЕЙ ВЕТКОЙ.
+     *
+     * Здесь стоял свой подсчёт петель и ручек для встроенного
+     * холодильника: `moduleFronts` о его двух створках не знала, и их
+     * приходилось называть отдельно. Теперь знает — и отдельная ветка
+     * стала вторым ответом на тот же вопрос.
+     */
 
     /*
      * ФАСАДЫ НАД ПРИБОРОМ И ПОД НИМ ТОЖЕ НА ЧЁМ-ТО ВИСЯТ.
@@ -411,25 +422,52 @@ export function openingHardware(
       continue;
     }
 
-    if (unit.frontType !== 'door') continue;
+    /*
+     * СТВОРКИ СЧИТАЮТСЯ ПО ФАКТУ, А НЕ ПО ТИПУ ФАСАДА.
+     *
+     * Здесь стояло `frontType !== 'door'` — и мойка с посудомойкой
+     * уходили на `continue` с нулём петель при висящей створке. Это был
+     * корень целой семьи дефектов: тип фасада говорит, ОТКУДА фронт
+     * взялся, а не что на модуле висит.
+     */
+    if (fronts.leaves.length === 0) continue;
 
     const { opening, assumed, basis } = openingOf(unit, index, total);
     if (opening === 'none') {
       /*
-       * Фасад есть, петель нет — это карго. Ручка ему всё равно нужна:
-       * за неё выдвигают.
+       * «НАПРАВЛЕНИЕ НЕ НАЗНАЧЕНО» И «ВЫДВИГАЕТСЯ» — РАЗНЫЕ СОСТОЯНИЯ.
+       *
+       * Карго выдвигается целиком: петель у него нет, а ручка нужна — за
+       * неё и тянут. А у мойки, посудомойки и встроенного холодильника
+       * направление просто НЕ ЗАПИСАНО: раскладка его приборным модулям
+       * не назначает. Сливать эти два состояния значило оставить висящую
+       * створку без единой петли — что смета и делала.
+       *
+       * Направление для расчёта берём распашным: створка есть, она на
+       * чём-то висит. В данные это не пишется — отпечаток не двигается.
        */
-      addHandles(unit, 1);
+      if (isPullOut(unit)) {
+        addHandles(unit, 1);
+        continue;
+      }
+
+      for (const leaf of fronts.leaves) add('hinges', leafHinges(leaf.heightMm, 'left'));
+      addHandles(unit, fronts.leaves.length);
       continue;
     }
 
-    const doors = Math.max(1, unit.doorCount);
     const isCorner = unit.kind === 'corner_base' || unit.kind === 'corner_upper';
 
     if (isSwing(opening)) {
-      const perDoor = leafHinges(heightMm, opening);
-      if (isCorner) add('cornerHinges', doors * perDoor);
-      else add('hinges', doors * perDoor);
+      /*
+       * Петли считаются ПО ПОЛОТНАМ: у встроенного холодильника их два и
+       * они вдвое ниже, и `leafHinges` это уже знает.
+       */
+      for (const leaf of fronts.leaves) {
+        const perLeaf = leafHinges(leaf.heightMm, opening);
+        if (isCorner) add('cornerHinges', perLeaf);
+        else add('hinges', perLeaf);
+      }
     }
 
     if (opening === 'lift') {
@@ -453,7 +491,7 @@ export function openingHardware(
      * (он режется по ширине модуля), нажимной механизм — штуками: за
      * «без ручки» стоит механизм, а не пустота.
      */
-    addHandles(unit, isMechanism(opening) ? 1 : doors);
+    addHandles(unit, isMechanism(opening) ? 1 : fronts.leaves.length);
 
     /*
      * О чём молчать нельзя, а о чём не стоит говорить.

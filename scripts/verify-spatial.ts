@@ -48,6 +48,7 @@ import {
 import { profileMm } from '../lib/millwork/relief';
 import { DEMO_REQUIREMENTS } from '../lib/millwork/demo';
 import { HANDLE_PLACES } from '../lib/millwork/handlePlace';
+import FrontGlyph from '../components/millwork/FrontGlyph';
 import { openingHardware } from '../lib/millwork/opening';
 import { moduleCarcassHeightMm } from '../lib/millwork/fill';
 import { wallMismatches } from '../lib/millwork/walls';
@@ -1868,6 +1869,82 @@ console.log('\n' + 'Петли в сцене и положения ручки');
       'и ни в одном ручка не выходит за фасад',
       outsideFront.length === 0,
       outsideFront.length === 0 ? 'все внутри полотна' : outsideFront.join(' · '),
+    );
+  }
+}
+
+/* ═══  Ручка на листе стоит там же, где в сцене  ═══ */
+
+/**
+ * ЛИСТ ПОКАЗЫВАЕТ ТУ ЖЕ РУЧКУ, ЧТО И СЦЕНА.
+ *
+ * Положение ручки выбиралось и до чертежа не доезжало вовсе: `frontGlyph`
+ * не рисовал её ни в одном из восьми положений. Сборщик по такому листу
+ * не знает, с какой стороны за фасад берутся.
+ *
+ * Меряется совпадение: в разметке листа стоит ТО ЖЕ положение, которое
+ * применено к модулю, и меняется оно вслед за выбором.
+ */
+console.log('\n' + 'Ручка на чертеже совпадает со сценой');
+{
+  const run = buildRun({
+    lengthMm: 3800,
+    ceilingHeightMm: 2700,
+    requirements: DEMO_REQUIREMENTS,
+    openings: [],
+    comms: [],
+  } as never);
+
+  const unit = run.modules.find(
+    (u) => u.frontType === 'door' && !u.appliance && (u.fill?.drawerHeights.length ?? 0) === 0,
+  );
+
+  check(
+    'модуль со створкой есть — ручку на листе проверять есть на чём',
+    Boolean(unit),
+    unit ? unit.label : 'МОДУЛЯ СО СТВОРКОЙ НЕТ',
+  );
+
+  if (unit) {
+    const drawnPlaces: string[] = [];
+
+    for (const place of HANDLE_PLACES) {
+      const edited = applyOps({
+        run,
+        requirements: DEMO_REQUIREMENTS,
+        ops: [{ op: 'set_handle_place', moduleId: unit.id, place: place.key }],
+      } as never);
+
+      const edit = edited.modules.find((u) => u.id === unit.id)!;
+      const html = renderToStaticMarkup(
+        React.createElement(FrontGlyph, {
+          unit: edit,
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 200,
+          mode: 'fronts',
+        } as never),
+      );
+
+      const m = html.match(/data-handle-place="([^"]+)"/);
+      if (m) drawnPlaces.push(m[1]);
+    }
+
+    check(
+      'ручка нарисована на листе во всех восьми положениях',
+      drawnPlaces.length === HANDLE_PLACES.length,
+      drawnPlaces.length === 0
+        ? 'РУЧКИ НА ЛИСТЕ НЕТ НИ В ОДНОМ ПОЛОЖЕНИИ'
+        : `нарисовано ${drawnPlaces.length} из ${HANDLE_PLACES.length}`,
+    );
+
+    check(
+      'и на листе стоит ТО ЖЕ положение, что выбрано у модуля',
+      drawnPlaces.join(',') === HANDLE_PLACES.map((pl) => pl.key).join(','),
+      drawnPlaces.length === 0
+        ? 'СВЕРЯТЬ НЕЧЕГО'
+        : `${drawnPlaces.join(', ')}`,
     );
   }
 }

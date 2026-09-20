@@ -2,6 +2,7 @@
 
 import { FlapMark, LiftMark, SwingMark } from './DrawingSymbols';
 import { frontGlyph, type GlyphMode } from '@/lib/millwork/frontGlyph';
+import { handleBoxOf } from '@/lib/millwork/handlePlace';
 import type { Module } from '@/types/millwork';
 
 /**
@@ -221,6 +222,42 @@ export default function FrontGlyph({
                 data-symbol="open"
               />
             );
+
+          case 'handle': {
+            /*
+             * РУЧКА НА ЛИСТЕ — В ТОМ ЖЕ ПОЛОЖЕНИИ, ЧТО В СЦЕНЕ.
+             *
+             * Геометрию считает `handleBoxOf` — та же функция, что ставит
+             * ручку на фасад в 3D: второй формулы места в продукте нет, и
+             * лист не может показать ручку не там, где она встанет.
+             * Полотно здесь — прямоугольник вида, поэтому в функцию идут
+             * его центр и габарит в единицах листа.
+             */
+            const box = handleBoxOf(el.place, {
+              cx: x + width / 2,
+              cy: y + height / 2,
+              widthM: width,
+              heightM: height,
+              thicknessM: 0,
+            });
+
+            /* У вида ось Y растёт ВНИЗ, у сцены вверх: отражаем по центру. */
+            const hy = 2 * (y + height / 2) - box.position[1];
+
+            return (
+              <rect
+                key={i}
+                data-symbol="handle"
+                data-handle-place={el.place}
+                x={box.position[0] - box.scale[0] / 2}
+                y={hy - box.scale[1] / 2}
+                width={Math.max(0.8 * k, box.scale[0])}
+                height={Math.max(0.8 * k, box.scale[1])}
+                fill={LINE}
+                opacity={0.75}
+              />
+            );
+          }
 
           case 'cargo':
             // Вертикальная стрелка выдвижения: карго едет на себя.

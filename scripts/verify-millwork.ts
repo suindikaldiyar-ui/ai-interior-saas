@@ -107,7 +107,7 @@ import {
 } from '../lib/millwork/moduleVariants';
 import { gapsIn } from '../lib/millwork/freeRun';
 import { BOTTLE_MAX_MM, variantEstimateKeys } from '../lib/millwork/moduleVariants';
-import { MIN_FACADE_SPAN_MM, facadeSpans, hasFacade } from '../lib/millwork/applianceFront';
+import { MIN_FACADE_SPAN_MM, facadeSpans, hasFacade, moduleFronts } from '../lib/millwork/applianceFront';
 import {
   CARCASS_SCOPES,
   carcassCatalog,
@@ -194,6 +194,8 @@ import {
   openingOf,
   openingRejection,
   openingsFor,
+  isPullOut,
+  handleOf,
 } from '../lib/millwork/opening';
 import {
   hardwareWarnings,
@@ -248,7 +250,7 @@ import {
   missingRequiredRates,
 } from '../lib/millwork/rates';
 import { axonometryExtentMm, buildAxonometry, project } from '../lib/millwork/axonometry';
-import { carcassBoxes, doorCount, doorPivot, hasVisibleAppliance, moduleBoxes, openablePartIds, panelPlaces, runBoxes, runPlaces } from '../lib/millwork/cabinetBoxes';
+import { carcassBoxes, doorCount, doorPivot, hasVisibleAppliance, moduleBoxes, openablePartIds, panelPlaces, runBoxes, runPlaces, doorLeaves} from '../lib/millwork/cabinetBoxes';
 import {
   DEFAULT_ALLOWANCES,
   DEFAULT_PRODUCTION,
@@ -8704,10 +8706,28 @@ console.log('\nФасады, створки и ручки');
     { gapM: 0.003, frontThicknessM: 0.018, integratedHandles: false, cutaway: false },
   ).filter((box) => box.material === 'front');
 
+  /*
+   * СТВОРОК В СЦЕНЕ СТОЛЬКО, СКОЛЬКО ИХ РЕЖЕТСЯ.
+   *
+   * Здесь стояло «ровно один фасад» — и это была ЗАПИСАННАЯ В ПРОВЕРКУ
+   * ошибка: раскрой пилит встроенному холодильнику ДВЕ створки (дверь
+   * камеры и дверь морозильника, `BUILT_IN_FRIDGE_FRONTS`), а сцена
+   * рисовала одно полотно во всю высоту. Расхождение жило «известным»
+   * (слой 43) и проверкой закреплялось.
+   *
+   * Теперь сравниваем с раскроем, а не с числом в скобках: так проверка
+   * ловит расхождение в обе стороны.
+   */
+  const fridgeCut = buildPanels({ run })
+    .filter((p) => p.moduleId === fridgePlace.unit.id && p.material.startsWith('Фасад'))
+    .reduce((sum, p) => sum + p.qty, 0);
+
   check(
-    'у колонны холодильника ровно один фасад',
-    fridgeBoxes.length === 1,
-    `${fridgeBoxes.length} фасадных коробок`,
+    'створок у колонны холодильника в сцене столько же, сколько в раскрое',
+    fridgeBoxes.length === fridgeCut && fridgeCut > 0,
+    fridgeCut === 0
+      ? 'НОЛЬ ФАСАДОВ В РАСКРОЕ У ХОЛОДИЛЬНИКА'
+      : `сцена ${fridgeBoxes.length} · раскрой ${fridgeCut}`,
   );
 
   const mezzanine = places.find((place) => place.unit.section === 'mezzanine')!;
@@ -16299,6 +16319,175 @@ console.log('\n' + 'Ручка и материал корпуса');
       ? `${upperUnit.label}: ${carcassFor(upperUnit, upperOwn)}`
       : 'ВЕРХНЕГО РЯДА НЕТ — наследование не проверить',
   );
+}
+
+/* ═══  Раскрой, сцена и смета говорят одно  ═══ */
+
+/**
+ * ОДИН КОРЕНЬ: «ЕСТЬ ЛИ ЗДЕСЬ СТВОРКА» РЕШАЛОСЬ ПО ТИПУ ФАСАДА.
+ *
+ * `frontType` говорит, ОТКУДА фронт взялся, а не что на модуле висит. Из
+ * этого вышла целая семья дефектов: направляющие под варочной, петли и
+ * ручки колонны, петли мойки и посудомойки, ручки ящиков под варочной,
+ * фасад вытяжки — резался и не рисовался.
+ *
+ * Здесь проверяется ВСЯ таблица, а не выборочные модули: у каждого вида
+ * створок в сцене столько же, сколько в раскрое, и фурнитура сходится с
+ * тем, что на модуле физически висит. «Хотя бы у одного» пропускает
+ * ровно ту ошибку, ради которой проверка написана (ловушка 318).
+ */
+console.log('\n' + 'Раскрой, сцена и смета говорят одно');
+{
+  const withMicrowave: RunRequirements = {
+    ...REQ,
+    appliances: [...REQ.appliances, 'microwave'],
+  };
+  const run = buildRun({ ...baseInput, lengthMm: 4200, requirements: withMicrowave });
+  const panels = buildPanels({ run });
+  const places = runPlaces(run);
+
+  const all = [...run.modules, ...run.upperSegments.flatMap((sg) => sg.modules)];
+  const hw = openingHardware(
+    all.map((unit, index) => ({
+      unit,
+      heightMm: moduleCarcassHeightMm(unit, run),
+      index,
+      total: all.length,
+    })),
+    run,
+  );
+
+  check(
+    'модули есть — таблицу строить есть из чего',
+    places.length > 0 && all.length > 0,
+    places.length === 0 ? 'НОЛЬ МОДУЛЕЙ В РЯДУ — сверять нечего' : `модулей ${places.length}`,
+  );
+
+  type Row = {
+    label: string;
+    cutLeaves: number;
+    cutDrawers: number;
+    sceneLeaves: number;
+    hinges: number;
+    handles: number;
+    pullOut: boolean;
+    noHandle: boolean;
+  };
+
+  const rows: Row[] = places.map((place) => {
+    const unit = place.unit;
+    const heightMm = moduleCarcassHeightMm(unit, run);
+    const mine = panels.filter((panel) => panel.moduleId === unit.id);
+    const mod = hw.byModule[unit.id];
+
+    return {
+      label: unit.label,
+      cutLeaves: mine
+        .filter((panel) => panel.material.startsWith('Фасад') && panel.name !== DRAWER_FRONT_PANEL_NAME)
+        .reduce((sum, panel) => sum + panel.qty, 0),
+      cutDrawers: mine
+        .filter((panel) => panel.name === DRAWER_FRONT_PANEL_NAME)
+        .reduce((sum, panel) => sum + panel.qty, 0),
+      sceneLeaves: doorLeaves(unit, heightMm).length,
+      hinges: (mod?.hinges ?? 0) + (mod?.cornerHinges ?? 0),
+      handles: (mod?.handleBar ?? 0) + (mod?.handlePush ?? 0) + ((mod?.handleProfileMm ?? 0) > 0 ? 1 : 0),
+      pullOut: isPullOut(unit),
+      noHandle: handleOf(unit, run).handle === 'none',
+    };
+  });
+
+  /* ── 1. Створок в сцене столько же, сколько в раскрое ── */
+
+  const displays = new Set(
+    places.filter((place) => place.unit.section === 'glass_display').map((place) => place.unit.label),
+  );
+
+  const leafOff = rows.filter(
+    (row) => !displays.has(row.label) && row.cutLeaves !== row.sceneLeaves,
+  );
+
+  check(
+    'створок в сцене столько же, сколько в раскрое, У КАЖДОГО модуля',
+    leafOff.length === 0 && rows.length > 0,
+    leafOff.length === 0
+      ? `сверено модулей ${rows.length}, расхождений 0`
+      : `РАСХОЖДЕНИЕ: ${leafOff
+          .map((row) => `${row.label}: раскрой ${row.cutLeaves}, сцена ${row.sceneLeaves}`)
+          .join(' · ')}`,
+  );
+
+  /* ── 2. Ни одной створки без петель, ни одних петель без створки ── */
+
+  const naked = rows.filter((row) => row.cutLeaves > 0 && row.hinges === 0 && !row.pullOut);
+  const orphan = rows.filter((row) => row.hinges > 0 && row.cutLeaves === 0);
+
+  check(
+    'ни одной створки без петель',
+    naked.length === 0,
+    naked.length === 0
+      ? `створок с петлями ${rows.filter((r) => r.cutLeaves > 0).length}`
+      : `СТВОРКА БЕЗ ПЕТЕЛЬ: ${naked.map((r) => `${r.label} (${r.cutLeaves})`).join(' · ')}`,
+  );
+
+  check(
+    'и ни одних петель без створки',
+    orphan.length === 0,
+    orphan.length === 0
+      ? 'лишних петель нет'
+      : `ПЕТЛИ БЕЗ СТВОРКИ: ${orphan.map((r) => `${r.label} (${r.hinges})`).join(' · ')}`,
+  );
+
+  /* ── 3. Ни одного фронта без ручки ── */
+
+  const handless = rows.filter(
+    (row) => row.cutLeaves + row.cutDrawers > 0 && row.handles === 0 && !row.noHandle,
+  );
+  const ghostHandles = rows.filter((row) => row.handles > 0 && row.cutLeaves + row.cutDrawers === 0);
+
+  check(
+    'ни одного фронта без ручки — кроме тех, где выбрано «без ручки»',
+    handless.length === 0,
+    handless.length === 0
+      ? `с ручками ${rows.filter((r) => r.handles > 0).length} модулей`
+      : `ФРОНТ БЕЗ РУЧКИ: ${handless
+          .map((r) => `${r.label} (створок ${r.cutLeaves}, фронтов ${r.cutDrawers})`)
+          .join(' · ')}`,
+  );
+
+  check(
+    'и ни одной ручки без фронта',
+    ghostHandles.length === 0,
+    ghostHandles.length === 0
+      ? 'лишних ручек нет'
+      : `РУЧКА БЕЗ ФРОНТА: ${ghostHandles.map((r) => `${r.label} (${r.handles})`).join(' · ')}`,
+  );
+
+  /* ── 5. Вытяжка: раскрой и сцена согласованы ── */
+
+  const hood = rows.find((row) => row.label.includes('Вытяжк'));
+
+  check(
+    'вытяжка в ряду есть — согласованность проверять есть на чём',
+    Boolean(hood),
+    hood ? hood.label : 'ВЫТЯЖКИ В РЯДУ НЕТ',
+  );
+
+  if (hood) {
+    check(
+      'у вытяжки раскрой и сцена согласованы',
+      hood.cutLeaves === hood.sceneLeaves,
+      `раскрой ${hood.cutLeaves} · сцена ${hood.sceneLeaves} · петель ${hood.hinges}`,
+    );
+  }
+
+  /* Таблица целиком — она и есть ответ на вопрос «где ещё расходится». */
+  for (const row of rows) {
+    check(
+      `${row.label}: раскрой ${row.cutLeaves}/${row.cutDrawers} · сцена ${row.sceneLeaves} · петель ${row.hinges} · ручек ${row.handles}`,
+      row.cutLeaves === row.sceneLeaves || displays.has(row.label),
+      '',
+    );
+  }
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

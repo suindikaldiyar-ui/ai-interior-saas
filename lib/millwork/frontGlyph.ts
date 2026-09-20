@@ -4,8 +4,9 @@ import {
   variantsForModule,
   currentVariant,
 } from './moduleVariants';
-import { openingOf } from './opening';
-import type { Module, ModuleVariantKind } from '@/types/millwork';
+import { handleOf, openingOf } from './opening';
+import { defaultHandlePlace } from './handlePlace';
+import type { HandlePlace, Module, ModuleVariantKind, Run } from '@/types/millwork';
 
 /**
  * ЧТО ВИДНО НА ФАСАДЕ МОДУЛЯ.
@@ -49,6 +50,17 @@ export type GlyphElement =
   | { kind: 'led' }
   /** Открытая секция: фасада нет вовсе. */
   | { kind: 'open' }
+  /**
+   * РУЧКА НА ФАСАДЕ — В ТОМ ЖЕ ПОЛОЖЕНИИ, ЧТО В СЦЕНЕ.
+   *
+   * Лист рисовал мебель без единой ручки: положение выбиралось и до
+   * чертежа не доезжало вовсе. Сборщик по такому листу не знает, с какой
+   * стороны за фасад берутся, а это вопрос, который решают на объекте.
+   *
+   * `place` — то же поле `fill.handlePlace`, по которому ручку ставит
+   * сцена. Второго правила «где ручка» в продукте нет.
+   */
+  | { kind: 'handle'; place: HandlePlace }
   /** Вертикальная стрелка выдвижения — карго. */
   | { kind: 'cargo' }
   /** Решётка сушилки пунктиром. */
@@ -373,6 +385,33 @@ export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts'): GlyphEleme
 
   // Вытяжка: воздуховод пунктиром вверх — по нему видно, куда идёт труба.
   if (unit.appliance === 'hood') elements.push({ kind: 'hoodDuct' });
+
+  /*
+   * РУЧКА РИСУЕТСЯ ТАМ, ГДЕ ОНА ЕСТЬ.
+   *
+   * «Без ручки» — это механизм нажатия, и на фасаде не видно ничего:
+   * именно за этим её и выбирают. У открытой секции и у видимого прибора
+   * фасада нет вовсе — брать не за что.
+   */
+  if (mode === 'fronts') {
+    const handle = handleOf(unit, { options: {} as Run['options'] });
+    const fronts = elements.some(
+      (el) => el.kind === 'panel' || el.kind === 'drawer' || el.kind === 'glass',
+    );
+
+    if (fronts && handle.handle !== 'none') {
+      elements.push({
+        kind: 'handle',
+        place:
+          unit.fill?.handlePlace ??
+          defaultHandlePlace(
+            handle.handle,
+            openingOf(unit).opening,
+            openingOf(unit).opening === 'right' ? 'right' : 'left',
+          ),
+      });
+    }
+  }
 
   return elements;
 }
