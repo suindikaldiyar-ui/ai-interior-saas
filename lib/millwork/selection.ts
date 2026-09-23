@@ -92,6 +92,99 @@ export function moduleOfPart(partId: string): string | null {
   return id ? id : null;
 }
 
+/** Какому ряду принадлежит модуль. */
+export type RunRow = 'base' | 'upper' | 'mezzanine';
+
+/**
+ * В КАКОМ РЯДУ СТОИТ МОДУЛЬ.
+ *
+ * Правка живёт внутри одного ряда: наполнение пишется в тот ряд, где его
+ * правили, а перенос переставляет модуль среди СОСЕДЕЙ ПО РЯДУ. Ответ
+ * на «в каком ряду» должен быть один — жест на чертеже и операция в
+ * движке обязаны выбрать один и тот же список, иначе подсветка покажет
+ * одно, а запись уйдёт в другое.
+ *
+ * Ряд определяется тем, где модуль ЛЕЖИТ, а не его видом: у полосы
+ * антресоли в шкафу-купе вид `upper` — тот же, что у верхнего ряда
+ * кухни, — и различает их только `section`.
+ */
+export function rowOfModule(
+  run: Run,
+  id: string | null | undefined,
+): { row: RunRow; modules: Module[] } | null {
+  if (!id) return null;
+
+  if (run.modules.some((unit) => unit.id === id)) {
+    return { row: 'base', modules: run.modules };
+  }
+
+  const upper = run.upperSegments.flatMap((segment) => segment.modules);
+  const found = upper.find((unit) => unit.id === id);
+  if (!found) return null;
+
+  const row: RunRow = found.section === 'mezzanine' ? 'mezzanine' : 'upper';
+  return { row, modules: upper.filter((unit) => (unit.section === 'mezzanine') === (row === 'mezzanine')) };
+}
+
+/**
+ * КУДА ВСТАНЕТ МОДУЛЬ, ЕСЛИ ОТПУСТИТЬ ЕГО ЗДЕСЬ.
+ *
+ * Перетаскивание даёт одно число — левый край под пальцем. Что из него
+ * следует, зависит от режима, и ответ здесь ОДИН на подсветку и на
+ * операцию: подсветка обязана показывать то место, которое запишется.
+ *
+ * `offsetMm` — свободная сборка: модуль встаёт туда, где отпустили, а
+ * соседи не двигаются. Здесь эта функция ничего не решает.
+ *
+ * `afterModuleId` — раскладка по шаблону и верхние ряды: там позиция
+ * выводится из суммы ширин, и «поставить на 1750 мм» не значит ничего —
+ * ряд всё равно сойдётся со стеной. Жест означает ПЕРЕСТАНОВКУ, и
+ * считается она по центру: модуль встаёт перед тем соседом, чью
+ * середину он перешёл.
+ */
+export function reorderTarget(
+  modules: Module[],
+  moduleId: string,
+  offsetMm: number,
+): { afterModuleId: string; offsetMm: number } | null {
+  const from = modules.findIndex((unit) => unit.id === moduleId);
+  if (from < 0) return null;
+
+  const centre = offsetMm + modules[from].widthMm / 2;
+
+  /* Порядок без переносимого модуля: между кем он встаёт. */
+  const rest = modules.filter((_, i) => i !== from);
+  let to = rest.length;
+  let at = modules[0]?.offsetMm ?? 0;
+  for (let i = 0; i < rest.length; i += 1) {
+    if (centre < at + rest[i].widthMm / 2) {
+      to = i;
+      break;
+    }
+    at += rest[i].widthMm;
+  }
+
+  if (to === from) return null;
+
+  /*
+   * `afterModuleId` в `move_module` — это СОСЕД, НА ЧЬЁ МЕСТО встают:
+   * модуль вынимается из списка и вставляется по индексу соседа. Значит
+   * называть надо того, кто окажется на этом индексе.
+   */
+  const neighbour = modules[Math.min(to, modules.length - 1)];
+  if (!neighbour || neighbour.id === moduleId) return null;
+
+  /* Отметка после перестановки — сумма ширин тех, кто окажется левее. */
+  const order = [...rest];
+  order.splice(to, 0, modules[from]);
+  const start = modules[0]?.offsetMm ?? 0;
+  const landed = order
+    .slice(0, order.findIndex((unit) => unit.id === moduleId))
+    .reduce((sum, unit) => sum + unit.widthMm, start);
+
+  return { afterModuleId: neighbour.id, offsetMm: landed };
+}
+
 /**
  * В КАКОЙ СТЕНЕ СТОИТ ЭТОТ МОДУЛЬ.
  *

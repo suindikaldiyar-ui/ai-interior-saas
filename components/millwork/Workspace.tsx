@@ -74,7 +74,14 @@ import TemplatePicker from './TemplatePicker';
 import type { RateTable } from '@/lib/millwork/estimate';
 import { applyOps } from '@/lib/millwork/ops';
 import { screenState } from '@/lib/millwork/screen';
-import { keepSelection, selectionState, wallOfModule } from '@/lib/millwork/selection';
+import {
+  keepSelection,
+  reorderTarget,
+  rowOfModule,
+  selectionState,
+  wallOfModule,
+} from '@/lib/millwork/selection';
+import { snapMove } from '@/lib/millwork/freeRun';
 /*
  * Отметки цеха показываются теми же функциями, по которым собран ряд:
  * показанное число обязано совпадать с тем, по которому пилят.
@@ -102,7 +109,7 @@ import {
 } from '@/lib/millwork/moduleVariants';
 import { allModules } from '@/lib/millwork/layout';
 import { buildRun } from '@/lib/millwork/layout';
-import { manualAnchorCost, widthOverflowMm } from '@/lib/millwork/invariants';
+import { manualAnchorCost } from '@/lib/millwork/invariants';
 import {
   APPLIANCE_SLOTS,
   MAX_WIDTH,
@@ -146,14 +153,12 @@ import {
   type Survey,
 } from '@/types/survey';
 import { shareUrl, whatsappLink, type MillworkState } from '@/lib/projects';
-import { runFingerprint } from '@/lib/millwork/fingerprint';
 import type {
   ApplianceKind,
   CompositionKind,
   CommPoint,
   MillworkOp,
   ModuleVariantKind,
-  Module,
   ModuleFill,
   Opening,
   Run,
@@ -1103,33 +1108,22 @@ export default function Workspace(props: WorkspaceProps) {
   }, []);
 
   /**
-   * Правка наполнения модуля.
+   * ПРАВКА НАПОЛНЕНИЯ ИДЁТ ОПЕРАЦИЕЙ, КАК ЛЮБАЯ ДРУГАЯ.
    *
-   * Идёт тем же путём, что и правка состава: результат ложится в
-   * `editedRuns`, попадает в автосохранение и меняет отпечаток — чертёж,
-   * смета и рендер обязаны увидеть одну и ту же мебель.
+   * Здесь стоял `changeFill` — единственная в продукте прямая запись в
+   * ряд мимо `applyOps`. Он собирал новый `Run` сам и накладывал одну
+   * карту `id → fill` СРАЗУ на нижний ряд и на все верхние сегменты, то
+   * есть писал во все три ряда одним движением. Мимо него проходили и
+   * три инварианта, которыми кончается `applyOps`: `assertRunFits`,
+   * `assertNoOverlap`, `assertUnderCeiling`.
+   *
+   * Теперь жест на чертеже зовёт `set_fill`, ряд выбирается в движке
+   * ОДИН, и отказ приходит словами с числом — туда же, куда приходил
+   * отказ самого жеста (`onFillReject`).
    */
   const changeFill = (moduleId: string, fill: ModuleFill) => {
-    // Правку приняли — прошлый отказ больше не про эту мебель.
     setMoveNotice(null);
-
-    const patch = (list: Module[]) =>
-      list.map((unit) => (unit.id === moduleId ? { ...unit, fill } : unit));
-
-    const next: Run = {
-      ...active.run,
-      modules: patch(active.run.modules),
-      upperSegments: active.run.upperSegments.map((segment) => ({
-        ...segment,
-        modules: patch(segment.modules),
-      })),
-    };
-
-    dirty.current = true;
-    setEditedRuns((prev) => ({
-      ...prev,
-      [variantKey]: { ...next, fingerprint: runFingerprint(next) },
-    }));
+    runOps([{ op: 'set_fill', moduleId, fill }], setMoveNotice);
   };
 
   /**
@@ -1187,11 +1181,43 @@ export default function Workspace(props: WorkspaceProps) {
     );
   };
 
+  /**
+   * ПЕРЕНОС МОДУЛЯ ВДОЛЬ РЯДА.
+   *
+   * Жест один, а значит он два: в свободной сборке модуль встаёт ТУДА,
+   * ГДЕ ОТПУСТИЛИ, и соседи не двигаются; в раскладке по шаблону ряд
+   * обязан сойтись со стеной до миллиметра, и «поставить на 1750 мм» там
+   * не значит ничего — модуль МЕНЯЕТСЯ МЕСТАМИ с соседом.
+   *
+   * Раньше перенос был включён только в свободной сборке
+   * (`freeMode ? moveModule : undefined`), а по шаблону работает
+   * девять замерщиков из десяти: модуль на схеме не двигался вовсе.
+   *
+   * Обе ветки — ОДНА операция `move_module`: она умеет и то, и другое, и
+   * умеет это для всех трёх рядов. Второго пути записи не появляется.
+   */
   const moveModule = (moduleId: string, offsetMm: number) => {
+    const row = rowOfModule(active.run, moduleId);
+    if (!row) return;
+
+    /*
+     * Свободная сборка двигает по месту только НИЖНИЙ ряд: верхний и
+     * антресоль там не собираются руками, и `move_module` для них знает
+     * одну форму — перестановку.
+     */
+    const byPlace = freeMode && row.row === 'base';
+    const target = byPlace ? null : reorderTarget(row.modules, moduleId, offsetMm);
+
+    if (!byPlace && !target) return;
+
     const next = applyOps({
       run: active.run,
       requirements,
-      ops: [{ op: 'move_module', moduleId, offsetMm }],
+      ops: [
+        byPlace
+          ? { op: 'move_module', moduleId, offsetMm }
+          : { op: 'move_module', moduleId, afterModuleId: target!.afterModuleId },
+      ],
       openings: props.openings,
       roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
     });
@@ -1204,9 +1230,22 @@ export default function Workspace(props: WorkspaceProps) {
     setMoveNotice(null);
     dirty.current = true;
     setEditedRuns((prev) => ({ ...prev, [active.key]: next }));
-    // Идентификатор выводится из позиции: подвинули — модуль стал другим id.
+    /*
+     * Идентификатор выводится из позиции: подвинули — модуль стал другим
+     * id. Ищем его там же, где он лежал, и по той отметке, на которую
+     * встал, — её посчитала `reorderTarget`, та же функция, что рисовала
+     * подсветку под пальцем.
+     */
+    const landed = byPlace ? snapMove(offsetMm) : target!.offsetMm;
+    const after = rowOfModule(next, moduleId) ?? {
+      row: row.row,
+      modules:
+        row.row === 'base'
+          ? next.modules
+          : next.upperSegments.flatMap((segment) => segment.modules),
+    };
     setSelectedId(
-      next.modules.find((m) => m.offsetMm === Math.round(offsetMm / 50) * 50)?.id ?? null,
+      after.modules.find((m) => m.offsetMm === landed)?.id ?? keepSelection(next, moduleId),
     );
   };
 
@@ -1531,7 +1570,19 @@ export default function Workspace(props: WorkspaceProps) {
   );
 
   const runOps = useCallback(
-    (ops: MillworkOp[]) => {
+    (
+      ops: MillworkOp[],
+      /**
+       * Куда положить отказ.
+       *
+       * Операция, которую движок не принял, возвращает ряд БЕЗ правки и
+       * кладёт причину в `warnings`. Молча проглотить её нельзя: человек
+       * потянул полку или ширину, ничего не произошло, и почему — не
+       * сказал никто. По умолчанию строка идёт под схему, где и делают
+       * жест; чертёжный лист показывает свою строку и передаёт её сюда.
+       */
+      onRefusal: (text: string | null) => void = setSceneNotice,
+    ) => {
       if (ops.length === 0) return;
 
       /*
@@ -1568,6 +1619,12 @@ export default function Workspace(props: WorkspaceProps) {
         roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
       });
       dirty.current = true;
+      /*
+       * ОТКАЗ НАЗЫВАЕТСЯ СЛОВАМИ. Ряд при этом всё равно записывается:
+       * в пачке бывает несколько операций, и отклонённая не отменяет
+       * принятые — движок вернул ряд с тем, что прошло.
+       */
+      onRefusal(next.warnings[0] ?? null);
       /*
        * Правка уходит в ТУ стену, которая выбрана. Операция одна и та
        * же — меняется только, чей ряд она правит.
@@ -1751,12 +1808,18 @@ export default function Workspace(props: WorkspaceProps) {
       const wanted = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, widthMm));
       if (wanted === unit.widthMm) return;
 
-      const over = widthOverflowMm(active.run, moduleId, wanted, MIN_WIDTH);
-      if (over > 0) {
-        setSceneNotice(`Не помещается: ряд вышел бы за стену на ${over} мм.`);
-        return;
-      }
-
+      /*
+       * ПОМЕЩАЕМОСТЬ СЧИТАЕТ `set_width`, А НЕ ЭТА РУЧКА.
+       *
+       * Здесь стояла ВТОРАЯ копия проверки — `widthOverflowMm`, — и она
+       * считала по-шаблонному ВСЕГДА: «соседи ужмутся до MIN_WIDTH, и
+       * всё сойдётся». В свободной сборке соседей никто не ужимает
+       * (ловушка 233), поэтому ручка отказывала там, где поле ширины
+       * пропускало, и пропускала там, где модуль налезал на соседа.
+       *
+       * Одна правка — одна формула: жест кладёт операцию, движок
+       * считает по режиму ряда и называет отказ числом.
+       */
       const spec = MODULE_VARIANTS[currentVariant(unit)];
       setSceneNotice(
         !spec.anyWidth && (wanted < spec.minWidthMm || wanted > spec.maxWidthMm)
@@ -2260,7 +2323,7 @@ export default function Workspace(props: WorkspaceProps) {
       selectedModuleId={selectedId}
       onSelectModule={selectModule}
       onWidth={dragWidth}
-      onMoveModule={freeMode ? moveModule : undefined}
+      onMoveModule={moveModule}
       onItemId={setKitchenItemId}
     />
   );
@@ -2685,7 +2748,8 @@ export default function Workspace(props: WorkspaceProps) {
                   comms={props.comms}
                   selectedModuleId={selectedId}
                   onSelect={selectModule}
-                  onMoveModule={freeMode ? moveModule : undefined}
+                  onMoveModule={moveModule}
+                  moveMode={freeMode ? 'place' : 'reorder'}
                   changedIds={changedIds}
                 />
               </div>
@@ -3564,7 +3628,8 @@ export default function Workspace(props: WorkspaceProps) {
                    * означать одно.
                    */
                   onMoveAppliance: freeMode ? undefined : moveAppliance,
-                  onMoveModule: freeMode ? moveModule : undefined,
+                  onMoveModule: moveModule,
+                  moveMode: freeMode ? 'place' : 'reorder',
                 }}
               />
 

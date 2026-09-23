@@ -11,7 +11,6 @@ import {
   STANDARD_WIDTHS,
   isStandardWidth,
 } from '@/lib/millwork/modules';
-import { widthOverflowMm } from '@/lib/millwork/invariants';
 import { moduleById } from '@/lib/millwork/selection';
 import { actionEnabled, moduleActions } from '@/lib/millwork/moduleActions';
 import { freeSpaceMm } from '@/lib/millwork/layout';
@@ -216,18 +215,29 @@ export default function RunEditor({
       return;
     }
 
-    // Инвариант проверяется ДО применения: отрицательного остатка
-    // и вылезшего за стену ряда пользователь видеть не должен.
-    const over = widthOverflowMm(run, selected.id, wanted, MIN_WIDTH);
-    if (over > 0) {
-      setWidthNote(`Не помещается: ряд вышел бы за стену на ${over} мм.`);
-      setWidthDraft(String(selected.widthMm));
-      return;
-    }
-
+    /*
+     * ПОМЕЩАЕМОСТЬ СЧИТАЕТ `set_width`, А НЕ ЭТО ПОЛЕ.
+     *
+     * Здесь стояла копия проверки — `widthOverflowMm`, — и ТА ЖЕ копия
+     * лежала на ручке ширины в сцене. Обе считали по-шаблонному всегда,
+     * а в свободной сборке соседей никто не ужимает (ловушка 233):
+     * поле и ручка давали разные ответы на один и тот же ввод, и оба
+     * расходились с движком.
+     *
+     * Отказ приходит из операции — словами и числом, тем же, что видит
+     * ручка. Поле остаётся полем: границы 150…1200 мм это ГРАНИЦЫ
+     * ЗНАЧЕНИЯ, а не проверка ряда, и они проверяются здесь же.
+     */
     setWidthNote(null);
     if (wanted !== selected.widthMm) {
       onOps([{ op: 'set_width', moduleId: selected.id, widthMm: wanted }]);
+      /*
+       * Поле показывает то, что в ряду, а не то, что набрали.
+       * Правку отклонили — ширина осталась прежней, и поле обязано
+       * вернуться к ней; приняли — проп приедет новым, и поле
+       * пересинхронизируется эффектом.
+       */
+      setWidthDraft(String(selected.widthMm));
     }
   };
 

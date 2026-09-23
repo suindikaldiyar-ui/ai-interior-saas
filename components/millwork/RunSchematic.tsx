@@ -70,6 +70,8 @@ type Props = {
   facadeColor?: string;
   /** Свободная сборка: модуль тянется вдоль ряда. */
   onMoveModule?: (moduleId: string, offsetMm: number) => void;
+  /** Что означает жест переноса: поставить на место или переставить. */
+  moveMode?: 'place' | 'reorder';
   changedIds?: string[];
   /**
    * Какой вид показан сейчас.
@@ -116,6 +118,7 @@ export default function RunSchematic({
   selectedModuleId,
   onSelect,
   onMoveModule,
+  moveMode,
   changedIds,
   onViewChange,
   panelHidden,
@@ -569,6 +572,7 @@ export default function RunSchematic({
                        * чужой стене ушёл бы правкой не туда.
                        */
                       onMoveModule={row.run.id === run.id ? onMoveModule : undefined}
+                      moveMode={moveMode}
                       changedIds={changedIds}
                       showMaterial
                     />

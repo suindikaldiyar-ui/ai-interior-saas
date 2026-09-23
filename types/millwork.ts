@@ -969,6 +969,26 @@ export type MillworkOp =
       scope?: 'base' | 'upper' | 'tall' | 'drawers' | 'mezzanine';
       itemId: string | null;
     }
+  /**
+   * НАПОЛНЕНИЕ МОДУЛЯ ЦЕЛИКОМ — ОДНА ОПЕРАЦИЯ, А НЕ ПЯТЬ.
+   *
+   * Жест на чертеже правит `fill`: полку тянут вверх-вниз, границу между
+   * ящиками — с сохранением суммы, перегородку — вдоль, треугольник
+   * открывания — нажатием. Это ОДНО поле модуля, и заводить под каждую
+   * его часть свою операцию значит открыть в одну структуру пять дверей:
+   * `set_shelves`, `set_drawer_heights`, `set_divider`, `set_rods` — и
+   * шестую на первую же новую величину. Их в `fill` прибавлялось трижды
+   * за последние заходы (`handleLevel`, `handleTurn`, `openingChosen`).
+   *
+   * Две двери туда уже ведут — `set_opening` и `set_handle_spot`, — и обе
+   * правят ОДНО названное свойство, а не наполнение. Правка чертежа
+   * говорит другое: «вот наполнение этого модуля целиком».
+   *
+   * Что принять, а что отклонить, решает не форма операции, а проверка
+   * после неё: `fillRefusal` называет число, а инварианты ряда стоят там
+   * же, где у всех остальных операций.
+   */
+  | { op: 'set_fill'; moduleId: string; fill: ModuleFill }
   | { op: 'set_option'; key: 'upperToCeiling' | 'hardwareClass' | 'countertop' | 'hasUpper' | 'hasCornice' | 'integratedHandles'; value: string | boolean };
 
 export interface MillworkRequest {

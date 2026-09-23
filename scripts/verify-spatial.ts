@@ -38,6 +38,9 @@ import { zoneProfile } from '../lib/millwork/zones';
 import { DEFAULT_PRODUCTION, type ProductionSettings } from '../types/catalog';
 import { mezzanineBaseOf, moduleDepthMm, rowStandardDepthMm } from '../lib/millwork/fill';
 import { applyOps } from '../lib/millwork/ops';
+import { reorderTarget } from '../lib/millwork/selection';
+import { moveShelf } from '../lib/millwork/fill';
+import { readFileSync } from 'node:fs';
 import { buildPanels } from '../lib/millwork/panels';
 import MillingPicker from '../components/millwork/MillingPicker';
 import {
@@ -2112,6 +2115,264 @@ console.log('\n' + 'Ручка встаёт напротив петель');
         ? 'проверено на обеих сторонах'
         : `РУЧКА НА ПЕТЛЯХ: ${onHinge.map((x) => x.hinge).join(', ')}`,
     );
+  }
+}
+
+/**
+ * ПРАВКА МЫШЬЮ НА ЧЕРТЕЖЕ: ЗА ЧТО БЕРЁТСЯ ПАЛЕЦ И ЧТО ОН МЕНЯЕТ.
+ *
+ * Три вещи, которые ломались молча и каждая стоила времени:
+ * фигура с `fill="none"` ловит указатель только по обводке;
+ * порог в 6 px отличает тап от перетаскивания;
+ * `setPointerCapture` на эмулированном указателе бросает исключение и
+ * роняет обработчик целиком.
+ *
+ * Меряется разметка, а не намерение: лист рисуется и разбирается.
+ */
+console.log('\n' + 'Правка мышью на чертеже');
+{
+  const dragRun = buildRun({
+    wallId: 'w1',
+    lengthMm: 3800,
+    ceilingHeightMm: 2700,
+    requirements: DEMO_REQUIREMENTS,
+    openings: [],
+    comms: [],
+  } as never);
+
+  const withMezz = applyOps({
+    run: dragRun,
+    requirements: DEMO_REQUIREMENTS,
+    ops: [{ op: 'set_mezzanine', heightMm: 400 }],
+  } as never) as Run;
+
+  const above = withMezz.upperSegments.flatMap((segment) => segment.modules);
+  const upperUnits = above.filter((u) => u.section !== 'mezzanine');
+  const mezzUnits = above.filter((u) => u.section === 'mezzanine');
+
+  check(
+    'на листе есть все три ряда — проверять перенос есть на чём',
+    withMezz.modules.length > 0 && upperUnits.length > 0 && mezzUnits.length > 0,
+    `низ ${withMezz.modules.length} · верх ${upperUnits.length} · антресоль ${mezzUnits.length}`,
+  );
+
+  if (withMezz.modules.length === 0 || upperUnits.length === 0 || mezzUnits.length === 0) {
+    throw new Error(
+      'НУЛЕВОЙ СЕЛЕКТОР: на листе нет трёх рядов — ' +
+        `низ ${withMezz.modules.length}, верх ${upperUnits.length}, антресоль ${mezzUnits.length}`,
+    );
+  }
+
+  const sheet = renderToStaticMarkup(
+    React.createElement(ElevationDrawing, {
+      run: withMezz,
+      onMoveModule: () => {},
+      moveMode: 'reorder',
+      onFillChange: () => {},
+      mode: 'inside',
+    } as never),
+  );
+
+  /* ── Зона захвата: прозрачная заливка, а не только обводка ── */
+
+  const groups = sheet.split('data-module-id="').slice(1);
+  check(
+    'модули на листе размечены',
+    groups.length >= withMezz.modules.length + upperUnits.length + mezzUnits.length,
+    `групп ${groups.length} при модулях ${
+      withMezz.modules.length + upperUnits.length + mezzUnits.length
+    }`,
+  );
+  if (groups.length === 0) {
+    throw new Error('НУЛЕВОЙ СЕЛЕКТОР: на листе нет ни одной группы модуля');
+  }
+
+  const noFillGrab = groups.filter((chunk) => {
+    const body = chunk.slice(0, chunk.indexOf('data-module-id="') + 1 || undefined);
+    return !body.includes('fill="transparent"');
+  });
+  check(
+    'у КАЖДОГО модуля есть прозрачная зона захвата, а не одна обводка',
+    noFillGrab.length === 0,
+    `без заливки ${noFillGrab.length} из ${groups.length}`,
+  );
+
+  /* ── Перенос предлагается во всех трёх рядах ── */
+
+  const draggableIds = groups
+    .filter((chunk) => chunk.includes('ew-resize'))
+    .map((chunk) => chunk.slice(0, chunk.indexOf('"')));
+
+  const inRow = (list: typeof upperUnits) =>
+    list.filter((u) => draggableIds.includes(u.id)).length;
+
+  check(
+    'модуль нижнего ряда берётся мышью',
+    inRow(withMezz.modules) > 0,
+    `${inRow(withMezz.modules)} из ${withMezz.modules.length}`,
+  );
+  check(
+    'модуль верхнего ряда — тоже',
+    inRow(upperUnits) > 0,
+    `${inRow(upperUnits)} из ${upperUnits.length}`,
+  );
+  check(
+    'и модуль антресоли',
+    inRow(mezzUnits) > 0,
+    `${inRow(mezzUnits)} из ${mezzUnits.length}`,
+  );
+
+  /* ── Вытяжка не переносится: она едет за варочной ── */
+  const hood = above.find((u) => u.appliance === 'hood');
+  if (hood) {
+    check(
+      'вытяжка мышью не берётся — она висит над варочной',
+      !draggableIds.includes(hood.id),
+      draggableIds.includes(hood.id) ? 'ВЫТЯЖКУ МОЖНО УТАЩИТЬ' : 'не берётся',
+    );
+  }
+
+  /* ── Правка наполнения предлагается там же ── */
+  check(
+    'полки на листе тянутся: у них курсор и разметка',
+    sheet.includes('data-shelf="0"') && sheet.includes('ns-resize'),
+    sheet.includes('data-shelf="0"') ? 'размечены' : 'ПОЛОК НА ЛИСТЕ НЕТ',
+  );
+
+  /* ── Ловушки жеста ── */
+
+  const source = readFileSync('components/millwork/ElevationDrawing.tsx', 'utf8');
+
+  check(
+    'порог «тап или перенос» — 6 px, и он на месте',
+    /const MOVE_SLOP_PX = 6;/.test(source),
+    (source.match(/const MOVE_SLOP_PX = \d+;/) ?? ['ПОРОГА НЕТ'])[0],
+  );
+  check(
+    'и он проверяется до применения переноса',
+    /Math\.abs\(e\.clientX - startX\) > MOVE_SLOP_PX/.test(source) &&
+      /if \(!dragged\) return;/.test(source),
+    'порог читается в onMove, onEnd без него выходит',
+  );
+  check(
+    'setPointerCapture на чертеже не зовётся: он падает на эмулированном указателе',
+    !source.includes('setPointerCapture'),
+    source.includes('setPointerCapture') ? 'ЗОВЁТСЯ' : 'не зовётся',
+  );
+
+  /* ── Число видно ДО отпускания ── */
+  check(
+    'во время переноса на листе стоит число, а не одна подсветка',
+    sheet.includes('мм от угла'),
+    sheet.includes('мм от угла') ? 'подпись есть' : 'ЧИСЛА ПОД ПАЛЬЦЕМ НЕТ',
+  );
+  check(
+    'и считает его та же функция, что запишет операцию',
+    /landingAt\(centerMm\)/.test(source) && /reorderTarget\(/.test(source),
+    'подсветка зовёт reorderTarget',
+  );
+
+  /* ── Что получится: место совпадает с тем, что применит движок ── */
+
+  const dragUnit = withMezz.modules.find((u) => !u.appliance && !u.column);
+  check(
+    'модуль для переноса на листе есть',
+    Boolean(dragUnit),
+    dragUnit ? dragUnit.label : 'ПЕРЕНОСИТЬ НЕЧЕГО',
+  );
+
+  if (dragUnit) {
+    const preview = reorderTarget(withMezz.modules, dragUnit.id, 0);
+    check(
+      'подсветка знает, куда встанет модуль',
+      preview !== null,
+      preview ? `${preview.offsetMm} мм от угла` : 'МЕСТО НЕ ПОСЧИТАЛОСЬ',
+    );
+
+    if (preview) {
+      const applied = applyOps({
+        run: withMezz,
+        requirements: DEMO_REQUIREMENTS,
+        ops: [
+          { op: 'move_module', moduleId: dragUnit.id, afterModuleId: preview.afterModuleId },
+        ],
+      } as never) as Run;
+
+      const landedAt = applied.modules.find(
+        (u) => u.label === dragUnit.label && u.widthMm === dragUnit.widthMm,
+      );
+
+      check(
+        'и модуль встаёт ровно туда, куда показывала подсветка',
+        landedAt?.offsetMm === preview.offsetMm,
+        `подсветка ${preview.offsetMm} · встал ${landedAt?.offsetMm ?? 'НИКУДА'}`,
+      );
+
+      /* ── Соседние ряды от переноса внизу не теряются молча ── */
+      const afterMezz = applied.upperSegments
+        .flatMap((segment) => segment.modules)
+        .filter((u) => u.section === 'mezzanine');
+      check(
+        'антресоль перенос внизу переживает',
+        afterMezz.length === mezzUnits.length,
+        `${mezzUnits.length} → ${afterMezz.length}`,
+      );
+    }
+  }
+
+  /* ── Правка полки: геометрия рядов не разъезжается ── */
+
+  const shelfUnit = withMezz.modules.find((u) => (u.fill?.shelves.length ?? 0) > 0);
+  check(
+    'модуль с полкой на листе есть',
+    Boolean(shelfUnit),
+    shelfUnit ? shelfUnit.id : 'ПОЛОК НЕТ',
+  );
+
+  if (shelfUnit) {
+    const heightMm = moduleCarcassHeightMm(shelfUnit, withMezz);
+    const shifted = moveShelf(shelfUnit.fill!, 0, shelfUnit.fill!.shelves[0] + 96, heightMm);
+    check(
+      'полку есть куда двинуть',
+      !shifted.rejected,
+      shifted.rejected ?? JSON.stringify(shifted.fill.shelves),
+    );
+
+    if (!shifted.rejected) {
+      const edited = applyOps({
+        run: withMezz,
+        requirements: DEMO_REQUIREMENTS,
+        ops: [{ op: 'set_fill', moduleId: shelfUnit.id, fill: shifted.fill }],
+      } as never) as Run;
+
+      const shop = { thicknessMm: 16, frontThicknessMm: 18, gapMm: 3 };
+      const boxesBefore = runBoxes(withMezz, shop).length;
+      const boxesAfter = runBoxes(edited, shop).length;
+
+      check(
+        'после правки полки коробок ряда столько же — мебель не рассыпалась',
+        boxesAfter === boxesBefore,
+        `${boxesBefore} → ${boxesAfter}`,
+      );
+
+      /*
+       * ОТМЕТКИ МОДУЛЕЙ СЧИТАЕТ `runPlaces` — одна функция на сцену,
+       * чертёж и инвариант. Правка полки высот не трогает, и если хоть
+       * один модуль поехал, значит правка залезла не в свой ряд.
+       */
+      const placesAfter = new Map(
+        runPlaces(edited).map((place) => [place.unit.id, place] as const),
+      );
+      const drift = runPlaces(withMezz).filter((place) => {
+        const now = placesAfter.get(place.unit.id);
+        return !now || now.y !== place.y || now.heightM !== place.heightM;
+      });
+      check(
+        'и ни один модуль не поехал по высоте',
+        drift.length === 0,
+        `съехало ${drift.length} из ${runPlaces(withMezz).length}`,
+      );
+    }
   }
 }
 

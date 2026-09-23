@@ -58,6 +58,7 @@ type ElevationHandlers = {
   onFillReject?: Parameters<typeof ElevationDrawing>[0]['onFillReject'];
   onMoveAppliance?: Parameters<typeof ElevationDrawing>[0]['onMoveAppliance'];
   onMoveModule?: Parameters<typeof ElevationDrawing>[0]['onMoveModule'];
+  moveMode?: Parameters<typeof ElevationDrawing>[0]['moveMode'];
   variants?: VariantOption[];
   onVariant?: (kind: VariantOption['kind']) => void;
 };

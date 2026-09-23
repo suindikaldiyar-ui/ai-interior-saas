@@ -44,6 +44,7 @@ import {
 import { CORNER } from './modules';
 import { MAX_MEZZANINE_MM, MIN_MEZZANINE_MM } from './sections';
 import { hasFacade } from './applianceFront';
+import { fillRefusal } from './fill';
 import {
   moveConflict,
   moveRefusal,
@@ -58,6 +59,7 @@ import type {
   ApplianceKind,
   MillworkOp,
   Module,
+  ModuleFill,
   ModuleKind,
   Opening,
   Run,
@@ -237,6 +239,21 @@ export function applyOps({
   let upperFrontAll: Module['front'] | null = null;
   /** Антресоль ряда: отдельная позиция, переживает пересборку верха. */
   let mezzanine = run.mezzanine ?? null;
+
+  /**
+   * НАПОЛНЕНИЕ КЛАДОВКИ НАД КОЛОННОЙ, ПОПРАВЛЕННОЕ В ЭТОМ ЖЕ ВЫЗОВЕ.
+   *
+   * Кладовка собирается заново каждый раз — её высота следует из
+   * остатка над холодильником, — поэтому держанного списка у неё нет и
+   * быть не должно. Но полки в ней двигает рука, и правке надо доехать
+   * до сборки, которая случится ниже по ходу этого же вызова.
+   *
+   * Это НЕ второе хранилище: живёт наполнение там же, где у всех, — на
+   * модуле в `upperSegments`, откуда `freshStorage` его и забирает.
+   * Здесь лежит ровно то, что поправили сейчас, и ровно до конца вызова
+   * (так же устроен `upperFrontAll`).
+   */
+  const storageFills = new Map<string, ModuleFill>();
 
   /**
    * Фрезеровка, назначенная полосам объекта.
@@ -1061,12 +1078,26 @@ export function applyOps({
           break;
         }
 
+        /*
+         * ПЕРЕСТАНОВКА ЗНАЧИТ ОДНО И ТО ЖЕ ВО ВСЕХ ТРЁХ РЯДАХ.
+         *
+         * Здесь стояло `splice(insertAt + 1, 0, moved)` — «встать ПОСЛЕ
+         * названного», — а верхний ряд и антресоль выше в этом же
+         * `case` делают `splice(to, 0, taken)`, то есть «встать НА ЕГО
+         * МЕСТО». Одно поле, два смысла: подсветка под пальцем считала
+         * по одному правилу, а ряд перекладывался по другому, и модуль
+         * вставал на соседа мимо показанного места (замерено: подсветка
+         * 600 мм, встал 1200 мм).
+         *
+         * Смысл оставлен тот, который выражает БОЛЬШЕ: «на место
+         * соседа» умеет поставить модуль первым, «после соседа» —
+         * не умеет вовсе, и левый край ряда был недостижим.
+         */
         const from = modules.findIndex((m) => m.id === op.moduleId);
         const to = modules.findIndex((m) => m.id === op.afterModuleId);
         if (from < 0 || to < 0 || from === to) break;
         const [moved] = modules.splice(from, 1);
-        const insertAt = modules.findIndex((m) => m.id === op.afterModuleId);
-        modules.splice(insertAt + 1, 0, moved);
+        modules.splice(to, 0, moved);
         break;
       }
 
@@ -1285,6 +1316,84 @@ export function applyOps({
             );
           }
         }
+        break;
+      }
+
+      case 'set_fill': {
+        /*
+         * ПРАВКА НАПОЛНЕНИЯ ПОПАДАЕТ РОВНО В ТОТ РЯД, ГДЕ СДЕЛАНА.
+         *
+         * Раньше её делал `changeFill` в рабочем месте — прямой записью в
+         * ряд мимо операций: одна карта `id → fill` накладывалась И на
+         * `modules`, И на каждый сегмент `upperSegments` разом. Ряды при
+         * этом давно разведены здесь, в `applyOps`: нижний, верхний и
+         * антресоль — три отдельных списка (`modules`, `upperModules`,
+         * `mezzModules`), и каждая операция пишет ровно в один. Правка на
+         * чертеже шла мимо этого разделения и держалась только на том,
+         * что идентификаторы рядов не совпадают.
+         *
+         * Держаться на этом нельзя: идентификатор выводится из вида и
+         * позиции (`upper-1200`), и у полосы антресоли в шкафу-купе вид
+         * тот же `upper`. Совпали offsetы — и одна правка легла в два
+         * ряда, причём молча.
+         *
+         * Теперь ряд выбирается ОДИН: нашли в антресоли — пишем в
+         * антресоль, в верхнем — в верхний, иначе в нижний.
+         */
+        const fillAt = modules.findIndex((m) => m.id === op.moduleId);
+        const fillTarget =
+          fillAt >= 0
+            ? modules[fillAt]
+            : (mezzModules.find((m) => m.id === op.moduleId) ??
+              upperModules.find((m) => m.id === op.moduleId) ??
+              /*
+               * Кладовка над колонной держанного списка не имеет: она
+               * пересобирается. Найти её всё равно надо — иначе правка
+               * на чертеже уходит в «модуль не найден», то есть молча.
+               */
+              run.upperSegments
+                .flatMap((segment) => segment.modules)
+                .find((m) => m.id === op.moduleId && m.section === 'mezzanine'));
+
+        if (!fillTarget) {
+          warnings.push(`Модуль ${op.moduleId} не найден: наполнение менять не у чего.`);
+          break;
+        }
+
+        /*
+         * ВЫСОТА КОРПУСА — ТА ЖЕ, ПО КОТОРОЙ СЧИТАЕТСЯ РАСКРОЙ.
+         *
+         * Оболочка собрана из `run` с уже поправленными списками: под
+         * ригелем и под антресолью высота другая, и проверять правку по
+         * неурезанной значило бы пустить полку в балку (ловушка 381).
+         */
+        const fillShell = {
+          zone: run.zone,
+          ceilingHeightMm: run.ceilingHeightMm,
+          options,
+          production: run.production,
+          beams: run.beams,
+          mezzanine: mezzanine ?? undefined,
+          modules,
+          upperSegments: run.upperSegments,
+        };
+
+        const refusal = fillRefusal(
+          op.fill,
+          fillTarget,
+          moduleCarcassHeightMm(fillTarget, fillShell),
+          fillTarget.fill,
+        );
+        if (refusal) {
+          warnings.push(refusal);
+          break;
+        }
+
+        const filled: Module = { ...fillTarget, fill: op.fill };
+        if (fillAt >= 0) modules[fillAt] = filled;
+        else if (editMezz(fillTarget.id, () => filled)) break;
+        else if (editUpper(fillTarget.id, () => filled)) break;
+        else storageFills.set(fillTarget.id, op.fill);
         break;
       }
 
@@ -1525,6 +1634,16 @@ export function applyOps({
          */
         if (op.heightMm === null) {
           mezzanine = null;
+          /*
+           * СНЯТАЯ АНТРЕСОЛЬ УНОСИТ СВОИ МОДУЛИ.
+           *
+           * Держанный ряд живёт сам по себе (см. ниже), поэтому одного
+           * `mezzanine = null` мало: модули остались бы стоять, и
+           * «снять» перестало бы что-либо делать. Кладовка над колонной
+           * сюда не входит — она не выбор, а правило, и в `mezzModules`
+           * её нет по построению (`mezzanineBaseOf`).
+           */
+          mezzModules = [];
           break;
         }
 
@@ -1727,9 +1846,35 @@ export function applyOps({
    * человека: подняли холодильник — кладовка стала ниже. Держать её
    * значило бы показывать модуль, которого над этой колонной уже нет.
    */
-  const freshStorage = fresh.filter((segment) =>
-    segment.modules.some((unit) => unit.section === 'mezzanine'),
-  );
+  const freshStorage = fresh
+    .filter((segment) => segment.modules.some((unit) => unit.section === 'mezzanine'))
+    /*
+     * ВЫСОТА КЛАДОВКИ ПЕРЕСЧИТЫВАЕТСЯ, А ПРАВКА ЧЕЛОВЕКА — НЕТ.
+     *
+     * Кладовка над колонной собирается заново каждый раз: её высота
+     * следует из остатка над холодильником, и держать её значило бы
+     * показывать модуль, которого над этой колонной уже нет. Но полки в
+     * ней двигает РУКА, и пересборка их стирала молча: замерщик тянул
+     * полку на чертеже, отпускал — и она возвращалась на место.
+     *
+     * Едет только то, что выбрал человек: наполнение и материал.
+     * Габарит по-прежнему считает раскладка.
+     */
+    .map((segment) => ({
+      ...segment,
+      modules: segment.modules.map((unit) => {
+        const had = run.upperSegments
+          .flatMap((old) => old.modules)
+          .find((prev) => prev.id === unit.id && prev.section === 'mezzanine');
+        const edited = storageFills.get(unit.id);
+        if (!had && !edited) return unit;
+        return {
+          ...unit,
+          fill: edited ?? had?.fill ?? unit.fill,
+          front: had?.front ?? unit.front,
+        };
+      }),
+    }));
 
   /*
    * АВТОСБОРКА — ТОЛЬКО НА ПЕРВОЕ ПОЯВЛЕНИЕ.
@@ -1848,7 +1993,22 @@ export function applyOps({
   nextRun.milling = milling;
   nextRun.carcass = carcass;
   nextRun.mezzanine = mezzanine ?? undefined;
-  if (mezzanine) {
+  /*
+   * ДЕРЖИМ ПОЛОСУ АНТРЕСОЛИ ВСЕГДА, СОБИРАЕМ — ТОЛЬКО ЗАКАЗАННУЮ.
+   *
+   * Здесь стояло `if (mezzanine)`, и это сливало две разные вещи:
+   * «антресоль заказана на ряду» и «модули антресоли в ряду есть».
+   * В шкафу-купе и в прихожей полосу строит не заказ, а СЕКЦИЯ
+   * (`buildSectionRun`) — `run.mezzanine` там не заполнен вовсе, и блок
+   * пропускался целиком. А `nextRun.upperSegments` к этому месту уже
+   * перезаписан пересборкой верхнего ряда, которого в этих зонах нет:
+   * полоса исчезала ЦЕЛИКОМ на первой же операции.
+   *
+   * Замерено: спальня 3800 и прихожая 3800 — антресоль 4 модуля до
+   * правки, 0 после, без единого предупреждения. Ровно это видно на
+   * экране как «двигаю чуть-чуть — антресоль исчезает».
+   */
+  if (mezzanine || mezzModules.length > 0) {
     const kept = new Map(
       run.upperSegments
         .flatMap((segment) => segment.modules)
@@ -1906,7 +2066,9 @@ export function applyOps({
     const grown =
       mezzModules.length > 0
         ? mezzModules
-        : spans.flatMap((segment) =>
+        : !mezzanine
+          ? []
+          : spans.flatMap((segment) =>
             segment.modules.map((unit) => {
               const mezz: Module = {
                 ...unit,
@@ -1924,7 +2086,7 @@ export function applyOps({
               const front = kept.get(mezz.id) ?? upperFrontAll ?? unit.front;
               return front ? { ...mezz, front } : mezz;
             }),
-          );
+            );
 
     /*
      * РИГЕЛЬ ПРОВЕРЯЕТСЯ И У ДЕРЖАННОГО РЯДА.

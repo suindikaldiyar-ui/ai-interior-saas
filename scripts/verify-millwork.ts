@@ -122,6 +122,7 @@ import {
   typicalColorItem,
 } from '../lib/millwork/palette';
 import { frontKey, frontOf } from '../lib/millwork/frontMaterial';
+import { reorderTarget } from '../lib/millwork/selection';
 import { handleSpotOf } from '../lib/millwork/handlePlace';
 import { frontSwatch } from '../lib/millwork/frontSwatch';
 import {
@@ -283,6 +284,7 @@ import {
   CORNER_SIZE_MM,
   moduleAppliances,
   GEOMETRY,
+  MAX_WIDTH,
   MIN_WIDTH,
   STANDARD_WIDTHS,
 } from '../lib/millwork/modules';
@@ -301,6 +303,7 @@ import type {
   FrontSpec,
   MillworkOp,
   Module,
+  ModuleFill,
   ModuleVariantKind,
   Opening,
   Run,
@@ -16655,6 +16658,455 @@ console.log('\n' + 'Ручка: механизмы, переезд, отказ �
         : 'СВЕРЯТЬ НЕЧЕГО',
     );
   }
+}
+
+/* ═══  Правка на чертеже идёт операцией и не трогает соседние ряды  ═══ */
+
+/**
+ * ПРАВКА НА ЧЕРТЕЖЕ — ЭТО ОПЕРАЦИЯ, А НЕ ЗАПИСЬ В РЯД.
+ *
+ * Она шла мимо `applyOps`: рабочее место собирало новый `Run` само и
+ * накладывало одну карту `id → fill` СРАЗУ на нижний ряд и на все
+ * верхние сегменты. Ряды при этом разведены в движке — три отдельных
+ * списка, — и правка проходила мимо этого разделения, держась только на
+ * том, что идентификаторы не совпадают. Мимо проходили и три инварианта,
+ * которыми кончается `applyOps`.
+ *
+ * Здесь меряется ровно это: в какой ряд легла правка и что стало с
+ * остальными.
+ */
+console.log('\n' + 'Правка на чертеже: ряды, инварианты, перенос');
+{
+  const zoneRun = (zone: ZoneKind, lengthMm: number) =>
+    buildRun({
+      wallId: 'w1',
+      lengthMm,
+      ceilingHeightMm: 2700,
+      requirements: {
+        ...REQ,
+        zone,
+        appliances: zone === 'kitchen' ? [...REQ.appliances] : [],
+        sections: zone === 'kitchen' ? [] : [...zoneProfile(zone).sections],
+        /*
+         * Верхний ряд бывает только на кухне (`zoneOptions`). Оставь
+         * здесь кухонные опции — и `applyOps` начнёт строить верхний ряд
+         * поверх секций шкафа: инвариант непересечения поймает это
+         * исключением, и падать будет проверка, а не продукт.
+         */
+        options: { ...REQ.options, hasUpper: zone === 'kitchen' },
+      },
+      openings: zone === 'kitchen' ? OPENINGS : [],
+      comms: zone === 'kitchen' ? COMMS : [],
+    });
+
+  const rowsOf = (r: Run) => {
+    const above = r.upperSegments.flatMap((sg) => sg.modules);
+    return {
+      base: r.modules,
+      upper: above.filter((u) => u.section !== 'mezzanine'),
+      mezz: above.filter((u) => u.section === 'mezzanine'),
+    };
+  };
+
+  /** Слепок наполнения ряда: по нему и видно, тронули его или нет. */
+  const printRow = (list: Module[]) =>
+    list.map((u) => `${u.id}:${JSON.stringify(u.fill?.shelves ?? null)}`).join(' ');
+
+  const edit = (r: Run, req: RunRequirements, ops: MillworkOp[], openings: Opening[]) =>
+    applyOps({ run: r, requirements: req, openings, ops });
+
+  /*
+   * ТРИ РЯДА НА ОДНОМ ЭКРАНЕ: кухня с заказанной антресолью. Кладовка
+   * над колонной холодильника там же — это четвёртый вид модулей, и
+   * задеть его правкой тоже нельзя.
+   */
+  const kitchenReq: RunRequirements = { ...REQ, appliances: [...REQ.appliances] };
+  const plain = zoneRun('kitchen', DEMO_PROJECT.lengthMm);
+  const three = edit(plain, kitchenReq, [{ op: 'set_mezzanine', heightMm: 400 }], OPENINGS);
+  const before = rowsOf(three);
+
+  check(
+    'ряды для проверки есть все три',
+    before.base.length > 0 && before.upper.length > 0 && before.mezz.length > 0,
+    `низ ${before.base.length} · верх ${before.upper.length} · антресоль ${before.mezz.length}`,
+  );
+
+  if (before.base.length === 0 || before.upper.length === 0 || before.mezz.length === 0) {
+    throw new Error(
+      'НУЛЕВОЙ СЕЛЕКТОР: проверять правку по рядам не на чем — ' +
+        `низ ${before.base.length}, верх ${before.upper.length}, антресоль ${before.mezz.length}`,
+    );
+  }
+
+  /** Модуль ряда, у которого есть полка: её и двигаем. */
+  const withShelf = (list: Module[]) => list.find((u) => (u.fill?.shelves.length ?? 0) > 0);
+
+  const moved = (unit: Module, run: Run) => {
+    const h = moduleCarcassHeightMm(unit, run);
+    const shifted = moveShelf(unit.fill!, 0, unit.fill!.shelves[0] + SYSTEM32_STEP_MM * 3, h);
+    if (shifted.rejected) {
+      const back = moveShelf(unit.fill!, 0, unit.fill!.shelves[0] - SYSTEM32_STEP_MM * 3, h);
+      return back.rejected ? null : back.fill;
+    }
+    return shifted.fill;
+  };
+
+  /* ── 1, 2, 3. Правка ложится ровно в свой ряд ── */
+
+  const rowNames = ['base', 'upper', 'mezz'] as const;
+
+  for (const where of rowNames) {
+    const unit = withShelf(before[where]);
+    check(
+      `в ряду «${where}» есть модуль с полкой — править есть`,
+      Boolean(unit),
+      unit ? unit.id : 'МОДУЛЯ С ПОЛКОЙ В ЭТОМ РЯДУ НЕТ',
+    );
+    if (!unit) {
+      throw new Error(`нулевой селектор: в ряду «${where}» нет модуля с полкой`);
+    }
+
+    const fill = moved(unit, three);
+    check(
+      `полку в ряду «${where}» есть куда подвинуть`,
+      fill !== null,
+      fill ? JSON.stringify(fill.shelves) : 'ПОЛКА НИКУДА НЕ ДВИГАЕТСЯ',
+    );
+    if (!fill) throw new Error(`нулевой селектор: полка в ряду «${where}» не двигается`);
+
+    const next = edit(
+      three,
+      kitchenReq,
+      [{ op: 'set_fill', moduleId: unit.id, fill }],
+      OPENINGS,
+    );
+    const after = rowsOf(next);
+
+    check(
+      `правка в ряду «${where}» легла в него сам`,
+      JSON.stringify(
+        [...after[where]].find((u) => u.id === unit.id)?.fill?.shelves ?? null,
+      ) === JSON.stringify(fill.shelves),
+      `${JSON.stringify(unit.fill!.shelves)} → ${JSON.stringify(
+        after[where].find((u) => u.id === unit.id)?.fill?.shelves ?? null,
+      )}`,
+    );
+
+    for (const other of rowNames) {
+      if (other === where) continue;
+      check(
+        `и не тронула ряд «${other}»`,
+        printRow(before[other]) === printRow(after[other]),
+        `до  ${printRow(before[other])}\nстало ${printRow(after[other])}`,
+      );
+    }
+
+    /* ── 4. Антресоль после правки на месте ── */
+    check(
+      `антресоль пережила правку в ряду «${where}»`,
+      after.mezz.length === before.mezz.length,
+      `${before.mezz.length} → ${after.mezz.length} модулей`,
+    );
+  }
+
+  /* ── 4б. И в шкафу-купе, где полосу строит не заказ, а секция ── */
+  for (const zone of ['bedroom', 'hallway'] as ZoneKind[]) {
+    const req: RunRequirements = {
+      ...REQ,
+      zone,
+      appliances: [],
+      sections: [...zoneProfile(zone).sections],
+      options: { ...REQ.options, hasUpper: false },
+    };
+    const run = zoneRun(zone, 3800);
+    const rows = rowsOf(run);
+
+    check(
+      `${zone}: полоса антресоли собралась — проверять есть`,
+      rows.mezz.length > 0,
+      `${rows.mezz.length} модулей`,
+    );
+    if (rows.mezz.length === 0) {
+      throw new Error(`нулевой селектор: в зоне ${zone} полосы антресоли нет`);
+    }
+
+    /* Берём первый модуль, у которого полку ДЕЙСТВИТЕЛЬНО есть куда сдвинуть. */
+    const movableShelf = rows.base
+      .filter((u) => (u.fill?.shelves.length ?? 0) > 0)
+      .map((u) => ({ unit: u, fill: moved(u, run) }))
+      .find((candidate) => candidate.fill !== null);
+
+    if (!movableShelf || !movableShelf.fill) {
+      throw new Error(
+        `НУЛЕВОЙ СЕЛЕКТОР: в зоне ${zone} нет нижнего модуля с подвижной полкой — ` +
+          `модулей с полками ${rows.base.filter((u) => (u.fill?.shelves.length ?? 0) > 0).length}`,
+      );
+    }
+    const unit = movableShelf.unit;
+    const fill = movableShelf.fill;
+
+    const next = edit(run, req, [{ op: 'set_fill', moduleId: unit.id, fill }], []);
+    const after = rowsOf(next);
+
+    check(
+      `${zone}: полоса антресоли пережила правку на чертеже`,
+      after.mezz.length === rows.mezz.length,
+      `${rows.mezz.length} → ${after.mezz.length} модулей`,
+    );
+  }
+
+  /* ── 5. Правка идёт через операцию и проходит инварианты ── */
+
+  const victim = withShelf(before.base)!;
+  const good = moved(victim, three)!;
+  const applied = edit(three, kitchenReq, [{ op: 'set_fill', moduleId: victim.id, fill: good }], OPENINGS);
+
+  check(
+    'правка меняет отпечаток — наполнение входит в него',
+    applied.fingerprint !== three.fingerprint,
+    `${three.fingerprint} → ${applied.fingerprint}`,
+  );
+
+  check(
+    'и ряд после неё по-прежнему сходится со стеной',
+    runWidthSum(applied) === applied.lengthMm,
+    `сумма ${runWidthSum(applied)} при стене ${applied.lengthMm}`,
+  );
+
+  /* ── 6. Правка, которую собрать нельзя, отклоняется СЛОВАМИ и ЧИСЛОМ ── */
+
+  const height = moduleCarcassHeightMm(victim, three);
+  const tooHigh: ModuleFill = {
+    ...victim.fill!,
+    shelves: [snapTo32(height + SYSTEM32_STEP_MM * 4)],
+  };
+  const refusedHigh = edit(
+    three,
+    kitchenReq,
+    [{ op: 'set_fill', moduleId: victim.id, fill: tooHigh }],
+    OPENINGS,
+  );
+
+  check(
+    'полка выше корпуса отклоняется, и отказ называет число',
+    refusedHigh.warnings.some((w) => w.includes(String(height))) &&
+      JSON.stringify(
+        refusedHigh.modules.find((u) => u.id === victim.id)?.fill?.shelves,
+      ) === JSON.stringify(victim.fill!.shelves),
+    refusedHigh.warnings[0] ?? 'МОЛЧА ПРИНЯЛ ПОЛКУ ВЫШЕ КОРПУСА',
+  );
+
+  const offGrid: ModuleFill = { ...victim.fill!, shelves: [victim.fill!.shelves[0] + 5] };
+  const refusedGrid = edit(
+    three,
+    kitchenReq,
+    [{ op: 'set_fill', moduleId: victim.id, fill: offGrid }],
+    OPENINGS,
+  );
+
+  check(
+    'полка мимо присадки отклоняется — система 32 это правило',
+    refusedGrid.warnings.some((w) => w.includes(String(SYSTEM32_STEP_MM))) &&
+      JSON.stringify(
+        refusedGrid.modules.find((u) => u.id === victim.id)?.fill?.shelves,
+      ) === JSON.stringify(victim.fill!.shelves),
+    refusedGrid.warnings[0] ?? 'МОЛЧА ПРИНЯЛ ПОЛКУ МИМО ОТВЕРСТИЯ',
+  );
+
+  /* ── 7. Перенос модуля меняет ПОРЯДОК и только его ── */
+
+  const order = (list: Module[]) => list.map((u) => u.label).join(' | ');
+  const widths = (list: Module[]) => list.map((u) => u.widthMm).join(' ');
+
+  const dragged = before.base.find((u) => !u.appliance && !u.column);
+  check(
+    'модуль для переноса есть',
+    Boolean(dragged),
+    dragged ? `${dragged.label} на ${dragged.offsetMm}` : 'ПЕРЕНОСИТЬ НЕЧЕГО',
+  );
+  if (!dragged) throw new Error('нулевой селектор: в ряду нет обычного модуля');
+
+  const target = reorderTarget(before.base, dragged.id, 0);
+  check(
+    'перенос к левому краю находит соседа, на чьё место встают',
+    target !== null,
+    target ? `${target.afterModuleId} на ${target.offsetMm} мм` : 'СОСЕД НЕ НАЙДЕН',
+  );
+
+  if (target) {
+    const reordered = edit(
+      three,
+      kitchenReq,
+      [{ op: 'move_module', moduleId: dragged.id, afterModuleId: target.afterModuleId }],
+      OPENINGS,
+    );
+    const now = rowsOf(reordered);
+
+    check(
+      'перенос поменял порядок модулей',
+      order(now.base) !== order(before.base),
+      `было  ${order(before.base)}\nстало ${order(now.base)}`,
+    );
+    check(
+      'и только порядок: состав и ширины те же',
+      [...now.base].map((u) => u.label).sort().join('|') ===
+        [...before.base].map((u) => u.label).sort().join('|') &&
+        [...now.base].map((u) => u.widthMm).sort((a, b) => a - b).join(' ') ===
+          [...before.base].map((u) => u.widthMm).sort((a, b) => a - b).join(' '),
+      `было  ${widths(before.base)}\nстало ${widths(now.base)}`,
+    );
+    /*
+     * ВЕРХНИЙ РЯД ВПРАВЕ ПОЕХАТЬ — И ТОГДА ОБ ЭТОМ СКАЗАНО СЛОВАМИ.
+     *
+     * Он разрывается колонной, окном и ригелем (`freeSpans`), и
+     * перестановка нижнего ряда двигает эти разрывы. Требовать «верх не
+     * изменился» значило бы требовать от продукта неправды. Требуем
+     * другого: молча он не меняется.
+     */
+    check(
+      'перенос внизу либо не трогает верх, либо называет потерю числом',
+      now.upper.length === before.upper.length ||
+        reordered.warnings.some((w) => /\d+ модул/.test(w)),
+      `верх ${before.upper.length} → ${now.upper.length} · ${
+        reordered.warnings[0] ?? 'без предупреждений'
+      }`,
+    );
+    check(
+      'антресоль при этом на месте',
+      now.mezz.length === before.mezz.length,
+      `${before.mezz.length} → ${now.mezz.length} модулей`,
+    );
+  }
+
+  /* ── 8. Ручка и поле ширины дают ОДИН ответ ── */
+
+  const freeReq: RunRequirements = {
+    ...kitchenReq,
+    mode: 'free',
+    appliances: [],
+    manualAnchors: {},
+  };
+
+  const freeRun0 = buildRun({
+    wallId: 'w1',
+    lengthMm: 3800,
+    ceilingHeightMm: 2700,
+    requirements: freeReq,
+    openings: [],
+    comms: [],
+  });
+  const freeRun = applyOps({
+    run: freeRun0,
+    requirements: freeReq,
+    openings: [],
+    ops: [
+      { op: 'add_module', kind: 'base', widthMm: 600 },
+      { op: 'add_module', kind: 'base', widthMm: 600 },
+    ],
+  });
+
+  const freeUnit = freeRun.modules[0];
+  check(
+    'свободная сборка собралась — сравнивать есть на чём',
+    freeRun.modules.length >= 2 && Boolean(freeUnit),
+    `модулей ${freeRun.modules.length}`,
+  );
+  if (freeRun.modules.length < 2) {
+    throw new Error('НУЛЕВОЙ СЕЛЕКТОР: свободная сборка не дала двух модулей');
+  }
+
+  /**
+   * ОДИН ВХОД — ОДИН ОТВЕТ.
+   *
+   * Ручка в сцене и поле в ленте держали СВОЮ копию проверки —
+   * `widthOverflowMm`, — и считали ею всегда по-шаблонному. В свободной
+   * сборке соседей никто не ужимает, и ответы расходились: копия
+   * пропускала ширину, после которой модуль налезает на соседа.
+   *
+   * Теперь обе зовут `set_width`. Проверяем не «одинаково ли они
+   * написаны», а совпадает ли ОТВЕТ с тем, что делает ряд.
+   */
+  const grown = freeUnit.widthMm + 400;
+  const byOp = applyOps({
+    run: freeRun,
+    requirements: freeReq,
+    openings: [],
+    ops: [{ op: 'set_width', moduleId: freeUnit.id, widthMm: grown }],
+  });
+  const copyAnswer = widthOverflowMm(freeRun, freeUnit.id, grown, MIN_WIDTH);
+
+  check(
+    'в свободной сборке ширина отклоняется словами и числом',
+    byOp.warnings.length > 0 &&
+      byOp.modules.find((u) => u.id === freeUnit.id)?.widthMm === freeUnit.widthMm,
+    byOp.warnings[0] ?? 'МОЛЧА ПРИНЯЛ ШИРИНУ, НАЛЕЗАЮЩУЮ НА СОСЕДА',
+  );
+
+  check(
+    'а прежняя копия проверки отвечала иначе — потому её и нет',
+    copyAnswer <= 0 && byOp.warnings.length > 0,
+    `копия: запас ${-copyAnswer} мм · движок: ${byOp.warnings[0] ?? '—'}`,
+  );
+
+  const shrunk = Math.max(MIN_WIDTH, freeUnit.widthMm - 100);
+  const okOp = applyOps({
+    run: freeRun,
+    requirements: freeReq,
+    openings: [],
+    ops: [{ op: 'set_width', moduleId: freeUnit.id, widthMm: shrunk }],
+  });
+  check(
+    'и одинаково пропускает ширину, которая помещается',
+    okOp.warnings.length === 0 &&
+      okOp.modules.find((u) => u.id === freeUnit.id)?.widthMm === shrunk,
+    `${freeUnit.widthMm} → ${okOp.modules.find((u) => u.id === freeUnit.id)?.widthMm}`,
+  );
+
+  /*
+   * В ШАБЛОНЕ ОТВЕТ СЧИТАЕТ ТА ЖЕ ОПЕРАЦИЯ — И ОН ДРУГОЙ.
+   *
+   * Там `rebalance` действительно ужмёт соседей, поэтому ширина, которой
+   * в свободной сборке не хватило места, здесь проходит, а ряд остаётся
+   * сошедшимся со стеной. Это и есть «одна функция на поле и на ручку»:
+   * ответ зависит от РЕЖИМА РЯДА, а не от того, кто спросил.
+   */
+  const tplUnit = before.base.find((u) => !u.appliance && !u.column)!;
+  const tplWanted = Math.min(MAX_WIDTH, tplUnit.widthMm + 400);
+  const tplOp = applyOps({
+    run: three,
+    requirements: kitchenReq,
+    openings: OPENINGS,
+    ops: [{ op: 'set_width', moduleId: tplUnit.id, widthMm: tplWanted }],
+  });
+  const tplNow = tplOp.modules.find((u) => u.id === tplUnit.id)?.widthMm ?? 0;
+
+  check(
+    'в шаблоне ответ даёт та же операция: либо ширина встала, либо отказ с числом',
+    (tplOp.warnings.length === 0 && tplNow === tplWanted) ||
+      (tplOp.warnings.length > 0 &&
+        /\d+ мм/.test(tplOp.warnings[0]) &&
+        tplNow === tplUnit.widthMm),
+    `${tplUnit.widthMm} → ${tplNow} · ${tplOp.warnings[0] ?? 'принято'}`,
+  );
+  check(
+    'и ряд после этого по-прежнему сходится со стеной',
+    runWidthSum(tplOp) === tplOp.lengthMm,
+    `сумма ${runWidthSum(tplOp)} при стене ${tplOp.lengthMm}`,
+  );
+
+  const tplTooWide = MAX_WIDTH + 1;
+  const tplRefused = applyOps({
+    run: three,
+    requirements: kitchenReq,
+    openings: OPENINGS,
+    ops: [{ op: 'set_width', moduleId: tplUnit.id, widthMm: tplTooWide }],
+  });
+  check(
+    'а ширина за границей значения отклоняется числом и там, и там',
+    tplRefused.warnings.some((w) => w.includes(String(MAX_WIDTH))) &&
+      tplRefused.modules.find((u) => u.id === tplUnit.id)?.widthMm === tplUnit.widthMm,
+    tplRefused.warnings[0] ?? 'МОЛЧА ПРИНЯЛ ШИРИНУ БОЛЬШЕ ПРЕДЕЛА',
+  );
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

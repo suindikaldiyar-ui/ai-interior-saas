@@ -16,6 +16,7 @@ import {
 import { sectionSpec } from '@/lib/millwork/sections';
 import { runPlaces } from '@/lib/millwork/cabinetBoxes';
 import { moveConflict } from '@/lib/millwork/freeRun';
+import { reorderTarget, rowOfModule } from '@/lib/millwork/selection';
 import { moduleSwatch } from '@/lib/millwork/frontSwatch';
 import { frontOf } from '@/lib/millwork/frontMaterial';
 import { hasFacade } from '@/lib/millwork/applianceFront';
@@ -103,6 +104,18 @@ type Props = {
    * что человек задал руками, и двигается всё.
    */
   onMoveModule?: (moduleId: string, offsetMm: number) => void;
+  /**
+   * ЧТО ОЗНАЧАЕТ ЖЕСТ ПЕРЕНОСА.
+   *
+   * `place` — свободная сборка: модуль встаёт туда, где отпустили, и
+   * соседи не двигаются. `reorder` — раскладка по шаблону и верхние
+   * ряды: ряд сходится со стеной сам, и жест меняет ПОРЯДОК.
+   *
+   * Подсветка под пальцем считает то же и той же функцией, что запишет
+   * операция: показать одно, а записать другое — хуже, чем не
+   * показывать вовсе.
+   */
+  moveMode?: 'place' | 'reorder';
   /**
    * Показывать МАТЕРИАЛ фасада, а не только его контур.
    *
@@ -636,6 +649,7 @@ export default function ElevationDrawing({
   onFillReject,
   onMoveAppliance,
   onMoveModule,
+  moveMode = 'place',
   showMaterial = false,
   variants = [],
   onVariant,
@@ -795,10 +809,39 @@ export default function ElevationDrawing({
      * стоящий рядом модуль. Узнать об этом из отказа ПОСЛЕ отпускания —
      * значит тянуть наугад; подсветка меняет цвет прямо под пальцем.
      */
+    /*
+     * РЯД МОДУЛЯ — ОДНА ФУНКЦИЯ НА ПРОДУКТ.
+     *
+     * Перенос живёт ВНУТРИ ряда: модуль верхнего ряда переставляется
+     * среди верхних, антресоли — среди антресоли. Спрашивать «где он
+     * лежит» второй раз здесь нельзя: подсветка и операция обязаны
+     * выбрать один и тот же список.
+     */
+    const rowHere = rowOfModule(run, unit.id);
+    const rowModules = rowHere?.modules ?? run.modules;
+
+    /*
+     * Место занято — только там, где модуль встаёт НА МЕСТО. При
+     * перестановке соседи расступаются сами, и «занято» там не бывает.
+     */
+    const reorder = moveMode === 'reorder' || (rowHere !== null && rowHere.row !== 'base');
+
     const busyAt = (centerMm: number) =>
-      byModule
-        ? moveConflict(run.modules, unit.id, centerMm - half, run.lengthMm)
+      byModule && !reorder
+        ? moveConflict(rowModules, unit.id, centerMm - half, run.lengthMm)
         : null;
+
+    /*
+     * КУДА ВСТАНЕТ — ТЕМ ЖЕ СЧЁТОМ, ЧТО ЗАПИШЕТ ОПЕРАЦИЯ.
+     *
+     * `reorderTarget` зовут оба: рабочее место, когда собирает
+     * `move_module`, и эта подсветка. Своя арифметика здесь означала бы
+     * число под пальцем, которого после отпускания не будет.
+     */
+    const landingAt = (centerMm: number) =>
+      reorder
+        ? (reorderTarget(rowModules, unit.id, centerMm - half)?.offsetMm ?? unit.offsetMm)
+        : Math.round(centerMm - half);
 
     let last = snap(unit.offsetMm + half);
     let frame: number | null = null;
@@ -837,7 +880,7 @@ export default function ElevationDrawing({
         label.setAttribute('fill', paint);
         label.textContent = busy
           ? `занято: ${busy.blockedBy.label}`
-          : `${Math.round(centerMm - half)} мм от угла`;
+          : `${landingAt(centerMm)} мм от угла`;
       }
     };
 
@@ -956,12 +999,23 @@ export default function ElevationDrawing({
      * Вытяжка не перетаскивается: она обязана висеть над варочной и едет
      * за ней сама. Отдельная вытяжка — это ошибка монтажа, а не свобода.
      */
-    const movable = isUpper
-      ? false
-      : onMoveModule
-        ? // Верхний ряд пересобирается из нижнего, его не двигают руками.
-          true
-        : Boolean(onMoveAppliance && unit.appliance && unit.appliance !== 'hood');
+    /*
+     * ПЕРЕНОСИТСЯ МОДУЛЬ ЛЮБОГО РЯДА.
+     *
+     * Здесь стояло `isUpper ? false` с объяснением «верхний ряд
+     * пересобирается из нижнего». Он не пересобирается с тех пор, как
+     * стал держаться (`upperModules`), и `move_module` давно умеет все
+     * три ряда — переставляет модуль внутри его собственного.
+     *
+     * Вытяжка не переносится по-прежнему: она висит над варочной и едет
+     * за ней сама, отдельная вытяжка — ошибка монтажа.
+     */
+    const movable =
+      unit.appliance === 'hood'
+        ? false
+        : onMoveModule
+          ? true
+          : Boolean(onMoveAppliance && unit.appliance);
 
     return (
       <g

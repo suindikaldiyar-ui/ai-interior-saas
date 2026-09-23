@@ -948,6 +948,113 @@ export type ShelfEdit = {
   rejected?: string;
 };
 
+/**
+ * МОЖНО ЛИ СОБРАТЬ ТАКОЕ НАПОЛНЕНИЕ. Отказ — словами и числом.
+ *
+ * Жесты на чертеже (`moveShelf`, `addShelf`, `moveDrawerBoundary`) свои
+ * границы знают и сами; эта проверка стоит НА ОПЕРАЦИИ, то есть на том
+ * единственном входе, через который наполнение попадает в ряд. Разница
+ * не в осторожности: операцию зовёт не только рука на чертеже, а всё,
+ * что придёт к ней потом — ответ модели, импорт, вторая панель.
+ *
+ * Числа здесь не свои: зазор полки тот же `MIN_SHELF_GAP_MM`, по
+ * которому отказывает `clampShelf`, шаг тот же 32 мм, а сумма фронтов
+ * сверяется с высотой корпуса — с той же, которую считает
+ * `moduleCarcassHeightMm` и по которой режут фасады.
+ */
+export function fillRefusal(
+  fill: ModuleFill,
+  unit: Module,
+  heightMm: number,
+  /**
+   * Наполнение, которое стоит на модуле СЕЙЧАС.
+   *
+   * Проверяется то, что правка ВНОСИТ, а не то, что уже лежит. Разница
+   * не в мягкости: раскладка сама ставит полки выше корпуса — в шкафу
+   * «Полки» при корпусе 1900 мм полка приходит на 2112 мм, в полосе
+   * антресоли при корпусе 300 мм — на 256 мм. Измерено перебором:
+   * 26 072 наполнения, 5 855 не прошли бы сплошную проверку. Откажи им
+   * здесь — и править такой модуль стало бы нельзя вовсе: отказ получал
+   * бы не человек, а продукт за то, что он построил сам.
+   *
+   * Это расхождение названо отдельно и не тронуто: оно про раскладку, а
+   * не про правку мышью.
+   */
+  previous?: ModuleFill,
+): string | null {
+  if (!Number.isFinite(heightMm) || heightMm <= 0) {
+    return `У «${unit.label}» нет высоты корпуса: наполнение считать не от чего.`;
+  }
+
+  const was = new Set(previous?.shelves ?? []);
+
+  for (const mm of fill.shelves) {
+    if (!Number.isFinite(mm)) return `У «${unit.label}» полка без высоты — такой не бывает.`;
+
+    /*
+     * СИСТЕМА 32 — ПРАВИЛО ПРОДУКТА, А НЕ ПРЕДПОЧТЕНИЕ (ловушка 82).
+     * Спрашивается у всех полок: мимо отверстия полки не существует, и
+     * раскладка такого не строит — проверено теми же 26 072 наполнениями.
+     */
+    if (mm % SYSTEM32_STEP_MM !== 0) {
+      return (
+        `Полка на ${mm} мм не садится на присадку: отверстия идут ` +
+        `шагом ${SYSTEM32_STEP_MM} мм, ближайшее — ${snapTo32(mm)} мм.`
+      );
+    }
+
+    if (was.has(mm)) continue;
+
+    if (mm < MIN_SHELF_GAP_MM || mm > heightMm - MIN_SHELF_GAP_MM) {
+      return (
+        `Полка на ${mm} мм не встанет: корпус «${unit.label}» высотой ` +
+        `${heightMm} мм, полка живёт между ${MIN_SHELF_GAP_MM} и ` +
+        `${heightMm - MIN_SHELF_GAP_MM} мм.`
+      );
+    }
+
+    const near = fill.shelves.find(
+      (other) => other !== mm && Math.abs(other - mm) < MIN_SHELF_GAP_MM,
+    );
+    if (near !== undefined) {
+      return (
+        `Полки на ${Math.min(mm, near)} и ${Math.max(mm, near)} мм: между ними ` +
+        `${Math.abs(mm - near)} мм — туда ничего не положить, нужно от ` +
+        `${MIN_SHELF_GAP_MM} мм.`
+      );
+    }
+  }
+
+  /*
+   * СУММА ФРОНТОВ РАВНА ВЫСОТЕ КОРПУСА (ловушка 83).
+   *
+   * Иначе фасады не закроют корпус, и это видно уже в раскрое. Здесь
+   * сверяется с тем, что было: раскладка бывает на миллиметр другой,
+   * а правка границы сумму не меняет по построению.
+   */
+  if (fill.drawerHeights.length > 0) {
+    const sum = fill.drawerHeights.reduce((total, h) => total + h, 0);
+    const target = previous?.drawerHeights.length
+      ? previous.drawerHeights.reduce((total, h) => total + h, 0)
+      : Math.round(heightMm);
+    if (sum !== target) {
+      return (
+        `Фронты ящиков дают ${sum} мм вместо ${target} мм — расхождение ` +
+        `${Math.abs(sum - target)} мм: фасады не закроют корпус.`
+      );
+    }
+  }
+
+  if (fill.dividerMm < 0 || fill.dividerMm > unit.widthMm) {
+    return (
+      `Перегородка на ${fill.dividerMm} мм выходит за модуль шириной ` +
+      `${unit.widthMm} мм.`
+    );
+  }
+
+  return null;
+}
+
 export function moveShelf(
   fill: ModuleFill,
   indexAt: number,
