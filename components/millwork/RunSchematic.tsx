@@ -72,6 +72,8 @@ type Props = {
   onMoveModule?: (moduleId: string, offsetMm: number) => void;
   /** Что означает жест переноса: поставить на место или переставить. */
   moveMode?: 'place' | 'reorder';
+  /** Ширина тянется за границу между модулями — той же операцией. */
+  onWidth?: (moduleId: string, widthMm: number) => void;
   changedIds?: string[];
   /**
    * Какой вид показан сейчас.
@@ -119,6 +121,7 @@ export default function RunSchematic({
   onSelect,
   onMoveModule,
   moveMode,
+  onWidth,
   changedIds,
   onViewChange,
   panelHidden,
@@ -573,6 +576,7 @@ export default function RunSchematic({
                        */
                       onMoveModule={row.run.id === run.id ? onMoveModule : undefined}
                       moveMode={moveMode}
+                      onWidth={row.run.id === run.id ? onWidth : undefined}
                       changedIds={changedIds}
                       showMaterial
                     />

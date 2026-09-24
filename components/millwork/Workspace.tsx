@@ -1212,42 +1212,49 @@ export default function Workspace(props: WorkspaceProps) {
 
     if (!byPlace && !target) return;
 
-    const next = applyOps({
-      run: active.run,
-      requirements,
-      ops: [
+    /*
+     * ПРЕДУПРЕЖДЕНИЕ — ЭТО НЕ ОТКАЗ.
+     *
+     * Здесь стоял свой вызов `applyOps` и своя запись в `editedRuns`, а
+     * перед ними — `if (next.warnings.length > 0) return`. Любая строка,
+     * которую движок сказал ВМЕСТЕ с применённой правкой, выбрасывала
+     * правку целиком: верхний ряд переставлялся, движок честно говорил
+     * «двух модулей там больше нет — место заняла колонна», и рабочее
+     * место молча возвращало всё назад. На экране это выглядело как
+     * «верхний ряд не двигается мышью».
+     *
+     * Отказ движок оформляет иначе: он возвращает ряд БЕЗ правки и
+     * кладёт причину в `warnings`. Значит правильное поведение одно —
+     * записать то, что вернули, и назвать причину словами. Ровно это
+     * делает `runOps`, и второго пути записи в ряд больше нет.
+     */
+    /*
+     * Идентификатор выводится из позиции: подвинули — модуль стал другим
+     * id. Отметку, на которую он встал, посчитала `reorderTarget` — та
+     * же функция, что рисовала подсветку под пальцем.
+     */
+    const landed = byPlace ? snapMove(offsetMm) : target!.offsetMm;
+
+    runOps(
+      [
         byPlace
           ? { op: 'move_module', moduleId, offsetMm }
           : { op: 'move_module', moduleId, afterModuleId: target!.afterModuleId },
       ],
-      openings: props.openings,
-      roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
-    });
-
-    if (next.warnings.length > 0) {
-      setMoveNotice(next.warnings[0]);
-      return;
-    }
-
-    setMoveNotice(null);
-    dirty.current = true;
-    setEditedRuns((prev) => ({ ...prev, [active.key]: next }));
-    /*
-     * Идентификатор выводится из позиции: подвинули — модуль стал другим
-     * id. Ищем его там же, где он лежал, и по той отметке, на которую
-     * встал, — её посчитала `reorderTarget`, та же функция, что рисовала
-     * подсветку под пальцем.
-     */
-    const landed = byPlace ? snapMove(offsetMm) : target!.offsetMm;
-    const after = rowOfModule(next, moduleId) ?? {
-      row: row.row,
-      modules:
-        row.row === 'base'
-          ? next.modules
-          : next.upperSegments.flatMap((segment) => segment.modules),
-    };
-    setSelectedId(
-      after.modules.find((m) => m.offsetMm === landed)?.id ?? keepSelection(next, moduleId),
+      setMoveNotice,
+      (next) => {
+        const after = rowOfModule(next, moduleId) ?? {
+          row: row.row,
+          modules:
+            row.row === 'base'
+              ? next.modules
+              : next.upperSegments.flatMap((segment) => segment.modules),
+        };
+        return (
+          after.modules.find((m) => m.offsetMm === landed)?.id ??
+          keepSelection(next, moduleId)
+        );
+      },
     );
   };
 
@@ -1584,6 +1591,16 @@ export default function Workspace(props: WorkspaceProps) {
        * жест; чертёжный лист показывает свою строку и передаёт её сюда.
        */
       onRefusal: (text: string | null) => void = setSceneNotice,
+      /**
+       * Что выделить после правки.
+       *
+       * По умолчанию выделение решается ФАКТОМ: модуль на месте —
+       * остаётся, исчез — снимается. Но перенос выводит идентификатор
+       * из позиции, и после перестановки модуль СТАЛ ДРУГИМ id: искать
+       * его надо по отметке, на которую он встал. Знает её только тот,
+       * кто жест и совершил, поэтому он её сюда и передаёт.
+       */
+      selectAfter?: (next: Run) => string | null,
     ) => {
       if (ops.length === 0) return;
 
@@ -1673,7 +1690,7 @@ export default function Workspace(props: WorkspaceProps) {
          * (ловушка 249). Теперь спрашиваем ряд: модуль на месте —
          * выделение остаётся, исчез — снимается.
          */
-        setSelectedId(keepSelection(next, selectedId));
+        setSelectedId(selectAfter ? selectAfter(next) : keepSelection(next, selectedId));
       }
       flash(
         next.modules
@@ -2752,12 +2769,16 @@ export default function Workspace(props: WorkspaceProps) {
                   onSelect={selectModule}
                   onMoveModule={moveModule}
                   moveMode={freeMode ? 'place' : 'reorder'}
+                  onWidth={dragWidth}
                   changedIds={changedIds}
                 />
               </div>
 
               {sceneNotice && (
-                <p className="mt-2 rounded-[var(--r-control)] bg-tape/15 px-3 py-2 text-[13px] leading-snug text-tape">
+                <p
+                  data-scene-notice
+                  className="mt-2 rounded-[var(--r-control)] bg-tape/15 px-3 py-2 text-[13px] leading-snug text-tape"
+                >
                   {sceneNotice}
                 </p>
               )}
@@ -3190,7 +3211,10 @@ export default function Workspace(props: WorkspaceProps) {
               )}
 
               {moveNotice && (
-                <p className="mt-3 rounded-[var(--r-control)] bg-navy px-4 py-3 text-[13px] leading-snug text-graphiteMw">
+                <p
+                  data-move-notice
+                  className="mt-3 rounded-[var(--r-control)] bg-navy px-4 py-3 text-[13px] leading-snug text-graphiteMw"
+                >
                   {moveNotice}
                 </p>
               )}
@@ -3653,8 +3677,17 @@ export default function Workspace(props: WorkspaceProps) {
                    * означать одно.
                    */
                   onMoveAppliance: freeMode ? undefined : moveAppliance,
-                  onMoveModule: moveModule,
-                  moveMode: freeMode ? 'place' : 'reorder',
+                  /*
+                   * ЛИСТ НА «РЕЗУЛЬТАТЕ» — ДОКУМЕНТ, А НЕ РАБОЧИЙ ЭКРАН.
+                   *
+                   * По нему мерят линейкой: масштаб из стандартного ряда,
+                   * штамп, примечания, печать. Состав правят на схеме —
+                   * там и стоят перенос модуля и ручка ширины.
+                   *
+                   * Правка наполнения (`onFillChange`) здесь остаётся
+                   * намеренно: это эскиз слоя 10, полку на нём тянут по
+                   * замыслу, и она не меняет ни состав ряда, ни масштаб.
+                   */
                 }}
               />
 

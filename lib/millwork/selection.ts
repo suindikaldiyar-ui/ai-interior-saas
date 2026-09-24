@@ -1,4 +1,5 @@
 import { allModules } from './layout';
+import { mezzanineBaseOf } from './fill';
 import { moduleNumbers } from './positions';
 import type { Module, Run } from '@/types/millwork';
 
@@ -93,7 +94,7 @@ export function moduleOfPart(partId: string): string | null {
 }
 
 /** Какому ряду принадлежит модуль. */
-export type RunRow = 'base' | 'upper' | 'mezzanine';
+export type RunRow = 'base' | 'upper' | 'mezzanine' | 'storage';
 
 /**
  * В КАКОМ РЯДУ СТОИТ МОДУЛЬ.
@@ -122,8 +123,34 @@ export function rowOfModule(
   const found = upper.find((unit) => unit.id === id);
   if (!found) return null;
 
-  const row: RunRow = found.section === 'mezzanine' ? 'mezzanine' : 'upper';
-  return { row, modules: upper.filter((unit) => (unit.section === 'mezzanine') === (row === 'mezzanine')) };
+  if (found.section !== 'mezzanine') {
+    return { row: 'upper', modules: upper.filter((unit) => unit.section !== 'mezzanine') };
+  }
+
+  /*
+   * АНТРЕСОЛЕЙ ДВЕ, И РАЗЛИЧАЮТСЯ ОНИ ОПОРОЙ.
+   *
+   * Заказанная стоит на верхнем ряду, обязательная — на крыше колонны
+   * холодильника (слой 38). На схеме обе подписаны «антресоль», но это
+   * РАЗНЫЕ полосы на разной высоте, и движок переставляет модуль только
+   * внутри своей: «Модуль антресоли переносится только внутри
+   * антресоли: соседа mezz-0 в ней нет».
+   *
+   * Пока жест считал их одной полосой, он предлагал перестановку,
+   * которую движок честно отклонял, — на экране это выглядело как
+   * «антресоль не двигается». Спрашиваем опору той же функцией, что и
+   * движок (`mezzanineBaseOf`), и второго ответа на «какая это полоса»
+   * не появляется.
+   */
+  const onColumn = mezzanineBaseOf(found, run) !== null;
+  return {
+    /* Кладовка над колонной — своя полоса и своя высота, не антресоль ряда. */
+    row: onColumn ? 'storage' : 'mezzanine',
+    modules: upper.filter(
+      (unit) =>
+        unit.section === 'mezzanine' && (mezzanineBaseOf(unit, run) !== null) === onColumn,
+    ),
+  };
 }
 
 /**
@@ -136,11 +163,26 @@ export function rowOfModule(
  * `offsetMm` — свободная сборка: модуль встаёт туда, где отпустили, а
  * соседи не двигаются. Здесь эта функция ничего не решает.
  *
- * `afterModuleId` — раскладка по шаблону и верхние ряды: там позиция
- * выводится из суммы ширин, и «поставить на 1750 мм» не значит ничего —
- * ряд всё равно сойдётся со стеной. Жест означает ПЕРЕСТАНОВКУ, и
- * считается она по центру: модуль встаёт перед тем соседом, чью
+ * `afterModuleId` — раскладка по шаблону и висящие ряды: там позиция
+ * выводится из состава, и «поставить на 1750 мм» не значит ничего.
+ * Жест означает ПЕРЕСТАНОВКУ: модуль встаёт перед тем соседом, чью
  * середину он перешёл.
+ *
+ * СЕРЕДИНА БЕРЁТСЯ У СОСЕДА, А НЕ У ВЫДУМАННОЙ УКЛАДКИ.
+ *
+ * Здесь соседи складывались вплотную от первого: `at += widthMm`. Для
+ * нижнего ряда это верно — он сходится со стеной до миллиметра, — а
+ * верхний ряд РАЗОРВАН окном, колонной и выступом. Замерено на
+ * демо-ряду: модули стоят на 1200, 2400, 2700 и 3300 при ширинах 300,
+ * 300, 600 и 500 — между первым и вторым 900 мм пустой стены. Слоты,
+ * посчитанные укладкой, лежали не там, где модули нарисованы: под
+ * пальцем показывалась отметка 2100 мм, которой в ряду нет вовсе, а
+ * вокруг собственного места модуля возвращался `null` на девятистах
+ * миллиметрах хода — то есть жест молча не делал ничего.
+ *
+ * Ровно это и было на экране как «верхний ряд не двигается мышью».
+ * Спрашиваем то, что видит глаз: `offsetMm + widthMm / 2` каждого
+ * соседа.
  */
 export function reorderTarget(
   modules: Module[],
@@ -152,16 +194,25 @@ export function reorderTarget(
 
   const centre = offsetMm + modules[from].widthMm / 2;
 
-  /* Порядок без переносимого модуля: между кем он встаёт. */
+  /*
+   * Порядок без переносимого модуля: между кем он встаёт. Его
+   * собственное место в этом списке — индекс `from`: вынули и вернули
+   * на то же место значит «не двигали».
+   */
   const rest = modules.filter((_, i) => i !== from);
+
   let to = rest.length;
-  let at = modules[0]?.offsetMm ?? 0;
   for (let i = 0; i < rest.length; i += 1) {
-    if (centre < at + rest[i].widthMm / 2) {
+    /*
+     * Середина соседа принадлежит ЕГО слоту: иначе левый край ряда
+     * недостижим — центр перетаскиваемого зажат в
+     * `[ширина/2, длина − ширина/2]` и у модуля той же ширины, что и
+     * первый, упирается ровно в его середину.
+     */
+    if (centre <= rest[i].offsetMm + rest[i].widthMm / 2) {
       to = i;
       break;
     }
-    at += rest[i].widthMm;
   }
 
   if (to === from) return null;
@@ -174,30 +225,20 @@ export function reorderTarget(
   const neighbour = modules[Math.min(to, modules.length - 1)];
   if (!neighbour || neighbour.id === moduleId) return null;
 
-  /* Отметка после перестановки — сумма ширин тех, кто окажется левее. */
-  const order = [...rest];
-  order.splice(to, 0, modules[from]);
-  const start = modules[0]?.offsetMm ?? 0;
-  const landed = order
-    .slice(0, order.findIndex((unit) => unit.id === moduleId))
-    .reduce((sum, unit) => sum + unit.widthMm, start);
+  /*
+   * ОТМЕТКА, КОТОРУЮ ПОКАЗЫВАЕТ ПОДСВЕТКА — МЕСТО СОСЕДА, А НЕ СУММА
+   * ШИРИН.
+   *
+   * Ряд после перестановки пересобирает движок, и в разорванном ряду
+   * он укладывает модули по участкам. Сумма ширин дала бы отметку,
+   * которой в ряду не будет; сосед стоит там, куда человек и целится.
+   */
+  const landed =
+    to === 0 ? rest[0].offsetMm : rest[to - 1].offsetMm + rest[to - 1].widthMm;
 
-  return { afterModuleId: neighbour.id, offsetMm: landed };
+  return { afterModuleId: neighbour.id, offsetMm: Math.round(landed) };
 }
 
-/**
- * В КАКОЙ СТЕНЕ СТОИТ ЭТОТ МОДУЛЬ.
- *
- * Схема показывает все ряды композиции рядом, и нажать можно в любом.
- * Правки при этом уходят в АКТИВНУЮ стену: `applyOps` правит один ряд, и
- * операция по модулю чужой стены в нём просто не найдётся. Поэтому выбор
- * модуля и выбор стены — один жест, а не два: нажали на стене Б — она и
- * стала активной.
- *
- * Возвращается номер ряда в композиции — тот же индекс, которым
- * подписаны стены (`wallLabel`) и по которому рабочее место пишет
- * правку. `null` — модуля нет ни в одном ряду.
- */
 export function wallOfModule(runs: Run[], moduleId: string | null | undefined): number | null {
   if (!moduleId) return null;
   const at = runs.findIndex((run) => allModules(run).some((module) => module.id === moduleId));

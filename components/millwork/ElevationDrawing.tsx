@@ -117,6 +117,14 @@ type Props = {
    */
   moveMode?: 'place' | 'reorder';
   /**
+   * ШИРИНА ТЯНЕТСЯ ЗА ГРАНИЦУ МЕЖДУ МОДУЛЯМИ.
+   *
+   * Тот же обработчик, что и в сцене (`onWidth` у `ModuleHandles`), и
+   * та же операция `set_width`: помещаемость считает движок по режиму
+   * ряда, а не жест.
+   */
+  onWidth?: (moduleId: string, widthMm: number) => void;
+  /**
    * Показывать МАТЕРИАЛ фасада, а не только его контур.
    *
    * Это режим рабочего экрана, а не листа: на бумаге заливка идёт по типу
@@ -186,6 +194,15 @@ const MOVE_STEP_MM = 50;
  * нажатие на технику переставляло бы ряд.
  */
 const MOVE_SLOP_PX = 6;
+
+/**
+ * Полоса захвата границы между модулями, в единицах чертежа.
+ *
+ * Линия шва нарисована в один пиксель, и попасть в неё пальцем нельзя
+ * (ловушка 89: зона касания меряется тем, что видит палец, а не тем,
+ * что нарисовано).
+ */
+const EDGE_GRAB_UNITS = 12;
 
 /**
  * Поле под выноски с каждой стороны.
@@ -649,6 +666,7 @@ export default function ElevationDrawing({
   onFillReject,
   onMoveAppliance,
   onMoveModule,
+  onWidth,
   moveMode = 'place',
   showMaterial = false,
   variants = [],
@@ -672,8 +690,11 @@ export default function ElevationDrawing({
   const ghostRect = useRef<SVGRectElement>(null);
   const ghostLabel = useRef<SVGTextElement>(null);
   const moveCleanup = useRef<(() => void) | null>(null);
+  /** Снятие слушателей жеста границы: живут только между нажатием и отпусканием. */
+  const edgeCleanup = useRef<(() => void) | null>(null);
 
   useEffect(() => () => moveCleanup.current?.(), []);
+  useEffect(() => () => edgeCleanup.current?.(), []);
 
   /*
    * Рабочая поверхность — ФОРМУЛА цеха, а не константа: цоколь плюс
@@ -771,6 +792,134 @@ export default function ElevationDrawing({
 
     return { top: zoneTop, bottom: plinthMm(run.production) };
   };
+
+  /**
+   * ГРАНИЦА МЕЖДУ ДВУМЯ МОДУЛЯМИ ТЯНЕТСЯ.
+   *
+   * Жест меняет ширину ЛЕВОГО из двух: правый едет за ним, и ряд
+   * пересобирает движок. Шаг тот же, что у ручки в сцене (50 мм):
+   * пальцем миллиметр не поставить, а цех считает пятёрками.
+   *
+   * Ряд у границы один — тот, в котором стоят оба модуля. Соседей
+   * ищет `rowOfModule`, та же функция, что выбирает ряд переносу:
+   * второго ответа на «в каком ряду этот модуль» в продукте нет.
+   */
+  const startEdge = (event: React.PointerEvent, unit: Module) => {
+    if (!onWidth) return;
+    event.stopPropagation();
+
+    const svg = (event.currentTarget as SVGGraphicsElement).ownerSVGElement;
+    if (!svg) return;
+
+    const box = svg.getBoundingClientRect();
+    const viewW = svg.viewBox.baseVal.width || box.width;
+    const toMm = (clientX: number) =>
+      Math.round((((clientX - box.left) / box.width) * viewW - padLeft) / scale);
+
+    const startX = event.clientX;
+    const startMm = toMm(event.clientX);
+    let wanted = unit.widthMm;
+    let dragged = false;
+    let frame: number | null = null;
+
+    const paint = () => {
+      const rect = ghostRect.current;
+      const label = ghostLabel.current;
+      if (ghost.current) ghost.current.style.display = '';
+      if (rect) {
+        rect.setAttribute('x', String(padLeft + unit.offsetMm * scale));
+        rect.setAttribute('width', String(Math.max(0, wanted * scale)));
+        rect.setAttribute('fill', 'var(--tape)');
+        rect.setAttribute('stroke', 'var(--tape)');
+      }
+      if (label) {
+        label.setAttribute('x', String(padLeft + (unit.offsetMm + wanted / 2) * scale));
+        label.setAttribute('fill', 'var(--tape)');
+        label.textContent = `${wanted} мм`;
+      }
+    };
+
+    const onMove = (e: PointerEvent) => {
+      if (Math.abs(e.clientX - startX) > MOVE_SLOP_PX) dragged = true;
+      const next = unit.widthMm + (toMm(e.clientX) - startMm);
+      const snapped = Math.round(next / MOVE_STEP_MM) * MOVE_STEP_MM;
+      if (frame !== null) return;
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        wanted = Math.max(MOVE_STEP_MM, snapped);
+        paint();
+      });
+    };
+
+    const onEnd = () => {
+      edgeCleanup.current?.();
+      /* Нажатие — это ВЫБОР, а не правка: порог тот же, что у переноса. */
+      if (!dragged || wanted === unit.widthMm) return;
+      onWidth(unit.id, wanted);
+    };
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onEnd);
+    window.addEventListener('pointercancel', onEnd);
+
+    edgeCleanup.current = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onEnd);
+      window.removeEventListener('pointercancel', onEnd);
+      if (frame !== null) cancelAnimationFrame(frame);
+      if (ghost.current) ghost.current.style.display = 'none';
+      edgeCleanup.current = null;
+    };
+
+    paint();
+  };
+
+  /**
+   * ГДЕ ПРОХОДЯТ ГРАНИЦЫ МЕЖДУ МОДУЛЯМИ — ВО ВСЕХ ТРЁХ РЯДАХ.
+   *
+   * Граница есть там, где ДВА СОСЕДА ПО ОДНОМУ РЯДУ стоят вплотную:
+   * конец левого совпадает с началом правого. Разрыв ряда (окно,
+   * колонна, выступ) границей не считается — там между модулями стена,
+   * а не шов, и тянуть её нечего.
+   *
+   * Ширина техники не тянется никогда: её диктует прибор.
+   */
+  const edgePairs: { unit: Module; atMm: number; top: number; height: number }[] = [];
+  if (onWidth && !compact) {
+    const rows: Module[][] = [
+      run.modules,
+      ...run.upperSegments.map((segment) => segment.modules),
+    ];
+
+    for (const list of rows) {
+      for (let i = 0; i < list.length - 1; i += 1) {
+        const left = list[i];
+        const right = list[i + 1];
+        if (left.appliance || left.kind === 'filler') continue;
+        const edgeMm = left.offsetMm + left.widthMm;
+        if (edgeMm !== right.offsetMm) continue;
+
+        const isUpper = list !== run.modules;
+        const placed = isUpper ? placeOf.get(left.id) : undefined;
+        const bounds = sectionZone
+          ? sectionBounds(left, isUpper)
+          : placed
+            ? { top: placed.topMm, bottom: placed.bottomMm }
+            : { top: isUpper ? upperTop : workTop, bottom: isUpper ? upperBottom : 0 };
+        const tallTopMm =
+          !sectionZone && left.kind === 'tall'
+            ? plinthMm(run.production) + moduleCarcassHeightMm(left, run)
+            : bounds.top;
+
+        edgePairs.push({
+          unit: left,
+          atMm: edgeMm,
+          top: yOf(tallTopMm),
+          height: Math.max(0, yOf(bounds.bottom) - yOf(tallTopMm)),
+        });
+      }
+    }
+  }
 
   /** Перенос прибора: подсветка будущего места и расстояние от левого угла. */
   const startMove = (event: React.PointerEvent, unit: Module) => {
@@ -878,6 +1027,17 @@ export default function ElevationDrawing({
       if (label) {
         label.setAttribute('x', String(padLeft + centerMm * scale));
         label.setAttribute('fill', paint);
+        /*
+         * ЧТО ПОКАЖЕТ ПОДСВЕТКА — ТО И ЗАПИШЕТСЯ.
+         *
+         * Оба числа выставлены признаками: приёмка гоняет настоящие
+         * события указателя и сверяет предпросмотр с результатом. Без
+         * этого «ряд не двигается» видно только глазами, а почему —
+         * не видно вовсе.
+         */
+        label.setAttribute('data-centre-mm', String(Math.round(centerMm)));
+        label.setAttribute('data-landing-mm', String(landingAt(centerMm)));
+        label.setAttribute('data-drag-row', rowHere?.row ?? 'нет');
         label.textContent = busy
           ? `занято: ${busy.blockedBy.label}`
           : `${landingAt(centerMm)} мм от угла`;
@@ -1041,6 +1201,16 @@ export default function ElevationDrawing({
          */
         data-bottom-mm={compact ? undefined : Math.round(bottom)}
         data-top-mm={compact ? undefined : Math.round(tallTop)}
+        /*
+         * В КАКОМ РЯДУ МОДУЛЬ И ЧТО ЗНАЧИТ ЖЕСТ НАД НИМ.
+         *
+         * Жест живёт в SVG, и проверить его типами нельзя: приёмка
+         * гоняет настоящие события указателя и обязана видеть, тот ли
+         * ряд выбрал обработчик. Без этого «верхний ряд не двигается»
+         * ловится только глазами — и ловилось именно так.
+         */
+        data-move-row={compact ? undefined : (rowOfModule(run, unit.id)?.row ?? 'нет')}
+        data-move-mode={compact || !movable ? undefined : moveMode}
         onClick={onSelect ? () => onSelect(unit.id) : undefined}
         onPointerDown={movable ? (event) => startMove(event, unit) : undefined}
         style={{ cursor: movable ? 'ew-resize' : onSelect ? 'pointer' : 'default' }}
@@ -1627,6 +1797,38 @@ export default function ElevationDrawing({
           ),
         )}
       </g>
+
+      {/*
+        * ГРАНИЦЫ МЕЖДУ МОДУЛЯМИ — ПОВЕРХ МЕБЕЛИ И ОДНИМ СПИСКОМ.
+        *
+        * Рисуются ПОСЛЕ модулей: нажатие на границу обязано доставаться
+        * ей, а не модулю под ней, иначе жест «потянуть ширину»
+        * превращается в жест «перенести модуль». Полоса захвата — 12
+        * единиц чертежа: по линии в один пиксель пальцем не попасть.
+        *
+        * Ряд у каждой границы свой, и берётся он из тех же списков, что
+        * рисуют модули: нижний — `run.modules`, верхний и антресоль —
+        * свои сегменты. Границы между РАЗНЫМИ рядами не существует.
+        */}
+      {onWidth && !compact && (
+        <g data-edges>
+          {edgePairs.map(({ unit, atMm, top, height }) => (
+            <rect
+              key={`edge-${unit.id}`}
+              data-edge={unit.id}
+              x={padLeft + atMm * scale - EDGE_GRAB_UNITS / 2}
+              y={top}
+              width={EDGE_GRAB_UNITS}
+              height={height}
+              fill="transparent"
+              style={{ cursor: 'col-resize' }}
+              onPointerDown={(event) => startEdge(event, unit)}
+            >
+              <title>Тяните, чтобы изменить ширину</title>
+            </rect>
+          ))}
+        </g>
+      )}
 
       {/*
         * Выноски рисуются ПОСЛЕ мебели: линия к детали должна лежать
