@@ -929,7 +929,28 @@ export type MillworkOp =
       variant?: ModuleVariantKind;
     }
   | { op: 'remove_module'; moduleId: string }
-  | { op: 'replace_module'; moduleId: string; kind: ModuleKind; appliance?: ApplianceKind }
+  /**
+   * ЗАМЕНА МЕСТА — ОДНА ОПЕРАЦИЯ.
+   *
+   * Библиотека модулей меняет на месте ТРИ вещи сразу: чем модуль стал
+   * (`variant`), какого он вида (`kind`) и какой ширины (`widthMm`).
+   * Тремя операциями подряд это было бы три пересчёта ряда и три
+   * промежуточных состояния, каждое из которых может не собраться:
+   * узкий вариант в широком месте, широкий в узком.
+   *
+   * Материал фасада, корпуса и ручка при этом ПЕРЕЕЗЖАЮТ: человек
+   * выбирал их для этого места, а не для этого типа модуля.
+   */
+  | {
+      op: 'replace_module';
+      moduleId: string;
+      kind: ModuleKind;
+      appliance?: ApplianceKind;
+      /** Чем модуль стал: ключ из `MODULE_VARIANTS`. */
+      variant?: ModuleVariantKind;
+      /** Новая ширина. Пусто — остаётся прежняя. */
+      widthMm?: number;
+    }
   | { op: 'set_width'; moduleId: string; widthMm: number }
   | { op: 'set_fronts'; moduleId: string; drawerCount: number }
   /** Сменить начинку модуля в зонах без техники: штанга вместо полок. */

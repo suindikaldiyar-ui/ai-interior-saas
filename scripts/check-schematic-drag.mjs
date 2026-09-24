@@ -77,6 +77,7 @@ const READ_ROWS = `(() => {
     rows[row].push({
       id,
       offset: Number(g.getAttribute('data-module-offset')),
+      widthMm: Number(g.getAttribute('data-module-width')),
       x: box ? Math.round(box.x) : 0,
       y: box ? Math.round(box.y) : 0,
       w: box ? Math.round(box.width) : 0,
@@ -104,6 +105,12 @@ const READ_GHOST = `(() => {
 const order = (list) => list.map((m) => m.id.split('@')[0]).join(' | ');
 const marks = (list) => list.map((m) => m.offset).join(' ');
 const pixels = (list) => list.map((m) => m.w).join(' ');
+/* Набор ширин ряда в миллиметрах: по нему видно, перекроили ряд или нет. */
+const widthSet = (list) =>
+  list
+    .map((m) => m.widthMm)
+    .sort((a, b) => a - b)
+    .join(' ');
 
 /** Настоящий жест: нажали, повели шагами, отпустили. */
 async function drag(page, from, to) {
@@ -309,10 +316,22 @@ try {
         .join(' · '),
     );
     console.log(`     движок сказал: ${said || '—'}`);
+    /*
+     * ПРАВКА ШИРИНЫ НЕ УДАЛЯЕТ МОДУЛЕЙ ВОВСЕ.
+     *
+     * Раньше здесь допускалась потеря, если её называли словами:
+     * замерено 4 → 1 при сдвиге шва на 40 px. Теперь ряд обязан
+     * остаться целым — не влезло, значит отказ, и ряд прежний.
+     */
     check(
-      'ряд либо не потерял модулей, либо потеря названа числом',
-      after.upper.length === before.upper.length || /\d+ модул/.test(said),
-      `${before.upper.length} → ${after.upper.length} · ${said || 'МОЛЧА'}`,
+      'ряд не потерял модулей',
+      after.upper.length === before.upper.length,
+      `${before.upper.length} → ${after.upper.length} · ${said || 'без слов'}`,
+    );
+    check(
+      'и ни один модуль не уехал в окно или в колонну',
+      after.upper.every((m, i) => i === 0 || m.offset >= after.upper[i - 1].offset),
+      marks(after.upper),
     );
     check(
       'нижний ряд от правки ширины наверху не поехал',
@@ -358,11 +377,40 @@ try {
     console.log(`     отметки после:    ${marks(after[row])}`);
     console.log(`     ширины после, px: ${pixels(after[row])}`);
 
+    /*
+     * РЕЗУЛЬТАТ, А НЕ ФАКТ ЖЕСТА.
+     *
+     * Прошлая версия скрипта писала «ВСЁ ЗЕЛЁНОЕ», проверив, что жест
+     * дошёл до нужного ряда. Ряд при этом терял модули: 4 → 2 при
+     * переносе и 4 → 1 при правке ширины. Меряем то, что обязано быть
+     * правдой после ЛЮБОЙ правки.
+     */
+    check(
+      `${row}: модулей столько же — правка не удаляет мебель`,
+      after[row].length === list.length,
+      `${list.length} → ${after[row].length} · ${marks(after[row])}`,
+    );
+    check(
+      `${row}: набор ширин тот же — переставили, а не перекроили`,
+      widthSet(after[row]) === widthSet(list),
+      `было ${widthSet(list)} · стало ${widthSet(after[row])}`,
+    );
+
     if (list.length > 1) {
+      /*
+       * ПЕРЕСТАВИЛСЯ ЛИБО ОТКАЗАЛ СЛОВАМИ.
+       *
+       * Ряд разорван, и сосед, на чьё место несут модуль, может стоять
+       * ЗА ОКНОМ: в участке шириной 300 мм модулю на 450 места нет.
+       * Это законный отказ — но молчать в этом случае нельзя, иначе
+       * жест выглядит сломанным.
+       */
       check(
-        `${row}: порядок модулей изменился`,
-        order(after[row]) !== order(list),
-        order(after[row]) === order(list) ? 'НЕ ДВИНУЛСЯ' : 'переставлен',
+        `${row}: порядок изменился либо отказ назван числом`,
+        order(after[row]) !== order(list) || /выходит за участок на \d+ мм/.test(said),
+        order(after[row]) !== order(list)
+          ? 'переставлен'
+          : said || 'НЕ ДВИНУЛСЯ И ПРОМОЛЧАЛ',
       );
     } else {
       /* Менять местами не с кем: меряем, что жест ДОШЁЛ до этого ряда. */

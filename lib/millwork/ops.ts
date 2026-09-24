@@ -12,7 +12,7 @@ import {
   isStandardWidth,
   snapToStandard,
 } from './modules';
-import { buildUpperRow, fillGap, moduleId, onWall } from './layout';
+import { upperSpans, buildUpperRow, fillGap, moduleId, onWall } from './layout';
 import {
   assertNoOverlap,
   assertRunFits,
@@ -287,77 +287,256 @@ export function applyOps({
     .flatMap((segment) => segment.modules)
     .filter((unit) => unit.section === 'mezzanine' && mezzanineBaseOf(unit, run) === null);
 
-  /**
-   * ЛЕВЫЙ КРАЙ ПОЛОСЫ АНТРЕСОЛИ — ОДНО ЧИСЛО НА ВСЮ ПРАВКУ.
+  /*
+   * УКЛАДКА ВПЛОТНУЮ УБРАНА ВМЕСТЕ С `reindexMezz` И `mezzFits`.
    *
-   * Антресоль лежит полосой НАД ВЕРХНИМ РЯДОМ, а он начинается после
-   * колонны: у демо-ряда это 1200 мм. Сброс в ноль загонял её на место
-   * кладовки над холодильником — та тоже `mezz-`, и `assertNoOverlap`
-   * поймал это исключением: «перекрытие 300×300×320 мм».
-   *
-   * Брать край у ПЕРВОГО оставшегося модуля тоже нельзя: удалили первый —
-   * и вся полоса уехала вправо, а освободившееся место оказалось слева,
-   * где его не занять. Край запоминается один раз, до правок.
+   * Обе считали ряд от одного левого края (`mezzOriginMm`) и складывали
+   * модули без промежутков — то есть описывали ряд, которого в
+   * разорванной стене нет. Теперь место каждого модуля считает
+   * `placeInSpans`, и второго расчёта не остаётся.
    */
-  const mezzOriginMm = mezzModules.length > 0
-    ? Math.min(...mezzModules.map((unit) => unit.offsetMm))
-    : 0;
 
-  /** Идентификатор модуля антресоли: та же функция, роль `mezz`. */
-  const reindexMezz = (list: Module[]): Module[] => {
+  /**
+   * ГДЕ ВЕРХНИЙ РЯД МОЖЕТ СТОЯТЬ — В МОМЕНТ ПРАВКИ.
+   *
+   * Участки зависят от НИЖНЕГО ряда: поставили колонну — над ней места
+   * нет. Нижний правится в этом же вызове, поэтому спрашиваем по
+   * текущему составу, а не по тому, с чем пришли.
+   *
+   * Считает их `upperSpans` — та же функция, по которой ряд собирается
+   * впервые. Второго расчёта «где можно» не появляется, и участок
+   * модуля выводится из его смещения: своего поля у него нет.
+   */
+  const spansNow = () =>
+    upperSpans(
+      modules,
+      run.lengthMm,
+      /*
+       * Проёмы ряда: ригели живут на РЯДУ (слой 44), окна приходят
+       * замером. Тот же набор, что уходит в `buildUpperRow` ниже.
+       */
+      [...openings.filter((opening) => opening.kind !== 'beam'), ...(run.beams ?? [])],
+      { ...requirements, options },
+      run.ceilingHeightMm,
+      run.production,
+    );
+
+  /** Участок, в котором модуль стоит ЛЕВЫМ КРАЕМ. */
+  const spanAt = (
+    offsetMm: number,
+    free: { from: number; to: number }[],
+  ): { from: number; to: number } | null =>
+    free.find((span) => offsetMm >= span.from && offsetMm < span.to) ?? null;
+
+  /** Чем участок кончается справа: словом, а не координатой. */
+  const blockerAfter = (toMm: number, blockers: { from: number; to: number; reason: string }[]) =>
+    blockers.find((b) => b.from === toMm)?.reason ?? 'край стены';
+
+  type Placement =
+    | { ok: Module[] }
+    | { overflowMm: number; unit: Module; reason: string };
+
+  /**
+   * РАЗЛОЖИТЬ ВИСЯЩИЙ РЯД ПО ЕГО УЧАСТКАМ.
+   *
+   * Правило одно и читается словами: модуль остаётся там, где стоит, и
+   * двигается вправо ТОЛЬКО если наехал на левого соседа по тому же
+   * участку. Пустота между модулями законна и сохраняется: ряд разорван
+   * окном и колонной, и «вплотную» там означает «не там, где мебель».
+   *
+   * Здесь стояла укладка вплотную от одного левого края
+   * (`upperOriginMm`), и после каждой правки ряд съезжал влево, попадал
+   * в запрещённые участки и обрезался: 4 модуля → 2 при переносе и
+   * 4 → 1 при правке ширины. Обрезка делалась молча — модули просто
+   * пропадали.
+   *
+   * Не влезло — это ОТКАЗ с числом, а не удаление. Удаляет только
+   * кнопка «Удалить».
+   */
+  const placeInSpans = (list: Module[]): Placement => {
+    const { free, blockers } = spansNow();
     const sorted = [...list].sort((a, b) => a.offsetMm - b.offsetMm);
-    let offset = mezzOriginMm;
 
-    return sorted.map((unit) => {
-      const next: Module = {
-        ...unit,
-        offsetMm: offset,
-        id: moduleId('mezz', offset, undefined, run.wallId),
-      };
-      offset += unit.widthMm;
-      return next;
+    /* Правый край занятого в каждом участке: по нему и двигаем. */
+    const cursor = new Map<number, number>();
+    const out: Module[] = [];
+
+    for (const unit of sorted) {
+      const span = spanAt(unit.offsetMm, free);
+      if (!span) {
+        /*
+         * Участка под модулем нет вовсе — его отняла правка НИЖНЕГО
+         * ряда (появилась колонна, внесли ригель). Это не отказ правки
+         * верха: такой модуль снимается ниже по ходу, и потеря там же
+         * называется словами.
+         */
+        out.push(unit);
+        continue;
+      }
+
+      const at = Math.max(unit.offsetMm, cursor.get(span.from) ?? span.from);
+      if (at + unit.widthMm > span.to) {
+        return {
+          overflowMm: at + unit.widthMm - span.to,
+          unit,
+          reason: blockerAfter(span.to, blockers),
+        };
+      }
+
+      cursor.set(span.from, at + unit.widthMm);
+      out.push(
+        at === unit.offsetMm
+          ? unit
+          : {
+              ...unit,
+              offsetMm: at,
+              id: moduleId(
+                unit.section === 'mezzanine' ? 'mezz' : unit.kind,
+                at,
+                unit.appliance,
+                run.wallId,
+              ),
+            },
+      );
+    }
+
+    return { ok: out };
+  };
+
+  /**
+   * ПЕРЕСТАНОВКА: НОВЫЙ ПОРЯДОК САДИТСЯ НА ПРЕЖНИЕ МЕСТА УЧАСТКА.
+   *
+   * Обмен местами не двигает ряд: занятое в участке остаётся занятым, и
+   * промежутки между соседями сохраняются — меняется только, КТО где
+   * стоит. Сумма ширин и промежутков от перестановки не меняется, и
+   * хвост участка встаёт ровно туда же, где стоял.
+   *
+   * Складывать модули вплотную здесь нельзя: ряд разорван, и «вплотную»
+   * означает «не там, где мебель».
+   */
+  const reflow = (order: Module[]): Module[] => {
+    const { free } = spansNow();
+
+    /* Промежутки участка — по тому, как он выглядел ДО перестановки. */
+    const gapsOf = (span: { from: number; to: number }) => {
+      const was = order
+        .filter((unit) => spanAt(unit.offsetMm, free)?.from === span.from)
+        .sort((a, b) => a.offsetMm - b.offsetMm);
+      const gaps: number[] = [];
+      for (let i = 1; i < was.length; i += 1) {
+        gaps.push(Math.max(0, was[i].offsetMm - (was[i - 1].offsetMm + was[i - 1].widthMm)));
+      }
+      return { startMm: was[0]?.offsetMm ?? span.from, gaps };
+    };
+
+    const cursor = new Map<number, { at: number; step: number; gaps: number[] }>();
+
+    return order.map((unit) => {
+      const span = spanAt(unit.offsetMm, free);
+      if (!span) return unit;
+
+      if (!cursor.has(span.from)) {
+        const { startMm, gaps } = gapsOf(span);
+        cursor.set(span.from, { at: startMm, step: 0, gaps });
+      }
+      const state = cursor.get(span.from)!;
+      const at = state.at;
+      state.at = at + unit.widthMm + (state.gaps[state.step] ?? 0);
+      state.step += 1;
+
+      return at === unit.offsetMm
+        ? unit
+        : {
+            ...unit,
+            offsetMm: at,
+            id: moduleId(
+              unit.section === 'mezzanine' ? 'mezz' : unit.kind,
+              at,
+              unit.appliance,
+              run.wallId,
+            ),
+          };
     });
   };
 
   /**
-   * Правый край ряда антресоли после правки.
+   * Уложить и записать, либо отказать словами и числом.
    *
-   * Отказ называет число и НИЧЕГО не меняет: `assertRunFits` за спиной
-   * бросает исключение, а человек всего лишь потянул ширину.
+   * Возвращает `true`, если ряд изменился: вызывающему остаётся только
+   * `break`. Отказ НИЧЕГО не меняет — ряд остаётся прежним до модуля.
    */
-  const mezzFits = (list: Module[]): number =>
-    mezzOriginMm + list.reduce((sum, unit) => sum + unit.widthMm, 0);
-
-  /**
-   * ЛЕВЫЙ КРАЙ ВЕРХНЕГО РЯДА — ОДНО ЧИСЛО НА ВСЮ ПРАВКУ.
-   *
-   * Тот же разбор, что у антресоли: брать край у первого оставшегося
-   * модуля нельзя — удалили первый, и весь ряд уехал вправо, а
-   * освободившееся место оказалось слева, где его не занять.
-   */
-  const upperOriginMm = upperModules.length > 0
-    ? Math.min(...upperModules.map((unit) => unit.offsetMm))
-    : 0;
-
-  /** Идентификатор модуля верхнего ряда: та же функция, что у остальных. */
-  const reindexUpper = (list: Module[]): Module[] => {
-    const sorted = [...list].sort((a, b) => a.offsetMm - b.offsetMm);
-    let offset = upperOriginMm;
-
-    return sorted.map((unit) => {
-      const next: Module = {
-        ...unit,
-        offsetMm: offset,
-        id: moduleId(unit.kind, offset, unit.appliance, run.wallId),
-      };
-      offset += unit.widthMm;
-      return next;
-    });
+  const placeUpper = (list: Module[], what: string): boolean => {
+    const placed = placeInSpans(list);
+    if ('ok' in placed) {
+      upperModules = placed.ok;
+      return true;
+    }
+    warnings.push(
+      `${what} не встаёт: «${placed.unit.label}» выходит за участок на ` +
+        `${placed.overflowMm} мм — справа ${placed.reason}.`,
+    );
+    return false;
   };
 
-  /** Правый край верхнего ряда после правки: по нему считается отказ. */
-  const upperFits = (list: Module[]): number =>
-    upperOriginMm + list.reduce((sum, unit) => sum + unit.widthMm, 0);
+  const placeMezz = (list: Module[], what: string): boolean => {
+    const placed = placeInSpans(list);
+    if ('ok' in placed) {
+      mezzModules = placed.ok;
+      return true;
+    }
+    warnings.push(
+      `${what} не встаёт: «${placed.unit.label}» выходит за участок на ` +
+        `${placed.overflowMm} мм — справа ${placed.reason}.`,
+    );
+    return false;
+  };
+
+  /**
+   * СКОЛЬКО МОДУЛЬ МОЖЕТ ВЗЯТЬ В ШИРИНУ, НЕ ВЫТОЛКНУВ СОСЕДЕЙ.
+   *
+   * Отказ обязан называть число, на которое человек может согласиться:
+   * «шире 390 мм не встанет» он перескажет клиенту, «не помещается» —
+   * нет. Считается тем же перебором, что и укладка: сначала съедается
+   * пустота справа, потом двигаются соседи.
+   */
+  const widthRoomMm = (list: Module[], unit: Module): number => {
+    const { free } = spansNow();
+    const span = spanAt(unit.offsetMm, free);
+    if (!span) return unit.widthMm;
+
+    const right = list
+      .filter((m) => m.id !== unit.id && m.offsetMm >= unit.offsetMm)
+      .filter((m) => spanAt(m.offsetMm, free)?.from === span.from)
+      .reduce((sum, m) => sum + m.widthMm, 0);
+
+    return Math.max(0, span.to - unit.offsetMm - right);
+  };
+
+  /**
+   * ВЛЕЗАЕТ ЛИ НОВЫЙ МОДУЛЬ ТУДА, КУДА ЕГО СТАВЯТ.
+   *
+   * Добавление — единственный случай, когда модуль появляется В ТОЧКЕ,
+   * а не двигается: ставится он вплотную к соседу, и участок соседа
+   * может там уже кончиться. Проверять это внутри укладки нельзя —
+   * модуль без участка там законен: его участок мог отнять НИЖНИЙ ряд
+   * этой же правкой, и такой модуль снимается отдельно, со своими
+   * словами.
+   *
+   * Возвращает текст отказа или `null`.
+   */
+  const noRoomAfter = (neighbour: Module, widthMm: number): string | null => {
+    const { free, blockers } = spansNow();
+    const span = spanAt(neighbour.offsetMm, free);
+    if (!span) return null;
+
+    const at = neighbour.offsetMm + neighbour.widthMm;
+    if (at + widthMm <= span.to) return null;
+
+    return (
+      `Модуль ${widthMm} мм сюда не встаёт: до края участка ` +
+      `${Math.max(0, span.to - at)} мм — справа ${blockerAfter(span.to, blockers)}.`
+    );
+  };
 
   /** Правка ложится на модуль верхнего ряда — как у нижнего и у антресоли. */
   const editUpper = (id: string, change: (unit: Module) => Module): boolean => {
@@ -430,22 +609,20 @@ export function applyOps({
             fill: undefined,
           };
 
-          const next = [
-            ...mezzModules.slice(0, afterMezz + 1),
-            fresh,
-            ...mezzModules.slice(afterMezz + 1),
-          ];
-          const sum = mezzFits(next);
-
-          if (sum > run.lengthMm) {
-            warnings.push(
-              `Модуль ${widthMm} мм в антресоль не встаёт: она займёт ${sum} мм ` +
-                `при стене ${run.lengthMm} мм — не хватает ${sum - run.lengthMm} мм.`,
-            );
+          const noRoom = noRoomAfter(neighbour, widthMm);
+          if (noRoom) {
+            warnings.push(noRoom);
             break;
           }
 
-          mezzModules = reindexMezz(next);
+          placeMezz(
+            [
+              ...mezzModules.slice(0, afterMezz + 1),
+              fresh,
+              ...mezzModules.slice(afterMezz + 1),
+            ],
+            `Модуль ${widthMm} мм`,
+          );
           break;
         }
 
@@ -470,22 +647,25 @@ export function applyOps({
             label: 'Верхний шкаф',
           };
 
-          const next = [
-            ...upperModules.slice(0, afterUpper + 1),
-            fresh,
-            ...upperModules.slice(afterUpper + 1),
-          ];
-          const edge = upperFits(next);
-
-          if (edge > run.lengthMm) {
-            warnings.push(
-              `Модуль ${widthMm} мм в верхний ряд не встаёт: он займёт ${edge} мм ` +
-                `при стене ${run.lengthMm} мм — не хватает ${edge - run.lengthMm} мм.`,
-            );
+          /*
+           * Новый модуль встаёт вплотную к соседу и толкает тех, кто
+           * правее, ВНУТРИ ЕГО УЧАСТКА. Не влезло — отказ с числом, а не
+           * выброшенный сосед.
+           */
+          const noRoomUp = noRoomAfter(neighbour, widthMm);
+          if (noRoomUp) {
+            warnings.push(noRoomUp);
             break;
           }
 
-          upperModules = reindexUpper(next);
+          placeUpper(
+            [
+              ...upperModules.slice(0, afterUpper + 1),
+              fresh,
+              ...upperModules.slice(afterUpper + 1),
+            ],
+            `Модуль ${widthMm} мм`,
+          );
           break;
         }
 
@@ -571,13 +751,18 @@ export function applyOps({
       case 'remove_module': {
         const mezzAt = mezzModules.findIndex((m) => m.id === op.moduleId);
         if (mezzAt >= 0) {
-          mezzModules = reindexMezz(mezzModules.filter((_, i) => i !== mezzAt));
+          mezzModules = mezzModules.filter((_, i) => i !== mezzAt);
           break;
         }
 
         const upperGone = upperModules.findIndex((m) => m.id === op.moduleId);
         if (upperGone >= 0) {
-          upperModules = reindexUpper(upperModules.filter((_, i) => i !== upperGone));
+          /*
+           * Соседи остаются НА МЕСТЕ: пустота в разорванном ряду законна,
+           * и подтягивать их влево значило бы двигать мебель, которую
+           * никто не трогал.
+           */
+          upperModules = upperModules.filter((_, i) => i !== upperGone);
           break;
         }
 
@@ -596,23 +781,58 @@ export function applyOps({
          * замене остаются — меняется то, ЧТО там стоит; поэтому новый
          * модуль садится на прежнее место тем же `reindex`.
          */
+        /**
+         * ЧТО ПЕРЕЕЗЖАЕТ НА НОВЫЙ МОДУЛЬ.
+         *
+         * Материал фасада, декор корпуса и ручка выбраны ДЛЯ ЭТОГО
+         * МЕСТА, а не для того, что на нём стояло: дизайнер перебирает
+         * варианты подряд, и терять цвет на каждом нажатии значит
+         * заставлять выбирать его заново по десять раз.
+         *
+         * Наполнение НЕ переезжает: полки и ящики принадлежат варианту,
+         * и старые у нового модуля означали бы мебель, которой цех не
+         * сделает. Его пересчитает `fill`.
+         */
         const swap = (unit: Module): Module => {
           const width = op.appliance
             ? applianceWidthMm(op.appliance, requirements.applianceSizes)
-            : unit.widthMm;
-          return {
+            : Math.round(op.widthMm ?? unit.widthMm);
+
+          const made: Module = {
             ...makePlainModule(op.kind, width, run.wallId, op.appliance),
             offsetMm: unit.offsetMm,
             section: unit.section,
+            front: unit.front,
+            carcassItemId: unit.carcassItemId,
           };
+
+          const dressed = op.variant ? applyVariant(made, op.variant) : made;
+
+          /*
+           * Ручка живёт в `fill` рядом с направлением открывания (слой
+           * 41). Наполнение у нового модуля своё, поэтому переносим
+           * ровно выбор человека — высоту и поворот планки.
+           */
+          const handle = unit.fill;
+          return handle && dressed.fill
+            ? {
+                ...dressed,
+                fill: {
+                  ...dressed.fill,
+                  handleLevel: handle.handleLevel,
+                  handleTurn: handle.handleTurn,
+                  handlePlace: handle.handlePlace,
+                },
+              }
+            : dressed;
         };
 
         if (editMezz(op.moduleId, swap)) {
-          mezzModules = reindexMezz(mezzModules);
+          placeMezz(mezzModules, 'Замена');
           break;
         }
         if (editUpper(op.moduleId, swap)) {
-          upperModules = reindexUpper(upperModules);
+          placeUpper(upperModules, 'Замена');
           break;
         }
 
@@ -621,10 +841,7 @@ export function applyOps({
           warnings.push(`Модуль ${op.moduleId} не найден.`);
           break;
         }
-        const width = op.appliance
-          ? applianceWidthMm(op.appliance, requirements.applianceSizes)
-          : modules[at].widthMm;
-        modules[at] = makePlainModule(op.kind, width, run.wallId, op.appliance);
+        modules[at] = swap(modules[at]);
         break;
       }
 
@@ -644,21 +861,23 @@ export function applyOps({
             break;
           }
 
-          const next = mezzModules.map((unit, i) =>
-            i === mezzAt ? { ...unit, widthMm: wanted } : unit,
-          );
-          const sum = mezzFits(next);
+          const mezzUnit = mezzModules[mezzAt];
+          const mezzRoom = widthRoomMm(mezzModules, mezzUnit);
 
-          if (sum > run.lengthMm) {
+          if (wanted > mezzRoom) {
+            const { free, blockers } = spansNow();
+            const span = spanAt(mezzUnit.offsetMm, free);
             warnings.push(
-              `«${mezzModules[mezzAt].label}» шириной ${wanted} мм не встаёт: ` +
-                `антресоль займёт ${sum} мм при стене ${run.lengthMm} мм — ` +
-                `не хватает ${sum - run.lengthMm} мм.`,
+              `Шире ${mezzRoom} мм не встанет: справа ` +
+                `${span ? blockerAfter(span.to, blockers) : 'край стены'}.`,
             );
             break;
           }
 
-          mezzModules = reindexMezz(next);
+          placeMezz(
+            mezzModules.map((unit, i) => (i === mezzAt ? { ...unit, widthMm: wanted } : unit)),
+            `«${mezzUnit.label}» шириной ${wanted} мм`,
+          );
           break;
         }
 
@@ -686,18 +905,34 @@ export function applyOps({
             break;
           }
 
-          const next = upperModules.map((m, i) => (i === upperAt ? { ...m, widthMm: wanted } : m));
-          const edge = upperFits(next);
-
-          if (edge > run.lengthMm) {
+          /*
+           * ЛЕВЫЙ КРАЙ НА МЕСТЕ, РАСТЁТ ВПРАВО.
+           *
+           * Сначала съедается пустота справа в том же участке, потом
+           * двигаются правые соседи. Упёрлись в край участка — отказ с
+           * числом, на которое человек может согласиться: «шире 390 мм
+           * не встанет: справа окно».
+           *
+           * Здесь считался ПРАВЫЙ КРАЙ ВСЕГО РЯДА от одного левого края
+           * (`upperFits`), то есть по укладке, которой в разорванном
+           * ряду нет: проверка пропускала правку, а укладка следом
+           * выбрасывала соседей.
+           */
+          const room = widthRoomMm(upperModules, unit);
+          if (wanted > room) {
+            const { free, blockers } = spansNow();
+            const span = spanAt(unit.offsetMm, free);
             warnings.push(
-              `«${unit.label}» шириной ${wanted} мм не встаёт: верхний ряд займёт ` +
-                `${edge} мм при стене ${run.lengthMm} мм — не хватает ${edge - run.lengthMm} мм.`,
+              `Шире ${room} мм не встанет: справа ` +
+                `${span ? blockerAfter(span.to, blockers) : 'край стены'}.`,
             );
             break;
           }
 
-          upperModules = reindexUpper(next);
+          placeUpper(
+            upperModules.map((m, i) => (i === upperAt ? { ...m, widthMm: wanted } : m)),
+            `«${unit.label}» шириной ${wanted} мм`,
+          );
           break;
         }
 
@@ -1016,10 +1251,19 @@ export function applyOps({
             break;
           }
 
-          const moved = [...mezzModules];
-          const [taken] = moved.splice(moveMezz, 1);
-          moved.splice(toMezz, 0, taken);
-          mezzModules = reindexMezz(moved);
+          const movedMezz = [...mezzModules];
+          const [takenMezz] = movedMezz.splice(moveMezz, 1);
+          const homeMezz = spanAt(takenMezz.offsetMm, spansNow().free);
+          const hostMezz = spanAt(mezzModules[toMezz].offsetMm, spansNow().free);
+
+          movedMezz.splice(
+            toMezz,
+            0,
+            homeMezz?.from === hostMezz?.from
+              ? takenMezz
+              : { ...takenMezz, offsetMm: mezzModules[toMezz].offsetMm },
+          );
+          placeMezz(reflow(movedMezz), 'Перестановка');
           break;
         }
 
@@ -1037,10 +1281,39 @@ export function applyOps({
             break;
           }
 
-          const moved = [...upperModules];
-          const [taken] = moved.splice(moveUpper, 1);
-          moved.splice(toUpper, 0, taken);
-          upperModules = reindexUpper(moved);
+          /*
+           * МОДУЛЬ ВСТАЁТ В УЧАСТОК, КУДА ЕГО ПРИНЕСЛИ.
+           *
+           * Ряд разорван, и сосед, на чьё место его несут, может стоять
+           * ЗА ОКНОМ. Ставим переносимый на отметку соседа: дальше
+           * укладка сама разложит участок и откажет, если там не
+           * хватает места. Без этого модуль оставался в своём участке, и
+           * жест молча не делал ничего.
+           */
+          /*
+           * МОДУЛЬ ВСТАЁТ В УЧАСТОК, КУДА ЕГО ПРИНЕСЛИ.
+           *
+           * В СВОЁМ участке это перестановка: модули меняются местами, а
+           * промежутки между ними остаются — их и раскладывает `reflow`.
+           *
+           * Через РАЗРЫВ (окно, колонна, выступ) это переезд: модуль
+           * садится на отметку соседа, и дальше укладка решает, хватает
+           * ли там места. Без этого он оставался в своём участке, и жест
+           * молча не делал ничего.
+           */
+          const movedUpper = [...upperModules];
+          const [takenUpper] = movedUpper.splice(moveUpper, 1);
+          const homeUpper = spanAt(takenUpper.offsetMm, spansNow().free);
+          const hostUpper = spanAt(upperModules[toUpper].offsetMm, spansNow().free);
+
+          movedUpper.splice(
+            toUpper,
+            0,
+            homeUpper?.from === hostUpper?.from
+              ? takenUpper
+              : { ...takenUpper, offsetMm: upperModules[toUpper].offsetMm },
+          );
+          placeUpper(reflow(movedUpper), 'Перестановка');
           break;
         }
 
@@ -1918,8 +2191,14 @@ export function applyOps({
   }
 
   /*
-   * Ряд раскладывается по тем же участкам, что и свежая сборка: модули
-   * одного участка идут подряд от его левого края.
+   * МОДУЛИ ОСТАЮТСЯ ТАМ, ГДЕ СТОЯТ.
+   *
+   * Здесь ряд перекладывался вплотную от левого края участка — вторая
+   * укладка вдобавок к той, что делала правка. Пустота между модулями
+   * в разорванном ряду ЗАКОННА: она появляется, когда сосед снят или
+   * сужен, и схлопывать её значит двигать мебель, которую никто не
+   * трогал. Место внутри участка уже разложила `placeInSpans`, и
+   * второго расчёта здесь не остаётся — только разбивка по сегментам.
    */
   const bySpan = new Map<number, Module[]>();
   for (const unit of standingUpper) {
@@ -1928,24 +2207,11 @@ export function applyOps({
   }
 
   const keptSegments = allowed
-    .map((span) => {
-      const list = (bySpan.get(span.fromMm) ?? []).sort((a, b) => a.offsetMm - b.offsetMm);
-      let offset = span.fromMm;
-
-      return {
-        fromMm: span.fromMm,
-        toMm: span.toMm,
-        modules: list.map((unit) => {
-          const next: Module = {
-            ...unit,
-            offsetMm: offset,
-            id: moduleId(unit.kind, offset, unit.appliance, run.wallId),
-          };
-          offset += unit.widthMm;
-          return next;
-        }),
-      };
-    })
+    .map((span) => ({
+      fromMm: span.fromMm,
+      toMm: span.toMm,
+      modules: (bySpan.get(span.fromMm) ?? []).sort((a, b) => a.offsetMm - b.offsetMm),
+    }))
     .filter((segment) => segment.modules.length > 0);
 
   nextRun.upperSegments = [...keptSegments, ...freshStorage];

@@ -124,6 +124,7 @@ import {
 import { frontKey, frontOf } from '../lib/millwork/frontMaterial';
 import { reorderTarget } from '../lib/millwork/selection';
 import { cornerBandMm, cornerFillerMm } from '../lib/millwork/composition';
+import { upperSpans } from '../lib/millwork/layout';
 import { CORNER_FILLER_PANEL_NAME } from '../lib/millwork/panels';
 import { counterSlabDepthMm, rowStandardDepthMm } from '../lib/millwork/fill';
 import { carcassHeightMm } from '../lib/millwork/shop';
@@ -13490,6 +13491,11 @@ console.log('\nАнтресоль — самостоятельный ряд');
 
   if (start.length > 1) {
     const target = start[1];
+    /*
+     * ПРОЁМОВ ЗДЕСЬ НЕТ НАМЕРЕННО: ряд собран `mezzInput` со стеной без
+     * окна, и правка обязана идти по той же стене. Передай их только в
+     * правку — и участки станут другими, чем у собранного ряда.
+     */
     const edit = (run: Run, ops: MillworkOp[]) =>
       applyOps({ run, requirements: DEMO_REQUIREMENTS, ops });
     const find = (r: Run, id: string) => mezzOf(r).find((u) => u.id === id);
@@ -13628,15 +13634,23 @@ console.log('\nАнтресоль — самостоятельный ряд');
       { op: 'add_module', kind: 'upper', widthMm: 300, afterModuleId: anchor.id },
     ]);
     /*
-     * Добавление проверяется ДВУМЯ числами: модулей антресоли стало
-     * больше И нижний ряд не тронут. Одно первое число зелёное и тогда,
-     * когда модуль уехал вниз, а антресоль просто пересобралась.
+     * ЗА ПОСЛЕДНИМ МОДУЛЕМ УЧАСТОК КОНЧАЕТСЯ — ТАМ СТЕНА.
+     *
+     * Проверка требовала, чтобы модуль «добавился» и за краем участка:
+     * раньше он действительно появлялся, а следом выбрасывался вместе с
+     * соседом при укладке вплотную. Теперь это отказ с числом, и ряд не
+     * меняется: удалять чужую мебель ради нового модуля нельзя.
+     *
+     * Что добавление РАБОТАЕТ, меряет случай ниже: слева место есть, и
+     * модуль встаёт между соседями.
      */
     check(
-      'модуль добавляется справа от выбранного, а нижний ряд не трогается',
-      ownMezz(right).length === freedStart.length + 1 &&
+      'за краем участка — отказ с числом, ряд и низ прежние',
+      ownMezz(right).length === freedStart.length &&
+        (right.warnings ?? []).some((text) => /не встаёт/.test(text)) &&
         right.modules.map((u) => u.id).join() === base.modules.map((u) => u.id).join(),
-      `антресоль ${freedStart.length} → ${ownMezz(right).length} · низ ${base.modules.length} → ${right.modules.length}` +
+      `антресоль ${freedStart.length} → ${ownMezz(right).length} · ` +
+        `${(right.warnings ?? [])[0] ?? 'МОЛЧА'}` +
         (right.modules.map((u) => u.id).join() === base.modules.map((u) => u.id).join()
           ? ''
           : ' · НИЗ ИЗМЕНИЛСЯ'),
@@ -13769,6 +13783,7 @@ console.log('\nАнтресоль — самостоятельный ряд');
     const beamed = applyOps({
       run: buildRun(baseInput),
       requirements: DEMO_REQUIREMENTS,
+      openings: OPENINGS,
       ops: [{ op: 'set_mezzanine', heightMm: 400 }],
     });
     const beamedCount = mezzOf(beamed).length;
@@ -13776,6 +13791,7 @@ console.log('\nАнтресоль — самостоятельный ряд');
     const pushed = applyOps({
       run: beamed,
       requirements: DEMO_REQUIREMENTS,
+      openings: OPENINGS,
       ops: [
         {
           op: 'add_module',
@@ -13785,7 +13801,7 @@ console.log('\nАнтресоль — самостоятельный ряд');
         },
       ],
     });
-    const beamWarning = (pushed.warnings ?? []).find((text) => /выступ/.test(text));
+    const beamRefusal = (pushed.warnings ?? []).find((text) => /не встаёт/.test(text));
 
     check(
       'в ряду с ригелем антресоль есть — правило балки проверять есть на чём',
@@ -13793,10 +13809,27 @@ console.log('\nАнтресоль — самостоятельный ряд');
       beamedCount === 0 ? 'НОЛЬ АНТРЕСОЛЕЙ ПОД РИГЕЛЕМ — проверять нечего' : `${beamedCount} модулей`,
     );
 
+    /*
+     * ЭТА ПРОВЕРКА КОДИРОВАЛА ДЕФЕКТ И ПЕРЕПИСАНА.
+     *
+     * Она требовала, чтобы добавленный модуль ВЫТОЛКНУЛ соседа под
+     * выступ и тот был УБРАН — лишь бы об этом сказали словами. То есть
+     * правка удаляла чужую мебель: замерено 4 модуля → 2 при переносе и
+     * 4 → 1 при правке ширины.
+     *
+     * Правка не удаляет модулей вовсе. Не влезло — отказ с числом, ряд
+     * остаётся прежним; удаляет только кнопка «Удалить».
+     */
     check(
-      'модуль, уехавший под выступ, убран и об этом сказано словами',
-      Boolean(beamWarning),
-      beamWarning ?? 'МОЛЧА: под ригель уехало, а слов нет',
+      'модулю, которому не хватает участка, отказывают числом',
+      Boolean(beamRefusal),
+      beamRefusal ?? 'МОЛЧА: не встало, а слов нет',
+    );
+
+    check(
+      'и антресоль при этом цела: ни одного модуля не потеряно',
+      mezzOf(pushed).length === beamedCount,
+      `${beamedCount} → ${mezzOf(pushed).length}`,
     );
 
     check(
@@ -13963,14 +13996,25 @@ console.log('\nВерхний ряд — самостоятельный');
       { op: 'add_module', kind: 'upper', widthMm: 300, afterModuleId: freed[freed.length - 1].id },
     ]);
 
+    /*
+     * И ЭТА ПЕРЕПИСАНА ПО ТОЙ ЖЕ ПРИЧИНЕ.
+     *
+     * Справа от последнего модуля участок КОНЧИЛСЯ — там стена. Старая
+     * проверка считала правый край ряда от одного левого края
+     * (`upperFits`), то есть по укладке вплотную, которой в разорванном
+     * ряду нет: модуль «добавлялся», а следом выбрасывался вместе с
+     * соседом. Теперь это отказ с числом, и ряд не меняется.
+     *
+     * Что добавление РАБОТАЕТ, проверяет следующий случай: слева место
+     * есть, и модуль встаёт между соседями.
+     */
     check(
-      'модуль добавляется справа, а нижний ряд не трогается',
-      upperOf(right).length === freed.length + 1 &&
+      'справа от участка места нет — отказ с числом, ряд прежний',
+      upperOf(right).length === freed.length &&
+        (right.warnings ?? []).some((text) => /не встаёт/.test(text)) &&
         right.modules.map((u) => u.id).join() === base.modules.map((u) => u.id).join(),
-      `верх ${freed.length} → ${upperOf(right).length} · низ ${base.modules.length} → ${right.modules.length}` +
-        (right.modules.map((u) => u.id).join() === base.modules.map((u) => u.id).join()
-          ? ''
-          : ' · НИЗ ИЗМЕНИЛСЯ'),
+      `верх ${freed.length} → ${upperOf(right).length} · ` +
+        `${(right.warnings ?? [])[0] ?? 'МОЛЧА'}`,
     );
 
     const left = edit(removed, [
@@ -17320,6 +17364,302 @@ console.log('\n' + 'Угол: фальш-панель, столешница, ц�
       `${solution}: угол одинаков на обеих парах длин`,
       fillers.every((width) => width > 0 && width === fillers[0]),
       `2734+1678 → ${fillers[0]} мм · 3800+1140 → ${fillers[1]} мм`,
+    );
+  }
+}
+
+/* ═══  Правка висящего ряда не удаляет модулей  ═══ */
+
+/**
+ * ПРАВКА НИКОГДА НЕ УДАЛЯЕТ МОДУЛИ.
+ *
+ * Верхний ряд разорван окном, колонной и выступом: на демо-ряду модули
+ * стоят на 1200, 2400, 2700 и 3300, а между первым и вторым 900 мм
+ * пустой стены. Укладка вплотную от одного левого края съезжала влево,
+ * попадала в запрещённые участки и ОБРЕЗАЛАСЬ: замерено в браузере
+ * 4 модуля → 2 при переносе и 4 → 1 при правке ширины, оба раза молча.
+ *
+ * Здесь меряется то, что нельзя доказать типами: после КАЖДОЙ правки
+ * модулей столько же, ширины те же (кроме правленой), никто ни на кого
+ * не налез и никто не стоит в окне.
+ */
+console.log('\n' + 'Висящий ряд: правка не теряет модулей');
+{
+  const rowsOf = (r: Run) => {
+    const above = r.upperSegments.flatMap((sg) => sg.modules);
+    return {
+      upper: above.filter((u) => u.section !== 'mezzanine'),
+      mezz: above.filter((u) => u.section === 'mezzanine' && mezzanineBaseOf(u, r) === null),
+    };
+  };
+
+  const shape = (list: Module[]) => list.map((u) => `${u.offsetMm}(${u.widthMm})`).join(' ');
+
+  const edit = (r: Run, ops: MillworkOp[]) =>
+    applyOps({ run: r, requirements: REQ, openings: OPENINGS, ops });
+
+  /** Участки ряда — та же функция, по которой он собран. */
+  const spansOf = (r: Run) =>
+    upperSpans(
+      r.modules,
+      r.lengthMm,
+      [...OPENINGS.filter((o) => o.kind !== 'beam'), ...(r.beams ?? [])],
+      REQ,
+      r.ceilingHeightMm,
+      r.production,
+    ).free;
+
+  /** Ни один модуль не стоит в окне, в колонне и под выступом. */
+  const outside = (r: Run, list: Module[]) => {
+    const free = spansOf(r);
+    return list.filter(
+      (u) => !free.some((sp) => u.offsetMm >= sp.from && u.offsetMm + u.widthMm <= sp.to),
+    );
+  };
+
+  /** Два модуля в одном объёме. */
+  const overlaps = (list: Module[]) => {
+    const sorted = [...list].sort((a, b) => a.offsetMm - b.offsetMm);
+    let count = 0;
+    for (let i = 1; i < sorted.length; i += 1) {
+      if (sorted[i].offsetMm < sorted[i - 1].offsetMm + sorted[i - 1].widthMm) count += 1;
+    }
+    return count;
+  };
+
+  /*
+   * СТЕНА ПОДЛИННЕЕ ДЕМО — ЧТОБЫ В УЧАСТКЕ БЫЛО ЧТО ДВИГАТЬ.
+   *
+   * На демо-стене второй участок держит три модуля; на 5000 мм —
+   * четыре, и среди них два обычных подряд. Разорван ряд так же: окно и
+   * колонны на месте.
+   */
+  const withMezz = edit(buildRun({ ...baseInput, lengthMm: 5000 }), [
+    { op: 'set_mezzanine', heightMm: 400 },
+  ]);
+  const before = rowsOf(withMezz);
+
+  check(
+    'ряд разорван — участки названы числами, и модулей в нём есть',
+    spansOf(withMezz).length > 1 && before.upper.length >= 4,
+    `участки ${spansOf(withMezz)
+      .map((sp) => `${sp.from}…${sp.to}`)
+      .join(' · ')} · верх ${shape(before.upper)}`,
+  );
+
+  if (before.upper.length < 4 || spansOf(withMezz).length < 2) {
+    throw new Error(
+      `НУЛЕВОЙ СЕЛЕКТОР: ряд не разорван либо модулей мало — участков ` +
+        `${spansOf(withMezz).length}, модулей ${before.upper.length}`,
+    );
+  }
+
+  /*
+   * ЗАПАС В УЧАСТКЕ ДЕЛАЕТСЯ ПРАВКОЙ, А НЕ БЕРЁТСЯ ОТКУДА-ТО.
+   *
+   * Раскладка заполняет участок ВПЛОТНУЮ (`fillGap`), и расти там
+   * некуда ни одному модулю: любая прибавка — честный отказ, и «ширина
+   * изменилась» проверить негде. Сужаем последний модуль участка:
+   * справа появляется пустота, и в неё можно двигать соседей — ровно
+   * тот случай, который правило и описывает.
+   */
+  const tail = before.upper[before.upper.length - 1];
+  const roomy = edit(withMezz, [
+    { op: 'set_width', moduleId: tail.id, widthMm: tail.widthMm - 300 },
+  ]);
+  const start = rowsOf(roomy);
+
+  check(
+    'запас в участке сделан: последний модуль сужен, соседи на местах',
+    start.upper.length === before.upper.length &&
+      start.upper[start.upper.length - 1].widthMm === tail.widthMm - 300,
+    `${shape(before.upper)} → ${shape(start.upper)}`,
+  );
+
+  if (start.upper.length !== before.upper.length) {
+    throw new Error(
+      'ПРАВКА ШИРИНЫ ПОТЕРЯЛА МОДУЛИ: ' +
+        `${before.upper.length} → ${start.upper.length} · ` +
+        `было ${shape(before.upper)} · стало ${shape(start.upper)}`,
+    );
+  }
+
+  /* ── 8. Любая правка: модулей столько же, ширины те же ── */
+
+  const plain = start.upper.find(
+    (u, i) => !u.appliance && i > 0 && i < start.upper.length - 1,
+  );
+  if (!plain) {
+    throw new Error(
+      `НУЛЕВОЙ СЕЛЕКТОР: в верхнем ряду нет обычного модуля с соседом справа — ${shape(
+        start.upper,
+      )}`,
+    );
+  }
+
+  const cases: { name: string; ops: MillworkOp[]; changed: string[] }[] = [
+    {
+      name: 'ширина +200 мм',
+      ops: [{ op: 'set_width', moduleId: plain.id, widthMm: plain.widthMm + 200 }],
+      changed: [plain.id],
+    },
+    {
+      name: 'ширина −50 мм',
+      ops: [{ op: 'set_width', moduleId: plain.id, widthMm: plain.widthMm - 50 }],
+      changed: [plain.id],
+    },
+    {
+      /*
+       * Переставляем В ОДНОМ участке: между участками перестановки не
+       * бывает — там стена, а не соседство.
+       */
+      name: 'перестановка на место соседа',
+      ops: [
+        {
+          op: 'move_module',
+          moduleId: start.upper[3].id,
+          afterModuleId: start.upper[1].id,
+        },
+      ],
+      changed: [],
+    },
+  ];
+
+  for (const one of cases) {
+    const next = edit(roomy, one.ops);
+    const now = rowsOf(next);
+
+    check(
+      `${one.name}: модулей верхнего ряда столько же`,
+      now.upper.length === start.upper.length,
+      `${start.upper.length} → ${now.upper.length} · ${shape(now.upper)}`,
+    );
+    check(
+      `${one.name}: антресоль на месте`,
+      now.mezz.length === start.mezz.length,
+      `${start.mezz.length} → ${now.mezz.length}`,
+    );
+    check(
+      `${one.name}: ни один модуль не попал в окно, колонну или под выступ`,
+      outside(next, now.upper).length === 0,
+      outside(next, now.upper)
+        .map((u) => `${u.id}@${u.offsetMm}(${u.widthMm})`)
+        .join(' ') || 'все в своих участках',
+    );
+    check(
+      `${one.name}: модули не налезли друг на друга`,
+      overlaps(now.upper) === 0,
+      `пересечений ${overlaps(now.upper)}`,
+    );
+
+    const kept = (list: Module[]) =>
+      list
+        .filter((u) => !one.changed.includes(u.id))
+        .map((u) => u.widthMm)
+        .sort((a, b) => a - b)
+        .join(' ');
+    check(
+      `${one.name}: ширины остальных не тронуты`,
+      kept(now.upper) === kept(start.upper),
+      `было ${kept(start.upper)} · стало ${kept(now.upper)}`,
+    );
+  }
+
+  /* ── 9, 10. У края участка правка отклоняется словами ── */
+
+  const spans = spansOf(withMezz);
+  const lastSpan = spans[spans.length - 1];
+  const atEdge = before.upper.find(
+    (u) => u.offsetMm + u.widthMm === lastSpan.to && !u.appliance,
+  );
+
+  check(
+    'у края участка есть модуль — отказ проверять есть на чём',
+    Boolean(atEdge),
+    atEdge ? `${atEdge.id}@${atEdge.offsetMm}(${atEdge.widthMm})` : 'МОДУЛЯ У КРАЯ НЕТ',
+  );
+
+  if (atEdge) {
+    const refused = edit(withMezz, [
+      { op: 'set_width', moduleId: atEdge.id, widthMm: atEdge.widthMm + 400 },
+    ]);
+    const now = rowsOf(refused);
+
+    check(
+      'правка, которая не влезает, отклоняется словами и числом',
+      (refused.warnings ?? []).some((text) => /Шире \d+ мм не встанет/.test(text)),
+      (refused.warnings ?? [])[0] ?? 'МОЛЧА ПРИНЯЛ ШИРИНУ ЗА КРАЙ УЧАСТКА',
+    );
+    check(
+      'и отказ называет, ЧТО справа',
+      (refused.warnings ?? []).some((text) =>
+        /справа (окно|дверь|арка|колонна|выступ|край стены)/.test(text),
+      ),
+      (refused.warnings ?? [])[0] ?? 'ПРИЧИНА НЕ НАЗВАНА',
+    );
+    check(
+      'ряд после отказа глубоко равен исходному',
+      shape(now.upper) === shape(before.upper) && shape(now.mezz) === shape(before.mezz),
+      `было ${shape(before.upper)} · стало ${shape(now.upper)}`,
+    );
+  }
+
+  /* ── 11. Сдвинутый сосед сохраняет материал и ручку ── */
+
+  /*
+   * Красим и настраиваем ПОСЛЕДНИЙ модуль участка, а двигаем его левого
+   * соседа: идентификатор выводится из смещения, значит при сдвиге
+   * модуль становится другим id. Всё, что на нём лежит — материал,
+   * ручка, наполнение, — обязано переехать вместе с ним.
+   */
+  const far = start.upper[start.upper.length - 1];
+  const dressed = edit(roomy, [
+    {
+      op: 'set_front',
+      moduleId: far.id,
+      front: { base: 'veneer_solid', construct: 'solid', finish: 'textured' },
+    },
+    { op: 'set_handle_spot', moduleId: far.id, level: 'bottom', turn: 'horizontal' },
+  ]);
+
+  const dressedFar = rowsOf(dressed).upper.find((u) => u.id === far.id);
+  check(
+    'модуль покрашен и ручка ему задана — переезд проверять есть на чём',
+    Boolean(dressedFar?.front && dressedFar?.fill?.handleLevel === 'bottom'),
+    dressedFar
+      ? `${dressedFar.front?.base ?? 'без материала'}/${dressedFar.fill?.handleLevel ?? '—'}`
+      : 'МОДУЛЬ ПОТЕРЯН',
+  );
+
+  const pusher = rowsOf(dressed).upper.find(
+    (u, i) => !u.appliance && i > 0 && i < rowsOf(dressed).upper.length - 1,
+  );
+  check(
+    'слева от него есть кого двигать',
+    Boolean(pusher),
+    pusher ? `${pusher.id}@${pusher.offsetMm}(${pusher.widthMm})` : 'ДВИГАТЬ НЕКОГО',
+  );
+
+  if (dressedFar && pusher) {
+    const pushed = edit(dressed, [
+      { op: 'set_width', moduleId: pusher.id, widthMm: pusher.widthMm + 200 },
+    ]);
+    const after = rowsOf(pushed).upper;
+    const moved = after.find(
+      (u) => u.front?.base === 'veneer_solid' && u.fill?.handleLevel === 'bottom',
+    );
+
+    check(
+      'сдвинутый сосед переехал и сохранил материал с ручкой',
+      Boolean(moved) && moved!.offsetMm !== dressedFar.offsetMm,
+      moved
+        ? `${dressedFar.id}@${dressedFar.offsetMm} → ${moved.id}@${moved.offsetMm}`
+        : 'МАТЕРИАЛ ИЛИ РУЧКА ПОТЕРЯНЫ ПРИ СДВИГЕ',
+    );
+    check(
+      'и при этом ряд не потерял модулей',
+      after.length === start.upper.length,
+      `${start.upper.length} → ${after.length}`,
     );
   }
 }

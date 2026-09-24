@@ -29,6 +29,7 @@ import {
 import { SECTION_SPECS, sectionSpec } from './sections';
 import { isSectionZone, zoneHeightMm, zoneProfile } from './zones';
 import { beamBottomMm, beamsOnRun, ceilingOverSpanMm } from './ceiling';
+import { OPENING_KIND_TITLE } from '@/types/millwork';
 import { plinthMm, upperBottomMm } from './shop';
 import type { ProductionSettings } from '@/types/catalog';
 import { runFingerprint } from './fingerprint';
@@ -1295,6 +1296,74 @@ function blockingOpenings(
   });
 }
 
+/** Что перекрывает верхний ряд и КАК ЭТО НАЗЫВАЕТСЯ человеку. */
+export type UpperBlocker = { from: number; to: number; reason: string };
+
+/**
+ * ГДЕ ВЕРХНИЙ РЯД МОЖЕТ СТОЯТЬ — ОДИН ОТВЕТ НА ПРОДУКТ.
+ *
+ * Раньше эти участки жили внутри `buildUpperRow` и наружу не выходили:
+ * правка ряда о них не знала вовсе и укладывала модули вплотную от
+ * одного левого края. Ряд разорван окном, колонной и выступом — после
+ * правки всё съезжало влево, попадало в запрещённые участки и
+ * ОБРЕЗАЛОСЬ: замерено 4 модуля → 2 при переносе и 4 → 1 при правке
+ * ширины.
+ *
+ * Теперь участки считает одна функция, и правка спрашивает её же.
+ * Второго расчёта «где можно» в продукте нет: `buildUpperRow` зовёт
+ * эту же.
+ *
+ * Возвращаются и ПРЕГРАДЫ — с именем: отказ «шире 390 мм не встанет:
+ * справа окно» человек перескажет клиенту, а «не помещается» нет.
+ */
+export function upperSpans(
+  baseModules: Module[],
+  lengthMm: number,
+  openings: Opening[],
+  req: RunRequirements,
+  ceilingHeightMm: number,
+  production?: ProductionSettings,
+): { free: { from: number; to: number }[]; blockers: UpperBlocker[] } {
+  const beams = beamsOnRun(openings, lengthMm);
+  const shell = {
+    zone: req.zone,
+    ceilingHeightMm,
+    options: req.options,
+    upperSegments: [],
+    beams,
+    production,
+  };
+  const upperBottom = upperBottomMm(production);
+
+  /*
+   * Признак ГЕОМЕТРИЧЕСКИЙ, а не по типу модуля: перекрывает всё, что
+   * поднимается выше отметки навески. Новый вид высокого модуля —
+   * витрина-пенал, гардеробная колонна — попадёт под правило сам.
+   */
+  const tall = baseModules
+    .filter((unit) => plinthMm(production) + moduleCarcassHeightMm(unit, shell) > upperBottom)
+    .map((unit) => ({
+      from: unit.offsetMm,
+      to: unit.offsetMm + unit.widthMm,
+      reason: unit.appliance ? unit.label.toLowerCase() : 'колонна',
+    }));
+
+  const blockers: UpperBlocker[] = [
+    ...blockingOpenings(openings, ceilingHeightMm, req.options, production).map((o) => ({
+      from: o.fromCornerMm,
+      to: o.fromCornerMm + o.widthMm,
+      reason: OPENING_KIND_TITLE[o.kind].toLowerCase(),
+    })),
+    ...beamBlockedSpans(beams, ceilingHeightMm, upperBottom).map((span) => ({
+      ...span,
+      reason: 'выступ на потолке',
+    })),
+    ...tall,
+  ].sort((a, b) => a.from - b.from);
+
+  return { free: freeSpans(lengthMm, blockers), blockers };
+}
+
 /**
  * Верхний ряд идёт по проекции нижнего и РАЗРЫВАЕТСЯ на участке окна.
  * Шкафы поперёк окна — грубая ошибка, которую клиент замечает мгновенно.
@@ -1325,6 +1394,12 @@ export function buildUpperRow(
    * поднимается выше отметки навески. Новый вид высокого модуля —
    * витрина-пенал, гардеробная колонна — попадёт под правило сам.
    */
+  /*
+   * ГДЕ РЯД МОЖЕТ СТОЯТЬ — СПРАШИВАЕМ, А НЕ СЧИТАЕМ ЗДЕСЬ.
+   *
+   * Тот же ответ получает правка ряда (`ops.ts`): пока участки жили
+   * только здесь, она о них не знала и обрезала ряд.
+   */
   const beams = beamsOnRun(openings, lengthMm);
   const shell = {
     zone: req.zone,
@@ -1334,36 +1409,15 @@ export function buildUpperRow(
     beams,
     production,
   };
-  const upperBottom = upperBottomMm(production);
-  const tallSpans = baseModules
-    .filter((unit) => plinthMm(shell.production) + moduleCarcassHeightMm(unit, shell) > upperBottom)
-    .map((unit) => ({ from: unit.offsetMm, to: unit.offsetMm + unit.widthMm }));
 
-  /*
-   * РИГЕЛЬ, ПОД КОТОРЫМ ШКАФА НЕ ПОЛУЧИТСЯ, РАЗРЫВАЕТ РЯД — КАК ОКНО.
-   *
-   * Выступ на потолке не запрещает верхний ряд: под ним шкаф просто ниже,
-   * и высоту урезает `moduleCarcassHeightMm`. Но если свес съел столько,
-   * что осталось меньше полезного шкафа, корпус там ставить нельзя: полка
-   * не встанет, а фасад с петлями будет стоить как у нормального.
-   *
-   * Признак тот же, что у окна, — участок ряда, на котором верхнего ряда
-   * нет. Второго механизма разрыва заводить нельзя: он разошёлся бы с
-   * первым на первой же правке.
-   */
-  const beamBlockers = beamBlockedSpans(beams, ceilingHeightMm, upperBottom);
-
-  const blockers = [
-    ...blockingOpenings(openings, ceilingHeightMm, req.options, production).map((o) => ({
-      from: o.fromCornerMm,
-      to: o.fromCornerMm + o.widthMm,
-    })),
-    ...beamBlockers,
-    ...tallSpans,
-  ].sort((a, b) => a.from - b.from);
-
-  // Свободные интервалы = длина ряда минус занятые участки.
-  const free = freeSpans(lengthMm, blockers);
+  const { free } = upperSpans(
+    baseModules,
+    lengthMm,
+    openings,
+    req,
+    ceilingHeightMm,
+    production,
+  );
 
   // Вытяжка обязана висеть строго над варочной панелью.
   const hob = baseModules.find((m) => m.appliance === 'hob');

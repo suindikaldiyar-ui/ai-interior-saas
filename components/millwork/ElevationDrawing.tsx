@@ -1192,6 +1192,12 @@ export default function ElevationDrawing({
         data-module-id={compact ? undefined : unit.id}
         data-module-offset={compact ? undefined : unit.offsetMm}
         /*
+         * Ширина в МИЛЛИМЕТРАХ, а не в пикселях: приёмка сверяет состав
+         * ряда числами цеха. Пиксель зависит от масштаба листа и от
+         * ширины экрана — по нему «ширины те же» не докажешь.
+         */
+        data-module-width={compact ? undefined : unit.widthMm}
+        /*
          * ОТМЕТКИ, ПО КОТОРЫМ МОДУЛЬ НАРИСОВАН — ПРИБОР, А НЕ УКРАШЕНИЕ.
          *
          * «Антресоли на чертеже не видно» проверить глазами нельзя: она
