@@ -14,6 +14,7 @@ import type {
   CornerJoin,
   Opening,
   Run,
+  RunCorner,
   RunRequirements,
   RunSegment,
   ZoneKind,
@@ -453,6 +454,34 @@ export function buildComposition(input: BuildCompositionInput): Composition {
     };
   });
 
+  /*
+   * ЧТО У КАЖДОГО РЯДА В УГЛУ — ЗАПИСЫВАЕТСЯ НА РЯД.
+   *
+   * Полезную длину угол урезал выше, и на этом всё кончалось: панель в
+   * раскрое не появлялась, в сцене её не было, в смете тоже — 100 мм
+   * просто пропадали. Отсюда и брался вид «два ряда приставлены друг к
+   * другу»: между ними оставалась пустая полоса, а столешница, цоколь и
+   * ниша обрывались у каждого ряда по своей длине.
+   *
+   * Числа те же самые, что урезали длину: `cornerLostMm` и
+   * `cornerFillerMm`. Второго расчёта занятого в углу не появляется.
+   */
+  const cornerDepthMm = rowStandardDepthMm(
+    requirements.zone,
+    'base',
+    input.production,
+  );
+  segments.forEach((segment, i) => {
+    const corner: RunCorner = {};
+    if (i > 0) {
+      corner.backMm = cornerLostMm(solution, cornerDepthMm);
+      const filler = cornerFillerMm(solution, cornerDepthMm);
+      if (filler > 0) corner.fillerMm = filler;
+    }
+    if (i < segments.length - 1) corner.ahead = true;
+    if (Object.keys(corner).length > 0) segment.run.corner = corner;
+  });
+
   const corners: CornerJoin[] = segments.slice(1).map((segment, i) => ({
     fromSegmentId: segments[i].id,
     toSegmentId: segment.id,
@@ -747,6 +776,63 @@ export function cornerLostMm(
   depthMm: number,
 ): number {
   return solution === 'corner_module' ? CORNER_SIZE_MM : depthMm + CORNER.falsePanelMm;
+}
+
+/**
+ * МЁРТВАЯ ПОЛОСА В УГЛУ — ТО, ЧТО ЗАКРЫВАЕТ ФАЛЬШ-ПАНЕЛЬ.
+ *
+ * Из того, что угол занял, глубина соседнего ряда занята его корпусом.
+ * Остаток — полоса между фасадами соседнего ряда и первым модулем
+ * этого: её не видно в числах, но видно глазами, и до этого слоя там
+ * была дыра.
+ *
+ * Число НЕ НОВОЕ ни в одном из двух случаев:
+ *
+ *   фальш-панель   660 − 560 = 100 = `CORNER.falsePanelMm`
+ *   угловой модуль 900 − 560 = 340 = `CORNER_SIZE_MM` минус глубина
+ *
+ * Второй случай — не «панель вместо углового модуля». Угловой модуль
+ * съедает 900 вдоль ОБЕИХ стен, а корпус его рисуется глубиной ряда:
+ * между его фасадом и началом соседнего ряда остаётся полоса, и она
+ * закрывается тем же способом.
+ */
+export function cornerFillerMm(
+  solution: CornerJoin['solution'],
+  depthMm: number,
+): number {
+  return Math.max(0, cornerLostMm(solution, depthMm) - depthMm);
+}
+
+/**
+ * НАСКОЛЬКО СПЛОШНАЯ ПОЛОСА РЯДА ЗАХОДИТ В УГОЛ.
+ *
+ * Столешница, цоколь и ниша под верхним рядом идут ПО ВСЕМУ ряду одной
+ * плитой. В углу их две, и встретиться они обязаны без щели и без
+ * нахлёста: щель видно на любом ракурсе, нахлёст — это вторая плита
+ * поверх первой, которой в цехе никто не режет.
+ *
+ * Правило одно на все три полосы и читается словами:
+ *
+ *   ряд ПОСЛЕ угла заходит назад на всё, что угол занял;
+ *   ряд ПЕРЕД углом кончается там, где начинается полоса соседнего.
+ *
+ * Отсюда и два числа. Глубину своей полосы вызывающий знает сам — он её
+ * и рисует: у столешницы это корпус со свесом, у цоколя корпус минус
+ * утопление, у ниши глубина верхнего ряда. Своей формулы «где кончается
+ * соседняя плита» здесь не появляется: это та же глубина.
+ */
+export function cornerBandMm(input: {
+  corner: RunCorner | undefined;
+  /** Глубина САМОЙ полосы, мм: у каждой она своя. */
+  bandDepthMm: number;
+}): { backMm: number; cutMm: number } {
+  const corner = input.corner;
+  if (!corner) return { backMm: 0, cutMm: 0 };
+
+  return {
+    backMm: Math.max(0, Math.round(corner.backMm ?? 0)),
+    cutMm: corner.ahead ? Math.max(0, Math.round(input.bandDepthMm)) : 0,
+  };
 }
 
 const MM_IN_M = 1000;

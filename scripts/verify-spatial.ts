@@ -39,6 +39,9 @@ import { DEFAULT_PRODUCTION, type ProductionSettings } from '../types/catalog';
 import { mezzanineBaseOf, moduleDepthMm, rowStandardDepthMm } from '../lib/millwork/fill';
 import { applyOps } from '../lib/millwork/ops';
 import { reorderTarget } from '../lib/millwork/selection';
+import { cornerBandMm } from '../lib/millwork/composition';
+import { CORNER_FILLER_PANEL_NAME } from '../lib/millwork/panels';
+import { COUNTER_OVERHANG_MM, counterSlabDepthMm } from '../lib/millwork/fill';
 import { moveShelf } from '../lib/millwork/fill';
 import { readFileSync } from 'node:fs';
 import { buildPanels } from '../lib/millwork/panels';
@@ -2373,6 +2376,155 @@ console.log('\n' + 'Правка мышью на чертеже');
         `съехало ${drift.length} из ${runPlaces(withMezz).length}`,
       );
     }
+  }
+}
+
+/**
+ * СПЛОШНЫЕ ПОЛОСЫ СХОДЯТСЯ В УГЛУ БЕЗ ЩЕЛИ И БЕЗ НАХЛЁСТА.
+ *
+ * Столешница, цоколь и ниша под верхним рядом идут по ВСЕМУ ряду одной
+ * плитой, и в углу их две. Раньше каждая кончалась у своего ряда, и
+ * между ними оставалась щель: 59 мм по столешнице, 150 по цоколю, 340
+ * по нише. Числа стыка при этом сходились (`runPlacements`) — дело было
+ * не в координатах рядов, а в том, что стояло В САМОМ углу.
+ *
+ * Меряются прямоугольники полос в МИРОВЫХ осях: щель — расстояние между
+ * ними, нахлёст — площадь пересечения. Ноль обязан быть и там, и там:
+ * щель видно на любом ракурсе, а нахлёст — это вторая плита поверх
+ * первой, которой в цехе никто не режет.
+ */
+console.log('\n' + 'Угол: полосы сходятся');
+{
+  const MM_ = 1000;
+  const PLINTH_SETBACK_M = 0.05;
+
+  type Rect = { x0: number; x1: number; z0: number; z1: number };
+
+  /** Полоса ряда в мировых осях с учётом её захода в угол. */
+  const strip = (
+    place: { xM: number; zM: number; rotationYDeg: number },
+    lengthM: number,
+    backM: number,
+    frontM: number,
+    reach: { backMm: number; cutMm: number },
+  ): Rect => {
+    const startM = -reach.backMm / MM_;
+    const spanM = Math.max(0, lengthM + reach.backMm / MM_ - reach.cutMm / MM_);
+    const a = (place.rotationYDeg * Math.PI) / 180;
+    const dir: [number, number] = [Math.cos(a), -Math.sin(a)];
+    const nrm: [number, number] = [Math.sin(a), Math.cos(a)];
+    const pts: [number, number][] = [];
+    for (const t of [startM, startM + spanM]) {
+      for (const d of [-backM, frontM]) {
+        pts.push([place.xM + dir[0] * t + nrm[0] * d, place.zM + dir[1] * t + nrm[1] * d]);
+      }
+    }
+    return {
+      x0: Math.min(...pts.map((q) => q[0])),
+      x1: Math.max(...pts.map((q) => q[0])),
+      z0: Math.min(...pts.map((q) => q[1])),
+      z1: Math.max(...pts.map((q) => q[1])),
+    };
+  };
+
+  const gapOf = (a: Rect, b: Rect) =>
+    Math.round(
+      Math.hypot(
+        Math.max(0, Math.max(a.x0 - b.x1, b.x0 - a.x1)),
+        Math.max(0, Math.max(a.z0 - b.z1, b.z0 - a.z1)),
+      ) * MM_,
+    );
+
+  const overlapOf = (a: Rect, b: Rect) =>
+    Math.round(
+      Math.max(0, Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0)) *
+        MM_ *
+        Math.max(0, Math.min(a.z1, b.z1) - Math.max(a.z0, b.z0)) *
+        MM_,
+    );
+
+  let measured = 0;
+
+  for (const solution of ['false_panel', 'corner_module'] as const) {
+    for (const [a, b] of [
+      [2734, 1678],
+      [3800, 1140],
+    ] as [number, number][]) {
+      const comp = buildComposition({
+        kind: 'corner_l',
+        walls: [
+          { id: 'wA', lengthMm: a, openings: [] },
+          { id: 'wB', lengthMm: b, openings: [] },
+        ],
+        ceilingHeightMm: 2700,
+        requirements: { ...DEMO_REQUIREMENTS, cornerSolution: solution },
+        comms: [],
+      } as never);
+
+      const places = runPlacements({
+        runs: comp.segments.map((seg) => seg.run),
+        solution,
+        zone: 'kitchen',
+      });
+
+      const depthM = rowStandardDepthMm('kitchen', 'base', undefined) / MM_;
+      const upperM = rowStandardDepthMm('kitchen', 'upper', undefined) / MM_;
+      const frontM = DEFAULT_PRODUCTION.frontMm / MM_;
+      const overhangM = COUNTER_OVERHANG_MM / MM_;
+
+      const bands: [string, number, number, number][] = [
+        /* название, назад от фасада, вперёд, глубина ПЛИТЫ для стыка */
+        ['столешница', depthM, overhangM + frontM, counterSlabDepthMm('kitchen', undefined)],
+        ['цоколь', depthM, -PLINTH_SETBACK_M, (depthM - PLINTH_SETBACK_M) * MM_],
+        ['ниша верхнего ряда', depthM, -(depthM - upperM), upperM * MM_],
+      ];
+
+      for (const [name, backM, frontOffM, bandDepthMm] of bands) {
+        const rects = comp.segments.map((seg, i) =>
+          strip(
+            places[i],
+            seg.run.lengthMm / MM_,
+            backM,
+            frontOffM,
+            cornerBandMm({ corner: seg.run.corner, bandDepthMm }),
+          ),
+        );
+
+        measured += 1;
+        check(
+          `${solution} ${a}+${b}: ${name} сходится в углу без щели`,
+          gapOf(rects[0], rects[1]) === 0,
+          `зазор ${gapOf(rects[0], rects[1])} мм`,
+        );
+        check(
+          `${solution} ${a}+${b}: ${name} не ложится вторым слоем`,
+          overlapOf(rects[0], rects[1]) === 0,
+          `перекрытие ${overlapOf(rects[0], rects[1])} мм²`,
+        );
+      }
+
+      /* Фальш-панель стоит В УГЛУ и видна в сцене. */
+      const boxes = runBoxes(comp.segments[1].run, {
+        thicknessMm: DEFAULT_PRODUCTION.carcassMm,
+        frontThicknessMm: DEFAULT_PRODUCTION.frontMm,
+        gapMm: DEFAULT_PRODUCTION.frontGapMm,
+      });
+      const filler = boxes.filter((box) => box.panel === CORNER_FILLER_PANEL_NAME);
+      check(
+        `${solution} ${a}+${b}: в углу стоит фальш-панель`,
+        filler.length === 1,
+        `коробок ${filler.length}`,
+      );
+    }
+  }
+
+  check(
+    'полос в углу измерено столько, сколько объявлено',
+    measured === 12,
+    `${measured} из 12`,
+  );
+  if (measured === 0) {
+    throw new Error('НУЛЕВОЙ СЕЛЕКТОР: ни одной полосы в углу не измерено');
   }
 }
 

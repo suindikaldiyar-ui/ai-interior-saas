@@ -4,7 +4,8 @@ import {
   standsOnFloor,
 } from './modules';
 import { allModules } from './layout';
-import { bearsCountertop, moduleCarcassHeightMm } from './fill';
+import { cornerBandMm } from './composition';
+import { bearsCountertop, counterSlabDepthMm, moduleCarcassHeightMm } from './fill';
 import { CORNER_HINGE_TITLE, drawerSlides, liftKey, openingHardware } from './opening';
 import { buildPanels, panelMaterials, SHELF_PANEL_NAME} from './panels';
 import { DEFAULT_PRODUCTION, type HardwareItem, type ProductionSettings } from '@/types/catalog';
@@ -399,7 +400,17 @@ export function buildEstimateDrafts(
   }
 
   // Столешница: длина ряда плюс запил на угол, если ряд угловой.
-  const hasCorner = run.modules.some((m) => m.kind === 'corner_base');
+  /*
+   * СТЫК В УГЛУ ЕСТЬ ПРИ ЛЮБОМ РЕШЕНИИ УГЛА.
+   *
+   * Здесь спрашивался угловой МОДУЛЬ, и при фальш-панели запила не было
+   * вовсе — при том, что плит в углу всё равно две и встречаются они по
+   * стыку. Спрашиваем факт угла (`run.corner.ahead`), а не одно из двух
+   * его решений; считается он на ряду ПЕРЕД углом, поэтому на кухню
+   * приходится один запил, а не два.
+   */
+  const hasCorner =
+    run.modules.some((m) => m.kind === 'corner_base') || run.corner?.ahead === true;
 
   /*
    * ДЛИНА СОБРАННОГО РЯДА, А НЕ ДЛИНА СТЕНЫ.
@@ -412,10 +423,38 @@ export function buildEstimateDrafts(
    *
    * Верхние модули столешницу не несут — считаем только нижний ряд.
    */
+  /*
+   * СТОЛЕШНИЦА ОБХОДИТ УГОЛ — И ЭТО ТЕ ЖЕ МИЛЛИМЕТРЫ, ЧТО В СЦЕНЕ.
+   *
+   * Плита ряда ПОСЛЕ угла заходит назад на всё, что угол занял; плита
+   * ряда ПЕРЕД углом кончается там, где начинается соседняя. Раньше обе
+   * кончались у своего ряда, и между ними оставалась щель 59 мм — её
+   * никто не резал и никто не оплачивал, а в углу было видно дыру.
+   *
+   * Считает заход `cornerBandMm` — та же функция, что двигает плиту в
+   * сцене. Второй формулы «сколько столешницы в углу» не появляется: у
+   * прямого ряда `run.corner` пуст, и метраж не меняется ни на миллиметр.
+   */
+  const counterBand = cornerBandMm({
+    corner: run.corner,
+    bandDepthMm: counterSlabDepthMm(run.zone, run.production),
+  });
+
+  const counterBearingMm = run.modules
+    .filter((unit) => bearsCountertop(unit, run))
+    .reduce((sum, unit) => sum + unit.widthMm, 0);
+
+  /*
+   * ПУСТОЙ РЯД НЕ ПОЛУЧАЕТ УГЛА.
+   *
+   * Заход в угол — это плита НАД мебелью. Нет мебели — нет и плиты:
+   * иначе пустая стена углового объекта выставляла бы 660 мм столешницы
+   * за то, чего ещё нет (ловушка 230, только теперь через угол).
+   */
   const counterMp = round3(
-    run.modules
-      .filter((unit) => bearsCountertop(unit, run))
-      .reduce((sum, unit) => sum + unit.widthMm, 0) / MM_IN_M,
+    counterBearingMm === 0
+      ? 0
+      : Math.max(0, counterBearingMm + counterBand.backMm - counterBand.cutMm) / MM_IN_M,
   );
 
   /*
@@ -508,7 +547,12 @@ export function buildEstimateDrafts(
       quantity: counterMp,
     });
 
-    if (hasCorner) {
+    /*
+     * Запил — это операция НАД ПЛИТОЙ. Нет плиты — нет и запила: пустая
+     * стена углового объекта иначе стоила бы 25 000 ₸ за стык двух
+     * столешниц, которых ещё нет.
+     */
+    if (hasCorner && counterMp > 0) {
       drafts.push({ key: 'countertop_miter', title: 'Запил столешницы на угол', unit: 'pcs', quantity: 1 });
     }
 

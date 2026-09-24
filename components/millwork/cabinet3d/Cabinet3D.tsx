@@ -19,7 +19,8 @@ import type { FrontSpec } from '@/types/millwork';
 import { surfaceLook } from '@/lib/millwork/surfaces';
 import { APRON_TARGET, COUNTERTOP_TARGET, FACADE_TARGET } from '@/types/catalog';
 import { runPlaces } from '@/lib/millwork/cabinetBoxes';
-import { rowStandardDepthMm } from '@/lib/millwork/fill';
+import { cornerBandMm } from '@/lib/millwork/composition';
+import { COUNTER_OVERHANG_MM, rowStandardDepthMm } from '@/lib/millwork/fill';
 import { moduleOfPart } from '@/lib/millwork/selection';
 import {
   countertopMm,
@@ -246,7 +247,8 @@ export default function Cabinet3D({
   /** Цоколь утоплен: по нижней тени шкаф «стоит», а не лежит на полу. */
   const plinthSetbackM = 0.05;
   /** Столешница свисает вперёд — по свесу читается торцевая полоса. */
-  const counterOverhangM = 0.025;
+  /* Свес — из движка: его же теперь меряет смета (`counterSlabDepthMm`). */
+  const counterOverhangM = COUNTER_OVERHANG_MM / MM;
 
   /*
    * Размеры и положение считаются один раз на состав: при каждом кадре
@@ -467,6 +469,31 @@ export default function Cabinet3D({
    * клиент выбирает на шаге «Материалы» третьей строкой, и без неё выбор
    * плитки ничего не менял в сцене.
    */
+  /*
+   * СПЛОШНЫЕ ПОЛОСЫ СХОДЯТСЯ В УГЛУ.
+   *
+   * Столешница, цоколь и ниша под верхним рядом идут по ВСЕМУ ряду
+   * одной плитой, и в углу их две. Раньше каждая кончалась у своего
+   * ряда: между ними оставалась щель — 59 мм по столешнице, 150 по
+   * цоколю, 340 по нише, — и угловая кухня читалась как два ряда,
+   * приставленных друг к другу.
+   *
+   * Правило одно на все три полосы и считает его `cornerBandMm`:
+   * ряд ПОСЛЕ угла заходит назад на всё, что угол занял; ряд ПЕРЕД
+   * углом кончается там, где начинается полоса соседнего. Глубину своей
+   * полосы каждая знает сама — она её и рисует.
+   */
+  const band = (bandDepthM: number) => {
+    const { backMm, cutMm } = cornerBandMm({
+      corner: run.corner,
+      bandDepthMm: bandDepthM * MM,
+    });
+    const backM = backMm / MM;
+    const startM = -backM;
+    const lengthBandM = Math.max(0, lengthM + backM - cutMm / MM);
+    return { startM, lengthM: lengthBandM, centerM: startM + lengthBandM / 2 };
+  };
+
   const apronBottom = workTopMm(run.production) / MM;
   const apronTop = upperBottomMm(run.production) / MM;
   const apronH = Math.max(0, apronTop - apronBottom);
@@ -506,8 +533,12 @@ export default function Cabinet3D({
         <mesh
           geometry={parts.box}
           material={parts.plinth}
-          position={[lengthM / 2, plinthM / 2, -depthM / 2 - plinthSetbackM / 2]}
-          scale={[lengthM, plinthM, depthM - plinthSetbackM]}
+          position={[
+            band(depthM - plinthSetbackM).centerM,
+            plinthM / 2,
+            -depthM / 2 - plinthSetbackM / 2,
+          ]}
+          scale={[band(depthM - plinthSetbackM).lengthM, plinthM, depthM - plinthSetbackM]}
           receiveShadow
         />
       )}
@@ -648,12 +679,12 @@ export default function Cabinet3D({
           geometry={parts.box}
           material={parts.counter}
           position={[
-            lengthM / 2,
+            band(depthM + counterOverhangM + frontThicknessM).centerM,
             (counterTopY + countertopMm(run.production) / 2) / MM,
             -depthM / 2 + counterOverhangM / 2 + frontThicknessM / 2,
           ]}
           scale={[
-            lengthM,
+            band(depthM + counterOverhangM + frontThicknessM).lengthM,
             countertopMm(run.production) / MM,
             depthM + counterOverhangM + frontThicknessM,
           ]}
@@ -677,11 +708,15 @@ export default function Cabinet3D({
            * там, где верхних шкафов уже нет.
            */
           position={[
-            lengthM / 2,
+            band(rowStandardDepthMm(run.zone, 'upper', run.production) / MM).centerM,
             upperBottomMm(run.production) / MM - 0.004,
             -depthM + rowStandardDepthMm(run.zone, 'upper', run.production) / MM / 2,
           ]}
-          scale={[lengthM, 0.008, rowStandardDepthMm(run.zone, 'upper', run.production) / MM]}
+          scale={[
+            band(rowStandardDepthMm(run.zone, 'upper', run.production) / MM).lengthM,
+            0.008,
+            rowStandardDepthMm(run.zone, 'upper', run.production) / MM,
+          ]}
         />
       )}
     </group>
@@ -710,8 +745,8 @@ export default function Cabinet3D({
         <mesh
           geometry={parts.box}
           material={apronMaterial}
-          position={[lengthM / 2, apronBottom + apronH / 2, -depthM + 0.003]}
-          scale={[lengthM, apronH, 0.004]}
+          position={[band(0).centerM, apronBottom + apronH / 2, -depthM + 0.003]}
+          scale={[band(0).lengthM, apronH, 0.004]}
         />
       </group>
     )}

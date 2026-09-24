@@ -1,8 +1,9 @@
 import { columnNiches, moduleCarcassHeightMm, upperBottomFor } from '@/lib/millwork/fill';
-import { plinthMm } from './shop';
+import { carcassHeightMm, plinthMm } from './shop';
 import {
   BACK_PANEL_NAME,
   BOTTOM_PANEL_NAME,
+  CORNER_FILLER_PANEL_NAME,
   DIVIDER_PANEL_NAME,
   SHELF_PANEL_NAME,
   SIDE_PANEL_NAME,
@@ -12,7 +13,7 @@ import {
 import { moduleDepthMm, rowStandardDepthMm } from './fill';
 import type { ProductionSettings } from '@/types/catalog';
 import type { ApplianceKind } from '@/types/millwork';
-import { FRAME_WIDTH_MM, frontKey, isFramed } from './frontMaterial';
+import { FRAME_WIDTH_MM, frontKey, frontOf, isFramed } from './frontMaterial';
 import { moduleFronts, type FacadeSpan } from './applianceFront';
 import { carcassKeyOf, type CarcassItem } from './carcassMaterial';
 import { handleBoxOf, handleSpotOf } from './handlePlace';
@@ -1111,7 +1112,36 @@ export function runBoxes(
 
   const carcassItems = options.carcass ?? new Map<string, CarcassItem>();
 
-  return placed.flatMap((entry) =>
+  /*
+   * ФАЛЬШ-ПАНЕЛЬ УГЛА — КОРОБКА НАРАВНЕ С ОСТАЛЬНЫМИ.
+   *
+   * Она стоит в полосе, которую ряд уже отдал углу: локально ЛЕВЕЕ
+   * нуля, в плоскости фасадов. Модулем ей быть нельзя — модули
+   * складываются в длину ряда и несут столешницу, — но нарисована она
+   * обязана быть: до этого слоя между рядами была дыра, и угловая
+   * кухня читалась как два приставленных ряда.
+   *
+   * Размер тот же, что уехал в раскрой: `run.corner.fillerMm` и высота
+   * корпуса. Второго числа здесь не появляется.
+   */
+  const fillerMm = run.corner?.fillerMm ?? 0;
+  const filler: PartBox[] = [];
+  if (fillerMm > 0 && run.modules.length > 0) {
+    const widthM = fillerMm / MM;
+    const heightM = carcassHeightMm(run.production) / MM;
+    const frontM = options.frontThicknessMm / MM;
+    const gapM = options.gapMm / MM;
+
+    filler.push({
+      position: [-widthM / 2, plinthMm(run.production) / MM + heightM / 2, frontM / 2],
+      scale: [Math.max(0, widthM - gapM), Math.max(0, heightM - gapM), frontM],
+      material: 'front',
+      panel: CORNER_FILLER_PANEL_NAME,
+      frontKey: frontKey(frontOf(run.modules[0])),
+    });
+  }
+
+  return filler.concat(placed.flatMap((entry) =>
     moduleBoxes(
       entry.unit,
       {
@@ -1135,7 +1165,7 @@ export function runBoxes(
       },
       run.production,
     ),
-  );
+  ));
 }
 
 /**

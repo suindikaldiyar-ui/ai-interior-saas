@@ -123,6 +123,10 @@ import {
 } from '../lib/millwork/palette';
 import { frontKey, frontOf } from '../lib/millwork/frontMaterial';
 import { reorderTarget } from '../lib/millwork/selection';
+import { cornerBandMm, cornerFillerMm } from '../lib/millwork/composition';
+import { CORNER_FILLER_PANEL_NAME } from '../lib/millwork/panels';
+import { counterSlabDepthMm, rowStandardDepthMm } from '../lib/millwork/fill';
+import { carcassHeightMm } from '../lib/millwork/shop';
 import { handleSpotOf } from '../lib/millwork/handlePlace';
 import { frontSwatch } from '../lib/millwork/frontSwatch';
 import {
@@ -17107,6 +17111,217 @@ console.log('\n' + 'Правка на чертеже: ряды, инвариан
       tplRefused.modules.find((u) => u.id === tplUnit.id)?.widthMm === tplUnit.widthMm,
     tplRefused.warnings[0] ?? 'МОЛЧА ПРИНЯЛ ШИРИНУ БОЛЬШЕ ПРЕДЕЛА',
   );
+}
+
+/* ═══  Угол собран, а не приставлен  ═══ */
+
+/**
+ * ФАЛЬШ-ПАНЕЛЬ — ДЕТАЛЬ, А НЕ ВЫЧЕТ ИЗ ДЛИНЫ.
+ *
+ * Сто миллиметров вычитались из полезной длины соседней стены с первого
+ * захода, и на этом всё кончалось: в раскрое детали не было, в сцене
+ * полосы не было, в смете денег не было. Между рядами оставалась дыра —
+ * отсюда и «два ряда приставлены друг к другу».
+ *
+ * Меряется то, что видно глазами: есть ли деталь, одна ли она в трёх
+ * местах и одного ли размера.
+ */
+console.log('\n' + 'Угол: фальш-панель, столешница, цоколь');
+{
+  const WALLS: [number, number][] = [
+    [2734, 1678],
+    [3800, 1140],
+  ];
+  /*
+   * ЗАЗОР БЕРЁТСЯ У ЦЕХА, А НЕ ПОДСТАВЛЯЕТСЯ ЗДЕСЬ.
+   *
+   * Раскрой снимает `frontGapMm` школы цеха; подставь сцене своё число —
+   * и деталь с коробкой разойдутся на миллиметр, причём виноватой будет
+   * выглядеть правка, а не проверка.
+   */
+  const SHOP = {
+    thicknessMm: DEFAULT_PRODUCTION.carcassMm,
+    frontThicknessMm: DEFAULT_PRODUCTION.frontMm,
+    gapMm: DEFAULT_PRODUCTION.frontGapMm,
+  };
+
+  const cornerOf = (
+    solution: 'false_panel' | 'corner_module',
+    a: number,
+    b: number,
+  ) =>
+    buildComposition({
+      kind: 'corner_l',
+      walls: [
+        { id: 'wA', lengthMm: a, openings: [] },
+        { id: 'wB', lengthMm: b, openings: [] },
+      ],
+      ceilingHeightMm: 2700,
+      requirements: { ...REQ, cornerSolution: solution },
+      comms: [],
+    });
+
+  for (const solution of ['false_panel', 'corner_module'] as const) {
+    for (const [a, b] of WALLS) {
+      const comp = cornerOf(solution, a, b);
+      const tag = `${solution} ${a}+${b}`;
+
+      check(
+        `${tag}: угол собрался из двух рядов`,
+        comp.segments.length === 2,
+        `сегментов ${comp.segments.length}`,
+      );
+      if (comp.segments.length !== 2) {
+        throw new Error(`нулевой селектор: ${tag} не дал двух рядов`);
+      }
+
+      const depthMm = rowStandardDepthMm(REQ.zone, 'base', undefined);
+      const wantFiller = cornerFillerMm(solution, depthMm);
+
+      check(
+        `${tag}: мёртвая полоса в углу посчитана`,
+        wantFiller > 0,
+        `${wantFiller} мм = ${cornerLostMm(solution, depthMm)} − ${depthMm}`,
+      );
+      if (wantFiller <= 0) {
+        throw new Error(`нулевой селектор: ${tag} — полосы в углу нет, проверять нечего`);
+      }
+
+      /* ── 1. Деталь в раскрое ── */
+      const second = comp.segments[1].run;
+      const panels = buildPanels({ run: second });
+      const filler = panels.filter((panel) => panel.name === CORNER_FILLER_PANEL_NAME);
+
+      check(
+        `${tag}: фальш-панель есть в раскрое`,
+        filler.length === 1,
+        filler.length === 1
+          ? `${filler[0].number} ${filler[0].lengthMm}×${filler[0].widthMm} ${filler[0].material}`
+          : `ДЕТАЛЕЙ В УГЛУ: ${filler.length}`,
+      );
+      if (filler.length !== 1) {
+        throw new Error(
+          `НУЛЕВОЙ СЕЛЕКТОР: ${tag} — деталей угла в раскрое ${filler.length}, ожидалась одна`,
+        );
+      }
+
+      const gap = DEFAULT_PRODUCTION.frontGapMm;
+
+      check(
+        `${tag}: и размер у неё из решения угла, а не свой`,
+        filler[0].widthMm === wantFiller - gap &&
+          filler[0].lengthMm === carcassHeightMm(undefined) - gap,
+        `${filler[0].lengthMm}×${filler[0].widthMm} при ${carcassHeightMm(undefined) - gap}×${
+          wantFiller - gap
+        }`,
+      );
+
+      check(
+        `${tag}: и режется из ФАСАДНОГО материала`,
+        filler[0].material.startsWith('Фасад'),
+        filler[0].material,
+      );
+
+      /* ── 1б. Та же деталь в сцене ── */
+      const boxes = runBoxes(second, SHOP);
+      const drawn = boxes.filter((box) => box.panel === CORNER_FILLER_PANEL_NAME);
+
+      check(
+        `${tag}: фальш-панель есть в сцене`,
+        drawn.length === 1,
+        `коробок` + ` ${drawn.length}`,
+      );
+
+      if (drawn.length === 1) {
+        const widthMm = Math.round(drawn[0].scale[0] * 1000);
+        const heightMm = Math.round(drawn[0].scale[1] * 1000);
+        check(
+          `${tag}: и в сцене она ТОГО ЖЕ размера, что в раскрое`,
+          widthMm === filler[0].widthMm && heightMm === filler[0].lengthMm,
+          `сцена ${heightMm}×${widthMm} · раскрой ${filler[0].lengthMm}×${filler[0].widthMm}`,
+        );
+        check(
+          `${tag}: и стоит в углу, ЛЕВЕЕ начала ряда`,
+          drawn[0].position[0] < 0,
+          `x = ${Math.round(drawn[0].position[0] * 1000)} мм`,
+        );
+      }
+
+      /* ── 1в. И оплачена в смете ── */
+      const withPanel = buildEstimate(second, MAIN_VARIANT, DEMO_RATES);
+      const bare: Run = { ...second, corner: undefined };
+      const without = buildEstimate(bare, MAIN_VARIANT, DEMO_RATES);
+
+      /*
+       * СМЕТА СЧИТАЕТ ИЗ РАСКРОЯ, И СВЕРЯЕМСЯ МЫ С ТЕМ ЖЕ ЧИСЛОМ.
+       *
+       * У строки сметы количество округлено до сотых — сверять по ней
+       * значит сверять округление. `panelTotals` отдаёт ровно то, что
+       * смета берёт на вход.
+       */
+      const frontM2 = (run: Run) => panelTotals(buildPanels({ run })).frontM2;
+      const panelM2 = (filler[0].widthMm * filler[0].lengthMm) / 1_000_000;
+
+      check(
+        `${tag}: смета видит панель площадью фасада`,
+        /* Итоги листа округлены до сотых — сверяем в пределах шага. */
+        Math.abs(frontM2(second) - frontM2(bare) - panelM2) <= 0.01,
+        `+${(frontM2(second) - frontM2(bare)).toFixed(4)} м² при детали ${panelM2.toFixed(4)} м²`,
+      );
+
+      check(
+        `${tag}: и итог без неё меньше`,
+        withPanel.total > without.total,
+        `${Math.round(without.total)} → ${Math.round(withPanel.total)} ₸`,
+      );
+
+      /* ── 2. Стык столешницы назван при ЛЮБОМ решении угла ── */
+      const first = buildEstimate(comp.segments[0].run, MAIN_VARIANT, DEMO_RATES);
+      check(
+        `${tag}: стык столешницы назван в смете`,
+        first.lines.some((line) => line.key === 'countertop_miter'),
+        first.lines.find((line) => line.key === 'countertop_miter')?.title ?? 'СТЫК НЕ НАЗВАН',
+      );
+
+      /* ── 3. Столешница и цоколь заходят в угол ── */
+      const counterBand = cornerBandMm({
+        corner: second.corner,
+        bandDepthMm: counterSlabDepthMm(REQ.zone, undefined),
+      });
+      check(
+        `${tag}: столешница второго ряда заходит в угол`,
+        counterBand.backMm === cornerLostMm(solution, depthMm),
+        `${counterBand.backMm} мм назад`,
+      );
+
+      const cut = cornerBandMm({
+        corner: comp.segments[0].run.corner,
+        bandDepthMm: counterSlabDepthMm(REQ.zone, undefined),
+      });
+      check(
+        `${tag}: а первого — кончается там, где начинается вторая`,
+        cut.cutMm === counterSlabDepthMm(REQ.zone, undefined),
+        `${cut.cutMm} мм при глубине плиты ${counterSlabDepthMm(REQ.zone, undefined)}`,
+      );
+    }
+  }
+
+  /* ── 4. Обе пары длин собираются одинаково ── */
+  for (const solution of ['false_panel', 'corner_module'] as const) {
+    const built = WALLS.map(([a, b]) => cornerOf(solution, a, b));
+    const fillers = built.map(
+      (comp) =>
+        buildPanels({ run: comp.segments[1].run }).find(
+          (panel) => panel.name === CORNER_FILLER_PANEL_NAME,
+        )?.widthMm ?? 0,
+    );
+
+    check(
+      `${solution}: угол одинаков на обеих парах длин`,
+      fillers.every((width) => width > 0 && width === fillers[0]),
+      `2734+1678 → ${fillers[0]} мм · 3800+1140 → ${fillers[1]} мм`,
+    );
+  }
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

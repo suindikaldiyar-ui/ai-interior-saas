@@ -1,4 +1,5 @@
 import { moduleCarcassHeightMm, moduleDepthMm } from './fill';
+import { carcassHeightMm, shopOf } from './shop';
 import { millingLink, type MillingItem } from './milling';
 import { carcassMaterialName, type CarcassItem } from './carcassMaterial';
 import { BUILT_IN_FRIDGE_FRONTS } from './modules';
@@ -82,6 +83,18 @@ export const TOP_RAIL_PANEL_NAME = 'Планки верхние';
 export const BACK_PANEL_NAME = 'Задняя стенка';
 export const DIVIDER_PANEL_NAME = 'Перегородка вертикальная';
 export const DRAWER_FRONT_PANEL_NAME = 'Фронт ящика';
+/**
+ * ФАЛЬШ-ПАНЕЛЬ УГЛА — ДЕТАЛЬ, А НЕ ВЫЧЕТ ИЗ ДЛИНЫ.
+ *
+ * Сто миллиметров вычитались из полезной длины соседней стены с первого
+ * захода — и на этом всё: в раскрое детали не было, в сцене полосы не
+ * было, в смете денег не было. Между рядами оставалась дыра, и угловая
+ * кухня выглядела двумя приставленными рядами.
+ *
+ * Панель режут из ФАСАДНОГО материала: она стоит в плоскости фасадов
+ * соседнего ряда и обязана быть с ними одного цвета.
+ */
+export const CORNER_FILLER_PANEL_NAME = 'Фальш-панель угла';
 
 /**
  * КАКИЕ ТОРЦЫ ДЕТАЛИ ОКЛЕЕНЫ — ОДИН ОТВЕТ НА ПРОДУКТ.
@@ -434,7 +447,7 @@ export function buildPanels({ run, production = DEFAULT_PRODUCTION, milling, car
    */
   const numbers = moduleNumbers(run);
 
-  return modules.flatMap((unit) => {
+  const fromModules = modules.flatMap((unit) => {
     const number = numbers.get(unit.id);
 
     /*
@@ -451,6 +464,51 @@ export function buildPanels({ run, production = DEFAULT_PRODUCTION, milling, car
 
     return modulePanels(unit, run, production, number, milling, carcass);
   });
+
+  /*
+   * ДЕТАЛЬ УГЛА ИДЁТ ПОСЛЕ МОДУЛЕЙ И СВОИМ НОМЕРОМ.
+   *
+   * Модулем она быть не может: модули складываются в длину ряда
+   * (`runWidthSum`), стоят в отпечатке и несут столешницу, а панель
+   * живёт в полосе, которую ряд уже отдал углу. Номер «У.1» — угол,
+   * первая деталь: он не сталкивается с номерами модулей (те числовые)
+   * и читается в цеху без пояснения.
+   */
+  const fillerMm = run.corner?.fillerMm ?? 0;
+  if (fillerMm <= 0) return fromModules;
+
+  const first = run.modules[0];
+  if (!first) return fromModules;
+
+  const spec = frontOf(first);
+  const shop = shopOf(production);
+
+  return [
+    ...fromModules,
+    {
+      moduleId: `${run.id}:corner`,
+      moduleLabel: 'Угол',
+      number: 'У.1',
+      name: CORNER_FILLER_PANEL_NAME,
+      material: `Фасад ${shop.frontMm}`,
+      /*
+       * Высота — корпуса ряда: панель закрывает его от пола до
+       * столешницы. Зазор снимается с обеих сторон, как у фасада: она
+       * стоит в одной с ними плоскости и в тот же зазор встаёт.
+       */
+      lengthMm: carcassHeightMm(production) - production.frontGapMm,
+      widthMm: Math.round(fillerMm) - production.frontGapMm,
+      qty: 1,
+      /*
+       * Видно все четыре торца: панель стоит в углу отдельно стоящей
+       * полосой. Кромки у эмали и плёнки нет вовсе — то же правило, что
+       * у фасада (`hasEdgeBanding`), и считает его та же функция.
+       */
+      edges: hasEdgeBanding(spec) ? { long: 2, short: 2 } : { long: 0, short: 0 },
+      edgeType: edgeType(production),
+      grain: 'along',
+    },
+  ];
 }
 
 /**

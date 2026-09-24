@@ -15,6 +15,7 @@ import {
   mezzanineDepthMm,
   plinthMm,
   rowDepthMm,
+  shopOf,
   upperBottomMm,
 } from './shop';
 import type { ProductionSettings } from '@/types/catalog';
@@ -614,6 +615,34 @@ export function rowStandardDepthMm(
   if (profile.kind !== 'kitchen') return profile.depthMm;
   if (section === 'mezzanine') return mezzanineDepthMm(production);
   return rowDepthMm(kind, production);
+}
+
+/**
+ * СВЕС СТОЛЕШНИЦЫ ВПЕРЁД ЗА ФАСАД.
+ *
+ * Отраслевое: по торцевой полосе ряд читается кухней, а не шкафом с
+ * крышкой. Жило это числом внутри сцены (`counterOverhangM = 0.025`), и
+ * пока столешницу никто не мерил, второго читателя не было. Теперь
+ * глубину плиты спрашивает и смета — значит, число обязано быть одно.
+ */
+export const COUNTER_OVERHANG_MM = 25;
+
+/**
+ * ГЛУБИНА ПЛИТЫ СТОЛЕШНИЦЫ: корпус ряда, фасад перед ним и свес.
+ *
+ * По ней столешница встречается в углу с соседней: ряд перед углом
+ * кончается ровно там, где начинается её плита. Считать это на месте
+ * второй раз нельзя — разойдутся сцена и смета.
+ */
+export function counterSlabDepthMm(
+  zone: ZoneKind | undefined,
+  production?: ProductionSettings,
+): number {
+  return (
+    rowStandardDepthMm(zone, 'base', production) +
+    shopOf(production).frontMm +
+    COUNTER_OVERHANG_MM
+  );
 }
 
 export function moduleDepthMm(
