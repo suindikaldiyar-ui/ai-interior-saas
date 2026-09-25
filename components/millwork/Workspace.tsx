@@ -8,6 +8,15 @@ import BeforeAfter from './BeforeAfter';
 import CommandBar from './CommandBar';
 import DrawingSheet from './DrawingSheet';
 import VariantStrip, { type VariantPreview } from './VariantStrip';
+import ModuleLibrary from './ModuleLibrary';
+import {
+  libraryCards,
+  libraryGaps,
+  libraryLock,
+  priceDeltaOf,
+  type LibraryCard,
+  type LibraryGap,
+} from '@/lib/millwork/moduleLibrary';
 import FrontMaterialPicker from './FrontMaterialPicker';
 import OpeningPicker from './OpeningPicker';
 import RunSchematic from './RunSchematic';
@@ -118,7 +127,7 @@ import {
   MIN_WIDTH,
   moduleAppliances,
 } from '@/lib/millwork/modules';
-import { composeVariants, workspaceInput } from '@/lib/millwork/workspace';
+import { composeVariants, editedRunEstimate, workspaceInput } from '@/lib/millwork/workspace';
 import {
   MAIN_VARIANT,
   SINGLE_VARIANT,
@@ -159,6 +168,7 @@ import type {
   ApplianceKind,
   CompositionKind,
   CommPoint,
+  Estimate,
   MillworkOp,
   ModuleVariantKind,
   ModuleFill,
@@ -304,6 +314,15 @@ export default function Workspace(props: WorkspaceProps) {
     props.initialState?.selectedVariant ?? MAIN_VARIANT,
   );
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  /**
+   * ВЫБРАННОЕ ПУСТОЕ МЕСТО.
+   *
+   * Второй вид выделения, а не второй источник правды: место — это
+   * отметка и ряд, а всё, что можно туда поставить, считает движок.
+   * Выбрано либо место, либо модуль: два выделения сразу означали бы
+   * два ответа на вопрос «куда поедет нажатие в библиотеке».
+   */
+  const [selectedGap, setSelectedGap] = useState<LibraryGap | null>(null);
 
   /**
    * ОТМЕТКИ ЭТОГО ОБЪЕКТА — ТОЛЬКО ИЗМЕНЁННЫЕ.
@@ -1009,26 +1028,44 @@ export default function Workspace(props: WorkspaceProps) {
     [segments],
   );
 
-  const estimate = useMemo(() => {
-    if (!layout) return active.estimate;
-    return mergeEstimates(
-      segments.map((run, i) =>
-        i === 0
-          ? active.estimate
-          : buildEstimate(
-              run,
-              variantKey,
-              input.rates,
-              disabled[variantKey],
-              undefined,
-              production,
-              undefined,
-              millingItems,
-              carcassItems,
-            ),
-      ),
-    );
-  }, [layout, segments, active.estimate, variantKey, input.rates, disabled, production, millingItems, carcassItems]);
+  /**
+   * СМЕТА ОБЪЕКТА ИЗ РЯДОВ СТЕН — ОДНА ФУНКЦИЯ НА ИТОГ ЭКРАНА И НА ЦЕНУ
+   * КАРТОЧКИ БИБЛИОТЕКИ.
+   *
+   * Карточка обещает, насколько сдвинется итог внизу экрана. Считай она
+   * этот итог своей сборкой — и у угловой кухни разошлась бы с экраном:
+   * у стены А смета приходит из вариантов, у остальных — прямо из
+   * `buildEstimate`, а складывает их `mergeEstimates` без удвоения
+   * разовых статей.
+   */
+  const objectEstimateOf = useCallback(
+    (wallRuns: Run[], wallAEstimate: Estimate) => {
+      if (!layout) return wallAEstimate;
+      return mergeEstimates(
+        wallRuns.map((run, i) =>
+          i === 0
+            ? wallAEstimate
+            : buildEstimate(
+                run,
+                variantKey,
+                input.rates,
+                disabled[variantKey],
+                undefined,
+                production,
+                undefined,
+                millingItems,
+                carcassItems,
+              ),
+        ),
+      );
+    },
+    [layout, variantKey, input.rates, disabled, production, millingItems, carcassItems],
+  );
+
+  const estimate = useMemo(
+    () => objectEstimateOf(segments, active.estimate),
+    [objectEstimateOf, segments, active.estimate],
+  );
 
   /*
    * Смета объекта несёт отпечаток ОБЪЕКТА. Иначе она подписана числом
@@ -1402,8 +1439,19 @@ export default function Workspace(props: WorkspaceProps) {
       const at = wallOfModule(segments, moduleId);
       if (at !== null) setWallIndex(at);
       setSelectedId(moduleId);
+      /* Выделено что-то одно: модуль ИЛИ пустота. */
+      setSelectedGap(null);
     },
     [segments],
+  );
+
+  /** Нажатие на пустое место ряда: библиотека открывается для него. */
+  const selectGap = useCallback(
+    (gap: LibraryGap) => {
+      setSelectedId(null);
+      setSelectedGap(gap);
+    },
+    [],
   );
   const selectedLabel = selection.caption;
 
@@ -1545,6 +1593,72 @@ export default function Workspace(props: WorkspaceProps) {
       };
     });
   }, [selectedId, active.run, zone, requirements, input.rates, input.openings, disabled, variantKey, production, millingItems, carcassItems]);
+
+  /**
+   * БИБЛИОТЕКА МОДУЛЕЙ ДЛЯ ВЫБРАННОГО МЕСТА.
+   *
+   * Всё, что она знает, считает движок: типы, ширины, встанет ли,
+   * сколько будет стоить. Здесь только собирается вопрос — какое место
+   * выбрано — и отдаётся ответ панели.
+   */
+  /*
+   * ТОТ ЖЕ ВХОД, ЧТО У `runOps`: выбранная стена (`activeRun`, а не
+   * всегда стена А — ловушка 355), проёмы из пропсов и глубина комнаты.
+   * Карточка, проверенная на другом входе, обещала бы то, чего нажатие
+   * не сделает.
+   */
+  const libraryInput = useMemo(
+    () => ({
+      run: activeRun,
+      requirements,
+      openings: props.openings,
+      roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
+      moduleId: selectedId,
+      gap: selectedGap,
+    }),
+    [activeRun, requirements, props.openings, props.roomDepthM, selectedId, selectedGap],
+  );
+
+  const libraryList = useMemo(() => libraryCards(libraryInput), [libraryInput]);
+
+  /* Пустоты выбранной стены: схема их только рисует. */
+  const libraryGapList = useMemo(
+    () => libraryGaps(activeRun, props.openings, requirements),
+    [activeRun, props.openings, requirements],
+  );
+  const libraryReason = useMemo(() => libraryLock(libraryInput), [libraryInput]);
+
+  /**
+   * ИТОГ, КОТОРЫЙ ПОКАЖЕТ ЭКРАН, ЕСЛИ ВЫБРАННАЯ СТЕНА СТАНЕТ ТАКОЙ.
+   *
+   * Правка стены А попадает в `editedRuns` и считается сметой правленого
+   * ряда (`editedRunEstimate`) — той же функцией, что в `composeVariants`.
+   * Правка остальных стен попадает в `editedWalls`, и их смету считает
+   * `objectEstimateOf` сам. Складывает всё та же `objectEstimateOf`, что
+   * даёт итог внизу экрана.
+   */
+  const totalOf = useCallback(
+    (run: Run) =>
+      objectEstimateOf(
+        segments.map((segment, i) => (i === wall ? run : segment)),
+        wall === 0 ? editedRunEstimate(run, variantKey, input, disabled) : active.estimate,
+      ).total,
+    [objectEstimateOf, segments, wall, variantKey, input, disabled, active.estimate],
+  );
+
+  const libraryPrice = useCallback(
+    (card: LibraryCard) => priceDeltaOf(libraryInput, card.ops, totalOf, estimate.total),
+    [libraryInput, totalOf, estimate.total],
+  );
+
+  /** Что выбрано — словами: «Дверца 600» либо «Пусто 900 мм». */
+  const placeLabel = useMemo(() => {
+    if (selectedId) return selectedLabel;
+    if (selectedGap) {
+      return `Пусто ${selectedGap.widthMm} мм на отметке ${selectedGap.fromMm}`;
+    }
+    return null;
+  }, [selectedId, selectedLabel, selectedGap]);
 
   /**
    * ПЕРЕНОС ПРИБОРА НА ДРУГУЮ СТЕНУ.
@@ -1700,6 +1814,33 @@ export default function Workspace(props: WorkspaceProps) {
     },
     [active, activeRun, wall, requirements, props.openings, props.roomDepthM, flash, selectedId],
   );
+
+  /**
+   * НАЖАЛ КАРТОЧКУ — МОДУЛЬ ПОМЕНЯЛСЯ.
+   *
+   * Одна операция, тот же `runOps`, что и у всех остальных правок:
+   * второго пути записи в ряд не появляется. Выделение после замены
+   * остаётся на месте — идентификатор выводится из позиции, а позицию
+   * замена сохраняет; после вставки выделяется то, что поставили.
+   */
+  const pickFromLibrary = useCallback(
+    (card: LibraryCard) => {
+      const keep = selectedId;
+      const at = selectedGap?.fromMm ?? null;
+
+      runOps(card.ops, setSceneNotice, (next) => {
+        if (keep) return keep;
+        if (at === null) return null;
+        return (
+          allModules(next).find((unit) => unit.offsetMm === at)?.id ?? null
+        );
+      });
+
+      setSelectedGap(null);
+    },
+    [runOps, selectedId, selectedGap],
+  );
+
 
   /**
    * ВЫБОР ГОТОВОГО РЕШЕНИЯ.
@@ -2382,8 +2523,29 @@ export default function Workspace(props: WorkspaceProps) {
    * не сходящийся со стеной. Шаги мастера и наличие объекта в базе к
    * этому поведению не относятся и остаются здесь.
    */
+  /**
+   * ПУСТАЯ СТЕНА НЕ ЕДЕТ ДАЛЬШЕ.
+   *
+   * Пустой ряд — законное РАБОЧЕЕ состояние (ловушка 229): с него
+   * начинается свободная сборка, и краснеть ему незачем. Но дальше
+   * него ехать не с чем: на следующих шагах выбирают материал мебели,
+   * которой нет, и показывают клиенту смету в ноль.
+   *
+   * Замок живёт ЗДЕСЬ, а не в `screenState`: тот отвечает за
+   * защищённую часть — отказ сборки и расхождение со стеной, — и про
+   * шаги мастера намеренно не знает. Это его собственное правило,
+   * записанное у него в шапке.
+   */
+  const emptyRunLock =
+    allModules(activeRun).length === 0
+      ? `${wallLabel(wall)}: мебели нет. Дальше выбирают материал и ` +
+        'показывают смету, а показывать пока нечего — нажмите на стену и ' +
+        'поставьте модуль из библиотеки.'
+      : null;
+
   const nextDisabled =
     screen.nextLocked ||
+    Boolean(emptyRunLock) ||
     (step === 'template' && !templateId && !freeMode) ||
     (step === 'result' && (blocked || !props.projectId));
 
@@ -2767,6 +2929,9 @@ export default function Workspace(props: WorkspaceProps) {
                   comms={props.comms}
                   selectedModuleId={selectedId}
                   onSelect={selectModule}
+                  onSelectGap={selectGap}
+                  selectedGap={selectedGap}
+                  gaps={libraryGapList}
                   onMoveModule={moveModule}
                   moveMode={freeMode ? 'place' : 'reorder'}
                   onWidth={dragWidth}
@@ -3128,6 +3293,27 @@ export default function Workspace(props: WorkspaceProps) {
                   onPick={chooseVariant}
                   moduleLabel={selectedLabel}
                   pickPrompt="Нажмите на модуль в сцене, чтобы поменять его начинку."
+                />
+              </div>
+
+              {/*
+                * БИБЛИОТЕКА МОДУЛЕЙ — ТАМ ЖЕ, ГДЕ ВАРИАНТЫ.
+                *
+                * Лента вариантов отвечает «чем может быть ЭТОТ модуль
+                * при его ширине», библиотека — «что вообще ставят на
+                * это место», вместе с другими ширинами и с пустотами.
+                * Второго списка типов у них нет: обе спрашивают
+                * `variantsForModule`.
+                */}
+              <div className="mt-3">
+                <ModuleLibrary
+                  cards={libraryList}
+                  lock={libraryReason}
+                  placeLabel={placeLabel}
+                  run={active.run}
+                  production={production}
+                  priceOf={libraryPrice}
+                  onPick={pickFromLibrary}
                 />
               </div>
 
@@ -3726,6 +3912,22 @@ export default function Workspace(props: WorkspaceProps) {
 
       {/* ── Низ экрана: зона большого пальца ── */}
       <footer className="border-t border-navyLine/60 bg-navyDeep px-4 pb-4 pt-3 print:hidden">
+        {/*
+          * ПОЧЕМУ «ДАЛЬШЕ» НЕ НАЖИМАЕТСЯ — СЛОВАМИ И РЯДОМ С КНОПКОЙ.
+          *
+          * Серая кнопка без объяснения читается как поломка. Строка не
+          * красная: пустая стена — это «ещё не собрано», а не ошибка,
+          * и краснеть ей незачем (ловушка 229).
+          */}
+        {emptyRunLock && (
+          <p
+            data-empty-run-lock
+            className="mb-3 rounded-[var(--r-control)] bg-surface-2 px-4 py-3 text-[15px] leading-snug text-dim"
+          >
+            {emptyRunLock}
+          </p>
+        )}
+
         {blockingWarnings.length > 0 && (
           <div className="mb-3 rounded-[var(--r-control)] bg-alert/15 px-4 py-3">
             <p className="text-[15px] leading-snug text-alert">
@@ -3813,6 +4015,7 @@ export default function Workspace(props: WorkspaceProps) {
           </button>
           <button
             type="button"
+            data-next-button
             onClick={onNext}
             disabled={nextDisabled}
             title={

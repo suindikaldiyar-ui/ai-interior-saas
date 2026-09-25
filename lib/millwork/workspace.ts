@@ -185,6 +185,38 @@ export function workspaceInput(seed: WorkspaceSeed): WorkspaceInput {
 }
 
 /**
+ * СМЕТА ПРАВЛЕНОГО РЯДА.
+ *
+ * Её видит человек внизу экрана после любой правки рабочей стены, и её
+ * же обязана предсказать карточка библиотеки: «+17 383 ₸» на карточке и
+ * сдвиг итога после нажатия — одно число, а не два расчёта. Пока сборка
+ * сметы жила внутри `composeVariants`, карточке оставалось переписать
+ * восемь аргументов `buildEstimate` у себя — и разойтись на первом же
+ * новом.
+ */
+export function editedRunEstimate(
+  run: Run,
+  key: VariantKey,
+  input: Pick<WorkspaceInput, 'rates' | 'production' | 'milling' | 'carcass'>,
+  disabled: Record<VariantKey, string[]>,
+) {
+  return recalcTotal(
+    buildEstimate(
+      run,
+      key,
+      input.rates,
+      disabled[key],
+      undefined,
+      input.production,
+      undefined,
+      input.milling,
+      input.carcass,
+    ),
+    disabled[key],
+  );
+}
+
+/**
  * Три варианта с учётом ручных правок.
  *
  * Одним кодом собирают рабочее место замерщика и кабинет клиента: клиент
@@ -228,20 +260,7 @@ export function composeVariants(
     const edited = editedRuns[variant.key];
     if (!edited) return variant;
 
-    const estimate = recalcTotal(
-      buildEstimate(
-        edited,
-        variant.key,
-        input.rates,
-        disabled[variant.key],
-        undefined,
-        input.production,
-        undefined,
-        input.milling,
-        input.carcass,
-      ),
-      disabled[variant.key],
-    );
+    const estimate = editedRunEstimate(edited, variant.key, input, disabled);
     return { ...variant, run: edited, estimate };
   });
 }

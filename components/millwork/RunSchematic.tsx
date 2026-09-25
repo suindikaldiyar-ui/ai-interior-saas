@@ -20,6 +20,8 @@ const CadScene = dynamic(() => import('./cabinet3d/CadScene'), {
   ssr: false,
   loading: () => <div className="h-full w-full animate-pulse rounded-[var(--r-panel)] bg-navy/40" />,
 });
+import type { RunRow } from '@/lib/millwork/selection';
+import type { LibraryGap } from '@/lib/millwork/moduleLibrary';
 import type { CommPoint, LayoutIssue, Run } from '@/types/millwork';
 
 /**
@@ -48,6 +50,14 @@ type Props = {
   issues?: LayoutIssue[];
   selectedModuleId: string | null;
   onSelect: (moduleId: string) => void;
+  /**
+   * Нажатие на ПУСТОЕ МЕСТО ряда. Без него свободная сборка начинается
+   * с экрана, на котором нажимать не на что: модулей ещё нет.
+   */
+  onSelectGap?: (gap: LibraryGap) => void;
+  selectedGap?: { fromMm: number; row: RunRow } | null;
+  /** Пустоты АКТИВНОЙ стены — их считает библиотека, а не схема. */
+  gaps?: LibraryGap[];
   /**
    * Соседняя стена угла: рисуется КОНТУРОМ, без материала и без правки.
    *
@@ -119,6 +129,9 @@ export default function RunSchematic({
   facadeColor,
   selectedModuleId,
   onSelect,
+  onSelectGap,
+  selectedGap = null,
+  gaps = [],
   onMoveModule,
   moveMode,
   onWidth,
@@ -569,6 +582,14 @@ export default function RunSchematic({
                       run={row.run}
                       selectedModuleId={selectedModuleId}
                       onSelect={onSelect}
+                      /*
+                       * Пустое место выбирается только в АКТИВНОЙ стене
+                       * — по той же причине, что и перенос: модуль туда
+                       * поставит операция, а она правит один ряд.
+                       */
+                      onSelectGap={row.run.id === run.id ? onSelectGap : undefined}
+                      selectedGap={row.run.id === run.id ? selectedGap : null}
+                      gaps={row.run.id === run.id ? gaps : []}
                       /*
                        * Тянуть модуль можно только в активной стене:
                        * перенос пишется операцией в ОДИН ряд, и жест на

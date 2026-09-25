@@ -12,7 +12,7 @@ import {
   isStandardWidth,
   snapToStandard,
 } from './modules';
-import { upperSpans, buildUpperRow, fillGap, moduleId, onWall } from './layout';
+import { upperSpansOfRun, buildUpperRow, fillGap, moduleId, onWall } from './layout';
 import {
   assertNoOverlap,
   assertRunFits,
@@ -204,6 +204,33 @@ export function applyOps({
 }: ApplyOpsInput): Run {
   let modules = [...run.modules];
   let options = { ...run.options };
+
+  /**
+   * РУЧКА, ВЫБРАННАЯ ДЛЯ МЕСТА, ПЕРЕЖИВАЕТ ЗАМЕНУ МОДУЛЯ.
+   *
+   * Наполнение нового модуля считает `defaultFill` — и правильно
+   * делает: полки и ящики принадлежат варианту, а старые у нового
+   * модуля означали бы мебель, которой цех не сделает. Но ручка лежит
+   * в том же `fill` (слой 41), и вместе с наполнением терялась она:
+   * дизайнер перебирает варианты подряд, и выбранный профиль пропадал
+   * на первом же нажатии.
+   *
+   * Поэтому выбор человека едет ОТДЕЛЬНО от наполнения и возвращается
+   * туда, где наполнение и рождается. Ключ — идентификатор модуля: он
+   * выводится из позиции, а замена позицию сохраняет, поэтому после
+   * `reindex` он тот же (ловушка 291). Не совпал — ручка просто не
+   * переехала, как и до этой правки.
+   */
+  const keptHandles = new Map<
+    string,
+    Pick<ModuleFill, 'handleLevel' | 'handleTurn' | 'handlePlace'>
+  >();
+
+  /** Вернуть наполнению ручку, выбранную для этого места. */
+  const withKeptHandle = (unit: Module, fill: ModuleFill): ModuleFill => {
+    const kept = keptHandles.get(unit.id);
+    return kept ? { ...fill, ...kept } : fill;
+  };
   const warnings: string[] = [];
 
   const zone = requirements.zone ?? run.zone ?? 'kitchen';
@@ -307,19 +334,7 @@ export function applyOps({
    * впервые. Второго расчёта «где можно» не появляется, и участок
    * модуля выводится из его смещения: своего поля у него нет.
    */
-  const spansNow = () =>
-    upperSpans(
-      modules,
-      run.lengthMm,
-      /*
-       * Проёмы ряда: ригели живут на РЯДУ (слой 44), окна приходят
-       * замером. Тот же набор, что уходит в `buildUpperRow` ниже.
-       */
-      [...openings.filter((opening) => opening.kind !== 'beam'), ...(run.beams ?? [])],
-      { ...requirements, options },
-      run.ceilingHeightMm,
-      run.production,
-    );
+  const spansNow = () => upperSpansOfRun(run, modules, openings, requirements, options);
 
   /** Участок, в котором модуль стоит ЛЕВЫМ КРАЕМ. */
   const spanAt = (
@@ -538,6 +553,34 @@ export function applyOps({
     );
   };
 
+  /**
+   * ВСТАНЕТ ЛИ МОДУЛЬ ЛЕВЫМ КРАЕМ НА ЭТУ ОТМЕТКУ ВИСЯЩЕГО РЯДА.
+   *
+   * Вопрос другой, чем у `noRoomAfter`: там место задаёт сосед, здесь —
+   * сама отметка, и она может стоять вплотную к окну. Отказ называет,
+   * что мешает: преграда под отметкой, занятое место или край участка.
+   * Сам ряд при этом раскладывает `placeInSpans`, как и всякую правку.
+   */
+  const noRoomAt = (at: number, widthMm: number, row: Module[]): string | null => {
+    const { free, blockers } = spansNow();
+    const span = spanAt(at, free);
+    if (!span) {
+      const here = blockers.find((b) => b.from <= at && at < b.to)?.reason ?? 'край стены';
+      return `Модуль ${widthMm} мм сюда не встаёт: на отметке ${at} мм ${here}.`;
+    }
+
+    const taken = row.find((unit) => unit.offsetMm <= at && at < unit.offsetMm + unit.widthMm);
+    if (taken) {
+      return `Здесь стоит «${taken.label}»: отметка ${at} мм занята.`;
+    }
+
+    if (at + widthMm <= span.to) return null;
+    return (
+      `Модуль ${widthMm} мм сюда не встаёт: до края участка ` +
+      `${Math.max(0, span.to - at)} мм — справа ${blockerAfter(span.to, blockers)}.`
+    );
+  };
+
   /** Правка ложится на модуль верхнего ряда — как у нижнего и у антресоли. */
   const editUpper = (id: string, change: (unit: Module) => Module): boolean => {
     const at = upperModules.findIndex((m) => m.id === id);
@@ -560,6 +603,54 @@ export function applyOps({
     if (at < 0) return false;
     mezzModules = mezzModules.map((unit, i) => (i === at ? change(unit) : unit));
     return true;
+  };
+
+  /**
+   * ВСТАНЕТ ЛИ МОДУЛЬ НИЖНЕГО РЯДА ТАКОЙ ШИРИНЫ НА СВОЁ МЕСТО.
+   *
+   * Одно правило на две операции, которые меняют ширину: `set_width` и
+   * `replace_module`. Пока оно жило внутри `set_width`, замена с другой
+   * шириной шла мимо него — и в свободной сборке широкий модуль наезжал
+   * на соседа, а `assertRunFits` роняла всю правку исключением с
+   * внутренним идентификатором вместо отказа, который можно пересказать
+   * клиенту («base-0 заканчивается на 700 мм»).
+   *
+   * Проверок две, и обе нужны:
+   *   стена — в шаблоне соседи ужмутся (`widthOverflowMm`), в свободной
+   *   сборке сумма считается по ФАКТИЧЕСКИМ ширинам;
+   *   сосед — в свободной сборке между модулями бывает пустота, и
+   *   «в стену помещается» не значит «здесь помещается».
+   *
+   * Возвращает отказ словами и числом либо `null`.
+   */
+  const bottomWidthRefusal = (at: number, wanted: number): string | null => {
+    const unit = modules[at];
+
+    const over =
+      requirements.mode === 'free'
+        ? modules.reduce((sum, m) => sum + m.widthMm, 0) - unit.widthMm + wanted - run.lengthMm
+        : widthOverflowMm({ modules, lengthMm: run.lengthMm }, unit.id, wanted, MIN_WIDTH);
+    if (over > 0) {
+      return `${wanted} мм не помещается: ряд длиннее стены на ${over} мм.`;
+    }
+
+    if (requirements.mode === 'free') {
+      const grown = { ...unit, widthMm: wanted };
+      const conflict = moveConflict(
+        modules.map((m) => (m.id === grown.id ? grown : m)),
+        grown.id,
+        grown.offsetMm,
+        run.lengthMm,
+      );
+      if (conflict) {
+        return (
+          `${wanted} мм не встают: справа «${conflict.blockedBy.label}», ` +
+          `не хватает ${conflict.overlapMm} мм.`
+        );
+      }
+    }
+
+    return null;
   };
 
   for (const op of ops) {
@@ -599,17 +690,23 @@ export function applyOps({
         if (afterMezz >= 0) {
           const widthMm = Math.max(MIN_WIDTH, Math.round(op.widthMm ?? MIN_WIDTH));
           const neighbour = mezzModules[afterMezz];
+          /* Отметка задана — сосед только называет ряд. */
+          const at =
+            op.atMm !== undefined ? Math.round(op.atMm) : neighbour.offsetMm + neighbour.widthMm;
           const fresh: Module = {
             ...neighbour,
-            id: moduleId('mezz', neighbour.offsetMm + neighbour.widthMm, undefined, run.wallId),
-            offsetMm: neighbour.offsetMm + neighbour.widthMm,
+            id: moduleId('mezz', at, undefined, run.wallId),
+            offsetMm: at,
             widthMm,
             variant: undefined,
             front: undefined,
             fill: undefined,
           };
 
-          const noRoom = noRoomAfter(neighbour, widthMm);
+          const noRoom =
+            op.atMm !== undefined
+              ? noRoomAt(at, widthMm, mezzModules)
+              : noRoomAfter(neighbour, widthMm);
           if (noRoom) {
             warnings.push(noRoom);
             break;
@@ -618,7 +715,7 @@ export function applyOps({
           placeMezz(
             [
               ...mezzModules.slice(0, afterMezz + 1),
-              fresh,
+              op.variant ? applyVariant(fresh, op.variant) : fresh,
               ...mezzModules.slice(afterMezz + 1),
             ],
             `Модуль ${widthMm} мм`,
@@ -633,10 +730,13 @@ export function applyOps({
         if (afterUpper >= 0) {
           const widthMm = Math.max(MIN_WIDTH, Math.round(op.widthMm ?? MIN_WIDTH));
           const neighbour = upperModules[afterUpper];
+          /* Отметка задана — сосед только называет ряд. */
+          const at =
+            op.atMm !== undefined ? Math.round(op.atMm) : neighbour.offsetMm + neighbour.widthMm;
           const fresh: Module = {
             ...neighbour,
-            id: moduleId('upper', neighbour.offsetMm + neighbour.widthMm, undefined, run.wallId),
-            offsetMm: neighbour.offsetMm + neighbour.widthMm,
+            id: moduleId('upper', at, undefined, run.wallId),
+            offsetMm: at,
             widthMm,
             kind: 'upper',
             appliance: undefined,
@@ -652,7 +752,10 @@ export function applyOps({
            * правее, ВНУТРИ ЕГО УЧАСТКА. Не влезло — отказ с числом, а не
            * выброшенный сосед.
            */
-          const noRoomUp = noRoomAfter(neighbour, widthMm);
+          const noRoomUp =
+            op.atMm !== undefined
+              ? noRoomAt(at, widthMm, upperModules)
+              : noRoomAfter(neighbour, widthMm);
           if (noRoomUp) {
             warnings.push(noRoomUp);
             break;
@@ -661,7 +764,7 @@ export function applyOps({
           placeUpper(
             [
               ...upperModules.slice(0, afterUpper + 1),
-              fresh,
+              op.variant ? applyVariant(fresh, op.variant) : fresh,
               ...upperModules.slice(afterUpper + 1),
             ],
             `Модуль ${widthMm} мм`,
@@ -721,7 +824,36 @@ export function applyOps({
          * в первый подходящий слева направо.
          */
         if (requirements.mode === 'free') {
-          const at0 = placementFor(modules, run.lengthMm, width, op.afterModuleId);
+          /*
+           * ОТМЕТКА СИЛЬНЕЕ ПОИСКА МЕСТА.
+           *
+           * Человек показал пустоту пальцем — ставим туда, а не «в первую
+           * подходящую слева направо»: поиск места молча уводит модуль в
+           * другую пустоту, если в показанной он не помещается. Занято —
+           * отказ с числом, тем же `moveConflict`, которым отказывает
+           * перенос.
+           */
+          const at0 =
+            op.atMm !== undefined
+              ? Math.max(0, Math.round(op.atMm))
+              : placementFor(modules, run.lengthMm, width, op.afterModuleId);
+
+          if (at0 !== null && op.atMm !== undefined) {
+            /*
+             * У пробного модуля СВОЙ идентификатор. Готовый выведен из
+             * отметки 0 (`makePlainModule`) и совпадает с модулем, который
+             * стоит у края: `moveConflict` ищет двигаемого по id и
+             * исключает всех с этим id — и мерил бы чужую ширину, не видя
+             * настоящего соседа. Проба никуда не записывается.
+             */
+            const probe = { ...created, id: `${created.id}:проба`, offsetMm: at0, widthMm: width };
+            const clash = moveConflict([...modules, probe], probe.id, at0, run.lengthMm);
+            if (clash) {
+              warnings.push(moveRefusal(clash));
+              break;
+            }
+          }
+
           if (at0 === null) {
             warnings.push(
               `Некуда поставить модуль ${width} мм: ` +
@@ -810,20 +942,33 @@ export function applyOps({
 
           /*
            * Ручка живёт в `fill` рядом с направлением открывания (слой
-           * 41). Наполнение у нового модуля своё, поэтому переносим
-           * ровно выбор человека — высоту и поворот планки.
+           * 41). Наполнение у нового модуля своё и считается ниже, в
+           * `defaultFill`, — поэтому выбор человека откладывается и
+           * возвращается туда же, где наполнение рождается.
            */
           const handle = unit.fill;
-          return handle && dressed.fill
-            ? {
-                ...dressed,
-                fill: {
-                  ...dressed.fill,
-                  handleLevel: handle.handleLevel,
-                  handleTurn: handle.handleTurn,
-                  handlePlace: handle.handlePlace,
-                },
-              }
+          if (
+            handle &&
+            (handle.handleLevel !== undefined ||
+              handle.handleTurn !== undefined ||
+              handle.handlePlace !== undefined)
+          ) {
+            /*
+             * Ключ — идентификатор ЗАМЕНЯЕМОГО модуля, а не нового: у
+             * нового он выведен из отметки 0 (`makePlainModule`) и до
+             * `reindex` ничего не значит. Замена отметку сохраняет,
+             * поэтому после `reindex` модуль получает ровно тот же
+             * идентификатор, что был (ловушка 291).
+             */
+            keptHandles.set(op.moduleId, {
+              handleLevel: handle.handleLevel,
+              handleTurn: handle.handleTurn,
+              handlePlace: handle.handlePlace,
+            });
+          }
+
+          return dressed.fill
+            ? { ...dressed, fill: withKeptHandle(dressed, dressed.fill) }
             : dressed;
         };
 
@@ -841,7 +986,25 @@ export function applyOps({
           warnings.push(`Модуль ${op.moduleId} не найден.`);
           break;
         }
-        modules[at] = swap(modules[at]);
+
+        /*
+         * ДРУГАЯ ШИРИНА — ТО ЖЕ ПРАВИЛО, ЧТО У `set_width`.
+         *
+         * Замена несёт ширину с собой (библиотека предлагает «Карго 300»
+         * на месте дверцы 600), и мимо проверки помещаемости она
+         * проходить не вправе: широкий вариант в свободной сборке
+         * наезжал на соседа, и правку роняло исключение.
+         */
+        const replaced = swap(modules[at]);
+        if (replaced.widthMm !== modules[at].widthMm) {
+          const refusedWidth = bottomWidthRefusal(at, replaced.widthMm);
+          if (refusedWidth) {
+            warnings.push(refusedWidth);
+            break;
+          }
+        }
+
+        modules[at] = replaced;
         break;
       }
 
@@ -956,54 +1119,14 @@ export function applyOps({
         }
 
         /*
-         * ПРОВЕРКА ПОМЕЩАЕМОСТИ РАЗНАЯ В ДВУХ РЕЖИМАХ.
-         *
-         * `widthOverflowMm` считает МИНИМАЛЬНО возможную сумму: техника и
-         * пеналы держат габарит, обычные модули ужимаются до `MIN_WIDTH`.
-         * Это верно для шаблона — там `rebalance` действительно ужмёт
-         * соседей и всё сойдётся.
-         *
-         * В свободной сборке соседей никто не трогает, и та же проверка
-         * пропускала правку, после которой ряд вылезал за стену: дальше
-         * `assertRunFits` роняла ВСЮ правку исключением — то есть рабочее
-         * место человека — вместо отказа с числом. Поэтому здесь сумма
-         * считается по фактическим ширинам.
+         * Помещаемость — одно правило на ширину и на замену
+         * (`bottomWidthRefusal`): стена в обоих режимах, сосед — в
+         * свободной сборке.
          */
-        const over =
-          requirements.mode === 'free'
-            ? modules.reduce((sum, m) => sum + m.widthMm, 0) -
-              modules[at].widthMm +
-              wanted -
-              run.lengthMm
-            : widthOverflowMm({ modules, lengthMm: run.lengthMm }, op.moduleId, wanted, MIN_WIDTH);
-        if (over > 0) {
-          warnings.push(`${wanted} мм не помещается: ряд длиннее стены на ${over} мм.`);
+        const refusedWidth = bottomWidthRefusal(at, wanted);
+        if (refusedWidth) {
+          warnings.push(refusedWidth);
           break;
-        }
-
-        /*
-         * И НЕ НАЕЗЖАЕТ НА СОСЕДА.
-         *
-         * Проверка выше отвечает только за стену: в свободной сборке
-         * между модулями бывает пустое место, и «в стену помещается» не
-         * значит «здесь помещается». Растущий модуль съел бы соседа,
-         * а `assertRunFits` уронила бы всю правку исключением.
-         */
-        if (requirements.mode === 'free') {
-          const grown = { ...modules[at], widthMm: wanted };
-          const conflict = moveConflict(
-            modules.map((m) => (m.id === grown.id ? grown : m)),
-            grown.id,
-            grown.offsetMm,
-            run.lengthMm,
-          );
-          if (conflict) {
-            warnings.push(
-              `${wanted} мм не встают: справа «${conflict.blockedBy.label}», ` +
-                `не хватает ${conflict.overlapMm} мм.`,
-            );
-            break;
-          }
         }
 
         modules[at] = { ...modules[at], widthMm: wanted };
@@ -2035,7 +2158,9 @@ export function applyOps({
     beams: run.beams,
   };
   modules = modules.map((unit, i) => {
-    if (!unit.fill) return { ...unit, fill: defaultFill(unit, shell, i, modules.length) };
+    if (!unit.fill) {
+      return { ...unit, fill: withKeptHandle(unit, defaultFill(unit, shell, i, modules.length)) };
+    }
 
     /*
      * СТОРОНА ПЕТЕЛЬ ВЫВОДИТСЯ ИЗ МЕСТА В РЯДУ, а не запоминается.
@@ -2244,7 +2369,10 @@ export function applyOps({
 
       return painted.fill
         ? painted
-        : { ...painted, fill: defaultFill(painted, shell, i, segment.modules.length) };
+        : {
+            ...painted,
+            fill: withKeptHandle(painted, defaultFill(painted, shell, i, segment.modules.length)),
+          };
     }),
   }));
 
@@ -2404,7 +2532,15 @@ export function applyOps({
     nextRun.upperSegments = nextRun.upperSegments.map((segment) => ({
       ...segment,
       modules: segment.modules.map((unit, i) =>
-        unit.fill ? unit : { ...unit, fill: defaultFill(unit, nextRun, i, segment.modules.length) },
+        unit.fill
+          ? unit
+          : {
+              ...unit,
+              fill: withKeptHandle(
+                unit,
+                defaultFill(unit, nextRun, i, segment.modules.length),
+              ),
+            },
       ),
     }));
   }

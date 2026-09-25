@@ -78,6 +78,12 @@ export default function EstimateSheet({
         </span>
         <span
           key={estimate.total}
+          /*
+           * Итог числом, без пробелов разрядов: приёмка сверяет его с
+           * разницей на карточке библиотеки ДО ТЕНГЕ, а разбирать
+           * отформатированную строку значит мерить форматирование.
+           */
+          data-estimate-total={Math.round(estimate.total)}
           className="mw-num mw-value-flash whitespace-nowrap text-[22px] font-semibold"
         >
           {formatMoney(estimate.total)} ₸

@@ -34,6 +34,15 @@ const server = spawn('npx.cmd', ['next', 'start', '-p', String(PORT)], {
   env: { ...process.env, SITE_PASSWORD: '' },
 });
 
+let failed = 0;
+const check = (name, ok, detail = '') => {
+  if (ok) console.log(`  ok   ${name}${detail ? `  ${detail}` : ''}`);
+  else {
+    failed += 1;
+    console.log(`  FAIL ${name}${detail ? `  ${detail}` : ''}`);
+  }
+};
+
 const until = async (fn, ms = 90_000) => {
   const end = Date.now() + ms;
   while (Date.now() < end) { if (await fn()) return true; await sleep(300); }
@@ -64,6 +73,7 @@ try {
   await sleep(10_000);
   const idle1 = await frames();
   console.log(`покой: ${idle1 - idle0} кадров за 10 с`);
+  check('в покое сцена не рисует ни кадра', idle0 >= 0 && idle1 - idle0 === 0, `${idle1 - idle0} за 10 с`);
 
   /* Минута работы: ракурсы, открывание, клики, материалы, вращение. */
   const start = Date.now();
@@ -113,10 +123,64 @@ try {
   const to = await frames();
   console.log(`минута работы: ${to - from} кадров, ${actions} действий`);
 
+  /*
+   * ПОКОЙ С ОТКРЫТОЙ БИБЛИОТЕКОЙ И НАРИСОВАННЫМИ КАРТИНКАМИ.
+   *
+   * Картинки карточек рисует СВОЙ отрисовщик, вне цикла сцены, а цены
+   * считаются пересчётом сметы. Ни то ни другое не имеет права крутить
+   * видимую сцену: панель открыта рядом с ней, и каждый лишний кадр —
+   * это батарея планшета на встрече.
+   */
+  await page.locator('[data-schematic-tab="front"]').click();
+  await sleep(1500);
+  const picked = await page.evaluate(() => {
+    const g = [...document.querySelectorAll('[data-module-id]')].find((n) =>
+      /^base-\d+$/.test((n.getAttribute('data-module-id') || '').split('@')[0]),
+    );
+    g?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    return g ? g.getAttribute('data-module-id') : null;
+  });
+  if (!picked) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: на схеме нет обычного модуля нижнего ряда');
+  await until(async () => (await page.locator('[data-library="1"] [data-card] img').count()) > 0, 30_000);
+
+  await page.locator('[data-schematic-tab="scene"]').click();
+  await sleep(2500);
+  const toggle = page.locator('[data-panel-toggle]');
+  if ((await toggle.count()) > 0 && /Показать/.test(await toggle.first().innerText())) {
+    await toggle.first().click();
+    await sleep(1500);
+  }
+
+  const pictures = await page.locator('[data-library="1"] [data-card] img').count();
+  const panelVisible = await page.locator('[data-library="1"]').isVisible();
+  check(
+    'библиотека открыта рядом со сценой и картинки нарисованы',
+    panelVisible && pictures > 0,
+    `модуль ${picked} · картинок ${pictures} · панель ${panelVisible ? 'видна' : 'НЕ ВИДНА'}`,
+  );
+
+  /* Дорисовка видимых карточек — это работа; покой начинается после. */
+  await sleep(3000);
+  const rest0 = await frames();
+  await sleep(10_000);
+  const rest1 = await frames();
+  console.log(`покой с библиотекой: ${rest1 - rest0} кадров за 10 с`);
+  check(
+    'с открытой библиотекой и картинками сцена в покое не рисует ни кадра',
+    rest0 >= 0 && rest1 - rest0 === 0,
+    `${rest1 - rest0} за 10 с`,
+  );
+
   const scene = await page.evaluate(() => (window.__mwScene ? window.__mwScene() : null));
   console.log(`объекты: вызовов ${scene.calls}, мешей ${scene.scene.meshes}, треугольников ${scene.triangles}`);
+} catch (error) {
+  failed += 1;
+  console.log(`  FAIL ${error instanceof Error ? error.message : String(error)}`);
 } finally {
   await browser?.close();
   server.kill();
   try { execSync(`taskkill /PID ${server.pid} /T /F`, { stdio: 'ignore' }); } catch {}
 }
+
+console.log(`ПАДЕНИЙ: ${failed}`);
+process.exit(failed === 0 ? 0 : 1);

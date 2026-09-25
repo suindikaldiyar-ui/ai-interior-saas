@@ -16,7 +16,9 @@ import {
 import { sectionSpec } from '@/lib/millwork/sections';
 import { runPlaces } from '@/lib/millwork/cabinetBoxes';
 import { moveConflict } from '@/lib/millwork/freeRun';
-import { reorderTarget, rowOfModule } from '@/lib/millwork/selection';
+import { reorderTarget, rowOfModule, type RunRow } from '@/lib/millwork/selection';
+import type { LibraryGap } from '@/lib/millwork/moduleLibrary';
+import { currentVariant } from '@/lib/millwork/moduleVariants';
 import { moduleSwatch } from '@/lib/millwork/frontSwatch';
 import { frontOf } from '@/lib/millwork/frontMaterial';
 import { hasFacade } from '@/lib/millwork/applianceFront';
@@ -73,6 +75,22 @@ type Props = {
   assumedTotal?: boolean;
   selectedModuleId?: string | null;
   onSelect?: (moduleId: string) => void;
+  /**
+   * ПУСТОЕ МЕСТО В РЯДУ — ТОЖЕ МЕСТО.
+   *
+   * Свободная сборка начинается с пустой стены, и нажимать там не на
+   * что: модулей нет вовсе. Промежуток между модулями — тот же случай:
+   * человек видит дырку и хочет поставить туда шкаф, а нажать может
+   * только по соседям.
+   *
+   * Пустоты приходят ГОТОВЫМИ (`libraryGaps`). Чертёж сам их не ищет: у
+   * него нет ни окон, ни требований ряда, и своя догадка «между
+   * модулями пусто» назвала пустым местом окно.
+   */
+  gaps?: LibraryGap[];
+  onSelectGap?: (gap: LibraryGap) => void;
+  /** Какое пустое место выбрано: подсвечивается так же, как модуль. */
+  selectedGap?: { fromMm: number; row: RunRow } | null;
   /** Идентификаторы модулей, ширина которых только что изменилась. */
   changedIds?: string[];
   mode?: DrawingMode;
@@ -660,6 +678,9 @@ export default function ElevationDrawing({
   assumedTotal = false,
   selectedModuleId,
   onSelect,
+  gaps = [],
+  onSelectGap,
+  selectedGap = null,
   changedIds = [],
   mode = 'fronts',
   onFillChange,
@@ -775,6 +796,34 @@ export default function ElevationDrawing({
     }
     return map;
   }, [run]);
+
+  /**
+   * ПУСТЫЕ МЕСТА РЯДА, УЖЕ С ВЫСОТАМИ.
+   *
+   * Где пусто, решила библиотека; здесь только ВЫСОТА полосы — это
+   * рисунок, а не раскладка. Её задаёт сосед по ряду: у верхнего ряда
+   * отметку навески знает `runPlaces`, у антресоли она своя. Пустой
+   * стене сосед не нужен — там ряд один, нижний.
+   */
+  const gapTargets = useMemo(() => {
+    if (!onSelectGap || compact) return [];
+
+    return gaps.map((gap) => {
+      const sample =
+        gap.row === 'base'
+          ? undefined
+          : run.upperSegments
+              .flatMap((segment) => segment.modules)
+              .find((unit) => rowOfModule(run, unit.id)?.row === gap.row);
+      const place = sample ? placeOf.get(sample.id) : undefined;
+
+      return {
+        ...gap,
+        topMm: place ? place.topMm : workTop,
+        bottomMm: place ? place.bottomMm : 0,
+      };
+    });
+  }, [gaps, run, onSelectGap, compact, placeOf, workTop]);
 
   /** Верх и низ модуля секционной зоны: у каждой секции своя высота. */
   const sectionBounds = (unit: Module, isUpper: boolean): { top: number; bottom: number } => {
@@ -1197,6 +1246,13 @@ export default function ElevationDrawing({
          * ширины экрана — по нему «ширины те же» не докажешь.
          */
         data-module-width={compact ? undefined : unit.widthMm}
+        /*
+         * ЧЕМ МОДУЛЬ СТАЛ — для приёмки библиотеки: замена обязана
+         * поменять начинку, не трогая место, а идентификатор при этом
+         * прежний (он выводится из позиции). Сверить «тип сменился»
+         * по одному id нельзя.
+         */
+        data-module-variant={compact ? undefined : currentVariant(unit)}
         /*
          * ОТМЕТКИ, ПО КОТОРЫМ МОДУЛЬ НАРИСОВАН — ПРИБОР, А НЕ УКРАШЕНИЕ.
          *
@@ -1794,6 +1850,74 @@ export default function ElevationDrawing({
           0 мм от угла
         </text>
       </g>
+
+      {/*
+        * ПУСТЫЕ МЕСТА — ПОД МОДУЛЯМИ И ПОД ГРАНИЦАМИ.
+        *
+        * Промежутки с модулями не пересекаются, но нарисованные ПОСЛЕ
+        * них они перехватывали бы нажатия у границ ширины, которые
+        * лежат ровно на стыке (та же ловушка 85, из-за которой полка
+        * переставала тянуться).
+        */}
+      {onSelectGap && !compact && (
+        <g data-gaps={gapTargets.length}>
+          {gapTargets.map((gap) => {
+            const gx = padLeft + gap.fromMm * scale;
+            const gw = gap.widthMm * scale;
+            const gyTop = yOf(gap.topMm);
+            const gh = yOf(gap.bottomMm) - gyTop;
+            const chosen =
+              selectedGap?.row === gap.row && selectedGap?.fromMm === gap.fromMm;
+
+            return (
+              <g
+                key={`gap-${gap.row}-${gap.fromMm}`}
+                data-gap-from={gap.fromMm}
+                data-gap-width={gap.widthMm}
+                data-gap-row={gap.row}
+                onClick={() =>
+                  onSelectGap({ fromMm: gap.fromMm, widthMm: gap.widthMm, row: gap.row })
+                }
+                style={{ cursor: 'pointer' }}
+              >
+                {/*
+                  * ПОДСКАЗКА — ОДНОЙ СТРОКОЙ, А НЕ ТЕКСТОМ С ВСТАВКАМИ.
+                  *
+                  * Серверная отрисовка React выбрасывает детей `<title>`,
+                  * если их больше одного: на сервере выходил пустой
+                  * `<title></title>`, в браузере — с текстом, и гидратация
+                  * падала целиком (ошибка #418, семь раз за загрузку).
+                  */}
+                <title>{`Пусто ${gap.widthMm} мм — нажмите, чтобы поставить модуль`}</title>
+                <rect x={gx} y={gyTop} width={gw} height={gh} fill="transparent" />
+                <rect
+                  x={gx}
+                  y={gyTop}
+                  width={gw}
+                  height={gh}
+                  fill="none"
+                  stroke="var(--blueprint)"
+                  strokeWidth={(chosen ? 1.4 : 0.6) * k}
+                  strokeDasharray={`${6 * k} ${5 * k}`}
+                  opacity={chosen ? 1 : 0.45}
+                />
+                {gw > 40 && gh > 24 && (
+                  <text
+                    x={gx + gw / 2}
+                    y={gyTop + gh / 2}
+                    textAnchor="middle"
+                    fontSize={11 * k}
+                    fill="var(--blueprint)"
+                    opacity={0.7}
+                  >
+                    {`пусто ${gap.widthMm}`}
+                  </text>
+                )}
+              </g>
+            );
+          })}
+        </g>
+      )}
 
       <g opacity={overlay ? 0.55 : 1}>
         {run.modules.map((m) => renderModule(m, false))}

@@ -41,6 +41,7 @@ import type {
   ModuleKind,
   Opening,
   Run,
+  RunOptions,
   RunRequirements,
   SectionKind,
   UpperSegment,
@@ -1298,6 +1299,37 @@ function blockingOpenings(
 
 /** Что перекрывает верхний ряд и КАК ЭТО НАЗЫВАЕТСЯ человеку. */
 export type UpperBlocker = { from: number; to: number; reason: string };
+
+/**
+ * УЧАСТКИ ВИСЯЩЕГО РЯДА ДЛЯ ГОТОВОГО РЯДА.
+ *
+ * `upperSpans` спрашивают двое: движок, когда укладывает верхний ряд и
+ * антресоль (`placeInSpans`), и библиотека, когда ищет в них пустое
+ * место. Спрашивать обязаны ОДИНАКОВО: окна из замера, ригели с ряда,
+ * опции ряда поверх требований. Собери аргументы в двух местах — и
+ * библиотека предложит поставить шкаф туда, где движок его не примет:
+ * ровно так пустым местом называлось окно.
+ */
+export function upperSpansOfRun(
+  run: Pick<Run, 'lengthMm' | 'beams' | 'ceilingHeightMm' | 'production'>,
+  baseModules: Module[],
+  openings: Opening[],
+  requirements: RunRequirements,
+  options: RunOptions,
+): { free: { from: number; to: number }[]; blockers: UpperBlocker[] } {
+  return upperSpans(
+    baseModules,
+    run.lengthMm,
+    /*
+     * Проёмы ряда: ригели живут на РЯДУ (слой 44), окна приходят
+     * замером. Тот же набор, что уходит в `buildUpperRow`.
+     */
+    [...openings.filter((opening) => opening.kind !== 'beam'), ...(run.beams ?? [])],
+    { ...requirements, options },
+    run.ceilingHeightMm,
+    run.production,
+  );
+}
 
 /**
  * ГДЕ ВЕРХНИЙ РЯД МОЖЕТ СТОЯТЬ — ОДИН ОТВЕТ НА ПРОДУКТ.

@@ -122,10 +122,19 @@ import {
   typicalColorItem,
 } from '../lib/millwork/palette';
 import { frontKey, frontOf } from '../lib/millwork/frontMaterial';
-import { reorderTarget } from '../lib/millwork/selection';
+import { reorderTarget, rowOfModule } from '../lib/millwork/selection';
 import { cornerBandMm, cornerFillerMm } from '../lib/millwork/composition';
-import { upperSpans } from '../lib/millwork/layout';
+import { upperSpans, upperSpansOfRun } from '../lib/millwork/layout';
 import { CORNER_FILLER_PANEL_NAME } from '../lib/millwork/panels';
+import {
+  gapsOfRow,
+  libraryCards,
+  libraryGaps,
+  libraryLock,
+  priceDeltaOf,
+  widthsFor,
+  type LibraryCard,
+} from '../lib/millwork/moduleLibrary';
 import { counterSlabDepthMm, rowStandardDepthMm } from '../lib/millwork/fill';
 import { carcassHeightMm } from '../lib/millwork/shop';
 import { handleSpotOf } from '../lib/millwork/handlePlace';
@@ -17660,6 +17669,894 @@ console.log('\n' + 'Висящий ряд: правка не теряет мод
       'и при этом ряд не потерял модулей',
       after.length === start.upper.length,
       `${start.upper.length} → ${after.length}`,
+    );
+  }
+}
+
+
+/* ───────────────────  Слой 49: библиотека модулей  ─────────────────── */
+
+console.log('\nБиблиотека модулей: что встаёт на это место');
+{
+  /*
+   * Библиотека живёт в СВОБОДНОЙ СБОРКЕ: «не шаблон, собираем сами — у
+   * всех квартиры разные». Поэтому и меряем её там же, где ей работать,
+   * а не на демо-раскладке по шаблону, где `rebalance` двигает соседей
+   * по своему собственному правилу (ловушка 232).
+   */
+  const freeReq: RunRequirements = { ...REQ, mode: 'free', appliances: [] };
+  const emptyWall = buildRun({
+    lengthMm: 3800,
+    ceilingHeightMm: 2700,
+    requirements: freeReq,
+    openings: [],
+    comms: [],
+  });
+
+  const put = (run: Run, widthMm: number): Run => {
+    const gap = gapsOfRow(run, 'base', [], freeReq)[0];
+    if (!gap) throw new Error('в ряду не осталось пустого места');
+    const cards = libraryCards({
+      run,
+      requirements: freeReq,
+      openings: [],
+      moduleId: null,
+      gap,
+    });
+    const pick = cards.find((c) => !c.refusal && c.widthMm === widthMm);
+    if (!pick) throw new Error(`нет карточки шириной ${widthMm}`);
+    return applyOps({ run, requirements: freeReq, openings: [], ops: pick.ops });
+  };
+
+  /* ── Пустая стена: ряд пустой, смета не падает и равна нулю ── */
+  check(
+    'пустая стена даёт ряд без модулей',
+    emptyWall.modules.length === 0 && emptyWall.upperSegments.length === 0,
+    `модулей ${emptyWall.modules.length} · остаток ${emptyWall.residualMm} мм`,
+  );
+
+  const emptyEstimate = buildEstimate(emptyWall, 'optimal', DEMO_RATES);
+  check(
+    'смета пустой стены считается и равна нулю',
+    emptyEstimate.total === 0,
+    `${emptyEstimate.total} ₸`,
+  );
+
+  /*
+   * ПУСТОЙ РЯД — ЭТО МЕСТО, А НЕ ПОЛОМКА. Библиотека обязана на нём
+   * что-то предложить: иначе собрать стену нечем вовсе.
+   */
+  const firstGap = gapsOfRow(emptyWall, 'base', [], freeReq);
+  check(
+    'у пустой стены ровно одно пустое место — она сама',
+    firstGap.length === 1 &&
+      firstGap[0].fromMm === 0 &&
+      firstGap[0].widthMm === emptyWall.lengthMm,
+    JSON.stringify(firstGap),
+  );
+
+  const startCards = libraryCards({
+    run: emptyWall,
+    requirements: freeReq,
+    openings: [],
+    moduleId: null,
+    gap: firstGap[0],
+  });
+  check(
+    'на пустую стену библиотека предлагает модули, и все они встают',
+    startCards.length > 0 && startCards.every((c) => !c.refusal),
+    `карточек ${startCards.length}, отказов ${startCards.filter((c) => c.refusal).length}`,
+  );
+
+  /* ── Вставка в пустоту садится на ЕЁ отметку ── */
+  let built = put(emptyWall, 600);
+  built = put(built, 450);
+  built = put(built, 600);
+
+  check(
+    'модули встали подряд от края стены',
+    built.modules.map((m) => m.offsetMm).join(' ') === '0 600 1050',
+    built.modules.map((m) => `${m.offsetMm}:${m.widthMm}`).join(' | '),
+  );
+
+  /*
+   * Пустота ПОСРЕДИ ряда: удаляем средний модуль и ставим в дырку
+   * другой. Он обязан встать на ту же отметку, а соседи — не поехать.
+   */
+  const holed = applyOps({
+    run: built,
+    requirements: freeReq,
+    openings: [],
+    ops: [{ op: 'remove_module', moduleId: built.modules[1].id }],
+  });
+  const holes = gapsOfRow(holed, 'base', [], freeReq);
+  const middle = holes.find((g) => g.fromMm === 600);
+
+  check(
+    'удалённый посреди ряда модуль оставил пустоту на своём месте',
+    Boolean(middle) && middle!.widthMm === 450,
+    middle ? `${middle.fromMm}+${middle.widthMm}` : JSON.stringify(holes),
+  );
+
+  if (middle) {
+    const intoHole = libraryCards({
+      run: holed,
+      requirements: freeReq,
+      openings: [],
+      moduleId: null,
+      gap: middle,
+    }).find((c) => !c.refusal && c.widthMm === 450);
+
+    check('в пустоту 450 мм библиотека даёт карточку', Boolean(intoHole));
+
+    if (intoHole) {
+      const filled = applyOps({
+        run: holed,
+        requirements: freeReq,
+        openings: [],
+        ops: intoHole.ops,
+      });
+      const at = filled.modules.find((m) => m.offsetMm === 600);
+
+      check(
+        'модуль встал ИМЕННО в пустоту, на её отметку',
+        Boolean(at) && at!.widthMm === 450,
+        at ? `${at.offsetMm}:${at.widthMm}` : 'МОДУЛЬ ВСТАЛ НЕ ТУДА',
+      );
+      check(
+        'соседи при вставке не поехали',
+        filled.modules.map((m) => `${m.offsetMm}:${m.widthMm}`).join(' ') ===
+          '0:600 600:450 1050:600',
+        filled.modules.map((m) => `${m.offsetMm}:${m.widthMm}`).join(' '),
+      );
+    }
+  }
+
+  /* ── Пустота в НАЧАЛЕ ряда: соседа слева нет вовсе ── */
+  {
+    /*
+     * Снимаем ДВА первых модуля: пустота встаёт на отметку 0, и соседа
+     * слева у неё нет. «Поставить за первым модулем ряда» здесь значило
+     * бы увезти мебель вправо, за чужую спину.
+     *
+     * Снимается именно два, а не один: с одним справа от первого
+     * оставшегося модуля нет места, поиск места молча уходит к краю
+     * стены — и проверка зеленеет на сломанном продукте. Так и было:
+     * откат соседа «любой модуль ряда» проходил её насквозь.
+     */
+    const headless = applyOps({
+      run: built,
+      requirements: freeReq,
+      openings: [],
+      ops: [
+        { op: 'remove_module', moduleId: built.modules[0].id },
+        { op: 'remove_module', moduleId: built.modules[1].id },
+      ],
+    });
+    const head = gapsOfRow(headless, 'base', [], freeReq).find((g) => g.fromMm === 0);
+
+    check(
+      'снятые первые модули оставили пустоту от края стены',
+      Boolean(head) && head!.widthMm === 1050,
+      head ? `${head.fromMm}+${head.widthMm}` : JSON.stringify(gapsOfRow(headless, 'base', [], freeReq)),
+    );
+
+    if (head) {
+      const card = libraryCards({
+        run: headless,
+        requirements: freeReq,
+        openings: [],
+        moduleId: null,
+        gap: head,
+      }).find((c) => !c.refusal && c.widthMm === 600);
+
+      check('в пустоту у края библиотека даёт карточку', Boolean(card));
+
+      if (card) {
+        const filled = applyOps({
+          run: headless,
+          requirements: freeReq,
+          openings: [],
+          ops: card.ops,
+        });
+        check(
+          'модуль встал у края стены, а не за соседом справа',
+          filled.modules.map((m) => `${m.offsetMm}:${m.widthMm}`).join(' ') === '0:600 1050:600',
+          filled.modules.map((m) => `${m.offsetMm}:${m.widthMm}`).join(' '),
+        );
+      }
+    }
+  }
+
+  /* ── Нестандартная пустота: карточка не обещает 650 там, где встанет 600 ── */
+  {
+    /*
+     * Нижний ряд сажает добавленный модуль на стандартную ширину
+     * (`snapToStandard`). Библиотека перебирает стандарты И ширину
+     * самой пустоты — значит в пустоте 650 мм найдётся запрос на 650,
+     * который движок исполнит как 600. Карточка обязана показывать то,
+     * что встанет, иначе клиент видит одно, а в цех едет другое.
+     */
+    const two = put(put(emptyWall, 600), 600);
+    const withThird = applyOps({
+      run: two,
+      requirements: freeReq,
+      openings: [],
+      ops: [{ op: 'add_module', kind: 'base', widthMm: 600 }],
+    });
+    /* Третий модуль уводим на 1850 — между ним и вторым остаётся 650 мм. */
+    const third = applyOps({
+      run: withThird,
+      requirements: freeReq,
+      openings: [],
+      ops: [{ op: 'move_module', moduleId: withThird.modules[2].id, offsetMm: 1850 }],
+    });
+    const oddGap = gapsOfRow(third, 'base', [], freeReq).find((g) => g.widthMm === 650);
+
+    check(
+      'в ряду есть пустота нестандартной ширины 650 мм',
+      Boolean(oddGap),
+      JSON.stringify(gapsOfRow(third, 'base', [], freeReq)),
+    );
+
+    if (oddGap) {
+      const cards = libraryCards({
+        run: third,
+        requirements: freeReq,
+        openings: [],
+        moduleId: null,
+        gap: oddGap,
+      }).filter((c) => !c.refusal);
+
+      let honest = 0;
+      const lied: string[] = [];
+      for (const card of cards) {
+        const next = applyOps({
+          run: third,
+          requirements: freeReq,
+          openings: [],
+          ops: card.ops,
+        });
+        const had = new Set(third.modules.map((m) => m.id));
+        const made = next.modules.find((m) => !had.has(m.id));
+        if (made && made.widthMm === card.widthMm) honest += 1;
+        else lied.push(`${card.key}→${made?.widthMm ?? 'нет'}`);
+      }
+
+      check(
+        'в нестандартной пустоте ширина каждой карточки равна поставленной',
+        cards.length > 0 && honest === cards.length,
+        `${honest} из ${cards.length}${lied.length ? ' · врут: ' + lied.join(' ') : ''}`,
+      );
+      check(
+        'и карточек с шириной 650 там нет — движок такую не ставит',
+        cards.every((c) => c.widthMm !== 650),
+        cards.map((c) => c.widthMm).filter((w, i, a) => a.indexOf(w) === i).join(' '),
+      );
+    }
+  }
+
+  /* ── Замена: состав, отметки, ширины, материал и ручка ── */
+  const target = built.modules[1];
+  const dressed = applyOps({
+    run: built,
+    requirements: freeReq,
+    openings: [],
+    ops: [
+      {
+        op: 'set_front',
+        moduleId: target.id,
+        front: {
+          base: 'mdf_enamel',
+          construct: 'solid',
+          finish: 'gloss',
+          colorHex: '#3A3D40',
+        },
+      },
+    ],
+  });
+  const painted = dressed.modules[1];
+  const withHandle = applyOps({
+    run: dressed,
+    requirements: freeReq,
+    openings: [],
+    ops: [
+      {
+        op: 'set_fill',
+        moduleId: painted.id,
+        fill: {
+          ...painted.fill!,
+          handleLevel: 'top',
+          handleTurn: 'vertical',
+          handlePlace: 'left-along',
+        },
+      },
+    ],
+  });
+  const before = withHandle.modules[1];
+
+  check(
+    'модуль покрашен и ручка ему задана — замену проверять есть на чём',
+    before.front?.base === 'mdf_enamel' && before.fill?.handleLevel === 'top',
+    `${before.front?.base}/${before.fill?.handleLevel}`,
+  );
+
+  const swapCard = libraryCards({
+    run: withHandle,
+    requirements: freeReq,
+    openings: [],
+    moduleId: before.id,
+  }).find((c) => !c.refusal && !c.current && c.widthMm === before.widthMm);
+
+  check('для занятого места библиотека даёт замену той же ширины', Boolean(swapCard));
+
+  if (swapCard) {
+    const swapped = applyOps({
+      run: withHandle,
+      requirements: freeReq,
+      openings: [],
+      ops: swapCard.ops,
+    });
+    const after = swapped.modules[1];
+
+    check(
+      'замена не меняет число модулей в ряду',
+      swapped.modules.length === withHandle.modules.length,
+      `${withHandle.modules.length} → ${swapped.modules.length}`,
+    );
+    check(
+      'отметки и ширины соседей после замены те же',
+      swapped.modules.map((m) => `${m.offsetMm}:${m.widthMm}`).join(' ') ===
+        withHandle.modules.map((m) => `${m.offsetMm}:${m.widthMm}`).join(' '),
+      `${withHandle.modules.map((m) => `${m.offsetMm}:${m.widthMm}`).join(' ')} → ` +
+        `${swapped.modules.map((m) => `${m.offsetMm}:${m.widthMm}`).join(' ')}`,
+    );
+    check(
+      'модуль действительно стал другим',
+      currentVariant(after) === swapCard.spec.kind &&
+        currentVariant(after) !== currentVariant(before),
+      `${currentVariant(before)} → ${currentVariant(after)}`,
+    );
+    /*
+     * МАТЕРИАЛ И РУЧКА ВЫБРАНЫ ДЛЯ МЕСТА, А НЕ ДЛЯ ТИПА МОДУЛЯ.
+     * Дизайнер перебирает варианты подряд; терять цвет на каждом
+     * нажатии значит выбирать его заново по десять раз.
+     */
+    check(
+      'материал фасада переехал на новый модуль',
+      after.front?.base === 'mdf_enamel' && after.front?.colorHex === '#3A3D40',
+      JSON.stringify(after.front),
+    );
+    check(
+      'ручка переехала на новый модуль',
+      after.fill?.handleLevel === 'top' &&
+        after.fill?.handleTurn === 'vertical' &&
+        after.fill?.handlePlace === 'left-along',
+      `${after.fill?.handleLevel}/${after.fill?.handleTurn}/${after.fill?.handlePlace}`,
+    );
+    /*
+     * А вот НАПОЛНЕНИЕ переезжать не должно: полки и ящики принадлежат
+     * варианту, и старые у нового модуля — это мебель, которой цех не
+     * сделает.
+     */
+    check(
+      'наполнение при этом пересчитано под новый вариант',
+      JSON.stringify(after.fill?.drawerHeights ?? []) !==
+        JSON.stringify(before.fill?.drawerHeights ?? []) ||
+        after.fill?.shelves.length !== before.fill?.shelves.length,
+      `ящиков ${before.fill?.drawerHeights.length ?? 0} → ${after.fill?.drawerHeights.length ?? 0}, ` +
+        `полок ${before.fill?.shelves.length ?? 0} → ${after.fill?.shelves.length ?? 0}`,
+    );
+  }
+
+  /* ── Цена карточки равна разнице смет до тенге ── */
+  {
+    const totalOf = (run: Run) => buildEstimate(run, 'optimal', DEMO_RATES).total;
+    const place = withHandle.modules[1];
+    const every = libraryCards({
+      run: withHandle,
+      requirements: freeReq,
+      openings: [],
+      moduleId: place.id,
+    });
+    const cards = every.filter((c) => !c.refusal);
+
+    /*
+     * ПЯТЬ КАРТОЧЕК, И ЭТО ЧИСЛО ЗАФИКСИРОВАНО. «Сколько найдётся» —
+     * это проверка, которая тихо схлопывается до нуля и остаётся
+     * зелёной.
+     */
+    check(
+      'доступных карточек хватает на пять сверок цены',
+      cards.length >= 5,
+      `доступно ${cards.length} из ${every.length}`,
+    );
+
+    /*
+     * СВЕРЯЕТСЯ ТО, ЧТО ВИДНО: итог на экране — целые тенге, и разница
+     * карточки обязана быть разницей ДВУХ ПОКАЗАННЫХ итогов. Округлённая
+     * разница неокруглённых смет расходилась с экраном на тенге — это
+     * поймал браузер (`check-library.mjs`), а эта проверка тогда
+     * считала обе стороны одной и той же неверной арифметикой.
+     */
+    const shown = (run: Run) => Math.round(totalOf(run));
+    const beforeTotal = shown(withHandle);
+    let matched = 0;
+    const seen: string[] = [];
+
+    for (const card of cards.slice(0, 5)) {
+      const promised = priceDeltaOf(
+        { run: withHandle, requirements: freeReq, openings: [] },
+        card.ops,
+        totalOf,
+        /* «До» — итог, который на экране сейчас. */
+        totalOf(withHandle),
+      );
+      const real =
+        shown(applyOps({ run: withHandle, requirements: freeReq, openings: [], ops: card.ops })) -
+        beforeTotal;
+      if (promised === real) matched += 1;
+      seen.push(`${card.key} ${promised}/${real}`);
+    }
+
+    check(
+      'разница на карточке равна разнице смет ДО ТЕНГЕ на пяти вариантах',
+      matched === 5,
+      `${matched} из 5 · ${seen.join(' · ')}`,
+    );
+  }
+
+  /* ── Не влезает: карточка серая, причина с числом, ряд цел ── */
+  {
+    /*
+     * Ряд из трёх модулей кончается на 1650 мм при стене 3800: места
+     * справа много. Чтобы получить настоящий отказ движка, набиваем
+     * стену почти целиком и просим самый широкий модуль.
+     */
+    let tight = built;
+    for (;;) {
+      const gap = gapsOfRow(tight, 'base', [], freeReq)[0];
+      if (!gap || gap.widthMm < 600) break;
+      tight = put(tight, 600);
+    }
+
+    const tail = gapsOfRow(tight, 'base', [], freeReq)[0];
+    const cards = libraryCards({
+      run: tight,
+      requirements: freeReq,
+      openings: [],
+      moduleId: tight.modules[0].id,
+    });
+    const refused = cards.filter((c) => c.refusal);
+
+    check(
+      'в забитом ряду часть карточек не встаёт',
+      refused.length > 0,
+      `отказов ${refused.length} из ${cards.length}` +
+        (tail ? ` · хвост ${tail.widthMm} мм` : ' · хвоста нет'),
+    );
+
+    if (refused.length > 0) {
+      const withNumber = refused.filter((c) => /\d/.test(c.refusal ?? ''));
+      check(
+        'отказ называет ЧИСЛО, а не «нельзя»',
+        withNumber.length === refused.length,
+        `с числом ${withNumber.length} из ${refused.length} · «${refused[0].refusal}»`,
+      );
+
+      /*
+       * Серая карточка обязана быть НЕНАЖИМАЕМОЙ и на движке тоже:
+       * применённая, она не имеет права поменять ряд.
+       */
+      const beforeRow = tight.modules.map((m) => `${m.offsetMm}:${m.widthMm}`).join(' ');
+      const tried = applyOps({
+        run: tight,
+        requirements: freeReq,
+        openings: [],
+        ops: refused[0].ops,
+      });
+      check(
+        'применённый отказ оставляет ряд прежним',
+        tried.modules.map((m) => `${m.offsetMm}:${m.widthMm}`).join(' ') === beforeRow,
+        `${beforeRow} → ${tried.modules.map((m) => `${m.offsetMm}:${m.widthMm}`).join(' ')}`,
+      );
+    }
+  }
+
+  /* ── Готовое решение: доступная карточка не двигает соседей ── */
+  {
+    /*
+     * ЭКРАН ДЕМО СОБРАН ПО ШАБЛОНУ, и там движок вправе сводить ряд со
+     * стеной (`rebalance`) — сдвигать соседей и дописывать доборную
+     * планку. Замерено до правки: у модуля на 1200 из 48 доступных
+     * карточек 44 сдвигали мойку с 1650 на 1500 мм и добавляли модуль
+     * в хвост ряда. Карточка такого делать не вправе.
+     *
+     * Меряется ТЕМ ЖЕ рядом, что показывает экран демо: `buildRun` по
+     * демо-входу.
+     */
+    const demo = buildRun(baseInput);
+    const place = demo.modules.find((m) => !m.appliance && !m.column && m.kind === 'base');
+    check('в демо-ряду есть обычный нижний модуль', Boolean(place), place?.id ?? '—');
+
+    if (place) {
+      const all = libraryCards({
+        run: demo,
+        requirements: REQ,
+        openings: OPENINGS,
+        moduleId: place.id,
+      });
+      const ready = all.filter((c) => !c.refusal);
+      const spot = (r: Run, skip: number) =>
+        r.modules
+          .filter((m) => m.offsetMm !== skip)
+          .map((m) => `${m.offsetMm}:${m.widthMm}`)
+          .join(' ');
+      const was = spot(demo, place.offsetMm);
+
+      let still = 0;
+      const broke: string[] = [];
+      for (const card of ready) {
+        const next = applyOps({ run: demo, requirements: REQ, openings: OPENINGS, ops: card.ops });
+        if (spot(next, place.offsetMm) === was) still += 1;
+        else if (broke.length < 2) broke.push(`${card.key}: ${spot(next, place.offsetMm)}`);
+      }
+
+      check(
+        'ни одна доступная карточка не двигает соседей и не добавляет модулей',
+        ready.length > 0 && still === ready.length,
+        `${still} из ${ready.length}${broke.length ? ' · двигают: ' + broke.join(' ; ') : ''}`,
+      );
+
+      /*
+       * Серые из-за соседей называют ЧИСЛО: сколько миллиметров или
+       * сколько модулей. «Не встанет» без числа пересказать нельзя.
+       */
+      const byNeighbours = all.filter((c) => /соседей|модулей/.test(c.refusal ?? ''));
+      check(
+        'карточки, после которых поехали бы соседи, серые и называют число',
+        byNeighbours.length > 0 && byNeighbours.every((c) => /\d+ мм|: \d+/.test(c.refusal ?? '')),
+        byNeighbours[0] ? `${byNeighbours.length} шт. · «${byNeighbours[0].refusal}»` : 'НИ ОДНОЙ',
+      );
+    }
+  }
+
+  /* ── Пустота висящего ряда — внутри участков, а не над окном ── */
+  {
+    /*
+     * У верхнего ряда между модулями бывают окно, колонна холодильника
+     * и выступ на потолке. Первая версия считала пустотой всё, что не
+     * занято, и схема звала поставить шкаф «в пусто 900» — ровно на
+     * окно, а над холодильником — «в пусто 3200» в полосе кладовки,
+     * которая собирается сама.
+     *
+     * Меряется ТЕМ ЖЕ рядом, что показывает экран демо, и с антресолью:
+     * у неё свои пустоты в тех же участках.
+     */
+    /*
+     * ЖИВАЯ ПУСТОТА НУЖНА НАСТОЯЩАЯ. Демо-ряд собран вплотную, и
+     * проверка «пустоты не лежат на окне» на пустом списке прошла бы
+     * сама собой. Поэтому снимаем верхний шкаф ВНУТРИ участка: на его
+     * месте остаётся законная пустота (ловушка 410), а окно слева от
+     * неё — та самая преграда, которую нельзя назвать пустым местом.
+     */
+    const dressedDemo = applyOps({
+      run: buildRun(baseInput),
+      requirements: REQ,
+      openings: OPENINGS,
+      ops: [{ op: 'set_mezzanine', heightMm: 400 }],
+    });
+    const removable = dressedDemo.upperSegments
+      .flatMap((sg) => sg.modules)
+      .find((m) => rowOfModule(dressedDemo, m.id)?.row === 'upper' && !m.appliance && m.offsetMm >= 2400);
+    if (!removable) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: в верхнем ряду демо нет шкафа правее окна');
+    const demo = applyOps({
+      run: dressedDemo,
+      requirements: REQ,
+      openings: OPENINGS,
+      ops: [{ op: 'remove_module', moduleId: removable.id }],
+    });
+    const gaps = libraryGaps(demo, OPENINGS, REQ);
+    /* Преграды — у той же функции, по которой движок укладывает ряд. */
+    const { blockers } = upperSpansOfRun(demo, demo.modules, OPENINGS, REQ, demo.options);
+
+    check(
+      'у демо-ряда есть преграды висящему ряду — проверять есть на чём',
+      blockers.length > 0,
+      blockers.map((b) => `${b.reason} ${b.from}…${b.to}`).join(' · '),
+    );
+
+    const hanging = gaps.filter((g) => g.row === 'upper' || g.row === 'mezzanine');
+    check(
+      'снятый шкаф оставил в верхнем ряду живую пустоту на своём месте',
+      hanging.some(
+        (g) => g.row === 'upper' && g.fromMm === removable.offsetMm && g.widthMm >= removable.widthMm,
+      ),
+      `снят ${removable.id}@${removable.offsetMm}(${removable.widthMm}) · пустоты: ` +
+        (hanging.map((g) => `${g.row} ${g.fromMm}+${g.widthMm}`).join(' · ') || 'НИ ОДНОЙ'),
+    );
+    const onBlocker = hanging.filter((g) =>
+      blockers.some((b) => g.fromMm < b.to && g.fromMm + g.widthMm > b.from),
+    );
+    check(
+      'ни одна пустота висящего ряда не лежит на окне, колонне или выступе',
+      onBlocker.length === 0,
+      `пустот ${hanging.length}` +
+        (onBlocker.length
+          ? ' · на преграде: ' + onBlocker.map((g) => `${g.row} ${g.fromMm}+${g.widthMm}`).join(' ')
+          : ''),
+    );
+    check(
+      'у кладовки над колонной пустот нет — она собирается сама',
+      gaps.every((g) => g.row !== 'storage'),
+      gaps.map((g) => `${g.row} ${g.fromMm}+${g.widthMm}`).join(' · ') || 'пустот нет',
+    );
+
+    /*
+     * И каждая предложенная пустота висящего ряда ПРИНИМАЕТ модуль:
+     * пустота, в которую не встаёт ничего, — это не место, а обещание.
+     */
+    let accepted = 0;
+    const idle: string[] = [];
+    for (const gap of hanging) {
+      const ready = libraryCards({
+        run: demo,
+        requirements: REQ,
+        openings: OPENINGS,
+        moduleId: null,
+        gap,
+      }).filter((c) => !c.refusal);
+      if (ready.length > 0) accepted += 1;
+      else idle.push(`${gap.row} ${gap.fromMm}+${gap.widthMm}`);
+    }
+    check(
+      'в каждую пустоту висящего ряда что-то встаёт',
+      hanging.length > 0 && accepted === hanging.length,
+      `${accepted} из ${hanging.length}${idle.length ? ' · пустые: ' + idle.join(' ') : ''}`,
+    );
+
+    /*
+     * ШКАФ ВСТАЁТ ОБРАТНО ВПЛОТНУЮ К ОКНУ — И ИМЕННО ТОТ, ЧТО ВЫБРАН.
+     *
+     * Сосед слева стоит по ту сторону окна: «за соседом» модуль въехал
+     * бы в окно. И вариант обязан доехать до модуля: вставка в висящий
+     * ряд раньше ставила простую дверцу под любым названием карточки.
+     */
+    const back = hanging.find((g) => g.row === 'upper' && g.fromMm === removable.offsetMm);
+    if (back) {
+      const upperBefore = (r: Run) =>
+        r.upperSegments
+          .flatMap((sg) => sg.modules)
+          .filter((m) => rowOfModule(r, m.id)?.row === 'upper' && m.offsetMm !== back.fromMm)
+          .map((m) => `${m.offsetMm}:${m.widthMm}`)
+          .join(' ');
+      const choice = libraryCards({
+        run: demo,
+        requirements: REQ,
+        openings: OPENINGS,
+        moduleId: null,
+        gap: back,
+      }).find((c) => !c.refusal && c.spec.kind !== 'upper_door');
+
+      check(
+        'в пустоту за окном есть не только простая дверца',
+        Boolean(choice),
+        choice ? `${choice.key}` : 'ТОЛЬКО ДВЕРЦА ИЛИ НИЧЕГО',
+      );
+
+      if (choice) {
+        const placed = applyOps({ run: demo, requirements: REQ, openings: OPENINGS, ops: choice.ops });
+        const made = placed.upperSegments
+          .flatMap((sg) => sg.modules)
+          .find((m) => rowOfModule(placed, m.id)?.row === 'upper' && m.offsetMm === back.fromMm);
+
+        check(
+          'модуль встал вплотную к окну, на отметку пустоты',
+          Boolean(made) && made!.widthMm === choice.widthMm,
+          made ? `${made.offsetMm}:${made.widthMm}` : 'НЕ ВСТАЛ',
+        );
+        check(
+          'и это именно выбранный вариант, а не простая дверца',
+          Boolean(made) && currentVariant(made!) === choice.spec.kind,
+          `${choice.spec.kind} → ${made ? currentVariant(made) : '—'}`,
+        );
+        check(
+          'остальной верхний ряд не поехал',
+          upperBefore(placed) === upperBefore(demo),
+          `${upperBefore(demo)} → ${upperBefore(placed)}`,
+        );
+      }
+    }
+  }
+
+  /* ── Ширины карточек — только те, что у варианта бывают ── */
+  {
+    /*
+     * На пустой стене библиотека предлагала «Высокое карго 1200» при
+     * пределе варианта 600 — и движок его ставил. Размер, которого не
+     * бывает, в цех уехал бы деталью. Меряются все три пути: занятое
+     * место, пустота с соседом и пустая стена.
+     */
+    const paths: [string, LibraryCard[]][] = [
+      [
+        'пустая стена',
+        libraryCards({
+          run: emptyWall,
+          requirements: freeReq,
+          openings: [],
+          moduleId: null,
+          gap: gapsOfRow(emptyWall, 'base', [], freeReq)[0],
+        }),
+      ],
+      [
+        'занятое место',
+        libraryCards({ run: built, requirements: freeReq, openings: [], moduleId: built.modules[1].id }),
+      ],
+      [
+        'пустота с соседом',
+        libraryCards({
+          run: built,
+          requirements: freeReq,
+          openings: [],
+          moduleId: null,
+          gap: gapsOfRow(built, 'base', [], freeReq).find((g) => g.fromMm > 0) ?? null,
+        }),
+      ],
+    ];
+
+    for (const [name, cards] of paths) {
+      const ready = cards.filter((c) => !c.refusal);
+      const wrong = ready.filter(
+        (c) =>
+          c.widthMm < c.spec.minWidthMm || (!c.spec.anyWidth && c.widthMm > c.spec.maxWidthMm),
+      );
+      check(
+        `${name}: ни одна доступная карточка не шире и не уже своего варианта`,
+        ready.length > 0 && wrong.length === 0,
+        `доступно ${ready.length}` +
+          (wrong.length ? ' · невозможные: ' + wrong.slice(0, 4).map((c) => c.key).join(' ') : ''),
+      );
+    }
+  }
+
+  /* ── Замки: место, которое не выбирают, объясняет себя словами ── */
+  {
+    const demo = buildRun(baseInput);
+    const fridge = demo.modules.find((m) => m.appliance === 'fridge' || m.column);
+
+    check('в демо-ряду есть приборный модуль', Boolean(fridge), fridge?.id ?? '—');
+
+    if (fridge) {
+      const lock = libraryLock({
+        run: demo,
+        requirements: REQ,
+        openings: OPENINGS,
+        moduleId: fridge.id,
+      });
+      check(
+        'у приборного модуля библиотеки нет, и это сказано словами',
+        Boolean(lock) && /прибор/i.test(lock ?? ''),
+        lock ?? 'ЗАМКА НЕТ',
+      );
+      check(
+        'и карточек он при этом не даёт вовсе',
+        libraryCards({
+          run: demo,
+          requirements: REQ,
+          openings: OPENINGS,
+          moduleId: fridge.id,
+        }).length === 0,
+      );
+    }
+
+    /*
+     * КЛАДОВКА НАД КОЛОННОЙ СОБИРАЕТСЯ САМА. Замерено до замка: она
+     * давала 67 карточек, из которых не вставала НИ ОДНА.
+     */
+    const withMezz = applyOps({
+      run: demo,
+      requirements: REQ,
+      openings: OPENINGS,
+      ops: [{ op: 'set_mezzanine', heightMm: 400 }],
+    });
+    const storage = withMezz.upperSegments
+      .flatMap((sg) => sg.modules)
+      .find((m) => rowOfModule(withMezz, m.id)?.row === 'storage');
+
+    check('в демо-ряду есть кладовка над колонной', Boolean(storage), storage?.id ?? '—');
+
+    if (storage) {
+      const lock = libraryLock({
+        run: withMezz,
+        requirements: REQ,
+        openings: OPENINGS,
+        moduleId: storage.id,
+      });
+      check(
+        'у кладовки над колонной библиотеки нет, и причина названа',
+        Boolean(lock) && /холодильник/i.test(lock ?? ''),
+        lock ?? 'ЗАМКА НЕТ',
+      );
+      check(
+        'карточек она не даёт — вместо 67, из которых не вставала ни одна',
+        libraryCards({
+          run: withMezz,
+          requirements: REQ,
+          openings: OPENINGS,
+          moduleId: storage.id,
+        }).length === 0,
+      );
+    }
+  }
+
+  /* ── Ширины: карточка не обещает того, чего движок не сделает ── */
+  {
+    /*
+     * Библиотека перебирает СТАНДАРТНЫЕ ширины плюс текущую: раскладка
+     * выдаёт и 630 мм, и предложить там только круглые числа значит
+     * заставить человека менять ширину, которую он не просил.
+     */
+    check(
+      'текущая нестандартная ширина остаётся в списке',
+      widthsFor(630).includes(630),
+      widthsFor(630).join(' '),
+    );
+    check(
+      'и список не выходит за физические границы модуля',
+      widthsFor(630).every((mm) => mm >= MIN_WIDTH && mm <= MAX_WIDTH),
+      `${widthsFor(630)[0]}…${widthsFor(630)[widthsFor(630).length - 1]}`,
+    );
+
+    const place = built.modules[1];
+    const all = libraryCards({
+      run: built,
+      requirements: freeReq,
+      openings: [],
+      moduleId: place.id,
+    });
+    const cards = all.filter((c) => !c.refusal);
+
+    let honest = 0;
+    for (const card of cards) {
+      const next = applyOps({
+        run: built,
+        requirements: freeReq,
+        openings: [],
+        ops: card.ops,
+      });
+      const made = next.modules.find((m) => m.offsetMm === place.offsetMm);
+      if (made && made.widthMm === card.widthMm) honest += 1;
+    }
+
+    check(
+      'ширина на карточке равна той, что получилась у движка',
+      honest === cards.length && cards.length > 0,
+      `${honest} из ${cards.length}`,
+    );
+
+    /*
+     * И ОДНА КАРТОЧКА НА СОЧЕТАНИЕ: два одинаковых «Дверца 600» подряд
+     * читаются как сломанная панель, а не как выбор.
+     */
+    const keys = all.map((c) => c.key);
+    check(
+      'одинаковых карточек в панели нет',
+      new Set(keys).size === keys.length,
+      `${keys.length} карточек, уникальных ${new Set(keys).size}`,
+    );
+
+    /* Доступные стоят ВЫШЕ серых: иначе нужные тонут среди отказов. */
+    const firstRefusal = all.findIndex((c) => c.refusal);
+    const lastReady = all.map((c) => Boolean(c.refusal)).lastIndexOf(false);
+    check(
+      'доступные карточки идут раньше серых',
+      firstRefusal === -1 || firstRefusal > lastReady,
+      `первый отказ на ${firstRefusal}, последняя доступная на ${lastReady}`,
+    );
+    check(
+      'а текущая стоит первой — с ней сравнивают',
+      all.length > 0 && all[0].current,
+      all[0] ? `${all[0].key} current=${all[0].current}` : 'КАРТОЧЕК НЕТ',
     );
   }
 }

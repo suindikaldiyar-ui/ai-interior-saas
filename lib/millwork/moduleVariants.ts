@@ -484,6 +484,19 @@ function overAppliance(unit: Module, run: Run, kinds: string[]): boolean {
  * варочной, карусель только в углу, а карго только там, где оно физически
  * помещается.
  */
+/**
+ * БЫВАЕТ ЛИ ВАРИАНТ ТАКОЙ ШИРИНЫ — физически, а не по вкусу.
+ *
+ * Одно правило на все места, где вариант встречается с шириной: место
+ * модуля и пустота на стене. Проверять верхнюю границу там, где она
+ * физическая: карго шире 400 не бывает, а обычная дверца бывает любой —
+ * мебель делают на заказ (`anyWidth`).
+ */
+export function variantFitsWidth(spec: ModuleVariantSpec, widthMm: number): boolean {
+  if (widthMm < spec.minWidthMm) return false;
+  return spec.anyWidth || widthMm <= spec.maxWidthMm;
+}
+
 export function variantsForModule(
   unit: Module,
   run: Run,
@@ -505,13 +518,8 @@ export function variantsForModule(
     if (spec.zones && !spec.zones.includes(zone)) return false;
     if (!spec.zones && profile.kind !== 'kitchen' && row !== 'tall') return false;
 
-    /*
-     * Ширина места: вариант, который не влезает, обещать нельзя. Верхнюю
-     * границу проверяем только там, где она физическая: карго шире 400
-     * не бывает, а обычная дверца бывает любой — мебель делают на заказ.
-     */
-    if (unit.widthMm < spec.minWidthMm) return false;
-    if (!spec.anyWidth && unit.widthMm > spec.maxWidthMm) return false;
+    /* Ширина места: вариант, который не влезает, обещать нельзя. */
+    if (!variantFitsWidth(spec, unit.widthMm)) return false;
 
     // Карусель только в углу, а в углу — только карусель.
     const corner = unit.kind === 'corner_base';
