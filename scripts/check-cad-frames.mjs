@@ -171,6 +171,70 @@ try {
     `${rest1 - rest0} за 10 с`,
   );
 
+  /*
+   * ПОКОЙ С ОТКРЫТОЙ ПАНЕЛЬЮ МАТЕРИАЛОВ (слой 51).
+   *
+   * 1825 цветов RAL в панели — это DOM, а не сцена: список рисует только
+   * видимые строки, и ни прокрутка, ни поиск не имеют права крутить
+   * кадры мебели рядом. Меряется после прокрутки списка — покой
+   * начинается, когда работа кончилась.
+   */
+  await page.getByRole('button', { name: /Материалы/ }).first().click();
+  await sleep(1500);
+  await page.locator('[data-schematic-tab="scene"]').click();
+  await sleep(1500);
+  const panelToggle = page.locator('[data-panel-toggle]');
+  if ((await panelToggle.count()) > 0 && /Показать/.test(await panelToggle.first().innerText())) {
+    await panelToggle.first().click();
+    await sleep(1500);
+  }
+  const materialsOpen = await until(
+    () =>
+      page.evaluate(() => {
+        const panel = document.querySelector('[data-materials-panel]');
+        return Boolean(panel && panel.offsetParent !== null && panel.getAttribute('data-loaded') === '1');
+      }),
+    45_000,
+  );
+  check(
+    'панель «Материалы» открыта рядом со сценой и каталог загружен',
+    materialsOpen,
+    materialsOpen ? '' : 'НУЛЕВОЙ СЕЛЕКТОР: [data-materials-panel] не видна или не загружена',
+  );
+  if (materialsOpen) {
+    await page.locator('[data-material-tab="mdf_paint"]').click();
+    await sleep(800);
+    const readRows = () =>
+      page.evaluate(() => {
+        const items = [...document.querySelectorAll('[data-material-item]')];
+        return { count: items.length, first: items[0]?.getAttribute('data-material-item') ?? null };
+      });
+    const top = await readRows();
+    await page.evaluate(() => {
+      const list = document.querySelector('[data-material-list]');
+      if (list) list.scrollTop = 20_000;
+    });
+    /* Список перерисовывается по событию прокрутки — меряем после него. */
+    await sleep(800);
+    const deep = await readRows();
+    console.log(`строк RAL в DOM: вверху ${top.count} (с ${top.first}), после прокрутки ${deep.count} (с ${deep.first})`);
+    check(
+      'список RAL рисует только видимые строки, а не 1825 — и после прокрутки тоже',
+      top.count > 0 && top.count < 120 && deep.count > 0 && deep.count < 120 && deep.first !== top.first,
+      `вверху ${top.count} с ${top.first} · после прокрутки ${deep.count} с ${deep.first}`,
+    );
+    await sleep(3000);
+    const open0 = await frames();
+    await sleep(10_000);
+    const open1 = await frames();
+    console.log(`покой с панелью материалов: ${open1 - open0} кадров за 10 с`);
+    check(
+      'с открытой панелью материалов сцена в покое не рисует ни кадра',
+      open0 >= 0 && open1 - open0 === 0,
+      `${open1 - open0} за 10 с`,
+    );
+  }
+
   const scene = await page.evaluate(() => (window.__mwScene ? window.__mwScene() : null));
   console.log(`объекты: вызовов ${scene.calls}, мешей ${scene.scene.meshes}, треугольников ${scene.triangles}`);
 } catch (error) {

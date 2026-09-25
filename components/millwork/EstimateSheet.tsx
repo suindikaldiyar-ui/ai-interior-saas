@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import EstimateTable from './EstimateTable';
-import { formatMoney } from '@/lib/millwork/estimate';
+import { formatMoney, totalCaption, unpricedLines } from '@/lib/millwork/estimate';
 import { estimateGroups } from '@/lib/millwork/estimateGroups';
 import type { Estimate } from '@/types/millwork';
 
@@ -54,6 +54,13 @@ export default function EstimateSheet({
    */
   const [detailed, setDetailed] = useState(false);
   const groups = useMemo(() => estimateGroups(estimate), [estimate]);
+  /*
+   * ИТОГ НЕПОЛНЫЙ — И ЭТО СКАЗАНО РЯДОМ С СУММОЙ (слой 51).
+   *
+   * У позиции каталога не задана цена: её строка есть, а денег в ней нет.
+   * Итог без пометки клиент примет за цену кухни.
+   */
+  const unpriced = useMemo(() => unpricedLines(estimate), [estimate]);
 
   // Esc закрывает — привычка, которой не надо учить.
   useEffect(() => {
@@ -84,12 +91,18 @@ export default function EstimateSheet({
            * отформатированную строку значит мерить форматирование.
            */
           data-estimate-total={Math.round(estimate.total)}
+          data-estimate-incomplete={unpriced.length > 0 ? '1' : '0'}
           className="mw-num mw-value-flash whitespace-nowrap text-[22px] font-semibold"
         >
           {formatMoney(estimate.total)} ₸
         </span>
         {preliminary && (
           <span className="text-[13px] text-tape">предварительно</span>
+        )}
+        {unpriced.length > 0 && (
+          <span className="text-[13px] text-alert" data-estimate-caption>
+            неполный: цена не задана у {unpriced.length}
+          </span>
         )}
         <span className="ml-auto text-[13px] text-cyan">
           {open ? 'свернуть' : 'подробнее'}
@@ -131,6 +144,13 @@ export default function EstimateSheet({
               </p>
             )}
 
+            {unpriced.length > 0 && (
+              <p className="px-4 pb-2 text-[13px] leading-snug text-alert" data-estimate-unpriced>
+                Итог неполный: {unpriced.map((line) => `${line.title} — ${line.priceUnset}`).join('; ')}.
+                Задайте цену в карточке позиции на панели «Материалы».
+              </p>
+            )}
+
             {assumptions.map((line) => (
               <p
                 key={line}
@@ -166,7 +186,7 @@ export default function EstimateSheet({
                         </tr>
                       ))}
                       <tr>
-                        <td className="py-3 pr-3 text-[15px]">Итого</td>
+                        <td className="py-3 pr-3 text-[15px]">{totalCaption({ ...estimate, preliminary: false })}</td>
                         <td className="mw-num whitespace-nowrap py-3 text-right text-[22px] font-semibold">
                           {formatMoney(estimate.total)} ₸
                         </td>

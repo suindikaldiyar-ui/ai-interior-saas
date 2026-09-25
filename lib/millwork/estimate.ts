@@ -15,6 +15,9 @@ import { MODULE_VARIANTS, isSinkBase, variantEstimateKeys } from './moduleVarian
 import { zoneProfile } from './zones';
 import { millingLink, type MillingItem } from './milling';
 import { carcassLink, type CarcassItem } from './carcassMaterial';
+import { frontOf } from './frontMaterial';
+import { MATERIAL_FINISHES } from './materialFinishes';
+import { priceState, type MaterialItem } from './materialCollection';
 import type {
   Estimate,
   EstimateLine,
@@ -55,6 +58,13 @@ type Draft = {
    * Пусто — как раньше: ставка из `RateTable` по ключу статьи.
    */
   rate?: number;
+  /**
+   * ЦЕНА ПОЗИЦИИ НЕ ЗАДАНА — строка есть, денег в ней нет, и это сказано.
+   *
+   * Только у позиций коллекций каталога материалов (слой 51): их ставкой
+   * цеха не подменить — эмаль по RAL не стоит как типовой фасад.
+   */
+  priceUnset?: string;
 };
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
@@ -269,6 +279,11 @@ export function buildEstimateDrafts(
    */
   millingItems: Map<string, MillingItem> = new Map(),
   carcassItems: Map<string, CarcassItem> = new Map(),
+  /**
+   * Позиции коллекций каталога материалов. Пусто — смета ровно такая, какой
+   * была до каталога: ни одна сохранённая от появления параметра не едет.
+   */
+  materialItems: Map<string, MaterialItem> = new Map(),
 ): Draft[] {
   /*
    * Высоту и потолок больше не разбираем по кусочкам: всё, что считает
@@ -504,7 +519,21 @@ export function buildEstimateDrafts(
      */
     { key: 'shelf_panel', title: 'Полки', unit: 'm2', quantity: materials.shelfM2 },
     { key: 'hdf_back', title: 'Задние стенки ХДФ', unit: 'm2', quantity: materials.backM2 },
-    { key: 'front_panel', title: 'Фасады', unit: 'm2', quantity: materials.frontM2 },
+    /*
+     * ФАСАДЫ ПО СТАВКЕ ЦЕХА — ТОЛЬКО ТЕ, ЧТО НЕ ИЗ КОЛЛЕКЦИИ.
+     *
+     * Фасады позиции каталога материалов идут своей строкой по её цене,
+     * и их площадь отсюда вычитается — тот же приём, что у корпуса своего
+     * декора. Площадь та же, что в раскрое: вторая формула «сколько
+     * фасадов» разошлась бы с цехом.
+     */
+    {
+      key: 'front_panel',
+      title: 'Фасады',
+      unit: 'm2',
+      quantity: round2(Math.max(0, materials.frontM2 - pickedFrontM2(run, panels, materialItems))),
+    },
+    ...frontMaterialDrafts(run, panels, materialItems),
     /*
      * ФРЕЗЕРОВКА — СВОЯ СТРОКА, И ПЛОЩАДЬ У НЕЁ ИЗ РАСКРОЯ.
      *
@@ -534,12 +563,33 @@ export function buildEstimateDrafts(
       quantity: counterMp,
     });
   } else if (zone.hasCountertop) {
-    drafts.push({
-      key: `countertop_${run.options.countertop}`,
-      title: `Столешница (${countertopTitle(run.options.countertop)})`,
-      unit: 'mp',
-      quantity: counterMp,
-    });
+    /*
+     * СТОЛЕШНИЦА ИЗ КАТАЛОГА МАТЕРИАЛОВ — ПО ЦЕНЕ ПОЗИЦИИ.
+     *
+     * Метраж тот же (`countertopSlabs`), меняется ставка. Позиции нет в
+     * каталоге — остаётся тип столешницы по ставке цеха, как у корпуса
+     * пропавшего декора; позиция есть без цены — «цена не задана».
+     */
+    const counterItem = run.countertopMaterial
+      ? materialItems.get(run.countertopMaterial.itemId)
+      : undefined;
+    if (counterItem) {
+      const price = priceState(counterItem, run.countertopMaterial?.surface, 'running_m');
+      drafts.push({
+        key: `countertop_item_${counterItem.id}`,
+        title: `Столешница ${counterItem.code}${counterItem.name ? ` «${counterItem.name}»` : ''}`,
+        unit: 'mp',
+        quantity: counterMp,
+        ...(price.state === 'priced' ? { rate: price.rate } : { priceUnset: price.reason }),
+      });
+    } else {
+      drafts.push({
+        key: `countertop_${run.options.countertop}`,
+        title: `Столешница (${countertopTitle(run.options.countertop)})`,
+        unit: 'mp',
+        quantity: counterMp,
+      });
+    }
 
     /*
      * Запил — это операция НАД ПЛИТОЙ. Нет плиты — нет и запила: пустая
@@ -829,7 +879,14 @@ function carcassAreas(
     if (!unit) continue;
 
     const link = carcassLink(unit, run, catalog);
-    if (link.state !== 'resolved') continue;
+    /*
+     * Позиция коллекции без цены тоже уходит своей строкой — с «цена не
+     * задана»: подменить её ставкой цеха значит назвать клиенту цену
+     * материала, которого никто не оценивал (слой 51).
+     */
+    const own =
+      link.state === 'resolved' || (link.state === 'priceless' && Boolean(link.item.collection));
+    if (!own) continue;
 
     const areaM2 = (panel.lengthMm * panel.widthMm * panel.qty) / 1_000_000;
     const at = out.get(link.item.id);
@@ -868,8 +925,70 @@ function carcassDrafts(
       title: `Корпус «${item.name}»`,
       unit: 'm2' as const,
       quantity: Math.round(m2 * 100) / 100,
-      rate: item.price,
+      ...(item.collection && !(item.price > 0)
+        ? { priceUnset: item.priceNote ?? 'цена не задана' }
+        : { rate: item.price }),
     }));
+}
+
+/**
+ * ПЛОЩАДЬ ФАСАДОВ ПО ПОЗИЦИЯМ КОЛЛЕКЦИЙ — ИЗ УЖЕ НАРЕЗАННЫХ ПАНЕЛЕЙ.
+ *
+ * Какая позиция у фасада, говорит `FrontSpec.itemId` модуля — то же поле,
+ * по которому сцена красит пачку. Позиции нет среди коллекций — фасад
+ * остаётся в общей строке по ставке цеха, как и раньше.
+ */
+function frontMaterialAreas(
+  run: Run,
+  panels: Panel[],
+  catalog: Map<string, MaterialItem>,
+): Map<string, { item: MaterialItem; surface: string | undefined; m2: number }> {
+  const out = new Map<string, { item: MaterialItem; surface: string | undefined; m2: number }>();
+  if (catalog.size === 0) return out;
+
+  const byModule = new Map<string, Module>();
+  for (const unit of allModules(run)) byModule.set(unit.id, unit);
+
+  for (const panel of panels) {
+    if (!panel.material.startsWith('Фасад')) continue;
+    const unit = byModule.get(panel.moduleId);
+    if (!unit) continue;
+
+    const spec = frontOf(unit);
+    const item = spec.itemId ? catalog.get(spec.itemId) : undefined;
+    if (!item) continue;
+
+    const key = `${item.id}${spec.surface ? `_${spec.surface}` : ''}`;
+    const areaM2 = (panel.lengthMm * panel.widthMm * panel.qty) / MM2_IN_M2;
+    const at = out.get(key);
+    if (at) at.m2 += areaM2;
+    else out.set(key, { item, surface: spec.surface, m2: areaM2 });
+  }
+
+  return out;
+}
+
+function pickedFrontM2(run: Run, panels: Panel[], catalog: Map<string, MaterialItem>): number {
+  let sum = 0;
+  for (const { m2 } of Array.from(frontMaterialAreas(run, panels, catalog).values())) sum += m2;
+  return round2(sum);
+}
+
+/** Строки фасадов из коллекций: по позиции и поверхности, цена — у позиции. */
+function frontMaterialDrafts(run: Run, panels: Panel[], catalog: Map<string, MaterialItem>): Draft[] {
+  return Array.from(frontMaterialAreas(run, panels, catalog).entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, { item, surface, m2 }]) => {
+      const price = priceState(item, surface, 'm2');
+      const finish = surface ? MATERIAL_FINISHES[surface]?.label : undefined;
+      return {
+        key: `front_item_${key}`,
+        title: `Фасады ${item.code}${item.name ? ` «${item.name}»` : ''}${finish ? `, ${finish}` : ''}`,
+        unit: 'm2' as const,
+        quantity: round2(m2),
+        ...(price.state === 'priced' ? { rate: price.rate } : { priceUnset: price.reason }),
+      };
+    });
 }
 
 /**
@@ -938,8 +1057,17 @@ export function buildEstimate(
   millingItems: Map<string, MillingItem> = new Map(),
   /** Материалы корпуса организации: цены выбранных позиций. Пусто — как раньше. */
   carcassItems: Map<string, CarcassItem> = new Map(),
+  /** Позиции коллекций каталога материалов. Пусто — как раньше. */
+  materialItems: Map<string, MaterialItem> = new Map(),
 ): Estimate {
-  const drafts = buildEstimateDrafts(run, production, hardwareItems, millingItems, carcassItems);
+  const drafts = buildEstimateDrafts(
+    run,
+    production,
+    hardwareItems,
+    millingItems,
+    carcassItems,
+    materialItems,
+  );
   const disabled = new Set(disabledKeys);
   const priceSnapshot: Record<string, number> = {};
 
@@ -950,7 +1078,14 @@ export function buildEstimate(
      * этом не появляется — в снимок цен она попадает тем же полем, что
      * и остальные, и подписанный документ её удержит (ловушка 30).
      */
-    const rate = draft.rate ?? rates[draft.key] ?? 0;
+    /*
+     * ЦЕНА НЕ ЗАДАНА — В СТРОКЕ НОЛЬ, НО НЕ «НОЛЬ ТЕНГЕ».
+     *
+     * Ставкой цеха такую строку не закрыть: это чужая цена. Строка
+     * остаётся с количеством, её сумма в итог не входит, и итог помечен
+     * «неполный» (`unpricedLines`), а экран вместо суммы пишет причину.
+     */
+    const rate = draft.priceUnset ? 0 : (draft.rate ?? rates[draft.key] ?? 0);
     priceSnapshot[draft.key] = rate;
 
     // Крепёж задаётся процентом от стоимости корпуса, а не ценой за м².
@@ -971,7 +1106,8 @@ export function buildEstimate(
       rate,
       total,
       enabled: !disabled.has(draft.key),
-      missingRate: draft.rate === undefined && rates[draft.key] === undefined,
+      missingRate: !draft.priceUnset && draft.rate === undefined && rates[draft.key] === undefined,
+      ...(draft.priceUnset ? { priceUnset: draft.priceUnset } : {}),
     };
   });
 
@@ -1021,6 +1157,34 @@ export function recalcTotal(estimate: Estimate, disabledKeys: string[]): Estimat
   );
 
   return { ...estimate, lines: withDelivery, total };
+}
+
+/**
+ * СТРОКИ БЕЗ ЦЕНЫ, ИЗ-ЗА КОТОРЫХ ИТОГ НЕПОЛНЫЙ.
+ *
+ * Снятая галочка строку из счёта убирает: её не покупают, и итог по
+ * ней неполным не становится.
+ */
+export function unpricedLines(estimate: Pick<Estimate, 'lines'>): EstimateLine[] {
+  return estimate.lines.filter((line) => line.enabled && Boolean(line.priceUnset));
+}
+
+/** Что писать в колонке суммы: причину вместо «0 ₸». */
+export function lineAmountText(line: EstimateLine): string {
+  return line.priceUnset ? line.priceUnset : `${formatMoney(line.total)} ₸`;
+}
+
+/**
+ * Подпись у итога: «Итого · неполный», если хоть у одной позиции нет цены.
+ *
+ * Итог без этой пометки клиент примет за цену кухни, а в нём нет денег
+ * за материал, которого никто не оценил.
+ */
+export function totalCaption(estimate: Pick<Estimate, 'lines' | 'preliminary'>): string {
+  const parts = ['Итого'];
+  if (estimate.preliminary) parts.push('предварительно');
+  if (unpricedLines(estimate).length > 0) parts.push('неполный');
+  return parts.join(' · ');
 }
 
 export function formatMoney(value: number): string {

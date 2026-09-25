@@ -59,6 +59,8 @@ export type StepField =
   /** Направление открывания и ручка. */
   | 'opening'
   /* ── Материалы ── */
+  /** Каталог материалов поставщиков: цель, вкладки, поиск, позиции. */
+  | 'collections'
   /** Материал фасада выбранного модуля: образцы и атрибуты. */
   | 'front'
   /** Готовые дизайны: материал на весь ряд одним тапом. */
@@ -75,7 +77,7 @@ export const STEP_FIELDS: Record<StepKey, StepField[]> = {
   sizes: ['walls', 'shop'],
   layout: ['modules', 'appliance-wall', 'arrangements', 'command'],
   build: ['variants', 'filling', 'opening'],
-  materials: ['front', 'designs', 'catalog', 'photo'],
+  materials: ['collections', 'front', 'designs', 'catalog', 'photo'],
   result: [],
 };
 

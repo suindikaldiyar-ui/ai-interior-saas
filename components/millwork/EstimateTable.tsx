@@ -1,6 +1,6 @@
 'use client';
 
-import { UNIT_LABEL_MW, formatMoney } from '@/lib/millwork/estimate';
+import { UNIT_LABEL_MW, formatMoney, lineAmountText, totalCaption } from '@/lib/millwork/estimate';
 import type { Estimate } from '@/types/millwork';
 
 /**
@@ -50,8 +50,14 @@ export default function EstimateTable({ estimate, disabledKeys, onToggle }: Prop
                       )}
                     </div>
                   </td>
-                  <td className="mw-num px-2 py-1.5 text-right text-[12px] align-top">
-                    {formatMoney(line.total)}
+                  {/* «Цена не задана» вместо «0»: ноль здесь не бесплатно, а неизвестно. */}
+                  <td
+                    className={`mw-num px-2 py-1.5 text-right text-[12px] align-top ${
+                      line.priceUnset ? 'text-alert' : ''
+                    }`}
+                    data-line-amount={line.key}
+                  >
+                    {line.priceUnset ? lineAmountText(line) : formatMoney(line.total)}
                   </td>
                 </tr>
               );
@@ -63,7 +69,7 @@ export default function EstimateTable({ estimate, disabledKeys, onToggle }: Prop
       <div className="flex items-baseline justify-between border-t-2 border-cyan px-3 py-2">
         <span className="mw-label">
           {/* Подпись у самой суммы: её и увидит клиент, а не сноску сверху. */}
-          {estimate.preliminary ? 'Итого · предварительно' : 'Итого'}
+          {totalCaption(estimate)}
         </span>
         <span className="mw-num text-[20px] font-semibold">{formatMoney(estimate.total)} ₸</span>
       </div>

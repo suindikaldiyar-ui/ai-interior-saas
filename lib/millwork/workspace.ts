@@ -12,6 +12,7 @@ import { buildEstimate, recalcTotal, type RateTable } from './estimate';
 import type { ProductionSettings } from '@/types/catalog';
 import type { MillingItem } from './milling';
 import type { CarcassItem } from './carcassMaterial';
+import type { MaterialItem } from './materialCollection';
 import { buildVariants } from './variants';
 
 /**
@@ -66,6 +67,14 @@ export type WorkspaceSeed = {
    * хранится и не доезжает до суммы, — дефект.
    */
   carcass?: Map<string, CarcassItem>;
+  /**
+   * ПОЗИЦИИ КОЛЛЕКЦИЙ КАТАЛОГА МАТЕРИАЛОВ (слой 51).
+   *
+   * Тем же путём, что фрезеровка и декор корпуса: RAL на фасадах, своя
+   * столешница и EGGER на корпусе стоят по цене позиции, а позиция без
+   * цены — строкой «цена не задана», и итог неполный.
+   */
+  materials?: Map<string, MaterialItem>;
 };
 
 export type WorkspaceInput = {
@@ -130,6 +139,14 @@ export type WorkspaceInput = {
    * хранится и не доезжает до суммы, — дефект.
    */
   carcass?: Map<string, CarcassItem>;
+  /**
+   * ПОЗИЦИИ КОЛЛЕКЦИЙ КАТАЛОГА МАТЕРИАЛОВ (слой 51).
+   *
+   * Тем же путём, что фрезеровка и декор корпуса: RAL на фасадах, своя
+   * столешница и EGGER на корпусе стоят по цене позиции, а позиция без
+   * цены — строкой «цена не задана», и итог неполный.
+   */
+  materials?: Map<string, MaterialItem>;
 };
 
 /** Рабочая стена: указанная явно либо самая длинная в замере. */
@@ -181,6 +198,7 @@ export function workspaceInput(seed: WorkspaceSeed): WorkspaceInput {
     production: seed.production,
     milling: seed.milling,
     carcass: seed.carcass,
+    materials: seed.materials,
   };
 }
 
@@ -197,7 +215,7 @@ export function workspaceInput(seed: WorkspaceSeed): WorkspaceInput {
 export function editedRunEstimate(
   run: Run,
   key: VariantKey,
-  input: Pick<WorkspaceInput, 'rates' | 'production' | 'milling' | 'carcass'>,
+  input: Pick<WorkspaceInput, 'rates' | 'production' | 'milling' | 'carcass' | 'materials'>,
   disabled: Record<VariantKey, string[]>,
 ) {
   return recalcTotal(
@@ -211,6 +229,7 @@ export function editedRunEstimate(
       undefined,
       input.milling,
       input.carcass,
+      input.materials,
     ),
     disabled[key],
   );
@@ -254,6 +273,7 @@ export function composeVariants(
     production: input.production,
     milling: input.milling,
     carcass: input.carcass,
+    materials: input.materials,
   });
 
   return base.map((variant) => {

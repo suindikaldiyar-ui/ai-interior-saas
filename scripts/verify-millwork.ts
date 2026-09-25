@@ -11,7 +11,26 @@
 
 import { buildRun, fillGap, runWidthSum } from '../lib/millwork/layout';
 import { applyOps } from '../lib/millwork/ops';
-import { buildEstimate, recalcTotal } from '../lib/millwork/estimate';
+import {
+  buildEstimate,
+  lineAmountText,
+  recalcTotal,
+  totalCaption,
+  unpricedLines,
+} from '../lib/millwork/estimate';
+import catalogJson from '../data/catalog/catalog.json';
+import * as THREE from 'three';
+import {
+  catalogEntriesFromRows,
+  manualMaterialRow,
+  materialCatalog,
+  materialOps,
+  parseMaterialFile,
+  planMaterialImport,
+  type MaterialChoice,
+} from '../lib/millwork/materialCatalog';
+import { MATERIAL_FINISHES } from '../lib/millwork/materialFinishes';
+import { applyFrontLook } from '../components/millwork/cabinet3d/cadLook';
 import {
   DEFAULT_STRATEGIES,
   MAIN_VARIANT,
@@ -314,6 +333,7 @@ import {
 import type {
   ApplianceKind,
   CommPoint,
+  Estimate,
   FrontSpec,
   MillworkOp,
   Module,
@@ -18957,6 +18977,350 @@ console.log('\nБиблиотека к показу: замена не двиг�
     }
   }
 }
+
+/* ═══  Слой 51: каталог материалов рядом со сценой  ═══ */
+
+/**
+ * RAL НА ВСЕ ФАСАДЫ — И КОД НА КАЖДОМ, И ЦВЕТ В ЛИНЕЙНОМ ПРОСТРАНСТВЕ.
+ *
+ * Код меряется на КАЖДОМ модуле с фасадом всех стен, а не «хотя бы у
+ * одного». Цвет — на материале, настроенном ТОЙ ЖЕ функцией, что сцена
+ * (`applyFrontLook`), и сверяется с hex, переведённым из sRGB в
+ * линейное здесь же, своей формулой: hex в файле — sRGB, и сцена без
+ * перевода показала бы другой цвет.
+ */
+console.log('\n' + 'Каталог материалов: RAL на все фасады, цена не задана (тесты 9, 11)');
+{
+  const close = (a: number, b: number, eps: number) => Math.abs(a - b) < eps;
+  const file = parseMaterialFile(catalogJson);
+  const entries = catalogEntriesFromRows(planMaterialImport(file, []).rows, file, 'demo', 'demo-mat:');
+  const items = materialCatalog(entries);
+  const all = Array.from(items.values());
+  const ral = all.find((item) => item.code === 'RAL 010 30 20');
+  const mdf = all.find((item) => item.collection === 'mdf-panels-palette');
+  check(
+    'тест 9: RAL 010 30 20 и МДФ-панель есть в каталоге',
+    Boolean(ral) && Boolean(mdf),
+    `${ral ? `${ral.code} ${ral.colorHex}` : 'RAL: НУЛЕВОЙ СЕЛЕКТОР'} · ${mdf ? mdf.code : 'МДФ: НУЛЕВОЙ СЕЛЕКТОР'}`,
+  );
+  if (!ral || !mdf) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: позиций каталога материалов нет — мерить нечего');
+
+  const collectionOfItem = (id: string) => {
+    const found = file.collections.find((collection) => collection.id === id);
+    if (!found) throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: коллекции ${id} нет в файле`);
+    return found;
+  };
+  const ralChoice: MaterialChoice = { item: ral, collection: collectionOfItem(ral.collection), surface: 'matte' };
+
+  const demoReq = requirementsFromTemplate(templateById(DEMO_TEMPLATE_ID)!, DEMO_REQUIREMENTS.options);
+  const demo = buildRun({
+    lengthMm: DEMO_PROJECT.lengthMm,
+    ceilingHeightMm: DEMO_MEASUREMENT.ceilingHeightMm,
+    requirements: demoReq,
+    openings: DEMO_MEASUREMENT.walls[0].openings,
+    comms: DEMO_MEASUREMENT.comms,
+    cornerAt: null,
+  });
+
+  const paint = (run: Run, requirements: RunRequirements, choice: MaterialChoice, target: 'fronts' | 'carcass' | 'countertop' = 'fronts') => {
+    const plan = materialOps(target, choice, run, null);
+    if ('refusal' in plan) throw new Error(`материал не лёг: ${plan.refusal}`);
+    return applyOps({ run, requirements, openings: DEMO_MEASUREMENT.walls[0].openings, ops: plan.ops });
+  };
+
+  const codeOf = (id: string | undefined) => entries.find((entry) => entry.id === id)?.article ?? '—';
+  const frontsOf = (run: Run) => allModules(run).filter((unit) => hasFacade(unit));
+  const notRal = (run: Run) => frontsOf(run).filter((unit) => codeOf(unit.front?.itemId) !== 'RAL 010 30 20');
+
+  /* Модуль с филёнкой ДО материала: человек выбрал конструкцию, и она остаётся. */
+  const framedId = frontsOf(demo).find((unit) => !unit.appliance)?.id;
+  const framed = framedId
+    ? applyOps({
+        run: demo,
+        requirements: demoReq,
+        openings: DEMO_MEASUREMENT.walls[0].openings,
+        ops: [{ op: 'set_front', moduleId: framedId, front: { base: 'mdf_enamel', construct: 'framed', finish: 'matte' } }],
+      })
+    : demo;
+
+  const painted = paint(framed, demoReq, ralChoice);
+  check(
+    'тест 9: код RAL 010 30 20 на каждом фасаде прямой кухни',
+    frontsOf(painted).length > 0 && notRal(painted).length === 0,
+    `фасадов ${frontsOf(painted).length} · без кода: ${notRal(painted).map((unit) => unit.id).join(' ') || 'нет'}`,
+  );
+  check(
+    'тест 9: и цвет у каждого — #643941 из файла',
+    frontsOf(painted).every((unit) => unit.front?.colorHex === '#643941'),
+    Array.from(new Set(frontsOf(painted).map((unit) => unit.front?.colorHex))).join(' '),
+  );
+  check(
+    'конструкция, выбранная человеком, пережила смену материала',
+    Boolean(framedId) && allModules(painted).find((unit) => unit.id === framedId)?.front?.construct === 'framed',
+    framedId ? `${framedId}: ${allModules(painted).find((unit) => unit.id === framedId)?.front?.construct}` : 'НУЛЕВОЙ СЕЛЕКТОР',
+  );
+
+  const corner = buildComposition({
+    kind: 'corner_l',
+    walls: [
+      { id: 'w1', lengthMm: 3800 },
+      { id: 'w2', lengthMm: 2400 },
+    ],
+    ceilingHeightMm: 2700,
+    requirements: REQ,
+  });
+  const cornerPainted = corner.segments.map((segment) => paint(segment.run, REQ, ralChoice));
+  check(
+    'тест 9: код на каждом фасаде угловой кухни — обе стены',
+    cornerPainted.length === 2 && cornerPainted.every((run) => frontsOf(run).length > 0 && notRal(run).length === 0),
+    cornerPainted.map((run, i) => `стена ${'АБ'[i]}: фасадов ${frontsOf(run).length}, без кода ${notRal(run).length}`).join(' · '),
+  );
+
+  /* Выбор переживает правку ряда: ширина и перестановка пересобирают ряд. */
+  const widened = frontsOf(painted).find((unit) => !unit.appliance && unit.kind === 'base');
+  const edited = widened
+    ? applyOps({
+        run: painted,
+        requirements: demoReq,
+        openings: DEMO_MEASUREMENT.walls[0].openings,
+        ops: [{ op: 'set_width', moduleId: widened.id, widthMm: widened.widthMm - 50 }],
+      })
+    : painted;
+  /*
+   * Выбор живёт в модулях (тот же механизм, что у материала модуля), и
+   * меряется он на модулях, которые СТОЯЛИ при выборе: правка ширины
+   * пересобирает ряд, и у каждого из них код обязан остаться. Добор,
+   * появившийся правкой ПОСЛЕ выбора, выбора не видел — так же, как
+   * сегодня не видит его материал из палитры и готовый дизайн.
+   */
+  const paintedIds = new Set(frontsOf(painted).map((unit) => unit.id));
+  const lostAfterEdit = notRal(edited).filter((unit) => paintedIds.has(unit.id));
+  check(
+    'материал пережил пересборку ряда после правки ширины — у каждого модуля, стоявшего при выборе',
+    Boolean(widened) && paintedIds.size > 0 && lostAfterEdit.length === 0,
+    widened
+      ? `${widened.id} −50 мм · стояло ${paintedIds.size} · потеряли код: ${lostAfterEdit.map((unit) => unit.id).join(' ') || 'никто'}`
+      : 'НУЛЕВОЙ СЕЛЕКТОР',
+  );
+
+  const linear = (byte: number) => {
+    const c = byte / 255;
+    return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  };
+  const expected = [0x64, 0x39, 0x41].map(linear);
+  const spec = frontsOf(painted)[0].front!;
+  const material = new THREE.MeshPhysicalMaterial();
+  applyFrontLook(material, spec, '#D8D6D2', MATERIAL_FINISHES);
+  const got = [material.color.r, material.color.g, material.color.b];
+  check(
+    'тест 9: цвет материала сцены равен линеаризованному hex',
+    got.every((value, i) => Math.abs(value - expected[i]) < 1e-4),
+    `материал ${got.map((v) => v.toFixed(4)).join(' ')} · ожидали ${expected.map((v) => v.toFixed(4)).join(' ')}`,
+  );
+  check(
+    'тест 9: это не sRGB-число, положенное как есть',
+    Math.abs(got[0] - 0x64 / 255) > 0.05,
+    `r ${got[0].toFixed(4)} против sRGB ${(0x64 / 255).toFixed(4)}`,
+  );
+  check(
+    'матовая эмаль — шероховатость и лак из таблицы поверхностей файла',
+    material.roughness === MATERIAL_FINISHES.matte.roughness && material.clearcoat === MATERIAL_FINISHES.matte.clearcoat,
+    `roughness ${material.roughness} · clearcoat ${material.clearcoat}`,
+  );
+
+  const mdfChoice = (surface: string): MaterialChoice => ({ item: mdf, collection: collectionOfItem(mdf.collection), surface });
+  const look = (surface: string) => {
+    const run = paint(demo, demoReq, mdfChoice(surface));
+    const m = new THREE.MeshPhysicalMaterial();
+    applyFrontLook(m, frontsOf(run)[0].front!, '#D8D6D2', MATERIAL_FINISHES);
+    return m;
+  };
+  const gloss = look('high_gloss');
+  const touch = look('touch_sense');
+  check(
+    'High Gloss и Touch Sense — разная шероховатость и лак, числа из файла',
+    gloss.roughness === 0.05 && gloss.clearcoat === 1 && gloss.clearcoatRoughness === 0.03 &&
+      touch.roughness === 0.9 && touch.clearcoat === 0,
+    `глянец ${gloss.roughness}/${gloss.clearcoat}/${gloss.clearcoatRoughness} · тач ${touch.roughness}/${touch.clearcoat}`,
+  );
+
+  /*
+   * КЛАДОВКА НАД КОЛОННОЙ — ТОЖЕ ФАСАД КУХНИ.
+   *
+   * Её собирает `buildUpperRow` заново на каждой правке, и `set_front`
+   * до неё не дотягивался: ручной выбор отвечал «модуль не найден», а
+   * второй материал на всю кухню её пропускал — пересборка возвращала
+   * прежний фасад. Замерено в браузере на демо: после МДФ на все фасады
+   * 13 из 14 стали МДФ, кладовка осталась эмалью RAL.
+   */
+  const storage = allModules(demo).find(
+    (unit) => unit.section === 'mezzanine' && mezzanineBaseOf(unit, demo) !== null && hasFacade(unit),
+  );
+  check(
+    'в демо-ряду есть кладовка над колонной — проверять есть на чём',
+    Boolean(storage),
+    storage ? storage.id : 'НУЛЕВОЙ СЕЛЕКТОР: кладовки над колонной нет',
+  );
+  if (storage) {
+    const twice = paint(paint(demo, demoReq, ralChoice), demoReq, mdfChoice('high_gloss'));
+    const after = allModules(twice).find((unit) => unit.id === storage.id);
+    check(
+      'второй материал на всю кухню перекрашивает и кладовку над колонной',
+      codeOf(after?.front?.itemId) === mdf.code && notRal(twice).length === frontsOf(twice).length,
+      `${storage.id}: ${codeOf(after?.front?.itemId)} · RAL осталось на ${frontsOf(twice).length - notRal(twice).length} из ${frontsOf(twice).length}`,
+    );
+
+    const direct = applyOps({
+      run: demo,
+      requirements: demoReq,
+      openings: DEMO_MEASUREMENT.walls[0].openings,
+      ops: [
+        {
+          op: 'set_front',
+          moduleId: storage.id,
+          front: { base: 'mdf_enamel', construct: 'solid', finish: 'matte', colorHex: '#123456' },
+        },
+      ],
+    });
+    const painted1 = allModules(direct).find((unit) => unit.id === storage.id);
+    check(
+      'материал на кладовку над колонной ложится, а не «модуль не найден»',
+      direct.warnings.length === 0 && painted1?.front?.colorHex === '#123456',
+      `${direct.warnings[0] ?? 'без отказа'} · фасад ${painted1?.front?.colorHex ?? '—'}`,
+    );
+  }
+
+  /* ── Тест 11: цена null — строка «цена не задана», итог «неполный» ── */
+  const withCatalog = buildEstimate(painted, 'optimal', DEMO_RATES, [], undefined, undefined, undefined, undefined, undefined, items);
+  const withoutCatalog = buildEstimate(painted, 'optimal', DEMO_RATES);
+  const ralLine = withCatalog.lines.find((line) => line.key.startsWith('front_item_'));
+  check(
+    'тест 11: фасады RAL идут своей строкой',
+    Boolean(ralLine),
+    ralLine ? `${ralLine.title}: ${ralLine.quantity} м²` : `НУЛЕВОЙ СЕЛЕКТОР: ${withCatalog.lines.map((line) => line.key).join(' ')}`,
+  );
+  check(
+    'тест 11: строка говорит «цена не задана», а не 0 ₸',
+    ralLine?.priceUnset === 'цена не задана' && lineAmountText(ralLine) === 'цена не задана',
+    ralLine ? `priceUnset=${ralLine.priceUnset} · на экране «${lineAmountText(ralLine)}»` : '—',
+  );
+  check(
+    'тест 11: итог помечен «неполный»',
+    unpricedLines(withCatalog).length === 1 && totalCaption(withCatalog).includes('неполный'),
+    `${totalCaption(withCatalog)} · строк без цены ${unpricedLines(withCatalog).length}`,
+  );
+  /* «Фасады» с нулём строку не выводят: нет строки — ноль по ставке цеха. */
+  const frontPanel = (estimate: Estimate) => estimate.lines.find((line) => line.key === 'front_panel')?.quantity ?? 0;
+  check(
+    'тест 11: площадь этих фасадов не ушла в общую строку по ставке цеха',
+    Boolean(ralLine) &&
+      frontPanel(withoutCatalog) > 0 &&
+      close(frontPanel(withCatalog) + ralLine!.quantity, frontPanel(withoutCatalog), 0.02),
+    `«Фасады» ${frontPanel(withoutCatalog)} → ${frontPanel(withCatalog)} м² · RAL ${ralLine?.quantity ?? '—'} м²`,
+  );
+  check(
+    'тест 11: итог не считает материал нулём молча — сумма без него, и она помечена',
+    withCatalog.total < withoutCatalog.total && totalCaption(withCatalog).includes('неполный'),
+    `${Math.round(withoutCatalog.total)} → ${Math.round(withCatalog.total)} · ${totalCaption(withCatalog)}`,
+  );
+
+  const pricedItems = materialCatalog(entries.map((entry) => (entry.id === ral.id ? { ...entry, price: 30000 } : entry)));
+  const priced = buildEstimate(painted, 'optimal', DEMO_RATES, [], undefined, undefined, undefined, undefined, undefined, pricedItems);
+  const pricedLine = priced.lines.find((line) => line.key === ralLine?.key);
+  check(
+    'с ценой та же строка считается: площадь × цена позиции',
+    Boolean(pricedLine) && !pricedLine!.priceUnset && close(pricedLine!.total, pricedLine!.quantity * 30000, 0.01),
+    pricedLine ? `${pricedLine.quantity} м² × 30 000 = ${pricedLine.total}` : 'НУЛЕВОЙ СЕЛЕКТОР',
+  );
+  check(
+    'и итог больше не помечен',
+    unpricedLines(priced).length === 0 && !totalCaption(priced).includes('неполный'),
+    totalCaption(priced),
+  );
+
+  /* МДФ-панель: цена своя у каждой поверхности. */
+  const mdfPriced = materialCatalog(
+    entries.map((entry) =>
+      entry.id === mdf.id
+        ? { ...entry, meta: { ...entry.meta, finishPrices: { high_gloss: 41000, touch_sense: null } } }
+        : entry,
+    ),
+  );
+  const glossRun = paint(demo, demoReq, mdfChoice('high_gloss'));
+  const touchRun = paint(demo, demoReq, mdfChoice('touch_sense'));
+  const glossLine = buildEstimate(glossRun, 'optimal', DEMO_RATES, [], undefined, undefined, undefined, undefined, undefined, mdfPriced).lines.find((line) => line.key.startsWith('front_item_'));
+  const touchLine = buildEstimate(touchRun, 'optimal', DEMO_RATES, [], undefined, undefined, undefined, undefined, undefined, mdfPriced).lines.find((line) => line.key.startsWith('front_item_'));
+  check(
+    'МДФ-панель: High Gloss со своей ценой, у Touch Sense цена не задана',
+    Boolean(glossLine) && glossLine!.rate === 41000 && !glossLine!.priceUnset &&
+      Boolean(touchLine) && touchLine!.priceUnset === 'цена не задана',
+    `${glossLine?.title ?? '—'}: ${glossLine?.rate ?? '—'} · ${touchLine?.title ?? '—'}: ${touchLine ? lineAmountText(touchLine) : '—'}`,
+  );
+
+  /* Столешница и корпус: та же цена и то же «не задана». */
+  const counterCollection = collectionOfItem('kedr-countertops');
+  const carcassCollection = collectionOfItem('egger-ldsp');
+  const own = catalogEntriesFromRows(
+    [
+      manualMaterialRow(counterCollection, { code: 'KEDR-TEST', name: 'Проба столешницы', hex: '#6f5a44', price: null }),
+      manualMaterialRow(carcassCollection, { code: 'EGGER-TEST', name: 'Проба корпуса', hex: '#d8d2c4', price: null }),
+    ],
+    file,
+    'demo',
+    'demo-own:',
+  );
+  const ownItems = materialCatalog([...entries, ...own]);
+  const counterItem = Array.from(ownItems.values()).find((item) => item.code === 'KEDR-TEST')!;
+  const carcassItem = Array.from(ownItems.values()).find((item) => item.code === 'EGGER-TEST')!;
+  const counterRun = paint(demo, demoReq, { item: counterItem, collection: counterCollection, surface: 'matte' }, 'countertop');
+  const carcassRun = paint(demo, demoReq, { item: carcassItem, collection: carcassCollection, surface: 'matte' }, 'carcass');
+  const counterLine = buildEstimate(counterRun, 'optimal', DEMO_RATES, [], undefined, undefined, undefined, undefined, undefined, ownItems).lines.find((line) => line.key.startsWith('countertop_item_'));
+  /* Тем же путём, что экран: материалы корпуса — `carcassCatalog` того же каталога. */
+  const carcassLine = buildEstimate(
+    carcassRun,
+    'optimal',
+    DEMO_RATES,
+    [],
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    carcassCatalog([...entries, ...own]),
+    ownItems,
+  ).lines.find((line) => line.key === `carcass_${carcassItem.id}`);
+  check(
+    'столешница своей позиции без цены — «цена не задана», а не ставка цеха',
+    counterLine?.priceUnset === 'цена не задана' &&
+      !buildEstimate(counterRun, 'optimal', DEMO_RATES, [], undefined, undefined, undefined, undefined, undefined, ownItems).lines.some((line) => line.key === `countertop_${counterRun.options.countertop}`),
+    counterLine ? `${counterLine.title}: ${lineAmountText(counterLine)}` : 'НУЛЕВОЙ СЕЛЕКТОР',
+  );
+  check(
+    'корпус своей позиции без цены — «цена не задана»',
+    carcassLine?.priceUnset === 'цена не задана',
+    carcassLine ? `${carcassLine.title}: ${lineAmountText(carcassLine)}` : 'НУЛЕВОЙ СЕЛЕКТОР',
+  );
+  check(
+    'столешница переживает правку ряда — она живёт на ряду, как материал корпуса',
+    Boolean(widened) &&
+      applyOps({
+        run: counterRun,
+        requirements: demoReq,
+        openings: DEMO_MEASUREMENT.walls[0].openings,
+        ops: [{ op: 'set_width', moduleId: widened!.id, widthMm: widened!.widthMm - 50 }],
+      }).countertopMaterial?.itemId === counterItem.id,
+    counterRun.countertopMaterial ? `${counterRun.countertopMaterial.itemId}` : 'НЕ ЛЕГЛА',
+  );
+
+  /* Демонстрация: материалов каталога на ней нет, и сумма не двинулась. */
+  const demoPlain = buildEstimate(demo, 'optimal', DEMO_RATES).total;
+  const demoWithCatalog = buildEstimate(demo, 'optimal', DEMO_RATES, [], undefined, undefined, undefined, undefined, undefined, items).total;
+  check(
+    'демо-ряд: каталог материалов в сторе сумму не двигает',
+    demoPlain === demoWithCatalog,
+    `${Math.round(demoPlain)} → ${Math.round(demoWithCatalog)}`,
+  );
+}
+
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

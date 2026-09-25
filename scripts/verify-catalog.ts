@@ -10,6 +10,19 @@ import {
   typicalMillingItem,
 } from '../lib/millwork/milling';
 import { patchCatalogItem } from '../lib/catalog';
+import catalogJson from '../data/catalog/catalog.json';
+import {
+  catalogEntriesFromRows,
+  collectionOf,
+  materialDefs,
+  materialTabs,
+  parseMaterialFile,
+  planMaterialImport,
+  searchMaterials,
+} from '../lib/millwork/materialCatalog';
+import { paletteFromCatalog } from '../lib/millwork/palette';
+import { carcassCatalog } from '../lib/millwork/carcassMaterial';
+import { DEMO_CATALOG } from '../lib/millwork/demo';
 /**
  * Приёмка фазы 3 — та её часть, что проверяется без живого Supabase:
  * разбор выгрузок из 1С, расчёт спецификации, правила «фото → комната».
@@ -762,6 +775,176 @@ async function millingPriceChecks() {
     'а с ценой та же позиция считается настоящей',
     millingLink(unit, { milling: {} } as never, millingCatalog([item(7000)])).state === 'resolved',
     millingLink(unit, { milling: {} } as never, millingCatalog([item(7000)])).state,
+  );
+}
+
+
+/* ─────────────────  Слой 51: каталог материалов из catalog.json  ───────────────── */
+
+/**
+ * ЗАГРУЗКА ИДЁТ В СУЩЕСТВУЮЩИЙ КАТАЛОГ, И ПОВТОРНАЯ — БЕЗ ДУБЛЕЙ.
+ *
+ * Меряется ровно то, что уйдёт в `catalog_items`: строки плана загрузки.
+ * Ключ дубля — коллекция + код. Повторная загрузка того же файла в
+ * каталог, где он уже лежит, не добавляет НИ ОДНОЙ строки.
+ */
+console.log('\nКаталог материалов: загрузка catalog.json (тест 8)');
+{
+  const file = parseMaterialFile(catalogJson);
+  const first = planMaterialImport(file, []);
+  const of = (id: string) => first.rows.filter((row) => row.collectionId === id);
+  const mdf = of('mdf-panels-palette');
+  const ral = of('ral-design');
+
+  check('тест 8: МДФ-панелей загружено 20', mdf.length === 20, `${mdf.length}`);
+  check(
+    'тест 8: у каждой МДФ-панели две поверхности — High Gloss и Touch Sense, у каждой своя цена',
+    mdf.length === 20 &&
+      mdf.every(
+        (row) =>
+          JSON.stringify(row.meta.finishes) === '["high_gloss","touch_sense"]' &&
+          Object.keys((row.meta.finishPrices ?? {}) as Record<string, unknown>).sort().join(',') ===
+            'high_gloss,touch_sense',
+      ),
+    mdf
+      .slice(0, 2)
+      .map((row) => `${row.article}: ${JSON.stringify(row.meta.finishes)} ${JSON.stringify(row.meta.finishPrices)}`)
+      .join(' · ') || 'НУЛЕВОЙ СЕЛЕКТОР',
+  );
+  check('тест 8: цветов RAL загружено 1825', ral.length === 1825, `${ral.length}`);
+
+  const articles = first.rows.map((row) => row.article);
+  check(
+    'тест 8: коды уникальны на весь каталог',
+    articles.length === 1845 && new Set(articles).size === articles.length,
+    `${articles.length} строк · уникальных ${new Set(articles).size}`,
+  );
+
+  const counts = Object.entries(first.byCollection)
+    .map(([id, n]) => `${id} ${n.added}/${n.inFile}`)
+    .join(' · ');
+  check(
+    'тест 8: счёт по коллекциям назван числом, пустые — нулём, а не пропуском',
+    Object.keys(first.byCollection).length === file.collections.length &&
+      first.byCollection['egger-ldsp']?.inFile === 0 &&
+      first.byCollection['grandex-acrylic']?.inFile === 0,
+    counts || 'НУЛЕВОЙ СЕЛЕКТОР',
+  );
+
+  const loaded = catalogEntriesFromRows(first.rows, file, 'demo', 'demo-mat:');
+  check(
+    'тест 8: каждая строка легла в категорию своей коллекции',
+    loaded.length === 1845 && loaded.every((entry) => collectionOf(entry) !== null),
+    `${loaded.length} позиций`,
+  );
+
+  const again = planMaterialImport(
+    file,
+    loaded.map((entry) => ({ article: entry.article, collection: collectionOf(entry) })),
+  );
+  check(
+    'тест 8: повторная загрузка — дублей 0',
+    again.rows.length === 0 && again.skipped === 1845 && again.conflicts.length === 0,
+    `добавлено ${again.rows.length} · пропущено ${again.skipped} · конфликтов ${again.conflicts.length}`,
+  );
+
+  /*
+   * Код, который уже занят ДРУГОЙ коллекцией, не грузится молча поверх и
+   * не пропадает молча: артикул в каталоге организации один, и конфликт
+   * назван словами.
+   */
+  const clash = planMaterialImport(file, [{ article: 'RAL 010 30 20', collection: 'veneer' }]);
+  check(
+    'чужой код не перезаписывается и не пропадает молча — конфликт назван',
+    clash.rows.length === 1844 && clash.conflicts.length === 1 && clash.conflicts[0].includes('RAL 010 30 20'),
+    clash.conflicts[0] ?? `конфликтов ${clash.conflicts.length}`,
+  );
+
+  /*
+   * 1825 ЦВЕТОВ НЕ ПРОЛИВАЮТСЯ В СТАРЫЕ ВЫБОРЫ.
+   *
+   * Палитра фасада и материал корпуса рисуют кнопку на КАЖДЫЙ цвет без
+   * прокрутки по требованию. RAL в них — это 1825 кнопок в одном списке
+   * и зависший планшет. Позиции коллекций живут в своей панели.
+   */
+  const paletteBefore = paletteFromCatalog(DEMO_CATALOG).length;
+  const paletteAfter = paletteFromCatalog([...DEMO_CATALOG, ...loaded]).length;
+  check(
+    'каталог материалов не проливается в старую палитру фасада',
+    paletteAfter === paletteBefore,
+    `${paletteBefore} → ${paletteAfter}`,
+  );
+  const carcassBefore = carcassCatalog(DEMO_CATALOG).size;
+  const carcassAfter = carcassCatalog([...DEMO_CATALOG, ...loaded]).size;
+  check(
+    'RAL и МДФ-панели — не материал корпуса: их роль фасад',
+    carcassAfter === carcassBefore,
+    `${carcassBefore} → ${carcassAfter}`,
+  );
+
+  const hits = searchMaterials(loaded, 'RAL 010 30 20');
+  check(
+    'поиск по коду «RAL 010 30 20» — ровно одна позиция',
+    hits.length === 1 && hits[0].article === 'RAL 010 30 20',
+    hits.map((entry) => entry.article).join(' · ') || 'НУЛЕВОЙ СЕЛЕКТОР',
+  );
+  check(
+    'поиск по названию и без учёта регистра',
+    searchMaterials(loaded, 'pinkish brown').some((entry) => entry.article === 'RAL 010 30 20') &&
+      searchMaterials(loaded, 'ral 010 30 20').length === 1,
+    `${searchMaterials(loaded, 'pinkish brown').length} по названию`,
+  );
+}
+
+/**
+ * ВКЛАДКА ПОКАЗЫВАЕТ ТОЛЬКО ТО, ЧТО ИДЁТ НА ЦЕЛЬ.
+ *
+ * Роли коллекции — из файла: столешница не идёт на корпус, эмаль по RAL
+ * не идёт на столешницу. Недоступная вкладка называет причину словами.
+ */
+console.log('\nКаталог материалов: вкладки по цели (тест 10)');
+{
+  const defs = materialDefs(parseMaterialFile(catalogJson));
+  const carcass = materialTabs(defs.collections, 'carcass');
+  const countertopTab = carcass.find((tab) => tab.key === 'countertop');
+
+  check(
+    'тест 10: цель «корпус» — вкладка «Столешницы» недоступна',
+    Boolean(countertopTab) && countertopTab!.available === false,
+    countertopTab
+      ? `${countertopTab.title}: ${countertopTab.reason}`
+      : 'НУЛЕВОЙ СЕЛЕКТОР: вкладки «Столешницы» нет',
+  );
+  check(
+    'тест 10: и причина названа словами',
+    Boolean(countertopTab?.reason && /корпус/.test(countertopTab.reason)),
+    countertopTab?.reason ?? '—',
+  );
+  check(
+    'тест 10: у корпуса доступна только ЛДСП — это единственная коллекция с ролью «корпус»',
+    carcass.filter((tab) => tab.available).map((tab) => tab.key).join(',') === 'ldsp',
+    carcass.map((tab) => `${tab.key}:${tab.available ? 'да' : 'нет'}`).join(' · '),
+  );
+
+  const fronts = materialTabs(defs.collections, 'fronts');
+  check(
+    'у фасадов доступны ЛДСП, МДФ, эмаль и шпон, а столешниц нет',
+    fronts.filter((tab) => tab.available).map((tab) => tab.key).join(',') ===
+      'ldsp,mdf_panel,mdf_paint,veneer',
+    fronts.map((tab) => `${tab.key}:${tab.available ? 'да' : 'нет'}`).join(' · '),
+  );
+
+  const counter = materialTabs(defs.collections, 'countertop');
+  check(
+    'у столешницы доступна только вкладка «Столешницы»',
+    counter.filter((tab) => tab.available).map((tab) => tab.key).join(',') === 'countertop',
+    counter.map((tab) => `${tab.key}:${tab.available ? 'да' : 'нет'}`).join(' · '),
+  );
+
+  const module = materialTabs(defs.collections, 'module');
+  check(
+    'выбранный модуль — это его фасад: вкладки те же, что у фасадов',
+    module.map((tab) => tab.available).join() === fronts.map((tab) => tab.available).join(),
   );
 }
 

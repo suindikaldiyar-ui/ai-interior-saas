@@ -3,6 +3,7 @@ import { buildEstimate, type RateTable } from './estimate';
 import type { ProductionSettings } from '@/types/catalog';
 import type { MillingItem } from './milling';
 import type { CarcassItem } from './carcassMaterial';
+import type { MaterialItem } from './materialCollection';
 import { APPLIANCE_SLOTS } from './modules';
 import type {
   ApplianceKind,
@@ -119,6 +120,14 @@ export interface BuildVariantsInput extends Omit<BuildRunInput, 'requirements'> 
    * хранится и не доезжает до суммы, — дефект.
    */
   carcass?: Map<string, CarcassItem>;
+  /**
+   * ПОЗИЦИИ КОЛЛЕКЦИЙ КАТАЛОГА МАТЕРИАЛОВ (слой 51).
+   *
+   * Тем же путём, что фрезеровка и декор корпуса: RAL на фасадах, своя
+   * столешница и EGGER на корпусе стоят по цене позиции, а позиция без
+   * цены — строкой «цена не задана», и итог неполный.
+   */
+  materials?: Map<string, MaterialItem>;
   strategies?: VariantStrategy[];
   disabledKeys?: Record<VariantKey, string[]>;
   calculatedAt?: string;
@@ -167,6 +176,7 @@ export function buildVariants(input: BuildVariantsInput): Variant[] {
       undefined,
       input.milling,
       input.carcass,
+      input.materials,
     );
 
     return {

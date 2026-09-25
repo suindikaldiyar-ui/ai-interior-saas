@@ -58,6 +58,7 @@ import type {
   ApplianceKind,
   MillworkOp,
   Module,
+  FrontSpec,
   ModuleFill,
   ModuleKind,
   Opening,
@@ -258,6 +259,27 @@ export function applyOps({
   const storageFills = new Map<string, ModuleFill>();
 
   /**
+   * МАТЕРИАЛ КЛАДОВКИ НАД КОЛОННОЙ — ТЕМ ЖЕ ПУТЁМ, ЧТО ЕЁ НАПОЛНЕНИЕ.
+   *
+   * Кладовку собирает `buildUpperRow` заново каждый раз, и `set_front`
+   * до неё не дотягивался: её нет ни в `modules`, ни в верхнем ряду, ни
+   * в антресоли. Выбор материала на ней отвечал «модуль не найден», а
+   * материал на всю кухню её пропускал со второго раза — пересборка
+   * возвращала прежний фасад (`had.front`). Замерено на демо (слой 51):
+   * после МДФ-панели на все фасады 13 из 14 стали МДФ, кладовка осталась
+   * эмалью RAL.
+   *
+   * Правка лежит здесь до конца вызова и едет на модуль при пересборке —
+   * ровно как `storageFills`. Второго хранилища нет: после вызова фасад
+   * живёт на модуле в `upperSegments`.
+   */
+  const storageFronts = new Map<string, FrontSpec>();
+  const isStorage = (id: string) =>
+    run.upperSegments
+      .flatMap((segment) => segment.modules)
+      .some((unit) => unit.id === id && unit.section === 'mezzanine' && mezzanineBaseOf(unit, run) !== null);
+
+  /**
    * Фрезеровка, назначенная полосам объекта.
    *
    * Лежит на РЯДУ рядом с антресолью и ригелями по той же причине: её
@@ -265,6 +287,13 @@ export function applyOps({
    */
   let milling: Run['milling'] = run.milling ? { ...run.milling } : undefined;
   let carcass: Run['carcass'] = run.carcass ? { ...run.carcass } : undefined;
+  /*
+   * Столешница из каталога материалов — на ряду, как `carcass`: так она
+   * переживает правки ряда и закрытие объекта (слой 51).
+   */
+  let countertopMaterial: Run['countertopMaterial'] = run.countertopMaterial
+    ? { ...run.countertopMaterial }
+    : undefined;
 
   /**
    * МОДУЛИ АНТРЕСОЛИ — РЯД, А НЕ ПРОИЗВОДНАЯ.
@@ -1712,6 +1741,10 @@ export function applyOps({
           upperModules = upperModules.map((unit) =>
             hasFacade(unit) ? { ...unit, front: op.front } : unit,
           );
+          /* Кладовка над колонной — такой же фасад кухни. */
+          for (const unit of run.upperSegments.flatMap((segment) => segment.modules)) {
+            if (isStorage(unit.id) && hasFacade(unit)) storageFronts.set(unit.id, op.front);
+          }
           upperFrontAll = op.front;
           break;
         }
@@ -1724,6 +1757,10 @@ export function applyOps({
            */
           if (editMezz(op.moduleId, (unit) => ({ ...unit, front: op.front }))) break;
           if (editUpper(op.moduleId, (unit) => ({ ...unit, front: op.front }))) break;
+          if (isStorage(op.moduleId)) {
+            storageFronts.set(op.moduleId, op.front);
+            break;
+          }
           warnings.push(`Модуль ${op.moduleId} не найден: материал менять не у чего.`);
           break;
         }
@@ -2192,6 +2229,20 @@ export function applyOps({
         break;
       }
 
+      case 'set_countertop': {
+        /*
+         * СТОЛЕШНИЦА ИЗ КАТАЛОГА — ССЫЛКОЙ НА ПОЗИЦИЮ.
+         *
+         * Метраж по-прежнему считает `countertopSlabs`, а позиция задаёт
+         * цену и вид. `null` снимает выбор, и столешница снова считается
+         * по типу из `options.countertop`.
+         */
+        countertopMaterial = op.itemId
+          ? { itemId: op.itemId, ...(op.surface ? { surface: op.surface } : {}) }
+          : undefined;
+        break;
+      }
+
       case 'set_mezzanine': {
         /*
          * АНТРЕСОЛЬ — ОТДЕЛЬНАЯ ПОЗИЦИЯ СОСТАВА.
@@ -2439,11 +2490,13 @@ export function applyOps({
           .flatMap((old) => old.modules)
           .find((prev) => prev.id === unit.id && prev.section === 'mezzanine');
         const edited = storageFills.get(unit.id);
-        if (!had && !edited) return unit;
+        /* Материал, выбранный в этом вызове, сильнее прежнего (`storageFronts`). */
+        const painted = storageFronts.get(unit.id);
+        if (!had && !edited && !painted) return unit;
         return {
           ...unit,
           fill: edited ?? had?.fill ?? unit.fill,
-          front: had?.front ?? unit.front,
+          front: painted ?? had?.front ?? unit.front,
         };
       }),
     }));
@@ -2572,6 +2625,7 @@ export function applyOps({
    */
   nextRun.milling = milling;
   nextRun.carcass = carcass;
+  nextRun.countertopMaterial = countertopMaterial;
   nextRun.mezzanine = mezzanine ?? undefined;
   /*
    * ДЕРЖИМ ПОЛОСУ АНТРЕСОЛИ ВСЕГДА, СОБИРАЕМ — ТОЛЬКО ЗАКАЗАННУЮ.

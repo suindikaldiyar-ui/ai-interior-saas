@@ -22,5 +22,11 @@ export function storageUrl(bucket: string, path: string): string {
 }
 
 export function catalogUrl(path: string): string {
+  /*
+   * Путь, который уже адрес, отдаётся как есть: фото своей позиции в
+   * демонстрации живёт в памяти вкладки (`blob:`), базы и Storage у
+   * демо нет (слой 51).
+   */
+  if (/^(blob:|data:|https?:)/.test(path)) return path;
   return storageUrl(CATALOG_BUCKET, path);
 }

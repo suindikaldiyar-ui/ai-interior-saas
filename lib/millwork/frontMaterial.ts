@@ -151,9 +151,14 @@ export function frontKey(spec: FrontSpec): string {
    * Умолчание в ключ не пишется (ловушка 246): у фасада без фрезеровки
    * строка та же, что была, и отпечатки сохранённых рядов не едут.
    */
+  /*
+   * ПОВЕРХНОСТЬ КАТАЛОГА — тоже часть ключа: High Gloss и Touch Sense
+   * одной МДФ-панели — разные плиты, разные деньги и разный вид в сцене.
+   * Пусто не пишется (ловушка 246): у прежних фасадов ключ прежний.
+   */
   return `${spec.base}/${spec.construct}/${spec.finish}/${spec.colorHex ?? '-'}/${spec.itemId ?? '-'}${
     spec.millingId ? `/${spec.millingId}` : ''
-  }`;
+  }${spec.surface ? `~${spec.surface}` : ''}`;
 }
 
 /**

@@ -1,5 +1,7 @@
 import { textureRepeat, textureUrl } from '@/lib/catalog';
 import type { CatalogEntryFull } from '@/types/catalog';
+import { finishParams } from './materialFinishes';
+import type { MaterialItem } from './materialCollection';
 
 /**
  * КАК ВЫГЛЯДИТ ПОВЕРХНОСТЬ.
@@ -50,6 +52,14 @@ export type SurfaceLook = {
   milled: boolean;
   /** Артикул выбран: по этому признаку интерфейс говорит правду. */
   fromCatalog: boolean;
+  /**
+   * Настоящий размер фото, м (слой 51). Есть — текстура ложится по
+   * метрам грани, а `repeat` не читается.
+   */
+  realSizeM?: [number, number] | null;
+  /** Лак поверхности из таблицы `finishes` файла каталога. */
+  clearcoat?: number;
+  clearcoatRoughness?: number;
 };
 
 const HEX = /^#[0-9a-f]{6}$/i;
@@ -100,5 +110,32 @@ export function surfaceLook(
     repeat: textureRepeat(entry.tiling, surfaceSize[0], surfaceSize[1]),
     milled: finish === 'milled',
     fromCatalog: true,
+  };
+}
+
+/**
+ * ВИД ПОЗИЦИИ КАТАЛОГА МАТЕРИАЛОВ — столешница из коллекции.
+ *
+ * Цвет — позиции, шероховатость и лак — из таблицы поверхностей файла
+ * (`MATERIAL_FINISHES`), фото — в настоящем размере. Поверхности, которой
+ * нет в таблице, шероховатость не выдумывается: берётся умолчание сцены.
+ */
+export function materialSurfaceLook(
+  item: MaterialItem,
+  surface: string | undefined,
+  fallback: { color: string; roughness: number; metalness?: number },
+): SurfaceLook {
+  const finish = finishParams(surface);
+  return {
+    color: item.colorHex ?? fallback.color,
+    roughness: finish ? finish.roughness : fallback.roughness,
+    metalness: 0,
+    textureUrl: item.photo?.url ?? null,
+    repeat: [1, 1],
+    milled: false,
+    fromCatalog: true,
+    realSizeM: item.photo?.sizeM ?? null,
+    clearcoat: finish?.clearcoat ?? 0,
+    clearcoatRoughness: finish?.clearcoatRoughness ?? 0,
   };
 }

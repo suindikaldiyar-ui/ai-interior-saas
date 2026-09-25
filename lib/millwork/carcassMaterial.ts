@@ -1,4 +1,12 @@
 import type { CatalogEntryFull } from '@/types/catalog';
+import {
+  collectionOf,
+  materialColorOf,
+  metaFinishPrices,
+  metaRoles,
+  priceState,
+  priceUnitOf,
+} from './materialCollection';
 import type { Module, Run } from '@/types/millwork';
 import { MILLING_SCOPES, millingScopeOf, type MillingScope } from './milling';
 
@@ -37,6 +45,15 @@ export type CarcassItem = {
   active: boolean;
   /** Цвет декора: им красится корпус в сцене. */
   colorHex: string;
+  /**
+   * Коллекция каталога материалов, если позиция оттуда.
+   *
+   * У такой позиции своё правило цены: не заданная цена — строка «цена
+   * не задана» и итог «неполный», а не молчаливая ставка цеха.
+   */
+  collection?: string | null;
+  /** Почему цену позиции коллекции не умножить на м²: словами. */
+  priceNote?: string | null;
 };
 
 /**
@@ -47,6 +64,39 @@ export type CarcassItem = {
  * плита одна и та же, и компания сама решает, куда её ставить.
  */
 export function carcassItemOf(entry: CatalogEntryFull): CarcassItem | null {
+  /*
+   * ПОЗИЦИЯ КОЛЛЕКЦИИ — МАТЕРИАЛ КОРПУСА, ТОЛЬКО ЕСЛИ ЕЁ РОЛЬ КОРПУС.
+   *
+   * Цвет есть у каждого из 1825 цветов RAL, но эмаль — фасад: пусти её
+   * сюда, и выбор корпуса нарисовал бы 1825 кнопок. Роль берётся из
+   * данных позиции (её скопировала туда загрузка файла), а не угадывается.
+   */
+  const collection = collectionOf(entry);
+  if (collection) {
+    if (!metaRoles(entry.meta).includes('carcass')) return null;
+    const colorHex = materialColorOf(entry);
+    if (!colorHex) return null;
+    const price = priceState(
+      {
+        price: typeof entry.price === 'number' && entry.price > 0 ? entry.price : null,
+        finishPrices: metaFinishPrices(entry.meta),
+        unit: priceUnitOf(entry),
+      },
+      undefined,
+      'm2',
+    );
+    return {
+      id: entry.id,
+      name: entry.name_ru,
+      article: entry.article ?? '',
+      price: price.state === 'priced' ? price.rate : 0,
+      active: entry.is_active !== false,
+      colorHex,
+      collection,
+      priceNote: price.state === 'unset' ? price.reason : null,
+    };
+  }
+
   const meta = entry.meta as { color?: unknown; frontBase?: unknown } | null | undefined;
   const color = typeof meta?.color === 'string' ? meta.color.trim() : '';
   if (!/^#[0-9a-fA-F]{6}$/.test(color)) return null;
@@ -136,9 +186,14 @@ export function carcassLink(
     return {
       state: 'priceless',
       item,
-      reason:
-        `«${item.name}»: цена не задана — корпус посчитан по ставке цеха. ` +
-        'Задайте цену за м² в каталоге.',
+      /*
+       * Позиция коллекции ставкой цеха не подменяется: у неё своя строка
+       * «цена не задана», и итог помечен неполным (слой 51).
+       */
+      reason: item.collection
+        ? `«${item.name}»: ${item.priceNote ?? 'цена не задана'} — корпус в смете без цены, итог неполный.`
+        : `«${item.name}»: цена не задана — корпус посчитан по ставке цеха. ` +
+          'Задайте цену за м² в каталоге.',
     };
   }
 

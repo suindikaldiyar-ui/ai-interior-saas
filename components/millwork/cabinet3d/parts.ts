@@ -1,11 +1,9 @@
 'use client';
 
-import {
-  CARCASS_ROUGHNESS,
-  FRONT_METALNESS,
-  FRONT_ROUGHNESS,
-  INNER_ROUGHNESS,
-} from './cadLook';
+import { CARCASS_ROUGHNESS, INNER_ROUGHNESS, applyFrontLook } from './cadLook';
+import { setRealSizeMap, unpatch } from './realSizeMap';
+import { MATERIAL_FINISHES } from '@/lib/millwork/materialFinishes';
+import type { MaterialPhoto } from '@/lib/millwork/materialCollection';
 import { useEffect, useMemo } from 'react';
 import * as THREE from 'three';
 import { milledNormalMap, millingReliefMap } from './milledNormal';
@@ -14,7 +12,6 @@ import { RELIEF_NORMAL_SCALE } from '@/lib/millwork/relief';
 import { loadTexture } from '@/lib/textureCache';
 import type { SurfaceLook } from '@/lib/millwork/surfaces';
 import { DEFAULT_FRONT, frontKey } from '@/lib/millwork/frontMaterial';
-import { frontSwatch } from '@/lib/millwork/frontSwatch';
 /*
  * Цвет по роли — одна таблица на продукт: сцена её ЧИТАЕТ. Свои
  * `darken`/`lighten` здесь означали бы вторую палитру, и проверка
@@ -138,7 +135,11 @@ export function useCabinetParts(
         polygonOffsetFactor: 1,
         polygonOffsetUnits: 1,
       }),
-      counter: new THREE.MeshStandardMaterial({
+      /*
+       * Столешница — физический материал: у поверхностей каталога есть
+       * лак (слой 51). Без лака он рисует как стандартный.
+       */
+      counter: new THREE.MeshPhysicalMaterial({
         color: palette.counter,
         roughness: 0.28,
         metalness: 0.04,
@@ -239,6 +240,7 @@ export function useSurfaceLook(
   look: SurfaceLook | undefined,
   fallback: { color: string; roughness: number; metalness: number },
 ): void {
+  const invalidate = useThree((state) => state.invalidate);
   const color = look?.color ?? fallback.color;
   const roughness = look?.roughness ?? fallback.roughness;
   const metalness = look?.metalness ?? fallback.metalness;
@@ -246,12 +248,29 @@ export function useSurfaceLook(
   const milled = Boolean(look?.milled);
   const repeatX = look?.repeat[0] ?? 1;
   const repeatY = look?.repeat[1] ?? 1;
+  /*
+   * НАСТОЯЩИЙ РАЗМЕР ФОТО (слой 51). У позиции каталога материалов фото
+   * ложится по метрам грани, а не повторами на «габарит поверхности»:
+   * у столешницы плит несколько, и повторы на длину ряда растягивали бы
+   * рисунок по каждой.
+   */
+  const realW = look?.realSizeM?.[0] ?? 0;
+  const realH = look?.realSizeM?.[1] ?? 0;
+
+  const clearcoat = look?.clearcoat ?? 0;
+  const clearcoatRoughness = look?.clearcoatRoughness ?? 0;
 
   useEffect(() => {
     material.color.set(color);
     material.roughness = roughness;
     material.metalness = metalness;
-  }, [material, color, roughness, metalness]);
+    /* Лак есть только у физического материала: столешница из каталога — он. */
+    if (material instanceof THREE.MeshPhysicalMaterial) {
+      material.clearcoat = clearcoat;
+      material.clearcoatRoughness = clearcoatRoughness;
+    }
+    invalidate();
+  }, [material, color, roughness, metalness, clearcoat, clearcoatRoughness, invalidate]);
 
   /* ── Фрезеровка: рельеф, а не цвет ── */
   useEffect(() => {
@@ -267,58 +286,51 @@ export function useSurfaceLook(
     let cancelled = false;
 
     if (!textureUrl) {
-      if (material.map) {
-        material.map = null;
-        material.needsUpdate = true;
-      }
+      setRealSizeMap(material, null, null);
       return;
     }
 
     loadTexture(textureUrl)
       .then((texture) => {
         if (cancelled) return;
-        /*
-         * Текстура одна на URL и лежит в кэше, поэтому повторы ставим на
-         * клоне: две поверхности с разным числом повторов не должны
-         * драться за одну и ту же картинку.
-         */
-        const own = texture.clone();
-        own.needsUpdate = true;
-        own.wrapS = THREE.RepeatWrapping;
-        own.wrapT = THREE.RepeatWrapping;
-        own.repeat.set(repeatX, repeatY);
-        material.map = own;
-        material.needsUpdate = true;
+        if (realW > 0 && realH > 0) {
+          setRealSizeMap(material, texture, [realW, realH]);
+        } else {
+          unpatch(material);
+          /*
+           * Текстура одна на URL и лежит в кэше, поэтому повторы ставим на
+           * клоне: две поверхности с разным числом повторов не должны
+           * драться за одну и ту же картинку.
+           */
+          const own = texture.clone();
+          own.needsUpdate = true;
+          own.wrapS = THREE.RepeatWrapping;
+          own.wrapT = THREE.RepeatWrapping;
+          own.repeat.set(repeatX, repeatY);
+          material.map = own;
+          material.needsUpdate = true;
+        }
+        // `frameloop="demand"`: без кадра текстура встанет в памяти, но не на экране.
+        invalidate();
       })
-      .catch(() => {
-        // Файл не отдался — остаётся цвет. Пустая поверхность хуже цвета.
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        /*
+         * Файл не отдался — остаётся цвет: пустая поверхность хуже цвета.
+         * Но не молча: адрес лежит на материале, и приёмка его видит.
+         */
+        material.userData.textureFailed = textureUrl;
+        console.error(`Текстура не загрузилась: ${textureUrl}`, error);
       });
 
     return () => {
       cancelled = true;
     };
-  }, [material, textureUrl, repeatX, repeatY]);
+  }, [material, textureUrl, repeatX, repeatY, realW, realH, invalidate]);
 }
 
 
 /* ────────────────  Материал фасада виден сразу  ──────────────── */
-
-/**
- * ЦВЕТ ФАСАДА — ОДНА ФОРМУЛА НА СЦЕНУ И НА СХЕМУ.
- *
- * Здесь стояла своя: «артикул выбран — его цвет, иначе цвет сцены». А
- * схема считала иначе — `frontSwatch`: «иначе типовой цвет ЭТОЙ БАЗЫ».
- * Расхождение видно сразу, как только человек берёт базу без артикула:
- * акрил на схеме тёмный, а в сцене бежевый, потому что запасной цвет
- * один на все базы.
- *
- * Восьмой случай того же класса — две формулы одной величины. Считает
- * `frontSwatch`, сцена только спрашивает.
- */
-function frontColor(spec: FrontSpec, fallback: string): string {
-  const color = frontSwatch(spec).color;
-  return /^#[0-9a-f]{6}$/i.test(color) ? color : fallback;
-}
 
 /**
  * МАТЕРИАЛЫ ФАСАДОВ ПО КЛЮЧАМ.
@@ -344,31 +356,44 @@ export function useFrontMaterials(
    * честнее выдуманного: профиль знает только каталог.
    */
   milling: Map<string, MillingItem> = new Map(),
-): Map<string, THREE.MeshStandardMaterial> {
+  /**
+   * ФОТО ПОЗИЦИЙ КАТАЛОГА МАТЕРИАЛОВ — по идентификатору позиции.
+   *
+   * Фото ложится в настоящем размере (`setRealSizeMap`), а не по детали.
+   * Позиции без фото красятся цветом, как и раньше.
+   */
+  photos: Map<string, MaterialPhoto> = new Map(),
+): Map<string, THREE.MeshPhysicalMaterial> {
   const invalidate = useThree((state) => state.invalidate);
-  const cache = useMemo(() => new Map<string, THREE.MeshStandardMaterial>(), []);
+  const cache = useMemo(() => new Map<string, THREE.MeshPhysicalMaterial>(), []);
 
+  /*
+   * ФИЗИЧЕСКИЙ МАТЕРИАЛ, А НЕ СТАНДАРТНЫЙ: у поверхностей каталога есть
+   * ЛАК (`clearcoat`) — High Gloss это лак 1.0 поверх плиты. У
+   * стандартного материала лака нет вовсе, и глянец читался бы тем же
+   * пятном, что мат. Без лака физический рисует как стандартный.
+   */
   const materials = useMemo(() => {
-    const out = new Map<string, THREE.MeshStandardMaterial>();
-    for (const [key, spec] of Array.from(specs.entries())) {
+    const out = new Map<string, THREE.MeshPhysicalMaterial>();
+    for (const key of Array.from(specs.keys())) {
       let material = cache.get(key);
       if (!material) {
-        material = new THREE.MeshStandardMaterial();
+        material = new THREE.MeshPhysicalMaterial();
         cache.set(key, material);
       }
       out.set(key, material);
-      void spec;
     }
     return out;
   }, [specs, cache]);
 
   useEffect(() => {
+    let cancelled = false;
+
     for (const [key, spec] of Array.from(specs.entries())) {
       const material = materials.get(key);
       if (!material) continue;
-      material.color.set(frontColor(spec, fallbackColor));
-      material.roughness = FRONT_ROUGHNESS[spec.finish];
-      material.metalness = FRONT_METALNESS[spec.finish];
+      /* Вид фасада — одна функция на сцену, картинки и приёмку (`cadLook`). */
+      applyFrontLook(material, spec, fallbackColor, MATERIAL_FINISHES);
 
       /*
        * ФРЕЗЕРОВАННЫЙ ФАСАД ВИДЕН РЕЛЬЕФОМ, А НЕ ЦВЕТОМ.
@@ -400,13 +425,43 @@ export function useFrontMaterials(
        * вблизи в штамповку.
        */
       material.normalScale.set(RELIEF_NORMAL_SCALE, RELIEF_NORMAL_SCALE);
+
+      /*
+       * ФОТО ПОЗИЦИИ — ПОСЛЕ ЦВЕТА, А НЕ ВМЕСТО НЕГО.
+       *
+       * Пока фото едет, фасад уже цвета позиции; приехало — цвет белый, и
+       * рисунок несёт текстура. Не приехало — остаётся цвет, а адрес
+       * лежит на материале: молча потерянное фото выглядело бы «так и
+       * задумано».
+       */
+      const photo = spec.itemId ? photos.get(spec.itemId) : undefined;
+      if (!photo) {
+        setRealSizeMap(material, null, null);
+        continue;
+      }
+      loadTexture(photo.url)
+        .then((texture) => {
+          if (cancelled) return;
+          applyFrontLook(material, spec, fallbackColor, MATERIAL_FINISHES, true);
+          setRealSizeMap(material, texture, photo.sizeM);
+          invalidate();
+        })
+        .catch((error: unknown) => {
+          if (cancelled) return;
+          material.userData.textureFailed = photo.url;
+          console.error(`Фото позиции не загрузилось: ${photo.url}`, error);
+        });
     }
     /*
      * `frameloop="demand"`: без явного кадра рельеф сменится в памяти, а
      * на экране останется прежний фасад (ловушка 250).
      */
     invalidate();
-  }, [specs, materials, fallbackColor, milling, invalidate]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [specs, materials, fallbackColor, milling, photos, invalidate]);
 
   useEffect(
     () => () => {
@@ -433,6 +488,8 @@ export function useFrontMaterials(
 export function useCarcassMaterials(
   keys: Map<string, string>,
   inner: boolean,
+  /** Фото декора по тому же ключу пачки: ложится в настоящем размере. */
+  photos: Map<string, MaterialPhoto> = new Map(),
 ): Map<string, THREE.MeshStandardMaterial> {
   const invalidate = useThree((state) => state.invalidate);
   const cache = useMemo(() => new Map<string, THREE.MeshStandardMaterial>(), []);
@@ -457,14 +514,39 @@ export function useCarcassMaterials(
   }, [keys, cache]);
 
   useEffect(() => {
+    let cancelled = false;
+
     for (const [key, hex] of Array.from(keys.entries())) {
       const material = materials.get(key);
       if (!material) continue;
       /* Внутренности светлее корпуса — та же таблица ролей, что и без декора. */
       material.color.set(inner ? lightenHex(hex, 0.18) : darkenHex(hex, 0.08));
+
+      const photo = photos.get(key);
+      if (!photo) {
+        setRealSizeMap(material, null, null);
+        continue;
+      }
+      loadTexture(photo.url)
+        .then((texture) => {
+          if (cancelled) return;
+          // Под фото цвет белый: рисунок несёт текстура (как у фасада).
+          material.color.set('#ffffff');
+          setRealSizeMap(material, texture, photo.sizeM);
+          invalidate();
+        })
+        .catch((error: unknown) => {
+          if (cancelled) return;
+          material.userData.textureFailed = photo.url;
+          console.error(`Фото декора корпуса не загрузилось: ${photo.url}`, error);
+        });
     }
     invalidate();
-  }, [keys, materials, inner, invalidate]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [keys, materials, inner, photos, invalidate]);
 
   useEffect(
     () => () => {

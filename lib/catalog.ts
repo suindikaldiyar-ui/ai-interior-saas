@@ -44,21 +44,39 @@ export async function fetchCatalog(
   supabase: SupabaseClient,
   orgId: string,
 ): Promise<CatalogEntryFull[]> {
-  const { data, error } = await supabase
-    .from('catalog_items')
-    .select(
-      `id, org_id, category_id, article, name_ru, name_kk, description, price, unit,
-       dimensions, tiling, meta, is_active,
-       catalog_categories!inner(id, org_id, key, name_ru, name_kk, applies_to, unit, sort_order, is_active),
-       catalog_assets(id, item_id, kind, storage_path, sort_order)`,
-    )
-    .eq('org_id', orgId)
-    .eq('is_active', true)
-    .order('article');
+  /*
+   * КАТАЛОГ ЧИТАЕТСЯ СТРАНИЦАМИ.
+   *
+   * PostgREST отдаёт за запрос не больше 1000 строк (`max-rows` у
+   * Supabase по умолчанию) и не говорит, что обрезал. Пока каталог был
+   * прайсом на сотню позиций, этого не было видно; 1825 цветов RAL
+   * — это каталог, у которого пропала бы половина молча. Порядок —
+   * артикул и id: иначе страница может отдать строку дважды, а другую
+   * не отдать вовсе.
+   */
+  const PAGE = 1000;
+  const rows: RawItem[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from('catalog_items')
+      .select(
+        `id, org_id, category_id, article, name_ru, name_kk, description, price, unit,
+         dimensions, tiling, meta, is_active,
+         catalog_categories!inner(id, org_id, key, name_ru, name_kk, applies_to, unit, sort_order, is_active),
+         catalog_assets(id, item_id, kind, storage_path, sort_order)`,
+      )
+      .eq('org_id', orgId)
+      .eq('is_active', true)
+      .order('article')
+      .order('id')
+      .range(from, from + PAGE - 1);
 
-  if (error || !data) return [];
+    if (error || !data) return [];
+    rows.push(...(data as unknown as RawItem[]));
+    if (data.length < PAGE) break;
+  }
 
-  return (data as unknown as RawItem[])
+  return rows
     .filter((row) => row.catalog_categories?.is_active !== false)
     .map((row) => ({
       ...row,

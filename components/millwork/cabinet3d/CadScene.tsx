@@ -5,6 +5,21 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import { CAD_LIGHT, applyCadLook } from './cadLook';
+import { realSizeOf } from './realSizeMap';
+
+/** Материал пачки фасадов, прочитанный со сцены: для приёмки. */
+type FrontReadout = {
+  key: string;
+  /** Сколько фасадов в пачке. */
+  count: number;
+  /** Цвет материала — линейный, как его держит three. */
+  color: number[];
+  roughness: number;
+  clearcoat: number;
+  clearcoatRoughness: number;
+  map: boolean;
+  realSizeM: [number, number] | null;
+};
 import Cabinet3D from './Cabinet3D';
 import { beamDropMm } from '@/lib/millwork/ceiling';
 import { plinthMm } from '@/lib/millwork/shop';
@@ -476,6 +491,7 @@ function FrameProbe({ rows }: { rows: SceneRow[] }) {
       };
       __mwCadModules?: () => { drawn: number; ids: string[] };
       __mwCadCounter?: () => Record<string, number[]>;
+      __mwCadFronts?: () => FrontReadout[];
       __mwCadLook?: () => {
         frontColors: string[];
         opaque: number;
@@ -486,6 +502,34 @@ function FrameProbe({ rows }: { rows: SceneRow[] }) {
       };
     };
     w.__mwCadFrames = () => gl.info.render.frame;
+
+    /*
+     * МАТЕРИАЛ КАЖДОЙ ПАЧКИ ФАСАДОВ — ТАКИМ, КАКИМ ОН ВИСИТ В СЦЕНЕ.
+     *
+     * Цвет — ЛИНЕЙНЫЙ, прямо из материала: приёмка сверяет его с hex
+     * каталога, переведённым из sRGB своей формулой. Сравнивать ключ
+     * пачки бессмысленно — ключ говорит, каким цвет должен быть, а
+     * материал — каким его видит клиент (слой 51).
+     */
+    w.__mwCadFronts = () => {
+      const out: FrontReadout[] = [];
+      scene.traverse((object) => {
+        const mesh = object as THREE.Mesh & { count?: number };
+        if (!mesh.isMesh || mesh.visible === false || !mesh.name.startsWith('front:')) return;
+        const material = mesh.material as THREE.MeshPhysicalMaterial;
+        out.push({
+          key: mesh.name.slice('front:'.length),
+          count: typeof mesh.count === 'number' ? mesh.count : 1,
+          color: [material.color.r, material.color.g, material.color.b],
+          roughness: material.roughness,
+          clearcoat: material.clearcoat ?? 0,
+          clearcoatRoughness: material.clearcoatRoughness ?? 0,
+          map: Boolean(material.map),
+          realSizeM: realSizeOf(material),
+        });
+      });
+      return out;
+    };
 
     /*
      * СКОЛЬКО СТОЛЕШНИЦЫ НАРИСОВАНО — по стенам, в миллиметрах.
@@ -814,6 +858,7 @@ function FrameProbe({ rows }: { rows: SceneRow[] }) {
 
     return () => {
       delete w.__mwCadFrames;
+      delete w.__mwCadFronts;
       delete w.__mwCadState;
       delete w.__mwCadFit;
       delete w.__mwCadLook;

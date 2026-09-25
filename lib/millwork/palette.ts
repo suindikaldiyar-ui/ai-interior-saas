@@ -1,4 +1,5 @@
 import { textureUrl } from '@/lib/catalog';
+import { collectionOf } from './materialCollection';
 import type { CatalogEntryFull } from '@/types/catalog';
 import type { FrontBase } from '@/types/millwork';
 
@@ -65,6 +66,12 @@ export function paletteFromCatalog(items: CatalogEntryFull[]): PaletteColor[] {
 
   for (const item of items) {
     if (item.is_active === false) continue;
+    /*
+     * Позиции коллекций каталога материалов — не палитра. У палитры нет
+     * прокрутки по требованию: 1825 цветов RAL стали бы 1825 кнопками в
+     * одном списке. Коллекции живут в своей панели со своим списком.
+     */
+    if (collectionOf(item)) continue;
 
     const base = metaString(item, 'frontBase') as FrontBase;
     const colorHex = metaString(item, 'color');

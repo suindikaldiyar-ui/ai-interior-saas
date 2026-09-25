@@ -144,6 +144,19 @@ export type InteriorState = {
    * после перезагрузки страницы.
    */
   setCatalogPrice: (id: string, price: number) => void;
+  /**
+   * ПОЗИЦИЯ КАТАЛОГА ПОПРАВЛЕНА — цена или цены по поверхностям.
+   *
+   * Тот же каталог, та же строка, что уходит в `catalog_items` (слой 51):
+   * у МДФ-панели цена живёт в `meta.finishPrices`, и правится она здесь
+   * тем же движением, что `price`.
+   */
+  patchCatalogEntry: (id: string, patch: Partial<Pick<CatalogEntryFull, 'price' | 'meta'>>) => void;
+  /**
+   * В каталог добавлены позиции — загрузкой коллекции или своей позицией.
+   * Позиция с тем же id заменяется: вторая копия товара разошлась бы с первой.
+   */
+  addCatalogEntries: (entries: CatalogEntryFull[]) => void;
   setSelection: (targetKey: TargetKey, itemId: string | null) => void;
   clearSelections: () => void;
   setAnalysis: (analysis: RoomAnalysis | null) => void;
@@ -629,6 +642,22 @@ export const useInteriorStore = create<InteriorState>((set, get) => ({
     set((state) => ({
       catalog: state.catalog.map((item) => (item.id === id ? { ...item, price } : item)),
     })),
+
+  patchCatalogEntry: (id, patch) =>
+    set((state) => ({
+      catalog: state.catalog.map((item) => (item.id === id ? { ...item, ...patch } : item)),
+    })),
+
+  addCatalogEntries: (entries) =>
+    set((state) => {
+      const fresh = new Map(entries.map((entry) => [entry.id, entry]));
+      return {
+        catalog: [
+          ...state.catalog.filter((item) => !fresh.has(item.id)),
+          ...entries,
+        ],
+      };
+    }),
 
   setSelection: (targetKey, itemId) =>
     set((state) => {

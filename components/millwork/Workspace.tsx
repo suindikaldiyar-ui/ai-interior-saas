@@ -81,6 +81,15 @@ import SurveySheet from './SurveySheet';
 import TemplatePicker from './TemplatePicker';
 import type { RateTable } from '@/lib/millwork/estimate';
 import { applyOps } from '@/lib/millwork/ops';
+import MaterialLibraryPanel, { type AppliedMaterial } from './MaterialLibraryPanel';
+import {
+  materialCatalog,
+  materialOps,
+  type MaterialChoice,
+  type MaterialTarget,
+} from '@/lib/millwork/materialCatalog';
+import { metaFinishPrices } from '@/lib/millwork/materialCollection';
+import { MATERIAL_FINISHES } from '@/lib/millwork/materialFinishes';
 import { screenState } from '@/lib/millwork/screen';
 import {
   keepSelection,
@@ -838,6 +847,19 @@ export default function Workspace(props: WorkspaceProps) {
    */
   const carcassItems = useMemo(() => carcassCatalog(catalog), [catalog]);
 
+  /*
+   * ПОЗИЦИИ КОЛЛЕКЦИЙ КАТАЛОГА МАТЕРИАЛОВ — ИЗ ТОГО ЖЕ КАТАЛОГА (слой 51).
+   *
+   * RAL на фасадах, своя столешница и EGGER на корпусе стоят по цене
+   * позиции; позиция без цены — строка «цена не задана», итог неполный.
+   * Отдельного списка материалов у экрана нет.
+   */
+  const materialItems = useMemo(() => materialCatalog(catalog), [catalog]);
+  const orgId = useInteriorStore((s) => s.orgId);
+  const addCatalogEntries = useInteriorStore((s) => s.addCatalogEntries);
+  const patchCatalogEntry = useInteriorStore((s) => s.patchCatalogEntry);
+  const setCatalog = useInteriorStore((s) => s.setCatalog);
+
   const input = useMemo(() => {
     if (!resolution) {
       return {
@@ -859,6 +881,7 @@ export default function Workspace(props: WorkspaceProps) {
         roomDepthM: props.roomDepthM ?? 3.2,
         milling: millingItems,
         carcass: carcassItems,
+        materials: materialItems,
       };
     }
 
@@ -873,11 +896,12 @@ export default function Workspace(props: WorkspaceProps) {
       production: production,
       milling: millingItems,
       carcass: carcassItems,
+      materials: materialItems,
     });
 
     // Пока стены не введены, ряд брать неоткуда — держим габарит из пропсов.
     return seed.lengthMm > 0 ? seed : { ...seed, lengthMm: props.lengthMm };
-  }, [resolution, wallRequirements, props, millingItems, carcassItems]);
+  }, [resolution, wallRequirements, props, millingItems, carcassItems, materialItems]);
 
   /*
    * Компоновки: две-три расстановки ОДНОЙ кухни из одного замера. Считаются
@@ -1053,11 +1077,12 @@ export default function Workspace(props: WorkspaceProps) {
                 undefined,
                 millingItems,
                 carcassItems,
+                materialItems,
               ),
         ),
       );
     },
-    [layout, variantKey, input.rates, disabled, production, millingItems, carcassItems],
+    [layout, variantKey, input.rates, disabled, production, millingItems, carcassItems, materialItems],
   );
 
   const estimate = useMemo(
@@ -1084,9 +1109,13 @@ export default function Workspace(props: WorkspaceProps) {
    */
   useEffect(() => {
     (window as unknown as {
-      __mwEstimateLines?: () => { key: string; quantity: number }[];
+      __mwEstimateLines?: () => { key: string; quantity: number; priceUnset: string | null }[];
     }).__mwEstimateLines = () =>
-      objectEstimate.lines.map((line) => ({ key: line.key, quantity: line.quantity }));
+      objectEstimate.lines.map((line) => ({
+        key: line.key,
+        quantity: line.quantity,
+        priceUnset: line.enabled ? (line.priceUnset ?? null) : null,
+      }));
   }, [objectEstimate]);
 
   /**
@@ -1811,6 +1840,135 @@ export default function Workspace(props: WorkspaceProps) {
     },
     [runOps, selectedId, selectedGap],
   );
+
+  /*
+   * ═══  ПАНЕЛЬ «МАТЕРИАЛЫ»: КУДА ЛОЖИТСЯ ПОЗИЦИЯ КАТАЛОГА (слой 51)  ═══
+   *
+   * «Фасады всей кухни», «Корпус всей кухни» и «Столешница» — это ВСЕ
+   * стены объекта: у угловой кухни материал один на оба ряда. Каждая
+   * стена правится тем же `applyOps`, что и любая правка; операции
+   * собирает `materialOps` — `set_front` помодульно, `set_carcass` по
+   * полосам, `set_countertop` на ряд. Выбор ложится в модули и в ряд и
+   * потому переживает пересборку и закрытие объекта — тот же механизм,
+   * что у материала модуля.
+   */
+  const applyMaterial = useCallback(
+    (target: MaterialTarget, choice: MaterialChoice): string | null => {
+      const walls = target === 'module' ? [wall] : segments.map((_, index) => index);
+      const said: string[] = [];
+      let changed = false;
+
+      for (const index of walls) {
+        const run = segments[index];
+        if (!run) continue;
+        const plan = materialOps(
+          target,
+          choice,
+          run,
+          target === 'module' ? selectedId : null,
+          MATERIAL_FINISHES,
+        );
+        if ('refusal' in plan) {
+          said.push(plan.refusal);
+          continue;
+        }
+        if (plan.note) said.push(plan.note);
+
+        const next = applyOps({
+          run,
+          requirements,
+          ops: plan.ops,
+          openings: props.openings,
+          roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
+        });
+        /* Отказ движка — словами, а ряд записывается с тем, что прошло. */
+        if (next.warnings[0]) said.push(next.warnings[0]);
+        if (index === 0) setEditedRuns((prev) => ({ ...prev, [active.key]: next }));
+        else setEditedWalls((prev) => ({ ...prev, [index]: next }));
+        changed = true;
+      }
+
+      if (changed) dirty.current = true;
+      return said[0] ?? null;
+    },
+    [wall, segments, selectedId, requirements, props.openings, props.roomDepthM, active.key],
+  );
+
+  /*
+   * ЧТО ЛЕЖИТ НА КАЖДОЙ ЦЕЛИ — ИЗ РЯДОВ, А НЕ ИЗ ПАМЯТИ ПАНЕЛИ.
+   *
+   * Панель подсвечивает позицию по данным: после перезагрузки объекта
+   * она обязана показать ту же позицию, что уехала в смету и в сцену.
+   * У фасадов берётся самая частая позиция всех стен: ручная правка
+   * модуля сильнее, и одинаковыми фасады быть не обязаны.
+   */
+  const appliedMaterials = useMemo((): Record<MaterialTarget, AppliedMaterial> => {
+    const tally = new Map<string, { count: number; surface?: string }>();
+    for (const run of segments) {
+      for (const unit of allModules(run).filter((m) => hasFacade(m))) {
+        const spec = frontOf(unit);
+        if (!spec.itemId || !materialItems.has(spec.itemId)) continue;
+        const at = tally.get(spec.itemId);
+        if (at) at.count += 1;
+        else tally.set(spec.itemId, { count: 1, surface: spec.surface });
+      }
+    }
+    const top = Array.from(tally.entries()).sort((a, b) => b[1].count - a[1].count)[0];
+    const carcassId = segments[0]?.carcass?.base ?? null;
+    const counter = segments[0]?.countertopMaterial;
+    const moduleFront = selection.unit ? frontOf(selection.unit) : null;
+    return {
+      fronts: top ? { itemId: top[0], surface: top[1].surface } : { itemId: null },
+      carcass: { itemId: carcassId && materialItems.has(carcassId) ? carcassId : null },
+      countertop: counter ? { itemId: counter.itemId, surface: counter.surface } : { itemId: null },
+      module:
+        moduleFront?.itemId && materialItems.has(moduleFront.itemId)
+          ? { itemId: moduleFront.itemId, surface: moduleFront.surface }
+          : { itemId: null },
+    };
+  }, [segments, materialItems, selection.unit]);
+
+  /*
+   * ЦЕНА ПОЗИЦИИ — ТОЙ ЖЕ ПРАВКОЙ, ЧТО У ФРЕЗЕРОВКИ.
+   *
+   * Смета пересчитывается сразу (каталог в сторе), а в базу цена уходит
+   * `patchCatalogItem` — одной дверью правки каталога. В демонстрации
+   * писать некуда, и это сказано словами.
+   */
+  const saveMaterialPrice = useCallback(
+    async (
+      itemId: string,
+      patch: { price?: number | null; finishPrices?: Record<string, number | null> },
+    ): Promise<string | null> => {
+      const entry = catalog.find((e) => e.id === itemId);
+      if (!entry) return 'Позиции нет в каталоге — цену записать некуда.';
+      const next = patch.finishPrices
+        ? { meta: { ...entry.meta, finishPrices: { ...(metaFinishPrices(entry.meta) ?? {}), ...patch.finishPrices } } }
+        : { price: patch.price ?? 0 };
+      patchCatalogEntry(itemId, next);
+      if (!orgId) return 'Это демонстрация: цена посчитана, но в каталог не сохранится.';
+      const { supabaseBrowser } = await import('@/lib/supabase/client');
+      const supabase = supabaseBrowser();
+      if (!supabase) return 'Supabase не настроен: цена посчитана, но в каталог не записалась.';
+      const { patchCatalogItem } = await import('@/lib/catalog');
+      const error = await patchCatalogItem(supabase, itemId, next);
+      return error ? `«${entry.article}»: в каталог не записалось — ${error}` : null;
+    },
+    [catalog, orgId, patchCatalogEntry],
+  );
+
+  /* Каталог организации изменился в базе — перечитать тем же `fetchCatalog`. */
+  const reloadCatalog = useCallback(async (): Promise<string | null> => {
+    if (!orgId) return null;
+    const { supabaseBrowser } = await import('@/lib/supabase/client');
+    const supabase = supabaseBrowser();
+    if (!supabase) return 'Supabase не настроен: каталог не перечитан.';
+    const { fetchCatalog } = await import('@/lib/catalog');
+    const fresh = await fetchCatalog(supabase, orgId);
+    if (fresh.length === 0) return 'Каталог организации не прочитался — обновите страницу.';
+    setCatalog(fresh);
+    return null;
+  }, [orgId, setCatalog]);
 
 
   /**
@@ -2552,6 +2710,7 @@ export default function Workspace(props: WorkspaceProps) {
 
         {props.projectId && saveLabel && (
           <span
+            data-save-state={saveState}
             className={`text-[13px] ${
               saveState === 'error'
                 ? 'text-alert'
@@ -3249,6 +3408,27 @@ export default function Workspace(props: WorkspaceProps) {
                     </label>
                   </div>
                 )}
+              </div>
+
+              {/*
+                * КАТАЛОГ МАТЕРИАЛОВ — РЯДОМ СО СЦЕНОЙ (слой 51).
+                *
+                * Сразу за фото помещения (ловушка 266): это главный выбор
+                * шага «Материалы». Цель, вкладки, поиск и позиции — одной
+                * панелью; нажал позицию — сцена и смета поменялись на месте.
+                */}
+              <div className={`mb-4 ${onStep('collections')}`}>
+                <MaterialLibraryPanel
+                  active={shows(step, 'collections')}
+                  orgId={orgId}
+                  catalog={catalog}
+                  applied={appliedMaterials}
+                  selectedModuleLabel={selection.title || null}
+                  onApply={applyMaterial}
+                  onPrice={saveMaterialPrice}
+                  onCatalogAdded={addCatalogEntries}
+                  onCatalogReload={reloadCatalog}
+                />
               </div>
 
               {/*

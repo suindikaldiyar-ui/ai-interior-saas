@@ -103,6 +103,13 @@ export function mergeEstimates(parts: Estimate[]): Estimate {
         total: round2(before.total + line.total),
         // Пропавшая ставка на любой из стен — пропавшая ставка на объекте.
         missingRate: before.missingRate || line.missingRate,
+        /*
+         * Цена позиции не задана на одной стене — не задана на объекте:
+         * сумма двух стен без цены это всё ещё «цена не задана», а не ноль.
+         */
+        ...(before.priceUnset || line.priceUnset
+          ? { priceUnset: before.priceUnset ?? line.priceUnset }
+          : {}),
       });
     }
   }

@@ -8,11 +8,11 @@ import {
   CAD_CARCASS_BASE,
   CAD_LIGHT,
   CARCASS_ROUGHNESS,
-  FRONT_METALNESS,
-  FRONT_ROUGHNESS,
   INNER_ROUGHNESS,
   applyCadLook,
+  frontLookOf,
 } from './cadLook';
+import { MATERIAL_FINISHES } from '@/lib/millwork/materialFinishes';
 import type { ProductionSettings } from '@/types/catalog';
 import type { Module, Run } from '@/types/millwork';
 
@@ -92,6 +92,8 @@ export function thumbKey(unit: Module, heightMm: number): string {
     front.base,
     front.construct,
     front.finish,
+    // Поверхность каталога — другая шероховатость, значит другая картинка.
+    front.surface ?? '',
     frontSwatch(front).color,
   ].join('|');
 }
@@ -150,6 +152,12 @@ export function renderThumb(
   const made = new Map<string, THREE.MeshStandardMaterial>();
   const meshes: THREE.Mesh[] = [];
 
+  /*
+   * Шероховатость фасада — та же функция, что у сцены (`frontLookOf`):
+   * поверхность каталога материалов берёт числа из таблицы файла.
+   */
+  const frontLook = frontLookOf(spec, MATERIAL_FINISHES);
+
   for (const box of boxes) {
     const isFront = box.material === 'front';
     const key = box.material;
@@ -158,11 +166,11 @@ export function renderThumb(
       material = new THREE.MeshStandardMaterial({
         color: new THREE.Color(isFront ? front : roles[box.material]),
         roughness: isFront
-          ? FRONT_ROUGHNESS[spec.finish]
+          ? frontLook.roughness
           : box.material === 'inner'
             ? INNER_ROUGHNESS
             : CARCASS_ROUGHNESS,
-        metalness: isFront ? FRONT_METALNESS[spec.finish] : 0,
+        metalness: isFront ? frontLook.metalness : 0,
       });
       made.set(key, material);
     }

@@ -16,7 +16,9 @@ import {
 import { useCabinetParts, useCarcassMaterials, useFrontMaterials, useSurfaceLook } from './parts';
 import { DEFAULT_FRONT, frontKey } from '@/lib/millwork/frontMaterial';
 import type { FrontSpec } from '@/types/millwork';
-import { surfaceLook } from '@/lib/millwork/surfaces';
+import { materialSurfaceLook, surfaceLook } from '@/lib/millwork/surfaces';
+import { materialCatalog } from '@/lib/millwork/materialCatalog';
+import type { MaterialPhoto } from '@/lib/millwork/materialCollection';
 import { APRON_TARGET, COUNTERTOP_TARGET, FACADE_TARGET } from '@/types/catalog';
 import { runPlaces } from '@/lib/millwork/cabinetBoxes';
 import { cornerBandMm } from '@/lib/millwork/composition';
@@ -196,11 +198,31 @@ export default function Cabinet3D({
     { color: facadeColor, roughness: 0.72 },
     [0.6, 0.7],
   );
-  const counterLook = surfaceLook(
-    entryFor(COUNTERTOP_TARGET),
-    { color: counterColor, roughness: 0.28, metalness: 0.04 },
-    [run.lengthMm / MM, 0.6],
-  );
+  /*
+   * ПОЗИЦИИ КАТАЛОГА МАТЕРИАЛОВ — тот же каталог, что у панели и сметы.
+   * Второго списка фото и цветов в сцене нет.
+   */
+  const materialItems = useMemo(() => materialCatalog(catalog), [catalog]);
+
+  /*
+   * СТОЛЕШНИЦА ИЗ КАТАЛОГА МАТЕРИАЛОВ ЛЕЖИТ НА РЯДУ (`countertopMaterial`)
+   * и сильнее прежнего выбора артикула: её видит смета, и сцена обязана
+   * показывать ту же плиту, за которую выставлены деньги.
+   */
+  const counterItem = run.countertopMaterial
+    ? materialItems.get(run.countertopMaterial.itemId)
+    : undefined;
+  const counterLook = counterItem
+    ? materialSurfaceLook(counterItem, run.countertopMaterial?.surface, {
+        color: counterColor,
+        roughness: 0.28,
+        metalness: 0.04,
+      })
+    : surfaceLook(
+        entryFor(COUNTERTOP_TARGET),
+        { color: counterColor, roughness: 0.28, metalness: 0.04 },
+        [run.lengthMm / MM, 0.6],
+      );
   const apronLook = surfaceLook(
     entryFor(APRON_TARGET),
     { color: '#D8D2C6', roughness: 0.35 },
@@ -324,8 +346,18 @@ export default function Cabinet3D({
     return out;
   }, [carcassItems]);
 
-  const carcassMaterials = useCarcassMaterials(carcassColors, false);
-  const innerMaterials = useCarcassMaterials(carcassColors, true);
+  /* Фото декора корпуса — по тому же ключу пачки, что и цвет. */
+  const carcassPhotos = useMemo(() => {
+    const out = new Map<string, MaterialPhoto>();
+    for (const item of Array.from(carcassItems.values())) {
+      const photo = materialItems.get(item.id)?.photo;
+      if (photo) out.set(`carcass/${item.id}`, photo);
+    }
+    return out;
+  }, [carcassItems, materialItems]);
+
+  const carcassMaterials = useCarcassMaterials(carcassColors, false, carcassPhotos);
+  const innerMaterials = useCarcassMaterials(carcassColors, true, carcassPhotos);
 
   const boxes = useMemo(
     () =>
@@ -440,7 +472,16 @@ export default function Cabinet3D({
    */
   const millingItems = useMemo(() => millingCatalog(catalog), [catalog]);
 
-  const frontMaterials = useFrontMaterials(frontSpecs, facadeColor, millingItems);
+  /* Фото позиций каталога материалов — по идентификатору позиции. */
+  const frontPhotos = useMemo(() => {
+    const out = new Map<string, MaterialPhoto>();
+    for (const item of Array.from(materialItems.values())) {
+      if (item.photo) out.set(item.id, item.photo);
+    }
+    return out;
+  }, [materialItems]);
+
+  const frontMaterials = useFrontMaterials(frontSpecs, facadeColor, millingItems, frontPhotos);
 
   const selected = useMemo(() => {
     if (!selectedModuleId) return null;

@@ -56,6 +56,15 @@ export async function POST(request: Request) {
     : 'main';
   // Фотография смонтированного изделия — только для карточки, не для модели.
   const asPhoto = String(form.get('asPhoto') ?? '') === '1';
+  /*
+   * ФОТО МАТЕРИАЛА В НАСТОЯЩЕМ РАЗМЕРЕ (слой 51).
+   *
+   * Позиция каталога материалов знает, сколько миллиметров на фото
+   * (`tiling.moduleSize`). Обрезка в квадрат, как у тайла покрытия,
+   * сделала бы этот размер ложью: на квадрате уже не 600 × 450 мм, а
+   * неизвестно что. Текстура кладётся целиком, с пропорциями.
+   */
+  const realSize = String(form.get('realSize') ?? '') === '1';
 
   if (!itemId || !(file instanceof File)) {
     return NextResponse.json({ error: 'Нужны itemId и файл.' }, { status: 400 });
@@ -99,7 +108,11 @@ export async function POST(request: Request) {
       const composite = await buildComposite(source);
       averageColor = composite.averageColor;
       prepared = [
-        { kind: 'texture', role, buffer: await buildTexture(source) },
+        {
+          kind: 'texture',
+          role,
+          buffer: realSize ? await buildPhoto(source, 2048) : await buildTexture(source),
+        },
         { kind: 'swatch', role, buffer: await buildSwatch(source) },
         { kind: 'composite', role, buffer: composite.buffer },
       ];
