@@ -1,5 +1,6 @@
 import {
   MODULE_VARIANTS,
+  applyVariant,
   currentVariant,
   variantFitsWidth,
   variantsForModule,
@@ -10,7 +11,7 @@ import { STANDARD_WIDTHS, MAX_WIDTH, MIN_WIDTH } from './modules';
 import { applyOps } from './ops';
 import { moduleById, rowOfModule, type RunRow } from './selection';
 import { moduleCarcassHeightMm } from './fill';
-import { upperSpansOfRun } from './layout';
+import { rowSpansOfRun } from './layout';
 import type {
   MillworkOp,
   Module,
@@ -129,11 +130,6 @@ export function libraryLock(input: LibraryInput): string | null {
 
     if (gap.widthMm < MIN_WIDTH) {
       return `Здесь ${gap.widthMm} мм: самый узкий корпус — ${MIN_WIDTH} мм, он сюда не встанет.`;
-    }
-
-    const row = gap.row ?? 'base';
-    if (row === 'base' && input.requirements.mode !== 'free') {
-      return 'Ряд собран по готовому решению: он сходится со стеной, и пустот в нём нет.';
     }
 
     return null;
@@ -262,10 +258,31 @@ function gapCandidates(
   if (!gap || gap.widthMm < MIN_WIDTH) return [];
 
   const row = gap.row ?? 'base';
-  /* Сосед СЛЕВА — тот, за кем движок и поставит модуль. */
+  /* Сосед СЛЕВА — по нему видно, что это за ряд. Место — из пустоты. */
   const after = afterOf(input.run, row, gap.fromMm);
-  /* Любой модуль ряда: по нему видно, что это за ряд. Место — из пустоты. */
-  const sample = after ?? modulesOfRow(input.run, row)[0] ?? null;
+  /*
+   * Висящий ряд бывает ПУСТЫМ (свободная сборка) — соседа нет, и ряд
+   * называет пробный модуль: вид «верхний», у антресоли её секция. Это
+   * ВОПРОС к `variantsForModule`, а не модуль: в ряд его не пишут, модуль
+   * собирает движок по `add_module.row`.
+   */
+  const sample: Module | null =
+    after ??
+    modulesOfRow(input.run, row)[0] ??
+    (row === 'upper' || row === 'mezzanine'
+      ? ({
+          id: `пробный:${row}`,
+          kind: 'upper',
+          widthMm: gap.widthMm,
+          offsetMm: gap.fromMm,
+          frontType: 'door',
+          doorCount: 1,
+          drawerCount: 0,
+          isFiller: false,
+          label: '',
+          section: row === 'mezzanine' ? 'mezzanine' : undefined,
+        } as Module)
+      : null);
 
   return widthsFor(gap.widthMm)
     .filter((widthMm) => widthMm <= gap.widthMm)
@@ -324,11 +341,12 @@ function gapCandidates(
                  * поиск места молча уводит модуль в другую пустоту, если
                  * в показанной он не помещается.
                  *
-                 * В висящем ряду сосед при этом нужен — он называет РЯД
-                 * (верхний или антресоль); место задаёт отметка.
+                 * В висящем ряду ряд называется по имени (`row`), место
+                 * задаёт отметка.
                  */
                 atMm: gap.fromMm,
-                ...(row !== 'base' && sample ? { afterModuleId: sample.id } : {}),
+                /* Висящий ряд называется по имени: соседа может не быть. */
+                ...(row === 'upper' || row === 'mezzanine' ? { row } : {}),
               },
             ],
             sample: null,
@@ -647,25 +665,23 @@ export function gapsOfRow(
 ): LibraryGap[] {
   /* Кладовка над колонной — не место для выбора: её строит правило. */
   if (row === 'storage') return [];
+  /* Верхнего ряда нет вовсе — нет и его пустот; антресоль не включена — тоже. */
+  if (row === 'upper' && !run.options.hasUpper) return [];
+  if (row === 'mezzanine' && !run.mezzanine) return [];
 
   const modules = modulesOfRow(run, row);
 
   /*
-   * Висящий ряд без единого модуля — не ряд: у него нет высоты, на
-   * которой рисовать пустоту, и соседа, за которым встать. Он появится
-   * вместе с нижними модулями, как и появлялся.
+   * УЧАСТКИ — У ДВИЖКА: у нижнего ряда вся стена, у верхнего — между
+   * окном, колонной и выступом, у антресоли — ещё и без того, что съел
+   * ригель. Пустой висящий ряд — это вся свободная длина его участков.
    */
-  if (row !== 'base' && modules.length === 0) return [];
-
-  const spans =
-    row === 'base'
-      ? [{ from: 0, to: run.lengthMm }]
-      : upperSpansOfRun(run, run.modules, openings, requirements, run.options).free;
+  const { free } = rowSpansOfRun(row, run, run.modules, openings, requirements, run.options);
 
   const sorted = [...modules].sort((a, b) => a.offsetMm - b.offsetMm);
   const gaps: LibraryGap[] = [];
 
-  for (const span of spans) {
+  for (const span of free) {
     let at = span.from;
     for (const unit of sorted) {
       const from = unit.offsetMm;
@@ -692,13 +708,13 @@ export function libraryGaps(
   openings: Opening[],
   requirements: RunRequirements,
 ): LibraryGap[] {
+  /*
+   * Ряды, которые ЕСТЬ: нижний всегда, верхний — если он включён,
+   * антресоль — если заказана. Пустые тоже: их пустоты и есть место.
+   */
   const rows: RunRow[] = ['base'];
-  for (const segment of run.upperSegments) {
-    for (const unit of segment.modules) {
-      const row = rowOfModule(run, unit.id)?.row;
-      if (row && !rows.includes(row)) rows.push(row);
-    }
-  }
+  if (run.options.hasUpper) rows.push('upper');
+  if (run.mezzanine) rows.push('mezzanine');
 
   const zone = requirements.zone ?? run.zone ?? 'kitchen';
 
@@ -724,4 +740,70 @@ export function libraryCount(input: LibraryInput): number {
 /** Название варианта с шириной — подпись карточки. */
 export function cardTitle(card: LibraryCard): string {
   return `${MODULE_VARIANTS[card.spec.kind].title} ${card.widthMm}`;
+}
+
+/** Карточка ленты вариантов: что поставить и почём — или почему нельзя. */
+export type VariantPreviewCard = {
+  spec: ModuleVariantSpec;
+  /** Модуль с применённым вариантом — по нему рисуется мини-чертёж. */
+  unit: Module;
+  heightMm: number;
+  /** Разница показанного итога. `null` — вариант не собирается. */
+  deltaKzt: number | null;
+  /** Почему не собирается — словами. */
+  refusal?: string;
+  active: boolean;
+};
+
+/**
+ * ЛЕНТА ВАРИАНТОВ: ВАРИАНТ, КОТОРЫЙ НЕ СОБИРАЕТСЯ, — СЕРЫЙ С ПРИЧИНОЙ.
+ *
+ * Здесь стоял `catch { deltaKzt = 0 }`, а отказ движка словами
+ * (`warnings`) не проверялся вовсе: вариант, которого не будет, выходил
+ * на экран с подписью «та же цена». На демо так выглядели все семь
+ * вариантов кладовки над холодильником — движок на каждый отвечал «не
+ * найден», а клиент видел выбор.
+ *
+ * Разница — та же, что у библиотеки: показанный итог после минус
+ * показанный сейчас (`priceDeltaOf`).
+ */
+export function variantPreviews(
+  input: Pick<LibraryInput, 'run' | 'requirements' | 'openings' | 'roomDepthMm'> & {
+    unit: Module;
+    zone: NonNullable<RunRequirements['zone']>;
+  },
+  totalOf: (run: Run) => number,
+  shownNow: number,
+): VariantPreviewCard[] {
+  const { run, unit, zone } = input;
+  const specs = variantsForModule(unit, run, zone);
+  /* Один вариант — это не выбор, а надпись. */
+  if (specs.length < 2) return [];
+
+  const lock = libraryLock({ ...input, moduleId: unit.id });
+  const now = currentVariant(unit);
+
+  return specs.map((spec) => {
+    const applied = applyVariant(unit, spec.kind);
+    const heightMm = moduleCarcassHeightMm(unit, run);
+    const active = spec.kind === now;
+
+    if (lock) {
+      return { spec, unit: applied, heightMm, deltaKzt: null, refusal: lock, active };
+    }
+    if (active) return { spec, unit: applied, heightMm, deltaKzt: 0, active };
+
+    const ops: MillworkOp[] = [{ op: 'set_variant', moduleId: unit.id, variant: spec.kind }];
+    const next = tryRun(run, input.requirements, input.openings, ops, input.roomDepthMm);
+    if (!next.ok) {
+      return { spec, unit: applied, heightMm, deltaKzt: null, refusal: next.why, active };
+    }
+    return {
+      spec,
+      unit: applied,
+      heightMm,
+      deltaKzt: Math.round(totalOf(next.run)) - Math.round(shownNow),
+      active,
+    };
+  });
 }

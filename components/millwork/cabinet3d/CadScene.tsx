@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
+import { CAD_LIGHT, applyCadLook } from './cadLook';
 import Cabinet3D from './Cabinet3D';
 import { beamDropMm } from '@/lib/millwork/ceiling';
 import { plinthMm } from '@/lib/millwork/shop';
@@ -178,6 +179,8 @@ export default function CadScene({
       dpr={[1, 1.75]}
       gl={{ antialias: true, alpha: true }}
       camera={{ position: [3, 2.2, 4], fov: 40 }}
+      /* Тон-маппинг и цветовое пространство — из того же места, что у картинок. */
+      onCreated={({ gl: renderer }) => applyCadLook(renderer)}
     >
       {/*
         * СВЕТ РОВНО ДВА: направленный и общий.
@@ -186,8 +189,8 @@ export default function CadScene({
         * теням стать чёрными провалами. Больше света — это уже съёмка,
         * а съёмку делает рендер.
         */}
-      <ambientLight intensity={0.72} />
-      <directionalLight position={[2.5, 5, 4]} intensity={0.85} />
+      <ambientLight intensity={CAD_LIGHT.ambient} />
+      <directionalLight position={CAD_LIGHT.keyPosition} intensity={CAD_LIGHT.keyIntensity} />
 
       {rows.map((row, i) => (
         <Cabinet3D
@@ -472,6 +475,7 @@ function FrameProbe({ rows }: { rows: SceneRow[] }) {
         intersects: number;
       };
       __mwCadModules?: () => { drawn: number; ids: string[] };
+      __mwCadCounter?: () => Record<string, number[]>;
       __mwCadLook?: () => {
         frontColors: string[];
         opaque: number;
@@ -482,6 +486,24 @@ function FrameProbe({ rows }: { rows: SceneRow[] }) {
       };
     };
     w.__mwCadFrames = () => gl.info.render.frame;
+
+    /*
+     * СКОЛЬКО СТОЛЕШНИЦЫ НАРИСОВАНО — по стенам, в миллиметрах.
+     *
+     * Плита — единичная коробка, растянутая по X на свою длину. Меряется
+     * то, что лежит в сцене, а не то, что посчитала смета: сверять их и
+     * есть смысл проверки.
+     */
+    w.__mwCadCounter = () => {
+      const byWall: Record<string, number[]> = {};
+      scene.traverse((object) => {
+        const mesh = object as THREE.Mesh;
+        if (!mesh.isMesh || !mesh.name.startsWith('counter:')) return;
+        const wall = mesh.name.slice('counter:'.length);
+        (byWall[wall] ??= []).push(Math.round(mesh.scale.x * MM));
+      });
+      return byWall;
+    };
 
     /*
      * СОСТОЯНИЕ СЦЕНЫ ЧИСЛАМИ.

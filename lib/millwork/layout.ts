@@ -18,7 +18,7 @@ import {
   assertUnderCeiling,
   runWidthSum,
 } from './invariants';
-import { defaultFill, moduleCarcassHeightMm } from './fill';
+import { defaultFill, mezzanineBlockedByBeam, moduleCarcassHeightMm } from './fill';
 import {
   BOTTLE_MAX_MM,
   BOTTLE_MIN_MM,
@@ -1311,6 +1311,80 @@ export type UpperBlocker = { from: number; to: number; reason: string };
  * ровно так пустым местом называлось окно.
  */
 export function upperSpansOfRun(
+  run: Pick<Run, 'lengthMm' | 'beams' | 'ceilingHeightMm' | 'production'>,
+  baseModules: Module[],
+  openings: Opening[],
+  requirements: RunRequirements,
+  options: RunOptions,
+): { free: { from: number; to: number }[]; blockers: UpperBlocker[] } {
+  return rowSpansOfRun('upper', run, baseModules, openings, requirements, options);
+}
+
+/**
+ * УЧАСТКИ РЯДА — ЛЮБОГО ИЗ ТРЁХ.
+ *
+ * Верхний ряд живёт участками давно (слой 48): окно, колонна и выступ
+ * рвут его на куски, модуль стоит там, где стоит, и двигается вправо,
+ * только если наехал на соседа. Теперь так живёт и нижний: замена не
+ * пересобирает ряд, и мойка не уезжает от вывода воды.
+ *
+ *   base       вся стена: у нижнего ряда преград нет
+ *   upper      `upperSpans`: окно, колонна, выступ
+ *   mezzanine  участки верхнего ряда минус места, где антресоль под
+ *              ригелем не встаёт (`mezzanineBlockedByBeam`)
+ */
+export function rowSpansOfRun(
+  row: 'base' | 'upper' | 'mezzanine',
+  run: Pick<Run, 'lengthMm' | 'beams' | 'ceilingHeightMm' | 'production'> &
+    Partial<Pick<Run, 'zone' | 'mezzanine'>>,
+  baseModules: Module[],
+  openings: Opening[],
+  requirements: RunRequirements,
+  options: RunOptions,
+): { free: { from: number; to: number }[]; blockers: UpperBlocker[] } {
+  if (row === 'base') return { free: [{ from: 0, to: run.lengthMm }], blockers: [] };
+
+  const upper = rowUpperSpans(run, baseModules, openings, requirements, options);
+  if (row === 'upper') return upper;
+
+  /*
+   * Антресоль над ригелем: участок режется там, где её не остаётся.
+   * Границы берутся у самих ригелей, а проверка — та же, по которой
+   * движок снимает антресоль после укладки.
+   */
+  const shell = {
+    zone: run.zone ?? requirements.zone,
+    ceilingHeightMm: run.ceilingHeightMm,
+    options,
+    production: run.production,
+    mezzanine: run.mezzanine,
+    beams: run.beams,
+  };
+  const beams = (run.beams ?? [])
+    .map((beam) => ({ from: beam.fromCornerMm, to: beam.fromCornerMm + beam.widthMm }))
+    .filter((beam) => mezzanineBlockedByBeam(beam.from, beam.to, shell));
+
+  const free: { from: number; to: number }[] = [];
+  for (const span of upper.free) {
+    let at = span.from;
+    for (const beam of [...beams].sort((a, b) => a.from - b.from)) {
+      if (beam.to <= at || beam.from >= span.to) continue;
+      if (beam.from > at) free.push({ from: at, to: beam.from });
+      at = Math.max(at, beam.to);
+    }
+    if (at < span.to) free.push({ from: at, to: span.to });
+  }
+
+  return {
+    free,
+    blockers: [
+      ...upper.blockers,
+      ...beams.map((beam) => ({ ...beam, reason: 'выступ на потолке' })),
+    ],
+  };
+}
+
+function rowUpperSpans(
   run: Pick<Run, 'lengthMm' | 'beams' | 'ceilingHeightMm' | 'production'>,
   baseModules: Module[],
   openings: Opening[],

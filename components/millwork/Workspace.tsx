@@ -14,6 +14,7 @@ import {
   libraryGaps,
   libraryLock,
   priceDeltaOf,
+  variantPreviews,
   type LibraryCard,
   type LibraryGap,
 } from '@/lib/millwork/moduleLibrary';
@@ -49,8 +50,6 @@ import {
   designOps,
   designSummary,
 } from '@/lib/millwork/designs';
-import { applyVariant } from '@/lib/millwork/moduleVariants';
-import { moduleCarcassHeightMm } from '@/lib/millwork/fill';
 import type { DrawingMode } from './ElevationDrawing';
 import EstimateSheet from './EstimateSheet';
 import MaterialsStep from './MaterialsStep';
@@ -114,7 +113,6 @@ import { buildEstimate } from '@/lib/millwork/estimate';
 import {
   MODULE_VARIANTS,
   currentVariant,
-  variantsForModule,
 } from '@/lib/millwork/moduleVariants';
 import { allModules } from '@/lib/millwork/layout';
 import { buildRun } from '@/lib/millwork/layout';
@@ -1077,6 +1075,20 @@ export default function Workspace(props: WorkspaceProps) {
     [estimate, layout, objectFingerprint],
   );
 
+  /*
+   * СТРОКИ СМЕТЫ, КОТОРЫЕ ВИДИТ ЧЕЛОВЕК, — для приёмки.
+   *
+   * Метраж столешницы сверяется с плитой, которую нарисовала сцена
+   * (`__mwCadCounter`). Берётся та же смета объекта, что стоит внизу
+   * экрана, а не пересчёт: мерить надо показанное.
+   */
+  useEffect(() => {
+    (window as unknown as {
+      __mwEstimateLines?: () => { key: string; quantity: number }[];
+    }).__mwEstimateLines = () =>
+      objectEstimate.lines.map((line) => ({ key: line.key, quantity: line.quantity }));
+  }, [objectEstimate]);
+
   /**
    * РЯДЫ ДЛЯ СЦЕНЫ: МЕСТО СЧИТАЕТ ДВИЖОК, А НЕ ЭКРАН.
    *
@@ -1523,76 +1535,6 @@ export default function Workspace(props: WorkspaceProps) {
    */
   const onStep = (field: StepField) => (shows(step, field) ? '' : 'hidden');
 
-  const variantOptions = useMemo<VariantPreview[]>(() => {
-    if (!selectedId) return [];
-
-    // Варианты места — тоже у ВЫБРАННОЙ стены, а не у первой.
-    const unit = allModules(activeRun).find((m) => m.id === selectedId);
-    if (!unit) return [];
-
-    const specs = variantsForModule(unit, activeRun, zone);
-    // Один вариант — это не выбор, а надпись. Меню не показываем вовсе.
-    if (specs.length < 2) return [];
-
-    const now = currentVariant(unit);
-    const base = buildEstimate(
-      active.run,
-      variantKey,
-      input.rates,
-      disabled[variantKey],
-      undefined,
-      production,
-      undefined,
-      millingItems,
-      carcassItems,
-    ).total;
-
-    return specs.map((spec) => {
-      let deltaKzt = 0;
-
-      if (spec.kind !== now) {
-        try {
-          const next = applyOps({
-            run: active.run,
-            requirements,
-            ops: [{ op: 'set_variant', moduleId: unit.id, variant: spec.kind }],
-            openings: input.openings,
-          });
-          deltaKzt = Math.round(
-            buildEstimate(
-              next,
-              variantKey,
-              input.rates,
-              disabled[variantKey],
-              undefined,
-              production,
-              undefined,
-              millingItems,
-              carcassItems,
-            ).total - base,
-          );
-        } catch {
-          // Вариант, который не собирается, просто идёт без цены.
-          deltaKzt = 0;
-        }
-      }
-
-      /*
-       * Карточка рисует НАСТОЯЩИЙ модуль с применённым вариантом — тем же
-       * кодом, что и большой чертёж. Заготовленная иконка разошлась бы
-       * с чертежом на первой же правке.
-       */
-      return {
-        kind: spec.kind,
-        title: spec.title,
-        hint: spec.hint,
-        unit: applyVariant(unit, spec.kind),
-        heightMm: moduleCarcassHeightMm(unit, active.run),
-        deltaKzt,
-        active: spec.kind === now,
-      };
-    });
-  }, [selectedId, active.run, zone, requirements, input.rates, input.openings, disabled, variantKey, production, millingItems, carcassItems]);
 
   /**
    * БИБЛИОТЕКА МОДУЛЕЙ ДЛЯ ВЫБРАННОГО МЕСТА.
@@ -1650,6 +1592,35 @@ export default function Workspace(props: WorkspaceProps) {
     (card: LibraryCard) => priceDeltaOf(libraryInput, card.ops, totalOf, estimate.total),
     [libraryInput, totalOf, estimate.total],
   );
+
+  /*
+   * ЛЕНТА ВАРИАНТОВ — ТЕМ ЖЕ ВХОДОМ И ТЕМ ЖЕ ИТОГОМ, ЧТО БИБЛИОТЕКА.
+   *
+   * Здесь стоял свой расчёт с `catch { deltaKzt = 0 }` и без проверки
+   * отказа словами: вариант, которого не будет, выходил на экран с
+   * подписью «та же цена» (все семь вариантов кладовки на демо).
+   * Теперь не собравшийся вариант — серая карточка с причиной.
+   */
+  const variantOptions = useMemo<VariantPreview[]>(() => {
+    if (!selectedId) return [];
+    const unit = allModules(activeRun).find((m) => m.id === selectedId);
+    if (!unit) return [];
+
+    return variantPreviews(
+      { ...libraryInput, unit, zone },
+      totalOf,
+      estimate.total,
+    ).map((card) => ({
+      kind: card.spec.kind,
+      title: card.spec.title,
+      hint: card.spec.hint,
+      unit: card.unit,
+      heightMm: card.heightMm,
+      deltaKzt: card.deltaKzt,
+      refusal: card.refusal,
+      active: card.active,
+    }));
+  }, [selectedId, activeRun, libraryInput, zone, totalOf, estimate.total]);
 
   /** Что выбрано — словами: «Дверца 600» либо «Пусто 900 мм». */
   const placeLabel = useMemo(() => {

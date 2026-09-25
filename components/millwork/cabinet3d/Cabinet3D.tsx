@@ -22,6 +22,8 @@ import { runPlaces } from '@/lib/millwork/cabinetBoxes';
 import { cornerBandMm } from '@/lib/millwork/composition';
 import { COUNTER_OVERHANG_MM, rowStandardDepthMm } from '@/lib/millwork/fill';
 import { moduleOfPart } from '@/lib/millwork/selection';
+import { countertopSlabs } from '@/lib/millwork/countertop';
+import { CAD_CARCASS_BASE } from './cadLook';
 import {
   countertopMm,
   plinthMm,
@@ -207,7 +209,7 @@ export default function Cabinet3D({
 
   const parts = useCabinetParts(
     useMemo(
-      () => ({ facade: facadeColor, carcass: '#B9B2A4', counter: counterColor }),
+      () => ({ facade: facadeColor, carcass: CAD_CARCASS_BASE, counter: counterColor }),
       [facadeColor, counterColor],
     ),
     { facade: facadeLook, counter: counterLook },
@@ -463,6 +465,7 @@ export default function Cabinet3D({
    * Слагаемые принадлежат цеху, и собирать их здесь второй раз нельзя.
    */
   const counterTopY = workTopMm(run.production) - countertopMm(run.production);
+  const counterSlabs = useMemo(() => countertopSlabs(run), [run]);
 
   /*
    * Фартук: полоса стены между столешницей и верхним рядом. Именно её
@@ -674,24 +677,36 @@ export default function Cabinet3D({
         * свес. По торцевой полосе в 38 мм ряд читается как кухня, а не как
         * шкаф с крышкой.
         */}
-      {hasCountertop && (
-        <mesh
-          geometry={parts.box}
-          material={parts.counter}
-          position={[
-            band(depthM + counterOverhangM + frontThicknessM).centerM,
-            (counterTopY + countertopMm(run.production) / 2) / MM,
-            -depthM / 2 + counterOverhangM / 2 + frontThicknessM / 2,
-          ]}
-          scale={[
-            band(depthM + counterOverhangM + frontThicknessM).lengthM,
-            countertopMm(run.production) / MM,
-            depthM + counterOverhangM + frontThicknessM,
-          ]}
-          castShadow
-          receiveShadow
-        />
-      )}
+      {/*
+        * ПЛИТЫ — ИЗ `countertopSlabs`, ТОЙ ЖЕ ФУНКЦИИ, ЧТО СЧИТАЕТ СМЕТУ.
+        *
+        * Здесь лежала одна плита на всю длину ряда — сквозь колонну
+        * холодильника (на демо 3800 мм в сцене против 2600 в смете).
+        * Теперь плита идёт по модулям, которые её несут, сплошная над
+        * пустотой между ними и рвётся колонной; заход в угол — тот же.
+        * Имя со стеной — для приёмки, она сверяет нарисованное со сметой.
+        */}
+      {hasCountertop &&
+        counterSlabs.map((slab) => (
+          <mesh
+            key={`counter-${slab.fromMm}`}
+            name={`counter:${run.wallId ?? 'a'}`}
+            geometry={parts.box}
+            material={parts.counter}
+            position={[
+              (slab.fromMm + slab.toMm) / 2 / MM,
+              (counterTopY + countertopMm(run.production) / 2) / MM,
+              -depthM / 2 + counterOverhangM / 2 + frontThicknessM / 2,
+            ]}
+            scale={[
+              (slab.toMm - slab.fromMm) / MM,
+              countertopMm(run.production) / MM,
+              depthM + counterOverhangM + frontThicknessM,
+            ]}
+            castShadow
+            receiveShadow
+          />
+        ))}
 
       {/*
         * Ниша под верхним рядом: тонкая тёмная плоскость по низу шкафов.

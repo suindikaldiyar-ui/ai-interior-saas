@@ -18209,14 +18209,41 @@ console.log('\nБиблиотека модулей: что встаёт на э�
       );
 
       /*
-       * Серые из-за соседей называют ЧИСЛО: сколько миллиметров или
-       * сколько модулей. «Не встанет» без числа пересказать нельзя.
+       * СТОРОЖ СОСЕДЕЙ МЕРЯЕТСЯ ТАМ, ГДЕ ТОЛКАТЬ ЕЩЁ МОЖНО.
+       *
+       * Нижний ряд больше не толкает никого (слой 50): замена шире своего
+       * места отказывает сама, и серых «из-за соседей» там не бывает. А
+       * верхний ряд по-прежнему раздвигает правых внутри участка
+       * (ловушка 411) — и карточка, после которой соседи поехали бы,
+       * обязана быть серой с числом. Снимаем крайний шкаф участка, чтобы
+       * было куда толкать.
        */
-      const byNeighbours = all.filter((c) => /соседей|модулей/.test(c.refusal ?? ''));
+      const uppers = demo.upperSegments
+        .flatMap((sg) => sg.modules)
+        .filter((m) => rowOfModule(demo, m.id)?.row === 'upper')
+        .sort((a, b) => a.offsetMm - b.offsetMm);
+      const tail = uppers[uppers.length - 1];
+      const pusher = uppers.find(
+        (m) => m !== tail && uppers.some((o) => o.offsetMm === m.offsetMm + m.widthMm),
+      );
+      const slack = tail
+        ? applyOps({
+            run: demo,
+            requirements: REQ,
+            openings: OPENINGS,
+            ops: [{ op: 'remove_module', moduleId: tail.id }],
+          })
+        : demo;
+      const pushCards = pusher
+        ? libraryCards({ run: slack, requirements: REQ, openings: OPENINGS, moduleId: pusher.id })
+        : [];
+      const byNeighbours = pushCards.filter((c) => /соседей|модулей/.test(c.refusal ?? ''));
       check(
         'карточки, после которых поехали бы соседи, серые и называют число',
         byNeighbours.length > 0 && byNeighbours.every((c) => /\d+ мм|: \d+/.test(c.refusal ?? '')),
-        byNeighbours[0] ? `${byNeighbours.length} шт. · «${byNeighbours[0].refusal}»` : 'НИ ОДНОЙ',
+        byNeighbours[0]
+          ? `верхний ${pusher?.id}: ${byNeighbours.length} шт. · «${byNeighbours[0].refusal}»`
+          : `НУЛЕВОЙ СЕЛЕКТОР: у ${pusher?.id ?? 'верхнего'} ни одной`,
       );
     }
   }
@@ -18558,6 +18585,376 @@ console.log('\nБиблиотека модулей: что встаёт на э�
       all.length > 0 && all[0].current,
       all[0] ? `${all[0].key} current=${all[0].current}` : 'КАРТОЧЕК НЕТ',
     );
+  }
+}
+
+
+/* ─────────────  Слой 50: библиотека готова к показу клиенту  ───────────── */
+
+console.log('\nБиблиотека к показу: замена не двигает соседей, пустоты, столешница');
+{
+  /*
+   * Всё меряется ТЕМ ЖЕ рядом, что показывает экран демо: `buildRun` по
+   * демо-входу, режим шаблона. Именно там клиент открывает панель.
+   */
+  const demo = buildRun(baseInput);
+  const spotsOf = (r: Run) => r.modules.map((m) => `${m.offsetMm}:${m.widthMm}`).join(' ');
+  const counterQty = (r: Run) =>
+    buildEstimate(r, 'optimal', DEMO_RATES).lines.find(
+      (line) =>
+        line.key.startsWith('countertop_') &&
+        line.key !== 'countertop_plinth' &&
+        line.key !== 'countertop_miter',
+    )?.quantity ?? 0;
+
+  const plain = demo.modules.filter(
+    (m) => !m.appliance && !m.column && m.kind === 'base',
+  );
+  check(
+    'в демо-ряду есть обычные нижние модули — мерить есть на чём',
+    plain.length > 0,
+    plain.map((m) => m.id).join(' ') || 'НУЛЕВОЙ СЕЛЕКТОР: ни одного',
+  );
+
+  /* ── 6. Сколько карточек доступно на каждом месте нижнего ряда ── */
+  for (const unit of plain) {
+    const cards = libraryCards({ run: demo, requirements: REQ, openings: OPENINGS, moduleId: unit.id });
+    const ready = cards.filter((c) => !c.refusal);
+    const now = currentVariant(unit);
+    const narrower = cards.filter((c) => c.spec.kind === now && c.widthMm < unit.widthMm);
+    const blocked = narrower.filter((c) => c.refusal);
+    check(
+      `${unit.id}: все узкие карточки своего варианта доступны`,
+      narrower.length > 0 && blocked.length === 0,
+      `доступно ${ready.length} из ${cards.length} · узких ${narrower.length}, серых ${blocked.length}` +
+        (blocked[0] ? ` · «${blocked[0].refusal}»` : narrower.length === 0 ? ' · НУЛЕВОЙ СЕЛЕКТОР: узких нет' : ''),
+    );
+  }
+
+  /* ── 7. Замена уже: пустота ровно на разницу, соседи и мойка на месте ── */
+  const sinkUnit = demo.modules.find((m) => moduleAppliances(m).some((a) => a.startsWith('sink')));
+  const leftOfSink = sinkUnit
+    ? demo.modules.find(
+        (m) => !m.appliance && !m.column && m.offsetMm + m.widthMm === sinkUnit.offsetMm,
+      )
+    : undefined;
+  check(
+    'слева от мойки стоит обычный модуль — замену проверять есть на чём',
+    Boolean(sinkUnit && leftOfSink),
+    sinkUnit && leftOfSink
+      ? `${leftOfSink.id}@${leftOfSink.offsetMm}(${leftOfSink.widthMm}) · мойка @${sinkUnit.offsetMm}`
+      : 'НУЛЕВОЙ СЕЛЕКТОР: мойки или соседа слева нет',
+  );
+
+  if (sinkUnit && leftOfSink) {
+    const cut = 150;
+    const narrowed = applyOps({
+      run: demo,
+      requirements: REQ,
+      openings: OPENINGS,
+      ops: [
+        {
+          op: 'replace_module',
+          moduleId: leftOfSink.id,
+          kind: leftOfSink.kind,
+          variant: currentVariant(leftOfSink),
+          widthMm: leftOfSink.widthMm - cut,
+        },
+      ],
+    });
+    const placed = narrowed.modules.find((m) => m.offsetMm === leftOfSink.offsetMm);
+    const sinkAfter = narrowed.modules.find((m) =>
+      moduleAppliances(m).some((a) => a.startsWith('sink')),
+    );
+    const others = (r: Run) =>
+      r.modules
+        .filter((m) => m.offsetMm !== leftOfSink.offsetMm)
+        .map((m) => `${m.offsetMm}:${m.widthMm}`)
+        .join(' ');
+
+    check(
+      'замена уже: модулей столько же — добор не дописан',
+      narrowed.modules.length === demo.modules.length,
+      `${demo.modules.length} → ${narrowed.modules.length}`,
+    );
+    check(
+      'замена уже: модуль стоит от своего левого края',
+      placed?.widthMm === leftOfSink.widthMm - cut,
+      placed ? `${placed.offsetMm}:${placed.widthMm}` : 'МОДУЛЯ НА МЕСТЕ НЕТ',
+    );
+    check(
+      'замена уже: мойка на месте до миллиметра',
+      sinkAfter?.offsetMm === sinkUnit.offsetMm && sinkAfter?.widthMm === sinkUnit.widthMm,
+      `${sinkUnit.offsetMm} → ${sinkAfter?.offsetMm ?? 'МОЙКИ НЕТ'}`,
+    );
+    check(
+      'замена уже: остальные соседи на месте до миллиметра',
+      others(narrowed) === others(demo),
+      `${others(demo)} → ${others(narrowed)}`,
+    );
+    const hole = gapsOfRow(narrowed, 'base', OPENINGS, REQ).find(
+      (g) => g.fromMm === leftOfSink.offsetMm + leftOfSink.widthMm - cut,
+    );
+    check(
+      'замена уже: справа пустота ровно на разницу ширин',
+      hole?.widthMm === cut,
+      hole ? `пусто ${hole.fromMm}+${hole.widthMm}` : `НУЛЕВОЙ СЕЛЕКТОР · ряд ${spotsOf(narrowed)}`,
+    );
+
+    /* ── 9. Столешница над пустотой сплошная: смета не дешевеет на неё ── */
+    check(
+      'столешница над пустотой внутри ряда не укоротилась',
+      counterQty(narrowed) === counterQty(demo),
+      `${counterQty(demo)} м → ${counterQty(narrowed)} м`,
+    );
+
+    /* ── 8. Замена шире при пустоте справа: пустота уменьшается ровно ── */
+    const grow = 100;
+    const regrown = applyOps({
+      run: narrowed,
+      requirements: REQ,
+      openings: OPENINGS,
+      ops: [
+        {
+          op: 'replace_module',
+          moduleId: placed?.id ?? leftOfSink.id,
+          kind: leftOfSink.kind,
+          variant: currentVariant(leftOfSink),
+          widthMm: leftOfSink.widthMm - cut + grow,
+        },
+      ],
+    });
+    /*
+     * Пустота меряется ОТМЕТКАМИ: 50 мм — это пустота, но не место
+     * (самый узкий корпус 150), и в список мест библиотеки она не
+     * попадает — искать её там значит мерить не то.
+     */
+    const grownUnit = regrown.modules.find((m) => m.offsetMm === leftOfSink.offsetMm);
+    const nextAfter = regrown.modules
+      .filter((m) => m.offsetMm > leftOfSink.offsetMm)
+      .sort((a, b) => a.offsetMm - b.offsetMm)[0];
+    const hole2 =
+      grownUnit && nextAfter ? nextAfter.offsetMm - (grownUnit.offsetMm + grownUnit.widthMm) : null;
+    check(
+      'замена шире: пустота справа уменьшилась ровно на разницу',
+      hole2 === cut - grow,
+      `пусто ${hole2 ?? '—'} мм · ряд ${spotsOf(regrown)}`,
+    );
+    check(
+      'замена шире: соседи на месте до миллиметра',
+      others(regrown) === others(demo),
+      `${others(demo)} → ${others(regrown)}`,
+    );
+
+    const tooWide = applyOps({
+      run: demo,
+      requirements: REQ,
+      openings: OPENINGS,
+      ops: [
+        {
+          op: 'replace_module',
+          moduleId: leftOfSink.id,
+          kind: leftOfSink.kind,
+          variant: currentVariant(leftOfSink),
+          widthMm: leftOfSink.widthMm + 150,
+        },
+      ],
+    });
+    check(
+      'замена шире без пустоты: отказ называет число',
+      tooWide.warnings.some((w) => /\d+ мм/.test(w)),
+      tooWide.warnings[0] ?? 'ОТКАЗА НЕТ',
+    );
+    check(
+      'и ряд после отказа прежний до миллиметра',
+      spotsOf(tooWide) === spotsOf(demo),
+      `${spotsOf(demo)} → ${spotsOf(tooWide)}`,
+    );
+  }
+
+  /* ── 13. Угловая и П-образная: стены А, Б, В — замена уже и цена ── */
+  for (const [kind, walls] of [
+    ['corner_l', [{ id: 'w1', lengthMm: 3800 }, { id: 'w2', lengthMm: 2400 }]],
+    ['u_shape', [{ id: 'w1', lengthMm: 2400 }, { id: 'w2', lengthMm: 3800 }, { id: 'w3', lengthMm: 2400 }]],
+  ] as const) {
+    const comp = buildComposition({
+      kind,
+      walls: walls.map((w) => ({ ...w })),
+      ceilingHeightMm: 2700,
+      requirements: REQ,
+    });
+    const runs = comp.segments.map((seg) => seg.run);
+    /*
+     * Итог объекта — сумма смет стен без удвоения разовых статей: тот же
+     * `mergeEstimates`, которым складывает смету экран.
+     */
+    const objectTotal = (list: Run[]) =>
+      mergeEstimates(list.map((r) => buildEstimate(r, 'optimal', DEMO_RATES))).total;
+
+    runs.forEach((run, wall) => {
+      const label = `${kind === 'corner_l' ? 'угловая' : 'П-образная'} · стена ${'АБВ'[wall]}`;
+      const target = run.modules.find(
+        (m) => !m.appliance && !m.column && m.kind === 'base' && m.widthMm >= 450,
+      );
+      if (!target) {
+        check(`${label}: есть обычный модуль от 450 мм`, false, `НУЛЕВОЙ СЕЛЕКТОР · ${run.modules.map((m) => m.id).join(' ')}`);
+        return;
+      }
+      const cards = libraryCards({ run, requirements: REQ, openings: [], moduleId: target.id });
+      const narrow = cards
+        .filter((c) => !c.refusal && c.spec.kind === currentVariant(target) && c.widthMm <= target.widthMm - 150)
+        .sort((a, b) => b.widthMm - a.widthMm)[0];
+      if (!narrow) {
+        check(`${label}: карточка уже доступна`, false, `НУЛЕВОЙ СЕЛЕКТОР · доступно ${cards.filter((c) => !c.refusal).length} из ${cards.length}`);
+        return;
+      }
+      const next = applyOps({ run, requirements: REQ, openings: [], ops: narrow.ops });
+      const others = (r: Run) =>
+        r.modules.filter((m) => m.offsetMm !== target.offsetMm).map((m) => `${m.offsetMm}:${m.widthMm}`).join(' ');
+      check(
+        `${label}: замена уже — соседи на месте, модулей столько же`,
+        others(next) === others(run) && next.modules.length === run.modules.length,
+        `${others(run)} → ${others(next)}`,
+      );
+
+      const totalOf = (r: Run) => objectTotal(runs.map((x, i) => (i === wall ? r : x)));
+      const promised = priceDeltaOf(
+        { run, requirements: REQ, openings: [] },
+        narrow.ops,
+        totalOf,
+        totalOf(run),
+      );
+      const real = Math.round(totalOf(next)) - Math.round(totalOf(run));
+      check(
+        `${label}: разница на карточке равна сдвигу итога объекта до тенге`,
+        promised === real,
+        `карточка ${promised} · итог ${real}`,
+      );
+    });
+  }
+
+  /* ── 10. Пустая стена: низ, верх и антресоль собираются из библиотеки ── */
+  {
+    const freeWall: RunRequirements = { ...REQ, mode: 'free', appliances: [] };
+    let wall = buildRun({
+      lengthMm: 3800,
+      ceilingHeightMm: 2700,
+      requirements: freeWall,
+      openings: [],
+      comms: [],
+    });
+    const inserted = { base: 0, upper: 0, mezzanine: 0 };
+    const count = (r: Run) => ({
+      base: r.modules.length,
+      upper: r.upperSegments
+        .flatMap((sg) => sg.modules)
+        .filter((m) => rowOfModule(r, m.id)?.row === 'upper').length,
+      mezzanine: r.upperSegments
+        .flatMap((sg) => sg.modules)
+        .filter((m) => rowOfModule(r, m.id)?.row === 'mezzanine').length,
+    });
+
+    const putInto = (row: 'base' | 'upper' | 'mezzanine', widthMm: number): string | null => {
+      const gap = libraryGaps(wall, [], freeWall).find((g) => g.row === row && g.widthMm >= widthMm);
+      if (!gap) return `НУЛЕВОЙ СЕЛЕКТОР: в ряду «${row}» нет пустоты под ${widthMm} мм`;
+      const card = libraryCards({
+        run: wall,
+        requirements: freeWall,
+        openings: [],
+        moduleId: null,
+        gap,
+      }).find((c) => !c.refusal && c.widthMm === widthMm);
+      if (!card) return `НУЛЕВОЙ СЕЛЕКТОР: в пустоту ряда «${row}» нет карточки ${widthMm} мм`;
+      wall = applyOps({ run: wall, requirements: freeWall, openings: [], ops: card.ops });
+      inserted[row] += 1;
+      return null;
+    };
+
+    const steps: (string | null)[] = [];
+    steps.push(putInto('base', 600));
+    steps.push(putInto('base', 600));
+    check(
+      'пустая стена: после нижних модулей верхний ряд сам не вырос',
+      count(wall).upper === 0,
+      `верхних ${count(wall).upper}`,
+    );
+    steps.push(putInto('upper', 600));
+    steps.push(putInto('upper', 600));
+    wall = applyOps({
+      run: wall,
+      requirements: freeWall,
+      openings: [],
+      ops: [{ op: 'set_mezzanine', heightMm: 400 }],
+    });
+    steps.push(putInto('mezzanine', 600));
+
+    const failedSteps = steps.filter(Boolean);
+    check(
+      'пустая стена: каждая вставка из библиотеки нашла себе пустоту',
+      failedSteps.length === 0,
+      failedSteps.join(' · ') || 'все пять вставок',
+    );
+    const got = count(wall);
+    check(
+      'пустая стена: модулей ровно столько, сколько вставили',
+      got.base === inserted.base && got.upper === inserted.upper && got.mezzanine === inserted.mezzanine &&
+        inserted.base === 2 && inserted.upper === 2 && inserted.mezzanine === 1,
+      `вставили низ ${inserted.base} · верх ${inserted.upper} · антресоль ${inserted.mezzanine}; ` +
+        `в ряду низ ${got.base} · верх ${got.upper} · антресоль ${got.mezzanine}`,
+    );
+  }
+
+  /* ── 11. Антресоль после ригеля: пустота есть, вставка встаёт не под ним ── */
+  {
+    const withMezz = applyOps({
+      run: demo,
+      requirements: REQ,
+      openings: OPENINGS,
+      ops: [{ op: 'set_mezzanine', heightMm: 400 }],
+    });
+    const beam = (withMezz.beams ?? [])[0];
+    check('у демо-ряда есть ригель — проверять есть на чём', Boolean(beam), beam ? `${beam.fromCornerMm}+${beam.widthMm}` : 'НУЛЕВОЙ СЕЛЕКТОР');
+
+    if (beam) {
+      const beamEnd = beam.fromCornerMm + beam.widthMm;
+      const after = libraryGaps(withMezz, OPENINGS, REQ).find(
+        (g) => g.row === 'mezzanine' && g.fromMm >= beamEnd,
+      );
+      check(
+        'пустота антресоли начинается после ригеля',
+        Boolean(after),
+        after
+          ? `пусто ${after.fromMm}+${after.widthMm}`
+          : 'НУЛЕВОЙ СЕЛЕКТОР: ' +
+              (libraryGaps(withMezz, OPENINGS, REQ)
+                .map((g) => `${g.row} ${g.fromMm}+${g.widthMm}`)
+                .join(' · ') || 'пустот нет вовсе'),
+      );
+
+      if (after) {
+        const card = libraryCards({
+          run: withMezz,
+          requirements: REQ,
+          openings: OPENINGS,
+          moduleId: null,
+          gap: after,
+        }).find((c) => !c.refusal);
+        check('в пустоту антресоли после ригеля есть доступная карточка', Boolean(card), card?.key ?? 'НЕТ');
+
+        if (card) {
+          const placed = applyOps({ run: withMezz, requirements: REQ, openings: OPENINGS, ops: card.ops });
+          const mezz = placed.upperSegments
+            .flatMap((sg) => sg.modules)
+            .filter((m) => rowOfModule(placed, m.id)?.row === 'mezzanine');
+          const fresh = mezz.find((m) => m.offsetMm === after.fromMm);
+          check(
+            'вставка в антресоль встала после ригеля, а не под ним',
+            Boolean(fresh) && fresh!.offsetMm >= beamEnd,
+            fresh ? `${fresh.offsetMm}:${fresh.widthMm}` : `НЕ ВСТАЛА · ${placed.warnings[0] ?? ''}`,
+          );
+        }
+      }
+    }
   }
 }
 

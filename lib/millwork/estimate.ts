@@ -4,8 +4,8 @@ import {
   standsOnFloor,
 } from './modules';
 import { allModules } from './layout';
-import { cornerBandMm } from './composition';
-import { bearsCountertop, counterSlabDepthMm, moduleCarcassHeightMm } from './fill';
+import { countertopLengthMm } from './countertop';
+import { moduleCarcassHeightMm } from './fill';
 import { CORNER_HINGE_TITLE, drawerSlides, liftKey, openingHardware } from './opening';
 import { buildPanels, panelMaterials, SHELF_PANEL_NAME} from './panels';
 import { DEFAULT_PRODUCTION, type HardwareItem, type ProductionSettings } from '@/types/catalog';
@@ -435,14 +435,12 @@ export function buildEstimateDrafts(
    * сцене. Второй формулы «сколько столешницы в углу» не появляется: у
    * прямого ряда `run.corner` пуст, и метраж не меняется ни на миллиметр.
    */
-  const counterBand = cornerBandMm({
-    corner: run.corner,
-    bandDepthMm: counterSlabDepthMm(run.zone, run.production),
-  });
-
-  const counterBearingMm = run.modules
-    .filter((unit) => bearsCountertop(unit, run))
-    .reduce((sum, unit) => sum + unit.widthMm, 0);
+  /*
+   * ПЛИТЫ СЧИТАЕТ `countertopSlabs` — та же функция кладёт их в сцену.
+   * Сплошная над пустотой между модулями, рвётся колонной, заход в угол
+   * — как и раньше, через `cornerBandMm`.
+   */
+  const counterLengthMm = countertopLengthMm(run);
 
   /*
    * ПУСТОЙ РЯД НЕ ПОЛУЧАЕТ УГЛА.
@@ -451,11 +449,7 @@ export function buildEstimateDrafts(
    * иначе пустая стена углового объекта выставляла бы 660 мм столешницы
    * за то, чего ещё нет (ловушка 230, только теперь через угол).
    */
-  const counterMp = round3(
-    counterBearingMm === 0
-      ? 0
-      : Math.max(0, counterBearingMm + counterBand.backMm - counterBand.cutMm) / MM_IN_M,
-  );
+  const counterMp = round3(counterLengthMm / MM_IN_M);
 
   /*
    * ДЛИНА РЯДА И ДЛИНА СТОЛЕШНИЦЫ — РАЗНЫЕ ВЕЛИЧИНЫ.

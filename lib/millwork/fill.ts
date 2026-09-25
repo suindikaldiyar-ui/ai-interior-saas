@@ -9,7 +9,7 @@ import {
 import { MODULE_VARIANTS, currentVariant } from './moduleVariants';
 import { defaultOpening } from './opening';
 import { sectionSpec } from './sections';
-import { ceilingOverModuleMm } from './ceiling';
+import { ceilingOverModuleMm, ceilingOverSpanMm } from './ceiling';
 import {
   carcassHeightMm,
   mezzanineDepthMm,
@@ -411,6 +411,27 @@ export function mezzanineHeightMm(run: Partial<Pick<Run, 'mezzanine' | 'producti
 }
 
 /** Низ антресоли: потолок зоны минус её собственная высота. */
+/**
+ * СТОИТ ЛИ АНТРЕСОЛЬ НА ЭТОМ УЧАСТКЕ ПОД РИГЕЛЕМ.
+ *
+ * Её низ лежит выше низа балки, и если над участком не остаётся
+ * полезного корпуса, антресоли там нет вовсе (ловушка 377). Правило
+ * одно на двоих: движок снимает по нему антресоль после укладки, а
+ * библиотека не зовёт туда ставить — иначе «пусто 1400» над коробом
+ * вентиляции обещало место, куда не встаёт ничего.
+ */
+export function mezzanineBlockedByBeam(
+  fromMm: number,
+  toMm: number,
+  run: Pick<Run, 'zone' | 'ceilingHeightMm'> &
+    Partial<Pick<Run, 'mezzanine' | 'options' | 'production' | 'beams'>>,
+): boolean {
+  return (
+    ceilingOverSpanMm(fromMm, toMm, run.beams, run.ceilingHeightMm) - mezzanineBottomMm(run) <
+    GEOMETRY.upper.minCarcassH
+  );
+}
+
 export function mezzanineBottomMm(
   run: Pick<Run, 'zone' | 'ceilingHeightMm'> &
     Partial<Pick<Run, 'mezzanine' | 'options' | 'production'>>,

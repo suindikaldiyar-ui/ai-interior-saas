@@ -1,5 +1,11 @@
 'use client';
 
+import {
+  CARCASS_ROUGHNESS,
+  FRONT_METALNESS,
+  FRONT_ROUGHNESS,
+  INNER_ROUGHNESS,
+} from './cadLook';
 import { useEffect, useMemo } from 'react';
 import * as THREE from 'three';
 import { milledNormalMap, millingReliefMap } from './milledNormal';
@@ -106,7 +112,7 @@ export function useCabinetParts(
        */
       carcass: new THREE.MeshStandardMaterial({
         color: roleColors(palette).carcass,
-        roughness: 0.72,
+        roughness: CARCASS_ROUGHNESS,
         metalness: 0,
         polygonOffset: true,
         polygonOffsetFactor: 1,
@@ -118,7 +124,7 @@ export function useCabinetParts(
        */
       inner: new THREE.MeshStandardMaterial({
         color: roleColors(palette).inner,
-        roughness: 0.78,
+        roughness: INNER_ROUGHNESS,
         metalness: 0,
         polygonOffset: true,
         polygonOffsetFactor: 1,
@@ -296,33 +302,6 @@ export function useSurfaceLook(
 
 
 /* ────────────────  Материал фасада виден сразу  ──────────────── */
-
-/**
- * ШЕРОХОВАТОСТЬ ПО ФАКТУРЕ.
- *
- * Разница обязана быть ЗАМЕТНОЙ, а не тонкой: клиент на встрече сравнивает
- * глянец с матом на планшете, при комнатном свете, за две секунды. 0.06
- * отражает окно почти зеркально, 0.78 не бликует вовсе — между ними видно
- * невооружённым глазом, в отличие от «0.4 против 0.5».
- */
-const FRONT_ROUGHNESS: Record<FrontSpec['finish'], number> = {
-  gloss: 0.06,
-  matte: 0.78,
-  textured: 0.62,
-};
-
-/**
- * Небольшая «металличность» глянца.
- *
- * Чистый диэлектрик с нулевой шероховатостью на схематичной сцене
- * выглядит просто светлым пятном: блик появляется, когда есть что
- * отражать. Это не физика краски, а способ показать разницу.
- */
-const FRONT_METALNESS: Record<FrontSpec['finish'], number> = {
-  gloss: 0.16,
-  matte: 0,
-  textured: 0.02,
-};
 
 /**
  * ЦВЕТ ФАСАДА — ОДНА ФОРМУЛА НА СЦЕНУ И НА СХЕМУ.

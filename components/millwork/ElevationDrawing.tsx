@@ -36,6 +36,7 @@ import {
   moveShelf,
   removeShelf,
   snapTo32,
+  mezzanineBottomMm,
 } from '@/lib/millwork/fill';
 import { formatMoney } from '@/lib/millwork/estimate';
 import SheetDefs from './SheetDefs';
@@ -817,13 +818,28 @@ export default function ElevationDrawing({
               .find((unit) => rowOfModule(run, unit.id)?.row === gap.row);
       const place = sample ? placeOf.get(sample.id) : undefined;
 
+      /*
+       * ПУСТОЙ ВИСЯЩИЙ РЯД — ПОЛОСА РЯДА, А НЕ ПОЛ.
+       *
+       * Соседа, у которого взять высоту, в пустом ряду нет: верхний ряд
+       * висит на отметке навески, антресоль — на своей отметке низа
+       * (`mezzanineBottomMm`), той же, что у движка.
+       */
+      if (!place && gap.row === 'upper') {
+        return { ...gap, topMm: upperTop, bottomMm: upperBottom };
+      }
+      if (!place && gap.row === 'mezzanine' && run.mezzanine) {
+        const bottomMm = mezzanineBottomMm(run);
+        return { ...gap, topMm: bottomMm + run.mezzanine.heightMm, bottomMm };
+      }
+
       return {
         ...gap,
         topMm: place ? place.topMm : workTop,
         bottomMm: place ? place.bottomMm : 0,
       };
     });
-  }, [gaps, run, onSelectGap, compact, placeOf, workTop]);
+  }, [gaps, run, onSelectGap, compact, placeOf, workTop, upperTop, upperBottom]);
 
   /** Верх и низ модуля секционной зоны: у каждой секции своя высота. */
   const sectionBounds = (unit: Module, isUpper: boolean): { top: number; bottom: number } => {

@@ -3,6 +3,16 @@ import { moduleBoxes, type PartBox } from '@/lib/millwork/cabinetBoxes';
 import { frontOf } from '@/lib/millwork/frontMaterial';
 import { frontSwatch } from '@/lib/millwork/frontSwatch';
 import { moduleCarcassHeightMm, moduleDepthMm } from '@/lib/millwork/fill';
+import { roleColors } from '@/lib/millwork/sceneColors';
+import {
+  CAD_CARCASS_BASE,
+  CAD_LIGHT,
+  CARCASS_ROUGHNESS,
+  FRONT_METALNESS,
+  FRONT_ROUGHNESS,
+  INNER_ROUGHNESS,
+  applyCadLook,
+} from './cadLook';
 import type { ProductionSettings } from '@/types/catalog';
 import type { Module, Run } from '@/types/millwork';
 
@@ -53,6 +63,8 @@ function renderer(): THREE.WebGLRenderer | null {
       preserveDrawingBuffer: true,
     });
     shared.setSize(PX, PX, false);
+    /* Тон-маппинг и цветовое пространство — те же, что у сцены. */
+    applyCadLook(shared);
     return shared;
   } catch {
     /*
@@ -84,13 +96,6 @@ export function thumbKey(unit: Module, heightMm: number): string {
   ].join('|');
 }
 
-const COLOR: Record<string, string> = {
-  carcass: '#d8d2c4',
-  inner: '#c6c0b2',
-  metal: '#9aa0a6',
-  appliance: '#43464a',
-  glass: '#cfe0e6',
-};
 
 /**
  * Нарисовать модуль и отдать PNG.
@@ -134,17 +139,32 @@ export function renderThumb(
   if (boxes.length === 0) return null;
 
   const scene = new THREE.Scene();
-  const front = frontSwatch(frontOf(unit)).color;
+  const spec = frontOf(unit);
+  const front = frontSwatch(spec).color;
+  /*
+   * ЦВЕТА РОЛЕЙ — ТЕ ЖЕ, ЧТО В СЦЕНЕ: `roleColors` от того же тона
+   * корпуса, фасад — `frontSwatch`, шероховатость — по фактуре.
+   */
+  const roles = roleColors({ facade: front, carcass: CAD_CARCASS_BASE, counter: front });
   const geometry = new THREE.BoxGeometry(1, 1, 1);
-  const made = new Map<string, THREE.MeshLambertMaterial>();
+  const made = new Map<string, THREE.MeshStandardMaterial>();
   const meshes: THREE.Mesh[] = [];
 
   for (const box of boxes) {
-    const tone = box.material === 'front' ? front : (COLOR[box.material] ?? '#d8d2c4');
-    let material = made.get(tone);
+    const isFront = box.material === 'front';
+    const key = box.material;
+    let material = made.get(key);
     if (!material) {
-      material = new THREE.MeshLambertMaterial({ color: new THREE.Color(tone) });
-      made.set(tone, material);
+      material = new THREE.MeshStandardMaterial({
+        color: new THREE.Color(isFront ? front : roles[box.material]),
+        roughness: isFront
+          ? FRONT_ROUGHNESS[spec.finish]
+          : box.material === 'inner'
+            ? INNER_ROUGHNESS
+            : CARCASS_ROUGHNESS,
+        metalness: isFront ? FRONT_METALNESS[spec.finish] : 0,
+      });
+      made.set(key, material);
     }
     const mesh = new THREE.Mesh(geometry, material);
     mesh.position.set(...box.position);
@@ -154,13 +174,14 @@ export function renderThumb(
   }
 
   /*
-   * СВЕТ ТОТ ЖЕ, ЧТО В САПР-ВИДЕ: один направленный плюс общий. Бликов
-   * нет намеренно — клиент не должен выбирать цвет по блику (ловушка 299).
+   * СВЕТ ТОТ ЖЕ, ЧТО В САПР-ВИДЕ, — и не копией: `CAD_LIGHT`. Своя
+   * копия света и Ламберт вместо стандартного материала давали карточки
+   * темнее мебели в сцене рядом.
    */
-  scene.add(new THREE.AmbientLight(0xffffff, 0.72));
-  const key1 = new THREE.DirectionalLight(0xffffff, 0.66);
-  key1.position.set(1.2, 1.6, 1.4);
-  scene.add(key1);
+  scene.add(new THREE.AmbientLight(0xffffff, CAD_LIGHT.ambient));
+  const keyLight = new THREE.DirectionalLight(0xffffff, CAD_LIGHT.keyIntensity);
+  keyLight.position.set(...CAD_LIGHT.keyPosition);
+  scene.add(keyLight);
 
   /* Габарит модуля: по нему и кадрируем — как `sceneBounds` у сцены. */
   const bounds = new THREE.Box3().setFromObject(scene);

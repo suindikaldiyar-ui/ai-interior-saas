@@ -30,7 +30,10 @@ export type VariantPreview = {
   unit: Module;
   /** Высота модуля в миллиметрах: схема должна быть в пропорции. */
   heightMm: number;
-  deltaKzt: number;
+  /** Разница показанного итога. `null` — вариант не собирается. */
+  deltaKzt: number | null;
+  /** Почему не собирается — словами. */
+  refusal?: string;
   active: boolean;
 };
 
@@ -113,10 +116,20 @@ export default function VariantStrip({
             key={option.kind}
             type="button"
             data-variant={option.kind}
-            onClick={() => onPick(option.kind)}
+            data-refused={option.refusal ? '1' : '0'}
+            /*
+             * Не собирается — не нажимается, и почему, сказано словами:
+             * «та же цена» у варианта, которого не будет, — обещание.
+             */
+            disabled={Boolean(option.refusal)}
+            onClick={() => {
+              if (!option.refusal) onPick(option.kind);
+            }}
             aria-pressed={option.active}
-            title={option.hint}
+            title={option.refusal ?? option.hint}
             className={`mw-panel-flat shrink-0 p-2 text-left ${
+              option.refusal ? 'cursor-not-allowed opacity-45 ' : ''
+            }${
               option.active ? 'ring-2 ring-inset ring-cyan' : ''
             }`}
             style={{ width: CARD_W }}
@@ -149,11 +162,13 @@ export default function VariantStrip({
 
             <div className="mt-1 truncate text-[13px] leading-tight">{option.title}</div>
             <div className="mw-num text-[13px] leading-tight text-graphiteMw">
-              {option.active
-                ? 'сейчас'
-                : option.deltaKzt === 0
-                  ? 'та же цена'
-                  : `${option.deltaKzt > 0 ? '+' : '−'}${formatMoney(Math.abs(option.deltaKzt))} ₸`}
+              {option.refusal
+                ? 'не встанет'
+                : option.active
+                  ? 'сейчас'
+                  : option.deltaKzt === 0 || option.deltaKzt === null
+                    ? 'та же цена'
+                    : `${option.deltaKzt > 0 ? '+' : '−'}${formatMoney(Math.abs(option.deltaKzt))} ₸`}
             </div>
           </button>
         ))}

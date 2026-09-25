@@ -12,7 +12,7 @@ import {
   isStandardWidth,
   snapToStandard,
 } from './modules';
-import { upperSpansOfRun, buildUpperRow, fillGap, moduleId, onWall } from './layout';
+import { rowSpansOfRun, upperSpansOfRun, buildUpperRow, fillGap, moduleId, onWall } from './layout';
 import {
   assertNoOverlap,
   assertRunFits,
@@ -21,7 +21,6 @@ import {
 } from './invariants';
 import { runFingerprint } from './fingerprint';
 import { plinthMm, upperBottomMm } from './shop';
-import { ceilingOverSpanMm } from './ceiling';
 import { NO_MILLING_ID } from './milling';
 import { NO_CARCASS_ID } from './carcassMaterial';
 import { HANDLE_LEVELS, HANDLE_TURNS, handleLevelOrNull, handleTurnOrNull } from './handlePlace';
@@ -29,7 +28,7 @@ import {
   defaultFill,
   hingeSide,
   mezzanineBaseOf,
-  mezzanineBottomMm,
+  mezzanineBlockedByBeam,
 } from './fill';
 import { zoneHeightMm } from './zones';
 import { isMechanism, openingRejection } from './opening';
@@ -76,56 +75,32 @@ import type {
  * остаётся воспроизводимой.
  */
 
-function reindex(modules: Module[], wallId?: string): Module[] {
-  let offset = 0;
-  return modules.map((unit) => {
-    const next: Module = {
-      ...unit,
-      offsetMm: offset,
-      // Третья копия формулы жила здесь.
-      id: moduleId(unit.kind, offset, unit.appliance, wallId),
-      isFiller: unit.kind === 'filler' || !isStandardWidth(unit.widthMm),
-    };
-    offset += unit.widthMm;
-    return next;
-  });
-}
+/*
+ * `reindex` и `rebalance` жили здесь: первый выводил каждую отметку из
+ * суммы ширин слева, второй дозаполнял и ужимал ряд до стены. Любая
+ * правка по готовому решению перекладывала через них ряд вплотную, и
+ * замена модуля уводила мойку от вывода воды. Их место заняли укладка
+ * участками (`settleBottom`) и подтяжка цепочки (`closeUp`) в applyOps.
+ */
 
 /**
- * После правок сумма ширин обязана снова сойтись с длиной ряда.
- * Недостачу закрываем стандартными модулями, излишек снимаем с обычных
- * модулей — технику трогать нельзя, у неё габарит фиксирован.
+ * МОДУЛЬ АНТРЕСОЛИ ИЗ МОДУЛЯ ВЕРХНЕГО РЯДА — одна сборка на два пути:
+ * автосборку над верхним рядом и вставку из библиотеки в пустую полосу.
  */
-function rebalance(modules: Module[], lengthMm: number, wallId?: string): Module[] {
-  const sum = modules.reduce((acc, m) => acc + m.widthMm, 0);
-  let diff = lengthMm - sum;
-
-  if (diff === 0) return reindex(modules, wallId);
-
-  if (diff > 0) {
-    const added = fillGap(diff).map((widthMm) =>
-      makePlainModule('base', widthMm, wallId),
-    );
-    return reindex([...modules, ...added], wallId);
-  }
-
-  // Излишек: ужимаем и удаляем обычные модули, начиная с последнего.
-  const result = [...modules];
-  for (let i = result.length - 1; i >= 0 && diff < 0; i--) {
-    const unit = result[i];
-    if (unit.appliance || unit.kind === 'tall' || unit.kind === 'corner_base') continue;
-
-    const canShrink = unit.widthMm - MIN_WIDTH;
-    if (canShrink >= -diff) {
-      result[i] = { ...unit, widthMm: unit.widthMm + diff };
-      diff = 0;
-    } else {
-      diff += unit.widthMm;
-      result.splice(i, 1);
-    }
-  }
-
-  return reindex(result, wallId);
+function asMezzanine(unit: Module, wallId?: string): Module {
+  return {
+    ...unit,
+    id: moduleId('mezz', unit.offsetMm, undefined, wallId),
+    section: 'mezzanine',
+    variant: undefined,
+    appliance: undefined,
+    column: undefined,
+    frontType: 'door',
+    doorCount: 1,
+    drawerCount: 0,
+    fill: undefined,
+    label: 'Антресоль',
+  };
 }
 
 function makePlainModule(
@@ -368,8 +343,12 @@ export function applyOps({
    * Не влезло — это ОТКАЗ с числом, а не удаление. Удаляет только
    * кнопка «Удалить».
    */
-  const placeInSpans = (list: Module[]): Placement => {
-    const { free, blockers } = spansNow();
+  const placeInSpans = (
+    list: Module[],
+    /* Участки ряда. Пусто — участки висящего ряда, как и раньше. */
+    spans: { free: { from: number; to: number }[]; blockers: { from: number; to: number; reason: string }[] } = spansNow(),
+  ): Placement => {
+    const { free, blockers } = spans;
     const sorted = [...list].sort((a, b) => a.offsetMm - b.offsetMm);
 
     /* Правый край занятого в каждом участке: по нему и двигаем. */
@@ -561,8 +540,13 @@ export function applyOps({
    * что мешает: преграда под отметкой, занятое место или край участка.
    * Сам ряд при этом раскладывает `placeInSpans`, как и всякую правку.
    */
-  const noRoomAt = (at: number, widthMm: number, row: Module[]): string | null => {
-    const { free, blockers } = spansNow();
+  const noRoomAt = (
+    at: number,
+    widthMm: number,
+    row: Module[],
+    spans: { free: { from: number; to: number }[]; blockers: { from: number; to: number; reason: string }[] } = spansNow(),
+  ): string | null => {
+    const { free, blockers } = spans;
     const span = spanAt(at, free);
     if (!span) {
       const here = blockers.find((b) => b.from <= at && at < b.to)?.reason ?? 'край стены';
@@ -578,6 +562,116 @@ export function applyOps({
     return (
       `Модуль ${widthMm} мм сюда не встаёт: до края участка ` +
       `${Math.max(0, span.to - at)} мм — справа ${blockerAfter(span.to, blockers)}.`
+    );
+  };
+
+  /**
+   * НИЖНИЙ РЯД ПО ГОТОВОМУ РЕШЕНИЮ: ТА ЖЕ УКЛАДКА, ЧТО У ВЕРХНЕГО.
+   *
+   * Здесь стоял `rebalance`: он выводил каждую отметку из суммы ширин
+   * слева, и ЛЮБАЯ правка перекладывала ряд вплотную. Замена модуля
+   * уже двигала мойку с 1650 на 1500 и дописывала добор в хвост — на
+   * демо 44 из 48 карточек библиотеки были серыми именно поэтому.
+   *
+   * Теперь модуль стоит там, где стоит, и двигается вправо, только если
+   * на него наехал левый сосед — `placeInSpans`, та же функция, что
+   * держит верхний ряд. Участок у нижнего ряда один — вся стена, — и
+   * край у него открыт: что вылезло за стену, снимает хвост (ниже),
+   * ровно как снимал `rebalance`.
+   *
+   * Правки, которые по готовому решению ТЯНУТ ряд следом (ширина уже,
+   * снятый модуль), делают это сами — `closeUp`. Замена и вставка в
+   * пустоту ряд не тянут: пустота остаётся, где появилась.
+   */
+  const settleBottom = (list: Module[]): Module[] => {
+    const placed = placeInSpans(list, {
+      free: [{ from: 0, to: Number.POSITIVE_INFINITY }],
+      blockers: [],
+    });
+    let out = 'ok' in placed ? placed.ok : list;
+
+    /*
+     * ХВОСТ ЗА СТЕНОЙ СНИМАЕТСЯ С КОНЦА — прежнее правило `rebalance`:
+     * технику, пеналы и угол не трогаем, обычные ужимаем до минимума
+     * или снимаем, и всё правее ужатого подтягивается влево.
+     */
+    const lastEnd = () => out.reduce((end, unit) => Math.max(end, unit.offsetMm + unit.widthMm), 0);
+    let over = lastEnd() - run.lengthMm;
+    for (let i = out.length - 1; i >= 0 && over > 0; i -= 1) {
+      const unit = out[i];
+      if (unit.appliance || unit.kind === 'tall' || unit.kind === 'corner_base') continue;
+
+      const give = Math.min(over, unit.widthMm - MIN_WIDTH);
+      const drop = give < over;
+      const freed = drop ? unit.widthMm : give;
+      out = out
+        .map((other, j) =>
+          j === i
+            ? drop
+              ? null
+              : { ...other, widthMm: other.widthMm - give }
+            : j > i
+              ? { ...other, offsetMm: other.offsetMm - freed }
+              : other,
+        )
+        .filter((other): other is Module => other !== null);
+      over -= freed;
+    }
+
+    return out;
+  };
+
+  /**
+   * СОСЕДИ СПРАВА ИДУТ ЗА МОДУЛЕМ — пока стоят вплотную.
+   *
+   * Так по готовому решению работали сужение и снятие модуля: ряд
+   * подтягивался влево, а в хвост дописывался добор. Правило то же, но
+   * цепочка кончается на первой пустоте: пустота — это чьё-то решение,
+   * и её не съедают молча. Дошла цепочка до стены — хвост дозаполняется
+   * стандартными модулями, как и раньше.
+   */
+  const closeUp = (fromMm: number, deltaMm: number) => {
+    if (deltaMm <= 0 || requirements.mode === 'free') return;
+
+    const chain = new Set<Module>();
+    let edge = fromMm;
+    for (const unit of [...modules].sort((a, b) => a.offsetMm - b.offsetMm)) {
+      if (unit.offsetMm < fromMm) continue;
+      if (unit.offsetMm !== edge) break;
+      chain.add(unit);
+      edge = unit.offsetMm + unit.widthMm;
+    }
+
+    modules = modules.map((unit) =>
+      chain.has(unit) ? { ...unit, offsetMm: unit.offsetMm - deltaMm } : unit,
+    );
+
+    if (edge === run.lengthMm) {
+      let x = run.lengthMm - deltaMm;
+      for (const widthMm of fillGap(deltaMm)) {
+        modules.push({ ...makePlainModule('base', widthMm, run.wallId), offsetMm: x });
+        x += widthMm;
+      }
+    }
+  };
+
+  /**
+   * ВСТАНЕТ ЛИ ЗАМЕНА НА СВОЁ МЕСТО — в своё место и пустоту справа.
+   *
+   * Замена соседей не двигает никогда: ни мойку, ни посудомойку, ни
+   * варочную. Шире своего места плюс пустоты справа — отказ с числом.
+   */
+  const ownPlaceRefusal = (at: number, wanted: number): string | null => {
+    const unit = modules[at];
+    const next = modules
+      .filter((other) => other !== unit && other.offsetMm >= unit.offsetMm + Math.min(unit.widthMm, 1))
+      .sort((a, b) => a.offsetMm - b.offsetMm)[0];
+    const edge = next ? next.offsetMm : run.lengthMm;
+    const over = unit.offsetMm + wanted - edge;
+    if (over <= 0) return null;
+    return (
+      `${wanted} мм не встают: справа ${next ? `«${next.label}»` : 'край стены'}, ` +
+      `не хватает ${over} мм.`
     );
   };
 
@@ -683,6 +777,50 @@ export function applyOps({
          * модуль в НИЖНИЙ ряд, а антресоль просто пересобиралась: со
          * стороны это выглядело как «добавилось не туда».
          */
+        /*
+         * ВИСЯЩИЙ РЯД ПО ИМЕНИ — В ТОМ ЧИСЛЕ ПУСТОЙ.
+         *
+         * Библиотека ставит модуль в пустоту верхнего ряда или антресоли,
+         * и соседа, который назвал бы ряд, там может не быть вовсе: на
+         * пустой стене верхний ряд — одна большая пустота. Место —
+         * отметка; помещается ли — участки ряда (`rowSpansOfRun`), у
+         * антресоли с вычетом того, что съел ригель.
+         */
+        if (op.row === 'upper' || op.row === 'mezzanine') {
+          const widthMm = Math.max(MIN_WIDTH, Math.round(op.widthMm ?? MIN_WIDTH));
+          const toMezz = op.row === 'mezzanine';
+          if (toMezz && !mezzanine) {
+            warnings.push('Антресоль не включена: ставить модуль некуда.');
+            break;
+          }
+          const list = toMezz ? mezzModules : upperModules;
+          const last = [...list].sort((a, b) => a.offsetMm - b.offsetMm).pop();
+          const at = Math.round(op.atMm ?? (last ? last.offsetMm + last.widthMm : 0));
+          const spans = toMezz
+            ? rowSpansOfRun('mezzanine', { ...run, mezzanine: mezzanine ?? undefined }, modules, openings, requirements, options)
+            : spansNow();
+
+          const noRoom = noRoomAt(at, widthMm, list, spans);
+          if (noRoom) {
+            warnings.push(noRoom);
+            break;
+          }
+
+          const plain: Module = {
+            ...makePlainModule('upper', widthMm, run.wallId),
+            id: moduleId('upper', at, undefined, run.wallId),
+            offsetMm: at,
+          };
+          const made = toMezz ? asMezzanine(plain, run.wallId) : plain;
+          const dressed = op.variant
+            ? { ...applyVariant(made, op.variant), section: made.section }
+            : made;
+
+          if (toMezz) placeMezz([...mezzModules, dressed], `Модуль ${widthMm} мм`);
+          else placeUpper([...upperModules, dressed], `Модуль ${widthMm} мм`);
+          break;
+        }
+
         const afterMezz = op.afterModuleId
           ? mezzModules.findIndex((m) => m.id === op.afterModuleId)
           : -1;
@@ -805,6 +943,32 @@ export function applyOps({
         const created = makePlainModule(op.kind, width, run.wallId, op.appliance, requirements);
 
         /*
+         * НА ОТМЕТКУ — В ЛЮБОМ РЕЖИМЕ.
+         *
+         * Пустота бывает и в ряду по готовому решению: замена уже
+         * оставляет её справа. Модуль встаёт ровно туда, соседи не
+         * двигаются; не помещается — отказ с числом.
+         */
+        if (op.atMm !== undefined && !op.appliance) {
+          const at0 = Math.max(0, Math.round(op.atMm));
+          const probe = { ...created, id: `${created.id}:проба`, offsetMm: at0, widthMm: width };
+          const clash = moveConflict([...modules, probe], probe.id, at0, run.lengthMm);
+          if (clash) {
+            warnings.push(moveRefusal(clash));
+            break;
+          }
+          if (at0 + width > run.lengthMm) {
+            warnings.push(
+              `Модуль ${width} мм сюда не встаёт: до края стены ${run.lengthMm - at0} мм.`,
+            );
+            break;
+          }
+          created.offsetMm = at0;
+          modules.push(op.variant ? applyVariant(created, op.variant) : created);
+          break;
+        }
+
+        /*
          * Холодильник, добавленный руками, встраивается по тем же
          * умолчаниям, что и поставленный раскладкой (`planAnchors`).
          * Иначе один и тот же состав стоил бы разных денег и выглядел
@@ -833,26 +997,12 @@ export function applyOps({
            * отказ с числом, тем же `moveConflict`, которым отказывает
            * перенос.
            */
-          const at0 =
-            op.atMm !== undefined
-              ? Math.max(0, Math.round(op.atMm))
-              : placementFor(modules, run.lengthMm, width, op.afterModuleId);
-
-          if (at0 !== null && op.atMm !== undefined) {
-            /*
-             * У пробного модуля СВОЙ идентификатор. Готовый выведен из
-             * отметки 0 (`makePlainModule`) и совпадает с модулем, который
-             * стоит у края: `moveConflict` ищет двигаемого по id и
-             * исключает всех с этим id — и мерил бы чужую ширину, не видя
-             * настоящего соседа. Проба никуда не записывается.
-             */
-            const probe = { ...created, id: `${created.id}:проба`, offsetMm: at0, widthMm: width };
-            const clash = moveConflict([...modules, probe], probe.id, at0, run.lengthMm);
-            if (clash) {
-              warnings.push(moveRefusal(clash));
-              break;
-            }
-          }
+          /*
+           * У пробного модуля отметки выше СВОЙ идентификатор: готовый
+           * выведен из отметки 0 (`makePlainModule`) и совпадает с
+           * модулем у края — `moveConflict` мерил бы чужую ширину.
+           */
+          const at0 = placementFor(modules, run.lengthMm, width, op.afterModuleId);
 
           if (at0 === null) {
             warnings.push(
@@ -876,6 +1026,12 @@ export function applyOps({
         const at = op.afterModuleId
           ? modules.findIndex((m) => m.id === op.afterModuleId)
           : modules.length - 1;
+        /*
+         * Место — вплотную за соседом (или за последним). Правых
+         * раздвинет укладка, лишнее снимет хвост — как и раньше.
+         */
+        const anchor = modules[at];
+        created.offsetMm = anchor ? anchor.offsetMm + anchor.widthMm : 0;
         modules.splice(at + 1, 0, created);
         break;
       }
@@ -899,8 +1055,11 @@ export function applyOps({
         }
 
         const at = modules.findIndex((m) => m.id === op.moduleId);
-        if (at >= 0) modules.splice(at, 1);
-        else warnings.push(`Модуль ${op.moduleId} не найден.`);
+        if (at >= 0) {
+          const gone = modules[at];
+          modules.splice(at, 1);
+          closeUp(gone.offsetMm + gone.widthMm, gone.widthMm);
+        } else warnings.push(`Модуль ${op.moduleId} не найден.`);
         break;
       }
 
@@ -996,8 +1155,8 @@ export function applyOps({
          * наезжал на соседа, и правку роняло исключение.
          */
         const replaced = swap(modules[at]);
-        if (replaced.widthMm !== modules[at].widthMm) {
-          const refusedWidth = bottomWidthRefusal(at, replaced.widthMm);
+        if (replaced.widthMm > modules[at].widthMm) {
+          const refusedWidth = ownPlaceRefusal(at, replaced.widthMm);
           if (refusedWidth) {
             warnings.push(refusedWidth);
             break;
@@ -1129,7 +1288,9 @@ export function applyOps({
           break;
         }
 
+        const narrowedFrom = modules[at];
         modules[at] = { ...modules[at], widthMm: wanted };
+        closeUp(narrowedFrom.offsetMm + narrowedFrom.widthMm, narrowedFrom.widthMm - wanted);
         break;
       }
 
@@ -1492,8 +1653,20 @@ export function applyOps({
         const from = modules.findIndex((m) => m.id === op.moduleId);
         const to = modules.findIndex((m) => m.id === op.afterModuleId);
         if (from < 0 || to < 0 || from === to) break;
+        const lo = Math.min(from, to);
+        const hi = Math.max(from, to);
+        const start = modules[lo].offsetMm;
         const [moved] = modules.splice(from, 1);
         modules.splice(to, 0, moved);
+        /*
+         * Переставленный отрезок садится вплотную с того же левого края:
+         * сумма ширин в нём прежняя, и правее него не двигается ничего.
+         */
+        let cursor = start;
+        for (let i = lo; i <= hi; i += 1) {
+          modules[i] = { ...modules[i], offsetMm: cursor };
+          cursor += modules[i].widthMm;
+        }
         break;
       }
 
@@ -1685,6 +1858,7 @@ export function applyOps({
           ),
           applianceSizes: sizes,
         };
+        closeUp(unit.offsetMm + unit.widthMm, unit.widthMm - modules[at].widthMm);
 
         const nextDepth = moduleDepthMm(modules[at], zone);
         const pushed = nextDepth - moduleDepthMm(unit, zone);
@@ -2140,7 +2314,7 @@ export function applyOps({
    * а незаполненный остаток показывается числом.
    */
   const free = requirements.mode === 'free';
-  modules = free ? placeFree(modules, run.wallId) : rebalance(modules, run.lengthMm, run.wallId);
+  modules = placeFree(free ? modules : settleBottom(modules), run.wallId);
 
   /*
    * Наполнение пересчитывается там, где оно слетело со сменой секции:
@@ -2280,8 +2454,20 @@ export function applyOps({
    * Пусто — берём свежий ряд целиком; есть — держим свой. Дальше ряд
    * правится как обычный, и правка едет вместе с модулем.
    */
+  /*
+   * ПУСТОЙ ВЕРХНИЙ РЯД — ЗАКОННОЕ СОСТОЯНИЕ.
+   *
+   * «Автосборка на первое появление» была написана как «всякий раз,
+   * когда ряд пуст»: на пустой стене верхний ряд вырастал целиком после
+   * первого же нижнего модуля, а снятые руками шкафы возвращались на
+   * следующей правке. Теперь ряд собирается сам ровно тогда, когда его
+   * ВКЛЮЧИЛИ в этой правке, и только по готовому решению: в свободной
+   * сборке его собирает человек из библиотеки.
+   */
+  const upperGrows =
+    requirements.mode !== 'free' && options.hasUpper && !run.options.hasUpper;
   const grownUpper =
-    upperModules.length > 0
+    upperModules.length > 0 || !upperGrows
       ? upperModules
       : fresh
           .filter((segment) => segment.modules.every((unit) => unit.section !== 'mezzanine'))
@@ -2434,16 +2620,8 @@ export function applyOps({
      * туда не впишет. Это тот же разрыв ряда, что на окне, — только
      * этажом выше.
      */
-    const mezzBottom = mezzanineBottomMm(nextRun);
     const underBeam = (unit: Module) =>
-      ceilingOverSpanMm(
-        unit.offsetMm,
-        unit.offsetMm + unit.widthMm,
-        nextRun.beams,
-        nextRun.ceilingHeightMm,
-      ) -
-        mezzBottom <
-      GEOMETRY.upper.minCarcassH;
+      mezzanineBlockedByBeam(unit.offsetMm, unit.offsetMm + unit.widthMm, nextRun);
 
     /*
      * АВТОСБОРКА — ТОЛЬКО НА ПЕРВОЕ ПОЯВЛЕНИЕ.
@@ -2457,26 +2635,16 @@ export function applyOps({
      * Замерщик от этого ничего не теряет: первое появление по-прежнему
      * даёт готовый ряд по верхнему, собирать с нуля не приходится.
      */
+    /* Антресоль растёт сама только на включение и только по шаблону. */
+    const mezzGrows = requirements.mode !== 'free' && !run.mezzanine;
     const grown =
-      mezzModules.length > 0
+      mezzModules.length > 0 || !mezzGrows
         ? mezzModules
         : !mezzanine
           ? []
           : spans.flatMap((segment) =>
             segment.modules.map((unit) => {
-              const mezz: Module = {
-                ...unit,
-                id: moduleId('mezz', unit.offsetMm, undefined, nextRun.wallId),
-                section: 'mezzanine',
-                variant: undefined,
-                appliance: undefined,
-                column: undefined,
-                frontType: 'door',
-                doorCount: 1,
-                drawerCount: 0,
-                fill: undefined,
-                label: 'Антресоль',
-              };
+              const mezz = asMezzanine(unit, nextRun.wallId);
               const front = kept.get(mezz.id) ?? upperFrontAll ?? unit.front;
               return front ? { ...mezz, front } : mezz;
             }),
