@@ -17,7 +17,7 @@ import { millingLink, type MillingItem } from './milling';
 import { carcassLink, type CarcassItem } from './carcassMaterial';
 import { frontOf } from './frontMaterial';
 import { MATERIAL_FINISHES } from './materialFinishes';
-import { priceState, type MaterialItem } from './materialCollection';
+import { PRICE_UNSET, priceState, type MaterialItem } from './materialCollection';
 import type {
   Estimate,
   EstimateLine,
@@ -284,6 +284,12 @@ export function buildEstimateDrafts(
    * была до каталога: ни одна сохранённая от появления параметра не едет.
    */
   materialItems: Map<string, MaterialItem> = new Map(),
+  /**
+   * Ставки — ради цены коллекции (слой 52): она лежит ставкой
+   * `material_<коллекция>_<поверхность>`, и позиция без своей цены
+   * берёт её оттуда той же `materialPrice`, что и панель.
+   */
+  rates: RateTable = {},
 ): Draft[] {
   /*
    * Высоту и потолок больше не разбираем по кусочкам: всё, что считает
@@ -533,7 +539,7 @@ export function buildEstimateDrafts(
       unit: 'm2',
       quantity: round2(Math.max(0, materials.frontM2 - pickedFrontM2(run, panels, materialItems))),
     },
-    ...frontMaterialDrafts(run, panels, materialItems),
+    ...frontMaterialDrafts(run, panels, materialItems, rates),
     /*
      * ФРЕЗЕРОВКА — СВОЯ СТРОКА, И ПЛОЩАДЬ У НЕЁ ИЗ РАСКРОЯ.
      *
@@ -550,7 +556,7 @@ export function buildEstimateDrafts(
      * а «цену не задали», и говорит об этом `millingWarnings`.
      */
     ...millingDrafts(run, panels, millingItems),
-    ...carcassDrafts(run, panels, carcassItems),
+    ...carcassDrafts(run, panels, carcassItems, materialItems, rates),
     { key: 'pvc_edge', title: 'Кромка ПВХ', unit: 'mp', quantity: materials.edgeM },
   ];
 
@@ -574,7 +580,7 @@ export function buildEstimateDrafts(
       ? materialItems.get(run.countertopMaterial.itemId)
       : undefined;
     if (counterItem) {
-      const price = priceState(counterItem, run.countertopMaterial?.surface, 'running_m');
+      const price = priceState(counterItem, run.countertopMaterial?.surface, 'running_m', rates);
       drafts.push({
         key: `countertop_item_${counterItem.id}`,
         title: `Столешница ${counterItem.code}${counterItem.name ? ` «${counterItem.name}»` : ''}`,
@@ -917,18 +923,36 @@ function carcassDrafts(
   run: Run,
   panels: Panel[],
   catalog: Map<string, CarcassItem>,
+  materialItems: Map<string, MaterialItem>,
+  rates: RateTable,
 ): Draft[] {
   return Array.from(carcassAreas(run, panels, catalog).values())
     .sort((a, b) => a.item.name.localeCompare(b.item.name, 'ru'))
-    .map(({ item, m2 }) => ({
-      key: `carcass_${item.id}`,
-      title: `Корпус «${item.name}»`,
-      unit: 'm2' as const,
-      quantity: Math.round(m2 * 100) / 100,
-      ...(item.collection && !(item.price > 0)
-        ? { priceUnset: item.priceNote ?? 'цена не задана' }
-        : { rate: item.price }),
-    }));
+    .map(({ item, m2 }) => {
+      const quantity = Math.round(m2 * 100) / 100;
+      const base = { key: `carcass_${item.id}`, unit: 'm2' as const, quantity };
+      if (!item.collection) return { ...base, title: `Корпус «${item.name}»`, rate: item.price };
+
+      /*
+       * ПОЗИЦИЯ КОЛЛЕКЦИИ НА КОРПУСЕ — ТА ЖЕ ФУНКЦИЯ ЦЕНЫ, ЧТО У ФАСАДОВ.
+       *
+       * Своя цена позиции, иначе цена коллекции. Поверхности у корпуса не
+       * выбирают, поэтому цена коллекции берётся по ПЕРВОЙ поверхности
+       * коллекции, и строка сметы её называет: цена за другую поверхность
+       * не подставляется молча.
+       */
+      const material = materialItems.get(item.id);
+      const surface = material?.finishes[0];
+      const surfaceTitle = surface ? MATERIAL_FINISHES[surface]?.label ?? surface : null;
+      const price = material
+        ? priceState(material, surface, 'm2', rates)
+        : { state: 'unset' as const, reason: item.priceNote ?? 'цена не задана' };
+      return {
+        ...base,
+        title: `Корпус «${item.name}»${surfaceTitle ? `, ${surfaceTitle}` : ''}`,
+        ...(price.state === 'priced' ? { rate: price.rate } : { priceUnset: price.reason }),
+      };
+    });
 }
 
 /**
@@ -975,11 +999,16 @@ function pickedFrontM2(run: Run, panels: Panel[], catalog: Map<string, MaterialI
 }
 
 /** Строки фасадов из коллекций: по позиции и поверхности, цена — у позиции. */
-function frontMaterialDrafts(run: Run, panels: Panel[], catalog: Map<string, MaterialItem>): Draft[] {
+function frontMaterialDrafts(
+  run: Run,
+  panels: Panel[],
+  catalog: Map<string, MaterialItem>,
+  rates: RateTable,
+): Draft[] {
   return Array.from(frontMaterialAreas(run, panels, catalog).entries())
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([key, { item, surface, m2 }]) => {
-      const price = priceState(item, surface, 'm2');
+      const price = priceState(item, surface, 'm2', rates);
       const finish = surface ? MATERIAL_FINISHES[surface]?.label : undefined;
       return {
         key: `front_item_${key}`,
@@ -1059,6 +1088,16 @@ export function buildEstimate(
   carcassItems: Map<string, CarcassItem> = new Map(),
   /** Позиции коллекций каталога материалов. Пусто — как раньше. */
   materialItems: Map<string, MaterialItem> = new Map(),
+  /**
+   * СНИМОК ЦЕН — ДЛЯ КАБИНЕТА КЛИЕНТА (слой 52).
+   *
+   * Клиент видит ту сумму, что ему назвали: переоценка каталога после
+   * отправки её не меняет (ловушка 30). Снимок держит ставку КАЖДОЙ строки
+   * по её ключу — и ставки цеха, и цену позиции, фрезеровки, корпуса и
+   * коллекции. Строка, которой в снимке нет, считается как на экране.
+   * Экран дизайнера снимка не передаёт: он считает по каталогу.
+   */
+  options: { frozen?: Record<string, number> } = {},
 ): Estimate {
   const drafts = buildEstimateDrafts(
     run,
@@ -1067,7 +1106,13 @@ export function buildEstimate(
     millingItems,
     carcassItems,
     materialItems,
+    rates,
   );
+  const frozen = options.frozen;
+  const inSnapshot = (key: string) =>
+    frozen !== undefined && Object.prototype.hasOwnProperty.call(frozen, key);
+  /** Ставка статьи: из снимка, если он есть, иначе из каталога. */
+  const rateOf = (key: string) => (inSnapshot(key) ? frozen![key] : rates[key]);
   const disabled = new Set(disabledKeys);
   const priceSnapshot: Record<string, number> = {};
 
@@ -1085,12 +1130,27 @@ export function buildEstimate(
      * остаётся с количеством, её сумма в итог не входит, и итог помечен
      * «неполный» (`unpricedLines`), а экран вместо суммы пишет причину.
      */
-    const rate = draft.priceUnset ? 0 : (draft.rate ?? rates[draft.key] ?? 0);
+    /*
+     * Строка с ценой позиции (своя, фрезеровка, корпус, коллекция) в
+     * снимке держит ту ставку, что была при отправке. Ноль там — «цена не
+     * задана» на тот момент: бесплатного материала не бывает, и он не
+     * превращается в «0 ₸» оттого, что цену завели позже.
+     */
+    const itemPriced = draft.rate !== undefined || draft.priceUnset !== undefined;
+    let priceUnset = draft.priceUnset;
+    let rate: number;
+    if (inSnapshot(draft.key)) {
+      rate = frozen![draft.key];
+      if (itemPriced) priceUnset = rate > 0 ? undefined : (draft.priceUnset ?? PRICE_UNSET);
+    } else {
+      rate = draft.priceUnset ? 0 : (draft.rate ?? rates[draft.key] ?? 0);
+    }
+    if (priceUnset) rate = 0;
     priceSnapshot[draft.key] = rate;
 
     // Крепёж задаётся процентом от стоимости корпуса, а не ценой за м².
     const isPercent = draft.unit === 'percent';
-    const carcassRate = rates.ldsp_carcass ?? 0;
+    const carcassRate = rateOf('ldsp_carcass') ?? 0;
     const carcassQty = drafts.find((d) => d.key === 'ldsp_carcass')?.quantity ?? 0;
 
     const total = isPercent
@@ -1106,8 +1166,8 @@ export function buildEstimate(
       rate,
       total,
       enabled: !disabled.has(draft.key),
-      missingRate: !draft.priceUnset && draft.rate === undefined && rates[draft.key] === undefined,
-      ...(draft.priceUnset ? { priceUnset: draft.priceUnset } : {}),
+      missingRate: !priceUnset && draft.rate === undefined && rateOf(draft.key) === undefined,
+      ...(priceUnset ? { priceUnset } : {}),
     };
   });
 
@@ -1115,7 +1175,7 @@ export function buildEstimate(
     .filter((l) => l.enabled)
     .reduce((sum, l) => sum + l.total, 0);
 
-  const deliveryRate = rates[DELIVERY_KEY] ?? 0;
+  const deliveryRate = rateOf(DELIVERY_KEY) ?? 0;
   priceSnapshot[DELIVERY_KEY] = deliveryRate;
 
   if (deliveryRate > 0) {

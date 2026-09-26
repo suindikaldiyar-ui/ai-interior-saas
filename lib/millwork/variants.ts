@@ -128,6 +128,14 @@ export interface BuildVariantsInput extends Omit<BuildRunInput, 'requirements'> 
    * цены — строкой «цена не задана», и итог неполный.
    */
   materials?: Map<string, MaterialItem>;
+  /**
+   * СНИМОК ЦЕН ОТПРАВЛЕННОГО ПРЕДЛОЖЕНИЯ — ТОЛЬКО У КАБИНЕТА КЛИЕНТА (слой 52).
+   *
+   * Клиент видит ту сумму, что ему назвали: ставка каждой строки берётся
+   * из снимка, а строка, которой в нём нет, считается по каталогу. Экран
+   * дизайнера снимка не передаёт — он считает по каталогу на сегодня.
+   */
+  frozen?: Record<string, number>;
   strategies?: VariantStrategy[];
   disabledKeys?: Record<VariantKey, string[]>;
   calculatedAt?: string;
@@ -177,6 +185,7 @@ export function buildVariants(input: BuildVariantsInput): Variant[] {
       input.milling,
       input.carcass,
       input.materials,
+      { frozen: input.frozen },
     );
 
     return {

@@ -9,7 +9,7 @@ import {
   profileOf,
   typicalMillingItem,
 } from '../lib/millwork/milling';
-import { patchCatalogItem } from '../lib/catalog';
+import { fetchCatalog, patchCatalogItem } from '../lib/catalog';
 import catalogJson from '../data/catalog/catalog.json';
 import {
   catalogEntriesFromRows,
@@ -949,6 +949,91 @@ console.log('\nКаталог материалов: вкладки по цели
 }
 
 
+/**
+ * ОШИБКА ЧТЕНИЯ КАТАЛОГА — СЛОВАМИ, А НЕ ПУСТЫМ СПИСКОМ (тест 11, слой 52).
+ *
+ * Пустой каталог без слов перед клиентом хуже падения: смета говорит
+ * «заполните цены», панель — «ждёт импорта», и никто не знает, что каталог
+ * просто не прочитался. Заглушка клиента Supabase отвечает ошибкой так же,
+ * как отвечает PostgREST, — и чтение обязано её назвать.
+ */
+function stubClient(pages: { data: unknown[] | null; error: { message: string } | null }[]) {
+  let call = 0;
+  const chain: Record<string, unknown> = {};
+  for (const name of ['from', 'select', 'eq', 'order']) chain[name] = () => chain;
+  chain.range = () => Promise.resolve(pages[Math.min(call++, pages.length - 1)]);
+  return chain;
+}
+
+function rawRow(i: number) {
+  return {
+    id: `id-${i}`,
+    org_id: 'org',
+    category_id: 'cat',
+    article: `A-${String(i).padStart(5, '0')}`,
+    name_ru: `Позиция ${i}`,
+    name_kk: '',
+    description: '',
+    price: 0,
+    unit: 'm2',
+    dimensions: {},
+    tiling: {},
+    meta: {},
+    is_active: true,
+    catalog_categories: {
+      id: 'cat',
+      org_id: 'org',
+      key: 'collection:ral-design',
+      name_ru: 'Эмаль · RAL Design',
+      name_kk: '',
+      applies_to: 'object',
+      unit: 'm2',
+      sort_order: 0,
+      is_active: true,
+    },
+    catalog_assets: [],
+  };
+}
+
+async function catalogReadChecks() {
+  console.log('\nКаталог: ошибка чтения называется словами (тест 11)');
+
+  const read = (await fetchCatalog(
+    stubClient([{ data: null, error: { message: 'permission denied for table catalog_items' } }]) as never,
+    'org',
+  )) as unknown;
+  const failed = read as { entries?: unknown; error?: unknown };
+  check(
+    'тест 11: ошибка чтения — не пустой список, а слова',
+    !Array.isArray(read) && failed.entries === null && typeof failed.error === 'string' && /Каталог/.test(failed.error),
+    Array.isArray(read)
+      ? `ВЕРНУЛСЯ ПУСТОЙ СПИСОК БЕЗ СЛОВ: ${read.length} позиций`
+      : `ошибка: «${String(failed.error)}»`,
+  );
+  check(
+    'тест 11: причина для экрана — словами, без кода ошибки базы',
+    typeof failed.error === 'string' && !/permission denied/.test(failed.error),
+    String(failed.error),
+  );
+
+  /* Каталог длиннее 1000 строк читается целиком — страницами. */
+  const first = Array.from({ length: 1000 }, (_, i) => rawRow(i));
+  const second = Array.from({ length: 845 }, (_, i) => rawRow(1000 + i));
+  const paged = (await fetchCatalog(
+    stubClient([
+      { data: first, error: null },
+      { data: second, error: null },
+    ]) as never,
+    'org',
+  )) as unknown as { entries?: unknown[] };
+  check(
+    'каталог 1845 позиций читается целиком, страницами по 1000',
+    Array.isArray(paged.entries) && paged.entries.length === 1845,
+    Array.isArray(paged.entries) ? `${paged.entries.length} позиций` : 'НЕ СПИСОК',
+  );
+}
+
+
 /*
  * ХВОСТ ЖДЁТ АСИНХРОННЫЕ ПРОВЕРКИ.
  *
@@ -956,7 +1041,9 @@ console.log('\nКаталог материалов: вкладки по цели
  * Напечатай итог раньше — и проверка записи не попала бы в счёт:
  * проверка, которая не считается, это не проверка.
  */
-void millingPriceChecks().then(() => {
+void millingPriceChecks()
+  .then(() => catalogReadChecks())
+  .then(() => {
   console.log(`\n${passed} passed, ${failed} failed\n`);
   process.exit(failed === 0 ? 0 : 1);
 });

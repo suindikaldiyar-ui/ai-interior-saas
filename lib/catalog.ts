@@ -37,13 +37,30 @@ type RawItem = CatalogItem & {
 };
 
 /**
- * Весь активный каталог организации одним запросом.
+ * ЧТЕНИЕ КАТАЛОГА: позиции ИЛИ слова, почему их нет.
+ *
+ * «Пусто» и «не прочиталось» — разные состояния. Пустой список на
+ * ошибке чтения выглядел как каталог без позиций: панель показывала
+ * коллекции «ждёт импорта», смета считала фасады RAL по ставке цеха, и
+ * никто не знал, что каталог просто не дошёл. Ошибка — словами для
+ * экрана, причина — в лог сервера или консоль браузера.
+ */
+export type CatalogRead =
+  | { entries: CatalogEntryFull[]; error: null }
+  | { entries: null; error: string };
+
+/** Что сказать человеку, когда каталог не прочитался. Без кода ошибки базы. */
+export const CATALOG_READ_ERROR =
+  'Каталог организации не прочитался — цены материалов неизвестны. Обновите страницу.';
+
+/**
+ * Весь активный каталог организации.
  * Категории и файлы приезжают вложенными — отдельных round-trip нет.
  */
 export async function fetchCatalog(
   supabase: SupabaseClient,
   orgId: string,
-): Promise<CatalogEntryFull[]> {
+): Promise<CatalogRead> {
   /*
    * КАТАЛОГ ЧИТАЕТСЯ СТРАНИЦАМИ.
    *
@@ -71,23 +88,34 @@ export async function fetchCatalog(
       .order('id')
       .range(from, from + PAGE - 1);
 
-    if (error || !data) return [];
+    if (error || !data) {
+      /*
+       * Половина каталога — тоже не каталог: строки, прочитанные до
+       * ошибки, не отдаются. Причина уходит в лог, человеку — слова.
+       */
+      console.error(
+        `[каталог] организация ${orgId}: чтение строк ${from}…${from + PAGE - 1} не удалось —`,
+        error?.message ?? 'пустой ответ без ошибки',
+      );
+      return { entries: null, error: CATALOG_READ_ERROR };
+    }
     rows.push(...(data as unknown as RawItem[]));
     if (data.length < PAGE) break;
   }
 
-  return rows
-    .filter((row) => row.catalog_categories?.is_active !== false)
-    .map((row) => ({
-      ...row,
-      dimensions: row.dimensions ?? {},
-      tiling: row.tiling ?? {},
-      meta: row.meta ?? {},
-      category: row.catalog_categories as CatalogCategory,
-      assets: [...(row.catalog_assets ?? [])].sort(
-        (a, b) => a.sort_order - b.sort_order,
-      ),
-    }));
+  return {
+    error: null,
+    entries: rows
+      .filter((row) => row.catalog_categories?.is_active !== false)
+      .map((row) => ({
+        ...row,
+        dimensions: row.dimensions ?? {},
+        tiling: row.tiling ?? {},
+        meta: row.meta ?? {},
+        category: row.catalog_categories as CatalogCategory,
+        assets: [...(row.catalog_assets ?? [])].sort((a, b) => a.sort_order - b.sort_order),
+      })),
+  };
 }
 
 export async function fetchCategories(

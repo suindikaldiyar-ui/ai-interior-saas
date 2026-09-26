@@ -25,18 +25,24 @@ import { hasFacade } from '@/lib/millwork/applianceFront';
 import { frontOf } from '@/lib/millwork/frontMaterial';
 import { paletteFromCatalog } from '@/lib/millwork/palette';
 import {
-  compositionOf,
-  compositionWalls,
   lowerWall,
-  mergeEstimates,
   wallLabel,
   wallMismatches,
 } from '@/lib/millwork/walls';
 import {
   SHAPE_TITLE,
   runPlacements,
-  tryBuildComposition,
 } from '@/lib/millwork/composition';
+import {
+  compositionFor,
+  objectEstimateOf,
+  objectInput,
+  objectSite,
+  savedWallRuns,
+  wallRequirementsOf,
+  wallSegments,
+} from '@/lib/millwork/objectEstimate';
+import { ratesFromCatalog } from '@/lib/millwork/rates';
 import { openingAssumptions } from '@/lib/millwork/warnings';
 
 /** Решение угла: модуль 900×900 или фальш-панель. */
@@ -83,8 +89,11 @@ import type { RateTable } from '@/lib/millwork/estimate';
 import { applyOps } from '@/lib/millwork/ops';
 import MaterialLibraryPanel, { type AppliedMaterial } from './MaterialLibraryPanel';
 import {
+  catalogEntriesFromRows,
+  collectionPriceRow,
   materialCatalog,
   materialOps,
+  type CollectionDef,
   type MaterialChoice,
   type MaterialTarget,
 } from '@/lib/millwork/materialCatalog';
@@ -117,8 +126,6 @@ import {
   workTopMm,
   type ObjectMark,
 } from '@/lib/millwork/shop';
-import { onWall } from '@/lib/millwork/layout';
-import { buildEstimate } from '@/lib/millwork/estimate';
 import {
   MODULE_VARIANTS,
   currentVariant,
@@ -134,7 +141,7 @@ import {
   MIN_WIDTH,
   moduleAppliances,
 } from '@/lib/millwork/modules';
-import { composeVariants, editedRunEstimate, workspaceInput } from '@/lib/millwork/workspace';
+import { composeVariants, editedRunEstimate } from '@/lib/millwork/workspace';
 import {
   MAIN_VARIANT,
   SINGLE_VARIANT,
@@ -496,15 +503,9 @@ export default function Workspace(props: WorkspaceProps) {
    * объект обязан открыться ровно таким, каким его закрыли (ловушка 42).
    * Ключи в базе строковые — JSON других не знает.
    */
-  const [editedWalls, setEditedWalls] = useState<Record<number, Run>>(() => {
-    const saved = props.initialState?.wallRuns ?? {};
-    const out: Record<number, Run> = {};
-    for (const [key, run] of Object.entries(saved)) {
-      const index = Number(key);
-      if (Number.isInteger(index) && index > 0) out[index] = run;
-    }
-    return out;
-  });
+  const [editedWalls, setEditedWalls] = useState<Record<number, Run>>(() =>
+    savedWallRuns(props.initialState?.wallRuns),
+  );
 
   const [freeMode, setFreeMode] = useState(
     props.initialState?.requirements?.mode === 'free',
@@ -687,70 +688,51 @@ export default function Workspace(props: WorkspaceProps) {
   }, [template, props.requirements, manualAnchors, composition, freeMode]);
 
   /**
-   * ДЛИНА РАБОЧЕЙ СТЕНЫ — ОТДЕЛЬНО ОТ СОСТАВА.
+   * ГДЕ СТОИТ ОБЪЕКТ — `objectSite`, ТОТ ЖЕ, ЧТО У КАБИНЕТА КЛИЕНТА.
    *
-   * Её даёт замер, и приборы на неё не влияют. Считаем её раньше всего
-   * остального: от неё зависят и список стен, и раздача приборов по
-   * стенам, а они, в свою очередь, нужны для сборки самой стены А.
-   * Без этого получается круг: состав ждёт длину, длина ждёт состав.
+   * Длину рабочей стены даёт замер, и приборы на неё не влияют. Считаем
+   * её раньше всего остального: от неё зависят и список стен, и раздача
+   * приборов по стенам, а они нужны для сборки самой стены А. Без этого
+   * получается круг: состав ждёт длину, длина ждёт состав.
+   *
+   * Стены отбираются по ИДЕНТИФИКАТОРУ (`compositionWalls`), а не по
+   * длине: на квадратной кухне 3000 × 3000 отбор по значению выбрасывал
+   * обе соседние стены, и композиция состояла из выдуманных. Глубины
+   * помещения здесь нет вовсе: стену, которой в замере нет, система не
+   * придумывает — об этом говорит отказ композиции.
+   *
+   * Живой замер главнее: его правят прямо сейчас. Нет его — стены пришли
+   * с объектом (`workspaceInput`). Кабинет клиента идёт теми же шагами
+   * (`projectOffer`): вторая копия разошлась бы с ним на первой правке.
    */
-  const runLengthMm = useMemo(() => {
-    if (!resolution) return props.lengthMm;
-    const seed = workspaceInput({
-      title: props.title,
-      zone: props.zone,
-      measurement: resolution.measurement,
-      requirements: props.requirements,
-      rates: props.rates,
-      wallId: resolution.runWallId,
-      cornerAt: props.cornerAt ?? null,
-    });
-    return seed.lengthMm > 0 ? seed.lengthMm : props.lengthMm;
-  }, [resolution, props]);
-
-  /**
-   * СТЕНЫ КОМПОЗИЦИИ: ОТБОР ПО ИДЕНТИФИКАТОРУ, А НЕ ПО ДЛИНЕ.
-   *
-   * Соседние стены отбирались вычитанием ЗНАЧЕНИЯ: всё, что не равно
-   * длине рабочей стены. Пока стены были разные, это совпадало с
-   * правдой; на двух одинаковых рассыпалось:
-   *
-   *   замер А=3800, Б=1140  →  в композицию 3800 и 1140        ✓
-   *   замер А=3800, Б=3800  →  Б выпадала, и на её место
-   *                            вставала глубина помещения      ✗
-   *
-   * На квадратной кухне 3000 × 3000 выпадали ОБЕ, и композиция целиком
-   * состояла из выдуманных стен. Идентичность у стены есть с захода про
-   * id модуля — `runWallId`; ею и отбираем.
-   *
-   * Глубины помещения здесь больше нет вовсе: стену, которой в замере
-   * нет, система не придумывает. Не хватило — об этом говорит отказ
-   * композиции, и говорит словами, какой именно стены не хватает.
-   */
-  const walls = useMemo(
+  const site = useMemo(
     () =>
-      compositionWalls({
-        /*
-         * Живой замер главнее: его правят прямо сейчас. Нет его —
-         * стены пришли с объектом (`workspaceInput`). Отбор при этом
-         * ОДИН: два источника данных, одна функция над ними.
-         *
-         * Оттуда же проёмы соседних стен: окно на стене Б рвёт верхний
-         * ряд так же, как на стене А, и терять его по дороге нечего ради.
-         */
-        measured: resolution?.measurement.walls ?? props.measuredWalls ?? [],
-        runWallId: resolution?.runWallId ?? props.runWallId,
-        runLengthMm,
-        runOpenings: props.openings,
-      }),
-    [resolution, props.measuredWalls, props.runWallId, runLengthMm, props.openings],
+      objectSite(
+        {
+          lengthMm: props.lengthMm,
+          ceilingHeightMm: props.ceilingHeightMm,
+          openings: props.openings,
+          comms: props.comms,
+          measuredWalls: props.measuredWalls,
+          measuredComms: props.measuredComms,
+          runWallId: props.runWallId,
+        },
+        resolution,
+      ),
+    [
+      props.lengthMm,
+      props.ceilingHeightMm,
+      props.openings,
+      props.comms,
+      props.measuredWalls,
+      props.measuredComms,
+      props.runWallId,
+      resolution,
+    ],
   );
-
+  const walls = site.walls;
   /** Высота потолка: нужна и композиции, и сборке стены А. */
-  const ceilingMm = useMemo(
-    () => resolution?.measurement?.ceilingHeightMm ?? props.ceilingHeightMm,
-    [resolution, props.ceilingHeightMm],
-  );
+  const ceilingMm = site.ceilingMm;
 
   /**
    * КОМПОЗИЦИЯ СЧИТАЕТСЯ ДО СБОРКИ СТЕНЫ А.
@@ -765,44 +747,19 @@ export default function Workspace(props: WorkspaceProps) {
    * это ровно тот класс ошибки, от которого продукт лечится уже
    * одиннадцатый раз: два расчёта одной величины расходятся молча.
    */
-  const layoutAttempt = useMemo(() => {
-    if (shape === 'linear') return null;
-
-    /*
-     * УПАВШАЯ СБОРКА — ЭТО НЕ «ФОРМЫ НЕТ».
-     *
-     * Здесь стоял `catch { return null }`: угловая, которая не сошлась,
-     * молча превращалась в прямую, и замерщик видел пустоту без причины.
-     * Теперь наружу уходит состояние с причиной; исключение при этом не
-     * ослаблено — оно просто получило слова.
-     */
-    return tryBuildComposition({
-      id: 'ws',
-      kind: shape,
-      requirements: { ...requirements, cornerSolution },
-      ceilingHeightMm: ceilingMm,
-      walls,
-      /*
-       * ВЕСЬ ЗАМЕР, А НЕ ТОЧКИ РАБОЧЕЙ СТЕНЫ.
-       *
-       * Отбор по стене и перевод отметки — работа композиции
-       * (`commsOnRun`). Отфильтруй здесь — и ряд стены Б останется без
-       * своего вывода воды, как это и было.
-       */
-      comms: resolution?.measurement.comms ?? props.measuredComms ?? props.comms,
-      production: production,
-    });
-  }, [
-    shape,
-    requirements,
-    cornerSolution,
-    ceilingMm,
-    walls,
-    resolution,
-    props.measuredComms,
-    props.comms,
-    production,
-  ]);
+  /*
+   * УПАВШАЯ СБОРКА — ЭТО НЕ «ФОРМЫ НЕТ».
+   *
+   * Здесь стоял `catch { return null }`: угловая, которая не сошлась,
+   * молча превращалась в прямую, и замерщик видел пустоту без причины.
+   * `compositionFor` отдаёт состояние с причиной словами; весь замер, а
+   * не точки рабочей стены — отбор по стене делает композиция
+   * (`commsOnRun`), иначе ряд стены Б остался бы без вывода воды.
+   */
+  const layoutAttempt = useMemo(
+    () => compositionFor({ shape, requirements, cornerSolution, site, production }),
+    [shape, requirements, cornerSolution, site, production],
+  );
 
   /** Композиция, которая СОБРАЛАСЬ. Отказ сюда не проходит. */
   const layout = useMemo(
@@ -815,8 +772,7 @@ export default function Workspace(props: WorkspaceProps) {
 
   /** Требования СТЕНЫ А: её доля приборов из композиции, а не весь набор. */
   const wallRequirements = useMemo(
-    () =>
-      layout ? { ...requirements, appliances: layout.segments[0].appliances } : requirements,
+    () => wallRequirementsOf(layout, requirements),
     [layout, requirements],
   );
 
@@ -859,49 +815,44 @@ export default function Workspace(props: WorkspaceProps) {
   const addCatalogEntries = useInteriorStore((s) => s.addCatalogEntries);
   const patchCatalogEntry = useInteriorStore((s) => s.patchCatalogEntry);
   const setCatalog = useInteriorStore((s) => s.setCatalog);
+  /** Каталог не прочитался — словами (слой 52). */
+  const catalogError = useInteriorStore((s) => s.catalogError);
+  const setCatalogError = useInteriorStore((s) => s.setCatalogError);
 
-  const input = useMemo(() => {
-    if (!resolution) {
-      return {
-        title: props.title,
-        zone: props.zone,
-        measuredBy: props.measuredBy,
-        measuredAt: props.measuredAt,
-        lengthMm: props.lengthMm,
-        ceilingHeightMm: props.ceilingHeightMm,
+  /**
+   * СТАВКИ — ИЗ КАТАЛОГА В СТОРЕ ПОВЕРХ ПРОПСОВ (слой 52).
+   *
+   * Пропсы несут ставки на момент открытия объекта. Цена коллекции,
+   * заведённая в панели «Материалы», — это новая строка каталога со
+   * ставкой, и до перезагрузки страницы она жила бы только в сторе: итог
+   * остался бы «неполным» при заданной цене. Каталог в сторе тот же, из
+   * которого берутся позиции материалов, — ставки читаются оттуда же.
+   */
+  const liveRates = useMemo(
+    () => ({ ...props.rates, ...ratesFromCatalog(catalog) }),
+    [props.rates, catalog],
+  );
+
+  /*
+   * Вход конфигуратора — `objectInput`, тот же, что у кабинета клиента:
+   * без живого замера — то, что пришло с объектом, с замером — его
+   * разрешение. Каталог организации едет целиком: фрезеровка, декор
+   * корпуса и позиции коллекций.
+   */
+  const input = useMemo(
+    () =>
+      objectInput({
+        base: props,
+        resolution,
         requirements: wallRequirements,
-        openings: props.openings,
-        comms: props.comms,
-        rates: props.rates,
-        cornerAt: props.cornerAt ?? null,
-        production: production,
-        measuredWalls: props.measuredWalls ?? [],
-        measuredComms: props.measuredComms ?? props.comms,
-        runWallId: props.runWallId ?? 'a',
-        roomDepthM: props.roomDepthM ?? 3.2,
+        rates: liveRates,
+        production,
         milling: millingItems,
         carcass: carcassItems,
         materials: materialItems,
-      };
-    }
-
-    const seed = workspaceInput({
-      title: props.title,
-      zone: props.zone,
-      measurement: resolution.measurement,
-      requirements: wallRequirements,
-      rates: props.rates,
-      wallId: resolution.runWallId,
-      cornerAt: props.cornerAt ?? null,
-      production: production,
-      milling: millingItems,
-      carcass: carcassItems,
-      materials: materialItems,
-    });
-
-    // Пока стены не введены, ряд брать неоткуда — держим габарит из пропсов.
-    return seed.lengthMm > 0 ? seed : { ...seed, lengthMm: props.lengthMm };
-  }, [resolution, wallRequirements, props, millingItems, carcassItems, materialItems]);
+      }),
+    [props, resolution, wallRequirements, liveRates, production, millingItems, carcassItems, materialItems],
+  );
 
   /*
    * Компоновки: две-три расстановки ОДНОЙ кухни из одного замера. Считаются
@@ -975,40 +926,10 @@ export default function Workspace(props: WorkspaceProps) {
    * комплектации, компоновки, сохранение. Соседние стены живут своими
    * рядами и правятся ТЕМИ ЖЕ операциями.
    */
-  const segments = useMemo(() => {
-    if (!layout) return [active.run];
-
-    return layout.segments.map((segment, i) => {
-      if (i === 0) return active.run;
-
-      const saved = editedWalls[i];
-      if (!saved) return segment.run;
-
-      /*
-       * РЯД ИЗ СОХРАНЕНИЯ ПОЛУЧАЕТ ИДЕНТИЧНОСТЬ СВОЕЙ СТЕНЫ.
-       *
-       * Объекты, сохранённые до захода про id, лежат без метки стены.
-       * Восстановленные дословно, они снова делят ключи открывания со
-       * стеной А — и антресоли двух стен открываются вместе. Какая это
-       * стена, композиция знает: метка не выдумывается, а берётся у
-       * сегмента, на месте которого ряд стоит.
-       *
-       * Клеймит та же `onWall`, что и сборка: второй формулы метки
-       * в продукте нет.
-       */
-      if (saved.wallId) return saved;
-
-      return {
-        ...saved,
-        wallId: segment.wallId,
-        modules: onWall(saved.modules, segment.wallId),
-        upperSegments: saved.upperSegments.map((upper) => ({
-          ...upper,
-          modules: onWall(upper.modules, segment.wallId),
-        })),
-      };
-    });
-  }, [layout, active.run, editedWalls]);
+  const segments = useMemo(
+    () => wallSegments(layout, active.run, editedWalls),
+    [layout, active.run, editedWalls],
+  );
 
   const wall = Math.min(wallIndex, segments.length - 1);
   const activeRun = segments[wall] ?? active.run;
@@ -1022,20 +943,6 @@ export default function Workspace(props: WorkspaceProps) {
    * группируются в пять групп. Второй расчёт угловой кухни разошёлся бы
    * с первым на первой же правке ставок.
    */
-  /**
-   * ОТПЕЧАТОК ОБЪЕКТА — ОТ КОМПОЗИЦИИ, А НЕ ОТ ОДНОЙ СТЕНЫ.
-   *
-   * Главное правило продукта: чертёж, смета, раскрой и рендер сверяются
-   * ОДНИМ числом. Пока угловая кухня несла отпечаток стены А, правка на
-   * стене Б его не меняла — смета и лист могли разъехаться молча.
-   *
-   * У прямой кухни это по-прежнему отпечаток ряда: один ряд — одно
-   * число, и отпечатки сохранённых объектов не едут.
-   */
-  const objectFingerprint = useMemo(() => {
-    if (!layout) return active.run.fingerprint;
-    return compositionOf(layout, segments).fingerprint;
-  }, [layout, segments, active.run.fingerprint]);
 
   /*
    * ЧТО В СМЕТЕ ПОСЧИТАНО УМОЛЧАНИЕМ.
@@ -1060,45 +967,26 @@ export default function Workspace(props: WorkspaceProps) {
    * `buildEstimate`, а складывает их `mergeEstimates` без удвоения
    * разовых статей.
    */
-  const objectEstimateOf = useCallback(
-    (wallRuns: Run[], wallAEstimate: Estimate) => {
-      if (!layout) return wallAEstimate;
-      return mergeEstimates(
-        wallRuns.map((run, i) =>
-          i === 0
-            ? wallAEstimate
-            : buildEstimate(
-                run,
-                variantKey,
-                input.rates,
-                disabled[variantKey],
-                undefined,
-                production,
-                undefined,
-                millingItems,
-                carcassItems,
-                materialItems,
-              ),
-        ),
-      );
-    },
-    [layout, variantKey, input.rates, disabled, production, millingItems, carcassItems, materialItems],
-  );
-
-  const estimate = useMemo(
-    () => objectEstimateOf(segments, active.estimate),
-    [objectEstimateOf, segments, active.estimate],
+  const objectEstimateFor = useCallback(
+    (wallRuns: Run[], wallAEstimate: Estimate) =>
+      objectEstimateOf({ layout, segments: wallRuns, wallAEstimate, variantKey, input, disabled }),
+    [layout, variantKey, input, disabled],
   );
 
   /*
-   * Смета объекта несёт отпечаток ОБЪЕКТА. Иначе она подписана числом
-   * одной стены, а посчитана по всем — ровно то расхождение, от которого
-   * отпечаток и защищает.
+   * ОТПЕЧАТОК ОБЪЕКТА — ОТ КОМПОЗИЦИИ, А НЕ ОТ ОДНОЙ СТЕНЫ.
+   *
+   * Главное правило продукта: чертёж, смета, раскрой и рендер сверяются
+   * ОДНИМ числом. Пока угловая кухня несла отпечаток стены А, правка на
+   * стене Б его не меняла. Смета объекта несёт отпечаток композиции — его
+   * ставит `objectEstimateOf`; у прямой кухни это по-прежнему отпечаток
+   * ряда, и отпечатки сохранённых объектов не едут.
    */
-  const objectEstimate = useMemo(
-    () => (layout ? { ...estimate, fingerprint: objectFingerprint } : estimate),
-    [estimate, layout, objectFingerprint],
+  const estimate = useMemo(
+    () => objectEstimateFor(segments, active.estimate),
+    [objectEstimateFor, segments, active.estimate],
   );
+  const objectEstimate = estimate;
 
   /*
    * СТРОКИ СМЕТЫ, КОТОРЫЕ ВИДИТ ЧЕЛОВЕК, — для приёмки.
@@ -1109,11 +997,23 @@ export default function Workspace(props: WorkspaceProps) {
    */
   useEffect(() => {
     (window as unknown as {
-      __mwEstimateLines?: () => { key: string; quantity: number; priceUnset: string | null }[];
+      __mwEstimateLines?: () => {
+        key: string;
+        quantity: number;
+        rate: number;
+        total: number;
+        enabled: boolean;
+        unit: string;
+        priceUnset: string | null;
+      }[];
     }).__mwEstimateLines = () =>
       objectEstimate.lines.map((line) => ({
         key: line.key,
         quantity: line.quantity,
+        rate: line.rate,
+        total: line.total,
+        enabled: line.enabled,
+        unit: line.unit,
         priceUnset: line.enabled ? (line.priceUnset ?? null) : null,
       }));
   }, [objectEstimate]);
@@ -1610,11 +1510,11 @@ export default function Workspace(props: WorkspaceProps) {
    */
   const totalOf = useCallback(
     (run: Run) =>
-      objectEstimateOf(
+      objectEstimateFor(
         segments.map((segment, i) => (i === wall ? run : segment)),
         wall === 0 ? editedRunEstimate(run, variantKey, input, disabled) : active.estimate,
       ).total,
-    [objectEstimateOf, segments, wall, variantKey, input, disabled, active.estimate],
+    [objectEstimateFor, segments, wall, variantKey, input, disabled, active.estimate],
   );
 
   const libraryPrice = useCallback(
@@ -1964,11 +1864,45 @@ export default function Workspace(props: WorkspaceProps) {
     const supabase = supabaseBrowser();
     if (!supabase) return 'Supabase не настроен: каталог не перечитан.';
     const { fetchCatalog } = await import('@/lib/catalog');
-    const fresh = await fetchCatalog(supabase, orgId);
-    if (fresh.length === 0) return 'Каталог организации не прочитался — обновите страницу.';
-    setCatalog(fresh);
+    const read = await fetchCatalog(supabase, orgId);
+    if (read.error !== null) {
+      setCatalogError(read.error);
+      return read.error;
+    }
+    setCatalog(read.entries);
     return null;
-  }, [orgId, setCatalog]);
+  }, [orgId, setCatalog, setCatalogError]);
+
+  /**
+   * ЦЕНА КОЛЛЕКЦИИ ПО ПОВЕРХНОСТЯМ (слой 52).
+   *
+   * Строка каталога со ставкой (`collectionPriceRow`): у организации — в
+   * базу, у демонстрации — во вкладку. Смета подхватывает её сразу:
+   * ставки экрана читаются из каталога в сторе (`liveRates`).
+   */
+  const saveCollectionPrice = useCallback(
+    async (collection: CollectionDef, prices: Record<string, number | null>): Promise<string | null> => {
+      const label = (surface: string) => MATERIAL_FINISHES[surface]?.label ?? surface;
+      if (!orgId) {
+        const rows = Object.entries(prices).map(([surface, price]) =>
+          collectionPriceRow(collection, surface, price ?? 0, label(surface)),
+        );
+        addCatalogEntries(catalogEntriesFromRows(rows, { collections: [collection] }, 'demo', 'demo-price:'));
+        return 'Это демонстрация: цена коллекции посчитана, но в каталог не сохранится.';
+      }
+      const response = await fetch('/api/catalog/materials/price', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ orgId, collectionId: collection.id, prices }),
+      });
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      if (!response.ok) {
+        return `Цена коллекции «${collection.label}» не сохранилась: ${body?.error ?? `сервер ответил ${response.status}`}`;
+      }
+      return reloadCatalog();
+    },
+    [orgId, addCatalogEntries, reloadCatalog],
+  );
 
 
   /**
@@ -2258,8 +2192,9 @@ export default function Workspace(props: WorkspaceProps) {
         segments,
         shape,
         warnings,
+        catalogError,
       }),
-    [refusal, mismatches, walls, segments, shape, warnings],
+    [refusal, mismatches, walls, segments, shape, warnings, catalogError],
   );
 
 
@@ -2398,7 +2333,18 @@ export default function Workspace(props: WorkspaceProps) {
         selectedVariant: variantKey,
         renderStyle,
         disabled,
-        priceSnapshot: active.estimate.priceSnapshot,
+        /*
+         * СНИМОК ЦЕН — СМЕТЫ ОБЪЕКТА, А НЕ СТЕНЫ А (слой 52).
+         *
+         * По нему кабинет клиента держит сумму, которую назвали. Пока
+         * здесь лежал снимок стены А, у угловой кухни ставки строк стены Б
+         * в него не попадали, а `total` был итогом одной стены.
+         *
+         * Каталог не прочитался — цена посчитана без его позиций и не
+         * пишется: остаётся снимок, с которым объект открыли. Состояние
+         * (состав, правки) сохраняется — работа замерщика не теряется.
+         */
+        priceSnapshot: catalogError ? props.initialState?.priceSnapshot : objectEstimate.priceSnapshot,
         savedAt: new Date().toISOString(),
       };
 
@@ -2407,7 +2353,11 @@ export default function Workspace(props: WorkspaceProps) {
        * интернета часто нет вовсе, и замер, потерянный из-за отсутствия
        * связи, — это второй выезд на объект.
        */
-      const payload = { projectId: props.projectId, millwork: state, total: active.estimate.total };
+      const payload = {
+        projectId: props.projectId,
+        millwork: state,
+        ...(catalogError ? {} : { total: objectEstimate.total }),
+      };
       try {
         localStorage.setItem(`millwork:${props.projectId}`, JSON.stringify(payload));
       } catch {
@@ -2451,6 +2401,9 @@ export default function Workspace(props: WorkspaceProps) {
     variantKey,
     renderStyle,
     active.estimate,
+    objectEstimate,
+    catalogError,
+    props.initialState?.priceSnapshot,
     survey,
     templateId,
     requirements,
@@ -3426,6 +3379,9 @@ export default function Workspace(props: WorkspaceProps) {
                   selectedModuleLabel={selection.title || null}
                   onApply={applyMaterial}
                   onPrice={saveMaterialPrice}
+                  rates={liveRates}
+                  onCollectionPrice={saveCollectionPrice}
+                  catalogError={catalogError}
                   onCatalogAdded={addCatalogEntries}
                   onCatalogReload={reloadCatalog}
                 />
@@ -4130,7 +4086,15 @@ export default function Workspace(props: WorkspaceProps) {
             * она по мебели, которой не существует. На её месте — та же
             * причина словами, что и в красной полосе.
             */}
-          {screen.priceHidden ? (
+          {screen.priceHidden && !refusal && mismatches.length === 0 && catalogError ? (
+            /*
+             * Каталог не прочитался: сумма без его позиций посчитала бы
+             * фасады RAL по ставке цеха. Цены нет, причина — словами.
+             */
+            <p data-price-hidden="catalog" className="text-[15px] leading-snug text-alert">
+              Цены нет: каталог организации не прочитался.
+            </p>
+          ) : screen.priceHidden ? (
             <p
               data-composition-refused
               className="text-[15px] leading-snug text-alert"

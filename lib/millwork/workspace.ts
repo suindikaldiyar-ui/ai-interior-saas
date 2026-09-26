@@ -75,6 +75,14 @@ export type WorkspaceSeed = {
    * цены — строкой «цена не задана», и итог неполный.
    */
   materials?: Map<string, MaterialItem>;
+  /**
+   * СНИМОК ЦЕН ОТПРАВЛЕННОГО ПРЕДЛОЖЕНИЯ — ТОЛЬКО У КАБИНЕТА КЛИЕНТА (слой 52).
+   *
+   * Клиент видит ту сумму, что ему назвали: ставка каждой строки берётся
+   * из снимка, а строка, которой в нём нет, считается по каталогу. Экран
+   * дизайнера снимка не передаёт — он считает по каталогу на сегодня.
+   */
+  frozen?: Record<string, number>;
 };
 
 export type WorkspaceInput = {
@@ -147,6 +155,14 @@ export type WorkspaceInput = {
    * цены — строкой «цена не задана», и итог неполный.
    */
   materials?: Map<string, MaterialItem>;
+  /**
+   * СНИМОК ЦЕН ОТПРАВЛЕННОГО ПРЕДЛОЖЕНИЯ — ТОЛЬКО У КАБИНЕТА КЛИЕНТА (слой 52).
+   *
+   * Клиент видит ту сумму, что ему назвали: ставка каждой строки берётся
+   * из снимка, а строка, которой в нём нет, считается по каталогу. Экран
+   * дизайнера снимка не передаёт — он считает по каталогу на сегодня.
+   */
+  frozen?: Record<string, number>;
 };
 
 /** Рабочая стена: указанная явно либо самая длинная в замере. */
@@ -199,6 +215,7 @@ export function workspaceInput(seed: WorkspaceSeed): WorkspaceInput {
     milling: seed.milling,
     carcass: seed.carcass,
     materials: seed.materials,
+    frozen: seed.frozen,
   };
 }
 
@@ -215,7 +232,7 @@ export function workspaceInput(seed: WorkspaceSeed): WorkspaceInput {
 export function editedRunEstimate(
   run: Run,
   key: VariantKey,
-  input: Pick<WorkspaceInput, 'rates' | 'production' | 'milling' | 'carcass' | 'materials'>,
+  input: Pick<WorkspaceInput, 'rates' | 'production' | 'milling' | 'carcass' | 'materials' | 'frozen'>,
   disabled: Record<VariantKey, string[]>,
 ) {
   return recalcTotal(
@@ -230,6 +247,7 @@ export function editedRunEstimate(
       input.milling,
       input.carcass,
       input.materials,
+      { frozen: input.frozen },
     ),
     disabled[key],
   );
@@ -274,6 +292,7 @@ export function composeVariants(
     milling: input.milling,
     carcass: input.carcass,
     materials: input.materials,
+    frozen: input.frozen,
   });
 
   return base.map((variant) => {

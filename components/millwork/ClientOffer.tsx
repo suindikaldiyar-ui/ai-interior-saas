@@ -4,7 +4,12 @@ import { useState } from 'react';
 import ThemeToggle from '@/components/ThemeToggle';
 import BeforeAfter from './BeforeAfter';
 import ElevationDrawing from './ElevationDrawing';
-import { UNIT_LABEL_MW, formatMoney } from '@/lib/millwork/estimate';
+import {
+  UNIT_LABEL_MW,
+  formatMoney,
+  lineAmountText,
+  unpricedLines,
+} from '@/lib/millwork/estimate';
 import type { Org } from '@/types/catalog';
 import type { Estimate, Run } from '@/types/millwork';
 
@@ -59,6 +64,14 @@ export default function ClientOffer({
   const [busy, setBusy] = useState(false);
   const off = new Set(disabledKeys);
   const lines = estimate.lines.filter((l) => !off.has(l.key));
+  /*
+   * ИТОГ БЕЗ ЦЕНЫ МАТЕРИАЛА ПОМЕЧЕН «НЕПОЛНЫЙ» — И У КЛИЕНТА (слой 52).
+   *
+   * Экран дизайнера это говорил, кабинет — нет: клиент видел сумму без
+   * эмали RAL и принимал её за цену кухни. Та же `unpricedLines`, что у
+   * экрана: второй формулы «полон ли итог» нет.
+   */
+  const unpriced = unpricedLines(estimate);
 
   const approve = async () => {
     setBusy(true);
@@ -86,10 +99,23 @@ export default function ClientOffer({
       </header>
 
       <section className="border-b border-navyLine px-4 py-4">
-        <p className="mw-label mb-1">Ваша кухня</p>
-        <p className="mw-num mw-display">
+        <p className="mw-label mb-1">
+          {unpriced.length > 0 ? 'Ваша кухня · неполный' : 'Ваша кухня'}
+        </p>
+        <p
+          className="mw-num mw-display"
+          data-offer-total={Math.round(estimate.total)}
+          data-offer-incomplete={unpriced.length > 0 ? '1' : '0'}
+        >
           {formatMoney(estimate.total)} ₸
         </p>
+        {unpriced.length > 0 && (
+          <p className="mt-1 text-[13px] leading-snug text-tape">
+            Сумма без {unpriced.length === 1 ? 'позиции' : `${unpriced.length} позиций`}, у{' '}
+            {unpriced.length === 1 ? 'которой' : 'которых'} цена не задана:{' '}
+            {unpriced.map((line) => line.title).join('; ')}. Итоговую цену назовёт компания.
+          </p>
+        )}
         <p className="mt-1 text-[13px] text-graphiteMw">
           Цены зафиксированы на {estimate.calculatedAt}. Ряд {run.lengthMm} мм,
           модулей {run.modules.length}.
@@ -143,7 +169,7 @@ export default function ClientOffer({
                   </div>
                 </td>
                 <td className="mw-num py-1.5 text-right text-[13px]">
-                  {formatMoney(line.total)}
+                  {lineAmountText(line)}
                 </td>
               </tr>
             ))}

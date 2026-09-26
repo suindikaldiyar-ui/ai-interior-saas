@@ -54,10 +54,34 @@ export default async function ProjectPage({ params }: { params: { id: string } }
   // RLS уже отсекает чужие объекты, но проверка org_id здесь стоит дёшево.
   if (!project || project.org_id !== org.id) notFound();
 
-  const [catalog, { data: orgRow }] = await Promise.all([
+  const [catalogRead, { data: orgRow }] = await Promise.all([
     fetchCatalog(supabase, org.id),
     supabase.from('orgs').select('run_templates, production').eq('id', org.id).maybeSingle(),
   ]);
+
+  /*
+   * КАТАЛОГ НЕ ПРОЧИТАЛСЯ — ОБЪЕКТ НЕ ОТКРЫВАЕТСЯ С ПУСТЫМИ ЦЕНАМИ.
+   *
+   * Пустой список на ошибке чтения давал смету без ставок: «Заполните
+   * цены каталога» у компании, которая их заполнила, и фасады RAL по
+   * ставке цеха. Слова на экране, причина — в логе сервера.
+   */
+  if (catalogRead.error !== null) {
+    return (
+      <main className="mw-root flex min-h-screen items-center justify-center p-6">
+        <div className="max-w-md text-center">
+          <h1 className="mb-2 text-[18px] font-semibold">Объект не открылся</h1>
+          <p className="mb-4 text-[13px] text-graphiteMw" data-catalog-error>
+            {catalogRead.error}
+          </p>
+          <Link href={`/project/${params.id}`} className="text-[13px] text-cyanBright underline">
+            Открыть ещё раз →
+          </Link>
+        </div>
+      </main>
+    );
+  }
+  const catalog = catalogRead.entries;
   const rates = ratesFromCatalog(catalog);
 
   /*

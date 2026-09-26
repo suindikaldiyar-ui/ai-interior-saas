@@ -294,6 +294,8 @@ export function applyOps({
   let countertopMaterial: Run['countertopMaterial'] = run.countertopMaterial
     ? { ...run.countertopMaterial }
     : undefined;
+  /* Материал фасадов кухни — держится на ряду и красит новые модули. */
+  let kitchenFront: Run['kitchenFront'] = run.kitchenFront ? { ...run.kitchenFront } : undefined;
 
   /**
    * МОДУЛИ АНТРЕСОЛИ — РЯД, А НЕ ПРОИЗВОДНАЯ.
@@ -2229,6 +2231,20 @@ export function applyOps({
         break;
       }
 
+      case 'set_kitchen_front': {
+        /*
+         * МАТЕРИАЛ КУХНИ ПРОВЕРЯЕТСЯ ТЕМИ ЖЕ ПРАВИЛАМИ, ЧТО ФАСАД МОДУЛЯ.
+         * Иначе новый модуль получил бы фасад, которого цех не сделает.
+         */
+        const conflict = op.front ? frontConflict(op.front) : null;
+        if (conflict) {
+          warnings.push(conflict);
+          break;
+        }
+        kitchenFront = op.front ?? undefined;
+        break;
+      }
+
       case 'set_countertop': {
         /*
          * СТОЛЕШНИЦА ИЗ КАТАЛОГА — ССЫЛКОЙ НА ПОЗИЦИЮ.
@@ -2626,6 +2642,7 @@ export function applyOps({
   nextRun.milling = milling;
   nextRun.carcass = carcass;
   nextRun.countertopMaterial = countertopMaterial;
+  nextRun.kitchenFront = kitchenFront;
   nextRun.mezzanine = mezzanine ?? undefined;
   /*
    * ДЕРЖИМ ПОЛОСУ АНТРЕСОЛИ ВСЕГДА, СОБИРАЕМ — ТОЛЬКО ЗАКАЗАННУЮ.
@@ -2764,6 +2781,28 @@ export function applyOps({
               ),
             },
       ),
+    }));
+  }
+
+  /*
+   * НОВЫЙ МОДУЛЬ БЕРЁТ МАТЕРИАЛ КУХНИ (слой 52).
+   *
+   * Выбор «на всю кухню» ложится на модули, которые стояли в ту минуту, —
+   * а добор после сужения и модуль из библиотеки появлялись позже и
+   * получали фасад по умолчанию: полоса ЛДСП среди эмали. Здесь, в конце
+   * правки, каждый модуль с фасадом, у которого СВОЕГО фасада нет, берёт
+   * материал кухни. Свой фасад модуля не трогается: его выбирали.
+   *
+   * До отпечатка: фасад входит в отпечаток, и смета с чертежом обязаны
+   * видеть ту мебель, что стоит.
+   */
+  if (kitchenFront) {
+    const paint = (unit: Module): Module =>
+      !unit.front && hasFacade(unit) ? { ...unit, front: { ...kitchenFront! } } : unit;
+    nextRun.modules = nextRun.modules.map(paint);
+    nextRun.upperSegments = nextRun.upperSegments.map((segment) => ({
+      ...segment,
+      modules: segment.modules.map(paint),
     }));
   }
 

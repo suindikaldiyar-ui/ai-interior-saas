@@ -202,22 +202,61 @@ export type MaterialItem = {
 export const PRICE_UNSET = 'цена не задана';
 
 /**
- * Цена позиции за единицу — для выбранной поверхности.
+ * КЛЮЧ ЦЕНЫ КОЛЛЕКЦИИ НА ПОВЕРХНОСТЬ: `material_ral-design_matte`.
  *
- * Ноль в колонке `price` — не «бесплатно», а «цену не задали» (тот же
- * уговор, что у фрезеровки): `null` из файла колонка NOT NULL хранит
- * нулём. Читается это ОДНОЙ функцией, и смета, и карточка спрашивают её.
+ * Цена коллекции — это СТАВКА: позиция каталога с `meta.estimateKey`,
+ * как у ставок цеха. Своего хранилища у неё нет — её читает тот же
+ * `ratesFromCatalog`, и в смету она едет вместе с остальными ставками.
  */
-export function materialPrice(
-  item: Pick<MaterialItem, 'price' | 'finishPrices'>,
-  surface?: string,
-): number | null {
+export function collectionRateKey(collectionId: string, surface: string): string {
+  return `material_${collectionId}_${surface}`;
+}
+
+/** Своя цена позиции: по поверхности, если цены у неё по поверхностям. */
+function ownPrice(item: Pick<MaterialItem, 'price' | 'finishPrices'>, surface?: string): number | null {
   if (item.finishPrices) {
     if (!surface) return null;
     const value = item.finishPrices[surface];
     return typeof value === 'number' && value > 0 ? value : null;
   }
   return typeof item.price === 'number' && item.price > 0 ? item.price : null;
+}
+
+export type MaterialPriceSource = 'own' | 'collection';
+
+/**
+ * ЦЕНА ПОЗИЦИИ ЗА ЕДИНИЦУ — ОДНА ФУНКЦИЯ НА СМЕТУ, КАРТОЧКУ И ПАНЕЛЬ.
+ *
+ * Своя цена позиции, если задана; иначе цена коллекции на эту поверхность
+ * (слой 52): 1825 цветов RAL по одному не заведёт никто, и цена ставится
+ * у коллекции. Ни той, ни другой — `null`, «цена не задана».
+ *
+ * Ноль в колонке `price` — не «бесплатно», а «цену не задали» (тот же
+ * уговор, что у фрезеровки): `null` из файла колонка NOT NULL хранит
+ * нулём.
+ */
+export function materialPriceOf(
+  item: Pick<MaterialItem, 'price' | 'finishPrices' | 'collection'>,
+  surface?: string,
+  rates: Record<string, number> = {},
+): { rate: number; source: MaterialPriceSource } | null {
+  const own = ownPrice(item, surface);
+  if (own !== null) return { rate: own, source: 'own' };
+  if (surface && item.collection) {
+    const byCollection = rates[collectionRateKey(item.collection, surface)];
+    if (typeof byCollection === 'number' && Number.isFinite(byCollection) && byCollection > 0) {
+      return { rate: byCollection, source: 'collection' };
+    }
+  }
+  return null;
+}
+
+export function materialPrice(
+  item: Pick<MaterialItem, 'price' | 'finishPrices' | 'collection'>,
+  surface?: string,
+  rates: Record<string, number> = {},
+): number | null {
+  return materialPriceOf(item, surface, rates)?.rate ?? null;
 }
 
 export type PriceState = { state: 'priced'; rate: number } | { state: 'unset'; reason: string };
@@ -228,13 +267,15 @@ export type PriceState = { state: 'priced'; rate: number } | { state: 'unset'; r
  * Нет цены — «цена не задана». Цена в другой единице — сказано, в какой
  * и почему её не умножить: лист на квадратные метры без размера листа
  * пересчитать нельзя, и выдумывать этот размер значит выдумывать деньги.
+ * Цена коллекции в той же единице, что её позиции: единица у них общая.
  */
 export function priceState(
-  item: Pick<MaterialItem, 'price' | 'finishPrices' | 'unit'>,
+  item: Pick<MaterialItem, 'price' | 'finishPrices' | 'unit' | 'collection'>,
   surface: string | undefined,
   quantityUnit: PriceUnit,
+  rates: Record<string, number> = {},
 ): PriceState {
-  const rate = materialPrice(item, surface);
+  const rate = materialPrice(item, surface, rates);
   if (rate === null) return { state: 'unset', reason: PRICE_UNSET };
   if (item.unit !== quantityUnit) {
     return {

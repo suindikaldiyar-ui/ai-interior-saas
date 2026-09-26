@@ -63,14 +63,19 @@ export async function POST(request: Request) {
     );
   }
 
-  const [catalog, { data: orgRow }] = await Promise.all([
+  const [catalogRead, { data: orgRow }] = await Promise.all([
     fetchCatalog(supabase, orgId),
     supabase.from('orgs').select('run_templates, production').eq('id', orgId).maybeSingle(),
   ]);
 
+  /* Без каталога цена автопроекта — нули с виду настоящей цены (ловушка 142). */
+  if (catalogRead.error !== null) {
+    return NextResponse.json({ error: catalogRead.error }, { status: 503 });
+  }
+
   const result = buildAutoProjects({
     plan,
-    rates: ratesFromCatalog(catalog),
+    rates: ratesFromCatalog(catalogRead.entries),
     templates: parseOrgTemplates(orgRow?.run_templates),
     // Настройки цеха: от толщин и зазоров зависит расход материалов.
     production: productionSettings(orgRow?.production),

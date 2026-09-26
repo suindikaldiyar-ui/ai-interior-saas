@@ -2,20 +2,44 @@ import { notFound } from 'next/navigation';
 import ClientPortal from '@/components/ClientPortal';
 import ClientOffer from '@/components/millwork/ClientOffer';
 import { fetchCatalog } from '@/lib/catalog';
-import { DEFAULT_REQUIREMENTS, composeVariants, workspaceInput } from '@/lib/millwork/workspace';
+import { projectOffer } from '@/lib/millwork/objectEstimate';
 import { VARIANT_STYLE } from '@/lib/millwork/styles';
-import { isEstimatePreliminary, resolveSurvey } from '@/types/survey';
+import { isEstimatePreliminary } from '@/types/survey';
 import type { MillworkState } from '@/lib/projects';
 import { storageUrl } from '@/lib/supabase/config';
 import { supabaseService } from '@/lib/supabase/server';
 import { PROJECTS_BUCKET } from '@/lib/supabase/config';
-import type { Org, ProjectSelections } from '@/types/catalog';
+import { productionSettings, type Org, type ProjectSelections } from '@/types/catalog';
 import type { FurnitureItem, RoomConfig } from '@/types/interior';
 import type { Measurement } from '@/types/millwork';
 
 export const dynamic = 'force-dynamic';
 
 type PageProps = { params: { token: string } };
+
+/**
+ * Предложение не открылось — словами и без суммы.
+ *
+ * Сумма, собранная без каталога компании или по несошедшейся раскладке,
+ * — это цифра, которую клиент запомнит, а компания не подпишет.
+ */
+function OfferUnavailable({ org, reason }: { org: Org | null; reason: string }) {
+  return (
+    <main className="mw-root flex min-h-screen items-center justify-center p-6">
+      <div className="max-w-md text-center">
+        <p className="mb-2 text-[17px] font-medium">{org?.name ?? 'Ваш проект'}</p>
+        <p className="text-[15px] leading-snug" data-offer-unavailable>
+          {reason}
+        </p>
+        {org?.phone && (
+          <a href={`tel:${org.phone}`} className="mt-3 inline-block text-[13px] text-cyanBright underline">
+            Позвонить: {org.phone}
+          </a>
+        )}
+      </div>
+    </main>
+  );
+}
 
 /**
  * Публичная страница по share_token, без авторизации.
@@ -52,26 +76,50 @@ export default async function SharePage({ params }: PageProps) {
     .maybeSingle();
 
   /*
-   * Кухня показывается чертежом и сметой, а не картинкой. Пересчёта здесь
-   * нет: варианты собираются по снимку цен, снятому в момент расчёта, —
-   * клиент обязан видеть ровно ту сумму, что ему назвали на встрече.
+   * СМЕТА КАБИНЕТА — ТЕМИ ЖЕ ШАГАМИ, ЧТО У ЭКРАНА ДИЗАЙНЕРА (слой 52).
+   *
+   * Здесь была своя сборка: `workspaceInput` + `composeVariants` по снимку
+   * цен, без позиций каталога, без фрезеровки и декоров корпуса, без
+   * настроек цеха и без стен угловой кухни. Клиент видел фасады RAL по
+   * ставке цеха и итог без пометки «неполный»: 1 571 843 ₸ против
+   * 2 277 790 ₸ «неполный» на экране дизайнера.
+   *
+   * Теперь это `projectOffer` — место, композиция, вход с каталогом
+   * организации, варианты с правками, ряды стен и смета объекта — те же
+   * функции, что зовёт экран. Снимок цен держит сумму, которую назвали:
+   * переоценка каталога после отправки её не меняет (ловушка 30).
    */
   if (millwork.priceSnapshot && Object.keys(millwork.priceSnapshot).length > 0) {
-    const input = workspaceInput({
+    const org = (offerOrg as Org | null) ?? null;
+    const [catalogRead, { data: orgRow }] = await Promise.all([
+      fetchCatalog(service, project.org_id as string),
+      service.from('orgs').select('production').eq('id', project.org_id as string).maybeSingle(),
+    ]);
+    if (catalogRead.error !== null) {
+      return (
+        <OfferUnavailable
+          org={org}
+          reason="Предложение сейчас не открывается: каталог компании не прочитался. Обновите страницу через минуту."
+        />
+      );
+    }
+
+    const offer = projectOffer({
       title: (project.address as string) || 'Ваш проект',
       zone: (project.zone as string) || 'Кухня',
       measurement: project.measurements as Measurement,
-      requirements: millwork.requirements ?? DEFAULT_REQUIREMENTS,
-      rates: millwork.priceSnapshot,
+      state: millwork,
+      production: productionSettings(orgRow?.production),
+      catalog: catalogRead.entries,
     });
-
-    const variantKey = millwork.selectedVariant ?? 'optimal';
-    const disabled = {
-      basic: millwork.disabled?.basic ?? [],
-      optimal: millwork.disabled?.optimal ?? [],
-      premium: millwork.disabled?.premium ?? [],
-    };
-    const variants = composeVariants(input, disabled, millwork.runs ?? {});
+    if (offer.state === 'refused') {
+      return (
+        <OfferUnavailable
+          org={org}
+          reason={`Расчёт по проекту сейчас не собирается: ${offer.refusal} Компания уточнит размеры и пришлёт ссылку ещё раз.`}
+        />
+      );
+    }
 
     /*
      * Фотография помещения и картинка выбранной комплектации: сравнение
@@ -96,19 +144,18 @@ export default async function SharePage({ params }: PageProps) {
       (renderRows ?? []).find((r) => r.style_id === chosenStyle) ?? (renderRows ?? [])[0];
     // Те же состояния величин, что видел замерщик: клиент не должен узнать
     // о допущениях позже, чем подпишет.
-    const survey = millwork.survey ? resolveSurvey(millwork.survey) : null;
-    const chosen = variants.find((v) => v.key === variantKey) ?? variants[0];
+    const survey = offer.resolution;
 
     return (
       <ClientOffer
         token={params.token}
-        org={(offerOrg as Org | null) ?? null}
+        org={org}
         clientName={(project.client_name as string) ?? ''}
-        title={input.title}
-        zone={input.zone}
-        run={chosen.run}
-        variantTitle={chosen.title}
-        estimate={chosen.estimate}
+        title={(project.address as string) || 'Ваш проект'}
+        zone={(project.zone as string) || 'Кухня'}
+        run={offer.run}
+        variantTitle={offer.variant.title}
+        estimate={offer.estimate}
         photoUrl={
           project.source_photo_path
             ? storageUrl(PROJECTS_BUCKET, project.source_photo_path as string)
@@ -119,7 +166,7 @@ export default async function SharePage({ params }: PageProps) {
             ? storageUrl(PROJECTS_BUCKET, renderRow.image_path as string)
             : null
         }
-        disabledKeys={disabled[variantKey]}
+        disabledKeys={offer.disabled[offer.variant.key]}
         approved={project.status === 'approved'}
         pending={survey?.stats.pending.map((p) => p.where) ?? []}
         preliminary={survey ? isEstimatePreliminary(survey.stats) : false}
@@ -140,7 +187,16 @@ export default async function SharePage({ params }: PageProps) {
       .maybeSingle(),
   ]);
 
-  const catalog = await fetchCatalog(service, project.org_id as string);
+  const catalogRead = await fetchCatalog(service, project.org_id as string);
+  if (catalogRead.error !== null) {
+    return (
+      <OfferUnavailable
+        org={(orgRow as Org | null) ?? null}
+        reason="Проект сейчас не открывается: каталог компании не прочитался. Обновите страницу через минуту."
+      />
+    );
+  }
+  const catalog = catalogRead.entries;
 
   const renders = (renderRows ?? []).map((r) => ({
     id: r.id as string,

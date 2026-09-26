@@ -5,7 +5,6 @@ import { compressPhoto } from '@/lib/photo';
 import { formatMoney } from '@/lib/millwork/estimate';
 import {
   APRON_TARGET,
-  COUNTERTOP_TARGET,
   FACADE_TARGET,
   useInteriorStore,
 } from '@/store/useInteriorStore';
@@ -69,20 +68,6 @@ export default function MaterialsStep({
     [catalog],
   );
 
-  const countertops = useMemo(
-    () =>
-      catalog.filter((e) => {
-        const key = estimateKey(e);
-        // Запил и плинтус — работы, а не поверхность: выбирать их нечего.
-        return (
-          key.startsWith('countertop_') &&
-          key !== 'countertop_miter' &&
-          key !== 'countertop_plinth'
-        );
-      }),
-    [catalog],
-  );
-
   const aprons = useMemo(
     () => catalog.filter((e) => estimateKey(e) === 'wall_panel'),
     [catalog],
@@ -96,12 +81,9 @@ export default function MaterialsStep({
    * товар лежит под id гарнитура. Читаем оба ключа, пишем в новый.
    */
   /** Сколько блоков на экране: в спальне остаётся один — фасады. */
-  const surfaces = 1 + (profile.hasCountertop ? 1 : 0) + (profile.hasApron ? 1 : 0);
+  const surfaces = 1 + (profile.hasApron ? 1 : 0);
   /** Есть ли вообще что выбирать в этой зоне. */
-  const available =
-    facades.length +
-    (profile.hasCountertop ? countertops.length : 0) +
-    (profile.hasApron ? aprons.length : 0);
+  const available = facades.length + (profile.hasApron ? aprons.length : 0);
 
   const legacyId = kitchenItemId ? selections[kitchenItemId] : undefined;
   const facadeId = selections[FACADE_TARGET] ?? legacyId;
@@ -218,19 +200,24 @@ export default function MaterialsStep({
         />
 
         {/*
+          * СТОЛЕШНИЦУ ВЫБИРАЮТ В ОДНОМ МЕСТЕ — В ПАНЕЛИ «МАТЕРИАЛЫ» (слой 52).
+          *
+          * Здесь был второй выбор: он писал `selections['zone:countertop']`,
+          * не сохранялся с объектом и в смету не шёл, а смета считала
+          * столешницу ряда (`set_countertop`). Две кнопки одной вещи
+          * показывали клиенту две разные столешницы.
+          *
           * Столешницы и фартука в спальне и прихожей не существует — и в
-          * смете, и на чертеже их уже нет. Показывать здесь пустой блок
-          * значило бы предлагать выбрать то, чего в зоне не бывает.
+          * смете, и на чертеже их уже нет.
           */}
         {profile.hasCountertop && (
-          <Surface
-            title="Столешница"
-            items={countertops}
-            selectedId={selections[COUNTERTOP_TARGET]}
-            onSelect={(id) => setSelection(COUNTERTOP_TARGET, id)}
-            missing="В каталоге нет столешниц"
-            waiting="Столешница пойдёт по описанию комплектации"
-          />
+          <div className="mt-5" data-countertop-moved>
+            <p className="text-[15px] font-medium">Столешница</p>
+            <p className="mt-1 text-[13px] leading-snug text-graphiteMw">
+              Выбирается в панели «Материалы» (цель «Столешница»): там она ложится на ряд
+              и идёт в смету, чертёж и рендер.
+            </p>
+          </div>
         )}
 
         {profile.hasApron && (

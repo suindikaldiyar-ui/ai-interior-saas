@@ -22,9 +22,11 @@ import catalogJson from '../data/catalog/catalog.json';
 import * as THREE from 'three';
 import {
   catalogEntriesFromRows,
+  collectionPriceRow,
   manualMaterialRow,
   materialCatalog,
   materialOps,
+  materialPrice,
   parseMaterialFile,
   planMaterialImport,
   type MaterialChoice,
@@ -283,7 +285,9 @@ import {
   REQUIRED_RATE_KEYS,
   TYPICAL_PRICE_LIST,
   missingRequiredRates,
+  ratesFromCatalog,
 } from '../lib/millwork/rates';
+import { objectEstimateOf, projectOffer } from '../lib/millwork/objectEstimate';
 import { axonometryExtentMm, buildAxonometry, project } from '../lib/millwork/axonometry';
 import { carcassBoxes, doorCount, doorPivot, hasVisibleAppliance, moduleBoxes, openablePartIds, panelPlaces, runBoxes, runPlaces, doorLeaves} from '../lib/millwork/cabinetBoxes';
 import {
@@ -19093,13 +19097,18 @@ console.log('\n' + 'Каталог материалов: RAL на все фас�
    * появившийся правкой ПОСЛЕ выбора, выбора не видел — так же, как
    * сегодня не видит его материал из палитры и готовый дизайн.
    */
+  /*
+   * Выбор «на всю кухню» — материал КУХНИ (слой 52): его держит и модуль,
+   * стоявший при выборе, и модуль, появившийся после — добор в хвосте
+   * после сужения.
+   */
   const paintedIds = new Set(frontsOf(painted).map((unit) => unit.id));
-  const lostAfterEdit = notRal(edited).filter((unit) => paintedIds.has(unit.id));
+  const bornAfter = frontsOf(edited).filter((unit) => !paintedIds.has(unit.id));
   check(
-    'материал пережил пересборку ряда после правки ширины — у каждого модуля, стоявшего при выборе',
-    Boolean(widened) && paintedIds.size > 0 && lostAfterEdit.length === 0,
+    'материал пережил пересборку ряда после правки ширины — у каждого фасада, и у нового добора тоже',
+    Boolean(widened) && paintedIds.size > 0 && notRal(edited).length === 0,
     widened
-      ? `${widened.id} −50 мм · стояло ${paintedIds.size} · потеряли код: ${lostAfterEdit.map((unit) => unit.id).join(' ') || 'никто'}`
+      ? `${widened.id} −50 мм · стояло ${paintedIds.size} · появилось ${bornAfter.map((unit) => unit.id).join(' ') || 'ничего'} · без кода: ${notRal(edited).map((unit) => unit.id).join(' ') || 'никто'}`
       : 'НУЛЕВОЙ СЕЛЕКТОР',
   );
 
@@ -19318,6 +19327,298 @@ console.log('\n' + 'Каталог материалов: RAL на все фас�
     'демо-ряд: каталог материалов в сторе сумму не двигает',
     demoPlain === demoWithCatalog,
     `${Math.round(demoPlain)} → ${Math.round(demoWithCatalog)}`,
+  );
+}
+
+
+/* ═══  Слой 52: цена коллекции, смета кабинета, материал кухни  ═══ */
+
+/**
+ * ЦЕНА НА КОЛЛЕКЦИЮ И ПОВЕРХНОСТЬ; СВОЯ ЦЕНА ПОЗИЦИИ ЕЁ ПЕРЕБИВАЕТ.
+ *
+ * 1825 цветов RAL по одному не заведёт никто: цена ставится на коллекцию
+ * и поверхность, позиция может её переопределить. Числа проверки —
+ * некруглые и не совпадают ни с одной ставкой цеха: совпади они, строка
+ * «правильно» посчиталась бы по чужой цене.
+ */
+console.log('\n' + 'Каталог материалов: цена коллекции, смета кабинета, материал кухни (тесты 8–10)');
+{
+  const close = (a: number, b: number, eps: number) => Math.abs(a - b) < eps;
+  const round2 = (v: number) => Math.round(v * 100) / 100;
+  const file = parseMaterialFile(catalogJson);
+  const entries = catalogEntriesFromRows(planMaterialImport(file, []).rows, file, 'demo', 'demo-mat:');
+  const collectionOfFile = (id: string) => {
+    const found = file.collections.find((c) => c.id === id);
+    if (!found) throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: коллекции ${id} нет в файле`);
+    return found;
+  };
+  const ralCollection = collectionOfFile('ral-design');
+  const mdfCollection = collectionOfFile('mdf-panels-palette');
+
+  const P_RAL = 27_413;
+  const P_OWN = 31_877;
+  const P_MDF_GLOSS = 29_351;
+  const P_MILLING = 18_437;
+  const shopRates = new Set(Object.values(DEMO_RATES));
+  check(
+    'цены проверки некруглые и не совпадают ни с одной ставкой цеха',
+    [P_RAL, P_OWN, P_MDF_GLOSS, P_MILLING].every((p) => !shopRates.has(p) && p % 100 !== 0),
+    `${P_RAL} · ${P_OWN} · ${P_MDF_GLOSS} · ${P_MILLING}`,
+  );
+
+  const priceEntries = catalogEntriesFromRows(
+    [
+      collectionPriceRow(ralCollection, 'matte', P_RAL),
+      collectionPriceRow(mdfCollection, 'high_gloss', P_MDF_GLOSS),
+    ],
+    file,
+    'demo',
+    'demo-price:',
+  );
+  const catalog = [...DEMO_CATALOG, ...entries, ...priceEntries];
+  const rates = { ...DEMO_RATES, ...ratesFromCatalog(catalog) };
+  const items = materialCatalog(catalog);
+  const all = Array.from(items.values());
+  const ral = all.find((item) => item.code === 'RAL 010 30 20');
+  const mdf = all.find((item) => item.collection === 'mdf-panels-palette');
+  check(
+    'цена коллекции — не позиция: в списке материалов её нет, позиций по-прежнему 1845',
+    items.size === 1845 && Boolean(ral) && Boolean(mdf),
+    `позиций ${items.size}`,
+  );
+  if (!ral || !mdf) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: RAL 010 30 20 или МДФ-панели нет');
+
+  const demoReq = requirementsFromTemplate(templateById(DEMO_TEMPLATE_ID)!, DEMO_REQUIREMENTS.options);
+  const openings = DEMO_MEASUREMENT.walls[0].openings;
+  const demo = buildRun({
+    lengthMm: DEMO_PROJECT.lengthMm,
+    ceilingHeightMm: DEMO_MEASUREMENT.ceilingHeightMm,
+    requirements: demoReq,
+    openings,
+    comms: DEMO_MEASUREMENT.comms,
+    cornerAt: null,
+  });
+  const paint = (run: Run, choice: MaterialChoice) => {
+    const plan = materialOps('fronts', choice, run, null);
+    if ('refusal' in plan) throw new Error(`материал не лёг: ${plan.refusal}`);
+    return applyOps({ run, requirements: demoReq, openings, ops: plan.ops });
+  };
+  const painted = paint(demo, { item: ral, collection: ralCollection, surface: 'matte' });
+  const frontLine = (estimate: Estimate) => estimate.lines.find((line) => line.key.startsWith('front_item_'));
+  const frontsOf = (run: Run) => allModules(run).filter((unit) => hasFacade(unit));
+
+  /* ── Тест 8 ── */
+  const byCollection = buildEstimate(painted, 'optimal', rates, [], undefined, undefined, undefined, undefined, undefined, items);
+  const line8 = frontLine(byCollection);
+  check(
+    'тест 8: RAL матовый с ценой коллекции — фасады посчитаны по ней',
+    Boolean(line8) && line8!.rate === P_RAL && !line8!.priceUnset && close(line8!.total, round2(line8!.quantity * P_RAL), 0.01),
+    line8 ? `${line8.title}: ${line8.quantity} м² × ${line8.rate} = ${line8.total}${line8.priceUnset ? ` · ${line8.priceUnset}` : ''}` : 'НУЛЕВОЙ СЕЛЕКТОР: строки фасадов RAL нет',
+  );
+  check(
+    'тест 8: итог полный — строк без цены нет',
+    unpricedLines(byCollection).length === 0 && !totalCaption(byCollection).includes('неполный'),
+    `${totalCaption(byCollection)} · без цены: ${unpricedLines(byCollection).map((l) => l.key).join(' ') || 'нет'}`,
+  );
+
+  const ownCatalog = catalog.map((entry) => (entry.id === ral.id ? { ...entry, price: P_OWN } : entry));
+  const ownItems = materialCatalog(ownCatalog);
+  const line8own = frontLine(buildEstimate(painted, 'optimal', rates, [], undefined, undefined, undefined, undefined, undefined, ownItems));
+  check(
+    'тест 8: у позиции своя цена — берётся своя, а не коллекции',
+    line8own?.rate === P_OWN,
+    line8own ? `${line8own.rate} (коллекция ${P_RAL})` : 'НУЛЕВОЙ СЕЛЕКТОР',
+  );
+  check(
+    'одна функция цены: панель и карточка читают те же числа, что смета',
+    materialPrice(ral, 'matte', rates) === P_RAL && materialPrice(ownItems.get(ral.id)!, 'matte', rates) === P_OWN,
+    `${materialPrice(ral, 'matte', rates)} · ${materialPrice(ownItems.get(ral.id)!, 'matte', rates)}`,
+  );
+  check(
+    'цена коллекции — по поверхности: у глянца RAL своей цены нет',
+    materialPrice(ral, 'gloss', rates) === null,
+    String(materialPrice(ral, 'gloss', rates)),
+  );
+
+  const mdfGloss = paint(demo, { item: mdf, collection: mdfCollection, surface: 'high_gloss' });
+  const mdfTouch = paint(demo, { item: mdf, collection: mdfCollection, surface: 'touch_sense' });
+  const glossLine = frontLine(buildEstimate(mdfGloss, 'optimal', rates, [], undefined, undefined, undefined, undefined, undefined, items));
+  const touchLine = frontLine(buildEstimate(mdfTouch, 'optimal', rates, [], undefined, undefined, undefined, undefined, undefined, items));
+  check(
+    'МДФ: High Gloss по цене коллекции, у Touch Sense цены коллекции нет — «цена не задана»',
+    glossLine?.rate === P_MDF_GLOSS && touchLine?.priceUnset === 'цена не задана',
+    `${glossLine?.rate ?? '—'} · ${touchLine ? lineAmountText(touchLine) : '—'}`,
+  );
+
+  /* ── Тест 10: выбор «на всю кухню» держится для новых модулей ── */
+  /*
+   * Пустоты в крашеном демо-ряду нет: её делает человек — снимает шкаф
+   * верхнего ряда. Пустота висящего ряда законна (ловушка 410), и
+   * библиотека ставит в неё модуль тем же путём, что на экране.
+   */
+  const removable = painted.upperSegments.flatMap((segment) => segment.modules).find((unit) => !unit.appliance);
+  check(
+    'в крашеном ряду есть шкаф верхнего ряда без прибора — его снимут',
+    Boolean(removable),
+    removable?.id ?? 'НУЛЕВОЙ СЕЛЕКТОР: верхнего шкафа нет',
+  );
+  const holed = removable
+    ? applyOps({ run: painted, requirements: demoReq, openings, ops: [{ op: 'remove_module', moduleId: removable.id }] })
+    : painted;
+  const gap = libraryGaps(holed, openings, demoReq).find((g) => g.row === 'upper');
+  check(
+    'после снятия шкафа в верхнем ряду пустое место — вставлять есть куда',
+    Boolean(gap),
+    gap ? `${gap.row} ${gap.fromMm}+${gap.widthMm}` : 'НУЛЕВОЙ СЕЛЕКТОР: пустот нет',
+  );
+  if (gap) {
+    const card = libraryCards({ run: holed, requirements: demoReq, openings, moduleId: null, gap }).find(
+      (c) => !c.refusal,
+    );
+    check('в пустоте есть доступная карточка библиотеки', Boolean(card), card?.key ?? 'НУЛЕВОЙ СЕЛЕКТОР');
+    if (card) {
+      const inserted = applyOps({ run: holed, requirements: demoReq, openings, ops: card.ops });
+      const before = new Set(allModules(holed).map((unit) => unit.id));
+      const fresh = allModules(inserted).filter((unit) => !before.has(unit.id) && hasFacade(unit));
+      check(
+        'тест 10: модуль из библиотеки после выбора «на всю кухню» — с тем же материалом',
+        fresh.length > 0 && fresh.every((unit) => unit.front?.itemId === ral.id && unit.front?.surface === 'matte'),
+        fresh.length
+          ? fresh.map((unit) => `${unit.id}: ${unit.front?.itemId ?? 'фасад по умолчанию'}`).join(' · ')
+          : 'НУЛЕВОЙ СЕЛЕКТОР: новый модуль не встал',
+      );
+    }
+  }
+
+  /* Выбор на модуле сильнее материала кухни. */
+  const own = frontsOf(painted).find((unit) => !unit.appliance);
+  if (own) {
+    const repainted = applyOps({
+      run: painted,
+      requirements: demoReq,
+      openings,
+      ops: [{ op: 'set_front', moduleId: own.id, front: { base: 'mdf_enamel', construct: 'solid', finish: 'matte', colorHex: '#224466' } }],
+    });
+    const after = applyOps({
+      run: repainted,
+      requirements: demoReq,
+      openings,
+      ops: [{ op: 'set_width', moduleId: own.id, widthMm: own.widthMm - 50 }],
+    });
+    check(
+      'выбор на модуле сильнее материала кухни и переживает правку',
+      allModules(after).find((unit) => unit.id === own.id)?.front?.colorHex === '#224466',
+      String(allModules(after).find((unit) => unit.id === own.id)?.front?.colorHex),
+    );
+  }
+
+  /* ── Тест 9 на уровне движка: смета кабинета = смета экрана ── */
+  const millingEntries = catalog.map((entry) =>
+    entry.id.startsWith('demo-milling-') && entry.article !== 'MIL-NONE' ? { ...entry, price: P_MILLING } : entry,
+  );
+  const millingId = millingEntries.find((entry) => entry.id.startsWith('demo-milling-') && entry.article !== 'MIL-NONE')?.id;
+  const carcassId = carcassCatalog(millingEntries).keys().next().value as string | undefined;
+  check('для объекта есть фрезеровка и декор корпуса', Boolean(millingId) && Boolean(carcassId), `${millingId} · ${carcassId}`);
+  if (millingId && carcassId) {
+    const full = applyOps({
+      run: painted,
+      requirements: demoReq,
+      openings,
+      ops: [
+        { op: 'set_milling', millingId, scope: 'base' },
+        { op: 'set_carcass', scope: 'base', itemId: carcassId },
+      ],
+    });
+    const orgCatalog = millingEntries;
+    const liveRates = { ...DEMO_RATES, ...ratesFromCatalog(orgCatalog) };
+    const disabled = { basic: [], optimal: [], premium: [] };
+    const input = workspaceInput({
+      title: 'Проверка',
+      zone: 'Кухня',
+      measurement: DEMO_MEASUREMENT,
+      requirements: demoReq,
+      rates: liveRates,
+      cornerAt: null,
+      production: DEFAULT_PRODUCTION,
+      milling: millingCatalog(orgCatalog),
+      carcass: carcassCatalog(orgCatalog),
+      materials: materialCatalog(orgCatalog),
+    });
+    const variants = composeVariants(input, disabled, { optimal: full });
+    const active = variants.find((v) => v.key === 'optimal')!;
+    const designer = objectEstimateOf({
+      layout: null,
+      segments: [active.run],
+      wallAEstimate: active.estimate,
+      variantKey: 'optimal',
+      input,
+      disabled,
+    });
+    check(
+      'у объекта есть и RAL, и фрезеровка, и декор корпуса своими строками',
+      ['front_item_', 'front_milling_', 'carcass_'].every((prefix) => designer.lines.some((l) => l.key.startsWith(prefix))),
+      designer.lines.filter((l) => /^(front_item_|front_milling_|carcass_)/.test(l.key)).map((l) => `${l.key}=${l.rate}`).join(' · '),
+    );
+
+    const state: MillworkState = {
+      requirements: demoReq,
+      runs: { optimal: full },
+      selectedVariant: 'optimal',
+      disabled,
+      priceSnapshot: designer.priceSnapshot,
+      shape: 'linear',
+      savedAt: '2026-09-25T12:00:00.000Z',
+    };
+    const offer = projectOffer({
+      title: 'Проверка',
+      zone: 'Кухня',
+      measurement: DEMO_MEASUREMENT,
+      state: JSON.parse(JSON.stringify(state)) as MillworkState,
+      production: DEFAULT_PRODUCTION,
+      catalog: orgCatalog,
+      rates: ratesFromCatalog(orgCatalog),
+    });
+    const oldCabinet = composeVariants(
+      workspaceInput({
+        title: 'Проверка',
+        zone: 'Кухня',
+        measurement: DEMO_MEASUREMENT,
+        requirements: demoReq,
+        rates: designer.priceSnapshot,
+      }),
+      disabled,
+      { optimal: full },
+    ).find((v) => v.key === 'optimal')!.estimate.total;
+    check(
+      'тест 9: итог кабинета клиента = итог экрана дизайнера, до тенге',
+      'estimate' in offer && Math.round(offer.estimate.total) === Math.round(designer.total),
+      `экран ${Math.round(designer.total)} · кабинет ${'estimate' in offer ? Math.round(offer.estimate.total) : offer.refusal} · прежним путём кабинет считал ${Math.round(oldCabinet)}`,
+    );
+
+    /* Переоценка после отправки: кабинет держит снимок, экран считает по каталогу. */
+    const repriced = orgCatalog.map((entry) => (entry.id === priceEntries[0].id ? { ...entry, price: P_RAL + 1000 } : entry));
+    const later = projectOffer({
+      title: 'Проверка',
+      zone: 'Кухня',
+      measurement: DEMO_MEASUREMENT,
+      state,
+      production: DEFAULT_PRODUCTION,
+      catalog: repriced,
+      rates: ratesFromCatalog(repriced),
+    });
+    check(
+      'кабинет держит снимок цен: переоценка коллекции после отправки сумму клиента не меняет',
+      'estimate' in later && Math.round(later.estimate.total) === Math.round(designer.total),
+      `${Math.round(designer.total)} → ${'estimate' in later ? Math.round(later.estimate.total) : later.refusal}`,
+    );
+  }
+
+  /* Демонстрация: ни цен коллекций, ни материалов на ней нет — сумма прежняя. */
+  check(
+    'демо-ряд: цены коллекций в каталоге сумму не двигают',
+    buildEstimate(demo, 'optimal', rates, [], undefined, undefined, undefined, undefined, undefined, items).total ===
+      buildEstimate(demo, 'optimal', DEMO_RATES).total,
+    `${Math.round(buildEstimate(demo, 'optimal', DEMO_RATES).total)}`,
   );
 }
 

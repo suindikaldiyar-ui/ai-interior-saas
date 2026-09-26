@@ -8,10 +8,11 @@ import {
   TARGET_TITLE,
   catalogEntriesFromRows,
   collectionOf,
+  collectionRateKey,
   manualMaterialRow,
   materialDefs,
   materialItemOf,
-  materialPrice,
+  materialPriceOf,
   materialTabs,
   planMaterialImport,
   searchMaterials,
@@ -60,6 +61,22 @@ type Props = {
   onApply: (target: MaterialTarget, choice: MaterialChoice) => string | null;
   /** Цена позиции. Строка — что сказать человеку (ошибка или «демонстрация»). */
   onPrice: (itemId: string, patch: PricePatch) => Promise<string | null>;
+  /**
+   * СТАВКИ КАТАЛОГА — ради цены коллекции (слой 52). Она лежит ставкой
+   * `material_<коллекция>_<поверхность>`, и строки списка, карточка и
+   * смета читают её одной `materialPriceOf`.
+   */
+  rates: Record<string, number>;
+  /** Цена коллекции по поверхностям. `null` — «не задана». */
+  onCollectionPrice: (
+    collection: CollectionDef,
+    prices: Record<string, number | null>,
+  ) => Promise<string | null>;
+  /**
+   * Каталог организации не прочитался — словами. Панель тогда не рисует
+   * коллекции «ждёт импорта»: ждёт не импорт, а сеть.
+   */
+  catalogError: string | null;
   /** В каталог добавились позиции (демонстрация). */
   onCatalogAdded: (entries: CatalogEntryFull[]) => void;
   /** Каталог организации изменился в базе: перечитать. */
@@ -86,16 +103,30 @@ function photoWarning(width: number, height: number): string | null {
   );
 }
 
-function priceText(item: MaterialItem, surface: string | undefined): string {
+/**
+ * ЦЕНА В СТРОКЕ СПИСКА — ТОЙ ЖЕ `materialPriceOf`, ЧТО В СМЕТЕ.
+ *
+ * Своя цена позиции, иначе цена коллекции на поверхность (слой 52).
+ * Поверхность не выбрана — самая низкая из известных, со словом «от».
+ */
+function priceText(
+  item: MaterialItem,
+  surface: string | undefined,
+  rates: Record<string, number>,
+): string {
   const unit = PRICE_UNIT_LABEL[item.unit];
-  if (item.finishPrices) {
-    const own = surface ? materialPrice(item, surface) : null;
-    if (own !== null) return `${formatMoney(own)} ₸/${unit}`;
-    const known = Object.values(item.finishPrices).filter((v): v is number => typeof v === 'number');
-    return known.length ? `от ${formatMoney(Math.min(...known))} ₸/${unit}` : 'цена не задана';
+  if (surface) {
+    const found = materialPriceOf(item, surface, rates);
+    return found ? `${formatMoney(found.rate)} ₸/${unit}` : 'цена не задана';
   }
-  const price = materialPrice(item);
-  return price === null ? 'цена не задана' : `${formatMoney(price)} ₸/${unit}`;
+  const own = materialPriceOf(item, undefined, rates);
+  if (own) return `${formatMoney(own.rate)} ₸/${unit}`;
+  const known = item.finishes
+    .map((finish) => materialPriceOf(item, finish, rates)?.rate ?? null)
+    .filter((rate): rate is number => rate !== null);
+  if (known.length === 0) return 'цена не задана';
+  const low = Math.min(...known);
+  return `${known.length > 1 && known.some((rate) => rate !== low) ? 'от ' : ''}${formatMoney(low)} ₸/${unit}`;
 }
 
 function parsePrice(raw: string): number | null | 'bad' {
@@ -113,6 +144,9 @@ export default function MaterialLibraryPanel({
   selectedModuleLabel,
   onApply,
   onPrice,
+  rates,
+  onCollectionPrice,
+  catalogError,
   onCatalogAdded,
   onCatalogReload,
 }: Props) {
@@ -283,6 +317,33 @@ export default function MaterialLibraryPanel({
         .join(' '),
     );
   };
+
+  /*
+   * КАТАЛОГ НЕ ПРОЧИТАЛСЯ — СЛОВА, А НЕ СПИСОК «ЖДЁТ ИМПОРТА» (слой 52).
+   *
+   * Описания коллекций приходят из файла и есть всегда; позиций нет,
+   * потому что каталог организации не дошёл. Нарисовать коллекции с
+   * нулём позиций значило бы сказать «загрузите каталог» компании, у
+   * которой он загружен.
+   */
+  if (catalogError) {
+    return (
+      <section className="mw-panel" data-materials-panel data-loaded="0">
+        <p className="text-[17px] font-medium">Материалы</p>
+        <p className="mt-2 text-[13px] leading-snug text-alert" data-catalog-error>
+          {catalogError}
+        </p>
+        <button
+          type="button"
+          className="mw-btn mw-btn-ghost mt-2"
+          onClick={() => void onCatalogReload().then((error) => setNotice(error))}
+        >
+          Прочитать ещё раз
+        </button>
+        {notice && <p className="mt-2 text-[13px] leading-snug text-tape">{notice}</p>}
+      </section>
+    );
+  }
 
   if (defsError) {
     return (
@@ -460,7 +521,7 @@ export default function MaterialLibraryPanel({
                       {row.entry.name_ru && <span className="text-graphiteMw"> · {row.entry.name_ru}</span>}
                     </span>
                     <span className="shrink-0 text-[13px] text-graphiteMw">
-                      {priceText(row.item, on ? current.surface : undefined)}
+                      {priceText(row.item, on ? current.surface : undefined, rates)}
                     </span>
                   </button>
                 );
@@ -472,6 +533,24 @@ export default function MaterialLibraryPanel({
               {query.trim() ? `По «${query.trim()}» ничего не нашлось.` : 'В этой вкладке позиций нет.'}
             </p>
           )}
+
+          {/*
+            * ЦЕНА КОЛЛЕКЦИИ — ПОЛЕ ПО КАЖДОЙ ПОВЕРХНОСТИ (слой 52).
+            *
+            * 1825 цветов RAL по одному не заведёт никто. Цена ставится
+            * здесь, у коллекции; позиция со своей ценой сильнее.
+            */}
+          {tab?.collections.map((collection) => {
+            const prices = collection.finishes.map((finish) => rates[collectionRateKey(collection.id, finish)] ?? 0);
+            return (
+              <CollectionPriceForm
+                key={`${collection.id}:${prices.join(',')}`}
+                collection={collection}
+                rates={rates}
+                onSave={async (next) => setNotice(await onCollectionPrice(collection, next))}
+              />
+            );
+          })}
 
           {notice && (
             <p className="mt-2 text-[13px] leading-snug text-tape" data-material-notice>
@@ -487,6 +566,7 @@ export default function MaterialLibraryPanel({
               collection={currentCollection}
               surface={current.surface}
               surfaceChoice={target !== 'carcass'}
+              rates={rates}
               onSurface={(surface) => apply(currentPair.item, currentCollection, surface)}
               onPrice={async (patch) => setNotice(await onPrice(currentPair.item.id, patch))}
             />
@@ -525,6 +605,7 @@ function MaterialCard({
   collection,
   surface,
   surfaceChoice,
+  rates,
   onSurface,
   onPrice,
 }: {
@@ -533,19 +614,27 @@ function MaterialCard({
   collection: CollectionDef;
   surface: string | undefined;
   surfaceChoice: boolean;
+  rates: Record<string, number>;
   onSurface: (surface: string) => void;
   onPrice: (patch: PricePatch) => Promise<void>;
 }) {
   const perFinish = Boolean(item.finishPrices) || collection.pricePerFinish;
   const fields = perFinish ? collection.finishes : ['single'];
+  /* Поля карточки — СВОЯ цена позиции: цену коллекции правят у коллекции. */
+  const ownOf = (key: string) => {
+    const found = materialPriceOf(item, key === 'single' ? undefined : key, {});
+    return found ? found.rate : null;
+  };
   const [drafts, setDrafts] = useState<Record<string, string>>(() =>
     Object.fromEntries(
       fields.map((key) => {
-        const value = key === 'single' ? materialPrice(item) : materialPrice(item, key);
+        const value = ownOf(key);
         return [key, value === null ? '' : String(value)];
       }),
     ),
   );
+  /** По чему позиция стоит на выбранной поверхности — своей или коллекции. */
+  const effective = surface ? materialPriceOf(item, surface, rates) : null;
   const [error, setError] = useState<string | null>(null);
   const [pixels, setPixels] = useState<{ w: number; h: number } | null>(null);
 
@@ -636,6 +725,12 @@ function MaterialCard({
         </button>
       </form>
       {error && <p className="mt-1 text-[13px] text-alert">{error}</p>}
+      {effective?.source === 'collection' && (
+        <p className="mt-1 text-[13px] leading-snug text-graphiteMw" data-material-price-source="collection">
+          Своей цены нет — стоит по цене коллекции: {formatMoney(effective.rate)} ₸/
+          {PRICE_UNIT_LABEL[item.unit]}.
+        </p>
+      )}
 
       {item.photoWithoutSize && (
         <p className="mt-1 text-[13px] leading-snug text-tape">
@@ -648,6 +743,102 @@ function MaterialCard({
         </p>
       )}
     </div>
+  );
+}
+
+/* ─────────────────────────  Цена коллекции  ───────────────────────── */
+
+function CollectionPriceForm({
+  collection,
+  rates,
+  onSave,
+}: {
+  collection: CollectionDef;
+  rates: Record<string, number>;
+  onSave: (prices: Record<string, number | null>) => Promise<void>;
+}) {
+  const current = (finish: string): number | null => {
+    const rate = rates[collectionRateKey(collection.id, finish)];
+    return typeof rate === 'number' && rate > 0 ? rate : null;
+  };
+  const [drafts, setDrafts] = useState<Record<string, string>>(() =>
+    Object.fromEntries(
+      collection.finishes.map((finish) => {
+        const rate = current(finish);
+        return [finish, rate === null ? '' : String(rate)];
+      }),
+    ),
+  );
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const save = async () => {
+    const parsed: Record<string, number | null> = {};
+    for (const finish of collection.finishes) {
+      const value = parsePrice(drafts[finish] ?? '');
+      if (value === 'bad') {
+        setError(`Цена — число от нуля. Введено «${drafts[finish]}».`);
+        return;
+      }
+      /*
+       * Пустое поле уходит, только если цена у поверхности уже была — её
+       * снимают. Нетронутая поверхность строки в каталоге не заводит:
+       * «цена не задана» и так читается из отсутствия.
+       */
+      const known = Object.prototype.hasOwnProperty.call(rates, collectionRateKey(collection.id, finish));
+      if (value !== null || known) parsed[finish] = value;
+    }
+    if (Object.keys(parsed).length === 0) {
+      setError('Введите цену хотя бы одной поверхности.');
+      return;
+    }
+    setError(null);
+    setBusy(true);
+    await onSave(parsed);
+    setBusy(false);
+  };
+
+  return (
+    <form
+      className="mt-3 grid gap-1 rounded-[var(--r-control)] bg-navy p-3"
+      data-collection-price-form={collection.id}
+      onSubmit={(event) => {
+        event.preventDefault();
+        void save();
+      }}
+    >
+      <p className="text-[13px] font-medium">Цена коллекции «{collection.label}»</p>
+      <p className="text-[13px] leading-snug text-graphiteMw">
+        Позиция без своей цены стоит по цене коллекции; своя цена позиции сильнее.
+      </p>
+      {collection.finishes.map((finish) => (
+        <label key={finish} className="flex items-center gap-2 text-[13px]">
+          <span className="w-[112px] shrink-0 leading-tight text-graphiteMw">
+            {MATERIAL_FINISHES[finish]?.label ?? finish}
+          </span>
+          <input
+            inputMode="decimal"
+            data-collection-price={`${collection.id}:${finish}`}
+            value={drafts[finish] ?? ''}
+            placeholder="не задана"
+            onChange={(event) => setDrafts((prev) => ({ ...prev, [finish]: event.target.value }))}
+            className="mw-field min-w-0 flex-1"
+          />
+          <span className="shrink-0 whitespace-nowrap text-graphiteMw">
+            ₸/{PRICE_UNIT_LABEL[collection.priceUnit]}
+          </span>
+        </label>
+      ))}
+      <button
+        type="submit"
+        data-collection-price-save={collection.id}
+        disabled={busy}
+        className="mw-btn mw-btn-ghost justify-self-start"
+      >
+        {busy ? 'Сохраняю…' : 'Сохранить цену коллекции'}
+      </button>
+      {error && <p className="text-[13px] text-alert">{error}</p>}
+    </form>
   );
 }
 

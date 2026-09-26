@@ -5,7 +5,7 @@ import ElevationDrawing, { elevationSpanUnits } from './ElevationDrawing';
 import { buildLeaders } from '@/lib/millwork/leaders';
 import { buildPanels } from '@/lib/millwork/panels';
 import { useInteriorStore } from '@/store/useInteriorStore';
-import { APRON_TARGET, COUNTERTOP_TARGET, FACADE_TARGET } from '@/types/catalog';
+import { APRON_TARGET, FACADE_TARGET } from '@/types/catalog';
 import PlanDrawing from './PlanDrawing';
 import AxonometryDrawing from './AxonometryDrawing';
 import SectionDrawing, { findModuleRow, hasFilling, sectionSizeMm } from './SectionDrawing';
@@ -142,6 +142,13 @@ export default function DrawingSheet({
     const id = selections[target];
     return (id && catalog.find((e) => e.id === id)) || null;
   };
+  /*
+   * СТОЛЕШНИЦА — С РЯДА (слой 52): выбор живёт в `Run.countertopMaterial`,
+   * и его же считает смета. Прежний выбор шага «Материалы» больше не
+   * пишется, а читать его значило бы подписать на листе не ту плиту.
+   */
+  const counterEntry =
+    (run.countertopMaterial && catalog.find((e) => e.id === run.countertopMaterial?.itemId)) || null;
 
   /*
    * ДЕТАЛИ СЧИТАЮТСЯ ОДИН РАЗ НА ЛИСТ — как и номера модулей ниже.
@@ -155,7 +162,7 @@ export default function DrawingSheet({
 
   const leaders = buildLeaders(run, panels, {
     facade: entryFor(FACADE_TARGET),
-    counter: entryFor(COUNTERTOP_TARGET),
+    counter: counterEntry,
     apron: entryFor(APRON_TARGET),
   });
 
@@ -180,7 +187,7 @@ export default function DrawingSheet({
   const legendMaterials: LegendMaterial[] = (
     [
       ['Фасады', entryFor(FACADE_TARGET)],
-      ['Столешница', entryFor(COUNTERTOP_TARGET)],
+      ['Столешница', counterEntry],
       ['Фартук', entryFor(APRON_TARGET)],
     ] as const
   ).flatMap(([where, entry]) =>

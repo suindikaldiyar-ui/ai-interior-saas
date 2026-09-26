@@ -21,6 +21,16 @@
  *       фасады, переживает перезагрузку страницы. Организация, объект,
  *       файлы и пользователь заводятся служебным ключом и удаляются.
  *
+ * Слой 52:
+ *   12. цена коллекции в панели → RAL на все фасады: итог полный и сдвинулся
+ *       ровно на количество × цену плюс процент доставки, до тенге;
+ *    9. объект с RAL, фрезеровкой и декором корпуса: итог экрана дизайнера
+ *       = итог кабинета клиента `/p/<token>`, до тенге;
+ *   11. чтение каталога в браузере падает — на экране слова, а не пустой
+ *       список «ждёт импорта»;
+ *    7. админка каталога после загрузки 1845 позиций рисует видимые строки,
+ *       а не все.
+ *
  * Любое расхождение — FAIL и ненулевой код выхода. Ноль найденного —
  * FAIL с внятной строкой, а не молчаливый пропуск.
  *
@@ -122,6 +132,27 @@ const READ_PANEL = `(() => {
     notice: panel.querySelector('[data-material-notice]')?.textContent ?? null,
   };
 })()`;
+
+/** Итог экрана — числом, и заодно помечен ли он неполным. */
+const DELIVERY_KEY = 'delivery_install';
+const round2 = (v) => Math.round(v * 100) / 100;
+
+/*
+ * СКОЛЬКО ДОЛЖЕН СТАТЬ ИТОГ, КОГДА У СТРОКИ RAL ПОЯВИЛАСЬ ЦЕНА.
+ *
+ * Считается здесь, своей арифметикой, из количества RAL и введённой цены:
+ * подытог без доставки + количество × цена, и доставка процентом от
+ * нового подытога. Остальные строки обязаны остаться прежними — это
+ * проверяется отдельно.
+ */
+function expectedAfterPrice(lines, key, price) {
+  const delivery = lines.find((line) => line.key === DELIVERY_KEY);
+  const subtotal = lines
+    .filter((line) => line.enabled && line.key !== DELIVERY_KEY)
+    .reduce((sum, line) => sum + (line.key === key ? round2(line.quantity * price) : line.total), 0);
+  const percent = delivery && delivery.enabled ? delivery.quantity : 0;
+  return round2(subtotal + round2((subtotal * percent) / 100));
+}
 
 const READ_ESTIMATE = `(() => {
   const total = document.querySelector('[data-estimate-total]');
@@ -248,6 +279,48 @@ async function demoScenario(browser) {
     `неполный ${estimate.incomplete} · подпись «${estimate.caption ?? '—'}» · без цены: ${unpriced.map((line) => line.key).join(' ') || 'нет'}`,
   );
   await page.screenshot({ path: `${OUT}/demo-after-ral.png` });
+
+  /*
+   * ТЕСТ 12: ЦЕНА КОЛЛЕКЦИИ В ПАНЕЛИ — И ИТОГ ПОЛНЫЙ.
+   *
+   * 1825 цветов по одному не заведёт никто: цена ставится у коллекции на
+   * поверхность. Число некруглое и не совпадает ни с одной ставкой цеха.
+   */
+  const PRICE = 27_413;
+  const unpricedState = await page.evaluate(READ_ESTIMATE);
+  const ralKey = (unpricedState.lines ?? []).find((line) => line.priceUnset)?.key ?? null;
+  const priceField = page.locator('[data-collection-price="ral-design:matte"]');
+  const hasField = (await priceField.count()) > 0;
+  check(
+    'тест 12: у коллекции RAL в панели есть поле цены матовой поверхности',
+    hasField,
+    hasField ? '' : 'НУЛЕВОЙ СЕЛЕКТОР: [data-collection-price="ral-design:matte"] нет в панели',
+  );
+  if (hasField && ralKey) {
+    await priceField.fill(String(PRICE));
+    await page.locator('[data-collection-price-save="ral-design"]').click();
+    const priced = await waitFor(page, READ_ESTIMATE, (e) => e.incomplete === false, 15_000);
+    const expected = expectedAfterPrice(unpricedState.lines, ralKey, PRICE);
+    const ralLine = (priced.lines ?? []).find((line) => line.key === ralKey);
+    const moved = (priced.lines ?? []).filter((line) => {
+      if (line.key === ralKey || line.key === DELIVERY_KEY) return false;
+      const was = unpricedState.lines.find((old) => old.key === line.key);
+      return !was || was.total !== line.total;
+    });
+    check(
+      'тест 12: цена коллекции → итог полный, строка RAL по ней',
+      priced.incomplete === false && ralLine?.rate === PRICE && !ralLine?.priceUnset,
+      `неполный ${priced.incomplete} · RAL ${ralLine ? `${ralLine.quantity} м² × ${ralLine.rate}` : 'НЕТ СТРОКИ'}`,
+    );
+    check(
+      'тест 12: итог изменился ровно на ожидаемое число — количество × цена плюс доставка',
+      priced.total === Math.round(expected) && moved.length === 0,
+      `было ${unpricedState.total} (неполный) → стало ${priced.total} · ожидали ${Math.round(expected)} · ` +
+        `сдвиг ${priced.total - unpricedState.total}` +
+        (moved.length ? ` · ПОЕХАЛИ ЧУЖИЕ СТРОКИ: ${moved.map((l) => l.key).join(' ')}` : ''),
+    );
+    await page.screenshot({ path: `${OUT}/demo-collection-price.png` });
+  }
 
   /* Поверхность МДФ-панели: Touch Sense ↔ High Gloss. */
   await page.locator('[data-material-tab="mdf_panel"]').click();
@@ -508,6 +581,195 @@ async function orgScenario(browser) {
       Array.isArray(reloaded) ? reloaded.map((f) => `${f.count}×${f.key.includes(itemId) ? 'своя' : f.key}${f.map ? '+фото' : ''}`).join(' · ') : 'НУЛЕВОЙ СЕЛЕКТОР',
     );
     await page.screenshot({ path: `${OUT}/org-after-reload.png` });
+
+    /*
+     * ТЕСТ 9: ОДИН ОБЪЕКТ — ОДНА СУММА У ДИЗАЙНЕРА И У КЛИЕНТА.
+     *
+     * RAL с ценой коллекции, фрезеровка со своей ценой и декор корпуса.
+     * Кабинет клиента `/p/<token>` обязан показать тот же итог до тенге:
+     * он считает той же функцией, а не своим расчётом.
+     */
+    console.log('\n  ── организация: итог экрана = итог кабинета клиента (тест 9)');
+    const PRICE_RAL = 27_413;
+    const PRICE_MILLING = 18_437;
+    await page.locator('[data-material-target="fronts"]').click();
+    await page.locator('[data-material-tab="mdf_paint"]').click();
+    const orgPrice = page.locator('[data-collection-price="ral-design:matte"]');
+    if ((await orgPrice.count()) > 0) {
+      await orgPrice.fill(String(PRICE_RAL));
+      await page.locator('[data-collection-price-save="ral-design"]').click();
+      await sleep(2500);
+    } else {
+      check('тест 9: поле цены коллекции на объекте есть', false, 'НУЛЕВОЙ СЕЛЕКТОР: [data-collection-price] нет');
+    }
+    /* Своих цветов RAL у новой организации нет — ставим из вкладки после загрузки ниже. */
+    const imported = page.locator('[data-material-import]');
+    if ((await imported.count()) > 0) {
+      await imported.click();
+      await waitFor(
+        page,
+        `(() => document.querySelector('[data-material-notice]')?.textContent ?? '')()`,
+        (t) => /Загружено/.test(t),
+        90_000,
+      );
+    }
+    await search(page, 'RAL 010 30 20');
+    const ralRow = await waitFor(page, READ_PANEL, (p) => p && p.rows.length === 1, 30_000);
+    check(
+      'тест 9: RAL 010 30 20 есть в каталоге организации после загрузки',
+      ralRow?.rows.length === 1,
+      ralRow ? `строк ${ralRow.rows.length}` : 'НУЛЕВОЙ СЕЛЕКТОР',
+    );
+    if (ralRow?.rows.length === 1) {
+      await page.locator('[data-materials-panel] [data-material-item]').first().click();
+      await sleep(1500);
+    }
+
+    const millingId = await page.evaluate(() => {
+      const cards = [...document.querySelectorAll('[data-milling]')];
+      const card = cards.find((n) => !/без/i.test(n.textContent ?? ''));
+      return card ? card.getAttribute('data-milling') : null;
+    });
+    check('тест 9: фрезеровка есть в каталоге организации', Boolean(millingId), millingId ?? 'НУЛЕВОЙ СЕЛЕКТОР: [data-milling] нет');
+    if (millingId) {
+      const priceBox = page.locator(`[data-milling-price="${millingId}"]`);
+      await priceBox.fill(String(PRICE_MILLING));
+      await priceBox.press('Tab');
+      await sleep(800);
+      await page.locator(`[data-milling="${millingId}"]`).click();
+      await sleep(1200);
+    }
+    const carcassId = await page.evaluate(() => {
+      const card = [...document.querySelectorAll('[data-carcass]')].find(
+        (n) => n.getAttribute('data-carcass') !== 'none',
+      );
+      return card ? card.getAttribute('data-carcass') : null;
+    });
+    check('тест 9: декор корпуса есть в каталоге организации', Boolean(carcassId), carcassId ?? 'НУЛЕВОЙ СЕЛЕКТОР: [data-carcass] нет');
+    if (carcassId) {
+      await page.locator(`[data-carcass="${carcassId}"]`).click();
+      await sleep(1200);
+    }
+
+    /* Автосохранение — через паузу после последней правки. */
+    await sleep(3500);
+    await waitFor(
+      page,
+      `(() => document.querySelector('[data-save-state]')?.getAttribute('data-save-state') ?? null)()`,
+      (st) => st === 'saved',
+      30_000,
+    );
+    const designer = await page.evaluate(READ_ESTIMATE);
+    const designerLines = (designer.lines ?? []).map((line) => line.key);
+    check(
+      'тест 9: у объекта есть и RAL, и фрезеровка, и декор корпуса своими строками',
+      ['front_item_', 'front_milling_', 'carcass_'].every((prefix) => designerLines.some((key) => key.startsWith(prefix))),
+      designerLines.filter((key) => /^(front_item_|front_milling_|carcass_)/.test(key)).join(' · ') || 'НИ ОДНОЙ',
+    );
+    await page.screenshot({ path: `${OUT}/org-designer-total.png` });
+
+    const { data: tokenRow } = await service.from('projects').select('share_token').eq('id', project.id).single();
+    const offer = await context.newPage();
+    await offer.goto(`${BASE}/p/${tokenRow.share_token}`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+    await sleep(2500);
+    const cabinet = await offer.evaluate(() => {
+      const tagged = document.querySelector('[data-offer-total]');
+      if (tagged) {
+        return {
+          total: Number(tagged.getAttribute('data-offer-total')),
+          incomplete: tagged.getAttribute('data-offer-incomplete') === '1',
+        };
+      }
+      const shown = document.querySelector('.mw-display');
+      return shown ? { total: Number((shown.textContent ?? '').replace(/[^0-9]/g, '')), incomplete: null } : null;
+    });
+    check(
+      'тест 9: итог кабинета клиента = итог экрана дизайнера, до тенге',
+      cabinet !== null && cabinet.total === designer.total && cabinet.incomplete === designer.incomplete,
+      `экран ${designer.total}${designer.incomplete ? ' (неполный)' : ''} · кабинет ${cabinet ? cabinet.total : 'НУЛЕВОЙ СЕЛЕКТОР'}` +
+        `${cabinet?.incomplete ? ' (неполный)' : ''}`,
+    );
+    await offer.screenshot({ path: `${OUT}/org-cabinet-total.png` });
+    await offer.close();
+
+    /*
+     * АДМИНКА: 1845+ ПОЗИЦИЙ НЕ РИСУЮТСЯ РАЗОМ.
+     *
+     * Строка таблицы — картинка, четыре поля и список. 1825 таких строк в
+     * DOM — это та же зависшая вкладка, от которой уведена панель.
+     */
+    console.log('\n  ── админка каталога: 1845+ позиций (пункт 7)');
+    const admin = await context.newPage();
+    await admin.goto(`${BASE}/admin/catalog`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+    await sleep(2500);
+    const category = admin.getByText('Эмаль · RAL Design', { exact: true }).first();
+    if ((await category.count()) > 0) {
+      await category.click();
+      await sleep(1500);
+      const readRows = () =>
+        admin.evaluate(() => {
+          const rows = [...document.querySelectorAll('tbody tr')].filter((row) => row.querySelector('td input'));
+          return {
+            count: rows.length,
+            first: rows[0]?.querySelector('td input')?.value ?? null,
+            scroller: Boolean(document.querySelector('[data-admin-list]')),
+          };
+        });
+      const top = await readRows();
+      await admin.evaluate(() => {
+        const list = document.querySelector('[data-admin-list]') ?? document.scrollingElement;
+        if (list) list.scrollTop = 30_000;
+      });
+      await sleep(800);
+      const deep = await readRows();
+      check(
+        'пункт 7: админка рисует видимые строки RAL, а не все 1825',
+        top.count > 0 && top.count < 120 && deep.count > 0 && deep.count < 120 && deep.first !== top.first,
+        `вверху ${top.count} строк с ${top.first} · после прокрутки ${deep.count} с ${deep.first}`,
+      );
+    } else {
+      check('пункт 7: категория «Эмаль · RAL Design» есть в админке', false, 'НУЛЕВОЙ СЕЛЕКТОР: категории нет');
+    }
+    await admin.screenshot({ path: `${OUT}/org-admin-ral.png` });
+    await admin.close();
+
+    /*
+     * ТЕСТ 11: КАТАЛОГ НЕ ПРОЧИТАЛСЯ — СЛОВА, А НЕ ПУСТОЙ СПИСОК.
+     *
+     * Чтение каталога в браузере перехватывается и падает так, как падает
+     * PostgREST. Панель обязана сказать это словами, а не показать
+     * коллекции «ждёт импорта»: ждёт не импорт, а сеть.
+     */
+    console.log('\n  ── каталог не прочитался (тест 11)');
+    const broken = await context.newPage();
+    await broken.route('**/rest/v1/catalog_items**', (route) =>
+      route.fulfill({ status: 500, contentType: 'application/json', body: '{"message":"проверка: отказ чтения"}' }),
+    );
+    await broken.goto(`${BASE}/project/${project.id}`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+    await sleep(3500);
+    await openMaterials(broken);
+    const shownError = await waitFor(
+      broken,
+      `(() => {
+        const node = document.querySelector('[data-catalog-error]');
+        return {
+          text: node && node.offsetParent !== null ? node.textContent : null,
+          waiting: [...document.querySelectorAll('[data-material-collection]')].length,
+        };
+      })()`,
+      (v) => Boolean(v?.text),
+      30_000,
+    );
+    check(
+      'тест 11: каталог не прочитался — на экране слова, а не список «ждёт импорта»',
+      Boolean(shownError?.text && /Каталог/.test(shownError.text)) && shownError.waiting === 0,
+      shownError?.text
+        ? `«${shownError.text.trim().slice(0, 120)}» · коллекций в списке ${shownError.waiting}`
+        : `НУЛЕВОЙ СЕЛЕКТОР: слов нет · коллекций «ждёт импорта» в списке ${shownError?.waiting ?? '?'}`,
+    );
+    await broken.screenshot({ path: `${OUT}/org-catalog-error.png` });
+    await broken.close();
+
     await context.close();
   } finally {
     /* Уборка: организация каскадом уносит категории, позиции и объект. */

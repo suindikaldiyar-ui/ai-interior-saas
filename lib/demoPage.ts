@@ -1,12 +1,13 @@
 import { estimateGroups, type EstimateGroup } from './millwork/estimateGroups';
-import { buildEstimate } from './millwork/estimate';
 import { DEMO_SEED_KEY } from './millwork/demoProject';
+import { projectOffer } from './millwork/objectEstimate';
+import { fetchCatalog } from './catalog';
 import { orgBySlug } from './org';
 import type { MillworkState } from './projects';
 import { PROJECTS_BUCKET, storageUrl } from './supabase/config';
 import { supabaseService } from './supabase/server';
-import type { Org } from '@/types/catalog';
-import type { Estimate, Run } from '@/types/millwork';
+import { productionSettings, type Org } from '@/types/catalog';
+import type { Estimate, Measurement, Run } from '@/types/millwork';
 
 /**
  * ДАННЫЕ ПУБЛИЧНОЙ ДЕМО-СТРАНИЦЫ.
@@ -24,8 +25,13 @@ import type { Estimate, Run } from '@/types/millwork';
  *     нет, и блок честно пуст.
  */
 
-/** Только те поля объекта, которым место на публичной странице. */
-const DEMO_PROJECT_FIELDS = 'id, address, zone, total, share_token, millwork';
+/**
+ * Только те поля объекта, которым место на публичной странице.
+ *
+ * `measurements` наружу не выходит: он нужен смете (длина стены,
+ * потолок, проёмы) — той же, что у экрана дизайнера и кабинета клиента.
+ */
+const DEMO_PROJECT_FIELDS = 'id, address, zone, total, share_token, millwork, measurements';
 
 export type DemoPageData = {
   org: Org;
@@ -41,7 +47,13 @@ export type DemoPageData = {
   renderUrl: string | null;
 };
 
-export async function loadDemoPage(slug: string): Promise<DemoPageData | null> {
+/**
+ * Страница есть, но показать её сейчас нельзя — словами. Не 404: адрес
+ * верный, а «страницы не существует» отправит человека искать другую.
+ */
+export type DemoPageUnavailable = { unavailable: string };
+
+export async function loadDemoPage(slug: string): Promise<DemoPageData | DemoPageUnavailable | null> {
   const org = await orgBySlug(slug);
   if (!org) return null;
 
@@ -60,15 +72,46 @@ export async function loadDemoPage(slug: string): Promise<DemoPageData | null> {
 
   const millwork = (data.millwork ?? {}) as MillworkState;
   const variant = millwork.selectedVariant ?? 'optimal';
-  const run = millwork.runs?.[variant];
-  if (!run) return null;
+  if (!millwork.runs?.[variant]) return null;
 
   /*
-   * Смета считается ТЕМ ЖЕ `buildEstimate` и по СНИМКУ ЦЕН из объекта, а не
-   * по каталогу на сегодня: страница показывает ту сумму, которую компании
-   * назвали, и переоценка каталога её менять не должна.
+   * СМЕТА — ТЕМИ ЖЕ ШАГАМИ, ЧТО У ЭКРАНА ДИЗАЙНЕРА И КАБИНЕТА (слой 52).
+   *
+   * Здесь был свой `buildEstimate` по снимку цен: без позиций каталога,
+   * без фрезеровки и декоров корпуса, без настроек цеха и со снятыми
+   * галочками, которых он не видел. Теперь это `projectOffer`: каталог
+   * организации даёт строки, снимок цен держит сумму, которую назвали —
+   * переоценка каталога её не меняет (ловушка 30).
+   *
+   * Каталог не прочитался или раскладка не собралась — страницы нет:
+   * цена без каталога — это цифра, которую компания не подпишет, а
+   * причина уходит в лог.
    */
-  const estimate = buildEstimate(run, variant, millwork.priceSnapshot ?? {}, [], millwork.savedAt);
+  const [catalogRead, { data: orgRow, error: orgError }] = await Promise.all([
+    fetchCatalog(service, org.id),
+    service.from('orgs').select('production').eq('id', org.id).maybeSingle(),
+  ]);
+  if (catalogRead.error !== null) {
+    return { unavailable: 'Демонстрация сейчас не открывается: каталог компании не прочитался. Обновите страницу через минуту.' };
+  }
+  if (orgError) {
+    console.error(`[демо-страница] ${org.slug}: настройки цеха не прочитались —`, orgError.message);
+    return { unavailable: 'Демонстрация сейчас не открывается: настройки цеха не прочитались. Обновите страницу через минуту.' };
+  }
+
+  const offer = projectOffer({
+    title: String(data.address ?? ''),
+    zone: String(data.zone ?? ''),
+    measurement: data.measurements as Measurement,
+    state: millwork,
+    production: productionSettings(orgRow?.production),
+    catalog: catalogRead.entries,
+  });
+  if (offer.state === 'refused') {
+    console.error(`[демо-страница] ${org.slug}: раскладка не собралась — ${offer.refusal}`);
+    return { unavailable: `Демонстрация сейчас не собирается: ${offer.refusal}` };
+  }
+  const { run, estimate } = offer;
 
   return {
     org,

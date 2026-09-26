@@ -6,7 +6,12 @@ import { PROJECTS_BUCKET, storageUrl } from '@/lib/supabase/config';
 import { buildCatalogRefs, renderVariant, urlToDataUrl } from '@/lib/renderClient';
 import { assertSameConfiguration } from '@/lib/millwork/fingerprint';
 import { useInteriorStore } from '@/store/useInteriorStore';
-import type { Variant } from '@/types/millwork';
+import type { Run, Variant } from '@/types/millwork';
+
+/** Столешница ряда — в BINDING TABLE (слой 52): выбор живёт на ряду. */
+function countertopOf(run: Run): { itemId: string | null } {
+  return { itemId: run.countertopMaterial?.itemId ?? null };
+}
 import type { RunAngle } from '@/types/render';
 
 /**
@@ -142,7 +147,7 @@ export async function rerenderMillworkVariant(
       : await urlToDataUrl(roomPhoto)
     : undefined;
 
-  const catalogRefs = await buildCatalogRefs();
+  const catalogRefs = await buildCatalogRefs(countertopOf(variant.run));
 
   await renderVariant(
     styleId,
@@ -200,21 +205,21 @@ export async function runMillworkRenders({
     assertSameConfiguration('Рендер', variant.run.fingerprint, sceneFingerprint);
   }
 
-  const catalogRefs = await buildCatalogRefs();
-
   useInteriorStore.getState().startRenderBatch([styleId], capture);
 
   await Promise.allSettled(
-    variants.map((variant) =>
-      renderVariant(
+    variants.map(async (variant) => {
+      const catalogRefs = await buildCatalogRefs(countertopOf(variant.run));
+      await renderVariant(
         styleId,
         capture,
         [],
         catalogRefs,
         variantNotes(variant),
         photo,
-      ).then(() => offloadToStorage(styleId, projectId)),
-    ),
+      );
+      await offloadToStorage(styleId, projectId);
+    }),
   );
 }
 

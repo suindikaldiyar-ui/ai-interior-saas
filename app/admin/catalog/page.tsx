@@ -47,9 +47,15 @@ export default async function CatalogPage() {
   if (!org) return <OrgBootstrap />;
 
   const supabase = supabaseServer();
-  const [categories, items] = supabase
+  const [categories, itemsRead] = supabase
     ? await Promise.all([fetchCategories(supabase, org.id), fetchCatalog(supabase, org.id)])
-    : [[], []];
+    : [[], null];
+  /*
+   * Каталог не прочитался — это не «товаров 0». Пустая таблица на ошибке
+   * чтения предлагает завести заново то, что уже заведено (слой 52).
+   */
+  const items = itemsRead?.entries ?? [];
+  const itemsError = itemsRead?.error ?? null;
 
   return (
     <main className="mw-root flex h-screen flex-col overflow-hidden">
@@ -57,7 +63,9 @@ export default async function CatalogPage() {
         <span className="text-[15px] font-semibold tracking-[-0.02em]">{org.name}</span>
         <span className="mw-label">Каталог</span>
         <span className="mw-num text-[12px] text-graphiteMw">
-          {categories.length} категорий · {items.length} товаров
+          {itemsError
+            ? `${categories.length} категорий · товары не прочитались`
+            : `${categories.length} категорий · ${items.length} товаров`}
         </span>
 
         <div className="ml-auto flex items-center gap-2">
@@ -88,7 +96,12 @@ export default async function CatalogPage() {
         </div>
       </header>
 
-      <CatalogAdmin orgId={org.id} initialCategories={categories} initialItems={items} />
+      <CatalogAdmin
+        orgId={org.id}
+        initialCategories={categories}
+        initialItems={items}
+        initialError={itemsError}
+      />
     </main>
   );
 }

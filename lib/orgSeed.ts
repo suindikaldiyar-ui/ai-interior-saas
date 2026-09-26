@@ -70,7 +70,11 @@ export async function seedDemoProject(
     return { created: false, projectId: String(already[0].id) };
   }
 
-  const rates = ratesFromCatalog(await fetchCatalog(supabase, orgId));
+  const catalogRead = await fetchCatalog(supabase, orgId);
+  if (catalogRead.error !== null) {
+    return { created: false, error: `Демо-объект не создан: ${catalogRead.error}` };
+  }
+  const rates = ratesFromCatalog(catalogRead.entries);
   const missing = missingRequiredRates(rates);
   if (missing.length > 0) {
     return {

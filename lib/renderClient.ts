@@ -109,10 +109,25 @@ function planKitchenRefs(
  * Выбранные артикулы вместе с композитными референсами.
  * Товар без картинки не выбрасывается — он уйдёт в промпт текстом.
  */
-export async function buildCatalogRefs(): Promise<CatalogReference[]> {
+export async function buildCatalogRefs(
+  /**
+   * СТОЛЕШНИЦА РЯДА — У КОНФИГУРАТОРА (слой 52).
+   *
+   * Выбор столешницы живёт на ряду (`Run.countertopMaterial`), и его же
+   * считает смета. Передан — прежний ключ `zone:countertop` из
+   * `selections` не читается вовсе: столешницу выбирают в одном месте.
+   * Не передан — студия, у которой ряда нет.
+   */
+  countertop?: { itemId: string | null },
+): Promise<CatalogReference[]> {
   const state = useInteriorStore.getState();
   const byId = new Map(state.catalog.map((e) => [e.id, e]));
   const sceneById = new Map(state.items.map((i) => [i.id, i]));
+  const selections: Record<string, string> = { ...state.selections };
+  if (countertop) {
+    delete selections[COUNTERTOP_TARGET];
+    if (countertop.itemId) selections[COUNTERTOP_TARGET] = countertop.itemId;
+  }
 
   /*
    * Столешница и фартук выбираются своими товарами и уходят в BINDING TABLE
@@ -120,8 +135,8 @@ export async function buildCatalogRefs(): Promise<CatalogReference[]> {
    * столешницы.
    */
   const taken = {
-    countertop: Boolean(state.selections[COUNTERTOP_TARGET]),
-    backsplash: Boolean(state.selections[APRON_TARGET]),
+    countertop: Boolean(selections[COUNTERTOP_TARGET]),
+    backsplash: Boolean(selections[APRON_TARGET]),
   };
 
   /*
@@ -135,7 +150,7 @@ export async function buildCatalogRefs(): Promise<CatalogReference[]> {
       return Math.max(max, box.width * box.height);
     }, 0) || 6;
 
-  const plans: RefPlan[] = Object.entries(state.selections).flatMap(
+  const plans: RefPlan[] = Object.entries(selections).flatMap(
     ([targetKey, itemId]) => {
       const entry = byId.get(itemId);
       if (!entry) return [];
@@ -155,7 +170,7 @@ export async function buildCatalogRefs(): Promise<CatalogReference[]> {
       }
 
       if (sceneItem && isKitchen(sceneItem)) {
-        if (state.selections[FACADE_TARGET]) return [];
+        if (selections[FACADE_TARGET]) return [];
         return planKitchenRefs(targetKey, entry, label, Math.max(area, 6), taken);
       }
 

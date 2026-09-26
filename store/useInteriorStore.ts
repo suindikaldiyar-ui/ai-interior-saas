@@ -88,6 +88,15 @@ export type InteriorState = {
   orgId: string | null;
   projectId: string | null;
   catalog: CatalogEntryFull[];
+  /**
+   * КАТАЛОГ НЕ ПРОЧИТАЛСЯ — СЛОВАМИ (слой 52).
+   *
+   * «Каталог пуст» и «каталог не дошёл» — разные состояния: первое
+   * значит «нечего показать», второе — «цены неизвестны». Пустой
+   * `catalog` при ошибке чтения выглядел бы первым. `null` — прочитался
+   * или его нет вовсе (демонстрация, студия без входа).
+   */
+  catalogError: string | null;
   /** targetKey → catalog_item_id. Ссылка, а не копия товара:
       компания поменяла цену — проект подтянет актуальную. */
   selections: ProjectSelections;
@@ -134,6 +143,7 @@ export type InteriorState = {
   setOrgId: (id: string | null) => void;
   setProjectId: (id: string | null) => void;
   setCatalog: (catalog: CatalogEntryFull[]) => void;
+  setCatalogError: (error: string | null) => void;
   /**
    * ЦЕНА ПОЗИЦИИ КАТАЛОГА ПОМЕНЯЛАСЬ.
    *
@@ -280,6 +290,7 @@ export const useInteriorStore = create<InteriorState>((set, get) => ({
   orgId: null,
   projectId: null,
   catalog: [],
+  catalogError: null,
   selections: {},
   analysis: null,
   measurements: {},
@@ -636,7 +647,9 @@ export const useInteriorStore = create<InteriorState>((set, get) => ({
 
   setOrgId: (id) => set({ orgId: id }),
   setProjectId: (id) => set({ projectId: id }),
-  setCatalog: (catalog) => set({ catalog }),
+  /* Прочитанный каталог снимает прежнюю ошибку чтения. */
+  setCatalog: (catalog) => set({ catalog, catalogError: null }),
+  setCatalogError: (catalogError) => set({ catalogError }),
 
   setCatalogPrice: (id, price) =>
     set((state) => ({

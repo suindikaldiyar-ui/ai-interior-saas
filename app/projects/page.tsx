@@ -46,14 +46,20 @@ export default async function ProjectsPage() {
   if (!org) return <OrgBootstrap />;
 
   const supabase = supabaseServer();
-  const [projects, catalog] = supabase
+  const [projects, catalogRead] = supabase
     ? await Promise.all([listProjects(supabase, org.id), fetchCatalog(supabase, org.id)])
-    : [[], []];
+    : [[], null];
 
   // Пока в каталоге нет ставок, считать смету нечем — говорим об этом сразу,
   // а не показываем цифры, посчитанные по выдуманным ценам.
-  const rates = ratesFromCatalog(catalog);
-  const hasRates = Object.keys(rates).length > 0;
+  const rates = ratesFromCatalog(catalogRead?.entries ?? []);
+  /*
+   * «Ставок нет» и «каталог не прочитался» — разные вещи: первое чинит
+   * компания в каталоге, второе — обновление страницы. Не прочитался —
+   * про ставки молчим, а не пугаем пустым прайсом.
+   */
+  const catalogError = catalogRead?.error ?? null;
+  const hasRates = catalogError !== null || Object.keys(rates).length > 0;
 
   return (
     <main className="mw-root min-h-screen">
@@ -104,6 +110,11 @@ export default async function ProjectsPage() {
       </header>
 
       <div className="px-4 py-4">
+        {catalogError && (
+          <p className="mb-4 border border-alert bg-sheet px-3 py-2.5 text-[13px]" data-catalog-error>
+            {catalogError}
+          </p>
+        )}
         {!hasRates && (
           <div className="mb-4 border border-tape bg-sheet px-3 py-2.5">
             <p className="text-[13px]">

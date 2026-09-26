@@ -31,6 +31,15 @@ export async function generateMetadata({ params }: { params: { slug: string } })
 export default async function CompanyDemoPage({ params }: { params: { slug: string } }) {
   const data = await loadDemoPage(params.slug);
   if (!data) notFound();
+  if ('unavailable' in data) {
+    return (
+      <main className="mw-root flex min-h-screen items-center justify-center p-6">
+        <p className="max-w-md text-center text-[15px] leading-snug" data-demo-unavailable>
+          {data.unavailable}
+        </p>
+      </main>
+    );
+  }
 
   return <DemoShowcase data={data} />;
 }

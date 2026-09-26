@@ -3,7 +3,7 @@ import type { CatalogCategory, CatalogEntryFull, CatalogUnit, TilingSpec } from 
 import type { FrontBase, FrontFinish, FrontSpec, MillworkOp, Module, Run } from '@/types/millwork';
 import { hasFacade } from './applianceFront';
 import { CARCASS_SCOPES } from './carcassMaterial';
-import { frontConflict, frontOf } from './frontMaterial';
+import { DEFAULT_FRONT, frontConflict, frontOf } from './frontMaterial';
 import { allModules } from './layout';
 import {
   CATALOG_UNIT_OF,
@@ -15,6 +15,7 @@ import {
   PRICE_UNITS,
   collectionCategoryKey,
   collectionOf,
+  collectionRateKey,
   materialColorOf,
   metaFinishPrices,
   metaFinishes,
@@ -32,7 +33,9 @@ export {
   PRICE_UNSET,
   collectionCategoryKey,
   collectionOf,
+  collectionRateKey,
   materialPrice,
+  materialPriceOf,
   parseFinishes,
   priceState,
 } from './materialCollection';
@@ -321,6 +324,37 @@ export function manualMaterialRow(
   });
 }
 
+/**
+ * ЦЕНА КОЛЛЕКЦИИ НА ПОВЕРХНОСТЬ — СТРОКА КАТАЛОГА СО СТАВКОЙ.
+ *
+ * Та же `catalog_items`, что у ставок цеха: `meta.estimateKey` делает её
+ * ставкой, и её читает `ratesFromCatalog` — второго места под цены нет.
+ * Лежит она в категории своей коллекции, рядом с позициями, но позицией
+ * не считается (`materialItemOf` её пропускает). Артикул выводится из
+ * коллекции и поверхности: на пару — одна строка.
+ */
+export function collectionPriceArticle(collectionId: string, surface: string): string {
+  return `price:${collectionId}:${surface}`;
+}
+
+export function collectionPriceRow(
+  collection: Pick<CollectionDef, 'id' | 'label' | 'priceUnit'>,
+  surface: string,
+  price: number,
+  surfaceLabel: string = surface,
+): MaterialRow {
+  return {
+    collectionId: collection.id,
+    article: collectionPriceArticle(collection.id, surface),
+    name_ru: `Цена коллекции «${collection.label}», ${surfaceLabel}`,
+    name_kk: `Цена коллекции «${collection.label}», ${surfaceLabel}`,
+    price: price > 0 ? price : 0,
+    unit: CATALOG_UNIT_OF[collection.priceUnit],
+    tiling: {},
+    meta: { estimateKey: collectionRateKey(collection.id, surface) },
+  };
+}
+
 /** Категория коллекции — в `ensureCategories`: заводится, только если её нет. */
 export function collectionCategory(collection: Pick<CollectionDef, 'id' | 'label' | 'priceUnit'>) {
   return {
@@ -397,7 +431,8 @@ export function planMaterialImport(
  */
 export function catalogEntriesFromRows(
   rows: MaterialRow[],
-  file: Pick<MaterialFile, 'collections'> | MaterialDefs,
+  /* Нужны только коллекции — файл, их описания или одна коллекция. */
+  file: { collections: Pick<CollectionDef, 'id' | 'label' | 'priceUnit'>[] },
   orgId: string,
   idPrefix: string,
 ): CatalogEntryFull[] {
@@ -451,6 +486,8 @@ export function catalogEntriesFromRows(
 export function materialItemOf(entry: CatalogEntryFull): MaterialItem | null {
   const collection = collectionOf(entry);
   if (!collection || entry.is_active === false) return null;
+  /* Цена коллекции лежит рядом с позициями, но это ставка, а не материал. */
+  if (typeof entry.meta?.estimateKey === 'string' && entry.meta.estimateKey) return null;
 
   const color = materialColorOf(entry);
   const url = textureUrl(entry) || null;
@@ -719,6 +756,17 @@ export function materialOps(
     if (made.reset) reset += 1;
     return { op: 'set_front', moduleId: unit.id, front: made.front };
   });
+
+  /*
+   * «НА ВСЮ КУХНЮ» — ЭТО И МАТЕРИАЛ КУХНИ, А НЕ ТОЛЬКО СЕГОДНЯШНИЕ МОДУЛИ.
+   *
+   * Модуль, который появится после выбора, возьмёт его сам (`applyOps`).
+   * Материал кухни — цельный фасад позиции: конструкцию нового модуля
+   * никто не выбирал.
+   */
+  if (target === 'fronts') {
+    ops.push({ op: 'set_kitchen_front', front: frontFrom(DEFAULT_FRONT, choice, finishes).front });
+  }
 
   return {
     ops,

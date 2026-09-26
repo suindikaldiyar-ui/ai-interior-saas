@@ -1,7 +1,7 @@
 'use client';
 
-import { useCallback, useMemo, useRef, useState } from 'react';
-import { patchCatalogItem, previewUrl } from '@/lib/catalog';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { fetchCatalog, patchCatalogItem, previewUrl } from '@/lib/catalog';
 import { TYPICAL_PRICE_LIST } from '@/lib/millwork/rates';
 import { supabaseBrowser } from '@/lib/supabase/client';
 import {
@@ -20,12 +20,30 @@ type Props = {
   orgId: string;
   initialCategories: CatalogCategory[];
   initialItems: CatalogEntryFull[];
+  /** Товары не прочитались на сервере — словами, а не пустой таблицей. */
+  initialError?: string | null;
 };
+
+/*
+ * ТАБЛИЦА ТОВАРОВ ВИРТУАЛЬНАЯ (слой 52).
+ *
+ * Строка — картинка, четыре поля и список. Категория «Эмаль · RAL Design»
+ * — 1825 таких строк, и все они стояли в DOM разом: та же зависшая
+ * вкладка, от которой уведена панель материалов. Рисуются видимые строки
+ * плюс запас, остальное — две распорки нужной высоты.
+ */
+const ROW_PX = 52;
+const OVERSCAN = 8;
 
 const inputCls =
   'mw-field';
 
-export default function CatalogAdmin({ orgId, initialCategories, initialItems }: Props) {
+export default function CatalogAdmin({
+  orgId,
+  initialCategories,
+  initialItems,
+  initialError = null,
+}: Props) {
   const supabase = supabaseBrowser();
 
   const [categories, setCategories] = useState(initialCategories);
@@ -37,6 +55,11 @@ export default function CatalogAdmin({ orgId, initialCategories, initialItems }:
   const [notice, setNotice] = useState<string | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
   const [dragId, setDragId] = useState<string | null>(null);
+  /** Каталог не прочитался: таблица прежняя, а причина — словами над ней. */
+  const [readError, setReadError] = useState<string | null>(initialError);
+  const listRef = useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewport, setViewport] = useState(640);
 
   const fileInput = useRef<HTMLInputElement>(null);
   const csvInput = useRef<HTMLInputElement>(null);
@@ -47,40 +70,54 @@ export default function CatalogAdmin({ orgId, initialCategories, initialItems }:
     [items, activeCategory],
   );
 
+  /*
+   * ПЕРЕЧИТАТЬ — ТЕМ ЖЕ `fetchCatalog`, ЧТО И СЕРВЕР.
+   *
+   * Здесь был свой запрос без страниц и без проверки ошибок: PostgREST
+   * отдаёт не больше 1000 строк, и после первой же правки каталог на
+   * 1845 позиций молча терял половину, а упавшее чтение не меняло ничего
+   * и не говорило ни слова.
+   */
   const reload = useCallback(async () => {
     if (!supabase) return;
     const [cats, list] = await Promise.all([
       supabase.from('catalog_categories').select('*').eq('org_id', orgId).order('sort_order'),
-      supabase
-        .from('catalog_items')
-        .select(
-          `id, org_id, category_id, article, name_ru, name_kk, description, price, unit,
-           dimensions, tiling, meta, is_active,
-           catalog_categories!inner(id, org_id, key, name_ru, name_kk, applies_to, unit, sort_order, is_active),
-           catalog_assets(id, item_id, kind, storage_path, sort_order)`,
-        )
-        .eq('org_id', orgId)
-        .order('article'),
+      fetchCatalog(supabase, orgId),
     ]);
 
-    if (cats.data) setCategories(cats.data as CatalogCategory[]);
-    if (list.data) {
-      type Raw = CatalogEntryFull & {
-        catalog_categories: CatalogCategory;
-        catalog_assets: CatalogEntryFull['assets'];
-      };
-      setItems(
-        (list.data as unknown as Raw[]).map((row) => ({
-          ...row,
-          dimensions: row.dimensions ?? {},
-          tiling: row.tiling ?? {},
-          meta: row.meta ?? {},
-          category: row.catalog_categories,
-          assets: [...(row.catalog_assets ?? [])].sort((a, b) => a.sort_order - b.sort_order),
-        })),
-      );
+    if (cats.error) {
+      console.error('[каталог] категории не прочитались:', cats.error.message);
+      setNotice('Категории не прочитались — обновите страницу.');
+    } else if (cats.data) {
+      setCategories(cats.data as CatalogCategory[]);
     }
+    if (list.error !== null) {
+      setReadError(list.error);
+      return;
+    }
+    setReadError(null);
+    setItems(list.entries);
   }, [supabase, orgId]);
+
+  /* Высота окна списка: по ней считается, какие строки видны. */
+  useEffect(() => {
+    const node = listRef.current;
+    if (!node) return;
+    const measure = () => setViewport(node.clientHeight || 640);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  /* Сменили категорию — список с начала. */
+  useEffect(() => {
+    setScrollTop(0);
+    if (listRef.current) listRef.current.scrollTop = 0;
+  }, [activeCategory]);
+
+  const first = Math.max(0, Math.floor(scrollTop / ROW_PX) - OVERSCAN);
+  const last = Math.min(visibleItems.length, Math.ceil((scrollTop + viewport) / ROW_PX) + OVERSCAN);
 
   /* ── Категории ── */
 
@@ -290,7 +327,7 @@ export default function CatalogAdmin({ orgId, initialCategories, initialItems }:
       </datalist>
 
       {/* Категории */}
-      <aside className="w-full border-b border-navyLine bg-sheet lg:w-[290px] lg:shrink-0 lg:border-b-0 lg:border-r">
+      <aside className="max-h-[40vh] w-full overflow-y-auto border-b border-navyLine bg-sheet lg:max-h-none lg:w-[290px] lg:shrink-0 lg:border-b-0 lg:border-r">
         <div className="flex items-center justify-between border-b border-navyLine px-3 py-2">
           <span className="mw-label">Категории</span>
           <button
@@ -363,7 +400,7 @@ export default function CatalogAdmin({ orgId, initialCategories, initialItems }:
       </aside>
 
       {/* Товары */}
-      <section className="min-w-0 flex-1 bg-concrete">
+      <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-concrete">
         <div className="flex flex-wrap items-center gap-2 border-b border-navyLine px-3 py-2">
           <span className="mw-label">Товары</span>
           <button
@@ -397,6 +434,12 @@ export default function CatalogAdmin({ orgId, initialCategories, initialItems }:
           </span>
         </div>
 
+        {readError && (
+          <p className="border-b border-alert/50 bg-navy px-3 py-2 text-[13px] text-alert" data-catalog-error>
+            {readError}
+          </p>
+        )}
+
         {errors.length > 0 && (
           <ul className="border-b border-alert/50 bg-navy px-3 py-2">
             {errors.slice(0, 12).map((e, i) => (
@@ -407,19 +450,26 @@ export default function CatalogAdmin({ orgId, initialCategories, initialItems }:
           </ul>
         )}
 
-        <div className="overflow-x-auto">
+        <div
+          ref={listRef}
+          data-admin-list
+          data-row-count={visibleItems.length}
+          onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+          className="min-h-0 flex-1 overflow-auto"
+        >
           <table className="w-full min-w-[820px] border-collapse">
-            <thead>
+            <thead className="sticky top-0 z-10">
               <tr className="border-b border-navyLine bg-sheet text-left">
                 {['', 'Артикул', 'Название', 'Ключ сметы', 'Цена', 'Ед.', 'Файлы', ''].map((h, i) => (
-                  <th key={i} className="mw-label px-2 py-1.5 font-normal">
+                  <th key={i} className="mw-label bg-sheet px-2 py-1.5 font-normal">
                     {h}
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {visibleItems.map((item) => {
+              {first > 0 && <tr aria-hidden style={{ height: first * ROW_PX }} />}
+              {visibleItems.slice(first, last).map((item) => {
                 const surface = isSurfaceKind(item.category.applies_to);
                 const hasComposite = item.assets.some((a) => a.kind === 'composite');
                 const preview = previewUrl(item);
@@ -432,6 +482,7 @@ export default function CatalogAdmin({ orgId, initialCategories, initialItems }:
                     onDragOver={(e) => e.preventDefault()}
                     onDrop={() => onDrop(item.id)}
                     className="border-b border-navyLine/70 hover:bg-navy/60"
+                    style={{ height: ROW_PX }}
                   >
                     <td className="w-12 px-2 py-1.5">
                       {preview ? (
@@ -524,16 +575,19 @@ export default function CatalogAdmin({ orgId, initialCategories, initialItems }:
                   </tr>
                 );
               })}
+              {last < visibleItems.length && (
+                <tr aria-hidden style={{ height: (visibleItems.length - last) * ROW_PX }} />
+              )}
             </tbody>
           </table>
-        </div>
 
-        {activeCategory && visibleItems.length === 0 && (
-          <p className="px-3 py-4 text-[13px] text-graphiteMw">
-            В категории пусто. Добавьте товар или импортируйте выгрузку из 1С —
-            колонки article, name, category_key, price, unit.
-          </p>
-        )}
+          {activeCategory && visibleItems.length === 0 && !readError && (
+            <p className="px-3 py-4 text-[13px] text-graphiteMw">
+              В категории пусто. Добавьте товар или импортируйте выгрузку из 1С —
+              колонки article, name, category_key, price, unit.
+            </p>
+          )}
+        </div>
       </section>
     </div>
   );

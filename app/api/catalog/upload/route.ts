@@ -122,7 +122,8 @@ export async function POST(request: Request) {
         { kind: 'swatch', role: 'main', buffer: await buildSwatch(source) },
       ];
     }
-  } catch {
+  } catch (error) {
+    console.error('[загрузка] изображение не обработалось:', error);
     return NextResponse.json(
       { error: 'Не удалось обработать изображение. Нужен JPEG, PNG или WebP.' },
       { status: 400 },
@@ -148,15 +149,29 @@ export async function POST(request: Request) {
       );
     }
 
+    /*
+     * ЗАПИСЬ О ФАЙЛЕ ПРОВЕРЯЕТСЯ (слой 52).
+     *
+     * Файл без строки в `catalog_assets` лежит в Storage, но каталог его
+     * не видит: фото не ляжет на фасад, композит не уйдёт в рендер, а
+     * ответ говорил «Готово». Не записалось — отказ словами, причина в лог.
+     */
     // Один файл на связку вид + поверхность — сначала чистим старую запись.
-    await supabase
+    const { error: clearError } = await supabase
       .from('catalog_assets')
       .delete()
       .eq('item_id', row.id)
       .eq('kind', asset.kind)
       .eq('role', asset.role);
+    if (clearError) {
+      console.error(`[загрузка] ${row.id}: старая запись ${asset.role}-${asset.kind} не удалилась —`, clearError.message);
+      return NextResponse.json(
+        { error: 'Файл загружен, но каталог его не увидит: прежняя запись о файле не удалилась. Повторите загрузку.' },
+        { status: 500 },
+      );
+    }
 
-    await supabase.from('catalog_assets').insert({
+    const { error: insertError } = await supabase.from('catalog_assets').insert({
       item_id: row.id,
       org_id: row.org_id,
       kind: asset.kind,
@@ -164,6 +179,13 @@ export async function POST(request: Request) {
       storage_path: path,
       sort_order: uploaded.length,
     });
+    if (insertError) {
+      console.error(`[загрузка] ${row.id}: запись ${asset.role}-${asset.kind} не легла —`, insertError.message);
+      return NextResponse.json(
+        { error: 'Файл загружен, но каталог его не увидит: запись о файле не сохранилась. Повторите загрузку.' },
+        { status: 500 },
+      );
+    }
 
     uploaded.push({ kind: asset.kind, role: asset.role, path });
   }
@@ -174,13 +196,20 @@ export async function POST(request: Request) {
     const metaKey =
       role === 'facade' ? 'facadeColor' : role === 'countertop' ? 'counterColor' : role === 'backsplash' ? 'apronColor' : null;
 
-    await supabase
+    const { error: colorError } = await supabase
       .from('catalog_items')
       .update({
         tiling: { ...(row.tiling ?? {}), averageColor },
         ...(metaKey ? { meta: { ...(row.meta ?? {}), [metaKey]: averageColor } } : {}),
       })
       .eq('id', row.id);
+    if (colorError) {
+      console.error(`[загрузка] ${row.id}: средний цвет не записался —`, colorError.message);
+      return NextResponse.json(
+        { error: 'Файл загружен, но цвет позиции не сохранился: сцена покажет прежний цвет. Повторите загрузку.' },
+        { status: 500 },
+      );
+    }
   }
 
   return NextResponse.json({ ok: true, assets: uploaded, averageColor });

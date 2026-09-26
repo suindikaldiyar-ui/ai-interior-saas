@@ -42,6 +42,11 @@ export type ScreenInput = {
   shape: CompositionKind;
   /** Предупреждения ряда: они идут в общий канал последними. */
   warnings: SurveyWarning[];
+  /**
+   * КАТАЛОГ ОРГАНИЗАЦИИ НЕ ПРОЧИТАЛСЯ — СЛОВАМИ (слой 52). Пусто —
+   * прочитался или его нет вовсе (демонстрация).
+   */
+  catalogError?: string | null;
 };
 
 export type ScreenState = {
@@ -74,6 +79,7 @@ const STALE_PREFIX = 'wall-stale-';
 
 export function screenState(input: ScreenInput): ScreenState {
   const { refusal, mismatches, walls, segments, shape, warnings } = input;
+  const catalogError = input.catalogError ?? null;
 
   /*
    * ЗАМЕРЕНА, НО МЕБЕЛИ НА НЕЙ НЕТ.
@@ -144,6 +150,19 @@ export function screenState(input: ScreenInput): ScreenState {
       severity: 'blocking' as const,
       message: wallMismatchMessage(mismatch),
     })),
+    /*
+     * Каталог не дошёл — сумма без его позиций назвала бы клиенту цену
+     * фасадов RAL по ставке цеха. Последствие словами, отправка заперта.
+     */
+    ...(catalogError
+      ? [
+          {
+            id: 'catalog-unread',
+            severity: 'blocking' as const,
+            message: `${catalogError} Пока каталог не прочитан, суммы нет и отправить клиенту нельзя.`,
+          },
+        ]
+      : []),
     ...(idleWallsNote
       ? [{ id: 'walls-idle', severity: 'clarify' as const, message: idleWallsNote }]
       : []),
@@ -182,15 +201,20 @@ export function screenState(input: ScreenInput): ScreenState {
    *
    * Третьего флага под них не заводится: он разошёлся бы с первыми
    * двумя на первой же правке.
+   *
+   * Непрочитанный каталог прячет цену и запирает «Дальше», но НЕ запись:
+   * состав и правки замерщика собраны верно, неизвестны только цены
+   * материалов. Цену без каталога рабочее место в базу не пишет само.
    */
   const locked = Boolean(refusal) || mismatches.length > 0;
+  const unpriced = locked || catalogError !== null;
 
   return {
     channel,
     blocking,
     clarify,
-    priceHidden: locked,
-    nextLocked: locked,
+    priceHidden: unpriced,
+    nextLocked: unpriced,
     autosaveLocked: locked,
     rebuildWall: stale ? stale.index : null,
     idleWallsNote,

@@ -76,11 +76,17 @@ export function carcassItemOf(entry: CatalogEntryFull): CarcassItem | null {
     if (!metaRoles(entry.meta).includes('carcass')) return null;
     const colorHex = materialColorOf(entry);
     if (!colorHex) return null;
+    /*
+     * Здесь только СВОЯ цена позиции: цену коллекции знает ставка, а
+     * ставки у каталога корпуса нет. Её спрашивает смета — той же
+     * `materialPrice`, что и у фасадов (слой 52).
+     */
     const price = priceState(
       {
         price: typeof entry.price === 'number' && entry.price > 0 ? entry.price : null,
         finishPrices: metaFinishPrices(entry.meta),
         unit: priceUnitOf(entry),
+        collection,
       },
       undefined,
       'm2',
