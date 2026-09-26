@@ -75,19 +75,21 @@ export const SCENE_VIEW_LABEL: Record<SceneView, string> = {
 export const ORTHOGRAPHIC_VIEWS: SceneView[] = ['elevation', 'plan', 'left', 'right'];
 
 /**
- * ОБЩИЙ ВИД — ТОЖЕ ОРТОГОНАЛЬНЫЙ.
+ * ОБЩИЙ ВИД — ПЕРСПЕКТИВА НА ВЫСОТЕ ГЛАЗ (слой 53).
  *
- * Изометрия у мебельных САПР ортогональная: постоянный угол, никакой
- * перспективы. И это не только про вид — это убирает целый класс беды.
- * Пока общий вид был перспективным, на экране жили ДВЕ камеры, и
- * переключение между ними спорило с элементами управления: возвращаясь с
- * плана на общий вид, сцена оставалась на ортокамере ПЛАНА с её
- * масштабом — мебель на экране разъезжалась, хотя геометрия была верной.
+ * Изометрия сверху показывала мебель как чертёж: пол ромбом во весь
+ * кадр, кухня в трети кадра, взгляд сверху. «Наше 3D слабое» — клиент
+ * сравнивал с PRO100, где комнату смотрят так, как в неё входят: с
+ * открытой стороны, с высоты глаз.
  *
- * Одна камера на все пять ракурсов — и спорить стало нечему.
+ * Спереди, сбоку и сверху остаются ортогональными: это виды-чертежи, по
+ * ним ложатся размерные цепи. Камер на канвасе две, и спор за активную,
+ * из-за которого общий вид однажды уже сделали ортогональным, решает
+ * `SceneCamera`: перелёт на общий вид первым делом делает активной
+ * перспективную камеру — ортокамера плана на нём не остаётся.
  */
 export function isOrthographic(view: SceneView): boolean {
-  return view !== 'perspective';
+  return view !== 'perspective' && view !== 'iso';
 }
 
 /**
@@ -102,6 +104,120 @@ export function isFixedView(view: SceneView): boolean {
 }
 
 export const DEFAULT_SCENE_VIEW: SceneView = 'perspective';
+
+/** Объектив общего вида: без «рыбьего глаза», стены не заваливаются. */
+export const GENERAL_FOV = 42;
+
+/**
+ * Какую долю кадра по ограничивающей оси занимает кухня на общем виде.
+ *
+ * Половина кадра в NDC — единица, поэтому 0.86 — это габарит в 86 %
+ * холста по той оси, что упирается первой. Требование — не меньше 70 %;
+ * запас нужен на перспективу: ближние углы крупнее дальних.
+ */
+export const GENERAL_FILL = 0.86;
+
+export type GeneralCameraInput = {
+  /** Центр габарита кухни, м. */
+  center: [number, number, number];
+  /** Габарит кухни, м. */
+  size: [number, number, number];
+  /** Куда смотрит открытая сторона комнаты: единичный вектор по полу (x, z). */
+  open: [number, number];
+  /** Ширина холста к высоте. */
+  aspect: number;
+  fovDeg?: number;
+  fill?: number;
+  eyeM?: number;
+};
+
+/** Проекция точки камерой, которая стоит в `eye` и смотрит в `target`. */
+function projectPoint(
+  point: [number, number, number],
+  eye: [number, number, number],
+  target: [number, number, number],
+  tanHalf: number,
+  aspect: number,
+): [number, number] | null {
+  const f = [target[0] - eye[0], target[1] - eye[1], target[2] - eye[2]];
+  const fl = Math.hypot(f[0], f[1], f[2]) || 1;
+  const fw = [f[0] / fl, f[1] / fl, f[2] / fl];
+  // right = forward × up(0,1,0)
+  const r = [-fw[2], 0, fw[0]];
+  const rl = Math.hypot(r[0], r[1], r[2]) || 1;
+  const rw = [r[0] / rl, r[1] / rl, r[2] / rl];
+  // up = right × forward
+  const u = [
+    rw[1] * fw[2] - rw[2] * fw[1],
+    rw[2] * fw[0] - rw[0] * fw[2],
+    rw[0] * fw[1] - rw[1] * fw[0],
+  ];
+  const v = [point[0] - eye[0], point[1] - eye[1], point[2] - eye[2]];
+  const depth = v[0] * fw[0] + v[1] * fw[1] + v[2] * fw[2];
+  if (depth <= 0.05) return null;
+  const x = v[0] * rw[0] + v[1] * rw[1] + v[2] * rw[2];
+  const y = v[0] * u[0] + v[1] * u[1] + v[2] * u[2];
+  return [x / depth / (tanHalf * aspect), y / depth / tanHalf];
+}
+
+/**
+ * ОБЩИЙ ВИД: ТОЧКА СЪЁМКИ ПОД ГАБАРИТ КУХНИ И ПОД ХОЛСТ.
+ *
+ * Камера стоит на высоте глаз с открытой стороны комнаты и смотрит в
+ * центр габарита кухни. Отход подбирается так, чтобы проекция габарита
+ * заняла `fill` кадра по той оси, что упирается первой, — поэтому кухня
+ * крупная и на 1440, и на 1920: кадр считается от холста, а не от
+ * комнаты. Считается делением отрезка пополам по настоящей проекции
+ * восьми углов, без приближённых формул.
+ */
+export function generalCamera(input: GeneralCameraInput): CameraFraming & { distanceM: number } {
+  const fov = input.fovDeg ?? GENERAL_FOV;
+  const fill = input.fill ?? GENERAL_FILL;
+  const eyeM = input.eyeM ?? EYE_HEIGHT;
+  const tanHalf = Math.tan((fov * Math.PI) / 360);
+  const aspect = input.aspect > 0 ? input.aspect : 1.5;
+  const [cx, cy, cz] = input.center;
+  const [sx, sy, sz] = input.size;
+  const ol = Math.hypot(input.open[0], input.open[1]) || 1;
+  const open: [number, number] = [input.open[0] / ol, input.open[1] / ol];
+  const target: [number, number, number] = [cx, cy, cz];
+
+  const corners: [number, number, number][] = [];
+  for (const dx of [-sx / 2, sx / 2]) {
+    for (const dy of [-sy / 2, sy / 2]) {
+      for (const dz of [-sz / 2, sz / 2]) corners.push([cx + dx, cy + dy, cz + dz]);
+    }
+  }
+
+  const eyeAt = (d: number): [number, number, number] => [cx + open[0] * d, eyeM, cz + open[1] * d];
+  const extent = (d: number): number => {
+    const eye = eyeAt(d);
+    let worst = 0;
+    for (const corner of corners) {
+      const ndc = projectPoint(corner, eye, target, tanHalf, aspect);
+      if (!ndc) return Infinity;
+      worst = Math.max(worst, Math.abs(ndc[0]), Math.abs(ndc[1]));
+    }
+    return worst;
+  };
+
+  let near = 0.3;
+  let far = 60;
+  for (let i = 0; i < 48; i += 1) {
+    const mid = (near + far) / 2;
+    if (extent(mid) > fill) near = mid;
+    else far = mid;
+  }
+  const distanceM = far;
+  const eye = eyeAt(distanceM);
+
+  return {
+    position: [round2(eye[0]), round2(eye[1]), round2(eye[2])],
+    target: [round2(target[0]), round2(target[1]), round2(target[2])],
+    fov,
+    distanceM,
+  };
+}
 
 /**
  * Кадрирование ортогонального вида.

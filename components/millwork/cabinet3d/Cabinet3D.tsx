@@ -25,7 +25,7 @@ import { cornerBandMm } from '@/lib/millwork/composition';
 import { COUNTER_OVERHANG_MM, rowStandardDepthMm } from '@/lib/millwork/fill';
 import { moduleOfPart } from '@/lib/millwork/selection';
 import { countertopSlabs } from '@/lib/millwork/countertop';
-import { CAD_CARCASS_BASE } from './cadLook';
+import { CAD_CARCASS_BASE, CAD_ROOM, cadShadeMaterial, cadShadeQuaternion } from './cadLook';
 import {
   countertopMm,
   plinthMm,
@@ -110,6 +110,20 @@ type Props = {
    */
   focusM?: [number, number, number];
   placement?: { xM: number; zM: number; rotationYDeg: number };
+  /**
+   * Общий вид: габарит всей кухни и открытая сторона комнаты — по ним
+   * камера встаёт на высоте глаз (`generalCamera`, слой 53).
+   */
+  general?: {
+    center: [number, number, number];
+    size: [number, number, number];
+    open: [number, number];
+  };
+  /**
+   * Отбрасывает ли мебель тень. В САПР-виде да — кухня кладёт её на пол и
+   * стены; в сцене за экраном карты теней нет вовсе, и флаг ей ни к чему.
+   */
+  shadows?: boolean;
 };
 
 /** Модуль из верхнего сегмента: у него своя отметка низа. */
@@ -133,6 +147,8 @@ export default function Cabinet3D({
   camera = true,
   focusM,
   placement,
+  general,
+  shadows = false,
 }: Props) {
   const groupRef = useRef<THREE.Group>(null);
   const invalidate = useThree((state) => state.invalidate);
@@ -542,6 +558,15 @@ export default function Cabinet3D({
   const apronTop = upperBottomMm(run.production) / MM;
   const apronH = Math.max(0, apronTop - apronBottom);
 
+  /*
+   * ЗАТЕНЕНИЕ ПОД ШКАФАМИ (слой 53): пол у цоколя, тёмный у самой
+   * планки. Материал — из `cadLook`, общий вид со стыками комнаты; только
+   * в САПР-сцене с тенями — кадр для рендера его не получает.
+   */
+  const underShade = useMemo(() => (shadows ? cadShadeMaterial(CAD_ROOM.under) : null), [shadows]);
+  useEffect(() => () => underShade?.dispose(), [underShade]);
+  const underTurn = useMemo(() => cadShadeQuaternion([0, 0, 1], [1, 0, 0]), []);
+
   return (
     <>
     <group
@@ -560,6 +585,7 @@ export default function Cabinet3D({
           view={view}
           runWidthM={lengthM}
           focusM={focusM}
+          general={general}
           onFraming={onFraming}
         />
       )}
@@ -584,7 +610,21 @@ export default function Cabinet3D({
           ]}
           scale={[band(depthM - plinthSetbackM).lengthM, plinthM, depthM - plinthSetbackM]}
           receiveShadow
+          castShadow={shadows}
         />
+      )}
+      {assembled && underShade && (
+        <mesh
+          name="shade-under"
+          userData={{ shade: true }}
+          material={underShade}
+          position={[band(depthM - plinthSetbackM).centerM, 0.0015, -plinthSetbackM + CAD_ROOM.underM / 2]}
+          quaternion={underTurn}
+          renderOrder={1}
+          raycast={() => null}
+        >
+          <planeGeometry args={[CAD_ROOM.underM, band(depthM - plinthSetbackM).lengthM]} />
+        </mesh>
       )}
 
       {/*
@@ -596,6 +636,7 @@ export default function Cabinet3D({
         geometry={parts.box}
         material={parts.carcass}
         receiveShadow
+        castShadow={shadows}
       />
       {/*
         * По пачке на материал фасада. Ключ в `key` обязателен: число
@@ -614,6 +655,8 @@ export default function Cabinet3D({
           boxes={list}
           geometry={parts.box}
           material={frontMaterials.get(key) ?? parts.front}
+          castShadow={shadows}
+          receiveShadow={shadows}
         />
       ))}
       {/*
@@ -638,6 +681,7 @@ export default function Cabinet3D({
           geometry={parts.box}
           material={carcassMaterials.get(key) ?? parts.carcass}
           receiveShadow
+          castShadow={shadows}
         />
       ))}
       {Array.from(grouped.inner.entries()).map(([key, list]) => (
@@ -657,6 +701,7 @@ export default function Cabinet3D({
         boxes={grouped.groups.appliance}
         geometry={parts.box}
         material={parts.appliance}
+        castShadow={shadows}
       />
 
       {[...modules, ...uppers].map((entry) => (
@@ -803,6 +848,12 @@ export default function Cabinet3D({
           material={apronMaterial}
           position={[band(0).centerM, apronBottom + apronH / 2, -depthM + 0.003]}
           scale={[band(0).lengthM, apronH, 0.004]}
+          /*
+           * Фартук — отделка стены, и тень верхнего ряда ложится именно
+           * на него: без приёма тени он закрывал её от стены, и под
+           * шкафами было ровно светло (слой 53).
+           */
+          receiveShadow={shadows}
         />
       </group>
     )}

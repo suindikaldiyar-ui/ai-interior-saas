@@ -1,7 +1,7 @@
 'use client';
 
 import { captureScene } from '@/lib/captureRegistry';
-import { settled } from '@/components/millwork/cabinet3d/useSlide';
+import { settled } from '@/components/millwork/cabinet3d/motion';
 import { useInteriorStore } from '@/store/useInteriorStore';
 import type { CaptureFraming, CaptureResult } from '@/types/render';
 

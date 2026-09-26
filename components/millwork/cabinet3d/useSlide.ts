@@ -2,6 +2,7 @@
 
 import { useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
+import { startMoving, stopMoving } from './motion';
 
 /**
  * АНИМАЦИЯ НА useFrame, А НЕ НА СТОРОННЕЙ БИБЛИОТЕКЕ.
@@ -11,8 +12,8 @@ import { useFrame, useThree } from '@react-three/fiber';
  * просто не перерисовывается: анимация «не работает» при полностью верном
  * коде. Поэтому доводка своя, на `useFrame` + `invalidate()`.
  *
- * Здесь же живёт учёт движущихся элементов: захват кадра обязан дождаться,
- * пока всё доедет, а не спать по таймеру.
+ * Учёт движущихся элементов живёт в `motion.ts`, без three.js: захват
+ * кадра обязан дождаться, пока всё доедет, и спрашивает он учёт, а не хук.
  */
 
 /** Меньше половины миллиметра — считаем, что приехали. */
@@ -21,15 +22,7 @@ const EPSILON = 0.0005;
 /** Доля пути за кадр: мягкое торможение без пружины и перелёта. */
 const EASING = 0.18;
 
-/* ─────────────────  Кто сейчас движется  ───────────────── */
-
-let movingCount = 0;
 let lastInvalidateAt = 0;
-
-/** Сколько элементов сейчас в движении. Ноль — сцена спокойна. */
-export function movingParts(): number {
-  return movingCount;
-}
 
 /**
  * Один `invalidate()` на кадр, а не по одному из каждого меша.
@@ -42,32 +35,6 @@ function requestFrame(invalidate: () => void): void {
   if (now - lastInvalidateAt < 4) return;
   lastInvalidateAt = now;
   invalidate();
-}
-
-/**
- * Ждём не по таймеру, а по факту: два кадра подряд без движения.
- *
- * Таймер соврал бы на медленной машине, а кадр, снятый в середине хода
- * ящика, показал бы модели полуоткрытую мебель.
- */
-export function settled(timeoutMs = 2000): Promise<void> {
-  return new Promise((resolve) => {
-    const startedAt = performance.now();
-    let calm = 0;
-
-    const tick = () => {
-      if (movingParts() === 0) calm += 1;
-      else calm = 0;
-
-      if (calm >= 2 || performance.now() - startedAt > timeoutMs) {
-        resolve();
-        return;
-      }
-      requestAnimationFrame(tick);
-    };
-
-    requestAnimationFrame(tick);
-  });
 }
 
 /* ─────────────────  Сам ход  ───────────────── */
@@ -108,7 +75,7 @@ export function useSlide({ target, apply, initial = target, onSettle }: SlideOpt
         value.current = target;
         apply(target);
         moving.current = false;
-        movingCount = Math.max(0, movingCount - 1);
+        stopMoving();
         onSettle?.();
         // Последний кадр после остановки: иначе элемент замрёт в миллиметре
         // от цели, и это будет видно на кадре захвата.
@@ -119,7 +86,7 @@ export function useSlide({ target, apply, initial = target, onSettle }: SlideOpt
 
     if (!moving.current) {
       moving.current = true;
-      movingCount += 1;
+      startMoving();
     }
 
     value.current += delta * EASING;

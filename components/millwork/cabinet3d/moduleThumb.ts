@@ -187,6 +187,9 @@ export function renderThumb(
    * темнее мебели в сцене рядом.
    */
   scene.add(new THREE.AmbientLight(0xffffff, CAD_LIGHT.ambient));
+  scene.add(
+    new THREE.HemisphereLight(CAD_LIGHT.hemisphereSky, CAD_LIGHT.hemisphereGround, CAD_LIGHT.hemisphere),
+  );
   const keyLight = new THREE.DirectionalLight(0xffffff, CAD_LIGHT.keyIntensity);
   keyLight.position.set(...CAD_LIGHT.keyPosition);
   scene.add(keyLight);

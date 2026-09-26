@@ -16,12 +16,139 @@ import type { FrontSpec } from '@/types/millwork';
  * картинок читают это отсюда, а не держат копии.
  */
 
-/** Свет ровно два: общий и один направленный (ловушка 299: без бликов). */
+/**
+ * СВЕТ: РАССЕЯННЫЙ И ОДИН ИСТОЧНИК С ТЕНЬЮ (слой 53).
+ *
+ * Было два плоских: общий 0.72 и направленный без тени — мебель без
+ * тени висела над полом, углы комнаты не читались. Теперь рассеянный
+ * свет — общий плюс полусферический (сверху светлее, у пола темнее), а
+ * ключевой — ОДИН направленный источник, и только он даёт тень: кухня
+ * кладёт её на пол и на стены. Второй источник с тенью на планшете —
+ * второй проход по каждому мешу (ловушка 299: бликов по-прежнему нет).
+ *
+ * Картинки библиотеки берут тот же набор (`moduleThumb`): карточка рядом
+ * со сценой светом от неё не отличается.
+ */
 export const CAD_LIGHT = {
-  ambient: 0.72,
+  ambient: 0.3,
+  /** Полусферический: цвет неба и цвет пола. */
+  hemisphere: 0.62,
+  hemisphereSky: '#FFFFFF',
+  hemisphereGround: '#A39B8C',
+  /** Для картинок: откуда светит относительно модуля. */
   keyPosition: [2.5, 5, 4] as [number, number, number],
-  keyIntensity: 0.85,
+  keyIntensity: 1.05,
+  /**
+   * Для сцены: направление ключевого света от центра комнаты — сверху, с
+   * открытой стороны и чуть слева, чтобы тень шкафов легла на стену и пол.
+   */
+  keyFromOpen: 0.55,
+  keySide: 0.35,
+  keyUp: 1,
 };
+
+/**
+ * ТЕНЬ — ОДИН ИСТОЧНИК, РАЗМЕР КАРТЫ — КОНСТАНТА.
+ *
+ * Карта пересчитывается только при изменении сцены (правка, материал,
+ * открытая створка) — `autoUpdate` выключен, иначе она перерисовывалась бы
+ * каждым кадром вращения камеры, а камера тени не меняет вовсе.
+ */
+export const CAD_SHADOW = {
+  mapSize: 1024,
+  bias: -0.0004,
+  normalBias: 0.03,
+  radius: 3,
+};
+
+/** Настройки карты теней для `<Canvas shadows>`: мягкая, без автопересчёта. */
+export const CAD_SHADOW_MAP = {
+  enabled: true,
+  type: THREE.PCFSoftShadowMap,
+  autoUpdate: false,
+} as const;
+
+/**
+ * КОМНАТА: СВЕТЛЫЕ НЕЙТРАЛЬНЫЕ ЦВЕТА ПО УМОЛЧАНИЮ, ОДНИМ МЕСТОМ.
+ *
+ * Стены и пол — фон, а не отделка: отделку показывает рендер по фото
+ * клиента. Допущение замера — полупрозрачным, не замеренный вынос — контуром.
+ */
+export const CAD_ROOM = {
+  wall: '#E9E5DD',
+  floor: '#D6CFC2',
+  object: '#DCD6CA',
+  contour: '#8A8373',
+  assumedOpacity: 0.42,
+  /** Затенение у пола и в углах: насколько темнее у самого стыка. */
+  corner: 0.3,
+  /** Ширина полосы затенения, м. */
+  cornerM: 0.32,
+  /** Затенение ПОД шкафами: пол у цоколя, насколько темнее у самой планки. */
+  under: 0.38,
+  /** Сколько пола перед цоколем оно захватывает, м. */
+  underM: 0.24,
+};
+
+/**
+ * ЗАТЕНЕНИЕ СТЫКОВ — ПОЛОСОЙ С ГРАДИЕНТОМ, А НЕ ПОСТОБРАБОТКОЙ.
+ *
+ * Угол комнаты и пол у цоколя без него читаются стыком двух одинаково
+ * освещённых листов. Второй проход по кадру (SSAO) на планшете стоит
+ * половины кадра, поэтому стык затеняет плоскость: тёмная у стыка,
+ * прозрачная через заданную ширину. Текстура градиента одна на вкладку —
+ * 128 × 1, её не освобождают: делят комната и мебель.
+ */
+let shadeTexture: THREE.DataTexture | null = null;
+
+export function cadShadeTexture(): THREE.DataTexture {
+  if (shadeTexture) return shadeTexture;
+  const size = 128;
+  const data = new Uint8Array(size * 4);
+  for (let i = 0; i < size; i += 1) {
+    // Нелинейно: у самого стыка темнее, дальше быстро светлеет.
+    const t = i / (size - 1);
+    const a = Math.round(255 * (1 - t) ** 2.2);
+    data.set([a, a, a, 255], i * 4);
+  }
+  const texture = new THREE.DataTexture(data, size, 1, THREE.RGBAFormat);
+  texture.needsUpdate = true;
+  texture.magFilter = THREE.LinearFilter;
+  texture.minFilter = THREE.LinearFilter;
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  shadeTexture = texture;
+  return texture;
+}
+
+/** Материал полосы затенения: чёрный, прозрачность по градиенту. */
+export function cadShadeMaterial(opacity: number): THREE.MeshBasicMaterial {
+  return new THREE.MeshBasicMaterial({
+    color: '#000000',
+    transparent: true,
+    opacity,
+    alphaMap: cadShadeTexture(),
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -2,
+  });
+}
+
+/**
+ * Поворот полосы по двум её ортам: тёмный край — у `−xAxis`, нормаль —
+ * их произведение. Полосу не надо крутить углами: она задаётся тем, куда
+ * смотрит.
+ */
+export function cadShadeQuaternion(
+  xAxis: [number, number, number],
+  yAxis: [number, number, number],
+): THREE.Quaternion {
+  const x = new THREE.Vector3(...xAxis);
+  const y = new THREE.Vector3(...yAxis);
+  const z = new THREE.Vector3().crossVectors(x, y);
+  return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z));
+}
 
 /** Тон-маппинг и цветовое пространство — те же, что R3F ставит сцене. */
 export const CAD_TONE_MAPPING = THREE.ACESFilmicToneMapping;

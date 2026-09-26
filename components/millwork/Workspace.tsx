@@ -43,6 +43,8 @@ import {
   wallSegments,
 } from '@/lib/millwork/objectEstimate';
 import { ratesFromCatalog } from '@/lib/millwork/rates';
+import { rowStandardDepthMm } from '@/lib/millwork/fill';
+import { roomSourceOf, type RoomSource } from '@/lib/millwork/room';
 import { openingAssumptions } from '@/lib/millwork/warnings';
 
 /** Решение угла: модуль 900×900 или фальш-панель. */
@@ -852,6 +854,30 @@ export default function Workspace(props: WorkspaceProps) {
         materials: materialItems,
       }),
     [props, resolution, wallRequirements, liveRates, production, millingItems, carcassItems, materialItems],
+  );
+
+  /**
+   * КОМНАТА ИЗ ЗАМЕРА — ДЛЯ СЦЕНЫ, СХЕМЫ И ПЛАНА (слой 53).
+   *
+   * Стены — те же стены композиции (`site.walls`), по которым стоят ряды;
+   * проёмы стены А — те, что получил её ряд (`input.openings`): живой
+   * замер правят прямо сейчас, и окно, сдвинутое в замере, обязано
+   * сдвинуться и в комнате. Угол к следующей стене — из замера, чтобы
+   * комната сказала словами, где замер не 90°. Место всего этого считает
+   * `roomLayout`, и больше никто.
+   */
+  const roomSource = useMemo<RoomSource>(
+    () =>
+      roomSourceOf({
+        walls: site.walls,
+        runOpenings: input.openings,
+        measuredWalls: resolution?.measurement.walls ?? props.measuredWalls ?? [],
+        ceilingMm: site.ceilingMm,
+        depthMm: rowStandardDepthMm(zone, 'base', production),
+        solution: cornerSolution,
+        survey: survey ?? null,
+      }),
+    [resolution, props.measuredWalls, site, input.openings, zone, production, cornerSolution, survey],
   );
 
   /*
@@ -2997,6 +3023,7 @@ export default function Workspace(props: WorkspaceProps) {
                   onTogglePanel={() => setPanelHidden((on) => !on)}
                   run={activeRun}
                   sceneRows={sceneRows}
+                  room={roomSource}
                   production={production}
                   roomWidthM={Math.max(input.lengthMm / 1000, 2)}
                   roomDepthM={props.roomDepthM}
@@ -4018,7 +4045,10 @@ export default function Workspace(props: WorkspaceProps) {
       </div>
 
       {/* ── Низ экрана: зона большого пальца ── */}
-      <footer className="border-t border-navyLine/60 bg-navyDeep px-4 pb-4 pt-3 print:hidden">
+      <footer
+        data-workspace-footer
+        className="border-t border-navyLine/60 bg-navyDeep px-4 pb-4 pt-3 print:hidden"
+      >
         {/*
           * ПОЧЕМУ «ДАЛЬШЕ» НЕ НАЖИМАЕТСЯ — СЛОВАМИ И РЯДОМ С КНОПКОЙ.
           *

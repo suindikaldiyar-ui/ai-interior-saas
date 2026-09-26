@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
-import { CAD_LIGHT, applyCadLook } from './cadLook';
+import { CAD_LIGHT, CAD_SHADOW, CAD_SHADOW_MAP, applyCadLook } from './cadLook';
 import { realSizeOf } from './realSizeMap';
 
 /** Материал пачки фасадов, прочитанный со сцены: для приёмки. */
@@ -21,10 +21,18 @@ type FrontReadout = {
   realSizeM: [number, number] | null;
 };
 import Cabinet3D from './Cabinet3D';
-import { beamDropMm } from '@/lib/millwork/ceiling';
+import RoomScene from './RoomScene';
+import { movingParts } from './motion';
 import { plinthMm } from '@/lib/millwork/shop';
-import { rowStandardDepthMm } from '@/lib/millwork/fill';
 import { moduleBoxes, runBoxes, runPlaces } from '@/lib/millwork/cabinetBoxes';
+import { generalCamera } from '@/lib/cameraFraming';
+import {
+  openSideOf,
+  roomAroundRows,
+  rowPlacement as placeOfRow,
+  type Room,
+  type RoomSource,
+} from '@/lib/millwork/room';
 import { frontKey } from '@/lib/millwork/frontMaterial';
 import { frontWithMilling } from '@/lib/millwork/milling';
 import type { ProductionSettings } from '@/types/catalog';
@@ -83,6 +91,13 @@ type Props = {
    * цепи прячутся: на повёрнутой мебели размер по горизонтали врёт.
    */
   onFraming?: (framing: OrthoProjection | null) => void;
+  /**
+   * КОМНАТА ИЗ ЗАМЕРА (слой 53): стены композиции, потолок, глубина ряда,
+   * решение угла и живой замер. Место стен, проёмов и ригеля считает
+   * `roomLayout` вокруг первого ряда сцены — так же, как ряды стоят вокруг
+   * него. Нет — комнаты в сцене нет, мебель рисуется одна.
+   */
+  room?: RoomSource;
 };
 
 const MM = 1000;
@@ -106,7 +121,11 @@ export function rowPlacement(row: SceneRow): {
   zM: number;
   rotationYDeg: number;
 } {
-  return row.placement ?? { xM: -row.run.lengthMm / (2 * MM), zM: 0, rotationYDeg: 0 };
+  /*
+   * Сама формула живёт в `lib/millwork/room.ts`: комната строится вокруг
+   * того же ряда и обязана спрашивать то же место, не таща three.js.
+   */
+  return placeOfRow(row);
 }
 
 export default function CadScene({
@@ -123,6 +142,7 @@ export default function CadScene({
   onWidth,
   onMoveModule,
   onFraming,
+  room,
 }: Props) {
   /*
    * ГАБАРИТ МЕБЕЛИ, А НЕ КОМНАТЫ.
@@ -158,27 +178,62 @@ export default function CadScene({
   const frame = useInteriorStore((state) => state.cutaway);
 
   /*
-   * Материалы комнаты — ОДИН экземпляр на сцену, а не по одному на
-   * стену: иначе каждая новая стена добавляла бы свою пачку отрисовки, и
-   * счёт материалов перестал бы совпадать у прямой, угловой и П-образной.
+   * КОМНАТА ВОКРУГ ПЕРВОГО РЯДА СЦЕНЫ.
+   *
+   * Опорная стена — та, на которой стоит первый ряд (`run.wallId`): на
+   * общем виде и плане это стена А с местом из `runPlacements`, на видах
+   * спереди и сбоку — выбранная стена, поставленная без поворота. Ряды и
+   * комната получают место из одной `rowPlacement`, и расходиться им
+   * нечем.
    */
-  const roomMaterials = useMemo(
-    () => ({
-      floor: new THREE.MeshStandardMaterial({
-        color: '#D9D4CA',
-        roughness: 0.95,
-        metalness: 0,
-      }),
-      wall: new THREE.MeshStandardMaterial({
-        color: '#E9E5DC',
-        roughness: 0.98,
-        metalness: 0,
-        // Изнутри комнаты видна лицевая сторона, снаружи стена исчезает —
-        // так же, как в комнате студии (ловушка 10).
-        side: THREE.FrontSide,
-      }),
-    }),
-    [],
+  const roomWorld = useMemo<Room | null>(
+    () =>
+      room
+        ? /*
+           * У одной стены глубина комнаты не замерена: пол идёт под
+           * мебелью — от грани стены до переда габарита. Это место
+           * мебели, а не размер комнаты, и оно известно.
+           */
+          roomAroundRows(room, rows, bounds.empty ? null : bounds.center[2] + bounds.size[2] / 2)
+        : null,
+    [room, rows, bounds],
+  );
+
+  /* ОТКРЫТАЯ СТОРОНА КОМНАТЫ — с неё камера, свет и скрытие стен. */
+  const open = useMemo<[number, number]>(() => openSideOf(roomWorld, rows), [roomWorld, rows]);
+
+  /*
+   * ГАБАРИТ ДЛЯ СВЕТА: комната вместе с мебелью. По нему ставится камера
+   * тени — она обязана накрыть и пол, и стены, на которые кухня кладёт
+   * тень.
+   */
+  const lightBounds = useMemo(() => {
+    let minX = bounds.center[0] - bounds.size[0] / 2;
+    let maxX = bounds.center[0] + bounds.size[0] / 2;
+    let minZ = bounds.center[2] - bounds.size[2] / 2;
+    let maxZ = bounds.center[2] + bounds.size[2] / 2;
+    let maxY = bounds.center[1] + bounds.size[1] / 2;
+    for (const wall of roomWorld?.walls ?? []) {
+      const ends = [
+        [wall.startMm[0], wall.startMm[1]],
+        [wall.startMm[0] + wall.lengthMm * wall.dir[0], wall.startMm[1] + wall.lengthMm * wall.dir[1]],
+      ];
+      for (const [x, z] of ends) {
+        minX = Math.min(minX, x / MM);
+        maxX = Math.max(maxX, x / MM);
+        minZ = Math.min(minZ, z / MM);
+        maxZ = Math.max(maxZ, z / MM);
+      }
+      maxY = Math.max(maxY, wall.heightMm / MM);
+    }
+    const center: [number, number, number] = [(minX + maxX) / 2, maxY / 2, (minZ + maxZ) / 2];
+    const radius = Math.max(1.5, Math.hypot(maxX - minX, maxY, maxZ - minZ) / 2 + 0.4);
+    return { center, radius };
+  }, [bounds, roomWorld]);
+
+  const general = useMemo(
+    () => ({ center: bounds.center, size: bounds.size, open }),
+    [bounds, open],
   );
 
   return (
@@ -190,22 +245,28 @@ export default function CadScene({
        * ровно та трата, из-за которой сцену однажды убрали.
        */
       frameloop="demand"
-      shadows={false}
+      /*
+       * Тень мягкая и БЕЗ автопересчёта: карта обновляется по правке, а не
+       * каждым кадром вращения — камера тени не меняет (`ShadowSync`).
+       */
+      shadows={CAD_SHADOW_MAP}
       dpr={[1, 1.75]}
       gl={{ antialias: true, alpha: true }}
       camera={{ position: [3, 2.2, 4], fov: 40 }}
       /* Тон-маппинг и цветовое пространство — из того же места, что у картинок. */
-      onCreated={({ gl: renderer }) => applyCadLook(renderer)}
+      onCreated={({ gl: renderer }) => {
+        applyCadLook(renderer);
+        renderer.shadowMap.autoUpdate = CAD_SHADOW_MAP.autoUpdate;
+        renderer.shadowMap.needsUpdate = true;
+      }}
     >
       {/*
-        * СВЕТ РОВНО ДВА: направленный и общий.
-        *
-        * Направленный отделяет передние детали от задних, общий не даёт
-        * теням стать чёрными провалами. Больше света — это уже съёмка,
-        * а съёмку делает рендер.
+        * СВЕТ ИЗ `cadLook`: рассеянный (общий и полусферический) и ОДИН
+        * направленный с мягкой тенью. Тот же набор у картинок библиотеки.
         */}
       <ambientLight intensity={CAD_LIGHT.ambient} />
-      <directionalLight position={CAD_LIGHT.keyPosition} intensity={CAD_LIGHT.keyIntensity} />
+      <hemisphereLight args={[CAD_LIGHT.hemisphereSky, CAD_LIGHT.hemisphereGround, CAD_LIGHT.hemisphere]} />
+      <KeyLight center={lightBounds.center} radius={lightBounds.radius} open={open} />
 
       {rows.map((row, i) => (
         <Cabinet3D
@@ -228,6 +289,8 @@ export default function CadScene({
            * стены.
            */
           focusM={i === 0 ? bounds.center : undefined}
+          general={i === 0 ? general : undefined}
+          shadows
           /*
            * КАМЕРЕ — ГАБАРИТ СЪЁМКИ, КОМНАТЕ — ГАБАРИТ КОМНАТЫ.
            *
@@ -252,38 +315,32 @@ export default function CadScene({
         * объектов и столько же вызовов отрисовки. Здесь вершины сложены
         * в один буфер и пересобираются только при смене состава.
         */}
-      <RoomShell
-        rows={rows}
-        ceilingHeightMm={rows[0]?.run.ceilingHeightMm ?? 2700}
-        materials={roomMaterials}
-      />
+      {/*
+        * КОМНАТА — ИЗ ЗАМЕРА, А НЕ ПО РЯДАМ: стены с толщиной наружу и
+        * проёмами, пол по контуру, ригель по размерам замера.
+        */}
+      {roomWorld && <RoomScene room={roomWorld} />}
 
       <RunEdges rows={rows} inside={frame} />
 
-      {/* Мягкая тень под рядом: она и ставит мебель на пол. */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.001, 0]}>
-        <planeGeometry args={[40, 40]} />
-        <shadowMaterial opacity={0} />
-      </mesh>
+      <ShadowSync rows={rows} room={roomWorld} inside={frame} />
 
-      {orbit && <OrbitScene bounds={bounds} />}
-      <FrameProbe rows={rows} />
+      {orbit && <OrbitScene bounds={bounds} open={open} />}
+      <FrameProbe rows={rows} room={roomWorld} />
     </Canvas>
   );
 }
 
 /**
- * ВО СКОЛЬКО РАЗ МОЖНО ПРИБЛИЗИТЬ ОТ ОБЩЕГО ВИДА.
+ * ВО СКОЛЬКО РАЗ МОЖНО ПРИБЛИЗИТЬСЯ ОТ ОБЩЕГО ВИДА.
  *
- * Шесть — это не круглое число для красоты: на ряду 3800 мм общий вид
- * даёт около 0.37 пикселя на миллиметр, и кромка 16 мм занимает шесть
- * пикселей — увидеть на ней нечего. Шестикратное приближение делает ту
- * же кромку тридцатипиксельной, и стык фасадов виден так, как его видит
- * мебельщик у готовой мебели.
+ * Общий вид стал перспективой (слой 53), и приближение — это отход
+ * камеры, а не зум ортокамеры: шестикратно ближе — это стык фасадов во
+ * весь кадр, как его видит мебельщик у готовой мебели.
  */
 const ZOOM_IN = 6;
 
-/** Отдалить дальше чем вдвое незачем: мебель превращается в точку. */
+/** Отойти дальше чем вдвое незачем: мебель превращается в точку. */
 const ZOOM_OUT = 2;
 
 /**
@@ -293,32 +350,19 @@ const ZOOM_OUT = 2;
  * которым стоит клиент, он показывает рукой. Свободное вращение при этом
  * однажды уже сломало вид: камеру уводили внутрь корпуса и под пол.
  *
- * Поэтому вращение вернулось с пределами, и держатся они на двух вещах.
- *
- * Первая — камера ОРТОГОНАЛЬНАЯ. У неё масштаб не зависит от расстояния,
- * поэтому зум — это просто пиксели на метр, и один предел верен на всех
- * 360°. Считается он от ДИАГОНАЛИ габарита: при повороте на 45° в кадр
- * ложится именно она.
- *
- * Вторая — цель не выходит за габарит мебели. Раньше её держало
- * `enablePan={false}`, то есть панорамы не было вовсе; теперь она есть, а
- * потерять мебель по-прежнему нельзя — за габаритом её просто нет.
- *
- * ЧЕГО ЗДЕСЬ БОЛЬШЕ НЕТ — ЗАПРЕТА ПРИБЛИЖАТЬСЯ. `maxZoom` равнялся
- * `fitZoom`, и «весь габарит в кадре» работало не начальным кадром, а
- * потолком: колесо упиралось в общий вид, и рассмотреть стык фасадов было
- * нельзя. Кадрирование по габариту осталось там, где ему место — у
- * фиксированных ракурсов и у «Вернуть вид», — а здесь стоит предел
- * свободы. Замерено на демо-ряду: общий вид 109 пикс/м, крупный план
- * 797 — приближение в 7.3 раза.
- *
- * Наклон ограничен снизу полом и сверху видом отвесно вниз: под пол не
- * уйти и вверх ногами не перевернуться.
+ * Пределы: наклон не уходит под пол и не встаёт отвесно сверху; отход —
+ * от шестикратного приближения до двукратного удаления от общего вида,
+ * а общий вид считает та же `generalCamera`, что ставит камеру; цель не
+ * выходит за габарит мебели — за ним мебели нет, и смотреть там не на
+ * что. Стена, оказавшаяся между камерой и кухней при повороте, прячется
+ * сама (`RoomScene`).
  */
 function OrbitScene({
   bounds,
+  open,
 }: {
   bounds: { center: [number, number, number]; size: [number, number, number] };
+  open: [number, number];
 }) {
   const controls = useRef<{
     update: () => boolean;
@@ -326,7 +370,6 @@ function OrbitScene({
     object: THREE.Object3D;
   } | null>(null);
   const invalidate = useThree((state) => state.invalidate);
-  // Размер канваса меряет сам R3F: «влезает» у ортокамеры считается в пикселях.
   const size = useThree((state) => state.size);
   const center = useMemo(() => new THREE.Vector3(...bounds.center), [bounds.center]);
 
@@ -343,48 +386,27 @@ function OrbitScene({
   }, [center, invalidate]);
 
   /*
-   * НОВЫЙ РАЗМЕР КАДРА — НОВЫЙ КАДР.
-   *
-   * `fitZoom` считается от `size`, и при смене размера канваса пределы
-   * зума меняются вместе с ним. Но при `frameloop="demand"` никто не
-   * просит перерисовку: на экране остаётся старый кадр, и правка
-   * выглядит несработавшей. Спросить кадр надо явно — ровно как при
-   * смене материала (ловушка 250).
-   *
-   * Ноль кадров в покое от этого не страдает: размер меняется только
-   * когда его меняют.
+   * НОВЫЙ РАЗМЕР КАДРА — НОВЫЙ КАДР. При `frameloop="demand"` никто не
+   * просит перерисовку сам (ловушка 250); покой от этого не страдает —
+   * размер меняется, только когда его меняют.
    */
   useEffect(() => {
     controls.current?.update();
     invalidate();
   }, [size.width, size.height, invalidate]);
 
-  /*
-   * Что обязано влезть при ЛЮБОМ повороте: по горизонтали — диагональ
-   * основания, по вертикали — высота плюс та же диагональ, положенная
-   * набок при наклоне сверху.
-   */
-  const [sx, sy, sz] = bounds.size;
-  const spanX = Math.max(0.5, Math.hypot(sx, sz));
-  const spanY = Math.max(0.5, sy + Math.hypot(sx, sz) * 0.5);
+  /* Отход общего вида — той же функцией, что ставит камеру. */
+  const fitDistance = useMemo(
+    () =>
+      generalCamera({
+        center: bounds.center,
+        size: bounds.size,
+        open,
+        aspect: size.width / Math.max(1, size.height),
+      }).distanceM,
+    [bounds.center, bounds.size, open, size.width, size.height],
+  );
 
-  // Ортокамера кадрируется в пикселях: зум — это пиксели на метр.
-  const fitZoom = Math.min(size.width / (spanX * 1.15), size.height / (spanY * 1.15));
-
-  /*
-   * ПАНОРАМА ХОДИТ ПО МЕБЕЛИ, А НЕ ПО ПУСТОТЕ.
-   *
-   * Без панорамы приближать бессмысленно: крупный план показывает только
-   * середину ряда, а посмотреть край невозможно. Но и уехать в пустое
-   * поле нельзя — это ровно то, чем свободная камера ломала вид раньше.
-   * Поэтому предел один и он физический: ЦЕЛЬ не выходит за габарит
-   * мебели. Внутри габарита человек волен ходить как угодно, снаружи
-   * мебели нет вовсе, и смотреть там не на что.
-   *
-   * Цель тянет за собой камеру на тот же вектор — иначе кадр и точка
-   * вращения расходятся, и мебель начинает вращаться вокруг чужого
-   * места.
-   */
   const half = useMemo(
     () =>
       [
@@ -422,32 +444,16 @@ function OrbitScene({
       enableZoom
       enableDamping={false}
       target={bounds.center}
-      /* Полные 360° вокруг вертикали: ограничения по азимуту нет вовсе. */
-      minPolarAngle={0.05}
-      maxPolarAngle={Math.PI / 2 - 0.02}
-      /*
-       * ПРЕДЕЛ ПО ГАБАРИТУ И СВОБОДНЫЙ ЗУМ — РАЗНЫЕ ВЕЩИ.
-       *
-       * `maxZoom` стоял равным `fitZoom`, то есть «весь габарит в кадре»
-       * было не начальным кадром, а ПОТОЛКОМ: колесо мыши упиралось в
-       * общий вид и дальше не шло — приблизиться к ручке или к стыку
-       * фасадов было нельзя вовсе. Мебельщик смотрит именно стыки.
-       *
-       * Кадрирование «всё в кадре» осталось там, где ему место: его
-       * ставят фиксированные ракурсы (`orthoZoom` в `SceneCamera`) и
-       * «Вернуть вид», который пересобирает сцену и возвращает тот же
-       * кадр. Здесь остаётся ПРЕДЕЛ СВОБОДЫ, и он широкий.
-       *
-       * Второго состояния камеры при этом не появляется: `zoom` у
-       * ортокамеры по-прежнему один, меняются только его границы.
-       */
-      minZoom={fitZoom / ZOOM_OUT}
-      maxZoom={fitZoom * ZOOM_IN}
+      /* Полные 360° вокруг вертикали; сверху не отвесно, снизу не под пол. */
+      minPolarAngle={0.12}
+      maxPolarAngle={Math.PI / 2 - 0.03}
+      minDistance={Math.max(0.6, fitDistance / ZOOM_IN)}
+      maxDistance={fitDistance * ZOOM_OUT}
       onChange={() => {
         /*
-         * `invalidate` после смены зума обязателен: при
-         * `frameloop="demand"` иначе меняется матрица, а на экране
-         * остаётся прежний кадр (ловушка 250).
+         * `invalidate` после движения обязателен: при `frameloop="demand"`
+         * иначе меняется матрица, а на экране остаётся прежний кадр
+         * (ловушка 250).
          */
         keepOnFurniture();
         invalidate();
@@ -457,13 +463,106 @@ function OrbitScene({
 }
 
 /**
+ * КЛЮЧЕВОЙ СВЕТ — ОДИН, С МЯГКОЙ ТЕНЬЮ.
+ *
+ * Стоит сверху, с открытой стороны и чуть сбоку: тень шкафов ложится на
+ * стену за ними и на пол, а не уходит за кадр. Камера тени накрывает
+ * комнату вместе с мебелью; размер карты — константа `cadLook`.
+ */
+function KeyLight({
+  center,
+  radius,
+  open,
+}: {
+  center: [number, number, number];
+  radius: number;
+  open: [number, number];
+}) {
+  const invalidate = useThree((state) => state.invalidate);
+  const gl = useThree((state) => state.gl);
+  const light = useMemo(() => {
+    const key = new THREE.DirectionalLight('#FFFFFF', CAD_LIGHT.keyIntensity);
+    key.castShadow = true;
+    key.shadow.mapSize.set(CAD_SHADOW.mapSize, CAD_SHADOW.mapSize);
+    key.shadow.bias = CAD_SHADOW.bias;
+    key.shadow.normalBias = CAD_SHADOW.normalBias;
+    key.shadow.radius = CAD_SHADOW.radius;
+    return key;
+  }, []);
+
+  useEffect(() => () => light.dispose(), [light]);
+
+  const [cx, cy, cz] = center;
+  const [ox, oz] = open;
+  useEffect(() => {
+    // Сбоку — перпендикуляр открытой стороны, влево от зрителя.
+    const sx = -oz;
+    const sz = ox;
+    const dir = new THREE.Vector3(
+      ox * CAD_LIGHT.keyFromOpen + sx * CAD_LIGHT.keySide,
+      CAD_LIGHT.keyUp,
+      oz * CAD_LIGHT.keyFromOpen + sz * CAD_LIGHT.keySide,
+    ).normalize();
+    const distance = radius + 6;
+    light.position.set(cx + dir.x * distance, cy + dir.y * distance, cz + dir.z * distance);
+    light.target.position.set(cx, cy, cz);
+    light.target.updateMatrixWorld();
+    const camera = light.shadow.camera as THREE.OrthographicCamera;
+    camera.left = -radius;
+    camera.right = radius;
+    camera.top = radius;
+    camera.bottom = -radius;
+    camera.near = 0.5;
+    camera.far = distance + radius + 2;
+    camera.updateProjectionMatrix();
+    gl.shadowMap.needsUpdate = true;
+    invalidate();
+  }, [light, cx, cy, cz, ox, oz, radius, gl, invalidate]);
+
+  return (
+    <>
+      <primitive object={light} />
+      <primitive object={light.target} />
+    </>
+  );
+}
+
+/**
+ * КАРТА ТЕНЕЙ — ТОЛЬКО ПО ИЗМЕНЕНИЮ СЦЕНЫ.
+ *
+ * `autoUpdate` выключен: вращение камеры тень не меняет, и пересчитывать
+ * её каждым кадром — это второй проход по каждому мешу на планшете.
+ * Пересчёт просят правка (ряды), комната, режим «Каркас» и остановка
+ * створки или ящика: пока они едут, тень старая, остановились — одна
+ * новая. Ничего здесь не зовёт кадр сам по себе в покое.
+ */
+function ShadowSync({ rows, room, inside }: { rows: SceneRow[]; room: Room | null; inside: boolean }) {
+  const gl = useThree((state) => state.gl);
+  const invalidate = useThree((state) => state.invalidate);
+  const moving = useRef(false);
+
+  useEffect(() => {
+    gl.shadowMap.needsUpdate = true;
+    invalidate();
+  }, [rows, room, inside, gl, invalidate]);
+
+  useFrame(() => {
+    const now = movingParts() > 0;
+    if (moving.current && !now) gl.shadowMap.needsUpdate = true;
+    moving.current = now;
+  });
+
+  return null;
+}
+
+/**
  * Сколько кадров нарисовала ИМЕННО ЭТА сцена.
  *
  * Общий счётчик не годится: скрытая сцена для clay-кадра регистрирует
  * свой, и последний зарегистрированный затирает предыдущий — мерили бы
  * не то. Число нужно для приёмки: «быстро» это не измерение.
  */
-function FrameProbe({ rows }: { rows: SceneRow[] }) {
+function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
   const gl = useThree((state) => state.gl);
   const camera = useThree((state) => state.camera);
   const scene = useThree((state) => state.scene);
@@ -483,12 +582,22 @@ function FrameProbe({ rows }: { rows: SceneRow[] }) {
       __mwCadRoom?: () => {
         floors: number;
         walls: number;
+        /** Стен, спрятанных сейчас: они между камерой и кухней. */
+        hiddenWalls: number;
         /** Выступов на потолке нарисовано. */
         beams: number;
         /** Вершин мебели ВЫШЕ низа балки, то есть внутри неё. */
         beamHits: number;
+        /** Пар «деталь ряда — нарисованный кусок стены или объём», которые пересекаются. */
         intersects: number;
+        /** Стены по замеру: длина и высота, мм. */
+        wallSizes: { id: string; lengthMm: number; heightMm: number }[];
+        /** Стены по нарисованному: габарит кусков стены, мм. */
+        wallDrawn: { id: string; lengthMm: number; heightMm: number }[];
+        /** Чего замер не знает — словами. */
+        missing: string[];
       };
+      __mwCadShadows?: () => number;
       __mwCadModules?: () => { drawn: number; ids: string[] };
       __mwCadCounter?: () => Record<string, number[]>;
       __mwCadFronts?: () => FrontReadout[];
@@ -502,6 +611,31 @@ function FrameProbe({ rows }: { rows: SceneRow[] }) {
       };
     };
     w.__mwCadFrames = () => gl.info.render.frame;
+
+    /*
+     * СКОЛЬКО РАЗ ПЕРЕСЧИТАНА КАРТА ТЕНЕЙ.
+     *
+     * Считается по факту: отрисовщик зовёт карту каждым кадром, а она
+     * рисуется, только когда её попросили (`needsUpdate`). Приёмка
+     * сверяет, что правка модуля стоит ровно одного пересчёта.
+     */
+    const shadowMap = gl.shadowMap as THREE.WebGLShadowMap & {
+      render: (lights: THREE.Light[], scene: THREE.Scene, camera: THREE.Camera) => void;
+      __mwCount?: number;
+      __mwOriginal?: (lights: THREE.Light[], scene: THREE.Scene, camera: THREE.Camera) => void;
+    };
+    if (!shadowMap.__mwOriginal) {
+      const original = shadowMap.render;
+      shadowMap.__mwOriginal = original;
+      shadowMap.__mwCount = 0;
+      shadowMap.render = function render(lights, target, camera) {
+        if (this.enabled && (this.autoUpdate || this.needsUpdate) && lights.length > 0) {
+          shadowMap.__mwCount = (shadowMap.__mwCount ?? 0) + 1;
+        }
+        return original.call(this, lights, target, camera);
+      };
+    }
+    w.__mwCadShadows = () => shadowMap.__mwCount ?? 0;
 
     /*
      * МАТЕРИАЛ КАЖДОЙ ПАЧКИ ФАСАДОВ — ТАКИМ, КАКИМ ОН ВИСИТ В СЦЕНЕ.
@@ -633,9 +767,25 @@ function FrameProbe({ rows }: { rows: SceneRow[] }) {
       let transparent = 0;
       const seen = new Set<string>();
 
+      /*
+       * Меряется МЕБЕЛЬ: комната со своим затенением углов и
+       * полупрозрачным допущением замера — не мебель, и сквозь мебель от
+       * неё видно не становится.
+       */
+      const roomGroup = scene.getObjectByName('room');
+      const inRoom = (object: THREE.Object3D) => {
+        for (let node: THREE.Object3D | null = object; node; node = node.parent) {
+          if (node === roomGroup) return true;
+        }
+        return false;
+      };
       scene.traverse((object) => {
         const mesh = object as THREE.Mesh;
-        if (!mesh.isMesh || mesh.visible === false) return;
+        /*
+         * Полоса затенения под шкафами — свет, а не деталь: как и тень на
+         * полу, в прозрачность мебели она не входит.
+         */
+        if (!mesh.isMesh || mesh.visible === false || inRoom(mesh) || mesh.userData?.shade === true) return;
         const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
         for (const material of materials) {
           if (!material) continue;
@@ -729,72 +879,103 @@ function FrameProbe({ rows }: { rows: SceneRow[] }) {
      * сторону своей стены.
      */
     w.__mwCadRoom = () => {
-      const room = scene.getObjectByName('room');
+      const group = scene.getObjectByName('room');
       let floors = 0;
       let walls = 0;
-
+      let hiddenWalls = 0;
       let beams = 0;
+      const beamBoxes: THREE.Box3[] = [];
 
-      room?.traverse((object) => {
-        const mesh = object as THREE.Mesh;
-        if (!mesh.isMesh) return;
-        if (mesh.name.startsWith('beam:')) {
-          beams += 1;
+      group?.traverse((object) => {
+        if (object.name.startsWith('wall:') && !(object as THREE.Mesh).isMesh) {
+          walls += 1;
+          if (!object.visible) hiddenWalls += 1;
           return;
         }
-        // Пол уложен поворотом на −90° вокруг X, стены стоят вертикально.
-        if (Math.abs(mesh.rotation.x) > 1) floors += 1;
-        else walls += 1;
+        const mesh = object as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        if (mesh.name === 'floor') floors += 1;
+        if (mesh.name.startsWith('beam:')) {
+          beams += 1;
+          beamBoxes.push(new THREE.Box3().setFromObject(mesh));
+        }
       });
 
+      /*
+       * НИ ОДНА ДЕТАЛЬ НЕ ВХОДИТ В ОБЪЁМ СТЕНЫ — ПО НАРИСОВАННОМУ.
+       *
+       * Габарит каждой коробки ряда против габарита каждого нарисованного
+       * куска стены и объёма с замеренным выносом (стены стоят под прямым
+       * углом, их габарит в мире — это они сами). По данным комнаты
+       * проверка оставалась зелёной и тогда, когда стену рисовали по
+       * центру линии замера и она съедала полтолщины шкафов.
+       */
+      const solids: THREE.Box3[] = [];
+      group?.traverse((object) => {
+        const mesh = object as THREE.Mesh;
+        const role = mesh.userData?.role;
+        if (mesh.isMesh && (role === 'wall' || role === 'corner' || role === 'object')) {
+          solids.push(new THREE.Box3().setFromObject(mesh));
+        }
+      });
       let intersects = 0;
-      for (const row of rows) {
-        const place = rowPlacement(row);
-        const angle = (place.rotationYDeg * Math.PI) / 180;
-        const normal = new THREE.Vector3(Math.sin(angle), 0, Math.cos(angle));
-        const wallPoint = new THREE.Vector3(
-          place.xM - (rowStandardDepthMm(row.run.zone, 'base', row.run.production) / MM + 0.02) * Math.sin(angle),
-          0,
-          place.zM - (rowStandardDepthMm(row.run.zone, 'base', row.run.production) / MM + 0.02) * Math.cos(angle),
-        );
-
-        for (const corner of rowCorners([row], true)) {
-          const point = new THREE.Vector3(...corner);
-          // Отрицательное расстояние — точка за стеной, то есть в ней.
-          if (point.clone().sub(wallPoint).dot(normal) < -0.001) intersects += 1;
+      const corners = rowCorners(rows, true);
+      for (let i = 0; i + 8 <= corners.length; i += 8) {
+        const part = new THREE.Box3().setFromPoints(corners.slice(i, i + 8).map(([x, y, z]) => new THREE.Vector3(x, y, z)));
+        for (const solid of solids) {
+          const dx = Math.min(part.max.x, solid.max.x) - Math.max(part.min.x, solid.min.x);
+          const dy = Math.min(part.max.y, solid.max.y) - Math.max(part.min.y, solid.min.y);
+          const dz = Math.min(part.max.z, solid.max.z) - Math.max(part.min.z, solid.min.z);
+          if (dx > 0.001 && dy > 0.001 && dz > 0.001) intersects += 1;
         }
       }
 
       /*
-       * РЯД НЕ ПЕРЕСЕКАЕТ РИГЕЛЬ.
-       *
-       * Меряется по НАРИСОВАННОМУ: берётся габарит самой балки в сцене и
-       * вершины коробок ряда. Проверка по числам живёт в движке
-       * (`beamHits` в инвариантах), а эта отвечает на другой вопрос —
-       * то же ли самое видно на экране.
+       * РЯД НЕ ПЕРЕСЕКАЕТ РИГЕЛЬ — по нарисованному: габарит самой балки
+       * (или её контура на стене) против вершин коробок ряда.
        */
       let beamHits = 0;
-      const beamBoxes: THREE.Box3[] = [];
-      room?.traverse((object) => {
-        const mesh = object as THREE.Mesh;
-        if (!mesh.isMesh || !mesh.name.startsWith('beam:')) return;
-        beamBoxes.push(new THREE.Box3().setFromObject(mesh));
-      });
-
-      if (beamBoxes.length > 0) {
-        const corners = rowCorners(rows, true).map((corner) => new THREE.Vector3(...corner));
-        for (const box of beamBoxes) {
-          for (const point of corners) {
-            // Допуск в миллиметр: касание низа балки — это не пересечение.
-            if (point.y <= box.min.y + 0.001) continue;
-            if (point.x < box.min.x + 0.001 || point.x > box.max.x - 0.001) continue;
-            if (point.z < box.min.z - 0.001 || point.z > box.max.z + 0.001) continue;
-            beamHits += 1;
-          }
+      for (const box of beamBoxes) {
+        for (const [x, y, z] of corners) {
+          if (y <= box.min.y + 0.001) continue;
+          if (x < box.min.x + 0.001 || x > box.max.x - 0.001) continue;
+          if (z < box.min.z + 0.001 || z > box.max.z - 0.001) continue;
+          beamHits += 1;
         }
       }
 
-      return { floors, walls, beams, beamHits, intersects };
+      return {
+        floors,
+        walls,
+        hiddenWalls,
+        beams,
+        beamHits,
+        intersects,
+        wallSizes: (room?.walls ?? []).map((wall) => ({
+          id: wall.id,
+          lengthMm: wall.lengthMm,
+          heightMm: wall.heightMm,
+        })),
+        /*
+         * РАЗМЕРЫ СТЕН ПО НАРИСОВАННОМУ: габарит кусков стены (без
+         * углового блока) — длина вдоль, высота по вертикали. Стена стоит
+         * под прямым углом, поэтому длина — большая из горизонталей.
+         */
+        wallDrawn: (room?.walls ?? []).map((wall) => {
+          const box = new THREE.Box3();
+          scene.getObjectByName(`wall:${wall.id}`)?.traverse((object) => {
+            const mesh = object as THREE.Mesh;
+            if (mesh.isMesh && mesh.userData?.role === 'wall') box.union(new THREE.Box3().setFromObject(mesh));
+          });
+          const size = box.isEmpty() ? new THREE.Vector3() : box.getSize(new THREE.Vector3());
+          return {
+            id: wall.id,
+            lengthMm: Math.round(Math.max(size.x, size.z) * MM),
+            heightMm: Math.round(size.y * MM),
+          };
+        }),
+        missing: room?.missing ?? [],
+      };
     };
 
     /*
@@ -864,8 +1045,9 @@ function FrameProbe({ rows }: { rows: SceneRow[] }) {
       delete w.__mwCadLook;
       delete w.__mwCadRoom;
       delete w.__mwCadModules;
+      delete w.__mwCadShadows;
     };
-  }, [gl, camera, scene, get, rows]);
+  }, [gl, camera, scene, get, rows, room]);
 
   return null;
 }
@@ -963,150 +1145,6 @@ function rowCorners(rows: SceneRow[], inside = true): [number, number, number][]
   }
 
   return points;
-}
-
-/**
- * КОМНАТА ИЗ ПЛОСКОСТЕЙ: ПОЛ И СТЕНЫ.
- *
- * Мебель, висящая в пустоте, читается развалившейся — глазу не за что
- * зацепиться, и он не понимает, где верх, где низ и где угол. У мебельных
- * САПР под гарнитуром всегда пол и две стены, и это не украшение: ряд
- * ПРИМЫКАЕТ к чему-то, и потому стоит.
- *
- * Стены ставятся ПО РЯДАМ, а не по форме из настроек: у каждого ряда своя
- * стена за спиной, и прямая кухня получает одну, угловая две, П-образная
- * три — сама собой, тем же `rowPlacement`, который ставит мебель. Второй
- * формулы «где стена» в продукте нет.
- *
- * Ни окон, ни дверей, ни мебели комнаты: это фон, а не визуализация.
- * Показывает её рендер, и показывает по фотографии клиента.
- */
-function RoomShell({
-  rows,
-  ceilingHeightMm,
-  materials,
-}: {
-  rows: SceneRow[];
-  ceilingHeightMm: number;
-  materials: { floor: THREE.Material; wall: THREE.Material };
-}) {
-  const planes = useMemo(() => {
-    const heightM = ceilingHeightMm / MM;
-    const bounds = sceneBounds(rows);
-
-    /*
-     * Пол накрывает всю мебель с запасом в полметра: подрезанный по
-     * габариту, он читается ковриком, а не полом.
-     */
-    const spanX = Math.max(4, bounds.radius * 2 + 1);
-    const spanZ = Math.max(3, bounds.radius * 2 + 1);
-
-    const walls = rows.map((row) => {
-      const place = rowPlacement(row);
-      const lengthM = row.run.lengthMm / MM;
-      const depthM = rowStandardDepthMm(row.run.zone, 'base', row.run.production) / MM;
-      const angle = (place.rotationYDeg * Math.PI) / 180;
-
-      /*
-       * Стена стоит ЗА рядом, на два сантиметра дальше задней стенки:
-       * плоскость толщины не имеет, и совпадение с корпусом дало бы
-       * мерцание, а не примыкание.
-       */
-      const localZ = -depthM - 0.02;
-      const cos = Math.cos(angle);
-      const sin = Math.sin(angle);
-      const cx = lengthM / 2;
-
-      return {
-        key: row.run.id || String(place.xM),
-        position: [
-          cx * cos + localZ * sin + place.xM,
-          heightM / 2,
-          -cx * sin + localZ * cos + place.zM,
-        ] as [number, number, number],
-        rotationY: angle,
-        width: lengthM,
-      };
-    });
-
-    /*
-     * РИГЕЛЬ — ЧАСТЬ КОМНАТЫ, А НЕ МЕБЕЛИ.
-     *
-     * Он принадлежит потолку, поэтому и живёт в группе комнаты: попади
-     * он в габарит гарнитура, и камера начала бы кадрировать балку, а
-     * счётчик мешей мебели — считать её мебелью.
-     *
-     * Числа те же `run.beams`, по которым урезана высота модулей: ряд
-     * обязан упираться в то, что видно на экране.
-     */
-    const beams = rows.flatMap((row) => {
-      const place = rowPlacement(row);
-      const angle = (place.rotationYDeg * Math.PI) / 180;
-      const cos = Math.cos(angle);
-      const sin = Math.sin(angle);
-      const depthM = rowStandardDepthMm(row.run.zone, 'base', row.run.production) / MM;
-
-      return (row.run.beams ?? []).map((beam) => {
-        const dropM = beamDropMm(beam) / MM;
-        const widthM = beam.widthMm / MM;
-        const cx = (beam.fromCornerMm + beam.widthMm / 2) / MM;
-        // Балка идёт от стены вперёд на глубину ряда: под ней и стоит мебель.
-        const localZ = -depthM / 2;
-
-        return {
-          key: `${row.run.id}-${beam.id}`,
-          position: [
-            cx * cos + localZ * sin + place.xM,
-            heightM - dropM / 2,
-            -cx * sin + localZ * cos + place.zM,
-          ] as [number, number, number],
-          rotationY: angle,
-          size: [widthM, dropM, depthM] as [number, number, number],
-        };
-      });
-    });
-
-    return { spanX, spanZ, heightM, walls, beams, center: bounds.center };
-  }, [rows, ceilingHeightMm]);
-
-  return (
-    <group name="room">
-      {/* Пол: светлая плоскость под всей мебелью. */}
-      <mesh
-        rotation={[-Math.PI / 2, 0, 0]}
-        position={[planes.center[0], 0, planes.center[2]]}
-        material={materials.floor}
-        receiveShadow
-      >
-        <planeGeometry args={[planes.spanX, planes.spanZ]} />
-      </mesh>
-
-      {planes.walls.map((wall) => (
-        <mesh
-          key={wall.key}
-          position={wall.position}
-          rotation={[0, wall.rotationY, 0]}
-          material={materials.wall}
-          receiveShadow
-        >
-          <planeGeometry args={[wall.width, planes.heightM]} />
-        </mesh>
-      ))}
-
-      {/* Выступ на потолке: объём, в который мебель упирается. */}
-      {planes.beams.map((beam) => (
-        <mesh
-          key={beam.key}
-          name={`beam:${beam.key}`}
-          position={beam.position}
-          rotation={[0, beam.rotationY, 0]}
-          material={materials.wall}
-        >
-          <boxGeometry args={beam.size} />
-        </mesh>
-      ))}
-    </group>
-  );
 }
 
 /**

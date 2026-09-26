@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef } from 'react';
+import type { RowRoomObject } from '@/lib/millwork/room';
 import DimensionChain from './DimensionChain';
 import LeaderLines from './LeaderLines';
 import FrontGlyph from './FrontGlyph';
@@ -72,6 +73,15 @@ export type DrawingMode = 'fronts' | 'inside';
 
 type Props = {
   run: Run;
+  /**
+   * ОБЪЕКТЫ КОМНАТЫ НА ЭТОЙ СТЕНЕ — ИЗ `roomLayout` (слой 53).
+   *
+   * Окно, дверь, колонна и ригель в координатах ряда, переведённые тем же
+   * `markOnRun`, что и раскладка (`wallObjectsOnRow`). Схема рабочего места
+   * берёт их отсюда; там, где комнаты нет (лист, кабинет клиента), ригель
+   * по-прежнему идёт из `run.beams` — тех же чисел после того же перевода.
+   */
+  roomObjects?: RowRoomObject[];
   /** Габарит получен из допущения — на чертеже он идёт пунктиром. */
   assumedTotal?: boolean;
   selectedModuleId?: string | null;
@@ -676,6 +686,7 @@ function ModuleInside({
 
 export default function ElevationDrawing({
   run,
+  roomObjects,
   assumedTotal = false,
   selectedModuleId,
   onSelect,
@@ -1646,6 +1657,32 @@ export default function ElevationDrawing({
   /** Модуль уже 250 мм — номер уходит на выноску над ним. */
   const NARROW_MODULE_UNITS = narrowThreshold(run.lengthMm, drawWidth);
 
+  /*
+   * РИГЕЛИ И ПРОЁМЫ — ОДИН СПИСОК НА ЧЕРТЁЖ.
+   *
+   * С комнатой — её объекты (`roomLayout`), без неё — `run.beams`, то есть
+   * те же отметки замера после того же перевода в координаты ряда.
+   */
+  const beams: { id: string; fromCornerMm: number; widthMm: number; dropMm: number; contour: boolean }[] =
+    roomObjects
+      ? roomObjects
+          .filter((object) => object.kind === 'beam')
+          .map((object) => ({
+            id: object.id,
+            fromCornerMm: object.onRowFromMm,
+            widthMm: object.onRowWidthMm,
+            dropMm: object.topMm - object.bottomMm,
+            contour: object.depthMm === null,
+          }))
+      : (run.beams ?? []).map((beam) => ({
+          id: beam.id,
+          fromCornerMm: beam.fromCornerMm,
+          widthMm: beam.widthMm,
+          dropMm: beamDropMm(beam),
+          contour: false,
+        }));
+  const roomOpenings = (roomObjects ?? []).filter((object) => object.kind !== 'beam');
+
   const drawing = (
     <svg
       viewBox={`${viewLeft} ${viewTop} ${viewWidth} ${viewHeight}`}
@@ -1706,6 +1743,71 @@ export default function ElevationDrawing({
         </>
       )}
 
+      {/*
+        * ОКНО, ДВЕРЬ, КОЛОННА И КОРОБ — ИЗ КОМНАТЫ, ПОЗАДИ МЕБЕЛИ.
+        *
+        * Место — `wallObjectsOnRow`: тот же перевод от угла стены к началу
+        * ряда, что у раскладки. Проём — рамкой, объём — штриховкой;
+        * допущение замера и незамеренный вынос — пунктиром.
+        */}
+      {!compact && roomOpenings.length > 0 && (
+        <g data-room-objects pointerEvents="none">
+          <defs>
+            <pattern
+              id="mw-room-hatch"
+              width={7}
+              height={7}
+              patternUnits="userSpaceOnUse"
+              patternTransform="rotate(-45)"
+            >
+              <line x1={0} y1={0} x2={0} y2={7} stroke="var(--blueprint)" strokeWidth={0.6} />
+            </pattern>
+          </defs>
+          {roomOpenings.map((object) => {
+            const x = padLeft + object.onRowFromMm * scale;
+            const w = object.onRowWidthMm * scale;
+            const y = yOf(object.topMm);
+            const h = yOf(object.bottomMm) - y;
+            const dashed = object.state === 'assumed' || (object.cut !== 'through' && object.depthMm === null);
+            return (
+              <g
+                key={object.id}
+                data-room-object={object.id}
+                data-kind={object.kind}
+                data-from-mm={object.onRowFromMm}
+                data-width-mm={object.onRowWidthMm}
+                data-bottom-mm={object.bottomMm}
+                data-top-mm={object.topMm}
+              >
+                <rect
+                  x={x}
+                  y={y}
+                  width={w}
+                  height={h}
+                  fill={object.cut === 'volume' ? 'url(#mw-room-hatch)' : 'none'}
+                  stroke="var(--blueprint)"
+                  strokeWidth={0.8 * k}
+                  strokeDasharray={dashed ? '4 3' : undefined}
+                  opacity={0.75}
+                />
+                {object.kind === 'window' && (
+                  <rect
+                    x={x + 3}
+                    y={y + 3}
+                    width={Math.max(0, w - 6)}
+                    height={Math.max(0, h - 6)}
+                    fill="none"
+                    stroke="var(--blueprint)"
+                    strokeWidth={0.5 * k}
+                    opacity={0.6}
+                  />
+                )}
+              </g>
+            );
+          })}
+        </g>
+      )}
+
       {/* Высотные отметки слева. В макете их нет: он читается силуэтом. */}
       {!compact && marks.map(([mm, label]) => (
         <g key={label}>
@@ -1752,7 +1854,7 @@ export default function ElevationDrawing({
         * `run.beams`, по которым урезана высота модулей, — второй
         * источник разошёлся бы с мебелью.
         */}
-      {(run.beams ?? []).length > 0 && (
+      {beams.length > 0 && (
         <g data-beams>
           <defs>
             <pattern
@@ -1766,15 +1868,22 @@ export default function ElevationDrawing({
             </pattern>
           </defs>
 
-          {(run.beams ?? []).map((beam) => {
-            const drop = beamDropMm(beam);
+          {beams.map((beam) => {
+            const drop = beam.dropMm;
             const x = padLeft + beam.fromCornerMm * scale;
             const w = beam.widthMm * scale;
             const y = yOf(ceiling);
             const h = yOf(ceiling - drop) - y;
 
             return (
-              <g key={beam.id} data-beam={beam.id} pointerEvents="none">
+              <g
+                key={beam.id}
+                data-beam={beam.id}
+                data-from-mm={beam.fromCornerMm}
+                data-width-mm={beam.widthMm}
+                data-drop-mm={drop}
+                pointerEvents="none"
+              >
                 <rect
                   x={x}
                   y={y}
@@ -1783,6 +1892,7 @@ export default function ElevationDrawing({
                   fill="url(#mw-beam-hatch)"
                   stroke="var(--blueprint)"
                   strokeWidth={0.8 * k}
+                  strokeDasharray={beam.contour ? '4 3' : undefined}
                 />
                 {!compact && h > 9 && (
                   <text

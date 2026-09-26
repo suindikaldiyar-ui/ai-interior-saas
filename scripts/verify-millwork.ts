@@ -144,7 +144,7 @@ import {
 } from '../lib/millwork/palette';
 import { frontKey, frontOf } from '../lib/millwork/frontMaterial';
 import { reorderTarget, rowOfModule } from '../lib/millwork/selection';
-import { cornerBandMm, cornerFillerMm } from '../lib/millwork/composition';
+import { cornerBandMm, cornerFillerMm, markOnRun, runPlacements } from '../lib/millwork/composition';
 import { upperSpans, upperSpansOfRun } from '../lib/millwork/layout';
 import { CORNER_FILLER_PANEL_NAME } from '../lib/millwork/panels';
 import {
@@ -287,7 +287,27 @@ import {
   missingRequiredRates,
   ratesFromCatalog,
 } from '../lib/millwork/rates';
-import { objectEstimateOf, projectOffer } from '../lib/millwork/objectEstimate';
+import {
+  compositionFor,
+  objectEstimateOf,
+  objectInput,
+  objectSite,
+  projectOffer,
+  wallRequirementsOf,
+  wallSegments,
+} from '../lib/millwork/objectEstimate';
+import {
+  ROOM_CONTOUR_MM,
+  ROOM_WALL_THICKNESS_MM,
+  roomAroundRows,
+  roomBoxes,
+  roomOnRow,
+  openSideOf,
+  roomSourceOf,
+  rowPlacement as roomRowPlacement,
+  wallsFacingAway,
+} from '../lib/millwork/room';
+import { generalCamera } from '../lib/cameraFraming';
 import { axonometryExtentMm, buildAxonometry, project } from '../lib/millwork/axonometry';
 import { carcassBoxes, doorCount, doorPivot, hasVisibleAppliance, moduleBoxes, openablePartIds, panelPlaces, runBoxes, runPlaces, doorLeaves} from '../lib/millwork/cabinetBoxes';
 import {
@@ -339,6 +359,7 @@ import type {
   CommPoint,
   Estimate,
   FrontSpec,
+  Measurement,
   MillworkOp,
   Module,
   ModuleFill,
@@ -405,6 +426,7 @@ import {
   resolveSurvey,
   surveyFromMeasurement,
   surveyStats,
+  type Survey,
 } from '../types/survey';
 import {
   VISIBLE_WARNINGS,
@@ -19621,6 +19643,688 @@ console.log('\n' + 'Каталог материалов: цена коллекц
     `${Math.round(buildEstimate(demo, 'optimal', DEMO_RATES).total)}`,
   );
 }
+
+/* ═══════════  Слой 53: комната из замера — стены, проёмы, ригель  ═══════════ */
+
+/**
+ * КОМНАТА ИЗ ЗАМЕРА ИДЁТ ПУТЁМ ЭКРАНА (тесты 17–20 слоя 53).
+ *
+ * Рабочее место доходит до сцены так: `objectSite` → `compositionFor` →
+ * `objectInput` → `composeVariants` → `wallSegments` → `runPlacements` →
+ * `roomSourceOf` → `roomAroundRows`. Здесь те же вызовы в том же порядке.
+ * Сцена рисует `roomBoxes`, схема и план — `ElevationDrawing` и
+ * `PlanDrawing` с `roomOnRow`, как `RunSchematic`.
+ *
+ * Меряются миллиметры ЗАМЕРА против НАРИСОВАННОГО — на трёх формах, двух
+ * решениях угла и трёх школах цеха: на умолчаниях расхождение не видно.
+ */
+console.log('\nСлой 53: комната из замера — стены, проёмы, ригель');
+{
+  const T = ROOM_WALL_THICKNESS_MM;
+
+  const cornerRoom: Measurement = {
+    id: 'room-corner',
+    ceilingHeightMm: 2750,
+    walls: [
+      {
+        id: 'a',
+        lengthMm: 3400,
+        angleDeg: 90,
+        openings: [{ id: 'win-a', kind: 'window', fromCornerMm: 1300, widthMm: 1000, sillMm: 900, heightMm: 1400 }],
+      },
+      {
+        id: 'b',
+        lengthMm: 2600,
+        angleDeg: 90,
+        openings: [
+          { id: 'beam-b', kind: 'beam', fromCornerMm: 1200, widthMm: 300, sillMm: 0, heightMm: 300, depthMm: 250 },
+        ],
+      },
+      {
+        id: 'c',
+        lengthMm: 3400,
+        angleDeg: 90,
+        openings: [{ id: 'door-c', kind: 'door', fromCornerMm: 2300, widthMm: 900, sillMm: 0, heightMm: 2100 }],
+      },
+    ],
+    comms: [],
+    photos: [],
+    measuredBy: 'Проверка',
+    measuredAt: '2026-09-26',
+    notes: '',
+  };
+
+  const uRoom: Measurement = {
+    id: 'room-u',
+    ceilingHeightMm: 2700,
+    walls: [
+      { id: 'a', lengthMm: 2800, angleDeg: 90, openings: [] },
+      {
+        id: 'b',
+        lengthMm: 3200,
+        angleDeg: 90,
+        openings: [{ id: 'win-b', kind: 'window', fromCornerMm: 1100, widthMm: 900, sillMm: 900, heightMm: 1400 }],
+      },
+      { id: 'c', lengthMm: 2800, angleDeg: 90, openings: [] },
+      {
+        id: 'd',
+        lengthMm: 3200,
+        angleDeg: 90,
+        openings: [{ id: 'door-d', kind: 'door', fromCornerMm: 1000, widthMm: 900, sillMm: 0, heightMm: 2100 }],
+      },
+    ],
+    comms: [],
+    photos: [],
+    measuredBy: 'Проверка',
+    measuredAt: '2026-09-26',
+    notes: '',
+  };
+
+  const schools: [string, ProductionSettings][] = [
+    ['цех 560/320', DEFAULT_PRODUCTION],
+    [
+      'цех 550/350',
+      {
+        ...DEFAULT_PRODUCTION,
+        depths: { baseMm: 550, upperMm: 350, mezzanineMm: 550 },
+        heights: { plinthMm: 100, carcassMm: 760, countertopMm: 40, apronMm: 600 },
+      },
+    ],
+    ['цех 600/300', { ...DEFAULT_PRODUCTION, depths: { baseMm: 600, upperMm: 300, mezzanineMm: 600 } }],
+  ];
+
+  const shapes: { title: string; measurement: Measurement; wallId: string; kind: CompositionKind }[] = [
+    { title: 'прямая (демо)', measurement: DEMO_MEASUREMENT, wallId: 'w1', kind: 'linear' },
+    { title: 'угловая', measurement: cornerRoom, wallId: 'a', kind: 'corner_l' },
+    { title: 'П-образная', measurement: uRoom, wallId: 'a', kind: 'u_shape' },
+  ];
+  const solutions = ['false_panel', 'corner_module'] as const;
+
+  /** Путь экрана до сцены: ровно те вызовы, что у рабочего места. */
+  const screenRoom = (
+    measurement: Measurement,
+    wallId: string,
+    kind: CompositionKind,
+    solution: (typeof solutions)[number],
+    production: ProductionSettings,
+    survey: Survey | null = null,
+  ) => {
+    const requirements = DEMO_REQUIREMENTS;
+    const resolution = survey ? resolveSurvey(survey) : null;
+    const base = workspaceInput({
+      title: 'Комната',
+      zone: 'Кухня',
+      measurement,
+      requirements,
+      rates: DEMO_RATES,
+      wallId,
+      cornerAt: null,
+    });
+    const site = objectSite(base, resolution);
+    const attempt = compositionFor({ shape: kind, requirements, cornerSolution: solution, site, production });
+    if (attempt?.state === 'refused') return { refused: attempt.reason };
+    const layout = attempt?.state === 'built' ? attempt.composition : null;
+    const input = objectInput({
+      base,
+      resolution,
+      requirements: wallRequirementsOf(layout, requirements),
+      rates: DEMO_RATES,
+      production,
+      milling: new Map(),
+      carcass: new Map(),
+      materials: new Map(),
+    });
+    const active = composeVariants(input, { basic: [], optimal: [], premium: [] } as never, {}).find(
+      (variant) => variant.key === 'optimal',
+    )!;
+    const segments = wallSegments(layout, active.run, {});
+    const zone = active.run.zone;
+    const places = runPlacements({ runs: segments, solution, zone, production });
+    const rows = segments.map((run, i) => ({ run, placement: places[i] }));
+    const source = roomSourceOf({
+      walls: site.walls,
+      runOpenings: input.openings,
+      measuredWalls: resolution?.measurement.walls ?? base.measuredWalls ?? [],
+      ceilingMm: site.ceilingMm,
+      depthMm: rowStandardDepthMm(zone, 'base', production),
+      solution,
+      survey,
+    });
+    return {
+      rows,
+      siteWalls: site.walls,
+      /** Комната сцены: `CadScene` вокруг рядов. */
+      room: roomAroundRows(source, rows, null),
+      /** Комната схемы и плана: `RunSchematic` вокруг тех же рядов. */
+      plan: roomAroundRows(source, rows, null),
+    };
+  };
+
+  type WallFrame = { startMm: [number, number]; dir: [number, number]; inward: [number, number] };
+  type Extent = { along: [number, number]; into: [number, number]; height: [number, number] };
+
+  /** Вершины коробки в мире (мм) → промежутки в осях стены. */
+  const extentOf = (wall: WallFrame, corners: [number, number, number][]): Extent => {
+    const along: number[] = [];
+    const into: number[] = [];
+    const height: number[] = [];
+    for (const [x, y, z] of corners) {
+      const dx = x - wall.startMm[0];
+      const dz = z - wall.startMm[1];
+      along.push(dx * wall.dir[0] + dz * wall.dir[1]);
+      into.push(dx * wall.inward[0] + dz * wall.inward[1]);
+      height.push(y);
+    }
+    return {
+      along: [Math.min(...along), Math.max(...along)],
+      into: [Math.min(...into), Math.max(...into)],
+      height: [Math.min(...height), Math.max(...height)],
+    };
+  };
+
+  /** Коробка комнаты: центр и размер в метрах, поворот как у стены. */
+  const roomCorners = (box: { center: [number, number, number]; size: [number, number, number]; rotationYDeg: number }) => {
+    const a = (box.rotationYDeg * Math.PI) / 180;
+    const ux: [number, number] = [Math.cos(a), -Math.sin(a)];
+    const uz: [number, number] = [Math.sin(a), Math.cos(a)];
+    const out: [number, number, number][] = [];
+    for (const sx of [-0.5, 0.5]) {
+      for (const sy of [-0.5, 0.5]) {
+        for (const sz of [-0.5, 0.5]) {
+          const lx = sx * box.size[0];
+          const lz = sz * box.size[2];
+          out.push([
+            (box.center[0] + lx * ux[0] + lz * uz[0]) * 1000,
+            (box.center[1] + sy * box.size[1]) * 1000,
+            (box.center[2] + lx * ux[1] + lz * uz[1]) * 1000,
+          ]);
+        }
+      }
+    }
+    return out;
+  };
+
+  /** Коробка ряда: в осях ряда, в мир — местом ряда (`rowPlacement`). */
+  const partCorners = (
+    part: { position: [number, number, number]; scale: [number, number, number] },
+    place: { xM: number; zM: number; rotationYDeg: number },
+  ) => {
+    const a = (place.rotationYDeg * Math.PI) / 180;
+    const cos = Math.cos(a);
+    const sin = Math.sin(a);
+    const out: [number, number, number][] = [];
+    for (const ox of [-0.5, 0.5]) {
+      for (const oy of [-0.5, 0.5]) {
+        for (const oz of [-0.5, 0.5]) {
+          const x = part.position[0] + ox * part.scale[0];
+          const y = part.position[1] + oy * part.scale[1];
+          const z = part.position[2] + oz * part.scale[2];
+          out.push([(x * cos + z * sin + place.xM) * 1000, y * 1000, (-x * sin + z * cos + place.zM) * 1000]);
+        }
+      }
+    }
+    return out;
+  };
+
+  const overlap = (a: [number, number], b: [number, number]) => Math.min(a[1], b[1]) - Math.max(a[0], b[0]);
+
+  /** Отметки на разметке чертежа: `data-<что>="id"` и все `data-*-mm`. */
+  const marksIn = (svg: string, attr: string) => {
+    const out = new Map<string, Record<string, number>>();
+    for (const tag of svg.match(new RegExp(`<g[^>]*\\b${attr}="[^"]*"[^>]*>`, 'g')) ?? []) {
+      const id = tag.match(new RegExp(`\\b${attr}="([^"]*)"`))![1];
+      const values: Record<string, number> = {};
+      const numbers = /data-([a-z-]+)-mm="(-?[\d.]+)"/g;
+      for (let hit = numbers.exec(tag); hit; hit = numbers.exec(tag)) values[hit[1]] = Number(hit[2]);
+      out.set(id, values);
+    }
+    return out;
+  };
+
+  let configs = 0;
+  let walls17 = 0;
+  let backs18 = 0;
+  let parts18 = 0;
+  let objects19 = 0;
+  let marks20 = 0;
+  const refused: string[] = [];
+  const drift17: string[] = [];
+  const drift18: string[] = [];
+  const hits18: string[] = [];
+  const drift19: string[] = [];
+  const drift20: string[] = [];
+
+  for (const shape of shapes) {
+    for (const solution of solutions) {
+      for (const [school, production] of schools) {
+        const tag = `${shape.title} · ${solution === 'corner_module' ? 'угловой модуль' : 'фальш-панель'} · ${school}`;
+        const screen = screenRoom(shape.measurement, shape.wallId, shape.kind, solution, production);
+        if ('refused' in screen) {
+          refused.push(`${tag}: ${screen.refused}`);
+          continue;
+        }
+        const { rows, room, plan } = screen;
+        if (!room || !plan) {
+          refused.push(`${tag}: КОМНАТЫ НЕТ — рядов ${rows.length}`);
+          continue;
+        }
+        configs += 1;
+        const boxes = roomBoxes(room);
+        const ceiling = shape.measurement.ceilingHeightMm;
+        const measuredWalls = shape.measurement.walls.filter((wall) => wall.lengthMm > 0);
+
+        /* ── 17. Стен в сцене = стен в композиции замера, длина и высота = замер ── */
+        const drawnWalls = new Set(boxes.filter((box) => box.role === 'wall').map((box) => box.wallIndex));
+        if (
+          drawnWalls.size !== screen.siteWalls.length ||
+          room.walls.length !== screen.siteWalls.length ||
+          screen.siteWalls.length !== measuredWalls.length
+        ) {
+          drift17.push(
+            `${tag}: стен нарисовано ${drawnWalls.size}, в комнате ${room.walls.length}, ` +
+              `в композиции ${screen.siteWalls.length}, в замере ${measuredWalls.length}`,
+          );
+        }
+        for (const wall of room.walls) {
+          walls17 += 1;
+          const want = measuredWalls.find((candidate) => candidate.id === wall.id);
+          const pieces = boxes
+            .filter((box) => box.wallIndex === wall.index && box.role === 'wall')
+            .map((box) => extentOf(wall, roomCorners(box)));
+          if (!want || pieces.length === 0) {
+            drift17.push(`${tag} · ${wall.id}: ${!want ? 'стены нет в замере' : 'НОЛЬ КУСКОВ СТЕНЫ в сцене'}`);
+            continue;
+          }
+          const u0 = Math.min(...pieces.map((p) => p.along[0]));
+          const u1 = Math.max(...pieces.map((p) => p.along[1]));
+          const v0 = Math.min(...pieces.map((p) => p.height[0]));
+          const v1 = Math.max(...pieces.map((p) => p.height[1]));
+          const i0 = Math.min(...pieces.map((p) => p.into[0]));
+          const i1 = Math.max(...pieces.map((p) => p.into[1]));
+          const area = pieces.reduce((sum, p) => sum + (p.along[1] - p.along[0]) * (p.height[1] - p.height[0]), 0);
+          const holes = room.objects
+            .filter((object) => object.wallIndex === wall.index && object.cut === 'through')
+            .reduce((sum, object) => sum + object.widthMm * (object.topMm - object.bottomMm), 0);
+          const wantArea = want.lengthMm * ceiling - holes;
+          if (
+            wall.lengthMm !== want.lengthMm ||
+            wall.heightMm !== ceiling ||
+            Math.abs(u0) > 1 ||
+            Math.abs(u1 - want.lengthMm) > 1 ||
+            Math.abs(v0) > 1 ||
+            Math.abs(v1 - ceiling) > 1 ||
+            Math.abs(i1) > 1 ||
+            Math.abs(i0 + T) > 1 ||
+            Math.abs(area - wantArea) > 0.002 * want.lengthMm * ceiling
+          ) {
+            drift17.push(
+              `${tag} · ${wall.id}: замер ${want.lengthMm}×${ceiling}, нарисовано ${Math.round(u1 - u0)}×${Math.round(v1 - v0)} ` +
+                `от ${Math.round(u0)} · грань ${Math.round(i1)} · наружу ${Math.round(-i0)} мм · площадь ${Math.round(area / 1e4) / 100} м² ` +
+                `против ${Math.round(wantArea / 1e4) / 100}`,
+            );
+          }
+        }
+
+        /* ── 18. Задняя плоскость ряда на грани стены, мебель не в объёме стены ── */
+        for (const row of rows) {
+          const wall = room.walls.find((candidate) => candidate.id === row.run.wallId);
+          if (!wall) {
+            drift18.push(`${tag}: ряд стены ${row.run.wallId} — стены нет в комнате`);
+            continue;
+          }
+          const place = roomRowPlacement(row);
+          const placed = runPlaces(row.run);
+          if (placed.length === 0) {
+            drift18.push(`${tag} · ${wall.id}: НОЛЬ МОДУЛЕЙ — задней плоскости нет`);
+            continue;
+          }
+          for (const entry of placed) {
+            backs18 += 1;
+            const back = entry.zM - entry.depthM;
+            const x1 = entry.x + entry.unit.widthMm / 1000;
+            const edge = extentOf(
+              wall,
+              partCorners({ position: [(entry.x + x1) / 2, 0, back], scale: [x1 - entry.x, 0, 0] }, place),
+            );
+            const gap = Math.max(Math.abs(edge.into[0]), Math.abs(edge.into[1]));
+            if (gap > 0.5) {
+              drift18.push(`${tag} · ${wall.id} · ${entry.unit.id}: от задней плоскости до грани стены ${gap.toFixed(1)} мм`);
+            }
+          }
+
+          const parts = runBoxes(row.run, {
+            thicknessMm: production.carcassMm,
+            frontThicknessMm: production.frontMm,
+            gapMm: production.frontGapMm,
+          });
+          /*
+           * Меряется НАРИСОВАННОЕ: коробки стен, угловых блоков и объёмов с
+           * замеренным выносом — те, что кладёт сцена (`roomBoxes`). По данным
+           * комнаты проверка оставалась зелёной и тогда, когда стена стояла
+           * по центру линии замера и съедала полтолщины шкафов.
+           */
+          const solids = boxes
+            .filter((box) => box.role === 'wall' || box.role === 'corner' || box.role === 'object')
+            .map((box) => {
+              const host = room.walls[box.wallIndex];
+              return { box, host, extent: extentOf(host, roomCorners(box)) };
+            });
+          for (const part of parts) {
+            parts18 += 1;
+            const corners = partCorners(part, place);
+            for (const { box, host, extent } of solids) {
+              const e = extentOf(host, corners);
+              const deep = overlap(e.into, extent.into);
+              if (overlap(e.along, extent.along) > 1 && overlap(e.height, extent.height) > 1 && deep > 1) {
+                hits18.push(
+                  `${tag} · ряд ${wall.id} · ${part.panel ?? part.node ?? part.material}: ` +
+                    `${box.role === 'object' ? `в объёме ${box.kind} ${box.objectId}` : `в стене ${host.id}`} на ${deep.toFixed(1)} мм`,
+                );
+              }
+            }
+          }
+        }
+
+        /* ── 19. Окно, дверь, ригель: положение в мм = замер ── */
+        for (const measuredWall of measuredWalls) {
+          for (const opening of measuredWall.openings) {
+            objects19 += 1;
+            const object = room.objects.find((candidate) => candidate.id === opening.id);
+            if (!object) {
+              drift19.push(`${tag}: ${opening.kind} ${opening.id} НЕ НАРИСОВАН`);
+              continue;
+            }
+            const volume = opening.kind === 'beam' || opening.kind === 'column' || opening.kind === 'pipe_box';
+            const want =
+              opening.kind === 'beam'
+                ? { bottom: ceiling - beamDropMm(opening), top: ceiling }
+                : opening.kind === 'door' || opening.kind === 'arch'
+                  ? { bottom: 0, top: opening.heightMm }
+                  : { bottom: opening.sillMm, top: opening.sillMm + opening.heightMm };
+            const need = `${measuredWall.id} ${opening.fromCornerMm}+${opening.widthMm} ↕${want.bottom}…${want.top} вынос ${volume ? (opening.depthMm ?? null) : null}`;
+            const got = `${object.wallId} ${object.fromMm}+${object.widthMm} ↕${object.bottomMm}…${object.topMm} вынос ${object.depthMm}`;
+            if (need !== got) drift19.push(`${tag} · ${opening.id}: замер ${need} · комната ${got}`);
+
+            /* В сцене: проём — дыра ровно по отметке, объём — коробка по ней же. */
+            const wall = room.walls[object.wallIndex];
+            if (object.cut === 'through') {
+              const pieces = boxes
+                .filter((box) => box.wallIndex === wall.index && box.role === 'wall')
+                .map((box) => extentOf(wall, roomCorners(box)));
+              const hole: Extent = {
+                along: [opening.fromCornerMm, opening.fromCornerMm + opening.widthMm],
+                into: [-T, 0],
+                height: [want.bottom, want.top],
+              };
+              const covered = (u: number, v: number) =>
+                pieces.some((p) => u > p.along[0] && u < p.along[1] && v > p.height[0] && v < p.height[1]);
+              const midU = (hole.along[0] + hole.along[1]) / 2;
+              const midV = (hole.height[0] + hole.height[1]) / 2;
+              const around: [number, number][] = [
+                [hole.along[0] - 2, midV],
+                [hole.along[1] + 2, midV],
+                ...(hole.height[0] > 2 ? [[midU, hole.height[0] - 2] as [number, number]] : []),
+                ...(hole.height[1] < ceiling - 2 ? [[midU, hole.height[1] + 2] as [number, number]] : []),
+              ];
+              const inHole = pieces.filter(
+                (p) => overlap(p.along, hole.along) > 1 && overlap(p.height, hole.height) > 1,
+              );
+              const open = around.filter(([u, v]) => !covered(u, v));
+              if (inHole.length > 0 || open.length > 0) {
+                drift19.push(
+                  `${tag} · ${opening.id}: дыра в стене не по замеру — кусков в проёме ${inHole.length}, ` +
+                    `непокрытых краёв ${open.length}`,
+                );
+              }
+            } else {
+              const box = boxes.find((candidate) => candidate.objectId === object.id);
+              if (!box) {
+                drift19.push(`${tag} · ${opening.id}: В СЦЕНЕ НЕТ КОРОБКИ`);
+                continue;
+              }
+              const e = extentOf(wall, roomCorners(box));
+              const deep = object.depthMm ?? ROOM_CONTOUR_MM;
+              if (
+                Math.abs(e.along[0] - opening.fromCornerMm) > 1 ||
+                Math.abs(e.along[1] - opening.fromCornerMm - opening.widthMm) > 1 ||
+                Math.abs(e.height[0] - want.bottom) > 1 ||
+                Math.abs(e.height[1] - want.top) > 1 ||
+                Math.abs(e.into[0]) > 1 ||
+                Math.abs(e.into[1] - deep) > 1
+              ) {
+                drift19.push(
+                  `${tag} · ${opening.id}: в сцене ${Math.round(e.along[0])}…${Math.round(e.along[1])} ↕` +
+                    `${Math.round(e.height[0])}…${Math.round(e.height[1])} вынос ${Math.round(e.into[1] - e.into[0])} · замер ${need}`,
+                );
+              }
+            }
+          }
+        }
+
+        /* ── 20. Сцена, схема и план — одна комната ── */
+        for (const row of rows) {
+          const wall = plan.walls.find((candidate) => candidate.id === row.run.wallId);
+          const sceneWall = room.walls.find((candidate) => candidate.id === row.run.wallId);
+          const measuredWall = measuredWalls.find((candidate) => candidate.id === row.run.wallId);
+          if (!wall || !sceneWall || !measuredWall) {
+            drift20.push(`${tag}: ряд ${row.run.wallId} — стены нет в комнате схемы или сцены`);
+            continue;
+          }
+          const on = roomOnRow(plan, row.run);
+          const elevation = renderToStaticMarkup(
+            createElement(ElevationDrawing, { run: row.run, roomObjects: on.objects }),
+          );
+          const planSvg = renderToStaticMarkup(
+            createElement(PlanDrawing, {
+              run: row.run,
+              comms: [],
+              issues: [],
+              roomWall: on.wall,
+              roomObjects: on.objects,
+            }),
+          );
+          const onElevation = new Map(
+            Array.from(marksIn(elevation, 'data-room-object').entries()).concat(
+              Array.from(marksIn(elevation, 'data-beam').entries()),
+            ),
+          );
+          const onPlan = marksIn(planSvg, 'data-room-object');
+          const planWall = marksIn(planSvg, 'data-plan-wall');
+          const expected = measuredWall.openings.flatMap((opening) => {
+            const at = markOnRun(opening, sceneWall.rowStartMm, row.run.lengthMm);
+            return at ? [{ opening, at }] : [];
+          });
+
+          if (onElevation.size !== expected.length || onPlan.size !== expected.length) {
+            drift20.push(
+              `${tag} · ${wall.id}: на ряду по замеру ${expected.length}, на схеме ${onElevation.size}, на плане ${onPlan.size}`,
+            );
+          }
+          const wallMark = Array.from(planWall.values())[0];
+          if (
+            !wallMark ||
+            wallMark.from !== -sceneWall.rowStartMm ||
+            wallMark.to !== measuredWall.lengthMm - sceneWall.rowStartMm
+          ) {
+            drift20.push(
+              `${tag} · ${wall.id}: стена на плане ${wallMark ? `${wallMark.from}…${wallMark.to}` : 'НЕ НАРИСОВАНА'} · ` +
+                `замер ${-sceneWall.rowStartMm}…${measuredWall.lengthMm - sceneWall.rowStartMm}`,
+            );
+          }
+
+          for (const { opening, at } of expected) {
+            marks20 += 1;
+            const elev = onElevation.get(opening.id);
+            const planMark = onPlan.get(opening.id);
+            const sceneBox = boxes.find((box) => box.objectId === opening.id);
+            const scenePieces = boxes
+              .filter((box) => box.wallIndex === sceneWall.index && box.role === 'wall')
+              .map((box) => extentOf(sceneWall, roomCorners(box)));
+            /* Сцена: коробка объёма или края дыры — в координатах ряда. */
+            const sceneFrom = sceneBox
+              ? extentOf(sceneWall, roomCorners(sceneBox)).along[0] - sceneWall.rowStartMm
+              : Math.max(
+                  ...scenePieces
+                    .filter((p) => p.along[1] <= opening.fromCornerMm + 1)
+                    .map((p) => p.along[1]),
+                ) - sceneWall.rowStartMm;
+            const engineBeam = (row.run.beams ?? []).find((beam) => beam.id === opening.id);
+            const dropOk =
+              opening.kind !== 'beam' ||
+              (elev?.drop === beamDropMm(opening) && Boolean(engineBeam) && engineBeam!.fromCornerMm === at.fromCornerMm);
+            if (
+              !elev ||
+              !planMark ||
+              elev.from !== at.fromCornerMm ||
+              elev.width !== at.widthMm ||
+              planMark.from !== at.fromCornerMm ||
+              planMark.width !== at.widthMm ||
+              Math.abs(Math.max(sceneFrom, 0) - at.fromCornerMm) > 1 ||
+              !dropOk
+            ) {
+              drift20.push(
+                `${tag} · ${opening.id}: замер→ряд ${at.fromCornerMm}+${at.widthMm} · схема ${elev ? `${elev.from}+${elev.width}` : 'НЕТ'} · ` +
+                  `план ${planMark ? `${planMark.from}+${planMark.width}` : 'НЕТ'} · сцена ${Math.round(sceneFrom)}` +
+                  (opening.kind === 'beam'
+                    ? ` · свес на схеме ${elev?.drop ?? 'НЕТ'}, в движке ${engineBeam ? engineBeam.fromCornerMm : 'НЕТ РИГЕЛЯ'}`
+                    : ''),
+              );
+            }
+          }
+        }
+      }
+    }
+  }
+
+  const want = shapes.length * solutions.length * schools.length;
+  check(
+    'слой 53: все конфигурации комнаты собрались путём экрана',
+    configs === want && refused.length === 0,
+    configs === want ? `${configs} конфигураций` : `собралось ${configs} из ${want}: ${refused.slice(0, 2).join(' · ')}`,
+  );
+  check(
+    'тест 17: стен в сцене = стен в композиции замера, длина и высота каждой = замер в мм, внутренняя грань на линии замера',
+    walls17 === (2 + 3 + 4) * solutions.length * schools.length && drift17.length === 0,
+    drift17.length === 0 ? `${walls17} стен сверено` : drift17.slice(0, 3).join(' · '),
+  );
+  check(
+    'тест 18: от задней плоскости каждого ряда до внутренней грани стены 0 мм',
+    backs18 > 0 && drift18.length === 0,
+    backs18 === 0 ? 'НОЛЬ МОДУЛЕЙ — мерить нечего' : drift18.length === 0 ? `${backs18} модулей на грани` : drift18.slice(0, 3).join(' · '),
+  );
+  check(
+    'тест 18: ни одна деталь мебели не входит в объём стены или ригеля',
+    parts18 > 0 && hits18.length === 0,
+    parts18 === 0 ? 'НОЛЬ ДЕТАЛЕЙ — мерить нечего' : hits18.length === 0 ? `${parts18} деталей вне стен` : `${hits18.length}: ${hits18.slice(0, 3).join(' · ')}`,
+  );
+  check(
+    'тест 19: окно, дверь и ригель — в комнате и в сцене на отметках замера',
+    objects19 === (2 + 3 + 2) * solutions.length * schools.length && drift19.length === 0,
+    drift19.length === 0 ? `${objects19} объектов сверено` : drift19.slice(0, 3).join(' · '),
+  );
+  check(
+    'тест 20: сцена, схема и план ставят объекты комнаты на одни отметки — из одной roomLayout',
+    marks20 === (2 + 2 + 1) * solutions.length * schools.length && drift20.length === 0,
+    drift20.length === 0 ? `${marks20} отметок сверено трижды` : drift20.slice(0, 3).join(' · '),
+  );
+
+  /*
+   * ── Стены между камерой и кухней прячутся, стены с мебелью видны ──
+   *
+   * Камера — та же, что у «Общего вида»: габарит мебели как у
+   * `sceneBounds` (коробки рядов без внутренних деталей), открытая сторона
+   * `openSideOf`, отход `generalCamera` под холст 1408 × 691. Стена, которую
+   * пересекает луч «камера → центр кухни», обязана быть спрятана; стена, у
+   * которой стоит мебель, — видна.
+   */
+  {
+    const drift: string[] = [];
+    const seen: string[] = [];
+    let viewed = 0;
+    let uVisible = -1;
+    for (const shape of shapes) {
+      const screen = screenRoom(shape.measurement, shape.wallId, shape.kind, 'false_panel', DEFAULT_PRODUCTION);
+      if ('refused' in screen || !screen.room) {
+        drift.push(`${shape.title}: КОМНАТЫ НЕТ`);
+        continue;
+      }
+      viewed += 1;
+      const { rows, room } = screen;
+      const corners = rows.flatMap((row) =>
+        runBoxes(row.run, { thicknessMm: 16, frontThicknessMm: 18, gapMm: 3 })
+          .filter((part) => !part.inside)
+          .flatMap((part) => partCorners(part, roomRowPlacement(row))),
+      );
+      const low = [0, 1, 2].map((i) => Math.min(...corners.map((c) => c[i])) / 1000);
+      const high = [0, 1, 2].map((i) => Math.max(...corners.map((c) => c[i])) / 1000);
+      const center: [number, number, number] = [(low[0] + high[0]) / 2, (low[1] + high[1]) / 2, (low[2] + high[2]) / 2];
+      const size: [number, number, number] = [high[0] - low[0], high[1] - low[1], high[2] - low[2]];
+      const eye = generalCamera({ center, size, open: openSideOf(room, rows), aspect: 1408 / 691 }).position;
+      const hidden = new Set(wallsFacingAway(room, [eye[0] * 1000, eye[2] * 1000]).map((index) => room.walls[index].id));
+
+      /* Пересекает ли луч «камера → центр кухни» внутреннюю грань стены — по плану. */
+      const blocks = (wall: (typeof room.walls)[number]) => {
+        const p = [eye[0] * 1000, eye[2] * 1000];
+        const q = [center[0] * 1000, center[2] * 1000];
+        const a = wall.startMm;
+        const d1 = [q[0] - p[0], q[1] - p[1]];
+        const d2 = [wall.lengthMm * wall.dir[0], wall.lengthMm * wall.dir[1]];
+        const den = d1[0] * d2[1] - d1[1] * d2[0];
+        if (Math.abs(den) < 1e-9) return false;
+        const t = ((a[0] - p[0]) * d2[1] - (a[1] - p[1]) * d2[0]) / den;
+        const u = ((a[0] - p[0]) * d1[1] - (a[1] - p[1]) * d1[0]) / den;
+        return t > 0 && t < 1 && u > 0 && u < 1;
+      };
+      const kitchen = new Set(rows.map((row) => row.run.wallId));
+      const shown = room.walls.filter((wall) => !hidden.has(wall.id)).map((wall) => wall.id);
+      seen.push(`${shape.title}: видны ${shown.join(' ') || 'НИ ОДНОЙ'} · спрятаны ${Array.from(hidden).join(' ') || 'нет'}`);
+      for (const wall of room.walls) {
+        if (kitchen.has(wall.id) && hidden.has(wall.id)) drift.push(`${shape.title}: стена ${wall.id} с мебелью СПРЯТАНА`);
+        if (blocks(wall) && !hidden.has(wall.id)) drift.push(`${shape.title}: стена ${wall.id} между камерой и кухней ВИДНА`);
+      }
+      if (shape.kind === 'u_shape') uVisible = shown.length;
+    }
+    check(
+      'стены между камерой и кухней спрятаны, стены с мебелью видны, у П-образной видны три',
+      viewed === shapes.length && drift.length === 0 && uVisible === 3,
+      drift.length === 0 ? `${seen.join(' · ')}` : drift.slice(0, 3).join(' · '),
+    );
+  }
+
+  /* ── Не замерено — не рисуется; допущение помечено ── */
+  {
+    const survey = surveyFromMeasurement(cornerRoom, 'проверка допущений');
+    survey.walls[2].openings[0].widthMm = UNKNOWN;
+    survey.walls[1].openings[0].depthMm = UNKNOWN;
+    const screen = screenRoom(cornerRoom, 'a', 'corner_l', 'false_panel', DEFAULT_PRODUCTION, survey);
+    const room = 'refused' in screen ? null : screen.room;
+    const boxes = room ? roomBoxes(room) : [];
+    const door = room?.objects.find((object) => object.id === 'door-c');
+    const beam = room?.objects.find((object) => object.id === 'beam-b');
+    const beamBox = boxes.find((box) => box.objectId === 'beam-b');
+    check(
+      'не замерено: дверь без ширины не рисуется и названа словами',
+      Boolean(room) && !door && (room?.missing ?? []).some((line) => /двер/i.test(line) && /ширин/.test(line)),
+      room ? (room.missing.join(' · ') || 'СПИСОК НЕЗАМЕРЕННОГО ПУСТ') : `КОМНАТЫ НЕТ: ${'refused' in screen ? screen.refused : ''}`,
+    );
+    check(
+      'не замерено: ригель без выноса — контур на стене, не выдуманный брус',
+      Boolean(beam) && beam!.depthMm === null && beamBox?.role === 'contour' &&
+        (room?.missing ?? []).some((line) => /ригель/i.test(line) && /вынос/.test(line)),
+      beam ? `вынос ${beam.depthMm} · роль в сцене ${beamBox?.role ?? 'НЕТ КОРОБКИ'}` : 'РИГЕЛЯ НЕТ В КОМНАТЕ',
+    );
+    check(
+      'допущение: стены и окно из библиотеки помечены assumed — сцена кладёт их полупрозрачными',
+      Boolean(room) &&
+        room!.walls.length > 0 &&
+        room!.walls.every((wall) => wall.state === 'assumed') &&
+        room!.objects.find((object) => object.id === 'win-a')?.state === 'assumed' &&
+        boxes.filter((box) => box.role === 'wall').every((box) => box.state === 'assumed'),
+      room ? room.walls.map((wall) => `${wall.id}:${wall.state}`).join(' ') : 'КОМНАТЫ НЕТ',
+    );
+  }
+}
+
 
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

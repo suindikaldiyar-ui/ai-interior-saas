@@ -6,7 +6,13 @@ import ElevationDrawing from './ElevationDrawing';
 import { wallLabel } from '@/lib/millwork/walls';
 import PlanDrawing from './PlanDrawing';
 import type { SceneRow } from './cabinet3d/CadScene';
-import { openablePartIds } from './cabinet3d/Cabinet3D';
+/*
+ * Список открываемого — из чистого модуля коробок, а не из `Cabinet3D`:
+ * статический импорт компонента сцены тянул three.js в первую загрузку
+ * `/demo`, хотя сама сцена подключается динамически (слой 53).
+ */
+import { openablePartIds } from '@/lib/millwork/cabinetBoxes';
+import { roomAroundRows, roomOnRow, type RoomSource } from '@/lib/millwork/room';
 import DimensionLayer from './DimensionLayer';
 import type { OrthoProjection } from './cabinet3d/SceneCamera';
 import { useInteriorStore } from '@/store/useInteriorStore';
@@ -95,6 +101,12 @@ type Props = {
   /** Панель рабочего места спрятана: в 3D сцена занимает всё. */
   panelHidden?: boolean;
   onTogglePanel?: () => void;
+  /**
+   * КОМНАТА ИЗ ЗАМЕРА (слой 53): стены композиции, потолок, глубина ряда,
+   * решение угла, живой замер. Из неё одной `roomLayout` берут место
+   * стен, окон, дверей и ригеля сцена, схема и план.
+   */
+  room?: RoomSource;
 };
 
 type View = 'front' | 'plan' | 'scene';
@@ -139,6 +151,7 @@ export default function RunSchematic({
   onViewChange,
   panelHidden,
   onTogglePanel,
+  room,
 }: Props) {
   const [view, setView] = useState<View>('front');
   const [angle, setAngle] = useState<Angle>('iso');
@@ -219,6 +232,19 @@ export default function RunSchematic({
 
   /** Ряд под цепями: тот, что сейчас в кадре. */
   const rows0 = rows[0];
+
+  /*
+   * ОБЪЕКТЫ КОМНАТЫ ДЛЯ СХЕМЫ И ПЛАНА — ТА ЖЕ КОМНАТА, ЧТО У СЦЕНЫ.
+   *
+   * `roomAroundRows` вокруг тех же рядов, что уходят в сцену; перевод в
+   * координаты ряда — `roomOnRow`, тем же `markOnRun`, что у раскладки.
+   * Своей опоры и своего поиска стены у схемы нет.
+   */
+  const roomPlan = useMemo(
+    () => (room ? roomAroundRows(room, allRows, null) : null),
+    [room, allRows],
+  );
+  const onRow = (target: Run) => roomOnRow(roomPlan, target);
 
   const openable = useMemo(
     () => allRows.flatMap((row) => openablePartIds(row.run)),
@@ -401,7 +427,12 @@ export default function RunSchematic({
         * съедала у схемы сотню пикселей высоты. На плане и в сцене
         * показан по-прежнему один ряд, там она остаётся.
         */}
-      {view !== 'front' && neighbour && neighbour.modules.length > 0 && (
+      {/*
+        * Соседняя стена — только на ПЛАНЕ: там показан один ряд. В 3D все
+        * стены угла стоят в сцене сами, и схема между кнопками и сценой
+        * отнимала у холста 122 px (слой 53).
+        */}
+      {view === 'plan' && neighbour && neighbour.modules.length > 0 && (
         <div className="mb-2 rounded-[var(--r-panel)] bg-sheet/60 p-2" data-neighbour>
           <p className="mw-label mb-1">{neighbourLabel ?? 'Соседняя стена'} — в углу</p>
           <div className="h-[84px] [&>svg]:h-full [&>svg]:w-full">
@@ -431,6 +462,7 @@ export default function RunSchematic({
               roomDepthM={roomDepthM}
               facadeColor={facadeColor}
               view={angle}
+              room={room}
               /*
                * Зум разрешён только на общем виде: на ортогональных
                * ракурсах масштаб задаёт кадрирование, и подкрученный
@@ -580,6 +612,7 @@ export default function RunSchematic({
                   <div className="min-h-0 flex-1 [&>svg]:h-full [&>svg]:w-full">
                     <ElevationDrawing
                       run={row.run}
+                      roomObjects={onRow(row.run).objects}
                       selectedModuleId={selectedModuleId}
                       onSelect={onSelect}
                       /*
@@ -612,6 +645,8 @@ export default function RunSchematic({
               issues={issues}
               selectedModuleId={selectedModuleId}
               onSelect={onSelect}
+              roomWall={onRow(run).wall}
+              roomObjects={onRow(run).objects}
             />
           )}
         </div>

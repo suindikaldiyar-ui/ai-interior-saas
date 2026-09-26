@@ -7,6 +7,7 @@ import { moduleDepthMm } from '@/lib/millwork/fill';
 import { runPlaces } from '@/lib/millwork/cabinetBoxes';
 import { LINE_MM, unitsPerPaperMm } from '@/lib/millwork/sheetStyle';
 import type { CommPoint, LayoutIssue, Run } from '@/types/millwork';
+import type { RoomState, RowRoomObject } from '@/lib/millwork/room';
 
 /**
  * Вид сверху: глубины, привязки к стенам, точки коммуникаций с расстоянием
@@ -27,6 +28,14 @@ type Props = {
   walkwayMm?: number;
   /** Ширина вида на бумаге: из неё считаются толщины линий. */
   paperWidthMm?: number;
+  /**
+   * СТЕНА И ЕЁ ОБЪЕКТЫ ИЗ КОМНАТЫ (слой 53): где стена начинается и
+   * кончается относительно ряда (`wallOnRow`) и что на ней — окно, дверь,
+   * колонна, ригель (`wallObjectsOnRow`). Та же `roomLayout`, что у сцены
+   * и схемы. Нет — стена рисуется условной полосой за рядом, как раньше.
+   */
+  roomWall?: { fromMm: number; toMm: number; state: RoomState } | null;
+  roomObjects?: RowRoomObject[];
 };
 
 const PADDING_LEFT = 74;
@@ -57,6 +66,8 @@ export default function PlanDrawing({
   selectedModuleId,
   onSelect,
   walkwayMm = 1000,
+  roomWall = null,
+  roomObjects = [],
 }: Props) {
   const scale = DRAW_WIDTH / Math.max(run.lengthMm, 1);
   const maxDepth = GEOMETRY.base.countertopDepth;
@@ -86,6 +97,30 @@ export default function PlanDrawing({
   // Стена сверху, фронт снизу — как смотрит замерщик, стоя в комнате.
   const wallY = PADDING_TOP;
 
+  /*
+   * Куски стены на плане: от её начала до конца в координатах ряда, минус
+   * разрывы окон, дверей и арок. Выходить за поле плана стене незачем —
+   * она обрезается там же, где и ряд (плюс ширина штриха по краям).
+   */
+  const planWallPieces: [number, number][] = (() => {
+    if (!roomWall) return [];
+    const margin = 10 / scale;
+    const from = Math.max(-margin, roomWall.fromMm);
+    const to = Math.min(run.lengthMm + margin, roomWall.toMm);
+    const gaps = roomObjects
+      .filter((object) => object.cut === 'through')
+      .map((object) => [object.onRowFromMm, object.onRowFromMm + object.onRowWidthMm] as [number, number])
+      .sort((a, b) => a[0] - b[0]);
+    const pieces: [number, number][] = [];
+    let at = from;
+    for (const [g0, g1] of gaps) {
+      if (g0 > at) pieces.push([at, Math.min(g0, to)]);
+      at = Math.max(at, g1);
+    }
+    if (at < to) pieces.push([at, to]);
+    return pieces.filter(([a, b]) => b - a > 0);
+  })();
+
   const errorAt = new Map<string, LayoutIssue>();
   for (const issue of issues) {
     if (issue.level === 'error' && issue.moduleId) errorAt.set(issue.moduleId, issue);
@@ -98,16 +133,90 @@ export default function PlanDrawing({
       role="img"
       aria-label="План ряда с привязками к коммуникациям"
     >
-      {/* Стена */}
-      <rect
-        x={PADDING_LEFT - 10}
-        y={wallY - 10}
-        width={DRAW_WIDTH + 20}
-        height={10}
-        fill="var(--concrete-deep)"
-        stroke="var(--ink)"
-        strokeWidth={0.8 * k}
-      />
+      {/* Стена: по замеру, если комната известна; иначе условная полоса. */}
+      {roomWall ? (
+        <g
+          data-plan-wall
+          data-from-mm={roomWall.fromMm}
+          data-to-mm={roomWall.toMm}
+          opacity={roomWall.state === 'assumed' ? 0.5 : 1}
+        >
+          {planWallPieces.map(([from, to]) => (
+            <rect
+              key={`${from}-${to}`}
+              x={PADDING_LEFT + from * scale}
+              y={wallY - 10}
+              width={(to - from) * scale}
+              height={10}
+              fill="var(--concrete-deep)"
+              stroke="var(--ink)"
+              strokeWidth={0.8 * k}
+            />
+          ))}
+        </g>
+      ) : (
+        <rect
+          x={PADDING_LEFT - 10}
+          y={wallY - 10}
+          width={DRAW_WIDTH + 20}
+          height={10}
+          fill="var(--concrete-deep)"
+          stroke="var(--ink)"
+          strokeWidth={0.8 * k}
+        />
+      )}
+
+      {/*
+        * ОБЪЕКТЫ СТЕНЫ НА ПЛАНЕ.
+        *
+        * Окно — разрыв стены с двумя линиями стекла, дверь и арка —
+        * разрыв; колонна и короб — прямоугольник перед стеной на свой
+        * вынос; ригель висит над планом реза — пунктиром. Не замеренный
+        * вынос — пунктиром по грани стены, без выдуманной глубины.
+        */}
+      {roomObjects.length > 0 && (
+        <g data-room-objects pointerEvents="none">
+          {roomObjects.map((object) => {
+            const x = PADDING_LEFT + object.onRowFromMm * scale;
+            const w = object.onRowWidthMm * scale;
+            const deep = object.depthMm !== null ? object.depthMm * scale : 0;
+            const dashed = object.state === 'assumed' || object.kind === 'beam' || object.depthMm === null;
+            return (
+              <g
+                key={object.id}
+                data-room-object={object.id}
+                data-kind={object.kind}
+                data-from-mm={object.onRowFromMm}
+                data-width-mm={object.onRowWidthMm}
+              >
+                {object.cut === 'through' ? (
+                  <>
+                    <line x1={x} y1={wallY - 10} x2={x} y2={wallY} stroke="var(--ink)" strokeWidth={0.8 * k} />
+                    <line x1={x + w} y1={wallY - 10} x2={x + w} y2={wallY} stroke="var(--ink)" strokeWidth={0.8 * k} />
+                    {object.kind === 'window' && (
+                      <>
+                        <line x1={x} y1={wallY - 6.5} x2={x + w} y2={wallY - 6.5} stroke="var(--blueprint)" strokeWidth={0.5 * k} />
+                        <line x1={x} y1={wallY - 3.5} x2={x + w} y2={wallY - 3.5} stroke="var(--blueprint)" strokeWidth={0.5 * k} />
+                      </>
+                    )}
+                  </>
+                ) : (
+                  <rect
+                    x={x}
+                    y={deep > 0 ? wallY : wallY - 1}
+                    width={w}
+                    height={deep > 0 ? deep : 2}
+                    fill="none"
+                    stroke="var(--blueprint)"
+                    strokeWidth={0.7 * k}
+                    strokeDasharray={dashed ? '4 3' : undefined}
+                  />
+                )}
+              </g>
+            );
+          })}
+        </g>
+      )}
       <text className="mw-label" x={PADDING_LEFT - 14} y={wallY - 14} textAnchor="start" fontSize={8}>
         стена
       </text>

@@ -197,6 +197,19 @@ export function carcassBoxes(unit: Module, place: ModulePlacement): BoxDraw[] {
    */
   const topName = unit.kind === 'base' || unit.kind === 'corner_base' ? TOP_RAIL_PANEL_NAME : TOP_PANEL_NAME;
 
+  /*
+   * ЗАДНЯЯ СТЕНКА — УПОР ДЛЯ ПОЛКИ И ПЕРЕГОРОДКИ.
+   *
+   * Полка стояла центром на «−глубина/2 − 10 мм» при глубине «глубина −
+   * толщина»: её задний край выходил на 2 мм ЗА заднюю плоскость корпуса,
+   * сквозь заднюю стенку — то есть в стену комнаты (слой 53: стена стоит
+   * от задней плоскости ряда наружу, и пробник это поймал). Теперь место
+   * выводится из того, во что деталь упирается: задний край — на лицевой
+   * плоскости задней стенки. Размер детали прежний.
+   */
+  const backZ = -depthM + 0.004;
+  const backFaceZ = backZ + 0.004 / 2;
+
   const boxes: BoxDraw[] = [
     // Боковины
     at(thicknessM / 2, heightM / 2, -depthM / 2, thicknessM, heightM, depthM, false, SIDE_PANEL_NAME),
@@ -205,7 +218,7 @@ export function carcassBoxes(unit: Module, place: ModulePlacement): BoxDraw[] {
     at(widthM / 2, thicknessM / 2, -depthM / 2, innerW, thicknessM, depthM, false, BOTTOM_PANEL_NAME),
     at(widthM / 2, heightM - thicknessM / 2, -depthM / 2, innerW, thicknessM, depthM, false, topName),
     // Задняя стенка
-    at(widthM / 2, heightM / 2, -depthM + 0.004, widthM, heightM, 0.004, false, BACK_PANEL_NAME),
+    at(widthM / 2, heightM / 2, backZ, widthM, heightM, 0.004, false, BACK_PANEL_NAME),
   ];
 
   /*
@@ -218,7 +231,7 @@ export function carcassBoxes(unit: Module, place: ModulePlacement): BoxDraw[] {
       at(
         widthM / 2,
         mm / MM,
-        -depthM / 2 - 0.01,
+        backFaceZ + innerDepth / 2,
         innerW - 0.002,
         thicknessM,
         innerDepth,
@@ -234,7 +247,7 @@ export function carcassBoxes(unit: Module, place: ModulePlacement): BoxDraw[] {
       at(
         fill.dividerMm / MM,
         heightM / 2,
-        -depthM / 2 - 0.01,
+        backFaceZ + innerDepth / 2,
         thicknessM,
         heightM - 2 * thicknessM,
         innerDepth,

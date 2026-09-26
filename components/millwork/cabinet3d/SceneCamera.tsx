@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import {
+  generalCamera,
   isFixedView,
   isOrthographic,
   orthoFraming,
@@ -64,6 +65,19 @@ type Props = {
    * угловой и П-образной — нет, и гарнитур вылезал за кадр.
    */
   focusM?: [number, number, number];
+  /**
+   * ОБЩИЙ ВИД: габарит кухни и открытая сторона комнаты (слой 53).
+   *
+   * Камера встаёт на высоте глаз и отходит ровно настолько, чтобы кухня
+   * заняла кадр по той оси, что упирается первой (`generalCamera`). Кадр
+   * считается от ХОЛСТА: на широком экране кухня мелкая была из-за
+   * кадра, а не из-за размера холста.
+   */
+  general?: {
+    center: [number, number, number];
+    size: [number, number, number];
+    open: [number, number];
+  };
   /** Кадрирование изменилось — слою размеров нужно пересчитать себя. */
   onFraming?: (framing: OrthoProjection | null) => void;
 };
@@ -79,7 +93,7 @@ function easeInOut(t: number): number {
   return t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2;
 }
 
-export default function SceneCamera({ room, view, runWidthM, focusM, onFraming }: Props) {
+export default function SceneCamera({ room, view, runWidthM, focusM, general, onFraming }: Props) {
   /*
    * Габариты разбираются на числа НАМЕРЕННО: `room` приходит объектным
    * литералом и на каждой перерисовке новый. Зависимость от объекта
@@ -99,6 +113,18 @@ export default function SceneCamera({ room, view, runWidthM, focusM, onFraming }
     () => [focusX, focusY, focusZ] as [number, number, number],
     [focusX, focusY, focusZ],
   );
+
+  /*
+   * Габарит общего вида — числами, по той же причине, что и габариты
+   * комнаты: объект приходит новым на каждой перерисовке. Пропорцию
+   * холста округляем: перерисовка на полпикселя кадр не переставляет.
+   */
+  const gc = general?.center ?? [0, 0, 0];
+  const gs = general?.size ?? [0, 0, 0];
+  const go = general?.open ?? [0, 1];
+  const hasGeneral = Boolean(general);
+  const sizeForAspect = useThree((state) => state.size);
+  const aspect = Math.round((sizeForAspect.width / Math.max(1, sizeForAspect.height)) * 100) / 100;
 
   const perspective = useThree((state) => state.camera);
   const controls = useThree((state) => state.controls) as OrbitLike | null;
@@ -229,11 +255,19 @@ export default function SceneCamera({ room, view, runWidthM, focusM, onFraming }
 
   /* ── Смена вида: запускаем перелёт ── */
   useEffect(() => {
-    const framing = sceneCamera(
-      { width: roomWidth, depth: roomDepth, height: roomHeight } as RoomConfig,
-      view,
-      focus,
-    );
+    const framing =
+      view === 'iso' && hasGeneral
+        ? generalCamera({
+            center: [gc[0], gc[1], gc[2]],
+            size: [gs[0], gs[1], gs[2]],
+            open: [go[0], go[1]],
+            aspect,
+          })
+        : sceneCamera(
+            { width: roomWidth, depth: roomDepth, height: roomHeight } as RoomConfig,
+            view,
+            focus,
+          );
     const to = new THREE.Vector3(...framing.position);
     const toTarget = new THREE.Vector3(...framing.target);
 
@@ -282,7 +316,29 @@ export default function SceneCamera({ room, view, runWidthM, focusM, onFraming }
     // дерутся, и кадр дёргается.
     if (controls) controls.enabled = false;
     invalidate();
-  }, [view, roomWidth, roomDepth, roomHeight, perspective, controls, invalidate, set]);
+    // Габарит общего вида разобран на числа выше: объект пересобирается
+    // каждой перерисовкой, а перелёт обязан начинаться только от смены.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    view,
+    roomWidth,
+    roomDepth,
+    roomHeight,
+    perspective,
+    controls,
+    invalidate,
+    set,
+    hasGeneral,
+    gc[0],
+    gc[1],
+    gc[2],
+    gs[0],
+    gs[1],
+    gs[2],
+    go[0],
+    go[1],
+    aspect,
+  ]);
 
   /*
    * Анимация — только через `useFrame` + `invalidate()`: при

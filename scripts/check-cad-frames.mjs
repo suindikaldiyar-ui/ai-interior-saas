@@ -14,6 +14,10 @@
  *
  * В приёмку не входит: минута прогона на каждый `npm run verify` — это
  * минута на каждый прогон. Ноль в покое проверяет `test:demo`.
+ *
+ * Слой 53: после вращения и остановки — ноль кадров, и карта теней от
+ * движения камеры не пересчитывается; правка модуля — ровно один
+ * пересчёт (`__mwCadShadows`).
  */
 import { chromium } from 'playwright';
 import { execSync, spawn } from 'node:child_process';
@@ -169,6 +173,110 @@ try {
     'с открытой библиотекой и картинками сцена в покое не рисует ни кадра',
     rest0 >= 0 && rest1 - rest0 === 0,
     `${rest1 - rest0} за 10 с`,
+  );
+
+  /*
+   * ТЕСТ 22 СЛОЯ 53: ВРАЩЕНИЕ И ПРАВКА — КАДРЫ И КАРТА ТЕНЕЙ.
+   *
+   * Тени и скрытие стен не имеют права жить в цикле кадров: после
+   * вращения и остановки сцена обязана замолчать, а карта теней —
+   * не пересчитываться от движения камеры вовсе. Правка модуля — это
+   * ровно один пересчёт карты: второй означал бы, что сцена пересобирает
+   * тень на чём-то, кроме изменения мебели.
+   */
+  const shadows = () => page.evaluate(() => (window.__mwCadShadows ? window.__mwCadShadows() : -1));
+  const readTotal = () =>
+    page.evaluate(() => {
+      const n = document.querySelector('[data-estimate-total]');
+      return n ? Number(n.getAttribute('data-estimate-total')) : null;
+    });
+  /** Сцена замолчала: счётчик кадров не менялся 2.5 с подряд. */
+  const settle = async () => {
+    let last = await frames();
+    let still = Date.now();
+    const end = Date.now() + 30_000;
+    while (Date.now() < end) {
+      await sleep(500);
+      const now = await frames();
+      if (now !== last) {
+        last = now;
+        still = Date.now();
+      } else if (Date.now() - still >= 2500) return true;
+    }
+    return false;
+  };
+
+  await page.locator('[data-angle="iso"]').click();
+  await settle();
+  const view = await page.evaluate(() => {
+    const c = document.querySelector('[data-scene] canvas');
+    const r = c.getBoundingClientRect();
+    return { x: r.x, y: r.y, w: r.width, h: r.height };
+  });
+  const rot0 = { f: await frames(), s: await shadows() };
+  await page.mouse.move(view.x + view.w * 0.5, view.y + view.h * 0.45);
+  await page.mouse.down();
+  for (let i = 0; i < 14; i++) {
+    await page.mouse.move(view.x + view.w * (0.5 + i * 0.015), view.y + view.h * (0.45 + i * 0.004));
+    await sleep(40);
+  }
+  await page.mouse.up();
+  const rotSettled = await settle();
+  const rot1 = { f: await frames(), s: await shadows() };
+  await sleep(10_000);
+  const rot2 = await frames();
+  console.log(
+    `вращение: кадров ${rot1.f - rot0.f}, пересчётов тени ${rot1.s - rot0.s}; после остановки ${rot2 - rot1.f} кадров за 10 с`,
+  );
+  check(
+    'тест 22: вращение рисует кадры, а карту теней не пересчитывает',
+    rot0.s >= 0 && rot1.f > rot0.f && rot1.s - rot0.s === 0,
+    rot0.s < 0 ? 'НЕТ ПРОБНИКА __mwCadShadows' : `кадров ${rot1.f - rot0.f} · пересчётов ${rot1.s - rot0.s}`,
+  );
+  check(
+    'тест 22: после вращения и остановки — 0 кадров в покое',
+    rotSettled && rot2 - rot1.f === 0,
+    rotSettled ? `${rot2 - rot1.f} за 10 с` : 'СЦЕНА НЕ ЗАМОЛЧАЛА за 30 с после вращения',
+  );
+
+  const card = await page.evaluate(() => {
+    const n = [...document.querySelectorAll('[data-library="1"] [data-card]')].find(
+      (c) =>
+        !c.disabled &&
+        c.getAttribute('aria-pressed') !== 'true' &&
+        c.getAttribute('data-refused') !== '1' &&
+        /[1-9]/.test(c.getAttribute('data-delta') ?? ''),
+    );
+    return n ? { key: n.getAttribute('data-card'), delta: n.getAttribute('data-delta') } : null;
+  });
+  if (!card) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: в библиотеке нет доступной карточки с разницей в цене — править нечем');
+  await settle();
+  const total0 = await readTotal();
+  const edit0 = { f: await frames(), s: await shadows() };
+  await page.evaluate((key) => document.querySelector(`[data-card="${key}"]`)?.click(), card.key);
+  const changed = await until(async () => (await readTotal()) !== total0, 20_000);
+  const editSettled = await settle();
+  const edit1 = { f: await frames(), s: await shadows() };
+  await sleep(10_000);
+  const edit2 = await frames();
+  console.log(
+    `правка «${card.key}» (${card.delta}): итог ${total0} → ${await readTotal()}, кадров ${edit1.f - edit0.f}, ` +
+      `пересчётов тени ${edit1.s - edit0.s}; после ${edit2 - edit1.f} кадров за 10 с`,
+  );
+  check(
+    'тест 22: правка модуля дошла до сметы и до сцены',
+    changed && edit1.f > edit0.f,
+    changed ? `кадров ${edit1.f - edit0.f}` : `ИТОГ НЕ СДВИНУЛСЯ: ${total0}`,
+  );
+  check(
+    'тест 22: после правки модуля карта теней пересчитана один раз, не больше',
+    edit1.s - edit0.s === 1,
+    `${edit1.s - edit0.s} раз`,
+  );
+  check(
+    'тест 22: после правки — снова 0 кадров в покое',
+    editSettled && edit2 - edit1.f === 0,
+    editSettled ? `${edit2 - edit1.f} за 10 с` : 'СЦЕНА НЕ ЗАМОЛЧАЛА за 30 с после правки',
   );
 
   /*
