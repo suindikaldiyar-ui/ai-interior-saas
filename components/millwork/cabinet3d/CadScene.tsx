@@ -22,6 +22,7 @@ type FrontReadout = {
 };
 import Cabinet3D from './Cabinet3D';
 import RoomScene from './RoomScene';
+import type { PathTraceSource } from './pathTrace';
 import { movingParts } from './motion';
 import { plinthMm } from '@/lib/millwork/shop';
 import { moduleBoxes, runBoxes, runPlaces } from '@/lib/millwork/cabinetBoxes';
@@ -98,7 +99,27 @@ type Props = {
    * него. Нет — комнаты в сцене нет, мебель рисуется одна.
    */
   room?: RoomSource;
+  /**
+   * РЕНДЕР ПО ЧЕРТЕЖУ БЕРЁТ ЭТУ СЦЕНУ (слой 54).
+   *
+   * Наружу отдаётся не копия, а способ её взять: в момент нажатия
+   * «Рендер» берутся живая сцена и активная камера — та, которой человек
+   * смотрит сейчас, с его поворотом и зумом. `null` — сцены больше нет.
+   */
+  onRenderSource?: (source: (() => PathTraceSource) | null) => void;
+  /** Камера встаёт сразу, без перелёта: сцена рендера за экраном. */
+  instantCamera?: boolean;
+  /**
+   * Где мебель на холсте — проекция её габарита (тот же расчёт, что
+   * `__mwCadFit`). По нему строка кнопок рендера встаёт туда, где мебели
+   * нет: на широком холсте кухня вписана по высоте и свободно справа, на
+   * узком — по ширине, и свободно сверху и снизу (слой 54).
+   */
+  onFurnitureRect?: (rect: FurnitureRect | null) => void;
 };
+
+/** Прямоугольник мебели на холсте, CSS-пиксели; `width`/`height` — сам холст. */
+export type FurnitureRect = { left: number; top: number; right: number; bottom: number; width: number; height: number };
 
 const MM = 1000;
 
@@ -143,6 +164,9 @@ export default function CadScene({
   onMoveModule,
   onFraming,
   room,
+  onRenderSource,
+  instantCamera = false,
+  onFurnitureRect,
 }: Props) {
   /*
    * ГАБАРИТ МЕБЕЛИ, А НЕ КОМНАТЫ.
@@ -290,6 +314,7 @@ export default function CadScene({
            */
           focusM={i === 0 ? bounds.center : undefined}
           general={i === 0 ? general : undefined}
+          instantCamera={i === 0 && instantCamera}
           shadows
           /*
            * КАМЕРЕ — ГАБАРИТ СЪЁМКИ, КОМНАТЕ — ГАБАРИТ КОМНАТЫ.
@@ -327,8 +352,87 @@ export default function CadScene({
 
       {orbit && <OrbitScene bounds={bounds} open={open} />}
       <FrameProbe rows={rows} room={roomWorld} />
+      {onFurnitureRect && <FurnitureRectProbe bounds={bounds} onRect={onFurnitureRect} />}
+      {/* Последним: к этому эффекту камера поставлена и стены спрятаны. */}
+      <RenderSource onRenderSource={onRenderSource} />
     </Canvas>
   );
+}
+
+/**
+ * ГДЕ МЕБЕЛЬ НА ХОЛСТЕ — числом, на каждом нарисованном кадре.
+ *
+ * Своих кадров не заказывает (`frameloop="demand"`): считает только на
+ * тех, что и так рисуются, и наружу отдаёт лишь изменившееся. Углы
+ * габарита позади камеры не считаются — они проецируются зеркально.
+ */
+function FurnitureRectProbe({
+  bounds,
+  onRect,
+}: {
+  bounds: { center: [number, number, number]; size: [number, number, number] };
+  onRect: (rect: FurnitureRect | null) => void;
+}) {
+  const last = useRef('');
+  const corner = useMemo(() => new THREE.Vector3(), []);
+  const view = useMemo(() => new THREE.Vector3(), []);
+  useEffect(() => () => onRect(null), [onRect]);
+  useFrame(({ camera, size }) => {
+    camera.updateMatrixWorld();
+    const [cx, cy, cz] = bounds.center;
+    const [sx, sy, sz] = bounds.size;
+    let left = Infinity;
+    let right = -Infinity;
+    let top = Infinity;
+    let bottom = -Infinity;
+    for (const dx of [-sx / 2, sx / 2]) {
+      for (const dy of [-sy / 2, sy / 2]) {
+        for (const dz of [-sz / 2, sz / 2]) {
+          corner.set(cx + dx, cy + dy, cz + dz);
+          view.copy(corner).applyMatrix4(camera.matrixWorldInverse);
+          if (view.z > -0.01) continue;
+          corner.project(camera);
+          left = Math.min(left, ((corner.x + 1) / 2) * size.width);
+          right = Math.max(right, ((corner.x + 1) / 2) * size.width);
+          top = Math.min(top, ((1 - corner.y) / 2) * size.height);
+          bottom = Math.max(bottom, ((1 - corner.y) / 2) * size.height);
+        }
+      }
+    }
+    const rect: FurnitureRect | null = Number.isFinite(left)
+      ? {
+          left: Math.round(left),
+          top: Math.round(top),
+          right: Math.round(right),
+          bottom: Math.round(bottom),
+          width: Math.round(size.width),
+          height: Math.round(size.height),
+        }
+      : null;
+    const key = JSON.stringify(rect);
+    if (key === last.current) return;
+    last.current = key;
+    onRect(rect);
+  });
+  return null;
+}
+
+/**
+ * Способ взять сцену и камеру для рендера по чертежу — в момент нажатия,
+ * а не при монтировании: камера к нажатию могла уйти в другой ракурс.
+ */
+function RenderSource({
+  onRenderSource,
+}: {
+  onRenderSource?: (source: (() => PathTraceSource) | null) => void;
+}) {
+  const get = useThree((state) => state.get);
+  useEffect(() => {
+    if (!onRenderSource) return undefined;
+    onRenderSource(() => ({ scene: get().scene, camera: get().camera }));
+    return () => onRenderSource(null);
+  }, [onRenderSource, get]);
+  return null;
 }
 
 /**

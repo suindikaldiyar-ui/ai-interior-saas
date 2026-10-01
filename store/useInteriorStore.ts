@@ -1,6 +1,7 @@
 'use client';
 
 import { create } from 'zustand';
+import type { SceneView } from '@/lib/cameraFraming';
 import { getEntry, isFurnitureType } from '@/lib/furnitureCatalog';
 import { kitchenFootprint, readKitchenMeta } from '@/lib/kitchen';
 import {
@@ -78,6 +79,15 @@ export type InteriorState = {
    * полоса в clay-кадре читается моделью как часть мебели.
    */
   displayLit: boolean;
+  /**
+   * Ракурс САПР-вида: «Спереди», «Слева», «Справа», «Сверху», «Общий вид».
+   *
+   * Живёт в сторе, а не в компоненте схемы: рендер по чертежу на шаге
+   * «Результат» снимает ТЕКУЩИЙ вид (слой 54), а сцены там на экране нет —
+   * ракурс оставлен на шаге конфигуратора. Это состояние камеры, а не
+   * производственная величина.
+   */
+  cadAngle: SceneView;
   renderFraming: CaptureFraming;
   customNotes: string;
   selectedReferenceIds: string[];
@@ -133,6 +143,7 @@ export type InteriorState = {
   closeAllParts: () => void;
   setCutaway: (value: boolean) => void;
   setDisplayLit: (value: boolean) => void;
+  setCadAngle: (value: SceneView) => void;
   setRenderFraming: (framing: CaptureFraming) => void;
   setCustomNotes: (value: string) => void;
   toggleReference: (id: string) => void;
@@ -280,6 +291,7 @@ export const useInteriorStore = create<InteriorState>((set, get) => ({
   openParts: [],
   cutaway: false,
   displayLit: true,
+  cadAngle: 'iso',
   captureMode: false,
   renderFraming: 'hero',
   customNotes: '',
@@ -616,6 +628,7 @@ export const useInteriorStore = create<InteriorState>((set, get) => ({
   closeAllParts: () => set({ openParts: [] }),
   setCutaway: (value) => set({ cutaway: value }),
   setDisplayLit: (value) => set({ displayLit: value }),
+  setCadAngle: (value) => set({ cadAngle: value }),
   setRenderFraming: (framing) => set({ renderFraming: framing }),
   setCustomNotes: (value) => set({ customNotes: value }),
 

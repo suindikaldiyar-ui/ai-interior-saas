@@ -16,6 +16,7 @@ import { PROJECTS_BUCKET, storageUrl } from '@/lib/supabase/config';
 import { SUPABASE_READY } from '@/lib/supabase/config';
 import { currentOrg, currentUser, supabaseServer } from '@/lib/supabase/server';
 import type { Measurement } from '@/types/millwork';
+import { PATHTRACE_STYLE_ID, type PathImage } from '@/lib/millwork/pathtrace';
 
 export const dynamic = 'force-dynamic';
 
@@ -129,10 +130,35 @@ export default async function ProjectPage({ params }: { params: { id: string } }
     if (plan && isMeasured(plan)) libraryNote = libraryBasis(plan);
   }
 
+  /*
+   * Рендер по чертежу, сохранённый с объектом (слой 54): открыл объект —
+   * картинка на «Результате» и на листе та же, что видит клиент.
+   */
+  const { data: pathRow, error: pathError } = await supabase
+    .from('renders')
+    .select('image_path, duration_ms')
+    .eq('project_id', project.id)
+    .eq('style_id', PATHTRACE_STYLE_ID)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const pathRender: PathImage | null = pathRow?.image_path
+    ? {
+        url: storageUrl(PROJECTS_BUCKET, pathRow.image_path as string),
+        width: 0,
+        height: 0,
+        samples: null,
+        ms: (pathRow.duration_ms as number | null) ?? null,
+        saved: true,
+      }
+    : null;
+
   return (
     <Workspace
       {...input}
       roomPhoto={roomPhoto}
+      pathRender={pathRender}
+      pathRenderError={pathError ? `Сохранённый рендер по чертежу не прочитался: ${pathError.message}` : null}
       floorPlanId={project.floor_plan_id}
       libraryNote={libraryNote}
       projectId={project.id}

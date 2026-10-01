@@ -124,6 +124,8 @@ type Props = {
    * стены; в сцене за экраном карты теней нет вовсе, и флаг ей ни к чему.
    */
   shadows?: boolean;
+  /** Камера встаёт сразу, без перелёта (сцена рендера за экраном, слой 54). */
+  instantCamera?: boolean;
 };
 
 /** Модуль из верхнего сегмента: у него своя отметка низа. */
@@ -149,6 +151,7 @@ export default function Cabinet3D({
   placement,
   general,
   shadows = false,
+  instantCamera = false,
 }: Props) {
   const groupRef = useRef<THREE.Group>(null);
   const invalidate = useThree((state) => state.invalidate);
@@ -587,6 +590,7 @@ export default function Cabinet3D({
           focusM={focusM}
           general={general}
           onFraming={onFraming}
+          instant={instantCamera}
         />
       )}
 

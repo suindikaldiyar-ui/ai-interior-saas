@@ -43,6 +43,8 @@ type Props = {
   /** Фотография помещения и рендер выбранной комплектации. */
   photoUrl?: string | null;
   renderUrl?: string | null;
+  /** Рендер по чертежу (слой 54): та же мебель в комнате по замеру, без ИИ. */
+  pathRenderUrl?: string | null;
 };
 
 export default function ClientOffer({
@@ -59,6 +61,7 @@ export default function ClientOffer({
   preliminary = false,
   photoUrl = null,
   renderUrl = null,
+  pathRenderUrl = null,
 }: Props) {
   const [liked, setLiked] = useState(approved);
   const [busy, setBusy] = useState(false);
@@ -149,6 +152,27 @@ export default function ClientOffer({
             heightClass="h-[70vh] min-h-[320px]"
             emptyHint="Визуализация ещё готовится"
           />
+        </section>
+      )}
+
+      {/*
+        * КУХНЯ ПО ЧЕРТЕЖУ — отдельно от сравнения «до и после». Там кухня
+        * на фотографии квартиры, здесь та же мебель, что в смете, в
+        * комнате по замеру: свет посчитан, ничего не дорисовано.
+        */}
+      {pathRenderUrl && (
+        <section className="border-b border-navyLine px-4 py-4" data-client-pathtrace-block>
+          <p className="mw-label mb-2">Кухня по чертежу</p>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            data-client-pathtrace
+            src={pathRenderUrl}
+            alt="Кухня по чертежу: та же мебель, размеры и материалы, что в смете"
+            className="h-auto w-full rounded-[var(--r-panel)]"
+          />
+          <p className="mt-2 text-[13px] leading-snug text-graphiteMw">
+            Та же мебель, размеры и материалы, что в смете; комната — по замеру.
+          </p>
         </section>
       )}
 

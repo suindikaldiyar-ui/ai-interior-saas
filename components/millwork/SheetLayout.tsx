@@ -29,6 +29,8 @@ import {
 export type SheetViewNode = SheetView & {
   /** Масштаб вида: подпись «1:25» и деление размеров. */
   scaleDen: number;
+  /** Вид без масштаба (визуализация) — так и подписывается, а не «1:0». */
+  scaleNote?: string;
   render: ReactNode;
 };
 
@@ -136,7 +138,7 @@ export default function SheetLayout({ format, views, footer }: Props) {
                     style={{ minHeight: `${VIEW_CAPTION_MM}mm` }}
                   >
                     <span>{node.title}</span>
-                    <span className="mw-num text-graphiteMw">{scaleLabel(node.scaleDen)}</span>
+                    <span className="mw-num text-graphiteMw">{node.scaleNote ?? scaleLabel(node.scaleDen)}</span>
                   </figcaption>
                   {node.render}
                 </figure>

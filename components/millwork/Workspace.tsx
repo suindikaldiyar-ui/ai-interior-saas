@@ -20,7 +20,9 @@ import {
 } from '@/lib/millwork/moduleLibrary';
 import FrontMaterialPicker from './FrontMaterialPicker';
 import OpeningPicker from './OpeningPicker';
-import RunSchematic from './RunSchematic';
+import RunSchematic, { SCENE_ROOM_DEFAULT_M, rowsForAngle } from './RunSchematic';
+import type { SceneRow } from './cabinet3d/CadScene';
+import type { PathImage } from '@/lib/millwork/pathtrace';
 import { hasFacade } from '@/lib/millwork/applianceFront';
 import { frontOf } from '@/lib/millwork/frontMaterial';
 import { paletteFromCatalog } from '@/lib/millwork/palette';
@@ -212,6 +214,13 @@ import type {
  * Сцену подключаем динамически: она тянет three.js, а конфигуратор обязан
  * открываться быстро — замерщик стоит с планшетом в чужой квартире.
  */
+/*
+ * Рендер по чертежу — по требованию (слой 54): блок нужен на шаге
+ * «Результат», сцена для рендера — только пока он идёт. Первая загрузка
+ * `/demo` от них не растёт.
+ */
+const PathTraceResult = dynamic(() => import('./PathTraceResult'), { ssr: false });
+
 const KitchenScene = dynamic(() => import('./KitchenScene'), {
   ssr: false,
   loading: () => (
@@ -286,6 +295,13 @@ export type WorkspaceProps = {
   demoRenderSpent?: boolean;
   /** Фотография помещения клиента: основа рендера. */
   roomPhoto?: string | null;
+  /**
+   * Рендер по чертежу, сохранённый с объектом (слой 54): путь-трейсинг
+   * той же сцены, без ИИ. Нет — ещё не считали.
+   */
+  pathRender?: PathImage | null;
+  /** Сохранённый рендер не прочитался — словами: «пусто» и «не прочиталось» разные вещи. */
+  pathRenderError?: string | null;
   /**
    * Планировка ЖК, по которой собран объект. С ней работают две вещи:
    * честная строка «размеры из библиотеки» и кнопка «Сохранить как готовый
@@ -409,6 +425,23 @@ export default function Workspace(props: WorkspaceProps) {
   const sceneView: SceneView = DEFAULT_SCENE_VIEW;
   const [estimateOpen, setEstimateOpen] = useState(false);
   const [renderAngle, setRenderAngle] = useState<RunAngle>('front');
+
+  /*
+   * РЕНДЕР ПО ЧЕРТЕЖУ (слой 54): последняя картинка объекта. Сохранённая
+   * приходит с сервера; посчитанная сейчас — адресом в памяти вкладки,
+   * пока не ляжет в Storage. Прежний адрес в памяти отдаётся сразу:
+   * PNG 1920×1080 — это мегабайты во вкладке (ловушка 18).
+   */
+  const [pathImage, setPathImage] = useState<PathImage | null>(props.pathRender ?? null);
+  const takePathImage = useCallback((next: PathImage) => {
+    setPathImage((prev) => {
+      if (prev && prev.url !== next.url && prev.url.startsWith('blob:')) URL.revokeObjectURL(prev.url);
+      return next;
+    });
+  }, []);
+
+  /* Последний ракурс 3D: его снимает рендер на «Результате» (слой 54). */
+  const cadAngle = useInteriorStore((state) => state.cadAngle);
 
   const [renderStyle, setRenderStyle] = useState<string>(
     isRenderStyle(props.initialState?.renderStyle)
@@ -959,6 +992,10 @@ export default function Workspace(props: WorkspaceProps) {
 
   const wall = Math.min(wallIndex, segments.length - 1);
   const activeRun = segments[wall] ?? active.run;
+  /** Цвет фасада для сцены: один на экран и на сцену рендера по чертежу. */
+  const sceneFacadeColor = frontOf(
+    activeRun.modules.find((unit) => hasFacade(unit)) ?? activeRun.modules[0] ?? {},
+  ).colorHex;
   /** Соседний ряд: на схеме он идёт контуром, чтобы был виден угол. */
   const neighbourRun = layout ? (segments[wall === 0 ? 1 : wall - 1] ?? null) : null;
 
@@ -3027,11 +3064,10 @@ export default function Workspace(props: WorkspaceProps) {
                   production={production}
                   roomWidthM={Math.max(input.lengthMm / 1000, 2)}
                   roomDepthM={props.roomDepthM}
-                  facadeColor={
-                    frontOf(
-                      activeRun.modules.find((unit) => hasFacade(unit)) ?? activeRun.modules[0] ?? {},
-                    ).colorHex
-                  }
+                  facadeColor={sceneFacadeColor}
+                  pathImage={pathImage}
+                  onPathImage={takePathImage}
+                  projectId={props.projectId}
                   neighbour={neighbourRun}
                   neighbourLabel={
                     layout ? wallLabel(wall === 0 ? 1 : wall - 1) : undefined
@@ -3752,6 +3788,21 @@ export default function Workspace(props: WorkspaceProps) {
               />
             </div>
 
+            {/* Рендер по чертежу — без ИИ, той же сценой (слой 54). */}
+            <PathTraceResult
+              image={pathImage}
+              onImage={takePathImage}
+              projectId={props.projectId}
+              readError={props.pathRenderError}
+              rows={rowsForAngle<SceneRow>(sceneRows.length > 0 ? sceneRows : [{ run: activeRun }], cadAngle, activeRun.id)}
+              room={roomSource}
+              production={production}
+              roomWidthM={Math.max(input.lengthMm / 1000, 2)}
+              roomDepthM={props.roomDepthM ?? SCENE_ROOM_DEFAULT_M.depth}
+              facadeColor={sceneFacadeColor}
+              view={cadAngle}
+            />
+
             {/* Ниже — документы: чертёж, план и техническая сцена. */}
             <div className="mt-6 flex flex-wrap gap-2 print:hidden">
               {(
@@ -3949,6 +4000,7 @@ export default function Workspace(props: WorkspaceProps) {
                 * выбираются прямо на нём.
                 */}
               <DrawingSheet
+                renderImage={pathImage}
                 title={props.title}
                 zone={props.zone}
                 measuredBy={props.measuredBy}

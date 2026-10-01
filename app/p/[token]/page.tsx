@@ -12,6 +12,7 @@ import { PROJECTS_BUCKET } from '@/lib/supabase/config';
 import { productionSettings, type Org, type ProjectSelections } from '@/types/catalog';
 import type { FurnitureItem, RoomConfig } from '@/types/interior';
 import type { Measurement } from '@/types/millwork';
+import { PATHTRACE_STYLE_ID } from '@/lib/millwork/pathtrace';
 
 export const dynamic = 'force-dynamic';
 
@@ -140,8 +141,15 @@ export default async function SharePage({ params }: PageProps) {
     // выводился из комплектации, и эта таблица остаётся запасным вариантом.
     const chosenStyle =
       millwork.renderStyle ?? VARIANT_STYLE[millwork.selectedVariant ?? 'optimal'];
-    const renderRow =
-      (renderRows ?? []).find((r) => r.style_id === chosenStyle) ?? (renderRows ?? [])[0];
+    /*
+     * Рендер по чертежу — отдельной картинкой, а не в сравнение «до и
+     * после»: там справа фото квартиры с кухней, а у него ракурс сцены
+     * (слой 54). «Самая свежая» поэтому выбирается только среди рендеров
+     * по фото.
+     */
+    const photoRenders = (renderRows ?? []).filter((r) => r.style_id !== PATHTRACE_STYLE_ID);
+    const pathRow = (renderRows ?? []).find((r) => r.style_id === PATHTRACE_STYLE_ID);
+    const renderRow = photoRenders.find((r) => r.style_id === chosenStyle) ?? photoRenders[0];
     // Те же состояния величин, что видел замерщик: клиент не должен узнать
     // о допущениях позже, чем подпишет.
     const survey = offer.resolution;
@@ -165,6 +173,9 @@ export default async function SharePage({ params }: PageProps) {
           renderRow?.image_path
             ? storageUrl(PROJECTS_BUCKET, renderRow.image_path as string)
             : null
+        }
+        pathRenderUrl={
+          pathRow?.image_path ? storageUrl(PROJECTS_BUCKET, pathRow.image_path as string) : null
         }
         disabledKeys={offer.disabled[offer.variant.key]}
         approved={project.status === 'approved'}

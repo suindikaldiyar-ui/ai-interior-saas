@@ -32,7 +32,10 @@ import {
   type MaterialChoice,
 } from '../lib/millwork/materialCatalog';
 import { MATERIAL_FINISHES } from '../lib/millwork/materialFinishes';
-import { applyFrontLook } from '../components/millwork/cabinet3d/cadLook';
+import { CAD_RENDER, applyFrontLook, cadShadeMaterial } from '../components/millwork/cabinet3d/cadLook';
+import { REAL_SIZE_UV_SOURCE, realSizeUvGeometry } from '../components/millwork/cabinet3d/realSizeMap';
+import { pathTraceSceneOf, wireSceneOf } from '../components/millwork/cabinet3d/pathTrace';
+import { sceneFromWire } from '../components/millwork/cabinet3d/pathTraceScene';
 import {
   DEFAULT_STRATEGIES,
   MAIN_VARIANT,
@@ -20326,6 +20329,323 @@ console.log('\nСлой 53: комната из замера — стены, п�
 }
 
 
+/* ═══════════  Слой 54: рендер по чертежу — что идёт в картинку  ═══════════ */
 
-console.log(`\n${passed} passed, ${failed} failed\n`);
-process.exit(failed === 0 ? 0 : 1);
+/**
+ * РЕНДЕР ПО ЧЕРТЕЖУ БЕРЁТ ТО, ЧТО НАРИСОВАНО, — ПО ПРАВИЛАМ (слой 54).
+ *
+ * Видеокарта здесь не нужна: сборщик сцены для трассировщика
+ * (`pathTraceSceneOf`) — чистое правило «что из живой сцены идёт в
+ * картинку». Браузерная сторона — `scripts/check-render.mjs`.
+ *
+ * И развёртка фото «в настоящем размере»: трассировщик шейдеров сцены не
+ * выполняет, поэтому она запекается в геометрию той же таблицей граней,
+ * что строит шейдер. Строка шейдера сверяется буква в букву с прежней —
+ * растр от переноса таблицы поменяться не имел права.
+ */
+console.log('\nСлой 54: рендер по чертежу — сцена для трассировщика и развёртка фото');
+{
+  /* ── Развёртка фото: настоящий размер на всех трёх гранях ── */
+  const box = new THREE.BoxGeometry(1, 1, 1);
+  const baked = realSizeUvGeometry(box, new THREE.Vector3(0.6, 0.72, 0.56), [0.6, 0.45]);
+  const position = baked.getAttribute('position');
+  const normal = baked.getAttribute('normal');
+  const uv = baked.getAttribute('uv');
+  const span = { z: [Infinity, -Infinity, Infinity, -Infinity], x: [Infinity, -Infinity, Infinity, -Infinity], y: [Infinity, -Infinity, Infinity, -Infinity] };
+  for (let i = 0; i < position.count; i += 1) {
+    const face = Math.abs(normal.getZ(i)) > 0.5 ? 'z' : Math.abs(normal.getX(i)) > 0.5 ? 'x' : 'y';
+    const range = span[face];
+    range[0] = Math.min(range[0], uv.getX(i));
+    range[1] = Math.max(range[1], uv.getX(i));
+    range[2] = Math.min(range[2], uv.getY(i));
+    range[3] = Math.max(range[3], uv.getY(i));
+  }
+  const width = (range: number[]) => [Math.round((range[1] - range[0]) * 1000) / 1000, Math.round((range[3] - range[2]) * 1000) / 1000];
+  /*
+   * Фасад 600 × 720 при фото 600 × 450: по ширине ровно одно фото, по
+   * высоте 1.6. Торец 560 × 720: 0.933 × 1.6. Верх 600 × 560: 1 × 1.244.
+   */
+  const faces = { z: width(span.z), x: width(span.x), y: width(span.y) };
+  check(
+    'развёртка фото в геометрии: грань любой ориентации несёт фото в настоящем размере',
+    faces.z[0] === 1 && faces.z[1] === 1.6 && faces.x[0] === 0.933 && faces.x[1] === 1.6 && faces.y[0] === 1 && faces.y[1] === 1.244,
+    `лицо ${faces.z.join('×')} · торец ${faces.x.join('×')} · верх ${faces.y.join('×')}`,
+  );
+  check(
+    'шейдер сцены собран из той же таблицы граней и не поменялся',
+    REAL_SIZE_UV_SOURCE.includes('vec2 rsUv = rsNormal.z > 0.5 ? rsPos.xy : (rsNormal.x > 0.5 ? rsPos.zy : rsPos.xz);'),
+    REAL_SIZE_UV_SOURCE.split('\n').find((line) => line.includes('rsUv =')) ?? 'СТРОКИ РАЗВЁРТКИ НЕТ',
+  );
+  baked.dispose();
+
+  /* ── Что из живой сцены идёт в картинку ── */
+  const live = new THREE.Scene();
+  const unit = new THREE.BoxGeometry(1, 1, 1);
+  const standard = new THREE.MeshStandardMaterial({ color: '#b9b2a4' });
+
+  live.add(new THREE.Mesh(unit, standard));
+
+  const batch = new THREE.InstancedMesh(unit, standard, 3);
+  for (let i = 0; i < 3; i += 1) batch.setMatrixAt(i, new THREE.Matrix4().makeTranslation(i, 0, 0));
+  live.add(batch);
+
+  /*
+   * «Не идёт» узнаётся по САМОМУ мешу сцены (`userData.from` у детали
+   * трассировщика), а не по признаку, который и проверяется: снятый
+   * признак проходил бы такую проверку вхолостую, а неосвещаемый
+   * материал в трассировщике — уже другой объект.
+   */
+  const hiddenWall = new THREE.Group();
+  hiddenWall.visible = false;
+  const hiddenMesh = new THREE.Mesh(unit, standard);
+  hiddenWall.add(hiddenMesh);
+  live.add(hiddenWall);
+
+  const grip = new THREE.Mesh(unit, new THREE.MeshBasicMaterial({ color: '#C08B3E' }));
+  grip.userData = { helper: true };
+  live.add(grip);
+
+  const shadeMesh = new THREE.Mesh(unit, cadShadeMaterial(0.3));
+  live.add(shadeMesh);
+
+  const contour = new THREE.Mesh(unit, new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.18 }));
+  contour.userData = { role: 'contour', kind: 'beam', objectId: 'beam-1' };
+  live.add(contour);
+
+  const glow = new THREE.Mesh(unit, Object.assign(new THREE.MeshBasicMaterial({ color: '#F6E2B8' }), { userData: { emissive: true } }));
+  live.add(glow);
+
+  const hitMesh = new THREE.Mesh(unit, new THREE.MeshBasicMaterial({ transparent: true, opacity: 0 }));
+  live.add(hitMesh);
+
+  const key = new THREE.DirectionalLight('#ffffff', 1.05);
+  key.position.set(2, 5, 4);
+  live.add(key, key.target);
+
+  const built = pathTraceSceneOf(live);
+  const meshes: THREE.Mesh[] = [];
+  const lights: THREE.DirectionalLight[] = [];
+  built.scene.traverse((object) => {
+    if ((object as THREE.Mesh).isMesh) meshes.push(object as THREE.Mesh);
+    if ((object as THREE.DirectionalLight).isDirectionalLight) lights.push(object as THREE.DirectionalLight);
+  });
+  /* Светится та, у которой цвет свечения не чёрный: сила по умолчанию у всех 1. */
+  const emissive = meshes.filter((mesh) => {
+    const material = mesh.material as THREE.MeshStandardMaterial;
+    return material.emissive.getHex() !== 0 && material.emissiveIntensity > 0;
+  });
+
+  check(
+    'в картинку идут видимые детали, каждая копия пачки отдельно, подсветка — светом',
+    built.meshes === 5 && meshes.length === 5 && emissive.length === 1,
+    `деталей ${built.meshes} (нужно 5: деталь + 3 копии пачки + подсветка) · светящихся ${emissive.length}`,
+  );
+  const leaked = [
+    ['спрятанная стена', hiddenMesh],
+    ['ручка выделения', grip],
+    ['полоса затенения', shadeMesh],
+    ['зона касания', hitMesh],
+  ].filter(([, source]) => meshes.some((mesh) => mesh.userData.from === (source as THREE.Object3D).uuid));
+  check(
+    'не идут: спрятанная стена, ручка выделения, полоса затенения, зона касания',
+    leaked.length === 0,
+    leaked.length === 0 ? `в сцене трассировщика ${meshes.length} деталей` : `ПОПАЛИ: ${leaked.map(([name]) => name).join(', ')}`,
+  );
+  check(
+    'контур незамеренного на картинку не идёт и назван словами',
+    built.skipped.length === 1 && built.skipped[0] === 'beam',
+    `пропущено: ${built.skipped.join(', ') || 'НИЧЕГО — контур попал в картинку'}`,
+  );
+  check(
+    'ключевой свет САПР-вида — тем же направлением, яркость из cadLook',
+    lights.length === 1 &&
+      Math.abs(lights[0].intensity - 1.05 * CAD_RENDER.keyScale) < 1e-9 &&
+      lights[0].position.distanceTo(new THREE.Vector3(2, 5, 4)) < 1e-9,
+    lights[0] ? `яркость ${lights[0].intensity.toFixed(3)} · место ${lights[0].position.toArray().join(', ')}` : 'СВЕТА НЕТ',
+  );
+
+  /* Фото «в настоящем размере» уходит с запечённой развёрткой и картой без сдвигов. */
+  const photoLive = new THREE.Scene();
+  const texture = new THREE.Texture();
+  texture.repeat.set(3, 2);
+  const photoMaterial = new THREE.MeshStandardMaterial({ map: texture });
+  photoMaterial.userData = { realSizePatched: true, realSizeM: [0.6, 0.45] };
+  const front = new THREE.Mesh(unit, photoMaterial);
+  front.scale.set(0.6, 0.72, 0.018);
+  photoLive.add(front);
+  const photoBuilt = pathTraceSceneOf(photoLive);
+  const photoMesh = photoBuilt.scene.children.find((child) => (child as THREE.Mesh).isMesh) as THREE.Mesh | undefined;
+  const bakedUv = photoMesh?.geometry.getAttribute('uv');
+  const bakedMap = (photoMesh?.material as THREE.MeshStandardMaterial | undefined)?.map;
+  check(
+    'фото «в настоящем размере» уходит в трассировщик запечённым, а общая коробка не тронута',
+    Boolean(photoMesh && photoMesh.geometry !== unit && bakedUv && bakedMap && bakedMap.repeat.x === 1 && bakedMap.repeat.y === 1) &&
+      unit.getAttribute('uv').getX(0) === new THREE.BoxGeometry(1, 1, 1).getAttribute('uv').getX(0),
+    photoMesh ? `своя геометрия ${photoMesh.geometry !== unit} · повтор карты ${bakedMap?.repeat.toArray().join('×')}` : 'ДЕТАЛИ НЕТ',
+  );
+  built.dispose();
+  photoBuilt.dispose();
+}
+
+/*
+ * СЦЕНА УЕЗЖАЕТ В ФОНОВЫЙ ПОТОК ДАННЫМИ — и обратно собирается той же.
+ *
+ * Счёт идёт в воркере (первая сборка шейдера держит свой поток около
+ * минуты), и то, что решили правила, переезжает туда данными. Обратная
+ * сборка (`sceneFromWire` — её же зовёт воркер) обязана дать ту же сцену:
+ * столько же деталей, те же матрицы, те же числа материалов, ту же
+ * таблицу карты, тот же свет и ту же камеру. Иначе картинка снята не с
+ * той мебели, что в 3D, и никто этого не заметит до встречи с клиентом.
+ */
+const asyncChecks: Promise<void>[] = [];
+asyncChecks.push(
+  (async () => {
+    const live = new THREE.Scene();
+    const unit = new THREE.BoxGeometry(1, 1, 1);
+    const lacquer = new THREE.MeshPhysicalMaterial({
+      color: '#643941',
+      roughness: 0.05,
+      metalness: 0,
+      clearcoat: 1,
+      clearcoatRoughness: 0.08,
+    });
+    const front = new THREE.Mesh(unit, lacquer);
+    front.position.set(0.3, 0.4, -0.2);
+    front.scale.set(0.6, 0.72, 0.018);
+    live.add(front);
+
+    const batch = new THREE.InstancedMesh(unit, new THREE.MeshStandardMaterial({ color: '#b9b2a4', roughness: 0.78 }), 2);
+    batch.setMatrixAt(0, new THREE.Matrix4().makeTranslation(1, 0, 0));
+    batch.setMatrixAt(
+      1,
+      new THREE.Matrix4().compose(
+        new THREE.Vector3(2, 0.5, 0),
+        new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2),
+        new THREE.Vector3(0.3, 1, 0.6),
+      ),
+    );
+    live.add(batch);
+
+    live.add(new THREE.Mesh(unit, Object.assign(new THREE.MeshBasicMaterial({ color: '#F6E2B8' }), { userData: { emissive: true } })));
+
+    const grid = new THREE.DataTexture(new Uint8Array([255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255]), 2, 2);
+    grid.repeat.set(2, 3);
+    grid.needsUpdate = true;
+    live.add(new THREE.Mesh(unit, new THREE.MeshStandardMaterial({ color: '#ffffff', map: grid })));
+
+    const key = new THREE.DirectionalLight('#fff4e0', 1.05);
+    key.position.set(2, 5, 4);
+    key.target.position.set(0, 0, -1);
+    live.add(key, key.target);
+
+    const built = pathTraceSceneOf(live);
+    const camera = new THREE.PerspectiveCamera(42, 16 / 9, 0.05, 80);
+    camera.position.set(1.2, 1.55, 3.4);
+    camera.lookAt(0, 1, 0);
+    camera.updateMatrixWorld(true);
+
+    const { scene: wire } = await wireSceneOf(built, camera);
+    const back = sceneFromWire(wire);
+
+    const meshesOf = (scene: THREE.Scene) => {
+      const list: THREE.Mesh[] = [];
+      scene.traverse((object) => {
+        if ((object as THREE.Mesh).isMesh) list.push(object as THREE.Mesh);
+      });
+      return list;
+    };
+    const before = meshesOf(built.scene);
+    const after = meshesOf(back.scene);
+    const drift = Math.max(
+      0,
+      ...before.map((mesh, i) =>
+        Math.max(...mesh.matrix.elements.map((value, k) => Math.abs(value - (after[i]?.matrix.elements[k] ?? Number.NaN)))),
+      ),
+    );
+    check(
+      'сцена в фоновый поток — данными: деталей столько же, матрицы те же',
+      before.length === 5 && after.length === before.length && drift < 1e-6,
+      `деталей ${before.length} → ${after.length} (нужно 5) · расхождение матриц ${drift}`,
+    );
+
+    const numbers = (material: THREE.Material) => {
+      const m = material as THREE.MeshPhysicalMaterial;
+      return [
+        m.type,
+        m.color?.getHexString(),
+        m.roughness,
+        m.metalness,
+        m.emissive?.getHexString(),
+        m.emissiveIntensity,
+        m.transparent,
+        m.opacity,
+        m.side,
+        m.clearcoat ?? 0,
+        m.clearcoatRoughness ?? 0,
+      ].join('|');
+    };
+    const differ = before
+      .map((mesh, i) => (after[i] && numbers(mesh.material as THREE.Material) === numbers(after[i].material as THREE.Material) ? null : i))
+      .filter((i) => i !== null);
+    const lacquered = after.find((mesh) => (mesh.material as THREE.Material).type === 'MeshPhysicalMaterial');
+    check(
+      'материалы в потоке — с теми же числами: цвет, глянец, лак, свечение',
+      differ.length === 0 && Boolean(lacquered),
+      differ.length === 0
+        ? numbers(lacquered?.material as THREE.Material)
+        : `РАСХОДЯТСЯ ${differ.length}: ${numbers(before[differ[0] as number].material as THREE.Material)} → ${after[differ[0] as number] ? numbers(after[differ[0] as number].material as THREE.Material) : 'НЕТ ДЕТАЛИ'}`,
+    );
+
+    const tiled = after.find((mesh) => (mesh.material as THREE.MeshStandardMaterial).map);
+    const map = (tiled?.material as THREE.MeshStandardMaterial | undefined)?.map as THREE.DataTexture | undefined;
+    const data = map?.image?.data as Uint8Array | undefined;
+    check(
+      'карта-таблица доезжает теми же данными и повтором',
+      Boolean(
+        map?.isDataTexture &&
+          data &&
+          data.length === 16 &&
+          data.every((value, i) => value === (grid.image.data as Uint8Array)[i]) &&
+          map.repeat.x === 2 &&
+          map.repeat.y === 3,
+      ),
+      map ? `${map.image.width}×${map.image.height} · повтор ${map.repeat.toArray().join('×')}` : 'КАРТЫ НЕТ',
+    );
+
+    const light = back.scene.children.find((child) => (child as THREE.DirectionalLight).isDirectionalLight) as
+      | THREE.DirectionalLight
+      | undefined;
+    const sourceLight = built.scene.children.find((child) => (child as THREE.DirectionalLight).isDirectionalLight) as
+      | THREE.DirectionalLight
+      | undefined;
+    const sameCamera =
+      (back.camera as THREE.PerspectiveCamera).fov === camera.fov &&
+      (back.camera as THREE.PerspectiveCamera).aspect === camera.aspect &&
+      back.camera.position.equals(camera.position) &&
+      // Поворот — покомпонентно и точно: `angleTo` берёт acos от 1 − ulp и даёт 1.5e-8 на одинаковых.
+      back.camera.quaternion.equals(camera.quaternion);
+    check(
+      'свет и камера в потоке — те же',
+      Boolean(
+        light &&
+          sourceLight &&
+          light.color.equals(sourceLight.color) &&
+          light.intensity === sourceLight.intensity &&
+          light.position.distanceTo(sourceLight.position) < 1e-9 &&
+          light.target.position.distanceTo(sourceLight.target.position) < 1e-9,
+      ) && sameCamera,
+      light ? `свет ${light.intensity.toFixed(3)} · камера ${sameCamera ? 'та же' : 'ДРУГАЯ'}` : 'СВЕТА НЕТ',
+    );
+    built.dispose();
+  })(),
+);
+
+Promise.allSettled(asyncChecks).then((results) => {
+  for (const result of results) {
+    if (result.status === 'rejected') {
+      check('асинхронная проверка дошла до конца', false, result.reason instanceof Error ? result.reason.message : String(result.reason));
+    }
+  }
+  console.log(`\n${passed} passed, ${failed} failed\n`);
+  process.exit(failed === 0 ? 0 : 1);
+});

@@ -18,9 +18,11 @@ import SheetLegend, { type LegendMaterial } from './SheetLegend';
 import { scaleLabel } from '@/lib/millwork/sheet';
 import {
   DRAW_FIELD,
+  VIEW_CAPTION_MM,
   chooseFormat,
   fitComposition,
   fitExtra,
+  sheetField,
   viewWidthMm,
   type ScaleDenominator,
 } from '@/lib/millwork/sheet';
@@ -106,9 +108,18 @@ type Props = {
    * это спор бригад при разгрузке.
    */
   position?: number;
+  /**
+   * РЕНДЕР ПО ЧЕРТЕЖУ — ПОСЛЕДНИМ ЛИСТОМ (слой 54).
+   *
+   * Картинка той же мебели идёт в тот же комплект со штампом: цех и
+   * клиент видят, что считали. Масштаба у неё нет, и это подписано — по
+   * картинке не мерят, мерят по видам.
+   */
+  renderImage?: { url: string; width: number; height: number } | null;
 };
 
 export default function DrawingSheet({
+  renderImage = null,
   otherRuns = [],
   title,
   zone,
@@ -402,6 +413,38 @@ export default function DrawingSheet({
     ),
   };
 
+  /*
+   * Лист визуализации: во всё поле, с нового листа, пропорцией картинки.
+   * В подбор масштаба чертежа он не входит — у картинки масштаба нет.
+   */
+  const field = sheetField(format);
+  const renderAspect = renderImage && renderImage.width > 0 && renderImage.height > 0
+    ? renderImage.height / renderImage.width
+    : 9 / 16;
+  const renderHeightMm = Math.min(field.height - VIEW_CAPTION_MM, field.width * renderAspect);
+  const renderView: SheetViewNode[] = renderImage
+    ? [
+        {
+          id: 'pathtrace',
+          title: 'Визуализация по чертежу',
+          widthMm: renderHeightMm / renderAspect,
+          heightMm: renderHeightMm,
+          breakPage: true,
+          scaleDen: 0,
+          scaleNote: 'без масштаба',
+          render: (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              data-sheet-pathtrace
+              src={renderImage.url}
+              alt="Кухня по чертежу"
+              style={{ width: '100%', height: 'auto', display: 'block' }}
+            />
+          ),
+        },
+      ]
+    : [];
+
   const views: SheetViewNode[] = [
     ...sizesFor(den).map((view) => ({ ...view, scaleDen: den, render: render[view.id] })),
     ...axonSizesFor(axon.den).map((view) => ({
@@ -409,6 +452,7 @@ export default function DrawingSheet({
       scaleDen: axon.den,
       render: render[view.id],
     })),
+    ...renderView,
   ];
 
   return (

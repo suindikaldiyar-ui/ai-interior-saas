@@ -175,6 +175,8 @@ export default function BeforeAfter({
   const compare = (
     <div
       ref={frame}
+      /* Для приёмки: что стоит в «после» — рендер по фото, а не по чертежу. */
+      data-before-after
       style={{ '--split': `${pos}%` } as React.CSSProperties}
       className={`relative w-full touch-none select-none overflow-hidden rounded-[var(--r-panel)] bg-navyDeep ${
         full ? 'h-full' : heightClass
@@ -200,6 +202,7 @@ export default function BeforeAfter({
         {render ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
+            data-before-after-render
             src={render}
             alt={title}
             draggable={false}

@@ -80,6 +80,13 @@ type Props = {
   };
   /** Кадрирование изменилось — слою размеров нужно пересчитать себя. */
   onFraming?: (framing: OrthoProjection | null) => void;
+  /**
+   * Ставить камеру сразу, без перелёта — как при системном «меньше
+   * движения». Нужно сцене, которую рендер по чертежу монтирует за экраном
+   * на шаге «Результат» (слой 54): смотреть на перелёт там некому, а кадр
+   * нужен сейчас. Место камеры считает тот же расчёт, что и на экране.
+   */
+  instant?: boolean;
 };
 
 type OrbitLike = {
@@ -93,7 +100,7 @@ function easeInOut(t: number): number {
   return t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2;
 }
 
-export default function SceneCamera({ room, view, runWidthM, focusM, general, onFraming }: Props) {
+export default function SceneCamera({ room, view, runWidthM, focusM, general, onFraming, instant = false }: Props) {
   /*
    * Габариты разбираются на числа НАМЕРЕННО: `room` приходит объектным
    * литералом и на каждой перерисовке новый. Зависимость от объекта
@@ -272,8 +279,9 @@ export default function SceneCamera({ room, view, runWidthM, focusM, general, on
     const toTarget = new THREE.Vector3(...framing.target);
 
     const reduced =
-      typeof window !== 'undefined' &&
-      window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      instant ||
+      (typeof window !== 'undefined' &&
+        window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
 
     /*
      * Перелёт всегда идёт перспективной камерой, поэтому на время перехода

@@ -1,11 +1,11 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ElevationDrawing from './ElevationDrawing';
 import { wallLabel } from '@/lib/millwork/walls';
 import PlanDrawing from './PlanDrawing';
-import type { SceneRow } from './cabinet3d/CadScene';
+import type { FurnitureRect, SceneRow } from './cabinet3d/CadScene';
 /*
  * Список открываемого — из чистого модуля коробок, а не из `Cabinet3D`:
  * статический импорт компонента сцены тянул three.js в первую загрузку
@@ -15,6 +15,15 @@ import { openablePartIds } from '@/lib/millwork/cabinetBoxes';
 import { roomAroundRows, roomOnRow, type RoomSource } from '@/lib/millwork/room';
 import DimensionLayer from './DimensionLayer';
 import type { OrthoProjection } from './cabinet3d/SceneCamera';
+import type { PathTraceSource } from './cabinet3d/pathTrace';
+/*
+ * Панель рендера по чертежу — тоже по требованию: она нужна только над
+ * сценой, а сцена сама грузится динамически (слой 54). В первой загрузке
+ * `/demo` ей не место.
+ */
+const PathTracePanel = dynamic(() => import('./PathTracePanel'), { ssr: false });
+import type { PathImage } from '@/lib/millwork/pathtrace';
+import type { SceneView } from '@/lib/cameraFraming';
 import { useInteriorStore } from '@/store/useInteriorStore';
 
 /*
@@ -107,6 +116,14 @@ type Props = {
    * стен, окон, дверей и ригеля сцена, схема и план.
    */
   room?: RoomSource;
+  /**
+   * РЕНДЕР ПО ЧЕРТЕЖУ НАД СЦЕНОЙ (слой 54): картинка объекта и куда её
+   * отдать. Нет обработчика — кнопки «Рендер» над сценой нет.
+   */
+  pathImage?: PathImage | null;
+  onPathImage?: (image: PathImage) => void;
+  /** Объект в базе: картинка сохраняется с ним. */
+  projectId?: string | null;
 };
 
 type View = 'front' | 'plan' | 'scene';
@@ -126,7 +143,80 @@ const ANGLES = [
   ['iso', 'Общий вид'],
 ] as const;
 
-type Angle = (typeof ANGLES)[number][0];
+/** Габарит комнаты сцены, если объект его не знает: одно умолчание на обе сцены. */
+export const SCENE_ROOM_DEFAULT_M = { width: 4, depth: 3 } as const;
+
+/**
+ * ГДЕ СТОИТ СТРОКА КНОПОК РЕНДЕРА — ТАМ, ГДЕ МЕБЕЛИ НЕТ (слой 54).
+ *
+ * Свободное место на сцене зависит не от экрана, а от того, как кухня
+ * вписана в холст: по высоте — свободна полоса справа, по ширине —
+ * свободно сверху и снизу. Поэтому место выбирается по прямоугольнику
+ * мебели, который считает сама сцена (`onFurnitureRect`): первое из мест,
+ * где строка в полный рост (17rem × строка с полосой) мебель не задевает.
+ * Блок с картинкой и абзацами, стоявший тут раньше, на 390 px закрывал
+ * все 11 дверей и ящиков демо; строка справа сверху на планшете стоя
+ * заходила на угол кухни.
+ */
+type ChipPlace = 'side' | 'below' | 'narrow' | 'top';
+
+const CHIP_BOX = { width: 272, height: 60 } as const;
+/** Столбик: «Рендер» или «Остановить», под ним статус или миниатюра и ⚙. */
+const NARROW_BOX = { width: 112, height: 160 } as const;
+
+const CHIP_CLASS: Record<ChipPlace, string> = {
+  /* Справа, под «На весь экран»: кухня вписана по высоте. */
+  side: 'absolute right-2 top-[3.75rem] z-10 max-w-[17rem]',
+  /* Справа, над ракурсами: кухня вписана по ширине, под ней пусто. */
+  below: 'absolute bottom-[4.25rem] right-2 z-10 max-w-[17rem]',
+  /* Справа столбиком: полоса справа от кухни уже строки (планшет стоя). */
+  narrow: 'absolute right-2 top-[3.75rem] z-10 w-28',
+  /* Узкий экран: слева сверху, не шире места до «На весь экран». */
+  top: 'absolute left-2 top-2 z-10 max-w-[calc(100%-10rem)]',
+};
+
+function chipPlace(rect: FurnitureRect | null, wide: boolean): ChipPlace {
+  const order: ChipPlace[] = wide ? ['side', 'below', 'narrow'] : ['top', 'below'];
+  if (!rect) return order[0];
+  const { width, height } = rect;
+  const boxes: Record<ChipPlace, { left: number; top: number; right: number; bottom: number }> = {
+    side: { left: width - 8 - CHIP_BOX.width, right: width - 8, top: 60, bottom: 60 + CHIP_BOX.height },
+    below: {
+      left: width - 8 - CHIP_BOX.width,
+      right: width - 8,
+      top: height - 68 - CHIP_BOX.height,
+      bottom: height - 68,
+    },
+    narrow: { left: width - 8 - NARROW_BOX.width, right: width - 8, top: 60, bottom: 60 + NARROW_BOX.height },
+    top: { left: 8, right: 8 + Math.min(CHIP_BOX.width, width - 160), top: 8, bottom: 8 + CHIP_BOX.height },
+  };
+  const clear = (box: { left: number; top: number; right: number; bottom: number }) =>
+    box.right <= rect.left || box.left >= rect.right || box.bottom <= rect.top || box.top >= rect.bottom;
+  // Нигде не свободно — самая узкая форма: она задевает меньше всего.
+  return order.find((place) => clear(boxes[place])) ?? order[order.length - 1];
+}
+
+/**
+ * ФРОНТАЛЬНЫЙ РАКУРС ПОКАЗЫВАЕТ ОДНУ СТЕНУ.
+ *
+ * П-образная кухня в виде «Спереди» разворачивалась в плоскую ленту: три
+ * перпендикулярные стены выстраивались в строку и уезжали за край
+ * экрана. Развёртки трёх стен в одной проекции не существует — это и
+ * на чертеже отдельные виды (ловушка 292).
+ *
+ * Поэтому фронтальные ракурсы берут ту стену, что выбрана
+ * переключателем, и берут её БЕЗ поворота вокруг угла: вид спереди на
+ * повёрнутый ряд показывал бы его торцом. «Сверху» — это план, там
+ * видны все стены разом, и на общем виде тоже.
+ *
+ * Правило одно на сцену экрана и на сцену рендера по чертежу (слой 54):
+ * картинка снимает ровно те ряды, что человек видел в этом ракурсе.
+ */
+export function rowsForAngle<Row extends { run: Run }>(allRows: Row[], angle: SceneView, runId: string): (Row | { run: Run })[] {
+  if (angle === 'plan' || angle === 'iso') return allRows;
+  const active = allRows.find((row) => row.run.id === runId) ?? allRows[0];
+  return active ? [{ run: active.run }] : [];
+}
 
 export default function RunSchematic({
   run,
@@ -136,8 +226,8 @@ export default function RunSchematic({
   neighbourLabel,
   sceneRows = [],
   production,
-  roomWidthM = 4,
-  roomDepthM = 3,
+  roomWidthM = SCENE_ROOM_DEFAULT_M.width,
+  roomDepthM = SCENE_ROOM_DEFAULT_M.depth,
   facadeColor,
   selectedModuleId,
   onSelect,
@@ -152,9 +242,34 @@ export default function RunSchematic({
   panelHidden,
   onTogglePanel,
   room,
+  pathImage = null,
+  onPathImage,
+  projectId = null,
 }: Props) {
   const [view, setView] = useState<View>('front');
-  const [angle, setAngle] = useState<Angle>('iso');
+  /*
+   * Ракурс — в сторе: рендер по чертежу на шаге «Результат» снимает тот
+   * вид, что был здесь последним (слой 54). Это состояние камеры.
+   */
+  const angle = useInteriorStore((state) => state.cadAngle) as SceneView;
+  const setAngle = useInteriorStore((state) => state.setCadAngle);
+
+  /* Сцена для рендера — живая, в момент нажатия. */
+  const renderSource = useRef<(() => PathTraceSource) | null>(null);
+  const onRenderSource = useCallback((source: (() => PathTraceSource) | null) => {
+    renderSource.current = source;
+  }, []);
+  const acquireScene = useCallback(async () => renderSource.current?.() ?? null, []);
+  /* Где мебель на холсте и широкий ли экран — по ним встаёт строка кнопок рендера. */
+  const [furniture, setFurniture] = useState<FurnitureRect | null>(null);
+  const [wide, setWide] = useState(false);
+  useEffect(() => {
+    const query = window.matchMedia('(min-width: 768px)');
+    const sync = () => setWide(query.matches);
+    sync();
+    query.addEventListener('change', sync);
+    return () => query.removeEventListener('change', sync);
+  }, []);
   /** Счётчик «Вернуть вид»: смена ключа ставит камеру заново. */
   const [homeKey, setHomeKey] = useState(0);
   /**
@@ -211,24 +326,8 @@ export default function RunSchematic({
     [sceneRows, run],
   );
 
-  /**
-   * ФРОНТАЛЬНЫЙ РАКУРС ПОКАЗЫВАЕТ ОДНУ СТЕНУ.
-   *
-   * П-образная кухня в виде «Спереди» разворачивалась в плоскую ленту:
-   * три перпендикулярные стены выстраивались в строку и уезжали за край
-   * экрана. Развёртки трёх стен в одной проекции не существует — это и
-   * на чертеже отдельные виды (ловушка 292).
-   *
-   * Поэтому фронтальные ракурсы берут ту стену, что выбрана
-   * переключателем, и берут её БЕЗ поворота вокруг угла: вид спереди на
-   * повёрнутый ряд показывал бы его торцом. «Сверху» — это план, там
-   * видны все стены разом, и на общем виде тоже.
-   */
-  const rows = useMemo(() => {
-    if (angle === 'plan' || angle === 'iso') return allRows;
-    const active = allRows.find((row) => row.run.id === run.id) ?? allRows[0];
-    return [{ run: active.run }];
-  }, [allRows, angle, run.id]);
+  /* Фронтальный ракурс — одна стена (`rowsForAngle`, ловушка 292). */
+  const rows = useMemo(() => rowsForAngle(allRows, angle, run.id), [allRows, angle, run.id]);
 
   /** Ряд под цепями: тот, что сейчас в кадре. */
   const rows0 = rows[0];
@@ -471,6 +570,8 @@ export default function RunSchematic({
               orbit={angle === 'iso'}
               selectedModuleId={selectedModuleId}
               onSelectModule={onSelect}
+              onRenderSource={onRenderSource}
+              onFurnitureRect={onPathImage ? setFurniture : undefined}
             />
 
             {/*
@@ -557,6 +658,26 @@ export default function RunSchematic({
               * Пустая стена — законное состояние, и читается оно как
               * поломка, если сцена молчит. Здесь она говорит.
               */}
+            {/*
+              * РЕНДЕР ПО ЧЕРТЕЖУ — С ЭТОЙ ЖЕ СЦЕНЫ, ЭТОЙ ЖЕ КАМЕРОЙ.
+              *
+              * Строка кнопок — туда, где мебели нет (`chipPlace`), а
+              * картинка и слова — в просмотре поверх сцены.
+              */}
+            {onPathImage && !empty && (
+              <div data-scene-render data-chip-place={chipPlace(furniture, wide)} className="contents">
+                <PathTracePanel
+                  compact
+                  chipClassName={CHIP_CLASS[chipPlace(furniture, wide)]}
+                  stacked={chipPlace(furniture, wide) === 'narrow'}
+                  acquire={acquireScene}
+                  image={pathImage}
+                  onImage={onPathImage}
+                  projectId={projectId}
+                />
+              </div>
+            )}
+
             {empty && (
               <div
                 className="pointer-events-none absolute inset-0 flex items-center justify-center p-6"

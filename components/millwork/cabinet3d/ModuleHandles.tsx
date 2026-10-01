@@ -218,6 +218,8 @@ export default function ModuleHandles({
         */}
       <mesh
         name="module-grip"
+        /* Инструмент правки, а не мебель: в рендер по чертежу не идёт. */
+        userData={{ helper: true }}
         geometry={gripGeometry}
         material={gripMaterial}
         position={[x + widthM, y + heightM / 2, 0.02]}
@@ -256,6 +258,7 @@ export default function ModuleHandles({
       {onMove && (
         <mesh
           name="module-slide"
+          userData={{ helper: true }}
           geometry={gripGeometry}
           material={gripMaterial}
           position={[x + widthM / 2, y + 0.02, 0.02]}

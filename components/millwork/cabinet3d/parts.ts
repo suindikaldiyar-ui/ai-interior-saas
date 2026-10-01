@@ -180,7 +180,14 @@ export function useCabinetParts(
         opacity: 0.18,
         depthWrite: false,
       }),
-      glow: new THREE.MeshBasicMaterial({ color: '#F6E2B8' }),
+      /*
+       * Подсветка светит сама: в растре это неосвещаемый цвет, а в
+       * рендере по чертежу — источник света (слой 54). Признак — на
+       * материале, а не догадка по цвету.
+       */
+      glow: Object.assign(new THREE.MeshBasicMaterial({ color: '#F6E2B8' }), {
+        userData: { emissive: true },
+      }),
       // Зоны касания невидимы, но должны ловить луч: `visible: false` его
       // не пропускает, поэтому материал прозрачный, а не выключенный.
       hit: new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }),
