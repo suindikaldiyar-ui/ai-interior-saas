@@ -149,7 +149,22 @@ import { frontKey, frontOf } from '../lib/millwork/frontMaterial';
 import { reorderTarget, rowOfModule } from '../lib/millwork/selection';
 import { cornerBandMm, cornerFillerMm, markOnRun, runPlacements } from '../lib/millwork/composition';
 import { upperSpans, upperSpansOfRun } from '../lib/millwork/layout';
-import { CORNER_FILLER_PANEL_NAME } from '../lib/millwork/panels';
+import { CORNER_FILLER_PANEL_NAME, CORNER_UPPER_FILLER_PANEL_NAME, legName } from '../lib/millwork/panels';
+import { blindPartMm, cornerChoicesOf, cornerFillersOf, cornerGeometry, openFrontMm } from '../lib/millwork/corner';
+import { hingesPerDoor } from '../lib/millwork/modules';
+import { cornerCards } from '../lib/millwork/cornerChange';
+import {
+  PLINTH_SETBACK_MM,
+  apronLengthMm,
+  apronSpans,
+  counterTailsOf,
+  countertopSlabs,
+  plinthSpans,
+} from '../lib/millwork/countertop';
+import { DRAWER_TRAVEL_M, bifoldPoses, drawerBoxes, leafPoses, sceneLeaves } from '../lib/millwork/cabinetBoxes';
+import { TAIL_FILLER_PANEL_NAME } from '../lib/millwork/panels';
+import { wallCornerOf } from '../lib/millwork/objectEstimate';
+import type { CornerChoice, LowerCornerKind, UpperCornerKind } from '../types/millwork';
 import {
   gapsOfRow,
   libraryCards,
@@ -172,7 +187,7 @@ import {
   wallMismatchMessage,
   wallMismatches,
 } from '../lib/millwork/walls';
-import { composeVariants, workingWall, workspaceInput } from '../lib/millwork/workspace';
+import { composeVariants, editedRunEstimate, workingWall, workspaceInput } from '../lib/millwork/workspace';
 import { screenState } from '../lib/millwork/screen';
 import React from 'react';
 import MillingPicker from '../components/millwork/MillingPicker';
@@ -296,6 +311,8 @@ import {
   objectInput,
   objectSite,
   projectOffer,
+  savedCornerChoices,
+  savedWallRuns,
   wallRequirementsOf,
   wallSegments,
 } from '../lib/millwork/objectEstimate';
@@ -2077,12 +2094,28 @@ console.log('\nКомпозиция: угол и П');
     Boolean(cornerHinges) && cornerHinges!.quantity > 0,
     cornerHinges ? `${cornerHinges.quantity} шт. · ${cornerHinges.total} ₸` : 'строки нет',
   );
-  check(
-    'у фальш-панели угловых петель нет: углового модуля там нет вовсе',
-    (buildEstimate(corner.segments[0].run, 'optimal', DEMO_RATES).lines.find(
-      (l) => l.key === 'hinge_corner_175',
-    )?.quantity ?? 0) === 0,
-  );
+  /*
+   * СЛЕПОЙ УГОЛ — ТОЖЕ НА УГЛОВЫХ ПЕТЛЯХ (слой 55).
+   *
+   * Здесь стояло «у фальш-панели угловых петель нет: углового модуля там
+   * нет вовсе» — петли 175° считались только у углового модуля. Задача
+   * слоя 55 требует их строкой и у фальш-панели: створка слепого модуля
+   * стоит у панели, и обычная петля 110° не даёт достать до глухой части.
+   * Проверка не ослаблена, а перевёрнута требованием: строка обязана быть,
+   * и петли в ней — ровно у створки слепого модуля, не у соседей.
+   */
+  {
+    const owner = corner.segments[0].run;
+    const blindUnits = allModules(owner).filter((m) => blindPartMm(m, owner) > 0 && openFrontMm(m, owner) > 0);
+    const line = buildEstimate(owner, 'optimal', DEMO_RATES).lines.find((l) => l.key === 'hinge_corner_175');
+    /* Петель на угловой строке — ровно на одну створку слепого модуля его высоты. */
+    const ownHinges = blindUnits.reduce((sum, unit) => sum + hingesPerDoor(moduleCarcassHeightMm(unit, owner)), 0);
+    check(
+      'у фальш-панели створка слепого модуля — на угловых петлях своей строкой',
+      blindUnits.length > 0 && (line?.quantity ?? 0) > 0 && line?.quantity === ownHinges,
+      `слепых створок ${blindUnits.length} · угловых петель ${line?.quantity ?? 0} при ${ownHinges} у слепой створки`,
+    );
+  }
   check(
     'по умолчанию угол решается фальш-панелью: она дешевле',
     corner.corners[0].solution === 'false_panel',
@@ -17278,21 +17311,47 @@ console.log('\n' + 'Угол: фальш-панель, столешница, ц�
       }
 
       const depthMm = rowStandardDepthMm(REQ.zone, 'base', undefined);
+      /*
+       * ПОЛОСА МЕЖДУ ФАСАДОМ ВЛАДЕЛЬЦА И НАЧАЛОМ СОСЕДА (слой 55).
+       *
+       * До слоя 55 её у обоих решений закрывала фальш-панель: у углового
+       * модуля — шириной 340 мм, то есть вторая нога модуля жила в раскрое
+       * плоской деталью фасада. Задача слоя 55: «Г-модуль — Г-корпус, обе
+       * ноги в раскрое, два фасада». Теперь полосу Г-модуля закрывает его
+       * вторая нога со своим фасадом, а фальш-панель остаётся у слепого
+       * угла. Утверждение «деталь, закрывающая полосу, есть в раскрое, в
+       * сцене и в смете, и одного размера» не ослаблено — меняется деталь.
+       */
+      const stripMm = cornerLostMm(solution, depthMm) - depthMm;
+      const closerName =
+        solution === 'corner_module' ? legName(FACADE_PANEL_NAME, 'Б') : CORNER_FILLER_PANEL_NAME;
       const wantFiller = cornerFillerMm(solution, depthMm);
 
       check(
         `${tag}: мёртвая полоса в углу посчитана`,
-        wantFiller > 0,
-        `${wantFiller} мм = ${cornerLostMm(solution, depthMm)} − ${depthMm}`,
+        stripMm > 0,
+        `${stripMm} мм = ${cornerLostMm(solution, depthMm)} − ${depthMm}`,
       );
-      if (wantFiller <= 0) {
+      if (stripMm <= 0) {
         throw new Error(`нулевой селектор: ${tag} — полосы в углу нет, проверять нечего`);
       }
 
       /* ── 1. Деталь в раскрое ── */
       const second = comp.segments[1].run;
-      const panels = buildPanels({ run: second });
-      const filler = panels.filter((panel) => panel.name === CORNER_FILLER_PANEL_NAME);
+      /* Полосу Г-модуля закрывает его нога — деталь ряда-владельца. */
+      const closerRun = solution === 'corner_module' ? comp.segments[0].run : second;
+      const panels = buildPanels({ run: closerRun });
+      const filler = panels.filter((panel) => panel.name === closerName);
+      if (solution === 'corner_module') {
+        const strayPanels = buildPanels({ run: second }).filter(
+          (panel) => panel.name === CORNER_FILLER_PANEL_NAME,
+        ).length;
+        check(
+          `${tag}: у Г-модуля фальш-панели нет — полосу закрывает нога`,
+          strayPanels === 0,
+          `фальш-панелей у соседа ${strayPanels}`,
+        );
+      }
 
       check(
         `${tag}: фальш-панель есть в раскрое`,
@@ -17309,13 +17368,19 @@ console.log('\n' + 'Угол: фальш-панель, столешница, ц�
 
       const gap = DEFAULT_PRODUCTION.frontGapMm;
 
+      /*
+       * Ширина — из решения угла: панель — `cornerFillerMm` без зазора;
+       * фасад второй ноги — полоса без толщины фасада ноги А и без зазора.
+       */
+      const wantWidth =
+        solution === 'corner_module'
+          ? stripMm - DEFAULT_PRODUCTION.frontMm - gap
+          : wantFiller - gap;
       check(
         `${tag}: и размер у неё из решения угла, а не свой`,
-        filler[0].widthMm === wantFiller - gap &&
+        filler[0].widthMm === wantWidth &&
           filler[0].lengthMm === carcassHeightMm(undefined) - gap,
-        `${filler[0].lengthMm}×${filler[0].widthMm} при ${carcassHeightMm(undefined) - gap}×${
-          wantFiller - gap
-        }`,
+        `${filler[0].lengthMm}×${filler[0].widthMm} при ${carcassHeightMm(undefined) - gap}×${wantWidth}`,
       );
 
       check(
@@ -17325,8 +17390,8 @@ console.log('\n' + 'Угол: фальш-панель, столешница, ц�
       );
 
       /* ── 1б. Та же деталь в сцене ── */
-      const boxes = runBoxes(second, SHOP);
-      const drawn = boxes.filter((box) => box.panel === CORNER_FILLER_PANEL_NAME);
+      const boxes = runBoxes(closerRun, SHOP);
+      const drawn = boxes.filter((box) => box.panel === closerName);
 
       check(
         `${tag}: фальш-панель есть в сцене`,
@@ -17335,7 +17400,9 @@ console.log('\n' + 'Угол: фальш-панель, столешница, ц�
       );
 
       if (drawn.length === 1) {
-        const widthMm = Math.round(drawn[0].scale[0] * 1000);
+        /* Фасад ноги Б стоит поперёк ряда: его ширина лежит по z. */
+        const across = solution === 'corner_module';
+        const widthMm = Math.round(drawn[0].scale[across ? 2 : 0] * 1000);
         const heightMm = Math.round(drawn[0].scale[1] * 1000);
         check(
           `${tag}: и в сцене она ТОГО ЖЕ размера, что в раскрое`,
@@ -17343,14 +17410,23 @@ console.log('\n' + 'Угол: фальш-панель, столешница, ц�
           `сцена ${heightMm}×${widthMm} · раскрой ${filler[0].lengthMm}×${filler[0].widthMm}`,
         );
         check(
-          `${tag}: и стоит в углу, ЛЕВЕЕ начала ряда`,
-          drawn[0].position[0] < 0,
-          `x = ${Math.round(drawn[0].position[0] * 1000)} мм`,
+          across
+            ? `${tag}: и стоит в углу, ПЕРЕД фасадами ряда-владельца`
+            : `${tag}: и стоит в углу, ЛЕВЕЕ начала ряда`,
+          across ? drawn[0].position[2] > 0 : drawn[0].position[0] < 0,
+          across
+            ? `z = ${Math.round(drawn[0].position[2] * 1000)} мм`
+            : `x = ${Math.round(drawn[0].position[0] * 1000)} мм`,
         );
       }
 
       /* ── 1в. И оплачена в смете ── */
-      const withPanel = buildEstimate(second, MAIN_VARIANT, DEMO_RATES);
+      const withPanel = buildEstimate(closerRun, MAIN_VARIANT, DEMO_RATES);
+      /*
+       * «Без детали» у слепого угла — ряд без угла: уходят ОБЕ его
+       * фальш-панели (нижняя и, со слоя 55, верхняя). У Г-модуля — его
+       * раскрой без фасада ноги Б.
+       */
       const bare: Run = { ...second, corner: undefined };
       const without = buildEstimate(bare, MAIN_VARIANT, DEMO_RATES);
 
@@ -17362,20 +17438,35 @@ console.log('\n' + 'Угол: фальш-панель, столешница, ц�
        * смета берёт на вход.
        */
       const frontM2 = (run: Run) => panelTotals(buildPanels({ run })).frontM2;
+      const cornerM2 = buildPanels({ run: second })
+        .filter(
+          (panel) =>
+            panel.name === CORNER_FILLER_PANEL_NAME || panel.name === CORNER_UPPER_FILLER_PANEL_NAME,
+        )
+        .reduce((sum, panel) => sum + (panel.widthMm * panel.lengthMm * panel.qty) / 1_000_000, 0);
       const panelM2 = (filler[0].widthMm * filler[0].lengthMm) / 1_000_000;
 
-      check(
-        `${tag}: смета видит панель площадью фасада`,
-        /* Итоги листа округлены до сотых — сверяем в пределах шага. */
-        Math.abs(frontM2(second) - frontM2(bare) - panelM2) <= 0.01,
-        `+${(frontM2(second) - frontM2(bare)).toFixed(4)} м² при детали ${panelM2.toFixed(4)} м²`,
-      );
-
-      check(
-        `${tag}: и итог без неё меньше`,
-        withPanel.total > without.total,
-        `${Math.round(without.total)} → ${Math.round(withPanel.total)} ₸`,
-      );
+      if (solution === 'corner_module') {
+        const withoutLeg = panelTotals(panels.filter((panel) => panel.name !== closerName)).frontM2;
+        check(
+          `${tag}: смета видит фасад ноги Б площадью фасада`,
+          Math.abs(frontM2(closerRun) - withoutLeg - panelM2) <= 0.01,
+          `+${(frontM2(closerRun) - withoutLeg).toFixed(4)} м² при детали ${panelM2.toFixed(4)} м²`,
+        );
+      } else {
+        check(
+          `${tag}: смета видит панели угла площадью фасада`,
+          /* Итоги листа округлены до сотых — сверяем в пределах шага. */
+          Math.abs(frontM2(second) - frontM2(bare) - cornerM2) <= 0.01 && cornerM2 >= panelM2,
+          `+${(frontM2(second) - frontM2(bare)).toFixed(4)} м² при деталях угла ${cornerM2.toFixed(4)} м² ` +
+            `(нижняя ${panelM2.toFixed(4)})`,
+        );
+        check(
+          `${tag}: и итог без неё меньше`,
+          withPanel.total > without.total,
+          `${Math.round(without.total)} → ${Math.round(withPanel.total)} ₸`,
+        );
+      }
 
       /* ── 2. Стык столешницы назван при ЛЮБОМ решении угла ── */
       const first = buildEstimate(comp.segments[0].run, MAIN_VARIANT, DEMO_RATES);
@@ -17385,25 +17476,34 @@ console.log('\n' + 'Угол: фальш-панель, столешница, ц�
         first.lines.find((line) => line.key === 'countertop_miter')?.title ?? 'СТЫК НЕ НАЗВАН',
       );
 
-      /* ── 3. Столешница и цоколь заходят в угол ── */
+      /*
+       * ── 3. Столешница и цоколь заходят в угол ──
+       *
+       * Правило слоя 55 обратное слою 46: плиту на всю глубину угла даёт
+       * ВЛАДЕЛЕЦ (первый ряд) — он идёт до стены соседа и не обрезается;
+       * второй ряд заходит назад ровно до края плиты владельца: на занятое
+       * в углу минус глубина плиты. Щели и нахлёста нет при обоих
+       * правилах — это меряет «Угол: полосы сходятся» в test:spatial.
+       */
+      const slabDepth = counterSlabDepthMm(REQ.zone, undefined);
       const counterBand = cornerBandMm({
         corner: second.corner,
-        bandDepthMm: counterSlabDepthMm(REQ.zone, undefined),
+        bandDepthMm: slabDepth,
       });
       check(
-        `${tag}: столешница второго ряда заходит в угол`,
-        counterBand.backMm === cornerLostMm(solution, depthMm),
-        `${counterBand.backMm} мм назад`,
+        `${tag}: столешница второго ряда заходит в угол до края плиты владельца`,
+        counterBand.backMm === cornerLostMm(solution, depthMm) - slabDepth,
+        `${counterBand.backMm} мм назад при ${cornerLostMm(solution, depthMm)} − ${slabDepth}`,
       );
 
       const cut = cornerBandMm({
         corner: comp.segments[0].run.corner,
-        bandDepthMm: counterSlabDepthMm(REQ.zone, undefined),
+        bandDepthMm: slabDepth,
       });
       check(
-        `${tag}: а первого — кончается там, где начинается вторая`,
-        cut.cutMm === counterSlabDepthMm(REQ.zone, undefined),
-        `${cut.cutMm} мм при глубине плиты ${counterSlabDepthMm(REQ.zone, undefined)}`,
+        `${tag}: а первого — идёт до стены соседа, не обрезаясь`,
+        cut.cutMm === 0 && cut.backMm === 0,
+        `обрезано ${cut.cutMm} мм, заход ${cut.backMm} мм`,
       );
     }
   }
@@ -17411,10 +17511,16 @@ console.log('\n' + 'Угол: фальш-панель, столешница, ц�
   /* ── 4. Обе пары длин собираются одинаково ── */
   for (const solution of ['false_panel', 'corner_module'] as const) {
     const built = WALLS.map(([a, b]) => cornerOf(solution, a, b));
+    /* Деталь полосы: панель у слепого угла, фасад ноги Б у Г-модуля (слой 55). */
     const fillers = built.map(
       (comp) =>
-        buildPanels({ run: comp.segments[1].run }).find(
-          (panel) => panel.name === CORNER_FILLER_PANEL_NAME,
+        (solution === 'corner_module'
+          ? buildPanels({ run: comp.segments[0].run }).find(
+              (panel) => panel.name === legName(FACADE_PANEL_NAME, 'Б'),
+            )
+          : buildPanels({ run: comp.segments[1].run }).find(
+              (panel) => panel.name === CORNER_FILLER_PANEL_NAME,
+            )
         )?.widthMm ?? 0,
     );
 
@@ -19764,7 +19870,18 @@ console.log('\nСлой 53: комната из замера — стены, п�
       cornerAt: null,
     });
     const site = objectSite(base, resolution);
-    const attempt = compositionFor({ shape: kind, requirements, cornerSolution: solution, site, production });
+    /*
+     * Путь экрана слоя 55: комплектация композиции — та же, что у стены А,
+     * и стене А угол кладёт композиция (`wallCornerOf`).
+     */
+    const attempt = compositionFor({
+      shape: kind,
+      requirements,
+      cornerSolution: solution,
+      site,
+      production,
+      variantKey: 'optimal',
+    });
     if (attempt?.state === 'refused') return { refused: attempt.reason };
     const layout = attempt?.state === 'built' ? attempt.composition : null;
     const input = objectInput({
@@ -19776,6 +19893,7 @@ console.log('\nСлой 53: комната из замера — стены, п�
       milling: new Map(),
       carcass: new Map(),
       materials: new Map(),
+      corner: wallCornerOf(layout),
     });
     const active = composeVariants(input, { basic: [], optimal: [], premium: [] } as never, {}).find(
       (variant) => variant.key === 'optimal',
@@ -20485,6 +20603,1325 @@ console.log('\nСлой 54: рендер по чертежу — сцена дл
   );
   built.dispose();
   photoBuilt.dispose();
+}
+
+/* ═══════════  Слой 55: угол Г и П как у мебельщика  ═══════════ */
+
+/**
+ * УГОЛ ПРОВЕРЯЕТСЯ ТЕМ ЖЕ ПУТЁМ, ЧТО ЭКРАН.
+ *
+ * Стена А на экране собирается из вариантов (`composeVariants`) и угол
+ * получает от композиции (`wallCornerOf`); остальные стены — из
+ * композиции и правок (`wallSegments`). Проверка, собиравшая угол
+ * `buildComposition` напрямую, мерила данные ДО этого шва — а дефекты
+ * слоя жили ровно в нём: у угла было НОЛЬ владельцев, столешницы А и Б
+ * ложились в угловой квадрат дважды, запила в смете не было.
+ *
+ * Каждый тип угла (низ: слепой, Г; верх: Г, слепой, пустой) — на
+ * Г-образной и П-образной кухне и на четырёх школах цеха: 560/320,
+ * 550/350, 600/300 и 560/320 с размерами угла организации (панель 60,
+ * Г-модуль 1000). Числа объявлены и сверяются: конфигураций не может
+ * тихо стать меньше.
+ */
+console.log('\nСлой 55: угол Г и П — владелец, места, пересечения, полосы, открывание, Г-модуль, хвост');
+{
+  const LOWERS: LowerCornerKind[] = ['blind', 'l_shape'];
+  const UPPERS: UpperCornerKind[] = ['l_shape', 'blind', 'empty'];
+  const ALL: CornerChoice[] = LOWERS.flatMap((lower) => UPPERS.map((upper) => ({ lower, upper })));
+
+  const room55 = (walls: [string, number][]): Measurement => ({
+    id: 'room-55',
+    ceilingHeightMm: 2700,
+    walls: walls.map(([id, lengthMm]) => ({ id, lengthMm, angleDeg: 90, openings: [] })),
+    comms: [],
+    photos: [],
+    measuredBy: 'Проверка',
+    measuredAt: '2026-10-01',
+    notes: '',
+  });
+  const L_ROOM = room55([
+    ['a', 3600],
+    ['b', 2800],
+    ['c', 3600],
+    ['d', 2800],
+  ]);
+  const U_ROOM = room55([
+    ['a', 2800],
+    ['b', 3600],
+    ['c', 2800],
+    ['d', 3600],
+  ]);
+
+  const SCHOOLS: [string, ProductionSettings][] = [
+    ['560/320', DEFAULT_PRODUCTION],
+    [
+      '550/350',
+      {
+        ...DEFAULT_PRODUCTION,
+        depths: { baseMm: 550, upperMm: 350, mezzanineMm: 550 },
+        heights: { plinthMm: 100, carcassMm: 760, countertopMm: 40, apronMm: 600 },
+      },
+    ],
+    ['600/300', { ...DEFAULT_PRODUCTION, depths: { baseMm: 600, upperMm: 300, mezzanineMm: 600 } }],
+    [
+      '560/320, угол 60/1000',
+      { ...DEFAULT_PRODUCTION, corner: { falsePanelMm: 60, lowerLMm: 1000, upperLMm: 600, confirmed: true } },
+    ],
+  ];
+
+  type Shape55 = { title: string; measurement: Measurement; kind: CompositionKind; corners: CornerChoice[] };
+  const SHAPES: Shape55[] = [
+    ...ALL.map((choice) => ({ title: 'Г', measurement: L_ROOM, kind: 'corner_l' as const, corners: [choice] })),
+    ...ALL.map((choice) => ({ title: 'П', measurement: U_ROOM, kind: 'u_shape' as const, corners: [choice, choice] })),
+    {
+      title: 'П смешанная',
+      measurement: U_ROOM,
+      kind: 'u_shape',
+      corners: [
+        { lower: 'blind', upper: 'blind' },
+        { lower: 'l_shape', upper: 'l_shape' },
+      ],
+    },
+    {
+      title: 'П смешанная',
+      measurement: U_ROOM,
+      kind: 'u_shape',
+      corners: [
+        { lower: 'l_shape', upper: 'empty' },
+        { lower: 'blind', upper: 'l_shape' },
+      ],
+    },
+  ];
+  const DISABLED55 = { basic: [], optimal: [], premium: [] } as Record<VariantKey, string[]>;
+
+  /** Путь экрана: ровно те вызовы, что у рабочего места (`Workspace`). */
+  const screen55 = (
+    shape: Shape55,
+    production: ProductionSettings,
+    edits: { walls?: Record<number, Run>; runs?: Partial<Record<VariantKey, Run>> } = {},
+  ) => {
+    const requirements = DEMO_REQUIREMENTS;
+    const base = workspaceInput({
+      title: 'Угол',
+      zone: 'Кухня',
+      measurement: shape.measurement,
+      requirements,
+      rates: DEMO_RATES,
+      wallId: 'a',
+      cornerAt: null,
+    });
+    const site = objectSite(base, null);
+    const attempt = compositionFor({
+      shape: shape.kind,
+      requirements,
+      cornerSolution: 'false_panel',
+      corners: shape.corners,
+      site,
+      production,
+      variantKey: 'optimal',
+    });
+    if (attempt?.state !== 'built') {
+      return { refused: attempt?.state === 'refused' ? attempt.reason : 'композиции нет' } as const;
+    }
+    const layout = attempt.composition;
+    const input = objectInput({
+      base,
+      resolution: null,
+      requirements: wallRequirementsOf(layout, requirements),
+      rates: DEMO_RATES,
+      production,
+      milling: new Map(),
+      carcass: new Map(),
+      materials: new Map(),
+      corner: wallCornerOf(layout),
+    });
+    const active = composeVariants(input, DISABLED55, edits.runs ?? {}).find((variant) => variant.key === 'optimal')!;
+    const segments = wallSegments(layout, active.run, edits.walls ?? {});
+    const zone = active.run.zone;
+    const places = runPlacements({ runs: segments, corners: shape.corners, zone, production });
+    const rows = segments.map((run, i) => ({ run, placement: places[i] }));
+    const source = roomSourceOf({
+      walls: site.walls,
+      runOpenings: input.openings,
+      measuredWalls: base.measuredWalls ?? [],
+      ceilingMm: site.ceilingMm,
+      depthMm: rowStandardDepthMm(zone, 'base', production),
+      solution: 'false_panel',
+      corners: shape.corners,
+      zone,
+      production,
+      survey: null,
+    });
+    const room = roomAroundRows(source, rows, null);
+    const estimate = objectEstimateOf({
+      layout,
+      segments,
+      wallAEstimate: active.estimate,
+      variantKey: 'optimal',
+      input,
+      disabled: DISABLED55,
+    });
+    /* Смета КАЖДОЙ стены: у стены А — из вариантов, у остальных — как у `objectEstimateOf`. */
+    const wallEstimates = segments.map((run, i) =>
+      i === 0
+        ? active.estimate
+        : buildEstimate(run, 'optimal', DEMO_RATES, [], undefined, production, undefined, new Map(), new Map(), new Map()),
+    );
+    return { layout, segments, rows, room, estimate, wallEstimates, input, site, requirements, zone };
+  };
+
+  /* ── Геометрия: всё в миллиметрах мира ── */
+  type V3 = [number, number, number];
+  type Obb = { c: V3; u: [V3, V3, V3]; e: V3; name: string };
+  const rotY = (v: V3, a: number): V3 => [
+    v[0] * Math.cos(a) + v[2] * Math.sin(a),
+    v[1],
+    -v[0] * Math.sin(a) + v[2] * Math.cos(a),
+  ];
+  const rotX = (v: V3, a: number): V3 => [
+    v[0],
+    v[1] * Math.cos(a) - v[2] * Math.sin(a),
+    v[1] * Math.sin(a) + v[2] * Math.cos(a),
+  ];
+  /** Коробка ряда (метры, оси ряда) → коробка мира (мм). Повороты рядов — по 90°. */
+  const worldBox = (
+    place: { xM: number; zM: number; rotationYDeg: number },
+    center: V3,
+    size: V3,
+    turn: { yaw?: number; pitch?: number } = {},
+    name = '',
+  ): Obb => {
+    const a = (place.rotationYDeg * Math.PI) / 180;
+    const local = (v: V3) => rotY(rotX(v, turn.pitch ?? 0), turn.yaw ?? 0);
+    const c = rotY(center, a);
+    return {
+      c: [(c[0] + place.xM) * 1000, c[1] * 1000, (c[2] + place.zM) * 1000],
+      u: [rotY(local([1, 0, 0]), a), rotY(local([0, 1, 0]), a), rotY(local([0, 0, 1]), a)],
+      e: [(size[0] * 1000) / 2, (size[1] * 1000) / 2, (size[2] * 1000) / 2],
+      name,
+    };
+  };
+  const dot = (a: V3, b: V3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const cross = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  /**
+   * Насколько две коробки входят друг в друга, мм: наименьшее
+   * перекрытие проекций по 15 осям (теорема о разделяющей оси). Ноль и
+   * меньше — не пересекаются (касание — ноль).
+   */
+  const depthOf = (A: Obb, B: Obb): number => {
+    const axes: V3[] = [...A.u, ...B.u];
+    for (const a of A.u) for (const b of B.u) {
+      const n = cross(a, b);
+      const len = Math.hypot(n[0], n[1], n[2]);
+      if (len > 1e-9) axes.push([n[0] / len, n[1] / len, n[2] / len]);
+    }
+    const d: V3 = [B.c[0] - A.c[0], B.c[1] - A.c[1], B.c[2] - A.c[2]];
+    let least = Infinity;
+    for (const axis of axes) {
+      const ra = A.e.reduce((sum, e, k) => sum + e * Math.abs(dot(A.u[k], axis)), 0);
+      const rb = B.e.reduce((sum, e, k) => sum + e * Math.abs(dot(B.u[k], axis)), 0);
+      least = Math.min(least, ra + rb - Math.abs(dot(d, axis)));
+      if (least <= 0) return least;
+    }
+    return least;
+  };
+  /** Полоса ряда (отметки вдоль ряда, мм; глубина назад и вперёд от фасада, мм) → прямоугольник мира. */
+  const stripRect = (place: { xM: number; zM: number; rotationYDeg: number }, fromMm: number, toMm: number, backMm: number, frontMm: number) => {
+    const a = (place.rotationYDeg * Math.PI) / 180;
+    const pts = [fromMm, toMm].flatMap((x) =>
+      [-backMm, frontMm].map((z) => {
+        const p = rotY([x / 1000, 0, z / 1000], a);
+        return [(p[0] + place.xM) * 1000, (p[2] + place.zM) * 1000] as [number, number];
+      }),
+    );
+    return {
+      x0: Math.min(...pts.map((q) => q[0])),
+      x1: Math.max(...pts.map((q) => q[0])),
+      z0: Math.min(...pts.map((q) => q[1])),
+      z1: Math.max(...pts.map((q) => q[1])),
+    };
+  };
+  type Rect55 = ReturnType<typeof stripRect>;
+  const rectGap = (a: Rect55, b: Rect55) =>
+    Math.hypot(Math.max(0, a.x0 - b.x1, b.x0 - a.x1), Math.max(0, a.z0 - b.z1, b.z0 - a.z1));
+  const rectOverlap = (a: Rect55, b: Rect55) =>
+    Math.max(0, Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0)) * Math.max(0, Math.min(a.z1, b.z1) - Math.max(a.z0, b.z0));
+  /** Общая граница двух касающихся прямоугольников, мм. */
+  const rectTouch = (a: Rect55, b: Rect55) =>
+    Math.max(
+      Math.abs(a.x1 - b.x0) < 0.5 || Math.abs(b.x1 - a.x0) < 0.5 ? Math.min(a.z1, b.z1) - Math.max(a.z0, b.z0) : 0,
+      Math.abs(a.z1 - b.z0) < 0.5 || Math.abs(b.z1 - a.z0) < 0.5 ? Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0) : 0,
+    );
+
+  let configs55 = 0;
+  let owners55 = 0;
+  let origins55 = 0;
+  let pairs55 = 0;
+  let solids55 = 0;
+  let gaps55 = 0;
+  let joints55 = 0;
+  let movers55 = 0;
+  let poses55 = 0;
+  let lModules55 = 0;
+  const refused55: string[] = [];
+  const drift8: string[] = [];
+  const hits9: string[] = [];
+  const gaps9: string[] = [];
+  const drift10: string[] = [];
+  const keys11: string[] = [];
+  const hits11: string[] = [];
+  const drift12: string[] = [];
+
+  for (const shape of SHAPES) {
+    for (const [school, production] of SCHOOLS) {
+      const tag = `${shape.title} ${shape.corners.map((c) => `${c.lower}/${c.upper}`).join('+')} · ${school}`;
+      const screen = screen55(shape, production);
+      if ('refused' in screen) {
+        refused55.push(`${tag}: ${screen.refused}`);
+        continue;
+      }
+      const { rows, room, segments, zone } = screen;
+      if (!room) {
+        refused55.push(`${tag}: КОМНАТЫ НЕТ`);
+        continue;
+      }
+      configs55 += 1;
+      const corners = shape.corners;
+      const shop = { thicknessMm: production.carcassMm, frontThicknessMm: production.frontMm, gapMm: production.frontGapMm };
+      const depthMm = rowStandardDepthMm(zone, 'base', production);
+      const places = rows.map((row) => roomRowPlacement(row));
+
+      /* ── 8. Владелец ровно один; ряды Б и В стоят на своих стенах до миллиметра ── */
+      const ownFlags = segments.filter((run) => run.corner?.own).length;
+      const dockFlags = segments.filter((run) => run.corner?.dock).length;
+      if (ownFlags !== corners.length || dockFlags !== corners.length) {
+        drift8.push(`${tag}: владельцев ${ownFlags}, стыкующихся ${dockFlags} при углах ${corners.length}`);
+      }
+      corners.forEach((choice, c) => {
+        owners55 += 1;
+        const own = segments[c]?.corner?.own;
+        const dock = segments[c + 1]?.corner?.dock;
+        if (!own || own.lower !== choice.lower || own.upper !== choice.upper) {
+          drift8.push(`${tag} · угол ${c + 1}: у стены ${c + 1} владения нет или не тот выбор (${JSON.stringify(own ?? null)})`);
+        }
+        if (!dock || dock.lower !== choice.lower || dock.upper !== choice.upper) {
+          drift8.push(`${tag} · угол ${c + 1}: у стены ${c + 2} стыка нет или не тот выбор (${JSON.stringify(dock ?? null)})`);
+        }
+      });
+      if (segments[0]?.corner?.dock || segments[segments.length - 1]?.corner?.own) {
+        drift8.push(`${tag}: у крайних стен лишний угол — ${JSON.stringify(segments[0]?.corner)} / ${JSON.stringify(segments[segments.length - 1]?.corner)}`);
+      }
+      rows.forEach((row, i) => {
+        origins55 += 1;
+        const wall = room.walls.find((candidate) => candidate.id === row.run.wallId);
+        if (!wall) {
+          drift8.push(`${tag}: ряд ${row.run.wallId} — стены нет в комнате`);
+          return;
+        }
+        const lost = i > 0 ? cornerGeometry(corners[i - 1], zone, production).lostMm : 0;
+        const place = places[i];
+        const a = (place.rotationYDeg * Math.PI) / 180;
+        const start = rotY([0, 0, -depthMm / 1000], a);
+        const at: [number, number] = [(start[0] + place.xM) * 1000, (start[2] + place.zM) * 1000];
+        const want: [number, number] = [wall.startMm[0] + wall.dir[0] * lost, wall.startMm[1] + wall.dir[1] * lost];
+        const miss = Math.hypot(at[0] - want[0], at[1] - want[1]);
+        const along = Math.cos(a) * wall.dir[0] - Math.sin(a) * wall.dir[1];
+        const facing = Math.sin(a) * wall.inward[0] + Math.cos(a) * wall.inward[1];
+        if (miss > 0.5 || Math.abs(along - 1) > 1e-9 || Math.abs(facing - 1) > 1e-9 || wall.rowStartMm !== lost) {
+          drift8.push(
+            `${tag} · ряд ${row.run.wallId}: начало мимо стены на ${miss.toFixed(2)} мм, ` +
+              `вдоль ${along.toFixed(6)}, в комнату ${facing.toFixed(6)}, начало ряда у комнаты ${wall.rowStartMm} при ${lost}`,
+          );
+        }
+      });
+
+      /* ── 9. Пересечения: модуль с модулем другой стены, со стеной, с выступом ── */
+      const partsOf = rows.map((row, i) =>
+        runBoxes(row.run, shop).map((part) => ({
+          part,
+          box: worldBox(places[i], part.position as V3, part.scale as V3, {}, `${row.run.wallId}:${part.panel ?? part.node ?? part.material}`),
+        })),
+      );
+      for (let i = 0; i < rows.length; i += 1) {
+        for (let j = i + 1; j < rows.length; j += 1) {
+          for (const A of partsOf[i]) {
+            for (const B of partsOf[j]) {
+              pairs55 += 1;
+              const deep = depthOf(A.box, B.box);
+              if (deep > 0.5) hits9.push(`${tag}: ${A.box.name} × ${B.box.name} на ${deep.toFixed(1)} мм`);
+            }
+          }
+        }
+      }
+      const solids = roomBoxes(room).filter((box) => box.role === 'wall' || box.role === 'corner' || box.role === 'object');
+      for (const parts of partsOf) {
+        for (const { box } of parts) {
+          for (const solid of solids) {
+            solids55 += 1;
+            const wallBox: Obb = {
+              c: [solid.center[0] * 1000, solid.center[1] * 1000, solid.center[2] * 1000],
+              u: [
+                rotY([1, 0, 0], (solid.rotationYDeg * Math.PI) / 180),
+                [0, 1, 0],
+                rotY([0, 0, 1], (solid.rotationYDeg * Math.PI) / 180),
+              ],
+              e: [(solid.size[0] * 1000) / 2, (solid.size[1] * 1000) / 2, (solid.size[2] * 1000) / 2],
+              name: solid.key,
+            };
+            const deep = depthOf(box, wallBox);
+            if (deep > 0.5) hits9.push(`${tag}: ${box.name} в ${solid.role} ${solid.key} на ${deep.toFixed(1)} мм`);
+          }
+        }
+      }
+      /* Щелей в углу нет, кроме фальш-панели: модули сходятся к углу вплотную. */
+      corners.forEach((choice, c) => {
+        gaps55 += 1;
+        const owner = segments[c];
+        const dock = segments[c + 1];
+        const g = cornerGeometry(choice, zone, production);
+        const floorOwner = owner.modules.filter((unit) => standsOnFloor(unit));
+        const ownerEnd = Math.max(...floorOwner.map((unit) => unit.offsetMm + unit.widthMm));
+        const floorDock = dock.modules.filter((unit) => standsOnFloor(unit));
+        const dockStart = Math.min(...floorDock.map((unit) => unit.offsetMm));
+        const fillers = cornerFillersOf(dock);
+        const lower = fillers.find((piece) => piece.level === 'lower');
+        const wantLower = choice.lower === 'blind' ? g.fillerMm : 0;
+        if (ownerEnd !== owner.lengthMm || dockStart !== 0 || (lower ? lower.toMm - lower.fromMm : 0) !== wantLower || (lower && lower.toMm !== 0)) {
+          gaps9.push(
+            `${tag} · угол ${c + 1}, низ: владелец кончается на ${ownerEnd} при стене ${owner.lengthMm}, ` +
+              `сосед начинается на ${dockStart}, панель ${lower ? `${lower.fromMm}…${lower.toMm}` : 'нет'} при ${wantLower}`,
+          );
+        }
+        if (!owner.options.hasUpper) return;
+        const uppers = (run: Run) =>
+          run.upperSegments.flatMap((segment) => segment.modules).filter((unit) => unit.section !== 'mezzanine');
+        const ownerUpperEnd = Math.max(...uppers(owner).map((unit) => unit.offsetMm + unit.widthMm));
+        const start = g.upperStartMm - g.lostMm;
+        const upperFiller = fillers.find((piece) => piece.level === 'upper');
+        const tallTop = (unit: Module) => plinthMm(production) + moduleCarcassHeightMm(unit, dock) > upperBottomMm(production);
+        const firstAfter = Math.min(
+          ...uppers(dock).map((unit) => unit.offsetMm),
+          ...dock.modules.filter(tallTop).map((unit) => unit.offsetMm),
+        );
+        const wantOwnerEnd = owner.lengthMm - g.ownerUpperCutMm;
+        /*
+         * Щели нет: либо первый модуль (или колонна) соседа стоит ровно на
+         * начале его верха, либо между ними панель — от края угла до него.
+         * У слепого верха панель есть всегда; у Г и пустого — только когда
+         * она закрывает узкую полосу до колонны (`cornerFillersOf`).
+         */
+        const closed = upperFiller
+          ? upperFiller.fromMm === start - g.upperFillerMm && upperFiller.toMm === firstAfter
+          : choice.upper !== 'blind' && firstAfter === start;
+        if (Math.round(ownerUpperEnd) !== wantOwnerEnd || !closed) {
+          gaps9.push(
+            `${tag} · угол ${c + 1}, верх: владелец кончается на ${ownerUpperEnd} при ${wantOwnerEnd}, ` +
+              `сосед с ${firstAfter} при начале ${start}, панель ${upperFiller ? `${upperFiller.fromMm}…${upperFiller.toMm}` : 'нет'}`,
+          );
+        }
+      });
+
+      /* ── 10. Плита одна на угол, без щели и нахлёста; цоколь и фартук; материал и стык ── */
+      const slabDepthMm = counterSlabDepthMm(zone, production);
+      corners.forEach((choice, c) => {
+        joints55 += 1;
+        const owner = segments[c];
+        const dock = segments[c + 1];
+        const lost = cornerGeometry(choice, zone, production).lostMm;
+        const ownSlabs = countertopSlabs(owner);
+        const dockSlabs = countertopSlabs(dock);
+        const lastOwn = ownSlabs[ownSlabs.length - 1];
+        const firstDock = dockSlabs[0];
+        if (!lastOwn || !firstDock) {
+          drift10.push(`${tag} · угол ${c + 1}: плиты нет — у владельца ${ownSlabs.length}, у соседа ${dockSlabs.length}`);
+          return;
+        }
+        const front = slabDepthMm - depthMm;
+        const ownRect = stripRect(places[c], lastOwn.fromMm, lastOwn.toMm, depthMm, front);
+        const dockRect = stripRect(places[c + 1], firstDock.fromMm, firstDock.toMm, depthMm, front);
+        const overlap = rectOverlap(ownRect, dockRect);
+        const gap = rectGap(ownRect, dockRect);
+        const touch = rectTouch(ownRect, dockRect);
+        if (lastOwn.toMm !== owner.lengthMm || firstDock.fromMm !== -(lost - slabDepthMm) || overlap > 0.5 || gap > 0.5 || Math.abs(touch - slabDepthMm) > 0.5) {
+          drift10.push(
+            `${tag} · угол ${c + 1}, столешница: владелец до ${lastOwn.toMm} при ${owner.lengthMm}, ` +
+              `сосед с ${firstDock.fromMm} при ${-(lost - slabDepthMm)} · нахлёст ${Math.round(overlap)} мм² · щель ${gap.toFixed(1)} · стык ${touch.toFixed(1)} при ${slabDepthMm}`,
+          );
+        }
+        /* Цоколь — той же мерой: владелец до стены соседа, сосед — до лица цоколя владельца. */
+        const ownPlinth = plinthSpans(owner);
+        const dockPlinth = plinthSpans(dock);
+        const plinthDepth = depthMm - PLINTH_SETBACK_MM;
+        const pOwn = stripRect(places[c], ownPlinth[ownPlinth.length - 1].fromMm, ownPlinth[ownPlinth.length - 1].toMm, depthMm, -PLINTH_SETBACK_MM);
+        const pDock = stripRect(places[c + 1], dockPlinth[0].fromMm, dockPlinth[0].toMm, depthMm, -PLINTH_SETBACK_MM);
+        if (rectOverlap(pOwn, pDock) > 0.5 || rectGap(pOwn, pDock) > 0.5 || Math.abs(rectTouch(pOwn, pDock) - plinthDepth) > 0.5) {
+          drift10.push(
+            `${tag} · угол ${c + 1}, цоколь: нахлёст ${Math.round(rectOverlap(pOwn, pDock))} мм² · щель ${rectGap(pOwn, pDock).toFixed(1)} · ` +
+              `стык ${rectTouch(pOwn, pDock).toFixed(1)} при ${plinthDepth}`,
+          );
+        }
+        /* Фартук встречается по линии угла: конец фартука владельца — начало фартука соседа. */
+        if (owner.options.hasUpper) {
+          const ownApron = apronSpans(owner);
+          const dockApron = apronSpans(dock);
+          const endOwn = stripRect(places[c], ownApron[ownApron.length - 1].toMm, ownApron[ownApron.length - 1].toMm, depthMm, -depthMm);
+          const startDock = stripRect(places[c + 1], dockApron[0].fromMm, dockApron[0].fromMm, depthMm, -depthMm);
+          const miss = Math.hypot(endOwn.x0 - startDock.x0, endOwn.z0 - startDock.z0);
+          if (miss > 0.5) drift10.push(`${tag} · угол ${c + 1}, фартук: концы двух стен разошлись на ${miss.toFixed(1)} мм`);
+        }
+      });
+      /* Материал плиты один на кухню, стык — один на угол. */
+      const counterKeys = new Set(
+        screen.wallEstimates.flatMap((estimate) =>
+          estimate.lines
+            .filter((line) => line.key.startsWith('countertop_') && line.unit === 'mp' && line.key !== 'countertop_plinth')
+            .map((line) => line.key),
+        ),
+      );
+      const materials = new Set(segments.map((run) => JSON.stringify(run.countertopMaterial ?? null)));
+      const miter = screen.estimate.lines.find((line) => line.key === 'countertop_miter');
+      if (counterKeys.size !== 1 || materials.size !== 1 || (miter?.quantity ?? 0) !== corners.length) {
+        drift10.push(
+          `${tag}: столешниц ${Array.from(counterKeys).join(', ') || 'нет'} · материалов ${materials.size} · ` +
+            `стыков ${miter?.quantity ?? 0} при углах ${corners.length}`,
+        );
+      }
+      /* Фартук: длина в смете = длина, которую рисует сцена (`apronSpans`), у каждой стены и в сумме. */
+      const apronScene = segments.reduce((sum, run) => sum + apronLengthMm(run), 0);
+      const apronLine = screen.estimate.lines.find((line) => line.key === 'wall_panel');
+      const perWall = screen.wallEstimates.map((estimate, i) => ({
+        line: estimate.lines.find((line) => line.key === 'wall_panel')?.quantity ?? 0,
+        scene: Math.round(apronLengthMm(segments[i])) / 1000,
+      }));
+      if (
+        Math.abs((apronLine?.quantity ?? 0) - apronScene / 1000) > 0.0005 ||
+        perWall.some((wall) => Math.abs(wall.line - wall.scene) > 0.0005)
+      ) {
+        drift10.push(
+          `${tag}: фартук в смете ${apronLine?.quantity ?? 0} м при ${(apronScene / 1000).toFixed(3)} м в сцене · по стенам ` +
+            perWall.map((wall) => `${wall.line}/${wall.scene}`).join(' '),
+        );
+      }
+
+      /* ── 11. Ключ створки — свой у каждой стены; всё у угла открывается мимо соседа ── */
+      const idsByRow = rows.map((row) => {
+        const fromScene = runPlaces(row.run).flatMap((entry) =>
+          sceneLeaves(
+            entry.unit,
+            entry.heightM,
+            blindPartMm(entry.unit, row.run) > 0 ? openFrontMm(entry.unit, row.run) / 1000 : undefined,
+          ).map((leaf) => leaf.id),
+        );
+        return new Set([...openablePartIds(row.run), ...fromScene]);
+      });
+      idsByRow.forEach((ids, i) => {
+        for (const id of Array.from(ids)) {
+          const owners = idsByRow.filter((other) => other.has(id)).length;
+          const moduleId = id.split(':')[0];
+          const home = allModules(rows[i].run).some((unit) => unit.id === moduleId);
+          if (owners !== 1 || !home) keys11.push(`${tag}: ключ ${id} — стен ${owners}, модуль ${home ? 'свой' : 'ЧУЖОЙ'}`);
+        }
+      });
+      corners.forEach((_, c) => {
+        for (const [me, other] of [
+          [c, c + 1],
+          [c + 1, c],
+        ] as [number, number][]) {
+          const run = rows[me].run;
+          const obstacles = partsOf[other].filter(
+            ({ part }) => part.material === 'front' || part.material === 'glass' || part.node === 'handle',
+          );
+          for (const entry of runPlaces(run)) {
+            const openW = blindPartMm(entry.unit, run) > 0 ? openFrontMm(entry.unit, run) / 1000 : undefined;
+            const leaves = sceneLeaves(entry.unit, entry.heightM, openW);
+            const options = {
+              gapM: production.frontGapMm / 1000,
+              frontThicknessM: production.frontMm / 1000,
+              integratedHandles: Boolean(run.options.integratedHandles),
+            };
+            for (const leaf of leaves) {
+              movers55 += 1;
+              for (const s of [0.25, 0.5, 0.75, 1]) {
+                const posed: Obb[] =
+                  leaf.kind === 'door'
+                    ? leafPoses({
+                        opening: leaf.opening,
+                        x: leaf.xM,
+                        y: 0,
+                        width: leaf.widthM,
+                        height: entry.heightM,
+                        thickness: options.frontThicknessM,
+                        gap: options.gapM,
+                        integratedHandle: options.integratedHandles,
+                        s,
+                      }).map((box) =>
+                        worldBox(
+                          places[me],
+                          [box.center[0] + entry.x, box.center[1] + entry.y, box.center[2] + entry.zM],
+                          box.size,
+                          { yaw: box.yaw, pitch: box.pitch },
+                          `${leaf.id}:${box.role}`,
+                        ),
+                      )
+                    : leaf.kind === 'bifold'
+                      ? bifoldPoses(
+                          entry.unit,
+                          { x: entry.x, y: entry.y, heightM: entry.heightM, depthM: entry.depthM, thicknessM: production.carcassMm / 1000, zM: entry.zM },
+                          options,
+                          s,
+                        ).map((box) => worldBox(places[me], box.center, box.size, { yaw: box.yaw, pitch: box.pitch }, `${leaf.id}:${box.role}`))
+                      : drawerBoxes(
+                          entry.unit,
+                          { x: entry.x, y: entry.y, heightM: entry.heightM, depthM: entry.depthM, thicknessM: production.carcassMm / 1000, zM: entry.zM },
+                          Number(leaf.id.split(':').pop()),
+                          { ...options, cutaway: false },
+                        ).map((box) =>
+                          worldBox(
+                            places[me],
+                            [box.position[0], box.position[1], box.position[2] + entry.zM + DRAWER_TRAVEL_M * s],
+                            box.scale as V3,
+                            {},
+                            `${leaf.id}:${box.panel ?? box.node ?? box.material}`,
+                          ),
+                        );
+                for (const box of posed) {
+                  for (const { box: obstacle } of obstacles) {
+                    poses55 += 1;
+                    const deep = depthOf(box, obstacle);
+                    if (deep > 0.5) hits11.push(`${tag} · ход ${s}: ${box.name} задевает ${obstacle.name} на ${deep.toFixed(1)} мм`);
+                  }
+                }
+              }
+            }
+          }
+        }
+      });
+
+      /* ── 12. Г-модуль: обе ноги в раскрое — число деталей и площадь ── */
+      for (const run of segments) {
+        const panels = buildPanels({ run, production });
+        for (const unit of allModules(run).filter((m) => m.kind === 'corner_base' || m.kind === 'corner_upper')) {
+          lModules55 += 1;
+          const own = panels.filter((panel) => panel.moduleId === unit.id);
+          const S = unit.widthMm;
+          const D = moduleDepthMm(unit, run.zone, production);
+          const t = production.carcassMm;
+          const top = unit.kind === 'corner_base' ? TOP_RAIL_PANEL_NAME : TOP_PANEL_NAME;
+          const names = [BOTTOM_PANEL_NAME, top, BACK_PANEL_NAME, FACADE_PANEL_NAME].flatMap((name) => [
+            legName(name, 'А'),
+            legName(name, 'Б'),
+          ]);
+          const missing = names.filter((name) => own.filter((panel) => panel.name === name).length !== 1);
+          const sides = own.filter((panel) => panel.name === SIDE_PANEL_NAME).reduce((sum, panel) => sum + panel.qty, 0);
+          const area = (name: string) =>
+            own.filter((panel) => panel.name === name).reduce((sum, panel) => sum + panel.lengthMm * panel.widthMm * panel.qty, 0);
+          const bottoms = area(legName(BOTTOM_PANEL_NAME, 'А')) + area(legName(BOTTOM_PANEL_NAME, 'Б'));
+          const wantBottoms = D * (2 * S - D) - 2 * t * D;
+          const frontA = own.find((panel) => panel.name === legName(FACADE_PANEL_NAME, 'А'));
+          const frontB = own.find((panel) => panel.name === legName(FACADE_PANEL_NAME, 'Б'));
+          const gap = production.frontGapMm;
+          if (
+            missing.length > 0 ||
+            sides !== 2 ||
+            bottoms !== wantBottoms ||
+            frontA?.widthMm !== S - D - gap ||
+            frontB?.widthMm !== S - D - production.frontMm - gap
+          ) {
+            drift12.push(
+              `${tag} · ${unit.id}: нет ног ${missing.join(', ') || '—'} · боковин ${sides} · ` +
+                `дно ${bottoms} мм² при Г ${wantBottoms} · фасады ${frontA?.widthMm}/${frontB?.widthMm} при ${S - D - gap}/${S - D - production.frontMm - gap}`,
+            );
+          }
+        }
+      }
+    }
+  }
+
+  const WANT_CONFIGS = SHAPES.length * SCHOOLS.length;
+  check(
+    `слой 55: собрано ${WANT_CONFIGS} конфигураций угла путём экрана`,
+    configs55 === WANT_CONFIGS && refused55.length === 0,
+    refused55.length === 0 ? `${configs55} из ${WANT_CONFIGS}` : `НЕ СОБРАЛОСЬ ${refused55.length}: ${refused55.slice(0, 3).join(' | ')}`,
+  );
+  if (configs55 === 0) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: ни одна угловая конфигурация не собралась');
+  check(
+    '8. у каждого угла ровно один владелец, ряды Б и В стоят на стенах замера до миллиметра',
+    drift8.length === 0 && owners55 > 0 && origins55 > 0,
+    drift8.length === 0 ? `углов ${owners55}, рядов ${origins55}` : `${drift8.length}: ${drift8.slice(0, 3).join(' | ')}`,
+  );
+  check(
+    '9. ни одна деталь не входит в деталь другой стены, в стену или в выступ',
+    hits9.length === 0 && pairs55 > 0 && solids55 > 0,
+    hits9.length === 0 ? `пар деталей ${pairs55}, деталь × стена ${solids55}` : `${hits9.length}: ${hits9.slice(0, 4).join(' | ')}`,
+  );
+  check(
+    '9. в углу нет щели, кроме фальш-панели: модули сходятся к углу вплотную',
+    gaps9.length === 0 && gaps55 > 0,
+    gaps9.length === 0 ? `углов ${gaps55}` : `${gaps9.length}: ${gaps9.slice(0, 3).join(' | ')}`,
+  );
+  check(
+    '10. плита одна на угол, без щели и нахлёста; цоколь и фартук сходятся; материал один, стыков столько, сколько углов',
+    drift10.length === 0 && joints55 > 0,
+    drift10.length === 0 ? `углов ${joints55}` : `${drift10.length}: ${drift10.slice(0, 3).join(' | ')}`,
+  );
+  check(
+    '11. ключ створки свой у каждой стены: створка А не открывает створку Б',
+    keys11.length === 0,
+    keys11.length === 0 ? `стен ${configs55} конфигураций` : `${keys11.length}: ${keys11.slice(0, 3).join(' | ')}`,
+  );
+  check(
+    '11. каждая дверь, ящик и Г-фасад у угла открываются, не задевая фасад и ручку соседней стены',
+    hits11.length === 0 && movers55 > 0 && poses55 > 0,
+    hits11.length === 0 ? `подвижных ${movers55}, сверок положения ${poses55}` : `${hits11.length}: ${hits11.slice(0, 4).join(' | ')}`,
+  );
+  check(
+    '12. Г-модуль: обе ноги в раскрое — детали по ногам, две боковины, дно = площадь Г без боковин, два фасада',
+    drift12.length === 0 && lModules55 > 0,
+    drift12.length === 0 ? `Г-модулей ${lModules55}` : `${drift12.length}: ${drift12.slice(0, 3).join(' | ')}`,
+  );
+
+  /* ── 13. Хвост у стены: меньше 150 — добор в раскрое и в смете, плита до стены; больше — плита над пустотой, её можно снять ── */
+  {
+    /*
+     * Стена А короче — пеналы уходят на неё (`splitAppliances`), и у
+     * дальней стены Б стоит модуль под столешницей: его хвост и меряем.
+     */
+    const TAIL_ROOM = room55([
+      ['a', 2600],
+      ['b', 3600],
+      ['c', 2600],
+      ['d', 3600],
+    ]);
+    const shape: Shape55 = { title: 'Г', measurement: TAIL_ROOM, kind: 'corner_l', corners: [{ lower: 'blind', upper: 'blind' }] };
+    const before = screen55(shape, DEFAULT_PRODUCTION);
+    if ('refused' in before) throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: хвост — угол не собрался: ${before.refused}`);
+    const wallB = before.segments[1];
+    const last = [...wallB.modules].filter((unit) => standsOnFloor(unit)).sort((a, b) => b.offsetMm - a.offsetMm)[0];
+    if (!last || last.offsetMm + last.widthMm !== wallB.lengthMm || last.appliance || last.kind !== 'base') {
+      throw new Error(
+        `НУЛЕВОЙ СЕЛЕКТОР: у дальней стены Б нет обычного модуля под столешницей — ${last?.id ?? 'нет модулей'}`,
+      );
+    }
+    const narrowed = (byMm: number) =>
+      applyOps({
+        run: wallB,
+        requirements: before.requirements,
+        ops: [{ op: 'replace_module', moduleId: last.id, kind: last.kind, widthMm: last.widthMm - byMm }],
+        openings: before.layout.segments[1].openings ?? [],
+      });
+    for (const [byMm, filler] of [
+      [100, true],
+      [300, false],
+    ] as [number, boolean][]) {
+      const edited = narrowed(byMm);
+      const after = screen55(shape, DEFAULT_PRODUCTION, { walls: { 1: edited } });
+      if ('refused' in after) throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: хвост ${byMm} — не собралось: ${after.refused}`);
+      const run = after.segments[1];
+      const tail = counterTailsOf(run).find((item) => item.end === 'end');
+      const panels = buildPanels({ run });
+      const tailPanels = panels.filter((panel) => panel.name === TAIL_FILLER_PANEL_NAME);
+      const slabs = countertopSlabs(run);
+      const plinth = plinthSpans(run);
+      const carcassLine = after.wallEstimates[1].lines.find((line) => line.key === 'ldsp_carcass');
+      check(
+        `13. хвост ${byMm} мм у стены: ${filler ? 'добор в раскрое и в смете, цоколь под ним' : 'без добора'}, плита до стены`,
+        tail?.widthMm === byMm &&
+          tail.filler === filler &&
+          tailPanels.length === (filler ? 1 : 0) &&
+          (!filler || tailPanels[0].widthMm === byMm) &&
+          slabs[slabs.length - 1]?.toMm === run.lengthMm &&
+          (filler ? plinth[plinth.length - 1]?.toMm === run.lengthMm : plinth[plinth.length - 1]?.toMm === run.lengthMm - byMm) &&
+          Math.abs((carcassLine?.quantity ?? -1) - panelMaterials(panels).carcassM2) < 0.005,
+        `хвост ${tail?.widthMm ?? 'нет'} · добор ${tailPanels.map((panel) => `${panel.lengthMm}×${panel.widthMm}`).join(', ') || 'нет'} · ` +
+          `плита до ${slabs[slabs.length - 1]?.toMm} при ${run.lengthMm} · цоколь до ${plinth[plinth.length - 1]?.toMm} · ` +
+          `ЛДСП в смете ${carcassLine?.quantity} при раскрое ${panelMaterials(panels).carcassM2}`,
+      );
+      if (!filler) {
+        const cut = applyOps({
+          run: edited,
+          requirements: before.requirements,
+          ops: [{ op: 'set_counter_end', end: 'end', cut: true }],
+          openings: before.layout.segments[1].openings ?? [],
+        });
+        const afterCut = screen55(shape, DEFAULT_PRODUCTION, { walls: { 1: cut } });
+        if ('refused' in afterCut) throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: снятая плита — не собралось: ${afterCut.refused}`);
+        const cutSlabs = countertopSlabs(afterCut.segments[1]);
+        const len = (estimate: Estimate) =>
+          estimate.lines
+            .filter((line) => line.key.startsWith('countertop_') && line.unit === 'mp' && line.key !== 'countertop_plinth')
+            .reduce((sum, line) => sum + line.quantity, 0);
+        check(
+          `13. плиту над пустотой ${byMm} мм человек снимает — и смета короче ровно на неё`,
+          cutSlabs[cutSlabs.length - 1]?.toMm === afterCut.segments[1].lengthMm - byMm &&
+            Math.abs(len(after.wallEstimates[1]) - len(afterCut.wallEstimates[1]) - byMm / 1000) < 0.0005,
+          `плита до ${cutSlabs[cutSlabs.length - 1]?.toMm} · столешница ${len(after.wallEstimates[1])} → ${len(afterCut.wallEstimates[1])} м`,
+        );
+      }
+    }
+  }
+
+  /* ── 14. Смена угла: угол заменился, остальные модули стоят, где стояли; не влезает — отказ числом ── */
+  {
+    let changes = 0;
+    let refusals = 0;
+    const moved: string[] = [];
+    const wordless: string[] = [];
+    for (const start of ALL) {
+      const shape: Shape55 = { title: 'Г', measurement: L_ROOM, kind: 'corner_l', corners: [start] };
+      const screen = screen55(shape, DEFAULT_PRODUCTION);
+      if ('refused' in screen) throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: смена угла — исходный угол не собрался: ${screen.refused}`);
+      const input = {
+        runs: screen.segments,
+        index: 0,
+        corners: shape.corners,
+        requirements: screen.requirements,
+        wallOpenings: screen.site.walls.map((wall) => wall.openings),
+        labels: screen.segments.map((_, i) => wallLabel(i)),
+      };
+      for (const card of cornerCards(input)) {
+        if (card.current) continue;
+        if (card.refusal) {
+          refusals += 1;
+          if (!/\d+ мм/.test(card.refusal)) wordless.push(`${start.lower}/${start.upper} → ${card.key}: «${card.refusal}»`);
+          continue;
+        }
+        changes += 1;
+        const after = card.runs!;
+        /* Мировое место каждого модуля, кроме углового у владельца: оно обязано остаться. */
+        const placesBefore = runPlacements({ runs: screen.segments, corners: shape.corners, zone: screen.zone });
+        const nextCorners = [card.choice];
+        const placesAfter = runPlacements({ runs: after, corners: nextCorners, zone: screen.zone });
+        const worldOf = (run: Run, place: { xM: number; zM: number; rotationYDeg: number }, unit: Module) => {
+          const a = (place.rotationYDeg * Math.PI) / 180;
+          const p = rotY([unit.offsetMm / 1000, 0, 0], a);
+          return `${Math.round((p[0] + place.xM) * 1000)},${Math.round((p[2] + place.zM) * 1000)}+${unit.widthMm}:${unit.kind}`;
+        };
+        const cornerIds = new Set(
+          [screen.segments[0], after[0]].flatMap((run) =>
+            allModules(run)
+              .filter((unit) => unit.offsetMm + unit.widthMm >= run.lengthMm - 0.5 - cornerGeometry(start, screen.zone).ownerUpperCutMm - 1)
+              .map((unit) => unit.id),
+          ),
+        );
+        for (let i = 0; i < screen.segments.length; i += 1) {
+          const run = screen.segments[i];
+          const keep = allModules(run).filter((unit) => !(i === 0 && cornerIds.has(unit.id)));
+          const now = new Set(allModules(after[i]).map((unit) => worldOf(after[i], placesAfter[i], unit)));
+          for (const unit of keep) {
+            const was = worldOf(run, placesBefore[i], unit);
+            if (!now.has(was)) moved.push(`${start.lower}/${start.upper} → ${card.key}: ${run.wallId} ${unit.id} ${was}`);
+          }
+        }
+      }
+    }
+    check(
+      '14. смена угла не двигает в мире ни одного модуля, кроме углового',
+      changes > 0 && moved.length === 0,
+      moved.length === 0 ? `смен ${changes}` : `${moved.length}: ${moved.slice(0, 3).join(' | ')}`,
+    );
+    check(
+      '14. смена, которая не влезает, — отказ с числом',
+      refusals > 0 && wordless.length === 0,
+      wordless.length === 0 ? `отказов ${refusals}` : wordless.slice(0, 2).join(' | '),
+    );
+  }
+
+  /*
+   * ── 15. Старый угловой объект открывается тем углом, каким сохранён ──
+   *
+   * Объект, сохранённый до слоя 55: форма и одно `cornerSolution`, выбора
+   * по углам нет. Верхнего углового шкафа тогда не было — над столешницей
+   * угол оставался пустым (слой 46). «До открытия» — этот же объект с его
+   * углом, записанным явно: низ из решения, верх пустой. «После» — запись
+   * старого формата, открытая путём экрана: начальный выбор
+   * (`savedCornerChoices`, как у `Workspace`) → композиция → варианты с
+   * правками → ряды стен → смета объекта. Раскладка и смета обязаны
+   * совпасть до тенге: умолчание НОВЫХ углов (слепой верх) дописало бы
+   * старому объекту фальш-панель и глухую часть, которых в нём не было.
+   *
+   * Ряды берутся и собранные заново, и правленые — из `runs`/`wallRuns`,
+   * с углом ряда в прежнем формате (`backMm`/`ahead`; у стены А его не
+   * было вовсе: она собиралась из вариантов без угла). Кабинет клиента
+   * (`projectOffer`) обязан открыть ту же запись той же суммой, а
+   * сохранение после открытия — вернуть тот же объект.
+   */
+  {
+    type OldSolution = 'false_panel' | 'corner_module';
+    const OLD_SOLUTIONS: OldSolution[] = ['false_panel', 'corner_module'];
+    const OLD_SHAPES: { title: string; kind: CompositionKind; measurement: Measurement }[] = [
+      { title: 'Г', kind: 'corner_l', measurement: L_ROOM },
+      { title: 'П', kind: 'u_shape', measurement: U_ROOM },
+    ];
+    const VARIANT_OLD: VariantKey = 'optimal';
+
+    /** Открытие объекта — те же вызовы и в том же порядке, что у рабочего места. */
+    const openSaved = (state: MillworkState, measurement: Measurement, production: ProductionSettings) => {
+      const shape = state.shape ?? 'linear';
+      const legacy = state.cornerSolution ?? 'false_panel';
+      const choices = cornerChoicesOf(
+        { corners: savedCornerChoices(state), cornerSolution: legacy },
+        segmentCount(shape) - 1,
+      );
+      const requirements = state.requirements ?? DEMO_REQUIREMENTS;
+      const variantKey = state.selectedVariant ?? VARIANT_OLD;
+      /* Рабочая стена — как у объекта без своей отметки и у кабинета: самая длинная. */
+      const base = workspaceInput({
+        title: 'Старый угол',
+        zone: 'Кухня',
+        measurement,
+        requirements,
+        rates: DEMO_RATES,
+        cornerAt: null,
+      });
+      const site = objectSite(base, null);
+      const attempt = compositionFor({
+        shape,
+        requirements,
+        cornerSolution: legacy,
+        corners: choices,
+        site,
+        production,
+        variantKey,
+      });
+      if (attempt?.state !== 'built') {
+        throw new Error(
+          `НУЛЕВОЙ СЕЛЕКТОР: старый угловой объект не собрался — ${attempt?.state === 'refused' ? attempt.reason : 'композиции нет'}`,
+        );
+      }
+      const layout = attempt.composition;
+      const input = objectInput({
+        base,
+        resolution: null,
+        requirements: wallRequirementsOf(layout, requirements),
+        rates: DEMO_RATES,
+        production,
+        milling: new Map(),
+        carcass: new Map(),
+        materials: new Map(),
+        corner: wallCornerOf(layout),
+      });
+      const active = composeVariants(input, DISABLED55, state.runs ?? {}).find((v) => v.key === variantKey)!;
+      const segments = wallSegments(layout, active.run, savedWallRuns(state.wallRuns));
+      const estimate = objectEstimateOf({
+        layout,
+        segments,
+        wallAEstimate: active.estimate,
+        variantKey,
+        input,
+        disabled: DISABLED55,
+      });
+      const places = runPlacements({ runs: segments, corners: choices, zone: active.run.zone, production });
+      return { choices, segments, estimate, places, active, input };
+    };
+
+    /** Раскладка числами: каждый модуль, место ряда, фальш-панели и детали раскроя. */
+    const layoutOf = (open: ReturnType<typeof openSaved>, production: ProductionSettings): string[] =>
+      open.segments.flatMap((run, i) => {
+        const place = open.places[i];
+        return [
+          `ряд ${i} ${run.wallId} место ${Math.round(place.xM * 1000)},${Math.round(place.zM * 1000)} ∠${place.rotationYDeg} длина ${run.lengthMm}`,
+          ...allModules(run).map(
+            (unit) =>
+              `ряд ${i} ${unit.id} ${unit.kind} ${unit.offsetMm}+${unit.widthMm} ${unit.appliance ?? '—'} ${unit.fill?.hinge ?? '—'} ${unit.fill?.handle ?? '—'}`,
+          ),
+          ...cornerFillersOf(run).map((filler) => `ряд ${i} панель ${filler.level} ${filler.fromMm}…${filler.toMm}`),
+          ...buildPanels({ run, production }).map(
+            (panel) => `ряд ${i} деталь ${panel.name} ${panel.lengthMm}×${panel.widthMm}×${panel.qty}`,
+          ),
+        ];
+      });
+    /** Смета числами: каждая строка и итог до тенге. */
+    const moneyOf = (estimate: Estimate): string[] => [
+      ...estimate.lines.map(
+        (line) => `${line.key} ${line.quantity} × ${line.rate} = ${Math.round(line.total)}${line.enabled ? '' : ' (снята)'}`,
+      ),
+      `итого ${Math.round(estimate.total)}`,
+    ];
+    const firstDiff = (a: string[], b: string[]) => {
+      const at = a.findIndex((line, i) => line !== b[i]);
+      if (at < 0 && a.length === b.length) return null;
+      const i = at < 0 ? Math.min(a.length, b.length) : at;
+      return `до «${a[i] ?? '—'}» · после «${b[i] ?? '—'}»`;
+    };
+
+    let objects = 0;
+    let rows = 0;
+    let units = 0;
+    let lines = 0;
+    let corners = 0;
+    let saved = 0;
+    const drift: string[] = [];
+    const money: string[] = [];
+    const extra: string[] = [];
+    const cabinet: string[] = [];
+    const reopen: string[] = [];
+    const choicesDrift: string[] = [];
+
+    for (const [school, production] of SCHOOLS) {
+      for (const shape of OLD_SHAPES) {
+        for (const solution of OLD_SOLUTIONS) {
+          for (const edited of [false, true]) {
+            const tag = `${shape.title} ${solution} ${edited ? 'правленый' : 'собранный'} · ${school}`;
+            const count = segmentCount(shape.kind) - 1;
+            const asSaved: CornerChoice[] = Array.from({ length: count }, () => ({
+              lower: solution === 'corner_module' ? 'l_shape' : 'blind',
+              upper: 'empty',
+            }));
+
+            /* Запись старого формата: форма и решение, выбора по углам нет. */
+            let old: MillworkState = {
+              shape: shape.kind,
+              cornerSolution: solution,
+              requirements: DEMO_REQUIREMENTS,
+              selectedVariant: VARIANT_OLD,
+            };
+
+            if (edited) {
+              /*
+               * Правленые ряды — такими, какими их писал прежний продукт:
+               * правка — та же операция, что у экрана, угол ряда — в
+               * прежних полях. Стена А собиралась из вариантов без угла.
+               */
+              const was = openSaved({ ...old, corners: asSaved }, shape.measurement, production);
+              const depth = rowStandardDepthMm(was.segments[0].zone, 'base', production);
+              const edit = (run: Run) => {
+                const target = run.modules.find((unit) => unit.kind === 'base' && !unit.appliance);
+                if (!target) throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: ${tag} — на стене ${run.wallId} нет модуля для правки`);
+                return applyOps({
+                  run,
+                  requirements: DEMO_REQUIREMENTS,
+                  ops: [{ op: 'set_handle', moduleId: target.id, handle: 'profile' }],
+                  openings: [],
+                  roomDepthMm: 0,
+                });
+              };
+              const oldCorner = (i: number) => {
+                const back = cornerLostMm(solution, depth, production);
+                return {
+                  backMm: back,
+                  ...(back - depth > 0 ? { fillerMm: back - depth } : {}),
+                  ...(i < was.segments.length - 1 ? { ahead: true } : {}),
+                } as unknown as Run['corner'];
+              };
+              const wallA: Run = { ...edit(was.segments[0]) };
+              delete wallA.corner;
+              const wallRuns: Record<string, Run> = {};
+              was.segments.forEach((run, i) => {
+                if (i > 0) wallRuns[String(i)] = { ...edit(run), corner: oldCorner(i) };
+              });
+              old = { ...old, runs: { [VARIANT_OLD]: wallA }, wallRuns };
+            }
+
+            /* Запись — через JSON: в базу едет ровно это, и читается ровно это. */
+            const stored = JSON.parse(JSON.stringify(old)) as MillworkState;
+            const before = openSaved({ ...stored, corners: asSaved }, shape.measurement, production);
+            const after = openSaved(stored, shape.measurement, production);
+            objects += 1;
+            corners += after.choices.length;
+            rows += after.segments.length;
+            units += after.segments.reduce((sum, run) => sum + allModules(run).length, 0);
+            lines += after.estimate.lines.length;
+
+            const picked = after.choices.map((c) => `${c.lower}/${c.upper}`).join('+');
+            const want = asSaved.map((c) => `${c.lower}/${c.upper}`).join('+');
+            if (picked !== want) choicesDrift.push(`${tag}: открылся ${picked}, сохранён ${want}`);
+
+            const layoutDiff = firstDiff(layoutOf(before, production), layoutOf(after, production));
+            if (layoutDiff) drift.push(`${tag}: ${layoutDiff}`);
+            const moneyDiff = firstDiff(moneyOf(before.estimate), moneyOf(after.estimate));
+            if (moneyDiff) {
+              money.push(
+                `${tag}: ${Math.round(before.estimate.total)} → ${Math.round(after.estimate.total)} ₸ · ${moneyDiff}`,
+              );
+            }
+
+            /* Деталей верхнего угла у старого объекта не было: ни панели, ни глухой части. */
+            for (const run of after.segments) {
+              const upperPanels = buildPanels({ run, production }).filter(
+                (panel) => panel.name === CORNER_UPPER_FILLER_PANEL_NAME,
+              );
+              const blindUppers = run.upperSegments
+                .flatMap((segment) => segment.modules)
+                .filter((unit) => blindPartMm(unit, run) > 0);
+              if (upperPanels.length > 0 || blindUppers.length > 0) {
+                extra.push(
+                  `${tag} · ${run.wallId}: верхних фальш-панелей ${upperPanels.length}, глухих верхних ${blindUppers.map((u) => u.id).join(', ') || 0}`,
+                );
+              }
+            }
+
+            /* Кабинет клиента открывает ту же запись — та же сумма. */
+            const offer = projectOffer({
+              title: 'Старый угол',
+              zone: 'Кухня',
+              measurement: shape.measurement,
+              state: stored,
+              production,
+              catalog: [],
+              rates: DEMO_RATES,
+            });
+            if (offer.state !== 'built') {
+              cabinet.push(`${tag}: кабинет не собрал — ${offer.refusal}`);
+            } else if (Math.round(offer.estimate.total) !== Math.round(after.estimate.total)) {
+              cabinet.push(`${tag}: экран ${Math.round(after.estimate.total)}, кабинет ${Math.round(offer.estimate.total)}`);
+            }
+
+            /*
+             * Открыл и закрыл: рабочее место пишет выбор каждого угла формы,
+             * а прежнее решение больше не пишет — объект обязан остаться тем же.
+             */
+            const resaved = JSON.parse(JSON.stringify({ ...stored, corners: after.choices })) as MillworkState;
+            delete resaved.cornerSolution;
+            const again = openSaved(resaved, shape.measurement, production);
+            saved += 1;
+            const againDiff =
+              firstDiff(layoutOf(after, production), layoutOf(again, production)) ??
+              firstDiff(moneyOf(after.estimate), moneyOf(again.estimate));
+            if (againDiff) reopen.push(`${tag}: ${againDiff}`);
+          }
+        }
+      }
+    }
+
+    const WANT_OLD = SCHOOLS.length * OLD_SHAPES.length * OLD_SOLUTIONS.length * 2;
+    if (objects === 0) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: ни один старый угловой объект не открылся');
+    check(
+      `15. старых угловых объектов открыто ${WANT_OLD}`,
+      objects === WANT_OLD && saved === WANT_OLD,
+      `${objects} из ${WANT_OLD}, пересохранено ${saved}`,
+    );
+    check(
+      '15. старый объект открывается тем углом, каким сохранён: низ из решения, верх пустой',
+      choicesDrift.length === 0 && corners > 0,
+      choicesDrift.length === 0 ? `углов ${corners}` : `${choicesDrift.length}: ${choicesDrift.slice(0, 2).join(' | ')}`,
+    );
+    check(
+      '15. раскладка старого объекта до и после открытия одна: модули, места рядов, панели, детали',
+      drift.length === 0 && units > 0,
+      drift.length === 0 ? `рядов ${rows}, модулей ${units}` : `${drift.length}: ${drift.slice(0, 2).join(' | ')}`,
+    );
+    check(
+      '15. смета старого объекта до и после открытия одна — до тенге, по каждой строке',
+      money.length === 0 && lines > 0,
+      money.length === 0 ? `строк ${lines}` : `${money.length}: ${money.slice(0, 2).join(' | ')}`,
+    );
+    check(
+      '15. у старого объекта не появилось деталей верхнего угла, которых в нём не было',
+      extra.length === 0 && rows > 0,
+      extra.length === 0 ? `рядов ${rows}` : `${extra.length}: ${extra.slice(0, 2).join(' | ')}`,
+    );
+    check(
+      '15. кабинет клиента открывает старый объект той же суммой, что экран',
+      cabinet.length === 0,
+      cabinet.length === 0 ? `объектов ${objects}` : `${cabinet.length}: ${cabinet.slice(0, 2).join(' | ')}`,
+    );
+    check(
+      '15. открыл, сохранил, открыл — тот же объект до тенге',
+      reopen.length === 0 && saved > 0,
+      reopen.length === 0 ? `пересохранено ${saved}` : `${reopen.length}: ${reopen.slice(0, 2).join(' | ')}`,
+    );
+
+    /*
+     * ── 16. Смета правленой стены А — по тому же ряду, что видят сцена и раскрой ──
+     *
+     * Правленый ряд стены А лежит в `runs` с углом на момент записи: у
+     * объектов до слоя 55 угла на стене А не было вовсе, у стены, которую
+     * правили в прямой форме, — тоже. Смета стены А считалась по этому
+     * ряду, а сцена и раскрой получали угол композиции: одна величина в
+     * двух расчётах. Сверяется ровно то, что экран кладёт в итог за стену А
+     * (`composeVariants`), со сметой ряда, который он рисует (`wallSegments`):
+     * до тенге по каждой строке, отдельно — запил, угловые петли и площадь
+     * фасадов против раскроя того же ряда.
+     *
+     * (а) старый угловой объект с правленой стеной А;
+     * (б) стену правили в прямой форме, потом форму сменили на угловую —
+     *     угол новый, его выбор тот, что даст экран, и тот, что выберет
+     *     человек.
+     */
+    {
+      const lineDiff = (row: string[], counted: string[]) => {
+        const at = row.findIndex((line, i) => line !== counted[i]);
+        if (at < 0 && row.length === counted.length) return null;
+        const i = at < 0 ? Math.min(row.length, counted.length) : at;
+        return `ряд сцены «${row[i] ?? '—'}» · в итоге «${counted[i] ?? '—'}»`;
+      };
+      const frontsOf = (estimate: Estimate) => estimate.lines.find((line) => line.key === 'front_panel')?.quantity ?? 0;
+      const qtyOf = (estimate: Estimate, key: string) =>
+        estimate.lines.filter((line) => line.key === key).reduce((sum, line) => sum + line.quantity, 0);
+      const editWallA = (run: Run, tag: string) => {
+        const target = run.modules.find((unit) => unit.kind === 'base' && !unit.appliance);
+        if (!target) throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: ${tag} — на стене А нет модуля для правки`);
+        return applyOps({
+          run,
+          requirements: DEMO_REQUIREMENTS,
+          ops: [{ op: 'set_handle', moduleId: target.id, handle: 'profile' }],
+          openings: [],
+          roomDepthMm: 0,
+        });
+      };
+      /** Прямая форма — те же шаги экрана, композиции нет и угла у стены А нет. */
+      const openLinear = (measurement: Measurement, production: ProductionSettings) => {
+        const base = workspaceInput({
+          title: 'Прямая',
+          zone: 'Кухня',
+          measurement,
+          requirements: DEMO_REQUIREMENTS,
+          rates: DEMO_RATES,
+          cornerAt: null,
+        });
+        const input = objectInput({
+          base,
+          resolution: null,
+          requirements: DEMO_REQUIREMENTS,
+          rates: DEMO_RATES,
+          production,
+          milling: new Map(),
+          carcass: new Map(),
+          materials: new Map(),
+        });
+        return composeVariants(input, DISABLED55, {}).find((v) => v.key === VARIANT_OLD)!.run;
+      };
+
+      type Case16 = { tag: string; state: MillworkState; measurement: Measurement; production: ProductionSettings };
+      const oldCases: Case16[] = [];
+      const switchedCases: Case16[] = [];
+
+      for (const [school, production] of SCHOOLS) {
+        for (const shape of OLD_SHAPES) {
+          /* (а) Старый объект: стена А правлена и записана без угла, как писал прежний продукт. */
+          for (const solution of OLD_SOLUTIONS) {
+            const tag = `${shape.title} ${solution} старый · ${school}`;
+            const count = segmentCount(shape.kind) - 1;
+            const asSaved: CornerChoice[] = Array.from({ length: count }, () => ({
+              lower: solution === 'corner_module' ? 'l_shape' : 'blind',
+              upper: 'empty',
+            }));
+            const old: MillworkState = {
+              shape: shape.kind,
+              cornerSolution: solution,
+              requirements: DEMO_REQUIREMENTS,
+              selectedVariant: VARIANT_OLD,
+            };
+            const was = openSaved({ ...old, corners: asSaved }, shape.measurement, production);
+            const wallA: Run = { ...editWallA(was.segments[0], tag) };
+            delete wallA.corner;
+            oldCases.push({
+              tag,
+              state: JSON.parse(JSON.stringify({ ...old, runs: { [VARIANT_OLD]: wallA } })) as MillworkState,
+              measurement: shape.measurement,
+              production,
+            });
+          }
+
+          /* (б) Правка в прямой форме, потом форма сменилась: правка стены А осталась. */
+          const linearState: MillworkState = {
+            shape: 'linear',
+            requirements: DEMO_REQUIREMENTS,
+            selectedVariant: VARIANT_OLD,
+          };
+          const editedLinear = editWallA(openLinear(shape.measurement, production), `${shape.title} прямая · ${school}`);
+          const count = segmentCount(shape.kind) - 1;
+          /* Выбор после смены формы — тот, что считает экран: угол новый, по углам ничего не выбрано. */
+          const onSwitch = cornerChoicesOf(
+            { corners: savedCornerChoices(linearState), cornerSolution: linearState.cornerSolution ?? 'false_panel' },
+            count,
+          );
+          const picks: CornerChoice[][] =
+            shape.kind === 'corner_l'
+              ? [onSwitch, ...ALL.map((choice) => [choice])]
+              : [
+                  onSwitch,
+                  [
+                    { lower: 'l_shape', upper: 'empty' },
+                    { lower: 'blind', upper: 'l_shape' },
+                  ],
+                ];
+          for (const corners of picks) {
+            switchedCases.push({
+              tag: `${shape.title} прямая → ${corners.map((c) => `${c.lower}/${c.upper}`).join('+')}${corners === onSwitch ? ' (как после смены формы)' : ''} · ${school}`,
+              state: {
+                shape: shape.kind,
+                corners,
+                requirements: DEMO_REQUIREMENTS,
+                selectedVariant: VARIANT_OLD,
+                runs: { [VARIANT_OLD]: editedLinear },
+              },
+              measurement: shape.measurement,
+              production,
+            });
+          }
+        }
+      }
+
+      const sweep = (cases: Case16[]) => {
+        const money: string[] = [];
+        const miters: string[] = [];
+        const hinges: string[] = [];
+        const fronts: string[] = [];
+        let opened = 0;
+        let lines = 0;
+        let mitersShown = 0;
+        let hingesShown = 0;
+        for (const item of cases) {
+          const open = openSaved(item.state, item.measurement, item.production);
+          opened += 1;
+          /* Что экран кладёт в итог за стену А — и что он рисует на её месте. */
+          const counted = open.active.estimate;
+          const row = open.segments[0];
+          const shown = editedRunEstimate(row, VARIANT_OLD, open.input, DISABLED55);
+          lines += shown.lines.length;
+
+          const diff = lineDiff(moneyOf(shown), moneyOf(counted));
+          if (diff) {
+            money.push(`${item.tag}: по ряду сцены ${Math.round(shown.total)}, в итоге ${Math.round(counted.total)} ₸ · ${diff}`);
+          }
+          const miterShown = qtyOf(shown, 'countertop_miter');
+          const miterCounted = qtyOf(counted, 'countertop_miter');
+          mitersShown += miterShown;
+          if (miterShown !== miterCounted) miters.push(`${item.tag}: запилов в ряду ${miterShown}, в смете ${miterCounted}`);
+          const hingeShown = qtyOf(shown, 'hinge_corner_175');
+          const hingeCounted = qtyOf(counted, 'hinge_corner_175');
+          hingesShown += hingeShown;
+          if (hingeShown !== hingeCounted) hinges.push(`${item.tag}: угловых петель в ряду ${hingeShown}, в смете ${hingeCounted}`);
+          const cutM2 = panelMaterials(buildPanels({ run: row, production: item.production })).frontM2;
+          if (frontsOf(counted) !== cutM2) fronts.push(`${item.tag}: фасадов в смете ${frontsOf(counted)} м², в раскрое ряда ${cutM2} м²`);
+        }
+        return { money, miters, hinges, fronts, opened, lines, mitersShown, hingesShown };
+      };
+
+      const WANT16_OLD = SCHOOLS.length * OLD_SHAPES.length * OLD_SOLUTIONS.length;
+      const WANT16_SWITCHED = SCHOOLS.length * (1 + ALL.length + 2);
+      for (const [title, cases, want] of [
+        ['старый объект с правленой стеной А', oldCases, WANT16_OLD],
+        ['стену правили в прямой форме, форма сменилась на угловую', switchedCases, WANT16_SWITCHED],
+      ] as [string, Case16[], number][]) {
+        const result = sweep(cases);
+        if (result.opened === 0) throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: 16 · ${title} — ни одного объекта`);
+        check(
+          `16. ${title}: открыто ${want}`,
+          result.opened === want,
+          `${result.opened} из ${want}`,
+        );
+        check(
+          `16. ${title}: смета стены А = смета ряда, который видят сцена и раскрой, до тенге`,
+          result.money.length === 0 && result.lines > 0,
+          result.money.length === 0 ? `строк ${result.lines}` : `${result.money.length}: ${result.money.slice(0, 2).join(' | ')}`,
+        );
+        check(
+          `16. ${title}: запил и угловые петли — в смете, сколько их в ряду`,
+          result.miters.length === 0 && result.hinges.length === 0 && result.mitersShown > 0 && result.hingesShown > 0,
+          result.miters.length + result.hinges.length === 0
+            ? `запилов ${result.mitersShown}, угловых петель ${result.hingesShown}`
+            : [...result.miters, ...result.hinges].slice(0, 2).join(' | '),
+        );
+        check(
+          `16. ${title}: площадь фасадов в смете = раскрой ряда`,
+          result.fronts.length === 0,
+          result.fronts.length === 0 ? `объектов ${result.opened}` : `${result.fronts.length}: ${result.fronts.slice(0, 2).join(' | ')}`,
+        );
+      }
+    }
+  }
 }
 
 /*

@@ -4,12 +4,18 @@ import {
   BACK_PANEL_NAME,
   BOTTOM_PANEL_NAME,
   CORNER_FILLER_PANEL_NAME,
+  CORNER_UPPER_FILLER_PANEL_NAME,
   DIVIDER_PANEL_NAME,
+  FACADE_PANEL_NAME,
   SHELF_PANEL_NAME,
   SIDE_PANEL_NAME,
+  TAIL_FILLER_PANEL_NAME,
   TOP_PANEL_NAME,
   TOP_RAIL_PANEL_NAME,
+  legName,
 } from './panels';
+import { blindPartMm, cornerFillersOf, cornerOfModule, openFrontMm } from './corner';
+import { tailFillersOf } from './countertop';
 import { moduleDepthMm, rowStandardDepthMm } from './fill';
 import type { ProductionSettings } from '@/types/catalog';
 import type { ApplianceKind } from '@/types/millwork';
@@ -293,6 +299,15 @@ export type FrontOptions = {
    * Пусто — у ряда полос не назначено, и фасад берёт только своё.
    */
   rowMilling?: Run['milling'];
+  /**
+   * ДОСТУПНАЯ ШИРИНА ФАСАДА У СЛЕПОГО УГЛА, мм (слой 55).
+   *
+   * За глухой частью модуля стоит корпус соседнего ряда: створка там
+   * упрётся в фальш-панель. Число считает `openFrontMm` — та же функция,
+   * по которой режется фасад. Ноль — створки нет вовсе; пусто — модуль
+   * не у слепого угла, фасад во всю ширину.
+   */
+  openWidthMm?: number;
 };
 
 /**
@@ -405,6 +420,73 @@ export function doorLeaves(
   }));
 }
 
+/**
+ * ЧТО У МОДУЛЯ ОТКРЫВАЕТСЯ В СЦЕНЕ И ГДЕ — ОДИН СПИСОК (слой 55).
+ *
+ * Разметка `CabinetModule3D` решала сама: какие створки рисовать, сколько
+ * их у слепого угла, куда они открываются, где стоят ящики. Проверка «у
+ * угла всё открывается и не задевает соседнюю стену» мерила бы свою копию
+ * этих веток — и была бы зелёной при сцене, которая рисует другое. Теперь
+ * сцена рисует этот список, а проверка меряет его же.
+ *
+ * Координаты — модуля, метры: `xM` — левый край створки, `bottomM` — низ
+ * фронта ящика от низа корпуса. `openWidthM` — доступная часть фасада у
+ * слепого угла (`openFrontMm`); ноль — створки нет.
+ */
+export type SceneLeaf =
+  | { kind: 'door'; id: string; opening: 'left' | 'right' | 'lift' | 'flap'; xM: number; widthM: number }
+  | { kind: 'bifold'; id: string }
+  | { kind: 'drawer'; id: string; bottomM: number; heightM: number };
+
+export function sceneLeaves(unit: Module, heightM: number, openWidthM?: number): SceneLeaf[] {
+  const out: SceneLeaf[] = [];
+  const fill = unit.fill;
+  /*
+   * Ящики выдвигаются и под варочной: прибор занимает нишу, под ним
+   * обычные ящики (ловушка 358). Высоты идут сверху вниз, сцена — от пола.
+   */
+  if (!unit.column && fill) {
+    fill.drawerHeights.forEach((frontMm, i) => {
+      const above = fill.drawerHeights.slice(0, i).reduce((sum, h) => sum + h, 0);
+      out.push({
+        kind: 'drawer',
+        id: `${unit.id}:drawer:${i}`,
+        bottomM: Math.max(0, heightM * MM - above - frontMm) / MM,
+        heightM: frontMm / MM,
+      });
+    });
+  }
+  /* Г-образный: два фасада на одном ключе, открываются вместе. */
+  if (unit.kind === 'corner_base' || unit.kind === 'corner_upper') {
+    out.push({ kind: 'bifold', id: `${unit.id}:door:0` });
+    return out;
+  }
+  /*
+   * Створок нет у видимого прибора, у колонны (её фасады — над и под
+   * нишами, их рисует общая отрисовка), у витрины (стекло рисует свой код)
+   * и у слепого угла, где доступной части не осталось.
+   */
+  if (hasVisibleAppliance(unit) || unit.column || unit.section === 'glass_display' || openWidthM === 0) {
+    return out;
+  }
+  /*
+   * У слепого угла створка одна и на доступной части: вторая легла бы
+   * петлями к фальш-панели и упёрлась бы в неё.
+   */
+  const doors = openWidthM !== undefined ? 1 : doorCount(unit);
+  const doorW = (openWidthM ?? unit.widthMm / MM) / doors;
+  for (let i = 0; i < doors; i += 1) {
+    out.push({
+      kind: 'door',
+      id: `${unit.id}:door:${i}`,
+      opening: doorOpening(unit, i, doors),
+      xM: i * doorW,
+      widthM: doorW,
+    });
+  }
+  return out;
+}
+
 /** Распахнутая створка: 90°. */
 export const OPEN_ANGLE = Math.PI / 2;
 
@@ -423,6 +505,20 @@ export function doorPivot(
   y: number,
   width: number,
   height: number,
+  /**
+   * ВЫНОС ПОЛОТНА ВПЕРЁД ПО ХОДУ — толщина фасада, метры (слой 55).
+   *
+   * Распашное полотно поворачивалось вокруг заднего ребра на месте, и
+   * кромка у петли на ходу заходила в соседний фасад той же плоскости:
+   * 12 мм при 90° (18 мм фасада без двух зазоров), около 2 мм на
+   * середине хода. Так открывалась любая створка рядом с соседней, а у
+   * угла — створка рядом с фасадом Г-модуля другой стены. Петля так не
+   * работает: она выносит полотно вперёд, и соседний фасад оно проходит
+   * перед его лицом. Ось остаётся на передней плоскости корпуса
+   * (ловушка 95) — полотно при открывании уходит вперёд на `kick ·
+   * |sin угла|`, то есть на толщину фасада при 90°.
+   */
+  kickM = 0,
 ) {
   if (opening === 'lift') {
     return {
@@ -430,6 +526,7 @@ export function doorPivot(
       angle: -OPEN_ANGLE,
       origin: [x + width / 2, y + height, 0] as [number, number, number],
       panel: [0, -height / 2, 0] as [number, number, number],
+      kick: 0,
     };
   }
   if (opening === 'flap') {
@@ -438,6 +535,7 @@ export function doorPivot(
       angle: OPEN_ANGLE,
       origin: [x + width / 2, y, 0] as [number, number, number],
       panel: [0, height / 2, 0] as [number, number, number],
+      kick: 0,
     };
   }
 
@@ -457,7 +555,13 @@ export function doorPivot(
     angle: left ? -OPEN_ANGLE : OPEN_ANGLE,
     origin: [left ? x : x + width, y + height / 2, 0] as [number, number, number],
     panel: [left ? width / 2 : -width / 2, 0, 0] as [number, number, number],
+    kick: kickM,
   };
+}
+
+/** Насколько полотно вынесено вперёд при повороте на `angle` (радианы). */
+export function doorKick(pivot: { kick: number; angle: number }, angle: number): number {
+  return pivot.kick * Math.abs(Math.sin(angle));
 }
 
 /**
@@ -487,9 +591,14 @@ export function doorBoxes(
   const { x } = place;
   const y = span ? place.y + span.fromMm / MM : place.y;
   const heightM = span ? span.heightMm / MM : place.heightM;
-  /* Участок закрывается ОДНИМ полотном: делить его ещё и по ширине незачем. */
-  const doors = span ? 1 : doorCount(unit);
-  const widthM = unit.widthMm / MM;
+  /*
+   * Участок закрывается ОДНИМ полотном: делить его ещё и по ширине
+   * незачем. У слепого угла — тоже одно, на доступной части: вторая
+   * створка легла бы петлями к фальш-панели и в неё бы упёрлась.
+   */
+  const blind = options.openWidthMm !== undefined && options.openWidthMm < unit.widthMm;
+  const doors = span || blind ? 1 : doorCount(unit);
+  const widthM = (blind ? options.openWidthMm! : unit.widthMm) / MM;
   const doorW = widthM / doors;
   const hinge = doorHinge(unit, span ? 0 : index, doors);
 
@@ -742,6 +851,333 @@ export function drawerBoxes(
 }
 
 /**
+ * Г-ОБРАЗНЫЙ УГЛОВОЙ МОДУЛЬ ЧИСЛАМИ (слой 55).
+ *
+ * Квадрат S×S в углу: нога А вдоль своей стены (`widthMm`, глубина ряда
+ * назад от фасада) и нога Б вдоль соседней — вперёд от фасада, у правого
+ * края модуля, на S минус глубину. До этого слоя модуль рисовался
+ * прямоугольником S × глубина, а вторую ногу «закрывала» фальш-панель —
+ * в раскрое её не было, и цех получал плоскую деталь вместо корпуса.
+ *
+ * Детали названы так же, как в раскрое (`panels.ts`, `legName`): по имени
+ * деталировка находит место детали в модуле.
+ *
+ * Фасадов два, и открываются они вместе: створка Б висит на петлях у
+ * боковины Б, створка А — на створке Б. Ключ открывания у них ОДИН
+ * (`<модуль>:door:0`), поэтому «открыть» одну без другой нельзя.
+ */
+export function lCornerBoxes(unit: Module, place: ModulePlacement, options: FrontOptions): PartBox[] {
+  const { x, y, heightM: H, depthM: D, thicknessM: t } = place;
+  const S = unit.widthMm / MM;
+  const legB = Math.max(0, S - D);
+  const back = 0.004;
+  const upper = unit.kind === 'corner_upper';
+  const topName = upper ? TOP_PANEL_NAME : TOP_RAIL_PANEL_NAME;
+  const carcassKey = options.carcassKey ?? null;
+  const zM = place.zM;
+
+  const box = (
+    cx: number,
+    cy: number,
+    cz: number,
+    w: number,
+    h: number,
+    d: number,
+    panel: string,
+    inside = false,
+  ): PartBox => ({
+    material: inside ? 'inner' : 'carcass',
+    position: [x + cx, y + cy, zM + cz],
+    scale: [w, h, d],
+    panel,
+    inside,
+    carcassKey,
+  });
+
+  const boxes: PartBox[] = [
+    /* Боковины: в торце ноги А и в торце ноги Б. */
+    box(t / 2, H / 2, -D / 2, t, H, D, SIDE_PANEL_NAME),
+    box(S - D / 2, H / 2, legB - t / 2, D, H, t, SIDE_PANEL_NAME),
+    /* Дно: нога А от боковины до стены соседа, нога Б от фасада А до боковины Б. */
+    box((t + S) / 2, t / 2, -D / 2, S - t, t, D, legName(BOTTOM_PANEL_NAME, 'А')),
+    box(S - D / 2, t / 2, (legB - t) / 2, D, t, Math.max(0, legB - t), legName(BOTTOM_PANEL_NAME, 'Б')),
+    /* Верх: планки у нижнего, крыша у навесного — по ногам. */
+    box((t + S) / 2, H - t / 2, -D / 2, S - t, t, D, legName(topName, 'А')),
+    box(S - D / 2, H - t / 2, (legB - t) / 2, D, t, Math.max(0, legB - t), legName(topName, 'Б')),
+    /* Задние стенки: вдоль своей стены и вдоль соседней. */
+    box(S / 2, H / 2, -D + back / 2, S, H, back, legName(BACK_PANEL_NAME, 'А')),
+    box(S - back / 2, H / 2, (legB - D) / 2 + back / 2, back, H, S - back, legName(BACK_PANEL_NAME, 'Б')),
+  ];
+
+  for (const mm of unit.fill?.shelves ?? []) {
+    boxes.push(
+      box((t + S) / 2, mm / MM, (-D + back) / 2, S - t - 0.002, t, D - back, SHELF_PANEL_NAME, true),
+      box(S - D / 2 - back / 2, mm / MM, (legB - t) / 2, D - back - 0.002, t, Math.max(0, legB - t), SHELF_PANEL_NAME, true),
+    );
+  }
+
+  if (options.cutaway) return boxes;
+
+  const { gapM: gap, frontThicknessM: tf } = options;
+  const part = `${unit.id}:door:0`;
+  const key = frontKey(frontWithMilling(unit, { milling: options.rowMilling }));
+  /* Высота фасадов — та же, что режется (`H − зазор` в раскрое): деталь одна. */
+  const h = H - gap;
+
+  /* Фасад А — в плоскости своего ряда, до плоскости корпуса соседа. */
+  const aW = Math.max(0, legB - gap);
+  boxes.push({
+    material: 'front',
+    part,
+    frontKey: key,
+    position: [x + legB / 2, y + H / 2, zM + tf / 2],
+    scale: [aW, h, tf],
+    panel: legName(FACADE_PANEL_NAME, 'А'),
+  });
+
+  /* Фасад Б — в плоскости фасадов соседа, от лица фасада А до боковины Б. */
+  const bW = Math.max(0, legB - tf - gap);
+  boxes.push({
+    material: 'front',
+    part,
+    frontKey: key,
+    position: [x + legB - tf / 2, y + H / 2, zM + tf + gap / 2 + bW / 2],
+    scale: [tf, h, bW],
+    panel: legName(FACADE_PANEL_NAME, 'Б'),
+  });
+
+  /*
+   * Ручка — на свободном краю фасада А (левом): за неё тянут, и пара
+   * складывается. Место и габарит — тем же `handleBoxOf`, что у створок.
+   */
+  const kind = unit.fill?.handle ?? (options.integratedHandles ? 'profile' : 'bar');
+  if (kind !== 'none') {
+    const geometry = handleBoxOf(
+      handleSpotOf(unit, { options: { integratedHandles: options.integratedHandles } } as Run, 'right'),
+      { cx: x + legB / 2, cy: y + H / 2, widthM: aW, heightM: h, thicknessM: tf },
+    );
+    boxes.push({
+      material: 'metal',
+      part,
+      node: 'handle',
+      position: [geometry.position[0], geometry.position[1], zM + geometry.position[2]],
+      scale: geometry.scale,
+    });
+  }
+
+  /*
+   * Петли — узлом, а не присадкой (как у створок): у боковины Б, по
+   * высоте равномерно; сколько — столько, сколько купила смета.
+   */
+  const count = Math.max(0, Math.round(options.hinges ?? 0));
+  for (let i = 0; i < count; i += 1) {
+    const at = y + (H * (i + 1)) / (count + 1);
+    boxes.push({
+      material: 'metal',
+      part,
+      node: 'hinge',
+      position: [x + legB + HINGE_CUP_DEPTH_M / 2, at, zM + legB - HINGE_NODE_EDGE_MM / MM],
+      scale: [HINGE_CUP_DEPTH_M, HINGE_CUP_M, HINGE_CUP_M],
+    });
+  }
+
+  return boxes;
+}
+
+/** Коробка с поворотом: так стоят фасады на ходу. */
+export type PosedBox = {
+  center: [number, number, number];
+  /** Размер в собственных осях коробки. */
+  size: [number, number, number];
+  /** Поворот вокруг вертикали, радианы (как `rotation.y` у three). */
+  yaw: number;
+  /** Поворот вокруг горизонтали вдоль ряда (подъёмник, откидной), радианы. */
+  pitch?: number;
+  role: 'front' | 'handle';
+  panel?: string;
+};
+
+/**
+ * СТВОРКА НА ХОДУ — ТО, ЧТО РИСУЕТ `InteractiveDoor`, ЧИСЛАМИ.
+ *
+ * Сцена держит открытую створку своим мешем: группа на оси петель,
+ * полотно сдвинуто на полширины, ручка на свободном краю. Эти числа
+ * жили только в компоненте, и проверить «створка не задевает соседнюю
+ * стену» было нечем, кроме глаз. Теперь компонент рисует ровно то, что
+ * отдаёт эта функция, а проверка открывания меряет её же (слой 55).
+ *
+ * `s` — доля хода: 0 закрыто, 1 открыто на `OPEN_ANGLE`. Координаты —
+ * модуля (`x`, `y` — левый нижний угол полотна относительно модуля).
+ */
+/**
+ * Полотно и ручка створки В ОСЯХ ЕЁ ПЕТЕЛЬ — то, что `InteractiveDoor`
+ * кладёт в свою группу. Одно место на компонент и на `leafPoses`.
+ */
+export function leafLocal(input: {
+  opening: 'left' | 'right' | 'lift' | 'flap';
+  width: number;
+  height: number;
+  thickness: number;
+  gap: number;
+  integratedHandle: boolean;
+}): {
+  panel: { at: [number, number, number]; size: [number, number, number] };
+  handle: { at: [number, number, number]; size: [number, number, number] };
+} {
+  const { opening, width, height, thickness, gap, integratedHandle } = input;
+  const [panelX, panelY] = doorPivot(opening, 0, 0, width, height).panel;
+  return {
+    panel: { at: [panelX, panelY, thickness / 2], size: [width - 2 * gap, height - 2 * gap, thickness] },
+    handle: integratedHandle
+      ? {
+          at: [panelX, panelY + height / 2 - gap - 0.01, thickness + 0.004],
+          size: [width - 2 * gap, 0.02, 0.015],
+        }
+      : opening === 'lift' || opening === 'flap'
+        ? {
+            at: [
+              panelX,
+              panelY + (opening === 'lift' ? -height / 2 + 0.04 : height / 2 - 0.04),
+              thickness + 0.012,
+            ],
+            size: [Math.min(0.24, width * 0.5), 0.016, 0.016],
+          }
+        : {
+            at: [panelX + (opening === 'left' ? width / 2 - 0.05 : -width / 2 + 0.05), panelY, thickness + 0.012],
+            size: [0.016, Math.min(0.22, height * 0.4), 0.016],
+          },
+  };
+}
+
+export function leafPoses(input: {
+  opening: 'left' | 'right' | 'lift' | 'flap';
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  thickness: number;
+  gap: number;
+  integratedHandle: boolean;
+  s: number;
+}): PosedBox[] {
+  const { opening, x, y, width, height, thickness, gap, integratedHandle } = input;
+  const pivot = doorPivot(opening, x, y, width, height, thickness);
+  const angle = pivot.angle * Math.max(0, Math.min(1, input.s));
+  /* Вынос вперёд по ходу — тот же, что двигает группу `InteractiveDoor`. */
+  const kick = doorKick(pivot, angle);
+  const local = leafLocal({ opening, width, height, thickness, gap, integratedHandle });
+
+  /* Локальные точки группы на оси → координаты модуля. */
+  const place = (local: [number, number, number]): [number, number, number] => {
+    if (pivot.axis === 'y') {
+      return [
+        pivot.origin[0] + local[0] * Math.cos(angle) + local[2] * Math.sin(angle),
+        pivot.origin[1] + local[1],
+        pivot.origin[2] + kick - local[0] * Math.sin(angle) + local[2] * Math.cos(angle),
+      ];
+    }
+    return [
+      pivot.origin[0] + local[0],
+      pivot.origin[1] + local[1] * Math.cos(angle) - local[2] * Math.sin(angle),
+      pivot.origin[2] + local[1] * Math.sin(angle) + local[2] * Math.cos(angle),
+    ];
+  };
+  const turn = pivot.axis === 'y' ? { yaw: angle } : { yaw: 0, pitch: angle };
+
+  return [
+    { center: place(local.panel.at), size: local.panel.size, role: 'front', ...turn },
+    { center: place(local.handle.at), size: local.handle.size, role: 'handle', ...turn },
+  ];
+}
+
+/** Ход ящика при «Открыть всё», метры: столько выдвигает сцена. */
+export const DRAWER_TRAVEL_M = 0.3;
+
+/**
+ * ДВА ФАСАДА Г-МОДУЛЯ НА ХОДУ — ОДНА ФУНКЦИЯ НА СЦЕНУ И НА ПРОВЕРКУ.
+ *
+ * Фасад Б висит на петлях у боковины Б: ось — у его дальнего края, на
+ * лице. Фасад А висит на фасаде Б и, открываясь, ложится на него. Ход
+ * `s` от 0 (закрыто) до 1 (открыто): Б поворачивается на 90° от угла в
+ * комнату, А — ещё на 90° относительно Б. Сцена рисует ровно эти коробки,
+ * и проверка «створка не задевает соседнюю стену» меряет их же.
+ *
+ * Координаты — ряда, как у остальных коробок модуля (`ModulePlacement`).
+ */
+export function bifoldPoses(
+  unit: Module,
+  place: ModulePlacement,
+  options: Pick<FrontOptions, 'gapM' | 'frontThicknessM' | 'integratedHandles'>,
+  s: number,
+): PosedBox[] {
+  const { x, y, heightM: H, depthM: D } = place;
+  const S = unit.widthMm / MM;
+  const legB = Math.max(0, S - D);
+  const { gapM: gap, frontThicknessM: tf } = options;
+  /* Та же высота, что у закрытых фасадов Г-модуля и у детали раскроя. */
+  const h = H - gap;
+  const aW = Math.max(0, legB - gap);
+  const bW = Math.max(0, legB - tf - gap);
+  const zM = place.zM;
+
+  const theta = (Math.PI / 2) * Math.max(0, Math.min(1, s));
+  const psi = theta;
+  const turn = (px: number, pz: number, angle: number): [number, number] => [
+    px * Math.cos(angle) + pz * Math.sin(angle),
+    -px * Math.sin(angle) + pz * Math.cos(angle),
+  ];
+
+  /* Ось Б — дальний край фасада Б, на его лице. */
+  const P: [number, number] = [legB - tf, legB];
+  /* Фасад Б относительно оси. */
+  const bRel: [number, number] = [tf / 2, -(legB - tf) / 2];
+  /* Шарнир А–Б — ближний край Б относительно оси. */
+  const jRel: [number, number] = [0, tf - legB];
+  /* Фасад А относительно шарнира. */
+  const aRel: [number, number] = [tf - legB / 2, -tf / 2];
+
+  const bTurned = turn(bRel[0], bRel[1], theta);
+  const aLocal = turn(aRel[0], aRel[1], psi);
+  const aTurned = turn(jRel[0] + aLocal[0], jRel[1] + aLocal[1], theta);
+
+  const boxes: PosedBox[] = [
+    {
+      center: [x + P[0] + bTurned[0], y + H / 2, zM + P[1] + bTurned[1]],
+      size: [tf, h, bW],
+      yaw: theta,
+      role: 'front',
+      panel: legName(FACADE_PANEL_NAME, 'Б'),
+    },
+    {
+      center: [x + P[0] + aTurned[0], y + H / 2, zM + P[1] + aTurned[1]],
+      size: [aW, h, tf],
+      yaw: theta + psi,
+      role: 'front',
+      panel: legName(FACADE_PANEL_NAME, 'А'),
+    },
+  ];
+
+  /* Ручка — на свободном краю фасада А, тем же `handleBoxOf`, что у створок. */
+  const kind = unit.fill?.handle ?? (options.integratedHandles ? 'profile' : 'bar');
+  if (kind !== 'none') {
+    const closed = handleBoxOf(
+      handleSpotOf(unit, { options: { integratedHandles: options.integratedHandles } } as Run, 'right'),
+      { cx: legB / 2, cy: H / 2, widthM: aW, heightM: h, thicknessM: tf },
+    );
+    /* Ручка относительно центра фасада А в его закрытом положении. */
+    const off = turn(closed.position[0] - legB / 2, closed.position[2] - tf / 2, theta + psi);
+    boxes.push({
+      center: [boxes[1].center[0] + off[0], y + closed.position[1], boxes[1].center[2] + off[1]],
+      size: closed.scale,
+      yaw: theta + psi,
+      role: 'handle',
+    });
+  }
+
+  return boxes;
+}
+
+/**
  * ЛИЦО ПРИБОРА: ТО, ПО ЧЕМУ ЕГО УЗНАЮТ.
  *
  * Прибор рисовался тёмным блоком, и духовка от посудомойки отличалась
@@ -920,6 +1356,16 @@ export function moduleBoxes(
   production?: ProductionSettings,
 ): PartBox[] {
   /*
+   * Г-ОБРАЗНЫЙ МОДУЛЬ — СВОЯ ГЕОМЕТРИЯ (слой 55): корпус в две ноги и
+   * два фасада, которые открываются вместе. Прямоугольник 900 × глубина
+   * с фальш-панелью вместо второй ноги — то, что было до слоя, — описывал
+   * мебель, которой цех не делает.
+   */
+  if (unit.kind === 'corner_base' || unit.kind === 'corner_upper') {
+    return lCornerBoxes(unit, place, options);
+  }
+
+  /*
    * Полки, перегородки и короба ящиков уже помечены в данных
    * (`BoxDraw.inside`) — по этому же признаку сцена решает, вести ли по
    * ним рёбра. Цвет берётся оттуда же: второго признака «это внутри»
@@ -958,7 +1404,13 @@ export function moduleBoxes(
      * них два — над нишей и под ней. В цех уезжал корпус с открытой
      * дырой в полметра, а на картинке её не было видно.
      */
-    const leaves = doorLeaves(unit, Math.round(place.heightM * MM));
+    /*
+     * У слепого угла створка одна и только на доступной части; если
+     * доступной части меньше самого узкого корпуса — створки нет вовсе.
+     */
+    const blind = options.openWidthMm !== undefined && options.openWidthMm < unit.widthMm;
+    const all = options.openWidthMm === 0 ? [] : doorLeaves(unit, Math.round(place.heightM * MM));
+    const leaves = blind ? all.slice(0, 1) : all;
 
     /*
      * ПЕТЛИ РАСКЛАДЫВАЮТСЯ ПО ПОЛОТНАМ, А НЕ СЧИТАЮТСЯ ЗАНОВО.
@@ -1113,6 +1565,10 @@ export function runBoxes(
    * из которого смета выписывает позиции.
    */
   const all = [...run.modules, ...run.upperSegments.flatMap((sg) => sg.modules)];
+  /*
+   * Угловые петли — у Г-модуля и у створки слепого угла (слой 55):
+   * тот же список, по которому смета пишет строку `hinge_corner_175`.
+   */
   const hardware = openingHardware(
     all.map((unit, index) => ({
       unit,
@@ -1121,36 +1577,68 @@ export function runBoxes(
       total: all.length,
     })),
     run,
+    cornerOfModule(run),
   );
 
   const carcassItems = options.carcass ?? new Map<string, CarcassItem>();
 
   /*
-   * ФАЛЬШ-ПАНЕЛЬ УГЛА — КОРОБКА НАРАВНЕ С ОСТАЛЬНЫМИ.
+   * ФАЛЬШ-ПАНЕЛИ УГЛА — КОРОБКИ НАРАВНЕ С ОСТАЛЬНЫМИ.
    *
-   * Она стоит в полосе, которую ряд уже отдал углу: локально ЛЕВЕЕ
-   * нуля, в плоскости фасадов. Модулем ей быть нельзя — модули
-   * складываются в длину ряда и несут столешницу, — но нарисована она
-   * обязана быть: до этого слоя между рядами была дыра, и угловая
-   * кухня читалась как два приставленных ряда.
+   * Они стоят в полосе, которую ряд уже отдал углу: локально ЛЕВЕЕ
+   * нуля, в плоскости фасадов. Модулем им быть нельзя — модули
+   * складываются в длину ряда и несут столешницу, — но нарисованы они
+   * обязаны быть: до слоя 46 между рядами была дыра.
    *
-   * Размер тот же, что уехал в раскрой: `run.corner.fillerMm` и высота
-   * корпуса. Второго числа здесь не появляется.
+   * Место и ширина — `cornerFillersOf` (слой 55), та же функция, по
+   * которой режется деталь: нижняя у слепого угла, верхняя у слепого
+   * верхнего угла.
    */
-  const fillerMm = run.corner?.fillerMm ?? 0;
   const filler: PartBox[] = [];
-  if (fillerMm > 0 && run.modules.length > 0) {
-    const widthM = fillerMm / MM;
-    const heightM = carcassHeightMm(run.production) / MM;
-    const frontM = options.frontThicknessMm / MM;
-    const gapM = options.gapMm / MM;
+  const frontM = options.frontThicknessMm / MM;
+  const gapM = options.gapMm / MM;
+  for (const piece of cornerFillersOf(run)) {
+    const widthM = (piece.toMm - piece.fromMm) / MM;
+    const lower = piece.level === 'lower';
+    const neighbour = lower
+      ? run.modules[0]
+      : [...run.upperSegments.flatMap((sg) => sg.modules)]
+          .filter((unit) => unit.section !== 'mezzanine')
+          .sort((a, b) => a.offsetMm - b.offsetMm)[0];
+    if (!neighbour) continue;
+    const heightM = lower
+      ? carcassHeightMm(run.production) / MM
+      : moduleCarcassHeightMm(neighbour, run) / MM;
+    const bottomM = lower ? plinthMm(run.production) / MM : upperBottomFor(neighbour, run) / MM;
+    /* Верхняя панель стоит в плоскости фасадов верхнего ряда — он мельче. */
+    const planeM = lower
+      ? 0
+      : (moduleDepthMm(neighbour, run.zone, run.production) -
+          rowStandardDepthMm(run.zone, 'base', run.production)) /
+        MM;
 
     filler.push({
-      position: [-widthM / 2, plinthMm(run.production) / MM + heightM / 2, frontM / 2],
+      position: [(piece.fromMm + piece.toMm) / 2 / MM, bottomM + heightM / 2, planeM + frontM / 2],
       scale: [Math.max(0, widthM - gapM), Math.max(0, heightM - gapM), frontM],
       material: 'front',
-      panel: CORNER_FILLER_PANEL_NAME,
-      frontKey: frontKey(frontOf(run.modules[0])),
+      panel: lower ? CORNER_FILLER_PANEL_NAME : CORNER_UPPER_FILLER_PANEL_NAME,
+      frontKey: frontKey(frontOf(neighbour)),
+    });
+  }
+
+  /*
+   * ДОБОР ХВОСТА У СТЕНЫ (слой 55): хвост меньше 150 мм у ряда угловой
+   * кухни закрыт планкой под столешницей. Место — `tailFillersOf`, та же
+   * функция, по которой плита идёт до стены и режется деталь.
+   */
+  for (const piece of tailFillersOf(run)) {
+    const widthM = (piece.toMm - piece.fromMm) / MM;
+    const heightM = carcassHeightMm(run.production) / MM;
+    filler.push({
+      position: [(piece.fromMm + piece.toMm) / 2 / MM, plinthMm(run.production) / MM + heightM / 2, frontM / 2],
+      scale: [Math.max(0, widthM - gapM), Math.max(0, heightM - gapM), frontM],
+      material: 'carcass',
+      panel: TAIL_FILLER_PANEL_NAME,
     });
   }
 
@@ -1175,6 +1663,8 @@ export function runBoxes(
           (hardware.byModule[entry.unit.id]?.hinges ?? 0) +
           (hardware.byModule[entry.unit.id]?.cornerHinges ?? 0),
         carcassKey: carcassKeyOf(entry.unit, run, carcassItems),
+        /* У слепого угла фасад — только на доступной части (`openFrontMm`). */
+        ...(blindPartMm(entry.unit, run) > 0 ? { openWidthMm: openFrontMm(entry.unit, run) } : {}),
       },
       run.production,
     ),
@@ -1249,7 +1739,25 @@ export function openablePartIds(run: Run): string[] {
       unit.fill?.drawerHeights.forEach((_, i) => ids.push(`${unit.id}:drawer:${i}`));
     }
 
-    for (const leaf of doorLeaves(unit, moduleCarcassHeightMm(unit, run))) {
+    /*
+     * Г-ОБРАЗНЫЙ: два фасада — ОДИН ключ (слой 55). Открываются они вместе,
+     * и «открыть» один без другого значило бы показать мебель, которой
+     * так не сделать.
+     */
+    if (unit.kind === 'corner_base' || unit.kind === 'corner_upper') {
+      if (!unit.fill || unit.fill.drawerHeights.length === 0) ids.push(`${unit.id}:door:0`);
+      continue;
+    }
+
+    /*
+     * СЛЕПОЙ УГОЛ: створка одна, на доступной части; доступной части
+     * меньше корпуса — створки нет и открывать нечего. Те же условия, что
+     * у отрисовки (`openWidthMm` в `moduleBoxes`).
+     */
+    const blind = blindPartMm(unit, run) > 0;
+    const open = blind ? openFrontMm(unit, run) : unit.widthMm;
+    const leaves = open === 0 ? [] : doorLeaves(unit, moduleCarcassHeightMm(unit, run));
+    for (const leaf of blind ? leaves.slice(0, 1) : leaves) {
       ids.push(`${unit.id}:door:${leaf.index}`);
     }
   }

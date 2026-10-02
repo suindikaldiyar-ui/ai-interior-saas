@@ -4,6 +4,14 @@ import { compositionFingerprint } from './fingerprint';
 import { assertCornerFits } from './invariants';
 import { rowStandardDepthMm } from './fill';
 import { wallLabel } from './walls';
+import { cornerSizesOf } from './shop';
+import {
+  choiceFromSolution,
+  cornerChoicesOf,
+  cornerGeometry,
+  cornerOfSegment,
+  solutionOf,
+} from './corner';
 import type { ProductionSettings } from '@/types/catalog';
 import { COMM_TITLE } from '@/types/survey';
 import type {
@@ -11,6 +19,7 @@ import type {
   CommPoint,
   Composition,
   CompositionKind,
+  CornerChoice,
   CornerJoin,
   Opening,
   Run,
@@ -338,8 +347,12 @@ export function buildComposition(input: BuildCompositionInput): Composition {
    * раскладки: buildRun должен получить уже полезную длину, иначе он
    * честно разложит модули по всей стене — и они окажутся в углу
    * поверх соседних.
+   *
+   * ВЫБОР — ПО КАЖДОМУ УГЛУ (слой 55): у П-образной кухни два угла, и
+   * в одном Г-модуль, а в другом слепой угол — обычное дело. Прежнее
+   * `cornerSolution` читается, только если выбора по углам нет.
    */
-  const solution: CornerJoin['solution'] = requirements.cornerSolution ?? 'false_panel';
+  const choices = cornerChoicesOf(requirements, walls.length - 1);
 
   const usable = walls.map((wall, i) => {
     if (i === 0) return Math.max(0, Math.round(wall.lengthMm));
@@ -347,15 +360,15 @@ export function buildComposition(input: BuildCompositionInput): Composition {
     /*
      * Сколько второй ряд теряет в углу.
      *
-     * Угловой модуль — квадрат 900 × 900: он занимает 900 и вдоль своей
+     * Г-образный модуль — квадрат: он занимает свою сторону и вдоль своей
      * стены, и вдоль соседней. Считать здесь глубину ряда (560) значит
      * налезть на него на 340 мм — ровно та ошибка, которую замечают
      * на монтаже, когда мебель уже распилена.
      *
-     * Фальш-панель угол не занимает: там мёртвая зона глубиной ряда,
-     * плюс сама панель, отодвигающая фасад от чужого фасада.
+     * Слепой угол: там глубина соседнего ряда плюс фальш-панель,
+     * отодвигающая фасад от чужого фасада. Считает `cornerGeometry`.
      */
-    const lost = cornerLostMm(solution, depthMm);
+    const lost = cornerGeometry(choices[i - 1], requirements.zone, input.production).lostMm;
 
     const value = Math.round(wall.lengthMm) - lost;
 
@@ -416,25 +429,56 @@ export function buildComposition(input: BuildCompositionInput): Composition {
     }
 
     /*
-     * Угловой модуль стоит В УГЛУ и принадлежит первому ряду: он и есть
-     * доступ в угол. При фальш-панели угол остаётся мёртвой зоной, и
-     * модуля там нет вовсе.
+     * РОЛЬ РЯДА В ЕГО УГЛАХ — ДО РАСКЛАДКИ, А НЕ ПОСЛЕ.
+     *
+     * Ряд-владелец собирает угловой модуль в своём конце (Г-образный или
+     * слепой), ряд после угла начинает верхний ряд раньше нуля — и всё
+     * это решает раскладка. Кладёт роль та же функция, что и шов экрана
+     * (`cornerOfSegment`), поэтому у стены А, собранной из вариантов,
+     * угол тот же, что у композиции.
      */
-    const cornerAt =
-      solution === 'corner_module' && i < walls.length - 1 ? ('end' as const) : null;
+    const corner: RunCorner | undefined = cornerOfSegment(choices, i, walls.length);
+    const upperFromMm = corner?.dock
+      ? (() => {
+          const g = cornerGeometry(corner.dock!, requirements.zone, input.production);
+          return g.upperStartMm - g.lostMm;
+        })()
+      : 0;
+    /*
+     * Проёмы этой стены, пересчитанные от начала РЯДА: угол занят
+     * соседним рядом, и отметки замера сдвинуты на него. У ряда после
+     * угла остаётся и полоса перед нулём, куда заходит его верхний ряд:
+     * окно там рвёт верхний ряд так же, как на остальной стене.
+     */
+    const openings = openingsOnRun(wall.openings, lostHere, usable[i], Math.min(0, upperFromMm));
+
+    /*
+     * ПЕНАЛЫ — У СТЕНЫ КОМНАТЫ, А НЕ В УГЛУ (слой 55).
+     *
+     * «Пеналы у стены: холодильник в самом торце» — у ряда стены А торец
+     * у стены комнаты — его начало (`tallSide: 'left'`). У ряда, который к
+     * углу только стыкуется, начало — угол, а торец у стены комнаты — его
+     * конец; то же правило ставило холодильник вплотную к углу. Пенал
+     * глубиной нижнего ряда выступает там на 240 мм перед верхними шкафами
+     * стены-владельца, и их створки, открываясь, упирались в его фасад —
+     * это и поймала проверка открывания у угла. Сторона зеркалится: выбор
+     * «у стены» остаётся выбором «у стены».
+     */
+    const dockOnly = Boolean(corner?.dock) && !corner?.own;
+    const tallSide = dockOnly
+      ? requirements.tallSide === 'right'
+        ? ('left' as const)
+        : ('right' as const)
+      : requirements.tallSide;
 
     const run = buildRun({
       id: `${input.id ?? 'composition'}-${i}`,
       lengthMm: usable[i],
       ceilingHeightMm,
-      requirements: { ...requirements, appliances: perSegment[i] },
-      /*
-       * Проёмы этой стены, пересчитанные от начала РЯДА: угол занят
-       * соседним рядом, и отметки замера сдвинуты на него.
-       */
-      openings: openingsOnRun(wall.openings, lostHere, usable[i]),
+      requirements: { ...requirements, appliances: perSegment[i], tallSide },
+      openings,
       comms: wallComms.kept,
-      cornerAt,
+      corner,
       production: input.production,
       // Стена замера едет в ряд: она же идентичность его модулей.
       wallId: wall.id,
@@ -450,43 +494,25 @@ export function buildComposition(input: BuildCompositionInput): Composition {
       wallLengthMm: Math.round(wall.lengthMm),
       appliances: perSegment[i],
       comms: wallComms.kept,
+      openings,
       run,
     };
   });
 
   /*
-   * ЧТО У КАЖДОГО РЯДА В УГЛУ — ЗАПИСЫВАЕТСЯ НА РЯД.
+   * УГЛЫ КОМПОЗИЦИИ: владелец — стена ДО угла по обходу, одно поле.
    *
-   * Полезную длину угол урезал выше, и на этом всё кончалось: панель в
-   * раскрое не появлялась, в сцене её не было, в смете тоже — 100 мм
-   * просто пропадали. Отсюда и брался вид «два ряда приставлены друг к
-   * другу»: между ними оставалась пустая полоса, а столешница, цоколь и
-   * ниша обрывались у каждого ряда по своей длине.
-   *
-   * Числа те же самые, что урезали длину: `cornerLostMm` и
-   * `cornerFillerMm`. Второго расчёта занятого в углу не появляется.
+   * Фальш-панель и угол раскрытия петли — из того же выбора и той же
+   * школы цеха, что урезали длину: второго расчёта занятого в углу нет.
    */
-  const cornerDepthMm = rowStandardDepthMm(
-    requirements.zone,
-    'base',
-    input.production,
-  );
-  segments.forEach((segment, i) => {
-    const corner: RunCorner = {};
-    if (i > 0) {
-      corner.backMm = cornerLostMm(solution, cornerDepthMm);
-      const filler = cornerFillerMm(solution, cornerDepthMm);
-      if (filler > 0) corner.fillerMm = filler;
-    }
-    if (i < segments.length - 1) corner.ahead = true;
-    if (Object.keys(corner).length > 0) segment.run.corner = corner;
-  });
-
+  const sizes = cornerSizesOf(input.production);
   const corners: CornerJoin[] = segments.slice(1).map((segment, i) => ({
     fromSegmentId: segments[i].id,
     toSegmentId: segment.id,
-    solution,
-    falsePanelMm: solution === 'false_panel' ? CORNER.falsePanelMm : undefined,
+    ownerSegmentId: segments[i].id,
+    choice: { ...choices[i] },
+    solution: solutionOf(choices[i]),
+    falsePanelMm: choices[i].lower === 'blind' ? sizes.falsePanelMm : undefined,
     hingeAngleDeg: CORNER.hingeAngleDeg,
     frontGapMm: CORNER.frontGapMm,
   }));
@@ -567,16 +593,21 @@ export function markOnRun(
   mark: { fromCornerMm: number; widthMm?: number },
   lostMm: number,
   lengthMm: number,
+  /**
+   * С какой отметки ряд ЕСТЬ. Ноль у нижнего ряда; у ряда после угла
+   * верхний ряд начинается раньше нуля (слой 55), и окно там тоже его.
+   */
+  fromMm = 0,
 ): { fromCornerMm: number; widthMm: number } | null {
   const width = mark.widthMm ?? 0;
   const from = mark.fromCornerMm - lostMm;
 
   if (width === 0) {
-    if (from < 0 || from > lengthMm) return null;
+    if (from < fromMm || from > lengthMm) return null;
     return { fromCornerMm: Math.round(from), widthMm: 0 };
   }
 
-  const clippedFrom = Math.max(0, from);
+  const clippedFrom = Math.max(fromMm, from);
   const clippedTo = Math.min(lengthMm, from + width);
   if (clippedTo - clippedFrom <= 0) return null;
 
@@ -611,11 +642,13 @@ export function openingsOnRun(
   openings: Opening[] | undefined,
   lostMm: number,
   lengthMm: number,
+  /** С какой отметки ряд есть: у ряда после угла верх начинается раньше нуля. */
+  fromMm = 0,
 ): Opening[] {
   const moved: Opening[] = [];
 
   for (const opening of openings ?? []) {
-    const at = markOnRun(opening, lostMm, lengthMm);
+    const at = markOnRun(opening, lostMm, lengthMm, fromMm);
     if (!at) continue;
     moved.push({ ...opening, ...at });
   }
@@ -683,8 +716,13 @@ export type RunPlacement = {
 export function runPlacements(input: {
   /** Ряды композиции слева направо: их ПОЛЕЗНЫЕ длины, а не длины стен. */
   runs: Pick<Run, 'lengthMm'>[];
-  /** Решение угла: от него зависит, сколько занято в углу. */
-  solution: CornerJoin['solution'];
+  /**
+   * Прежнее решение угла — одно на все углы. Читается, только если
+   * выбора по углам (`corners`) нет: так считают старые места и приёмки.
+   */
+  solution?: CornerJoin['solution'];
+  /** Выбор по каждому углу (слой 55): у П два угла, и они бывают разными. */
+  corners?: CornerChoice[];
   /**
    * Зона и школа цеха — ГЛУБИНУ СЧИТАЕТ ЭТА ФУНКЦИЯ САМА.
    *
@@ -700,7 +738,17 @@ export function runPlacements(input: {
   production?: ProductionSettings;
 }): RunPlacement[] {
   const depthMm = rowStandardDepthMm(input.zone, 'base', input.production);
-  const lostM = cornerLostMm(input.solution, depthMm) / MM_IN_M;
+  /*
+   * Занятое в КАЖДОМ углу — той же `cornerGeometry`, что урезала
+   * полезную длину ряда после него. Своё число здесь развело бы сцену с
+   * раскладкой на первом же угле с другим решением.
+   */
+  const choices =
+    input.corners ??
+    Array.from({ length: Math.max(0, input.runs.length - 1) }, () => choiceFromSolution(input.solution));
+  const lostOf = (corner: number) =>
+    cornerGeometry(choices[corner] ?? choiceFromSolution(input.solution), input.zone, input.production).lostMm /
+    MM_IN_M;
   const depthM = depthMm / MM_IN_M;
 
   const places: RunPlacement[] = [];
@@ -748,6 +796,7 @@ export function runPlacements(input: {
       // Первый ряд стоит по центру: от −L/2 до +L/2, фасады на z = 0.
       point = [-lengthM / 2, -depthM];
     } else {
+      const lostM = lostOf(i - 1);
       point = [point[0] + lostM * dir[0], point[1] + lostM * dir[1]];
     }
 
@@ -774,65 +823,41 @@ export function runPlacements(input: {
 export function cornerLostMm(
   solution: CornerJoin['solution'],
   depthMm: number,
+  /** Школа цеха: размеры угла — её настройка (слой 55). Пусто — типовые. */
+  production?: ProductionSettings,
 ): number {
-  return solution === 'corner_module' ? CORNER_SIZE_MM : depthMm + CORNER.falsePanelMm;
+  const sizes = cornerSizesOf(production);
+  return solution === 'corner_module' ? sizes.lowerLMm : depthMm + sizes.falsePanelMm;
 }
 
 /**
- * МЁРТВАЯ ПОЛОСА В УГЛУ — ТО, ЧТО ЗАКРЫВАЕТ ФАЛЬШ-ПАНЕЛЬ.
+ * ФАЛЬШ-ПАНЕЛЬ НИЖНЕГО УГЛА — ШИРИНА ДЕТАЛИ.
  *
- * Из того, что угол занял, глубина соседнего ряда занята его корпусом.
- * Остаток — полоса между фасадами соседнего ряда и первым модулем
- * этого: её не видно в числах, но видно глазами, и до этого слоя там
- * была дыра.
+ * Слепой угол: между фасадом владельца и первым модулем соседа полоса в
+ * ширину панели — её и закрывает панель (`CORNER.falsePanelMm` по
+ * умолчанию, настройка организации в 50–100 мм).
  *
- * Число НЕ НОВОЕ ни в одном из двух случаев:
- *
- *   фальш-панель   660 − 560 = 100 = `CORNER.falsePanelMm`
- *   угловой модуль 900 − 560 = 340 = `CORNER_SIZE_MM` минус глубина
- *
- * Второй случай — не «панель вместо углового модуля». Угловой модуль
- * съедает 900 вдоль ОБЕИХ стен, а корпус его рисуется глубиной ряда:
- * между его фасадом и началом соседнего ряда остаётся полоса, и она
- * закрывается тем же способом.
+ * Г-образный модуль фальш-панели НЕ имеет (слой 55). До этого слоя он
+ * рисовался прямоугольником 900 × глубина, а полосу 340 мм перед его
+ * фасадом закрывала панель — то есть вторая нога модуля жила в раскрое
+ * плоской деталью фасада. Теперь нога — корпус и свой фасад, и панели
+ * там нет.
  */
 export function cornerFillerMm(
   solution: CornerJoin['solution'],
   depthMm: number,
+  production?: ProductionSettings,
 ): number {
-  return Math.max(0, cornerLostMm(solution, depthMm) - depthMm);
+  if (solution === 'corner_module') return 0;
+  return Math.max(0, cornerLostMm(solution, depthMm, production) - depthMm);
 }
 
-/**
- * НАСКОЛЬКО СПЛОШНАЯ ПОЛОСА РЯДА ЗАХОДИТ В УГОЛ.
- *
- * Столешница, цоколь и ниша под верхним рядом идут ПО ВСЕМУ ряду одной
- * плитой. В углу их две, и встретиться они обязаны без щели и без
- * нахлёста: щель видно на любом ракурсе, нахлёст — это вторая плита
- * поверх первой, которой в цехе никто не режет.
- *
- * Правило одно на все три полосы и читается словами:
- *
- *   ряд ПОСЛЕ угла заходит назад на всё, что угол занял;
- *   ряд ПЕРЕД углом кончается там, где начинается полоса соседнего.
- *
- * Отсюда и два числа. Глубину своей полосы вызывающий знает сам — он её
- * и рисует: у столешницы это корпус со свесом, у цоколя корпус минус
- * утопление, у ниши глубина верхнего ряда. Своей формулы «где кончается
- * соседняя плита» здесь не появляется: это та же глубина.
+/*
+ * `cornerBandMm` ПЕРЕЕХАЛА В `corner.ts` (слой 55): её спрашивают
+ * столешница, цоколь, фартук и ниша, а столешнице незачем тянуть за
+ * собой сборку композиции. Отсюда она отдаётся под прежним именем — те
+ * же места и приёмки зовут её как раньше.
  */
-export function cornerBandMm(input: {
-  corner: RunCorner | undefined;
-  /** Глубина САМОЙ полосы, мм: у каждой она своя. */
-  bandDepthMm: number;
-}): { backMm: number; cutMm: number } {
-  const corner = input.corner;
-  if (!corner) return { backMm: 0, cutMm: 0 };
-
-  return {
-    backMm: Math.max(0, Math.round(corner.backMm ?? 0)),
-    cutMm: corner.ahead ? Math.max(0, Math.round(input.bandDepthMm)) : 0,
-  };
-}
+export { cornerBandMm } from './corner';
 
 const MM_IN_M = 1000;

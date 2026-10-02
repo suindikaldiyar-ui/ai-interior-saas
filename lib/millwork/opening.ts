@@ -311,6 +311,14 @@ export function openingHardware(
   units: { unit: Module; heightMm: number; index?: number; total?: number }[],
   /** Ряд нужен ради умолчания ручки: оно живёт в опциях ряда. */
   run: Pick<Run, 'options'> = { options: {} as Run['options'] },
+  /**
+   * МОДУЛЬ У УГЛА (слой 55): `corner` — идёт на угловых петлях (Г-модуль,
+   * створка слепого угла у фальш-панели); `closed` — глухой целиком,
+   * створки нет вовсе (слепая часть съела всё). Знает это ряд с его
+   * углами (`cornerHingeModules`, `openFrontMm`), а не модуль — модулю не
+   * видно, где у ряда угол. Пусто — как раньше: по виду углового модуля.
+   */
+  cornerOf?: (unit: Module) => 'corner' | 'closed' | null,
 ): OpeningHardware {
   const result: OpeningHardware = {
     hinges: 0,
@@ -388,6 +396,12 @@ export function openingHardware(
      */
     const fronts = moduleFronts(unit, heightMm);
 
+    /*
+     * Глухой модуль слепого угла: створки нет — ни петель, ни ручки на
+     * неё не покупают (слой 55). Сцена её не рисует и раскрой не режет.
+     */
+    if (cornerOf?.(unit) === 'closed') continue;
+
     if (fronts.drawers.length > 0) {
       addHandles(unit, fronts.drawers.length);
     }
@@ -456,7 +470,8 @@ export function openingHardware(
       continue;
     }
 
-    const isCorner = unit.kind === 'corner_base' || unit.kind === 'corner_upper';
+    const isCorner =
+      unit.kind === 'corner_base' || unit.kind === 'corner_upper' || cornerOf?.(unit) === 'corner';
 
     if (isSwing(opening)) {
       /*

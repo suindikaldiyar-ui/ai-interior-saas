@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type {
   CompositionKind,
+  CornerChoice,
   Measurement,
   Run,
   RunRequirements,
@@ -77,7 +78,15 @@ export type MillworkState = {
    * старые строки не нужно.
    */
   shape?: CompositionKind;
+  /** Прежнее решение угла — читается, когда выбора по углам (`corners`) нет. */
   cornerSolution?: 'corner_module' | 'false_panel';
+  /**
+   * ЧТО СТОИТ В КАЖДОМ УГЛУ (слой 55): низ и верх, выбор человека.
+   * Поле необязательное: у объектов до этого слоя его нет, и угол
+   * читается тем, каким был сохранён, — низ из `cornerSolution`, верх
+   * пустой (`savedCornerChoices`; совместимость — чтением, ловушка 295).
+   */
+  corners?: CornerChoice[];
   /** Ряды соседних стен по индексу: 1 — стена Б, 2 — стена В. */
   wallRuns?: Record<string, Run>;
   /** Снятые галочки сметы по вариантам. */

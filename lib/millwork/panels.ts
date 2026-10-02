@@ -18,6 +18,8 @@ import {
   type ProductionSettings,
 } from '@/types/catalog';
 import { moduleNumbers } from './positions';
+import { blindPartMm, cornerFillersOf, openFrontMm } from './corner';
+import { tailFillersOf } from './countertop';
 import type { Module, Panel, PanelTotals, Run } from '@/types/millwork';
 
 /**
@@ -95,6 +97,24 @@ export const DRAWER_FRONT_PANEL_NAME = 'Фронт ящика';
  * соседнего ряда и обязана быть с ними одного цвета.
  */
 export const CORNER_FILLER_PANEL_NAME = 'Фальш-панель угла';
+/** Фальш-панель верхнего ряда у слепого верхнего угла (слой 55). */
+export const CORNER_UPPER_FILLER_PANEL_NAME = 'Фальш-панель угла верхняя';
+/**
+ * ДОБОР ХВОСТА У СТЕНЫ (слой 55): у ряда угловой кухни хвост меньше
+ * 150 мм под плитой закрывает планка — щели у стены под столешницей нет.
+ */
+export const TAIL_FILLER_PANEL_NAME = 'Доборная планка у стены';
+
+/**
+ * ДЕТАЛЬ НОГИ Г-ОБРАЗНОГО МОДУЛЯ: «Дно (нога А)».
+ *
+ * У Г-модуля корпус в две ноги, и детали одного назначения разного
+ * размера: дно ноги А вдоль своей стены, дно ноги Б вдоль соседней.
+ * Имя одно на раскрой и на сцену — по нему деталировка находит место.
+ */
+export function legName(name: string, leg: 'А' | 'Б'): string {
+  return `${name} (нога ${leg})`;
+}
 
 /**
  * КАКИЕ ТОРЦЫ ДЕТАЛИ ОКЛЕЕНЫ — ОДИН ОТВЕТ НА ПРОДУКТ.
@@ -200,6 +220,63 @@ function modulePanels(
   // Ниша под технику: корпуса нет, есть только боковины соседей.
   const isAppliance = Boolean(unit.appliance);
 
+  /*
+   * Г-ОБРАЗНЫЙ УГЛОВОЙ МОДУЛЬ — КОРПУС В ДВЕ НОГИ (слой 55).
+   *
+   * Нога А вдоль своей стены (сторона S, глубина ряда), нога Б вдоль
+   * соседней — от фасада А до боковины Б (S − глубина). Схема сборки та
+   * же, что у всего ряда: вкладное дно и верх между боковинами, задняя
+   * стенка в паз. До этого слоя в раскрое лежал прямоугольник S ×
+   * глубина, а вторая нога была фальш-панелью — плоской деталью фасада.
+   */
+  const lCorner = unit.kind === 'corner_base' || unit.kind === 'corner_upper';
+  const legB = Math.max(0, unit.widthMm - depthMm);
+  if (lCorner) {
+    const legInner = Math.max(0, legB - t);
+    const topName = unit.kind === 'corner_base' ? TOP_RAIL_PANEL_NAME : TOP_PANEL_NAME;
+    const backInsetL = production.backMount === 'inset' ? allow.backInsetMm : 0;
+    const carcassPart = (name: string, lengthMm: number, widthMm: number, qty: number) =>
+      push({
+        name,
+        material,
+        lengthMm,
+        widthMm,
+        qty,
+        edges: { long: 1, short: 0 },
+        edgeType: thick,
+        grain: name === SIDE_PANEL_NAME ? 'along' : 'across',
+      });
+
+    carcassPart(SIDE_PANEL_NAME, heightMm, depthMm, 2);
+    carcassPart(legName(BOTTOM_PANEL_NAME, 'А'), unit.widthMm - t, depthMm, 1);
+    carcassPart(legName(BOTTOM_PANEL_NAME, 'Б'), legInner, depthMm, 1);
+    carcassPart(legName(topName, 'А'), unit.widthMm - t, depthMm, 1);
+    carcassPart(legName(topName, 'Б'), legInner, depthMm, 1);
+
+    const count = unit.fill?.shelves.length ?? 0;
+    if (count > 0) {
+      carcassPart(SHELF_PANEL_NAME, unit.widthMm - t - allow.shelfSideMm, depthMm - allow.shelfDepthMm, count);
+      carcassPart(SHELF_PANEL_NAME, legInner - allow.shelfSideMm, depthMm - allow.shelfDepthMm, count);
+    }
+
+    for (const [leg, widthMm] of [
+      ['А', unit.widthMm - backInsetL],
+      ['Б', unit.widthMm - backInsetL - production.backMm],
+    ] as const) {
+      push({
+        name: legName(BACK_PANEL_NAME, leg),
+        material: `ХДФ ${production.backMm}`,
+        lengthMm: heightMm - backInsetL,
+        widthMm,
+        qty: 1,
+        edges: { long: 0, short: 0 },
+        edgeType: '0.4',
+        grain: 'none',
+      });
+    }
+  }
+
+  if (!lCorner) {
   push({
     name: SIDE_PANEL_NAME,
     material,
@@ -282,6 +359,7 @@ function modulePanels(
     edgeType: '0.4',
     grain: 'none',
   });
+  }
 
   const gap = production.frontGapMm;
 
@@ -370,6 +448,19 @@ function modulePanels(
   };
 
   /*
+   * Г-ОБРАЗНЫЙ: ДВА ФАСАДА, ОТКРЫВАЮТСЯ ВМЕСТЕ (слой 55).
+   *
+   * Фасад А — в плоскости своего ряда, до плоскости корпуса соседа
+   * (S − глубина); фасад Б — в плоскости фасадов соседа, от лица фасада А
+   * до боковины Б (S − глубина − толщина фасада). Зазор — как у всех.
+   */
+  if (lCorner) {
+    pushFront(legName(FACADE_PANEL_NAME, 'А'), heightMm - gap, legB - gap, 1);
+    pushFront(legName(FACADE_PANEL_NAME, 'Б'), heightMm - gap, legB - production.frontMm - gap, 1);
+    return panels;
+  }
+
+  /*
    * Встроенный холодильник закрыт фасадом заподлицо: две створки во всю
    * высоту пенала. Без этих деталей раскрой уедет — фасад есть в смете,
    * а в цех уходит лист без него.
@@ -421,9 +512,20 @@ function modulePanels(
   }
 
   if (unit.frontType === 'door' && unit.doorCount > 0) {
-    const doorWidth = Math.round((unit.widthMm - gap * (unit.doorCount + 1)) / unit.doorCount);
-    // У фасада видны все четыре торца — если кромка на нём вообще есть.
-    pushFront(FACADE_PANEL_NAME, heightMm - gap, doorWidth, unit.doorCount);
+    /*
+     * СЛЕПОЙ УГОЛ (слой 55): за глухой частью модуля стоит корпус соседа,
+     * и створка там упёрлась бы в фальш-панель. Режется одна створка на
+     * доступную часть (`openFrontMm`) — та же ширина, что в сцене; если
+     * доступной части меньше корпуса, створки нет вовсе.
+     */
+    const blind = blindPartMm(unit, run) > 0;
+    const openMm = blind ? openFrontMm(unit, run) : unit.widthMm;
+    const doors = blind ? 1 : unit.doorCount;
+    if (openMm > 0) {
+      const doorWidth = Math.round((openMm - gap * (doors + 1)) / doors);
+      // У фасада видны все четыре торца — если кромка на нём вообще есть.
+      pushFront(FACADE_PANEL_NAME, heightMm - gap, doorWidth, doors);
+    }
   }
 
   if (unit.frontType === 'drawers') {
@@ -474,30 +576,39 @@ export function buildPanels({ run, production = DEFAULT_PRODUCTION, milling, car
    * первая деталь: он не сталкивается с номерами модулей (те числовые)
    * и читается в цеху без пояснения.
    */
-  const fillerMm = run.corner?.fillerMm ?? 0;
-  if (fillerMm <= 0) return fromModules;
-
-  const first = run.modules[0];
-  if (!first) return fromModules;
-
-  const spec = frontOf(first);
   const shop = shopOf(production);
+  const extra: Panel[] = [];
 
-  return [
-    ...fromModules,
-    {
+  /*
+   * ФАЛЬШ-ПАНЕЛИ УГЛА — нижняя и верхняя, место и ширина из
+   * `cornerFillersOf` (слой 55): та же функция ставит их в сцену.
+   */
+  let cornerNo = 0;
+  for (const piece of cornerFillersOf(run)) {
+    const lower = piece.level === 'lower';
+    const neighbour = lower
+      ? run.modules[0]
+      : [...run.upperSegments.flatMap((sg) => sg.modules)]
+          .filter((unit) => unit.section !== 'mezzanine')
+          .sort((a, b) => a.offsetMm - b.offsetMm)[0];
+    if (!neighbour) continue;
+    const spec = frontOf(neighbour);
+    cornerNo += 1;
+    extra.push({
       moduleId: `${run.id}:corner`,
       moduleLabel: 'Угол',
-      number: 'У.1',
-      name: CORNER_FILLER_PANEL_NAME,
+      number: `У.${cornerNo}`,
+      name: lower ? CORNER_FILLER_PANEL_NAME : CORNER_UPPER_FILLER_PANEL_NAME,
       material: `Фасад ${shop.frontMm}`,
       /*
-       * Высота — корпуса ряда: панель закрывает его от пола до
-       * столешницы. Зазор снимается с обеих сторон, как у фасада: она
-       * стоит в одной с ними плоскости и в тот же зазор встаёт.
+       * Высота — корпуса своего ряда: нижняя закрывает его от пола до
+       * столешницы, верхняя — высоту навесного. Зазор снимается с обеих
+       * сторон, как у фасада: она стоит в одной с ними плоскости.
        */
-      lengthMm: carcassHeightMm(production) - production.frontGapMm,
-      widthMm: Math.round(fillerMm) - production.frontGapMm,
+      lengthMm:
+        (lower ? carcassHeightMm(production) : moduleCarcassHeightMm(neighbour, run)) -
+        production.frontGapMm,
+      widthMm: Math.round(piece.toMm - piece.fromMm) - production.frontGapMm,
       qty: 1,
       /*
        * Видно все четыре торца: панель стоит в углу отдельно стоящей
@@ -507,8 +618,32 @@ export function buildPanels({ run, production = DEFAULT_PRODUCTION, milling, car
       edges: hasEdgeBanding(spec) ? { long: 2, short: 2 } : { long: 0, short: 0 },
       edgeType: edgeType(production),
       grain: 'along',
-    },
-  ];
+    });
+  }
+
+  /*
+   * ДОБОР ХВОСТА У СТЕНЫ (слой 55): планка той же школы, что доборная
+   * планка ряда (`filler`), — корпусная плита, кромка по лицевому торцу.
+   */
+  let tailNo = 0;
+  for (const piece of tailFillersOf(run)) {
+    tailNo += 1;
+    extra.push({
+      moduleId: `${run.id}:tail`,
+      moduleLabel: 'Хвост у стены',
+      number: `Х.${tailNo}`,
+      name: TAIL_FILLER_PANEL_NAME,
+      material: `ЛДСП ${shop.carcassMm}`,
+      lengthMm: carcassHeightMm(production),
+      widthMm: Math.round(piece.toMm - piece.fromMm),
+      qty: 1,
+      edges: { long: 1, short: 0 },
+      edgeType: edgeType(production),
+      grain: 'along',
+    });
+  }
+
+  return extra.length > 0 ? [...fromModules, ...extra] : fromModules;
 }
 
 /**

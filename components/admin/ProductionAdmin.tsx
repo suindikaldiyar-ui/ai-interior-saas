@@ -6,6 +6,9 @@ import {
   DEFAULT_DEPTHS,
   DEFAULT_HEIGHTS,
   DEFAULT_PRODUCTION,
+  FALSE_PANEL_RANGE_MM,
+  cornerSizes,
+  type CornerSizes,
   type PartAllowances,
   type ProductionSettings,
   type RowDepths,
@@ -139,6 +142,22 @@ export default function ProductionAdmin({ initial }: Props) {
   const [value, setValue] = useState<ProductionSettings>(initial);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  /*
+   * Размеры угла: не заведены — типовые, и экран говорит об этом (слой 55).
+   * Поле панели держит то, что набрано (по пути к «70» бывает «7»); число
+   * вне границ названо словами под полем — сервер его не примет.
+   */
+  const corner = cornerSizes(value.corner);
+  const panelTyped = value.corner?.falsePanelMm ?? corner.falsePanelMm;
+  const panelOutside =
+    !Number.isFinite(panelTyped) ||
+    panelTyped < FALSE_PANEL_RANGE_MM[0] ||
+    panelTyped > FALSE_PANEL_RANGE_MM[1];
+  const setCorner = (patch: Partial<CornerSizes>) =>
+    setValue((prev) => ({
+      ...prev,
+      corner: { ...cornerSizes(prev.corner), falsePanelMm: prev.corner?.falsePanelMm ?? corner.falsePanelMm, ...patch },
+    }));
 
   const save = async () => {
     setBusy(true);
@@ -317,6 +336,84 @@ export default function ProductionAdmin({ initial }: Props) {
               столешница. Низ навесных {upperBottomMm(value)} мм — рабочая поверхность
               плюс фартук. Оба считаются, вводить их негде.
             </p>
+          </div>
+
+          {/*
+            * РАЗМЕРЫ УГЛА — ТИПОВЫЕ, ПОКА ЦЕХ ИХ НЕ ПОДТВЕРДИЛ (слой 55).
+            *
+            * Фальш-панель 50–100 мм, нижний Г-модуль 900 или 1000, верхний
+            * 600. Других размеров нет: корпус, которого цех не подтверждал,
+            * уехал бы в раскрой. Пока галочки нет, у замерщика рядом с углом
+            * написано «не подтверждено цехом».
+            */}
+          <div className="mt-6 border-t border-navyLine/60 pt-4" data-corner-sizes>
+            <p className="text-[15px] font-medium">Размеры угла</p>
+            <p className="mt-0.5 text-[13px] leading-snug text-graphiteMw">
+              Сколько занимает угол: от этих чисел начинается ряд соседней стены,
+              режутся фальш-панели и ноги Г-образных модулей.
+            </p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-3">
+              <label className="block">
+                <span className="mw-label">Фальш-панель, мм</span>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={FALSE_PANEL_RANGE_MM[0]}
+                  max={FALSE_PANEL_RANGE_MM[1]}
+                  data-corner-panel
+                  value={Number.isFinite(panelTyped) ? panelTyped : ''}
+                  onChange={(event) => setCorner({ falsePanelMm: Number(event.target.value) })}
+                  className="mw-field mt-1 w-full"
+                />
+                <span
+                  className={`mt-0.5 block text-[13px] leading-snug ${panelOutside ? 'text-alert' : 'text-graphiteMw'}`}
+                >
+                  {panelOutside
+                    ? `Вне ${FALSE_PANEL_RANGE_MM[0]}–${FALSE_PANEL_RANGE_MM[1]} мм: такое число не сохранится, останется ${corner.falsePanelMm}.`
+                    : `${FALSE_PANEL_RANGE_MM[0]}–${FALSE_PANEL_RANGE_MM[1]} мм: уже — не пройдёт ручка`}
+                </span>
+              </label>
+              <div>
+                <span className="mw-label">Нижний Г-модуль</span>
+                <div className="mt-1 flex flex-wrap gap-2">
+                  {([900, 1000] as const).map((mm) => (
+                    <button
+                      key={mm}
+                      type="button"
+                      data-corner-lower={mm}
+                      aria-pressed={corner.lowerLMm === mm}
+                      onClick={() => setCorner({ lowerLMm: mm })}
+                      className={`mw-btn ${corner.lowerLMm === mm ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+                    >
+                      {mm}×{mm}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <span className="mw-label">Верхний Г-модуль</span>
+                <p className="mt-2 text-[15px]">
+                  {corner.upperLMm}×{corner.upperLMm}
+                </p>
+                <span className="mt-0.5 block text-[13px] leading-snug text-graphiteMw">
+                  другого размера в типовых нет
+                </span>
+              </div>
+            </div>
+            <label className="mt-3 flex items-center gap-2 text-[15px]">
+              <input
+                type="checkbox"
+                data-corner-confirmed
+                checked={corner.confirmed}
+                onChange={(event) => setCorner({ confirmed: event.target.checked })}
+              />
+              Цех подтвердил эти размеры
+            </label>
+            {!corner.confirmed && (
+              <p className="mt-1 text-[13px] leading-snug text-tape">
+                Не подтверждено цехом: замерщик видит эту пометку рядом с каждым углом.
+              </p>
+            )}
           </div>
 
           <div className="mt-5 flex flex-wrap items-center gap-3">

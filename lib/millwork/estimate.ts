@@ -4,7 +4,8 @@ import {
   standsOnFloor,
 } from './modules';
 import { allModules } from './layout';
-import { countertopLengthMm } from './countertop';
+import { apronLengthMm, countertopLengthMm } from './countertop';
+import { cornerOfModule } from './corner';
 import { moduleCarcassHeightMm } from './fill';
 import { CORNER_HINGE_TITLE, drawerSlides, liftKey, openingHardware } from './opening';
 import { buildPanels, panelMaterials, SHELF_PANEL_NAME} from './panels';
@@ -343,6 +344,12 @@ export function buildEstimateDrafts(
       total: modules.length,
     })),
     run,
+    /*
+     * Угловые петли — у Г-модуля и у створки слепого угла у фальш-панели;
+     * глухому модулю угла петель и ручки не покупают (слой 55). Тот же
+     * ответ берёт сцена — петель на картинке столько же.
+     */
+    cornerOfModule(run),
   );
 
   let hinges = hardware.hinges;
@@ -430,8 +437,20 @@ export function buildEstimateDrafts(
    * его решений; считается он на ряду ПЕРЕД углом, поэтому на кухню
    * приходится один запил, а не два.
    */
-  const hasCorner =
-    run.modules.some((m) => m.kind === 'corner_base') || run.corner?.ahead === true;
+  /*
+   * СТЫК — ОДИН НА УГОЛ И У ВЛАДЕЛЬЦА (слой 55).
+   *
+   * Владелец угла даёт плиту на всю глубину угла, сосед к ней стыкуется:
+   * стык — операция над плитой владельца, и считается он на его ряду. На
+   * экране стена А собиралась без угла, и у Г-образной кухни запила в
+   * смете не было вовсе, а у П-образной был один на два угла.
+   *
+   * Ряд без поля угла (прежний вход `cornerAt`, старые места) — по виду
+   * углового модуля, как и было.
+   */
+  const hasCorner = run.corner
+    ? Boolean(run.corner.own)
+    : run.modules.some((m) => m.kind === 'corner_base');
 
   /*
    * ДЛИНА СОБРАННОГО РЯДА, А НЕ ДЛИНА СТЕНЫ.
@@ -615,11 +634,19 @@ export function buildEstimateDrafts(
   }
 
   if (zone.hasApron) {
+    /*
+     * ФАРТУК — ТЕМ ЖЕ ОТВЕТОМ, ЧТО РИСУЕТ СЦЕНА (`apronSpans`, слой 55).
+     *
+     * Здесь стояла длина столешницы при верхнем ряде, а сцена рисовала
+     * фартук на всю длину ряда. У прямой кухни ответ функции тот же —
+     * столешница при верхнем ряде, — а в углу у стыкующейся стены фартук
+     * идёт до стены владельца: над угловой плитой её стена тоже открыта.
+     */
     drafts.push({
       key: 'wall_panel',
       title: 'Стеновая панель (фартук)',
       unit: 'mp',
-      quantity: run.options.hasUpper ? counterMp : 0,
+      quantity: round3(apronLengthMm(run) / MM_IN_M),
     });
   }
 

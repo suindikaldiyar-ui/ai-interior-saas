@@ -2,10 +2,10 @@
 
 import * as THREE from 'three';
 
-import { doorCount } from '@/lib/millwork/cabinetBoxes';
+import { sceneLeaves } from '@/lib/millwork/cabinetBoxes';
 import InteractiveDoor from './InteractiveDoor';
+import InteractiveBifold from './InteractiveBifold';
 import InteractiveDrawer from './InteractiveDrawer';
-import { openingOf } from '@/lib/millwork/opening';
 import type { CabinetParts } from './parts';
 import type { Module } from '@/types/millwork';
 
@@ -48,20 +48,22 @@ type Props = {
   onActive?: (id: string, active: boolean) => void;
   /** Материал фасада этого модуля: у подвижных створок он тот же. */
   frontMaterial?: THREE.MeshStandardMaterial;
+  /**
+   * ДОСТУПНАЯ ШИРИНА ФАСАДА У СЛЕПОГО УГЛА, метры (слой 55): створка одна
+   * и только здесь; ноль — створки нет. Пусто — модуль не у слепого угла.
+   * Число — `openFrontMm`, то же, что у неподвижной отрисовки и раскроя.
+   */
+  openWidthM?: number;
 };
 
 /** Штанга: труба 25 мм — то, что реально ставят в шкаф. */
 const ROD_DIAMETER_M = 0.025;
 
-/**
- * Техника, которую ВИДНО в кадре.
- *
- * Холодильник, посудомойка и мойка встроены за фасад: в реальной кухне на
- * их месте обычная дверца, а не чёрная плита. Тёмными остаются только те
- * приборы, у которых своя лицевая панель, — духовка, варочная, вытяжка.
- * Без этого ряд из семи модулей читается как стена чёрных слэбов.
+/*
+ * Какая техника ВИДНА в кадре и потому стоит без створки, решает
+ * `hasVisibleAppliance` внутри `sceneLeaves`: копия списка приборов здесь
+ * была второй (слой 55).
  */
-const VISIBLE_APPLIANCES = new Set(['oven', 'hob', 'hood', 'microwave']);
 
 export default function CabinetModule3D({
   unit,
@@ -81,6 +83,7 @@ export default function CabinetModule3D({
   displayLit = true,
   onActive,
   frontMaterial,
+  openWidthM,
 }: Props) {
   const widthM = unit.widthMm / MM;
   const fill = unit.fill;
@@ -91,16 +94,6 @@ export default function CabinetModule3D({
   const innerDepth = depthM - thicknessM;
 
   const isOpen = (id: string) => openParts.includes(id);
-
-  /*
-   * Что видно в кадре. Встроенный холодильник закрыт фасадом, как обычный
-   * модуль; отдельностоящий стоит на виду целиком — это разные деньги и
-   * разный вид, и путать их нельзя.
-   */
-  const visibleAppliance =
-    Boolean(unit.appliance) &&
-    !unit.column &&
-    (VISIBLE_APPLIANCES.has(unit.appliance as string) || unit.builtIn === false);
 
   const isDisplay = unit.section === 'glass_display';
 
@@ -171,29 +164,31 @@ export default function CabinetModule3D({
         </>
       )}
 
-      {/* Ящики: каждый едет сам, пока едет. */}
       {/*
-        * Ящики выдвигаются и под варочной: прибор занимает нишу, а под
-        * ним обычные ящики. Условие «нет прибора» оставляло их глухой
-        * панелью, которая не открывается ни на один жест.
+        * ЯЩИКИ И СТВОРКИ — СПИСКОМ `sceneLeaves` (слой 55).
+        *
+        * Какие створки рисовать, куда они открываются (те же данные, что
+        * у диагонали на чертеже — `doorOpening`), одна ли она у слепого
+        * угла и где стоят ящики — решает одна функция движка. Проверка
+        * открывания у угла меряет её же: свои ветки здесь разошлись бы с
+        * ней молча.
+        *
+        * Ящик едет сам, пока едет; двери в разрезе не рисуются вовсе.
+        * Встроенная техника (холодильник, посудомойка, мойка) закрыта
+        * фасадом наравне с обычным модулем: так это и выглядит в квартире.
         */}
-      {!unit.column &&
-        fill?.drawerHeights.map((frontMm, i) => {
-          // Высоты идут сверху вниз, а сцена считает от пола.
-          const above = fill.drawerHeights.slice(0, i).reduce((sum, h) => sum + h, 0);
-          const bottomMm = Math.max(0, (heightM * MM - above - frontMm));
-          const id = `${unit.id}:drawer:${i}`;
-
+      {sceneLeaves(unit, heightM, openWidthM).map((leaf) => {
+        if (leaf.kind === 'drawer') {
           return (
             <InteractiveDrawer
-              key={id}
-              id={id}
-              open={isOpen(id)}
+              key={leaf.id}
+              id={leaf.id}
+              open={isOpen(leaf.id)}
               onToggle={onToggle}
               x={0}
-              y={bottomMm / MM}
+              y={leaf.bottomM}
               width={widthM}
-              height={frontMm / MM}
+              height={leaf.heightM}
               depth={innerDepth}
               thickness={frontThicknessM}
               parts={parts}
@@ -204,62 +199,47 @@ export default function CabinetModule3D({
               frontMaterial={frontMaterial}
             />
           );
-        })}
-
-      {/*
-        * Двери. В разрезе их нет вовсе.
-        *
-        * Встроенная техника (холодильник, посудомойка, мойка) закрыта
-        * фасадом наравне с обычным модулем: так это и выглядит в квартире.
-        */}
-      {!cutaway &&
-        !visibleAppliance &&
-        !unit.column &&
-        !isDisplay &&
-        Array.from({ length: doorCount(unit) }, (_, i) => {
-          const doors = doorCount(unit);
-          const doorW = widthM / doors;
-          const id = `${unit.id}:door:${i}`;
-
-          /*
-           * НАПРАВЛЕНИЕ БЕРЁТСЯ ИЗ ТЕХ ЖЕ ДАННЫХ, ЧТО РИСУЮТ ЧЕРТЁЖ.
-           *
-           * У двух створок стороны очевидны: левая на левой петле, правая
-           * на правой. У одной — то, что выбрано: сторона петель,
-           * подъёмник или откидной. Своей формулы у сцены нет, иначе
-           * фасад открывался бы не туда, куда указывает диагональ.
-           */
-          const { opening } = openingOf(unit);
-          const doorOpening =
-            doors > 1
-              ? i === 0
-                ? ('left' as const)
-                : ('right' as const)
-              : opening === 'lift' || opening === 'flap' || opening === 'right'
-                ? opening
-                : ('left' as const);
-
+        }
+        if (cutaway) return null;
+        if (leaf.kind === 'bifold') {
           return (
-            <InteractiveDoor
-              key={id}
-              id={id}
-              open={isOpen(id)}
+            <InteractiveBifold
+              key={leaf.id}
+              id={leaf.id}
+              unit={unit}
+              open={isOpen(leaf.id)}
               onToggle={onToggle}
-              opening={doorOpening}
-              x={i * doorW}
-              y={0}
-              width={doorW}
-              height={heightM}
-              depth={depthM}
-              thickness={frontThicknessM}
-              parts={parts}
+              place={{ x: 0, y: 0, heightM, depthM, thicknessM, zM: 0 }}
               gap={gapM}
+              thickness={frontThicknessM}
               integratedHandle={integratedHandles}
-              onActive={onActive}
+              parts={parts}
               frontMaterial={frontMaterial}
+              onActive={onActive}
             />
           );
-        })}
+        }
+        return (
+          <InteractiveDoor
+            key={leaf.id}
+            id={leaf.id}
+            open={isOpen(leaf.id)}
+            onToggle={onToggle}
+            opening={leaf.opening}
+            x={leaf.xM}
+            y={0}
+            width={leaf.widthM}
+            height={heightM}
+            depth={depthM}
+            thickness={frontThicknessM}
+            parts={parts}
+            gap={gapM}
+            integratedHandle={integratedHandles}
+            onActive={onActive}
+            frontMaterial={frontMaterial}
+          />
+        );
+      })}
     </group>
   );
 }

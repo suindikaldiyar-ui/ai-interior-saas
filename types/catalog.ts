@@ -377,7 +377,66 @@ export type ProductionSettings = {
    * своей жизнью, расходясь с цоколем и боковиной.
    */
   heights: RowHeights;
+  /**
+   * РАЗМЕРЫ УГЛА — НАСТРОЙКА ОРГАНИЗАЦИИ, ПОКА НЕ ПОДТВЕРЖДЁННАЯ ЦЕХОМ.
+   *
+   * Пусто — типовые числа (`DEFAULT_CORNER_SIZES`), и это сказано словами:
+   * у каждого размера стоит пометка «не подтверждено цехом», пока цех не
+   * поставит галочку. Других размеров, кроме перечисленных в типе, нет:
+   * выдумывать угловой модуль на 950 значит отправить в цех корпус,
+   * которого никто не подтверждал.
+   */
+  corner?: CornerSizes;
 };
+
+/**
+ * РАЗМЕРЫ УГЛА.
+ *
+ * Фальш-панель 50–100 мм, нижний Г-образный модуль 900×900 или 1000×1000,
+ * верхний Г-образный 600×600. Это ТИПОВЫЕ размеры, а не стандарт цеха:
+ * `confirmed` ставит человек, и пока её нет, интерфейс говорит «не
+ * подтверждено цехом» рядом с каждым числом.
+ */
+export type CornerSizes = {
+  /** Ширина фальш-панели между рядами, мм: 50…100. */
+  falsePanelMm: number;
+  /** Сторона нижнего Г-образного модуля, мм. */
+  lowerLMm: 900 | 1000;
+  /** Сторона верхнего Г-образного модуля, мм. */
+  upperLMm: 600;
+  /** Цех подтвердил эти числа. Нет — «не подтверждено цехом». */
+  confirmed: boolean;
+};
+
+/**
+ * Типовые размеры угла. Фальш-панель 100 и Г-модуль 900 — те самые числа,
+ * что стояли константами (`CORNER.falsePanelMm`, `CORNER_SIZE_MM`): угловые
+ * кухни, собранные до настройки, не едут ни на миллиметр.
+ */
+export const DEFAULT_CORNER_SIZES: CornerSizes = {
+  falsePanelMm: 100,
+  lowerLMm: 900,
+  upperLMm: 600,
+  confirmed: false,
+};
+
+/** Границы фальш-панели: уже 50 — не пройдёт ручка, шире 100 — это уже модуль. */
+export const FALSE_PANEL_RANGE_MM = [50, 100] as const;
+
+/** Размеры угла организации с подстановкой типовых. Мусор не принимается. */
+export function cornerSizes(raw: unknown): CornerSizes {
+  const value = (raw ?? {}) as Partial<CornerSizes>;
+  const panel = Number(value.falsePanelMm);
+  return {
+    falsePanelMm:
+      Number.isFinite(panel) && panel >= FALSE_PANEL_RANGE_MM[0] && panel <= FALSE_PANEL_RANGE_MM[1]
+        ? Math.round(panel)
+        : DEFAULT_CORNER_SIZES.falsePanelMm,
+    lowerLMm: value.lowerLMm === 1000 ? 1000 : 900,
+    upperLMm: 600,
+    confirmed: value.confirmed === true,
+  };
+}
 
 /** Глубина корпуса по рядам, мм. */
 export type RowDepths = {
@@ -516,6 +575,11 @@ export function productionSettings(raw: unknown): ProductionSettings {
       countertopMm: size(value.heights?.countertopMm, DEFAULT_HEIGHTS.countertopMm, 10, 120),
       apronMm: size(value.heights?.apronMm, DEFAULT_HEIGHTS.apronMm, 300, 900),
     },
+    /*
+     * Размеры угла пишутся, только если компания их заводила: пусто —
+     * типовые, и угловые кухни, собранные раньше, читаются как прежде.
+     */
+    ...(value.corner ? { corner: cornerSizes(value.corner) } : {}),
   };
 }
 

@@ -2,10 +2,12 @@ import type {
   CommPoint,
   Composition,
   CompositionKind,
+  CornerChoice,
   CornerJoin,
   Estimate,
   Measurement,
   Run,
+  RunCorner,
   RunRequirements,
   Variant,
   VariantKey,
@@ -14,7 +16,8 @@ import type { CatalogEntryFull, ProductionSettings } from '@/types/catalog';
 import { resolveSurvey, type SurveyResolution } from '@/types/survey';
 import type { MillworkState } from '@/lib/projects';
 import { buildEstimate, type RateTable } from './estimate';
-import { tryBuildComposition, type CompositionAttempt } from './composition';
+import { segmentCount, tryBuildComposition, type CompositionAttempt } from './composition';
+import { choiceFromSolution, runWithCorner } from './corner';
 import { compositionOf, compositionWalls, mergeEstimates, type SelectedWall } from './walls';
 import { onWall } from './layout';
 import { productionFor } from './shop';
@@ -23,7 +26,7 @@ import { carcassCatalog, type CarcassItem } from './carcassMaterial';
 import { materialCatalog } from './materialCatalog';
 import type { MaterialItem } from './materialCollection';
 import { ratesFromCatalog } from './rates';
-import { MAIN_VARIANT } from './variants';
+import { DEFAULT_STRATEGIES, MAIN_VARIANT, withStrategy } from './variants';
 import {
   DEFAULT_REQUIREMENTS,
   composeVariants,
@@ -100,20 +103,68 @@ export type CornerSolution = NonNullable<CornerJoin['solution']>;
 export function compositionFor(input: {
   shape: CompositionKind;
   requirements: RunRequirements;
+  /** Прежнее решение угла — одно на все углы; читается, когда выбора по углам нет. */
   cornerSolution: CornerSolution;
+  /** Выбор по каждому углу (слой 55). Пусто — из `cornerSolution`. */
+  corners?: CornerChoice[];
   site: Pick<ObjectSite, 'ceilingMm' | 'walls' | 'comms'>;
   production: ProductionSettings;
+  /**
+   * КОМПЛЕКТАЦИЯ, ПО КОТОРОЙ СОБРАНА СТЕНА А (слой 55).
+   *
+   * Стена А собирается из вариантов — со стратегией комплектации
+   * (`withStrategy`: кварц, доводчики). Стены Б и В собирались без неё,
+   * и у одной кухни выходило две столешницы: кварц на А, ЛДСП на Б, и
+   * два класса фурнитуры. Стратегия одна на объект — и на все его стены.
+   */
+  variantKey?: VariantKey;
 }): CompositionAttempt | null {
   if (input.shape === 'linear') return null;
+  const strategy =
+    DEFAULT_STRATEGIES.find((item) => item.key === (input.variantKey ?? MAIN_VARIANT)) ??
+    DEFAULT_STRATEGIES.find((item) => item.key === MAIN_VARIANT)!;
   return tryBuildComposition({
     id: 'ws',
     kind: input.shape,
-    requirements: { ...input.requirements, cornerSolution: input.cornerSolution },
+    requirements: {
+      ...withStrategy(input.requirements, strategy),
+      cornerSolution: input.cornerSolution,
+      ...(input.corners ? { corners: input.corners } : {}),
+    },
     ceilingHeightMm: input.site.ceilingMm,
     walls: input.site.walls,
     comms: input.site.comms,
     production: input.production,
   });
+}
+
+/**
+ * УГЛЫ СОХРАНЁННОГО ОБЪЕКТА — КАКИМИ ОН БЫЛ СОХРАНЁН.
+ *
+ * Выбор по углам есть (`corners`) — это он. Нет, а форма угловая —
+ * объект сохранён до слоя 55, когда выбора по углам не было: низ —
+ * прежнее `cornerSolution`, верх — ПУСТОЙ. Верхнего углового шкафа в
+ * продукте до слоя 55 не было, и над столешницей угол оставался пустым
+ * (слой 46). Умолчание новых углов (слепой верх) дописало бы старому
+ * объекту на открытии фальш-панель и глухую часть, которых в нём не было,
+ * и сумма поехала бы от одного открытия.
+ *
+ * Прямая — выбора нет: угол, появившийся сменой формы, новый, и его
+ * умолчание — `choiceFromSolution`.
+ *
+ * Одна функция на экран (начальный выбор) и на кабинет клиента
+ * (`projectOffer`): прочитай они старый объект по-разному, клиент увидел
+ * бы другой угол, чем показал замерщик.
+ */
+export function savedCornerChoices(
+  state: Pick<MillworkState, 'shape' | 'corners' | 'cornerSolution'> | null | undefined,
+): CornerChoice[] | undefined {
+  if (!state) return undefined;
+  if (state.corners) return state.corners;
+  const count = segmentCount(state.shape ?? 'linear') - 1;
+  if (count <= 0) return undefined;
+  const { lower } = choiceFromSolution(state.cornerSolution);
+  return Array.from({ length: count }, () => ({ lower, upper: 'empty' as const }));
 }
 
 /**
@@ -154,11 +205,17 @@ export function objectInput(args: {
   materials: Map<string, MaterialItem>;
   /** Снимок цен отправленного предложения — только у кабинета клиента. */
   frozen?: Record<string, number>;
+  /**
+   * Угол стены А в композиции (`wallCornerOf`, слой 55). Пусто — прямая.
+   */
+  corner?: RunCorner;
 }): WorkspaceInput {
   const { base, resolution } = args;
+  const corner = args.corner ? { corner: args.corner } : {};
 
   if (!resolution) {
     return {
+      ...corner,
       title: base.title,
       zone: base.zone,
       measuredBy: base.measuredBy,
@@ -198,7 +255,18 @@ export function objectInput(args: {
   });
 
   // Пока стены не введены, ряд брать неоткуда — держим габарит объекта.
-  return seed.lengthMm > 0 ? seed : { ...seed, lengthMm: base.lengthMm };
+  return { ...(seed.lengthMm > 0 ? seed : { ...seed, lengthMm: base.lengthMm }), ...corner };
+}
+
+/**
+ * УГОЛ СТЕНЫ А — ТОТ ЖЕ, ЧТО КОМПОЗИЦИЯ ПОЛОЖИЛА СВОЕМУ ПЕРВОМУ РЯДУ.
+ *
+ * Стена А на экране собирается из вариантов (`composeVariants`), а не
+ * композицией, и угол ей нужно передать явно — иначе в её конце нет
+ * углового модуля, а у угла нет владельца (слой 55).
+ */
+export function wallCornerOf(layout: Composition | null): RunCorner | undefined {
+  return layout?.segments[0]?.run.corner;
 }
 
 /**
@@ -217,8 +285,17 @@ export function savedWallRuns(saved: Record<string, Run> | undefined): Record<nu
 /**
  * РЯДЫ СТЕН ОБЪЕКТА.
  *
- * Стена А — из вариантов (на ней держатся комплектации и правки),
- * соседние — правленые из `editedWalls`, иначе собранные композицией.
+ * Стена А — из вариантов (на ней держатся комплектации и правки) и
+ * РОВНО ТОТ ряд, по которому посчитана её смета: угол ей положил
+ * `composeVariants`, правленой тоже. Положи его здесь второй раз — и
+ * сцена с раскроем снова увидят один ряд, а смета посчитает другой.
+ *
+ * Соседние — правленые из `editedWalls`, иначе собранные композицией;
+ * угол им кладёт композиция на каждом показе (`runWithCorner`, слой 55):
+ * сохранённый ряд лежит с тем углом, что был на момент записи (или с
+ * прежними полями `backMm`/`ahead`), а роль ряда в углу и выбор человека
+ * — свойство композиции. Иначе у угла снова окажется ноль владельцев
+ * или два.
  */
 export function wallSegments(
   layout: Composition | null,
@@ -227,9 +304,11 @@ export function wallSegments(
 ): Run[] {
   if (!layout) return [wallARun];
 
-  return layout.segments.map((segment, i) => {
-    if (i === 0) return wallARun;
+  return layout.segments.map((segment, i) =>
+    i === 0 ? wallARun : runWithCorner(wallRun(segment, i), segment.run.corner),
+  );
 
+  function wallRun(segment: Composition['segments'][number], i: number): Run {
     const saved = editedWalls[i];
     if (!saved) return segment.run;
 
@@ -256,7 +335,7 @@ export function wallSegments(
         modules: onWall(upper.modules, segment.wallId),
       })),
     };
-  });
+  }
 }
 
 /**
@@ -361,8 +440,10 @@ export function projectOffer(args: {
     shape: state.shape ?? 'linear',
     requirements,
     cornerSolution: state.cornerSolution ?? 'false_panel',
+    corners: savedCornerChoices(state),
     site,
     production,
+    variantKey: state.selectedVariant ?? MAIN_VARIANT,
   });
   if (attempt?.state === 'refused') return { state: 'refused', refusal: attempt.reason };
   const layout = attempt?.state === 'built' ? attempt.composition : null;
@@ -378,6 +459,7 @@ export function projectOffer(args: {
     carcass: carcassCatalog(catalog),
     materials: materialCatalog(catalog),
     frozen: snapshot && Object.keys(snapshot).length > 0 ? snapshot : undefined,
+    corner: wallCornerOf(layout),
   });
 
   const disabled: Record<VariantKey, string[]> = {

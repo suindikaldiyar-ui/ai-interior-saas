@@ -5,6 +5,7 @@ import type * as THREE from 'three';
 import { useSlide } from './useSlide';
 import { useTouchTarget } from './useTouchTarget';
 import type { CabinetParts } from './parts';
+import { DRAWER_TRAVEL_M } from '@/lib/millwork/cabinetBoxes';
 
 /**
  * Ящик, который выезжает.
@@ -14,8 +15,11 @@ import type { CabinetParts } from './parts';
  * никаких запросов к модели, чистая геометрия.
  */
 
-/** Реальный ход направляющих: 300 мм. */
-export const DRAWER_TRAVEL_M = 0.3;
+/*
+ * Ход направляющих (300 мм) живёт в движке (`DRAWER_TRAVEL_M`, слой 55):
+ * его меряет проверка открывания у угла, и второго числа быть не должно.
+ */
+export { DRAWER_TRAVEL_M };
 
 type Props = {
   id: string;

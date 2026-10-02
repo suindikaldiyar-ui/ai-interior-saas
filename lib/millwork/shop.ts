@@ -1,5 +1,7 @@
 import {
+  DEFAULT_CORNER_SIZES,
   DEFAULT_PRODUCTION,
+  type CornerSizes,
   type ProductionOverrides,
   type ProductionSettings,
 } from '@/types/catalog';
@@ -24,12 +26,25 @@ import type { ModuleKind } from '@/types/millwork';
  * отсутствующего: по нему сверлят присадку.
  *
  * Что НЕ параметризуется и остаётся стандартом: шаг присадки 32
- * (`SYSTEM32_STEP_MM`) и угловой модуль 900×900 (`CORNER_SIZE_MM`).
+ * (`SYSTEM32_STEP_MM`). Угловой модуль стал настройкой организации
+ * (слой 55, по прямому требованию задачи: 900×900 или 1000×1000) — и
+ * до подтверждения цехом помечен «не подтверждено цехом».
  */
 
 /** Настройки цеха с подстановкой умолчаний: ряд мог быть собран до них. */
 export function shopOf(production?: ProductionSettings): ProductionSettings {
   return production ?? DEFAULT_PRODUCTION;
+}
+
+/**
+ * РАЗМЕРЫ УГЛА ЭТОЙ ОРГАНИЗАЦИИ — ОДИН ВОПРОС, ОДНА ФУНКЦИЯ.
+ *
+ * Пусто — типовые (фальш-панель 100, Г-модуль 900, верхний 600), и это
+ * не молчаливая подстановка: `confirmed: false` идёт с ними и превращается
+ * на экране в «не подтверждено цехом».
+ */
+export function cornerSizesOf(production?: ProductionSettings): CornerSizes {
+  return production?.corner ?? DEFAULT_CORNER_SIZES;
 }
 
 /**

@@ -23,13 +23,15 @@ export function wallLabel(index: number): string {
 }
 
 /** Падеж, в котором стена стоит во фразе. */
-export type WallCase = 'nominative' | 'accusative' | 'prepositional';
+export type WallCase = 'nominative' | 'accusative' | 'prepositional' | 'genitive';
 
 /** Слово «стена» по падежам. Буква стены не склоняется — это обозначение. */
 const WALL_WORD: Record<WallCase, string> = {
   nominative: 'стена',
   accusative: 'стену',
   prepositional: 'стене',
+  /* «вдоль стены Б» — отказ смены угла называет стену так (слой 55). */
+  genitive: 'стены',
 };
 
 /**
@@ -98,7 +100,14 @@ export function mergeEstimates(parts: Estimate[]): Estimate {
 
       byKey.set(line.key, {
         ...before,
-        quantity: round2(before.quantity + line.quantity),
+        /*
+         * Количество — с точностью строк (миллиметр у погонных метров).
+         * Округление суммы до сотых теряло миллиметры столешницы угла
+         * (слой 55): у стены после угла плита начинается с захода в 57 мм,
+         * и 2.6 + 0.599 м показывались как 3.2 м при плите 3.199 м в сцене.
+         * Деньги складываются отдельно и от этого не менялись.
+         */
+        quantity: round3(before.quantity + line.quantity),
         // Складываем посчитанное, а не считаем заново.
         total: round2(before.total + line.total),
         // Пропавшая ставка на любой из стен — пропавшая ставка на объекте.
@@ -135,6 +144,10 @@ export function mergeEstimates(parts: Estimate[]): Estimate {
     merged,
     merged.lines.filter((line) => !line.enabled).map((line) => line.key),
   );
+}
+
+function round3(value: number): number {
+  return Math.round(value * 1000) / 1000;
 }
 
 function round2(value: number): number {

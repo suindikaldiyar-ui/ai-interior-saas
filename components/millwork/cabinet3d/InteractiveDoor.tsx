@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import type * as THREE from 'three';
 import { useSlide } from './useSlide';
 import { useTouchTarget } from './useTouchTarget';
-import { doorPivot } from '@/lib/millwork/cabinetBoxes';
+import { doorKick, doorPivot, leafLocal } from '@/lib/millwork/cabinetBoxes';
 import type { CabinetParts } from './parts';
 
 /**
@@ -98,7 +98,7 @@ export default function InteractiveDoor({
   useTouchTarget(touch, { width, height, depth: 0.06 });
   void depth;
 
-  const pivot = doorPivot(opening, x, y, width, height);
+  const pivot = doorPivot(opening, x, y, width, height, thickness);
   const target = open ? pivot.angle : 0;
 
   useSlide({
@@ -108,7 +108,11 @@ export default function InteractiveDoor({
       const el = group.current;
       if (!el) return;
       if (pivot.axis === 'x') el.rotation.x = value;
-      else el.rotation.y = value;
+      else {
+        el.rotation.y = value;
+        /* Петля выносит полотно вперёд по ходу (`doorKick`, слой 55). */
+        el.position.z = pivot.origin[2] + doorKick(pivot, value);
+      }
     },
     onSettle: () => {
       if (!openRef.current) setActive(false);
@@ -116,13 +120,17 @@ export default function InteractiveDoor({
   });
 
   const [panelX, panelY] = pivot.panel;
+  const local = leafLocal({ opening, width, height, thickness, gap, integratedHandle });
   return (
     /*
      * Ось вращения стоит на ПЕРЕДНЕЙ плоскости корпуса (z = 0): модуль
      * нарисован от нуля вглубь, и петля живёт именно здесь. Смещать группу
      * на половину глубины нельзя — дверь оторвётся от шкафа.
      */
-    <group ref={group} position={pivot.origin}>
+    <group
+      ref={group}
+      position={[pivot.origin[0], pivot.origin[1], pivot.origin[2] + doorKick(pivot, target)]}
+    >
       <mesh
         ref={touch}
         name={`part:${id}`}
@@ -160,53 +168,30 @@ export default function InteractiveDoor({
         */}
       {active && (
         <>
+      {/*
+        * ПОЛОТНО И РУЧКА — ИЗ `leafLocal` (слой 55): те же числа меряет
+        * проверка открывания у угла (`leafPoses`). Своих координат у
+        * компонента нет — иначе картинка и проверка разойдутся.
+        */}
       <mesh
         geometry={parts.box}
         material={frontMaterial ?? parts.front}
-        position={[panelX, panelY, thickness / 2]}
-        scale={[width - 2 * gap, height - 2 * gap, thickness]}
+        position={local.panel.at}
+        scale={local.panel.size}
         castShadow
       />
 
       {/*
         * Ручка. Без неё фасад читается как панель, а не как дверь.
-        * Профиль по верхней кромке при integratedHandles, иначе скоба.
+        * Профиль по верхней кромке при integratedHandles, у механизма — на
+        * свободном крае, иначе скоба.
         */}
-      {integratedHandle ? (
-        <mesh
-          geometry={parts.box}
-          material={parts.metal}
-          position={[panelX, panelY + height / 2 - gap - 0.01, thickness + 0.004]}
-          scale={[width - 2 * gap, 0.02, 0.015]}
-        />
-      ) : opening === 'lift' || opening === 'flap' ? (
-        /*
-         * У механизма ручка на СВОБОДНОМ крае — за него и берутся: у
-         * подъёмника снизу, у откидного сверху. Скоба сбоку читалась бы
-         * как распашная дверь, а это другая мебель.
-         */
-        <mesh
-          geometry={parts.box}
-          material={parts.metal}
-          position={[
-            panelX,
-            panelY + (opening === 'lift' ? -height / 2 + 0.04 : height / 2 - 0.04),
-            thickness + 0.012,
-          ]}
-          scale={[Math.min(0.24, width * 0.5), 0.016, 0.016]}
-        />
-      ) : (
-        <mesh
-          geometry={parts.box}
-          material={parts.metal}
-          position={[
-            panelX + (opening === 'left' ? width / 2 - 0.05 : -width / 2 + 0.05),
-            panelY,
-            thickness + 0.012,
-          ]}
-          scale={[0.016, Math.min(0.22, height * 0.4), 0.016]}
-        />
-      )}
+      <mesh
+        geometry={parts.box}
+        material={parts.metal}
+        position={local.handle.at}
+        scale={local.handle.size}
+      />
         </>
       )}
     </group>

@@ -13,6 +13,8 @@ import {
   snapToStandard,
 } from './modules';
 import { rowSpansOfRun, upperSpansOfRun, buildUpperRow, fillGap, moduleId, onWall } from './layout';
+import { blindVariantRefusal, cornerDoorHinge, cornerGeometry, upperBoundsOf } from './corner';
+import { counterTailsOf } from './countertop';
 import {
   assertNoOverlap,
   assertRunFits,
@@ -669,6 +671,12 @@ export function applyOps({
     for (const unit of [...modules].sort((a, b) => a.offsetMm - b.offsetMm)) {
       if (unit.offsetMm < fromMm) continue;
       if (unit.offsetMm !== edge) break;
+      /*
+       * Угловой модуль стоит В УГЛУ и за соседями не едет (слой 55):
+       * подтянутый влево, он ушёл бы из угла, а соседняя стена осталась
+       * бы стыковаться к пустоте. Цепочка кончается на нём.
+       */
+      if (unit.kind === 'corner_base') break;
       chain.add(unit);
       edge = unit.offsetMm + unit.widthMm;
     }
@@ -1094,6 +1102,32 @@ export function applyOps({
         break;
       }
 
+      case 'set_counter_end': {
+        /*
+         * СТОЛЕШНИЦА НАД ПУСТОТОЙ У СТЕНЫ — СНЯТЬ ИЛИ ВЕРНУТЬ (слой 55).
+         *
+         * Снять можно только то, что есть: плиту над хвостом не меньше
+         * 150 мм у ряда угловой кухни. Меньший хвост закрывается добором —
+         * плиту над ним не снимают, иначе между модулем и стеной щель.
+         */
+        const tail = counterTailsOf({ ...run, modules, counterEnds: undefined }).find(
+          (item) => item.end === op.end,
+        );
+        if (!tail || tail.filler) {
+          warnings.push(
+            tail
+              ? `У ${op.end === 'start' ? 'начала' : 'конца'} ряда хвост ${tail.widthMm} мм: его закрывает добор, плиту над ним не снимают.`
+              : `У ${op.end === 'start' ? 'начала' : 'конца'} ряда столешница над пустотой не лежит — снимать нечего.`,
+          );
+          break;
+        }
+        const ends = { ...(run.counterEnds ?? {}) };
+        if (op.cut) ends[op.end] = 'cut';
+        else delete ends[op.end];
+        run = { ...run, counterEnds: Object.keys(ends).length > 0 ? ends : undefined };
+        break;
+      }
+
       case 'replace_module': {
         /*
          * ЗАМЕНА РАБОТАЕТ НА ЛЮБОМ РЯДУ.
@@ -1161,6 +1195,27 @@ export function applyOps({
             ? { ...dressed, fill: withKeptHandle(dressed, dressed.fill) }
             : dressed;
         };
+
+        /*
+         * СЛЕПАЯ ЗОНА УГЛА — ТОЛЬКО ДВЕРЦА (слой 55). Замена несёт вариант
+         * с собой, и мимо этого правила она проходить не вправе: ящик у
+         * фальш-панели выехал бы в неё на всю ширину фронта.
+         */
+        const replacing =
+          modules.find((m) => m.id === op.moduleId) ??
+          upperModules.find((m) => m.id === op.moduleId) ??
+          mezzModules.find((m) => m.id === op.moduleId);
+        const blindReplace = replacing
+          ? blindVariantRefusal(replacing, { ...run, zone }, {
+              variant: op.variant,
+              kind: op.kind,
+              appliance: op.appliance,
+            })
+          : null;
+        if (blindReplace) {
+          warnings.push(blindReplace);
+          break;
+        }
 
         if (editMezz(op.moduleId, swap)) {
           placeMezz(mezzModules, 'Замена');
@@ -1535,6 +1590,12 @@ export function applyOps({
             `${spec.title}: в это место не встаёт — ` +
               `ширина ${target.widthMm} мм или не то место в ряду.`,
           );
+          break;
+        }
+        /* Слепая зона угла: только дверца, и ответ — словами (слой 55). */
+        const blindNo = blindVariantRefusal(target, { ...run, zone }, { variant: op.variant });
+        if (blindNo) {
+          warnings.push(`${spec.title}: ${blindNo}`);
           break;
         }
 
@@ -2423,7 +2484,15 @@ export function applyOps({
      */
     if (unit.fill.openingChosen) return unit;
 
-    const hinge = hingeSide(unit, i, modules.length);
+    /*
+     * Створки у угла открываются ОТ угла (слой 55, `cornerDoorHinge`):
+     * у слепого модуля петли у угла упрутся в фальш-панель, у первого
+     * модуля после угла полотно зайдёт кромкой в фасад соседней стены.
+     * Умолчание по месту в ряду про угол не знает — та же поправка, что
+     * в `buildRun`.
+     */
+    const hinge =
+      cornerDoorHinge(unit, { ...run, zone, modules }) ?? hingeSide(unit, i, modules.length);
     return unit.fill.hinge === hinge ? unit : { ...unit, fill: { ...unit.fill, hinge } };
   });
 
@@ -2468,6 +2537,14 @@ export function applyOps({
    * формулы «где можно» здесь не появляется — свежая сборка зовётся
    * ровно за этим, а ЧТО там стоит, берётся из держанного ряда.
    */
+  /*
+   * Углы ряда — те же, по которым он собран: у ряда после угла верх
+   * начинается раньше нуля, у владельца в конце стоит верхний угловой
+   * модуль (слой 55). Без них свежая сборка считала бы участки от нуля,
+   * и держанный шкаф над угловым модулем соседа снимался бы как «вне
+   * участка».
+   */
+  const cornerOwn = run.corner?.own;
   const fresh = options.hasUpper
     ? buildUpperRow(
         modules,
@@ -2475,6 +2552,14 @@ export function applyOps({
         withBeams,
         { ...requirements, options },
         run.ceilingHeightMm,
+        undefined,
+        run.corner
+          ? {
+              ...upperBoundsOf({ ...run, zone }),
+              own: cornerOwn,
+              geometry: cornerOwn ? cornerGeometry(cornerOwn, zone, run.production) : null,
+            }
+          : undefined,
       ).map((segment) => ({ ...segment, modules: onWall(segment.modules, run.wallId) }))
     : [];
 
@@ -2622,12 +2707,20 @@ export function applyOps({
           ? { ...unit, front: upperFrontAll }
           : unit;
 
-      return painted.fill
-        ? painted
-        : {
-            ...painted,
-            fill: withKeptHandle(painted, defaultFill(painted, shell, i, segment.modules.length)),
-          };
+      if (painted.fill) return painted;
+      const fill = withKeptHandle(painted, defaultFill(painted, shell, i, segment.modules.length));
+      /*
+       * Створки верхнего ряда у угла — от угла (слой 55), как внизу:
+       * у слепого петли упрутся в фальш-панель, у первого после угла
+       * полотно зайдёт кромкой в фасад соседней стены.
+       */
+      const cornerHinge = fill.openingChosen
+        ? null
+        : cornerDoorHinge(painted, { ...nextRun, zone });
+      return {
+        ...painted,
+        fill: cornerHinge ? { ...fill, hinge: cornerHinge } : fill,
+      };
     }),
   }));
 

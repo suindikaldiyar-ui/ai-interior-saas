@@ -3,6 +3,7 @@ import type {
   Measurement,
   Opening,
   Run,
+  RunCorner,
   RunRequirements,
   Variant,
   VariantKey,
@@ -14,6 +15,7 @@ import type { MillingItem } from './milling';
 import type { CarcassItem } from './carcassMaterial';
 import type { MaterialItem } from './materialCollection';
 import { buildVariants } from './variants';
+import { runWithCorner } from './corner';
 
 /**
  * Замер → входные данные конфигуратора.
@@ -97,6 +99,16 @@ export type WorkspaceInput = {
   comms: CommPoint[];
   rates: RateTable;
   cornerAt: 'start' | 'end' | null;
+  /**
+   * УГОЛ РАБОЧЕЙ СТЕНЫ В КОМПОЗИЦИИ (слой 55).
+   *
+   * Стена А собирается из вариантов, а не композицией, и угла не
+   * получала вовсе: в конце её ряда не было ни Г-модуля, ни слепого
+   * модуля, у угла не было владельца, и плиты А и Б ложились в угловой
+   * квадрат дважды. Угол ей кладёт та же `cornerOfSegment`, что и
+   * композиции. Пусто — прямая кухня.
+   */
+  corner?: RunCorner;
   /**
    * ВСЕ СТЕНЫ ЗАМЕРА, А НЕ ТОЛЬКО РАБОЧАЯ.
    *
@@ -287,6 +299,7 @@ export function composeVariants(
     comms: input.comms,
     rates: input.rates,
     cornerAt: input.cornerAt,
+    corner: input.corner,
     disabledKeys: disabled,
     production: input.production,
     milling: input.milling,
@@ -296,9 +309,21 @@ export function composeVariants(
   });
 
   return base.map((variant) => {
-    const edited = editedRuns[variant.key];
-    if (!edited) return variant;
+    const saved = editedRuns[variant.key];
+    if (!saved) return variant;
 
+    /*
+     * УГОЛ ПРАВЛЕНОМУ РЯДУ СТЕНЫ А КЛАДЁТ КОМПОЗИЦИЯ — ДО СМЕТЫ (слой 55).
+     *
+     * Ряд из правок лежит с углом на момент записи: у объектов до слоя 55
+     * угла на стене А не было вовсе, у стены, которую правили в прямой
+     * форме, — тоже. Смета считалась по этому ряду, а сцена и раскрой
+     * получали угол композиции позже: Г 3600 + 2800 со слепым углом —
+     * смета стены А 1 403 311 ₸ при ряде сцены 1 419 170 ₸, без запила,
+     * угловых петель и глухой части. Угол кладётся здесь, и этот же ряд
+     * видят сцена и раскрой: стену А `wallSegments` больше не трогает.
+     */
+    const edited = runWithCorner(saved, input.corner);
     const estimate = editedRunEstimate(edited, variant.key, input, disabled);
     return { ...variant, run: edited, estimate };
   });

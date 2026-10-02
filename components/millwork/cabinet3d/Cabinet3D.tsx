@@ -24,7 +24,8 @@ import { runPlaces } from '@/lib/millwork/cabinetBoxes';
 import { cornerBandMm } from '@/lib/millwork/composition';
 import { COUNTER_OVERHANG_MM, rowStandardDepthMm } from '@/lib/millwork/fill';
 import { moduleOfPart } from '@/lib/millwork/selection';
-import { countertopSlabs } from '@/lib/millwork/countertop';
+import { PLINTH_SETBACK_MM, apronSpans, countertopSlabs, plinthSpans } from '@/lib/millwork/countertop';
+import { blindPartMm, cornerGeometry, openFrontMm } from '@/lib/millwork/corner';
 import { CAD_CARCASS_BASE, CAD_ROOM, cadShadeMaterial, cadShadeQuaternion } from './cadLook';
 import {
   countertopMm,
@@ -287,8 +288,12 @@ export default function Cabinet3D({
    */
   const depthM = rowStandardDepthMm(run.zone, 'base', run.production) / MM;
   const plinthM = plinthMm(run.production) / MM;
-  /** Цоколь утоплен: по нижней тени шкаф «стоит», а не лежит на полу. */
-  const plinthSetbackM = 0.05;
+  /*
+   * Цоколь утоплен: по нижней тени шкаф «стоит», а не лежит на полу.
+   * Число — из движка (`PLINTH_SETBACK_MM`): по нему же цоколь в углу
+   * доходит до цоколя владельца (`plinthSpans`, слой 55).
+   */
+  const plinthSetbackM = PLINTH_SETBACK_MM / MM;
   /** Столешница свисает вперёд — по свесу читается торцевая полоса. */
   /* Свес — из движка: его же теперь меряет смета (`counterSlabDepthMm`). */
   const counterOverhangM = COUNTER_OVERHANG_MM / MM;
@@ -526,6 +531,36 @@ export default function Cabinet3D({
    */
   const counterTopY = workTopMm(run.production) - countertopMm(run.production);
   const counterSlabs = useMemo(() => countertopSlabs(run), [run]);
+  /*
+   * ЦОКОЛЬ И ФАРТУК — ТЕМИ ЖЕ ФУНКЦИЯМИ, ЧТО СЧИТАЮТ СМЕТУ (слой 55).
+   *
+   * Сцена рисовала обе полосы на всю длину ряда: фартук за колонной
+   * холодильника и без верхнего ряда, цоколь под пустотой. Смета брала
+   * фартук по столешнице при верхнем ряде. Теперь место и длину обеих
+   * считает `countertop.ts`, и рисуется ровно то, что посчитано.
+   */
+  const plinthStrips = useMemo(() => plinthSpans(run), [run]);
+  const apronStrips = useMemo(() => apronSpans(run), [run]);
+  /*
+   * НИША ПОД ВЕРХНИМ РЯДОМ — по верхнему ряду и его углам: у пустого
+   * верхнего угла владелец кончается раньше стены, сосед начинается
+   * позже; иначе — как у плиты, владелец до стены, сосед до его края.
+   */
+  const niche = useMemo(() => {
+    const upperDepthMm = rowStandardDepthMm(run.zone, 'upper', run.production);
+    const dock = run.corner?.dock;
+    const own = run.corner?.own;
+    const dockGeometry = dock ? cornerGeometry(dock, run.zone, run.production) : null;
+    const back = dock
+      ? dock.upper === 'empty'
+        ? dockGeometry!.lostMm - dockGeometry!.upperStartMm
+        : cornerBandMm({ corner: run.corner, bandDepthMm: upperDepthMm, zone: run.zone, production: run.production }).backMm
+      : 0;
+    const cut = own && own.upper === 'empty' ? cornerGeometry(own, run.zone, run.production).ownerUpperCutMm : 0;
+    const fromM = -back / MM;
+    const toM = (run.lengthMm - cut) / MM;
+    return { centerM: (fromM + toM) / 2, lengthM: Math.max(0, toM - fromM) };
+  }, [run]);
 
   /*
    * Фартук: полоса стены между столешницей и верхним рядом. Именно её
@@ -535,28 +570,13 @@ export default function Cabinet3D({
   /*
    * СПЛОШНЫЕ ПОЛОСЫ СХОДЯТСЯ В УГЛУ.
    *
-   * Столешница, цоколь и ниша под верхним рядом идут по ВСЕМУ ряду
-   * одной плитой, и в углу их две. Раньше каждая кончалась у своего
-   * ряда: между ними оставалась щель — 59 мм по столешнице, 150 по
-   * цоколю, 340 по нише, — и угловая кухня читалась как два ряда,
-   * приставленных друг к другу.
-   *
-   * Правило одно на все три полосы и считает его `cornerBandMm`:
-   * ряд ПОСЛЕ угла заходит назад на всё, что угол занял; ряд ПЕРЕД
-   * углом кончается там, где начинается полоса соседнего. Глубину своей
-   * полосы каждая знает сама — она её и рисует.
+   * Столешница, цоколь, фартук и ниша идут по ряду, и в углу их две.
+   * Правило одно и считает его движок (`cornerBandMm` в `corner.ts`,
+   * слой 55): ряд-ВЛАДЕЛЕЦ угла идёт до стены соседа, ряд, который к
+   * нему стыкуется, заходит назад до края полосы владельца. Своей
+   * арифметики полос у сцены нет: плиты — `countertopSlabs`, цоколь —
+   * `plinthSpans`, фартук — `apronSpans`, ниша — выше.
    */
-  const band = (bandDepthM: number) => {
-    const { backMm, cutMm } = cornerBandMm({
-      corner: run.corner,
-      bandDepthMm: bandDepthM * MM,
-    });
-    const backM = backMm / MM;
-    const startM = -backM;
-    const lengthBandM = Math.max(0, lengthM + backM - cutMm / MM);
-    return { startM, lengthM: lengthBandM, centerM: startM + lengthBandM / 2 };
-  };
-
   const apronBottom = workTopMm(run.production) / MM;
   const apronTop = upperBottomMm(run.production) / MM;
   const apronH = Math.max(0, apronTop - apronBottom);
@@ -603,33 +623,39 @@ export default function Cabinet3D({
         * поперёк пустой стены, та самая «случайная геометрия», из-за
         * которой пустая сцена читалась как недогруженная.
         */}
-      {assembled && (
-        <mesh
-          geometry={parts.box}
-          material={parts.plinth}
-          position={[
-            band(depthM - plinthSetbackM).centerM,
-            plinthM / 2,
-            -depthM / 2 - plinthSetbackM / 2,
-          ]}
-          scale={[band(depthM - plinthSetbackM).lengthM, plinthM, depthM - plinthSetbackM]}
-          receiveShadow
-          castShadow={shadows}
-        />
-      )}
-      {assembled && underShade && (
-        <mesh
-          name="shade-under"
-          userData={{ shade: true }}
-          material={underShade}
-          position={[band(depthM - plinthSetbackM).centerM, 0.0015, -plinthSetbackM + CAD_ROOM.underM / 2]}
-          quaternion={underTurn}
-          renderOrder={1}
-          raycast={() => null}
-        >
-          <planeGeometry args={[CAD_ROOM.underM, band(depthM - plinthSetbackM).lengthM]} />
-        </mesh>
-      )}
+      {assembled &&
+        plinthStrips.map((strip) => (
+          <mesh
+            key={`plinth-${strip.fromMm}`}
+            name={`plinth:${run.wallId ?? 'a'}`}
+            geometry={parts.box}
+            material={parts.plinth}
+            position={[
+              (strip.fromMm + strip.toMm) / 2 / MM,
+              plinthM / 2,
+              -depthM / 2 - plinthSetbackM / 2,
+            ]}
+            scale={[(strip.toMm - strip.fromMm) / MM, plinthM, depthM - plinthSetbackM]}
+            receiveShadow
+            castShadow={shadows}
+          />
+        ))}
+      {assembled &&
+        underShade &&
+        plinthStrips.map((strip) => (
+          <mesh
+            key={`shade-${strip.fromMm}`}
+            name="shade-under"
+            userData={{ shade: true }}
+            material={underShade}
+            position={[(strip.fromMm + strip.toMm) / 2 / MM, 0.0015, -plinthSetbackM + CAD_ROOM.underM / 2]}
+            quaternion={underTurn}
+            renderOrder={1}
+            raycast={() => null}
+          >
+            <planeGeometry args={[CAD_ROOM.underM, (strip.toMm - strip.fromMm) / MM]} />
+          </mesh>
+        ))}
 
       {/*
         * Четыре пачки: корпус, фасады, металл, техника. Всё, что стоит
@@ -728,6 +754,9 @@ export default function Cabinet3D({
           displayLit={displayLit}
           onActive={handleActive}
           frontMaterial={frontMaterials.get(frontKey(frontWithMilling(entry.unit, run)))}
+          openWidthM={
+            blindPartMm(entry.unit, run) > 0 ? openFrontMm(entry.unit, run) / MM : undefined
+          }
         />
       ))}
 
@@ -813,12 +842,12 @@ export default function Cabinet3D({
            * там, где верхних шкафов уже нет.
            */
           position={[
-            band(rowStandardDepthMm(run.zone, 'upper', run.production) / MM).centerM,
+            niche.centerM,
             upperBottomMm(run.production) / MM - 0.004,
             -depthM + rowStandardDepthMm(run.zone, 'upper', run.production) / MM / 2,
           ]}
           scale={[
-            band(rowStandardDepthMm(run.zone, 'upper', run.production) / MM).lengthM,
+            niche.lengthM,
             0.008,
             rowStandardDepthMm(run.zone, 'upper', run.production) / MM,
           ]}
@@ -838,7 +867,7 @@ export default function Cabinet3D({
       * на стенах Б и В он оставался у первого ряда, неповёрнутый, и
       * читался как «часть мебели висит в воздухе».
       */}
-    {hasCountertop && apronH > 0 && (
+    {hasCountertop && apronH > 0 && apronStrips.length > 0 && (
       <group
         position={[
           placement ? placement.xM : originX,
@@ -847,18 +876,28 @@ export default function Cabinet3D({
         ]}
         rotation={[0, placement ? (placement.rotationYDeg * Math.PI) / 180 : 0, 0]}
       >
-        <mesh
-          geometry={parts.box}
-          material={apronMaterial}
-          position={[band(0).centerM, apronBottom + apronH / 2, -depthM + 0.003]}
-          scale={[band(0).lengthM, apronH, 0.004]}
-          /*
-           * Фартук — отделка стены, и тень верхнего ряда ложится именно
-           * на него: без приёма тени он закрывал её от стены, и под
-           * шкафами было ровно светло (слой 53).
-           */
-          receiveShadow={shadows}
-        />
+        {apronStrips.map((strip) => (
+          <mesh
+            key={`apron-${strip.fromMm}`}
+            name={`apron:${run.wallId ?? 'a'}`}
+            geometry={parts.box}
+            material={apronMaterial}
+            /*
+             * Фартук — поверхность стены: лежит на ней плёнкой в миллиметр.
+             * В углу фартуки двух стен встречаются по линии угла, и толстая
+             * панель вошла бы одна в другую (слой 55): длина — та же, что в
+             * смете (`apronSpans`), толщина — только чтобы было что рисовать.
+             */
+            position={[(strip.fromMm + strip.toMm) / 2 / MM, apronBottom + apronH / 2, -depthM + 0.0005]}
+            scale={[(strip.toMm - strip.fromMm) / MM, apronH, 0.001]}
+            /*
+             * Фартук — отделка стены, и тень верхнего ряда ложится именно
+             * на него: без приёма тени он закрывал её от стены, и под
+             * шкафами было ровно светло (слой 53).
+             */
+            receiveShadow={shadows}
+          />
+        ))}
       </group>
     )}
     </>

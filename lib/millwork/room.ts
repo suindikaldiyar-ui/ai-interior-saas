@@ -1,8 +1,10 @@
-import type { CornerJoin, Opening, OpeningKind } from '@/types/millwork';
+import type { CornerChoice, CornerJoin, Opening, OpeningKind, ZoneKind } from '@/types/millwork';
 import { OPENING_KIND_TITLE } from '@/types/millwork';
+import type { ProductionSettings } from '@/types/catalog';
 import type { KnownState, Survey, SurveyOpening } from '@/types/survey';
 import { beamDropMm } from './ceiling';
 import { cornerLostMm, markOnRun } from './composition';
+import { cornerGeometry } from './corner';
 import { wallLabel } from './walls';
 
 /**
@@ -133,6 +135,14 @@ export type RoomInput = {
   /** Решение угла: с какого миллиметра стены начинается её ряд. */
   solution: CornerJoin['solution'];
   /**
+   * Выбор по каждому углу (слой 55) и школа цеха: занятое в углу каждой
+   * стены считает та же `cornerGeometry`, что урезала её ряд. Пусто —
+   * прежнее `solution` на все углы.
+   */
+  corners?: CornerChoice[];
+  zone?: ZoneKind;
+  production?: ProductionSettings;
+  /**
    * ОПОРНЫЙ РЯД: на какой стене он стоит и где в мире его начало (фасад,
    * левый край). Комната строится вокруг него — так же, как ряды вокруг
    * первого (`runPlacements`), или вокруг одной стены на видах-чертежах.
@@ -159,8 +169,14 @@ export function rowStartOnWallMm(
   wallIndex: number,
   solution: CornerJoin['solution'],
   depthMm: number,
+  /** Выбор по углам и школа цеха (слой 55): тот же ответ, что у композиции. */
+  corners?: { choices: CornerChoice[]; zone?: ZoneKind; production?: ProductionSettings },
 ): number {
-  return wallIndex === 0 ? 0 : cornerLostMm(solution, depthMm);
+  if (wallIndex === 0) return 0;
+  const choice = corners?.choices[wallIndex - 1];
+  return choice
+    ? cornerGeometry(choice, corners!.zone, corners!.production).lostMm
+    : cornerLostMm(solution, depthMm);
 }
 
 /** Что из полей проёма читается для этого вида. */
@@ -251,6 +267,11 @@ export function wallPieces(lengthMm: number, heightMm: number, holes: RoomRect[]
   );
 }
 
+/** Углы входа комнаты — тот же ответ, что у композиции (слой 55). */
+function cornersOf(input: Pick<RoomInput, 'corners' | 'zone' | 'production'>) {
+  return input.corners ? { choices: input.corners, zone: input.zone, production: input.production } : undefined;
+}
+
 export function roomLayout(input: RoomInput): Room {
   const missing: string[] = [];
   const survey = input.survey ?? null;
@@ -302,7 +323,7 @@ export function roomLayout(input: RoomInput): Room {
 
   const starts: [number, number][] = new Array(n);
   if (n > 0) {
-    const rowStart = rowStartOnWallMm(anchorIndex, input.solution, input.depthMm);
+    const rowStart = rowStartOnWallMm(anchorIndex, input.solution, input.depthMm, cornersOf(input));
     const d = dirOf(anchorIndex);
     const nin = inwardOf(anchorIndex);
     starts[anchorIndex] = [
@@ -421,7 +442,7 @@ export function roomLayout(input: RoomInput): Room {
       rotationYDeg: rotOf(index),
       pieces: wallPieces(Math.round(wall.lengthMm), ceilingMm, holes),
       cornerEndMm: index < n - 1 ? T : 0,
-      rowStartMm: rowStartOnWallMm(index, input.solution, input.depthMm),
+      rowStartMm: rowStartOnWallMm(index, input.solution, input.depthMm, cornersOf(input)),
       state: lengthState === 'assumed' || ceilingState === 'assumed' ? 'assumed' : 'measured',
     };
   });
@@ -568,6 +589,10 @@ export function roomSourceOf(input: {
   ceilingMm: number;
   depthMm: number;
   solution: CornerJoin['solution'];
+  /** Выбор по углам, зона и школа цеха (слой 55). Пусто — `solution` на все углы. */
+  corners?: CornerChoice[];
+  zone?: ZoneKind;
+  production?: ProductionSettings;
   survey?: Survey | null;
 }): RoomSource {
   return {
@@ -579,6 +604,7 @@ export function roomSourceOf(input: {
     ceilingMm: input.ceilingMm,
     depthMm: input.depthMm,
     solution: input.solution,
+    ...(input.corners ? { corners: input.corners, zone: input.zone, production: input.production } : {}),
     survey: input.survey ?? null,
   };
 }

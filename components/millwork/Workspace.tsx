@@ -34,13 +34,16 @@ import {
 import {
   SHAPE_TITLE,
   runPlacements,
+  segmentCount,
 } from '@/lib/millwork/composition';
 import {
   compositionFor,
   objectEstimateOf,
   objectInput,
   objectSite,
+  savedCornerChoices,
   savedWallRuns,
+  wallCornerOf,
   wallRequirementsOf,
   wallSegments,
 } from '@/lib/millwork/objectEstimate';
@@ -48,9 +51,17 @@ import { ratesFromCatalog } from '@/lib/millwork/rates';
 import { rowStandardDepthMm } from '@/lib/millwork/fill';
 import { roomSourceOf, type RoomSource } from '@/lib/millwork/room';
 import { openingAssumptions } from '@/lib/millwork/warnings';
-
-/** Решение угла: модуль 900×900 или фальш-панель. */
-type CornerSolution = 'corner_module' | 'false_panel';
+import {
+  LOWER_CORNER_TITLE,
+  UPPER_CORNER_TITLE,
+  cornerChoicesOf,
+} from '@/lib/millwork/corner';
+import {
+  changeCorner,
+  cornerCards,
+  cornerOfUnit,
+  type CornerCard,
+} from '@/lib/millwork/cornerChange';
 
 import { compressPhoto } from '@/lib/photo';
 import FrontSwatchCards from './FrontSwatchCards';
@@ -122,6 +133,7 @@ import { snapMove } from '@/lib/millwork/freeRun';
  */
 import {
   OBJECT_MARKS,
+  cornerSizesOf,
   markOwn,
   markValue,
   productionFor,
@@ -139,8 +151,6 @@ import { buildRun } from '@/lib/millwork/layout';
 import { manualAnchorCost } from '@/lib/millwork/invariants';
 import {
   APPLIANCE_SLOTS,
-  CORNER,
-  CORNER_SIZE_MM,
   MAX_WIDTH,
   MIN_WIDTH,
   moduleAppliances,
@@ -185,6 +195,7 @@ import { shareUrl, whatsappLink, type MillworkState } from '@/lib/projects';
 import type {
   ApplianceKind,
   CompositionKind,
+  CornerChoice,
   CommPoint,
   Estimate,
   MillworkOp,
@@ -528,9 +539,33 @@ export default function Workspace(props: WorkspaceProps) {
     props.initialState?.shape ?? 'linear',
   );
   const [wallIndex, setWallIndex] = useState(0);
-  const [cornerSolution, setCornerSolution] = useState<CornerSolution>(
-    props.initialState?.cornerSolution ?? 'false_panel',
+  /*
+   * ЧТО СТОИТ В КАЖДОМ УГЛУ — ВЫБОР ЧЕЛОВЕКА (слой 55).
+   *
+   * Было одно решение на всю кухню (`cornerSolution`) и только про низ.
+   * Теперь у каждого угла свой низ и свой верх. Объект, сохранённый до
+   * этого слоя, открывается тем углом, каким был сохранён: низ — его
+   * решение, верх пустой (`savedCornerChoices`, ловушка 295). Прежнее
+   * решение остаётся умолчанием НИЗА для углов, которых в объекте не
+   * было, — их добавляет смена формы.
+   */
+  const legacyCorner = props.initialState?.cornerSolution ?? 'false_panel';
+  const [cornerPicks, setCornerPicks] = useState<CornerChoice[] | undefined>(() =>
+    savedCornerChoices(props.initialState),
   );
+  const cornerChoices = useMemo(
+    () =>
+      cornerChoicesOf(
+        { corners: cornerPicks, cornerSolution: legacyCorner },
+        segmentCount(shape) - 1,
+      ),
+    [cornerPicks, legacyCorner, shape],
+  );
+  /**
+   * Угол, для которого открыта панель вариантов угла. Пусто — панель
+   * спрашивает выделенный модуль: нажал угловой — открылся его угол.
+   */
+  const [cornerPick, setCornerPick] = useState<number | null>(null);
   /**
    * Правки соседних стен: у стены А для этого есть `editedRuns`.
    *
@@ -791,9 +826,23 @@ export default function Workspace(props: WorkspaceProps) {
    * не точки рабочей стены — отбор по стене делает композиция
    * (`commsOnRun`), иначе ряд стены Б остался бы без вывода воды.
    */
+  /*
+   * Комплектация композиции — та же, что у стены А (`variantKey`): иначе
+   * стены Б и В собирались без стратегии, и у одной кухни выходило две
+   * столешницы — кварц на А и ЛДСП на Б (слой 55).
+   */
   const layoutAttempt = useMemo(
-    () => compositionFor({ shape, requirements, cornerSolution, site, production }),
-    [shape, requirements, cornerSolution, site, production],
+    () =>
+      compositionFor({
+        shape,
+        requirements,
+        cornerSolution: legacyCorner,
+        corners: cornerChoices,
+        site,
+        production,
+        variantKey,
+      }),
+    [shape, requirements, legacyCorner, cornerChoices, site, production, variantKey],
   );
 
   /** Композиция, которая СОБРАЛАСЬ. Отказ сюда не проходит. */
@@ -885,8 +934,14 @@ export default function Workspace(props: WorkspaceProps) {
         milling: millingItems,
         carcass: carcassItems,
         materials: materialItems,
+        /*
+         * Угол стены А — тот, что композиция положила своему первому
+         * ряду: без него в конце ряда А нет углового модуля, а у угла
+         * нет владельца (слой 55).
+         */
+        corner: wallCornerOf(layout),
       }),
-    [props, resolution, wallRequirements, liveRates, production, millingItems, carcassItems, materialItems],
+    [props, resolution, wallRequirements, liveRates, production, millingItems, carcassItems, materialItems, layout],
   );
 
   /**
@@ -907,10 +962,13 @@ export default function Workspace(props: WorkspaceProps) {
         measuredWalls: resolution?.measurement.walls ?? props.measuredWalls ?? [],
         ceilingMm: site.ceilingMm,
         depthMm: rowStandardDepthMm(zone, 'base', production),
-        solution: cornerSolution,
+        solution: legacyCorner,
+        corners: cornerChoices,
+        zone,
+        production,
         survey: survey ?? null,
       }),
-    [resolution, props.measuredWalls, site, input.openings, zone, production, cornerSolution, survey],
+    [resolution, props.measuredWalls, site, input.openings, zone, production, legacyCorner, cornerChoices, survey],
   );
 
   /*
@@ -998,6 +1056,21 @@ export default function Workspace(props: WorkspaceProps) {
   ).colorHex;
   /** Соседний ряд: на схеме он идёт контуром, чтобы был виден угол. */
   const neighbourRun = layout ? (segments[wall === 0 ? 1 : wall - 1] ?? null) : null;
+
+  /*
+   * ПРОЁМЫ СТЕНЫ — ТЕ, ПО КОТОРЫМ СОБРАН ЕЁ РЯД (слой 55).
+   *
+   * Правка, библиотека и материал всех стен брали проёмы стены А
+   * (`props.openings`): окно стены А рвало верхний ряд стены Б там, где у
+   * Б глухая стена, а её собственное окно правка не видела. У стен после
+   * угла проёмы — те, что композиция перевела в координаты их ряда; у
+   * стены А и у прямой кухни — прежние.
+   */
+  const wallOpenings = useCallback(
+    (index: number): Opening[] =>
+      index === 0 || !layout ? props.openings : (layout.segments[index]?.openings ?? []),
+    [props.openings, layout],
+  );
 
   /**
    * СМЕТА ВСЕГО ОБЪЕКТА, А НЕ ОДНОЙ СТЕНЫ.
@@ -1102,13 +1175,14 @@ export default function Workspace(props: WorkspaceProps) {
      */
     const places = runPlacements({
       runs: segments,
-      solution: cornerSolution,
+      solution: legacyCorner,
+      corners: cornerChoices,
       zone,
       production: production,
     });
 
     return segments.map((run, i) => ({ run, placement: places[i] }));
-  }, [layout, segments, cornerSolution, zone, production]);
+  }, [segments, legacyCorner, cornerChoices, zone, production]);
 
   /**
    * РЯД, СОБРАННЫЙ НА ДРУГОЙ ДЛИНЕ СТЕНЫ.
@@ -1443,8 +1517,10 @@ export default function Workspace(props: WorkspaceProps) {
       const at = wallOfModule(segments, moduleId);
       if (at !== null) setWallIndex(at);
       setSelectedId(moduleId);
-      /* Выделено что-то одно: модуль ИЛИ пустота. */
+      /* Выделено что-то одно: модуль ИЛИ пустота ИЛИ угол. */
       setSelectedGap(null);
+      /* Угол дальше решает выделенный модуль: угловой — его угол (слой 55). */
+      setCornerPick(null);
     },
     [segments],
   );
@@ -1454,9 +1530,18 @@ export default function Workspace(props: WorkspaceProps) {
     (gap: LibraryGap) => {
       setSelectedId(null);
       setSelectedGap(gap);
+      setCornerPick(null);
     },
     [],
   );
+
+  /** Кнопка угла: панель вариантов угла, стена — владелец угла. */
+  const selectCorner = useCallback((index: number) => {
+    setSelectedId(null);
+    setSelectedGap(null);
+    setWallIndex(index);
+    setCornerPick(index);
+  }, []);
   const selectedLabel = selection.caption;
 
   const palette = useMemo(() => paletteFromCatalog(catalog), [catalog]);
@@ -1545,20 +1630,20 @@ export default function Workspace(props: WorkspaceProps) {
     () => ({
       run: activeRun,
       requirements,
-      openings: props.openings,
+      openings: wallOpenings(wall),
       roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
       moduleId: selectedId,
       gap: selectedGap,
     }),
-    [activeRun, requirements, props.openings, props.roomDepthM, selectedId, selectedGap],
+    [activeRun, requirements, wallOpenings, wall, props.roomDepthM, selectedId, selectedGap],
   );
 
   const libraryList = useMemo(() => libraryCards(libraryInput), [libraryInput]);
 
   /* Пустоты выбранной стены: схема их только рисует. */
   const libraryGapList = useMemo(
-    () => libraryGaps(activeRun, props.openings, requirements),
-    [activeRun, props.openings, requirements],
+    () => libraryGaps(activeRun, wallOpenings(wall), requirements),
+    [activeRun, wallOpenings, wall, requirements],
   );
   const libraryReason = useMemo(() => libraryLock(libraryInput), [libraryInput]);
 
@@ -1614,6 +1699,148 @@ export default function Workspace(props: WorkspaceProps) {
     }));
   }, [selectedId, activeRun, libraryInput, zone, totalOf, estimate.total]);
 
+  /*
+   * ═══  УГОЛ: ЧТО В НЁМ СТОИТ И ЧЕМ ЕГО ЗАМЕНИТЬ (слой 55)  ═══
+   *
+   * Угол открывается двумя путями: кнопкой угла в панели формы или
+   * нажатием на угловой модуль в сцене и на схеме — тем же выделением,
+   * что у любого модуля (`cornerOfUnit`). Варианты показывает ТА ЖЕ
+   * панель библиотеки; «встанет ли» и сама смена — `changeCorner`, цена —
+   * той же сметой объекта, что итог внизу экрана.
+   */
+  const selectedCorner = useMemo(() => {
+    if (cornerPick !== null) return cornerPick < cornerChoices.length ? cornerPick : null;
+    if (!selectedUnit) return null;
+    const index = cornerOfUnit(selectedUnit, activeRun, wall);
+    return index !== null && index < cornerChoices.length ? index : null;
+  }, [cornerPick, cornerChoices.length, selectedUnit, activeRun, wall]);
+
+  /**
+   * РАЗДАЧА ПРИБОРОВ СЕЙЧАС: прибор → стена.
+   *
+   * Смена угла меняет полезную длину стены после угла, а раздача по
+   * умолчанию смотрит на длины (`splitAppliances`): короче стала стена —
+   * холодильник уехал бы на другую. Мебель при смене угла стоит, где
+   * стояла, поэтому и приборы держатся своих стен.
+   */
+  const applianceWallsNow = useMemo(
+    () =>
+      layout
+        ? Object.fromEntries(
+            layout.segments.flatMap((segment, i) => segment.appliances.map((a) => [a, i] as const)),
+          )
+        : {},
+    [layout],
+  );
+
+  /** Композиция с другим выбором по углам — для проверки до нажатия. */
+  const compositionWith = useCallback(
+    (corners: CornerChoice[], pinned: boolean) =>
+      compositionFor({
+        shape,
+        requirements: pinned ? { ...requirements, applianceWalls: applianceWallsNow } : requirements,
+        cornerSolution: legacyCorner,
+        corners,
+        site,
+        production,
+        variantKey,
+      }),
+    [shape, requirements, applianceWallsNow, legacyCorner, site, production, variantKey],
+  );
+
+  const cornerInput = useMemo(
+    () =>
+      selectedCorner === null
+        ? null
+        : {
+            runs: segments,
+            index: selectedCorner,
+            corners: cornerChoices,
+            requirements,
+            wallOpenings: site.walls.map((w) => w.openings),
+            labels: segments.map((_, i) => wallLabel(i)),
+          },
+    [selectedCorner, segments, cornerChoices, requirements, site],
+  );
+
+  /*
+   * КАРТОЧКИ УГЛА. Смена, которую движок принял, ещё обязана собраться
+   * композицией: не собралась — карточка серая с её причиной, а не экран
+   * с отказом после нажатия.
+   */
+  const cornerList = useMemo<CornerCard[]>(() => {
+    if (!cornerInput) return [];
+    return cornerCards(cornerInput).map((card) => {
+      if (card.refusal || card.current) return card;
+      const corners = cornerChoices.map((choice, i) => (i === cornerInput.index ? card.choice : choice));
+      const attempt = compositionWith(corners, true);
+      return attempt?.state === 'refused' ? { ...card, refusal: attempt.reason, runs: null } : card;
+    });
+  }, [cornerInput, cornerChoices, compositionWith]);
+
+  /** Сдвиг итога на экране — той же сметой объекта, что и сам итог. */
+  const cornerPrice = useCallback(
+    (card: CornerCard): number | null => {
+      if (card.refusal || !card.runs) return null;
+      if (card.current) return 0;
+      const total = objectEstimateFor(
+        card.runs,
+        editedRunEstimate(card.runs[0], variantKey, input, disabled),
+      ).total;
+      return Math.round(total) - Math.round(estimate.total);
+    },
+    [objectEstimateFor, variantKey, input, disabled, estimate.total],
+  );
+
+  /**
+   * НАЖАЛ КАРТОЧКУ УГЛА — УГОЛ СМЕНИЛСЯ, ОСТАЛЬНЫЕ МОДУЛИ НА МЕСТЕ.
+   *
+   * Ряды двух стен угла ложатся в правки (`editedRuns`, `editedWalls`) —
+   * как после любой правки модуля, — а выбор угла в состояние объекта.
+   * Отказ — словами под схемой, и ничего не меняется.
+   */
+  const applyCorner = useCallback(
+    (card: CornerCard) => {
+      if (!cornerInput) return;
+      const change = changeCorner({ ...cornerInput, next: card.choice });
+      if (!change.ok) {
+        setSceneNotice(change.why);
+        return;
+      }
+      const free = compositionWith(change.corners, false);
+      const pinned = compositionWith(change.corners, true);
+      if (pinned?.state === 'refused') {
+        setSceneNotice(pinned.reason);
+        return;
+      }
+      /*
+       * Раздача по длинам сменилась бы — приборы закрепляются на своих
+       * стенах: модули стоят, где стояли, и прибор вместе с ними.
+       */
+      const moved =
+        free?.state !== 'built' ||
+        free.composition.segments.some(
+          (segment, i) => segment.appliances.join() !== (layout?.segments[i]?.appliances ?? []).join(),
+        );
+      if (moved) setComposition((prev) => ({ ...prev, applianceWalls: applianceWallsNow }));
+
+      const owner = cornerInput.index;
+      dirty.current = true;
+      setCornerPicks(change.corners);
+      for (const index of [owner, owner + 1]) {
+        const run = change.runs[index];
+        if (!run) continue;
+        if (index === 0) setEditedRuns((prev) => ({ ...prev, [active.key]: run }));
+        else setEditedWalls((prev) => ({ ...prev, [index]: run }));
+      }
+      setSceneNotice(
+        `${wallLabel(owner)} — ${wallLabel(owner + 1)}: ${card.title.toLowerCase()}. ` +
+          'Остальные модули на своих местах.',
+      );
+    },
+    [cornerInput, compositionWith, layout, applianceWallsNow, active.key],
+  );
+
   /** Что выбрано — словами: «Дверца 600» либо «Пусто 900 мм». */
   const placeLabel = useMemo(() => {
     if (selectedId) return selectedLabel;
@@ -1622,6 +1849,26 @@ export default function Workspace(props: WorkspaceProps) {
     }
     return null;
   }, [selectedId, selectedLabel, selectedGap]);
+
+  /** Угол в панели библиотеки: что в нём стоит, его карточки и пометка размеров. */
+  const cornerPanel = useMemo(() => {
+    if (selectedCorner === null) return null;
+    const choice = cornerChoices[selectedCorner];
+    const sizes = cornerSizesOf(production);
+    return {
+      title: `Угол ${wallLabel(selectedCorner)} — ${wallLabel(selectedCorner + 1)}`,
+      now:
+        `Владелец угла — ${lowerWall(wallLabel(selectedCorner), 'nominative')}: её ряд идёт до стены соседа. ` +
+        `Низ: ${LOWER_CORNER_TITLE[choice.lower].toLowerCase()}, верх: ${UPPER_CORNER_TITLE[choice.upper].toLowerCase()}.`,
+      unconfirmed: sizes.confirmed
+        ? null
+        : `Размеры угла типовые — не подтверждено цехом: фальш-панель ${sizes.falsePanelMm} мм, ` +
+          `Г-модуль ${sizes.lowerLMm}×${sizes.lowerLMm}, верхний ${sizes.upperLMm}×${sizes.upperLMm}.`,
+      cards: cornerList,
+      priceOf: cornerPrice,
+      onPick: applyCorner,
+    };
+  }, [selectedCorner, cornerChoices, production, cornerList, cornerPrice, applyCorner]);
 
   /**
    * ПЕРЕНОС ПРИБОРА НА ДРУГУЮ СТЕНУ.
@@ -1711,7 +1958,7 @@ export default function Workspace(props: WorkspaceProps) {
         run: activeRun,
         requirements,
         ops,
-        openings: props.openings,
+        openings: wallOpenings(wall),
         roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
       });
       dirty.current = true;
@@ -1775,7 +2022,7 @@ export default function Workspace(props: WorkspaceProps) {
           .map((m) => m.id),
       );
     },
-    [active, activeRun, wall, requirements, props.openings, props.roomDepthM, flash, selectedId],
+    [active, activeRun, wall, requirements, wallOpenings, props.roomDepthM, flash, selectedId],
   );
 
   /**
@@ -1841,7 +2088,7 @@ export default function Workspace(props: WorkspaceProps) {
           run,
           requirements,
           ops: plan.ops,
-          openings: props.openings,
+          openings: wallOpenings(index),
           roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
         });
         /* Отказ движка — словами, а ряд записывается с тем, что прошло. */
@@ -1854,7 +2101,7 @@ export default function Workspace(props: WorkspaceProps) {
       if (changed) dirty.current = true;
       return said[0] ?? null;
     },
-    [wall, segments, selectedId, requirements, props.openings, props.roomDepthM, active.key],
+    [wall, segments, selectedId, requirements, wallOpenings, props.roomDepthM, active.key],
   );
 
   /*
@@ -2382,7 +2629,17 @@ export default function Workspace(props: WorkspaceProps) {
          * стене пропадала бы молча.
          */
         shape,
-        cornerSolution,
+        /*
+         * Выбор по углам — единственное место, где он хранится (слой 55).
+         * Прежнее `cornerSolution` больше не пишется: два поля об одном
+         * угле однажды разошлись бы, и объект открылся бы не тем углом.
+         *
+         * Пишется выбор КАЖДОГО угла формы, включая умолчания: угол,
+         * добавленный сменой формы, берёт низ из прежнего решения, а оно
+         * больше не сохраняется — записанный частично, такой угол открылся
+         * бы другим низом.
+         */
+        corners: shape === 'linear' ? cornerPicks : cornerChoices,
         wallRuns: Object.fromEntries(
           Object.entries(editedWalls).map(([index, run]) => [String(index), run]),
         ),
@@ -2459,7 +2716,8 @@ export default function Workspace(props: WorkspaceProps) {
     // кухня открылась бы прямой.
     editedWalls,
     shape,
-    cornerSolution,
+    cornerPicks,
+    cornerChoices,
     disabled,
     variantKey,
     renderStyle,
@@ -3150,6 +3408,7 @@ export default function Workspace(props: WorkspaceProps) {
                         setShape(kind);
                         setWallIndex(0);
                         setSelectedId(null);
+                        setCornerPick(null);
                       }}
                       className={`mw-btn ${shape === kind ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
                     >
@@ -3186,69 +3445,39 @@ export default function Workspace(props: WorkspaceProps) {
                     </div>
 
                     {/*
-                      * РЕШЕНИЕ УГЛА — ЭТО ДЕНЬГИ И ДОСТУП.
+                      * УГЛЫ — КАЖДЫЙ СВОЙ (слой 55).
                       *
-                      * Угловой модуль 900×900 даёт доступ в угол и стоит
-                      * корпуса с каруселью; фальш-панель 100 мм отдаёт
-                      * угол под мёртвую зону и стоит панели с угловыми
-                      * петлями. Второй ряд при этом теряет РАЗНОЕ место —
-                      * 900 против глубины ряда, — поэтому и состав, и
-                      * сумма меняются вместе с решением.
+                      * Было одно решение на кухню и только про низ, а
+                      * над столешницей угол оставался пустым всегда.
+                      * Теперь у каждого угла свой низ и свой верх; кнопка
+                      * открывает варианты угла в панели библиотеки — там
+                      * же, где открывает их нажатие на угловой модуль.
+                      * Смена не пересобирает стены: угол заменяется,
+                      * остальные модули стоят, где стояли.
                       */}
                     <div className="mt-2" data-corner>
-                      <p className="mw-label mb-1">Угол</p>
-                      <div className="flex flex-wrap gap-1">
-                        {(
-                          [
-                            ['false_panel', 'Фальш-панель 100 мм', 'угол мёртвый, петли 175°, зазор 12 мм'],
-                            ['corner_module', 'Угловой модуль 900', 'карусель, доступ в угол, дороже'],
-                          ] as [CornerSolution, string, string][]
-                        ).map(([solution, title, hint]) => (
+                      <p className="mw-label mb-1">{cornerChoices.length > 1 ? 'Углы' : 'Угол'}</p>
+                      <div className="grid gap-1">
+                        {cornerChoices.map((choice, i) => (
                           <button
-                            key={solution}
+                            key={i}
                             type="button"
-                            data-corner-solution={solution}
-                            aria-pressed={cornerSolution === solution}
-                            title={hint}
-                            onClick={() => {
-                              dirty.current = true;
-                              setCornerSolution(solution);
-                              setEditedWalls({});
-                              setSelectedId(null);
-                            }}
-                            className={`mw-btn ${cornerSolution === solution ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+                            data-corner-index={i}
+                            data-corner-lower={choice.lower}
+                            data-corner-upper={choice.upper}
+                            aria-pressed={selectedCorner === i}
+                            onClick={() => selectCorner(i)}
+                            className={`mw-btn justify-start text-left ${selectedCorner === i ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
                           >
-                            {title}
+                            {wallLabel(i)} — {wallLabel(i + 1)}: низ {LOWER_CORNER_TITLE[choice.lower].toLowerCase()},
+                            {' '}верх {UPPER_CORNER_TITLE[choice.upper].toLowerCase()}
                           </button>
                         ))}
                       </div>
-                      {/*
-                        * ЧТО СТОИТ В УГЛУ — СКАЗАНО ЧИСЛАМИ.
-                        *
-                        * Фальш-панель тут не фигура речи: это деталь
-                        * раскроя своего размера, она видна в углу и
-                        * оплачена в смете.
-                        *
-                        * А вот НАД столешницей угол остаётся пустым, и
-                        * это сказано прямо. Верхний угловой шкаф —
-                        * другой корпус (Г-образный), и этот
-                        * конфигуратор его не считает: нарисовать там
-                        * глухую панель во всю глубину значит показать
-                        * клиенту шкаф, который не открывается, а
-                        * выдумать размеры Г-образного корпуса — значит
-                        * отправить в цех деталь, которой никто не
-                        * подтверждал.
-                        */}
                       <p className="mt-1 text-[13px] leading-snug text-graphiteMw" data-corner-note>
-                        {cornerSolution === 'false_panel'
-                          ? `Угол отдан под мёртвую зону: ${wallLabel(1)} короче стены на глубину ряда и панель. ` +
-                            `Полосу в ${CORNER.falsePanelMm} мм между рядами закрывает фальш-панель — она есть в раскрое и в смете.`
-                          : `Карусель в углу: ${wallLabel(1)} короче стены на ${CORNER_SIZE_MM} мм — столько занимает угловой модуль. ` +
-                            'Полосу между его фасадом и соседним рядом закрывает фальш-панель — она есть в раскрое и в смете.'}
-                      </p>
-                      <p className="mt-1 text-[13px] leading-snug text-graphiteMw">
-                        Над столешницей угол остаётся пустым: верхний угловой шкаф — другой
-                        корпус, и этот конфигуратор его не считает.
+                        Углом владеет стена до него: её ряд идёт до стены соседа, сосед стыкуется к
+                        нему. Нажмите угол или угловой модуль в сцене — варианты угла покажет
+                        библиотека.
                       </p>
                     </div>
                   </>
@@ -3484,6 +3713,7 @@ export default function Workspace(props: WorkspaceProps) {
                   production={production}
                   priceOf={libraryPrice}
                   onPick={pickFromLibrary}
+                  corner={cornerPanel}
                 />
               </div>
 

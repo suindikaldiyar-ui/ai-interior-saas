@@ -40,7 +40,7 @@ import { mezzanineBaseOf, moduleDepthMm, rowStandardDepthMm } from '../lib/millw
 import { applyOps } from '../lib/millwork/ops';
 import { reorderTarget } from '../lib/millwork/selection';
 import { cornerBandMm } from '../lib/millwork/composition';
-import { CORNER_FILLER_PANEL_NAME } from '../lib/millwork/panels';
+import { CORNER_FILLER_PANEL_NAME, FACADE_PANEL_NAME, legName } from '../lib/millwork/panels';
 import { COUNTER_OVERHANG_MM, counterSlabDepthMm } from '../lib/millwork/fill';
 import { moveShelf } from '../lib/millwork/fill';
 import { readFileSync } from 'node:fs';
@@ -2503,17 +2503,35 @@ console.log('\n' + 'Угол: полосы сходятся');
         );
       }
 
-      /* Фальш-панель стоит В УГЛУ и видна в сцене. */
-      const boxes = runBoxes(comp.segments[1].run, {
+      /*
+       * Полосу между рядами в углу закрывает деталь, и она видна в сцене.
+       *
+       * У слепого угла — фальш-панель соседнего ряда. У Г-модуля (слой 55)
+       * — его вторая нога со своим фасадом: задача слоя «Г-модуль —
+       * Г-корпус, обе ноги в раскрое, два фасада», и фальш-панели шириной
+       * 340 мм, которой вторая нога жила до слоя 55, там больше нет.
+       * Утверждение «полоса закрыта деталью и деталь видна» то же.
+       */
+      const shop = {
         thicknessMm: DEFAULT_PRODUCTION.carcassMm,
         frontThicknessMm: DEFAULT_PRODUCTION.frontMm,
         gapMm: DEFAULT_PRODUCTION.frontGapMm,
-      });
-      const filler = boxes.filter((box) => box.panel === CORNER_FILLER_PANEL_NAME);
+      };
+      const closer =
+        solution === 'corner_module'
+          ? runBoxes(comp.segments[0].run, shop).filter(
+              (box) => box.panel === legName(FACADE_PANEL_NAME, 'Б'),
+            )
+          : runBoxes(comp.segments[1].run, shop).filter((box) => box.panel === CORNER_FILLER_PANEL_NAME);
+      const strayFiller = runBoxes(comp.segments[1].run, shop).filter(
+        (box) => box.panel === CORNER_FILLER_PANEL_NAME,
+      );
       check(
-        `${solution} ${a}+${b}: в углу стоит фальш-панель`,
-        filler.length === 1,
-        `коробок ${filler.length}`,
+        solution === 'corner_module'
+          ? `${solution} ${a}+${b}: полосу в углу закрывает фасад второй ноги Г-модуля, панели нет`
+          : `${solution} ${a}+${b}: в углу стоит фальш-панель`,
+        closer.length === 1 && (solution === 'corner_module' ? strayFiller.length === 0 : true),
+        `коробок ${closer.length}${solution === 'corner_module' ? ` · фальш-панелей ${strayFiller.length}` : ''}`,
       );
     }
   }

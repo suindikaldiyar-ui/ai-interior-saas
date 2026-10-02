@@ -12,6 +12,7 @@ import { applyOps } from './ops';
 import { moduleById, rowOfModule, type RunRow } from './selection';
 import { moduleCarcassHeightMm } from './fill';
 import { rowSpansOfRun } from './layout';
+import { blindVariantRefusal } from './corner';
 import type {
   MillworkOp,
   Module,
@@ -196,6 +197,8 @@ function occupiedCards(
      */
     variantsForModule({ ...unit, widthMm }, input.run, zone)
       .filter((spec) => !spec.impliesAppliance)
+      /* В слепой зоне угла — только дверца (слой 55): прочее упрётся в фальш-панель. */
+      .filter((spec) => !blindVariantRefusal({ ...unit, widthMm }, input.run, { variant: spec.kind }))
       .map((spec) =>
         card({
           ...input,
@@ -776,7 +779,10 @@ export function variantPreviews(
   shownNow: number,
 ): VariantPreviewCard[] {
   const { run, unit, zone } = input;
-  const specs = variantsForModule(unit, run, zone);
+  /* В слепой зоне угла — только дверца (слой 55): прочее упрётся в фальш-панель. */
+  const specs = variantsForModule(unit, run, zone).filter(
+    (spec) => !blindVariantRefusal(unit, run, { variant: spec.kind }),
+  );
   /* Один вариант — это не выбор, а надпись. */
   if (specs.length < 2) return [];
 

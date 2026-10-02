@@ -506,6 +506,12 @@ export function variantsForModule(
   if (unit.appliance || unit.column) return [];
   // Доборная планка — вынужденная деталь, а не выбор.
   if (unit.kind === 'filler') return [];
+  /*
+   * Г-образный навесной — корпус в две ноги со своей парой фасадов на
+   * угловой петле (слой 55). Подъёмник, стекло или полка на нём — мебель,
+   * которой не бывает: его меняют вариантом УГЛА, а не начинкой.
+   */
+  if (unit.kind === 'corner_upper') return [];
 
   const row = rowOf(unit.kind);
   const profile = zoneProfile(zone);
