@@ -1,7 +1,9 @@
 import {
   DEFAULT_CORNER_SIZES,
+  DEFAULT_COUNTERTOP_STRIP,
   DEFAULT_PRODUCTION,
   type CornerSizes,
+  type CountertopStrip,
   type ProductionOverrides,
   type ProductionSettings,
 } from '@/types/catalog';
@@ -45,6 +47,14 @@ export function shopOf(production?: ProductionSettings): ProductionSettings {
  */
 export function cornerSizesOf(production?: ProductionSettings): CornerSizes {
   return production?.corner ?? DEFAULT_CORNER_SIZES;
+}
+
+/**
+ * Полоса столешницы перед препятствием: своя у организации, иначе типовая
+ * 300 мм с пометкой «не подтверждено цехом» (слой 56).
+ */
+export function countertopStripOf(production?: ProductionSettings): CountertopStrip {
+  return production?.countertopStrip ?? DEFAULT_COUNTERTOP_STRIP;
 }
 
 /**

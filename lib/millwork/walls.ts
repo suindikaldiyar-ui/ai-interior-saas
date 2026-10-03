@@ -1,5 +1,6 @@
 import { recalcTotal } from './estimate';
 import { compositionFingerprint } from './fingerprint';
+import { obstacleConflictText, obstacleConflicts, type ObstacleConflict } from './obstacles';
 import type { Composition, Estimate, EstimateLine, Opening, Run } from '@/types/millwork';
 
 /**
@@ -188,6 +189,11 @@ export type WallMismatch = {
   runLengthMm: number;
   /** Полезная длина стены сейчас — то, что осталось после угла. */
   usableMm: number;
+  /**
+   * МЕБЕЛЬ ЗАШЛА В ПРЕПЯТСТВИЕ (слой 56): выступ, колонну или короб внесли
+   * в замер, когда ряд уже был поправлен руками. Пусто — расхождение длины.
+   */
+  obstacles?: ObstacleConflict[];
 };
 
 /**
@@ -234,6 +240,13 @@ export function wallMismatches(
  * не поймёт, чем это ему грозит.
  */
 export function wallMismatchMessage(mismatch: WallMismatch): string {
+  if (mismatch.obstacles?.length) {
+    return (
+      `${mismatch.label}: ${mismatch.obstacles.map(obstacleConflictText).join('; ')} — ` +
+      'на объекте эта мебель не встанет. Пересоберите эту стену: раскладка встанет между препятствиями, ' +
+      'правки по ней придётся сделать заново.'
+    );
+  }
   const diff = Math.abs(mismatch.runLengthMm - mismatch.usableMm);
   const longer = mismatch.runLengthMm > mismatch.usableMm;
 
@@ -244,6 +257,45 @@ export function wallMismatchMessage(mismatch: WallMismatch): string {
     : `${mismatch.label}: ряд собран на ${mismatch.runLengthMm} мм, а на стене ` +
       `${mismatch.usableMm} мм — ${diff} мм стены останутся пустыми. ` +
       'Пересоберите эту стену, чтобы мебель встала во всю длину.';
+}
+
+/**
+ * ПРАВЛЕНЫЕ РЯДЫ, ЗАШЕДШИЕ В ПРЕПЯТСТВИЕ ЗАМЕРА (слой 56).
+ *
+ * Только ряды из правок: ряд по шаблону собирается заново на каждом
+ * показе и в препятствие не встаёт. Стена, у которой уже есть расхождение
+ * длины, второй строкой не идёт — «Пересобрать» снимает оба.
+ */
+export function obstacleMismatches(input: {
+  runs: Run[];
+  /** Проёмы каждой стены — те же, что получает правка (`wallOpenings`). */
+  openingsOf: (index: number) => Opening[];
+  /** Правлен ли ряд руками: только у таких ряд мог остаться в препятствии. */
+  edited: (index: number) => boolean;
+  /** Стены, у которых уже есть расхождение длины. */
+  skip?: number[];
+}): WallMismatch[] {
+  const found: WallMismatch[] = [];
+  input.runs.forEach((run, index) => {
+    if (!input.edited(index) || input.skip?.includes(index)) return;
+    const conflicts = obstacleConflicts(run, input.openingsOf(index));
+    if (conflicts.length === 0) return;
+    found.push({
+      index,
+      label: wallLabel(index),
+      runLengthMm: run.lengthMm,
+      usableMm: run.lengthMm,
+      obstacles: conflicts,
+    });
+  });
+  return found;
+}
+
+/** Почему цены нет — у расхождения длины и у мебели в препятствии слова разные. */
+export function mismatchPriceText(mismatch: WallMismatch): string {
+  return mismatch.obstacles?.length
+    ? `Цены нет: ${mismatch.label}: мебель заходит в ${mismatch.obstacles[0].reason === 'колонна' ? 'колонну' : mismatch.obstacles[0].reason}.`
+    : `Цены нет: ${mismatch.label} собрана на другой длине стены.`;
 }
 
 /* ────────────────────  Какие стены уходят в композицию  ──────────────────── */

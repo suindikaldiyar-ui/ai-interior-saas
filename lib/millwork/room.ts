@@ -1,7 +1,7 @@
 import type { CornerChoice, CornerJoin, Opening, OpeningKind, ZoneKind } from '@/types/millwork';
 import { OPENING_KIND_TITLE } from '@/types/millwork';
 import type { ProductionSettings } from '@/types/catalog';
-import type { KnownState, Survey, SurveyOpening } from '@/types/survey';
+import { heightAssumedToCeiling, type KnownState, type Survey, type SurveyOpening } from '@/types/survey';
 import { beamDropMm } from './ceiling';
 import { cornerLostMm, markOnRun } from './composition';
 import { cornerGeometry } from './corner';
@@ -184,7 +184,7 @@ function usedFields(kind: OpeningKind): (keyof Pick<SurveyOpening, 'fromCornerMm
   if (kind === 'window' || kind === 'niche' || kind === 'column' || kind === 'pipe_box') {
     return ['fromCornerMm', 'widthMm', 'heightMm', 'sillMm'];
   }
-  // Дверь и арка стоят на полу, у ригеля низ считается из потолка.
+  // Дверь, арка и выступ стены стоят на полу, у ригеля низ считается из потолка.
   return ['fromCornerMm', 'widthMm', 'heightMm'];
 }
 
@@ -354,7 +354,15 @@ export function roomLayout(input: RoomInput): Room {
     for (const opening of wall.openings) {
       const title = `${wallTitle(wall.id, index)} · ${OPENING_KIND_TITLE[opening.kind].toLowerCase()}`;
       const known = surveyOpening.get(opening.id);
-      const states = usedFields(opening.kind).map((field) => stateOf(known?.[field]?.state));
+      /*
+       * Высоту выступа стены замер достраивает до потолка допущением
+       * (`heightAssumedToCeiling`, та же таблица в `resolveSurvey`): здесь
+       * она рисуется допущением, а не «не замерена».
+       */
+      const states = usedFields(opening.kind).map((field) => {
+        const state = stateOf(known?.[field]?.state);
+        return field === 'heightMm' && state === 'unknown' && heightAssumedToCeiling(opening.kind) ? 'assumed' : state;
+      });
       const unknownFields = usedFields(opening.kind).filter(
         (field, i) => states[i] === 'unknown' || (field !== 'sillMm' && field !== 'fromCornerMm' && !(opening[field] > 0)),
       );

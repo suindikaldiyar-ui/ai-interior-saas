@@ -87,6 +87,13 @@ export const TYPICAL_PRICE_LIST: TypicalRate[] = [
   { estimateKey: 'countertop_quartz', article: 'TOP-QUARTZ', name: 'Столешница кварцевый агломерат', categoryKey: 'countertops', unit: 'running_meter', price: 95000 },
   { estimateKey: 'countertop_solid_wood', article: 'TOP-WOOD', name: 'Столешница массив дуба', categoryKey: 'countertops', unit: 'running_meter', price: 140000 },
   { estimateKey: 'countertop_miter', article: 'TOP-MITER', name: 'Запил столешницы на угол', categoryKey: 'countertops', unit: 'piece', price: 25000 },
+  /*
+   * ВЫРЕЗ СТОЛЕШНИЦЫ ПОД ПРЕПЯТСТВИЕ (слой 56) — работа без цены. Средней
+   * по рынку у неё нет: цену ставит компания, а до тех пор в смете строка
+   * «цена не задана» и итог «неполный». Ноль здесь — «не задана», не
+   * «бесплатно» (ловушка 452).
+   */
+  { estimateKey: 'countertop_cutout', article: 'TOP-CUTOUT', name: 'Вырез столешницы под препятствие', categoryKey: 'countertops', unit: 'piece', price: 0 },
   { estimateKey: 'countertop_plinth', article: 'TOP-PLINTH', name: 'Плинтус столешницы', categoryKey: 'countertops', unit: 'running_meter', price: 2500 },
   { estimateKey: 'wall_panel', article: 'TOP-APRON', name: 'Стеновая панель (фартук)', categoryKey: 'countertops', unit: 'running_meter', price: 14000 },
   { estimateKey: 'hinge_standard', article: 'HW-HINGE-STD', name: 'Петля стандарт', categoryKey: 'hardware', unit: 'piece', price: 900 },

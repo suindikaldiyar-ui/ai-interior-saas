@@ -5,6 +5,7 @@ import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { CAD_ROOM, cadShadeMaterial, cadShadeQuaternion } from './cadLook';
 import { roomBoxes, wallsFacingAway, type Room, type RoomBox, type RoomWall } from '@/lib/millwork/room';
+import { isWallObstacle } from '@/lib/millwork/obstacles';
 
 /**
  * КОМНАТА В СЦЕНЕ — ИЗ `roomLayout`, И ТОЛЬКО ИЗ НЕЁ (слой 53).
@@ -214,7 +215,13 @@ export default function RoomScene({ room }: { room: Room }) {
 
   const materialOf = (box: RoomBox): THREE.Material => {
     if (box.role === 'contour') return materials.contour;
-    if (box.role === 'object') return box.state === 'assumed' ? materials.objectAssumed : materials.object;
+    /*
+     * Колонна, короб и выступ стены — это стена, вышедшая в комнату
+     * (слой 56): их рисует материал стены, а не объёма комнаты.
+     */
+    if (box.role === 'object' && !(box.kind && isWallObstacle(box.kind))) {
+      return box.state === 'assumed' ? materials.objectAssumed : materials.object;
+    }
     return box.state === 'assumed' ? materials.wallAssumed : materials.wall;
   };
 

@@ -283,7 +283,20 @@ export const ASSUMPTION_BASIS = {
   ceiling: 'стандарт новостройки — 2700 мм',
   sill: 'стандартная высота подоконника — 850 мм',
   doorHeight: 'стандартный дверной проём — 2100 мм',
+  protrusionHeight: 'выступ стены до потолка — высота не замерена',
 } as const;
+
+/**
+ * КАКУЮ ВЕЛИЧИНУ ПРОЁМА ЗАМЕР ДОСТРАИВАЕТ ДОПУЩЕНИЕМ.
+ *
+ * Высота выступа стены не замерена — он считается до потолка: так он
+ * стоит почти всегда, а мебель рядом с ним обязана его обойти по всей
+ * высоте. Это допущение, а не замер, и рисуется оно как допущение.
+ * Одна таблица на замер (`resolveSurvey`) и на комнату (`roomLayout`).
+ */
+export function heightAssumedToCeiling(kind: OpeningKind): boolean {
+  return kind === 'protrusion';
+}
 
 function count(stats: SurveyStats, k: Known<unknown> | undefined) {
   if (!k || k.state === 'unknown') stats.unknown++;
@@ -393,23 +406,27 @@ export type SurveyResolution = {
  * увидит его на экране и примет за замеренное.
  */
 export function resolveSurvey(survey: Survey): SurveyResolution {
+  const ceiling = resolveAssumed(survey.ceilingHeightMm, 2700, ASSUMPTION_BASIS.ceiling);
   const resolved: Survey = {
     ...survey,
-    ceilingHeightMm: resolveAssumed(survey.ceilingHeightMm, 2700, ASSUMPTION_BASIS.ceiling),
+    ceilingHeightMm: ceiling,
     walls: survey.walls.map((wall) => ({
       ...wall,
       openings: wall.openings.map((opening) => ({
         ...opening,
+        /* Дверь и выступ стены стоят на полу: низа от пола у них нет. */
         sillMm:
           opening.kind === 'window'
             ? resolveAssumed(opening.sillMm, 850, ASSUMPTION_BASIS.sill)
-            : opening.kind === 'door'
+            : opening.kind === 'door' || opening.kind === 'protrusion'
               ? measured(0)
               : opening.sillMm,
         heightMm:
           opening.kind === 'door'
             ? resolveAssumed(opening.heightMm, 2100, ASSUMPTION_BASIS.doorHeight)
-            : opening.heightMm,
+            : heightAssumedToCeiling(opening.kind)
+              ? resolveAssumed(opening.heightMm, valueOf(ceiling) ?? 2700, ASSUMPTION_BASIS.protrusionHeight)
+              : opening.heightMm,
       })),
     })),
   };

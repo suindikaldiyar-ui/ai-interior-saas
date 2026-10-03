@@ -387,7 +387,45 @@ export type ProductionSettings = {
    * которого никто не подтверждал.
    */
   corner?: CornerSizes;
+  /**
+   * СТОЛЕШНИЦА У ПРЕПЯТСТВИЯ — НАСТРОЙКА ОРГАНИЗАЦИИ, ПОКА НЕ ПОДТВЕРЖДЁННАЯ
+   * ЦЕХОМ (слой 56).
+   *
+   * Колонна, короб или выступ стены в толщине столешницы: если перед ними
+   * остаётся полоса плиты не уже этой — плита одна, с вырезом сзади; уже —
+   * разрыв, две плиты с торцами. Узкая полоса без опоры снизу ломается, и
+   * где она ещё держит, знает цех, а не код. Пусто — типовые 300 мм с
+   * пометкой «не подтверждено цехом».
+   */
+  countertopStrip?: CountertopStrip;
 };
+
+/** Самая узкая полоса столешницы перед препятствием, при которой плита ещё вырезается. */
+export type CountertopStrip = {
+  /** Полоса плиты перед препятствием, мм: не уже — вырез, уже — разрыв. */
+  minStripMm: number;
+  /** Цех подтвердил это число. Нет — «не подтверждено цехом». */
+  confirmed: boolean;
+};
+
+/** Типовая полоса — 300 мм, и она названа неподтверждённой, пока цех не поставит галочку. */
+export const DEFAULT_COUNTERTOP_STRIP: CountertopStrip = { minStripMm: 300, confirmed: false };
+
+/** Границы физические: полосы шире самой плиты не бывает. */
+export const COUNTERTOP_STRIP_RANGE_MM = [0, 900] as const;
+
+/** Полоса столешницы организации с подстановкой типовой. Мусор не принимается. */
+export function countertopStrip(raw: unknown): CountertopStrip {
+  const value = (raw ?? {}) as Partial<CountertopStrip>;
+  const strip = Number(value.minStripMm);
+  return {
+    minStripMm:
+      Number.isFinite(strip) && strip >= COUNTERTOP_STRIP_RANGE_MM[0] && strip <= COUNTERTOP_STRIP_RANGE_MM[1]
+        ? Math.round(strip)
+        : DEFAULT_COUNTERTOP_STRIP.minStripMm,
+    confirmed: value.confirmed === true,
+  };
+}
 
 /**
  * РАЗМЕРЫ УГЛА.
@@ -580,6 +618,8 @@ export function productionSettings(raw: unknown): ProductionSettings {
      * типовые, и угловые кухни, собранные раньше, читаются как прежде.
      */
     ...(value.corner ? { corner: cornerSizes(value.corner) } : {}),
+    /* Полоса столешницы — так же: не заводили — типовая, с пометкой. */
+    ...(value.countertopStrip ? { countertopStrip: countertopStrip(value.countertopStrip) } : {}),
   };
 }
 

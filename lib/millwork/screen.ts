@@ -206,8 +206,13 @@ export function screenState(input: ScreenInput): ScreenState {
    * состав и правки замерщика собраны верно, неизвестны только цены
    * материалов. Цену без каталога рабочее место в базу не пишет само.
    */
-  const locked = Boolean(refusal) || mismatches.length > 0;
-  const unpriced = locked || catalogError !== null;
+  /*
+   * Мебель в препятствии (слой 56) прячет цену и запирает «Дальше», но НЕ
+   * запись: данные целы, а запертая запись потеряла бы ровно то, из-за
+   * чего конфликт и появился, — выступ, только что внесённый в замер.
+   */
+  const locked = Boolean(refusal) || mismatches.some((mismatch) => !mismatch.obstacles?.length);
+  const unpriced = locked || mismatches.length > 0 || catalogError !== null;
 
   return {
     channel,

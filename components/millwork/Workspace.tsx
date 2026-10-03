@@ -30,6 +30,8 @@ import {
   lowerWall,
   wallLabel,
   wallMismatches,
+  mismatchPriceText,
+  obstacleMismatches,
 } from '@/lib/millwork/walls';
 import {
   SHAPE_TITLE,
@@ -1066,10 +1068,18 @@ export default function Workspace(props: WorkspaceProps) {
    * угла проёмы — те, что композиция перевела в координаты их ряда; у
    * стены А и у прямой кухни — прежние.
    */
+  /*
+   * ПРОЁМЫ СТЕНЫ ДЛЯ ПРАВКИ — ТЕ ЖЕ, ЧТО У ЕЁ РЯДА.
+   *
+   * Стена А брала проёмы объекта (`props.openings`), а её ряд, сцена и
+   * композиция — живого замера (`input.openings`): внесённый в замер
+   * выступ библиотека и перенос не видели и предлагали поставить модуль
+   * прямо в него (слой 56). Правка спрашивает то же, что рисуется.
+   */
   const wallOpenings = useCallback(
     (index: number): Opening[] =>
-      index === 0 || !layout ? props.openings : (layout.segments[index]?.openings ?? []),
-    [props.openings, layout],
+      index === 0 || !layout ? input.openings : (layout.segments[index]?.openings ?? []),
+    [input.openings, layout],
   );
 
   /**
@@ -1196,10 +1206,21 @@ export default function Workspace(props: WorkspaceProps) {
    * длина ряда против полезной длины стены, которую только что посчитала
    * композиция.
    */
-  const mismatches = useMemo(
-    () => (layout ? wallMismatches(layout, segments) : []),
-    [layout, segments],
-  );
+  const mismatches = useMemo(() => {
+    const byLength = layout ? wallMismatches(layout, segments) : [];
+    /*
+     * МЕБЕЛЬ, ЗАШЕДШАЯ В ПРЕПЯТСТВИЕ (слой 56): выступ внесли в замер,
+     * когда ряд уже поправлен руками. Модули не удаляются молча — каждый
+     * назван с миллиметрами, а выход тот же, «Пересобрать стену».
+     */
+    const byObstacle = obstacleMismatches({
+      runs: segments,
+      openingsOf: wallOpenings,
+      edited: (index) => (index === 0 ? Boolean(editedRuns[active.key]) : Boolean(editedWalls[index])),
+      skip: byLength.map((mismatch) => mismatch.index),
+    });
+    return [...byLength, ...byObstacle];
+  }, [layout, segments, wallOpenings, editedRuns, editedWalls, active.key]);
 
   /**
    * КОММУНИКАЦИИ ВЫБРАННОЙ СТЕНЫ.
@@ -1286,7 +1307,7 @@ export default function Workspace(props: WorkspaceProps) {
       run: active.run,
       requirements,
       ops: designOps(design, uppers),
-      openings: props.openings,
+      openings: wallOpenings(0),
       roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
     });
 
@@ -4413,7 +4434,7 @@ export default function Workspace(props: WorkspaceProps) {
             >
               {refusal
                 ? `Цены нет: ${SHAPE_TITLE[shape]} не сошлась.`
-                : `Цены нет: ${mismatches[0].label} собрана на другой длине стены.`}
+                : mismatchPriceText(mismatches[0])}
             </p>
           ) : (
           <EstimateSheet

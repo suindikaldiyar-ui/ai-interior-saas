@@ -5,10 +5,13 @@ import {
   DEFAULT_ALLOWANCES,
   DEFAULT_DEPTHS,
   DEFAULT_HEIGHTS,
+  COUNTERTOP_STRIP_RANGE_MM,
   DEFAULT_PRODUCTION,
   FALSE_PANEL_RANGE_MM,
   cornerSizes,
+  countertopStrip,
   type CornerSizes,
+  type CountertopStrip,
   type PartAllowances,
   type ProductionSettings,
   type RowDepths,
@@ -157,6 +160,26 @@ export default function ProductionAdmin({ initial }: Props) {
     setValue((prev) => ({
       ...prev,
       corner: { ...cornerSizes(prev.corner), falsePanelMm: prev.corner?.falsePanelMm ?? corner.falsePanelMm, ...patch },
+    }));
+  /*
+   * Полоса столешницы перед препятствием (слой 56): не заведена — типовые
+   * 300 мм, и экран говорит об этом. Поле держит то, что набрано; число вне
+   * границ названо словами — сервер его не примет.
+   */
+  const strip = countertopStrip(value.countertopStrip);
+  const stripTyped = value.countertopStrip?.minStripMm ?? strip.minStripMm;
+  const stripOutside =
+    !Number.isFinite(stripTyped) ||
+    stripTyped < COUNTERTOP_STRIP_RANGE_MM[0] ||
+    stripTyped > COUNTERTOP_STRIP_RANGE_MM[1];
+  const setStrip = (patch: Partial<CountertopStrip>) =>
+    setValue((prev) => ({
+      ...prev,
+      countertopStrip: {
+        ...countertopStrip(prev.countertopStrip),
+        minStripMm: prev.countertopStrip?.minStripMm ?? strip.minStripMm,
+        ...patch,
+      },
     }));
 
   const save = async () => {
@@ -412,6 +435,54 @@ export default function ProductionAdmin({ initial }: Props) {
             {!corner.confirmed && (
               <p className="mt-1 text-[13px] leading-snug text-tape">
                 Не подтверждено цехом: замерщик видит эту пометку рядом с каждым углом.
+              </p>
+            )}
+          </div>
+
+          {/*
+            * СТОЛЕШНИЦА У ПРЕПЯТСТВИЯ (слой 56): вырез или разрыв решает
+            * полоса плиты перед колонной, коробом или выступом. Где узкая
+            * полоса без опоры ещё держит, знает цех; пока галочки нет, у
+            * замерщика рядом с решением написано «не подтверждено цехом».
+            */}
+          <div className="mt-6 border-t border-navyLine/60 pt-4" data-countertop-strip>
+            <p className="text-[15px] font-medium">Столешница у препятствия</p>
+            <p className="mt-0.5 text-[13px] leading-snug text-graphiteMw">
+              Колонна, короб или выступ стены в толщине столешницы. Если перед ними остаётся полоса
+              плиты не уже этой — плита одна, с вырезом сзади; уже — разрыв, две плиты с торцами.
+            </p>
+            <label className="mt-3 block max-w-[320px]">
+              <span className="mw-label">Минимальная полоса перед препятствием, мм</span>
+              <input
+                type="number"
+                inputMode="numeric"
+                min={COUNTERTOP_STRIP_RANGE_MM[0]}
+                max={COUNTERTOP_STRIP_RANGE_MM[1]}
+                data-countertop-strip-mm
+                value={Number.isFinite(stripTyped) ? stripTyped : ''}
+                onChange={(event) => setStrip({ minStripMm: Number(event.target.value) })}
+                className="mw-field mt-1 w-full"
+              />
+              <span
+                className={`mt-0.5 block text-[13px] leading-snug ${stripOutside ? 'text-alert' : 'text-graphiteMw'}`}
+              >
+                {stripOutside
+                  ? `Вне ${COUNTERTOP_STRIP_RANGE_MM[0]}–${COUNTERTOP_STRIP_RANGE_MM[1]} мм: такое число не сохранится, останется ${strip.minStripMm}.`
+                  : 'уже — разрыв: узкая полоса без опоры снизу ломается'}
+              </span>
+            </label>
+            <label className="mt-3 flex items-center gap-2 text-[15px]">
+              <input
+                type="checkbox"
+                data-countertop-strip-confirmed
+                checked={strip.confirmed}
+                onChange={(event) => setStrip({ confirmed: event.target.checked })}
+              />
+              Цех подтвердил это число
+            </label>
+            {!strip.confirmed && (
+              <p className="mt-1 text-[13px] leading-snug text-tape">
+                Не подтверждено цехом: замерщик видит эту пометку у каждого выреза и разрыва столешницы.
               </p>
             )}
           </div>

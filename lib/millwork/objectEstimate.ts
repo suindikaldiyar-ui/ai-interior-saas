@@ -18,6 +18,7 @@ import type { MillworkState } from '@/lib/projects';
 import { buildEstimate, type RateTable } from './estimate';
 import { segmentCount, tryBuildComposition, type CompositionAttempt } from './composition';
 import { choiceFromSolution, runWithCorner } from './corner';
+import { runWithObstacles } from './obstacles';
 import { compositionOf, compositionWalls, mergeEstimates, type SelectedWall } from './walls';
 import { onWall } from './layout';
 import { productionFor } from './shop';
@@ -305,7 +306,9 @@ export function wallSegments(
   if (!layout) return [wallARun];
 
   return layout.segments.map((segment, i) =>
-    i === 0 ? wallARun : runWithCorner(wallRun(segment, i), segment.run.corner),
+    i === 0
+      ? wallARun
+      : runWithObstacles(runWithCorner(wallRun(segment, i), segment.run.corner), segment.run.obstacles),
   );
 
   function wallRun(segment: Composition['segments'][number], i: number): Run {

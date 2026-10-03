@@ -23,11 +23,21 @@
  * первой загрузки из манифеста сборки не имеют права содержать движок
  * сцены — он приезжает по требованию, вместе с 3D.
  *
- * `SCENE_ONLY=1` — только этот блок, без снимков остальных экранов.
+ * ВЫСТУП СТЕНЫ (слой 56): настоящий объект со стеной 3800 и выступом
+ * 600 × 400 посередине (заводится служебным ключом и удаляется). Снимки
+ * схемы, плана и сцены; числами — выступ на схеме и на плане из
+ * `roomLayout`, ни одного модуля в нём, соседи вплотную с обеих сторон
+ * (0 мм), столешница на схеме рвётся на две с торцами у выступа (полоса
+ * 201 мм уже типовых 300 мм цеха), объём выступа в сцене и ни одной детали
+ * в нём (`__mwCadRoom`).
+ *
+ * `SCENE_ONLY=1` — только эти блоки, без снимков остальных экранов.
  */
 import { execSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { chromium } from 'playwright';
+import { createClient } from '@supabase/supabase-js';
+import { createServerClient } from '@supabase/ssr';
 import sharp from 'sharp';
 
 const PORT = 3204;
@@ -376,6 +386,201 @@ async function generalViews(browser) {
   }
 }
 
+/* ─────────────  Выступ стены: кухня по обе стороны (слой 56)  ───────────── */
+
+/**
+ * Выступ стены на настоящем объекте: стена 3800, выступ посередине 600 × 400
+ * (проверка 9 приёмки). У демонстрации живого замера нет — шаг «Замер» есть
+ * только у объекта, — поэтому объект заводится служебным ключом, как в
+ * `check-render.mjs`, и удаляется после прогона.
+ */
+const PROTRUSION = { fromMm: 1600, widthMm: 600, depthMm: 400 };
+
+async function protrusionViews(browser) {
+  /* .env.local — ключи Supabase для объекта, как у проверок рендера и материалов. */
+  if (existsSync('.env.local')) {
+    for (const line of readFileSync('.env.local', 'utf8').split(/\r?\n/)) {
+      const m = /^([A-Z0-9_]+)=(.*)$/.exec(line.trim());
+      if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2].replace(/^"|"$/g, '');
+    }
+  }
+  const URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const SERVICE = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!URL || !ANON || !SERVICE || /your-project|example/.test(URL)) {
+    failures.push('выступ: НЕ ПРОВЕРЕНО — нет ключей Supabase в .env.local');
+    return;
+  }
+  const service = createClient(URL, SERVICE, { auth: { persistSession: false, autoRefreshToken: false } });
+  const stamp = Date.now();
+  const email = `design-${stamp}@example.test`;
+  const password = `Pw-${stamp}-design!`;
+  const made = { user: null, org: null, project: null };
+
+  try {
+    const { data: created, error: userError } = await service.auth.admin.createUser({ email, password, email_confirm: true });
+    if (userError) throw new Error(`createUser: ${userError.message}`);
+    made.user = created.user.id;
+    const { data: org, error: orgError } = await service
+      .from('orgs')
+      .insert({ slug: `design-${stamp}`, name: `Проверка выступа ${stamp}` })
+      .select('id')
+      .single();
+    if (orgError) throw new Error(`insert org: ${orgError.message}`);
+    made.org = org.id;
+    const { error: memberError } = await service.from('org_members').insert({ org_id: org.id, user_id: created.user.id, role: 'owner' });
+    if (memberError) throw new Error(`insert member: ${memberError.message}`);
+
+    const jar = [];
+    const ssr = createServerClient(URL, ANON, {
+      cookies: {
+        getAll: () => jar.map(({ name, value }) => ({ name, value })),
+        setAll: (list) => {
+          for (const cookie of list) {
+            const at = jar.findIndex((c) => c.name === cookie.name);
+            if (at >= 0) jar.splice(at, 1);
+            if (cookie.value) jar.push(cookie);
+          }
+        },
+      },
+    });
+    const { error: signError } = await ssr.auth.signInWithPassword({ email, password });
+    if (signError) throw new Error(`signIn: ${signError.message}`);
+
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    await context.addCookies(
+      jar.map((c) => ({ name: c.name, value: c.value, domain: 'localhost', path: '/', httpOnly: false, secure: false, sameSite: 'Lax' })),
+    );
+    const page = await context.newPage();
+    page.on('pageerror', (e) => sceneLog.push(`[ошибка страницы, выступ] ${e.message.slice(0, 140)}`));
+    const seeded = await page.request.post(`${BASE}/api/catalog/seed-rates`, { data: { orgId: org.id } });
+    if (!seeded.ok()) throw new Error(`типовой прайс не заведён: ${seeded.status()}`);
+
+    const { data: project, error: projectError } = await service
+      .from('projects')
+      .insert({
+        org_id: org.id,
+        address: 'Проверка выступа',
+        zone: 'Кухня',
+        client_name: 'Проверка',
+        measurements: {
+          id: `m-${stamp}`,
+          ceilingHeightMm: 2700,
+          walls: [
+            {
+              id: 'a',
+              lengthMm: 3800,
+              angleDeg: 90,
+              openings: [
+                {
+                  id: 'protrusion-1',
+                  kind: 'protrusion',
+                  fromCornerMm: PROTRUSION.fromMm,
+                  widthMm: PROTRUSION.widthMm,
+                  sillMm: 0,
+                  heightMm: 2700,
+                  depthMm: PROTRUSION.depthMm,
+                },
+              ],
+            },
+            { id: 'b', lengthMm: 3000, angleDeg: 90, openings: [] },
+          ],
+          comms: [],
+          photos: [],
+          measuredBy: 'проверка',
+          measuredAt: new Date().toISOString(),
+          notes: '',
+        },
+        millwork: { templateId: 'linear-column' },
+        status: 'in_progress',
+      })
+      .select('id')
+      .single();
+    if (projectError) throw new Error(`insert project: ${projectError.message}`);
+    made.project = project.id;
+
+    await page.goto(`${BASE}/project/${project.id}`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+    await sleep(4000);
+
+    const P = { from: PROTRUSION.fromMm, to: PROTRUSION.fromMm + PROTRUSION.widthMm };
+    await page.getByRole('button', { name: /Раскладка/ }).first().click({ timeout: 90_000 });
+    await sleep(2000);
+
+    /* Схема: выступ из `roomLayout`, модули вокруг — признаками листа. */
+    await page.locator('[data-schematic-tab="front"]').click();
+    await sleep(1500);
+    await page.screenshot({ path: `${OUT}/protrusion-front-1440.png` });
+    const front = await page.evaluate(() => ({
+      objects: [...document.querySelectorAll('[data-schematic] [data-room-object][data-kind="protrusion"]')].map((el) => ({
+        from: Number(el.getAttribute('data-from-mm')),
+        width: Number(el.getAttribute('data-width-mm')),
+      })),
+      modules: [...document.querySelectorAll('[data-schematic] [data-module-id]')].map((el) => ({
+        id: el.getAttribute('data-module-id'),
+        offset: Number(el.getAttribute('data-module-offset')),
+        width: Number(el.getAttribute('data-module-width')),
+      })),
+      counter: [...document.querySelectorAll('[data-schematic] [data-counter-piece]')].map((el) => ({
+        from: Number(el.getAttribute('data-from-mm')),
+        to: Number(el.getAttribute('data-to-mm')),
+      })),
+    }));
+    const inside = front.modules.filter((m) => m.offset < P.to && m.offset + m.width > P.from);
+    const leftFlush = front.modules.some((m) => m.offset + m.width === P.from);
+    const rightFlush = front.modules.some((m) => m.offset === P.to);
+    sceneLog.push(
+      `выступ на схеме: ${front.objects.map((o) => `${o.from}…${o.from + o.width}`).join(', ') || 'НЕТ'} · модулей ${front.modules.length}, ` +
+        `в выступе ${inside.length} · слева вплотную ${leftFlush ? 'да' : 'НЕТ'} · справа вплотную ${rightFlush ? 'да' : 'НЕТ'}`,
+    );
+    if (front.objects.length !== 1 || front.objects[0].from !== P.from || front.objects[0].width !== PROTRUSION.widthMm) {
+      failures.push(`выступ: на схеме ${front.objects.length} выступов, нужен один ${P.from}…${P.to}`);
+    }
+    if (front.modules.length === 0) failures.push('выступ: НУЛЕВОЙ СЕЛЕКТОР — модулей на схеме нет');
+    if (inside.length > 0) failures.push(`выступ: на схеме в выступе ${inside.map((m) => m.id).join(', ')}`);
+    if (!leftFlush || !rightFlush) failures.push('выступ: кухня не стоит к выступу вплотную с обеих сторон');
+
+    /*
+     * Столешница у выступа 400 при плите 601: полоса перед ним 201 мм — уже
+     * типовых 300 мм цеха, значит разрыв: две плиты с торцами у краёв
+     * выступа, сквозь него ни одной (проверка 13 приёмки, путь экрана).
+     */
+    const counterThrough = front.counter.filter((c) => c.from < P.to && c.to > P.from);
+    const counterEnds = [front.counter.some((c) => c.to === P.from), front.counter.some((c) => c.from === P.to)];
+    sceneLog.push(
+      `столешница на схеме: ${front.counter.map((c) => `${c.from}…${c.to}`).join(' ') || 'НЕТ'} · ` +
+        `сквозь выступ ${counterThrough.length} · торцы у выступа ${counterEnds.every(Boolean) ? 'да' : 'НЕТ'}`,
+    );
+    if (front.counter.length === 0) failures.push('выступ: НУЛЕВОЙ СЕЛЕКТОР — столешницы на схеме нет');
+    if (counterThrough.length > 0) failures.push(`выступ: столешница на схеме идёт сквозь выступ (${counterThrough.length})`);
+    if (!counterEnds.every(Boolean)) failures.push('выступ 400 при плите 601: столешница не рвётся на две с торцами у выступа');
+
+    await page.locator('[data-schematic-tab="plan"]').click();
+    await sleep(1500);
+    await page.screenshot({ path: `${OUT}/protrusion-plan-1440.png` });
+    const onPlan = await page.locator('[data-schematic] [data-room-object][data-kind="protrusion"]').count();
+    sceneLog.push(`выступ на плане: ${onPlan}`);
+    if (onPlan !== 1) failures.push(`выступ: на плане ${onPlan} выступов, нужен один`);
+
+    /* Сцена: объём выступа нарисован, ни одна деталь мебели в него не входит. */
+    await openGeneralView(page);
+    await page.screenshot({ path: `${OUT}/protrusion-scene-1440.png` });
+    const room = await page.evaluate(() => (window.__mwCadRoom ? window.__mwCadRoom() : null));
+    if (!room) {
+      failures.push('выступ: НУЛЕВОЙ СЕЛЕКТОР — __mwCadRoom нет, сцены нет');
+    } else {
+      const drawn = room.objects.filter((object) => object.kind === 'protrusion');
+      sceneLog.push(`выступ в сцене: объёмов ${drawn.length} · пересечений мебели с комнатой ${room.intersects}`);
+      if (drawn.length !== 1) failures.push(`выступ: в сцене ${drawn.length} объёмов выступа, нужен один`);
+      if (room.intersects !== 0) failures.push(`выступ: мебель входит в стену или в объём (${room.intersects})`);
+    }
+    await context.close();
+  } finally {
+    if (made.project) await service.from('projects').delete().eq('id', made.project);
+    if (made.org) await service.from('orgs').delete().eq('id', made.org);
+    if (made.user) await service.auth.admin.deleteUser(made.user);
+  }
+}
+
 try {
   for (let i = 0; i < 90; i++) {
     try {
@@ -398,6 +603,12 @@ try {
   }
 
   await generalViews(browser);
+  /* Сбой блока выступа — падение со словами, а не потерянный журнал остальных снимков. */
+  try {
+    await protrusionViews(browser);
+  } catch (error) {
+    failures.push(`выступ: ${error instanceof Error ? error.message.split(/\r?\n/)[0] : String(error)}`);
+  }
 
   await browser.close();
 
@@ -421,5 +632,5 @@ try {
   server.kill();
   freePort(PORT);
 }
-console.log(`  ПАДЕНИЙ «Общего вида»: ${failures.length}`);
+console.log(`  ПАДЕНИЙ «Общего вида» и выступа: ${failures.length}`);
 process.exit(failures.length === 0 ? 0 : 1);

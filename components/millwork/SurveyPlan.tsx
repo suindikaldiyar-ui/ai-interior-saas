@@ -2,7 +2,7 @@
 
 import { useMemo } from 'react';
 import { COMM_TITLE, valueOf, type Survey, type SurveyWall } from '@/types/survey';
-import type { Module } from '@/types/millwork';
+import { OPENING_KIND_TITLE, type Module } from '@/types/millwork';
 
 /**
  * План сверху, который дорисовывается по мере ввода.
@@ -189,7 +189,8 @@ export default function SurveyPlan({
                 fontSize={8}
                 fill="var(--graphite-mw)"
               >
-                {opening.kind === 'window' ? 'окно' : opening.kind === 'door' ? 'дверь' : opening.kind}
+                {/* Название вида — одна таблица на продукт (ловушка 382): сырой ключ замерщику не показывается. */}
+                {OPENING_KIND_TITLE[opening.kind].toLowerCase()}
               </text>
             </g>
           );

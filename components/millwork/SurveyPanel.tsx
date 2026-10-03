@@ -47,6 +47,8 @@ const OPENING_KINDS: OpeningKind[] = [
   'niche',
   'pipe_box',
   'column',
+  /* Выступ стены в комнату — пилон, утолщение у стояка. Мебель его обходит. */
+  'protrusion',
   /*
    * Ригель — такой же объект стены, как окно, только сверху. Заводится
    * там же и теми же тремя числами: от угла, ширина и свес.
@@ -62,12 +64,42 @@ const OPENING_KINDS: OpeningKind[] = [
  * поле «Низ от пола» значит попросить число, которого он не знает, и
  * получить выдуманное.
  */
-function openingFields(kind: OpeningKind): [ 'fromCornerMm' | 'widthMm' | 'heightMm' | 'sillMm', string ][] {
+function openingFields(
+  kind: OpeningKind,
+): ['fromCornerMm' | 'widthMm' | 'heightMm' | 'sillMm' | 'depthMm', string][] {
   if (kind === 'beam') {
     return [
       ['fromCornerMm', 'От левого угла'],
       ['widthMm', 'Ширина'],
       ['heightMm', 'Опускается от потолка'],
+    ];
+  }
+
+  /*
+   * ВЫСТУП СТЕНЫ СТОИТ НА ПОЛУ: низа от пола у него нет, а высота по
+   * умолчанию — до потолка, допущением (`resolveSurvey`). Вынос — та
+   * величина, от которой зависит, как столешница его обходит.
+   */
+  if (kind === 'protrusion') {
+    return [
+      ['fromCornerMm', 'От левого угла'],
+      ['widthMm', 'Ширина'],
+      ['depthMm', 'Вынос от стены'],
+      ['heightMm', 'Высота'],
+    ];
+  }
+
+  /*
+   * Колонна и короб выходят в комнату так же: мебель их обходит, и вынос
+   * решает, вырезать ли под них столешницу или рвать её.
+   */
+  if (kind === 'column' || kind === 'pipe_box') {
+    return [
+      ['fromCornerMm', 'От левого угла'],
+      ['widthMm', 'Ширина'],
+      ['depthMm', 'Вынос от стены'],
+      ['heightMm', 'Высота'],
+      ['sillMm', 'Низ от пола'],
     ];
   }
 
@@ -314,7 +346,12 @@ export default function SurveyPanel({
             </div>
 
             {wall.openings.map((opening) => (
-              <div key={opening.id} className="mb-2 border border-blueprint/30 p-2">
+              <div
+                key={opening.id}
+                data-survey-opening={opening.id}
+                data-kind={opening.kind}
+                className="mb-2 border border-blueprint/30 p-2"
+              >
                 <div className="mb-1.5 flex items-center gap-1">
                   <select
                     value={opening.kind}
@@ -352,7 +389,7 @@ export default function SurveyPanel({
                     <KnownField
                       key={field}
                       label={label}
-                      value={opening[field]}
+                      value={opening[field] ?? UNKNOWN}
                       onChange={(next) =>
                         patchWall(wall.id, {
                           openings: wall.openings.map((o) =>
@@ -364,6 +401,13 @@ export default function SurveyPanel({
                     />
                   ))}
                 </div>
+
+                {opening.kind === 'protrusion' && (
+                  <p className="mt-1 text-[13px] leading-snug text-graphiteMw">
+                    Модули встанут вплотную к выступу с обеих сторон. Высота
+                    не замерена — считаем до потолка, допущением.
+                  </p>
+                )}
 
                 {opening.kind === 'beam' && (
                   <p className="mt-1 text-[13px] leading-snug text-graphiteMw">

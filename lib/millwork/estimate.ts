@@ -4,7 +4,7 @@ import {
   standsOnFloor,
 } from './modules';
 import { allModules } from './layout';
-import { apronLengthMm, countertopLengthMm } from './countertop';
+import { apronLengthMm, countertopCuts, countertopLengthMm } from './countertop';
 import { cornerOfModule } from './corner';
 import { moduleCarcassHeightMm } from './fill';
 import { CORNER_HINGE_TITLE, drawerSlides, liftKey, openingHardware } from './opening';
@@ -27,6 +27,9 @@ import type {
   Run,
   VariantKey, Panel,
 } from '@/types/millwork';
+
+/** Ключ работы «вырез столешницы под препятствие» — позиция каталога работ (слой 56). */
+export const COUNTERTOP_CUTOUT_KEY = 'countertop_cutout';
 
 /**
  * Смета из спецификации материалов.
@@ -623,6 +626,28 @@ export function buildEstimateDrafts(
      */
     if (hasCorner && counterMp > 0) {
       drafts.push({ key: 'countertop_miter', title: 'Запил столешницы на угол', unit: 'pcs', quantity: 1 });
+    }
+
+    /*
+     * ВЫРЕЗ СТОЛЕШНИЦЫ ПОД ПРЕПЯТСТВИЕ (слой 56) — работа цеха, штуками.
+     *
+     * Плиту вырезают сзади под короб или колонну, когда перед ними
+     * остаётся полоса не уже настройки цеха — решает `counterObstacles`.
+     * Штуки — вырезы ТЕХ ЖЕ плит, что рисует сцена (`countertopCuts`):
+     * второго счёта «где вырез» нет. Цена — позиция каталога работ
+     * организации; не задана — строка остаётся с количеством и словами
+     * «цена не задана», итог «неполный»: не ноль и не пропавшая строка.
+     */
+    const cutouts = countertopCuts(run).length;
+    if (cutouts > 0) {
+      const cutoutRate = rates[COUNTERTOP_CUTOUT_KEY] ?? 0;
+      drafts.push({
+        key: COUNTERTOP_CUTOUT_KEY,
+        title: 'Вырез столешницы под препятствие',
+        unit: 'pcs',
+        quantity: cutouts,
+        ...(cutoutRate > 0 ? { rate: cutoutRate } : { priceUnset: PRICE_UNSET }),
+      });
     }
 
     drafts.push({

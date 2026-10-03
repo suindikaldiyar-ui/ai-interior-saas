@@ -5,6 +5,7 @@ import { CommLegend, COMM_SYMBOL } from './DrawingSymbols';
 import { GEOMETRY, isUpperRow } from '@/lib/millwork/modules';
 import { moduleDepthMm } from '@/lib/millwork/fill';
 import { runPlaces } from '@/lib/millwork/cabinetBoxes';
+import { countertopSlabs, slabPieces } from '@/lib/millwork/countertop';
 import { LINE_MM, unitsPerPaperMm } from '@/lib/millwork/sheetStyle';
 import type { CommPoint, LayoutIssue, Run } from '@/types/millwork';
 import type { RoomState, RowRoomObject } from '@/lib/millwork/room';
@@ -329,17 +330,29 @@ export default function PlanDrawing({
         );
       })}
 
-      {/* Столешница со свесом — пунктиром */}
-      <rect
-        x={PADDING_LEFT}
-        y={wallY}
-        width={DRAW_WIDTH}
-        height={depthPx}
-        fill="none"
-        stroke="var(--blueprint)"
-        strokeWidth={0.5 * k}
-        strokeDasharray="3 2"
-      />
+      {/*
+        * Столешница со свесом — пунктиром. У препятствия (слой 56) — по
+        * плитам: разрыв там, где плита рвётся, и вырез сзади, где она
+        * обходит короб или колонну (`slabPieces`). Без препятствий —
+        * прежний контур на всю длину ряда.
+        */}
+      {(run.obstacles?.length
+        ? countertopSlabs(run).flatMap((slab) => slabPieces(slab))
+        : [{ fromMm: 0, toMm: run.lengthMm, backCutMm: 0 }]
+      ).map((piece) => (
+        <rect
+          key={`counter-${piece.fromMm}`}
+          data-counter-piece={piece.backCutMm > 0 ? 'cut' : 'full'}
+          x={PADDING_LEFT + piece.fromMm * scale}
+          y={wallY + Math.min(piece.backCutMm, maxDepth) * scale}
+          width={(piece.toMm - piece.fromMm) * scale}
+          height={Math.max(0, maxDepth - piece.backCutMm) * scale}
+          fill="none"
+          stroke="var(--blueprint)"
+          strokeWidth={0.5 * k}
+          strokeDasharray="3 2"
+        />
+      ))}
 
       {/* Глубина слева */}
       <g>

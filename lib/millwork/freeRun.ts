@@ -60,16 +60,27 @@ export type Gap = { fromMm: number; toMm: number; widthMm: number };
  * дырка осталась там, где была, и ряд не схлопнулся. Именно поэтому одного
  * числа `residualMm` для интерфейса мало.
  */
-export function gapsIn(modules: Module[], lengthMm: number): Gap[] {
-  const sorted = [...modules].sort((a, b) => a.offsetMm - b.offsetMm);
+export function gapsIn(
+  modules: Module[],
+  lengthMm: number,
+  /**
+   * Занятое препятствиями у стены (слой 56): колонна, короб, выступ.
+   * Пустота у препятствия кончается на нём — внутрь модуль не встаёт.
+   */
+  blocked: { from: number; to: number }[] = [],
+): Gap[] {
+  const sorted = [
+    ...modules.map((unit) => ({ from: unit.offsetMm, to: unit.offsetMm + unit.widthMm })),
+    ...blocked,
+  ].sort((a, b) => a.from - b.from);
   const gaps: Gap[] = [];
   let cursor = 0;
 
-  for (const unit of sorted) {
-    if (unit.offsetMm > cursor) {
-      gaps.push({ fromMm: cursor, toMm: unit.offsetMm, widthMm: unit.offsetMm - cursor });
+  for (const taken of sorted) {
+    if (taken.from > cursor) {
+      gaps.push({ fromMm: cursor, toMm: taken.from, widthMm: taken.from - cursor });
     }
-    cursor = Math.max(cursor, unit.offsetMm + unit.widthMm);
+    cursor = Math.max(cursor, taken.to);
   }
 
   if (cursor < lengthMm) {
@@ -97,8 +108,10 @@ export function placementFor(
   lengthMm: number,
   widthMm: number,
   afterModuleId?: string,
+  /** Препятствия у стены — занятое место (слой 56). */
+  blocked: { from: number; to: number }[] = [],
 ): number | null {
-  const gaps = gapsIn(modules, lengthMm);
+  const gaps = gapsIn(modules, lengthMm, blocked);
   const after = afterModuleId ? modules.find((m) => m.id === afterModuleId) : undefined;
 
   if (after) {
@@ -134,6 +147,12 @@ export function moveConflict(
   moduleId: string,
   offsetMm: number,
   lengthMm: number,
+  /**
+   * Препятствия у стены (слой 56): подсказка «ближайшее свободное место»
+   * не отправляет внутрь выступа. Само захождение в препятствие отказывает
+   * правка ряда (`applyOps`), со словами и миллиметрами.
+   */
+  blocked: { from: number; to: number }[] = [],
 ): MoveConflict | null {
   const moving = modules.find((m) => m.id === moduleId);
   if (!moving) return null;
@@ -152,7 +171,7 @@ export function moveConflict(
    * занятой и подсказка отправляла бы человека дальше, чем нужно.
    */
   const candidates: number[] = [];
-  for (const gap of gapsIn(others, lengthMm)) {
+  for (const gap of gapsIn(others, lengthMm, blocked)) {
     if (gap.widthMm < moving.widthMm) continue;
     // В промежутке ближе всего либо его край, либо сама желаемая позиция.
     const lo = gap.fromMm;

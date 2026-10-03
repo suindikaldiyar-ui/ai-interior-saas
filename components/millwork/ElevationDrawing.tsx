@@ -16,6 +16,8 @@ import {
 } from '@/lib/millwork/shop';
 import { sectionSpec } from '@/lib/millwork/sections';
 import { runPlaces } from '@/lib/millwork/cabinetBoxes';
+import { countertopSlabs, plinthSpans } from '@/lib/millwork/countertop';
+import { baseObstaclesOf } from '@/lib/millwork/obstacles';
 import { moveConflict } from '@/lib/millwork/freeRun';
 import { reorderTarget, rowOfModule, type RunRow } from '@/lib/millwork/selection';
 import type { LibraryGap } from '@/lib/millwork/moduleLibrary';
@@ -1055,6 +1057,13 @@ export default function ElevationDrawing({
       byModule && !reorder
         ? moveConflict(rowModules, unit.id, centerMm - half, run.lengthMm)
         : null;
+    /*
+     * Препятствие у стены под пальцем (слой 56): подсветка краснеет и
+     * называет его — правка ряда туда модуль не поставит.
+     */
+    const wallObstaclesHere = rowHere === null || rowHere.row === 'base' ? baseObstaclesOf(run) : [];
+    const obstacleAt = (centerMm: number) =>
+      wallObstaclesHere.find((obstacle) => centerMm - half < obstacle.to && centerMm + half > obstacle.from);
 
     /*
      * КУДА ВСТАНЕТ — ТЕМ ЖЕ СЧЁТОМ, ЧТО ЗАПИШЕТ ОПЕРАЦИЯ.
@@ -1091,7 +1100,8 @@ export default function ElevationDrawing({
       const rect = ghostRect.current;
       const label = ghostLabel.current;
       const busy = busyAt(centerMm);
-      const paint = busy ? 'var(--alert)' : 'var(--tape)';
+      const blockedBy = obstacleAt(centerMm);
+      const paint = busy || blockedBy ? 'var(--alert)' : 'var(--tape)';
 
       if (ghost.current) ghost.current.style.display = '';
       if (rect) {
@@ -1116,7 +1126,9 @@ export default function ElevationDrawing({
         label.setAttribute('data-drag-row', rowHere?.row ?? 'нет');
         label.textContent = busy
           ? `занято: ${busy.blockedBy.label}`
-          : `${landingAt(centerMm)} мм от угла`;
+          : blockedBy
+            ? `занято: ${blockedBy.reason}`
+            : `${landingAt(centerMm)} мм от угла`;
       }
     };
 
@@ -1916,29 +1928,58 @@ export default function ElevationDrawing({
           на печати схлопывается в чёрную полосу, а на синьке не читается.
           Поверх сцены они приглушены вместе с модулями: линия в полную
           силу поверх настоящей столешницы читается как вторая мебель. */}
+      {/*
+        * У ПРЕПЯТСТВИЯ ЦОКОЛЬ И СТОЛЕШНИЦА РВУТСЯ (слой 56): контур идёт по
+        * тем же плитам и полосам, что считает смета и рисует сцена
+        * (`countertopSlabs`, `plinthSpans`). Без препятствий — прежний
+        * контур на всю длину ряда.
+        */}
       <g opacity={overlay ? 0.55 : 1}>
-        <rect
-          x={PADDING_LEFT}
-          y={yOf(plinthMm(run.production))}
-          width={drawWidth}
-          height={yOf(0) - yOf(plinthMm(run.production))}
-          fill="none"
-          stroke="var(--blueprint)"
-          strokeWidth={0.5 * k}
-        />
-
-        {/* Столешница есть не в каждой зоне: в шкафу её нет вовсе. */}
-        {(!sectionZone || zone.hasCountertop) && (
+        {(run.obstacles?.length
+          ? plinthSpans(run).map((span) => ({
+              x: padLeft + span.fromMm * scale,
+              width: (span.toMm - span.fromMm) * scale,
+            }))
+          : [{ x: PADDING_LEFT, width: drawWidth }]
+        ).map((piece) => (
           <rect
-            x={PADDING_LEFT}
-            y={yOf(sectionZone ? zoneTop : workTop)}
-            width={drawWidth}
-            height={countertopMm(run.production) * heightScale}
+            key={`plinth-${piece.x}`}
+            data-plinth-piece
+            x={piece.x}
+            y={yOf(plinthMm(run.production))}
+            width={piece.width}
+            height={yOf(0) - yOf(plinthMm(run.production))}
             fill="none"
             stroke="var(--blueprint)"
-            strokeWidth={1 * k}
+            strokeWidth={0.5 * k}
           />
-        )}
+        ))}
+
+        {/* Столешница есть не в каждой зоне: в шкафу её нет вовсе. */}
+        {(!sectionZone || zone.hasCountertop) &&
+          (run.obstacles?.length
+            ? countertopSlabs(run).map((slab) => ({
+                x: padLeft + slab.fromMm * scale,
+                width: (slab.toMm - slab.fromMm) * scale,
+                fromMm: slab.fromMm,
+                toMm: slab.toMm,
+              }))
+            : [{ x: PADDING_LEFT, width: drawWidth, fromMm: 0, toMm: run.lengthMm }]
+          ).map((piece) => (
+            <rect
+              key={`counter-${piece.x}`}
+              data-counter-piece
+              data-from-mm={piece.fromMm}
+              data-to-mm={piece.toMm}
+              x={piece.x}
+              y={yOf(sectionZone ? zoneTop : workTop)}
+              width={piece.width}
+              height={countertopMm(run.production) * heightScale}
+              fill="none"
+              stroke="var(--blueprint)"
+              strokeWidth={1 * k}
+            />
+          ))}
       </g>
 
       {/*

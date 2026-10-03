@@ -9,6 +9,8 @@ import { plinthMm, upperBottomMm } from './shop';
 import { columnNichesSumMm, moduleCarcassHeightMm, ovenBottomMm } from './fill';
 import { fridgeRoomMm } from './layout';
 import { openingHardware } from './opening';
+import { depthUnknownMessages, obstacleGenitive } from './obstacles';
+import { counterObstacles } from './countertop';
 import type { CommPoint, LayoutIssue, Opening, Run } from '@/types/millwork';
 import type { SurveyStats } from '@/types/survey';
 
@@ -561,6 +563,46 @@ export function surveyWarnings(stats: SurveyStats): SurveyWarning[] {
 }
 
 /**
+ * ВЫНОС КОЛОННЫ, КОРОБА ИЛИ ВЫСТУПА НЕ ЗАМЕРЕН (слой 56).
+ *
+ * Без выноса препятствие занимает место у стены на всю глубину ряда, и
+ * столешница там рвётся. Это не мешает работать, но сумма может
+ * измениться: уточнение, а не блокирующее.
+ */
+export function obstacleDepthWarnings(openings: Opening[], run: Run | null): SurveyWarning[] {
+  return depthUnknownMessages(openings, run?.ceilingHeightMm ?? 2700).map((message, i) => ({
+    id: `obstacle-depth-${i}`,
+    severity: 'clarify' as const,
+    message,
+  }));
+}
+
+/**
+ * СТОЛЕШНИЦА У ПРЕПЯТСТВИЯ РЕШЕНА ПОРОГОМ, КОТОРОГО ЦЕХ НЕ ПОДТВЕРЖДАЛ (слой 56).
+ *
+ * Вырез или разрыв решает полоса плиты перед препятствием против настройки
+ * цеха (`counterObstacles`). Пока цех её не подтвердил, решение стоит на
+ * типовом числе — и это сказано рядом с последствием: одна плита с вырезом
+ * или две плиты. Вынос не замерен — об этом своя строка, здесь её нет.
+ */
+export function countertopStripWarnings(run: Run | null): SurveyWarning[] {
+  if (!run) return [];
+  return counterObstacles(run)
+    .filter((item) => !item.confirmed && item.stripMm !== null)
+    .map((item, i) => {
+      const where = `${obstacleGenitive(item.obstacle.kind)} ${item.obstacle.from}…${item.obstacle.to} мм`;
+      const threshold = `при пороге ${item.minStripMm} мм (не подтверждено цехом)`;
+      const message =
+        item.decision === 'cut'
+          ? `Столешница у ${where} — одна плита с вырезом сзади: перед препятствием ${item.stripMm} мм плиты ${threshold}. ` +
+            'У цеха с другим порогом здесь будут две плиты и другая сумма.'
+          : `Столешница у ${where} рвётся на две: перед препятствием осталось бы ${item.stripMm} мм плиты ${threshold}. ` +
+            'У цеха с другим порогом здесь будет одна плита с вырезом и другая сумма.';
+      return { id: `countertop-strip-${i}`, severity: 'clarify' as const, message };
+    });
+}
+
+/**
  * Всё вместе, отсортировано по последствиям. Информационные не показываются
  * на экране вовсе — они уходят в примечания чертежа.
  */
@@ -585,6 +627,8 @@ export function collectWarnings(input: {
 
   const all = [
     ...doorwayConflicts(input.run, input.openings),
+    ...obstacleDepthWarnings(input.openings, input.run),
+    ...countertopStripWarnings(input.run),
     ...sinkWaterConflicts(input.run, input.comms, input.manualSink),
     ...vanityWaterConflicts(input.run, input.comms),
     ...manualPlacementWarnings(input.run, input.hoodRequested),

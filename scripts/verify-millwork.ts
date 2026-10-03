@@ -9,14 +9,16 @@
  * подпишет договор по неверной сумме и потеряет деньги на своём производстве.
  */
 
-import { buildRun, fillGap, runWidthSum } from '../lib/millwork/layout';
+import { buildRun, fillGap, rowSpansOfRun, runWidthSum } from '../lib/millwork/layout';
 import { applyOps } from '../lib/millwork/ops';
 import {
+  COUNTERTOP_CUTOUT_KEY,
   buildEstimate,
   lineAmountText,
   recalcTotal,
   totalCaption,
   unpricedLines,
+  type RateTable,
 } from '../lib/millwork/estimate';
 import catalogJson from '../data/catalog/catalog.json';
 import * as THREE from 'three';
@@ -68,6 +70,7 @@ import {
   zoneReadiness,
 } from '../lib/millwork/templates';
 import {
+  collectWarnings,
   manualPlacementWarnings,
   sinkWaterConflicts,
   vanityWaterConflicts,
@@ -160,6 +163,8 @@ import {
   counterTailsOf,
   countertopSlabs,
   plinthSpans,
+  slabPieces,
+  type CounterSlab,
 } from '../lib/millwork/countertop';
 import { DRAWER_TRAVEL_M, bifoldPoses, drawerBoxes, leafPoses, sceneLeaves } from '../lib/millwork/cabinetBoxes';
 import { TAIL_FILLER_PANEL_NAME } from '../lib/millwork/panels';
@@ -184,6 +189,7 @@ import {
   lowerWall,
   mergeEstimates,
   wallLabel,
+  obstacleMismatches,
   wallMismatchMessage,
   wallMismatches,
 } from '../lib/millwork/walls';
@@ -332,6 +338,7 @@ import { axonometryExtentMm, buildAxonometry, project } from '../lib/millwork/ax
 import { carcassBoxes, doorCount, doorPivot, hasVisibleAppliance, moduleBoxes, openablePartIds, panelPlaces, runBoxes, runPlaces, doorLeaves} from '../lib/millwork/cabinetBoxes';
 import {
   DEFAULT_ALLOWANCES,
+  DEFAULT_COUNTERTOP_STRIP,
   DEFAULT_PRODUCTION,
   EMPTY_MOUNTING,
   productionSettings,
@@ -21921,6 +21928,564 @@ console.log('\nСлой 55: угол Г и П — владелец, места, 
         );
       }
     }
+  }
+}
+
+/* ═══════════  Слой 56: выступ стены, колонна, короб — мебель обходит  ═══════════ */
+
+/**
+ * ПРЕПЯТСТВИЕ У СТЕНЫ МЕРЯЕТСЯ ПУТЁМ ЭКРАНА.
+ *
+ * Ряд стены А на экране — из вариантов (`composeVariants`) по проёмам
+ * живого замера (`input.openings`); правка — `applyOps` с теми же
+ * проёмами; мебель в препятствии — `obstacleMismatches`, как у рабочего
+ * места; уточнения — `collectWarnings`. Числа — путь экрана, а не сборка
+ * ряда напрямую.
+ */
+console.log('\nСлой 56: выступ стены, колонна, короб — участки, вплотную, отказы, столешница');
+{
+  const CEILING56 = 2700;
+  const DISABLED56 = { basic: [], optimal: [], premium: [] } as Record<VariantKey, string[]>;
+  const room56 = (lengthMm: number, openings: Opening[]): Measurement => ({
+    id: 'room-56',
+    ceilingHeightMm: CEILING56,
+    walls: [
+      { id: 'a', lengthMm, angleDeg: 90, openings },
+      { id: 'b', lengthMm: 3000, angleDeg: 90, openings: [] },
+      { id: 'c', lengthMm, angleDeg: 90, openings: [] },
+      { id: 'd', lengthMm: 3000, angleDeg: 90, openings: [] },
+    ],
+    comms: [],
+    photos: [],
+    measuredBy: 'Проверка',
+    measuredAt: '2026-10-02',
+    notes: '',
+  });
+  const protrusion56 = (fromMm: number, widthMm: number, depthMm?: number): Opening => ({
+    id: `p-${fromMm}`,
+    kind: 'protrusion',
+    fromCornerMm: fromMm,
+    widthMm,
+    sillMm: 0,
+    heightMm: CEILING56,
+    ...(depthMm ? { depthMm } : {}),
+  });
+  const box56 = (fromMm: number, widthMm: number, depthMm: number, heightMm: number): Opening => ({
+    id: `b-${fromMm}`,
+    kind: 'pipe_box',
+    fromCornerMm: fromMm,
+    widthMm,
+    sillMm: 0,
+    heightMm,
+    depthMm,
+  });
+  const column56 = (fromMm: number, widthMm: number): Opening => ({
+    id: `c-${fromMm}`,
+    kind: 'column',
+    fromCornerMm: fromMm,
+    widthMm,
+    sillMm: 0,
+    heightMm: CEILING56,
+  });
+
+  /** Рабочее место по объекту: те же шаги и в том же порядке. */
+  const screen56 = (
+    measurement: Measurement,
+    state: {
+      runs?: Partial<Record<VariantKey, Run>>;
+      requirements?: RunRequirements;
+      /** Настройки цеха организации — путь экрана берёт их из `orgs.production`. */
+      production?: ProductionSettings;
+      /** Ставки каталога организации. */
+      rates?: RateTable;
+    } = {},
+  ) => {
+    const requirements = state.requirements ?? DEMO_REQUIREMENTS;
+    const rates = state.rates ?? DEMO_RATES;
+    const base = workspaceInput({
+      title: 'Препятствие',
+      zone: 'Кухня',
+      measurement,
+      requirements,
+      rates,
+      wallId: 'a',
+      cornerAt: null,
+    });
+    const input = objectInput({
+      base,
+      resolution: null,
+      requirements,
+      rates,
+      production: state.production ?? DEFAULT_PRODUCTION,
+      milling: new Map(),
+      carcass: new Map(),
+      materials: new Map(),
+    });
+    const active = composeVariants(input, DISABLED56, state.runs ?? {}).find((v) => v.key === 'optimal')!;
+    const segments = wallSegments(null, active.run, {});
+    /* Смета объекта — та же функция, что итог внизу экрана (у прямой кухни это смета стены А). */
+    const estimate = objectEstimateOf({
+      layout: null,
+      segments,
+      wallAEstimate: active.estimate,
+      variantKey: 'optimal',
+      input,
+      disabled: DISABLED56,
+    });
+    /* Проёмы стены для правки — `wallOpenings(0)` экрана: живой замер. */
+    const openings = input.openings;
+    const mismatches = obstacleMismatches({
+      runs: segments,
+      openingsOf: () => openings,
+      edited: () => Boolean(state.runs?.optimal),
+    });
+    const warnings = collectWarnings({ issues: [], run: active.run, openings, comms: [] });
+    return { input, run: segments[0], openings, mismatches, warnings, requirements, estimate };
+  };
+  const edit56 = (screen: ReturnType<typeof screen56>, ops: MillworkOp[]) =>
+    applyOps({ run: screen.run, requirements: screen.requirements, ops, openings: screen.openings, roomDepthMm: 0 });
+
+  const uppersOf = (run: Run) =>
+    run.upperSegments.flatMap((segment) => segment.modules).filter((unit) => unit.section !== 'mezzanine');
+  const mezzOf = (run: Run) =>
+    run.upperSegments.flatMap((segment) => segment.modules).filter((unit) => unit.section === 'mezzanine');
+  const overlapOf = (unit: Module, from: number, to: number) =>
+    Math.min(unit.offsetMm + unit.widthMm, to) - Math.max(unit.offsetMm, from);
+  const spansOf = (screen: ReturnType<typeof screen56>, row: 'base' | 'upper' | 'mezzanine') =>
+    rowSpansOfRun(row, screen.run, screen.run.modules, screen.openings, screen.requirements, screen.run.options);
+
+  /* ── 9. Стена 3800, выступ посередине 600 × 400: три ряда рвутся, соседи вплотную ── */
+  {
+    const P = { from: 1600, to: 2200 };
+    const room = room56(3800, [protrusion56(P.from, P.to - P.from, 400)]);
+    /* Антресоль заказывается тем же `set_mezzanine`, что на экране. */
+    const withMezz = edit56(screen56(room), [{ op: 'set_mezzanine', heightMm: 400 }]);
+    const screen = screen56(room, { runs: { optimal: withMezz } });
+    const run = screen.run;
+    const rows: [string, 'base' | 'upper' | 'mezzanine', Module[]][] = [
+      ['нижний', 'base', run.modules],
+      ['верхний', 'upper', uppersOf(run)],
+      ['антресоль', 'mezzanine', mezzOf(run)],
+    ];
+
+    const whole: string[] = [];
+    for (const [title, row] of rows) {
+      const { free } = spansOf(screen, row);
+      const crossing = free.filter((span) => span.from < P.to && span.to > P.from);
+      const left = free.some((span) => span.to <= P.from);
+      const right = free.some((span) => span.from >= P.to);
+      if (crossing.length > 0 || !left || !right) {
+        whole.push(`${title}: участки ${free.map((span) => `${span.from}…${span.to}`).join(' ') || 'НЕТ'}`);
+      }
+    }
+    check(
+      '9. выступ 600 × 400 посередине стены 3800 рвёт нижний ряд, верхний и антресоль',
+      whole.length === 0,
+      whole.length === 0
+        ? rows.map(([title, row]) => `${title} ${spansOf(screen, row).free.map((s) => `${s.from}…${s.to}`).join(' ')}`).join(' · ')
+        : whole.join(' | '),
+    );
+
+    const intruders = allModules(run).filter((unit) => overlapOf(unit, P.from, P.to) > 0);
+    const counted = rows.reduce((sum, [, , units]) => sum + units.length, 0);
+    check(
+      '9. ни один модуль не стоит в объёме выступа',
+      intruders.length === 0 && counted > 0 && mezzOf(run).length > 0,
+      intruders.length === 0
+        ? `модулей ${counted}, антресоли ${mezzOf(run).length}`
+        : intruders.map((unit) => `${unit.id} заходит на ${overlapOf(unit, P.from, P.to)} мм`).join(', '),
+    );
+
+    const loose: string[] = [];
+    let sides = 0;
+    for (const [title, , units] of rows) {
+      const leftEnd = Math.max(...units.filter((unit) => unit.offsetMm + unit.widthMm <= P.from).map((u) => u.offsetMm + u.widthMm));
+      const rightStart = Math.min(...units.filter((unit) => unit.offsetMm >= P.to).map((u) => u.offsetMm));
+      for (const [side, gap] of [
+        ['слева', P.from - leftEnd],
+        ['справа', rightStart - P.to],
+      ] as [string, number][]) {
+        if (!Number.isFinite(gap)) {
+          if (title !== 'антресоль') loose.push(`${title} ${side}: модулей НЕТ`);
+          continue;
+        }
+        sides += 1;
+        if (gap !== 0) loose.push(`${title} ${side}: ${gap} мм`);
+      }
+    }
+    check(
+      '9. соседи стоят к выступу вплотную, 0 мм с обеих сторон',
+      loose.length === 0 && sides >= 4,
+      loose.length === 0 ? `сторон ${sides}, у каждой 0 мм` : loose.join(' | '),
+    );
+  }
+
+  /* ── 10. Короб 150 × 150 у пола в углу: нижний ряд после него, верхний прежний ── */
+  {
+    const requirements = { ...DEMO_REQUIREMENTS, tallSide: 'right' as const };
+    const plain = screen56(room56(3800, []), { requirements });
+    const boxed = screen56(room56(3800, [box56(0, 150, 150, 300)]), { requirements });
+    const first = [...boxed.run.modules].sort((a, b) => a.offsetMm - b.offsetMm)[0];
+    const inBox = boxed.run.modules.filter((unit) => overlapOf(unit, 0, 150) > 0);
+    check(
+      '10. короб 150 × 150 у пола: нижний ряд начинается сразу за ним, 0 мм',
+      Boolean(first) && first.offsetMm === 150 && inBox.length === 0,
+      first ? `первый модуль ${first.id} на ${first.offsetMm} мм, в коробе ${inBox.length}` : 'МОДУЛЕЙ НЕТ',
+    );
+    const upperBefore = spansOf(plain, 'upper');
+    const upperAfter = spansOf(boxed, 'upper');
+    const same = JSON.stringify(upperBefore.free) === JSON.stringify(upperAfter.free);
+    const boxBlocks = upperAfter.blockers.some((blocker) => blocker.reason === 'короб');
+    check(
+      '10. верхний ряд короб не трогает: участки те же, короба среди его преград нет',
+      same && !boxBlocks && upperAfter.free.length > 0 && uppersOf(boxed.run).length > 0,
+      `${upperBefore.free.map((s) => `${s.from}…${s.to}`).join(' ')} → ${upperAfter.free.map((s) => `${s.from}…${s.to}`).join(' ')}` +
+        (boxBlocks ? ' · КОРОБ РВЁТ ВЕРХНИЙ' : ''),
+    );
+  }
+
+  /* ── 11. Колонна без выноса: место занято на всю глубину, слова «замерьте вынос» ── */
+  {
+    const C = { from: 2400, to: 2800 };
+    const screen = screen56(room56(3800, [column56(C.from, C.to - C.from)]));
+    const inColumn = allModules(screen.run).filter((unit) => overlapOf(unit, C.from, C.to) > 0);
+    const slabsOver = countertopSlabs(screen.run).filter((slab) => slab.fromMm < C.to && slab.toMm > C.from);
+    const words = screen.warnings.find((warning) => /замерьте вынос колонны/i.test(warning.message));
+    check(
+      '11. колонна без выноса: место занято на всю глубину — ни модуля, ни плиты',
+      inColumn.length === 0 && slabsOver.length === 0 && screen.run.modules.length > 0,
+      `модулей в колонне ${inColumn.length}, плит над ней ${slabsOver.length}`,
+    );
+    check(
+      '11. колонна без выноса названа словами: «Замерьте вынос колонны»',
+      Boolean(words) && words!.severity === 'clarify',
+      words ? `«${words.message}»` : `СЛОВ НЕТ: ${screen.warnings.map((w) => w.message).join(' | ') || 'предупреждений нет'}`,
+    );
+  }
+
+  /* ── 12. Выступ внесли в замер, когда мебель уже поправлена руками ── */
+  {
+    const P = { from: 1600, to: 2200 };
+    const first = screen56(room56(3800, []));
+    const target = first.run.modules.find((unit) => unit.kind === 'base' && !unit.appliance);
+    if (!target) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: 12 — в ряду нет модуля для правки');
+    const edited = edit56(first, [{ op: 'set_handle', moduleId: target.id, handle: 'profile' }]);
+    const saved = JSON.parse(JSON.stringify({ optimal: edited })) as Partial<Record<VariantKey, Run>>;
+    const withP = room56(3800, [protrusion56(P.from, P.to - P.from, 400)]);
+    const opened = screen56(withP, { runs: saved });
+
+    const expected = allModules(opened.run)
+      .map((unit) => ({ unit, mm: overlapOf(unit, P.from, P.to) }))
+      .filter((hit) => hit.mm > 0);
+    const conflicts = opened.mismatches[0]?.obstacles ?? [];
+    const named = expected.filter((hit) =>
+      conflicts.some((conflict) => conflict.moduleId === hit.unit.id && conflict.overlapMm === Math.round(hit.mm)),
+    );
+    check(
+      '12. мебель не исчезла молча: модулей столько же, сколько сохранено',
+      allModules(opened.run).length === allModules(edited).length && expected.length > 0,
+      `модулей ${allModules(edited).length} → ${allModules(opened.run).length}, в выступе ${expected.length}`,
+    );
+    const message = opened.mismatches[0] ? wallMismatchMessage(opened.mismatches[0]) : '';
+    const listed = expected.every(
+      (hit) => message.includes(hit.unit.id.replace(/@.*$/, '')) && message.includes(`на ${Math.round(hit.mm)} мм`),
+    );
+    check(
+      '12. предупреждение перечисляет каждый модуль в выступе с миллиметрами',
+      expected.length > 0 && named.length === expected.length && listed,
+      message ? `«${message.slice(0, 240)}${message.length > 240 ? '…' : ''}»` : 'ПРЕДУПРЕЖДЕНИЯ НЕТ',
+    );
+    const screenNow = screenState({
+      refusal: null,
+      mismatches: opened.mismatches,
+      walls: [{ lengthMm: 3800 }],
+      segments: [opened.run],
+      shape: 'linear',
+      warnings: opened.warnings,
+    });
+    check(
+      '12. красная полоса с кнопкой «Пересобрать стену»: цена спрятана, запись не заперта',
+      screenNow.rebuildWall === 0 && screenNow.priceHidden && screenNow.nextLocked && !screenNow.autosaveLocked,
+      `пересобрать ${screenNow.rebuildWall} · цена ${screenNow.priceHidden ? 'спрятана' : 'ПОКАЗАНА'} · запись ${screenNow.autosaveLocked ? 'ЗАПЕРТА' : 'пишется'}`,
+    );
+    const rebuilt = screen56(withP, {});
+    const after = allModules(rebuilt.run).filter((unit) => overlapOf(unit, P.from, P.to) > 0);
+    check(
+      '12. «Пересобрать стену»: новая раскладка по шаблону сама встаёт в участки',
+      after.length === 0 && rebuilt.mismatches.length === 0 && rebuilt.run.modules.length > 0,
+      `в выступе ${after.length}, расхождений ${rebuilt.mismatches.length}`,
+    );
+  }
+
+  /*
+   * ── 13. Столешница у препятствия: полоса плиты перед ним против настройки цеха ──
+   *
+   * Решение владельца правил: полоса перед препятствием (глубина плиты минус
+   * вынос) не уже «минимальной полосы» цеха — вырез, плита одна; уже — разрыв,
+   * две плиты с торцами. Типовая полоса 300 мм, «не подтверждено цехом».
+   * Выступ 400 при плите 601 — полоса 201: разрыв. Короб 150 — полоса 451:
+   * вырез. Вырез — строка сметы из каталога работ; цены нет — «цена не
+   * задана» и итог «неполный», не ноль и не пропавшая строка.
+   */
+  {
+    const slabDepth = counterSlabDepthMm('kitchen', DEFAULT_PRODUCTION);
+    const typicalStrip = DEFAULT_COUNTERTOP_STRIP.minStripMm;
+    const B = { from: 1800, to: 1950, depth: 150 };
+    const P = { from: 1600, to: 2200, depth: 400 };
+    const boxRoom = room56(3800, [box56(B.from, B.to - B.from, B.depth, CEILING56)]);
+    const p400Room = room56(3800, [protrusion56(P.from, P.to - P.from, P.depth)]);
+    const shop56 = (minStripMm: number, confirmed: boolean): ProductionSettings => ({
+      ...DEFAULT_PRODUCTION,
+      countertopStrip: { minStripMm, confirmed },
+    });
+
+    /** Что плита делает у отрезка препятствия — числами плит ряда экрана. */
+    const slabAt = (run: Run, at: { from: number; to: number }) => {
+      const slabs = countertopSlabs(run);
+      const over = slabs.filter((slab) => slab.fromMm < at.to && slab.toMm > at.from);
+      const cuts = over.flatMap((slab) => slab.cuts ?? []);
+      /* Кусок плиты во всю глубину над препятствием — это плита сквозь него. */
+      const through = over
+        .flatMap((slab) => slabPieces(slab))
+        .filter((piece) => piece.fromMm < at.to && piece.toMm > at.from && piece.backCutMm === 0);
+      const cutText = (slab: CounterSlab) =>
+        slab.cuts ? ` (вырез ${slab.cuts.map((c) => `${c.fromMm}…${c.toMm} на ${c.depthMm}`).join(', ')})` : '';
+      return {
+        over,
+        cuts,
+        through,
+        endsAt: [slabs.some((slab) => slab.toMm === at.from), slabs.some((slab) => slab.fromMm === at.to)],
+        text: slabs.map((slab) => `${slab.fromMm}…${slab.toMm}${cutText(slab)}`).join(' ') || 'ПЛИТ НЕТ',
+      };
+    };
+    /** Вырез: над препятствием одна плита, вырез ровно по нему и на его вынос, сквозь — ничего. */
+    const isCut = (got: ReturnType<typeof slabAt>, at: { from: number; to: number; depth: number }) =>
+      got.over.length === 1 &&
+      got.cuts.length === 1 &&
+      got.cuts[0].fromMm === at.from &&
+      got.cuts[0].toMm === at.to &&
+      got.cuts[0].depthMm === at.depth &&
+      got.through.length === 0;
+    /** Разрыв: над препятствием плит нет, две плиты кончаются торцами у его краёв. */
+    const isBreak = (got: ReturnType<typeof slabAt>) =>
+      got.over.length === 0 && got.cuts.length === 0 && got.endsAt.every(Boolean);
+
+    /* Оба случая на типовой полосе. */
+    const riser = screen56(boxRoom);
+    const riserAt = slabAt(riser.run, B);
+    check(
+      `13. короб ${B.depth} при плите ${slabDepth}: полоса ${slabDepth - B.depth} мм не уже типовых ${typicalStrip} — вырез, плита одна, сквозь короб полотна нет`,
+      isCut(riserAt, B),
+      `плиты ${riserAt.text}`,
+    );
+    const p400 = screen56(p400Room);
+    const p400At = slabAt(p400.run, P);
+    check(
+      `13. выступ ${P.depth} при плите ${slabDepth}: полоса ${slabDepth - P.depth} мм уже типовых ${typicalStrip} — разрыв, две плиты с торцами у выступа`,
+      isBreak(p400At),
+      `плиты ${p400At.text}`,
+    );
+
+    /* Выступ на всю глубину плиты — полосы нет вовсе: разрыв при любом пороге, даже нулевом. */
+    const deep = screen56(room56(3800, [protrusion56(P.from, P.to - P.from, slabDepth)]), { production: shop56(0, true) });
+    const deepAt = slabAt(deep.run, P);
+    check(
+      `13. выступ с выносом ${slabDepth} (вся глубина плиты) при пороге 0 — разрыв: полосы перед ним нет`,
+      isBreak(deepAt),
+      `плиты ${deepAt.text}`,
+    );
+
+    /* Смена настройки цеха меняет решение — в обе стороны. */
+    const riserStrict = screen56(boxRoom, { production: shop56(500, true) });
+    const riserStrictAt = slabAt(riserStrict.run, B);
+    check(
+      `13. порог цеха 500: короб ${B.depth} (полоса ${slabDepth - B.depth} мм) — вырез сменился разрывом`,
+      isCut(riserAt, B) && isBreak(riserStrictAt),
+      `при ${typicalStrip}: ${riserAt.text} · при 500: ${riserStrictAt.text}`,
+    );
+    const p400Loose = screen56(p400Room, { production: shop56(200, true) });
+    const p400LooseAt = slabAt(p400Loose.run, P);
+    check(
+      `13. порог цеха 200: выступ ${P.depth} (полоса ${slabDepth - P.depth} мм) — разрыв сменился вырезом`,
+      isBreak(p400At) && isCut(p400LooseAt, P),
+      `при ${typicalStrip}: ${p400At.text} · при 200: ${p400LooseAt.text}`,
+    );
+
+    /* Вырез — строка сметы: цены нет — «цена не задана» и итог «неполный»; разрыв строки не даёт. */
+    const cutoutOf = (estimate: Estimate) => estimate.lines.filter((line) => line.key === COUNTERTOP_CUTOUT_KEY);
+    const unpricedCut = cutoutOf(riser.estimate);
+    check(
+      '13. вырез строкой в смете: 1 шт., «цена не задана», в итог не входит, итог «неполный»',
+      unpricedCut.length === 1 &&
+        unpricedCut[0].quantity === 1 &&
+        unpricedCut[0].enabled &&
+        unpricedCut[0].priceUnset === 'цена не задана' &&
+        lineAmountText(unpricedCut[0]) === 'цена не задана' &&
+        unpricedCut[0].total === 0 &&
+        unpricedLines(riser.estimate).some((line) => line.key === COUNTERTOP_CUTOUT_KEY) &&
+        totalCaption(riser.estimate).includes('неполный'),
+      unpricedCut.length === 0
+        ? `СТРОКИ ВЫРЕЗА НЕТ · ${totalCaption(riser.estimate)}`
+        : `${unpricedCut[0].title}: ${unpricedCut[0].quantity} шт., ${lineAmountText(unpricedCut[0])} · ${totalCaption(riser.estimate)}`,
+    );
+    /* Типовой прайс заводит позицию с нулём — это тоже «цена не задана», а не «0 ₸». */
+    const typicalRates = Object.fromEntries(TYPICAL_PRICE_LIST.map((r) => [r.estimateKey, r.price])) as RateTable;
+    const riserTypical = screen56(boxRoom, { rates: typicalRates });
+    const typicalCut = cutoutOf(riserTypical.estimate);
+    check(
+      '13. позиция «Вырез столешницы» в типовом прайсе без цены — в смете «цена не задана», не «0 ₸»',
+      TYPICAL_PRICE_LIST.some((r) => r.estimateKey === COUNTERTOP_CUTOUT_KEY) &&
+        typicalCut.length === 1 &&
+        lineAmountText(typicalCut[0]) === 'цена не задана' &&
+        totalCaption(riserTypical.estimate).includes('неполный'),
+      typicalCut.length === 0 ? 'СТРОКИ ВЫРЕЗА НЕТ' : `${lineAmountText(typicalCut[0])} · ${totalCaption(riserTypical.estimate)}`,
+    );
+    /* Цена заведена — строка с деньгами, итог полный. */
+    const CUTOUT_RATE = 7000;
+    const riserPriced = screen56(boxRoom, { rates: { ...DEMO_RATES, [COUNTERTOP_CUTOUT_KEY]: CUTOUT_RATE } });
+    const pricedCut = cutoutOf(riserPriced.estimate);
+    check(
+      `13. цена выреза заведена (${CUTOUT_RATE} ₸) — строка с деньгами, итог без «неполный»`,
+      pricedCut.length === 1 &&
+        !pricedCut[0].priceUnset &&
+        pricedCut[0].total === CUTOUT_RATE &&
+        !totalCaption(riserPriced.estimate).includes('неполный'),
+      pricedCut.length === 0 ? 'СТРОКИ ВЫРЕЗА НЕТ' : `${lineAmountText(pricedCut[0])} · ${totalCaption(riserPriced.estimate)}`,
+    );
+    const breakCuts = [cutoutOf(p400.estimate).length, cutoutOf(riserStrict.estimate).length];
+    check(
+      '13. разрыв строки выреза не даёт (выступ 400 при типовой полосе, короб при пороге 500), вырез при пороге 200 — даёт',
+      breakCuts.every((count) => count === 0) && cutoutOf(p400Loose.estimate).length === 1,
+      `строк выреза: выступ ${breakCuts[0]}, короб при 500 — ${breakCuts[1]}, выступ при 200 — ${cutoutOf(p400Loose.estimate).length}`,
+    );
+
+    /* Порог не подтверждён цехом — сказано у решения; подтверждён — молчим. */
+    const stripWarnings = (screen: ReturnType<typeof screen56>) =>
+      screen.warnings.filter((w) => w.message.startsWith('Столешница у') && w.message.includes('не подтверждено цехом'));
+    const confirmedRiser = screen56(boxRoom, { production: shop56(typicalStrip, true) });
+    check(
+      '13. типовая полоса «не подтверждено цехом» — у выреза и у разрыва; подтверждённая — без пометки',
+      stripWarnings(riser).length === 1 &&
+        stripWarnings(riser)[0].message.includes('с вырезом') &&
+        stripWarnings(p400).length === 1 &&
+        stripWarnings(p400)[0].message.includes('рвётся на две') &&
+        stripWarnings(confirmedRiser).length === 0 &&
+        isCut(slabAt(confirmedRiser.run, B), B),
+      [stripWarnings(riser)[0]?.message ?? 'У ВЫРЕЗА ПОМЕТКИ НЕТ', stripWarnings(p400)[0]?.message ?? 'У РАЗРЫВА ПОМЕТКИ НЕТ'].join(' | '),
+    );
+
+    /* Цоколь и фартук рвутся там же, где стоит препятствие, — при любом решении плиты. */
+    const plinthOver = plinthSpans(deep.run).filter((span) => span.fromMm < P.to && span.toMm > P.from);
+    const apronOver = apronSpans(p400Loose.run).filter((span) => span.fromMm < P.to && span.toMm > P.from);
+    check(
+      '13. цоколь и фартук у выступа рвутся',
+      plinthOver.length === 0 && apronOver.length === 0 && plinthSpans(deep.run).length >= 2 && apronSpans(p400Loose.run).length >= 1,
+      `цоколь ${plinthSpans(deep.run).map((s) => `${s.fromMm}…${s.toMm}`).join(' ')} · фартук ${apronSpans(p400Loose.run).map((s) => `${s.fromMm}…${s.toMm}`).join(' ')}`,
+    );
+  }
+
+  /* ── 14. Длины 2734, 3201, 4137, выступ в разных местах: шаблон заполняет участки ── */
+  {
+    const LENGTHS = [2734, 3201, 4137];
+    let configs = 0;
+    let spansChecked = 0;
+    const bad: string[] = [];
+    for (const length of LENGTHS) {
+      for (const at of [350, Math.round(length / 2) - 200, length - 750]) {
+        const P = { from: at, to: at + 400 };
+        const screen = screen56(room56(length, [protrusion56(P.from, 400, 300)]));
+        configs += 1;
+        const tag = `${length}, выступ ${P.from}…${P.to}`;
+        const inside = allModules(screen.run).filter((unit) => overlapOf(unit, P.from, P.to) > 0);
+        if (inside.length > 0) bad.push(`${tag}: в выступе ${inside.map((u) => u.id).join(', ')}`);
+        for (const span of spansOf(screen, 'base').free) {
+          const units = screen.run.modules.filter((unit) => unit.offsetMm >= span.from && unit.offsetMm < span.to);
+          spansChecked += 1;
+          const sum = units.reduce((total, unit) => total + unit.widthMm, 0);
+          const out = units.filter((unit) => unit.offsetMm + unit.widthMm > span.to);
+          if (out.length > 0) bad.push(`${tag}: ${out[0].id} выходит за участок ${span.from}…${span.to}`);
+          if (sum > span.to - span.from) bad.push(`${tag}: участок ${span.from}…${span.to} — ширин ${sum}`);
+          if (span.to - span.from >= MIN_WIDTH && units.length === 0) bad.push(`${tag}: участок ${span.from}…${span.to} пуст`);
+          if (span.to === P.from && units.length > 0) {
+            const end = Math.max(...units.map((unit) => unit.offsetMm + unit.widthMm));
+            if (end !== P.from) bad.push(`${tag}: слева от выступа щель ${P.from - end} мм`);
+          }
+          if (span.from === P.to && units.length > 0) {
+            const start = Math.min(...units.map((unit) => unit.offsetMm));
+            if (start !== P.to) bad.push(`${tag}: справа от выступа щель ${start - P.to} мм`);
+          }
+        }
+      }
+    }
+    const WANT14 = LENGTHS.length * 3;
+    check(
+      `14. длины 2734, 3201, 4137 с выступом в трёх местах: шаблон заполняет участки, сумма ширин ≤ участка — ${WANT14} конфигураций`,
+      configs === WANT14 && bad.length === 0 && spansChecked >= WANT14 * 2,
+      bad.length === 0 ? `конфигураций ${configs}, участков ${spansChecked}` : `${bad.length}: ${bad.slice(0, 3).join(' | ')}`,
+    );
+  }
+
+  /* ── 15. Библиотека и перенос в пустоту у выступа; не помещается — отказ числом ── */
+  {
+    const P = { from: 1600, to: 2200 };
+    const room = room56(3800, [protrusion56(P.from, P.to - P.from, 400)]);
+    const start = screen56(room);
+    const neighbour = start.run.modules.find((unit) => unit.offsetMm + unit.widthMm === P.from && unit.kind === 'base' && !unit.appliance);
+    if (!neighbour) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: 15 — у выступа слева нет обычного модуля');
+    /* Замена уже — справа от неё у выступа остаётся пустота (слой 50). */
+    const narrowed = edit56(start, [{ op: 'replace_module', moduleId: neighbour.id, kind: 'base', widthMm: neighbour.widthMm - 200 }]);
+    const screen = screen56(room, { runs: { optimal: narrowed } });
+    const gap = libraryGaps(screen.run, screen.openings, screen.requirements).find(
+      (candidate) => candidate.row === 'base' && candidate.fromMm + candidate.widthMm === P.from,
+    );
+    check(
+      '15. пустота у выступа видна библиотеке и кончается на выступе',
+      Boolean(gap) && gap!.widthMm === 200,
+      gap ? `пустота ${gap.fromMm}…${gap.fromMm + gap.widthMm}` : 'ПУСТОТЫ НЕТ',
+    );
+    if (!gap) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: 15 — пустоты у выступа нет');
+
+    const cards = libraryCards({ run: screen.run, requirements: screen.requirements, openings: screen.openings, moduleId: null, gap });
+    const placed = cards
+      .filter((card) => !card.refusal)
+      .map((card) => ({ card, run: edit56(screen, card.ops) }))
+      .map(({ card, run }) => ({ card, added: run.modules.find((unit) => !screen.run.modules.some((u) => u.id === unit.id)) }));
+    const wrong = placed.filter(({ added }) => !added || added.offsetMm < gap.fromMm || added.offsetMm + added.widthMm > P.from);
+    const flush = placed.filter(({ added }) => added && added.offsetMm + added.widthMm === P.from);
+    check(
+      '15. карточки библиотеки встают в пустоту у выступа и не заходят в него',
+      placed.length > 0 && wrong.length === 0 && flush.length > 0,
+      `карточек ${cards.length}, встаёт ${placed.length}, вплотную к выступу ${flush.length}` +
+        (wrong.length > 0 ? ` · МИМО: ${wrong.map(({ card }) => card.key).join(', ')}` : ''),
+    );
+
+    const wide = edit56(screen, [{ op: 'add_module', kind: 'base', widthMm: 450, atMm: gap.fromMm }]);
+    check(
+      '15. модуль шире пустоты: «Не помещается: справа выступ стены, не хватает 250 мм», ряд прежний',
+      wide.warnings.some((warning) => warning === 'Не помещается: справа выступ стены, не хватает 250 мм.') &&
+        allModules(wide).length === allModules(screen.run).length,
+      wide.warnings[0] ?? 'ОТКАЗА НЕТ',
+    );
+
+    const small = screen.run.modules.find((unit) => unit.offsetMm + unit.widthMm === gap.fromMm);
+    if (!small) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: 15 — у пустоты нет модуля для переноса');
+    const moved = edit56(screen, [{ op: 'move_module', moduleId: small.id, offsetMm: gap.fromMm + gap.widthMm - small.widthMm }]);
+    const landed = moved.modules.find((unit) => unit.offsetMm === P.from - small.widthMm);
+    check(
+      '15. перенос в пустоту: модуль встал к выступу вплотную, 0 мм',
+      Boolean(landed) && moved.warnings.length === 0 && allModules(moved).length === allModules(screen.run).length,
+      landed ? `${landed.id} на ${landed.offsetMm}…${landed.offsetMm + landed.widthMm}` : moved.warnings[0] ?? 'НЕ ВСТАЛ',
+    );
+
+    const sink = screen.run.modules.find((unit) => unit.offsetMm === P.to);
+    if (!sink) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: 15 — справа у выступа нет модуля');
+    const intoP = edit56(screen, [{ op: 'move_module', moduleId: sink.id, offsetMm: gap.fromMm }]);
+    check(
+      '15. перенос шире пустоты: отказ числом, модули на месте',
+      intoP.warnings.some((warning) => /справа выступ стены, не хватает \d+ мм/.test(warning)) &&
+        intoP.modules.every((unit, i) => unit.offsetMm === screen.run.modules[i]?.offsetMm),
+      intoP.warnings[0] ?? 'ОТКАЗА НЕТ',
+    );
   }
 }
 

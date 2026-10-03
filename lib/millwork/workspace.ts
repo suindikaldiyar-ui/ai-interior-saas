@@ -16,6 +16,7 @@ import type { CarcassItem } from './carcassMaterial';
 import type { MaterialItem } from './materialCollection';
 import { buildVariants } from './variants';
 import { runWithCorner } from './corner';
+import { obstaclesOnRun, runWithObstacles } from './obstacles';
 
 /**
  * Замер → входные данные конфигуратора.
@@ -323,7 +324,11 @@ export function composeVariants(
      * угловых петель и глухой части. Угол кладётся здесь, и этот же ряд
      * видят сцена и раскрой: стену А `wallSegments` больше не трогает.
      */
-    const edited = runWithCorner(saved, input.corner);
+    const edited = runWithObstacles(
+      runWithCorner(saved, input.corner),
+      /* Препятствия стены — из замера, как угол — из композиции (слой 56). */
+      obstaclesOnRun(input.openings, saved.lengthMm),
+    );
     const estimate = editedRunEstimate(edited, variant.key, input, disabled);
     return { ...variant, run: edited, estimate };
   });

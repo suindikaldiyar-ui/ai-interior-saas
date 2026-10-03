@@ -24,7 +24,7 @@ import { runPlaces } from '@/lib/millwork/cabinetBoxes';
 import { cornerBandMm } from '@/lib/millwork/composition';
 import { COUNTER_OVERHANG_MM, rowStandardDepthMm } from '@/lib/millwork/fill';
 import { moduleOfPart } from '@/lib/millwork/selection';
-import { PLINTH_SETBACK_MM, apronSpans, countertopSlabs, plinthSpans } from '@/lib/millwork/countertop';
+import { PLINTH_SETBACK_MM, apronSpans, countertopSlabs, plinthSpans, slabPieces } from '@/lib/millwork/countertop';
 import { blindPartMm, cornerGeometry, openFrontMm } from '@/lib/millwork/corner';
 import { CAD_CARCASS_BASE, CAD_ROOM, cadShadeMaterial, cadShadeQuaternion } from './cadLook';
 import {
@@ -805,27 +805,38 @@ export default function Cabinet3D({
         * пустотой между ними и рвётся колонной; заход в угол — тот же.
         * Имя со стеной — для приёмки, она сверяет нарисованное со сметой.
         */}
+      {/*
+        * ВЫРЕЗ ПОД ПРЕПЯТСТВИЕ (слой 56): у колонны или короба плита
+        * начинается не от стены, а от его лицевой плоскости — кусок
+        * мельче на вынос. Куски считает `slabPieces`, та же функция, по
+        * которой приёмка сверяет, что плита не входит в препятствие.
+        */}
       {hasCountertop &&
-        counterSlabs.map((slab) => (
-          <mesh
-            key={`counter-${slab.fromMm}`}
-            name={`counter:${run.wallId ?? 'a'}`}
-            geometry={parts.box}
-            material={parts.counter}
-            position={[
-              (slab.fromMm + slab.toMm) / 2 / MM,
-              (counterTopY + countertopMm(run.production) / 2) / MM,
-              -depthM / 2 + counterOverhangM / 2 + frontThicknessM / 2,
-            ]}
-            scale={[
-              (slab.toMm - slab.fromMm) / MM,
-              countertopMm(run.production) / MM,
-              depthM + counterOverhangM + frontThicknessM,
-            ]}
-            castShadow
-            receiveShadow
-          />
-        ))}
+        counterSlabs.flatMap((slab) =>
+          slabPieces(slab).map((piece) => {
+            const cutM = piece.backCutMm / MM;
+            return (
+              <mesh
+                key={`counter-${slab.fromMm}-${piece.fromMm}`}
+                name={`counter:${run.wallId ?? 'a'}`}
+                geometry={parts.box}
+                material={parts.counter}
+                position={[
+                  (piece.fromMm + piece.toMm) / 2 / MM,
+                  (counterTopY + countertopMm(run.production) / 2) / MM,
+                  -depthM / 2 + counterOverhangM / 2 + frontThicknessM / 2 + cutM / 2,
+                ]}
+                scale={[
+                  (piece.toMm - piece.fromMm) / MM,
+                  countertopMm(run.production) / MM,
+                  depthM + counterOverhangM + frontThicknessM - cutM,
+                ]}
+                castShadow
+                receiveShadow
+              />
+            );
+          }),
+        )}
 
       {/*
         * Ниша под верхним рядом: тонкая тёмная плоскость по низу шкафов.

@@ -35,6 +35,7 @@ import { plinthMm, upperBottomMm } from './shop';
 import type { ProductionSettings } from '@/types/catalog';
 import { runFingerprint } from './fingerprint';
 import { cornerDoorHinge, cornerGeometry, upperBoundsOf, type CornerGeometry } from './corner';
+import { obstacleBlockers, obstaclesInBand, obstaclesOnRun, rowBandMm, wallObstacles } from './obstacles';
 import type {
   ApplianceColumn,
   ApplianceKind,
@@ -1114,6 +1115,57 @@ export function buildRun(input: BuildRunInput): Run {
   }
 
   const span = Math.max(0, limit - cursor);
+
+  /*
+   * ПРЕПЯТСТВИЯ У СТЕНЫ — ЗАНЯТЫЕ УЧАСТКИ, КАК РУЧНЫЕ ПОЗИЦИИ (слой 56).
+   *
+   * Колонна, короб и выступ стены, заходящие в полосу нижнего ряда, —
+   * это место, которого у ряда нет: приборы его обходят (`fitAround`), а
+   * промежутки закрываются вплотную к нему с обеих сторон. Пеналу мешает
+   * и то, что выше столешницы: он стоит во всю высоту. Ригеля среди них
+   * нет — у него свои правила (слой 44).
+   */
+  const obstacles = wallObstacles(openings, ceilingHeightMm);
+  const zonesOf = (list: typeof obstacles) =>
+    list
+      .map((obstacle) => ({ fromMm: Math.max(cursor, obstacle.from), toMm: Math.min(limit, obstacle.to) }))
+      .filter((zone) => zone.toMm > zone.fromMm)
+      .sort((a, b) => a.fromMm - b.fromMm);
+  const blocked = zonesOf(
+    obstaclesInBand(
+      obstacles,
+      rowBandMm('base', { ceilingHeightMm, options: requirements.options, production: input.production }),
+    ),
+  );
+  const tallBlocked = zonesOf(obstacles);
+  const blockedIn = (fromMm: number, toMm: number, zones = blocked) =>
+    zones.reduce((sum, zone) => sum + Math.max(0, Math.min(toMm, zone.toMm) - Math.max(fromMm, zone.fromMm)), 0);
+  /** «выступ стены делит ряд на участки 1600 и 1600 мм» — отказ называет, ЧТО мешает и сколько осталось. */
+  const splitWords = () => {
+    const names = Array.from(
+      new Set(
+        obstacles
+          .filter((obstacle) => blocked.some((zone) => zone.fromMm < obstacle.to && zone.toMm > obstacle.from))
+          .map((obstacle) => obstacle.reason),
+      ),
+    );
+    const spans = freeSpans(limit, blocked.map((zone) => ({ from: zone.fromMm, to: zone.toMm })), cursor)
+      .map((span) => span.to - span.from)
+      .filter((width) => width > 0);
+    return `${names.join(' и ')} ${names.length > 1 ? 'делят' : 'делит'} ряд на участки ${spans.join(', ')} мм`;
+  };
+
+  /* Препятствие в углу или под витриной: угловой модуль встаёт на него — это сказано словами. */
+  for (const obstacle of obstacles) {
+    const inCorner = (obstacle.from < cursor && obstacle.to > 0) || (obstacle.to > limit && obstacle.from < usable);
+    if (inCorner) {
+      warnings.push(
+        `${obstacle.reason[0].toUpperCase()}${obstacle.reason.slice(1)} ${obstacle.from}…${obstacle.to} мм ` +
+          'стоит там, где угол: угловой модуль встаёт на него. Уточните замер или смените решение угла.',
+      );
+    }
+  }
+
   const anchors = planAnchors(
     span,
     requirements,
@@ -1131,8 +1183,10 @@ export function buildRun(input: BuildRunInput): Run {
    * технику: духовку 600 мм нельзя сделать 500 мм, она просто не влезет.
    */
   const anchorsTotal = anchors.reduce((sum, a) => sum + a.widthMm, 0);
+  /* Место под технику — стена ряда минус то, что заняли препятствия. */
+  const room = span - blockedIn(cursor, limit);
   let kept = anchors;
-  if (anchorsTotal > span) {
+  if (anchorsTotal > room) {
     let running = 0;
     kept = [...anchors]
       .sort((a, b) => a.priority - b.priority)
@@ -1142,7 +1196,7 @@ export function buildRun(input: BuildRunInput): Run {
           running += a.widthMm;
           return true;
         }
-        if (running + a.widthMm > span) {
+        if (running + a.widthMm > room) {
           warnings.push(
             `${APPLIANCE_SLOTS[a.appliance].title}: не помещается в ряд ${usable} мм.`,
           );
@@ -1175,8 +1229,11 @@ export function buildRun(input: BuildRunInput): Run {
   const manualAnchors = kept.filter((a) => a.manual);
   const autoAnchors = kept.filter((a) => !a.manual);
 
-  /** Занятые ручными приборами участки: их обходят все остальные. */
-  const fixed: { fromMm: number; toMm: number }[] = [];
+  /**
+   * Занятые участки: препятствия у стены и ручные приборы. Их обходят все
+   * остальные; ручной прибор, попавший на препятствие, отходит вправо.
+   */
+  const fixed: { fromMm: number; toMm: number }[] = blocked.map((zone) => ({ ...zone }));
 
   for (const anchor of [...manualAnchors].sort((a, b) => a.desiredCenterMm - b.desiredCenterMm)) {
     const desired = Math.round(anchor.desiredCenterMm - anchor.widthMm / 2);
@@ -1201,9 +1258,10 @@ export function buildRun(input: BuildRunInput): Run {
    * Сначала пробуем поставить слева от ближайшего ручного участка — там
    * порядок ряда сохраняется. Не влезает — уходим правее него.
    */
-  const fitAround = (fromMm: number, widthMm: number): number => {
+  const fitAround = (fromMm: number, widthMm: number, extra: { fromMm: number; toMm: number }[] = []): number => {
+    const zones = extra.length > 0 ? [...fixed, ...extra].sort((a, b) => a.fromMm - b.fromMm) : fixed;
     let at = fromMm;
-    for (const span of fixed) {
+    for (const span of zones) {
       if (at >= span.toMm) continue;
       if (at + widthMm <= span.fromMm) return at;
       at = span.toMm;
@@ -1216,7 +1274,16 @@ export function buildRun(input: BuildRunInput): Run {
     const anchor = autoAnchors[i];
     const reserve = autoAnchors.slice(i + 1).reduce((sum, a) => sum + a.widthMm, 0);
     const desired = Math.round(anchor.desiredCenterMm - anchor.widthMm / 2);
-    const maxStart = limit - anchor.widthMm - reserve;
+    /*
+     * Остаток под ещё не поставленные считается без препятствий: место,
+     * занятое выступом, под технику не годится.
+     */
+    let maxStart = limit - anchor.widthMm - reserve;
+    for (let step = 0; step < 4 && blocked.length > 0; step += 1) {
+      const short = reserve - (limit - (maxStart + anchor.widthMm) - blockedIn(maxStart + anchor.widthMm, limit));
+      if (short <= 0) break;
+      maxStart -= short;
+    }
     let startMm = Math.max(flow, Math.min(desired, maxStart));
 
     /*
@@ -1226,7 +1293,14 @@ export function buildRun(input: BuildRunInput): Run {
      */
     if (startMm > flow && startMm - flow < MIN_WIDTH) startMm = flow;
 
-    startMm = fitAround(startMm, anchor.widthMm);
+    startMm = fitAround(startMm, anchor.widthMm, anchor.kind === 'tall' ? tallBlocked : []);
+
+    /* Та же щель за препятствием: прибор встаёт к нему вплотную. */
+    const behind = blocked.filter((zone) => zone.toMm <= startMm && zone.toMm >= flow).pop();
+    if (behind && startMm > behind.toMm && startMm - behind.toMm < MIN_WIDTH) {
+      const snapped = fitAround(behind.toMm, anchor.widthMm, anchor.kind === 'tall' ? tallBlocked : []);
+      if (snapped === behind.toMm) startMm = snapped;
+    }
 
     /*
      * Ручные позиции съели место: этот прибор поставить некуда. Отбрасываем
@@ -1235,7 +1309,9 @@ export function buildRun(input: BuildRunInput): Run {
      */
     if (startMm + anchor.widthMm > limit) {
       warnings.push(
-        `${APPLIANCE_SLOTS[anchor.appliance].title}: не помещается после ручной расстановки.`,
+        manualAnchors.length === 0 && blocked.length > 0
+          ? `${APPLIANCE_SLOTS[anchor.appliance].title}: не помещается — ${splitWords()}.`
+          : `${APPLIANCE_SLOTS[anchor.appliance].title}: не помещается после ручной расстановки.`,
       );
       continue;
     }
@@ -1255,26 +1331,32 @@ export function buildRun(input: BuildRunInput): Run {
   // Промежутки между якорями закрываем стандартными ширинами.
   let modules: Module[] = [...cornerModules];
   let at = cursor;
+  /** Где начался закрываемый участок: стена, угол или край препятствия. */
+  let spanStart = cursor;
 
-  for (const { anchor, startMm } of placed) {
-    for (const width of fillGap(startMm - at)) {
+  /** Промежуток до отметки — стандартными ширинами, остаток раздаётся им же. */
+  const fillTo = (endMm: number) => {
+    for (const width of fillGap(endMm - at)) {
       modules.push(makeModule('base', width, at));
       at += width;
     }
-    modules.push(
-      makeModule(anchor.kind, anchor.widthMm, at, anchor.appliance, undefined, {
-        columnWith: anchor.columnWith,
-        builtIn: anchor.builtIn,
-        columnTop: requirements.columnTop,
-        sizes: requirements.applianceSizes,
-        types: requirements.applianceTypes,
-      }),
-    );
-    at += anchor.widthMm;
-  }
+  };
 
-  const tail = limit - at;
-  if (tail > 0 && tail < MIN_WIDTH && modules.length > 0) {
+  /**
+   * ОГРЫЗОК В КОНЦЕ УЧАСТКА — у стены и у препятствия одним правилом.
+   *
+   * Модуль стоит к препятствию вплотную так же, как к стене (слой 56):
+   * огрызок уже самого узкого корпуса прирастает к обычному модулю ЭТОГО
+   * участка или закрывается доборной планкой. Участок, в котором ещё
+   * ничего нет, уже корпуса, — пустота: поставить туда нечего.
+   */
+  const closeTail = (endMm: number) => {
+    const tail = endMm - at;
+    if (!(tail > 0 && tail < MIN_WIDTH && modules.length > 0)) return;
+    if (blocked.length > 0 && at === spanStart) {
+      at = endMm;
+      return;
+    }
     /*
      * Огрызок в хвосте прирастает к обычному модулю. Но подращивать можно
      * только тот, что стоит ПОСЛЕ ручных позиций: рост сдвигает всё правее
@@ -1288,10 +1370,15 @@ export function buildRun(input: BuildRunInput): Run {
       -1,
     );
 
+    /* Только свой участок: рост за препятствием сдвинул бы мебель сквозь него. */
     const lastPlain = [...modules]
       .reverse()
       .find(
-        (m) => !m.appliance && m.kind === 'base' && modules.indexOf(m) > lastManual,
+        (m) =>
+          !m.appliance &&
+          m.kind === 'base' &&
+          m.offsetMm >= spanStart &&
+          modules.indexOf(m) > lastManual,
       );
 
     if (lastPlain) {
@@ -1300,19 +1387,46 @@ export function buildRun(input: BuildRunInput): Run {
       for (let i = modules.indexOf(lastPlain) + 1; i < modules.length; i++) {
         modules[i].offsetMm += tail;
       }
-      at = limit;
+      at = endMm;
     } else {
-      // Расти нечему — закрываем хвост доборной планкой в конце ряда.
+      // Расти нечему — закрываем хвост доборной планкой в конце участка.
       const filler = makeModule('filler', tail, at);
       modules.push(filler);
-      at = limit;
+      at = endMm;
     }
+  };
+
+  /** Закрыть всё до отметки, обходя препятствия: к каждому — вплотную с обеих сторон. */
+  const closeTo = (endMm: number) => {
+    for (const zone of blocked) {
+      if (zone.toMm <= at || zone.fromMm >= endMm) continue;
+      if (zone.fromMm > at) {
+        closeTail(zone.fromMm);
+        fillTo(zone.fromMm);
+      }
+      at = Math.max(at, zone.toMm);
+      spanStart = at;
+    }
+  };
+
+  for (const { anchor, startMm } of placed) {
+    closeTo(startMm);
+    fillTo(startMm);
+    modules.push(
+      makeModule(anchor.kind, anchor.widthMm, at, anchor.appliance, undefined, {
+        columnWith: anchor.columnWith,
+        builtIn: anchor.builtIn,
+        columnTop: requirements.columnTop,
+        sizes: requirements.applianceSizes,
+        types: requirements.applianceTypes,
+      }),
+    );
+    at += anchor.widthMm;
   }
 
-  for (const width of fillGap(limit - at)) {
-    modules.push(makeModule('base', width, at));
-    at += width;
-  }
+  closeTo(limit);
+  closeTail(limit);
+  fillTo(limit);
 
   if (display?.side === 'end') {
     modules.push(makeDisplay(display.widthMm, at));
@@ -1352,6 +1466,8 @@ export function buildRun(input: BuildRunInput): Run {
    * модуля считает одна функция, и видит она только `unit` и `run`.
    */
   const beams = beamsOnRun(openings, usable);
+  /* Колонна, короб и выступ стены — тоже на ряду: их обходят столешница, цоколь и фартук. */
+  const obstaclesHere = obstaclesOnRun(openings, usable);
 
   /*
    * Верхний ряд знает про углы: у ряда после угла он начинается раньше
@@ -1433,6 +1549,7 @@ export function buildRun(input: BuildRunInput): Run {
     wallId: input.wallId,
     options: requirements.options,
     beams: beams.length > 0 ? beams : undefined,
+    ...(obstaclesHere.length > 0 ? { obstacles: obstaclesHere } : {}),
     ...(input.corner ? { corner: input.corner } : {}),
     production: input.production,
     residualMm: usable - at,
@@ -1511,15 +1628,13 @@ function blockingOpenings(
   /** Школа цеха: полоса верхнего ряда начинается с её отметки навески. */
   production?: ProductionSettings,
 ): Opening[] {
-  const bottom = upperBottomMm(production);
-  const top = options.upperToCeiling
-    ? ceilingHeightMm
-    : bottom + GEOMETRY.upper.carcassH;
+  /* Полоса ряда — та же, по которой его рвут колонна, короб и выступ. */
+  const band = rowBandMm('upper', { ceilingHeightMm, options, production });
 
   return openings.filter((o) => {
     if (o.kind !== 'window' && o.kind !== 'arch') return false;
     const openingTop = o.sillMm + o.heightMm;
-    return openingTop > bottom && o.sillMm < top;
+    return openingTop > band.bottomMm && o.sillMm < band.topMm;
   });
 }
 
@@ -1555,10 +1670,16 @@ export function upperSpansOfRun(
  * только если наехал на соседа. Теперь так живёт и нижний: замена не
  * пересобирает ряд, и мойка не уезжает от вывода воды.
  *
- *   base       вся стена: у нижнего ряда преград нет
- *   upper      `upperSpans`: окно, колонна, выступ
+ *   base       стена минус то, что заходит в полосу от пола до столешницы:
+ *              колонна, короб, выступ стены (слой 56)
+ *   upper      `upperSpans`: окно, пенал, ригель, колонна, короб, выступ
  *   mezzanine  участки верхнего ряда минус места, где антресоль под
- *              ригелем не встаёт (`mezzanineBlockedByBeam`)
+ *              ригелем не встаёт (`mezzanineBlockedByBeam`), и минус то,
+ *              что заходит в её полосу у потолка
+ *
+ * Препятствие рвёт ряд, если заходит в ЕГО полосу высот
+ * (`obstaclesInBand`): короб у пола рвёт нижний и не трогает верхний,
+ * ригель — наоборот. Одна функция на все три ряда — второго места нет.
  */
 export function rowSpansOfRun(
   row: 'base' | 'upper' | 'mezzanine',
@@ -1569,7 +1690,14 @@ export function rowSpansOfRun(
   requirements: RunRequirements,
   options: RunOptions,
 ): { free: { from: number; to: number }[]; blockers: UpperBlocker[] } {
-  if (row === 'base') return { free: [{ from: 0, to: run.lengthMm }], blockers: [] };
+  if (row === 'base') {
+    const blockers = obstacleBlockers(
+      openings,
+      rowBandMm('base', { ceilingHeightMm: run.ceilingHeightMm, options, production: run.production }),
+      run.ceilingHeightMm,
+    );
+    return { free: freeSpans(run.lengthMm, blockers), blockers };
+  }
 
   const upper = rowUpperSpans(run, baseModules, openings, requirements, options);
   if (row === 'upper') return upper;
@@ -1591,13 +1719,29 @@ export function rowSpansOfRun(
     .map((beam) => ({ from: beam.fromCornerMm, to: beam.fromCornerMm + beam.widthMm }))
     .filter((beam) => mezzanineBlockedByBeam(beam.from, beam.to, shell));
 
+  /*
+   * Колонна, короб и выступ стены у потолка, которые не задели верхний
+   * ряд, но заходят в полосу антресоли, рвут её — тем же правилом полосы.
+   */
+  const inBand = obstacleBlockers(
+    openings,
+    rowBandMm('mezzanine', {
+      ceilingHeightMm: run.ceilingHeightMm,
+      options,
+      production: run.production,
+      mezzanineMm: run.mezzanine?.heightMm ?? null,
+    }),
+    run.ceilingHeightMm,
+  );
+  const cuts = [...beams, ...inBand].sort((a, b) => a.from - b.from);
+
   const free: { from: number; to: number }[] = [];
   for (const span of upper.free) {
     let at = span.from;
-    for (const beam of [...beams].sort((a, b) => a.from - b.from)) {
-      if (beam.to <= at || beam.from >= span.to) continue;
-      if (beam.from > at) free.push({ from: at, to: beam.from });
-      at = Math.max(at, beam.to);
+    for (const cut of cuts) {
+      if (cut.to <= at || cut.from >= span.to) continue;
+      if (cut.from > at) free.push({ from: at, to: cut.from });
+      at = Math.max(at, cut.to);
     }
     if (at < span.to) free.push({ from: at, to: span.to });
   }
@@ -1607,6 +1751,7 @@ export function rowSpansOfRun(
     blockers: [
       ...upper.blockers,
       ...beams.map((beam) => ({ ...beam, reason: 'выступ на потолке' })),
+      ...inBand,
     ],
   };
 }
@@ -1711,6 +1856,15 @@ export function upperSpans(
       ...span,
       reason: 'выступ на потолке',
     })),
+    /*
+     * Колонна, короб и выступ стены, заходящие в полосу верхнего ряда
+     * (слой 56): та же функция полосы, что рвёт нижний ряд и антресоль.
+     */
+    ...obstacleBlockers(
+      openings,
+      rowBandMm('upper', { ceilingHeightMm, options: req.options, production }),
+      ceilingHeightMm,
+    ),
     ...tall,
     /*
      * Пустой верхний угол — это выбор, и отказ правки называет его словом

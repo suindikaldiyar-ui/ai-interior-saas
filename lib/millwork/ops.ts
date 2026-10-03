@@ -15,6 +15,7 @@ import {
 import { rowSpansOfRun, upperSpansOfRun, buildUpperRow, fillGap, moduleId, onWall } from './layout';
 import { blindVariantRefusal, cornerDoorHinge, cornerGeometry, upperBoundsOf } from './corner';
 import { counterTailsOf } from './countertop';
+import { obstaclesInBand, rowBandMm, wallObstacles, type WallObstacle } from './obstacles';
 import {
   assertNoOverlap,
   assertRunFits,
@@ -210,6 +211,25 @@ export function applyOps({
     return kept ? { ...fill, ...kept } : fill;
   };
   const warnings: string[] = [];
+
+  /*
+   * ПРЕПЯТСТВИЯ У СТЕНЫ НИЖНЕМУ РЯДУ (слой 56).
+   *
+   * Колонна, короб и выступ стены, заходящие в полосу нижнего ряда, — это
+   * место, куда модуль не встаёт: ни правкой ширины, ни заменой, ни
+   * переносом, ни вставкой. Пеналу мешает и то, что выше столешницы — он
+   * во всю высоту. Список — та же функция, что рвёт ряд на участки
+   * (`obstaclesInBand`).
+   */
+  const obstacles = wallObstacles(openings, run.ceilingHeightMm);
+  const baseObstacles = obstaclesInBand(
+    obstacles,
+    rowBandMm('base', { ceilingHeightMm: run.ceilingHeightMm, options: run.options, production: run.production }),
+  );
+  const tallObstacles = obstacles;
+  const obstaclesFor = (unit: Pick<Module, 'kind'>) => (unit.kind === 'tall' ? tallObstacles : baseObstacles);
+  /** Отрезки препятствий нижнего ряда — для поиска пустот свободной сборки. */
+  const baseBlocked = baseObstacles.map((obstacle) => ({ from: obstacle.from, to: obstacle.to }));
 
   const zone = requirements.zone ?? run.zone ?? 'kitchen';
   /**
@@ -685,8 +705,12 @@ export function applyOps({
       chain.has(unit) ? { ...unit, offsetMm: unit.offsetMm - deltaMm } : unit,
     );
 
-    if (edge === run.lengthMm) {
-      let x = run.lengthMm - deltaMm;
+    /*
+     * Цепочка дошла до стены — или до препятствия (слой 56): модуль стоит
+     * к нему вплотную так же, как к стене, и место у него дозаполняется.
+     */
+    if (edge === run.lengthMm || baseObstacles.some((obstacle) => obstacle.from === edge)) {
+      let x = edge - deltaMm;
       for (const widthMm of fillGap(deltaMm)) {
         modules.push({ ...makePlainModule('base', widthMm, run.wallId), offsetMm: x });
         x += widthMm;
@@ -705,14 +729,57 @@ export function applyOps({
     const next = modules
       .filter((other) => other !== unit && other.offsetMm >= unit.offsetMm + Math.min(unit.widthMm, 1))
       .sort((a, b) => a.offsetMm - b.offsetMm)[0];
-    const edge = next ? next.offsetMm : run.lengthMm;
+    /* Препятствие справа — тоже край места (слой 56). */
+    const wall = obstaclesFor(unit)
+      .filter((obstacle) => obstacle.from >= unit.offsetMm + Math.min(unit.widthMm, 1))
+      .sort((a, b) => a.from - b.from)[0];
+    const edge = Math.min(next ? next.offsetMm : run.lengthMm, wall ? wall.from : run.lengthMm);
     const over = unit.offsetMm + wanted - edge;
     if (over <= 0) return null;
+    if (wall && wall.from === edge && (!next || wall.from <= next.offsetMm)) {
+      return `Не помещается: справа ${wall.reason}, не хватает ${over} мм.`;
+    }
     return (
       `${wanted} мм не встают: справа ${next ? `«${next.label}»` : 'край стены'}, ` +
       `не хватает ${over} мм.`
     );
   };
+
+  /**
+   * НАСКОЛЬКО НИЖНИЙ РЯД ЗАХОДИТ В ПРЕПЯТСТВИЯ — после того, как уляжется.
+   *
+   * По готовому решению правка раздвигает правых соседей (`settleBottom`),
+   * поэтому мерить надо РАЗДВИНУТЫЙ ряд: шире стал модуль у стены — в
+   * выступ упёрся его сосед. В свободной сборке соседи не двигаются.
+   * Возвращает сумму захождений и самое глубокое — с модулем и именем.
+   */
+  const intrusionOf = (list: Module[]) => {
+    const placed =
+      requirements.mode === 'free'
+        ? list
+        : (() => {
+            const settled = placeInSpans(list, { free: [{ from: 0, to: Number.POSITIVE_INFINITY }], blockers: [] });
+            return 'ok' in settled ? settled.ok : list;
+          })();
+    let totalMm = 0;
+    let worst: { unit: Module; obstacle: WallObstacle; overlapMm: number } | null = null;
+    for (const unit of placed) {
+      for (const obstacle of obstaclesFor(unit)) {
+        const overlapMm =
+          Math.min(unit.offsetMm + unit.widthMm, obstacle.to) - Math.max(unit.offsetMm, obstacle.from);
+        if (overlapMm <= 0) continue;
+        totalMm += overlapMm;
+        if (!worst || overlapMm > worst.overlapMm) worst = { unit, obstacle, overlapMm };
+      }
+    }
+    return { totalMm, worst };
+  };
+
+  /** Отказ, который можно пересказать клиенту: что мешает и сколько не хватает. */
+  const obstacleRefusal = (hit: { unit: Module; obstacle: WallObstacle; overlapMm: number }): string =>
+    hit.unit.offsetMm >= hit.obstacle.from
+      ? `«${hit.unit.label}» сюда не встаёт: на отметке ${hit.unit.offsetMm} мм ${hit.obstacle.reason}.`
+      : `Не помещается: справа ${hit.obstacle.reason}, не хватает ${hit.overlapMm} мм.`;
 
   /** Правка ложится на модуль верхнего ряда — как у нижнего и у антресоли. */
   const editUpper = (id: string, change: (unit: Module) => Module): boolean => {
@@ -788,6 +855,29 @@ export function applyOps({
 
   for (const op of ops) {
     /*
+     * ПРАВКА НЕ ЗАВОДИТ МЕБЕЛЬ В ПРЕПЯТСТВИЕ (слой 56).
+     *
+     * Захождение нижнего ряда в колонну, короб и выступ меряется до и
+     * после операции. Стало больше — операция не применяется, а отказ
+     * называет препятствие и миллиметры. Модули при этом не выбрасываются:
+     * ряд остаётся прежним. То, что уже стояло в препятствии (его внесли в
+     * замер после правок), не мешает другим правкам — его называет
+     * предупреждение и снимает «Пересобрать стену».
+     */
+    const beforeOp = baseObstacles.length > 0 || tallObstacles.length > 0 ? [...modules] : null;
+    const intrusionBefore = beforeOp ? intrusionOf(beforeOp).totalMm : 0;
+    applyOne(op);
+    if (beforeOp) {
+      const after = intrusionOf(modules);
+      if (after.totalMm > intrusionBefore && after.worst) {
+        modules = beforeOp;
+        warnings.push(obstacleRefusal(after.worst));
+      }
+    }
+  }
+
+  function applyOne(op: MillworkOp) {
+    /*
      * НИ ОДНОГО ЧУЖОГО ЭЛЕМЕНТА, откуда бы операция ни пришла — из ленты
      * модулей, из командной строки или от модели. Отказ называет причину:
      * «в зоне «спальня» посудомойки не бывает» объясняет мир, а молчание
@@ -798,12 +888,12 @@ export function applyOps({
 
     if (appliance && !allowsAppliance(zone, appliance)) {
       warnings.push(applianceRefusal(zone, appliance));
-      continue;
+      return;
     }
 
     if (op.op === 'set_section' && !allowsSection(zone, op.section)) {
       warnings.push(sectionRefusal(zone, op.section));
-      continue;
+      return;
     }
 
     switch (op.op) {
@@ -991,7 +1081,7 @@ export function applyOps({
         if (op.atMm !== undefined && !op.appliance) {
           const at0 = Math.max(0, Math.round(op.atMm));
           const probe = { ...created, id: `${created.id}:проба`, offsetMm: at0, widthMm: width };
-          const clash = moveConflict([...modules, probe], probe.id, at0, run.lengthMm);
+          const clash = moveConflict([...modules, probe], probe.id, at0, run.lengthMm, baseBlocked);
           if (clash) {
             warnings.push(moveRefusal(clash));
             break;
@@ -1041,7 +1131,7 @@ export function applyOps({
            * выведен из отметки 0 (`makePlainModule`) и совпадает с
            * модулем у края — `moveConflict` мерил бы чужую ширину.
            */
-          const at0 = placementFor(modules, run.lengthMm, width, op.afterModuleId);
+          const at0 = placementFor(modules, run.lengthMm, width, op.afterModuleId, baseBlocked);
 
           if (at0 === null) {
             warnings.push(
@@ -1717,7 +1807,7 @@ export function applyOps({
             Math.max(0, run.lengthMm - unit.widthMm),
           );
 
-          const conflict = moveConflict(modules, unit.id, wanted, run.lengthMm);
+          const conflict = moveConflict(modules, unit.id, wanted, run.lengthMm, baseBlocked);
           if (conflict) {
             warnings.push(moveRefusal(conflict));
             break;

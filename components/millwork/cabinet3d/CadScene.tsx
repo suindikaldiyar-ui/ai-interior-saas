@@ -694,6 +694,8 @@ function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
         beamHits: number;
         /** Пар «деталь ряда — нарисованный кусок стены или объём», которые пересекаются. */
         intersects: number;
+        /** Объёмы комнаты, нарисованные мешем: вид и идентификатор (колонна, короб, выступ). */
+        objects: { kind: string; id: string }[];
         /** Стены по замеру: длина и высота, мм. */
         wallSizes: { id: string; lengthMm: number; heightMm: number }[];
         /** Стены по нарисованному: габарит кусков стены, мм. */
@@ -1015,11 +1017,15 @@ function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
        * центру линии замера и она съедала полтолщины шкафов.
        */
       const solids: THREE.Box3[] = [];
+      const objects: { kind: string; id: string }[] = [];
       group?.traverse((object) => {
         const mesh = object as THREE.Mesh;
         const role = mesh.userData?.role;
         if (mesh.isMesh && (role === 'wall' || role === 'corner' || role === 'object')) {
           solids.push(new THREE.Box3().setFromObject(mesh));
+        }
+        if (mesh.isMesh && role === 'object') {
+          objects.push({ kind: String(mesh.userData.kind ?? ''), id: String(mesh.userData.objectId ?? '') });
         }
       });
       let intersects = 0;
@@ -1055,6 +1061,7 @@ function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
         beams,
         beamHits,
         intersects,
+        objects,
         wallSizes: (room?.walls ?? []).map((wall) => ({
           id: wall.id,
           lengthMm: wall.lengthMm,

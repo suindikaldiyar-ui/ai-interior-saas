@@ -1,6 +1,8 @@
 import { cornerBandMm } from './corner';
 import { bearsCountertop, counterSlabDepthMm, rowStandardDepthMm } from './fill';
 import { standsOnFloor } from './modules';
+import { obstaclesInBand, wallObstacles, type WallObstacle } from './obstacles';
+import { countertopMm, countertopStripOf, plinthMm, upperBottomMm, workTopMm } from './shop';
 import type { Run } from '@/types/millwork';
 
 /**
@@ -24,11 +26,47 @@ import type { Run } from '@/types/millwork';
  *   не доходит;
  *   у ряда угловой кухни плита доходит до стены (слой 55): хвост меньше
  *   150 мм закрывает добор (`counterTailsOf`), больший — плита над
- *   пустотой, которую человек вправе снять (`Run.counterEnds`).
+ *   пустотой, которую человек вправе снять (`Run.counterEnds`);
+ *   сквозь колонну, короб и выступ стены плита не идёт никогда (слой 56):
+ *   полоса плиты перед препятствием не уже настройки цеха
+ *   (`countertopStrip`, типовая 300 мм) — ВЫРЕЗ, плита обходит его сзади
+ *   и остаётся одной (`cuts`); уже или вынос не замерен — РАЗРЫВ, две
+ *   плиты с торцами. Решает `counterObstacles`.
  *
  * Отметки — в миллиметрах от начала ряда; отрицательная — заход в угол.
  */
-export type CounterSlab = { fromMm: number; toMm: number };
+export type CounterSlab = {
+  fromMm: number;
+  toMm: number;
+  /** Вырезы сзади под препятствия у стены: где и на сколько плита мельче. */
+  cuts?: CounterCut[];
+};
+
+/** Вырез плиты под препятствие: отрезок ряда и глубина выреза от стены. */
+export type CounterCut = { fromMm: number; toMm: number; depthMm: number; reason: string };
+
+/** Что заходит в полосу высот полосы ряда — колонна, короб, выступ стены. */
+function obstaclesAt(run: RunLike, bottomMm: number, topMm: number): WallObstacle[] {
+  return obstaclesInBand(wallObstacles(run.obstacles, run.ceilingHeightMm), { row: 'base', bottomMm, topMm });
+}
+
+/** Полосы минус отрезки препятствий: там, где стоит препятствие, полосы нет. */
+function withoutObstacles<T extends { fromMm: number; toMm: number }>(
+  spans: T[],
+  obstacles: { from: number; to: number }[],
+): T[] {
+  let out = spans;
+  for (const obstacle of obstacles) {
+    out = out.flatMap((span) => {
+      if (obstacle.to <= span.fromMm || obstacle.from >= span.toMm) return [span];
+      const pieces: T[] = [];
+      if (obstacle.from > span.fromMm) pieces.push({ ...span, toMm: obstacle.from });
+      if (obstacle.to < span.toMm) pieces.push({ ...span, fromMm: obstacle.to });
+      return pieces;
+    });
+  }
+  return out;
+}
 
 /**
  * ХВОСТ МЕНЬШЕ ЭТОГО ЗАКРЫВАЕТ ДОБОР — число задачи слоя 55.
@@ -119,7 +157,8 @@ export function tailFillersOf(run: RunLike): { fromMm: number; toMm: number }[] 
     .map((tail) => ({ fromMm: tail.fromMm, toMm: tail.toMm }));
 }
 
-export function countertopSlabs(run: RunLike): CounterSlab[] {
+/** Плиты по модулям, хвостам и углу — ДО препятствий: их обходит `countertopSlabs`. */
+function slabsOverModules(run: RunLike): CounterSlab[] {
   const sorted = [...run.modules].sort((a, b) => a.offsetMm - b.offsetMm);
   const slabs: CounterSlab[] = [];
   let open: CounterSlab | null = null;
@@ -162,7 +201,101 @@ export function countertopSlabs(run: RunLike): CounterSlab[] {
     else slabs.unshift({ fromMm: -band.backMm, toMm: 0 });
   }
 
-  return slabs.filter((slab) => slab.toMm > slab.fromMm);
+  return slabs;
+}
+
+/** Препятствие в толщине столешницы и что с ним делает плита (слой 56). */
+export type CounterObstacle = {
+  obstacle: WallObstacle;
+  /** Полоса плиты перед препятствием, мм. `null` — вынос не замерен. */
+  stripMm: number | null;
+  /** Полоса, начиная с которой плита вырезается: настройка цеха. */
+  minStripMm: number;
+  /** Цех подтвердил полосу. Нет — «не подтверждено цехом». */
+  confirmed: boolean;
+  /** Вырез — плита одна и обходит препятствие сзади; разрыв — две плиты с торцами. */
+  decision: 'cut' | 'break';
+};
+
+/**
+ * ЧТО ПЛИТА ДЕЛАЕТ У ПРЕПЯТСТВИЯ — ОДИН ОТВЕТ НА ПЛИТЫ, СМЕТУ И СЛОВА.
+ *
+ * Сквозь колонну, короб и выступ стены плита не идёт никогда. Перед
+ * препятствием остаётся полоса плиты — её глубина минус вынос. Не уже
+ * настройки цеха (`countertopStrip`, типовая 300 мм) — вырез: плита одна
+ * и обходит препятствие сзади. Уже или вынос не замерен — разрыв: узкая
+ * полоса без опоры снизу ломается, и плиты две, с торцами у препятствия.
+ *
+ * Только препятствия, над которыми плита и правда лежит: за крайним
+ * модулем плиты нет, и решать там нечего.
+ */
+export function counterObstacles(run: RunLike): CounterObstacle[] {
+  const slabs = slabsOverModules(run);
+  if (slabs.length === 0) return [];
+  const slabDepthMm = counterSlabDepthMm(run.zone, run.production);
+  const strip = countertopStripOf(run.production);
+  const top = workTopMm(run.production);
+  return obstaclesAt(run, top - countertopMm(run.production), top)
+    .filter((obstacle) => slabs.some((slab) => obstacle.from < slab.toMm && obstacle.to > slab.fromMm))
+    .map((obstacle) => {
+      const stripMm = obstacle.depthMm === null ? null : slabDepthMm - obstacle.depthMm;
+      return {
+        obstacle,
+        stripMm,
+        minStripMm: strip.minStripMm,
+        confirmed: strip.confirmed,
+        decision: stripMm !== null && stripMm > 0 && stripMm >= strip.minStripMm ? ('cut' as const) : ('break' as const),
+      };
+    });
+}
+
+export function countertopSlabs(run: RunLike): CounterSlab[] {
+  const slabs = slabsOverModules(run);
+  if (slabs.length === 0) return [];
+
+  const decided = counterObstacles(run);
+  const breaks = decided.filter((item) => item.decision === 'break').map((item) => item.obstacle);
+  const notches = decided.filter((item) => item.decision === 'cut').map((item) => item.obstacle);
+
+  return withoutObstacles(slabs, breaks)
+    .filter((slab) => slab.toMm > slab.fromMm)
+    .map((slab) => {
+      const cuts = notches
+        .filter((obstacle) => obstacle.from < slab.toMm && obstacle.to > slab.fromMm)
+        .map((obstacle) => ({
+          fromMm: Math.max(slab.fromMm, obstacle.from),
+          toMm: Math.min(slab.toMm, obstacle.to),
+          depthMm: obstacle.depthMm!,
+          reason: obstacle.reason,
+        }));
+      return cuts.length > 0 ? { ...slab, cuts } : slab;
+    });
+}
+
+/**
+ * КУСКИ ПЛИТЫ ПО ГЛУБИНЕ: где она на всю глубину, а где вырезана сзади.
+ *
+ * Плита с вырезом — одна деталь, и в смете она идёт одной длиной. Сцене
+ * же надо знать, где плита мельче: у препятствия она начинается не от
+ * стены, а от его лицевой плоскости (`backCutMm` — сколько срезано от
+ * стены). Одна функция на сцену и на приёмку пересечений.
+ */
+export function slabPieces(slab: CounterSlab): { fromMm: number; toMm: number; backCutMm: number }[] {
+  const cuts = [...(slab.cuts ?? [])].sort((a, b) => a.fromMm - b.fromMm);
+  const pieces: { fromMm: number; toMm: number; backCutMm: number }[] = [];
+  let at = slab.fromMm;
+  for (const cut of cuts) {
+    if (cut.fromMm > at) pieces.push({ fromMm: at, toMm: cut.fromMm, backCutMm: 0 });
+    pieces.push({ fromMm: Math.max(at, cut.fromMm), toMm: cut.toMm, backCutMm: cut.depthMm });
+    at = Math.max(at, cut.toMm);
+  }
+  if (at < slab.toMm) pieces.push({ fromMm: at, toMm: slab.toMm, backCutMm: 0 });
+  return pieces.filter((piece) => piece.toMm > piece.fromMm);
+}
+
+/** Вырезы плиты под препятствия — одни на сцену и на строку сметы «Вырез столешницы». */
+export function countertopCuts(run: RunLike): CounterCut[] {
+  return countertopSlabs(run).flatMap((slab) => slab.cuts ?? []);
 }
 
 /** Сколько столешницы, мм: сумма плит. */
@@ -186,8 +319,14 @@ export function countertopLengthMm(run: Parameters<typeof countertopSlabs>[0]): 
  */
 export function apronSpans(run: RunLike): CounterSlab[] {
   if (!run.options?.hasUpper) return [];
-  const slabs = countertopSlabs(run);
+  const slabs = countertopSlabs(run).map(({ fromMm, toMm }) => ({ fromMm, toMm }));
   if (slabs.length === 0) return [];
+
+  /*
+   * Колонна, короб и выступ стены в полосе фартука рвут его (слой 56):
+   * стена там закрыта препятствием, и плитка на нём — уже не фартук.
+   */
+  const inApron = obstaclesAt(run, workTopMm(run.production), upperBottomMm(run.production));
 
   const band = cornerBandMm({
     corner: run.corner,
@@ -195,11 +334,14 @@ export function apronSpans(run: RunLike): CounterSlab[] {
     zone: run.zone,
     production: run.production,
   });
-  if (band.backMm <= 0) return slabs;
+  if (band.backMm <= 0) return withoutObstacles(slabs, inApron);
 
   /* Заход угла у стыкующегося ряда — до стены владельца целиком. */
   const lostMm = band.backMm + counterSlabDepthMm(run.zone, run.production);
-  return slabs.map((slab, i) => (i === 0 && slab.fromMm === -band.backMm ? { ...slab, fromMm: -lostMm } : slab));
+  return withoutObstacles(
+    slabs.map((slab, i) => (i === 0 && slab.fromMm === -band.backMm ? { ...slab, fromMm: -lostMm } : slab)),
+    inApron,
+  );
 }
 
 /** Сколько фартука, мм — то же число в сцене и в смете. */
@@ -251,5 +393,8 @@ export function plinthSpans(run: RunLike): CounterSlab[] {
     if (spans[0].fromMm === 0) spans[0] = { ...spans[0], fromMm: -band.backMm };
     else spans.unshift({ fromMm: -band.backMm, toMm: 0 });
   }
-  return spans.filter((span) => span.toMm > span.fromMm);
+  /* Препятствие у пола рвёт цоколь там же, где ряд (слой 56). */
+  return withoutObstacles(spans, obstaclesAt(run, 0, plinthMm(run.production))).filter(
+    (span) => span.toMm > span.fromMm,
+  );
 }
