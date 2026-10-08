@@ -273,6 +273,24 @@ export function editedRunEstimate(
  * обязан видеть ровно то, что ему показали на встрече, вплоть до состава
  * модулей и снятых галочек.
  */
+/**
+ * ПРАВКА РАБОЧЕЙ СТЕНЫ — ТОЛЬКО ЕЙ.
+ *
+ * Ряд перенесли на другую стену замера («ряд здесь?») — правка прежней
+ * рабочей стены не ложится на новую: у той свои модули и своя длина, и
+ * чужой ряд показывался бы на ней как её собственный. Правка при этом не
+ * стирается и вернётся вместе с рядом. Ряд без метки — старое
+ * сохранение — читается, как читался.
+ *
+ * Одна функция на сборку вариантов и на ответ «правлена ли стена А»:
+ * второй ответ на тот же вопрос разошёлся бы с первым.
+ */
+export function workingWallEdit(saved: Run | undefined, runWallId: string | undefined): Run | undefined {
+  if (!saved) return undefined;
+  if (saved.wallId && runWallId && saved.wallId !== runWallId) return undefined;
+  return saved;
+}
+
 export function composeVariants(
   input: WorkspaceInput,
   disabled: Record<VariantKey, string[]>,
@@ -310,7 +328,7 @@ export function composeVariants(
   });
 
   return base.map((variant) => {
-    const saved = editedRuns[variant.key];
+    const saved = workingWallEdit(editedRuns[variant.key], input.runWallId);
     if (!saved) return variant;
 
     /*

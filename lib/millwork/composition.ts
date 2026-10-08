@@ -239,6 +239,102 @@ export function splitAppliances(
   return out;
 }
 
+/** Правка состава кухни — те её поля, по которым видно, каких стен она касается. */
+export type CompositionChange = {
+  appliances?: ApplianceKind[];
+  sections?: unknown;
+  doorSystem?: unknown;
+  tallSide?: unknown;
+  glassDisplay?: unknown;
+  upperToCeiling?: unknown;
+  columnTop?: RunRequirements['columnTop'];
+  fridgeType?: RunRequirements['fridgeType'];
+  applianceWalls?: Partial<Record<ApplianceKind, number>>;
+  applianceSizes?: RunRequirements['applianceSizes'];
+  applianceTypes?: RunRequirements['applianceTypes'];
+};
+
+/** Поля, которые меняют ВСЕ стены: секции, двери, сторона пеналов, витрина, высота верхнего ряда. */
+const KITCHEN_WIDE: (keyof CompositionChange)[] = ['sections', 'doorSystem', 'tallSide', 'glassDisplay', 'upperToCeiling'];
+
+/** Поля, по которым стена прибора известна. Всё прочее — правка всей кухни. */
+const BY_APPLIANCE: (keyof CompositionChange)[] = [
+  'appliances',
+  'columnTop',
+  'fridgeType',
+  'applianceWalls',
+  'applianceSizes',
+  'applianceTypes',
+];
+
+/**
+ * КАКИХ СТЕН КАСАЕТСЯ ПРАВКА СОСТАВА.
+ *
+ * Правка состава пересобирала стену А всегда и не трогала стены Б и В
+ * никогда: удаление холодильника со стены Б стирало правки стены А и
+ * оставляло на стене Б её прежний ряд — вместе с холодильником.
+ *
+ * Раздача приборов независима: стену каждого прибора выбирает
+ * `splitAppliances` по длинам стен и закреплению, а не по остальным
+ * приборам. Поэтому правку, относящуюся к прибору, видит ровно та стена,
+ * где он стоит (и та, куда он уходит или куда встанет новый), а правку
+ * всей кухни — все стены. Поле, которого здесь нет, считается правкой
+ * всей кухни: лишняя пересборка честнее устаревшего ряда.
+ */
+export function wallsTouchedByChange(
+  change: CompositionChange,
+  current: {
+    /** Раздача сейчас: приборы каждой стены композиции. */
+    assignment: ApplianceKind[][];
+    /** Полезная длина каждой стены: по ней раздаёт `splitAppliances`. */
+    usableMm: number[];
+    requirements: Pick<
+      RunRequirements,
+      'appliances' | 'applianceWalls' | 'applianceSizes' | 'applianceTypes' | 'columnTop' | 'fridgeType'
+    >;
+  },
+): number[] {
+  const all = current.assignment.map((_, i) => i);
+  const keys = (Object.keys(change) as (keyof CompositionChange)[]).filter((key) => change[key] !== undefined);
+  if (keys.some((key) => KITCHEN_WIDE.includes(key) || !BY_APPLIANCE.includes(key))) return all;
+
+  const walls = new Set<number>();
+  const touch = (appliance: ApplianceKind) =>
+    current.assignment.forEach((list, i) => {
+      if (list.includes(appliance)) walls.add(i);
+    });
+  const req = current.requirements;
+
+  if (change.appliances) {
+    for (const appliance of req.appliances) if (!change.appliances.includes(appliance)) touch(appliance);
+    const pinned = { ...(req.applianceWalls ?? {}), ...(change.applianceWalls ?? {}) };
+    for (const appliance of change.appliances) {
+      if (req.appliances.includes(appliance)) continue;
+      splitAppliances([appliance], current.usableMm, pinned).forEach((list, i) => {
+        if (list.length > 0) walls.add(i);
+      });
+    }
+  }
+  if (change.fridgeType !== undefined && change.fridgeType !== req.fridgeType) touch('fridge');
+  if (change.columnTop !== undefined && change.columnTop !== req.columnTop) {
+    touch('oven');
+    touch('microwave');
+  }
+  for (const [appliance, id] of Object.entries(change.applianceTypes ?? {}) as [ApplianceKind, string][]) {
+    if (req.applianceTypes?.[appliance] !== id) touch(appliance);
+  }
+  for (const [appliance, size] of Object.entries(change.applianceSizes ?? {}) as [ApplianceKind, unknown][]) {
+    if (JSON.stringify(req.applianceSizes?.[appliance]) !== JSON.stringify(size)) touch(appliance);
+  }
+  for (const [appliance, wall] of Object.entries(change.applianceWalls ?? {}) as [ApplianceKind, number][]) {
+    if (req.applianceWalls?.[appliance] === wall) continue;
+    touch(appliance);
+    if (wall >= 0 && wall < all.length) walls.add(wall);
+  }
+
+  return Array.from(walls).sort((a, b) => a - b);
+}
+
 /**
  * СБОРКА КОМПОЗИЦИИ.
  *

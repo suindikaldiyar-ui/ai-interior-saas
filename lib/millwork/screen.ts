@@ -1,8 +1,10 @@
 import { SHAPE_TITLE, SHAPE_WALLS, segmentCount } from './composition';
+import { allModules } from './layout';
+import { APPLIANCE_SLOTS, moduleAppliances } from './modules';
 import { lowerWall, wallLabel, wallMismatchMessage, type WallMismatch } from './walls';
 import type { SurveyWarning } from './warnings';
 import type { Arrangement } from './variants';
-import type { CompositionKind } from '@/types/millwork';
+import type { ApplianceKind, Composition, CompositionKind, Run } from '@/types/millwork';
 
 /**
  * РЕШЕНИЯ РАБОЧЕГО ЭКРАНА — ОДНО МЕСТО, А НЕ РАЗМЕТКА.
@@ -77,6 +79,13 @@ export type ScreenState = {
  * находить свою стену.
  */
 const STALE_PREFIX = 'wall-stale-';
+
+/**
+ * Ключ строки «прибор есть в составе, а в правленом ряду стены нет».
+ * Собирается здесь и разбирается здесь же: по нему красная полоса
+ * предлагает пересобрать ИМЕННО эту стену.
+ */
+const EDITED_PREFIX = 'appliance-edited-';
 
 export function screenState(input: ScreenInput): ScreenState {
   const { refusal, mismatches, walls, segments, shape, warnings } = input;
@@ -196,6 +205,13 @@ export function screenState(input: ScreenInput): ScreenState {
   const stale = mismatches.find(
     (mismatch) => `${STALE_PREFIX}${mismatch.index}` === staleId,
   );
+  /*
+   * Прибор в составе есть, а в правленом ряду стены его нет: выход тот
+   * же — пересобрать эту стену. Её правки при этом пропадут, и это сказано
+   * в самой строке, до нажатия. Расхождение со стеной главнее: оно первым.
+   */
+  const editedId = blocking.find((w) => w.id.startsWith(EDITED_PREFIX))?.id;
+  const editedWall = editedId ? Number(editedId.slice(EDITED_PREFIX.length).split('-')[0]) : null;
 
   /*
    * ЦЕНА, «ДАЛЬШЕ» И ЗАПИСЬ ЗАПЕРТЫ ОДНИМИ И ТЕМИ ЖЕ ДВУМЯ УСЛОВИЯМИ.
@@ -222,7 +238,7 @@ export function screenState(input: ScreenInput): ScreenState {
     priceHidden: unpriced,
     nextLocked: unpriced,
     autosaveLocked: locked,
-    rebuildWall: stale ? stale.index : null,
+    rebuildWall: stale ? stale.index : editedWall !== null && Number.isInteger(editedWall) ? editedWall : null,
     idleWallsNote,
     renderCoverageNote,
   };
@@ -244,6 +260,153 @@ export const ARRANGEMENTS_FAILED =
 export type ArrangementsState =
   | { state: 'ready'; arrangements: Arrangement[] }
   | { state: 'failed'; words: string };
+
+/**
+ * ЗАКАЗАННАЯ ТЕХНИКА НЕ ИСЧЕЗАЕТ МОЛЧА.
+ *
+ * Раскладка стены, на которой прибору не хватило места, отбрасывает его и
+ * пишет причину в предупреждения ЭТОЙ стены, — а экран показывал
+ * предупреждения только выбранной. На П-образной 3200 + 2400 + 3200 духовка
+ * уходила со стены Б, а замерщик смотрел на стену А: духовки нет ни на
+ * схеме, ни в смете, и ни слова почему.
+ *
+ * Здесь — по всем стенам сразу: прибор состава, которого нет ни в одном
+ * ряду на экране, — блокирующая строка с его стеной. Причина — та, что
+ * назвала раскладка (с миллиметрами), а если стену правили руками и
+ * прибор в правленый ряд не встал — так и сказано, с выходом: пересобрать
+ * стену. Прямая кухня сюда не ходит: стена у неё одна, и её предупреждения
+ * на экране всегда.
+ *
+ * Два прибора ведут себя по-своему, и правила у них прежние:
+ * - микроволновка при духовке стоит с ней в ОДНОЙ колонне, и отказ
+ *   раскладки назван духовкой — строка одна на оба прибора;
+ * - вытяжка висит над варочной: нет варочной — строка про неё объясняет и
+ *   вытяжку; варочная есть, а вытяжки нет — это разрыв верхнего ряда над
+ *   ней, уточнение того же класса, что и на выбранной стене
+ *   (`manualPlacementWarnings`), там оно уже стоит.
+ */
+export function missingAppliances(input: {
+  /** Состав кухни: что заказано. */
+  requested: ApplianceKind[];
+  /** Ряды стен, как они на экране, — с правками. */
+  shown: Run[];
+  /** Композиция: кому раздан прибор и что собрала раскладка. */
+  layout: Composition | null;
+  /** Правлена ли стена руками: ряд на экране — не тот, что собрала раскладка. */
+  edited: (index: number) => boolean;
+  /** Выбранная стена: её собственные предупреждения на экране и так. */
+  active: number;
+}): SurveyWarning[] {
+  const { layout } = input;
+  if (!layout) return [];
+
+  const holds = (run: Run, appliance: ApplianceKind) =>
+    allModules(run).some((unit) => moduleAppliances(unit).includes(appliance));
+  const present = new Set<ApplianceKind>(
+    input.shown.flatMap((run) => allModules(run).flatMap((unit) => moduleAppliances(unit))),
+  );
+  const missing = Array.from(new Set(input.requested)).filter((appliance) => !present.has(appliance));
+  const title = (appliance: ApplianceKind) => APPLIANCE_SLOTS[appliance]?.title ?? appliance;
+  const wallOf = (appliance: ApplianceKind) =>
+    layout.segments.findIndex((segment) => segment.appliances.includes(appliance));
+  /** Отказ раскладки стены: «<прибор>: не помещается — свободно … мм, нужно … мм, не хватает … мм.» */
+  const droppedOn = (appliance: ApplianceKind, index: number) =>
+    layout.segments[index]?.run.warnings.find(
+      (warning) => warning.startsWith(`${title(appliance)}:`) && warning.includes('не помещается'),
+    );
+  /** Микроволновка ушла вместе с колонной духовки — отказ назван духовкой. */
+  const inOvenColumn = (index: number) =>
+    missing.includes('oven') &&
+    missing.includes('microwave') &&
+    wallOf('oven') === index &&
+    wallOf('microwave') === index &&
+    !droppedOn('microwave', index) &&
+    Boolean(droppedOn('oven', index));
+
+  return missing.flatMap((appliance): SurveyWarning[] => {
+    const index = wallOf(appliance);
+    if (index < 0) {
+      return [
+        {
+          id: `appliance-missing-${appliance}`,
+          severity: 'blocking',
+          message: `${title(appliance)} — в составе есть, а ни одной стене не раздан. Прибора нет ни на схеме, ни в смете.`,
+        },
+      ];
+    }
+    const wall = wallLabel(index);
+
+    if (appliance === 'hood') {
+      if (missing.includes('hob')) return [];
+      const hobWall = input.shown.findIndex((run) => holds(run, 'hob'));
+      if (hobWall < 0 || hobWall === input.active) return [];
+      return [
+        {
+          id: 'appliance-missing-hood',
+          severity: 'clarify',
+          message: `${wallLabel(hobWall)}: над варочной вытяжку не повесить — там разрыв верхнего ряда.`,
+        },
+      ];
+    }
+    if (appliance === 'microwave' && inOvenColumn(index)) return [];
+
+    const dropped = droppedOn(appliance, index);
+    if (dropped) {
+      const companions = [
+        appliance === 'oven' && inOvenColumn(index) ? 'С ним в одной колонне и микроволновка.' : '',
+        appliance === 'hob' && missing.includes('hood') ? 'Вытяжки над ней тоже нет.' : '',
+      ].filter(Boolean);
+      return [
+        {
+          id: `appliance-missing-${appliance}`,
+          severity: 'blocking',
+          message: [`${wall}: ${dropped}`, ...companions, companions.length > 0
+            ? 'Приборов нет ни на схеме, ни в смете.'
+            : 'Прибора нет ни на схеме, ни в смете.'].join(' '),
+        },
+      ];
+    }
+    if (input.edited(index)) {
+      return [
+        {
+          id: `${EDITED_PREFIX}${index}-${appliance}`,
+          severity: 'blocking',
+          message:
+            `${wall}: ${title(appliance)} — в составе есть, а в правленом ряду стены нет: в правленый ряд прибор сам не встаёт. ` +
+            `Прибора нет ни на схеме, ни в смете. Пересоберите ${lowerWall(wall, 'accusative')} — её правки пропадут — ` +
+            'или уберите прибор из состава.',
+        },
+      ];
+    }
+    return [
+      {
+        id: `appliance-missing-${appliance}`,
+        severity: 'blocking',
+        message: `${wall}: ${title(appliance)} — в составе есть, а раскладка его на стену не поставила. Прибора нет ни на схеме, ни в смете.`,
+      },
+    ];
+  });
+}
+
+/**
+ * ПРАВКИ, КОТОРЫЕ СНЯЛА ПРАВКА СОСТАВА, — СЛОВАМИ.
+ *
+ * Состав кухни поменялся там, где стоит правленая стена: её ряд собран
+ * заново, и правки этой стены к нему уже не относятся. Молча это читается
+ * как «правка пропала сама»; строка называет, чьи именно. Остальные
+ * стены правка состава не трогает вовсе (`wallsTouchedByChange`).
+ */
+export function lostWallEditsNote(walls: number[]): string | null {
+  if (walls.length === 0) return null;
+  const many = walls.length > 1;
+  const whose = many
+    ? `стен ${walls.map((i) => wallLabel(i).slice(wallLabel(i).indexOf(' ') + 1)).join(' и ')}`
+    : lowerWall(wallLabel(walls[0]), 'genitive');
+  return (
+    `Правки ${whose} сняты: состав ${many ? 'этих стен' : 'этой стены'} изменился, ` +
+    `и раскладка собрала ${many ? 'их' : 'её'} заново.`
+  );
+}
 
 export function arrangementsState(build: () => Arrangement[]): ArrangementsState {
   try {

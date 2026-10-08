@@ -616,16 +616,26 @@ export function collectWarnings(input: {
   manualSink?: boolean;
   /** Вытяжка заказана: её пропажа из ряда — последствие переноса варочной. */
   hoodRequested?: boolean;
+  /**
+   * Заказанные приборы, которых нет ни на одной стене (`missingAppliances`).
+   * Блокирующие, со стеной и миллиметрами; жёлтая строка раскладки про тот
+   * же прибор при этом не повторяется — это одна беда, а не две.
+   */
+  missing?: SurveyWarning[];
 }): SurveyWarning[] {
-  const fromIssues: SurveyWarning[] = input.issues.map((issue, i) => ({
-    id: `issue-${i}`,
-    severity: classifyIssue(issue),
-    message: issue.message,
-    atMm: issue.atMm,
-    moduleId: issue.moduleId,
-  }));
+  const missing = input.missing ?? [];
+  const fromIssues: SurveyWarning[] = input.issues
+    .filter((issue) => !(issue.kind === 'fit' && missing.some((w) => w.message.includes(issue.message))))
+    .map((issue, i) => ({
+      id: `issue-${i}`,
+      severity: classifyIssue(issue),
+      message: issue.message,
+      atMm: issue.atMm,
+      moduleId: issue.moduleId,
+    }));
 
   const all = [
+    ...missing,
     ...doorwayConflicts(input.run, input.openings),
     ...obstacleDepthWarnings(input.openings, input.run),
     ...countertopStripWarnings(input.run),

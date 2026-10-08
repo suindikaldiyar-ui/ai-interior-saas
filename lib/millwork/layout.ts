@@ -1197,8 +1197,18 @@ export function buildRun(input: BuildRunInput): Run {
           return true;
         }
         if (running + a.widthMm > room) {
+          /*
+           * ОТКАЗ НАЗЫВАЕТ МЕСТО, А НЕ ДЛИНУ СТЕНЫ.
+           *
+           * «Не помещается в ряд 1740 мм» называло стену, а не то, что на
+           * ней осталось: глухая часть угла и прибор важнее этого уже
+           * заняли своё, и на П-образной под духовку оставалось 562 мм из
+           * 600. Свободно — то, что осталось после приборов важнее этого.
+           */
+          const free = Math.max(0, room - running);
           warnings.push(
-            `${APPLIANCE_SLOTS[a.appliance].title}: не помещается в ряд ${usable} мм.`,
+            `${APPLIANCE_SLOTS[a.appliance].title}: не помещается — свободно ${free} мм, ` +
+              `нужно ${a.widthMm} мм, не хватает ${a.widthMm - free} мм.`,
           );
           return false;
         }
@@ -1308,10 +1318,13 @@ export function buildRun(input: BuildRunInput): Run {
      * «ряд помещается в стену» при этом остаётся нерушимым.
      */
     if (startMm + anchor.widthMm > limit) {
+      /* Свободно — от места, где прибор встал бы, до конца участка под технику. */
+      const free = Math.max(0, limit - startMm);
+      const numbers = `свободно ${free} мм, нужно ${anchor.widthMm} мм, не хватает ${anchor.widthMm - free} мм`;
       warnings.push(
         manualAnchors.length === 0 && blocked.length > 0
-          ? `${APPLIANCE_SLOTS[anchor.appliance].title}: не помещается — ${splitWords()}.`
-          : `${APPLIANCE_SLOTS[anchor.appliance].title}: не помещается после ручной расстановки.`,
+          ? `${APPLIANCE_SLOTS[anchor.appliance].title}: не помещается — ${splitWords()}: ${numbers}.`
+          : `${APPLIANCE_SLOTS[anchor.appliance].title}: не помещается после ручной расстановки — ${numbers}.`,
       );
       continue;
     }

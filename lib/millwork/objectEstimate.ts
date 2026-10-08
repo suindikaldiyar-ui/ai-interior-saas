@@ -271,16 +271,60 @@ export function wallCornerOf(layout: Composition | null): RunCorner | undefined 
 }
 
 /**
- * Ряды соседних стен из сохранения. Ключи в базе строковые — JSON других
- * не знает; стена А живёт в `runs`, поэтому индекс начинается с 1.
+ * ПРАВКИ СОСЕДНИХ СТЕН — ПО ИДЕНТИЧНОСТИ СТЕНЫ, А НЕ ПО НОМЕРУ.
+ *
+ * Номер стены в композиции — место в обходе от рабочей стены. Замерщик
+ * переносит ряд на другую стену («ряд здесь?»), и номера сдвигаются:
+ * правка, лежавшая под номером 1, показывалась на той стене, что встала
+ * вторым номером, — у чужой стены оказывались модули стены Б. Директива
+ * (§10): идентичность не выводится из номера в массиве.
+ *
+ * Ключ правки — `wallId` её стены. Сохранённые раньше лежат под номерами
+ * ('1', '2'); у их рядов есть `wallId`, и читаются они по нему. Ряд без
+ * метки — самые старые объекты — остаётся под номером и читается стеной
+ * этого номера, как читался всегда (`wallEditOf`).
  */
-export function savedWallRuns(saved: Record<string, Run> | undefined): Record<number, Run> {
-  const out: Record<number, Run> = {};
+export type WallEdits = Record<string, Run>;
+
+/** Правки соседних стен из сохранения: ключ — стена ряда, у старых без метки — номер. */
+export function savedWallRuns(saved: Record<string, Run> | undefined): WallEdits {
+  const out: WallEdits = {};
   for (const [key, run] of Object.entries(saved ?? {})) {
+    if (run?.wallId) {
+      out[run.wallId] = run;
+      continue;
+    }
     const index = Number(key);
-    if (Number.isInteger(index) && index > 0) out[index] = run;
+    if (Number.isInteger(index) && index > 0) out[String(index)] = run;
   }
   return out;
+}
+
+/**
+ * Правка стены — та, что принадлежит ИМЕННО ей: под её `wallId`, а у
+ * старых объектов — под её номером и без чужой метки.
+ */
+export function wallEditOf(edits: WallEdits, wallId: string, index: number): Run | undefined {
+  const own = edits[wallId];
+  if (own) return own;
+  const byNumber = edits[String(index)];
+  return byNumber && (!byNumber.wallId || byNumber.wallId === wallId) ? byNumber : undefined;
+}
+
+/** Записать правку стены: под её `wallId`, и снять прежнюю запись этой стены под номером. */
+export function withWallEdit(edits: WallEdits, wallId: string, index: number, run: Run): WallEdits {
+  const next = withoutWallEdit(edits, wallId, index);
+  next[wallId] = run;
+  return next;
+}
+
+/** Снять правку стены — и под её `wallId`, и под номером, если там лежит она. */
+export function withoutWallEdit(edits: WallEdits, wallId: string, index: number): WallEdits {
+  const next = { ...edits };
+  delete next[wallId];
+  const byNumber = next[String(index)];
+  if (byNumber && (!byNumber.wallId || byNumber.wallId === wallId)) delete next[String(index)];
+  return next;
 }
 
 /**
@@ -301,7 +345,7 @@ export function savedWallRuns(saved: Record<string, Run> | undefined): Record<nu
 export function wallSegments(
   layout: Composition | null,
   wallARun: Run,
-  editedWalls: Record<number, Run>,
+  editedWalls: WallEdits,
 ): Run[] {
   if (!layout) return [wallARun];
 
@@ -312,7 +356,7 @@ export function wallSegments(
   );
 
   function wallRun(segment: Composition['segments'][number], i: number): Run {
-    const saved = editedWalls[i];
+    const saved = wallEditOf(editedWalls, segment.wallId, i);
     if (!saved) return segment.run;
 
     /*

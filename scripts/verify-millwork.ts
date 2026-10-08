@@ -150,7 +150,7 @@ import {
 } from '../lib/millwork/palette';
 import { frontKey, frontOf } from '../lib/millwork/frontMaterial';
 import { reorderTarget, rowOfModule } from '../lib/millwork/selection';
-import { cornerBandMm, cornerFillerMm, markOnRun, runPlacements } from '../lib/millwork/composition';
+import { cornerBandMm, cornerFillerMm, markOnRun, runPlacements, wallsTouchedByChange } from '../lib/millwork/composition';
 import { upperSpans, upperSpansOfRun } from '../lib/millwork/layout';
 import { CORNER_FILLER_PANEL_NAME, CORNER_UPPER_FILLER_PANEL_NAME, legName } from '../lib/millwork/panels';
 import { blindPartMm, cornerChoicesOf, cornerFillersOf, cornerGeometry, openFrontMm } from '../lib/millwork/corner';
@@ -193,8 +193,14 @@ import {
   wallMismatchMessage,
   wallMismatches,
 } from '../lib/millwork/walls';
-import { composeVariants, editedRunEstimate, workingWall, workspaceInput } from '../lib/millwork/workspace';
-import { ARRANGEMENTS_FAILED, arrangementsState, screenState } from '../lib/millwork/screen';
+import { composeVariants, editedRunEstimate, workingWall, workingWallEdit, workspaceInput } from '../lib/millwork/workspace';
+import {
+  ARRANGEMENTS_FAILED,
+  arrangementsState,
+  lostWallEditsNote,
+  missingAppliances,
+  screenState,
+} from '../lib/millwork/screen';
 import ArrangementCards from '../components/millwork/ArrangementCards';
 import React from 'react';
 import MillingPicker from '../components/millwork/MillingPicker';
@@ -322,6 +328,7 @@ import {
   savedWallRuns,
   wallRequirementsOf,
   wallSegments,
+  withWallEdit,
 } from '../lib/millwork/objectEstimate';
 import {
   ROOM_CONTOUR_MM,
@@ -22570,6 +22577,389 @@ console.log('\nСлой 56: выступ стены, колонна, короб 
       intoP.warnings.some((warning) => /справа выступ стены, не хватает \d+ мм/.test(warning)) &&
         intoP.modules.every((unit, i) => unit.offsetMm === screen.run.modules[i]?.offsetMm),
       intoP.warnings[0] ?? 'ОТКАЗА НЕТ',
+    );
+  }
+}
+
+/* ═══════════  P0: идентичность стен угловой и П-образной, пропавшая техника  ═══════════ */
+
+/**
+ * ПРАВКА ПРИНАДЛЕЖИТ СТЕНЕ ЗАМЕРА, А НЕ НОМЕРУ В ОБХОДЕ.
+ *
+ * Правки соседних стен лежали под номером стены в композиции ('1', '2'),
+ * а номер — место в обходе от рабочей стены: перенёс замерщик ряд на
+ * другую стену («ряд здесь?») — правка стены b показывалась на стене c.
+ * Правка рабочей стены ложилась на новую рабочую стену. Правка состава
+ * пересобирала стену А всегда и соседние никогда: удаление холодильника
+ * со стены Б стирало правки стены А. А прибор, которому не хватило места
+ * на соседней стене, пропадал молча — экран показывал предупреждения
+ * только выбранной стены.
+ *
+ * Всё — путём экрана: `workspaceInput` → `objectSite` → `compositionFor` →
+ * `objectInput` → `composeVariants` → `wallSegments`, состояние — через
+ * JSON, как его пишет и читает рабочее место. Три школы цеха.
+ */
+console.log('\nP0: идентичность стен угловой и П-образной, пропавшая техника');
+{
+  const roomP0 = (walls: [string, number][]): Measurement => ({
+    id: 'room-p0',
+    ceilingHeightMm: 2700,
+    walls: walls.map(([id, lengthMm]) => ({ id, lengthMm, angleDeg: 90, openings: [] })),
+    comms: [],
+    photos: [],
+    measuredBy: 'Проверка',
+    measuredAt: '2026-10-08',
+    notes: '',
+  });
+  const U_WIDE = roomP0([
+    ['a', 3600],
+    ['b', 3000],
+    ['c', 3600],
+    ['d', 3000],
+  ]);
+  const U_NARROW = roomP0([
+    ['a', 3200],
+    ['b', 2400],
+    ['c', 3200],
+    ['d', 2400],
+  ]);
+  const BLIND: CornerChoice = { lower: 'blind', upper: 'blind' };
+  const DISABLED_P0 = { basic: [], optimal: [], premium: [] } as Record<VariantKey, string[]>;
+  const SCHOOLS_P0: [string, ProductionSettings][] = [
+    ['560/320', DEFAULT_PRODUCTION],
+    [
+      '550/350',
+      {
+        ...DEFAULT_PRODUCTION,
+        depths: { baseMm: 550, upperMm: 350, mezzanineMm: 550 },
+      },
+    ],
+    [
+      '600/300',
+      {
+        ...DEFAULT_PRODUCTION,
+        depths: { baseMm: 600, upperMm: 300, mezzanineMm: 600 },
+      },
+    ],
+  ];
+
+  /** Путь экрана: те же вызовы, что у рабочего места, с рабочей стеной `runWallId`. */
+  const screenP0 = (
+    measurement: Measurement,
+    runWallId: string,
+    production: ProductionSettings,
+    edits: { walls?: Record<string, Run>; runs?: Partial<Record<VariantKey, Run>> } = {},
+    requirements: RunRequirements = DEMO_REQUIREMENTS,
+  ) => {
+    const base = workspaceInput({
+      title: 'P0',
+      zone: 'Кухня',
+      measurement,
+      requirements,
+      rates: DEMO_RATES,
+      wallId: runWallId,
+      cornerAt: null,
+    });
+    const site = objectSite(base, null);
+    const attempt = compositionFor({
+      shape: 'u_shape',
+      requirements,
+      cornerSolution: 'false_panel',
+      corners: [BLIND, BLIND],
+      site,
+      production,
+      variantKey: 'optimal',
+    });
+    if (attempt?.state !== 'built') {
+      throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: П-образная от стены ${runWallId} не собралась — ${attempt?.state === 'refused' ? attempt.reason : 'композиции нет'}`);
+    }
+    const layout = attempt.composition;
+    const input = objectInput({
+      base,
+      resolution: null,
+      requirements: wallRequirementsOf(layout, requirements),
+      rates: DEMO_RATES,
+      production,
+      milling: new Map(),
+      carcass: new Map(),
+      materials: new Map(),
+      corner: wallCornerOf(layout),
+    });
+    const active = composeVariants(input, DISABLED_P0, edits.runs ?? {}).find((variant) => variant.key === 'optimal')!;
+    /* Состояние объекта — через JSON, как его пишет автосохранение и читает открытие. */
+    const saved = savedWallRuns(JSON.parse(JSON.stringify(edits.walls ?? {})));
+    const segments = wallSegments(layout, active.run, saved);
+    return { layout, segments, active, input, requirements };
+  };
+  const ids = (run: Run) => allModules(run).map((unit) => `${unit.id}:${unit.widthMm}`).join(' ');
+  const wallsOf = (run: Run) => Array.from(new Set(allModules(run).map((unit) => unit.id.split('@')[1] ?? 'БЕЗ МЕТКИ')));
+
+  /* ── 1. Правка стены b — под её `wallId`, и только у неё ── */
+  {
+    const home = screenP0(U_WIDE, 'a', DEFAULT_PRODUCTION);
+    check(
+      'P0.1 П от стены a: стены композиции a, b, c',
+      home.layout.segments.map((segment) => segment.wallId).join(',') === 'a,b,c',
+      home.layout.segments.map((segment) => segment.wallId).join(', '),
+    );
+    const wallB = home.segments[1];
+    const upper = allModules(wallB).filter((unit) => unit.id.startsWith('upper-') && !unit.appliance);
+    const target = upper[1];
+    if (!target) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: P0.1 — у стены b нет второго шкафа верхнего ряда');
+    const editedB = applyOps({
+      run: wallB,
+      requirements: home.requirements,
+      ops: [{ op: 'remove_module', moduleId: target.id }],
+      openings: home.layout.segments[1].openings,
+      roomDepthMm: 0,
+    });
+    check(
+      'P0.1 правка стены b применилась: шкаф снят, соседи в верхнем ряду на местах',
+      !allModules(editedB).some((unit) => unit.id === target.id) &&
+        allModules(editedB).length === allModules(wallB).length - 1,
+      `${target.id} · модулей ${allModules(wallB).length} → ${allModules(editedB).length}`,
+    );
+
+    /* Как пишет рабочее место — под `wallId`; как лежат старые объекты — под номером. */
+    const written = withWallEdit({}, home.layout.segments[1].wallId, 1, editedB);
+    const legacy: Record<string, Run> = { '1': editedB };
+    const unmarked: Record<string, Run> = { '1': { ...editedB, wallId: undefined } };
+    const keys = (saved: Record<string, Run>) => Object.keys(savedWallRuns(JSON.parse(JSON.stringify(saved)))).join(',');
+    check(
+      'P0.1 правка соседней стены пишется и читается под wallId; старая под номером — по метке её ряда; без метки — номером',
+      keys(written) === 'b' && keys(legacy) === 'b' && keys(unmarked) === '1',
+      `пишется ${keys(written)} · старая «1» → ${keys(legacy)} · без метки «1» → ${keys(unmarked)}`,
+    );
+
+    for (const [title, saved] of [
+      ['записанная рабочим местом', written],
+      ['старого объекта под номером', legacy],
+    ] as [string, Record<string, Run>][]) {
+      const sameHome = screenP0(U_WIDE, 'a', DEFAULT_PRODUCTION, { walls: saved });
+      check(
+        `P0.1 правка ${title}: на стене b она, стены a и c — те же, что без правки`,
+        ids(sameHome.segments[1]) === ids(editedB) &&
+          ids(sameHome.segments[0]) === ids(home.segments[0]) &&
+          ids(sameHome.segments[2]) === ids(home.segments[2]),
+        `b: ${ids(sameHome.segments[1]) === ids(editedB) ? 'правка' : 'НЕ ТА'} · a: ${ids(sameHome.segments[0]) === ids(home.segments[0]) ? 'та же' : 'ДРУГАЯ'} · c: ${ids(sameHome.segments[2]) === ids(home.segments[2]) ? 'та же' : 'ДРУГАЯ'}`,
+      );
+
+      /* Ряд перенесли на стену b: обход b, c, d. Правка стены b не ложится ни на c, ни на d. */
+      const moved = screenP0(U_WIDE, 'b', DEFAULT_PRODUCTION, { walls: saved });
+      const order = moved.layout.segments.map((segment) => segment.wallId).join(',');
+      const foreign = moved.segments
+        .map((run, i) => ({ wall: moved.layout.segments[i].wallId, on: wallsOf(run) }))
+        .filter((entry) => entry.on.some((wallId) => wallId !== entry.wall));
+      check(
+        `P0.1 ряд перенесён на стену b (${title}): у каждой стены — модули только своей стены`,
+        order === 'b,c,d' && foreign.length === 0,
+        foreign.length === 0
+          ? `обход ${order}`
+          : `обход ${order} · ЧУЖИЕ: ${foreign.map((entry) => `${entry.wall} несёт ${entry.on.join('+')}`).join(' · ')}`,
+      );
+      const back = screenP0(U_WIDE, 'a', DEFAULT_PRODUCTION, { walls: saved });
+      check(
+        `P0.1 ряд вернулся на стену a (${title}): правка стены b снова на ней`,
+        ids(back.segments[1]) === ids(editedB),
+        ids(back.segments[1]) === ids(editedB) ? 'на месте' : 'ПРОПАЛА',
+      );
+    }
+  }
+
+  /* ── 2. Правка рабочей стены — только ей ── */
+  {
+    const home = screenP0(U_WIDE, 'a', DEFAULT_PRODUCTION);
+    const first = allModules(home.active.run).find((unit) => unit.id.startsWith('upper-') && !unit.appliance);
+    if (!first) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: P0.2 — у стены a нет шкафа верхнего ряда');
+    const editedA = applyOps({
+      run: home.active.run,
+      requirements: home.requirements,
+      ops: [{ op: 'remove_module', moduleId: first.id }],
+      openings: home.input.openings,
+      roomDepthMm: 0,
+    });
+    const runs = { optimal: editedA };
+    const own = screenP0(U_WIDE, 'a', DEFAULT_PRODUCTION, { runs });
+    check(
+      'P0.2 правка стены a лежит на стене a',
+      !allModules(own.segments[0]).some((unit) => unit.id === first.id) &&
+        allModules(own.segments[0]).length === allModules(home.active.run).length - 1,
+      `${first.id}: ${allModules(own.segments[0]).some((unit) => unit.id === first.id) ? 'СТОИТ' : 'снят'}`,
+    );
+    const moved = screenP0(U_WIDE, 'b', DEFAULT_PRODUCTION, { runs });
+    check(
+      'P0.2 ряд перенесён на стену b: правка стены a на неё не ложится',
+      wallsOf(moved.segments[0]).join(',') === 'b',
+      `стена A несёт модули ${wallsOf(moved.segments[0]).join('+')}`,
+    );
+    check(
+      'P0.2 правка рабочей стены принадлежит ей: та же стена — да, другая — нет, без метки — да',
+      workingWallEdit(editedA, 'a') === editedA &&
+        workingWallEdit(editedA, 'b') === undefined &&
+        workingWallEdit({ ...editedA, wallId: undefined }, 'b') !== undefined,
+      `a ${workingWallEdit(editedA, 'a') ? 'да' : 'нет'} · b ${workingWallEdit(editedA, 'b') ? 'ДА' : 'нет'}`,
+    );
+  }
+
+  /* ── 3. Правка состава касается стен своего прибора ── */
+  {
+    const home = screenP0(U_WIDE, 'a', DEFAULT_PRODUCTION);
+    const req = home.requirements;
+    const current = {
+      assignment: home.layout.segments.map((segment) => segment.appliances),
+      usableMm: home.layout.segments.map((segment) => segment.run.lengthMm),
+      requirements: req,
+    };
+    const at = (appliance: ApplianceKind) => current.assignment.findIndex((list) => list.includes(appliance));
+    const fridgeWall = at('fridge');
+    const hobWall = at('hob');
+    if (fridgeWall < 0 || hobWall < 0 || at('oven') < 0) {
+      throw new Error('НУЛЕВОЙ СЕЛЕКТОР: P0.3 — холодильник, духовка или варочная не розданы ни одной стене');
+    }
+    const without = (appliance: ApplianceKind) => req.appliances.filter((item) => item !== appliance);
+    const cases: [string, Parameters<typeof wallsTouchedByChange>[0], number[]][] = [
+      ['удалён холодильник', { appliances: without('fridge') }, [fridgeWall]],
+      ['удалена варочная', { appliances: without('hob') }, [hobWall]],
+      ['добавлена микроволновка — встаёт к пеналам', { appliances: [...req.appliances, 'microwave'] }, [fridgeWall]],
+      ['холодильник отдельностоящий', { fridgeType: req.fridgeType === 'freestanding' ? 'built_in' : 'freestanding' }, [fridgeWall]],
+      ['духовка в колонне поменялась местами', { columnTop: req.columnTop === 'oven' ? 'microwave' : 'oven' }, [at('oven')]],
+      ['размер варочной', { applianceSizes: { ...(req.applianceSizes ?? {}), hob: { widthMm: 600, heightMm: 50, depthMm: 520 } } }, [hobWall]],
+      ['тип вытяжки', { applianceTypes: { ...(req.applianceTypes ?? {}), hood: 'hood_dome' } }, [at('hood')]],
+      ['холодильник перенесён на стену a', { applianceWalls: { ...(req.applianceWalls ?? {}), fridge: 0 } }, [0, fridgeWall].sort((x, y) => x - y)],
+      ['верхний ряд до потолка — вся кухня', { upperToCeiling: true }, [0, 1, 2]],
+      ['сторона пеналов — вся кухня', { tallSide: 'right' }, [0, 1, 2]],
+    ];
+    const wrong = cases
+      .map(([title, change, want]) => ({ title, want, got: wallsTouchedByChange(change, current) }))
+      .filter((entry) => entry.got.join(',') !== entry.want.join(','));
+    check(
+      `P0.3 правка состава задевает ровно стены своего прибора — ${cases.length} случаев`,
+      cases.length === 10 && wrong.length === 0,
+      wrong.length === 0
+        ? `раздача ${current.assignment.map((list) => list.join('+')).join(' | ')}`
+        : wrong.map((entry) => `${entry.title}: нужно ${entry.want.join(',')}, вышло ${entry.got.join(',') || 'ни одной'}`).join(' · '),
+    );
+    check(
+      'P0.3 снятые правки названы словами',
+      lostWallEditsNote([1]) === 'Правки стены Б сняты: состав этой стены изменился, и раскладка собрала её заново.' &&
+        lostWallEditsNote([0, 2]) === 'Правки стен А и В сняты: состав этих стен изменился, и раскладка собрала их заново.' &&
+        lostWallEditsNote([]) === null,
+      lostWallEditsNote([0, 2]) ?? 'СЛОВ НЕТ',
+    );
+  }
+
+  /* ── 4. Духовка на П 3200 + 2400 + 3200: стоит или названа миллиметрами ── */
+  {
+    let dropped = 0;
+    for (const [school, production] of SCHOOLS_P0) {
+      const screen = screenP0(U_NARROW, 'a', production);
+      const ovenWall = screen.layout.segments.findIndex((segment) => segment.appliances.includes('oven'));
+      if (ovenWall < 0) throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: P0.4 ${school} — духовка не роздана ни одной стене`);
+      const shown = screen.segments.some((run) => allModules(run).some((unit) => moduleAppliances(unit).includes('oven')));
+      const missing = missingAppliances({
+        requested: screen.requirements.appliances,
+        shown: screen.segments,
+        layout: screen.layout,
+        edited: () => false,
+        active: 0,
+      });
+      if (shown) {
+        check(`P0.4 ${school}: духовка стоит — строки о пропаже нет`, missing.length === 0, missing[0]?.message ?? 'строк нет');
+        continue;
+      }
+      dropped += 1;
+      /*
+       * Числа — из геометрии: стена пеналов владеет вторым углом, глухая
+       * часть угла (`ownerBlindMm`) и холодильник заняли своё, и под
+       * духовку осталось то, что осталось.
+       */
+      const run = screen.layout.segments[ovenWall].run;
+      const blind = cornerGeometry(BLIND, screen.requirements.zone, production).ownerBlindMm;
+      const fridge = allModules(run).find((unit) => unit.appliance === 'fridge');
+      if (!fridge) throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: P0.4 ${school} — на стене духовки нет холодильника`);
+      const need = APPLIANCE_SLOTS.oven.widthMm;
+      const free = run.lengthMm - blind - fridge.widthMm;
+      const expected =
+        `${wallLabel(ovenWall)}: Духовой шкаф: не помещается — свободно ${free} мм, нужно ${need} мм, ` +
+        `не хватает ${need - free} мм. Прибора нет ни на схеме, ни в смете.`;
+      const line = missing.find((warning) => warning.id === 'appliance-missing-oven');
+      check(
+        `P0.4 ${school}: духовки нет на ${lowerWall(wallLabel(ovenWall), 'prepositional')} — блокирующая строка с миллиметрами из геометрии`,
+        Boolean(line) && line!.severity === 'blocking' && line!.message === expected && free < need,
+        line ? `${line.message} · стена ${run.lengthMm} − глухая часть ${blind} − холодильник ${fridge.widthMm} = ${free}` : `СТРОКИ НЕТ · ждали: ${expected}`,
+      );
+      /* Та же строка — в общем канале экрана, при выбранной стене А, и жёлтый дубль раскладки не повторяет её. */
+      const channel = collectWarnings({
+        missing,
+        issues: validateRun(screen.segments[0], screen.layout.segments[0].comms),
+        run: screen.segments[0],
+        openings: [],
+        comms: screen.layout.segments[0].comms,
+      });
+      const state = screenState({
+        refusal: null,
+        mismatches: [],
+        walls: screen.layout.segments.map((segment) => ({ lengthMm: segment.wallLengthMm })),
+        segments: screen.segments,
+        shape: 'u_shape',
+        warnings: channel,
+      });
+      check(
+        `P0.4 ${school}: строка в красной полосе экрана при выбранной стене А, цена при этом есть`,
+        state.blocking.some((warning) => warning.message === expected) && !state.priceHidden,
+        state.blocking.map((warning) => warning.message).join(' | ') || 'КРАСНАЯ ПОЛОСА ПУСТА',
+      );
+    }
+    check('P0.4 духовка не встала хотя бы у одной школы — проверка не пустая', dropped > 0, `не встала у ${dropped} из ${SCHOOLS_P0.length}`);
+
+    /* Где всё встало — строк нет вовсе; прямой кухни это не касается. */
+    const wide = screenP0(U_WIDE, 'a', DEFAULT_PRODUCTION);
+    const quiet = missingAppliances({
+      requested: wide.requirements.appliances,
+      shown: wide.segments,
+      layout: wide.layout,
+      edited: () => false,
+      active: 0,
+    });
+    check('P0.4 П 3600 + 3000: вся техника стоит — строк о пропаже нет', quiet.length === 0, quiet[0]?.message ?? 'строк нет');
+    check(
+      'P0.4 прямая кухня: композиции нет — строк нет',
+      missingAppliances({ requested: ['oven'], shown: [], layout: null, edited: () => false, active: 0 }).length === 0,
+    );
+
+    /* Правленая стена, в которую прибор не встал сам: выход — пересобрать её, и это сказано. */
+    const ovenWall = wide.layout.segments.findIndex((segment) => segment.appliances.includes('oven'));
+    const oven = allModules(wide.segments[ovenWall]).find((unit) => moduleAppliances(unit).includes('oven'));
+    if (!oven) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: P0.4 — на стене пеналов П 3600 + 3000 нет духовки');
+    const withoutOven = applyOps({
+      run: wide.segments[ovenWall],
+      requirements: wide.requirements,
+      ops: [{ op: 'remove_module', moduleId: oven.id }],
+      openings: wide.layout.segments[ovenWall].openings,
+      roomDepthMm: 0,
+    });
+    const edited = missingAppliances({
+      requested: wide.requirements.appliances,
+      shown: wide.segments.map((run, i) => (i === ovenWall ? withoutOven : run)),
+      layout: wide.layout,
+      edited: (index) => index === ovenWall,
+      active: 0,
+    });
+    const state = screenState({
+      refusal: null,
+      mismatches: [],
+      walls: wide.layout.segments.map((segment) => ({ lengthMm: segment.wallLengthMm })),
+      segments: wide.segments,
+      shape: 'u_shape',
+      warnings: edited,
+    });
+    check(
+      'P0.4 правленая стена без духовки: строка называет стену и выход, кнопка пересобирает её',
+      edited.length === 1 &&
+        edited[0].severity === 'blocking' &&
+        edited[0].message.includes(`Пересоберите ${lowerWall(wallLabel(ovenWall), 'accusative')}`) &&
+        state.rebuildWall === ovenWall,
+      `${edited[0]?.message ?? 'СТРОКИ НЕТ'} · пересобрать: ${state.rebuildWall ?? 'нечего'}`,
     );
   }
 }

@@ -37,6 +37,7 @@ import {
   SHAPE_TITLE,
   runPlacements,
   segmentCount,
+  wallsTouchedByChange,
 } from '@/lib/millwork/composition';
 import {
   compositionFor,
@@ -46,8 +47,12 @@ import {
   savedCornerChoices,
   savedWallRuns,
   wallCornerOf,
+  wallEditOf,
   wallRequirementsOf,
   wallSegments,
+  withWallEdit,
+  withoutWallEdit,
+  type WallEdits,
 } from '@/lib/millwork/objectEstimate';
 import { ratesFromCatalog } from '@/lib/millwork/rates';
 import { rowStandardDepthMm } from '@/lib/millwork/fill';
@@ -116,7 +121,13 @@ import {
 } from '@/lib/millwork/materialCatalog';
 import { metaFinishPrices } from '@/lib/millwork/materialCollection';
 import { MATERIAL_FINISHES } from '@/lib/millwork/materialFinishes';
-import { screenState, arrangementsState, type ArrangementsState } from '@/lib/millwork/screen';
+import {
+  screenState,
+  arrangementsState,
+  lostWallEditsNote,
+  missingAppliances,
+  type ArrangementsState,
+} from '@/lib/millwork/screen';
 import {
   keepSelection,
   reorderTarget,
@@ -157,7 +168,7 @@ import {
   MIN_WIDTH,
   moduleAppliances,
 } from '@/lib/millwork/modules';
-import { composeVariants, editedRunEstimate } from '@/lib/millwork/workspace';
+import { composeVariants, editedRunEstimate, workingWallEdit } from '@/lib/millwork/workspace';
 import {
   MAIN_VARIANT,
   SINGLE_VARIANT,
@@ -596,9 +607,11 @@ export default function Workspace(props: WorkspaceProps) {
    *
    * Восстанавливаются из сохранённого состояния, как и всё остальное:
    * объект обязан открыться ровно таким, каким его закрыли (ловушка 42).
-   * Ключи в базе строковые — JSON других не знает.
+   * Ключ — `wallId` стены замера, а не её номер в обходе: номер сдвигается,
+   * когда ряд переносят на другую стену, и правка оказывалась на чужой
+   * (`WallEdits`). Старые сохранения под номерами читает `savedWallRuns`.
    */
-  const [editedWalls, setEditedWalls] = useState<Record<number, Run>>(() =>
+  const [editedWalls, setEditedWalls] = useState<WallEdits>(() =>
     savedWallRuns(props.initialState?.wallRuns),
   );
 
@@ -1086,6 +1099,33 @@ export default function Workspace(props: WorkspaceProps) {
     [layout, active.run, editedWalls],
   );
 
+  /**
+   * СТЕНА КОМПОЗИЦИИ ПОД ЭТИМ НОМЕРОМ — КЛЮЧ ЕЁ ПРАВОК.
+   *
+   * Номер — место в обходе сейчас; правка принадлежит стене замера
+   * (`wallId`) и пишется под ним. Прямая кухня соседних стен не имеет.
+   */
+  const wallIdAt = useCallback(
+    (index: number) => layout?.segments[index]?.wallId ?? String(index),
+    [layout],
+  );
+
+  /**
+   * ПРАВЛЕНА ЛИ СТЕНА РУКАМИ — ПО ЕЁ ИДЕНТИЧНОСТИ.
+   *
+   * Стена А правится через `editedRuns`, и правка ей принадлежит, только
+   * если записана на этой же стене замера (`workingWallEdit`); соседние —
+   * через `editedWalls` под своим `wallId` (`wallEditOf`). Один ответ на
+   * расхождения, пропавшую технику, удаление прибора и правку состава.
+   */
+  const wallEdited = useCallback(
+    (index: number) =>
+      index === 0
+        ? Boolean(workingWallEdit(editedRuns[active.key], input.runWallId))
+        : Boolean(layout?.segments[index] && wallEditOf(editedWalls, layout.segments[index].wallId, index)),
+    [editedRuns, active.key, input.runWallId, layout, editedWalls],
+  );
+
   const wall = Math.min(wallIndex, segments.length - 1);
   const activeRun = segments[wall] ?? active.run;
   /** Цвет фасада для сцены: один на экран и на сцену рендера по чертежу. */
@@ -1252,11 +1292,11 @@ export default function Workspace(props: WorkspaceProps) {
     const byObstacle = obstacleMismatches({
       runs: segments,
       openingsOf: wallOpenings,
-      edited: (index) => (index === 0 ? Boolean(editedRuns[active.key]) : Boolean(editedWalls[index])),
+      edited: wallEdited,
       skip: byLength.map((mismatch) => mismatch.index),
     });
     return [...byLength, ...byObstacle];
-  }, [layout, segments, wallOpenings, editedRuns, editedWalls, active.key]);
+  }, [layout, segments, wallOpenings, wallEdited]);
 
   /**
    * КОММУНИКАЦИИ ВЫБРАННОЙ СТЕНЫ.
@@ -1473,13 +1513,43 @@ export default function Workspace(props: WorkspaceProps) {
    * модулей к нему уже не относятся: они ссылались на модули, которых
    * больше нет. Ручную расстановку это не трогает — прибор, поставленный
    * замерщиком, остаётся на своём месте.
+   *
+   * ПЕРЕСОБИРАЕТСЯ ТА СТЕНА, КОТОРОЙ ПРАВКА КАСАЕТСЯ, И ТОЛЬКО ОНА.
+   *
+   * Здесь всегда снимались правки стены А и никогда — соседних: удаление
+   * холодильника со стены Б стирало правки стены А, а на стене Б
+   * оставался её прежний ряд — вместе с холодильником. Каких стен правка
+   * касается, отвечает `wallsTouchedByChange`: прибор — его стена (и та,
+   * куда он уходит), правка всей кухни — все. Снятые правки названы.
+   *
+   * Возвращает строку о снятых правках — вызывающий кладёт её рядом со
+   * своей.
    */
-  const changeComposition = (patch: CompositionPatch) => {
+  const changeComposition = (patch: CompositionPatch): string | null => {
     dirty.current = true;
     setMoveNotice(null);
-    setEditedRuns({});
     setSelectedId(null);
+    let note: string | null = null;
+    if (!layout) {
+      setEditedRuns({});
+    } else {
+      const touched = wallsTouchedByChange(patch, {
+        assignment: layout.segments.map((segment) => segment.appliances),
+        usableMm: layout.segments.map((segment) => segment.run.lengthMm),
+        requirements,
+      });
+      note = lostWallEditsNote(touched.filter((index) => wallEdited(index)));
+      if (touched.includes(0) && wallEdited(0)) setEditedRuns({});
+      const neighbours = touched.filter((index) => index > 0);
+      if (neighbours.length > 0) {
+        setEditedWalls((prev) =>
+          neighbours.reduce((acc, index) => withoutWallEdit(acc, wallIdAt(index), index), prev),
+        );
+      }
+      setMoveNotice(note);
+    }
     setComposition((prev) => ({ ...prev, ...patch }));
+    return note;
   };
 
   /**
@@ -1960,14 +2030,14 @@ export default function Workspace(props: WorkspaceProps) {
         const run = change.runs[index];
         if (!run) continue;
         if (index === 0) setEditedRuns((prev) => ({ ...prev, [active.key]: run }));
-        else setEditedWalls((prev) => ({ ...prev, [index]: run }));
+        else setEditedWalls((prev) => withWallEdit(prev, wallIdAt(index), index, run));
       }
       setSceneNotice(
         `${wallLabel(owner)} — ${wallLabel(owner + 1)}: ${card.title.toLowerCase()}. ` +
           'Остальные модули на своих местах.',
       );
     },
-    [cornerInput, compositionWith, layout, applianceWallsNow, active.key],
+    [cornerInput, compositionWith, layout, applianceWallsNow, active.key, wallIdAt],
   );
 
   /** Что выбрано — словами: «Дверца 600» либо «Пусто 900 мм». */
@@ -2012,7 +2082,7 @@ export default function Workspace(props: WorkspaceProps) {
         moduleAppliances(m).includes(appliance),
       );
 
-      changeComposition({
+      const lost = changeComposition({
         applianceWalls: { ...(composition.applianceWalls ?? {}), [appliance]: toWall },
         applianceSizes: unit?.applianceSizes?.[appliance]
           ? {
@@ -2024,11 +2094,12 @@ export default function Workspace(props: WorkspaceProps) {
 
       setMoveNotice(
         `${APPLIANCE_SLOTS[appliance].title} переехал на ${lowerWall(wallLabel(toWall), 'accusative')}. ` +
-          'Размеры прибора переехали вместе с ним.',
+          'Размеры прибора переехали вместе с ним.' +
+          (lost ? ` ${lost}` : ''),
       );
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activeRun, composition],
+    [activeRun, composition, layout, requirements, wallEdited],
   );
 
   const runOps = useCallback(
@@ -2070,16 +2141,49 @@ export default function Workspace(props: WorkspaceProps) {
         return unit ? moduleAppliances(unit) : [];
       });
 
+      /*
+       * Удаление ПРИБОРА — это правка состава кухни, но не пересборка
+       * чужих стен. Здесь звалась общая правка состава, и она снимала
+       * правки стены А при удалении холодильника со стены Б, а правленую
+       * стену Б не трогала вовсе: холодильник оставался на схеме и в
+       * смете, а верхний шкаф стены А у угла уезжал.
+       *
+       * Теперь: стена, собранная раскладкой, пересобирается композицией
+       * без прибора; правленая — снимает ровно выбранный модуль той же
+       * операцией, что и любой другой, и её правки остаются. Остальные
+       * стены не трогаются ни в том, ни в другом случае.
+       */
       if (removedAppliances.length > 0 && layout) {
-        changeComposition({
-          appliances: requirements.appliances.filter(
-            (item) => !removedAppliances.includes(item),
-          ),
+        const titles = removedAppliances.map((a) => APPLIANCE_SLOTS[a].title).join(', ');
+        const remaining = requirements.appliances.filter((item) => !removedAppliances.includes(item));
+        if (!wallEdited(wall)) {
+          dirty.current = true;
+          setSelectedId(null);
+          setComposition((prev) => ({ ...prev, appliances: remaining }));
+          setMoveNotice(`${titles}: убран со всей кухни — прибор один на все стены.`);
+          return;
+        }
+        const exact = applyOps({
+          run: activeRun,
+          requirements,
+          ops,
+          openings: wallOpenings(wall),
+          roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
         });
-        setMoveNotice(
-          `${removedAppliances.map((a) => APPLIANCE_SLOTS[a].title).join(', ')}: ` +
-            'убран со всей кухни — прибор один на все стены.',
+        const kept = removedAppliances.filter((a) =>
+          allModules(exact).some((m) => moduleAppliances(m).includes(a)),
         );
+        if (kept.length > 0) {
+          onRefusal(exact.warnings[0] ?? `${titles}: ряд не принял удаление — прибор на месте.`);
+          return;
+        }
+        dirty.current = true;
+        onRefusal(exact.warnings[0] ?? null);
+        setComposition((prev) => ({ ...prev, appliances: remaining }));
+        if (wall === 0) setEditedRuns({ [active.key]: exact });
+        else setEditedWalls((prev) => withWallEdit(prev, wallIdAt(wall), wall, exact));
+        setSelectedId(null);
+        setMoveNotice(`${titles}: убран со всей кухни — прибор один на все стены.`);
         return;
       }
       const before = new Map(activeRun.modules.map((m) => [m.id, m.widthMm]));
@@ -2102,7 +2206,7 @@ export default function Workspace(props: WorkspaceProps) {
        * же — меняется только, чей ряд она правит.
        */
       if (wall === 0) setEditedRuns((prev) => ({ ...prev, [active.key]: next }));
-      else setEditedWalls((prev) => ({ ...prev, [wall]: next }));
+      else setEditedWalls((prev) => withWallEdit(prev, wallIdAt(wall), wall, next));
 
       /*
        * ДОБАВЛЕННЫЙ МОДУЛЬ СРАЗУ ВЫДЕЛЕН.
@@ -2129,9 +2233,10 @@ export default function Workspace(props: WorkspaceProps) {
        */
       const added = ops.length === 1 && ops[0].op === 'add_module' ? ops[0] : null;
       if (added) {
+        /* Индекс — в ряду ВЫБРАННОЙ стены: модуль ставили на неё, а не на стену А. */
         const at = added.afterModuleId
-          ? active.run.modules.findIndex((m) => m.id === added.afterModuleId)
-          : active.run.modules.length - 1;
+          ? activeRun.modules.findIndex((m) => m.id === added.afterModuleId)
+          : activeRun.modules.length - 1;
         setSelectedId(next.modules[at + 1]?.id ?? null);
       } else {
         /*
@@ -2151,7 +2256,7 @@ export default function Workspace(props: WorkspaceProps) {
           .map((m) => m.id),
       );
     },
-    [active, activeRun, wall, requirements, wallOpenings, props.roomDepthM, flash, selectedId],
+    [active, activeRun, wall, requirements, wallOpenings, props.roomDepthM, flash, selectedId, layout, wallEdited, wallIdAt],
   );
 
   /**
@@ -2223,14 +2328,14 @@ export default function Workspace(props: WorkspaceProps) {
         /* Отказ движка — словами, а ряд записывается с тем, что прошло. */
         if (next.warnings[0]) said.push(next.warnings[0]);
         if (index === 0) setEditedRuns((prev) => ({ ...prev, [active.key]: next }));
-        else setEditedWalls((prev) => ({ ...prev, [index]: next }));
+        else setEditedWalls((prev) => withWallEdit(prev, wallIdAt(index), index, next));
         changed = true;
       }
 
       if (changed) dirty.current = true;
       return said[0] ?? null;
     },
-    [wall, segments, selectedId, requirements, wallOpenings, props.roomDepthM, active.key],
+    [wall, segments, selectedId, requirements, wallOpenings, props.roomDepthM, active.key, wallIdAt],
   );
 
   /*
@@ -2616,9 +2721,31 @@ export default function Workspace(props: WorkspaceProps) {
    * на экране: десяток предупреждений превращается в фон, который не читает
    * никто. Остальные — под «ещё N», каждое кликабельно и ведёт на план.
    */
+  /**
+   * ЗАКАЗАННЫЙ ПРИБОР, КОТОРОГО НЕТ НИ НА ОДНОЙ СТЕНЕ, — СЛОВАМИ.
+   *
+   * Предупреждения раскладки видны только у выбранной стены, а прибор
+   * мог уйти с соседней: на П-образной 3200 + 2400 + 3200 духовка
+   * пропадала со стены Б, пока на экране стояла стена А. В свободной
+   * сборке состава нет вовсе — правда там ряд (ловушка 231), и спрашивать
+   * не о чем.
+   */
+  const missing = useMemo(
+    () =>
+      missingAppliances({
+        requested: freeMode ? [] : requirements.appliances,
+        shown: segments,
+        layout,
+        edited: wallEdited,
+        active: wall,
+      }),
+    [freeMode, requirements.appliances, segments, layout, wallEdited, wall],
+  );
+
   const warnings = useMemo(
     () =>
       collectWarnings({
+        missing,
         issues,
         /*
          * Ряд и коммуникации — ОДНОЙ стены, той, что выбрана. Прежде
@@ -2635,7 +2762,7 @@ export default function Workspace(props: WorkspaceProps) {
         manualSink: Object.keys(manualAnchors).length > 0,
         hoodRequested: requirements.appliances.includes('hood'),
       }),
-    [issues, activeRun, input.openings, activeComms, resolution, manualAnchors, requirements],
+    [missing, issues, activeRun, input.openings, activeComms, resolution, manualAnchors, requirements],
   );
 
   /*
@@ -2714,25 +2841,24 @@ export default function Workspace(props: WorkspaceProps) {
   const rebuildWall = useCallback(
     (index: number) => {
       dirty.current = true;
-      /* Стена А правится через `editedRuns`, соседние — через `editedWalls`. */
+      /* Стена А правится через `editedRuns`, соседние — через `editedWalls` по `wallId`. */
       if (index === 0) setEditedRuns({});
-      else
-        setEditedWalls((prev) => {
-          const next = { ...prev };
-          delete next[index];
-          return next;
-        });
+      else setEditedWalls((prev) => withoutWallEdit(prev, wallIdAt(index), index));
       setSelectedId(null);
     },
-    [],
+    [wallIdAt],
   );
 
   const blockingWarnings = screen.blocking;
-  /** Расхождение, о котором сейчас говорит красная полоса, — если это оно. */
+  /**
+   * Стена, которую предлагает пересобрать красная полоса: расхождение со
+   * стеной либо прибор, не вставший в её правленый ряд. Какая — решает
+   * `screenState`, здесь только кнопка.
+   */
   const staleShown =
     screen.rebuildWall === null
       ? undefined
-      : mismatches.find((mismatch) => mismatch.index === screen.rebuildWall);
+      : { index: screen.rebuildWall, label: wallLabel(screen.rebuildWall) };
   const softWarnings = groupWarnings(screen.clarify);
   const { shown: shownSoft, hidden: hiddenSoft } = splitWarnings(softWarnings);
 
@@ -2828,9 +2954,8 @@ export default function Workspace(props: WorkspaceProps) {
          * бы другим низом.
          */
         corners: shape === 'linear' ? cornerPicks : cornerChoices,
-        wallRuns: Object.fromEntries(
-          Object.entries(editedWalls).map(([index, run]) => [String(index), run]),
-        ),
+        /* Ключ — стена замера (`wallId`); старые номера читает `savedWallRuns`. */
+        wallRuns: editedWalls,
         requirements,
         /*
          * Только изменённое: объект без своей правки читает организацию
