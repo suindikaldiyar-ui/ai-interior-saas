@@ -61,7 +61,8 @@ export type CompositionPatch = {
    * не удаление на одной стене и добавление на другой: приборы
    * принадлежат кухне, а не ряду.
    */
-  applianceWalls?: Partial<Record<ApplianceKind, number>>;
+  /** Прибор → физическая стена замера (`wallId`); число — старая запись номером. */
+  applianceWalls?: Partial<Record<ApplianceKind, number | string>>;
   /** Введённые габариты приборов: они переезжают вместе с прибором. */
   applianceSizes?: Partial<Record<ApplianceKind, ApplianceSize>>;
   /** Исполнение прибора: газовая или электрическая, наклонная или купольная. */

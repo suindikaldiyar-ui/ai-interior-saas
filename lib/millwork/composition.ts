@@ -190,8 +190,11 @@ export function splitAppliances(
   /**
    * Выбор человека: прибор → стена. Он сильнее рабочего треугольника —
    * замерщик видит квартиру, а правило видит только длины стен.
+   * Стена — `wallId` физической стены (число — старая запись номером).
    */
-  walls?: Partial<Record<ApplianceKind, number>>,
+  walls?: Partial<Record<ApplianceKind, number | string>>,
+  /** Стены композиции по порядку (`wallId`): по ним ищется закреплённая стена. */
+  wallIds?: string[],
 ): ApplianceKind[][] {
   const out: ApplianceKind[][] = usableMm.map(() => []);
   if (usableMm.length === 0) return out;
@@ -216,8 +219,8 @@ export function splitAppliances(
      * Правило рабочего треугольника остаётся умолчанием: оно верно, пока
      * человек не сказал иначе. Сказал — слушаем его, а не длины стен.
      */
-    const chosen = walls?.[appliance];
-    const at2 = chosen !== undefined && chosen >= 0 && chosen < out.length ? chosen : at;
+    const chosen = pinnedWallIndex(walls?.[appliance], wallIds);
+    const at2 = chosen >= 0 && chosen < out.length ? chosen : at;
     out[at2].push(appliance);
   };
 
@@ -239,6 +242,20 @@ export function splitAppliances(
   return out;
 }
 
+/**
+ * НОМЕР СТЕНЫ КОМПОЗИЦИИ, ЗА КОТОРОЙ ЗАКРЕПЛЁН ПРИБОР.
+ *
+ * Закрепление — физическая стена замера (`wallId`): её место в обходе
+ * ищется в стенах композиции, и если стены там сейчас нет, прибор стоит
+ * по правилу, а закрепление ждёт её возвращения. Число — старая запись
+ * номером стены по обходу: оно читается, как читалось. −1 — не закреплён.
+ */
+export function pinnedWallIndex(pin: number | string | undefined, wallIds?: string[]): number {
+  if (typeof pin === 'string') return wallIds ? wallIds.indexOf(pin) : -1;
+  if (typeof pin === 'number' && Number.isInteger(pin)) return pin;
+  return -1;
+}
+
 /** Правка состава кухни — те её поля, по которым видно, каких стен она касается. */
 export type CompositionChange = {
   appliances?: ApplianceKind[];
@@ -249,7 +266,7 @@ export type CompositionChange = {
   upperToCeiling?: unknown;
   columnTop?: RunRequirements['columnTop'];
   fridgeType?: RunRequirements['fridgeType'];
-  applianceWalls?: Partial<Record<ApplianceKind, number>>;
+  applianceWalls?: Partial<Record<ApplianceKind, number | string>>;
   applianceSizes?: RunRequirements['applianceSizes'];
   applianceTypes?: RunRequirements['applianceTypes'];
 };
@@ -292,6 +309,8 @@ export function wallsTouchedByChange(
       RunRequirements,
       'appliances' | 'applianceWalls' | 'applianceSizes' | 'applianceTypes' | 'columnTop' | 'fridgeType'
     >;
+    /** Стены композиции по порядку (`wallId`): закрепление прибора — за физической стеной. */
+    wallIds?: string[];
   },
 ): number[] {
   const all = current.assignment.map((_, i) => i);
@@ -310,7 +329,7 @@ export function wallsTouchedByChange(
     const pinned = { ...(req.applianceWalls ?? {}), ...(change.applianceWalls ?? {}) };
     for (const appliance of change.appliances) {
       if (req.appliances.includes(appliance)) continue;
-      splitAppliances([appliance], current.usableMm, pinned).forEach((list, i) => {
+      splitAppliances([appliance], current.usableMm, pinned, current.wallIds).forEach((list, i) => {
         if (list.length > 0) walls.add(i);
       });
     }
@@ -326,9 +345,10 @@ export function wallsTouchedByChange(
   for (const [appliance, size] of Object.entries(change.applianceSizes ?? {}) as [ApplianceKind, unknown][]) {
     if (JSON.stringify(req.applianceSizes?.[appliance]) !== JSON.stringify(size)) touch(appliance);
   }
-  for (const [appliance, wall] of Object.entries(change.applianceWalls ?? {}) as [ApplianceKind, number][]) {
-    if (req.applianceWalls?.[appliance] === wall) continue;
+  for (const [appliance, pin] of Object.entries(change.applianceWalls ?? {}) as [ApplianceKind, number | string][]) {
+    if (req.applianceWalls?.[appliance] === pin) continue;
     touch(appliance);
+    const wall = pinnedWallIndex(pin, current.wallIds);
     if (wall >= 0 && wall < all.length) walls.add(wall);
   }
 
@@ -448,7 +468,8 @@ export function buildComposition(input: BuildCompositionInput): Composition {
    * в одном Г-модуль, а в другом слепой угол — обычное дело. Прежнее
    * `cornerSolution` читается, только если выбора по углам нет.
    */
-  const choices = cornerChoicesOf(requirements, walls.length - 1);
+  /* Выбор угла — за физической парой стен, где бы она ни стояла в обходе. */
+  const choices = cornerChoicesOf(requirements, walls.length - 1, walls.map((wall) => wall.id));
 
   const usable = walls.map((wall, i) => {
     if (i === 0) return Math.max(0, Math.round(wall.lengthMm));
@@ -497,6 +518,7 @@ export function buildComposition(input: BuildCompositionInput): Composition {
     requirements.appliances,
     usable,
     requirements.applianceWalls,
+    walls.map((wall) => wall.id),
   );
 
   const segments: RunSegment[] = walls.map((wall, i) => {

@@ -50,6 +50,32 @@ export type ScreenInput = {
    * прочитался или его нет вовсе (демонстрация).
    */
   catalogError?: string | null;
+  /**
+   * ПРАВКИ И ЗАКРЕПЛЕНИЯ, КОТОРЫЕ СЕЙЧАС НЕ ИСПОЛЬЗУЮТСЯ. Пусто —
+   * экран про них не спрашивает (прямая без правок соседних стен).
+   */
+  edits?: HiddenEditsInput;
+};
+
+/**
+ * Всё, из чего видно, какие правки сохранены, но сейчас не участвуют:
+ * те же поля, что держит рабочее место, — второй копии правок нет.
+ */
+export type HiddenEditsInput = {
+  /** Рабочая стена замера сейчас. */
+  runWallId?: string;
+  /** Правка рабочей стены — с той стеной, на которой её делали. */
+  wallAEdit?: Run | null;
+  /** Правки соседних стен (`WallEdits`): ключ — `wallId`, у старых — номер. */
+  wallEdits: Record<string, Run>;
+  /** Стены композиции по порядку (`wallId`); у прямой — одна рабочая. */
+  compositionWallIds: string[];
+  /** Стены замера по порядку — «Стена N замера» и её длина. */
+  surveyWalls: { id: string; lengthMm: number }[];
+  /** Закрепления приборов за стенами. */
+  pins?: Partial<Record<ApplianceKind, number | string>>;
+  /** Где приборы стоят сейчас: по стенам композиции. */
+  assignment?: ApplianceKind[][];
 };
 
 export type ScreenState = {
@@ -143,6 +169,15 @@ export function screenState(input: ScreenInput): ScreenState {
    * полосой над главной кнопкой (ловушка 58), уточнение — общим списком.
    * Порядок сохранён: отказ, расхождения, пустая стена, всё остальное.
    */
+  /*
+   * СОХРАНЕНО, НО СЕЙЧАС НЕ УЧАСТВУЕТ.
+   *
+   * Ряд перенесли на другую стену или форма короче — правки стены и
+   * закрепление прибора за ней лежат на месте и вернутся вместе с ней.
+   * Молча это читается как «правки пропали».
+   */
+  const hiddenEdits = input.edits ? hiddenEditsNote(input.edits) : null;
+
   const channel: SurveyWarning[] = [
     ...(refusal
       ? [
@@ -175,6 +210,9 @@ export function screenState(input: ScreenInput): ScreenState {
       : []),
     ...(idleWallsNote
       ? [{ id: 'walls-idle', severity: 'clarify' as const, message: idleWallsNote }]
+      : []),
+    ...(hiddenEdits
+      ? [{ id: 'walls-hidden-edits', severity: 'clarify' as const, message: hiddenEdits }]
       : []),
     ...warnings,
   ];
@@ -228,7 +266,14 @@ export function screenState(input: ScreenInput): ScreenState {
    * запись: данные целы, а запертая запись потеряла бы ровно то, из-за
    * чего конфликт и появился, — выступ, только что внесённый в замер.
    */
-  const locked = Boolean(refusal) || mismatches.some((mismatch) => !mismatch.obstacles?.length);
+  /*
+   * Конфликт роли угла — то же, что мебель в препятствии: данные целы, а
+   * причина — замер или форма, только что изменённые. Запертая запись
+   * потеряла бы ровно их.
+   */
+  const locked =
+    Boolean(refusal) ||
+    mismatches.some((mismatch) => !mismatch.obstacles?.length && !mismatch.corner?.length);
   const unpriced = locked || mismatches.length > 0 || catalogError !== null;
 
   return {
@@ -386,6 +431,101 @@ export function missingAppliances(input: {
       },
     ];
   });
+}
+
+/**
+ * КАКИЕ ПРАВКИ СОХРАНЕНЫ, НО СЕЙЧАС НЕ УЧАСТВУЮТ, — СЛОВАМИ.
+ *
+ * Правка лежит за физической стеной (`wallId`) и применяется, когда эта
+ * стена стоит в композиции на своём месте: правка рабочей стены — на
+ * месте стены А, правка соседней — на месте соседней. Иначе она ждёт,
+ * и человеку сказано, чья и когда вернётся. Закрепление прибора за
+ * стеной, которой в композиции нет, — так же. Стена называется по замеру
+ * («Стена 1 замера»): буквы А, Б, В — места в обходе, и после «ряд
+ * здесь?» они указывают на другие стены.
+ */
+function hiddenEditsNote(input: HiddenEditsInput): string | null {
+  const at = (wallId: string) => input.surveyWalls.findIndex((wall) => wall.id === wallId);
+  const named = (wallId: string) => {
+    const i = at(wallId);
+    return i >= 0 ? `Стена ${i + 1} замера (${Math.round(input.surveyWalls[i].lengthMm)} мм)` : `Стена «${wallId}»`;
+  };
+  const short = (wallId: string) => {
+    const i = at(wallId);
+    return i >= 0 ? `стеной ${i + 1} замера` : `стеной «${wallId}»`;
+  };
+  const ids = input.compositionWallIds;
+  const parts: string[] = [];
+  const said = new Set<string>();
+
+  const own = input.wallAEdit;
+  if (own?.wallId && input.runWallId && own.wallId !== input.runWallId) {
+    said.add(own.wallId);
+    const where = ids.includes(own.wallId)
+      ? 'сейчас ряд стоит на другой стене, и эта стена собрана заново'
+      : 'сейчас она не участвует в выбранной композиции';
+    parts.push(
+      `${named(own.wallId)}: сохранена ручная раскладка — ${where}. ` +
+        'Правки вернутся, когда ряд снова встанет на эту стену («ряд здесь»).',
+    );
+  }
+
+  for (const [key, run] of Object.entries(input.wallEdits)) {
+    const byNumber = /^\d+$/.test(key) && !run.wallId;
+    if (byNumber) {
+      const index = Number(key);
+      if (index >= 1 && index < ids.length) continue;
+      parts.push(
+        `Ряд стены №${index + 1} по старой записи сохранён — сейчас такой соседней стены в композиции нет. ` +
+          'Правки вернутся, когда у композиции снова будет эта стена.',
+      );
+      continue;
+    }
+    const wallId = run.wallId ?? key;
+    const place = ids.indexOf(wallId);
+    if (place >= 1 || said.has(wallId)) continue;
+    said.add(wallId);
+    /*
+     * Стены нет и в замере: её удалили. Ряд лежит, но вернуть его можно,
+     * только если стена снова появится в замере, — обещать «вернётся сама»
+     * нельзя.
+     */
+    if (at(wallId) < 0) {
+      parts.push(
+        `Сохранена ручная раскладка стены «${wallId}», которой в замере больше нет: ` +
+          'она вернётся, только если эта стена снова появится в замере.',
+      );
+      continue;
+    }
+    const where =
+      place === 0
+        ? 'сейчас ряд начинается с этой стены, и она собрана заново'
+        : 'сейчас она не участвует в выбранной композиции';
+    parts.push(
+      `${named(wallId)}: сохранена ручная раскладка — ${where}. ` +
+        'Правки вернутся, когда стена снова станет соседней в композиции.',
+    );
+  }
+
+  for (const [appliance, pin] of Object.entries(input.pins ?? {}) as [ApplianceKind, number | string][]) {
+    const title = APPLIANCE_SLOTS[appliance]?.title ?? appliance;
+    const now = input.assignment?.findIndex((list) => list.includes(appliance)) ?? -1;
+    const where =
+      now >= 0 ? `сейчас он стоит по правилу на ${lowerWall(wallLabel(now), 'prepositional')}` : 'сейчас его нет ни на одной стене';
+    if (typeof pin === 'string' && !ids.includes(pin)) {
+      parts.push(
+        `${title} закреплён за ${short(pin)} — её нет в выбранной композиции, ${where}. ` +
+          'Вернётся стена — вернётся и закрепление.',
+      );
+    } else if (typeof pin === 'number') {
+      parts.push(
+        `${title} закреплён по старой записи за стеной №${pin + 1} обхода — такой стены в замере нет, ${where}. ` +
+          'Закрепите его заново.',
+      );
+    }
+  }
+
+  return parts.length > 0 ? parts.join(' ') : null;
 }
 
 /**

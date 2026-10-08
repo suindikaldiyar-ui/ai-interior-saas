@@ -169,7 +169,7 @@ import {
 import { DRAWER_TRAVEL_M, bifoldPoses, drawerBoxes, leafPoses, sceneLeaves } from '../lib/millwork/cabinetBoxes';
 import { TAIL_FILLER_PANEL_NAME } from '../lib/millwork/panels';
 import { wallCornerOf } from '../lib/millwork/objectEstimate';
-import type { CornerChoice, LowerCornerKind, UpperCornerKind } from '../types/millwork';
+import type { CornerChoice, LowerCornerKind, RunCorner, UpperCornerKind } from '../types/millwork';
 import {
   gapsOfRow,
   libraryCards,
@@ -192,6 +192,7 @@ import {
   obstacleMismatches,
   wallMismatchMessage,
   wallMismatches,
+  type WallMismatch,
 } from '../lib/millwork/walls';
 import { composeVariants, editedRunEstimate, workingWall, workingWallEdit, workspaceInput } from '../lib/millwork/workspace';
 import {
@@ -22960,6 +22961,455 @@ console.log('\nP0: идентичность стен угловой и П-обр
         edited[0].message.includes(`Пересоберите ${lowerWall(wallLabel(ovenWall), 'accusative')}`) &&
         state.rebuildWall === ovenWall,
       `${edited[0]?.message ?? 'СТРОКИ НЕТ'} · пересобрать: ${state.rebuildWall ?? 'нечего'}`,
+    );
+  }
+}
+
+/* ═══════════  P0-3: физическая идентичность стен, приборов и углов  ═══════════ */
+
+/**
+ * СТЕНА, ПРИБОР И УГОЛ — ПО ФИЗИЧЕСКОЙ СТЕНЕ ЗАМЕРА, А НЕ ПО МЕСТУ В ОБХОДЕ.
+ *
+ * Закрепление прибора хранилось номером стены композиции, выбор угла —
+ * номером угла. Номер — место в обходе от рабочей стены: «ряд здесь?»
+ * сдвигает обход, и холодильник, закреплённый за стеной Б, оказывался на
+ * другой физической стене, а Г-модуль угла w1–w2 — в углу w2–w3.
+ * Правленая стена, сменившая роль в углу, показывалась с прежней
+ * раскладкой угла, и длина её не выдавала.
+ *
+ * Путь экрана: `workspaceInput` → `objectSite` → `compositionFor` →
+ * `objectInput` → `composeVariants` → `wallSegments`; состояние — через
+ * JSON. Три школы цеха там, где решают миллиметры.
+ */
+console.log('\nP0-3: физическая идентичность стен, приборов и углов');
+{
+  const roomP3 = (walls: [string, number][]): Measurement => ({
+    id: 'room-p03',
+    ceilingHeightMm: 2700,
+    walls: walls.map(([id, lengthMm]) => ({ id, lengthMm, angleDeg: 90, openings: [] })),
+    comms: [],
+    photos: [],
+    measuredBy: 'Проверка',
+    measuredAt: '2026-10-08',
+    notes: '',
+  });
+  const ROOM = roomP3([
+    ['a', 3600],
+    ['b', 3000],
+    ['c', 3600],
+    ['d', 3000],
+  ]);
+  const DISABLED_P3 = { basic: [], optimal: [], premium: [] } as Record<VariantKey, string[]>;
+  type SavedChoice = CornerChoice & { walls?: [string, string] };
+
+  /** Путь экрана с рабочей стеной `runWallId`, формой, углами и правками. */
+  const screenP3 = (
+    runWallId: string,
+    options: {
+      shape?: CompositionKind;
+      production?: ProductionSettings;
+      requirements?: RunRequirements;
+      corners?: SavedChoice[];
+      walls?: Record<string, Run>;
+      runs?: Partial<Record<VariantKey, Run>>;
+    } = {},
+  ) => {
+    const requirements = options.requirements ?? DEMO_REQUIREMENTS;
+    const production = options.production ?? DEFAULT_PRODUCTION;
+    const base = workspaceInput({
+      title: 'P0-3',
+      zone: 'Кухня',
+      measurement: ROOM,
+      requirements,
+      rates: DEMO_RATES,
+      wallId: runWallId,
+      cornerAt: null,
+    });
+    const site = objectSite(base, null);
+    const attempt = compositionFor({
+      shape: options.shape ?? 'u_shape',
+      requirements,
+      cornerSolution: 'false_panel',
+      corners: options.corners as CornerChoice[] | undefined,
+      site,
+      production,
+      variantKey: 'optimal',
+    });
+    if (attempt?.state !== 'built') {
+      throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: композиция от стены ${runWallId} не собралась — ${attempt?.state === 'refused' ? attempt.reason : 'композиции нет'}`);
+    }
+    const layout = attempt.composition;
+    const input = objectInput({
+      base,
+      resolution: null,
+      requirements: wallRequirementsOf(layout, requirements),
+      rates: DEMO_RATES,
+      production,
+      milling: new Map(),
+      carcass: new Map(),
+      materials: new Map(),
+      corner: wallCornerOf(layout),
+    });
+    const active = composeVariants(input, DISABLED_P3, options.runs ?? {}).find((variant) => variant.key === 'optimal')!;
+    const saved = savedWallRuns(JSON.parse(JSON.stringify(options.walls ?? {})));
+    const segments = wallSegments(layout, active.run, saved);
+    return { layout, segments, active, input, requirements, production, site };
+  };
+  const order = (screen: ReturnType<typeof screenP3>) => screen.layout.segments.map((segment) => segment.wallId).join(',');
+  const fridgeOn = (screen: ReturnType<typeof screenP3>) =>
+    screen.segments
+      .map((run, i) => (allModules(run).some((unit) => unit.appliance === 'fridge') ? screen.layout.segments[i].wallId : null))
+      .filter(Boolean)
+      .join('+') || 'НЕТ';
+
+  /* ── 1. Прибор закреплён за физической стеной ── */
+  {
+    const pinned = { ...DEMO_REQUIREMENTS, applianceWalls: { fridge: 'a' } } as unknown as RunRequirements;
+    const home = screenP3('a', { requirements: pinned });
+    check('P0-3.1 П от стены a: обход a, b, c; холодильник закреплён за a — стоит на a', order(home) === 'a,b,c' && fridgeOn(home) === 'a', `обход ${order(home)} · холодильник на ${fridgeOn(home)}`);
+    const moved = screenP3('d', { requirements: pinned });
+    check(
+      'P0-3.1 ряд на стене d (обход d, a, b): холодильник остаётся на физической стене a — это теперь стена Б',
+      order(moved) === 'd,a,b' && fridgeOn(moved) === 'a',
+      `обход ${order(moved)} · холодильник на ${fridgeOn(moved)} (по правилу ушёл бы на b)`,
+    );
+    const legacy = screenP3('a', { requirements: { ...DEMO_REQUIREMENTS, applianceWalls: { fridge: 0 } } });
+    check('P0-3.1 старая запись номером: 0 — стена А обхода, a', fridgeOn(legacy) === 'a', `холодильник на ${fridgeOn(legacy)}`);
+
+    /* Стена временно вне композиции: закрепление хранится и возвращается вместе с ней. */
+    const away = { ...DEMO_REQUIREMENTS, applianceWalls: { fridge: 'c' } } as unknown as RunRequirements;
+    const asL = screenP3('a', { shape: 'corner_l', requirements: away });
+    const asU = screenP3('a', { shape: 'u_shape', requirements: away });
+    check(
+      'P0-3.1 Г a, b без стены c: холодильник по правилу, закрепление за c не потеряно; П a, b, c — он снова на c',
+      fridgeOn(asL) === 'b' && (asL.requirements.applianceWalls as Record<string, unknown>)?.fridge === 'c' && fridgeOn(asU) === 'c',
+      `Г: на ${fridgeOn(asL)} · П: на ${fridgeOn(asU)}`,
+    );
+  }
+
+  /* ── 2. Правка состава задевает стены по физическому закреплению ── */
+  {
+    const home = screenP3('a');
+    const current = {
+      assignment: home.layout.segments.map((segment) => segment.appliances),
+      usableMm: home.layout.segments.map((segment) => segment.run.lengthMm),
+      requirements: home.requirements,
+      wallIds: home.layout.segments.map((segment) => segment.wallId),
+    };
+    const fridgeWall = current.assignment.findIndex((list) => list.includes('fridge'));
+    const touched = (pin: string) =>
+      wallsTouchedByChange({ applianceWalls: { fridge: pin } } as unknown as Parameters<typeof wallsTouchedByChange>[0], current).join(',');
+    check(
+      'P0-3.2 холодильник закрепляют за стеной a: задеты его стена и a',
+      fridgeWall === 1 && touched('a') === '0,1' && touched('c') === '1,2',
+      `холодильник на стене ${fridgeWall} · за a → ${touched('a') || 'ни одной'} · за c → ${touched('c') || 'ни одной'}`,
+    );
+  }
+
+  /* ── 3. Выбор угла — по физической паре стен ── */
+  {
+    const stamped: SavedChoice[] = [
+      { lower: 'l_shape', upper: 'blind', walls: ['a', 'b'] },
+      { lower: 'blind', upper: 'empty', walls: ['b', 'c'] },
+    ];
+    const read = cornerChoicesOf({ corners: stamped as CornerChoice[] }, 2, ['b', 'c', 'd'] as never);
+    check(
+      'P0-3.3 углы обхода b, c, d: угол b–c — свой (слепой, верх пустой), угол c–d — новый, по умолчанию',
+      JSON.stringify(read) === JSON.stringify([
+        { lower: 'blind', upper: 'empty' },
+        { lower: 'blind', upper: 'blind' },
+      ]),
+      JSON.stringify(read),
+    );
+    const legacy = cornerChoicesOf({ corners: [{ lower: 'l_shape', upper: 'empty' }] }, 1, ['a', 'b'] as never);
+    check('P0-3.3 старый массив без меток читается по номеру, как раньше', legacy[0]?.lower === 'l_shape' && legacy[0]?.upper === 'empty', JSON.stringify(legacy));
+
+    /* Кабинет клиента и экран: та же композиция — Г-модуль угла a–b не переезжает в угол b–c. */
+    const moved = screenP3('b', { corners: stamped });
+    const lost = cornerGeometry({ lower: 'blind', upper: 'empty' }, DEMO_REQUIREMENTS.zone, DEFAULT_PRODUCTION).lostMm;
+    check(
+      'P0-3.3 ряд на стене b: стена c после угла b–c (слепого) — 3600 − ' + lost + ' мм, не 3600 − 900',
+      order(moved) === 'b,c,d' && moved.layout.segments[1].run.lengthMm === 3600 - lost,
+      `обход ${order(moved)} · полезная длина c ${moved.layout.segments[1].run.lengthMm} мм`,
+    );
+  }
+
+  /* ── 4. Правленая стена сменила роль в углу ── */
+  {
+    const home = screenP3('a');
+    const c = home.segments[2];
+    const tail = [...c.modules].filter((unit) => unit.kind === 'base' && !unit.appliance).sort((x, y) => y.offsetMm - x.offsetMm)[0];
+    const head = c.modules.find((unit) => unit.offsetMm === 0 && unit.kind === 'base' && !unit.appliance);
+    if (!tail || tail.offsetMm + tail.widthMm !== c.lengthMm || !head) {
+      throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: P0-3.4 — у стены c нет обычного модуля у начала и у конца (${allModules(c).map((u) => u.id).join(' ')})`);
+    }
+    const edit = (unit: Module) =>
+      applyOps({
+        run: c,
+        requirements: home.requirements,
+        ops: [{ op: 'replace_module', moduleId: unit.id, kind: unit.kind, variant: 'door_two', widthMm: unit.widthMm }],
+        openings: home.layout.segments[2].openings,
+        roomDepthMm: 0,
+      });
+    const twoAtTail = edit(tail);
+    const twoAtHead = edit(head);
+    check(
+      'P0-3.4 правки стены c применились: двустворчатый у конца и у начала',
+      allModules(twoAtTail).find((u) => u.id === tail.id)?.variant === 'door_two' &&
+        allModules(twoAtHead).find((u) => u.id === head.id)?.variant === 'door_two',
+      `${tail.id} → ${allModules(twoAtTail).find((u) => u.id === tail.id)?.variant} · ${head.id} → ${allModules(twoAtHead).find((u) => u.id === head.id)?.variant}`,
+    );
+
+    /* Ряд на стене b: c — стена Б, она стыкуется к b–c и ВЛАДЕЕТ углом c–d. */
+    const shifted = (saved: Run) => {
+      const screen = screenP3('b', { walls: { c: saved } });
+      const mismatches = wallMismatches(screen.layout, screen.segments, {
+        before: (index: number) => (index === 1 ? saved.corner : undefined),
+        openingsOf: (index: number) => screen.layout.segments[index].openings,
+        requirements: screen.requirements,
+      } as never);
+      return { screen, mismatches };
+    };
+    const conflict = shifted(twoAtTail);
+    const own = conflict.screen.segments[1].corner?.own;
+    const g = own ? cornerGeometry(own, DEMO_REQUIREMENTS.zone, DEFAULT_PRODUCTION) : null;
+    const found = conflict.mismatches.find((mismatch) => mismatch.index === 1) as (WallMismatch & { corner?: string[] }) | undefined;
+    check(
+      'P0-3.4 двустворчатый в слепой зоне нового угла: конфликт стены Б назван с миллиметрами',
+      Boolean(found?.corner?.length) &&
+        found!.corner!.some(
+          (text) =>
+            text.includes(String(g?.ownerBlindMm)) &&
+            text.includes(`«${allModules(twoAtTail).find((u) => u.id === tail.id)?.label}»`),
+        ),
+      found ? (found.corner ?? []).join(' | ') || 'КОНФЛИКТ БЕЗ СЛОВ' : `КОНФЛИКТА НЕТ · роли стены c: ${JSON.stringify(conflict.screen.segments[1].corner)}`,
+    );
+    check(
+      'P0-3.4 правка не изменена молча: модуль тот же и того же вида',
+      allModules(conflict.screen.segments[1]).find((u) => u.id === tail.id)?.variant === 'door_two',
+      allModules(conflict.screen.segments[1]).map((u) => `${u.id}:${u.variant ?? ''}`).join(' '),
+    );
+    const sameRole = wallMismatches(conflict.screen.layout, conflict.screen.segments, {
+      before: (index: number) => (index === 1 ? conflict.screen.segments[1].corner : undefined),
+      openingsOf: (index: number) => conflict.screen.layout.segments[index].openings,
+      requirements: conflict.screen.requirements,
+    } as never);
+    check('P0-3.4 та же роль, что была при правке, — конфликта нет', sameRole.length === 0, sameRole.map((m) => m.label).join(', ') || 'нет');
+
+    /*
+     * Правили НЕ у угла (первый модуль), а у конца стены стоит раскладка
+     * стыкующейся стены: модуль 876 мм на две створки. Владельцу угла там
+     * положена одна створка на доступной части — та же стена, собранная
+     * раскладкой, ставит её. Молча показанная, такая стена шла в смету с
+     * 8 угловыми петлями вместо 4 у собранной раскладкой (две створки по
+     * 150 мм у фальш-панели) — и это тоже конфликт, а не «совместимо».
+     */
+    const headOnly = shifted(twoAtHead);
+    const tailNow = allModules(headOnly.screen.segments[1]).find((u) => u.id === tail.id);
+    const headFound = headOnly.mismatches.find((mismatch) => mismatch.index === 1) as (WallMismatch & { corner?: string[] }) | undefined;
+    check(
+      'P0-3.4 правка не у угла, а у конца — две створки стыкующейся стены: тоже конфликт, с модулем и миллиметрами',
+      Boolean(headFound?.corner?.some((text) => text.includes(tail.label) && text.includes(String(g?.ownerBlindMm)))) &&
+        tailNow?.doorCount === 2,
+      headFound ? (headFound.corner ?? []).join(' | ') : `КОНФЛИКТА НЕТ · у конца ${tailNow?.id} створок ${tailNow?.doorCount}`,
+    );
+
+    /*
+     * СОВМЕСТИМАЯ СМЕНА РОЛИ: стена b теряет угол. П от a: b стыкуется к
+     * a–b и владеет b–c; ряд на стене d (обход d, a, b): b — последняя, у
+     * её конца стена комнаты. Глухой части больше нет, створка становится
+     * полной — модули те же, и сцена, смета и раскрой это согласно видят.
+     */
+    const wallB = home.segments[1];
+    const upperB = wallB.upperSegments
+      .flatMap((segment) => segment.modules)
+      .filter((unit) => unit.kind === 'upper' && !unit.appliance && unit.section !== 'mezzanine')
+      .sort((x, y) => x.offsetMm - y.offsetMm);
+    const middle = upperB.length > 2 ? upperB[1] : undefined;
+    if (!middle) throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: P0-3.4 — у стены b нет шкафа верхнего ряда не у края (${upperB.map((u) => u.id).join(' ')})`);
+    const editedB = applyOps({
+      run: wallB,
+      requirements: home.requirements,
+      ops: [{ op: 'remove_module', moduleId: middle.id }],
+      openings: home.layout.segments[1].openings,
+      roomDepthMm: 0,
+    });
+    const fromD = screenP3('d', { walls: { b: editedB } });
+    const bAt = fromD.layout.segments.findIndex((segment) => segment.wallId === 'b');
+    const run = fromD.segments[bAt];
+    const fine = wallMismatches(fromD.layout, fromD.segments, {
+      before: (index: number) => (index === bAt ? editedB.corner : undefined),
+      openingsOf: (index: number) => fromD.layout.segments[index].openings,
+      requirements: fromD.requirements,
+    } as never);
+    const estimate = buildEstimate(run, 'optimal', DEMO_RATES);
+    const cut = panelMaterials(buildPanels({ run }));
+    const fronts = estimate.lines.find((line) => line.key === 'front_panel')?.quantity ?? 0;
+    const hingeEstimate = estimate.lines.filter((line) => line.key.startsWith('hinge_')).reduce((sum, line) => sum + line.quantity, 0);
+    const hingeScene = runBoxes(run, { thicknessMm: 16, frontThicknessMm: 18, gapMm: 3 }).filter((box) => box.node === 'hinge').length;
+    const cornerLine = estimate.lines.find((line) => line.key === 'hinge_corner_175')?.quantity ?? 0;
+    const facts = {
+      lostOwn: Boolean(editedB.corner?.own) && Boolean(run.corner?.dock) && !run.corner?.own,
+      usable: run.lengthMm === fromD.layout.segments[bAt].run.lengthMm && run.lengthMm === editedB.lengthMm,
+      places: allModules(run).map((u) => `${u.id}:${u.offsetMm}:${u.widthMm}`).join(' ') === allModules(editedB).map((u) => `${u.id}:${u.offsetMm}:${u.widthMm}`).join(' '),
+      overlaps: moduleOverlaps(run).length === 0,
+      noBlind: allModules(run).every((unit) => blindPartMm(unit, run) === 0 && openFrontMm(unit, run) === unit.widthMm),
+      cornerHinges: cornerLine === 0,
+      hinges: hingeEstimate === hingeScene,
+      frontsCut: Math.abs(fronts - cut.frontM2) <= 0.01,
+      filler: cornerFillersOf(run).some((piece) => piece.level === 'lower' && piece.toMm === 0 && piece.fromMm === -cornerGeometry(run.corner!.dock!, run.zone, run.production).fillerMm),
+      noConflict: !fine.some((mismatch) => mismatch.index === bAt),
+    };
+    const bad = Object.entries(facts).filter(([, ok]) => !ok).map(([key]) => key);
+    check(
+      'P0-3.4 совместимая смена роли (стена b потеряла угол): ряд, сцена, смета и раскрой согласны, конфликта нет',
+      bAt === 2 && bad.length === 0,
+      bad.length === 0
+        ? `обход ${order(fromD)} · b на месте ${bAt} · полезная ${run.lengthMm} мм · глухих частей 0 · угловых петель ${cornerLine} · петель смета ${hingeEstimate} = сцена ${hingeScene} · фасадов ${fronts} = раскрой ${cut.frontM2} м²`
+        : `РАСХОДЯТСЯ: ${bad.join(', ')} · обход ${order(fromD)} · угловых петель ${cornerLine}, петель ${hingeEstimate}/${hingeScene}, фасадов ${fronts}/${cut.frontM2}`,
+    );
+
+    /* Конфликт для экрана: цены нет, «Дальше» заперто, запись НЕ заперта, выход — пересборка. */
+    if (found) {
+      const state = screenState({
+        refusal: null,
+        mismatches: [found],
+        walls: conflict.screen.layout.segments.map((segment) => ({ lengthMm: segment.wallLengthMm })),
+        segments: conflict.screen.segments,
+        shape: 'u_shape',
+        warnings: [],
+      });
+      check(
+        'P0-3.4 конфликт роли угла: цены нет, «Дальше» заперто, запись не заперта, кнопка пересобирает стену Б',
+        state.priceHidden && state.nextLocked && !state.autosaveLocked && state.rebuildWall === 1 &&
+          state.blocking.some((warning) => /угл/.test(warning.message) && warning.message.includes(String(g?.ownerBlindMm))),
+        `цена ${state.priceHidden ? 'спрятана' : 'ВИДНА'} · дальше ${state.nextLocked ? 'заперто' : 'ОТКРЫТО'} · запись ${state.autosaveLocked ? 'ЗАПЕРТА' : 'идёт'} · стена ${state.rebuildWall} · ${state.blocking[0]?.message.slice(0, 160) ?? 'строки нет'}`,
+      );
+    } else {
+      check('P0-3.4 конфликт роли угла дошёл до экрана', false, 'конфликта нет — экрану нечего показать');
+    }
+  }
+
+  /* ── 5. Собранные раскладкой ряды не конфликтуют со своей ролью — ни у одной школы и выбора ── */
+  {
+    const LOWERS: LowerCornerKind[] = ['blind', 'l_shape'];
+    const UPPERS: UpperCornerKind[] = ['l_shape', 'blind', 'empty'];
+    const FAKE: RunCorner = { dock: { lower: 'l_shape', upper: 'l_shape' } };
+    const schools: [string, ProductionSettings][] = [
+      ['560/320', DEFAULT_PRODUCTION],
+      ['550/350', { ...DEFAULT_PRODUCTION, depths: { baseMm: 550, upperMm: 350, mezzanineMm: 550 } }],
+      ['600/300', { ...DEFAULT_PRODUCTION, depths: { baseMm: 600, upperMm: 300, mezzanineMm: 600 } }],
+    ];
+    let configs = 0;
+    let rowsChecked = 0;
+    const falseAlarms: string[] = [];
+    for (const [school, production] of schools) {
+      for (const shape of ['corner_l', 'u_shape'] as const) {
+        for (const lower of LOWERS) {
+          for (const upper of UPPERS) {
+            const corners = Array.from({ length: shape === 'u_shape' ? 2 : 1 }, () => ({ lower, upper }));
+            const screen = screenP3('a', { shape, production, corners });
+            configs += 1;
+            const found = wallMismatches(screen.layout, screen.segments, {
+              before: () => FAKE,
+              openingsOf: (index: number) => screen.layout.segments[index].openings,
+              requirements: screen.requirements,
+            } as never);
+            rowsChecked += screen.segments.length;
+            for (const mismatch of found) falseAlarms.push(`${school} ${shape} ${lower}/${upper} ${mismatch.label}: ${((mismatch as WallMismatch & { corner?: string[] }).corner ?? []).join('; ')}`);
+          }
+        }
+      }
+    }
+    const WANT = schools.length * 2 * LOWERS.length * UPPERS.length;
+    check(
+      `P0-3.5 ряды, собранные раскладкой, совместимы со своей ролью угла — ${WANT} конфигураций`,
+      configs === WANT && falseAlarms.length === 0 && rowsChecked >= WANT * 2,
+      falseAlarms.length === 0 ? `конфигураций ${configs}, рядов ${rowsChecked}` : `${falseAlarms.length}: ${falseAlarms.slice(0, 2).join(' | ')}`,
+    );
+  }
+
+  /* ── 6. Сохранённые и сейчас неиспользуемые правки названы словами ── */
+  {
+    const home = screenP3('a');
+    const wallA = home.active.run;
+    const wallB = home.segments[1];
+    const state = screenState({
+      refusal: null,
+      mismatches: [],
+      walls: [],
+      segments: [],
+      shape: 'u_shape',
+      warnings: [],
+      edits: {
+        runWallId: 'b',
+        wallAEdit: wallA,
+        wallEdits: { b: wallB },
+        compositionWallIds: ['b', 'c', 'd'],
+        surveyWalls: ROOM.walls.map((wall) => ({ id: wall.id, lengthMm: wall.lengthMm })),
+        pins: { fridge: 'a' },
+        assignment: [['sink600', 'dishwasher45'], ['oven'], ['fridge', 'hob', 'hood']],
+      },
+    } as never);
+    const note = state.clarify.find((warning) => warning.id === 'walls-hidden-edits')?.message ?? '';
+    check(
+      'P0-3.6 правки стен 1 и 2 замера сохранены и сейчас не участвуют — сказано словами, как и закрепление холодильника',
+      /Стена 1 замера \(3600 мм\): сохранена ручная раскладка/.test(note) &&
+        /Стена 2 замера \(3000 мм\)/.test(note) &&
+        /Холодильник закреплён за стеной 1 замера/.test(note),
+      note || 'СТРОКИ НЕТ',
+    );
+    const none = screenState({
+      refusal: null,
+      mismatches: [],
+      walls: [],
+      segments: [],
+      shape: 'u_shape',
+      warnings: [],
+      edits: {
+        runWallId: 'a',
+        wallAEdit: wallA,
+        wallEdits: { b: wallB },
+        compositionWallIds: ['a', 'b', 'c'],
+        surveyWalls: ROOM.walls.map((wall) => ({ id: wall.id, lengthMm: wall.lengthMm })),
+        pins: { fridge: 'a' },
+        assignment: [['fridge'], [], []],
+      },
+    } as never);
+    check(
+      'P0-3.6 все правки на своих стенах — строки нет',
+      !none.clarify.some((warning) => warning.id === 'walls-hidden-edits'),
+      none.clarify.map((warning) => warning.id).join(', ') || 'уточнений нет',
+    );
+
+    /*
+     * Стены нет и в замере: её удалили, а правленый ряд лежит. Найдено в
+     * базе (объект с рядом «w2» при замере без w2). «Вернётся, когда ряд
+     * встанет на эту стену» здесь — обещание, которого не выполнить:
+     * встать не на что.
+     */
+    const gone = screenState({
+      refusal: null,
+      mismatches: [],
+      walls: [],
+      segments: [],
+      shape: 'u_shape',
+      warnings: [],
+      edits: {
+        runWallId: 'a',
+        wallAEdit: wallA,
+        wallEdits: { z: { ...wallB, wallId: 'z' } },
+        compositionWallIds: ['a', 'b', 'c'],
+        surveyWalls: ROOM.walls.map((wall) => ({ id: wall.id, lengthMm: wall.lengthMm })),
+        pins: {},
+        assignment: [['fridge'], [], []],
+      },
+    } as never);
+    const goneNote = gone.clarify.find((warning) => warning.id === 'walls-hidden-edits')?.message ?? '';
+    check(
+      'P0-3.6 правка стены, которой в замере больше нет, — названа так, без обещания «вернётся, когда ряд встанет»',
+      /стены «z», которой в замере больше нет/.test(goneNote) && !/Правки вернутся/.test(goneNote),
+      goneNote || 'СТРОКИ НЕТ',
     );
   }
 }

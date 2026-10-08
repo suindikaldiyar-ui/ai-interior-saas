@@ -8,6 +8,7 @@ import type {
   Run,
   RunCorner,
   RunRequirements,
+  SavedCornerChoice,
   UpperCornerKind,
   ZoneKind,
 } from '@/types/millwork';
@@ -95,12 +96,76 @@ export function solutionOf(choice: CornerChoice): CornerJoin['solution'] {
 export function cornerChoicesOf(
   requirements: Pick<RunRequirements, 'corners' | 'cornerSolution'>,
   count: number,
+  /**
+   * Стены композиции по обходу (`wallId`). Угол `i` — стык стен `i` и
+   * `i + 1`: запись с меткой этих стен — его выбор, где бы он ни стоял в
+   * обходе. Запись без метки — старая, по номеру угла.
+   */
+  wallIds?: string[],
 ): CornerChoice[] {
   const legacy = choiceFromSolution(requirements.cornerSolution);
+  const saved = requirements.corners ?? [];
   return Array.from({ length: Math.max(0, count) }, (_, i) => {
-    const chosen = requirements.corners?.[i];
+    const owner = wallIds?.[i];
+    const dock = wallIds?.[i + 1];
+    const own = owner && dock ? saved.find((entry) => entry.walls?.[0] === owner && entry.walls?.[1] === dock) : undefined;
+    const byNumber = saved[i] && !saved[i].walls ? saved[i] : undefined;
+    const chosen = own ?? byNumber;
     return chosen ? { lower: chosen.lower, upper: chosen.upper } : { ...legacy };
   });
+}
+
+/**
+ * СТАРЫЙ ВЫБОР УГЛОВ ПОЛУЧАЕТ МЕТКИ СТЕН — ОДИН РАЗ, ПРИ ОТКРЫТИИ.
+ *
+ * Запись без метки — номер угла в обходе на момент сохранения. Обход при
+ * открытии тот же, что при записи (замер лежит в том же состоянии), и
+ * номер переводится в пару стен однозначно. Дальше «ряд здесь?» номера
+ * сдвигает, а метка — нет. Номер, которому в обходе нет пары стен,
+ * остаётся без метки: угадывать ему стену нечем.
+ */
+export function stampedCorners(
+  choices: SavedCornerChoice[] | undefined,
+  /** Стены замера по обходу от рабочей стены — на момент открытия. */
+  wallIds: string[],
+): SavedCornerChoice[] | undefined {
+  if (!choices) return choices;
+  return choices.map((choice, i) =>
+    choice.walls || !wallIds[i] || !wallIds[i + 1]
+      ? choice
+      : { lower: choice.lower, upper: choice.upper, walls: [wallIds[i], wallIds[i + 1]] },
+  );
+}
+
+/**
+ * ВЫБОР УГЛОВ КОМПОЗИЦИИ — В ЗАПИСЬ, НЕ ТЕРЯЯ ЧУЖИХ.
+ *
+ * Углы текущей композиции пишутся с меткой своих стен; выбор углов,
+ * которых в ней сейчас нет (форма короче, ряд на другой стене), остаётся
+ * как был: вернётся угол — вернётся и его выбор.
+ */
+export function mergedCorners(
+  stored: SavedCornerChoice[] | undefined,
+  current: CornerChoice[],
+  /** Стены композиции по обходу. */
+  wallIds: string[],
+): SavedCornerChoice[] {
+  const here = current.map((choice, i) => ({
+    lower: choice.lower,
+    upper: choice.upper,
+    walls: [wallIds[i], wallIds[i + 1]] as [string, string],
+  }));
+  const kept = (stored ?? []).filter(
+    (entry) =>
+      entry.walls && !here.some((mine) => mine.walls[0] === entry.walls![0] && mine.walls[1] === entry.walls![1]),
+  );
+  /*
+   * Старая запись, которой при открытии не нашлось пары стен, не
+   * выбрасывается: она в конце списка и номером ни к одному углу
+   * текущей композиции не относится.
+   */
+  const orphans = (stored ?? []).filter((entry) => !entry.walls);
+  return [...here, ...kept, ...orphans];
 }
 
 /**

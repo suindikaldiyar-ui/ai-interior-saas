@@ -1,7 +1,20 @@
 import { recalcTotal } from './estimate';
 import { compositionFingerprint } from './fingerprint';
 import { obstacleConflictText, obstacleConflicts, type ObstacleConflict } from './obstacles';
-import type { Composition, Estimate, EstimateLine, Opening, Run } from '@/types/millwork';
+import { BLIND_VARIANTS, cornerGeometry } from './corner';
+import { MIN_WIDTH, SINGLE_DOOR_MAX_MM, isUpperRow, standsOnFloor } from './modules';
+import { rowSpansOfRun } from './layout';
+import type {
+  Composition,
+  CornerChoice,
+  Estimate,
+  EstimateLine,
+  Module,
+  Opening,
+  Run,
+  RunCorner,
+  RunRequirements,
+} from '@/types/millwork';
 
 /**
  * НЕСКОЛЬКО СТЕН НА ОДНОМ РАБОЧЕМ ЭКРАНЕ.
@@ -194,6 +207,16 @@ export type WallMismatch = {
    * в замер, когда ряд уже был поправлен руками. Пусто — расхождение длины.
    */
   obstacles?: ObstacleConflict[];
+  /**
+   * ПРАВЛЕНЫЙ РЯД НЕ ПОДХОДИТ К НОВОЙ РОЛИ СТЕНЫ В УГЛУ: ряд переехал
+   * («ряд здесь?») или сменилась форма, и стена, которую правили
+   * стыкующейся, стала владельцем угла — или наоборот. Каждая строка —
+   * что именно не сходится, с миллиметрами.
+   */
+  corner?: string[];
+  /** Роль стены в углах, когда ряд правили, — и сейчас. */
+  cornerBefore?: RunCorner;
+  cornerNow?: RunCorner;
 };
 
 /**
@@ -212,6 +235,17 @@ export type WallMismatch = {
 export function wallMismatches(
   layout: { segments: { label: string; run: Pick<Run, 'lengthMm'> }[] },
   runs: Pick<Run, 'lengthMm'>[],
+  /**
+   * РОЛЬ УГЛА ПРАВЛЕНЫХ РЯДОВ. Длина не выдаёт стену, которая была
+   * стыкующейся, а стала владельцем угла: полезная длина у них одна, а
+   * угол собирается по-разному. Здесь — с какой ролью ряд правили
+   * (`before`, только у правленых рядов) и чем мерить верхний ряд.
+   */
+  corner?: {
+    before: (index: number) => RunCorner | undefined;
+    openingsOf: (index: number) => Opening[];
+    requirements: RunRequirements;
+  },
 ): WallMismatch[] {
   const found: WallMismatch[] = [];
 
@@ -230,7 +264,152 @@ export function wallMismatches(
     });
   });
 
+  if (corner) {
+    layout.segments.forEach((segment, index) => {
+      const run = runs[index] as Run | undefined;
+      /* Стена с расхождением длины уже названа: «Пересобрать» снимает оба. */
+      if (!run || found.some((mismatch) => mismatch.index === index)) return;
+      const before = corner.before(index);
+      const conflicts = cornerRoleConflicts({
+        run,
+        before,
+        openings: corner.openingsOf(index),
+        requirements: corner.requirements,
+      });
+      if (conflicts.length === 0) return;
+      found.push({
+        index,
+        label: segment.label ?? wallLabel(index),
+        runLengthMm: run.lengthMm,
+        usableMm: segment.run.lengthMm,
+        corner: conflicts,
+        cornerBefore: before,
+        cornerNow: run.corner,
+      });
+    });
+  }
+
   return found;
+}
+
+/** Роль ряда в его углах одной строкой — для сравнения «тогда» и «сейчас». */
+function roleKey(corner: RunCorner | undefined): string {
+  const part = (choice?: CornerChoice) => (choice ? `${choice.lower}/${choice.upper}` : '—');
+  return `own ${part(corner?.own)} · dock ${part(corner?.dock)}`;
+}
+
+/** Роль ряда в углах словами. */
+function roleWords(corner: RunCorner | undefined): string {
+  const parts = [corner?.dock ? 'стыкуется к углу' : null, corner?.own ? 'владеет углом' : null].filter(Boolean);
+  return parts.length > 0 ? parts.join(' и ') : 'без угла';
+}
+
+/**
+ * ПОДХОДИТ ЛИ ПРАВЛЕНЫЙ РЯД К РОЛИ, КОТОРУЮ СТЕНА ИМЕЕТ СЕЙЧАС.
+ *
+ * Роль считает композиция по текущему обходу (`runWithCorner` уже
+ * положил её на ряд). Ряд правили с другой ролью — проверяется, стоит ли
+ * в углу то, чего угол требует, ТЕМИ ЖЕ правилами, по которым угол
+ * строит раскладка (`buildRun`), и ничем больше:
+ *
+ *   Г-модуль владельца — `corner_base`/`corner_upper` стороной из
+ *   `cornerGeometry` в конце ряда; у стены без угла его быть не может;
+ *   слепая зона владельца (`ownerBlindMm`) — один распашной модуль, одна
+ *   створка, доступная часть от самого узкого корпуса до
+ *   `SINGLE_DOOR_MAX_MM` либо целиком глухая (`BLIND_VARIANTS`);
+ *   верхний ряд — внутри своих участков (`rowSpansOfRun`): у стыкующейся
+ *   стены он начинается до нуля, у пустого верхнего угла кончается
+ *   раньше стены.
+ *
+ * Ряд, правленный до слоя 55 (роли на нём нет), не проверяется: он
+ * открывается углом композиции, как открывался (ловушка 533). Та же роль,
+ * что при правке, — тоже: такой ряд собирала сама правка.
+ */
+export function cornerRoleConflicts(input: {
+  /** Правленый ряд — уже с ТЕКУЩЕЙ ролью в углах. */
+  run: Run;
+  /** Роль, с которой ряд правили. */
+  before: RunCorner | undefined;
+  openings: Opening[];
+  requirements: RunRequirements;
+}): string[] {
+  const { run, before } = input;
+  if (!before?.own && !before?.dock) return [];
+  if (roleKey(before) === roleKey(run.corner)) return [];
+
+  const out: string[] = [];
+  const length = run.lengthMm;
+  const own = run.corner?.own;
+  const g = own ? cornerGeometry(own, run.zone, run.production) : null;
+  const byOffset = (a: Module, b: Module) => a.offsetMm - b.offsetMm;
+  const floor = run.modules.filter((unit) => standsOnFloor(unit)).sort(byOffset);
+  const uppers = run.upperSegments
+    .flatMap((segment) => segment.modules)
+    .filter((unit) => isUpperRow(unit) && unit.section !== 'mezzanine')
+    .sort(byOffset);
+  const name = (unit: Module) => `«${unit.label}» ${unit.widthMm} мм (${unit.offsetMm}…${unit.offsetMm + unit.widthMm})`;
+
+  /* Г-модуль: у владельца с Г-углом — в конце ряда, у остальных — нигде. */
+  const cornerUnit = (level: 'lower' | 'upper', list: Module[], kind: 'corner_base' | 'corner_upper', legMm: number, wants: boolean) => {
+    const last = list[list.length - 1];
+    if (wants) {
+      if (!last || last.kind !== kind || last.offsetMm + last.widthMm !== length || last.widthMm !== legMm) {
+        out.push(
+          `у угла нужен ${level === 'lower' ? 'нижний' : 'верхний'} Г-модуль ${legMm}×${legMm} мм в конце ряда, а там ${last ? name(last) : 'пусто'}`,
+        );
+      }
+      return;
+    }
+    for (const unit of list.filter((u) => u.kind === kind)) {
+      out.push(`${name(unit)} — угловой Г-модуль, а угла с этой стороны у стены теперь нет`);
+    }
+  };
+  cornerUnit('lower', floor, 'corner_base', g?.lowerLegMm ?? 0, own?.lower === 'l_shape');
+  cornerUnit('upper', uppers, 'corner_upper', g?.upperLegMm ?? 0, own?.upper === 'l_shape');
+
+  /* Слепая зона владельца: одна распашная створка на доступной части. */
+  const blindZone = (level: 'lower' | 'upper', list: Module[], kind: 'base' | 'upper', zone: number) => {
+    if (zone <= 0) return;
+    const inZone = list.filter((unit) => unit.offsetMm + unit.widthMm > length - zone);
+    const fits = (unit: Module) => {
+      const plain =
+        unit.kind === kind &&
+        !unit.appliance &&
+        !unit.column &&
+        !unit.section &&
+        unit.frontType === 'door' &&
+        (!unit.variant || BLIND_VARIANTS.includes(unit.variant)) &&
+        unit.doorCount === 1;
+      if (!plain) return false;
+      const blind = Math.max(0, Math.min(unit.widthMm, unit.offsetMm + unit.widthMm - (length - zone)));
+      const open = unit.widthMm - blind;
+      return open === 0 || (open >= MIN_WIDTH && open <= SINGLE_DOOR_MAX_MM);
+    };
+    /* Ряд короче зоны — все его модули глухие, и каждый обязан быть дверцей. */
+    const extra = zone < length ? inZone.slice(0, -1) : [];
+    const bad = [...extra, ...inZone.filter((unit) => !extra.includes(unit) && !fits(unit))];
+    for (const unit of bad) {
+      out.push(
+        `в слепой зоне ${level === 'lower' ? 'нижнего' : 'верхнего'} угла (последние ${zone} мм ряда) стоит ${name(unit)}: ` +
+          `там встаёт одна распашная створка на доступной части, ${MIN_WIDTH}…${SINGLE_DOOR_MAX_MM} мм`,
+      );
+    }
+  };
+  if (own?.lower === 'blind' && g) blindZone('lower', floor, 'base', g.ownerBlindMm);
+  if (own?.upper === 'blind' && g) blindZone('upper', uppers, 'upper', g.ownerUpperBlindMm);
+
+  /* Верхний ряд — внутри своих участков с текущей ролью в углах. */
+  const spans = rowSpansOfRun('upper', run, run.modules, input.openings, input.requirements, run.options).free;
+  for (const unit of uppers.filter((u) => u.kind !== 'corner_upper')) {
+    const inside = spans.some((span) => unit.offsetMm >= span.from && unit.offsetMm + unit.widthMm <= span.to);
+    if (!inside) {
+      out.push(
+        `верхний ${name(unit)} выходит за место верхнего ряда у угла (${spans.map((span) => `${span.from}…${span.to}`).join(', ') || 'места нет'} мм)`,
+      );
+    }
+  }
+
+  return out;
 }
 
 /**
@@ -240,6 +419,14 @@ export function wallMismatches(
  * не поймёт, чем это ему грозит.
  */
 export function wallMismatchMessage(mismatch: WallMismatch): string {
+  if (mismatch.corner?.length) {
+    const text = mismatch.corner.join('; ');
+    return (
+      `${mismatch.label}: ряд правили, когда стена ${roleWords(mismatch.cornerBefore)}, а теперь она ` +
+      `${roleWords(mismatch.cornerNow)} — ${text}. На объекте такой угол не собрать. ` +
+      'Пересоберите эту стену — правки по ней пропадут — или верните прежнюю расстановку стен: ряд и правки на месте.'
+    );
+  }
   if (mismatch.obstacles?.length) {
     return (
       `${mismatch.label}: ${mismatch.obstacles.map(obstacleConflictText).join('; ')} — ` +
@@ -293,6 +480,9 @@ export function obstacleMismatches(input: {
 
 /** Почему цены нет — у расхождения длины и у мебели в препятствии слова разные. */
 export function mismatchPriceText(mismatch: WallMismatch): string {
+  if (mismatch.corner?.length) {
+    return `Цены нет: ${mismatch.label}: раскладка угла не совпадает с новой ролью стены.`;
+  }
   return mismatch.obstacles?.length
     ? `Цены нет: ${mismatch.label}: мебель заходит в ${mismatch.obstacles[0].reason === 'колонна' ? 'колонну' : mismatch.obstacles[0].reason}.`
     : `Цены нет: ${mismatch.label} собрана на другой длине стены.`;

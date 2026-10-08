@@ -33,6 +33,29 @@
  *       правок w1 и w2 нет на чужих стенах → ряд обратно на стену 1 → все
  *       три стены ровно такие, как до переноса.
  *
+ * P0-3 — физическая идентичность стен, приборов и углов:
+ *   A1  /measure Г 3600 × 3000: холодильник перенесён на стену А (w1) →
+ *       «ряд здесь?» на стене 4 → он на w1 (теперь стена Б), не на w4;
+ *   A2  /measure П 3600 × 3000: холодильник перенесён на стену В (w3) →
+ *       «ряд здесь?» на стене 2 → он на w3 (теперь стена Б), не на w4;
+ *   B1  П: у угла w1–w2 верх пустой → «ряд здесь?» на стене 2 → угол
+ *       w2–w3 своего выбора (слепой), а не чужого; на экране сказано, что
+ *       правки стен 1 и 2 сохранены; обратно — у угла w1–w2 снова пустой
+ *       верх, стены ровно такие, как до переноса;
+ *   B2  П: последний модуль стены В — двустворчатый → «ряд здесь?» на
+ *       стене 2 → стена w3 стала владельцем угла, створки в слепой зоне:
+ *       конфликт словами с миллиметрами, цены нет, «Пересобрать стену Б»,
+ *       правка не тронута; обратно — конфликта нет, правка на месте;
+ *   B3  П: правка стены Б (w2) → «ряд здесь?» на стене 4 → w2 стала
+ *       последней стеной и угол у своего конца потеряла: раскладка
+ *       совместима — конфликта нет, цена есть, модули w2 те же, угол w1–w2
+ *       сохранил свой выбор;
+ *   LG  старый объект в базе (закрепление холодильника номером стены,
+ *       углы массивом без меток, выбранное решение): открылся — холодильник
+ *       на той стене, где его закрепили, угол прежний; «ряд здесь?» —
+ *       холодильник остаётся на своей физической стене. Объект, организация
+ *       и пользователь заводятся служебным ключом и удаляются.
+ *
  * Сравнение — по разметке схемы: у каждой стены блок `[data-wall-block]`,
  * у модуля — идентификатор (вид, отметка, прибор, стена) и ширина. Ноль
  * найденных стен, модулей или приборов — FAIL со словами.
@@ -41,8 +64,10 @@
  * проверки, в `verify` не входит.
  */
 import { execSync, spawn } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { chromium } from 'playwright';
+import { createClient } from '@supabase/supabase-js';
+import { createServerClient } from '@supabase/ssr';
 
 const PORT = 3241;
 const BASE = `http://localhost:${PORT}`;
@@ -230,8 +255,13 @@ async function demoCorner(browser) {
   return page;
 }
 
-/** Замер из четырёх стен по кругу на /measure, П-образная, шаг «Раскладка». */
-async function measureU(browser, [a, b]) {
+/** Замер из четырёх стен по кругу на /measure, П-образная, шаг «Размеры». */
+async function measureU(browser, lengths) {
+  return measureShape(browser, lengths, 'u_shape');
+}
+
+/** Замер из четырёх стен по кругу на /measure (a, b, a, b), форма `kind`, шаг «Размеры». */
+async function measureShape(browser, [a, b], kind) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   page.on('pageerror', (e) => {
     failed += 1;
@@ -255,9 +285,92 @@ async function measureU(browser, [a, b]) {
     await sleep(120);
   }
   await toStep(page, 'Размеры');
-  await page.locator('[data-shape-kind="u_shape"]').click();
+  await page.locator(`[data-shape-kind="${kind}"]`).click();
   await sleep(3000);
   return page;
+}
+
+/* ─────────────────────────  P0-3: стена по физическому wallId  ───────────────────────── */
+
+/** Физические стены блоков схемы по порядку: метка модулей «…@w1». */
+const wallIdsOf = (list) => list.map((block) => block.modules[0]?.wallId ?? 'пусто');
+/** Блок схемы физической стены. */
+const blockOfWall = (list, wallId) => list.find((block) => block.modules[0]?.wallId === wallId);
+/** На какой физической стене стоит прибор: одна стена — её id, иначе слова. */
+function applianceWall(list, appliance) {
+  const blocks = list.filter((block) => block.modules.some((m) => m.appliance === appliance));
+  if (blocks.length === 0) return 'НЕТ НА СХЕМЕ';
+  if (blocks.length > 1) return `НА ${blocks.length} СТЕНАХ`;
+  return blocks[0].modules.find((m) => m.appliance === appliance).wallId;
+}
+const countOf = (list, appliance) =>
+  list.reduce((sum, block) => sum + block.modules.filter((m) => m.appliance === appliance).length, 0);
+
+/** Перенос прибора на стену композиции `toWall` — кнопкой панели модуля. */
+async function moveAppliance(page, list, appliance, toWall) {
+  const block = list.find((b) => b.modules.some((m) => m.appliance === appliance));
+  if (!block) return `${appliance}: на схеме его нет`;
+  const unit = block.modules.find((m) => m.appliance === appliance);
+  if (!(await select(page, block.wall, unit.id))) return `${unit.id}: модуль на схеме не нажимается`;
+  const button = page.locator(`[data-appliance-move] [data-move-appliance="${toWall}"]`).filter({ visible: true });
+  if ((await button.count()) !== 1) return `кнопки переноса на стену ${toWall} нет (${await button.count()})`;
+  await button.click();
+  await sleep(1800);
+  return null;
+}
+
+/** Выбор угла `index` в панели угла: карточка `key`. Пусто — выбран. */
+async function chooseCorner(page, index, key) {
+  await toStep(page, 'Размеры');
+  const corner = page.locator(`[data-corner-index="${index}"]`);
+  if ((await corner.count()) !== 1) return `угла ${index} нет`;
+  await corner.click();
+  await sleep(1500);
+  const card = page.locator(`[data-corner-card="${key}"]`).filter({ visible: true });
+  if ((await card.count()) !== 1) return `карточки ${key} нет`;
+  if ((await card.getAttribute('data-refused')) === '1') return `карточка ${key} отказывает: ${await card.getAttribute('title')}`;
+  if ((await card.getAttribute('aria-pressed')) !== 'true') {
+    await card.click();
+    await sleep(2200);
+  }
+  return null;
+}
+
+/** Выбор угла `index` словами: «низ/верх». Угла нет — `null`. */
+async function cornerAt(page, index) {
+  await toStep(page, 'Размеры');
+  const corner = page.locator(`[data-corner-index="${index}"]`);
+  if ((await corner.count()) !== 1) return null;
+  return `${await corner.getAttribute('data-corner-lower')}/${await corner.getAttribute('data-corner-upper')}`;
+}
+
+/** Все уточнения экрана текстом: «ещё N» раскрывается. */
+async function softText(page) {
+  const more = page.locator('[data-soft-warnings] button', { hasText: /^ещё \d+$/ });
+  if ((await more.count()) > 0) {
+    await more.first().click();
+    await sleep(300);
+  }
+  return (await page.locator('[data-soft-warnings] li').allInnerTexts()).join(' | ');
+}
+
+/** Замена модуля карточкой библиотеки той же ширины и вида `variant`. */
+async function replaceWith(page, wall, unit, variants) {
+  if (!(await select(page, wall, unit.id))) return `${unit.id}: модуль на схеме не нажимается`;
+  for (const variant of variants) {
+    const card = page
+      .locator(`[data-card][data-refused="0"][aria-pressed="false"][data-width="${unit.widthMm}"][data-variant="${variant}"]`)
+      .filter({ visible: true });
+    if ((await card.count()) === 0) continue;
+    await card.first().click();
+    await sleep(1800);
+    return null;
+  }
+  return `${unit.id}: карточек ${variants.join('/')} шириной ${unit.widthMm} мм нет`;
+}
+
+async function footerText(page) {
+  return (await page.locator('footer').innerText()).replace(/\s+/g, ' ');
 }
 
 /* ─────────────────────────  L1: правки А и Б, удаление на Б  ───────────────────────── */
@@ -448,6 +561,12 @@ async function scenarioU1(browser) {
   await sleep(2500);
   await toStep(page, 'Раскладка');
   const asL = await rows(page);
+  const hiddenL = await softText(page);
+  check(
+    'П → Г: на экране сказано, что правка стены 3 замера сохранена и сейчас не участвует',
+    /Стена 3 замера/.test(hiddenL) && /сохранена ручная раскладка/.test(hiddenL),
+    hiddenL.slice(0, 260) || 'УТОЧНЕНИЙ НЕТ',
+  );
   same('П → Г: стена А та же', wallOf(afterCorner, 0), wallOf(asL, 0));
   check(
     'П → Г: правка стены Б на ней',
@@ -462,6 +581,8 @@ async function scenarioU1(browser) {
   for (const [wall, label] of [[0, 'А'], [1, 'Б'], [2, 'В']]) {
     same(`Г → П: стена ${label} та же, что до смены формы`, wallOf(afterCorner, wall), wallOf(backU, wall));
   }
+  const hiddenU = await softText(page);
+  check('Г → П: строки о сохранённой правке больше нет — она снова на стене', !/сохранена ручная раскладка/.test(hiddenU), hiddenU.slice(0, 200) || 'уточнений нет');
 
   /* Удаление прибора на стене В. */
   const cBlock = wallOf(backU, 2);
@@ -579,6 +700,388 @@ async function scenarioU3(browser) {
   await page.close();
 }
 
+/* ─────────────────────────  A1: Г, прибор закреплён за физической стеной  ───────────────────────── */
+
+async function scenarioA1(browser) {
+  console.log('\n── A1. Г 3600 × 3000: холодильник на w1 → «ряд здесь?» на стене 4 → холодильник на w1');
+  const page = await measureShape(browser, [3600, 3000], 'corner_l');
+  await toStep(page, 'Раскладка');
+  const start = await rows(page);
+  check('Г из замера: стены w1, w2', wallIdsOf(start).join(',') === 'w1,w2', wallIdsOf(start).join(', ') || 'НУЛЕВОЙ СЕЛЕКТОР: стен нет');
+  check('холодильник по правилу на w2 (короткая стена)', applianceWall(start, 'fridge') === 'w2', applianceWall(start, 'fridge'));
+  const refused = await moveAppliance(page, start, 'fridge', 0);
+  const pinned = await rows(page);
+  check(
+    'холодильник перенесён на стену А — физическую w1, и он один',
+    !refused && applianceWall(pinned, 'fridge') === 'w1' && countOf(pinned, 'fridge') === 1,
+    refused ?? `стоит на ${applianceWall(pinned, 'fridge')}, штук ${countOf(pinned, 'fridge')}`,
+  );
+  const moved = await runWallHere(page, 4);
+  check('ряд перенесён на стену 4', moved, moved ? 'ряд здесь — стена 4' : 'кнопки «ряд здесь?» у стены 4 нет');
+  await toStep(page, 'Раскладка');
+  const shifted = await rows(page);
+  check('стены композиции — w4, w1', wallIdsOf(shifted).join(',') === 'w4,w1', wallIdsOf(shifted).join(', ') || 'НУЛЕВОЙ СЕЛЕКТОР: стен нет');
+  const fridge = blockOfWall(shifted, 'w1')?.modules.find((m) => m.appliance === 'fridge');
+  check(
+    'холодильник остался на физической стене w1 — теперь это стена Б',
+    applianceWall(shifted, 'fridge') === 'w1' && countOf(shifted, 'fridge') === 1,
+    `стоит на ${applianceWall(shifted, 'fridge')}${fridge ? ` (${fridge.id}, ${fridge.widthMm} мм)` : ''} · стены ${wallIdsOf(shifted).join(', ')}`,
+  );
+  mkdirSync(OUT, { recursive: true });
+  await page.screenshot({ path: `${OUT}/A1-L-fridge-on-w1.png` });
+  const back = await runWallHere(page, 1);
+  await toStep(page, 'Раскладка');
+  const restored = await rows(page);
+  check(
+    'ряд вернулся на стену 1: стены w1, w2, холодильник на w1',
+    back && wallIdsOf(restored).join(',') === 'w1,w2' && applianceWall(restored, 'fridge') === 'w1',
+    `стены ${wallIdsOf(restored).join(', ')} · холодильник на ${applianceWall(restored, 'fridge')}`,
+  );
+  await page.close();
+}
+
+/* ─────────────────────────  A2: П, прибор закреплён за стеной В  ───────────────────────── */
+
+async function scenarioA2(browser) {
+  console.log('\n── A2. П 3600 × 3000: холодильник на w3 → «ряд здесь?» на стене 2 → холодильник на w3');
+  const page = await measureShape(browser, [3600, 3000], 'u_shape');
+  await toStep(page, 'Раскладка');
+  const start = await rows(page);
+  check('П из замера: стены w1, w2, w3', wallIdsOf(start).join(',') === 'w1,w2,w3', wallIdsOf(start).join(', ') || 'НУЛЕВОЙ СЕЛЕКТОР: стен нет');
+  check('холодильник по правилу на w2', applianceWall(start, 'fridge') === 'w2', applianceWall(start, 'fridge'));
+  const refused = await moveAppliance(page, start, 'fridge', 2);
+  const pinned = await rows(page);
+  check(
+    'холодильник перенесён на стену В — физическую w3',
+    !refused && applianceWall(pinned, 'fridge') === 'w3' && countOf(pinned, 'fridge') === 1,
+    refused ?? `стоит на ${applianceWall(pinned, 'fridge')}`,
+  );
+  const moved = await runWallHere(page, 2);
+  check('ряд перенесён на стену 2', moved, moved ? 'ряд здесь — стена 2' : 'кнопки «ряд здесь?» у стены 2 нет');
+  await toStep(page, 'Раскладка');
+  const shifted = await rows(page);
+  check('стены композиции — w2, w3, w4', wallIdsOf(shifted).join(',') === 'w2,w3,w4', wallIdsOf(shifted).join(', ') || 'НУЛЕВОЙ СЕЛЕКТОР: стен нет');
+  check(
+    'холодильник остался на физической стене w3 — теперь это стена Б',
+    applianceWall(shifted, 'fridge') === 'w3' && countOf(shifted, 'fridge') === 1,
+    `стоит на ${applianceWall(shifted, 'fridge')} · стены ${wallIdsOf(shifted).join(', ')}`,
+  );
+  mkdirSync(OUT, { recursive: true });
+  await page.screenshot({ path: `${OUT}/A2-U-fridge-on-w3.png` });
+  const back = await runWallHere(page, 1);
+  await toStep(page, 'Раскладка');
+  const restored = await rows(page);
+  check(
+    'ряд вернулся на стену 1: холодильник на w3 — стене В',
+    back && wallIdsOf(restored).join(',') === 'w1,w2,w3' && applianceWall(restored, 'fridge') === 'w3',
+    `стены ${wallIdsOf(restored).join(', ')} · холодильник на ${applianceWall(restored, 'fridge')}`,
+  );
+  await page.close();
+}
+
+/* ─────────────────────────  B1: угол по физической паре стен, скрытые правки  ───────────────────────── */
+
+async function scenarioB1(browser) {
+  console.log('\n── B1. П: угол w1–w2 — верх пустой → «ряд здесь?» на стене 2 → угол w2–w3 свой, правки названы');
+  const page = await measureShape(browser, [3600, 3000], 'u_shape');
+  const refused = await chooseCorner(page, 0, 'upper:empty');
+  const chosen = await cornerAt(page, 0);
+  check('угол w1–w2: верх пустой', !refused && chosen === 'blind/empty', refused ?? chosen ?? 'УГЛА НЕТ');
+  const secondBefore = await cornerAt(page, 1);
+  await toStep(page, 'Раскладка');
+  const before = await rows(page);
+  check('П: стены w1, w2, w3', wallIdsOf(before).join(',') === 'w1,w2,w3', wallIdsOf(before).join(', ') || 'НУЛЕВОЙ СЕЛЕКТОР: стен нет');
+
+  const moved = await runWallHere(page, 2);
+  check('ряд перенесён на стену 2', moved, moved ? 'ряд здесь — стена 2' : 'кнопки «ряд здесь?» у стены 2 нет');
+  const first = await cornerAt(page, 0);
+  const second = await cornerAt(page, 1);
+  check(
+    'угол w2–w3 (теперь первый) — его собственный выбор, а не пустой верх угла w1–w2',
+    first === secondBefore && first !== 'blind/empty',
+    `первый угол ${first ?? 'НЕТ'} · был у w2–w3 ${secondBefore ?? 'НЕТ'}`,
+  );
+  check('второй угол w3–w4 — новый, по умолчанию', second === 'blind/blind', second ?? 'УГЛА НЕТ');
+  await toStep(page, 'Раскладка');
+  const shifted = await rows(page);
+  check('стены композиции — w2, w3, w4', wallIdsOf(shifted).join(',') === 'w2,w3,w4', wallIdsOf(shifted).join(', ') || 'НУЛЕВОЙ СЕЛЕКТОР: стен нет');
+  const hidden = await softText(page);
+  check(
+    'на экране сказано: правки стен 1 и 2 замера сохранены и вернутся',
+    /Стена 1 замера/.test(hidden) && /Стена 2 замера/.test(hidden) && /сохранена ручная раскладка/.test(hidden),
+    hidden.slice(0, 320) || 'УТОЧНЕНИЙ НЕТ',
+  );
+  mkdirSync(OUT, { recursive: true });
+  await page.screenshot({ path: `${OUT}/B1-U-corner-transfer.png` });
+
+  const back = await runWallHere(page, 1);
+  const firstBack = await cornerAt(page, 0);
+  check('обратно: у угла w1–w2 снова пустой верх', back && firstBack === 'blind/empty', firstBack ?? 'УГЛА НЕТ');
+  await toStep(page, 'Раскладка');
+  const restored = await rows(page);
+  for (const [wall, label] of [[0, 'А'], [1, 'Б'], [2, 'В']]) {
+    same(`обратно: стена ${label} та же, что до переноса`, wallOf(before, wall), wallOf(restored, wall));
+  }
+  const hiddenBack = await softText(page);
+  check('обратно: строки о сохранённых правках нет', !/сохранена ручная раскладка/.test(hiddenBack), hiddenBack.slice(0, 200) || 'уточнений нет');
+  await page.close();
+}
+
+/* ─────────────────────────  B2: правленая стена стала владельцем угла — конфликт  ───────────────────────── */
+
+async function scenarioB2(browser) {
+  console.log('\n── B2. П: двустворчатый модуль в конце стены В → «ряд здесь?» на стене 2 → конфликт угла');
+  const page = await measureShape(browser, [3600, 3000], 'u_shape');
+  await toStep(page, 'Раскладка');
+  const start = await rows(page);
+  const c = wallOf(start, 2);
+  const last = c?.modules
+    .filter((m) => m.row === 'base' && !m.appliance)
+    .sort((x, y) => y.offsetMm + y.widthMm - (x.offsetMm + x.widthMm))[0];
+  check('у стены В (w3) есть обычный модуль у её конца', Boolean(last) && last.offsetMm + last.widthMm === c.lengthMm, last ? `${last.id} ${last.widthMm} мм до ${last.offsetMm + last.widthMm} из ${c.lengthMm}` : 'НУЛЕВОЙ СЕЛЕКТОР: модуля нет');
+  const refused = last ? await replaceWith(page, 2, last, ['door_two', 'drawers']) : 'модуля нет';
+  const edited = await rows(page);
+  const now = blockOfWall(edited, 'w3')?.modules.find((m) => m.id === last?.id);
+  check('модуль у конца стены В заменён — не распашная дверца', !refused && Boolean(now) && now.variant !== 'door', refused ?? `${now?.id}: ${last?.variant} → ${now?.variant}`);
+  const totalBefore = await totalOf(page);
+
+  const moved = await runWallHere(page, 2);
+  check('ряд перенесён на стену 2', moved, moved ? 'ряд здесь — стена 2' : 'кнопки «ряд здесь?» у стены 2 нет');
+  await toStep(page, 'Раскладка');
+  const shifted = await rows(page);
+  check('стена w3 теперь стена Б', wallIdsOf(shifted)[1] === 'w3', wallIdsOf(shifted).join(', ') || 'НУЛЕВОЙ СЕЛЕКТОР: стен нет');
+  const kept = blockOfWall(shifted, 'w3')?.modules.find((m) => m.id === last?.id);
+  check('правка стены w3 не тронута молча: модуль тот же и того же вида', Boolean(kept) && kept.variant === now?.variant && kept.widthMm === now?.widthMm, kept ? `${kept.id} ${kept.variant} ${kept.widthMm} мм` : 'МОДУЛЯ НЕТ');
+  const footer = await footerText(page);
+  const conflict = /Стена Б:/.test(footer) && /угл/.test(footer) && /\d+ мм/.test(footer) && /Пересоберите/.test(footer);
+  check(
+    'красная полоса называет конфликт роли угла с миллиметрами',
+    conflict,
+    `подвал: ${footer.slice(0, 300)}`,
+  );
+  check('цены нет, пока конфликт не снят', (await page.locator('[data-estimate-total]').count()) === 0 && (await page.locator('[data-composition-refused]').count()) === 1, `сумм на экране ${await page.locator('[data-estimate-total]').count()}`);
+  check('выход назван кнопкой «Пересобрать стену Б»', (await page.locator('[data-rebuild-wall="1"]').count()) === 1, `кнопок ${await page.locator('[data-rebuild-wall="1"]').count()}`);
+  mkdirSync(OUT, { recursive: true });
+  await page.screenshot({ path: `${OUT}/B2-U-corner-conflict.png` });
+
+  const back = await runWallHere(page, 1);
+  await toStep(page, 'Раскладка');
+  const restored = await rows(page);
+  const footerBack = await footerText(page);
+  check('обратно: конфликта нет, цена на месте', back && !/Пересоберите/.test(footerBack) && (await totalOf(page)) === totalBefore, `итог ${await totalOf(page)} при прежнем ${totalBefore}`);
+  same('обратно: стена В (w3) та же, правка на месте', blockOfWall(edited, 'w3'), blockOfWall(restored, 'w3'));
+  await page.close();
+}
+
+/* ─────────────────────────  B3: стена теряет угол — раскладка совместима  ───────────────────────── */
+
+async function scenarioB3(browser) {
+  console.log('\n── B3. П: правка стены Б (w2) → «ряд здесь?» на стене 4 → w2 теряет угол, конфликта нет');
+  const page = await measureShape(browser, [3600, 3000], 'u_shape');
+  await toStep(page, 'Раскладка');
+  const start = await rows(page);
+  const edit = await editOn(page, start, 1);
+  const edited = await rows(page);
+  check('правка стены Б (w2) применилась', carries(wallOf(edited, 1), edit) && sig(wallOf(edited, 1)) !== sig(wallOf(start, 1)), edit ? editWords(edit) : 'на стене Б нечего ни заменить, ни снять');
+  const cornerB = await cornerAt(page, 0);
+  const moved = await runWallHere(page, 4);
+  check('ряд перенесён на стену 4', moved, moved ? 'ряд здесь — стена 4' : 'кнопки «ряд здесь?» у стены 4 нет');
+  const cornerAfter = await cornerAt(page, 1);
+  check('угол w1–w2 (теперь второй) сохранил свой выбор', cornerAfter === cornerB, `был ${cornerB ?? 'НЕТ'} · стал ${cornerAfter ?? 'НЕТ'}`);
+  await toStep(page, 'Раскладка');
+  const shifted = await rows(page);
+  check('стены композиции — w4, w1, w2: w2 последняя и угла у своего конца не имеет', wallIdsOf(shifted).join(',') === 'w4,w1,w2', wallIdsOf(shifted).join(', ') || 'НУЛЕВОЙ СЕЛЕКТОР: стен нет');
+  const footer = await footerText(page);
+  check('конфликта угла нет, цена на месте', !/Пересоберите/.test(footer) && (await page.locator('[data-estimate-total]').count()) === 1, footer.slice(0, 200));
+  same('модули w2 те же, правка на месте', blockOfWall(edited, 'w2'), blockOfWall(shifted, 'w2'));
+  await page.close();
+}
+
+/* ─────────────────────────  LG: старый объект в базе  ───────────────────────── */
+
+function loadEnv() {
+  if (!existsSync('.env.local')) return;
+  for (const line of readFileSync('.env.local', 'utf8').split(/\r?\n/)) {
+    const m = /^([A-Z0-9_]+)=(.*)$/.exec(line.trim());
+    if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2].replace(/^"|"$/g, '');
+  }
+}
+
+/** Стены замера по кругу: формат `Survey` и формат `Measurement` объекта. */
+function legacyRoom(stamp) {
+  const lengths = [3600, 3000, 3600, 3000];
+  const known = (value) => ({ state: 'measured', value });
+  return {
+    survey: {
+      ceilingHeightMm: known(2700),
+      walls: lengths.map((lengthMm, i) => ({
+        id: `w${i + 1}`,
+        lengthMm: known(lengthMm),
+        turn: 'right',
+        turnDeg: 90,
+        openings: [],
+        isRunWall: i === 0,
+      })),
+      comms: [],
+      photos: [],
+      clientNotes: '',
+      steps: { ceiling: 'done', walls: 'done', openings: 'todo', comms: 'todo', photos: 'todo' },
+      measuredBy: 'проверка',
+      measuredAt: '2026-10-08',
+    },
+    measurement: {
+      id: `m-${stamp}`,
+      ceilingHeightMm: 2700,
+      walls: lengths.map((lengthMm, i) => ({ id: `w${i + 1}`, lengthMm, angleDeg: 90, openings: [] })),
+      comms: [],
+      photos: [],
+      measuredBy: 'проверка',
+      measuredAt: '2026-10-08',
+      notes: '',
+    },
+  };
+}
+
+async function scenarioLG(browser) {
+  console.log('\n── LG. Старый объект: холодильник закреплён номером стены, углы массивом, решение выбрано');
+  loadEnv();
+  const URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const SERVICE = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!URL || !ANON || !SERVICE || /your-project|example/.test(URL)) {
+    check('старый объект: ключи Supabase есть', false, 'НЕ ПРОВЕРЕНО — нет ключей Supabase в .env.local');
+    return;
+  }
+  const service = createClient(URL, SERVICE, { auth: { persistSession: false, autoRefreshToken: false } });
+  const stamp = Date.now();
+  const email = `identity-${stamp}@example.test`;
+  const password = `Pw-${stamp}-identity!`;
+  const made = { user: null, org: null, project: null };
+  try {
+    const { data: created, error: userError } = await service.auth.admin.createUser({ email, password, email_confirm: true });
+    if (userError) throw new Error(`createUser: ${userError.message}`);
+    made.user = created.user.id;
+    const { data: org, error: orgError } = await service
+      .from('orgs')
+      .insert({ slug: `identity-${stamp}`, name: `Проверка идентичности ${stamp}` })
+      .select('id')
+      .single();
+    if (orgError) throw new Error(`insert org: ${orgError.message}`);
+    made.org = org.id;
+    const { error: memberError } = await service.from('org_members').insert({ org_id: org.id, user_id: created.user.id, role: 'owner' });
+    if (memberError) throw new Error(`insert member: ${memberError.message}`);
+
+    const jar = [];
+    const ssr = createServerClient(URL, ANON, {
+      cookies: {
+        getAll: () => jar.map(({ name, value }) => ({ name, value })),
+        setAll: (list) => {
+          for (const cookie of list) {
+            const at = jar.findIndex((c) => c.name === cookie.name);
+            if (at >= 0) jar.splice(at, 1);
+            if (cookie.value) jar.push(cookie);
+          }
+        },
+      },
+    });
+    const { error: signError } = await ssr.auth.signInWithPassword({ email, password });
+    if (signError) throw new Error(`signIn: ${signError.message}`);
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    await context.addCookies(
+      jar.map((c) => ({ name: c.name, value: c.value, domain: 'localhost', path: '/', httpOnly: false, secure: false, sameSite: 'Lax' })),
+    );
+    const page = await context.newPage();
+    page.on('pageerror', (e) => {
+      failed += 1;
+      console.log('  [ошибка страницы]', e.message.slice(0, 160));
+    });
+    const seeded = await page.request.post(`${BASE}/api/catalog/seed-rates`, { data: { orgId: org.id } });
+    if (!seeded.ok()) throw new Error(`типовой прайс не заведён: ${seeded.status()}`);
+
+    const room = legacyRoom(stamp);
+    /*
+     * Состояние старого формата: закрепление НОМЕРОМ стены обхода (0 — стена
+     * А, то есть w1 на момент записи), выбор углов массивом без меток стен,
+     * выбранное готовое решение.
+     */
+    const { data: project, error: projectError } = await service
+      .from('projects')
+      .insert({
+        org_id: org.id,
+        address: 'Проверка идентичности стен',
+        zone: 'Кухня',
+        client_name: 'Проверка',
+        measurements: room.measurement,
+        millwork: {
+          templateId: 'linear-column',
+          shape: 'corner_l',
+          corners: [{ lower: 'l_shape', upper: 'empty' }],
+          survey: room.survey,
+          requirements: {
+            zone: 'kitchen',
+            appliances: ['fridge', 'oven', 'sink600', 'dishwasher45', 'hob', 'hood'],
+            tallSide: 'left',
+            options: {
+              hasUpper: true,
+              upperToCeiling: false,
+              hardwareClass: 'standard',
+              countertop: 'ldsp',
+              hasCornice: false,
+              integratedHandles: false,
+            },
+            applianceWalls: { fridge: 0 },
+          },
+        },
+        status: 'in_progress',
+      })
+      .select('id')
+      .single();
+    if (projectError) throw new Error(`insert project: ${projectError.message}`);
+    made.project = project.id;
+
+    await page.goto(`${BASE}/project/${project.id}`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+    await ready(page);
+    const corner0 = await cornerAt(page, 0);
+    check('открылся тем углом, каким сохранён: w1–w2 — Г-модуль, верх пустой', corner0 === 'l_shape/empty', corner0 ?? 'УГЛА НЕТ');
+    await toStep(page, 'Раскладка');
+    const opened = await rows(page);
+    check('стены объекта — w1, w2', wallIdsOf(opened).join(',') === 'w1,w2', wallIdsOf(opened).join(', ') || 'НУЛЕВОЙ СЕЛЕКТОР: стен нет');
+    check(
+      'холодильник на той стене, где его закрепили: w1, без переназначения',
+      applianceWall(opened, 'fridge') === 'w1' && countOf(opened, 'fridge') === 1,
+      `стоит на ${applianceWall(opened, 'fridge')} · закреплён номером 0 = w1`,
+    );
+    mkdirSync(OUT, { recursive: true });
+    await page.screenshot({ path: `${OUT}/LG-legacy-open.png` });
+
+    const moved = await runWallHere(page, 4);
+    check('ряд перенесён на стену 4', moved, moved ? 'ряд здесь — стена 4' : 'кнопки «ряд здесь?» у стены 4 нет');
+    const shiftedCorner = await cornerAt(page, 0);
+    check('угол w4–w1 — свой (по умолчанию), Г-модуль угла w1–w2 к нему не переехал', shiftedCorner === 'blind/blind', shiftedCorner ?? 'УГЛА НЕТ');
+    await toStep(page, 'Раскладка');
+    const shifted = await rows(page);
+    check(
+      'после переноса ряда холодильник на физической стене w1 (теперь стена Б)',
+      wallIdsOf(shifted).join(',') === 'w4,w1' && applianceWall(shifted, 'fridge') === 'w1',
+      `стены ${wallIdsOf(shifted).join(', ')} · холодильник на ${applianceWall(shifted, 'fridge')}`,
+    );
+    const back = await runWallHere(page, 1);
+    const backCorner = await cornerAt(page, 0);
+    await toStep(page, 'Раскладка');
+    const restored = await rows(page);
+    check(
+      'обратно: угол w1–w2 снова Г-модуль, холодильник на w1',
+      back && backCorner === 'l_shape/empty' && applianceWall(restored, 'fridge') === 'w1',
+      `угол ${backCorner ?? 'НЕТ'} · холодильник на ${applianceWall(restored, 'fridge')}`,
+    );
+    await context.close();
+  } finally {
+    if (made.project) await service.from('projects').delete().eq('id', made.project);
+    if (made.org) await service.from('orgs').delete().eq('id', made.org);
+    if (made.user) await service.auth.admin.deleteUser(made.user);
+  }
+}
+
 /* ─────────────────────────  запуск  ───────────────────────── */
 
 freePort(PORT);
@@ -612,6 +1115,12 @@ try {
     U1: scenarioU1,
     U2: scenarioU2,
     U3: scenarioU3,
+    A1: scenarioA1,
+    A2: scenarioA2,
+    B1: scenarioB1,
+    B2: scenarioB2,
+    B3: scenarioB3,
+    LG: scenarioLG,
   };
   const unknown = only.filter((key) => !(key in scenarios));
   if (unknown.length > 0) throw new Error(`нет таких сценариев: ${unknown.join(', ')}`);

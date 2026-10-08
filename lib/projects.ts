@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type {
   CompositionKind,
-  CornerChoice,
+  SavedCornerChoice,
   Measurement,
   Run,
   RunRequirements,
@@ -85,9 +85,15 @@ export type MillworkState = {
    * Поле необязательное: у объектов до этого слоя его нет, и угол
    * читается тем, каким был сохранён, — низ из `cornerSolution`, верх
    * пустой (`savedCornerChoices`; совместимость — чтением, ловушка 295).
+   * Запись с меткой стен (`walls`) — выбор физического угла; без метки —
+   * старая запись номером угла, метку она получает при открытии.
    */
-  corners?: CornerChoice[];
-  /** Ряды соседних стен по индексу: 1 — стена Б, 2 — стена В. */
+  corners?: SavedCornerChoice[];
+  /**
+   * Ряды соседних стен. Ключ — стена замера (`wallId`); у объектов,
+   * сохранённых раньше, — номер стены: 1 — стена Б, 2 — стена В
+   * (читает `savedWallRuns`).
+   */
   wallRuns?: Record<string, Run>;
   /** Снятые галочки сметы по вариантам. */
   disabled?: Partial<Record<VariantKey, string[]>>;

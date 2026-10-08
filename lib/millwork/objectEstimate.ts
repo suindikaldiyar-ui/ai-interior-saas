@@ -2,15 +2,16 @@ import type {
   CommPoint,
   Composition,
   CompositionKind,
-  CornerChoice,
   CornerJoin,
   Estimate,
   Measurement,
   Run,
   RunCorner,
   RunRequirements,
+  SavedCornerChoice,
   Variant,
   VariantKey,
+  ApplianceKind,
 } from '@/types/millwork';
 import type { CatalogEntryFull, ProductionSettings } from '@/types/catalog';
 import { resolveSurvey, type SurveyResolution } from '@/types/survey';
@@ -107,7 +108,7 @@ export function compositionFor(input: {
   /** Прежнее решение угла — одно на все углы; читается, когда выбора по углам нет. */
   cornerSolution: CornerSolution;
   /** Выбор по каждому углу (слой 55). Пусто — из `cornerSolution`. */
-  corners?: CornerChoice[];
+  corners?: SavedCornerChoice[];
   site: Pick<ObjectSite, 'ceilingMm' | 'walls' | 'comms'>;
   production: ProductionSettings;
   /**
@@ -159,7 +160,7 @@ export function compositionFor(input: {
  */
 export function savedCornerChoices(
   state: Pick<MillworkState, 'shape' | 'corners' | 'cornerSolution'> | null | undefined,
-): CornerChoice[] | undefined {
+): SavedCornerChoice[] | undefined {
   if (!state) return undefined;
   if (state.corners) return state.corners;
   const count = segmentCount(state.shape ?? 'linear') - 1;
@@ -285,6 +286,29 @@ export function wallCornerOf(layout: Composition | null): RunCorner | undefined 
  * этого номера, как читался всегда (`wallEditOf`).
  */
 export type WallEdits = Record<string, Run>;
+
+/**
+ * СТАРОЕ ЗАКРЕПЛЕНИЕ ПРИБОРА НОМЕРОМ — В ФИЗИЧЕСКУЮ СТЕНУ, ОДИН РАЗ, ПРИ ОТКРЫТИИ.
+ *
+ * Номер — место стены в обходе на момент записи. Обход при открытии тот
+ * же: замер лежит в том же состоянии, что и закрепление. Поэтому номер
+ * переводится в `wallId` однозначно, пока «ряд здесь?» его не сдвинул.
+ * Номер, которому в обходе стены нет, остаётся числом: угадывать стену
+ * нечем, и экран просит закрепить прибор заново.
+ */
+export function appliancePinsByWall(
+  pins: Partial<Record<ApplianceKind, number | string>> | undefined,
+  /** Стены замера по обходу от рабочей стены — на момент открытия. */
+  wallIds: string[],
+): Partial<Record<ApplianceKind, number | string>> | undefined {
+  if (!pins) return pins;
+  const out: Partial<Record<ApplianceKind, number | string>> = {};
+  for (const [appliance, pin] of Object.entries(pins) as [ApplianceKind, number | string][]) {
+    out[appliance] =
+      typeof pin === 'number' && Number.isInteger(pin) && pin >= 0 && pin < wallIds.length ? wallIds[pin] : pin;
+  }
+  return out;
+}
 
 /** Правки соседних стен из сохранения: ключ — стена ряда, у старых без метки — номер. */
 export function savedWallRuns(saved: Record<string, Run> | undefined): WallEdits {

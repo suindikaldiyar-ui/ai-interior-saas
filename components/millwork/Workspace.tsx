@@ -40,6 +40,7 @@ import {
   wallsTouchedByChange,
 } from '@/lib/millwork/composition';
 import {
+  appliancePinsByWall,
   compositionFor,
   objectEstimateOf,
   objectInput,
@@ -62,6 +63,8 @@ import {
   LOWER_CORNER_TITLE,
   UPPER_CORNER_TITLE,
   cornerChoicesOf,
+  mergedCorners,
+  stampedCorners,
 } from '@/lib/millwork/corner';
 import {
   changeCorner,
@@ -217,6 +220,7 @@ import type {
   Opening,
   Run,
   RunRequirements,
+  SavedCornerChoice,
   VariantKey,
   WallSegment,
 } from '@/types/millwork';
@@ -532,12 +536,41 @@ export default function Workspace(props: WorkspaceProps) {
     setPendingSolution(null);
   }, [step]);
 
+  /**
+   * ОБХОД СТЕН НА МОМЕНТ ОТКРЫТИЯ — ДЛЯ СТАРЫХ ЗАПИСЕЙ НОМЕРОМ.
+   *
+   * Закрепление прибора и выбор угла раньше хранились номером стены и
+   * угла в обходе. Обход при открытии — тот же, что при записи: замер
+   * лежит в том же состоянии. Номера переводятся в стены замера ОДИН раз,
+   * здесь; дальше «ряд здесь?» номера сдвигает, а стены — нет. Считает
+   * обход та же `objectSite`, что и весь экран.
+   */
+  const openOrder = useRef<string[] | null>(null);
+  const openWallIds = (): string[] => {
+    if (!openOrder.current) {
+      const opened = props.initialState?.survey ?? props.survey ?? null;
+      openOrder.current = objectSite(
+        {
+          lengthMm: props.lengthMm,
+          ceilingHeightMm: props.ceilingHeightMm,
+          openings: props.openings,
+          comms: props.comms,
+          measuredWalls: props.measuredWalls,
+          measuredComms: props.measuredComms,
+          runWallId: props.runWallId,
+        },
+        opened ? resolveSurvey(opened) : null,
+      ).walls.map((wall) => wall.id);
+    }
+    return openOrder.current;
+  };
+
   /*
    * Правки состава поверх шаблона: техника, колонна, встройка, витрина и
    * высота верхнего ряда. Шаблон задаёт умолчания, а замерщик правит их
    * при клиенте — и правка обязана пережить пересчёт и закрытие объекта.
    */
-  const [composition, setComposition] = useState<CompositionPatch>({
+  const [composition, setComposition] = useState<CompositionPatch>(() => ({
     appliances: props.initialState?.requirements?.appliances,
     sections: props.initialState?.requirements?.sections,
     doorSystem: props.initialState?.requirements?.doorSystem,
@@ -546,7 +579,20 @@ export default function Workspace(props: WorkspaceProps) {
     glassDisplay: props.initialState?.requirements?.glassDisplay,
     applianceTypes: props.initialState?.requirements?.applianceTypes,
     upperToCeiling: props.initialState?.requirements?.options?.upperToCeiling,
-  });
+    /*
+     * ЗАКРЕПЛЕНИЕ ПРИБОРА ЗА СТЕНОЙ И ЕГО ГАБАРИТЫ ВОЗВРАЩАЮТСЯ С ОБЪЕКТОМ.
+     *
+     * Их здесь не было: у объекта с выбранным решением основа требований —
+     * шаблон, и перенос холодильника на другую стену пропадал при каждом
+     * открытии молча. Закрепление — физическая стена замера; старая запись
+     * номером переводится по обходу на момент открытия.
+     */
+    applianceWalls: appliancePinsByWall(
+      props.initialState?.requirements?.applianceWalls ?? props.requirements.applianceWalls,
+      openWallIds(),
+    ),
+    applianceSizes: props.initialState?.requirements?.applianceSizes,
+  }));
 
   const [templateId, setTemplateId] = useState<string | null>(
     props.initialState?.templateId ?? props.templateId ?? null,
@@ -586,16 +632,12 @@ export default function Workspace(props: WorkspaceProps) {
    * было, — их добавляет смена формы.
    */
   const legacyCorner = props.initialState?.cornerSolution ?? 'false_panel';
-  const [cornerPicks, setCornerPicks] = useState<CornerChoice[] | undefined>(() =>
-    savedCornerChoices(props.initialState),
-  );
-  const cornerChoices = useMemo(
-    () =>
-      cornerChoicesOf(
-        { corners: cornerPicks, cornerSolution: legacyCorner },
-        segmentCount(shape) - 1,
-      ),
-    [cornerPicks, legacyCorner, shape],
+  /*
+   * Выбор каждого угла — за физической парой стен (`walls`). Старая запись
+   * номером угла получает метку здесь, по обходу на момент открытия.
+   */
+  const [cornerPicks, setCornerPicks] = useState<SavedCornerChoice[] | undefined>(() =>
+    stampedCorners(savedCornerChoices(props.initialState), openWallIds()),
   );
   /**
    * Угол, для которого открыта панель вариантов угла. Пусто — панель
@@ -881,6 +923,25 @@ export default function Workspace(props: WorkspaceProps) {
    * стены Б и В собирались без стратегии, и у одной кухни выходило две
    * столешницы — кварц на А и ЛДСП на Б (слой 55).
    */
+  /** Стены композиции по обходу: за ними — выбор углов и закрепления приборов. */
+  const compositionWallIds = useMemo(
+    () => site.walls.slice(0, segmentCount(shape)).map((wall) => wall.id),
+    [site.walls, shape],
+  );
+  /*
+   * ВЫБОР КАЖДОГО УГЛА — ПО ФИЗИЧЕСКОЙ ПАРЕ СТЕН. Угол `i` — стык стен
+   * `i` и `i + 1` обхода; номер угла меняется вместе с рабочей стеной, а
+   * пара стен — нет: Г-модуль угла w1–w2 не переезжает в угол w2–w3.
+   */
+  const cornerChoices = useMemo(
+    () =>
+      cornerChoicesOf(
+        { corners: cornerPicks, cornerSolution: legacyCorner },
+        segmentCount(shape) - 1,
+        compositionWallIds,
+      ),
+    [cornerPicks, legacyCorner, shape, compositionWallIds],
+  );
   const layoutAttempt = useMemo(
     () =>
       compositionFor({
@@ -1283,7 +1344,23 @@ export default function Workspace(props: WorkspaceProps) {
    * композиция.
    */
   const mismatches = useMemo(() => {
-    const byLength = layout ? wallMismatches(layout, segments) : [];
+    /*
+     * Правленый ряд и роль его стены в углах: правили с одной ролью
+     * (её `corner` на ряду), а сейчас роль другая — ряд перенесли или
+     * сменили форму. Длина этого не выдаёт.
+     */
+    const byLength = layout
+      ? wallMismatches(layout, segments, {
+          before: (index) =>
+            index === 0
+              ? workingWallEdit(editedRuns[active.key], input.runWallId)?.corner
+              : layout.segments[index]
+                ? wallEditOf(editedWalls, layout.segments[index].wallId, index)?.corner
+                : undefined,
+          openingsOf: wallOpenings,
+          requirements,
+        })
+      : [];
     /*
      * МЕБЕЛЬ, ЗАШЕДШАЯ В ПРЕПЯТСТВИЕ (слой 56): выступ внесли в замер,
      * когда ряд уже поправлен руками. Модули не удаляются молча — каждый
@@ -1296,7 +1373,7 @@ export default function Workspace(props: WorkspaceProps) {
       skip: byLength.map((mismatch) => mismatch.index),
     });
     return [...byLength, ...byObstacle];
-  }, [layout, segments, wallOpenings, wallEdited]);
+  }, [layout, segments, wallOpenings, wallEdited, editedRuns, active.key, input.runWallId, editedWalls, requirements]);
 
   /**
    * КОММУНИКАЦИИ ВЫБРАННОЙ СТЕНЫ.
@@ -1537,6 +1614,7 @@ export default function Workspace(props: WorkspaceProps) {
         assignment: layout.segments.map((segment) => segment.appliances),
         usableMm: layout.segments.map((segment) => segment.run.lengthMm),
         requirements,
+        wallIds: layout.segments.map((segment) => segment.wallId),
       });
       note = lostWallEditsNote(touched.filter((index) => wallEdited(index)));
       if (touched.includes(0) && wallEdited(0)) setEditedRuns({});
@@ -1926,7 +2004,7 @@ export default function Workspace(props: WorkspaceProps) {
     () =>
       layout
         ? Object.fromEntries(
-            layout.segments.flatMap((segment, i) => segment.appliances.map((a) => [a, i] as const)),
+            layout.segments.flatMap((segment) => segment.appliances.map((a) => [a, segment.wallId] as const)),
           )
         : {},
     [layout],
@@ -2021,11 +2099,28 @@ export default function Workspace(props: WorkspaceProps) {
         free.composition.segments.some(
           (segment, i) => segment.appliances.join() !== (layout?.segments[i]?.appliances ?? []).join(),
         );
-      if (moved) setComposition((prev) => ({ ...prev, applianceWalls: applianceWallsNow }));
+      /*
+       * Закрепление за стеной, которой сейчас нет в композиции, не
+       * затирается: вернётся стена — вернётся и прибор.
+       */
+      if (moved) {
+        setComposition((prev) => ({
+          ...prev,
+          applianceWalls: {
+            ...applianceWallsNow,
+            ...Object.fromEntries(
+              Object.entries(prev.applianceWalls ?? {}).filter(
+                ([, pin]) => typeof pin === 'string' && !compositionWallIds.includes(pin),
+              ),
+            ),
+          },
+        }));
+      }
 
       const owner = cornerInput.index;
       dirty.current = true;
-      setCornerPicks(change.corners);
+      /* Выбор углов — за парами стен; углы, которых сейчас нет, не теряются. */
+      setCornerPicks((prev) => mergedCorners(prev, change.corners, compositionWallIds));
       for (const index of [owner, owner + 1]) {
         const run = change.runs[index];
         if (!run) continue;
@@ -2037,7 +2132,7 @@ export default function Workspace(props: WorkspaceProps) {
           'Остальные модули на своих местах.',
       );
     },
-    [cornerInput, compositionWith, layout, applianceWallsNow, active.key, wallIdAt],
+    [cornerInput, compositionWith, layout, applianceWallsNow, active.key, wallIdAt, compositionWallIds],
   );
 
   /** Что выбрано — словами: «Дверца 600» либо «Пусто 900 мм». */
@@ -2082,8 +2177,12 @@ export default function Workspace(props: WorkspaceProps) {
         moduleAppliances(m).includes(appliance),
       );
 
+      /* Прибор закрепляется за ФИЗИЧЕСКОЙ стеной: номер в обходе сдвинет «ряд здесь?». */
       const lost = changeComposition({
-        applianceWalls: { ...(composition.applianceWalls ?? {}), [appliance]: toWall },
+        applianceWalls: {
+          ...(composition.applianceWalls ?? {}),
+          [appliance]: layout?.segments[toWall]?.wallId ?? toWall,
+        },
         applianceSizes: unit?.applianceSizes?.[appliance]
           ? {
               ...(composition.applianceSizes ?? {}),
@@ -2818,8 +2917,40 @@ export default function Workspace(props: WorkspaceProps) {
         shape,
         warnings,
         catalogError,
+        /*
+         * Правки и закрепления, которые сейчас не участвуют: те же
+         * `editedRuns`, `editedWalls` и `applianceWalls`, что держит экран.
+         */
+        edits: {
+          runWallId: input.runWallId,
+          wallAEdit: editedRuns[active.key] ?? null,
+          wallEdits: editedWalls,
+          compositionWallIds: layout ? layout.segments.map((segment) => segment.wallId) : [input.runWallId],
+          surveyWalls: (resolution?.measurement.walls ?? props.measuredWalls ?? []).map((wall) => ({
+            id: wall.id,
+            lengthMm: wall.lengthMm,
+          })),
+          pins: requirements.applianceWalls,
+          assignment: layout ? layout.segments.map((segment) => segment.appliances) : [requirements.appliances],
+        },
       }),
-    [refusal, mismatches, walls, segments, shape, warnings, catalogError],
+    [
+      refusal,
+      mismatches,
+      walls,
+      segments,
+      shape,
+      warnings,
+      catalogError,
+      input.runWallId,
+      editedRuns,
+      active.key,
+      editedWalls,
+      layout,
+      resolution,
+      props.measuredWalls,
+      requirements,
+    ],
   );
 
 
@@ -2875,6 +3006,7 @@ export default function Workspace(props: WorkspaceProps) {
         <li key={w.id}>
           <button
             type="button"
+            data-warning-id={w.id}
             onClick={() => {
               if (w.moduleId) selectModule(w.moduleId);
               setWarningAt(w.atMm ?? null);
@@ -2953,7 +3085,7 @@ export default function Workspace(props: WorkspaceProps) {
          * больше не сохраняется — записанный частично, такой угол открылся
          * бы другим низом.
          */
-        corners: shape === 'linear' ? cornerPicks : cornerChoices,
+        corners: shape === 'linear' ? cornerPicks : mergedCorners(cornerPicks, cornerChoices, compositionWallIds),
         /* Ключ — стена замера (`wallId`); старые номера читает `savedWallRuns`. */
         wallRuns: editedWalls,
         requirements,
@@ -3031,6 +3163,7 @@ export default function Workspace(props: WorkspaceProps) {
     shape,
     cornerPicks,
     cornerChoices,
+    compositionWallIds,
     disabled,
     variantKey,
     renderStyle,
