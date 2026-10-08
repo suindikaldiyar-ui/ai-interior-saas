@@ -1,11 +1,22 @@
 /**
- * Одна модель, три вида — вживую.
+ * Одна модель, разные ракурсы — вживую.
  *
  * Проверяется то, что нельзя доказать типами:
- *  1. на виде «Чертёж» размерная цепочка ложится на мебель, а не рядом;
- *  2. переход «чертёж → три четверти» действительно анимируется, а не
- *     прыгает кадром;
- *  3. при этом не проседает частота кадров.
+ *  1. на ракурсе «Спереди» размерная цепочка ложится на мебель, а не
+ *     рядом, а камера — настоящая ортокамера без наклона;
+ *  2. переход «спереди → общий вид» действительно переставляет камеру;
+ *  3. на перспективе слоя размеров нет вовсе — проекции нет, и цепь
+ *     рисовала бы неверную длину (ловушка 309).
+ *
+ * Где это на экране сейчас (слои 36–53): 3D — вкладка схемы
+ * (`[data-schematic-tab="scene"]`) на рабочих шагах, ракурсы —
+ * `[data-angle]` (Спереди · Слева · Справа · Сверху · Общий вид),
+ * слой размеров — по кнопке `[data-dims-toggle]` и по умолчанию выключен
+ * (ловушка 324). Прежняя версия искала вкладку «3D» на «Результате» и
+ * кнопки `data-scene-view` — их нет со слоя 32, и она падала на первом же
+ * нажатии.
+ *
+ * Нулевой селектор — падение с названием, а не пропуск.
  *
  * Инструмент глазной проверки, в `verify` не входит.
  */
@@ -44,48 +55,90 @@ const server = spawn('npx', ['next', 'start', '-p', String(PORT)], {
 });
 
 let failures = 0;
+let passes = 0;
 const ok = (name, pass, detail = '') => {
-  console.log(`${pass ? '  ok  ' : '  ПЛОХО'} ${name}${detail ? ` — ${detail}` : ''}`);
-  if (!pass) failures += 1;
+  console.log(`${pass ? '  ok  ' : '  FAIL'} ${name}${detail ? ` — ${detail}` : ''}`);
+  if (pass) passes += 1;
+  else failures += 1;
 };
 
-async function pickView(page, view) {
-  // Кнопки вида ищем по атрибуту: подпись «Как чертёж» есть и во вкладках
-  // результата, и выбор по тексту увёл бы проверку на другой экран.
-  await page.locator(`button[data-scene-view="${view}"]`).first().click();
-  // Перелёт длится 600 мс; ждём с запасом на софтверный WebGL.
-  await sleep(1400);
+async function until(read, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await read()) return true;
+    await sleep(250);
+  }
+  return false;
+}
+
+/** Нажать ровно одну кнопку; нет её — падение с названием. */
+async function press(page, selector, what) {
+  const count = await page.locator(selector).count();
+  if (count !== 1) {
+    ok(what, false, `НУЛЕВОЙ СЕЛЕКТОР: ${selector} — найдено ${count}`);
+    return false;
+  }
+  await page.locator(selector).click();
+  return true;
+}
+
+async function toStep(page, title) {
+  const button = page.locator(`nav[aria-label="Шаги работы"] button[aria-label="${title}"]`);
+  await button.click({ timeout: 30_000 });
+  const opened = await until(async () => (await button.getAttribute('aria-current')) === 'step', 15_000);
+  if (!opened) throw new Error(`шаг «${title}» не открылся`);
+  await sleep(600);
 }
 
 async function main() {
-  const browser = await chromium.launch();
+  let up = false;
+  for (let i = 0; i < 120 && !up; i += 1) {
+    try {
+      up = (await fetch(BASE)).ok;
+    } catch {
+      /* поднимается */
+    }
+    if (!up) await sleep(1000);
+  }
+  if (!up) throw new Error(`сервер на ${BASE} не поднялся за 120 с`);
+
+  const browser = await chromium.launch({
+    args: ['--enable-unsafe-swiftshader', '--use-angle=swiftshader', '--ignore-gpu-blocklist'],
+  });
   const page = await browser.newPage({ viewport: { width: 1440, height: 960 } });
 
-  for (let i = 0; i < 60; i += 1) {
-    try {
-      const res = await fetch(BASE);
-      if (res.ok || res.status < 500) break;
-    } catch {
-      await sleep(1000);
-    }
-  }
-
   await page.goto(`${BASE}/demo`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
-  await sleep(3500);
-  await page.getByRole('button', { name: /Результат/ }).first().click({ timeout: 90_000 });
-  await sleep(1200);
-  await page.getByRole('button', { name: '3D', exact: true }).first().click();
+  const ready = await until(
+    async () => (await page.locator('nav[aria-label="Шаги работы"] button').count()) > 0,
+    120_000,
+  );
+  if (!ready) throw new Error('полоса шагов не появилась за 120 с');
+
+  await toStep(page, 'Раскладка');
+  if (!(await press(page, '[data-schematic-tab="scene"]', 'вкладка «3D» рядом со схемой'))) return finish(browser);
+  const scene = await until(async () => (await page.locator('[data-scene] canvas').count()) > 0, 30_000);
+  ok('сцена смонтирована', scene);
   await sleep(2500);
 
-  /* ── 1. Размеры совпадают с мебелью ── */
-  await pickView(page, 'elevation');
+  /* ── 1. «Спереди»: размеры лежат на мебели, камера — фасад ── */
+  if (!(await press(page, '[data-angle="elevation"]', 'ракурс «Спереди»'))) return finish(browser);
+  await sleep(1800);
+  ok(
+    'слой размеров по умолчанию выключен',
+    (await page.locator('[data-dim-layer]').count()) === 0 ||
+      (await page.locator('[data-dim-layer]').getAttribute('aria-hidden')) === 'true',
+    `слоёв ${await page.locator('[data-dim-layer]').count()}`,
+  );
+  if (!(await press(page, '[data-dims-toggle]', 'кнопка «Размеры»'))) return finish(browser);
+  await until(async () => (await page.locator('[data-dim-sheet]').count()) === 1, 10_000);
+  await sleep(800);
   await page.screenshot({ path: `${OUT}/elevation.png` });
 
   const aligned = await page.evaluate(() => {
     const w = window;
     const sheet = document.querySelector('[data-dim-sheet]');
-    if (!sheet) return { error: 'слоя размеров нет в DOM' };
-    if (!w.__mwRunBox) return { error: 'сцена не отдаёт габарит ряда' };
+    if (!sheet) return { error: 'НУЛЕВОЙ СЕЛЕКТОР: слоя размеров нет в DOM' };
+    if (!w.__mwRunBox) return { error: 'сцена не отдаёт габарит ряда (__mwRunBox)' };
 
     const box = w.__mwRunBox();
     if (!box) return { error: 'габарит ряда пустой' };
@@ -102,11 +155,12 @@ async function main() {
       dxRight: Math.round(drawRight - box.right),
       dyFloor: Math.round(floor - box.bottom),
       opacity: Number(getComputedStyle(sheet.parentElement).opacity),
+      labels: sheet.querySelectorAll('text').length,
     };
   });
 
   /*
-   * Вид «как чертёж» обязан быть НАСТОЯЩИМ фасадом. OrbitControls
+   * Вид «Спереди» обязан быть НАСТОЯЩИМ фасадом. OrbitControls
    * подхватывают активную камеру и двигают её даже выключенными — камера
    * уезжала на четверть метра вверх и наклонялась на полтора градуса.
    * Глазами это неотличимо от фасада, числом — сразу видно.
@@ -118,17 +172,16 @@ async function main() {
     return {
       type: box ? box.cameraType : null,
       tilt: box ? Math.max(...box.cameraRot.map((v) => Math.abs(v))) : null,
-      driftPx:
-        fresh && layer ? Math.abs(fresh.originY - Number(layer.dataset.originY)) : null,
+      driftPx: fresh && layer ? Math.abs(fresh.originY - Number(layer.dataset.originY)) : null,
     };
   });
 
-  ok('вид «как чертёж» снят ортокамерой', camera.type === 'OrthographicCamera', String(camera.type));
+  ok('ракурс «Спереди» снят ортокамерой', camera.type === 'OrthographicCamera', String(camera.type));
   ok('камера не наклонена', camera.tilt !== null && camera.tilt < 0.001, `наклон ${camera.tilt}`);
   ok(
     'слой знает то же, что сцена',
     camera.driftPx !== null && camera.driftPx < 0.5,
-    `расхождение ${camera.driftPx?.toFixed?.(2)} px`,
+    `расхождение ${camera.driftPx === null ? '—' : camera.driftPx.toFixed(2)} px`,
   );
 
   if (aligned.error) {
@@ -137,7 +190,7 @@ async function main() {
     console.log(
       `  расхождение: слева ${aligned.dxLeft} px, справа ${aligned.dxRight} px, пол ${aligned.dyFloor} px`,
     );
-    ok('слой размеров видим', aligned.opacity > 0.9, `opacity ${aligned.opacity}`);
+    ok('слой размеров видим и с подписями', aligned.opacity > 0.9 && aligned.labels > 0, `opacity ${aligned.opacity}, подписей ${aligned.labels}`);
     ok('левый край цепочки на мебели', Math.abs(aligned.dxLeft) <= 1, `${aligned.dxLeft} px`);
     ok('правый край цепочки на мебели', Math.abs(aligned.dxRight) <= 1, `${aligned.dxRight} px`);
     ok('пол чертежа на полу сцены', Math.abs(aligned.dyFloor) <= 1, `${aligned.dyFloor} px`);
@@ -147,31 +200,43 @@ async function main() {
    * ── 2. Камера действительно переезжает ──
    *
    * ПЛАВНОСТЬ здесь не меряется и мериться не может: в headless нет GPU,
-   * софтверный растеризатор даёт 1–2 кадра в секунду (ловушка 97), и любой
-   * перелёт укладывается в один кадр. Поэтому проверяется факт переезда:
-   * ряд после переключения виден иначе, чем на чертеже.
+   * софтверный растеризатор даёт 1–2 кадра в секунду (ловушка 97). Поэтому
+   * проверяется факт переезда: ряд на общем виде виден иначе, чем спереди.
    */
   const before = await page.evaluate(() => window.__mwRunBox?.() ?? null);
-  await pickView(page, 'perspective');
+  if (!(await press(page, '[data-angle="iso"]', 'ракурс «Общий вид»'))) return finish(browser);
+  await sleep(2200);
   const after = await page.evaluate(() => window.__mwRunBox?.() ?? null);
 
   ok(
-    'камера переезжает на объём',
-    Boolean(before && after) && Math.abs(after.left - before.left) > 10,
-    before && after ? `левый край ${Math.round(before.left)} → ${Math.round(after.left)} px` : 'нет габарита',
+    'камера переезжает на общий вид',
+    Boolean(before && after) && Math.abs(after.left - before.left) > 10 && after.cameraType === 'PerspectiveCamera',
+    before && after
+      ? `левый край ${Math.round(before.left)} → ${Math.round(after.left)} px, камера ${after.cameraType}`
+      : 'нет габарита',
+  );
+  await page.screenshot({ path: `${OUT}/general.png` });
+
+  /*
+   * ── 3. На перспективе цепи нет вовсе ──
+   *
+   * Слой убирается из разметки, а не гасится прозрачностью: проекции на
+   * перспективе нет, и размер по горизонтали на повёрнутой мебели мерил
+   * бы не ту длину (ловушка 309). Кнопка при этом остаётся включённой.
+   */
+  ok(
+    'на перспективе слоя размеров нет вовсе, хотя кнопка включена',
+    (await page.locator('[data-dim-layer]').count()) === 0 &&
+      (await page.locator('[data-dims-toggle]').getAttribute('aria-pressed')) === 'true',
+    `слоёв ${await page.locator('[data-dim-layer]').count()}, кнопка ${await page.locator('[data-dims-toggle]').getAttribute('aria-pressed')}`,
   );
 
-  await sleep(400);
-  await page.screenshot({ path: `${OUT}/perspective.png` });
+  /* Вернулись на «Спереди» — цепь снова на мебели. */
+  await press(page, '[data-angle="elevation"]', 'снова «Спереди»');
+  const back = await until(async () => (await page.locator('[data-dim-sheet]').count()) === 1, 10_000);
+  ok('вернулись на «Спереди» — цепь снова на экране', back);
 
-  const hiddenLayer = await page.evaluate(() => {
-    const sheet = document.querySelector('[data-dim-layer]');
-    // Слой остаётся в разметке и гаснет: пропасть рывком он не должен.
-    return sheet ? Number(getComputedStyle(sheet).opacity) : -1;
-  });
-  ok('в объёме размеры гаснут, а не исчезают', hiddenLayer === 0, `opacity ${hiddenLayer}`);
-
-  /* ── 3. Частота кадров ── */
+  /* ── 4. Частота кадров — числом, без порога (ловушка 97) ── */
   const fps = await page.evaluate(async () => {
     let frames = 0;
     const tick = () => {
@@ -182,23 +247,33 @@ async function main() {
     await new Promise((r) => setTimeout(r, 2000));
     return Math.round(frames / 2);
   });
-  console.log(`  кадров в секунду после перехода: ${fps}`);
+  console.log(`  кадров страницы в секунду: ${fps}`);
 
-  /* ── 4. Вид сверху ── */
-  await pickView(page, 'plan');
+  /* ── 5. Вид сверху — снимок для глаз ── */
+  await press(page, '[data-angle="plan"]', 'ракурс «Сверху»');
+  await sleep(1800);
   await page.screenshot({ path: `${OUT}/plan.png` });
 
+  return finish(browser);
+}
+
+async function finish(browser) {
   await browser.close();
-  console.log(failures === 0 ? '\nвсё сходится' : `\nпровалов: ${failures}`);
+  console.log(`\n${passes} passed, ${failures} failed`);
   process.exitCode = failures === 0 ? 0 : 1;
 }
 
 main()
   .catch((error) => {
-    console.error(error);
+    console.error(`  FAIL ${error instanceof Error ? error.message : error}`);
     process.exitCode = 1;
   })
   .finally(() => {
     server.kill();
+    try {
+      execSync(`taskkill /PID ${server.pid} /T /F`, { stdio: 'ignore' });
+    } catch {
+      /* уже остановлен */
+    }
     freePort(PORT);
   });

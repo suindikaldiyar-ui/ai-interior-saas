@@ -20,7 +20,7 @@ type FrontReadout = {
   map: boolean;
   realSizeM: [number, number] | null;
 };
-import Cabinet3D from './Cabinet3D';
+import Cabinet3D, { APPLIANCE_GLASS_NAME } from './Cabinet3D';
 import RoomScene from './RoomScene';
 import type { PathTraceSource } from './pathTrace';
 import { movingParts } from './motion';
@@ -711,6 +711,7 @@ function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
         frontColors: string[];
         opaque: number;
         transparent: number;
+        applianceGlass: number;
         edgeDrift: number | null;
         edgePoints: number;
         boxes: Record<string, number>;
@@ -871,6 +872,12 @@ function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
     w.__mwCadLook = () => {
       let opaque = 0;
       let transparent = 0;
+      /**
+       * Стекло дверцы ПРИБОРА (духовки, СВЧ) — лицо техники, а не мебель:
+       * сквозь него видно нишу прибора, а не стену и не соседний модуль.
+       * Считается отдельно и называется числом, а не пропадает из счёта.
+       */
+      let applianceGlass = 0;
       const seen = new Set<string>();
 
       /*
@@ -892,6 +899,10 @@ function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
          * полу, в прозрачность мебели она не входит.
          */
         if (!mesh.isMesh || mesh.visible === false || inRoom(mesh) || mesh.userData?.shade === true) return;
+        if (mesh.name === APPLIANCE_GLASS_NAME) {
+          applianceGlass += 1;
+          return;
+        }
         const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
         for (const material of materials) {
           if (!material) continue;
@@ -912,13 +923,7 @@ function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
       });
 
       const bounds = sceneBounds(rows);
-      const lines: THREE.LineSegments[] = [];
-      scene.traverse((object) => {
-        const line = object as THREE.LineSegments;
-        if (line.isLineSegments) lines.push(line);
-      });
-
-      const edges = lines[0];
+      const edges = scene.getObjectByName(RUN_EDGES_NAME) as THREE.LineSegments | undefined;
       const sphere = edges ? edges.geometry.boundingSphere : null;
       const drift = sphere
         ? Math.hypot(
@@ -969,6 +974,7 @@ function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
         frontColors: Array.from(new Set(frontColors)).sort(),
         opaque,
         transparent,
+        applianceGlass,
         /** На сколько метров буфер рёбер разошёлся с мебелью. */
         edgeDrift: drift === null ? null : Math.round(drift * 1000) / 1000,
         edgePoints: edges ? edges.geometry.getAttribute('position').count : 0,
@@ -1265,6 +1271,9 @@ function rowCorners(rows: SceneRow[], inside = true): [number, number, number][]
  * читаться мебелью, а не проволокой. В «Каркасе» — всё, включая полки и
  * короба ящиков: там их и смотрят.
  */
+/** Имя буфера рёбер мебели: по нему его находит приёмка. */
+const RUN_EDGES_NAME = 'run-edges';
+
 function RunEdges({ rows, inside }: { rows: SceneRow[]; inside: boolean }) {
   const geometry = useMemo(() => {
     const points: number[] = [];
@@ -1290,7 +1299,12 @@ function RunEdges({ rows, inside }: { rows: SceneRow[]; inside: boolean }) {
   }, [rows, inside]);
 
   return (
-    <lineSegments geometry={geometry} renderOrder={2}>
+    /*
+     * Имя — для приёмки: со слоя 53 в сцене есть и линии КОМНАТЫ (контур
+     * незамеренного выноса ригеля), и «первый буфер линий в сцене» перестал
+     * быть рёбрами мебели — мерилось расхождение контура балки с гарнитуром.
+     */
+    <lineSegments name={RUN_EDGES_NAME} geometry={geometry} renderOrder={2}>
       {/*
         * Толщина линии в WebGL почти везде игнорируется — разницу держим
         * цветом и прозрачностью, а не `linewidth`, на который нельзя

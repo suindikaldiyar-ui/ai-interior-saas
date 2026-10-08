@@ -195,6 +195,7 @@ export default function SolutionGallery({
               <button
                 key={card.template.id}
                 type="button"
+                data-solution={card.template.id}
                 onClick={() => onPick(card.template)}
                 aria-pressed={active}
                 className={`mw-panel-flat text-left ${active ? 'ring-inset ring-2 ring-tape' : ''}`}

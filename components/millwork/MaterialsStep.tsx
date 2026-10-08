@@ -115,6 +115,7 @@ export default function MaterialsStep({
         type="file"
         accept="image/*"
         hidden
+        data-room-photo-input
         onChange={(e) => {
           void addPhoto(e.target.files?.[0]);
           e.target.value = '';

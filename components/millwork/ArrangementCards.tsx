@@ -2,6 +2,7 @@
 
 import { formatMoney } from '@/lib/millwork/estimate';
 import { APPLIANCE_SLOTS } from '@/lib/millwork/modules';
+import type { ArrangementsState } from '@/lib/millwork/screen';
 import type { Arrangement } from '@/lib/millwork/variants';
 import type { ApplianceKind, Module, Run } from '@/types/millwork';
 
@@ -16,7 +17,12 @@ import type { ApplianceKind, Module, Run } from '@/types/millwork';
  */
 
 type Props = {
-  arrangements: Arrangement[];
+  /**
+   * Компоновки или отказ их расчёта. «Выбирать не из чего» (меньше двух)
+   * и «не посчиталось» — разные ответы: первое не рисуется, второе
+   * говорит словами (`arrangementsState`).
+   */
+  state: ArrangementsState;
   /** Ключ варианта, который сейчас на экране. Null — состав уже правили. */
   activeKey: string | null;
   onSelect: (arrangement: Arrangement) => void;
@@ -110,7 +116,16 @@ function composition(run: Run): string {
   return parts.join(' · ');
 }
 
-export default function ArrangementCards({ arrangements, activeKey, onSelect }: Props) {
+export default function ArrangementCards({ state, activeKey, onSelect }: Props) {
+  if (state.state === 'failed') {
+    return (
+      <div data-arrangements-error>
+        <span className="text-[15px] font-medium">Компоновка</span>
+        <p className="mt-1 text-[13px] leading-snug text-alert">{state.words}</p>
+      </div>
+    );
+  }
+  const { arrangements } = state;
   if (arrangements.length < 2) return null;
 
   return (

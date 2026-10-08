@@ -203,7 +203,13 @@ async function run(browser, { width, height, theme }) {
   await sleep(600);
   await shot(page, `measure-${tag}`);
 
-  await page.goto(`${BASE}/demo`, { waitUntil: 'networkidle' });
+  /*
+   * Готовность — по экрану, а не по «сеть затихла»: сцена берёт HDRI-пресет
+   * drei с raw.githubusercontent.com (`RoomCanvas.tsx`, слой 21), и при
+   * медленном GitHub запрос висит минутами — `networkidle` не наступает.
+   */
+  await page.goto(`${BASE}/demo`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+  await page.locator('nav[aria-label="Шаги работы"] button').first().waitFor({ timeout: 120_000 });
   await sleep(900);
 
   /*

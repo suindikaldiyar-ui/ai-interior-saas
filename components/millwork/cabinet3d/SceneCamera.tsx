@@ -133,7 +133,19 @@ export default function SceneCamera({ room, view, runWidthM, focusM, general, on
   const sizeForAspect = useThree((state) => state.size);
   const aspect = Math.round((sizeForAspect.width / Math.max(1, sizeForAspect.height)) * 100) / 100;
 
-  const perspective = useThree((state) => state.camera);
+  /*
+   * ПЕРСПЕКТИВНАЯ КАМЕРА — ТА, С КОТОРОЙ СОЗДАН КАНВАС, А НЕ «ТЕКУЩАЯ».
+   *
+   * Здесь стояло `useThree((state) => state.camera)` — это АКТИВНАЯ
+   * камера. По прибытии на вид-чертёж активной становится ортокамера, и
+   * следующий перелёт на общий вид шёл уже ею: «Общий вид» после
+   * «Спереди» рисовался ортокамерой, хотя слой 53 сделал его
+   * перспективой. Помним последнюю перспективную камеру, которую видели.
+   */
+  const active = useThree((state) => state.camera);
+  const perspectiveRef = useRef<THREE.Camera | null>(null);
+  if ((active as THREE.PerspectiveCamera).isPerspectiveCamera) perspectiveRef.current = active;
+  const perspective = perspectiveRef.current ?? active;
   const controls = useThree((state) => state.controls) as OrbitLike | null;
   const invalidate = useThree((state) => state.invalidate);
   const size = useThree((state) => state.size);
@@ -157,6 +169,9 @@ export default function SceneCamera({ room, view, runWidthM, focusM, general, on
    */
   const orthoPose = useRef<{ position: THREE.Vector3; target: THREE.Vector3 } | null>(null);
 
+  /** Последняя проекция, отправленная наверх: повтор не шлём. */
+  const reported = useRef<OrthoProjection | null>(null);
+
   /** Что анимируем: откуда, куда и сколько прошло. */
   const move = useRef<{
     from: THREE.Vector3;
@@ -171,6 +186,12 @@ export default function SceneCamera({ room, view, runWidthM, focusM, general, on
   useEffect(() => {
     const ortho = orthoRef.current;
     if (!ortho || !isOrthographic(view)) {
+      /*
+       * Проекцию отозвали — и забыли, что отправляли. Иначе при возврате на
+       * тот же вид-чертёж она совпадала с «уже отправленной», не уходила
+       * наверх, и включённый слой размеров не возвращался вовсе.
+       */
+      reported.current = null;
       onFraming?.(null);
       return;
     }
@@ -207,8 +228,6 @@ export default function SceneCamera({ room, view, runWidthM, focusM, general, on
    * показала расхождение в три пикселя — цепочка висела над полом. В кадре
    * и матрица свежая, и размер настоящий.
    */
-  const reported = useRef<OrthoProjection | null>(null);
-
   const publishProjection = () => {
     const ortho = orthoRef.current;
     const pose = orthoPose.current;

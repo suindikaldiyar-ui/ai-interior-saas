@@ -65,7 +65,7 @@ import {
   type CornerCard,
 } from '@/lib/millwork/cornerChange';
 
-import { compressPhoto } from '@/lib/photo';
+import { compressPhoto, photoToFile } from '@/lib/photo';
 import FrontSwatchCards from './FrontSwatchCards';
 import {
   RUN_DESIGNS,
@@ -116,7 +116,7 @@ import {
 } from '@/lib/millwork/materialCatalog';
 import { metaFinishPrices } from '@/lib/millwork/materialCollection';
 import { MATERIAL_FINISHES } from '@/lib/millwork/materialFinishes';
-import { screenState } from '@/lib/millwork/screen';
+import { screenState, arrangementsState, type ArrangementsState } from '@/lib/millwork/screen';
 import {
   keepSelection,
   reorderTarget,
@@ -349,6 +349,16 @@ export type WorkspaceProps = {
 /** Пауза после последнего изменения перед записью в базу. */
 const AUTOSAVE_DELAY_MS = 2000;
 
+/** «1 модуль», «2 модуля», «5 модулей» — для слов на экране. */
+function modulesWord(count: number): string {
+  const tens = count % 100;
+  const ones = count % 10;
+  if (tens >= 11 && tens <= 14) return 'модулей';
+  if (ones === 1) return 'модуль';
+  if (ones >= 2 && ones <= 4) return 'модуля';
+  return 'модулей';
+}
+
 export default function Workspace(props: WorkspaceProps) {
   /*
    * Комплектация одна (см. SINGLE_VARIANT). Ключ остаётся: он держит
@@ -498,6 +508,19 @@ export default function Workspace(props: WorkspaceProps) {
     freeModules: number;
   } | null>(null);
 
+  /**
+   * Решение, выбранное поверх РУЧНОЙ сборки, — до ответа человека.
+   *
+   * Готовое решение считает раскладку заново, и от собранного руками ряда
+   * не остаётся ничего. Поэтому сначала вопрос словами, и только «Заменить»
+   * меняет стену; «Оставить» не трогает ни модуля.
+   */
+  const [pendingSolution, setPendingSolution] = useState<RunTemplate | null>(null);
+  /* Ушли с шага — вопроса нет, а сборка не тронута. */
+  useEffect(() => {
+    setPendingSolution(null);
+  }, [step]);
+
   /*
    * Правки состава поверх шаблона: техника, колонна, встройка, витрина и
    * высота верхнего ряда. Шаблон задаёт умолчания, а замерщик правит их
@@ -601,6 +624,18 @@ export default function Workspace(props: WorkspaceProps) {
   const [kitchenItemId, setKitchenItemId] = useState<string | null>(null);
   // Снимок можно добавить и позже, прямо из вкладки рендера.
   const [roomPhoto, setRoomPhoto] = useState<string | null>(props.roomPhoto ?? null);
+  /**
+   * Записано ли фото С ОБЪЕКТОМ. Снимок на экране и снимок в Storage —
+   * разные вещи: пока запись не подтвердил сервер, после перезагрузки
+   * его не будет, и это сказано словами.
+   */
+  const [photoSave, setPhotoSave] = useState<
+    { state: 'idle' | 'saving' | 'saved' } | { state: 'error'; words: string }
+  >({ state: 'idle' });
+  /** Записи идут по очереди: последнее выбранное фото и остаётся у объекта. */
+  const photoQueue = useRef<Promise<void>>(Promise.resolve());
+  /** Номер последней записи: состояние на экране — только её. */
+  const photoSeq = useRef(0);
   const [zoom, setZoom] = useState<string | null>(null);
   const [survey, setSurvey] = useState<Survey | null>(
     props.initialState?.survey ?? props.survey ?? null,
@@ -977,11 +1012,15 @@ export default function Workspace(props: WorkspaceProps) {
    * Компоновки: две-три расстановки ОДНОЙ кухни из одного замера. Считаются
    * от требований без ручных позиций — иначе карточки поплыли бы вслед за
    * выбранным вариантом и перестали быть выбором.
+   *
+   * Отказ расчёта — не пустой список: здесь стоял `catch { return [] }`, и
+   * упавший расчёт выглядел как «выбирать не из чего». Теперь он словами на
+   * месте карточек, а причина — в лог (`arrangementsState`).
    */
-  const arrangements = useMemo(() => {
-    if (zone !== 'kitchen') return [];
-    try {
-      return buildArrangements({
+  const arrangements = useMemo<ArrangementsState>(() => {
+    if (zone !== 'kitchen') return { state: 'ready', arrangements: [] };
+    return arrangementsState(() =>
+      buildArrangements({
         lengthMm: input.lengthMm,
         ceilingHeightMm: input.ceilingHeightMm,
         requirements: arrangementBase,
@@ -990,11 +1029,8 @@ export default function Workspace(props: WorkspaceProps) {
         rates: input.rates,
         cornerAt: input.cornerAt,
         disabledKeys: disabled[variantKey],
-      });
-    } catch {
-      // Компоновки — подсказка, а не расчёт: их отсутствие ничего не ломает.
-      return [];
-    }
+      }),
+    );
   }, [zone, input, arrangementBase, disabled, variantKey]);
 
   /*
@@ -1491,6 +1527,78 @@ export default function Workspace(props: WorkspaceProps) {
 
     setMoveNotice(notes.length > 0 ? notes.join(' ') : null);
   };
+
+  /**
+   * ФОТО ПОМЕЩЕНИЯ — С ОБЪЕКТОМ, А НЕ В ПАМЯТИ ВКЛАДКИ.
+   *
+   * Снимок, добавленный здесь, лежал только в состоянии экрана: в
+   * `MillworkState` его нет, в Storage он не уходил, и после перезагрузки
+   * объект открывался без фото — клиент видел «настроение, а не свою
+   * квартиру». Теперь оба места добавления зовут эту функцию: файл уходит
+   * в папку объекта, объект указывает на него, прежний главный снимок
+   * удаляется — как прежний рендер по чертежу (слой 54). «Убрать» снимает
+   * снимок с объекта тем же путём.
+   *
+   * Без объекта (демонстрация, замер до сохранения) записывать некуда —
+   * снимок остаётся на экране, как и раньше.
+   */
+  const changeRoomPhoto = useCallback(
+    (next: string | null) => {
+      setRoomPhoto(next);
+      const projectId = props.projectId;
+      if (!projectId) return;
+
+      setPhotoSave({ state: 'saving' });
+      const seq = ++photoSeq.current;
+      const show = (state: Parameters<typeof setPhotoSave>[0]) => {
+        if (seq === photoSeq.current) setPhotoSave(state);
+      };
+      photoQueue.current = photoQueue.current.then(async () => {
+        try {
+          const response = next
+            ? await fetch('/api/projects/photo', {
+                method: 'POST',
+                body: (() => {
+                  const form = new FormData();
+                  form.append('projectId', projectId);
+                  form.append('replace', '1');
+                  form.append('file', photoToFile({ id: 'room', dataUrl: next, name: 'room.jpg', sizeKb: 0 }));
+                  return form;
+                })(),
+              })
+            : await fetch('/api/projects/photo', {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ projectId }),
+              });
+          const body = (await response.json().catch(() => null)) as
+            | { error?: string; warning?: string | null }
+            | null;
+          if (!response.ok) {
+            console.error('Фото помещения не записалось', response.status, body?.error);
+            show({
+              state: 'error',
+              words:
+                `Фото не сохранилось с объектом: ${body?.error ?? `сервер ответил ${response.status}`}. ` +
+                'После перезагрузки его не будет — добавьте фото ещё раз.',
+            });
+            return;
+          }
+          if (body?.warning) console.error('Фото помещения: уборка прежних снимков', body.warning);
+          show({ state: 'saved' });
+        } catch (error) {
+          console.error('Фото помещения не записалось', error);
+          show({
+            state: 'error',
+            words:
+              'Фото не сохранилось с объектом: запрос не дошёл до сервера. После перезагрузки ' +
+              'его не будет — добавьте фото ещё раз, когда появится связь.',
+          });
+        }
+      });
+    },
+    [props.projectId],
+  );
 
   const resetAnchors = () => {
     dirty.current = true;
@@ -2237,19 +2345,28 @@ export default function Workspace(props: WorkspaceProps) {
 
 
   /**
-   * ВЫБОР ГОТОВОГО РЕШЕНИЯ.
+   * ВЫБОР ГОТОВОГО РЕШЕНИЯ — ОДИН ПУТЬ НА ШАГ «РЕШЕНИЕ» И НА ГАЛЕРЕЮ.
    *
    * Решение — это набор секций и опций, а НЕ своя раскладка: ширины
    * по-прежнему считает `buildRun` по длине стены. Иначе макет на карточке
    * разошёлся бы с чертежом после выбора.
    *
+   * Путей было два, и сбрасывали они разное. Галерея на «Результате»
+   * снимала правки рядов, но оставляла СВОБОДНУЮ сборку — а свободный ряд
+   * без правок `buildRun` собирает пустым: стена оставалась пустой, итог
+   * 0 ₸, а строка на экране говорила «решение собрано». Шаг «Решение»
+   * свободную сборку снимал, но заменял собранное руками сразу, без
+   * вопроса. Теперь путь один: ручная сборка заменяется только после
+   * «Заменить», снимок кладётся ДО замены, режим — по шаблону.
+   *
    * Ручная расстановка и варианты модулей сбрасываются: в новом решении
    * на этих местах стоит другая мебель. Говорим об этом словами — молча
    * потерянная правка читается как поломка.
    */
-  const pickSolution = (template: RunTemplate) => {
+  const applySolution = (template: RunTemplate) => {
     const hadManual = Object.keys(manualAnchors).length > 0;
     const hadEdits = Object.keys(editedRuns).length > 0;
+    const freeModules = freeMode ? active.run.modules.length : 0;
 
     setPrevious({
       templateId,
@@ -2258,10 +2375,12 @@ export default function Workspace(props: WorkspaceProps) {
       manualAnchors,
       editedRuns,
       freeMode,
-      freeModules: freeMode ? active.run.modules.length : 0,
+      freeModules,
     });
 
     dirty.current = true;
+    setPendingSolution(null);
+    setFreeMode(false);
     setTemplateId(template.id);
     setComposition({});
     setManualAnchors({});
@@ -2269,13 +2388,60 @@ export default function Workspace(props: WorkspaceProps) {
     setSelectedId(null);
 
     const notes = [
-      `Решение «${template.name}» собрано на стене ${input.lengthMm} мм.`,
+      freeModules > 0
+        ? `Ряд, собранный руками (${freeModules} ${modulesWord(freeModules)}), заменён решением «${template.name}» на стене ${input.lengthMm} мм. ` +
+          'Вернуть его — кнопкой «Вернуть собранный ряд» на шаге «Решение».'
+        : `Решение «${template.name}» собрано на стене ${input.lengthMm} мм.`,
       hadManual ? 'Ручная расстановка сброшена — это другое решение, а не правка текущего.' : null,
-      hadEdits ? 'Варианты модулей сброшены: на этих местах теперь другая мебель.' : null,
+      hadEdits && freeModules === 0
+        ? 'Варианты модулей сброшены: на этих местах теперь другая мебель.'
+        : null,
     ].filter(Boolean);
 
     setMoveNotice(notes.join(' '));
+    // С шага «Решение» дальше — раскладка; галерея остаётся у чертежа.
+    if (step === 'template') setStep('layout');
   };
+
+  /** Нажата карточка решения — на шаге «Решение» или в галерее. */
+  const chooseSolution = (template: RunTemplate) => {
+    if (freeMode && active.run.modules.length > 0) {
+      setPendingSolution(template);
+      return;
+    }
+    applySolution(template);
+  };
+
+  /** Вопрос перед заменой ручной сборки — одна разметка на оба места. */
+  const solutionQuestion = pendingSolution ? (
+    <div className="mb-4 rounded-[var(--r-control)] bg-alert/10 p-3" data-solution-confirm>
+      <p className="text-[15px] font-medium">Заменить вашу сборку?</p>
+      <p className="mt-1 text-[13px] leading-snug text-graphiteMw">
+        Ряд, собранный руками ({active.run.modules.length} {modulesWord(active.run.modules.length)}),
+        заменит решение «{pendingSolution.name}»: его раскладку считает расчёт по длине стены, и
+        от вашей сборки на стене не останется ничего. Вернуть её можно будет кнопкой «Вернуть
+        собранный ряд» на шаге «Решение».
+      </p>
+      <div className="mt-2 flex flex-wrap gap-2">
+        <button
+          type="button"
+          data-solution-replace
+          onClick={() => applySolution(pendingSolution)}
+          className="mw-btn mw-btn-primary"
+        >
+          Заменить
+        </button>
+        <button
+          type="button"
+          data-solution-keep
+          onClick={() => setPendingSolution(null)}
+          className="mw-btn mw-btn-ghost"
+        >
+          Оставить мою сборку
+        </button>
+      </div>
+    </div>
+  ) : null;
 
   /**
    * СВОЁ РЕШЕНИЕ КОМПАНИИ.
@@ -2335,9 +2501,10 @@ export default function Workspace(props: WorkspaceProps) {
     setManualAnchors(previous.manualAnchors);
     setEditedRuns(previous.editedRuns);
     setSelectedId(null);
+    setPendingSolution(null);
     setMoveNotice(
       previous.freeModules > 0
-        ? `Вернули ряд, собранный руками: ${previous.freeModules} модулей.`
+        ? `Вернули ряд, собранный руками: ${previous.freeModules} ${modulesWord(previous.freeModules)}.`
         : 'Вернули то, что было до выбора решения.',
     );
     setPrevious(null);
@@ -3184,44 +3351,14 @@ export default function Workspace(props: WorkspaceProps) {
               </p>
             )}
 
+            {solutionQuestion}
+
             <TemplatePicker
               lengthMm={input.lengthMm}
               zone={zone}
               orgTemplates={props.orgTemplates}
               selectedId={templateId}
-              onSelect={(t: RunTemplate) => {
-                /*
-                 * СОБРАННЫЙ РУКАМИ РЯД НЕ ИСЧЕЗАЕТ МОЛЧА.
-                 *
-                 * Человек собирал его двадцать минут, а готовое решение
-                 * считает раскладку заново — от ручной сборки не остаётся
-                 * ничего. Один клик не должен стоить этой работы, поэтому
-                 * снимок кладётся ДО замены, а рядом встаёт «вернуть».
-                 */
-                if (freeMode && active.run.modules.length > 0) {
-                  setPrevious({
-                    templateId,
-                    name: t.name,
-                    composition,
-                    manualAnchors,
-                    editedRuns,
-                    freeMode: true,
-                    freeModules: active.run.modules.length,
-                  });
-                  setMoveNotice(
-                    `Ряд, собранный руками (${active.run.modules.length} модулей), ` +
-                      `заменён решением «${t.name}». Вернуть — кнопкой на шаге «Шаблон».`,
-                  );
-                }
-
-                dirty.current = true;
-                setFreeMode(false);
-                setTemplateId(t.id);
-                // Правки предыдущего состава к новому шаблону не относятся.
-                setEditedRuns({});
-                setComposition({});
-                setStep('layout');
-              }}
+              onSelect={(t: RunTemplate) => chooseSolution(t)}
             />
             {!templateId && suggested && (
               <p className="mt-4 text-[13px] text-graphiteMw">
@@ -3632,7 +3769,11 @@ export default function Workspace(props: WorkspaceProps) {
                 * Как только фото есть, блок сворачивается в строку: место
                 * наверху дорогое, и держать там готовое дело незачем.
                 */}
-              <div className={`mb-4 ${onStep('photo')}`} data-photo-first>
+              <div
+                className={`mb-4 ${onStep('photo')}`}
+                data-photo-first
+                data-photo-save={photoSave.state}
+              >
                 {roomPhoto ? (
                   <button
                     type="button"
@@ -3661,6 +3802,7 @@ export default function Workspace(props: WorkspaceProps) {
                         type="file"
                         accept="image/*"
                         className="hidden"
+                        data-room-photo-input
                         onChange={async (event) => {
                           const file = event.target.files?.[0];
                           if (!file) return;
@@ -3668,11 +3810,24 @@ export default function Workspace(props: WorkspaceProps) {
                           // должны уезжать ни в Storage, ни в модель.
                           const compressed = await compressPhoto(file);
                           dirty.current = true;
-                          setRoomPhoto(compressed.dataUrl);
+                          changeRoomPhoto(compressed.dataUrl);
                         }}
                       />
                     </label>
                   </div>
+                )}
+                {/*
+                  * Снимок на экране и снимок с объектом — разные вещи:
+                  * пока сервер не подтвердил запись, это сказано, а не
+                  * сделан вид, что фото уже у объекта.
+                  */}
+                {photoSave.state === 'saving' && (
+                  <p className="mt-1 text-[13px] text-graphiteMw">Сохраняем фото с объектом…</p>
+                )}
+                {photoSave.state === 'error' && (
+                  <p className="mt-1 text-[13px] leading-snug text-alert" data-photo-error>
+                    {photoSave.words}
+                  </p>
                 )}
               </div>
 
@@ -3883,14 +4038,16 @@ export default function Workspace(props: WorkspaceProps) {
                 * Компоновки и материалы объекта — ниже состава: их трогают
                 * реже, чем варианты модуля, а место наверху дороже.
                 */}
-              {arrangements.length > 1 && (
+              {(arrangements.state === 'failed' || arrangements.arrangements.length > 1) && (
                 <div className={`mt-4 ${onStep('arrangements')}`}>
                   <ArrangementCards
-                    arrangements={arrangements}
+                    state={arrangements}
                     activeKey={
-                      arrangements.find(
-                        (a) => a.run.fingerprint === active.run.fingerprint,
-                      )?.key ?? null
+                      arrangements.state === 'ready'
+                        ? (arrangements.arrangements.find(
+                            (a) => a.run.fingerprint === active.run.fingerprint,
+                          )?.key ?? null)
+                        : null
                     }
                     onSelect={chooseArrangement}
                   />
@@ -3905,7 +4062,7 @@ export default function Workspace(props: WorkspaceProps) {
                   roomPhoto={roomPhoto}
                   onPhotoChange={(next) => {
                     dirty.current = true;
-                    setRoomPhoto(next);
+                    changeRoomPhoto(next);
                   }}
                   angle={renderAngle}
                   onAngleChange={setRenderAngle}
@@ -4136,6 +4293,7 @@ export default function Workspace(props: WorkspaceProps) {
               */}
             {resultView === 'facade' && (
               <div className="mt-4">
+                {solutionQuestion}
                 <SolutionGallery
                   zone={zone}
                   lengthMm={input.lengthMm}
@@ -4149,7 +4307,7 @@ export default function Workspace(props: WorkspaceProps) {
                   orgTemplates={props.orgTemplates}
                   currentFingerprint={active.run.fingerprint}
                   currentTotal={active.estimate.total}
-                  onPick={pickSolution}
+                  onPick={chooseSolution}
                   onUndo={undoSolution}
                   undoLabel={previous?.name ?? null}
                   onSaveOwn={props.projectId ? saveOwnSolution : undefined}

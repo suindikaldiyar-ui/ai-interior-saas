@@ -134,6 +134,12 @@ function isUpperSegment(run: Run, unit: Module): boolean {
   return run.upperSegments.some((segment) => segment.modules.some((m) => m.id === unit.id));
 }
 
+/**
+ * Имя пачки стекла дверец ПРИБОРОВ. Стекло это прозрачное, но мебелью не
+ * является — приёмка «сквозь мебель не видно» считает его отдельно.
+ */
+export const APPLIANCE_GLASS_NAME = 'appliance-glass';
+
 export default function Cabinet3D({
   run,
   production = DEFAULT_PRODUCTION,
@@ -726,7 +732,12 @@ export default function Cabinet3D({
       ))}
       <InstancedBoxes boxes={grouped.groups.metal} geometry={parts.box} material={parts.metal} />
       {/* Стекло дверцы прибора: по нему духовка узнаётся с трёх метров. */}
-      <InstancedBoxes boxes={grouped.groups.glass} geometry={parts.box} material={parts.glass} />
+      <InstancedBoxes
+        name={APPLIANCE_GLASS_NAME}
+        boxes={grouped.groups.glass}
+        geometry={parts.box}
+        material={parts.glass}
+      />
       <InstancedBoxes
         boxes={grouped.groups.appliance}
         geometry={parts.box}

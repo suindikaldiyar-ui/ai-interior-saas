@@ -194,7 +194,8 @@ import {
   wallMismatches,
 } from '../lib/millwork/walls';
 import { composeVariants, editedRunEstimate, workingWall, workspaceInput } from '../lib/millwork/workspace';
-import { screenState } from '../lib/millwork/screen';
+import { ARRANGEMENTS_FAILED, arrangementsState, screenState } from '../lib/millwork/screen';
+import ArrangementCards from '../components/millwork/ArrangementCards';
 import React from 'react';
 import MillingPicker from '../components/millwork/MillingPicker';
 import { useInteriorStore } from '../store/useInteriorStore';
@@ -2911,6 +2912,90 @@ console.log('\nКомпоновки');
   check(
     'и они не повторяют друг друга',
     new Set(long.map((a) => a.run.fingerprint)).size === long.length,
+  );
+}
+
+/* ──────────  Компоновки: отказ расчёта — словами, а не пустотой  ────────── */
+
+console.log('\nКомпоновки: отказ расчёта — словами, а не пустотой');
+{
+  /*
+   * Тем же путём, что экран: `arrangementsState` вокруг расчёта, затем
+   * `ArrangementCards` с этим состоянием — их же зовёт `Workspace`. Экран
+   * глушил любую ошибку (`catch { return [] }`), и упавший расчёт выглядел
+   * как «выбирать не из чего»: карточек нет, и почему — не сказано.
+   */
+  const logged: unknown[][] = [];
+  const realError = console.error;
+  console.error = (...args: unknown[]) => {
+    logged.push(args);
+  };
+  let broken: ReturnType<typeof arrangementsState>;
+  try {
+    broken = arrangementsState(() => {
+      throw new Error('проба: расчёт компоновок упал');
+    });
+  } finally {
+    console.error = realError;
+  }
+  const noop = () => undefined;
+  const brokenHtml = renderToStaticMarkup(
+    createElement(ArrangementCards, { state: broken, activeKey: null, onSelect: noop }),
+  );
+  const brokenText = brokenHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+
+  check(
+    'отказ расчёта — состояние «не посчиталось», а не пустой список',
+    broken.state === 'failed',
+    broken.state === 'ready' ? `«готово», карточек ${broken.arrangements.length}` : broken.state,
+  );
+  check(
+    'на месте карточек — слова',
+    brokenHtml.includes('data-arrangements-error') && brokenText.includes(ARRANGEMENTS_FAILED),
+    brokenText || 'ПУСТО: на экране ничего',
+  );
+  check(
+    'слова называют последствие, а не текст ошибки',
+    brokenText.length > 0 && !brokenText.includes('проба') && !/Error|stack/i.test(brokenText),
+    brokenText.slice(0, 120) || 'ПУСТО',
+  );
+  check(
+    'причина ушла в лог',
+    logged.length === 1 &&
+      logged[0].some((arg) => arg instanceof Error && arg.message.includes('проба')),
+    `записей в логе ${logged.length}`,
+  );
+
+  /* Посчиталось — карточки, а не слова. Ноль карточек здесь — падение. */
+  const ready = arrangementsState(() =>
+    buildArrangements({
+      lengthMm: 3200,
+      ceilingHeightMm: 2700,
+      requirements: REQ,
+      openings: OPENINGS,
+      comms: COMMS,
+      rates: DEMO_RATES,
+    }),
+  );
+  const readyHtml = renderToStaticMarkup(
+    createElement(ArrangementCards, { state: ready, activeKey: null, onSelect: noop }),
+  );
+  const cards = (readyHtml.match(/<button/g) ?? []).length;
+  check(
+    'расчёт прошёл — на экране карточки компоновок, а не слова',
+    ready.state === 'ready' && cards >= 2 && !readyHtml.includes('data-arrangements-error'),
+    `карточек ${cards}`,
+  );
+
+  /* «Выбирать не из чего» — законная пустота: не рисуется ничего, и это не отказ. */
+  const single = arrangementsState(() => (ready.state === 'ready' ? ready.arrangements.slice(0, 1) : []));
+  const singleHtml = renderToStaticMarkup(
+    createElement(ArrangementCards, { state: single, activeKey: null, onSelect: noop }),
+  );
+  check(
+    'один вариант — пусто без слов об отказе',
+    single.state === 'ready' && single.arrangements.length === 1 && singleHtml === '',
+    singleHtml ? singleHtml.slice(0, 80) : 'пусто',
   );
 }
 

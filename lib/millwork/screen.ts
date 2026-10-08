@@ -1,6 +1,7 @@
 import { SHAPE_TITLE, SHAPE_WALLS, segmentCount } from './composition';
 import { lowerWall, wallLabel, wallMismatchMessage, type WallMismatch } from './walls';
 import type { SurveyWarning } from './warnings';
+import type { Arrangement } from './variants';
 import type { CompositionKind } from '@/types/millwork';
 
 /**
@@ -225,4 +226,30 @@ export function screenState(input: ScreenInput): ScreenState {
     idleWallsNote,
     renderCoverageNote,
   };
+}
+
+/**
+ * КОМПОНОВКИ: «ПУСТО» И «НЕ ПОСЧИТАЛОСЬ» — РАЗНЫЕ СОСТОЯНИЯ.
+ *
+ * Экран глушил любую ошибку расчёта компоновок (`catch { return [] }`): карточек
+ * просто не было, и не было видно, что их нет не потому, что вариант у
+ * этой кухни один, а потому, что расчёт упал. Пустой список остаётся
+ * законным ответом («выбирать не из чего» — карточки не рисуются), а
+ * отказ — это слова там, где стоят карточки, и причина в лог.
+ */
+export const ARRANGEMENTS_FAILED =
+  'Другие расстановки этой кухни не посчитались — выбрать вариант сейчас нельзя. ' +
+  'Ряд на экране и его смета от этого не зависят.';
+
+export type ArrangementsState =
+  | { state: 'ready'; arrangements: Arrangement[] }
+  | { state: 'failed'; words: string };
+
+export function arrangementsState(build: () => Arrangement[]): ArrangementsState {
+  try {
+    return { state: 'ready', arrangements: build() };
+  } catch (error) {
+    console.error('Компоновки не посчитались', error);
+    return { state: 'failed', words: ARRANGEMENTS_FAILED };
+  }
 }
