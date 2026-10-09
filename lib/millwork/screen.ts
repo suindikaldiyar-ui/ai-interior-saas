@@ -91,6 +91,15 @@ export type ScreenState = {
   nextLocked: boolean;
   /** Автосохранение не пишет: состояние, которое не собирается, открывать нечем. */
   autosaveLocked: boolean;
+  /**
+   * ВЫГРУЗКА ДЛЯ РАСКРОЯ ЗАПЕРТА (P0-3b): композиция не собралась либо
+   * стена не сходится — по такому раскрою цех распилил бы детали, которые
+   * на объекте не встанут. Шаг «Результат» открывается и полосой шагов,
+   * мимо запертой «Дальше», поэтому замок стоит у самой кнопки.
+   */
+  exportLocked: boolean;
+  /** Почему выгрузка заперта — словами у самой кнопки. `null` — открыта. */
+  exportLockText: string | null;
   /** Какую стену предлагает пересобрать красная полоса. `null` — не про это. */
   rebuildWall: number | null;
   /** Строка про замеренную стену без мебели. */
@@ -269,12 +278,27 @@ export function screenState(input: ScreenInput): ScreenState {
   /*
    * Конфликт роли угла — то же, что мебель в препятствии: данные целы, а
    * причина — замер или форма, только что изменённые. Запертая запись
-   * потеряла бы ровно их.
+   * потеряла бы ровно их. Створка шире предела после смены роли (P0-3b) —
+   * тот же случай: правки замерщика целы, их и пишем.
    */
   const locked =
     Boolean(refusal) ||
-    mismatches.some((mismatch) => !mismatch.obstacles?.length && !mismatch.corner?.length);
+    mismatches.some(
+      (mismatch) => !mismatch.obstacles?.length && !mismatch.corner?.length && !mismatch.leaves?.length,
+    );
   const unpriced = locked || mismatches.length > 0 || catalogError !== null;
+  /*
+   * Выгрузку для раскроя запирает геометрия, а не каталог: непрочитанные
+   * цены деталей не меняют, а несобравшаяся композиция и несходящаяся
+   * стена — меняют.
+   */
+  const exportLockText = refusal
+    ? `Выгрузки для раскроя нет: ${SHAPE_TITLE[shape]} не сошлась — раскраивать нечего.`
+    : mismatches.length > 0
+      ? `Выгрузки для раскроя нет: ${mismatches[0].label} не собирается — по такому раскрою цех распилит ` +
+        'детали, которые на объекте не встанут. Сначала пересоберите стену или верните прежнюю расстановку.'
+      : null;
+  const exportLocked = exportLockText !== null;
 
   return {
     channel,
@@ -283,6 +307,8 @@ export function screenState(input: ScreenInput): ScreenState {
     priceHidden: unpriced,
     nextLocked: unpriced,
     autosaveLocked: locked,
+    exportLocked,
+    exportLockText,
     rebuildWall: stale ? stale.index : editedWall !== null && Number.isInteger(editedWall) ? editedWall : null,
     idleWallsNote,
     renderCoverageNote,

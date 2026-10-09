@@ -46,10 +46,24 @@
  *       стене 2 → стена w3 стала владельцем угла, створки в слепой зоне:
  *       конфликт словами с миллиметрами, цены нет, «Пересобрать стену Б»,
  *       правка не тронута; обратно — конфликта нет, правка на месте;
- *   B3  П: правка стены Б (w2) → «ряд здесь?» на стене 4 → w2 стала
- *       последней стеной и угол у своего конца потеряла: раскладка
- *       совместима — конфликта нет, цена есть, модули w2 те же, угол w1–w2
- *       сохранил свой выбор;
+ *   B3  П: правки А и Б → «ряд здесь?» на стене 4 → w2 стала последней
+ *       и угол w2–w3 потеряла. До P0-3b здесь ждали «совместимо, конфликта
+ *       нет» — это и был дефект: слепой модуль без глухой части — одна
+ *       створка во всю ширину корпуса. Теперь: красная полоса со стеной,
+ *       створкой, пределом и превышением в мм, цены нет, «Дальше» и
+ *       выгрузка для раскроя заперты, пересборка — стены w2 по её wallId;
+ *       после пересборки w4 и w1 те же, правка А на месте;
+ *
+ * P0-3b — модуль после смены роли угла проходит правила производства:
+ *   B4  Г: правки А и Б в П → форма «Угловая» → w2 теряет угол: створки
+ *       названы; «ряд здесь?» в Г правку в другой роли не ставит — ложной
+ *       тревоги нет, правки названы словами; обратно — конфликт снова,
+ *       пересборка w2, стена А с правкой та же;
+ *   B5  прямая: правка А в П → «Прямая» → w1 теряет угол: створки
+ *       названы, цены нет, выгрузка заперта, пересборка w1;
+ *   B6  П 3600 × 2436, у угла w2–w3 верх пустой: глухая часть — свой
+ *       корпус не шире одной створки → «ряд здесь?» на стене 4 → ложной
+ *       тревоги нет, цена на экране, выгрузка открыта;
  *   LG  старый объект в базе (закрепление холодильника номером стены,
  *       углы массивом без меток, выбранное решение): открылся — холодильник
  *       на той стене, где его закрепили, угол прежний; «ряд здесь?» —
@@ -873,17 +887,107 @@ async function scenarioB2(browser) {
   await page.close();
 }
 
-/* ─────────────────────────  B3: стена теряет угол — раскладка совместима  ───────────────────────── */
+/* ─────────────────────────  P0-3b: модуль после смены роли угла  ───────────────────────── */
+
+/**
+ * ПРЕДЕЛ ОДНОЙ РАСПАШНОЙ СТВОРКИ — порог `frontPlan` (`SINGLE_DOOR_MAX_MM`):
+ * шире движок ставит две. Что это тот же порог, сверяет `test:millwork`.
+ */
+const SINGLE_LEAF_MAX_MM = 600;
+
+/** Модули ряда, доходящие до конца стены: у владельца угла это слепые модули. */
+function cornerEndModules(block) {
+  return (block?.modules ?? []).filter(
+    (m) => (m.row === 'base' || m.row === 'upper') && !m.appliance && m.offsetMm + m.widthMm === block.lengthMm,
+  );
+}
+
+/** Подвал числами: красная полоса, суммы, «Дальше», кнопки пересборки и их стены. */
+async function lockState(page) {
+  return {
+    text: await footerText(page),
+    totals: await page.locator('[data-estimate-total]').count(),
+    refused: await page.locator('[data-composition-refused]').count(),
+    nextDisabled: await page.locator('[data-next-button]').isDisabled(),
+    rebuild: await page
+      .locator('[data-rebuild-wall-id]')
+      .evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-rebuild-wall-id'))),
+  };
+}
+
+/** Красная полоса называет стену, каждую створку шире предела, предел и превышение. */
+function namesLeaves(text, label, units) {
+  return (
+    units.length > 0 &&
+    text.includes(`${label}:`) &&
+    text.includes(`${SINGLE_LEAF_MAX_MM} мм`) &&
+    /Пересоберите/.test(text) &&
+    units.every((m) => text.includes(`${m.widthMm} мм`) && text.includes(`на ${m.widthMm - SINGLE_LEAF_MAX_MM} мм`))
+  );
+}
+
+/** «Результат» → «Детализировка»: заперта ли выгрузка для раскроя и почему. */
+async function exportState(page) {
+  await toStep(page, 'Результат');
+  const tab = page.getByRole('button', { name: 'Детализировка', exact: true }).filter({ visible: true });
+  if ((await tab.count()) !== 1) return { found: false, disabled: null, reason: `кнопок «Детализировка» ${await tab.count()}` };
+  await tab.click();
+  await sleep(1200);
+  const button = page.getByRole('button', { name: 'Выгрузить для раскроя', exact: true }).filter({ visible: true });
+  const count = await button.count();
+  if (count !== 1) return { found: false, disabled: null, reason: `кнопок «Выгрузить для раскроя» ${count}` };
+  const lock = page.locator('[data-export-lock]').filter({ visible: true });
+  return {
+    found: true,
+    disabled: await button.isDisabled(),
+    reason: (await lock.count()) > 0 ? (await lock.first().innerText()).replace(/\s+/g, ' ') : '',
+  };
+}
+const exportWords = (state) =>
+  state.found ? `кнопка ${state.disabled ? 'заперта' : 'открыта'} · ${state.reason || 'причины нет'}` : `НУЛЕВОЙ СЕЛЕКТОР: ${state.reason}`;
+
+/** Смена формы на шаге «Размеры». */
+async function chooseShape(page, kind) {
+  await toStep(page, 'Размеры');
+  const button = page.locator(`[data-shape-kind="${kind}"]`);
+  if ((await button.count()) !== 1) return false;
+  await button.click();
+  await sleep(2500);
+  return (await button.getAttribute('aria-pressed')) === 'true';
+}
+
+/** Нажатие кнопки пересборки стены `wallId` в красной полосе. */
+async function rebuildWall(page, wallId) {
+  const button = page.locator(`[data-rebuild-wall-id="${wallId}"]`);
+  if ((await button.count()) !== 1) return false;
+  await button.click();
+  await sleep(1800);
+  return true;
+}
+
+/* ─────────────────────────  B3: П, «ряд здесь?» — стена Б теряет угол  ───────────────────────── */
 
 async function scenarioB3(browser) {
-  console.log('\n── B3. П: правка стены Б (w2) → «ряд здесь?» на стене 4 → w2 теряет угол, конфликта нет');
+  console.log('\n── B3. П: правки А и Б → «ряд здесь?» на стене 4 → w2 теряет угол w2–w3: створки шире предела названы (P0-3b)');
   const page = await measureShape(browser, [3600, 3000], 'u_shape');
   await toStep(page, 'Раскладка');
   const start = await rows(page);
-  const edit = await editOn(page, start, 1);
+  const editA = await editOn(page, start, 0);
+  const editB = await editOn(page, await rows(page), 1);
   const edited = await rows(page);
-  check('правка стены Б (w2) применилась', carries(wallOf(edited, 1), edit) && sig(wallOf(edited, 1)) !== sig(wallOf(start, 1)), edit ? editWords(edit) : 'на стене Б нечего ни заменить, ни снять');
+  check(
+    'правки стен А (w1) и Б (w2) применились',
+    carries(blockOfWall(edited, 'w1'), editA) && carries(blockOfWall(edited, 'w2'), editB),
+    `${editWords(editA)} · ${editWords(editB)}`,
+  );
+  const wide = cornerEndModules(blockOfWall(edited, 'w2')).filter((m) => m.widthMm > SINGLE_LEAF_MAX_MM);
+  check(
+    'у угла w2–w3 у стены w2 слепые модули шире одной створки',
+    wide.length > 0,
+    wide.map((m) => `${m.id} ${m.widthMm} мм`).join(' · ') || 'НУЛЕВОЙ СЕЛЕКТОР: у конца стены w2 нет модулей шире предела',
+  );
   const cornerB = await cornerAt(page, 0);
+
   const moved = await runWallHere(page, 4);
   check('ряд перенесён на стену 4', moved, moved ? 'ряд здесь — стена 4' : 'кнопки «ряд здесь?» у стены 4 нет');
   const cornerAfter = await cornerAt(page, 1);
@@ -891,9 +995,165 @@ async function scenarioB3(browser) {
   await toStep(page, 'Раскладка');
   const shifted = await rows(page);
   check('стены композиции — w4, w1, w2: w2 последняя и угла у своего конца не имеет', wallIdsOf(shifted).join(',') === 'w4,w1,w2', wallIdsOf(shifted).join(', ') || 'НУЛЕВОЙ СЕЛЕКТОР: стен нет');
-  const footer = await footerText(page);
-  check('конфликта угла нет, цена на месте', !/Пересоберите/.test(footer) && (await page.locator('[data-estimate-total]').count()) === 1, footer.slice(0, 200));
+  same('модули w2 те же, правка не изменена молча', blockOfWall(edited, 'w2'), blockOfWall(shifted, 'w2'));
+  const state = await lockState(page);
+  check('красная полоса называет стену В, створки, предел и превышение в мм', namesLeaves(state.text, 'Стена В', wide), `подвал: ${state.text.slice(0, 480)}`);
+  check('цены нет, «Дальше» заперто', state.totals === 0 && state.refused === 1 && state.nextDisabled, `сумм ${state.totals} · «Дальше» ${state.nextDisabled ? 'заперто' : 'ОТКРЫТО'}`);
+  check('кнопка пересборки — физической стены w2', state.rebuild.length === 1 && state.rebuild[0] === 'w2', `кнопки: ${state.rebuild.join(', ') || 'НЕТ'}`);
+  mkdirSync(OUT, { recursive: true });
+  await page.screenshot({ path: `${OUT}/B3-U-invalid-leaf.png` });
+  const locked = await exportState(page);
+  check('выгрузка для раскроя заперта, причина названа', locked.found && locked.disabled === true && locked.reason.length > 0, exportWords(locked));
+  await page.screenshot({ path: `${OUT}/B3-U-export-locked.png` });
+
+  await toStep(page, 'Раскладка');
+  const rebuilt = (await rebuildWall(page, 'w2')) ? await rows(page) : null;
+  const after = await lockState(page);
+  check('пересборка стены w2: конфликта нет, цена на месте', Boolean(rebuilt) && !/Пересоберите/.test(after.text) && after.totals === 1, rebuilt ? after.text.slice(0, 200) : 'кнопки пересборки w2 нет');
+  same('стена w4 та же после пересборки', blockOfWall(shifted, 'w4'), blockOfWall(rebuilt ?? [], 'w4'));
+  same('стена w1 та же после пересборки', blockOfWall(shifted, 'w1'), blockOfWall(rebuilt ?? [], 'w1'));
+  check('стена w2 собрана заново для своей роли', Boolean(rebuilt) && sig(blockOfWall(rebuilt, 'w2')) !== sig(blockOfWall(shifted, 'w2')), rebuilt ? sig(blockOfWall(rebuilt, 'w2')) : 'СТЕНЫ НЕТ');
+  const open = await exportState(page);
+  check('после пересборки выгрузка для раскроя открыта', open.found && open.disabled === false && open.reason === '', exportWords(open));
+
+  const back = await runWallHere(page, 1);
+  await toStep(page, 'Раскладка');
+  const restored = await rows(page);
+  check('ряд вернулся на стену 1: правка стены А (w1) на месте', back && carries(blockOfWall(restored, 'w1'), editA), editWords(editA));
+  same('стена w3 та же, что в начале', blockOfWall(start, 'w3'), blockOfWall(restored, 'w3'));
+  await page.close();
+}
+
+/* ─────────────────────────  B4: Г — стена Б теряет угол формой; «ряд здесь?» в Г  ───────────────────────── */
+
+async function scenarioB4(browser) {
+  console.log('\n── B4. Г: правки А и Б в П → «Угловая» → w2 теряет угол w2–w3; «ряд здесь?» в Г ложной тревоги не даёт (P0-3b)');
+  const page = await measureShape(browser, [3600, 3000], 'u_shape');
+  await toStep(page, 'Раскладка');
+  const start = await rows(page);
+  const editA = await editOn(page, start, 0);
+  const editB = await editOn(page, await rows(page), 1);
+  const edited = await rows(page);
+  check(
+    'правки стен А (w1) и Б (w2) применились',
+    carries(blockOfWall(edited, 'w1'), editA) && carries(blockOfWall(edited, 'w2'), editB),
+    `${editWords(editA)} · ${editWords(editB)}`,
+  );
+  const wide = cornerEndModules(blockOfWall(edited, 'w2')).filter((m) => m.widthMm > SINGLE_LEAF_MAX_MM);
+  check('у угла w2–w3 у стены w2 слепые модули шире одной створки', wide.length > 0, wide.map((m) => `${m.id} ${m.widthMm} мм`).join(' · ') || 'НУЛЕВОЙ СЕЛЕКТОР');
+
+  const toL = await chooseShape(page, 'corner_l');
+  await toStep(page, 'Раскладка');
+  const asL = await rows(page);
+  check('форма «Угловая»: стены w1, w2', toL && wallIdsOf(asL).join(',') === 'w1,w2', wallIdsOf(asL).join(', ') || 'НУЛЕВОЙ СЕЛЕКТОР: стен нет');
+  same('Г: правка стены w2 не изменена молча', blockOfWall(edited, 'w2'), blockOfWall(asL, 'w2'));
+  same('Г: стена w1 с правкой та же', blockOfWall(edited, 'w1'), blockOfWall(asL, 'w1'));
+  const state = await lockState(page);
+  check('Г: красная полоса называет стену Б, створки, предел и превышение в мм', namesLeaves(state.text, 'Стена Б', wide), `подвал: ${state.text.slice(0, 480)}`);
+  /*
+   * Прежнее поведение (P0, не P0-3b): в Г варочная по правилу раздачи
+   * уходит на стену А, а стена А правлена — прибор в правленый ряд сам
+   * не встаёт, и это вторая блокирующая строка. Расхождение со стеной
+   * идёт в канале первым, поэтому кнопка — у стены w2.
+   */
+  check('Г: варочная, ушедшая на правленую стену А, названа второй строкой (P0)', /Варочная панель/.test(state.text), state.text.slice(0, 480));
+  check('Г: цены нет, «Дальше» заперто, пересборка — w2', state.totals === 0 && state.nextDisabled && state.rebuild.join(',') === 'w2', `сумм ${state.totals} · «Дальше» ${state.nextDisabled ? 'заперто' : 'ОТКРЫТО'} · кнопки ${state.rebuild.join(', ') || 'НЕТ'}`);
+  mkdirSync(OUT, { recursive: true });
+  await page.screenshot({ path: `${OUT}/B4-L-invalid-leaf.png` });
+
+  /* «Ряд здесь?» в Г: правка соседа встаёт только соседом-стыкующимся, правка А — только на А. */
+  const moved = await runWallHere(page, 4);
+  await toStep(page, 'Раскладка');
+  const shifted = await rows(page);
+  const calm = await lockState(page);
+  check(
+    'Г, «ряд здесь?» на стене 4: стены w4, w1 — ложной тревоги нет, цена на экране, «Дальше» открыто',
+    moved && wallIdsOf(shifted).join(',') === 'w4,w1' && !/Пересоберите/.test(calm.text) && calm.totals === 1 && !calm.nextDisabled,
+    `стены ${wallIdsOf(shifted).join(', ')} · сумм ${calm.totals} · «Дальше» ${calm.nextDisabled ? 'ЗАПЕРТО' : 'открыто'} · ${calm.text.slice(0, 160)}`,
+  );
+  const soft = await softText(page);
+  check('… а сохранённые правки w1 и w2 названы словами', /Стена 1 замера/.test(soft) && /Стена 2 замера/.test(soft), soft.slice(0, 300) || 'СТРОКИ НЕТ');
+
+  const back = await runWallHere(page, 1);
+  await toStep(page, 'Раскладка');
+  const again = await lockState(page);
+  check('обратно на стену 1: конфликт стены Б назван снова — правка не пропала', back && namesLeaves(again.text, 'Стена Б', wide), again.text.slice(0, 240));
+  const rebuilt = (await rebuildWall(page, 'w2')) ? await rows(page) : null;
+  const fine = await lockState(page);
+  check(
+    'пересборка стены w2: строки о створке нет, стена Б собрана заново (строка о варочной на стене А — прежняя, P0)',
+    Boolean(rebuilt) && !/превышает допустимую ширину/.test(fine.text) && !/Стена Б:/.test(fine.text) &&
+      sig(blockOfWall(rebuilt, 'w2')) !== sig(blockOfWall(asL, 'w2')),
+    rebuilt ? fine.text.slice(0, 240) : 'кнопки пересборки w2 нет',
+  );
+  same('стена w1 с правкой та же после пересборки w2', blockOfWall(asL, 'w1'), blockOfWall(rebuilt ?? [], 'w1'));
+  await page.close();
+}
+
+/* ─────────────────────────  B5: прямая — стена А теряет угол  ───────────────────────── */
+
+async function scenarioB5(browser) {
+  console.log('\n── B5. Прямая: правка стены А в П → «Прямая» → w1 теряет угол w1–w2: створки названы (P0-3b)');
+  const page = await measureShape(browser, [3600, 3000], 'u_shape');
+  await toStep(page, 'Раскладка');
+  const start = await rows(page);
+  const editA = await editOn(page, start, 0);
+  const edited = await rows(page);
+  check('правка стены А (w1) применилась', carries(wallOf(edited, 0), editA), editWords(editA));
+  const wide = cornerEndModules(wallOf(edited, 0)).filter((m) => m.widthMm > SINGLE_LEAF_MAX_MM);
+  check('у угла w1–w2 у стены w1 слепые модули шире одной створки', wide.length > 0, wide.map((m) => `${m.id} ${m.widthMm} мм`).join(' · ') || 'НУЛЕВОЙ СЕЛЕКТОР');
+
+  const toLinear = await chooseShape(page, 'linear');
+  await toStep(page, 'Раскладка');
+  const asLinear = await rows(page);
+  check('форма «Прямая»: одна стена, правка на месте', toLinear && asLinear.length === 1 && carries(wallOf(asLinear, 0), editA), `стен ${asLinear.length} · ${editWords(editA)}`);
+  const state = await lockState(page);
+  check('прямая: красная полоса называет стену А, створки, предел и превышение в мм', namesLeaves(state.text, 'Стена А', wide), `подвал: ${state.text.slice(0, 480)}`);
+  check('прямая: цены нет, «Дальше» заперто, пересборка — w1', state.totals === 0 && state.nextDisabled && state.rebuild.join(',') === 'w1', `сумм ${state.totals} · «Дальше» ${state.nextDisabled ? 'заперто' : 'ОТКРЫТО'} · кнопки ${state.rebuild.join(', ') || 'НЕТ'}`);
+  const locked = await exportState(page);
+  check('прямая: выгрузка для раскроя заперта', locked.found && locked.disabled === true, exportWords(locked));
+  await toStep(page, 'Раскладка');
+  const rebuilt = (await rebuildWall(page, 'w1')) ? await rows(page) : null;
+  const fine = await lockState(page);
+  check('пересборка стены w1: конфликта нет, цена на месте', Boolean(rebuilt) && !/Пересоберите/.test(fine.text) && fine.totals === 1, rebuilt ? fine.text.slice(0, 200) : 'кнопки пересборки w1 нет');
+  await page.close();
+}
+
+/* ─────────────────────────  B6: допустимая — створка без угла в пределе  ───────────────────────── */
+
+async function scenarioB6(browser) {
+  console.log('\n── B6. П 3600 × 2436: у угла w2–w3 верх пустой, глухая часть — свой корпус → «ряд здесь?» на стене 4 → ложной тревоги нет (P0-3b)');
+  const page = await measureShape(browser, [3600, 2436], 'u_shape');
+  const refused = await chooseCorner(page, 1, 'upper:empty');
+  const chosen = await cornerAt(page, 1);
+  check('у угла w2–w3 верх пустой', !refused && chosen === 'blind/empty', refused ?? chosen ?? 'УГЛА НЕТ');
+  await toStep(page, 'Раскладка');
+  const start = await rows(page);
+  const end = cornerEndModules(blockOfWall(start, 'w2'));
+  check(
+    'у конца стены w2 — один нижний глухой корпус не шире одной створки',
+    end.length === 1 && end[0].row === 'base' && end[0].widthMm <= SINGLE_LEAF_MAX_MM,
+    end.map((m) => `${m.id} ${m.widthMm} мм`).join(' · ') || 'НУЛЕВОЙ СЕЛЕКТОР: у конца стены w2 модулей нет',
+  );
+  const editB = await editOn(page, start, 1);
+  const edited = await rows(page);
+  check('правка стены Б (w2) применилась', carries(blockOfWall(edited, 'w2'), editB), editWords(editB));
+
+  const moved = await runWallHere(page, 4);
+  await toStep(page, 'Раскладка');
+  const shifted = await rows(page);
+  check('ряд на стене 4: стены w4, w1, w2', moved && wallIdsOf(shifted).join(',') === 'w4,w1,w2', wallIdsOf(shifted).join(', ') || 'НУЛЕВОЙ СЕЛЕКТОР: стен нет');
   same('модули w2 те же, правка на месте', blockOfWall(edited, 'w2'), blockOfWall(shifted, 'w2'));
+  const state = await lockState(page);
+  check(
+    'ложной тревоги нет: красной полосы нет, цена на экране, «Дальше» открыто, пересобирать нечего',
+    !/Пересоберите/.test(state.text) && state.totals === 1 && !state.nextDisabled && state.rebuild.length === 0,
+    `сумм ${state.totals} · «Дальше» ${state.nextDisabled ? 'ЗАПЕРТО' : 'открыто'} · кнопки ${state.rebuild.join(', ') || 'нет'} · ${state.text.slice(0, 160)}`,
+  );
+  mkdirSync(OUT, { recursive: true });
+  await page.screenshot({ path: `${OUT}/B6-U-valid.png` });
+  const open = await exportState(page);
+  check('выгрузка для раскроя открыта', open.found && open.disabled === false && open.reason === '', exportWords(open));
   await page.close();
 }
 
@@ -1120,6 +1380,9 @@ try {
     B1: scenarioB1,
     B2: scenarioB2,
     B3: scenarioB3,
+    B4: scenarioB4,
+    B5: scenarioB5,
+    B6: scenarioB6,
     LG: scenarioLG,
   };
   const unknown = only.filter((key) => !(key in scenarios));

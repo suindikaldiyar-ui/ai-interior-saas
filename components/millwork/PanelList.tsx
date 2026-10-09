@@ -38,6 +38,12 @@ type Props = {
    * Пусто — корпус остаётся обычной плитой цеха, как и раньше.
    */
   carcass?: Map<string, CarcassItem>;
+  /**
+   * ВЫГРУЗКА ДЛЯ РАСКРОЯ ЗАПЕРТА — ПОЧЕМУ (P0-3b). Композиция не
+   * собралась или стена не сходится: по такому раскрою цех распилит
+   * детали, которые на объекте не встанут. Пусто — выгрузка открыта.
+   */
+  exportLock?: string | null;
 };
 
 const GRAIN_LABEL: Record<Panel['grain'], string> = {
@@ -54,6 +60,7 @@ export default function PanelList({
   measuredAt = '',
   production = DEFAULT_PRODUCTION,
   carcass,
+  exportLock = null,
 }: Props) {
   const [encoding, setEncoding] = useState<CsvEncoding>('windows-1251');
 
@@ -125,6 +132,7 @@ export default function PanelList({
   }, [panels]);
 
   const download = () => {
+    if (exportLock) return;
     const { bytes, type } = panelsCsvFile(panels, encoding);
     // Копия в обычный ArrayBuffer: Blob не принимает view поверх чужого буфера.
     const blob = new Blob([bytes.slice().buffer], { type });
@@ -144,9 +152,20 @@ export default function PanelList({
   return (
     <div>
       <div className="mb-3 flex flex-wrap items-center gap-2 print:hidden">
-        <button type="button" onClick={download} className="mw-btn mw-btn-primary">
+        <button
+          type="button"
+          onClick={download}
+          disabled={Boolean(exportLock)}
+          data-export-cut
+          className="mw-btn mw-btn-primary"
+        >
           Выгрузить для раскроя
         </button>
+        {exportLock && (
+          <p data-export-lock className="w-full text-[13px] leading-snug text-alert">
+            {exportLock}
+          </p>
+        )}
 
         {/* Кодировка: старые программы раскроя читают только windows-1251. */}
         <div className="flex gap-2">

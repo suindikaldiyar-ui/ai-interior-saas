@@ -1,4 +1,4 @@
-import { CORNER_SIZE_MM } from './modules';
+import { CORNER_SIZE_MM, frontPlan } from './modules';
 import { zoneProfile } from './zones';
 import type {
   FrontType,
@@ -497,6 +497,22 @@ export function variantFitsWidth(spec: ModuleVariantSpec, widthMm: number): bool
   return spec.anyWidth || widthMm <= spec.maxWidthMm;
 }
 
+/**
+ * СКОЛЬКО СТВОРОК ПОЛОЖЕНО ФАСАДУ ЭТОЙ ШИРИНЫ — одно правило на вариант
+ * и на проверку готового ряда (P0-3b).
+ *
+ * Вариант, объявивший число створок, держит его при любой ширине: «две
+ * дверцы» — две и на 600 мм, подъёмник — одна и на 1200, ради широкого
+ * фасада он и нужен. Остальным створки ставит ширина фасада: `frontPlan`
+ * (шире `SINGLE_DOOR_MAX_MM` одна провисает — ставят две). В
+ * `applyVariant` стоял свой литерал `> 600` — вторая формула того же
+ * правила.
+ */
+export function leavesForFront(unit: Pick<Module, 'kind' | 'variant'>, frontMm: number): number {
+  const declared = unit.variant ? MODULE_VARIANTS[unit.variant].doorCount : undefined;
+  return declared ?? frontPlan(unit.kind, frontMm).doorCount;
+}
+
 export function variantsForModule(
   unit: Module,
   run: Run,
@@ -616,9 +632,7 @@ export function applyVariant(unit: Module, kind: ModuleVariantKind): Module {
    * получает его объявлением, а не правкой формулы.
    */
   const doorCount =
-    spec.frontType !== 'door'
-      ? 0
-      : (spec.doorCount ?? (unit.widthMm > 600 ? 2 : 1));
+    spec.frontType !== 'door' ? 0 : leavesForFront({ kind: unit.kind, variant: kind }, unit.widthMm);
 
   return {
     ...unit,

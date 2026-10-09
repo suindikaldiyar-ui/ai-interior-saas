@@ -1,9 +1,11 @@
 import { recalcTotal } from './estimate';
 import { compositionFingerprint } from './fingerprint';
 import { obstacleConflictText, obstacleConflicts, type ObstacleConflict } from './obstacles';
-import { BLIND_VARIANTS, cornerGeometry } from './corner';
+import { BLIND_VARIANTS, blindPartMm, cornerGeometry } from './corner';
 import { MIN_WIDTH, SINGLE_DOOR_MAX_MM, isUpperRow, standsOnFloor } from './modules';
 import { rowSpansOfRun } from './layout';
+import { runPlaces, sceneLeaves, type SceneLeaf } from './cabinetBoxes';
+import { leavesForFront } from './moduleVariants';
 import type {
   Composition,
   CornerChoice,
@@ -214,9 +216,32 @@ export type WallMismatch = {
    * что именно не сходится, с миллиметрами.
    */
   corner?: string[];
+  /**
+   * СТВОРКА ШИРЕ, ЧЕМ ЕЁ ПОСТАВИЛ БЫ ДВИЖОК (P0-3b): стена потеряла угол,
+   * глухой части у слепого модуля больше нет, и его одна створка встаёт
+   * во всю ширину корпуса. Каждая — с модулем, шириной, пределом и
+   * превышением в миллиметрах.
+   */
+  leaves?: LeafRefusal[];
   /** Роль стены в углах, когда ряд правили, — и сейчас. */
   cornerBefore?: RunCorner;
   cornerNow?: RunCorner;
+};
+
+/** Створка шире предела — числами, из которых строятся слова. */
+export type LeafRefusal = {
+  moduleId: string;
+  label: string;
+  offsetMm: number;
+  widthMm: number;
+  /** Ширина створки — как её рисует сцена (`sceneLeaves`). */
+  leafMm: number;
+  /** Створок стоит — и сколько положено фасаду этой ширины (`leavesForFront`). */
+  leaves: number;
+  wanted: number;
+  /** Предел одной распашной створки — порог `frontPlan`. */
+  limitMm: number;
+  excessMm: number;
 };
 
 /**
@@ -233,7 +258,12 @@ export type WallMismatch = {
  * пришлось бы сбрасывать, и он разошёлся бы с длиной на первой правке.
  */
 export function wallMismatches(
-  layout: { segments: { label: string; run: Pick<Run, 'lengthMm'> }[] },
+  /**
+   * Композиция. `null` — прямая кухня: стена одна, длину сверять не с чем,
+   * а роль угла у правленого ряда стены А сверяется — форма стала прямой,
+   * и угол она потеряла (P0-3b).
+   */
+  layout: { segments: { label: string; run: Pick<Run, 'lengthMm'> }[] } | null,
   runs: Pick<Run, 'lengthMm'>[],
   /**
    * РОЛЬ УГЛА ПРАВЛЕНЫХ РЯДОВ. Длина не выдаёт стену, которая была
@@ -248,8 +278,10 @@ export function wallMismatches(
   },
 ): WallMismatch[] {
   const found: WallMismatch[] = [];
+  const segments =
+    layout?.segments ?? runs.slice(0, 1).map((run) => ({ label: wallLabel(0), run: { lengthMm: run.lengthMm } }));
 
-  layout.segments.forEach((segment, index) => {
+  segments.forEach((segment, index) => {
     const run = runs[index];
     if (!run) return;
 
@@ -265,7 +297,7 @@ export function wallMismatches(
   });
 
   if (corner) {
-    layout.segments.forEach((segment, index) => {
+    segments.forEach((segment, index) => {
       const run = runs[index] as Run | undefined;
       /* Стена с расхождением длины уже названа: «Пересобрать» снимает оба. */
       if (!run || found.some((mismatch) => mismatch.index === index)) return;
@@ -276,13 +308,15 @@ export function wallMismatches(
         openings: corner.openingsOf(index),
         requirements: corner.requirements,
       });
-      if (conflicts.length === 0) return;
+      const leaves = leafRefusals({ run, before });
+      if (conflicts.length === 0 && leaves.length === 0) return;
       found.push({
         index,
         label: segment.label ?? wallLabel(index),
         runLengthMm: run.lengthMm,
         usableMm: segment.run.lengthMm,
-        corner: conflicts,
+        ...(conflicts.length > 0 ? { corner: conflicts } : {}),
+        ...(leaves.length > 0 ? { leaves } : {}),
         cornerBefore: before,
         cornerNow: run.corner,
       });
@@ -413,18 +447,92 @@ export function cornerRoleConflicts(input: {
 }
 
 /**
+ * СТВОРКА ШИРЕ, ЧЕМ ЕЁ ПОСТАВИЛ БЫ ДВИЖОК, — ПОСЛЕ СМЕНЫ РОЛИ УГЛА (P0-3b).
+ *
+ * Слепой модуль владельца — корпус «створка + глухая часть» с ОДНОЙ
+ * створкой на доступной части (`attachBlind`): вторая легла бы петлями к
+ * фальш-панели. Стена теряет угол — «ряд здесь?» сделал среднюю стену П
+ * последней, форма стала короче, кухня прямой, — глухой части больше
+ * нет, и та же створка закрывает корпус целиком: 1140 мм там, где цех
+ * ставит две. P0-3 называла это «совместимо».
+ *
+ * Проверяются только ЗАТРОНУТЫЕ сменой роли модули — у кого глухая часть
+ * была, когда ряд правили, и исчезла теперь. Остальное в ряду собирала
+ * сама правка, и роль угла его не меняла; в слепой зоне нового угла —
+ * её правило (`cornerRoleConflicts`).
+ *
+ * Своего «сколько можно» здесь нет. Створки — те, что рисует сцена
+ * (`sceneLeaves`, тот же вызов, что у `Cabinet3D`); положено столько,
+ * сколько поставил бы движок (`leavesForFront`: вариант со своим числом
+ * держит его, остальным — ширина через `frontPlan`). Подъёмник и
+ * откидной держит механизм: створка одна при любой ширине, ради этого их
+ * и ставят. Вариант с объявленным числом створок сюда не доходит: в
+ * слепой зоне встаёт только дверца (`BLIND_VARIANTS`), и затронутому
+ * модулю створки ставит ширина — поэтому предел — порог `frontPlan`.
+ */
+export function leafRefusals(input: { run: Run; before: RunCorner | undefined }): LeafRefusal[] {
+  const { run, before } = input;
+  if (!before?.own && !before?.dock) return [];
+  if (roleKey(before) === roleKey(run.corner)) return [];
+
+  const then = { ...run, corner: before };
+  const out: LeafRefusal[] = [];
+  for (const { unit, heightM } of runPlaces(run)) {
+    if (blindPartMm(unit, run) > 0 || blindPartMm(unit, then) === 0) continue;
+    const doors = sceneLeaves(unit, heightM).filter(
+      (leaf): leaf is Extract<SceneLeaf, { kind: 'door' }> => leaf.kind === 'door',
+    );
+    if (doors.length === 0) continue;
+    if (doors.some((leaf) => leaf.opening === 'lift' || leaf.opening === 'flap')) continue;
+    const frontMm = Math.round(doors.reduce((sum, leaf) => sum + leaf.widthM, 0) * 1000);
+    const wanted = leavesForFront(unit, frontMm);
+    if (doors.length >= wanted) continue;
+    const leafMm = Math.round(doors[0].widthM * 1000);
+    out.push({
+      moduleId: unit.id,
+      label: unit.label,
+      offsetMm: unit.offsetMm,
+      widthMm: unit.widthMm,
+      leafMm,
+      leaves: doors.length,
+      wanted,
+      limitMm: SINGLE_DOOR_MAX_MM,
+      excessMm: leafMm - SINGLE_DOOR_MAX_MM,
+    });
+  }
+  return out;
+}
+
+/** Створка словами: модуль и место, ширина, предел, превышение. */
+export function leafRefusalText(refusal: LeafRefusal): string {
+  return (
+    `створка «${refusal.label}» ${refusal.leafMm} мм (${refusal.offsetMm}…${refusal.offsetMm + refusal.widthMm} мм) ` +
+    `превышает допустимую ширину ${refusal.limitMm} мм на ${refusal.excessMm} мм`
+  );
+}
+
+/**
  * Одна строка словами: что именно не сходится и чем это кончится.
  *
  * Последствие, а не факт: «ряд 1140 при стене 480» замерщик прочитает и
  * не поймёт, чем это ему грозит.
  */
 export function wallMismatchMessage(mismatch: WallMismatch): string {
+  const leaves = (mismatch.leaves ?? []).map(leafRefusalText);
   if (mismatch.corner?.length) {
-    const text = mismatch.corner.join('; ');
+    const text = [...mismatch.corner, ...leaves].join('; ');
     return (
       `${mismatch.label}: ряд правили, когда стена ${roleWords(mismatch.cornerBefore)}, а теперь она ` +
       `${roleWords(mismatch.cornerNow)} — ${text}. На объекте такой угол не собрать. ` +
       'Пересоберите эту стену — правки по ней пропадут — или верните прежнюю расстановку стен: ряд и правки на месте.'
+    );
+  }
+  if (leaves.length > 0) {
+    return (
+      `${mismatch.label}: ${leaves.join('; ')}. Ряд правили, когда стена ${roleWords(mismatch.cornerBefore)} ` +
+      `и у угла часть фасада была глухой; теперь она ${roleWords(mismatch.cornerNow)}, и створка закрывает корпус ` +
+      'целиком — одна распашная створка такой ширины провисает на петлях. Пересоберите эту стену — правки по ней ' +
+      'пропадут — или верните прежнюю расстановку стен: ряд и правки на месте.'
     );
   }
   if (mismatch.obstacles?.length) {
@@ -482,6 +590,9 @@ export function obstacleMismatches(input: {
 export function mismatchPriceText(mismatch: WallMismatch): string {
   if (mismatch.corner?.length) {
     return `Цены нет: ${mismatch.label}: раскладка угла не совпадает с новой ролью стены.`;
+  }
+  if (mismatch.leaves?.length) {
+    return `Цены нет: ${mismatch.label}: створка шире допустимой — на петлях она провиснет.`;
   }
   return mismatch.obstacles?.length
     ? `Цены нет: ${mismatch.label}: мебель заходит в ${mismatch.obstacles[0].reason === 'колонна' ? 'колонну' : mismatch.obstacles[0].reason}.`

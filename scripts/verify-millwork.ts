@@ -154,7 +154,7 @@ import { cornerBandMm, cornerFillerMm, markOnRun, runPlacements, wallsTouchedByC
 import { upperSpans, upperSpansOfRun } from '../lib/millwork/layout';
 import { CORNER_FILLER_PANEL_NAME, CORNER_UPPER_FILLER_PANEL_NAME, legName } from '../lib/millwork/panels';
 import { blindPartMm, cornerChoicesOf, cornerFillersOf, cornerGeometry, openFrontMm } from '../lib/millwork/corner';
-import { hingesPerDoor } from '../lib/millwork/modules';
+import { SINGLE_DOOR_MAX_MM, frontPlan, hingesPerDoor } from '../lib/millwork/modules';
 import { cornerCards } from '../lib/millwork/cornerChange';
 import {
   PLINTH_SETBACK_MM,
@@ -190,6 +190,7 @@ import {
   mergeEstimates,
   wallLabel,
   obstacleMismatches,
+  mismatchPriceText,
   wallMismatchMessage,
   wallMismatches,
   type WallMismatch,
@@ -23012,6 +23013,8 @@ console.log('\nP0-3: физическая идентичность стен, п�
       corners?: SavedChoice[];
       walls?: Record<string, Run>;
       runs?: Partial<Record<VariantKey, Run>>;
+      /** Свой замер (P0-3b: допустимая конфигурация — на стене другой длины). */
+      measurement?: Measurement;
     } = {},
   ) => {
     const requirements = options.requirements ?? DEMO_REQUIREMENTS;
@@ -23019,7 +23022,7 @@ console.log('\nP0-3: физическая идентичность стен, п�
     const base = workspaceInput({
       title: 'P0-3',
       zone: 'Кухня',
-      measurement: ROOM,
+      measurement: options.measurement ?? ROOM,
       requirements,
       rates: DEMO_RATES,
       wallId: runWallId,
@@ -23215,10 +23218,16 @@ console.log('\nP0-3: физическая идентичность стен, п�
     );
 
     /*
-     * СОВМЕСТИМАЯ СМЕНА РОЛИ: стена b теряет угол. П от a: b стыкуется к
-     * a–b и владеет b–c; ряд на стене d (обход d, a, b): b — последняя, у
-     * её конца стена комнаты. Глухой части больше нет, створка становится
+     * СМЕНА РОЛИ: стена b теряет угол. П от a: b стыкуется к a–b и
+     * владеет b–c; ряд на стене d (обход d, a, b): b — последняя, у её
+     * конца стена комнаты. Глухой части больше нет, створка становится
      * полной — модули те же, и сцена, смета и раскрой это согласно видят.
+     *
+     * До P0-3b здесь стояло «конфликта нет»: это и есть путь, который
+     * P0-3b называет дефектом. Слепой модуль владельца — корпус «створка
+     * + глухая часть» с ОДНОЙ створкой; без угла она во всю ширину корпуса
+     * и шире, чем ставит движок (`frontPlan`). Ожидание перевёрнуто по
+     * постановке, а не ради зелёного: сверка сцены, сметы и раскроя та же.
      */
     const wallB = home.segments[1];
     const upperB = wallB.upperSegments
@@ -23258,11 +23267,13 @@ console.log('\nP0-3: физическая идентичность стен, п�
       hinges: hingeEstimate === hingeScene,
       frontsCut: Math.abs(fronts - cut.frontM2) <= 0.01,
       filler: cornerFillersOf(run).some((piece) => piece.level === 'lower' && piece.toMm === 0 && piece.fromMm === -cornerGeometry(run.corner!.dock!, run.zone, run.production).fillerMm),
-      noConflict: !fine.some((mismatch) => mismatch.index === bAt),
+      named: fine.some(
+        (mismatch) => mismatch.index === bAt && ((mismatch as WallMismatch & { leaves?: unknown[] }).leaves?.length ?? 0) > 0,
+      ),
     };
     const bad = Object.entries(facts).filter(([, ok]) => !ok).map(([key]) => key);
     check(
-      'P0-3.4 совместимая смена роли (стена b потеряла угол): ряд, сцена, смета и раскрой согласны, конфликта нет',
+      'P0-3.4 смена роли (стена b потеряла угол): ряд, сцена, смета и раскрой согласны, а створка шире предела названа (P0-3b)',
       bAt === 2 && bad.length === 0,
       bad.length === 0
         ? `обход ${order(fromD)} · b на месте ${bAt} · полезная ${run.lengthMm} мм · глухих частей 0 · угловых петель ${cornerLine} · петель смета ${hingeEstimate} = сцена ${hingeScene} · фасадов ${fronts} = раскрой ${cut.frontM2} м²`
@@ -23410,6 +23421,534 @@ console.log('\nP0-3: физическая идентичность стен, п�
       'P0-3.6 правка стены, которой в замере больше нет, — названа так, без обещания «вернётся, когда ряд встанет»',
       /стены «z», которой в замере больше нет/.test(goneNote) && !/Правки вернутся/.test(goneNote),
       goneNote || 'СТРОКИ НЕТ',
+    );
+  }
+
+  /* ══════  P0-3b: модуль после смены роли угла проходит правила производства  ══════ */
+  /*
+   * Стена теряет угол: «ряд здесь?» делает среднюю стену П последней,
+   * форма становится короче (П → Г), кухня — прямой. Правленый ряд — тот,
+   * что собирали для владельца угла: у слепого модуля корпус «створка +
+   * глухая часть» и ОДНА створка. Глухой части больше нет — створка во
+   * всю ширину корпуса, а P0-3 называла это «совместимо»: цена на экране,
+   * «Дальше» открыто, раскрой режет фасад шире, чем его делает цех.
+   *
+   * Предел — то, что поставил бы сам движок: вариант со своим числом
+   * створок держит его, механизм (подъёмник, откидной) — одну, остальным
+   * число створок ставит ширина фасада (`frontPlan`: шире
+   * `SINGLE_DOOR_MAX_MM` — две). Ширина створки — как её рисует сцена
+   * (`sceneLeaves`), раскрой режет её же за вычетом зазоров. Ожидания
+   * ниже считаются из этих примитивов, а не из проверки экрана.
+   */
+  console.log('\nP0-3b: производственная пригодность модуля после смены роли угла');
+  {
+    type LeafRefusal = {
+      moduleId: string;
+      label: string;
+      offsetMm: number;
+      widthMm: number;
+      leafMm: number;
+      leaves: number;
+      wanted: number;
+      limitMm: number;
+      excessMm: number;
+    };
+    type Found = WallMismatch & { corner?: string[]; leaves?: LeafRefusal[] };
+    type DoorLeaf = { kind: 'door'; id: string; opening: string; xM: number; widthM: number };
+    type ScreenB = ReturnType<typeof screenState> & { exportLocked?: boolean };
+    const SCHOOLS_B: [string, ProductionSettings][] = [
+      ['560/320', DEFAULT_PRODUCTION],
+      ['550/350', { ...DEFAULT_PRODUCTION, depths: { baseMm: 550, upperMm: 350, mezzanineMm: 550 } }],
+      ['600/300', { ...DEFAULT_PRODUCTION, depths: { baseMm: 600, upperMm: 300, mezzanineMm: 600 } }],
+    ];
+    const refusalsOf = (found: WallMismatch[] | null, index: number): LeafRefusal[] =>
+      ((found ?? []) as Found[]).find((mismatch) => mismatch.index === index)?.leaves ?? [];
+
+    /** Створки модуля — тем же вызовом, что рисует сцена (`Cabinet3D`, проверка открывания у угла). */
+    const leavesOf = (run: Run) =>
+      runPlaces(run).map((entry) => {
+        const blind = blindPartMm(entry.unit, run);
+        const doors = sceneLeaves(
+          entry.unit,
+          entry.heightM,
+          blind > 0 ? openFrontMm(entry.unit, run) / 1000 : undefined,
+        ).filter((leaf) => leaf.kind === 'door') as unknown as DoorLeaf[];
+        return { unit: entry.unit, blind, doors };
+      });
+
+    /** Затронутые сменой роли: глухая часть была, когда ряд правили, и её нет теперь. */
+    const affected = (run: Run, before: RunCorner | undefined) => {
+      const then = { ...run, corner: before };
+      return leavesOf(run).filter(
+        ({ unit, blind, doors }) => blind === 0 && blindPartMm(unit, then) > 0 && doors.length > 0,
+      );
+    };
+
+    /** Чем движок ограничивает створки модуля: механизм, число варианта или ширина. */
+    const ruleOf = (unit: Module, doors: DoorLeaf[]) => {
+      if (doors.some((leaf) => leaf.opening === 'lift' || leaf.opening === 'flap')) return { wanted: 1, text: 'механизм — одна створка' };
+      const front = Math.round(doors.reduce((sum, leaf) => sum + leaf.widthM, 0) * 1000);
+      const declared = unit.variant ? MODULE_VARIANTS[unit.variant].doorCount : undefined;
+      return declared !== undefined
+        ? { wanted: declared, text: `вариант — ${declared} створки` }
+        : { wanted: frontPlan(unit.kind, front).doorCount, text: `предел ${SINGLE_DOOR_MAX_MM} мм на створку` };
+    };
+
+    /** Что обязан назвать экран: створок меньше, чем поставил бы движок фасаду этой ширины. */
+    const owed = (run: Run, before: RunCorner | undefined) =>
+      affected(run, before)
+        .filter(({ unit, doors }) => doors.length < ruleOf(unit, doors).wanted)
+        .map(({ unit, doors }) => ({ id: unit.id, label: unit.label, leafMm: Math.round(doors[0].widthM * 1000), leaves: doors.length }));
+
+    /**
+     * НАЗВАННАЯ СТВОРКА — ТА ЖЕ В СЦЕНЕ, НА ЧЕРТЕЖЕ И В РАСКРОЕ.
+     * Пусто — сходится; иначе — что разошлось.
+     */
+    const unsynced = (run: Run, production: ProductionSettings, refusal: LeafRefusal): string[] => {
+      const out: string[] = [];
+      const entry = leavesOf(run).find((item) => item.unit.id === refusal.moduleId);
+      if (!entry) return [`${refusal.moduleId}: модуля в ряду нет`];
+      const scene = entry.doors.map((leaf) => Math.round(leaf.widthM * 1000));
+      if (scene.length !== refusal.leaves || scene.some((width) => width !== refusal.leafMm)) {
+        out.push(`сцена ${scene.join('+') || 'без створок'} при ${refusal.leafMm}×${refusal.leaves}`);
+      }
+      const gap = production.frontGapMm;
+      const cut = buildPanels({ run, production }).filter(
+        (panel) => panel.moduleId === refusal.moduleId && panel.name === FACADE_PANEL_NAME,
+      );
+      const cutLeaves = cut.reduce((sum, panel) => sum + panel.qty, 0);
+      const cutLeaf = cut[0] ? (cut[0].widthMm * refusal.leaves + gap * (refusal.leaves + 1)) / refusal.leaves : NaN;
+      if (cutLeaves !== refusal.leaves || !(Math.abs(cutLeaf - refusal.leafMm) <= 1)) {
+        out.push(`раскрой ${cut.map((panel) => `${panel.widthMm}×${panel.qty}`).join(' ') || 'без фасада'} при створке ${refusal.leafMm}`);
+      }
+      const glyph = frontGlyph(entry.unit, 'fronts').filter((element) => element.kind === 'swing').length;
+      if (glyph !== refusal.leaves) out.push(`чертёж: створок ${glyph} при ${refusal.leaves}`);
+      if (
+        refusal.limitMm !== SINGLE_DOOR_MAX_MM ||
+        frontPlan(entry.unit.kind, refusal.limitMm).doorCount !== 1 ||
+        frontPlan(entry.unit.kind, refusal.limitMm + 1).doorCount !== 2
+      ) {
+        out.push(`предел ${refusal.limitMm} мм — не порог frontPlan`);
+      }
+      if (refusal.excessMm !== refusal.leafMm - refusal.limitMm) {
+        out.push(`превышение ${refusal.excessMm} при ${refusal.leafMm} − ${refusal.limitMm}`);
+      }
+      return out;
+    };
+    const screenOf = (found: WallMismatch[], walls: { lengthMm: number }[], segments: Run[], shape: CompositionKind) =>
+      screenState({ refusal: null, mismatches: found, walls, segments, shape, warnings: [] } as never) as ScreenB;
+    const lockWords = (state: ScreenB | null) =>
+      state
+        ? `цена ${state.priceHidden ? 'спрятана' : 'ВИДНА'} · дальше ${state.nextLocked ? 'заперто' : 'ОТКРЫТО'} · ` +
+          `выгрузка ${state.exportLocked === true ? 'заперта' : 'ОТКРЫТА'} · запись ${state.autosaveLocked ? 'ЗАПЕРТА' : 'идёт'}`
+        : 'ЭКРАНА НЕТ';
+
+    /** Прямая кухня — тот же путь, что у экрана без композиции: требования целиком, угла нет. */
+    const linear = (runs: Partial<Record<VariantKey, Run>>, production: ProductionSettings = DEFAULT_PRODUCTION) => {
+      const base = workspaceInput({
+        title: 'P0-3b',
+        zone: 'Кухня',
+        measurement: ROOM,
+        requirements: DEMO_REQUIREMENTS,
+        rates: DEMO_RATES,
+        wallId: 'a',
+        cornerAt: null,
+      });
+      const input = objectInput({
+        base,
+        resolution: null,
+        requirements: DEMO_REQUIREMENTS,
+        rates: DEMO_RATES,
+        production,
+        milling: new Map(),
+        carcass: new Map(),
+        materials: new Map(),
+        corner: undefined,
+      });
+      const active = composeVariants(input, DISABLED_P3, runs).find((variant) => variant.key === 'optimal')!;
+      return { input, active, segments: wallSegments(null, active.run, {}) };
+    };
+    /** Расхождения прямой кухни — тем же вызовом, что делает экран: композиции нет (`null`). */
+    const linearMismatches = (lin: ReturnType<typeof linear>, before: RunCorner | undefined) => {
+      try {
+        const found = (wallMismatches as unknown as (...args: unknown[]) => Found[])(null, lin.segments, {
+          before: () => before,
+          openingsOf: () => lin.input.openings,
+          requirements: DEMO_REQUIREMENTS,
+        });
+        return { found, crash: '' };
+      } catch (error) {
+        /* Не глушитель: исключение уходит в FAIL проверки ниже своими словами. */
+        return { found: null, crash: error instanceof Error ? error.message.split('\n')[0] : String(error) };
+      }
+    };
+
+    /* ── b.1 П, «ряд здесь?» на d: угол b–c был у стены Б, теперь b последняя (B, D, E, F) ── */
+    const homeD = screenP3('a');
+    const rowB = homeD.segments[1];
+    const rowA = homeD.active.run;
+    const uppersB = rowB.upperSegments
+      .flatMap((segment) => segment.modules)
+      .filter((unit) => unit.kind === 'upper' && !unit.appliance && unit.section !== 'mezzanine')
+      .sort((x, y) => x.offsetMm - y.offsetMm);
+    const middleB = uppersB.length > 2 ? uppersB[1] : undefined;
+    const plainA = rowA.modules.find(
+      (unit) =>
+        unit.kind === 'base' && !unit.appliance && !unit.variant && blindPartMm(unit, rowA) === 0 &&
+        unit.widthMm >= MODULE_VARIANTS.drawers.minWidthMm && unit.widthMm <= MODULE_VARIANTS.drawers.maxWidthMm,
+    );
+    if (!middleB || !plainA) {
+      throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: P0-3b — нечего править: шкаф не у края на b ${middleB?.id ?? 'нет'}, обычный нижний на a ${plainA?.id ?? 'нет'}`);
+    }
+    const editB = applyOps({
+      run: rowB,
+      requirements: homeD.requirements,
+      ops: [{ op: 'remove_module', moduleId: middleB.id }],
+      openings: homeD.layout.segments[1].openings,
+      roomDepthMm: 0,
+    });
+    const editA = applyOps({
+      run: rowA,
+      requirements: homeD.input.requirements,
+      ops: [{ op: 'set_variant', moduleId: plainA.id, variant: 'drawers' }],
+      openings: homeD.input.openings,
+      roomDepthMm: 0,
+    });
+    check(
+      'P0-3b правки стен А и Б применились',
+      allModules(editA).some((unit) => unit.id === plainA.id && unit.variant === 'drawers') &&
+        !allModules(editB).some((unit) => unit.id === middleB.id),
+      `${plainA.id} → ящики · ${middleB.id} снят`,
+    );
+
+    const fromD = screenP3('d', { walls: { b: editB }, runs: { optimal: editA } });
+    const bAt = fromD.layout.segments.findIndex((segment) => segment.wallId === 'b');
+    const runB = fromD.segments[bAt];
+    const foundD = wallMismatches(fromD.layout, fromD.segments, {
+      before: (index: number) => (index === bAt ? editB.corner : undefined),
+      openingsOf: (index: number) => fromD.layout.segments[index].openings,
+      requirements: fromD.requirements,
+    } as never);
+    const wantD = owed(runB, editB.corner);
+    const gotD = refusalsOf(foundD, bAt);
+    if (wantD.length === 0) {
+      throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: P0-3b — у стены b без угла нет створки шире, чем ставит движок (затронуто: ${affected(runB, editB.corner).map(({ unit }) => unit.id).join(' ') || 'ничего'})`);
+    }
+    check(
+      'P0-3b П, ряд на d: стена b потеряла угол b–c — каждая створка шире предела названа: модуль, ширина, предел, превышение',
+      bAt === 2 && gotD.length === wantD.length &&
+        wantD.every((want) => gotD.some((got) => got.moduleId === want.id && got.leafMm === want.leafMm && got.leaves === want.leaves)),
+      gotD.length > 0
+        ? gotD.map((got) => `${got.moduleId} створка ${got.leafMm} мм / предел ${got.limitMm} мм / +${got.excessMm} мм`).join(' · ')
+        : `НЕ НАЗВАНО: ${wantD.map((want) => `${want.id} ${want.leafMm} мм`).join(', ')} · обход ${order(fromD)} · расхождений ${foundD.length}`,
+    );
+    const driftD = gotD.flatMap((got) => unsynced(runB, DEFAULT_PRODUCTION, got).map((text) => `${got.moduleId}: ${text}`));
+    const estimateD = buildEstimate(runB, 'optimal', DEMO_RATES);
+    const cutD = panelMaterials(buildPanels({ run: runB }));
+    const hingesD = estimateD.lines.filter((line) => line.key.startsWith('hinge_')).reduce((sum, line) => sum + line.quantity, 0);
+    const hingeBoxesD = runBoxes(runB, { thicknessMm: 16, frontThicknessMm: 18, gapMm: 3 }).filter((box) => box.node === 'hinge').length;
+    const frontsD = estimateD.lines.find((line) => line.key === 'front_panel')?.quantity ?? 0;
+    check(
+      'P0-3b названная створка — та же в сцене, на чертеже, в раскрое и в смете',
+      gotD.length > 0 && driftD.length === 0 && hingesD === hingeBoxesD && Math.abs(frontsD - cutD.frontM2) <= 0.01,
+      driftD.length > 0
+        ? driftD.join(' | ')
+        : `створок названо ${gotD.length} · петель смета ${hingesD} = сцена ${hingeBoxesD} · фасадов смета ${frontsD} = раскрой ${cutD.frontM2} м²`,
+    );
+    const mismatchD = (foundD as Found[]).find((mismatch) => mismatch.index === bAt);
+    const messageD = mismatchD ? wallMismatchMessage(mismatchD) : '';
+    check(
+      'P0-3b слова: стена, модуль, ширина створки, предел и превышение в мм, выход — пересобрать; у цены — почему её нет',
+      Boolean(mismatchD) &&
+        gotD.length > 0 &&
+        messageD.startsWith(`${fromD.layout.segments[bAt].label}:`) &&
+        gotD.every(
+          (got) =>
+            messageD.includes(`«${got.label}»`) &&
+            messageD.includes(`${got.leafMm} мм`) &&
+            messageD.includes(`${got.limitMm} мм`) &&
+            messageD.includes(`на ${got.excessMm} мм`),
+        ) &&
+        /Пересоберите/.test(messageD) &&
+        Boolean(mismatchD && /створк/.test(mismatchPriceText(mismatchD))),
+      messageD || 'СТРОКИ НЕТ',
+    );
+    const stateD = screenOf(
+      foundD,
+      fromD.layout.segments.map((segment) => ({ lengthMm: segment.wallLengthMm })),
+      fromD.segments,
+      'u_shape',
+    );
+    const rebuildId = stateD.rebuildWall === null ? null : (fromD.layout.segments[stateD.rebuildWall]?.wallId ?? null);
+    check(
+      'P0-3b экран: цены нет, «Дальше» и выгрузка для раскроя заперты, запись правок идёт, пересобирается стена b',
+      stateD.priceHidden && stateD.nextLocked && stateD.exportLocked === true && !stateD.autosaveLocked && rebuildId === 'b',
+      `${lockWords(stateD)} · пересборка ${rebuildId ?? 'НЕТ'}`,
+    );
+
+    /* Пересборка снимает правку стены b — и только её: d и a те же до модуля, правка А на месте (I, J). */
+    const rebuilt = screenP3('d', { runs: { optimal: editA } });
+    const foundR = wallMismatches(rebuilt.layout, rebuilt.segments, {
+      before: () => undefined,
+      openingsOf: (index: number) => rebuilt.layout.segments[index].openings,
+      requirements: rebuilt.requirements,
+    } as never);
+    const placesOf = (run: Run) =>
+      allModules(run).map((unit) => `${unit.id}:${unit.offsetMm}:${unit.widthMm}:${unit.variant ?? ''}:${unit.doorCount}`).join(' ');
+    const neighboursSame = [0, 1].every((i) => placesOf(rebuilt.segments[i]) === placesOf(fromD.segments[i]));
+    const backA = screenP3('a', { runs: { optimal: editA } });
+    check(
+      'P0-3b пересборка стены b: конфликта нет, стены d и a те же до модуля, правка стены А на месте',
+      foundR.length === 0 && neighboursSame && rebuilt.layout.segments[bAt].wallId === 'b' &&
+        allModules(backA.active.run).some((unit) => unit.id === plainA.id && unit.variant === 'drawers'),
+      `расхождений ${foundR.length} · соседи ${neighboursSame ? 'те же' : 'ПОЕХАЛИ'} · b: ${rebuilt.segments[bAt].modules
+        .filter((unit) => unit.kind === 'base')
+        .map((unit) => `${unit.id}:${unit.widthMm}×${unit.doorCount}`)
+        .join(' ')}`,
+    );
+
+    /* ── b.2 П → Г: стена Б теряет угол b–c формой (A) ── */
+    const asL = screenP3('a', { shape: 'corner_l', walls: { b: editB }, runs: { optimal: editA } });
+    const foundL = wallMismatches(asL.layout, asL.segments, {
+      before: (index: number) => (index === 0 ? editA.corner : index === 1 ? editB.corner : undefined),
+      openingsOf: (index: number) => asL.layout.segments[index].openings,
+      requirements: asL.requirements,
+    } as never);
+    const wantL = owed(asL.segments[1], editB.corner);
+    const gotL = refusalsOf(foundL, 1);
+    check(
+      'P0-3b П → Г: стена Б потеряла угол b–c — створки шире предела названы, стена А (угол a–b тот же) не тронута',
+      wantL.length > 0 && gotL.length === wantL.length &&
+        wantL.every((want) => gotL.some((got) => got.moduleId === want.id && got.leafMm === want.leafMm)) &&
+        !(foundL as Found[]).some((mismatch) => mismatch.index === 0),
+      gotL.length > 0
+        ? gotL.map((got) => `${got.moduleId} ${got.leafMm}/${got.limitMm} +${got.excessMm}`).join(' · ')
+        : `НЕ НАЗВАНО: ${wantL.map((want) => `${want.id} ${want.leafMm} мм`).join(', ') || 'затронутых нет'}`,
+    );
+
+    /* ── b.3 Г, «ряд здесь?» на d: правка соседа встаёт только соседом, правка А — только на А (H) ── */
+    const homeL = screenP3('a', { shape: 'corner_l' });
+    const rowBL = homeL.segments[1];
+    /* Правка стены Б: обычный нижний модуль — «две дверцы» (вариант от 600 мм, ширина любая). */
+    const plainBL = rowBL.modules.find(
+      (unit) => unit.kind === 'base' && !unit.appliance && !unit.variant && unit.widthMm >= MODULE_VARIANTS.door_two.minWidthMm,
+    );
+    if (!plainBL) throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: P0-3b — на стене Б Г-образной нет обычного нижнего модуля от 600 мм (${allModules(rowBL).map((u) => `${u.id}:${u.widthMm}`).join(' ')})`);
+    const editBL = applyOps({
+      run: rowBL,
+      requirements: homeL.requirements,
+      ops: [{ op: 'set_variant', moduleId: plainBL.id, variant: 'door_two' }],
+      openings: homeL.layout.segments[1].openings,
+      roomDepthMm: 0,
+    });
+    const movedL = screenP3('d', { shape: 'corner_l', walls: { b: editBL }, runs: { optimal: editA } });
+    const foundML = wallMismatches(movedL.layout, movedL.segments, {
+      before: (index: number) => (movedL.layout.segments[index].wallId === 'b' ? editBL.corner : undefined),
+      openingsOf: (index: number) => movedL.layout.segments[index].openings,
+      requirements: movedL.requirements,
+    } as never);
+    const stateML = screenOf(foundML, movedL.layout.segments.map((segment) => ({ lengthMm: segment.wallLengthMm })), movedL.segments, 'corner_l');
+    check(
+      'P0-3b Г, «ряд здесь?» на d: правки А и Б в другой роли не встают — ложной тревоги нет, цена на экране',
+      allModules(editBL).some((unit) => unit.id === plainBL.id && unit.variant === 'door_two') &&
+        order(movedL) === 'd,a' && foundML.length === 0 && !stateML.priceHidden && !stateML.nextLocked,
+      `обход ${order(movedL)} · расхождений ${foundML.length} · ${lockWords(stateML)}`,
+    );
+
+    /* ── b.4 Прямая: стена А теряет угол a–b (C) ── */
+    const linA = linear({ optimal: editA });
+    const runAL = linA.segments[0];
+    const wantC = owed(runAL, editA.corner);
+    if (wantC.length === 0) {
+      throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: P0-3b — у стены А в прямой форме нет створки шире, чем ставит движок (затронуто: ${affected(runAL, editA.corner).map(({ unit }) => unit.id).join(' ') || 'ничего'})`);
+    }
+    const gotCAll = linearMismatches(linA, editA.corner);
+    const gotC = refusalsOf(gotCAll.found, 0);
+    check(
+      'P0-3b прямая: стена А потеряла угол a–b — створки шире предела названы, та же створка в сцене, на чертеже и в раскрое',
+      gotCAll.found !== null && gotC.length === wantC.length &&
+        wantC.every((want) => gotC.some((got) => got.moduleId === want.id && got.leafMm === want.leafMm)) &&
+        gotC.every((got) => unsynced(runAL, DEFAULT_PRODUCTION, got).length === 0),
+      gotCAll.found === null
+        ? `ИСКЛЮЧЕНИЕ: ${gotCAll.crash}`
+        : gotC.length > 0
+          ? gotC.map((got) => `${got.moduleId} ${got.leafMm}/${got.limitMm} +${got.excessMm}`).join(' · ')
+          : `НЕ НАЗВАНО: ${wantC.map((want) => `${want.id} ${want.leafMm} мм`).join(', ')}`,
+    );
+    const stateC = gotCAll.found ? screenOf(gotCAll.found, [{ lengthMm: runAL.lengthMm }], linA.segments, 'linear') : null;
+    check(
+      'P0-3b прямая: цены нет, «Дальше» и выгрузка заперты, запись идёт, пересобирается стена А',
+      Boolean(stateC && stateC.priceHidden && stateC.nextLocked && stateC.exportLocked === true && !stateC.autosaveLocked && stateC.rebuildWall === 0),
+      `${lockWords(stateC)} · пересборка ${stateC?.rebuildWall ?? 'НЕТ'}`,
+    );
+    const linPlain = linear({});
+    const plainLinear = linPlain.segments[0].modules.find(
+      (unit) => unit.kind === 'base' && !unit.appliance && !unit.variant && unit.widthMm >= 400 && unit.widthMm <= 900,
+    );
+    if (!plainLinear) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: P0-3b — у прямой кухни нет обычного нижнего модуля');
+    const editLinear = applyOps({
+      run: linPlain.segments[0],
+      requirements: DEMO_REQUIREMENTS,
+      ops: [{ op: 'set_variant', moduleId: plainLinear.id, variant: 'drawers' }],
+      openings: linPlain.input.openings,
+      roomDepthMm: 0,
+    });
+    const plainFound = linearMismatches(linear({ optimal: editLinear }), editLinear.corner);
+    check(
+      'P0-3b прямая кухня, правленная прямой: угла у ряда не было — расхождений нет',
+      plainFound.found !== null && plainFound.found.length === 0 && !editLinear.corner,
+      plainFound.found === null
+        ? `ИСКЛЮЧЕНИЕ: ${plainFound.crash}`
+        : `расхождений ${plainFound.found.length} · угол у ряда ${editLinear.corner ? 'ЕСТЬ' : 'нет'}`,
+    );
+
+    /* ── b.5 Допустимая: глухая часть — свой корпус, без угла створка в пределе (G, H) ── */
+    const columnsMm = rowB.modules.filter((unit) => unit.kind === 'tall').reduce((sum, unit) => sum + unit.widthMm, 0);
+    const verdictsG: string[] = [];
+    let wrongG = 0;
+    for (const [school, production] of SCHOOLS_B) {
+      const ab: CornerChoice = { lower: 'blind', upper: 'blind' };
+      const bc: CornerChoice = { lower: 'blind', upper: 'empty' };
+      const lostMm = cornerGeometry(ab, 'kitchen', production).lostMm;
+      const blindMm = cornerGeometry(bc, 'kitchen', production).ownerBlindMm;
+      const bLen = columnsMm + blindMm + lostMm;
+      const measurement = roomP3([
+        ['a', 3600],
+        ['b', bLen],
+        ['c', 3600],
+        ['d', bLen],
+      ]);
+      const corners: SavedChoice[] = [
+        { ...ab, walls: ['a', 'b'] },
+        { ...bc, walls: ['b', 'c'] },
+      ];
+      const homeG = screenP3('a', { measurement, production, corners });
+      const rowG = homeG.segments[1];
+      const lastG = rowG.modules.filter((unit) => standsOnFloor(unit)).sort((x, y) => y.offsetMm - x.offsetMm)[0];
+      if (!lastG || blindPartMm(lastG, rowG) !== lastG.widthMm || lastG.widthMm !== blindMm) {
+        throw new Error(
+          `НУЛЕВОЙ СЕЛЕКТОР: P0-3b ${school} — у стены b ${bLen} мм в углу не отдельный глухой корпус ${blindMm} мм: ` +
+            `${lastG ? `${lastG.id} ${lastG.widthMm} мм, глухо ${blindPartMm(lastG, rowG)}` : 'модулей нет'}`,
+        );
+      }
+      const movedG = screenP3('d', { measurement, production, corners, walls: { b: rowG } });
+      const gAt = movedG.layout.segments.findIndex((segment) => segment.wallId === 'b');
+      const runG = movedG.segments[gAt];
+      const foundG = wallMismatches(movedG.layout, movedG.segments, {
+        before: (index: number) => (index === gAt ? rowG.corner : undefined),
+        openingsOf: (index: number) => movedG.layout.segments[index].openings,
+        requirements: movedG.requirements,
+      } as never);
+      const wantG = owed(runG, rowG.corner);
+      const gotG = refusalsOf(foundG, gAt);
+      const stateG = screenOf(foundG, movedG.layout.segments.map((segment) => ({ lengthMm: segment.wallLengthMm })), movedG.segments, 'u_shape');
+      const valid = wantG.length === 0;
+      const ok = valid
+        ? foundG.length === 0 && !stateG.priceHidden && !stateG.nextLocked && stateG.exportLocked !== true
+        : gotG.length === wantG.length && stateG.priceHidden && stateG.exportLocked === true;
+      if (!ok) wrongG += 1;
+      verdictsG.push(
+        `${school}: b ${bLen} мм, глухой корпус ${blindMm} мм → без угла одна створка ${blindMm} мм, предел ${SINGLE_DOOR_MAX_MM} мм — ` +
+          (valid
+            ? ok
+              ? 'допустимо, тревоги нет, цена на экране'
+              : `ЛОЖНАЯ ТРЕВОГА: ${lockWords(stateG)}`
+            : gotG.length > 0
+              ? `отказ +${gotG[0].excessMm} мм`
+              : 'НЕ НАЗВАНО'),
+      );
+    }
+    check(
+      'P0-3b допустимая конфигурация по трём школам цеха: ложной тревоги нет, недопустимое названо',
+      verdictsG.length === SCHOOLS_B.length && wrongG === 0 && verdictsG.some((verdict) => /допустимо/.test(verdict)),
+      verdictsG.join(' | '),
+    );
+
+    /* ── b.6 36 конфигураций P0-3: форма, владелец угла, стена, створка, предел, итог ── */
+    const LOWERS_B: LowerCornerKind[] = ['blind', 'l_shape'];
+    const UPPERS_B: UpperCornerKind[] = ['l_shape', 'blind', 'empty'];
+    let configsB = 0;
+    let rowsB = 0;
+    let affectedB = 0;
+    let rejectedB = 0;
+    let passedB = 0;
+    let falseB = 0;
+    let missB = 0;
+    let driftB = 0;
+    let cornerB = 0;
+    for (const [school, production] of SCHOOLS_B) {
+      for (const shape of ['corner_l', 'u_shape'] as const) {
+        for (const lower of LOWERS_B) {
+          for (const upper of UPPERS_B) {
+            configsB += 1;
+            const choice: CornerChoice = { lower, upper };
+            const corners: SavedChoice[] =
+              shape === 'u_shape'
+                ? [
+                    { ...choice, walls: ['a', 'b'] },
+                    { ...choice, walls: ['b', 'c'] },
+                  ]
+                : [{ ...choice, walls: ['a', 'b'] }];
+            const home = screenP3('a', { shape, production, corners });
+            const cases: { wallId: string; how: string; run: Run; before: RunCorner | undefined; found: Found[] | null; crash: string; index: number }[] = [];
+            const rowA0 = home.active.run;
+            const lin = linear({ optimal: rowA0 }, production);
+            const linFound = linearMismatches(lin, rowA0.corner);
+            cases.push({ wallId: 'a', how: 'владелец a–b → прямая', run: lin.segments[0], before: rowA0.corner, found: linFound.found, crash: linFound.crash, index: 0 });
+            if (shape === 'u_shape') {
+              const rowB0 = home.segments[1];
+              const moved = screenP3('d', { shape, production, corners, walls: { b: rowB0 } });
+              const at = moved.layout.segments.findIndex((segment) => segment.wallId === 'b');
+              cases.push({
+                wallId: 'b',
+                how: 'владелец b–c → «ряд здесь?» на d',
+                run: moved.segments[at],
+                before: rowB0.corner,
+                found: wallMismatches(moved.layout, moved.segments, {
+                  before: (index: number) => (index === at ? rowB0.corner : undefined),
+                  openingsOf: (index: number) => moved.layout.segments[index].openings,
+                  requirements: moved.requirements,
+                } as never) as Found[],
+                crash: '',
+                index: at,
+              });
+            }
+            for (const item of cases) {
+              rowsB += 1;
+              const touched = affected(item.run, item.before);
+              const want = owed(item.run, item.before);
+              const got = refusalsOf(item.found, item.index);
+              const corner = (item.found ?? []).find((mismatch) => mismatch.index === item.index)?.corner?.length ?? 0;
+              affectedB += touched.length;
+              rejectedB += got.length;
+              passedB += touched.filter(({ unit }) => !got.some((hit) => hit.moduleId === unit.id)).length;
+              falseB += got.filter((hit) => !want.some((owe) => owe.id === hit.moduleId) || hit.leafMm <= hit.limitMm).length;
+              missB += want.filter((owe) => !got.some((hit) => hit.moduleId === owe.id)).length + (item.found === null ? 1 : 0);
+              driftB += got.reduce((sum, hit) => sum + unsynced(item.run, production, hit).length, 0);
+              cornerB += corner;
+              const leaves = touched.map(({ unit, doors }) => {
+                const hit = got.find((refusal) => refusal.moduleId === unit.id);
+                const leaf = Math.round(doors[0].widthM * 1000);
+                return hit
+                  ? `${unit.id} створка ${leaf} мм / предел ${hit.limitMm} мм → отказ +${hit.excessMm} мм`
+                  : `${unit.id} створка ${leaf} мм × ${doors.length} / ${ruleOf(unit, doors).text} → проходит`;
+              });
+              console.log(
+                `  ··   ${school} ${shape === 'u_shape' ? 'П' : 'Г'} ${lower}/${upper} · стена ${item.wallId} (${item.how}): ` +
+                  `${item.found === null ? `ИСКЛЮЧЕНИЕ: ${item.crash}` : leaves.join('; ') || 'затронутых створок нет'}` +
+                  `${corner > 0 ? ` · угол: несоответствий ${corner}` : ''}`,
+              );
+            }
+          }
+        }
+      }
+    }
+    const WANT_B = SCHOOLS_B.length * 2 * LOWERS_B.length * UPPERS_B.length;
+    check(
+      `P0-3b ${WANT_B} конфигураций P0-3: названы ровно створки шире, чем ставит движок, — ложных нет, пропусков нет, сцена и раскрой те же`,
+      configsB === WANT_B && rowsB === WANT_B + WANT_B / 2 && falseB === 0 && missB === 0 && driftB === 0 && rejectedB > 0,
+      `конфигураций ${configsB} · рядов ${rowsB} · затронутых створок ${affectedB}: отказ ${rejectedB}, проходит ${passedB} · ` +
+        `ложных ${falseB} · пропусков ${missB} · расхождений сцены и раскроя ${driftB} · несоответствий угла ${cornerB}`,
     );
   }
 }

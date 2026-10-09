@@ -1349,18 +1349,21 @@ export default function Workspace(props: WorkspaceProps) {
      * (её `corner` на ряду), а сейчас роль другая — ряд перенесли или
      * сменили форму. Длина этого не выдаёт.
      */
-    const byLength = layout
-      ? wallMismatches(layout, segments, {
-          before: (index) =>
-            index === 0
-              ? workingWallEdit(editedRuns[active.key], input.runWallId)?.corner
-              : layout.segments[index]
-                ? wallEditOf(editedWalls, layout.segments[index].wallId, index)?.corner
-                : undefined,
-          openingsOf: wallOpenings,
-          requirements,
-        })
-      : [];
+    /*
+     * Прямая кухня композиции не имеет, но правленый ряд стены А мог
+     * остаться от угловой: форма стала прямой, и угол он потерял (P0-3b).
+     * Сверка та же — `wallMismatches` принимает `null` как одну стену.
+     */
+    const byLength = wallMismatches(layout, segments, {
+      before: (index) =>
+        index === 0
+          ? workingWallEdit(editedRuns[active.key], input.runWallId)?.corner
+          : layout?.segments[index]
+            ? wallEditOf(editedWalls, layout.segments[index].wallId, index)?.corner
+            : undefined,
+      openingsOf: wallOpenings,
+      requirements,
+    });
     /*
      * МЕБЕЛЬ, ЗАШЕДШАЯ В ПРЕПЯТСТВИЕ (слой 56): выступ внесли в замер,
      * когда ряд уже поправлен руками. Модули не удаляются молча — каждый
@@ -4633,6 +4636,7 @@ export default function Workspace(props: WorkspaceProps) {
                   measuredBy={props.measuredBy}
                   measuredAt={props.measuredAt}
                   production={production}
+                  exportLock={screen.exportLockText}
                 />
               </div>
             )}
@@ -4808,6 +4812,8 @@ export default function Workspace(props: WorkspaceProps) {
               <button
                 type="button"
                 data-rebuild-wall={staleShown.index}
+                /* Физическая стена, чью правку снимет кнопка, — для проверки по wallId. */
+                data-rebuild-wall-id={staleShown.index === 0 ? input.runWallId : wallIdAt(staleShown.index)}
                 onClick={() => rebuildWall(staleShown.index)}
                 className="mw-btn mw-btn-ghost mt-2"
               >
