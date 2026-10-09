@@ -135,7 +135,7 @@ import {
   variantsToAdd,
 } from '../lib/millwork/moduleVariants';
 import { gapsIn } from '../lib/millwork/freeRun';
-import { BOTTLE_MAX_MM, variantEstimateKeys } from '../lib/millwork/moduleVariants';
+import { BOTTLE_MAX_MM, leavesForFront, variantEstimateKeys } from '../lib/millwork/moduleVariants';
 import { MIN_FACADE_SPAN_MM, facadeSpans, hasFacade, moduleFronts } from '../lib/millwork/applianceFront';
 import {
   CARCASS_SCOPES,
@@ -24425,6 +24425,317 @@ console.log('\nP0-3: физическая идентичность стен, п�
       auditS.problems.length > 0 ? auditS.problems.slice(0, 4).join(' | ') : statWords(auditS.stats),
     );
   }
+}
+
+/* ═══════════  STAGE 01A: свободная сборка — ширина пересчитывает створки, отказ числами  ═══════════ */
+/*
+ * Путь экрана Studio: объект без выбранного решения → свободная сборка
+ * (`mode: 'free'`) → `workspaceInput` → `composeVariants` → пустая стена →
+ * пустота (`libraryGaps`) → карточка библиотеки (`libraryCards`, её `ops`)
+ * → `applyOps` тем же входом, что `runOps` → `editedRuns` →
+ * `composeVariants` снова. Ширина — та же операция, что у поля ширины,
+ * ручки в сцене и шва на схеме (`set_width`).
+ *
+ * `set_width` число створок не пересчитывал: дверца 600 → 750 оставалась
+ * одной створкой 742 мм — шире предела, на котором движок сам ставит две
+ * (`leavesForFront`), — в сцене, в раскрое и в петлях сметы. А модуль у
+ * торца стены, расширенный за стену, ронял правку исключением
+ * `RunOverflowError` вместо отказа с числом (ловушка 233).
+ */
+console.log('\nSTAGE 01A: свободная сборка — ширина пересчитывает створки, отказ называет доступно / требуется / не хватает');
+{
+  const FREE_01A: RunRequirements = { ...REQ, mode: 'free', appliances: [], sections: [] };
+  const input01A = workspaceInput({
+    title: DEMO_PROJECT.title,
+    zone: DEMO_PROJECT.zone,
+    measurement: DEMO_MEASUREMENT,
+    requirements: FREE_01A,
+    rates: DEMO_RATES,
+    wallId: 'w1',
+    cornerAt: null,
+  });
+  const disabled01A = { basic: [], optimal: [], premium: [] } as Record<VariantKey, string[]>;
+  let edited01A: Partial<Record<VariantKey, Run>> = {};
+  /** Ровно то, что показывает экран: ряд и смета выбранной комплектации. */
+  const shown01A = () => composeVariants(input01A, disabled01A, edited01A).find((v) => v.key === 'optimal')!;
+  /** Ровно то, что делает `runOps`: applyOps от показанного ряда → editedRuns. */
+  const ops01A = (ops: MillworkOp[]): Run => {
+    const next = applyOps({
+      run: shown01A().run,
+      requirements: FREE_01A,
+      ops,
+      openings: input01A.openings,
+      roomDepthMm: 0,
+    });
+    edited01A = { ...edited01A, optimal: next };
+    return next;
+  };
+  /** Карточка библиотеки на первой пустоте нижнего ряда — тот же вход, что у панели. */
+  const card01A = (kind: ModuleVariantKind, widthMm: number) => {
+    const run = shown01A().run;
+    const gap = libraryGaps(run, input01A.openings, FREE_01A).find((g) => g.row === 'base') ?? null;
+    if (!gap) return null;
+    return (
+      libraryCards({
+        run,
+        requirements: FREE_01A,
+        openings: input01A.openings,
+        roomDepthMm: 0,
+        moduleId: null,
+        gap: { fromMm: gap.fromMm, widthMm: gap.widthMm, row: 'base' },
+      }).find((card) => card.spec.kind === kind && card.widthMm === widthMm && !card.refusal) ?? null
+    );
+  };
+  /** Створки модуля в раскрое — фасады этого модуля, по одной строке на ширину. */
+  const cutLeaves01A = (run: Run, id: string) =>
+    buildPanels({ run }).filter((panel) => panel.moduleId === id && panel.name === FACADE_PANEL_NAME);
+  const cutCount01A = (run: Run, id: string) => cutLeaves01A(run, id).reduce((sum, panel) => sum + panel.qty, 0);
+  /** Створки модуля в сцене — тем же списком, что рисует 3D (`sceneLeaves`). */
+  const sceneDoors01A = (run: Run, id: string) => {
+    const place = runPlaces(run).find((p) => p.unit.id === id);
+    return place ? sceneLeaves(place.unit, place.heightM).filter((leaf) => leaf.kind === 'door') : [];
+  };
+  /** Петли распашных фасадов в смете — штук. */
+  const hinges01A = (estimate: Estimate) =>
+    estimate.lines
+      .filter((line) => line.key.startsWith('hinge_') && line.key !== 'hinge_corner_175')
+      .reduce((sum, line) => sum + line.quantity, 0);
+  /** Ни одной детали с NaN, нулём или минусом. */
+  const badParts01A = (run: Run) =>
+    buildPanels({ run }).filter(
+      (panel) =>
+        ![panel.lengthMm, panel.widthMm, panel.qty, panel.thicknessMm].every(
+          (value) => Number.isFinite(value) && value > 0,
+        ),
+    );
+  const said01A = (run: Run) => (run.warnings.length > 0 ? run.warnings.join(' | ') : 'отказа нет');
+
+  /* 01A.1 — пустая стена, модуль из библиотеки без готового решения. */
+  const empty01A = shown01A();
+  const door600 = card01A('door', 600);
+  check(
+    '01A.1 свободная сборка: стена пустая, смета 0, в пустоте есть карточка «Дверца 600»',
+    empty01A.run.modules.length === 0 && Math.round(empty01A.estimate.total) === 0 && Boolean(door600),
+    `стена ${empty01A.run.lengthMm} мм · модулей ${empty01A.run.modules.length} · итог ${Math.round(empty01A.estimate.total)} · ` +
+      (door600 ? JSON.stringify(door600.ops) : 'НУЛЕВОЙ СЕЛЕКТОР: карточки «Дверца 600» в пустоте нет'),
+  );
+  if (!door600) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: 01A — поставить модуль не из чего');
+
+  ops01A(door600.ops);
+  const placed01A = shown01A();
+  const first01A = placed01A.run.modules[0];
+  check(
+    '01A.1 модуль встал на отметку пустоты: 600 мм, одна створка — в сцене и в раскрое, итог больше нуля',
+    placed01A.run.modules.length === 1 &&
+      first01A.offsetMm === 0 &&
+      first01A.widthMm === 600 &&
+      first01A.doorCount === 1 &&
+      sceneDoors01A(placed01A.run, first01A.id).length === 1 &&
+      cutCount01A(placed01A.run, first01A.id) === 1 &&
+      placed01A.estimate.total > 0,
+    first01A
+      ? `${first01A.id} · ${first01A.offsetMm}+${first01A.widthMm} · створок ${first01A.doorCount} · сцена ${sceneDoors01A(placed01A.run, first01A.id).length} · раскрой ${cutCount01A(placed01A.run, first01A.id)} · итог ${Math.round(placed01A.estimate.total)}`
+      : 'НУЛЕВОЙ СЕЛЕКТОР: модуля нет',
+  );
+
+  /* 01A.2 — ширина 600 → 750: две створки, той же функцией, что ставит их раскладка. */
+  const hingesBefore01A = hinges01A(placed01A.estimate);
+  const totalBefore01A = Math.round(placed01A.estimate.total);
+  ops01A([{ op: 'set_width', moduleId: first01A.id, widthMm: 750 }]);
+  const wide01A = shown01A();
+  const wideUnit01A = wide01A.run.modules.find((unit) => unit.id === first01A.id);
+  const wideCut01A = cutLeaves01A(wide01A.run, first01A.id);
+  const wideScene01A = sceneDoors01A(wide01A.run, first01A.id);
+  check(
+    '01A.2 ширина 600 → 750: модуль тот же, отметка та же, створок две — как ставит движок (`leavesForFront`)',
+    Boolean(wideUnit01A) &&
+      wideUnit01A!.offsetMm === 0 &&
+      wideUnit01A!.widthMm === 750 &&
+      wideUnit01A!.doorCount === leavesForFront(wideUnit01A!, 750) &&
+      wideUnit01A!.doorCount === 2,
+    wideUnit01A
+      ? `${wideUnit01A.id} · ${wideUnit01A.offsetMm}+${wideUnit01A.widthMm} · створок ${wideUnit01A.doorCount}, движок ставит ${leavesForFront(wideUnit01A, 750)} · ${said01A(wide01A.run)}`
+      : 'МОДУЛЬ ПРОПАЛ после правки ширины',
+  );
+  check(
+    '01A.2 сцена и раскрой: две створки не шире 600 мм, деталей с NaN, нулём и минусом нет',
+    wideScene01A.length === 2 &&
+      cutCount01A(wide01A.run, first01A.id) === 2 &&
+      wideCut01A.every((panel) => panel.widthMm <= SINGLE_DOOR_MAX_MM && panel.lengthMm <= SINGLE_DOOR_MAX_MM * 2) &&
+      wideScene01A.every((leaf) => leaf.kind === 'door' && Math.round(leaf.widthM * 1000) <= SINGLE_DOOR_MAX_MM) &&
+      badParts01A(wide01A.run).length === 0,
+    `сцена ${wideScene01A.length}: ${wideScene01A.map((leaf) => (leaf.kind === 'door' ? Math.round(leaf.widthM * 1000) : '?')).join(' + ')} мм · ` +
+      `раскрой ${wideCut01A.map((panel) => `${panel.lengthMm}×${panel.widthMm}×${panel.qty}`).join(' ')} · плохих деталей ${badParts01A(wide01A.run).length}`,
+  );
+  check(
+    '01A.2 смета: петель вдвое больше (две створки), итог вырос',
+    hinges01A(wide01A.estimate) === hingesBefore01A * 2 && Math.round(wide01A.estimate.total) > totalBefore01A,
+    `петли ${hingesBefore01A} → ${hinges01A(wide01A.estimate)} · итог ${totalBefore01A} → ${Math.round(wide01A.estimate.total)}`,
+  );
+  check(
+    '01A.2 открывание не выбирали — умолчание двух створок: от середины',
+    wideUnit01A?.fill?.openingChosen !== true && wideUnit01A?.fill?.hinge === 'double',
+    `hinge ${wideUnit01A?.fill?.hinge ?? 'нет'} · выбрано ${wideUnit01A?.fill?.openingChosen ? 'человеком' : 'умолчанием'}`,
+  );
+
+  /* 01A.3 — обратно 750 → 550: одна створка. */
+  ops01A([{ op: 'set_width', moduleId: first01A.id, widthMm: 550 }]);
+  const narrow01A = shown01A();
+  const narrowUnit01A = narrow01A.run.modules.find((unit) => unit.id === first01A.id);
+  check(
+    '01A.3 ширина 750 → 550: створка снова одна — в данных, сцене и раскрое',
+    narrowUnit01A?.widthMm === 550 &&
+      narrowUnit01A.doorCount === 1 &&
+      sceneDoors01A(narrow01A.run, first01A.id).length === 1 &&
+      cutCount01A(narrow01A.run, first01A.id) === 1,
+    narrowUnit01A
+      ? `${narrowUnit01A.widthMm} мм · створок ${narrowUnit01A.doorCount} · сцена ${sceneDoors01A(narrow01A.run, first01A.id).length} · раскрой ${cutCount01A(narrow01A.run, first01A.id)}`
+      : 'МОДУЛЬ ПРОПАЛ',
+  );
+
+  /* 01A.4 — сторона выбрана человеком: одну створку за него не делят, ширина — отказом. */
+  ops01A([{ op: 'set_opening', moduleId: first01A.id, opening: 'left' }]);
+  const chosenBefore01A = shown01A().run.modules.find((unit) => unit.id === first01A.id);
+  const chosenRun01A = ops01A([{ op: 'set_width', moduleId: first01A.id, widthMm: 750 }]);
+  const chosen01A = shown01A().run.modules.find((unit) => unit.id === first01A.id);
+  check(
+    '01A.4 открывание «влево» выбрано человеком: ширина 750 не применяется, створка одна, сторона та же, причина словами',
+    chosenBefore01A?.fill?.openingChosen === true &&
+      chosen01A?.widthMm === 550 &&
+      chosen01A.doorCount === 1 &&
+      chosen01A.fill?.hinge === 'left' &&
+      chosenRun01A.warnings.some((w) => w.includes('750 мм') && w.includes(`${SINGLE_DOOR_MAX_MM} мм`) && w.includes('выбран')),
+    chosen01A
+      ? `${chosen01A.widthMm} мм · створок ${chosen01A.doorCount} · hinge ${chosen01A.fill?.hinge} · ${said01A(chosenRun01A)}`
+      : 'МОДУЛЬ ПРОПАЛ',
+  );
+
+  /* 01A.5 — число створок объявил вариант: «Две дверцы» остаются двумя при любой ширине. */
+  /* «Две дверцы» бывают от 600 мм: после отказа 01A.4 модуль 550 — сначала 600 (одна створка, как выбрано). */
+  ops01A([{ op: 'set_width', moduleId: first01A.id, widthMm: 600 }]);
+  ops01A([{ op: 'set_variant', moduleId: first01A.id, variant: 'door_two' }]);
+  ops01A([{ op: 'set_width', moduleId: first01A.id, widthMm: 1000 }]);
+  const declared01A = shown01A().run.modules.find((unit) => unit.id === first01A.id);
+  check(
+    '01A.5 вариант «Две дверцы» объявил створки сам: 1000 мм — по-прежнему две',
+    declared01A?.variant === 'door_two' && declared01A.widthMm === 1000 && declared01A.doorCount === 2,
+    declared01A ? `${declared01A.variant} · ${declared01A.widthMm} мм · створок ${declared01A.doorCount}` : 'МОДУЛЬ ПРОПАЛ',
+  );
+
+  /* 01A.6 — сосед справа вплотную: отказ называет доступно, требуется и не хватает. */
+  ops01A([{ op: 'set_variant', moduleId: first01A.id, variant: 'door' }]);
+  ops01A([{ op: 'set_width', moduleId: first01A.id, widthMm: 750 }]);
+  const door600b = card01A('door', 600);
+  if (!door600b) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: 01A.6 — карточки «Дверца 600» во второй пустоте нет');
+  ops01A(door600b.ops);
+  const pair01A = shown01A().run.modules.map((unit) => `${unit.id}@${unit.offsetMm}+${unit.widthMm}`).join(' ');
+  const refusedRun01A = ops01A([{ op: 'set_width', moduleId: first01A.id, widthMm: 1000 }]);
+  const pairAfter01A = shown01A().run.modules.map((unit) => `${unit.id}@${unit.offsetMm}+${unit.widthMm}`).join(' ');
+  check(
+    '01A.6 сосед вплотную: 1000 мм — отказ «доступно 750 мм, требуется 1000 мм, не хватает 250 мм», ряд прежний',
+    pair01A === `${first01A.id}@0+750 ${shown01A().run.modules[1]?.id}@750+600` &&
+      pairAfter01A === pair01A &&
+      refusedRun01A.warnings.some(
+        (w) => w.includes('доступно 750 мм') && w.includes('требуется 1000 мм') && w.includes('не хватает 250 мм'),
+      ),
+    `ряд ${pair01A} → ${pairAfter01A} · ${said01A(refusedRun01A)}`,
+  );
+
+  /* 01A.7 — модуль у торца стены: шире стены — отказ числом, а не исключение. */
+  const second01A = shown01A().run.modules[1];
+  ops01A([{ op: 'move_module', moduleId: second01A.id, offsetMm: input01A.lengthMm - 600 }]);
+  const atEnd01A = shown01A().run.modules.find((unit) => unit.offsetMm === input01A.lengthMm - 600);
+  let endRun01A: Run | null = null;
+  let endCrash01A: string | null = null;
+  try {
+    if (atEnd01A) endRun01A = ops01A([{ op: 'set_width', moduleId: atEnd01A.id, widthMm: 800 }]);
+  } catch (error) {
+    endCrash01A = error instanceof Error ? error.message : String(error);
+  }
+  const atEndAfter01A = shown01A().run.modules.find((unit) => unit.id === atEnd01A?.id);
+  check(
+    '01A.7 модуль у торца: 800 мм — отказ «доступно 600 мм, требуется 800 мм, не хватает 200 мм», без исключения, модуль прежний',
+    Boolean(atEnd01A) &&
+      endCrash01A === null &&
+      atEndAfter01A?.widthMm === 600 &&
+      Boolean(
+        endRun01A?.warnings.some(
+          (w) => w.includes('доступно 600 мм') && w.includes('требуется 800 мм') && w.includes('не хватает 200 мм'),
+        ),
+      ),
+    !atEnd01A
+      ? 'НУЛЕВОЙ СЕЛЕКТОР: модуль к торцу не переехал'
+      : endCrash01A
+        ? `ИСКЛЮЧЕНИЕ: ${endCrash01A}`
+        : `${atEndAfter01A?.offsetMm}+${atEndAfter01A?.widthMm} · ${endRun01A ? said01A(endRun01A) : 'ряда нет'}`,
+  );
+
+  /* 01A.8 — сохранение и открытие: тот же ряд, та же смета. */
+  const savedState01A = JSON.parse(JSON.stringify({ requirements: FREE_01A, runs: edited01A })) as {
+    requirements: RunRequirements;
+    runs: Partial<Record<VariantKey, Run>>;
+  };
+  const reopened01A = composeVariants(
+    workspaceInput({
+      title: DEMO_PROJECT.title,
+      zone: DEMO_PROJECT.zone,
+      measurement: DEMO_MEASUREMENT,
+      requirements: savedState01A.requirements,
+      rates: DEMO_RATES,
+      wallId: 'w1',
+      cornerAt: null,
+    }),
+    disabled01A,
+    savedState01A.runs,
+  ).find((v) => v.key === 'optimal')!;
+  const sig01A = (run: Run) =>
+    run.modules.map((unit) => `${unit.id}@${unit.offsetMm}+${unit.widthMm}/${unit.doorCount}${unit.variant ? `/${unit.variant}` : ''}`).join(' ');
+  check(
+    '01A.8 записал — открыл: те же модули, отметки, ширины и створки, итог до тенге, свободная сборка',
+    savedState01A.requirements.mode === 'free' &&
+      sig01A(reopened01A.run) === sig01A(shown01A().run) &&
+      Math.round(reopened01A.estimate.total) === Math.round(shown01A().estimate.total) &&
+      reopened01A.run.modules.length === 2,
+    `${sig01A(shown01A().run)} → ${sig01A(reopened01A.run)} · итог ${Math.round(shown01A().estimate.total)} → ${Math.round(reopened01A.estimate.total)}`,
+  );
+
+  /* 01A.9 — по готовому решению то же правило: 450 → 800 — две створки, 800 → 500 — одна. */
+  const inputT01A = workspaceInput({
+    title: DEMO_PROJECT.title,
+    zone: DEMO_PROJECT.zone,
+    measurement: DEMO_MEASUREMENT,
+    requirements: REQ,
+    rates: DEMO_RATES,
+    wallId: 'w1',
+    cornerAt: DEMO_PROJECT.cornerAt,
+  });
+  let editedT01A: Partial<Record<VariantKey, Run>> = {};
+  const shownT01A = () => composeVariants(inputT01A, disabled01A, editedT01A).find((v) => v.key === 'optimal')!;
+  const plainT01A = shownT01A().run.modules.find(
+    (unit) =>
+      unit.kind === 'base' && !unit.appliance && !unit.column && unit.frontType === 'door' && unit.doorCount === 1 && !unit.variant,
+  );
+  if (!plainT01A) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: 01A.9 — в ряду по готовому решению нет обычной дверцы');
+  const opsT01A = (ops: MillworkOp[]) => {
+    const next = applyOps({ run: shownT01A().run, requirements: REQ, ops, openings: inputT01A.openings, roomDepthMm: 0 });
+    editedT01A = { ...editedT01A, optimal: next };
+    return next;
+  };
+  const wideT01A = opsT01A([{ op: 'set_width', moduleId: plainT01A.id, widthMm: 800 }]);
+  const wideTUnit01A = shownT01A().run.modules.find((unit) => unit.id === plainT01A.id);
+  const wideTCut01A = cutCount01A(shownT01A().run, plainT01A.id);
+  const narrowT01A = opsT01A([{ op: 'set_width', moduleId: plainT01A.id, widthMm: 500 }]);
+  const narrowTUnit01A = shownT01A().run.modules.find((unit) => unit.id === plainT01A.id);
+  check(
+    '01A.9 по готовому решению: дверца 450 → 800 — две створки, 800 → 500 — одна',
+    wideTUnit01A?.widthMm === 800 &&
+      wideTUnit01A.doorCount === 2 &&
+      wideTCut01A === 2 &&
+      narrowTUnit01A?.widthMm === 500 &&
+      narrowTUnit01A.doorCount === 1,
+    `${plainT01A.id}: 800 → створок ${wideTUnit01A?.doorCount ?? 'НЕТ МОДУЛЯ'}, в раскрое ${wideTCut01A} (${said01A(wideT01A)}) · ` +
+      `500 → створок ${narrowTUnit01A?.doorCount ?? 'НЕТ МОДУЛЯ'} (${said01A(narrowT01A)})`,
+  );
 }
 
 /*

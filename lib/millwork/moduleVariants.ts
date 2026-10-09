@@ -1,4 +1,4 @@
-import { CORNER_SIZE_MM, frontPlan } from './modules';
+import { CORNER_SIZE_MM, SINGLE_DOOR_MAX_MM, frontPlan, isUpperRow } from './modules';
 import { zoneProfile } from './zones';
 import type {
   FrontType,
@@ -511,6 +511,58 @@ export function variantFitsWidth(spec: ModuleVariantSpec, widthMm: number): bool
 export function leavesForFront(unit: Pick<Module, 'kind' | 'variant'>, frontMm: number): number {
   const declared = unit.variant ? MODULE_VARIANTS[unit.variant].doorCount : undefined;
   return declared ?? frontPlan(unit.kind, frontMm).doorCount;
+}
+
+/**
+ * СТВОРКИ ПОСЛЕ СМЕНЫ ШИРИНЫ — ТЕМ ЖЕ ПРАВИЛОМ, ЧТО ПРИ ПОСТАНОВКЕ (STAGE 01A).
+ *
+ * `set_width` менял ширину и оставлял прежнее число створок: дверца
+ * 600 → 750 оставалась одной створкой 742 мм — шире предела, на котором
+ * движок сам ставит две, — в сцене, в раскрое и в петлях сметы. Обратно
+ * то же: двустворчатый 950 → 550 оставался двумя створками по 270.
+ *
+ * Пересчёт — `leavesForFront`, та же функция, что ставит створки варианту
+ * и проверяет готовый ряд. Но только там, где число створок не решал
+ * человек и не диктует само устройство:
+ *   - вариант объявил створки сам («Две дверцы», «Подъёмник») — его слово;
+ *   - механизм (подъёмник, откидной) — фасад один при любой ширине;
+ *   - угловой модуль — створки ставит угол (слепой модуль отсекает
+ *     вызывающий: глухую часть знает ряд, а не модуль);
+ *   - направление выбрал человек (`openingChosen`) — его решение не
+ *     меняется за него: если новая ширина делает его одну створку шире
+ *     предела, правка отклоняется словами, и решать ему.
+ *
+ * `null` — число створок остаётся прежним; `doorCount` — новое число;
+ * `refusal` — ширину не применять, причина словами.
+ */
+export function leavesAfterWidth(
+  unit: Module,
+  widthMm: number,
+): { doorCount: number } | { refusal: string } | null {
+  if (unit.frontType !== 'door' || unit.appliance || unit.column) return null;
+  if (unit.kind === 'corner_base' || unit.kind === 'corner_upper') return null;
+  if (unit.variant && MODULE_VARIANTS[unit.variant].doorCount !== undefined) return null;
+  const hinge = unit.fill?.hinge;
+  if (hinge === 'lift' || hinge === 'flap') return null;
+
+  /* Ноль створок у распашного фасада рисуется и режется одной (`doorCountOf`). */
+  const now = Math.max(1, unit.doorCount);
+  const wanted = leavesForFront(unit, widthMm);
+  if (wanted === now) return null;
+
+  if (unit.fill?.openingChosen) {
+    /* Две створки, выбранные человеком, на узком модуле остаются двумя. */
+    if (wanted < now) return null;
+    const two = MODULE_VARIANTS[isUpperRow(unit) ? 'upper_door_two' : 'door_two'].title;
+    return {
+      refusal:
+        `${widthMm} мм — одна створка шире ${SINGLE_DOOR_MAX_MM} мм провисает на петлях, а открывание ` +
+        `модуля «${unit.label}» выбрано вручную: число створок за вас не меняется. ` +
+        `Выберите вариант «${two}» или оставьте ширину до ${SINGLE_DOOR_MAX_MM} мм.`,
+    };
+  }
+
+  return { doorCount: wanted };
 }
 
 export function variantsForModule(

@@ -109,9 +109,11 @@ import {
   type StepKey,
 } from '@/lib/millwork/steps';
 import SurveyPanel from './SurveyPanel';
+import StudioInspector, { type StudioWall } from './StudioInspector';
 import SurveySheet from './SurveySheet';
 import TemplatePicker from './TemplatePicker';
 import type { RateTable } from '@/lib/millwork/estimate';
+import { unpricedLines } from '@/lib/millwork/estimate';
 import { applyOps } from '@/lib/millwork/ops';
 import MaterialLibraryPanel, { type AppliedMaterial } from './MaterialLibraryPanel';
 import {
@@ -360,6 +362,14 @@ export type WorkspaceProps = {
   onSurveyFinish?: (survey: Survey) => void;
   /** Замер правится и снаружи: страница держит его у себя. */
   onSurveyChange?: (survey: Survey) => void;
+  /**
+   * ALDIK FURNITURE STUDIO (STAGE 01A): тот же объект и то же рабочее место,
+   * но без мастера шагов. Вместо полосы шагов — вкладки, вместо «Назад /
+   * Дальше» — состояние проекта; решение не навязывается: объект, на котором
+   * ещё ничего не собрано, открывается свободной сборкой. Состояние, операции
+   * и автосохранение — общие с мастером: второго конфигуратора нет.
+   */
+  studio?: boolean;
 };
 
 /** Пауза после последнего изменения перед записью в базу. */
@@ -430,7 +440,11 @@ export default function Workspace(props: WorkspaceProps) {
    * вернув её однажды, он не должен возвращать её на каждом переключении.
    */
   const [schematicView, setSchematicView] = useState<'front' | 'plan' | 'scene'>('front');
-  const [panelHidden, setPanelHidden] = useState(true);
+  /*
+   * В Studio панель видна и рядом с 3D: справа инспектор выбранного, и
+   * выбор в сцене обязан показать его тут же (STAGE 01A).
+   */
+  const [panelHidden, setPanelHidden] = useState(!props.studio);
   const wideScene = schematicView === 'scene' && panelHidden;
 
   /*
@@ -439,12 +453,24 @@ export default function Workspace(props: WorkspaceProps) {
    */
   const startSurvey = props.initialState?.survey ?? props.survey ?? null;
   const [step, setStep] = useState<StepKey>(
-    startSurvey && !startSurvey.finishedAt
-      ? 'survey'
-      : (props.initialState?.templateId ?? props.templateId)
-        ? 'layout'
-        : 'template',
+    /*
+     * Studio открывается на работе с мебелью: замер — вкладка рядом, а не
+     * обязательный первый шаг, решения в Studio не выбирают вовсе.
+     */
+    props.studio
+      ? 'layout'
+      : startSurvey && !startSurvey.finishedAt
+        ? 'survey'
+        : (props.initialState?.templateId ?? props.templateId)
+          ? 'layout'
+          : 'template',
   );
+  /**
+   * Вкладка Studio «Деталировка» — документ на месте рабочей сетки. Шагом
+   * мастера она не стала: шаг «Результат» — это сравнение и отправка
+   * клиенту, а здесь нужен раскрой той мебели, что сейчас на стене.
+   */
+  const [studioPanels, setStudioPanels] = useState(false);
   const [resultView, setResultView] = useState<ResultView>('facade');
   /*
    * Эскиз в двух видах: «с фасадами» показывают клиенту, «внутри» —
@@ -658,8 +684,22 @@ export default function Workspace(props: WorkspaceProps) {
     savedWallRuns(props.initialState?.wallRuns),
   );
 
+  /*
+   * STUDIO НЕ НАВЯЗЫВАЕТ ГОТОВОЕ РЕШЕНИЕ (STAGE 01A).
+   *
+   * Объект, на котором ещё ничего не собрано — ни решения, ни правок
+   * рядов, — открывается в Studio свободной сборкой: пустая стена, модули
+   * ставит человек. Собранный объект открывается тем, чем его сохранили:
+   * переключить его режим молча значило бы поменять правила его рядов без
+   * единого нажатия.
+   */
+  const nothingAssembled =
+    !props.initialState?.templateId &&
+    !props.templateId &&
+    Object.keys(props.initialState?.runs ?? {}).length === 0 &&
+    Object.keys(props.initialState?.wallRuns ?? {}).length === 0;
   const [freeMode, setFreeMode] = useState(
-    props.initialState?.requirements?.mode === 'free',
+    props.initialState?.requirements?.mode === 'free' || (Boolean(props.studio) && nothingAssembled),
   );
   const [disabled, setDisabled] = useState<Record<VariantKey, string[]>>({
     basic: props.initialState?.disabled?.basic ?? [],
@@ -1202,6 +1242,28 @@ export default function Workspace(props: WorkspaceProps) {
 
   const wall = Math.min(wallIndex, segments.length - 1);
   const activeRun = segments[wall] ?? active.run;
+
+  /**
+   * СТЕНА АКТИВНОГО РЯДА ДЛЯ ИНСПЕКТОРА STUDIO (STAGE 01A).
+   *
+   * Номер стены — тот же `wallId`, под которым пишутся правки ряда;
+   * длина и её состояние — из живого замера (`Known`): допущение не
+   * выдаётся за замер и в инспекторе. Замера в режиме замерщика нет —
+   * длина та, с которой объект открыли.
+   */
+  const studioWall = useMemo<StudioWall>(() => {
+    const id = wall === 0 ? (input.runWallId ?? null) : wallIdAt(wall);
+    const known = id ? survey?.walls.find((item) => item.id === id)?.lengthMm : undefined;
+    const siteWall = id ? site.walls.find((item) => item.id === id) : undefined;
+    return {
+      id: id ?? '—',
+      label: wallLabel(wall),
+      lengthMm:
+        known && known.state !== 'unknown' ? known.value : (siteWall?.lengthMm ?? activeRun.lengthMm),
+      state: known?.state ?? 'measured',
+      basis: known?.state === 'assumed' ? known.basis : undefined,
+    };
+  }, [wall, input.runWallId, wallIdAt, survey, site.walls, activeRun.lengthMm]);
   /** Цвет фасада для сцены: один на экран и на сцену рендера по чертежу. */
   const sceneFacadeColor = frontOf(
     activeRun.modules.find((unit) => hasFacade(unit)) ?? activeRun.modules[0] ?? {},
@@ -3058,6 +3120,55 @@ export default function Workspace(props: WorkspaceProps) {
   const preliminary = resolution ? isEstimatePreliminary(resolution.stats) : false;
 
   /*
+   * СОСТОЯНИЕ STUDIO — ОДНО СЛОВО И ПРИЧИНА (STAGE 01A).
+   *
+   * У мастера состояние говорили «Дальше» и её замок; в Studio шагов нет,
+   * и состояние проекта называется прямо, внизу экрана, рядом с суммой.
+   * Решают его те же замки, что держат выгрузку и цену (`screenState`), —
+   * своего правила «готово ли» у Studio нет:
+   *   блокирующие ошибки — красное расхождение, отказ сборки, запертая
+   *                        выгрузка или спрятанная цена;
+   *   черновик           — мебели нет, в смете строки без цены или размеры
+   *                        приняты по умолчанию;
+   *   готово к производственной проверке — ничего из этого: чертёж и
+   *                        раскрой можно отдавать на проверку цеху, но не
+   *                        в производство без неё.
+   */
+  const studioStatus: { key: 'blocked' | 'draft' | 'ready'; title: string; reason: string } =
+    screen.blocking.length > 0 || screen.exportLocked || screen.priceHidden
+      ? {
+          key: 'blocked',
+          title: 'Есть блокирующие ошибки',
+          reason:
+            screen.blocking[0]?.message ??
+            screen.exportLockText ??
+            'цены нет: смету по этой мебели показывать нельзя.',
+        }
+      : segments.every((run) => allModules(run).length === 0)
+        ? {
+            key: 'draft',
+            title: 'Черновик',
+            reason: `${wallLabel(wall)}: мебели нет — нажмите на пустое место стены и поставьте модуль из библиотеки.`,
+          }
+        : unpricedLines(objectEstimate).length > 0
+          ? {
+              key: 'draft',
+              title: 'Черновик',
+              reason: 'в смете есть строки без цены — итог неполный, предложением его называть нельзя.',
+            }
+          : preliminary
+            ? {
+                key: 'draft',
+                title: 'Черновик',
+                reason: 'часть размеров принята по умолчанию — смета предварительная, пока их не замерят.',
+              }
+            : {
+                key: 'ready',
+                title: 'Готово к производственной проверке',
+                reason: 'расхождений нет, смета полная — чертёж и раскрой можно отдавать на проверку цеху.',
+              };
+
+  /*
    * Автосохранение через паузу после последнего изменения. Замерщик правит
    * состав при клиенте и не должен помнить про кнопку «сохранить»; писать же
    * на каждый клик — это запрос в базу на каждое нажатие.
@@ -3423,17 +3534,50 @@ export default function Workspace(props: WorkspaceProps) {
   };
 
   return (
-    <div className="mw-root flex h-screen flex-col overflow-hidden">
+    <div
+      className="mw-root flex h-screen flex-col overflow-hidden"
+      data-studio-root={props.studio ? '' : undefined}
+    >
       {/* ── Шапка: имя объекта и состояние сохранения, больше ничего ── */}
       <header className="flex items-center gap-3 px-4 py-3 print:hidden">
         <div className="min-w-0">
-          <p className="truncate text-[17px] font-medium leading-tight">{props.title}</p>
+          <p
+            className="truncate text-[17px] font-medium leading-tight"
+            data-studio-title={props.studio ? '' : undefined}
+          >
+            {props.title}
+          </p>
           <p className="mw-num truncate text-[13px] text-graphiteMw">
+            {props.studio && <span className="text-cyan">ALDIK Furniture Studio · </span>}
             {props.zone} · {props.measuredBy || 'замерщик'} · {props.measuredAt || '—'}
           </p>
         </div>
 
         <ThemeToggle className="ml-auto" />
+
+        {/*
+          * МАСТЕР И STUDIO — ОДИН ОБЪЕКТ, ДВА РАСПОЛОЖЕНИЯ ЭКРАНА.
+          *
+          * Переход — обычная ссылка на тот же объект: состояние живёт в
+          * базе, и оба экрана читают его одной загрузкой. Пока правка ещё
+          * пишется, уход со страницы потерял бы её (запись идёт через
+          * паузу) — поэтому на «Сохраняем…» переход ждёт.
+          */}
+        {props.projectId && (
+          <a
+            href={props.studio ? `/project/${props.projectId}` : `/project/${props.projectId}/room`}
+            data-studio-wizard={props.studio ? '' : undefined}
+            data-open-studio={props.studio ? undefined : ''}
+            aria-disabled={saveState === 'saving'}
+            title={saveState === 'saving' ? 'Дождитесь сохранения — правка ещё пишется' : undefined}
+            onClick={(event) => {
+              if (saveState === 'saving') event.preventDefault();
+            }}
+            className="mw-btn mw-btn-ghost hidden sm:inline-flex"
+          >
+            {props.studio ? 'Мастер шагов' : 'Studio'}
+          </a>
+        )}
 
         <a
           href="/demo"
@@ -3461,7 +3605,73 @@ export default function Workspace(props: WorkspaceProps) {
       </header>
 
       <div className="print:hidden">
-        <StepBar steps={steps} active={step} onSelect={setStep} />
+        {props.studio ? (
+          /*
+           * ВКЛАДКИ STUDIO — ТЕ ЖЕ ШАГИ, НО БЕЗ ПОРЯДКА (STAGE 01A).
+           *
+           * «Размеры», «Дизайн», «Конструкция» и «Материалы» — это рабочие
+           * шаги мастера с той же сценой и той же панелью: второй копии
+           * экранов нет. Обязательного порядка нет, решения не выбирают;
+           * «Деталировка» — раскрой той мебели, что стоит сейчас, а
+           * «Смета» открывает ту же таблицу, что строка суммы внизу.
+           */
+          <nav
+            aria-label="Вкладки Studio"
+            className="flex items-center gap-1 overflow-x-auto px-4 pb-2"
+            data-studio-tabs
+          >
+            {(
+              [
+                ['survey', 'Замер'],
+                ['sizes', 'Размеры'],
+                ['layout', 'Дизайн'],
+                ['build', 'Конструкция'],
+                ['materials', 'Материалы'],
+                ['panels', 'Деталировка'],
+              ] as const
+            ).map(([key, title]) => {
+              const on = key === 'panels' ? studioPanels : !studioPanels && step === key;
+              const locked = key === 'survey' && !survey;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  data-studio-tab={key}
+                  aria-pressed={on}
+                  disabled={locked}
+                  title={
+                    locked
+                      ? 'Замера в режиме замерщика у объекта нет: размеры пришли с формы замера.'
+                      : undefined
+                  }
+                  onClick={() => {
+                    if (key === 'panels') {
+                      setStudioPanels(true);
+                      return;
+                    }
+                    setStudioPanels(false);
+                    setStep(key);
+                  }}
+                  className={`mw-btn shrink-0 ${on ? 'mw-btn-primary' : 'mw-btn-ghost'} disabled:opacity-40`}
+                >
+                  {title}
+                </button>
+              );
+            })}
+            <button
+              type="button"
+              data-studio-estimate
+              disabled={screen.priceHidden}
+              title={screen.priceHidden ? 'Цены нет — причина внизу экрана.' : undefined}
+              onClick={() => setEstimateOpen(true)}
+              className="mw-btn mw-btn-ghost shrink-0 disabled:opacity-40"
+            >
+              Смета
+            </button>
+          </nav>
+        ) : (
+          <StepBar steps={steps} active={step} onSelect={setStep} />
+        )}
       </div>
 
       {props.ratesMissing && (
@@ -3545,7 +3755,7 @@ export default function Workspace(props: WorkspaceProps) {
                 dirty.current = true;
                 setSurvey(finished);
                 setShowSheet(false);
-                setStep('template');
+                setStep(props.studio ? 'layout' : 'template');
                 props.onSurveyFinish?.(finished);
               }}
             />
@@ -3665,7 +3875,7 @@ export default function Workspace(props: WorkspaceProps) {
           *
           * Чертёж сюда НЕ переехал: он для цеха, и живёт на «Результате».
           */}
-        {isStudio(step) && (
+        {isStudio(step) && !(props.studio && studioPanels) && (
           /*
             * 3D ЗАНИМАЕТ ВЕСЬ ЭКРАН.
             *
@@ -3795,6 +4005,14 @@ export default function Workspace(props: WorkspaceProps) {
               className={`min-w-0 lg:h-full lg:overflow-y-auto ${wideScene ? 'hidden' : ''}`}
               data-studio-panel
             >
+              {props.studio && (
+                <StudioInspector
+                  run={activeRun}
+                  wall={studioWall}
+                  selectedId={selectedId}
+                  gap={selectedGap}
+                />
+              )}
               {/*
                 * ЗАГОЛОВОК ВЫБРАННОГО МОДУЛЯ — ПЕРВЫМ БЛОКОМ ПАНЕЛИ.
                 *
@@ -4396,6 +4614,29 @@ export default function Workspace(props: WorkspaceProps) {
           </div>
         )}
 
+        {props.studio && studioPanels && (
+          /*
+           * ДЕТАЛИРОВКА STUDIO — ТОТ ЖЕ РАСКРОЙ, ЧТО НА «РЕЗУЛЬТАТЕ» (P0-5).
+           *
+           * Те же стены композиции (`panelWalls`), та же выгрузка для
+           * раскроя и тот же замок на ней: второго раскроя у Studio нет.
+           */
+          <div className="pb-6" data-studio-panels>
+            <PanelList
+              walls={panelWalls}
+              title={props.title}
+              zone={props.zone}
+              measuredBy={props.measuredBy}
+              measuredAt={props.measuredAt}
+              production={production}
+              milling={millingItems}
+              carcass={carcassItems}
+              fingerprint={objectEstimate.fingerprint}
+              exportLock={screen.exportLockText}
+            />
+          </div>
+        )}
+
         {step === 'result' && (
           <>
             {/*
@@ -4822,7 +5063,7 @@ export default function Workspace(props: WorkspaceProps) {
           * красная: пустая стена — это «ещё не собрано», а не ошибка,
           * и краснеть ей незачем (ловушка 229).
           */}
-        {emptyRunLock && (
+        {emptyRunLock && !props.studio && (
           <p
             data-empty-run-lock
             className="mb-3 rounded-[var(--r-control)] bg-surface-2 px-4 py-3 text-[15px] leading-snug text-dim"
@@ -4917,6 +5158,25 @@ export default function Workspace(props: WorkspaceProps) {
           )}
           </div>
 
+          {props.studio ? (
+            /*
+             * СОСТОЯНИЕ ВМЕСТО «ДАЛЬШЕ» (STAGE 01A): шагов нет, и куда ехать
+             * дальше, человек решает сам. Внизу — что с проектом сейчас и
+             * почему, теми же замками, что держат выгрузку и цену.
+             */
+            <p
+              data-studio-status={studioStatus.key}
+              className={`min-w-[220px] flex-1 text-[15px] leading-snug ${
+                studioStatus.key === 'blocked'
+                  ? 'text-alert'
+                  : studioStatus.key === 'ready'
+                    ? 'text-cyan'
+                    : 'text-dim'
+              }`}
+            >
+              <span className="font-medium">{studioStatus.title}</span>: {studioStatus.reason}
+            </p>
+          ) : (
           <div className="flex gap-2">
           <button
             type="button"
@@ -4941,6 +5201,7 @@ export default function Workspace(props: WorkspaceProps) {
             {nextLabel}
           </button>
           </div>
+          )}
         </div>
       </footer>
 

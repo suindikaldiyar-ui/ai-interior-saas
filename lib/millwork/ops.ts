@@ -13,7 +13,7 @@ import {
   snapToStandard,
 } from './modules';
 import { rowSpansOfRun, upperSpansOfRun, buildUpperRow, fillGap, moduleId, onWall } from './layout';
-import { blindVariantRefusal, cornerDoorHinge, cornerGeometry, upperBoundsOf } from './corner';
+import { blindPartMm, blindVariantRefusal, cornerDoorHinge, cornerGeometry, upperBoundsOf } from './corner';
 import { counterTailsOf } from './countertop';
 import { obstaclesInBand, rowBandMm, wallObstacles, type WallObstacle } from './obstacles';
 import {
@@ -56,7 +56,7 @@ import {
 } from './freeRun';
 import { SECTION_SPECS } from './sections';
 import { allowsAppliance, allowsSection, applianceRefusal, sectionRefusal } from './zones';
-import { MODULE_VARIANTS, applyVariant, variantsForModule } from './moduleVariants';
+import { MODULE_VARIANTS, applyVariant, leavesAfterWidth, variantsForModule } from './moduleVariants';
 import type {
   ApplianceKind,
   MillworkOp,
@@ -815,23 +815,43 @@ export function applyOps({
    * внутренним идентификатором вместо отказа, который можно пересказать
    * клиенту («base-0 заканчивается на 700 мм»).
    *
-   * Проверок две, и обе нужны:
+   * Проверок три, и все нужны:
    *   стена — в шаблоне соседи ужмутся (`widthOverflowMm`), в свободной
    *   сборке сумма считается по ФАКТИЧЕСКИМ ширинам;
    *   сосед — в свободной сборке между модулями бывает пустота, и
-   *   «в стену помещается» не значит «здесь помещается».
+   *   «в стену помещается» не значит «здесь помещается»;
+   *   торец стены — в свободной сборке модуль стоит там, где его
+   *   поставили: у торца сумма ширин ещё сходится, а правый край уже за
+   *   стеной, и правку роняла `assertRunFits` (ловушка 233, STAGE 01A).
+   *
+   * Отказ называет три числа в миллиметрах — доступно, требуется, не
+   * хватает (STAGE 01A): «не встают» без них не пересказать клиенту и не
+   * понять, на сколько ужать.
    *
    * Возвращает отказ словами и числом либо `null`.
    */
+  /**
+   * У СЛЕПОГО УГЛА СТВОРКУ СТАВИТ УГОЛ — до правки ширины и после неё.
+   *
+   * Модуль, заходящий в слепую зону владельца, держит дверцу только на
+   * доступной части (слой 55); сколько её, знает ряд, а не модуль. Число
+   * створок такого модуля `set_width` не пересчитывает: ответ угла
+   * проверяет `leafRefusals` на уровне стены.
+   */
+  const blindAtWidth = (unit: Module, wanted: number): boolean =>
+    blindPartMm(unit, run) > 0 || blindPartMm({ ...unit, widthMm: wanted }, run) > 0;
+
   const bottomWidthRefusal = (at: number, wanted: number): string | null => {
     const unit = modules[at];
+    const room = (available: number) =>
+      `доступно ${Math.max(0, available)} мм, требуется ${wanted} мм, не хватает ${wanted - Math.max(0, available)} мм`;
 
     const over =
       requirements.mode === 'free'
         ? modules.reduce((sum, m) => sum + m.widthMm, 0) - unit.widthMm + wanted - run.lengthMm
         : widthOverflowMm({ modules, lengthMm: run.lengthMm }, unit.id, wanted, MIN_WIDTH);
     if (over > 0) {
-      return `${wanted} мм не помещается: ряд длиннее стены на ${over} мм.`;
+      return `${wanted} мм не помещается: ряд длиннее стены на ${over} мм — ${room(wanted - over)}.`;
     }
 
     if (requirements.mode === 'free') {
@@ -844,9 +864,12 @@ export function applyOps({
       );
       if (conflict) {
         return (
-          `${wanted} мм не встают: справа «${conflict.blockedBy.label}», ` +
-          `не хватает ${conflict.overlapMm} мм.`
+          `${wanted} мм не встают: справа «${conflict.blockedBy.label}» — ` +
+          `${room(conflict.blockedBy.offsetMm - unit.offsetMm)}.`
         );
+      }
+      if (unit.offsetMm + wanted > run.lengthMm) {
+        return `${wanted} мм не встают: справа край стены — ${room(run.lengthMm - unit.offsetMm)}.`;
       }
     }
 
@@ -1372,8 +1395,17 @@ export function applyOps({
             break;
           }
 
+          /* Створки едут за шириной — тем же правилом, что внизу (STAGE 01A). */
+          const mezzLeaves = leavesAfterWidth(mezzUnit, wanted);
+          if (mezzLeaves && 'refusal' in mezzLeaves) {
+            warnings.push(mezzLeaves.refusal);
+            break;
+          }
+
           placeMezz(
-            mezzModules.map((unit, i) => (i === mezzAt ? { ...unit, widthMm: wanted } : unit)),
+            mezzModules.map((unit, i) =>
+              i === mezzAt ? { ...unit, widthMm: wanted, ...(mezzLeaves ?? {}) } : unit,
+            ),
             `«${mezzUnit.label}» шириной ${wanted} мм`,
           );
           break;
@@ -1427,8 +1459,17 @@ export function applyOps({
             break;
           }
 
+          /* Створки едут за шириной — тем же правилом, что внизу (STAGE 01A). */
+          const upperLeaves = blindAtWidth(unit, wanted) ? null : leavesAfterWidth(unit, wanted);
+          if (upperLeaves && 'refusal' in upperLeaves) {
+            warnings.push(upperLeaves.refusal);
+            break;
+          }
+
           placeUpper(
-            upperModules.map((m, i) => (i === upperAt ? { ...m, widthMm: wanted } : m)),
+            upperModules.map((m, i) =>
+              i === upperAt ? { ...m, widthMm: wanted, ...(upperLeaves ?? {}) } : m,
+            ),
             `«${unit.label}» шириной ${wanted} мм`,
           );
           break;
@@ -1464,8 +1505,19 @@ export function applyOps({
           break;
         }
 
+        /*
+         * СТВОРКИ ЕДУТ ЗА ШИРИНОЙ (STAGE 01A) — тем же правилом, что при
+         * постановке (`leavesAfterWidth`). У слепого угла створку ставит
+         * угол: глухую часть знает ряд, и её модуль здесь не трогается.
+         */
+        const leaves = blindAtWidth(modules[at], wanted) ? null : leavesAfterWidth(modules[at], wanted);
+        if (leaves && 'refusal' in leaves) {
+          warnings.push(leaves.refusal);
+          break;
+        }
+
         const narrowedFrom = modules[at];
-        modules[at] = { ...modules[at], widthMm: wanted };
+        modules[at] = { ...modules[at], widthMm: wanted, ...(leaves ?? {}) };
         closeUp(narrowedFrom.offsetMm + narrowedFrom.widthMm, narrowedFrom.widthMm - wanted);
         break;
       }
