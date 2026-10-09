@@ -207,6 +207,7 @@ function modulePanels(
     push({
       name: 'Доборная планка',
       material,
+      thicknessMm: t,
       lengthMm: heightMm,
       widthMm: unit.widthMm,
       qty: 1,
@@ -239,6 +240,7 @@ function modulePanels(
       push({
         name,
         material,
+        thicknessMm: t,
         lengthMm,
         widthMm,
         qty,
@@ -266,6 +268,7 @@ function modulePanels(
       push({
         name: legName(BACK_PANEL_NAME, leg),
         material: `ХДФ ${production.backMm}`,
+        thicknessMm: production.backMm,
         lengthMm: heightMm - backInsetL,
         widthMm,
         qty: 1,
@@ -280,6 +283,7 @@ function modulePanels(
   push({
     name: SIDE_PANEL_NAME,
     material,
+    thicknessMm: t,
     lengthMm: heightMm,
     widthMm: depthMm,
     qty: 2,
@@ -297,6 +301,7 @@ function modulePanels(
     push({
       name: BOTTOM_PANEL_NAME,
       material,
+      thicknessMm: t,
       lengthMm: inner,
       widthMm: depthMm,
       qty: 1,
@@ -312,6 +317,7 @@ function modulePanels(
         ? TOP_RAIL_PANEL_NAME
         : TOP_PANEL_NAME,
     material,
+    thicknessMm: t,
     lengthMm: inner,
     widthMm: depthMm,
     qty: 1,
@@ -325,6 +331,7 @@ function modulePanels(
     push({
       name: SHELF_PANEL_NAME,
       material,
+      thicknessMm: t,
       lengthMm: inner - allow.shelfSideMm,
       widthMm: depthMm - allow.shelfDepthMm,
       qty: shelves,
@@ -338,6 +345,7 @@ function modulePanels(
     push({
       name: DIVIDER_PANEL_NAME,
       material,
+      thicknessMm: t,
       lengthMm: heightMm - 2 * t,
       widthMm: depthMm - allow.dividerDepthMm,
       qty: 1,
@@ -352,6 +360,7 @@ function modulePanels(
   push({
     name: BACK_PANEL_NAME,
     material: `ХДФ ${production.backMm}`,
+    thicknessMm: production.backMm,
     lengthMm: heightMm - backInset,
     widthMm: unit.widthMm - backInset,
     qty: 1,
@@ -413,6 +422,7 @@ function modulePanels(
       push({
         name,
         material: frontMaterial,
+        thicknessMm: production.frontMm,
         lengthMm,
         widthMm,
         qty,
@@ -426,6 +436,7 @@ function modulePanels(
     push({
       name: `${name}: рама`,
       material: frontMaterial,
+      thicknessMm: production.frontMm,
       lengthMm,
       widthMm,
       qty,
@@ -436,6 +447,7 @@ function modulePanels(
     push({
       name: `${name}: вставка`,
       material: frontMaterial,
+      thicknessMm: production.frontMm,
       // Вставка садится в паз обвязки: минус рама с двух сторон.
       lengthMm: Math.max(0, lengthMm - 2 * FRAME_WIDTH_MM),
       widthMm: Math.max(0, widthMm - 2 * FRAME_WIDTH_MM),
@@ -600,6 +612,7 @@ export function buildPanels({ run, production = DEFAULT_PRODUCTION, milling, car
       number: `У.${cornerNo}`,
       name: lower ? CORNER_FILLER_PANEL_NAME : CORNER_UPPER_FILLER_PANEL_NAME,
       material: `Фасад ${shop.frontMm}`,
+      thicknessMm: shop.frontMm,
       /*
        * Высота — корпуса своего ряда: нижняя закрывает его от пола до
        * столешницы, верхняя — высоту навесного. Зазор снимается с обеих
@@ -634,6 +647,7 @@ export function buildPanels({ run, production = DEFAULT_PRODUCTION, milling, car
       number: `Х.${tailNo}`,
       name: TAIL_FILLER_PANEL_NAME,
       material: `ЛДСП ${shop.carcassMm}`,
+      thicknessMm: shop.carcassMm,
       lengthMm: carcassHeightMm(production),
       widthMm: Math.round(piece.toMm - piece.fromMm),
       qty: 1,
@@ -644,6 +658,72 @@ export function buildPanels({ run, production = DEFAULT_PRODUCTION, milling, car
   }
 
   return extra.length > 0 ? [...fromModules, ...extra] : fromModules;
+}
+
+/* ─────────────────────────  Раскрой объекта: все стены композиции  ───────────────────────── */
+
+/**
+ * СТЕНА ОБЪЕКТА ДЛЯ РАСКРОЯ: физическая стена замера, её подпись на
+ * чертеже и ряд — тот, что на экране видят сцена и смета.
+ */
+export type PanelWall = { wallId: string; label: string; run: Run };
+
+/** Деталь объекта: деталь ряда и её происхождение. */
+export interface ObjectPanel extends Panel {
+  /** Физическая стена замера, чей ряд режет деталь. */
+  wallId: string;
+  /** «Стена Б» — как стена подписана на чертеже. */
+  wallLabel: string;
+  /** Номер детали в своём ряду, как его пишет `buildPanels` («3.2»). */
+  rowNumber: string;
+  /** Идентификатор детали по объекту: стена и номер в ряду. Не повторяется. */
+  partId: string;
+  /** Откуда деталь — словами, для цеха: стена и модуль. */
+  comment: string;
+}
+
+/**
+ * ДЕТАЛИ ОБЪЕКТА — ВСЕ СТЕНЫ КОМПОЗИЦИИ, А НЕ ОДНА (P0-5).
+ *
+ * «Детализировка» и выгрузка получали один ряд — стены А, а чертёжный
+ * лист — все стены: в Г и П детали стен Б и В в раскрой не попадали
+ * вовсе, цех получал половину заказа. Здесь стены складываются, и каждая
+ * режется ТЕМ ЖЕ `buildPanels`: второго расчёта размеров нет.
+ *
+ * Номер на листе — номер в ряду («3.2»). Ряды нумеруют модули каждый с
+ * единицы, как и чертёж каждой стены, поэтому у Г и П номер с буквой
+ * стены («Б-3.2»); у прямой — прежний. `partId` — стена и номер в ряду:
+ * по нему деталь не спутать и при объединении стен.
+ *
+ * Стена, переданная дважды, — исключение, а не тихая склейка: это одна
+ * физическая стена из `runs` и `wallRuns`, и порезать её дважды значит
+ * отправить в цех лишние детали.
+ */
+export function objectPanels(input: {
+  walls: PanelWall[];
+  production?: ProductionSettings;
+  milling?: Map<string, MillingItem>;
+  carcass?: Map<string, CarcassItem>;
+}): ObjectPanel[] {
+  const { walls, production = DEFAULT_PRODUCTION, milling, carcass } = input;
+  const many = walls.length > 1;
+  const seen = new Set<string>();
+  return walls.flatMap((wall) => {
+    if (seen.has(wall.wallId)) {
+      throw new Error(`Стена ${wall.wallId} передана в раскрой дважды: одна физическая стена режется один раз.`);
+    }
+    seen.add(wall.wallId);
+    const mark = wall.label.slice(wall.label.indexOf(' ') + 1);
+    return buildPanels({ run: wall.run, production, milling, carcass }).map((panel) => ({
+      ...panel,
+      number: many ? `${mark}-${panel.number}` : panel.number,
+      rowNumber: panel.number,
+      wallId: wall.wallId,
+      wallLabel: wall.label,
+      partId: `${wall.wallId}:${panel.number}`,
+      comment: `${wall.label} (${wall.wallId}) · ${panel.moduleLabel}`,
+    }));
+  });
 }
 
 /**
@@ -779,4 +859,54 @@ export function panelMaterials(panels: Panel[]): PanelMaterials {
     edgeM: r2(edgeM),
     count,
   };
+}
+
+/** Итог стены в деталировке: модули, детали, площади по листам, фасады. */
+export type WallPanelSummary = {
+  wallId: string;
+  label: string;
+  lengthMm: number;
+  /** Модулей в ряду стены. */
+  modules: number;
+  /** Модулей, у которых есть детали в раскрое. */
+  cutModules: number;
+  /** Деталей, штук — с количеством. */
+  parts: number;
+  materials: PanelMaterials;
+  /**
+   * Фасадов, штук: створки и фронты ящиков. Рама и вставка филёнки — один
+   * фасад, фальш-панель угла — не фасад, хоть и того же листа.
+   */
+  fronts: number;
+};
+
+export function wallPanelSummaries(walls: PanelWall[], parts: ObjectPanel[]): WallPanelSummary[] {
+  return walls.map((wall) => {
+    const own = parts.filter((part) => part.wallId === wall.wallId);
+    const modules = allModulesOf(wall.run);
+    const ids = new Set(modules.map((unit) => unit.id));
+    return {
+      wallId: wall.wallId,
+      label: wall.label,
+      lengthMm: wall.run.lengthMm,
+      modules: modules.length,
+      cutModules: new Set(own.filter((part) => ids.has(part.moduleId)).map((part) => part.moduleId)).size,
+      parts: own.reduce((sum, part) => sum + part.qty, 0),
+      materials: panelMaterials(own),
+      fronts: own
+        .filter(
+          (part) =>
+            part.material.startsWith('Фасад') &&
+            !part.name.endsWith(': вставка') &&
+            part.name !== CORNER_FILLER_PANEL_NAME &&
+            part.name !== CORNER_UPPER_FILLER_PANEL_NAME,
+        )
+        .reduce((sum, part) => sum + part.qty, 0),
+    };
+  });
+}
+
+/** Модули ряда: нижний ряд и висящие — то же, что режет `buildPanels`. */
+function allModulesOf(run: Run): Module[] {
+  return [...run.modules, ...run.upperSegments.flatMap((segment) => segment.modules)];
 }

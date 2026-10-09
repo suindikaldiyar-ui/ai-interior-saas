@@ -542,6 +542,12 @@ export interface Panel {
   name: string;
   /** «ЛДСП 16», «ХДФ 3», «Фасад 18». */
   material: string;
+  /**
+   * ТОЛЩИНА ЛИСТА, мм — та, что стоит в названии материала: корпус, ХДФ
+   * или фасад из настроек цеха. Ставится там же, где рождается деталь
+   * (`buildPanels`), а не выводится из строки названия (P0-5).
+   */
+  thicknessMm: number;
   lengthMm: number;
   widthMm: number;
   qty: number;

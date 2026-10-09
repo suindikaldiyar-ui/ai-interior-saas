@@ -1,4 +1,5 @@
 import type { Panel } from '@/types/millwork';
+import type { ObjectPanel } from './panels';
 
 /**
  * ВЫГРУЗКА ДЛЯ РАСКРОЯ.
@@ -28,7 +29,21 @@ export const CSV_HEADER = [
   'КромкаШ1',
   'КромкаШ2',
   'Текстура',
+  /*
+   * ТОЛЩИНА И ПРОИСХОЖДЕНИЕ ДЕТАЛИ (P0-5) — после прежних одиннадцати:
+   * программа раскроя, настроенная на них, читает их как раньше, а новые
+   * колонки берёт по имени. Стена и модуль — откуда деталь, ИД детали —
+   * по нему её не спутать в угловой кухне, где номера рядов совпадают.
+   */
+  'Толщина',
+  'Стена',
+  'Модуль',
+  'ИД детали',
+  'Комментарий',
 ] as const;
+
+/** Деталь выгрузки: деталь раскроя и, у объекта, её происхождение (`objectPanels`). */
+export type CsvPanel = Panel & Partial<Pick<ObjectPanel, 'wallId' | 'partId' | 'comment'>>;
 
 const GRAIN_LABEL: Record<Panel['grain'], string> = {
   along: 'вдоль',
@@ -37,7 +52,7 @@ const GRAIN_LABEL: Record<Panel['grain'], string> = {
 };
 
 /** Кромка по торцам: две длинные и две короткие, каждая либо есть, либо нет. */
-function edgeCells(panel: Panel): [string, string, string, string] {
+function edgeCells(panel: CsvPanel): [string, string, string, string] {
   const mark = (n: number, index: number) => (index < n ? panel.edgeType : '');
   return [
     mark(panel.edges.long, 0),
@@ -53,7 +68,7 @@ function cell(value: string | number): string {
   return /[;"\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
-export function panelsToCsv(panels: Panel[]): string {
+export function panelsToCsv(panels: CsvPanel[]): string {
   const rows = panels.map((panel) => {
     const [d1, d2, s1, s2] = edgeCells(panel);
     return [
@@ -68,6 +83,11 @@ export function panelsToCsv(panels: Panel[]): string {
       s1,
       s2,
       GRAIN_LABEL[panel.grain],
+      panel.thicknessMm,
+      panel.wallId ?? '',
+      panel.moduleId,
+      panel.partId ?? '',
+      panel.comment ?? '',
     ]
       .map(cell)
       .join(';');
@@ -127,7 +147,7 @@ export function encodeCp1251(text: string): Uint8Array {
 
 /** Готовый файл: байты и MIME под выбранную кодировку. */
 export function panelsCsvFile(
-  panels: Panel[],
+  panels: CsvPanel[],
   encoding: CsvEncoding = 'windows-1251',
 ): { bytes: Uint8Array; type: string } {
   const text = panelsToCsv(panels);

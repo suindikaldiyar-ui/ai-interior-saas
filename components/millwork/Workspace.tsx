@@ -45,6 +45,7 @@ import {
   objectEstimateOf,
   objectInput,
   objectSite,
+  panelWallsOf,
   savedCornerChoices,
   savedWallRuns,
   wallCornerOf,
@@ -1158,6 +1159,18 @@ export default function Workspace(props: WorkspaceProps) {
   const segments = useMemo(
     () => wallSegments(layout, active.run, editedWalls),
     [layout, active.run, editedWalls],
+  );
+
+  /*
+   * СТЕНЫ РАСКРОЯ — ТЕ ЖЕ РЯДЫ, ЧТО ВИДЯТ СЦЕНА, ЧЕРТЁЖ И СМЕТА (P0-5).
+   *
+   * «Детализировка» получала один ряд стены А (`active.run`), и в Г и П
+   * детали стен Б и В в раскрой не попадали. Стены берутся из композиции,
+   * ряды — те же `segments`: второго набора рядов для раскроя нет.
+   */
+  const panelWalls = useMemo(
+    () => panelWallsOf(layout, segments, input.runWallId),
+    [layout, segments, input.runWallId],
   );
 
   /**
@@ -4472,6 +4485,24 @@ export default function Workspace(props: WorkspaceProps) {
               view={cadAngle}
             />
 
+            {/*
+              * ЧЕРНОВИК, А НЕ ДОКУМЕНТ ДЛЯ ЦЕХА (P0-5).
+              *
+              * Тот же замок, что у выгрузки (`screen.exportLocked`): стена не
+              * сходится или композиция не собралась. Кнопки печати заперты,
+              * а если лист всё же напечатают из браузера, пометка стоит на
+              * каждой странице (`print:fixed`) — черновик не выдаёт себя за
+              * готовую документацию.
+              */}
+            {screen.exportLocked && (
+              <p
+                data-draft-mark
+                className="mt-6 rounded-[var(--r-control)] border-2 border-alert px-4 py-3 text-center text-[17px] font-semibold tracking-wide text-alert print:fixed print:inset-x-0 print:top-0 print:z-50 print:mt-0 print:bg-white"
+              >
+                ЧЕРНОВИК — ЕСТЬ РАСХОЖДЕНИЯ. НЕ ДЛЯ ПРОИЗВОДСТВА
+              </p>
+            )}
+
             {/* Ниже — документы: чертёж, план и техническая сцена. */}
             <div className="mt-6 flex flex-wrap gap-2 print:hidden">
               {(
@@ -4515,13 +4546,22 @@ export default function Workspace(props: WorkspaceProps) {
                 </button>
               )}
 
+              {/* Печать для цеха — под тем же замком, что выгрузка для раскроя (P0-5). */}
               <button
                 type="button"
                 onClick={() => window.print()}
+                disabled={screen.exportLocked}
+                title={screen.exportLockText ?? undefined}
+                data-print-sheet
                 className="mw-btn mw-btn-ghost ml-auto"
               >
                 Печать чертежа
               </button>
+              {screen.exportLockText && (
+                <p data-print-lock className="w-full text-[13px] leading-snug text-alert">
+                  {screen.exportLockText}
+                </p>
+              )}
             </div>
 
             {/*
@@ -4630,12 +4670,15 @@ export default function Workspace(props: WorkspaceProps) {
             {resultView === 'panels' && (
               <div className="mt-4">
                 <PanelList
-                  run={active.run}
+                  walls={panelWalls}
                   title={props.title}
                   zone={props.zone}
                   measuredBy={props.measuredBy}
                   measuredAt={props.measuredAt}
                   production={production}
+                  milling={millingItems}
+                  carcass={carcassItems}
+                  fingerprint={objectEstimate.fingerprint}
                   exportLock={screen.exportLockText}
                 />
               </div>

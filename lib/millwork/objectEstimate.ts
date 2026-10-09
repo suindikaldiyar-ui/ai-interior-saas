@@ -20,7 +20,8 @@ import { buildEstimate, type RateTable } from './estimate';
 import { segmentCount, tryBuildComposition, type CompositionAttempt } from './composition';
 import { choiceFromSolution, runWithCorner } from './corner';
 import { runWithObstacles } from './obstacles';
-import { compositionOf, compositionWalls, mergeEstimates, type SelectedWall } from './walls';
+import { compositionOf, compositionWalls, mergeEstimates, wallLabel, type SelectedWall } from './walls';
+import type { PanelWall } from './panels';
 import { onWall } from './layout';
 import { productionFor } from './shop';
 import { millingCatalog, type MillingItem } from './milling';
@@ -366,6 +367,30 @@ export function withoutWallEdit(edits: WallEdits, wallId: string, index: number)
  * — свойство композиции. Иначе у угла снова окажется ноль владельцев
  * или два.
  */
+/**
+ * СТЕНЫ РАСКРОЯ — ТЕ ЖЕ РЯДЫ, ЧТО ВИДЯТ СЦЕНА, ЧЕРТЁЖ И СМЕТА (P0-5).
+ *
+ * «Детализировка» и выгрузка получали один ряд — стены А, и в Г и П
+ * детали стен Б и В в раскрой не попадали. Здесь каждая стена композиции
+ * — один раз и своим рядом с экрана (`wallSegments`): у стены А ряд из
+ * `runs`, у соседних — правка из `wallRuns` либо ряд раскладки. Стена
+ * замера вне композиции в раскрой не идёт: её правки сохранены, но мебели
+ * на ней сейчас нет. Прямая кухня — одна стена.
+ *
+ * Ряда для стены композиции нет — исключение: композиция и ряды на экране
+ * разошлись, и раскраивать по ним значит распилить не ту мебель.
+ */
+export function panelWallsOf(layout: Composition | null, segments: Run[], runWallId: string): PanelWall[] {
+  const wallIds = layout ? layout.segments.map((segment) => segment.wallId) : [runWallId];
+  return wallIds.map((wallId, i) => {
+    const run = segments[i];
+    if (!run) {
+      throw new Error(`Ряда стены ${wallId} на экране нет: композиция и ряды разошлись, раскраивать нечего.`);
+    }
+    return { wallId, label: wallLabel(i), run };
+  });
+}
+
 export function wallSegments(
   layout: Composition | null,
   wallARun: Run,

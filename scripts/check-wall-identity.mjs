@@ -64,6 +64,20 @@
  *   B6  П 3600 × 2436, у угла w2–w3 верх пустой: глухая часть — свой
  *       корпус не шире одной створки → «ряд здесь?» на стене 4 → ложной
  *       тревоги нет, цена на экране, выгрузка открыта;
+ *
+ * P0-5 — полная производственная выгрузка (focused check: ONLY=E1,E2,E3,B3):
+ *   E1  прямая (демо): деталировка одной стены, номера прежние, CSV —
+ *       настоящая выгрузка — те же детали, что на экране; выгрузка и
+ *       печать открыты, черновика нет;
+ *   E2  Г 3600 × 3000, правки А и Б: в деталировке w1 и w2, фальш-панели
+ *       угла у w2, номера с буквой стены, ИД не повторяются, CSV = экран;
+ *       ещё одна правка Б меняет детали w2, а w1 — те же до детали;
+ *   E3  П 3600 × 3000, правки А, Б, В: в деталировке w1, w2, w3, угол у А
+ *       (панели у w2) и у Б (панели у w3), CSV = экран; правка В меняет
+ *       только детали w3;
+ *   B3  (дополнено) при конфликте «Печать листа» и «Печать чертежа»
+ *       заперты, лист помечен «ЧЕРНОВИК — ЕСТЬ РАСХОЖДЕНИЯ. НЕ ДЛЯ
+ *       ПРОИЗВОДСТВА»; после пересборки — открыты, пометки нет;
  *   LG  старый объект в базе (закрепление холодильника номером стены,
  *       углы массивом без меток, выбранное решение): открылся — холодильник
  *       на той стене, где его закрепили, угол прежний; «ряд здесь?» —
@@ -1005,6 +1019,15 @@ async function scenarioB3(browser) {
   const locked = await exportState(page);
   check('выгрузка для раскроя заперта, причина названа', locked.found && locked.disabled === true && locked.reason.length > 0, exportWords(locked));
   await page.screenshot({ path: `${OUT}/B3-U-export-locked.png` });
+  /* P0-5: производственная печать подчиняется тому же замку, лист — черновик. */
+  const printLocked = await printState(page);
+  check(
+    'печать запрещена: «Печать листа» и «Печать чертежа» заперты, лист помечен черновиком',
+    printLocked.panelsDisabled === true && printLocked.sheetDisabled === true &&
+      printLocked.draftPanels > 0 && printLocked.draftSheet > 0 && printLocked.draftText.includes(DRAFT_TEXT),
+    printWords(printLocked),
+  );
+  await page.screenshot({ path: `${OUT}/B3-U-print-locked.png` });
 
   await toStep(page, 'Раскладка');
   const rebuilt = (await rebuildWall(page, 'w2')) ? await rows(page) : null;
@@ -1015,6 +1038,12 @@ async function scenarioB3(browser) {
   check('стена w2 собрана заново для своей роли', Boolean(rebuilt) && sig(blockOfWall(rebuilt, 'w2')) !== sig(blockOfWall(shifted, 'w2')), rebuilt ? sig(blockOfWall(rebuilt, 'w2')) : 'СТЕНЫ НЕТ');
   const open = await exportState(page);
   check('после пересборки выгрузка для раскроя открыта', open.found && open.disabled === false && open.reason === '', exportWords(open));
+  const printOpen = await printState(page);
+  check(
+    'после пересборки печать открыта, пометки черновика нет',
+    printOpen.panelsDisabled === false && printOpen.sheetDisabled === false && printOpen.draftPanels === 0 && printOpen.draftSheet === 0,
+    printWords(printOpen),
+  );
 
   const back = await runWallHere(page, 1);
   await toStep(page, 'Раскладка');
@@ -1154,6 +1183,311 @@ async function scenarioB6(browser) {
   await page.screenshot({ path: `${OUT}/B6-U-valid.png` });
   const open = await exportState(page);
   check('выгрузка для раскроя открыта', open.found && open.disabled === false && open.reason === '', exportWords(open));
+  await page.close();
+}
+
+/* ─────────────────────────  P0-5: производственная деталировка всех стен  ───────────────────────── */
+
+/**
+ * ПРАВКА, КОТОРАЯ МЕНЯЕТ РАСКРОЙ: обычный нижний модуль — на ящики
+ * карточкой библиотеки, а где ящики не встают — снять шкаф верхнего ряда.
+ * «Две дверцы» вместо дверцы на широком модуле раскрой не меняет: створок
+ * там две и так.
+ */
+async function cutEdit(page, list, wall) {
+  const block = wallOf(list, wall);
+  for (const unit of (block?.modules ?? []).filter((m) => m.row === 'base' && !m.appliance && m.variant !== 'drawers')) {
+    const refused = await replaceWith(page, wall, unit, ['drawers']);
+    if (!refused) return { id: unit.id, widthMm: unit.widthMm, from: unit.variant, variant: 'drawers' };
+  }
+  for (const target of (block?.modules ?? []).filter((m) => m.row === 'upper' && !m.appliance)) {
+    if (!(await select(page, wall, target.id))) continue;
+    if (!(await remove(page))) continue;
+    return { id: target.id, widthMm: target.widthMm, from: target.variant, variant: null, removed: true };
+  }
+  return null;
+}
+
+/** Снимок таблицы деталировки у заголовка стены: первой (`at = 0`) или последней (`at = -1`). */
+async function shootWall(page, path, at) {
+  const heads = page.locator('[data-wall-summary]');
+  const count = await heads.count();
+  if (count === 0) return;
+  await heads.nth(at < 0 ? count - 1 : at).scrollIntoViewIfNeeded();
+  await sleep(300);
+  mkdirSync(OUT, { recursive: true });
+  await page.screenshot({ path });
+}
+
+/** «Результат» → «Детализировка»: строки деталей, итоги стен, замки выгрузки и печати. */
+async function detailState(page) {
+  await toStep(page, 'Результат');
+  const tab = page.getByRole('button', { name: 'Детализировка', exact: true }).filter({ visible: true });
+  if ((await tab.count()) !== 1) throw new Error(`кнопок «Детализировка» ${await tab.count()}`);
+  await tab.click();
+  await sleep(1500);
+  const rowsShown = await page.locator('[data-panel-row]').evaluateAll((nodes) =>
+    nodes.map((node) => ({
+      number: node.getAttribute('data-panel-row'),
+      partId: node.getAttribute('data-part-id'),
+      wallId: node.getAttribute('data-wall-id'),
+      moduleId: node.getAttribute('data-module-id'),
+      size: node.getAttribute('data-part-size'),
+      qty: node.getAttribute('data-part-qty'),
+      name: node.querySelectorAll('td')[1]?.textContent?.trim() ?? '',
+    })),
+  );
+  const walls = await page.locator('[data-wall-summary]').evaluateAll((nodes) =>
+    nodes.map((node) => ({
+      wallId: node.getAttribute('data-wall-summary'),
+      modules: Number(node.getAttribute('data-modules')),
+      parts: Number(node.getAttribute('data-parts')),
+      fronts: Number(node.getAttribute('data-fronts')),
+      text: (node.textContent ?? '').replace(/\s+/g, ' ').trim(),
+    })),
+  );
+  const csv = page.locator('[data-export-cut]').filter({ visible: true });
+  /* Кнопку печати ищем так, как её видит человек, — по названию. */
+  const print = page.getByRole('button', { name: 'Печать листа', exact: true }).filter({ visible: true });
+  return {
+    rows: rowsShown,
+    walls,
+    csvDisabled: (await csv.count()) === 1 ? await csv.isDisabled() : null,
+    printDisabled: (await print.count()) === 1 ? await print.isDisabled() : null,
+    draft: await page.locator('[data-draft-mark]').filter({ visible: true }).count(),
+  };
+}
+const partsOf = (state, wallId) => state.rows.filter((row) => row.wallId === wallId);
+const partsSig = (state, wallId) => partsOf(state, wallId).map((row) => `${row.partId}:${row.name}:${row.size}:${row.qty}`).join(' ');
+const wallWords = (state) => state.walls.map((wall) => wall.text).join(' | ') || 'ИТОГОВ СТЕН НЕТ';
+const lockWordsP5 = (state) =>
+  `выгрузка ${state.csvDisabled === null ? 'НЕТ КНОПКИ' : state.csvDisabled ? 'ЗАПЕРТА' : 'открыта'} · печать ${state.printDisabled === null ? 'НЕТ КНОПКИ' : state.printDisabled ? 'ЗАПЕРТА' : 'открыта'} · черновик ${state.draft}`;
+
+/** Строка CSV с кавычками: `;` внутри значения колонку не ломает. */
+function splitCsv(line) {
+  const out = [];
+  let cell = '';
+  let quoted = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (quoted) {
+      if (ch === '"' && line[i + 1] === '"') {
+        cell += '"';
+        i += 1;
+      } else if (ch === '"') quoted = false;
+      else cell += ch;
+    } else if (ch === '"') quoted = true;
+    else if (ch === ';') {
+      out.push(cell);
+      cell = '';
+    } else cell += ch;
+  }
+  out.push(cell);
+  return out;
+}
+
+/** Настоящая выгрузка для раскроя (UTF-8): заголовок и строки по именам колонок. */
+async function downloadCsv(page) {
+  const utf = page.getByRole('button', { name: 'UTF-8', exact: true }).filter({ visible: true });
+  if ((await utf.count()) === 1) {
+    await utf.click();
+    await sleep(300);
+  }
+  const button = page.locator('[data-export-cut]').filter({ visible: true });
+  if ((await button.count()) !== 1) return { error: `кнопок выгрузки ${await button.count()}`, rows: [] };
+  if (await button.isDisabled()) return { error: 'выгрузка заперта', rows: [] };
+  const [download] = await Promise.all([page.waitForEvent('download', { timeout: 30_000 }), button.click()]);
+  const file = await download.path();
+  const lines = readFileSync(file, 'utf8').replace(/^﻿/, '').split('\r\n').filter(Boolean);
+  const header = splitCsv(lines[0] ?? '');
+  const at = (name) => header.indexOf(name);
+  return {
+    error: null,
+    header,
+    rows: lines.slice(1).map((line) => {
+      const cells = splitCsv(line);
+      const cell = (name) => (at(name) >= 0 ? cells[at(name)] : undefined);
+      return {
+        number: cell('Номер'),
+        partId: cell('ИД детали'),
+        wallId: cell('Стена'),
+        moduleId: cell('Модуль'),
+        size: `${cell('Длина')}x${cell('Ширина')}x${cell('Толщина')}`,
+        qty: cell('Количество'),
+      };
+    }),
+  };
+}
+
+/** Экран и CSV: те же детали в том же порядке, с теми же размерами и количеством. Пусто — сходится. */
+function csvVsScreen(state, csv) {
+  if (csv.error) return [csv.error];
+  const out = [];
+  if (csv.rows.length !== state.rows.length) out.push(`строк CSV ${csv.rows.length} при ${state.rows.length} на экране`);
+  csv.rows.forEach((row, i) => {
+    const shown = state.rows[i];
+    if (!shown) return;
+    for (const key of ['number', 'partId', 'wallId', 'moduleId', 'size', 'qty']) {
+      if (String(row[key]) !== String(shown[key])) {
+        out.push(`строка ${i + 1}: ${key} в CSV «${row[key]}» при «${shown[key]}» на экране`);
+        break;
+      }
+    }
+  });
+  return out;
+}
+
+/** Печать на «Результате»: заперта ли у детализировки и у чертежа, есть ли пометка черновика. */
+async function printState(page) {
+  await toStep(page, 'Результат');
+  const pick = async (title) => {
+    const tab = page.getByRole('button', { name: title, exact: true }).filter({ visible: true });
+    if ((await tab.count()) === 1) {
+      await tab.click();
+      await sleep(1200);
+    }
+  };
+  await pick('Детализировка');
+  const panels = page.getByRole('button', { name: 'Печать листа', exact: true }).filter({ visible: true });
+  const panelsDisabled = (await panels.count()) === 1 ? await panels.isDisabled() : null;
+  const draftPanels = await page.locator('[data-draft-mark]').filter({ visible: true }).count();
+  await pick('Чертёж');
+  const sheet = page.getByRole('button', { name: 'Печать чертежа', exact: true }).filter({ visible: true });
+  const sheetDisabled = (await sheet.count()) === 1 ? await sheet.isDisabled() : null;
+  const marks = page.locator('[data-draft-mark]').filter({ visible: true });
+  const draftSheet = await marks.count();
+  const draftText = draftSheet > 0 ? (await marks.first().innerText()).replace(/\s+/g, ' ').trim() : '';
+  return { panelsDisabled, sheetDisabled, draftPanels, draftSheet, draftText };
+}
+const printWords = (state) =>
+  `«Печать листа» ${state.panelsDisabled === null ? 'НЕТ КНОПКИ' : state.panelsDisabled ? 'заперта' : 'открыта'} · ` +
+  `«Печать чертежа» ${state.sheetDisabled === null ? 'НЕТ КНОПКИ' : state.sheetDisabled ? 'заперта' : 'открыта'} · ` +
+  `черновик на детализировке ${state.draftPanels}, на чертеже ${state.draftSheet}${state.draftText ? ` · «${state.draftText}»` : ''}`;
+const DRAFT_TEXT = 'ЧЕРНОВИК — ЕСТЬ РАСХОЖДЕНИЯ. НЕ ДЛЯ ПРОИЗВОДСТВА';
+
+/* ─────────────────────────  E1: прямая — деталировка одной стены  ───────────────────────── */
+
+async function scenarioE1(browser) {
+  console.log('\n── E1. Прямая (демо): деталировка одной стены; CSV — те же детали; производство не заперто (P0-5)');
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+  page.on('pageerror', (e) => {
+    failed += 1;
+    console.log('  [ошибка страницы]', e.message.slice(0, 160));
+  });
+  await page.goto(`${BASE}/demo`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+  await ready(page);
+  const state = await detailState(page);
+  const ids = state.rows.map((row) => row.partId);
+  check('прямая: в деталировке одна стена, у неё детали', state.walls.length === 1 && state.walls[0].parts > 0 && state.rows.length > 0, `${wallWords(state)} · строк ${state.rows.length}`);
+  check(
+    'у каждой строки — ИД детали, стена и модуль; ИД не повторяются',
+    state.rows.length > 0 && ids.every(Boolean) && new Set(ids).size === ids.length && state.rows.every((row) => row.wallId && row.moduleId),
+    `строк ${state.rows.length} · без ИД ${ids.filter((id) => !id).length} · разных ИД ${new Set(ids).size}`,
+  );
+  check(
+    'прямая: номера деталей прежние, без буквы стены',
+    state.rows.length > 0 && state.rows.every((row) => /^(\d+|[УХ])\.\d+$/.test(row.number ?? '')),
+    state.rows.slice(0, 4).map((row) => row.number).join(' ') || 'СТРОК НЕТ',
+  );
+  check('прямая: производство не заперто ложной тревогой — выгрузка и печать открыты, черновика нет', state.csvDisabled === false && state.printDisabled === false && state.draft === 0, lockWordsP5(state));
+  await shootWall(page, `${OUT}/E1-linear-detail.png`, 0);
+  const csv = await downloadCsv(page);
+  const diff = csvVsScreen(state, csv);
+  check('прямая: CSV — те же детали, что на экране: номер, ИД, стена, модуль, размеры с толщиной, количество', state.rows.length > 0 && diff.length === 0, diff.length > 0 ? diff.slice(0, 3).join(' | ') : `строк CSV ${csv.rows.length} = строк экрана ${state.rows.length}`);
+  await page.close();
+}
+
+/* ─────────────────────────  E2: Г — стены А и Б  ───────────────────────── */
+
+async function scenarioE2(browser) {
+  console.log('\n── E2. Г 3600 × 3000: правки А и Б → деталировка w1 и w2; правка Б меняет только детали Б; CSV — те же детали (P0-5)');
+  const page = await measureShape(browser, [3600, 3000], 'corner_l');
+  await toStep(page, 'Раскладка');
+  const start = await rows(page);
+  const editA = await editOn(page, start, 0);
+  const editB = await editOn(page, await rows(page), 1);
+  const edited = await rows(page);
+  check('правки стен А (w1) и Б (w2) применились', carries(blockOfWall(edited, 'w1'), editA) && carries(blockOfWall(edited, 'w2'), editB), `${editWords(editA)} · ${editWords(editB)}`);
+  const state = await detailState(page);
+  const ids = state.rows.map((row) => row.partId);
+  check(
+    'Г: в деталировке стены w1 и w2, у каждой — свои детали',
+    state.walls.map((wall) => wall.wallId).join(',') === 'w1,w2' && partsOf(state, 'w1').length > 0 && partsOf(state, 'w2').length > 0,
+    `${wallWords(state)} · строк w1 ${partsOf(state, 'w1').length}, w2 ${partsOf(state, 'w2').length}, всего ${state.rows.length}`,
+  );
+  const fillers = (wallId) => partsOf(state, wallId).filter((row) => /^Фальш-панель угла/.test(row.name)).length;
+  check('Г: фальш-панели угла w1–w2 — у стыкующейся стены w2, по одной', fillers('w2') === 2 && fillers('w1') === 0, `у w1 ${fillers('w1')} · у w2 ${fillers('w2')}`);
+  check(
+    'Г: номера с буквой стены, ИД деталей не повторяются',
+    state.rows.length > 0 && state.rows.every((row) => /^[АБВ]-/.test(row.number ?? '')) && ids.every(Boolean) && new Set(ids).size === ids.length,
+    `${state.rows.slice(0, 2).map((row) => row.number).join(' ')} … ${state.rows.slice(-2).map((row) => row.number).join(' ')} · разных ИД ${new Set(ids).size} из ${ids.length}`,
+  );
+  check('Г: производство не заперто ложной тревогой', state.csvDisabled === false && state.printDisabled === false && state.draft === 0, lockWordsP5(state));
+  await shootWall(page, `${OUT}/E2-L-detail.png`, 0);
+  await shootWall(page, `${OUT}/E2-L-detail-wall-B.png`, -1);
+  const csv = await downloadCsv(page);
+  const diff = csvVsScreen(state, csv);
+  check('Г: CSV — те же детали, что на экране', state.rows.length > 0 && diff.length === 0, diff.length > 0 ? diff.slice(0, 3).join(' | ') : `строк CSV ${csv.rows.length} = строк экрана ${state.rows.length}`);
+
+  await toStep(page, 'Раскладка');
+  const again = await cutEdit(page, await rows(page), 1);
+  const after = await detailState(page);
+  check(
+    'Г: правка модуля на стене Б меняет детали Б, детали А — те же до детали',
+    Boolean(again) && partsOf(after, 'w1').length > 0 && partsSig(after, 'w1') === partsSig(state, 'w1') && partsSig(after, 'w2') !== partsSig(state, 'w2'),
+    `${editWords(again)} · w1 ${partsSig(after, 'w1') === partsSig(state, 'w1') ? 'та же' : 'ПОЕХАЛА'} · w2 ${partsSig(after, 'w2') !== partsSig(state, 'w2') ? 'изменилась' : 'НЕ ИЗМЕНИЛАСЬ'} (${partsOf(state, 'w2').length} → ${partsOf(after, 'w2').length} строк)`,
+  );
+  await page.close();
+}
+
+/* ─────────────────────────  E3: П — стены А, Б, В  ───────────────────────── */
+
+async function scenarioE3(browser) {
+  console.log('\n── E3. П 3600 × 3000: правки А, Б, В → деталировка w1, w2, w3; угол у А и у Б; правка В — только детали В (P0-5)');
+  const page = await measureShape(browser, [3600, 3000], 'u_shape');
+  await toStep(page, 'Раскладка');
+  const start = await rows(page);
+  const editA = await editOn(page, start, 0);
+  const editB = await editOn(page, await rows(page), 1);
+  const editC = await editOn(page, await rows(page), 2);
+  const edited = await rows(page);
+  check(
+    'правки стен А (w1), Б (w2) и В (w3) применились',
+    carries(blockOfWall(edited, 'w1'), editA) && carries(blockOfWall(edited, 'w2'), editB) && carries(blockOfWall(edited, 'w3'), editC),
+    `${editWords(editA)} · ${editWords(editB)} · ${editWords(editC)}`,
+  );
+  const state = await detailState(page);
+  const ids = state.rows.map((row) => row.partId);
+  check(
+    'П: в деталировке стены w1, w2 и w3, у каждой — свои детали',
+    state.walls.map((wall) => wall.wallId).join(',') === 'w1,w2,w3' && ['w1', 'w2', 'w3'].every((wallId) => partsOf(state, wallId).length > 0),
+    `${wallWords(state)} · строк w1 ${partsOf(state, 'w1').length}, w2 ${partsOf(state, 'w2').length}, w3 ${partsOf(state, 'w3').length}, всего ${state.rows.length}`,
+  );
+  const fillers = (wallId) => partsOf(state, wallId).filter((row) => /^Фальш-панель угла/.test(row.name)).length;
+  check(
+    'П: угол w1–w2 (владелец А) — фальш-панели у w2, угол w2–w3 (владелец Б) — у w3',
+    fillers('w1') === 0 && fillers('w2') === 2 && fillers('w3') === 2,
+    `у w1 ${fillers('w1')} · у w2 ${fillers('w2')} · у w3 ${fillers('w3')}`,
+  );
+  check('П: ИД деталей не повторяются', ids.length > 0 && ids.every(Boolean) && new Set(ids).size === ids.length, `разных ${new Set(ids).size} из ${ids.length}`);
+  check('П: производство не заперто ложной тревогой', state.csvDisabled === false && state.printDisabled === false && state.draft === 0, lockWordsP5(state));
+  await shootWall(page, `${OUT}/E3-U-detail.png`, 0);
+  await shootWall(page, `${OUT}/E3-U-detail-wall-C.png`, -1);
+  const csv = await downloadCsv(page);
+  const diff = csvVsScreen(state, csv);
+  check('П: CSV — те же детали, что на экране', state.rows.length > 0 && diff.length === 0, diff.length > 0 ? diff.slice(0, 3).join(' | ') : `строк CSV ${csv.rows.length} = строк экрана ${state.rows.length}`);
+
+  await toStep(page, 'Раскладка');
+  const again = await cutEdit(page, await rows(page), 2);
+  const after = await detailState(page);
+  check(
+    'П: правка модуля на стене В отражается в деталях В, детали А и Б — те же до детали',
+    Boolean(again) &&
+      partsSig(after, 'w1') === partsSig(state, 'w1') &&
+      partsSig(after, 'w2') === partsSig(state, 'w2') &&
+      partsSig(after, 'w3') !== partsSig(state, 'w3'),
+    `${editWords(again)} · w1 ${partsSig(after, 'w1') === partsSig(state, 'w1') ? 'та же' : 'ПОЕХАЛА'} · w2 ${partsSig(after, 'w2') === partsSig(state, 'w2') ? 'та же' : 'ПОЕХАЛА'} · w3 ${partsSig(after, 'w3') !== partsSig(state, 'w3') ? 'изменилась' : 'НЕ ИЗМЕНИЛАСЬ'}`,
+  );
   await page.close();
 }
 
@@ -1383,6 +1717,9 @@ try {
     B4: scenarioB4,
     B5: scenarioB5,
     B6: scenarioB6,
+    E1: scenarioE1,
+    E2: scenarioE2,
+    E3: scenarioE3,
     LG: scenarioLG,
   };
   const unknown = only.filter((key) => !(key in scenarios));

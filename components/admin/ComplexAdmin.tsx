@@ -8,7 +8,8 @@ import { schemeUrl } from '@/lib/complexes';
 import PlanCalibrator from './PlanCalibrator';
 import PanelList from '@/components/millwork/PanelList';
 import PlanRenderer from './PlanRenderer';
-import { buildPanels, panelTotals } from '@/lib/millwork/panels';
+import { buildPanels, objectPanels, panelTotals } from '@/lib/millwork/panels';
+import { wallLabel } from '@/lib/millwork/walls';
 import { panelsCsvFile, panelsFileName } from '@/lib/millwork/csv-export';
 import { DEFAULT_PRODUCTION, type ProductionSettings } from '@/types/catalog';
 import {
@@ -302,9 +303,17 @@ export default function ComplexAdmin({
    * и windows-1251, иначе программы раскроя его не примут.
    */
   const exportCsv = (project: ReadyProject) => {
-    const panels = buildPanels({ run: project.run, production });
+    /*
+     * Та же деталировка объекта, что у рабочего места (P0-5): у детали
+     * толщина и происхождение — стена, модуль, ИД. Готовый проект — одна
+     * стена, его ряд.
+     */
+    const parts = objectPanels({
+      walls: [{ wallId: project.run.wallId ?? project.run.id, label: wallLabel(0), run: project.run }],
+      production,
+    });
     // windows-1251 по умолчанию: так файл примут программы раскроя.
-    const { bytes, type } = panelsCsvFile(panels);
+    const { bytes, type } = panelsCsvFile(parts);
     // Копия в обычный ArrayBuffer: Blob не принимает view поверх чужого буфера.
     const url = URL.createObjectURL(new Blob([bytes.slice().buffer], { type }));
 
@@ -1045,10 +1054,17 @@ export default function ComplexAdmin({
                                       {open && (
                                         <div className="mt-2">
                                           <PanelList
-                                            run={project.run}
+                                            walls={[
+                                              {
+                                                wallId: project.run.wallId ?? project.run.id,
+                                                label: wallLabel(0),
+                                                run: project.run,
+                                              },
+                                            ]}
                                             title={project.title}
                                             zone={zoneProfile(project.zone).title}
                                             production={production}
+                                            fingerprint={project.run.fingerprint}
                                           />
                                         </div>
                                       )}

@@ -22,6 +22,8 @@ import {
 } from '../lib/millwork/estimate';
 import catalogJson from '../data/catalog/catalog.json';
 import * as THREE from 'three';
+import * as panelsModule from '../lib/millwork/panels';
+import * as objectEstimateModule from '../lib/millwork/objectEstimate';
 import {
   catalogEntriesFromRows,
   collectionPriceRow,
@@ -394,6 +396,7 @@ import {
 import type {
   ApplianceKind,
   CommPoint,
+  Composition,
   Estimate,
   FrontSpec,
   Measurement,
@@ -402,6 +405,7 @@ import type {
   ModuleFill,
   ModuleVariantKind,
   Opening,
+  Panel,
   Run,
   RunRequirements,
   SectionKind,
@@ -3483,9 +3487,19 @@ console.log('\nДетализировка');
   // Выгрузка для раскроя: разделитель, колонки и кириллица без искажений.
   const csv = panelsToCsv(panels);
   const head = csv.split('\r\n')[0];
+  /*
+   * P0-5: у детали в выгрузке — толщина и происхождение: стена, модуль,
+   * идентификатор детали, комментарий. Прежние одиннадцать колонок стоят
+   * на своих местах — программа раскроя, настроенная на них, читает их
+   * как раньше; новые идут в конце. Здесь было «одиннадцать колонок» —
+   * ожидание расширено постановкой P0-5, прежние колонки сверяются по
+   * имени и месту.
+   */
+  const OLD_COLUMNS = ['Номер', 'Наименование', 'Материал', 'Длина', 'Ширина', 'Количество', 'КромкаД1', 'КромкаД2', 'КромкаШ1', 'КромкаШ2', 'Текстура'];
+  const NEW_COLUMNS = ['Толщина', 'Стена', 'Модуль', 'ИД детали', 'Комментарий'];
   check(
-    'в CSV одиннадцать колонок и номер детали первой',
-    head.split(';').length === 11 && head.split(';')[0] === 'Номер',
+    'в CSV прежние одиннадцать колонок на своих местах, номер детали первой, затем толщина и происхождение детали',
+    head.split(';').join('|') === [...OLD_COLUMNS, ...NEW_COLUMNS].join('|'),
     head,
   );
 
@@ -16074,11 +16088,19 @@ console.log('\n' + 'Сборочный лист модуля');
 
   /* ── 6. Лист печатается ── */
 
+  /*
+   * P0-5: деталировка получает стены объекта, а не один ряд. У прямой
+   * кухни это одна стена; утверждения ниже прежние. `run` остаётся для
+   * прежней версии компонента — откат правки обязан падать на проверках
+   * P0-5, а не обрывать прогон здесь.
+   */
   const list = renderToStaticMarkup(
     React.createElement(PanelList, {
       run,
+      walls: [{ wallId: run.wallId ?? run.id, label: wallLabel(0), run }],
       title: 'Проверка печати',
       production: DEFAULT_PRODUCTION,
+      fingerprint: run.fingerprint,
     } as never),
   );
 
@@ -23949,6 +23971,458 @@ console.log('\nP0-3: физическая идентичность стен, п�
       configsB === WANT_B && rowsB === WANT_B + WANT_B / 2 && falseB === 0 && missB === 0 && driftB === 0 && rejectedB > 0,
       `конфигураций ${configsB} · рядов ${rowsB} · затронутых створок ${affectedB}: отказ ${rejectedB}, проходит ${passedB} · ` +
         `ложных ${falseB} · пропусков ${missB} · расхождений сцены и раскроя ${driftB} · несоответствий угла ${cornerB}`,
+    );
+  }
+
+  /* ══════  P0-5: полная производственная выгрузка — все стены композиции  ══════ */
+  /*
+   * «Детализировка» и CSV получали ОДИН ряд — стены А (`run={active.run}`),
+   * а чертёжный лист — все стены (`otherRuns`). В Г и П детали стен Б и В
+   * в раскрой не попадали вовсе: цех получал половину заказа.
+   *
+   * Путь экрана: композиция → ряды стен, как их видят сцена и смета
+   * (`wallSegments`) → стены раскроя (`panelWallsOf`) → детали объекта
+   * (`objectPanels`, каждая стена — тем же `buildPanels`). Сверка — с тем,
+   * что уже считает движок: деталями ряда, номерами модулей на чертеже,
+   * сметой стены и объекта, выгрузкой CSV.
+   */
+  console.log('\nP0-5: полная производственная выгрузка — все стены композиции');
+  {
+    type PartWall = { wallId: string; label: string; run: Run };
+    type Part = Panel & {
+      wallId: string;
+      wallLabel: string;
+      partId: string;
+      rowNumber: string;
+      comment: string;
+      thicknessMm: number;
+    };
+    type Screen5 = {
+      layout: Composition | null;
+      segments: Run[];
+      input: ReturnType<typeof objectInput>;
+      active: { run: Run; estimate: Estimate };
+    };
+    const panelsApi = panelsModule as unknown as {
+      objectPanels?: (input: {
+        walls: PartWall[];
+        production?: ProductionSettings;
+        milling?: unknown;
+        carcass?: unknown;
+      }) => Part[];
+    };
+    const objectApi = objectEstimateModule as unknown as {
+      panelWallsOf?: (layout: Composition | null, segments: Run[], runWallId: string) => PartWall[];
+    };
+    const SCHOOL_B: ProductionSettings = {
+      ...DEFAULT_PRODUCTION,
+      carcassMm: 18,
+      frontMm: 19,
+      backMm: 4,
+      depths: { baseMm: 550, upperMm: 350, mezzanineMm: 550 },
+    };
+
+    /** Деталировка объекта — путём экрана. `null` — пути нет: экран режет одну стену А. */
+    const detailOf = (screen: Screen5, production: ProductionSettings) => {
+      if (!objectApi.panelWallsOf || !panelsApi.objectPanels) return null;
+      const walls = objectApi.panelWallsOf(screen.layout, screen.segments, screen.input.runWallId);
+      const parts = panelsApi.objectPanels({
+        walls,
+        production,
+        milling: screen.input.milling,
+        carcass: screen.input.carcass,
+      });
+      return { walls, parts };
+    };
+    /** Толщина листа по материалу — независимо от раскроя, из настроек цеха. */
+    const sheetMm = (material: string, production: ProductionSettings) =>
+      material.startsWith('ХДФ') ? production.backMm : material.startsWith('Фасад') ? production.frontMm : production.carcassMm;
+    const isFront = (part: Panel) =>
+      part.material.startsWith('Фасад') &&
+      !part.name.endsWith(': вставка') &&
+      part.name !== CORNER_FILLER_PANEL_NAME &&
+      part.name !== CORNER_UPPER_FILLER_PANEL_NAME;
+    const near = (a: number, b: number, tolerance = 0.005) => Math.abs(a - b) <= tolerance;
+    /** Строка CSV с кавычками: `;` внутри значения колонку не ломает. */
+    const csvCells = (line: string) => {
+      const out: string[] = [];
+      let cell = '';
+      let quoted = false;
+      for (let i = 0; i < line.length; i += 1) {
+        const ch = line[i];
+        if (quoted) {
+          if (ch === '"' && line[i + 1] === '"') {
+            cell += '"';
+            i += 1;
+          } else if (ch === '"') quoted = false;
+          else cell += ch;
+        } else if (ch === '"') quoted = true;
+        else if (ch === ';') {
+          out.push(cell);
+          cell = '';
+        } else cell += ch;
+      }
+      out.push(cell);
+      return out;
+    };
+
+    type WallStat = {
+      wallId: string;
+      label: string;
+      modules: number;
+      cutModules: number;
+      rows: number;
+      parts: number;
+      ldsp: number;
+      front: number;
+      hdf: number;
+      edge: number;
+      fronts: number;
+    };
+    /**
+     * ПОЛНОТА И СОГЛАСОВАННОСТЬ ДЕТАЛИРОВКИ ОБЪЕКТА.
+     *
+     * Пусто в `problems` — сходится. Каждое расхождение названо стеной,
+     * модулем или деталью и причиной.
+     */
+    const auditDetail = (screen: Screen5, production: ProductionSettings) => {
+      const problems: string[] = [];
+      const detail = detailOf(screen, production);
+      if (!detail) {
+        return {
+          problems: ['ДЕТАЛИРОВКИ ОБЪЕКТА НЕТ (panelWallsOf / objectPanels): экран режет только ряд стены А'],
+          stats: [] as WallStat[],
+          parts: [] as Part[],
+          walls: [] as PartWall[],
+        };
+      }
+      const { walls, parts } = detail;
+      const wallIds = screen.layout ? screen.layout.segments.map((segment) => segment.wallId) : [screen.input.runWallId];
+      if (walls.map((wall) => wall.wallId).join(',') !== wallIds.join(',')) {
+        problems.push(`стены раскроя ${walls.map((wall) => wall.wallId).join(',') || 'нет'} при стенах композиции ${wallIds.join(',')}`);
+      }
+      walls.forEach((wall, i) => {
+        if (wall.run !== screen.segments[i]) problems.push(`${wall.label}: ряд раскроя не тот, что видят сцена и смета`);
+      });
+
+      const stats: WallStat[] = [];
+      for (const wall of walls) {
+        const own = parts.filter((part) => part.wallId === wall.wallId);
+        const modules = allModules(wall.run);
+        const ids = new Set(modules.map((unit) => unit.id));
+        const expected = buildPanels({ run: wall.run, production, milling: screen.input.milling, carcass: screen.input.carcass });
+        if (modules.length > 0 && own.length === 0) problems.push(`${wall.label} (${wall.wallId}): деталей 0 при ${modules.length} модулях`);
+        if (own.length !== expected.length) {
+          problems.push(`${wall.label} (${wall.wallId}): деталей ${own.length} при ${expected.length} у раскроя ряда`);
+        }
+        own.forEach((part, i) => {
+          const twin = expected[i];
+          if (
+            !twin ||
+            part.rowNumber !== twin.number ||
+            part.moduleId !== twin.moduleId ||
+            part.name !== twin.name ||
+            part.material !== twin.material ||
+            part.lengthMm !== twin.lengthMm ||
+            part.widthMm !== twin.widthMm ||
+            part.qty !== twin.qty ||
+            part.grain !== twin.grain ||
+            JSON.stringify(part.edges) !== JSON.stringify(twin.edges)
+          ) {
+            problems.push(`${part.partId}: не та деталь, что режет ряд (${twin ? `${twin.number} ${twin.name}` : 'у ряда её нет'})`);
+          }
+          if (part.thicknessMm !== sheetMm(part.material, production)) {
+            problems.push(`${part.partId}: толщина ${part.thicknessMm} при листе «${part.material}» ${sheetMm(part.material, production)} мм`);
+          }
+          if (!ids.has(part.moduleId) && !part.moduleId.startsWith(`${wall.run.id}:`)) {
+            problems.push(`${part.partId}: модуль ${part.moduleId} не на стене ${wall.wallId}`);
+          }
+        });
+        /* Номер модуля в номере детали — тот, что в кружке на чертеже этой стены. */
+        const marks = moduleNumbers(wall.run);
+        for (const part of own.filter((item) => ids.has(item.moduleId))) {
+          if (part.rowNumber.split('.')[0] !== String(marks.get(part.moduleId))) {
+            problems.push(`${part.partId}: номер ${part.rowNumber} не при модуле ${marks.get(part.moduleId)} на чертеже ${wall.label}`);
+          }
+        }
+        /* Смета стены берёт площади и кромку из того же раскроя. */
+        const estimate = buildEstimate(
+          wall.run,
+          'optimal',
+          screen.input.rates,
+          [],
+          undefined,
+          production,
+          undefined,
+          screen.input.milling,
+          screen.input.carcass,
+          screen.input.materials,
+        );
+        const line = (key: string) => estimate.lines.filter((item) => item.key === key).reduce((sum, item) => sum + item.quantity, 0);
+        const m = panelMaterials(own);
+        const pairs: [string, number, number][] = [
+          ['shelf_panel', line('shelf_panel'), m.shelfM2],
+          ['hdf_back', line('hdf_back'), m.backM2],
+          ['front_panel', line('front_panel'), m.frontM2],
+          ['pvc_edge', line('pvc_edge'), m.edgeM],
+          ['cutting', line('cutting'), Math.round((m.carcassM2 + m.shelfM2 + m.frontM2) * 100) / 100],
+        ];
+        for (const [key, inEstimate, inCut] of pairs) {
+          if (!near(inEstimate, inCut, 0.011)) problems.push(`${wall.label} (${wall.wallId}): ${key} в смете ${inEstimate} при ${inCut} в раскрое`);
+        }
+        stats.push({
+          wallId: wall.wallId,
+          label: wall.label,
+          modules: modules.length,
+          cutModules: new Set(own.filter((part) => ids.has(part.moduleId)).map((part) => part.moduleId)).size,
+          rows: own.length,
+          parts: own.reduce((sum, part) => sum + part.qty, 0),
+          ldsp: Math.round((m.carcassM2 + m.shelfM2) * 100) / 100,
+          front: m.frontM2,
+          hdf: m.backM2,
+          edge: m.edgeM,
+          fronts: own.filter(isFront).reduce((sum, part) => sum + part.qty, 0),
+        });
+      }
+
+      /* Объект: смета объекта = сумма стен, деталь = одна, модуль — у одной стены. */
+      const merged = objectEstimateOf({
+        layout: screen.layout,
+        segments: screen.segments,
+        wallAEstimate: screen.active.estimate,
+        variantKey: 'optimal',
+        input: screen.input,
+        disabled: DISABLED_P3,
+      });
+      const all = panelMaterials(parts);
+      const mergedLine = (key: string) => merged.lines.filter((item) => item.key === key).reduce((sum, item) => sum + item.quantity, 0);
+      const tolerance = 0.011 * Math.max(1, walls.length);
+      for (const [key, inCut] of [
+        ['shelf_panel', all.shelfM2],
+        ['hdf_back', all.backM2],
+        ['pvc_edge', all.edgeM],
+      ] as [string, number][]) {
+        if (!near(mergedLine(key), inCut, tolerance)) problems.push(`объект: ${key} в смете ${mergedLine(key)} при ${inCut} в раскрое`);
+      }
+      const seen = new Map<string, number>();
+      for (const part of parts) seen.set(part.partId, (seen.get(part.partId) ?? 0) + 1);
+      const doubled = Array.from(seen.entries()).filter(([, n]) => n > 1);
+      if (doubled.length > 0) problems.push(`дубли деталей: ${doubled.slice(0, 3).map(([id, n]) => `${id}×${n}`).join(', ')}`);
+      const moduleWalls = new Map<string, Set<string>>();
+      for (const part of parts) moduleWalls.set(part.moduleId, (moduleWalls.get(part.moduleId) ?? new Set()).add(part.wallId));
+      const shared = Array.from(moduleWalls.entries()).filter(([, set]) => set.size > 1);
+      if (shared.length > 0) problems.push(`модуль у нескольких стен: ${shared.slice(0, 3).map(([id]) => id).join(', ')}`);
+      if (new Set(parts.map((part) => part.number)).size !== parts.length) problems.push('номера деталей на листе совпадают у разных деталей');
+
+      /* Выгрузка CSV — те же детали, в том же порядке, с теми же числами. */
+      const csv = panelsToCsv(parts as Panel[]).split('\r\n').filter(Boolean);
+      const header = csvCells(csv[0]);
+      const at = (name: string) => header.indexOf(name);
+      const rows = csv.slice(1).map(csvCells);
+      if (rows.length !== parts.length) problems.push(`CSV: строк ${rows.length} при ${parts.length} деталях на экране`);
+      rows.forEach((cells, i) => {
+        const part = parts[i];
+        if (!part) return;
+        const want: [string, string | number][] = [
+          ['Номер', part.number],
+          ['ИД детали', part.partId],
+          ['Стена', part.wallId],
+          ['Модуль', part.moduleId],
+          ['Материал', part.material],
+          ['Длина', part.lengthMm],
+          ['Ширина', part.widthMm],
+          ['Толщина', part.thicknessMm],
+          ['Количество', part.qty],
+        ];
+        const off = want.filter(([name, value]) => at(name) < 0 || cells[at(name)] !== String(value));
+        if (off.length > 0) problems.push(`CSV строка ${i + 1}: ${off.map(([name]) => name).join(', ')} не совпадает с деталью ${part.partId}`);
+      });
+      return { problems, stats, parts, walls };
+    };
+    const statWords = (stats: WallStat[]) =>
+      stats
+        .map(
+          (s) =>
+            `${s.label} (${s.wallId}): модулей ${s.modules}, с деталями ${s.cutModules}, строк ${s.rows}, деталей ${s.parts}, ` +
+            `ЛДСП ${s.ldsp} м², фасад ${s.front} м², ХДФ ${s.hdf} м², кромка ${s.edge} м, фасадов ${s.fronts}`,
+        )
+        .join(' | ');
+
+    /* ── 5.1 Прямая: детали одной стены, номера прежние ── */
+    const linearScreen = (measurement: Measurement, production: ProductionSettings, runs: Partial<Record<VariantKey, Run>> = {}): Screen5 => {
+      const base = workspaceInput({
+        title: 'P0-5',
+        zone: 'Кухня',
+        measurement,
+        requirements: DEMO_REQUIREMENTS,
+        rates: DEMO_RATES,
+        cornerAt: null,
+      });
+      const input = objectInput({
+        base,
+        resolution: null,
+        requirements: DEMO_REQUIREMENTS,
+        rates: DEMO_RATES,
+        production,
+        milling: new Map(),
+        carcass: new Map(),
+        materials: new Map(),
+        corner: undefined,
+      });
+      const active = composeVariants(input, DISABLED_P3, runs).find((variant) => variant.key === 'optimal')!;
+      return { layout: null, segments: wallSegments(null, active.run, {}), input, active };
+    };
+    const lin = linearScreen(DEMO_MEASUREMENT, DEFAULT_PRODUCTION);
+    const linAudit = auditDetail(lin, DEFAULT_PRODUCTION);
+    check(
+      'P0-5.1 прямая: в деталировке ровно стена ряда, детали — раскрой ряда, смета и CSV сходятся',
+      linAudit.problems.length === 0 && linAudit.walls.length === 1 && linAudit.parts.length > 0,
+      linAudit.problems.length > 0 ? linAudit.problems.slice(0, 4).join(' | ') : statWords(linAudit.stats),
+    );
+    check(
+      'P0-5.1 прямая: номера деталей прежние («3.2»), без буквы стены — старый сценарий не поехал',
+      linAudit.parts.length > 0 && linAudit.parts.every((part) => part.number === part.rowNumber && /^(\d+|[УХ])\.\d+$/.test(part.number)),
+      linAudit.parts.slice(0, 4).map((part) => part.number).join(' ') || 'ДЕТАЛЕЙ НЕТ',
+    );
+
+    /* ── 5.2 Г: стены А и Б, угол у А ── */
+    const homeL5 = screenP3('a', { shape: 'corner_l' });
+    const auditL = auditDetail(homeL5, DEFAULT_PRODUCTION);
+    const fillerOf = (parts: Part[], wallId: string) =>
+      parts.filter((part) => part.wallId === wallId && (part.name === CORNER_FILLER_PANEL_NAME || part.name === CORNER_UPPER_FILLER_PANEL_NAME));
+    check(
+      'P0-5.2 Г: в деталировке стены a и b, у каждой — её детали; смета, чертёж и CSV сходятся',
+      auditL.problems.length === 0 && auditL.walls.map((wall) => wall.wallId).join(',') === 'a,b' &&
+        auditL.stats.every((stat) => stat.parts > 0),
+      auditL.problems.length > 0 ? auditL.problems.slice(0, 4).join(' | ') : statWords(auditL.stats),
+    );
+    check(
+      'P0-5.2 Г: фальш-панели угла a–b — у стыкующейся стены b, по одной; номера на листе — с буквой стены',
+      fillerOf(auditL.parts, 'b').length === 2 && fillerOf(auditL.parts, 'a').length === 0 &&
+        auditL.parts.every((part) => part.number === `${part.wallLabel.split(' ').pop()}-${part.rowNumber}`),
+      `у b: ${fillerOf(auditL.parts, 'b').map((part) => `${part.number} ${part.name}`).join(', ') || 'нет'} · у a: ${fillerOf(auditL.parts, 'a').length} · ` +
+        `номера ${auditL.parts.slice(0, 2).map((part) => part.number).join(' ')} … ${auditL.parts.slice(-2).map((part) => part.number).join(' ')}`,
+    );
+
+    /* ── 5.3 П: стены А, Б, В; угол a–b у А, угол b–c у Б ── */
+    const homeU5 = screenP3('a');
+    const auditU = auditDetail(homeU5, DEFAULT_PRODUCTION);
+    check(
+      'P0-5.3 П: в деталировке стены a, b и c; смета, чертёж и CSV сходятся',
+      auditU.problems.length === 0 && auditU.walls.map((wall) => wall.wallId).join(',') === 'a,b,c' &&
+        auditU.stats.every((stat) => stat.parts > 0),
+      auditU.problems.length > 0 ? auditU.problems.slice(0, 4).join(' | ') : statWords(auditU.stats),
+    );
+    check(
+      'P0-5.3 П: угол a–b (владелец А) — фальш-панели у b, угол b–c (владелец Б) — у c',
+      fillerOf(auditU.parts, 'b').length === 2 && fillerOf(auditU.parts, 'c').length === 2 && fillerOf(auditU.parts, 'a').length === 0,
+      `у a ${fillerOf(auditU.parts, 'a').length} · у b ${fillerOf(auditU.parts, 'b').length} · у c ${fillerOf(auditU.parts, 'c').length}`,
+    );
+
+    /* ── 5.4 Правленые А и Б; правка Б меняет детали Б, а не А и В ── */
+    const rowA5 = homeU5.active.run;
+    const rowB5 = homeU5.segments[1];
+    const rowC5 = homeU5.segments[2];
+    const plainA5 = rowA5.modules.find(
+      (unit) =>
+        unit.kind === 'base' && !unit.appliance && !unit.variant && blindPartMm(unit, rowA5) === 0 &&
+        unit.widthMm >= MODULE_VARIANTS.drawers.minWidthMm && unit.widthMm <= MODULE_VARIANTS.drawers.maxWidthMm,
+    );
+    const uppersB5 = rowB5.upperSegments
+      .flatMap((segment) => segment.modules)
+      .filter((unit) => unit.kind === 'upper' && !unit.appliance && unit.section !== 'mezzanine')
+      .sort((x, y) => x.offsetMm - y.offsetMm);
+    const middleB5 = uppersB5.length > 2 ? uppersB5[1] : undefined;
+    /* Правка стены В меняет раскрой: дверца → ящики (фронты ящиков вместо створок). */
+    const plainC5 = rowC5.modules.find(
+      (unit) =>
+        unit.kind === 'base' && !unit.appliance && !unit.variant &&
+        unit.widthMm >= MODULE_VARIANTS.drawers.minWidthMm && unit.widthMm <= MODULE_VARIANTS.drawers.maxWidthMm,
+    );
+    if (!plainA5 || !middleB5 || !plainC5) {
+      throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: P0-5 — нечего править: a ${plainA5?.id ?? 'нет'}, b ${middleB5?.id ?? 'нет'}, c ${plainC5?.id ?? 'нет'}`);
+    }
+    const editA5 = applyOps({
+      run: rowA5,
+      requirements: homeU5.input.requirements,
+      ops: [{ op: 'set_variant', moduleId: plainA5.id, variant: 'drawers' }],
+      openings: homeU5.input.openings,
+      roomDepthMm: 0,
+    });
+    const editB5 = applyOps({
+      run: rowB5,
+      requirements: homeU5.requirements,
+      ops: [{ op: 'remove_module', moduleId: middleB5.id }],
+      openings: homeU5.layout.segments[1].openings,
+      roomDepthMm: 0,
+    });
+    const editC5 = applyOps({
+      run: rowC5,
+      requirements: homeU5.requirements,
+      ops: [{ op: 'set_variant', moduleId: plainC5.id, variant: 'drawers' }],
+      openings: homeU5.layout.segments[2].openings,
+      roomDepthMm: 0,
+    });
+    const editedU = screenP3('a', { walls: { b: editB5 }, runs: { optimal: editA5 } });
+    const auditE = auditDetail(editedU, DEFAULT_PRODUCTION);
+    check(
+      'P0-5.4 П с правками А и Б: ящики стены А и снятый шкаф стены Б — в деталировке ровно так; смета и CSV сходятся',
+      auditE.problems.length === 0 &&
+        auditE.parts.some((part) => part.wallId === 'a' && part.moduleId === plainA5.id && part.name === 'Фронт ящика') &&
+        !auditE.parts.some((part) => part.moduleId === middleB5.id),
+      auditE.problems.length > 0
+        ? auditE.problems.slice(0, 4).join(' | ')
+        : `фронтов ящиков у ${plainA5.id}: ${auditE.parts.filter((part) => part.moduleId === plainA5.id && part.name === 'Фронт ящика').length} · деталей ${middleB5.id}: 0 · ${statWords(auditE.stats)}`,
+    );
+    const signature = (parts: Part[], wallId: string) =>
+      parts
+        .filter((part) => part.wallId === wallId)
+        .map((part) => `${part.partId}:${part.name}:${part.lengthMm}x${part.widthMm}x${part.thicknessMm}:${part.qty}`)
+        .join(' ');
+    const onlyB = auditDetail(screenP3('a', { walls: { b: editB5 } }), DEFAULT_PRODUCTION);
+    check(
+      'P0-5.5 правка модуля на стене Б меняет детали Б, а детали А и В — те же до детали',
+      onlyB.parts.length > 0 &&
+        signature(onlyB.parts, 'a') === signature(auditU.parts, 'a') &&
+        signature(onlyB.parts, 'c') === signature(auditU.parts, 'c') &&
+        signature(onlyB.parts, 'b') !== signature(auditU.parts, 'b') &&
+        !onlyB.parts.some((part) => part.moduleId === middleB5.id),
+      `деталей b: ${auditU.parts.filter((part) => part.wallId === 'b').length} → ${onlyB.parts.filter((part) => part.wallId === 'b').length} · a ${signature(onlyB.parts, 'a') === signature(auditU.parts, 'a') ? 'та же' : 'ПОЕХАЛА'} · c ${signature(onlyB.parts, 'c') === signature(auditU.parts, 'c') ? 'та же' : 'ПОЕХАЛА'}`,
+    );
+    const onlyC = auditDetail(screenP3('a', { walls: { c: editC5 } }), DEFAULT_PRODUCTION);
+    check(
+      'P0-5.6 правка модуля на стене В отражается в деталях В, А и Б — те же',
+      onlyC.parts.length > 0 &&
+        signature(onlyC.parts, 'a') === signature(auditU.parts, 'a') &&
+        signature(onlyC.parts, 'b') === signature(auditU.parts, 'b') &&
+        signature(onlyC.parts, 'c') !== signature(auditU.parts, 'c') &&
+        onlyC.parts.some((part) => part.moduleId === plainC5.id && part.wallId === 'c'),
+      `${plainC5.id}: ${auditU.parts.filter((part) => part.moduleId === plainC5.id).map((part) => part.name).join(', ') || 'нет'} → ${onlyC.parts.filter((part) => part.moduleId === plainC5.id).map((part) => part.name).join(', ') || 'нет'}`,
+    );
+
+    /* ── 5.7 Стена вне композиции и правка стены А в правках соседей — не считаются ── */
+    const strayD = screenP3('d').segments[0];
+    const stale = auditDetail(
+      screenP3('a', { walls: { a: rowB5, d: { ...strayD, wallId: 'd' }, b: editB5 }, runs: { optimal: editA5 } }),
+      DEFAULT_PRODUCTION,
+    );
+    check(
+      'P0-5.7 стена d вне композиции и чужая правка под wallId a в деталировку не попадают: каждая стена — один раз, своим рядом',
+      stale.problems.length === 0 && stale.walls.map((wall) => wall.wallId).join(',') === 'a,b,c' &&
+        signature(stale.parts, 'a') === signature(auditE.parts, 'a'),
+      stale.problems.length > 0 ? stale.problems.slice(0, 3).join(' | ') : `стены ${stale.walls.map((wall) => wall.wallId).join(',')}`,
+    );
+
+    /* ── 5.8 Вторая школа цеха: толщины и глубины не умолчаний ── */
+    const homeS = screenP3('a', { production: SCHOOL_B });
+    const auditS = auditDetail(homeS, SCHOOL_B);
+    check(
+      'P0-5.8 школа 18/19/4, глубины 550/350: П — три стены, толщины из настроек цеха, смета и CSV сходятся',
+      auditS.problems.length === 0 && auditS.walls.length === 3 &&
+        auditS.parts.some((part) => part.thicknessMm === 18) &&
+        auditS.parts.some((part) => part.thicknessMm === 19) &&
+        auditS.parts.some((part) => part.thicknessMm === 4),
+      auditS.problems.length > 0 ? auditS.problems.slice(0, 4).join(' | ') : statWords(auditS.stats),
     );
   }
 }
