@@ -107,6 +107,14 @@ type Props = {
    * схеме и плане панель остаётся на месте.
    */
   onViewChange?: (view: 'front' | 'plan' | 'scene') => void;
+  /**
+   * ВИД ЗАДАЁТ ТОТ, КТО ВЛАДЕЕТ ЭКРАНОМ (STAGE 01B).
+   *
+   * В CAD-оболочке Studio вид выбирает нижняя строка оболочки: один
+   * переключатель на экран (ловушка 257). Задан вид снаружи — своя группа
+   * «3D · Схема · План» не рисуется. Мастер вид не задаёт.
+   */
+  view?: 'front' | 'plan' | 'scene';
   /** Панель рабочего места спрятана: в 3D сцена занимает всё. */
   panelHidden?: boolean;
   onTogglePanel?: () => void;
@@ -239,6 +247,7 @@ export default function RunSchematic({
   onWidth,
   changedIds,
   onViewChange,
+  view: controlledView,
   panelHidden,
   onTogglePanel,
   room,
@@ -246,7 +255,8 @@ export default function RunSchematic({
   onPathImage,
   projectId = null,
 }: Props) {
-  const [view, setView] = useState<View>('front');
+  const [ownView, setView] = useState<View>('front');
+  const view: View = controlledView ?? ownView;
   /*
    * Ракурс — в сторе: рендер по чертежу на шаге «Результат» снимает тот
    * вид, что был здесь последним (слой 54). Это состояние камеры.
@@ -418,6 +428,7 @@ export default function RunSchematic({
         }
         data-toolbar
       >
+        {controlledView === undefined && (
         <div className="flex shrink-0 gap-1" data-group="view">
           {(
             [
@@ -441,6 +452,7 @@ export default function RunSchematic({
             </button>
           ))}
         </div>
+        )}
 
         {view === 'scene' && (
           /*

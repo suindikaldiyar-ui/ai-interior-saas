@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useInteriorStore } from '@/store/useInteriorStore';
 import dynamic from 'next/dynamic';
 import ThemeToggle from '@/components/ThemeToggle';
@@ -109,7 +109,11 @@ import {
   type StepKey,
 } from '@/lib/millwork/steps';
 import SurveyPanel from './SurveyPanel';
-import StudioInspector, { type StudioWall } from './StudioInspector';
+import type { StudioWall } from './StudioInspector';
+import type { StudioTool, StudioView } from './studio/StudioShell';
+import type { PlanCommand, PlanFurniture } from './studio/RoomPlan';
+import { StudioKitContext } from './studio/kit';
+import { wallFurnitureOf, wallLengthVerdict } from '@/lib/millwork/wallLength';
 import SurveySheet from './SurveySheet';
 import TemplatePicker from './TemplatePicker';
 import type { RateTable } from '@/lib/millwork/estimate';
@@ -175,6 +179,7 @@ import {
   moduleAppliances,
 } from '@/lib/millwork/modules';
 import { composeVariants, editedRunEstimate, workingWallEdit } from '@/lib/millwork/workspace';
+import { OPENING_KIND_TITLE } from '@/types/millwork';
 import {
   MAIN_VARIANT,
   SINGLE_VARIANT,
@@ -206,8 +211,11 @@ import {
 } from '@/lib/cameraFraming';
 import type { RunAngle } from '@/types/render';
 import {
+  COMM_TITLE,
   isEstimatePreliminary,
+  measured,
   resolveSurvey,
+  valueOf,
   type Survey,
 } from '@/types/survey';
 import { shareUrl, whatsappLink, type MillworkState } from '@/lib/projects';
@@ -465,12 +473,37 @@ export default function Workspace(props: WorkspaceProps) {
           ? 'layout'
           : 'template',
   );
-  /**
-   * Вкладка Studio «Деталировка» — документ на месте рабочей сетки. Шагом
-   * мастера она не стала: шаг «Результат» — это сравнение и отправка
-   * клиенту, а здесь нужен раскрой той мебели, что сейчас на стене.
+  /*
+   * CAD-ОБОЛОЧКА STUDIO (STAGE 01B): инструмент рельса, открыта ли его
+   * панель и что в рабочей области. Это состояние экрана, а не проекта:
+   * в базу оно не пишется, и переключение не трогает ни ряд, ни замер.
+   *
+   * Объект без мебели открывается на замере — с плана комнаты работа и
+   * начинается; объект с мебелью — на ней.
    */
-  const [studioPanels, setStudioPanels] = useState(false);
+  const studioHasFurniture =
+    Boolean(props.initialState?.templateId ?? props.templateId) ||
+    Object.values(props.initialState?.runs ?? {}).some((run) => (run?.modules.length ?? 0) > 0) ||
+    Object.keys(props.initialState?.wallRuns ?? {}).length > 0;
+  const [studioTool, setStudioTool] = useState<StudioTool>(studioHasFurniture ? 'furniture' : 'measure');
+  /** Оболочка Studio — её приносит страница Studio (`StudioKitProvider`), мастер её не грузит. */
+  const studioKit = useContext(StudioKitContext);
+  const [studioContextOpen, setStudioContextOpen] = useState(true);
+  /** Что в рабочей области Studio: план комнаты, фасад, 3D или деталировка. */
+  const [studioView, setStudioView] = useState<StudioView>(studioHasFurniture ? 'facade' : 'plan');
+  /** Стена замера, выбранная на плане или в списке. Выбор — одно из трёх: стена, модуль или пустота. */
+  const [selectedWallId, setSelectedWallId] = useState<string | null>(null);
+  /** Отказ либо последствие последней правки длины — у той стены, где её делали. */
+  const [wallVerdict, setWallVerdict] = useState<{
+    wallId: string;
+    refusal: { text: string; rebuild?: boolean } | null;
+    note: string | null;
+    lengthMm: number;
+  } | null>(null);
+  /** Масштаб плана относительно «вписать» — для нижней строки. */
+  const [planZoom, setPlanZoom] = useState(100);
+  /** Команда масштаба плану из нижней строки; номер — чтобы повтор тоже сработал. */
+  const [planCommand, setPlanCommand] = useState<PlanCommand | null>(null);
   const [resultView, setResultView] = useState<ResultView>('facade');
   /*
    * Эскиз в двух видах: «с фасадами» показывают клиенту, «внутри» —
@@ -1872,8 +1905,9 @@ export default function Workspace(props: WorkspaceProps) {
       const at = wallOfModule(segments, moduleId);
       if (at !== null) setWallIndex(at);
       setSelectedId(moduleId);
-      /* Выделено что-то одно: модуль ИЛИ пустота ИЛИ угол. */
+      /* Выделено что-то одно: модуль ИЛИ пустота ИЛИ угол ИЛИ стена замера. */
       setSelectedGap(null);
+      setSelectedWallId(null);
       /* Угол дальше решает выделенный модуль: угловой — его угол (слой 55). */
       setCornerPick(null);
     },
@@ -1886,6 +1920,7 @@ export default function Workspace(props: WorkspaceProps) {
       setSelectedId(null);
       setSelectedGap(gap);
       setCornerPick(null);
+      setSelectedWallId(null);
     },
     [],
   );
@@ -1965,7 +2000,25 @@ export default function Workspace(props: WorkspaceProps) {
    * пережить переход (ловушка 335). Поэтому блоки гасятся классом, а
    * какие именно — решает одна таблица `STEP_FIELDS`, а не разметка.
    */
-  const onStep = (field: StepField) => (shows(step, field) ? '' : 'hidden');
+  /*
+   * В STUDIO БЛОКИ ПАНЕЛИ РАЗДАЁТ ИНСТРУМЕНТ, А НЕ ШАГ (STAGE 01B).
+   *
+   * Блоки те же — библиотека, состав, материалы, отметки; их разметка одна
+   * на мастер и Studio. Таблица ниже говорит, какой инструмент какие
+   * блоки показывает. Выбранный модуль (ширина, фасад, открывание) стоит в
+   * инспекторе справа и в панель инструмента не входит.
+   */
+  const STUDIO_TOOL_FIELDS: Record<StudioTool, StepField[]> = {
+    select: [],
+    measure: [],
+    documents: [],
+    furniture: ['walls', 'modules', 'appliance-wall', 'arrangements', 'command'],
+    construction: ['variants', 'shop'],
+    materials: ['collections', 'designs', 'catalog', 'photo'],
+  };
+  const isShown = (field: StepField) =>
+    props.studio ? STUDIO_TOOL_FIELDS[studioTool].includes(field) : shows(step, field);
+  const onStep = (field: StepField) => (isShown(field) ? '' : 'hidden');
 
 
   /**
@@ -3168,6 +3221,225 @@ export default function Workspace(props: WorkspaceProps) {
                 reason: 'расхождений нет, смета полная — чертёж и раскрой можно отдавать на проверку цеху.',
               };
 
+  /**
+   * МЕБЕЛЬ НА СТЕНАХ ЗАМЕРА (STAGE 01B).
+   *
+   * Какой ряд стоит на какой стене замера и с какой её отметки он
+   * начинается. У стены после угла начало занял соседний ряд: её ряд стоит
+   * с `lostMm` угла, а это разница длины стены и её полезной длины — те же
+   * числа композиции, что урезали ряд. Нужно двоим: плану комнаты (мебель
+   * на своих отметках) и правке длины стены (встанет ли то, что стоит).
+   */
+  const wallFurniture = useMemo(
+    () =>
+      wallFurnitureOf({
+        runs: segments,
+        layout,
+        runWallId: input.runWallId,
+        edited: wallEdited,
+        free: requirements.mode === 'free',
+      }),
+    [segments, input.runWallId, layout, wallEdited, requirements.mode],
+  );
+
+  const planFurniture = useMemo<PlanFurniture[]>(
+    () => wallFurniture.map(({ wallId, run, startMm }) => ({ wallId, run, startMm })),
+    [wallFurniture],
+  );
+
+  /**
+   * СОБЕРЁТСЯ ЛИ ГОТОВОЕ РЕШЕНИЕ НА НОВОЙ ДЛИНЕ СТЕНЫ.
+   *
+   * Ряд по готовому решению выводится из длины (`buildRun`), и замер, на
+   * котором он не собирается, запер бы запись объекта. Поэтому длина
+   * сперва собирается пробно — теми же функциями, что собирают экран
+   * (`objectSite` → `compositionFor` либо `objectInput` → `composeVariants`),
+   * — и только потом пишется. Не собралось — причина словами, замер
+   * прежний.
+   */
+  const layoutRefusalFor = useCallback(
+    (nextSurvey: Survey): string | null => {
+      const nextResolution = resolveSurvey(nextSurvey);
+      if (shape !== 'linear') {
+        const nextSite = objectSite(
+          {
+            lengthMm: props.lengthMm,
+            ceilingHeightMm: props.ceilingHeightMm,
+            openings: props.openings,
+            comms: props.comms,
+            measuredWalls: props.measuredWalls,
+            measuredComms: props.measuredComms,
+            runWallId: props.runWallId,
+          },
+          nextResolution,
+        );
+        const attempt = compositionFor({
+          shape,
+          requirements,
+          cornerSolution: legacyCorner,
+          corners: cornerChoices,
+          site: nextSite,
+          production,
+          variantKey,
+        });
+        return attempt?.state === 'refused' ? attempt.reason : null;
+      }
+      try {
+        composeVariants(
+          objectInput({
+            base: props,
+            resolution: nextResolution,
+            requirements: wallRequirements,
+            rates: liveRates,
+            production,
+            milling: millingItems,
+            carcass: carcassItems,
+            materials: materialItems,
+            corner: wallCornerOf(layout),
+          }),
+          disabled,
+          {},
+        );
+        return null;
+      } catch (error) {
+        /* Не глушитель: отказ сборки уходит человеку словами, длина не пишется. */
+        return error instanceof Error ? error.message : String(error);
+      }
+    },
+    [
+      props,
+      shape,
+      requirements,
+      legacyCorner,
+      cornerChoices,
+      production,
+      variantKey,
+      wallRequirements,
+      liveRates,
+      millingItems,
+      carcassItems,
+      materialItems,
+      layout,
+      disabled,
+    ],
+  );
+
+  /**
+   * ДЛИНА СТЕНЫ — В ЗАМЕР, НО СНАЧАЛА ПРОВЕРКА (STAGE 01B).
+   *
+   * Одна дверь на ввод числом и на перетаскивание конца стены. Решает
+   * `wallLengthVerdict`: проёмы, точки и мебель на стене против новой
+   * длины. Отказ — словами с миллиметрами, замер и мебель прежние. Принято
+   * — длина пишется «замерено» (её ввёл человек), а правленый ряд свободной
+   * сборки получает новую длину тем же `applyOps` (пустой список операций:
+   * та же нормализация и те же инварианты) — модули на своих отметках.
+   * `rebuild` — явное решение человека: длина вместе с пересборкой стены,
+   * правки которой при этой длине не сходятся; потеря названа до нажатия.
+   */
+  const applyWallLength = useCallback(
+    (wallId: string, lengthMm: number, mode: 'check' | 'rebuild' = 'check') => {
+      if (!survey) return;
+      const at = survey.walls.findIndex((item) => item.id === wallId);
+      if (at < 0) return;
+      const label = `Стена ${at + 1}`;
+      const furniture = wallFurniture.find((item) => item.wallId === wallId) ?? null;
+      const verdict =
+        mode === 'rebuild'
+          ? {
+              kind: 'apply' as const,
+              note: `${label}: записано ${lengthMm} мм, стена пересобрана по готовому решению — её правки сняты.`,
+              runLengthMm: null,
+            }
+          : wallLengthVerdict({ survey, wallId, lengthMm, label, furniture });
+      if (verdict.kind === 'refuse') {
+        setWallVerdict({ wallId, refusal: { text: verdict.text, rebuild: verdict.rebuild }, note: null, lengthMm });
+        return;
+      }
+
+      const nextSurvey: Survey = {
+        ...survey,
+        walls: survey.walls.map((item) => (item.id === wallId ? { ...item, lengthMm: measured(lengthMm) } : item)),
+      };
+
+      if (furniture && !furniture.free && (mode === 'rebuild' || !furniture.edited)) {
+        const reason = layoutRefusalFor(nextSurvey);
+        if (reason) {
+          setWallVerdict({
+            wallId,
+            refusal: { text: `${label}: при ${lengthMm} мм готовое решение не собирается — ${reason}` },
+            note: null,
+            lengthMm,
+          });
+          return;
+        }
+      }
+
+      const nextRun =
+        furniture && verdict.runLengthMm !== null
+          ? applyOps({
+              run: { ...furniture.run, lengthMm: verdict.runLengthMm },
+              requirements,
+              ops: [],
+              openings: wallOpenings(furniture.index),
+              roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
+            })
+          : null;
+
+      dirty.current = true;
+      setSurvey(nextSurvey);
+      props.onSurveyChange?.(nextSurvey);
+      if (nextRun && furniture) {
+        if (furniture.index === 0) setEditedRuns((prev) => ({ ...prev, [active.key]: nextRun }));
+        else setEditedWalls((prev) => withWallEdit(prev, wallIdAt(furniture.index), furniture.index, nextRun));
+      }
+      if (mode === 'rebuild' && furniture) rebuildWall(furniture.index);
+      setWallVerdict({ wallId, refusal: null, note: verdict.note, lengthMm });
+    },
+    [survey, wallFurniture, layoutRefusalFor, requirements, wallOpenings, props, active.key, wallIdAt, rebuildWall],
+  );
+
+  /** Стена выбрана на плане или в списке: выбор один — стена, а не модуль. */
+  const selectWall = useCallback(
+    (wallId: string) => {
+      setSelectedWallId(wallId);
+      setSelectedId(null);
+      setSelectedGap(null);
+      setCornerPick(null);
+      /* Стена с рядом становится рабочей: её мебель и покажет «Мебель». */
+      const furniture = wallFurniture.find((item) => item.wallId === wallId);
+      if (furniture) setWallIndex(furniture.index);
+      setWallVerdict((prev) => (prev?.wallId === wallId ? prev : null));
+    },
+    [wallFurniture],
+  );
+
+  /**
+   * ИНСТРУМЕНТ РЕЛЬСА — ЭТО ТОЛЬКО ТО, ЧТО ПОКАЗАНО.
+   *
+   * Ни ряд, ни замер, ни автосохранение переключение не трогает (ловушка
+   * 60): «Замер» открывает план комнаты, «Мебель» — фасад того же ряда.
+   * Повторное нажатие на инструмент сворачивает его панель — рабочей
+   * области достаётся больше места.
+   */
+  const chooseTool = useCallback(
+    (next: StudioTool) => {
+      if (next === studioTool) {
+        setStudioContextOpen((open) => !open);
+        return;
+      }
+      setStudioTool(next);
+      setStudioContextOpen(true);
+      if (next === 'measure') setStudioView('plan');
+      else if (
+        (next === 'furniture' || next === 'construction' || next === 'materials') &&
+        (studioView === 'plan' || studioView === 'panels')
+      ) {
+        setStudioView('facade');
+      }
+    },
+    [studioTool, studioView],
+  );
+
   /*
    * Автосохранение через паузу после последнего изменения. Замерщик правит
    * состав при клиенте и не должен помнить про кнопку «сохранить»; писать же
@@ -3533,22 +3805,1156 @@ export default function Workspace(props: WorkspaceProps) {
     goNext();
   };
 
+  /*
+   * СХЕМА И СЦЕНА — ОДИН ЭЛЕМЕНТ НА МАСТЕР И STUDIO (STAGE 01B).
+   *
+   * В мастере она стоит слева от панели, в Studio — в рабочей области, с
+   * видом от нижней строки оболочки. Второй сборки схемы нет.
+   */
+  const schematicElement = (
+    <RunSchematic
+      onViewChange={props.studio ? undefined : setSchematicView}
+      /*
+       * В Studio вид выбирает нижняя строка оболочки (STAGE 01B):
+       * фасад или 3D. Свой переключатель схемы там не рисуется.
+       */
+      view={props.studio ? (studioView === '3d' ? 'scene' : 'front') : undefined}
+      /*
+       * Панель прячется и возвращается ОДНОЙ кнопкой, и стоит
+       * она в полосе сцены: своей строкой она отнимала у сцены
+       * полсотни пикселей — ровно тех, из-за которых мебель
+       * уезжала под подвал.
+       */
+      panelHidden={panelHidden}
+      onTogglePanel={props.studio ? undefined : () => setPanelHidden((on) => !on)}
+      run={activeRun}
+      sceneRows={sceneRows}
+      room={roomSource}
+      production={production}
+      roomWidthM={Math.max(input.lengthMm / 1000, 2)}
+      roomDepthM={props.roomDepthM}
+      facadeColor={sceneFacadeColor}
+      pathImage={pathImage}
+      onPathImage={takePathImage}
+      projectId={props.projectId}
+      neighbour={neighbourRun}
+      neighbourLabel={
+        layout ? wallLabel(wall === 0 ? 1 : wall - 1) : undefined
+      }
+      comms={props.comms}
+      selectedModuleId={selectedId}
+      onSelect={selectModule}
+      onSelectGap={selectGap}
+      selectedGap={selectedGap}
+      gaps={libraryGapList}
+      onMoveModule={moveModule}
+      moveMode={freeMode ? 'place' : 'reorder'}
+      onWidth={dragWidth}
+      changedIds={changedIds}
+    />
+  );
+
+  /*
+   * ФАСАД, ПРИБОР И ОТКРЫВАНИЕ ВЫБРАННОГО МОДУЛЯ — ОДНА РАЗМЕТКА.
+   *
+   * В мастере блок стоит в панели шага и гасится по шагу; в Studio он в
+   * инспекторе справа и виден всегда, пока выбран модуль с фасадом.
+   */
+  const frontEditors = (show: (field: StepField) => string) =>
+    selectedUnit && hasFacade(selectedUnit) && (
+      <div className="mt-3">
+        {/*
+          * Сначала ОБРАЗЦЫ — клиент выбирает материал глазами, как
+          * в салоне. Атрибуты (конструкция, фактура) идут ниже:
+          * ими уточняют выбранное, а не начинают выбор.
+          */}
+        <div className={show('front')}>
+          <p className="mw-label mb-2">Материал фасада · {selectedUnit.label}</p>
+          <FrontSwatchCards unit={selectedUnit} onOps={runOps} />
+
+          <div className="mt-3">
+            <FrontMaterialPicker
+              unit={selectedUnit}
+              onOps={runOps}
+              onRefuse={setSceneNotice}
+              palette={palette}
+            />
+          </div>
+        </div>
+
+        {/*
+          * ПРИБОР ПЕРЕЕЗЖАЕТ НА ДРУГУЮ СТЕНУ ОДНОЙ КНОПКОЙ.
+          *
+          * Он принадлежит кухне, а не ряду: удалять его на одной
+          * стене и добавлять на другой — это два действия там,
+          * где человек делает одно, и половина настроек по
+          * дороге теряется.
+          */}
+        {layout && moduleAppliances(selectedUnit).length > 0 && (
+          <div className={`mt-3 ${show('appliance-wall')}`} data-appliance-move>
+            <p className="mw-label mb-2">
+              Прибор стоит на {lowerWall(wallLabel(wall), 'prepositional')}
+            </p>
+            <div className="flex flex-wrap gap-1">
+              {layout.segments.map((segment, i) =>
+                i === wall ? null : (
+                  <button
+                    key={segment.id}
+                    type="button"
+                    data-move-appliance={i}
+                    onClick={() =>
+                      moveApplianceToWall(moduleAppliances(selectedUnit)[0], i)
+                    }
+                    className="mw-btn mw-btn-ghost"
+                  >
+                    Перенести на {lowerWall(wallLabel(i), 'accusative')}
+                  </button>
+                ),
+              )}
+            </div>
+          </div>
+        )}
+
+        {/*
+          * Направление открывания стоит рядом с материалом: это
+          * такой же выбор про ЭТОТ фасад, и спрашивают о нём в
+          * тот же момент разговора.
+          */}
+        <div className={`mt-3 ${show('opening')}`}>
+          <OpeningPicker
+            unit={selectedUnit}
+            run={activeRun}
+            onOps={runOps}
+            onRefuse={setSceneNotice}
+          />
+        </div>
+      </div>
+    );
+
+  /*
+   * БЛОКИ ПАНЕЛИ — ОДНА РАЗМЕТКА НА МАСТЕР И STUDIO.
+   *
+   * В мастере это правая колонка рабочего экрана, в Studio — панель
+   * инструмента слева; какие блоки видны, решает `onStep`: шаг мастера или
+   * инструмент Studio (`STUDIO_TOOL_FIELDS`).
+   */
+  const studioPanelContent = (
+    <>
+      {/*
+        * ЗАГОЛОВОК ВЫБРАННОГО МОДУЛЯ — ПЕРВЫМ БЛОКОМ ПАНЕЛИ.
+        *
+        * Замерщик пришёл править модуль, а не читать список: под
+        * шестью уточнениями «Модуль 6 · 600 мм» и его поля
+        * оказывались ниже сгиба, и до них надо было доскроллить
+        * при клиенте. Уточнения теперь стоят в конце панели — они
+        * важны, но они не работа, а вопрос к замеру.
+        *
+        * Номер тот же, что в кружке на чертеже и в раскрое; для
+        * верхнего модуля работает так же: `selectionState` ищет
+        * во всех рядах.
+        */}
+      {!props.studio && selection.title && (
+        <p
+          data-selected-module={selection.unit?.id}
+          data-selected-number={selection.number ?? undefined}
+          className="mb-2 text-[17px] font-medium leading-none"
+        >
+          {selection.title}
+        </p>
+      )}
+      {/*
+        * ФОРМА ГАРНИТУРА И СТЕНЫ.
+        *
+        * «В чертеже только прямой» — сказал мебельщик, который
+        * делает угловые постоянно. Форма выбирается здесь, стены
+        * переключаются рядом: работа идёт по одной, но соседняя
+        * видна на схеме контуром — иначе не понять, где угол.
+        */}
+      <div className={`mb-4 ${onStep('walls')}`} data-shape>
+        <p className="mw-label mb-1">Форма</p>
+        <div className="flex flex-wrap gap-1">
+          {(Object.entries(SHAPE_TITLE) as [CompositionKind, string][]).map(
+            ([kind, title]) => (
+            <button
+              key={kind}
+              type="button"
+              data-shape-kind={kind}
+              aria-pressed={shape === kind}
+              onClick={() => {
+                dirty.current = true;
+                setShape(kind);
+                setWallIndex(0);
+                setSelectedId(null);
+                setCornerPick(null);
+              }}
+              className={`mw-btn ${shape === kind ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+            >
+              {title}
+            </button>
+          ))}
+        </div>
+
+        {shape !== 'linear' && !layout && (
+          <p className="mt-1 text-[13px] leading-snug text-alert">
+            Для этой формы нужны замеры соседних стен: угол по одной
+            стене не собрать — вторая половина была бы выдуманной.
+          </p>
+        )}
+
+        {layout && (
+          <>
+            <div className="mt-2 flex flex-wrap gap-1" data-walls>
+              {layout.segments.map((segment, i) => (
+                <button
+                  key={segment.id}
+                  type="button"
+                  data-wall={i}
+                  aria-pressed={wall === i}
+                  onClick={() => {
+                    setWallIndex(i);
+                    setSelectedId(null);
+                  }}
+                  className={`mw-btn ${wall === i ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+                >
+                  {wallLabel(i)} · {segment.run.lengthMm}
+                </button>
+              ))}
+            </div>
+
+            {/*
+              * УГЛЫ — КАЖДЫЙ СВОЙ (слой 55).
+              *
+              * Было одно решение на кухню и только про низ, а
+              * над столешницей угол оставался пустым всегда.
+              * Теперь у каждого угла свой низ и свой верх; кнопка
+              * открывает варианты угла в панели библиотеки — там
+              * же, где открывает их нажатие на угловой модуль.
+              * Смена не пересобирает стены: угол заменяется,
+              * остальные модули стоят, где стояли.
+              */}
+            <div className="mt-2" data-corner>
+              <p className="mw-label mb-1">{cornerChoices.length > 1 ? 'Углы' : 'Угол'}</p>
+              <div className="grid gap-1">
+                {cornerChoices.map((choice, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    data-corner-index={i}
+                    data-corner-lower={choice.lower}
+                    data-corner-upper={choice.upper}
+                    aria-pressed={selectedCorner === i}
+                    onClick={() => selectCorner(i)}
+                    className={`mw-btn justify-start text-left ${selectedCorner === i ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+                  >
+                    {wallLabel(i)} — {wallLabel(i + 1)}: низ {LOWER_CORNER_TITLE[choice.lower].toLowerCase()},
+                    {' '}верх {UPPER_CORNER_TITLE[choice.upper].toLowerCase()}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-1 text-[13px] leading-snug text-graphiteMw" data-corner-note>
+                Углом владеет стена до него: её ряд идёт до стены соседа, сосед стыкуется к
+                нему. Нажмите угол или угловой модуль в сцене — варианты угла покажет
+                библиотека.
+              </p>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/*
+        * ОТМЕТКИ ЦЕХА — ПОКА ТОЛЬКО ПОКАЗАНЫ.
+        *
+        * Числа берутся у `shop.ts` — у той же функции, по которой
+        * собран ряд и посчитан раскрой. Второй формулы здесь нет
+        * и быть не может: показанная на экране отметка обязана
+        * совпадать с той, по которой пилят.
+        *
+        * Правятся они в настройках производства: школа цеха
+        * принадлежит компании, а не проекту.
+        */}
+      <div className={`mb-4 ${onStep('shop')}`} data-shop-sizes>
+        <p className="mw-label mb-2">Отметки объекта</p>
+
+        {/*
+          * ПОЛЕ ПУСТОЕ — ЗНАЧИТ «КАК У ЦЕХА».
+          *
+          * В поле стоит число, по которому считается ряд, но своим
+          * оно становится только когда его ввели: у нетронутой
+          * отметки рядом нет пометки, и она едет за настройкой
+          * организации. «Как у цеха» возвращает её обратно —
+          * снимает поле, а не пишет в него сегодняшнее число.
+          */}
+        <div className="grid gap-3">
+          {OBJECT_MARKS.map((mark) => {
+            const own = markOwn(mark, ownMarks);
+            return (
+              <label key={mark.key} className="block" data-mark={mark.key}>
+                <span className="mw-label flex items-baseline justify-between gap-2">
+                  <span>
+                    {mark.title}
+                    {own && <span className="ml-1 text-cyan">· свой</span>}
+                  </span>
+                  {own && (
+                    <button
+                      type="button"
+                      data-mark-reset={mark.key}
+                      onClick={() => changeMark(mark, null)}
+                      className="text-[13px] text-graphiteMw underline"
+                    >
+                      как у цеха
+                    </button>
+                  )}
+                </span>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={mark.min}
+                  max={mark.max}
+                  step={1}
+                  defaultValue={markValue(mark, production)}
+                  key={`${mark.key}-${markValue(mark, production)}`}
+                  onBlur={(event) => {
+                    const raw = Number(event.target.value);
+                    if (!Number.isFinite(raw)) return;
+                    if (raw === markValue(mark, production)) return;
+                    if (raw < mark.min || raw > mark.max) {
+                      setMarksNotice(
+                        `${mark.title}: от ${mark.min} до ${mark.max} мм — ` +
+                          'за этими границами мебель не собирается.',
+                      );
+                      event.target.value = String(markValue(mark, production));
+                      return;
+                    }
+                    changeMark(mark, raw);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') (event.target as HTMLInputElement).blur();
+                  }}
+                  className="mw-num mw-touch mt-1 w-full border border-blueprint/40 bg-field px-1.5 text-[13px]"
+                />
+              </label>
+            );
+          })}
+        </div>
+
+        {marksNotice && (
+          <p
+            data-marks-notice
+            className="mt-2 rounded-[var(--r-control)] bg-tape/15 px-3 py-2 text-[13px] leading-snug text-tape"
+          >
+            {marksNotice}
+          </p>
+        )}
+
+        {/*
+          * ПРОИЗВОДНЫЕ ПОКАЗАНЫ, НО ПОЛЯ У НИХ НЕТ.
+          *
+          * Рабочая поверхность — это цоколь плюс боковина плюс
+          * столешница, низ верхних — она же плюс фартук. Заведи им
+          * поле, и они разойдутся со слагаемыми на первой правке,
+          * а по разошедшемуся размеру сверлят присадку.
+          */}
+        <dl className="mw-num mt-3 grid gap-x-4 gap-y-1 text-[13px] sm:grid-cols-2">
+          {(
+            [
+              ['Потолок', ceilingMm],
+              ['Рабочая поверхность', workTopMm(production)],
+              ['Низ верхнего ряда', upperBottomMm(production)],
+            ] as [string, number][]
+          ).map(([title, mm]) => (
+            <div key={title} className="flex justify-between gap-2">
+              <dt className="text-graphiteMw">{title}</dt>
+              <dd>{mm}</dd>
+            </div>
+          ))}
+        </dl>
+        <p className="mt-2 text-[13px] leading-snug text-graphiteMw">
+          Миллиметры. Рабочая поверхность и низ верхних — производные:
+          они считаются формулой и поля не имеют. Толщины, зазоры,
+          припуски и кромка остаются школой цеха и правятся в
+          настройках производства.
+        </p>
+      </div>
+
+      {/*
+        * ФОТО ПОМЕЩЕНИЯ — ПЕРВЫМ БЛОКОМ.
+        *
+        * Это обязательный шаг продажи, а не настройка: без снимка
+        * нет сравнения «до и после» и нет визуализации — клиент
+        * видит настроение вместо своей квартиры. Внизу панели его
+        * приходилось искать прокруткой при клиенте, а значит его
+        * не делали.
+        *
+        * Как только фото есть, блок сворачивается в строку: место
+        * наверху дорогое, и держать там готовое дело незачем.
+        */}
+      <div
+        className={`mb-4 ${onStep('photo')}`}
+        data-photo-first
+        data-photo-save={photoSave.state}
+      >
+        {roomPhoto ? (
+          <button
+            type="button"
+            onClick={() => setZoom(roomPhoto)}
+            className="mw-btn mw-btn-ghost !h-auto w-full !justify-start gap-3 !p-2"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={roomPhoto}
+              alt="Помещение клиента"
+              className="h-12 w-16 rounded-[6px] object-cover"
+            />
+            <span className="text-[13px] leading-snug text-graphiteMw">
+              Фото помещения есть — клиент увидит свою квартиру
+            </span>
+          </button>
+        ) : (
+          <div className="rounded-[var(--r-control)] bg-alert/10 p-3">
+            <p className="mb-2 text-[13px] leading-snug text-alert">
+              Без фото помещения клиент увидит настроение, а не свою
+              квартиру: сравнения «до и после» не будет.
+            </p>
+            <label className="mw-btn mw-btn-primary inline-flex cursor-pointer">
+              Добавить фото помещения
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                data-room-photo-input
+                onChange={async (event) => {
+                  const file = event.target.files?.[0];
+                  if (!file) return;
+                  // Сжатие идёт НА КЛИЕНТЕ: 4–12 МБ с телефона не
+                  // должны уезжать ни в Storage, ни в модель.
+                  const compressed = await compressPhoto(file);
+                  dirty.current = true;
+                  changeRoomPhoto(compressed.dataUrl);
+                }}
+              />
+            </label>
+          </div>
+        )}
+        {/*
+          * Снимок на экране и снимок с объектом — разные вещи:
+          * пока сервер не подтвердил запись, это сказано, а не
+          * сделан вид, что фото уже у объекта.
+          */}
+        {photoSave.state === 'saving' && (
+          <p className="mt-1 text-[13px] text-graphiteMw">Сохраняем фото с объектом…</p>
+        )}
+        {photoSave.state === 'error' && (
+          <p className="mt-1 text-[13px] leading-snug text-alert" data-photo-error>
+            {photoSave.words}
+          </p>
+        )}
+      </div>
+
+      {/*
+        * КАТАЛОГ МАТЕРИАЛОВ — РЯДОМ СО СЦЕНОЙ (слой 51).
+        *
+        * Сразу за фото помещения (ловушка 266): это главный выбор
+        * шага «Материалы». Цель, вкладки, поиск и позиции — одной
+        * панелью; нажал позицию — сцена и смета поменялись на месте.
+        */}
+      <div className={`mb-4 ${onStep('collections')}`}>
+        <MaterialLibraryPanel
+          active={isShown('collections')}
+          orgId={orgId}
+          catalog={catalog}
+          applied={appliedMaterials}
+          selectedModuleLabel={selection.title || null}
+          onApply={applyMaterial}
+          onPrice={saveMaterialPrice}
+          rates={liveRates}
+          onCollectionPrice={saveCollectionPrice}
+          catalogError={catalogError}
+          onCatalogAdded={addCatalogEntries}
+          onCatalogReload={reloadCatalog}
+        />
+      </div>
+
+      {/*
+        * Варианты выбранного модуля — ПЕРВЫМИ.
+        *
+        * Это то, ради чего в сцену и нажимают: миниатюра, название,
+        * разница в цене. Без выделения лента сама говорит, что
+        * делать, и не занимает место молча.
+        */}
+      <div className={onStep('variants')}>
+        <VariantStrip
+          options={variantOptions}
+          onPick={chooseVariant}
+          moduleLabel={selectedLabel}
+          pickPrompt="Нажмите на модуль в сцене, чтобы поменять его начинку."
+        />
+      </div>
+
+      {/*
+        * БИБЛИОТЕКА МОДУЛЕЙ — ТАМ ЖЕ, ГДЕ ВАРИАНТЫ.
+        *
+        * Лента вариантов отвечает «чем может быть ЭТОТ модуль
+        * при его ширине», библиотека — «что вообще ставят на
+        * это место», вместе с другими ширинами и с пустотами.
+        * Второго списка типов у них нет: обе спрашивают
+        * `variantsForModule`.
+        */}
+      {/* В Studio библиотека — инструмент «Мебель»: там ставят модули. */}
+      <div className={props.studio && !isShown('modules') ? 'hidden' : 'mt-3'}>
+        <ModuleLibrary
+          cards={libraryList}
+          lock={libraryReason}
+          placeLabel={placeLabel}
+          run={active.run}
+          production={production}
+          priceOf={libraryPrice}
+          onPick={pickFromLibrary}
+          corner={cornerPanel}
+        />
+      </div>
+
+      {/*
+        * ПАНЕЛЬ МАТЕРИАЛА — ДЛЯ ВСЕГО, ЧТО ЗАКРЫТО ФАСАДОМ.
+        *
+        * Условие было `!selectedUnit.appliance`: выделяешь мойку
+        * или колонну — панель не появляется вовсе, нажать некуда,
+        * и модуль остаётся прежнего цвета. Раскрой и смета к тому
+        * моменту фасад у него уже видели; расходилась ровно эта
+        * ветка — вторая копия правила «прибор ли это».
+        */}
+      {!props.studio && frontEditors(onStep)}
+      {!props.studio && moveNotice && (
+        <p
+          data-move-notice
+          className="mt-3 rounded-[var(--r-control)] bg-navy px-4 py-3 text-[13px] leading-snug text-graphiteMw"
+        >
+          {moveNotice}
+        </p>
+      )}
+
+      <div
+        className={`mt-4 ${
+          isShown('modules') || (!props.studio && isShown('filling')) ? '' : 'hidden'
+        }`}
+      >
+        <RunEditor
+          /*
+           * Лента модулей и ширина — РАСКЛАДКА, число фронтов и
+           * секция — КОНСТРУКЦИЯ. Компонент один: делить его на
+           * два значило бы завести второй путь правки состава.
+           */
+          fields={props.studio ? 'all' : shows(step, 'modules') ? 'layout' : 'build'}
+          /* В Studio выбранный модуль правится в инспекторе справа (STAGE 01B). */
+          part={props.studio ? 'composition' : 'all'}
+          selectionTitle={selection.title}
+          run={activeRun}
+          zone={zone}
+          selectedModuleId={selectedId}
+          onSelect={selectModule}
+          onOps={runOps}
+          requirements={requirements}
+          onComposition={changeComposition}
+          freeMode={freeMode}
+        />
+      </div>
+
+      {/*
+        * ГОТОВЫЕ ДИЗАЙНЫ.
+        *
+        * Один тап кладёт материал на весь ряд. Недоступные не
+        * прячутся: замерщик должен знать, чего не хватает в
+        * каталоге, — иначе он идёт спрашивать нас.
+        */}
+      <div className={`mt-4 ${onStep('designs')}`} data-designs>
+        <p className="mw-label mb-2">Готовые дизайны</p>
+        <div className="flex flex-wrap gap-1">
+          {RUN_DESIGNS.map((design) => {
+            const availability = designAvailability(design, input.rates);
+            return (
+              <button
+                key={design.id}
+                type="button"
+                data-design={design.id}
+                data-available={availability.available ? '1' : '0'}
+                title={
+                  availability.available
+                    ? designSummary(design)
+                    : availability.reason
+                }
+                onClick={() => applyDesign(design.id)}
+                className={`mw-btn ${availability.available ? 'mw-btn-ghost' : 'mw-btn-ghost opacity-50'}`}
+              >
+                {design.name}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/*
+        * Компоновки и материалы объекта — ниже состава: их трогают
+        * реже, чем варианты модуля, а место наверху дороже.
+        */}
+      {(arrangements.state === 'failed' || arrangements.arrangements.length > 1) && (
+        <div className={`mt-4 ${onStep('arrangements')}`}>
+          <ArrangementCards
+            state={arrangements}
+            activeKey={
+              arrangements.state === 'ready'
+                ? (arrangements.arrangements.find(
+                    (a) => a.run.fingerprint === active.run.fingerprint,
+                  )?.key ?? null)
+                : null
+            }
+            onSelect={chooseArrangement}
+          />
+        </div>
+      )}
+
+      <div className={`mt-4 ${onStep('catalog')}`}>
+        <CatalogLoader />
+        <MaterialsStep
+          zone={zone}
+          kitchenItemId={kitchenItemId}
+          roomPhoto={roomPhoto}
+          onPhotoChange={(next) => {
+            dirty.current = true;
+            changeRoomPhoto(next);
+          }}
+          angle={renderAngle}
+          onAngleChange={setRenderAngle}
+        />
+
+        {/*
+          * ФРЕЗЕРОВКА — РЯДОМ С ПАЛИТРОЙ ФАСАДА.
+          *
+          * Она отвечает на тот же вопрос, что материал: как будет
+          * выглядеть фасад. Развести их по разным шагам значит
+          * заставить замерщика переключаться между экранами,
+          * держа в голове, что он уже выбрал (слой 31).
+          *
+          * Каталог доезжает тем же путём, что материалы и
+          * фурнитура, — из стора (`useInteriorStore.catalog`),
+          * который наполняет `CatalogLoader` выше. Второго
+          * источника позиций нет.
+          */}
+        <div className="mt-3">
+          <CarcassPicker
+            run={active.run}
+            catalog={carcassItems}
+            selectedModuleId={selectedId}
+            onOps={runOps}
+          />
+
+          <MillingPicker
+            run={active.run}
+            catalog={millingItems}
+            selectedModuleId={selectedId}
+            onOps={runOps}
+          />
+        </div>
+      </div>
+
+      {/*
+        * Командная строка правит СОСТАВ: «убери посудомойку»,
+        * «поставь карго 400». Поэтому она на раскладке, рядом с
+        * лентой модулей, а не отдельным местом внизу панели.
+        */}
+      <div className={`mt-4 ${onStep('command')}`}>
+        <CommandBar onSubmit={sendCommand} busy={busy} lastReply={reply} />
+      </div>
+
+      {/*
+        * УТОЧНЕНИЯ — В КОНЦЕ ПАНЕЛИ.
+        *
+        * Они не работа, а вопрос к замеру: «розетка не отмечена»
+        * не мешает собрать ряд, но мешает его смонтировать.
+        * Первыми в панели они задавливали то, ради чего на экран
+        * и пришли, — настройки выбранного модуля. Блокирующее это
+        * не трогает вовсе: оно в подвале, красной полосой над
+        * главной кнопкой, и видно без прокрутки на любом шаге.
+        */}
+      {!props.studio && softList}
+    </>
+  );
+
+  /*
+   * ═══  ALDIK STUDIO — CAD-ОБОЛОЧКА (STAGE 01B)  ═══
+   *
+   * Тот же объект, то же состояние, те же операции и то же автосохранение,
+   * что у мастера; другое — раскладка экрана. План комнаты строится из
+   * замера (`RoomPlan`), фасад и 3D — та же схема, блоки панели — те же,
+   * выбранное — в инспекторе справа.
+   */
+  if (props.studio) {
+    if (!studioKit) {
+      throw new Error(
+        'Studio открыт без оболочки: страница Studio обязана обернуть рабочее место в StudioKitProvider.',
+      );
+    }
+    const { StudioShell, RoomPlan, WallInspector, StudioObjects, StudioInspector } = studioKit;
+    const surveyWalls = survey?.walls ?? [];
+    const turnWords = (item: Survey['walls'][number]) =>
+      item.turn === 'custom' ? `${item.turnDeg}° (другой угол)` : `90° ${item.turn === 'left' ? 'влево' : 'вправо'}`;
+    const spot = (from?: number, width?: number) =>
+      from === undefined
+        ? 'привязка не замерена'
+        : width === undefined
+          ? `${from} мм от угла`
+          : `${from}…${from + width} мм`;
+    const pickedIndex = selectedWallId ? surveyWalls.findIndex((item) => item.id === selectedWallId) : -1;
+    const pickedWall = pickedIndex >= 0 ? surveyWalls[pickedIndex] : null;
+    const pickedFurniture = pickedWall
+      ? (wallFurniture.find((item) => item.wallId === pickedWall.id) ?? null)
+      : null;
+    const pickedUnits = pickedFurniture ? allModules(pickedFurniture.run) : [];
+    const pickedSpan =
+      pickedFurniture && pickedUnits.length > 0
+        ? `${pickedFurniture.startMm + Math.min(...pickedUnits.map((unit) => unit.offsetMm))}…` +
+          `${pickedFurniture.startMm + Math.max(...pickedUnits.map((unit) => unit.offsetMm + unit.widthMm))} мм от угла`
+        : '';
+    const pickedVerdict = pickedWall && wallVerdict?.wallId === pickedWall.id ? wallVerdict : null;
+    /* Стена, чьи проёмы правятся в панели «Замер»: выбранная, иначе стена ряда. */
+    const measureWallId = selectedWallId ?? input.runWallId ?? surveyWalls[0]?.id ?? null;
+    const measureIndex = measureWallId ? surveyWalls.findIndex((item) => item.id === measureWallId) : -1;
+    const editSurvey = (next: Survey) => {
+      /* Один вызов на правку (ловушка 54): два подряд затёрли бы друг друга. */
+      dirty.current = true;
+      setSurvey(next);
+      props.onSurveyChange?.(next);
+    };
+    const panelTool = studioTool === 'furniture' || studioTool === 'construction' || studioTool === 'materials';
+    const commandPlan = (action: PlanCommand['action']) =>
+      setPlanCommand((prev) => ({ action, seq: (prev?.seq ?? 0) + 1 }));
+
+    const studioViewport =
+      studioView === 'plan' ? (
+        survey ? (
+          <RoomPlan
+            command={planCommand}
+            survey={survey}
+            selectedWallId={selectedWallId}
+            onSelectWall={selectWall}
+            furniture={planFurniture}
+            selectedModuleId={selectedId}
+            onSelectModule={selectModule}
+            onWallLength={(wallId, lengthMm) => applyWallLength(wallId, lengthMm)}
+            onZoom={setPlanZoom}
+          />
+        ) : (
+          <p className="m-6 max-w-md text-[15px] leading-snug" data-plan-missing>
+            У объекта нет замера в режиме замерщика: стены пришли с формы замера без состояний
+            величин, и плана комнаты строить не из чего. Мебель и документы работают как обычно.
+          </p>
+        )
+      ) : studioView === 'panels' ? (
+        <div className="h-full overflow-y-auto p-4" data-studio-panels>
+          <PanelList
+            walls={panelWalls}
+            title={props.title}
+            zone={props.zone}
+            measuredBy={props.measuredBy}
+            measuredAt={props.measuredAt}
+            production={production}
+            milling={millingItems}
+            carcass={carcassItems}
+            fingerprint={objectEstimate.fingerprint}
+            exportLock={screen.exportLockText}
+          />
+        </div>
+      ) : (
+        <div className="h-full p-2">{schematicElement}</div>
+      );
+
+    const studioContext = (
+      <>
+        {studioTool === 'select' && (
+          <StudioObjects
+            walls={surveyWalls.map((item, i) => ({
+              id: item.id,
+              label: `Стена ${i + 1}`,
+              lengthMm: valueOf(item.lengthMm) ?? null,
+              state: item.lengthMm.state,
+            }))}
+            modules={allModules(activeRun).map((unit) => ({
+              id: unit.id,
+              label: unit.label,
+              offsetMm: unit.offsetMm,
+              widthMm: unit.widthMm,
+            }))}
+            modulesOf={`${wallLabel(wall)} · ${studioWall.id}`}
+            selectedWallId={selectedWallId}
+            selectedModuleId={selectedId}
+            onSelectWall={selectWall}
+            onSelectModule={selectModule}
+          />
+        )}
+
+        {studioTool === 'measure' &&
+          (survey ? (
+            <div className="grid gap-4" data-studio-measure>
+              <div>
+                <p className="mw-label mb-1">Стены по обходу</p>
+                <ul className="grid gap-1">
+                  {surveyWalls.map((item, i) => (
+                    <li key={item.id}>
+                      <button
+                        type="button"
+                        data-measure-wall={item.id}
+                        aria-pressed={item.id === selectedWallId}
+                        onClick={() => selectWall(item.id)}
+                        className="cad-row"
+                      >
+                        <span>Стена {i + 1}</span>
+                        <span className="mw-num text-graphiteMw">{item.id}</span>
+                        <span className={`mw-num ml-auto ${item.lengthMm.state === 'measured' ? '' : 'text-tape'}`}>
+                          {valueOf(item.lengthMm) === undefined
+                            ? 'не замерена'
+                            : `${valueOf(item.lengthMm)}${item.lengthMm.state === 'assumed' ? '*' : ''}`}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-1 text-[13px] leading-snug text-graphiteMw">
+                  Нажмите на стену на плане или здесь: длина правится в инспекторе справа, конец
+                  выбранной стены тянется мышью вдоль неё.
+                </p>
+              </div>
+              {measureWallId && (
+                <div>
+                  <p className="mw-label mb-1">Проёмы · Стена {measureIndex + 1}</p>
+                  <SurveyPanel
+                    survey={survey}
+                    onChange={editSurvey}
+                    onFinish={() => undefined}
+                    only="openings"
+                    wallId={measureWallId}
+                  />
+                </div>
+              )}
+              <div>
+                <p className="mw-label mb-1">Коммуникации</p>
+                <SurveyPanel
+                  survey={survey}
+                  onChange={editSurvey}
+                  onFinish={() => undefined}
+                  only="comms"
+                  wallId={measureWallId}
+                />
+              </div>
+            </div>
+          ) : (
+            <p className="text-[13px] leading-snug text-graphiteMw" data-studio-measure-missing>
+              Замера в режиме замерщика у объекта нет — стены и проёмы правятся на форме замера.
+            </p>
+          ))}
+
+        {studioTool === 'documents' && (
+          <div className="grid gap-1" data-studio-documents>
+            <button
+              type="button"
+              data-studio-doc="panels"
+              aria-pressed={studioView === 'panels'}
+              onClick={() => setStudioView('panels')}
+              className="cad-row"
+            >
+              <span>Деталировка</span>
+              <span className="ml-auto text-graphiteMw">детали всех стен</span>
+            </button>
+            <button
+              type="button"
+              data-studio-doc="estimate"
+              disabled={screen.priceHidden}
+              onClick={() => setEstimateOpen(true)}
+              className="cad-row disabled:opacity-40"
+            >
+              <span>Смета</span>
+              <span className="ml-auto text-graphiteMw">итог и строки</span>
+            </button>
+            {props.projectId && (
+              <a href={`/project/${props.projectId}`} className="cad-row" data-studio-doc="wizard">
+                <span>Мастер шагов</span>
+                <span className="ml-auto text-graphiteMw">чертёж, рендер, клиенту</span>
+              </a>
+            )}
+          </div>
+        )}
+
+        {/* Блоки мастера держатся смонтированными: их состояние переживает смену инструмента. */}
+        <div className={panelTool ? '' : 'hidden'}>{studioPanelContent}</div>
+      </>
+    );
+
+    const studioInspector = (
+      <div className="grid gap-3">
+        {props.libraryNote && (
+          <p className="rounded-[var(--r-control)] bg-surface-2 px-3 py-2 text-[13px] leading-snug text-tape">
+            {props.libraryNote}. Подставленные величины — допущения, смета предварительная.
+          </p>
+        )}
+        {props.ratesMissing && (
+          <p className="rounded-[var(--r-control)] bg-surface-2 px-3 py-2 text-[13px] leading-snug text-tape">
+            Заполните цены каталога, чтобы считать смету.{' '}
+            <a href="/admin/catalog" className="underline">
+              Каталог →
+            </a>
+          </p>
+        )}
+        {blockingWarnings.length > 0 && (
+          <div className="rounded-[var(--r-control)] bg-alert/15 px-3 py-2" data-studio-blocking>
+            {blockingWarnings.slice(0, 2).map((warning) => (
+              <p key={warning.id} className="text-[13px] leading-snug text-alert">
+                {warning.message}
+              </p>
+            ))}
+            {blockingWarnings.length > 2 && (
+              <p className="text-[13px] text-alert">И ещё {blockingWarnings.length - 2}.</p>
+            )}
+            {staleShown && (
+              <button
+                type="button"
+                data-rebuild-wall={staleShown.index}
+                data-rebuild-wall-id={staleShown.index === 0 ? input.runWallId : wallIdAt(staleShown.index)}
+                onClick={() => rebuildWall(staleShown.index)}
+                className="mw-btn mw-btn-ghost mt-2 w-full"
+              >
+                Пересобрать {lowerWall(staleShown.label, 'accusative')}
+              </button>
+            )}
+          </div>
+        )}
+
+        {pickedWall ? (
+          <WallInspector
+            wallId={pickedWall.id}
+            label={`Стена ${pickedIndex + 1}`}
+            lengthMm={valueOf(pickedWall.lengthMm) ?? null}
+            state={pickedWall.lengthMm.state}
+            basis={pickedWall.lengthMm.state === 'assumed' ? pickedWall.lengthMm.basis : undefined}
+            turn={turnWords(pickedWall)}
+            runWall={pickedFurniture !== null}
+            openings={pickedWall.openings.map((opening) => ({
+              id: opening.id,
+              title: OPENING_KIND_TITLE[opening.kind],
+              spot: spot(valueOf(opening.fromCornerMm), valueOf(opening.widthMm)),
+            }))}
+            comms={(survey?.comms ?? [])
+              .filter((comm) => comm.wallId === pickedWall.id)
+              .map((comm) => ({
+                id: comm.id,
+                title: COMM_TITLE[comm.kind],
+                spot: spot(valueOf(comm.fromCornerMm)),
+              }))}
+            furniture={
+              pickedUnits.length > 0 ? `${pickedUnits.length} ${modulesWord(pickedUnits.length)}, ${pickedSpan}` : null
+            }
+            refusal={pickedVerdict?.refusal ?? null}
+            note={pickedVerdict?.note ?? null}
+            onApply={(lengthMm) => applyWallLength(pickedWall.id, lengthMm)}
+            onRebuild={
+              pickedVerdict?.refusal?.rebuild
+                ? () => applyWallLength(pickedWall.id, pickedVerdict.lengthMm, 'rebuild')
+                : undefined
+            }
+          />
+        ) : (
+          <>
+            <StudioInspector run={activeRun} wall={studioWall} selectedId={selectedId} gap={selectedGap} />
+            {selectedUnit && (
+              <RunEditor
+                part="selected"
+                fields="all"
+                selectionTitle={selection.title}
+                run={activeRun}
+                zone={zone}
+                selectedModuleId={selectedId}
+                onSelect={selectModule}
+                onOps={runOps}
+                requirements={requirements}
+                onComposition={changeComposition}
+                freeMode={freeMode}
+              />
+            )}
+            {frontEditors(() => '')}
+          </>
+        )}
+
+        {sceneNotice && (
+          <p
+            data-scene-notice
+            className="rounded-[var(--r-control)] bg-tape/15 px-3 py-2 text-[13px] leading-snug text-tape"
+          >
+            {sceneNotice}
+          </p>
+        )}
+        {moveNotice && (
+          <p
+            data-move-notice
+            className="rounded-[var(--r-control)] bg-surface-2 px-3 py-2 text-[13px] leading-snug text-graphiteMw"
+          >
+            {moveNotice}
+          </p>
+        )}
+        {softList}
+      </div>
+    );
+
+    return (
+      <StudioShell
+        title={props.title}
+        zone={props.zone}
+        saveState={
+          props.projectId && saveLabel ? (
+            <span
+              data-save-state={saveState}
+              className={
+                saveState === 'error' ? 'text-alert' : saveState === 'offline' ? 'text-tape' : 'text-graphiteMw'
+              }
+            >
+              {saveLabel}
+            </span>
+          ) : null
+        }
+        topActions={
+          <>
+            <button
+              type="button"
+              data-studio-open="panels"
+              aria-pressed={studioView === 'panels'}
+              onClick={() => setStudioView('panels')}
+              className="cad-icon-button"
+            >
+              Деталировка
+            </button>
+            <button
+              type="button"
+              data-studio-open="estimate"
+              disabled={screen.priceHidden}
+              title={screen.priceHidden ? 'Цены нет — причина внизу экрана.' : undefined}
+              onClick={() => setEstimateOpen(true)}
+              className="cad-icon-button"
+            >
+              Смета
+            </button>
+            {props.projectId && (
+              <a
+                href={`/project/${props.projectId}`}
+                data-studio-wizard
+                aria-disabled={saveState === 'saving'}
+                title={
+                  saveState === 'saving'
+                    ? 'Дождитесь сохранения — правка ещё пишется'
+                    : 'Чертёж, рендер и отправка клиенту — в мастере шагов'
+                }
+                onClick={(event) => {
+                  if (saveState === 'saving') event.preventDefault();
+                }}
+                className="cad-icon-button inline-flex items-center"
+              >
+                Мастер
+              </a>
+            )}
+          </>
+        }
+        tool={studioTool}
+        onTool={chooseTool}
+        contextOpen={studioContextOpen}
+        context={studioContext}
+        view={studioView}
+        onView={setStudioView}
+        viewport={studioViewport}
+        inspector={studioInspector}
+        zoom={
+          studioView === 'plan' && survey ? (
+            <>
+              <button
+                type="button"
+                aria-label="Отдалить"
+                onClick={() => commandPlan('out')}
+                className="cad-icon-button"
+              >
+                −
+              </button>
+              <span className="mw-num w-12 text-center text-[13px]" data-studio-zoom>
+                {planZoom}%
+              </span>
+              <button
+                type="button"
+                aria-label="Приблизить"
+                onClick={() => commandPlan('in')}
+                className="cad-icon-button"
+              >
+                +
+              </button>
+              <button type="button" data-studio-fit onClick={() => commandPlan('fit')} className="cad-icon-button">
+                Вписать
+              </button>
+            </>
+          ) : null
+        }
+        status={
+          <p
+            data-studio-status={studioStatus.key}
+            title={`${studioStatus.title}: ${studioStatus.reason}`}
+            className={`truncate text-[13px] ${
+              studioStatus.key === 'blocked' ? 'text-alert' : studioStatus.key === 'ready' ? 'text-cyan' : 'text-graphiteMw'
+            }`}
+          >
+            <span className="font-medium">{studioStatus.title}</span>: {studioStatus.reason}
+          </p>
+        }
+        price={
+          screen.priceHidden ? (
+            <p data-price-hidden className="truncate text-[13px] text-alert">
+              {!refusal && mismatches.length === 0 && catalogError
+                ? 'Цены нет: каталог организации не прочитался.'
+                : refusal
+                  ? `Цены нет: ${SHAPE_TITLE[shape]} не сошлась.`
+                  : mismatchPriceText(mismatches[0])}
+            </p>
+          ) : (
+            <EstimateSheet
+              estimate={objectEstimate}
+              variantTitle={SINGLE_VARIANT ? zoneProfile(zone).yours : active.title}
+              disabledKeys={disabled[active.key]}
+              onToggle={toggleLine}
+              open={estimateOpen}
+              onOpenChange={setEstimateOpen}
+              preliminary={preliminary}
+              assumptions={estimateAssumptions}
+            />
+          )
+        }
+        hidden={
+          <>
+            {/* Сцена захвата кадра — смонтирована всегда и за экраном (ловушка 61). */}
+            <div className="mw-scene-hidden fixed left-[-3000px] top-0 h-[220px] w-[340px] opacity-0" aria-hidden>
+              {sceneSlot}
+            </div>
+            {zoom && (
+              <button
+                type="button"
+                onClick={() => setZoom(null)}
+                className="fixed inset-0 z-50 flex items-center justify-center bg-navyDeep/95 p-4 print:hidden"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={zoom} alt="" className="max-h-full max-w-full object-contain" />
+              </button>
+            )}
+          </>
+        }
+      />
+    );
+  }
+
   return (
-    <div
-      className="mw-root flex h-screen flex-col overflow-hidden"
-      data-studio-root={props.studio ? '' : undefined}
-    >
+    <div className="mw-root flex h-screen flex-col overflow-hidden">
       {/* ── Шапка: имя объекта и состояние сохранения, больше ничего ── */}
       <header className="flex items-center gap-3 px-4 py-3 print:hidden">
         <div className="min-w-0">
-          <p
-            className="truncate text-[17px] font-medium leading-tight"
-            data-studio-title={props.studio ? '' : undefined}
-          >
-            {props.title}
-          </p>
+          <p className="truncate text-[17px] font-medium leading-tight">{props.title}</p>
           <p className="mw-num truncate text-[13px] text-graphiteMw">
-            {props.studio && <span className="text-cyan">ALDIK Furniture Studio · </span>}
             {props.zone} · {props.measuredBy || 'замерщик'} · {props.measuredAt || '—'}
           </p>
         </div>
@@ -3565,9 +4971,8 @@ export default function Workspace(props: WorkspaceProps) {
           */}
         {props.projectId && (
           <a
-            href={props.studio ? `/project/${props.projectId}` : `/project/${props.projectId}/room`}
-            data-studio-wizard={props.studio ? '' : undefined}
-            data-open-studio={props.studio ? undefined : ''}
+            href={`/project/${props.projectId}/room`}
+            data-open-studio
             aria-disabled={saveState === 'saving'}
             title={saveState === 'saving' ? 'Дождитесь сохранения — правка ещё пишется' : undefined}
             onClick={(event) => {
@@ -3575,7 +4980,7 @@ export default function Workspace(props: WorkspaceProps) {
             }}
             className="mw-btn mw-btn-ghost hidden sm:inline-flex"
           >
-            {props.studio ? 'Мастер шагов' : 'Studio'}
+            Studio
           </a>
         )}
 
@@ -3605,73 +5010,7 @@ export default function Workspace(props: WorkspaceProps) {
       </header>
 
       <div className="print:hidden">
-        {props.studio ? (
-          /*
-           * ВКЛАДКИ STUDIO — ТЕ ЖЕ ШАГИ, НО БЕЗ ПОРЯДКА (STAGE 01A).
-           *
-           * «Размеры», «Дизайн», «Конструкция» и «Материалы» — это рабочие
-           * шаги мастера с той же сценой и той же панелью: второй копии
-           * экранов нет. Обязательного порядка нет, решения не выбирают;
-           * «Деталировка» — раскрой той мебели, что стоит сейчас, а
-           * «Смета» открывает ту же таблицу, что строка суммы внизу.
-           */
-          <nav
-            aria-label="Вкладки Studio"
-            className="flex items-center gap-1 overflow-x-auto px-4 pb-2"
-            data-studio-tabs
-          >
-            {(
-              [
-                ['survey', 'Замер'],
-                ['sizes', 'Размеры'],
-                ['layout', 'Дизайн'],
-                ['build', 'Конструкция'],
-                ['materials', 'Материалы'],
-                ['panels', 'Деталировка'],
-              ] as const
-            ).map(([key, title]) => {
-              const on = key === 'panels' ? studioPanels : !studioPanels && step === key;
-              const locked = key === 'survey' && !survey;
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  data-studio-tab={key}
-                  aria-pressed={on}
-                  disabled={locked}
-                  title={
-                    locked
-                      ? 'Замера в режиме замерщика у объекта нет: размеры пришли с формы замера.'
-                      : undefined
-                  }
-                  onClick={() => {
-                    if (key === 'panels') {
-                      setStudioPanels(true);
-                      return;
-                    }
-                    setStudioPanels(false);
-                    setStep(key);
-                  }}
-                  className={`mw-btn shrink-0 ${on ? 'mw-btn-primary' : 'mw-btn-ghost'} disabled:opacity-40`}
-                >
-                  {title}
-                </button>
-              );
-            })}
-            <button
-              type="button"
-              data-studio-estimate
-              disabled={screen.priceHidden}
-              title={screen.priceHidden ? 'Цены нет — причина внизу экрана.' : undefined}
-              onClick={() => setEstimateOpen(true)}
-              className="mw-btn mw-btn-ghost shrink-0 disabled:opacity-40"
-            >
-              Смета
-            </button>
-          </nav>
-        ) : (
-          <StepBar steps={steps} active={step} onSelect={setStep} />
-        )}
+        <StepBar steps={steps} active={step} onSelect={setStep} />
       </div>
 
       {props.ratesMissing && (
@@ -3755,7 +5094,7 @@ export default function Workspace(props: WorkspaceProps) {
                 dirty.current = true;
                 setSurvey(finished);
                 setShowSheet(false);
-                setStep(props.studio ? 'layout' : 'template');
+                setStep('template');
                 props.onSurveyFinish?.(finished);
               }}
             />
@@ -3875,7 +5214,7 @@ export default function Workspace(props: WorkspaceProps) {
           *
           * Чертёж сюда НЕ переехал: он для цеха, и живёт на «Результате».
           */}
-        {isStudio(step) && !(props.studio && studioPanels) && (
+        {isStudio(step) && (
           /*
             * 3D ЗАНИМАЕТ ВЕСЬ ЭКРАН.
             *
@@ -3948,41 +5287,7 @@ export default function Workspace(props: WorkspaceProps) {
                 * ровно остаток — его считает `flex-1` выше.
                 */}
               <div className="h-[52vh] min-h-[260px] lg:h-full lg:min-h-[420px]">
-                <RunSchematic
-                  onViewChange={setSchematicView}
-                  /*
-                   * Панель прячется и возвращается ОДНОЙ кнопкой, и стоит
-                   * она в полосе сцены: своей строкой она отнимала у сцены
-                   * полсотни пикселей — ровно тех, из-за которых мебель
-                   * уезжала под подвал.
-                   */
-                  panelHidden={panelHidden}
-                  onTogglePanel={() => setPanelHidden((on) => !on)}
-                  run={activeRun}
-                  sceneRows={sceneRows}
-                  room={roomSource}
-                  production={production}
-                  roomWidthM={Math.max(input.lengthMm / 1000, 2)}
-                  roomDepthM={props.roomDepthM}
-                  facadeColor={sceneFacadeColor}
-                  pathImage={pathImage}
-                  onPathImage={takePathImage}
-                  projectId={props.projectId}
-                  neighbour={neighbourRun}
-                  neighbourLabel={
-                    layout ? wallLabel(wall === 0 ? 1 : wall - 1) : undefined
-                  }
-                  comms={props.comms}
-                  selectedModuleId={selectedId}
-                  onSelect={selectModule}
-                  onSelectGap={selectGap}
-                  selectedGap={selectedGap}
-                  gaps={libraryGapList}
-                  onMoveModule={moveModule}
-                  moveMode={freeMode ? 'place' : 'reorder'}
-                  onWidth={dragWidth}
-                  changedIds={changedIds}
-                />
+                {schematicElement}
               </div>
 
               {sceneNotice && (
@@ -4005,635 +5310,8 @@ export default function Workspace(props: WorkspaceProps) {
               className={`min-w-0 lg:h-full lg:overflow-y-auto ${wideScene ? 'hidden' : ''}`}
               data-studio-panel
             >
-              {props.studio && (
-                <StudioInspector
-                  run={activeRun}
-                  wall={studioWall}
-                  selectedId={selectedId}
-                  gap={selectedGap}
-                />
-              )}
-              {/*
-                * ЗАГОЛОВОК ВЫБРАННОГО МОДУЛЯ — ПЕРВЫМ БЛОКОМ ПАНЕЛИ.
-                *
-                * Замерщик пришёл править модуль, а не читать список: под
-                * шестью уточнениями «Модуль 6 · 600 мм» и его поля
-                * оказывались ниже сгиба, и до них надо было доскроллить
-                * при клиенте. Уточнения теперь стоят в конце панели — они
-                * важны, но они не работа, а вопрос к замеру.
-                *
-                * Номер тот же, что в кружке на чертеже и в раскрое; для
-                * верхнего модуля работает так же: `selectionState` ищет
-                * во всех рядах.
-                */}
-              {selection.title && (
-                <p
-                  data-selected-module={selection.unit?.id}
-                  data-selected-number={selection.number ?? undefined}
-                  className="mb-2 text-[17px] font-medium leading-none"
-                >
-                  {selection.title}
-                </p>
-              )}
-              {/*
-                * ФОРМА ГАРНИТУРА И СТЕНЫ.
-                *
-                * «В чертеже только прямой» — сказал мебельщик, который
-                * делает угловые постоянно. Форма выбирается здесь, стены
-                * переключаются рядом: работа идёт по одной, но соседняя
-                * видна на схеме контуром — иначе не понять, где угол.
-                */}
-              <div className={`mb-4 ${onStep('walls')}`} data-shape>
-                <p className="mw-label mb-1">Форма</p>
-                <div className="flex flex-wrap gap-1">
-                  {(Object.entries(SHAPE_TITLE) as [CompositionKind, string][]).map(
-                    ([kind, title]) => (
-                    <button
-                      key={kind}
-                      type="button"
-                      data-shape-kind={kind}
-                      aria-pressed={shape === kind}
-                      onClick={() => {
-                        dirty.current = true;
-                        setShape(kind);
-                        setWallIndex(0);
-                        setSelectedId(null);
-                        setCornerPick(null);
-                      }}
-                      className={`mw-btn ${shape === kind ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
-                    >
-                      {title}
-                    </button>
-                  ))}
-                </div>
-
-                {shape !== 'linear' && !layout && (
-                  <p className="mt-1 text-[13px] leading-snug text-alert">
-                    Для этой формы нужны замеры соседних стен: угол по одной
-                    стене не собрать — вторая половина была бы выдуманной.
-                  </p>
-                )}
-
-                {layout && (
-                  <>
-                    <div className="mt-2 flex flex-wrap gap-1" data-walls>
-                      {layout.segments.map((segment, i) => (
-                        <button
-                          key={segment.id}
-                          type="button"
-                          data-wall={i}
-                          aria-pressed={wall === i}
-                          onClick={() => {
-                            setWallIndex(i);
-                            setSelectedId(null);
-                          }}
-                          className={`mw-btn ${wall === i ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
-                        >
-                          {wallLabel(i)} · {segment.run.lengthMm}
-                        </button>
-                      ))}
-                    </div>
-
-                    {/*
-                      * УГЛЫ — КАЖДЫЙ СВОЙ (слой 55).
-                      *
-                      * Было одно решение на кухню и только про низ, а
-                      * над столешницей угол оставался пустым всегда.
-                      * Теперь у каждого угла свой низ и свой верх; кнопка
-                      * открывает варианты угла в панели библиотеки — там
-                      * же, где открывает их нажатие на угловой модуль.
-                      * Смена не пересобирает стены: угол заменяется,
-                      * остальные модули стоят, где стояли.
-                      */}
-                    <div className="mt-2" data-corner>
-                      <p className="mw-label mb-1">{cornerChoices.length > 1 ? 'Углы' : 'Угол'}</p>
-                      <div className="grid gap-1">
-                        {cornerChoices.map((choice, i) => (
-                          <button
-                            key={i}
-                            type="button"
-                            data-corner-index={i}
-                            data-corner-lower={choice.lower}
-                            data-corner-upper={choice.upper}
-                            aria-pressed={selectedCorner === i}
-                            onClick={() => selectCorner(i)}
-                            className={`mw-btn justify-start text-left ${selectedCorner === i ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
-                          >
-                            {wallLabel(i)} — {wallLabel(i + 1)}: низ {LOWER_CORNER_TITLE[choice.lower].toLowerCase()},
-                            {' '}верх {UPPER_CORNER_TITLE[choice.upper].toLowerCase()}
-                          </button>
-                        ))}
-                      </div>
-                      <p className="mt-1 text-[13px] leading-snug text-graphiteMw" data-corner-note>
-                        Углом владеет стена до него: её ряд идёт до стены соседа, сосед стыкуется к
-                        нему. Нажмите угол или угловой модуль в сцене — варианты угла покажет
-                        библиотека.
-                      </p>
-                    </div>
-                  </>
-                )}
-              </div>
-
-              {/*
-                * ОТМЕТКИ ЦЕХА — ПОКА ТОЛЬКО ПОКАЗАНЫ.
-                *
-                * Числа берутся у `shop.ts` — у той же функции, по которой
-                * собран ряд и посчитан раскрой. Второй формулы здесь нет
-                * и быть не может: показанная на экране отметка обязана
-                * совпадать с той, по которой пилят.
-                *
-                * Правятся они в настройках производства: школа цеха
-                * принадлежит компании, а не проекту.
-                */}
-              <div className={`mb-4 ${onStep('shop')}`} data-shop-sizes>
-                <p className="mw-label mb-2">Отметки объекта</p>
-
-                {/*
-                  * ПОЛЕ ПУСТОЕ — ЗНАЧИТ «КАК У ЦЕХА».
-                  *
-                  * В поле стоит число, по которому считается ряд, но своим
-                  * оно становится только когда его ввели: у нетронутой
-                  * отметки рядом нет пометки, и она едет за настройкой
-                  * организации. «Как у цеха» возвращает её обратно —
-                  * снимает поле, а не пишет в него сегодняшнее число.
-                  */}
-                <div className="grid gap-3">
-                  {OBJECT_MARKS.map((mark) => {
-                    const own = markOwn(mark, ownMarks);
-                    return (
-                      <label key={mark.key} className="block" data-mark={mark.key}>
-                        <span className="mw-label flex items-baseline justify-between gap-2">
-                          <span>
-                            {mark.title}
-                            {own && <span className="ml-1 text-cyan">· свой</span>}
-                          </span>
-                          {own && (
-                            <button
-                              type="button"
-                              data-mark-reset={mark.key}
-                              onClick={() => changeMark(mark, null)}
-                              className="text-[13px] text-graphiteMw underline"
-                            >
-                              как у цеха
-                            </button>
-                          )}
-                        </span>
-                        <input
-                          type="number"
-                          inputMode="numeric"
-                          min={mark.min}
-                          max={mark.max}
-                          step={1}
-                          defaultValue={markValue(mark, production)}
-                          key={`${mark.key}-${markValue(mark, production)}`}
-                          onBlur={(event) => {
-                            const raw = Number(event.target.value);
-                            if (!Number.isFinite(raw)) return;
-                            if (raw === markValue(mark, production)) return;
-                            if (raw < mark.min || raw > mark.max) {
-                              setMarksNotice(
-                                `${mark.title}: от ${mark.min} до ${mark.max} мм — ` +
-                                  'за этими границами мебель не собирается.',
-                              );
-                              event.target.value = String(markValue(mark, production));
-                              return;
-                            }
-                            changeMark(mark, raw);
-                          }}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Enter') (event.target as HTMLInputElement).blur();
-                          }}
-                          className="mw-num mw-touch mt-1 w-full border border-blueprint/40 bg-field px-1.5 text-[13px]"
-                        />
-                      </label>
-                    );
-                  })}
-                </div>
-
-                {marksNotice && (
-                  <p
-                    data-marks-notice
-                    className="mt-2 rounded-[var(--r-control)] bg-tape/15 px-3 py-2 text-[13px] leading-snug text-tape"
-                  >
-                    {marksNotice}
-                  </p>
-                )}
-
-                {/*
-                  * ПРОИЗВОДНЫЕ ПОКАЗАНЫ, НО ПОЛЯ У НИХ НЕТ.
-                  *
-                  * Рабочая поверхность — это цоколь плюс боковина плюс
-                  * столешница, низ верхних — она же плюс фартук. Заведи им
-                  * поле, и они разойдутся со слагаемыми на первой правке,
-                  * а по разошедшемуся размеру сверлят присадку.
-                  */}
-                <dl className="mw-num mt-3 grid gap-x-4 gap-y-1 text-[13px] sm:grid-cols-2">
-                  {(
-                    [
-                      ['Потолок', ceilingMm],
-                      ['Рабочая поверхность', workTopMm(production)],
-                      ['Низ верхнего ряда', upperBottomMm(production)],
-                    ] as [string, number][]
-                  ).map(([title, mm]) => (
-                    <div key={title} className="flex justify-between gap-2">
-                      <dt className="text-graphiteMw">{title}</dt>
-                      <dd>{mm}</dd>
-                    </div>
-                  ))}
-                </dl>
-                <p className="mt-2 text-[13px] leading-snug text-graphiteMw">
-                  Миллиметры. Рабочая поверхность и низ верхних — производные:
-                  они считаются формулой и поля не имеют. Толщины, зазоры,
-                  припуски и кромка остаются школой цеха и правятся в
-                  настройках производства.
-                </p>
-              </div>
-
-              {/*
-                * ФОТО ПОМЕЩЕНИЯ — ПЕРВЫМ БЛОКОМ.
-                *
-                * Это обязательный шаг продажи, а не настройка: без снимка
-                * нет сравнения «до и после» и нет визуализации — клиент
-                * видит настроение вместо своей квартиры. Внизу панели его
-                * приходилось искать прокруткой при клиенте, а значит его
-                * не делали.
-                *
-                * Как только фото есть, блок сворачивается в строку: место
-                * наверху дорогое, и держать там готовое дело незачем.
-                */}
-              <div
-                className={`mb-4 ${onStep('photo')}`}
-                data-photo-first
-                data-photo-save={photoSave.state}
-              >
-                {roomPhoto ? (
-                  <button
-                    type="button"
-                    onClick={() => setZoom(roomPhoto)}
-                    className="mw-btn mw-btn-ghost !h-auto w-full !justify-start gap-3 !p-2"
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={roomPhoto}
-                      alt="Помещение клиента"
-                      className="h-12 w-16 rounded-[6px] object-cover"
-                    />
-                    <span className="text-[13px] leading-snug text-graphiteMw">
-                      Фото помещения есть — клиент увидит свою квартиру
-                    </span>
-                  </button>
-                ) : (
-                  <div className="rounded-[var(--r-control)] bg-alert/10 p-3">
-                    <p className="mb-2 text-[13px] leading-snug text-alert">
-                      Без фото помещения клиент увидит настроение, а не свою
-                      квартиру: сравнения «до и после» не будет.
-                    </p>
-                    <label className="mw-btn mw-btn-primary inline-flex cursor-pointer">
-                      Добавить фото помещения
-                      <input
-                        type="file"
-                        accept="image/*"
-                        className="hidden"
-                        data-room-photo-input
-                        onChange={async (event) => {
-                          const file = event.target.files?.[0];
-                          if (!file) return;
-                          // Сжатие идёт НА КЛИЕНТЕ: 4–12 МБ с телефона не
-                          // должны уезжать ни в Storage, ни в модель.
-                          const compressed = await compressPhoto(file);
-                          dirty.current = true;
-                          changeRoomPhoto(compressed.dataUrl);
-                        }}
-                      />
-                    </label>
-                  </div>
-                )}
-                {/*
-                  * Снимок на экране и снимок с объектом — разные вещи:
-                  * пока сервер не подтвердил запись, это сказано, а не
-                  * сделан вид, что фото уже у объекта.
-                  */}
-                {photoSave.state === 'saving' && (
-                  <p className="mt-1 text-[13px] text-graphiteMw">Сохраняем фото с объектом…</p>
-                )}
-                {photoSave.state === 'error' && (
-                  <p className="mt-1 text-[13px] leading-snug text-alert" data-photo-error>
-                    {photoSave.words}
-                  </p>
-                )}
-              </div>
-
-              {/*
-                * КАТАЛОГ МАТЕРИАЛОВ — РЯДОМ СО СЦЕНОЙ (слой 51).
-                *
-                * Сразу за фото помещения (ловушка 266): это главный выбор
-                * шага «Материалы». Цель, вкладки, поиск и позиции — одной
-                * панелью; нажал позицию — сцена и смета поменялись на месте.
-                */}
-              <div className={`mb-4 ${onStep('collections')}`}>
-                <MaterialLibraryPanel
-                  active={shows(step, 'collections')}
-                  orgId={orgId}
-                  catalog={catalog}
-                  applied={appliedMaterials}
-                  selectedModuleLabel={selection.title || null}
-                  onApply={applyMaterial}
-                  onPrice={saveMaterialPrice}
-                  rates={liveRates}
-                  onCollectionPrice={saveCollectionPrice}
-                  catalogError={catalogError}
-                  onCatalogAdded={addCatalogEntries}
-                  onCatalogReload={reloadCatalog}
-                />
-              </div>
-
-              {/*
-                * Варианты выбранного модуля — ПЕРВЫМИ.
-                *
-                * Это то, ради чего в сцену и нажимают: миниатюра, название,
-                * разница в цене. Без выделения лента сама говорит, что
-                * делать, и не занимает место молча.
-                */}
-              <div className={onStep('variants')}>
-                <VariantStrip
-                  options={variantOptions}
-                  onPick={chooseVariant}
-                  moduleLabel={selectedLabel}
-                  pickPrompt="Нажмите на модуль в сцене, чтобы поменять его начинку."
-                />
-              </div>
-
-              {/*
-                * БИБЛИОТЕКА МОДУЛЕЙ — ТАМ ЖЕ, ГДЕ ВАРИАНТЫ.
-                *
-                * Лента вариантов отвечает «чем может быть ЭТОТ модуль
-                * при его ширине», библиотека — «что вообще ставят на
-                * это место», вместе с другими ширинами и с пустотами.
-                * Второго списка типов у них нет: обе спрашивают
-                * `variantsForModule`.
-                */}
-              <div className="mt-3">
-                <ModuleLibrary
-                  cards={libraryList}
-                  lock={libraryReason}
-                  placeLabel={placeLabel}
-                  run={active.run}
-                  production={production}
-                  priceOf={libraryPrice}
-                  onPick={pickFromLibrary}
-                  corner={cornerPanel}
-                />
-              </div>
-
-              {/*
-                * ПАНЕЛЬ МАТЕРИАЛА — ДЛЯ ВСЕГО, ЧТО ЗАКРЫТО ФАСАДОМ.
-                *
-                * Условие было `!selectedUnit.appliance`: выделяешь мойку
-                * или колонну — панель не появляется вовсе, нажать некуда,
-                * и модуль остаётся прежнего цвета. Раскрой и смета к тому
-                * моменту фасад у него уже видели; расходилась ровно эта
-                * ветка — вторая копия правила «прибор ли это».
-                */}
-              {selectedUnit && hasFacade(selectedUnit) && (
-                <div className="mt-3">
-                  {/*
-                    * Сначала ОБРАЗЦЫ — клиент выбирает материал глазами, как
-                    * в салоне. Атрибуты (конструкция, фактура) идут ниже:
-                    * ими уточняют выбранное, а не начинают выбор.
-                    */}
-                  <div className={onStep('front')}>
-                    <p className="mw-label mb-2">Материал фасада · {selectedUnit.label}</p>
-                    <FrontSwatchCards unit={selectedUnit} onOps={runOps} />
-
-                    <div className="mt-3">
-                      <FrontMaterialPicker
-                        unit={selectedUnit}
-                        onOps={runOps}
-                        onRefuse={setSceneNotice}
-                        palette={palette}
-                      />
-                    </div>
-                  </div>
-
-                  {/*
-                    * ПРИБОР ПЕРЕЕЗЖАЕТ НА ДРУГУЮ СТЕНУ ОДНОЙ КНОПКОЙ.
-                    *
-                    * Он принадлежит кухне, а не ряду: удалять его на одной
-                    * стене и добавлять на другой — это два действия там,
-                    * где человек делает одно, и половина настроек по
-                    * дороге теряется.
-                    */}
-                  {layout && moduleAppliances(selectedUnit).length > 0 && (
-                    <div className={`mt-3 ${onStep('appliance-wall')}`} data-appliance-move>
-                      <p className="mw-label mb-2">
-                        Прибор стоит на {lowerWall(wallLabel(wall), 'prepositional')}
-                      </p>
-                      <div className="flex flex-wrap gap-1">
-                        {layout.segments.map((segment, i) =>
-                          i === wall ? null : (
-                            <button
-                              key={segment.id}
-                              type="button"
-                              data-move-appliance={i}
-                              onClick={() =>
-                                moveApplianceToWall(moduleAppliances(selectedUnit)[0], i)
-                              }
-                              className="mw-btn mw-btn-ghost"
-                            >
-                              Перенести на {lowerWall(wallLabel(i), 'accusative')}
-                            </button>
-                          ),
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/*
-                    * Направление открывания стоит рядом с материалом: это
-                    * такой же выбор про ЭТОТ фасад, и спрашивают о нём в
-                    * тот же момент разговора.
-                    */}
-                  <div className={`mt-3 ${onStep('opening')}`}>
-                    <OpeningPicker
-                      unit={selectedUnit}
-                      run={activeRun}
-                      onOps={runOps}
-                      onRefuse={setSceneNotice}
-                    />
-                  </div>
-                </div>
-              )}
-
-              {moveNotice && (
-                <p
-                  data-move-notice
-                  className="mt-3 rounded-[var(--r-control)] bg-navy px-4 py-3 text-[13px] leading-snug text-graphiteMw"
-                >
-                  {moveNotice}
-                </p>
-              )}
-
-              <div className={`mt-4 ${shows(step, 'modules') || shows(step, 'filling') ? '' : 'hidden'}`}>
-                <RunEditor
-                  /*
-                   * Лента модулей и ширина — РАСКЛАДКА, число фронтов и
-                   * секция — КОНСТРУКЦИЯ. Компонент один: делить его на
-                   * два значило бы завести второй путь правки состава.
-                   */
-                  fields={shows(step, 'modules') ? 'layout' : 'build'}
-                  selectionTitle={selection.title}
-                  run={activeRun}
-                  zone={zone}
-                  selectedModuleId={selectedId}
-                  onSelect={selectModule}
-                  onOps={runOps}
-                  requirements={requirements}
-                  onComposition={changeComposition}
-                  freeMode={freeMode}
-                />
-              </div>
-
-              {/*
-                * ГОТОВЫЕ ДИЗАЙНЫ.
-                *
-                * Один тап кладёт материал на весь ряд. Недоступные не
-                * прячутся: замерщик должен знать, чего не хватает в
-                * каталоге, — иначе он идёт спрашивать нас.
-                */}
-              <div className={`mt-4 ${onStep('designs')}`} data-designs>
-                <p className="mw-label mb-2">Готовые дизайны</p>
-                <div className="flex flex-wrap gap-1">
-                  {RUN_DESIGNS.map((design) => {
-                    const availability = designAvailability(design, input.rates);
-                    return (
-                      <button
-                        key={design.id}
-                        type="button"
-                        data-design={design.id}
-                        data-available={availability.available ? '1' : '0'}
-                        title={
-                          availability.available
-                            ? designSummary(design)
-                            : availability.reason
-                        }
-                        onClick={() => applyDesign(design.id)}
-                        className={`mw-btn ${availability.available ? 'mw-btn-ghost' : 'mw-btn-ghost opacity-50'}`}
-                      >
-                        {design.name}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/*
-                * Компоновки и материалы объекта — ниже состава: их трогают
-                * реже, чем варианты модуля, а место наверху дороже.
-                */}
-              {(arrangements.state === 'failed' || arrangements.arrangements.length > 1) && (
-                <div className={`mt-4 ${onStep('arrangements')}`}>
-                  <ArrangementCards
-                    state={arrangements}
-                    activeKey={
-                      arrangements.state === 'ready'
-                        ? (arrangements.arrangements.find(
-                            (a) => a.run.fingerprint === active.run.fingerprint,
-                          )?.key ?? null)
-                        : null
-                    }
-                    onSelect={chooseArrangement}
-                  />
-                </div>
-              )}
-
-              <div className={`mt-4 ${onStep('catalog')}`}>
-                <CatalogLoader />
-                <MaterialsStep
-                  zone={zone}
-                  kitchenItemId={kitchenItemId}
-                  roomPhoto={roomPhoto}
-                  onPhotoChange={(next) => {
-                    dirty.current = true;
-                    changeRoomPhoto(next);
-                  }}
-                  angle={renderAngle}
-                  onAngleChange={setRenderAngle}
-                />
-
-                {/*
-                  * ФРЕЗЕРОВКА — РЯДОМ С ПАЛИТРОЙ ФАСАДА.
-                  *
-                  * Она отвечает на тот же вопрос, что материал: как будет
-                  * выглядеть фасад. Развести их по разным шагам значит
-                  * заставить замерщика переключаться между экранами,
-                  * держа в голове, что он уже выбрал (слой 31).
-                  *
-                  * Каталог доезжает тем же путём, что материалы и
-                  * фурнитура, — из стора (`useInteriorStore.catalog`),
-                  * который наполняет `CatalogLoader` выше. Второго
-                  * источника позиций нет.
-                  */}
-                <div className="mt-3">
-                  <CarcassPicker
-                    run={active.run}
-                    catalog={carcassItems}
-                    selectedModuleId={selectedId}
-                    onOps={runOps}
-                  />
-
-                  <MillingPicker
-                    run={active.run}
-                    catalog={millingItems}
-                    selectedModuleId={selectedId}
-                    onOps={runOps}
-                  />
-                </div>
-              </div>
-
-              {/*
-                * Командная строка правит СОСТАВ: «убери посудомойку»,
-                * «поставь карго 400». Поэтому она на раскладке, рядом с
-                * лентой модулей, а не отдельным местом внизу панели.
-                */}
-              <div className={`mt-4 ${onStep('command')}`}>
-                <CommandBar onSubmit={sendCommand} busy={busy} lastReply={reply} />
-              </div>
-
-              {/*
-                * УТОЧНЕНИЯ — В КОНЦЕ ПАНЕЛИ.
-                *
-                * Они не работа, а вопрос к замеру: «розетка не отмечена»
-                * не мешает собрать ряд, но мешает его смонтировать.
-                * Первыми в панели они задавливали то, ради чего на экран
-                * и пришли, — настройки выбранного модуля. Блокирующее это
-                * не трогает вовсе: оно в подвале, красной полосой над
-                * главной кнопкой, и видно без прокрутки на любом шаге.
-                */}
-              {softList}
+              {studioPanelContent}
             </div>
-          </div>
-        )}
-
-        {props.studio && studioPanels && (
-          /*
-           * ДЕТАЛИРОВКА STUDIO — ТОТ ЖЕ РАСКРОЙ, ЧТО НА «РЕЗУЛЬТАТЕ» (P0-5).
-           *
-           * Те же стены композиции (`panelWalls`), та же выгрузка для
-           * раскроя и тот же замок на ней: второго раскроя у Studio нет.
-           */
-          <div className="pb-6" data-studio-panels>
-            <PanelList
-              walls={panelWalls}
-              title={props.title}
-              zone={props.zone}
-              measuredBy={props.measuredBy}
-              measuredAt={props.measuredAt}
-              production={production}
-              milling={millingItems}
-              carcass={carcassItems}
-              fingerprint={objectEstimate.fingerprint}
-              exportLock={screen.exportLockText}
-            />
           </div>
         )}
 
@@ -5063,7 +5741,7 @@ export default function Workspace(props: WorkspaceProps) {
           * красная: пустая стена — это «ещё не собрано», а не ошибка,
           * и краснеть ей незачем (ловушка 229).
           */}
-        {emptyRunLock && !props.studio && (
+        {emptyRunLock && (
           <p
             data-empty-run-lock
             className="mb-3 rounded-[var(--r-control)] bg-surface-2 px-4 py-3 text-[15px] leading-snug text-dim"
@@ -5158,25 +5836,6 @@ export default function Workspace(props: WorkspaceProps) {
           )}
           </div>
 
-          {props.studio ? (
-            /*
-             * СОСТОЯНИЕ ВМЕСТО «ДАЛЬШЕ» (STAGE 01A): шагов нет, и куда ехать
-             * дальше, человек решает сам. Внизу — что с проектом сейчас и
-             * почему, теми же замками, что держат выгрузку и цену.
-             */
-            <p
-              data-studio-status={studioStatus.key}
-              className={`min-w-[220px] flex-1 text-[15px] leading-snug ${
-                studioStatus.key === 'blocked'
-                  ? 'text-alert'
-                  : studioStatus.key === 'ready'
-                    ? 'text-cyan'
-                    : 'text-dim'
-              }`}
-            >
-              <span className="font-medium">{studioStatus.title}</span>: {studioStatus.reason}
-            </p>
-          ) : (
           <div className="flex gap-2">
           <button
             type="button"
@@ -5201,7 +5860,6 @@ export default function Workspace(props: WorkspaceProps) {
             {nextLabel}
           </button>
           </div>
-          )}
         </div>
       </footer>
 

@@ -1,8 +1,9 @@
 'use client';
 
 import { useMemo } from 'react';
-import { COMM_TITLE, valueOf, type Survey, type SurveyWall } from '@/types/survey';
+import { COMM_TITLE, valueOf, type Survey } from '@/types/survey';
 import { OPENING_KIND_TITLE, type Module } from '@/types/millwork';
+import { surveyWalk } from '@/lib/millwork/surveyPlan';
 
 /**
  * План сверху, который дорисовывается по мере ввода.
@@ -22,42 +23,10 @@ type Props = {
   activeWallId?: string | null;
 };
 
-type Point = { x: number; y: number };
-
-type Placed = {
-  wall: SurveyWall;
-  from: Point;
-  to: Point;
-  lengthMm: number;
-  angle: number;
-};
-
-/**
- * Цепочка сегментов: каждый следующий отсчитывается от конца предыдущего
- * и поворачивает на заданный угол. Пара «ширина × длина» не годится —
- * реальные кухни бывают Г-образными, с эркерами и коробами.
+/*
+ * Цепочка сегментов — `surveyWalk`: тот же обход строит план комнаты
+ * Studio, и второй копии формулы нет (STAGE 01B).
  */
-function walk(walls: SurveyWall[]): Placed[] {
-  const placed: Placed[] = [];
-  let cursor: Point = { x: 0, y: 0 };
-  let heading = 0; // 0° — вправо
-
-  for (const wall of walls) {
-    const lengthMm = valueOf(wall.lengthMm) ?? 0;
-    const rad = (heading * Math.PI) / 180;
-    const to = {
-      x: cursor.x + Math.cos(rad) * lengthMm,
-      y: cursor.y + Math.sin(rad) * lengthMm,
-    };
-
-    placed.push({ wall, from: cursor, to, lengthMm, angle: heading });
-
-    cursor = to;
-    heading += wall.turn === 'left' ? -wall.turnDeg : wall.turnDeg;
-  }
-
-  return placed;
-}
 
 const PAD = 26;
 
@@ -69,7 +38,7 @@ export default function SurveyPlan({
   onPickWall,
   activeWallId,
 }: Props) {
-  const placed = useMemo(() => walk(survey.walls), [survey.walls]);
+  const placed = useMemo(() => surveyWalk(survey.walls), [survey.walls]);
 
   const known = placed.filter((p) => p.lengthMm > 0);
   const bounds = useMemo(() => {

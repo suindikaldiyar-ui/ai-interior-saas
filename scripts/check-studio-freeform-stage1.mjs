@@ -8,8 +8,9 @@
  * удаляется в конце. Настоящий заказ клиента не трогается.
  *
  *   S1  /project/<id>/room — Studio: шапка с названием объекта и состоянием
- *       сохранения, вкладки, мастера шагов нет; стена w1 3600 мм из замера,
- *       ряд пустой, решение не выбирали, состояние «Черновик».
+ *       сохранения, инструменты рельса (STAGE 01B: CAD-оболочка вместо
+ *       вкладок 01A), мастера шагов нет; стена w1 3600 мм из замера, ряд
+ *       пустой, решение не выбирали, состояние «Черновик».
  *   S2  пустое место стены на схеме → библиотека → «Дверца 600» → модуль на
  *       отметке 0, 600 мм; на схеме и в 3D один и тот же ИД.
  *   S3  выбор кликом на схеме → инспектор: ИД, стена w1, отметка 0, ширина
@@ -255,21 +256,36 @@ async function pickCard(page, variant, width) {
   return { card };
 }
 
-/** Вкладка Studio. */
-async function studioTab(page, key) {
-  const tab = page.locator(`[data-studio-tab="${key}"]`);
-  if ((await tab.count()) === 0) return false;
-  await tab.first().click({ timeout: 15_000 });
+/**
+ * Инструмент рельса Studio (STAGE 01B: CAD-оболочка). Повторное нажатие
+ * на выбранный инструмент сворачивает его панель — поэтому выбранный не
+ * нажимается второй раз.
+ */
+async function studioTool(page, key) {
+  const tool = page.locator(`[data-studio-rail] [data-studio-tool="${key}"]`);
+  if ((await tool.count()) === 0) return false;
+  if ((await tool.first().getAttribute('aria-pressed')) !== 'true') {
+    await tool.first().click({ timeout: 15_000 });
+    await sleep(400);
+  }
+  return true;
+}
+
+/** Вид рабочей области в нижней строке: план комнаты, фасад или 3D. */
+async function studioView(page, key) {
+  const view = page.locator(`[data-studio-bottombar] [data-studio-view="${key}"]`);
+  if ((await view.count()) === 0) return false;
+  await view.first().click({ timeout: 15_000 });
   await sleep(400);
   return true;
 }
 
-/** Вид сцены: 3D, схема или план. */
-async function schematicView(page, key) {
-  const tab = page.locator(`[data-schematic-tab="${key}"]`);
-  if ((await tab.count()) === 0) return false;
-  await tab.first().click({ timeout: 15_000 });
-  return true;
+/** «Мебель» фасадом: там ставят модули и меряют ряд на схеме. */
+async function furnitureFacade(page) {
+  const tool = await studioTool(page, 'furniture');
+  const view = await studioView(page, 'facade');
+  await page.waitForSelector('[data-studio-viewport] [data-schematic]', { timeout: 30_000 }).catch(() => undefined);
+  return tool && view;
 }
 
 /** 3D готова: нарисованы модули ряда. */
@@ -284,7 +300,7 @@ async function cadModules(page, timeoutMs = 60_000) {
 
 /** Ввести ширину в поле инспектора. */
 async function typeWidth(page, width) {
-  const input = page.locator('[data-studio-panel] label:has-text("Ширина, мм") input').first();
+  const input = page.locator('[data-studio-inspector] label:has-text("Ширина, мм") input').first();
   if ((await input.count()) === 0) return false;
   /* Ширину прибора не правят: поле заперто — это ответ, а не повод ждать 30 с. */
   if (!(await input.isEnabled())) return false;
@@ -413,7 +429,6 @@ async function scenario(browser) {
       await context.close();
       return;
     }
-    await page.waitForSelector('[data-schematic]', { timeout: 60_000 }).catch(() => undefined);
     /*
      * Состояние сохранения ставит эффект после гидратации: в серверном HTML
      * его ещё нет. Ждём его появления, а не читаем разметку до оживления.
@@ -422,20 +437,21 @@ async function scenario(browser) {
     const header = await page.evaluate(() => ({
       title: document.querySelector('[data-studio-title]')?.textContent?.trim() ?? null,
       save: document.querySelector('[data-save-state]')?.getAttribute('data-save-state') ?? null,
-      tabs: [...document.querySelectorAll('[data-studio-tab]')].map((n) => n.getAttribute('data-studio-tab')),
+      tools: [...document.querySelectorAll('[data-studio-rail] [data-studio-tool]')].map((n) => n.getAttribute('data-studio-tool')),
       wizardSteps: document.querySelectorAll('nav[aria-label="Шаги работы"]').length,
       wizardLink: document.querySelector('[data-studio-wizard]')?.getAttribute('href') ?? null,
     }));
     check(
-      'S1 шапка: название объекта, состояние сохранения, вкладки; полосы шагов мастера нет',
+      'S1 шапка: название объекта, состояние сохранения, инструменты рельса; полосы шагов мастера нет',
       Boolean(header.title?.includes('Проверка Studio 01A')) &&
         header.save !== null &&
-        ['survey', 'sizes', 'layout', 'build', 'materials', 'panels'].every((key) => header.tabs.includes(key)) &&
+        ['select', 'measure', 'furniture', 'construction', 'materials', 'documents'].every((key) => header.tools.includes(key)) &&
         header.wizardSteps === 0 &&
         header.wizardLink === `/project/${project.id}`,
-      `«${header.title ?? 'НЕТ НАЗВАНИЯ'}» · сохранение ${header.save ?? 'НЕТ'} · вкладки ${header.tabs.join(', ') || 'НЕТ'} · ` +
+      `«${header.title ?? 'НЕТ НАЗВАНИЯ'}» · сохранение ${header.save ?? 'НЕТ'} · инструменты ${header.tools.join(', ') || 'НЕТ'} · ` +
         `полос мастера ${header.wizardSteps} · мастер ${header.wizardLink ?? 'ссылки нет'}`,
     );
+    await furnitureFacade(page);
     const start = await page.evaluate(READ_INSPECTOR);
     const startRow = await page.evaluate(READ_ROW);
     const startGaps = await page.evaluate(READ_GAPS);
@@ -456,20 +472,26 @@ async function scenario(browser) {
     );
     await page.screenshot({ path: `${OUT}/S1-studio-1440.png` });
 
-    /* Вкладка «Замер» — тот же замер объекта, без обязательного прохода. */
-    const surveyTab = await studioTab(page, 'survey');
-    const surveyStep = surveyTab
+    /* «Замер» — тот же замер объекта, без обязательного прохода: план комнаты и правка проёмов. */
+    const measureTool = await studioTool(page, 'measure');
+    const surveyPlan = measureTool
       ? await page
-          .waitForSelector('[data-survey-step]', { timeout: 15_000 })
-          .then((n) => n.getAttribute('data-survey-step'))
+          .waitForSelector('[data-studio-viewport] [data-room-plan]', { timeout: 15_000 })
+          .then((n) => n.getAttribute('data-walls'))
           .catch(() => null)
       : null;
-    check(
-      'S1 вкладка «Замер» открывает замер объекта; обратно — «Дизайн»',
-      Boolean(surveyStep) && (await studioTab(page, 'layout')),
-      surveyTab ? (surveyStep ? `шаг замера «${surveyStep}»` : 'НУЛЕВОЙ СЕЛЕКТОР: панели замера нет') : 'НУЛЕВОЙ СЕЛЕКТОР: вкладки «Замер» нет',
+    const surveyEditors = await page.evaluate(() =>
+      [...document.querySelectorAll('[data-studio-context] [data-survey-only]')].map((n) => n.getAttribute('data-survey-only')),
     );
-    await page.waitForSelector('[data-schematic]', { timeout: 30_000 }).catch(() => undefined);
+    check(
+      'S1 инструмент «Замер» открывает план комнаты из замера и правку проёмов; обратно — «Мебель»',
+      surveyPlan === '4' && surveyEditors.includes('openings') && (await furnitureFacade(page)),
+      measureTool
+        ? surveyPlan
+          ? `стен на плане ${surveyPlan} · редакторы ${surveyEditors.join(', ') || 'НЕТ'}`
+          : 'НУЛЕВОЙ СЕЛЕКТОР: плана комнаты нет'
+        : 'НУЛЕВОЙ СЕЛЕКТОР: инструмента «Замер» нет',
+    );
 
     /* ── S2. Модуль без готового решения ── */
     console.log('\n── S2. Пустое место → библиотека → «Дверца 600»');
@@ -518,7 +540,7 @@ async function scenario(browser) {
     /* Снять выбор модуля — выбрать пустоту справа, — чтобы нажатие в 3D выбрало заново. */
     await clickGap(page, 600, 'base');
     await waitFor(page, READ_INSPECTOR, (v) => v.module === null, 5_000);
-    await schematicView(page, 'scene');
+    await studioView(page, '3d');
     const drawn = await cadModules(page);
     check(
       'S3 3D: модуль нарисован тем же ИД',
@@ -592,7 +614,7 @@ async function scenario(browser) {
       framesBefore !== null && framesAfter !== null && framesAfter - framesBefore === 0,
       framesBefore === null ? 'НУЛЕВОЙ СЕЛЕКТОР: счётчика кадров сцены нет' : `кадров ${framesAfter - framesBefore}`,
     );
-    await schematicView(page, 'front');
+    await studioView(page, 'facade');
     const row750 = await waitFor(page, READ_ROW, (row) => Array.isArray(row) && row.length === 1, 10_000);
     const totalAfter = await page.evaluate(READ_TOTAL);
     check(
@@ -601,7 +623,8 @@ async function scenario(browser) {
         totalBefore !== null && totalAfter !== null && totalAfter !== totalBefore && totalAfter > 0,
       `${rowWords(row750)} · итог ${totalEmpty ?? '—'} → ${totalBefore ?? 'НЕТ'} → ${totalAfter ?? 'НЕТ'}`,
     );
-    await studioTab(page, 'panels');
+    await page.locator('[data-studio-topbar] [data-studio-open="panels"]').click({ timeout: 15_000 }).catch(() => undefined);
+    await sleep(400);
     const parts = await waitFor(page, READ_PARTS, (rows) => rows.length > 0, 15_000);
     const own = parts.filter((p) => p.module === id);
     const fronts = own.filter((p) => p.name === 'Фасад');
@@ -622,7 +645,7 @@ async function scenario(browser) {
 
     /* ── S5. Недопустимая ширина — отказ числами ── */
     console.log('\n── S5. Сосед вплотную, ширина 1000 — отказ числами');
-    await studioTab(page, 'layout');
+    await furnitureFacade(page);
     await page.waitForSelector('[data-schematic]', { timeout: 30_000 }).catch(() => undefined);
     await clickGap(page, 750, 'base');
     const second = await pickCard(page, 'door', 600);
@@ -691,10 +714,10 @@ async function scenario(browser) {
         `итог ${totalSaved} → ${totalReopened}`,
     );
     await page.screenshot({ path: `${OUT}/S6-after-reload.png` });
-    if (await schematicView(page, 'plan')) {
+    if (await studioView(page, 'plan')) {
       await sleep(800);
       await page.screenshot({ path: `${OUT}/S6-plan.png` });
-      await schematicView(page, 'front');
+      await furnitureFacade(page);
     }
 
     await page.goto(`${BASE}/project/${project.id}`, { waitUntil: 'domcontentloaded', timeout: 120_000 });

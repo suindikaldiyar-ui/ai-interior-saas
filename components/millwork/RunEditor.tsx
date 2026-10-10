@@ -103,7 +103,16 @@ type Props = {
    * `applyOps`, и второй такой компонент означал бы второй путь записи
    * в состав (ловушка 231).
    */
-  fields?: 'layout' | 'build';
+  fields?: 'layout' | 'build' | 'all';
+  /**
+   * КАКАЯ ЧАСТЬ ПАНЕЛИ (STAGE 01B).
+   *
+   * В CAD-оболочке Studio состав ряда (техника, лента, «+ Модуль») стоит в
+   * панели инструмента слева, а выбранный модуль — в инспекторе справа.
+   * Компонент один и правит одними операциями: `composition` — без
+   * выбранного модуля, `selected` — только он. Мастер берёт всё (`all`).
+   */
+  part?: 'all' | 'composition' | 'selected';
   /** Требования, по которым собран ряд: из них видно состав техники. */
   requirements?: RunRequirements;
   /** Правка состава. Без неё панель только читается. */
@@ -155,6 +164,7 @@ export default function RunEditor({
   onOps,
   selectionTitle,
   fields = 'layout',
+  part = 'all',
   requirements,
   onComposition,
   freeMode = false,
@@ -189,7 +199,10 @@ export default function RunEditor({
   const selected = moduleById(run, selectedModuleId);
 
   /** Поля раскладки и поля конструкции — разные шаги одной панели. */
-  const onLayout = fields === 'layout';
+  const onLayout = fields !== 'build';
+  const onBuild = fields !== 'layout';
+  const showComposition = part !== 'selected';
+  const showSelected = part !== 'composition';
   const hide = (show: boolean) => (show ? '' : 'hidden');
 
   /*
@@ -351,7 +364,7 @@ export default function RunEditor({
         * Техника и верхний ряд — это СОСТАВ, и он стоит над лентой модулей:
         * сначала решают, что в кухне есть, потом двигают модули.
         */}
-      {requirements && onComposition && (
+      {showComposition && requirements && onComposition && (
         /*
          * СОСТАВ РЯДА — ЭТО РАСКЛАДКА.
          *
@@ -571,7 +584,7 @@ export default function RunEditor({
         </div>
       )}
 
-      <div className={`mb-2 flex items-baseline justify-between ${hide(onLayout)}`}>
+      <div className={`mb-2 flex items-baseline justify-between ${hide(onLayout && showComposition)}`}>
         <span className="text-[15px] font-medium">Состав ряда</span>
         {/*
           * ОСТАТОК ЧИТАЕТСЯ ПО-РАЗНОМУ В ДВУХ РЕЖИМАХ.
@@ -622,14 +635,14 @@ export default function RunEditor({
         * Пустая лента и ноль в смете читаются как «не загрузилось».
         * Здесь это законное начало: стена есть, мебели пока нет.
         */}
-      {run.modules.length === 0 && (
+      {showComposition && run.modules.length === 0 && (
         <p className="mb-2 text-[13px] leading-snug text-graphiteMw" data-empty-run>
           Стена {run.lengthMm} мм пустая: мебели нет, и смета поэтому нулевая.
           Добавьте первый модуль — кнопкой ниже или прибором из состава.
         </p>
       )}
 
-      <div className={`flex w-full gap-1 overflow-x-auto pb-1 ${hide(onLayout)}`}>
+      <div className={`flex w-full gap-1 overflow-x-auto pb-1 ${hide(onLayout && showComposition)}`}>
         {run.modules.map((unit) => {
           const active = unit.id === selectedModuleId;
           return (
@@ -665,8 +678,8 @@ export default function RunEditor({
         })}
       </div>
 
-      {selected && (
-        <div className="mw-panel mt-3">
+      {showSelected && selected && (
+        <div className={`mw-panel ${showComposition ? 'mt-3' : ''}`}>
           <div className="mb-3 flex items-baseline justify-between">
             {/*
               * Номер стоит ПЕРЕД шириной: «Дверца 600 мм» в ряду
@@ -930,7 +943,7 @@ export default function RunEditor({
               )}
             </label>
 
-            <label className={`block ${hide(!onLayout)}`}>
+            <label className={`block ${hide(onBuild)}`}>
               <span className="mw-label">Фасад</span>
               <select
                 value={
@@ -1026,7 +1039,7 @@ export default function RunEditor({
                 </select>
               </label>
             ) : (
-              <label className={`block ${hide(!onLayout)}`}>
+              <label className={`block ${hide(onBuild)}`}>
                 <span className="mw-label">Секция</span>
                 <select
                   value={selected.section ?? ''}
@@ -1063,7 +1076,7 @@ export default function RunEditor({
         * читался бы как ошибка расчёта, поэтому остаток назван прямо, и
         * рядом стоят ширины, которые в него ещё влезают.
         */}
-      {freeMode && (
+      {showComposition && freeMode && (
         <div className={`mt-3 ${hide(onLayout)}`} data-free-space>
           {gap >= MIN_WIDTH ? (
             <>
@@ -1161,7 +1174,7 @@ export default function RunEditor({
       )}
 
       {/* «+ Модуль» и «+ Пенал» ставят модуль в ряд — это раскладка. */}
-      <div className={`mt-2 flex flex-wrap gap-1 ${hide(onLayout)}`}>
+      <div className={`mt-2 flex flex-wrap gap-1 ${hide(onLayout && showComposition)}`}>
         <button
           type="button"
           onClick={() =>

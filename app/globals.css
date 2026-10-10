@@ -620,3 +620,324 @@ input[type='color']::-webkit-color-swatch {
     display: none !important;
   }
 }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   ALDIK STUDIO — CAD-ОБОЛОЧКА (STAGE 01B)
+
+   Свой визуальный язык рабочего места проектировщика: графитовые панели,
+   светлый нейтральный холст рабочей области, один спокойный акцент.
+
+   Переменные переопределяются НА КОРНЕ STUDIO — так же, как у листа
+   чертежа (`.mw-paper`): за его пределами (мастер, кабинет клиента,
+   админка) не меняется ничего. Внутри — те же компоненты рабочего места
+   (библиотека модулей, состав ряда, материалы): они берут цвета из этих
+   токенов, а не тёплую палитру мастера.
+   ────────────────────────────────────────────────────────────────────── */
+.studio-cad {
+  color-scheme: dark;
+
+  /* Токены оболочки */
+  --cad-bg: #15171a;
+  --cad-panel: #1d2024;
+  --cad-panel-2: #272b30;
+  --cad-line: #343a41;
+  --cad-text: #e6e8eb;
+  --cad-text-dim: #9ba3ac;
+  --cad-accent: #4c8dd6;
+  --cad-accent-soft: rgba(76, 141, 214, 0.2);
+  --cad-warn: #d9a23b;
+  --cad-error: #e0574d;
+  --cad-ok: #5aa676;
+  --cad-radius: 6px;
+
+  /* Холст рабочей области: план и фасад */
+  --cad-canvas: #eef0f2;
+  --cad-grid: #e1e4e8;
+  --cad-grid-major: #cdd3d9;
+  --cad-wall: #3b4149;
+  --cad-wall-face: #1f2328;
+  --cad-dim: #2f6db0;
+  --cad-dim-text: #1d4f87;
+  --cad-opening: #6b7480;
+  --cad-opening-text: #48515b;
+  --cad-obstacle: rgba(217, 162, 59, 0.24);
+  --cad-obstacle-line: #a8771c;
+  --cad-module: rgba(76, 141, 214, 0.12);
+  --cad-module-line: #56616d;
+  --cad-comm: #c0392b;
+
+  /* Прежние имена продукта внутри Studio — графитовые */
+  --bg: var(--cad-bg);
+  --surface: var(--cad-panel);
+  --surface-2: var(--cad-panel-2);
+  --line-warm: var(--cad-line);
+  --text: var(--cad-text);
+  --text-dim: var(--cad-text-dim);
+  --accent: var(--cad-accent);
+  --accent-sub: #3a72b0;
+  --alert: var(--cad-error);
+  --cyan: #8bb8ea;
+  --navy-deep: var(--cad-bg);
+  --navy: var(--cad-panel);
+  --navy-line: var(--cad-line);
+  --sheet: var(--cad-panel-2);
+  --cyan-bright: var(--cad-accent);
+  --tape: var(--cad-warn);
+  --field: var(--cad-panel-2);
+  --graphite-mw: var(--cad-text-dim);
+  --blueprint: #c4cbd3;
+  --line-strong: #454c54;
+
+  /* Плотность рабочего места: компактнее мастера, но в палец */
+  --r-panel: 8px;
+  --r-control: 6px;
+  --pad-panel: 12px;
+  --gap-block: 12px;
+  --h-button: 36px;
+  --h-button-lg: 40px;
+  --h-input: 36px;
+
+  background: var(--cad-bg);
+  color: var(--cad-text);
+}
+
+/* Рабочая область — светлый холст: план и фасад читаются как чертёж. */
+.studio-cad .cad-viewport {
+  color-scheme: light;
+  --sheet: var(--cad-canvas);
+  --surface: #ffffff;
+  --surface-2: #dfe3e8;
+  --line-warm: #c9cfd6;
+  --navy: #ffffff;
+  --navy-deep: #f4f6f8;
+  --text: #1d2125;
+  --text-dim: #56606b;
+  --graphite-mw: #56606b;
+  --blueprint: #2b3138;
+  --field: #ffffff;
+  --cyan: #2f6db0;
+  background: var(--cad-canvas);
+  color: #1d2125;
+}
+
+.studio-cad .cad-topbar,
+.studio-cad .cad-rail,
+.studio-cad .cad-panel,
+.studio-cad .cad-bottombar {
+  background: var(--cad-panel);
+}
+.studio-cad .cad-topbar {
+  border-bottom: 1px solid var(--cad-line);
+}
+.studio-cad .cad-bottombar {
+  border-top: 1px solid var(--cad-line);
+}
+.studio-cad .cad-rail {
+  border-right: 1px solid var(--cad-line);
+}
+.studio-cad aside[data-studio-context] {
+  border-right: 1px solid var(--cad-line);
+}
+.studio-cad aside[data-studio-inspector] {
+  border-left: 1px solid var(--cad-line);
+}
+
+/*
+ * Тело Studio — сетка с именованными областями. Широкий экран: рельс,
+ * панель инструмента, рабочая область, инспектор. Свёрнутая панель
+ * инструмента уходит из сетки целиком.
+ */
+.studio-cad .cad-body {
+  display: grid;
+  grid-template-columns: 56px 268px minmax(0, 1fr) 292px;
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-areas: 'rail context viewport inspector';
+}
+.studio-cad .cad-body[data-context-open='false'] {
+  grid-template-columns: 56px minmax(0, 1fr) 292px;
+  grid-template-areas: 'rail viewport inspector';
+}
+.studio-cad .cad-area-rail {
+  grid-area: rail;
+}
+.studio-cad .cad-area-context {
+  grid-area: context;
+}
+.studio-cad .cad-area-viewport {
+  grid-area: viewport;
+}
+.studio-cad .cad-area-inspector {
+  grid-area: inspector;
+}
+
+/*
+ * Планшет (уже 1200 px — все iPad, и в альбоме, и в портрете): четыре
+ * колонки оставляли рабочей области 564 px из 1180, 408 из 1024 и 218 из
+ * 834. Панель инструмента и инспектор встают одной колонкой справа, друг
+ * под другом, — план и фасад получают 832, 676 и 486 px.
+ */
+@media (max-width: 1199.98px) {
+  .studio-cad .cad-body {
+    grid-template-columns: 56px minmax(0, 1fr) 292px;
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas:
+      'rail viewport context'
+      'rail viewport inspector';
+  }
+  .studio-cad .cad-body[data-context-open='false'] {
+    grid-template-areas:
+      'rail viewport inspector'
+      'rail viewport inspector';
+  }
+  .studio-cad aside[data-studio-context] {
+    border-right: 0;
+    border-left: 1px solid var(--cad-line);
+    border-bottom: 1px solid var(--cad-line);
+  }
+}
+
+.studio-cad .cad-brand {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--cad-accent);
+}
+.studio-cad .cad-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--cad-line);
+}
+.studio-cad .cad-chip {
+  font-size: 13px;
+  line-height: 20px;
+  padding: 0 8px;
+  border: 1px solid var(--cad-line);
+  border-radius: 999px;
+  color: var(--cad-text-dim);
+}
+
+/* Инструменты рельса: значок, выбранный — акцентной полосой слева. */
+.studio-cad .cad-tool {
+  contain: paint;
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--cad-radius);
+  color: var(--cad-text-dim);
+}
+.studio-cad .cad-tool:hover {
+  background: var(--cad-panel-2);
+  color: var(--cad-text);
+}
+.studio-cad .cad-tool[aria-pressed='true'] {
+  background: var(--cad-accent-soft);
+  color: var(--cad-accent);
+  box-shadow: inset 2px 0 0 var(--cad-accent);
+}
+
+.studio-cad .cad-panel-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  margin: 0;
+  padding: 8px 12px;
+  background: var(--cad-panel);
+  border-bottom: 1px solid var(--cad-line);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--cad-text-dim);
+}
+.studio-cad .cad-panel-body {
+  padding: 12px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+/* Сегменты нижней строки: вид рабочей области. */
+.studio-cad .cad-segment {
+  border: 1px solid var(--cad-line);
+  border-radius: var(--cad-radius);
+  overflow: hidden;
+}
+.studio-cad .cad-segment-button {
+  contain: paint;
+  height: 32px;
+  padding: 0 14px;
+  font-size: 13px;
+  color: var(--cad-text-dim);
+}
+.studio-cad .cad-segment-button + .cad-segment-button {
+  border-left: 1px solid var(--cad-line);
+}
+.studio-cad .cad-segment-button[aria-pressed='true'] {
+  background: var(--cad-accent);
+  color: #ffffff;
+}
+.studio-cad .cad-icon-button {
+  contain: paint;
+  height: 32px;
+  min-width: 32px;
+  padding: 0 8px;
+  border-radius: var(--cad-radius);
+  font-size: 13px;
+  color: var(--cad-text);
+  background: var(--cad-panel-2);
+}
+.studio-cad .cad-icon-button:disabled {
+  opacity: 0.4;
+}
+
+/* Поля и строки списков панели. */
+.studio-cad .cad-input {
+  height: 36px;
+  padding: 0 10px;
+  border-radius: var(--cad-radius);
+  border: 1px solid var(--cad-line);
+  background: var(--cad-panel-2);
+  color: var(--cad-text);
+  font-size: 15px;
+  outline: none;
+}
+.studio-cad .cad-input:focus {
+  border-color: var(--cad-accent);
+}
+.studio-cad .cad-row {
+  contain: paint;
+  width: 100%;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border-radius: var(--cad-radius);
+  font-size: 13px;
+  text-align: left;
+}
+.studio-cad .cad-row:hover {
+  background: var(--cad-panel-2);
+}
+.studio-cad .cad-row[aria-pressed='true'] {
+  background: var(--cad-accent-soft);
+  box-shadow: inset 2px 0 0 var(--cad-accent);
+}
+
+/* Кнопки рабочего места внутри Studio — компактнее мастера. */
+.studio-cad .mw-btn {
+  font-size: 13px;
+  padding: 0 12px;
+}
+.studio-cad .mw-btn-primary {
+  color: #ffffff;
+}
+
+/* Итог в нижней строке — той же кнопкой сметы, только ниже ростом. */
+.studio-cad [data-studio-bottombar] .mw-touch {
+  min-height: 34px;
+}
+.studio-cad [data-studio-bottombar] [data-estimate-total] {
+  font-size: 17px;
+}

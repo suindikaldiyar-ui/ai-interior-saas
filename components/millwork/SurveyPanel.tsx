@@ -39,6 +39,20 @@ type Props = {
   onFinish: () => void;
   /** Куда смотреть на плане: приходит из общего списка предупреждений. */
   highlightAtMm?: number | null;
+  /**
+   * ОДИН ШАГ ЗАМЕРА — В ПАНЕЛИ ИНСТРУМЕНТА STUDIO (STAGE 01B).
+   *
+   * В CAD-оболочке план комнаты стоит в рабочей области, а проёмы и
+   * коммуникации правятся в панели инструмента «Замер». Редакторы те же —
+   * разметка шага без полосы шагов, без своего плана и без «Замер
+   * завершён»: второй копии полей замера нет.
+   */
+  only?: SurveyStep;
+  /**
+   * Стена, выбранная снаружи — нажатием на плане. Задана — выбор стены
+   * внутри шага не рисуется: стена одна на экран, и выбирают её на плане.
+   */
+  wallId?: string | null;
 };
 
 const OPENING_KINDS: OpeningKind[] = [
@@ -128,6 +142,8 @@ export default function SurveyPanel({
   onChange,
   onFinish,
   highlightAtMm = null,
+  only,
+  wallId,
 }: Props) {
   const [step, setStep] = useState<SurveyStep>('ceiling');
   const [activeWallId, setActiveWallId] = useState<string | null>(survey.walls[0]?.id ?? null);
@@ -144,7 +160,8 @@ export default function SurveyPanel({
    * от них зависит разрыв верхнего ряда.
    */
   const runWall = survey.walls.find((w) => w.isRunWall) ?? survey.walls[0] ?? null;
-  const wall = survey.walls.find((w) => w.id === activeWallId) ?? runWall;
+  const wall =
+    survey.walls.find((w) => w.id === (wallId !== undefined ? wallId : activeWallId)) ?? runWall;
 
   const patchWall = (id: string, next: Partial<SurveyWall>) =>
     patch({ walls: survey.walls.map((w) => (w.id === id ? { ...w, ...next } : w)) });
@@ -195,7 +212,7 @@ export default function SurveyPanel({
   /* ── Шаги ── */
 
   const stepBody = () => {
-    switch (step) {
+    switch (only ?? step) {
       case 'ceiling':
         return (
           <div data-survey-step="ceiling">
@@ -327,7 +344,7 @@ export default function SurveyPanel({
         if (!wall) return <p className="text-[13px] text-graphiteMw">Сначала добавьте стену.</p>;
         return (
           <div data-survey-step="openings">
-            <div className="mb-2 flex flex-wrap gap-1">
+            <div className={`mb-2 flex flex-wrap gap-1 ${wallId !== undefined ? 'hidden' : ''}`}>
               {survey.walls.map((w, i) => (
                 <button
                   key={w.id}
@@ -640,6 +657,9 @@ export default function SurveyPanel({
   };
 
   const stats = resolution.stats;
+
+  /* Один шаг — только его поля: план и полоса шагов стоят у Studio свои. */
+  if (only) return <div data-survey-only={only}>{stepBody()}</div>;
 
   return (
     <div className="grid gap-3 lg:grid-cols-[minmax(0,340px)_minmax(0,1fr)]">

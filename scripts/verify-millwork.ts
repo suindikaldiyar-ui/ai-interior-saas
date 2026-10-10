@@ -136,6 +136,8 @@ import {
 } from '../lib/millwork/moduleVariants';
 import { gapsIn } from '../lib/millwork/freeRun';
 import { BOTTLE_MAX_MM, leavesForFront, variantEstimateKeys } from '../lib/millwork/moduleVariants';
+import { wallFurnitureOf, wallLengthVerdict } from '../lib/millwork/wallLength';
+import { contourGapMm } from '../lib/millwork/surveyPlan';
 import { MIN_FACADE_SPAN_MM, facadeSpans, hasFacade, moduleFronts } from '../lib/millwork/applianceFront';
 import {
   CARCASS_SCOPES,
@@ -24735,6 +24737,287 @@ console.log('\nSTAGE 01A: свободная сборка — ширина пе�
       narrowTUnit01A.doorCount === 1,
     `${plainT01A.id}: 800 → створок ${wideTUnit01A?.doorCount ?? 'НЕТ МОДУЛЯ'}, в раскрое ${wideTCut01A} (${said01A(wideT01A)}) · ` +
       `500 → створок ${narrowTUnit01A?.doorCount ?? 'НЕТ МОДУЛЯ'} (${said01A(narrowT01A)})`,
+  );
+}
+
+/* ═══════════  STAGE 01B: длина стены на плане — проверка до записи, мебель не двигается  ═══════════ */
+/*
+ * Путь экрана Studio при правке длины стены: ряды экрана (`composeVariants`
+ * → `wallSegments`) → мебель по стенам замера (`wallFurnitureOf`) → решение
+ * (`wallLengthVerdict`) → принято: длина «замерено» в замер и, у правленого
+ * ряда свободной сборки, `applyOps` с пустым списком на новой длине →
+ * экран собирается заново по новому замеру.
+ *
+ * Движок длину стены с мебелью не сверял вовсе: у прямой кухни правленый
+ * ряд держал старую длину (`composeVariants` берёт его как есть, а
+ * `wallMismatches` сверяет ряд сам с собой), у угловой — запирал запись.
+ */
+console.log('\nSTAGE 01B: длина стены — отказ числами до записи, ряд свободной сборки идёт за стеной');
+{
+  const known01B = (value: number) => ({ state: 'measured' as const, value });
+  const survey01B = (lengths: number[]): Survey => ({
+    ceilingHeightMm: known01B(2700),
+    walls: lengths.map((lengthMm, i) => ({
+      id: `w${i + 1}`,
+      lengthMm: known01B(lengthMm),
+      turn: 'right' as const,
+      turnDeg: 90,
+      openings: [],
+      isRunWall: i === 0,
+    })),
+    comms: [],
+    photos: [],
+    clientNotes: '',
+    steps: { ceiling: 'done', walls: 'done', openings: 'todo', comms: 'todo', photos: 'todo' },
+    measuredBy: 'проверка 01B',
+    measuredAt: '2026-10-10',
+  });
+  const withLength01B = (survey: Survey, wallId: string, lengthMm: number): Survey => ({
+    ...survey,
+    walls: survey.walls.map((wall) => (wall.id === wallId ? { ...wall, lengthMm: known01B(lengthMm) } : wall)),
+  });
+  const FREE_01B: RunRequirements = { ...REQ, mode: 'free', appliances: [], sections: [] };
+  const disabled01B = { basic: [], optimal: [], premium: [] } as Record<VariantKey, string[]>;
+
+  /** Экран по замеру: те же шаги, что у рабочего места и кабинета клиента. */
+  const screen01B = (
+    survey: Survey,
+    requirements: RunRequirements,
+    edited: Partial<Record<VariantKey, Run>>,
+    shape: CompositionKind = 'linear',
+    editedWalls: Record<string, Run> = {},
+  ) => {
+    const resolution = resolveSurvey(survey);
+    const base = workspaceInput({
+      title: 'Studio 01B',
+      zone: 'Кухня',
+      measurement: resolution.measurement,
+      requirements,
+      rates: DEMO_RATES,
+      wallId: resolution.runWallId,
+      cornerAt: null,
+    });
+    const site = objectSite(base, resolution);
+    const attempt =
+      shape === 'linear'
+        ? null
+        : compositionFor({
+            shape,
+            requirements,
+            cornerSolution: 'false_panel',
+            site,
+            production: DEFAULT_PRODUCTION,
+            variantKey: 'optimal',
+          });
+    const layout = attempt?.state === 'built' ? attempt.composition : null;
+    const input = objectInput({
+      base,
+      resolution,
+      requirements: wallRequirementsOf(layout, requirements),
+      rates: DEMO_RATES,
+      production: DEFAULT_PRODUCTION,
+      milling: new Map(),
+      carcass: new Map(),
+      materials: new Map(),
+      corner: wallCornerOf(layout),
+    });
+    const active = composeVariants(input, disabled01B, edited).find((v) => v.key === 'optimal')!;
+    const segments = wallSegments(layout, active.run, editedWalls);
+    return { input, active, layout, segments };
+  };
+  const sig01B = (run: Run) => run.modules.map((unit) => `${unit.id}@${unit.offsetMm}+${unit.widthMm}`).join(' ');
+
+  /* Две «Дверцы 600» на стене w1 3600 — свободная сборка, правленый ряд. */
+  const room01B = survey01B([3600, 2800, 3600, 2800]);
+  let edited01B: Partial<Record<VariantKey, Run>> = {};
+  for (const at of [0, 600]) {
+    const run = screen01B(room01B, FREE_01B, edited01B).active.run;
+    edited01B = {
+      optimal: applyOps({
+        run,
+        requirements: FREE_01B,
+        ops: [{ op: 'add_module', kind: 'base', widthMm: 600, variant: 'door', atMm: at }],
+        openings: [],
+        roomDepthMm: 0,
+      }),
+    };
+  }
+  const placed01B = screen01B(room01B, FREE_01B, edited01B);
+  const furniture01B = wallFurnitureOf({
+    runs: placed01B.segments,
+    layout: placed01B.layout,
+    runWallId: placed01B.input.runWallId,
+    edited: () => true,
+    free: true,
+  });
+  const onW1 = furniture01B.find((item) => item.wallId === 'w1') ?? null;
+  check(
+    '01B.0 исходное: на стене w1 3600 две «Дверцы 600», ряд с начала стены',
+    sig01B(placed01B.active.run) === 'base-0@w1@0+600 base-600@w1@600+600' &&
+      placed01B.active.run.lengthMm === 3600 &&
+      onW1?.startMm === 0,
+    `${sig01B(placed01B.active.run) || 'МОДУЛЕЙ НЕТ'} · ряд ${placed01B.active.run.lengthMm} · с отметки ${onW1?.startMm ?? 'СТЕНЫ НЕТ'}`,
+  );
+  if (!onW1) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: 01B — мебели на стене w1 нет');
+
+  /* 01B.1 — длиннее: принято, ряд идёт за стеной, модули на своих отметках. */
+  const grow01B = wallLengthVerdict({ survey: room01B, wallId: 'w1', lengthMm: 3700, label: 'Стена 1', furniture: onW1 });
+  const grownRun01B =
+    grow01B.kind === 'apply' && grow01B.runLengthMm !== null
+      ? applyOps({ run: { ...onW1.run, lengthMm: grow01B.runLengthMm }, requirements: FREE_01B, ops: [], openings: [], roomDepthMm: 0 })
+      : null;
+  const grown01B = grownRun01B ? screen01B(withLength01B(room01B, 'w1', 3700), FREE_01B, { optimal: grownRun01B }) : null;
+  const grownGaps01B = grown01B ? libraryGaps(grown01B.active.run, grown01B.input.openings, FREE_01B) : [];
+  check(
+    '01B.1 стена 3600 → 3700: принято, ряд 3700, модули те же, пустота 1200…3700 — её видит библиотека',
+    grow01B.kind === 'apply' &&
+      grow01B.runLengthMm === 3700 &&
+      grown01B?.active.run.lengthMm === 3700 &&
+      sig01B(grown01B.active.run) === sig01B(placed01B.active.run) &&
+      grownGaps01B.some((gap) => gap.row === 'base' && gap.fromMm === 1200 && gap.widthMm === 2500),
+    grow01B.kind === 'refuse'
+      ? `ОТКАЗ: ${grow01B.text}`
+      : `ряд ${grown01B?.active.run.lengthMm ?? 'НЕТ'} · ${grown01B ? sig01B(grown01B.active.run) : 'НЕТ'} · пустоты ${grownGaps01B
+          .filter((gap) => gap.row === 'base')
+          .map((gap) => `${gap.fromMm}+${gap.widthMm}`)
+          .join(' ') || 'НЕТ'}`,
+  );
+  check(
+    '01B.1 смета и раскрой той же мебели не сдвинулись от длины стены',
+    Boolean(grown01B) && Math.round(grown01B!.active.estimate.total) === Math.round(placed01B.active.estimate.total),
+    `итог ${Math.round(placed01B.active.estimate.total)} → ${grown01B ? Math.round(grown01B.active.estimate.total) : 'НЕТ'}`,
+  );
+
+  /* 01B.2 — короче мебели: отказ числами, с модулем. */
+  const short01B = wallLengthVerdict({ survey: room01B, wallId: 'w1', lengthMm: 1000, label: 'Стена 1', furniture: onW1 });
+  check(
+    '01B.2 стена 3600 → 1000 при мебели до 1200: отказ «доступно 1000 мм, требуется 1200 мм, не хватает 200 мм» с base-600@w1',
+    short01B.kind === 'refuse' &&
+      short01B.text.includes('доступно 1000 мм') &&
+      short01B.text.includes('требуется 1200 мм') &&
+      short01B.text.includes('не хватает 200 мм') &&
+      short01B.text.includes('base-600@w1'),
+    short01B.kind === 'refuse' ? short01B.text : 'ПРИНЯТО — мебель вышла бы за стену',
+  );
+  const exact01B = wallLengthVerdict({ survey: room01B, wallId: 'w1', lengthMm: 1200, label: 'Стена 1', furniture: onW1 });
+  check(
+    '01B.2 ровно по мебели (1200) — принято',
+    exact01B.kind === 'apply' && exact01B.runLengthMm === 1200,
+    exact01B.kind === 'refuse' ? exact01B.text : `ряд ${exact01B.runLengthMm}`,
+  );
+
+  /* 01B.3 — проём и точка коммуникации на стене тоже держат длину. */
+  const withWindow01B: Survey = {
+    ...room01B,
+    walls: room01B.walls.map((wall) =>
+      wall.id === 'w1'
+        ? {
+            ...wall,
+            openings: [
+              {
+                id: 'win-1',
+                kind: 'window' as const,
+                fromCornerMm: known01B(2000),
+                widthMm: known01B(1400),
+                heightMm: known01B(1400),
+                sillMm: known01B(900),
+              },
+            ],
+          }
+        : wall,
+    ),
+    comms: [{ id: 'water-1', kind: 'water_supply' as const, wallId: 'w1', fromCornerMm: known01B(3500), heightMm: known01B(500) }],
+  };
+  const window01B = wallLengthVerdict({ survey: withWindow01B, wallId: 'w1', lengthMm: 3300, label: 'Стена 1', furniture: null });
+  const comm01B = wallLengthVerdict({ survey: withWindow01B, wallId: 'w1', lengthMm: 3450, label: 'Стена 1', furniture: null });
+  check(
+    '01B.3 окно 2000…3400 и вывод воды на 3500: стена короче — отказ с их числами',
+    window01B.kind === 'refuse' &&
+      window01B.text.includes('окно') &&
+      window01B.text.includes('требуется 3400 мм') &&
+      comm01B.kind === 'refuse' &&
+      comm01B.text.includes('вывод воды') &&
+      comm01B.text.includes('требуется 3500 мм'),
+    `${window01B.kind === 'refuse' ? window01B.text : 'окно: ПРИНЯТО'} | ${comm01B.kind === 'refuse' ? comm01B.text : 'вода: ПРИНЯТО'}`,
+  );
+
+  /* 01B.4 — границы числа. */
+  const bounds01B = [150, 20001, 3600.5].map((lengthMm) =>
+    wallLengthVerdict({ survey: room01B, wallId: 'w1', lengthMm, label: 'Стена 1', furniture: null }).kind,
+  );
+  check(
+    '01B.4 длина вне 200…20000 и дробная — отказ',
+    bounds01B.every((kind) => kind === 'refuse'),
+    bounds01B.join(', '),
+  );
+
+  /* 01B.5 — ряд по готовому решению: правленый держит стену до миллиметра — отказ с пересборкой; нетронутый пересчитается. */
+  const template01B = screen01B(room01B, REQ, {});
+  const templateFurniture01B = wallFurnitureOf({
+    runs: template01B.segments,
+    layout: template01B.layout,
+    runWallId: template01B.input.runWallId,
+    edited: () => false,
+    free: false,
+  }).find((item) => item.wallId === 'w1');
+  const templateKeep01B = templateFurniture01B
+    ? wallLengthVerdict({ survey: room01B, wallId: 'w1', lengthMm: 3700, label: 'Стена 1', furniture: templateFurniture01B })
+    : null;
+  const templateEdited01B = templateFurniture01B
+    ? wallLengthVerdict({
+        survey: room01B,
+        wallId: 'w1',
+        lengthMm: 3700,
+        label: 'Стена 1',
+        furniture: { ...templateFurniture01B, edited: true },
+      })
+    : null;
+  check(
+    '01B.5 готовое решение: нетронутый ряд — принято с последствием словами; правленый — отказ с пересборкой стены',
+    templateKeep01B?.kind === 'apply' &&
+      Boolean(templateKeep01B.note?.includes('пересчитается')) &&
+      templateEdited01B?.kind === 'refuse' &&
+      templateEdited01B.rebuild === true,
+    `${templateKeep01B ? (templateKeep01B.kind === 'apply' ? `принято: ${templateKeep01B.note}` : `ОТКАЗ: ${templateKeep01B.text}`) : 'НУЛЕВОЙ СЕЛЕКТОР'} | ` +
+      `${templateEdited01B ? (templateEdited01B.kind === 'refuse' ? `отказ, пересборка ${templateEdited01B.rebuild}` : 'ПРИНЯТО') : 'НУЛЕВОЙ СЕЛЕКТОР'}`,
+  );
+
+  /* 01B.6 — Г: ряд стены после угла стоит с отметки `lostMm` угла, и мерить её мебель надо от угла. */
+  const corner01B = screen01B(survey01B([3600, 2800, 3600, 2800]), FREE_01B, {}, 'corner_l');
+  const cornerFurniture01B = wallFurnitureOf({
+    runs: corner01B.segments,
+    layout: corner01B.layout,
+    runWallId: corner01B.input.runWallId,
+    edited: () => false,
+    free: true,
+  });
+  const onW2 = cornerFurniture01B.find((item) => item.wallId === 'w2');
+  const lost01B = cornerGeometry(
+    cornerChoicesOf({ cornerSolution: 'false_panel' }, 1, ['w1', 'w2'])[0],
+    'kitchen',
+    DEFAULT_PRODUCTION,
+  ).lostMm;
+  check(
+    '01B.6 Г 3600 + 2800: стена w2 — ряд с отметки угла (lostMm), стена w1 — с нуля',
+    cornerFurniture01B.length === 2 &&
+      cornerFurniture01B[0].wallId === 'w1' &&
+      cornerFurniture01B[0].startMm === 0 &&
+      onW2?.startMm === lost01B &&
+      lost01B > 0,
+    `${cornerFurniture01B.map((item) => `${item.wallId}@${item.startMm}`).join(' ') || 'НУЛЕВОЙ СЕЛЕКТОР'} · lostMm ${lost01B}`,
+  );
+
+  /* 01B.7 — контур комнаты: правка одной стены прямоугольника размыкает его, и план называет зазор числом. */
+  const closed01B = contourGapMm(room01B.walls);
+  const opened01B = contourGapMm(withLength01B(room01B, 'w1', 3700).walls);
+  const partial01B = contourGapMm(survey01B([3600, 2800]).walls);
+  const unknown01B = contourGapMm(
+    room01B.walls.map((wall, i) => (i === 2 ? { ...wall, lengthMm: { state: 'unknown' as const } } : wall)),
+  );
+  check(
+    '01B.7 контур: 3600×2800 сходится (0), w1 3700 — зазор 100 мм; две стены и стена без длины — не считается',
+    closed01B === 0 && opened01B === 100 && partial01B === null && unknown01B === null,
+    `замкнутый ${closed01B} · w1 3700 ${opened01B} · две стены ${partial01B} · без длины ${unknown01B}`,
   );
 }
 
