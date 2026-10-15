@@ -5,6 +5,7 @@ import { carcassMaterialName, type CarcassItem } from './carcassMaterial';
 import { BUILT_IN_FRIDGE_FRONTS } from './modules';
 import { hasBottom } from './moduleVariants';
 import { hasFacade, moduleFronts } from './applianceFront';
+import { bayLayout } from './bays';
 import {
   FRAME_WIDTH_MM,
   frontMaterialName,
@@ -326,7 +327,47 @@ function modulePanels(
     grain: 'across',
   });
 
-  const shelves = unit.fill?.shelves.length ?? 0;
+  /*
+   * ОТСЕКИ (R01): полки и перегородки — из `bayLayout`, той же геометрии,
+   * что рисуют сцена и лист. Строка полок — на отсек: длина у каждого
+   * отсека своя, а перегородки одной высоты и глубины — одна строка со
+   * всеми ИД. Прежний путь ниже этих деталей тогда не режет вовсе.
+   */
+  const bays = bayLayout(unit, { widthMm: unit.widthMm, heightMm, depthMm, thicknessMm: t, allowances: allow });
+  if (bays) {
+    for (const bay of bays.bays) {
+      if (bay.shelves.length === 0) continue;
+      push({
+        name: SHELF_PANEL_NAME,
+        material,
+        thicknessMm: t,
+        lengthMm: bay.shelves[0].lengthMm,
+        widthMm: bay.shelves[0].depthMm,
+        qty: bay.shelves.length,
+        edges: { long: 1, short: 0 },
+        edgeType: thick,
+        grain: 'across',
+        bayId: bay.id,
+        partIds: bay.shelves.map((shelf) => shelf.partId),
+      });
+    }
+    if (bays.partitions.length > 0) {
+      push({
+        name: DIVIDER_PANEL_NAME,
+        material,
+        thicknessMm: t,
+        lengthMm: bays.partitions[0].lengthMm,
+        widthMm: bays.partitions[0].depthMm,
+        qty: bays.partitions.length,
+        edges: { long: 1, short: 0 },
+        edgeType: thick,
+        grain: 'along',
+        partIds: bays.partitions.map((partition) => partition.partId),
+      });
+    }
+  }
+
+  const shelves = bays ? 0 : (unit.fill?.shelves.length ?? 0);
   if (shelves > 0) {
     push({
       name: SHELF_PANEL_NAME,
@@ -341,7 +382,7 @@ function modulePanels(
     });
   }
 
-  if (unit.fill?.dividerMm) {
+  if (!bays && unit.fill?.dividerMm) {
     push({
       name: DIVIDER_PANEL_NAME,
       material,

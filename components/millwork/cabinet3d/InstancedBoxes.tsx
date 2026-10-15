@@ -91,6 +91,11 @@ export default function InstancedBoxes({
        */
       key={boxes.length}
       args={[geometry, material, boxes.length]}
+      /*
+       * ИД ДЕТАЛИ ПО ЭКЗЕМПЛЯРУ (R01): приёмка находит полку и перегородку
+       * отсека в НАРИСОВАННОМ графе и сверяет её матрицу с раскроем.
+       */
+      userData={{ partIds: boxes.map((box) => box.partId ?? null) }}
       castShadow={castShadow}
       receiveShadow={receiveShadow}
     />

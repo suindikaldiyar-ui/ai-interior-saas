@@ -710,7 +710,7 @@ export const MAX_APPLIANCE_DEPTH_MM = 700;
 /* ─────────────────────────  Наполнение по умолчанию  ───────────────────────── */
 
 /** Полки равномерно по высоте, все на системе 32. */
-function evenShelves(heightMm: number, count: number): number[] {
+export function evenShelves(heightMm: number, count: number): number[] {
   const shelves: number[] = [];
   for (let i = 1; i <= count; i++) {
     const raw = (heightMm * i) / (count + 1);
@@ -1135,7 +1135,7 @@ export function removeShelf(fill: ModuleFill, indexAt: number): ModuleFill {
  * «нарушен минимальный зазор». Замерщик читает это при клиенте, и слово
  * «зазор» здесь означает только то, что он что-то сделал не так.
  */
-function clampShelf(
+export function clampShelf(
   mm: number,
   others: number[],
   heightMm: number,

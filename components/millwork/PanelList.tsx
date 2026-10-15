@@ -367,6 +367,9 @@ export default function PanelList({
                         data-module-id={panel.moduleId}
                         data-part-size={`${panel.lengthMm}x${panel.widthMm}x${panel.thicknessMm}`}
                         data-part-qty={panel.qty}
+                        /* Отсек и физические детали строки (R01): те же ИД, что у полок в 3D и на схеме. */
+                        data-bay-id={panel.bayId}
+                        data-part-ids={panel.partIds?.join(' ')}
                         aria-selected={panel.partId === selectedId}
                         onClick={() =>
                           setSelectedId((prev) => (prev === panel.partId ? null : panel.partId))

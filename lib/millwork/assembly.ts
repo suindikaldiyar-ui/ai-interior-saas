@@ -281,7 +281,7 @@ export function buildAssemblySheet(
    * Фасады сюда не попадают намеренно: закрытый фасад прячет ровно то,
    * ради чего этот вид смотрят.
    */
-  const placed = panelPlaces(unit, placement, panels).filter(
+  const placed = panelPlaces(unit, placement, panels, production).filter(
     (entry) => entry.boxes.length > 0,
   );
 

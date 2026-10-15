@@ -9,6 +9,7 @@ import {
   workTopMm,
 } from '@/lib/millwork/shop';
 import { rowStandardDepthMm } from '@/lib/millwork/fill';
+import { bayEnvelope, bayLayout, fillShelfCount } from '@/lib/millwork/bays';
 import { runPlaces } from '@/lib/millwork/cabinetBoxes';
 import { SHELF_PANEL_NAME, panelNumberOf } from '@/lib/millwork/panels';
 import { GEOMETRY, isUpperRow } from '@/lib/millwork/modules';
@@ -84,7 +85,13 @@ type Props = {
  */
 export function hasFilling(unit: Module): boolean {
   const fill = unit.fill;
-  return Boolean(fill && (fill.shelves.length > 0 || fill.rodsMm.length > 0));
+  /*
+   * У отсеков (R01) полки живут в отсеках — считаем их тем же счётом, что
+   * раскрой; перегородка между отсеками — тоже наполнение.
+   */
+  return Boolean(
+    fill && (fillShelfCount(fill) > 0 || fill.rodsMm.length > 0 || (fill.bays?.length ?? 0) > 1),
+  );
 }
 
 /** Модуль по идентификатору и в каком он ряду: датум полок у них разный. */
@@ -210,8 +217,24 @@ export default function SectionDrawing({
    * с количеством. Поэтому подпись у всех полок разреза одна и та же —
    * номер той самой строки.
    */
-  const shelfNumber = picked ? panelNumberOf(panels, picked.unit.id, SHELF_PANEL_NAME) : null;
-  const pickedFill = picked && hasFilling(picked.unit) ? picked.unit.fill! : null;
+  /*
+   * ОТСЕКИ (R01): разрез идёт через ОДИН отсек — крайний левый, где есть
+   * полки, — и так подписан. Высоты — из `bayLayout`, тех же чисел, что
+   * режет цех; номер — строки полок этого отсека.
+   */
+  const pickedBays = picked ? bayLayout(picked.unit, bayEnvelope(picked.unit, run)) : null;
+  const sectionBay = pickedBays ? (pickedBays.bays.find((bay) => bay.shelves.length > 0) ?? pickedBays.bays[0]) : null;
+  const shelfNumber = picked
+    ? sectionBay
+      ? (panels?.find((panel) => panel.moduleId === picked.unit.id && panel.bayId === sectionBay.id)?.number ?? null)
+      : panelNumberOf(panels, picked.unit.id, SHELF_PANEL_NAME)
+    : null;
+  const pickedFill =
+    picked && hasFilling(picked.unit)
+      ? sectionBay
+        ? { ...picked.unit.fill!, shelves: sectionBay.shelves.map((shelf) => shelf.atMm) }
+        : picked.unit.fill!
+      : null;
   const fillDatum = picked?.upper ? upperBottom : plinth;
   const fillFrom = xOf(16);
   const fillTo = xOf((picked?.upper ? upperDepth : baseDepth) - 16);
@@ -281,6 +304,17 @@ export default function SectionDrawing({
         * Пересчитывать их здесь нельзя — они уже сели на систему 32, и
         * второй расчёт развёл бы разрез с фасадом, 3D и раскроем.
         */}
+      {sectionBay && pickedFill && (
+        <text
+          data-section-bay={sectionBay.id}
+          x={fillFrom + 12}
+          y={yOf(fillDatum) - 18}
+          fontSize={2.6 * u}
+          fill="var(--graphite-mw)"
+        >
+          {`разрез по отсеку ${sectionBay.index + 1}`}
+        </text>
+      )}
       {pickedFill && !picked!.upper && (
         <Filling
           shelfNumber={shelfNumber}

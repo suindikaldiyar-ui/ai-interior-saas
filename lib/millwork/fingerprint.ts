@@ -50,7 +50,7 @@ export function moduleParts(modules: Module[]): FingerprintPart[] {
 function fillPart(unit: Module): string | undefined {
   const fill = unit.fill;
   if (!fill) return undefined;
-  return [
+  const base = [
     fill.shelves.join('.'),
     fill.dividerMm,
     fill.rodsMm.join('.'),
@@ -59,6 +59,19 @@ function fillPart(unit: Module): string | undefined {
     // Умолчание не пишется: ряды, собранные до выбора ручек, не едут.
     fill.handle ?? '',
   ].join('/');
+  /*
+   * ОТСЕКИ (R01) — другая мебель: другие детали в раскрое. Пишутся ТОЛЬКО
+   * когда есть (ловушка 246): у модулей без отсеков отпечаток прежний до
+   * символа. Хранится первичное — ширины, режим и число либо высоты.
+   */
+  if (!fill.bays) return base;
+  const bays = fill.bays
+    .map(
+      (bay) =>
+        `${bay.id}:${bay.widthMm ?? '*'}:${bay.shelves.mode === 'even' ? `e${bay.shelves.count}` : `m${bay.shelves.at.join('.')}`}`,
+    )
+    .join(',');
+  return `${base}/${bays}`;
 }
 
 /** Колонна, встройка и секция — короткой строкой в фиксированном порядке. */

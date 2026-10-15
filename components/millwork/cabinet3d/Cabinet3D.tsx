@@ -21,6 +21,7 @@ import { materialCatalog } from '@/lib/millwork/materialCatalog';
 import type { MaterialPhoto } from '@/lib/millwork/materialCollection';
 import { APRON_TARGET, COUNTERTOP_TARGET, FACADE_TARGET } from '@/types/catalog';
 import { runPlaces } from '@/lib/millwork/cabinetBoxes';
+import { bayLayout, placeEnvelope } from '@/lib/millwork/bays';
 import { cornerBandMm } from '@/lib/millwork/composition';
 import { COUNTER_OVERHANG_MM, rowStandardDepthMm } from '@/lib/millwork/fill';
 import { moduleOfPart } from '@/lib/millwork/selection';
@@ -520,6 +521,59 @@ export default function Cabinet3D({
   }, [selectedModuleId, modules, uppers]);
 
   /*
+   * ВЫБРАННЫЙ ОТСЕК (R01) — рамка по просвету отсека: от боковины или
+   * перегородки до следующей, от дна до крыши, на всю глубину корпуса.
+   * Числа — `bayLayout` по тому же конверту, по которому сцена ставит
+   * полки и перегородки (`placeEnvelope`). Только линии: прозрачный
+   * объём посчитался бы прозрачностью мебели (ловушка 331).
+   */
+  const selectedBay = useInteriorStore((s) => s.selectedBay);
+  const bayFrame = useMemo(() => {
+    if (!selectedBay) return null;
+    const entry = [...modules, ...uppers].find((e) => e.unit.id === selectedBay.moduleId);
+    if (!entry) return null;
+    const layout = bayLayout(
+      entry.unit,
+      placeEnvelope(
+        entry.unit,
+        { heightM: entry.heightM, depthM: entry.depthM, thicknessM: production.carcassMm / MM },
+        run.production,
+      ),
+    );
+    const bay = layout?.bays.find((item) => item.id === selectedBay.bayId);
+    if (!layout || !bay) return null;
+    const t = layout.envelope.thicknessMm;
+    return {
+      moduleId: entry.unit.id,
+      bayId: bay.id,
+      zM: entry.zM,
+      position: [
+        entry.x + (bay.xFromMm + bay.xToMm) / 2 / MM,
+        entry.y + layout.envelope.heightMm / 2 / MM,
+        -entry.depthM / 2,
+      ] as [number, number, number],
+      scale: [
+        bay.widthMm / MM,
+        (layout.envelope.heightMm - 2 * t) / MM,
+        entry.depthM,
+      ] as [number, number, number],
+    };
+  }, [selectedBay, modules, uppers, production.carcassMm, run.production]);
+  const bayEdges = useMemo(() => {
+    const geometry = new THREE.BoxGeometry(1, 1, 1);
+    const edges = new THREE.EdgesGeometry(geometry);
+    geometry.dispose();
+    return edges;
+  }, []);
+  const bayEdgeMaterial = useMemo(
+    () => new THREE.LineBasicMaterial({ color: '#C08B3E', depthTest: false }),
+    [],
+  );
+  useEffect(() => {
+    invalidate();
+  }, [bayFrame, invalidate]);
+
+  /*
    * ПУСТОЙ РЯД НЕ РИСУЕТ НИЧЕГО.
    *
    * До выбора компоновки в сцене стояли две плоские панели и каркас:
@@ -800,6 +854,22 @@ export default function Cabinet3D({
               : undefined
           }
         />
+      )}
+
+      {bayFrame && (
+        <group position={[0, 0, bayFrame.zM]}>
+          <lineSegments
+            name="bay-highlight"
+            /* Инструмент выбора, а не мебель: в рендер по чертежу не идёт. */
+            userData={{ helper: true, moduleId: bayFrame.moduleId, bayId: bayFrame.bayId }}
+            geometry={bayEdges}
+            material={bayEdgeMaterial}
+            position={bayFrame.position}
+            scale={bayFrame.scale}
+            renderOrder={10}
+            raycast={() => null}
+          />
+        </group>
       )}
 
       {/*

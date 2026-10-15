@@ -188,7 +188,7 @@ export function axonometryBoxes(
      * Остальные виды берут полный состав модуля.
      */
     if (mode === 'carcass') {
-      for (const box of carcassBoxes(entry.unit, placement)) {
+      for (const box of carcassBoxes(entry.unit, placement, run.production)) {
         boxes.push({ ...box, material: 'carcass' });
       }
       continue;

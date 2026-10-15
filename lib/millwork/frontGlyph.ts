@@ -5,6 +5,7 @@ import {
   currentVariant,
 } from './moduleVariants';
 import { handleOf, openingOf } from './opening';
+import { fillShelfCount } from './bays';
 import { handleSpotOf, type HandleSpot } from './handlePlace';
 import type { Module, ModuleVariantKind, Run } from '@/types/millwork';
 
@@ -99,7 +100,8 @@ export function glyphSignature(elements: GlyphElement[]): string {
 
 /** Сколько полок видно у варианта — число берётся из наполнения модуля. */
 function shelfCount(unit: Module, fallback: number): number {
-  const fromFill = unit.fill?.shelves.length ?? 0;
+  /* С отсеками (R01) — все полки модуля по отсекам, тем же счётом, что раскрой. */
+  const fromFill = fillShelfCount(unit.fill);
   return fromFill > 0 ? fromFill : fallback;
 }
 

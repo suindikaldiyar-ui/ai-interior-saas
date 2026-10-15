@@ -58,6 +58,7 @@ import {
 } from '@/lib/millwork/objectEstimate';
 import { ratesFromCatalog } from '@/lib/millwork/rates';
 import { rowStandardDepthMm } from '@/lib/millwork/fill';
+import { bayEnvelope } from '@/lib/millwork/bays';
 import { roomSourceOf, type RoomSource } from '@/lib/millwork/room';
 import { openingAssumptions } from '@/lib/millwork/warnings';
 import {
@@ -557,6 +558,16 @@ export default function Workspace(props: WorkspaceProps) {
   );
   /** Почему последняя правка не применилась. */
   const [moveNotice, setMoveNotice] = useState<string | null>(null);
+  /*
+   * Отсек, выбранный во «Внутреннем наполнении» (R01): его подсвечивают
+   * схема и 3D. Отказ правки наполнения — у своего модуля: при выборе
+   * другого модуля чужая строка не показывается.
+   */
+  const selectedBay = useInteriorStore((state) => state.selectedBay);
+  const setSelectedBay = useInteriorStore((state) => state.setSelectedBay);
+  const [fillNotice, setFillNotice] = useState<{ moduleId: string; text: string } | null>(null);
+  /* Выбор отсека — выделение этого экрана: уходит вместе с ним. */
+  useEffect(() => () => setSelectedBay(null), [setSelectedBay]);
 
   /**
    * Снимок перед выбором решения.
@@ -3819,6 +3830,9 @@ export default function Workspace(props: WorkspaceProps) {
        * фасад или 3D. Свой переключатель схемы там не рисуется.
        */
       view={props.studio ? (studioView === '3d' ? 'scene' : 'front') : undefined}
+      /* Отсеки и полки (R01) правятся в Studio — там схема умеет показать начинку. */
+      frontInside={Boolean(props.studio)}
+      selectedBay={props.studio ? selectedBay : null}
       /*
        * Панель прячется и возвращается ОДНОЙ кнопкой, и стоит
        * она в полосе сцены: своей строкой она отнимала у сцены
@@ -4492,7 +4506,7 @@ export default function Workspace(props: WorkspaceProps) {
         'Studio открыт без оболочки: страница Studio обязана обернуть рабочее место в StudioKitProvider.',
       );
     }
-    const { StudioShell, RoomPlan, WallInspector, StudioObjects, StudioInspector } = studioKit;
+    const { StudioShell, RoomPlan, WallInspector, StudioObjects, StudioInspector, FillEditor } = studioKit;
     const surveyWalls = survey?.walls ?? [];
     const turnWords = (item: Survey['walls'][number]) =>
       item.turn === 'custom' ? `${item.turnDeg}° (другой угол)` : `90° ${item.turn === 'left' ? 'влево' : 'вправо'}`;
@@ -4761,6 +4775,29 @@ export default function Workspace(props: WorkspaceProps) {
         ) : (
           <>
             <StudioInspector run={activeRun} wall={studioWall} selectedId={selectedId} gap={selectedGap} />
+            {/*
+              * ВНУТРЕННЕЕ НАПОЛНЕНИЕ (R01) — отсеки и полки выбранного шкафа.
+              * Конверт модуля — `bayEnvelope` по тому же ряду, по которому
+              * `set_fill` проверит наполнение; правка — та же операция.
+              */}
+            {selectedUnit && (
+              <FillEditor
+                key={selectedUnit.id}
+                unit={selectedUnit}
+                envelope={bayEnvelope(selectedUnit, activeRun)}
+                selectedBayId={selectedBay?.moduleId === selectedUnit.id ? selectedBay.bayId : null}
+                onSelectBay={(bayId) => setSelectedBay({ moduleId: selectedUnit.id, bayId })}
+                onFill={(fill) => {
+                  const moduleId = selectedUnit.id;
+                  setFillNotice(null);
+                  runOps([{ op: 'set_fill', moduleId, fill }], (text) =>
+                    setFillNotice(text ? { moduleId, text } : null),
+                  );
+                }}
+                notice={fillNotice?.moduleId === selectedUnit.id ? fillNotice.text : null}
+                onNotice={(text) => setFillNotice(text ? { moduleId: selectedUnit.id, text } : null)}
+              />
+            )}
             {selectedUnit && (
               <RunEditor
                 part="selected"

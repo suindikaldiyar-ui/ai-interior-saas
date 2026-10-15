@@ -17,6 +17,7 @@ import {
 import { blindPartMm, cornerFillersOf, cornerOfModule, openFrontMm } from './corner';
 import { tailFillersOf } from './countertop';
 import { moduleDepthMm, rowStandardDepthMm } from './fill';
+import { bayLayout, placeEnvelope } from './bays';
 import type { ProductionSettings } from '@/types/catalog';
 import type { ApplianceKind } from '@/types/millwork';
 import { FRAME_WIDTH_MM, frontKey, frontOf, isFramed } from './frontMaterial';
@@ -91,6 +92,13 @@ export type BoxDraw = {
    */
   node?: 'hinge' | 'hinge-arm' | 'handle';
   /**
+   * ИД ФИЗИЧЕСКОЙ ДЕТАЛИ (R01): тот же, что в строке раскроя (`Panel.partIds`).
+   * Есть у полок и перегородок отсеков — по нему сверяются сцена и цех.
+   */
+  partId?: string;
+  /** Отсек, которому принадлежит деталь. */
+  bayId?: string;
+  /**
    * КЛЮЧ МАТЕРИАЛА КОРПУСА.
    *
    * Пусто — корпус красится РОЛЬЮ, как и раньше. Заполнен — у него декор
@@ -161,7 +169,12 @@ export type ModulePlacement = {
   zM: number;
 };
 
-export function carcassBoxes(unit: Module, place: ModulePlacement): BoxDraw[] {
+export function carcassBoxes(
+  unit: Module,
+  place: ModulePlacement,
+  /** Школа цеха: припуски полок и перегородок отсеков (R01). Пусто — по умолчанию. */
+  production?: ProductionSettings,
+): BoxDraw[] {
   const { x, y, heightM, depthM, thicknessM } = place;
   const widthM = unit.widthMm / MM;
   const fill = unit.fill;
@@ -226,6 +239,51 @@ export function carcassBoxes(unit: Module, place: ModulePlacement): BoxDraw[] {
     // Задняя стенка
     at(widthM / 2, heightM / 2, backZ, widthM, heightM, 0.004, false, BACK_PANEL_NAME),
   ];
+
+  /*
+   * ОТСЕКИ (R01): полки и перегородки — из `bayLayout`, тех же чисел, что
+   * режет цех. Полка по центру своего отсека, короче его на припуск цеха,
+   * мельче корпуса на припуск; задним торцом — в заднюю стенку, как и
+   * прежняя полка. Перегородка — между дном и крышей. Прежний путь ниже
+   * тогда не рисует ничего: деталь одна.
+   */
+  const bays = bayLayout(unit, placeEnvelope(unit, place, production));
+  if (bays) {
+    for (const bay of bays.bays) {
+      for (const shelf of bay.shelves) {
+        boxes.push({
+          ...at(
+            (shelf.xFromMm + shelf.xToMm) / 2 / MM,
+            shelf.atMm / MM,
+            backFaceZ + shelf.depthMm / MM / 2,
+            shelf.lengthMm / MM,
+            shelf.thicknessMm / MM,
+            shelf.depthMm / MM,
+            true,
+            SHELF_PANEL_NAME,
+          ),
+          partId: shelf.partId,
+          bayId: bay.id,
+        });
+      }
+    }
+    for (const partition of bays.partitions) {
+      boxes.push({
+        ...at(
+          (partition.xFromMm + partition.xToMm) / 2 / MM,
+          heightM / 2,
+          backFaceZ + partition.depthMm / MM / 2,
+          partition.thicknessMm / MM,
+          partition.lengthMm / MM,
+          partition.depthMm / MM,
+          true,
+          DIVIDER_PANEL_NAME,
+        ),
+        partId: partition.partId,
+      });
+    }
+    return boxes;
+  }
 
   /*
    * Полки — ровно на тех высотах, что стоят на чертеже. Высота отсчитана
@@ -1371,7 +1429,7 @@ export function moduleBoxes(
    * ним рёбра. Цвет берётся оттуда же: второго признака «это внутри»
    * заводить нельзя, он разойдётся с первым.
    */
-  const boxes: PartBox[] = carcassBoxes(unit, place).map((box) => ({
+  const boxes: PartBox[] = carcassBoxes(unit, place, production).map((box) => ({
     ...box,
     material: (box.inside ? 'inner' : 'carcass') as BoxMaterial,
     /* Декор корпуса: пусто — красит роль, как и раньше. */
@@ -1705,16 +1763,24 @@ export type PanelPlace = {
 export function panelPlaces(
   unit: Module,
   place: ModulePlacement,
-  panels: { number: string; name: string; moduleId: string }[],
+  panels: { number: string; name: string; moduleId: string; partIds?: string[] }[],
+  /** Школа цеха: у отсеков от неё зависят полки и перегородки (R01). */
+  production?: ProductionSettings,
 ): PanelPlace[] {
-  const boxes = carcassBoxes(unit, place);
+  const boxes = carcassBoxes(unit, place, production);
 
   return panels
     .filter((panel) => panel.moduleId === unit.id)
     .map((panel) => ({
       number: panel.number,
       name: panel.name,
-      boxes: boxes.filter((box) => box.panel === panel.name),
+      /*
+       * У строки с ИД деталей (отсеки) — ровно её коробки: полки отсека 1 и
+       * отсека 2 называются одинаково, а места у них разные.
+       */
+      boxes: panel.partIds
+        ? boxes.filter((box) => box.partId !== undefined && panel.partIds!.includes(box.partId))
+        : boxes.filter((box) => box.panel === panel.name && box.partId === undefined),
     }));
 }
 

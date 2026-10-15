@@ -115,6 +115,17 @@ type Props = {
    * «3D · Схема · План» не рисуется. Мастер вид не задаёт.
    */
   view?: 'front' | 'plan' | 'scene';
+  /**
+   * СХЕМА ПОКАЗЫВАЕТ НАЧИНКУ (R01, только Studio).
+   *
+   * Отсеки и полки правятся в инспекторе Studio, и проверить их глазами
+   * надо на схеме тоже. Переключатель — тот же «Фасады / Каркас», что у
+   * сцены, и признак тот же `cutaway`: второй флаг разошёлся бы с первым.
+   * Мастер его не передаёт — там схема прежняя.
+   */
+  frontInside?: boolean;
+  /** Выбранный отсек: подсвечен на схеме в режиме «Каркас». */
+  selectedBay?: { moduleId: string; bayId: string } | null;
   /** Панель рабочего места спрятана: в 3D сцена занимает всё. */
   panelHidden?: boolean;
   onTogglePanel?: () => void;
@@ -248,6 +259,8 @@ export default function RunSchematic({
   changedIds,
   onViewChange,
   view: controlledView,
+  frontInside = false,
+  selectedBay = null,
   panelHidden,
   onTogglePanel,
   room,
@@ -520,6 +533,25 @@ export default function RunSchematic({
           </div>
         )}
 
+        {view === 'front' && frontInside && (
+          <div className="flex shrink-0 gap-1" data-group="schematic-inside">
+            <button
+              type="button"
+              data-schematic-mode={frame ? 'frame' : 'fronts'}
+              aria-pressed={frame}
+              onClick={() => setFrame(!frame)}
+              className={`mw-btn ${frame ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+              title={
+                frame
+                  ? 'Схема показывает начинку: отсеки, перегородки, полки'
+                  : 'Схема показывает фасады'
+              }
+            >
+              {frame ? 'Каркас' : 'Фасады'}
+            </button>
+          </div>
+        )}
+
       </div>
 
       {/*
@@ -766,6 +798,8 @@ export default function RunSchematic({
                       onWidth={row.run.id === run.id ? onWidth : undefined}
                       changedIds={changedIds}
                       showMaterial
+                      mode={frontInside && frame ? 'inside' : 'fronts'}
+                      selectedBay={selectedBay}
                     />
                   </div>
                 </div>

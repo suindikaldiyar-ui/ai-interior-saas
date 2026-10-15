@@ -16,6 +16,7 @@ import {
 } from '@/lib/millwork/shop';
 import { sectionSpec } from '@/lib/millwork/sections';
 import { runPlaces } from '@/lib/millwork/cabinetBoxes';
+import { bayEnvelope, bayLayout, type BayLayout } from '@/lib/millwork/bays';
 import { countertopSlabs, plinthSpans } from '@/lib/millwork/countertop';
 import { baseObstaclesOf } from '@/lib/millwork/obstacles';
 import { moveConflict } from '@/lib/millwork/freeRun';
@@ -86,6 +87,8 @@ type Props = {
   roomObjects?: RowRoomObject[];
   /** Габарит получен из допущения — на чертеже он идёт пунктиром. */
   assumedTotal?: boolean;
+  /** Выбранный отсек модуля (R01): подсвечен на виде «Внутри». */
+  selectedBay?: { moduleId: string; bayId: string } | null;
   selectedModuleId?: string | null;
   onSelect?: (moduleId: string) => void;
   /**
@@ -339,6 +342,8 @@ function ModuleInside({
   onFillChange,
   onFillReject,
   k = 1,
+  bays = null,
+  selectedBayId = null,
 }: {
   unit: Module;
   x: number;
@@ -346,6 +351,10 @@ function ModuleInside({
   yTop: number;
   height: number;
   heightMm: number;
+  /** Отсеки модуля (R01) — числа `bayLayout`, тех же, что режет цех. */
+  bays?: BayLayout | null;
+  /** Выбранный отсек: подсвечен рамкой. */
+  selectedBayId?: string | null;
   onFillChange?: (moduleId: string, fill: ModuleFill) => void;
   onFillReject?: (reason: string) => void;
   /** Множитель толщины линий: на бумаге они абсолютные, на экране прежние. */
@@ -413,8 +422,15 @@ function ModuleInside({
     };
   };
 
-  const editable = Boolean(onFillChange);
+  /*
+   * У модуля с отсеками прежние жесты выключены: двойной клик и перенос
+   * правят полки на ВЕСЬ модуль (`fill.shelves`), а у него полки живут в
+   * отсеках. Отсеки правятся в инспекторе Studio той же операцией.
+   */
+  const editable = Boolean(onFillChange) && !bays;
   const inner = { x: x + 2, width: Math.max(0, width - 4) };
+  /** Экранный X по миллиметрам от левого края модуля. */
+  const xAt = (mm: number) => x + mm * (width / Math.max(unit.widthMm, 1));
 
   return (
     <g>
@@ -429,6 +445,78 @@ function ModuleInside({
         strokeWidth={0.4 * k}
         strokeDasharray="3 2"
       />
+
+      {/*
+        * ОТСЕКИ (R01): перегородки и полки — ровно те, что режет цех
+        * (`bayLayout`). Полка кончается у своей перегородки, а не у боковины.
+        * Миллиметры лежат на элементах: по ним приёмка сверяет лист с
+        * раскроем и сценой.
+        */}
+      {bays && (
+        <g data-bays={unit.id}>
+          {bays.bays.map((bay) =>
+            bay.id === selectedBayId ? (
+              <rect
+                key={`sel-${bay.id}`}
+                data-bay-selected={bay.id}
+                x={xAt(bay.xFromMm)}
+                y={yTop + 2}
+                width={Math.max(0, xAt(bay.xToMm) - xAt(bay.xFromMm))}
+                height={Math.max(0, height - 4)}
+                fill="var(--cyan)"
+                fillOpacity={0.12}
+                stroke="var(--cyan)"
+                strokeWidth={1.2 * k}
+              />
+            ) : null,
+          )}
+          {bays.partitions.map((partition) => (
+            <rect
+              key={partition.partId}
+              data-partition={partition.partId}
+              data-from-mm={partition.xFromMm}
+              data-to-mm={partition.xToMm}
+              x={xAt(partition.xFromMm)}
+              y={yAt(heightMm - partition.thicknessMm)}
+              width={Math.max(0.5, xAt(partition.xToMm) - xAt(partition.xFromMm))}
+              height={Math.max(0, yAt(partition.thicknessMm) - yAt(heightMm - partition.thicknessMm))}
+              fill="var(--blueprint)"
+              fillOpacity={0.25}
+              stroke="var(--blueprint)"
+              strokeWidth={0.8 * k}
+            />
+          ))}
+          {bays.bays.flatMap((bay) =>
+            bay.shelves.map((shelf) => (
+              <g key={shelf.partId}>
+                <line
+                  data-bay-shelf={bay.id}
+                  data-part-id={shelf.partId}
+                  data-from-mm={shelf.xFromMm}
+                  data-to-mm={shelf.xToMm}
+                  data-at-mm={shelf.atMm}
+                  x1={xAt(shelf.xFromMm)}
+                  y1={yAt(shelf.atMm)}
+                  x2={xAt(shelf.xToMm)}
+                  y2={yAt(shelf.atMm)}
+                  stroke="var(--blueprint)"
+                  strokeWidth={1.2 * k}
+                />
+                <text
+                  className="mw-num"
+                  x={xAt(shelf.xFromMm) + 2}
+                  y={yAt(shelf.atMm) - 2}
+                  fontSize={6}
+                  fill="var(--graphite-mw)"
+                  pointerEvents="none"
+                >
+                  {shelf.atMm}
+                </text>
+              </g>
+            )),
+          )}
+        </g>
+      )}
 
       {/*
         * Пустое место: двойной клик ставит сюда полку. Прямоугольник идёт
@@ -668,8 +756,13 @@ function ModuleInside({
           );
         })}
 
-      {/* Пустая секция: сказать прямо, а не оставлять белое место. */}
-      {fill.shelves.length === 0 &&
+      {/*
+        * Пустая секция: сказать прямо, а не оставлять белое место. У модуля
+        * с отсеками (R01) полки живут в отсеках, а перегородка — тоже
+        * наполнение: подпись «без наполнения» поверх них была бы неправдой.
+        */}
+      {!bays &&
+        fill.shelves.length === 0 &&
         fill.rodsMm.length === 0 &&
         fill.drawerHeights.length === 0 && (
           <text
@@ -690,6 +783,7 @@ export default function ElevationDrawing({
   run,
   roomObjects,
   assumedTotal = false,
+  selectedBay = null,
   selectedModuleId,
   onSelect,
   gaps = [],
@@ -1410,6 +1504,8 @@ export default function ElevationDrawing({
             onFillChange={onFillChange}
             onFillReject={onFillReject}
             k={k}
+            bays={bayLayout(unit, bayEnvelope(unit, run))}
+            selectedBayId={selectedBay?.moduleId === unit.id ? selectedBay.bayId : null}
           />
         )}
 

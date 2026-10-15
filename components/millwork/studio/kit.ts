@@ -2,6 +2,7 @@
 
 import { createContext } from 'react';
 import type StudioInspector from '../StudioInspector';
+import type FillEditor from './FillEditor';
 import type RoomPlan from './RoomPlan';
 import type StudioObjects from './StudioObjects';
 import type StudioShell from './StudioShell';
@@ -28,6 +29,7 @@ export type StudioKit = {
   WallInspector: typeof WallInspector;
   StudioObjects: typeof StudioObjects;
   StudioInspector: typeof StudioInspector;
+  FillEditor: typeof FillEditor;
 };
 
 export const StudioKitContext = createContext<StudioKit | null>(null);

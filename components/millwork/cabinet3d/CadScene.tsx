@@ -1129,6 +1129,53 @@ function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
       return { drawn: drawn.size, ids: Array.from(drawn).sort() };
     };
 
+    /*
+     * ДЕТАЛИ ОТСЕКОВ, КАК ОНИ НАРИСОВАНЫ (R01).
+     *
+     * Читается граф сцены, а не данные: матрица каждого экземпляра с ИД
+     * детали — в миллиметрах ряда (x от левого края ряда, y от пола),
+     * габарит — масштаб коробки. Приёмка сверяет эти числа с раскроем и
+     * проверяет пересечения уже нарисованного. Рамка выбранного отсека —
+     * там же: что подсвечено и где.
+     */
+    (w as { __mwCadBays?: () => unknown }).__mwCadBays = () => {
+      const parts: { partId: string; mesh: string; center: number[]; size: number[] }[] = [];
+      const matrix = new THREE.Matrix4();
+      const position = new THREE.Vector3();
+      const quaternion = new THREE.Quaternion();
+      const scale = new THREE.Vector3();
+      const mm = (v: number) => Math.round(v * 10000) / 10;
+      scene.traverse((object) => {
+        const mesh = object as THREE.InstancedMesh;
+        const ids = mesh.userData?.partIds as (string | null)[] | undefined;
+        if (!mesh.isInstancedMesh || !ids || mesh.visible === false) return;
+        for (let i = 0; i < mesh.count; i++) {
+          const partId = ids[i];
+          if (!partId) continue;
+          mesh.getMatrixAt(i, matrix);
+          matrix.decompose(position, quaternion, scale);
+          parts.push({
+            partId,
+            mesh: mesh.name,
+            center: [mm(position.x), mm(position.y), mm(position.z)],
+            size: [mm(scale.x), mm(scale.y), mm(scale.z)],
+          });
+        }
+      });
+      const frame = scene.getObjectByName('bay-highlight');
+      return {
+        parts: parts.sort((a, b) => a.partId.localeCompare(b.partId)),
+        highlight: frame
+          ? {
+              moduleId: frame.userData.moduleId as string,
+              bayId: frame.userData.bayId as string,
+              center: [mm(frame.position.x), mm(frame.position.y), mm(frame.position.z)],
+              size: [mm(frame.scale.x), mm(frame.scale.y), mm(frame.scale.z)],
+            }
+          : null,
+      };
+    };
+
     w.__mwCadState = () => ({
       fronts: Array.from(
         new Set(
@@ -1158,6 +1205,7 @@ function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
       delete w.__mwCadFrames;
       delete w.__mwCadFronts;
       delete w.__mwCadState;
+      delete (w as { __mwCadBays?: unknown }).__mwCadBays;
       delete w.__mwCadFit;
       delete w.__mwCadLook;
       delete w.__mwCadRoom;

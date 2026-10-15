@@ -23,7 +23,7 @@ import {
   widthOverflowMm,
 } from './invariants';
 import { runFingerprint } from './fingerprint';
-import { plinthMm, upperBottomMm } from './shop';
+import { plinthMm, shopOf, upperBottomMm } from './shop';
 import { NO_MILLING_ID } from './milling';
 import { NO_CARCASS_ID } from './carcassMaterial';
 import { HANDLE_LEVELS, HANDLE_TURNS, handleLevelOrNull, handleTurnOrNull } from './handlePlace';
@@ -47,6 +47,8 @@ import { CORNER } from './modules';
 import { MAX_MEZZANINE_MM, MIN_MEZZANINE_MM } from './sections';
 import { hasFacade } from './applianceFront';
 import { fillRefusal } from './fill';
+import { baysRefusal, baysWidthRefusal, type BayEnvelope } from './bays';
+import { DEFAULT_ALLOWANCES } from '@/types/catalog';
 import {
   moveConflict,
   moveRefusal,
@@ -1401,6 +1403,12 @@ export function applyOps({
             warnings.push(mezzLeaves.refusal);
             break;
           }
+          /* Отсеки (R01): остаток ширины достаётся последнему отсеку — не уже щели. */
+          const mezzBays = baysWidthRefusal(mezzUnit, wanted, shopOf(run.production).carcassMm);
+          if (mezzBays) {
+            warnings.push(mezzBays);
+            break;
+          }
 
           placeMezz(
             mezzModules.map((unit, i) =>
@@ -1465,6 +1473,11 @@ export function applyOps({
             warnings.push(upperLeaves.refusal);
             break;
           }
+          const upperBays = baysWidthRefusal(unit, wanted, shopOf(run.production).carcassMm);
+          if (upperBays) {
+            warnings.push(upperBays);
+            break;
+          }
 
           placeUpper(
             upperModules.map((m, i) =>
@@ -1513,6 +1526,16 @@ export function applyOps({
         const leaves = blindAtWidth(modules[at], wanted) ? null : leavesAfterWidth(modules[at], wanted);
         if (leaves && 'refusal' in leaves) {
           warnings.push(leaves.refusal);
+          break;
+        }
+        /*
+         * ОТСЕКИ (R01): ширину модуля забирает или отдаёт последний отсек —
+         * он и хранится остатком. Уже щели он не станет: отказ с числом,
+         * заданные человеком отсеки молча не ужимаются.
+         */
+        const baseBays = baysWidthRefusal(modules[at], wanted, shopOf(run.production).carcassMm);
+        if (baseBays) {
+          warnings.push(baseBays);
           break;
         }
 
@@ -2190,14 +2213,29 @@ export function applyOps({
           upperSegments: run.upperSegments,
         };
 
-        const refusal = fillRefusal(
-          op.fill,
-          fillTarget,
-          moduleCarcassHeightMm(fillTarget, fillShell),
-          fillTarget.fill,
-        );
+        const fillHeightMm = moduleCarcassHeightMm(fillTarget, fillShell);
+        const refusal = fillRefusal(op.fill, fillTarget, fillHeightMm, fillTarget.fill);
         if (refusal) {
           warnings.push(refusal);
+          break;
+        }
+
+        /*
+         * ОТСЕКИ (R01) — тем же входом. Конверт модуля — те же числа, что у
+         * раскроя: высота по поправленной оболочке, глубина ряда, толщина и
+         * припуски цеха. Отказ — словами с миллиметрами, ряд прежний.
+         */
+        const bayShop = shopOf(run.production);
+        const envelope: BayEnvelope = {
+          widthMm: fillTarget.widthMm,
+          heightMm: fillHeightMm,
+          depthMm: moduleDepthMm(fillTarget, run.zone, run.production),
+          thicknessMm: bayShop.carcassMm,
+          allowances: bayShop.allowances ?? DEFAULT_ALLOWANCES,
+        };
+        const bayRefusal = baysRefusal(op.fill, fillTarget, envelope, fillTarget.fill);
+        if (bayRefusal) {
+          warnings.push(bayRefusal);
           break;
         }
 

@@ -138,6 +138,19 @@ import { gapsIn } from '../lib/millwork/freeRun';
 import { BOTTLE_MAX_MM, leavesForFront, variantEstimateKeys } from '../lib/millwork/moduleVariants';
 import { wallFurnitureOf, wallLengthVerdict } from '../lib/millwork/wallLength';
 import { contourGapMm } from '../lib/millwork/surveyPlan';
+import {
+  addBayShelf,
+  bayEnvelope,
+  distributeBayShelves,
+  moveBayShelf,
+  removeBayShelf,
+  removePartition,
+  removePartitionNote,
+  setBayShelfCount,
+  setBayWidth,
+  splitBay,
+  type BayEdit,
+} from '../lib/millwork/bays';
 import { MIN_FACADE_SPAN_MM, facadeSpans, hasFacade, moduleFronts } from '../lib/millwork/applianceFront';
 import {
   CARCASS_SCOPES,
@@ -314,7 +327,7 @@ import { DEMO_TEMPLATE_ID } from '../lib/millwork/demoProject';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ElevationDrawing from '../components/millwork/ElevationDrawing';
-import SectionDrawing from '../components/millwork/SectionDrawing';
+import SectionDrawing, { hasFilling } from '../components/millwork/SectionDrawing';
 import PlanDrawing from '../components/millwork/PlanDrawing';
 import AxonometryDrawing from '../components/millwork/AxonometryDrawing';
 import { describeFront, interiorVisible } from '../lib/millwork/promptFronts';
@@ -25018,6 +25031,447 @@ console.log('\nSTAGE 01B: длина стены — отказ числами д
     '01B.7 контур: 3600×2800 сходится (0), w1 3700 — зазор 100 мм; две стены и стена без длины — не считается',
     closed01B === 0 && opened01B === 100 && partial01B === null && unknown01B === null,
     `замкнутый ${closed01B} · w1 3700 ${opened01B} · две стены ${partial01B} · без длины ${unknown01B}`,
+  );
+}
+
+/* ═══════════  R01: независимые отсеки корпуса — 1000 × 2400 × 600, слева 4 полки, справа пусто  ═══════════ */
+/*
+ * Путь экрана: спальня, потолок 2500 → ряд `composeVariants` → правые модули
+ * сняты и шкаф «Полки» расширен до 1000 тем же `applyOps`, что у кнопок →
+ * `set_fill` с отсеками. Мерим то, что режет цех (`buildPanels`), то, что
+ * рисует сцена (`moduleBoxes`), и то, что рисует лист (`ElevationDrawing`).
+ *
+ * R00: полки шли во всю ширину корпуса 966 мм сквозь перегородку, в сцене —
+ * 4 пересечения «полка × перегородка», на листе — линии во всю ширину.
+ */
+console.log('\nR01: независимые отсеки — полки только в своём отсеке, одна перегородка, 2D = 3D = раскрой');
+{
+  type R01Bay = { id: string; widthMm?: number; shelves: { mode: 'even'; count: number } | { mode: 'manual'; at: number[] } };
+  const R01_REQ: RunRequirements = { ...DEMO_REQUIREMENTS, zone: 'bedroom', mode: 'free', appliances: [], sections: [] };
+  const disabledR01 = { basic: [], optimal: [], premium: [] } as Record<VariantKey, string[]>;
+
+  /** Шкаф 1000 × 2400 × 600 путём экрана; `production` — школа цеха. */
+  const fixtureR01 = (production: ProductionSettings = DEFAULT_PRODUCTION) => {
+    const measurement: Measurement = {
+      id: 'r01',
+      ceilingHeightMm: 2500,
+      walls: [{ id: 'w1', lengthMm: 3000, angleDeg: 90, openings: [] }],
+      comms: [],
+      photos: [],
+      measuredBy: 'R01',
+      measuredAt: '2026-10-15',
+      notes: '',
+    };
+    const input = workspaceInput({
+      title: 'R01',
+      zone: 'Спальня',
+      measurement,
+      requirements: R01_REQ,
+      rates: DEMO_RATES,
+      wallId: 'w1',
+      cornerAt: null,
+      production,
+    });
+    let edited: Partial<Record<VariantKey, Run>> = {};
+    const shown = () => composeVariants(input, disabledR01, edited).find((v) => v.key === 'optimal')!;
+    const ops = (list: MillworkOp[]): Run => {
+      const next = applyOps({ run: shown().run, requirements: R01_REQ, ops: list, openings: input.openings, roomDepthMm: 0 });
+      edited = { ...edited, optimal: next };
+      return next;
+    };
+    const start = shown().run;
+    const cabinet = start.modules.find((m) => m.section === 'shelves');
+    if (!cabinet) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: R01 — в ряду спальни нет шкафа «Полки»');
+    ops(start.modules.filter((m) => m.offsetMm > cabinet.offsetMm).map((m) => ({ op: 'remove_module' as const, moduleId: m.id })));
+    const run = ops([{ op: 'set_width', moduleId: cabinet.id, widthMm: 1000 }]);
+    const unit = run.modules.find((m) => m.id === cabinet.id)!;
+    return { input, ops, run, unit, production };
+  };
+
+  /** Наполнение с отсеками поверх прежнего: старые полки и перегородка сняты. */
+  const withBays = (unit: Module, bays: R01Bay[], extra: Partial<ModuleFill> = {}): ModuleFill =>
+    ({ ...unit.fill!, shelves: [], dividerMm: 0, rodsMm: [], drawerHeights: [], ...extra, bays }) as unknown as ModuleFill;
+  const fillOf = (run: Run, id: string) => run.modules.find((m) => m.id === id)?.fill;
+  const panelsOf = (run: Run, id: string, production: ProductionSettings) =>
+    buildPanels({ run, production }).filter((p) => p.moduleId === id);
+  type R01Part = { name: string; bay: string | null; length: number; width: number; thick: number; qty: number };
+  const partsOf = (run: Run, id: string, production: ProductionSettings): R01Part[] =>
+    panelsOf(run, id, production)
+      .filter((p) => p.name === SHELF_PANEL_NAME || p.name === DIVIDER_PANEL_NAME)
+      .map((p) => ({
+        name: p.name,
+        bay: (p as Panel & { bayId?: string }).bayId ?? null,
+        length: p.lengthMm,
+        width: p.widthMm,
+        thick: p.thicknessMm,
+        qty: p.qty,
+      }));
+  const partWords = (parts: R01Part[]) =>
+    parts.map((p) => `${p.name}${p.bay ? `[${p.bay}]` : ''} ${p.length}×${p.width}×${p.thick}·${p.qty}`).join(' | ') || 'НЕТ';
+
+  /** Внутренние детали сцены этого модуля в мм от левого края модуля. */
+  const sceneOf = (run: Run, id: string, production: ProductionSettings) => {
+    const place = runPlaces(run).find((p) => p.unit.id === id)!;
+    const boxes = moduleBoxes(
+      place.unit,
+      { x: place.x, y: place.y, heightM: place.heightM, depthM: place.depthM, zM: place.zM, thicknessM: production.carcassMm / 1000 },
+      { gapM: production.frontGapMm / 1000, frontThicknessM: production.frontMm / 1000, integratedHandles: false, cutaway: true },
+      production,
+    );
+    const r = (m: number) => Math.round(m * 10000) / 10;
+    return boxes
+      .filter((b) => b.panel === SHELF_PANEL_NAME || b.panel === DIVIDER_PANEL_NAME || b.panel === SIDE_PANEL_NAME || b.panel === BOTTOM_PANEL_NAME || b.panel === TOP_PANEL_NAME || b.panel === BACK_PANEL_NAME)
+      .map((b) => ({
+        panel: b.panel!,
+        partId: (b as typeof b & { partId?: string }).partId ?? null,
+        x0: r(b.position[0] - b.scale[0] / 2 - place.x),
+        x1: r(b.position[0] + b.scale[0] / 2 - place.x),
+        y0: r(b.position[1] - b.scale[1] / 2 - place.y),
+        y1: r(b.position[1] + b.scale[1] / 2 - place.y),
+        z0: r(b.position[2] - b.scale[2] / 2),
+        z1: r(b.position[2] + b.scale[2] / 2),
+        w: r(b.scale[0]),
+        h: r(b.scale[1]),
+        d: r(b.scale[2]),
+      }));
+  };
+  /** Проникновение двух коробок, мм по каждой оси; касание по плоскости — не проникновение. */
+  const penetration = (a: ReturnType<typeof sceneOf>[number], b: ReturnType<typeof sceneOf>[number]) => {
+    const dx = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0);
+    const dy = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0);
+    const dz = Math.min(a.z1, b.z1) - Math.max(a.z0, b.z0);
+    return dx > 0.5 && dy > 0.5 && dz > 0.5 ? { dx, dy, dz } : null;
+  };
+  /** Пересечения внутренних деталей с внутренними и с корпусом (корпус с корпусом — как был, не меряем). */
+  const collisionsOf = (boxes: ReturnType<typeof sceneOf>) => {
+    const inner = boxes.filter((b) => b.panel === SHELF_PANEL_NAME || b.panel === DIVIDER_PANEL_NAME);
+    const hits: string[] = [];
+    for (let i = 0; i < inner.length; i++) {
+      for (const other of boxes) {
+        if (other === inner[i]) continue;
+        const isInner = other.panel === SHELF_PANEL_NAME || other.panel === DIVIDER_PANEL_NAME;
+        if (isInner && boxes.indexOf(other) < boxes.indexOf(inner[i])) continue;
+        const hit = penetration(inner[i], other);
+        if (hit) {
+          hits.push(
+            `${inner[i].partId ?? inner[i].panel} × ${other.partId ?? other.panel}: ${hit.dx.toFixed(1)}×${hit.dy.toFixed(1)}×${hit.dz.toFixed(1)} мм`,
+          );
+        }
+      }
+    }
+    return hits;
+  };
+  /** Отсеки и полки на листе «Внутри»: то, что нарисовано, в мм от левого края модуля. */
+  const sheetOf = (run: Run, id: string) => {
+    const svg = renderToStaticMarkup(createElement(ElevationDrawing, { run, mode: 'inside' }));
+    const at = svg.indexOf(`data-module-id="${id}"`);
+    if (at < 0) return null;
+    const next = svg.indexOf('data-module-id="', at + 20);
+    const chunk = svg.slice(at, next < 0 ? undefined : next);
+    const attrs = (tag: string) => ({
+      bay: /data-bay-shelf="([^"]+)"/.exec(tag)?.[1] ?? null,
+      from: Number(/data-from-mm="([\d.]+)"/.exec(tag)?.[1]),
+      to: Number(/data-to-mm="([\d.]+)"/.exec(tag)?.[1]),
+      at: Number(/data-at-mm="([\d.]+)"/.exec(tag)?.[1]),
+    });
+    const tags = (re: RegExp) => {
+      const found: string[] = [];
+      for (let m = re.exec(chunk); m; m = re.exec(chunk)) found.push(m[0]);
+      return found;
+    };
+    return {
+      shelves: tags(/<line[^>]*data-bay-shelf="[^"]+"[^>]*>/g).map(attrs),
+      partitions: tags(/<rect[^>]*data-partition="[^"]+"[^>]*>/g).map(attrs),
+      wholeWidthShelves: tags(/<line[^>]*data-shelf="\d+"[^>]*>/g).length,
+      /* Подпись пустой секции — прежнего пути; поверх отсеков она неправда. */
+      emptyLabel: chunk.includes('без наполнения'),
+    };
+  };
+
+  /* ── A–F: стандартный цех 16 мм ── */
+  const fx = fixtureR01();
+  const id = fx.unit.id;
+  check(
+    'R01 шкаф путём экрана: 1000 × 2400 × 600, корпус 16 мм',
+    fx.unit.widthMm === 1000 &&
+      moduleCarcassHeightMm(fx.unit, fx.run) === 2400 &&
+      moduleDepthMm(fx.unit, fx.run.zone, fx.run.production) === 600 &&
+      fx.production.carcassMm === 16,
+    `${id} ${fx.unit.widthMm} × ${moduleCarcassHeightMm(fx.unit, fx.run)} × ${moduleDepthMm(fx.unit, fx.run.zone, fx.run.production)} · ${fx.production.carcassMm} мм`,
+  );
+  const neighbourBefore = JSON.stringify(fx.run.modules.find((m) => m.id !== id));
+  const neighbourPanelsBefore = JSON.stringify(buildPanels({ run: fx.run, production: fx.production }).filter((p) => p.moduleId !== id));
+  const fingerprintLegacy = configurationFingerprint(fx.run.modules);
+
+  const leftFour: R01Bay[] = [
+    { id: 'b1', widthMm: 476, shelves: { mode: 'even', count: 4 } },
+    { id: 'b2', shelves: { mode: 'manual', at: [] } },
+  ];
+  const split = fx.ops([{ op: 'set_fill', moduleId: id, fill: withBays(fx.unit, leftFour) }]);
+  const splitFill = fillOf(split, id) as (ModuleFill & { bays?: R01Bay[] }) | undefined;
+  check(
+    'R01.A set_fill с двумя отсеками принят: отказа нет, в наполнении 2 отсека',
+    split.warnings.length === 0 && splitFill?.bays?.length === 2,
+    `${split.warnings.join(' | ') || 'отказа нет'} · отсеков ${splitFill?.bays?.length ?? 'НЕТ'}`,
+  );
+
+  const parts = partsOf(split, id, fx.production);
+  check(
+    'R01.A раскрой: 4 полки отсека b1 474 × 580 × 16 (просвет 476 − припуск цеха 2) и одна перегородка 2368 × 580 × 16',
+    partWords(parts) === 'Полка[b1] 474×580×16·4 | Перегородка вертикальная 2368×580×16·1',
+    partWords(parts),
+  );
+  check(
+    'R01.B правая секция пустая: полок отсека b2 в раскрое 0',
+    !parts.some((p) => p.bay === 'b2'),
+    partWords(parts),
+  );
+  check(
+    'R01.F перегородка в деталировке ровно один раз',
+    parts.filter((p) => p.name === DIVIDER_PANEL_NAME).reduce((s, p) => s + p.qty, 0) === 1,
+    partWords(parts),
+  );
+
+  const scene = sceneOf(split, id, fx.production);
+  const sceneShelves = scene.filter((b) => b.panel === SHELF_PANEL_NAME);
+  const scenePartitions = scene.filter((b) => b.panel === DIVIDER_PANEL_NAME);
+  const hits = collisionsOf(scene);
+  check(
+    'R01.C полки сцены только в отсеке b1 (16…492 мм), перегородка 492…508 мм; пересечений 0',
+    sceneShelves.length === 4 &&
+      sceneShelves.every((b) => b.x0 >= 16 && b.x1 <= 492) &&
+      scenePartitions.length === 1 &&
+      scenePartitions[0].x0 === 492 &&
+      scenePartitions[0].x1 === 508 &&
+      hits.length === 0,
+    `полки ${sceneShelves.map((b) => `${b.x0}…${b.x1}@${b.y0 + b.h / 2}`).join(' ')} · перегородка ${scenePartitions.map((b) => `${b.x0}…${b.x1}`).join(' ') || 'НЕТ'} · пересечений ${hits.length}${hits.length ? `: ${hits.slice(0, 3).join('; ')}` : ''}`,
+  );
+  check(
+    'R01.D размеры сцены = раскрой: полка 474 × 16 × 580, перегородка 16 × 2368 × 580, высоты 480 · 960 · 1440 · 1920',
+    sceneShelves.every((b) => b.w === 474 && b.h === 16 && b.d === 580) &&
+      sceneShelves.map((b) => b.y0 + b.h / 2).join(',') === '480,960,1440,1920' &&
+      scenePartitions.every((b) => b.w === 16 && b.h === 2368 && b.d === 580),
+    `полки ${sceneShelves.map((b) => `${b.w}×${b.h}×${b.d}`).join(' ')} · перегородка ${scenePartitions.map((b) => `${b.w}×${b.h}×${b.d}`).join(' ') || 'НЕТ'}`,
+  );
+
+  const sheet = sheetOf(split, id);
+  check(
+    'R01.E лист «Внутри»: 4 полки отсека b1 от 17 до 491 мм, перегородка 492…508, полок во всю ширину нет',
+    Boolean(sheet) &&
+      sheet!.shelves.length === 4 &&
+      sheet!.shelves.every((s) => s.bay === 'b1' && s.from === 17 && s.to === 491) &&
+      sheet!.shelves.map((s) => s.at).join(',') === '480,960,1440,1920' &&
+      sheet!.partitions.length === 1 &&
+      sheet!.partitions[0].from === 492 &&
+      sheet!.partitions[0].to === 508 &&
+      sheet!.wholeWidthShelves === 0,
+    sheet
+      ? `полки ${sheet.shelves.map((s) => `${s.bay}:${s.from}…${s.to}@${s.at}`).join(' ') || 'НЕТ'} · перегородки ${sheet.partitions.map((p) => `${p.from}…${p.to}`).join(' ') || 'НЕТ'} · во всю ширину ${sheet.wholeWidthShelves}`
+      : 'НУЛЕВОЙ СЕЛЕКТОР: модуля на листе нет',
+  );
+
+  /*
+   * ── E2: у шкафа с отсеками нет подписи «без наполнения» ──
+   * Подпись прежнего пути смотрела на полки во всю ширину, а у модуля с
+   * отсеками их нет по построению: в браузере она висела поверх четырёх
+   * полок. Перегородка без полок — тоже наполнение: и лист, и разрез.
+   */
+  const partitionOnly = fx.ops([
+    {
+      op: 'set_fill',
+      moduleId: id,
+      fill: withBays(fx.unit, [
+        { id: 'b1', widthMm: 476, shelves: { mode: 'even', count: 0 } },
+        { id: 'b2', shelves: { mode: 'even', count: 0 } },
+      ]),
+    },
+  ]);
+  const partitionSheet = sheetOf(partitionOnly, id);
+  const partitionUnit = partitionOnly.modules.find((m) => m.id === id);
+  check(
+    'R01.E2 на листе у шкафа с отсеками нет «без наполнения» — ни при 4 полках, ни при одной перегородке; разрез называет перегородку наполнением',
+    Boolean(sheet && partitionSheet && partitionUnit) &&
+      !sheet!.emptyLabel &&
+      !partitionSheet!.emptyLabel &&
+      partitionSheet!.partitions.length === 1 &&
+      hasFilling(partitionUnit!),
+    sheet && partitionSheet && partitionUnit
+      ? `4 полки: ${sheet.emptyLabel ? 'подпись ЕСТЬ' : 'подписи нет'} · одна перегородка: ${partitionSheet.emptyLabel ? 'подпись ЕСТЬ' : 'подписи нет'}, перегородок ${partitionSheet.partitions.length} · разрез ${hasFilling(partitionUnit) ? 'с наполнением' : 'БЕЗ наполнения'}`
+      : 'НУЛЕВОЙ СЕЛЕКТОР: модуля на листе нет',
+  );
+
+  /* ── G: ширина отсека b1 600 — b2 получает остаток, корпус прежний ── */
+  const wider = fx.ops([{ op: 'set_fill', moduleId: id, fill: withBays(fx.unit, [{ ...leftFour[0], widthMm: 600 }, leftFour[1]]) }]);
+  const widerParts = partsOf(wider, id, fx.production);
+  const widerScene = sceneOf(wider, id, fx.production);
+  check(
+    'R01.G b1 600 мм: полки 598, перегородка 616…632, b2 = 968 − 16 − 600 = 352 мм; модуль 1000',
+    wider.warnings.length === 0 &&
+      partWords(widerParts) === 'Полка[b1] 598×580×16·4 | Перегородка вертикальная 2368×580×16·1' &&
+      widerScene.filter((b) => b.panel === DIVIDER_PANEL_NAME).map((b) => `${b.x0}…${b.x1}`).join(' ') === '616…632' &&
+      wider.modules.find((m) => m.id === id)?.widthMm === 1000 &&
+      collisionsOf(widerScene).length === 0,
+    `${wider.warnings.join(' | ') || 'отказа нет'} · ${partWords(widerParts)} · перегородка ${widerScene.filter((b) => b.panel === DIVIDER_PANEL_NAME).map((b) => `${b.x0}…${b.x1}`).join(' ')}`,
+  );
+
+  /* ── H: отсек b1 900 — b2 остался бы 52 мм: отказ числами, наполнение прежнее ── */
+  const before900 = JSON.stringify(fillOf(fx.ops([]), id));
+  const narrow = fx.ops([{ op: 'set_fill', moduleId: id, fill: withBays(fx.unit, [{ ...leftFour[0], widthMm: 900 }, leftFour[1]]) }]);
+  check(
+    'R01.H отсек b2 52 мм: отказ «доступно 52 мм, требуется 150 мм, не хватает 98 мм», наполнение прежнее',
+    Boolean(narrow.warnings[0]?.includes('доступно 52 мм') && narrow.warnings[0].includes('требуется 150 мм') && narrow.warnings[0].includes('не хватает 98 мм')) &&
+      JSON.stringify(fillOf(narrow, id)) === before900,
+    `${narrow.warnings[0] ?? 'ОТКАЗА НЕТ'} · наполнение ${JSON.stringify(fillOf(narrow, id)) === before900 ? 'прежнее' : 'ИЗМЕНИЛОСЬ'}`,
+  );
+
+  /* ── I: запись — круг JSON ── */
+  const backR01 = JSON.parse(JSON.stringify(wider)) as Run;
+  check(
+    'R01.I сохранение: после круга JSON отсеки, раскрой и отпечаток те же',
+    JSON.stringify(fillOf(backR01, id)) === JSON.stringify(fillOf(wider, id)) &&
+      partWords(partsOf(backR01, id, fx.production)) === partWords(widerParts) &&
+      configurationFingerprint(backR01.modules) === configurationFingerprint(wider.modules) &&
+      configurationFingerprint(wider.modules) !== fingerprintLegacy,
+    `отпечаток ${fingerprintLegacy} → ${configurationFingerprint(wider.modules)} → после круга ${configurationFingerprint(backR01.modules)}`,
+  );
+
+  /* ── J, K: соседний шкаф и его раскрой не тронуты ── */
+  check(
+    'R01.J/K соседний шкаф и его детали после правки отсеков те же',
+    JSON.stringify(wider.modules.find((m) => m.id !== id)) === neighbourBefore &&
+      JSON.stringify(buildPanels({ run: wider, production: fx.production }).filter((p) => p.moduleId !== id)) === neighbourPanelsBefore,
+    `сосед ${wider.modules.find((m) => m.id !== id)?.id ?? 'НЕТ'}`,
+  );
+
+  /* ── L: размеры конечные и положительные, ИД деталей сцены не повторяются ── */
+  const allPanels = buildPanels({ run: wider, production: fx.production });
+  const badR01 = allPanels.filter((p) => ![p.lengthMm, p.widthMm, p.thicknessMm, p.qty].every((v) => Number.isFinite(v) && v > 0));
+  const sceneIds = widerScene.map((b) => b.partId).filter((v): v is string => Boolean(v));
+  check(
+    'R01.L ни одной детали с NaN, нулём или минусом; ИД полок и перегородок в сцене есть и не повторяются',
+    badR01.length === 0 && sceneIds.length === 5 && new Set(sceneIds).size === sceneIds.length,
+    `плохих деталей ${badR01.length} · ИД ${sceneIds.join(' ') || 'НЕТ'}`,
+  );
+
+  /* ── M: то же действие дважды — то же состояние, без дублей ── */
+  const again = fx.ops([{ op: 'set_fill', moduleId: id, fill: withBays(fx.unit, [{ ...leftFour[0], widthMm: 600 }, leftFour[1]]) }]);
+  check(
+    'R01.M повтор того же set_fill: наполнение и раскрой те же, деталей не прибавилось',
+    JSON.stringify(fillOf(again, id)) === JSON.stringify(fillOf(wider, id)) &&
+      partWords(partsOf(again, id, fx.production)) === partWords(widerParts),
+    partWords(partsOf(again, id, fx.production)),
+  );
+
+  /* ── O: смешанная запись — отсеки вместе со старыми ящиками или полками — отказ ── */
+  const beforeMixed = JSON.stringify(fillOf(fx.ops([]), id));
+  const mixedDrawers = fx.ops([{ op: 'set_fill', moduleId: id, fill: withBays(fx.unit, leftFour, { drawerHeights: [800, 800, 800] }) }]);
+  const mixedShelves = fx.ops([{ op: 'set_fill', moduleId: id, fill: withBays(fx.unit, leftFour, { shelves: [352, 704] }) }]);
+  check(
+    'R01.O отсеки + прежние ящики или полки модуля — отказ словами, наполнение прежнее',
+    Boolean(mixedDrawers.warnings[0]) &&
+      Boolean(mixedShelves.warnings[0]) &&
+      JSON.stringify(fillOf(mixedDrawers, id)) === beforeMixed &&
+      JSON.stringify(fillOf(mixedShelves, id)) === beforeMixed,
+    `${mixedDrawers.warnings[0] ?? 'ящики: ОТКАЗА НЕТ'} | ${mixedShelves.warnings[0] ?? 'полки: ОТКАЗА НЕТ'}`,
+  );
+
+  /* ── N: школа цеха 18 мм — те же числа из настройки, а не из «похоже 16» ── */
+  const fx18 = fixtureR01({ ...DEFAULT_PRODUCTION, carcassMm: 18 });
+  const split18 = fx18.ops([
+    { op: 'set_fill', moduleId: fx18.unit.id, fill: withBays(fx18.unit, [{ id: 'b1', widthMm: 473, shelves: { mode: 'even', count: 4 } }, { id: 'b2', shelves: { mode: 'manual', at: [] } }]) },
+  ]);
+  const parts18 = partsOf(split18, fx18.unit.id, fx18.production);
+  const scene18 = sceneOf(split18, fx18.unit.id, fx18.production);
+  check(
+    'R01.N цех 18 мм: просвет (964 − 18) / 2 = 473, полки 471 × 580 × 18, перегородка 2364 × 580 × 18, сцена = раскрой, пересечений 0',
+    split18.warnings.length === 0 &&
+      partWords(parts18) === 'Полка[b1] 471×580×18·4 | Перегородка вертикальная 2364×580×18·1' &&
+      scene18.filter((b) => b.panel === SHELF_PANEL_NAME).every((b) => b.w === 471 && b.h === 18 && b.d === 580 && b.x0 >= 18 && b.x1 <= 491) &&
+      scene18.filter((b) => b.panel === DIVIDER_PANEL_NAME).map((b) => `${b.x0}…${b.x1}`).join(' ') === '491…509' &&
+      collisionsOf(scene18).length === 0,
+    `${split18.warnings.join(' | ') || 'отказа нет'} · ${partWords(parts18)} · перегородка ${scene18.filter((b) => b.panel === DIVIDER_PANEL_NAME).map((b) => `${b.x0}…${b.x1}`).join(' ') || 'НЕТ'}`,
+  );
+
+  /* ── Операции интерфейса: те же правки, что делают кнопки «Внутреннего наполнения» ── */
+  const ox = fixtureR01();
+  const oid = ox.unit.id;
+  /** Применить правку отсеков тем же входом, что кнопка: `set_fill`. */
+  const apply = (edit: BayEdit, label: string): Run => {
+    if ('refusal' in edit) throw new Error(`R01 операция «${label}» отказала: ${edit.refusal}`);
+    return ox.ops([{ op: 'set_fill', moduleId: oid, fill: edit.fill }]);
+  };
+  const unitNow = (run: Run) => run.modules.find((m) => m.id === oid)!;
+  const envNow = (run: Run) => bayEnvelope(unitNow(run), run, ox.production);
+  const legacyShelves = ox.unit.fill!.shelves.length;
+
+  const r1 = apply(splitBay(ox.unit, envNow(ox.run)), 'разделить');
+  check(
+    'R01.ops «Разделить вертикально»: 2 отсека по 476 мм, прежние полки на своих высотах в обоих, перегородка одна',
+    partWords(partsOf(r1, oid, ox.production)) ===
+      `Полка[b1] 474×580×16·${legacyShelves} | Полка[b2] 474×580×16·${legacyShelves} | Перегородка вертикальная 2368×580×16·1`,
+    partWords(partsOf(r1, oid, ox.production)),
+  );
+  const r2 = apply(setBayShelfCount(unitNow(r1), envNow(r1), 'b1', 4), 'четыре полки слева');
+  const r3 = apply(setBayShelfCount(unitNow(r2), envNow(r2), 'b2', 0), 'правый пустой');
+  check(
+    'R01.ops слева «Количество полок» 4, справа 0: раскрой — 4 полки 474 только в b1 и одна перегородка',
+    partWords(partsOf(r3, oid, ox.production)) === 'Полка[b1] 474×580×16·4 | Перегородка вертикальная 2368×580×16·1' &&
+      collisionsOf(sceneOf(r3, oid, ox.production)).length === 0,
+    partWords(partsOf(r3, oid, ox.production)),
+  );
+  const r4 = apply(setBayWidth(unitNow(r3), envNow(r3), 'b1', 600), 'ширина 600');
+  const r5 = apply(setBayWidth(unitNow(r4), envNow(r4), 'b2', 300), 'правый 300');
+  const narrowOp = setBayWidth(unitNow(r5), envNow(r5), 'b1', 900);
+  check(
+    'R01.ops ширина: b1 600 → полки 598; правый 300 → левый 652; b1 900 — отказ «доступно 52 мм…», корпус 1000',
+    partWords(partsOf(r4, oid, ox.production)).startsWith('Полка[b1] 598×580×16·4') &&
+      partWords(partsOf(r5, oid, ox.production)).startsWith('Полка[b1] 650×580×16·4') &&
+      'refusal' in narrowOp &&
+      narrowOp.refusal.includes('доступно 52 мм') &&
+      unitNow(r5).widthMm === 1000,
+    `${partWords(partsOf(r4, oid, ox.production))} → ${partWords(partsOf(r5, oid, ox.production))} · ${'refusal' in narrowOp ? narrowOp.refusal : 'ОТКАЗА НЕТ'}`,
+  );
+  const r6 = apply(addBayShelf(unitNow(r5), envNow(r5), 'b1'), 'добавить полку');
+  const r7 = apply(moveBayShelf(unitNow(r6), envNow(r6), 'b1', 0, 300), 'полка 1 на 300');
+  const moved = sceneOf(r7, oid, ox.production).filter((b) => b.panel === SHELF_PANEL_NAME).map((b) => b.y0 + b.h / 2);
+  const r8 = apply(removeBayShelf(unitNow(r7), envNow(r7), 'b1', 4), 'удалить верхнюю');
+  const r9 = apply(distributeBayShelves(unitNow(r8), envNow(r8), 'b1'), 'распределить');
+  const r9h = sceneOf(r9, oid, ox.production).filter((b) => b.panel === SHELF_PANEL_NAME).map((b) => b.y0 + b.h / 2);
+  check(
+    'R01.ops «Добавить полку» 4 → 5; «Высота полки» 1 → 288 (система 32), прочие на прежних 800 · 1216 · 1600 · 2016; «Удалить полку» 5 → 4; «Распределить» — 480 · 960 · 1440 · 1920',
+    moved.length === 5 &&
+      moved[0] === 288 &&
+      moved.slice(1).join(',') === '800,1216,1600,2016' &&
+      r9h.join(',') === '480,960,1440,1920' &&
+      collisionsOf(sceneOf(r9, oid, ox.production)).length === 0,
+    `после переноса ${moved.join(' · ')} · после «Распределить» ${r9h.join(' · ')}`,
+  );
+  const note = removePartitionNote(unitNow(r9), envNow(r9), 'b1');
+  const r10 = apply(removePartition(unitNow(r9), envNow(r9), 'b1'), 'убрать перегородку');
+  check(
+    'R01.ops «Убрать перегородку»: потеря названа до нажатия, один отсек 968 мм с полками левого, перегородок 0',
+    Boolean(note?.includes('станут одним 968 мм')) &&
+      partWords(partsOf(r10, oid, ox.production)) === 'Полка[b1] 966×580×16·4',
+    `«${note ?? 'СЛОВ НЕТ'}» → ${partWords(partsOf(r10, oid, ox.production))}`,
+  );
+
+  /* Ширина модуля при отсеках: последний отсек — остаток, уже щели не станет. */
+  const w1 = apply(splitBay(unitNow(r10), envNow(r10), 'b1'), 'снова разделить');
+  const w2 = apply(setBayWidth(unitNow(w1), envNow(w1), 'b1', 600), 'b1 600');
+  const shrink = ox.ops([{ op: 'set_width', moduleId: oid, widthMm: 700 }]);
+  check(
+    'R01.ops модуль 1000 → 700 при отсеке b1 600: отказ «последний отсек станет 52 мм», ширина прежняя',
+    Boolean(shrink.warnings[0]?.includes('последний отсек станет 52 мм') && shrink.warnings[0].includes('не хватает 98 мм')) &&
+      unitNow(shrink).widthMm === 1000 &&
+      JSON.stringify(unitNow(shrink).fill) === JSON.stringify(unitNow(w2).fill),
+    `${shrink.warnings[0] ?? 'ОТКАЗА НЕТ'} · ширина ${unitNow(shrink).widthMm}`,
+  );
+  const neighbour = ox.run.modules.find((m) => m.id !== oid)!;
+  const rodSplit = splitBay(neighbour, bayEnvelope(neighbour, ox.run, ox.production));
+  check(
+    'R01.ops шкаф со штангой не делится молча: отказ словами (штанга и ящики в отсеках — следующий этап)',
+    'refusal' in rodSplit && rodSplit.refusal.includes('штанга'),
+    'refusal' in rodSplit ? rodSplit.refusal : 'ОТКАЗА НЕТ',
   );
 }
 

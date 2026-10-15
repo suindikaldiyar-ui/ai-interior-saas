@@ -75,6 +75,12 @@ export type InteriorState = {
   /** Разрез: фасады убраны совсем, видно наполнение целиком. */
   cutaway: boolean;
   /**
+   * Выбранный отсек шкафа (R01): подсветка в сцене и на схеме и цель
+   * правок «Внутреннего наполнения». Состояние выделения, а не
+   * конструкции — сами отсеки живут в `Module.fill.bays`.
+   */
+  selectedBay: { moduleId: string; bayId: string } | null;
+  /**
    * Подсветка витрины горит. Перед захватом кадра гаснет: светящаяся
    * полоса в clay-кадре читается моделью как часть мебели.
    */
@@ -142,6 +148,7 @@ export type InteriorState = {
   setOpenParts: (ids: string[]) => void;
   closeAllParts: () => void;
   setCutaway: (value: boolean) => void;
+  setSelectedBay: (value: { moduleId: string; bayId: string } | null) => void;
   setDisplayLit: (value: boolean) => void;
   setCadAngle: (value: SceneView) => void;
   setRenderFraming: (framing: CaptureFraming) => void;
@@ -290,6 +297,7 @@ export const useInteriorStore = create<InteriorState>((set, get) => ({
 
   openParts: [],
   cutaway: false,
+  selectedBay: null,
   displayLit: true,
   cadAngle: 'iso',
   captureMode: false,
@@ -627,6 +635,7 @@ export const useInteriorStore = create<InteriorState>((set, get) => ({
   setOpenParts: (ids) => set({ openParts: Array.from(new Set(ids)) }),
   closeAllParts: () => set({ openParts: [] }),
   setCutaway: (value) => set({ cutaway: value }),
+  setSelectedBay: (value) => set({ selectedBay: value }),
   setDisplayLit: (value) => set({ displayLit: value }),
   setCadAngle: (value) => set({ cadAngle: value }),
   setRenderFraming: (framing) => set({ renderFraming: framing }),
