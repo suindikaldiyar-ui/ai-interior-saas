@@ -754,8 +754,32 @@ async function layoutScenario(browser) {
     opened.push(context);
     const page = await context.newPage();
     page.on('pageerror', (e) => console.log('  [ошибка страницы]', e.message.slice(0, 160)));
+    /* Что страница говорит о WebGL и контексте — чтобы отказ сцены имел имя (R01.1). */
+    const glTrail = [];
+    page.on('console', (m) => {
+      if (m.type() === 'error' || /webgl|context|gpu/i.test(m.text())) glTrail.push(`${m.type()}: ${m.text().replace(/\s+/g, ' ').slice(0, 220)}`);
+    });
     await page.goto(`${BASE}/demo`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
     await openScene(page);
+    /*
+     * СЦЕНА СКАЗАЛА «ГОТОВА» ИЛИ «ОТКАЗ» (R01.1): `data-scene-state`. Отказ —
+     * FAIL со словами сцены и консолью, а не тридцать секунд ожидания холста,
+     * которого в состоянии отказа нет.
+     */
+    await until(
+      () => page.evaluate(() => ['ready', 'failed'].includes(document.querySelector('[data-schematic] [data-scene]')?.getAttribute('data-scene-state') ?? '')),
+      60_000,
+    );
+    const scene = await page.evaluate(() => {
+      const node = document.querySelector('[data-schematic] [data-scene]');
+      return { state: node?.getAttribute('data-scene-state') ?? null, failure: node?.querySelector('[data-scene-failure-text]')?.textContent ?? null };
+    });
+    check(
+      `${name}: сцена готова (data-scene-state «ready»)`,
+      scene.state === 'ready',
+      `состояние ${scene.state ?? 'НЕТ'}${scene.failure ? ` «${scene.failure}»` : ''}${glTrail.length ? ` · консоль: ${glTrail.slice(-4).join(' | ')}` : ''}`,
+    );
+    if (scene.state !== 'ready') continue;
     /* Сцена на телефоне ниже полосы кнопок: детали мерить там, где они на экране. */
     await page.locator('[data-schematic] canvas').first().scrollIntoViewIfNeeded();
     await sleep(800);

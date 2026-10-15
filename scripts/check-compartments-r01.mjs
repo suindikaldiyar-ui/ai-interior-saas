@@ -224,6 +224,38 @@ async function view(page, key) {
   return true;
 }
 
+/**
+ * 3D ГОТОВА ПО СОСТОЯНИЮ СЦЕНЫ (R01.1): `ready` — холст с размером и
+ * отрисованным кадром, `failed` — отказ со словами. Ждём, пока сцена не
+ * скажет одно из двух (сама она называет отказом 20 с без кадра), или пока
+ * не исчезнет Studio — падение тоже ответ, и его видно сразу.
+ */
+async function sceneSettled(page) {
+  const t0 = Date.now();
+  const read = () =>
+    page.evaluate(() => {
+      const scene = document.querySelector('[data-studio-viewport] [data-scene]');
+      const c = scene?.querySelector('canvas');
+      const r = c?.getBoundingClientRect();
+      return {
+        state: scene?.getAttribute('data-scene-state') ?? null,
+        failure: scene?.querySelector('[data-scene-failure-text]')?.textContent ?? null,
+        root: Boolean(document.querySelector('[data-studio-root]')),
+        canvas: r ? [Math.round(r.width), Math.round(r.height)] : null,
+        center: r ? { x: r.left + r.width * 0.5, y: r.top + r.height * 0.55 } : null,
+      };
+    });
+  let s = await read();
+  while (Date.now() - t0 < 60_000 && s.root && s.state !== 'ready' && s.state !== 'failed') {
+    await sleep(150);
+    s = await read();
+  }
+  return { ...s, ms: Date.now() - t0 };
+}
+const sceneOk = (s) => s.state === 'ready' && Boolean(s.canvas && s.canvas[0] > 0 && s.canvas[1] > 0);
+const sceneWords = (s) =>
+  `за ${s.ms} мс: состояние ${s.state ?? 'НЕТ'}${s.failure ? ` «${s.failure}»` : ''} · Studio ${s.root ? 'жива' : 'УПАЛА'} · холст ${s.canvas?.join('×') ?? 'НЕТ'}`;
+
 async function saved(page) {
   return waitFor(page, READ_SAVE, (v) => v === 'saved', 30_000);
 }
@@ -508,35 +540,14 @@ async function scenario(browser) {
     /* ── K5. 3D ── */
     console.log('\n── K5. 3D: поворот, «Каркас», нарисованные детали');
     must('K5 вид «3D»', await view(page, '3d'), 'НУЛЕВОЙ СЕЛЕКТОР: вида «3D» нет');
-    const sceneStart = Date.now();
-    await page.waitForSelector('[data-studio-viewport] canvas', { timeout: 90_000 }).catch(() => undefined);
-    await page.waitForFunction(() => typeof window.__mwCadBays === 'function' && typeof window.__mwCadState === 'function', null, { timeout: 60_000 }).catch(() => undefined);
-    const sceneMs = Date.now() - sceneStart;
-    const cameraBefore = await page.evaluate(() => window.__mwCadState?.().camera ?? null);
-    const canvas = await page.evaluate(() => {
-      const c = document.querySelector('[data-studio-viewport] canvas');
-      if (!c) return null;
-      const r = c.getBoundingClientRect();
-      return { x: r.left + r.width * 0.5, y: r.top + r.height * 0.55 };
-    });
-    if (!canvas) {
-      const state = await page.evaluate(() => {
-        const viewport = document.querySelector('[data-studio-viewport]');
-        return {
-          view: viewport?.getAttribute('data-view') ?? null,
-          scene: Boolean(viewport?.querySelector('[data-scene]')),
-          text: viewport?.textContent?.replace(/\s+/g, ' ').trim().slice(0, 160) ?? null,
-        };
-      });
-      await page.screenshot({ path: `${OUT}/FAIL-K5-no-canvas.png` });
-      must(
-        'K5 холст сцены',
-        false,
-        `НУЛЕВОЙ СЕЛЕКТОР: canvas в рабочей области нет за ${sceneMs} мс · вид ${state.view} · [data-scene] ${state.scene} · ` +
-          `текст «${state.text}» · ошибки страницы: ${pageErrors.slice(0, 2).join(' | ') || 'нет'}`,
-      );
+    const settled = await sceneSettled(page);
+    if (!sceneOk(settled)) {
+      await page.screenshot({ path: `${OUT}/FAIL-K5-scene.png` });
+      must('K5 сцена готова: data-scene-state «ready», холст с размером', false, `${sceneWords(settled)} · ошибки страницы: ${pageErrors.slice(0, 2).join(' | ') || 'нет'}`);
     }
-    check('K5 холст сцены', true, `${sceneMs} мс до готовности`);
+    check('K5 сцена готова: data-scene-state «ready», холст с размером', true, sceneWords(settled));
+    const cameraBefore = await page.evaluate(() => window.__mwCadState?.().camera ?? null);
+    const canvas = settled.center;
     await page.mouse.move(canvas.x, canvas.y);
     await page.mouse.down();
     for (let i = 1; i <= 12; i++) await page.mouse.move(canvas.x + i * 12, canvas.y - i * 3);
@@ -717,8 +728,8 @@ async function scenario(browser) {
       `${chipWords(fill)} · схема ${reSheet ? `${reSheet.partitions.map((p) => `${p.from}…${p.to}`).join(' ')} · полок ${reSheet.shelves.length}` : 'НУЛЕВОЙ СЕЛЕКТОР: отсеков на схеме нет'}`,
     );
     await view(page, '3d');
-    await page.waitForFunction(() => typeof window.__mwCadBays === 'function', null, { timeout: 60_000 }).catch(() => undefined);
-    await sleep(1000);
+    const reSettled = await sceneSettled(page);
+    check('K9 после перезагрузки сцена готова: data-scene-state «ready», холст с размером', sceneOk(reSettled), sceneWords(reSettled));
     const reCad = await scene3d(page, cabinetId);
     const reCadShelves = reCad?.parts.filter((p) => p.partId.includes(':b1:shelf:')) ?? [];
     check(
@@ -759,8 +770,8 @@ async function scenario(browser) {
     check('K10 1024: без горизонтального вылета', overflow <= 0, `вылет ${overflow} px`);
     await tab.screenshot({ path: `${OUT}/R6-1024-schematic-frame.png` });
     await view(tab, '3d');
-    await tab.waitForFunction(() => typeof window.__mwCadBays === 'function', null, { timeout: 60_000 }).catch(() => undefined);
-    await sleep(1200);
+    const tabSettled = await sceneSettled(tab);
+    check('K10 1024: сцена готова: data-scene-state «ready», холст с размером', sceneOk(tabSettled), sceneWords(tabSettled));
     const tabCad = await scene3d(tab, cabinetId);
     check('K10 1024: в 3D обведён отсек 2', tabCad?.highlight?.bayId === 'b2', tabCad?.highlight ? `${tabCad.highlight.bayId} ${tabCad.highlight.size.join('×')}` : 'рамки нет');
     await tab.screenshot({ path: `${OUT}/R7-1024-3d.png` });

@@ -1,7 +1,6 @@
 'use client';
 
-import dynamic from 'next/dynamic';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import ElevationDrawing from './ElevationDrawing';
 import { wallLabel } from '@/lib/millwork/walls';
 import PlanDrawing from './PlanDrawing';
@@ -21,20 +20,103 @@ import type { PathTraceSource } from './cabinet3d/pathTrace';
  * сценой, а сцена сама грузится динамически (слой 54). В первой загрузке
  * `/demo` ей не место.
  */
-const PathTracePanel = dynamic(() => import('./PathTracePanel'), { ssr: false });
 import type { PathImage } from '@/lib/millwork/pathtrace';
 import type { SceneView } from '@/lib/cameraFraming';
 import { useInteriorStore } from '@/store/useInteriorStore';
 
 /*
- * Сцена — только `dynamic(ssr:false)`: WebGL на сервере нет, а
- * статический импорт затащил бы three.js в бандл конфигуратора, который
- * обязан открываться быстро на планшете (ловушка 41).
+ * СЦЕНА ГРУЗИТСЯ ПО ТРЕБОВАНИЮ И УМЕЕТ СКАЗАТЬ, ЧТО НЕ ЗАГРУЗИЛАСЬ (R01.1).
+ *
+ * Статический импорт затащил бы three.js в бандл конфигуратора, который
+ * обязан открываться быстро на планшете (ловушка 41), — поэтому `import()`
+ * в эффекте, только в браузере. Не `next/dynamic`: он строится на
+ * `React.lazy`, а тот запоминает упавший импорт навсегда — оборванная сеть
+ * оставила бы 3D пустой до перезагрузки страницы, без слов и без повтора.
+ * Упавший чанк webpack сбрасывает, и повторный `import()` идёт заново.
  */
-const CadScene = dynamic(() => import('./cabinet3d/CadScene'), {
-  ssr: false,
-  loading: () => <div className="h-full w-full animate-pulse rounded-[var(--r-panel)] bg-navy/40" />,
-});
+const loadCadScene = () => import('./cabinet3d/CadScene').then((module) => module.default);
+/* Плашка «Рендер по чертежу» — тем же путём: её чанк тоже грузится на входе в 3D. */
+const loadPathTracePanel = () => import('./PathTracePanel').then((module) => module.default);
+
+/**
+ * ЧАНК ПО ТРЕБОВАНИЮ, С ОТКАЗОМ КАК СОСТОЯНИЕМ (R01.1).
+ *
+ * Упавший `next/dynamic` бросает ошибку до ближайшей границы — у Studio её
+ * нет, и при оборванной сети на входе в 3D исчезала вся страница: холстов
+ * 0, слов 0 (замерено: чанк плашки рендера 3800 не пришёл — Studio упала).
+ * Здесь отказ — значение `error`, `retry` грузит заново.
+ */
+function useChunk<T>(load: () => Promise<T>, wanted: boolean): { value: T | null; error: unknown; retry: () => void } {
+  const [value, setValue] = useState<T | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    /* Не нужен — прежний отказ не висит до следующего входа. */
+    if (!wanted) {
+      setError(null);
+      return;
+    }
+    if (value) return;
+    let alive = true;
+    setError(null);
+    load()
+      .then((loaded) => {
+        if (alive) setValue(() => loaded);
+      })
+      .catch((failure: unknown) => {
+        if (alive) setError(failure ?? new Error('чанк не загрузился'));
+      });
+    return () => {
+      alive = false;
+    };
+  }, [wanted, value, attempt, load]);
+  const retry = useCallback(() => {
+    setError(null);
+    setAttempt((n) => n + 1);
+  }, []);
+  return { value, error, retry };
+}
+
+/** Почему 3D нет — словами, а не стеком (CLAUDE.md: причина названа словами). */
+const SCENE_FAILURE = {
+  chunk: '3D не загрузилась: часть программы для сцены не пришла с сервера — нет связи или сайт только что обновился.',
+  webgl: '3D не загрузилась: браузер не дал видеокарту (WebGL) — на этом устройстве сцена не рисуется.',
+  lost: '3D остановилась: видеокарта сбросила сцену (потерян контекст WebGL).',
+  crash: '3D не нарисовалась: ошибка программы при построении сцены.',
+} as const;
+
+/** Долгое ожидание первого кадра — словами, но не отказом: сцена жива и может прийти. */
+const SCENE_SLOW_WORDS = '3D готовится дольше обычного: больше 20 с без первого кадра. Можно подождать или повторить.';
+
+/** Через сколько ожидание первого кадра называется словами. */
+const SCENE_SLOW_MS = 20_000;
+
+/**
+ * Граница ошибок сцены: WebGL, которого браузер не дал, или ошибка при
+ * построении — это отказ одной сцены, а не всей страницы Studio.
+ */
+class SceneBoundary extends Component<
+  { onFailure: (words: string, error: unknown) => void; children: ReactNode },
+  { failed: boolean }
+> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: unknown) {
+    const text = error instanceof Error ? error.message : String(error);
+    this.props.onFailure(
+      /webgl|context/i.test(text) ? SCENE_FAILURE.webgl : /chunk/i.test(text) ? SCENE_FAILURE.chunk : SCENE_FAILURE.crash,
+      error,
+    );
+  }
+
+  render() {
+    return this.state.failed ? null : this.props.children;
+  }
+}
 import type { RunRow } from '@/lib/millwork/selection';
 import type { LibraryGap } from '@/lib/millwork/moduleLibrary';
 import type { CommPoint, LayoutIssue, Run } from '@/types/millwork';
@@ -295,6 +377,73 @@ export default function RunSchematic({
   }, []);
   /** Счётчик «Вернуть вид»: смена ключа ставит камеру заново. */
   const [homeKey, setHomeKey] = useState(0);
+
+  /*
+   * СОСТОЯНИЕ 3D — ГРУЗИТСЯ, ГОТОВА ИЛИ ОТКАЗ (R01.1).
+   *
+   * «Готова» — только по сигналу самой сцены: холст ненулевого размера и
+   * отрисованный кадр. Отказ называется словами, рядом «Повторить»; упавшая
+   * сцена не роняет Studio. Каждый вход в 3D и «Повторить» — новая попытка.
+   */
+  const sceneChunk = useChunk(loadCadScene, view === 'scene');
+  const SceneComponent = sceneChunk.value;
+  const [scene, setScene] = useState<{ state: 'loading' | 'ready' | 'failed'; failure: string | null; attempt: number }>(
+    { state: 'loading', failure: null, attempt: 0 },
+  );
+  const failScene = useCallback((failure: string, error?: unknown) => {
+    if (error !== undefined) console.error(`Сцена 3D: ${failure}`, error);
+    setScene((prev) => ({ ...prev, state: 'failed', failure }));
+  }, []);
+  const onSceneReady = useCallback(
+    () => setScene((prev) => (prev.state === 'loading' ? { ...prev, state: 'ready' } : prev)),
+    [],
+  );
+  const onSceneLost = useCallback(() => failScene(SCENE_FAILURE.lost), [failScene]);
+  const retrySceneChunk = sceneChunk.retry;
+  const retryScene = useCallback(() => {
+    retrySceneChunk();
+    setScene((prev) => ({ state: 'loading', failure: null, attempt: prev.attempt + 1 }));
+  }, [retrySceneChunk]);
+
+  /*
+   * Ушли из 3D — следующий вход будет новой попыткой: прежний отказ не
+   * висит над новой сценой, а «готова» снова только по кадру. Сброс на
+   * выходе, а не на входе: на входе он смонтировал бы холст дважды подряд.
+   */
+  useEffect(() => {
+    if (view === 'scene') return;
+    setScene((prev) =>
+      prev.state === 'loading' && prev.failure === null ? prev : { state: 'loading', failure: null, attempt: prev.attempt + 1 },
+    );
+  }, [view]);
+
+  /* Модуль сцены не пришёл — отказ сцены словами; повтор грузит заново. */
+  useEffect(() => {
+    if (view === 'scene' && sceneChunk.error) failScene(SCENE_FAILURE.chunk, sceneChunk.error);
+  }, [view, sceneChunk.error, failScene]);
+
+  /*
+   * ПЕРВЫЙ КАДР ДОЛЬШЕ 20 С — ЭТО ОЖИДАНИЕ, А НЕ ОТКАЗ (R01.1).
+   *
+   * Сначала здесь стоял отказ со снятием холста. Но кадр приходит и позже:
+   * драйвер D3D11, доделывающий программу трассировщика, держит кадры
+   * соседних страниц 30–43 с (слой 54), — и сцена, которая пришла бы на
+   * 25-й секунде, снималась навсегда. Теперь холст остаётся, состояние —
+   * `loading`, а молчать не даёт строка со словами и «Повторить». Пришёл
+   * кадр — строка уходит сама. Время копится, только пока вкладка видна:
+   * в спрятанной браузер кадров не рисует вовсе.
+   */
+  const [sceneSlow, setSceneSlow] = useState(false);
+  useEffect(() => {
+    setSceneSlow(false);
+    if (view !== 'scene' || scene.state !== 'loading') return;
+    let visibleMs = 0;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') visibleMs += 1000;
+      if (visibleMs >= SCENE_SLOW_MS) setSceneSlow(true);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [view, scene.state, scene.attempt]);
   /**
    * Во весь экран — то, что замерщик показывает клиенту.
    *
@@ -383,6 +532,10 @@ export default function RunSchematic({
       ),
     [rows],
   );
+
+  /* Плашка рендера: тот же отказ-как-состояние, что у сцены. Нужна только над непустой сценой. */
+  const renderChunk = useChunk(loadPathTracePanel, view === 'scene' && Boolean(onPathImage) && !empty);
+  const PathTracePanel = renderChunk.value;
 
   return (
     <div
@@ -595,9 +748,36 @@ export default function RunSchematic({
         }`}
       >
         {view === 'scene' ? (
-          <div className="relative h-full w-full" data-scene>
-            <CadScene
+          <div className="relative h-full w-full" data-scene data-scene-state={scene.state}>
+            {!SceneComponent && scene.state === 'loading' && (
+              <div className="h-full w-full animate-pulse rounded-[var(--r-panel)] bg-navy/40" data-scene-loading />
+            )}
+            {scene.state === 'loading' && sceneSlow && (
+              <div className="pointer-events-none absolute inset-x-0 top-1/3 z-20 flex justify-center p-6" data-scene-slow>
+                <div className="pointer-events-auto max-w-md rounded-[var(--r-panel)] bg-surface-2 p-4 text-[15px] leading-snug">
+                  <p>{SCENE_SLOW_WORDS}</p>
+                  <button type="button" data-scene-retry onClick={retryScene} className="mw-btn mw-btn-ghost mt-3">
+                    Повторить
+                  </button>
+                </div>
+              </div>
+            )}
+            {scene.state === 'failed' && (
+              <div className="absolute inset-0 z-20 flex items-center justify-center p-6" data-scene-failure>
+                <div className="max-w-md rounded-[var(--r-panel)] bg-surface-2 p-4 text-[15px] leading-snug">
+                  <p data-scene-failure-text>{scene.failure}</p>
+                  <button type="button" data-scene-retry onClick={retryScene} className="mw-btn mw-btn-primary mt-3">
+                    Повторить
+                  </button>
+                </div>
+              </div>
+            )}
+            {SceneComponent && scene.state !== 'failed' && (
+            <SceneBoundary key={scene.attempt} onFailure={failScene}>
+            <SceneComponent
               key={homeKey}
+              onReady={onSceneReady}
+              onLost={onSceneLost}
               onFraming={setFraming}
               rows={rows}
               production={production}
@@ -617,6 +797,8 @@ export default function RunSchematic({
               onRenderSource={onRenderSource}
               onFurnitureRect={onPathImage ? setFurniture : undefined}
             />
+            </SceneBoundary>
+            )}
 
             {/*
               * РАЗМЕРНЫЕ ЦЕПИ — ТОТ ЖЕ ЧЕРТЁЖ, ПОЛОЖЕННЫЙ НА КАДР.
@@ -691,6 +873,8 @@ export default function RunSchematic({
                 onClick={() => {
                   setAngle('iso');
                   setHomeKey((n) => n + 1);
+                  /* Новая камера — новая сцена: «готова» снова только по кадру. */
+                  setScene((prev) => (prev.state === 'ready' ? { ...prev, state: 'loading' } : prev));
                 }}
                 className="mw-btn mw-btn-ghost"
               >
@@ -708,7 +892,7 @@ export default function RunSchematic({
               * Строка кнопок — туда, где мебели нет (`chipPlace`), а
               * картинка и слова — в просмотре поверх сцены.
               */}
-            {onPathImage && !empty && (
+            {onPathImage && !empty && PathTracePanel && (
               <div data-scene-render data-chip-place={chipPlace(furniture, wide)} className="contents">
                 <PathTracePanel
                   compact
@@ -719,6 +903,18 @@ export default function RunSchematic({
                   onImage={onPathImage}
                   projectId={projectId}
                 />
+              </div>
+            )}
+            {/* Плашка рендера не пришла — сцена работает, отказ назван на месте плашки. */}
+            {onPathImage && !empty && !PathTracePanel && Boolean(renderChunk.error) && (
+              <div
+                className={`${CHIP_CLASS[chipPlace(furniture, wide)]} rounded-[var(--r-panel)] bg-navyDeep/90 p-2 text-[13px] leading-snug text-graphiteMw`}
+                data-pathtrace-failure
+              >
+                Рендер по чертежу не загрузился: часть программы не пришла с сервера. 3D работает без него.
+                <button type="button" data-pathtrace-retry onClick={renderChunk.retry} className="mw-btn mw-btn-ghost mt-1 w-full">
+                  Повторить
+                </button>
               </div>
             )}
 

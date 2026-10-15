@@ -116,7 +116,59 @@ type Props = {
    * узком — по ширине, и свободно сверху и снизу (слой 54).
    */
   onFurnitureRect?: (rect: FurnitureRect | null) => void;
+  /**
+   * СЦЕНА ГОТОВА (R01.1): холст ненулевого размера и в нём отрисован хотя
+   * бы один кадр. Смонтированный компонент — ещё не сцена: холст бывает
+   * 0×0, а кадр не нарисован, и «готово» в этот момент было бы неправдой.
+   */
+  onReady?: () => void;
+  /** Видеокарта сбросила сцену: потерян контекст WebGL. */
+  onLost?: () => void;
 };
+
+/**
+ * ЖДЁТ ПЕРВЫЙ КАДР И СЛУШАЕТ ПОТЕРЮ КОНТЕКСТА (R01.1).
+ *
+ * Кадр заказывается `invalidate` только до первого нарисованного: при
+ * `frameloop="demand"` покой остаётся покоем (ловушка 481), а первого
+ * кадра без заказа может не случиться вовсе.
+ */
+function SceneReady({ onReady, onLost }: { onReady?: () => void; onLost?: () => void }) {
+  const gl = useThree((state) => state.gl);
+  const invalidate = useThree((state) => state.invalidate);
+
+  useEffect(() => {
+    if (!onReady) return;
+    let raf = 0;
+    let done = false;
+    const tick = () => {
+      if (done) return;
+      const canvas = gl.domElement;
+      if (gl.info.render.frame > 0 && canvas.width > 0 && canvas.height > 0) {
+        done = true;
+        onReady();
+        return;
+      }
+      invalidate();
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => {
+      done = true;
+      cancelAnimationFrame(raf);
+    };
+  }, [gl, invalidate, onReady]);
+
+  useEffect(() => {
+    if (!onLost) return;
+    const canvas = gl.domElement;
+    const lost = () => onLost();
+    canvas.addEventListener('webglcontextlost', lost);
+    return () => canvas.removeEventListener('webglcontextlost', lost);
+  }, [gl, onLost]);
+
+  return null;
+}
 
 /** Прямоугольник мебели на холсте, CSS-пиксели; `width`/`height` — сам холст. */
 export type FurnitureRect = { left: number; top: number; right: number; bottom: number; width: number; height: number };
@@ -167,6 +219,8 @@ export default function CadScene({
   onRenderSource,
   instantCamera = false,
   onFurnitureRect,
+  onReady,
+  onLost,
 }: Props) {
   /*
    * ГАБАРИТ МЕБЕЛИ, А НЕ КОМНАТЫ.
@@ -355,6 +409,7 @@ export default function CadScene({
       {onFurnitureRect && <FurnitureRectProbe bounds={bounds} onRect={onFurnitureRect} />}
       {/* Последним: к этому эффекту камера поставлена и стены спрятаны. */}
       <RenderSource onRenderSource={onRenderSource} />
+      <SceneReady onReady={onReady} onLost={onLost} />
     </Canvas>
   );
 }
