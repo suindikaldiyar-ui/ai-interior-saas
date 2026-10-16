@@ -93,6 +93,8 @@ function groupOf(line: EstimateLine): EstimateGroupKey {
     key === 'drawer_box' ||
     key === 'bay_drawer_box' ||
     key === 'bay_drawer_slide' ||
+    key === 'bay_rod' ||
+    key === 'bay_rod_holder' ||
     key === 'coat_hook' ||
     key === 'shoe_rack' ||
     key === 'hanging_bracket' ||

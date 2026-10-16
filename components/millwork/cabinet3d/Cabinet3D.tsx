@@ -550,20 +550,21 @@ export default function Cabinet3D({
     const bay = layout?.bays.find((item) => item.id === selectedBay.bayId);
     if (!layout || !bay) return null;
     const t = layout.envelope.thicknessMm;
+    /* Выбрана горизонтальная зона (R02B) — рамка по её просвету, числа те же `bayLayout`. */
+    const zone = selectedBay.zoneId ? (bay.zones?.find((item) => item.id === selectedBay.zoneId) ?? null) : null;
+    const fromMm = zone ? zone.fromMm : t;
+    const toMm = zone ? zone.toMm : layout.envelope.heightMm - t;
     return {
       moduleId: entry.unit.id,
       bayId: bay.id,
+      zoneId: zone?.id ?? null,
       zM: entry.zM,
       position: [
         entry.x + (bay.xFromMm + bay.xToMm) / 2 / MM,
-        entry.y + layout.envelope.heightMm / 2 / MM,
+        entry.y + (fromMm + toMm) / 2 / MM,
         -entry.depthM / 2,
       ] as [number, number, number],
-      scale: [
-        bay.widthMm / MM,
-        (layout.envelope.heightMm - 2 * t) / MM,
-        entry.depthM,
-      ] as [number, number, number],
+      scale: [bay.widthMm / MM, (toMm - fromMm) / MM, entry.depthM] as [number, number, number],
     };
   }, [selectedBay, modules, uppers, production.carcassMm, run.production]);
   const bayEdges = useMemo(() => {
@@ -869,7 +870,7 @@ export default function Cabinet3D({
           <lineSegments
             name="bay-highlight"
             /* Инструмент выбора, а не мебель: в рендер по чертежу не идёт. */
-            userData={{ helper: true, moduleId: bayFrame.moduleId, bayId: bayFrame.bayId }}
+            userData={{ helper: true, moduleId: bayFrame.moduleId, bayId: bayFrame.bayId, zoneId: bayFrame.zoneId }}
             geometry={bayEdges}
             material={bayEdgeMaterial}
             position={bayFrame.position}

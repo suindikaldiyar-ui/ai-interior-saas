@@ -88,7 +88,7 @@ type Props = {
   /** Габарит получен из допущения — на чертеже он идёт пунктиром. */
   assumedTotal?: boolean;
   /** Выбранный отсек модуля (R01): подсвечен на виде «Внутри». */
-  selectedBay?: { moduleId: string; bayId: string; drawerId?: string } | null;
+  selectedBay?: { moduleId: string; bayId: string; zoneId?: string; drawerId?: string } | null;
   selectedModuleId?: string | null;
   onSelect?: (moduleId: string) => void;
   /**
@@ -344,6 +344,7 @@ function ModuleInside({
   k = 1,
   bays = null,
   selectedBayId = null,
+  selectedZoneId = null,
   selectedDrawerId = null,
 }: {
   unit: Module;
@@ -356,6 +357,8 @@ function ModuleInside({
   bays?: BayLayout | null;
   /** Выбранный отсек: подсвечен рамкой. */
   selectedBayId?: string | null;
+  /** Выбранная горизонтальная зона выбранного отсека (R02B): подсвечена заливкой. */
+  selectedZoneId?: string | null;
   /** Выбранный ящик отсека (R02A): обведён на листе. */
   selectedDrawerId?: string | null;
   onFillChange?: (moduleId: string, fill: ModuleFill) => void;
@@ -472,6 +475,87 @@ function ModuleInside({
                 strokeWidth={1.2 * k}
               />
             ) : null,
+          )}
+          {/*
+            * ГОРИЗОНТАЛЬНЫЕ ЗОНЫ (R02B): выбранная зона — заливкой, как отсек;
+            * перегородка — доской с толщиной, а не линией: это физическая
+            * деталь раскроя; штанга — условным знаком, как у секций с
+            * вешалкой, с высотой оси. Числа — `bayLayout`.
+            */}
+          {bays.bays.flatMap((bay) =>
+            (bay.zones ?? []).map((zone) =>
+              bay.id === selectedBayId && zone.id === selectedZoneId ? (
+                <rect
+                  key={`zone-sel-${bay.id}-${zone.id}`}
+                  data-bay-zone-selected={`${bay.id}:${zone.id}`}
+                  x={xAt(bay.xFromMm)}
+                  y={yAt(zone.toMm)}
+                  width={Math.max(0, xAt(bay.xToMm) - xAt(bay.xFromMm))}
+                  height={Math.max(0, yAt(zone.fromMm) - yAt(zone.toMm))}
+                  fill="var(--cyan)"
+                  fillOpacity={0.18}
+                  stroke="var(--cyan)"
+                  strokeWidth={1.2 * k}
+                />
+              ) : null,
+            ),
+          )}
+          {bays.bays.flatMap((bay) =>
+            bay.dividers.map((divider) => (
+              <rect
+                key={divider.partId}
+                data-bay-divider={divider.partId}
+                data-from-mm={divider.xFromMm}
+                data-to-mm={divider.xToMm}
+                data-y-from-mm={divider.yFromMm}
+                data-y-to-mm={divider.yToMm}
+                x={xAt(divider.xFromMm)}
+                y={yAt(divider.yToMm)}
+                width={Math.max(0.5, xAt(divider.xToMm) - xAt(divider.xFromMm))}
+                height={Math.max(0.5, yAt(divider.yFromMm) - yAt(divider.yToMm))}
+                fill="var(--blueprint)"
+                fillOpacity={0.25}
+                stroke="var(--blueprint)"
+                strokeWidth={0.8 * k}
+              />
+            )),
+          )}
+          {bays.bays.flatMap((bay) =>
+            bay.rods.map((rod) => (
+              <g key={rod.partId} data-bay-rod={rod.partId} data-at-mm={rod.atMm} data-from-mm={rod.xFromMm} data-to-mm={rod.xToMm}>
+                <line
+                  x1={xAt(rod.xFromMm) + 3}
+                  y1={yAt(rod.atMm)}
+                  x2={xAt(rod.xToMm) - 3}
+                  y2={yAt(rod.atMm)}
+                  stroke="var(--blueprint)"
+                  strokeWidth={0.8 * k}
+                  strokeDasharray="6 3"
+                />
+                <circle cx={xAt((rod.xFromMm + rod.xToMm) / 2)} cy={yAt(rod.atMm)} r={3} fill="none" stroke="var(--blueprint)" strokeWidth={0.8 * k} />
+                <text className="mw-num" x={xAt(rod.xToMm) - 3} y={yAt(rod.atMm) - 3} textAnchor="end" fontSize={6} fill="var(--graphite-mw)" pointerEvents="none">
+                  штанга {rod.atMm}
+                </text>
+              </g>
+            )),
+          )}
+          {bays.bays.flatMap((bay) =>
+            (bay.zones ?? [])
+              .filter((zone) => zone.mezzanine)
+              .map((zone) => (
+                <text
+                  key={`mezz-${bay.id}-${zone.id}`}
+                  data-bay-mezzanine={`${bay.id}:${zone.id}`}
+                  x={xAt((bay.xFromMm + bay.xToMm) / 2)}
+                  y={yAt((zone.fromMm + zone.toMm) / 2) + 2}
+                  textAnchor="middle"
+                  fontSize={6}
+                  fill="var(--graphite-mw)"
+                  pointerEvents="none"
+                >
+                  антресоль {zone.heightMm}
+                </text>
+              )),
           )}
           {bays.partitions.map((partition) => (
             <rect
@@ -1547,6 +1631,7 @@ export default function ElevationDrawing({
             k={k}
             bays={bayLayout(unit, bayEnvelope(unit, run))}
             selectedBayId={selectedBay?.moduleId === unit.id ? selectedBay.bayId : null}
+            selectedZoneId={selectedBay?.moduleId === unit.id ? (selectedBay.zoneId ?? null) : null}
             selectedDrawerId={selectedBay?.moduleId === unit.id ? (selectedBay.drawerId ?? null) : null}
           />
         )}

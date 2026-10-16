@@ -85,6 +85,12 @@ export const TOP_PANEL_NAME = 'Крыша';
 export const TOP_RAIL_PANEL_NAME = 'Планки верхние';
 export const BACK_PANEL_NAME = 'Задняя стенка';
 export const DIVIDER_PANEL_NAME = 'Перегородка вертикальная';
+/**
+ * ГОРИЗОНТАЛЬНАЯ ПЕРЕГОРОДКА ОТСЕКА (R02B) — несущая панель между зонами.
+ * Своё имя, а не «Полка»: полка лежит на полкодержателях и переставляется,
+ * перегородка делит отсек на зоны — и в смете она корпус, а не полка.
+ */
+export const HDIVIDER_PANEL_NAME = 'Перегородка горизонтальная';
 export const DRAWER_FRONT_PANEL_NAME = 'Фронт ящика';
 /**
  * ФАЛЬШ-ПАНЕЛЬ УГЛА — ДЕТАЛЬ, А НЕ ВЫЧЕТ ИЗ ДЛИНЫ.
@@ -376,6 +382,29 @@ function modulePanels(
         edgeType: thick,
         grain: 'along',
         partIds: bays.partitions.map((partition) => partition.partId),
+      });
+    }
+    /*
+     * ГОРИЗОНТАЛЬНЫЕ ПЕРЕГОРОДКИ (R02B) — из той же `bayLayout`: длина —
+     * просвет отсека (вкладная между боковиной и перегородкой, как дно),
+     * глубина — «перегородка мельче корпуса» цеха, как у вертикальной.
+     * Строка — на отсек, у каждой — ИД своих деталей. Полкой она не
+     * считается ни здесь, ни в смете: деталь одна.
+     */
+    for (const bay of bays.bays) {
+      if (bay.dividers.length === 0) continue;
+      push({
+        name: HDIVIDER_PANEL_NAME,
+        material,
+        thicknessMm: t,
+        lengthMm: bay.dividers[0].lengthMm,
+        widthMm: bay.dividers[0].depthMm,
+        qty: bay.dividers.length,
+        edges: { long: 1, short: 0 },
+        edgeType: thick,
+        grain: 'across',
+        bayId: bay.id,
+        partIds: bay.dividers.map((divider) => divider.partId),
       });
     }
   }

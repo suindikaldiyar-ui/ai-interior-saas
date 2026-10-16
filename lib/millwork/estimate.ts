@@ -14,7 +14,8 @@ import { resolveHardware } from './hardware';
 import { SLIDING_DOOR, displayLedMeters, sectionSpec, slidingDoorCount } from './sections';
 import { MODULE_VARIANTS, isSinkBase, variantEstimateKeys } from './moduleVariants';
 import { zoneProfile } from './zones';
-import { drawerHeights } from './drawerCount';
+import { bayDrawerStackOf, drawerHeights } from './drawerCount';
+import { bayEnvelope, bayLayout } from './bays';
 import { millingLink, type MillingItem } from './milling';
 import { carcassLink, type CarcassItem } from './carcassMaterial';
 import { frontOf } from './frontMaterial';
@@ -853,6 +854,7 @@ export function buildEstimateDrafts(
   drafts.push(...sectionDrafts(run));
 
   drafts.push(...bayDrawerDrafts(run, hardwareItems));
+  drafts.push(...bayRodDrafts(run, production));
 
   /*
    * Техника и мойка — отдельными позициями, их клиент часто покупает сам.
@@ -937,10 +939,12 @@ function bayDrawerDrafts(run: Run, hardwareItems: Map<string, HardwareItem>): Dr
 
   for (const unit of allModules(run)) {
     for (const bay of unit.fill?.bays ?? []) {
-      if (!bay.drawers) continue;
-      const count = drawerHeights(bay.drawers).length;
+      /* Блок в отсеке (R02A) или в его зоне (R02B) — одна и та же оценка. */
+      const stack = bayDrawerStackOf(bay);
+      if (!stack) continue;
+      const count = drawerHeights(stack).length;
       drawers += count;
-      const id = bay.drawers.slideItemId;
+      const id = stack.slideItemId;
       const item = id ? hardwareItems.get(id) : undefined;
       if (item) {
         const entry = chosen.get(item.id) ?? { item, count: 0 };
@@ -988,6 +992,49 @@ function bayDrawerDrafts(run: Run, hardwareItems: Map<string, HardwareItem>): Dr
     estimated: 'короб не рассчитан: правил короба цеха нет — оценка по ставке «Ящик в сборе»',
   });
   return drafts;
+}
+
+/**
+ * ШТАНГИ ЗОН ОТСЕКОВ (R02B) — ОЦЕНКОЙ, А НЕ ЦЕНОЙ.
+ *
+ * Штанга из каталога не выбирается: артикула, сечения и держателей нет.
+ * Поэтому строка своя (`bay_rod`), по ставке «Штанга для одежды» на
+ * пролёт в свету отсека — та же длина, что рисуют сцена и лист
+ * (`bayLayout`), — и сказана оценкой. Держатели — по два на штангу, по
+ * ставке «Держатель штанги», тоже оценкой: какие держатели, никто не
+ * выбирал. Прежние строки штанг секций (`wardrobe_rod`) не тронуты.
+ */
+function bayRodDrafts(run: Run, production: ProductionSettings): Draft[] {
+  let lengthMm = 0;
+  let rods = 0;
+  for (const unit of allModules(run)) {
+    if (!unit.fill?.bays?.some((bay) => bay.zones?.some((zone) => zone.rod))) continue;
+    for (const bay of bayLayout(unit, bayEnvelope(unit, run, production))?.bays ?? []) {
+      for (const rod of bay.rods) {
+        lengthMm += rod.lengthMm;
+        rods += 1;
+      }
+    }
+  }
+  if (rods === 0) return [];
+  return [
+    {
+      key: 'bay_rod',
+      title: 'Штанги отсеков — штанга не выбрана',
+      unit: 'mp',
+      quantity: round2(lengthMm / MM_IN_M),
+      rateKey: 'wardrobe_rod',
+      estimated: 'штанга не выбрана из каталога — оценка по ставке «Штанга для одежды» на пролёт в свету отсека',
+    },
+    {
+      key: 'bay_rod_holder',
+      title: 'Держатели штанг отсеков — не выбраны',
+      unit: 'pcs',
+      quantity: 2 * rods,
+      rateKey: 'rod_holder',
+      estimated: 'держатели не выбраны — оценка по ставке «Держатель штанги», по два на штангу',
+    },
+  ];
 }
 
 function hardwareTitle(kind: Run['options']['hardwareClass']): string {

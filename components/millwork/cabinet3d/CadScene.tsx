@@ -1224,6 +1224,7 @@ function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
           ? {
               moduleId: frame.userData.moduleId as string,
               bayId: frame.userData.bayId as string,
+              zoneId: (frame.userData.zoneId as string | null | undefined) ?? null,
               center: [mm(frame.position.x), mm(frame.position.y), mm(frame.position.z)],
               size: [mm(frame.scale.x), mm(frame.scale.y), mm(frame.scale.z)],
             }

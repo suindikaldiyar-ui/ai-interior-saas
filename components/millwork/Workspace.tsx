@@ -4854,10 +4854,16 @@ export default function Workspace(props: WorkspaceProps) {
                 selectedDrawerId={selectedBay?.moduleId === selectedUnit.id ? (selectedBay.drawerId ?? null) : null}
                 onSelectDrawer={(drawerId) => {
                   const bayId = /:(b\d+):drawer:\d+$/.exec(drawerId)?.[1];
-                  if (bayId) setSelectedBay({ moduleId: selectedUnit.id, bayId, drawerId });
+                  if (bayId) {
+                    /* Ящик в зоне (R02B): выбранная зона остаётся выбранной. */
+                    const zoneId = selectedBay?.moduleId === selectedUnit.id && selectedBay.bayId === bayId ? selectedBay.zoneId : undefined;
+                    setSelectedBay({ moduleId: selectedUnit.id, bayId, ...(zoneId ? { zoneId } : {}), drawerId });
+                  }
                 }}
                 openIds={openParts}
                 onToggleOpen={toggleOpenPart}
+                selectedZoneId={selectedBay?.moduleId === selectedUnit.id ? (selectedBay.zoneId ?? null) : null}
+                onSelectZone={(bayId, zoneId) => setSelectedBay({ moduleId: selectedUnit.id, bayId, zoneId })}
               />
             )}
             {selectedUnit && (
@@ -5767,6 +5773,7 @@ export default function Workspace(props: WorkspaceProps) {
                   assumedTotal,
                   selectedModuleId: selectedId,
                   selectedBayId: selectedBay?.moduleId === selectedId ? selectedBay.bayId : null,
+                  selectedZoneId: selectedBay?.moduleId === selectedId ? (selectedBay.zoneId ?? null) : null,
                   onSelect: selectModule,
                   changedIds,
                   mode: drawingMode,

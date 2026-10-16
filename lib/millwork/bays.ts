@@ -1,6 +1,7 @@
 import { DEFAULT_ALLOWANCES, type PartAllowances, type ProductionSettings } from '@/types/catalog';
 import type { HardwareItem } from '@/types/catalog';
-import type { BayDrawerStack, BayShelves, FillBay, Module, ModuleFill, Run } from '@/types/millwork';
+import type { BayDrawerStack, BayShelves, BayZone, FillBay, Module, ModuleFill, Run } from '@/types/millwork';
+import { DEFAULT_MEZZANINE_MM, MIN_MEZZANINE_MM } from './sections';
 import {
   MIN_DIVIDER_EDGE_MM,
   MIN_SHELF_GAP_MM,
@@ -12,10 +13,10 @@ import {
   snapTo32,
 } from './fill';
 import { shopOf } from './shop';
-import { bayDrawerCount, drawerHeights } from './drawerCount';
+import { bayDrawerCount, bayDrawerStackOf, drawerHeights } from './drawerCount';
 
 /* Число ящиков и высоты их зон — в модуле без зависимостей (см. drawerCount.ts). */
-export { bayDrawerCount, drawerHeights };
+export { bayDrawerCount, bayDrawerStackOf, drawerHeights };
 
 /**
  * ОТСЕКИ КОРПУСА — ОДИН РАСЧЁТ ГЕОМЕТРИИ НА РАСКРОЙ, СЦЕНУ И ЛИСТ (R01).
@@ -42,6 +43,39 @@ export { bayDrawerCount, drawerHeights };
 
 /** Уже этого отсек — щель, а не отсек: то же число, что у старой перегородки. */
 export const MIN_BAY_MM = MIN_DIVIDER_EDGE_MM;
+
+/**
+ * НИЖЕ ЭТОГО ГОРИЗОНТАЛЬНАЯ ЗОНА — ЩЕЛЬ (R02B): то же число, что держит
+ * просвет между полками и минимальный ящик, — «туда ничего не положить».
+ * Своего числа у зоны нет: подтверждённой минимальной высоты зоны у цеха нет.
+ */
+export const MIN_ZONE_MM = MIN_SHELF_GAP_MM;
+
+/**
+ * СЕЧЕНИЕ ШТАНГИ В СЦЕНЕ И НА ЛИСТЕ, мм — условное.
+ *
+ * Это то же число, которым сцена рисует штангу у прежних секций с вешалкой
+ * («труба 25 мм»). Артикула штанги нет: у позиций каталога сечения разные
+ * (круг 20, овал 30 × 15 — см. W00), и ни одна не выбрана. Поэтому
+ * сечением проверяется только, что штанга не входит в перегородку и
+ * полку, а держатели, присадка и нагрузка не считаются и названы словами.
+ */
+export const ROD_VISUAL_DIAMETER_MM = 25;
+
+/**
+ * С КАКОЙ ВЫСОТЫ НАЧИНАЕТСЯ ШТАНГА В ЗОНЕ: на 100 мм ниже верха зоны.
+ *
+ * Начальное значение поля, а не размер производства — то же число, что у
+ * секций «Длинная вешалка» и «Две штанги» (`defaultFill`: штанга на
+ * 100 мм ниже полки или крыши над ней). Человек сразу видит его числом и
+ * правит под свои плечики.
+ */
+export const ROD_START_BELOW_TOP_MM = 100;
+
+/** Что про штангу зоны известно и что нет — одна строка на сцену, лист и инспектор. */
+export const ROD_NOTE =
+  'Штанга — условный референс: артикул из каталога не выбран, держатели и присадка не рассчитаны, ' +
+  'высота для одежды и нагрузка не проверены.';
 
 /** Что модуль знает о себе: габарит и правила цеха. Все числа — мм. */
 export type BayEnvelope = {
@@ -112,6 +146,78 @@ export type BayShelfPart = {
   lengthMm: number;
   depthMm: number;
   thicknessMm: number;
+  /**
+   * Зона отсека, где стоит полка (R02B). Пусто — отсек без зон, и ИД
+   * полки прежний: «<модуль>:<отсек>:shelf:<номер>». В зоне ИД с зоной —
+   * «<модуль>:<отсек>:<зона>:shelf:<номер в зоне>», номер — снизу в зоне.
+   */
+  zoneId?: string;
+};
+
+/** Что лежит в горизонтальной зоне: одно содержимое на зону. */
+export type ZoneKind = 'empty' | 'shelves' | 'drawers' | 'rod';
+
+/** Горизонтальная зона отсека (R02B): просвет по высоте от низа корпуса, мм. */
+export type ResolvedZone = {
+  id: string;
+  /** Номер снизу вверх, с нуля. */
+  index: number;
+  kind: ZoneKind;
+  mezzanine: boolean;
+  /** Низ и верх просвета зоны от низа корпуса, мм: от панели под ней до панели над ней. */
+  fromMm: number;
+  toMm: number;
+  heightMm: number;
+  /** Между какими высотами могут стоять полки зоны (середина полки), мм — те же правила, что у отсека. */
+  shelfFromMm: number;
+  shelfToMm: number;
+};
+
+/**
+ * ГОРИЗОНТАЛЬНАЯ ПЕРЕГОРОДКА (R02B) — одна физическая панель между двумя
+ * зонами отсека: от боковины или перегородки до следующей, толщиной
+ * корпуса цеха. ИД — от зоны НАД ней: «<модуль>:<отсек>:<зона>:divider».
+ */
+export type BayDividerPart = {
+  partId: string;
+  bayId: string;
+  /** Зона над перегородкой: перегородка — её нижняя грань. */
+  zoneId: string;
+  /** Номер снизу вверх, с нуля. */
+  index: number;
+  xFromMm: number;
+  xToMm: number;
+  /** Низ и верх панели от низа корпуса, мм. */
+  yFromMm: number;
+  yToMm: number;
+  lengthMm: number;
+  depthMm: number;
+  thicknessMm: number;
+};
+
+/**
+ * ШТАНГА ЗОНЫ (R02B) — условный референс: пролёт — просвет отсека, сечение
+ * — `ROD_VISUAL_DIAMETER_MM`, по глубине — середина корпуса, как у прежних
+ * секций с вешалкой. Ничего из этого не каталожный размер (`verified`).
+ */
+export type BayRodPart = {
+  /** ИД: «<модуль>:<отсек>:<зона>:rod». */
+  partId: string;
+  bayId: string;
+  zoneId: string;
+  /** Ось от низа корпуса, мм. */
+  atMm: number;
+  /** Ось ниже верха зоны, мм — то, что хранится. */
+  belowTopMm: number;
+  xFromMm: number;
+  xToMm: number;
+  /** Пролёт в свету отсека, мм — по нему смета считает погонные метры (оценкой). */
+  lengthMm: number;
+  diameterMm: number;
+  /** Ось по глубине от передней кромки корпуса, мм (минус — внутрь). */
+  zMm: number;
+  verified: false;
+  note: string;
 };
 
 export type BayPartition = {
@@ -135,9 +241,16 @@ export type ResolvedBay = {
   xToMm: number;
   widthMm: number;
   mode: BayShelves['mode'];
+  /** Все полки отсека снизу вверх — и его собственные, и полки его зон (R02B). */
   shelves: BayShelfPart[];
-  /** Блок ящиков отсека (R02A); `null` — ящиков нет. */
+  /** Блок ящиков отсека (R02A) — в самом отсеке или в его зоне; `null` — ящиков нет. */
   drawerStack: ResolvedDrawerStack | null;
+  /** Горизонтальные зоны снизу вверх (R02B); `null` — отсек без зон. */
+  zones: ResolvedZone[] | null;
+  /** Горизонтальные перегородки снизу вверх (R02B). */
+  dividers: BayDividerPart[];
+  /** Штанги зон (R02B). */
+  rods: BayRodPart[];
 };
 
 /** Фасад ящика отсека: вкладной в проём, координаты от левого-нижнего угла корпуса, мм. */
@@ -194,6 +307,8 @@ export type ResolvedDrawerStack = {
   front: BayDrawerStack['front'];
   slideItemId: string | null;
   drawers: BayDrawerPart[];
+  /** Зона отсека, где стоит блок (R02B); пусто — блок в отсеке без зон. */
+  zoneId?: string;
 };
 
 export type BayLayout = {
@@ -220,14 +335,84 @@ export function bayWidths(bays: FillBay[], widthMm: number, thicknessMm: number)
   return [...stored, last];
 }
 
-/** Сколько полок в наполнении — по отсекам, если они есть. Положения не нужны. */
+/** Сколько полок в наполнении — по отсекам и их зонам, если они есть. Положения не нужны. */
 export function fillShelfCount(fill: ModuleFill | undefined): number {
   if (!fill) return 0;
   if (!fill.bays) return fill.shelves.length;
+  const count = (shelves: BayShelves | undefined) =>
+    !shelves ? 0 : shelves.mode === 'even' ? shelves.count : shelves.at.length;
   return fill.bays.reduce(
-    (sum, bay) => sum + (bay.shelves.mode === 'even' ? bay.shelves.count : bay.shelves.at.length),
+    (sum, bay) => sum + count(bay.shelves) + (bay.zones ?? []).reduce((zones, zone) => zones + count(zone.shelves), 0),
     0,
   );
+}
+
+/* ─────────────────────────  Горизонтальные зоны (R02B)  ───────────────────────── */
+
+/** Просвет зоны по высоте от низа корпуса, мм. */
+type ZoneSpan = { zone: BayZone; index: number; fromMm: number; toMm: number; heightMm: number };
+
+/**
+ * ПРОСВЕТЫ ЗОН ОТСЕКА СНИЗУ ВВЕРХ.
+ *
+ * Нижняя зона стоит на дне, верхняя упирается в крышу; между зонами — по
+ * одной перегородке толщиной корпуса. Высота у всех, кроме верхней, —
+ * хранимая; верхняя — остаток. Сумма сходится с внутренней высотой
+ * корпуса до миллиметра по построению — так же, как ширины отсеков.
+ */
+function zoneSpans(zones: BayZone[], env: BayEnvelope): ZoneSpan[] {
+  const t = env.thicknessMm;
+  const innerTop = env.heightMm - t;
+  let y = t;
+  return zones.map((zone, index) => {
+    const last = index === zones.length - 1;
+    const heightMm = last ? innerTop - y : (zone.heightMm ?? Number.NaN);
+    const span = { zone, index, fromMm: y, toMm: y + heightMm, heightMm };
+    y += heightMm + t;
+    return span;
+  });
+}
+
+/**
+ * МЕЖДУ КАКИМИ ВЫСОТАМИ СТОИТ ПОЛКА ЗОНЫ — правило отсека, перенесённое на
+ * зону. У отсека полка живёт между `MIN_SHELF_GAP_MM` от низа корпуса и
+ * столько же от его верха — то есть от НАРУЖНЫХ граней дна и крыши. У зоны
+ * границы те же по смыслу: наружная грань панели под ней и панели над ней.
+ * У отсека без зон это ровно прежние 96 и высота − 96.
+ */
+function zoneShelfRange(span: { fromMm: number; toMm: number }, t: number): { lo: number; hi: number } {
+  return { lo: span.fromMm - t, hi: span.toMm + t };
+}
+
+/** Полки поровну между границами зоны — та же формула, что у отсека, на системе 32. */
+function evenShelvesIn(lo: number, hi: number, count: number): number[] {
+  const out: number[] = [];
+  for (let i = 1; i <= count; i++) {
+    const at = snapTo32(lo + ((hi - lo) * i) / (count + 1));
+    if (at < lo + MIN_SHELF_GAP_MM || at > hi - MIN_SHELF_GAP_MM) continue;
+    if (out.length > 0 && at - out[out.length - 1] < MIN_SHELF_GAP_MM) continue;
+    out.push(at);
+  }
+  return out;
+}
+
+/** Высоты полок зоны снизу вверх: поровну — выводятся, вручную — как поставил человек. */
+function zoneShelfHeights(shelves: BayShelves | undefined, range: { lo: number; hi: number }): number[] {
+  if (!shelves) return [];
+  return shelves.mode === 'even' ? evenShelvesIn(range.lo, range.hi, shelves.count) : [...shelves.at].sort((a, b) => a - b);
+}
+
+/** Что лежит в зоне. Полки числом ноль — это пустая зона, а не «зона полок». */
+export function zoneKindOf(zone: BayZone): ZoneKind {
+  if (zone.drawers) return 'drawers';
+  if (zone.rod) return 'rod';
+  const count = !zone.shelves ? 0 : zone.shelves.mode === 'even' ? zone.shelves.count : zone.shelves.at.length;
+  return count > 0 ? 'shelves' : 'empty';
+}
+
+/** Ось штанги от низа корпуса: верх зоны минус хранимое расстояние. */
+function rodAtMm(span: { toMm: number }, belowTopMm: number): number {
+  return span.toMm - belowTopMm;
 }
 
 /**
@@ -284,6 +469,26 @@ export function bayLayout(unit: Module, env: BayEnvelope): BayLayout | null {
       }
     });
 
+    const shelfAt = (atMm: number, i: number, zoneId?: string): BayShelfPart => ({
+      partId: zoneId ? `${unit.id}:${bay.id}:${zoneId}:shelf:${i + 1}` : `${unit.id}:${bay.id}:shelf:${i + 1}`,
+      bayId: bay.id,
+      index: i,
+      atMm,
+      xFromMm: x + (widthMm - lengthMm) / 2,
+      xToMm: x + (widthMm - lengthMm) / 2 + lengthMm,
+      lengthMm,
+      depthMm,
+      thicknessMm: t,
+      ...(zoneId ? { zoneId } : {}),
+    });
+
+    /*
+     * ГОРИЗОНТАЛЬНЫЕ ЗОНЫ (R02B). Полки зоны, её блок ящиков и штанга —
+     * в просвете зоны; между зонами по одной перегородке. Отсек без зон
+     * идёт прежним путём ниже, и его числа не меняются ни на миллиметр.
+     */
+    const zoned = bay.zones && bay.zones.length > 0 ? resolveZones(unit, bay, bay.zones, x, widthMm, env, problems, name) : null;
+
     resolved.push({
       id: bay.id,
       index,
@@ -291,18 +496,17 @@ export function bayLayout(unit: Module, env: BayEnvelope): BayLayout | null {
       xToMm: x + widthMm,
       widthMm,
       mode: bay.shelves.mode,
-      shelves: heights.map((atMm, i) => ({
-        partId: `${unit.id}:${bay.id}:shelf:${i + 1}`,
-        bayId: bay.id,
-        index: i,
-        atMm,
-        xFromMm: x + (widthMm - lengthMm) / 2,
-        xToMm: x + (widthMm - lengthMm) / 2 + lengthMm,
-        lengthMm,
-        depthMm,
-        thicknessMm: t,
-      })),
-      drawerStack: bay.drawers ? resolveDrawerStack(unit, bay, bay.drawers, x, widthMm, env, problems, name) : null,
+      shelves: zoned
+        ? zoned.shelves.map(({ atMm, index: i, zoneId }) => shelfAt(atMm, i, zoneId))
+        : heights.map((atMm, i) => shelfAt(atMm, i)),
+      drawerStack: zoned
+        ? zoned.drawerStack
+        : bay.drawers
+          ? resolveDrawerStack(unit, bay, bay.drawers, x, widthMm, env, problems, name)
+          : null,
+      zones: zoned ? zoned.zones : null,
+      dividers: zoned ? zoned.dividers : [],
+      rods: zoned ? zoned.rods : [],
     });
 
     x += widthMm;
@@ -360,16 +564,21 @@ function resolveDrawerStack(
   env: BayEnvelope,
   problems: string[],
   name: string,
+  /**
+   * Просвет, в котором стоит блок (R02B): у отсека без зон — от дна до
+   * крыши, ровно как раньше; у зоны — от панели под ней до панели над ней.
+   * Низ блока (`stack.fromMm`) отсчитан от низа этого просвета.
+   */
+  zone: { fromMm: number; toMm: number; id?: string } = { fromMm: env.thicknessMm, toMm: env.heightMm - env.thicknessMm },
 ): ResolvedDrawerStack {
-  const t = env.thicknessMm;
   const g = env.frontGapMm;
   const depthMm = drawerDepthMm(env);
-  const fromMm = t + stack.fromMm;
+  const fromMm = zone.fromMm + stack.fromMm;
   const heights = drawerHeights(stack);
-  const innerTop = env.heightMm - t;
+  const innerTop = zone.toMm;
   if (fromMm + stack.heightMm > innerTop) {
     problems.push(
-      `${name}: блок ящиков ${stack.fromMm}+${stack.heightMm} мм выходит за корпус — ` +
+      `${name}: блок ящиков ${stack.fromMm}+${stack.heightMm} мм выходит за ${zone.id ? 'зону' : 'корпус'} — ` +
         `${shortage(innerTop - fromMm, stack.heightMm)}.`,
     );
   }
@@ -425,7 +634,125 @@ function resolveDrawerStack(
     front: stack.front,
     slideItemId: stack.slideItemId,
     drawers,
+    ...(zone.id ? { zoneId: zone.id } : {}),
   };
+}
+
+/**
+ * ГЕОМЕТРИЯ ГОРИЗОНТАЛЬНЫХ ЗОН ОТСЕКА (R02B) — та же `bayLayout`, без второй
+ * формулы: просветы зон (`zoneSpans`), полки зоны на системе 32 между её
+ * панелями, блок ящиков R02A в просвете своей зоны, перегородка — одна
+ * панель между зонами, штанга — условным сечением. Что физически не так —
+ * в `problems` словами и миллиметрами: ничего не ужимается молча.
+ */
+function resolveZones(
+  unit: Module,
+  bay: FillBay,
+  zones: BayZone[],
+  xFrom: number,
+  widthMm: number,
+  env: BayEnvelope,
+  problems: string[],
+  name: string,
+): {
+  zones: ResolvedZone[];
+  shelves: { atMm: number; index: number; zoneId: string }[];
+  dividers: BayDividerPart[];
+  rods: BayRodPart[];
+  drawerStack: ResolvedDrawerStack | null;
+} {
+  const t = env.thicknessMm;
+  const spans = zoneSpans(zones, env);
+  const shelves: { atMm: number; index: number; zoneId: string }[] = [];
+  const rods: BayRodPart[] = [];
+  let drawerStack: ResolvedDrawerStack | null = null;
+
+  const resolvedZones = spans.map((span): ResolvedZone => {
+    const zone = span.zone;
+    const where = `${name}, зона ${span.index + 1}`;
+    const range = zoneShelfRange(span, t);
+    if (!Number.isFinite(span.heightMm) || span.heightMm < MIN_ZONE_MM) {
+      problems.push(`${where}: ${Number.isFinite(span.heightMm) ? span.heightMm : '—'} мм — ${shortage(span.heightMm, MIN_ZONE_MM)}: туда ничего не положить.`);
+    }
+    if (zone.mezzanine && span.heightMm < MIN_MEZZANINE_MM) {
+      problems.push(
+        `${name}: антресоль ${span.heightMm} мм — ${shortage(span.heightMm, MIN_MEZZANINE_MM)}: ниже ${MIN_MEZZANINE_MM} мм в неё нечего положить.`,
+      );
+    }
+    const heights = zoneShelfHeights(zone.shelves, range);
+    if (zone.shelves?.mode === 'even' && heights.length < zone.shelves.count) {
+      problems.push(`${where}: ${zone.shelves.count} полок поровну не встают — встаёт ${heights.length}.`);
+    }
+    heights.forEach((atMm, i) => {
+      if (atMm < range.lo + MIN_SHELF_GAP_MM || atMm > range.hi - MIN_SHELF_GAP_MM) {
+        problems.push(
+          `${where}: полка на ${atMm} мм выходит из зоны — полка живёт между ${range.lo + MIN_SHELF_GAP_MM} и ${range.hi - MIN_SHELF_GAP_MM} мм.`,
+        );
+      }
+      shelves.push({ atMm, index: i, zoneId: zone.id });
+    });
+    if (zone.drawers) {
+      drawerStack = resolveDrawerStack(unit, bay, zone.drawers, xFrom, widthMm, env, problems, where, {
+        fromMm: span.fromMm,
+        toMm: span.toMm,
+        id: zone.id,
+      });
+    }
+    if (zone.rod) {
+      const atMm = rodAtMm(span, zone.rod.belowTopMm);
+      const r = ROD_VISUAL_DIAMETER_MM / 2;
+      if (atMm + r > span.toMm || atMm - r < span.fromMm) {
+        problems.push(
+          `${where}: штанга на ${atMm} мм не помещается в зону ${span.fromMm}…${span.toMm} мм — ` +
+            `сечение ${ROD_VISUAL_DIAMETER_MM} мм вошло бы в панель.`,
+        );
+      }
+      rods.push({
+        partId: `${unit.id}:${bay.id}:${zone.id}:rod`,
+        bayId: bay.id,
+        zoneId: zone.id,
+        atMm,
+        belowTopMm: zone.rod.belowTopMm,
+        xFromMm: xFrom,
+        xToMm: xFrom + widthMm,
+        lengthMm: widthMm,
+        diameterMm: ROD_VISUAL_DIAMETER_MM,
+        zMm: -env.depthMm / 2,
+        verified: false,
+        note: ROD_NOTE,
+      });
+    }
+    return {
+      id: zone.id,
+      index: span.index,
+      kind: zoneKindOf(zone),
+      mezzanine: Boolean(zone.mezzanine),
+      fromMm: span.fromMm,
+      toMm: span.toMm,
+      heightMm: span.heightMm,
+      shelfFromMm: range.lo + MIN_SHELF_GAP_MM,
+      shelfToMm: range.hi - MIN_SHELF_GAP_MM,
+    };
+  });
+
+  /* Перегородка — нижняя грань каждой зоны, кроме нижней: от её просвета вниз на толщину. */
+  const dividers = spans.slice(1).map(
+    (span, i): BayDividerPart => ({
+      partId: `${unit.id}:${bay.id}:${span.zone.id}:divider`,
+      bayId: bay.id,
+      zoneId: span.zone.id,
+      index: i,
+      xFromMm: xFrom,
+      xToMm: xFrom + widthMm,
+      yFromMm: span.fromMm - t,
+      yToMm: span.fromMm,
+      lengthMm: widthMm,
+      depthMm: env.depthMm - env.allowances.dividerDepthMm,
+      thicknessMm: t,
+    }),
+  );
+
+  return { zones: resolvedZones, shelves, dividers, rods, drawerStack };
 }
 
 /** Почему блок ящиков не может быть таким — словами и числом; `null` — может. */
@@ -433,14 +760,23 @@ function drawerStackRefusal(bay: FillBay, index: number, unit: Module, env: BayE
   const stack = bay.drawers;
   if (!stack) return null;
   const label = `«${unit.label}»`;
-  const where = `отсек ${index + 1}`;
   const shelves = bayShelfHeights(bay, env.heightMm).length;
   if (shelves > 0) {
     return (
-      `${label}: в отсеке ${index + 1} полки (${shelves}) и блок ящиков — полки и ящики в одном отсеке ` +
-      'сделаем на следующем этапе. Уберите полки отсека (Количество полок 0) или блок ящиков.'
+      `${label}: в отсеке ${index + 1} полки (${shelves}) и блок ящиков без перегородки между ними — полки ` +
+      'прошли бы сквозь ящики. «Разделите горизонтально»: ящики останутся внизу, полки встанут в зону над перегородкой.'
     );
   }
+  const inner = env.heightMm - 2 * env.thicknessMm;
+  return stackRefusal(stack, label, `отсеке ${index + 1}`, inner, `корпус ${env.heightMm} мм, внутри ${inner} мм`);
+}
+
+/**
+ * БЛОК ЯЩИКОВ В ПРОСВЕТЕ — одна проверка на отсек без зон и на зону (R02B):
+ * ИД, фасад, целые миллиметры, помещается ли, сумма высот, минимальный ящик.
+ * `room` — высота просвета, мм; `roomWords` — что это за просвет, словами.
+ */
+function stackRefusal(stack: BayDrawerStack, label: string, where: string, room: number, roomWords: string): string | null {
   if (!/^d\d+$/.test(stack.id)) return `${label}: у блока ящиков пустой или неверный идентификатор (${stack.id}).`;
   if (stack.front !== 'inset') {
     return `${label}: фасад ящика в отсеке — только вкладной в проём отсека; другие фасады ящиков — следующий этап.`;
@@ -451,11 +787,10 @@ function drawerStackRefusal(bay: FillBay, index: number, unit: Module, env: BayE
   if (stack.slideItemId !== null && typeof stack.slideItemId !== 'string') {
     return `${label}: направляющая блока ящиков — позиция каталога или «не выбрана».`;
   }
-  const inner = env.heightMm - 2 * env.thicknessMm;
-  if (stack.fromMm + stack.heightMm > inner) {
+  if (stack.fromMm + stack.heightMm > room) {
     return (
-      `${label}: блок ящиков в ${where} не встанет — ${shortage(inner - stack.fromMm, stack.heightMm)}: ` +
-      `корпус ${env.heightMm} мм, внутри ${inner} мм, блок начинается на ${stack.fromMm} мм.`
+      `${label}: блок ящиков в ${where} не встанет — ${shortage(room - stack.fromMm, stack.heightMm)}: ` +
+      `${roomWords}, блок начинается на ${stack.fromMm} мм.`
     );
   }
   if (stack.drawers.mode === 'even') {
@@ -688,6 +1023,12 @@ export function baysRefusal(
 
   for (let i = 0; i < bays.length; i++) {
     const bay = bays[i];
+    /* Горизонтальные зоны (R02B): содержимое живёт в зонах, проверяется по зонам. */
+    if (bay.zones) {
+      const zoneRefusal = zonesRefusal(bay, i, unit, env, previous?.bays?.find((other) => other.id === bay.id));
+      if (zoneRefusal) return zoneRefusal;
+      continue;
+    }
     /* Блок ящиков (R02A) — до полок: в отсеке с ящиками полок быть не должно. */
     const drawerRefusal = drawerStackRefusal(bay, i, unit, env);
     if (drawerRefusal) return drawerRefusal;
@@ -736,6 +1077,146 @@ export function baysRefusal(
     }
   }
 
+  return null;
+}
+
+/**
+ * МОЖНО ЛИ ТАКИЕ ЗОНЫ В ОТСЕКЕ (R02B). Отказ — словами и миллиметрами.
+ *
+ * Порядок — от формы к содержимому: сначала есть ли зоны и не лежит ли
+ * что-то в самом отсеке поверх них, потом ИД и высоты, потом помещаются
+ * ли зоны в корпус, потом антресоль, потом содержимое каждой зоны.
+ * Положения полок, которые уже стояли в этой зоне, проверяются только на
+ * систему 32 — то же правило, что у отсека (`was`): иначе корпус, ставший
+ * ниже, запер бы и все остальные правки.
+ */
+function zonesRefusal(bay: FillBay, index: number, unit: Module, env: BayEnvelope, previous?: FillBay): string | null {
+  const zones = bay.zones!;
+  const label = `«${unit.label}»`;
+  const t = env.thicknessMm;
+
+  if (zones.length === 0) return `${label}: в отсеке ${index + 1} список зон пуст — у отсека без зон поле не пишется.`;
+  if (zones.length === 1 && !zones[0].rod) {
+    return `${label}: у отсека ${index + 1} одна зона без штанги — это отсек без перегородки, он пишется без зон.`;
+  }
+  const own = bayShelfHeights(bay, env.heightMm).length;
+  if (own > 0 || bay.drawers) {
+    const what = [own > 0 ? `полки (${own})` : null, bay.drawers ? 'блок ящиков' : null].filter(Boolean).join(' и ');
+    return `${label}: в отсеке ${index + 1} ${what} поверх горизонтальных зон — содержимое живёт в зонах, иначе детали резались бы дважды.`;
+  }
+  const ids = zones.map((zone) => zone.id);
+  if (ids.some((id) => !/^z\d+$/.test(id)) || new Set(ids).size !== ids.length) {
+    return `${label}: у зон отсека ${index + 1} повторяется или пуст идентификатор (${ids.join(', ')}).`;
+  }
+  if (zones[zones.length - 1].heightMm !== undefined) {
+    return `${label}: высота верхней зоны отсека ${index + 1} не задаётся — она получает остаток высоты корпуса.`;
+  }
+  for (let k = 0; k < zones.length - 1; k++) {
+    const h = zones[k].heightMm;
+    if (typeof h !== 'number' || !Number.isInteger(h) || h <= 0) {
+      return `${label}: высота зоны ${k + 1} отсека ${index + 1} — целое число миллиметров больше нуля, а не ${String(h)}.`;
+    }
+  }
+
+  const spans = zoneSpans(zones, env);
+  for (const span of spans) {
+    if (span.heightMm < MIN_ZONE_MM) {
+      return (
+        `${label}: зона ${span.index + 1} отсека ${index + 1} получилась бы ${span.heightMm} мм — ` +
+        `${shortage(span.heightMm, MIN_ZONE_MM)}: туда ничего не положить. Корпус ${env.heightMm} мм остаётся прежним.`
+      );
+    }
+  }
+
+  const mezzAt = zones.findIndex((zone) => zone.mezzanine);
+  if (mezzAt >= 0) {
+    if (mezzAt !== zones.length - 1 || zones.length < 2) {
+      return `${label}: антресоль — только верхняя зона отсека ${index + 1}, отделённая перегородкой.`;
+    }
+    const mezzH = spans[mezzAt].heightMm;
+    if (mezzH < MIN_MEZZANINE_MM) {
+      return (
+        `${label}: антресоль отсека ${index + 1} получилась бы ${mezzH} мм — ${shortage(mezzH, MIN_MEZZANINE_MM)}: ` +
+        `ниже ${MIN_MEZZANINE_MM} мм в неё нечего положить. Подвиньте перегородку под ней ниже.`
+      );
+    }
+  }
+
+  const stacks = zones.filter((zone) => zone.drawers).length;
+  if (stacks > 1) {
+    return `${label}: в отсеке ${index + 1} ${stacks} блока ящиков — второй блок в отсеке следующий этап.`;
+  }
+
+  for (const span of spans) {
+    const zone = span.zone;
+    const zw = `зоне ${span.index + 1} отсека ${index + 1}`;
+    const count = !zone.shelves ? 0 : zone.shelves.mode === 'even' ? zone.shelves.count : zone.shelves.at.length;
+    const filled = [count > 0 ? `полки (${count})` : null, zone.drawers ? 'блок ящиков' : null, zone.rod ? 'штанга' : null].filter(
+      (item): item is string => Boolean(item),
+    );
+    if (filled.length > 1) {
+      return (
+        `${label}: в ${zw} ${filled.join(' и ')} — у зоны одно содержимое: полки, ящики или штанга. ` +
+        'Разделите зону горизонтально, и каждое встанет в свою.'
+      );
+    }
+    if (zone.drawers) {
+      const refusal = stackRefusal(zone.drawers, label, zw, span.heightMm, `зона ${span.heightMm} мм в свету`);
+      if (refusal) return refusal;
+    }
+    if (zone.rod) {
+      const below = zone.rod.belowTopMm;
+      const r = ROD_VISUAL_DIAMETER_MM / 2;
+      if (!Number.isInteger(below) || below <= 0) {
+        return `${label}: штанга в ${zw} — целое число миллиметров ниже верха зоны, больше нуля.`;
+      }
+      if (below < r || below + r > span.heightMm) {
+        const atMm = rodAtMm(span, below);
+        return (
+          `${label}: штанга на ${atMm} мм не помещается в ${zw} (${span.fromMm}…${span.toMm} мм): ` +
+          `ось от ${span.fromMm + Math.ceil(r)} до ${span.toMm - Math.ceil(r)} мм — сечение ${ROD_VISUAL_DIAMETER_MM} мм не входит в панели.`
+        );
+      }
+    }
+    if (zone.shelves) {
+      const range = zoneShelfRange(span, t);
+      const lo = range.lo + MIN_SHELF_GAP_MM;
+      const hi = range.hi - MIN_SHELF_GAP_MM;
+      if (zone.shelves.mode === 'even') {
+        const n = zone.shelves.count;
+        if (!Number.isInteger(n) || n < 0) return `${label}: в ${zw} число полок не целое.`;
+        const fits = evenShelvesIn(range.lo, range.hi, n).length;
+        if (fits < n) {
+          return (
+            `${label}: ${n} полок в ${zw} поровну не встают — зона ${span.fromMm}…${span.toMm} мм, ` +
+            `между полками нужно от ${MIN_SHELF_GAP_MM} мм, встаёт ${fits}.`
+          );
+        }
+        continue;
+      }
+      const before = previous?.zones?.find((other) => other.id === zone.id);
+      const prevSpan = before && previous?.zones ? zoneSpans(previous.zones, env).find((s) => s.zone.id === zone.id) : undefined;
+      const was = new Set<number>(before && prevSpan ? zoneShelfHeights(before.shelves, zoneShelfRange(prevSpan, t)) : []);
+      const at = [...zone.shelves.at].sort((a, b) => a - b);
+      for (const mm of at) {
+        if (!Number.isFinite(mm)) return `${label}: в ${zw} полка без высоты — такой не бывает.`;
+        if (mm % SYSTEM32_STEP_MM !== 0) {
+          return `Полка на ${mm} мм не садится на присадку: отверстия идут шагом ${SYSTEM32_STEP_MM} мм, ближайшее — ${snapTo32(mm)} мм.`;
+        }
+        if (!was.has(mm) && (mm < lo || mm > hi)) {
+          return `Полка на ${mm} мм не встанет в ${zw}: зона ${span.fromMm}…${span.toMm} мм, полка живёт между ${lo} и ${hi} мм.`;
+        }
+      }
+      for (let k = 1; k < at.length; k++) {
+        if (at[k] - at[k - 1] < MIN_SHELF_GAP_MM && !(was.has(at[k]) && was.has(at[k - 1]))) {
+          return (
+            `Полки на ${at[k - 1]} и ${at[k]} мм в ${zw}: между ними ${at[k] - at[k - 1]} мм — ` +
+            `туда ничего не положить, нужно от ${MIN_SHELF_GAP_MM} мм.`
+          );
+        }
+      }
+    }
+  }
   return null;
 }
 
@@ -881,16 +1362,41 @@ export function removePartitionNote(unit: Module, env: BayEnvelope, bayId: strin
   const lost = bayShelfHeights(bays[at + 1], env.heightMm).length;
   const kept = bayShelfHeights(bays[at], env.heightMm).length;
   /* Ящики правого отсека (R02A) уходят вместе с ним — это названо до нажатия. */
-  const lostDrawers = bays[at + 1].drawers ? drawerHeights(bays[at + 1].drawers!).length : 0;
+  const rightStack = bayDrawerStackOf(bays[at + 1]);
+  const lostDrawers = rightStack ? drawerHeights(rightStack).length : 0;
+  /* Зоны правого отсека (R02B) — его перегородки, полки зон и штанга — тоже. */
+  const zoneWords = bayZoneWords(bays[at + 1], env);
   return (
     `Отсеки ${widths[at]} и ${widths[at + 1]} мм станут одним ${widths[at] + env.thicknessMm + widths[at + 1]} мм. ` +
     (lost > 0
       ? `Полки отсека ${at + 2} (${lost}) снимаются, остаются полки отсека ${at + 1} (${kept}).`
-      : lostDrawers > 0
+      : lostDrawers > 0 || zoneWords
         ? ''
         : `Полок в отсеке ${at + 2} нет — ничего не теряется.`) +
-    (lostDrawers > 0 ? ` Блок ящиков отсека ${at + 2} (${lostDrawers} шт.) снимается вместе с ним.` : '')
+    (lostDrawers > 0 ? ` Блок ящиков отсека ${at + 2} (${lostDrawers} шт.) снимается вместе с ним.` : '') +
+    (zoneWords ? ` Зоны отсека ${at + 2} снимаются: ${zoneWords}.` : '')
   );
+}
+
+/**
+ * ЧТО В ЗОНАХ ОТСЕКА — словами для предупреждений (R02B): горизонтальные
+ * перегородки, полки зон, штанга, антресоль. Ящики называет вызывающий —
+ * они есть и у отсека без зон. Пусто — зон нет.
+ */
+function bayZoneWords(bay: FillBay, env: BayEnvelope): string {
+  const zones = bay.zones;
+  if (!zones || zones.length === 0) return '';
+  const spans = zoneSpans(zones, env);
+  const shelves = spans.reduce((sum, span) => sum + zoneShelfHeights(span.zone.shelves, zoneShelfRange(span, env.thicknessMm)).length, 0);
+  const rods = zones.filter((zone) => zone.rod).length;
+  return [
+    zones.length > 1 ? `горизонтальные перегородки (${zones.length - 1})` : null,
+    shelves > 0 ? `полки зон (${shelves})` : null,
+    rods > 0 ? `штанга (${rods})` : null,
+    zones.some((zone) => zone.mezzanine) ? 'антресоль' : null,
+  ]
+    .filter(Boolean)
+    .join(', ');
 }
 
 /** УБРАТЬ ПЕРЕГОРОДКУ справа от отсека: два отсека становятся одним, полки — левого. */
@@ -904,9 +1410,14 @@ export function removePartition(unit: Module, env: BayEnvelope, bayId: string): 
   const absorbsLast = at + 1 === bays.length - 1;
   const next: FillBay[] = [
     ...bays.slice(0, at),
-    /* Последний отсек ширину не хранит; блок ящиков левого отсека переезжает вместе с ним (R02A). */
+    /* Последний отсек ширину не хранит; блок ящиков и зоны левого отсека переезжают вместе с ним (R02A, R02B). */
     absorbsLast
-      ? { id: bays[at].id, shelves: bays[at].shelves, ...(bays[at].drawers ? { drawers: bays[at].drawers } : {}) }
+      ? {
+          id: bays[at].id,
+          shelves: bays[at].shelves,
+          ...(bays[at].drawers ? { drawers: bays[at].drawers } : {}),
+          ...(bays[at].zones ? { zones: bays[at].zones } : {}),
+        }
       : { ...bays[at], widthMm: merged },
     ...bays.slice(at + 2),
   ];
@@ -1004,28 +1515,40 @@ function editStack(
   if (!bays || !unit.fill) return { refusal: `«${unit.label}»: модуль не разделён на отсеки.` };
   const at = bays.findIndex((bay) => bay.id === bayId);
   if (at < 0) return { refusal: `Отсека ${bayId} в модуле нет.` };
-  const stack = bays[at].drawers;
+  /* Блок лежит в отсеке (R02A) или в одной из его зон (R02B) — и правка ложится туда же. */
+  const stack = bayDrawerStackOf(bays[at]);
   if (!stack) return { refusal: `В отсеке ${at + 1} блока ящиков нет.` };
   const next = edit(stack, bays[at]);
   if (typeof next === 'string') return { refusal: next };
-  return checked(withBays(unit.fill, bays.map((bay, i) => (i === at ? { ...bay, drawers: next } : bay))), unit, env);
+  const put = (bay: FillBay): FillBay =>
+    bay.drawers
+      ? { ...bay, drawers: next }
+      : { ...bay, zones: (bay.zones ?? []).map((zone) => (zone.drawers ? { ...zone, drawers: next } : zone)) };
+  return checked(withBays(unit.fill, bays.map((bay, i) => (i === at ? put(bay) : bay))), unit, env);
+}
+
+/** Начальный блок ящиков в просвете высотой `room`: до трёх ящиков поровну в `DRAWER_STACK_START_MM`. */
+function startStack(room: number): BayDrawerStack {
+  const heightMm = Math.min(DRAWER_STACK_START_MM, room);
+  const count = Math.max(1, Math.min(3, Math.floor(heightMm / MIN_DRAWER_MM)));
+  return { id: 'd1', fromMm: 0, heightMm, drawers: { mode: 'even', count }, front: 'inset', slideItemId: null };
 }
 
 /**
  * ДОБАВИТЬ БЛОК ЯЩИКОВ в нижнюю зону отсека: три ящика поровну в зоне
  * `DRAWER_STACK_START_MM` (или во всю внутреннюю высоту, если корпус ниже).
  * Направляющая не выбрана — блок сразу черновик, и это сказано на экране.
+ * У отсека с горизонтальными зонами блок ставится в зону — «Ящики» зоны
+ * (`setZoneFunction`).
  */
 export function addDrawerStack(unit: Module, env: BayEnvelope, bayId: string): BayEdit {
   const bays = unit.fill?.bays;
   if (!bays || !unit.fill) return { refusal: `«${unit.label}»: модуль не разделён на отсеки — сначала «Разделить вертикально».` };
   const at = bays.findIndex((bay) => bay.id === bayId);
   if (at < 0) return { refusal: `Отсека ${bayId} в модуле нет.` };
-  if (bays[at].drawers) return { refusal: `В отсеке ${at + 1} блок ящиков уже есть.` };
-  const inner = env.heightMm - 2 * env.thicknessMm;
-  const heightMm = Math.min(DRAWER_STACK_START_MM, inner);
-  const count = Math.max(1, Math.min(3, Math.floor(heightMm / MIN_DRAWER_MM)));
-  const stack: BayDrawerStack = { id: 'd1', fromMm: 0, heightMm, drawers: { mode: 'even', count }, front: 'inset', slideItemId: null };
+  if (bayDrawerStackOf(bays[at])) return { refusal: `В отсеке ${at + 1} блок ящиков уже есть.` };
+  if (bays[at].zones) return { refusal: `Отсек ${at + 1} разделён горизонтально — выберите зону и в ней «Ящики».` };
+  const stack = startStack(env.heightMm - 2 * env.thicknessMm);
   return checked(withBays(unit.fill, bays.map((bay, i) => (i === at ? { ...bay, drawers: stack } : bay))), unit, env);
 }
 
@@ -1091,8 +1614,11 @@ export function bayLossNote(before: Module, after: Module | null | undefined, en
   if (!bays || after?.fill?.bays) return null;
   const parts = bays.map((bay, i) => {
     const shelves = bayShelfHeights(bay, env.heightMm).length;
-    const drawers = bay.drawers ? drawerHeights(bay.drawers).length : 0;
-    const what = [shelves > 0 ? `полки (${shelves})` : null, drawers > 0 ? `ящики (${drawers})` : null]
+    const stack = bayDrawerStackOf(bay);
+    const drawers = stack ? drawerHeights(stack).length : 0;
+    /* Зоны (R02B): горизонтальные перегородки, полки зон, штанга, антресоль — поимённо. */
+    const zones = bayZoneWords(bay, env);
+    const what = [shelves > 0 ? `полки (${shelves})` : null, drawers > 0 ? `ящики (${drawers})` : null, zones || null]
       .filter(Boolean)
       .join(', ');
     return `отсек ${i + 1} — ${what || 'пустой'}`;
@@ -1106,35 +1632,532 @@ export function bayLossNote(before: Module, after: Module | null | undefined, en
 /** Что пропадёт, если снять блок: слова ДО нажатия. */
 export function removeDrawerStackNote(unit: Module, bayId: string): string | null {
   const bay = unit.fill?.bays?.find((item) => item.id === bayId);
-  if (!bay?.drawers) return null;
-  const count = drawerHeights(bay.drawers).length;
+  const stack = bay ? bayDrawerStackOf(bay) : null;
+  if (!stack) return null;
+  const count = drawerHeights(stack).length;
   return (
     `Блок из ${count} ящ. снимется: фасады ящиков (${count} шт.) уйдут из раскроя, «Ящики в сборе» и направляющие — ` +
-    'из сметы. Отсек станет пустым.'
+    `из сметы. ${bay?.drawers ? 'Отсек' : 'Зона'} станет пустой.`
   );
 }
 
-/** СНЯТЬ БЛОК ЯЩИКОВ: отсек становится пустым, полки не появляются сами. */
+/** СНЯТЬ БЛОК ЯЩИКОВ: отсек (или его зона) становится пустым, полки не появляются сами. */
 export function removeDrawerStack(unit: Module, env: BayEnvelope, bayId: string): BayEdit {
   const bays = unit.fill?.bays;
   if (!bays || !unit.fill) return { refusal: `«${unit.label}»: модуль не разделён на отсеки.` };
   const at = bays.findIndex((bay) => bay.id === bayId);
-  if (at < 0 || !bays[at].drawers) return { refusal: 'В этом отсеке блока ящиков нет.' };
-  return checked(
-    withBays(
-      unit.fill,
-      bays.map((bay, i) =>
-        i !== at
-          ? bay
-          : { id: bay.id, shelves: bay.shelves, ...(bay.widthMm !== undefined ? { widthMm: bay.widthMm } : {}) },
-      ),
-    ),
-    unit,
-    env,
-  );
+  if (at < 0 || !bayDrawerStackOf(bays[at])) return { refusal: 'В этом отсеке блока ящиков нет.' };
+  const emptied = (bay: FillBay): FillBay =>
+    bay.zones
+      ? { ...bay, zones: bay.zones.map((zone) => (zone.drawers ? withoutContent(zone) : zone)) }
+      : { id: bay.id, shelves: bay.shelves, ...(bay.widthMm !== undefined ? { widthMm: bay.widthMm } : {}) };
+  return checked(withBays(unit.fill, bays.map((bay, i) => (i !== at ? bay : emptied(bay)))), unit, env);
+}
+
+/** Зона без содержимого: ИД, высота и признак антресоли остаются. */
+function withoutContent(zone: BayZone): BayZone {
+  return {
+    id: zone.id,
+    ...(zone.heightMm !== undefined ? { heightMm: zone.heightMm } : {}),
+    ...(zone.mezzanine ? { mezzanine: true as const } : {}),
+  };
 }
 
 /** НАПРАВЛЯЮЩАЯ: позиция каталога или «не выбрана». Готовность считает `drawerStackReadiness`. */
 export function setDrawerSlide(unit: Module, env: BayEnvelope, bayId: string, slideItemId: string | null): BayEdit {
   return editStack(unit, env, bayId, (stack) => ({ ...stack, slideItemId }));
+}
+
+/* ─────────────────────────  Операции над горизонтальными зонами (R02B)  ───────────────────────── */
+
+/**
+ * Правка, которая снимает собранное, сначала отвечает СЛОВАМИ О ПОТЕРЕ
+ * (`loss`), а не наполнением: замерщик главнее алгоритма. Та же правка с
+ * подтверждением (`confirmed`) — наполнение. Отказ — словами с числом.
+ * Наполнение уходит в ряд операцией `set_fill`, как любая правка отсеков.
+ */
+export type ZoneEdit = BayEdit | { loss: string };
+
+/** Отсек как набор зон: у отсека без зон — одна зона со всем его содержимым. */
+function asZones(bay: FillBay): BayZone[] {
+  if (bay.zones) return bay.zones.map((zone) => ({ ...zone }));
+  const shelves = bay.shelves.mode === 'even' ? bay.shelves.count > 0 : bay.shelves.at.length > 0;
+  return [{ id: 'z1', ...(shelves ? { shelves: bay.shelves } : {}), ...(bay.drawers ? { drawers: bay.drawers } : {}) }];
+}
+
+/**
+ * Отсек с этими зонами — в КАНОНИЧЕСКОЙ записи: одна зона без штанги —
+ * это отсек без перегородки, и пишется он без зон, как в R01/R02A. Иначе
+ * одна и та же мебель имела бы две записи и два отпечатка.
+ */
+function bayWithZones(bay: FillBay, zones: BayZone[]): FillBay {
+  const base = { id: bay.id, ...(bay.widthMm !== undefined ? { widthMm: bay.widthMm } : {}) };
+  if (zones.length === 1 && !zones[0].rod) {
+    const zone = zones[0];
+    return { ...base, shelves: zone.shelves ?? { mode: 'manual', at: [] }, ...(zone.drawers ? { drawers: zone.drawers } : {}) };
+  }
+  return { ...base, shelves: { mode: 'manual', at: [] }, zones };
+}
+
+function nextZoneId(zones: BayZone[]): string {
+  const max = zones.reduce((m, zone) => Math.max(m, Number(zone.id.slice(1)) || 0), 0);
+  return `z${max + 1}`;
+}
+
+/** Наполнение модуля с отсеками: у модуля без отсеков — один отсек из его полок (как у «Разделить вертикально»). */
+function fillWithBays(unit: Module): { fill: ModuleFill; bays: FillBay[] } | string {
+  const fill = unit.fill;
+  if (!fill) return `«${unit.label}»: у модуля нет наполнения.`;
+  const blocker = splitBlocker(unit);
+  if (blocker) return blocker;
+  if (fill.bays) return { fill, bays: fill.bays };
+  if (fill.drawerHeights.length > 0 || fill.rodsMm.length > 0) {
+    const what = [
+      fill.drawerHeights.length > 0 ? `ящики (${fill.drawerHeights.length})` : null,
+      fill.rodsMm.length > 0 ? `штанга (${fill.rodsMm.length})` : null,
+    ]
+      .filter(Boolean)
+      .join(' и ');
+    return `«${unit.label}»: ${what} на весь модуль — их место в отсеке не задано. Делятся шкафы с полками.`;
+  }
+  const bay: FillBay = { id: 'b1', shelves: { mode: 'manual', at: [...fill.shelves] } };
+  return { fill: { ...fill, shelves: [], dividerMm: 0 }, bays: [bay] };
+}
+
+/** Общий вход операций над зонами: найти отсек, отдать его зоны, записать результат и проверить. */
+function editZones(
+  unit: Module,
+  env: BayEnvelope,
+  bayId: string,
+  edit: (zones: BayZone[], spans: ZoneSpan[], bay: FillBay, bayIndex: number) => BayZone[] | { refusal: string } | { loss: string },
+): ZoneEdit {
+  const found = fillWithBays(unit);
+  if (typeof found === 'string') return { refusal: found };
+  const at = found.bays.findIndex((bay) => bay.id === bayId);
+  if (at < 0) return { refusal: `Отсека ${bayId} в модуле нет.` };
+  const zones = asZones(found.bays[at]);
+  const result = edit(zones, zoneSpans(zones, env), found.bays[at], at);
+  if (!Array.isArray(result)) return result;
+  const next = found.bays.map((bay, i) => (i === at ? bayWithZones(bay, result) : bay));
+  return checked(withBays(found.fill, next), unit, env);
+}
+
+function zoneIndexOf(zones: BayZone[], zoneId: string | null | undefined, fallback: number): number | { refusal: string } {
+  if (zoneId === null || zoneId === undefined) return fallback;
+  const k = zones.findIndex((zone) => zone.id === zoneId);
+  return k < 0 ? { refusal: `Зоны ${zoneId} в отсеке нет.` } : k;
+}
+
+/** Содержимое зоны словами: «полки (2)», «ящики (3)», «штанга», «пусто». */
+function zoneWhat(zone: BayZone, span: ZoneSpan, t: number): string {
+  const kind = zoneKindOf(zone);
+  if (kind === 'drawers') return `ящики (${drawerHeights(zone.drawers!).length})`;
+  if (kind === 'rod') return 'штанга';
+  if (kind === 'shelves') return `полки (${zoneShelfHeights(zone.shelves, zoneShelfRange(span, t)).length})`;
+  return 'пусто';
+}
+
+/** Полки зоны — ручными высотами: деление и снятие перегородки не двигают то, что стоит. */
+function keptShelves(zone: BayZone, span: ZoneSpan, t: number): number[] {
+  return zoneShelfHeights(zone.shelves, zoneShelfRange(span, t));
+}
+
+/**
+ * РАЗДЕЛИТЬ ГОРИЗОНТАЛЬНО: зона (или отсек без зон) становится двумя зонами
+ * и одной перегородкой.
+ *
+ * Где встанет перегородка: задано — там (низ панели от низа корпуса, мм);
+ * не задано — сразу над блоком ящиков, если он в зоне есть, иначе посередине.
+ * Содержимое делится по месту: что ниже перегородки — в нижнюю зону (она
+ * сохраняет ИД), что выше — в новую верхнюю. Полки остаются на своих
+ * высотах, штанга — там, где висит; то, во что перегородка попала бы, —
+ * отказ с миллиметрами, а не сдвиг.
+ */
+export function splitBayHorizontal(
+  unit: Module,
+  env: BayEnvelope,
+  bayId: string,
+  zoneId?: string | null,
+  bottomMm?: number,
+): BayEdit {
+  const t = env.thicknessMm;
+  const result = editZones(unit, env, bayId, (zones, spans) => {
+    const k = zoneIndexOf(zones, zoneId, zones.length - 1);
+    if (typeof k !== 'number') return k;
+    const span = spans[k];
+    const zone = zones[k];
+    const stack = zone.drawers;
+    const bottom =
+      bottomMm ?? (stack ? span.fromMm + stack.fromMm + stack.heightMm : span.fromMm + Math.floor((span.heightMm - t) / 2));
+    if (!Number.isInteger(bottom)) return { refusal: 'Высота перегородки — целое число миллиметров.' };
+    const lowerH = bottom - span.fromMm;
+    const upperFrom = bottom + t;
+    const upperH = span.toMm - upperFrom;
+    if (lowerH < MIN_ZONE_MM) {
+      return { refusal: `Под перегородкой на ${bottom} мм зоне остаётся ${lowerH} мм — ${shortage(lowerH, MIN_ZONE_MM)}: туда ничего не положить.` };
+    }
+    if (upperH < MIN_ZONE_MM) {
+      return { refusal: `Над перегородкой на ${bottom}…${upperFrom} мм зоне остаётся ${upperH} мм — ${shortage(upperH, MIN_ZONE_MM)}: туда ничего не положить.` };
+    }
+    const lower: BayZone = { id: zone.id, heightMm: lowerH };
+    const upper: BayZone = {
+      id: nextZoneId(zones),
+      ...(k === zones.length - 1 ? {} : { heightMm: upperH }),
+      ...(zone.mezzanine ? { mezzanine: true as const } : {}),
+    };
+    if (stack) {
+      const top = span.fromMm + stack.fromMm + stack.heightMm;
+      if (top > bottom) {
+        return { refusal: `Перегородка на ${bottom} мм прошла бы через блок ящиков: ящики до ${top} мм — ставьте её не ниже ${top} мм.` };
+      }
+      lower.drawers = stack;
+    }
+    if (zone.rod) {
+      const at = rodAtMm(span, zone.rod.belowTopMm);
+      const r = ROD_VISUAL_DIAMETER_MM / 2;
+      if (at - r >= upperFrom) upper.rod = { belowTopMm: zone.rod.belowTopMm };
+      else if (at + r <= bottom) lower.rod = { belowTopMm: bottom - at };
+      else return { refusal: `Перегородка на ${bottom}…${upperFrom} мм попадает в штангу на ${at} мм — поставьте её выше или ниже штанги.` };
+    }
+    const heights = keptShelves(zone, span, t);
+    const below = heights.filter((mm) => mm <= bottom + t - MIN_SHELF_GAP_MM);
+    const above = heights.filter((mm) => mm >= bottom + MIN_SHELF_GAP_MM);
+    const hit = heights.find((mm) => !below.includes(mm) && !above.includes(mm));
+    if (hit !== undefined) {
+      return {
+        refusal:
+          `Полка на ${hit} мм попадает в перегородку на ${bottom}…${upperFrom} мм: от перегородки до полки нужно ` +
+          `${MIN_SHELF_GAP_MM - t} мм просвета — подвиньте полку или перегородку.`,
+      };
+    }
+    if (below.length > 0) lower.shelves = { mode: 'manual', at: below };
+    if (above.length > 0) upper.shelves = { mode: 'manual', at: above };
+    return [...zones.slice(0, k), lower, upper, ...zones.slice(k + 1)];
+  });
+  return 'loss' in result ? { refusal: result.loss } : result;
+}
+
+/**
+ * ПОДВИНУТЬ ПЕРЕГОРОДКУ: низ панели — на `bottomMm` от низа корпуса.
+ * Перегородка — нижняя грань зоны `zoneId`. Высоту меняют две соседние
+ * зоны, остальные перегородки стоят. Полки, поставленные руками, стоят на
+ * своих высотах: не помещаются в новую зону — отказ с миллиметрами, не
+ * сдвиг. Штанга висит под тем, что над ней, и едет со своей перегородкой.
+ */
+export function moveBayDivider(unit: Module, env: BayEnvelope, bayId: string, zoneId: string, bottomMm: number): BayEdit {
+  const t = env.thicknessMm;
+  const result = editZones(unit, env, bayId, (zones, spans) => {
+    const k = zones.findIndex((zone) => zone.id === zoneId);
+    if (k < 1) return { refusal: 'Под этой зоной перегородки нет: она стоит на дне.' };
+    if (!Number.isInteger(bottomMm)) return { refusal: 'Высота перегородки — целое число миллиметров.' };
+    const lowerH = bottomMm - spans[k - 1].fromMm;
+    const delta = lowerH - spans[k - 1].heightMm;
+    const next = zones.map((zone) => ({ ...zone }));
+    next[k - 1].heightMm = lowerH;
+    if (k < zones.length - 1) next[k].heightMm = spans[k].heightMm - delta;
+    /* Ручные полки двух зон — строго по новым границам: «уже стояла» здесь не оправдание, стояла она в другой зоне. */
+    const moved = zoneSpans(next, env);
+    for (const i of [k - 1, k]) {
+      const zone = next[i];
+      if (zone.shelves?.mode !== 'manual') continue;
+      const range = zoneShelfRange(moved[i], t);
+      const out = zone.shelves.at.find((mm) => mm < range.lo + MIN_SHELF_GAP_MM || mm > range.hi - MIN_SHELF_GAP_MM);
+      if (out !== undefined) {
+        return {
+          refusal:
+            `Полка на ${out} мм не встанет в зону ${moved[i].fromMm}…${moved[i].toMm} мм: полка живёт между ` +
+            `${range.lo + MIN_SHELF_GAP_MM} и ${range.hi - MIN_SHELF_GAP_MM} мм. Подвиньте полку или перегородку.`,
+        };
+      }
+    }
+    return next;
+  });
+  return 'loss' in result ? { refusal: result.loss } : result;
+}
+
+/** Что будет, если снять перегородку под зоной `zoneId`: слова ДО нажатия. */
+export function removeBayDividerNote(unit: Module, env: BayEnvelope, bayId: string, zoneId: string): string | null {
+  const bay = unit.fill?.bays?.find((item) => item.id === bayId);
+  if (!bay?.zones) return null;
+  const k = bay.zones.findIndex((zone) => zone.id === zoneId);
+  if (k < 1) return null;
+  const spans = zoneSpans(bay.zones, env);
+  const t = env.thicknessMm;
+  const lower = bay.zones[k - 1];
+  const upper = bay.zones[k];
+  const merged = spans[k].toMm - spans[k - 1].fromMm;
+  const head = `Перегородка ${spans[k].fromMm - t}…${spans[k].fromMm} мм снимется, зоны ${k} и ${k + 1} станут одной ${merged} мм.`;
+  const lowerKind = zoneKindOf(lower);
+  const upperKind = zoneKindOf(upper);
+  if (lowerKind === 'empty' || upperKind === 'empty' || (lowerKind === 'shelves' && upperKind === 'shelves')) {
+    return `${head} Ничего не теряется: всё остаётся на своих высотах${upper.mezzanine ? ', антресоли больше нет' : ''}.`;
+  }
+  return (
+    `${head} У зоны одно содержимое: остаются ${zoneWhat(lower, spans[k - 1], t)}, а ${zoneWhat(upper, spans[k], t)} ` +
+    `зоны над перегородкой снимется${upper.mezzanine ? ' вместе с антресолью' : ''}.`
+  );
+}
+
+/**
+ * УБРАТЬ ПЕРЕГОРОДКУ под зоной `zoneId`: две зоны становятся одной с ИД
+ * нижней. Всё, что стоит, остаётся на своих высотах — полки, блок ящиков,
+ * штанга. Если в обеих зонах разное содержимое, верхнее снимается — и
+ * только с подтверждением (`confirmed`), иначе ответ — слова о потере.
+ */
+export function removeBayDivider(unit: Module, env: BayEnvelope, bayId: string, zoneId: string, confirmed = false): ZoneEdit {
+  const t = env.thicknessMm;
+  return editZones(unit, env, bayId, (zones, spans) => {
+    const k = zones.findIndex((zone) => zone.id === zoneId);
+    if (k < 1) return { refusal: 'Под этой зоной перегородки нет: она стоит на дне.' };
+    const lower = zones[k - 1];
+    const upper = zones[k];
+    const from = spans[k - 1].fromMm;
+    const to = spans[k].toMm;
+    const lowerKind = zoneKindOf(lower);
+    const upperKind = zoneKindOf(upper);
+    const merged: BayZone = { id: lower.id, ...(k === zones.length - 1 ? {} : { heightMm: to - from }) };
+    /* Содержимое зоны `zone` на её месте — в просвете объединённой зоны. */
+    const carry = (zone: BayZone, span: ZoneSpan) => {
+      if (zone.drawers) merged.drawers = { ...zone.drawers, fromMm: span.fromMm - from + zone.drawers.fromMm };
+      if (zone.rod) merged.rod = { belowTopMm: to - rodAtMm(span, zone.rod.belowTopMm) };
+      const kept = keptShelves(zone, span, t);
+      if (kept.length > 0) {
+        const at = merged.shelves?.mode === 'manual' ? merged.shelves.at : [];
+        merged.shelves = { mode: 'manual', at: [...at, ...kept].sort((a, b) => a - b) };
+      }
+    };
+    const both = lowerKind !== 'empty' && upperKind !== 'empty' && !(lowerKind === 'shelves' && upperKind === 'shelves');
+    if (both && !confirmed) {
+      return { loss: removeBayDividerNote(unit, env, bayId, zoneId) ?? 'Содержимое зоны над перегородкой снимется.' };
+    }
+    carry(lower, spans[k - 1]);
+    if (!both) carry(upper, spans[k]);
+    return [...zones.slice(0, k - 1), merged, ...zones.slice(k + 1)];
+  });
+}
+
+/** Что сделает «Добавить антресоль»: слова ДО нажатия. */
+export function addBayMezzanineNote(unit: Module, env: BayEnvelope, bayId: string): string | null {
+  const bay = unit.fill?.bays?.find((item) => item.id === bayId);
+  if (!bay) return null;
+  const zones = asZones(bay);
+  const spans = zoneSpans(zones, env);
+  const top = spans[spans.length - 1];
+  const t = env.thicknessMm;
+  const bottom = top.toMm - DEFAULT_MEZZANINE_MM - t;
+  const words = [`Сверху отсека встанет антресоль ${DEFAULT_MEZZANINE_MM} мм на перегородке ${bottom}…${bottom + t} мм.`];
+  if (top.zone.rod) {
+    words.push(
+      `Штанга висит под тем, что над ней, и опустится вместе с верхом зоны: ${rodAtMm(top, top.zone.rod.belowTopMm)} → ` +
+        `${bottom - top.zone.rod.belowTopMm} мм.`,
+    );
+  }
+  if (top.zone.shelves?.mode === 'even' && zoneKindOf(top.zone) === 'shelves') {
+    words.push('Полки зоны встанут поровну заново — в зоне под антресолью.');
+  }
+  return words.join(' ');
+}
+
+/**
+ * ДОБАВИТЬ АНТРЕСОЛЬ ВНУТРИ ШКАФА: верхняя зона отсека делится, сверху —
+ * пустая зона `DEFAULT_MEZZANINE_MM` (отраслевое начало разговора об
+ * антресоли, то же, что у антресоли ряда) с признаком антресоли. Это
+ * часть ТОГО ЖЕ модуля, а не антресоль ряда (`Run.mezzanine`): отдельного
+ * верхнего модуля не появляется. Фасада у неё нет — следующий этап.
+ * Содержимое верхней зоны остаётся в ней: штанга едет с верхом зоны,
+ * поровну стоящие полки встают поровну в меньшей зоне, ручные — на своих
+ * высотах, а не помещаются — отказ с миллиметрами.
+ */
+export function addBayMezzanine(unit: Module, env: BayEnvelope, bayId: string): BayEdit {
+  const t = env.thicknessMm;
+  const result = editZones(unit, env, bayId, (zones, spans) => {
+    const k = zones.length - 1;
+    const top = spans[k];
+    if (zones[k].mezzanine) return { refusal: 'Антресоль в этом отсеке уже есть — она и есть верхняя зона.' };
+    const keptH = top.heightMm - DEFAULT_MEZZANINE_MM - t;
+    if (keptH < MIN_ZONE_MM) {
+      return {
+        refusal:
+          `Под антресолью ${DEFAULT_MEZZANINE_MM} мм верхней зоне осталось бы ${keptH} мм — ${shortage(keptH, MIN_ZONE_MM)}: ` +
+          'туда ничего не положить.',
+      };
+    }
+    const kept: BayZone = { ...zones[k], heightMm: keptH };
+    if (kept.shelves?.mode === 'manual') {
+      const range = zoneShelfRange({ fromMm: top.fromMm, toMm: top.fromMm + keptH }, t);
+      const out = kept.shelves.at.find((mm) => mm > range.hi - MIN_SHELF_GAP_MM);
+      if (out !== undefined) {
+        return { refusal: `Полка на ${out} мм оказалась бы в антресоли — полкам под ней место до ${range.hi - MIN_SHELF_GAP_MM} мм. Подвиньте или уберите полку.` };
+      }
+    }
+    return [...zones.slice(0, k), kept, { id: nextZoneId(zones), mezzanine: true as const }];
+  });
+  return 'loss' in result ? { refusal: result.loss } : result;
+}
+
+/** Что снимет смена содержимого зоны: слова ДО нажатия; `null` — терять нечего. */
+export function zoneFunctionNote(unit: Module, env: BayEnvelope, bayId: string, zoneId: string, kind: ZoneKind): string | null {
+  const bay = unit.fill?.bays?.find((item) => item.id === bayId);
+  const zones = bay ? asZones(bay) : [];
+  const k = zones.findIndex((zone) => zone.id === zoneId);
+  if (k < 0) return null;
+  const current = zoneKindOf(zones[k]);
+  if (current === 'empty' || current === kind) return null;
+  const span = zoneSpans(zones, env)[k];
+  const one = current === 'rod';
+  const instead =
+    kind === 'empty'
+      ? 'зона станет пустой'
+      : `вместо ${one ? 'неё' : 'них'} ${kind === 'rod' ? 'штанга' : kind === 'shelves' ? 'полки' : 'блок ящиков'}`;
+  return `Зона ${k + 1}: ${zoneWhat(zones[k], span, env.thicknessMm)} ${one ? 'снимется' : 'снимутся'} — ${instead}. Другие зоны и отсеки не меняются.`;
+}
+
+/**
+ * СОДЕРЖИМОЕ ЗОНЫ: пусто, полки, ящики или штанга.
+ *
+ * Новое содержимое не генерирует ничего лишнего: полки — одна, ящики —
+ * начальный блок R02A по высоте зоны, штанга — на `ROD_START_BELOW_TOP_MM`
+ * под верхом зоны. Если в зоне уже что-то стоит, ответ — слова о потере,
+ * и только подтверждённая (`confirmed`) правка снимает его.
+ */
+export function setZoneFunction(unit: Module, env: BayEnvelope, bayId: string, zoneId: string, kind: ZoneKind, confirmed = false): ZoneEdit {
+  return editZones(unit, env, bayId, (zones, spans) => {
+    const k = zones.findIndex((zone) => zone.id === zoneId);
+    if (k < 0) return { refusal: `Зоны ${zoneId} в отсеке нет.` };
+    const zone = zones[k];
+    const current = zoneKindOf(zone);
+    if (current === kind) return zones;
+    if (current !== 'empty' && !confirmed) {
+      return { loss: zoneFunctionNote(unit, env, bayId, zoneId, kind) ?? `Содержимое зоны ${k + 1} снимется.` };
+    }
+    const next: BayZone = withoutContent(zone);
+    if (kind === 'shelves') next.shelves = { mode: 'even', count: 1 };
+    if (kind === 'rod') next.rod = { belowTopMm: ROD_START_BELOW_TOP_MM };
+    if (kind === 'drawers') {
+      if (zones.some((other, i) => i !== k && other.drawers)) {
+        return { refusal: 'Блок ящиков в этом отсеке уже есть — второй блок в отсеке следующий этап.' };
+      }
+      next.drawers = startStack(spans[k].heightMm);
+    }
+    return zones.map((other, i) => (i === k ? next : other));
+  });
+}
+
+/** Правка полок одной зоны: зона пустая или с полками; штанга и ящики — словами, не молча. */
+function editZoneShelves(
+  unit: Module,
+  env: BayEnvelope,
+  bayId: string,
+  zoneId: string,
+  edit: (heights: number[], range: { lo: number; hi: number }, zone: BayZone) => BayShelves | null | string,
+): BayEdit {
+  const t = env.thicknessMm;
+  const result = editZones(unit, env, bayId, (zones, spans) => {
+    const k = zones.findIndex((zone) => zone.id === zoneId);
+    if (k < 0) return { refusal: `Зоны ${zoneId} в отсеке нет.` };
+    const zone = zones[k];
+    const kind = zoneKindOf(zone);
+    if (kind === 'rod' || kind === 'drawers') {
+      return {
+        refusal:
+          `В зоне ${k + 1} ${kind === 'rod' ? 'штанга' : 'блок ящиков'} — у зоны одно содержимое. ` +
+          'Выберите «Полки» для зоны: снимаемое будет названо до подтверждения.',
+      };
+    }
+    const range = zoneShelfRange(spans[k], t);
+    const shelves = edit(zoneShelfHeights(zone.shelves, range), range, zone);
+    if (typeof shelves === 'string') return { refusal: shelves };
+    const next: BayZone = withoutContent(zone);
+    if (shelves && (shelves.mode === 'even' ? shelves.count > 0 : shelves.at.length > 0)) next.shelves = shelves;
+    return zones.map((other, i) => (i === k ? next : other));
+  });
+  return 'loss' in result ? { refusal: result.loss } : result;
+}
+
+/** Полка в зоне — та же проверка, что `clampShelf`, но между панелями зоны. */
+function clampShelfIn(mm: number, others: number[], range: { lo: number; hi: number }): { mm: number } | { reason: string } {
+  if (mm < range.lo + MIN_SHELF_GAP_MM) {
+    return { reason: `Ниже ${range.lo + MIN_SHELF_GAP_MM} мм полка в этой зоне не встанет — под ней ничего не положить.` };
+  }
+  if (mm > range.hi - MIN_SHELF_GAP_MM) {
+    return { reason: `Выше ${range.hi - MIN_SHELF_GAP_MM} мм полку в этой зоне не закрепить: над ней перегородка или крыша.` };
+  }
+  const near = others.find((other) => Math.abs(other - mm) < MIN_SHELF_GAP_MM);
+  if (near !== undefined) {
+    return {
+      reason: `Слишком близко к полке на ${near} мм: между ними останется меньше ${MIN_SHELF_GAP_MM} мм, туда ничего не поставить.`,
+    };
+  }
+  return { mm };
+}
+
+/** ЧИСЛО ПОЛОК ЗОНЫ — поровну между её панелями. Ноль — зона пустая. */
+export function setZoneShelfCount(unit: Module, env: BayEnvelope, bayId: string, zoneId: string, count: number): BayEdit {
+  if (!Number.isInteger(count) || count < 0) return { refusal: 'Число полок — целое, от нуля.' };
+  return editZoneShelves(unit, env, bayId, zoneId, () => ({ mode: 'even', count }));
+}
+
+/** ДОБАВИТЬ ПОЛКУ В ЗОНУ: поровну — на одну больше, вручную — в середину самого высокого просвета. */
+export function addZoneShelf(unit: Module, env: BayEnvelope, bayId: string, zoneId: string): BayEdit {
+  return editZoneShelves(unit, env, bayId, zoneId, (heights, range, zone) => {
+    if (!zone.shelves || zone.shelves.mode === 'even') return { mode: 'even', count: heights.length + 1 };
+    const edges = [range.lo, ...heights, range.hi];
+    let best = 0;
+    for (let i = 1; i < edges.length; i++) if (edges[i] - edges[i - 1] > edges[best + 1] - edges[best]) best = i - 1;
+    const spot = clampShelfIn(snapTo32((edges[best] + edges[best + 1]) / 2), heights, range);
+    if ('reason' in spot) return spot.reason;
+    return { mode: 'manual', at: [...heights, spot.mm].sort((a, b) => a - b) };
+  });
+}
+
+/** УДАЛИТЬ ПОЛКУ ЗОНЫ номер `index` (снизу в зоне, с нуля). */
+export function removeZoneShelf(unit: Module, env: BayEnvelope, bayId: string, zoneId: string, index: number): BayEdit {
+  return editZoneShelves(unit, env, bayId, zoneId, (heights, _range, zone) => {
+    if (index < 0 || index >= heights.length) return `В зоне нет полки номер ${index + 1}.`;
+    if (zone.shelves?.mode === 'even') return { mode: 'even', count: zone.shelves.count - 1 };
+    return { mode: 'manual', at: heights.filter((_, i) => i !== index) };
+  });
+}
+
+/**
+ * ВЫСОТА ПОЛКИ ЗОНЫ, мм от низа корпуса до середины полки — на систему 32.
+ * Поровну стоящие полки зоны становятся ручными: двигается только эта.
+ */
+export function moveZoneShelf(unit: Module, env: BayEnvelope, bayId: string, zoneId: string, index: number, toMm: number): BayEdit {
+  return editZoneShelves(unit, env, bayId, zoneId, (heights, range) => {
+    if (index < 0 || index >= heights.length) return `В зоне нет полки номер ${index + 1}.`;
+    if (!Number.isFinite(toMm)) return 'Высота полки — число миллиметров.';
+    const others = heights.filter((_, i) => i !== index);
+    const spot = clampShelfIn(snapTo32(toMm), others, range);
+    if ('reason' in spot) return spot.reason;
+    return { mode: 'manual', at: [...others, spot.mm].sort((a, b) => a - b) };
+  });
+}
+
+/** РАСПРЕДЕЛИТЬ ПОЛКИ ЗОНЫ ПОРОВНУ: сколько стоит, столько и остаётся. */
+export function distributeZoneShelves(unit: Module, env: BayEnvelope, bayId: string, zoneId: string): BayEdit {
+  return editZoneShelves(unit, env, bayId, zoneId, (heights) => ({ mode: 'even', count: heights.length }));
+}
+
+/**
+ * ШТАНГА ЗОНЫ: ось на `belowTopMm` ниже верха зоны; `null` — убрать штангу
+ * («Убрать штангу» — это само действие, и снимает оно только штангу).
+ */
+export function setZoneRod(unit: Module, env: BayEnvelope, bayId: string, zoneId: string, belowTopMm: number | null): BayEdit {
+  const result = editZones(unit, env, bayId, (zones) => {
+    const k = zones.findIndex((zone) => zone.id === zoneId);
+    if (k < 0) return { refusal: `Зоны ${zoneId} в отсеке нет.` };
+    const zone = zones[k];
+    const kind = zoneKindOf(zone);
+    if (belowTopMm === null) {
+      if (kind !== 'rod') return { refusal: `В зоне ${k + 1} штанги нет.` };
+      return zones.map((other, i) => (i === k ? withoutContent(zone) : other));
+    }
+    if (kind !== 'rod' && kind !== 'empty') {
+      return { refusal: `В зоне ${k + 1} ${zoneWhat(zone, zoneSpans(zones, env)[k], env.thicknessMm)} — штанга встаёт в пустую зону или вместо них, с подтверждением.` };
+    }
+    if (!Number.isInteger(belowTopMm)) return { refusal: 'Высота штанги — целое число миллиметров.' };
+    return zones.map((other, i) => (i === k ? { ...withoutContent(zone), rod: { belowTopMm } } : other));
+  });
+  return 'loss' in result ? { refusal: result.loss } : result;
 }

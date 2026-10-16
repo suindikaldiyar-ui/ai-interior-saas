@@ -12,12 +12,13 @@ import {
   TAIL_FILLER_PANEL_NAME,
   TOP_PANEL_NAME,
   TOP_RAIL_PANEL_NAME,
+  HDIVIDER_PANEL_NAME,
   legName,
 } from './panels';
 import { blindPartMm, cornerFillersOf, cornerOfModule, openFrontMm } from './corner';
 import { tailFillersOf } from './countertop';
 import { moduleDepthMm, rowStandardDepthMm } from './fill';
-import { bayEnvelope, bayLayout, placeEnvelope } from './bays';
+import { bayDrawerStackOf, bayEnvelope, bayLayout, placeEnvelope } from './bays';
 import type { ProductionSettings } from '@/types/catalog';
 import type { ApplianceKind } from '@/types/millwork';
 import { FRAME_WIDTH_MM, frontKey, frontOf, isFramed } from './frontMaterial';
@@ -90,7 +91,7 @@ export type BoxDraw = {
    * чтобы проверка могла спросить «петель в сцене столько же, сколько в
    * смете».
    */
-  node?: 'hinge' | 'hinge-arm' | 'handle';
+  node?: 'hinge' | 'hinge-arm' | 'handle' | 'rod';
   /**
    * ИД ФИЗИЧЕСКОЙ ДЕТАЛИ (R01): тот же, что в строке раскроя (`Panel.partIds`).
    * Есть у полок и перегородок отсеков — по нему сверяются сцена и цех.
@@ -168,6 +169,31 @@ export type ModulePlacement = {
    */
   zM: number;
 };
+
+/**
+ * ШТАНГИ ЗОН ОТСЕКОВ (R02B) ЧИСЛАМИ — из `bayLayout`: пролёт — просвет
+ * отсека, ось — по высоте зоны, по глубине — середина корпуса. Сечение
+ * условное (`diameterMm`): штанга из каталога не выбрана, и это сказано
+ * словами в инспекторе и на листе. Коробка несёт ИД штанги: по нему
+ * сверяются сцена, лист и проверка пересечений.
+ */
+export function bayRodBoxes(unit: Module, place: ModulePlacement, production?: ProductionSettings): PartBox[] {
+  const layout = bayLayout(unit, placeEnvelope(unit, place, production));
+  if (!layout) return [];
+  return layout.bays.flatMap((bay) =>
+    bay.rods.map(
+      (rod): PartBox => ({
+        material: 'metal',
+        node: 'rod',
+        inside: true,
+        partId: rod.partId,
+        bayId: bay.id,
+        position: [place.x + (rod.xFromMm + rod.xToMm) / 2 / MM, place.y + rod.atMm / MM, rod.zMm / MM],
+        scale: [rod.lengthMm / MM, rod.diameterMm / MM, rod.diameterMm / MM],
+      }),
+    ),
+  );
+}
 
 export function carcassBoxes(
   unit: Module,
@@ -281,6 +307,29 @@ export function carcassBoxes(
         ),
         partId: partition.partId,
       });
+    }
+    /*
+     * ГОРИЗОНТАЛЬНЫЕ ПЕРЕГОРОДКИ (R02B) — те же числа, что в раскрое и на
+     * листе: от боковины или перегородки до следующей, задней кромкой в
+     * заднюю стенку, как полка.
+     */
+    for (const bay of bays.bays) {
+      for (const divider of bay.dividers) {
+        boxes.push({
+          ...at(
+            (divider.xFromMm + divider.xToMm) / 2 / MM,
+            (divider.yFromMm + divider.yToMm) / 2 / MM,
+            backFaceZ + divider.depthMm / MM / 2,
+            divider.lengthMm / MM,
+            divider.thicknessMm / MM,
+            divider.depthMm / MM,
+            true,
+            HDIVIDER_PANEL_NAME,
+          ),
+          partId: divider.partId,
+          bayId: bay.id,
+        });
+      }
     }
     return boxes;
   }
@@ -1500,6 +1549,7 @@ export function moduleBoxes(
   }));
 
   boxes.push(...applianceBoxes(unit, place, production));
+  boxes.push(...bayRodBoxes(unit, place, production));
 
 
   /*
@@ -1869,8 +1919,8 @@ export function openablePartIds(run: Run): string[] {
     if (!unit.column) {
       unit.fill?.drawerHeights.forEach((_, i) => ids.push(`${unit.id}:drawer:${i}`));
     }
-    /* Ящики отсеков (R02A): каждый своим ключом — тем же, что несут его коробки. */
-    if (unit.fill?.bays?.some((bay) => bay.drawers)) {
+    /* Ящики отсеков (R02A) — и в зонах отсеков (R02B): каждый своим ключом, тем же, что несут его коробки. */
+    if (unit.fill?.bays?.some((bay) => bayDrawerStackOf(bay))) {
       for (const bay of bayLayout(unit, bayEnvelope(unit, run))?.bays ?? []) {
         for (const drawer of bay.drawerStack?.drawers ?? []) ids.push(drawer.id);
       }

@@ -77,9 +77,10 @@ export type InteriorState = {
   /**
    * Выбранный отсек шкафа (R01): подсветка в сцене и на схеме и цель
    * правок «Внутреннего наполнения». Состояние выделения, а не
-   * конструкции — сами отсеки живут в `Module.fill.bays`.
+   * конструкции — сами отсеки живут в `Module.fill.bays`. `zoneId` —
+   * выбранная горизонтальная зона отсека (R02B): тоже только выделение.
    */
-  selectedBay: { moduleId: string; bayId: string; drawerId?: string } | null;
+  selectedBay: { moduleId: string; bayId: string; zoneId?: string; drawerId?: string } | null;
   /**
    * Подсветка витрины горит. Перед захватом кадра гаснет: светящаяся
    * полоса в clay-кадре читается моделью как часть мебели.
@@ -148,7 +149,7 @@ export type InteriorState = {
   setOpenParts: (ids: string[]) => void;
   closeAllParts: () => void;
   setCutaway: (value: boolean) => void;
-  setSelectedBay: (value: { moduleId: string; bayId: string; drawerId?: string } | null) => void;
+  setSelectedBay: (value: { moduleId: string; bayId: string; zoneId?: string; drawerId?: string } | null) => void;
   setDisplayLit: (value: boolean) => void;
   setCadAngle: (value: SceneView) => void;
   setRenderFraming: (framing: CaptureFraming) => void;

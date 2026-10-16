@@ -55,6 +55,8 @@ type ElevationHandlers = {
   selectedModuleId?: string | null;
   /** Через какой отсек выбранного модуля идёт разрез (R02A.1). */
   selectedBayId?: string | null;
+  /** Выбранная горизонтальная зона этого отсека (R02B): подсвечена на разрезе. */
+  selectedZoneId?: string | null;
   onSelect?: (moduleId: string) => void;
   changedIds?: string[];
   mode?: DrawingMode;
@@ -386,6 +388,7 @@ export default function DrawingSheet({
         inside
         selectedModuleId={elevation.selectedModuleId}
         selectedBayId={elevation.selectedBayId ?? null}
+        selectedZoneId={elevation.selectedZoneId ?? null}
         paperWidthMm={paperWidth.get('section-inside')}
       />
     ),

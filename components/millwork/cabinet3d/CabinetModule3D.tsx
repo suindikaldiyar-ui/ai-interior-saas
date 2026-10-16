@@ -4,6 +4,7 @@ import * as THREE from 'three';
 
 import { useMemo } from 'react';
 import { bayDrawerBoxes, sceneLeaves, type PartBox } from '@/lib/millwork/cabinetBoxes';
+import { ROD_VISUAL_DIAMETER_MM } from '@/lib/millwork/bays';
 import type { ProductionSettings } from '@/types/catalog';
 import InteractiveBayDrawer from './InteractiveBayDrawer';
 import InteractiveDoor from './InteractiveDoor';
@@ -61,8 +62,8 @@ type Props = {
   production?: ProductionSettings;
 };
 
-/** Штанга: труба 25 мм — то, что реально ставят в шкаф. */
-const ROD_DIAMETER_M = 0.025;
+/** Штанга: условное сечение — то же число, что у штанги зоны отсека (`ROD_VISUAL_DIAMETER_MM`). */
+const ROD_DIAMETER_M = ROD_VISUAL_DIAMETER_MM / MM;
 
 /*
  * Какая техника ВИДНА в кадре и потому стоит без створки, решает

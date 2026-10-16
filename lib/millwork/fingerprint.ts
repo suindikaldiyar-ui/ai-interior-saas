@@ -1,6 +1,6 @@
 import { beamsPart } from './ceiling';
 import { frontPart } from './frontMaterial';
-import type { Module, Run } from '@/types/millwork';
+import type { BayDrawerStack, BayShelves, Module, Run } from '@/types/millwork';
 
 /**
  * Отпечаток конфигурации.
@@ -65,18 +65,37 @@ function fillPart(unit: Module): string | undefined {
    * символа. Хранится первичное — ширины, режим и число либо высоты.
    */
   if (!fill.bays) return base;
+  const shelvesPart = (shelves: BayShelves) =>
+    shelves.mode === 'even' ? `e${shelves.count}` : `m${shelves.at.join('.')}`;
+  /*
+   * Блок ящиков (R02A) — другая мебель: фасады в раскрое, ящики и
+   * направляющие в смете. Пишется только когда есть (ловушка 246).
+   */
+  const stackPart = (stack: BayDrawerStack) =>
+    `:${stack.id}@${stack.fromMm}+${stack.heightMm}` +
+    `:${stack.drawers.mode === 'even' ? `e${stack.drawers.count}` : `m${stack.drawers.heights.join('.')}`}` +
+    `:${stack.front}:${stack.slideItemId ?? '-'}`;
   const bays = fill.bays
     .map(
       (bay) =>
-        `${bay.id}:${bay.widthMm ?? '*'}:${bay.shelves.mode === 'even' ? `e${bay.shelves.count}` : `m${bay.shelves.at.join('.')}`}` +
+        `${bay.id}:${bay.widthMm ?? '*'}:${shelvesPart(bay.shelves)}` +
+        (bay.drawers ? stackPart(bay.drawers) : '') +
         /*
-         * Блок ящиков (R02A) — другая мебель: фасады в раскрое, ящики и
-         * направляющие в смете. Пишется только когда есть (ловушка 246).
+         * Горизонтальные зоны (R02B) — другая мебель: перегородки в
+         * раскрое, полки на других высотах, штанга в смете. Пишутся только
+         * когда есть (ловушка 246): у отсеков без зон отпечаток прежний.
          */
-        (bay.drawers
-          ? `:${bay.drawers.id}@${bay.drawers.fromMm}+${bay.drawers.heightMm}` +
-            `:${bay.drawers.drawers.mode === 'even' ? `e${bay.drawers.drawers.count}` : `m${bay.drawers.drawers.heights.join('.')}`}` +
-            `:${bay.drawers.front}:${bay.drawers.slideItemId ?? '-'}`
+        (bay.zones
+          ? `|${bay.zones
+              .map(
+                (zone) =>
+                  `${zone.id}:${zone.heightMm ?? '*'}` +
+                  (zone.shelves ? `:${shelvesPart(zone.shelves)}` : '') +
+                  (zone.drawers ? stackPart(zone.drawers) : '') +
+                  (zone.rod ? `:r${zone.rod.belowTopMm}` : '') +
+                  (zone.mezzanine ? ':mz' : ''),
+              )
+              .join(';')}`
           : ''),
     )
     .join(',');

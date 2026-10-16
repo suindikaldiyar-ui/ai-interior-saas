@@ -19,10 +19,15 @@ export default function BayLossDialog({
   text,
   onConfirm,
   onCancel,
+  title = 'Изменение снимет собранное в шкафу',
+  confirmLabel = 'Снять отсеки и применить',
 }: {
   text: string;
   onConfirm: () => void;
   onCancel: () => void;
+  /** Заголовок: у правки зоны (R02B) он свой — снимается не отсек, а содержимое зоны. */
+  title?: string;
+  confirmLabel?: string;
 }) {
   const cancel = useRef<HTMLButtonElement>(null);
 
@@ -45,7 +50,7 @@ export default function BayLossDialog({
         className="mw-panel w-full max-w-[520px] p-6"
       >
         <h2 id="bay-loss-title" className="text-[17px] font-medium">
-          Изменение снимет собранное в шкафу
+          {title}
         </h2>
         <p id="bay-loss-text" className="mt-3 text-[15px] leading-snug" data-bay-loss-text>
           {text}
@@ -58,7 +63,7 @@ export default function BayLossDialog({
             Отмена
           </button>
           <button type="button" className="mw-btn mw-btn-primary" data-bay-loss-action="confirm" onClick={onConfirm}>
-            Снять отсеки и применить
+            {confirmLabel}
           </button>
         </div>
       </div>

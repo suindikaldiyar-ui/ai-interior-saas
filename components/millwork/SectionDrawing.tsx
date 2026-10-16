@@ -63,6 +63,8 @@ type Props = {
    * отсек с ящиками, иначе крайний левый с полками.
    */
   selectedBayId?: string | null;
+  /** Выбранная горизонтальная зона этого отсека (R02B): подсвечена полосой. */
+  selectedZoneId?: string | null;
   /**
    * Ширина вида на бумаге, миллиметры.
    *
@@ -95,7 +97,12 @@ export function hasFilling(unit: Module): boolean {
    * раскрой; перегородка между отсеками — тоже наполнение.
    */
   return Boolean(
-    fill && (fillShelfCount(fill) > 0 || fill.rodsMm.length > 0 || (fill.bays?.length ?? 0) > 1),
+    fill &&
+      (fillShelfCount(fill) > 0 ||
+        fill.rodsMm.length > 0 ||
+        (fill.bays?.length ?? 0) > 1 ||
+        /* Зоны отсека и блок ящиков (R02A, R02B) — тоже наполнение, даже в единственном отсеке. */
+        (fill.bays ?? []).some((bay) => bay.zones || bay.drawers)),
   );
 }
 
@@ -136,6 +143,7 @@ export default function SectionDrawing({
   inside = false,
   selectedModuleId,
   selectedBayId = null,
+  selectedZoneId = null,
   panels = [],
   paperWidthMm,
 }: Props) {
@@ -476,6 +484,78 @@ export default function SectionDrawing({
               короб не рассчитан
             </tspan>
           </text>
+        </g>
+      )}
+
+      {/*
+        * ГОРИЗОНТАЛЬНЫЕ ЗОНЫ ОТСЕКА (R02B) — из той же `bayLayout`: перегородка
+        * сечением на своей высоте и толщине (по глубине — от стены на свою
+        * глубину, как полка), штанга — кружком условного сечения на оси,
+        * у каждой зоны — её просвет. Полки зон рисует `Filling` выше.
+        */}
+      {inside && pickedPlace && !picked!.upper && sectionBay && sectionBay.zones && (
+        <g data-section-zones={sectionBay.id}>
+          {sectionBay.zones
+            .filter((zone) => zone.id === selectedZoneId && sectionBay.id === selectedBayId)
+            .map((zone) => (
+              <rect
+                key={`sel-${zone.id}`}
+                data-section-zone-selected={zone.id}
+                x={xOf(0)}
+                y={yOf(moduleBottom + zone.toMm)}
+                width={moduleDepth}
+                height={zone.heightMm}
+                fill="var(--cyan)"
+                fillOpacity={0.12}
+                stroke="var(--cyan)"
+                strokeWidth={lw.inner}
+              />
+            ))}
+          {sectionBay.dividers.map((divider) => (
+            <rect
+              key={divider.partId}
+              data-section-divider={divider.partId}
+              data-y-from-mm={divider.yFromMm}
+              data-y-to-mm={divider.yToMm}
+              data-depth-mm={divider.depthMm}
+              x={xOf(0)}
+              y={yOf(moduleBottom + divider.yToMm)}
+              width={divider.depthMm}
+              height={divider.thicknessMm}
+              fill={cut}
+              stroke={line}
+              strokeWidth={lw.contour}
+            />
+          ))}
+          {sectionBay.rods.map((rod) => (
+            <circle
+              key={rod.partId}
+              data-section-rod={rod.partId}
+              data-at-mm={rod.atMm}
+              cx={xOf(moduleDepth + rod.zMm)}
+              cy={yOf(moduleBottom + rod.atMm)}
+              r={rod.diameterMm / 2}
+              fill="none"
+              stroke={line}
+              strokeWidth={lw.inner}
+            />
+          ))}
+          {sectionBay.zones.map((zone) => (
+            <text
+              key={zone.id}
+              className="mw-num"
+              data-section-zone={zone.id}
+              data-from-mm={zone.fromMm}
+              data-to-mm={zone.toMm}
+              x={xOf(moduleDepth) - 16}
+              y={yOf(moduleBottom + zone.toMm) + 3.4 * u}
+              textAnchor="end"
+              fontSize={2.6 * u}
+              fill="var(--graphite-mw)"
+            >
+              {`${zone.mezzanine ? 'антресоль' : `зона ${zone.index + 1}`} · ${zone.heightMm}`}
+            </text>
+          ))}
         </g>
       )}
 

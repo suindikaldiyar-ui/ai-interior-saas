@@ -1,4 +1,4 @@
-import type { BayDrawerStack, ModuleFill } from '@/types/millwork';
+import type { BayDrawerStack, FillBay, ModuleFill } from '@/types/millwork';
 
 /**
  * СКОЛЬКО ЯЩИКОВ В ОТСЕКАХ И КАКОЙ ВЫСОТЫ ИХ ЗОНЫ (R02A) — без зависимостей.
@@ -20,7 +20,19 @@ export function drawerHeights(stack: BayDrawerStack): number[] {
   return Array.from({ length: count }, (_, i) => (i === count - 1 ? stack.heightMm - base * (count - 1) : base));
 }
 
+/**
+ * БЛОК ЯЩИКОВ ОТСЕКА — где бы он ни лежал (R02B): в самом отсеке или в
+ * одной из его горизонтальных зон. Блок на отсек один; его ищут смета,
+ * выпуск в цех и счёт направляющих — одной функцией, а не каждый у себя.
+ */
+export function bayDrawerStackOf(bay: FillBay): BayDrawerStack | null {
+  return bay.drawers ?? bay.zones?.find((zone) => zone.drawers)?.drawers ?? null;
+}
+
 /** Сколько ящиков отсеков в наполнении — для сметы и направляющих. */
 export function bayDrawerCount(fill: ModuleFill | undefined): number {
-  return (fill?.bays ?? []).reduce((sum, bay) => sum + (bay.drawers ? drawerHeights(bay.drawers).length : 0), 0);
+  return (fill?.bays ?? []).reduce((sum, bay) => {
+    const stack = bayDrawerStackOf(bay);
+    return sum + (stack ? drawerHeights(stack).length : 0);
+  }, 0);
 }
