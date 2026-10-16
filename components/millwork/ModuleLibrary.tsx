@@ -214,6 +214,8 @@ export default function ModuleLibrary({
   }
 
   const ready = cards.filter((card) => !card.refusal).length;
+  /* Что снимет замена — одной строкой над карточками, ДО нажатия (R02A). */
+  const loss = cards.find((card) => card.loss)?.loss ?? null;
 
   return (
     <section className="mw-panel-flat p-4" data-library="1">
@@ -222,6 +224,11 @@ export default function ModuleLibrary({
       <p className="mb-3 text-[13px] leading-snug text-dim">
         {placeLabel} · встанет {ready} из {cards.length}
       </p>
+      {loss && (
+        <p className="mb-3 text-[13px] leading-snug text-graphiteMw" data-library-loss>
+          Замена: {loss}
+        </p>
+      )}
 
       {cards.length === 0 && (
         <p className="text-[13px] leading-snug text-dim">
@@ -243,12 +250,14 @@ export default function ModuleLibrary({
               data-variant={card.spec.kind}
               data-width={card.widthMm}
               data-refused={card.refusal ? '1' : '0'}
+              data-loss={card.loss ? '1' : undefined}
               data-delta={delta === undefined || delta === null ? '' : String(delta)}
               disabled={Boolean(card.refusal)}
               aria-pressed={card.current}
-              title={card.refusal ?? undefined}
+              title={card.refusal ?? card.loss ?? undefined}
               onClick={() => {
-                if (!card.refusal) onPick(card);
+                /* «Стоит сейчас» не нажимается: замена тем же сняла бы наполнение. */
+                if (!card.refusal && !card.current) onPick(card);
               }}
               className={[
                 'mw-card flex flex-col gap-1 rounded-[var(--r-control)] p-2 text-left',
@@ -290,6 +299,11 @@ export default function ModuleLibrary({
               ) : (
                 <span className="text-[12px] font-medium">
                   {delta === 0 ? 'без изменения цены' : `${delta > 0 ? '+' : '−'}${Math.abs(delta).toLocaleString('ru-RU')} ₸`}
+                </span>
+              )}
+              {card.loss && !card.refusal && (
+                <span className="text-[12px] leading-snug text-graphiteMw" data-card-loss>
+                  снимет отсеки
                 </span>
               )}
             </button>

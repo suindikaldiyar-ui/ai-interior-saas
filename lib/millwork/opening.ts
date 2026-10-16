@@ -1,6 +1,7 @@
 import { CORNER, hingesPerDoor, isUpperRow } from './modules';
 import { MODULE_VARIANTS } from './moduleVariants';
 import { moduleFronts, nicheFacadeSpans } from './applianceFront';
+import { bayDrawerCount } from './drawerCount';
 import type { FrontOpening, HandleKind, Module, Run } from '@/types/millwork';
 
 /**
@@ -304,6 +305,16 @@ export function leafHinges(leafHeightMm: number, opening: FrontOpening): number 
 }
 
 export function drawerSlides(unit: Module): number {
+  /* Ящики отсеков (R02A) едут на тех же направляющих: пара на ящик. */
+  return frontDrawerSlides(unit) + bayDrawerCount(unit.fill);
+}
+
+/**
+ * Направляющие ящиков НА ВСЮ ШИРИНУ — тех, у кого комплект выбран
+ * комплектацией. Ящики отсеков (R02A.1) смета считает отдельной строкой:
+ * их направляющая выбирается в блоке, а не выбрана — это оценка.
+ */
+export function frontDrawerSlides(unit: Module): number {
   return unit.column ? 0 : (unit.fill?.drawerHeights.length ?? 0);
 }
 

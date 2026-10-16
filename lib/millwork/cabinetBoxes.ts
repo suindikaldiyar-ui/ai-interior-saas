@@ -17,7 +17,7 @@ import {
 import { blindPartMm, cornerFillersOf, cornerOfModule, openFrontMm } from './corner';
 import { tailFillersOf } from './countertop';
 import { moduleDepthMm, rowStandardDepthMm } from './fill';
-import { bayLayout, placeEnvelope } from './bays';
+import { bayEnvelope, bayLayout, placeEnvelope } from './bays';
 import type { ProductionSettings } from '@/types/catalog';
 import type { ApplianceKind } from '@/types/millwork';
 import { FRAME_WIDTH_MM, frontKey, frontOf, isFramed } from './frontMaterial';
@@ -805,6 +805,69 @@ export function doorBoxes(
   ]);
 }
 
+/** Справочный габарит ящика отсека в сцене: не деталь, в раскрое его нет. */
+export const DRAWER_ENVELOPE_NAME = 'Габарит ящика (справочно)';
+
+/**
+ * ЯЩИКИ ОТСЕКОВ (R02A) ЧИСЛАМИ — из `bayLayout`, тех же чисел, что режет цех
+ * и рисует лист.
+ *
+ * Фасад — вкладной: лицом на передней кромке корпуса, весь внутри проёма
+ * отсека. За ним — ГАБАРИТ РАБОЧЕЙ ЗОНЫ ящика «внутренним» материалом: это
+ * место, которое ящик занимает, а не его короб — короб без правил цеха и
+ * подтверждённой направляющей не рассчитан. Ни ручек, ни боковин короба
+ * здесь нет: их размеров никто не подтверждал. Обе коробки несут ИД ящика
+ * (`part`), и открытый ящик едет своим мешем целиком.
+ */
+export function bayDrawerBoxes(
+  unit: Module,
+  place: ModulePlacement,
+  options: FrontOptions,
+  production?: ProductionSettings,
+): PartBox[] {
+  const layout = bayLayout(unit, placeEnvelope(unit, place, production));
+  if (!layout) return [];
+  const key = frontKey(frontWithMilling(unit, { milling: options.rowMilling }));
+  const out: PartBox[] = [];
+  for (const bay of layout.bays) {
+    for (const drawer of bay.drawerStack?.drawers ?? []) {
+      const env = drawer.envelope;
+      const front = drawer.front;
+      out.push({
+        material: 'inner',
+        part: drawer.id,
+        inside: true,
+        panel: DRAWER_ENVELOPE_NAME,
+        bayId: bay.id,
+        carcassKey: options.carcassKey ?? null,
+        /* Глубина — из `bayLayout` (`zFromMm…zToMm`): те же числа читает разрез. */
+        position: [
+          place.x + (env.xFromMm + env.xToMm) / 2 / MM,
+          place.y + (env.yFromMm + env.yToMm) / 2 / MM,
+          (env.zFromMm + env.zToMm) / 2 / MM,
+        ],
+        scale: [(env.xToMm - env.xFromMm) / MM, (env.yToMm - env.yFromMm) / MM, (env.zToMm - env.zFromMm) / MM],
+      });
+      if (options.cutaway) continue;
+      out.push({
+        material: 'front',
+        part: drawer.id,
+        partId: front.partId,
+        bayId: bay.id,
+        panel: 'Фронт ящика',
+        frontKey: key,
+        position: [
+          place.x + (front.xFromMm + front.xToMm) / 2 / MM,
+          place.y + (front.yFromMm + front.yToMm) / 2 / MM,
+          (front.zFromMm + front.zToMm) / 2 / MM,
+        ],
+        scale: [front.widthMm / MM, front.heightMm / MM, (front.zToMm - front.zFromMm) / MM],
+      });
+    }
+  }
+  return out;
+}
+
 /** Ящик в задвинутом положении: короб, фронт и ручка. */
 export function drawerBoxes(
   unit: Module,
@@ -1452,6 +1515,8 @@ export function moduleBoxes(
    */
   const drawers = unit.column ? 0 : (unit.fill?.drawerHeights.length ?? 0);
   for (let i = 0; i < drawers; i += 1) boxes.push(...drawerBoxes(unit, place, i, options));
+  /* Ящики отсеков (R02A) — своей функцией из `bayLayout`. */
+  boxes.push(...bayDrawerBoxes(unit, place, options, production));
 
   if (!options.cutaway) {
     /*
@@ -1803,6 +1868,12 @@ export function openablePartIds(run: Run): string[] {
      */
     if (!unit.column) {
       unit.fill?.drawerHeights.forEach((_, i) => ids.push(`${unit.id}:drawer:${i}`));
+    }
+    /* Ящики отсеков (R02A): каждый своим ключом — тем же, что несут его коробки. */
+    if (unit.fill?.bays?.some((bay) => bay.drawers)) {
+      for (const bay of bayLayout(unit, bayEnvelope(unit, run))?.bays ?? []) {
+        for (const drawer of bay.drawerStack?.drawers ?? []) ids.push(drawer.id);
+      }
     }
 
     /*

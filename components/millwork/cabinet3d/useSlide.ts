@@ -1,8 +1,8 @@
 'use client';
 
 import { useRef } from 'react';
-import { useFrame, useThree } from '@react-three/fiber';
-import { startMoving, stopMoving } from './motion';
+import { useFrame, type RootState } from '@react-three/fiber';
+import { frameRequestGate, startMoving, stopMoving } from './motion';
 
 /**
  * АНИМАЦИЯ НА useFrame, А НЕ НА СТОРОННЕЙ БИБЛИОТЕКЕ.
@@ -22,19 +22,18 @@ const EPSILON = 0.0005;
 /** Доля пути за кадр: мягкое торможение без пружины и перелёта. */
 const EASING = 0.18;
 
-let lastInvalidateAt = 0;
-
 /**
  * Один `invalidate()` на кадр, а не по одному из каждого меша.
  *
  * При «Открыть всё» едут десятки ящиков одновременно; каждый со своим
- * вызовом — это десятки лишних заявок на перерисовку в одном кадре.
+ * вызовом — это десятки лишних заявок на перерисовку в одном кадре. Кадр
+ * узнаётся по часам холста (`clock.elapsedTime` обновляется перед
+ * `useFrame`), а не по 4 мс между заявками: часы отбрасывали заявку
+ * следующего кадра, если он пришёл быстро, и ход вставал на полпути
+ * (`frameRequestGate`).
  */
-function requestFrame(invalidate: () => void): void {
-  const now = performance.now();
-  if (now - lastInvalidateAt < 4) return;
-  lastInvalidateAt = now;
-  invalidate();
+function requestFrame(state: RootState): void {
+  if (frameRequestGate(state.clock, state.clock.elapsedTime)) state.invalidate();
 }
 
 /* ─────────────────  Сам ход  ───────────────── */
@@ -65,9 +64,8 @@ export type SlideOptions = {
 export function useSlide({ target, apply, initial = target, onSettle }: SlideOptions): void {
   const value = useRef(initial);
   const moving = useRef(false);
-  const invalidate = useThree((state) => state.invalidate);
 
-  useFrame(() => {
+  useFrame((state) => {
     const delta = target - value.current;
 
     if (Math.abs(delta) < EPSILON) {
@@ -79,7 +77,7 @@ export function useSlide({ target, apply, initial = target, onSettle }: SlideOpt
         onSettle?.();
         // Последний кадр после остановки: иначе элемент замрёт в миллиметре
         // от цели, и это будет видно на кадре захвата.
-        requestFrame(invalidate);
+        requestFrame(state);
       }
       return;
     }
@@ -91,6 +89,6 @@ export function useSlide({ target, apply, initial = target, onSettle }: SlideOpt
 
     value.current += delta * EASING;
     apply(value.current);
-    requestFrame(invalidate);
+    requestFrame(state);
   });
 }

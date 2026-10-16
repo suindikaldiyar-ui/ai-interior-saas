@@ -7,13 +7,14 @@ import { allModules } from './layout';
 import { apronLengthMm, countertopCuts, countertopLengthMm } from './countertop';
 import { cornerOfModule } from './corner';
 import { moduleCarcassHeightMm } from './fill';
-import { CORNER_HINGE_TITLE, drawerSlides, liftKey, openingHardware } from './opening';
+import { CORNER_HINGE_TITLE, frontDrawerSlides, liftKey, openingHardware } from './opening';
 import { buildPanels, panelMaterials, SHELF_PANEL_NAME} from './panels';
 import { DEFAULT_PRODUCTION, type HardwareItem, type ProductionSettings } from '@/types/catalog';
 import { resolveHardware } from './hardware';
 import { SLIDING_DOOR, displayLedMeters, sectionSpec, slidingDoorCount } from './sections';
 import { MODULE_VARIANTS, isSinkBase, variantEstimateKeys } from './moduleVariants';
 import { zoneProfile } from './zones';
+import { drawerHeights } from './drawerCount';
 import { millingLink, type MillingItem } from './milling';
 import { carcassLink, type CarcassItem } from './carcassMaterial';
 import { frontOf } from './frontMaterial';
@@ -69,6 +70,19 @@ type Draft = {
    * цеха не подменить — эмаль по RAL не стоит как типовой фасад.
    */
   priceUnset?: string;
+  /**
+   * СТАВКА ДРУГОЙ СТАТЬИ (R02A.1): строка своя, а цена — по ключу этой
+   * статьи. Так ящики отсеков идут ОТДЕЛЬНОЙ строкой оценки, не сливаясь
+   * с подтверждёнными направляющими и ящиками, — а ставку берут ту же,
+   * второго места под цену не появляется.
+   */
+  rateKey?: string;
+  /**
+   * ОЦЕНКА, А НЕ ПОДТВЕРЖДЁННАЯ ЦЕНА — и почему, словами (R02A.1). Деньги
+   * в итоге есть, но итог помечен «с оценкой», и сумма оценки названа
+   * отдельно (`estimatedLines`).
+   */
+  estimated?: string;
 };
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
@@ -416,7 +430,8 @@ export function buildEstimateDrafts(
        * Условия ровно те же, что у отрисовки и у раскроя: фронты в
        * наполнении и не колонна.
        */
-      const drawers = drawerSlides(unit);
+      /* Ящики отсеков (R02A.1) — своей строкой оценки ниже (`bayDrawerDrafts`). */
+      const drawers = frontDrawerSlides(unit);
       if (pick) pick.slides += drawers;
       else slides += drawers;
     }
@@ -837,6 +852,8 @@ export function buildEstimateDrafts(
 
   drafts.push(...sectionDrafts(run));
 
+  drafts.push(...bayDrawerDrafts(run, hardwareItems));
+
   /*
    * Техника и мойка — отдельными позициями, их клиент часто покупает сам.
    * В колонне приборов ДВА, и второй терять нельзя: клиент заказал
@@ -896,6 +913,81 @@ function countertopTitle(kind: Run['options']['countertop']): string {
   if (kind === 'quartz') return 'кварцевый агломерат';
   if (kind === 'solid_wood') return 'массив';
   return 'ЛДСП';
+}
+
+/**
+ * ЯЩИКИ ОТСЕКОВ (R02A.1) — ОЦЕНКА ОТДЕЛЬНО ОТ ПОДТВЕРЖДЁННОЙ ЦЕНЫ.
+ *
+ * Было (R02A): направляющие ящиков отсеков сливались в строку
+ * «Направляющие (с доводчиками)» — как будто направляющую выбрали, — а
+ * «Ящики в сборе» шли как рассчитанный короб. Ни то ни другое не
+ * подтверждено: направляющая в блоке не выбрана, правил короба цеха нет.
+ *
+ * Теперь это свои строки со своим ключом: ставка — та же статья
+ * (`rateKey`), деньги в итоге те же, но строка сказана оценкой и почему
+ * (`estimated`). Выбрана направляющая из каталога — её строка по цене
+ * позиции, как у фурнитуры модуля (`hardware_<позиция>_slides`), и это
+ * уже не оценка. Короб — оценка всегда, пока у цеха нет правил короба.
+ */
+function bayDrawerDrafts(run: Run, hardwareItems: Map<string, HardwareItem>): Draft[] {
+  let drawers = 0;
+  let unchosen = 0;
+  let notInCatalog = 0;
+  const chosen = new Map<string, { item: HardwareItem; count: number }>();
+
+  for (const unit of allModules(run)) {
+    for (const bay of unit.fill?.bays ?? []) {
+      if (!bay.drawers) continue;
+      const count = drawerHeights(bay.drawers).length;
+      drawers += count;
+      const id = bay.drawers.slideItemId;
+      const item = id ? hardwareItems.get(id) : undefined;
+      if (item) {
+        const entry = chosen.get(item.id) ?? { item, count: 0 };
+        entry.count += count;
+        chosen.set(item.id, entry);
+      } else {
+        unchosen += count;
+        if (id) notInCatalog += count;
+      }
+    }
+  }
+  if (drawers === 0) return [];
+
+  const hardwareClass = run.options.hardwareClass;
+  const slideRate = `«Направляющие (${hardwareTitle(hardwareClass)})»`;
+  const drafts: Draft[] = [];
+  if (unchosen > 0) {
+    drafts.push({
+      key: 'bay_drawer_slide',
+      title: 'Направляющие ящиков отсеков — не выбраны',
+      unit: 'set',
+      quantity: unchosen,
+      rateKey: `slide_${hardwareClass}`,
+      estimated:
+        notInCatalog > 0
+          ? `выбранной направляющей нет в каталоге организации — оценка по ставке ${slideRate}`
+          : `направляющая не выбрана — оценка по ставке ${slideRate}`,
+    });
+  }
+  for (const { item, count } of Array.from(chosen.values())) {
+    drafts.push({
+      key: `hardware_${item.id}_slides`,
+      title: `${item.name} (направляющие)`,
+      unit: 'set',
+      quantity: count,
+      rate: item.price,
+    });
+  }
+  drafts.push({
+    key: 'bay_drawer_box',
+    title: 'Ящики отсеков в сборе — короб не рассчитан',
+    unit: 'set',
+    quantity: drawers,
+    rateKey: 'drawer_box',
+    estimated: 'короб не рассчитан: правил короба цеха нет — оценка по ставке «Ящик в сборе»',
+  });
+  return drafts;
 }
 
 function hardwareTitle(kind: Run['options']['hardwareClass']): string {
@@ -1189,13 +1281,15 @@ export function buildEstimate(
      * превращается в «0 ₸» оттого, что цену завели позже.
      */
     const itemPriced = draft.rate !== undefined || draft.priceUnset !== undefined;
+    /* Ставка — по ключу статьи (`rateKey`), снимок — по ключу строки. */
+    const rateKey = draft.rateKey ?? draft.key;
     let priceUnset = draft.priceUnset;
     let rate: number;
     if (inSnapshot(draft.key)) {
       rate = frozen![draft.key];
       if (itemPriced) priceUnset = rate > 0 ? undefined : (draft.priceUnset ?? PRICE_UNSET);
     } else {
-      rate = draft.priceUnset ? 0 : (draft.rate ?? rates[draft.key] ?? 0);
+      rate = draft.priceUnset ? 0 : (draft.rate ?? rates[rateKey] ?? 0);
     }
     if (priceUnset) rate = 0;
     priceSnapshot[draft.key] = rate;
@@ -1218,8 +1312,12 @@ export function buildEstimate(
       rate,
       total,
       enabled: !disabled.has(draft.key),
-      missingRate: !priceUnset && draft.rate === undefined && rateOf(draft.key) === undefined,
+      missingRate:
+        !priceUnset &&
+        draft.rate === undefined &&
+        (inSnapshot(draft.key) ? frozen![draft.key] : rates[rateKey]) === undefined,
       ...(priceUnset ? { priceUnset } : {}),
+      ...(draft.estimated ? { estimated: draft.estimated } : {}),
     };
   });
 
@@ -1281,6 +1379,15 @@ export function unpricedLines(estimate: Pick<Estimate, 'lines'>): EstimateLine[]
   return estimate.lines.filter((line) => line.enabled && Boolean(line.priceUnset));
 }
 
+/**
+ * СТРОКИ ОЦЕНКИ (R02A.1): деньги в итоге есть, но это не подтверждённая
+ * цена — направляющая не выбрана, короб не рассчитан. Экран называет их
+ * сумму отдельно от итога и помечает итог «с оценкой».
+ */
+export function estimatedLines(estimate: Pick<Estimate, 'lines'>): EstimateLine[] {
+  return estimate.lines.filter((line) => line.enabled && Boolean(line.estimated));
+}
+
 /** Что писать в колонке суммы: причину вместо «0 ₸». */
 export function lineAmountText(line: EstimateLine): string {
   return line.priceUnset ? line.priceUnset : `${formatMoney(line.total)} ₸`;
@@ -1295,6 +1402,7 @@ export function lineAmountText(line: EstimateLine): string {
 export function totalCaption(estimate: Pick<Estimate, 'lines' | 'preliminary'>): string {
   const parts = ['Итого'];
   if (estimate.preliminary) parts.push('предварительно');
+  if (estimatedLines(estimate).length > 0) parts.push('с оценкой');
   if (unpricedLines(estimate).length > 0) parts.push('неполный');
   return parts.join(' · ');
 }

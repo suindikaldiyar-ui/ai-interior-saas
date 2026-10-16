@@ -207,7 +207,7 @@ type Props = {
    */
   frontInside?: boolean;
   /** Выбранный отсек: подсвечен на схеме в режиме «Каркас». */
-  selectedBay?: { moduleId: string; bayId: string } | null;
+  selectedBay?: { moduleId: string; bayId: string; drawerId?: string } | null;
   /** Панель рабочего места спрятана: в 3D сцена занимает всё. */
   panelHidden?: boolean;
   onTogglePanel?: () => void;

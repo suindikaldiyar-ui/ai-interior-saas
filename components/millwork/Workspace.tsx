@@ -5,6 +5,7 @@ import { useInteriorStore } from '@/store/useInteriorStore';
 import dynamic from 'next/dynamic';
 import ThemeToggle from '@/components/ThemeToggle';
 import BeforeAfter from './BeforeAfter';
+import BayLossDialog from './BayLossDialog';
 import CommandBar from './CommandBar';
 import DrawingSheet from './DrawingSheet';
 import VariantStrip, { type VariantPreview } from './VariantStrip';
@@ -58,7 +59,8 @@ import {
 } from '@/lib/millwork/objectEstimate';
 import { ratesFromCatalog } from '@/lib/millwork/rates';
 import { rowStandardDepthMm } from '@/lib/millwork/fill';
-import { bayEnvelope } from '@/lib/millwork/bays';
+import { bayEnvelope, drawerReleaseBlock } from '@/lib/millwork/bays';
+import { hardwareByCategory, hardwareCatalog } from '@/lib/millwork/hardware';
 import { roomSourceOf, type RoomSource } from '@/lib/millwork/room';
 import { openingAssumptions } from '@/lib/millwork/warnings';
 import {
@@ -119,7 +121,7 @@ import SurveySheet from './SurveySheet';
 import TemplatePicker from './TemplatePicker';
 import type { RateTable } from '@/lib/millwork/estimate';
 import { unpricedLines } from '@/lib/millwork/estimate';
-import { applyOps } from '@/lib/millwork/ops';
+import { applyOps, confirmBayLoss, opsBayLoss } from '@/lib/millwork/ops';
 import MaterialLibraryPanel, { type AppliedMaterial } from './MaterialLibraryPanel';
 import {
   catalogEntriesFromRows,
@@ -1064,6 +1066,15 @@ export default function Workspace(props: WorkspaceProps) {
    * клиенту декоры, которых компания не продаёт.
    */
   const catalog = useInteriorStore((s) => s.catalog);
+  /*
+   * НАПРАВЛЯЮЩИЕ ОРГАНИЗАЦИИ (R02A) — из того же каталога, что вся
+   * фурнитура: из них выбирают направляющую блока ящиков. Пусто — выбирать
+   * не из чего, и инспектор говорит это словами.
+   */
+  const slideItems = useMemo(() => hardwareByCategory(hardwareCatalog(catalog), 'slide'), [catalog]);
+  /* Что открыто в сцене: кнопки «Открыть / Закрыть» ящика — тот же список, что у сцены. */
+  const openParts = useInteriorStore((s) => s.openParts);
+  const toggleOpenPart = useInteriorStore((s) => s.toggleOpenPart);
 
   /*
    * ФРЕЗЕРОВКИ ОРГАНИЗАЦИИ — ИЗ ТОГО ЖЕ КАТАЛОГА.
@@ -2114,6 +2125,7 @@ export default function Workspace(props: WorkspaceProps) {
       heightMm: card.heightMm,
       deltaKzt: card.deltaKzt,
       refusal: card.refusal,
+      loss: card.loss,
       active: card.active,
     }));
   }, [selectedId, activeRun, libraryInput, zone, totalOf, estimate.total]);
@@ -2343,6 +2355,20 @@ export default function Workspace(props: WorkspaceProps) {
     [activeRun, composition, layout, requirements, wallEdited],
   );
 
+  /**
+   * ПРАВКА, КОТОРАЯ СНИМЕТ ОТСЕКИ, ЖДЁТ ЧЕЛОВЕКА (R02A.1).
+   *
+   * Здесь лежит ровно та правка, что пришла в `runOps`, и куда отдать её
+   * отказ и выделение. До подтверждения не меняется ничего — ни ряд, ни
+   * запись; «Отмена» её просто выбрасывает.
+   */
+  const [pendingLoss, setPendingLoss] = useState<{
+    ops: MillworkOp[];
+    text: string;
+    onRefusal: (text: string | null) => void;
+    selectAfter?: (next: Run) => string | null;
+  } | null>(null);
+
   const runOps = useCallback(
     (
       ops: MillworkOp[],
@@ -2368,6 +2394,21 @@ export default function Workspace(props: WorkspaceProps) {
       selectAfter?: (next: Run) => string | null,
     ) => {
       if (ops.length === 0) return;
+
+      /*
+       * ОТСЕКИ НЕ СНИМАЮТСЯ МОЛЧА (R02A.1).
+       *
+       * Замена (библиотека, «Заменить», «Тип», «Техника»), вариант, секция
+       * и число фронтов ставят наполнение варианта заново. Все эти пути —
+       * и команда модели — приходят сюда, поэтому и спрашиваем здесь, один
+       * раз: правка ждёт подтверждения, а движок без него всё равно
+       * откажет словами.
+       */
+      const loss = opsBayLoss(activeRun, ops);
+      if (loss) {
+        setPendingLoss({ ops, text: loss, onRefusal, selectAfter });
+        return;
+      }
 
       /*
        * УДАЛЁННЫЙ ПРИБОР УХОДИТ С КУХНИ ЦЕЛИКОМ.
@@ -2499,6 +2540,17 @@ export default function Workspace(props: WorkspaceProps) {
     },
     [active, activeRun, wall, requirements, wallOpenings, props.roomDepthM, flash, selectedId, layout, wallEdited, wallIdAt],
   );
+
+  /* Подтверждение — та же правка, с разрешением снять отсеки; отмена — ничего. */
+  const confirmPendingLoss = useCallback(() => {
+    if (!pendingLoss) return;
+    setPendingLoss(null);
+    runOps(confirmBayLoss(pendingLoss.ops), pendingLoss.onRefusal, pendingLoss.selectAfter);
+  }, [pendingLoss, runOps]);
+  const cancelPendingLoss = useCallback(() => setPendingLoss(null), []);
+  const lossDialog = pendingLoss ? (
+    <BayLossDialog text={pendingLoss.text} onConfirm={confirmPendingLoss} onCancel={cancelPendingLoss} />
+  ) : null;
 
   /**
    * НАЖАЛ КАРТОЧКУ — МОДУЛЬ ПОМЕНЯЛСЯ.
@@ -3059,6 +3111,8 @@ export default function Workspace(props: WorkspaceProps) {
         shape,
         warnings,
         catalogError,
+        /* Ящики отсеков без правил короба — черновик: выпуск в цех заперт словами (R02A). */
+        drawerDraft: drawerReleaseBlock(segments),
         /*
          * Правки и закрепления, которые сейчас не участвуют: те же
          * `editedRuns`, `editedWalls` и `applianceWalls`, что держит экран.
@@ -4796,6 +4850,14 @@ export default function Workspace(props: WorkspaceProps) {
                 }}
                 notice={fillNotice?.moduleId === selectedUnit.id ? fillNotice.text : null}
                 onNotice={(text) => setFillNotice(text ? { moduleId: selectedUnit.id, text } : null)}
+                slides={slideItems}
+                selectedDrawerId={selectedBay?.moduleId === selectedUnit.id ? (selectedBay.drawerId ?? null) : null}
+                onSelectDrawer={(drawerId) => {
+                  const bayId = /:(b\d+):drawer:\d+$/.exec(drawerId)?.[1];
+                  if (bayId) setSelectedBay({ moduleId: selectedUnit.id, bayId, drawerId });
+                }}
+                openIds={openParts}
+                onToggleOpen={toggleOpenPart}
               />
             )}
             {selectedUnit && (
@@ -4979,6 +5041,7 @@ export default function Workspace(props: WorkspaceProps) {
                 <img src={zoom} alt="" className="max-h-full max-w-full object-contain" />
               </button>
             )}
+            {lossDialog}
           </>
         }
       />
@@ -4987,6 +5050,7 @@ export default function Workspace(props: WorkspaceProps) {
 
   return (
     <div className="mw-root flex h-screen flex-col overflow-hidden">
+      {lossDialog}
       {/* ── Шапка: имя объекта и состояние сохранения, больше ничего ── */}
       <header className="flex items-center gap-3 px-4 py-3 print:hidden">
         <div className="min-w-0">
@@ -5702,6 +5766,7 @@ export default function Workspace(props: WorkspaceProps) {
                 elevation={{
                   assumedTotal,
                   selectedModuleId: selectedId,
+                  selectedBayId: selectedBay?.moduleId === selectedId ? selectedBay.bayId : null,
                   onSelect: selectModule,
                   changedIds,
                   mode: drawingMode,

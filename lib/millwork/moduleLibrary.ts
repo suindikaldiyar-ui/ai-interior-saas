@@ -8,11 +8,12 @@ import {
 } from './moduleVariants';
 import type { ModuleVariantSpec } from './moduleVariants';
 import { STANDARD_WIDTHS, MAX_WIDTH, MIN_WIDTH } from './modules';
-import { applyOps } from './ops';
+import { applyOps, confirmBayLoss } from './ops';
 import { moduleById, rowOfModule, type RunRow } from './selection';
 import { moduleCarcassHeightMm } from './fill';
 import { rowSpansOfRun } from './layout';
 import { blindVariantRefusal } from './corner';
+import { bayEnvelope, bayLossNote } from './bays';
 import type {
   MillworkOp,
   Module,
@@ -71,6 +72,11 @@ export type LibraryCard = {
   current: boolean;
   /** Почему нажать нельзя. Пусто — можно. */
   refusal?: string;
+  /**
+   * Что нажатие снимет из собранного человеком: отсеки, их полки и ящики
+   * (`bayLossNote`). Пусто — терять нечего. Нажать можно, но слова — ДО.
+   */
+  loss?: string;
   /** Модуль, который получится: по нему рисуется картинка. */
   preview: Module | null;
 };
@@ -410,7 +416,13 @@ function card(
    * нужен — по нему же считается цена. Отказ движок оформляет словами
    * и числом, и в карточку идёт его текст, а не наш пересказ.
    */
-  const next = tryRun(run, requirements, openings, ops, input.roomDepthMm);
+  /*
+   * Вхолостую — ПОДТВЕРЖДЁННОЙ (R02A.1): у шкафа с отсеками замена без
+   * подтверждения отказ, и карточка вышла бы серой. Встанет ли и почём —
+   * это ответ «если подтвердить»; сама карточка несёт операции без
+   * подтверждения, и экран перед нажатием спросит человека.
+   */
+  const next = tryRun(run, requirements, openings, confirmBayLoss(ops), input.roomDepthMm);
 
   if (!next.ok) {
     return { key, spec, widthMm, heightMm: 0, ops, current, refusal: next.why, preview: null };
@@ -455,6 +467,17 @@ function card(
     };
   }
 
+  /*
+   * ОТСЕКИ НЕ ПРОПАДАЮТ МОЛЧА (R02A).
+   *
+   * Замена ставит модуль со своим наполнением: перегородки, полки отсеков
+   * и блок ящиков, собранные человеком, уходят. Карточка называет это до
+   * нажатия — по результату движка, а не своей догадкой. «Стоит сейчас»
+   * не нажимается вовсе: менять там нечего, а замена тем же вариантом
+   * сняла бы наполнение.
+   */
+  const loss = sample && !current ? bayLossNote(sample, preview, bayEnvelope(sample, run)) : null;
+
   return {
     key: `${spec.kind}:${made}`,
     spec,
@@ -462,6 +485,7 @@ function card(
     heightMm: preview ? moduleCarcassHeightMm(preview, next.run) : 0,
     ops,
     current,
+    ...(loss ? { loss } : {}),
     preview,
   };
 }
@@ -626,7 +650,8 @@ export function priceDeltaOf(
    */
   shownNow: number,
 ): number | null {
-  const next = tryRun(input.run, input.requirements, input.openings, cardOps, input.roomDepthMm);
+  /* Цена — «если подтвердить»: снятие отсеков подтверждает человек, а не карточка (R02A.1). */
+  const next = tryRun(input.run, input.requirements, input.openings, confirmBayLoss(cardOps), input.roomDepthMm);
   if (!next.ok) return null;
 
   /*
@@ -755,6 +780,8 @@ export type VariantPreviewCard = {
   deltaKzt: number | null;
   /** Почему не собирается — словами. */
   refusal?: string;
+  /** Что выбор снимет из собранного человеком (`bayLossNote`). Пусто — ничего. */
+  loss?: string;
   active: boolean;
 };
 
@@ -800,15 +827,18 @@ export function variantPreviews(
     if (active) return { spec, unit: applied, heightMm, deltaKzt: 0, active };
 
     const ops: MillworkOp[] = [{ op: 'set_variant', moduleId: unit.id, variant: spec.kind }];
-    const next = tryRun(run, input.requirements, input.openings, ops, input.roomDepthMm);
+    const next = tryRun(run, input.requirements, input.openings, confirmBayLoss(ops), input.roomDepthMm);
     if (!next.ok) {
       return { spec, unit: applied, heightMm, deltaKzt: null, refusal: next.why, active };
     }
+    /* Отсеки у варианта свои — снятые названы до нажатия (R02A). */
+    const loss = bayLossNote(unit, moduleById(next.run, unit.id), bayEnvelope(unit, run));
     return {
       spec,
       unit: applied,
       heightMm,
       deltaKzt: Math.round(totalOf(next.run)) - Math.round(shownNow),
+      ...(loss ? { loss } : {}),
       active,
     };
   });

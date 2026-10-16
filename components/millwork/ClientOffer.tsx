@@ -8,6 +8,7 @@ import {
   UNIT_LABEL_MW,
   formatMoney,
   lineAmountText,
+  estimatedLines,
   unpricedLines,
 } from '@/lib/millwork/estimate';
 import type { Org } from '@/types/catalog';
@@ -75,6 +76,13 @@ export default function ClientOffer({
    * экрана: второй формулы «полон ли итог» нет.
    */
   const unpriced = unpricedLines(estimate);
+  /*
+   * ОЦЕНКА — И У КЛИЕНТА (R02A.1). Ящики отсеков без выбранной направляющей
+   * и без правил короба посчитаны по ставке, а не по подтверждённой цене:
+   * клиент видит сумму и то, что часть её — оценка.
+   */
+  const estimated = estimatedLines(estimate);
+  const estimatedSum = estimated.reduce((sum, line) => sum + line.total, 0);
 
   const approve = async () => {
     setBusy(true);
@@ -117,6 +125,12 @@ export default function ClientOffer({
             Сумма без {unpriced.length === 1 ? 'позиции' : `${unpriced.length} позиций`}, у{' '}
             {unpriced.length === 1 ? 'которой' : 'которых'} цена не задана:{' '}
             {unpriced.map((line) => line.title).join('; ')}. Итоговую цену назовёт компания.
+          </p>
+        )}
+        {estimated.length > 0 && (
+          <p className="mt-1 text-[13px] leading-snug text-tape" data-offer-estimated={Math.round(estimatedSum)}>
+            В том числе оценка {formatMoney(estimatedSum)} ₸: {estimated.map((line) => line.title).join('; ')}. Точную
+            цену назовёт компания, когда будет выбрана фурнитура.
           </p>
         )}
         <p className="mt-1 text-[13px] text-graphiteMw">

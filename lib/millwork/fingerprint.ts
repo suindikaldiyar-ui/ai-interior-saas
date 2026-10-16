@@ -68,7 +68,16 @@ function fillPart(unit: Module): string | undefined {
   const bays = fill.bays
     .map(
       (bay) =>
-        `${bay.id}:${bay.widthMm ?? '*'}:${bay.shelves.mode === 'even' ? `e${bay.shelves.count}` : `m${bay.shelves.at.join('.')}`}`,
+        `${bay.id}:${bay.widthMm ?? '*'}:${bay.shelves.mode === 'even' ? `e${bay.shelves.count}` : `m${bay.shelves.at.join('.')}`}` +
+        /*
+         * Блок ящиков (R02A) — другая мебель: фасады в раскрое, ящики и
+         * направляющие в смете. Пишется только когда есть (ловушка 246).
+         */
+        (bay.drawers
+          ? `:${bay.drawers.id}@${bay.drawers.fromMm}+${bay.drawers.heightMm}` +
+            `:${bay.drawers.drawers.mode === 'even' ? `e${bay.drawers.drawers.count}` : `m${bay.drawers.drawers.heights.join('.')}`}` +
+            `:${bay.drawers.front}:${bay.drawers.slideItemId ?? '-'}`
+          : ''),
     )
     .join(',');
   return `${base}/${bays}`;

@@ -2,7 +2,10 @@
 
 import * as THREE from 'three';
 
-import { sceneLeaves } from '@/lib/millwork/cabinetBoxes';
+import { useMemo } from 'react';
+import { bayDrawerBoxes, sceneLeaves, type PartBox } from '@/lib/millwork/cabinetBoxes';
+import type { ProductionSettings } from '@/types/catalog';
+import InteractiveBayDrawer from './InteractiveBayDrawer';
 import InteractiveDoor from './InteractiveDoor';
 import InteractiveBifold from './InteractiveBifold';
 import InteractiveDrawer from './InteractiveDrawer';
@@ -54,6 +57,8 @@ type Props = {
    * Число — `openFrontMm`, то же, что у неподвижной отрисовки и раскроя.
    */
   openWidthM?: number;
+  /** Школа цеха ряда: по ней `bayLayout` считает ящики отсеков — те же числа, что в пачке (R02A). */
+  production?: ProductionSettings;
 };
 
 /** Штанга: труба 25 мм — то, что реально ставят в шкаф. */
@@ -84,6 +89,7 @@ export default function CabinetModule3D({
   onActive,
   frontMaterial,
   openWidthM,
+  production,
 }: Props) {
   const widthM = unit.widthMm / MM;
   const fill = unit.fill;
@@ -96,6 +102,27 @@ export default function CabinetModule3D({
   const isOpen = (id: string) => openParts.includes(id);
 
   const isDisplay = unit.section === 'glass_display';
+
+  /*
+   * ЯЩИКИ ОТСЕКОВ (R02A): коробки — те же, что в общей пачке
+   * (`bayDrawerBoxes`), сгруппированные по ящику. Задвинутый рисует пачка,
+   * выехавший — свой меш с этими же коробками.
+   */
+  const bayDrawers = useMemo(() => {
+    const byDrawer = new Map<string, PartBox[]>();
+    for (const box of bayDrawerBoxes(
+      unit,
+      { x: 0, y: 0, heightM, depthM, zM: 0, thicknessM },
+      { gapM, frontThicknessM, integratedHandles, cutaway },
+      production,
+    )) {
+      if (!box.part) continue;
+      const list = byDrawer.get(box.part);
+      if (list) list.push(box);
+      else byDrawer.set(box.part, [box]);
+    }
+    return Array.from(byDrawer.entries());
+  }, [unit, heightM, depthM, thicknessM, gapM, frontThicknessM, integratedHandles, cutaway, production]);
 
   return (
     <group position={[x, y, zM]}>
@@ -240,6 +267,20 @@ export default function CabinetModule3D({
           />
         );
       })}
+
+      {/* Ящики отсеков (R02A): каждый своим ключом, открывается сам по себе. */}
+      {bayDrawers.map(([id, boxes]) => (
+        <InteractiveBayDrawer
+          key={id}
+          id={id}
+          open={isOpen(id)}
+          onToggle={onToggle}
+          boxes={boxes}
+          parts={parts}
+          frontMaterial={frontMaterial}
+          onActive={onActive}
+        />
+      ))}
     </group>
   );
 }

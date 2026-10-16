@@ -34,6 +34,8 @@ export type VariantPreview = {
   deltaKzt: number | null;
   /** Почему не собирается — словами. */
   refusal?: string;
+  /** Что выбор снимет из собранного человеком: отсеки, их полки и ящики. */
+  loss?: string;
   active: boolean;
 };
 
@@ -100,11 +102,19 @@ export default function VariantStrip({
     );
   }
 
+  /* Что снимет другой вариант — одной строкой, ДО нажатия (R02A). */
+  const loss = options.find((option) => option.loss)?.loss ?? null;
+
   return (
     <div className="print:hidden" data-variant-strip>
       <p className="mw-label mb-2" data-variant-label>
         Что здесь бывает: {moduleLabel}
       </p>
+      {loss && (
+        <p className="mb-2 text-[13px] leading-snug text-graphiteMw" data-variant-loss>
+          Другой вариант: {loss}
+        </p>
+      )}
 
       {/*
         * Лента прокручивается вбок и НЕ ЗАКРЫВАЕТСЯ после выбора: замерщик
@@ -117,16 +127,19 @@ export default function VariantStrip({
             type="button"
             data-variant={option.kind}
             data-refused={option.refusal ? '1' : '0'}
+            data-loss={option.loss ? '1' : undefined}
             /*
              * Не собирается — не нажимается, и почему, сказано словами:
              * «та же цена» у варианта, которого не будет, — обещание.
+             * Выбранный сейчас тоже не нажимается: тот же вариант заново
+             * снял бы наполнение, собранное человеком.
              */
             disabled={Boolean(option.refusal)}
             onClick={() => {
-              if (!option.refusal) onPick(option.kind);
+              if (!option.refusal && !option.active) onPick(option.kind);
             }}
             aria-pressed={option.active}
-            title={option.refusal ?? option.hint}
+            title={option.refusal ?? option.loss ?? option.hint}
             className={`mw-panel-flat shrink-0 p-2 text-left ${
               option.refusal ? 'cursor-not-allowed opacity-45 ' : ''
             }${

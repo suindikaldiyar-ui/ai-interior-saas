@@ -11,7 +11,7 @@ import {
 import { rowStandardDepthMm } from '@/lib/millwork/fill';
 import { bayEnvelope, bayLayout, fillShelfCount } from '@/lib/millwork/bays';
 import { runPlaces } from '@/lib/millwork/cabinetBoxes';
-import { SHELF_PANEL_NAME, panelNumberOf } from '@/lib/millwork/panels';
+import { DRAWER_FRONT_PANEL_NAME, SHELF_PANEL_NAME, panelNumberOf } from '@/lib/millwork/panels';
 import { GEOMETRY, isUpperRow } from '@/lib/millwork/modules';
 import { moduleNumbers, POSITION_CIRCLE_MM } from '@/lib/millwork/positions';
 import {
@@ -58,6 +58,11 @@ type Props = {
   inside?: boolean;
   /** Чьё наполнение показываем. Без него полки не рисуются вовсе. */
   selectedModuleId?: string | null;
+  /**
+   * Через какой отсек идёт разрез (R02A.1): выбранный человеком. Пусто —
+   * отсек с ящиками, иначе крайний левый с полками.
+   */
+  selectedBayId?: string | null;
   /**
    * Ширина вида на бумаге, миллиметры.
    *
@@ -130,6 +135,7 @@ export default function SectionDrawing({
   run,
   inside = false,
   selectedModuleId,
+  selectedBayId = null,
   panels = [],
   paperWidthMm,
 }: Props) {
@@ -223,7 +229,17 @@ export default function SectionDrawing({
    * режет цех; номер — строки полок этого отсека.
    */
   const pickedBays = picked ? bayLayout(picked.unit, bayEnvelope(picked.unit, run)) : null;
-  const sectionBay = pickedBays ? (pickedBays.bays.find((bay) => bay.shelves.length > 0) ?? pickedBays.bays[0]) : null;
+  /*
+   * ЯЩИКИ (R02A.1): выбран отсек — разрез идёт через него; не выбран —
+   * через отсек с ящиками: разрез и нужен, чтобы видеть ящик в глубину.
+   * Без ящиков — как в R01, крайний левый с полками.
+   */
+  const sectionBay = pickedBays
+    ? (pickedBays.bays.find((bay) => bay.id === selectedBayId) ??
+      pickedBays.bays.find((bay) => bay.drawerStack) ??
+      pickedBays.bays.find((bay) => bay.shelves.length > 0) ??
+      pickedBays.bays[0])
+    : null;
   const shelfNumber = picked
     ? sectionBay
       ? (panels?.find((panel) => panel.moduleId === picked.unit.id && panel.bayId === sectionBay.id)?.number ?? null)
@@ -238,6 +254,25 @@ export default function SectionDrawing({
   const fillDatum = picked?.upper ? upperBottom : plinth;
   const fillFrom = xOf(16);
   const fillTo = xOf((picked?.upper ? upperDepth : baseDepth) - 16);
+
+  /*
+   * ЯЩИКИ ОТСЕКА НА РАЗРЕЗЕ (R02A.1) — из той же `bayLayout`, что фасад, 3D
+   * и раскрой: по высоте — от дна корпуса, по глубине — от передней кромки
+   * (`zFromMm…zToMm`). Где стоит корпус выбранного модуля — `runPlaces`, та
+   * же функция, что ставит его в сцену: разрез ряда рисует корпус нижнего
+   * ряда, а шкаф бывает и 2400. Короба нет: его размеров никто не
+   * подтверждал, габарит подписан справочным.
+   */
+  const pickedPlace = picked ? (runPlaces(run).find((place) => place.unit.id === picked.unit.id) ?? null) : null;
+  const drawerStack = inside && pickedPlace && !picked!.upper ? (sectionBay?.drawerStack ?? null) : null;
+  const moduleDepth = pickedBays?.envelope.depthMm ?? baseDepth;
+  const moduleBottom = pickedPlace ? Math.round(pickedPlace.y * 1000) : 0;
+  const moduleTop = pickedPlace ? Math.round((pickedPlace.y + pickedPlace.heightM) * 1000) : 0;
+  const frontNumber = (partId: string) =>
+    panels.find(
+      (panel) =>
+        panel.moduleId === picked?.unit.id && panel.name === DRAWER_FRONT_PANEL_NAME && panel.partIds?.includes(partId),
+    )?.number ?? null;
 
   return (
     <svg
@@ -327,6 +362,121 @@ export default function SectionDrawing({
           inner={lw.inner}
           labelSize={2.6 * u}
         />
+      )}
+
+      {/*
+        * ЯЩИКИ ОТСЕКА (R02A.1): корпус выбранного модуля контуром, фасады —
+        * сечением на своей глубине, габарит — пунктиром за фасадом, высоты и
+        * глубина — размерами. Номер фасада — строки «Фронт ящика» раскроя.
+        */}
+      {drawerStack && pickedPlace && (
+        <g
+          data-section-drawer-stack={drawerStack.id}
+          data-bay={drawerStack.bayId}
+          data-from-mm={drawerStack.fromMm}
+          data-to-mm={drawerStack.toMm}
+          data-height-mm={drawerStack.heightMm}
+          data-depth-mm={drawerStack.depthMm}
+        >
+          <rect
+            data-section-module={picked!.unit.id}
+            data-bottom-mm={moduleBottom}
+            data-top-mm={moduleTop}
+            data-depth-mm={moduleDepth}
+            x={xOf(0)}
+            y={yOf(moduleTop)}
+            width={moduleDepth}
+            height={moduleTop - moduleBottom}
+            fill="none"
+            stroke={line}
+            strokeWidth={lw.contour}
+          />
+          {drawerStack.drawers.map((drawer) => {
+            const env = drawer.envelope;
+            const front = drawer.front;
+            const number = frontNumber(front.partId);
+            return (
+              <g key={drawer.id}>
+                <rect
+                  data-section-drawer-envelope={drawer.id}
+                  data-depth-mm={env.depthMm}
+                  data-depth-from-mm={moduleDepth + env.zFromMm}
+                  data-depth-to-mm={moduleDepth + env.zToMm}
+                  data-y-from-mm={env.yFromMm}
+                  data-y-to-mm={env.yToMm}
+                  x={xOf(moduleDepth + env.zFromMm)}
+                  y={yOf(moduleBottom + env.yToMm)}
+                  width={env.zToMm - env.zFromMm}
+                  height={env.yToMm - env.yFromMm}
+                  fill="none"
+                  stroke={line}
+                  strokeWidth={lw.inner}
+                  strokeDasharray={axisDash(u)}
+                />
+                <rect
+                  data-section-drawer-front={front.partId}
+                  data-y-from-mm={front.yFromMm}
+                  data-y-to-mm={front.yToMm}
+                  data-depth-from-mm={moduleDepth + front.zFromMm}
+                  data-depth-to-mm={moduleDepth + front.zToMm}
+                  x={xOf(moduleDepth + front.zFromMm)}
+                  y={yOf(moduleBottom + front.yToMm)}
+                  width={front.zToMm - front.zFromMm}
+                  height={front.heightMm}
+                  fill={PAPER_FILL.front}
+                  stroke={line}
+                  strokeWidth={lw.contour}
+                />
+                {/* Подпись — внутри габарита: справа от корпуса поле узкое, и при 1:20 текст обрезался. */}
+                <text
+                  className="mw-num"
+                  x={xOf(moduleDepth + env.zFromMm) + 16}
+                  y={yOf(moduleBottom + (front.yFromMm + front.yToMm) / 2) + 0.9 * u}
+                  fontSize={2.6 * u}
+                  fill={line}
+                >
+                  {number ? `${number} · ${front.heightMm}` : front.heightMm}
+                </text>
+              </g>
+            );
+          })}
+          <Vertical
+            from={moduleBottom + drawerStack.fromMm}
+            to={moduleBottom + drawerStack.toMm}
+            x={moduleDepth + 150}
+            label={`${drawerStack.heightMm}`}
+            yOf={yOf}
+            xOf={xOf}
+            lw={lw.dimension}
+            fontSize={2.6 * u}
+          />
+          <Horizontal
+            from={moduleDepth + (drawerStack.drawers[0]?.envelope.zFromMm ?? 0)}
+            to={moduleDepth + (drawerStack.drawers[0]?.envelope.zToMm ?? 0)}
+            y={moduleBottom + drawerStack.toMm + 70}
+            label={`${drawerStack.depthMm}`}
+            yOf={yOf}
+            xOf={xOf}
+            lw={lw.dimension}
+            fontSize={2.6 * u}
+          />
+          {/*
+            * Две короткие строки в свободной части отсека над блоком: блок и
+            * габарит названы размерами, здесь — чьи ящики и что короба нет.
+            */}
+          <text
+            x={xOf(24)}
+            y={yOf(moduleBottom + drawerStack.toMm + 600)}
+            fontSize={2.6 * u}
+            fill="var(--graphite-mw)"
+            data-section-drawer-note
+          >
+            <tspan x={xOf(24)}>{`ящики отсека ${(sectionBay?.index ?? 0) + 1}`}</tspan>
+            <tspan x={xOf(24)} dy={3.4 * u}>
+              короб не рассчитан
+            </tspan>
+          </text>
+        </g>
       )}
 
       {/* Фасад впереди корпуса — на свою толщину. */}

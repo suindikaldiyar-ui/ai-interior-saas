@@ -23,6 +23,10 @@ import {
 import catalogJson from '../data/catalog/catalog.json';
 import * as THREE from 'three';
 import * as panelsModule from '../lib/millwork/panels';
+import * as baysNs from '../lib/millwork/bays';
+import * as motionNs from '../components/millwork/cabinet3d/motion';
+import * as opsNs from '../lib/millwork/ops';
+import * as estimateNs from '../lib/millwork/estimate';
 import * as objectEstimateModule from '../lib/millwork/objectEstimate';
 import {
   catalogEntriesFromRows,
@@ -141,6 +145,7 @@ import { contourGapMm } from '../lib/millwork/surveyPlan';
 import {
   addBayShelf,
   bayEnvelope,
+  bayLayout,
   distributeBayShelves,
   moveBayShelf,
   removeBayShelf,
@@ -193,6 +198,7 @@ import {
   libraryGaps,
   libraryLock,
   priceDeltaOf,
+  variantPreviews,
   widthsFor,
   type LibraryCard,
 } from '../lib/millwork/moduleLibrary';
@@ -25473,6 +25479,802 @@ console.log('\nR01: независимые отсеки — полки толь�
     'refusal' in rodSplit && rodSplit.refusal.includes('штанга'),
     'refusal' in rodSplit ? rodSplit.refusal : 'ОТКАЗА НЕТ',
   );
+
+  /* ═══════════  R02A: блок ящиков в отсеке — b1 4 полки, b2 3 ящика внизу, верх b2 свободен  ═══════════ */
+  /*
+   * Тот же шкаф 1000 × 2400 × 600 путём экрана. Ящики — блок в НИЖНЕЙ зоне
+   * отсека b2 (`FillBay.drawers`), фасады вкладные в проём отсека с зазором
+   * цеха, короб — черновик: подтверждённых правил короба и направляющих нет.
+   * Новые функции берутся через пространство имён модуля: на прежнем коде
+   * проверка падает словами, а не компиляцией.
+   */
+  console.log('\nR02A: ящики в отсеке — зона снизу, фасады вкладные, короб черновиком, 2D = 3D = раскрой');
+  {
+    const ns = baysNs as unknown as Record<string, ((...args: unknown[]) => unknown) | undefined>;
+    type R02Stack = {
+      id: string;
+      fromMm: number;
+      heightMm: number;
+      drawers: { mode: 'even'; count: number } | { mode: 'manual'; heights: number[] };
+      front: string;
+      slideItemId: string | null;
+    };
+    const stack3: R02Stack = { id: 'd1', fromMm: 0, heightMm: 600, drawers: { mode: 'even', count: 3 }, front: 'inset', slideItemId: null };
+    const baysR02 = (stack: R02Stack | null = stack3, b1Width = 476) => [
+      { id: 'b1', widthMm: b1Width, shelves: { mode: 'even' as const, count: 4 } },
+      { id: 'b2', shelves: { mode: 'even' as const, count: 0 }, ...(stack ? { drawers: stack } : {}) },
+    ];
+    type DrawerOut = {
+      id: string;
+      index: number;
+      slotFromMm: number;
+      slotToMm: number;
+      front: { partId: string; xFromMm: number; xToMm: number; yFromMm: number; yToMm: number; widthMm: number; heightMm: number; thicknessMm: number };
+      envelope: { xFromMm: number; xToMm: number; yFromMm: number; yToMm: number; depthMm: number };
+    };
+    type StackOut = { id: string; fromMm: number; toMm: number; heightMm: number; depthMm: number; slideItemId: string | null; drawers: DrawerOut[] };
+    const stackOf = (run: Run, moduleId: string, production: ProductionSettings): StackOut | null => {
+      const unit = run.modules.find((m) => m.id === moduleId);
+      if (!unit) return null;
+      const layout = bayLayout(unit, bayEnvelope(unit, run, production)) as unknown as {
+        bays: { id: string; drawerStack?: StackOut | null }[];
+      } | null;
+      return layout?.bays.find((b) => b.id === 'b2')?.drawerStack ?? null;
+    };
+    type Box3 = { panel: string | null; material: string; part: string | null; partId: string | null; x0: number; x1: number; y0: number; y1: number; z0: number; z1: number };
+    /** Все коробки сцены модуля в мм от левого-нижнего угла корпуса (`cutaway` — снят ли фасад). */
+    const boxesOf = (run: Run, moduleId: string, production: ProductionSettings, cutaway: boolean): Box3[] => {
+      const place = runPlaces(run).find((p) => p.unit.id === moduleId)!;
+      const r = (m: number) => Math.round(m * 10000) / 10;
+      return moduleBoxes(
+        place.unit,
+        { x: place.x, y: place.y, heightM: place.heightM, depthM: place.depthM, zM: place.zM, thicknessM: production.carcassMm / 1000 },
+        { gapM: production.frontGapMm / 1000, frontThicknessM: production.frontMm / 1000, integratedHandles: false, cutaway },
+        production,
+      ).map((b) => ({
+        panel: b.panel ?? null,
+        material: b.material,
+        part: b.part ?? null,
+        partId: (b as typeof b & { partId?: string }).partId ?? null,
+        x0: r(b.position[0] - b.scale[0] / 2 - place.x),
+        x1: r(b.position[0] + b.scale[0] / 2 - place.x),
+        y0: r(b.position[1] - b.scale[1] / 2 - place.y),
+        y1: r(b.position[1] + b.scale[1] / 2 - place.y),
+        z0: r(b.position[2] - b.scale[2] / 2),
+        z1: r(b.position[2] + b.scale[2] / 2),
+      }));
+    };
+    const pen3 = (a: Box3, b: Box3) => {
+      const dx = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0);
+      const dy = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0);
+      const dz = Math.min(a.z1, b.z1) - Math.max(a.z0, b.z0);
+      return dx > 0.5 && dy > 0.5 && dz > 0.5 ? Math.min(dx, dy, dz) : 0;
+    };
+    const drawerBoxes3 = (boxes: Box3[]) => boxes.filter((b) => b.part !== null && b.part.includes(':b2:drawer:'));
+    const fronts3 = (boxes: Box3[]) => drawerBoxes3(boxes).filter((b) => b.material === 'front');
+    const envelopes3 = (boxes: Box3[]) => drawerBoxes3(boxes).filter((b) => b.material !== 'front');
+    const drawerPanels = (run: Run, moduleId: string, production: ProductionSettings) =>
+      panelsOf(run, moduleId, production)
+        .filter((p) => (p as Panel & { bayId?: string }).bayId === 'b2')
+        .map((p) => ({
+          name: p.name,
+          size: `${p.lengthMm}x${p.widthMm}x${p.thicknessMm}`,
+          qty: p.qty,
+          partIds: (p as Panel & { partIds?: string[] }).partIds ?? [],
+        }));
+    const panelWords = (rows: ReturnType<typeof drawerPanels>) => rows.map((p) => `${p.name} ${p.size}·${p.qty}`).join(' | ') || 'НЕТ';
+    const fillNow = (run: Run, moduleId: string) => run.modules.find((m) => m.id === moduleId)!.fill;
+
+    /* ── A–D: 1000 × 2400 × 600, цех 16 мм, b2 — 3 ящика в зоне 600 мм снизу ── */
+    const fa = fixtureR01();
+    const aid = fa.unit.id;
+    const withDrawers = fa.ops([{ op: 'set_fill', moduleId: aid, fill: withBays(fa.unit, baysR02() as unknown as R01Bay[]) }]);
+    const stackA = stackOf(withDrawers, aid, fa.production);
+    check(
+      'R02A.A set_fill: b1 — 4 полки, b2 — блок из 3 ящиков, отказа нет; в данных блок лежит в отсеке b2',
+      withDrawers.warnings.length === 0 &&
+        JSON.stringify((fillNow(withDrawers, aid)?.bays as unknown as { drawers?: unknown }[] | undefined)?.[1]?.drawers ?? null) === JSON.stringify(stack3),
+      withDrawers.warnings.join(' | ') || 'отказа нет',
+    );
+    check(
+      'R02A.A геометрия: 3 зоны 16…216 · 216…416 · 416…616, фасады 468 мм на x 512…980, высоты 196 · 196 · 192',
+      Boolean(stackA) &&
+        stackA!.drawers.map((d) => `${d.slotFromMm}…${d.slotToMm}`).join(' · ') === '16…216 · 216…416 · 416…616' &&
+        stackA!.drawers.every((d) => d.front.widthMm === 468 && d.front.xFromMm === 512 && d.front.xToMm === 980) &&
+        stackA!.drawers.map((d) => d.front.heightMm).join(',') === '196,196,192',
+      stackA
+        ? stackA.drawers.map((d) => `${d.id} зона ${d.slotFromMm}…${d.slotToMm} фасад ${d.front.widthMm}×${d.front.heightMm} x ${d.front.xFromMm}…${d.front.xToMm}`).join(' | ')
+        : 'НУЛЕВОЙ СЕЛЕКТОР: у отсека b2 нет блока ящиков (bayLayout.drawerStack)',
+    );
+    const partsA = partsOf(withDrawers, aid, fa.production);
+    check(
+      'R02A.B/T b1 не тронут: полки 474 × 580 × 16 · 4 и одна перегородка, как в R01',
+      partWords(partsA) === 'Полка[b1] 474×580×16·4 | Перегородка вертикальная 2368×580×16·1',
+      partWords(partsA),
+    );
+    const sceneA = boxesOf(withDrawers, aid, fa.production, false);
+    check(
+      'R02A.C верх b2 свободен: в отсеке b2 выше 616 мм нет ни одной детали',
+      Boolean(stackA) && stackA!.toMm === 616 && sceneA.every((b) => !(b.x0 >= 508 && b.x1 <= 984 && b.y0 >= 616 && b.panel !== 'Боковина' && b.panel !== 'Задняя стенка')),
+      stackA ? `зона до ${stackA.toMm} мм` : 'НУЛЕВОЙ СЕЛЕКТОР: блока нет',
+    );
+    const frontsA = fronts3(sceneA);
+    const envA = envelopes3(sceneA);
+    check(
+      'R02A.D 3D: фасады x 512…980, z −16…0, y 20…216 · 220…416 · 420…612; габариты ящиков x 508…984, z −580…−16',
+      frontsA.length === 3 &&
+        frontsA.every((b) => b.x0 === 512 && b.x1 === 980 && b.z0 === -16 && b.z1 === 0) &&
+        frontsA.map((b) => `${b.y0}…${b.y1}`).sort().join(' · ') === '20…216 · 220…416 · 420…612' &&
+        envA.length === 3 &&
+        envA.every((b) => b.x0 === 508 && b.x1 === 984 && b.z0 === -580 && b.z1 === -16),
+      `фасады ${frontsA.map((b) => `${b.x0}…${b.x1}/${b.y0}…${b.y1}/${b.z0}…${b.z1}`).join(' ') || 'НЕТ'} · габариты ${envA.map((b) => `${b.x0}…${b.x1}/${b.y0}…${b.y1}/${b.z0}…${b.z1}`).join(' ') || 'НЕТ'}`,
+    );
+    const hitsA: string[] = [];
+    for (const d of drawerBoxes3(sceneA)) {
+      for (const other of sceneA) {
+        if (other === d || (other.part === d.part && other.material !== d.material && other.part !== null)) continue;
+        const depth = pen3(d, other);
+        if (depth > 0) hitsA.push(`${d.part}/${d.material} × ${other.partId ?? other.part ?? other.panel}: ${depth.toFixed(1)} мм`);
+      }
+    }
+    check(
+      'R02A.D/R ящики не пересекают ни корпус, ни перегородку, ни полки b1, ни друг друга (касание — не пересечение)',
+      drawerBoxes3(sceneA).length === 6 && hitsA.length === 0,
+      hitsA.slice(0, 4).join(' | ') || `деталей ящиков ${drawerBoxes3(sceneA).length}, пересечений 0`,
+    );
+    const contact = { panel: null, material: 'inner', part: null, partId: null, x0: 0, x1: 10, y0: 0, y1: 10, z0: 0, z1: 10 };
+    check(
+      'R02A.R контакт по плоскости — не пересечение, заход на 1 мм — пересечение',
+      pen3(contact, { ...contact, x0: 10, x1: 20 }) === 0 && pen3(contact, { ...contact, x0: 9, x1: 20 }) === 1,
+      `касание ${pen3(contact, { ...contact, x0: 10, x1: 20 })} · заход ${pen3(contact, { ...contact, x0: 9, x1: 20 })}`,
+    );
+
+    /* ── I, J, P: раскрой, 3D и лист — одни фасады; короб — не в раскрое ── */
+    const panA = drawerPanels(withDrawers, aid, fa.production);
+    const frontPanels = panA.filter((p) => p.name === 'Фронт ящика');
+    check(
+      'R02A.I раскрой b2: фронты ящика 196 × 468 × 16 · 2 и 192 × 468 × 16 · 1, ИД деталей = ИД фасадов в 3D',
+      panelWords(frontPanels) === 'Фронт ящика 196x468x16·2 | Фронт ящика 192x468x16·1' &&
+        frontPanels.flatMap((p) => p.partIds).sort().join() === frontsA.map((b) => b.partId).sort().join(),
+      `${panelWords(frontPanels)} · ИД раскрой ${frontPanels.flatMap((p) => p.partIds).join(' ') || 'НЕТ'} · 3D ${frontsA.map((b) => b.partId).join(' ') || 'НЕТ'}`,
+    );
+    const allIdsA = panelsOf(withDrawers, aid, fa.production).flatMap((p) => (p as Panel & { partIds?: string[] }).partIds ?? []);
+    check(
+      'R02A.I/M ИД деталей модуля не повторяются; фасадов ящиков ровно 3, других фасадов у модуля нет',
+      new Set(allIdsA).size === allIdsA.length && frontsA.length === 3 && fronts3(boxesOf(withDrawers, aid, fa.production, false)).length === sceneA.filter((b) => b.material === 'front').length,
+      `ИД ${allIdsA.length}, уникальных ${new Set(allIdsA).size} · фасадов в сцене ${sceneA.filter((b) => b.material === 'front').length}`,
+    );
+    check(
+      'R02A.J короб ящика не в раскрое: размеров короба без правил цеха и направляющей нет — ни боковин, ни дна ящика',
+      panA.every((p) => p.name === 'Фронт ящика') && panA.length > 0,
+      panelWords(panA),
+    );
+    const readiness = ns.drawerStackReadiness?.(stack3, null, null) as { ready: boolean; missing: string[] } | undefined;
+    check(
+      'R02A.J/Q черновик назван: направляющая не выбрана, правил короба цеха нет — перечислено, чего не хватает',
+      Boolean(readiness && readiness.ready === false && readiness.missing.some((m) => /направляющ/i.test(m)) && readiness.missing.some((m) => /короб/i.test(m))),
+      readiness ? `готов ${readiness.ready} · не хватает: ${readiness.missing.join('; ')}` : 'НУЛЕВОЙ СЕЛЕКТОР: drawerStackReadiness нет',
+    );
+    const slideNoData = { id: 's1', orgId: 'o', name: 'Направляющая без размеров', article: 'S1', price: 1000, active: true, estimateKey: '', hardware: { category: 'slide' }, mounting: { holeDiameterMm: null, holeDepthMm: null, edgeOffsetMm: null, firstHoleOffsetMm: null, pitchMm: null, topOffsetMm: null, bottomOffsetMm: null, runnerOffsetMm: null, extra: {} } };
+    const readinessSlide = ns.drawerStackReadiness?.({ ...stack3, slideItemId: 's1' }, slideNoData, null) as { ready: boolean; missing: string[] } | undefined;
+    check(
+      'R02A.Q направляющая без монтажных размеров в каталоге — не «готово»: названо, каких размеров нет',
+      Boolean(readinessSlide && !readinessSlide.ready && readinessSlide.missing.some((m) => /длин/i.test(m))),
+      readinessSlide ? readinessSlide.missing.join('; ') : 'НУЛЕВОЙ СЕЛЕКТОР: drawerStackReadiness нет',
+    );
+    const sheetA = renderToStaticMarkup(createElement(ElevationDrawing, { run: withDrawers, mode: 'inside' }));
+    const sheetFronts: string[] = [];
+    for (let m = /<rect[^>]*data-bay-drawer="([^"]+)"[^>]*data-from-mm="([\d.]+)"[^>]*data-to-mm="([\d.]+)"[^>]*data-y-from-mm="([\d.]+)"[^>]*data-y-to-mm="([\d.]+)"[^>]*>/g.exec(sheetA), re = /<rect[^>]*data-bay-drawer="([^"]+)"[^>]*data-from-mm="([\d.]+)"[^>]*data-to-mm="([\d.]+)"[^>]*data-y-from-mm="([\d.]+)"[^>]*data-y-to-mm="([\d.]+)"[^>]*>/g; ; ) {
+      m = re.exec(sheetA);
+      if (!m) break;
+      sheetFronts.push(`${m[1]} ${m[2]}…${m[3]}/${m[4]}…${m[5]}`);
+    }
+    const scene3Words = frontsA.map((b) => `${b.partId} ${b.x0}…${b.x1}/${b.y0}…${b.y1}`).sort();
+    check(
+      'R02A.P лист «Внутри» = 3D: те же 3 фасада, те же ИД и миллиметры',
+      sheetFronts.length === 3 && sheetFronts.sort().join(' | ') === scene3Words.join(' | '),
+      `лист ${sheetFronts.join(' | ') || 'НЕТ'} · 3D ${scene3Words.join(' | ')}`,
+    );
+
+    /* ── H: открывание — каждый ящик своим ключом ── */
+    const openIds = openablePartIds(withDrawers).filter((p) => p.includes(':b2:drawer:'));
+    check(
+      'R02A.H «Открыть» знает 3 ящика отсека по отдельности — три разных ключа',
+      openIds.length === 3 && new Set(openIds).size === 3 && openIds.every((p) => frontsA.some((b) => b.part === p)),
+      openIds.join(' ') || 'НЕТ',
+    );
+
+    /* ── смета: ящики в сборе и направляющие — по числу ящиков; фасады — из раскроя ── */
+    /*
+     * R02A.1 (решение владельца): ящики отсеков идут СВОИМИ строками оценки
+     * (`bay_drawer_box`, `bay_drawer_slide`), а не внутри общих «Ящики в
+     * сборе» и «Направляющие». Число по-прежнему одно на ящик — его и мерим.
+     */
+    const estBefore = buildEstimate(fa.run, 'optimal', DEMO_RATES);
+    const estAfter = buildEstimate(withDrawers, 'optimal', DEMO_RATES);
+    const qty = (e: ReturnType<typeof buildEstimate>, test: (key: string) => boolean) =>
+      e.lines.filter((l) => test(l.key)).reduce((sum, l) => sum + l.quantity, 0);
+    const isBox = (k: string) => k === 'drawer_box' || k === 'bay_drawer_box';
+    const isSlide = (k: string) => k.startsWith('slide_') || k === 'bay_drawer_slide';
+    check(
+      'R02A смета: «Ящики в сборе» +3 и направляющие +3 — по числу ящиков, без размеров короба',
+      qty(estAfter, isBox) - qty(estBefore, isBox) === 3 && qty(estAfter, isSlide) - qty(estBefore, isSlide) === 3,
+      `ящики ${qty(estBefore, isBox)} → ${qty(estAfter, isBox)} · направляющие ${qty(estBefore, isSlide)} → ${qty(estAfter, isSlide)}`,
+    );
+
+    /* ── G: число ящиков 1, 3, 4 — да; 7 в 600 мм — отказ с числом ── */
+    const counts = [1, 3, 4].map((count) => {
+      const r = fa.ops([{ op: 'set_fill', moduleId: aid, fill: withBays(fa.unit, baysR02({ ...stack3, drawers: { mode: 'even', count } }) as unknown as R01Bay[]) }]);
+      return { count, ok: r.warnings.length === 0, drawers: stackOf(r, aid, fa.production)?.drawers.length ?? 0 };
+    });
+    check(
+      'R02A.G 1, 3 и 4 ящика в зоне 600 мм принимаются',
+      counts.every((c) => c.ok && c.drawers === c.count),
+      counts.map((c) => `${c.count}: ${c.ok ? 'да' : 'ОТКАЗ'} · ящиков ${c.drawers}`).join(' · '),
+    );
+    /* Ряд перед каждой проверкой отказа — эталонный: фикстура копит правки, сравнивать надо с тем, что было ПЕРЕД операцией. */
+    const reset = () => fillNow(fa.ops([{ op: 'set_fill', moduleId: aid, fill: withBays(fa.unit, baysR02() as unknown as R01Bay[]) }]), aid);
+    const before7 = reset();
+    const seven = fa.ops([{ op: 'set_fill', moduleId: aid, fill: withBays(fa.unit, baysR02({ ...stack3, drawers: { mode: 'even', count: 7 } }) as unknown as R01Bay[]) }]);
+    check(
+      'R02A.G 7 ящиков в 600 мм — отказ «доступно … требуется 96 мм», наполнение прежнее',
+      /доступно/.test(seven.warnings[0] ?? '') && /96/.test(seven.warnings[0] ?? '') && JSON.stringify(fillNow(seven, aid)) === JSON.stringify(before7),
+      seven.warnings[0] ?? 'ОТКАЗА НЕТ',
+    );
+    const refusals: [string, R02Stack | null, Record<string, unknown> | null, RegExp][] = [
+      ['зона выше корпуса (2400 мм)', { ...stack3, heightMm: 2400 }, null, /доступно 2368/],
+      ['низ зоны NaN', { ...stack3, fromMm: Number.NaN }, null, /число|NaN|высот/i],
+      ['высоты вручную не сходятся с зоной', { ...stack3, drawers: { mode: 'manual', heights: [200, 200, 150] } }, null, /600/],
+      ['фасад не вкладной', { ...stack3, front: 'overlay' }, null, /вкладн/],
+      ['полки и ящики в одном отсеке', stack3, { shelves: { mode: 'even', count: 2 } }, /полк/i],
+    ];
+    const refusalWords = refusals.map(([name, stack, b2Extra, re]) => {
+      const bays = baysR02(stack);
+      if (b2Extra) Object.assign(bays[1], b2Extra);
+      const base = reset();
+      const r = fa.ops([{ op: 'set_fill', moduleId: aid, fill: withBays(fa.unit, bays as unknown as R01Bay[]) }]);
+      return { name, ok: re.test(r.warnings[0] ?? '') && JSON.stringify(fillNow(r, aid)) === JSON.stringify(base), text: r.warnings[0] ?? 'ОТКАЗА НЕТ' };
+    });
+    check(
+      'R02A отказы словами и с миллиметрами, ряд прежний: зона выше корпуса, NaN, высоты не сходятся, не вкладной фасад, полки с ящиками',
+      refusalWords.every((r) => r.ok),
+      refusalWords.map((r) => `${r.name}: ${r.ok ? 'ок' : 'НЕТ'} «${r.text.slice(0, 70)}»`).join(' | '),
+    );
+    const mixBase = reset();
+    const legacyMix = fa.ops([{ op: 'set_fill', moduleId: aid, fill: withBays(fa.unit, baysR02() as unknown as R01Bay[], { drawerHeights: [800, 800, 800] }) }]);
+    check(
+      'R02A прежние ящики на всю ширину вместе с ящиками отсека — отказ, ряд прежний',
+      legacyMix.warnings.length > 0 && JSON.stringify(fillNow(legacyMix, aid)) === JSON.stringify(mixBase),
+      legacyMix.warnings[0] ?? 'ОТКАЗА НЕТ',
+    );
+
+    /* ── E: ширина b2 меняется — фасады идут за ней ── */
+    const wider = fa.ops([{ op: 'set_fill', moduleId: aid, fill: withBays(fa.unit, baysR02(stack3, 600) as unknown as R01Bay[]) }]);
+    const stackE = stackOf(wider, aid, fa.production);
+    check(
+      'R02A.E b1 600 → b2 352: фасады 344 мм на x 636…980, габарит 632…984',
+      Boolean(stackE) && stackE!.drawers.every((d) => d.front.widthMm === 344 && d.front.xFromMm === 636 && d.front.xToMm === 980 && d.envelope.xFromMm === 632 && d.envelope.xToMm === 984),
+      stackE ? stackE.drawers.map((d) => `${d.front.widthMm} x ${d.front.xFromMm}…${d.front.xToMm} / ${d.envelope.xFromMm}…${d.envelope.xToMm}`).join(' | ') : 'НУЛЕВОЙ СЕЛЕКТОР',
+    );
+
+    /* ── F: глубина 600 → 550 — в движке; в Studio глубина модуля не правится ── */
+    const env550 = { ...bayEnvelope(fillNow(withDrawers, aid) ? withDrawers.modules.find((m) => m.id === aid)! : fa.unit, withDrawers, fa.production), depthMm: 550 };
+    const lay550 = bayLayout(withDrawers.modules.find((m) => m.id === aid)!, env550) as unknown as { bays: { drawerStack?: StackOut | null }[] } | null;
+    check(
+      'R02A.F глубина корпуса 550: габарит ящика 514 (550 − 20 − 16) — тот же расчёт, без второй формулы',
+      lay550?.bays[1]?.drawerStack?.depthMm === 514 && Boolean(lay550?.bays[1]?.drawerStack?.drawers.every((d) => d.envelope.depthMm === 514)),
+      `глубина ${lay550?.bays[1]?.drawerStack?.depthMm ?? 'НЕТ'}`,
+    );
+
+    /* ── K: подтверждённый профиль — длины деталей короба воспроизводимы до миллиметра ── */
+    const profile = {
+      slideLengthMm: 500,
+      sideClearanceMm: 13,
+      boxSideMm: 16,
+      boxBottomMm: 8,
+      boxHeightGapMm: 40,
+      provenance: { slide: 'паспорт направляющей (проверочный)', box: 'правила цеха (проверочные)' },
+    };
+    const firstDrawer = stackA?.drawers[0];
+    const boxParts1 = firstDrawer ? (ns.drawerBoxParts?.(firstDrawer, profile) as { name: string; lengthMm: number; widthMm: number; thicknessMm: number; qty: number }[] | undefined) : undefined;
+    const boxParts2 = firstDrawer ? (ns.drawerBoxParts?.(firstDrawer, profile) as typeof boxParts1) : undefined;
+    const boxWords = (parts: typeof boxParts1) => (parts ?? []).map((p) => `${p.name} ${p.lengthMm}×${p.widthMm}×${p.thicknessMm}·${p.qty}`).join(' | ');
+    check(
+      'R02A.K профиль 500 / 13 / 16 / 8 / 40: боковины 500×160×16·2, торцы 418×160×16·2, дно 418×468×8·1 — и второй раз те же',
+      boxWords(boxParts1) === 'Боковина ящика 500×160×16·2 | Торец ящика 418×160×16·2 | Дно ящика 418×468×8·1' && boxWords(boxParts1) === boxWords(boxParts2),
+      boxWords(boxParts1) || 'НУЛЕВОЙ СЕЛЕКТОР: drawerBoxParts нет',
+    );
+    const tooLong = ns.drawerStackReadiness?.({ ...stack3, slideItemId: 's2' }, { ...slideNoData, id: 's2', mounting: { ...slideNoData.mounting, extra: { slideLengthMm: 600, sideClearanceMm: 13 } } }, null, 564) as { ready: boolean; missing: string[] } | undefined;
+    check(
+      'R02A.Q направляющая 600 мм длиннее полезной глубины 564 мм — названо числом',
+      Boolean(tooLong && !tooLong.ready && tooLong.missing.some((m) => /600/.test(m) && /564/.test(m))),
+      tooLong ? tooLong.missing.join('; ') : 'НУЛЕВОЙ СЕЛЕКТОР',
+    );
+
+    /* ── L: цех 18 мм ── */
+    const f18 = fixtureR01({ ...DEFAULT_PRODUCTION, carcassMm: 18 });
+    const r18 = f18.ops([{ op: 'set_fill', moduleId: f18.unit.id, fill: withBays(f18.unit, baysR02() as unknown as R01Bay[]) }]);
+    const stack18 = stackOf(r18, f18.unit.id, f18.production);
+    check(
+      'R02A.L цех 18 мм: b2 470 мм в свету, фасады 462 на x 516…978, зоны 18…218 · 218…418 · 418…618',
+      Boolean(stack18) &&
+        stack18!.drawers.every((d) => d.front.widthMm === 462 && d.front.xFromMm === 516 && d.front.xToMm === 978) &&
+        stack18!.drawers.map((d) => `${d.slotFromMm}…${d.slotToMm}`).join(' · ') === '18…218 · 218…418 · 418…618',
+      stack18 ? stack18.drawers.map((d) => `${d.front.widthMm} x ${d.front.xFromMm}…${d.front.xToMm} зона ${d.slotFromMm}…${d.slotToMm}`).join(' | ') : 'НУЛЕВОЙ СЕЛЕКТОР',
+    );
+
+    /* ── M, N: добавить — снять — добавить; запись и чтение ── */
+    const removed = fa.ops([{ op: 'set_fill', moduleId: aid, fill: withBays(fa.unit, baysR02(null) as unknown as R01Bay[]) }]);
+    const again = fa.ops([{ op: 'set_fill', moduleId: aid, fill: withBays(fa.unit, baysR02() as unknown as R01Bay[]) }]);
+    const idsOf = (run: Run) => (stackOf(run, aid, fa.production)?.drawers ?? []).map((d) => `${d.id}/${d.front.partId}`).join(' ');
+    check(
+      'R02A.M добавить → снять → добавить: те же ИД ящиков и фасадов; без блока — ни одного фасада ящика',
+      idsOf(again) === idsOf(withDrawers) && idsOf(withDrawers).length > 0 && drawerPanels(removed, aid, fa.production).length === 0,
+      `${idsOf(withDrawers) || 'НЕТ'} → снят: ${drawerPanels(removed, aid, fa.production).length} → ${idsOf(again) || 'НЕТ'}`,
+    );
+    const roundTrip = JSON.parse(JSON.stringify(withDrawers)) as Run;
+    check(
+      'R02A.N через JSON: тот же блок, те же ИД и тот же отпечаток; отпечаток с ящиками ≠ без них',
+      idsOf(roundTrip) === idsOf(withDrawers) &&
+        configurationFingerprint(roundTrip.modules) === configurationFingerprint(withDrawers.modules) &&
+        configurationFingerprint(withDrawers.modules) !== configurationFingerprint(removed.modules),
+      `${configurationFingerprint(withDrawers.modules)} / без ящиков ${configurationFingerprint(removed.modules)}`,
+    );
+
+    /* ── выпуск в цех: черновой ящик запирает выгрузку словами ── */
+    const block = ns.drawerReleaseBlock?.([withDrawers]) as string | null | undefined;
+    check(
+      'R02A выпуск в цех заперт словами, пока короб черновик; без ящиков — не заперт',
+      typeof block === 'string' && /ящик/i.test(block) && ns.drawerReleaseBlock?.([removed]) === null,
+      typeof block === 'string' ? block : 'НУЛЕВОЙ СЕЛЕКТОР: drawerReleaseBlock нет',
+    );
+
+    /* ── ход ящика не встаёт на полпути: заявка на кадр решается кадром, а не часами ── */
+    /*
+     * При `frameloop="demand"` движущийся ящик заказывает следующий кадр сам.
+     * Заявка отбрасывалась, если прошлая была меньше 4 мс назад; кадры не
+     * обязаны идти через 16 мс — после подвисшего кадра следующий приходит
+     * через 2–3 мс, на экране 240–360 Гц так всегда. Отброшенная заявка —
+     * последний кадр: в браузере ящик 2 встал на 136 мм из 300, 4 кадра за
+     * 60 с. Решать должен кадр холста: первая заявка кадра проходит всегда.
+     */
+    {
+      const gate = (motionNs as unknown as Record<string, ((root: object, stamp: number) => boolean) | undefined>).frameRequestGate;
+      const rootA = {};
+      const rootB = {};
+      /* Кадры через 2.8 мс (360 Гц) и через 2 мс после подвисшего: каждый заказывает следующий. */
+      const stamps = [0.1, 0.1028, 0.1056, 0.1084, 0.12, 0.122, 0.1248];
+      const passed = gate ? stamps.map((stamp) => gate(rootA, stamp)) : [];
+      const sameFrame = gate ? gate(rootA, 0.1248) : null;
+      const otherRoot = gate ? gate(rootB, 0.1248) : null;
+      check(
+        'R02A ход ящика: каждый кадр заказывает следующий, даже через 2 мс; второй заявки в том же кадре нет; холсты не мешают друг другу',
+        Boolean(gate) && passed.length === stamps.length && passed.every(Boolean) && sameFrame === false && otherRoot === true,
+        gate
+          ? `заявок прошло ${passed.filter(Boolean).length} из ${stamps.length} · повтор в кадре: ${sameFrame ? 'прошёл' : 'нет'} · другой холст: ${otherRoot ? 'прошёл' : 'НЕТ'}`
+          : 'НУЛЕВОЙ СЕЛЕКТОР: в motion.ts нет frameRequestGate — заявку на кадр решают часы (4 мс), и при кадрах чаще 4 мс ход встаёт',
+      );
+    }
+
+    /* ── замена модуля и смена варианта: отсеки с ящиками не пропадают молча ── */
+    /*
+     * Наполнение на новый модуль не переезжает — оно принадлежит варианту
+     * (ловушка 421). Отсеки, их полки и блок ящиков, собранные человеком,
+     * уходят вместе с прежним модулем. Нажатие остаётся возможным, но
+     * карточка библиотеки и лента вариантов называют потерю ДО нажатия.
+     * Мерится результатом движка: после операции ящиков действительно нет.
+     */
+    type LossCard = { current?: boolean; active?: boolean; refusal?: string; loss?: string; ops?: MillworkOp[] };
+    const libraryIn = { run: again, requirements: R01_REQ, openings: fa.input.openings, moduleId: aid, gap: null, roomDepthMm: 0 };
+    const libCards = libraryCards(libraryIn) as unknown as LossCard[];
+    const replacing = libCards.filter((c) => !c.current && !c.refusal);
+    const firstLoss = replacing[0]?.loss ?? '';
+    /*
+     * R02A.1: замена с потерей отсеков применяется только подтверждённой
+     * (`confirmBayLoss`) — так её применяет экран после «Снять отсеки и
+     * заменить». Неподтверждённая отклоняется — это проверка R02A.1 ниже.
+     */
+    const confirmOps =
+      ((opsNs as unknown as Record<string, unknown>).confirmBayLoss as ((ops: MillworkOp[]) => MillworkOp[]) | undefined) ??
+      ((ops: MillworkOp[]) => ops);
+    const replacedRun = replacing[0]?.ops
+      ? applyOps({ run: again, requirements: R01_REQ, openings: fa.input.openings, ops: confirmOps(replacing[0].ops), roomDepthMm: 0 })
+      : null;
+    const replacedUnit = replacedRun?.modules.find((m) => m.offsetMm === fa.unit.offsetMm);
+    check(
+      'R02A замена из библиотеки снимает отсеки — и каждая такая карточка называет это ДО нажатия: полки (4), ящики (3)',
+      replacing.length > 0 &&
+        replacing.every((c) => /полки \(4\)/.test(c.loss ?? '') && /ящики \(3\)/.test(c.loss ?? '')) &&
+        libCards.filter((c) => c.current).every((c) => !c.loss) &&
+        Boolean(replacedUnit) &&
+        !replacedUnit!.fill?.bays,
+      replacing.length === 0
+        ? `НУЛЕВОЙ СЕЛЕКТОР: у шкафа с отсеками нет ни одной доступной карточки замены (${libCards.length} всего)`
+        : `${replacing.length} карточек · «${firstLoss || 'НЕТ СЛОВ'}» · после подтверждённой замены: ${replacedUnit?.fill?.bays ? 'отсеки на месте' : 'отсеков нет'}`,
+    );
+    const plainCards = libraryCards({ ...libraryIn, run: removed }) as unknown as LossCard[];
+    const noBayCards = libraryCards({ ...libraryIn, run: fa.run }) as unknown as LossCard[];
+    check(
+      'R02A отсеки без блока ящиков: названы полки (4), ящиков не придумано; шкаф без отсеков — ни слова о потере',
+      plainCards.some((c) => /полки \(4\)/.test(c.loss ?? '')) &&
+        plainCards.every((c) => !/ящики/.test(c.loss ?? '')) &&
+        noBayCards.length > 0 &&
+        noBayCards.every((c) => !c.loss),
+      `${plainCards.find((c) => c.loss)?.loss ?? 'НЕТ СЛОВ'} · без отсеков: ${noBayCards.filter((c) => c.loss).length} из ${noBayCards.length} со словами`,
+    );
+
+    /* Лента вариантов — тот же вопрос на месте, где вариантов больше одного (кухонная дверца). */
+    {
+      const freeKitchen: RunRequirements = { ...REQ, mode: 'free', appliances: [] };
+      const wall = buildRun({ lengthMm: 3000, ceilingHeightMm: 2700, requirements: freeKitchen, openings: [], comms: [] });
+      const placed = applyOps({ run: wall, requirements: freeKitchen, openings: [], ops: [{ op: 'add_module', kind: 'base', widthMm: 600, atMm: 0 } as MillworkOp] });
+      const door = placed.modules[0];
+      if (!door) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: R02A — нижний модуль 600 не встал на пустую стену');
+      const split = applyOps({
+        run: placed,
+        requirements: freeKitchen,
+        openings: [],
+        ops: [
+          {
+            op: 'set_fill',
+            moduleId: door.id,
+            fill: withBays(door, [
+              { id: 'b1', widthMm: 276, shelves: { mode: 'even', count: 1 } },
+              { id: 'b2', shelves: { mode: 'even', count: 0 }, drawers: { ...stack3, heightMm: 400 } },
+            ] as unknown as R01Bay[]),
+          },
+        ],
+      });
+      const doorNow = split.modules.find((m) => m.id === door.id)!;
+      const strip = variantPreviews({ run: split, requirements: freeKitchen, openings: [], unit: doorNow, zone: 'kitchen' }, () => 0, 0) as unknown as LossCard[];
+      const stripOthers = strip.filter((c) => !c.active && !c.refusal);
+      check(
+        'R02A лента вариантов у модуля с отсеками называет потерю ДО нажатия: полки (1), ящики (3)',
+        Boolean(doorNow.fill?.bays?.[1]?.drawers) &&
+          stripOthers.length > 0 &&
+          stripOthers.every((c) => /полки \(1\)/.test(c.loss ?? '') && /ящики \(3\)/.test(c.loss ?? '')) &&
+          strip.filter((c) => c.active).every((c) => !c.loss),
+        !doorNow.fill?.bays?.[1]?.drawers
+          ? `НУЛЕВОЙ СЕЛЕКТОР: отсеки у кухонной дверцы не встали — ${split.warnings.join(' / ') || 'без слов'}`
+          : `${stripOthers.length} вариантов · «${stripOthers[0]?.loss ?? 'НЕТ СЛОВ'}»`,
+      );
+    }
+
+    /* ── R02A.ops: кнопки инспектора — те же операции, что уходят в `set_fill` ── */
+    type Edit = { fill: ModuleFill } | { refusal: string };
+    const op = (name: string) => ns[name] as ((...args: unknown[]) => Edit) | undefined;
+    const ob = fixtureR01();
+    const oid2 = ob.unit.id;
+    const unitOf = (run: Run) => run.modules.find((m) => m.id === oid2)!;
+    const envOf = (run: Run) => bayEnvelope(unitOf(run), run, ob.production);
+    const apply = (run: Run, edit: Edit | undefined): Run =>
+      edit && 'fill' in edit ? ob.ops([{ op: 'set_fill', moduleId: oid2, fill: edit.fill }]) : run;
+    let cur = ob.ops([{ op: 'set_fill', moduleId: oid2, fill: withBays(ob.unit, baysR02(null) as unknown as R01Bay[]) }]);
+    const added = op('addDrawerStack')?.(unitOf(cur), envOf(cur), 'b2');
+    cur = apply(cur, added);
+    const s1 = stackOf(cur, oid2, ob.production);
+    check(
+      'R02A.ops «Добавить блок ящиков» в b2: 3 ящика в зоне 600 мм от дна, направляющая не выбрана',
+      Boolean(added && 'fill' in added) && s1?.drawers.length === 3 && s1.heightMm === 600 && s1.fromMm === 16 && s1.slideItemId === null,
+      added && 'refusal' in added ? added.refusal : s1 ? `${s1.drawers.length} ящ. ${s1.fromMm}…${s1.toMm}` : 'НУЛЕВОЙ СЕЛЕКТОР: addDrawerStack нет',
+    );
+    cur = apply(cur, op('setDrawerCount')?.(unitOf(cur), envOf(cur), 'b2', 4));
+    cur = apply(cur, op('setDrawerZone')?.(unitOf(cur), envOf(cur), 'b2', { heightMm: 800 }));
+    const s2 = stackOf(cur, oid2, ob.production);
+    cur = apply(cur, op('setDrawerHeight')?.(unitOf(cur), envOf(cur), 'b2', 0, 300));
+    const s3 = stackOf(cur, oid2, ob.production);
+    cur = apply(cur, op('distributeDrawers')?.(unitOf(cur), envOf(cur), 'b2'));
+    const s4 = stackOf(cur, oid2, ob.production);
+    check(
+      'R02A.ops 4 ящика → зона 800 → ящик 1 высотой 300 (разницу взял ящик 2) → «Распределить поровну» 200 · 200 · 200 · 200',
+      s2?.drawers.map((d) => d.slotToMm - d.slotFromMm).join(',') === '200,200,200,200' &&
+        s3?.drawers.map((d) => d.slotToMm - d.slotFromMm).join(',') === '300,100,200,200' &&
+        s4?.drawers.map((d) => d.slotToMm - d.slotFromMm).join(',') === '200,200,200,200',
+      `${s2?.drawers.map((d) => d.slotToMm - d.slotFromMm).join(',') ?? 'НЕТ'} → ${s3?.drawers.map((d) => d.slotToMm - d.slotFromMm).join(',') ?? 'НЕТ'} → ${s4?.drawers.map((d) => d.slotToMm - d.slotFromMm).join(',') ?? 'НЕТ'}`,
+    );
+    const tooLow = op('setDrawerHeight')?.(unitOf(cur), envOf(cur), 'b2', 0, 350);
+    check(
+      'R02A.ops ящик 1 → 350 при соседе 200: соседу останется 50 — отказ «требуется 96 мм»',
+      Boolean(tooLow && 'refusal' in tooLow && /96/.test(tooLow.refusal)),
+      tooLow && 'refusal' in tooLow ? tooLow.refusal : 'ОТКАЗА НЕТ',
+    );
+    const note = (ns.removeDrawerStackNote as ((...a: unknown[]) => string | null) | undefined)?.(unitOf(cur), 'b2');
+    const gone = op('removeDrawerStack')?.(unitOf(cur), envOf(cur), 'b2');
+    const afterGone = apply(cur, gone);
+    check(
+      '«Удалить блок»: потеря названа до нажатия (4 фасада, ящики и направляющие из сметы), отсек пустой',
+      Boolean(note && /4/.test(note) && /смет/.test(note)) && stackOf(afterGone, oid2, ob.production) === null,
+      `${note ?? 'слов нет'} → блок ${stackOf(afterGone, oid2, ob.production) ? 'ОСТАЛСЯ' : 'снят'}`,
+    );
+    /* Ящики в ЛЕВОМ отсеке, правый — последний: «Убрать перегородку» не теряет блок молча. */
+    const leftDrawers = ob.ops([
+      {
+        op: 'set_fill',
+        moduleId: oid2,
+        fill: withBays(ob.unit, [
+          { id: 'b1', widthMm: 476, shelves: { mode: 'even', count: 0 }, drawers: stack3 },
+          { id: 'b2', shelves: { mode: 'even', count: 0 } },
+        ] as unknown as R01Bay[]),
+      },
+    ]);
+    const merged = op('removePartition') ? removePartition(unitOf(leftDrawers), envOf(leftDrawers), 'b1') : undefined;
+    const mergedRun = apply(leftDrawers, merged);
+    const mergedBays = fillNow(mergedRun, oid2)?.bays as unknown as { id: string; drawers?: unknown }[] | undefined;
+    check(
+      'R02A «Убрать перегородку» у отсека с ящиками слева: блок ящиков остаётся в объединённом отсеке',
+      mergedBays?.length === 1 && Boolean(mergedBays[0].drawers),
+      merged && 'refusal' in merged ? merged.refusal : JSON.stringify(mergedBays ?? null).slice(0, 160),
+    );
+
+    /* ═══════════  R02A.1: потеря отсеков — только с подтверждением; зона 450 везде; разрез; оценка отдельно  ═══════════ */
+    console.log('\nR02A.1: замена не снимает отсеки молча, зона 450 сходится везде, ящики на разрезе, оценка отдельно от цены');
+    {
+      const opsApi = opsNs as unknown as Record<string, unknown>;
+      const lossOf = opsApi.opsBayLoss as ((run: Run, ops: MillworkOp[]) => string | null) | undefined;
+      const confirmOf = opsApi.confirmBayLoss as ((ops: MillworkOp[]) => MillworkOp[]) | undefined;
+      const fx = fixtureR01();
+      const cid = fx.unit.id;
+      const at = fx.unit.offsetMm;
+      const built = fx.ops([{ op: 'set_fill', moduleId: cid, fill: withBays(fx.unit, baysR02() as unknown as R01Bay[]) }]);
+      const unitAt = (run: Run) => run.modules.find((m) => m.offsetMm === at);
+      const fillJson = (run: Run) => JSON.stringify(unitAt(run)?.fill ?? null);
+      const before = fillJson(built);
+      const applyTo = (run: Run, ops: MillworkOp[]) =>
+        applyOps({ run, requirements: R01_REQ, openings: fx.input.openings, ops, roomDepthMm: 0 });
+
+      /* ── П1. Разрушительные операции: потеря названа ДО, без подтверждения ряд прежний ── */
+      /*
+       * Воспроизведено до правки: замена, вариант, «Секция» и число фронтов
+       * у шкафа с отсеками ставили наполнение по умолчанию — 4 полки отсека 1,
+       * перегородка и 3 ящика отсека 2 пропадали без единого слова.
+       */
+      const destructive: [string, MillworkOp][] = [
+        ['«Заменить»', { op: 'replace_module', moduleId: cid, kind: fx.unit.kind }],
+        ['вариант', { op: 'set_variant', moduleId: cid, variant: 'tall_shelves' }],
+        ['«Секция»', { op: 'set_section', moduleId: cid, section: 'hanging_long' }],
+        ['число фронтов', { op: 'set_fronts', moduleId: cid, drawerCount: 2 }],
+      ];
+      const notes = destructive.map(([, op]) => (lossOf ? lossOf(built, [op]) : null));
+      check(
+        'R02A.1 потеря отсеков считается ДО операции: замена, вариант, «Секция», число фронтов — полки (4), ящики (3); ширина и шкаф без отсеков — ни слова',
+        Boolean(lossOf) &&
+          notes.every((n) => typeof n === 'string' && /полки \(4\)/.test(n) && /ящики \(3\)/.test(n)) &&
+          lossOf!(built, [{ op: 'set_width', moduleId: cid, widthMm: 1100 }]) === null &&
+          lossOf!(fx.run, [destructive[0][1]]) === null,
+        lossOf ? destructive.map(([name], i) => `${name}: ${notes[i] ? 'названо' : 'НЕТ СЛОВ'}`).join(' · ') : 'НУЛЕВОЙ СЕЛЕКТОР: в ops.ts нет opsBayLoss',
+      );
+      const refused = destructive.map(([name, op]) => {
+        const next = applyTo(built, [op]);
+        return { name, kept: fillJson(next) === before, words: next.warnings[0] ?? '' };
+      });
+      check(
+        'R02A.1 без подтверждения движок отказывает словами, отсеки, полки и ящики на месте — у всех четырёх операций',
+        refused.every((r) => r.kept && /ящики \(3\)/.test(r.words) && /подтвер/i.test(r.words)),
+        refused.map((r) => `${r.name}: ${r.kept ? 'на месте' : 'ПОТЕРЯНО'} · «${r.words.slice(0, 70) || 'без слов'}»`).join(' | '),
+      );
+      const confirmed = destructive.map(([name, op]) => {
+        const next = applyTo(built, confirmOf ? confirmOf([op]) : [op]);
+        return { name, gone: !unitAt(next)?.fill?.bays, warnings: next.warnings.length };
+      });
+      check(
+        'R02A.1 подтверждённая операция применяется: отсеков нет, отказа нет',
+        Boolean(confirmOf) && confirmed.every((r) => r.gone && r.warnings === 0),
+        confirmOf ? confirmed.map((r) => `${r.name}: ${r.gone ? 'снято' : 'на месте'}`).join(' · ') : 'НУЛЕВОЙ СЕЛЕКТОР: в ops.ts нет confirmBayLoss',
+      );
+      const legacyReplace = applyTo(fx.run, [destructive[0][1]]);
+      check(
+        'R02A.1 модуль без отсеков меняется как раньше: без подтверждения и без отказа',
+        legacyReplace.warnings.length === 0 && Boolean(unitAt(legacyReplace)),
+        legacyReplace.warnings.join(' / ') || 'без отказа',
+      );
+
+      /* Кухня: «Тип» и «Техника» в RunEditor — тот же `replace_module`. */
+      {
+        const freeKitchen: RunRequirements = { ...REQ, mode: 'free', appliances: [] };
+        const wallK = buildRun({ lengthMm: 3000, ceilingHeightMm: 2700, requirements: freeKitchen, openings: [], comms: [] });
+        const placedK = applyOps({ run: wallK, requirements: freeKitchen, openings: [], ops: [{ op: 'add_module', kind: 'base', widthMm: 600, atMm: 0 } as MillworkOp] });
+        const doorK = placedK.modules[0];
+        if (!doorK) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: R02A.1 — нижний модуль 600 не встал на пустую стену');
+        const splitK = applyOps({
+          run: placedK,
+          requirements: freeKitchen,
+          openings: [],
+          ops: [
+            {
+              op: 'set_fill',
+              moduleId: doorK.id,
+              fill: withBays(doorK, [
+                { id: 'b1', widthMm: 276, shelves: { mode: 'even', count: 1 } },
+                { id: 'b2', shelves: { mode: 'even', count: 0 }, drawers: { ...stack3, heightMm: 400 } },
+              ] as unknown as R01Bay[]),
+            },
+          ],
+        });
+        const kFill = JSON.stringify(splitK.modules[0]?.fill ?? null);
+        const kitchenOps: [string, MillworkOp][] = [
+          ['«Тип» → пенал', { op: 'replace_module', moduleId: doorK.id, kind: 'tall' }],
+          ['«Техника» → мойка', { op: 'replace_module', moduleId: doorK.id, kind: 'base', appliance: 'sink600' }],
+        ];
+        const kRes = kitchenOps.map(([name, op]) => {
+          const next = applyOps({ run: splitK, requirements: freeKitchen, openings: [], ops: [op] });
+          return { name, kept: JSON.stringify(next.modules[0]?.fill ?? null) === kFill, words: next.warnings[0] ?? '' };
+        });
+        check(
+          'R02A.1 кухня: «Тип» и «Техника» у модуля с отсеками без подтверждения не применяются, потеря названа',
+          Boolean(splitK.modules[0]?.fill?.bays?.[1]?.drawers) && kRes.every((r) => r.kept && /ящики \(3\)/.test(r.words)),
+          !splitK.modules[0]?.fill?.bays
+            ? `НУЛЕВОЙ СЕЛЕКТОР: отсеки у кухонной дверцы не встали — ${splitK.warnings.join(' / ') || 'без слов'}`
+            : kRes.map((r) => `${r.name}: ${r.kept ? 'на месте' : 'ПОТЕРЯНО'} · «${r.words.slice(0, 60) || 'без слов'}»`).join(' | '),
+        );
+      }
+
+      /* Библиотека: карточка доступна, цена считается, а нажатие требует подтверждения. */
+      const libIn = { run: built, requirements: R01_REQ, openings: fx.input.openings, moduleId: cid, gap: null, roomDepthMm: 0 };
+      const cards1 = libraryCards(libIn).filter((c) => !c.current && !c.refusal) as (LibraryCard & { loss?: string })[];
+      const totalOfRun = (run: Run) => buildEstimate(run, 'optimal', DEMO_RATES, [], undefined, fx.production).total;
+      const shown1 = totalOfRun(built);
+      const priced = cards1.slice(0, 3).map((c) => priceDeltaOf(libIn, c.ops, totalOfRun, shown1));
+      check(
+        'R02A.1 библиотека: карточки замены доступны, с ценой и словами о потере; их операция без подтверждения не применится',
+        cards1.length > 0 &&
+          cards1.every((c) => Boolean(c.loss) && Boolean(lossOf?.(built, c.ops))) &&
+          priced.every((p) => typeof p === 'number'),
+        cards1.length === 0
+          ? 'НУЛЕВОЙ СЕЛЕКТОР: доступных карточек замены нет'
+          : `${cards1.length} карточек · цена ${priced.join(', ')} · потеря названа у ${cards1.filter((c) => c.loss).length}`,
+      );
+
+      /* ── П2. Зона 450 при отсеке 1 = 600: одни миллиметры у движка, 3D, раскроя и после JSON ── */
+      /*
+       * В отчёте R02A стояли зоны 16…216 · 216…416 · 416…616 — это состояние
+       * D1 (блок 600 мм, отсек 1 = 476), а «heightMm 450» — запись после D4.
+       * Разные состояния, не ошибка; здесь проверяется второе — то, что лежит
+       * в базе после D4.
+       */
+      const z450 = fx.ops([
+        { op: 'set_fill', moduleId: cid, fill: withBays(fx.unit, baysR02({ ...stack3, heightMm: 450 }, 600) as unknown as R01Bay[]) },
+      ]);
+      const s450 = stackOf(z450, cid, fx.production);
+      const zonesWords = (s: StackOut | null) => (s?.drawers ?? []).map((d) => `${d.slotFromMm}…${d.slotToMm}`).join(' · ');
+      const frontsWords = (s: StackOut | null) =>
+        (s?.drawers ?? []).map((d) => `${d.front.xFromMm}…${d.front.xToMm}/${d.front.yFromMm}…${d.front.yToMm}`).join(' · ');
+      const f3 = fronts3(boxesOf(z450, cid, fx.production, false));
+      const f3Words = f3
+        .slice()
+        .sort((a, b) => a.y0 - b.y0)
+        .map((b) => `${b.x0}…${b.x1}/${b.y0}…${b.y1}`)
+        .join(' · ');
+      const z450Json = JSON.parse(JSON.stringify(z450)) as Run;
+      check(
+        'R02A.1 зона 450 (отсек 1 = 600): зоны 16…166 · 166…316 · 316…466, фасады 344 × 146 · 146 · 142 на x 636…980 — движок, 3D, раскрой и запись через JSON одинаковы',
+        zonesWords(s450) === '16…166 · 166…316 · 316…466' &&
+          frontsWords(s450) === '636…980/20…166 · 636…980/170…316 · 636…980/320…462' &&
+          f3Words === frontsWords(s450) &&
+          panelWords(drawerPanels(z450, cid, fx.production)) === 'Фронт ящика 146x344x16·2 | Фронт ящика 142x344x16·1' &&
+          frontsWords(stackOf(z450Json, cid, fx.production)) === frontsWords(s450) &&
+          configurationFingerprint(z450Json.modules) === configurationFingerprint(z450.modules),
+        `зоны ${zonesWords(s450)} · движок ${frontsWords(s450)} · 3D ${f3Words} · раскрой ${panelWords(drawerPanels(z450, cid, fx.production))}`,
+      );
+
+      /* ── П3. Боковой разрез: ящики отсека из той же `bayLayout` ── */
+      const sectionOf = (run: Run, bayId?: string) =>
+        renderToStaticMarkup(
+          createElement(SectionDrawing, {
+            run,
+            inside: true,
+            selectedModuleId: cid,
+            panels: buildPanels({ run, production: fx.production }),
+            ...(bayId ? { selectedBayId: bayId } : {}),
+          } as Parameters<typeof SectionDrawing>[0]),
+        );
+      const attrsOf = (html: string, name: string) =>
+        Array.from(html.matchAll(new RegExp(`<[^>]*${name}="[^"]*"[^>]*>`, 'g'))).map((m) => {
+          const tag = m[0];
+          const get = (a: string) => tag.match(new RegExp(`${a}="([^"]*)"`))?.[1] ?? null;
+          return { id: get(name), get };
+        });
+      const html450 = sectionOf(z450);
+      const secStack = attrsOf(html450, 'data-section-drawer-stack')[0];
+      const secFronts = attrsOf(html450, 'data-section-drawer-front');
+      const secEnv = attrsOf(html450, 'data-section-drawer-envelope');
+      const secWords = secFronts
+        .map((f) => `${f.get('data-y-from-mm')}…${f.get('data-y-to-mm')}/${f.get('data-depth-from-mm')}…${f.get('data-depth-to-mm')}`)
+        .sort()
+        .join(' · ');
+      check(
+        'R02A.1 разрез по отсеку 2: блок 16…466, три фасада 20…166 · 170…316 · 320…462 на глубине 584…600, габарит 564 мм от 20 до 584; ИД = ИД раскроя',
+        /data-section-bay="b2"/.test(html450) &&
+          secStack?.get('data-from-mm') === '16' &&
+          secStack?.get('data-to-mm') === '466' &&
+          secWords === '170…316/584…600 · 20…166/584…600 · 320…462/584…600' &&
+          secEnv.length === 3 &&
+          secEnv.every((e) => e.get('data-depth-mm') === '564' && e.get('data-depth-from-mm') === '20' && e.get('data-depth-to-mm') === '584') &&
+          secFronts.map((f) => f.id).sort().join() === (s450?.drawers ?? []).map((d) => d.front.partId).sort().join(),
+        secFronts.length === 0
+          ? `НУЛЕВОЙ СЕЛЕКТОР: на разрезе ящиков нет (${/data-section-bay="(\w+)"/.exec(html450)?.[1] ?? 'отсек не подписан'})`
+          : `блок ${secStack?.get('data-from-mm')}…${secStack?.get('data-to-mm')} · фасады ${secWords} · габарит ${secEnv.map((e) => e.get('data-depth-mm')).join(',')}`,
+      );
+      const htmlB1 = sectionOf(z450, 'b1');
+      check(
+        'R02A.1 выбран отсек 1 — разрез по нему: 4 полки, ящиков на разрезе нет',
+        /data-section-bay="b1"/.test(htmlB1) && attrsOf(htmlB1, 'data-section-drawer-front').length === 0,
+        `${/data-section-bay="(\w+)"/.exec(htmlB1)?.[1] ?? 'отсек не подписан'} · фасадов ящиков ${attrsOf(htmlB1, 'data-section-drawer-front').length}`,
+      );
+
+      /* ── П4. Смета: оценка отдельно от подтверждённой цены ── */
+      /*
+       * До правки: направляющие ящиков отсеков шли строкой «Направляющие (с
+       * доводчиком)» — по ставке комплектации, как будто направляющая
+       * выбрана, — а «Ящики в сборе» — как рассчитанный короб. Итог 712 755.29 ₸
+       * (зона 600, отсек 1 = 476, ставки демо) — он не меняется: меняется то,
+       * что сказано о строках.
+       */
+      const estApi = estimateNs as unknown as Record<string, unknown>;
+      const estimatedOf = estApi.estimatedLines as ((e: Estimate) => Estimate['lines']) | undefined;
+      const est = (run: Run, hw: Map<string, HardwareItem> = new Map()) =>
+        buildEstimate(run, 'optimal', DEMO_RATES, [], undefined, fx.production, hw);
+      const eWith = est(built);
+      const eNo = est(fx.run);
+      const lineOf = (e: Estimate, key: string) => e.lines.find((l) => l.key === key) as (Estimate['lines'][number] & { estimated?: string }) | undefined;
+      const bSlide = lineOf(eWith, 'bay_drawer_slide');
+      const bBox = lineOf(eWith, 'bay_drawer_box');
+      check(
+        'R02A.1 смета: направляющие ящиков отсеков (3 × 6 500) и ящики в сборе (3 × 14 000) — отдельными строками «оценка» со словами; общие строки их не содержат; итог прежний 712 755.29',
+        bSlide?.quantity === 3 &&
+          bSlide.rate === DEMO_RATES.slide_soft_close &&
+          /не выбрана/.test(bSlide.estimated ?? '') &&
+          bBox?.quantity === 3 &&
+          bBox.rate === DEMO_RATES.drawer_box &&
+          /короб/.test(bBox.estimated ?? '') &&
+          (lineOf(eWith, 'slide_soft_close')?.quantity ?? 0) === (lineOf(eNo, 'slide_soft_close')?.quantity ?? 0) &&
+          (lineOf(eWith, 'drawer_box')?.quantity ?? 0) === (lineOf(eNo, 'drawer_box')?.quantity ?? 0) &&
+          Math.abs(eWith.total - 712755.29) < 0.01,
+        `направляющие ${bSlide ? `${bSlide.quantity}×${bSlide.rate} «${bSlide.estimated ?? 'НЕ ОЦЕНКА'}»` : 'НЕТ СТРОКИ'} · ящики ${
+          bBox ? `${bBox.quantity}×${bBox.rate} «${bBox.estimated ?? 'НЕ ОЦЕНКА'}»` : 'НЕТ СТРОКИ'
+        } · общие: направляющие ${lineOf(eWith, 'slide_soft_close')?.quantity ?? 0}, ящики ${lineOf(eWith, 'drawer_box')?.quantity ?? 0} · итог ${eWith.total}`,
+      );
+      const estSum = estimatedOf ? estimatedOf(eWith).reduce((s, l) => s + l.total, 0) : null;
+      check(
+        'R02A.1 итог подписан «с оценкой», оценка 61 500 ₸ названа отдельно; без ящиков — подпись прежняя',
+        estSum === 61500 && /оценк/.test(totalCaption(eWith)) && !/оценк/.test(totalCaption(eNo)) && (estimatedOf?.(eNo).length ?? -1) === 0,
+        `${totalCaption(eWith)} · оценка ${estSum ?? 'НУЛЕВОЙ СЕЛЕКТОР: estimatedLines нет'} · без ящиков «${totalCaption(eNo)}»`,
+      );
+      const slideItem: HardwareItem = {
+        id: 'hw-slide-r02a1',
+        orgId: 'org-1',
+        name: 'Направляющая проверочная 500',
+        article: 'HW-SLIDE-R02A1',
+        price: 9000,
+        active: true,
+        estimateKey: 'slide_soft_close',
+        hardware: { category: 'slide' } as HardwareItem['hardware'],
+        mounting: EMPTY_MOUNTING,
+      };
+      const chosen = fx.ops([
+        {
+          op: 'set_fill',
+          moduleId: cid,
+          fill: withBays(fx.unit, baysR02({ ...stack3, slideItemId: slideItem.id }) as unknown as R01Bay[]),
+        },
+      ]);
+      const eChosen = est(chosen, new Map([[slideItem.id, slideItem]]));
+      const own = lineOf(eChosen, `hardware_${slideItem.id}_slides`);
+      check(
+        'R02A.1 выбранная направляющая — строка позиции каталога по её цене (3 × 9 000), не оценка; короб — по-прежнему оценка',
+        own?.quantity === 3 && own.rate === 9000 && !own.estimated && /Направляющая проверочная/.test(own.title) &&
+          !lineOf(eChosen, 'bay_drawer_slide') && Boolean(lineOf(eChosen, 'bay_drawer_box')?.estimated),
+        own ? `${own.title} ${own.quantity}×${own.rate}${own.estimated ? ' ОЦЕНКА' : ''}` : `НЕТ СТРОКИ · ${eChosen.lines.map((l) => l.key).filter((k) => /slide|drawer/.test(k)).join(', ')}`,
+      );
+      const frozenEst = buildEstimate(built, 'optimal', DEMO_RATES, [], undefined, fx.production, new Map(), new Map(), new Map(), new Map(), {
+        frozen: eWith.priceSnapshot,
+      });
+      check(
+        'R02A.1 снимок цен (кабинет клиента): тот же итог и те же строки оценки',
+        Math.abs(frozenEst.total - eWith.total) < 0.01 && Boolean(lineOf(frozenEst, 'bay_drawer_box')?.estimated) && Boolean(lineOf(frozenEst, 'bay_drawer_slide')?.estimated),
+        `${frozenEst.total} / ${eWith.total}`,
+      );
+    }
+  }
 }
 
 /*

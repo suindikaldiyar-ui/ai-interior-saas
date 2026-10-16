@@ -53,6 +53,8 @@ const PLAN_MARGIN_UNITS = 34 + 78;
 type ElevationHandlers = {
   assumedTotal?: boolean;
   selectedModuleId?: string | null;
+  /** Через какой отсек выбранного модуля идёт разрез (R02A.1). */
+  selectedBayId?: string | null;
   onSelect?: (moduleId: string) => void;
   changedIds?: string[];
   mode?: DrawingMode;
@@ -383,6 +385,7 @@ export default function DrawingSheet({
         panels={panels}
         inside
         selectedModuleId={elevation.selectedModuleId}
+        selectedBayId={elevation.selectedBayId ?? null}
         paperWidthMm={paperWidth.get('section-inside')}
       />
     ),

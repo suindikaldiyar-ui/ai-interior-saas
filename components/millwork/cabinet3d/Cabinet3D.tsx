@@ -422,13 +422,20 @@ export default function Cabinet3D({
    * Выделение — то же, что на чертеже, поэтому идентификатор модуля
    * достаётся из идентификатора детали: `<модуль>:door:0`.
    */
+  /*
+   * Ящик отсека (R02A) выбирается вместе с отсеком: «<модуль>:<отсек>:drawer:<n>»
+   * — инспектор показывает параметры именно этого ящика.
+   */
+  const setSelectedBay = useInteriorStore((s) => s.setSelectedBay);
   const handleToggle = useCallback(
     (partId: string) => {
       const moduleId = moduleOfPart(partId);
       if (moduleId) onSelectModule?.(moduleId);
+      const bayDrawer = /^[^:]+:(b\d+):drawer:\d+$/.exec(partId);
+      if (moduleId && bayDrawer) setSelectedBay({ moduleId, bayId: bayDrawer[1], drawerId: partId });
       toggleOpenPart(partId);
     },
-    [onSelectModule, toggleOpenPart],
+    [onSelectModule, toggleOpenPart, setSelectedBay],
   );
 
   const grouped = useMemo(() => {
@@ -803,6 +810,7 @@ export default function Cabinet3D({
         <CabinetModule3D
           key={entry.unit.id}
           unit={entry.unit}
+          production={run.production}
           gapM={gapM}
           frontThicknessM={frontThicknessM}
           integratedHandles={Boolean(run.options.integratedHandles)}
@@ -1243,9 +1251,20 @@ function SceneProbe({ group }: { group: React.RefObject<THREE.Group> }) {
       };
     };
 
+    /*
+     * НАСКОЛЬКО ВЫЕХАЛ ЯЩИК, мм (R02A): сдвиг группы, которая его везёт, —
+     * то, что нарисовано, а не флаг в сторе. Проверка «открылся ровно один»
+     * меряет им каждый ящик.
+     */
+    (w as { __mwPartSlide?: (id: string) => number | null }).__mwPartSlide = (id: string) => {
+      const target = group.current?.getObjectByName(`part:${id}`);
+      return target?.parent ? Math.round(target.parent.position.z * 1000) : null;
+    };
+
     return () => {
       delete w.__mwScene;
       delete w.__mwPartPoint;
+      delete (w as { __mwPartSlide?: unknown }).__mwPartSlide;
       delete (w as { __mwOpenableIds?: unknown }).__mwOpenableIds;
       delete (w as { __mwPartSize?: unknown }).__mwPartSize;
       delete (w as { __mwRunBox?: unknown }).__mwRunBox;

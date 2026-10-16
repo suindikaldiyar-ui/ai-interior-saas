@@ -88,7 +88,7 @@ type Props = {
   /** Габарит получен из допущения — на чертеже он идёт пунктиром. */
   assumedTotal?: boolean;
   /** Выбранный отсек модуля (R01): подсвечен на виде «Внутри». */
-  selectedBay?: { moduleId: string; bayId: string } | null;
+  selectedBay?: { moduleId: string; bayId: string; drawerId?: string } | null;
   selectedModuleId?: string | null;
   onSelect?: (moduleId: string) => void;
   /**
@@ -344,6 +344,7 @@ function ModuleInside({
   k = 1,
   bays = null,
   selectedBayId = null,
+  selectedDrawerId = null,
 }: {
   unit: Module;
   x: number;
@@ -355,6 +356,8 @@ function ModuleInside({
   bays?: BayLayout | null;
   /** Выбранный отсек: подсвечен рамкой. */
   selectedBayId?: string | null;
+  /** Выбранный ящик отсека (R02A): обведён на листе. */
+  selectedDrawerId?: string | null;
   onFillChange?: (moduleId: string, fill: ModuleFill) => void;
   onFillReject?: (reason: string) => void;
   /** Множитель толщины линий: на бумаге они абсолютные, на экране прежние. */
@@ -511,6 +514,44 @@ function ModuleInside({
                   pointerEvents="none"
                 >
                   {shelf.atMm}
+                </text>
+              </g>
+            )),
+          )}
+          {/*
+            * ЯЩИКИ ОТСЕКОВ (R02A): вкладные фасады — те же, что режет цех и
+            * рисует сцена (`bayLayout`), с зазором цеха между ними и по
+            * контуру проёма. Подпись — высота фасада, мм.
+            */}
+          {bays.bays.flatMap((bay) =>
+            (bay.drawerStack?.drawers ?? []).map((drawer) => (
+              <g key={drawer.id} data-bay-drawer-group={drawer.id}>
+                <rect
+                  data-bay-drawer={drawer.front.partId}
+                  data-from-mm={drawer.front.xFromMm}
+                  data-to-mm={drawer.front.xToMm}
+                  data-y-from-mm={drawer.front.yFromMm}
+                  data-y-to-mm={drawer.front.yToMm}
+                  data-drawer-id={drawer.id}
+                  x={xAt(drawer.front.xFromMm)}
+                  y={yAt(drawer.front.yToMm)}
+                  width={Math.max(0, xAt(drawer.front.xToMm) - xAt(drawer.front.xFromMm))}
+                  height={Math.max(0, yAt(drawer.front.yFromMm) - yAt(drawer.front.yToMm))}
+                  fill="var(--surface-2)"
+                  fillOpacity={0.6}
+                  stroke={selectedDrawerId === drawer.id ? 'var(--cyan)' : 'var(--blueprint)'}
+                  strokeWidth={(selectedDrawerId === drawer.id ? 1.6 : 1) * k}
+                />
+                <text
+                  className="mw-num"
+                  x={xAt((drawer.front.xFromMm + drawer.front.xToMm) / 2)}
+                  y={yAt((drawer.front.yFromMm + drawer.front.yToMm) / 2) + 2}
+                  textAnchor="middle"
+                  fontSize={6}
+                  fill="var(--graphite-mw)"
+                  pointerEvents="none"
+                >
+                  {drawer.front.heightMm}
                 </text>
               </g>
             )),
@@ -1506,6 +1547,7 @@ export default function ElevationDrawing({
             k={k}
             bays={bayLayout(unit, bayEnvelope(unit, run))}
             selectedBayId={selectedBay?.moduleId === unit.id ? selectedBay.bayId : null}
+            selectedDrawerId={selectedBay?.moduleId === unit.id ? (selectedBay.drawerId ?? null) : null}
           />
         )}
 

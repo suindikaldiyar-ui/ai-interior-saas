@@ -47,7 +47,8 @@ import { CORNER } from './modules';
 import { MAX_MEZZANINE_MM, MIN_MEZZANINE_MM } from './sections';
 import { hasFacade } from './applianceFront';
 import { fillRefusal } from './fill';
-import { baysRefusal, baysWidthRefusal, type BayEnvelope } from './bays';
+import { bayEnvelope, bayLossNote, baysRefusal, baysWidthRefusal, type BayEnvelope } from './bays';
+import { allModules } from './layout';
 import { DEFAULT_ALLOWANCES } from '@/types/catalog';
 import {
   moveConflict,
@@ -159,6 +160,45 @@ function makePlainModule(
             ? `${fronts.doorCount} дверцы`
             : 'Дверца',
   };
+}
+
+/* ─────────────  Отсеки не снимаются молча (R02A.1)  ───────────── */
+
+/** Операции, которые ставят модулю наполнение варианта заново. */
+type RefillOp = Extract<MillworkOp, { op: 'replace_module' | 'set_variant' | 'set_section' | 'set_fronts' }>;
+
+function isRefillOp(op: MillworkOp): op is RefillOp {
+  return op.op === 'replace_module' || op.op === 'set_variant' || op.op === 'set_section' || op.op === 'set_fronts';
+}
+
+/** Что снимет ЭТА операция из отсеков модуля — словами; `null` — ничего или подтверждено. */
+function bayLossOfOp(op: MillworkOp, find: (id: string) => Module | undefined, run: Run): string | null {
+  if (!isRefillOp(op) || op.dropBays) return null;
+  const unit = find(op.moduleId);
+  if (!unit?.fill?.bays) return null;
+  const note = bayLossNote(unit, null, bayEnvelope(unit, run));
+  return note ? `«${unit.label}»: ${note}` : null;
+}
+
+/**
+ * ЧТО СНИМУТ ОПЕРАЦИИ — ДО ТОГО, КАК ИХ ПРИМЕНЯТЬ.
+ *
+ * Экран спрашивает это перед любой правкой (`runOps`): есть слова —
+ * правка не идёт, пока человек не подтвердит. Тот же расчёт стоит в
+ * движке отказом, так что мимо экрана (модель, командная строка) отсеки
+ * тоже не пропадут.
+ */
+export function opsBayLoss(run: Run, ops: MillworkOp[]): string | null {
+  const all = allModules(run);
+  const notes = ops
+    .map((op) => bayLossOfOp(op, (id) => all.find((m) => m.id === id), run))
+    .filter((note): note is string => Boolean(note));
+  return notes.length > 0 ? notes.join(' ') : null;
+}
+
+/** Подтверждение человека: те же операции, снятие отсеков разрешено. */
+export function confirmBayLoss(ops: MillworkOp[]): MillworkOp[] {
+  return ops.map((op) => (isRefillOp(op) ? { ...op, dropBays: true } : op));
 }
 
 export interface ApplyOpsInput {
@@ -918,6 +958,21 @@ export function applyOps({
 
     if (op.op === 'set_section' && !allowsSection(zone, op.section)) {
       warnings.push(sectionRefusal(zone, op.section));
+      return;
+    }
+
+    /*
+     * ОТСЕКИ НЕ СНИМАЮТСЯ МОЛЧА (R02A.1).
+     *
+     * Замена, вариант, секция и число фронтов ставят модулю наполнение
+     * варианта заново — и отсеки, их полки и блоки ящиков, собранные
+     * человеком, пропадали без единого слова. Такая операция применяется
+     * только подтверждённой (`dropBays`); без подтверждения — отказ с
+     * перечнем того, что пропало бы, и ряд прежний.
+     */
+    const bayLoss = bayLossOfOp(op, (id) => [...modules, ...upperModules, ...mezzModules].find((m) => m.id === id), run);
+    if (bayLoss) {
+      warnings.push(`${bayLoss} Изменение не применено: снятие отсеков подтверждается отдельно.`);
       return;
     }
 
@@ -2231,6 +2286,8 @@ export function applyOps({
           heightMm: fillHeightMm,
           depthMm: moduleDepthMm(fillTarget, run.zone, run.production),
           thicknessMm: bayShop.carcassMm,
+          frontMm: bayShop.frontMm,
+          frontGapMm: bayShop.frontGapMm,
           allowances: bayShop.allowances ?? DEFAULT_ALLOWANCES,
         };
         const bayRefusal = baysRefusal(op.fill, fillTarget, envelope, fillTarget.fill);

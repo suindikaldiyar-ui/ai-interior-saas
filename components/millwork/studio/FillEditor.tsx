@@ -3,20 +3,32 @@
 import { useState } from 'react';
 import {
   addBayShelf,
+  addDrawerStack,
   bayLayout,
   distributeBayShelves,
+  distributeDrawers,
+  drawerStackReadiness,
   moveBayShelf,
   removeBayShelf,
+  removeDrawerStack,
+  removeDrawerStackNote,
   removePartition,
   removePartitionNote,
   setBayShelfCount,
   setBayWidth,
+  setDrawerCount,
+  setDrawerHeight,
+  setDrawerSlide,
+  setDrawerZone,
   splitBay,
   type BayEdit,
   type BayEnvelope,
+  type ResolvedDrawerStack,
 } from '@/lib/millwork/bays';
+import { DRAWER_TRAVEL_M } from '@/lib/millwork/cabinetBoxes';
 import { snapTo32 } from '@/lib/millwork/fill';
-import type { Module, ModuleFill } from '@/types/millwork';
+import type { HardwareItem } from '@/types/catalog';
+import type { BayDrawerStack, Module, ModuleFill } from '@/types/millwork';
 
 /**
  * ВНУТРЕННЕЕ НАПОЛНЕНИЕ ШКАФА — ОТСЕКИ И ПОЛКИ (R01).
@@ -43,6 +55,14 @@ type Props = {
   /** Отказ — операции или движка — словами. */
   notice: string | null;
   onNotice: (text: string | null) => void;
+  /** Направляющие каталога организации (`category: 'slide'`), из чего выбирать (R02A). */
+  slides?: HardwareItem[];
+  /** Выбранный ящик отсека: `«<модуль>:<отсек>:drawer:<n>»`. */
+  selectedDrawerId?: string | null;
+  onSelectDrawer?: (drawerId: string) => void;
+  /** Что открыто в сцене — тот же список, что у «Открыть всё». */
+  openIds?: string[];
+  onToggleOpen?: (id: string) => void;
 };
 
 function shelvesWord(n: number): string {
@@ -62,6 +82,11 @@ export default function FillEditor({
   onFill,
   notice,
   onNotice,
+  slides = [],
+  selectedDrawerId = null,
+  onSelectDrawer,
+  openIds = [],
+  onToggleOpen,
 }: Props) {
   const layout = bayLayout(unit, envelope);
   const [widthDraft, setWidthDraft] = useState<string | null>(null);
@@ -157,6 +182,7 @@ export default function FillEditor({
             data-bay-chip={item.id}
             data-bay-width={item.widthMm}
             data-bay-shelves={item.shelves.length}
+            data-bay-drawers={item.drawerStack?.drawers.length ?? 0}
             aria-pressed={item.id === bay.id}
             onClick={() => {
               setWidthDraft(null);
@@ -166,7 +192,8 @@ export default function FillEditor({
             }}
             className={`mw-btn mw-num px-2 text-[13px] ${item.id === bay.id ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
           >
-            Отсек {item.index + 1} · {item.widthMm} мм · {item.shelves.length} {shelvesWord(item.shelves.length)}
+            Отсек {item.index + 1} · {item.widthMm} мм ·{' '}
+            {item.drawerStack ? `${item.drawerStack.drawers.length} ящ.` : `${item.shelves.length} ${shelvesWord(item.shelves.length)}`}
           </button>
         ))}
       </div>
@@ -206,6 +233,7 @@ export default function FillEditor({
           </span>
         </form>
 
+        {!bay.drawerStack && (
         <label className="block">
           <span className="mw-label">Количество полок</span>
           <input
@@ -227,8 +255,11 @@ export default function FillEditor({
             className="mw-num mw-touch mt-1 w-full border border-blueprint/40 bg-field px-1.5 text-[13px]"
           />
         </label>
+        )}
 
         <div className="grid grid-cols-2 gap-1">
+          {!bay.drawerStack && (
+            <>
           <button
             type="button"
             data-fill-action="add-shelf"
@@ -246,6 +277,8 @@ export default function FillEditor({
           >
             Распределить полки
           </button>
+            </>
+          )}
           <button
             type="button"
             data-fill-action="split"
@@ -265,6 +298,16 @@ export default function FillEditor({
               Убрать перегородку справа
             </button>
           )}
+          {!bay.drawerStack && (
+            <button
+              type="button"
+              data-drawer-action="add"
+              onClick={() => apply(addDrawerStack(unit, envelope, bay.id))}
+              className="mw-btn mw-btn-ghost"
+            >
+              Добавить блок ящиков
+            </button>
+          )}
         </div>
         {partitionNote && (
           <p className="text-[12px] leading-snug text-graphiteMw" data-partition-note>
@@ -272,8 +315,23 @@ export default function FillEditor({
           </p>
         )}
 
+        {bay.drawerStack && (
+          <DrawerStackEditor
+            unit={unit}
+            envelope={envelope}
+            stack={bay.drawerStack}
+            raw={unit.fill?.bays?.find((item) => item.id === bay.id)?.drawers ?? null}
+            slides={slides}
+            selectedDrawerId={selectedDrawerId}
+            onSelectDrawer={onSelectDrawer}
+            openIds={openIds}
+            onToggleOpen={onToggleOpen}
+            apply={apply}
+          />
+        )}
+
         {/* Полки снизу вверх: высота центра от дна корпуса и деталь из раскроя. */}
-        {bay.shelves.length > 0 ? (
+        {bay.drawerStack ? null : bay.shelves.length > 0 ? (
           <ul className="grid gap-1" aria-label="Полки отсека">
             {bay.shelves.map((shelf) => (
               <li
@@ -332,9 +390,11 @@ export default function FillEditor({
             Полок в отсеке нет.
           </p>
         )}
-        <p className="text-[12px] leading-snug text-graphiteMw">
-          Высота полки — от дна корпуса до её середины; полка садится на отверстия шагом 32 мм.
-        </p>
+        {!bay.drawerStack && (
+          <p className="text-[12px] leading-snug text-graphiteMw">
+            Высота полки — от дна корпуса до её середины; полка садится на отверстия шагом 32 мм.
+          </p>
+        )}
       </div>
 
       {snapNote && (
@@ -350,5 +410,263 @@ export default function FillEditor({
       {noticeLine}
       {drilling}
     </section>
+  );
+}
+
+/**
+ * БЛОК ЯЩИКОВ ОТСЕКА (R02A) — поля и кнопки инспектора.
+ *
+ * Каждое нажатие — операция над блоком (`setDrawerCount`, `setDrawerZone`…)
+ * с отказом словами; числа — из `bayLayout`. Статус выпуска считает
+ * `drawerStackReadiness`: пока нет подтверждённой направляющей и правил
+ * короба цеха, блок — черновик, и это написано здесь же.
+ */
+function DrawerStackEditor({
+  unit,
+  envelope,
+  stack,
+  raw,
+  slides,
+  selectedDrawerId,
+  onSelectDrawer,
+  openIds,
+  onToggleOpen,
+  apply,
+}: {
+  unit: Module;
+  envelope: BayEnvelope;
+  stack: ResolvedDrawerStack;
+  raw: BayDrawerStack | null;
+  slides: HardwareItem[];
+  selectedDrawerId: string | null;
+  onSelectDrawer?: (drawerId: string) => void;
+  openIds: string[];
+  onToggleOpen?: (id: string) => void;
+  apply: (edit: BayEdit) => void;
+}) {
+  const slide = raw?.slideItemId ? (slides.find((item) => item.id === raw.slideItemId) ?? null) : null;
+  const readiness = raw ? drawerStackReadiness(raw, slide, null, stack.depthMm) : null;
+  const removeNote = removeDrawerStackNote(unit, stack.bayId);
+  const selected = stack.drawers.find((drawer) => drawer.id === selectedDrawerId) ?? null;
+  const t = envelope.thicknessMm;
+  const commitOnEnter = (event: { key: string; target: EventTarget }) => {
+    if (event.key === 'Enter') (event.target as HTMLInputElement).blur();
+  };
+  const field = 'mw-num mw-touch mt-1 w-full border border-blueprint/40 bg-field px-1.5 text-[13px]';
+
+  return (
+    <div
+      className="grid gap-3 border-t border-blueprint/20 pt-3"
+      data-drawer-stack={stack.id}
+      data-drawer-bay={stack.bayId}
+      data-drawer-count={stack.drawers.length}
+      data-drawer-zone={`${stack.fromMm - t}+${stack.heightMm}`}
+    >
+      <p className="text-[13px] font-medium">Блок ящиков · {stack.drawers.length} ящ.</p>
+      <div className="rounded-[var(--r-control)] bg-tape/10 px-3 py-2" data-drawer-status={readiness?.ready ? 'ready' : 'draft'}>
+        <p className="text-[12px] leading-snug text-tape">
+          {readiness?.ready
+            ? 'Короб рассчитан по подтверждённому профилю.'
+            : 'Черновик: короб ящика не рассчитан — фасады режутся, короба нет ни в раскрое, ни в присадке; в цех не выпускается.'}
+        </p>
+        {readiness && !readiness.ready && (
+          <ul className="mt-1 grid gap-[2px] text-[12px] leading-snug text-tape" data-drawer-missing>
+            {readiness.missing.map((line) => (
+              <li key={line}>Не хватает: {line}</li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <label className="block">
+        <span className="mw-label">Количество ящиков</span>
+        <input
+          key={`count:${stack.drawers.length}`}
+          type="number"
+          inputMode="numeric"
+          min={1}
+          step={1}
+          data-drawer-count-input
+          defaultValue={stack.drawers.length}
+          onBlur={(event) => {
+            const value = Number(event.target.value);
+            if (value === stack.drawers.length) return;
+            apply(setDrawerCount(unit, envelope, stack.bayId, value));
+          }}
+          onKeyDown={commitOnEnter}
+          className={field}
+        />
+      </label>
+
+      <div className="grid grid-cols-2 gap-2">
+        <label className="block">
+          <span className="mw-label">Низ блока над дном, мм</span>
+          <input
+            key={`from:${stack.fromMm}`}
+            type="number"
+            inputMode="numeric"
+            min={0}
+            step={1}
+            data-drawer-from-input
+            defaultValue={stack.fromMm - t}
+            onBlur={(event) => {
+              const value = Number(event.target.value);
+              if (value === stack.fromMm - t) return;
+              apply(setDrawerZone(unit, envelope, stack.bayId, { fromMm: value }));
+            }}
+            onKeyDown={commitOnEnter}
+            className={field}
+          />
+        </label>
+        <label className="block">
+          <span className="mw-label">Высота блока, мм</span>
+          <input
+            key={`height:${stack.heightMm}`}
+            type="number"
+            inputMode="numeric"
+            min={1}
+            step={1}
+            data-drawer-height-input
+            defaultValue={stack.heightMm}
+            onBlur={(event) => {
+              const value = Number(event.target.value);
+              if (value === stack.heightMm) return;
+              apply(setDrawerZone(unit, envelope, stack.bayId, { heightMm: value }));
+            }}
+            onKeyDown={commitOnEnter}
+            className={field}
+          />
+        </label>
+      </div>
+      <p className="text-[12px] leading-snug text-graphiteMw">
+        Зона блока {stack.fromMm}…{stack.toMm} мм от низа корпуса; выше — отсек свободен.
+      </p>
+
+      <ul className="grid gap-1" aria-label="Ящики блока">
+        {stack.drawers.map((drawer) => {
+          const open = openIds.includes(drawer.id);
+          const slot = drawer.slotToMm - drawer.slotFromMm;
+          return (
+            <li
+              key={drawer.id}
+              data-drawer-row={drawer.id}
+              data-drawer-slot={slot}
+              data-drawer-front={`${drawer.front.widthMm}x${drawer.front.heightMm}x${drawer.front.thicknessMm}`}
+              data-drawer-selected-row={drawer.id === selectedDrawerId ? '1' : '0'}
+              className={`flex flex-wrap items-center gap-2 rounded-[var(--r-control)] px-1 text-[13px] ${
+                drawer.id === selectedDrawerId ? 'bg-[var(--accent)]/15' : ''
+              }`}
+            >
+              <button
+                type="button"
+                data-drawer-select={drawer.id}
+                aria-pressed={drawer.id === selectedDrawerId}
+                onClick={() => onSelectDrawer?.(drawer.id)}
+                className="mw-btn mw-btn-ghost px-2"
+              >
+                Ящик {drawer.index + 1}
+              </button>
+              <label className="flex items-center gap-1">
+                <span className="sr-only">Высота зоны ящика, мм</span>
+                <input
+                  key={`${drawer.id}:${slot}`}
+                  type="number"
+                  inputMode="numeric"
+                  step={1}
+                  data-drawer-slot-input
+                  aria-label={`Высота зоны ящика ${drawer.index + 1}, мм`}
+                  defaultValue={slot}
+                  onBlur={(event) => {
+                    const value = Number(event.target.value);
+                    if (value === slot) return;
+                    apply(setDrawerHeight(unit, envelope, stack.bayId, drawer.index, value));
+                  }}
+                  onKeyDown={commitOnEnter}
+                  className="mw-num mw-touch w-20 border border-blueprint/40 bg-field px-1.5 text-[13px]"
+                />
+                <span className="text-graphiteMw">мм</span>
+              </label>
+              <span className="mw-num text-[12px] text-graphiteMw" data-drawer-front-size>
+                фасад {drawer.front.widthMm} × {drawer.front.heightMm} × {drawer.front.thicknessMm}
+              </span>
+              <button
+                type="button"
+                data-drawer-action="toggle"
+                data-drawer-toggle={drawer.id}
+                data-drawer-open={open ? '1' : '0'}
+                onClick={() => onToggleOpen?.(drawer.id)}
+                className="mw-btn mw-btn-ghost ml-auto px-2"
+              >
+                {open ? 'Закрыть' : 'Открыть'}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      <button
+        type="button"
+        data-drawer-action="distribute"
+        onClick={() => apply(distributeDrawers(unit, envelope, stack.bayId))}
+        className="mw-btn mw-btn-ghost"
+      >
+        Распределить поровну
+      </button>
+
+      {selected && (
+        <p className="mw-num text-[12px] leading-snug text-graphiteMw" data-drawer-selected={selected.id}>
+          Ящик {selected.index + 1}: зона {selected.slotFromMm}…{selected.slotToMm} мм от низа корпуса; фасад{' '}
+          {selected.front.widthMm} × {selected.front.heightMm} × {selected.front.thicknessMm} на {selected.front.xFromMm}…
+          {selected.front.xToMm} мм; габарит рабочей зоны (справочно) {selected.envelope.xToMm - selected.envelope.xFromMm} ×{' '}
+          {selected.envelope.yToMm - selected.envelope.yFromMm} × {selected.envelope.depthMm} мм.
+        </p>
+      )}
+
+      <p className="text-[12px] leading-snug text-graphiteMw" data-drawer-front-kind>
+        Тип фасадов: вкладной в проём отсека — зазор цеха {envelope.frontGapMm} мм по контуру и между фасадами. Другие
+        фасады ящиков — следующий этап.
+      </p>
+
+      <label className="block">
+        <span className="mw-label">Направляющие</span>
+        <select
+          data-drawer-slide-select
+          value={raw?.slideItemId ?? ''}
+          disabled={slides.length === 0}
+          onChange={(event) => apply(setDrawerSlide(unit, envelope, stack.bayId, event.target.value || null))}
+          className={`${field} disabled:opacity-60`}
+        >
+          <option value="">не выбраны</option>
+          {slides.map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.name} · {item.article}
+            </option>
+          ))}
+        </select>
+        {slides.length === 0 && (
+          <span className="mt-1 block text-[12px] leading-snug text-graphiteMw" data-drawer-no-slides>
+            В каталоге организации направляющих нет — выбрать не из чего.
+          </span>
+        )}
+      </label>
+
+      <p className="text-[12px] leading-snug text-graphiteMw">
+        Полезная глубина ящика {stack.depthMm} мм. Выдвижение в 3D — наглядное, {Math.round(DRAWER_TRAVEL_M * 1000)} мм:
+        ход настоящей направляющей не выбран.
+      </p>
+
+      <button
+        type="button"
+        data-drawer-action="remove"
+        onClick={() => apply(removeDrawerStack(unit, envelope, stack.bayId))}
+        className="mw-btn mw-btn-ghost text-alert"
+      >
+        Удалить блок
+      </button>
+      {removeNote && (
+        <p className="text-[12px] leading-snug text-graphiteMw" data-drawer-remove-note>
+          Удалить блок: {removeNote}
+        </p>
+      )}
+    </div>
   );
 }

@@ -49,6 +49,12 @@ export default function EstimateTable({ estimate, disabledKeys, onToggle }: Prop
                         <span className="ml-1 text-alert">ставки нет в каталоге</span>
                       )}
                     </div>
+                    {/* Оценка, а не подтверждённая цена — и почему (R02A.1). */}
+                    {line.estimated && (
+                      <div className="text-[10px] leading-snug text-tape" data-line-estimated={line.key}>
+                        оценка: {line.estimated}
+                      </div>
+                    )}
                   </td>
                   {/* «Цена не задана» вместо «0»: ноль здесь не бесплатно, а неизвестно. */}
                   <td

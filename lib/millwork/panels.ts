@@ -172,6 +172,20 @@ function modulePanels(
   const allow = production.allowances ?? DEFAULT_ALLOWANCES;
   const inner = unit.widthMm - 2 * t;
   const thick = edgeType(production);
+  /*
+   * ОТСЕКИ (R01) И ЯЩИКИ ОТСЕКОВ (R02A) — одна геометрия на всю функцию:
+   * полки и перегородки режутся с корпусом, фасады ящиков — с фасадами.
+   * У Г-модуля отсеков не бывает (`splitBlocker`), и здесь `null`.
+   */
+  const bays = bayLayout(unit, {
+    widthMm: unit.widthMm,
+    heightMm,
+    depthMm,
+    thicknessMm: t,
+    frontMm: production.frontMm,
+    frontGapMm: production.frontGapMm,
+    allowances: allow,
+  });
 
   const label = unit.label || unit.kind;
   /*
@@ -333,7 +347,6 @@ function modulePanels(
    * отсека своя, а перегородки одной высоты и глубины — одна строка со
    * всеми ИД. Прежний путь ниже этих деталей тогда не режет вовсе.
    */
-  const bays = bayLayout(unit, { widthMm: unit.widthMm, heightMm, depthMm, thicknessMm: t, allowances: allow });
   if (bays) {
     for (const bay of bays.bays) {
       if (bay.shelves.length === 0) continue;
@@ -456,6 +469,8 @@ function modulePanels(
     lengthMm: number,
     widthMm: number,
     qty: number,
+    /** Фасад ящика отсека (R02A): его отсек и ИД физических деталей. */
+    tag?: { bayId: string; partIds: string[] },
   ) => {
     const edges = edged ? { long: 2, short: 2 } : { long: 0, short: 0 };
 
@@ -470,6 +485,7 @@ function modulePanels(
         edges,
         edgeType: thick,
         grain: 'along',
+        ...(tag ? { bayId: tag.bayId, partIds: tag.partIds } : {}),
       });
       return;
     }
@@ -484,6 +500,7 @@ function modulePanels(
       edges,
       edgeType: thick,
       grain: 'along',
+      ...(tag ? { bayId: tag.bayId, partIds: tag.partIds.map((id) => `${id}:frame`) } : {}),
     });
     push({
       name: `${name}: вставка`,
@@ -497,8 +514,32 @@ function modulePanels(
       edges: { long: 0, short: 0 },
       edgeType: thick,
       grain: 'along',
+      ...(tag ? { bayId: tag.bayId, partIds: tag.partIds.map((id) => `${id}:insert`) } : {}),
     });
   };
+
+  /*
+   * ФАСАДЫ ЯЩИКОВ ОТСЕКОВ (R02A) — из той же `bayLayout`, что рисует сцена
+   * и лист: вкладные в проём отсека, с зазором цеха. Одинаковые по размеру
+   * идут одной строкой, у каждой — ИД своих деталей. Короба здесь нет:
+   * без правил цеха и подтверждённой направляющей его размеров не
+   * существует (`drawerStackReadiness`), и выдумывать их нельзя.
+   */
+  if (bays) {
+    for (const bay of bays.bays) {
+      if (!bay.drawerStack) continue;
+      const sizes = new Map<string, { lengthMm: number; widthMm: number; partIds: string[] }>();
+      for (const drawer of bay.drawerStack.drawers) {
+        const key = `${drawer.front.heightMm}x${drawer.front.widthMm}`;
+        const row = sizes.get(key);
+        if (row) row.partIds.push(drawer.front.partId);
+        else sizes.set(key, { lengthMm: drawer.front.heightMm, widthMm: drawer.front.widthMm, partIds: [drawer.front.partId] });
+      }
+      for (const row of Array.from(sizes.values())) {
+        pushFront('Фронт ящика', row.lengthMm, row.widthMm, row.partIds.length, { bayId: bay.id, partIds: row.partIds });
+      }
+    }
+  }
 
   /*
    * Г-ОБРАЗНЫЙ: ДВА ФАСАДА, ОТКРЫВАЮТСЯ ВМЕСТЕ (слой 55).

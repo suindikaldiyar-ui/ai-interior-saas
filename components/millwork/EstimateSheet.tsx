@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import EstimateTable from './EstimateTable';
-import { formatMoney, totalCaption, unpricedLines } from '@/lib/millwork/estimate';
+import { estimatedLines, formatMoney, totalCaption, unpricedLines } from '@/lib/millwork/estimate';
 import { estimateGroups } from '@/lib/millwork/estimateGroups';
 import type { Estimate } from '@/types/millwork';
 
@@ -61,6 +61,13 @@ export default function EstimateSheet({
    * Итог без пометки клиент примет за цену кухни.
    */
   const unpriced = useMemo(() => unpricedLines(estimate), [estimate]);
+  /*
+   * ОЦЕНКА ОТДЕЛЬНО ОТ ЦЕНЫ (R02A.1): ящики отсеков без выбранной
+   * направляющей и без правил короба. Деньги в итоге есть, и это сказано
+   * рядом с суммой — сколько и почему.
+   */
+  const estimated = useMemo(() => estimatedLines(estimate), [estimate]);
+  const estimatedSum = estimated.reduce((sum, line) => sum + line.total, 0);
 
   // Esc закрывает — привычка, которой не надо учить.
   useEffect(() => {
@@ -102,6 +109,11 @@ export default function EstimateSheet({
         {unpriced.length > 0 && (
           <span className="text-[13px] text-alert" data-estimate-caption>
             неполный: цена не задана у {unpriced.length}
+          </span>
+        )}
+        {estimated.length > 0 && (
+          <span className="whitespace-nowrap text-[13px] text-tape" data-estimate-estimated={Math.round(estimatedSum)}>
+            в т. ч. оценка {formatMoney(estimatedSum)} ₸
           </span>
         )}
         <span className="ml-auto text-[13px] text-cyan">
@@ -148,6 +160,13 @@ export default function EstimateSheet({
               <p className="px-4 pb-2 text-[13px] leading-snug text-alert" data-estimate-unpriced>
                 Итог неполный: {unpriced.map((line) => `${line.title} — ${line.priceUnset}`).join('; ')}.
                 Задайте цену в карточке позиции на панели «Материалы».
+              </p>
+            )}
+
+            {estimated.length > 0 && (
+              <p className="px-4 pb-2 text-[13px] leading-snug text-tape" data-estimate-estimated-note>
+                В итоге есть оценка {formatMoney(estimatedSum)} ₸ — это не подтверждённая цена:{' '}
+                {estimated.map((line) => `${line.title} — ${line.estimated}`).join('; ')}.
               </p>
             )}
 

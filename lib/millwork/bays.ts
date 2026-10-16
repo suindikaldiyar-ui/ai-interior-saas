@@ -1,5 +1,6 @@
 import { DEFAULT_ALLOWANCES, type PartAllowances, type ProductionSettings } from '@/types/catalog';
-import type { BayShelves, FillBay, Module, ModuleFill, Run } from '@/types/millwork';
+import type { HardwareItem } from '@/types/catalog';
+import type { BayDrawerStack, BayShelves, FillBay, Module, ModuleFill, Run } from '@/types/millwork';
 import {
   MIN_DIVIDER_EDGE_MM,
   MIN_SHELF_GAP_MM,
@@ -11,6 +12,10 @@ import {
   snapTo32,
 } from './fill';
 import { shopOf } from './shop';
+import { bayDrawerCount, drawerHeights } from './drawerCount';
+
+/* Число ящиков и высоты их зон — в модуле без зависимостей (см. drawerCount.ts). */
+export { bayDrawerCount, drawerHeights };
 
 /**
  * ОТСЕКИ КОРПУСА — ОДИН РАСЧЁТ ГЕОМЕТРИИ НА РАСКРОЙ, СЦЕНУ И ЛИСТ (R01).
@@ -44,6 +49,10 @@ export type BayEnvelope = {
   heightMm: number;
   depthMm: number;
   thicknessMm: number;
+  /** Толщина фасада цеха, мм — у фасадов ящиков отсека (R02A). */
+  frontMm: number;
+  /** Зазор вокруг фасада цеха, мм — тот же, что у всех фасадов. */
+  frontGapMm: number;
   allowances: PartAllowances;
 };
 
@@ -58,6 +67,8 @@ export function bayEnvelope(
     heightMm: moduleCarcassHeightMm(unit, run),
     depthMm: moduleDepthMm(unit, run.zone, run.production),
     thicknessMm: production.carcassMm,
+    frontMm: production.frontMm,
+    frontGapMm: production.frontGapMm,
     allowances: production.allowances ?? DEFAULT_ALLOWANCES,
   };
 }
@@ -81,6 +92,8 @@ export function placeEnvelope(
     heightMm: mm(place.heightM),
     depthMm: mm(place.depthM),
     thicknessMm: mm(place.thicknessM),
+    frontMm: shopOf(production).frontMm,
+    frontGapMm: shopOf(production).frontGapMm,
     allowances: shopOf(production).allowances ?? DEFAULT_ALLOWANCES,
   };
 }
@@ -123,6 +136,64 @@ export type ResolvedBay = {
   widthMm: number;
   mode: BayShelves['mode'];
   shelves: BayShelfPart[];
+  /** Блок ящиков отсека (R02A); `null` — ящиков нет. */
+  drawerStack: ResolvedDrawerStack | null;
+};
+
+/** Фасад ящика отсека: вкладной в проём, координаты от левого-нижнего угла корпуса, мм. */
+export type BayDrawerFront = {
+  /** ИД физической детали: «<ящик>:front». */
+  partId: string;
+  xFromMm: number;
+  xToMm: number;
+  yFromMm: number;
+  yToMm: number;
+  widthMm: number;
+  heightMm: number;
+  thicknessMm: number;
+  /**
+   * Глубина от ПЕРЕДНЕЙ кромки корпуса, мм: 0 — плоскость фасадов, минус —
+   * внутрь, к стене. Одни числа на сцену и разрез (R02A.1).
+   */
+  zFromMm: number;
+  zToMm: number;
+};
+
+/**
+ * ЯЩИК ОТСЕКА (R02A).
+ *
+ * `envelope` — ГАБАРИТ РАБОЧЕЙ ЗОНЫ ящика, справочно: место от фасада до
+ * полезной глубины отсека на высоту его зоны. Это НЕ короб: размеров
+ * короба без подтверждённой направляющей и правил цеха нет
+ * (`drawerStackReadiness`), и в раскрой габарит не идёт.
+ */
+export type BayDrawerPart = {
+  /** ИД ящика: «<модуль>:<отсек>:drawer:<номер снизу>» — он же ключ открывания в сцене. */
+  id: string;
+  stackId: string;
+  bayId: string;
+  /** Номер снизу вверх, с нуля. */
+  index: number;
+  /** Зона ящика по высоте от дна корпуса, мм. */
+  slotFromMm: number;
+  slotToMm: number;
+  front: BayDrawerFront;
+  /** Габарит; глубина `zFromMm…zToMm` — от передней кромки корпуса, как у фасада. */
+  envelope: { xFromMm: number; xToMm: number; yFromMm: number; yToMm: number; depthMm: number; zFromMm: number; zToMm: number };
+};
+
+export type ResolvedDrawerStack = {
+  id: string;
+  bayId: string;
+  /** Зона блока по высоте от дна корпуса, мм: выше `toMm` отсек свободен. */
+  fromMm: number;
+  toMm: number;
+  heightMm: number;
+  /** Полезная глубина ящика, мм: глубина корпуса − «полка мельче корпуса» − фасад. */
+  depthMm: number;
+  front: BayDrawerStack['front'];
+  slideItemId: string | null;
+  drawers: BayDrawerPart[];
 };
 
 export type BayLayout = {
@@ -231,6 +302,7 @@ export function bayLayout(unit: Module, env: BayEnvelope): BayLayout | null {
         depthMm,
         thicknessMm: t,
       })),
+      drawerStack: bay.drawers ? resolveDrawerStack(unit, bay, bay.drawers, x, widthMm, env, problems, name) : null,
     });
 
     x += widthMm;
@@ -249,6 +321,284 @@ export function bayLayout(unit: Module, env: BayEnvelope): BayLayout | null {
   });
 
   return { envelope: env, innerWidthMm: env.widthMm - 2 * t, bays: resolved, partitions, problems };
+}
+
+/* ─────────────────────────  Ящики отсека (R02A)  ───────────────────────── */
+
+/**
+ * Ниже этого зона ящика — щель, а не ящик: то же число, что держит
+ * просвет между полками (`MIN_SHELF_GAP_MM`) — «туда ничего не положить».
+ * Своего числа у ящика нет: подтверждённой минимальной высоты ящика у цеха
+ * нет, и выдумывать её нельзя.
+ */
+export const MIN_DRAWER_MM = MIN_SHELF_GAP_MM;
+
+/**
+ * ПОЛЕЗНАЯ ГЛУБИНА ЯЩИКА: глубина корпуса минус «полка мельче корпуса»
+ * (припуск цеха — та же полезная глубина, что у полки) минус фасад ящика.
+ * Одна формула на габарит в сцене, проверку длины направляющей и экран.
+ */
+export function drawerDepthMm(env: BayEnvelope): number {
+  return env.depthMm - env.allowances.shelfDepthMm - env.frontMm;
+}
+
+/**
+ * ГЕОМЕТРИЯ БЛОКА ЯЩИКОВ.
+ *
+ * Зона блока начинается над верхней гранью дна (`fromMm`) и идёт вверх на
+ * `heightMm`; выше неё отсек свободен. Зоны ящиков — снизу вверх. Фасад
+ * вкладной в проём отсека: зазор цеха `frontGapMm` слева и справа, под
+ * каждым фасадом и над верхним — зазоры идут подряд и не подгоняются на
+ * глаз. Фасад стоит в плоскости корпуса: его лицо — на передней кромке.
+ */
+function resolveDrawerStack(
+  unit: Module,
+  bay: FillBay,
+  stack: BayDrawerStack,
+  xFrom: number,
+  widthMm: number,
+  env: BayEnvelope,
+  problems: string[],
+  name: string,
+): ResolvedDrawerStack {
+  const t = env.thicknessMm;
+  const g = env.frontGapMm;
+  const depthMm = drawerDepthMm(env);
+  const fromMm = t + stack.fromMm;
+  const heights = drawerHeights(stack);
+  const innerTop = env.heightMm - t;
+  if (fromMm + stack.heightMm > innerTop) {
+    problems.push(
+      `${name}: блок ящиков ${stack.fromMm}+${stack.heightMm} мм выходит за корпус — ` +
+        `${shortage(innerTop - fromMm, stack.heightMm)}.`,
+    );
+  }
+  let y = fromMm;
+  const drawers = heights.map((h, i): BayDrawerPart => {
+    const slotFromMm = y;
+    const slotToMm = y + h;
+    y = slotToMm;
+    if (h < MIN_DRAWER_MM) {
+      problems.push(`${name}: ящик ${i + 1} — ${h} мм: ${shortage(h, MIN_DRAWER_MM)}.`);
+    }
+    const top = i === heights.length - 1 ? slotToMm - g : slotToMm;
+    const id = `${unit.id}:${bay.id}:drawer:${i + 1}`;
+    return {
+      id,
+      stackId: stack.id,
+      bayId: bay.id,
+      index: i,
+      slotFromMm,
+      slotToMm,
+      front: {
+        partId: `${id}:front`,
+        xFromMm: xFrom + g,
+        xToMm: xFrom + widthMm - g,
+        yFromMm: slotFromMm + g,
+        yToMm: top,
+        widthMm: widthMm - 2 * g,
+        heightMm: top - (slotFromMm + g),
+        thicknessMm: env.frontMm,
+        /* Вкладной фасад: лицом на передней кромке, толщиной внутрь. */
+        zFromMm: -env.frontMm,
+        zToMm: 0,
+      },
+      /* Габарит — сразу за фасадом на полезную глубину. */
+      envelope: {
+        xFromMm: xFrom,
+        xToMm: xFrom + widthMm,
+        yFromMm: slotFromMm,
+        yToMm: slotToMm,
+        depthMm,
+        zFromMm: -env.frontMm - depthMm,
+        zToMm: -env.frontMm,
+      },
+    };
+  });
+  return {
+    id: stack.id,
+    bayId: bay.id,
+    fromMm,
+    toMm: fromMm + stack.heightMm,
+    heightMm: stack.heightMm,
+    depthMm,
+    front: stack.front,
+    slideItemId: stack.slideItemId,
+    drawers,
+  };
+}
+
+/** Почему блок ящиков не может быть таким — словами и числом; `null` — может. */
+function drawerStackRefusal(bay: FillBay, index: number, unit: Module, env: BayEnvelope): string | null {
+  const stack = bay.drawers;
+  if (!stack) return null;
+  const label = `«${unit.label}»`;
+  const where = `отсек ${index + 1}`;
+  const shelves = bayShelfHeights(bay, env.heightMm).length;
+  if (shelves > 0) {
+    return (
+      `${label}: в отсеке ${index + 1} полки (${shelves}) и блок ящиков — полки и ящики в одном отсеке ` +
+      'сделаем на следующем этапе. Уберите полки отсека (Количество полок 0) или блок ящиков.'
+    );
+  }
+  if (!/^d\d+$/.test(stack.id)) return `${label}: у блока ящиков пустой или неверный идентификатор (${stack.id}).`;
+  if (stack.front !== 'inset') {
+    return `${label}: фасад ящика в отсеке — только вкладной в проём отсека; другие фасады ящиков — следующий этап.`;
+  }
+  if (!Number.isInteger(stack.fromMm) || !Number.isInteger(stack.heightMm) || stack.fromMm < 0 || stack.heightMm <= 0) {
+    return `${label}: низ и высота блока ящиков — целые миллиметры, низ от нуля, высота больше нуля.`;
+  }
+  if (stack.slideItemId !== null && typeof stack.slideItemId !== 'string') {
+    return `${label}: направляющая блока ящиков — позиция каталога или «не выбрана».`;
+  }
+  const inner = env.heightMm - 2 * env.thicknessMm;
+  if (stack.fromMm + stack.heightMm > inner) {
+    return (
+      `${label}: блок ящиков в ${where} не встанет — ${shortage(inner - stack.fromMm, stack.heightMm)}: ` +
+      `корпус ${env.heightMm} мм, внутри ${inner} мм, блок начинается на ${stack.fromMm} мм.`
+    );
+  }
+  if (stack.drawers.mode === 'even') {
+    const count = stack.drawers.count;
+    if (!Number.isInteger(count) || count < 1) return `${label}: число ящиков — целое, от одного.`;
+  } else {
+    const heights = stack.drawers.heights;
+    if (heights.length === 0 || heights.some((h) => !Number.isInteger(h) || h <= 0)) {
+      return `${label}: высоты ящиков — целые миллиметры больше нуля.`;
+    }
+    const sum = heights.reduce((a, b) => a + b, 0);
+    if (sum !== stack.heightMm) {
+      return `${label}: высоты ящиков ${heights.join('+')} = ${sum} мм, а блок ${stack.heightMm} мм — сумма обязана сойтись.`;
+    }
+  }
+  const heights = drawerHeights(stack);
+  const low = heights.findIndex((h) => h < MIN_DRAWER_MM);
+  if (low >= 0) {
+    return (
+      `${label}: ${heights.length} ящ. в блоке ${stack.heightMm} мм — на ящик ${low + 1} приходится ${heights[low]} мм: ` +
+      `${shortage(heights[low], MIN_DRAWER_MM)}; ниже ${MIN_DRAWER_MM} мм туда ничего не положить.`
+    );
+  }
+  return null;
+}
+
+/**
+ * ПРАВИЛА КОРОБА ЦЕХА: толщины боковин и дна, насколько короб ниже своей
+ * зоны. В настройках организации их пока нет — и подставлять их нельзя:
+ * по выдуманному коробу цех распилит плиту.
+ */
+export type DrawerBoxRules = { boxSideMm: number; boxBottomMm: number; boxHeightGapMm: number; source: string };
+
+/**
+ * ПОДТВЕРЖДЁННЫЙ ПРОФИЛЬ ЯЩИКА: направляющая (длина, боковой зазор — из
+ * паспорта, `mounting.extra` позиции каталога) плюс правила короба цеха.
+ * У каждого числа — откуда оно (`provenance`).
+ */
+export type DrawerProfile = {
+  slideLengthMm: number;
+  sideClearanceMm: number;
+  boxSideMm: number;
+  boxBottomMm: number;
+  boxHeightGapMm: number;
+  provenance: { slide: string; box: string };
+};
+
+export type DrawerReadiness = { ready: true; profile: DrawerProfile; missing: [] } | { ready: false; missing: string[] };
+
+/**
+ * ГОТОВ ЛИ БЛОК ЯЩИКОВ К ВЫПУСКУ В ЦЕХ — и если нет, чего не хватает.
+ *
+ * Черновик — не ошибка: эскиз, 3D и смета работают. Но без длины и
+ * бокового зазора направляющей из каталога и без правил короба цеха
+ * размеров короба нет, и выпуск заперт (`drawerReleaseBlock`).
+ */
+export function drawerStackReadiness(
+  stack: BayDrawerStack,
+  slide: HardwareItem | null | undefined,
+  rules: DrawerBoxRules | null | undefined,
+  usableDepthMm?: number,
+): DrawerReadiness {
+  const missing: string[] = [];
+  let slideLengthMm: number | null = null;
+  let sideClearanceMm: number | null = null;
+  if (stack.slideItemId === null) {
+    missing.push('направляющая не выбрана — нужна позиция каталога с длиной и боковым зазором');
+  } else if (!slide) {
+    missing.push('выбранной направляющей нет в каталоге организации');
+  } else {
+    const extra = slide.mounting.extra;
+    slideLengthMm = typeof extra.slideLengthMm === 'number' ? extra.slideLengthMm : null;
+    sideClearanceMm = typeof extra.sideClearanceMm === 'number' ? extra.sideClearanceMm : null;
+    if (slideLengthMm === null) missing.push(`у направляющей «${slide.name}» в каталоге нет длины (slideLengthMm)`);
+    if (sideClearanceMm === null) missing.push(`у направляющей «${slide.name}» в каталоге нет бокового зазора (sideClearanceMm)`);
+    if (slideLengthMm !== null && usableDepthMm !== undefined && slideLengthMm > usableDepthMm) {
+      missing.push(
+        `направляющая ${slideLengthMm} мм длиннее полезной глубины ящика ${usableDepthMm} мм — ${shortage(usableDepthMm, slideLengthMm)}`,
+      );
+    }
+  }
+  if (!rules) {
+    missing.push('правил короба цеха нет: толщина боковин и дна, насколько короб ниже своей зоны');
+  }
+  if (missing.length > 0 || !rules || slideLengthMm === null || sideClearanceMm === null || !slide) {
+    return { ready: false, missing };
+  }
+  return {
+    ready: true,
+    profile: {
+      slideLengthMm,
+      sideClearanceMm,
+      boxSideMm: rules.boxSideMm,
+      boxBottomMm: rules.boxBottomMm,
+      boxHeightGapMm: rules.boxHeightGapMm,
+      provenance: { slide: `паспорт «${slide.name}» (${slide.article})`, box: rules.source },
+    },
+    missing: [],
+  };
+}
+
+/**
+ * ДЕТАЛИ КОРОБА ПО ПОДТВЕРЖДЁННОМУ ПРОФИЛЮ.
+ *
+ * Конструкция одна и названа: боковины во всю длину направляющей, торцы
+ * между боковинами, дно вкладное между стенками. Ширина короба — проём
+ * отсека минус боковой зазор направляющей с двух сторон, высота — зона
+ * ящика минус зазор цеха. Без профиля функция не зовётся вовсе.
+ */
+export function drawerBoxParts(
+  drawer: BayDrawerPart,
+  profile: DrawerProfile,
+): { name: string; lengthMm: number; widthMm: number; thicknessMm: number; qty: number }[] {
+  const outerW = drawer.envelope.xToMm - drawer.envelope.xFromMm - 2 * profile.sideClearanceMm;
+  const height = drawer.slotToMm - drawer.slotFromMm - profile.boxHeightGapMm;
+  const innerW = outerW - 2 * profile.boxSideMm;
+  return [
+    { name: 'Боковина ящика', lengthMm: profile.slideLengthMm, widthMm: height, thicknessMm: profile.boxSideMm, qty: 2 },
+    { name: 'Торец ящика', lengthMm: innerW, widthMm: height, thicknessMm: profile.boxSideMm, qty: 2 },
+    { name: 'Дно ящика', lengthMm: innerW, widthMm: profile.slideLengthMm - 2 * profile.boxSideMm, thicknessMm: profile.boxBottomMm, qty: 1 },
+  ];
+}
+
+/**
+ * ВЫПУСК В ЦЕХ ЗАПЕРТ, ПОКА ЯЩИКИ ОТСЕКОВ — ЧЕРНОВИК.
+ *
+ * Правил короба в настройках организации нет, поэтому сегодня любой блок
+ * ящиков отсека — черновик: фасады режутся, а короба нет ни в раскрое, ни
+ * в присадке. Печать и выгрузка для цеха — только когда короб рассчитан.
+ */
+export function drawerReleaseBlock(runs: Run[]): string | null {
+  let drawers = 0;
+  for (const run of runs) {
+    for (const unit of [...run.modules, ...run.upperSegments.flatMap((segment) => segment.modules)]) {
+      drawers += bayDrawerCount(unit.fill);
+    }
+  }
+  if (drawers === 0) return null;
+  return (
+    `Выпуск в цех заперт: ящики отсеков (${drawers} шт.) — черновик. Короб не рассчитан: нет правил короба цеха ` +
+    'и подтверждённой направляющей (длина, боковой зазор). Эскиз, 3D и смета работают; раскрой и печать для цеха — ' +
+    'после правил.'
+  );
 }
 
 /** «доступно X мм, требуется Y мм, не хватает Z мм» — одна строка на все отказы. */
@@ -338,6 +688,9 @@ export function baysRefusal(
 
   for (let i = 0; i < bays.length; i++) {
     const bay = bays[i];
+    /* Блок ящиков (R02A) — до полок: в отсеке с ящиками полок быть не должно. */
+    const drawerRefusal = drawerStackRefusal(bay, i, unit, env);
+    if (drawerRefusal) return drawerRefusal;
     if (bay.shelves.mode === 'even') {
       const count = bay.shelves.count;
       if (!Number.isInteger(count) || count < 0) return `${label}: в отсеке ${i + 1} число полок не целое.`;
@@ -527,11 +880,16 @@ export function removePartitionNote(unit: Module, env: BayEnvelope, bayId: strin
   const widths = bayWidths(bays, env.widthMm, env.thicknessMm);
   const lost = bayShelfHeights(bays[at + 1], env.heightMm).length;
   const kept = bayShelfHeights(bays[at], env.heightMm).length;
+  /* Ящики правого отсека (R02A) уходят вместе с ним — это названо до нажатия. */
+  const lostDrawers = bays[at + 1].drawers ? drawerHeights(bays[at + 1].drawers!).length : 0;
   return (
     `Отсеки ${widths[at]} и ${widths[at + 1]} мм станут одним ${widths[at] + env.thicknessMm + widths[at + 1]} мм. ` +
     (lost > 0
       ? `Полки отсека ${at + 2} (${lost}) снимаются, остаются полки отсека ${at + 1} (${kept}).`
-      : `Полок в отсеке ${at + 2} нет — ничего не теряется.`)
+      : lostDrawers > 0
+        ? ''
+        : `Полок в отсеке ${at + 2} нет — ничего не теряется.`) +
+    (lostDrawers > 0 ? ` Блок ящиков отсека ${at + 2} (${lostDrawers} шт.) снимается вместе с ним.` : '')
   );
 }
 
@@ -546,7 +904,10 @@ export function removePartition(unit: Module, env: BayEnvelope, bayId: string): 
   const absorbsLast = at + 1 === bays.length - 1;
   const next: FillBay[] = [
     ...bays.slice(0, at),
-    absorbsLast ? { id: bays[at].id, shelves: bays[at].shelves } : { ...bays[at], widthMm: merged },
+    /* Последний отсек ширину не хранит; блок ящиков левого отсека переезжает вместе с ним (R02A). */
+    absorbsLast
+      ? { id: bays[at].id, shelves: bays[at].shelves, ...(bays[at].drawers ? { drawers: bays[at].drawers } : {}) }
+      : { ...bays[at], widthMm: merged },
     ...bays.slice(at + 2),
   ];
   return checked(withBays(unit.fill, next), unit, env);
@@ -622,4 +983,158 @@ export function moveBayShelf(unit: Module, env: BayEnvelope, bayId: string, inde
     if ('reason' in spot) return spot.reason;
     return { mode: 'manual', at: [...others, spot.mm].sort((a, b) => a - b) };
   });
+}
+
+/* ─────────────────────────  Операции над блоком ящиков (R02A)  ───────────────────────── */
+
+/**
+ * С какой зоны начинается новый блок: 600 мм от дна, но не выше корпуса.
+ * Это начальное значение поля на экране, а не размер производства: человек
+ * сразу видит его числом и правит под свой шкаф.
+ */
+export const DRAWER_STACK_START_MM = 600;
+
+function editStack(
+  unit: Module,
+  env: BayEnvelope,
+  bayId: string,
+  edit: (stack: BayDrawerStack, bay: FillBay) => BayDrawerStack | string,
+): BayEdit {
+  const bays = unit.fill?.bays;
+  if (!bays || !unit.fill) return { refusal: `«${unit.label}»: модуль не разделён на отсеки.` };
+  const at = bays.findIndex((bay) => bay.id === bayId);
+  if (at < 0) return { refusal: `Отсека ${bayId} в модуле нет.` };
+  const stack = bays[at].drawers;
+  if (!stack) return { refusal: `В отсеке ${at + 1} блока ящиков нет.` };
+  const next = edit(stack, bays[at]);
+  if (typeof next === 'string') return { refusal: next };
+  return checked(withBays(unit.fill, bays.map((bay, i) => (i === at ? { ...bay, drawers: next } : bay))), unit, env);
+}
+
+/**
+ * ДОБАВИТЬ БЛОК ЯЩИКОВ в нижнюю зону отсека: три ящика поровну в зоне
+ * `DRAWER_STACK_START_MM` (или во всю внутреннюю высоту, если корпус ниже).
+ * Направляющая не выбрана — блок сразу черновик, и это сказано на экране.
+ */
+export function addDrawerStack(unit: Module, env: BayEnvelope, bayId: string): BayEdit {
+  const bays = unit.fill?.bays;
+  if (!bays || !unit.fill) return { refusal: `«${unit.label}»: модуль не разделён на отсеки — сначала «Разделить вертикально».` };
+  const at = bays.findIndex((bay) => bay.id === bayId);
+  if (at < 0) return { refusal: `Отсека ${bayId} в модуле нет.` };
+  if (bays[at].drawers) return { refusal: `В отсеке ${at + 1} блок ящиков уже есть.` };
+  const inner = env.heightMm - 2 * env.thicknessMm;
+  const heightMm = Math.min(DRAWER_STACK_START_MM, inner);
+  const count = Math.max(1, Math.min(3, Math.floor(heightMm / MIN_DRAWER_MM)));
+  const stack: BayDrawerStack = { id: 'd1', fromMm: 0, heightMm, drawers: { mode: 'even', count }, front: 'inset', slideItemId: null };
+  return checked(withBays(unit.fill, bays.map((bay, i) => (i === at ? { ...bay, drawers: stack } : bay))), unit, env);
+}
+
+/** ЧИСЛО ЯЩИКОВ — поровну в той же зоне. */
+export function setDrawerCount(unit: Module, env: BayEnvelope, bayId: string, count: number): BayEdit {
+  if (!Number.isInteger(count) || count < 1) return { refusal: 'Число ящиков — целое, от одного.' };
+  return editStack(unit, env, bayId, (stack) => ({ ...stack, drawers: { mode: 'even', count } }));
+}
+
+/**
+ * ЗОНА БЛОКА: низ над дном и высота, мм. Высоты ящиков выводятся заново
+ * поровну с прежним числом: ручные высоты не сошлись бы с новой зоной.
+ */
+export function setDrawerZone(
+  unit: Module,
+  env: BayEnvelope,
+  bayId: string,
+  zone: { fromMm?: number; heightMm?: number },
+): BayEdit {
+  return editStack(unit, env, bayId, (stack) => {
+    const fromMm = zone.fromMm ?? stack.fromMm;
+    const heightMm = zone.heightMm ?? stack.heightMm;
+    if (!Number.isFinite(fromMm) || !Number.isFinite(heightMm)) return 'Низ и высота блока — числа миллиметров.';
+    return { ...stack, fromMm, heightMm, drawers: { mode: 'even', count: drawerHeights(stack).length } };
+  });
+}
+
+/** РАСПРЕДЕЛИТЬ ПОРОВНУ: сколько ящиков было, столько и остаётся. */
+export function distributeDrawers(unit: Module, env: BayEnvelope, bayId: string): BayEdit {
+  return editStack(unit, env, bayId, (stack) => ({ ...stack, drawers: { mode: 'even', count: drawerHeights(stack).length } }));
+}
+
+/**
+ * ВЫСОТА ЗОНЫ ОДНОГО ЯЩИКА, мм. Блок прежней высоты: разницу забирает ящик
+ * выше (у верхнего — ящик ниже). Не влезло — отказ с числом.
+ */
+export function setDrawerHeight(unit: Module, env: BayEnvelope, bayId: string, index: number, heightMm: number): BayEdit {
+  return editStack(unit, env, bayId, (stack) => {
+    const heights = drawerHeights(stack);
+    if (index < 0 || index >= heights.length) return `В блоке нет ящика номер ${index + 1}.`;
+    if (heights.length < 2) return 'Ящик один — его высота равна высоте блока: меняйте высоту блока.';
+    if (!Number.isInteger(heightMm) || heightMm <= 0) return 'Высота ящика — целое число миллиметров больше нуля.';
+    const next = [...heights];
+    const neighbour = index < heights.length - 1 ? index + 1 : index - 1;
+    next[neighbour] = heights[neighbour] - (heightMm - heights[index]);
+    next[index] = heightMm;
+    return { ...stack, drawers: { mode: 'manual', heights: next } };
+  });
+}
+
+/**
+ * ЧТО СНИМЕТ ЗАМЕНА МОДУЛЯ ИЛИ ЕГО ВАРИАНТА: слова ДО нажатия.
+ *
+ * Наполнение на новый модуль не переезжает — оно принадлежит варианту
+ * (ловушка 421). Отсеки, собранные человеком, — перегородки, полки
+ * отсеков и блоки ящиков — уходят вместе с прежним модулем, и карточка
+ * библиотеки или ленты вариантов обязана сказать это до нажатия.
+ * Спрашивается РЕЗУЛЬТАТ движка: `after` — модуль на том же месте после
+ * операции; остались у него отсеки — терять нечего.
+ */
+export function bayLossNote(before: Module, after: Module | null | undefined, env: BayEnvelope): string | null {
+  const bays = before.fill?.bays;
+  if (!bays || after?.fill?.bays) return null;
+  const parts = bays.map((bay, i) => {
+    const shelves = bayShelfHeights(bay, env.heightMm).length;
+    const drawers = bay.drawers ? drawerHeights(bay.drawers).length : 0;
+    const what = [shelves > 0 ? `полки (${shelves})` : null, drawers > 0 ? `ящики (${drawers})` : null]
+      .filter(Boolean)
+      .join(', ');
+    return `отсек ${i + 1} — ${what || 'пустой'}`;
+  });
+  return (
+    `Отсеки снимутся: перегородки (${bays.length - 1}); ${parts.join('; ')}. ` +
+    'Наполнение встанет по умолчанию — отсеки придётся собрать заново.'
+  );
+}
+
+/** Что пропадёт, если снять блок: слова ДО нажатия. */
+export function removeDrawerStackNote(unit: Module, bayId: string): string | null {
+  const bay = unit.fill?.bays?.find((item) => item.id === bayId);
+  if (!bay?.drawers) return null;
+  const count = drawerHeights(bay.drawers).length;
+  return (
+    `Блок из ${count} ящ. снимется: фасады ящиков (${count} шт.) уйдут из раскроя, «Ящики в сборе» и направляющие — ` +
+    'из сметы. Отсек станет пустым.'
+  );
+}
+
+/** СНЯТЬ БЛОК ЯЩИКОВ: отсек становится пустым, полки не появляются сами. */
+export function removeDrawerStack(unit: Module, env: BayEnvelope, bayId: string): BayEdit {
+  const bays = unit.fill?.bays;
+  if (!bays || !unit.fill) return { refusal: `«${unit.label}»: модуль не разделён на отсеки.` };
+  const at = bays.findIndex((bay) => bay.id === bayId);
+  if (at < 0 || !bays[at].drawers) return { refusal: 'В этом отсеке блока ящиков нет.' };
+  return checked(
+    withBays(
+      unit.fill,
+      bays.map((bay, i) =>
+        i !== at
+          ? bay
+          : { id: bay.id, shelves: bay.shelves, ...(bay.widthMm !== undefined ? { widthMm: bay.widthMm } : {}) },
+      ),
+    ),
+    unit,
+    env,
+  );
+}
+
+/** НАПРАВЛЯЮЩАЯ: позиция каталога или «не выбрана». Готовность считает `drawerStackReadiness`. */
+export function setDrawerSlide(unit: Module, env: BayEnvelope, bayId: string, slideItemId: string | null): BayEdit {
+  return editStack(unit, env, bayId, (stack) => ({ ...stack, slideItemId }));
 }
