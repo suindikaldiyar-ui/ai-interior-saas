@@ -5,6 +5,7 @@ import { previewUrl } from '@/lib/catalog';
 import {
   MATERIAL_TARGETS,
   PRICE_UNIT_LABEL,
+  TARGET_ROLE,
   TARGET_TITLE,
   catalogEntriesFromRows,
   collectionOf,
@@ -25,6 +26,7 @@ import {
 import { loadMaterialDefs, loadMaterialFile } from '@/lib/millwork/materialFileClient';
 import { MATERIAL_FINISHES } from '@/lib/millwork/materialFinishes';
 import { formatMoney } from '@/lib/millwork/estimate';
+import { REFERENCE_SOURCE_TITLE, referenceScaleWords } from '@/lib/millwork/referenceTextures';
 import type { CatalogEntryFull } from '@/types/catalog';
 
 /**
@@ -108,10 +110,19 @@ type ReviewPreview = {
   conflicts: string[];
 };
 
-/** Образец карточки поставщика — через закрытую выдачу, только вошедшему (P3). */
-function reviewPreviewUrl(file: string): string {
-  return `/api/catalog/materials/preview?file=${encodeURIComponent(file)}`;
-}
+/** Куда ляжет выбор «на весь объект» — словами под кнопками цели. */
+const SCOPE_WORDS: Record<Exclude<MaterialTarget, 'module' | 'module-carcass'>, string> = {
+  fronts: 'Ляжет на все фасады всех стен объекта: фасад, выбранный модулю отдельно, тоже заменится.',
+  carcass: 'Ляжет на корпус всех стен объекта; корпус, выбранный модулю отдельно, сильнее и останется.',
+  shelves:
+    'Ляжет на полки всех стен объекта — независимо от корпуса; полки, которые появятся потом, возьмут его сами. ' +
+    'В смете — своя строка «Полки «…»».',
+  partitions:
+    'Ляжет на перегородки (вертикальные и горизонтальные) всех стен — независимо от корпуса. ' +
+    'В смете — своя строка «Перегородки «…»».',
+  antresol: 'Ляжет на корпус и фасады антресолей, которые стоят сейчас; остальная мебель не меняется.',
+  countertop: 'Ляжет на столешницу всех стен объекта.',
+};
 
 /** Высота строки списка: по ней считается, какие строки видны. */
 const ROW_PX = 44;
@@ -495,13 +506,9 @@ export default function MaterialLibraryPanel({
                 : `Выберите модуль в сцене — материал ляжет на его ${target === 'module' ? 'фасад' : 'корпус'}.`}
             </p>
           )}
-          {(target === 'fronts' || target === 'carcass' || target === 'countertop') && (
+          {target !== 'module' && target !== 'module-carcass' && (
             <p className="mt-1 text-[13px] leading-snug text-graphiteMw" data-material-scope>
-              {target === 'fronts'
-                ? 'Ляжет на все фасады всех стен объекта: фасад, выбранный модулю отдельно, тоже заменится.'
-                : target === 'carcass'
-                  ? 'Ляжет на корпус всех стен объекта; корпус, выбранный модулю отдельно, сильнее и останется.'
-                  : 'Ляжет на столешницу всех стен объекта.'}
+              {SCOPE_WORDS[target]}
             </p>
           )}
 
@@ -615,10 +622,10 @@ export default function MaterialLibraryPanel({
           {hidden.length > 0 && (
             <p className="mt-1 text-[13px] leading-snug text-graphiteMw" data-material-hidden>
               {hidden.map((t) => t.title).join(', ')} — не идут{' '}
-              {target === 'carcass' || target === 'module-carcass'
-                ? 'на корпус'
-                : target === 'countertop'
-                  ? 'на столешницу'
+              {target === 'countertop'
+                ? 'на столешницу'
+                : TARGET_ROLE[target] === 'carcass'
+                  ? 'на корпус'
                   : 'на фасады'}
               .
             </p>
@@ -670,14 +677,11 @@ export default function MaterialLibraryPanel({
                 }
                 const on = current.itemId === row.item.id;
                 /*
-                 * Образец поставщика (P3) — кроп PDF через закрытую выдачу:
-                 * только в списке и карточке, на детали — средний цвет.
+                 * Образец из брошюры (REFERENCE_ONLY) — это `photo.reference`: тот же
+                 * в списке, в карточке и на детали в 3D, через закрытую выдачу.
+                 * Нет образца — плашка цвета, а не битая картинка.
                  */
-                const thumb = row.item.photo
-                  ? previewUrl(row.entry) || row.item.photo.url
-                  : row.item.review?.preview
-                    ? reviewPreviewUrl(row.item.review.preview)
-                    : null;
+                const thumb = row.item.photo ? previewUrl(row.entry) || row.item.photo.url : null;
                 return (
                   <button
                     key={row.entry.id}
@@ -687,6 +691,7 @@ export default function MaterialLibraryPanel({
                     data-photo={row.item.photo ? '1' : '0'}
                     data-brand={row.item.brand ?? 'other'}
                     data-review={row.item.review ? '1' : '0'}
+                    data-reference={row.item.photo?.reference ? row.item.photo.reference.source : ''}
                     aria-pressed={on}
                     onClick={() => apply(row.item, row.collection)}
                     className="absolute inset-x-0 flex items-center gap-2 px-3 text-left"
@@ -764,7 +769,7 @@ export default function MaterialLibraryPanel({
               entry={currentPair.entry}
               collection={currentCollection}
               surface={current.surface}
-              surfaceChoice={target !== 'carcass'}
+              surfaceChoice={TARGET_ROLE[target] !== 'carcass'}
               rates={rates}
               onSurface={(surface) => apply(currentPair.item, currentCollection, surface)}
               onPrice={async (patch) => setNotice(await onPrice(currentPair.item.id, patch))}
@@ -836,6 +841,9 @@ function MaterialCard({
   const effective = surface ? materialPriceOf(item, surface, rates) : null;
   const [error, setError] = useState<string | null>(null);
   const [pixels, setPixels] = useState<{ w: number; h: number } | null>(null);
+  /** Образец из брошюры (REFERENCE_ONLY) и не отдался ли он с этого сервера. */
+  const reference = item.photo?.reference ?? null;
+  const [imageFailed, setImageFailed] = useState(false);
 
   /* Размер фото в пикселях — чтобы предупредить про квадраты на столешнице. */
   useEffect(() => {
@@ -866,7 +874,16 @@ function MaterialCard({
     await onPrice(perFinish ? { finishPrices: parsed } : { price: parsed.single });
   };
 
-  const warning = pixels ? photoWarning(pixels.w, pixels.h) : null;
+  /*
+   * У образца из брошюры пикселей мало по природе: это печатный образец, а
+   * не файл декора. Предупреждение называет, откуда взять настоящий.
+   */
+  const warning = pixels
+    ? reference
+      ? `Образец брошюры ${pixels.w}×${pixels.h} px: на большой детали он заметно повторяется. ` +
+        'Настоящую текстуру даёт файл декора производителя (у EGGER — myEGGER, у GRANDEX — дилер).'
+      : photoWarning(pixels.w, pixels.h)
+    : null;
 
   return (
     <div className="mt-3 rounded-[var(--r-control)] bg-navy p-3" data-material-card={item.id}>
@@ -877,36 +894,58 @@ function MaterialCard({
       <p className="text-[13px] text-graphiteMw">{collection.label}</p>
 
       {/*
-        * СПРАВОЧНАЯ КАРТОЧКА ПОСТАВЩИКА (P3): код декора и поверхность,
-        * страница брошюры и чего о позиции НЕ известно. Образец — кроп PDF:
-        * он здесь, на карточке; на детали в 3D — средний цвет образца.
+        * СПРАВОЧНАЯ КАРТОЧКА ПОСТАВЩИКА (P3): производитель, код декора и
+        * поверхность, страница брошюры и чего о позиции НЕ известно.
+        * Образец — картинка из PDF производителя, сопоставленная с позицией
+        * по коду и структуре дословно; он же ложится на деталь в 3D, но
+        * остаётся REFERENCE_ONLY: масштаб принят, повтор зеркальный.
         */}
       {item.review && (
         <div className="mt-2 flex gap-3" data-material-review={item.review.decorCode}>
-          {item.review.preview && (
+          {reference && !imageFailed ? (
             /* eslint-disable-next-line @next/next/no-img-element -- образец идёт закрытой выдачей, без оптимизатора и без кэша CDN */
             <img
-              src={reviewPreviewUrl(item.review.preview)}
-              alt={`Образец ${item.review.decorCode} ${item.review.surfaceCode} из PDF`}
-              width={96}
-              height={96}
-              className="h-24 w-24 shrink-0 rounded-[5px] object-cover"
+              src={item.photo!.url}
+              alt={`Образец ${item.brand ?? ''} ${item.review.decorCode} ${item.review.surfaceCode} из брошюры производителя`}
+              width={112}
+              height={112}
+              className="h-28 w-28 shrink-0 rounded-[5px] object-cover"
               style={{ background: item.colorHex ?? undefined }}
+              onError={() => setImageFailed(true)}
               data-review-image
+              data-reference-source={reference.source}
+            />
+          ) : (
+            <span
+              className="block h-28 w-28 shrink-0 rounded-[5px]"
+              style={{ background: item.colorHex ?? undefined }}
+              data-review-color
             />
           )}
-          <div className="grid gap-0.5 text-[13px] leading-snug">
+          <div className="grid content-start gap-0.5 text-[13px] leading-snug">
             <p>
-              {item.brand} {item.review.decorCode} · поверхность {item.review.surfaceCode}
+              <b data-material-maker>{item.brand}</b> {item.review.decorCode} · поверхность {item.review.surfaceCode}
             </p>
             {!item.review.nameVerified && <p className="text-tape">Название не подтверждено — в брошюре его нет.</p>}
-            <p className="text-graphiteMw">
-              {item.review.sourcePdf}
-              {item.review.pages.length > 0 ? `, стр. ${item.review.pages.join(', ')}` : ''}
-            </p>
+            {reference ? (
+              <p className="text-graphiteMw" data-reference-origin>
+                {REFERENCE_SOURCE_TITLE[reference.source]}
+                {reference.page !== null ? `, стр. ${reference.page}` : ''}
+                {reference.caption ? `, подпись «${reference.caption}»` : ''}
+                {reference.note ? ` — ${reference.note}` : ''}
+              </p>
+            ) : (
+              <p className="text-graphiteMw">
+                {item.review.sourcePdf}
+                {item.review.pages.length > 0 ? `, стр. ${item.review.pages.join(', ')}` : ''}
+              </p>
+            )}
             <p className="text-tape" data-review-status>
-              Образец из PDF — справочный, не текстура плиты и не PBR; права на образец не подтверждены; на детали —
-              средний цвет образца.
+              {reference
+                ? imageFailed
+                  ? 'Образец недоступен на этом сервере — права на изображения не подтверждены, поэтому файлов нет в git и Storage. Карточка и деталь показывают средний цвет образца.'
+                  : `REFERENCE_ONLY: образец из брошюры, не PBR и не бесшовная текстура — на деталях повторяется зеркально; ${referenceScaleWords(reference)}; права на изображение не подтверждены.`
+                : 'Образца из брошюры у позиции нет — на детали её цвет. Права на изображения не подтверждены.'}
             </p>
             {item.price === null && !item.finishPrices && <p className="text-tape">Нет цены — смета с ним «неполная».</p>}
           </div>

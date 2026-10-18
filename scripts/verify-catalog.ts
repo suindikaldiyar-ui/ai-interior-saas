@@ -35,6 +35,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import type { MillworkOp } from '../types/millwork';
 import { paletteFromCatalog } from '../lib/millwork/palette';
 import { carcassCatalog } from '../lib/millwork/carcassMaterial';
+import { REFERENCE_SCALE, REFERENCE_TEXTURES } from '../lib/millwork/referenceTextures.generated';
+import { referenceKeyOf, referenceUrl, withReferences } from '../lib/millwork/referenceTextures';
 import { DEMO_CATALOG } from '../lib/millwork/demo';
 /**
  * Приёмка фазы 3 — та её часть, что проверяется без живого Supabase:
@@ -1292,6 +1294,175 @@ console.log('\nP3: EGGER и GRANDEX — сопоставление, показ �
   );
 }
 
+/* ═══════════  P3D-TEX: образцы декоров из брошюр — точно по артикулу, на карточке и на детали  ═══════════ */
+/*
+ * Образец — картинка из PDF производителя, сопоставленная с позицией по
+ * коду и структуре ДОСЛОВНО (`scripts/build-reference-textures.ts`). Здесь
+ * проверяется то, что лежит в репозитории и идёт путём экрана:
+ * `fetchCatalog` → `withReferences` → `materialItemOf` / `carcassItemOf`.
+ * Файлы образцов вне git — их не трогаем; таблица и путь до детали — здесь.
+ */
+async function referenceTextureChecks() {
+  console.log('\nP3D-TEX: образцы EGGER и GRANDEX — точно по артикулу, размер принят, путь экрана до карточки и 3D');
+  const file = parseMaterialFile(catalogJson);
+  const REVIEW = ['egger-ldsp', 'egger-perfectsense', 'egger-worktops', 'grandex-acrylic'];
+  const reviewItems = REVIEW.flatMap((id) => (file.collections.find((c) => c.id === id)?.items ?? []).map((item) => ({ item, collection: id })));
+  const table = Object.entries(REFERENCE_TEXTURES);
+  const bySource: Record<string, number> = {};
+  for (const [, r] of table) bySource[r.source] = (bySource[r.source] ?? 0) + 1;
+  const files = new Set(table.map(([, r]) => r.file));
+  const keyOfItem = (item: (typeof reviewItems)[number]['item']) => referenceKeyOf({ provenance: item.provenance });
+  const missing = reviewItems.filter(({ item }) => {
+    const key = keyOfItem(item);
+    return !key || !REFERENCE_TEXTURES[key];
+  });
+  check(
+    'TX1 таблица образцов: 340 (EDC26 76 · брошюра столешниц 174 · GRANDEX 90), файлов 337; у каждой из 337 позиций каталога образец по ключу provenance.preview',
+    table.length === 340 &&
+      bySource.edc26 === 76 &&
+      bySource.worktops === 174 &&
+      bySource['grandex-pack'] === 90 &&
+      files.size === 337 &&
+      reviewItems.length === 337 &&
+      missing.length === 0,
+    `образцов ${table.length} · ${JSON.stringify(bySource)} · файлов ${files.size} · позиций ${reviewItems.length} · без образца ${missing.length}${missing.length ? `: ${missing.slice(0, 3).map(({ item }) => item.code).join(', ')}` : ''}`,
+  );
+
+  /*
+   * ТОЧНО ПО АРТИКУЛУ: подпись под образцом в брошюре — тот же код и та же
+   * структура, что у позиции. Подпись «W1001 PG / ST9» подходит и «PG».
+   * Ключ таблицы несёт код записи пакета — и он тот же, что в подписи.
+   */
+  const alnum = (text: string) => text.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const fits = (caption: string | null, code: string, finish: string) => {
+    if (!caption) return false;
+    const [head, ...rest] = caption.split(' ');
+    const tail = rest.join(' ');
+    return head === code && (alnum(tail) === alnum(finish) || tail.split('/').some((part) => alnum(part) === alnum(finish)));
+  };
+  const wrong: string[] = [];
+  for (const { item } of reviewItems) {
+    const p = item.provenance as Record<string, string>;
+    const sample = REFERENCE_TEXTURES[keyOfItem(item) ?? ''];
+    if (!sample) continue;
+    if (p.brand === 'GRANDEX') {
+      if (sample.source !== 'grandex-pack' || !sample.file.startsWith(`GRANDEX/${p.manufacturerDecorCode}.`)) wrong.push(`${item.code} → ${sample.file}`);
+    } else if (!fits(sample.caption, p.manufacturerDecorCode, p.surfaceCode)) {
+      wrong.push(`${item.code} → «${sample.caption}»`);
+    }
+  }
+  const keyCode = table.filter(([key, r]) => r.caption && key.split('/')[1].split('_')[0] !== r.caption.split(' ')[0]);
+  check(
+    'TX2 каждый образец — того же артикула: код и структура подписи в брошюре = код и поверхность позиции (337 из 337); код ключа = код подписи (250 из 250 EGGER)',
+    wrong.length === 0 && keyCode.length === 0 && table.filter(([, r]) => r.caption).length === 250,
+    wrong.length || keyCode.length
+      ? `не тот: ${[...wrong, ...keyCode.map(([k, r]) => `${k} ↔ ${r.caption}`)].slice(0, 4).join(' | ')}`
+      : 'все сходятся',
+  );
+
+  /*
+   * МАСШТАБ ПРИНЯТ, И ОДИН: EGGER — печать 1:10 при 150 dpi брошюры (1.6–1.8
+   * мм на пиксель у обеих брошюр), GRANDEX — длинная сторона 600 мм.
+   * Волокно — по правилу цеха: плита вдоль v, столешница вдоль u.
+   */
+  const perPx = table.filter(([, r]) => r.source !== 'grandex-pack').flatMap(([, r]) => [r.mm[0] / r.px[0], r.mm[1] / r.px[1]]);
+  const grandexLong = table.filter(([, r]) => r.source === 'grandex-pack').map(([, r]) => Math.max(...r.mm));
+  const classOf = new Map(reviewItems.map(({ item }) => [keyOfItem(item), (item.provenance as Record<string, string>).productClass]));
+  /*
+   * Волокно ДЕРЕВА (декоры H…) обязано лечь по правилу цеха. Камень и уни
+   * (F…, U…, W…, GRANDEX) лежат так, как их печатает производитель: прожилка
+   * мрамора идёт как угодно, а «направление» крошки — шум оценки.
+   */
+  const wood = table.filter(([key, r]) => /^EGGER\/H/.test(key) && classOf.has(key) && r.grain !== 'none');
+  const badGrain = wood.filter(([key, r]) => {
+    const cls = classOf.get(key);
+    const worktop = cls === 'egger_worktop' || cls === 'solid_surface_worktop';
+    return r.grain !== (worktop ? 'horizontal' : 'vertical');
+  });
+  check(
+    'TX3 размер ПРИНЯТ и назван (basis assumed): EGGER 1.6–1.8 мм/пикс, GRANDEX — 600 мм по длинной стороне; волокно дерева у плиты вдоль v, у столешницы вдоль u',
+    REFERENCE_SCALE.basis === 'assumed' &&
+      perPx.every((v) => v >= 1.6 && v <= 1.8) &&
+      grandexLong.length === 90 &&
+      grandexLong.every((v) => v === REFERENCE_SCALE.grandexLongMm) &&
+      wood.length > 0 &&
+      badGrain.length === 0,
+    `мм/пикс ${Math.min(...perPx).toFixed(2)}…${Math.max(...perPx).toFixed(2)} · GRANDEX ${Math.min(...grandexLong)}…${Math.max(...grandexLong)} мм · дерево с явным волокном ${wood.length}, поперёк правила ${badGrain.length}`,
+  );
+
+  /* Путь экрана без базы: строки импорта → позиции → образцы → позиция для сметы и сцены. */
+  const plan = planMaterialImport(file, [], { collections: REVIEW });
+  const others = planMaterialImport(file, []).rows.slice(0, 60);
+  const loaded = [...catalogEntriesFromRows(plan.rows, file, 'org-t', 't:'), ...catalogEntriesFromRows(others, file, 'org-t', 'u:')];
+  const bare = materialCatalog(loaded);
+  const dressed = withReferences(loaded, REFERENCE_TEXTURES);
+  const items = materialCatalog(dressed);
+  const reviewIds = loaded.filter((e) => referenceKeyOf(e.meta)).map((e) => e.id);
+  const badPhoto = reviewIds.filter((id) => {
+    const item = items.get(id);
+    const entry = dressed.find((e) => e.id === id)!;
+    const key = referenceKeyOf(entry.meta)!;
+    const r = REFERENCE_TEXTURES[key];
+    return (
+      !item?.photo?.reference ||
+      item.photo.url !== referenceUrl(key) ||
+      item.photo.sizeM[0] !== r.mm[0] / 1000 ||
+      item.photo.sizeM[1] !== r.mm[1] / 1000 ||
+      item.colorHex !== r.hex
+    );
+  });
+  const othersSame = loaded
+    .filter((e) => !referenceKeyOf(e.meta))
+    .every((e) => JSON.stringify(bare.get(e.id)) === JSON.stringify(items.get(e.id)));
+  const bareWithPhoto = reviewIds.filter((id) => bare.get(id)?.photo).length;
+  const h1113 = Array.from(items.values()).find((i) => i.code === 'EGGER-H1113-ST10');
+  check(
+    'TX4 путь экрана: 337 позиций EGGER/GRANDEX получают образец на деталь (адрес закрытой выдачи, принятый размер) и цвет самого образца; без таблицы фото не было ни у одной; МДФ и RAL не тронуты',
+    reviewIds.length === 337 && badPhoto.length === 0 && bareWithPhoto === 0 && othersSame && h1113?.colorHex === '#aa8763',
+    `позиций ${reviewIds.length} · не так ${badPhoto.length} · без таблицы с фото ${bareWithPhoto} · прочие ${othersSame ? 'те же' : 'ИЗМЕНИЛИСЬ'} · H1113 ST10 ${h1113?.colorHex} (по кропу с полями было #d5c9ba)`,
+  );
+
+  const carcass = carcassCatalog(dressed);
+  const eggerBoards = dressed.filter((e) => e.category.key === 'collection:egger-ldsp');
+  const carcassWrong = eggerBoards.filter((e) => carcass.get(e.id)?.colorHex !== e.reference?.hex);
+  check(
+    'TX5 корпус: 136 плит EGGER красят корпус цветом самого образца (тем же, что карточка), а не цветом кропа со страницей',
+    eggerBoards.length === 136 && carcassWrong.length === 0,
+    `плит ${eggerBoards.length} · цвет не тот ${carcassWrong.length}`,
+  );
+
+  /* Одна дверь чтения: `fetchCatalog` отдаёт позиции уже с образцами. */
+  const sample = dressed.find((e) => e.reference && e.article === 'EGGER-H1113-ST10');
+  const plain = dressed.find((e) => !e.reference);
+  if (!sample || !plain) {
+    check('TX6 позиции для чтения найдены', false, `НУЛЕВОЙ СЕЛЕКТОР: EGGER ${Boolean(sample)} · обычная ${Boolean(plain)}`);
+    return;
+  }
+  const raw = (entry: typeof sample) => {
+    const { category, assets, reference, ...row } = entry;
+    void reference;
+    return { ...row, catalog_categories: category, catalog_assets: assets };
+  };
+  const read = (await fetchCatalog(stubClient([{ data: [raw(sample), raw(plain)], error: null }]) as never, 'org-t')) as {
+    entries: typeof dressed | null;
+  };
+  const readSample = read.entries?.find((e) => e.id === sample.id);
+  const readPlain = read.entries?.find((e) => e.id === plain.id);
+  check(
+    'TX6 fetchCatalog (экран, админка, перечитывание, кабинет) отдаёт позицию EGGER уже с образцом, обычную — без; в meta строки образец не попадает',
+    readSample?.reference?.file === sample.reference?.file && readPlain?.reference === undefined && !('reference' in (readSample?.meta ?? {})),
+    `EGGER: ${readSample?.reference?.file ?? 'НЕТ ОБРАЗЦА'} · обычная: ${readPlain ? (readPlain.reference ? 'С ОБРАЗЦОМ' : 'без образца') : 'НУЛЕВОЙ СЕЛЕКТОР'}`,
+  );
+
+  /* Одна величина — один расчёт: цвет в файле каталога = цвет образца. */
+  const hexDiff = reviewItems.filter(({ item }) => item.hex !== REFERENCE_TEXTURES[keyOfItem(item) ?? '']?.hex);
+  check(
+    'TX7 цвет позиций EGGER/GRANDEX в data/catalog/catalog.json = средний цвет самого образца (337 из 337)',
+    hexDiff.length === 0,
+    hexDiff.length ? `расходятся ${hexDiff.length}: ${hexDiff.slice(0, 3).map(({ item }) => `${item.code} ${item.hex}`).join(', ')}` : 'сходятся',
+  );
+}
+
 /*
  * ХВОСТ ЖДЁТ АСИНХРОННЫЕ ПРОВЕРКИ.
  *
@@ -1301,6 +1472,7 @@ console.log('\nP3: EGGER и GRANDEX — сопоставление, показ �
  */
 void millingPriceChecks()
   .then(() => catalogReadChecks())
+  .then(() => referenceTextureChecks())
   .then(() => {
   console.log(`\n${passed} passed, ${failed} failed\n`);
   process.exit(failed === 0 ? 0 : 1);

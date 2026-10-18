@@ -91,7 +91,7 @@ import MaterialsStep from './MaterialsStep';
 import MillingPicker from './MillingPicker';
 import CarcassPicker from './CarcassPicker';
 import { millingCatalog } from '@/lib/millwork/milling';
-import { carcassCatalog } from '@/lib/millwork/carcassMaterial';
+import { carcassCatalog, isAntresol } from '@/lib/millwork/carcassMaterial';
 import PanelList from './PanelList';
 import RenderPanel from './RenderPanel';
 import { DEMO_QUOTA_HINT, DEMO_QUOTA_SPENT } from '@/lib/plan';
@@ -2597,6 +2597,12 @@ export default function Workspace(props: WorkspaceProps) {
       const one = target === 'module' || target === 'module-carcass';
       const walls = one ? [wall] : segments.map((_, index) => index);
       const said: string[] = [];
+      /*
+       * Отказ одной стены («антресоли на этой стене нет») — не ответ всему
+       * выбору, если на другой стене материал лёг. Говорим его, только когда
+       * не легло нигде.
+       */
+      const refused: string[] = [];
       let changed = false;
 
       for (const index of walls) {
@@ -2610,7 +2616,7 @@ export default function Workspace(props: WorkspaceProps) {
           MATERIAL_FINISHES,
         );
         if ('refusal' in plan) {
-          said.push(plan.refusal);
+          refused.push(plan.refusal);
           continue;
         }
         if (plan.note) said.push(plan.note);
@@ -2630,7 +2636,7 @@ export default function Workspace(props: WorkspaceProps) {
       }
 
       if (changed) dirty.current = true;
-      return said[0] ?? null;
+      return said[0] ?? (changed ? null : (refused[0] ?? null));
     },
     [wall, segments, selectedId, requirements, wallOpenings, props.roomDepthM, active.key, wallIdAt],
   );
@@ -2658,9 +2664,22 @@ export default function Workspace(props: WorkspaceProps) {
     const carcassId = segments[0]?.carcass?.base ?? null;
     const counter = segments[0]?.countertopMaterial;
     const moduleFront = selection.unit ? frontOf(selection.unit) : null;
+    const known = (id: string | null | undefined) => (id && materialItems.has(id) ? id : null);
+    /* Антресоль — декор её корпуса; модулей несколько — тот, что у большинства. */
+    const antresolTally = new Map<string, number>();
+    for (const run of segments) {
+      for (const unit of allModules(run).filter(isAntresol)) {
+        const id = known(unit.carcassItemId);
+        if (id) antresolTally.set(id, (antresolTally.get(id) ?? 0) + 1);
+      }
+    }
+    const antresolTop = Array.from(antresolTally.entries()).sort((a, b) => b[1] - a[1])[0];
     return {
       fronts: top ? { itemId: top[0], surface: top[1].surface } : { itemId: null },
       carcass: { itemId: carcassId && materialItems.has(carcassId) ? carcassId : null },
+      shelves: { itemId: known(segments[0]?.carcass?.shelves) },
+      partitions: { itemId: known(segments[0]?.carcass?.partitions) },
+      antresol: { itemId: antresolTop ? antresolTop[0] : null },
       countertop: counter ? { itemId: counter.itemId, surface: counter.surface } : { itemId: null },
       module:
         moduleFront?.itemId && materialItems.has(moduleFront.itemId)

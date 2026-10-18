@@ -383,6 +383,12 @@ export function applyOps({
    * живёт на модуле в `upperSegments`.
    */
   const storageFronts = new Map<string, FrontSpec>();
+  /**
+   * ДЕКОР КОРПУСА КЛАДОВКИ — тем же путём, что её фасад: кладовку пересобирает
+   * `buildUpperRow`, и `set_carcass` на неё отвечал «модуль не найден», а
+   * выбор антресоли целиком (P3D-TEX) терял бы её корпус на пересборке.
+   */
+  const storageCarcass = new Map<string, string>();
   const isStorage = (id: string) =>
     run.upperSegments
       .flatMap((segment) => segment.modules)
@@ -2867,15 +2873,30 @@ export function applyOps({
          * это одна лестница `carcassFor`. Второго места хранения не
          * появляется, второй лестницы наследования — тоже.
          */
-        if (op.moduleId && op.scope) {
+        if ([op.moduleId, op.scope, op.part].filter(Boolean).length > 1) {
           warnings.push(
-            'Материал корпуса назначается либо полосе, либо модулю: ' +
+            'Материал корпуса назначается либо полосе, либо модулю, либо деталям ряда: ' +
               'два адреса в одной правке — это два разных решения.',
           );
           break;
         }
 
         const value = op.itemId ?? NO_CARCASS_ID;
+
+        /*
+         * ПОЛКИ И ПЕРЕГОРОДКИ — РОД ДЕТАЛИ, А НЕ ПОЛОСА: лежит на ряду рядом с
+         * полосами и читается той же `carcassFor`. Снять (`null`) — деталь
+         * снова как корпус, а не «плита цеха»: отказ от декора полок пишется
+         * явно, и в ряд уходит не `none`, а отсутствие выбора.
+         */
+        if (op.part) {
+          const next = { ...carcass };
+          if (op.itemId) next[op.part] = op.itemId;
+          else delete next[op.part];
+          /* Пустой выбор в ряд не пишется (ловушка 246). */
+          carcass = Object.keys(next).length > 0 ? next : undefined;
+          break;
+        }
 
         if (op.moduleId) {
           const paint = (unit: Module): Module => ({ ...unit, carcassItemId: value });
@@ -2887,6 +2908,10 @@ export function applyOps({
           }
           if (editMezz(op.moduleId, paint)) break;
           if (editUpper(op.moduleId, paint)) break;
+          if (isStorage(op.moduleId)) {
+            storageCarcass.set(op.moduleId, value);
+            break;
+          }
 
           warnings.push(`Модуль ${op.moduleId} не найден: красить нечего.`);
           break;
@@ -3198,11 +3223,13 @@ export function applyOps({
         const edited = storageFills.get(unit.id);
         /* Материал, выбранный в этом вызове, сильнее прежнего (`storageFronts`). */
         const painted = storageFronts.get(unit.id);
-        if (!had && !edited && !painted) return unit;
+        const decor = storageCarcass.get(unit.id) ?? had?.carcassItemId;
+        if (!had && !edited && !painted && !decor) return unit;
         return {
           ...unit,
           fill: edited ?? had?.fill ?? unit.fill,
           front: painted ?? had?.front ?? unit.front,
+          ...(decor ? { carcassItemId: decor } : {}),
         };
       }),
     }));

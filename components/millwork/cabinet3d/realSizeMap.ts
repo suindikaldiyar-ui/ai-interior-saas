@@ -95,6 +95,7 @@ export function setRealSizeMap(
   material: THREE.MeshStandardMaterial,
   texture: THREE.Texture | null,
   sizeM: [number, number] | null,
+  options: { mirror?: boolean } = {},
 ): void {
   if (!texture || !sizeM) {
     unpatch(material);
@@ -103,12 +104,26 @@ export function setRealSizeMap(
       material.needsUpdate = true;
     }
     material.userData.realSizeM = null;
+    material.userData.realSizeMirror = null;
     return;
+  }
+
+  /*
+   * ОБРАЗЕЦ ИЗ БРОШЮРЫ НЕ БЕСШОВНЫЙ (REFERENCE_ONLY) — повтор зеркальный.
+   * Прямой повтор резал бы плиту сеткой швов через каждый образец. Адрес
+   * образца свой, поэтому текстура в кэше одна на этот способ повтора.
+   */
+  const wrap = options.mirror ? THREE.MirroredRepeatWrapping : THREE.RepeatWrapping;
+  if (texture.wrapS !== wrap || texture.wrapT !== wrap) {
+    texture.wrapS = wrap;
+    texture.wrapT = wrap;
+    texture.needsUpdate = true;
   }
 
   patch(material);
   uniformOf(material).value.set(sizeM[0], sizeM[1]);
   material.userData.realSizeM = [sizeM[0], sizeM[1]];
+  material.userData.realSizeMirror = Boolean(options.mirror);
   if (material.map !== texture) {
     material.map = texture;
     material.needsUpdate = true;

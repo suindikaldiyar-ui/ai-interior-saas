@@ -2,7 +2,7 @@ import { textureUrl } from '@/lib/catalog';
 import type { CatalogCategory, CatalogEntryFull, CatalogUnit, TilingSpec } from '@/types/catalog';
 import type { FrontBase, FrontFinish, FrontSpec, MillworkOp, Module, Run } from '@/types/millwork';
 import { hasFacade } from './applianceFront';
-import { CARCASS_SCOPES } from './carcassMaterial';
+import { CARCASS_SCOPES, isAntresol } from './carcassMaterial';
 import { DEFAULT_FRONT, frontConflict, frontOf } from './frontMaterial';
 import { allModules } from './layout';
 import {
@@ -27,6 +27,7 @@ import {
   type PriceUnit,
 } from './materialCollection';
 import { zoneProfile } from './zones';
+import { referenceKeyOf, referenceUrl } from './referenceTextures';
 
 export type { FinishSpec, MaterialItem, MaterialRole, PriceUnit } from './materialCollection';
 export {
@@ -645,6 +646,19 @@ export function materialItemOf(entry: CatalogEntryFull): MaterialItem | null {
   const url = textureUrl(entry) || null;
   const size = entry.tiling?.moduleSize;
   const sized = Array.isArray(size) && size[0] > 0 && size[1] > 0;
+  /*
+   * ОБРАЗЕЦ ИЗ БРОШЮРЫ — когда своего фото с размером у позиции нет.
+   * Своё фото компании сильнее: оно её, и размер у него настоящий.
+   */
+  const referenceKey = entry.reference ? referenceKeyOf(entry.meta) : null;
+  const reference =
+    entry.reference && referenceKey
+      ? {
+          url: referenceUrl(referenceKey),
+          sizeM: [entry.reference.mm[0] / 1000, entry.reference.mm[1] / 1000] as [number, number],
+          reference: entry.reference,
+        }
+      : null;
 
   return {
     id: entry.id,
@@ -657,7 +671,7 @@ export function materialItemOf(entry: CatalogEntryFull): MaterialItem | null {
     price: typeof entry.price === 'number' && entry.price > 0 ? entry.price : null,
     finishPrices: metaFinishPrices(entry.meta),
     colorHex: color,
-    photo: url && sized ? { url, sizeM: [size![0], size![1]] } : null,
+    photo: url && sized ? { url, sizeM: [size![0], size![1]] } : reference,
     photoWithoutSize: Boolean(url) && !sized,
     brand: typeof entry.meta?.brand === 'string' && entry.meta.brand ? entry.meta.brand : null,
     review: reviewNoteOf(entry.meta),
@@ -684,14 +698,41 @@ export const MATERIAL_TABS: { key: string; title: string }[] = [
   { key: 'countertop', title: 'Столешницы' },
 ];
 
-/** Куда ложится материал. */
-export type MaterialTarget = 'fronts' | 'carcass' | 'countertop' | 'module' | 'module-carcass';
+/**
+ * Куда ложится материал.
+ *
+ * Полки, перегородки и антресоль — НЕЗАВИСИМО от корпуса: «корпус дуб,
+ * полки белые», «антресоль в цвет фасадов». Полки и перегородки — род
+ * детали по ряду (`run.carcass.shelves`/`partitions`), антресоль — её
+ * модули (корпус и фасады), тем же `set_carcass`/`set_front`.
+ */
+export type MaterialTarget =
+  | 'fronts'
+  | 'carcass'
+  | 'shelves'
+  | 'partitions'
+  | 'antresol'
+  | 'countertop'
+  | 'module'
+  | 'module-carcass';
 
-export const MATERIAL_TARGETS: MaterialTarget[] = ['fronts', 'carcass', 'countertop', 'module', 'module-carcass'];
+export const MATERIAL_TARGETS: MaterialTarget[] = [
+  'fronts',
+  'carcass',
+  'shelves',
+  'partitions',
+  'antresol',
+  'countertop',
+  'module',
+  'module-carcass',
+];
 
 export const TARGET_TITLE: Record<MaterialTarget, string> = {
   fronts: 'Фасады всей кухни',
   carcass: 'Корпус всей кухни',
+  shelves: 'Полки',
+  partitions: 'Перегородки',
+  antresol: 'Антресоль',
   countertop: 'Столешница',
   module: 'Выбранный модуль',
   'module-carcass': 'Корпус выбранного модуля',
@@ -701,6 +742,10 @@ export const TARGET_TITLE: Record<MaterialTarget, string> = {
 export const TARGET_ROLE: Record<MaterialTarget, MaterialRole> = {
   fronts: 'front',
   carcass: 'carcass',
+  shelves: 'carcass',
+  partitions: 'carcass',
+  /* Антресоль — её корпус; фасады ложатся вместе с ним, если позиция идёт и на фасад. */
+  antresol: 'carcass',
   countertop: 'countertop',
   module: 'front',
   'module-carcass': 'carcass',
@@ -710,6 +755,9 @@ export const TARGET_ROLE: Record<MaterialTarget, MaterialRole> = {
 const TARGET_ON: Record<MaterialTarget, string> = {
   fronts: 'на фасады',
   carcass: 'на корпус',
+  shelves: 'на полки',
+  partitions: 'на перегородки',
+  antresol: 'на корпус антресоли',
   countertop: 'на столешницу',
   module: 'на фасад модуля',
   'module-carcass': 'на корпус модуля',
@@ -885,6 +933,45 @@ export function materialOps(
     return {
       ops: CARCASS_SCOPES.map((scope) => ({ op: 'set_carcass' as const, scope: scope.key, itemId: choice.item.id })),
       note: null,
+    };
+  }
+
+  /*
+   * ПОЛКИ И ПЕРЕГОРОДКИ — род детали по ряду: тот же `set_carcass`, адрес —
+   * деталь. Корпус не трогается; полки, которые появятся потом, возьмут
+   * этот декор сами — он лежит на ряду, а не в сегодняшних модулях.
+   */
+  if (target === 'shelves' || target === 'partitions') {
+    return { ops: [{ op: 'set_carcass', part: target, itemId: choice.item.id }], note: null };
+  }
+
+  /*
+   * АНТРЕСОЛЬ ЦЕЛИКОМ — корпус и фасады её модулей (полоса антресоли,
+   * кладовка над колонной, корпус над шкафом). Позиция только для корпуса
+   * фасады не трогает, и это сказано словами.
+   */
+  if (target === 'antresol') {
+    const units = allModules(run).filter(isAntresol);
+    if (units.length === 0) {
+      return { refusal: 'Антресоли на этой стене нет — сначала поставьте её, затем выбирайте материал.' };
+    }
+    const ops: MillworkOp[] = units.map((unit) => ({ op: 'set_carcass', moduleId: unit.id, itemId: choice.item.id }));
+    const toFronts = roles.includes('front') && Boolean(FRONT_BASE_OF_CATEGORY[choice.collection.category]);
+    let reset = 0;
+    if (toFronts) {
+      for (const unit of units.filter((m) => hasFacade(m))) {
+        const made = frontFrom(frontOf(unit), choice, finishes);
+        if (made.reset) reset += 1;
+        ops.push({ op: 'set_front', moduleId: unit.id, front: made.front });
+      }
+    }
+    return {
+      ops,
+      note: !toFronts
+        ? `Фасады антресоли не тронуты: «${choice.item.code}» не идёт на фасады — только корпус.`
+        : reset > 0
+          ? `${modulesWord(reset)} цельными: у «${choice.collection.label}» прежней конструкции не бывает.`
+          : null,
     };
   }
 

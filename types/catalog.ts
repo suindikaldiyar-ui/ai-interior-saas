@@ -120,10 +120,44 @@ export type CatalogItem = {
   is_active: boolean;
 };
 
+/**
+ * ОБРАЗЕЦ ДЕКОРА ИЗ БРОШЮРЫ ПРОИЗВОДИТЕЛЯ — REFERENCE_ONLY.
+ *
+ * Картинка из PDF производителя, сопоставленная с позицией по коду и
+ * структуре дословно (`scripts/build-reference-textures.ts`). Не PBR, не
+ * бесшовная текстура, права не подтверждены; размер в мм ПРИНЯТ —
+ * масштаб печати производитель не указывает.
+ */
+export type ReferenceTexture = {
+  /** Файл образца в папке образцов на сервере (вне git, как и пакет). */
+  file: string;
+  px: [number, number];
+  /** Принятый размер образца, мм (`basis: assumed`). */
+  mm: [number, number];
+  source: 'edc26' | 'worktops' | 'grandex-pack';
+  page: number | null;
+  /** Подпись под образцом в брошюре — дословно. */
+  caption: string | null;
+  /** Почему образец не со страницы позиции или чем отличается — словами. */
+  note: string | null;
+  /** Средний цвет самого образца (без полей страницы). */
+  hex: string;
+  /** Куда идёт рисунок в файле: плита — вдоль v, столешница — вдоль u. */
+  grain: 'vertical' | 'horizontal' | 'none';
+  /** Файл повёрнут на 90° относительно брошюры, чтобы волокно легло по правилу. */
+  rotated: boolean;
+};
+
 /** Товар вместе с категорией и файлами — то, чем оперирует интерфейс. */
 export type CatalogEntryFull = CatalogItem & {
   category: CatalogCategory;
   assets: CatalogAsset[];
+  /**
+   * Образец декора из брошюры — ПРОИЗВОДНОЕ от `meta.provenance.preview` и
+   * таблицы образцов (`withReferences`), в базу не пишется. Нет у позиции —
+   * поля нет.
+   */
+  reference?: ReferenceTexture;
 };
 
 /* ─────────────────────────  Фурнитура организации  ───────────────────────── */

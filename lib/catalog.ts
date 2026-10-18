@@ -13,6 +13,7 @@ import {
 import { catalogUrl } from './supabase/config';
 import { TYPICAL_PALETTE, typicalColorItem } from './millwork/palette';
 import { TYPICAL_MILLING, typicalMillingItem } from './millwork/milling';
+import { loadReferenceTable, withReferences } from './millwork/referenceTextures';
 import {
   UNIT_LABEL,
   isSurfaceKind,
@@ -103,19 +104,23 @@ export async function fetchCatalog(
     if (data.length < PAGE) break;
   }
 
-  return {
-    error: null,
-    entries: rows
-      .filter((row) => row.catalog_categories?.is_active !== false)
-      .map((row) => ({
-        ...row,
-        dimensions: row.dimensions ?? {},
-        tiling: row.tiling ?? {},
-        meta: row.meta ?? {},
-        category: row.catalog_categories as CatalogCategory,
-        assets: [...(row.catalog_assets ?? [])].sort((a, b) => a.sort_order - b.sort_order),
-      })),
-  };
+  const entries = rows
+    .filter((row) => row.catalog_categories?.is_active !== false)
+    .map((row) => ({
+      ...row,
+      dimensions: row.dimensions ?? {},
+      tiling: row.tiling ?? {},
+      meta: row.meta ?? {},
+      category: row.catalog_categories as CatalogCategory,
+      assets: [...(row.catalog_assets ?? [])].sort((a, b) => a.sort_order - b.sort_order),
+    }));
+
+  /*
+   * ОБРАЗЦЫ ДЕКОРОВ ИЗ БРОШЮР (REFERENCE_ONLY) — здесь, в одной двери чтения:
+   * экран, админка, перечитывание и кабинет получают позиции одинаковыми.
+   * Это производное от `meta.provenance.preview`, в базу оно не пишется.
+   */
+  return { error: null, entries: withReferences(entries, await loadReferenceTable()) };
 }
 
 export async function fetchCategories(

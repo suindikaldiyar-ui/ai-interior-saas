@@ -20,6 +20,16 @@ type FrontReadout = {
   map: boolean;
   realSizeM: [number, number] | null;
 };
+/** Поверхность сцены с картой: что за файл, как повторяется и какого он размера. */
+type SurfaceReadout = {
+  name: string;
+  count: number;
+  /** Адрес картинки на материале — тот, что реально загружен. */
+  map: string | null;
+  wrap: 'mirror' | 'repeat' | 'clamp' | null;
+  realSizeM: [number, number] | null;
+  color: number[];
+};
 import Cabinet3D, { APPLIANCE_GLASS_NAME } from './Cabinet3D';
 import RoomScene from './RoomScene';
 import type { PathTraceSource } from './pathTrace';
@@ -765,6 +775,7 @@ function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
       __mwCadModules?: () => { drawn: number; ids: string[] };
       __mwCadCounter?: () => Record<string, number[]>;
       __mwCadFronts?: () => FrontReadout[];
+      __mwCadSurfaces?: () => SurfaceReadout[];
       __mwCadLook?: () => {
         frontColors: string[];
         carcassColors: string[];
@@ -827,6 +838,38 @@ function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
           clearcoatRoughness: material.clearcoatRoughness ?? 0,
           map: Boolean(material.map),
           realSizeM: realSizeOf(material),
+        });
+      });
+      return out;
+    };
+
+    /*
+     * ПОВЕРХНОСТИ С КАРТОЙ — фасады, корпус, внутренности и столешница:
+     * какой файл на материале, как он повторяется (образец из брошюры —
+     * зеркально) и в каком размере лёг. Меряется то, что висит в сцене, а
+     * не то, что выбрано в панели.
+     */
+    w.__mwCadSurfaces = () => {
+      const out: SurfaceReadout[] = [];
+      scene.traverse((object) => {
+        const mesh = object as THREE.Mesh & { count?: number };
+        if (!mesh.isMesh || mesh.visible === false || !/^(front|carcass|inner|counter):/.test(mesh.name)) return;
+        const material = mesh.material as THREE.MeshStandardMaterial;
+        const map = material.map;
+        const image = map?.image as { currentSrc?: string; src?: string } | undefined;
+        out.push({
+          name: mesh.name,
+          count: typeof mesh.count === 'number' ? mesh.count : 1,
+          map: map ? (image?.currentSrc || image?.src || 'без адреса') : null,
+          wrap: map
+            ? map.wrapS === THREE.MirroredRepeatWrapping
+              ? 'mirror'
+              : map.wrapS === THREE.RepeatWrapping
+                ? 'repeat'
+                : 'clamp'
+            : null,
+          realSizeM: realSizeOf(material),
+          color: [material.color.r, material.color.g, material.color.b],
         });
       });
       return out;
@@ -1321,6 +1364,7 @@ function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
     return () => {
       delete w.__mwCadFrames;
       delete w.__mwCadFronts;
+      delete w.__mwCadSurfaces;
       delete w.__mwCadState;
       delete (w as { __mwCadBays?: unknown }).__mwCadBays;
       delete w.__mwCadFit;

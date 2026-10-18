@@ -8,7 +8,7 @@ import { apronLengthMm, countertopCuts, countertopLengthMm } from './countertop'
 import { cornerOfModule } from './corner';
 import { moduleCarcassHeightMm } from './fill';
 import { CORNER_HINGE_TITLE, frontDrawerSlides, liftKey, openingHardware } from './opening';
-import { buildPanels, panelMaterials, SHELF_PANEL_NAME} from './panels';
+import { buildPanels, panelMaterials, partOfPanel } from './panels';
 import { DEFAULT_PRODUCTION, type HardwareItem, type ProductionSettings } from '@/types/catalog';
 import { resolveHardware } from './hardware';
 import { SLIDING_DOOR, displayLedMeters, sectionSpec, slidingDoorCount } from './sections';
@@ -551,7 +551,7 @@ export function buildEstimateDrafts(
       key: carcassKey,
       title: carcassTitle,
       unit: 'm2',
-      quantity: round2(Math.max(0, materials.carcassM2 - pickedCarcassM2(run, panels, carcassItems))),
+      quantity: round2(Math.max(0, materials.carcassM2 - pickedCarcassM2(run, panels, carcassItems, ['carcass', 'partitions']))),
     },
     /*
      * ПОЛКИ ОТДЕЛЬНОЙ СТРОКОЙ — одна на весь ряд, по `fill.shelves`.
@@ -561,7 +561,17 @@ export function buildEstimateDrafts(
      * и прожила: в корпус была зашита одна полка на модуль, и её никто
      * не видел.
      */
-    { key: 'shelf_panel', title: 'Полки', unit: 'm2', quantity: materials.shelfM2 },
+    /*
+     * Полки со СВОИМ декором (`run.carcass.shelves`) уходят своей строкой —
+     * по цене декора; их площадь отсюда вычитается. Полки без своего декора
+     * остаются здесь, как всегда, по ставке цеха «Полки».
+     */
+    {
+      key: 'shelf_panel',
+      title: 'Полки',
+      unit: 'm2',
+      quantity: round2(Math.max(0, materials.shelfM2 - pickedCarcassM2(run, panels, carcassItems, ['shelves']))),
+    },
     { key: 'hdf_back', title: 'Задние стенки ХДФ', unit: 'm2', quantity: materials.backM2 },
     /*
      * ФАСАДЫ ПО СТАВКЕ ЦЕХА — ТОЛЬКО ТЕ, ЧТО НЕ ИЗ КОЛЛЕКЦИИ.
@@ -1049,6 +1059,18 @@ function hardwareTitle(kind: Run['options']['hardwareClass']): string {
 export const DELIVERY_KEY = 'delivery_install';
 
 /**
+ * Чья строка у площади детали со своим декором.
+ *
+ * `carcass` — корпус (и перегородки, у которых своего декора нет: они
+ * часть корпуса, как и раньше). `partitions`, `shelves` — род детали со
+ * СВОИМ декором (`run.carcass.partitions`, `run.carcass.shelves`): у него
+ * своя строка, иначе выбор полкам «доехал» бы до раскроя и не доехал до
+ * денег. Полки без своего декора здесь не считаются вовсе — они строкой
+ * «Полки» по ставке цеха, как было всегда.
+ */
+type DecorLine = 'carcass' | 'shelves' | 'partitions';
+
+/**
  * Площадь корпуса, у которого выбран СВОЙ материал.
  *
  * Считается из уже нарезанных панелей: второй расчёт площади ради новой
@@ -1059,8 +1081,8 @@ function carcassAreas(
   run: Run,
   panels: Panel[],
   catalog: Map<string, CarcassItem>,
-): Map<string, { item: CarcassItem; m2: number }> {
-  const out = new Map<string, { item: CarcassItem; m2: number }>();
+): Map<string, { item: CarcassItem; m2: number; line: DecorLine }> {
+  const out = new Map<string, { item: CarcassItem; m2: number; line: DecorLine }>();
   if (catalog.size === 0) return out;
 
   const byModule = new Map<string, Module>();
@@ -1070,12 +1092,15 @@ function carcassAreas(
 
   for (const panel of panels) {
     if (panel.material.startsWith('ХДФ') || panel.material.startsWith('Фасад')) continue;
-    if (panel.name === SHELF_PANEL_NAME) continue;
+    const part = partOfPanel(panel.name);
+    const ownPart = part !== null && Boolean(run.carcass?.[part]);
+    if (part === 'shelves' && !ownPart) continue;
+    const line: DecorLine = ownPart ? part! : 'carcass';
 
     const unit = byModule.get(panel.moduleId);
     if (!unit) continue;
 
-    const link = carcassLink(unit, run, catalog);
+    const link = carcassLink(unit, run, catalog, ownPart ? part! : undefined);
     /*
      * Позиция коллекции без цены тоже уходит своей строкой — с «цена не
      * задана»: подменить её ставкой цеха значит назвать клиенту цену
@@ -1086,9 +1111,10 @@ function carcassAreas(
     if (!own) continue;
 
     const areaM2 = (panel.lengthMm * panel.widthMm * panel.qty) / 1_000_000;
-    const at = out.get(link.item.id);
+    const key = `${line}:${link.item.id}`;
+    const at = out.get(key);
     if (at) at.m2 += areaM2;
-    else out.set(link.item.id, { item: link.item, m2: areaM2 });
+    else out.set(key, { item: link.item, m2: areaM2, line });
   }
 
   return out;
@@ -1098,11 +1124,21 @@ function pickedCarcassM2(
   run: Run,
   panels: Panel[],
   catalog: Map<string, CarcassItem>,
+  lines: DecorLine[],
 ): number {
   let sum = 0;
-  for (const { m2 } of Array.from(carcassAreas(run, panels, catalog).values())) sum += m2;
+  for (const { m2, line } of Array.from(carcassAreas(run, panels, catalog).values())) {
+    if (lines.includes(line)) sum += m2;
+  }
   return round2(sum);
 }
+
+/** Строка сметы декора: ключ и слово по роду детали. */
+const DECOR_LINE: Record<DecorLine, { key: string; title: string }> = {
+  carcass: { key: 'carcass', title: 'Корпус' },
+  partitions: { key: 'partitions', title: 'Перегородки' },
+  shelves: { key: 'shelves', title: 'Полки' },
+};
 
 /**
  * Строки корпуса своего декора: по одной на применённую позицию каталога.
@@ -1118,11 +1154,12 @@ function carcassDrafts(
   rates: RateTable,
 ): Draft[] {
   return Array.from(carcassAreas(run, panels, catalog).values())
-    .sort((a, b) => a.item.name.localeCompare(b.item.name, 'ru'))
-    .map(({ item, m2 }) => {
+    .sort((a, b) => a.line.localeCompare(b.line) || a.item.name.localeCompare(b.item.name, 'ru'))
+    .map(({ item, m2, line }) => {
       const quantity = Math.round(m2 * 100) / 100;
-      const base = { key: `carcass_${item.id}`, unit: 'm2' as const, quantity };
-      if (!item.collection) return { ...base, title: `Корпус «${item.name}»`, rate: item.price };
+      const word = DECOR_LINE[line];
+      const base = { key: `${word.key}_${item.id}`, unit: 'm2' as const, quantity };
+      if (!item.collection) return { ...base, title: `${word.title} «${item.name}»`, rate: item.price };
 
       /*
        * ПОЗИЦИЯ КОЛЛЕКЦИИ НА КОРПУСЕ — ТА ЖЕ ФУНКЦИЯ ЦЕНЫ, ЧТО У ФАСАДОВ.
@@ -1140,7 +1177,7 @@ function carcassDrafts(
         : { state: 'unset' as const, reason: item.priceNote ?? 'цена не задана' };
       return {
         ...base,
-        title: `Корпус «${item.name}»${surfaceTitle ? `, ${surfaceTitle}` : ''}`,
+        title: `${word.title} «${item.name}»${surfaceTitle ? `, ${surfaceTitle}` : ''}`,
         ...(price.state === 'priced' ? { rate: price.rate } : { priceUnset: price.reason }),
       };
     });

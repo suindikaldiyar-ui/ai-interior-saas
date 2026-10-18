@@ -14,6 +14,7 @@ import {
   TOP_RAIL_PANEL_NAME,
   HDIVIDER_PANEL_NAME,
   legName,
+  partOfPanel,
 } from './panels';
 import { blindPartMm, cornerFillersOf, cornerOfModule, openFrontMm } from './corner';
 import { tailFillersOf } from './countertop';
@@ -458,6 +459,11 @@ export type FrontOptions = {
    * Пусто — корпус красится ролью, как и раньше.
    */
   carcassKey?: string | null;
+  /**
+   * КЛЮЧИ ДЕКОРА ПОЛОК И ПЕРЕГОРОДОК — та же `carcassKeyOf` с родом детали.
+   * Своего декора нет — ключ тот же, что у корпуса.
+   */
+  partKeys?: Partial<Record<'shelves' | 'partitions', string | null>>;
   /**
    * ФРЕЗЕРОВКА, НАЗНАЧЕННАЯ ПОЛОСАМ РЯДА.
    *
@@ -1104,6 +1110,10 @@ export function lCornerBoxes(unit: Module, place: ModulePlacement, options: Fron
   const upper = unit.kind === 'corner_upper';
   const topName = upper ? TOP_PANEL_NAME : TOP_RAIL_PANEL_NAME;
   const carcassKey = options.carcassKey ?? null;
+  const keyOf = (panel: string) => {
+    const part = partOfPanel(panel);
+    return part && options.partKeys?.[part] !== undefined ? (options.partKeys[part] ?? null) : carcassKey;
+  };
   const zM = place.zM;
 
   const box = (
@@ -1121,7 +1131,7 @@ export function lCornerBoxes(unit: Module, place: ModulePlacement, options: Fron
     scale: [w, h, d],
     panel,
     inside,
-    carcassKey,
+    carcassKey: keyOf(panel),
   });
 
   const boxes: PartBox[] = [
@@ -1601,12 +1611,17 @@ export function moduleBoxes(
    * ним рёбра. Цвет берётся оттуда же: второго признака «это внутри»
    * заводить нельзя, он разойдётся с первым.
    */
-  const boxes: PartBox[] = carcassBoxes(unit, place, production).map((box) => ({
-    ...box,
-    material: (box.inside ? 'inner' : 'carcass') as BoxMaterial,
-    /* Декор корпуса: пусто — красит роль, как и раньше. */
-    carcassKey: options.carcassKey ?? null,
-  }));
+  const boxes: PartBox[] = carcassBoxes(unit, place, production).map((box) => {
+    /* Полки и перегородки — свой декор, если выбран (`partOfPanel`, та же таблица, что у раскроя). */
+    const part = partOfPanel(box.panel);
+    const partKey = part ? options.partKeys?.[part] : undefined;
+    return {
+      ...box,
+      material: (box.inside ? 'inner' : 'carcass') as BoxMaterial,
+      /* Декор корпуса: пусто — красит роль, как и раньше. */
+      carcassKey: partKey !== undefined ? partKey : (options.carcassKey ?? null),
+    };
+  });
 
   boxes.push(...applianceBoxes(unit, place, production));
   boxes.push(...bayRodBoxes(unit, place, production));
@@ -1896,6 +1911,10 @@ export function runBoxes(
           (hardware.byModule[entry.unit.id]?.hinges ?? 0) +
           (hardware.byModule[entry.unit.id]?.cornerHinges ?? 0),
         carcassKey: carcassKeyOf(entry.unit, run, carcassItems),
+        partKeys: {
+          shelves: carcassKeyOf(entry.unit, run, carcassItems, 'shelves'),
+          partitions: carcassKeyOf(entry.unit, run, carcassItems, 'partitions'),
+        },
         /* У слепого угла фасад — только на доступной части (`openFrontMm`). */
         ...(blindPartMm(entry.unit, run) > 0 ? { openWidthMm: openFrontMm(entry.unit, run) } : {}),
       },

@@ -36,6 +36,32 @@ export const CARCASS_SCOPES = MILLING_SCOPES;
 /** В какую полосу попадает модуль. Та же функция, что у фрезеровки. */
 export const carcassScopeOf = millingScopeOf;
 
+/**
+ * ДЕТАЛИ СО СВОИМ ДЕКОРОМ — ПОЛКИ И ПЕРЕГОРОДКИ.
+ *
+ * Не полоса, а род детали: «полки — белые во всём шкафу» при корпусе под
+ * дуб. Хранятся рядом с полосами (`run.carcass.shelves`,
+ * `run.carcass.partitions`) и читаются той же лестницей `carcassFor`:
+ * второй лестницы наследования здесь нет. Перегородки — обе: вертикальные
+ * и горизонтальные.
+ */
+export type CarcassPart = 'shelves' | 'partitions';
+
+export const CARCASS_PARTS: { key: CarcassPart; title: string }[] = [
+  { key: 'shelves', title: 'Полки' },
+  { key: 'partitions', title: 'Перегородки' },
+];
+
+/**
+ * АНТРЕСОЛЬ — модуль антресольной полосы или отдельный корпус над шкафом.
+ *
+ * Обе антресоли (заказанная на верхнем ряду и кладовка над колонной) —
+ * `section: 'mezzanine'`; корпус на крыше шкафа (P2) — `overhead`.
+ */
+export function isAntresol(unit: Module): boolean {
+  return unit.section === 'mezzanine' || Boolean(unit.overhead);
+}
+
 export type CarcassItem = {
   id: string;
   name: string;
@@ -93,7 +119,11 @@ export function carcassItemOf(entry: CatalogEntryFull): CarcassItem | null {
     );
     return {
       id: entry.id,
-      name: entry.name_ru,
+      /*
+       * Название не подтверждено (у EGGER из брошюры его нет) — плиту называет
+       * АРТИКУЛ: «ЛДСП 16 · » с пустым декором в раскрое цех не прочитает.
+       */
+      name: entry.name_ru?.trim() || entry.article,
       article: entry.article ?? '',
       price: price.state === 'priced' ? price.rate : 0,
       active: entry.is_active !== false,
@@ -141,7 +171,16 @@ export function carcassChoices(catalog: Map<string, CarcassItem>): CarcassItem[]
  * сильнее низа. Пусто — корпус остаётся обычной плитой цеха, и ни в
  * раскрое, ни в смете ничего не меняется.
  */
-export function carcassFor(unit: Module, run: Pick<Run, 'carcass'>): string | null {
+export function carcassFor(unit: Module, run: Pick<Run, 'carcass'>, part?: CarcassPart): string | null {
+  /*
+   * Деталь со своим декором (полки, перегородки) сильнее корпуса любого
+   * уровня: это выбор рода детали по ряду. Не выбран — деталь как корпус.
+   */
+  if (part) {
+    const byPart = run.carcass?.[part]?.trim();
+    if (byPart) return byPart === NO_CARCASS_ID ? null : byPart;
+  }
+
   const own = unit.carcassItemId?.trim();
   if (own) return own === NO_CARCASS_ID ? null : own;
 
@@ -169,12 +208,13 @@ export function carcassLink(
   unit: Module,
   run: Pick<Run, 'carcass'>,
   catalog: Map<string, CarcassItem>,
+  part?: CarcassPart,
 ):
   | { state: 'none' }
   | { state: 'missing'; id: string; reason: string }
   | { state: 'priceless'; item: CarcassItem; reason: string }
   | { state: 'resolved'; item: CarcassItem } {
-  const id = carcassFor(unit, run);
+  const id = carcassFor(unit, run, part);
   if (!id) return { state: 'none' };
 
   const item = catalog.get(id);
@@ -218,8 +258,9 @@ export function carcassKeyOf(
   unit: Module,
   run: Pick<Run, 'carcass'>,
   catalog: Map<string, CarcassItem>,
+  part?: CarcassPart,
 ): string | null {
-  const link = carcassLink(unit, run, catalog);
+  const link = carcassLink(unit, run, catalog, part);
   if (link.state === 'none' || link.state === 'missing') return null;
   return `carcass/${link.item.id}`;
 }
@@ -236,8 +277,9 @@ export function carcassMaterialName(
   unit: Module,
   run: Pick<Run, 'carcass'>,
   catalog: Map<string, CarcassItem>,
+  part?: CarcassPart,
 ): string {
-  const link = carcassLink(unit, run, catalog);
+  const link = carcassLink(unit, run, catalog, part);
   if (link.state === 'none' || link.state === 'missing') return base;
   return `${base} · ${link.item.name}`;
 }
@@ -256,11 +298,15 @@ export function carcassWarnings(
   const seen = new Map<string, string>();
 
   for (const unit of [...run.modules, ...run.upperSegments.flatMap((s) => s.modules)]) {
-    const link = carcassLink(unit, run, catalog);
-    if (link.state === 'none' || link.state === 'resolved') continue;
+    /* Детали со своим декором спрашиваются так же: позиция полок могла пропасть из каталога. */
+    const parts: (CarcassPart | undefined)[] = [undefined, ...CARCASS_PARTS.filter((p) => run.carcass?.[p.key]).map((p) => p.key)];
+    for (const part of parts) {
+      const link = carcassLink(unit, run, catalog, part);
+      if (link.state === 'none' || link.state === 'resolved') continue;
 
-    const key = link.state === 'missing' ? `missing:${link.id}` : `priceless:${link.item.id}`;
-    if (!seen.has(key)) seen.set(key, link.reason);
+      const key = link.state === 'missing' ? `missing:${link.id}` : `priceless:${link.item.id}`;
+      if (!seen.has(key)) seen.set(key, link.reason);
+    }
   }
 
   return Array.from(seen.entries()).map(([key, message]) => ({

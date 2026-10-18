@@ -263,12 +263,20 @@ export function useSurfaceLook(
    */
   const realW = look?.realSizeM?.[0] ?? 0;
   const realH = look?.realSizeM?.[1] ?? 0;
+  /* Образец из брошюры (REFERENCE_ONLY) не бесшовный — повтор зеркальный. */
+  const mirror = Boolean(look?.mirror);
 
   const clearcoat = look?.clearcoat ?? 0;
   const clearcoatRoughness = look?.clearcoatRoughness ?? 0;
 
   useEffect(() => {
-    material.color.set(color);
+    /*
+     * ПОД ФОТО ПОЗИЦИИ В НАСТОЯЩЕМ РАЗМЕРЕ ЦВЕТ БЕЛЫЙ — рисунок несёт текстура,
+     * как у фасада и корпуса. Умноженное на средний цвет, фото темнело: камень
+     * GRANDEX на столешнице выходил вдвое темнее своего образца.
+     */
+    const photoOn = Boolean(material.map) && Array.isArray(material.userData.realSizeM);
+    material.color.set(photoOn ? '#ffffff' : color);
     material.roughness = roughness;
     material.metalness = metalness;
     /* Лак есть только у физического материала: столешница из каталога — он. */
@@ -294,6 +302,9 @@ export function useSurfaceLook(
 
     if (!textureUrl) {
       setRealSizeMap(material, null, null);
+      /* Фото сняли — поверхность снова цвета позиции. */
+      material.color.set(color);
+      invalidate();
       return;
     }
 
@@ -301,8 +312,11 @@ export function useSurfaceLook(
       .then((texture) => {
         if (cancelled) return;
         if (realW > 0 && realH > 0) {
-          setRealSizeMap(material, texture, [realW, realH]);
+          setRealSizeMap(material, texture, [realW, realH], { mirror });
+          material.color.set('#ffffff');
         } else {
+          /* Повторы по габариту (артикул без размера) — прежний вид: картинка на цвете. */
+          material.color.set(color);
           unpatch(material);
           /*
            * Текстура одна на URL и лежит в кэше, поэтому повторы ставим на
@@ -333,7 +347,7 @@ export function useSurfaceLook(
     return () => {
       cancelled = true;
     };
-  }, [material, textureUrl, repeatX, repeatY, realW, realH, invalidate]);
+  }, [material, textureUrl, repeatX, repeatY, realW, realH, mirror, color, invalidate]);
 }
 
 
@@ -450,7 +464,7 @@ export function useFrontMaterials(
         .then((texture) => {
           if (cancelled) return;
           applyFrontLook(material, spec, fallbackColor, MATERIAL_FINISHES, true);
-          setRealSizeMap(material, texture, photo.sizeM);
+          setRealSizeMap(material, texture, photo.sizeM, { mirror: Boolean(photo.reference) });
           invalidate();
         })
         .catch((error: unknown) => {
@@ -539,7 +553,7 @@ export function useCarcassMaterials(
           if (cancelled) return;
           // Под фото цвет белый: рисунок несёт текстура (как у фасада).
           material.color.set('#ffffff');
-          setRealSizeMap(material, texture, photo.sizeM);
+          setRealSizeMap(material, texture, photo.sizeM, { mirror: Boolean(photo.reference) });
           invalidate();
         })
         .catch((error: unknown) => {

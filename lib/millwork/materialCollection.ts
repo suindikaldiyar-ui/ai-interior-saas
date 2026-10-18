@@ -1,4 +1,4 @@
-import type { CatalogEntryFull, CatalogUnit } from '@/types/catalog';
+import type { CatalogEntryFull, CatalogUnit, ReferenceTexture } from '@/types/catalog';
 
 /**
  * КОЛЛЕКЦИЯ МАТЕРИАЛОВ — ЭТО КАТЕГОРИЯ КАТАЛОГА, А НЕ ВТОРОЙ КАТАЛОГ.
@@ -164,16 +164,31 @@ const HEX = /^#[0-9a-f]{6}$/i;
  * Средний цвет не выдумывается: его считает загрузка файла
  * (`tiling.averageColor`), тем же проходом, что собирает композит для
  * рендера. Им красится схема и корпус до того, как текстура приехала.
+ *
+ * У позиции с ОБРАЗЦОМ ИЗ БРОШЮРЫ (`entry.reference`) цвет — средний цвет
+ * самого образца. Её `meta.color` тоже не задан человеком: его посчитала
+ * загрузка пакета по кропу ВМЕСТЕ с полями страницы, и «Brown Kansas Oak»
+ * выходил бежевым #d5c9ba. Одна величина — один расчёт: по образцу.
  */
-export function materialColorOf(entry: Pick<CatalogEntryFull, 'meta' | 'tiling'>): string | null {
+export function materialColorOf(
+  entry: Pick<CatalogEntryFull, 'meta' | 'tiling'> & Pick<Partial<CatalogEntryFull>, 'reference'>,
+): string | null {
+  const sampled = entry.reference?.hex;
+  if (typeof sampled === 'string' && HEX.test(sampled)) return sampled;
   const own = entry.meta?.color;
   if (typeof own === 'string' && HEX.test(own)) return own;
   const average = (entry.tiling as { averageColor?: unknown } | undefined)?.averageColor;
   return typeof average === 'string' && HEX.test(average) ? average : null;
 }
 
-/** Фото позиции и его НАСТОЯЩИЙ размер в метрах — по нему ложится текстура. */
-export type MaterialPhoto = { url: string; sizeM: [number, number] };
+/**
+ * Фото позиции и его НАСТОЯЩИЙ размер в метрах — по нему ложится текстура.
+ *
+ * `reference` — это не фото позиции, а ОБРАЗЕЦ ИЗ БРОШЮРЫ (REFERENCE_ONLY):
+ * размер у него принятый, а не замеренный, и он не бесшовный — на детали
+ * он повторяется зеркально, а карточка говорит об этом словами.
+ */
+export type MaterialPhoto = { url: string; sizeM: [number, number]; reference?: ReferenceTexture };
 
 /** Позиция коллекции глазами сметы, сцены и панели. */
 export type MaterialItem = {
@@ -201,8 +216,8 @@ export type MaterialItem = {
   brand: string | null;
   /**
    * СПРАВОЧНАЯ КАРТОЧКА ПОСТАВЩИКА (P3): что о позиции известно и чего нет.
-   * Образец из PDF — только для карточки выбора; на детали — цвет, а не
-   * текстура: кроп печатного образца не плита и не PBR.
+   * Образец из PDF ложится и на деталь (`photo.reference`), но остаётся
+   * REFERENCE_ONLY: печатный образец не плита и не PBR, масштаб принят.
    */
   review: ReviewNote | null;
 };

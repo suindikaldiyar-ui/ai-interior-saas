@@ -828,8 +828,12 @@ export interface Run {
    * Устроен ровно как `milling` и читается той же лестницей: модуль →
    * полоса → низ (`carcassFor`). Вторая лестница наследования разошлась
    * бы с первой на первом же ряду, где назначено и то, и другое.
+   *
+   * `shelves` и `partitions` — не полосы, а ДЕТАЛИ: свой декор полок и
+   * перегородок по всему ряду. Читает их та же `carcassFor` — деталь со
+   * своим декором сильнее корпуса, без него она как корпус.
    */
-  carcass?: Partial<Record<'base' | 'upper' | 'tall' | 'drawers' | 'mezzanine', string>>;
+  carcass?: Partial<Record<'base' | 'upper' | 'tall' | 'drawers' | 'mezzanine' | 'shelves' | 'partitions', string>>;
   /**
    * СТОЛЕШНИЦА ИЗ КАТАЛОГА МАТЕРИАЛОВ: позиция и её поверхность.
    *
@@ -1423,13 +1427,15 @@ export type MillworkOp =
       place?: string;
     }
   /**
-   * Материал корпуса: полосе или одному модулю, как фрезеровка.
-   * `itemId: null` — «как у цеха», то есть отказ от декора.
+   * Материал корпуса: полосе, одному модулю или ДЕТАЛЯМ ряда (полкам,
+   * перегородкам), как фрезеровка. `itemId: null` — «как у цеха», то есть
+   * отказ от декора. Адрес у правки один.
    */
   | {
       op: 'set_carcass';
       moduleId?: string;
       scope?: 'base' | 'upper' | 'tall' | 'drawers' | 'mezzanine';
+      part?: 'shelves' | 'partitions';
       itemId: string | null;
     }
   /**

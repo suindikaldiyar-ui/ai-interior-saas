@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchCatalog, patchCatalogItem, previewUrl } from '@/lib/catalog';
+import { REFERENCE_SOURCE_TITLE, referenceKeyOf, referenceUrl } from '@/lib/millwork/referenceTextures';
 import { TYPICAL_PRICE_LIST } from '@/lib/millwork/rates';
 import { supabaseBrowser } from '@/lib/supabase/client';
 import {
@@ -494,6 +495,16 @@ export default function CatalogAdmin({
                 const surface = isSurfaceKind(item.category.applies_to);
                 const hasComposite = item.assets.some((a) => a.kind === 'composite');
                 const preview = previewUrl(item);
+                /*
+                 * Образец из брошюры (REFERENCE_ONLY): у позиций EGGER и GRANDEX файлов
+                 * каталога нет — права не подтверждены, — и ячейка была пустой рамкой.
+                 * Картинка идёт той же закрытой выдачей, что карточка выбора.
+                 */
+                const referenceKey = !preview && item.reference ? referenceKeyOf(item.meta) : null;
+                const referenceTitle = item.reference
+                  ? `${REFERENCE_SOURCE_TITLE[item.reference.source]}${item.reference.page !== null ? `, стр. ${item.reference.page}` : ''}` +
+                    `${item.reference.caption ? `, «${item.reference.caption}»` : ''}. REFERENCE_ONLY: не PBR, не бесшовная, права не подтверждены.`
+                  : undefined;
 
                 return (
                   <tr
@@ -512,6 +523,16 @@ export default function CatalogAdmin({
                           src={preview}
                           alt=""
                           className="h-9 w-9 border border-navyLine object-cover"
+                        />
+                      ) : referenceKey ? (
+                        // eslint-disable-next-line @next/next/no-img-element -- закрытая выдача, без оптимизатора
+                        <img
+                          src={referenceUrl(referenceKey)}
+                          alt=""
+                          title={referenceTitle}
+                          className="h-9 w-9 border border-navyLine object-cover"
+                          style={{ background: item.reference?.hex }}
+                          data-admin-reference={referenceKey}
                         />
                       ) : (
                         <div className="h-9 w-9 border border-dashed border-navyLine" />
@@ -575,6 +596,11 @@ export default function CatalogAdmin({
                       >
                         Загрузить
                       </button>
+                      {referenceKey && (
+                        <span className="ml-1.5 text-[13px] text-tape" title={referenceTitle} data-admin-reference-status>
+                          образец брошюры · REFERENCE_ONLY
+                        </span>
+                      )}
                       {surface && (
                         <span
                           className={`ml-1.5 text-[13px] ${hasComposite ? 'text-cyan' : 'text-alert'}`}

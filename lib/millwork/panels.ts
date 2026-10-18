@@ -91,6 +91,17 @@ export const DIVIDER_PANEL_NAME = 'Перегородка вертикальна
  * перегородка делит отсек на зоны — и в смете она корпус, а не полка.
  */
 export const HDIVIDER_PANEL_NAME = 'Перегородка горизонтальная';
+
+/**
+ * Род детали со своим декором (`run.carcass.shelves`, `run.carcass.partitions`)
+ * — по имени детали раскроя. Одна таблица на раскрой, смету и сцену: сцена
+ * знает деталь по тому же имени (`BoxDraw.panel`).
+ */
+export function partOfPanel(name: string | undefined): 'shelves' | 'partitions' | null {
+  if (name === SHELF_PANEL_NAME) return 'shelves';
+  if (name === DIVIDER_PANEL_NAME || name === HDIVIDER_PANEL_NAME) return 'partitions';
+  return null;
+}
 export const DRAWER_FRONT_PANEL_NAME = 'Фронт ящика';
 /**
  * ФАЛЬШ-ПАНЕЛЬ УГЛА — ДЕТАЛЬ, А НЕ ВЫЧЕТ ИЗ ДЛИНЫ.
@@ -202,6 +213,13 @@ function modulePanels(
    * не второй раскрой.
    */
   const material = carcassMaterialName(`ЛДСП ${t}`, unit, run, carcass ?? new Map());
+  /*
+   * ПОЛКИ И ПЕРЕГОРОДКИ СО СВОИМ ДЕКОРОМ — тем же названием «ЛДСП 16 · декор»:
+   * в раскрое это отдельная плита, и считает её та же `carcassFor`.
+   * Своего декора нет — название то же, что у корпуса.
+   */
+  const shelfMaterial = carcassMaterialName(`ЛДСП ${t}`, unit, run, carcass ?? new Map(), 'shelves');
+  const partitionMaterial = carcassMaterialName(`ЛДСП ${t}`, unit, run, carcass ?? new Map(), 'partitions');
   const panels: Panel[] = [];
 
   /*
@@ -260,7 +278,7 @@ function modulePanels(
     const carcassPart = (name: string, lengthMm: number, widthMm: number, qty: number) =>
       push({
         name,
-        material,
+        material: name === SHELF_PANEL_NAME ? shelfMaterial : material,
         thicknessMm: t,
         lengthMm,
         widthMm,
@@ -358,7 +376,7 @@ function modulePanels(
       if (bay.shelves.length === 0) continue;
       push({
         name: SHELF_PANEL_NAME,
-        material,
+        material: shelfMaterial,
         thicknessMm: t,
         lengthMm: bay.shelves[0].lengthMm,
         widthMm: bay.shelves[0].depthMm,
@@ -373,7 +391,7 @@ function modulePanels(
     if (bays.partitions.length > 0) {
       push({
         name: DIVIDER_PANEL_NAME,
-        material,
+        material: partitionMaterial,
         thicknessMm: t,
         lengthMm: bays.partitions[0].lengthMm,
         widthMm: bays.partitions[0].depthMm,
@@ -395,7 +413,7 @@ function modulePanels(
       if (bay.dividers.length === 0) continue;
       push({
         name: HDIVIDER_PANEL_NAME,
-        material,
+        material: partitionMaterial,
         thicknessMm: t,
         lengthMm: bay.dividers[0].lengthMm,
         widthMm: bay.dividers[0].depthMm,
@@ -413,7 +431,7 @@ function modulePanels(
   if (shelves > 0) {
     push({
       name: SHELF_PANEL_NAME,
-      material,
+      material: shelfMaterial,
       thicknessMm: t,
       lengthMm: inner - allow.shelfSideMm,
       widthMm: depthMm - allow.shelfDepthMm,
@@ -427,7 +445,7 @@ function modulePanels(
   if (!bays && unit.fill?.dividerMm) {
     push({
       name: DIVIDER_PANEL_NAME,
-      material,
+      material: partitionMaterial,
       thicknessMm: t,
       lengthMm: heightMm - 2 * t,
       widthMm: depthMm - allow.dividerDepthMm,

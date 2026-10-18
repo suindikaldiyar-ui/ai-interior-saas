@@ -9,8 +9,10 @@
  *     длина массива, а не «один объект»: прежний установщик насчитывал 1);
  *   • сопоставляет карточки коллекциям тем же `mapReviewRecords`, что
  *     проверяет `test:catalog`;
- *   • цвет позиции — среднее по кропу образца (sharp), и это помечено:
- *     цвет на детали — приближение к печатному образцу, а не плита;
+ *   • цвет позиции — средний цвет САМОГО образца из PDF
+ *     (`referenceTextures.generated.ts`, его собирает
+ *     `scripts/build-reference-textures.ts`), а не кропа пакета: в кропе
+ *     поля страницы, и «Brown Kansas Oak» выходил бежевым #d5c9ba;
  *   • вписывает позиции в коллекции `egger-ldsp` и `grandex-acrylic` и две
  *     новые рядом (`egger-perfectsense`, `egger-worktops`) — ТОЧЕЧНО: остальной
  *     файл (МДФ, 1825 RAL, шпон, КЕДР) не переформатируется и не меняется.
@@ -18,10 +20,10 @@
  * Чего НЕ делает: не пишет в базу, не копирует картинки в public, не
  * трогает исходники брошюр. Повторный запуск даёт тот же файл байт в байт.
  */
-import sharp from 'sharp';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { mapReviewRecords, type ReviewRecord } from '../lib/millwork/supplierReview';
+import { REFERENCE_TEXTURES } from '../lib/millwork/referenceTextures.generated';
+import { mapReviewRecords, productClassOf, type ReviewRecord } from '../lib/millwork/supplierReview';
 import { parseMaterialFile } from '../lib/millwork/materialCatalog';
 
 const PACK = process.argv[2] ?? 'CATALOG_STAGING/99_IMPORT_QUEUE/EGGER_GRANDEX';
@@ -71,12 +73,6 @@ function asBlock(value: unknown, indent: number): string {
     .join('\n');
 }
 
-async function hexOfFile(file: string): Promise<string | null> {
-  if (!existsSync(file)) return null;
-  const stats = await sharp(file).stats();
-  const [r, g, b] = stats.channels.slice(0, 3).map((channel) => Math.round(channel.mean));
-  return `#${[r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
-}
 
 async function main() {
   const reviewPath = join(PACK, 'data', 'COMBINED_EGGER_GRANDEX_REVIEW.json');
@@ -85,10 +81,20 @@ async function main() {
   if (!Array.isArray(raw)) fail(`${reviewPath}: ожидался СПИСОК карточек, пришёл ${typeof raw}`);
   const records = raw as ReviewRecord[];
 
-  /* Цвет кропа — заранее, чтобы сопоставление осталось чистой функцией. */
+  /*
+   * Цвет — из таблицы образцов, заранее, чтобы сопоставление осталось чистой
+   * функцией. У карточки, которая становится позицией, образец обязан быть:
+   * нет его — падение словами, а не тихо «без цвета».
+   */
   const hexById = new Map<string, string | null>();
+  const noSample: string[] = [];
   for (const record of records) {
-    hexById.set(record.id, await hexOfFile(join(PACK, record.preview)));
+    const sample = REFERENCE_TEXTURES[record.preview.replace(/^assets\//, '')];
+    hexById.set(record.id, sample?.hex ?? null);
+    if (!sample && productClassOf(record) !== null) noSample.push(record.id);
+  }
+  if (noSample.length) {
+    fail(`Нет образца в таблице у ${noSample.length}: ${noSample.slice(0, 5).join(', ')} — сначала scripts/build-reference-textures.ts. Каталог не тронут.`);
   }
   const mapping = mapReviewRecords(records, (record) => hexById.get(record.id) ?? null, CHECKED_AT);
 
@@ -101,8 +107,9 @@ async function main() {
   let text = readFileSync(CATALOG, 'utf8');
 
   const reviewNote =
-    'Справочные карточки поставщика: кроп печатного образца из PDF (только для карточки выбора), ' +
-    'не PBR и не текстура плиты; права на изображения не подтверждены; цен нет. На детали — средний цвет образца.';
+    'Справочные карточки поставщика: образец из PDF производителя, сопоставленный по коду и структуре дословно; ' +
+    'REFERENCE_ONLY — не PBR и не бесшовная текстура плиты, масштаб принят; права на изображения не подтверждены; цен нет. ' +
+    'На детали — этот образец (зеркальным повтором), без него — его средний цвет.';
 
   const definitions: Record<string, Record<string, unknown>> = {
     'egger-ldsp': {
@@ -226,7 +233,7 @@ async function main() {
     `Пакет: ${records.length} карточек (${Object.entries(brands).map(([b, n]) => `${b} ${n}`).join(', ')}).\n` +
       `В коллекции: ${['egger-ldsp', 'egger-perfectsense', 'egger-worktops', 'grandex-acrylic'].map((id) => `${id} ${counts[id]}`).join(' · ')}\n` +
       `Слито повторов: ${pack.duplicate} · не встаёт в Studio: ${pack.ineligible} · неполных: ${pack.incomplete} · название не подтверждено: ${nameUnverified}\n` +
-      `Цвет из кропа: ${Array.from(hexById.values()).filter(Boolean).length} из ${records.length}.`,
+      `Цвет из образца: ${Array.from(hexById.values()).filter(Boolean).length} из ${records.length} (у карточек без детали в Studio образца нет).`,
   );
 }
 

@@ -57,6 +57,11 @@ export type SurfaceLook = {
    * метрам грани, а `repeat` не читается.
    */
   realSizeM?: [number, number] | null;
+  /**
+   * Образец из брошюры (REFERENCE_ONLY): он не бесшовный, и на поверхности
+   * повторяется зеркально — шов прямого повтора резал бы плиту сеткой.
+   */
+  mirror?: boolean;
   /** Лак поверхности из таблицы `finishes` файла каталога. */
   clearcoat?: number;
   clearcoatRoughness?: number;
@@ -135,6 +140,7 @@ export function materialSurfaceLook(
     milled: false,
     fromCatalog: true,
     realSizeM: item.photo?.sizeM ?? null,
+    mirror: Boolean(item.photo?.reference),
     clearcoat: finish?.clearcoat ?? 0,
     clearcoatRoughness: finish?.clearcoatRoughness ?? 0,
   };

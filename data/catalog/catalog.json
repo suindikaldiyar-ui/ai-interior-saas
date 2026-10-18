@@ -20383,13 +20383,13 @@
     "pdf": "BR+EDC26+Collection+Brochure+EAST+EN.pdf",
     "pages": "76–83",
     "url": "https://www.egger.com/en/furniture-interior-design/decorative-collection/planning-and-visualisation",
-    "note": "Декоративные плиты EGGER (White & Uni, Wood, Feelwood). Справочные карточки поставщика: кроп печатного образца из PDF (только для карточки выбора), не PBR и не текстура плиты; права на изображения не подтверждены; цен нет. На детали — средний цвет образца. Полные данные декоров — myEGGER."
+    "note": "Декоративные плиты EGGER (White & Uni, Wood, Feelwood). Справочные карточки поставщика: образец из PDF производителя, сопоставленный по коду и структуре дословно; REFERENCE_ONLY — не PBR и не бесшовная текстура плиты, масштаб принят; права на изображения не подтверждены; цен нет. На детали — этот образец (зеркальным повтором), без него — его средний цвет. Полные данные декоров — myEGGER."
    },
    "items": [
     {
      "code": "EGGER-H1113-ST10",
      "name": "",
-     "hex": "#d5c9ba",
+     "hex": "#aa8763",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -20422,7 +20422,7 @@
     {
      "code": "EGGER-H1142-ST36",
      "name": "",
-     "hex": "#ded1c1",
+     "hex": "#c19e78",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -20455,7 +20455,7 @@
     {
      "code": "EGGER-H1145-ST10",
      "name": "",
-     "hex": "#dacfc2",
+     "hex": "#c0a284",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -20488,7 +20488,7 @@
     {
      "code": "EGGER-H1176-ST37",
      "name": "",
-     "hex": "#ded7cd",
+     "hex": "#c1ad96",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -20521,7 +20521,7 @@
     {
      "code": "EGGER-H1180-ST37",
      "name": "",
-     "hex": "#d7ccbd",
+     "hex": "#b89771",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -20554,7 +20554,7 @@
     {
      "code": "EGGER-H1181-ST37",
      "name": "",
-     "hex": "#c5bcb2",
+     "hex": "#896d51",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -20587,7 +20587,7 @@
     {
      "code": "EGGER-H1199-ST12",
      "name": "",
-     "hex": "#aca7a2",
+     "hex": "#33261e",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -20620,7 +20620,7 @@
     {
      "code": "EGGER-H1223-ST19",
      "name": "",
-     "hex": "#eae6dd",
+     "hex": "#ebdfcd",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -20653,7 +20653,7 @@
     {
      "code": "EGGER-H1225-ST12",
      "name": "Trondheim Ash",
-     "hex": "#eceae7",
+     "hex": "#f0ece9",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -20686,7 +20686,7 @@
     {
      "code": "EGGER-H1242-ST10",
      "name": "",
-     "hex": "#e0d4c5",
+     "hex": "#caa680",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -20719,7 +20719,7 @@
     {
      "code": "EGGER-H1250-ST36",
      "name": "",
-     "hex": "#e5ded3",
+     "hex": "#d3bea7",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -20752,7 +20752,7 @@
     {
      "code": "EGGER-H1277-ST9",
      "name": "",
-     "hex": "#e8e0d4",
+     "hex": "#e5cdb2",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -20785,7 +20785,7 @@
     {
      "code": "EGGER-H1303-ST12",
      "name": "",
-     "hex": "#ccc2b7",
+     "hex": "#896e55",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -20818,7 +20818,7 @@
     {
      "code": "EGGER-H1307-ST19",
      "name": "",
-     "hex": "#bdb2a8",
+     "hex": "#63422e",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -20851,7 +20851,7 @@
     {
      "code": "EGGER-H1312-ST10",
      "name": "",
-     "hex": "#ded7cd",
+     "hex": "#c6b39d",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -20884,7 +20884,7 @@
     {
      "code": "EGGER-H1313-ST10",
      "name": "",
-     "hex": "#c9c5c0",
+     "hex": "#7d726c",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -20917,7 +20917,7 @@
     {
      "code": "EGGER-H1316-ST17",
      "name": "Bookmatch Oak",
-     "hex": "#ddcebe",
+     "hex": "#c1976f",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -20950,7 +20950,7 @@
     {
      "code": "EGGER-H1318-ST10",
      "name": "",
-     "hex": "#d9ccbc",
+     "hex": "#be976c",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -20983,7 +20983,7 @@
     {
      "code": "EGGER-H1330-ST10",
      "name": "",
-     "hex": "#c5bdb3",
+     "hex": "#76604b",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -21016,7 +21016,7 @@
     {
      "code": "EGGER-H1344-ST32",
      "name": "Cognac Brown Sherman Oak",
-     "hex": "#cabdad",
+     "hex": "#936d42",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -21049,7 +21049,7 @@
     {
      "code": "EGGER-H1346-ST32",
      "name": "",
-     "hex": "#bcb7b2",
+     "hex": "#5b504b",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -21082,7 +21082,7 @@
     {
      "code": "EGGER-H1362-ST12",
      "name": "",
-     "hex": "#ded4c8",
+     "hex": "#c4a98e",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -21115,7 +21115,7 @@
     {
      "code": "EGGER-H1367-ST40",
      "name": "Light Natural Casella Oak",
-     "hex": "#dfd4c5",
+     "hex": "#caad89",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -21148,7 +21148,7 @@
     {
      "code": "EGGER-H1385-ST40",
      "name": "Natural Casella Oak",
-     "hex": "#d8cbbb",
+     "hex": "#b68f68",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -21181,7 +21181,7 @@
     {
      "code": "EGGER-H1386-ST40",
      "name": "Brown Casella Oak",
-     "hex": "#cbbfb3",
+     "hex": "#916d4e",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -21214,7 +21214,7 @@
     {
      "code": "EGGER-H1399-ST10",
      "name": "",
-     "hex": "#cbc4bc",
+     "hex": "#927e6b",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -21247,7 +21247,7 @@
     {
      "code": "EGGER-H1401-ST22",
      "name": "",
-     "hex": "#e7e6e1",
+     "hex": "#d5d0c4",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -21280,7 +21280,7 @@
     {
      "code": "EGGER-H1487-ST22",
      "name": "",
-     "hex": "#ddd0c1",
+     "hex": "#bf9c77",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -21313,7 +21313,7 @@
     {
      "code": "EGGER-H1636-ST12",
      "name": "",
-     "hex": "#d5c1ae",
+     "hex": "#aa7041",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -21346,7 +21346,7 @@
     {
      "code": "EGGER-H1708-ST17",
      "name": "",
-     "hex": "#d9cdc1",
+     "hex": "#b49275",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -21379,7 +21379,7 @@
     {
      "code": "EGGER-H1710-ST10",
      "name": "",
-     "hex": "#e7ded2",
+     "hex": "#e0c7a9",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -21412,7 +21412,7 @@
     {
      "code": "EGGER-H1714-ST19",
      "name": "",
-     "hex": "#c3b6aa",
+     "hex": "#765135",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -21445,7 +21445,7 @@
     {
      "code": "EGGER-H1715-ST12",
      "name": "",
-     "hex": "#ddcebf",
+     "hex": "#c79b76",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -21478,7 +21478,7 @@
     {
      "code": "EGGER-H1732-ST9",
      "name": "",
-     "hex": "#e9e1d3",
+     "hex": "#e7cead",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -21511,7 +21511,7 @@
     {
      "code": "EGGER-H1910-ST9",
      "name": "",
-     "hex": "#e3d4c0",
+     "hex": "#d3a874",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -21544,7 +21544,7 @@
     {
      "code": "EGGER-H2033-ST10",
      "name": "",
-     "hex": "#c2b6a8",
+     "hex": "#6e4e33",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -21577,7 +21577,7 @@
     {
      "code": "EGGER-H3003-ST19",
      "name": "",
-     "hex": "#bebab5",
+     "hex": "#675d54",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -21610,7 +21610,7 @@
     {
      "code": "EGGER-H3012-ST22",
      "name": "",
-     "hex": "#dfd5c5",
+     "hex": "#d0ad80",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -21643,7 +21643,7 @@
     {
      "code": "EGGER-H3043-ST12",
      "name": "",
-     "hex": "#a9a4a0",
+     "hex": "#281b17",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -21676,7 +21676,7 @@
     {
      "code": "EGGER-H305-ST12",
      "name": "",
-     "hex": "#dbd3c7",
+     "hex": "#bfa68c",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -21709,7 +21709,7 @@
     {
      "code": "EGGER-H309-ST12",
      "name": "",
-     "hex": "#c0b6ad",
+     "hex": "#6d4f3e",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -21742,7 +21742,7 @@
     {
      "code": "EGGER-H3131-ST12",
      "name": "",
-     "hex": "#ddd5c6",
+     "hex": "#c3ab87",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -21775,7 +21775,7 @@
     {
      "code": "EGGER-H3133-ST12",
      "name": "",
-     "hex": "#c7bdb4",
+     "hex": "#866c58",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -21808,7 +21808,7 @@
     {
      "code": "EGGER-H3146-ST19",
      "name": "",
-     "hex": "#d6d0c8",
+     "hex": "#ae9e8d",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -21841,7 +21841,7 @@
     {
      "code": "EGGER-H3152-ST19",
      "name": "",
-     "hex": "#e6d9c9",
+     "hex": "#e3be96",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -21874,7 +21874,7 @@
     {
      "code": "EGGER-H3154-ST36",
      "name": "",
-     "hex": "#c2b8ad",
+     "hex": "#73563d",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -21907,7 +21907,7 @@
     {
      "code": "EGGER-H3156-ST12",
      "name": "",
-     "hex": "#cfc7be",
+     "hex": "#9b8370",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -21940,7 +21940,7 @@
     {
      "code": "EGGER-H3157-ST12",
      "name": "",
-     "hex": "#e2d7c6",
+     "hex": "#d2b288",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -21973,7 +21973,7 @@
     {
      "code": "EGGER-H3170-ST12",
      "name": "Natural Kendal Oak",
-     "hex": "#dad0c2",
+     "hex": "#b99b7a",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -22006,7 +22006,7 @@
     {
      "code": "EGGER-H3176-ST37",
      "name": "Pewter Halifax Oak",
-     "hex": "#c4bbb1",
+     "hex": "#7e6249",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -22039,7 +22039,7 @@
     {
      "code": "EGGER-H3190-ST19",
      "name": "",
-     "hex": "#b2afab",
+     "hex": "#453d3a",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -22072,7 +22072,7 @@
     {
      "code": "EGGER-H3195-ST19",
      "name": "",
-     "hex": "#eae9e4",
+     "hex": "#e9e8e2",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -22105,7 +22105,7 @@
     {
      "code": "EGGER-H3197-ST19",
      "name": "",
-     "hex": "#d3cfcb",
+     "hex": "#a39b94",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -22138,7 +22138,7 @@
     {
      "code": "EGGER-H3198-ST19",
      "name": "",
-     "hex": "#bfbbb5",
+     "hex": "#6b5e55",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -22171,7 +22171,7 @@
     {
      "code": "EGGER-H3303-ST10",
      "name": "",
-     "hex": "#dcd0be",
+     "hex": "#c0a072",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -22204,7 +22204,7 @@
     {
      "code": "EGGER-H3309-ST28",
      "name": "",
-     "hex": "#ded3c5",
+     "hex": "#c7aa88",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -22237,7 +22237,7 @@
     {
      "code": "EGGER-H3317-ST28",
      "name": "",
-     "hex": "#d5c9bb",
+     "hex": "#ab8766",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -22270,7 +22270,7 @@
     {
      "code": "EGGER-H3322-ST17",
      "name": "",
-     "hex": "#ded4c4",
+     "hex": "#bc9e7b",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -22303,7 +22303,7 @@
     {
      "code": "EGGER-H3325-ST28",
      "name": "",
-     "hex": "#bcb6af",
+     "hex": "#635145",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -22336,7 +22336,7 @@
     {
      "code": "EGGER-H3331-ST10",
      "name": "",
-     "hex": "#ded3c4",
+     "hex": "#c0a17c",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -22369,7 +22369,7 @@
     {
      "code": "EGGER-H3359-ST32",
      "name": "",
-     "hex": "#d9cec0",
+     "hex": "#c1a07d",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -22402,7 +22402,7 @@
     {
      "code": "EGGER-H3395-ST12",
      "name": "",
-     "hex": "#decfba",
+     "hex": "#c59a65",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -22435,7 +22435,7 @@
     {
      "code": "EGGER-H3398-ST12",
      "name": "",
-     "hex": "#ccbeae",
+     "hex": "#916741",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -22468,7 +22468,7 @@
     {
      "code": "EGGER-H3430-ST22",
      "name": "",
-     "hex": "#e0dbd2",
+     "hex": "#d6c8b5",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -22501,7 +22501,7 @@
     {
      "code": "EGGER-H3433-ST22",
      "name": "",
-     "hex": "#eae6dd",
+     "hex": "#eadfcd",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -22534,7 +22534,7 @@
     {
      "code": "EGGER-H3450-ST22",
      "name": "",
-     "hex": "#e8e3d9",
+     "hex": "#e3d6c1",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -22567,7 +22567,7 @@
     {
      "code": "EGGER-H3700-ST10",
      "name": "",
-     "hex": "#d6cabc",
+     "hex": "#b69572",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -22600,7 +22600,7 @@
     {
      "code": "EGGER-H3702-ST10",
      "name": "",
-     "hex": "#c0b8ae",
+     "hex": "#664e3b",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -22633,7 +22633,7 @@
     {
      "code": "EGGER-H3710-ST12",
      "name": "",
-     "hex": "#c7bdb2",
+     "hex": "#7d634c",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -22666,7 +22666,7 @@
     {
      "code": "EGGER-H3730-ST10",
      "name": "Natural Hickory",
-     "hex": "#dfd1be",
+     "hex": "#c49f6f",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -22699,7 +22699,7 @@
     {
      "code": "EGGER-H3734-ST9",
      "name": "",
-     "hex": "#cebeae",
+     "hex": "#94663e",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -22732,7 +22732,7 @@
     {
      "code": "EGGER-H3786-ST19",
      "name": "",
-     "hex": "#d2c5bb",
+     "hex": "#a17d67",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -22765,7 +22765,7 @@
     {
      "code": "EGGER-H3787-ST19",
      "name": "Brown Bolivar Wood",
-     "hex": "#c2b6ac",
+     "hex": "#6e4c38",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -22798,7 +22798,7 @@
     {
      "code": "EGGER-H3840-ST9",
      "name": "",
-     "hex": "#e7dccb",
+     "hex": "#e0c199",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -22831,7 +22831,7 @@
     {
      "code": "EGGER-H3860-ST9",
      "name": "",
-     "hex": "#e8e3da",
+     "hex": "#e5d6c3",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -22864,7 +22864,7 @@
     {
      "code": "EGGER-H7586-ST17",
      "name": "",
-     "hex": "#bcb1a8",
+     "hex": "#62422d",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -22897,7 +22897,7 @@
     {
      "code": "EGGER-U104-ST9",
      "name": "",
-     "hex": "#f4f3ec",
+     "hex": "#fff9e3",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -22930,7 +22930,7 @@
     {
      "code": "EGGER-U113-ST9",
      "name": "",
-     "hex": "#f4f0e8",
+     "hex": "#fdedd1",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -22963,7 +22963,7 @@
     {
      "code": "EGGER-U115-ST9",
      "name": "",
-     "hex": "#f2eee7",
+     "hex": "#f0e2ca",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -22996,7 +22996,7 @@
     {
      "code": "EGGER-U125-ST9",
      "name": "",
-     "hex": "#f0e8dc",
+     "hex": "#e5bf90",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -23029,7 +23029,7 @@
     {
      "code": "EGGER-U156-ST9",
      "name": "",
-     "hex": "#f0ece5",
+     "hex": "#e7d6c1",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -23062,7 +23062,7 @@
     {
      "code": "EGGER-U163-ST9",
      "name": "",
-     "hex": "#f0e5cd",
+     "hex": "#e5b13d",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -23095,7 +23095,7 @@
     {
      "code": "EGGER-U201-ST9",
      "name": "",
-     "hex": "#e7e5df",
+     "hex": "#b6ae9f",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -23128,7 +23128,7 @@
     {
      "code": "EGGER-U211-ST9",
      "name": "",
-     "hex": "#e7e3dd",
+     "hex": "#b7a193",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -23161,7 +23161,7 @@
     {
      "code": "EGGER-U216-ST9",
      "name": "",
-     "hex": "#f4f1eb",
+     "hex": "#fbf1e1",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -23194,7 +23194,7 @@
     {
      "code": "EGGER-U220-ST9",
      "name": "Soft Beige",
-     "hex": "#f1eee9",
+     "hex": "#f0e4da",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -23227,7 +23227,7 @@
     {
      "code": "EGGER-U222-ST9",
      "name": "",
-     "hex": "#f4f1eb",
+     "hex": "#fff3dd",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -23260,7 +23260,7 @@
     {
      "code": "EGGER-U250-ST9",
      "name": "Caramel Beige",
-     "hex": "#e5dfd7",
+     "hex": "#ad9072",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -23293,7 +23293,7 @@
     {
      "code": "EGGER-U311-ST9",
      "name": "",
-     "hex": "#dbc7c5",
+     "hex": "#710a0d",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -23326,7 +23326,7 @@
     {
      "code": "EGGER-U321-ST9",
      "name": "",
-     "hex": "#eacac7",
+     "hex": "#c9171c",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -23359,7 +23359,7 @@
     {
      "code": "EGGER-U325-ST9",
      "name": "",
-     "hex": "#eae2dd",
+     "hex": "#c49e95",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -23392,7 +23392,7 @@
     {
      "code": "EGGER-U335-ST9",
      "name": "",
-     "hex": "#dfd5d1",
+     "hex": "#8b574f",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -23425,7 +23425,7 @@
     {
      "code": "EGGER-U350-ST9",
      "name": "",
-     "hex": "#ecd9c2",
+     "hex": "#d06e00",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -23458,7 +23458,7 @@
     {
      "code": "EGGER-U502-ST9",
      "name": "",
-     "hex": "#d6dada",
+     "hex": "#567085",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -23491,7 +23491,7 @@
     {
      "code": "EGGER-U504-ST9",
      "name": "",
-     "hex": "#d0d4d6",
+     "hex": "#39536f",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -23524,7 +23524,7 @@
     {
      "code": "EGGER-U525-ST9",
      "name": "",
-     "hex": "#c5d5e0",
+     "hex": "#005ba7",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -23557,7 +23557,7 @@
     {
      "code": "EGGER-U540-ST9",
      "name": "",
-     "hex": "#e1e3e3",
+     "hex": "#95a5b2",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -23590,7 +23590,7 @@
     {
      "code": "EGGER-U599-ST9",
      "name": "",
-     "hex": "#cdcecd",
+     "hex": "#272f3a",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -23623,7 +23623,7 @@
     {
      "code": "EGGER-U604-ST9",
      "name": "",
-     "hex": "#dbdcd7",
+     "hex": "#758074",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -23656,7 +23656,7 @@
     {
      "code": "EGGER-U630-ST9",
      "name": "",
-     "hex": "#e5eacf",
+     "hex": "#a9ca4b",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -23689,7 +23689,7 @@
     {
      "code": "EGGER-U636-ST9",
      "name": "",
-     "hex": "#e0e2df",
+     "hex": "#909e9d",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -23722,7 +23722,7 @@
     {
      "code": "EGGER-U638-ST9",
      "name": "",
-     "hex": "#e9e7e0",
+     "hex": "#c1bca4",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -23755,7 +23755,7 @@
     {
      "code": "EGGER-U665-ST9",
      "name": "Stone Green",
-     "hex": "#d5d7d4",
+     "hex": "#526260",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -23788,7 +23788,7 @@
     {
      "code": "EGGER-U669-ST9",
      "name": "",
-     "hex": "#dddcd7",
+     "hex": "#818077",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -23821,7 +23821,7 @@
     {
      "code": "EGGER-U699-ST9",
      "name": "",
-     "hex": "#cbcfca",
+     "hex": "#1c362a",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -23854,7 +23854,7 @@
     {
      "code": "EGGER-U702-ST9",
      "name": "",
-     "hex": "#edeae5",
+     "hex": "#d8cbbd",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -23887,7 +23887,7 @@
     {
      "code": "EGGER-U705-ST9",
      "name": "",
-     "hex": "#efede8",
+     "hex": "#e4dcd1",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -23920,7 +23920,7 @@
     {
      "code": "EGGER-U707-ST9",
      "name": "",
-     "hex": "#efeeeb",
+     "hex": "#e4e1de",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -23953,7 +23953,7 @@
     {
      "code": "EGGER-U708-ST9",
      "name": "",
-     "hex": "#ecebe7",
+     "hex": "#d2cfc8",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -23986,7 +23986,7 @@
     {
      "code": "EGGER-U727-ST9",
      "name": "",
-     "hex": "#e4e1db",
+     "hex": "#a6988a",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -24019,7 +24019,7 @@
     {
      "code": "EGGER-U732-ST9",
      "name": "",
-     "hex": "#ddddda",
+     "hex": "#848684",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -24052,7 +24052,7 @@
     {
      "code": "EGGER-U740-ST9",
      "name": "",
-     "hex": "#e0ddd8",
+     "hex": "#908579",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -24085,7 +24085,7 @@
     {
      "code": "EGGER-U741-ST9",
      "name": "",
-     "hex": "#d7d5d1",
+     "hex": "#5d5850",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -24118,7 +24118,7 @@
     {
      "code": "EGGER-U748-ST9",
      "name": "",
-     "hex": "#d9d6d1",
+     "hex": "#695b52",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -24151,7 +24151,7 @@
     {
      "code": "EGGER-U750-ST9",
      "name": "",
-     "hex": "#eceae4",
+     "hex": "#d2c9ba",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -24184,7 +24184,7 @@
     {
      "code": "EGGER-U755-ST9",
      "name": "",
-     "hex": "#d4d1cf",
+     "hex": "#4e4547",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -24217,7 +24217,7 @@
     {
      "code": "EGGER-U763-ST9",
      "name": "",
-     "hex": "#eae8e4",
+     "hex": "#c3c0bb",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -24250,7 +24250,7 @@
     {
      "code": "EGGER-U767-ST9",
      "name": "",
-     "hex": "#dfddd8",
+     "hex": "#897f74",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -24283,7 +24283,7 @@
     {
      "code": "EGGER-U775-ST9",
      "name": "",
-     "hex": "#f0efea",
+     "hex": "#e8e4db",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -24316,7 +24316,7 @@
     {
      "code": "EGGER-U780-ST9",
      "name": "",
-     "hex": "#dbdcda",
+     "hex": "#767e84",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -24349,7 +24349,7 @@
     {
      "code": "EGGER-U788-ST9",
      "name": "",
-     "hex": "#e2e0dd",
+     "hex": "#999593",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -24382,7 +24382,7 @@
     {
      "code": "EGGER-U818-ST9",
      "name": "",
-     "hex": "#d5cfca",
+     "hex": "#543829",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -24415,7 +24415,7 @@
     {
      "code": "EGGER-U830-ST9",
      "name": "",
-     "hex": "#eaddd2",
+     "hex": "#c8845c",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -24448,7 +24448,7 @@
     {
      "code": "EGGER-U899-ST9",
      "name": "",
-     "hex": "#d1d0cc",
+     "hex": "#3b3836",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -24481,7 +24481,7 @@
     {
      "code": "EGGER-U960-ST9",
      "name": "",
-     "hex": "#d9d8d5",
+     "hex": "#6a6968",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -24514,7 +24514,7 @@
     {
      "code": "EGGER-U961-ST7",
      "name": "",
-     "hex": "#d1d0cc",
+     "hex": "#403b38",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -24547,7 +24547,7 @@
     {
      "code": "EGGER-U963-ST9",
      "name": "",
-     "hex": "#d4d3d0",
+     "hex": "#4a4a4a",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -24580,7 +24580,7 @@
     {
      "code": "EGGER-U968-ST9",
      "name": "",
-     "hex": "#cfcfcd",
+     "hex": "#31353a",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -24613,7 +24613,7 @@
     {
      "code": "EGGER-U998-ST38",
      "name": "",
-     "hex": "#c8c7c4",
+     "hex": "#111111",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -24646,7 +24646,7 @@
     {
      "code": "EGGER-U999-ST19",
      "name": "Black",
-     "hex": "#c8c7c4",
+     "hex": "#090a09",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -24679,7 +24679,7 @@
     {
      "code": "EGGER-U999-ST7",
      "name": "Black",
-     "hex": "#c6c5c3",
+     "hex": "#040305",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -24712,7 +24712,7 @@
     {
      "code": "EGGER-W1000-ST19",
      "name": "",
-     "hex": "#f3f2ed",
+     "hex": "#f8f6eb",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -24745,7 +24745,7 @@
     {
      "code": "EGGER-W1000-ST38",
      "name": "",
-     "hex": "#f4f3ee",
+     "hex": "#fcfcf3",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -24778,7 +24778,7 @@
     {
      "code": "EGGER-W1000-ST9",
      "name": "",
-     "hex": "#f4f3ee",
+     "hex": "#fcfcf3",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -24811,7 +24811,7 @@
     {
      "code": "EGGER-W1100-ST9",
      "name": "",
-     "hex": "#f4f3ef",
+     "hex": "#fffefa",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -24844,7 +24844,7 @@
     {
      "code": "EGGER-W1200-ST9",
      "name": "",
-     "hex": "#f3f1ec",
+     "hex": "#f7f2e5",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -24894,13 +24894,13 @@
     "type": "supplier_brochure",
     "pdf": "BR+EDC26+Collection+Brochure+EAST+EN.pdf",
     "pages": "76–83",
-    "note": "Лакированные плиты PerfectSense — фасады. Справочные карточки поставщика: кроп печатного образца из PDF (только для карточки выбора), не PBR и не текстура плиты; права на изображения не подтверждены; цен нет. На детали — средний цвет образца."
+    "note": "Лакированные плиты PerfectSense — фасады. Справочные карточки поставщика: образец из PDF производителя, сопоставленный по коду и структуре дословно; REFERENCE_ONLY — не PBR и не бесшовная текстура плиты, масштаб принят; права на изображения не подтверждены; цен нет. На детали — этот образец (зеркальным повтором), без него — его средний цвет."
    },
    "items": [
     {
      "code": "EGGER-F128-PA",
      "name": "Black Ambiance Granite",
-     "hex": "#b8b7b4",
+     "hex": "#4c4b48",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -24932,7 +24932,7 @@
     {
      "code": "EGGER-F129-PA",
      "name": "Beige Ambiance Granite",
-     "hex": "#ece7df",
+     "hex": "#ded2c1",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -24964,7 +24964,7 @@
     {
      "code": "EGGER-H1204-TM22",
      "name": "",
-     "hex": "#e9dfd2",
+     "hex": "#d9bc9e",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -24996,7 +24996,7 @@
     {
      "code": "EGGER-H1227-TM12",
      "name": "",
-     "hex": "#b8b3ad",
+     "hex": "#473930",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -25028,7 +25028,7 @@
     {
      "code": "EGGER-H3041-TM12",
      "name": "Natural Eucalyptus",
-     "hex": "#c3b9b1",
+     "hex": "#694d3e",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -25060,7 +25060,7 @@
     {
      "code": "EGGER-H3180-TM37",
      "name": "",
-     "hex": "#c1bab1",
+     "hex": "#64503d",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -25092,7 +25092,7 @@
     {
      "code": "EGGER-H3311-TM28",
      "name": "Bleached Cuneo Oak",
-     "hex": "#e5dacc",
+     "hex": "#ccad8e",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -25124,7 +25124,7 @@
     {
      "code": "EGGER-U250-PM+TM",
      "name": "Caramel Beige",
-     "hex": "#dacfc3",
+     "hex": "#ad8f72",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -25156,7 +25156,7 @@
     {
      "code": "EGGER-U399-PM+TM",
      "name": "Garnet Red",
-     "hex": "#c0aaa8",
+     "hex": "#5f1e22",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -25188,7 +25188,7 @@
     {
      "code": "EGGER-U590-PM+TM",
      "name": "Deep Blue",
-     "hex": "#afb2b2",
+     "hex": "#2b3840",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -25220,7 +25220,7 @@
     {
      "code": "EGGER-U599-PM+TM",
      "name": "",
-     "hex": "#adafb0",
+     "hex": "#272f3a",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -25252,7 +25252,7 @@
     {
      "code": "EGGER-U604-PM+TM",
      "name": "",
-     "hex": "#c7cac4",
+     "hex": "#758074",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -25284,7 +25284,7 @@
     {
      "code": "EGGER-U665-PM+TM",
      "name": "Stone Green",
-     "hex": "#bcc0bd",
+     "hex": "#526260",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -25316,7 +25316,7 @@
     {
      "code": "EGGER-U669-PM+TM",
      "name": "",
-     "hex": "#cbcac5",
+     "hex": "#818077",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -25348,7 +25348,7 @@
     {
      "code": "EGGER-U702-PM+TM",
      "name": "",
-     "hex": "#e9e4dd",
+     "hex": "#d8cbbd",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -25380,7 +25380,7 @@
     {
      "code": "EGGER-U705-PM+TM",
      "name": "",
-     "hex": "#edeae3",
+     "hex": "#e4dcd1",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -25412,7 +25412,7 @@
     {
      "code": "EGGER-U708-PM+TM",
      "name": "",
-     "hex": "#e7e5e1",
+     "hex": "#d2cfc8",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -25444,7 +25444,7 @@
     {
      "code": "EGGER-U732-PM+TM",
      "name": "",
-     "hex": "#cccdc9",
+     "hex": "#848684",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -25476,7 +25476,7 @@
     {
      "code": "EGGER-U740-PM+TM",
      "name": "",
-     "hex": "#d1cdc6",
+     "hex": "#908579",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -25508,7 +25508,7 @@
     {
      "code": "EGGER-U755-PM+TM",
      "name": "",
-     "hex": "#bab6b5",
+     "hex": "#4e4547",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -25540,7 +25540,7 @@
     {
      "code": "EGGER-U767-PM+TM",
      "name": "",
-     "hex": "#cecbc4",
+     "hex": "#897f74",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -25572,7 +25572,7 @@
     {
      "code": "EGGER-U960-PM+TM",
      "name": "",
-     "hex": "#c3c3c0",
+     "hex": "#6a6968",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -25604,7 +25604,7 @@
     {
      "code": "EGGER-U961-PM+TM",
      "name": "",
-     "hex": "#b6b4b0",
+     "hex": "#403b38",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -25636,7 +25636,7 @@
     {
      "code": "EGGER-U999-PG",
      "name": "Black",
-     "hex": "#a2a19f",
+     "hex": "#040305",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -25668,7 +25668,7 @@
     {
      "code": "EGGER-U999-PM+TM",
      "name": "Black",
-     "hex": "#a2a19f",
+     "hex": "#040305",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -25700,7 +25700,7 @@
     {
      "code": "EGGER-U999-TM28",
      "name": "Black",
-     "hex": "#abaaa9",
+     "hex": "#1d1e21",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -25732,7 +25732,7 @@
     {
      "code": "EGGER-W1000-PM+TM",
      "name": "",
-     "hex": "#f5f4ee",
+     "hex": "#fcfcf3",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -25764,7 +25764,7 @@
     {
      "code": "EGGER-W1100-PG",
      "name": "",
-     "hex": "#f6f5f1",
+     "hex": "#fffefa",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -25796,7 +25796,7 @@
     {
      "code": "EGGER-W1100-PM+TM",
      "name": "",
-     "hex": "#f6f5f1",
+     "hex": "#fffefa",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -25845,13 +25845,13 @@
     "type": "supplier_brochure",
     "pdf": "BR+EDC26+Collection+Brochure+EAST+EN.pdf",
     "pages": "76–83",
-    "note": "Столешницы EGGER (кромочные, постформинг). Справочные карточки поставщика: кроп печатного образца из PDF (только для карточки выбора), не PBR и не текстура плиты; права на изображения не подтверждены; цен нет. На детали — средний цвет образца. Толщина и профиль — по артикулу, не по брошюре."
+    "note": "Столешницы EGGER (кромочные, постформинг). Справочные карточки поставщика: образец из PDF производителя, сопоставленный по коду и структуре дословно; REFERENCE_ONLY — не PBR и не бесшовная текстура плиты, масштаб принят; права на изображения не подтверждены; цен нет. На детали — этот образец (зеркальным повтором), без него — его средний цвет. Толщина и профиль — по артикулу, не по брошюре."
    },
    "items": [
     {
      "code": "EGGER-WT-F021-ST75",
      "name": "",
-     "hex": "#d4d1cb",
+     "hex": "#98948d",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -25883,7 +25883,7 @@
     {
      "code": "EGGER-WT-F030-ST75",
      "name": "",
-     "hex": "#e8e0d5",
+     "hex": "#e4cfb7",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -25915,7 +25915,7 @@
     {
      "code": "EGGER-WT-F031-ST78",
      "name": "",
-     "hex": "#dfddd9",
+     "hex": "#c6c1bd",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -25947,7 +25947,7 @@
     {
      "code": "EGGER-WT-F032-ST78",
      "name": "",
-     "hex": "#bfbeb9",
+     "hex": "#6f6c67",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -25979,7 +25979,7 @@
     {
      "code": "EGGER-WT-F052-ST75",
      "name": "",
-     "hex": "#dddad4",
+     "hex": "#c2b9b1",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -26011,7 +26011,7 @@
     {
      "code": "EGGER-WT-F093-ST7",
      "name": "",
-     "hex": "#cecbc5",
+     "hex": "#928b84",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -26043,7 +26043,7 @@
     {
      "code": "EGGER-WT-F095-ST87",
      "name": "",
-     "hex": "#cdc9c3",
+     "hex": "#958d83",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -26075,7 +26075,7 @@
     {
      "code": "EGGER-WT-F108-ST9",
      "name": "",
-     "hex": "#e7e4db",
+     "hex": "#e0d6c3",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -26107,7 +26107,7 @@
     {
      "code": "EGGER-WT-F121-ST87",
      "name": "",
-     "hex": "#bab9b4",
+     "hex": "#5d5953",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -26139,7 +26139,7 @@
     {
      "code": "EGGER-WT-F128-PA",
      "name": "Black Ambiance Granite",
-     "hex": "#b6b5b2",
+     "hex": "#4c4b48",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -26171,7 +26171,7 @@
     {
      "code": "EGGER-WT-F129-PA",
      "name": "Beige Ambiance Granite",
-     "hex": "#eae6dd",
+     "hex": "#ded2c1",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -26203,7 +26203,7 @@
     {
      "code": "EGGER-WT-F186-ST9",
      "name": "",
-     "hex": "#d0ceca",
+     "hex": "#9b9794",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -26235,7 +26235,7 @@
     {
      "code": "EGGER-WT-F1861-ST9",
      "name": "",
-     "hex": "#d3d1cd",
+     "hex": "#9c9794",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -26267,7 +26267,7 @@
     {
      "code": "EGGER-WT-F187-ST9",
      "name": "",
-     "hex": "#bcb9b2",
+     "hex": "#605548",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -26299,7 +26299,7 @@
     {
      "code": "EGGER-WT-F199-PA",
      "name": "Black Ambiance Marble",
-     "hex": "#b2b0ab",
+     "hex": "#312c2b",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -26331,7 +26331,7 @@
     {
      "code": "EGGER-WT-F205-ST9",
      "name": "",
-     "hex": "#bfbbb5",
+     "hex": "#696157",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -26363,7 +26363,7 @@
     {
      "code": "EGGER-WT-F206-PM",
      "name": "",
-     "hex": "#b6b4b1",
+     "hex": "#322e2e",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -26395,7 +26395,7 @@
     {
      "code": "EGGER-WT-F206-ST9",
      "name": "",
-     "hex": "#b7b5b1",
+     "hex": "#343030",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -26429,7 +26429,7 @@
     {
      "code": "EGGER-WT-F208-ST75",
      "name": "",
-     "hex": "#c6c4c1",
+     "hex": "#7f7b78",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -26461,7 +26461,7 @@
     {
      "code": "EGGER-WT-F221-ST87",
      "name": "",
-     "hex": "#e4e0d7",
+     "hex": "#bdb4a2",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -26493,7 +26493,7 @@
     {
      "code": "EGGER-WT-F226-ST78",
      "name": "",
-     "hex": "#d1c7bc",
+     "hex": "#8c7661",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -26525,7 +26525,7 @@
     {
      "code": "EGGER-WT-F227-ST78",
      "name": "",
-     "hex": "#beb9b2",
+     "hex": "#60564c",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -26557,7 +26557,7 @@
     {
      "code": "EGGER-WT-F228-ST78",
      "name": "",
-     "hex": "#aaa7a4",
+     "hex": "#413833",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -26589,7 +26589,7 @@
     {
      "code": "EGGER-WT-F229-ST75",
      "name": "",
-     "hex": "#edeae5",
+     "hex": "#ece5dd",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -26621,7 +26621,7 @@
     {
      "code": "EGGER-WT-F230-ST75",
      "name": "",
-     "hex": "#ddd9d3",
+     "hex": "#beb5aa",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -26653,7 +26653,7 @@
     {
      "code": "EGGER-WT-F234-ST76",
      "name": "",
-     "hex": "#dad8d4",
+     "hex": "#b3aeaa",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -26685,7 +26685,7 @@
     {
      "code": "EGGER-WT-F235-ST76",
      "name": "",
-     "hex": "#b1b0ae",
+     "hex": "#464344",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -26717,7 +26717,7 @@
     {
      "code": "EGGER-WT-F237-ST76",
      "name": "",
-     "hex": "#adaba7",
+     "hex": "#312a28",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -26749,7 +26749,7 @@
     {
      "code": "EGGER-WT-F243-ST76",
      "name": "",
-     "hex": "#d6d4d0",
+     "hex": "#aaa5a1",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -26781,7 +26781,7 @@
     {
      "code": "EGGER-WT-F244-ST76",
      "name": "Anthracite Candela Marble",
-     "hex": "#c0bfbc",
+     "hex": "#5b5959",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -26813,7 +26813,7 @@
     {
      "code": "EGGER-WT-F251-ST9",
      "name": "",
-     "hex": "#c5c2bb",
+     "hex": "#7e776b",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -26845,7 +26845,7 @@
     {
      "code": "EGGER-WT-F267-ST76",
      "name": "",
-     "hex": "#c7c2bc",
+     "hex": "#6e6259",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -26877,7 +26877,7 @@
     {
      "code": "EGGER-WT-F302-ST87",
      "name": "",
-     "hex": "#c1b8b0",
+     "hex": "#70594a",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -26909,7 +26909,7 @@
     {
      "code": "EGGER-WT-F311-ST87",
      "name": "",
-     "hex": "#b5b2ac",
+     "hex": "#3a3630",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -26941,7 +26941,7 @@
     {
      "code": "EGGER-WT-F352-ST76",
      "name": "",
-     "hex": "#c0bcb6",
+     "hex": "#6c6458",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -26973,7 +26973,7 @@
     {
      "code": "EGGER-WT-F486-ST76",
      "name": "",
-     "hex": "#e3e0da",
+     "hex": "#d4cdc2",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -27005,7 +27005,7 @@
     {
      "code": "EGGER-WT-F502-ST7",
      "name": "",
-     "hex": "#cecdc7",
+     "hex": "#928f88",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -27037,7 +27037,7 @@
     {
      "code": "EGGER-WT-F620-ST87",
      "name": "",
-     "hex": "#c0beba",
+     "hex": "#6a6562",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -27069,7 +27069,7 @@
     {
      "code": "EGGER-WT-F638-ST10",
      "name": "Chromix Silver",
-     "hex": "#d4d0ca",
+     "hex": "#a19a92",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -27101,7 +27101,7 @@
     {
      "code": "EGGER-WT-F661-ST76",
      "name": "",
-     "hex": "#e9e3db",
+     "hex": "#d7c6b7",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -27133,7 +27133,7 @@
     {
      "code": "EGGER-WT-F662-ST76",
      "name": "",
-     "hex": "#ddd8d1",
+     "hex": "#b3a598",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -27165,7 +27165,7 @@
     {
      "code": "EGGER-WT-F675-ST75",
      "name": "Light Grey Calvia Stone",
-     "hex": "#e4e2dd",
+     "hex": "#d9d3cb",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -27197,7 +27197,7 @@
     {
      "code": "EGGER-WT-F676-ST75",
      "name": "",
-     "hex": "#e3ded8",
+     "hex": "#d6cbc0",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -27229,7 +27229,7 @@
     {
      "code": "EGGER-WT-F800-ST9",
      "name": "",
-     "hex": "#e9e7e3",
+     "hex": "#efebe6",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -27261,7 +27261,7 @@
     {
      "code": "EGGER-WT-F8001-ST9",
      "name": "",
-     "hex": "#eae7e3",
+     "hex": "#efebe6",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -27293,7 +27293,7 @@
     {
      "code": "EGGER-WT-F836-ST75",
      "name": "",
-     "hex": "#e3ded9",
+     "hex": "#c8c0bc",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -27325,7 +27325,7 @@
     {
      "code": "EGGER-WT-H011-STG8",
      "name": "",
-     "hex": "#d9ccbd",
+     "hex": "#b9936f",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -27357,7 +27357,7 @@
     {
      "code": "EGGER-WT-H1145-ST10",
      "name": "",
-     "hex": "#dcd2c5",
+     "hex": "#c0a284",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -27389,7 +27389,7 @@
     {
      "code": "EGGER-WT-H1180-ST37",
      "name": "",
-     "hex": "#dcd1c1",
+     "hex": "#b89771",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -27421,7 +27421,7 @@
     {
      "code": "EGGER-WT-H1181-ST37",
      "name": "",
-     "hex": "#ccc2b6",
+     "hex": "#896d51",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -27453,7 +27453,7 @@
     {
      "code": "EGGER-WT-H1303-ST12",
      "name": "",
-     "hex": "#cac0b6",
+     "hex": "#896e55",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -27485,7 +27485,7 @@
     {
      "code": "EGGER-WT-H1313-ST10",
      "name": "",
-     "hex": "#c7c2be",
+     "hex": "#7d726c",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -27517,7 +27517,7 @@
     {
      "code": "EGGER-WT-H1318-ST10",
      "name": "",
-     "hex": "#ddd1c0",
+     "hex": "#be976c",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -27551,7 +27551,7 @@
     {
      "code": "EGGER-WT-H1330-ST10",
      "name": "",
-     "hex": "#c6bfb5",
+     "hex": "#76604b",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -27583,7 +27583,7 @@
     {
      "code": "EGGER-WT-H1344-ST32",
      "name": "Cognac Brown Sherman Oak",
-     "hex": "#d2c5b4",
+     "hex": "#936d42",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -27615,7 +27615,7 @@
     {
      "code": "EGGER-WT-H1357-ST10",
      "name": "",
-     "hex": "#d7cfc5",
+     "hex": "#ab9781",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -27647,7 +27647,7 @@
     {
      "code": "EGGER-WT-H1367-ST40",
      "name": "Light Natural Casella Oak",
-     "hex": "#f4f3f1",
+     "hex": "#caad89",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -27679,7 +27679,7 @@
     {
      "code": "EGGER-WT-H1385-ST40",
      "name": "Natural Casella Oak",
-     "hex": "#dccebe",
+     "hex": "#b68f68",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -27711,7 +27711,7 @@
     {
      "code": "EGGER-WT-H1386-ST40",
      "name": "Brown Casella Oak",
-     "hex": "#cfc3b6",
+     "hex": "#916d4e",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -27743,7 +27743,7 @@
     {
      "code": "EGGER-WT-H1401-ST22",
      "name": "",
-     "hex": "#e4e1db",
+     "hex": "#d5d0c4",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -27775,7 +27775,7 @@
     {
      "code": "EGGER-WT-H193-ST12",
      "name": "",
-     "hex": "#ddd6c7",
+     "hex": "#c1ab87",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -27807,7 +27807,7 @@
     {
      "code": "EGGER-WT-H197-ST10",
      "name": "",
-     "hex": "#cfc2b6",
+     "hex": "#a07d59",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -27839,7 +27839,7 @@
     {
      "code": "EGGER-WT-H2032-ST10",
      "name": "",
-     "hex": "#d1c6b5",
+     "hex": "#93734d",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -27871,7 +27871,7 @@
     {
      "code": "EGGER-WT-H2033-ST10",
      "name": "",
-     "hex": "#c2b6a8",
+     "hex": "#6e4e33",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -27903,7 +27903,7 @@
     {
      "code": "EGGER-WT-H2409-STG8",
      "name": "",
-     "hex": "#b2ada6",
+     "hex": "#493629",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -27935,7 +27935,7 @@
     {
      "code": "EGGER-WT-H305-ST12",
      "name": "",
-     "hex": "#dbd2c7",
+     "hex": "#bfa68c",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -27967,7 +27967,7 @@
     {
      "code": "EGGER-WT-H3133-ST12",
      "name": "",
-     "hex": "#c7beb4",
+     "hex": "#866c58",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -27999,7 +27999,7 @@
     {
      "code": "EGGER-WT-H3157-ST12",
      "name": "",
-     "hex": "#e1d7c6",
+     "hex": "#d2b288",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -28031,7 +28031,7 @@
     {
      "code": "EGGER-WT-H3176-ST37",
      "name": "Pewter Halifax Oak",
-     "hex": "#ccc3b8",
+     "hex": "#7e6249",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -28063,7 +28063,7 @@
     {
      "code": "EGGER-WT-H3303-ST10",
      "name": "",
-     "hex": "#dcd0bf",
+     "hex": "#c0a072",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -28095,7 +28095,7 @@
     {
      "code": "EGGER-WT-H3331-ST10",
      "name": "",
-     "hex": "#dfd4c5",
+     "hex": "#c0a17c",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -28127,7 +28127,7 @@
     {
      "code": "EGGER-WT-H3359-ST32",
      "name": "",
-     "hex": "#ded3c5",
+     "hex": "#c1a07d",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -28159,7 +28159,7 @@
     {
      "code": "EGGER-WT-H3730-ST10",
      "name": "Natural Hickory",
-     "hex": "#e4d6c3",
+     "hex": "#c49f6f",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -28193,7 +28193,7 @@
     {
      "code": "EGGER-WT-U702-ST78",
      "name": "",
-     "hex": "#e4dfd8",
+     "hex": "#d8cbbd",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -28225,7 +28225,7 @@
     {
      "code": "EGGER-WT-U7081-ST76",
      "name": "",
-     "hex": "#e7e5e1",
+     "hex": "#d2cfc8",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -28257,7 +28257,7 @@
     {
      "code": "EGGER-WT-U763-ST76",
      "name": "",
-     "hex": "#dddbd7",
+     "hex": "#c3c0bb",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -28289,7 +28289,7 @@
     {
      "code": "EGGER-WT-U999-PM",
      "name": "Black",
-     "hex": "#a1a09f",
+     "hex": "#040305",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -28321,7 +28321,7 @@
     {
      "code": "EGGER-WT-U999-ST76",
      "name": "Black",
-     "hex": "#a1a09f",
+     "hex": "#040305",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -28353,7 +28353,7 @@
     {
      "code": "EGGER-WT-U999-ST78",
      "name": "Black",
-     "hex": "#9c9c9a",
+     "hex": "#040305",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -28385,7 +28385,7 @@
     {
      "code": "EGGER-WT-W1000-ST76",
      "name": "",
-     "hex": "#f1f0ea",
+     "hex": "#fcfcf3",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -28417,7 +28417,7 @@
     {
      "code": "EGGER-WT-W1100-PM",
      "name": "",
-     "hex": "#f6f5f1",
+     "hex": "#fffefa",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -28449,7 +28449,7 @@
     {
      "code": "EGGER-WT-W1101-ST76",
      "name": "",
-     "hex": "#f6f5f1",
+     "hex": "#fffefa",
      "price": null,
      "provenance": {
       "brand": "EGGER",
@@ -28519,7 +28519,7 @@
     "type": "supplier_catalog",
     "pdf": "katalog-grandex-KZ-mob-2025.pdf",
     "url": "https://interstone.su/stones/akrilovyy-kamen/grandex/colors/",
-    "note": "Акриловый камень Grandex 12 мм — столешницы и фартук, не ЛДСП и не полки. Справочные карточки поставщика: кроп печатного образца из PDF (только для карточки выбора), не PBR и не текстура плиты; права на изображения не подтверждены; цен нет. На детали — средний цвет образца."
+    "note": "Акриловый камень Grandex 12 мм — столешницы и фартук, не ЛДСП и не полки. Справочные карточки поставщика: образец из PDF производителя, сопоставленный по коду и структуре дословно; REFERENCE_ONLY — не PBR и не бесшовная текстура плиты, масштаб принят; права на изображения не подтверждены; цен нет. На детали — этот образец (зеркальным повтором), без него — его средний цвет."
    },
    "items": [
     {

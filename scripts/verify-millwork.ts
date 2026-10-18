@@ -27499,6 +27499,227 @@ asyncChecks.push(
   })(),
 );
 
+/* ═══════════  P3D-TEX: полки, перегородки и антресоль — свой декор, независимо от корпуса  ═══════════ */
+/*
+ * Выбор идёт путём экрана (`Workspace.applyMaterial`): позиции каталога —
+ * строками импорта из того же файла и `withReferences`, операции — той же
+ * `materialOps`, правка — `applyOps`. Мерится то, куда выбор обязан доехать:
+ * раскрой (название плиты у детали), смета (своя строка и площадь), сцена
+ * (ключ пачки у коробки детали). Геометрия, детали и их размеры — те же до
+ * миллиметра: материал не режет второй раскрой.
+ */
+import { DEFAULT_REQUIREMENTS as TEX_DEFAULT_REQUIREMENTS } from '../lib/millwork/workspace';
+import { withReferences as texWithReferences } from '../lib/millwork/referenceTextures';
+import { REFERENCE_TEXTURES as TEX_TABLE } from '../lib/millwork/referenceTextures.generated';
+import { isAntresol as texIsAntresol } from '../lib/millwork/carcassMaterial';
+import { partOfPanel as texPartOfPanel, SIDE_PANEL_NAME as TEX_SIDE } from '../lib/millwork/panels';
+import { runFingerprint as texRunFingerprint } from '../lib/millwork/fingerprint';
+{
+  console.log('\nP3D-TEX: корпус, полки, перегородки и антресоль — независимо; раскрой, смета, сцена; кладовка над колонной');
+  const file = parseMaterialFile(catalogJson);
+  const REVIEW = ['egger-ldsp', 'egger-perfectsense', 'egger-worktops', 'grandex-acrylic'];
+  const plan = planMaterialImport(file, [], { collections: REVIEW });
+  const entries = texWithReferences(catalogEntriesFromRows(plan.rows, file, 'org-tex', 'tex:'), TEX_TABLE);
+  const items = materialCatalog(entries);
+  const carcass = carcassCatalog(entries);
+  const ldsp = file.collections.find((c) => c.id === 'egger-ldsp')!;
+  const pick = (code: string) => {
+    const item = Array.from(items.values()).find((i) => i.code === code);
+    if (!item) throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: позиции ${code} в каталоге нет`);
+    return { item, collection: ldsp, surface: ldsp.finishes[0] };
+  };
+  const body = pick('EGGER-W1000-ST9');
+  const shelves = pick('EGGER-H1113-ST10');
+  const parts = pick('EGGER-U999-ST7');
+  const antresol = pick('EGGER-H1180-ST37');
+
+  const bedReq = { ...TEX_DEFAULT_REQUIREMENTS, zone: 'bedroom', doorSystem: 'hinged', appliances: [], sections: ['shelves', 'hanging_long', 'mezzanine'] } as RunRequirements;
+  const built = buildRun({ lengthMm: 3000, ceilingHeightMm: 2700, requirements: bedReq, openings: [], comms: [] });
+  const withDivider = built.modules.find((m) => m.id.startsWith('tall-0'))!;
+  const r0 = applyOps({
+    run: built,
+    requirements: bedReq,
+    openings: [],
+    ops: [{ op: 'set_fill', moduleId: withDivider.id, fill: { ...withDivider.fill!, dividerMm: Math.round(withDivider.widthMm / 2) } }],
+  });
+  const apply = (run: Run, target: Parameters<typeof materialOps>[0], choice: typeof body) => {
+    const made = materialOps(target, choice, run, null, MATERIAL_FINISHES);
+    if ('refusal' in made) throw new Error(`материал не лёг (${target}): ${made.refusal}`);
+    const next = applyOps({ run, requirements: bedReq, openings: [], ops: made.ops });
+    if (next.warnings.length) throw new Error(`правка с отказом (${target}): ${next.warnings.join(' | ')}`);
+    return next;
+  };
+  const r1 = apply(r0, 'carcass', body);
+  const r2 = apply(r1, 'shelves', shelves);
+  const r3 = apply(r2, 'partitions', parts);
+  const r4 = apply(r3, 'antresol', antresol);
+
+  const panelsOf = (run: Run) => buildPanels({ run, carcass });
+  const dims = (run: Run) => panelsOf(run).map((p) => `${p.moduleId}:${p.name}:${p.lengthMm}x${p.widthMm}x${p.thicknessMm}x${p.qty}:${p.grain}`).join('|');
+  const antresolIds = new Set(allModules(r4).filter(texIsAntresol).map((m) => m.id));
+  const panels4 = panelsOf(r4);
+  const shelfPanels = panels4.filter((p) => texPartOfPanel(p.name) === 'shelves');
+  const partPanels = panels4.filter((p) => texPartOfPanel(p.name) === 'partitions');
+  const bodyPanels = panels4.filter((p) => !texPartOfPanel(p.name) && p.material.startsWith('ЛДСП') && !antresolIds.has(p.moduleId));
+  const antresolPanels = panels4.filter((p) => !texPartOfPanel(p.name) && p.material.startsWith('ЛДСП') && antresolIds.has(p.moduleId));
+  /* Плиту в раскрое называет позиция корпуса: её название, а без подтверждённого — артикул. */
+  const plate = (item: typeof body.item) => carcass.get(item.id)?.name ?? '';
+  const named = (list: typeof panels4, item: typeof body.item) =>
+    list.length > 0 && plate(item).length > 0 && list.every((p) => p.material === `ЛДСП 16 · ${plate(item)}`);
+  check(
+    'TEX.1 раскрой: полки — своим декором, перегородки — своим, корпус — своим, корпус антресоли — своим; размеры и волокно всех деталей те же до миллиметра',
+    named(shelfPanels, shelves.item) &&
+      named(partPanels, parts.item) &&
+      named(bodyPanels, body.item) &&
+      named(antresolPanels, antresol.item) &&
+      dims(r4) === dims(r0) &&
+      antresolIds.size > 0,
+    `полок ${shelfPanels.length} · перегородок ${partPanels.length} · корпус ${bodyPanels.length} · антресоль ${antresolPanels.length} (${antresolIds.size} мод.) · размеры ${dims(r4) === dims(r0) ? 'те же' : 'ПОЕХАЛИ'} · ${[...shelfPanels, ...partPanels].slice(0, 2).map((p) => p.material).join(' / ')}`,
+  );
+
+  const estimateOf = (run: Run) => buildEstimate(run, 'optimal', DEMO_RATES, [], undefined, undefined, undefined, undefined, carcass, items);
+  const e0 = estimateOf(r0);
+  const e4 = estimateOf(r4);
+  const area = (list: typeof panels4) => Math.round(list.reduce((s, p) => s + (p.lengthMm * p.widthMm * p.qty) / 1_000_000, 0) * 100) / 100;
+  const line = (e: typeof e4, key: string) => e.lines.find((l) => l.key === key);
+  const shelfLine = line(e4, `shelves_${shelves.item.id}`);
+  const partLine = line(e4, `partitions_${parts.item.id}`);
+  const bodyLine = line(e4, `carcass_${body.item.id}`);
+  const antresolLine = line(e4, `carcass_${antresol.item.id}`);
+  const q = (l?: { quantity: number }) => l?.quantity ?? -1;
+  /* Строка с нулём в смету не попадает вовсе (схлопывание строк) — её нет, значит 0. */
+  const shop = (e: typeof e4) => line(e, 'shelf_panel')?.quantity ?? 0;
+  const shopBody = (e: typeof e4) => e.lines.find((l) => l.key === 'ldsp_carcass' || l.key === 'ldsp_moisture');
+  const conserved =
+    Boolean(shopBody(e0)) &&
+    Math.abs(
+      shop(e0) +
+        q(shopBody(e0)) -
+        (shop(e4) + (shopBody(e4)?.quantity ?? 0) + q(shelfLine) + q(partLine) + q(bodyLine) + q(antresolLine)),
+    ) < 0.05;
+  check(
+    'TEX.2 смета: «Полки «H1113»», «Перегородки «U999 ST7»», «Корпус «W1000»» и корпус антресоли — каждый своей строкой с площадью из раскроя; «Полки» по ставке цеха — 0 м²; площадь корпуса и полок сохраняется',
+    Math.abs(q(shelfLine) - area(shelfPanels)) < 0.011 &&
+      Math.abs(q(partLine) - area(partPanels)) < 0.011 &&
+      Math.abs(q(bodyLine) - area(bodyPanels)) < 0.011 &&
+      Math.abs(q(antresolLine) - area(antresolPanels)) < 0.011 &&
+      shop(e4) === 0 &&
+      /Полки «/.test(shelfLine?.title ?? '') &&
+      /Перегородки «/.test(partLine?.title ?? '') &&
+      conserved,
+    `полки ${q(shelfLine)} (раскрой ${area(shelfPanels)}) · перегородки ${q(partLine)} (${area(partPanels)}) · корпус ${q(bodyLine)} (${area(bodyPanels)}) · антресоль ${q(antresolLine)} (${area(antresolPanels)}) · «Полки» цеха ${shop(e0)} → ${shop(e4)} · площадь ${conserved ? 'сохранена' : 'НЕ СХОДИТСЯ'}`,
+  );
+
+  const boxes = runBoxes(r4, { thicknessMm: 16, frontThicknessMm: 18, gapMm: 3, carcass });
+  const keyOf = (list: typeof boxes) => Array.from(new Set(list.map((b) => b.carcassKey ?? 'роль'))).join(',');
+  const shelfBoxes = boxes.filter((b) => texPartOfPanel(b.panel) === 'shelves');
+  const partBoxes = boxes.filter((b) => texPartOfPanel(b.panel) === 'partitions');
+  const sideBoxes = boxes.filter((b) => b.panel === TEX_SIDE);
+  check(
+    'TEX.3 сцена: коробки полок — пачкой декора полок, перегородок — своей, боковины — декором корпуса и антресоли (тот же ключ `carcass/<позиция>`, по нему грузится образец)',
+    shelfBoxes.length > 0 &&
+      keyOf(shelfBoxes) === `carcass/${shelves.item.id}` &&
+      partBoxes.length > 0 &&
+      keyOf(partBoxes) === `carcass/${parts.item.id}` &&
+      sideBoxes.some((b) => b.carcassKey === `carcass/${body.item.id}`) &&
+      sideBoxes.some((b) => b.carcassKey === `carcass/${antresol.item.id}`) &&
+      sideBoxes.every((b) => b.carcassKey === `carcass/${body.item.id}` || b.carcassKey === `carcass/${antresol.item.id}`),
+    `полки ${shelfBoxes.length}: ${keyOf(shelfBoxes)} · перегородки ${partBoxes.length}: ${keyOf(partBoxes)} · боковины: ${keyOf(sideBoxes)}`,
+  );
+
+  const frontsBefore = allModules(r3).filter((m) => hasFacade(m) && !texIsAntresol(m)).map((m) => `${m.id}:${m.front?.itemId ?? '-'}`).join();
+  const frontsAfter = allModules(r4).filter((m) => hasFacade(m) && !texIsAntresol(m)).map((m) => `${m.id}:${m.front?.itemId ?? '-'}`).join();
+  const antresolFronts = allModules(r4).filter((m) => texIsAntresol(m) && hasFacade(m));
+  check(
+    'TEX.4 «Антресоль»: корпус и фасады только антресолей; фасады и корпус остальной мебели не тронуты',
+    antresolFronts.length > 0 &&
+      antresolFronts.every((m) => m.front?.itemId === antresol.item.id && m.carcassItemId === antresol.item.id) &&
+      frontsBefore === frontsAfter &&
+      allModules(r4).filter((m) => !texIsAntresol(m)).every((m) => !m.carcassItemId),
+    `антресолей с фасадом ${antresolFronts.length} · фасады прочих ${frontsBefore === frontsAfter ? 'те же' : 'ПОМЕНЯЛИСЬ'}`,
+  );
+
+  /* Снять декор полок — полки снова как корпус; корпус поменять — полки и перегородки не едут. */
+  const reset = applyOps({ run: r4, requirements: bedReq, openings: [], ops: [{ op: 'set_carcass', part: 'shelves', itemId: null }] });
+  const resetShelves = buildPanels({ run: reset, carcass }).filter((p) => texPartOfPanel(p.name) === 'shelves' && !antresolIds.has(p.moduleId));
+  const e5 = estimateOf(reset);
+  const other = pick('EGGER-H1145-ST10');
+  const swapped = apply(r4, 'carcass', other);
+  const swappedPanels = buildPanels({ run: swapped, carcass });
+  check(
+    'TEX.5 снять декор полок — полки снова «как корпус», своей строки нет, «Полки» цеха вернулись; новый корпус не трогает полки и перегородки',
+    reset.carcass?.shelves === undefined &&
+      named(resetShelves, body.item) &&
+      !e5.lines.some((l) => l.key.startsWith('shelves_')) &&
+      shop(e5) > 0 &&
+      named(swappedPanels.filter((p) => texPartOfPanel(p.name) === 'shelves'), shelves.item) &&
+      named(swappedPanels.filter((p) => texPartOfPanel(p.name) === 'partitions'), parts.item),
+    `полки после снятия: ${resetShelves[0]?.material ?? 'НЕТ'} · «Полки» цеха ${shop(e5)} · после смены корпуса полки: ${swappedPanels.find((p) => texPartOfPanel(p.name) === 'shelves')?.material ?? 'НЕТ'}`,
+  );
+
+  check(
+    'TEX.6 материал не меняет отпечаток состава: корпус, полки и перегородки — те же модули и наполнение',
+    texRunFingerprint(r3) === texRunFingerprint(r0),
+    `${texRunFingerprint(r0)} → ${texRunFingerprint(r3)}`,
+  );
+
+  /* Кладовка над колонной кухни пересобирается на каждой правке — декор её корпуса обязан пережить пересборку. */
+  const kitchen = buildRun({ lengthMm: 3800, ceilingHeightMm: 2700, requirements: TEX_DEFAULT_REQUIREMENTS, openings: [], comms: [] });
+  const kitchenMade = materialOps('antresol', antresol, kitchen, null, MATERIAL_FINISHES);
+  const k1 = 'refusal' in kitchenMade ? kitchen : applyOps({ run: kitchen, requirements: TEX_DEFAULT_REQUIREMENTS, openings: [], ops: kitchenMade.ops });
+  /* Любая следующая правка пересобирает верхний ряд и кладовку — берём безобидную. */
+  const k2 = applyOps({ run: k1, requirements: TEX_DEFAULT_REQUIREMENTS, openings: [], ops: [{ op: 'set_carcass', scope: 'base', itemId: body.item.id }] });
+  const storage = (run: Run) => allModules(run).filter(texIsAntresol);
+  check(
+    'TEX.7 кладовка над колонной: «Антресоль» красит её корпус и фасад без «модуль не найден», и после следующей правки ряда (пересборка) декор на месте',
+    !('refusal' in kitchenMade) &&
+      k1.warnings.length === 0 &&
+      storage(k1).length > 0 &&
+      storage(k1).every((m) => m.carcassItemId === antresol.item.id) &&
+      storage(k2).length === storage(k1).length &&
+      storage(k2).every((m) => m.carcassItemId === antresol.item.id && m.front?.itemId === antresol.item.id),
+    `${'refusal' in kitchenMade ? kitchenMade.refusal : `кладовок ${storage(k1).length} · ${k1.warnings.join(' | ') || 'отказов нет'} · после правки: ${storage(k2).map((m) => `${m.id}:${m.carcassItemId ?? '—'}`).join(', ')}`}`,
+  );
+
+  /* Корпус над шкафом (P2) — тоже антресоль. */
+  const plainReq = { ...bedReq, sections: ['shelves', 'hanging_long'] } as RunRequirements;
+  const plain = buildRun({ lengthMm: 3000, ceilingHeightMm: 2700, requirements: plainReq, openings: [], comms: [] });
+  const host = plain.modules[0];
+  /* Полки шкафа под антресолью убираются той же правкой: движок не снимает наполнение молча. */
+  const over = applyOps({
+    run: plain,
+    requirements: plainReq,
+    openings: [],
+    ops: [
+      { op: 'set_fill', moduleId: host.id, fill: { ...host.fill!, shelves: [] } },
+      { op: 'add_overhead', moduleId: host.id, heightMm: 400, baseHeightMm: 2000 },
+    ],
+  });
+  const overMade = materialOps('antresol', antresol, over, null, MATERIAL_FINISHES);
+  const o1 = 'refusal' in overMade ? over : applyOps({ run: over, requirements: plainReq, openings: [], ops: overMade.ops });
+  const overUnits = allModules(o1).filter((m) => Boolean(m.overhead));
+  check(
+    'TEX.8 корпус над шкафом — антресоль: «Антресоль» кладёт на него декор корпуса и фасада, шкаф под ним не тронут',
+    over.warnings.length === 0 &&
+      overUnits.length === 1 &&
+      overUnits[0].carcassItemId === antresol.item.id &&
+      overUnits[0].front?.itemId === antresol.item.id &&
+      !o1.modules.find((m) => m.id === host.id)?.carcassItemId,
+    `${over.warnings.join(' | ') || 'поставлена'} · ${'refusal' in overMade ? overMade.refusal : `над шкафом ${overUnits.length}: ${overUnits[0]?.carcassItemId ?? '—'}`}`,
+  );
+
+  /* Позиция только для фасада (PerfectSense) на антресоль не ложится; позиция корпуса без фасада — только корпус, и это сказано. */
+  const ps = file.collections.find((c) => c.id === 'egger-perfectsense')!;
+  const psItem = Array.from(items.values()).find((i) => i.collection === 'egger-perfectsense')!;
+  const psPlan = materialOps('antresol', { item: psItem, collection: ps, surface: ps.finishes[0] }, r0, null, MATERIAL_FINISHES);
+  const shelvesPs = materialOps('shelves', { item: psItem, collection: ps, surface: ps.finishes[0] }, r0, null, MATERIAL_FINISHES);
+  check(
+    'TEX.9 PerfectSense (только фасад) на антресоль и на полки не ложится — отказ словами',
+    'refusal' in psPlan && 'refusal' in shelvesPs && /не идёт/.test(psPlan.refusal) && /не идёт/.test(shelvesPs.refusal),
+    `${'refusal' in psPlan ? psPlan.refusal : 'ЛЁГ'} · ${'refusal' in shelvesPs ? shelvesPs.refusal : 'ЛЁГ'}`,
+  );
+}
+
 Promise.allSettled(asyncChecks).then((results) => {
   for (const result of results) {
     if (result.status === 'rejected') {
