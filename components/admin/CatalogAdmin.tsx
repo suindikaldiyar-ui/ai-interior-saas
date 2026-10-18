@@ -65,10 +65,18 @@ export default function CatalogAdmin({
   const csvInput = useRef<HTMLInputElement>(null);
   const uploadTarget = useRef<string | null>(null);
 
-  const visibleItems = useMemo(
-    () => items.filter((i) => i.category_id === activeCategory),
-    [items, activeCategory],
-  );
+  /*
+   * ПОИСК ПО АРТИКУЛУ И НАЗВАНИЮ (P3) — по всему каталогу, а не по одной
+   * категории: EGGER H1180 ищут кодом, не зная, в какой он коллекции.
+   */
+  const [query, setQuery] = useState('');
+  const visibleItems = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return items.filter((i) => i.category_id === activeCategory);
+    return items.filter(
+      (i) => i.article.toLowerCase().includes(needle) || (i.name_ru ?? '').toLowerCase().includes(needle),
+    );
+  }, [items, activeCategory, query]);
 
   /*
    * ПЕРЕЧИТАТЬ — ТЕМ ЖЕ `fetchCatalog`, ЧТО И СЕРВЕР.
@@ -114,7 +122,7 @@ export default function CatalogAdmin({
   useEffect(() => {
     setScrollTop(0);
     if (listRef.current) listRef.current.scrollTop = 0;
-  }, [activeCategory]);
+  }, [activeCategory, query]);
 
   const first = Math.max(0, Math.floor(scrollTop / ROW_PX) - OVERSCAN);
   const last = Math.min(visibleItems.length, Math.ceil((scrollTop + viewport) / ROW_PX) + OVERSCAN);
@@ -428,6 +436,19 @@ export default function CatalogAdmin({
           >
             Загрузить типовой прайс
           </button>
+          <input
+            type="search"
+            data-admin-search
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Артикул или название: EGGER H1180"
+            className="mw-touch min-w-[14rem] border border-navyLine bg-navy px-2 text-[13px]"
+          />
+          {query.trim() && (
+            <span className="text-[13px] text-graphiteMw" data-admin-found>
+              Найдено по всем категориям: {visibleItems.length}
+            </span>
+          )}
           {notice && <span className="text-[13px] text-graphiteMw">{notice}</span>}
           <span className="ml-auto text-[13px] text-graphiteMw">
             Типовой прайс — ориентир, а не цены вашей компании

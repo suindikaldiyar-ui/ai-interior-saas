@@ -70,8 +70,10 @@ export function rowOfModule(run: Run, unit: Module): Module[] {
   const storage = hanging.filter(
     (m) => m.section === 'mezzanine' && mezzanineBaseOf(m, run) !== null,
   );
-  const upper = hanging.filter((m) => m.section !== 'mezzanine');
+  const upper = hanging.filter((m) => m.section !== 'mezzanine' && !m.overhead);
 
+  /* Антресоль над шкафом (P2) — сама по себе: соседей по ряду у неё нет. */
+  if (unit.overhead) return [unit];
   if (ordered.some((m) => m.id === unit.id)) return ordered;
   if (storage.some((m) => m.id === unit.id)) return storage;
   return upper;

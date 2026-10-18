@@ -22,7 +22,7 @@ import { choiceFromSolution, runWithCorner } from './corner';
 import { runWithObstacles } from './obstacles';
 import { compositionOf, compositionWalls, mergeEstimates, wallLabel, type SelectedWall } from './walls';
 import type { PanelWall } from './panels';
-import { onWall } from './layout';
+import { onWall, uniqueModuleIds } from './layout';
 import { productionFor } from './shop';
 import { millingCatalog, type MillingItem } from './milling';
 import { carcassCatalog, type CarcassItem } from './carcassMaterial';
@@ -401,7 +401,11 @@ export function wallSegments(
   return layout.segments.map((segment, i) =>
     i === 0
       ? wallARun
-      : runWithObstacles(runWithCorner(wallRun(segment, i), segment.run.corner), segment.run.obstacles),
+      : runWithObstacles(
+          /* Сохранённый ряд с дублем ключа чинится на показе (P0, `uniqueModuleIds`). */
+          runWithCorner(uniqueModuleIds(wallRun(segment, i)), segment.run.corner),
+          segment.run.obstacles,
+        ),
   );
 
   function wallRun(segment: Composition['segments'][number], i: number): Run {

@@ -123,6 +123,7 @@ import type { RateTable } from '@/lib/millwork/estimate';
 import { unpricedLines } from '@/lib/millwork/estimate';
 import { applyOps, confirmBayLoss, opsBayLoss } from '@/lib/millwork/ops';
 import MaterialLibraryPanel, { type AppliedMaterial } from './MaterialLibraryPanel';
+import CaptureSceneBoundary from './CaptureSceneBoundary';
 import {
   catalogEntriesFromRows,
   collectionPriceRow,
@@ -442,6 +443,8 @@ export default function Workspace(props: WorkspaceProps) {
   );
   /** Жёлтая строка под сценой: правку не отменяем, но о последствии говорим. */
   const [sceneNotice, setSceneNotice] = useState<string | null>(null);
+  /* Скрытая сцена захвата кадра не поднялась (нет WebGL): словами, а не падением страницы. */
+  const [captureFailure, setCaptureFailure] = useState<string | null>(null);
 
   /*
    * КАКОЙ ВИД ПОКАЗАН И СПРЯТАНА ЛИ ПАНЕЛЬ.
@@ -2591,7 +2594,8 @@ export default function Workspace(props: WorkspaceProps) {
    */
   const applyMaterial = useCallback(
     (target: MaterialTarget, choice: MaterialChoice): string | null => {
-      const walls = target === 'module' ? [wall] : segments.map((_, index) => index);
+      const one = target === 'module' || target === 'module-carcass';
+      const walls = one ? [wall] : segments.map((_, index) => index);
       const said: string[] = [];
       let changed = false;
 
@@ -2602,7 +2606,7 @@ export default function Workspace(props: WorkspaceProps) {
           target,
           choice,
           run,
-          target === 'module' ? selectedId : null,
+          one ? selectedId : null,
           MATERIAL_FINISHES,
         );
         if ('refusal' in plan) {
@@ -2662,6 +2666,13 @@ export default function Workspace(props: WorkspaceProps) {
         moduleFront?.itemId && materialItems.has(moduleFront.itemId)
           ? { itemId: moduleFront.itemId, surface: moduleFront.surface }
           : { itemId: null },
+      /* Корпус выбранного модуля (P3) — его собственный декор, не полосы ряда. */
+      'module-carcass': {
+        itemId:
+          selection.unit?.carcassItemId && materialItems.has(selection.unit.carcassItemId)
+            ? selection.unit.carcassItemId
+            : null,
+      },
     };
   }, [segments, materialItems, selection.unit]);
 
@@ -3776,6 +3787,7 @@ export default function Workspace(props: WorkspaceProps) {
    * пока их не попросят: в обычной работе нагрузки нет.
    */
   const sceneSlot = (
+    <CaptureSceneBoundary onFailure={setCaptureFailure}>
     <KitchenScene
       run={active.run}
       /*
@@ -3799,6 +3811,7 @@ export default function Workspace(props: WorkspaceProps) {
       onMoveModule={moveModule}
       onItemId={setKitchenItemId}
     />
+    </CaptureSceneBoundary>
   );
 
   /*
@@ -4560,7 +4573,7 @@ export default function Workspace(props: WorkspaceProps) {
         'Studio открыт без оболочки: страница Studio обязана обернуть рабочее место в StudioKitProvider.',
       );
     }
-    const { StudioShell, RoomPlan, WallInspector, StudioObjects, StudioInspector, FillEditor } = studioKit;
+    const { StudioShell, RoomPlan, WallInspector, StudioObjects, StudioInspector, FillEditor, OverheadEditor } = studioKit;
     const surveyWalls = survey?.walls ?? [];
     const turnWords = (item: Survey['walls'][number]) =>
       item.turn === 'custom' ? `${item.turnDeg}° (другой угол)` : `90° ${item.turn === 'left' ? 'влево' : 'вправо'}`;
@@ -4866,6 +4879,29 @@ export default function Workspace(props: WorkspaceProps) {
                 onSelectZone={(bayId, zoneId) => setSelectedBay({ moduleId: selectedUnit.id, bayId, zoneId })}
               />
             )}
+            {/*
+              * НАД ШКАФОМ: ОТДЕЛЬНЫЙ ВЕРХНИЙ КОРПУС (P2) — у высокого шкафа
+              * и у самой антресоли. Ответ «встанет ли» — тот же `applyOps`
+              * вхолостую, правка — тот же `runOps`, что у всех кнопок.
+              */}
+            {selectedUnit && (
+              <OverheadEditor
+                key={`${selectedUnit.id}:${allModules(activeRun).filter((m) => m.overhead).map((m) => `${m.id}:${m.widthMm}:${m.heightMm}:${m.overhead?.depthMm}`).join(',')}`}
+                unit={selectedUnit}
+                run={activeRun}
+                onOps={(ops, onRefusal) => runOps(ops, onRefusal)}
+                preview={(ops) =>
+                  applyOps({
+                    run: activeRun,
+                    requirements,
+                    ops,
+                    openings: wallOpenings(wall),
+                    roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
+                  })
+                }
+                onSelect={selectModule}
+              />
+            )}
             {selectedUnit && (
               <RunEditor
                 part="selected"
@@ -4885,6 +4921,11 @@ export default function Workspace(props: WorkspaceProps) {
           </>
         )}
 
+        {captureFailure && (
+          <p data-capture-failure className="rounded-[var(--r-control)] bg-tape/15 px-3 py-2 text-[13px] leading-snug text-tape">
+            {captureFailure}
+          </p>
+        )}
         {sceneNotice && (
           <p
             data-scene-notice
@@ -5843,6 +5884,11 @@ export default function Workspace(props: WorkspaceProps) {
         data-workspace-footer
         className="border-t border-navyLine/60 bg-navyDeep px-4 pb-4 pt-3 print:hidden"
       >
+        {captureFailure && (
+          <p data-capture-failure className="mb-2 text-[13px] leading-snug text-tape">
+            {captureFailure}
+          </p>
+        )}
         {/*
           * ПОЧЕМУ «ДАЛЬШЕ» НЕ НАЖИМАЕТСЯ — СЛОВАМИ И РЯДОМ С КНОПКОЙ.
           *

@@ -391,7 +391,7 @@ export function cornerFillersOf(run: Run): CornerFiller[] {
 
   const uppers = run.upperSegments
     .flatMap((segment) => segment.modules)
-    .filter((unit) => unit.section !== 'mezzanine');
+    .filter((unit) => unit.section !== 'mezzanine' && !unit.overhead);
   if (!run.options.hasUpper || uppers.length === 0) return out;
 
   const start = g.upperStartMm - g.lostMm;
@@ -446,7 +446,7 @@ export function blindPartMm(
    */
   if (unit.appliance || unit.column || (unit.kind !== 'base' && unit.kind !== 'upper')) return 0;
   const g = cornerGeometry(own, run.zone, run.production);
-  const upper = isUpperRow(unit) && unit.section !== 'mezzanine';
+  const upper = isUpperRow(unit) && unit.section !== 'mezzanine' && !unit.overhead;
   const lower = standsOnFloor(unit);
   const zone = upper && own.upper === 'blind' ? g.ownerUpperBlindMm : lower && own.lower === 'blind' ? g.ownerBlindMm : 0;
   if (zone <= 0) return 0;
@@ -548,12 +548,12 @@ export function cornerDoorHinge(
     const first = Math.min(...run.modules.filter((m) => standsOnFloor(m)).map((m) => m.offsetMm));
     return unit.offsetMm === first && first < MIN_WIDTH ? 'right' : null;
   }
-  if (isUpperRow(unit) && unit.section !== 'mezzanine') {
+  if (isUpperRow(unit) && unit.section !== 'mezzanine' && !unit.overhead) {
     const g = cornerGeometry(dock, run.zone, run.production);
     const start = g.upperStartMm - g.lostMm;
     const uppers = run.upperSegments
       .flatMap((segment) => segment.modules)
-      .filter((m) => m.section !== 'mezzanine');
+      .filter((m) => m.section !== 'mezzanine' && !m.overhead);
     const first = Math.min(...uppers.map((m) => m.offsetMm));
     return unit.offsetMm === first && first < start + MIN_WIDTH ? 'right' : null;
   }

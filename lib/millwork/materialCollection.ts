@@ -197,7 +197,50 @@ export type MaterialItem = {
    * в сцене остаётся цвет, и это сказано в карточке.
    */
   photoWithoutSize: boolean;
+  /** Производитель (P3): EGGER, GRANDEX; у своих позиций и палитр — `null` («другие»). */
+  brand: string | null;
+  /**
+   * СПРАВОЧНАЯ КАРТОЧКА ПОСТАВЩИКА (P3): что о позиции известно и чего нет.
+   * Образец из PDF — только для карточки выбора; на детали — цвет, а не
+   * текстура: кроп печатного образца не плита и не PBR.
+   */
+  review: ReviewNote | null;
 };
+
+export type ReviewNote = {
+  decorCode: string;
+  surfaceCode: string;
+  productClass: string;
+  nameVerified: boolean;
+  /** Путь кропа внутри пакета проверки — для карточки, через закрытую выдачу. */
+  preview: string | null;
+  sourcePdf: string;
+  pages: number[];
+  previewStatus: string;
+  textureStatus: string;
+  rightsStatus: string;
+  priceStatus: string;
+};
+
+/** Карточка поставщика из `meta.provenance` позиции; у прочих — `null`. */
+export function reviewNoteOf(meta: Record<string, unknown> | null | undefined): ReviewNote | null {
+  const p = meta?.provenance as Record<string, unknown> | undefined;
+  if (!p || typeof p !== 'object') return null;
+  const str = (key: string) => (typeof p[key] === 'string' ? (p[key] as string) : '');
+  return {
+    decorCode: str('manufacturerDecorCode'),
+    surfaceCode: str('surfaceCode'),
+    productClass: str('productClass'),
+    nameVerified: p.nameVerified === true,
+    preview: str('preview') || null,
+    sourcePdf: str('sourcePdf'),
+    pages: Array.isArray(p.pages) ? p.pages.filter((n): n is number => typeof n === 'number') : [],
+    previewStatus: str('previewStatus'),
+    textureStatus: str('textureStatus'),
+    rightsStatus: str('rightsStatus'),
+    priceStatus: str('priceStatus'),
+  };
+}
 
 export const PRICE_UNSET = 'цена не задана';
 

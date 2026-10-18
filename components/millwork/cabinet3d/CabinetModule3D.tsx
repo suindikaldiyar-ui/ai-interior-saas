@@ -3,7 +3,8 @@
 import * as THREE from 'three';
 
 import { useMemo } from 'react';
-import { bayDrawerBoxes, sceneLeaves, type PartBox } from '@/lib/millwork/cabinetBoxes';
+import { bayDrawerBoxes, boxShown, sceneLeaves, type PartBox } from '@/lib/millwork/cabinetBoxes';
+import { ALL_LAYERS, type SceneLayers } from '@/lib/millwork/sceneLayers';
 import { ROD_VISUAL_DIAMETER_MM } from '@/lib/millwork/bays';
 import type { ProductionSettings } from '@/types/catalog';
 import InteractiveBayDrawer from './InteractiveBayDrawer';
@@ -60,6 +61,12 @@ type Props = {
   openWidthM?: number;
   /** Школа цеха ряда: по ней `bayLayout` считает ящики отсеков — те же числа, что в пачке (R02A). */
   production?: ProductionSettings;
+  /**
+   * Слои вида (P1). Подвижная деталь выключенного слоя не рисуется и не
+   * ловит нажатие: открыть невидимую створку нельзя. Слой — той же
+   * `boxLayer`, что у неподвижной пачки.
+   */
+  layers?: SceneLayers;
 };
 
 /** Штанга: условное сечение — то же число, что у штанги зоны отсека (`ROD_VISUAL_DIAMETER_MM`). */
@@ -91,6 +98,7 @@ export default function CabinetModule3D({
   frontMaterial,
   openWidthM,
   production,
+  layers = ALL_LAYERS,
 }: Props) {
   const widthM = unit.widthMm / MM;
   const fill = unit.fill;
@@ -118,12 +126,14 @@ export default function CabinetModule3D({
       production,
     )) {
       if (!box.part) continue;
+      /* Выехавший ящик несёт только детали включённых слоёв: короб без фронта в «Наполнении». */
+      if (!boxShown(box, layers)) continue;
       const list = byDrawer.get(box.part);
       if (list) list.push(box);
       else byDrawer.set(box.part, [box]);
     }
     return Array.from(byDrawer.entries());
-  }, [unit, heightM, depthM, thicknessM, gapM, frontThicknessM, integratedHandles, cutaway, production]);
+  }, [unit, heightM, depthM, thicknessM, gapM, frontThicknessM, integratedHandles, cutaway, production, layers]);
 
   return (
     <group position={[x, y, zM]}>
@@ -134,8 +144,8 @@ export default function CabinetModule3D({
         * это сотня вызовов отрисовки на мебель, которая не двигается.
         */}
 
-      {/* Штанги: труба поперёк секции. */}
-      {fill?.rodsMm.map((mm) => (
+      {/* Штанги: труба поперёк секции. Это фурнитура — слой «Фурнитура». */}
+      {layers.hardware && fill?.rodsMm.map((mm) => (
         <mesh
           key={`rod-${mm}`}
           geometry={parts.cylinder}
@@ -158,7 +168,7 @@ export default function CabinetModule3D({
         * гаснет перед захватом кадра — светящаяся полоса в clay читается
         * моделью как часть мебели.
         */}
-      {isDisplay && !cutaway && (
+      {isDisplay && !cutaway && layers.fronts && (
         <>
           <mesh
             geometry={parts.box}
@@ -206,6 +216,11 @@ export default function CabinetModule3D({
         * фасадом наравне с обычным модулем: так это и выглядит в квартире.
         */}
       {sceneLeaves(unit, heightM, openWidthM).map((leaf) => {
+        /*
+         * Слой фасадов выключен — подвижного полотна нет вовсе: его нельзя
+         * ни увидеть, ни нажать. Короб ящика остаётся в пачке слоя «Ящики».
+         */
+        if (!layers.fronts) return null;
         if (leaf.kind === 'drawer') {
           return (
             <InteractiveDrawer
@@ -270,7 +285,7 @@ export default function CabinetModule3D({
       })}
 
       {/* Ящики отсеков (R02A): каждый своим ключом, открывается сам по себе. */}
-      {bayDrawers.map(([id, boxes]) => (
+      {bayDrawers.filter(([, boxes]) => boxes.length > 0).map(([id, boxes]) => (
         <InteractiveBayDrawer
           key={id}
           id={id}

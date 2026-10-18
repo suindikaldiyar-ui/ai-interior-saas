@@ -94,12 +94,63 @@ export const CORNER_LABEL = {
  * двоеточие сломало бы выделение.
  */
 export function moduleId(
-  kind: ModuleKind | 'mezz',
+  /* `over` — отдельный верхний корпус над шкафом (P2): своё место, свой ключ. */
+  kind: ModuleKind | 'mezz' | 'over',
   offsetMm: number,
   appliance?: ApplianceKind,
   wallId?: string,
+  /**
+   * Номер копии — только там, где место и вид уже заняты другим модулем
+   * того же ряда (`uniqueModuleIds`). Через `~`, а не `:` и не `@`: по
+   * ним сцена отрезает деталь и стену.
+   */
+  copy?: number,
 ): string {
-  return withWall(`${kind}-${offsetMm}${appliance ? `-${appliance}` : ''}`, wallId);
+  return withWall(`${kind}-${offsetMm}${appliance ? `-${appliance}` : ''}${copy && copy > 1 ? `~${copy}` : ''}`, wallId);
+}
+
+/**
+ * ИДЕНТИФИКАТОР МОДУЛЯ УНИКАЛЕН ПО РЯДУ — И ПО ВСЕМ ЕГО ЭТАЖАМ.
+ *
+ * Замена модуля висящего ряда брала идентификатор у `makePlainModule`,
+ * то есть от отметки 0, а укладка (`placeInSpans`) переименовывает модуль,
+ * только если он ПЕРЕЕХАЛ: замена места не меняет, и модуль на 1000 мм
+ * оставался `upper-0`. Замерено на объекте владельца (P0): две антресоли
+ * спальни на 0 и 1000 мм обе `upper-0@w1` — ключ React один на двоих,
+ * и ключ открывания `upper-0@w1:door:0` открывал обе створки разом.
+ *
+ * Сохранённый ряд с таким дублем чинится здесь, на каждом показе и в
+ * конце каждой правки: первый по обходу (нижний ряд, затем висящие слева
+ * направо) держит свой ключ, следующий получает ключ своего места, а если
+ * и он занят — номер копии. Порядок обхода детерминирован, поэтому один и
+ * тот же ряд всегда получает одни и те же ключи. Отпечаток ключей не
+ * содержит и не двигается.
+ */
+export function uniqueModuleIds(run: Run): Run {
+  const seen = new Set<string>();
+  let changed = false;
+  const own = (unit: Module): Module => {
+    if (!seen.has(unit.id)) {
+      seen.add(unit.id);
+      return unit;
+    }
+    changed = true;
+    const kind = unit.overhead ? 'over' : unit.section === 'mezzanine' ? 'mezz' : unit.kind;
+    let copy = 1;
+    let id = moduleId(kind, unit.offsetMm, unit.appliance, run.wallId);
+    while (seen.has(id)) {
+      copy += 1;
+      id = moduleId(kind, unit.offsetMm, unit.appliance, run.wallId, copy);
+    }
+    seen.add(id);
+    return { ...unit, id };
+  };
+  const modules = run.modules.map(own);
+  const upperSegments = run.upperSegments.map((segment) => ({
+    ...segment,
+    modules: segment.modules.map(own),
+  }));
+  return changed ? { ...run, modules, upperSegments } : run;
 }
 
 /**

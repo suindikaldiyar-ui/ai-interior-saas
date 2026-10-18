@@ -12,7 +12,7 @@ import {
   isStandardWidth,
   snapToStandard,
 } from './modules';
-import { rowSpansOfRun, upperSpansOfRun, buildUpperRow, fillGap, moduleId, onWall } from './layout';
+import { rowSpansOfRun, upperSpansOfRun, buildUpperRow, fillGap, moduleId, onWall, uniqueModuleIds } from './layout';
 import { blindPartMm, blindVariantRefusal, cornerDoorHinge, cornerGeometry, upperBoundsOf } from './corner';
 import { counterTailsOf } from './countertop';
 import { obstaclesInBand, rowBandMm, wallObstacles, type WallObstacle } from './obstacles';
@@ -32,6 +32,7 @@ import {
   hingeSide,
   mezzanineBaseOf,
   mezzanineBlockedByBeam,
+  overheadBaseOf,
 } from './fill';
 import { zoneHeightMm } from './zones';
 import { isMechanism, openingRejection } from './opening';
@@ -44,10 +45,11 @@ import {
   moduleDepthMm,
 } from './fill';
 import { CORNER } from './modules';
-import { MAX_MEZZANINE_MM, MIN_MEZZANINE_MM } from './sections';
+import { MAX_MEZZANINE_MM, MIN_MEZZANINE_MM, sectionSpec } from './sections';
+import { ceilingOverSpanMm } from './ceiling';
 import { hasFacade } from './applianceFront';
 import { fillRefusal } from './fill';
-import { bayEnvelope, bayLossNote, baysRefusal, baysWidthRefusal, type BayEnvelope } from './bays';
+import { bayEnvelope, bayLayout, bayLossNote, baysRefusal, baysWidthRefusal, type BayEnvelope } from './bays';
 import { allModules } from './layout';
 import { DEFAULT_ALLOWANCES } from '@/types/catalog';
 import {
@@ -201,6 +203,35 @@ export function confirmBayLoss(ops: MillworkOp[]): MillworkOp[] {
   return ops.map((op) => (isRefillOp(op) ? { ...op, dropBays: true } : op));
 }
 
+/**
+ * ЧТО НЕ ВЛЕЗЕТ В ШКАФ, ЕСЛИ ЕГО ОПУСТИТЬ ПОД АНТРЕСОЛЬ (P2) — поимённо.
+ *
+ * Полки и штанги, которые окажутся выше новой крыши, и всё, что новая
+ * высота ломает в отсеках и зонах (R01/R02A/R02B): проблема раскладки,
+ * которой не было при прежней высоте. Прежние проблемы не считаются —
+ * меряется внесённое (ловушка 385).
+ */
+function overheadFillLoss(before: Module, after: Module, shell: Run, heightMm: number, t: number): string[] {
+  const fill = before.fill;
+  if (!fill) return [];
+  const out: string[] = [];
+  const roof = heightMm - t;
+  /* Полка стоит центром на своей отметке: её верх — отметка плюс половина толщины. */
+  const shelves = fill.shelves.filter((mm) => mm + t / 2 > roof);
+  if (shelves.length > 0) {
+    out.push(`${shelves.length === 1 ? 'полка' : 'полки'} на ${shelves.join(', ')} мм выше новой крыши ${roof} мм`);
+  }
+  const rods = fill.rodsMm.filter((mm) => mm >= roof);
+  if (rods.length > 0) out.push(`штанга на ${rods.join(', ')} мм выше новой крыши ${roof} мм`);
+  if (fill.bays) {
+    const was = new Set(bayLayout(before, bayEnvelope(before, shell))?.problems ?? []);
+    for (const problem of bayLayout(after, bayEnvelope(after, shell))?.problems ?? []) {
+      if (!was.has(problem)) out.push(problem);
+    }
+  }
+  return out;
+}
+
 export interface ApplyOpsInput {
   run: Run;
   requirements: RunRequirements;
@@ -294,7 +325,21 @@ export function applyOps({
    */
   let upperModules: Module[] = run.upperSegments
     .flatMap((segment) => segment.modules)
-    .filter((unit) => unit.section !== 'mezzanine');
+    .filter((unit) => unit.section !== 'mezzanine' && !unit.overhead);
+
+  /**
+   * ОТДЕЛЬНЫЕ ВЕРХНИЕ КОРПУСА НАД ШКАФАМИ (P2) — третий висящий список.
+   *
+   * Это не верхний ряд (он пересобирается по участкам стены и снимается
+   * над колонной) и не антресоль ряда (её высота одна на ряд). Корпус над
+   * шкафом стоит на крыше своего шкафа, держится как есть и правится только
+   * своими операциями (`add_overhead`, `set_overhead`) и общими правками
+   * модуля — материал, наполнение, открывание, удаление. Лежит он там же,
+   * где все висящие модули, — в `upperSegments`, своим сегментом.
+   */
+  let overModules: Module[] = run.upperSegments
+    .flatMap((segment) => segment.modules)
+    .filter((unit) => Boolean(unit.overhead));
   /**
    * Материал на ВЕСЬ объект: так ложится готовый дизайн.
    *
@@ -826,9 +871,162 @@ export function applyOps({
   /** Правка ложится на модуль верхнего ряда — как у нижнего и у антресоли. */
   const editUpper = (id: string, change: (unit: Module) => Module): boolean => {
     const at = upperModules.findIndex((m) => m.id === id);
-    if (at < 0) return false;
+    if (at < 0) return editOver(id, change);
     upperModules = upperModules.map((unit, i) => (i === at ? change(unit) : unit));
     return true;
+  };
+
+  /**
+   * Правка модуля над шкафом (P2) — тем же входом, что у верхнего ряда:
+   * материал, наполнение, открывание, ручка, корпус. Его габарит
+   * (`overhead`, `heightMm`) правка модуля не трогает — её `change` их
+   * переносит вместе с остальным.
+   */
+  const editOver = (id: string, change: (unit: Module) => Module): boolean => {
+    const at = overModules.findIndex((m) => m.id === id);
+    if (at < 0) return false;
+    overModules = overModules.map((unit, i) => (i === at ? { ...change(unit), overhead: unit.overhead, heightMm: unit.heightMm } : unit));
+    return true;
+  };
+
+  /**
+   * ЧТО ВСТАНЕТ НАД ШКАФОМ И ПОЧЕМУ НЕТ (P2) — одна проверка на
+   * постановку и правку.
+   *
+   * Отказ называет доступное, нужное и недостающее в миллиметрах. Шкаф
+   * молча не укорачивается и наполнение не снимается: новая высота шкафа
+   * приходит только явно (`baseHeightMm`), а полка, ящик или зона, которые
+   * в неё не влезут, называются поимённо — и правка не применяется.
+   */
+  /** Под антресолью — только высокий шкаф без прибора: у колонны высоту задаёт прибор, на нижний ложится столешница. */
+  const overheadKindRefusal = (base: Module): string | null =>
+    base.kind !== 'tall' || base.appliance || base.column
+      ? `Антресоль над шкафом ставится на высокий шкаф без прибора: над «${base.label}» её не поставить — ` +
+        'высоту колонны задаёт прибор, а на нижний шкаф ложится столешница.'
+      : null;
+
+  const overheadPlan = (
+    base: Module,
+    want: { widthMm?: number; depthMm?: number; heightMm?: number; baseHeightMm?: number },
+    current: Module | null,
+  ): { refusal: string } | { unit: Module; baseHeightMm: number | null } => {
+    const name = `«${base.label}»`;
+    const kindRefusal = overheadKindRefusal(base);
+    if (kindRefusal) return { refusal: kindRefusal };
+    const shell = { ...run, zone, modules, options };
+    const plinth = plinthMm(run.production);
+    const t = shopOf(run.production).carcassMm;
+    const baseNow = moduleCarcassHeightMm(base, shell);
+    const fullBody = moduleCarcassHeightMm({ ...base, heightMm: undefined }, shell);
+    const baseHeight = want.baseHeightMm !== undefined ? Math.round(want.baseHeightMm) : baseNow;
+    if (!Number.isFinite(baseHeight) || baseHeight <= 2 * t) {
+      return { refusal: `Шкаф ${name} высотой ${want.baseHeightMm} мм не собрать: дно и крыша сами по себе ${2 * t} мм.` };
+    }
+    if (baseHeight > fullBody) {
+      return { refusal: `Шкаф ${name} выше ${fullBody} мм в этом ряду не бывает: просили ${baseHeight} мм — лишние ${baseHeight - fullBody} мм.` };
+    }
+
+    const width = Math.round(want.widthMm ?? current?.widthMm ?? base.widthMm);
+    if (!Number.isFinite(width) || width < MIN_WIDTH) {
+      return { refusal: `Антресоль уже ${MIN_WIDTH} мм не делают: просили ${want.widthMm} мм.` };
+    }
+    if (width > base.widthMm) {
+      return { refusal: `Антресоль ${width} мм шире шкафа ${name} (${base.widthMm} мм) на ${width - base.widthMm} мм — краю не на чем стоять.` };
+    }
+    const baseDepth = moduleDepthMm(base, zone, run.production);
+    const depth = Math.round(want.depthMm ?? current?.overhead?.depthMm ?? baseDepth);
+    if (!Number.isFinite(depth) || depth <= 2 * t) {
+      return { refusal: `Антресоль глубиной ${want.depthMm} мм не собрать: задняя стенка и фасад сами по себе толще.` };
+    }
+    if (depth > baseDepth) {
+      return { refusal: `Антресоль ${depth} мм глубже шкафа ${name} (${baseDepth} мм) на ${depth - baseDepth} мм — передняя часть повиснет в воздухе.` };
+    }
+
+    const ceiling = Math.min(
+      zoneHeightMm(zone, run.ceilingHeightMm),
+      ceilingOverSpanMm(base.offsetMm, base.offsetMm + width, run.beams, run.ceilingHeightMm),
+    );
+    const room = ceiling - plinth - baseHeight;
+    const minH = GEOMETRY.upper.minCarcassH;
+    const height = Math.round(want.heightMm ?? current?.heightMm ?? (room >= minH ? room : sectionSpec('mezzanine').heightMm));
+    if (!Number.isFinite(height) || height < minH) {
+      return { refusal: `Антресоль ${want.heightMm ?? height} мм ниже ${minH} мм: полезного корпуса не остаётся — полка не встанет.` };
+    }
+    if (height > room) {
+      const lowerTo = ceiling - plinth - height;
+      return {
+        refusal:
+          `Антресоль ${height} мм над ${name} не встаёт: до потолка над шкафом ${Math.max(0, room)} мм ` +
+          `(потолок ${ceiling} мм, верх шкафа ${plinth + baseHeight} мм) — не хватает ${height - Math.max(0, room)} мм. ` +
+          (lowerTo > 2 * t ? `Опустите шкаф до ${lowerTo} мм` : 'Шкаф так не опустить') +
+          (room >= minH ? ` или уменьшите антресоль до ${room} мм.` : '.'),
+      };
+    }
+
+    /*
+     * Шкаф опускается — его наполнение обязано влезть. Меряется ВНЕСЁННОЕ
+     * (ловушка 385): только то, что новая высота ломает, а не то, что
+     * раскладка поставила раньше.
+     */
+    if (baseHeight !== baseNow) {
+      const lowered = { ...base, heightMm: baseHeight };
+      const lost = overheadFillLoss(base, lowered, shell, baseHeight, t);
+      if (lost.length > 0) {
+        return {
+          refusal:
+            `Шкаф ${name} не опустить до ${baseHeight} мм: ${lost.join('; ')}. ` +
+            'Наполнение молча не снимается — поправьте его, затем ставьте антресоль.',
+        };
+      }
+    }
+
+    const unit: Module = current
+      ? {
+          ...current,
+          widthMm: width,
+          heightMm: height,
+          overhead: { depthMm: depth },
+          ...(current.widthMm !== width
+            ? { doorCount: makePlainModule('upper', width, run.wallId).doorCount }
+            : {}),
+          /* Габарит поменялся — наполнение пересчитается по новому корпусу. */
+          fill: current.widthMm === width && current.heightMm === height ? current.fill : undefined,
+        }
+      : {
+          ...makePlainModule('upper', width, run.wallId),
+          id: moduleId('over', base.offsetMm, undefined, run.wallId),
+          offsetMm: base.offsetMm,
+          heightMm: height,
+          overhead: { depthMm: depth },
+          label: 'Антресоль над шкафом',
+          /* Материал — тот же, что у шкафа под ней: её видно рядом с ним. */
+          ...(base.front ? { front: base.front } : {}),
+          ...(base.carcassItemId ? { carcassItemId: base.carcassItemId } : {}),
+        };
+    return { unit, baseHeightMm: baseHeight !== baseNow ? baseHeight : null };
+  };
+
+  /**
+   * Опора каждого корпуса над шкафом после правки: стоит ли он целиком на
+   * своём шкафу и не упирается ли в потолок. Слова — для отказа.
+   */
+  const overheadProblem = (list: Module[]): string | null => {
+    const shell = { ...run, zone, modules: list, options };
+    for (const over of overModules) {
+      const base = overheadBaseOf(over, shell);
+      if (!base) {
+        return `антресоль над шкафом (${over.offsetMm}…${over.offsetMm + over.widthMm} мм) осталась бы без опоры`;
+      }
+      const top = plinthMm(run.production) + moduleCarcassHeightMm(base, shell) + (over.heightMm ?? 0);
+      const ceiling = Math.min(
+        zoneHeightMm(zone, run.ceilingHeightMm),
+        ceilingOverSpanMm(over.offsetMm, over.offsetMm + over.widthMm, run.beams, run.ceilingHeightMm),
+      );
+      if (top > ceiling) {
+        return `антресоль над «${base.label}» упёрлась бы в потолок: её верх ${top} мм при потолке ${ceiling} мм, лишние ${top - ceiling} мм`;
+      }
+    }
+    return null;
   };
 
   /**
@@ -931,7 +1129,23 @@ export function applyOps({
      */
     const beforeOp = baseObstacles.length > 0 || tallObstacles.length > 0 ? [...modules] : null;
     const intrusionBefore = beforeOp ? intrusionOf(beforeOp).totalMm : 0;
+    /*
+     * АНТРЕСОЛЬ НАД ШКАФОМ НЕ ОСТАЁТСЯ БЕЗ ОПОРЫ (P2). Опора — геометрия
+     * (`overheadBaseOf`): снятый, суженный или переставленный шкаф, замена,
+     * вернувшая ему полную высоту, — после такой правки корпус висел бы в
+     * воздухе или упёрся в потолок. Тот же приём, что у препятствий: ряд
+     * прежний, отказ словами.
+     */
+    const beforeOver = overModules.length > 0 ? { modules: [...modules], over: [...overModules] } : null;
     applyOne(op);
+    if (beforeOver) {
+      const problem = overheadProblem(modules);
+      if (problem) {
+        modules = beforeOver.modules;
+        overModules = beforeOver.over;
+        warnings.push(`Правка не применена: ${problem}. Сначала уберите или поправьте антресоль над шкафом.`);
+      }
+    }
     if (beforeOp) {
       const after = intrusionOf(modules);
       if (after.totalMm > intrusionBefore && after.worst) {
@@ -942,6 +1156,26 @@ export function applyOps({
   }
 
   function applyOne(op: MillworkOp) {
+    /*
+     * АНТРЕСОЛЬ НАД ШКАФОМ ПРАВИТСЯ СВОЕЙ КАРТОЧКОЙ (P2). Ширина, место,
+     * замена и секция висящего ряда её не касаются: её габарит — свой
+     * (`set_overhead`), место — крыша шкафа под ней.
+     */
+    const overTarget =
+      'moduleId' in op && typeof op.moduleId === 'string'
+        ? overModules.find((unit) => unit.id === op.moduleId)
+        : undefined;
+    if (
+      overTarget &&
+      (op.op === 'set_width' || op.op === 'move_module' || op.op === 'replace_module' || op.op === 'set_section')
+    ) {
+      warnings.push(
+        `«${overTarget.label}» — отдельный корпус над шкафом: ширина, высота и глубина правятся в её карточке ` +
+          '«Над шкафом», а место — вместе со шкафом под ней.',
+      );
+      return;
+    }
+
     /*
      * НИ ОДНОГО ЧУЖОГО ЭЛЕМЕНТА, откуда бы операция ни пришла — из ленты
      * модулей, из командной строки или от модели. Отказ называет причину:
@@ -1245,7 +1479,131 @@ export function applyOps({
         break;
       }
 
+      case 'add_overhead':
+      case 'set_overhead': {
+        /*
+         * ОТДЕЛЬНЫЙ ВЕРХНИЙ КОРПУС НАД ШКАФОМ (P2).
+         *
+         * Ставится над выбранным напольным шкафом, если над ним никакого
+         * корпуса ещё нет: антресоль ряда, верхний шкаф или кладовка над
+         * колонной — это уже отдельные корпуса, и второй поверх них не
+         * встаёт (дубля не заводим). Что встанет и почему нет — одна
+         * `overheadPlan`.
+         */
+        if (op.op === 'add_overhead') {
+          const baseAt = modules.findIndex((m) => m.id === op.moduleId);
+          if (baseAt < 0) {
+            warnings.push(`Шкафа ${op.moduleId} в нижнем ряду нет — антресоль ставить не на что.`);
+            break;
+          }
+          const base = modules[baseAt];
+          /* Сначала — можно ли сюда вообще: на нижний шкаф и колонну прибора антресоль не ставят. */
+          const kindRefusal = overheadKindRefusal(base);
+          if (kindRefusal) {
+            warnings.push(kindRefusal);
+            break;
+          }
+          const from = base.offsetMm;
+          const to = base.offsetMm + base.widthMm;
+          const hanging = [
+            ...overModules,
+            ...upperModules,
+            ...mezzModules,
+            ...run.upperSegments.flatMap((segment) => segment.modules).filter((unit) => isStorage(unit.id)),
+          ];
+          const above = hanging.find((unit) => unit.offsetMm < to && from < unit.offsetMm + unit.widthMm);
+          if (above) {
+            warnings.push(
+              above.overhead
+                ? `Над «${base.label}» уже стоит антресоль ${above.widthMm} × ${above.heightMm} мм — правьте её, вторую сверху не ставим.`
+                : `Над «${base.label}» уже стоит «${above.label}» (${above.offsetMm}…${above.offsetMm + above.widthMm} мм) — это отдельный корпус, второй сверху не ставим.`,
+            );
+            break;
+          }
+          const plan = overheadPlan(base, op, null);
+          if ('refusal' in plan) {
+            warnings.push(plan.refusal);
+            break;
+          }
+          if (plan.baseHeightMm !== null) modules[baseAt] = { ...base, heightMm: plan.baseHeightMm };
+          overModules = [...overModules, plan.unit];
+          break;
+        }
+
+        const overAt = overModules.findIndex((m) => m.id === op.moduleId);
+        if (overAt < 0) {
+          warnings.push(`Антресоли над шкафом ${op.moduleId} нет.`);
+          break;
+        }
+        const current = overModules[overAt];
+        const base = overheadBaseOf(current, { modules });
+        if (!base) {
+          warnings.push('Под этой антресолью нет шкафа: опереть её не на что — уберите её.');
+          break;
+        }
+        const plan = overheadPlan(base, op, current);
+        if ('refusal' in plan) {
+          warnings.push(plan.refusal);
+          break;
+        }
+        if (plan.baseHeightMm !== null) modules[modules.indexOf(base)] = { ...base, heightMm: plan.baseHeightMm };
+        overModules = overModules.map((unit, i) => (i === overAt ? plan.unit : unit));
+        break;
+      }
+
+      case 'set_height': {
+        /*
+         * ВЫСОТА ШКАФА, ЗАДАННАЯ ЧЕЛОВЕКОМ (P2). `null` — снова по зоне (до
+         * потолка). Опустить можно, только если наполнение влезает: что не
+         * влезет, названо поимённо, и правка не применяется. Антресоль над
+         * шкафом проверяет потолок сама (`overheadProblem` после правки).
+         */
+        const at = modules.findIndex((m) => m.id === op.moduleId);
+        if (at < 0) {
+          warnings.push(`Модуль ${op.moduleId} не найден.`);
+          break;
+        }
+        const unit = modules[at];
+        if (unit.kind !== 'tall' || unit.appliance || unit.column) {
+          warnings.push(`Высота «${unit.label}» задаётся не числом: у колонны её задаёт прибор, у нижнего шкафа — столешница.`);
+          break;
+        }
+        const shell = { ...run, zone, modules, options };
+        const t = shopOf(run.production).carcassMm;
+        const fullBody = moduleCarcassHeightMm({ ...unit, heightMm: undefined }, shell);
+        if (op.heightMm === null) {
+          const { heightMm: _was, ...rest } = unit;
+          void _was;
+          modules[at] = rest;
+          break;
+        }
+        const wanted = Math.round(op.heightMm);
+        if (!Number.isFinite(wanted) || wanted <= 2 * t) {
+          warnings.push(`Шкаф высотой ${op.heightMm} мм не собрать: дно и крыша сами по себе ${2 * t} мм.`);
+          break;
+        }
+        if (wanted > fullBody) {
+          warnings.push(`Шкаф «${unit.label}» выше ${fullBody} мм в этом ряду не бывает: просили ${wanted} мм — лишние ${wanted - fullBody} мм.`);
+          break;
+        }
+        const lowered = { ...unit, heightMm: wanted };
+        const lost = overheadFillLoss(unit, lowered, shell, wanted, t);
+        if (lost.length > 0) {
+          warnings.push(`Шкаф «${unit.label}» не опустить до ${wanted} мм: ${lost.join('; ')}. Наполнение молча не снимается — поправьте его.`);
+          break;
+        }
+        modules[at] = lowered;
+        break;
+      }
+
       case 'remove_module': {
+        /* Антресоль над шкафом снимается сама: наполнение шкафа под ней не трогается. */
+        const overGone = overModules.findIndex((m) => m.id === op.moduleId);
+        if (overGone >= 0) {
+          overModules = overModules.filter((_, i) => i !== overGone);
+          break;
+        }
+
         const mezzAt = mezzModules.findIndex((m) => m.id === op.moduleId);
         if (mezzAt >= 0) {
           mezzModules = mezzModules.filter((_, i) => i !== mezzAt);
@@ -1326,7 +1684,17 @@ export function applyOps({
 
           const made: Module = {
             ...makePlainModule(op.kind, width, run.wallId, op.appliance),
+            /*
+             * КЛЮЧ — ЗАМЕНЯЕМОГО МЕСТА (P0). У `makePlainModule` он выведен
+             * из отметки 0, а висящий ряд переименовывает модуль только при
+             * переезде (`placeInSpans`): замена антресоли на 1000 мм давала
+             * второй `upper-0` в ряду. Нижний ряд ключ всё равно выводит
+             * заново (`placeFree`) — там это ничего не меняет.
+             */
+            id: unit.id,
             offsetMm: unit.offsetMm,
+            /* Высота, заданная человеком (P2), — свойство места: под антресолью шкаф той же высоты. */
+            ...(unit.heightMm !== undefined ? { heightMm: unit.heightMm } : {}),
             section: unit.section,
             front: unit.front,
             carcassItemId: unit.carcassItemId,
@@ -3115,6 +3483,23 @@ export function applyOps({
   }
 
   /*
+   * АНТРЕСОЛИ НАД ШКАФАМИ (P2) — своими сегментами, ПОСЛЕ пересборки
+   * верхнего ряда и антресоли ряда: те пересобираются по участкам стены и
+   * про корпус на крыше шкафа не знают. Наполнение — тем же `defaultFill`,
+   * что у всех, если его ещё нет (новый корпус или поменялся габарит).
+   */
+  nextRun.upperSegments = [
+    ...nextRun.upperSegments,
+    ...[...overModules]
+      .sort((a, b) => a.offsetMm - b.offsetMm)
+      .map((unit) => ({
+        fromMm: unit.offsetMm,
+        toMm: unit.offsetMm + unit.widthMm,
+        modules: [unit.fill ? unit : { ...unit, fill: withKeptHandle(unit, defaultFill(unit, nextRun, 0, 1)) }],
+      })),
+  ];
+
+  /*
    * НОВЫЙ МОДУЛЬ БЕРЁТ МАТЕРИАЛ КУХНИ (слой 52).
    *
    * Выбор «на всю кухню» ложится на модули, которые стояли в ту минуту, —
@@ -3136,16 +3521,22 @@ export function applyOps({
     }));
   }
 
+  /*
+   * Ключ модуля — один на ряд и на все его этажи (P0): ряд, сохранённый с
+   * дублем, чинится первой же правкой, и новая правка дубля не заводит.
+   */
+  const owned = uniqueModuleIds(nextRun);
+
   // Отпечаток пересчитывается вместе с составом — иначе смета и чертёж
   // разойдутся молча, а это ровно то, от чего он защищает.
-  nextRun.fingerprint = runFingerprint(nextRun);
+  owned.fingerprint = runFingerprint(owned);
 
   // Тот же инвариант, что и в buildRun: правки не могут вывести ряд за стену.
-  assertRunFits(nextRun);
+  assertRunFits(owned);
   // Два модуля в одном объёме собрать нельзя, а смета посчитает их дважды.
-  assertNoOverlap(nextRun);
+  assertNoOverlap(owned);
   // И не упирается в выступ на потолке: такой шкаф не встанет на объекте.
-  assertUnderCeiling(nextRun);
+  assertUnderCeiling(owned);
 
-  return nextRun;
+  return owned;
 }

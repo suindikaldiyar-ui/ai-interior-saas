@@ -712,7 +712,7 @@ export function buildPanels({ run, production = DEFAULT_PRODUCTION, milling, car
     const neighbour = lower
       ? run.modules[0]
       : [...run.upperSegments.flatMap((sg) => sg.modules)]
-          .filter((unit) => unit.section !== 'mezzanine')
+          .filter((unit) => unit.section !== 'mezzanine' && !unit.overhead)
           .sort((a, b) => a.offsetMm - b.offsetMm)[0];
     if (!neighbour) continue;
     const spec = frontOf(neighbour);

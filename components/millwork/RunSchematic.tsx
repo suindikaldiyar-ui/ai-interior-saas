@@ -10,7 +10,8 @@ import type { FurnitureRect, SceneRow } from './cabinet3d/CadScene';
  * статический импорт компонента сцены тянул three.js в первую загрузку
  * `/demo`, хотя сама сцена подключается динамически (слой 53).
  */
-import { openablePartIds } from '@/lib/millwork/cabinetBoxes';
+import { layerCounts, openablePartIds } from '@/lib/millwork/cabinetBoxes';
+import SceneLayersControl from './SceneLayersControl';
 import { roomAroundRows, roomOnRow, type RoomSource } from '@/lib/millwork/room';
 import DimensionLayer from './DimensionLayer';
 import type { OrthoProjection } from './cabinet3d/SceneCamera';
@@ -501,6 +502,9 @@ export default function RunSchematic({
   /* Фронтальный ракурс — одна стена (`rowsForAngle`, ловушка 292). */
   const rows = useMemo(() => rowsForAngle(allRows, angle, run.id), [allRows, angle, run.id]);
 
+  /* Сколько чего в рядах сцены — кнопки слоёв (P1): пустой слой закрыт и назван. */
+  const layerTally = useMemo(() => layerCounts(rows.map((row) => row.run)), [rows]);
+
   /** Ряд под цепями: тот, что сейчас в кадре. */
   const rows0 = rows[0];
 
@@ -587,7 +591,13 @@ export default function RunSchematic({
                * замерено; одна строка со сдвигом вбок стоит сцене 52 px.
                */
               'mb-2 flex items-center gap-x-4 gap-y-1 overflow-x-auto ' +
-              'md:absolute md:left-2 md:top-2 md:z-10 md:mb-0 md:max-w-[calc(100%-1rem)] ' +
+              /*
+               * Правый верхний угол сцены — кнопке «На весь экран» (она лежит
+               * на сцене без своего слоя). Полоса с «Видом» и «Слоями» (P1)
+               * длиннее прежней и в мастере переносится; растянутая на всю
+               * ширину, она накрывала эту кнопку — `test:demo` [cad].
+               */
+              'md:absolute md:left-2 md:top-2 md:z-10 md:mb-0 md:max-w-[calc(100%-11rem)] ' +
               'md:flex-wrap md:overflow-visible ' +
               'md:rounded-[var(--r-panel)] md:bg-navyDeep/80 md:p-1'
             : 'mb-2 flex flex-wrap items-center gap-x-4 gap-y-1'
@@ -660,6 +670,12 @@ export default function RunSchematic({
                 {panelHidden ? 'Показать панель' : 'Скрыть панель'}
               </button>
             )}
+            {/*
+              * РЕНТГЕН — прежний разрез (`cutaway`): фасады сняты, корпус
+              * просвечивает, видны рёбра внутренних деталей. Это отладочный
+              * вид, а не «Каркас» (P1): непрозрачный каркас — предустановка
+              * слоёв рядом. В «Дизайн» рентген не протекает.
+              */}
             <button
               type="button"
               data-scene-mode={frame ? 'frame' : 'fronts'}
@@ -668,11 +684,11 @@ export default function RunSchematic({
               className={`mw-btn ${frame ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
               title={
                 frame
-                  ? 'Показана начинка: полки, ящики, штанги'
-                  : 'Показана готовая мебель: фасады закрыты'
+                  ? 'Рентген включён: корпус просвечивает, фасады сняты — отладочный вид'
+                  : 'Рентген: корпус просвечивает, видны внутренние детали — отладочный вид'
               }
             >
-              {frame ? 'Каркас' : 'Фасады'}
+              Рентген
             </button>
             <button
               type="button"
@@ -683,6 +699,11 @@ export default function RunSchematic({
             >
               Размеры
             </button>
+            {/*
+              * «Вид» и «Слои» (P1) — в той же группе «что делаем со сценой»,
+              * рядом с рентгеном: групп над сценой по-прежнему три (ловушка 327).
+              */}
+            <SceneLayersControl counts={layerTally} />
           </div>
         )}
 

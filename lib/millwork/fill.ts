@@ -191,12 +191,30 @@ export function moduleCarcassHeightMm(
   const capped = (heightMm: number) => capByCeiling(heightMm, unit, run);
 
   /*
+   * ОТДЕЛЬНЫЙ ВЕРХНИЙ КОРПУС НАД ШКАФОМ (P2) — своя высота, выбранная
+   * человеком. Не урезается молча ни ригелем, ни потолком: правка, после
+   * которой он не помещается, отказывает с миллиметрами (`overheadRefusal`),
+   * а инвариант `assertUnderCeiling` ловит то, что прошло мимо.
+   */
+  if (unit.overhead) return Math.max(0, Math.round(unit.heightMm ?? 0));
+
+  /*
    * Шкаф до потолка ДЕЛИТ высоту с антресолью, а не занимает её всю.
    * Пока корпус доходил до потолка сам, антресоли было некуда встать —
    * и она садилась внутрь него.
    */
   const bodyTop = hasMezzanine(run) ? mezzanineBottomMm(run) : top;
   const fullBody = Math.max(carcassHeightMm(run.production), bodyTop - plinthMm(run.production));
+
+  /*
+   * ВЫСОТА, ЗАДАННАЯ ЧЕЛОВЕКОМ (P2): шкаф ниже потолка, чтобы над ним встал
+   * отдельный верхний корпус. Только у напольного без прибора — высоту
+   * колонны задаёт прибор. Выше того, что позволяет ряд, не бывает: предел
+   * — тот же `fullBody`, что у шкафа без заданной высоты.
+   */
+  if (unit.heightMm !== undefined && unit.heightMm > 0 && standsOnFloor(unit) && !unit.appliance && !unit.column) {
+    return capped(Math.min(Math.round(unit.heightMm), fullBody));
+  }
 
   if (unit.section) {
     const spec = sectionSpec(unit.section);
@@ -310,6 +328,7 @@ function bottomFromFloorMm(
   run: Pick<Run, 'zone' | 'ceilingHeightMm'> &
     Partial<Pick<Run, 'options' | 'upperSegments' | 'mezzanine' | 'modules' | 'beams' | 'production'>>,
 ): number {
+  if (unit.overhead) return overheadBottomMm(unit, run);
   if (unit.section === 'mezzanine') {
     const base = mezzanineBaseOf(unit, run);
     if (base) return plinthMm(run.production) + moduleCarcassHeightMm(base, run);
@@ -560,6 +579,46 @@ export function mezzanineBaseOf(
 }
 
 /**
+ * НА ЧЁМ СТОИТ ОТДЕЛЬНЫЙ ВЕРХНИЙ КОРПУС НАД ШКАФОМ (P2).
+ *
+ * Опора выводится ГЕОМЕТРИЕЙ, как у кладовки над холодильником: напольный
+ * модуль, под которым корпус стоит целиком (от левого края до правого).
+ * Своего поля «на ком стою» у корпуса нет — идентификатор шкафа выведен из
+ * его места и меняется вместе с ним, а геометрия не разойдётся с тем, что
+ * нарисовано. Опоры нет — `null`: правка, после которой так вышло, не
+ * применяется (`overheadProblems` в `applyOps`).
+ */
+export function overheadBaseOf(
+  unit: Module,
+  run: Partial<Pick<Run, 'modules'>>,
+): Module | null {
+  if (!unit.overhead) return null;
+  return (
+    (run.modules ?? []).find(
+      (below) =>
+        standsOnFloor(below) &&
+        below.offsetMm <= unit.offsetMm &&
+        unit.offsetMm + unit.widthMm <= below.offsetMm + below.widthMm,
+    ) ?? null
+  );
+}
+
+/**
+ * Низ корпуса над шкафом: крыша опоры (цоколь + её корпус). Опоры нет —
+ * корпус считается стоящим под потолком своей высотой: так его видно, а
+ * правка, которая его так оставила, всё равно отказывает словами.
+ */
+function overheadBottomMm(
+  unit: Module,
+  run: Pick<Run, 'zone' | 'ceilingHeightMm'> &
+    Partial<Pick<Run, 'options' | 'upperSegments' | 'mezzanine' | 'modules' | 'beams' | 'production'>>,
+): number {
+  const base = overheadBaseOf(unit, run);
+  if (base) return plinthMm(run.production) + moduleCarcassHeightMm(base, run);
+  return Math.max(0, zoneHeightMm(run.zone, run.ceilingHeightMm) - moduleCarcassHeightMm(unit, run));
+}
+
+/**
  * ОТМЕТКА НИЗА ВЕРХНЕГО РЯДА ДЛЯ ЭТОГО РЯДА.
  *
  * Одна функция на сцену, аксонометрию, чертёж, смету и инвариант. Высота
@@ -570,6 +629,8 @@ export function upperBottomFor(
   run: Pick<Run, 'zone' | 'ceilingHeightMm' | 'options' | 'upperSegments'> &
     Partial<Pick<Run, 'mezzanine' | 'modules' | 'production'>>,
 ): number {
+  /* Антресоль над шкафом (P2) стоит на его крыше — `overheadBottomMm`. */
+  if (unit.overhead) return overheadBottomMm(unit, run);
   if (unit.section === 'mezzanine') {
     const base = mezzanineBaseOf(unit, run);
     // Антресоль стоит НА своей опоре: на колонне — на её крыше.
@@ -672,6 +733,9 @@ export function moduleDepthMm(
   /** Школа цеха: глубины рядов принадлежат ей, а не коду. */
   production?: ProductionSettings,
 ): number {
+  /* Отдельный верхний корпус над шкафом (P2) — своя глубина, выбранная человеком. */
+  if (unit.overhead) return Math.max(0, Math.round(unit.overhead.depthMm));
+
   /*
    * Зону спрашивают на уровень ниже: `rowStandardDepthMm` решает, чья
    * глубина в этой зоне главнее — школы цеха или профиля зоны.

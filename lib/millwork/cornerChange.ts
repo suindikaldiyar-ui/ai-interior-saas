@@ -86,7 +86,7 @@ function cornerModule(
 
 /** Модули висящего ряда без антресоли и кладовки — сам верхний ряд. */
 function upperOf(run: Run): Module[] {
-  return run.upperSegments.flatMap((segment) => segment.modules).filter((unit) => unit.section !== 'mezzanine');
+  return run.upperSegments.flatMap((segment) => segment.modules).filter((unit) => unit.section !== 'mezzanine' && !unit.overhead);
 }
 
 /** Модули антресоли и кладовки — едут с рядом как есть. */

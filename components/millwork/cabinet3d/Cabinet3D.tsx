@@ -20,13 +20,12 @@ import { materialSurfaceLook, surfaceLook } from '@/lib/millwork/surfaces';
 import { materialCatalog } from '@/lib/millwork/materialCatalog';
 import type { MaterialPhoto } from '@/lib/millwork/materialCollection';
 import { APRON_TARGET, COUNTERTOP_TARGET, FACADE_TARGET } from '@/types/catalog';
-import { runPlaces } from '@/lib/millwork/cabinetBoxes';
+import { boxShown, runPlaces } from '@/lib/millwork/cabinetBoxes';
 import { bayLayout, placeEnvelope } from '@/lib/millwork/bays';
-import { cornerBandMm } from '@/lib/millwork/composition';
 import { COUNTER_OVERHANG_MM, rowStandardDepthMm } from '@/lib/millwork/fill';
 import { moduleOfPart } from '@/lib/millwork/selection';
-import { PLINTH_SETBACK_MM, apronSpans, countertopSlabs, plinthSpans, slabPieces } from '@/lib/millwork/countertop';
-import { blindPartMm, cornerGeometry, openFrontMm } from '@/lib/millwork/corner';
+import { PLINTH_SETBACK_MM, apronSpans, countertopSlabs, plinthSpans, slabPieces, upperNicheSpans } from '@/lib/millwork/countertop';
+import { blindPartMm, openFrontMm } from '@/lib/millwork/corner';
 import { CAD_CARCASS_BASE, CAD_ROOM, cadShadeMaterial, cadShadeQuaternion } from './cadLook';
 import {
   countertopMm,
@@ -176,6 +175,8 @@ export default function Cabinet3D({
   }, [invalidate, placement?.xM, placement?.zM, placement?.rotationYDeg]);
   const openParts = useInteriorStore((s) => s.openParts);
   const cutaway = useInteriorStore((s) => s.cutaway);
+  /* Слои вида (P1): что показано. Ряд, раскрой и смета от них не меняются. */
+  const layers = useInteriorStore((s) => s.sceneLayers);
   // Подсветка витрины: гаснет перед захватом кадра, см. lib/millwork/capture.ts
   const displayLit = useInteriorStore((s) => s.displayLit);
   const toggleOpenPart = useInteriorStore((s) => s.toggleOpenPart);
@@ -469,6 +470,8 @@ export default function Cabinet3D({
 
     for (const box of boxes) {
       if (box.part && active.has(box.part)) continue;
+      /* Слой выключен — коробки нет в кадре (P1); в раскрое и смете она остаётся. */
+      if (!boxShown(box, layers)) continue;
       if (box.material === 'front') {
         const key = box.frontKey ?? frontKey(DEFAULT_FRONT);
         const list = fronts.get(key);
@@ -486,7 +489,7 @@ export default function Cabinet3D({
       groups[box.material].push(box);
     }
     return { groups, fronts, carcass, inner };
-  }, [boxes, activeParts]);
+  }, [boxes, activeParts, layers]);
 
   /*
    * Какие фасады сейчас в ряду. Спецификации берутся из модулей, а не
@@ -610,25 +613,12 @@ export default function Cabinet3D({
   const plinthStrips = useMemo(() => plinthSpans(run), [run]);
   const apronStrips = useMemo(() => apronSpans(run), [run]);
   /*
-   * НИША ПОД ВЕРХНИМ РЯДОМ — по верхнему ряду и его углам: у пустого
-   * верхнего угла владелец кончается раньше стены, сосед начинается
-   * позже; иначе — как у плиты, владелец до стены, сосед до его края.
+   * НИША ПОД ВИСЯЩИМ РЯДОМ — `upperNicheSpans` (P0): только под висящими
+   * шкафами, на их отметке и их глубины. Полоса на всю длину ряда на
+   * кухонной отметке шла сквозь шкафы спальни и колонну холодильника —
+   * «полка посередине», которой нет ни в раскрое, ни в смете.
    */
-  const niche = useMemo(() => {
-    const upperDepthMm = rowStandardDepthMm(run.zone, 'upper', run.production);
-    const dock = run.corner?.dock;
-    const own = run.corner?.own;
-    const dockGeometry = dock ? cornerGeometry(dock, run.zone, run.production) : null;
-    const back = dock
-      ? dock.upper === 'empty'
-        ? dockGeometry!.lostMm - dockGeometry!.upperStartMm
-        : cornerBandMm({ corner: run.corner, bandDepthMm: upperDepthMm, zone: run.zone, production: run.production }).backMm
-      : 0;
-    const cut = own && own.upper === 'empty' ? cornerGeometry(own, run.zone, run.production).ownerUpperCutMm : 0;
-    const fromM = -back / MM;
-    const toM = (run.lengthMm - cut) / MM;
-    return { centerM: (fromM + toM) / 2, lengthM: Math.max(0, toM - fromM) };
-  }, [run]);
+  const niche = useMemo(() => upperNicheSpans(run), [run]);
 
   /*
    * Фартук: полоса стены между столешницей и верхним рядом. Именно её
@@ -669,7 +659,7 @@ export default function Cabinet3D({
       ]}
       rotation={[0, placement ? (placement.rotationYDeg * Math.PI) / 180 : 0, 0]}
     >
-      <SceneProbe group={groupRef} />
+      <SceneProbe group={groupRef} run={run} />
       {camera && (
         <SceneCamera
           room={{ width: roomWidthM, depth: roomDepthM, height: run.ceilingHeightMm / MM }}
@@ -692,6 +682,7 @@ export default function Cabinet3D({
         * которой пустая сцена читалась как недогруженная.
         */}
       {assembled &&
+        layers.carcass &&
         plinthStrips.map((strip) => (
           <mesh
             key={`plinth-${strip.fromMm}`}
@@ -825,6 +816,7 @@ export default function Cabinet3D({
           openParts={openParts}
           onToggle={handleToggle}
           cutaway={cutaway}
+          layers={layers}
           displayLit={displayLit}
           onActive={handleActive}
           frontMaterial={frontMaterials.get(frontKey(frontWithMilling(entry.unit, run)))}
@@ -902,6 +894,7 @@ export default function Cabinet3D({
         * которой приёмка сверяет, что плита не входит в препятствие.
         */}
       {hasCountertop &&
+        layers.carcass &&
         counterSlabs.flatMap((slab) =>
           slabPieces(slab).map((piece) => {
             const cutM = piece.backCutMm / MM;
@@ -933,27 +926,22 @@ export default function Cabinet3D({
         * Именно она читается как подсветка рабочей зоны и отделяет верхний
         * ряд от стены.
         */}
-      {run.upperSegments.length > 0 && (
-        <mesh
-          geometry={parts.box}
-          material={parts.plinth}
-          /*
-           * Ниша идёт ПО ВЕРХНЕМУ РЯДУ и вместе с ним лежит у стены:
-           * нарисованная заподлицо с нижним, она висела бы в воздухе
-           * там, где верхних шкафов уже нет.
-           */
-          position={[
-            niche.centerM,
-            upperBottomMm(run.production) / MM - 0.004,
-            -depthM + rowStandardDepthMm(run.zone, 'upper', run.production) / MM / 2,
-          ]}
-          scale={[
-            niche.lengthM,
-            0.008,
-            rowStandardDepthMm(run.zone, 'upper', run.production) / MM,
-          ]}
-        />
-      )}
+      {layers.carcass &&
+        niche.map((span) => (
+          <mesh
+            key={`niche-${span.fromMm}-${span.bottomMm}`}
+            /* Имя — для приёмки: она сверяет, что полоса не входит в корпус. */
+            name={`upper-niche:${run.wallId ?? 'a'}`}
+            geometry={parts.box}
+            material={parts.plinth}
+            /*
+             * Полоса лежит у стены под шкафом, а не в плоскости нижнего ряда:
+             * нарисованная заподлицо с нижним, она висела бы в воздухе.
+             */
+            position={[(span.fromMm + span.toMm) / 2 / MM, span.bottomMm / MM - 0.004, -depthM + span.depthMm / MM / 2]}
+            scale={[(span.toMm - span.fromMm) / MM, 0.008, span.depthMm / MM]}
+          />
+        ))}
     </group>
 
     {/*
@@ -968,7 +956,7 @@ export default function Cabinet3D({
       * на стенах Б и В он оставался у первого ряда, неповёрнутый, и
       * читался как «часть мебели висит в воздухе».
       */}
-    {hasCountertop && apronH > 0 && apronStrips.length > 0 && (
+    {hasCountertop && layers.carcass && apronH > 0 && apronStrips.length > 0 && (
       <group
         position={[
           placement ? placement.xM : originX,
@@ -1010,10 +998,54 @@ export default function Cabinet3D({
  * материалов в сцене. Производительность здесь не декларируется, а
  * меряется — ряд 3200 мм это десятки объектов, и их надо считать.
  */
-function SceneProbe({ group }: { group: React.RefObject<THREE.Group> }) {
+function SceneProbe({ group, run }: { group: React.RefObject<THREE.Group>; run: Run }) {
   const scene = useThree((state) => state.scene);
   const camera = useThree((state) => state.camera);
   const gl = useThree((state) => state.gl);
+
+  /*
+   * НИЧЕГО ЛИШНЕГО ВНУТРИ КОРПУСА (P0) — по нарисованному, а не по данным.
+   *
+   * «Полка посередине шкафа» была мешем ряда без имени и без детали
+   * раскроя: полоса ниши шла сквозь шкафы. Проверка берёт КАЖДЫЙ меш,
+   * лежащий прямо в группе ряда (цоколь, плиты, ниша — всё, что не деталь
+   * модуля), и меряет, не входит ли он в объём модуля по `runPlaces` —
+   * той же раскладке, что ставит модули. Касание — не вход: допуск 1 мм.
+   * Ряды регистрируются по стене: у угловой кухни их несколько.
+   */
+  useEffect(() => {
+    const w = window as unknown as {
+      __mwCadStrayRows?: Record<string, () => { name: string; moduleId: string; depthMm: number }[]>;
+      __mwCadStray?: () => { name: string; moduleId: string; depthMm: number }[];
+    };
+    const key = run.wallId ?? 'a';
+    const rows = (w.__mwCadStrayRows ??= {});
+    rows[key] = () => {
+      const root = group.current;
+      if (!root) return [];
+      const modules = runPlaces(run).map((place) => ({
+        id: place.unit.id,
+        min: [place.x, place.y, place.zM - place.depthM],
+        max: [place.x + place.unit.widthMm / MM, place.y + place.heightM, place.zM],
+      }));
+      const out: { name: string; moduleId: string; depthMm: number }[] = [];
+      for (const child of root.children) {
+        const mesh = child as THREE.Mesh & { isInstancedMesh?: boolean };
+        if (!mesh.isMesh || mesh.isInstancedMesh || !mesh.visible || mesh.userData?.shade === true) continue;
+        const min = [0, 1, 2].map((i) => mesh.position.getComponent(i) - Math.abs(mesh.scale.getComponent(i)) / 2);
+        const max = [0, 1, 2].map((i) => mesh.position.getComponent(i) + Math.abs(mesh.scale.getComponent(i)) / 2);
+        for (const unit of modules) {
+          const depth = Math.min(...[0, 1, 2].map((i) => Math.min(max[i], unit.max[i]) - Math.max(min[i], unit.min[i])));
+          if (depth > 0.001) out.push({ name: mesh.name || '(меш без имени)', moduleId: unit.id, depthMm: Math.round(depth * MM) });
+        }
+      }
+      return out;
+    };
+    w.__mwCadStray = () => Object.values(w.__mwCadStrayRows ?? {}).flatMap((probe) => probe());
+    return () => {
+      if (w.__mwCadStrayRows) delete w.__mwCadStrayRows[key];
+    };
+  }, [group, run]);
 
   useEffect(() => {
     const w = window as unknown as {

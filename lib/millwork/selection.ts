@@ -123,8 +123,11 @@ export function rowOfModule(
   const found = upper.find((unit) => unit.id === id);
   if (!found) return null;
 
+  /* Антресоль над шкафом (P2) — ряд сама по себе: переставлять её не с кем. */
+  if (found.overhead) return { row: 'upper', modules: [found] };
+
   if (found.section !== 'mezzanine') {
-    return { row: 'upper', modules: upper.filter((unit) => unit.section !== 'mezzanine') };
+    return { row: 'upper', modules: upper.filter((unit) => unit.section !== 'mezzanine' && !unit.overhead) };
   }
 
   /*

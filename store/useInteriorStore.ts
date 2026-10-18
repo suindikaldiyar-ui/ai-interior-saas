@@ -2,6 +2,7 @@
 
 import { create } from 'zustand';
 import type { SceneView } from '@/lib/cameraFraming';
+import { ALL_LAYERS, type SceneLayers } from '@/lib/millwork/sceneLayers';
 import { getEntry, isFurnitureType } from '@/lib/furnitureCatalog';
 import { kitchenFootprint, readKitchenMeta } from '@/lib/kitchen';
 import {
@@ -74,6 +75,12 @@ export type InteriorState = {
   openParts: string[];
   /** Разрез: фасады убраны совсем, видно наполнение целиком. */
   cutaway: boolean;
+  /**
+   * СЛОИ 3D (P1): корпус, перегородки, полки, ящики, фасады, фурнитура.
+   * Состояние ВИДА рядом с разрезом и открытыми створками: ряд, раскрой и
+   * смета от него не меняются, в объект оно не пишется.
+   */
+  sceneLayers: SceneLayers;
   /**
    * Выбранный отсек шкафа (R01): подсветка в сцене и на схеме и цель
    * правок «Внутреннего наполнения». Состояние выделения, а не
@@ -149,6 +156,7 @@ export type InteriorState = {
   setOpenParts: (ids: string[]) => void;
   closeAllParts: () => void;
   setCutaway: (value: boolean) => void;
+  setSceneLayers: (value: SceneLayers) => void;
   setSelectedBay: (value: { moduleId: string; bayId: string; zoneId?: string; drawerId?: string } | null) => void;
   setDisplayLit: (value: boolean) => void;
   setCadAngle: (value: SceneView) => void;
@@ -298,6 +306,7 @@ export const useInteriorStore = create<InteriorState>((set, get) => ({
 
   openParts: [],
   cutaway: false,
+  sceneLayers: ALL_LAYERS,
   selectedBay: null,
   displayLit: true,
   cadAngle: 'iso',
@@ -636,6 +645,7 @@ export const useInteriorStore = create<InteriorState>((set, get) => ({
   setOpenParts: (ids) => set({ openParts: Array.from(new Set(ids)) }),
   closeAllParts: () => set({ openParts: [] }),
   setCutaway: (value) => set({ cutaway: value }),
+  setSceneLayers: (value) => set({ sceneLayers: { ...value } }),
   setSelectedBay: (value) => set({ selectedBay: value }),
   setDisplayLit: (value) => set({ displayLit: value }),
   setCadAngle: (value) => set({ cadAngle: value }),

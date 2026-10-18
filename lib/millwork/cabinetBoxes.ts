@@ -43,6 +43,7 @@ const HINGE_ARM_DEPTH_M = 0.07;
 import { frontWithMilling } from './milling';
 import { leafHinges, openingHardware, openingOf } from './opening';
 import type { Module, Run } from '@/types/millwork';
+import type { SceneLayer } from './sceneLayers';
 
 /**
  * КОРПУС МОДУЛЯ ЧИСЛАМИ.
@@ -140,6 +141,65 @@ export type PartBox = BoxDraw & {
    */
   part?: string;
 };
+
+/**
+ * СЛОЙ КОРОБКИ В СЦЕНЕ (P1) — одна функция на сцену, рёбра и приёмку.
+ *
+ * Решается по признакам, которые коробка УЖЕ несёт, а не по догадке о
+ * цвете: роль материала, имя детали раскроя, ключ подвижной детали и
+ * узел фурнитуры. Второй классификации в продукте нет — сцена прячет
+ * слой, рёбра идут по тем же слоям, приёмка считает по этой же функции.
+ *
+ *   фасад (материал `front`)                        → фасады
+ *   петля, ручка, штанга — узел или металл детали   → фурнитура
+ *   короб и габарит ящика (`<модуль>:…drawer:…`)    → ящики
+ *   полка (`SHELF_PANEL_NAME`)                      → полки
+ *   перегородка, горизонтальная перегородка зоны    → перегородки
+ *   остальное: боковины, дно, крыша, задняя стенка,
+ *   планки, прибор и его стекло                     → корпус
+ *
+ * Металл без узла и без подвижной детали — это лицо прибора (конфорки,
+ * панель духовки): он идёт с прибором, а не с фурнитурой мебели.
+ */
+export function boxLayer(box: Pick<PartBox, 'material' | 'panel' | 'part' | 'node'>): SceneLayer {
+  if (box.material === 'front') return 'fronts';
+  if (box.material === 'metal' && (box.node !== undefined || box.part !== undefined)) return 'hardware';
+  if (box.part !== undefined && box.part.includes(':drawer:')) return 'drawers';
+  if (box.panel === DRAWER_ENVELOPE_NAME) return 'drawers';
+  if (box.panel === SHELF_PANEL_NAME) return 'shelves';
+  if (box.panel === DIVIDER_PANEL_NAME || box.panel === HDIVIDER_PANEL_NAME) return 'partitions';
+  return 'carcass';
+}
+
+/**
+ * ВИДНА ЛИ КОРОБКА ПРИ ЭТИХ СЛОЯХ (P1) — одна функция на сцену, рёбра и приёмку.
+ *
+ * Слой включён — видна. С одной оговоркой: фурнитура НА ФАСАДЕ (чашка петли,
+ * ручка — у них есть подвижная деталь-фасад) без фасада висела бы в воздухе,
+ * поэтому она видна вместе с фасадом. Исключение — вид «только фурнитура»
+ * (всё, кроме неё, выключено): там узлы показываются на своих местах, ради
+ * этого вид и выбирают. Штанги и корпусные части петель от фасада не зависят.
+ */
+export function boxShown(box: Pick<PartBox, 'material' | 'panel' | 'part' | 'node'>, layers: Record<SceneLayer, boolean>): boolean {
+  const layer = boxLayer(box);
+  if (!layers[layer]) return false;
+  const onFront = layer === 'hardware' && box.part !== undefined && box.node !== 'rod' && box.node !== 'hinge-arm';
+  if (!onFront || layers.fronts) return true;
+  const hardwareOnly = !layers.carcass && !layers.partitions && !layers.shelves && !layers.drawers;
+  return hardwareOnly;
+}
+
+/** Сколько коробок каждого слоя в рядах — для кнопок слоёв: пустой слой не притворяется рабочим. */
+export function layerCounts(runs: Run[]): Partial<Record<SceneLayer, number>> {
+  const out: Partial<Record<SceneLayer, number>> = {};
+  for (const run of runs) {
+    for (const box of runBoxes(run, { thicknessMm: 16, frontThicknessMm: 18, gapMm: 3 })) {
+      const layer = boxLayer(box);
+      out[layer] = (out[layer] ?? 0) + 1;
+    }
+  }
+  return out;
+}
 
 export type ModulePlacement = {
   /** Левый край модуля от левого края ряда, метры. */
@@ -1776,7 +1836,7 @@ export function runBoxes(
     const neighbour = lower
       ? run.modules[0]
       : [...run.upperSegments.flatMap((sg) => sg.modules)]
-          .filter((unit) => unit.section !== 'mezzanine')
+          .filter((unit) => unit.section !== 'mezzanine' && !unit.overhead)
           .sort((a, b) => a.offsetMm - b.offsetMm)[0];
     if (!neighbour) continue;
     const heightM = lower

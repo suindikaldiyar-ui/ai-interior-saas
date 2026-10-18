@@ -589,8 +589,8 @@ function ZonesEditor({
             disabled={'refusal' in mezz}
             onClick={() => apply(mezz, selectNew(['z1']))}
             className="mw-btn mw-btn-ghost disabled:opacity-40"
-          >
-            Добавить антресоль
+           title="Верхняя зона внутри этого шкафа, за его фасадом. Отдельный корпус над шкафом — в блоке «Над шкафом».">
+            Внутренняя верхняя зона
           </button>
         </div>
         {'refusal' in trial && (
@@ -600,7 +600,7 @@ function ZonesEditor({
         )}
         {mezzNote && (
           <p className="text-[12px] leading-snug text-graphiteMw" data-zone-mezz-note>
-            Антресоль: {mezzNote}
+            Внутренняя верхняя зона: {mezzNote}
           </p>
         )}
       </div>
@@ -909,8 +909,8 @@ function ZonesEditor({
           disabled={'refusal' in mezz}
           onClick={() => apply(mezz, selectNew(ids))}
           className="mw-btn mw-btn-ghost disabled:opacity-40"
-        >
-          Добавить антресоль
+         title="Верхняя зона внутри этого шкафа, за его фасадом. Отдельный корпус над шкафом — в блоке «Над шкафом».">
+          Внутренняя верхняя зона
         </button>
       )}
       {mezz && 'refusal' in mezz && (
@@ -920,12 +920,12 @@ function ZonesEditor({
       )}
       {mezzNote && (
         <p className="text-[12px] leading-snug text-graphiteMw" data-zone-mezz-note>
-          Антресоль: {mezzNote}
+          Внутренняя верхняя зона: {mezzNote}
         </p>
       )}
       <p className="text-[12px] leading-snug text-tape" data-zone-drilling>
         Перегородка — деталь раскроя: длина — просвет отсека, глубина — припуск цеха «перегородка мельче корпуса». Крепёж и
-        присадка под неё не рассчитаны: цехом не подтверждены. Фасада у антресоли нет — это следующий этап.
+        присадка под неё не рассчитаны: цехом не подтверждены. Своего фасада у внутренней верхней зоны нет — её закрывает фасад шкафа; отдельный корпус со своими фасадами ставится в блоке «Над шкафом».
       </p>
     </div>
   );

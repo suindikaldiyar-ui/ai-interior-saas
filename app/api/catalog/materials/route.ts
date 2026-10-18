@@ -7,6 +7,7 @@ import {
   collectionOf,
   materialDefs,
   parseMaterialFile,
+  importPreview,
   planMaterialImport,
   type MaterialFile,
 } from '@/lib/millwork/materialCatalog';
@@ -87,7 +88,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Требуется вход.' }, { status: 401 });
   }
 
-  let body: { orgId?: string };
+  let body: { orgId?: string; collections?: unknown; dryRun?: boolean; confirm?: boolean };
   try {
     body = await request.json();
   } catch {
@@ -99,13 +100,46 @@ export async function POST(request: Request) {
   const file = readFile();
   if (file instanceof NextResponse) return file;
 
+  /*
+   * КАКИЕ КОЛЛЕКЦИИ (P3). Без списка — как раньше: всё, кроме коллекций на
+   * проверке. Коллекции на проверке (EGGER, GRANDEX из пакета поставщика:
+   * без цен и без подтверждённых прав на образцы) — только явным списком, и
+   * запись — только с `confirm` после показа (`dryRun`). Случайный запрос
+   * мимо экрана их не загружает.
+   */
+  const collections = Array.isArray(body.collections) ? body.collections.map(String) : undefined;
+  const unknown = (collections ?? []).filter((id) => !file.collections.some((c) => c.id === id));
+  if (unknown.length > 0) {
+    return NextResponse.json({ error: `Коллекций нет в файле: ${unknown.join(', ')}.` }, { status: 400 });
+  }
+  const review = (collections ?? []).filter((id) => file.collections.find((c) => c.id === id)?.review);
+
   /* Клиентом пользователя: RLS сама не даст записать в чужую организацию. */
   const existing = await existingArticles(supabase, orgId);
   if (existing.error) {
     return NextResponse.json({ error: `Нет доступа к каталогу: ${existing.error}` }, { status: 500 });
   }
 
-  const plan = planMaterialImport(file, existing.rows);
+  if (body.dryRun) {
+    return NextResponse.json({
+      ok: true,
+      dryRun: true,
+      orgId,
+      preview: importPreview(file, existing.rows, collections ?? file.collections.filter((c) => !c.review).map((c) => c.id)),
+    });
+  }
+  if (review.length > 0 && body.confirm !== true) {
+    return NextResponse.json(
+      {
+        error:
+          `Коллекции на проверке (${review.join(', ')}) загружаются только после показа того, что ляжет, ` +
+          'и подтверждения: цен у них нет, права на образцы не подтверждены.',
+      },
+      { status: 409 },
+    );
+  }
+
+  const plan = planMaterialImport(file, existing.rows, collections ? { collections } : {});
 
   /* Категории — только тем коллекциям, чьи позиции сейчас ложатся. */
   const needed = file.collections.filter((collection) =>

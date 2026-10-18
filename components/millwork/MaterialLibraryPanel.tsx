@@ -83,6 +83,36 @@ type Props = {
   onCatalogReload: () => Promise<string | null>;
 };
 
+type BrandFilter = 'all' | 'EGGER' | 'GRANDEX' | 'other';
+
+const BRAND_FILTERS: { key: BrandFilter; title: string }[] = [
+  { key: 'all', title: 'Все' },
+  { key: 'EGGER', title: 'EGGER' },
+  { key: 'GRANDEX', title: 'GRANDEX' },
+  { key: 'other', title: 'Другие' },
+];
+
+/** Ответ показа импорта (P3): организация и числа — до записи. */
+type ReviewPreview = {
+  orgId: string;
+  collections: string[];
+  inFile: number;
+  exists: number;
+  fresh: number;
+  conflict: number;
+  unpriced: number;
+  duplicate: number;
+  incomplete: number;
+  ineligible: number;
+  nameUnverified: number;
+  conflicts: string[];
+};
+
+/** Образец карточки поставщика — через закрытую выдачу, только вошедшему (P3). */
+function reviewPreviewUrl(file: string): string {
+  return `/api/catalog/materials/preview?file=${encodeURIComponent(file)}`;
+}
+
 /** Высота строки списка: по ней считается, какие строки видны. */
 const ROW_PX = 44;
 const LIST_PX = 320;
@@ -159,6 +189,10 @@ export default function MaterialLibraryPanel({
   const [scrollTop, setScrollTop] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
+  /* Производитель (P3): EGGER, GRANDEX или остальное — свои позиции и палитры организации. */
+  const [brand, setBrand] = useState<BrandFilter>('all');
+  /* Показ «что ляжет» из коллекций на проверке — до записи, с организацией и числами. */
+  const [reviewPreview, setReviewPreview] = useState<ReviewPreview | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
   /*
@@ -229,7 +263,10 @@ export default function MaterialLibraryPanel({
     const out: Row[] = [];
     if (!tab) return out;
     for (const collection of tab.collections) {
-      const all = byCollection.get(collection.id) ?? [];
+      const all = (byCollection.get(collection.id) ?? []).filter(
+        (pair) => brand === 'all' || (pair.item.brand ?? 'other') === brand,
+      );
+      if (brand !== 'all' && all.length === 0) continue;
       const found = query.trim()
         ? searchMaterials(
             all.map((pair) => pair.entry),
@@ -244,7 +281,7 @@ export default function MaterialLibraryPanel({
       }
     }
     return out;
-  }, [tab, byCollection, query]);
+  }, [tab, byCollection, query, brand]);
 
   const matches = rows.filter((row) => row.type === 'item').length;
 
@@ -273,9 +310,9 @@ export default function MaterialLibraryPanel({
     setNotice(onApply(target, { item, collection, surface: chosen }));
   };
 
-  /* Сколько позиций файла ещё не в каталоге организации. */
+  /* Сколько позиций файла ещё не в каталоге организации — без коллекций на проверке (P3). */
   const missing = defs
-    ? defs.collections.reduce(
+    ? defs.collections.filter((c) => !c.review).reduce(
         (sum, c) => sum + Math.max(0, c.itemCount - (byCollection.get(c.id)?.length ?? 0)),
         0,
       )
@@ -313,6 +350,65 @@ export default function MaterialLibraryPanel({
         ...(body.conflicts ?? []).slice(0, 2),
         reloadError,
       ]
+        .filter(Boolean)
+        .join(' '),
+    );
+  };
+
+  /*
+   * КАТАЛОГИ ПОСТАВЩИКОВ НА ПРОВЕРКЕ (P3) — EGGER и GRANDEX из пакета.
+   *
+   * Сначала показ: в какую организацию, сколько ляжет новыми, сколько уже
+   * есть, сколько без цены и что из пакета не встаёт вовсе. Запись — только
+   * второй кнопкой после показа (`confirm`), тем же маршрутом, что МДФ и RAL.
+   */
+  const reviewCollections = defs ? defs.collections.filter((c) => c.review).map((c) => c.id) : [];
+  const reviewLoaded = defs
+    ? defs.collections.filter((c) => c.review).reduce((sum, c) => sum + (byCollection.get(c.id)?.length ?? 0), 0)
+    : 0;
+  const reviewInFile = defs
+    ? defs.collections.filter((c) => c.review).reduce((sum, c) => sum + c.itemCount, 0)
+    : 0;
+
+  const previewReview = async () => {
+    if (!orgId || reviewCollections.length === 0) return;
+    setImporting(true);
+    setNotice(null);
+    const response = await fetch('/api/catalog/materials', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ orgId, collections: reviewCollections, dryRun: true }),
+    });
+    const body = (await response.json().catch(() => null)) as { error?: string; preview?: Omit<ReviewPreview, 'orgId'> } | null;
+    setImporting(false);
+    if (!response.ok || !body?.preview) {
+      setReviewPreview(null);
+      setNotice(`Показ не получился: ${body?.error ?? `сервер ответил ${response.status}`}`);
+      return;
+    }
+    setReviewPreview({ ...body.preview, orgId });
+  };
+
+  const importReview = async () => {
+    if (!orgId || !reviewPreview) return;
+    setImporting(true);
+    setNotice(null);
+    const response = await fetch('/api/catalog/materials', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ orgId, collections: reviewPreview.collections, confirm: true }),
+    });
+    const body = (await response.json().catch(() => null)) as { error?: string; added?: number; skipped?: number } | null;
+    if (!response.ok || !body) {
+      setImporting(false);
+      setNotice(`Не загрузилось: ${body?.error ?? `сервер ответил ${response.status}`}`);
+      return;
+    }
+    const reloadError = await onCatalogReload();
+    setImporting(false);
+    setReviewPreview(null);
+    setNotice(
+      [`Загружено ${body.added ?? 0}, уже были ${body.skipped ?? 0}. Цен нет — смета с ними «неполная».`, reloadError]
         .filter(Boolean)
         .join(' '),
     );
@@ -392,13 +488,92 @@ export default function MaterialLibraryPanel({
               </button>
             ))}
           </div>
-          {target === 'module' && (
-            <p className="mt-1 text-[13px] leading-snug text-graphiteMw">
+          {(target === 'module' || target === 'module-carcass') && (
+            <p className="mt-1 text-[13px] leading-snug text-graphiteMw" data-material-scope>
               {selectedModuleLabel
-                ? `Материал ляжет на фасад: ${selectedModuleLabel}.`
-                : 'Выберите модуль в сцене — материал ляжет на его фасад.'}
+                ? `Материал ляжет на ${target === 'module' ? 'фасад' : 'корпус'}: ${selectedModuleLabel}. Соседние модули не меняются.`
+                : `Выберите модуль в сцене — материал ляжет на его ${target === 'module' ? 'фасад' : 'корпус'}.`}
             </p>
           )}
+          {(target === 'fronts' || target === 'carcass' || target === 'countertop') && (
+            <p className="mt-1 text-[13px] leading-snug text-graphiteMw" data-material-scope>
+              {target === 'fronts'
+                ? 'Ляжет на все фасады всех стен объекта: фасад, выбранный модулю отдельно, тоже заменится.'
+                : target === 'carcass'
+                  ? 'Ляжет на корпус всех стен объекта; корпус, выбранный модулю отдельно, сильнее и останется.'
+                  : 'Ляжет на столешницу всех стен объекта.'}
+            </p>
+          )}
+
+          {orgId && reviewCollections.length > 0 && (
+            <div className="mt-3 rounded-[var(--r-control)] bg-navy p-3" data-review-import>
+              <p className="text-[13px] leading-snug">
+                Каталоги поставщиков на проверке — EGGER и GRANDEX: в каталоге организации {reviewLoaded} из{' '}
+                {reviewInFile}. Это справочные карточки: цен нет, образцы — кропы PDF, права на них не подтверждены.
+              </p>
+              {!reviewPreview ? (
+                <button
+                  type="button"
+                  data-review-preview
+                  disabled={importing}
+                  onClick={() => void previewReview()}
+                  className="mw-btn mw-btn-ghost mt-2"
+                >
+                  {importing ? 'Считаю…' : 'Показать, что ляжет'}
+                </button>
+              ) : (
+                <div className="mt-2 grid gap-1 text-[13px]" data-review-preview-result>
+                  <p>
+                    Организация <span className="mw-num">{reviewPreview.orgId.slice(0, 8)}</span>: новых{' '}
+                    <b data-preview-fresh>{reviewPreview.fresh}</b>, уже есть <b data-preview-exists>{reviewPreview.exists}</b>,
+                    конфликтов <b data-preview-conflict>{reviewPreview.conflict}</b>, без цены{' '}
+                    <b data-preview-unpriced>{reviewPreview.unpriced}</b>.
+                  </p>
+                  <p className="text-graphiteMw">
+                    Из пакета не ляжет: повторов слито {reviewPreview.duplicate}, без детали в Studio{' '}
+                    {reviewPreview.ineligible}, неполных {reviewPreview.incomplete}. Название не подтверждено у{' '}
+                    {reviewPreview.nameUnverified}.
+                  </p>
+                  {reviewPreview.conflicts.slice(0, 2).map((line) => (
+                    <p key={line} className="text-tape">
+                      {line}
+                    </p>
+                  ))}
+                  <div className="flex flex-wrap gap-1">
+                    <button
+                      type="button"
+                      data-review-import-confirm
+                      disabled={importing || reviewPreview.fresh === 0}
+                      onClick={() => void importReview()}
+                      className="mw-btn mw-btn-primary"
+                    >
+                      {importing ? 'Загружаю…' : `Загрузить ${reviewPreview.fresh} в каталог организации`}
+                    </button>
+                    <button type="button" onClick={() => setReviewPreview(null)} className="mw-btn mw-btn-ghost">
+                      Отмена
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Производитель (P3) ── */}
+          <div className="mt-3 flex flex-wrap items-center gap-1" role="group" aria-label="Производитель">
+            <span className="text-[13px] text-graphiteMw">Производитель</span>
+            {BRAND_FILTERS.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                data-material-brand={item.key}
+                aria-pressed={brand === item.key}
+                onClick={() => setBrand(item.key)}
+                className={`mw-btn ${brand === item.key ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+              >
+                {item.title}
+              </button>
+            ))}
+          </div>
 
           {orgId && missing > 0 && (
             <div className="mt-3 rounded-[var(--r-control)] bg-navy p-3">
@@ -440,7 +615,12 @@ export default function MaterialLibraryPanel({
           {hidden.length > 0 && (
             <p className="mt-1 text-[13px] leading-snug text-graphiteMw" data-material-hidden>
               {hidden.map((t) => t.title).join(', ')} — не идут{' '}
-              {target === 'carcass' ? 'на корпус' : target === 'countertop' ? 'на столешницу' : 'на фасады'}.
+              {target === 'carcass' || target === 'module-carcass'
+                ? 'на корпус'
+                : target === 'countertop'
+                  ? 'на столешницу'
+                  : 'на фасады'}
+              .
             </p>
           )}
 
@@ -489,7 +669,15 @@ export default function MaterialLibraryPanel({
                   );
                 }
                 const on = current.itemId === row.item.id;
-                const thumb = row.item.photo ? previewUrl(row.entry) || row.item.photo.url : null;
+                /*
+                 * Образец поставщика (P3) — кроп PDF через закрытую выдачу:
+                 * только в списке и карточке, на детали — средний цвет.
+                 */
+                const thumb = row.item.photo
+                  ? previewUrl(row.entry) || row.item.photo.url
+                  : row.item.review?.preview
+                    ? reviewPreviewUrl(row.item.review.preview)
+                    : null;
                 return (
                   <button
                     key={row.entry.id}
@@ -497,6 +685,8 @@ export default function MaterialLibraryPanel({
                     data-material-item={row.entry.article}
                     data-item-id={row.item.id}
                     data-photo={row.item.photo ? '1' : '0'}
+                    data-brand={row.item.brand ?? 'other'}
+                    data-review={row.item.review ? '1' : '0'}
                     aria-pressed={on}
                     onClick={() => apply(row.item, row.collection)}
                     className="absolute inset-x-0 flex items-center gap-2 px-3 text-left"
@@ -516,12 +706,21 @@ export default function MaterialLibraryPanel({
                         border: row.item.colorHex || thumb ? undefined : '1px dashed var(--line-warm)',
                       }}
                     />
-                    <span className="min-w-0 flex-1 truncate text-[13px]">
-                      <span className="font-medium">{row.entry.article}</span>
-                      {row.entry.name_ru && <span className="text-graphiteMw"> · {row.entry.name_ru}</span>}
-                    </span>
-                    <span className="shrink-0 text-[13px] text-graphiteMw">
-                      {priceText(row.item, on ? current.surface : undefined, rates)}
+                    {/*
+                      * Две строки: код целиком сверху — по нему ищут и
+                      * называют позицию (EGGER-H1180-ST37 в узкой панели
+                      * обрезался до «EGGE…»); название и цена — под ним.
+                      */}
+                    <span className="grid min-w-0 flex-1 leading-tight" title={`${row.entry.article}${row.entry.name_ru ? ` · ${row.entry.name_ru}` : ''}`}>
+                      <span className="truncate text-[13px] font-medium">{row.entry.article}</span>
+                      <span className="truncate text-[12px] text-graphiteMw">
+                        {row.entry.name_ru ? (
+                          `${row.entry.name_ru} · `
+                        ) : row.item.review ? (
+                          <span className="text-tape">название не подтверждено · </span>
+                        ) : null}
+                        {priceText(row.item, on ? current.surface : undefined, rates)}
+                      </span>
                     </span>
                   </button>
                 );
@@ -676,6 +875,43 @@ function MaterialCard({
         {entry.name_ru ? ` · ${entry.name_ru}` : ''}
       </p>
       <p className="text-[13px] text-graphiteMw">{collection.label}</p>
+
+      {/*
+        * СПРАВОЧНАЯ КАРТОЧКА ПОСТАВЩИКА (P3): код декора и поверхность,
+        * страница брошюры и чего о позиции НЕ известно. Образец — кроп PDF:
+        * он здесь, на карточке; на детали в 3D — средний цвет образца.
+        */}
+      {item.review && (
+        <div className="mt-2 flex gap-3" data-material-review={item.review.decorCode}>
+          {item.review.preview && (
+            /* eslint-disable-next-line @next/next/no-img-element -- образец идёт закрытой выдачей, без оптимизатора и без кэша CDN */
+            <img
+              src={reviewPreviewUrl(item.review.preview)}
+              alt={`Образец ${item.review.decorCode} ${item.review.surfaceCode} из PDF`}
+              width={96}
+              height={96}
+              className="h-24 w-24 shrink-0 rounded-[5px] object-cover"
+              style={{ background: item.colorHex ?? undefined }}
+              data-review-image
+            />
+          )}
+          <div className="grid gap-0.5 text-[13px] leading-snug">
+            <p>
+              {item.brand} {item.review.decorCode} · поверхность {item.review.surfaceCode}
+            </p>
+            {!item.review.nameVerified && <p className="text-tape">Название не подтверждено — в брошюре его нет.</p>}
+            <p className="text-graphiteMw">
+              {item.review.sourcePdf}
+              {item.review.pages.length > 0 ? `, стр. ${item.review.pages.join(', ')}` : ''}
+            </p>
+            <p className="text-tape" data-review-status>
+              Образец из PDF — справочный, не текстура плиты и не PBR; права на образец не подтверждены; на детали —
+              средний цвет образца.
+            </p>
+            {item.price === null && !item.finishPrices && <p className="text-tape">Нет цены — смета с ним «неполная».</p>}
+          </div>
+        </div>
+      )}
 
       {surfaceChoice && (
         <div className="mt-2 flex flex-wrap gap-1" role="group" aria-label="Поверхность">

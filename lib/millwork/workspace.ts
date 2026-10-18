@@ -17,6 +17,7 @@ import type { MaterialItem } from './materialCollection';
 import { buildVariants } from './variants';
 import { runWithCorner } from './corner';
 import { obstaclesOnRun, runWithObstacles } from './obstacles';
+import { uniqueModuleIds } from './layout';
 
 /**
  * Замер → входные данные конфигуратора.
@@ -343,7 +344,8 @@ export function composeVariants(
      * видят сцена и раскрой: стену А `wallSegments` больше не трогает.
      */
     const edited = runWithObstacles(
-      runWithCorner(saved, input.corner),
+      /* Сохранённый ряд с дублем ключа чинится на показе (P0, `uniqueModuleIds`). */
+      runWithCorner(uniqueModuleIds(saved), input.corner),
       /* Препятствия стены — из замера, как угол — из композиции (слой 56). */
       obstaclesOnRun(input.openings, saved.lengthMm),
     );

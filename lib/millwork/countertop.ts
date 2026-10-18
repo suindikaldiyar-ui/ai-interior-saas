@@ -1,5 +1,5 @@
 import { cornerBandMm } from './corner';
-import { bearsCountertop, counterSlabDepthMm, rowStandardDepthMm } from './fill';
+import { bearsCountertop, counterSlabDepthMm, moduleDepthMm, rowStandardDepthMm, upperBottomFor } from './fill';
 import { standsOnFloor } from './modules';
 import { obstaclesInBand, wallObstacles, type WallObstacle } from './obstacles';
 import { countertopMm, countertopStripOf, plinthMm, upperBottomMm, workTopMm } from './shop';
@@ -347,6 +347,57 @@ export function apronSpans(run: RunLike): CounterSlab[] {
 /** Сколько фартука, мм — то же число в сцене и в смете. */
 export function apronLengthMm(run: RunLike): number {
   return apronSpans(run).reduce((sum, span) => sum + span.toMm - span.fromMm, 0);
+}
+
+/** Тёмная полоса под висящим шкафом: где, на какой высоте и какой глубины. */
+export type NicheSpan = { fromMm: number; toMm: number; bottomMm: number; depthMm: number };
+
+/**
+ * НИША ПОД ВИСЯЩИМ РЯДОМ — ТОЛЬКО ПОД ВИСЯЩИМИ ШКАФАМИ (P0).
+ *
+ * Сцена клала полосу «по низу верхнего ряда» на ВСЮ длину ряда и на
+ * кухонной отметке навески (`upperBottomMm`, 1450 мм), как только в ряду
+ * был хоть один верхний сегмент. В спальне верхний ряд — антресоли НА
+ * КРЫШЕ шкафов, и полоса проходила сквозь шкафы на 1446…1454 мм: на
+ * объекте владельца её было видно в открытом модуле `tall-0@w1` как
+ * «полку посередине», которой нет ни в раскрое, ни в смете. У кухни та же
+ * полоса шла сквозь колонну холодильника.
+ *
+ * Полоса — не деталь: это затенение под шкафом. Поэтому её место — низ
+ * каждого ВИСЯЩЕГО шкафа (`upperBottomFor`, та же функция, что ставит
+ * модуль), его глубина у стены (`moduleDepthMm`), и только там, где шкаф
+ * висит. Антресоль на крыше шкафа (`section: 'mezzanine'`) и отдельный
+ * верхний корпус (`overhead`) не висят — под ними полосы нет. Соседние
+ * шкафы на одной отметке и одной глубины сливаются в одну полосу.
+ */
+export function upperNicheSpans(run: Run): NicheSpan[] {
+  const hanging = run.upperSegments
+    .flatMap((segment) => segment.modules)
+    .filter(
+      (unit) =>
+        (unit.kind === 'upper' || unit.kind === 'corner_upper') &&
+        unit.section !== 'mezzanine' &&
+        !unit.overhead &&
+        unit.widthMm > 0,
+    )
+    .map((unit) => ({
+      fromMm: unit.offsetMm,
+      toMm: unit.offsetMm + unit.widthMm,
+      bottomMm: upperBottomFor(unit, run),
+      depthMm: moduleDepthMm(unit, run.zone, run.production),
+    }))
+    .sort((a, b) => a.fromMm - b.fromMm);
+
+  const spans: NicheSpan[] = [];
+  for (const piece of hanging) {
+    const last = spans[spans.length - 1];
+    if (last && piece.fromMm <= last.toMm && piece.bottomMm === last.bottomMm && piece.depthMm === last.depthMm) {
+      last.toMm = Math.max(last.toMm, piece.toMm);
+    } else {
+      spans.push({ ...piece });
+    }
+  }
+  return spans;
 }
 
 /**

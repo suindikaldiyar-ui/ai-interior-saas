@@ -127,6 +127,14 @@ function extrasPart(unit: Module): string | undefined {
      * раскрой и другие деньги, чем две по 595.
      */
     applianceSizesPart(unit),
+    /*
+     * Высота корпуса, заданная человеком, и отдельный верхний корпус над
+     * шкафом (P2) — другая мебель: другие боковины в раскрое, своя антресоль
+     * в смете. Пишутся ТОЛЬКО когда есть (ловушка 246): у рядов без них
+     * отпечаток прежний до символа.
+     */
+    unit.heightMm !== undefined ? `h${unit.heightMm}` : '',
+    unit.overhead ? `over${unit.overhead.depthMm}` : '',
   ].filter(Boolean);
 
   return parts.length > 0 ? parts.join(',') : undefined;

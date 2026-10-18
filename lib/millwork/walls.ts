@@ -379,7 +379,7 @@ export function cornerRoleConflicts(input: {
   const floor = run.modules.filter((unit) => standsOnFloor(unit)).sort(byOffset);
   const uppers = run.upperSegments
     .flatMap((segment) => segment.modules)
-    .filter((unit) => isUpperRow(unit) && unit.section !== 'mezzanine')
+    .filter((unit) => isUpperRow(unit) && unit.section !== 'mezzanine' && !unit.overhead)
     .sort(byOffset);
   const name = (unit: Module) => `«${unit.label}» ${unit.widthMm} мм (${unit.offsetMm}…${unit.offsetMm + unit.widthMm})`;
 

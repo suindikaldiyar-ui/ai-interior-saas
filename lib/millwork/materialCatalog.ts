@@ -21,6 +21,7 @@ import {
   metaFinishes,
   metaRoles,
   priceUnitOf,
+  reviewNoteOf,
   type MaterialItem,
   type MaterialRole,
   type PriceUnit,
@@ -62,6 +63,12 @@ export type MaterialFileItem = {
   hex: string | null;
   price: number | null;
   prices: Record<string, number | null> | null;
+  /**
+   * ОТКУДА ПОЗИЦИЯ И ЧТО О НЕЙ НЕ ИЗВЕСТНО (P3): производитель, код декора,
+   * поверхность, класс изделия, страница брошюры, статусы образца, прав и
+   * цены. Есть у позиций из пакета проверки поставщика; у остальных пусто.
+   */
+  provenance: Record<string, unknown> | null;
 };
 
 export type MaterialCollection = {
@@ -75,6 +82,13 @@ export type MaterialCollection = {
   /** Цена задаётся по поверхности (МДФ-панели), а не одна на позицию. */
   pricePerFinish: boolean;
   sourceNote: string | null;
+  /**
+   * КОЛЛЕКЦИЯ НА ПРОВЕРКЕ (P3): справочные карточки поставщика без цен и
+   * без подтверждённых прав на изображения. В каталог организации она
+   * загружается только явно — после показа того, что ляжет, и нажатием
+   * человека (`planMaterialImport` с явным списком `collections`).
+   */
+  review: boolean;
   items: MaterialFileItem[];
 };
 
@@ -84,7 +98,50 @@ export type MaterialFile = {
   notes: string[];
   finishes: Record<string, FinishSpec>;
   collections: MaterialCollection[];
+  /** Пакеты проверки поставщиков (P3): сколько карточек, что слито и что не встаёт. */
+  reviewPacks: ReviewPack[];
 };
+
+/**
+ * ПАКЕТ ПРОВЕРКИ ПОСТАВЩИКА (P3) — сводка того, что в коллекции НЕ попало:
+ * слитые повторы, карточки без детали в Studio, карточки без кода. Нужна
+ * показу «что ляжет» до записи — позиции в коллекциях этого уже не знают.
+ */
+export type ReviewPack = {
+  id: string;
+  label: string;
+  source: string;
+  records: number;
+  brands: Record<string, number>;
+  collections: string[];
+  duplicate: number;
+  ineligible: number;
+  incomplete: number;
+  nameUnverified: number;
+  note: string;
+};
+
+function parseReviewPacks(raw: unknown): ReviewPack[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) fail('reviewPacks — не список');
+  return raw.map((entry, i) => {
+    const pack = entry as Record<string, unknown>;
+    const num = (key: string) => (typeof pack[key] === 'number' ? (pack[key] as number) : fail('reviewPacks[' + i + ']: нет числа ' + key));
+    return {
+      id: text(pack.id) || fail('reviewPacks[' + i + ']: нет id'),
+      label: text(pack.label),
+      source: text(pack.source),
+      records: num('records'),
+      brands: (pack.brands as Record<string, number>) ?? {},
+      collections: Array.isArray(pack.collections) ? pack.collections.map(String) : [],
+      duplicate: num('duplicate'),
+      ineligible: num('ineligible'),
+      incomplete: num('incomplete'),
+      nameUnverified: num('nameUnverified'),
+      note: text(pack.note),
+    };
+  });
+}
 
 /** Коллекция без позиций: то, что нужно панели и без 1825 строк RAL. */
 export type CollectionDef = Omit<MaterialCollection, 'items'> & { itemCount: number };
@@ -142,6 +199,10 @@ function parseItem(
     hex,
     price: parsePrice(item.price, `${where}, ${code}`),
     prices,
+    provenance:
+      item.provenance && typeof item.provenance === 'object' && !Array.isArray(item.provenance)
+        ? { ...(item.provenance as Record<string, unknown>) }
+        : null,
   };
 }
 
@@ -193,6 +254,7 @@ function parseCollection(
     priceUnit,
     pricePerFinish: items.some((item) => item.prices !== null),
     sourceNote: text(source?.note) || null,
+    review: collection.review === true,
     items,
   };
 }
@@ -210,6 +272,7 @@ export function parseMaterialFile(raw: unknown): MaterialFile {
     notes: Array.isArray(file.notes) ? file.notes.map((note) => String(note)) : [],
     finishes,
     collections: file.collections.map((collection, i) => parseCollection(collection, i, finishes, ids)),
+    reviewPacks: parseReviewPacks(file.reviewPacks),
   };
 }
 
@@ -221,6 +284,7 @@ export function materialDefs(file: MaterialFile): MaterialDefs {
     notes: file.notes,
     finishes: file.finishes,
     collections: file.collections.map(({ items, ...rest }) => ({ ...rest, itemCount: items.length })),
+    reviewPacks: file.reviewPacks,
   };
 }
 
@@ -257,6 +321,7 @@ function rowOf(
     price: number | null;
     prices: Record<string, number | null> | null;
     photoSizeMm?: [number, number] | null;
+    provenance?: Record<string, unknown> | null;
   },
 ): MaterialRow {
   return {
@@ -287,6 +352,14 @@ function rowOf(
       finishes: [...collection.finishes],
       ...(item.prices ? { finishPrices: { ...item.prices } } : {}),
       ...(collection.priceUnit === 'sheet' ? { priceUnit: 'sheet' } : {}),
+      /*
+       * Провенанс пакета проверки (P3) едет с позицией в каталог: брошюра,
+       * страница, статусы образца, прав и цены. Производитель — отдельным
+       * полем: по нему фильтр «EGGER · GRANDEX · другие».
+       */
+      ...(item.provenance
+        ? { provenance: { ...item.provenance }, ...(typeof item.provenance.brand === 'string' ? { brand: item.provenance.brand } : {}) }
+        : {}),
     },
   };
 }
@@ -386,6 +459,12 @@ export type ImportPlan = {
 export function planMaterialImport(
   file: MaterialFile,
   existing: { article: string; collection: string | null }[],
+  /**
+   * Какие коллекции грузить. Пусто — все, КРОМЕ коллекций на проверке
+   * (`review`, P3): справочные карточки поставщика без цен и прав ложатся в
+   * каталог только явным списком после показа того, что ляжет.
+   */
+  options: { collections?: string[] } = {},
 ): ImportPlan {
   const owner = new Map<string, string | null>();
   for (const entry of existing) owner.set(entry.article, entry.collection);
@@ -395,7 +474,18 @@ export function planMaterialImport(
   const byCollection: ImportPlan['byCollection'] = {};
   let skipped = 0;
 
+  const wanted = (collection: MaterialCollection) =>
+    options.collections ? options.collections.includes(collection.id) : !collection.review;
+
   for (const collection of file.collections) {
+    /*
+     * Коллекция, которую сейчас не грузят (на проверке или не в списке), не
+     * пропадает из счёта: «в файле N, загружено 0» — числом, а не пропуском.
+     */
+    if (!wanted(collection)) {
+      byCollection[collection.id] = { inFile: collection.items.length, added: 0, skipped: 0 };
+      continue;
+    }
     const tally = { inFile: collection.items.length, added: 0, skipped: 0 };
     byCollection[collection.id] = tally;
 
@@ -420,6 +510,68 @@ export function planMaterialImport(
   }
 
   return { rows, skipped, conflicts, byCollection };
+}
+
+/** Что ляжет из выбранных коллекций — числами, ДО записи (P3). */
+export type ImportPreview = {
+  collections: string[];
+  /** Позиций в выбранных коллекциях файла. */
+  inFile: number;
+  /** Уже в каталоге организации той же коллекцией и тем же артикулом. */
+  exists: number;
+  /** Ляжет новыми строками. */
+  fresh: number;
+  /** Артикул занят другой коллекцией или своим товаром — не ляжет, назван. */
+  conflict: number;
+  /** Из новых — без цены: строка сметы будет «цена не задана», итог «неполный». */
+  unpriced: number;
+  /** Карточек пакета, слитых с такой же (производитель + код + поверхность + класс). */
+  duplicate: number;
+  /** Карточек без кода или поверхности. */
+  incomplete: number;
+  /** Карточек, которым в Studio нет детали (кромка, ламинат, компакт). */
+  ineligible: number;
+  /** Позиций с неподтверждённым названием. */
+  nameUnverified: number;
+  byCollection: ImportPlan['byCollection'];
+  conflicts: string[];
+};
+
+/**
+ * ПОКАЗ ИМПОРТА (P3) — тот же `planMaterialImport`, что и запись, только
+ * без записи. Повторный показ после записи даёт ноль новых: ключ позиции —
+ * коллекция и артикул, и второй раз она не ляжет. Чужая организация в
+ * `existing` не попадает: список артикулов читает вызывающий по своей.
+ */
+export function importPreview(
+  file: MaterialFile,
+  existing: { article: string; collection: string | null }[],
+  collections: string[],
+): ImportPreview {
+  const plan = planMaterialImport(file, existing, { collections });
+  const chosen = file.collections.filter((collection) => collections.includes(collection.id));
+  const packs = file.reviewPacks.filter((pack) => pack.collections.some((id) => collections.includes(id)));
+  const inFile = chosen.reduce((sum, collection) => sum + collection.items.length, 0);
+  const exists = Object.values(plan.byCollection).reduce((sum, tally) => sum + tally.skipped, 0);
+  return {
+    collections,
+    inFile,
+    exists,
+    fresh: plan.rows.length,
+    conflict: plan.conflicts.length,
+    unpriced: plan.rows.filter(
+      (row) => !(row.price > 0) && !Object.values((row.meta.finishPrices as Record<string, number | null> | undefined) ?? {}).some((p) => typeof p === 'number' && p > 0),
+    ).length,
+    duplicate: packs.reduce((sum, pack) => sum + pack.duplicate, 0),
+    incomplete: packs.reduce((sum, pack) => sum + pack.incomplete, 0),
+    ineligible: packs.reduce((sum, pack) => sum + pack.ineligible, 0),
+    nameUnverified: chosen.reduce(
+      (sum, collection) => sum + collection.items.filter((item) => item.provenance?.nameVerified === false).length,
+      0,
+    ),
+    byCollection: plan.byCollection,
+    conflicts: plan.conflicts,
+  };
 }
 
 /**
@@ -507,6 +659,8 @@ export function materialItemOf(entry: CatalogEntryFull): MaterialItem | null {
     colorHex: color,
     photo: url && sized ? { url, sizeM: [size![0], size![1]] } : null,
     photoWithoutSize: Boolean(url) && !sized,
+    brand: typeof entry.meta?.brand === 'string' && entry.meta.brand ? entry.meta.brand : null,
+    review: reviewNoteOf(entry.meta),
   };
 }
 
@@ -531,15 +685,16 @@ export const MATERIAL_TABS: { key: string; title: string }[] = [
 ];
 
 /** Куда ложится материал. */
-export type MaterialTarget = 'fronts' | 'carcass' | 'countertop' | 'module';
+export type MaterialTarget = 'fronts' | 'carcass' | 'countertop' | 'module' | 'module-carcass';
 
-export const MATERIAL_TARGETS: MaterialTarget[] = ['fronts', 'carcass', 'countertop', 'module'];
+export const MATERIAL_TARGETS: MaterialTarget[] = ['fronts', 'carcass', 'countertop', 'module', 'module-carcass'];
 
 export const TARGET_TITLE: Record<MaterialTarget, string> = {
   fronts: 'Фасады всей кухни',
   carcass: 'Корпус всей кухни',
   countertop: 'Столешница',
   module: 'Выбранный модуль',
+  'module-carcass': 'Корпус выбранного модуля',
 };
 
 /** Выбранный модуль — это его фасад: корпус модуля красит панель модуля. */
@@ -548,6 +703,7 @@ export const TARGET_ROLE: Record<MaterialTarget, MaterialRole> = {
   carcass: 'carcass',
   countertop: 'countertop',
   module: 'front',
+  'module-carcass': 'carcass',
 };
 
 /** «Столешницы не идут на корпус» — винительный падеж цели. */
@@ -556,6 +712,7 @@ const TARGET_ON: Record<MaterialTarget, string> = {
   carcass: 'на корпус',
   countertop: 'на столешницу',
   module: 'на фасад модуля',
+  'module-carcass': 'на корпус модуля',
 };
 
 export type MaterialTab = {
@@ -729,6 +886,17 @@ export function materialOps(
       ops: CARCASS_SCOPES.map((scope) => ({ op: 'set_carcass' as const, scope: scope.key, itemId: choice.item.id })),
       note: null,
     };
+  }
+
+  /*
+   * КОРПУС ОДНОГО МОДУЛЯ (P3): тот же `set_carcass`, адрес — модуль. Соседи
+   * не трогаются: «EGGER на корпус левого шкафа» — это ровно левый шкаф.
+   */
+  if (target === 'module-carcass') {
+    if (!selectedModuleId) return { refusal: 'Выберите модуль в сцене — материал ляжет на его корпус.' };
+    const unit = allModules(run).find((m) => m.id === selectedModuleId);
+    if (!unit) return { refusal: `Модуля ${selectedModuleId} на этой стене нет.` };
+    return { ops: [{ op: 'set_carcass', moduleId: unit.id, itemId: choice.item.id }], note: null };
   }
 
   if (!FRONT_BASE_OF_CATEGORY[choice.collection.category]) {

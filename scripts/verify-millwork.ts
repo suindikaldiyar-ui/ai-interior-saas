@@ -28,6 +28,10 @@ import * as motionNs from '../components/millwork/cabinet3d/motion';
 import * as opsNs from '../lib/millwork/ops';
 import * as estimateNs from '../lib/millwork/estimate';
 import * as objectEstimateModule from '../lib/millwork/objectEstimate';
+import * as countertopNs from '../lib/millwork/countertop';
+import * as layoutNs from '../lib/millwork/layout';
+import * as cabinetBoxesNs from '../lib/millwork/cabinetBoxes';
+import * as sceneLayersNs from '../lib/millwork/sceneLayers';
 import {
   catalogEntriesFromRows,
   collectionPriceRow,
@@ -26825,6 +26829,521 @@ console.log('\nR01: независимые отсеки — полки толь�
       );
     }
   }
+
+  /* ═══════════  P3D-CAT-01 P0: лишняя полоса в шкафу и дубль ключа модуля  ═══════════ */
+  /*
+   * Источник «полки посередине» (объект владельца «Жк нью сити», модуль
+   * tall-0@w1): меш ниши под верхним рядом рисовался на всю длину ряда на
+   * кухонной отметке 1446…1454 мм, как только в ряду был хоть один висящий
+   * сегмент, — а в спальне это антресоли НА КРЫШЕ шкафов. В раскрое и смете
+   * полосы нет — она только в сцене. Второй дефект того же объекта: две
+   * антресоли на 0 и 1000 мм с одним ключом `upper-0@w1` после замены.
+   *
+   * Путь экрана: спальня, `composeVariants` → `applyOps` (антресоль ряда и два
+   * модуля в ней — тем же входом, что библиотека). Новые функции берутся через
+   * пространства имён: на прежнем коде проверка падает словами.
+   */
+  /**
+   * Шкаф спальни путём экрана: `composeVariants` → `applyOps`. Остаётся один
+   * шкаф «Полки» 1000 мм; система дверей и потолок — параметры (у владельца
+   * распашные двери). Тот же вход, что у кнопок.
+   */
+  const fixtureWardrobe = ({
+    production = DEFAULT_PRODUCTION,
+    ceilingMm = 2600,
+    doorSystem,
+  }: { production?: ProductionSettings; ceilingMm?: number; doorSystem?: RunRequirements['doorSystem'] } = {}) => {
+    const req: RunRequirements = { ...R01_REQ, ...(doorSystem ? { doorSystem } : {}) };
+    const measurement: Measurement = {
+      id: 'p3d',
+      ceilingHeightMm: ceilingMm,
+      walls: [{ id: 'w1', lengthMm: 3000, angleDeg: 90, openings: [] }],
+      comms: [],
+      photos: [],
+      measuredBy: 'P3D',
+      measuredAt: '2026-10-17',
+      notes: '',
+    };
+    const input = workspaceInput({ title: 'P3D', zone: 'Спальня', measurement, requirements: req, rates: DEMO_RATES, wallId: 'w1', cornerAt: null, production });
+    let edited: Partial<Record<VariantKey, Run>> = {};
+    const shown = () => composeVariants(input, disabledR01, edited).find((v) => v.key === 'optimal')!;
+    const ops = (list: MillworkOp[]): Run => {
+      const next = applyOps({ run: shown().run, requirements: req, ops: list, openings: input.openings, roomDepthMm: 0 });
+      edited = { ...edited, optimal: next };
+      return next;
+    };
+    const start = shown().run;
+    const cabinet = start.modules.find((m) => m.section === 'shelves');
+    if (!cabinet) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: в ряду спальни нет шкафа «Полки»');
+    ops(start.modules.filter((m) => m.id !== cabinet.id).map((m) => ({ op: 'remove_module' as const, moduleId: m.id })));
+    const run = ops([{ op: 'set_width', moduleId: cabinet.id, widthMm: 1000 }]);
+    const unit = run.modules.find((m) => m.id === cabinet.id);
+    if (!unit) throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: шкаф ${cabinet.id} пропал после правки ширины`);
+    return { input, ops, run, unit, production, shown, req };
+  };
+
+  /** Спальня по готовому решению с секцией «антресоль»: шкафы и антресоль ряда на их крыше (как у владельца). */
+  const fixtureMezzRow = () => {
+    const req: RunRequirements = {
+      ...R01_REQ,
+      mode: 'template',
+      doorSystem: 'hinged',
+      sections: ['hanging_long', 'shelves', 'mezzanine'],
+    };
+    const input = workspaceInput({
+      title: 'P0',
+      zone: 'Спальня',
+      measurement: {
+        id: 'p0',
+        ceilingHeightMm: 2500,
+        walls: [{ id: 'w1', lengthMm: 2500, angleDeg: 90, openings: [] }],
+        comms: [],
+        photos: [],
+        measuredBy: 'P0',
+        measuredAt: '2026-10-17',
+        notes: '',
+      },
+      requirements: req,
+      rates: DEMO_RATES,
+      wallId: 'w1',
+      cornerAt: null,
+      production: DEFAULT_PRODUCTION,
+    });
+    let edited: Partial<Record<VariantKey, Run>> = {};
+    const shown = () => composeVariants(input, disabledR01, edited).find((v) => v.key === 'optimal')!.run;
+    const ops = (list: MillworkOp[]): Run => {
+      const next = applyOps({ run: shown(), requirements: req, ops: list, openings: input.openings, roomDepthMm: 0 });
+      edited = { optimal: next };
+      return next;
+    };
+    return { input, shown, ops, req };
+  };
+
+  console.log('\nP0: полоса ниши только под висящими шкафами; ключ модуля уникален после замены');
+  {
+    const ctNs = countertopNs as unknown as Record<string, ((...args: unknown[]) => unknown) | undefined>;
+    const layoutAny = layoutNs as unknown as Record<string, ((...args: unknown[]) => unknown) | undefined>;
+    type Niche = { fromMm: number; toMm: number; bottomMm: number; depthMm: number };
+    const nichesOf = (run: Run): Niche[] | null => {
+      const fn = ctNs.upperNicheSpans;
+      return fn ? (fn(run) as Niche[]) : null;
+    };
+    /** Полоса ниши против корпусов модулей — в мм, тем же местом, что рисует сцена. */
+    const nicheHits = (run: Run, spans: Niche[]) => {
+      const rowDepth = rowStandardDepthMm(run.zone, 'base', run.production);
+      const hits: string[] = [];
+      for (const span of spans) {
+        const n = { x0: span.fromMm, x1: span.toMm, y0: span.bottomMm - 8, y1: span.bottomMm, z0: -rowDepth, z1: -rowDepth + span.depthMm };
+        for (const place of runPlaces(run)) {
+          const m = {
+            x0: place.x * 1000,
+            x1: place.x * 1000 + place.unit.widthMm,
+            y0: place.y * 1000,
+            y1: (place.y + place.heightM) * 1000,
+            z0: (place.zM - place.depthM) * 1000,
+            z1: place.zM * 1000,
+          };
+          const d = Math.min(Math.min(n.x1, m.x1) - Math.max(n.x0, m.x0), Math.min(n.y1, m.y1) - Math.max(n.y0, m.y0), Math.min(n.z1, m.z1) - Math.max(n.z0, m.z0));
+          if (d > 1) hits.push(`${span.fromMm}…${span.toMm}@${span.bottomMm} × ${place.unit.id}: ${Math.round(d)} мм`);
+        }
+      }
+      return hits;
+    };
+
+    /*
+     * Спальня как у владельца: шкафы и антресоль ряда на их крыше. У
+     * владельца она пришла из готового решения с секцией «антресоль»
+     * (`buildSectionRun`): в свободной сборке спальни верхнего ряда нет, и
+     * библиотека антресоль ряда не ставит. Тот же путь: шаблон спальни.
+     */
+    const mz = fixtureMezzRow();
+    const b = mz.shown();
+    const fx = { input: mz.input, ops: mz.ops };
+    const mezzOf = (run: Run) => run.upperSegments.flatMap((s) => s.modules).filter((m) => m.section === 'mezzanine');
+    const tallUnder = b.modules.filter((m) => m.kind === 'tall');
+    const owner = nichesOf(b);
+    check(
+      'P0.N1 спальня с антресолью ряда на крыше шкафов: полосы ниши нет вовсе, ни одна полоса не входит в шкаф',
+      owner !== null && owner.length === 0 && nicheHits(b, owner).length === 0 && mezzOf(b).length >= 2 && tallUnder.length >= 2,
+      owner === null
+        ? 'НЕТ ФУНКЦИИ upperNicheSpans: ниша рисуется на всю длину ряда на кухонной отметке'
+        : `полос ${owner.length}: ${owner.map((s) => `${s.fromMm}…${s.toMm}@${s.bottomMm}`).join(' · ') || '—'} · антресолей ${mezzOf(b).length} (${mezzOf(b).map((m) => m.id).join(', ')}) · шкафов ${tallUnder.length}`,
+    );
+
+    /* Кухня: полоса под висящими шкафами, на их отметке; сквозь колонну и пеналы — ни миллиметра. */
+    const kitchen = buildRun(baseInput);
+    const kitchenNiche = nichesOf(kitchen) ?? [];
+    const hanging = kitchen.upperSegments.flatMap((s) => s.modules).filter((m) => (m.kind === 'upper' || m.kind === 'corner_upper') && m.section !== 'mezzanine');
+    const hangingMm = hanging.reduce((sum, m) => sum + m.widthMm, 0);
+    const nicheMm = kitchenNiche.reduce((sum, s) => sum + s.toMm - s.fromMm, 0);
+    const kitchenHits = nicheHits(kitchen, kitchenNiche);
+    check(
+      'P0.N2 кухня (демо-ряд): полоса ниши ровно под висящими шкафами — длина = сумме их ширин, отметка = их низ, пересечений с корпусами 0',
+      kitchenNiche.length > 0 &&
+        nicheMm === hangingMm &&
+        kitchenNiche.every((s) => s.bottomMm === upperBottomMm(kitchen.production)) &&
+        kitchenHits.length === 0,
+      `полос ${kitchenNiche.length}, ${nicheMm} мм при висящих ${hangingMm} мм · пересечений ${kitchenHits.length}${kitchenHits.length ? `: ${kitchenHits.slice(0, 2).join(' | ')}` : ''}`,
+    );
+
+    /* Полоса ниши — не деталь: раскрой и смета от правки не меняются. */
+    check(
+      'P0.N3 полоса ниши не деталь раскроя: в раскрое кухни и спальни — только детали модулей ряда, строки без модуля нет',
+      [kitchen, b].every((run) => { const ids = new Set(allModules(run).map((m) => m.id)); return buildPanels({ run }).every((p) => ids.has(p.moduleId) || p.moduleId.endsWith(':corner') || p.moduleId.endsWith(':tail')); }),
+      `деталей кухни ${buildPanels({ run: kitchen }).length} · спальни ${buildPanels({ run: b }).length}`,
+    );
+
+    /* Дубль ключа: обе антресоли заменены тем же входом, что карточка библиотеки. */
+    const [m0, m1] = mezzOf(b).sort((p, q) => p.offsetMm - q.offsetMm);
+    fx.ops([{ op: 'replace_module', moduleId: m0.id, kind: 'upper' }]);
+    const replaced = fx.ops([{ op: 'replace_module', moduleId: m1.id, kind: 'upper' }]);
+    const ids = allModules(replaced).map((m) => m.id);
+    const doors = openablePartIds(replaced);
+    check(
+      'P0.D1 замена двух антресолей (0 и 900 мм): ключи модулей и ключи открывания уникальны, у каждой — ключ своего места',
+      new Set(ids).size === ids.length &&
+        new Set(doors).size === doors.length &&
+        [m0.id, m1.id].every((id) => mezzOf(replaced).some((m) => m.id === id)),
+      `ключи антресолей ${mezzOf(replaced).map((m) => `${m.id}@${m.offsetMm}`).join(' · ')} · дублей ${ids.length - new Set(ids).size} · дублей створок ${doors.length - new Set(doors).size}`,
+    );
+
+    /* Сохранённый объект с дублем (как у владельца) открывается без дубля и с тем же отпечатком. */
+    const broken: Run = {
+      ...replaced,
+      upperSegments: replaced.upperSegments.map((s) => ({
+        ...s,
+        modules: s.modules.map((m) => (m.section === 'mezzanine' ? { ...m, id: 'upper-0@w1' } : m)),
+      })),
+    };
+    const fixedFn = layoutAny.uniqueModuleIds;
+    const fixed = fixedFn ? (fixedFn(broken) as Run) : broken;
+    const shownBroken = composeVariants(fx.input, disabledR01, { optimal: broken }).find((v) => v.key === 'optimal')!.run;
+    const shownIds = allModules(shownBroken).map((m) => m.id);
+    check(
+      'P0.D2 сохранённый ряд с двумя `upper-0@w1`: на показе ключи уникальны, первая держит свой, отпечаток и раскрой те же',
+      Boolean(fixedFn) &&
+        new Set(shownIds).size === shownIds.length &&
+        mezzOf(fixed)[0].id === 'upper-0@w1' &&
+        mezzOf(fixed)[1].id !== 'upper-0@w1' &&
+        runFingerprint(fixed) === runFingerprint(broken) &&
+        buildPanels({ run: fixed }).length === buildPanels({ run: broken }).length,
+      fixedFn
+        ? `на показе: ${mezzOf(shownBroken).map((m) => m.id).join(' · ')} · отпечаток ${runFingerprint(broken)} → ${runFingerprint(fixed)}`
+        : 'НЕТ ФУНКЦИИ uniqueModuleIds',
+    );
+  }
+
+  /* ═══════════  P3D-CAT-01 P1: слои вида — состояние вида, не конструкция  ═══════════ */
+  console.log('\nP1: слои 3D — одна классификация коробок, предустановки, ряд от вида не меняется');
+  {
+    const cbNs = cabinetBoxesNs as unknown as Record<string, ((...args: unknown[]) => unknown) | undefined>;
+    const slNs = sceneLayersNs as unknown as Record<string, unknown>;
+    const boxLayerFn = cbNs.boxLayer as ((box: unknown) => string) | undefined;
+    const presetLayersFn = slNs.presetLayers as ((p: string) => Record<string, boolean>) | undefined;
+    const presetOfFn = slNs.presetOf as ((l: Record<string, boolean>) => string | null) | undefined;
+    const LAYERS = (slNs.SCENE_LAYERS as string[] | undefined) ?? [];
+
+    /*
+     * Шкаф на петлях (у владельца — распашной): отсек 1 — полки, отсек 2 —
+     * ящики снизу, перегородка, штанга сверху. Собирается кнопками R02A/R02B
+     * (`splitBayHorizontal`, `setZoneFunction`) и одной операцией `set_fill`.
+     */
+    const fx = fixtureWardrobe({ doorSystem: 'hinged' });
+    const bz = baysNs as unknown as Record<string, (...args: unknown[]) => unknown>;
+    const editOf = (edit: unknown, label: string): ModuleFill => {
+      const e = edit as { fill?: ModuleFill; refusal?: string; loss?: string };
+      if (!e.fill) throw new Error(`P1 приспособление: ${label} — ${e.refusal ?? e.loss ?? 'нет ответа'}`);
+      return e.fill;
+    };
+    const unit0 = fx.run.modules.find((m) => m.id === fx.unit.id)!;
+    const withStack = fx.ops([
+      {
+        op: 'set_fill',
+        moduleId: unit0.id,
+        fill: {
+          ...unit0.fill!,
+          shelves: [],
+          dividerMm: 0,
+          rodsMm: [],
+          drawerHeights: [],
+          bays: [
+            { id: 'b1', widthMm: 476, shelves: { mode: 'even', count: 4 } },
+            { id: 'b2', shelves: { mode: 'even', count: 0 }, drawers: { id: 'd1', fromMm: 0, heightMm: 450, drawers: { mode: 'even', count: 3 }, front: 'inset', slideItemId: null } },
+          ],
+        } as unknown as ModuleFill,
+      },
+    ]);
+    const u1 = withStack.modules.find((m) => m.id === unit0.id)!;
+    const split = fx.ops([{ op: 'set_fill', moduleId: u1.id, fill: editOf(bz.splitBayHorizontal(u1, bayEnvelope(u1, withStack), 'b2'), 'разделить b2') }]);
+    const u2 = split.modules.find((m) => m.id === unit0.id)!;
+    const zoned = fx.ops([{ op: 'set_fill', moduleId: u2.id, fill: editOf(bz.setZoneFunction(u2, bayEnvelope(u2, split), 'b2', 'z2', 'rod', true), 'штанга в z2') }]);
+    const boxes = runBoxes(zoned, { thicknessMm: 16, frontThicknessMm: 18, gapMm: 3 });
+    const tally: Record<string, number> = {};
+    for (const box of boxes) {
+      const layer = boxLayerFn ? boxLayerFn(box) : 'НЕТ boxLayer';
+      tally[layer] = (tally[layer] ?? 0) + 1;
+    }
+    const tallyWords = Object.entries(tally).map(([k, v]) => `${k} ${v}`).join(' · ');
+    check(
+      'P1.L1 каждая коробка ряда — ровно в одном из шести слоёв; у шкафа с отсеками, ящиками, штангой и дверями заняты все шесть',
+      Boolean(boxLayerFn) &&
+        LAYERS.length === 6 &&
+        boxes.every((box) => LAYERS.includes(boxLayerFn!(box))) &&
+        LAYERS.every((layer) => (tally[layer] ?? 0) > 0) &&
+        Object.values(tally).reduce((s, v) => s + v, 0) === boxes.length,
+      `${boxes.length} коробок: ${tallyWords}`,
+    );
+    const panelsBefore = JSON.stringify(buildPanels({ run: zoned }));
+    const fpBefore = zoned.fingerprint;
+    const fill = presetLayersFn ? presetLayersFn('fill') : null;
+    const shownFill = fill && boxLayerFn ? boxes.filter((box) => fill[boxLayerFn(box)]) : [];
+    check(
+      'P1.L2 «Наполнение»: без корпуса и фасадов — остаются полки, перегородки, ящики и фурнитура; ни одной боковины и ни одного фасада',
+      Boolean(fill) &&
+        fill!.carcass === false &&
+        fill!.fronts === false &&
+        shownFill.length > 0 &&
+        shownFill.every((box) => box.material !== 'front' && box.panel !== SIDE_PANEL_NAME) &&
+        shownFill.some((box) => box.panel === SHELF_PANEL_NAME) &&
+        shownFill.some((box) => box.part?.includes(':drawer:')),
+      `показано ${shownFill.length} из ${boxes.length}`,
+    );
+    const presets = ['design', 'frame', 'fill', 'fronts', 'hardware'];
+    check(
+      'P1.L3 пять предустановок различаются и узнаются по набору слоёв; «Дизайн» — все слои; набор вне предустановок — «свой»',
+      Boolean(presetLayersFn && presetOfFn) &&
+        presets.every((p) => presetOfFn!(presetLayersFn!(p)) === p) &&
+        new Set(presets.map((p) => JSON.stringify(presetLayersFn!(p)))).size === 5 &&
+        LAYERS.every((l) => presetLayersFn!('design')[l] === true) &&
+        presetOfFn!({ carcass: true, partitions: false, shelves: true, drawers: false, fronts: false, hardware: false }) === null,
+      presetLayersFn ? presets.map((p) => `${p}: ${LAYERS.filter((l) => presetLayersFn(p)[l]).join('+')}`).join(' | ') : 'НЕТ presetLayers',
+    );
+    const shownFn = cbNs.boxShown as ((box: unknown, layers: Record<string, boolean>) => boolean) | undefined;
+    const hw = presetLayersFn ? presetLayersFn('hardware') : null;
+    const onFront = (box: (typeof boxes)[number]) => (box.node === 'hinge' || box.node === 'handle') && box.part !== undefined;
+    const fillShown = shownFn && fill ? boxes.filter((box) => shownFn(box, fill)) : [];
+    const hwShown = shownFn && hw ? boxes.filter((box) => shownFn(box, hw)) : [];
+    check(
+      'P1.L5 фурнитура фасада уходит с фасадом: в «Наполнении» чашек петель и ручек 0, штанга есть; в «Фурнитуре» — петли, ручки и штанга на своих местах',
+      Boolean(shownFn) &&
+        boxes.some(onFront) &&
+        !fillShown.some(onFront) &&
+        fillShown.some((box) => box.node === 'rod') &&
+        hwShown.some((box) => box.node === 'hinge') &&
+        hwShown.some((box) => box.node === 'handle') &&
+        hwShown.some((box) => box.node === 'rod'),
+      shownFn
+        ? `«Наполнение»: на фасаде ${fillShown.filter(onFront).length}, штанг ${fillShown.filter((b) => b.node === 'rod').length} · «Фурнитура»: петель ${hwShown.filter((b) => b.node === 'hinge').length}, ручек ${hwShown.filter((b) => b.node === 'handle').length}`
+        : 'НЕТ boxShown',
+    );
+    check(
+      'P1.L4 слои — состояние вида: состав, отпечаток и раскрой ряда после выбора всех предустановок прежние',
+      JSON.stringify(buildPanels({ run: zoned })) === panelsBefore && zoned.fingerprint === fpBefore,
+      `отпечаток ${fpBefore}`,
+    );
+  }
+
+  /* ═══════════  P3D-CAT-01 P2: антресоль — отдельный верхний корпус НАД шкафом  ═══════════ */
+  /*
+   * Пример владельца: шкаф W1000 × H2000 × D600, над ним антресоль H400, потолок
+   * 2600. Цоколь 100 + 2000 + 400 = 2500 ≤ 2600 — встаёт; 600 вместо 400 — нет,
+   * не хватает 100 мм. Путь экрана — тот же `applyOps`, что у кнопки «Над шкафом».
+   */
+  console.log('\nP2: антресоль над шкафом — свой корпус, свои фасады, отказ в миллиметрах, две позиции в раскрое');
+  {
+    const fixtureP2 = (production: ProductionSettings = DEFAULT_PRODUCTION) => fixtureWardrobe({ production, doorSystem: 'hinged' });
+    const overOf = (run: Run) => run.upperSegments.flatMap((s) => s.modules).filter((m) => (m as Module & { overhead?: unknown }).overhead);
+    const words = (run: Run) => run.warnings.join(' | ') || 'отказов нет';
+    const fx = fixtureP2();
+    const cab = fx.unit;
+    const plinth = plinthMm(fx.run.production);
+    check(
+      'P2.0 приспособление: шкаф «Полки» 1000 мм у стены, один в ряду, корпус до потолка 2600',
+      fx.run.modules.length === 1 && cab.widthMm === 1000 && cab.offsetMm >= 0 && moduleCarcassHeightMm(cab, fx.run) === 2600 - plinth,
+      `${fx.run.modules.map((m) => `${m.id} ${m.widthMm}@${m.offsetMm} h${moduleCarcassHeightMm(m, fx.run)}`).join(' · ')}`,
+    );
+
+    const full = fx.ops([{ op: 'add_overhead', moduleId: cab.id, heightMm: 400 } as MillworkOp]);
+    check(
+      'P2.1 шкаф до потолка: антресоль 400 не встаёт — «до потолка над шкафом 0 мм … не хватает 400 мм», шкаф не укорочен молча',
+      overOf(full).length === 0 &&
+        /до потолка над шкафом 0 мм/.test(words(full)) &&
+        /не хватает 400 мм/.test(words(full)) &&
+        /Опустите шкаф до 2100 мм/.test(words(full)) &&
+        moduleCarcassHeightMm(full.modules[0], full) === 2600 - plinth,
+      words(full),
+    );
+
+    const tooTall = fx.ops([{ op: 'add_overhead', moduleId: cab.id, heightMm: 600, baseHeightMm: 2000 } as MillworkOp]);
+    check(
+      'P2.2 шкаф 2000 + антресоль 600 при потолке 2600: не встаёт — доступно 500, не хватает 100 мм',
+      overOf(tooTall).length === 0 && /до потолка над шкафом 500 мм/.test(words(tooTall)) && /не хватает 100 мм/.test(words(tooTall)),
+      words(tooTall),
+    );
+
+    /* Полки шкафа «Полки» стоят до 2112 мм — опустить до 2000 нельзя, пока они там. */
+    const shelfLoss = fx.ops([{ op: 'add_overhead', moduleId: cab.id, heightMm: 400, baseHeightMm: 2000 } as MillworkOp]);
+    const shelvesNow = shelfLoss.modules[0].fill?.shelves ?? [];
+    check(
+      'P2.3 полка выше новой крыши называется поимённо — шкаф не опускается, полки не снимаются молча',
+      overOf(shelfLoss).length === 0 &&
+        /не опустить до 2000 мм/.test(words(shelfLoss)) &&
+        shelvesNow.some((mm) => mm > 1984) &&
+        new RegExp(`${shelvesNow.filter((mm) => mm + 8 > 1984).join(', ')} мм выше новой крыши 1984 мм`).test(words(shelfLoss)),
+      `${words(shelfLoss)} · полки ${shelvesNow.join(',')}`,
+    );
+
+    /* Полки ниже 1900 — тем же `set_fill`, что у кнопок; затем антресоль встаёт. */
+    const low = fx.ops([{ op: 'set_fill', moduleId: cab.id, fill: { ...fx.run.modules[0].fill!, shelves: [352, 704, 1056, 1408, 1760] } }]);
+    const added = fx.ops([{ op: 'add_overhead', moduleId: low.modules[0].id, heightMm: 400, baseHeightMm: 2000 } as MillworkOp]);
+    const over = overOf(added)[0] as (Module & { overhead?: { depthMm: number }; heightMm?: number }) | undefined;
+    const base = added.modules[0];
+    const overPlace = over ? runPlaces(added).find((p) => p.unit.id === over.id) : undefined;
+    check(
+      'P2.4 шкаф W1000 × H2000 × D600 + антресоль H400 при потолке 2600: встала — низ 2100, верх 2500, ширина 1000, глубина 600',
+      Boolean(over && overPlace) &&
+        added.warnings.length === 0 &&
+        moduleCarcassHeightMm(base, added) === 2000 &&
+        over!.widthMm === 1000 &&
+        over!.offsetMm === base.offsetMm &&
+        Math.round(overPlace!.y * 1000) === plinth + 2000 &&
+        Math.round((overPlace!.y + overPlace!.heightM) * 1000) === plinth + 2400 &&
+        Math.round(overPlace!.depthM * 1000) === 600 &&
+        over!.id === `over-${base.offsetMm}@w1`,
+      over && overPlace
+        ? `${over.id}: ${over.widthMm}×${Math.round(overPlace.heightM * 1000)}×${Math.round(overPlace.depthM * 1000)} на ${Math.round(overPlace.y * 1000)} мм · шкаф ${moduleCarcassHeightMm(base, added)} · ${words(added)}`
+        : `антресоли нет · ${words(added)}`,
+    );
+
+    const panels = buildPanels({ run: added, production: DEFAULT_PRODUCTION });
+    const baseSides = panels.filter((p) => p.moduleId === base.id && p.name === SIDE_PANEL_NAME);
+    const overSides = panels.filter((p) => p.moduleId === over?.id && p.name === SIDE_PANEL_NAME);
+    const overFronts = panels.filter((p) => p.moduleId === over?.id && /Фасад/.test(p.name));
+    const overlaps = moduleOverlaps(added);
+    check(
+      'P2.5 в раскрое ДВЕ позиции: боковины шкафа 2000 и боковины антресоли 400, у антресоли свои фасады; пересечений корпусов 0',
+      baseSides.length > 0 &&
+        overSides.length > 0 &&
+        baseSides.every((p) => Math.max(p.lengthMm, p.widthMm) === 2000) &&
+        overSides.every((p) => Math.min(p.lengthMm, p.widthMm) === 400 || Math.max(p.lengthMm, p.widthMm) === 600) &&
+        overFronts.length > 0 &&
+        overlaps.length === 0,
+      `шкаф: ${baseSides.map((p) => `${p.lengthMm}×${p.widthMm}·${p.qty}`).join(',')} · антресоль: ${overSides.map((p) => `${p.lengthMm}×${p.widthMm}·${p.qty}`).join(',')} · фасадов ${overFronts.length} · пересечений ${overlaps.length}`,
+    );
+
+    const doors = openablePartIds(added);
+    const overDoors = doors.filter((id) => over && id.startsWith(`${over.id}:`));
+    check(
+      'P2.6 у антресоли свои створки со своими ключами: открывание одной не задевает шкаф под ней',
+      overDoors.length > 0 && new Set(doors).size === doors.length && !doors.filter((id) => id.startsWith(`${base.id}:`)).some((id) => overDoors.includes(id)),
+      `створки антресоли ${overDoors.join(', ') || 'НЕТ'} · всего ключей ${doors.length}`,
+    );
+
+    /* Сохранить → открыть: тот же ключ, тот же габарит, тот же отпечаток. */
+    const round = JSON.parse(JSON.stringify(added)) as Run;
+    const reopened = composeVariants(fx.input, disabledR01, { optimal: round }).find((v) => v.key === 'optimal')!.run;
+    const again = overOf(reopened)[0] as (Module & { heightMm?: number }) | undefined;
+    check(
+      'P2.7 сохранить и открыть: ключ антресоли, её габарит, высота шкафа и отпечаток — те же',
+      again?.id === over?.id && again?.heightMm === 400 && runFingerprint(reopened) === runFingerprint(added) && moduleCarcassHeightMm(reopened.modules[0], reopened) === 2000,
+      `${again?.id} h${again?.heightMm} · отпечаток ${runFingerprint(added)} → ${runFingerprint(reopened)}`,
+    );
+
+    /* Правки: шире шкафа, глубже шкафа — отказ; ниже — принято. */
+    const wide = fx.ops([{ op: 'set_overhead', moduleId: over!.id, widthMm: 1100 } as MillworkOp]);
+    const deep = fx.ops([{ op: 'set_overhead', moduleId: over!.id, depthMm: 650 } as MillworkOp]);
+    const shorter = fx.ops([{ op: 'set_overhead', moduleId: over!.id, heightMm: 350, depthMm: 450 } as MillworkOp]);
+    const shorterOver = overOf(shorter)[0] as (Module & { heightMm?: number; overhead?: { depthMm: number } }) | undefined;
+    /* Поле обязано ДОЕХАТЬ: место в сцене (задней плоскостью на стене) и боковины в раскрое — 450, а не 600. */
+    const shorterPlace = shorterOver ? runPlaces(shorter).find((p) => p.unit.id === shorterOver.id) : undefined;
+    const shorterSides = shorterOver
+      ? buildPanels({ run: shorter, production: DEFAULT_PRODUCTION }).filter((p) => p.moduleId === shorterOver.id && p.name === SIDE_PANEL_NAME)
+      : [];
+    check(
+      'P2.8 правка антресоли: шире шкафа на 100 мм и глубже на 50 мм — отказ с числом; 350 × 450 — принято, ключ тот же; глубина 450 доехала до сцены и раскроя',
+      /шире шкафа «[^»]+» \(1000 мм\) на 100 мм/.test(words(wide)) &&
+        /глубже шкафа «[^»]+» \(600 мм\) на 50 мм/.test(words(deep)) &&
+        shorterOver?.id === over?.id &&
+        shorterOver?.heightMm === 350 &&
+        shorterOver?.overhead?.depthMm === 450 &&
+        Math.round((shorterPlace?.depthM ?? 0) * 1000) === 450 &&
+        Math.round((shorterPlace?.heightM ?? 0) * 1000) === 350 &&
+        shorterSides.length > 0 &&
+        shorterSides.every((p) => Math.max(p.lengthMm, p.widthMm) <= 450 && Math.min(p.lengthMm, p.widthMm) === 350) &&
+        shorter.warnings.length === 0,
+      `${words(wide)} || ${words(deep)} || ${shorterOver?.id} ${shorterOver?.heightMm}×${shorterOver?.overhead?.depthMm} · в сцене ${Math.round((shorterPlace?.heightM ?? 0) * 1000)}×${Math.round((shorterPlace?.depthM ?? 0) * 1000)} · боковины ${shorterSides.map((p) => `${p.lengthMm}×${p.widthMm}`).join(',')}`,
+    );
+
+    /* Шкаф под антресолью не снимается и не переезжает молча. */
+    const baseGone = fx.ops([{ op: 'remove_module', moduleId: base.id }]);
+    check(
+      'P2.9 снять шкаф под антресолью нельзя: отказ «осталась бы без опоры», ряд прежний',
+      baseGone.modules.length === 1 && overOf(baseGone).length === 1 && /без опоры/.test(words(baseGone)),
+      words(baseGone),
+    );
+
+    /* Убрать антресоль: наполнение шкафа под ней цело до байта. */
+    const fillBefore = JSON.stringify(fx.shown().run.modules[0].fill);
+    const removed = fx.ops([{ op: 'remove_module', moduleId: over!.id }]);
+    check(
+      'P2.10 «Убрать антресоль»: её нет ни в ряду, ни в раскрое; наполнение шкафа под ней прежнее до байта',
+      overOf(removed).length === 0 &&
+        !buildPanels({ run: removed }).some((p) => p.moduleId === over!.id) &&
+        JSON.stringify(removed.modules[0].fill) === fillBefore,
+      `модулей ${allModules(removed).length} · ${words(removed)}`,
+    );
+    const restored = fx.ops([{ op: 'set_height', moduleId: removed.modules[0].id, heightMm: null } as MillworkOp]);
+    check(
+      'P2.11 «Вернуть шкафу высоту до потолка»: корпус снова 2500, отпечаток — как до антресоли',
+      moduleCarcassHeightMm(restored.modules[0], restored) === 2600 - plinth && restored.fingerprint === low.fingerprint,
+      `h${moduleCarcassHeightMm(restored.modules[0], restored)} · отпечаток ${low.fingerprint} → ${restored.fingerprint}`,
+    );
+
+    /* Антресоль ряда уже стоит — второй корпус поверх не ставится. */
+    const mz = fixtureMezzRow();
+    const rowRun = mz.shown();
+    const rowTall = rowRun.modules.find((m) => m.kind === 'tall');
+    if (!rowTall) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: P2.12 — в спальне с антресолью ряда нет высокого шкафа');
+    const doubled = mz.ops([{ op: 'add_overhead', moduleId: rowTall.id, heightMm: 300 } as MillworkOp]);
+    check(
+      'P2.12 над шкафом уже стоит антресоль ряда (готовое решение с секцией «антресоль») — второй корпус сверху не ставится, отказ называет её',
+      rowRun.upperSegments.some((s) => s.modules.some((m) => m.section === 'mezzanine')) &&
+        overOf(doubled).length === 0 &&
+        /уже стоит «/.test(words(doubled)),
+      words(doubled),
+    );
+
+    /* Кухня: на нижний шкаф антресоль не ставится — на него ложится столешница. */
+    const kitchenRun = buildRun(baseInput);
+    const kitchenBase = kitchenRun.modules.find((m) => m.kind === 'base' && !m.appliance)!;
+    const onBase = applyOps({ run: kitchenRun, requirements: REQ, ops: [{ op: 'add_overhead', moduleId: kitchenBase.id, heightMm: 400 } as MillworkOp], openings: OPENINGS });
+    check(
+      'P2.13 на нижний шкаф кухни антресоль не ставится — «на нижний шкаф ложится столешница»',
+      overOf(onBase).length === 0 && /ложится столешница/.test(words(onBase)),
+      words(onBase),
+    );
+
+    /* Школы цеха 16 и 18 мм: высоты те же, детали — своей толщины, ключ и отпечаток устойчивы. */
+    const shops = ([16, 18] as const).map((carcassMm) => {
+      const shop = { ...DEFAULT_PRODUCTION, carcassMm };
+      const f = fixtureP2(shop);
+      const lowered = f.ops([{ op: 'set_fill', moduleId: f.unit.id, fill: { ...f.run.modules[0].fill!, shelves: [352, 704, 1056] } }]);
+      const made = f.ops([{ op: 'add_overhead', moduleId: lowered.modules[0].id, heightMm: 400, baseHeightMm: 2000 } as MillworkOp]);
+      const o = overOf(made)[0];
+      const sides = buildPanels({ run: made, production: shop }).filter((p) => p.moduleId === o?.id && p.name === SIDE_PANEL_NAME);
+      const tops = buildPanels({ run: made, production: shop }).filter((p) => p.moduleId === o?.id && (p.name === TOP_PANEL_NAME || p.name === BOTTOM_PANEL_NAME));
+      return { carcassMm, baseOffset: made.modules[0].offsetMm, id: o?.id, fp: made.fingerprint, thick: sides.map((p) => p.thicknessMm), topLen: tops.map((p) => p.lengthMm), warn: words(made) };
+    });
+    check(
+      'P2.14 цех 16 и 18 мм: антресоль встаёт в обоих, детали своей толщины, крыша и дно короче на 2 × разницу, ключ и отпечаток те же',
+      shops.every((s) => s.id === `over-${s.baseOffset}@w1` && s.thick.length > 0 && s.thick.every((t) => t === s.carcassMm)) &&
+        shops[0].topLen.length > 0 &&
+        shops[0].topLen[0] - shops[1].topLen[0] === 4 &&
+        shops[0].fp === shops[1].fp,
+      shops.map((s) => `${s.carcassMm}: ${s.id} толщина ${s.thick.join(',')} крыша/дно ${s.topLen.join(',')} отпечаток ${s.fp} (${s.warn})`).join(' || '),
+    );
+  }
+
 }
 
 /*

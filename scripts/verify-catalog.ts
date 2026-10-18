@@ -14,12 +14,25 @@ import catalogJson from '../data/catalog/catalog.json';
 import {
   catalogEntriesFromRows,
   collectionOf,
+  importPreview,
+  materialCatalog,
   materialDefs,
+  materialOps,
   materialTabs,
   parseMaterialFile,
   planMaterialImport,
   searchMaterials,
 } from '../lib/millwork/materialCatalog';
+import { mapReviewRecords, type ReviewRecord } from '../lib/millwork/supplierReview';
+import { MATERIAL_FINISHES } from '../lib/millwork/materialFinishes';
+import { buildRun } from '../lib/millwork/layout';
+import { applyOps } from '../lib/millwork/ops';
+import { buildEstimate, totalCaption, unpricedLines } from '../lib/millwork/estimate';
+import { buildPanels } from '../lib/millwork/panels';
+import { DEFAULT_REQUIREMENTS } from '../lib/millwork/workspace';
+import { DEMO_RATES } from '../lib/millwork/demo';
+import { existsSync, readFileSync } from 'node:fs';
+import type { MillworkOp } from '../types/millwork';
 import { paletteFromCatalog } from '../lib/millwork/palette';
 import { carcassCatalog } from '../lib/millwork/carcassMaterial';
 import { DEMO_CATALOG } from '../lib/millwork/demo';
@@ -824,10 +837,17 @@ console.log('\nКаталог материалов: загрузка catalog.jso
     .map(([id, n]) => `${id} ${n.added}/${n.inFile}`)
     .join(' · ');
   check(
-    'тест 8: счёт по коллекциям назван числом, пустые — нулём, а не пропуском',
+    /*
+     * P3: EGGER и GRANDEX в файле больше не пустые — это справочные карточки
+     * пакета проверки (136 и 90). Без явного списка они НЕ грузятся: в счёте
+     * они есть числом («в файле 136, загружено 0»), а не пропуском.
+     */
+    'тест 8: счёт по коллекциям назван числом; коллекции на проверке (EGGER 136, GRANDEX 90) без явного списка — 0 загружено, а не пропуск',
     Object.keys(first.byCollection).length === file.collections.length &&
-      first.byCollection['egger-ldsp']?.inFile === 0 &&
-      first.byCollection['grandex-acrylic']?.inFile === 0,
+      first.byCollection['egger-ldsp']?.inFile === 136 &&
+      first.byCollection['egger-ldsp']?.added === 0 &&
+      first.byCollection['grandex-acrylic']?.inFile === 90 &&
+      first.byCollection['grandex-acrylic']?.added === 0,
     counts || 'НУЛЕВОЙ СЕЛЕКТОР',
   );
 
@@ -1033,6 +1053,244 @@ async function catalogReadChecks() {
   );
 }
 
+
+/* ═══════════  P3: EGGER и GRANDEX — карточки пакета проверки в существующем каталоге  ═══════════ */
+/*
+ * Пакет `CATALOG_STAGING/99_IMPORT_QUEUE/EGGER_GRANDEX` — 397 справочных
+ * карточек (EGGER 307, GRANDEX 90), а не товары: без цен, с образцами из PDF,
+ * права не подтверждены. Они ложатся позициями ТЕХ ЖЕ коллекций файла и
+ * оттуда — в `catalog_items` организации тем же `planMaterialImport`.
+ */
+console.log('\nP3: EGGER и GRANDEX — сопоставление, показ импорта, повтор без дублей, совместимость, «цена не задана»');
+{
+  const file = parseMaterialFile(catalogJson);
+  const REVIEW = ['egger-ldsp', 'egger-perfectsense', 'egger-worktops', 'grandex-acrylic'];
+  const rec = (over: Partial<ReviewRecord>): ReviewRecord => ({
+    id: 'EGGER:W1000:ST9:P76',
+    brand: 'EGGER',
+    code: 'W1000',
+    finish: 'ST9',
+    name: 'Premium White',
+    name_verified: true,
+    group: 'Decorative boards • White & Uni',
+    category: 'furniture_board',
+    preview: 'assets/EGGER/W1000_ST9_p76.webp',
+    source: 'BR+EDC26+Collection+Brochure+EAST+EN.pdf',
+    page: 76,
+    preview_status: 'PDF_PRINT_SWATCH_REFERENCE_ONLY',
+    price_status: 'UNPRICED',
+    pbr_status: 'NOT_PBR',
+    rights: 'NOT_VERIFIED',
+    ...over,
+  });
+
+  /* Одна карточка и несколько: список читается списком, а не «одним объектом». */
+  const one = mapReviewRecords([rec({})], () => '#f4f2ec', '2026-10-17');
+  const many = mapReviewRecords(
+    [
+      rec({}),
+      rec({ id: 'EGGER:W1000:ST9:P77', page: 77 }),
+      rec({ id: 'EGGER:W1000:ST9:WT', category: 'worktop', group: 'Worktops (postforming)' }),
+      rec({ id: 'EGGER:W1100:PG', code: 'W1100', finish: 'PG', group: 'PerfectSense Lacquered Boards' }),
+      rec({ id: 'EGGER:EDGE', category: 'other', group: 'Laminates/edging' }),
+      rec({ id: 'GRANDEX:A-410', brand: 'GRANDEX', code: 'A-410', finish: '12mm standard (verify by SKU)', category: 'worktop', group: 'ADVENTURE', name_verified: false, name: 'Атауы' }),
+      rec({ id: 'EGGER:NOCODE', code: '' }),
+    ],
+    () => null,
+    '2026-10-17',
+  );
+  const codes = (m: typeof many) => Object.entries(m.items).map(([c, list]) => `${c}:${list.map((i) => i.code).join('+')}`).join(' · ');
+  check(
+    'P3.C1 одна карточка — одна позиция; семь — плита, столешница EGGER, PerfectSense, GRANDEX разными позициями, повтор страницы слит, кромка и карточка без кода названы',
+    Object.values(one.items).flat().length === 1 &&
+      many.items['egger-ldsp']?.map((i) => i.code).join() === 'EGGER-W1000-ST9' &&
+      many.items['egger-ldsp']?.[0].provenance.pages.join() === '76,77' &&
+      many.items['egger-worktops']?.map((i) => i.code).join() === 'EGGER-WT-W1000-ST9' &&
+      many.items['egger-perfectsense']?.map((i) => i.code).join() === 'EGGER-W1100-PG' &&
+      many.items['grandex-acrylic']?.map((i) => i.code).join() === 'GRANDEX-A-410' &&
+      many.items['grandex-acrylic']?.[0].name === '' &&
+      many.duplicates.length === 1 &&
+      many.ineligible.map((x) => x.id).join() === 'EGGER:EDGE' &&
+      many.incomplete.map((x) => x.id).join() === 'EGGER:NOCODE',
+    `${codes(many)} · слито ${many.duplicates.length} · без детали ${many.ineligible.length} · неполных ${many.incomplete.length}`,
+  );
+
+  /* Файл в репозитории: сводка пакета сходится с позициями до карточки. */
+  const pack = file.reviewPacks[0];
+  const inCollections = REVIEW.map((id) => file.collections.find((c) => c.id === id)?.items.length ?? -1);
+  const total = inCollections.reduce((s, n) => s + n, 0);
+  check(
+    'P3.C2 файл: 397 карточек (EGGER 307, GRANDEX 90) = 136 + 29 + 82 + 90 позиций + 3 слитых повтора + 57 без детали + 0 неполных',
+    Boolean(pack) &&
+      pack.records === 397 &&
+      pack.brands.EGGER === 307 &&
+      pack.brands.GRANDEX === 90 &&
+      inCollections.join() === '136,29,82,90' &&
+      total + pack.duplicate + pack.ineligible + pack.incomplete === pack.records &&
+      pack.duplicate === 3 &&
+      pack.ineligible === 57 &&
+      pack.incomplete === 0,
+    pack ? `${pack.records} = ${inCollections.join(' + ')} + ${pack.duplicate} + ${pack.ineligible} + ${pack.incomplete}` : 'НУЛЕВОЙ СЕЛЕКТОР: reviewPacks нет',
+  );
+
+  const reviewItems = REVIEW.flatMap((id) => file.collections.find((c) => c.id === id)?.items ?? []);
+  const keyOf = (item: (typeof reviewItems)[number]) => {
+    const p = item.provenance as Record<string, unknown>;
+    return `${p.brand}|${p.manufacturerDecorCode}|${p.surfaceCode}|${p.productClass}`;
+  };
+  const required = ['brand', 'manufacturerDecorCode', 'surfaceCode', 'productClass', 'imageSource', 'sourcePdf', 'pages', 'checkedAt', 'nameVerified', 'previewStatus', 'textureStatus', 'rightsStatus', 'priceStatus', 'eligibleUse'];
+  const badProvenance = reviewItems.filter((item) => !item.provenance || required.some((key) => !(key in (item.provenance as object))));
+  const allArticles = file.collections.flatMap((c) => c.items.map((i) => i.code));
+  check(
+    'P3.C3 у каждой из 337 позиций провенанс полный; цены нет ни у одной; права NOT_VERIFIED, образец PDF, не PBR; ключ «производитель+код+поверхность+класс» и артикул уникальны на весь файл',
+    reviewItems.length === 337 &&
+      badProvenance.length === 0 &&
+      reviewItems.every((item) => item.price === null && item.prices === null) &&
+      reviewItems.every((item) => {
+        const p = item.provenance as Record<string, unknown>;
+        return p.rightsStatus === 'NOT_VERIFIED' && p.previewStatus === 'PDF_PRINT_SWATCH_REFERENCE_ONLY' && p.textureStatus === 'NOT_PBR' && p.priceStatus === 'UNPRICED';
+      }) &&
+      new Set(reviewItems.map(keyOf)).size === 337 &&
+      new Set(allArticles).size === allArticles.length &&
+      reviewItems.every((item) => /^#[0-9a-f]{6}$/.test(item.hex ?? '')),
+    `позиций ${reviewItems.length} · без провенанса ${badProvenance.length} · ключей ${new Set(reviewItems.map(keyOf)).size} · артикулов ${allArticles.length}/${new Set(allArticles).size}`,
+  );
+
+  /* Сверка с самим пакетом — если он на этой машине (он вне репозитория). */
+  const packPath = 'CATALOG_STAGING/99_IMPORT_QUEUE/EGGER_GRANDEX/data/COMBINED_EGGER_GRANDEX_REVIEW.json';
+  if (existsSync(packPath)) {
+    const records = JSON.parse(readFileSync(packPath, 'utf8')) as ReviewRecord[];
+    const fresh = mapReviewRecords(records, () => null, '2026-10-17');
+    const sameCodes = REVIEW.every(
+      (id) =>
+        (fresh.items[id] ?? []).map((i) => i.code).join() ===
+        (file.collections.find((c) => c.id === id)?.items ?? []).map((i) => i.code).join(),
+    );
+    check(
+      'P3.C4 пакет на этой машине: список из 397 карточек, его сопоставление даёт ровно те позиции, что лежат в файле',
+      Array.isArray(records) && records.length === 397 && sameCodes,
+      `карточек ${Array.isArray(records) ? records.length : 'НЕ СПИСОК'} · позиции ${sameCodes ? 'совпадают' : 'РАСХОДЯТСЯ'}`,
+    );
+  } else {
+    console.log(`  —    P3.C4 НЕ ПРОВЕРЕНО: пакета ${packPath} на этой машине нет (он вне репозитория); в счёт не идёт`);
+  }
+
+  /* Загрузка по умолчанию коллекции на проверке не трогает; явный список — показ, запись, повтор. */
+  const byDefault = planMaterialImport(file, []);
+  const reviewRows = byDefault.rows.filter((row) => REVIEW.includes(row.collectionId));
+  const first = importPreview(file, [], REVIEW);
+  const plan = planMaterialImport(file, [], { collections: REVIEW });
+  const loaded = catalogEntriesFromRows(plan.rows, file, 'org-a', 'a:');
+  const existingA = loaded.map((entry) => ({ article: entry.article, collection: collectionOf(entry) }));
+  const second = importPreview(file, existingA, REVIEW);
+  const again = importPreview(file, existingA, REVIEW);
+  check(
+    'P3.C5 показ импорта: без списка EGGER/GRANDEX не грузятся вовсе; со списком — новых 337, без цены 337, слито 3, без детали 57, неполных 0; после записи повторный показ дважды — новых 0, уже есть 337',
+    reviewRows.length === 0 &&
+      byDefault.rows.length === 1845 &&
+      first.fresh === 337 &&
+      first.exists === 0 &&
+      first.conflict === 0 &&
+      first.unpriced === 337 &&
+      first.duplicate === 3 &&
+      first.ineligible === 57 &&
+      first.incomplete === 0 &&
+      first.nameUnverified > 0 &&
+      plan.rows.length === 337 &&
+      second.fresh === 0 &&
+      second.exists === 337 &&
+      again.fresh === 0 &&
+      again.exists === 337,
+    `по умолчанию ${byDefault.rows.length} (из них EGGER/GRANDEX ${reviewRows.length}) · показ: новых ${first.fresh}, есть ${first.exists}, без цены ${first.unpriced}, слито ${first.duplicate}, без детали ${first.ineligible}, без названия ${first.nameUnverified} · повтор ${second.fresh}/${second.exists}, ещё раз ${again.fresh}/${again.exists}`,
+  );
+
+  /* Две организации: артикулы одной не делают позиции другой «уже загруженными». */
+  const orgB = importPreview(file, [], REVIEW);
+  const ownB = [{ article: 'EGGER-W1000-ST9', collection: null }];
+  const clash = importPreview(file, ownB, REVIEW);
+  check(
+    'P3.C6 организации раздельны: каталог А на показ Б не влияет (новых 337); свой товар Б с тем же артикулом — конфликт словами, не перезапись',
+    orgB.fresh === 337 && clash.fresh === 336 && clash.conflict === 1 && /как свой товар компании/.test(clash.conflicts[0] ?? ''),
+    `Б: новых ${orgB.fresh} · со своим «EGGER-W1000-ST9»: новых ${clash.fresh}, конфликт ${clash.conflict} — ${clash.conflicts[0] ?? '—'}`,
+  );
+
+  /* Физика изделия: EGGER-плита — корпус и фасад; PerfectSense — фасад; столешницы — только столешница. */
+  const items = materialCatalog(loaded);
+  const byCode = (code: string) => Array.from(items.values()).find((item) => item.code === code);
+  const choice = (code: string, collectionId: string) => {
+    const item = byCode(code);
+    const collection = file.collections.find((c) => c.id === collectionId)!;
+    if (!item) throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: позиции ${code} нет в каталоге`);
+    return { item, collection, surface: collection.finishes[0] };
+  };
+  const board = choice(file.collections.find((c) => c.id === 'egger-ldsp')!.items[0].code, 'egger-ldsp');
+  const lacq = choice(file.collections.find((c) => c.id === 'egger-perfectsense')!.items[0].code, 'egger-perfectsense');
+  const eggerTop = choice(file.collections.find((c) => c.id === 'egger-worktops')!.items[0].code, 'egger-worktops');
+  const grandex = choice('GRANDEX-A-410', 'grandex-acrylic');
+  const bedroom = buildRun({
+    lengthMm: 2000,
+    ceilingHeightMm: 2500,
+    requirements: { ...DEFAULT_REQUIREMENTS, zone: 'bedroom', doorSystem: 'hinged', appliances: [], sections: ['shelves', 'hanging_long'] },
+    openings: [],
+    comms: [],
+  });
+  const kitchen = buildRun({ lengthMm: 3800, ceilingHeightMm: 2700, requirements: DEFAULT_REQUIREMENTS, openings: [], comms: [] });
+  const verdict = (target: Parameters<typeof materialOps>[0], c: typeof board, run: typeof bedroom) => {
+    const plan = materialOps(target, c, run, run.modules[0]?.id ?? null, MATERIAL_FINISHES);
+    return 'refusal' in plan ? `нет: ${plan.refusal}` : `да: ${plan.ops.map((op) => op.op).join(',')}`;
+  };
+  const table = {
+    boardCarcass: verdict('carcass', board, bedroom),
+    boardModuleCarcass: verdict('module-carcass', board, bedroom),
+    boardFront: verdict('module', board, bedroom),
+    boardTop: verdict('countertop', board, kitchen),
+    lacqCarcass: verdict('carcass', lacq, bedroom),
+    lacqFront: verdict('module', lacq, bedroom),
+    eggerTopCarcass: verdict('carcass', eggerTop, bedroom),
+    grandexCarcass: verdict('carcass', grandex, bedroom),
+    grandexFront: verdict('fronts', grandex, bedroom),
+    grandexBedroom: verdict('countertop', grandex, bedroom),
+    grandexKitchen: verdict('countertop', grandex, kitchen),
+  };
+  check(
+    'P3.C7 совместимость по изделию: плита EGGER — корпус ряда, корпус модуля и фасад; PerfectSense — только фасад; столешницы EGGER и GRANDEX — только столешница, в спальне её нет',
+    table.boardCarcass.startsWith('да: set_carcass') &&
+      table.boardModuleCarcass === 'да: set_carcass' &&
+      table.boardFront.startsWith('да: set_front') &&
+      table.boardTop.startsWith('нет') &&
+      table.lacqCarcass.startsWith('нет') &&
+      table.lacqFront.startsWith('да: set_front') &&
+      table.eggerTopCarcass.startsWith('нет') &&
+      table.grandexCarcass.startsWith('нет') &&
+      table.grandexFront.startsWith('нет') &&
+      /столешницы нет/.test(table.grandexBedroom) &&
+      table.grandexKitchen === 'да: set_countertop',
+    Object.entries(table).map(([k, v]) => `${k} ${v.slice(0, 60)}`).join(' | '),
+  );
+
+  /* Цены нет — строка «цена не задана», итог «неполный»; геометрия раскроя не едет. */
+  const carcassItems = carcassCatalog(loaded);
+  const withTop = applyOps({ run: kitchen, requirements: DEFAULT_REQUIREMENTS, ops: (materialOps('countertop', grandex, kitchen, null, MATERIAL_FINISHES) as { ops: MillworkOp[] }).ops, openings: [] });
+  const estimate = buildEstimate(withTop, 'optimal', DEMO_RATES, [], undefined, undefined, undefined, undefined, carcassItems, items);
+  const topLine = unpricedLines(estimate).find((line) => /столешниц/i.test(line.title));
+  const planBoard = materialOps('module-carcass', board, bedroom, bedroom.modules[0].id, MATERIAL_FINISHES) as { ops: MillworkOp[] };
+  const planFront = materialOps('module', lacq, bedroom, bedroom.modules[0].id, MATERIAL_FINISHES) as { ops: MillworkOp[] };
+  const dressed = applyOps({ run: bedroom, requirements: { ...DEFAULT_REQUIREMENTS, zone: 'bedroom', doorSystem: 'hinged', appliances: [], sections: ['shelves', 'hanging_long'] }, ops: [...planBoard.ops, ...planFront.ops], openings: [] });
+  const dims = (run: typeof bedroom) => buildPanels({ run }).map((p) => `${p.moduleId}:${p.name}:${p.lengthMm}x${p.widthMm}x${p.thicknessMm}x${p.qty}`).join('|');
+  const bedEstimate = buildEstimate(dressed, 'optimal', DEMO_RATES, [], undefined, undefined, undefined, undefined, carcassItems, items);
+  check(
+    'P3.C8 GRANDEX на столешнице кухни без цены: строка «цена не задана», итог «неполный»; EGGER на корпус левого шкафа и PerfectSense на его фасад — размеры деталей раскроя те же до миллиметра, соседний шкаф не тронут',
+    Boolean(topLine) &&
+      /неполный/.test(totalCaption(estimate)) &&
+      dressed.warnings.length === 0 &&
+      dressed.modules[0].carcassItemId === board.item.id &&
+      dressed.modules[0].front?.itemId === lacq.item.id &&
+      dressed.modules.slice(1).every((m) => !m.carcassItemId && !m.front?.itemId) &&
+      dims(dressed) === dims(bedroom) &&
+      /неполный/.test(totalCaption(bedEstimate)),
+    `${topLine ? `${topLine.title}: ${topLine.priceUnset}` : 'СТРОКИ НЕТ'} · ${totalCaption(estimate)} · спальня: ${totalCaption(bedEstimate)} · ${dressed.warnings.join(' | ') || 'отказов нет'}`,
+  );
+}
 
 /*
  * ХВОСТ ЖДЁТ АСИНХРОННЫЕ ПРОВЕРКИ.

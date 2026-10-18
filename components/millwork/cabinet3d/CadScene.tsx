@@ -25,7 +25,8 @@ import RoomScene from './RoomScene';
 import type { PathTraceSource } from './pathTrace';
 import { movingParts } from './motion';
 import { plinthMm } from '@/lib/millwork/shop';
-import { moduleBoxes, runBoxes, runPlaces } from '@/lib/millwork/cabinetBoxes';
+import { boxLayer, boxShown, moduleBoxes, runBoxes, runPlaces } from '@/lib/millwork/cabinetBoxes';
+import { ALL_LAYERS, presetOf, type SceneLayers } from '@/lib/millwork/sceneLayers';
 import { generalCamera } from '@/lib/cameraFraming';
 import {
   openSideOf,
@@ -254,6 +255,8 @@ export default function CadScene({
    * сцену, где фасады сняты, а рёбра думают, что они на месте.
    */
   const frame = useInteriorStore((state) => state.cutaway);
+  /* Рёбра идут по тем же слоям вида, что и меши (P1). */
+  const layers = useInteriorStore((state) => state.sceneLayers);
 
   /*
    * КОМНАТА ВОКРУГ ПЕРВОГО РЯДА СЦЕНЫ.
@@ -400,9 +403,9 @@ export default function CadScene({
         */}
       {roomWorld && <RoomScene room={roomWorld} />}
 
-      <RunEdges rows={rows} inside={frame} />
+      <RunEdges rows={rows} inside={frame} layers={layers} />
 
-      <ShadowSync rows={rows} room={roomWorld} inside={frame} />
+      <ShadowSync rows={rows} room={roomWorld} inside={frame} layers={layers} />
 
       {orbit && <OrbitScene bounds={bounds} open={open} />}
       <FrameProbe rows={rows} room={roomWorld} />
@@ -695,7 +698,7 @@ function KeyLight({
  * створки или ящика: пока они едут, тень старая, остановились — одна
  * новая. Ничего здесь не зовёт кадр сам по себе в покое.
  */
-function ShadowSync({ rows, room, inside }: { rows: SceneRow[]; room: Room | null; inside: boolean }) {
+function ShadowSync({ rows, room, inside, layers }: { rows: SceneRow[]; room: Room | null; inside: boolean; layers: SceneLayers }) {
   const gl = useThree((state) => state.gl);
   const invalidate = useThree((state) => state.invalidate);
   const moving = useRef(false);
@@ -703,7 +706,7 @@ function ShadowSync({ rows, room, inside }: { rows: SceneRow[]; room: Room | nul
   useEffect(() => {
     gl.shadowMap.needsUpdate = true;
     invalidate();
-  }, [rows, room, inside, gl, invalidate]);
+  }, [rows, room, inside, layers, gl, invalidate]);
 
   useFrame(() => {
     const now = movingParts() > 0;
@@ -764,6 +767,8 @@ function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
       __mwCadFronts?: () => FrontReadout[];
       __mwCadLook?: () => {
         frontColors: string[];
+        carcassColors: string[];
+        counterColors: string[];
         opaque: number;
         transparent: number;
         applianceGlass: number;
@@ -1025,8 +1030,21 @@ function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
         if (material?.color) frontColors.push(`#${material.color.getHexString()}`);
       });
 
+      /* Корпус своего декора (P3) — пачка `carcass:<ключ>`; цвет с экрана, как у фасадов. */
+      const carcassColors: string[] = [];
+      const counterColors: string[] = [];
+      scene.traverse((object) => {
+        const mesh = object as THREE.Mesh;
+        if (!mesh.isMesh || mesh.visible === false) return;
+        const material = mesh.material as THREE.MeshStandardMaterial;
+        if (mesh.name.startsWith('carcass:') && material?.color) carcassColors.push(`#${material.color.getHexString()}`);
+        if (mesh.name.startsWith('counter:') && material?.color) counterColors.push(`#${material.color.getHexString()}`);
+      });
+
       return {
         frontColors: Array.from(new Set(frontColors)).sort(),
+        carcassColors: Array.from(new Set(carcassColors)).sort(),
+        counterColors: Array.from(new Set(counterColors)).sort(),
         opaque,
         transparent,
         applianceGlass,
@@ -1034,6 +1052,49 @@ function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
         edgeDrift: drift === null ? null : Math.round(drift * 1000) / 1000,
         edgePoints: edges ? edges.geometry.getAttribute('position').count : 0,
         boxes: tally,
+      };
+    };
+
+    /*
+     * СЛОИ ВИДА (P1): что включено и сколько коробок каждого слоя в кадре.
+     *
+     * Сколько КОРОБОК слоя в ряду — `runBoxes` и `boxLayer`, те же, что
+     * рисует сцена. Сколько их НАРИСОВАНО — экземпляры пачек в графе сцены:
+     * выключенный слой обязан уменьшить это число ровно на свои коробки,
+     * а ряд, раскрой и смета не меняются вовсе.
+     */
+    (w as { __mwCadLayers?: () => unknown }).__mwCadLayers = () => {
+      const state = useInteriorStore.getState();
+      const total: Record<string, number> = {};
+      const shown: Record<string, number> = {};
+      for (const row of rows) {
+        for (const box of runBoxes(row.run, { thicknessMm: 16, frontThicknessMm: 18, gapMm: 3 })) {
+          const layer = boxLayer(box);
+          total[layer] = (total[layer] ?? 0) + 1;
+          if (boxShown(box, state.sceneLayers)) shown[layer] = (shown[layer] ?? 0) + 1;
+        }
+      }
+      let instances = 0;
+      scene.traverse((object) => {
+        const mesh = object as THREE.InstancedMesh;
+        if (mesh.isInstancedMesh && mesh.visible) instances += mesh.count;
+      });
+      const edges = scene.getObjectByName(RUN_EDGES_NAME) as THREE.LineSegments | undefined;
+      return {
+        layers: { ...state.sceneLayers },
+        preset: presetOf(state.sceneLayers),
+        cutaway: state.cutaway,
+        total,
+        shown,
+        instances,
+        edgePoints: edges ? edges.geometry.getAttribute('position').count : 0,
+        niches: (() => {
+          let count = 0;
+          scene.traverse((object) => {
+            if (object.name.startsWith('upper-niche:') && object.visible) count += 1;
+          });
+          return count;
+        })(),
       };
     };
 
@@ -1264,6 +1325,7 @@ function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
       delete (w as { __mwCadBays?: unknown }).__mwCadBays;
       delete w.__mwCadFit;
       delete w.__mwCadLook;
+      delete (w as { __mwCadLayers?: unknown }).__mwCadLayers;
       delete w.__mwCadRoom;
       delete w.__mwCadModules;
       delete w.__mwCadShadows;
@@ -1328,7 +1390,7 @@ export function sceneBounds(rows: SceneRow[]): {
  * видно за дверью, и рёбра по ним превращают мебель в чертёж; в режиме
  * «Каркас» они и есть предмет разговора.
  */
-function rowCorners(rows: SceneRow[], inside = true): [number, number, number][] {
+function rowCorners(rows: SceneRow[], inside = true, layers: SceneLayers = ALL_LAYERS): [number, number, number][] {
   const points: [number, number, number][] = [];
 
   for (const row of rows) {
@@ -1336,7 +1398,7 @@ function rowCorners(rows: SceneRow[], inside = true): [number, number, number][]
         thicknessMm: 16,
         frontThicknessMm: 18,
         gapMm: 3,
-      }).filter((box) => inside || !box.inside);
+      }).filter((box) => (inside || !box.inside) && boxShown(box, layers));
 
       const place = rowPlacement(row);
       const angle = (place.rotationYDeg * Math.PI) / 180;
@@ -1378,10 +1440,10 @@ function rowCorners(rows: SceneRow[], inside = true): [number, number, number][]
 /** Имя буфера рёбер мебели: по нему его находит приёмка. */
 const RUN_EDGES_NAME = 'run-edges';
 
-function RunEdges({ rows, inside }: { rows: SceneRow[]; inside: boolean }) {
+function RunEdges({ rows, inside, layers }: { rows: SceneRow[]; inside: boolean; layers: SceneLayers }) {
   const geometry = useMemo(() => {
     const points: number[] = [];
-    const corners = rowCorners(rows, inside);
+    const corners = rowCorners(rows, inside, layers);
 
     // Двенадцать рёбер на каждые восемь вершин коробки.
     const edges: [number, number][] = [
@@ -1400,7 +1462,7 @@ function RunEdges({ rows, inside }: { rows: SceneRow[]; inside: boolean }) {
     buffer.setAttribute('position', new THREE.BufferAttribute(new Float32Array(points), 3));
     buffer.computeBoundingSphere();
     return buffer;
-  }, [rows, inside]);
+  }, [rows, inside, layers]);
 
   return (
     /*
