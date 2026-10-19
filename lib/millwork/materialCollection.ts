@@ -1,4 +1,5 @@
 import type { CatalogEntryFull, CatalogUnit, ReferenceTexture } from '@/types/catalog';
+import type { WoodPattern } from './woodPattern';
 
 /**
  * КОЛЛЕКЦИЯ МАТЕРИАЛОВ — ЭТО КАТЕГОРИЯ КАТАЛОГА, А НЕ ВТОРОЙ КАТАЛОГ.
@@ -184,11 +185,19 @@ export function materialColorOf(
 /**
  * Фото позиции и его НАСТОЯЩИЙ размер в метрах — по нему ложится текстура.
  *
- * `reference` — это не фото позиции, а ОБРАЗЕЦ ИЗ БРОШЮРЫ (REFERENCE_ONLY):
- * размер у него принятый, а не замеренный, и он не бесшовный — на детали
- * он повторяется зеркально, а карточка говорит об этом словами.
+ * `reference` — образец декора из брошюры (REFERENCE_ONLY): его провенанс
+ * для карточки. `procedural` — ДЕМОНСТРАЦИОННЫЙ рисунок дерева (наш код, не
+ * текстура декора): у ЛДСП-дерева в 3D лежит он, потому что прав на
+ * изображения EGGER нет. `mirror` — повторять зеркально: так кладётся только
+ * не бесшовный образец брошюры, рисунок бесшовный и повторяется прямо.
  */
-export type MaterialPhoto = { url: string; sizeM: [number, number]; reference?: ReferenceTexture };
+export type MaterialPhoto = {
+  url: string;
+  sizeM: [number, number];
+  reference?: ReferenceTexture;
+  procedural?: WoodPattern;
+  mirror?: boolean;
+};
 
 /** Позиция коллекции глазами сметы, сцены и панели. */
 export type MaterialItem = {

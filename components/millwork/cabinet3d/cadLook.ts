@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { frontSwatch } from '@/lib/millwork/frontSwatch';
 import type { FinishSpec } from '@/lib/millwork/materialCollection';
 import type { FrontSpec } from '@/types/millwork';
@@ -28,16 +29,21 @@ import type { FrontSpec } from '@/types/millwork';
  *
  * Картинки библиотеки берут тот же набор (`moduleThumb`): карточка рядом
  * со сценой светом от неё не отличается.
+ *
+ * P3D-LDSP: общий свет снят — его место заняло окружение (`CAD_ENVIRONMENT`),
+ * у которого есть сторона: сверху и от окна светлее, у пола темнее, и матовая
+ * плита получает мягкое отражение, а не плоскую заливку. Общий 0.3 и небо
+ * 0.62 при ACES давали лицу шкафа 0.38 освещённости: белое W1000 выходило
+ * серым (L* 69), дуб H1113 — шоколадом (L* 35 при образце 60).
  */
 export const CAD_LIGHT = {
-  ambient: 0.3,
-  /** Полусферический: цвет неба и цвет пола. */
-  hemisphere: 0.62,
+  /** Полусферический: цвет неба и цвет пола — подсветка снизу и с боков. */
+  hemisphere: 0.45,
   hemisphereSky: '#FFFFFF',
   hemisphereGround: '#A39B8C',
   /** Для картинок: откуда светит относительно модуля. */
   keyPosition: [2.5, 5, 4] as [number, number, number],
-  keyIntensity: 1.05,
+  keyIntensity: 1,
   /**
    * Для сцены: направление ключевого света от центра комнаты — сверху, с
    * открытой стороны и чуть слева, чтобы тень шкафов легла на стену и пол.
@@ -46,6 +52,60 @@ export const CAD_LIGHT = {
   keySide: 0.35,
   keyUp: 1,
 };
+
+/**
+ * ОКРУЖЕНИЕ САПР-ВИДА (P3D-LDSP) — `RoomEnvironment` из three, кодом.
+ *
+ * Файла HDR нет: окружение собирается кодом, и в квартире без сети ничего
+ * не тянется (ловушка 3). То же окружение, что у рендера по чертежу
+ * (слой 54), только в растре — через PMREM.
+ *
+ * Числа — из замера (three 0.169, PMREM с размытием 0.04): белая матовая
+ * грань получает от окружения ×1 сверху 1.63, лицом к светлой стороне 1.49,
+ * боком 0.63…0.81, спиной 0.56, снизу 0.70. Светлая сторона поворачивается
+ * к ОТКРЫТОЙ стороне комнаты (`environmentRotation`), туда же смотрят
+ * фасады. Лицо шкафа получает
+ *
+ *   окружение 1.49 × 0.5 + ключ 1.0 × cos 62° / π + небо 0.45 × 0.68 / π ≈ 0.99,
+ *
+ * то есть цвет декора показывается своим цветом (тон-маппинг Neutral
+ * отдаёт базовый цвет как есть до 0.76 и мягко сжимает выше), боковина —
+ * около половины: форма читается светом, а не подкраской.
+ */
+export const CAD_ENVIRONMENT = {
+  intensity: 0.5,
+  /** Размытие PMREM: окружение без резких пятен ламп в отражениях. */
+  blur: 0.04,
+};
+
+const environments = new WeakMap<THREE.WebGLRenderer, THREE.Texture>();
+
+/**
+ * Окружение для ЭТОГО отрисовщика: собирается один раз на контекст
+ * (сцена и отрисовщик картинок библиотеки — разные контексты), дальше
+ * отдаётся готовым. Повернуть его к открытой стороне — дело сцены.
+ */
+export function cadEnvironment(gl: THREE.WebGLRenderer): THREE.Texture {
+  const ready = environments.get(gl);
+  if (ready) return ready;
+  const pmrem = new THREE.PMREMGenerator(gl);
+  const room = new RoomEnvironment();
+  const texture = pmrem.fromScene(room, CAD_ENVIRONMENT.blur).texture;
+  room.dispose();
+  pmrem.dispose();
+  environments.set(gl, texture);
+  return texture;
+}
+
+/**
+ * Поворот окружения: его светлая сторона (+z) — к открытой стороне комнаты
+ * `[x, z]`. PMREM three читает окружение поворотом, обратным
+ * `environmentRotation`, поэтому угол — `atan2(x, z)` (слой лиц к свету
+ * проверяется приёмкой P3D-LDSP по светлоте фасада).
+ */
+export function cadEnvironmentYaw(open: [number, number]): number {
+  return Math.atan2(open[0], open[1]);
+}
 
 /**
  * ТЕНЬ — ОДИН ИСТОЧНИК, РАЗМЕР КАРТЫ — КОНСТАНТА.
@@ -96,6 +156,16 @@ export const CAD_RENDER = {
   environmentSize: 256,
   /** Подсветка витрины как источник света: яркость свечения. */
   glow: 4,
+  /**
+   * ТОН-МАППИНГ КАРТИНКИ — ACES, ПОД НЕГО ПОДОБРАНЫ ЧИСЛА ВЫШЕ (слой 54).
+   *
+   * САПР-вид перешёл на Neutral с окружением (P3D-LDSP), а картинка
+   * трассировщика не перекалибрована: «цвет фасада на картинке тот же, что
+   * в САПР-виде» подбирался под прежний вид. Сменить её тон-маппинг молча
+   * значило бы сдвинуть все картинки без замера — это отдельная работа, и
+   * она названа в отчёте P3D-LDSP, а не сделана вслепую.
+   */
+  toneMapping: THREE.ACESFilmicToneMapping as THREE.ToneMapping,
 };
 
 /** Настройки карты теней для `<Canvas shadows>`: мягкая, без автопересчёта. */
@@ -194,8 +264,16 @@ export function cadShadeQuaternion(
   return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z));
 }
 
-/** Тон-маппинг и цветовое пространство — те же, что R3F ставит сцене. */
-export const CAD_TONE_MAPPING = THREE.ACESFilmicToneMapping;
+/**
+ * ТОН-МАППИНГ — NEUTRAL (Khronos PBR Neutral), P3D-LDSP.
+ *
+ * ACES — плёночная кривая: темнит и уводит в насыщенность средние тона,
+ * и дуб H1113 (#aa8763) на фасаде выходил #684b30. Neutral сделан для
+ * показа товара: базовый цвет при единичном свете отдаётся как есть (до
+ * 0.76), выше — мягкое сжатие без пересвета; 4 % «чёрного уровня» блика,
+ * которые он вычитает, даёт окружение (`CAD_ENVIRONMENT`).
+ */
+export const CAD_TONE_MAPPING = THREE.NeutralToneMapping;
 export const CAD_COLOR_SPACE = THREE.SRGBColorSpace;
 
 /** Настроить отрисовщик так же, как настроена сцена. */

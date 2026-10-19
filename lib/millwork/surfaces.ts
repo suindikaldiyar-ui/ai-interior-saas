@@ -140,7 +140,7 @@ export function materialSurfaceLook(
     milled: false,
     fromCatalog: true,
     realSizeM: item.photo?.sizeM ?? null,
-    mirror: Boolean(item.photo?.reference),
+    mirror: Boolean(item.photo?.mirror),
     clearcoat: finish?.clearcoat ?? 0,
     clearcoatRoughness: finish?.clearcoatRoughness ?? 0,
   };

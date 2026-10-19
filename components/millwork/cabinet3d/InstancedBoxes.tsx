@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { BoxDraw } from '@/lib/millwork/cabinetBoxes';
+import { REAL_SIZE_SHIFT, realSizeShiftOf, shiftKeyOf } from './realSizeMap';
 
 /**
  * ОДИН ВЫЗОВ ОТРИСОВКИ НА ВЕСЬ КОРПУС.
@@ -23,13 +24,22 @@ import type { BoxDraw } from '@/lib/millwork/cabinetBoxes';
  */
 
 type Props = {
-  boxes: BoxDraw[];
+  /** `part` — идентификатор подвижной детали: по нему её рисунок тот же и закрытой, и на ходу. */
+  boxes: (BoxDraw & { part?: string })[];
   geometry: THREE.BufferGeometry;
   material: THREE.Material;
   castShadow?: boolean;
   receiveShadow?: boolean;
   /** Имя меша: по нему приёмка находит пачку в графе сцены. */
   name?: string;
+  /**
+   * ПАЧКА НЕСЁТ СДВИГ РИСУНКА (P3D-LDSP) — у фасадов и корпуса своего декора,
+   * где на материале бывает карта. Значение — соль места неподвижной детали
+   * в ключе сдвига: ряд (две стены угла с боковиной в одной и той же точке
+   * своего ряда иначе получили бы один кусок рисунка). Нет — пачка без
+   * атрибута, как раньше.
+   */
+  shiftSalt?: string;
 };
 
 export default function InstancedBoxes({
@@ -39,6 +49,7 @@ export default function InstancedBoxes({
   castShadow = false,
   receiveShadow = false,
   name,
+  shiftSalt,
 }: Props) {
   const ref = useRef<THREE.InstancedMesh>(null);
   const invalidate = useThree((state) => state.invalidate);
@@ -48,9 +59,33 @@ export default function InstancedBoxes({
    * их каждый кадр — та же трата, от которой мы уходим.
    */
   const key = useMemo(
-    () => boxes.map((b) => `${b.position.join(',')}|${b.scale.join(',')}`).join(';'),
+    () => boxes.map((b) => `${b.position.join(',')}|${b.scale.join(',')}|${b.part ?? ''}`).join(';'),
     [boxes],
   );
+
+  /*
+   * СВОЁ МЕСТО НА ПЛИТЕ (P3D-LDSP): сдвиг рисунка у каждого экземпляра —
+   * атрибутом пачки (`realSizeMap`). Геометрия своя у пачки: число
+   * экземпляров у пачек разное, общая коробка такой атрибут не держит.
+   */
+  const batchGeometry = useMemo(() => {
+    if (shiftSalt === undefined) return geometry;
+    const own = geometry.clone();
+    const data = new Float32Array(Math.max(1, boxes.length) * 2);
+    boxes.forEach((box, i) => {
+      const [u, v] = realSizeShiftOf(shiftKeyOf(box, shiftSalt));
+      data[i * 2] = u;
+      data[i * 2 + 1] = v;
+    });
+    own.setAttribute(REAL_SIZE_SHIFT, new THREE.InstancedBufferAttribute(data, 2));
+    return own;
+    // Состав — в `key`: массив пересоздаётся чаще, чем меняются коробки.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [geometry, key, shiftSalt]);
+  /* Своя геометрия пачки освобождается с ней; общая коробка — нет. */
+  useEffect(() => () => {
+    if (batchGeometry !== geometry) batchGeometry.dispose();
+  }, [batchGeometry, geometry]);
 
   useEffect(() => {
     const mesh = ref.current;
@@ -90,7 +125,7 @@ export default function InstancedBoxes({
        * оставит буфер на прежнюю длину.
        */
       key={boxes.length}
-      args={[geometry, material, boxes.length]}
+      args={[batchGeometry, material, boxes.length]}
       /*
        * ИД ДЕТАЛИ ПО ЭКЗЕМПЛЯРУ (R01): приёмка находит полку и перегородку
        * отсека в НАРИСОВАННОМ графе и сверяет её матрицу с раскроем.

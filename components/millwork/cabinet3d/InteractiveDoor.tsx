@@ -5,7 +5,7 @@ import type * as THREE from 'three';
 import { useSlide } from './useSlide';
 import { useTouchTarget } from './useTouchTarget';
 import { doorKick, doorPivot, leafLocal } from '@/lib/millwork/cabinetBoxes';
-import type { CabinetParts } from './parts';
+import { useShiftedBox, type CabinetParts } from './parts';
 
 /**
  * Дверь, которая распахивается.
@@ -121,6 +121,8 @@ export default function InteractiveDoor({
 
   const [panelX, panelY] = pivot.panel;
   const local = leafLocal({ opening, width, height, thickness, gap, integratedHandle });
+  /* Рисунок полотна — тот же кусок дерева, что у него закрытого в пачке. */
+  const panelBox = useShiftedBox(parts.box, id);
   return (
     /*
      * Ось вращения стоит на ПЕРЕДНЕЙ плоскости корпуса (z = 0): модуль
@@ -174,7 +176,7 @@ export default function InteractiveDoor({
         * компонента нет — иначе картинка и проверка разойдутся.
         */}
       <mesh
-        geometry={parts.box}
+        geometry={panelBox}
         material={frontMaterial ?? parts.front}
         position={local.panel.at}
         scale={local.panel.size}

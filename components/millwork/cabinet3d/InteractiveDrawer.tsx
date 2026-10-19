@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import type * as THREE from 'three';
 import { useSlide } from './useSlide';
 import { useTouchTarget } from './useTouchTarget';
-import type { CabinetParts } from './parts';
+import { useShiftedBox, type CabinetParts } from './parts';
 import { DRAWER_TRAVEL_M } from '@/lib/millwork/cabinetBoxes';
 
 /**
@@ -74,6 +74,8 @@ export default function InteractiveDrawer({
    */
   const [active, setActive] = useState(open);
   const openRef = useRef(open);
+  /* Фронт ящика — тот же кусок дерева, что у него задвинутого в пачке. */
+  const frontBox = useShiftedBox(parts.box, id);
   openRef.current = open;
 
   useEffect(() => {
@@ -171,7 +173,7 @@ export default function InteractiveDrawer({
       {!cutaway && (
         <>
           <mesh
-            geometry={parts.box}
+            geometry={frontBox}
             material={frontMaterial ?? parts.front}
             position={[0, 0, thickness / 2]}
             scale={[width - 2 * gap, height - 2 * gap, thickness]}

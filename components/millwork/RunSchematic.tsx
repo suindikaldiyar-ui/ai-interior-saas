@@ -484,6 +484,8 @@ export default function RunSchematic({
 
   const setOpenParts = useInteriorStore((state) => state.setOpenParts);
   const openParts = useInteriorStore((state) => state.openParts);
+  /* Сравнение с белым ЛДСП (P3D-LDSP) — только вид; сцена говорит об этом сама. */
+  const compareWhiteId = useInteriorStore((state) => state.compareWhiteId);
 
   /*
    * ФАСАДЫ ИЛИ КАРКАС — ТОТ ЖЕ `cutaway`, ЧТО СНИМАЕТ ФАСАДЫ В СЦЕНЕ.
@@ -705,6 +707,21 @@ export default function RunSchematic({
               */}
             <SceneLayersControl counts={layerTally} />
           </div>
+        )}
+
+        {view === 'scene' && compareWhiteId && (
+          /*
+           * СРАВНЕНИЕ С БЕЛЫМ ЛДСП — СЛОВАМИ НАД САМОЙ СЦЕНОЙ (P3D-LDSP). Снимок
+           * экрана без этих слов выдал бы белое за выбранный декор. Стоит в
+           * полосе над сценой, а не поверх неё: подпись на холсте накрывала
+           * мебель (ловушка 510 — плашка мебель не накрывает).
+           */
+          <span
+            className="self-center rounded-[var(--r-control)] bg-navy px-2 py-1 text-[13px] leading-snug text-tape"
+            data-compare-white-note
+          >
+            Сравнение: дерево показано белым ЛДСП — только вид, в проекте декор прежний
+          </span>
         )}
 
         {view === 'front' && frontInside && (
@@ -950,6 +967,8 @@ export default function RunSchematic({
                 </p>
               </div>
             )}
+
+
           </div>
         ) : (
         <div className="mw-schematic h-full [&>svg]:h-full [&>svg]:w-full">

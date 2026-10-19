@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type * as THREE from 'three';
 import { useSlide } from './useSlide';
 import { useTouchTarget } from './useTouchTarget';
-import type { CabinetParts } from './parts';
+import { useShiftedBox, type CabinetParts } from './parts';
 import { DRAWER_TRAVEL_M, type PartBox } from '@/lib/millwork/cabinetBoxes';
 
 /**
@@ -82,6 +82,8 @@ export default function InteractiveBayDrawer({ id, open, onToggle, boxes, parts,
 
   useTouchTarget(touch, { width: hit.size[0], height: hit.size[1], depth: hit.size[2] });
 
+  /* Фронт ящика — тот же кусок дерева, что у него закрытого в пачке (ключ — идентификатор ящика). */
+  const frontBox = useShiftedBox(parts.box, id);
   const materialOf = (box: PartBox) =>
     box.material === 'front' ? (frontMaterial ?? parts.front) : box.material === 'inner' ? parts.inner : parts.carcass;
 
@@ -111,7 +113,7 @@ export default function InteractiveBayDrawer({ id, open, onToggle, boxes, parts,
         boxes.map((box, i) => (
           <mesh
             key={`${box.partId ?? box.panel ?? 'box'}-${i}`}
-            geometry={parts.box}
+            geometry={box.material === 'front' ? frontBox : parts.box}
             material={materialOf(box)}
             position={box.position}
             scale={box.scale}

@@ -663,6 +663,29 @@ export function openSideOf(
   room: Room | null,
   rows: { run: { lengthMm: number; wallId?: string }; placement?: { xM: number; zM: number; rotationYDeg: number } }[],
 ): [number, number] {
+  let [x, z] = facingSideOf(room, rows);
+  if (rows.length <= 1) {
+    const yaw = (STRAIGHT_VIEW_YAW_DEG * Math.PI) / 180;
+    const rx = x * Math.cos(yaw) - z * Math.sin(yaw);
+    const rz = x * Math.sin(yaw) + z * Math.cos(yaw);
+    x = rx;
+    z = rz;
+  }
+  const length = Math.hypot(x, z) || 1;
+  return [x / length, z / length];
+}
+
+/**
+ * КУДА СМОТРЯТ ФАСАДЫ — сумма нормалей стен с мебелью, БЕЗ сдвига камеры
+ * вбок (P3D-LDSP). Камере у прямой кухни нужен сдвиг ради глубины ряда,
+ * а свету окружения — нет: его светлая сторона ставится туда, куда
+ * смотрят фасады, иначе лицо шкафа освещается боком окружения.
+ * Единичный вектор по полу (x, z).
+ */
+export function facingSideOf(
+  room: Room | null,
+  rows: { run: { lengthMm: number; wallId?: string }; placement?: { xM: number; zM: number; rotationYDeg: number } }[],
+): [number, number] {
   const walls = room
     ? rows
         .map((row) => room.walls.find((wall) => wall.id === row.run.wallId))
@@ -685,13 +708,6 @@ export function openSideOf(
   if (Math.hypot(x, z) < 1e-6) {
     x = 0;
     z = 1;
-  }
-  if (rows.length <= 1) {
-    const yaw = (STRAIGHT_VIEW_YAW_DEG * Math.PI) / 180;
-    const rx = x * Math.cos(yaw) - z * Math.sin(yaw);
-    const rz = x * Math.sin(yaw) + z * Math.cos(yaw);
-    x = rx;
-    z = rz;
   }
   const length = Math.hypot(x, z) || 1;
   return [x / length, z / length];

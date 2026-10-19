@@ -23,11 +23,13 @@ import {
   priceUnitOf,
   reviewNoteOf,
   type MaterialItem,
+  type MaterialPhoto,
   type MaterialRole,
   type PriceUnit,
 } from './materialCollection';
 import { zoneProfile } from './zones';
-import { referenceKeyOf, referenceUrl } from './referenceTextures';
+import { referenceImageAllowed, referenceKeyOf, referenceUrl } from './referenceTextures';
+import { WOOD_TILE_MM, woodPatternOf, woodPatternUrl } from './woodPattern';
 
 export type { FinishSpec, MaterialItem, MaterialRole, PriceUnit } from './materialCollection';
 export {
@@ -647,16 +649,49 @@ export function materialItemOf(entry: CatalogEntryFull): MaterialItem | null {
   const size = entry.tiling?.moduleSize;
   const sized = Array.isArray(size) && size[0] > 0 && size[1] > 0;
   /*
-   * ОБРАЗЕЦ ИЗ БРОШЮРЫ — когда своего фото с размером у позиции нет.
-   * Своё фото компании сильнее: оно её, и размер у него настоящий.
+   * ПЛИТА (ЛДСП, PerfectSense) — ДЕМОНСТРАЦИОННЫЙ РИСУНОК, А НЕ ОБРАЗЕЦ БРОШЮРЫ.
+   *
+   * Права на изображения EGGER не подтверждены: образец брошюры на деталь
+   * плиты не кладётся (P3D-LDSP). Плита-дерево (декор H…) получает НАШ
+   * рисунок — цвет, контраст и шаг колец от декора, сам рисунок условный и
+   * так назван; артикул остаётся своим. Однотон и камень на плите — ровным
+   * цветом самого образца: подрисованное волокно на W1000 было бы враньём.
+   *
+   * Столешницы — образец брошюры только с подтверждёнными правами
+   * (`referenceImageAllowed`); у всех позиций пакета их нет, и столешница
+   * лежит ровным цветом самого образца (материалы, финал: GRANDEX A-401 на
+   * кухне выходил белым — белый множитель под картинкой, которой на проде
+   * нет). Своё фото компании сильнее всего: оно её, и размер у него настоящий.
    */
-  const referenceKey = entry.reference ? referenceKeyOf(entry.meta) : null;
-  const reference =
+  const provenance = (entry.meta?.provenance ?? null) as Record<string, unknown> | null;
+  const productClass = typeof provenance?.productClass === 'string' ? provenance.productClass : null;
+  /* Тот же признак, что `isBoardItem`, — но здесь позиции ещё нет, есть её строка. */
+  const board = productClass === 'decorative_board' || productClass === 'perfectsense_board';
+  const pattern =
+    board && entry.reference
+      ? woodPatternOf({
+          decorCode: typeof provenance?.manufacturerDecorCode === 'string' ? provenance.manufacturerDecorCode : null,
+          surfaceCode: typeof provenance?.surfaceCode === 'string' ? provenance.surfaceCode : null,
+          hex: entry.reference.hex,
+        })
+      : null;
+  const demo: MaterialPhoto | null = pattern
+    ? {
+        url: woodPatternUrl(pattern),
+        sizeM: [WOOD_TILE_MM[0] / 1000, WOOD_TILE_MM[1] / 1000],
+        procedural: pattern,
+        reference: entry.reference,
+        mirror: false,
+      }
+    : null;
+  const referenceKey = !board && entry.reference && referenceImageAllowed(entry.meta) ? referenceKeyOf(entry.meta) : null;
+  const reference: MaterialPhoto | null =
     entry.reference && referenceKey
       ? {
           url: referenceUrl(referenceKey),
           sizeM: [entry.reference.mm[0] / 1000, entry.reference.mm[1] / 1000] as [number, number],
           reference: entry.reference,
+          mirror: true,
         }
       : null;
 
@@ -671,7 +706,7 @@ export function materialItemOf(entry: CatalogEntryFull): MaterialItem | null {
     price: typeof entry.price === 'number' && entry.price > 0 ? entry.price : null,
     finishPrices: metaFinishPrices(entry.meta),
     colorHex: color,
-    photo: url && sized ? { url, sizeM: [size![0], size![1]] } : reference,
+    photo: url && sized ? { url, sizeM: [size![0], size![1]] } : (demo ?? reference),
     photoWithoutSize: Boolean(url) && !sized,
     brand: typeof entry.meta?.brand === 'string' && entry.meta.brand ? entry.meta.brand : null,
     review: reviewNoteOf(entry.meta),
@@ -685,6 +720,29 @@ export function materialCatalog(entries: CatalogEntryFull[]): Map<string, Materi
     if (item) out.set(item.id, item);
   }
   return out;
+}
+
+/** Плита (ЛДСП, PerfectSense) — по классу позиции из пакета поставщика. */
+export function isBoardItem(item: MaterialItem): boolean {
+  const cls = item.review?.productClass;
+  return cls === 'decorative_board' || cls === 'perfectsense_board';
+}
+
+/**
+ * БЕЛОЕ ЛДСП ДЛЯ СРАВНЕНИЯ С ДЕКОРОМ-ДЕРЕВОМ (P3D-LDSP).
+ *
+ * Позиция плиты с декором W1000 («белый премиум» EGGER) из каталога
+ * организации — с поверхностью ST9, если такая есть. Своего «белого» код
+ * не придумывает: нет такой позиции — сравнения нет, и кнопки нет.
+ */
+export function whiteLdspOf(items: Iterable<MaterialItem>): MaterialItem | null {
+  let found: MaterialItem | null = null;
+  for (const item of Array.from(items)) {
+    if (!isBoardItem(item) || item.review?.decorCode !== 'W1000' || !item.colorHex) continue;
+    if (item.review.surfaceCode === 'ST9') return item;
+    if (!found || item.code < found.code) found = item;
+  }
+  return found;
 }
 
 /* ─────────────────────────  Панель: вкладки и поиск  ───────────────────────── */

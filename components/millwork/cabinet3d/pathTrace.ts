@@ -1,8 +1,8 @@
 'use client';
 
 import * as THREE from 'three';
-import { CAD_COLOR_SPACE, CAD_RENDER, CAD_TONE_MAPPING } from './cadLook';
-import { realSizeOf, realSizeUvGeometry } from './realSizeMap';
+import { CAD_COLOR_SPACE, CAD_RENDER } from './cadLook';
+import { REAL_SIZE_SHIFT, realSizeOf, realSizeUvGeometry } from './realSizeMap';
 import { pathTraceCounters } from './pathTraceStatus';
 import type {
   FromWorker,
@@ -178,15 +178,44 @@ function renderSceneOf(live: THREE.Scene): Built {
   let meshes = 0;
   const skipped: string[] = [];
 
+  /*
+   * СДВИГ РИСУНКА (`rsShift`, P3D-LDSP) — атрибут сцены, а не геометрия: у
+   * пачки он по экземплярам, и копией коробки в трассировщик не едет —
+   * поток собрал бы из него атрибут не той длины. Трассировщик получает
+   * сдвиг запечённым в развёртку (`realSizeUvGeometry`).
+   */
+  const plainOf = new Map<THREE.BufferGeometry, THREE.BufferGeometry>();
+  const plain = (geometry: THREE.BufferGeometry) => {
+    if (!geometry.getAttribute(REAL_SIZE_SHIFT)) return geometry;
+    let out = plainOf.get(geometry);
+    if (!out) {
+      out = geometry.clone();
+      out.deleteAttribute(REAL_SIZE_SHIFT);
+      plainOf.set(geometry, out);
+      geometries.push(out);
+    }
+    return out;
+  };
+  const shiftAt = (geometry: THREE.BufferGeometry, index: number): [number, number] => {
+    const attribute = geometry.getAttribute(REAL_SIZE_SHIFT) as THREE.BufferAttribute | undefined;
+    return attribute ? [attribute.getX(index), attribute.getY(index)] : [0, 0];
+  };
+
   /* `from` — какой меш сцены это нарисовал: приёмка сверяет по нему, что куда ушло. */
-  const add = (geometry: THREE.BufferGeometry, material: THREE.Material, world: THREE.Matrix4, from: THREE.Object3D) => {
-    let geo = geometry;
+  const add = (
+    geometry: THREE.BufferGeometry,
+    material: THREE.Material,
+    world: THREE.Matrix4,
+    from: THREE.Object3D,
+    shift: [number, number] = [0, 0],
+  ) => {
+    let geo = plain(geometry);
     let mat = material;
     const size = realSizeOf(material);
     const standard = material as THREE.MeshStandardMaterial;
     if (size && standard.map && material.userData?.realSizePatched === true) {
       world.decompose(unusedPosition, unusedRotation, scale);
-      geo = realSizeUvGeometry(geometry, scale, size);
+      geo = realSizeUvGeometry(geo, scale, size, shift);
       geometries.push(geo);
       mat = realSizeMaterial(standard, own);
     }
@@ -222,10 +251,10 @@ function renderSceneOf(live: THREE.Scene): Built {
         if (batch.isInstancedMesh) {
           for (let i = 0; i < batch.count; i += 1) {
             batch.getMatrixAt(i, instance);
-            add(batch.geometry, material, new THREE.Matrix4().multiplyMatrices(batch.matrixWorld, instance), batch);
+            add(batch.geometry, material, new THREE.Matrix4().multiplyMatrices(batch.matrixWorld, instance), batch, shiftAt(batch.geometry, i));
           }
         } else {
-          add(mesh.geometry, material, mesh.matrixWorld, mesh);
+          add(mesh.geometry, material, mesh.matrixWorld, mesh, shiftAt(mesh.geometry, 0));
         }
       }
     }
@@ -333,7 +362,7 @@ type Slots = Record<string, unknown>;
 
 /** Числа вида — из `cadLook`; своих у потока нет. */
 const LOOK: WireLook = {
-  toneMapping: CAD_TONE_MAPPING,
+  toneMapping: CAD_RENDER.toneMapping,
   outputColorSpace: CAD_COLOR_SPACE,
   bounces: CAD_RENDER.bounces,
   tiles: CAD_RENDER.tiles,

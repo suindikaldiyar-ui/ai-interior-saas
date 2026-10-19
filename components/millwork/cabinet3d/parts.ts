@@ -1,7 +1,7 @@
 'use client';
 
 import { CARCASS_ROUGHNESS, INNER_ROUGHNESS, applyFrontLook } from './cadLook';
-import { setRealSizeMap, unpatch } from './realSizeMap';
+import { realSizeShiftOf, setRealSizeMap, shiftedBox, unpatch } from './realSizeMap';
 import { MATERIAL_FINISHES } from '@/lib/millwork/materialFinishes';
 import type { MaterialPhoto } from '@/lib/millwork/materialCollection';
 import { useEffect, useMemo } from 'react';
@@ -300,8 +300,20 @@ export function useSurfaceLook(
   useEffect(() => {
     let cancelled = false;
 
+    /*
+     * ПОКА НОВОЕ ФОТО НЕ ПРИЕХАЛО — ЦВЕТ ПОЗИЦИИ, А НЕ ПРЕЖНЯЯ КАРТИНКА.
+     *
+     * Карта прежней позиции оставалась на материале до загрузки новой, а не
+     * приехала новая (404, нет сети) — оставалась навсегда: чужой рисунок
+     * на белом вместо цвета выбранной плиты. Карта другого адреса снимается
+     * сразу; из кэша новая встаёт в той же микрозадаче, до кадра.
+     */
+    if (material.userData.photoUrl !== textureUrl) {
+      dropPhoto(material);
+      material.color.set(color);
+    }
+
     if (!textureUrl) {
-      setRealSizeMap(material, null, null);
       /* Фото сняли — поверхность снова цвета позиции. */
       material.color.set(color);
       invalidate();
@@ -311,6 +323,7 @@ export function useSurfaceLook(
     loadTexture(textureUrl)
       .then((texture) => {
         if (cancelled) return;
+        material.userData.photoUrl = textureUrl;
         if (realW > 0 && realH > 0) {
           setRealSizeMap(material, texture, [realW, realH], { mirror });
           material.color.set('#ffffff');
@@ -324,6 +337,7 @@ export function useSurfaceLook(
            * драться за одну и ту же картинку.
            */
           const own = texture.clone();
+          own.userData.surfaceClone = true;
           own.needsUpdate = true;
           own.wrapS = THREE.RepeatWrapping;
           own.wrapT = THREE.RepeatWrapping;
@@ -337,8 +351,9 @@ export function useSurfaceLook(
       .catch((error: unknown) => {
         if (cancelled) return;
         /*
-         * Файл не отдался — остаётся цвет: пустая поверхность хуже цвета.
-         * Но не молча: адрес лежит на материале, и приёмка его видит.
+         * Файл не отдался — остаётся цвет позиции (карта прежней уже снята):
+         * пустая поверхность хуже цвета. Но не молча: адрес лежит на
+         * материале, и приёмка его видит.
          */
         material.userData.textureFailed = textureUrl;
         console.error(`Текстура не загрузилась: ${textureUrl}`, error);
@@ -350,6 +365,32 @@ export function useSurfaceLook(
   }, [material, textureUrl, repeatX, repeatY, realW, realH, mirror, color, invalidate]);
 }
 
+
+/**
+ * СНЯТЬ ФОТО ПОЗИЦИИ С МАТЕРИАЛА — до загрузки фото другого адреса или
+ * когда фото нет. Своя копия (повторы по габариту) освобождается: общая
+ * текстура живёт в кэше. Адрес и пометка о неудаче — вместе с картой.
+ */
+function dropPhoto(material: THREE.MeshStandardMaterial): void {
+  const own = material.map;
+  setRealSizeMap(material, null, null);
+  if (own?.userData?.surfaceClone === true) own.dispose();
+  material.userData.photoUrl = null;
+  delete material.userData.textureFailed;
+}
+
+/**
+ * КОРОБКА ЕДУЩЕЙ ДЕТАЛИ — СО СДВИГОМ РИСУНКА ТОЙ ЖЕ ДЕТАЛИ В ПАЧКЕ (P3D-LDSP).
+ *
+ * Открытая створка или выехавший ящик рисуются своим мешем; их сдвиг
+ * рисунка — из того же идентификатора детали, что у неё закрытой в пачке
+ * (`realSizeMap`), поэтому дерево не «перескакивает» в момент открывания.
+ */
+export function useShiftedBox(base: THREE.BufferGeometry, part: string): THREE.BufferGeometry {
+  const geometry = useMemo(() => shiftedBox(base, realSizeShiftOf(part)), [base, part]);
+  useEffect(() => () => geometry.dispose(), [geometry]);
+  return geometry;
+}
 
 /* ────────────────  Материал фасада виден сразу  ──────────────── */
 
@@ -456,15 +497,15 @@ export function useFrontMaterials(
        * задумано».
        */
       const photo = spec.itemId ? photos.get(spec.itemId) : undefined;
-      if (!photo) {
-        setRealSizeMap(material, null, null);
-        continue;
-      }
+      /* Карта другой позиции снимается до загрузки: не приедет новая — фасад её цвета, а не чужой рисунок. */
+      if (material.userData.photoUrl !== (photo?.url ?? null)) dropPhoto(material);
+      if (!photo) continue;
       loadTexture(photo.url)
         .then((texture) => {
           if (cancelled) return;
+          material.userData.photoUrl = photo.url;
           applyFrontLook(material, spec, fallbackColor, MATERIAL_FINISHES, true);
-          setRealSizeMap(material, texture, photo.sizeM, { mirror: Boolean(photo.reference) });
+          setRealSizeMap(material, texture, photo.sizeM, { mirror: Boolean(photo.mirror) });
           invalidate();
         })
         .catch((error: unknown) => {
@@ -544,16 +585,16 @@ export function useCarcassMaterials(
       material.color.set(inner ? lightenHex(hex, 0.18) : darkenHex(hex, 0.08));
 
       const photo = photos.get(key);
-      if (!photo) {
-        setRealSizeMap(material, null, null);
-        continue;
-      }
+      /* Карта другого декора снимается до загрузки: не приедет новая — корпус его цвета. */
+      if (material.userData.photoUrl !== (photo?.url ?? null)) dropPhoto(material);
+      if (!photo) continue;
       loadTexture(photo.url)
         .then((texture) => {
           if (cancelled) return;
+          material.userData.photoUrl = photo.url;
           // Под фото цвет белый: рисунок несёт текстура (как у фасада).
           material.color.set('#ffffff');
-          setRealSizeMap(material, texture, photo.sizeM, { mirror: Boolean(photo.reference) });
+          setRealSizeMap(material, texture, photo.sizeM, { mirror: Boolean(photo.mirror) });
           invalidate();
         })
         .catch((error: unknown) => {

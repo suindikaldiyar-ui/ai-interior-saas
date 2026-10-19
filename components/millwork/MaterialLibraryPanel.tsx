@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { previewUrl } from '@/lib/catalog';
+import { useInteriorStore } from '@/store/useInteriorStore';
+import { woodPatternUrl, type WoodPattern } from '@/lib/millwork/woodPattern';
 import {
   MATERIAL_TARGETS,
   PRICE_UNIT_LABEL,
@@ -10,6 +12,7 @@ import {
   catalogEntriesFromRows,
   collectionOf,
   collectionRateKey,
+  isBoardItem,
   manualMaterialRow,
   materialDefs,
   materialItemOf,
@@ -17,6 +20,7 @@ import {
   materialTabs,
   planMaterialImport,
   searchMaterials,
+  whiteLdspOf,
   type CollectionDef,
   type MaterialChoice,
   type MaterialDefs,
@@ -264,6 +268,12 @@ export default function MaterialLibraryPanel({
     }
     return out;
   }, [catalog]);
+
+  /* Белое ЛДСП для сравнения с деревом (P3D-LDSP) — позиция этого же каталога. */
+  const whiteBoard = useMemo(
+    () => whiteLdspOf(Array.from(byCollection.values()).flatMap((list) => list.map((pair) => pair.item))),
+    [byCollection],
+  );
 
   const tabs = useMemo(() => (defs ? materialTabs(defs.collections, target) : []), [defs, target]);
   const available = tabs.filter((tab) => tab.available);
@@ -680,8 +690,13 @@ export default function MaterialLibraryPanel({
                  * Образец из брошюры (REFERENCE_ONLY) — это `photo.reference`: тот же
                  * в списке, в карточке и на детали в 3D, через закрытую выдачу.
                  * Нет образца — плашка цвета, а не битая картинка.
+                 *
+                 * У ПЛИТЫ образца брошюры нет нигде (P3D-LDSP: права не
+                 * подтверждены): дерево — демонстрационный рисунок, тот же, что
+                 * на детали в 3D; однотон и камень — плашка цвета декора.
                  */
-                const thumb = row.item.photo ? previewUrl(row.entry) || row.item.photo.url : null;
+                const demo = row.item.photo?.procedural ?? null;
+                const thumb = demo || isBoardItem(row.item) ? null : row.item.photo ? previewUrl(row.entry) || row.item.photo.url : null;
                 return (
                   <button
                     key={row.entry.id}
@@ -691,7 +706,8 @@ export default function MaterialLibraryPanel({
                     data-photo={row.item.photo ? '1' : '0'}
                     data-brand={row.item.brand ?? 'other'}
                     data-review={row.item.review ? '1' : '0'}
-                    data-reference={row.item.photo?.reference ? row.item.photo.reference.source : ''}
+                    data-reference={thumb && row.item.photo?.reference ? row.item.photo.reference.source : ''}
+                    data-demo={demo ? '1' : '0'}
                     aria-pressed={on}
                     onClick={() => apply(row.item, row.collection)}
                     className="absolute inset-x-0 flex items-center gap-2 px-3 text-left"
@@ -702,15 +718,19 @@ export default function MaterialLibraryPanel({
                       outlineOffset: '-2px',
                     }}
                   >
-                    <span
-                      className="block h-7 w-7 shrink-0 rounded-[5px]"
-                      style={{
-                        background: thumb
-                          ? `center/cover url(${thumb}), ${row.item.colorHex ?? '#888'}`
-                          : (row.item.colorHex ?? 'transparent'),
-                        border: row.item.colorHex || thumb ? undefined : '1px dashed var(--line-warm)',
-                      }}
-                    />
+                    {demo ? (
+                      <DemoWoodSwatch pattern={demo} className="block h-7 w-7 shrink-0 rounded-[5px]" />
+                    ) : (
+                      <span
+                        className="block h-7 w-7 shrink-0 rounded-[5px]"
+                        style={{
+                          background: thumb
+                            ? `center/cover url(${thumb}), ${row.item.colorHex ?? '#888'}`
+                            : (row.item.colorHex ?? 'transparent'),
+                          border: row.item.colorHex || thumb ? undefined : '1px dashed var(--line-warm)',
+                        }}
+                      />
+                    )}
                     {/*
                       * Две строки: код целиком сверху — по нему ищут и
                       * называют позицию (EGGER-H1180-ST37 в узкой панели
@@ -771,6 +791,7 @@ export default function MaterialLibraryPanel({
               surface={current.surface}
               surfaceChoice={TARGET_ROLE[target] !== 'carcass'}
               rates={rates}
+              whiteBoard={whiteBoard}
               onSurface={(surface) => apply(currentPair.item, currentCollection, surface)}
               onPrice={async (patch) => setNotice(await onPrice(currentPair.item.id, patch))}
             />
@@ -801,6 +822,48 @@ export default function MaterialLibraryPanel({
   );
 }
 
+/* ─────────────────────────  Демонстрационный рисунок  ───────────────────────── */
+
+/**
+ * ОБРАЗЕЦ ДЕМОНСТРАЦИОННОГО РИСУНКА ДЕРЕВА (P3D-LDSP) — тот же рисунок, что
+ * лёг на деталь в 3D (`photo.procedural`), в малом размере. Пока поток его
+ * считает — плашка цвета декора; не посчитался — плашка и слова в подсказке.
+ * Генератор грузится по требованию: в первую загрузку он не едет.
+ */
+function DemoWoodSwatch({ pattern, className, label }: { pattern: WoodPattern; className: string; label?: string }) {
+  const key = woodPatternUrl(pattern);
+  const [state, setState] = useState<{ key: string; url: string | null; failed: string | null }>({ key, url: null, failed: null });
+  useEffect(() => {
+    let alive = true;
+    import('@/lib/woodTextureClient')
+      .then(({ woodSwatchUrl }) => woodSwatchUrl(pattern, key))
+      .then((url) => {
+        if (alive) setState({ key, url, failed: null });
+      })
+      .catch((error: unknown) => {
+        console.error(`Образец рисунка дерева не посчитан: ${key}`, error);
+        if (alive) setState({ key, url: null, failed: error instanceof Error ? error.message : String(error) });
+      });
+    return () => {
+      alive = false;
+    };
+    // Рисунок целиком в ключе: тот же ключ — тот же рисунок.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+  const url = state.key === key ? state.url : null;
+  const failed = state.key === key ? state.failed : null;
+  return (
+    <span
+      className={className}
+      style={{ background: url ? `center/cover url(${url}), ${pattern.hex}` : pattern.hex }}
+      data-demo-wood={url ? 'ready' : failed ? 'failed' : 'pending'}
+      title={failed ? `Рисунок не посчитан: ${failed}. Показан цвет декора.` : label}
+      role={label ? 'img' : undefined}
+      aria-label={label}
+    />
+  );
+}
+
 /* ─────────────────────────  Карточка позиции  ───────────────────────── */
 
 function MaterialCard({
@@ -810,6 +873,7 @@ function MaterialCard({
   surface,
   surfaceChoice,
   rates,
+  whiteBoard,
   onSurface,
   onPrice,
 }: {
@@ -819,6 +883,8 @@ function MaterialCard({
   surface: string | undefined;
   surfaceChoice: boolean;
   rates: Record<string, number>;
+  /** Белое ЛДСП каталога для сравнения с деревом в 3D; нет — сравнения нет. */
+  whiteBoard: MaterialItem | null;
   onSurface: (surface: string) => void;
   onPrice: (patch: PricePatch) => Promise<void>;
 }) {
@@ -841,13 +907,40 @@ function MaterialCard({
   const effective = surface ? materialPriceOf(item, surface, rates) : null;
   const [error, setError] = useState<string | null>(null);
   const [pixels, setPixels] = useState<{ w: number; h: number } | null>(null);
-  /** Образец из брошюры (REFERENCE_ONLY) и не отдался ли он с этого сервера. */
-  const reference = item.photo?.reference ?? null;
+  /*
+   * ПЛИТА (ЛДСП, PerfectSense) — БЕЗ ОБРАЗЦА БРОШЮРЫ (P3D-LDSP).
+   *
+   * Права на изображения EGGER не подтверждены: образец не показывается ни
+   * здесь, ни в списке, ни на детали. Дерево — демонстрационный рисунок в
+   * цвет декора (`photo.procedural`), однотон и камень — ровный цвет.
+   * Откуда цвет — сказано словами: средний цвет образца брошюры.
+   */
+  const board = isBoardItem(item);
+  const demo = item.photo?.procedural ?? null;
+  /**
+   * Образец из брошюры, который МОЖНО показать (права подтверждены —
+   * `referenceImageAllowed`; тогда он лежит и на детали), и не отдался ли он с
+   * этого сервера. У плиты его нет никогда (P3D-LDSP).
+   */
+  const reference = board ? null : (item.photo?.reference ?? null);
+  /** Образец есть, а картинки нет (права не подтверждены): сказано, откуда цвет. */
+  const colorSource = reference ? null : (entry.reference ?? null);
   const [imageFailed, setImageFailed] = useState(false);
+
+  /*
+   * СРАВНЕНИЕ С БЕЛЫМ ЛДСП — только вид сцены. Карточка ушла (другая
+   * позиция, панель закрыта) — сравнение снимается: иначе сцена осталась
+   * бы белой без единого слова о том, почему.
+   */
+  const compareWhiteId = useInteriorStore((s) => s.compareWhiteId);
+  const setCompareWhiteId = useInteriorStore((s) => s.setCompareWhiteId);
+  const comparing = Boolean(whiteBoard) && compareWhiteId === whiteBoard?.id;
+  useEffect(() => () => setCompareWhiteId(null), [setCompareWhiteId]);
 
   /* Размер фото в пикселях — чтобы предупредить про квадраты на столешнице. */
   useEffect(() => {
-    if (!item.photo) return;
+    /* У рисунка дерева файла нет: адрес `procedural:` браузер не грузит. */
+    if (!item.photo || item.photo.procedural) return;
     let alive = true;
     const image = new Image();
     image.crossOrigin = 'anonymous';
@@ -897,19 +990,32 @@ function MaterialCard({
         * СПРАВОЧНАЯ КАРТОЧКА ПОСТАВЩИКА (P3): производитель, код декора и
         * поверхность, страница брошюры и чего о позиции НЕ известно.
         * Образец — картинка из PDF производителя, сопоставленная с позицией
-        * по коду и структуре дословно; он же ложится на деталь в 3D, но
-        * остаётся REFERENCE_ONLY: масштаб принят, повтор зеркальный.
+        * по коду и структуре дословно; у столешницы он же ложится на деталь
+        * в 3D, но остаётся REFERENCE_ONLY: масштаб принят, повтор зеркальный.
+        * У плиты образца нет (P3D-LDSP): дерево — демонстрационный рисунок,
+        * однотон и камень — ровный цвет, и это сказано словами.
         */}
       {item.review && (
-        <div className="mt-2 flex gap-3" data-material-review={item.review.decorCode}>
-          {reference && !imageFailed ? (
+        /*
+         * Образец полосой сверху, слова под ним во всю ширину: панель узкая
+         * (~250 px), и колонка текста рядом с образцом 112 px обрезала строки
+         * краем панели (P3D-LDSP).
+         */
+        <div className="mt-2 grid gap-2" data-material-review={item.review.decorCode}>
+          {demo ? (
+            <DemoWoodSwatch
+              pattern={demo}
+              className="block h-20 w-full rounded-[5px]"
+              label={`Демонстрационный рисунок дерева в цвет декора ${item.review.decorCode} — не текстура ${item.brand ?? 'производителя'}`}
+            />
+          ) : reference && !imageFailed ? (
             /* eslint-disable-next-line @next/next/no-img-element -- образец идёт закрытой выдачей, без оптимизатора и без кэша CDN */
             <img
               src={item.photo!.url}
               alt={`Образец ${item.brand ?? ''} ${item.review.decorCode} ${item.review.surfaceCode} из брошюры производителя`}
               width={112}
               height={112}
-              className="h-28 w-28 shrink-0 rounded-[5px] object-cover"
+              className="h-20 w-full rounded-[5px] object-cover"
               style={{ background: item.colorHex ?? undefined }}
               onError={() => setImageFailed(true)}
               data-review-image
@@ -917,12 +1023,12 @@ function MaterialCard({
             />
           ) : (
             <span
-              className="block h-28 w-28 shrink-0 rounded-[5px]"
+              className="block h-20 w-full rounded-[5px]"
               style={{ background: item.colorHex ?? undefined }}
               data-review-color
             />
           )}
-          <div className="grid content-start gap-0.5 text-[13px] leading-snug">
+          <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] content-start gap-0.5 text-[13px] leading-snug [overflow-wrap:anywhere]">
             <p>
               <b data-material-maker>{item.brand}</b> {item.review.decorCode} · поверхность {item.review.surfaceCode}
             </p>
@@ -934,6 +1040,12 @@ function MaterialCard({
                 {reference.caption ? `, подпись «${reference.caption}»` : ''}
                 {reference.note ? ` — ${reference.note}` : ''}
               </p>
+            ) : colorSource ? (
+              <p className="text-graphiteMw" data-color-origin>
+                Цвет — средний цвет образца: {REFERENCE_SOURCE_TITLE[colorSource.source]}
+                {colorSource.page !== null ? `, стр. ${colorSource.page}` : ''}
+                {colorSource.caption ? `, подпись «${colorSource.caption}»` : ''}.
+              </p>
             ) : (
               <p className="text-graphiteMw">
                 {item.review.sourcePdf}
@@ -941,7 +1053,11 @@ function MaterialCard({
               </p>
             )}
             <p className="text-tape" data-review-status>
-              {reference
+              {demo
+                ? `В 3D — демонстрационный рисунок дерева в цвет декора ${item.review.decorCode}: это не текстура ${item.brand ?? 'производителя'} и не рисунок этого декора. Настоящую текстуру даёт файл декора производителя (у EGGER — myEGGER); образец брошюры не показывается и на детали не ложится — права на изображения не подтверждены.`
+                : !reference && colorSource
+                  ? `В 3D — ровный цвет декора ${item.review.decorCode}, без рисунка. Образец брошюры не показывается и на деталь не ложится — права на изображения не подтверждены.`
+                  : reference
                 ? imageFailed
                   ? 'Образец недоступен на этом сервере — права на изображения не подтверждены, поэтому файлов нет в git и Storage. Карточка и деталь показывают средний цвет образца.'
                   : `REFERENCE_ONLY: образец из брошюры, не PBR и не бесшовная текстура — на деталях повторяется зеркально; ${referenceScaleWords(reference)}; права на изображение не подтверждены.`
@@ -949,6 +1065,25 @@ function MaterialCard({
             </p>
             {item.price === null && !item.finishPrices && <p className="text-tape">Нет цены — смета с ним «неполная».</p>}
           </div>
+        </div>
+      )}
+
+      {demo && whiteBoard && whiteBoard.id !== item.id && (
+        <div className="mt-2 grid gap-1" data-compare>
+          <button
+            type="button"
+            data-compare-white={whiteBoard.code}
+            aria-pressed={comparing}
+            onClick={() => setCompareWhiteId(comparing ? null : whiteBoard.id)}
+            className={`mw-btn justify-self-start ${comparing ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+          >
+            {comparing ? 'Вернуть декор в 3D' : `Сравнить в 3D с белым ${whiteBoard.review?.decorCode ?? 'ЛДСП'}`}
+          </button>
+          <p className="text-[13px] leading-snug text-graphiteMw" data-compare-note>
+            {comparing
+              ? `В 3D сейчас белое ЛДСП ${whiteBoard.code} — только для сравнения: в проекте и смете ${entry.article}.`
+              : 'Только вид: в проекте и смете декор не меняется.'}
+          </p>
         </div>
       )}
 

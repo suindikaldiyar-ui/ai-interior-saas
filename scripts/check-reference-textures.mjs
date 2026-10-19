@@ -10,10 +10,12 @@
  * прежнего коммита со своей сборкой>. Там проверки обязаны падать — это и есть
  * доказательство, что они меряют дефект, а не своё присутствие.
  *
- *   egger   Каталог → EGGER на фасады → в 3D на фасадах карта образца (закрытая
- *           выдача, зеркальный повтор, принятый размер), карточка с картинкой,
- *           производителем и REFERENCE_ONLY → другой декор на фасады → корпус,
- *           полки, перегородки и антресоль — каждый своим образцом → сохранить →
+ *   egger   Каталог → EGGER на фасады → в 3D на фасадах ДЕМОНСТРАЦИОННЫЙ
+ *           рисунок дерева в цвет декора (P3D-LDSP: образец брошюры на плиту не
+ *           кладётся — права не подтверждены), карточка с этим рисунком, без
+ *           картинки брошюры и со словами «не текстура» → другой декор на
+ *           фасады → корпус, полки, перегородки и антресоль — каждый своим:
+ *           дерево рисунком своего цвета, однотон ровным цветом → сохранить →
  *           перезагрузить → те же карты; смета — строки полок и перегородок.
  *   grandex Кухня: GRANDEX на столешницу → карта камня на плитах → сохранить →
  *           перезагрузить → та же карта.
@@ -192,6 +194,10 @@ const surfaces = (page) =>
     return { hook: 'none', list: [] };
   });
 const mapsOf = (read, prefix) => read.list.filter((s) => s.name.startsWith(prefix) && s.count > 0);
+/** Демонстрационный рисунок дерева (P3D-LDSP) в цвет образца декора: адрес рисунка несёт его цвет. */
+const demoIn = (map, ref) => typeof map === 'string' && map.startsWith('procedural:wood?') && map.includes(`hex=${ref.hex.slice(1)}`);
+/** Плитка демонстрационного рисунка — 800 × 1600 мм, повтор прямой. */
+const demoSize = (real) => Array.isArray(real) && Math.abs(real[0] - 0.8) < 1e-6 && Math.abs(real[1] - 1.6) < 1e-6;
 const keyIn = (map, key) => Boolean(map) && decodeURIComponent(map).includes(`file=${key}`);
 const sizeFits = (real, ref) => Array.isArray(real) && Math.abs(real[0] - ref.mm[0] / 1000) < 1e-6 && Math.abs(real[1] - ref.mm[1] / 1000) < 1e-6;
 const words = (read, prefix) =>
@@ -249,6 +255,8 @@ const cardOf = (page) =>
           maker: card.querySelector('[data-material-maker]')?.textContent ?? null,
           status: card.querySelector('[data-review-status]')?.textContent ?? '',
           origin: card.querySelector('[data-reference-origin]')?.textContent ?? null,
+          colorOrigin: card.querySelector('[data-color-origin]')?.textContent ?? null,
+          demo: card.querySelector('[data-demo-wood]')?.getAttribute('data-demo-wood') ?? null,
           text: card.textContent ?? '',
         }
       : null;
@@ -377,23 +385,41 @@ async function partEgger(browser) {
     /* 1. Каталог → EGGER на фасады. */
     const r1 = await applyItem(page, 'fronts', 'EGGER', FRONT_1.article);
     must(`EGGER ${FRONT_1.article} лёг на фасады`, r1 === null, r1 ?? '');
+    await waitFor(page, () => document.querySelector('[data-material-card] [data-demo-wood]')?.getAttribute('data-demo-wood') ?? null, (v) => v === 'ready' || v === 'failed', 20_000);
     const card = await cardOf(page);
     const listThumb = await page.evaluate((article) => {
       const row = document.querySelector(`[data-material-item="${article}"]`);
-      const swatch = row?.querySelector('span');
-      return { background: swatch ? getComputedStyle(swatch).backgroundImage : null, reference: row?.getAttribute('data-reference') ?? null };
+      const swatch = row?.querySelector('[data-demo-wood]');
+      return {
+        demo: row?.getAttribute('data-demo') ?? null,
+        swatch: swatch?.getAttribute('data-demo-wood') ?? null,
+        background: swatch ? getComputedStyle(swatch).backgroundImage : null,
+        reference: row?.getAttribute('data-reference') ?? null,
+      };
     }, FRONT_1.article);
     await page.locator('[data-material-card]').first().scrollIntoViewIfNeeded().catch(() => undefined);
     await shot(page, '02-egger-card');
+    /*
+     * P3D-LDSP: было «картинка образца брошюры загрузилась». Права на
+     * изображения EGGER не подтверждены — у плиты образец брошюры не
+     * показывается нигде; карточка несёт демонстрационный рисунок в цвет
+     * декора и прямо говорит, что это не текстура EGGER. Откуда цвет —
+     * названо (страница и подпись брошюры).
+     */
     check(
-      'TEX-E.1 карточка: картинка образца загрузилась (а не плашка цвета), производитель EGGER, REFERENCE_ONLY и принятый размер названы',
-      Boolean(card?.image?.loaded) && card?.maker === 'EGGER' && /REFERENCE_ONLY/.test(card?.status ?? '') && /принят за \d+ × \d+ мм/.test(card?.status ?? ''),
-      card ? `картинка ${card.image ? `${card.image.w}×${card.image.h} ${card.image.loaded ? 'загружена' : 'НЕ ЗАГРУЖЕНА'}` : 'НЕТ'} · производитель ${card.maker ?? 'НЕ НАЗВАН'} · «${card.status.slice(0, 120)}»` : 'НУЛЕВОЙ СЕЛЕКТОР: карточки нет',
+      'TEX-E.1 карточка: образец — демонстрационный рисунок дерева (посчитан), картинки брошюры нет; производитель EGGER; «не текстура» и откуда цвет названы',
+      card?.demo === 'ready' &&
+        !card?.image &&
+        card?.maker === 'EGGER' &&
+        /демонстрационн/.test(card?.status ?? '') &&
+        /не текстура/.test(card?.status ?? '') &&
+        /стр\. \d+/.test(card?.colorOrigin ?? ''),
+      card ? `рисунок ${card.demo ?? 'НЕТ'} · брошюра ${card.image ? 'ПОКАЗАНА' : 'нет'} · производитель ${card.maker ?? 'НЕ НАЗВАН'} · цвет: ${card.colorOrigin ?? 'НЕ НАЗВАН'} · «${card.status.slice(0, 120)}»` : 'НУЛЕВОЙ СЕЛЕКТОР: карточки нет',
     );
     check(
-      'TEX-E.2 строка списка: значок — картинка образца того же артикула, источник назван',
-      /url\(/.test(listThumb.background ?? '') && decodeURIComponent(listThumb.background ?? '').includes(FRONT_1.key) && Boolean(listThumb.reference),
-      `${(listThumb.background ?? 'НЕТ').slice(0, 120)} · источник ${listThumb.reference || 'НЕ НАЗВАН'}`,
+      'TEX-E.2 строка списка: значок — тот же демонстрационный рисунок (картинка посчитана), брошюры в строке нет',
+      listThumb.demo === '1' && listThumb.swatch === 'ready' && /url\(/.test(listThumb.background ?? '') && listThumb.reference === '',
+      `рисунок ${listThumb.demo}/${listThumb.swatch} · ${(listThumb.background ?? 'НЕТ').slice(0, 60)} · брошюра «${listThumb.reference ?? '—'}»`,
     );
 
     await tool(page, 'furniture');
@@ -401,13 +427,15 @@ async function partEgger(browser) {
     await sceneSettled(page);
     await preset(page, 'design');
     await sleep(1500);
-    const fronts1 = await waitFor(page, () => (window.__mwCadSurfaces ? window.__mwCadSurfaces() : null), (v) => Array.isArray(v) && v.some((s) => s.name.startsWith('front:') && s.map), 15_000).then(() => surfaces(page));
-    await shot(page, '03-egger-fronts-3d');
     const ref1 = table.get(FRONT_1.key);
-    const withMap1 = mapsOf(fronts1, 'front:').filter((s) => keyIn(s.map, FRONT_1.key));
+    const fronts1 = await waitFor(page, () => (window.__mwCadSurfaces ? window.__mwCadSurfaces() : null), (v) => Array.isArray(v) && v.some((s) => s.name.startsWith('front:') && typeof s.map === 'string' && s.map.includes(`hex=${ref1.hex.slice(1)}`)), 30_000).then(() => surfaces(page));
+    await shot(page, '03-egger-fronts-3d');
+    const withMap1 = mapsOf(fronts1, 'front:').filter((s) => demoIn(s.map, ref1));
     check(
-      `TEX-E.3 3D: фасады несут образец ${FRONT_1.article} — закрытая выдача, зеркальный повтор, размер ${ref1.mm.join(' × ')} мм (принятый)`,
-      withMap1.length > 0 && withMap1.every((s) => s.wrap === 'mirror' && sizeFits(s.realSizeM, ref1)),
+      `TEX-E.3 3D: фасады ${FRONT_1.article} несут демонстрационный рисунок в цвет декора (${ref1.hex}), плитка 800 × 1600 мм, прямой повтор; образца брошюры на деталях нет`,
+      withMap1.length > 0 &&
+        withMap1.every((s) => s.wrap === 'repeat' && demoSize(s.realSizeM)) &&
+        !mapsOf(fronts1, 'front:').some((s) => typeof s.map === 'string' && s.map.includes('/preview?')),
       words(fronts1, 'front:'),
     );
 
@@ -418,13 +446,13 @@ async function partEgger(browser) {
     await view(page, '3d');
     await sceneSettled(page);
     await sleep(1500);
-    const fronts2 = await surfaces(page);
-    await shot(page, '04-egger-fronts-changed-3d');
     const ref2 = table.get(FRONT_2.key);
-    const withMap2 = mapsOf(fronts2, 'front:').filter((s) => keyIn(s.map, FRONT_2.key));
+    const fronts2 = await waitFor(page, () => (window.__mwCadSurfaces ? window.__mwCadSurfaces() : null), (v) => Array.isArray(v) && v.some((s) => s.name.startsWith('front:') && typeof s.map === 'string' && s.map.includes(`hex=${ref2.hex.slice(1)}`)), 30_000).then(() => surfaces(page));
+    await shot(page, '04-egger-fronts-changed-3d');
+    const withMap2 = mapsOf(fronts2, 'front:').filter((s) => demoIn(s.map, ref2));
     check(
-      `TEX-E.4 смена фасада: в 3D теперь образец ${FRONT_2.article}, прежнего ${FRONT_1.article} на фасадах нет`,
-      withMap2.length > 0 && !mapsOf(fronts2, 'front:').some((s) => keyIn(s.map, FRONT_1.key)) && withMap2.every((s) => sizeFits(s.realSizeM, ref2)),
+      `TEX-E.4 смена фасада: в 3D теперь рисунок в цвет ${FRONT_2.article} (${ref2.hex}), рисунка ${FRONT_1.article} на фасадах нет`,
+      withMap2.length > 0 && !mapsOf(fronts2, 'front:').some((s) => demoIn(s.map, ref1)) && withMap2.every((s) => demoSize(s.realSizeM)),
       words(fronts2, 'front:'),
     );
 
@@ -451,15 +479,16 @@ async function partEgger(browser) {
     const shelfMesh = meshOf(inside, 'inner:', shelvesId);
     const partMesh = meshOf(inside, 'inner:', partsId);
     const bodyMesh = meshOf(outside, 'carcass:', bodyId);
+    const shelvesRef = table.get(SHELVES.key);
     check(
-      'TEX-E.6 3D: корпус, полки и перегородки — три разных образца, каждый своей пачкой (корпус W1000, полки H1145, перегородки U999)',
+      'TEX-E.6 3D: корпус, полки и перегородки — каждый своей пачкой и своим: корпус W1000 и перегородки U999 (однотон) — ровный цвет без картинки, полки H1145 (дерево) — рисунок в свой цвет',
       bodyMesh.length > 0 &&
         shelfMesh.length > 0 &&
         partMesh.length > 0 &&
-        bodyMesh.every((s) => keyIn(s.map, BODY.key)) &&
-        shelfMesh.every((s) => keyIn(s.map, SHELVES.key)) &&
-        partMesh.every((s) => keyIn(s.map, PARTS_DECOR.key)),
-      `корпус ${bodyMesh.map((s) => s.map ? 'образец' : 'цвет').join(',') || 'НЕТ'} · полки ${shelfMesh.length ? shelfMesh.map((s) => (keyIn(s.map, SHELVES.key) ? 'образец' : s.map ?? 'цвет')).join(',') : 'НЕТ'} · перегородки ${partMesh.length ? partMesh.map((s) => (keyIn(s.map, PARTS_DECOR.key) ? 'образец' : s.map ?? 'цвет')).join(',') : 'НЕТ'} · ${inside.hook}`,
+        bodyMesh.every((s) => s.map === null) &&
+        shelfMesh.every((s) => demoIn(s.map, shelvesRef)) &&
+        partMesh.every((s) => s.map === null),
+      `корпус ${bodyMesh.map((s) => s.map ?? 'цвет').join(',') || 'НЕТ'} · полки ${shelfMesh.length ? shelfMesh.map((s) => (demoIn(s.map, shelvesRef) ? 'рисунок H1145' : s.map ?? 'цвет')).join(',') : 'НЕТ'} · перегородки ${partMesh.length ? partMesh.map((s) => s.map ?? 'цвет').join(',') : 'НЕТ'} · ${inside.hook}`,
     );
 
     /* 4. Антресоль над шкафом и её материал. */
@@ -479,12 +508,13 @@ async function partEgger(browser) {
     await sceneSettled(page);
     await preset(page, 'design');
     await sleep(1500);
-    const withAntresol = await surfaces(page);
+    const antresolRef = table.get(ANTRESOL.key);
+    const withAntresol = await waitFor(page, () => (window.__mwCadSurfaces ? window.__mwCadSurfaces() : null), (v) => Array.isArray(v) && v.some((s) => s.name === `carcass:carcass/${antresolId}` && typeof s.map === 'string'), 30_000).then(() => surfaces(page));
     await shot(page, '06-antresol-3d');
     const antresolMesh = withAntresol.list.filter((s) => s.name === `carcass:carcass/${antresolId}` && s.count > 0);
     check(
-      `TEX-E.8 3D: корпус антресоли — образец ${ANTRESOL.article}, отдельной пачкой от корпуса шкафа`,
-      antresolMesh.length > 0 && antresolMesh.every((s) => keyIn(s.map, ANTRESOL.key)) && withAntresol.list.some((s) => s.name === `carcass:carcass/${bodyId}` && keyIn(s.map, BODY.key)),
+      `TEX-E.8 3D: корпус антресоли — рисунок в цвет ${ANTRESOL.article} (${antresolRef.hex}), отдельной пачкой от корпуса шкафа W1000 (ровный цвет)`,
+      antresolMesh.length > 0 && antresolMesh.every((s) => demoIn(s.map, antresolRef)) && withAntresol.list.some((s) => s.name === `carcass:carcass/${bodyId}` && s.map === null),
       words(withAntresol, 'carcass:'),
     );
 
@@ -512,14 +542,19 @@ async function partEgger(browser) {
     await open3d(page);
     await preset(page, 'design');
     await sleep(2000);
-    const after = await waitFor(page, () => (window.__mwCadSurfaces ? window.__mwCadSurfaces() : null), (v) => Array.isArray(v) && v.some((s) => s.name.startsWith('front:') && s.map), 20_000).then(() => surfaces(page));
+    /*
+     * После перезагрузки рисунки считает один фоновый поток по очереди: ждём
+     * ИМЕННО рисунок H1180 на фасадах и H3309 на антресоли — «какая-нибудь
+     * карта на фасаде» выполнялась фасадом антресоли раньше фасадов шкафа.
+     */
+    const after = await waitFor(page, () => (window.__mwCadSurfaces ? window.__mwCadSurfaces() : null), (v) => Array.isArray(v) && v.some((s) => s.name.startsWith('front:') && demoIn(s.map, ref2)) && v.some((s) => s.name === `carcass:carcass/${antresolId}` && demoIn(s.map, antresolRef)), 30_000).then(() => surfaces(page));
     await shot(page, '07-after-reload-3d');
-    const sameFronts = mapsOf(after, 'front:').filter((s) => keyIn(s.map, FRONT_2.key));
+    const sameFronts = mapsOf(after, 'front:').filter((s) => demoIn(s.map, ref2));
     check(
-      'TEX-E.10 после перезагрузки: фасады — тот же образец H1180, корпус — W1000, корпус антресоли — H3309',
+      'TEX-E.10 после перезагрузки: фасады — тот же рисунок в цвет H1180, корпус W1000 — ровный цвет, корпус антресоли — рисунок в цвет H3309',
       sameFronts.length > 0 &&
-        after.list.some((s) => s.name === `carcass:carcass/${bodyId}` && keyIn(s.map, BODY.key)) &&
-        after.list.some((s) => s.name === `carcass:carcass/${antresolId}` && keyIn(s.map, ANTRESOL.key)),
+        after.list.some((s) => s.name === `carcass:carcass/${bodyId}` && s.map === null) &&
+        after.list.some((s) => s.name === `carcass:carcass/${antresolId}` && demoIn(s.map, antresolRef)),
       `${words(after, 'front:')} · ${words(after, 'carcass:')}`,
     );
 

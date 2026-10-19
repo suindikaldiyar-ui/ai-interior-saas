@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import type * as THREE from 'three';
 import { useSlide } from './useSlide';
 import { bifoldPoses, type ModulePlacement, type PosedBox } from '@/lib/millwork/cabinetBoxes';
-import type { CabinetParts } from './parts';
+import { useShiftedBox, type CabinetParts } from './parts';
 import type { Module } from '@/types/millwork';
 
 /**
@@ -52,6 +52,8 @@ export default function InteractiveBifold({
 }: Props) {
   const meshes = useRef<(THREE.Mesh | null)[]>([]);
   const [active, setActive] = useState(open);
+  /* Оба полотна — тот же кусок дерева, что у пары закрытой в пачке (один ключ на пару). */
+  const leafBox = useShiftedBox(parts.box, id);
   const openRef = useRef(open);
   openRef.current = open;
 
@@ -122,7 +124,7 @@ export default function InteractiveBifold({
             ref={(mesh) => {
               meshes.current[i] = mesh;
             }}
-            geometry={parts.box}
+            geometry={pose.role === 'handle' ? parts.box : leafBox}
             material={pose.role === 'handle' ? parts.metal : (frontMaterial ?? parts.front)}
             position={pose.center}
             rotation={[0, pose.yaw, 0]}

@@ -6,10 +6,12 @@ import { moduleCarcassHeightMm, moduleDepthMm } from '@/lib/millwork/fill';
 import { roleColors } from '@/lib/millwork/sceneColors';
 import {
   CAD_CARCASS_BASE,
+  CAD_ENVIRONMENT,
   CAD_LIGHT,
   CARCASS_ROUGHNESS,
   INNER_ROUGHNESS,
   applyCadLook,
+  cadEnvironment,
   frontLookOf,
 } from './cadLook';
 import { MATERIAL_FINISHES } from '@/lib/millwork/materialFinishes';
@@ -186,7 +188,9 @@ export function renderThumb(
    * копия света и Ламберт вместо стандартного материала давали карточки
    * темнее мебели в сцене рядом.
    */
-  scene.add(new THREE.AmbientLight(0xffffff, CAD_LIGHT.ambient));
+  /* Окружение то же, что у сцены (P3D-LDSP): модуль смотрит фасадом в +z — к светлой стороне. */
+  scene.environment = cadEnvironment(gl);
+  scene.environmentIntensity = CAD_ENVIRONMENT.intensity;
   scene.add(
     new THREE.HemisphereLight(CAD_LIGHT.hemisphereSky, CAD_LIGHT.hemisphereGround, CAD_LIGHT.hemisphere),
   );

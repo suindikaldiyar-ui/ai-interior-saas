@@ -233,6 +233,17 @@ export default function Cabinet3D({
   const materialItems = useMemo(() => materialCatalog(catalog), [catalog]);
 
   /*
+   * СРАВНЕНИЕ С БЕЛЫМ ЛДСП (P3D-LDSP) — ТОЛЬКО ВИД.
+   *
+   * Поверхности с демонстрационным рисунком дерева (фасады и корпус)
+   * временно рисуются белой плитой из каталога организации. Ключи пачек
+   * прежние — меняется только то, чем их материал покрашен; ряд, объект,
+   * смета и раскрой декора не меняют.
+   */
+  const compareWhiteId = useInteriorStore((s) => s.compareWhiteId);
+  const compareWhite = compareWhiteId ? (materialItems.get(compareWhiteId) ?? null) : null;
+
+  /*
    * СТОЛЕШНИЦА ИЗ КАТАЛОГА МАТЕРИАЛОВ ЛЕЖИТ НА РЯДУ (`countertopMaterial`)
    * и сильнее прежнего выбора артикула: её видит смета, и сцена обязана
    * показывать ту же плиту, за которую выставлены деньги.
@@ -370,26 +381,6 @@ export default function Cabinet3D({
    * материал. Второго списка декоров в сцене нет.
    */
   const carcassItems = useMemo(() => carcassCatalog(catalog), [catalog]);
-  const carcassColors = useMemo(() => {
-    const out = new Map<string, string>();
-    for (const item of Array.from(carcassItems.values())) {
-      out.set(`carcass/${item.id}`, item.colorHex);
-    }
-    return out;
-  }, [carcassItems]);
-
-  /* Фото декора корпуса — по тому же ключу пачки, что и цвет. */
-  const carcassPhotos = useMemo(() => {
-    const out = new Map<string, MaterialPhoto>();
-    for (const item of Array.from(carcassItems.values())) {
-      const photo = materialItems.get(item.id)?.photo;
-      if (photo) out.set(`carcass/${item.id}`, photo);
-    }
-    return out;
-  }, [carcassItems, materialItems]);
-
-  const carcassMaterials = useCarcassMaterials(carcassColors, false, carcassPhotos);
-  const innerMaterials = useCarcassMaterials(carcassColors, true, carcassPhotos);
 
   const boxes = useMemo(
     () =>
@@ -402,6 +393,47 @@ export default function Cabinet3D({
       }),
     [run, production.carcassMm, production.frontMm, production.frontGapMm, cutaway, carcassItems],
   );
+
+  /*
+   * МАТЕРИАЛ И ФОТО — ТОЛЬКО У ДЕКОРОВ, КОТОРЫЕ СТОЯТ В РЯДУ (P3D-LDSP).
+   *
+   * Каталог ЛДСП — сотня позиций с ролью «корпус». Материал и фото на
+   * каждую значили сотню запросов фото при открытии сцены ради двух-трёх
+   * декоров ряда; на проде, где образцов брошюр нет, — 548 ошибок в
+   * консоли за один показ. Ключ пачки тот же, что у коробки (`carcassKey`);
+   * набор ключей строкой — чтобы правка состава без смены декоров не
+   * перекрашивала материалы заново.
+   */
+  const usedCarcass = useMemo(() => {
+    const keys = new Set<string>();
+    for (const box of boxes) {
+      if ((box.material === 'carcass' || box.material === 'inner') && box.carcassKey) keys.add(box.carcassKey);
+    }
+    return Array.from(keys).sort().join('|');
+  }, [boxes]);
+  const carcassColors = useMemo(() => {
+    const out = new Map<string, string>();
+    for (const key of usedCarcass ? usedCarcass.split('|') : []) {
+      const item = carcassItems.get(key.replace(/^carcass\//, ''));
+      if (!item) continue;
+      const shownWhite = compareWhite && materialItems.get(item.id)?.photo?.procedural;
+      out.set(key, shownWhite ? (compareWhite.colorHex ?? item.colorHex) : item.colorHex);
+    }
+    return out;
+  }, [usedCarcass, carcassItems, compareWhite, materialItems]);
+
+  /* Фото декора корпуса — по тому же ключу пачки, что и цвет. */
+  const carcassPhotos = useMemo(() => {
+    const out = new Map<string, MaterialPhoto>();
+    for (const key of Array.from(carcassColors.keys())) {
+      const photo = materialItems.get(key.replace(/^carcass\//, ''))?.photo;
+      if (photo && !(compareWhite && photo.procedural)) out.set(key, photo);
+    }
+    return out;
+  }, [carcassColors, materialItems, compareWhite]);
+
+  const carcassMaterials = useCarcassMaterials(carcassColors, false, carcassPhotos);
+  const innerMaterials = useCarcassMaterials(carcassColors, true, carcassPhotos);
 
   /*
    * Что сейчас едет своим мешем. Закрытая дверь живёт в общей пачке,
@@ -522,7 +554,18 @@ export default function Cabinet3D({
     return out;
   }, [materialItems]);
 
-  const frontMaterials = useFrontMaterials(frontSpecs, facadeColor, millingItems, frontPhotos);
+  /* Сравнение с белым: фасад с рисунком дерева — белой плитой, ключ пачки тот же. */
+  const shownFrontSpecs = useMemo(() => {
+    if (!compareWhite) return frontSpecs;
+    const out = new Map<string, FrontSpec>();
+    for (const [key, spec] of Array.from(frontSpecs.entries())) {
+      const wood = spec.itemId ? materialItems.get(spec.itemId)?.photo?.procedural : undefined;
+      out.set(key, wood ? { ...spec, colorHex: compareWhite.colorHex ?? spec.colorHex, itemId: compareWhite.id } : spec);
+    }
+    return out;
+  }, [frontSpecs, compareWhite, materialItems]);
+
+  const frontMaterials = useFrontMaterials(shownFrontSpecs, facadeColor, millingItems, frontPhotos);
 
   const selected = useMemo(() => {
     if (!selectedModuleId) return null;
@@ -742,6 +785,7 @@ export default function Cabinet3D({
            */
           name={`front:${key}`}
           boxes={list}
+          shiftSalt={run.id}
           geometry={parts.box}
           material={frontMaterials.get(key) ?? parts.front}
           castShadow={shadows}
@@ -767,6 +811,7 @@ export default function Cabinet3D({
           key={key}
           name={`carcass:${key}`}
           boxes={list}
+          shiftSalt={run.id}
           geometry={parts.box}
           material={carcassMaterials.get(key) ?? parts.carcass}
           receiveShadow
@@ -778,6 +823,7 @@ export default function Cabinet3D({
           key={`inner-${key}`}
           name={`inner:${key}`}
           boxes={list}
+          shiftSalt={run.id}
           geometry={parts.box}
           material={innerMaterials.get(key) ?? parts.inner}
           receiveShadow

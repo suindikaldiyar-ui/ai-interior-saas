@@ -102,6 +102,13 @@ export type InteriorState = {
    * производственная величина.
    */
   cadAngle: SceneView;
+  /**
+   * СРАВНЕНИЕ С БЕЛЫМ ЛДСП (P3D-LDSP): позиция белой плиты, которой сцена
+   * ВРЕМЕННО показывает поверхности с рисунком дерева — фасады и корпус.
+   * Только вид, как ракурс и открытые створки: в ряду и в объекте декор
+   * прежний, смета, раскрой и запись его не видят. `null` — сравнения нет.
+   */
+  compareWhiteId: string | null;
   renderFraming: CaptureFraming;
   customNotes: string;
   selectedReferenceIds: string[];
@@ -160,6 +167,7 @@ export type InteriorState = {
   setSelectedBay: (value: { moduleId: string; bayId: string; zoneId?: string; drawerId?: string } | null) => void;
   setDisplayLit: (value: boolean) => void;
   setCadAngle: (value: SceneView) => void;
+  setCompareWhiteId: (value: string | null) => void;
   setRenderFraming: (framing: CaptureFraming) => void;
   setCustomNotes: (value: string) => void;
   toggleReference: (id: string) => void;
@@ -310,6 +318,7 @@ export const useInteriorStore = create<InteriorState>((set, get) => ({
   selectedBay: null,
   displayLit: true,
   cadAngle: 'iso',
+  compareWhiteId: null,
   captureMode: false,
   renderFraming: 'hero',
   customNotes: '',
@@ -649,6 +658,7 @@ export const useInteriorStore = create<InteriorState>((set, get) => ({
   setSelectedBay: (value) => set({ selectedBay: value }),
   setDisplayLit: (value) => set({ displayLit: value }),
   setCadAngle: (value) => set({ cadAngle: value }),
+  setCompareWhiteId: (value) => set({ compareWhiteId: value }),
   setRenderFraming: (framing) => set({ renderFraming: framing }),
   setCustomNotes: (value) => set({ customNotes: value }),
 

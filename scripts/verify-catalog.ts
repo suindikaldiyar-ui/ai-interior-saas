@@ -15,6 +15,7 @@ import {
   catalogEntriesFromRows,
   collectionOf,
   importPreview,
+  isBoardItem,
   materialCatalog,
   materialDefs,
   materialOps,
@@ -22,6 +23,7 @@ import {
   parseMaterialFile,
   planMaterialImport,
   searchMaterials,
+  whiteLdspOf,
 } from '../lib/millwork/materialCatalog';
 import { mapReviewRecords, type ReviewRecord } from '../lib/millwork/supplierReview';
 import { MATERIAL_FINISHES } from '../lib/millwork/materialFinishes';
@@ -37,6 +39,7 @@ import { paletteFromCatalog } from '../lib/millwork/palette';
 import { carcassCatalog } from '../lib/millwork/carcassMaterial';
 import { REFERENCE_SCALE, REFERENCE_TEXTURES } from '../lib/millwork/referenceTextures.generated';
 import { referenceKeyOf, referenceUrl, withReferences } from '../lib/millwork/referenceTextures';
+import { WOOD_TILE_MM, isWoodDecor, woodPatternUrl } from '../lib/millwork/woodPattern';
 import { DEMO_CATALOG } from '../lib/millwork/demo';
 /**
  * Приёмка фазы 3 — та её часть, что проверяется без живого Supabase:
@@ -1398,18 +1401,51 @@ async function referenceTextureChecks() {
   const dressed = withReferences(loaded, REFERENCE_TEXTURES);
   const items = materialCatalog(dressed);
   const reviewIds = loaded.filter((e) => referenceKeyOf(e.meta)).map((e) => e.id);
+  /*
+   * P3D-LDSP: ОБРАЗЕЦ БРОШЮРЫ ЛОЖИТСЯ НА ДЕТАЛЬ ТОЛЬКО У СТОЛЕШНИЦ.
+   *
+   * Было (P3D-TEX): все 337 позиций получали образец брошюры на деталь.
+   * Права на изображения EGGER не подтверждены, и владелец велел брать
+   * только изображения с правом публикации и применения: плита (вкладка
+   * «ЛДСП» — ЛДСП 136 и PerfectSense 29) образца не получает. Плита-дерево —
+   * демонстрационный рисунок в цвет образца (адрес рисунка, плитка
+   * 800 × 1600 мм, прямой повтор), однотон и камень — ровный цвет образца.
+   * Столешницы — прежним путём (кухня в P3D-LDSP не трогается). Цвет у всех
+   * 337 — средний цвет образца, как и был.
+   */
+  const kinds = { worktop: 0, wood: 0, plain: 0 };
   const badPhoto = reviewIds.filter((id) => {
     const item = items.get(id);
     const entry = dressed.find((e) => e.id === id)!;
     const key = referenceKeyOf(entry.meta)!;
     const r = REFERENCE_TEXTURES[key];
-    return (
-      !item?.photo?.reference ||
-      item.photo.url !== referenceUrl(key) ||
-      item.photo.sizeM[0] !== r.mm[0] / 1000 ||
-      item.photo.sizeM[1] !== r.mm[1] / 1000 ||
-      item.colorHex !== r.hex
-    );
+    if (!item || item.colorHex !== r.hex) return true;
+    if (!isBoardItem(item)) {
+      kinds.worktop += 1;
+      return (
+        !item.photo?.reference ||
+        Boolean(item.photo.procedural) ||
+        item.photo.mirror !== true ||
+        item.photo.url !== referenceUrl(key) ||
+        item.photo.sizeM[0] !== r.mm[0] / 1000 ||
+        item.photo.sizeM[1] !== r.mm[1] / 1000
+      );
+    }
+    if (isWoodDecor(item.review?.decorCode)) {
+      kinds.wood += 1;
+      const demo = item.photo?.procedural;
+      return (
+        !demo ||
+        demo.hex !== r.hex ||
+        item.photo!.url !== woodPatternUrl(demo) ||
+        !item.photo!.url.startsWith('procedural:wood?') ||
+        item.photo!.mirror !== false ||
+        item.photo!.sizeM[0] !== WOOD_TILE_MM[0] / 1000 ||
+        item.photo!.sizeM[1] !== WOOD_TILE_MM[1] / 1000
+      );
+    }
+    kinds.plain += 1;
+    return item.photo !== null;
   });
   const othersSame = loaded
     .filter((e) => !referenceKeyOf(e.meta))
@@ -1417,9 +1453,30 @@ async function referenceTextureChecks() {
   const bareWithPhoto = reviewIds.filter((id) => bare.get(id)?.photo).length;
   const h1113 = Array.from(items.values()).find((i) => i.code === 'EGGER-H1113-ST10');
   check(
-    'TX4 путь экрана: 337 позиций EGGER/GRANDEX получают образец на деталь (адрес закрытой выдачи, принятый размер) и цвет самого образца; без таблицы фото не было ни у одной; МДФ и RAL не тронуты',
-    reviewIds.length === 337 && badPhoto.length === 0 && bareWithPhoto === 0 && othersSame && h1113?.colorHex === '#aa8763',
-    `позиций ${reviewIds.length} · не так ${badPhoto.length} · без таблицы с фото ${bareWithPhoto} · прочие ${othersSame ? 'те же' : 'ИЗМЕНИЛИСЬ'} · H1113 ST10 ${h1113?.colorHex} (по кропу с полями было #d5c9ba)`,
+    'TX4 путь экрана (P3D-LDSP): столешницы 172 (EGGER 82, GRANDEX 90) — образец на деталь, зеркально, принятый размер; плита-дерево 81 — демонстрационный рисунок в цвет образца (800 × 1600 мм, прямой повтор); плита однотон и камень 84 — ровный цвет без картинки; цвет у всех 337 — средний цвет образца; без таблицы фото ни у одной; МДФ и RAL не тронуты',
+    reviewIds.length === 337 &&
+      kinds.worktop === 172 &&
+      kinds.wood === 81 &&
+      kinds.plain === 84 &&
+      badPhoto.length === 0 &&
+      bareWithPhoto === 0 &&
+      othersSame &&
+      h1113?.colorHex === '#aa8763' &&
+      h1113.photo?.procedural?.hex === '#aa8763',
+    `позиций ${reviewIds.length} · столешниц ${kinds.worktop} · дерево ${kinds.wood} · однотон/камень ${kinds.plain} · не так ${badPhoto.length} · без таблицы с фото ${bareWithPhoto} · прочие ${othersSame ? 'те же' : 'ИЗМЕНИЛИСЬ'} · H1113 ST10 ${h1113?.colorHex} → ${h1113?.photo?.url.slice(0, 40) ?? 'БЕЗ РИСУНКА'}`,
+  );
+
+  /*
+   * БЕЛОЕ ЛДСП ДЛЯ СРАВНЕНИЯ — позиция каталога, а не цвет из кода: W1000
+   * с поверхностью ST9. Нет W1000 в каталоге — сравнения нет (null), белый
+   * не придумывается.
+   */
+  const white = whiteLdspOf(items.values());
+  const withoutWhite = whiteLdspOf(Array.from(items.values()).filter((i) => i.review?.decorCode !== 'W1000'));
+  check(
+    'TX8 белое ЛДСП для сравнения в 3D — позиция каталога EGGER-W1000-ST9 (#fcfcf3); без W1000 в каталоге сравнения нет',
+    white?.code === 'EGGER-W1000-ST9' && white.colorHex === '#fcfcf3' && white.photo === null && withoutWhite === null,
+    `${white?.code ?? 'НЕТ'} ${white?.colorHex ?? ''} · без W1000 → ${withoutWhite?.code ?? 'нет'}`,
   );
 
   const carcass = carcassCatalog(dressed);

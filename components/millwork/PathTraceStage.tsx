@@ -75,6 +75,7 @@ export default function PathTraceStage({
         view={view}
         orbit={false}
         instantCamera
+        environment={false}
         selectedModuleId={null}
         onSelectModule={() => undefined}
         onRenderSource={onRenderSource}

@@ -34,6 +34,21 @@ export function referenceKeyOf(meta: Record<string, unknown> | null | undefined)
   return preview ? preview.replace(/^assets\//, '') : null;
 }
 
+/**
+ * МОЖНО ЛИ ПРИМЕНЯТЬ ОБРАЗЕЦ БРОШЮРЫ — РЕШАЮТ ДАННЫЕ ПОЗИЦИИ, А НЕ ОКРУЖЕНИЕ.
+ *
+ * Картинка производителя ложится на деталь и показывается в карточке и в
+ * списке, только когда права на неё подтверждены
+ * (`provenance.rightsStatus = 'VERIFIED'`). Пакет проверки пишет `NOT_VERIFIED`
+ * у всех 337 позиций — картинки не применяются нигде, ни на проде (там их
+ * файлов и нет: 404), ни здесь. Цвет позиции — средний цвет самого образца:
+ * это число, а не картинка, и он остаётся.
+ */
+export function referenceImageAllowed(meta: Record<string, unknown> | null | undefined): boolean {
+  const provenance = meta?.provenance as { rightsStatus?: unknown } | undefined;
+  return provenance?.rightsStatus === 'VERIFIED';
+}
+
 /** Адрес образца: тот же маршрут, что у карточки, — только вошедшему. */
 export function referenceUrl(key: string): string {
   return `/api/catalog/materials/preview?file=${encodeURIComponent(key)}`;

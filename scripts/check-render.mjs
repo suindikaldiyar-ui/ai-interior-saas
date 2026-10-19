@@ -35,8 +35,10 @@
  * цену первого рендера, и мерить её на прогретом браузере значит соврать;
  * `TIMING_PASSES` проходов (по умолчанию 256). `PART=stop` — остановка
  * посреди холодной сборки шейдера (в своём свежем браузере). `PART=demo` (демо и
- * раскладки кнопок), `PART=layout` (только раскладки) и `PART=project` —
- * по одной части; без `PART` — всё, кроме времени.
+ * раскладки кнопок), `PART=scene` (только демо: над сценой и «Результат» —
+ * часть `demo` без раскладок, чтобы прогон укладывался в 600 с),
+ * `PART=layout` (только раскладки) и `PART=project` — по одной части; без
+ * `PART` — всё, кроме времени.
  */
 import { chromium, devices } from 'playwright';
 import { execSync, spawn } from 'node:child_process';
@@ -1067,8 +1069,8 @@ try {
     browser = await launch();
     const part = process.env.PART ?? 'all';
     /* Опечатка в PART не должна давать «ПАДЕНИЙ: 0» над непрогнанным. */
-    if (!['all', 'demo', 'layout', 'stop', 'project'].includes(part)) {
-      check('PART известен', false, `НЕИЗВЕСТНЫЙ PART=${part}: all, demo, layout, stop, project, timing`);
+    if (!['all', 'demo', 'scene', 'layout', 'stop', 'project'].includes(part)) {
+      check('PART известен', false, `НЕИЗВЕСТНЫЙ PART=${part}: all, demo, scene, layout, stop, project, timing`);
     }
     /* Холодная сборка — только в свежем браузере: прогретый держит программу в кэше. */
     if (part === 'all' || part === 'stop') {
@@ -1079,7 +1081,7 @@ try {
         await fresh.close();
       }
     }
-    if (part === 'all' || part === 'demo') await demoScenario(browser);
+    if (part === 'all' || part === 'demo' || part === 'scene') await demoScenario(browser);
     if (part === 'all' || part === 'demo' || part === 'layout') await layoutScenario(browser);
     if (part === 'all' || part === 'project') await projectScenario(browser);
   }

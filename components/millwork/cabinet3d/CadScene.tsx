@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
-import { CAD_LIGHT, CAD_SHADOW, CAD_SHADOW_MAP, applyCadLook } from './cadLook';
+import { CAD_ENVIRONMENT, CAD_LIGHT, CAD_SHADOW, CAD_SHADOW_MAP, applyCadLook, cadEnvironment, cadEnvironmentYaw } from './cadLook';
 import { realSizeOf } from './realSizeMap';
 
 /** Материал пачки фасадов, прочитанный со сцены: для приёмки. */
@@ -39,6 +39,7 @@ import { boxLayer, boxShown, moduleBoxes, runBoxes, runPlaces } from '@/lib/mill
 import { ALL_LAYERS, presetOf, type SceneLayers } from '@/lib/millwork/sceneLayers';
 import { generalCamera } from '@/lib/cameraFraming';
 import {
+  facingSideOf,
   openSideOf,
   roomAroundRows,
   rowPlacement as placeOfRow,
@@ -120,6 +121,13 @@ type Props = {
   onRenderSource?: (source: (() => PathTraceSource) | null) => void;
   /** Камера встаёт сразу, без перелёта: сцена рендера за экраном. */
   instantCamera?: boolean;
+  /**
+   * ОКРУЖЕНИЕ САПР-ВИДА (P3D-LDSP). Сцена рендера за экраном (`PathTraceStage`)
+   * его не строит: трассировщик ставит своё окружение (слой 54), а сборка
+   * PMREM и шейдеров с окружением на D3D11 — это секунды стоящей страницы в
+   * самом начале рендера (замерено: разрыв главного потока 3034 мс).
+   */
+  environment?: boolean;
   /**
    * Где мебель на холсте — проекция её габарита (тот же расчёт, что
    * `__mwCadFit`). По нему строка кнопок рендера встаёт туда, где мебели
@@ -229,6 +237,7 @@ export default function CadScene({
   room,
   onRenderSource,
   instantCamera = false,
+  environment = true,
   onFurnitureRect,
   onReady,
   onLost,
@@ -292,6 +301,8 @@ export default function CadScene({
 
   /* ОТКРЫТАЯ СТОРОНА КОМНАТЫ — с неё камера, свет и скрытие стен. */
   const open = useMemo<[number, number]>(() => openSideOf(roomWorld, rows), [roomWorld, rows]);
+  /* Куда смотрят фасады — без сдвига камеры вбок: по нему ставится окружение (P3D-LDSP). */
+  const facing = useMemo<[number, number]>(() => facingSideOf(roomWorld, rows), [roomWorld, rows]);
 
   /*
    * ГАБАРИТ ДЛЯ СВЕТА: комната вместе с мебелью. По нему ставится камера
@@ -352,10 +363,11 @@ export default function CadScene({
       }}
     >
       {/*
-        * СВЕТ ИЗ `cadLook`: рассеянный (общий и полусферический) и ОДИН
-        * направленный с мягкой тенью. Тот же набор у картинок библиотеки.
+        * СВЕТ ИЗ `cadLook`: окружение, повёрнутое к открытой стороне,
+        * полусферический и ОДИН направленный с мягкой тенью. Тот же набор у
+        * картинок библиотеки.
         */}
-      <ambientLight intensity={CAD_LIGHT.ambient} />
+      {environment && <CadEnvironment facing={facing} />}
       <hemisphereLight args={[CAD_LIGHT.hemisphereSky, CAD_LIGHT.hemisphereGround, CAD_LIGHT.hemisphere]} />
       <KeyLight center={lightBounds.center} radius={lightBounds.radius} open={open} />
 
@@ -558,6 +570,35 @@ function OrbitScene({
   }, [center, invalidate]);
 
   /*
+   * ПОЗА КАМЕРЫ ДЛЯ ПРИЁМКИ: снимки «до» и «после» обязаны быть с ОДНОЙ
+   * точки, иначе сравнивается ракурс, а не материал. Ставит позу тем же
+   * `OrbitControls`, что и рука, — пределы приближения и «камера на мебели»
+   * действуют так же. Вид сцены от этого не меняется.
+   */
+  useEffect(() => {
+    type Pose = { position: number[]; target: number[] };
+    const w = window as unknown as {
+      __mwCadCamera?: (pose?: Pose) => (Pose & { bounds: typeof bounds; open: [number, number] }) | null;
+    };
+    w.__mwCadCamera = (pose) => {
+      const orbit = controls.current;
+      if (!orbit) return null;
+      if (pose) {
+        orbit.object.position.set(pose.position[0], pose.position[1], pose.position[2]);
+        orbit.target.set(pose.target[0], pose.target[1], pose.target[2]);
+        orbit.update();
+        invalidate();
+      }
+      const p = orbit.object.position;
+      const t = orbit.target;
+      return { position: [p.x, p.y, p.z], target: [t.x, t.y, t.z], bounds, open };
+    };
+    return () => {
+      delete w.__mwCadCamera;
+    };
+  }, [bounds, open, invalidate]);
+
+  /*
    * НОВЫЙ РАЗМЕР КАДРА — НОВЫЙ КАДР. При `frameloop="demand"` никто не
    * просит перерисовку сам (ловушка 250); покой от этого не страдает —
    * размер меняется, только когда его меняют.
@@ -632,6 +673,36 @@ function OrbitScene({
       }}
     />
   );
+}
+
+/**
+ * ОКРУЖЕНИЕ СЦЕНЫ (P3D-LDSP): `RoomEnvironment` светлой стороной туда,
+ * куда смотрят фасады (`facingSideOf` — без сдвига камеры вбок, который
+ * у прямой кухни есть у `open`). Собирается один раз на контекст
+ * (`cadEnvironment`); поворот меняется с формой кухни.
+ */
+function CadEnvironment({ facing }: { facing: [number, number] }) {
+  const gl = useThree((state) => state.gl);
+  const scene = useThree((state) => state.scene);
+  const invalidate = useThree((state) => state.invalidate);
+  const [ox, oz] = facing;
+
+  useEffect(() => {
+    const texture = cadEnvironment(gl);
+    scene.environment = texture;
+    scene.environmentIntensity = CAD_ENVIRONMENT.intensity;
+    invalidate();
+    return () => {
+      if (scene.environment === texture) scene.environment = null;
+    };
+  }, [gl, scene, invalidate]);
+
+  useEffect(() => {
+    scene.environmentRotation.set(0, cadEnvironmentYaw([ox, oz]), 0);
+    invalidate();
+  }, [scene, ox, oz, invalidate]);
+
+  return null;
 }
 
 /**
@@ -860,7 +931,8 @@ function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
         out.push({
           name: mesh.name,
           count: typeof mesh.count === 'number' ? mesh.count : 1,
-          map: map ? (image?.currentSrc || image?.src || 'без адреса') : null,
+          /* Демонстрационный рисунок — холст без адреса: читается его адрес рисунка (`procedural:wood?…`). */
+          map: map ? ((map.userData?.procedural as string | undefined) || image?.currentSrc || image?.src || 'без адреса') : null,
           wrap: map
             ? map.wrapS === THREE.MirroredRepeatWrapping
               ? 'mirror'
@@ -1106,6 +1178,34 @@ function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
      * выключенный слой обязан уменьшить это число ровно на свои коробки,
      * а ряд, раскрой и смета не меняются вовсе.
      */
+    /*
+     * СВЕТ САПР-ВИДА ЧИСЛАМИ (P3D-LDSP): тон-маппинг, окружение (есть ли,
+     * яркость, поворот), источники — тем, что висит в сцене, а не тем, что
+     * задано в `cadLook`. Приёмка сверяет, что сцена освещена так, как
+     * описано, а светлоту меряет по пикселям кадра.
+     */
+    (w as { __mwCadLight?: () => unknown }).__mwCadLight = () => {
+      const lights: { kind: string; intensity: number; direction?: number[] }[] = [];
+      scene.traverse((object) => {
+        const light = object as THREE.Light & { target?: THREE.Object3D };
+        if (!light.isLight || !light.visible) return;
+        if ((light as THREE.DirectionalLight).isDirectionalLight && light.target) {
+          const from = new THREE.Vector3().setFromMatrixPosition(light.matrixWorld);
+          const to = new THREE.Vector3().setFromMatrixPosition(light.target.matrixWorld);
+          const d = from.sub(to).normalize();
+          lights.push({ kind: 'directional', intensity: light.intensity, direction: [d.x, d.y, d.z].map((v) => Math.round(v * 1000) / 1000) });
+        } else {
+          lights.push({ kind: light.type, intensity: light.intensity });
+        }
+      });
+      return {
+        toneMapping: gl.toneMapping,
+        environment: scene.environment ? Math.round(scene.environmentIntensity * 1000) / 1000 : null,
+        environmentYaw: Math.round(scene.environmentRotation.y * 1000) / 1000,
+        lights,
+      };
+    };
+
     (w as { __mwCadLayers?: () => unknown }).__mwCadLayers = () => {
       const state = useInteriorStore.getState();
       const total: Record<string, number> = {};
@@ -1370,6 +1470,7 @@ function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
       delete w.__mwCadFit;
       delete w.__mwCadLook;
       delete (w as { __mwCadLayers?: unknown }).__mwCadLayers;
+      delete (w as { __mwCadLight?: unknown }).__mwCadLight;
       delete w.__mwCadRoom;
       delete w.__mwCadModules;
       delete w.__mwCadShadows;

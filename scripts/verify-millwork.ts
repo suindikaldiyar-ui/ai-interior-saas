@@ -27720,6 +27720,215 @@ import { runFingerprint as texRunFingerprint } from '../lib/millwork/fingerprint
   );
 }
 
+/* ═══════════  P3D-LDSP: ЛДСП в 3D — свой рисунок дерева, волокно на торце, своё место на плите  ═══════════ */
+/*
+ * Права на изображения EGGER не подтверждены: на плиту-дерево ложится НАШ
+ * демонстрационный рисунок в цвет декора (`woodPixels`), а не образец
+ * брошюры (решение позиции — `test:catalog`, TX4). Здесь меряется сам
+ * рисунок — тем же кодом, что считает фоновый поток сцены, — развёртка
+ * граней и свет САПР-вида. Как это выглядит на экране, меряет браузер
+ * (`scripts/check-ldsp-look.mjs`).
+ */
+import { DEMO_WOOD as LDSP_DEMO, WOOD_TILE_MM as LDSP_TILE, woodPatternOf as ldspPatternOf } from '../lib/millwork/woodPattern';
+import { woodPixels as ldspPixels } from '../lib/millwork/woodPixels';
+import { realSizeShiftOf as ldspShiftOf, shiftKeyOf as ldspShiftKey } from '../components/millwork/cabinet3d/realSizeMap';
+import {
+  CAD_ENVIRONMENT as LDSP_ENV,
+  CAD_LIGHT as LDSP_LIGHT,
+  CAD_TONE_MAPPING as LDSP_TONE,
+  cadEnvironmentYaw as ldspYaw,
+} from '../components/millwork/cabinet3d/cadLook';
+{
+  console.log('\nP3D-LDSP: демонстрационный рисунок дерева, волокно на торце, своё место на плите, свет');
+
+  /* ── Рисунок: цвет декора, разброс, волокно, бесшовность, детерминизм ── */
+  const lin = (b: number) => {
+    const c = b / 255;
+    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  const srgbByte = (c: number) => Math.round((c <= 0.0031308 ? c * 12.92 : 1.055 * c ** (1 / 2.4) - 0.055) * 255);
+  const measure = (px: Uint8ClampedArray, w: number, h: number) => {
+    const n = w * h;
+    const lum = new Float64Array(n);
+    const sum = [0, 0, 0];
+    for (let k = 0; k < n; k += 1) {
+      const r = lin(px[k * 4]);
+      const g = lin(px[k * 4 + 1]);
+      const b = lin(px[k * 4 + 2]);
+      sum[0] += r;
+      sum[1] += g;
+      sum[2] += b;
+      lum[k] = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    }
+    const mean = lum.reduce((s, v) => s + v, 0) / n;
+    const cv = Math.sqrt(lum.reduce((s, v) => s + (v - mean) ** 2, 0) / n) / mean;
+    /* Перепад между соседними столбцами (поперёк волокна) и строками (вдоль); через край плитки — отдельно. */
+    const column = new Float64Array(w);
+    const row = new Float64Array(h);
+    for (let j = 0; j < h; j += 1) {
+      for (let i = 0; i < w; i += 1) {
+        const k = j * w + i;
+        column[i] += Math.abs(lum[k] - lum[j * w + ((i + 1) % w)]) / h;
+        row[j] += Math.abs(lum[k] - lum[((j + 1) % h) * w + i]) / w;
+      }
+    }
+    const inner = (list: Float64Array) => Array.from(list).slice(0, -1);
+    return {
+      lum,
+      hex: `#${sum.map((v) => srgbByte(v / n).toString(16).padStart(2, '0')).join('')}`,
+      cv,
+      grain: inner(column).reduce((s, v) => s + v, 0) / inner(row).reduce((s, v) => s + v, 0) * (h - 1) / (w - 1),
+      /* Край плитки поперёк волокна — стык плашек: не резче самого резкого стыка внутри. */
+      seamU: column[w - 1] / Math.max(...inner(column)),
+      /* Вдоль волокна стыков нет: край — как обычные соседние строки. */
+      seamV: row[h - 1] / (inner(row).reduce((s, v) => s + v, 0) / (h - 1)),
+    };
+  };
+  const hexDistance = (a: string, b: string) =>
+    Math.max(...[1, 3, 5].map((c) => Math.abs(parseInt(a.slice(c, c + 2), 16) - parseInt(b.slice(c, c + 2), 16))));
+
+  const SIDE = 512;
+  const decors = [
+    { code: 'H1113', surface: 'ST10', hex: '#aa8763' },
+    { code: 'H1180', surface: 'ST37', hex: '#b89771' },
+    { code: 'H3309', surface: 'ST28', hex: '#a07e5c' },
+  ];
+  const drawn = decors.map((d) => {
+    const pattern = ldspPatternOf({ decorCode: d.code, surfaceCode: d.surface, hex: d.hex })!;
+    const px = ldspPixels(pattern, SIDE, SIDE);
+    return { ...d, pattern, px, m: measure(px, SIDE, SIDE) };
+  });
+  check(
+    'LDSP.R1 рисунок дерева: средний цвет плитки = цвет декора (±2 из 255 по каналу), разброс линейной яркости — заданный контраст демонстрации (±25 %)',
+    drawn.every((d) => hexDistance(d.m.hex, d.hex) <= 2 && Math.abs(d.m.cv - LDSP_DEMO.contrast) <= LDSP_DEMO.contrast * 0.25),
+    drawn.map((d) => `${d.code} ${d.m.hex}/${d.hex} разброс ${d.m.cv.toFixed(3)}`).join(' · '),
+  );
+  check(
+    'LDSP.R2 волокно вдоль v (по правилу раскроя): поперёк волокна яркость меняется минимум втрое сильнее, чем вдоль',
+    drawn.every((d) => d.m.grain >= 3),
+    drawn.map((d) => `${d.code} ×${d.m.grain.toFixed(1)}`).join(' · '),
+  );
+  check(
+    'LDSP.R3 плитка бесшовна: край поперёк волокна — стык плашек не резче стыков внутри плитки, край вдоль волокна — как соседние строки (≤ 2×)',
+    drawn.every((d) => d.m.seamU <= 1 && d.m.seamV <= 2),
+    drawn.map((d) => `${d.code} поперёк ${d.m.seamU.toFixed(2)} · вдоль ${d.m.seamV.toFixed(2)}`).join(' | '),
+  );
+  const again = ldspPixels(drawn[0].pattern, SIDE, SIDE);
+  const sameBytes = again.every((v, i) => v === drawn[0].px[i]);
+  /* Другой декор того же цвета — другой рисунок: зерно случайностей от кода. */
+  const twin = ldspPixels(ldspPatternOf({ decorCode: 'H1180', surfaceCode: 'ST37', hex: '#aa8763' })!, SIDE, SIDE);
+  let differ = 0;
+  for (let k = 0; k < SIDE * SIDE; k += 1) if (Math.abs(twin[k * 4] - drawn[0].px[k * 4]) > 3) differ += 1;
+  check(
+    'LDSP.R4 рисунок детерминирован: тот же декор — те же байты; другой код того же цвета — другой рисунок (больше половины точек)',
+    sameBytes && differ > (SIDE * SIDE) / 2,
+    `повтор ${sameBytes ? 'тот же' : 'ДРУГОЙ'} · другой код: отличается ${Math.round((differ / (SIDE * SIDE)) * 100)} %`,
+  );
+  /* Образец в панели — окно той же плитки: то же дерево, что в сцене. */
+  const at = [128, 160];
+  const block = 64;
+  const window = ldspPixels(drawn[0].pattern, block, block, [at[0] / SIDE, at[1] / SIDE, (at[0] + block) / SIDE, (at[1] + block) / SIDE]);
+  const wl = measure(window, block, block).lum;
+  const bl = new Float64Array(block * block);
+  for (let j = 0; j < block; j += 1) for (let i = 0; i < block; i += 1) bl[j * block + i] = drawn[0].m.lum[(at[1] + j) * SIDE + at[0] + i];
+  const corr = (a: Float64Array, b: Float64Array) => {
+    const ma = a.reduce((s, v) => s + v, 0) / a.length;
+    const mb = b.reduce((s, v) => s + v, 0) / b.length;
+    let ab = 0;
+    let aa = 0;
+    let bb = 0;
+    for (let k = 0; k < a.length; k += 1) {
+      ab += (a[k] - ma) * (b[k] - mb);
+      aa += (a[k] - ma) ** 2;
+      bb += (b[k] - mb) ** 2;
+    }
+    return ab / Math.sqrt(aa * bb);
+  };
+  const windowCorr = corr(wl, bl);
+  check(
+    'LDSP.R5 образец в панели — окно той же плитки: рисунок окна совпадает с тем же местом целой плитки (корреляция яркости ≥ 0.95)',
+    windowCorr >= 0.95,
+    `корреляция ${windowCorr.toFixed(3)}`,
+  );
+
+  /* ── Развёртка: волокно на торце вдоль торца, лицевые грани — по правилу раскроя ── */
+  const tile: [number, number] = [LDSP_TILE[0] / 1000, LDSP_TILE[1] / 1000];
+  const spans = (scale: THREE.Vector3, shift: [number, number] = [0, 0]) => {
+    const baked = realSizeUvGeometry(new THREE.BoxGeometry(1, 1, 1), scale, tile, shift);
+    const position = baked.getAttribute('position');
+    const normal = baked.getAttribute('normal');
+    const uv = baked.getAttribute('uv');
+    const out: Record<string, number[]> = {};
+    for (let i = 0; i < position.count; i += 1) {
+      const face = Math.abs(normal.getZ(i)) > 0.5 ? 'z' : Math.abs(normal.getX(i)) > 0.5 ? 'x' : 'y';
+      const r = (out[face] ??= [Infinity, -Infinity, Infinity, -Infinity]);
+      r[0] = Math.min(r[0], uv.getX(i));
+      r[1] = Math.max(r[1], uv.getX(i));
+      r[2] = Math.min(r[2], uv.getY(i));
+      r[3] = Math.max(r[3], uv.getY(i));
+    }
+    baked.dispose();
+    const round = (v: number) => Math.round(v * 10000) / 10000;
+    return Object.fromEntries(Object.entries(out).map(([k, r]) => [k, { u: round(r[1] - r[0]), v: round(r[3] - r[2]), u0: round(r[0]), v0: round(r[2]) }]));
+  };
+  const shelf = spans(new THREE.Vector3(0.8, 0.018, 0.56));
+  const door = spans(new THREE.Vector3(0.45, 2.0, 0.018));
+  const fits = (s: { u: number; v: number }, u: number, v: number) => Math.abs(s.u - u) < 1e-3 && Math.abs(s.v - v) < 1e-3;
+  check(
+    'LDSP.R6 торец плиты — волокно вдоль торца: кромка полки 800 × 18 и верхний торец двери 450 × 18 несут рисунок вдоль длины; лицо двери, торец двери по высоте и пласть полки — по правилу раскроя, как было',
+    fits(shelf.z, 0.018 / tile[0], 0.8 / tile[1]) &&
+      fits(door.y, 0.018 / tile[0], 0.45 / tile[1]) &&
+      fits(door.z, 0.45 / tile[0], 2.0 / tile[1]) &&
+      fits(door.x, 0.018 / tile[0], 2.0 / tile[1]) &&
+      fits(shelf.y, 0.8 / tile[0], 0.56 / tile[1]),
+    `полка: кромка ${shelf.z.u}×${shelf.z.v}, пласть ${shelf.y.u}×${shelf.y.v} · дверь: лицо ${door.z.u}×${door.z.v}, верх ${door.y.u}×${door.y.v}, бок ${door.x.u}×${door.x.v}`,
+  );
+  check(
+    'LDSP.R7 шейдер сцены несёт то же правило торца (из той же таблицы граней), что запекание для трассировщика',
+    REAL_SIZE_UV_SOURCE.includes('vec2 rsSpan = rsNormal.z > 0.5 ? rsScale.xy : (rsNormal.x > 0.5 ? rsScale.zy : rsScale.xz);') &&
+      REAL_SIZE_UV_SOURCE.includes('if (rsSpan.y < 0.06 && rsSpan.x > rsSpan.y) rsUv = rsUv.yx;') &&
+      REAL_SIZE_UV_SOURCE.includes('vMapUv = rsUv / uRealSize + fract(rsShift);'),
+    REAL_SIZE_UV_SOURCE.split('\n').filter((line) => /rsSpan|vMapUv/.test(line)).join(' ⏎ ') || 'СТРОК НЕТ',
+  );
+
+  /* ── Своё место на плите: у каждой детали свой кусок рисунка, у створки — один и закрытой, и на ходу ── */
+  const doors = ['tall-0@w1:door:0', 'tall-0@w1:door:1', 'tall-900@w1:door:0', 'tall-900@w1:door:1'];
+  const shifts = doors.map((id) => ldspShiftOf(id));
+  const apart = shifts.every((a, i) => shifts.every((b, j) => i === j || Math.max(Math.abs(a[0] - b[0]), Math.abs(a[1] - b[1])) >= 0.05));
+  const fixedA = ldspShiftKey({ position: [0.009, 1.2, -0.28] }, 'run-a');
+  const fixedB = ldspShiftKey({ position: [0.009, 1.2, -0.28] }, 'run-b');
+  const moving = ldspShiftKey({ part: doors[0], position: [0.2, 1.2, 0.009] }, 'run-a');
+  const shifted = spans(new THREE.Vector3(0.45, 2.0, 0.018), shifts[0]);
+  const plainDoor = spans(new THREE.Vector3(0.45, 2.0, 0.018));
+  const offset = [shifted.z.u0 - plainDoor.z.u0, shifted.z.v0 - plainDoor.z.v0];
+  check(
+    'LDSP.R8 своё место на плите: четыре двери одной ширины — четыре разных куска рисунка (сдвиг ≥ 5 % плитки); створка — ключом детали (закрытая и на ходу одна), неподвижная — местом и рядом; трассировщик получает тот же сдвиг в развёртке',
+    apart &&
+      JSON.stringify(ldspShiftOf(doors[0])) === JSON.stringify(shifts[0]) &&
+      moving === doors[0] &&
+      fixedA !== fixedB &&
+      Math.abs(offset[0] - shifts[0][0]) < 1e-4 &&
+      Math.abs(offset[1] - shifts[0][1]) < 1e-4 &&
+      fits(shifted.z, plainDoor.z.u, plainDoor.z.v),
+    `сдвиги ${shifts.map((s) => s.map((v) => v.toFixed(2)).join('/')).join(' · ')} · запечено ${offset.map((v) => v.toFixed(4)).join('/')}`,
+  );
+
+  /* ── Свет САПР-вида: Neutral, окружение к открытой стороне, рендер по чертежу — на прежней калибровке ── */
+  const yaw = [ldspYaw([0, 1]), ldspYaw([1, 0]), ldspYaw([0, -1]), ldspYaw([Math.SQRT1_2, Math.SQRT1_2])];
+  check(
+    'LDSP.R9 тон-маппинг САПР-вида — Neutral; рендер по чертежу — прежний ACES (его калибровка не перемерялась); окружение 0.5 светлой стороной к открытой стороне комнаты; общего света нет',
+    LDSP_TONE === THREE.NeutralToneMapping &&
+      CAD_RENDER.toneMapping === THREE.ACESFilmicToneMapping &&
+      LDSP_ENV.intensity === 0.5 &&
+      Math.abs(yaw[0]) < 1e-9 &&
+      Math.abs(yaw[1] - Math.PI / 2) < 1e-9 &&
+      Math.abs(Math.abs(yaw[2]) - Math.PI) < 1e-9 &&
+      Math.abs(yaw[3] - Math.PI / 4) < 1e-9 &&
+      !('ambient' in LDSP_LIGHT),
+    `тон ${LDSP_TONE} · рендер ${CAD_RENDER.toneMapping} · окружение ${LDSP_ENV.intensity} · поворот ${yaw.map((v) => v.toFixed(3)).join('/')}`,
+  );
+}
+
 Promise.allSettled(asyncChecks).then((results) => {
   for (const result of results) {
     if (result.status === 'rejected') {

@@ -152,6 +152,16 @@ const sceneWords = (s) => `за ${s.ms} мс: ${s.state ?? 'НЕТ'}${s.failure 
 const saveState = (page) => page.evaluate(() => document.querySelector('[data-save-state]')?.getAttribute('data-save-state') ?? null);
 const saved = (page) => waitFor(page, () => document.querySelector('[data-save-state]')?.getAttribute('data-save-state') ?? null, (v) => v === 'saved', 30_000);
 const look = (page) => page.evaluate(() => (window.__mwCadLook ? window.__mwCadLook() : null));
+/**
+ * ФАСАД ДЕКОРА-ДЕРЕВА (P3D-LDSP): цвет декора несёт демонстрационный рисунок
+ * (`procedural:wood?hex=…`), материал под ним белый — как под любым фото
+ * позиции. Однотон и камень — цветом материала, как было.
+ */
+const frontShows = async (page, hex) => {
+  const list = await page.evaluate(() => (window.__mwCadSurfaces ? window.__mwCadSurfaces() : null));
+  const fronts = (list ?? []).filter((s) => s.name.startsWith('front:') && s.count > 0);
+  return fronts.some((s) => typeof s.map === 'string' && s.map.startsWith('procedural:wood?') && s.map.includes(`hex=${String(hex).slice(1).toLowerCase()}`));
+};
 const layersNow = (page) => page.evaluate(() => (window.__mwCadLayers ? window.__mwCadLayers() : null));
 const stray = (page) => page.evaluate(() => (window.__mwCadStray ? window.__mwCadStray() : null));
 const schematicIds = (page) =>
@@ -676,12 +686,19 @@ async function partP3(browser) {
     await sceneSettled(page);
     await preset(page, 'design');
     await sleep(1200);
+    await waitFor(page, () => (window.__mwCadSurfaces ? window.__mwCadSurfaces() : null), (v) => Array.isArray(v) && v.some((s) => s.name.startsWith('front:') && typeof s.map === 'string'), 30_000);
     const l3 = await look(page);
+    const front3 = frontRow ? await frontShows(page, frontRow.meta.color) : false;
     await shot(page, 'p3-egger-design-3d');
+    /*
+     * Фасад — декор-дерево EGGER-H…: с P3D-LDSP его цвет на экране несёт
+     * демонстрационный рисунок в цвет декора, материал под ним белый (под
+     * любым фото позиции так с P3D-TEX). Сверяется рисунок того же цвета.
+     */
     check(
-      `P3.6 «Дизайн»: корпус левого шкафа — ${carcassItem} (${carcassRow?.meta?.color}, на экране тоном корпуса ${carcassRow ? carcassTone(carcassRow.meta.color) : "—"}), фасад — ${frontItem} (${frontRow?.meta?.color}); цвет — с экрана`,
-      Boolean(carcassRow && frontRow) && carcassItem !== frontItem && l3?.carcassColors?.includes(carcassTone(carcassRow.meta.color)) && l3?.frontColors?.includes(frontRow.meta.color),
-      `корпус ${l3?.carcassColors?.join(',')} · фасады ${l3?.frontColors?.join(',')}`,
+      `P3.6 «Дизайн»: корпус левого шкафа — ${carcassItem} (${carcassRow?.meta?.color}, на экране тоном корпуса ${carcassRow ? carcassTone(carcassRow.meta.color) : "—"}), фасад — ${frontItem} (${frontRow?.meta?.color}) рисунком в свой цвет; цвет — с экрана`,
+      Boolean(carcassRow && frontRow) && carcassItem !== frontItem && l3?.carcassColors?.includes(carcassTone(carcassRow.meta.color)) && front3,
+      `корпус ${l3?.carcassColors?.join(',')} · фасады ${l3?.frontColors?.join(',')} · рисунок в цвет фасада ${front3 ? 'есть' : 'НЕТ'}`,
     );
     const { data: savedRow } = await service.from('projects').select('millwork').eq('id', bedroom).single();
     const left = savedRow?.millwork?.runs?.optimal?.modules?.find((m) => m.id === 'tall-0@w1');
@@ -698,7 +715,9 @@ async function partP3(browser) {
     await sleep(1500);
     const l4 = await look(page);
     await shot(page, 'p3-egger-after-reload');
-    check('P3.8 после перезагрузки те же цвета корпуса и фасада', l4?.carcassColors?.includes(carcassTone(carcassRow?.meta?.color ?? "#000000")) && l4?.frontColors?.includes(frontRow?.meta?.color), `${l4?.carcassColors} · ${l4?.frontColors}`);
+    await waitFor(page, () => (window.__mwCadSurfaces ? window.__mwCadSurfaces() : null), (v) => Array.isArray(v) && v.some((s) => s.name.startsWith('front:') && typeof s.map === 'string'), 30_000);
+    const front4 = frontRow ? await frontShows(page, frontRow.meta.color) : false;
+    check('P3.8 после перезагрузки те же цвета корпуса и фасада (фасад — рисунком в свой цвет)', l4?.carcassColors?.includes(carcassTone(carcassRow?.meta?.color ?? "#000000")) && front4, `${l4?.carcassColors} · ${l4?.frontColors} · рисунок в цвет фасада ${front4 ? 'есть' : 'НЕТ'}`);
 
     /* GRANDEX в спальне — отказ словами. */
     await tool(page, 'materials');
