@@ -18,6 +18,7 @@ import {
   isBoardItem,
   materialCatalog,
   materialDefs,
+  materialItemOf,
   materialOps,
   materialTabs,
   parseMaterialFile,
@@ -1420,16 +1421,15 @@ async function referenceTextureChecks() {
     const key = referenceKeyOf(entry.meta)!;
     const r = REFERENCE_TEXTURES[key];
     if (!item || item.colorHex !== r.hex) return true;
+    /*
+     * Материалы, финал: столешница — тоже без образца брошюры, пока права не
+     * подтверждены (NOT_VERIFIED у всех 337): ровный цвет самого образца.
+     * Было (P3D-LDSP): образец на деталь, зеркально — и GRANDEX A-401 на
+     * кухне выходил белым множителем под картинкой, которой на проде нет.
+     */
     if (!isBoardItem(item)) {
       kinds.worktop += 1;
-      return (
-        !item.photo?.reference ||
-        Boolean(item.photo.procedural) ||
-        item.photo.mirror !== true ||
-        item.photo.url !== referenceUrl(key) ||
-        item.photo.sizeM[0] !== r.mm[0] / 1000 ||
-        item.photo.sizeM[1] !== r.mm[1] / 1000
-      );
+      return item.photo !== null;
     }
     if (isWoodDecor(item.review?.decorCode)) {
       kinds.wood += 1;
@@ -1453,7 +1453,7 @@ async function referenceTextureChecks() {
   const bareWithPhoto = reviewIds.filter((id) => bare.get(id)?.photo).length;
   const h1113 = Array.from(items.values()).find((i) => i.code === 'EGGER-H1113-ST10');
   check(
-    'TX4 путь экрана (P3D-LDSP): столешницы 172 (EGGER 82, GRANDEX 90) — образец на деталь, зеркально, принятый размер; плита-дерево 81 — демонстрационный рисунок в цвет образца (800 × 1600 мм, прямой повтор); плита однотон и камень 84 — ровный цвет без картинки; цвет у всех 337 — средний цвет образца; без таблицы фото ни у одной; МДФ и RAL не тронуты',
+    'TX4 путь экрана: права на картинки не подтверждены — образца брошюры нет ни на одной детали: столешницы 172 (EGGER 82, GRANDEX 90) и плита однотон и камень 84 — ровный цвет без картинки; плита-дерево 81 — демонстрационный рисунок в цвет образца (800 × 1600 мм, прямой повтор); цвет у всех 337 — средний цвет образца; без таблицы фото ни у одной; МДФ и RAL не тронуты',
     reviewIds.length === 337 &&
       kinds.worktop === 172 &&
       kinds.wood === 81 &&
@@ -1464,6 +1464,35 @@ async function referenceTextureChecks() {
       h1113?.colorHex === '#aa8763' &&
       h1113.photo?.procedural?.hex === '#aa8763',
     `позиций ${reviewIds.length} · столешниц ${kinds.worktop} · дерево ${kinds.wood} · однотон/камень ${kinds.plain} · не так ${badPhoto.length} · без таблицы с фото ${bareWithPhoto} · прочие ${othersSame ? 'те же' : 'ИЗМЕНИЛИСЬ'} · H1113 ST10 ${h1113?.colorHex} → ${h1113?.photo?.url.slice(0, 40) ?? 'БЕЗ РИСУНКА'}`,
+  );
+
+  /*
+   * ПРАВА РЕШАЮТ, А НЕ ОКРУЖЕНИЕ: та же позиция с подтверждёнными правами
+   * (`rightsStatus: 'VERIFIED'`) получает образец брошюры на деталь —
+   * столешница зеркально и в принятом размере. Плита — нет и с правами:
+   * кроп брошюры 0.6 пикс/мм на плиту не идёт (P3D-LDSP), у дерева рисунок.
+   */
+  const verify = (id: string) => {
+    const entry = dressed.find((e) => e.id === id)!;
+    const provenance = (entry.meta?.provenance ?? {}) as Record<string, unknown>;
+    return materialItemOf({ ...entry, meta: { ...entry.meta, provenance: { ...provenance, rightsStatus: 'VERIFIED' } } });
+  };
+  const worktopId = reviewIds.find((id) => items.get(id)?.code === 'GRANDEX-A-401');
+  const boardId = reviewIds.find((id) => items.get(id)?.code === 'EGGER-W1000-ST9');
+  const worktopKey = worktopId ? referenceKeyOf(dressed.find((e) => e.id === worktopId)!.meta) : null;
+  const verifiedWorktop = worktopId ? verify(worktopId) : null;
+  const verifiedBoard = boardId ? verify(boardId) : null;
+  check(
+    'TX9 картинка брошюры — только с подтверждёнными правами: GRANDEX-A-401 с VERIFIED получает образец (зеркально, принятый размер), без — ровный цвет #d6cdc5; плита W1000 и с VERIFIED без картинки',
+    Boolean(worktopId && boardId && worktopKey) &&
+      items.get(worktopId!)?.photo === null &&
+      items.get(worktopId!)?.colorHex === '#d6cdc5' &&
+      verifiedWorktop?.photo?.url === referenceUrl(worktopKey!) &&
+      verifiedWorktop?.photo?.mirror === true &&
+      verifiedBoard?.photo === null,
+    worktopId && boardId
+      ? `A-401: ${items.get(worktopId)?.photo ? 'С КАРТИНКОЙ' : 'цвет'} ${items.get(worktopId)?.colorHex} · с VERIFIED: ${verifiedWorktop?.photo?.url ?? 'БЕЗ КАРТИНКИ'} · W1000 с VERIFIED: ${verifiedBoard?.photo ? 'С КАРТИНКОЙ' : 'цвет'}`
+      : `НУЛЕВОЙ СЕЛЕКТОР: A-401 ${Boolean(worktopId)} · W1000 ${Boolean(boardId)}`,
   );
 
   /*

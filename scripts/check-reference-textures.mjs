@@ -584,11 +584,54 @@ async function partEgger(browser) {
 /* M-705A — тот камень, что владелец уже положил на свою кухню (объект 9f33785c), и рисунок у него виден. */
 const STONE = { article: 'GRANDEX-M-705A', key: 'GRANDEX/M-705A.webp' };
 
+/*
+ * СВОИ ПОЗИЦИИ С ФОТО — ДЛЯ ПРОВЕРКИ ЦВЕТА БЕЗ ЗАГРУЖЕННОЙ ФОТОГРАФИИ.
+ * Адрес фото абсолютный (`catalogUrl` отдаёт его как есть) и перехватывается
+ * страницей: «есть» отвечает настоящим PNG 4×4, «нет» — 404.
+ */
+const PHOTO_HOST = 'https://ldsp-test.invalid';
+const PHOTO_PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEElEQVQImWOYlW0PRwzEcQAUghRBIp/1UgAAAABJRU5ErkJggg==', 'base64');
+const OWN_OK = { article: 'TEST-COUNTER-PHOTO-OK', hex: '#8a6f5a', path: `${PHOTO_HOST}/ok.png` };
+const OWN_MISSING = { article: 'TEST-COUNTER-PHOTO-404', hex: '#3b5f7a', path: `${PHOTO_HOST}/missing.png` };
+
 async function partGrandex(browser) {
-  console.log('\n── GRANDEX: кухня → столешница из каталога → 3D → сохранить → перезагрузить');
+  console.log('\n── GRANDEX: кухня → столешница из каталога → 3D → сохранить → перезагрузить; цвет без фото');
   const table = referenceTable();
   await withOrg('GRANDEX', browser, async ({ service, makeUser, addProject, itemId, stamp }) => {
     const { org, page, errors } = await makeUser('tex-g');
+    /*
+     * Картинки брошюры с неподтверждёнными правами не запрашиваются вовсе —
+     * ни карточкой, ни списком, ни сценой: считается каждый запрос к выдаче
+     * образцов за всю часть.
+     */
+    const previewRequests = [];
+    page.on('request', (request) => {
+      if (request.url().includes('/api/catalog/materials/preview')) previewRequests.push(request.url());
+    });
+    await page.route(`${PHOTO_HOST}/**`, (route) =>
+      route.request().url().endsWith('/ok.png')
+        ? route.fulfill({ status: 200, contentType: 'image/png', headers: { 'access-control-allow-origin': '*' }, body: PHOTO_PNG })
+        : route.fulfill({ status: 404, contentType: 'text/plain', headers: { 'access-control-allow-origin': '*' }, body: 'нет файла' }),
+    );
+    /* Свои позиции коллекции GRANDEX с фото — строки той же формы, что у загруженной позиции. */
+    const { data: template } = await service.from('catalog_items').select('*').eq('org_id', org.id).eq('article', STONE.article).single();
+    must('GRANDEX образец строки для своих позиций найден', Boolean(template), `НУЛЕВОЙ СЕЛЕКТОР: ${STONE.article} в каталоге организации`);
+    for (const own of [OWN_OK, OWN_MISSING]) {
+      const { id: _id, created_at: _c, updated_at: _u, ...row } = template;
+      void _id;
+      void _c;
+      void _u;
+      const { provenance: _p, ...meta } = row.meta ?? {};
+      void _p;
+      const { data: made, error } = await service
+        .from('catalog_items')
+        .insert({ ...row, article: own.article, name_ru: `Проверка фото ${own.article}`, name_kk: `Проверка фото ${own.article}`, tiling: { moduleSize: [0.6, 0.6] }, meta: { ...meta, color: own.hex } })
+        .select('id')
+        .single();
+      must(`GRANDEX своя позиция ${own.article} заведена`, !error && Boolean(made), error?.message ?? 'нет строки');
+      const { error: assetError } = await service.from('catalog_assets').insert({ item_id: made.id, org_id: org.id, kind: 'texture', role: 'main', storage_path: own.path, sort_order: 0 });
+      must(`GRANDEX фото своей позиции ${own.article} записано`, !assetError, assetError?.message ?? '');
+    }
     const id = await addProject(org.id, {
       address: 'Проверка P3D-TEX кухня',
       zone: 'Кухня',
@@ -605,16 +648,23 @@ async function partGrandex(browser) {
     const card = await cardOf(page);
     await page.locator('[data-material-card]').first().scrollIntoViewIfNeeded().catch(() => undefined);
     await shot(page, '12-grandex-card');
+    /*
+     * Было (P3D-TEX): «картинка камня загрузилась, REFERENCE_ONLY». Права на
+     * изображения не подтверждены (NOT_VERIFIED): картинки нет, у карточки —
+     * цвет самого образца и откуда он, словами.
+     */
+    const swatch = await page.evaluate(() => getComputedStyle(document.querySelector('[data-material-card] [data-review-color]') ?? document.body).backgroundColor);
     check(
-      'TEX-G.1 карточка GRANDEX: картинка камня загрузилась, производитель GRANDEX, REFERENCE_ONLY и принятый размер',
-      Boolean(card?.image?.loaded) && card?.maker === 'GRANDEX' && /REFERENCE_ONLY/.test(card?.status ?? '') && /принят за/.test(card?.status ?? ''),
-      card ? `картинка ${card.image ? `${card.image.w}×${card.image.h}` : 'НЕТ'} · ${card.maker ?? 'НЕ НАЗВАН'} · «${card.status.slice(0, 100)}»` : 'НУЛЕВОЙ СЕЛЕКТОР',
+      'TEX-G.1 карточка GRANDEX: картинки брошюры нет — плашка цвета образца; производитель GRANDEX; «права не подтверждены» и откуда цвет названы',
+      Boolean(card) && !card.image && card.maker === 'GRANDEX' && /не подтверждены/.test(card.status ?? '') && /ровный цвет/.test(card.status ?? '') && /стр\.|кроп/.test(card.colorOrigin ?? '') && swatch !== 'rgba(0, 0, 0, 0)',
+      card ? `картинка ${card.image ? 'ПОКАЗАНА' : 'нет'} · плашка ${swatch} · ${card.maker ?? 'НЕ НАЗВАН'} · цвет: ${card.colorOrigin ?? 'НЕ НАЗВАН'} · «${card.status.slice(0, 100)}»` : 'НУЛЕВОЙ СЕЛЕКТОР',
     );
     await tool(page, 'furniture');
     await view(page, '3d');
     await sceneSettled(page);
     await sleep(1500);
-    const read = await waitFor(page, () => (window.__mwCadSurfaces ? window.__mwCadSurfaces() : null), (v) => Array.isArray(v) && v.some((s) => s.name.startsWith('counter:') && s.map), 15_000).then(() => surfaces(page));
+    const read = await surfaces(page);
+    const counterLook = await page.evaluate(() => (window.__mwCadLook ? window.__mwCadLook().counterColors : null));
     await shot(page, '13-grandex-countertop-3d');
     /* Сверху — плита во весь кадр: рисунок камня виден, а не скользящим взглядом. */
     await page.locator('[data-angles] [data-angle="plan"]').first().click().catch(() => undefined);
@@ -624,12 +674,10 @@ async function partGrandex(browser) {
     await sleep(800);
     const ref = table.get(STONE.key);
     const counters = mapsOf(read, 'counter:');
-    /* Под фото цвет белый: умноженный на средний цвет, камень темнел вдвое против своего образца. */
-    const white = (s) => Array.isArray(s.color) && s.color.every((c) => c > 0.99);
     check(
-      `TEX-G.2 3D: плиты столешницы несут образец ${STONE.article} — зеркальный повтор, размер ${ref.mm.join(' × ')} мм (принятый), цвет под фото белый`,
-      counters.length > 0 && counters.every((s) => keyIn(s.map, STONE.key) && s.wrap === 'mirror' && sizeFits(s.realSizeM, ref) && white(s)),
-      `${words(read, 'counter:')} · цвет под фото ${counters.map((s) => (Array.isArray(s.color) ? s.color.map((c) => c.toFixed(2)).join('/') : '—')).join(', ') || '—'}`,
+      `TEX-G.2 3D: плиты столешницы ${STONE.article} — ровный цвет самого образца (${ref.hex}), картинки нет; запросов к образцам брошюры с начала части — 0`,
+      counters.length > 0 && counters.every((s) => s.map === null) && Array.isArray(counterLook) && counterLook.includes(ref.hex) && previewRequests.length === 0,
+      `${words(read, 'counter:')} · цвет плит ${(counterLook ?? []).join(',') || 'НЕТ'} · запросов к образцам ${previewRequests.length}`,
     );
     await saved(page);
     const stoneId = await itemId(org.id, STONE.article);
@@ -641,9 +689,46 @@ async function partGrandex(browser) {
     await sleep(1500);
     await open3d(page);
     await sleep(2000);
-    const again = await waitFor(page, () => (window.__mwCadSurfaces ? window.__mwCadSurfaces() : null), (v) => Array.isArray(v) && v.some((s) => s.name.startsWith('counter:') && s.map), 20_000).then(() => surfaces(page));
+    /* Сразу после перезагрузки карты ещё нет и у сломанной сборки: даём фото время приехать. */
+    await sleep(3000);
+    const again = await surfaces(page);
+    const againLook = await page.evaluate(() => (window.__mwCadLook ? window.__mwCadLook().counterColors : null));
     await shot(page, '14-grandex-after-reload-3d');
-    check('TEX-G.4 после перезагрузки на столешнице тот же образец камня', mapsOf(again, 'counter:').some((s) => keyIn(s.map, STONE.key)), words(again, 'counter:'));
+    check(
+      'TEX-G.4 после перезагрузки на столешнице тот же цвет камня, картинки нет; запросов к образцам брошюры за часть — 0',
+      mapsOf(again, 'counter:').length > 0 && mapsOf(again, 'counter:').every((s) => s.map === null) && Array.isArray(againLook) && againLook.includes(ref.hex) && previewRequests.length === 0,
+      `${words(again, 'counter:')} · цвет плит ${(againLook ?? []).join(',') || 'НЕТ'} · запросов к образцам ${previewRequests.length}`,
+    );
+
+    /*
+     * ЦВЕТ БЕЗ ЗАГРУЖЕННОЙ ФОТОГРАФИИ (материалы, финал). Своя позиция с фото
+     * ложится фото; следующая, чьё фото не отдалось (404), обязана лечь СВОИМ
+     * цветом — а не прежним фото под белым множителем.
+     */
+    const okSaid = await applyItem(page, 'countertop', 'GRANDEX', OWN_OK.article);
+    must(`GRANDEX ${OWN_OK.article} лёг на столешницу`, okSaid === null, okSaid ?? '');
+    await tool(page, 'furniture');
+    await view(page, '3d');
+    await sceneSettled(page);
+    const withPhoto = await waitFor(page, () => (window.__mwCadSurfaces ? window.__mwCadSurfaces() : null), (v) => Array.isArray(v) && v.some((s) => s.name.startsWith('counter:') && typeof s.map === 'string' && s.map.includes('/ok.png')), 20_000).then(() => surfaces(page));
+    const missingSaid = await applyItem(page, 'countertop', 'GRANDEX', OWN_MISSING.article);
+    must(`GRANDEX ${OWN_MISSING.article} лёг на столешницу`, missingSaid === null, missingSaid ?? '');
+    await tool(page, 'furniture');
+    await view(page, '3d');
+    await sceneSettled(page);
+    await sleep(2500);
+    const without = await surfaces(page);
+    const withoutLook = await page.evaluate(() => (window.__mwCadLook ? window.__mwCadLook().counterColors : null));
+    await shot(page, '15-counter-photo-missing-3d');
+    check(
+      `TEX-G.5 цвет без загруженной фотографии: своя позиция с фото легла фото, следующая с фото 404 — своим цветом (${OWN_MISSING.hex}), прежнего фото на плите нет`,
+      mapsOf(withPhoto, 'counter:').some((s) => typeof s.map === 'string' && s.map.includes('/ok.png')) &&
+        mapsOf(without, 'counter:').length > 0 &&
+        mapsOf(without, 'counter:').every((s) => s.map === null) &&
+        Array.isArray(withoutLook) &&
+        withoutLook.includes(OWN_MISSING.hex),
+      `с фото: ${words(withPhoto, 'counter:')} · без фото: ${words(without, 'counter:')} · цвет плит ${(withoutLook ?? []).join(',') || 'НЕТ'}`,
+    );
     check('GRANDEX ошибок страницы нет', errors.length === 0, errors.slice(0, 2).join(' | '));
   });
 }

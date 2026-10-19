@@ -40,3 +40,7 @@ next-env.d.ts
 MANUFACTURER_CATALOGS/
 MANUFACTURER_CATALOGS/
 CATALOG_STAGING/
+
+# Пакеты образцов поставщиков: картинки производителей, права не подтверждены — не в git.
+ALDIK_VSCODE_EGGER_GRANDEX_SETUP_BUNDLE.zip
+ALDIK_*REVIEW_PACK*.zip
