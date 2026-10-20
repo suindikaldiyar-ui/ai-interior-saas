@@ -233,8 +233,14 @@ export function frontKey(spec: FrontSpec): string {
 export function frontTitle(spec: FrontSpec): string {
   const parts = [FRONT_BASES[spec.base].title];
   if (spec.construct !== 'solid') parts.push(FRONT_CONSTRUCTS[spec.construct].title.toLowerCase());
-  /* Рисунок МДФ (P3D-MDF) — тем же словом, что на карточке типа. */
-  if (spec.relief) parts.push(reliefKindDef(spec.relief.kind).title.toLowerCase());
+  /* Рисунок МДФ (P3D-MDF) — тем же словом, что на карточке типа; у модели — её ключ. */
+  if (spec.relief) {
+    parts.push(
+      spec.relief.kind === 'design' && spec.relief.model
+        ? `модель ${spec.relief.model}`
+        : reliefKindDef(spec.relief.kind).title.toLowerCase(),
+    );
+  }
   parts.push(FRONT_FINISHES[spec.finish].title.toLowerCase());
   return parts.join(', ');
 }

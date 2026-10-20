@@ -14,6 +14,8 @@ import {
 } from '@/lib/millwork/facadeRelief';
 import { MDF_COATINGS, coatingOf, type FacadePatch, type FacadeTarget } from '@/lib/millwork/mdfFacade';
 import type { MillingItem } from '@/lib/millwork/milling';
+import type { CatalogEntryFull } from '@/types/catalog';
+import KiraCatalog from './KiraCatalog';
 
 /**
  * ВКЛАДКА «МДФ ФАСАДЫ» (P3D-MDF): тип рисунка, покрытие, параметры.
@@ -42,6 +44,11 @@ type Props = {
   /** Сколько створок со своим фасадом останутся как есть при правке цели. */
   ownLeaves: number;
   onApply: (patch: FacadePatch) => string | null;
+  /**
+   * КАТАЛОГ KIRA (слой 58): организация (`null` — демонстрация), её каталог
+   * и куда класть строки моделей в демо. Нет — раздела KIRA нет.
+   */
+  kira?: { orgId: string | null; catalog: CatalogEntryFull[]; onCatalogAdded: (entries: CatalogEntryFull[]) => void };
 };
 
 /** Карточка рисунка: свет по полю глубины, без фото. */
@@ -113,8 +120,11 @@ function ParamField({
   );
 }
 
-export default function MdfFacadeTab({ target, spec, sample, models, frontMm, misfits, ownLeaves, onApply }: Props) {
+export default function MdfFacadeTab({ target, spec, sample, models, frontMm, misfits, ownLeaves, onApply, kira }: Props) {
   const [notice, setNotice] = useState<string | null>(null);
+  const [kiraOpen, setKiraOpen] = useState(false);
+  const kiraModels = useMemo(() => models.filter((item) => item.article.startsWith('KIRA-')), [models]);
+  const otherModels = useMemo(() => models.filter((item) => !item.article.startsWith('KIRA-')), [models]);
   const relief = spec?.relief ?? null;
   const resolved = relief ? resolveRelief(relief) : null;
   const coating = spec ? coatingOf(spec) : null;
@@ -168,17 +178,42 @@ export default function MdfFacadeTab({ target, spec, sample, models, frontMm, mi
         )}
       </div>
 
-      {/* ── Модели каталога (KIRA) ── */}
+      {/* ── Каталог KIRA (слой 58): шесть категорий, поиск, тип, карточки ── */}
       <div data-mdf-models={models.length}>
-        <p className="mw-label mb-2">Модели каталога</p>
-        {models.length === 0 ? (
-          <p className="text-[13px] leading-snug text-graphiteMw" data-mdf-models-empty>
-            Моделей МДФ-фасадов с рисунком в каталоге организации нет. Модели KIRA (11) подготовлены строками
-            каталога; в рабочую базу они заводятся после разрешения владельца.
+        <p className="mw-label mb-2">Модели KIRA</p>
+        {kiraModels.length === 0 && (
+          <p className="mb-2 text-[13px] leading-snug text-graphiteMw" data-mdf-models-empty>
+            Моделей KIRA в каталоге организации нет: карточки — для просмотра, применить можно после импорта в «Каталоге»
+            (/admin/catalog); в рабочую базу его делают после разрешения владельца.
           </p>
-        ) : (
-          <div className="grid grid-cols-2 gap-2" role="group" aria-label="Модели каталога">
-            {models.map((item) => {
+        )}
+        {kira && (
+          <button
+            type="button"
+            data-kira-open
+            aria-expanded={kiraOpen}
+            onClick={() => setKiraOpen((open) => !open)}
+            className={`mw-btn ${kiraOpen ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+          >
+            {kiraOpen ? 'Скрыть каталог KIRA' : 'Каталог KIRA: категории, поиск, модели'}
+          </button>
+        )}
+        {kira && kiraOpen && (
+          <div className="mt-2">
+            <KiraCatalog
+              spec={spec}
+              sample={sample}
+              models={kiraModels}
+              orgId={kira.orgId}
+              catalog={kira.catalog}
+              onCatalogAdded={kira.onCatalogAdded}
+              onApply={apply}
+            />
+          </div>
+        )}
+        {otherModels.length > 0 && (
+          <div className="mt-2 grid grid-cols-2 gap-2" role="group" aria-label="Модели каталога">
+            {otherModels.map((item) => {
               const model = item.milling.relief!;
               const on = relief?.model !== undefined && relief.model === model.model;
               return (

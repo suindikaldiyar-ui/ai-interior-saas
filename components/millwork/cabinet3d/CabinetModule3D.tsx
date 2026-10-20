@@ -13,6 +13,9 @@ import InteractiveBifold from './InteractiveBifold';
 import InteractiveDrawer from './InteractiveDrawer';
 import type { CabinetParts } from './parts';
 import type { FrontRelief, Module } from '@/types/millwork';
+import { gripOrient } from '@/lib/millwork/facadeRelief';
+import { isUpperRow } from '@/lib/millwork/modules';
+import { milledGrip } from '@/lib/millwork/opening';
 
 /**
  * Один модуль в 3D: корпус и его настоящее наполнение.
@@ -249,9 +252,11 @@ export default function CabinetModule3D({
               cutaway={cutaway}
               gap={gapM}
               integratedHandle={integratedHandles}
+              milledGrip={milledGrip(unit, leaf.id.slice(unit.id.length + 1))}
               onActive={onActive}
               frontMaterial={look?.material ?? frontMaterial}
               relief={look?.relief}
+              reliefOrient={gripOrient(look?.relief, 'flap', isUpperRow(unit))}
             />
           );
         }
@@ -291,9 +296,11 @@ export default function CabinetModule3D({
             parts={parts}
             gap={gapM}
             integratedHandle={integratedHandles}
+            milledGrip={milledGrip(unit, leaf.id.slice(unit.id.length + 1))}
             onActive={onActive}
             frontMaterial={look?.material ?? frontMaterial}
             relief={look?.relief}
+            reliefOrient={gripOrient(look?.relief, leaf.opening, isUpperRow(unit))}
           />
         );
       })}

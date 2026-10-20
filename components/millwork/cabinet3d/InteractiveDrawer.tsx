@@ -8,6 +8,7 @@ import { useShiftedBox, type CabinetParts } from './parts';
 import type { FrontRelief } from '@/types/millwork';
 import { realSizeShiftOf } from './realSizeMap';
 import { useReliefGeometry, useShiftedRelief } from './reliefGeometry';
+import type { ReliefOrient } from '@/lib/millwork/facadeRelief';
 import { DRAWER_TRAVEL_M } from '@/lib/millwork/cabinetBoxes';
 
 /**
@@ -45,10 +46,14 @@ type Props = {
   frontMaterial?: THREE.MeshStandardMaterial;
   /** Рельеф МДФ фронта (P3D-MDF): тот же, что у задвинутого в пачке. */
   relief?: FrontRelief;
+  /** Разворот рисунка с фрезерованной ручкой — тот же, что у фронта в пачке (`gripOrient`). */
+  reliefOrient?: ReliefOrient;
   /** Разрез: фасады убраны, видно короб ящика. */
   cutaway: boolean;
   gap: number;
   integratedHandle: boolean;
+  /** Ручка фрезерована во фронте (`milledGrip`): накладной нет — как у фронта в пачке. */
+  milledGrip?: boolean;
   /** Ящик поехал или встал: задвинутый рисуется вместе со всем рядом. */
   onActive?: (id: string, active: boolean) => void;
 };
@@ -66,9 +71,11 @@ export default function InteractiveDrawer({
   parts,
   frontMaterial,
   relief,
+  reliefOrient,
   cutaway,
   gap,
   integratedHandle,
+  milledGrip = false,
   onActive,
 }: Props) {
   const group = useRef<THREE.Group>(null);
@@ -84,11 +91,15 @@ export default function InteractiveDrawer({
   const frontBox = useShiftedBox(parts.box, id);
   /* Габарит фронта — тот же, что в `drawerBoxes`: ширина и высота минус зазоры. */
   const reliefGeometry = useShiftedRelief(
-    useReliefGeometry(relief, {
-      widthMm: (width - 2 * gap) * 1000,
-      heightMm: (height - 2 * gap) * 1000,
-      thicknessMm: thickness * 1000,
-    }),
+    useReliefGeometry(
+      relief,
+      {
+        widthMm: (width - 2 * gap) * 1000,
+        heightMm: (height - 2 * gap) * 1000,
+        thicknessMm: thickness * 1000,
+      },
+      reliefOrient,
+    ),
     realSizeShiftOf(id),
   );
   openRef.current = open;
@@ -196,7 +207,7 @@ export default function InteractiveDrawer({
           />
 
           {/* Ручка: профиль по верхней кромке либо накладная скоба. */}
-          {integratedHandle ? (
+          {milledGrip ? null : integratedHandle ? (
             <mesh
               geometry={parts.box}
               material={parts.metal}

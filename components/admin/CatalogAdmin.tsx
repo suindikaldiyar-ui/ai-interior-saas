@@ -34,6 +34,18 @@ type Props = {
  * плюс запас, остальное — две распорки нужной высоты.
  */
 const ROW_PX = 52;
+
+/** Ответ `/api/catalog/kira` на «что ляжет» (слой 58). */
+type KiraSummary = {
+  models: number;
+  categories: { key: string; title: string; listed: number }[];
+  excluded: { key: string; title: string }[];
+  byCategory: Record<string, { found: number; insert: number; update: number; unchanged: number; relief: number; cardOnly: number }>;
+  insert: number;
+  update: number;
+  unchanged: number;
+  conflicts: { article: string; why: string }[];
+};
 const OVERSCAN = 8;
 
 const inputCls =
@@ -285,6 +297,55 @@ export default function CatalogAdmin({
     if (res.ok) await reload();
   };
 
+  /* ── Модели МДФ-фасадов KIRA (слой 58): сначала «что ляжет», потом запись ── */
+
+  const [kira, setKira] = useState<KiraSummary | null>(null);
+  const kiraRequest = async (confirm: boolean) => {
+    setBusy(true);
+    setNotice(confirm ? 'Записываем модели KIRA…' : 'Считаем, что ляжет…');
+    let res: Response;
+    /* Предел ожидания — запас над пределом функции (60 с): без ответа экран не висит на «Считаем…». */
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 70_000);
+    try {
+      res = await fetch('/api/catalog/kira', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(confirm ? { orgId, confirm: true } : { orgId, dryRun: true }),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      /* Запрос не дошёл или сервер не ответил — словами, кнопки снова доступны. */
+      setBusy(false);
+      setNotice(
+        controller.signal.aborted
+          ? 'Модели KIRA: сервер не ответил за 70 с. Нажмите «Модели KIRA» ещё раз — «что ляжет» покажет, что уже в каталоге.'
+          : `Модели KIRA: запрос не дошёл до сервера (${error instanceof Error ? error.message : 'нет связи'}). Повторите.`,
+      );
+      return;
+    } finally {
+      clearTimeout(timer);
+    }
+    const data = await res.json().catch(() => ({}));
+    setBusy(false);
+    if (!res.ok) {
+      setNotice(data.error ?? 'Модели KIRA не загрузились.');
+      return;
+    }
+    if (!confirm) {
+      setNotice(null);
+      setKira(data as KiraSummary);
+      return;
+    }
+    setKira(null);
+    setNotice(
+      `KIRA: добавлено ${data.added}, обновлено ${data.updated}, без изменений ${data.unchanged}` +
+        (data.conflicts?.length ? `, не тронуто из-за конфликта артикула: ${data.conflicts.length}` : '') +
+        '. Цен у моделей нет — «цена не задана».',
+    );
+    await reload();
+  };
+
   /* ── Сортировка перетаскиванием ── */
 
   const onDrop = async (targetId: string) => {
@@ -437,6 +498,16 @@ export default function CatalogAdmin({
           >
             Загрузить типовой прайс
           </button>
+          <button
+            type="button"
+            onClick={() => kiraRequest(false)}
+            disabled={busy}
+            data-admin-kira
+            className="mw-touch border border-navyLine px-3 text-[13px] text-graphiteMw hover:border-cyan hover:text-textMw disabled:opacity-40"
+            title="Модели МДФ-фасадов KIRA: шесть категорий сайта, рисунок для показа, без цен"
+          >
+            Модели KIRA
+          </button>
           <input
             type="search"
             data-admin-search
@@ -455,6 +526,75 @@ export default function CatalogAdmin({
             Типовой прайс — ориентир, а не цены вашей компании
           </span>
         </div>
+
+        {kira && (
+          <div className="border-b border-navyLine bg-navy px-3 py-3 text-[13px]" data-admin-kira-plan>
+            <p className="mb-2">
+              Модели МДФ-фасадов KIRA: {kira.models}. Рисунок — приближение по фото производителя (VISUAL_ONLY), цен нет,
+              фото производителя в каталог не идут. Своё в уже заведённых позициях (цена, название) импорт не трогает и
+              ничего не удаляет.
+            </p>
+            <table className="mb-2 border-collapse">
+              <thead>
+                <tr className="text-left text-graphiteMw">
+                  {['Категория', 'Найдено', 'Новых', 'Обновить', 'Без изменений', 'С 3D', 'Только карточка'].map((title) => (
+                    <th key={title} className="pr-4 font-normal">
+                      {title}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {[...kira.categories.map((c) => ({ key: c.key, title: c.title })), { key: 'other', title: 'Вне шести категорий (СЛ 9)' }].map((c) => {
+                  const n = kira.byCategory[c.key];
+                  if (!n || n.found === 0) return null;
+                  return (
+                    <tr key={c.key} data-admin-kira-row={c.key}>
+                      <td className="pr-4">{c.title}</td>
+                      <td className="pr-4">{n.found}</td>
+                      <td className="pr-4">{n.insert}</td>
+                      <td className="pr-4">{n.update}</td>
+                      <td className="pr-4">{n.unchanged}</td>
+                      <td className="pr-4">{n.relief}</td>
+                      <td className="pr-4">{n.cardOnly}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            <p className="mb-2 text-graphiteMw">
+              Не исследуются и не импортируются: {kira.excluded.map((c) => c.title).join(', ')}.
+              {' '}Всего новых {kira.insert}, обновить {kira.update}, без изменений {kira.unchanged}.
+            </p>
+            {kira.conflicts.length > 0 && (
+              <ul className="mb-2 text-alert" data-admin-kira-conflicts={kira.conflicts.length}>
+                {kira.conflicts.slice(0, 6).map((c) => (
+                  <li key={c.article}>
+                    {c.article}: {c.why}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => kiraRequest(true)}
+                disabled={busy || kira.insert + kira.update === 0}
+                data-admin-kira-confirm
+                className="mw-touch border border-cyanBright bg-cyanBright px-3 text-[13px] text-navyDeep disabled:opacity-40"
+              >
+                {kira.insert + kira.update === 0 ? 'Всё уже в каталоге' : 'Загрузить'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setKira(null)}
+                className="mw-touch border border-navyLine px-3 text-[13px] text-graphiteMw"
+              >
+                Отмена
+              </button>
+            </div>
+          </div>
+        )}
 
         {readError && (
           <p className="border-b border-alert/50 bg-navy px-3 py-2 text-[13px] text-alert" data-catalog-error>

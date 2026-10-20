@@ -63,7 +63,7 @@ import {
 } from './freeRun';
 import { SECTION_SPECS } from './sections';
 import { allowsAppliance, allowsSection, applianceRefusal, sectionRefusal } from './zones';
-import { MODULE_VARIANTS, applyVariant, leavesAfterWidth, variantsForModule } from './moduleVariants';
+import { MODULE_VARIANTS, applyVariant, leavesAfterWidth, variantsForModule, vitrineRefusal } from './moduleVariants';
 import type {
   ApplianceKind,
   MillworkOp,
@@ -2410,6 +2410,15 @@ export function applyOps({
           warnings.push(reliefSaid);
           break;
         }
+        /* Рама витрины — только на модуль, у которого стекло есть в смете (KIRA «Витрины»). */
+        const glassSaid = vitrineRefusal(
+          op.moduleId === 'all' ? { label: 'Весь ряд' } : (allModules(run).find((unit) => unit.id === op.moduleId) ?? { label: op.moduleId }),
+          op.front.relief,
+        );
+        if (glassSaid) {
+          warnings.push(glassSaid);
+          break;
+        }
 
         /*
          * `all` — весь ряд: так ложится готовый дизайн. Поштучная правка
@@ -2483,6 +2492,11 @@ export function applyOps({
           const reliefSaid = op.front.relief ? reliefParamRefusal(op.front.relief, shopOf(run.production).frontMm) : null;
           if (reliefSaid) {
             warnings.push(reliefSaid);
+            break;
+          }
+          const glassSaid = vitrineRefusal(allModules(run).find((unit) => unit.id === op.moduleId) ?? { label: op.moduleId }, op.front.relief);
+          if (glassSaid) {
+            warnings.push(glassSaid);
             break;
           }
         }

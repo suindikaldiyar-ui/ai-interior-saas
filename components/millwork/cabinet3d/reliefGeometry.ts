@@ -3,7 +3,7 @@
 import { useEffect, useMemo } from 'react';
 import * as THREE from 'three';
 import type { FrontRelief } from '@/types/millwork';
-import { reliefMesh, reliefMeshKey, type ReliefLeaf } from '@/lib/millwork/facadeRelief';
+import { reliefMesh, reliefMeshKey, type ReliefLeaf, type ReliefOrient } from '@/lib/millwork/facadeRelief';
 import { REAL_SIZE_SHIFT } from './realSizeMap';
 
 /**
@@ -19,45 +19,60 @@ import { REAL_SIZE_SHIFT } from './realSizeMap';
  * Держат её пачка закрытых фасадов (`InstancedBoxes` в режиме «на месте»)
  * и едущая створка: открытая дверь — та же сетка, что закрытая в пачке,
  * поэтому рисунок не прыгает в момент открывания.
+ *
+ * У рисунка с фрезерованной ручкой сетка зависит ещё и от разворота
+ * (`ReliefOrient`): ручка у открываемой стороны — другая сетка в кэше.
  */
 
 type Entry = { geometry: THREE.BufferGeometry; users: number };
 const cache = new Map<string, Entry>();
 
-function build(relief: FrontRelief, leaf: ReliefLeaf): THREE.BufferGeometry {
-  const mesh = reliefMesh(relief, leaf);
+function build(relief: FrontRelief, leaf: ReliefLeaf, orient?: ReliefOrient): THREE.BufferGeometry {
+  const mesh = reliefMesh(relief, leaf, orient);
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.BufferAttribute(mesh.positions, 3));
   geometry.setAttribute('normal', new THREE.BufferAttribute(mesh.normals, 3));
   geometry.setAttribute('uv', new THREE.BufferAttribute(mesh.uvs, 2));
   geometry.computeBoundingBox();
   geometry.computeBoundingSphere();
-  /* Чем стал фасад и почему — для приёмки и подписи: рисунок мог не встать. */
-  geometry.userData = { relief: true, drawn: mesh.drawn, refusal: mesh.refusal, triangles: mesh.triangles };
+  /* Чем стал фасад и почему — для приёмки и подписи: рисунок мог не встать. Стекло витрины — для едущей створки. */
+  geometry.userData = {
+    relief: true,
+    drawn: mesh.drawn,
+    refusal: mesh.refusal,
+    triangles: mesh.triangles,
+    glassMm: mesh.glassMm,
+    /*
+     * Модель каталога (KIRA:…) — приёмка сверяет нарисованное с выбранным.
+     * Только у рисунка модели: у типов A–F ключ сетки модели не знает, и
+     * одна сетка служит и модели СЛ, и своему рисунку тех же чисел.
+     */
+    model: relief.kind === 'design' ? (relief.model ?? null) : null,
+  };
   return geometry;
 }
 
 /** Сетка из кэша (построить, если её нет) — без учёта, кто держит. */
-export function peekReliefGeometry(relief: FrontRelief, leaf: ReliefLeaf): THREE.BufferGeometry {
-  const key = reliefMeshKey(relief, leaf);
+export function peekReliefGeometry(relief: FrontRelief, leaf: ReliefLeaf, orient?: ReliefOrient): THREE.BufferGeometry {
+  const key = reliefMeshKey(relief, leaf, orient);
   let entry = cache.get(key);
   if (!entry) {
-    entry = { geometry: build(relief, leaf), users: 0 };
+    entry = { geometry: build(relief, leaf, orient), users: 0 };
     cache.set(key, entry);
   }
   return entry.geometry;
 }
 
 /** Взять сетку и запомнить, что её держат. */
-export function acquireReliefGeometry(relief: FrontRelief, leaf: ReliefLeaf): THREE.BufferGeometry {
-  const geometry = peekReliefGeometry(relief, leaf);
-  cache.get(reliefMeshKey(relief, leaf))!.users += 1;
+export function acquireReliefGeometry(relief: FrontRelief, leaf: ReliefLeaf, orient?: ReliefOrient): THREE.BufferGeometry {
+  const geometry = peekReliefGeometry(relief, leaf, orient);
+  cache.get(reliefMeshKey(relief, leaf, orient))!.users += 1;
   return geometry;
 }
 
 /** Отпустить сетку; последний отпустивший освобождает буфер. */
-export function releaseReliefGeometry(relief: FrontRelief, leaf: ReliefLeaf): void {
-  const key = reliefMeshKey(relief, leaf);
+export function releaseReliefGeometry(relief: FrontRelief, leaf: ReliefLeaf, orient?: ReliefOrient): void {
+  const key = reliefMeshKey(relief, leaf, orient);
   const entry = cache.get(key);
   if (!entry) return;
   entry.users -= 1;
@@ -84,22 +99,32 @@ export function leafOfBox(scale: [number, number, number], face?: '-x'): ReliefL
  * Сетка рельефа для одного меша (едущая створка). Пока рельефа нет —
  * `null`, и меш рисует свою коробку, как раньше.
  */
-export function useReliefGeometry(relief: FrontRelief | undefined, leaf: ReliefLeaf): THREE.BufferGeometry | null {
-  const key = relief ? reliefMeshKey(relief, leaf) : null;
+export function useReliefGeometry(
+  relief: FrontRelief | undefined,
+  leaf: ReliefLeaf,
+  orient?: ReliefOrient,
+): THREE.BufferGeometry | null {
+  const key = relief ? reliefMeshKey(relief, leaf, orient) : null;
   /* Сетка — сразу, в отрисовке; учёт держащих — в эффекте, парой «взял — отпустил». */
   const geometry = useMemo(
-    () => (relief ? peekReliefGeometry(relief, leaf) : null),
-    // Ключ — рисунок и габарит: сам объект рельефа пересоздаётся чаще.
+    () => (relief ? peekReliefGeometry(relief, leaf, orient) : null),
+    // Ключ — рисунок, габарит и разворот: сам объект рельефа пересоздаётся чаще.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [key],
   );
   useEffect(() => {
     if (!relief) return;
-    acquireReliefGeometry(relief, leaf);
-    return () => releaseReliefGeometry(relief, leaf);
+    acquireReliefGeometry(relief, leaf, orient);
+    return () => releaseReliefGeometry(relief, leaf, orient);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
   return geometry;
+}
+
+/** Стекло рамы витрины этой сетки: прямоугольник в мм от центра фасада, или `null`. */
+export function glassOfRelief(geometry: THREE.BufferGeometry | null): [number, number, number, number] | null {
+  const glass = geometry?.userData?.glassMm;
+  return Array.isArray(glass) && glass.length === 4 ? (glass as [number, number, number, number]) : null;
 }
 
 /**

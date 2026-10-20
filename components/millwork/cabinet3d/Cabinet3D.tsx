@@ -35,7 +35,7 @@ import {
 } from '@/lib/millwork/shop';
 import { zoneProfile } from '@/lib/millwork/zones';
 import { frontWithMilling, leafFrontWithMilling, millingCatalog } from '@/lib/millwork/milling';
-import { reliefMeshKey, type ReliefLeaf } from '@/lib/millwork/facadeRelief';
+import { reliefMeshKey, type ReliefLeaf, type ReliefOrient } from '@/lib/millwork/facadeRelief';
 import { leafOfBox } from './reliefGeometry';
 import type { FrontRelief } from '@/types/millwork';
 import { carcassCatalog } from '@/lib/millwork/carcassMaterial';
@@ -509,7 +509,10 @@ export default function Cabinet3D({
      * ФАСАДЫ С РЕЛЬЕФОМ МДФ (P3D-MDF) — пачка на материал И сетку: сетка
      * одна на рисунок и габарит, экземпляры встают на места коробок.
      */
-    const reliefFronts = new Map<string, { key: string; relief: FrontRelief; leaf: ReliefLeaf; face?: '-x'; boxes: PartBox[] }>();
+    const reliefFronts = new Map<
+      string,
+      { key: string; relief: FrontRelief; leaf: ReliefLeaf; face?: '-x'; orient?: ReliefOrient; boxes: PartBox[] }
+    >();
 
     for (const box of boxes) {
       if (box.part && active.has(box.part)) continue;
@@ -518,10 +521,10 @@ export default function Cabinet3D({
       if (box.material === 'front' && box.relief) {
         const key = box.frontKey ?? frontKey(DEFAULT_FRONT);
         const leaf = leafOfBox(box.scale, box.face);
-        const batch = `${key}|${reliefMeshKey(box.relief, leaf)}|${box.face ?? ''}`;
+        const batch = `${key}|${reliefMeshKey(box.relief, leaf, box.reliefOrient)}|${box.face ?? ''}`;
         const at = reliefFronts.get(batch);
         if (at) at.boxes.push(box);
-        else reliefFronts.set(batch, { key, relief: box.relief, leaf, face: box.face, boxes: [box] });
+        else reliefFronts.set(batch, { key, relief: box.relief, leaf, face: box.face, orient: box.reliefOrient, boxes: [box] });
         continue;
       }
       if (box.material === 'front') {
@@ -833,7 +836,7 @@ export default function Cabinet3D({
           material={frontMaterials.get(entry.key) ?? parts.front}
           castShadow={shadows}
           receiveShadow={shadows}
-          relief={{ relief: entry.relief, leaf: entry.leaf, face: entry.face }}
+          relief={{ relief: entry.relief, leaf: entry.leaf, face: entry.face, orient: entry.orient }}
         />
       ))}
       {/*
@@ -873,7 +876,7 @@ export default function Cabinet3D({
           receiveShadow
         />
       ))}
-      <InstancedBoxes boxes={grouped.groups.metal} geometry={parts.box} material={parts.metal} />
+      <InstancedBoxes name="metal" boxes={grouped.groups.metal} geometry={parts.box} material={parts.metal} />
       {/* Стекло дверцы прибора: по нему духовка узнаётся с трёх метров. */}
       <InstancedBoxes
         name={APPLIANCE_GLASS_NAME}

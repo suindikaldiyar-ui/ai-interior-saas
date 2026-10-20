@@ -1549,6 +1549,101 @@ async function referenceTextureChecks() {
   );
 }
 
+/* ─────────────  Слой 58: модели KIRA в каталог организации — повторяемый импорт  ───────────── */
+/*
+ * План импорта — чистая функция (`planKiraImport`): его зовёт маршрут
+ * `/api/catalog/kira` и до записи, и при записи. Здесь он меряется на
+ * строках, какими их отдала бы база: новый каталог, повтор, правки компании,
+ * устаревшее происхождение, чужой артикул, задвоенный артикул.
+ */
+import { KIRA_CATALOG as KIRA_ALL, planKiraImport, type KiraExistingRow } from '../lib/millwork/kiraCatalog';
+{
+  console.log('\nМодели KIRA: импорт в каталог организации');
+  const EXPECTED: Record<string, [number, number, number]> = {
+    /* найдено, с 3D, только карточка */
+    prostfrez: [12, 12, 0],
+    viborka: [28, 24, 4],
+    rify: [15, 15, 0],
+    moldingi: [1, 1, 0],
+    vitrina: [5, 5, 0],
+    integra: [7, 7, 0],
+    other: [1, 1, 0],
+  };
+  const fresh = planKiraImport([]);
+  const byCategoryOk = Object.entries(EXPECTED).every(([key, [found, relief, cardOnly]]) => {
+    const n = fresh.byCategory[key as keyof typeof fresh.byCategory];
+    return n.found === found && n.insert === found && n.relief === relief && n.cardOnly === cardOnly && n.update === 0 && n.unchanged === 0;
+  });
+  check(
+    'KI1 пустой каталог: ложится 69 моделей одной строкой каждая (артикулы без повторов), по категориям сайта 12 / 28 / 15 / 1 / 5 / 7 и СЛ 9 вне их; с 3D 65, только карточка 4 (выборка); цена у всех ноль — «цена не задана»; обновлять и конфликтовать нечему',
+    fresh.insert.length === 69 &&
+      new Set(fresh.insert.map((row) => row.article)).size === 69 &&
+      fresh.update.length === 0 &&
+      fresh.unchanged.length === 0 &&
+      fresh.conflicts.length === 0 &&
+      byCategoryOk &&
+      fresh.insert.every((row) => row.price === 0 && row.article.startsWith('KIRA-')),
+    Object.entries(fresh.byCategory)
+      .map(([key, n]) => `${key} ${n.found}: 3D ${n.relief}, карточка ${n.cardOnly}`)
+      .join(' · '),
+  );
+
+  /* Что записала бы база: те же строки, с id и JSON-кругом. */
+  const written: KiraExistingRow[] = fresh.insert.map((row, i) => ({
+    id: `row-${i}`,
+    article: row.article,
+    meta: JSON.parse(JSON.stringify(row.meta)) as Record<string, unknown>,
+  }));
+  const again = planKiraImport(written);
+  check(
+    'KI2 повторный импорт не добавляет ни строки и ничего не переписывает: 69 без изменений',
+    again.insert.length === 0 && again.update.length === 0 && again.unchanged.length === 69 && again.conflicts.length === 0,
+    `новых ${again.insert.length}, обновить ${again.update.length}, без изменений ${again.unchanged.length}, конфликтов ${again.conflicts.length}`,
+  );
+
+  /* Компания дописала в позицию своё; у другой позиции устарело происхождение. */
+  const own = written.map((row) =>
+    row.article === 'KIRA-RIF-2'
+      ? { ...row, meta: { ...row.meta, note: 'наш поставщик', finishPrices: { matte: 31000 } } }
+      : row.article === 'KIRA-OV-77'
+        ? { ...row, meta: { ...row.meta, note: 'своё', provenance: { ...(row.meta!.provenance as Record<string, unknown>), source: 'https://kira-group.kz/old' } } }
+        : row,
+  );
+  const refresh = planKiraImport(own);
+  const ov77 = refresh.update.find((row) => row.article === 'KIRA-OV-77');
+  const ov77Source = (ov77?.meta.provenance as { source?: string } | undefined)?.source;
+  check(
+    'KI3 своё у компании остаётся: позиция с её полями — без изменений; у позиции с устаревшим происхождением обновляются только происхождение и рисунок, её поле остаётся; в обновлении нет ни цены, ни названия',
+    refresh.insert.length === 0 &&
+      refresh.unchanged.includes('KIRA-RIF-2') &&
+      refresh.update.length === 1 &&
+      Boolean(ov77) &&
+      ov77!.meta.note === 'своё' &&
+      ov77Source === KIRA_ALL.find((e) => e.code === 'OV-77')!.source &&
+      Object.keys(ov77!).sort().join(',') === 'article,id,meta',
+    `обновить ${refresh.update.map((row) => row.article).join(', ') || 'НИЧЕГО'} · поле компании «${String(ov77?.meta.note ?? 'ПОТЕРЯНО')}» · источник ${ov77Source ?? '—'}`,
+  );
+
+  /* Артикул занят чужой позицией; артикул задвоен; своя посторонняя позиция KIRA-…. */
+  const foreign = [
+    ...written.filter((row) => row.article !== 'KIRA-V2'),
+    { id: 'foreign', article: 'KIRA-V2', meta: { color: '#ffffff' } },
+    { id: 'dup', article: 'KIRA-SL-3', meta: written.find((row) => row.article === 'KIRA-SL-3')!.meta },
+    { id: 'custom', article: 'KIRA-OLD-1', meta: { note: 'снятая с производства модель компании' } },
+  ];
+  const guarded = planKiraImport(foreign);
+  check(
+    'KI4 чужое не трогается: артикул, занятый позицией не из каталога KIRA, и задвоенный артикул — конфликт словами, строки не обновляются; позиция, которой в каталоге нет (KIRA-OLD-1), не удаляется и не упоминается; остальные 67 без изменений',
+    guarded.conflicts.map((c) => c.article).sort().join(',') === 'KIRA-SL-3,KIRA-V2' &&
+      guarded.conflicts.every((c) => c.why.length > 20) &&
+      guarded.insert.length === 0 &&
+      guarded.update.length === 0 &&
+      guarded.unchanged.length === 67 &&
+      !JSON.stringify(guarded).includes('KIRA-OLD-1'),
+    guarded.conflicts.map((c) => `${c.article}: ${c.why}`).join(' | '),
+  );
+}
+
 /*
  * ХВОСТ ЖДЁТ АСИНХРОННЫЕ ПРОВЕРКИ.
  *

@@ -224,6 +224,6 @@ export function reliefMisfits(run: Run, unitIds: string[] | null): string[] {
 /** Тип рисунка — подпись для строки состава: «Рифлёный (E)». */
 export function reliefTitle(kind: ReliefKind): string {
   const def = reliefKindDef(kind);
-  return `${def.title} (${def.letter})`;
+  return def.letter ? `${def.title} (${def.letter})` : def.title;
 }
 

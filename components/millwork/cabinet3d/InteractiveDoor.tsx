@@ -8,7 +8,9 @@ import { doorKick, doorPivot, leafLocal } from '@/lib/millwork/cabinetBoxes';
 import { useShiftedBox, type CabinetParts } from './parts';
 import type { FrontRelief } from '@/types/millwork';
 import { realSizeShiftOf } from './realSizeMap';
-import { useReliefGeometry, useShiftedRelief } from './reliefGeometry';
+import { glassOfRelief, useReliefGeometry, useShiftedRelief } from './reliefGeometry';
+import type { ReliefOrient } from '@/lib/millwork/facadeRelief';
+import { GLASS_PANE_M, GLASS_PANE_Z_M } from '@/lib/millwork/cabinetBoxes';
 
 /**
  * Дверь, которая распахивается.
@@ -49,10 +51,14 @@ type Props = {
    * открылась — рисунок едет вместе с полотном, а не становится коробкой.
    */
   relief?: FrontRelief;
+  /** Разворот рисунка с фрезерованной ручкой — тот же, что у створки в пачке (`gripOrient`). */
+  reliefOrient?: ReliefOrient;
   /** Зазор вокруг полотна, метры. По нему читается щель между фасадами. */
   gap: number;
   /** Ручка-профиль по верхней кромке вместо накладной скобы. */
   integratedHandle: boolean;
+  /** Ручка фрезерована в фасаде (`milledGrip`): накладной на полотне нет — как у створки в пачке. */
+  milledGrip?: boolean;
   /**
    * Створка поехала или встала.
    *
@@ -77,8 +83,10 @@ export default function InteractiveDoor({
   parts,
   frontMaterial,
   relief,
+  reliefOrient,
   gap,
   integratedHandle,
+  milledGrip = false,
   onActive,
 }: Props) {
   const group = useRef<THREE.Group>(null);
@@ -134,13 +142,19 @@ export default function InteractiveDoor({
   const panelBox = useShiftedBox(parts.box, id);
   /* Сетка рельефа — того же габарита, что закрытое полотно (`leafLocal` = `doorBoxes`). */
   const reliefGeometry = useShiftedRelief(
-    useReliefGeometry(relief, {
-      widthMm: local.panel.size[0] * 1000,
-      heightMm: local.panel.size[1] * 1000,
-      thicknessMm: local.panel.size[2] * 1000,
-    }),
+    useReliefGeometry(
+      relief,
+      {
+        widthMm: local.panel.size[0] * 1000,
+        heightMm: local.panel.size[1] * 1000,
+        thicknessMm: local.panel.size[2] * 1000,
+      },
+      reliefOrient,
+    ),
     realSizeShiftOf(id),
   );
+  /* Стекло рамы витрины едет с полотном: те же числа, что у створки в пачке (`doorBoxes`). */
+  const glass = glassOfRelief(reliefGeometry);
   return (
     /*
      * Ось вращения стоит на ПЕРЕДНЕЙ плоскости корпуса (z = 0): модуль
@@ -200,18 +214,32 @@ export default function InteractiveDoor({
         scale={reliefGeometry ? [1, 1, 1] : local.panel.size}
         castShadow
       />
+      {glass && (
+        <mesh
+          geometry={parts.box}
+          material={parts.glass}
+          position={[
+            local.panel.at[0] + (glass[0] + glass[2]) / 2 / 1000,
+            local.panel.at[1] + (glass[1] + glass[3]) / 2 / 1000,
+            local.panel.at[2] - local.panel.size[2] / 2 + GLASS_PANE_Z_M,
+          ]}
+          scale={[(glass[2] - glass[0]) / 1000, (glass[3] - glass[1]) / 1000, GLASS_PANE_M]}
+        />
+      )}
 
       {/*
         * Ручка. Без неё фасад читается как панель, а не как дверь.
         * Профиль по верхней кромке при integratedHandles, у механизма — на
         * свободном крае, иначе скоба.
         */}
-      <mesh
-        geometry={parts.box}
-        material={parts.metal}
-        position={local.handle.at}
-        scale={local.handle.size}
-      />
+      {!milledGrip && (
+        <mesh
+          geometry={parts.box}
+          material={parts.metal}
+          position={local.handle.at}
+          scale={local.handle.size}
+        />
+      )}
         </>
       )}
     </group>

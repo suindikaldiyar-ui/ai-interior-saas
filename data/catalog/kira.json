@@ -1,0 +1,962 @@
+{
+  "manufacturer": "KIRA",
+  "site": "https://kira-group.kz",
+  "checkedAt": "2026-10-20",
+  "method": "Публичные страницы категорий в браузере, по одной, с паузой; данные товаров — ответы магазина Tilda, которые страница грузит сама. Фото — локально в CATALOG_STAGING (права не подтверждены).",
+  "categories": [
+    {
+      "key": "prostfrez",
+      "uid": "754136430742",
+      "title": "Простая фрезеровка",
+      "url": "https://kira-group.kz/prostfrez",
+      "listed": 12
+    },
+    {
+      "key": "viborka",
+      "uid": "726283299594",
+      "title": "Выборка",
+      "url": "https://kira-group.kz/viborka",
+      "listed": 28
+    },
+    {
+      "key": "rify",
+      "uid": "462246863824",
+      "title": "Рифы",
+      "url": "https://kira-group.kz/rify",
+      "listed": 15
+    },
+    {
+      "key": "moldingi",
+      "uid": "668131222814",
+      "title": "Молдинги",
+      "url": "https://kira-group.kz/moldingi",
+      "listed": 1
+    },
+    {
+      "key": "vitrina",
+      "uid": "575130862944",
+      "title": "Витрины",
+      "url": "https://kira-group.kz/vitrina",
+      "listed": 5
+    },
+    {
+      "key": "integra",
+      "uid": "929515092312",
+      "title": "Интегрированные ручки",
+      "url": "https://kira-group.kz/integra",
+      "listed": 7
+    }
+  ],
+  "excluded": [
+    {
+      "key": "slozhfrez",
+      "title": "Сложная фрезеровка"
+    },
+    {
+      "key": "radius",
+      "title": "Радиусные фасады"
+    },
+    {
+      "key": "karniz",
+      "title": "Карнизы и пилястры"
+    }
+  ],
+  "models": [
+    {
+      "code": "ANTIK",
+      "title": "Антик",
+      "uid": "498495760564",
+      "url": "https://kira-group.kz/testtesttest/tproduct/498495760564-antik",
+      "categories": [
+        "prostfrez"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "ANTIK-RESHETKA",
+      "title": "Антик решетка",
+      "uid": "778655902034",
+      "url": "https://kira-group.kz/testtesttest/tproduct/778655902034-antik-reshetka",
+      "categories": [
+        "prostfrez"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "ARKA",
+      "title": "Арка",
+      "uid": "613464375924",
+      "url": "https://kira-group.kz/testtesttest/tproduct/613464375924-arka",
+      "categories": [
+        "prostfrez"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "ASIMMETRIYA",
+      "title": "Асимметрия",
+      "uid": "473724270824",
+      "url": "https://kira-group.kz/testtesttest/tproduct/473724270824-asimmetriya",
+      "categories": [
+        "prostfrez"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "GEOMETRIYA",
+      "title": "Геометрия",
+      "uid": "432369035384",
+      "url": "https://kira-group.kz/testtesttest/tproduct/432369035384-geometriya",
+      "categories": [
+        "viborka"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "IR-1",
+      "title": "ИР 1",
+      "uid": "305702591032",
+      "url": "https://kira-group.kz/integra/tproduct/305702591032-ir-1",
+      "categories": [
+        "integra"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 3
+    },
+    {
+      "code": "IR-2",
+      "title": "ИР 2",
+      "uid": "381063562482",
+      "url": "https://kira-group.kz/integra/tproduct/381063562482-ir-2",
+      "categories": [
+        "integra"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 3
+    },
+    {
+      "code": "IR-3",
+      "title": "ИР 3",
+      "uid": "465739972162",
+      "url": "https://kira-group.kz/integra/tproduct/465739972162-ir-3",
+      "categories": [
+        "integra"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 3
+    },
+    {
+      "code": "IR-4",
+      "title": "ИР 4",
+      "uid": "109852038502",
+      "url": "https://kira-group.kz/integra/tproduct/109852038502-ir-4",
+      "categories": [
+        "integra"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 3
+    },
+    {
+      "code": "IR-5",
+      "title": "ИР 5",
+      "uid": "432043112852",
+      "url": "https://kira-group.kz/integra/tproduct/432043112852-ir-5",
+      "categories": [
+        "integra"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 3
+    },
+    {
+      "code": "IR-6",
+      "title": "ИР 6",
+      "uid": "715243609692",
+      "url": "https://kira-group.kz/integra/tproduct/715243609692-ir-6",
+      "categories": [
+        "integra"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 3
+    },
+    {
+      "code": "IR-7",
+      "title": "ИР 7",
+      "uid": "276396407572",
+      "url": "https://kira-group.kz/integra/tproduct/276396407572-ir-7",
+      "categories": [
+        "integra"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 3
+    },
+    {
+      "code": "IZABELLA-PROSTAYA",
+      "title": "Изабелла простая",
+      "uid": "227896604234",
+      "url": "https://kira-group.kz/testtesttest/tproduct/227896604234-izabella-prostaya",
+      "categories": [
+        "prostfrez"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "KANT",
+      "title": "Кант",
+      "uid": "114060426114",
+      "url": "https://kira-group.kz/testtesttest/tproduct/114060426114-kant",
+      "categories": [
+        "viborka"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "KANTRI",
+      "title": "Кантри",
+      "uid": "987879852004",
+      "url": "https://kira-group.kz/testtesttest/tproduct/987879852004-kantri",
+      "categories": [
+        "prostfrez"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "KLASSIKA",
+      "title": "Классика",
+      "uid": "105065860644",
+      "url": "https://kira-group.kz/testtesttest/tproduct/105065860644-klassika",
+      "categories": [
+        "prostfrez"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "KLETKA",
+      "title": "Клетка",
+      "uid": "709147650384",
+      "url": "https://kira-group.kz/testtesttest/tproduct/709147650384-kletka",
+      "categories": [
+        "prostfrez"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "KRISTALL",
+      "title": "Кристалл",
+      "uid": "656070869734",
+      "url": "https://kira-group.kz/prostfrez/tproduct/656070869734-kristall",
+      "categories": [
+        "prostfrez"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "KVADRO-PROSTAYA",
+      "title": "Квадро простая",
+      "uid": "593990217454",
+      "url": "https://kira-group.kz/testtesttest/tproduct/593990217454-kvadro-prostaya",
+      "categories": [
+        "prostfrez"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "LIRA",
+      "title": "Лира",
+      "uid": "590643467274",
+      "url": "https://kira-group.kz/testtesttest/tproduct/590643467274-lira",
+      "categories": [
+        "prostfrez"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "OV-71",
+      "title": "ОВ 71",
+      "uid": "325166385184",
+      "url": "https://kira-group.kz/testtesttest/tproduct/325166385184-ov-71",
+      "categories": [
+        "viborka"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "OV-73",
+      "title": "ОВ 73",
+      "uid": "731967861874",
+      "url": "https://kira-group.kz/testtesttest/tproduct/731967861874-ov-73",
+      "categories": [
+        "viborka"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "OV-75",
+      "title": "ОВ 75",
+      "uid": "343965004784",
+      "url": "https://kira-group.kz/testtesttest/tproduct/343965004784-ov-75",
+      "categories": [
+        "viborka"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "OV-76-195813335644",
+      "title": "ОВ 76",
+      "uid": "195813335644",
+      "url": "https://kira-group.kz/testtesttest/tproduct/195813335644-ov-76",
+      "categories": [
+        "viborka"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2,
+      "duplicateTitle": true
+    },
+    {
+      "code": "OV-76-800964498042",
+      "title": "ОВ 76",
+      "uid": "800964498042",
+      "url": "https://kira-group.kz/testtesttest/tproduct/800964498042-ov-76",
+      "categories": [
+        "viborka"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2,
+      "duplicateTitle": true
+    },
+    {
+      "code": "OV-77",
+      "title": "ОВ 77",
+      "uid": "962384704284",
+      "url": "https://kira-group.kz/testtesttest/tproduct/962384704284-ov-77",
+      "categories": [
+        "viborka"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "OV-80",
+      "title": "ОВ 80",
+      "uid": "777675821644",
+      "url": "https://kira-group.kz/testtesttest/tproduct/777675821644-ov-80",
+      "categories": [
+        "viborka"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "OV-81",
+      "title": "ОВ 81",
+      "uid": "141695134794",
+      "url": "https://kira-group.kz/testtesttest/tproduct/141695134794-ov-81",
+      "categories": [
+        "viborka"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "OV-84",
+      "title": "ОВ 84",
+      "uid": "202844539294",
+      "url": "https://kira-group.kz/testtesttest/tproduct/202844539294-ov-84",
+      "categories": [
+        "viborka"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "PR-1",
+      "title": "ПР 1",
+      "uid": "999841064222",
+      "url": "https://kira-group.kz/testtesttest/tproduct/999841064222-pr-1",
+      "categories": [
+        "viborka"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "PR-4",
+      "title": "ПР 4",
+      "uid": "726192223752",
+      "url": "https://kira-group.kz/testtesttest/tproduct/726192223752-pr-4",
+      "categories": [
+        "rify"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "PR-5",
+      "title": "ПР 5",
+      "uid": "664002891922",
+      "url": "https://kira-group.kz/testtesttest/tproduct/664002891922-pr-5",
+      "categories": [
+        "viborka"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "PR-6",
+      "title": "ПР 6",
+      "uid": "888436334782",
+      "url": "https://kira-group.kz/testtesttest/tproduct/888436334782-pr-6",
+      "categories": [
+        "rify"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [
+        {
+          "title": "Катеригория",
+          "value": "Новинка"
+        }
+      ],
+      "images": 2
+    },
+    {
+      "code": "PR-7",
+      "title": "ПР 7",
+      "uid": "214629109702",
+      "url": "https://kira-group.kz/testtesttest/tproduct/214629109702-pr-7",
+      "categories": [
+        "viborka"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "PR-8",
+      "title": "ПР 8",
+      "uid": "265558752672",
+      "url": "https://kira-group.kz/testtesttest/tproduct/265558752672-pr-8",
+      "categories": [
+        "rify"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "PR-13",
+      "title": "ПР 13",
+      "uid": "802582441402",
+      "url": "https://kira-group.kz/testtesttest/tproduct/802582441402-pr-13",
+      "categories": [
+        "rify"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "RIF-1",
+      "title": "РИФ 1",
+      "uid": "399777214054",
+      "url": "https://kira-group.kz/testtesttest/tproduct/399777214054-rif-1",
+      "categories": [
+        "rify"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "RIF-2",
+      "title": "РИФ 2",
+      "uid": "227495119122",
+      "url": "https://kira-group.kz/testtesttest/tproduct/227495119122-rif-2",
+      "categories": [
+        "rify"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "RIF-3",
+      "title": "РИФ 3",
+      "uid": "935791161194",
+      "url": "https://kira-group.kz/testtesttest/tproduct/935791161194-rif-3",
+      "categories": [
+        "rify"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "RIF-4",
+      "title": "РИФ 4",
+      "uid": "257839160024",
+      "url": "https://kira-group.kz/testtesttest/tproduct/257839160024-rif-4",
+      "categories": [
+        "rify"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "RIF-5",
+      "title": "РИФ 5",
+      "uid": "298419281154",
+      "url": "https://kira-group.kz/testtesttest/tproduct/298419281154-rif-5",
+      "categories": [
+        "rify"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "RIF-6",
+      "title": "РИФ 6",
+      "uid": "421089582624",
+      "url": "https://kira-group.kz/testtesttest/tproduct/421089582624-rif-6",
+      "categories": [
+        "rify"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "RIF-7",
+      "title": "РИФ 7",
+      "uid": "161712825534",
+      "url": "https://kira-group.kz/testtesttest/tproduct/161712825534-rif-7",
+      "categories": [
+        "rify"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "RIF-8",
+      "title": "РИФ 8",
+      "uid": "785502064574",
+      "url": "https://kira-group.kz/testtesttest/tproduct/785502064574-rif-8",
+      "categories": [
+        "rify"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "RIF-9",
+      "title": "РИФ 9",
+      "uid": "700322094384",
+      "url": "https://kira-group.kz/testtesttest/tproduct/700322094384-rif-9",
+      "categories": [
+        "rify"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "RIF-10",
+      "title": "РИФ 10",
+      "uid": "593070715412",
+      "url": "https://kira-group.kz/testtesttest/tproduct/593070715412-rif-10",
+      "categories": [
+        "rify"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "SL-3",
+      "title": "СЛ 3",
+      "uid": "467998039012",
+      "url": "https://kira-group.kz/testtesttest/tproduct/467998039012-sl-3",
+      "categories": [
+        "viborka"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "SL-5",
+      "title": "СЛ 5",
+      "uid": "544273232712",
+      "url": "https://kira-group.kz/testtesttest/tproduct/544273232712-sl-5",
+      "categories": [
+        "viborka"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "SL-6",
+      "title": "СЛ 6",
+      "uid": "620678998432",
+      "url": "https://kira-group.kz/testtesttest/tproduct/620678998432-sl-6",
+      "categories": [
+        "viborka"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "SL-7",
+      "title": "СЛ 7",
+      "uid": "964339024692",
+      "url": "https://kira-group.kz/testtesttest/tproduct/964339024692-sl-7",
+      "categories": [
+        "viborka"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "SL-8",
+      "title": "СЛ 8",
+      "uid": "422213803702",
+      "url": "https://kira-group.kz/testtesttest/tproduct/422213803702-sl-8",
+      "categories": [
+        "viborka"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "SL-10",
+      "title": "СЛ 10",
+      "uid": "849795640602",
+      "url": "https://kira-group.kz/testtesttest/tproduct/849795640602-sl-10",
+      "categories": [
+        "viborka"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [
+        {
+          "title": "Характеристика",
+          "value": "16 мм"
+        }
+      ],
+      "images": 2
+    },
+    {
+      "code": "SL-11",
+      "title": "СЛ 11",
+      "uid": "398225154854",
+      "url": "https://kira-group.kz/viborka/tproduct/398225154854-sl-11",
+      "categories": [
+        "viborka"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "SL-12",
+      "title": "СЛ 12",
+      "uid": "484706748942",
+      "url": "https://kira-group.kz/testtesttest/tproduct/484706748942-sl-12",
+      "categories": [
+        "viborka"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "SL-13",
+      "title": "СЛ 13",
+      "uid": "482564429734",
+      "url": "https://kira-group.kz/testtesttest/tproduct/482564429734-sl-13",
+      "categories": [
+        "moldingi"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "SL-14",
+      "title": "СЛ 14",
+      "uid": "286837067242",
+      "url": "https://kira-group.kz/testtesttest/tproduct/286837067242-sl-14",
+      "categories": [
+        "rify"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "TANDEM",
+      "title": "Тандем",
+      "uid": "852172592944",
+      "url": "https://kira-group.kz/testtesttest/tproduct/852172592944-tandem",
+      "categories": [
+        "prostfrez"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "V2",
+      "title": "В2",
+      "uid": "812635255394",
+      "url": "https://kira-group.kz/testtesttest/tproduct/812635255394-v2",
+      "categories": [
+        "vitrina"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "V3",
+      "title": "В3",
+      "uid": "956456730694",
+      "url": "https://kira-group.kz/testtesttest/tproduct/956456730694-v3",
+      "categories": [
+        "vitrina"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "V4",
+      "title": "В4",
+      "uid": "208548553904",
+      "url": "https://kira-group.kz/testtesttest/tproduct/208548553904-v4",
+      "categories": [
+        "vitrina"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "V5",
+      "title": "В5",
+      "uid": "589006884804",
+      "url": "https://kira-group.kz/testtesttest/tproduct/589006884804-v5",
+      "categories": [
+        "vitrina"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "V6",
+      "title": "В6",
+      "uid": "855068447132",
+      "url": "https://kira-group.kz/testtesttest/tproduct/855068447132-v6",
+      "categories": [
+        "vitrina"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "VIBORKA-4",
+      "title": "Выборка 4",
+      "uid": "288523030294",
+      "url": "https://kira-group.kz/testtesttest/tproduct/288523030294-viborka-4",
+      "categories": [
+        "viborka"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "VIBORKA-42",
+      "title": "Выборка 4*2",
+      "uid": "261156054374",
+      "url": "https://kira-group.kz/testtesttest/tproduct/261156054374-viborka-42",
+      "categories": [
+        "viborka"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "VIBORKA-1208",
+      "title": "Выборка 120*8",
+      "uid": "346828056274",
+      "url": "https://kira-group.kz/testtesttest/tproduct/346828056274-viborka-1208",
+      "categories": [
+        "viborka"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "VIBORKA-12024",
+      "title": "Выборка 120*2*4",
+      "uid": "397182035364",
+      "url": "https://kira-group.kz/testtesttest/tproduct/397182035364-viborka-12024",
+      "categories": [
+        "viborka"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "VIBORKA-RIF-1",
+      "title": "Выборка РИФ 1",
+      "uid": "323337146264",
+      "url": "https://kira-group.kz/testtesttest/tproduct/323337146264-viborka-rif-1",
+      "categories": [
+        "viborka"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    },
+    {
+      "code": "VIBORKA-RIF-2",
+      "title": "Выборка РИФ 2",
+      "uid": "799976629764",
+      "url": "https://kira-group.kz/testtesttest/tproduct/799976629764-viborka-rif-2",
+      "categories": [
+        "viborka"
+      ],
+      "sku": null,
+      "description": null,
+      "characteristics": [],
+      "images": 2
+    }
+  ]
+}

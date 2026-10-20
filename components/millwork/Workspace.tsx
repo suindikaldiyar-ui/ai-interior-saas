@@ -2683,7 +2683,6 @@ export default function Workspace(props: WorkspaceProps) {
           refused.push(plan.refusal);
           continue;
         }
-        if (plan.note) said.push(plan.note);
         const next = applyOps({
           run,
           requirements,
@@ -2691,6 +2690,13 @@ export default function Workspace(props: WorkspaceProps) {
           openings: wallOpenings(index),
           roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
         });
+        /*
+         * Пояснение плана («фасад теперь МДФ в эмали») — только если фасады
+         * действительно изменились: при отказе движка оно рассказывало бы о
+         * правке, которой нет, и закрывало бы собой сам отказ.
+         */
+        const frontsOf = (r: typeof run) => JSON.stringify(allModules(r).map((m) => [m.id, m.front ?? null, m.leafFronts ?? null]));
+        if (plan.note && frontsOf(next) !== frontsOf(run)) said.push(plan.note);
         /* Отказ движка — словами, ряд записывается с тем, что прошло. */
         if (next.warnings[0]) said.push(next.warnings[0]);
         if (index === 0) setEditedRuns((prev) => ({ ...prev, [active.key]: next }));

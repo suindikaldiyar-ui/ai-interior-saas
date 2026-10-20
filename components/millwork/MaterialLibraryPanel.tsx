@@ -726,6 +726,7 @@ export default function MaterialLibraryPanel({
               misfits={facade.misfitsOf(facadeTarget)}
               ownLeaves={facade.ownLeavesOf(facadeTarget)}
               onApply={(patch) => facade.onApply(facadeTarget, patch)}
+              kira={{ orgId, catalog, onCatalogAdded }}
             />
           )}
 

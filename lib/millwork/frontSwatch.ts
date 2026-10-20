@@ -141,24 +141,36 @@ export function shade(hex: string, amount: number): string {
 export function leafSwatches(
   unit: Module,
 ): { leaf: string; x0: number; x1: number; y0: number; y1: number; swatch: FrontSwatch }[] {
-  if (!unit.leafFronts || !hasFacade(unit) || unit.column) return [];
+  if (!unit.leafFronts) return [];
   const own = unit.leafFronts;
   const out: { leaf: string; x0: number; x1: number; y0: number; y1: number; swatch: FrontSwatch }[] = [];
+  for (const place of schemeLeaves(unit)) {
+    const spec = own[place.leaf];
+    if (spec) out.push({ ...place, swatch: frontSwatch(spec) });
+  }
+  return out;
+}
+
+/**
+ * ДЕТАЛИ МОДУЛЯ НА СХЕМЕ — где лежит каждая в прямоугольнике модуля (доли
+ * ширины и высоты): створки поровну по ширине (`doorCount`), ящики по своим
+ * высотам сверху вниз. Это раскладка рисунка фасада (`FrontGlyph`); по ней
+ * схема кладёт свой фасад створки и решает, есть ли у модуля значок ручки.
+ * У колонны, ящиков отсеков и углового модуля деталей на схеме нет — пусто.
+ */
+export function schemeLeaves(unit: Module): { leaf: string; x0: number; x1: number; y0: number; y1: number }[] {
+  if (!hasFacade(unit) || unit.column) return [];
   const heights = unit.fill?.drawerHeights ?? [];
   if (heights.length > 0) {
     const total = heights.reduce((sum, h) => sum + h, 0);
+    if (total <= 0) return [];
     let above = 0;
-    heights.forEach((h, i) => {
-      const spec = own[`drawer:${i}`];
-      if (spec && total > 0) out.push({ leaf: `drawer:${i}`, x0: 0, x1: 1, y0: above / total, y1: (above + h) / total, swatch: frontSwatch(spec) });
+    return heights.map((h, i) => {
+      const place = { leaf: `drawer:${i}`, x0: 0, x1: 1, y0: above / total, y1: (above + h) / total };
       above += h;
+      return place;
     });
-    return out;
   }
-  if (unit.frontType !== 'door' || unit.doorCount < 1) return out;
-  for (let i = 0; i < unit.doorCount; i += 1) {
-    const spec = own[`door:${i}`];
-    if (spec) out.push({ leaf: `door:${i}`, x0: i / unit.doorCount, x1: (i + 1) / unit.doorCount, y0: 0, y1: 1, swatch: frontSwatch(spec) });
-  }
-  return out;
+  if (unit.frontType !== 'door' || unit.doorCount < 1) return [];
+  return Array.from({ length: unit.doorCount }, (_, i) => ({ leaf: `door:${i}`, x0: i / unit.doorCount, x1: (i + 1) / unit.doorCount, y0: 0, y1: 1 }));
 }

@@ -605,8 +605,139 @@ export interface FrontSpec {
  *   hgrooves  D  горизонтальная фрезеровка
  *   fluted    E  рифлёный: частые полукруглые желобки
  *   grooves   F  декоративные канавки: контуры по периметру
+ *   design       рисунок МОДЕЛИ каталога (KIRA): слои над фигурами —
+ *                ступени, канавки, валики, рифление; у каждой модели свой
+ *                (`FrontRelief.design`), а не один из шести типов
  */
-export type ReliefKind = 'slab' | 'frame' | 'vgrooves' | 'hgrooves' | 'fluted' | 'grooves';
+export type ReliefKind = 'slab' | 'frame' | 'vgrooves' | 'hgrooves' | 'fluted' | 'grooves' | 'design';
+
+/**
+ * ДЛИНА НА ФАСАДЕ: миллиметры (число) или доля размера плюс миллиметры
+ * (`{ f: 0.33, mm: 10 }` — треть высоты и ещё 10 мм). Доля — для элементов,
+ * которые у производителя растут вместе с фасадом (средник на трети
+ * высоты), миллиметры — для того, что от размера не зависит (отступ рамки).
+ */
+export type ReliefLen = number | { f: number; mm?: number };
+
+/**
+ * ФИГУРА НА ЛИЦЕ ФАСАДА. Отступы — от краёв фасада (слева, справа, сверху,
+ * снизу); точки — от левого и от верхнего края. Отрицательный отступ уводит
+ * сторону за край фасада: у ручки во всю ширину боковых переходов нет.
+ *
+ *   rect     прямоугольник; углы: `round` — скруглены радиусом `r`,
+ *            `inner` — вырезаны внутрь четвертью круга, `chamfer` — срезаны;
+ *            `arch` — верхняя (`archSide`) сторона аркой: подъём в мм или
+ *            доле, `shoulder` — прямые «плечики» до начала дуги.
+ *   ellipse  центр и полуоси.
+ *   poly     многоугольник по точкам.
+ */
+export type ReliefShape =
+  | {
+      rect: [ReliefLen, ReliefLen, ReliefLen, ReliefLen];
+      corner?: 'round' | 'inner' | 'chamfer';
+      r?: number;
+      arch?: ReliefLen;
+      archSide?: 'top' | 'bottom' | 'both';
+      /** Подъём нижней дуги, если он другой, чем у верхней (`archSide: 'both'`). */
+      archBottom?: ReliefLen;
+      shoulder?: number;
+      /**
+       * Вырез внутрь на пятах дуги (радиус, мм) — «Антик»: сторона доходит
+       * до пяты, четверть круга внутрь, дальше дуга. Плечики дуги — тот же радиус.
+       */
+      notch?: number;
+    }
+  | { ellipse: [ReliefLen, ReliefLen, ReliefLen, ReliefLen] }
+  | { poly: [ReliefLen, ReliefLen][] };
+
+/** Линия, по которой идёт канавка или валик. */
+export type ReliefPath =
+  | { outline: ReliefShape }
+  | { line: [[ReliefLen, ReliefLen], [ReliefLen, ReliefLen]]; ends?: 'round' | 'square' }
+  | { arc: { c: [ReliefLen, ReliefLen]; r: ReliefLen; from: number; to: number } };
+
+/** Переход ступени: как меняется высота поперёк полосы перехода. */
+export type ReliefEdge = 'bevel' | 'cove' | 'ovolo' | 'ogee' | 'step';
+
+/**
+ * СЛОЙ РИСУНКА МОДЕЛИ. Слои применяются по порядку к полю глубины лица
+ * (мм от лица фасада вниз), начиная с ровного лица:
+ *
+ *   level   внутри фигуры поверхность на глубине `depth`; переход шириной
+ *           `w` внутрь от контура, профиль `edge`. Выборка — глубже
+ *           прежнего, выпуклая ступень — мельче.
+ *   groove  канавка по пути: `depth` от ТЕКУЩЕЙ поверхности, ширина `w`,
+ *           сечение `profile` (V, полукруг, плоское дно).
+ *   bead    валик (кант, молдинг): поднимает поверхность на `height` по
+ *           пути, но не выше лица фасада.
+ *   flutes  рифление внутри фигуры: желобки с шагом `pitch` вдоль `dir`
+ *           (`v`, `h` или угол в градусах от оси X), кончаются скосом на
+ *           длине полуширины.
+ *   cut     сквозное окно — рама витрины под стекло: плиты там нет вовсе.
+ *   tiles   повторяющийся мотив орнамента: клетка `cell` (мм), ряды со
+ *           сдвигом `stagger` (доля клетки), внутри — свои слои в мм от
+ *           краёв клетки; мотив снимает материал от текущей поверхности.
+ *   cells   «камушки»: неровные ячейки (Вороной) с канавками по границам —
+ *           детерминированно от `seed`, тот же фасад — тот же рисунок.
+ */
+export type ReliefLayer =
+  | { op: 'level'; shape: ReliefShape; depth: number; w: number; edge: ReliefEdge }
+  | { op: 'groove'; paths: ReliefPath[]; w: number; depth: number; profile: 'v' | 'round' | 'flat' }
+  | {
+      op: 'bead';
+      paths: ReliefPath[];
+      w: number;
+      height: number;
+      profile?: 'round' | 'flat';
+      /** У плоского валика — ширина плоской макушки, мм; бока — до `w`. Пусто — бока 45°. */
+      top?: number;
+    }
+  | {
+      op: 'flutes';
+      area: ReliefShape;
+      dir: 'v' | 'h' | number;
+      pitch: number;
+      w: number;
+      depth: number;
+      profile: 'round' | 'v' | 'flat' | 'reed';
+      /** И второе семейство поперёк (решётка ромбами): на пересечении — глубина одной канавки. */
+      cross?: boolean;
+    }
+  | {
+      op: 'cut';
+      shape: ReliefShape;
+      /** Шпросы витрины: бруски ширины `w` по путям — окно их не режет. */
+      bars?: { paths: ReliefPath[]; w: number };
+    }
+  | { op: 'tiles'; area: ReliefShape; cell: [number, number]; stagger?: number; layers: ReliefLayer[] }
+  | {
+      op: 'cells';
+      area: ReliefShape;
+      /** Средний размер ячейки, мм. */
+      size: number;
+      /** Насколько ячейки неровные: 0 — сетка, 1 — сильно. */
+      jitter: number;
+      seed: number;
+      w: number;
+      depth: number;
+      profile: 'round' | 'v' | 'flat';
+      /** Наоборот: ячейки утоплены на `depth`, по границам — рёбра на уровне поверхности. */
+      invert?: boolean;
+    };
+
+/**
+ * РИСУНОК МОДЕЛИ — приближение VISUAL_ONLY, снятое с фото производителя:
+ * слои в миллиметрах. Заводской CNC-геометрии в нём нет.
+ *
+ * `grip` — у фасада фрезерованная ручка: рисунок снят для нижнего шкафа
+ * с петлями слева (ручка сверху, `corner` — у правого верхнего угла). На
+ * верхнем ряду и у подъёмника он переворачивается вниз, у двери с петлями
+ * справа угловая ручка уходит влево — ручка там, где открывают.
+ */
+export interface ReliefDesign {
+  layers: ReliefLayer[];
+  grip?: 'edge' | 'corner';
+}
 
 /**
  * Параметры рельефа. Пустое поле — умолчание типа (`RELIEF_KINDS`), и в
@@ -631,6 +762,12 @@ export interface FrontRelief {
    * происхождение, а не копия товара: цена и статусы — у позиции каталога.
    */
   model?: string;
+  /**
+   * Рисунок модели (`kind: 'design'`): слои над фигурами. Лежит в фасаде
+   * КОПИЕЙ, как и параметры типов A–F: каталог уточнит приближение — у
+   * сохранённого объекта рисунок не поедет без нажатия.
+   */
+  design?: ReliefDesign;
 }
 
 /**

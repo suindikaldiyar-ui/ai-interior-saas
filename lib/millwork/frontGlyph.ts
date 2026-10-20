@@ -4,7 +4,8 @@ import {
   variantsForModule,
   currentVariant,
 } from './moduleVariants';
-import { handleOf, openingOf } from './opening';
+import { gripOnEvery, handleOf, openingOf } from './opening';
+import { schemeLeaves } from './frontSwatch';
 import { fillShelfCount } from './bays';
 import { handleSpotOf, type HandleSpot } from './handlePlace';
 import type { Module, ModuleVariantKind, Run } from '@/types/millwork';
@@ -402,7 +403,9 @@ export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts'): GlyphEleme
       (el) => el.kind === 'panel' || el.kind === 'drawer' || el.kind === 'glass',
     );
 
-    if (fronts && handle.handle !== 'none') {
+    /* Ручка фрезерована во всех фасадах модуля (KIRA «Интегрированные ручки», `milledGrip`) — значка ручки нет. */
+    const milled = gripOnEvery(unit, schemeLeaves(unit).map((place) => place.leaf));
+    if (fronts && handle.handle !== 'none' && !milled) {
       elements.push({ kind: 'handle', spot: handleSpotOf(unit, run) });
     }
   }

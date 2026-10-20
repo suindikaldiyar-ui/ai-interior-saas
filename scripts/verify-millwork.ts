@@ -28289,6 +28289,349 @@ import { MATERIAL_FINISHES as MDF_FINISHES } from '../lib/millwork/materialFinis
   );
 }
 
+/* ═══════════  Слой 58: каталог KIRA — шесть категорий, рисунки моделей, ручка в фасаде, рама витрины  ═══════════ */
+/*
+ * Факты о моделях сняты с сайта производителя (`data/catalog/kira.json`),
+ * рисунки — приближения по фото (`kiraDesigns.ts`, VISUAL_ONLY). Меряется:
+ * объявленные числа категорий; у каждой модели свой рисунок, у четырёх 3D
+ * нет и сказано почему; сетка каждого рисунка; строки каталога (рисунок
+ * доезжает до позиции и не попадает в фрезеровку ряда); путь экрана
+ * (`composeVariants` → `facadeOps` → `applyOps`) — одна дверь, рисунок в
+ * смете без денег; ручка, фрезерованная в фасаде, — без скобы в сцене,
+ * смете и на схеме; рама витрины — только на шкаф со стеклом.
+ */
+import { KIRA_CATALOG, KIRA_CATEGORIES, KIRA_EXCLUDED, kiraCatalogRow, kiraDemoEntries, kiraMatches } from '../lib/millwork/kiraCatalog';
+import { KIRA_DESIGNS } from '../lib/millwork/kiraDesigns';
+import { designHash as kiraDesignHash, designParamRefusal as kiraParamRefusal } from '../lib/millwork/reliefDesign';
+import { reliefMesh as kiraMesh, reliefShade as kiraShade } from '../lib/millwork/facadeRelief';
+import { milledGrip as kiraMilledGrip } from '../lib/millwork/opening';
+{
+  console.log('\nСлой 58: каталог KIRA — шесть категорий, рисунки моделей, ручка в фасаде, рама витрины');
+  const EXPECTED: Record<string, number> = { prostfrez: 12, viborka: 28, rify: 15, moldingi: 1, vitrina: 5, integra: 7 };
+  const EXPECTED_3D: Record<string, number> = { prostfrez: 12, viborka: 24, rify: 15, moldingi: 1, vitrina: 5, integra: 7 };
+  const inCat = (key: string) => KIRA_CATALOG.filter((e) => (e.categories as string[]).includes(key));
+
+  /* ── K1: факты ── */
+  const legacyKept = KIRA_CATALOG.filter((e) => e.legacy).every(
+    (e) => JSON.stringify(e.relief) === JSON.stringify({ ...e.legacy!.relief, model: `KIRA:${e.legacy!.article}` }) && e.source === e.legacy!.source,
+  );
+  check(
+    'KIRA.K1 факты с сайта: шесть категорий (простая фрезеровка, выборка, рифы, молдинги, витрины, интегрированные ручки) — ровно 12 / 28 / 15 / 1 / 5 / 7 моделей и столько же отдал магазин; три исключённые категории не тронуты; моделей 69 (68 + СЛ 9), артикулы и коды без повторов, у каждой страница kira-group.kz и uid товара (кроме СЛ 9); 11 моделей СЛ — с прежним рисунком и страницей',
+    KIRA_CATEGORIES.map((c) => c.key).join(',') === 'prostfrez,viborka,rify,moldingi,vitrina,integra' &&
+      KIRA_CATEGORIES.every((c) => inCat(c.key).length === EXPECTED[c.key] && c.listed === EXPECTED[c.key]) &&
+      KIRA_EXCLUDED.map((c) => c.key).sort().join(',') === 'karniz,radius,slozhfrez' &&
+      KIRA_CATALOG.every((e) => e.categories.every((k) => k in EXPECTED)) &&
+      KIRA_CATALOG.length === 69 &&
+      new Set(KIRA_CATALOG.map((e) => e.article)).size === 69 &&
+      new Set(KIRA_CATALOG.map((e) => e.code)).size === 69 &&
+      KIRA_CATALOG.every((e) => /^https:\/\/kira-group\.kz\/.+/.test(e.source)) &&
+      KIRA_CATALOG.filter((e) => !e.uid).map((e) => e.code).join(',') === 'SL-9' &&
+      KIRA_CATALOG.filter((e) => e.legacy).length === 11 &&
+      legacyKept,
+    `${KIRA_CATEGORIES.map((c) => `${c.title} ${inCat(c.key).length}/${c.listed}`).join(' · ')} · всего ${KIRA_CATALOG.length} · СЛ ${KIRA_CATALOG.filter((e) => e.legacy).length}${legacyKept ? '' : ' РИСУНОК СЛ ИЗМЕНЁН'}`,
+  );
+
+  /* ── K2: свой рисунок у каждой модели ── */
+  const designs = KIRA_CATALOG.filter((e) => e.relief?.kind === 'design');
+  const cardOnly = KIRA_CATALOG.filter((e) => !e.relief);
+  const sample446 = { widthMm: 446, heightMm: 716, thicknessMm: 16 };
+  const hashes = new Set(designs.map((e) => kiraDesignHash(e.relief!.design)));
+  const pictures = new Set(designs.map((e) => createHash('sha1').update(kiraShade(e.relief!, sample446, 48, 78)).digest('hex')));
+  const orphans = Object.keys(KIRA_DESIGNS).filter((code) => !KIRA_CATALOG.some((e) => e.code === code && !e.legacy));
+  check(
+    'KIRA.K2 у каждой модели свой рисунок: 3D у 65 (по категориям 12 / 24 / 15 / 1 / 5 / 7 и СЛ 9), рисунков модели 54 — все разные и по числам, и по картинке; только карточка у четырёх (ОВ 71, 73, 75, 80) с причиной словами; у каждой записи рисунков есть модель, у каждой модели — запись; числа каждого рисунка проходят проверку',
+    designs.length === 54 &&
+      hashes.size === 54 &&
+      pictures.size === 54 &&
+      KIRA_CATALOG.filter((e) => e.relief).length === 65 &&
+      KIRA_CATEGORIES.every((c) => inCat(c.key).filter((e) => e.relief).length === EXPECTED_3D[c.key]) &&
+      cardOnly.map((e) => e.code).sort().join(',') === 'OV-71,OV-73,OV-75,OV-80' &&
+      cardOnly.every((e) => /по фото/.test(e.reason ?? '')) &&
+      Object.keys(KIRA_DESIGNS).length === 58 &&
+      orphans.length === 0 &&
+      designs.every((e) => kiraParamRefusal(e.relief!.design) === null),
+    `рисунков ${designs.length}, разных по числам ${hashes.size}, по картинке ${pictures.size} · 3D ${KIRA_CATEGORIES.map((c) => inCat(c.key).filter((e) => e.relief).length).join('/')} · только карточка: ${cardOnly.map((e) => e.code).join(', ')}${orphans.length ? ` · лишние записи: ${orphans.join(', ')}` : ''}`,
+  );
+
+  /* ── K3: сетка каждого рисунка ── */
+  const VITRINES = new Set(KIRA_CATALOG.filter((e) => e.type === 'vitrine').map((e) => e.code));
+  const meshLeaves = [sample446, { widthMm: 396, heightMm: 2392, thicknessMm: 16 }];
+  type MeshNote = { code: string; at: string; drawn: string; tri: number; ms: number; box: number; open: number; pinch: number; pinchOff: number; degenerate: number };
+  const notes: MeshNote[] = [];
+  for (const e of designs) {
+    const orients = e.relief!.design!.grip ? [undefined, { flipX: true }, { flipY: true }] : [undefined];
+    for (const leaf of meshLeaves) {
+      for (const orient of orients) {
+        const t0 = performance.now();
+        const m = kiraMesh(e.relief!, leaf, orient);
+        const ms = performance.now() - t0;
+        const p = m.positions;
+        const lo = [Infinity, Infinity, Infinity];
+        const hi = [-Infinity, -Infinity, -Infinity];
+        for (let i = 0; i < p.length; i += 3) {
+          for (let k = 0; k < 3; k += 1) {
+            lo[k] = Math.min(lo[k], p[i + k]);
+            hi[k] = Math.max(hi[k], p[i + k]);
+          }
+        }
+        const key = (i: number) => `${Math.round(p[i] * 1e7)},${Math.round(p[i + 1] * 1e7)},${Math.round(p[i + 2] * 1e7)}`;
+        const edges = new Map<string, number>();
+        let degenerate = 0;
+        for (let t = 0; t < p.length; t += 9) {
+          const ux = p[t + 3] - p[t];
+          const uy = p[t + 4] - p[t + 1];
+          const uz = p[t + 5] - p[t + 2];
+          const vx = p[t + 6] - p[t];
+          const vy = p[t + 7] - p[t + 1];
+          const vz = p[t + 8] - p[t + 2];
+          if (Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx) / 2 < 1e-14) degenerate += 1;
+          const ks = [key(t), key(t + 3), key(t + 6)];
+          for (let s = 0; s < 3; s += 1) {
+            const k = `${ks[s]}>${ks[(s + 1) % 3]}`;
+            edges.set(k, (edges.get(k) ?? 0) + 1);
+          }
+        }
+        const backZ = Math.round(lo[2] * 1e7);
+        let open = 0;
+        let pinch = 0;
+        let pinchOff = 0;
+        edges.forEach((n, k) => {
+          const [a, b] = k.split('>');
+          const reverse = edges.get(`${b}>${a}`) ?? 0;
+          if (n !== reverse) open += 1;
+          else if (n !== 1) {
+            pinch += 1;
+            if (Number(a.split(',')[2]) !== backZ || Number(b.split(',')[2]) !== backZ) pinchOff += 1;
+          }
+        });
+        const box = Math.max(
+          Math.abs((hi[0] - lo[0]) * 1000 - leaf.widthMm),
+          Math.abs((hi[1] - lo[1]) * 1000 - leaf.heightMm),
+          Math.abs((hi[2] - lo[2]) * 1000 - leaf.thicknessMm),
+        );
+        const at = `${leaf.widthMm}×${leaf.heightMm}${orient ? (orient.flipX ? ' fx' : ' fy') : ''}`;
+        notes.push({ code: e.code, at, drawn: m.drawn, tri: m.triangles, ms, box, open, pinch, pinchOff, degenerate });
+      }
+    }
+  }
+  const badMesh = notes.filter(
+    (n) => n.drawn !== 'design' || n.box > 0.01 || n.open > 0 || n.degenerate > 0 || n.pinchOff > 0 || (n.pinch > 0 && !VITRINES.has(n.code)),
+  );
+  const heaviest = notes.reduce((a, b) => (b.tri > a.tri ? b : a), notes[0]);
+  const slowest = notes.reduce((a, b) => (b.ms > a.ms ? b : a), notes[0]);
+  check(
+    'KIRA.K3 сетка каждого рисунка (54 модели × двери 446 × 716 и 396 × 2392, ручки ИР — ещё и развёрнутые: 136 сеток): рисунок встал, габарит ровно Ш × В × Т (± 0.01 мм), у каждого ребра есть обратное — дыр нет, вырожденных граней 0; касание тыла по линии (щель нулевой ширины у пересечения шпросов) — только у рам витрин и только на тыле; не больше 100 000 треугольников — рейки трёх направлений (РИФ 10) режут сетку линиями только внутри своей зоны',
+    notes.length === 136 && badMesh.length === 0 && heaviest.tri <= 100_000,
+    `сеток ${notes.length} · больше всего ${heaviest.code} ${heaviest.at}: ${heaviest.tri} тр · дольше всего ${slowest.code} ${slowest.at}: ${slowest.ms.toFixed(0)} мс · касаний тыла у витрин ${notes.filter((n) => n.pinch > 0).map((n) => `${n.code} ${n.at}: ${n.pinch}`).join(', ') || 'нет'}${badMesh.length ? ` · ПЛОХИЕ: ${badMesh.slice(0, 4).map((n) => `${n.code} ${n.at} ${n.drawn} габарит ±${n.box.toFixed(3)} дыр ${n.open} касаний вне тыла ${n.pinchOff} вырожд. ${n.degenerate}${n.pinch && !VITRINES.has(n.code) ? ` касаний ${n.pinch}` : ''}`).join(' | ')}` : ''}`,
+  );
+
+  /* ── K4: строки каталога ── */
+  const kiraEntries = kiraDemoEntries(MDF_DEMO_CATALOG);
+  const fullCatalog = [...MDF_DEMO_CATALOG, ...kiraEntries];
+  const kiraMillings = mdfMillingCatalog(fullCatalog);
+  const byArticle = new Map(Array.from(kiraMillings.values()).map((item) => [item.article, item]));
+  const rowsK = KIRA_CATALOG.map((e) => ({ e, row: kiraCatalogRow(e) }));
+  const rowPicker = mdfMillingChoices(kiraMillings).filter((item) => !item.milling.relief);
+  const provBad = rowsK.filter(({ row }) => {
+    const p = row.meta.provenance as Record<string, unknown> & { referencePhoto?: { status?: string } };
+    return !(
+      p.manufacturer === 'KIRA' &&
+      p.visualStatus === 'VISUAL_ONLY' &&
+      p.engineeringStatus === 'MISSING_DATA' &&
+      p.rightsStatus === 'NOT_VERIFIED' &&
+      p.referencePhoto?.status === 'REFERENCE_ONLY' &&
+      row.price === 0 &&
+      !JSON.stringify(row).includes('data:image') &&
+      /^https:\/\/kira-group\.kz\//.test(String(p.source))
+    );
+  });
+  const legacyRowsKept = rowsK
+    .filter(({ e }) => e.legacy)
+    .every(({ e, row }) => {
+      const old = kiraMillingItem(e.legacy!);
+      const prov = row.meta.provenance as Record<string, unknown>;
+      return (
+        row.article === old.article &&
+        row.name_ru === old.name_ru &&
+        JSON.stringify(row.meta.milling) === JSON.stringify(old.meta.milling) &&
+        Object.entries(old.meta.provenance).every(([k, v]) => JSON.stringify(prov[k]) === JSON.stringify(v))
+      );
+    });
+  const reliefLanded = rowsK.every(({ e }) =>
+    e.relief ? JSON.stringify(byArticle.get(e.article)?.milling.relief) === JSON.stringify(e.relief) : !byArticle.has(e.article),
+  );
+  check(
+    'KIRA.K4 строки каталога: у модели с 3D рисунок доезжает до позиции (`millingOf`) целиком, у «только карточки» фрезеровки нет; в выбор фрезеровки ряда ни одна модель не попала (там прежние типовые); происхождение у всех — KIRA, VISUAL_ONLY, MISSING_DATA, права NOT_VERIFIED, фото REFERENCE_ONLY и без картинки, цены нет; строки СЛ — прежние строки P3D-MDF плюс факты сайта; демо получает недостающие 58 один раз',
+    reliefLanded &&
+      rowPicker.length === MDF_TYPICAL.length &&
+      provBad.length === 0 &&
+      legacyRowsKept &&
+      kiraEntries.length === 58 &&
+      new Set(fullCatalog.map((e) => e.id)).size === fullCatalog.length &&
+      kiraDemoEntries(fullCatalog).length === 0,
+    `в демо добавится ${kiraEntries.length} · фрезеровок ряда ${rowPicker.length}/${MDF_TYPICAL.length} · происхождение не то у ${provBad.map(({ e }) => e.code).join(', ') || 'никого'}${reliefLanded ? '' : ' · РИСУНОК НЕ ДОЕХАЛ'}${legacyRowsKept ? '' : ' · СТРОКА СЛ ИЗМЕНЕНА'}`,
+  );
+
+  /* ── K5: поиск ── */
+  const find = (q: string) => KIRA_CATALOG.filter((e) => kiraMatches(e, q)).map((e) => e.code);
+  check(
+    'KIRA.K5 поиск по артикулу и названию: «сл 3» — СЛ 3; «ОВ 76» — обе модели с этим названием; «KIRA-RIF-2» — РИФ 2, а не «Выборка РИФ 2»; «выборка 120» — две; пустой — все 69; чужое — ни одной',
+    find('сл 3').join(',') === 'SL-3' &&
+      find('ОВ 76').length === 2 &&
+      find('KIRA-RIF-2').join(',') === 'RIF-2' &&
+      find('выборка 120').length === 2 &&
+      find('').length === 69 &&
+      find('нет такой модели').length === 0,
+    `сл 3 → ${find('сл 3').join(',')} · ОВ 76 → ${find('ОВ 76').join(',')} · KIRA-RIF-2 → ${find('KIRA-RIF-2').join(',')} · выборка 120 → ${find('выборка 120').join(',')}`,
+  );
+
+  /* ── Путь экрана: шкаф спальни 900 + 1000 в эмали, по две створки ── */
+  const reqK = { ...MDF_DEFAULT_REQUIREMENTS, zone: 'bedroom', mode: 'free', doorSystem: 'hinged', appliances: [], sections: [] } as RunRequirements;
+  const measurementK = {
+    id: 'kira-58',
+    ceilingHeightMm: 2600,
+    walls: [3000, 2800, 3000, 2800].map((lengthMm, i) => ({ id: `w${i + 1}`, lengthMm, angleDeg: 90, openings: [] })),
+    comms: [],
+    photos: [],
+    measuredBy: 'KIRA',
+    measuredAt: '2026-10-20',
+    notes: '',
+  };
+  const inputK = mdfWorkspaceInput({ title: 'KIRA', zone: 'Спальня', measurement: measurementK, requirements: reqK, rates: MDF_RATES, wallId: 'w1', cornerAt: null, production: DEFAULT_PRODUCTION } as never);
+  const shownK = (edited: Run | null): Run =>
+    mdfCompose(inputK, { basic: [], optimal: [], premium: [] } as never, (edited ? { optimal: edited } : {}) as never).find((v: { key: string }) => v.key === 'optimal')!.run as Run;
+  const opsK = (run: Run, list: MillworkOp[]) => {
+    const next = applyOps({ run, requirements: reqK, ops: list, openings: inputK.openings, roomDepthMm: 0 });
+    return { run: shownK(next), warnings: next.warnings };
+  };
+  const L = 'tall-0@w1';
+  let startK = shownK(null);
+  if (!startK.modules.some((m) => m.id === 'tall-900@w1')) throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: в ряду спальни нет tall-900@w1 — ${startK.modules.map((m) => m.id).join(', ')}`);
+  startK = opsK(startK, startK.modules.filter((m) => m.id !== L && m.id !== 'tall-900@w1').map((m) => ({ op: 'remove_module' as const, moduleId: m.id }))).run;
+  startK = opsK(startK, [{ op: 'set_width', moduleId: 'tall-900@w1', widthMm: 1000 }]).run;
+  /* Эмаль заранее: рисунок модели не меняет базу фасада, и итог меряет только рисунок и ручки. */
+  startK = opsK(startK, [{ op: 'set_front', moduleId: L, front: { base: 'mdf_enamel', construct: 'solid', finish: 'matte', surface: 'matte', colorHex: '#6a7b59' } }]).run;
+  const itemOf = (article: string) => {
+    const item = byArticle.get(article);
+    if (!item) throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: позиции ${article} нет в каталоге демонстрации`);
+    return item;
+  };
+  const applyModel = (
+    run: Run,
+    article: string,
+    leaf: string,
+    moduleId = L,
+    apply: (run: Run, list: MillworkOp[]) => { run: Run; warnings: string[] } = opsK,
+  ) => {
+    const plan = mdfFacadeOps('leaf', { model: itemOf(article) }, run, moduleId, leaf);
+    if ('refusal' in plan) throw new Error(`${article} на ${moduleId} ${leaf}: ${plan.refusal}`);
+    return apply(run, plan.ops);
+  };
+  const boxesK = (run: Run) => runBoxes(run, { thicknessMm: 16, frontThicknessMm: DEFAULT_PRODUCTION.frontMm, gapMm: DEFAULT_PRODUCTION.frontGapMm });
+  const estK = (run: Run) => buildEstimate(run, 'optimal', MDF_RATES, [], undefined, DEFAULT_PRODUCTION, new Map(), kiraMillings);
+  const unitK = (run: Run) => run.modules.find((m) => m.id === L)!;
+
+  /* ── K6: модель на одну дверь ── */
+  const rib = applyModel(startK, 'KIRA-RIF-2', 'door:1');
+  const kb0 = boxesK(startK);
+  const kb1 = boxesK(rib.run);
+  const changedK = kb1.filter((box, i) => JSON.stringify(box) !== JSON.stringify(kb0[i]));
+  const eStart = estK(startK);
+  const eRib = estK(rib.run);
+  const ribLine = eRib.lines.find((l) => l.key === 'front_relief_design_KIRA_RIF_2');
+  const ribArea = buildPanels({ run: rib.run })
+    .filter((p) => p.moduleId === L && p.frontLeaf === 'door:1' && p.material.startsWith('Фасад'))
+    .reduce((s, p) => s + (p.lengthMm * p.widthMm * p.qty) / 1e6, 0);
+  check(
+    'KIRA.K6 путь экрана: «Выбранная дверь» → KIRA «РИФ 2» на двери 2 — в сцене поменялась одна коробка (фасад этой двери: рисунок модели KIRA:RIF-2), у двери ссылка на позицию каталога; корпус и дверь 1 те же; отпечаток другой; в смете строка «Фрезеровка … по модели KIRA:RIF-2 — VISUAL_ONLY» с площадью двери из раскроя и без цены, итог «неполный», денег не прибавилось',
+    rib.warnings.length === 0 &&
+      kb0.length === kb1.length &&
+      changedK.length === 1 &&
+      changedK[0].part === `${L}:door:1` &&
+      changedK[0].relief?.kind === 'design' &&
+      changedK[0].relief?.model === 'KIRA:RIF-2' &&
+      unitK(rib.run).leafFronts?.['door:1']?.millingId === itemOf('KIRA-RIF-2').id &&
+      rib.run.fingerprint !== startK.fingerprint &&
+      Boolean(ribLine?.priceUnset) &&
+      ribArea > 0 &&
+      Math.abs((ribLine?.quantity ?? 0) - Math.round(ribArea * 100) / 100) < 0.011 &&
+      /KIRA:RIF-2/.test(ribLine?.title ?? '') &&
+      /VISUAL_ONLY/.test(ribLine?.title ?? '') &&
+      totalCaption(eRib).includes('неполный') &&
+      eRib.total === eStart.total,
+    `изменились ${changedK.map((b) => b.part ?? b.material).join(', ') || 'НИ ОДНОЙ'} · ${rib.warnings[0] ?? 'без отказа'} · строка ${ribLine ? `${ribLine.title}: ${ribLine.quantity} м² (раскрой ${ribArea.toFixed(2)})` : 'НЕТ'} · итог ${eStart.total} → ${eRib.total} «${totalCaption(eRib)}»`,
+  );
+
+  /* ── K7: ручка, фрезерованная в фасаде ── */
+  const ir1 = applyModel(startK, 'KIRA-IR-1', 'door:1');
+  const ir2 = applyModel(ir1.run, 'KIRA-IR-1', 'door:0');
+  const handleBoxes = (run: Run, leaf: string) => boxesK(run).filter((b) => b.node === 'handle' && b.part === `${L}:${leaf}`).length;
+  const handleQty = (run: Run) => estK(run).lines.find((l) => l.key === 'handle_standard')?.quantity ?? 0;
+  const glyphHandle = (run: Run) => frontGlyph(unitK(run), 'fronts').some((el) => el.kind === 'handle');
+  const ir4 = applyModel(applyModel(startK, 'KIRA-IR-4', 'door:1').run, 'KIRA-IR-4', 'door:0');
+  const orientOf = (run: Run, leaf: string) => boxesK(run).find((b) => b.part === `${L}:${leaf}` && b.material === 'front')?.reliefOrient;
+  check(
+    'KIRA.K7 ручка, фрезерованная в фасаде (ИР 1): на двери 2 скобы нет ни в сцене, ни в смете — ручек в смете на одну меньше, дверь 1 со скобой и значок ручки на схеме есть; ИР на обеих дверях — ни скобы, ни значка, ручек на две меньше; рисунок без ручки (РИФ 2) ручку не снимает; серповидная выемка (ИР 4) у правой створки — у её открываемого края (рисунок развёрнут), у левой — нет',
+    ir1.warnings.length === 0 &&
+      kiraMilledGrip(unitK(ir1.run), 'door:1') &&
+      !kiraMilledGrip(unitK(ir1.run), 'door:0') &&
+      handleBoxes(startK, 'door:1') === 1 &&
+      handleBoxes(ir1.run, 'door:1') === 0 &&
+      handleBoxes(ir1.run, 'door:0') === 1 &&
+      handleBoxes(ir2.run, 'door:0') === 0 &&
+      handleQty(startK) > 0 &&
+      handleQty(ir1.run) === handleQty(startK) - 1 &&
+      handleQty(ir2.run) === handleQty(startK) - 2 &&
+      glyphHandle(startK) &&
+      glyphHandle(ir1.run) &&
+      !glyphHandle(ir2.run) &&
+      handleBoxes(rib.run, 'door:1') === 1 &&
+      handleQty(rib.run) === handleQty(startK) &&
+      orientOf(ir4.run, 'door:1')?.flipX === true &&
+      !orientOf(ir4.run, 'door:0')?.flipX,
+    `скоб у двери 2: ${handleBoxes(startK, 'door:1')} → ${handleBoxes(ir1.run, 'door:1')} · ручек в смете ${handleQty(startK)} → ${handleQty(ir1.run)} → ${handleQty(ir2.run)} · значок ${glyphHandle(startK)}/${glyphHandle(ir1.run)}/${glyphHandle(ir2.run)} · РИФ 2: ${handleQty(rib.run)} · ИР 4 разворот ${JSON.stringify(orientOf(ir4.run, 'door:1') ?? null)}/${JSON.stringify(orientOf(ir4.run, 'door:0') ?? null)}`,
+  );
+
+  /* ── K8: рама витрины — только на шкаф со стеклом ── */
+  const v2plan = mdfFacadeOps('leaf', { model: itemOf('KIRA-V2') }, startK, L, 'door:1');
+  const v2 = 'refusal' in v2plan ? null : opsK(startK, v2plan.ops);
+  const kitchen = buildRun(baseInput);
+  const uppers = kitchen.upperSegments.flatMap((s) => s.modules);
+  const plainUpper = uppers.find((u) => u.frontType === 'door' && u.widthMm >= 300 && u.widthMm <= 900 && !u.appliance && !u.section);
+  if (!plainUpper) throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: в демо-кухне нет верхнего шкафа с дверцей 300…900 мм — ${uppers.map((u) => `${u.id}:${u.frontType}:${u.widthMm}`).join(' ')}`);
+  const otherUpper = uppers.find((u) => u.id !== plainUpper.id && u.frontType === 'door' && !u.appliance && !u.section);
+  if (!otherUpper) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: второго верхнего шкафа с дверцей в демо-кухне нет');
+  const kOps = (run: Run, list: MillworkOp[]) => {
+    const next = applyOps({ run, requirements: REQ, ops: list, openings: OPENINGS });
+    return { run: next as Run, warnings: next.warnings };
+  };
+  const glassy = kOps(kitchen, [{ op: 'set_variant', moduleId: plainUpper.id, variant: 'upper_glass' as ModuleVariantKind }]);
+  const glassyUnit = glassy.run.upperSegments.flatMap((s) => s.modules).find((u) => u.id === plainUpper.id);
+  if (glassyUnit?.variant !== 'upper_glass') throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: «Стекло в раме» не встало на ${plainUpper.id}: ${glassy.warnings.join(' | ')}`);
+  const framedGlass = applyModel(glassy.run, 'KIRA-V2', 'door:0', plainUpper.id, kOps);
+  const kBoxes = (run: Run) => runBoxes(run, { thicknessMm: 16, frontThicknessMm: DEFAULT_PRODUCTION.frontMm, gapMm: DEFAULT_PRODUCTION.frontGapMm });
+  const panes = (run: Run) => kBoxes(run).filter((b) => b.material === 'glass' && b.node === 'glass' && b.part === `${plainUpper.id}:door:0`).length;
+  const glassQty = (run: Run) =>
+    buildEstimate(run, 'optimal', MDF_RATES, [], undefined, DEFAULT_PRODUCTION, new Map(), kiraMillings).lines.find((l) => l.key === 'glass_front')?.quantity ?? 0;
+  const handleUp = applyModel(kitchen, 'KIRA-IR-2', 'door:0', otherUpper.id, kOps);
+  const upperOrient = kBoxes(handleUp.run).find((b) => b.part === `${otherUpper.id}:door:0` && b.material === 'front')?.reliefOrient;
+  check(
+    'KIRA.K8 рама витрины: на глухой шкаф спальни «В2» не ложится — отказ словами (рама под стекло, нужен вариант со стеклом), ряд прежний; на верхний шкаф «Стекло в раме» — ложится, за окнами рамы стекло той же створки; стекла в смете столько же, сколько считал вариант шкафа; у верхнего шкафа ручка ИР — у нижней кромки (рисунок развёрнут по вертикали)',
+    v2 !== null &&
+      /под стекло/.test(v2.warnings[0] ?? '') &&
+      /Стекло в раме/.test(v2.warnings[0] ?? '') &&
+      v2.run.fingerprint === startK.fingerprint &&
+      framedGlass.warnings.length === 0 &&
+      panes(glassy.run) === 0 &&
+      panes(framedGlass.run) === 1 &&
+      glassQty(glassy.run) > 0 &&
+      glassQty(framedGlass.run) === glassQty(glassy.run) &&
+      handleUp.warnings.length === 0 &&
+      upperOrient?.flipY === true,
+    `спальня: «${v2?.warnings[0] ?? ('refusal' in v2plan ? v2plan.refusal : 'МОЛЧА')}» · стекло за рамой ${panes(glassy.run)} → ${panes(framedGlass.run)} · стекло в смете ${glassQty(glassy.run)} → ${glassQty(framedGlass.run)} м² · ИР 2 наверху ${JSON.stringify(upperOrient ?? null)}`,
+  );
+}
+
 Promise.allSettled(asyncChecks).then((results) => {
   for (const result of results) {
     if (result.status === 'rejected') {

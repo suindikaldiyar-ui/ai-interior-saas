@@ -5,7 +5,7 @@ import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { BoxDraw } from '@/lib/millwork/cabinetBoxes';
 import type { FrontRelief } from '@/types/millwork';
-import type { ReliefLeaf } from '@/lib/millwork/facadeRelief';
+import type { ReliefLeaf, ReliefOrient } from '@/lib/millwork/facadeRelief';
 import { REAL_SIZE_SHIFT, realSizeShiftOf, shiftKeyOf } from './realSizeMap';
 import { useReliefGeometry } from './reliefGeometry';
 
@@ -54,7 +54,7 @@ type Props = {
    * же центр, масштаб 1: сетка уже в метрах фасада. `face` — куда смотрит
    * лицо (фасад Б угла — влево). Нет — единичный куб, растянутый по коробке.
    */
-  relief?: { relief: FrontRelief; leaf: ReliefLeaf; face?: '-x' };
+  relief?: { relief: FrontRelief; leaf: ReliefLeaf; face?: '-x'; orient?: ReliefOrient };
 };
 
 export default function InstancedBoxes({
@@ -69,7 +69,7 @@ export default function InstancedBoxes({
 }: Props) {
   const ref = useRef<THREE.InstancedMesh>(null);
   const invalidate = useThree((state) => state.invalidate);
-  const reliefGeometry = useReliefGeometry(relief?.relief, relief?.leaf ?? NO_LEAF);
+  const reliefGeometry = useReliefGeometry(relief?.relief, relief?.leaf ?? NO_LEAF, relief?.orient);
   const base = reliefGeometry ?? geometry;
 
   /*

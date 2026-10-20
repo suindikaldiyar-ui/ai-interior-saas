@@ -89,7 +89,7 @@ export default function InteractiveBayDrawer({ id, open, onToggle, boxes, parts,
   /* Рельеф МДФ фронта (P3D-MDF) — с коробки фронта той же пачки (`bayDrawerBoxes`). */
   const front = boxes.find((box) => box.material === 'front');
   const reliefGeometry = useShiftedRelief(
-    useReliefGeometry(front?.relief, leafOfBox(front?.scale ?? [0, 0, 0])),
+    useReliefGeometry(front?.relief, leafOfBox(front?.scale ?? [0, 0, 0]), front?.reliefOrient),
     realSizeShiftOf(id),
   );
   const materialOf = (box: PartBox) =>

@@ -1,6 +1,7 @@
 import type { CatalogEntryFull } from '@/types/catalog';
-import type { FrontRelief, FrontSpec, Module, Run } from '@/types/millwork';
-import { RELIEF_KINDS, resolveRelief } from './facadeRelief';
+import type { FrontRelief, FrontSpec, Module, ReliefDesign, ReliefLen, ReliefShape, Run } from '@/types/millwork';
+import { isKnownRelief, resolveRelief } from './facadeRelief';
+import { designDepthBound, lenOf } from './reliefDesign';
 import { frontOf } from './frontMaterial';
 import { hasFacade } from './applianceFront';
 import { isUpperRow } from './modules';
@@ -110,9 +111,12 @@ export function millingOf(entry: CatalogEntryFull): MillingItem | null {
   const profile = typeof meta?.profile === 'string' ? meta.profile.trim() : '';
   if (!profile) return null;
 
-  /* Рисунок — только известного типа: чужое значение не превращается в рельеф молча. */
+  /*
+   * Рисунок — только известного типа или рисунок модели с исправными
+   * слоями: чужое значение не превращается в рельеф молча.
+   */
   const relief = meta?.relief as FrontRelief | undefined;
-  const known = relief && RELIEF_KINDS.some((def) => def.kind === relief.kind);
+  const known = isKnownRelief(relief);
 
   return {
     id: entry.id,
@@ -529,6 +533,8 @@ export function layersOfRelief(relief: FrontRelief): MillingLayer[] {
   const rect = (a: number, depth: number): MillingLayer => ({ path: `M${a} ${a} H${100 - a} V${100 - a} H${a} Z`, depth });
   const bar = (x0: number, y0: number, x1: number, y1: number): MillingLayer => ({ path: `M${x0} ${y0} H${x1} V${y1} H${x0} Z`, depth: 1 });
   switch (r.kind) {
+    case 'design':
+      return layersOfDesign(r.design);
     case 'slab':
       return [FACE];
     case 'frame':
@@ -565,6 +571,54 @@ export function layersOfRelief(relief: FrontRelief): MillingLayer[] {
       return [FACE, ...Array.from({ length: count }, (_, i) => bar(first + i * step - half, top, first + i * step + half, 96))];
     }
   }
+}
+
+/**
+ * ПЛОСКИЙ КОНТУР РИСУНКА МОДЕЛИ — по фигурам слоёв на номинальном фасаде
+ * 400 × 400 мм (4 мм на единицу поля). Прямоугольник — своими отступами,
+ * остальное — габаритом: это значок для карточки и листа, а объём строит
+ * сетка (`reliefMesh`) по самим слоям.
+ */
+function layersOfDesign(design: ReliefDesign | undefined): MillingLayer[] {
+  if (!design) return [FACE];
+  const bound = Math.max(0.5, designDepthBound(design));
+  const unit = (len: ReliefLen) => Math.round(Math.max(0, Math.min(100, lenOf(len, 400) / 4)) * 10) / 10;
+  const box = (shape: ReliefShape): [number, number, number, number] | null => {
+    if ('rect' in shape) {
+      const [l, rr, t, b] = shape.rect;
+      return [unit(l), unit(t), 100 - unit(rr), 100 - unit(b)];
+    }
+    if ('ellipse' in shape) {
+      const [cx, cy, rx, ry] = shape.ellipse.map(unit);
+      return [cx - rx, cy - ry, cx + rx, cy + ry];
+    }
+    const xs = shape.poly.map(([x]) => unit(x));
+    const ys = shape.poly.map(([, y]) => unit(y));
+    return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+  };
+  const path = ([x0, y0, x1, y1]: [number, number, number, number]) => `M${x0} ${y0} H${x1} V${y1} H${x0} Z`;
+  const out: MillingLayer[] = [FACE];
+  for (const layer of design.layers) {
+    if (layer.op === 'level') {
+      const b = box(layer.shape);
+      if (b && b[2] > b[0] && b[3] > b[1]) out.push({ path: path(b), depth: Math.min(1, layer.depth / bound) });
+    } else if (layer.op === 'flutes' || layer.op === 'tiles' || layer.op === 'cells') {
+      const b = box(layer.area);
+      const depth = layer.op === 'tiles' ? 1 : layer.depth / bound;
+      if (b && b[2] > b[0] && b[3] > b[1]) out.push({ path: path(b), depth: Math.min(1, depth) });
+    } else if (layer.op === 'cut') {
+      const b = box(layer.shape);
+      if (b && b[2] > b[0] && b[3] > b[1]) out.push({ path: path(b), depth: 1 });
+    } else if (layer.op === 'groove') {
+      for (const p of layer.paths) {
+        if ('outline' in p) {
+          const b = box(p.outline);
+          if (b && b[2] > b[0] && b[3] > b[1]) out.push({ path: path(b), depth: 1 });
+        }
+      }
+    }
+  }
+  return out;
 }
 
 /** Позиция типового набора в виде товара каталога. */

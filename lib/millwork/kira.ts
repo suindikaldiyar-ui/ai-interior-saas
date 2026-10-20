@@ -30,7 +30,7 @@ import { layersOfRelief, profileOf } from './milling';
 export const KIRA_MANUFACTURER = 'KIRA';
 
 /** Чего у модели нет — имена полей карточки производителя (CATALOG_STAGING/…/product.json). */
-const MISSING = [
+export const KIRA_MISSING = [
   'panelThicknessMm',
   'borderOffsetMm',
   'frameWidthMm',
@@ -196,7 +196,7 @@ export function kiraMillingItem(model: KiraModel) {
         visualStatus: RELIEF_STATUS,
         engineeringStatus: 'MISSING_DATA',
         confirmed: model.confirmed,
-        missing: [...MISSING],
+        missing: [...KIRA_MISSING],
         ...(model.notReproduced ? { notReproduced: model.notReproduced } : {}),
       },
     },

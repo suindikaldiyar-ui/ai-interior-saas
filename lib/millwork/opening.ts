@@ -2,6 +2,7 @@ import { CORNER, hingesPerDoor, isUpperRow } from './modules';
 import { MODULE_VARIANTS } from './moduleVariants';
 import { moduleFronts, nicheFacadeSpans } from './applianceFront';
 import { bayDrawerCount } from './drawerCount';
+import { leafFrontOf } from './frontMaterial';
 import type { FrontOpening, HandleKind, Module, Run } from '@/types/millwork';
 
 /**
@@ -221,6 +222,25 @@ export function handleOf(
   return { handle: run.options.integratedHandles ? 'profile' : 'bar', assumed: true };
 }
 
+/**
+ * РУЧКА ФРЕЗЕРОВАНА В ФАСАДЕ ДЕТАЛИ (KIRA «Интегрированные ручки»).
+ *
+ * У детали, чей фасад — рисунок модели с ручкой (`design.grip`), браться
+ * есть за что без фурнитуры: накладной скобы, профиля и нажимного
+ * механизма на ней нет — ни в сцене (закрытой и на ходу), ни в смете, ни
+ * на схеме. Ручка модуля (`handleOf`) остаётся у его остальных деталей.
+ * `leaf` — деталь так, как её зовёт сцена: `door:0`, `drawer:1`, `b1:drawer:0`.
+ */
+export function milledGrip(unit: Pick<Module, 'front' | 'leafFronts'>, leaf: string): boolean {
+  const relief = leafFrontOf(unit, leaf).relief;
+  return relief?.kind === 'design' && relief.design?.grip !== undefined;
+}
+
+/** Ручка фрезерована во ВСЕХ названных деталях: тогда ручки у модуля нет вовсе. */
+export function gripOnEvery(unit: Pick<Module, 'front' | 'leafFronts'>, leaves: string[]): boolean {
+  return leaves.length > 0 && leaves.every((leaf) => milledGrip(unit, leaf));
+}
+
 /* ─────────────────────────  Фурнитура  ───────────────────────── */
 
 /**
@@ -368,14 +388,20 @@ export function openingHardware(
     else result.hinges += value;
   };
 
-  /** Ручки на фасадах: сколько и какого типа. */
-  const addHandles = (unit: Module, fronts: number) => {
+  /**
+   * Ручки на фасадах: сколько и какого типа. Деталь с фрезерованной ручкой
+   * (`milledGrip`) фурнитуры ручки не берёт: браться есть за фасад.
+   */
+  const addHandles = (unit: Module, leaves: string[]) => {
+    const plain = leaves.filter((leaf) => !milledGrip(unit, leaf)).length;
+    if (plain === 0) return;
     const { handle } = handleOf(unit, run);
-    if (handle === 'bar') add('handleBar', fronts);
+    if (handle === 'bar') add('handleBar', plain);
     else if (handle === 'profile') add('handleProfileMm', unit.widthMm);
-    else add('handlePush', fronts);
-    result.handles += fronts;
+    else add('handlePush', plain);
+    result.handles += plain;
   };
+  const doorsOf = (count: number) => Array.from({ length: count }, (_, i) => `door:${i}`);
 
   for (const { unit, heightMm, index = 0, total = 1 } of units) {
     current = {
@@ -414,7 +440,7 @@ export function openingHardware(
     if (cornerOf?.(unit) === 'closed') continue;
 
     if (fronts.drawers.length > 0) {
-      addHandles(unit, fronts.drawers.length);
+      addHandles(unit, fronts.drawers.map((_, i) => `drawer:${i}`));
     }
     /*
      * ВСТРОЙКА ИДЁТ ОБЩЕЙ ВЕТКОЙ.
@@ -443,7 +469,7 @@ export function openingHardware(
       /* Свободные участки — обычные распашные полотна. */
       const opening: FrontOpening = 'left';
       for (const facade of facades) add('hinges', leafHinges(facade.heightMm, opening));
-      addHandles(unit, facades.length);
+      addHandles(unit, doorsOf(facades.length));
       continue;
     }
 
@@ -472,12 +498,12 @@ export function openingHardware(
        * чём-то висит. В данные это не пишется — отпечаток не двигается.
        */
       if (isPullOut(unit)) {
-        addHandles(unit, 1);
+        addHandles(unit, doorsOf(1));
         continue;
       }
 
       for (const leaf of fronts.leaves) add('hinges', leafHinges(leaf.heightMm, 'left'));
-      addHandles(unit, fronts.leaves.length);
+      addHandles(unit, doorsOf(fronts.leaves.length));
       continue;
     }
 
@@ -517,7 +543,7 @@ export function openingHardware(
      * (он режется по ширине модуля), нажимной механизм — штуками: за
      * «без ручки» стоит механизм, а не пустота.
      */
-    addHandles(unit, isMechanism(opening) ? 1 : fronts.leaves.length);
+    addHandles(unit, doorsOf(isMechanism(opening) ? 1 : fronts.leaves.length));
 
     /*
      * О чём молчать нельзя, а о чём не стоит говорить.

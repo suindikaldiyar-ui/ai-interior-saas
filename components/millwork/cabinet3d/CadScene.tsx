@@ -45,6 +45,10 @@ type ReliefReadout = {
   /** Габарит сетки, мм: обязан совпасть с коробкой фасада. */
   sizeMm: [number, number, number] | null;
   color: number[];
+  /** Модель каталога, чей рисунок нарисован (`KIRA:RIF-2`); свой рисунок — `null`. */
+  model: string | null;
+  /** Окно рамы витрины, мм от центра фасада; `null` — окон нет. */
+  glassMm: number[] | null;
 };
 import Cabinet3D, { APPLIANCE_GLASS_NAME } from './Cabinet3D';
 import RoomScene from './RoomScene';
@@ -864,6 +868,7 @@ function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
       __mwCadFronts?: () => FrontReadout[];
       __mwCadSurfaces?: () => SurfaceReadout[];
       __mwCadReliefs?: () => ReliefReadout[];
+      __mwCadMetal?: () => number;
       __mwCadLook?: () => {
         frontColors: string[];
         carcassColors: string[];
@@ -975,7 +980,14 @@ function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
       scene.traverse((object) => {
         const mesh = object as THREE.Mesh & { count?: number; isInstancedMesh?: boolean };
         if (!mesh.isMesh || mesh.visible === false) return;
-        const data = (mesh.geometry?.userData ?? {}) as { relief?: boolean; drawn?: string; refusal?: string | null; triangles?: number };
+        const data = (mesh.geometry?.userData ?? {}) as {
+          relief?: boolean;
+          drawn?: string;
+          refusal?: string | null;
+          triangles?: number;
+          model?: string | null;
+          glassMm?: number[] | null;
+        };
         if (!data.relief) return;
         const box = mesh.geometry.boundingBox;
         const material = mesh.material as THREE.MeshStandardMaterial;
@@ -990,9 +1002,26 @@ function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
             ? [box.max.x - box.min.x, box.max.y - box.min.y, box.max.z - box.min.z].map((v) => Math.round(v * MM * 10) / 10) as [number, number, number]
             : null,
           color: [material.color.r, material.color.g, material.color.b],
+          model: data.model ?? null,
+          glassMm: data.glassMm ?? null,
         });
       });
       return out;
+    };
+
+    /*
+     * МЕТАЛЛ НА ФАСАДАХ ПО НАРИСОВАННОМУ (слой 58): экземпляров в пачках
+     * `metal` — ручки, чашки петель, штанги. Фасад с фрезерованной ручкой
+     * (`milledGrip`) скобы не несёт — пачка становится меньше ровно на неё.
+     */
+    w.__mwCadMetal = () => {
+      let count = 0;
+      scene.traverse((object) => {
+        const mesh = object as THREE.Mesh & { count?: number; isInstancedMesh?: boolean };
+        if (!mesh.isMesh || mesh.visible === false || mesh.name !== 'metal') return;
+        count += mesh.isInstancedMesh && typeof mesh.count === 'number' ? mesh.count : 1;
+      });
+      return count;
     };
 
     /*
@@ -1514,6 +1543,7 @@ function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
       delete w.__mwCadFronts;
       delete w.__mwCadSurfaces;
       delete w.__mwCadReliefs;
+      delete w.__mwCadMetal;
       delete w.__mwCadState;
       delete (w as { __mwCadBays?: unknown }).__mwCadBays;
       delete w.__mwCadFit;

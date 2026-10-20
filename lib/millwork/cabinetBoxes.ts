@@ -43,7 +43,9 @@ const HINGE_CUP_DEPTH_M = 0.012;
 const HINGE_ARM_DEPTH_M = 0.07;
 import { leafFrontWithMilling } from './milling';
 import type { FrontRelief } from '@/types/millwork';
-import { leafHinges, openingHardware, openingOf } from './opening';
+import { gripOrient, reliefGlassMm, type ReliefOrient } from './facadeRelief';
+import { isUpperRow } from './modules';
+import { leafHinges, milledGrip, openingHardware, openingOf } from './opening';
 import type { Module, Run } from '@/types/millwork';
 import type { SceneLayer } from './sceneLayers';
 
@@ -94,7 +96,7 @@ export type BoxDraw = {
    * чтобы проверка могла спросить «петель в сцене столько же, сколько в
    * смете».
    */
-  node?: 'hinge' | 'hinge-arm' | 'handle' | 'rod';
+  node?: 'hinge' | 'hinge-arm' | 'handle' | 'rod' | 'glass';
   /**
    * ИД ФИЗИЧЕСКОЙ ДЕТАЛИ (R01): тот же, что в строке раскроя (`Panel.partIds`).
    * Есть у полок и перегородок отсеков — по нему сверяются сцена и цех.
@@ -150,6 +152,11 @@ export type PartBox = BoxDraw & {
    */
   relief?: FrontRelief;
   /**
+   * Разворот рисунка с фрезерованной ручкой на ЭТОЙ створке (`gripOrient`):
+   * ручка там, где открывают. Пусто — рисунок как снят.
+   */
+  reliefOrient?: ReliefOrient;
+  /**
    * КУДА СМОТРИТ ЛИЦО ФАСАДА. Пусто — на зрителя (+Z ряда). `-x` — фасад Б
    * Г-образного модуля: он стоит в плоскости фасадов соседа, лицом влево,
    * и коробка у него узкая по X. Рельеф ложится на лицо, а не на торец.
@@ -178,6 +185,8 @@ export type PartBox = BoxDraw & {
  */
 export function boxLayer(box: Pick<PartBox, 'material' | 'panel' | 'part' | 'node'>): SceneLayer {
   if (box.material === 'front') return 'fronts';
+  /* Стекло рамы витрины — часть фасада: без фасада оно висело бы в воздухе. */
+  if (box.material === 'glass' && box.node === 'glass') return 'fronts';
   if (box.material === 'metal' && (box.node !== undefined || box.part !== undefined)) return 'hardware';
   if (box.part !== undefined && box.part.includes(':drawer:')) return 'drawers';
   if (box.panel === DRAWER_ENVELOPE_NAME) return 'drawers';
@@ -899,8 +908,9 @@ export function doorBoxes(
    * подписывает раскрой на другое. Рисуется так же, как делается: четыре
    * бруска обвязки по контуру и вставка, утопленная внутрь.
    */
-  const withHandle = (parts: PartBox[]) =>
-    kind === 'none' ? [...parts, ...hingeNodes] : [...parts, handle, ...hingeNodes];
+  /* Ручка фрезерована в фасаде створки (KIRA «Интегрированные ручки») — скобы на нём нет. */
+  const noHandle = kind === 'none' || milledGrip(unit, `door:${index}`);
+  const withHandle = (parts: PartBox[]) => (noHandle ? [...parts, ...hingeNodes] : [...parts, handle, ...hingeNodes]);
 
   if (isFramed(spec)) {
     const frame = FRAME_WIDTH_MM / MM;
@@ -924,7 +934,9 @@ export function doorBoxes(
     ]);
   }
 
-  return withHandle([
+  /* Рисунок с ручкой — ручкой к открываемой стороне (`gripOrient`). */
+  const reliefOrient = gripOrient(spec.relief, doorOpening(unit, span ? 0 : index, doors), isUpperRow(unit));
+  const leafBoxes: PartBox[] = [
     {
       material: 'front',
       part,
@@ -932,9 +944,30 @@ export function doorBoxes(
       position: [cx, cy, thickness / 2],
       scale: [w, h, thickness],
       ...(spec.relief ? { relief: spec.relief } : {}),
+      ...(reliefOrient ? { reliefOrient } : {}),
     },
-  ]);
+  ];
+  /*
+   * РАМА ВИТРИНЫ (KIRA «Витрины»): окна в раме сквозные, за ними стекло —
+   * у самого тыла, в четверти. Стекло — деталь ТОЙ ЖЕ створки (`part`):
+   * открылась дверь — уехало вместе с ней.
+   */
+  const glass = reliefGlassMm(spec.relief, { widthMm: w * MM, heightMm: h * MM, thicknessMm: thickness * MM }, reliefOrient);
+  if (glass) {
+    leafBoxes.push({
+      material: 'glass',
+      part,
+      node: 'glass',
+      position: [cx + (glass[0] + glass[2]) / 2 / MM, cy + (glass[1] + glass[3]) / 2 / MM, GLASS_PANE_Z_M],
+      scale: [(glass[2] - glass[0]) / MM, (glass[3] - glass[1]) / MM, GLASS_PANE_M],
+    });
+  }
+  return withHandle(leafBoxes);
 }
+
+/** Стекло рамы витрины: 4 мм у самого тыла полотна (VISUAL_ONLY — толщины стекла цех не давал). */
+export const GLASS_PANE_M = 0.004;
+export const GLASS_PANE_Z_M = 0.0035;
 
 /** Справочный габарит ящика отсека в сцене: не деталь, в раскрое его нет. */
 export const DRAWER_ENVELOPE_NAME = 'Габарит ящика (справочно)';
@@ -981,6 +1014,7 @@ export function bayDrawerBoxes(
       if (options.cutaway) continue;
       /* Фасад ЭТОГО ящика (P3D-MDF): деталь — его ключ без имени модуля. */
       const spec = leafFrontWithMilling(unit, drawer.id.slice(unit.id.length + 1), { milling: options.rowMilling });
+      const bayOrient = gripOrient(spec.relief, 'flap', isUpperRow(unit));
       out.push({
         material: 'front',
         part: drawer.id,
@@ -989,6 +1023,7 @@ export function bayDrawerBoxes(
         panel: 'Фронт ящика',
         frontKey: frontKey(spec),
         ...(spec.relief ? { relief: spec.relief } : {}),
+        ...(bayOrient ? { reliefOrient: bayOrient } : {}),
         position: [
           place.x + (front.xFromMm + front.xToMm) / 2 / MM,
           place.y + (front.yFromMm + front.yToMm) / 2 / MM,
@@ -1079,6 +1114,8 @@ export function drawerBoxes(
 
   /* Фасад ЭТОГО ящика (P3D-MDF): свой у ящика или модульный. */
   const spec = leafFrontWithMilling(unit, `drawer:${index}`, { milling: options.rowMilling });
+  /* Ящик выдвигают за верх; у верхнего ряда — за низ. */
+  const drawerOrient = gripOrient(spec.relief, 'flap', isUpperRow(unit));
   boxes.push({
     material: 'front',
     part,
@@ -1086,8 +1123,11 @@ export function drawerBoxes(
     position: [cx, cy, thickness / 2],
     scale: [widthM - 2 * gap, height - 2 * gap, thickness],
     ...(spec.relief ? { relief: spec.relief } : {}),
+    ...(drawerOrient ? { reliefOrient: drawerOrient } : {}),
   });
 
+  /* Ручка фрезерована во фронте ящика (`milledGrip`) — накладной нет. */
+  if (milledGrip(unit, `drawer:${index}`)) return boxes;
   boxes.push(
     integratedHandles
       ? {
@@ -1218,7 +1258,7 @@ export function lCornerBoxes(unit: Module, place: ModulePlacement, options: Fron
    * складывается. Место и габарит — тем же `handleBoxOf`, что у створок.
    */
   const kind = unit.fill?.handle ?? (options.integratedHandles ? 'profile' : 'bar');
-  if (kind !== 'none') {
+  if (kind !== 'none' && !milledGrip(unit, 'door:0')) {
     const geometry = handleBoxOf(
       handleSpotOf(unit, { options: { integratedHandles: options.integratedHandles } } as Run, 'right'),
       { cx: x + legB / 2, cy: y + H / 2, widthM: aW, heightM: h, thicknessM: tf },
@@ -1426,7 +1466,7 @@ export function bifoldPoses(
 
   /* Ручка — на свободном краю фасада А, тем же `handleBoxOf`, что у створок. */
   const kind = unit.fill?.handle ?? (options.integratedHandles ? 'profile' : 'bar');
-  if (kind !== 'none') {
+  if (kind !== 'none' && !milledGrip(unit, 'door:0')) {
     const closed = handleBoxOf(
       handleSpotOf(unit, { options: { integratedHandles: options.integratedHandles } } as Run, 'right'),
       { cx: legB / 2, cy: H / 2, widthM: aW, heightM: h, thicknessM: tf },

@@ -1,4 +1,5 @@
-import type { FrontRelief, ReliefKind } from '@/types/millwork';
+import type { FrontRelief, ReliefDesign, ReliefKind } from '@/types/millwork';
+import { compileDesign, designDepthBound, designHasCut, designHash, designParamRefusal, type CurvedZone } from './reliefDesign';
 
 /**
  * РЕЛЬЕФ МДФ-ФАСАДА — ОБЪЁМ, А НЕ КАРТИНКА (P3D-MDF).
@@ -31,7 +32,8 @@ export type ReliefParam = 'insetMm' | 'count' | 'pitchMm' | 'widthMm' | 'depthMm
 
 export type ReliefKindDef = {
   kind: ReliefKind;
-  letter: 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
+  /** Буква типа на карточке; у рисунка модели буквы нет. */
+  letter: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | '';
   title: string;
   /** Что это за рисунок — словами мебельщика. */
   hint: string;
@@ -92,10 +94,32 @@ export const RELIEF_KINDS: ReliefKindDef[] = [
   },
 ];
 
+/**
+ * РИСУНОК МОДЕЛИ КАТАЛОГА — не седьмой тип на карточке, а рисунок
+ * конкретной модели (KIRA): слои над фигурами (`reliefDesign.ts`). Своих
+ * параметров у него нет — правят его не числами типа, а выбором модели.
+ */
+export const DESIGN_KIND_DEF: ReliefKindDef = {
+  kind: 'design',
+  letter: '',
+  title: 'Рисунок модели',
+  hint: 'Рисунок модели каталога по фото производителя — приближение VISUAL_ONLY.',
+  params: {},
+  labels: {},
+};
+
 export function reliefKindDef(kind: ReliefKind): ReliefKindDef {
+  if (kind === 'design') return DESIGN_KIND_DEF;
   const def = RELIEF_KINDS.find((item) => item.kind === kind);
-  if (!def) throw new Error(`Тип рельефа «${kind}» неизвестен: есть ${RELIEF_KINDS.map((item) => item.kind).join(', ')}`);
+  if (!def) throw new Error(`Тип рельефа «${kind}» неизвестен: есть ${RELIEF_KINDS.map((item) => item.kind).join(', ')}, design`);
   return def;
+}
+
+/** Рельеф, который движок умеет строить: тип A–F или рисунок модели со слоями. */
+export function isKnownRelief(relief: FrontRelief | undefined | null): relief is FrontRelief {
+  if (!relief || typeof relief !== 'object') return false;
+  if (relief.kind === 'design') return designParamRefusal(relief.design) === null;
+  return RELIEF_KINDS.some((def) => def.kind === relief.kind);
 }
 
 /**
@@ -108,6 +132,13 @@ export const RELIEF_EDGE_MM = 1.5;
 /** Излом круче этого угла — острая кромка; положе — гладкая дуга. */
 const CREASE_DEG = 30;
 
+/**
+ * Сколько ячеек лица бывает у одного фасада, не больше: ~60–90 тыс.
+ * треугольников. Больше — сцена на планшете начинает отставать, а сборка
+ * сетки идёт секундами. Рисунок, который просит больше, строится крупнее.
+ */
+export const RELIEF_CELL_BUDGET = 30000;
+
 /** Рельеф с умолчаниями типа — то, по чему строится сетка. */
 export type ResolvedRelief = {
   kind: ReliefKind;
@@ -118,6 +149,8 @@ export type ResolvedRelief = {
   depthMm: number;
   zoneMm: number;
   model?: string;
+  /** Слои рисунка модели (`kind: 'design'`). */
+  design?: ReliefDesign;
 };
 
 export function resolveRelief(relief: FrontRelief): ResolvedRelief {
@@ -135,14 +168,18 @@ export function resolveRelief(relief: FrontRelief): ResolvedRelief {
     depthMm: pick('depthMm'),
     zoneMm: pick('zoneMm'),
     ...(relief.model ? { model: relief.model } : {}),
+    ...(relief.kind === 'design' && relief.design ? { design: relief.design } : {}),
   };
 }
 
 /**
  * КЛЮЧ РЕЛЬЕФА — для ключа материала и кэша геометрии. Только параметры
- * этого типа: у гладкого «шаг» не существует, и в ключ он не идёт.
+ * этого типа: у гладкого «шаг» не существует, и в ключ он не идёт. У
+ * рисунка модели — модель и отпечаток слоёв: уточнённое приближение той же
+ * модели — уже другая сетка.
  */
 export function reliefKey(relief: FrontRelief): string {
+  if (relief.kind === 'design') return `design:${relief.model ?? ''}:${designHash(relief.design)}`;
   const r = resolveRelief(relief);
   const def = reliefKindDef(r.kind);
   const parts = (Object.keys(def.params) as ReliefParam[]).map((key) => `${r[key]}`);
@@ -173,6 +210,14 @@ const mm = (value: number) => `${Math.round(value * 10) / 10} мм`;
  * толщины. Отказ называет число и причину.
  */
 export function reliefParamRefusal(relief: FrontRelief, thicknessMm: number): string | null {
+  if (relief.kind === 'design') {
+    const own = designParamRefusal(relief.design);
+    if (own) return own;
+    const bound = designDepthBound(relief.design!);
+    return bound > thicknessMm - 6
+      ? `Рисунок модели уходит на ${mm(bound)} при толщине фасада ${mm(thicknessMm)}: под фрезеровкой осталось бы меньше 6 мм плиты.`
+      : null;
+  }
   const r = resolveRelief(relief);
   const def = reliefKindDef(r.kind);
   for (const key of Object.keys(def.params) as ReliefParam[]) {
@@ -233,6 +278,10 @@ export function reliefLeafRefusal(relief: FrontRelief, leaf: ReliefLeaf): string
   const size = `${Math.round(leaf.widthMm)}×${Math.round(leaf.heightMm)}`;
   const short = Math.min(leaf.widthMm, leaf.heightMm);
   switch (r.kind) {
+    case 'design': {
+      const compiled = compileDesign(r.design!, leaf);
+      return 'refusal' in compiled ? `Фасад ${size}: ${compiled.refusal}` : null;
+    }
     case 'slab':
       return short < 4 * RELIEF_EDGE_MM ? `Фасад ${size}: меньше скругления кромки.` : null;
     case 'frame': {
@@ -344,6 +393,13 @@ type Field = {
   ys: number[];
   /** Глубина снятого материала в точке, мм. */
   depthAt: (x: number, y: number) => number;
+  /**
+   * Где рисунок кривой (дуга, скруглённый угол, наклон): там ячейку сетки
+   * режут мельче. У типов A–F зон нет — все изломы лежат на линиях сетки.
+   */
+  zones: CurvedZone[];
+  /** Габарит окон витрины (мм от центра фасада) — там стекло; `null` — окон нет. */
+  glass: [number, number, number, number] | null;
 };
 
 const EPS = 1e-6;
@@ -357,8 +413,15 @@ function uniqueSorted(values: number[], from: number, to: number): number[] {
   return out;
 }
 
+/**
+ * РАЗВОРОТ РИСУНКА НА СТВОРКЕ — только у рисунка с фрезерованной ручкой
+ * (`design.grip`): ручка там, где открывают. Остальные рисунки
+ * симметричны, и разворачивать их незачем — была бы лишняя сетка в кэше.
+ */
+export type ReliefOrient = { flipX?: boolean; flipY?: boolean };
+
 /** Поле высот фасада: что и где снято, и узлы, на которых лежат изломы. */
-function fieldOf(r: ResolvedRelief, leaf: ReliefLeaf, plain: boolean): Field {
+function fieldOf(r: ResolvedRelief, leaf: ReliefLeaf, plain: boolean, orient?: ReliefOrient): Field {
   const W = leaf.widthMm;
   const H = leaf.heightMm;
   const x0 = -W / 2;
@@ -378,11 +441,54 @@ function fieldOf(r: ResolvedRelief, leaf: ReliefLeaf, plain: boolean): Field {
   };
   byEdge(edge.breaks);
   let feature: (x: number, y: number) => number = () => 0;
+  let zones: CurvedZone[] = [];
+  let glass: [number, number, number, number] | null = null;
 
   if (!plain) {
     switch (r.kind) {
       case 'slab':
         break;
+      case 'design': {
+        const compiled = compileDesign(r.design!, leaf);
+        if ('refusal' in compiled) break;
+        /* Ручка у открываемой стороны: рисунок отражается по оси, поле и линии — вместе. */
+        const sx = orient?.flipX && r.design?.grip ? -1 : 1;
+        const sy = orient?.flipY && r.design?.grip ? -1 : 1;
+        xs.push(...compiled.xs.map((v) => sx * v));
+        ys.push(...compiled.ys.map((v) => sy * v));
+        zones = compiled.zones.map((zone) => ({
+          h: zone.h,
+          box: [
+            Math.min(sx * zone.box[0], sx * zone.box[2]),
+            Math.min(sy * zone.box[1], sy * zone.box[3]),
+            Math.max(sx * zone.box[0], sx * zone.box[2]),
+            Math.max(sy * zone.box[1], sy * zone.box[3]),
+          ],
+          hits: (x: number, y: number, radius: number) => zone.hits(sx * x, sy * y, radius),
+          ...(zone.lines
+            ? {
+                lines: {
+                  xs: sx === 1 ? zone.lines.xs : zone.lines.xs.map((v) => -v).reverse(),
+                  ys: sy === 1 ? zone.lines.ys : zone.lines.ys.map((v) => -v).reverse(),
+                  inside: (x: number, y: number, radius: number) => zone.lines!.inside(sx * x, sy * y, radius),
+                },
+              }
+            : {}),
+        }));
+        feature = sx === 1 && sy === 1 ? compiled.depthAt : (x, y) => compiled.depthAt(sx * x, sy * y);
+        glass = compiled.cuts.length
+          ? compiled.cuts.reduce<[number, number, number, number]>(
+              (acc, box) => [
+                Math.min(acc[0], Math.min(sx * box[0], sx * box[2])),
+                Math.min(acc[1], Math.min(sy * box[1], sy * box[3])),
+                Math.max(acc[2], Math.max(sx * box[0], sx * box[2])),
+                Math.max(acc[3], Math.max(sy * box[1], sy * box[3])),
+              ],
+              [Infinity, Infinity, -Infinity, -Infinity],
+            )
+          : null;
+        break;
+      }
       case 'frame': {
         const cove = coveProfile(r.widthMm, r.depthMm);
         byEdge(cove.breaks.map((s) => r.insetMm + s));
@@ -455,6 +561,8 @@ function fieldOf(r: ResolvedRelief, leaf: ReliefLeaf, plain: boolean): Field {
     xs: uniqueSorted(xs, x0, x1),
     ys: uniqueSorted(ys, y0, y1),
     depthAt: (x, y) => Math.max(edge.at(fromEdge(x, y)), feature(x, y)),
+    zones,
+    glass,
   };
 }
 
@@ -471,6 +579,11 @@ export type ReliefMesh = {
   drawn: ReliefKind;
   /** Почему рисунок не встал на этот фасад — словами; `null` — встал. */
   refusal: string | null;
+  /**
+   * Стекло рамы витрины: габарит окон (мм от центра фасада, X, Y). Сетка
+   * в окнах пустая — плиты там нет; стекло ставит сцена по этому габариту.
+   */
+  glassMm: [number, number, number, number] | null;
 };
 
 /**
@@ -482,47 +595,230 @@ export type ReliefMesh = {
  *
  * Не помещается рисунок на этот фасад (`reliefLeafRefusal`) — фасад
  * строится гладким, причина лежит в `refusal`.
+ *
+ * У рамы витрины лицо в окнах ложится на тыл: такие треугольники в сетку не
+ * идут вовсе, а тыл повторяет лицо — окно сквозное, кромка замкнута.
  */
-export function reliefMesh(relief: FrontRelief, leaf: ReliefLeaf): ReliefMesh {
+export function reliefMesh(relief: FrontRelief, leaf: ReliefLeaf, orient?: ReliefOrient): ReliefMesh {
   const r = resolveRelief(relief);
   const refusal = reliefLeafRefusal(relief, leaf);
   const plain = refusal !== null;
-  const field = fieldOf(r, leaf, plain);
+  const field = fieldOf(r, leaf, plain, orient);
   const { xs, ys } = field;
   const T = leaf.thicknessMm;
   const top = T / 2;
-  const nx = xs.length;
-  const ny = ys.length;
+  /* Глубже тыла не бывает: окно витрины — это лицо, легшее на тыл. */
+  const depthOf = (x: number, y: number) => Math.min(T, field.depthAt(x, y));
 
-  /* Высоты узлов лица. */
-  const z = new Float64Array(nx * ny);
-  for (let j = 0; j < ny; j += 1) {
-    for (let i = 0; i < nx; i += 1) z[j * nx + i] = top - field.depthAt(xs[i], ys[j]);
+  /*
+   * ── ячейки: сетка изломов; в кривых зонах — мельче ──
+   *
+   * Прямые изломы лежат на линиях сетки точно. Дугу, скруглённый угол и
+   * наклонную канавку на прямоугольных линиях не уложить — там ячейка
+   * делится пополам, пока не станет мельче шага зоны, и только там, где
+   * поле этой зоны действительно меняется. У типов A–F зон нет: ячейки —
+   * ровно ячейки сетки, сетка та же до байта.
+   */
+  type Cell = [number, number, number, number];
+  let cells: Cell[] = [];
+  /* Во сколько раз крупнее шаг зон, чем просит рисунок: растёт, если сетка не влезла в бюджет. */
+  let coarse = 1;
+  const stepAt = (x0: number, y0: number, x1: number, y1: number) => {
+    let h = Infinity;
+    const cx = (x0 + x1) / 2;
+    const cy = (y0 + y1) / 2;
+    const radius = Math.hypot(x1 - x0, y1 - y0) / 2;
+    for (const zone of field.zones) {
+      if (zone.h * coarse >= h) continue;
+      if (x1 < zone.box[0] || x0 > zone.box[2] || y1 < zone.box[1] || y0 > zone.box[3]) continue;
+      if (zone.hits(cx, cy, radius)) h = zone.h * coarse;
+    }
+    return h;
+  };
+  /* Зоны с точными линиями внутри фигуры (`CurvedZone.lines`): режут ячейку, целиком лежащую в фигуре. */
+  const lined = field.zones.filter((zone) => zone.lines && (zone.lines.xs.length > 0 || zone.lines.ys.length > 0));
+  /** Значения списка строго между `from` и `to`. */
+  const inside = (list: number[], from: number, to: number, out: number[]) => {
+    let lo = 0;
+    let hi = list.length;
+    while (lo < hi) {
+      const m = (lo + hi) >> 1;
+      if (list[m] <= from + 1e-4) lo = m + 1;
+      else hi = m;
+    }
+    for (let k = lo; k < list.length && list[k] < to - 1e-4; k += 1) out.push(list[k]);
+  };
+  const linesIn = (x0: number, y0: number, x1: number, y1: number): [number[], number[]] | null => {
+    const cx = (x0 + x1) / 2;
+    const cy = (y0 + y1) / 2;
+    const radius = Math.hypot(x1 - x0, y1 - y0) / 2;
+    const lx: number[] = [];
+    const ly: number[] = [];
+    for (const zone of lined) {
+      if (x1 < zone.box[0] || x0 > zone.box[2] || y1 < zone.box[1] || y0 > zone.box[3]) continue;
+      if (!zone.lines!.inside(cx, cy, radius)) continue;
+      inside(zone.lines!.xs, x0, x1, lx);
+      inside(zone.lines!.ys, y0, y1, ly);
+    }
+    if (lx.length === 0 && ly.length === 0) return null;
+    return [uniqueSorted(lx, x0, x1), uniqueSorted(ly, y0, y1)];
+  };
+  const split = (x0: number, y0: number, x1: number, y1: number, level: number): void => {
+    const local = lined.length === 0 || level > 24 ? null : linesIn(x0, y0, x1, y1);
+    if (local) {
+      const [gx, gy] = local;
+      for (let j = 0; j + 1 < gy.length; j += 1) {
+        for (let i = 0; i + 1 < gx.length; i += 1) split(gx[i], gy[j], gx[i + 1], gy[j + 1], level + 1);
+      }
+      return;
+    }
+    const h = field.zones.length === 0 ? Infinity : stepAt(x0, y0, x1, y1);
+    const wide = x1 - x0 > h;
+    const tall = y1 - y0 > h;
+    if (level > 24 || (!wide && !tall)) {
+      cells.push([x0, y0, x1, y1]);
+      return;
+    }
+    const mx = (x0 + x1) / 2;
+    const my = (y0 + y1) / 2;
+    if (wide && tall) {
+      split(x0, y0, mx, my, level + 1);
+      split(mx, y0, x1, my, level + 1);
+      split(x0, my, mx, y1, level + 1);
+      split(mx, my, x1, y1, level + 1);
+    } else if (wide) {
+      split(x0, y0, mx, y1, level + 1);
+      split(mx, y0, x1, y1, level + 1);
+    } else {
+      split(x0, y0, x1, my, level + 1);
+      split(x0, my, x1, y1, level + 1);
+    }
+  };
+  const cellsOf = () => {
+    cells = [];
+    for (let j = 0; j + 1 < ys.length; j += 1) {
+      for (let i = 0; i + 1 < xs.length; i += 1) split(xs[i], ys[j], xs[i + 1], ys[j + 1], 0);
+    }
+  };
+  cellsOf();
+  /*
+   * БЮДЖЕТ СЕТКИ. Густой орнамент на высокой двери просил бы сотни тысяч
+   * ячеек — секунды счёта в главном потоке и планшет, который не тянет
+   * сцену. Не влезло — шаг кривых зон растёт (ячеек меньше как квадрат
+   * шага), рисунок тот же, мельче детали — грубее.
+   */
+  for (let round = 0; round < 4 && field.zones.length > 0 && cells.length > RELIEF_CELL_BUDGET; round += 1) {
+    coarse *= Math.min(3, Math.max(1.3, Math.sqrt(cells.length / RELIEF_CELL_BUDGET)));
+    cellsOf();
   }
-  const node = (i: number, j: number): [number, number, number] => [xs[i], ys[j], z[j * nx + i]];
 
-  /* ── лицо: треугольники ячеек, диагональ — по данным ── */
+  /* ── узлы лица: один на точку, высота — по полю ── */
+  const keyOf = (v: number) => Math.round(v * 1e4);
+  const vx: number[] = [];
+  const vy: number[] = [];
+  const vz: number[] = [];
+  const index = new Map<number, number>();
+  /* Узлы по линиям: на какой горизонтали и вертикали что лежит — для стыков без Т. */
+  const rows = new Map<number, number[]>();
+  const cols = new Map<number, number[]>();
+  const vertex = (x: number, y: number): number => {
+    /* Ключ числом: x и y в десятитысячных мм, со сдвигом в положительные. */
+    const key = (keyOf(x) + 2e7) * 4e7 + (keyOf(y) + 2e7);
+    let n = index.get(key);
+    if (n === undefined) {
+      n = vx.length;
+      index.set(key, n);
+      vx.push(x);
+      vy.push(y);
+      vz.push(top - depthOf(x, y));
+      const row = rows.get(keyOf(y));
+      if (row) row.push(x);
+      else rows.set(keyOf(y), [x]);
+      const col = cols.get(keyOf(x));
+      if (col) col.push(y);
+      else cols.set(keyOf(x), [y]);
+    }
+    return n;
+  };
+  for (const [x0, y0, x1, y1] of cells) {
+    vertex(x0, y0);
+    vertex(x1, y0);
+    vertex(x1, y1);
+    vertex(x0, y1);
+  }
+  rows.forEach((list) => list.sort((a, b) => a - b));
+  cols.forEach((list) => list.sort((a, b) => a - b));
+  /** Точки строго между `from` и `to` на линии — по возрастанию. */
+  const between = (list: number[] | undefined, from: number, to: number): number[] => {
+    if (!list) return [];
+    let lo = 0;
+    let hi = list.length;
+    while (lo < hi) {
+      const m = (lo + hi) >> 1;
+      if (list[m] <= from + 1e-6) lo = m + 1;
+      else hi = m;
+    }
+    const out: number[] = [];
+    for (let k = lo; k < list.length && list[k] < to - 1e-6; k += 1) out.push(list[k]);
+    return out;
+  };
+  const point = (n: number): [number, number, number] => [vx[n], vy[n], vz[n]];
+
+  /* ── лицо: два треугольника на ячейку (диагональ по данным) или веер, если у соседа узлы на стороне ── */
   type Tri = { p: [number, number, number][]; nodes: number[] };
   const face: Tri[] = [];
-  for (let j = 0; j + 1 < ny; j += 1) {
-    for (let i = 0; i + 1 < nx; i += 1) {
-      const a = j * nx + i;
-      const b = j * nx + i + 1;
-      const c = (j + 1) * nx + i + 1;
-      const d = (j + 1) * nx + i;
-      const mid = top - field.depthAt((xs[i] + xs[i + 1]) / 2, (ys[j] + ys[j + 1]) / 2);
-      const viaAC = Math.abs((z[a] + z[c]) / 2 - mid);
-      const viaBD = Math.abs((z[b] + z[d]) / 2 - mid);
-      const pa = node(i, j);
-      const pb = node(i + 1, j);
-      const pc = node(i + 1, j + 1);
-      const pd = node(i, j + 1);
+  for (const [x0, y0, x1, y1] of cells) {
+    const a = vertex(x0, y0);
+    const b = vertex(x1, y0);
+    const c = vertex(x1, y1);
+    const d = vertex(x0, y1);
+    const bottom = between(rows.get(keyOf(y0)), x0, x1);
+    const right = between(cols.get(keyOf(x1)), y0, y1);
+    const upper = between(rows.get(keyOf(y1)), x0, x1).reverse();
+    const left = between(cols.get(keyOf(x0)), y0, y1).reverse();
+    const mid = top - depthOf((x0 + x1) / 2, (y0 + y1) / 2);
+    if (bottom.length + right.length + upper.length + left.length === 0) {
+      const viaAC = Math.abs((vz[a] + vz[c]) / 2 - mid);
+      const viaBD = Math.abs((vz[b] + vz[d]) / 2 - mid);
       if (viaAC <= viaBD) {
-        face.push({ p: [pa, pb, pc], nodes: [a, b, c] }, { p: [pa, pc, pd], nodes: [a, c, d] });
+        face.push({ p: [point(a), point(b), point(c)], nodes: [a, b, c] }, { p: [point(a), point(c), point(d)], nodes: [a, c, d] });
       } else {
-        face.push({ p: [pa, pb, pd], nodes: [a, b, d] }, { p: [pb, pc, pd], nodes: [b, c, d] });
+        face.push({ p: [point(a), point(b), point(d)], nodes: [a, b, d] }, { p: [point(b), point(c), point(d)], nodes: [b, c, d] });
       }
+      continue;
     }
+    /* Веер из середины ячейки по всем узлам её сторон — против часовой при взгляде с +Z. */
+    const ring = [
+      a,
+      ...bottom.map((x) => vertex(x, y0)),
+      b,
+      ...right.map((y) => vertex(x1, y)),
+      c,
+      ...upper.map((x) => vertex(x, y1)),
+      d,
+      ...left.map((y) => vertex(x0, y)),
+    ];
+    const center = vx.length;
+    vx.push((x0 + x1) / 2);
+    vy.push((y0 + y1) / 2);
+    vz.push(mid);
+    for (let k = 0; k < ring.length; k += 1) {
+      const p = ring[k];
+      const q = ring[(k + 1) % ring.length];
+      face.push({ p: [point(center), point(p), point(q)], nodes: [center, p, q] });
+    }
+  }
+
+  /*
+   * ОКНО ВИТРИНЫ: треугольник, все вершины которого легли на тыл, — это
+   * не плита, а дыра под стекло. В сетку он не идёт, и тыл под ним тоже.
+   */
+  const back = -T / 2;
+  const floor = (t: Tri) => t.p.every((v) => v[2] <= back + 1e-9);
+  if (field.glass) {
+    const kept = face.filter((t) => !floor(t));
+    face.length = 0;
+    face.push(...kept);
   }
 
   /* Нормаль треугольника лица и её площадь (вес). */
@@ -531,10 +827,10 @@ export function reliefMesh(relief: FrontRelief, leaf: ReliefLeaf): ReliefMesh {
     const ux = q[0] - p[0];
     const uy = q[1] - p[1];
     const uz = q[2] - p[2];
-    const vx = s[0] - p[0];
-    const vy = s[1] - p[1];
-    const vz = s[2] - p[2];
-    return [uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx];
+    const wx = s[0] - p[0];
+    const wy = s[1] - p[1];
+    const wz = s[2] - p[2];
+    return [uy * wz - uz * wy, uz * wx - ux * wz, ux * wy - uy * wx];
   };
   const unit = (v: [number, number, number]): [number, number, number] => {
     const l = Math.hypot(v[0], v[1], v[2]) || 1;
@@ -543,7 +839,7 @@ export function reliefMesh(relief: FrontRelief, leaf: ReliefLeaf): ReliefMesh {
   const raw = face.map(faceNormal);
   const dirs = raw.map(unit);
   /* Какие треугольники сходятся в узле — для гладких нормалей внутри дуги. */
-  const incident: number[][] = Array.from({ length: nx * ny }, () => []);
+  const incident: number[][] = Array.from({ length: vx.length }, () => []);
   face.forEach((t, k) => t.nodes.forEach((n) => incident[n].push(k)));
   const crease = Math.cos((CREASE_DEG * Math.PI) / 180);
 
@@ -575,7 +871,6 @@ export function reliefMesh(relief: FrontRelief, leaf: ReliefLeaf): ReliefMesh {
   });
 
   /* ── торцы: от кромки лица до тыла, по узлам лица — без Т-стыков ── */
-  const back = -T / 2;
   const quad = (
     a: [number, number, number],
     b: [number, number, number],
@@ -590,41 +885,75 @@ export function reliefMesh(relief: FrontRelief, leaf: ReliefLeaf): ReliefMesh {
     push(c, n);
     push(d, n);
   };
-  for (let i = 0; i + 1 < nx; i += 1) {
-    /* низ: смотрит в −Y */
-    const l = node(i, 0);
-    const rr = node(i + 1, 0);
-    quad([l[0], l[1], back], [rr[0], rr[1], back], rr, l, [0, -1, 0]);
-    /* верх: смотрит в +Y */
-    const tl = node(i, ny - 1);
-    const tr = node(i + 1, ny - 1);
-    quad([tr[0], tr[1], back], [tl[0], tl[1], back], tl, tr, [0, 1, 0]);
+  /* Узлы контура фасада — все, что легли на его стороны, по возрастанию. */
+  const xLo = xs[0];
+  const xHi = xs[xs.length - 1];
+  const yLo = ys[0];
+  const yHi = ys[ys.length - 1];
+  const along = (list: number[] | undefined) => list ?? [];
+  const lowRow = along(rows.get(keyOf(yLo)));
+  const highRow = along(rows.get(keyOf(yHi)));
+  const leftCol = along(cols.get(keyOf(xLo)));
+  const rightCol = along(cols.get(keyOf(xHi)));
+  const at = (x: number, y: number) => point(vertex(x, y));
+  /* Порядок тот же, что у прежней сетки: низ и верх парами, потом лево и право. */
+  for (let i = 0; i + 1 < Math.max(lowRow.length, highRow.length); i += 1) {
+    if (i + 1 < lowRow.length) {
+      /* низ: смотрит в −Y */
+      const l = at(lowRow[i], yLo);
+      const rr = at(lowRow[i + 1], yLo);
+      quad([l[0], l[1], back], [rr[0], rr[1], back], rr, l, [0, -1, 0]);
+    }
+    if (i + 1 < highRow.length) {
+      /* верх: смотрит в +Y */
+      const tl = at(highRow[i], yHi);
+      const tr = at(highRow[i + 1], yHi);
+      quad([tr[0], tr[1], back], [tl[0], tl[1], back], tl, tr, [0, 1, 0]);
+    }
   }
-  for (let j = 0; j + 1 < ny; j += 1) {
-    /* левый: смотрит в −X */
-    const lb = node(0, j);
-    const lt = node(0, j + 1);
-    quad([lt[0], lt[1], back], [lb[0], lb[1], back], lb, lt, [-1, 0, 0]);
-    /* правый: смотрит в +X */
-    const rb = node(nx - 1, j);
-    const rt = node(nx - 1, j + 1);
-    quad([rb[0], rb[1], back], [rt[0], rt[1], back], rt, rb, [1, 0, 0]);
+  for (let j = 0; j + 1 < Math.max(leftCol.length, rightCol.length); j += 1) {
+    if (j + 1 < leftCol.length) {
+      /* левый: смотрит в −X */
+      const lb = at(xLo, leftCol[j]);
+      const lt = at(xLo, leftCol[j + 1]);
+      quad([lt[0], lt[1], back], [lb[0], lb[1], back], lb, lt, [-1, 0, 0]);
+    }
+    if (j + 1 < rightCol.length) {
+      /* правый: смотрит в +X */
+      const rb = at(xHi, rightCol[j]);
+      const rt = at(xHi, rightCol[j + 1]);
+      quad([rb[0], rb[1], back], [rt[0], rt[1], back], rt, rb, [1, 0, 0]);
+    }
   }
 
-  /* ── тыл: веер из центра по всем узлам контура — тоже без Т-стыков ── */
-  const ring: [number, number][] = [];
-  for (let i = 0; i < nx; i += 1) ring.push([xs[i], ys[0]]);
-  for (let j = 1; j < ny; j += 1) ring.push([xs[nx - 1], ys[j]]);
-  for (let i = nx - 2; i >= 0; i -= 1) ring.push([xs[i], ys[ny - 1]]);
-  for (let j = ny - 2; j >= 1; j -= 1) ring.push([xs[0], ys[j]]);
-  const center: [number, number, number] = [0, 0, back];
-  for (let k = 0; k < ring.length; k += 1) {
-    const [ax, ay] = ring[k];
-    const [bx, by] = ring[(k + 1) % ring.length];
-    /* Контур обходится против часовой при взгляде с +Z; тыл смотрит в −Z — обход обратный. */
-    push(center, [0, 0, -1]);
-    push([bx, by, back], [0, 0, -1]);
-    push([ax, ay, back], [0, 0, -1]);
+  if (field.glass) {
+    /*
+     * ── тыл рамы витрины: те же треугольники, что у лица, но на тыле ──
+     * Окна в тыле там же, где в лице, и кромка окна замкнута: нижнее ребро
+     * стенки окна — ребро треугольника тыла под ней.
+     */
+    for (const t of face) {
+      const [p, q, s] = t.p;
+      push([p[0], p[1], back], [0, 0, -1]);
+      push([s[0], s[1], back], [0, 0, -1]);
+      push([q[0], q[1], back], [0, 0, -1]);
+    }
+  } else {
+    /* ── тыл: веер из центра по всем узлам контура — тоже без Т-стыков ── */
+    const ring: [number, number][] = [];
+    for (const x of lowRow) ring.push([x, yLo]);
+    for (const y of rightCol.slice(1)) ring.push([xHi, y]);
+    for (const x of highRow.slice(0, -1).reverse()) ring.push([x, yHi]);
+    for (const y of leftCol.slice(1, -1).reverse()) ring.push([xLo, y]);
+    const center: [number, number, number] = [0, 0, back];
+    for (let k = 0; k < ring.length; k += 1) {
+      const [ax, ay] = ring[k];
+      const [bx, by] = ring[(k + 1) % ring.length];
+      /* Контур обходится против часовой при взгляде с +Z; тыл смотрит в −Z — обход обратный. */
+      push(center, [0, 0, -1]);
+      push([bx, by, back], [0, 0, -1]);
+      push([ax, ay, back], [0, 0, -1]);
+    }
   }
 
   return {
@@ -634,13 +963,32 @@ export function reliefMesh(relief: FrontRelief, leaf: ReliefLeaf): ReliefMesh {
     triangles: positions.length / 9,
     drawn: plain ? 'slab' : r.kind,
     refusal,
+    glassMm: field.glass,
   };
 }
 
-/** Ключ сетки фасада: рисунок и габарит с точностью до десятой миллиметра. */
-export function reliefMeshKey(relief: FrontRelief, leaf: ReliefLeaf): string {
+/**
+ * Ключ сетки фасада: рисунок и габарит с точностью до десятой миллиметра;
+ * у рисунка с ручкой — ещё и разворот (зеркальная ручка — другая сетка).
+ */
+export function reliefMeshKey(relief: FrontRelief, leaf: ReliefLeaf, orient?: ReliefOrient): string {
   const r1 = (v: number) => Math.round(v * 10) / 10;
-  return `${reliefKey(relief)}|${r1(leaf.widthMm)}x${r1(leaf.heightMm)}x${r1(leaf.thicknessMm)}`;
+  const turned = relief.kind === 'design' && relief.design?.grip ? `|${orient?.flipX ? 'fx' : ''}${orient?.flipY ? 'fy' : ''}` : '';
+  return `${reliefKey(relief)}|${r1(leaf.widthMm)}x${r1(leaf.heightMm)}x${r1(leaf.thicknessMm)}${turned === '|' ? '' : turned}`;
+}
+
+/**
+ * КАК РАЗВЕРНУТЬ РИСУНОК С РУЧКОЙ НА ЭТОЙ СТВОРКЕ. Рисунок снят для нижнего
+ * шкафа с петлями слева: ручка сверху, угловая — у правого края. Петли
+ * справа — угловая ручка уходит влево; верхний ряд и подъёмник — ручка
+ * вниз (за неё берутся снизу). У рисунка без ручки разворота нет.
+ */
+export function gripOrient(relief: FrontRelief | undefined, hinge: string, upper: boolean): ReliefOrient | undefined {
+  const grip = relief?.kind === 'design' ? relief.design?.grip : undefined;
+  if (!grip) return undefined;
+  const flipX = grip === 'corner' && hinge === 'right';
+  const flipY = upper || hinge === 'lift';
+  return flipX || flipY ? { ...(flipX ? { flipX } : {}), ...(flipY ? { flipY } : {}) } : undefined;
 }
 
 /* ─────────────────────────  поле глубины и затенение  ───────────────────────── */
@@ -650,9 +998,33 @@ export function reliefMeshKey(relief: FrontRelief, leaf: ReliefLeaf): string {
  * сетка. Координаты — мм от центра фасада, Y вверх. Рисунок не встал на
  * этот фасад — поле гладкого (только кромка), как у сетки.
  */
-export function reliefDepthAt(relief: FrontRelief, leaf: ReliefLeaf): (xMm: number, yMm: number) => number {
+/** Стекло в раме витрины заходит под раму на четверть — VISUAL_ONLY, четверти цеха нет. */
+export const GLASS_REBATE_MM = 6;
+
+/**
+ * СТЕКЛО РАМЫ ВИТРИНЫ НА ЭТОМ ФАСАДЕ: прямоугольник (мм от центра фасада)
+ * — габарит окон плюс четверть, внутри фасада. У рисунка без окон и у
+ * рамы, которая на фасад не встала, стекла нет (`null`).
+ */
+export function reliefGlassMm(relief: FrontRelief | undefined, leaf: ReliefLeaf, orient?: ReliefOrient): [number, number, number, number] | null {
+  if (!relief || relief.kind !== 'design' || !designHasCut(relief.design)) return null;
+  if (reliefLeafRefusal(relief, leaf) !== null) return null;
+  const glass = fieldOf(resolveRelief(relief), leaf, false, orient).glass;
+  if (!glass) return null;
+  const limitX = leaf.widthMm / 2 - 10;
+  const limitY = leaf.heightMm / 2 - 10;
+  return [
+    Math.max(-limitX, glass[0] - GLASS_REBATE_MM),
+    Math.max(-limitY, glass[1] - GLASS_REBATE_MM),
+    Math.min(limitX, glass[2] + GLASS_REBATE_MM),
+    Math.min(limitY, glass[3] + GLASS_REBATE_MM),
+  ];
+}
+
+export function reliefDepthAt(relief: FrontRelief, leaf: ReliefLeaf, orient?: ReliefOrient): (xMm: number, yMm: number) => number {
   const plain = reliefLeafRefusal(relief, leaf) !== null;
-  return fieldOf(resolveRelief(relief), leaf, plain).depthAt;
+  const depthAt = fieldOf(resolveRelief(relief), leaf, plain, orient).depthAt;
+  return (x, y) => Math.min(leaf.thicknessMm, depthAt(x, y));
 }
 
 /** Свет карточки — сверху слева, как у рисунков фрезеровки (`RELIEF_LIGHT`). */
@@ -661,6 +1033,9 @@ const SHADE_LIGHT = (() => {
   const l = Math.hypot(v[0], v[1], v[2]);
   return [v[0] / l, v[1] / l, v[2] / l];
 })();
+
+/** Стекло в окне рамы витрины на карточке: холодный серый — видно, что это не лицо фасада. */
+const SHADE_GLASS = [150, 168, 176];
 
 /**
  * КАРТИНКА РИСУНКА — серым светом по полю глубины, без three и без фото.
@@ -676,8 +1051,19 @@ export function reliefShade(relief: FrontRelief, leaf: ReliefLeaf, width: number
   const scale = Math.min((width * 0.92) / leaf.widthMm, (height * 0.92) / leaf.heightMm);
   const ox = width / 2;
   const oy = height / 2;
-  const step = 0.5 / scale;
   const rgb = /^#[0-9a-f]{6}$/i.test(tint) ? [1, 3, 5].map((i) => parseInt(tint.slice(i, i + 2), 16)) : [217, 212, 203];
+  /*
+   * Глубина — одна выборка на пиксель (с рамкой в пиксель), наклон — по
+   * соседним пикселям: у рисунка модели десятки слоёв, и пять выборок на
+   * пиксель делали карточку списка медленной.
+   */
+  const gw = width + 2;
+  const grid = new Float64Array(gw * (height + 2));
+  for (let gy = 0; gy < height + 2; gy += 1) {
+    const yMm = -(gy - 0.5 - oy) / scale;
+    for (let gx = 0; gx < gw; gx += 1) grid[gy * gw + gx] = depthAt((gx - 0.5 - ox) / scale, yMm);
+  }
+  const step = 1 / scale;
   for (let py = 0; py < height; py += 1) {
     for (let px = 0; px < width; px += 1) {
       const xMm = (px + 0.5 - ox) / scale;
@@ -690,9 +1076,18 @@ export function reliefShade(relief: FrontRelief, leaf: ReliefLeaf, width: number
         out[k + 3] = 0;
         continue;
       }
+      const g = (py + 1) * gw + (px + 1);
+      /* Окно рамы витрины — насквозь, до тыла: там стекло, а не лицо фасада. */
+      if (grid[g] >= leaf.thicknessMm - 1e-6) {
+        out[k] = SHADE_GLASS[0];
+        out[k + 1] = SHADE_GLASS[1];
+        out[k + 2] = SHADE_GLASS[2];
+        out[k + 3] = 255;
+        continue;
+      }
       /* Нормаль по разностям глубины: z = −d, наклон — против роста глубины. */
-      const dx = (depthAt(xMm + step, yMm) - depthAt(xMm - step, yMm)) / (2 * step);
-      const dy = (depthAt(xMm, yMm + step) - depthAt(xMm, yMm - step)) / (2 * step);
+      const dx = (grid[g + 1] - grid[g - 1]) / (2 * step);
+      const dy = (grid[g - gw] - grid[g + gw]) / (2 * step);
       const n = [dx, dy, 1];
       const l = Math.hypot(n[0], n[1], n[2]);
       const lambert = Math.max(0, (n[0] * SHADE_LIGHT[0] + n[1] * SHADE_LIGHT[1] + n[2] * SHADE_LIGHT[2]) / l);
