@@ -63,7 +63,7 @@ function edgeCells(panel: CsvPanel): [string, string, string, string] {
 }
 
 /** Точка с запятой внутри значения сломала бы колонки. */
-function cell(value: string | number): string {
+export function cell(value: string | number): string {
   const text = String(value);
   return /[;"\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
@@ -150,8 +150,16 @@ export function panelsCsvFile(
   panels: CsvPanel[],
   encoding: CsvEncoding = 'windows-1251',
 ): { bytes: Uint8Array; type: string } {
-  const text = panelsToCsv(panels);
+  return csvFile(panelsToCsv(panels), encoding);
+}
 
+/**
+ * Текст CSV в байты: UTF-8 с BOM либо windows-1251. Одно место на выгрузку
+ * деталировки и карты раскроя (CUT-01, `cuttingCsvFile`); карта зовёт его
+ * сама — этот модуль её не тянет, иначе раскладка ехала бы в первую
+ * загрузку вместе с деталировкой.
+ */
+export function csvFile(text: string, encoding: CsvEncoding): { bytes: Uint8Array; type: string } {
   if (encoding === 'utf-8') {
     // BOM: без него Excel открывает UTF-8 как ANSI.
     const body = new TextEncoder().encode(text);

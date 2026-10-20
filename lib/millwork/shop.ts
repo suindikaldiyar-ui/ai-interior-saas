@@ -2,8 +2,10 @@ import {
   DEFAULT_CORNER_SIZES,
   DEFAULT_COUNTERTOP_STRIP,
   DEFAULT_PRODUCTION,
+  TYPICAL_CUTTING,
   type CornerSizes,
   type CountertopStrip,
+  type CuttingSettings,
   type ProductionOverrides,
   type ProductionSettings,
 } from '@/types/catalog';
@@ -55,6 +57,14 @@ export function cornerSizesOf(production?: ProductionSettings): CornerSizes {
  */
 export function countertopStripOf(production?: ProductionSettings): CountertopStrip {
   return production?.countertopStrip ?? DEFAULT_COUNTERTOP_STRIP;
+}
+
+/**
+ * Раскрой листов: свой у организации, иначе типовые пропил, обрезка и
+ * остаток с пометкой «не подтверждено цехом» и без форматов листов (CUT-01).
+ */
+export function cuttingOf(production?: ProductionSettings): CuttingSettings {
+  return production?.cutting ?? TYPICAL_CUTTING;
 }
 
 /**

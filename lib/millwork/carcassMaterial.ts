@@ -7,7 +7,7 @@ import {
   priceState,
   priceUnitOf,
 } from './materialCollection';
-import type { Module, Run } from '@/types/millwork';
+import type { Module, PanelStock, Run } from '@/types/millwork';
 import { MILLING_SCOPES, millingScopeOf, type MillingScope } from './milling';
 
 /**
@@ -282,6 +282,27 @@ export function carcassMaterialName(
   const link = carcassLink(unit, run, catalog, part);
   if (link.state === 'none' || link.state === 'missing') return base;
   return `${base} · ${link.item.name}`;
+}
+
+/**
+ * ЛИСТ КОРПУСА ДЛЯ КАРТЫ РАСКРОЯ (CUT-01).
+ *
+ * Декор — та же позиция, что называет деталь в деталировке
+ * (`carcassMaterialName`): подпись и лист читают один `carcassLink`. Нет
+ * позиции или она не разрешилась — декор не выбран, корпус — обычная плита
+ * цеха, ровно как в подписи.
+ */
+export function carcassStock(
+  unit: Module,
+  run: Pick<Run, 'carcass'>,
+  catalog: Map<string, CarcassItem>,
+  part?: CarcassPart,
+): PanelStock {
+  const link = carcassLink(unit, run, catalog, part);
+  return {
+    kind: 'ldsp',
+    decor: link.state === 'none' || link.state === 'missing' ? null : `item:${link.item.id}`,
+  };
 }
 
 /**

@@ -1,7 +1,7 @@
 import { moduleCarcassHeightMm, moduleDepthMm } from './fill';
 import { carcassHeightMm, shopOf } from './shop';
 import { millingLink, type MillingItem } from './milling';
-import { carcassMaterialName, type CarcassItem } from './carcassMaterial';
+import { carcassMaterialName, carcassStock, type CarcassItem } from './carcassMaterial';
 import { BUILT_IN_FRIDGE_FRONTS } from './modules';
 import { hasBottom } from './moduleVariants';
 import { hasFacade, moduleFronts } from './applianceFront';
@@ -11,6 +11,7 @@ import {
   frontKey,
   frontMaterialName,
   frontOf,
+  frontStock,
   hasEdgeBanding,
   isFramed,
   leafFrontOf,
@@ -23,7 +24,7 @@ import {
 import { moduleNumbers } from './positions';
 import { blindPartMm, cornerFillersOf, openFrontMm } from './corner';
 import { tailFillersOf } from './countertop';
-import type { Module, Panel, PanelTotals, Run } from '@/types/millwork';
+import type { Module, Panel, PanelStock, PanelTotals, Run } from '@/types/millwork';
 
 /**
  * ДЕТАЛИРОВКА — карта деталей для цеха.
@@ -164,6 +165,9 @@ export function edgeSides(panel: Pick<Panel, 'edges'>): EdgeSide[] {
   return out;
 }
 
+/** Лист задней стенки: ХДФ, декор в продукте не выбирается (CUT-01). */
+const BACK_STOCK: PanelStock = { kind: 'hdf', decor: null };
+
 /** Кромка: видимые торцы толстой, скрытые — тонкой. */
 function edgeType(production: ProductionSettings): Panel['edgeType'] {
   return production.visibleEdgeMm === 1 ? '1' : '2';
@@ -222,6 +226,13 @@ function modulePanels(
    */
   const shelfMaterial = carcassMaterialName(`ЛДСП ${t}`, unit, run, carcass ?? new Map(), 'shelves');
   const partitionMaterial = carcassMaterialName(`ЛДСП ${t}`, unit, run, carcass ?? new Map(), 'partitions');
+  /*
+   * ЛИСТ ДЕТАЛИ (CUT-01) — тем же разбором, что подпись выше: подпись и лист
+   * читают один `carcassLink`, и полка со своим декором уходит на свой лист.
+   */
+  const stock = carcassStock(unit, run, carcass ?? new Map());
+  const shelfStock = carcassStock(unit, run, carcass ?? new Map(), 'shelves');
+  const partitionStock = carcassStock(unit, run, carcass ?? new Map(), 'partitions');
   const panels: Panel[] = [];
 
   /*
@@ -248,6 +259,7 @@ function modulePanels(
     push({
       name: 'Доборная планка',
       material,
+      stock,
       thicknessMm: t,
       lengthMm: heightMm,
       widthMm: unit.widthMm,
@@ -281,6 +293,7 @@ function modulePanels(
       push({
         name,
         material: name === SHELF_PANEL_NAME ? shelfMaterial : material,
+        stock: name === SHELF_PANEL_NAME ? shelfStock : stock,
         thicknessMm: t,
         lengthMm,
         widthMm,
@@ -309,6 +322,7 @@ function modulePanels(
       push({
         name: legName(BACK_PANEL_NAME, leg),
         material: `ХДФ ${production.backMm}`,
+        stock: BACK_STOCK,
         thicknessMm: production.backMm,
         lengthMm: heightMm - backInsetL,
         widthMm,
@@ -324,6 +338,7 @@ function modulePanels(
   push({
     name: SIDE_PANEL_NAME,
     material,
+    stock,
     thicknessMm: t,
     lengthMm: heightMm,
     widthMm: depthMm,
@@ -342,6 +357,7 @@ function modulePanels(
     push({
       name: BOTTOM_PANEL_NAME,
       material,
+      stock,
       thicknessMm: t,
       lengthMm: inner,
       widthMm: depthMm,
@@ -358,6 +374,7 @@ function modulePanels(
         ? TOP_RAIL_PANEL_NAME
         : TOP_PANEL_NAME,
     material,
+    stock,
     thicknessMm: t,
     lengthMm: inner,
     widthMm: depthMm,
@@ -379,6 +396,7 @@ function modulePanels(
       push({
         name: SHELF_PANEL_NAME,
         material: shelfMaterial,
+        stock: shelfStock,
         thicknessMm: t,
         lengthMm: bay.shelves[0].lengthMm,
         widthMm: bay.shelves[0].depthMm,
@@ -394,6 +412,7 @@ function modulePanels(
       push({
         name: DIVIDER_PANEL_NAME,
         material: partitionMaterial,
+        stock: partitionStock,
         thicknessMm: t,
         lengthMm: bays.partitions[0].lengthMm,
         widthMm: bays.partitions[0].depthMm,
@@ -416,6 +435,7 @@ function modulePanels(
       push({
         name: HDIVIDER_PANEL_NAME,
         material: partitionMaterial,
+        stock: partitionStock,
         thicknessMm: t,
         lengthMm: bay.dividers[0].lengthMm,
         widthMm: bay.dividers[0].depthMm,
@@ -434,6 +454,7 @@ function modulePanels(
     push({
       name: SHELF_PANEL_NAME,
       material: shelfMaterial,
+      stock: shelfStock,
       thicknessMm: t,
       lengthMm: inner - allow.shelfSideMm,
       widthMm: depthMm - allow.shelfDepthMm,
@@ -448,6 +469,7 @@ function modulePanels(
     push({
       name: DIVIDER_PANEL_NAME,
       material: partitionMaterial,
+      stock: partitionStock,
       thicknessMm: t,
       lengthMm: heightMm - 2 * t,
       widthMm: depthMm - allow.dividerDepthMm,
@@ -463,6 +485,7 @@ function modulePanels(
   push({
     name: BACK_PANEL_NAME,
     material: `ХДФ ${production.backMm}`,
+    stock: BACK_STOCK,
     thicknessMm: production.backMm,
     lengthMm: heightMm - backInset,
     widthMm: unit.widthMm - backInset,
@@ -502,6 +525,8 @@ function modulePanels(
     const millingName = link && (link.state === 'resolved' || link.state === 'priceless') ? link.item.name : null;
     return {
       spec,
+      /* Лист фасада (CUT-01): вид плиты и декор — из того же фасада, что подпись. */
+      stock: frontStock(spec),
       edged: hasEdgeBanding(spec),
       material: millingName
         ? `${frontMaterialName(spec, production.frontMm)}, фрезеровка ${millingName}`
@@ -565,6 +590,7 @@ function modulePanels(
       push({
         name,
         material: look.material,
+        stock: look.stock,
         thicknessMm: production.frontMm,
         lengthMm,
         widthMm,
@@ -581,6 +607,7 @@ function modulePanels(
     push({
       name: `${name}: рама`,
       material: look.material,
+      stock: look.stock,
       thicknessMm: production.frontMm,
       lengthMm,
       widthMm,
@@ -594,6 +621,7 @@ function modulePanels(
     push({
       name: `${name}: вставка`,
       material: look.material,
+      stock: look.stock,
       thicknessMm: production.frontMm,
       // Вставка садится в паз обвязки: минус рама с двух сторон.
       lengthMm: Math.max(0, lengthMm - 2 * FRAME_WIDTH_MM),
@@ -794,6 +822,8 @@ export function buildPanels({ run, production = DEFAULT_PRODUCTION, milling, car
       number: `У.${cornerNo}`,
       name: lower ? CORNER_FILLER_PANEL_NAME : CORNER_UPPER_FILLER_PANEL_NAME,
       material: `Фасад ${shop.frontMm}`,
+      /* Лист — фасада соседа: панель обязана быть с ним одного цвета (CUT-01). */
+      stock: frontStock(spec),
       thicknessMm: shop.frontMm,
       /*
        * Высота — корпуса своего ряда: нижняя закрывает его от пола до
@@ -829,6 +859,11 @@ export function buildPanels({ run, production = DEFAULT_PRODUCTION, milling, car
       number: `Х.${tailNo}`,
       name: TAIL_FILLER_PANEL_NAME,
       material: `ЛДСП ${shop.carcassMm}`,
+      /*
+       * Декора в подписи нет — нет его и у листа (CUT-01): лист не говорит
+       * больше, чем деталировка, а карта называет это словами.
+       */
+      stock: { kind: 'ldsp', decor: null },
       thicknessMm: shop.carcassMm,
       lengthMm: carcassHeightMm(production),
       widthMm: Math.round(piece.toMm - piece.fromMm),
@@ -924,6 +959,14 @@ export function panelNumberOf(
 }
 
 /**
+ * КРОМКА ОДНОЙ ДЕТАЛИ, мм — одна формула на итоги листа, смету и карту
+ * раскроя (CUT-01): длинные торцы на длину, короткие на ширину.
+ */
+export function panelEdgeMm(panel: Pick<Panel, 'edges' | 'lengthMm' | 'widthMm'>): number {
+  return panel.edges.long * panel.lengthMm + panel.edges.short * panel.widthMm;
+}
+
+/**
  * Итоги внизу листа: площади и погонные метры кромки.
  *
  * По ним технолог сверяет заказ плиты, а сметчик — площади в смете.
@@ -944,8 +987,7 @@ export function panelTotals(panels: Panel[]): PanelTotals {
     else if (panel.material.startsWith('Фасад')) frontM2 += areaM2;
     else ldspM2 += areaM2;
 
-    const perimeterM =
-      (panel.edges.long * panel.lengthMm + panel.edges.short * panel.widthMm) / 1000;
+    const perimeterM = panelEdgeMm(panel) / 1000;
     const totalM = perimeterM * panel.qty;
 
     if (panel.edgeType === '0.4') edgeThinM += totalM;
@@ -1027,9 +1069,7 @@ export function panelMaterials(panels: Panel[]): PanelMaterials {
     else if (panel.name === SHELF_PANEL_NAME) shelfM2 += areaM2;
     else carcassM2 += areaM2;
 
-    edgeM +=
-      ((panel.edges.long * panel.lengthMm + panel.edges.short * panel.widthMm) / 1000) *
-      panel.qty;
+    edgeM += (panelEdgeMm(panel) / 1000) * panel.qty;
   }
 
   const r2 = (v: number) => Math.round(v * 100) / 100;

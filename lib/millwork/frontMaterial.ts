@@ -1,4 +1,4 @@
-import type { FrontBase, FrontConstruct, FrontFinish, FrontSpec } from '@/types/millwork';
+import type { FrontBase, FrontConstruct, FrontFinish, FrontSpec, PanelStock, StockKind } from '@/types/millwork';
 import { reliefKey, reliefKindDef } from './facadeRelief';
 
 /**
@@ -159,7 +159,39 @@ export function constructsFor(base: FrontBase): FrontConstruct[] {
  * достаточно: пропала строка кромки — пропали и метры, и деньги.
  */
 export function hasEdgeBanding(spec: FrontSpec): boolean {
-  return spec.base !== 'mdf_enamel' && spec.base !== 'mdf_film';
+  return !coatedAfterCut(spec);
+}
+
+/**
+ * ПОКРЫТИЕ — ПОСЛЕ РАСКРОЯ: эмаль и плёнка (CUT-01).
+ *
+ * Одно правило на два вопроса: у такого фасада нет кромки
+ * (`hasEdgeBanding`) — покрытие закрывает торцы, — и режут его из МДФ без
+ * покрытия (`frontStock`): цвет RAL и плёнка листы не делят.
+ */
+export function coatedAfterCut(spec: FrontSpec): boolean {
+  return spec.base === 'mdf_enamel' || spec.base === 'mdf_film';
+}
+
+/**
+ * ИЗ КАКОГО ЛИСТА РЕЖЕТСЯ ФАСАД (CUT-01) — одна функция на деталировку и
+ * карту раскроя.
+ *
+ * Эмаль и плёнка — покрытие после раскроя (`coatedAfterCut`): лист — МДФ без
+ * покрытия. ЛДСП, МДФ-панель (акрил) и шпон приходят с лицом: лист делит
+ * декор — позиция каталога, без неё цвет. Нет ни позиции, ни цвета — декор
+ * не выбран, и это говорится словами, а не подставляется.
+ *
+ * ПОВЕРХНОСТЬ ДЕЛИТ ЛИСТ ТОЛЬКО У МДФ-ПАНЕЛИ: High Gloss и Touch Sense одного
+ * цвета — разные плиты (`FrontSpec.surface`). У ЛДСП плиту называет артикул
+ * (EGGER-H1113-ST10 — структура ST10 уже в нём), а «текстура декора» или
+ * «мат» — подсказка сцене, не другой лист; лак шпона ложится после раскроя.
+ */
+export function frontStock(spec: FrontSpec): PanelStock {
+  if (coatedAfterCut(spec)) return { kind: 'mdf', decor: 'raw' };
+  const kind: StockKind = spec.base === 'ldsp' ? 'ldsp' : spec.base === 'acrylic' ? 'mdf' : 'veneer';
+  const decor = spec.itemId ? `item:${spec.itemId}` : spec.colorHex ? `color:${spec.colorHex.toLowerCase()}` : null;
+  return spec.surface && spec.base === 'acrylic' ? { kind, decor, surface: spec.surface } : { kind, decor };
 }
 
 /**

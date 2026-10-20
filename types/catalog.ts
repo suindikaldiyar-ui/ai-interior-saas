@@ -432,7 +432,114 @@ export type ProductionSettings = {
    * пометкой «не подтверждено цехом».
    */
   countertopStrip?: CountertopStrip;
+  /**
+   * РАСКРОЙ ЛИСТОВ — НАСТРОЙКА ЦЕХА (CUT-01).
+   *
+   * Пропил, обрезка кромки листа, полезный остаток и форматы листов у
+   * каждого цеха свои: зашитые в код, они дали бы карту, по которой пила
+   * не пройдёт. Пусто — типовые пропил, обрезка и остаток с пометкой «не
+   * подтверждено цехом» и НИ ОДНОГО формата: лист выбирает человек.
+   */
+  cutting?: CuttingSettings;
 };
+
+/**
+ * ФОРМАТ ЛИСТА ЦЕХА (CUT-01).
+ *
+ * `stock` — к чему он относится: вид плиты и толщина («ldsp:16») либо одна
+ * группа листа целиком, с декором («ldsp:16:item:…»). Длина — вдоль неё
+ * идёт текстура декора, и она не меньше ширины: «1830 × 2750» читается как
+ * 2750 × 1830.
+ */
+export type SheetFormat = { stock: string; lengthMm: number; widthMm: number };
+
+export type CuttingSettings = {
+  /** Ширина пропила пилы, мм (десятые доли). */
+  kerfMm: number;
+  /** Обрезка кромки листа с каждой стороны, мм, вместе с пропилом обрезного реза. */
+  trimMm: number;
+  /** Остаток, у которого обе стороны не короче, — полезный; меньше — отход. */
+  minRemnantMm: number;
+  /** Деталь, направление которой не задаёт текстура, можно повернуть на 90°. */
+  rotate: boolean;
+  sheets: SheetFormat[];
+  /**
+   * ТЕКСТУРА ГРУППЫ ЛИСТА, НАЗВАННАЯ ЧЕЛОВЕКОМ: `grain` — учитывать,
+   * `plain` — однотонный, детали можно поворачивать. Нет записи — по
+   * каталогу и по виду плиты (`cutting.ts`, `groupGrain`).
+   */
+  texture: Record<string, 'grain' | 'plain'>;
+  /** Цех подтвердил пропил, обрезку и остаток. Нет — «не подтверждено цехом», выпуск заперт. */
+  confirmed: boolean;
+};
+
+/**
+ * Типовые пропил 4, обрезка 10, остаток от 300 мм — с пометкой «не
+ * подтверждено цехом», пока цех не поставит галочку. Форматов листов среди
+ * типовых нет: лист выбирает человек, и до выбора детали этой плиты не
+ * раскладываются.
+ */
+export const TYPICAL_CUTTING: CuttingSettings = {
+  kerfMm: 4,
+  trimMm: 10,
+  minRemnantMm: 300,
+  rotate: true,
+  sheets: [],
+  texture: {},
+  confirmed: false,
+};
+
+/** Границы — физика пилы и плиты, а не «правильные» значения чужого цеха. */
+export const KERF_RANGE_MM = [1, 10] as const;
+export const TRIM_RANGE_MM = [0, 50] as const;
+export const MIN_REMNANT_RANGE_MM = [50, 2000] as const;
+export const SHEET_SIDE_RANGE_MM = [300, 5000] as const;
+
+/** Ключ группы листа: вид плиты, толщина и (необязательно) декор. */
+const SHEET_STOCK_KEY = /^(ldsp|mdf|hdf|veneer):\d{1,2}(:[^\s:][^\s]{0,200})?$/;
+
+/** Настройки раскроя организации с подстановкой типовых. Мусор не принимается. */
+export function cuttingSettings(raw: unknown): CuttingSettings {
+  const value = (raw ?? {}) as Partial<CuttingSettings> & { sheets?: unknown; texture?: unknown };
+  /* Десятые доли миллиметра: пропил 4.4 — обычное число. */
+  const tenth = (given: unknown, fallback: number, [min, max]: readonly [number, number]) => {
+    const n = Number(given);
+    return Number.isFinite(n) && n >= min && n <= max ? Math.round(n * 10) / 10 : fallback;
+  };
+  const whole = (given: unknown, [min, max]: readonly [number, number]) => {
+    const n = Number(given);
+    return Number.isFinite(n) && n >= min && n <= max ? Math.round(n) : null;
+  };
+
+  const sheets: SheetFormat[] = [];
+  const seen = new Set<string>();
+  for (const entry of Array.isArray(value.sheets) ? value.sheets.slice(0, 200) : []) {
+    const format = (entry ?? {}) as Partial<SheetFormat>;
+    const stock = typeof format.stock === 'string' ? format.stock.trim() : '';
+    const a = whole(format.lengthMm, SHEET_SIDE_RANGE_MM);
+    const b = whole(format.widthMm, SHEET_SIDE_RANGE_MM);
+    if (!SHEET_STOCK_KEY.test(stock) || a === null || b === null || seen.has(stock)) continue;
+    seen.add(stock);
+    sheets.push({ stock, lengthMm: Math.max(a, b), widthMm: Math.min(a, b) });
+  }
+
+  const texture: Record<string, 'grain' | 'plain'> = {};
+  if (value.texture && typeof value.texture === 'object' && !Array.isArray(value.texture)) {
+    for (const [stock, mode] of Object.entries(value.texture as Record<string, unknown>).slice(0, 200)) {
+      if (SHEET_STOCK_KEY.test(stock) && (mode === 'grain' || mode === 'plain')) texture[stock] = mode;
+    }
+  }
+
+  return {
+    kerfMm: tenth(value.kerfMm, TYPICAL_CUTTING.kerfMm, KERF_RANGE_MM),
+    trimMm: tenth(value.trimMm, TYPICAL_CUTTING.trimMm, TRIM_RANGE_MM),
+    minRemnantMm: whole(value.minRemnantMm, MIN_REMNANT_RANGE_MM) ?? TYPICAL_CUTTING.minRemnantMm,
+    rotate: value.rotate === undefined ? TYPICAL_CUTTING.rotate : value.rotate === true,
+    sheets,
+    texture,
+    confirmed: value.confirmed === true,
+  };
+}
 
 /** Самая узкая полоса столешницы перед препятствием, при которой плита ещё вырезается. */
 export type CountertopStrip = {
@@ -654,6 +761,8 @@ export function productionSettings(raw: unknown): ProductionSettings {
     ...(value.corner ? { corner: cornerSizes(value.corner) } : {}),
     /* Полоса столешницы — так же: не заводили — типовая, с пометкой. */
     ...(value.countertopStrip ? { countertopStrip: countertopStrip(value.countertopStrip) } : {}),
+    /* Раскрой листов (CUT-01) — так же: не заводили — типовые числа без форматов. */
+    ...(value.cutting ? { cutting: cuttingSettings(value.cutting) } : {}),
   };
 }
 

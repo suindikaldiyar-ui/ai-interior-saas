@@ -163,6 +163,7 @@ import { snapMove } from '@/lib/millwork/freeRun';
 import {
   OBJECT_MARKS,
   cornerSizesOf,
+  cuttingOf,
   markOwn,
   markValue,
   productionFor,
@@ -210,7 +211,7 @@ import {
   templateById,
   type RunTemplate,
 } from '@/lib/millwork/templates';
-import type { ProductionOverrides, ProductionSettings } from '@/types/catalog';
+import { cuttingSettings, type CuttingSettings, type ProductionOverrides, type ProductionSettings } from '@/types/catalog';
 import {
   DEFAULT_SCENE_VIEW,
   type SceneView,
@@ -265,6 +266,15 @@ import type {
  * `/demo` от них не растёт.
  */
 const PathTraceResult = dynamic(() => import('./PathTraceResult'), { ssr: false });
+
+/*
+ * Карта раскроя (CUT-01) — по требованию: раскладка, рисунок листа и сборка
+ * PDF нужны только на её виде в Studio, и первая загрузка от них не растёт.
+ */
+const CuttingMap = dynamic(() => import('./CuttingMap'), {
+  ssr: false,
+  loading: () => <p className="m-4 text-[13px] text-graphiteMw">Собираем карту раскроя…</p>,
+});
 
 const KitchenScene = dynamic(() => import('./KitchenScene'), {
   ssr: false,
@@ -443,6 +453,38 @@ export default function Workspace(props: WorkspaceProps) {
     () => productionFor(props.production, ownMarks),
     [props.production, ownMarks],
   );
+  /*
+   * НАСТРОЙКИ РАСКРОЯ (CUT-01) — настройка ЦЕХА, а не объекта: форматы
+   * листов и пропил лежат в `production.cutting` организации. На экране —
+   * правка до сохранения (`cuttingEdit`) и то, что сохранено сейчас
+   * (`cuttingStored`, пока страница не перечитала организацию). В объект
+   * они не пишутся: карта раскроя проект не меняет.
+   */
+  const savedCutting = useMemo(() => cuttingOf(production), [production]);
+  const [cuttingEdit, setCuttingEdit] = useState<CuttingSettings | null>(null);
+  const [cuttingStored, setCuttingStored] = useState<CuttingSettings | null>(null);
+  const cuttingBase = cuttingStored ?? savedCutting;
+  const cutting = cuttingEdit ?? cuttingBase;
+  const cuttingDirty = cuttingEdit !== null && JSON.stringify(cuttingEdit) !== JSON.stringify(cuttingBase);
+  const saveCutting = useMemo(
+    () =>
+      props.projectId
+        ? async (next: CuttingSettings): Promise<string | null> => {
+            const res = await fetch('/api/orgs/production', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ cutting: next }),
+            }).catch(() => null);
+            if (!res) return 'Нет связи с сервером: настройки раскроя не сохранились, расчёт на экране — по ним.';
+            const data = (await res.json().catch(() => ({}))) as { error?: string; production?: { cutting?: unknown } };
+            if (!res.ok) return data.error ?? `Настройки раскроя не сохранились: ответ ${res.status}.`;
+            setCuttingStored(cuttingSettings(data.production?.cutting ?? next));
+            setCuttingEdit(null);
+            return null;
+          }
+        : undefined,
+    [props.projectId],
+  );
   /** Жёлтая строка под сценой: правку не отменяем, но о последствии говорим. */
   const [sceneNotice, setSceneNotice] = useState<string | null>(null);
   /* Скрытая сцена захвата кадра не поднялась (нет WebGL): словами, а не падением страницы. */
@@ -497,7 +539,7 @@ export default function Workspace(props: WorkspaceProps) {
   /** Оболочка Studio — её приносит страница Studio (`StudioKitProvider`), мастер её не грузит. */
   const studioKit = useContext(StudioKitContext);
   const [studioContextOpen, setStudioContextOpen] = useState(true);
-  /** Что в рабочей области Studio: план комнаты, фасад, 3D или деталировка. */
+  /** Что в рабочей области Studio: план комнаты, фасад, 3D, деталировка или карта раскроя. */
   const [studioView, setStudioView] = useState<StudioView>(studioHasFurniture ? 'facade' : 'plan');
   /** Стена замера, выбранная на плане или в списке. Выбор — одно из трёх: стена, модуль или пустота. */
   const [selectedWallId, setSelectedWallId] = useState<string | null>(null);
@@ -3247,6 +3289,8 @@ export default function Workspace(props: WorkspaceProps) {
    * Условия и тексты перенесены дословно. Считать их здесь второй раз
    * нельзя: это ровно тот второй расчёт, от которого продукт уходит.
    */
+  /* Ящики отсеков без правил короба: одна строка на замок экрана и на карту раскроя. */
+  const drawerDraft = useMemo(() => drawerReleaseBlock(segments), [segments]);
   const screen = useMemo(
     () =>
       screenState({
@@ -3258,7 +3302,7 @@ export default function Workspace(props: WorkspaceProps) {
         warnings,
         catalogError,
         /* Ящики отсеков без правил короба — черновик: выпуск в цех заперт словами (R02A). */
-        drawerDraft: drawerReleaseBlock(segments),
+        drawerDraft,
         /*
          * Правки и закрепления, которые сейчас не участвуют: те же
          * `editedRuns`, `editedWalls` и `applianceWalls`, что держит экран.
@@ -3284,6 +3328,7 @@ export default function Workspace(props: WorkspaceProps) {
       shape,
       warnings,
       catalogError,
+      drawerDraft,
       input.runWallId,
       editedRuns,
       active.key,
@@ -3643,7 +3688,7 @@ export default function Workspace(props: WorkspaceProps) {
       if (next === 'measure') setStudioView('plan');
       else if (
         (next === 'furniture' || next === 'construction' || next === 'materials') &&
-        (studioView === 'plan' || studioView === 'panels')
+        (studioView === 'plan' || studioView === 'panels' || studioView === 'cutting')
       ) {
         setStudioView('facade');
       }
@@ -4782,6 +4827,29 @@ export default function Workspace(props: WorkspaceProps) {
             carcass={carcassItems}
             fingerprint={objectEstimate.fingerprint}
             exportLock={screen.exportLockText}
+            onCuttingMap={() => setStudioView('cutting')}
+          />
+        </div>
+      ) : studioView === 'cutting' ? (
+        <div className="h-full overflow-y-auto p-4" data-studio-cutting>
+          {/*
+            * Детали — те же стены, настройки цеха, фрезеровка и корпус, что у
+            * деталировки рядом. Замок экрана — без ящиков отсеков: ящики карта
+            * называет сама, по фронтам деталировки, и дважды одно не пишется.
+            */}
+          <CuttingMap
+            walls={panelWalls}
+            title={props.title}
+            production={production}
+            milling={millingItems}
+            carcass={carcassItems}
+            catalog={catalog}
+            fingerprint={objectEstimate.fingerprint}
+            exportLock={screen.exportLockText === drawerDraft ? null : screen.exportLockText}
+            settings={cutting}
+            onSettings={setCuttingEdit}
+            onSave={saveCutting}
+            dirty={cuttingDirty}
           />
         </div>
       ) : (
@@ -4883,6 +4951,16 @@ export default function Workspace(props: WorkspaceProps) {
             >
               <span>Деталировка</span>
               <span className="ml-auto text-graphiteMw">детали всех стен</span>
+            </button>
+            <button
+              type="button"
+              data-studio-doc="cutting"
+              aria-pressed={studioView === 'cutting'}
+              onClick={() => setStudioView('cutting')}
+              className="cad-row"
+            >
+              <span>Карта раскроя</span>
+              <span className="ml-auto text-graphiteMw">листы, PDF и CSV</span>
             </button>
             <button
               type="button"

@@ -109,6 +109,7 @@ import {
   panelTotals,
 } from '../lib/millwork/panels';
 import { panelsCsvFile, panelsToCsv } from '../lib/millwork/csv-export';
+import { cuttingChecks } from './verify-cutting';
 import { runFingerprint } from '../lib/millwork/fingerprint';
 import { surfaceFinish, surfaceLook } from '../lib/millwork/surfaces';
 import { GROUP_ORDER, estimateGroups, groupsTotal } from '../lib/millwork/estimateGroups';
@@ -26297,6 +26298,12 @@ console.log('\nR01: независимые отсеки — полки толь�
       const bz = baysNs as unknown as Record<string, ((...args: unknown[]) => unknown) | undefined>;
       const HDIV = ((panelsModule as unknown as Record<string, unknown>).HDIVIDER_PANEL_NAME as string | undefined) ?? '(нет HDIVIDER_PANEL_NAME)';
       const hashOf = (v: unknown) => createHash('sha1').update(JSON.stringify(v)).digest('hex').slice(0, 12);
+      /*
+       * CUT-01: у детали появился лист (`Panel.stock` — вид плиты и декор для
+       * карты раскроя). Эталоны R02A.1 сверяются по прежним полям — без листа
+       * раскрой тот же до байта, — а раскрой целиком, с листом, своим эталоном.
+       */
+      const withoutStock = (list: Panel[]) => list.map(({ stock: _stock, ...rest }) => rest);
       type Edit = { fill: ModuleFill } | { refusal: string } | { loss: string };
       const call = (name: string, ...args: unknown[]): Edit => {
         const fn = bz[name];
@@ -26406,9 +26413,10 @@ console.log('\nR01: независимые отсеки — полки толь�
       check(
         'R02B.B01 объект без отсеков: отпечаток 87fe21a5 и раскрой модуля прежние, горизонтальных перегородок нет',
         configurationFingerprint(legacy.modules) === '87fe21a5' &&
-          hashOf(modulePanels(legacy)) === '02117e262174' &&
+          hashOf(withoutStock(modulePanels(legacy))) === '02117e262174' &&
+          hashOf(modulePanels(legacy)) === 'f0f49d462963' &&
           !modulePanels(legacy).some((p) => p.name === HDIV),
-        `${configurationFingerprint(legacy.modules)} · раскрой ${hashOf(modulePanels(legacy))}`,
+        `${configurationFingerprint(legacy.modules)} · раскрой без листа ${hashOf(withoutStock(modulePanels(legacy)))} · с листом ${hashOf(modulePanels(legacy))}`,
       );
       const r01Run = fx.ops([
         {
@@ -26423,9 +26431,10 @@ console.log('\nR01: независимые отсеки — полки толь�
       check(
         'R02B.B02 R01 (b1 — 4 полки, b2 пусто): отпечаток bb80c016, раскрой и геометрия отсеков прежние',
         configurationFingerprint(r01Run.modules) === 'bb80c016' &&
-          hashOf(modulePanels(r01Run)) === 'bcf382e91d26' &&
+          hashOf(withoutStock(modulePanels(r01Run))) === 'bcf382e91d26' &&
+          hashOf(modulePanels(r01Run)) === '6c5f0daa218d' &&
           hashOf(view(layoutOf(r01Run))) === '69834a2884c4',
-        `${configurationFingerprint(r01Run.modules)} · раскрой ${hashOf(modulePanels(r01Run))} · отсеки ${hashOf(view(layoutOf(r01Run)))}`,
+        `${configurationFingerprint(r01Run.modules)} · раскрой без листа ${hashOf(withoutStock(modulePanels(r01Run)))} · с листом ${hashOf(modulePanels(r01Run))} · отсеки ${hashOf(view(layoutOf(r01Run)))}`,
       );
       const r02aRun = fx.ops([
         { op: 'set_fill', moduleId: cid, fill: withBays(fx.unit, baysR02({ ...stack3, heightMm: 450 }) as unknown as R01Bay[]) },
@@ -26434,11 +26443,12 @@ console.log('\nR01: независимые отсеки — полки толь�
       check(
         'R02B.B03 R02A (b2 — блок 450 без зон): отпечаток afa1f8cb, раскрой и позиции прежние; через JSON — то же, зон в данных нет',
         configurationFingerprint(r02aRun.modules) === 'afa1f8cb' &&
-          hashOf(modulePanels(r02aRun)) === '4cd1c7232d90' &&
+          hashOf(withoutStock(modulePanels(r02aRun))) === '4cd1c7232d90' &&
+          hashOf(modulePanels(r02aRun)) === '80b0c761e8ff' &&
           hashOf(view(layoutOf(r02aRun))) === '37f0afdb822b' &&
           hashOf(view(layoutOf(r02aJson))) === '37f0afdb822b' &&
           !('zones' in ((unitOf(r02aRun).fill?.bays ?? [])[1] ?? {})),
-        `${configurationFingerprint(r02aRun.modules)} · раскрой ${hashOf(modulePanels(r02aRun))} · отсеки ${hashOf(view(layoutOf(r02aRun)))}`,
+        `${configurationFingerprint(r02aRun.modules)} · раскрой без листа ${hashOf(withoutStock(modulePanels(r02aRun)))} · с листом ${hashOf(modulePanels(r02aRun))} · отсеки ${hashOf(view(layoutOf(r02aRun)))}`,
       );
 
       /* ── S1: разделить b2 горизонтально → полки сверху → штанга → антресоль ── */
@@ -28631,6 +28641,9 @@ import { milledGrip as kiraMilledGrip } from '../lib/millwork/opening';
     `спальня: «${v2?.warnings[0] ?? ('refusal' in v2plan ? v2plan.refusal : 'МОЛЧА')}» · стекло за рамой ${panes(glassy.run)} → ${panes(framedGlass.run)} · стекло в смете ${glassQty(glassy.run)} → ${glassQty(framedGlass.run)} м² · ИР 2 наверху ${JSON.stringify(upperOrient ?? null)}`,
   );
 }
+
+/* ═══════════  CUT-01: карта раскроя — детали деталировки на листах цеха  ═══════════ */
+cuttingChecks(check);
 
 Promise.allSettled(asyncChecks).then((results) => {
   for (const result of results) {

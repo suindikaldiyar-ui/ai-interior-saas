@@ -72,6 +72,11 @@ type Props = {
    * цех распилит детали, которые на объекте не встанут. Пусто — открыты.
    */
   exportLock?: string | null;
+  /**
+   * КАРТА РАСКРОЯ (CUT-01): из деталировки — на листы цеха. Есть там, где
+   * карта живёт (Studio); нет — кнопки нет.
+   */
+  onCuttingMap?: () => void;
 };
 
 const GRAIN_LABEL: Record<Panel['grain'], string> = {
@@ -102,6 +107,7 @@ export default function PanelList({
   carcass,
   fingerprint,
   exportLock = null,
+  onCuttingMap,
 }: Props) {
   const [encoding, setEncoding] = useState<CsvEncoding>('windows-1251');
 
@@ -228,6 +234,11 @@ export default function PanelList({
         >
           Выгрузить для раскроя
         </button>
+        {onCuttingMap && (
+          <button type="button" onClick={onCuttingMap} data-open-cutting className="mw-btn mw-btn-ghost">
+            Карта раскроя →
+          </button>
+        )}
         {exportLock && (
           <p data-export-lock className="w-full text-[13px] leading-snug text-alert">
             {exportLock}

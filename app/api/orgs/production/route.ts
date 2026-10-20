@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { productionSettings } from '@/types/catalog';
+import { cuttingSettings, productionSettings } from '@/types/catalog';
 import { currentOrg, supabaseServer } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
@@ -29,11 +29,27 @@ export async function POST(request: Request) {
     );
   }
 
-  let body: { production?: unknown } = {};
+  let body: { production?: unknown; cutting?: unknown } = {};
   try {
     body = await request.json();
   } catch {
     /* пустое тело — вернутся значения по умолчанию */
+  }
+
+  /*
+   * ТОЛЬКО РАСКРОЙ (CUT-01): карта раскроя присылает свои настройки, и
+   * остальное у цеха не трогается — читается из базы и пишется обратно
+   * как было. Экран объекта несёт отметки объекта поверх цеховых, и отдай
+   * он весь набор, отметки одного объекта стали бы школой всего цеха.
+   */
+  if (body.production === undefined && body.cutting !== undefined) {
+    const { data, error: readError } = await supabase.from('orgs').select('production').eq('id', org.id).maybeSingle();
+    if (readError) return NextResponse.json({ error: `Настройки цеха не прочитались: ${readError.message}` }, { status: 500 });
+    const stored = (data?.production ?? {}) as Record<string, unknown>;
+    const production = productionSettings({ ...stored, cutting: cuttingSettings(body.cutting) });
+    const { error } = await supabase.from('orgs').update({ production }).eq('id', org.id);
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ ok: true, production });
   }
 
   // Разбираем тем же кодом, что и чтение: в базу попадает только то,
