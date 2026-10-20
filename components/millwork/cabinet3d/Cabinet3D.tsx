@@ -34,7 +34,10 @@ import {
   workTopMm,
 } from '@/lib/millwork/shop';
 import { zoneProfile } from '@/lib/millwork/zones';
-import { frontWithMilling, millingCatalog } from '@/lib/millwork/milling';
+import { frontWithMilling, leafFrontWithMilling, millingCatalog } from '@/lib/millwork/milling';
+import { reliefMeshKey, type ReliefLeaf } from '@/lib/millwork/facadeRelief';
+import { leafOfBox } from './reliefGeometry';
+import type { FrontRelief } from '@/types/millwork';
 import { carcassCatalog } from '@/lib/millwork/carcassMaterial';
 import { useInteriorStore } from '@/store/useInteriorStore';
 import { DEFAULT_PRODUCTION, type ProductionSettings } from '@/types/catalog';
@@ -460,15 +463,18 @@ export default function Cabinet3D({
    * — инспектор показывает параметры именно этого ящика.
    */
   const setSelectedBay = useInteriorStore((s) => s.setSelectedBay);
+  /* Нажали на створку — выбрана и она (P3D-MDF): фасад «Выбранной двери» ляжет на неё. */
+  const setSelectedLeaf = useInteriorStore((s) => s.setSelectedLeaf);
   const handleToggle = useCallback(
     (partId: string) => {
       const moduleId = moduleOfPart(partId);
       if (moduleId) onSelectModule?.(moduleId);
+      if (moduleId) setSelectedLeaf({ moduleId, leaf: partId.slice(moduleId.length + 1) });
       const bayDrawer = /^[^:]+:(b\d+):drawer:\d+$/.exec(partId);
       if (moduleId && bayDrawer) setSelectedBay({ moduleId, bayId: bayDrawer[1], drawerId: partId });
       toggleOpenPart(partId);
     },
-    [onSelectModule, toggleOpenPart, setSelectedBay],
+    [onSelectModule, toggleOpenPart, setSelectedBay, setSelectedLeaf],
   );
 
   const grouped = useMemo(() => {
@@ -499,11 +505,25 @@ export default function Cabinet3D({
      */
     const carcass = new Map<string, PartBox[]>();
     const inner = new Map<string, PartBox[]>();
+    /*
+     * ФАСАДЫ С РЕЛЬЕФОМ МДФ (P3D-MDF) — пачка на материал И сетку: сетка
+     * одна на рисунок и габарит, экземпляры встают на места коробок.
+     */
+    const reliefFronts = new Map<string, { key: string; relief: FrontRelief; leaf: ReliefLeaf; face?: '-x'; boxes: PartBox[] }>();
 
     for (const box of boxes) {
       if (box.part && active.has(box.part)) continue;
       /* Слой выключен — коробки нет в кадре (P1); в раскрое и смете она остаётся. */
       if (!boxShown(box, layers)) continue;
+      if (box.material === 'front' && box.relief) {
+        const key = box.frontKey ?? frontKey(DEFAULT_FRONT);
+        const leaf = leafOfBox(box.scale, box.face);
+        const batch = `${key}|${reliefMeshKey(box.relief, leaf)}|${box.face ?? ''}`;
+        const at = reliefFronts.get(batch);
+        if (at) at.boxes.push(box);
+        else reliefFronts.set(batch, { key, relief: box.relief, leaf, face: box.face, boxes: [box] });
+        continue;
+      }
       if (box.material === 'front') {
         const key = box.frontKey ?? frontKey(DEFAULT_FRONT);
         const list = fronts.get(key);
@@ -520,7 +540,7 @@ export default function Cabinet3D({
       }
       groups[box.material].push(box);
     }
-    return { groups, fronts, carcass, inner };
+    return { groups, fronts, carcass, inner, reliefFronts };
   }, [boxes, activeParts, layers]);
 
   /*
@@ -533,6 +553,11 @@ export default function Cabinet3D({
     for (const entry of [...modules, ...uppers]) {
       const spec = frontWithMilling(entry.unit, run);
       map.set(frontKey(spec), spec);
+      /* Свой фасад створки (P3D-MDF) — свой материал: та же функция, что красит коробку. */
+      for (const leaf of Object.keys(entry.unit.leafFronts ?? {})) {
+        const own = leafFrontWithMilling(entry.unit, leaf, run);
+        map.set(frontKey(own), own);
+      }
     }
     if (map.size === 0) map.set(frontKey(DEFAULT_FRONT), DEFAULT_FRONT);
     return map;
@@ -793,6 +818,25 @@ export default function Cabinet3D({
         />
       ))}
       {/*
+        * ФАСАДЫ С РЕЛЬЕФОМ (P3D-MDF): та же пачка по материалу, только вместо
+        * единичного куба — сетка рисунка этого габарита, и экземпляр встаёт на
+        * место коробки без растяжения. Имя то же — `front:<ключ>`: приёмка
+        * читает цвет фасада одинаково у ровного и у фрезерованного.
+        */}
+      {Array.from(grouped.reliefFronts.entries()).map(([batch, entry]) => (
+        <InstancedBoxes
+          key={batch}
+          name={`front:${entry.key}`}
+          boxes={entry.boxes}
+          shiftSalt={run.id}
+          geometry={parts.box}
+          material={frontMaterials.get(entry.key) ?? parts.front}
+          castShadow={shadows}
+          receiveShadow={shadows}
+          relief={{ relief: entry.relief, leaf: entry.leaf, face: entry.face }}
+        />
+      ))}
+      {/*
         * ВНУТРЕННОСТИ — СВОЯ ПАЧКА, А НЕ ЧАСТЬ КОРПУСА.
         *
         * Полки и короба ящиков шли ролью корпуса и его же цветом. Своя
@@ -866,6 +910,10 @@ export default function Cabinet3D({
           displayLit={displayLit}
           onActive={handleActive}
           frontMaterial={frontMaterials.get(frontKey(frontWithMilling(entry.unit, run)))}
+          leafLook={(leaf) => {
+            const spec = leafFrontWithMilling(entry.unit, leaf, run);
+            return { material: frontMaterials.get(frontKey(spec)), relief: spec.relief };
+          }}
           openWidthM={
             blindPartMm(entry.unit, run) > 0 ? openFrontMm(entry.unit, run) / MM : undefined
           }

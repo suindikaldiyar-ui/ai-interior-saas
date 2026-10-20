@@ -1,4 +1,5 @@
 import type { FrontBase, FrontConstruct, FrontFinish, FrontSpec } from '@/types/millwork';
+import { reliefKey, reliefKindDef } from './facadeRelief';
 
 /**
  * МАТЕРИАЛ ФАСАДА: ТРИ НЕЗАВИСИМЫХ АТРИБУТА.
@@ -55,6 +56,36 @@ export function frontOf(unit: { front?: FrontSpec }): FrontSpec {
 }
 
 /**
+ * ФАСАД ОДНОЙ СТВОРКИ ИЛИ ЯЩИКА (P3D-MDF) — одна точка чтения.
+ *
+ * `leaf` — деталь модуля так, как её зовёт сцена после имени модуля:
+ * `door:0`, `drawer:1`, `b1:drawer:0`. Своего фасада у створки нет —
+ * фасад модуля. Сцена, раскрой, смета и отпечаток спрашивают ЭТУ функцию:
+ * своя ветка «какой фасад у двери» в любом из них развела бы картинку с
+ * цехом.
+ */
+export function leafFrontOf(unit: { front?: FrontSpec; leafFronts?: Record<string, FrontSpec> }, leaf: string | null): FrontSpec {
+  const own = leaf ? unit.leafFronts?.[leaf] : undefined;
+  return own ?? frontOf(unit);
+}
+
+/** Подпись детали модуля: «Дверь 2», «Ящик 1», «Ящик 3 · отсек b2». */
+export function leafTitle(leaf: string): string {
+  const door = /^door:(\d+)$/.exec(leaf);
+  if (door) return `Дверь ${Number(door[1]) + 1}`;
+  const drawer = /^drawer:(\d+)$/.exec(leaf);
+  if (drawer) return `Ящик ${Number(drawer[1]) + 1}`;
+  const bay = /^([^:]+):drawer:(\d+)$/.exec(leaf);
+  if (bay) return `Ящик ${Number(bay[2]) + 1} · отсек ${bay[1]}`;
+  return leaf;
+}
+
+/** Деталь модуля по идентификатору сцены: `<модуль>:door:0` → `door:0`. */
+export function leafOfPart(moduleId: string, partId: string): string | null {
+  return partId.startsWith(`${moduleId}:`) ? partId.slice(moduleId.length + 1) : null;
+}
+
+/**
  * ПОЧЕМУ ТАК НЕЛЬЗЯ.
  *
  * Возвращает объяснение или `null`, если сочетание рабочее. Объяснение
@@ -77,8 +108,34 @@ export function frontConflict(spec: FrontSpec): string | null {
     );
   }
 
+  /*
+   * РЕЛЬЕФ (P3D-MDF) ФРЕЗЕРУЮТ ПО МДФ И ПО ЦЕЛЬНОЙ ПЛИТЕ.
+   *
+   * ЛДСП под фрезой крошится, у акрила фреза прорежет пластик лица; у
+   * филёнки рама и вставка — уже отдельные детали, у радиусного — гнутая
+   * плита. Это факты производства, а не настройка: тип рисунка ложится на
+   * эмаль, плёнку и шпон по МДФ.
+   */
+  if (spec.relief) {
+    if (!RELIEF_BASES.includes(spec.base)) {
+      return (
+        `Рисунок фасада фрезеруют по МДФ: ${FRONT_BASES[spec.base].title} так не фрезеруется — ` +
+        'лицо раскрошится. Нужен рисунок — берите МДФ в эмали, в плёнке или шпон.'
+      );
+    }
+    if (spec.construct !== 'solid') {
+      return (
+        'Рисунок фрезеруют по цельной плите: у филёнчатого фасада рама и вставка — отдельные детали, ' +
+        'у радиусного — гнутая плита. Оставьте цельный фасад.'
+      );
+    }
+  }
+
   return null;
 }
+
+/** По каким базам ложится рельеф МДФ-фасада. */
+export const RELIEF_BASES: FrontBase[] = ['mdf_enamel', 'mdf_film', 'veneer_solid'];
 
 /** Из чего гнут радиус. Всё остальное на радиусе трескается. */
 const RADIUS_BASES: FrontBase[] = ['mdf_film', 'mdf_enamel', 'veneer_solid'];
@@ -156,9 +213,15 @@ export function frontKey(spec: FrontSpec): string {
    * одной МДФ-панели — разные плиты, разные деньги и разный вид в сцене.
    * Пусто не пишется (ловушка 246): у прежних фасадов ключ прежний.
    */
+  /*
+   * РЕЛЬЕФ (P3D-MDF) — тоже часть ключа: рифлёный и гладкий фасад одного
+   * цвета — разная мебель, и пачки отрисовки у них разные. Ключ — то, что
+   * нарисовано (параметры с умолчаниями типа); пусто не пишется, у прежних
+   * фасадов ключ прежний до символа (ловушка 246).
+   */
   return `${spec.base}/${spec.construct}/${spec.finish}/${spec.colorHex ?? '-'}/${spec.itemId ?? '-'}${
     spec.millingId ? `/${spec.millingId}` : ''
-  }${spec.surface ? `~${spec.surface}` : ''}`;
+  }${spec.surface ? `~${spec.surface}` : ''}${spec.relief ? `#${reliefKey(spec.relief)}` : ''}`;
 }
 
 /**
@@ -170,6 +233,8 @@ export function frontKey(spec: FrontSpec): string {
 export function frontTitle(spec: FrontSpec): string {
   const parts = [FRONT_BASES[spec.base].title];
   if (spec.construct !== 'solid') parts.push(FRONT_CONSTRUCTS[spec.construct].title.toLowerCase());
+  /* Рисунок МДФ (P3D-MDF) — тем же словом, что на карточке типа. */
+  if (spec.relief) parts.push(reliefKindDef(spec.relief.kind).title.toLowerCase());
   parts.push(FRONT_FINISHES[spec.finish].title.toLowerCase());
   return parts.join(', ');
 }

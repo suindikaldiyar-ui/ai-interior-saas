@@ -3,8 +3,9 @@ import type { CatalogCategory, CatalogEntryFull, CatalogUnit, TilingSpec } from 
 import type { FrontBase, FrontFinish, FrontSpec, MillworkOp, Module, Run } from '@/types/millwork';
 import { hasFacade } from './applianceFront';
 import { CARCASS_SCOPES, isAntresol } from './carcassMaterial';
-import { DEFAULT_FRONT, frontConflict, frontOf } from './frontMaterial';
+import { DEFAULT_FRONT, frontConflict, frontOf, leafFrontOf } from './frontMaterial';
 import { allModules } from './layout';
+import { NO_MILLING_ID } from './milling';
 import {
   CATALOG_UNIT_OF,
   MATERIAL_ROLES,
@@ -772,6 +773,7 @@ export type MaterialTarget =
   | 'antresol'
   | 'countertop'
   | 'module'
+  | 'leaf'
   | 'module-carcass';
 
 export const MATERIAL_TARGETS: MaterialTarget[] = [
@@ -782,6 +784,7 @@ export const MATERIAL_TARGETS: MaterialTarget[] = [
   'antresol',
   'countertop',
   'module',
+  'leaf',
   'module-carcass',
 ];
 
@@ -793,6 +796,8 @@ export const TARGET_TITLE: Record<MaterialTarget, string> = {
   antresol: 'Антресоль',
   countertop: 'Столешница',
   module: 'Выбранный модуль',
+  /* Одна створка или ящик (P3D-MDF): соседняя створка и корпус не трогаются. */
+  leaf: 'Выбранная дверь',
   'module-carcass': 'Корпус выбранного модуля',
 };
 
@@ -806,6 +811,7 @@ export const TARGET_ROLE: Record<MaterialTarget, MaterialRole> = {
   antresol: 'carcass',
   countertop: 'countertop',
   module: 'front',
+  leaf: 'front',
   'module-carcass': 'carcass',
 };
 
@@ -818,6 +824,7 @@ const TARGET_ON: Record<MaterialTarget, string> = {
   antresol: 'на корпус антресоли',
   countertop: 'на столешницу',
   module: 'на фасад модуля',
+  leaf: 'на фасад двери',
   'module-carcass': 'на корпус модуля',
 };
 
@@ -944,7 +951,17 @@ function frontFrom(current: FrontSpec, choice: MaterialChoice, finishes: Record<
    */
   const reset = frontConflict(next) !== null;
   if (reset) next.construct = 'solid';
-  return { front: next, reset };
+  /*
+   * Рисунок МДФ (P3D-MDF), которого у новой базы не бывает (ЛДСП, акрил не
+   * фрезеруют), снимается — человек выбрал материал, и это сказано словами,
+   * а не отказом всей правки.
+   */
+  const reliefDropped = Boolean(next.relief) && frontConflict(next) !== null;
+  if (reliefDropped) {
+    delete next.relief;
+    if (next.millingId === NO_MILLING_ID) delete next.millingId;
+  }
+  return { front: next, reset, reliefDropped };
 }
 
 /**
@@ -965,6 +982,8 @@ export function materialOps(
   run: Run,
   selectedModuleId: string | null,
   finishes: Record<string, FinishSpec> = {},
+  /** Выбранная створка модуля (P3D-MDF): `door:1`. Нужна цели «Выбранная дверь». */
+  leaf: string | null = null,
 ): MaterialPlan {
   const role = TARGET_ROLE[target];
   /* Роли позиции — её данные; у позиции без них — роли её коллекции. */
@@ -1050,6 +1069,28 @@ export function materialOps(
     };
   }
 
+  /*
+   * ОДНА ДВЕРЬ (P3D-MDF): `set_leaf_front` — фасад этой створки, поверх того,
+   * что у неё сейчас (свой или модульный). Соседняя створка и корпус те же.
+   */
+  if (target === 'leaf') {
+    if (!selectedModuleId || !leaf) {
+      return { refusal: 'Выберите дверь — в сцене или в списке дверей шкафа: материал ляжет на неё одну.' };
+    }
+    const unit = allModules(run).find((m) => m.id === selectedModuleId);
+    if (!unit) return { refusal: `Модуля ${selectedModuleId} на этой стене нет.` };
+    if (!hasFacade(unit)) return { refusal: `У «${unit.label}» фасада нет — красить нечего.` };
+    const made = frontFrom(leafFrontOf(unit, leaf), choice, finishes);
+    return {
+      ops: [{ op: 'set_leaf_front', moduleId: unit.id, leaf, front: made.front }],
+      note: made.reliefDropped
+        ? `Рисунок фасада снят: «${choice.collection.label}» не фрезеруют.`
+        : made.reset
+          ? `Дверь стала цельной: у «${choice.collection.label}» прежней конструкции не бывает.`
+          : null,
+    };
+  }
+
   const fronts: Module[] =
     target === 'module'
       ? allModules(run).filter((unit) => unit.id === selectedModuleId)
@@ -1064,9 +1105,11 @@ export function materialOps(
   if (fronts.length === 0) return { refusal: 'Мебели на этой стене пока нет — красить нечего.' };
 
   let reset = 0;
+  let dropped = 0;
   const ops: MillworkOp[] = fronts.map((unit) => {
     const made = frontFrom(frontOf(unit), choice, finishes);
     if (made.reset) reset += 1;
+    if (made.reliefDropped) dropped += 1;
     return { op: 'set_front', moduleId: unit.id, front: made.front };
   });
 
@@ -1084,9 +1127,11 @@ export function materialOps(
   return {
     ops,
     note:
-      reset > 0
-        ? `${modulesWord(reset)} цельными: у «${choice.collection.label}» прежней конструкции не бывает.`
-        : null,
+      dropped > 0
+        ? `Рисунок фасада снят у ${dropped} мод.: «${choice.collection.label}» не фрезеруют.`
+        : reset > 0
+          ? `${modulesWord(reset)} цельными: у «${choice.collection.label}» прежней конструкции не бывает.`
+          : null,
   };
 }
 

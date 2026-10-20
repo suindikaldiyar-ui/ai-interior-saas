@@ -25,7 +25,9 @@ import RunSchematic, { SCENE_ROOM_DEFAULT_M, rowsForAngle } from './RunSchematic
 import type { SceneRow } from './cabinet3d/CadScene';
 import type { PathImage } from '@/lib/millwork/pathtrace';
 import { hasFacade } from '@/lib/millwork/applianceFront';
-import { frontOf } from '@/lib/millwork/frontMaterial';
+import { frontOf, leafFrontOf } from '@/lib/millwork/frontMaterial';
+import { facadeOps, leafFrontSizes, moduleLeaves, reliefMisfits, type FacadePatch, type FacadeTarget } from '@/lib/millwork/mdfFacade';
+import type { ReliefLeaf } from '@/lib/millwork/facadeRelief';
 import { paletteFromCatalog } from '@/lib/millwork/palette';
 import {
   lowerWall,
@@ -90,7 +92,7 @@ import EstimateSheet from './EstimateSheet';
 import MaterialsStep from './MaterialsStep';
 import MillingPicker from './MillingPicker';
 import CarcassPicker from './CarcassPicker';
-import { millingCatalog } from '@/lib/millwork/milling';
+import { millingCatalog, millingChoices } from '@/lib/millwork/milling';
 import { carcassCatalog, isAntresol } from '@/lib/millwork/carcassMaterial';
 import PanelList from './PanelList';
 import RenderPanel from './RenderPanel';
@@ -573,6 +575,14 @@ export default function Workspace(props: WorkspaceProps) {
   const [fillNotice, setFillNotice] = useState<{ moduleId: string; text: string } | null>(null);
   /* Выбор отсека — выделение этого экрана: уходит вместе с ним. */
   useEffect(() => () => setSelectedBay(null), [setSelectedBay]);
+  /*
+   * ВЫБРАННАЯ ДВЕРЬ (P3D-MDF) — выделение этого экрана, как отсек: нажали на
+   * створку в сцене или выбрали в списке дверей шкафа. Фасад двери лежит в
+   * `Module.leafFronts`, здесь — только какая дверь выбрана.
+   */
+  const selectedLeafPick = useInteriorStore((state) => state.selectedLeaf);
+  const setSelectedLeaf = useInteriorStore((state) => state.setSelectedLeaf);
+  useEffect(() => () => setSelectedLeaf(null), [setSelectedLeaf]);
 
   /**
    * Снимок перед выбором решения.
@@ -1913,6 +1923,9 @@ export default function Workspace(props: WorkspaceProps) {
     () => selectionState(activeRun, selectedId),
     [activeRun, selectedId],
   );
+  /* Дверь — только у выбранного шкафа: выбрали другой шкаф — двери прежнего нет. */
+  const selectedLeaf =
+    selectedLeafPick && selectedLeafPick.moduleId === selectedId ? selectedLeafPick.leaf : null;
 
   /**
    * ВЫБОР МОДУЛЯ — ОДИН ЖЕСТ НА ВСЮ КОМПОЗИЦИЮ.
@@ -2594,7 +2607,7 @@ export default function Workspace(props: WorkspaceProps) {
    */
   const applyMaterial = useCallback(
     (target: MaterialTarget, choice: MaterialChoice): string | null => {
-      const one = target === 'module' || target === 'module-carcass';
+      const one = target === 'module' || target === 'module-carcass' || target === 'leaf';
       const walls = one ? [wall] : segments.map((_, index) => index);
       const said: string[] = [];
       /*
@@ -2614,6 +2627,7 @@ export default function Workspace(props: WorkspaceProps) {
           run,
           one ? selectedId : null,
           MATERIAL_FINISHES,
+          target === 'leaf' ? selectedLeaf : null,
         );
         if ('refusal' in plan) {
           refused.push(plan.refusal);
@@ -2638,7 +2652,55 @@ export default function Workspace(props: WorkspaceProps) {
       if (changed) dirty.current = true;
       return said[0] ?? (changed ? null : (refused[0] ?? null));
     },
-    [wall, segments, selectedId, requirements, wallOpenings, props.roomDepthM, active.key, wallIdAt],
+    [wall, segments, selectedId, selectedLeaf, requirements, wallOpenings, props.roomDepthM, active.key, wallIdAt],
+  );
+
+  /*
+   * ═══  ВКЛАДКА «МДФ ФАСАДЫ»: ТИП, ПОКРЫТИЕ, ПАРАМЕТРЫ (P3D-MDF)  ═══
+   *
+   * Тот же путь, что у материала: операции собирает `facadeOps`
+   * (`set_front` шкафу и всем фасадам, `set_leaf_front` одной двери), ряд
+   * правит `applyOps` — правила технологии и проверка параметров те же.
+   * «Все фасады» — все стены объекта; шкаф и дверь — выбранная стена.
+   */
+  const applyFacade = useCallback(
+    (target: FacadeTarget, patch: FacadePatch): string | null => {
+      const walls = target === 'fronts' ? segments.map((_, index) => index) : [wall];
+      const said: string[] = [];
+      const refused: string[] = [];
+      let changed = false;
+      for (const index of walls) {
+        const run = segments[index];
+        if (!run) continue;
+        const plan = facadeOps(
+          target,
+          patch,
+          run,
+          target === 'fronts' ? null : selectedId,
+          target === 'leaf' ? selectedLeaf : null,
+        );
+        if ('refusal' in plan) {
+          refused.push(plan.refusal);
+          continue;
+        }
+        if (plan.note) said.push(plan.note);
+        const next = applyOps({
+          run,
+          requirements,
+          ops: plan.ops,
+          openings: wallOpenings(index),
+          roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
+        });
+        /* Отказ движка — словами, ряд записывается с тем, что прошло. */
+        if (next.warnings[0]) said.push(next.warnings[0]);
+        if (index === 0) setEditedRuns((prev) => ({ ...prev, [active.key]: next }));
+        else setEditedWalls((prev) => withWallEdit(prev, wallIdAt(index), index, next));
+        changed = true;
+      }
+      if (changed) dirty.current = true;
+      return said[0] ?? (changed ? null : (refused[0] ?? null));
+    },
+    [wall, segments, selectedId, selectedLeaf, requirements, wallOpenings, props.roomDepthM, active.key, wallIdAt],
   );
 
   /*
@@ -2685,6 +2747,11 @@ export default function Workspace(props: WorkspaceProps) {
         moduleFront?.itemId && materialItems.has(moduleFront.itemId)
           ? { itemId: moduleFront.itemId, surface: moduleFront.surface }
           : { itemId: null },
+      /* Выбранная дверь (P3D-MDF) — её фасад: свой или модульный. */
+      leaf: (() => {
+        const spec = selection.unit && selectedLeaf ? leafFrontOf(selection.unit, selectedLeaf) : null;
+        return spec?.itemId && materialItems.has(spec.itemId) ? { itemId: spec.itemId, surface: spec.surface } : { itemId: null };
+      })(),
       /* Корпус выбранного модуля (P3) — его собственный декор, не полосы ряда. */
       'module-carcass': {
         itemId:
@@ -2693,7 +2760,50 @@ export default function Workspace(props: WorkspaceProps) {
             : null,
       },
     };
-  }, [segments, materialItems, selection.unit]);
+  }, [segments, materialItems, selection.unit, selectedLeaf]);
+
+  /*
+   * ДАННЫЕ ВКЛАДКИ «МДФ ФАСАДЫ» — из рядов, как всё на этом экране: фасад
+   * цели, габарит для карточек (коробка сцены той двери, `leafFrontSizes`),
+   * где рисунок не встал и сколько дверей со своим фасадом останутся.
+   */
+  const facadePanel = useMemo(() => {
+    const sizes = leafFrontSizes(activeRun);
+    const unit = selection.unit;
+    const firstFront = allModules(activeRun).find((m) => hasFacade(m)) ?? null;
+    const sizeOf = (moduleId: string | undefined, leaf: string | null | undefined) =>
+      moduleId && leaf ? sizes.get(`${moduleId}:${leaf}`) : undefined;
+    const firstLeafOf = (moduleId: string | undefined) => (moduleId ? moduleLeaves(activeRun, moduleId)[0]?.leaf : undefined);
+    const typical: ReliefLeaf = { widthMm: 446, heightMm: 716, thicknessMm: production.frontMm };
+    const ownOf = (units: typeof activeRun.modules) =>
+      units.reduce((sum, m) => sum + Object.keys(m.leafFronts ?? {}).length, 0);
+    return {
+      specOf: (target: FacadeTarget) =>
+        target === 'leaf'
+          ? unit && selectedLeaf
+            ? leafFrontOf(unit, selectedLeaf)
+            : null
+          : target === 'module'
+            ? unit && hasFacade(unit)
+              ? frontOf(unit)
+              : null
+            : firstFront
+              ? frontOf(firstFront)
+              : null,
+      sampleOf: (target: FacadeTarget) =>
+        (target === 'leaf'
+          ? sizeOf(unit?.id, selectedLeaf)
+          : target === 'module'
+            ? sizeOf(unit?.id, firstLeafOf(unit?.id))
+            : sizeOf(firstFront?.id, firstLeafOf(firstFront?.id))) ?? typical,
+      misfitsOf: (target: FacadeTarget) => reliefMisfits(activeRun, target === 'fronts' ? null : unit ? [unit.id] : []),
+      ownLeavesOf: (target: FacadeTarget) =>
+        target === 'fronts' ? ownOf(allModules(activeRun)) : target === 'module' && unit ? ownOf([unit]) : 0,
+      models: millingChoices(millingItems).filter((item) => item.milling.relief),
+      frontMm: production.frontMm,
+      onApply: applyFacade,
+    };
+  }, [activeRun, selection.unit, selectedLeaf, production.frontMm, millingItems, applyFacade]);
 
   /*
    * ЦЕНА ПОЗИЦИИ — ТОЙ ЖЕ ПРАВКОЙ, ЧТО У ФРЕЗЕРОВКИ.
@@ -4365,6 +4475,12 @@ export default function Workspace(props: WorkspaceProps) {
           applied={appliedMaterials}
           selectedModuleLabel={selection.title || null}
           onApply={applyMaterial}
+          leaves={selection.unit ? moduleLeaves(activeRun, selection.unit.id) : []}
+          selectedLeaf={selectedLeaf}
+          onSelectLeaf={(leaf) =>
+            setSelectedLeaf(selection.unit && leaf ? { moduleId: selection.unit.id, leaf } : null)
+          }
+          facade={facadePanel}
           onPrice={saveMaterialPrice}
           rates={liveRates}
           onCollectionPrice={saveCollectionPrice}

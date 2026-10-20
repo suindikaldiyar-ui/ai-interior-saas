@@ -8,10 +8,12 @@ import { hasFacade, moduleFronts } from './applianceFront';
 import { bayLayout } from './bays';
 import {
   FRAME_WIDTH_MM,
+  frontKey,
   frontMaterialName,
   frontOf,
   hasEdgeBanding,
   isFramed,
+  leafFrontOf,
 } from './frontMaterial';
 import {
   DEFAULT_ALLOWANCES,
@@ -488,43 +490,81 @@ function modulePanels(
    *     разного. Одна панель означала бы, что цех сделает гладкий фасад,
    *     а узнает об этом на сборке.
    */
-  const spec = frontOf(unit);
-  const edged = hasEdgeBanding(spec);
-
   /*
-   * ФРЕЗЕРОВКА НАЗВАНА В МАТЕРИАЛЕ ДЕТАЛИ.
+   * ФАСАД ДЕТАЛИ — ФАСАД ЕЁ СТВОРКИ (P3D-MDF). Своего у створки нет —
+   * фасад модуля, и строка та же, что была. Створки с разными фасадами —
+   * разные строки: одна строка «Фасад · 2 шт.» означала бы, что обе двери
+   * одного материала.
+   */
+  const lookOf = (leaf: string | null) => {
+    const spec = leafFrontOf(unit, leaf);
+    const link = milling ? millingLink(unit, run, milling, leaf) : null;
+    const millingName = link && (link.state === 'resolved' || link.state === 'priceless') ? link.item.name : null;
+    return {
+      spec,
+      edged: hasEdgeBanding(spec),
+      material: millingName
+        ? `${frontMaterialName(spec, production.frontMm)}, фрезеровка ${millingName}`
+        : frontMaterialName(spec, production.frontMm),
+      own: Boolean(leaf && unit.leafFronts?.[leaf]),
+    };
+  };
+  /*
+   * ФРЕЗЕРОВКА НАЗВАНА В МАТЕРИАЛЕ ДЕТАЛИ (`lookOf` выше).
    *
    * Лист раскроя уходит в цех, и по нему фрезеруют. «Фасад Эмаль 16» и
    * «Фасад Эмаль 16, фрезеровка Модерн» — это разные операции и разные
    * деньги; молчание здесь означает фасад, который приедет ровным.
    *
    * Название берётся из ТОЙ ЖЕ позиции каталога, что считает смета:
-   * второго имени фрезеровки в продукте нет.
+   * второго имени фрезеровки в продукте нет. Рельеф МДФ (P3D-MDF) сюда не
+   * пишется: он VISUAL_ONLY, чертежа фрезы нет, и раскрой по нему не меняется.
    */
-  const millingName = (() => {
-    if (!milling) return null;
-    const link = millingLink(unit, run, milling);
-    return link.state === 'resolved' || link.state === 'priceless' ? link.item.name : null;
-  })();
 
-  const frontMaterial = millingName
-    ? `${frontMaterialName(spec, production.frontMm)}, фрезеровка ${millingName}`
-    : frontMaterialName(spec, production.frontMm);
-
+  /*
+   * `leaves` — детали сцены, которые закрывает эта строка (`door:0`,
+   * `drawer:1`): строка делится по их фасадам, по порядку первого появления.
+   * У модуля без своих фасадов створок группа одна — строка прежняя.
+   */
   const pushFront = (
     name: string,
     lengthMm: number,
     widthMm: number,
-    qty: number,
-    /** Фасад ящика отсека (R02A): его отсек и ИД физических деталей. */
+    leaves: string[],
+    /** Фасад ящика отсека (R02A): его отсек и ИД физических деталей — по одному на деталь. */
     tag?: { bayId: string; partIds: string[] },
   ) => {
-    const edges = edged ? { long: 2, short: 2 } : { long: 0, short: 0 };
+    const groups = new Map<string, { look: ReturnType<typeof lookOf>; leaf: string; count: number; partIds: string[] }>();
+    leaves.forEach((leaf, i) => {
+      const look = lookOf(leaf);
+      const key = look.own ? `${look.material}|${frontKey(look.spec)}` : '';
+      const at = groups.get(key);
+      if (at) {
+        at.count += 1;
+        if (tag) at.partIds.push(tag.partIds[i]);
+      } else groups.set(key, { look, leaf, count: 1, partIds: tag ? [tag.partIds[i]] : [] });
+    });
+    for (const { look, leaf, count, partIds } of Array.from(groups.values())) {
+      pushFrontRow(name, lengthMm, widthMm, count, look, look.own ? leaf : undefined, tag ? { bayId: tag.bayId, partIds } : undefined);
+    }
+  };
 
-    if (!isFramed(spec)) {
+  const pushFrontRow = (
+    name: string,
+    lengthMm: number,
+    widthMm: number,
+    qty: number,
+    look: ReturnType<typeof lookOf>,
+    frontLeaf: string | undefined,
+    tag?: { bayId: string; partIds: string[] },
+  ) => {
+    const edges = look.edged ? { long: 2, short: 2 } : { long: 0, short: 0 };
+    const leafTag = frontLeaf ? { frontLeaf } : {};
+
+    if (!isFramed(look.spec)) {
       push({
         name,
-        material: frontMaterial,
+        material: look.material,
         thicknessMm: production.frontMm,
         lengthMm,
         widthMm,
@@ -533,13 +573,14 @@ function modulePanels(
         edgeType: thick,
         grain: 'along',
         ...(tag ? { bayId: tag.bayId, partIds: tag.partIds } : {}),
+        ...leafTag,
       });
       return;
     }
 
     push({
       name: `${name}: рама`,
-      material: frontMaterial,
+      material: look.material,
       thicknessMm: production.frontMm,
       lengthMm,
       widthMm,
@@ -548,10 +589,11 @@ function modulePanels(
       edgeType: thick,
       grain: 'along',
       ...(tag ? { bayId: tag.bayId, partIds: tag.partIds.map((id) => `${id}:frame`) } : {}),
+      ...leafTag,
     });
     push({
       name: `${name}: вставка`,
-      material: frontMaterial,
+      material: look.material,
       thicknessMm: production.frontMm,
       // Вставка садится в паз обвязки: минус рама с двух сторон.
       lengthMm: Math.max(0, lengthMm - 2 * FRAME_WIDTH_MM),
@@ -562,6 +604,7 @@ function modulePanels(
       edgeType: thick,
       grain: 'along',
       ...(tag ? { bayId: tag.bayId, partIds: tag.partIds.map((id) => `${id}:insert`) } : {}),
+      ...leafTag,
     });
   };
 
@@ -575,15 +618,19 @@ function modulePanels(
   if (bays) {
     for (const bay of bays.bays) {
       if (!bay.drawerStack) continue;
-      const sizes = new Map<string, { lengthMm: number; widthMm: number; partIds: string[] }>();
+      const sizes = new Map<string, { lengthMm: number; widthMm: number; partIds: string[]; leaves: string[] }>();
       for (const drawer of bay.drawerStack.drawers) {
         const key = `${drawer.front.heightMm}x${drawer.front.widthMm}`;
+        /* Деталь сцены ящика — его ключ без имени модуля (P3D-MDF). */
+        const leaf = drawer.id.slice(unit.id.length + 1);
         const row = sizes.get(key);
-        if (row) row.partIds.push(drawer.front.partId);
-        else sizes.set(key, { lengthMm: drawer.front.heightMm, widthMm: drawer.front.widthMm, partIds: [drawer.front.partId] });
+        if (row) {
+          row.partIds.push(drawer.front.partId);
+          row.leaves.push(leaf);
+        } else sizes.set(key, { lengthMm: drawer.front.heightMm, widthMm: drawer.front.widthMm, partIds: [drawer.front.partId], leaves: [leaf] });
       }
       for (const row of Array.from(sizes.values())) {
-        pushFront('Фронт ящика', row.lengthMm, row.widthMm, row.partIds.length, { bayId: bay.id, partIds: row.partIds });
+        pushFront('Фронт ящика', row.lengthMm, row.widthMm, row.leaves, { bayId: bay.id, partIds: row.partIds });
       }
     }
   }
@@ -596,8 +643,9 @@ function modulePanels(
    * до боковины Б (S − глубина − толщина фасада). Зазор — как у всех.
    */
   if (lCorner) {
-    pushFront(legName(FACADE_PANEL_NAME, 'А'), heightMm - gap, legB - gap, 1);
-    pushFront(legName(FACADE_PANEL_NAME, 'Б'), heightMm - gap, legB - production.frontMm - gap, 1);
+    /* Пара открывается вместе, и фасад у неё один — створки `door:0` (P3D-MDF). */
+    pushFront(legName(FACADE_PANEL_NAME, 'А'), heightMm - gap, legB - gap, ['door:0']);
+    pushFront(legName(FACADE_PANEL_NAME, 'Б'), heightMm - gap, legB - production.frontMm - gap, ['door:0']);
     return panels;
   }
 
@@ -608,7 +656,11 @@ function modulePanels(
    */
   if (unit.builtIn && hasFacade(unit)) {
     const doorHeight = Math.round((heightMm - gap * (BUILT_IN_FRIDGE_FRONTS + 1)) / BUILT_IN_FRIDGE_FRONTS);
-    pushFront('Фасад встройки', doorHeight, unit.widthMm - gap, BUILT_IN_FRIDGE_FRONTS);
+    /*
+     * Сцена рисует встройку ОДНИМ полотном (известное расхождение слоя 43),
+     * и это полотно — `door:0`: его фасад у обеих деталей встройки.
+     */
+    pushFront('Фасад встройки', doorHeight, unit.widthMm - gap, Array.from({ length: BUILT_IN_FRIDGE_FRONTS }, () => 'door:0'));
     return panels;
   }
 
@@ -643,12 +695,13 @@ function modulePanels(
      */
     const fronts = moduleFronts(unit, heightMm);
 
-    for (const front of fronts.drawers) {
-      pushFront('Фронт ящика', front - gap, unit.widthMm - gap, 1);
-    }
-    for (const leaf of fronts.leaves) {
-      pushFront(FACADE_PANEL_NAME, leaf.heightMm - gap, unit.widthMm - gap, 1);
-    }
+    fronts.drawers.forEach((front, i) => {
+      pushFront('Фронт ящика', front - gap, unit.widthMm - gap, [`drawer:${i}`]);
+    });
+    /* Номер створки — её место в списке (`doorLeaves`), тот же, что у сцены. */
+    fronts.leaves.forEach((leaf, i) => {
+      pushFront(FACADE_PANEL_NAME, leaf.heightMm - gap, unit.widthMm - gap, [`door:${i}`]);
+    });
     return panels;
   }
 
@@ -665,15 +718,15 @@ function modulePanels(
     if (openMm > 0) {
       const doorWidth = Math.round((openMm - gap * (doors + 1)) / doors);
       // У фасада видны все четыре торца — если кромка на нём вообще есть.
-      pushFront(FACADE_PANEL_NAME, heightMm - gap, doorWidth, doors);
+      pushFront(FACADE_PANEL_NAME, heightMm - gap, doorWidth, Array.from({ length: doors }, (_, i) => `door:${i}`));
     }
   }
 
   if (unit.frontType === 'drawers') {
     const heights = unit.fill?.drawerHeights ?? [];
-    for (const front of heights) {
-      pushFront('Фронт ящика', front - gap, unit.widthMm - gap, 1);
-    }
+    heights.forEach((front, i) => {
+      pushFront('Фронт ящика', front - gap, unit.widthMm - gap, [`drawer:${i}`]);
+    });
   }
 
   return panels;

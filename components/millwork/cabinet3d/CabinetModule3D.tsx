@@ -12,7 +12,7 @@ import InteractiveDoor from './InteractiveDoor';
 import InteractiveBifold from './InteractiveBifold';
 import InteractiveDrawer from './InteractiveDrawer';
 import type { CabinetParts } from './parts';
-import type { Module } from '@/types/millwork';
+import type { FrontRelief, Module } from '@/types/millwork';
 
 /**
  * Один модуль в 3D: корпус и его настоящее наполнение.
@@ -53,6 +53,13 @@ type Props = {
   onActive?: (id: string, active: boolean) => void;
   /** Материал фасада этого модуля: у подвижных створок он тот же. */
   frontMaterial?: THREE.MeshStandardMaterial;
+  /**
+   * ФАСАД ОТДЕЛЬНОЙ СТВОРКИ (P3D-MDF): материал и рельеф по детали модуля
+   * (`door:0`, `drawer:1`). Его считает ряд той же `leafFrontWithMilling`,
+   * что красит закрытые фасады в пачке: открытая створка не меняет ни цвет,
+   * ни рисунок. Нет — у всех створок фасад модуля, как раньше.
+   */
+  leafLook?: (leaf: string) => { material?: THREE.MeshStandardMaterial; relief?: FrontRelief };
   /**
    * ДОСТУПНАЯ ШИРИНА ФАСАДА У СЛЕПОГО УГЛА, метры (слой 55): створка одна
    * и только здесь; ноль — створки нет. Пусто — модуль не у слепого угла.
@@ -96,10 +103,13 @@ export default function CabinetModule3D({
   displayLit = true,
   onActive,
   frontMaterial,
+  leafLook,
   openWidthM,
   production,
   layers = ALL_LAYERS,
 }: Props) {
+  /* Деталь модуля по идентификатору сцены: `<модуль>:door:0` → `door:0`. */
+  const lookOf = (partId: string) => leafLook?.(partId.slice(unit.id.length + 1));
   const widthM = unit.widthMm / MM;
   const fill = unit.fill;
 
@@ -221,6 +231,7 @@ export default function CabinetModule3D({
          * ни увидеть, ни нажать. Короб ящика остаётся в пачке слоя «Ящики».
          */
         if (!layers.fronts) return null;
+        const look = lookOf(leaf.id);
         if (leaf.kind === 'drawer') {
           return (
             <InteractiveDrawer
@@ -239,7 +250,8 @@ export default function CabinetModule3D({
               gap={gapM}
               integratedHandle={integratedHandles}
               onActive={onActive}
-              frontMaterial={frontMaterial}
+              frontMaterial={look?.material ?? frontMaterial}
+              relief={look?.relief}
             />
           );
         }
@@ -257,7 +269,8 @@ export default function CabinetModule3D({
               thickness={frontThicknessM}
               integratedHandle={integratedHandles}
               parts={parts}
-              frontMaterial={frontMaterial}
+              frontMaterial={look?.material ?? frontMaterial}
+              relief={look?.relief}
               onActive={onActive}
             />
           );
@@ -279,7 +292,8 @@ export default function CabinetModule3D({
             gap={gapM}
             integratedHandle={integratedHandles}
             onActive={onActive}
-            frontMaterial={frontMaterial}
+            frontMaterial={look?.material ?? frontMaterial}
+            relief={look?.relief}
           />
         );
       })}
@@ -293,7 +307,7 @@ export default function CabinetModule3D({
           onToggle={onToggle}
           boxes={boxes}
           parts={parts}
-          frontMaterial={frontMaterial}
+          frontMaterial={lookOf(id)?.material ?? frontMaterial}
           onActive={onActive}
         />
       ))}

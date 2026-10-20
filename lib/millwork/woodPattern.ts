@@ -83,6 +83,19 @@ export function woodPatternOf(input: {
 }
 
 /** Рисунок — в строку адреса: кэш текстуры по ней, и сцена узнаёт рисунок, а не файл. */
+/**
+ * ШПОН БЕЗ ОБРАЗЦА В КАТАЛОГЕ (P3D-MDF) — тот же ДЕМОНСТРАЦИОННЫЙ рисунок
+ * дерева, что у плиты-дерева (P3D-LDSP), в цвет фасада. Коллекция шпона
+ * ждёт пакетов поставщика (позиций 0), и ровная заливка цветом читалась
+ * крашеным МДФ, а не шпоном. Это не образец поставщика и не его рисунок —
+ * наш код, и называется он так же честно, как у ЛДСП.
+ */
+export function veneerPatternOf(hex: string | null | undefined): WoodPattern | null {
+  if (!hex || !HEX.test(hex)) return null;
+  const color = hex.toLowerCase();
+  return { hex: color, seed: `veneer:${color}`, contrast: DEMO_WOOD.contrast, ringMm: DEMO_WOOD.ringMm };
+}
+
 export function woodPatternUrl(pattern: WoodPattern): string {
   const q = new URLSearchParams({
     hex: pattern.hex.slice(1),

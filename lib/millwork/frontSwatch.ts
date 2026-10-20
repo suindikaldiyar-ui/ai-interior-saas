@@ -127,3 +127,38 @@ export function shade(hex: string, amount: number): string {
 
   return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
 }
+
+/**
+ * СВОИ ФАСАДЫ СТВОРОК НА СХЕМЕ (P3D-MDF): где лежит створка в прямоугольнике
+ * модуля (доли ширины и высоты) и её образец.
+ *
+ * Схема заливает модуль одним образцом; створка со своим фасадом ложится
+ * поверх своим. Раскладка — та же, что у рисунка фасада (`FrontGlyph`):
+ * створки поровну по ширине, ящики по своим высотам сверху вниз. У
+ * колонны, ящиков отсеков и углового модуля своих прямоугольников на
+ * схеме нет — там заливка модуля, и это сказано в отчёте P3D-MDF.
+ */
+export function leafSwatches(
+  unit: Module,
+): { leaf: string; x0: number; x1: number; y0: number; y1: number; swatch: FrontSwatch }[] {
+  if (!unit.leafFronts || !hasFacade(unit) || unit.column) return [];
+  const own = unit.leafFronts;
+  const out: { leaf: string; x0: number; x1: number; y0: number; y1: number; swatch: FrontSwatch }[] = [];
+  const heights = unit.fill?.drawerHeights ?? [];
+  if (heights.length > 0) {
+    const total = heights.reduce((sum, h) => sum + h, 0);
+    let above = 0;
+    heights.forEach((h, i) => {
+      const spec = own[`drawer:${i}`];
+      if (spec && total > 0) out.push({ leaf: `drawer:${i}`, x0: 0, x1: 1, y0: above / total, y1: (above + h) / total, swatch: frontSwatch(spec) });
+      above += h;
+    });
+    return out;
+  }
+  if (unit.frontType !== 'door' || unit.doorCount < 1) return out;
+  for (let i = 0; i < unit.doorCount; i += 1) {
+    const spec = own[`door:${i}`];
+    if (spec) out.push({ leaf: `door:${i}`, x0: i / unit.doorCount, x1: (i + 1) / unit.doorCount, y0: 0, y1: 1, swatch: frontSwatch(spec) });
+  }
+  return out;
+}

@@ -23,7 +23,7 @@ import { moveConflict } from '@/lib/millwork/freeRun';
 import { reorderTarget, rowOfModule, type RunRow } from '@/lib/millwork/selection';
 import type { LibraryGap } from '@/lib/millwork/moduleLibrary';
 import { currentVariant } from '@/lib/millwork/moduleVariants';
-import { moduleSwatch } from '@/lib/millwork/frontSwatch';
+import { leafSwatches, moduleSwatch } from '@/lib/millwork/frontSwatch';
 import { frontOf } from '@/lib/millwork/frontMaterial';
 import { hasFacade } from '@/lib/millwork/applianceFront';
 import { beamDropMm } from '@/lib/millwork/ceiling';
@@ -1573,6 +1573,23 @@ export default function ElevationDrawing({
           strokeWidth={active ? 1.4 * k : 0.8 * k}
         />
         {/*
+          * СВОЙ ФАСАД СТВОРКИ (P3D-MDF) — поверх заливки модуля своим образцом:
+          * дверь 2 в другом цвете видна на схеме так же, как в 3D и в раскрое.
+          */}
+        {showMaterial &&
+          leafSwatches(unit).map((leaf) => (
+            <rect
+              key={leaf.leaf}
+              data-leaf-fill={`${unit.id}:${leaf.leaf}`}
+              x={x + leaf.x0 * w}
+              y={yTop + leaf.y0 * h}
+              width={(leaf.x1 - leaf.x0) * w}
+              height={(leaf.y1 - leaf.y0) * h}
+              fill={`url(#${swatchId(leaf.swatch)})`}
+              stroke="none"
+            />
+          ))}
+        {/*
           * ФИЛЁНКА ВИДНА НА СХЕМЕ.
           *
           * В раскрое филёнчатый фасад — это ДВЕ детали, рама и вставка.
@@ -1937,7 +1954,7 @@ export default function ElevationDrawing({
       {showMaterial && (
         <FrontSwatchDefs
           swatches={[...run.modules, ...run.upperSegments.flatMap((seg) => seg.modules)]
-            .map((unit) => moduleSwatch(unit))
+            .flatMap((unit) => [moduleSwatch(unit), ...leafSwatches(unit).map((leaf) => leaf.swatch)])
             .filter((swatch): swatch is NonNullable<typeof swatch> => Boolean(swatch))}
         />
       )}

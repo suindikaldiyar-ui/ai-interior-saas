@@ -166,7 +166,12 @@ function Relief({
 }
 
 export default function MillingPicker({ run, catalog, selectedModuleId, onOps }: Props) {
-  const items = millingChoices(catalog);
+  /*
+   * Модели с объёмным рисунком (P3D-MDF, KIRA) кладутся на фасад во вкладке
+   * «МДФ фасады» — рисунком, а не картой слоёв ряда: назначенные полосе, они
+   * рисовались бы плоско, и сцена разошлась бы с выбранной моделью.
+   */
+  const items = millingChoices(catalog).filter((item) => !item.milling.relief);
   const unit = moduleById(run, selectedModuleId);
   const setCatalogPrice = useInteriorStore((s) => s.setCatalogPrice);
   const orgId = useInteriorStore((s) => s.orgId);

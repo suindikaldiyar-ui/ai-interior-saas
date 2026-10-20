@@ -41,7 +41,8 @@ const HINGE_CUP_M = 0.035;
 const HINGE_CUP_DEPTH_M = 0.012;
 /** Корпусная часть уходит вглубь шкафа: её видно, когда створка открыта. */
 const HINGE_ARM_DEPTH_M = 0.07;
-import { frontWithMilling } from './milling';
+import { leafFrontWithMilling } from './milling';
+import type { FrontRelief } from '@/types/millwork';
 import { leafHinges, openingHardware, openingOf } from './opening';
 import type { Module, Run } from '@/types/millwork';
 import type { SceneLayer } from './sceneLayers';
@@ -141,6 +142,19 @@ export type PartBox = BoxDraw & {
    * и едет своим мешем.
    */
   part?: string;
+  /**
+   * РЕЛЬЕФ МДФ ЭТОГО ФАСАДА (P3D-MDF) — из фасада ЕГО створки
+   * (`leafFrontWithMilling`). Есть — сцена рисует коробку объёмом рисунка
+   * (`reliefMesh`) того же габарита; нет — коробкой, как раньше. Габарит,
+   * место и раскрой от него не меняются.
+   */
+  relief?: FrontRelief;
+  /**
+   * КУДА СМОТРИТ ЛИЦО ФАСАДА. Пусто — на зрителя (+Z ряда). `-x` — фасад Б
+   * Г-образного модуля: он стоит в плоскости фасадов соседа, лицом влево,
+   * и коробка у него узкая по X. Рельеф ложится на лицо, а не на торец.
+   */
+  face?: '-x';
 };
 
 /**
@@ -871,7 +885,8 @@ export function doorBoxes(
     });
   }
 
-  const spec = frontWithMilling(unit, { milling: options.rowMilling });
+  /* Фасад ЭТОЙ створки (P3D-MDF): свой у створки или модульный — одна функция. */
+  const spec = leafFrontWithMilling(unit, `door:${index}`, { milling: options.rowMilling });
   const key = frontKey(spec);
   const w = doorW - 2 * gap;
   const h = heightM - 2 * gap;
@@ -916,6 +931,7 @@ export function doorBoxes(
       frontKey: key,
       position: [cx, cy, thickness / 2],
       scale: [w, h, thickness],
+      ...(spec.relief ? { relief: spec.relief } : {}),
     },
   ]);
 }
@@ -942,7 +958,6 @@ export function bayDrawerBoxes(
 ): PartBox[] {
   const layout = bayLayout(unit, placeEnvelope(unit, place, production));
   if (!layout) return [];
-  const key = frontKey(frontWithMilling(unit, { milling: options.rowMilling }));
   const out: PartBox[] = [];
   for (const bay of layout.bays) {
     for (const drawer of bay.drawerStack?.drawers ?? []) {
@@ -964,13 +979,16 @@ export function bayDrawerBoxes(
         scale: [(env.xToMm - env.xFromMm) / MM, (env.yToMm - env.yFromMm) / MM, (env.zToMm - env.zFromMm) / MM],
       });
       if (options.cutaway) continue;
+      /* Фасад ЭТОГО ящика (P3D-MDF): деталь — его ключ без имени модуля. */
+      const spec = leafFrontWithMilling(unit, drawer.id.slice(unit.id.length + 1), { milling: options.rowMilling });
       out.push({
         material: 'front',
         part: drawer.id,
         partId: front.partId,
         bayId: bay.id,
         panel: 'Фронт ящика',
-        frontKey: key,
+        frontKey: frontKey(spec),
+        ...(spec.relief ? { relief: spec.relief } : {}),
         position: [
           place.x + (front.xFromMm + front.xToMm) / 2 / MM,
           place.y + (front.yFromMm + front.yToMm) / 2 / MM,
@@ -1059,12 +1077,15 @@ export function drawerBoxes(
 
   if (cutaway) return boxes;
 
+  /* Фасад ЭТОГО ящика (P3D-MDF): свой у ящика или модульный. */
+  const spec = leafFrontWithMilling(unit, `drawer:${index}`, { milling: options.rowMilling });
   boxes.push({
     material: 'front',
     part,
-    frontKey: frontKey(frontWithMilling(unit, { milling: options.rowMilling })),
+    frontKey: frontKey(spec),
     position: [cx, cy, thickness / 2],
     scale: [widthM - 2 * gap, height - 2 * gap, thickness],
+    ...(spec.relief ? { relief: spec.relief } : {}),
   });
 
   boxes.push(
@@ -1160,7 +1181,10 @@ export function lCornerBoxes(unit: Module, place: ModulePlacement, options: Fron
 
   const { gapM: gap, frontThicknessM: tf } = options;
   const part = `${unit.id}:door:0`;
-  const key = frontKey(frontWithMilling(unit, { milling: options.rowMilling }));
+  /* Пара открывается вместе, и фасад у неё один — створки `door:0` (P3D-MDF). */
+  const spec = leafFrontWithMilling(unit, 'door:0', { milling: options.rowMilling });
+  const key = frontKey(spec);
+  const relief = spec.relief ? { relief: spec.relief } : {};
   /* Высота фасадов — та же, что режется (`H − зазор` в раскрое): деталь одна. */
   const h = H - gap;
 
@@ -1173,6 +1197,7 @@ export function lCornerBoxes(unit: Module, place: ModulePlacement, options: Fron
     position: [x + legB / 2, y + H / 2, zM + tf / 2],
     scale: [aW, h, tf],
     panel: legName(FACADE_PANEL_NAME, 'А'),
+    ...relief,
   });
 
   /* Фасад Б — в плоскости фасадов соседа, от лица фасада А до боковины Б. */
@@ -1184,6 +1209,8 @@ export function lCornerBoxes(unit: Module, place: ModulePlacement, options: Fron
     position: [x + legB - tf / 2, y + H / 2, zM + tf + gap / 2 + bW / 2],
     scale: [tf, h, bW],
     panel: legName(FACADE_PANEL_NAME, 'Б'),
+    ...relief,
+    face: '-x',
   });
 
   /*

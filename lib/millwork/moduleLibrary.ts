@@ -8,7 +8,7 @@ import {
 } from './moduleVariants';
 import type { ModuleVariantSpec } from './moduleVariants';
 import { STANDARD_WIDTHS, MAX_WIDTH, MIN_WIDTH } from './modules';
-import { applyOps, confirmBayLoss } from './ops';
+import { applyOps, confirmBayLoss, leafLossNotes } from './ops';
 import { moduleById, rowOfModule, type RunRow } from './selection';
 import { moduleCarcassHeightMm } from './fill';
 import { rowSpansOfRun } from './layout';
@@ -476,7 +476,9 @@ function card(
    * не нажимается вовсе: менять там нечего, а замена тем же вариантом
    * сняла бы наполнение.
    */
-  const loss = sample && !current ? bayLossNote(sample, preview, bayEnvelope(sample, run)) : null;
+  const bayLoss = sample && !current ? bayLossNote(sample, preview, bayEnvelope(sample, run)) : null;
+  /* Свой фасад створки, которой у варианта нет (P3D-MDF), — тоже потеря до нажатия. */
+  const loss = [bayLoss, ...next.notes].filter(Boolean).join(' ') || null;
 
   return {
     key: `${spec.kind}:${made}`,
@@ -537,11 +539,17 @@ export function tryRun(
   openings: Opening[],
   ops: MillworkOp[],
   roomDepthMm?: number,
-): { ok: true; run: Run } | { ok: false; why: string } {
+): { ok: true; run: Run; notes: string[] } | { ok: false; why: string } {
   try {
     const next = applyOps({ run, requirements, openings, ops, roomDepthMm });
-    if (next.warnings.length > 0) return { ok: false, why: next.warnings[0] };
-    return { ok: true, run: next };
+    /*
+     * Снятый фасад створки (P3D-MDF) — потеря, а не отказ: нажать можно,
+     * слова — на карточке до нажатия. Остальное, что сказал движок, — отказ.
+     */
+    const notes = leafLossNotes(run, next);
+    const refusals = next.warnings.filter((said) => !notes.includes(said));
+    if (refusals.length > 0) return { ok: false, why: refusals[0] };
+    return { ok: true, run: next, notes };
   } catch (error) {
     /*
      * Инвариант ряда — это не «не влезло», а «так собрать нельзя».
@@ -831,8 +839,8 @@ export function variantPreviews(
     if (!next.ok) {
       return { spec, unit: applied, heightMm, deltaKzt: null, refusal: next.why, active };
     }
-    /* Отсеки у варианта свои — снятые названы до нажатия (R02A). */
-    const loss = bayLossNote(unit, moduleById(next.run, unit.id), bayEnvelope(unit, run));
+    /* Отсеки у варианта свои — снятые названы до нажатия (R02A); снятый фасад створки (P3D-MDF) — тоже. */
+    const loss = [bayLossNote(unit, moduleById(next.run, unit.id), bayEnvelope(unit, run)), ...next.notes].filter(Boolean).join(' ') || null;
     return {
       spec,
       unit: applied,

@@ -30,6 +30,22 @@ type SurfaceReadout = {
   realSizeM: [number, number] | null;
   color: number[];
 };
+
+/** Нарисованный рельеф МДФ (P3D-MDF): пачка закрытых фасадов или едущая створка. */
+type ReliefReadout = {
+  name: string;
+  /** Едущая створка (свой меш) или пачка закрытых. */
+  moving: boolean;
+  /** Сколько фасадов рисует меш. */
+  count: number;
+  /** Чем стал фасад: тип рисунка или гладкий, если рисунок не встал. */
+  drawn: string | null;
+  refusal: string | null;
+  triangles: number;
+  /** Габарит сетки, мм: обязан совпасть с коробкой фасада. */
+  sizeMm: [number, number, number] | null;
+  color: number[];
+};
 import Cabinet3D, { APPLIANCE_GLASS_NAME } from './Cabinet3D';
 import RoomScene from './RoomScene';
 import type { PathTraceSource } from './pathTrace';
@@ -847,6 +863,7 @@ function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
       __mwCadCounter?: () => Record<string, number[]>;
       __mwCadFronts?: () => FrontReadout[];
       __mwCadSurfaces?: () => SurfaceReadout[];
+      __mwCadReliefs?: () => ReliefReadout[];
       __mwCadLook?: () => {
         frontColors: string[];
         carcassColors: string[];
@@ -941,6 +958,37 @@ function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
                 : 'clamp'
             : null,
           realSizeM: realSizeOf(material),
+          color: [material.color.r, material.color.g, material.color.b],
+        });
+      });
+      return out;
+    };
+
+    /*
+     * РЕЛЬЕФ МДФ ПО НАРИСОВАННОМУ (P3D-MDF): меши, у которых сетка рисунка
+     * (`geometry.userData.relief`), — пачки закрытых фасадов и едущие
+     * створки. Приёмка сверяет число фасадов, тип и габарит сетки с тем, что
+     * положено в данные, — не данные с данными.
+     */
+    w.__mwCadReliefs = () => {
+      const out: ReliefReadout[] = [];
+      scene.traverse((object) => {
+        const mesh = object as THREE.Mesh & { count?: number; isInstancedMesh?: boolean };
+        if (!mesh.isMesh || mesh.visible === false) return;
+        const data = (mesh.geometry?.userData ?? {}) as { relief?: boolean; drawn?: string; refusal?: string | null; triangles?: number };
+        if (!data.relief) return;
+        const box = mesh.geometry.boundingBox;
+        const material = mesh.material as THREE.MeshStandardMaterial;
+        out.push({
+          name: mesh.name,
+          moving: !mesh.isInstancedMesh,
+          count: mesh.isInstancedMesh && typeof mesh.count === 'number' ? mesh.count : 1,
+          drawn: data.drawn ?? null,
+          refusal: data.refusal ?? null,
+          triangles: data.triangles ?? 0,
+          sizeMm: box
+            ? [box.max.x - box.min.x, box.max.y - box.min.y, box.max.z - box.min.z].map((v) => Math.round(v * MM * 10) / 10) as [number, number, number]
+            : null,
           color: [material.color.r, material.color.g, material.color.b],
         });
       });
@@ -1465,6 +1513,7 @@ function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
       delete w.__mwCadFrames;
       delete w.__mwCadFronts;
       delete w.__mwCadSurfaces;
+      delete w.__mwCadReliefs;
       delete w.__mwCadState;
       delete (w as { __mwCadBays?: unknown }).__mwCadBays;
       delete w.__mwCadFit;
@@ -1535,7 +1584,13 @@ export function sceneBounds(rows: SceneRow[]): {
  * видно за дверью, и рёбра по ним превращают мебель в чертёж; в режиме
  * «Каркас» они и есть предмет разговора.
  */
-function rowCorners(rows: SceneRow[], inside = true, layers: SceneLayers = ALL_LAYERS): [number, number, number][] {
+function rowCorners(
+  rows: SceneRow[],
+  inside = true,
+  layers: SceneLayers = ALL_LAYERS,
+  /** Открытые детали (P3D-MDF): у створки на ходу контура закрытого положения нет. */
+  open: ReadonlySet<string> = NO_OPEN,
+): [number, number, number][] {
   const points: [number, number, number][] = [];
 
   for (const row of rows) {
@@ -1543,7 +1598,7 @@ function rowCorners(rows: SceneRow[], inside = true, layers: SceneLayers = ALL_L
         thicknessMm: 16,
         frontThicknessMm: 18,
         gapMm: 3,
-      }).filter((box) => (inside || !box.inside) && boxShown(box, layers));
+      }).filter((box) => (inside || !box.inside) && boxShown(box, layers) && !(box.part && open.has(box.part)));
 
       const place = rowPlacement(row);
       const angle = (place.rotationYDeg * Math.PI) / 180;
@@ -1585,10 +1640,23 @@ function rowCorners(rows: SceneRow[], inside = true, layers: SceneLayers = ALL_L
 /** Имя буфера рёбер мебели: по нему его находит приёмка. */
 const RUN_EDGES_NAME = 'run-edges';
 
+/** Пустой набор открытых деталей: габарит мебели и пересечения меряются по закрытой. */
+const NO_OPEN: ReadonlySet<string> = new Set();
+
 function RunEdges({ rows, inside, layers }: { rows: SceneRow[]; inside: boolean; layers: SceneLayers }) {
+  /*
+   * ОТКРЫТАЯ СТВОРКА — БЕЗ КОНТУРА ЗАКРЫТОГО ПОЛОЖЕНИЯ (P3D-MDF).
+   *
+   * Буфер строился из закрытых коробок, и у распахнутой двери её контур
+   * оставался висеть линиями внутри шкафа — у филёнки по пять контуров на
+   * дверь. Открытая деталь рёбер не даёт; закрылась — контур на месте.
+   * Габарит мебели для камеры (`sceneBounds`) этим не меняется: он по закрытой.
+   */
+  const openParts = useInteriorStore((state) => state.openParts);
+  const open = useMemo(() => new Set(openParts), [openParts]);
   const geometry = useMemo(() => {
     const points: number[] = [];
-    const corners = rowCorners(rows, inside, layers);
+    const corners = rowCorners(rows, inside, layers, open);
 
     // Двенадцать рёбер на каждые восемь вершин коробки.
     const edges: [number, number][] = [
@@ -1607,7 +1675,7 @@ function RunEdges({ rows, inside, layers }: { rows: SceneRow[]; inside: boolean;
     buffer.setAttribute('position', new THREE.BufferAttribute(new Float32Array(points), 3));
     buffer.computeBoundingSphere();
     return buffer;
-  }, [rows, inside, layers]);
+  }, [rows, inside, layers, open]);
 
   return (
     /*

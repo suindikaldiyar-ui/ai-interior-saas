@@ -1,5 +1,6 @@
 import { TYPICAL_PALETTE, typicalColorItem } from './palette';
 import { TYPICAL_MILLING, typicalMillingItem } from './milling';
+import { KIRA_MODELS, kiraMillingItem } from './kira';
 import type { CatalogCategory, CatalogEntryFull } from '@/types/catalog';
 import type { CommPoint, Measurement, Opening, RunRequirements } from '@/types/millwork';
 import type { RateTable } from './estimate';
@@ -264,3 +265,32 @@ export const DEMO_CATALOG: CatalogEntryFull[] = TYPICAL_PALETTE.map((color, inde
 });
 
 DEMO_CATALOG.push(...DEMO_MILLING);
+
+/*
+ * МОДЕЛИ KIRA (P3D-MDF) — те же строки каталога, что получила бы организация
+ * (`kiraMillingItem`): рисунок-приближение VISUAL_ONLY, цены нет, фото нет.
+ * В рабочие базы организаций они не заводятся сами — импорт после
+ * разрешения владельца; демо показывает, как модель ляжет на фасад.
+ */
+DEMO_CATALOG.push(
+  ...KIRA_MODELS.map((model, index): CatalogEntryFull => {
+    const seed = kiraMillingItem(model);
+    return {
+      id: `demo-kira-${index}`,
+      org_id: 'demo',
+      category_id: DEMO_CATEGORY.id,
+      article: seed.article,
+      name_ru: seed.name_ru,
+      name_kk: seed.name_kk,
+      description: '',
+      price: seed.price,
+      unit: seed.unit,
+      dimensions: {},
+      tiling: {},
+      meta: seed.meta,
+      is_active: true,
+      category: DEMO_CATEGORY,
+      assets: [],
+    };
+  }),
+);

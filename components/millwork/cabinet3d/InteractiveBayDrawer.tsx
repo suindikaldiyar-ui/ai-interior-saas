@@ -5,6 +5,8 @@ import type * as THREE from 'three';
 import { useSlide } from './useSlide';
 import { useTouchTarget } from './useTouchTarget';
 import { useShiftedBox, type CabinetParts } from './parts';
+import { realSizeShiftOf } from './realSizeMap';
+import { leafOfBox, useReliefGeometry, useShiftedRelief } from './reliefGeometry';
 import { DRAWER_TRAVEL_M, type PartBox } from '@/lib/millwork/cabinetBoxes';
 
 /**
@@ -84,6 +86,12 @@ export default function InteractiveBayDrawer({ id, open, onToggle, boxes, parts,
 
   /* Фронт ящика — тот же кусок дерева, что у него закрытого в пачке (ключ — идентификатор ящика). */
   const frontBox = useShiftedBox(parts.box, id);
+  /* Рельеф МДФ фронта (P3D-MDF) — с коробки фронта той же пачки (`bayDrawerBoxes`). */
+  const front = boxes.find((box) => box.material === 'front');
+  const reliefGeometry = useShiftedRelief(
+    useReliefGeometry(front?.relief, leafOfBox(front?.scale ?? [0, 0, 0])),
+    realSizeShiftOf(id),
+  );
   const materialOf = (box: PartBox) =>
     box.material === 'front' ? (frontMaterial ?? parts.front) : box.material === 'inner' ? parts.inner : parts.carcass;
 
@@ -113,10 +121,10 @@ export default function InteractiveBayDrawer({ id, open, onToggle, boxes, parts,
         boxes.map((box, i) => (
           <mesh
             key={`${box.partId ?? box.panel ?? 'box'}-${i}`}
-            geometry={box.material === 'front' ? frontBox : parts.box}
+            geometry={box.material === 'front' ? (reliefGeometry ?? frontBox) : parts.box}
             material={materialOf(box)}
             position={box.position}
-            scale={box.scale}
+            scale={box.material === 'front' && reliefGeometry ? [1, 1, 1] : box.scale}
             castShadow={box.material === 'front'}
           />
         ))}

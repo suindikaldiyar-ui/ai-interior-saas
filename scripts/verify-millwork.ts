@@ -27929,6 +27929,366 @@ import {
   );
 }
 
+/* ═══════════  P3D-MDF: МДФ-фасады — объёмный рисунок, фасад одной двери, KIRA, покрытия  ═══════════ */
+/*
+ * Рисунок фасада — ГЕОМЕТРИЯ (`reliefMesh`), а не карта на плоскости: здесь
+ * меряется сама сетка (габарит, замкнутость, нормали, глубина), путь экрана
+ * (`composeVariants` → `facadeOps` → `applyOps`) — дверь меняется одна,
+ * корпус и соседняя створка те же, — раскрой, смета, отпечаток, модели KIRA
+ * и покрытия. Как это выглядит, меряет браузер (`scripts/check-mdf-look.mjs`).
+ */
+import {
+  RELIEF_KINDS as MDF_KINDS,
+  reliefLeafRefusal as mdfLeafRefusal,
+  reliefMesh as mdfMesh,
+  reliefParamRefusal as mdfParamRefusal,
+  resolveRelief as mdfResolve,
+  type ReliefLeaf as MdfLeaf,
+} from '../lib/millwork/facadeRelief';
+import type { FrontRelief as MdfRelief } from '../types/millwork';
+import { MDF_COATINGS, facadeOps as mdfFacadeOps, facadeSpec as mdfFacadeSpec, leafFrontSizes as mdfLeafSizes, moduleLeaves as mdfLeaves } from '../lib/millwork/mdfFacade';
+import { KIRA_MODELS, kiraMillingItem } from '../lib/millwork/kira';
+import { millingChoices as mdfMillingChoices, millingOf as mdfMillingOf, millingCatalog as mdfMillingCatalog, TYPICAL_MILLING as MDF_TYPICAL } from '../lib/millwork/milling';
+import { leafSwatches as mdfLeafSwatches } from '../lib/millwork/frontSwatch';
+import { frontLookOf as mdfLookOf } from '../components/millwork/cabinet3d/cadLook';
+import { veneerPatternOf as mdfVeneerPattern } from '../lib/millwork/woodPattern';
+import { composeVariants as mdfCompose, workspaceInput as mdfWorkspaceInput, DEFAULT_REQUIREMENTS as MDF_DEFAULT_REQUIREMENTS } from '../lib/millwork/workspace';
+import { DEMO_CATALOG as MDF_DEMO_CATALOG, DEMO_RATES as MDF_RATES } from '../lib/millwork/demo';
+import { MATERIAL_FINISHES as MDF_FINISHES } from '../lib/millwork/materialFinishes';
+{
+  console.log('\nP3D-MDF: объёмный рисунок фасада, фасад одной двери, раскрой и смета, модели KIRA, покрытия');
+
+  /* ── Сетка рисунка: габарит, замкнутость, нормали, глубина ── */
+  const meshFacts = (relief: Parameters<typeof mdfMesh>[0], leaf: MdfLeaf) => {
+    const m = mdfMesh(relief, leaf);
+    const p = m.positions;
+    const min = [Infinity, Infinity, Infinity];
+    const max = [-Infinity, -Infinity, -Infinity];
+    for (let i = 0; i < p.length; i += 3) {
+      for (let k = 0; k < 3; k += 1) {
+        min[k] = Math.min(min[k], p[i + k]);
+        max[k] = Math.max(max[k], p[i + k]);
+      }
+    }
+    const edges = new Map<string, number>();
+    const key = (i: number) => `${Math.round(p[i] * 1e6)},${Math.round(p[i + 1] * 1e6)},${Math.round(p[i + 2] * 1e6)}`;
+    let flipped = 0;
+    let degenerate = 0;
+    let volume = 0;
+    /* Лицо: самое глубокое место среди треугольников, смотрящих на зрителя. */
+    let faceMin = Infinity;
+    for (let t = 0; t < p.length; t += 9) {
+      const a = [p[t], p[t + 1], p[t + 2]];
+      const b = [p[t + 3], p[t + 4], p[t + 5]];
+      const c = [p[t + 6], p[t + 7], p[t + 8]];
+      volume += (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0]) + a[2] * (b[0] * c[1] - b[1] * c[0])) / 6;
+      const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+      const v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+      const n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+      const len = Math.hypot(n[0], n[1], n[2]);
+      if (len < 1e-12) degenerate += 1;
+      else if ((n[0] * m.normals[t] + n[1] * m.normals[t + 1] + n[2] * m.normals[t + 2]) / len < 0) flipped += 1;
+      if (len > 1e-12 && n[2] / len > 0.2) faceMin = Math.min(faceMin, a[2], b[2], c[2]);
+      const ks = [key(t), key(t + 3), key(t + 6)];
+      for (let e = 0; e < 3; e += 1) {
+        const k1 = ks[e];
+        const k2 = ks[(e + 1) % 3];
+        const k = k1 < k2 ? `${k1}|${k2}` : `${k2}|${k1}`;
+        edges.set(k, (edges.get(k) ?? 0) + 1);
+      }
+    }
+    let open = 0;
+    for (const count of Array.from(edges.values())) if (count !== 2) open += 1;
+    const sizeMm = [0, 1, 2].map((k) => (max[k] - min[k]) * 1000);
+    return {
+      m,
+      sizeMm,
+      zMm: [min[2] * 1000, max[2] * 1000],
+      open,
+      flipped,
+      degenerate,
+      share: volume / ((leaf.widthMm * leaf.heightMm * leaf.thicknessMm) / 1e9),
+      faceDepthMm: leaf.thicknessMm / 2 - faceMin * 1000,
+    };
+  };
+  const leaves: MdfLeaf[] = [
+    { widthMm: 446, heightMm: 716, thicknessMm: 16 },
+    { widthMm: 442, heightMm: 2492, thicknessMm: 19 },
+  ];
+  const geometry = MDF_KINDS.flatMap((def) =>
+    leaves.map((leaf) => ({ def, leaf, f: meshFacts({ kind: def.kind }, leaf), r: mdfResolve({ kind: def.kind }) })),
+  );
+  check(
+    `MDF.R1 сетка каждого типа A–F (${MDF_KINDS.length} × ${leaves.length} габарита): габарит ровно Ш × В × Т фасада (± 0.01 мм), тыл и лицо на ±Т/2, замкнута (каждое ребро у двух треугольников), ни одной перевёрнутой и вырожденной грани`,
+    geometry.length === 12 &&
+      geometry.every(
+        ({ leaf, f }) =>
+          Math.abs(f.sizeMm[0] - leaf.widthMm) < 0.01 &&
+          Math.abs(f.sizeMm[1] - leaf.heightMm) < 0.01 &&
+          Math.abs(f.sizeMm[2] - leaf.thicknessMm) < 0.01 &&
+          Math.abs(f.zMm[0] + leaf.thicknessMm / 2) < 0.01 &&
+          Math.abs(f.zMm[1] - leaf.thicknessMm / 2) < 0.01 &&
+          f.open === 0 &&
+          f.flipped === 0 &&
+          f.degenerate === 0 &&
+          f.share > 0 &&
+          f.share <= 1,
+      ),
+    geometry
+      .map(({ def, leaf, f }) => `${def.letter} ${leaf.widthMm}×${leaf.heightMm}: ${f.sizeMm.map((v) => v.toFixed(2)).join('×')} открытых ${f.open} перевёрн. ${f.flipped} вырожд. ${f.degenerate} тр. ${f.m.triangles}`)
+      .join(' · '),
+  );
+  check(
+    'MDF.R2 рисунок — объём, а не картинка: у B–F лицо снято на глубину рисунка (≥ 90 % от заданной), у A — только скругление кромки 1.5 мм; рисунок встал на оба габарита',
+    geometry.every(({ def, f, r }) =>
+      def.kind === 'slab'
+        ? f.faceDepthMm <= 1.5 + 1e-6 && f.m.drawn === 'slab'
+        : f.faceDepthMm >= r.depthMm * 0.9 && f.faceDepthMm <= r.depthMm + 1e-6 && f.m.drawn === def.kind && f.m.refusal === null,
+    ),
+    geometry.map(({ def, leaf, f, r }) => `${def.letter}/${leaf.heightMm}: ${f.faceDepthMm.toFixed(2)} из ${def.kind === 'slab' ? '1.5' : r.depthMm}`).join(' · '),
+  );
+  const again = mdfMesh({ kind: 'fluted' }, leaves[0]);
+  const once = mdfMesh({ kind: 'fluted' }, leaves[0]);
+  const wider = mdfMesh({ kind: 'fluted', pitchMm: 40 }, leaves[0]);
+  check(
+    'MDF.R3 сетка детерминирована: тот же рисунок и габарит — те же байты; другой шаг — другая сетка',
+    Buffer.compare(Buffer.from(again.positions.buffer), Buffer.from(once.positions.buffer)) === 0 &&
+      Buffer.compare(Buffer.from(again.normals.buffer), Buffer.from(once.normals.buffer)) === 0 &&
+      Buffer.compare(Buffer.from(again.positions.buffer), Buffer.from(wider.positions.buffer)) !== 0,
+    `треугольников ${again.triangles} и ${wider.triangles} при шаге 26 и 40`,
+  );
+
+  /* ── Проверка размеров: параметры сами по себе и на этом фасаде ── */
+  const deep = mdfParamRefusal({ kind: 'fluted', depthMm: 12 }, 16);
+  const tooDeep = mdfParamRefusal({ kind: 'frame', depthMm: 7 }, 12);
+  const tight = mdfParamRefusal({ kind: 'vgrooves', pitchMm: 9, widthMm: 8 }, 16);
+  const drawer = { widthMm: 596, heightMm: 140, thicknessMm: 16 };
+  const frameOnDrawer = mdfLeafRefusal({ kind: 'frame' }, drawer);
+  const linesTooMany = mdfLeafRefusal({ kind: 'vgrooves', count: 9, pitchMm: 60 }, leaves[0]);
+  const drawerMesh = mdfMesh({ kind: 'frame' }, drawer);
+  check(
+    'MDF.R4 размеры проверяются числом: глубина 12 мм — за пределом 8; 7 мм на фасаде 12 — меньше 6 мм плиты; шаг 9 при канавке 8 — канавки слились бы; рамка 70 на ящике 140 и 9 линий по 60 на двери 446 — не встают, такой фасад гладкий (а не ужат)',
+    Boolean(deep && /8/.test(deep)) &&
+      Boolean(tooDeep && /6 мм/.test(tooDeep)) &&
+      Boolean(tight && /слились/.test(tight)) &&
+      Boolean(frameOnDrawer && /202 мм/.test(frameOnDrawer)) &&
+      Boolean(linesTooMany && /9 линий/.test(linesTooMany)) &&
+      drawerMesh.drawn === 'slab' &&
+      drawerMesh.refusal === frameOnDrawer,
+    [deep, tooDeep, tight, frameOnDrawer, linesTooMany].map((s) => s ?? 'НЕТ ОТКАЗА').join(' | '),
+  );
+
+  /* ── Путь экрана: шкаф спальни, дверь 2 левого шкафа ── */
+  const req = { ...MDF_DEFAULT_REQUIREMENTS, zone: 'bedroom', mode: 'free', doorSystem: 'hinged', appliances: [], sections: [] } as RunRequirements;
+  const measurement = {
+    id: 'p3d-mdf',
+    ceilingHeightMm: 2600,
+    walls: [3000, 2800, 3000, 2800].map((lengthMm, i) => ({ id: `w${i + 1}`, lengthMm, angleDeg: 90, openings: [] })),
+    comms: [],
+    photos: [],
+    measuredBy: 'P3D-MDF',
+    measuredAt: '2026-10-20',
+    notes: '',
+  };
+  const input = mdfWorkspaceInput({ title: 'P3D-MDF', zone: 'Спальня', measurement, requirements: req, rates: MDF_RATES, wallId: 'w1', cornerAt: null, production: DEFAULT_PRODUCTION } as never);
+  const shown = (edited: Run | null): Run =>
+    (mdfCompose(input, { basic: [], optimal: [], premium: [] } as never, (edited ? { optimal: edited } : {}) as never).find((v: { key: string }) => v.key === 'optimal')!.run as Run);
+  const ops = (run: Run, list: MillworkOp[]) => {
+    const next = applyOps({ run, requirements: req, ops: list, openings: input.openings, roomDepthMm: 0 });
+    return { run: shown(next), warnings: next.warnings };
+  };
+  let start = shown(null);
+  const keep = new Set(['tall-0@w1', 'tall-900@w1']);
+  if (!start.modules.some((m) => m.id === 'tall-900@w1')) throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: в ряду спальни нет tall-900@w1 — ${start.modules.map((m) => m.id).join(', ')}`);
+  start = ops(start, start.modules.filter((m) => !keep.has(m.id)).map((m) => ({ op: 'remove_module' as const, moduleId: m.id }))).run;
+  start = ops(start, [{ op: 'set_width', moduleId: 'tall-900@w1', widthMm: 1000 }]).run;
+  const LEFT = 'tall-0@w1';
+  const boxesOf = (run: Run) => runBoxes(run, { thicknessMm: 16, frontThicknessMm: DEFAULT_PRODUCTION.frontMm, gapMm: DEFAULT_PRODUCTION.frontGapMm });
+  const doorPlan = mdfFacadeOps('leaf', { relief: { kind: 'fluted' } }, start, LEFT, 'door:1');
+  if ('refusal' in doorPlan) throw new Error(`фасад двери не лёг: ${doorPlan.refusal}`);
+  const door = ops(start, doorPlan.ops);
+  const b0 = boxesOf(start);
+  const b1 = boxesOf(door.run);
+  const changed = b1.filter((box, i) => JSON.stringify(box) !== JSON.stringify(b0[i]));
+  const sizes = mdfLeafSizes(door.run);
+  const doorSize = sizes.get(`${LEFT}:door:1`)!;
+  const doorMesh = meshFacts({ kind: 'fluted' }, doorSize);
+  check(
+    'MDF.R5 путь экрана: «Выбранная дверь» → рифлёный на двери 2 левого шкафа — в сцене поменялась ровно одна коробка (фасад этой двери: рисунок и ключ материала); корпус, дверь 1 и второй шкаф те же до байта; сетка рисунка совпадает с коробкой фасада до 0.01 мм',
+    mdfLeaves(start, LEFT).map((l) => l.leaf).join(',') === 'door:0,door:1' &&
+      door.warnings.length === 0 &&
+      b0.length === b1.length &&
+      changed.length === 1 &&
+      changed[0].part === `${LEFT}:door:1` &&
+      changed[0].relief?.kind === 'fluted' &&
+      b1.filter((box) => box.relief).length === 1 &&
+      Math.abs(doorMesh.sizeMm[0] - changed[0].scale[0] * 1000) < 0.01 &&
+      Math.abs(doorMesh.sizeMm[1] - changed[0].scale[1] * 1000) < 0.01 &&
+      Math.abs(doorMesh.sizeMm[2] - changed[0].scale[2] * 1000) < 0.01,
+    `коробок ${b0.length}→${b1.length}, изменились ${changed.map((b) => b.part ?? b.panel ?? b.material).join(', ') || 'НИ ОДНОЙ'} · сетка ${doorMesh.sizeMm.map((v) => v.toFixed(2)).join('×')} при коробке ${changed[0] ? changed[0].scale.map((v) => (v * 1000).toFixed(2)).join('×') : '—'}${door.warnings.length ? ` · отказ: ${door.warnings[0]}` : ''}`,
+  );
+  const back = ops(door.run, [{ op: 'set_leaf_front', moduleId: LEFT, leaf: 'door:1', front: null }]);
+  const pitched = ops(door.run, [
+    { op: 'set_leaf_front', moduleId: LEFT, leaf: 'door:1', front: { ...door.run.modules.find((m) => m.id === LEFT)!.leafFronts!['door:1'], relief: { kind: 'fluted', pitchMm: 40 } } },
+  ]);
+  check(
+    'MDF.R6 отпечаток: дверь со своим рисунком — другой отпечаток; «как у шкафа» — снова прежний до символа; другой шаг рифления — третий отпечаток',
+    door.run.fingerprint !== start.fingerprint &&
+      back.run.fingerprint === start.fingerprint &&
+      JSON.stringify(back.run.modules.find((m) => m.id === LEFT)!.leafFronts ?? null) === 'null' &&
+      pitched.run.fingerprint !== door.run.fingerprint &&
+      pitched.run.fingerprint !== start.fingerprint,
+    `${start.fingerprint} → ${door.run.fingerprint} → назад ${back.run.fingerprint} · шаг 40: ${pitched.run.fingerprint}`,
+  );
+
+  /* ── Раскрой и смета ── */
+  const rows = (run: Run) => buildPanels({ run }).filter((p) => p.material.startsWith('Фасад'));
+  const r0 = rows(start);
+  const r1 = rows(door.run);
+  const area = (list: Panel[]) => list.reduce((sum, p) => sum + p.lengthMm * p.widthMm * p.qty, 0);
+  const leftRows = r1.filter((p) => p.moduleId === LEFT);
+  check(
+    'MDF.R7 раскрой: у левого шкафа строка «Фасад × 2» делится на две по фасаду (своя дверь — своя строка с пометкой створки), размеры деталей те же, число и площадь фасадов те же; второй шкаф не тронут',
+    r0.filter((p) => p.moduleId === LEFT).length === 1 &&
+      r0.find((p) => p.moduleId === LEFT)!.qty === 2 &&
+      leftRows.length === 2 &&
+      leftRows.every((p) => p.qty === 1 && p.lengthMm === r0.find((q) => q.moduleId === LEFT)!.lengthMm && p.widthMm === r0.find((q) => q.moduleId === LEFT)!.widthMm) &&
+      leftRows.filter((p) => p.frontLeaf === 'door:1').length === 1 &&
+      area(r0) === area(r1) &&
+      JSON.stringify(r0.filter((p) => p.moduleId !== LEFT)) === JSON.stringify(r1.filter((p) => p.moduleId !== LEFT)),
+    leftRows.map((p) => `${p.name} ${p.lengthMm}×${p.widthMm} ×${p.qty} ${p.material}${p.frontLeaf ? ` [${p.frontLeaf}]` : ''}`).join(' · '),
+  );
+  /* Рисунок на шкафу в эмали: база та же — раскрой, деньги и детали те же, рисунок строкой без цены. */
+  const enamel = (run: Run, relief: MdfRelief | undefined) =>
+    ops(run, [{ op: 'set_front', moduleId: LEFT, front: { base: 'mdf_enamel', construct: 'solid', finish: 'matte', surface: 'matte', colorHex: '#6a7b59', ...(relief ? { relief } : {}) } }]).run;
+  const plainEnamel = enamel(start, undefined);
+  const slabEnamel = enamel(start, { kind: 'slab' });
+  const flutedEnamel = enamel(start, { kind: 'fluted' });
+  const est = (run: Run) => buildEstimate(run, 'optimal', MDF_RATES);
+  const e0 = est(plainEnamel);
+  const eSlab = est(slabEnamel);
+  const eFlute = est(flutedEnamel);
+  const reliefLine = eFlute.lines.find((l) => l.key === 'front_relief_fluted');
+  const leftArea = area(rows(flutedEnamel).filter((p) => p.moduleId === LEFT)) / 1e6;
+  check(
+    'MDF.R8 смета: рисунок на эмали не меняет ни раскроя, ни суммы; гладкий (A) — без строки; рифлёный — строка «Фрезеровка «Рифлёный» — VISUAL_ONLY» с площадью фасадов из раскроя и БЕЗ цены (итог «неполный», а не выдуманный)',
+    JSON.stringify(rows(plainEnamel)) === JSON.stringify(rows(flutedEnamel)) &&
+      e0.total === eSlab.total &&
+      e0.total === eFlute.total &&
+      !eSlab.lines.some((l) => l.key.startsWith('front_relief_')) &&
+      Boolean(reliefLine) &&
+      Math.abs((reliefLine?.quantity ?? 0) - Math.round(leftArea * 100) / 100) < 0.011 &&
+      Boolean(reliefLine?.priceUnset) &&
+      /VISUAL_ONLY/.test(reliefLine?.title ?? ''),
+    `итог ${e0.total} / гладкий ${eSlab.total} / рифлёный ${eFlute.total} · строка ${reliefLine ? `${reliefLine.title}: ${reliefLine.quantity} м² (раскрой ${leftArea.toFixed(2)}), ${reliefLine.priceUnset ?? 'С ЦЕНОЙ'}` : 'НЕТ'}`,
+  );
+
+  /* ── Отказы и снятие фасада исчезнувшей створки ── */
+  const ldsp = ops(door.run, [{ op: 'set_leaf_front', moduleId: LEFT, leaf: 'door:0', front: { base: 'ldsp', construct: 'solid', finish: 'matte', relief: { kind: 'frame' } } }]);
+  const framed = ops(door.run, [{ op: 'set_front', moduleId: LEFT, front: { base: 'mdf_enamel', construct: 'framed', finish: 'matte', relief: { kind: 'grooves' } } }]);
+  const ghost = ops(door.run, [{ op: 'set_leaf_front', moduleId: LEFT, leaf: 'door:7', front: { base: 'mdf_enamel', construct: 'solid', finish: 'matte' } }]);
+  const narrow = ops(door.run, [{ op: 'set_width', moduleId: LEFT, widthMm: 450 }]);
+  const narrowLeft = narrow.run.modules.find((m) => m.id === LEFT);
+  check(
+    'MDF.R9 отказы словами и ряд прежний: рисунок на ЛДСП, рисунок на филёнке, деталь «door:7»; шкаф сузили до одной створки — свой фасад двери 2 снят и это СКАЗАНО, а не потеряно молча',
+    /ЛДСП так не фрезеруется/.test(ldsp.warnings[0] ?? '') &&
+      ldsp.run.fingerprint === door.run.fingerprint &&
+      /цельной плите/.test(framed.warnings[0] ?? '') &&
+      framed.run.fingerprint === door.run.fingerprint &&
+      /нет детали «door:7»/.test(ghost.warnings[0] ?? '') &&
+      narrowLeft?.doorCount === 1 &&
+      !narrowLeft.leafFronts &&
+      narrow.warnings.some((w) => /свой фасад «Дверь 2» снят/.test(w)),
+    [ldsp.warnings[0], framed.warnings[0], ghost.warnings[0], narrow.warnings.join(' | ')].map((s) => s ?? 'МОЛЧА').join(' · '),
+  );
+
+  /* ── Библиотека: потеря фасада створки — слова на карточке, а не серая карточка ── */
+  const cardsAfter = libraryCards({ run: door.run, requirements: req, openings: input.openings, moduleId: LEFT, roomDepthMm: 0 });
+  const cardsBefore = libraryCards({ run: start, requirements: req, openings: input.openings, moduleId: LEFT, roomDepthMm: 0 });
+  const named = cardsAfter.filter((c) => !c.refusal && (c.loss ?? '').includes('свой фасад «Дверь 2» снят'));
+  const blockedByLeaf = cardsAfter.filter((c) => (c.refusal ?? '').includes('свой фасад'));
+  const available = (list: typeof cardsAfter) => list.filter((c) => !c.refusal).length;
+  check(
+    'MDF.R13 библиотека: у шкафа со своим фасадом двери 2 карточки, после которых двери 2 не будет, НЕ серые — потеря названа на карточке до нажатия; доступных карточек столько же, сколько без своего фасада',
+    cardsAfter.length > 0 && named.length > 0 && blockedByLeaf.length === 0 && available(cardsAfter) === available(cardsBefore),
+    `карточек ${cardsAfter.length} · доступно ${available(cardsBefore)} → ${available(cardsAfter)} · с названной потерей ${named.length} (${named.slice(0, 2).map((c) => c.key).join(', ')}) · серых из-за фасада ${blockedByLeaf.length}`,
+  );
+  /* ── Схема: дверь со своим фасадом — своим образцом ── */
+  const swatches = mdfLeafSwatches(door.run.modules.find((m) => m.id === LEFT)!);
+  check(
+    'MDF.R10 схема: свой фасад двери 2 — свой прямоугольник поверх заливки шкафа (правая половина, во всю высоту), у двери 1 — нет',
+    swatches.length === 1 && swatches[0].leaf === 'door:1' && swatches[0].x0 === 0.5 && swatches[0].x1 === 1 && swatches[0].y0 === 0 && swatches[0].y1 === 1,
+    JSON.stringify(swatches.map((s) => ({ leaf: s.leaf, x: [s.x0, s.x1], y: [s.y0, s.y1] }))),
+  );
+
+  /* ── Модели KIRA — позиции каталога фрезеровок ── */
+  const rowsKira = KIRA_MODELS.map((model) => ({ model, row: kiraMillingItem(model) }));
+  const parsed = rowsKira.map(({ model, row }, i) => ({
+    model,
+    row,
+    item: mdfMillingOf({ ...MDF_DEMO_CATALOG[0], id: `kira-${i}`, article: row.article, name_ru: row.name_ru, price: row.price, meta: row.meta } as never),
+  }));
+  const door446 = { widthMm: 446, heightMm: 716, thicknessMm: 16 };
+  const kiraFit = parsed.map(({ model, row }) => ({ article: model.article, said: mdfLeafRefusal(row.meta.milling.relief, door446) }));
+  const demoKira = MDF_DEMO_CATALOG.filter((e) => e.article.startsWith('KIRA-'));
+  const picker = mdfMillingChoices(mdfMillingCatalog(MDF_DEMO_CATALOG)).filter((item) => !item.milling.relief);
+  check(
+    `MDF.R11 модели KIRA (${KIRA_MODELS.length}): позиции каталога фрезеровок с рисунком-приближением VISUAL_ONLY, производителем, артикулом, страницей, фото-референсом (путь, REFERENCE_ONLY, права NOT_VERIFIED, картинки нет), типом рисунка, инженерным статусом MISSING_DATA, подтверждённым и отсутствующим; цены нет; рисунок встаёт на дверь 446 × 716; в демо-каталоге все, в выборе фрезеровки ряда их нет — там прежние ${MDF_TYPICAL.length}`,
+    KIRA_MODELS.length === 11 &&
+      parsed.every(({ model, row, item }) => {
+        const prov = row.meta.provenance;
+        return (
+          item !== null &&
+          item.milling.relief?.model === `KIRA:${model.article}` &&
+          item.price === 0 &&
+          prov.manufacturer === 'KIRA' &&
+          prov.article === model.article &&
+          /^https:\/\/kira-group\.kz\//.test(prov.source) &&
+          prov.referencePhoto.status === 'REFERENCE_ONLY' &&
+          prov.rightsStatus === 'NOT_VERIFIED' &&
+          prov.visualStatus === 'VISUAL_ONLY' &&
+          prov.engineeringStatus === 'MISSING_DATA' &&
+          prov.missing.includes('millingDepthMm') &&
+          prov.missing.includes('priceKzt') &&
+          typeof prov.patternType === 'string' &&
+          !('image' in row.meta) &&
+          !JSON.stringify(row).includes('data:image')
+        );
+      }) &&
+      kiraFit.every((f) => f.said === null) &&
+      demoKira.length === 11 &&
+      picker.length === MDF_TYPICAL.length,
+    `${parsed.filter(({ item }) => item).length} разобраны · не встали: ${kiraFit.filter((f) => f.said).map((f) => `${f.article}: ${f.said}`).join(' | ') || 'нет'} · в демо ${demoKira.length} · в выборе ряда ${picker.length}`,
+  );
+
+  /* ── Покрытия: поверхности таблицы каталога, PBR без выдуманных чисел ── */
+  const base = { base: 'mdf_enamel', construct: 'solid', finish: 'matte', colorHex: '#6a7b59' } as FrontSpec;
+  const coated = MDF_COATINGS.map((coating) => {
+    const spec = mdfFacadeSpec(base, { coating: coating.key }).spec;
+    return { coating, spec, look: mdfLookOf(spec, MDF_FINISHES) };
+  });
+  const table = (key: string) => MDF_FINISHES[key];
+  check(
+    'MDF.R12 покрытия — поверхности таблицы каталога: суперматовый 0.9 без лака, матовый 0.8, полуматовый 0.45 с лаком, глянцевый 0.15 с лаком 0.8; металличности нет (краска — диэлектрик); шпон — шпон по МДФ с рисунком дерева в цвет; цвет фасада не меняется',
+    coated.every(({ coating, spec, look }) => {
+      const f = table(coating.surface);
+      return (
+        Boolean(f) &&
+        spec.surface === coating.surface &&
+        spec.base === coating.base &&
+        spec.colorHex === '#6a7b59' &&
+        look.roughness === f.roughness &&
+        look.clearcoat === f.clearcoat &&
+        look.metalness === 0
+      );
+    }) &&
+      coated.find((c) => c.coating.key === 'supermatte')!.look.roughness === 0.9 &&
+      coated.find((c) => c.coating.key === 'gloss')!.look.clearcoat > 0.5 &&
+      mdfVeneerPattern('#8a6f5a') !== null,
+    coated.map(({ coating, look }) => `${coating.title} ${look.roughness}/${look.clearcoat}`).join(' · '),
+  );
+}
+
 Promise.allSettled(asyncChecks).then((results) => {
   for (const result of results) {
     if (result.status === 'rejected') {

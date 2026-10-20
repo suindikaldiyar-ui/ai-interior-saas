@@ -109,6 +109,12 @@ export type InteriorState = {
    * прежний, смета, раскрой и запись его не видят. `null` — сравнения нет.
    */
   compareWhiteId: string | null;
+  /**
+   * ВЫБРАННАЯ СТВОРКА (P3D-MDF): модуль и его деталь (`door:1`). Это
+   * выделение, как отсек и модуль: рабочее состояние сцены, а не данные —
+   * фасад створки лежит в `Module.leafFronts`. `null` — не выбрана.
+   */
+  selectedLeaf: { moduleId: string; leaf: string } | null;
   renderFraming: CaptureFraming;
   customNotes: string;
   selectedReferenceIds: string[];
@@ -168,6 +174,7 @@ export type InteriorState = {
   setDisplayLit: (value: boolean) => void;
   setCadAngle: (value: SceneView) => void;
   setCompareWhiteId: (value: string | null) => void;
+  setSelectedLeaf: (value: { moduleId: string; leaf: string } | null) => void;
   setRenderFraming: (framing: CaptureFraming) => void;
   setCustomNotes: (value: string) => void;
   toggleReference: (id: string) => void;
@@ -319,6 +326,7 @@ export const useInteriorStore = create<InteriorState>((set, get) => ({
   displayLit: true,
   cadAngle: 'iso',
   compareWhiteId: null,
+  selectedLeaf: null,
   captureMode: false,
   renderFraming: 'hero',
   customNotes: '',
@@ -659,6 +667,7 @@ export const useInteriorStore = create<InteriorState>((set, get) => ({
   setDisplayLit: (value) => set({ displayLit: value }),
   setCadAngle: (value) => set({ cadAngle: value }),
   setCompareWhiteId: (value) => set({ compareWhiteId: value }),
+  setSelectedLeaf: (value) => set({ selectedLeaf: value }),
   setRenderFraming: (framing) => set({ renderFraming: framing }),
   setCustomNotes: (value) => set({ customNotes: value }),
 

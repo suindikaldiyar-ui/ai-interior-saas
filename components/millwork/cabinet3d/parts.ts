@@ -1,6 +1,7 @@
 'use client';
 
-import { CARCASS_ROUGHNESS, INNER_ROUGHNESS, applyFrontLook } from './cadLook';
+import { CARCASS_ROUGHNESS, INNER_ROUGHNESS, applyFrontLook, frontColor } from './cadLook';
+import { WOOD_TILE_MM, veneerPatternOf, woodPatternUrl } from '@/lib/millwork/woodPattern';
 import { realSizeShiftOf, setRealSizeMap, shiftedBox, unpatch } from './realSizeMap';
 import { MATERIAL_FINISHES } from '@/lib/millwork/materialFinishes';
 import type { MaterialPhoto } from '@/lib/millwork/materialCollection';
@@ -469,7 +470,12 @@ export function useFrontMaterials(
        * Пачки уже разделены: `frontKey` включает фрезеровку, поэтому
        * фасад с Модерном и без него — два разных материала, а не один.
        */
-      const item = spec.millingId ? milling.get(spec.millingId) : undefined;
+      /*
+       * Рельеф МДФ (P3D-MDF) — геометрия, а не карта: у такого фасада карты
+       * нормалей нет вовсе, иначе плоский рисунок слоёв лёг бы поверх
+       * настоящих канавок.
+       */
+      const item = spec.millingId && !spec.relief ? milling.get(spec.millingId) : undefined;
       const normal = item
         ? millingReliefMap(item.id, item.milling.layers ?? [], item.milling.profile)
         : null;
@@ -496,7 +502,16 @@ export function useFrontMaterials(
        * лежит на материале: молча потерянное фото выглядело бы «так и
        * задумано».
        */
-      const photo = spec.itemId ? photos.get(spec.itemId) : undefined;
+      /*
+       * ШПОН БЕЗ ФОТО ПОЗИЦИИ (P3D-MDF) — демонстрационный рисунок дерева в
+       * цвет фасада (`veneerPatternOf`), в настоящем размере, как у плиты-дерева.
+       */
+      const veneer = spec.base === 'veneer_solid' ? veneerPatternOf(frontColor(spec, fallbackColor)) : null;
+      const photo: MaterialPhoto | undefined =
+        (spec.itemId ? photos.get(spec.itemId) : undefined) ??
+        (veneer
+          ? { url: woodPatternUrl(veneer), sizeM: [WOOD_TILE_MM[0] / 1000, WOOD_TILE_MM[1] / 1000], procedural: veneer, mirror: false }
+          : undefined);
       /* Карта другой позиции снимается до загрузки: не приедет новая — фасад её цвета, а не чужой рисунок. */
       if (material.userData.photoUrl !== (photo?.url ?? null)) dropPhoto(material);
       if (!photo) continue;

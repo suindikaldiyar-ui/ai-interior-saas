@@ -18,7 +18,8 @@ import { bayDrawerStackOf, drawerHeights } from './drawerCount';
 import { bayEnvelope, bayLayout } from './bays';
 import { millingLink, type MillingItem } from './milling';
 import { carcassLink, type CarcassItem } from './carcassMaterial';
-import { frontOf } from './frontMaterial';
+import { leafFrontOf } from './frontMaterial';
+import { RELIEF_STATUS, reliefKindDef } from './facadeRelief';
 import { MATERIAL_FINISHES } from './materialFinishes';
 import { PRICE_UNSET, priceState, type MaterialItem } from './materialCollection';
 import type {
@@ -604,6 +605,12 @@ export function buildEstimateDrafts(
      * а «цену не задали», и говорит об этом `millingWarnings`.
      */
     ...millingDrafts(run, panels, millingItems),
+    /*
+     * РИСУНОК МДФ БЕЗ ЦЕНЫ (P3D-MDF) — строкой «цена не задана», а не
+     * молчанием: клиент видит в 3D рифлёный фасад, и смета без этой строки
+     * показала бы цену ровного.
+     */
+    ...reliefDrafts(run, panels, millingItems),
     ...carcassDrafts(run, panels, carcassItems, materialItems, rates),
     { key: 'pvc_edge', title: 'Кромка ПВХ', unit: 'mp', quantity: materials.edgeM },
   ];
@@ -1206,7 +1213,8 @@ function frontMaterialAreas(
     const unit = byModule.get(panel.moduleId);
     if (!unit) continue;
 
-    const spec = frontOf(unit);
+    /* Фасад строки — её створки (P3D-MDF, `frontLeaf`), иначе модуля. */
+    const spec = leafFrontOf(unit, panel.frontLeaf ?? null);
     const item = spec.itemId ? catalog.get(spec.itemId) : undefined;
     if (!item) continue;
 
@@ -1276,7 +1284,7 @@ function millingDrafts(
     const unit = byModule.get(panel.moduleId);
     if (!unit) continue;
 
-    const link = millingLink(unit, run, catalog);
+    const link = millingLink(unit, run, catalog, panel.frontLeaf ?? null);
     if (link.state !== 'resolved') continue;
 
     const areaM2 = (panel.lengthMm * panel.widthMm * panel.qty) / 1_000_000;
@@ -1293,6 +1301,50 @@ function millingDrafts(
       unit: 'm2' as const,
       quantity: Math.round(m2 * 100) / 100,
       rate: item.price,
+    }));
+}
+
+/**
+ * ФРЕЗЕРОВКА РИСУНКА МДФ (P3D-MDF): площадь есть, цены нет.
+ *
+ * Рельеф VISUAL_ONLY — чертежа фрезы и цены цеха нет, и выдумывать её
+ * нельзя. Но и промолчать нельзя: компания подписала бы договор без
+ * операции, которую придётся делать. Площадь — из раскроя (те же панели
+ * «Фасад…», что у строки «Фасады»), строка с количеством и без денег,
+ * итог «неполный». Гладкий (A) — не фрезеровка, строки нет. Фасад, у
+ * которого фрезеровка с ценой из каталога (`millingDrafts`), её не
+ * дублирует.
+ */
+function reliefDrafts(run: Run, panels: Panel[], catalog: Map<string, MillingItem>): Draft[] {
+  const byModule = new Map<string, Module>();
+  for (const unit of allModules(run)) byModule.set(unit.id, unit);
+
+  const areas = new Map<string, { title: string; m2: number }>();
+  for (const panel of panels) {
+    if (!panel.material.startsWith('Фасад')) continue;
+    const unit = byModule.get(panel.moduleId);
+    if (!unit) continue;
+    const leaf = panel.frontLeaf ?? null;
+    const relief = leafFrontOf(unit, leaf).relief;
+    if (!relief || relief.kind === 'slab') continue;
+    if (catalog.size > 0 && millingLink(unit, run, catalog, leaf).state === 'resolved') continue;
+
+    const key = `${relief.kind}${relief.model ? `_${relief.model.replace(/[^A-Za-z0-9]+/g, '_')}` : ''}`;
+    const title = `Фрезеровка «${reliefKindDef(relief.kind).title}»${relief.model ? ` (по модели ${relief.model})` : ''} — ${RELIEF_STATUS}`;
+    const areaM2 = (panel.lengthMm * panel.widthMm * panel.qty) / MM2_IN_M2;
+    const at = areas.get(key);
+    if (at) at.m2 += areaM2;
+    else areas.set(key, { title, m2: areaM2 });
+  }
+
+  return Array.from(areas.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, { title, m2 }]) => ({
+      key: `front_relief_${key}`,
+      title,
+      unit: 'm2' as const,
+      quantity: round2(m2),
+      priceUnset: 'рисунок для показа: чертежа фрезы и цены цеха нет — цену задаёт цех',
     }));
 }
 

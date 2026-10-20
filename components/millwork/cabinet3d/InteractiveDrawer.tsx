@@ -5,6 +5,9 @@ import type * as THREE from 'three';
 import { useSlide } from './useSlide';
 import { useTouchTarget } from './useTouchTarget';
 import { useShiftedBox, type CabinetParts } from './parts';
+import type { FrontRelief } from '@/types/millwork';
+import { realSizeShiftOf } from './realSizeMap';
+import { useReliefGeometry, useShiftedRelief } from './reliefGeometry';
 import { DRAWER_TRAVEL_M } from '@/lib/millwork/cabinetBoxes';
 
 /**
@@ -40,6 +43,8 @@ type Props = {
    * створка иначе меняла бы цвет в момент открывания.
    */
   frontMaterial?: THREE.MeshStandardMaterial;
+  /** Рельеф МДФ фронта (P3D-MDF): тот же, что у задвинутого в пачке. */
+  relief?: FrontRelief;
   /** Разрез: фасады убраны, видно короб ящика. */
   cutaway: boolean;
   gap: number;
@@ -60,6 +65,7 @@ export default function InteractiveDrawer({
   thickness,
   parts,
   frontMaterial,
+  relief,
   cutaway,
   gap,
   integratedHandle,
@@ -76,6 +82,15 @@ export default function InteractiveDrawer({
   const openRef = useRef(open);
   /* Фронт ящика — тот же кусок дерева, что у него задвинутого в пачке. */
   const frontBox = useShiftedBox(parts.box, id);
+  /* Габарит фронта — тот же, что в `drawerBoxes`: ширина и высота минус зазоры. */
+  const reliefGeometry = useShiftedRelief(
+    useReliefGeometry(relief, {
+      widthMm: (width - 2 * gap) * 1000,
+      heightMm: (height - 2 * gap) * 1000,
+      thicknessMm: thickness * 1000,
+    }),
+    realSizeShiftOf(id),
+  );
   openRef.current = open;
 
   useEffect(() => {
@@ -173,10 +188,10 @@ export default function InteractiveDrawer({
       {!cutaway && (
         <>
           <mesh
-            geometry={frontBox}
+            geometry={reliefGeometry ?? frontBox}
             material={frontMaterial ?? parts.front}
             position={[0, 0, thickness / 2]}
-            scale={[width - 2 * gap, height - 2 * gap, thickness]}
+            scale={reliefGeometry ? [1, 1, 1] : [width - 2 * gap, height - 2 * gap, thickness]}
             castShadow
           />
 

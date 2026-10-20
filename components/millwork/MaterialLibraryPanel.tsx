@@ -32,6 +32,11 @@ import { MATERIAL_FINISHES } from '@/lib/millwork/materialFinishes';
 import { formatMoney } from '@/lib/millwork/estimate';
 import { REFERENCE_SOURCE_TITLE, referenceScaleWords } from '@/lib/millwork/referenceTextures';
 import type { CatalogEntryFull } from '@/types/catalog';
+import type { FrontSpec } from '@/types/millwork';
+import MdfFacadeTab from './MdfFacadeTab';
+import type { FacadePatch, FacadeTarget } from '@/lib/millwork/mdfFacade';
+import type { MillingItem } from '@/lib/millwork/milling';
+import type { ReliefLeaf } from '@/lib/millwork/facadeRelief';
 
 /**
  * ПАНЕЛЬ «МАТЕРИАЛЫ» — КАТАЛОГ ПОСТАВЩИКОВ РЯДОМ СО СЦЕНОЙ (слой 51).
@@ -87,7 +92,30 @@ type Props = {
   onCatalogAdded: (entries: CatalogEntryFull[]) => void;
   /** Каталог организации изменился в базе: перечитать. */
   onCatalogReload: () => Promise<string | null>;
+  /**
+   * ДВЕРИ ВЫБРАННОГО ШКАФА (P3D-MDF): цель «Выбранная дверь» берёт одну из
+   * них. Тот же список, что открывает «Открыть всё» (`moduleLeaves`).
+   */
+  leaves?: { leaf: string; title: string }[];
+  selectedLeaf?: string | null;
+  onSelectLeaf?: (leaf: string | null) => void;
+  /**
+   * ВКЛАДКА «МДФ ФАСАДЫ» (P3D-MDF): тип рисунка, покрытие и параметры для
+   * цели панели. Нет — вкладки нет, как до P3D-MDF.
+   */
+  facade?: {
+    specOf: (target: FacadeTarget) => FrontSpec | null;
+    sampleOf: (target: FacadeTarget) => ReliefLeaf;
+    misfitsOf: (target: FacadeTarget) => string[];
+    ownLeavesOf: (target: FacadeTarget) => number;
+    models: MillingItem[];
+    frontMm: number;
+    onApply: (target: FacadeTarget, patch: FacadePatch) => string | null;
+  };
 };
+
+/** Вкладка «МДФ фасады» (P3D-MDF): не коллекция каталога, а тип, покрытие и параметры фасада. */
+const FACADE_TAB = 'mdf_facade';
 
 type BrandFilter = 'all' | 'EGGER' | 'GRANDEX' | 'other';
 
@@ -115,8 +143,10 @@ type ReviewPreview = {
 };
 
 /** Куда ляжет выбор «на весь объект» — словами под кнопками цели. */
-const SCOPE_WORDS: Record<Exclude<MaterialTarget, 'module' | 'module-carcass'>, string> = {
-  fronts: 'Ляжет на все фасады всех стен объекта: фасад, выбранный модулю отдельно, тоже заменится.',
+const SCOPE_WORDS: Record<Exclude<MaterialTarget, 'module' | 'module-carcass' | 'leaf'>, string> = {
+  fronts:
+    'Ляжет на все фасады всех стен объекта: фасад, выбранный модулю отдельно, тоже заменится; ' +
+    'свой фасад отдельной двери остаётся — его выбирали отдельно.',
   carcass: 'Ляжет на корпус всех стен объекта; корпус, выбранный модулю отдельно, сильнее и останется.',
   shelves:
     'Ляжет на полки всех стен объекта — независимо от корпуса; полки, которые появятся потом, возьмут его сами. ' +
@@ -194,6 +224,10 @@ export default function MaterialLibraryPanel({
   catalogError,
   onCatalogAdded,
   onCatalogReload,
+  leaves = [],
+  selectedLeaf = null,
+  onSelectLeaf,
+  facade,
 }: Props) {
   const [defs, setDefs] = useState<MaterialDefs | null>(null);
   const [defsError, setDefsError] = useState<string | null>(null);
@@ -276,9 +310,22 @@ export default function MaterialLibraryPanel({
   );
 
   const tabs = useMemo(() => (defs ? materialTabs(defs.collections, target) : []), [defs, target]);
-  const available = tabs.filter((tab) => tab.available);
+  /*
+   * «МДФ ФАСАДЫ» — ПЕРВОЙ, КОГДА ЦЕЛЬ — ФАСАД (P3D-MDF): тип рисунка,
+   * покрытие и параметры. Это не коллекция каталога, поэтому её нет в
+   * `materialTabs`; на корпус и столешницу она не идёт вовсе.
+   */
+  const facadeTarget: FacadeTarget | null =
+    facade && (target === 'fronts' || target === 'module' || target === 'leaf') ? target : null;
+  const available = [
+    ...(facadeTarget ? [{ key: FACADE_TAB, title: 'МДФ фасады', available: true, reason: null, collections: [] }] : []),
+    ...tabs.filter((tab) => tab.available),
+  ];
   const tab = available.find((t) => t.key === tabKey) ?? available[0] ?? null;
   const hidden = tabs.filter((t) => !t.available);
+
+  /* Вкладка «МДФ фасады» открыта — списка позиций нет, есть тип, покрытие и параметры. */
+  const facadeTab = tab?.key === FACADE_TAB && facadeTarget !== null;
 
   const rows = useMemo(() => {
     const out: Row[] = [];
@@ -516,7 +563,34 @@ export default function MaterialLibraryPanel({
                 : `Выберите модуль в сцене — материал ляжет на его ${target === 'module' ? 'фасад' : 'корпус'}.`}
             </p>
           )}
-          {target !== 'module' && target !== 'module-carcass' && (
+          {target === 'leaf' && (
+            <div className="mt-1" data-material-leaves={leaves.length}>
+              <p className="text-[13px] leading-snug text-graphiteMw" data-material-scope>
+                {!selectedModuleLabel
+                  ? 'Выберите шкаф в сцене, затем его дверь — материал ляжет на неё одну.'
+                  : selectedLeaf
+                    ? `Ляжет на одну дверь: ${selectedModuleLabel} · ${leaves.find((l) => l.leaf === selectedLeaf)?.title ?? selectedLeaf}. Соседняя створка и корпус не меняются.`
+                    : `Выберите дверь шкафа ${selectedModuleLabel}: в сцене или здесь.`}
+              </p>
+              {leaves.length > 0 && (
+                <div className="mt-1 flex flex-wrap gap-1" role="group" aria-label="Двери шкафа">
+                  {leaves.map((item) => (
+                    <button
+                      key={item.leaf}
+                      type="button"
+                      data-material-leaf={item.leaf}
+                      aria-pressed={selectedLeaf === item.leaf}
+                      onClick={() => onSelectLeaf?.(item.leaf)}
+                      className={`mw-btn ${selectedLeaf === item.leaf ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+                    >
+                      {item.title}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {target !== 'module' && target !== 'module-carcass' && target !== 'leaf' && (
             <p className="mt-1 text-[13px] leading-snug text-graphiteMw" data-material-scope>
               {SCOPE_WORDS[target]}
             </p>
@@ -576,7 +650,7 @@ export default function MaterialLibraryPanel({
           )}
 
           {/* ── Производитель (P3) ── */}
-          <div className="mt-3 flex flex-wrap items-center gap-1" role="group" aria-label="Производитель">
+          <div className={`mt-3 flex flex-wrap items-center gap-1 ${facadeTab ? 'hidden' : ''}`} role="group" aria-label="Производитель">
             <span className="text-[13px] text-graphiteMw">Производитель</span>
             {BRAND_FILTERS.map((item) => (
               <button
@@ -641,6 +715,22 @@ export default function MaterialLibraryPanel({
             </p>
           )}
 
+          {facadeTab && facade && facadeTarget && (
+            <MdfFacadeTab
+              key={`${facadeTarget}:${selectedLeaf ?? ''}`}
+              target={facadeTarget}
+              spec={facade.specOf(facadeTarget)}
+              sample={facade.sampleOf(facadeTarget)}
+              models={facade.models}
+              frontMm={facade.frontMm}
+              misfits={facade.misfitsOf(facadeTarget)}
+              ownLeaves={facade.ownLeavesOf(facadeTarget)}
+              onApply={(patch) => facade.onApply(facadeTarget, patch)}
+            />
+          )}
+
+          {!facadeTab && (
+          <>
           <label className="mt-3 block">
             <span className="sr-only">Поиск по коду и названию</span>
             <input
@@ -811,6 +901,8 @@ export default function MaterialLibraryPanel({
               }
             }}
           />
+          </>
+          )}
 
           <p className="mt-3 text-[13px] leading-snug text-graphiteMw">
             {defs.notes.find((note) => note.startsWith('Цвет на экране')) ??

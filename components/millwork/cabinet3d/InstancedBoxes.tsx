@@ -4,7 +4,15 @@ import { useEffect, useMemo, useRef } from 'react';
 import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { BoxDraw } from '@/lib/millwork/cabinetBoxes';
+import type { FrontRelief } from '@/types/millwork';
+import type { ReliefLeaf } from '@/lib/millwork/facadeRelief';
 import { REAL_SIZE_SHIFT, realSizeShiftOf, shiftKeyOf } from './realSizeMap';
+import { useReliefGeometry } from './reliefGeometry';
+
+/** Пустой габарит: у пачки без рельефа хук сетки ничего не строит. */
+const NO_LEAF: ReliefLeaf = { widthMm: 0, heightMm: 0, thicknessMm: 0 };
+/** Фасад Б Г-образного модуля смотрит влево: +Z сетки поворачивается в −X. */
+const FACE_LEFT = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -Math.PI / 2);
 
 /**
  * ОДИН ВЫЗОВ ОТРИСОВКИ НА ВЕСЬ КОРПУС.
@@ -40,6 +48,13 @@ type Props = {
    * атрибута, как раньше.
    */
   shiftSalt?: string;
+  /**
+   * ПАЧКА ФАСАДОВ С РЕЛЬЕФОМ (P3D-MDF): одна сетка рисунка на все
+   * экземпляры одного габарита. Экземпляр ставится НА МЕСТО коробки — тот
+   * же центр, масштаб 1: сетка уже в метрах фасада. `face` — куда смотрит
+   * лицо (фасад Б угла — влево). Нет — единичный куб, растянутый по коробке.
+   */
+  relief?: { relief: FrontRelief; leaf: ReliefLeaf; face?: '-x' };
 };
 
 export default function InstancedBoxes({
@@ -50,9 +65,12 @@ export default function InstancedBoxes({
   receiveShadow = false,
   name,
   shiftSalt,
+  relief,
 }: Props) {
   const ref = useRef<THREE.InstancedMesh>(null);
   const invalidate = useThree((state) => state.invalidate);
+  const reliefGeometry = useReliefGeometry(relief?.relief, relief?.leaf ?? NO_LEAF);
+  const base = reliefGeometry ?? geometry;
 
   /*
    * Ключ состава: пока коробки те же, матрицы не трогаем вовсе. Считать
@@ -69,8 +87,22 @@ export default function InstancedBoxes({
    * экземпляров у пачек разное, общая коробка такой атрибут не держит.
    */
   const batchGeometry = useMemo(() => {
-    if (shiftSalt === undefined) return geometry;
-    const own = geometry.clone();
+    if (shiftSalt === undefined) return base;
+    /*
+     * Сетку рельефа не копируем: она большая (рифление — тысячи
+     * треугольников) и общая у пачки и едущих створок. Своя у пачки только
+     * обёртка с атрибутом сдвига, буферы вершин — те же.
+     */
+    const own = reliefGeometry ? new THREE.BufferGeometry() : base.clone();
+    if (reliefGeometry) {
+      for (const name of ['position', 'normal', 'uv']) {
+        const attribute = reliefGeometry.getAttribute(name);
+        if (attribute) own.setAttribute(name, attribute);
+      }
+      own.boundingBox = reliefGeometry.boundingBox;
+      own.boundingSphere = reliefGeometry.boundingSphere;
+      own.userData = reliefGeometry.userData;
+    }
     const data = new Float32Array(Math.max(1, boxes.length) * 2);
     boxes.forEach((box, i) => {
       const [u, v] = realSizeShiftOf(shiftKeyOf(box, shiftSalt));
@@ -81,11 +113,15 @@ export default function InstancedBoxes({
     return own;
     // Состав — в `key`: массив пересоздаётся чаще, чем меняются коробки.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [geometry, key, shiftSalt]);
-  /* Своя геометрия пачки освобождается с ней; общая коробка — нет. */
+  }, [base, key, shiftSalt]);
+  /*
+   * Своя геометрия пачки освобождается с ней; общая коробка и общая сетка
+   * рельефа — нет (сетку отпускает её хук). Обёртку рельефа не освобождаем
+   * вовсе: `dispose` снял бы с видеокарты ОБЩИЕ буферы вершин.
+   */
   useEffect(() => () => {
-    if (batchGeometry !== geometry) batchGeometry.dispose();
-  }, [batchGeometry, geometry]);
+    if (batchGeometry !== base && !reliefGeometry) batchGeometry.dispose();
+  }, [batchGeometry, base, reliefGeometry]);
 
   useEffect(() => {
     const mesh = ref.current;
@@ -96,9 +132,13 @@ export default function InstancedBoxes({
     const scale = new THREE.Vector3();
     const quaternion = new THREE.Quaternion();
 
+    /* Рельеф: сетка уже в метрах фасада — на место коробки, масштаб 1, лицо куда смотрит фасад. */
+    const placed = reliefGeometry !== null;
+    if (placed && relief?.face === '-x') quaternion.copy(FACE_LEFT);
     boxes.forEach((box, i) => {
       position.set(box.position[0], box.position[1], box.position[2]);
-      scale.set(box.scale[0], box.scale[1], box.scale[2]);
+      if (placed) scale.set(1, 1, 1);
+      else scale.set(box.scale[0], box.scale[1], box.scale[2]);
       matrix.compose(position, quaternion, scale);
       mesh.setMatrixAt(i, matrix);
     });
@@ -111,7 +151,7 @@ export default function InstancedBoxes({
     invalidate();
     // `key` меняется вместе с составом; сам массив пересоздаётся чаще.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, invalidate]);
+  }, [key, invalidate, batchGeometry]);
 
   if (boxes.length === 0) return null;
 

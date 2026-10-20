@@ -1,5 +1,6 @@
 import type { CatalogEntryFull } from '@/types/catalog';
-import type { FrontSpec, Module, Run } from '@/types/millwork';
+import type { FrontRelief, FrontSpec, Module, Run } from '@/types/millwork';
+import { RELIEF_KINDS, resolveRelief } from './facadeRelief';
 import { frontOf } from './frontMaterial';
 import { hasFacade } from './applianceFront';
 import { isUpperRow } from './modules';
@@ -75,6 +76,14 @@ export type MillingMeta = {
   profile: string;
   /** Позиция типовой поставки, а не своя: подписана ориентиром. */
   typical: boolean;
+  /**
+   * ОБЪЁМНЫЙ РИСУНОК МОДЕЛИ (P3D-MDF): тип и параметры в мм — приближение
+   * VISUAL_ONLY, снятое глазом с референса производителя. Выбрал модель —
+   * рисунок кладётся на фасад (`FrontSpec.relief`, с `model`), а позиция
+   * остаётся ссылкой на цену и происхождение. Пусто — фрезеровка рисуется
+   * слоями, как раньше.
+   */
+  relief?: FrontRelief;
 };
 
 export type MillingItem = {
@@ -101,6 +110,10 @@ export function millingOf(entry: CatalogEntryFull): MillingItem | null {
   const profile = typeof meta?.profile === 'string' ? meta.profile.trim() : '';
   if (!profile) return null;
 
+  /* Рисунок — только известного типа: чужое значение не превращается в рельеф молча. */
+  const relief = meta?.relief as FrontRelief | undefined;
+  const known = relief && RELIEF_KINDS.some((def) => def.kind === relief.kind);
+
   return {
     id: entry.id,
     name: entry.name_ru,
@@ -111,6 +124,7 @@ export function millingOf(entry: CatalogEntryFull): MillingItem | null {
       profile,
       layers: Array.isArray(meta?.layers) ? meta.layers : [],
       typical: meta?.typical === true,
+      ...(known ? { relief } : {}),
     },
   };
 }
@@ -135,6 +149,32 @@ export function frontWithMilling(
   const spec = frontOf(unit);
   const id = millingFor(unit, run);
   return id === (spec.millingId ?? null) ? spec : { ...spec, millingId: id ?? undefined };
+}
+
+/**
+ * ФАСАД СТВОРКИ С УЧЁТОМ ФРЕЗЕРОВКИ РЯДА (P3D-MDF).
+ *
+ * У створки со своим фасадом своя и фрезеровка: `millingId` её фасада, а
+ * пустой — та же, что у модуля (`millingFor`). `none` — у этой створки
+ * фрезеровки нет, что бы ни было назначено ряду. Створка без своего фасада —
+ * ровно `frontWithMilling` модуля.
+ */
+export function leafFrontWithMilling(
+  unit: Module,
+  leaf: string | null,
+  run: Pick<Run, 'milling'>,
+): FrontSpec {
+  const own = leaf ? unit.leafFronts?.[leaf] : undefined;
+  if (!own) return frontWithMilling(unit, run);
+  const id = own.millingId?.trim();
+  if (id) return id === NO_MILLING_ID ? { ...own, millingId: undefined } : own;
+  const inherited = millingFor(unit, run);
+  return inherited ? { ...own, millingId: inherited } : own;
+}
+
+/** Фрезеровка створки: та же цепочка, что у фасада створки. */
+export function leafMillingFor(unit: Module, leaf: string | null, run: Pick<Run, 'milling'>): string | null {
+  return leafFrontWithMilling(unit, leaf, run).millingId ?? null;
 }
 
 /** Фрезеровки организации: ключ — идентификатор позиции. */
@@ -250,8 +290,10 @@ export function millingLink(
   unit: Module,
   run: Pick<Run, 'milling'>,
   catalog: Map<string, MillingItem>,
+  /** Створка со своим фасадом (P3D-MDF); пусто — фасад модуля, как раньше. */
+  leaf: string | null = null,
 ): MillingLink {
-  const id = millingFor(unit, run);
+  const id = leafMillingFor(unit, leaf, run);
   if (!id) return { state: 'none' };
 
   const item = catalog.get(id);
@@ -473,6 +515,57 @@ export const TYPICAL_MILLING: TypicalMilling[] = [
   },
 ];
 
+
+/**
+ * ПЛОСКИЙ КОНТУР ОБЪЁМНОГО РИСУНКА — для карточки фрезеровки и печати листа.
+ *
+ * Слои выводятся из параметров рисунка (P3D-MDF), а не рисуются вторым
+ * рисунком: поле 100 × 100 — номинальный фасад 400 мм шириной, 4 мм на
+ * единицу. Рисунок в сцене строит сетка (`reliefMesh`) по тем же числам.
+ */
+export function layersOfRelief(relief: FrontRelief): MillingLayer[] {
+  const r = resolveRelief(relief);
+  const u = (mm: number) => Math.round(Math.max(1, Math.min(48, mm / 4)) * 10) / 10;
+  const rect = (a: number, depth: number): MillingLayer => ({ path: `M${a} ${a} H${100 - a} V${100 - a} H${a} Z`, depth });
+  const bar = (x0: number, y0: number, x1: number, y1: number): MillingLayer => ({ path: `M${x0} ${y0} H${x1} V${y1} H${x0} Z`, depth: 1 });
+  switch (r.kind) {
+    case 'slab':
+      return [FACE];
+    case 'frame':
+      return [FACE, rect(u(r.insetMm), 0.5), rect(u(r.insetMm + r.widthMm), 1)];
+    case 'grooves':
+      return [
+        FACE,
+        ...Array.from({ length: Math.max(1, r.count) }, (_, k) => {
+          const a = u(r.insetMm + k * r.pitchMm);
+          return [rect(a, 1), rect(Math.min(49, a + u(r.widthMm)), 0)];
+        }).flat(),
+      ];
+    case 'vgrooves':
+    case 'hgrooves': {
+      const step = u(r.pitchMm);
+      const count = r.count > 0 ? r.count : Math.max(1, Math.floor(88 / step));
+      const half = Math.max(0.5, u(r.widthMm) / 2);
+      const stop = r.insetMm > 0 ? u(r.insetMm) : 4;
+      const first = 50 - ((count - 1) * step) / 2;
+      return [
+        FACE,
+        ...Array.from({ length: count }, (_, i) => {
+          const c = Math.round((first + i * step) * 10) / 10;
+          return r.kind === 'vgrooves' ? bar(c - half, stop, c + half, 100 - stop) : bar(stop, c - half, 100 - stop, c + half);
+        }),
+      ];
+    }
+    case 'fluted': {
+      const step = u(r.pitchMm);
+      const half = Math.max(0.5, u(r.widthMm) / 2);
+      const count = Math.max(2, Math.floor(92 / step));
+      const first = 50 - ((count - 1) * step) / 2;
+      const top = r.zoneMm > 0 ? Math.max(4, 96 - r.zoneMm / 8) : 4;
+      return [FACE, ...Array.from({ length: count }, (_, i) => bar(first + i * step - half, top, first + i * step + half, 96))];
+    }
+  }
+}
 
 /** Позиция типового набора в виде товара каталога. */
 export function typicalMillingItem(milling: TypicalMilling) {

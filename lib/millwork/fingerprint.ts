@@ -1,5 +1,5 @@
 import { beamsPart } from './ceiling';
-import { frontPart } from './frontMaterial';
+import { frontKey, frontPart } from './frontMaterial';
 import type { BayDrawerStack, BayShelves, Module, Run } from '@/types/millwork';
 
 /**
@@ -135,6 +135,17 @@ function extrasPart(unit: Module): string | undefined {
      */
     unit.heightMm !== undefined ? `h${unit.heightMm}` : '',
     unit.overhead ? `over${unit.overhead.depthMm}` : '',
+    /*
+     * Свои фасады створок (P3D-MDF): дверь 2 в эмали RAL рядом с дверью 1 в
+     * ЛДСП — другая мебель и другие деньги. По детали в устойчивом порядке;
+     * пусто не пишется (ловушка 246) — у прежних рядов отпечаток прежний.
+     */
+    unit.leafFronts
+      ? Object.keys(unit.leafFronts)
+          .sort()
+          .map((leaf) => `${leaf}=${frontKey(unit.leafFronts![leaf])}`)
+          .join(';')
+      : '',
   ].filter(Boolean);
 
   return parts.length > 0 ? parts.join(',') : undefined;

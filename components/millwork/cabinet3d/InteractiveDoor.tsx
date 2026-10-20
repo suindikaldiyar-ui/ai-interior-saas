@@ -6,6 +6,9 @@ import { useSlide } from './useSlide';
 import { useTouchTarget } from './useTouchTarget';
 import { doorKick, doorPivot, leafLocal } from '@/lib/millwork/cabinetBoxes';
 import { useShiftedBox, type CabinetParts } from './parts';
+import type { FrontRelief } from '@/types/millwork';
+import { realSizeShiftOf } from './realSizeMap';
+import { useReliefGeometry, useShiftedRelief } from './reliefGeometry';
 
 /**
  * Дверь, которая распахивается.
@@ -41,6 +44,11 @@ type Props = {
    * створка иначе меняла бы цвет в момент открывания.
    */
   frontMaterial?: THREE.MeshStandardMaterial;
+  /**
+   * РЕЛЬЕФ МДФ ЭТОЙ СТВОРКИ (P3D-MDF) — тот же, что у неё закрытой в пачке:
+   * открылась — рисунок едет вместе с полотном, а не становится коробкой.
+   */
+  relief?: FrontRelief;
   /** Зазор вокруг полотна, метры. По нему читается щель между фасадами. */
   gap: number;
   /** Ручка-профиль по верхней кромке вместо накладной скобы. */
@@ -68,6 +76,7 @@ export default function InteractiveDoor({
   thickness,
   parts,
   frontMaterial,
+  relief,
   gap,
   integratedHandle,
   onActive,
@@ -123,6 +132,15 @@ export default function InteractiveDoor({
   const local = leafLocal({ opening, width, height, thickness, gap, integratedHandle });
   /* Рисунок полотна — тот же кусок дерева, что у него закрытого в пачке. */
   const panelBox = useShiftedBox(parts.box, id);
+  /* Сетка рельефа — того же габарита, что закрытое полотно (`leafLocal` = `doorBoxes`). */
+  const reliefGeometry = useShiftedRelief(
+    useReliefGeometry(relief, {
+      widthMm: local.panel.size[0] * 1000,
+      heightMm: local.panel.size[1] * 1000,
+      thicknessMm: local.panel.size[2] * 1000,
+    }),
+    realSizeShiftOf(id),
+  );
   return (
     /*
      * Ось вращения стоит на ПЕРЕДНЕЙ плоскости корпуса (z = 0): модуль
@@ -176,10 +194,10 @@ export default function InteractiveDoor({
         * компонента нет — иначе картинка и проверка разойдутся.
         */}
       <mesh
-        geometry={panelBox}
+        geometry={reliefGeometry ?? panelBox}
         material={frontMaterial ?? parts.front}
         position={local.panel.at}
-        scale={local.panel.size}
+        scale={reliefGeometry ? [1, 1, 1] : local.panel.size}
         castShadow
       />
 

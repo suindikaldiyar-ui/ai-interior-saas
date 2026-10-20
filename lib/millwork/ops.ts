@@ -36,7 +36,9 @@ import {
 } from './fill';
 import { zoneHeightMm } from './zones';
 import { isMechanism, openingRejection } from './opening';
-import { frontConflict, frontOf } from './frontMaterial';
+import { frontConflict, frontOf, leafTitle } from './frontMaterial';
+import { reliefParamRefusal } from './facadeRelief';
+import { openablePartIds } from './cabinetBoxes';
 import {
   MAX_APPLIANCE_DEPTH_MM,
   MIN_DRAWER_MM,
@@ -245,6 +247,32 @@ export interface ApplyOpsInput {
    * противоположной стеной должно быть, где разойтись.
    */
   roomDepthMm?: number;
+}
+
+/**
+ * СНЯТЫЙ ФАСАД СТВОРКИ — СЛОВАМИ (P3D-MDF). Одна формулировка на правку и на
+ * карточку библиотеки: это потеря, названная до нажатия, а не отказ.
+ */
+export function leafLossNote(unit: Pick<Module, 'label'>, lost: string[]): string {
+  return `«${unit.label}»: свой фасад ${lost.map((leaf) => `«${leafTitle(leaf)}»`).join(', ')} снят — такой детали у модуля больше нет.`;
+}
+
+/**
+ * ЧЬИ ФАСАДЫ СТВОРОК ПРАВКА СНЯЛА — по рядам «до» и «после», модуль по ключу.
+ * Библиотека отделяет этим потерю от отказа: те же слова, что положил движок.
+ */
+export function leafLossNotes(before: Run, after: Run): string[] {
+  const now = new Map(allModules(after).map((unit) => [unit.id, unit] as const));
+  const out: string[] = [];
+  for (const unit of allModules(before)) {
+    if (!unit.leafFronts) continue;
+    const next = now.get(unit.id);
+    if (!next) continue;
+    const kept = new Set(Object.keys(next.leafFronts ?? {}));
+    const lost = Object.keys(unit.leafFronts).filter((leaf) => !kept.has(leaf));
+    if (lost.length > 0) out.push(leafLossNote(next, lost));
+  }
+  return out;
 }
 
 export function applyOps({
@@ -1703,6 +1731,12 @@ export function applyOps({
             ...(unit.heightMm !== undefined ? { heightMm: unit.heightMm } : {}),
             section: unit.section,
             front: unit.front,
+            /*
+             * Фасады створок (P3D-MDF) выбраны для места, как и фасад модуля, —
+             * переезжают. Детали, которой у нового нет, снимаются в конце
+             * правки со словами (`keepLeaves`).
+             */
+            ...(unit.leafFronts ? { leafFronts: unit.leafFronts } : {}),
             carcassItemId: unit.carcassItemId,
           };
 
@@ -2370,6 +2404,12 @@ export function applyOps({
           warnings.push(conflict);
           break;
         }
+        /* Параметры рисунка МДФ (P3D-MDF) — до применения, числом: шаг меньше канавки не ляжет. */
+        const reliefSaid = op.front.relief ? reliefParamRefusal(op.front.relief, shopOf(run.production).frontMm) : null;
+        if (reliefSaid) {
+          warnings.push(reliefSaid);
+          break;
+        }
 
         /*
          * `all` — весь ряд: так ложится готовый дизайн. Поштучная правка
@@ -2422,6 +2462,63 @@ export function applyOps({
           break;
         }
         modules[at] = { ...modules[at], front: op.front };
+        break;
+      }
+
+      case 'set_leaf_front': {
+        /*
+         * ФАСАД ОДНОЙ СТВОРКИ ИЛИ ЯЩИКА (P3D-MDF).
+         *
+         * Те же правила технологии, что у фасада модуля, и те же параметры
+         * рисунка. Пишется в `leafFronts` модуля и не трогает ни соседнюю
+         * створку, ни фасад модуля, ни корпус: «выбрал дверь — поменял дверь».
+         * `front: null` — створка снова с фасадом модуля.
+         */
+        if (op.front) {
+          const conflict = frontConflict(op.front);
+          if (conflict) {
+            warnings.push(conflict);
+            break;
+          }
+          const reliefSaid = op.front.relief ? reliefParamRefusal(op.front.relief, shopOf(run.production).frontMm) : null;
+          if (reliefSaid) {
+            warnings.push(reliefSaid);
+            break;
+          }
+        }
+        /*
+         * Деталь обязана быть у модуля сейчас — ключ сцены, по тому же списку,
+         * что «Открыть всё» (`openablePartIds`). Фасад несуществующей створки
+         * лежал бы в данных и ни на что не влиял.
+         */
+        if (!openablePartIds(run).includes(`${op.moduleId}:${op.leaf}`)) {
+          warnings.push(`У модуля ${op.moduleId} нет детали «${op.leaf}»: фасад ставить некуда.`);
+          break;
+        }
+        const leafEdit = (unit: Module): Module => {
+          const own: Record<string, FrontSpec> = { ...(unit.leafFronts ?? {}) };
+          if (op.front) own[op.leaf] = op.front;
+          else delete own[op.leaf];
+          const { leafFronts: _before, ...rest } = unit;
+          void _before;
+          return Object.keys(own).length > 0 ? { ...rest, leafFronts: own } : rest;
+        };
+        const at = modules.findIndex((m) => m.id === op.moduleId);
+        if (at >= 0) {
+          modules[at] = leafEdit(modules[at]);
+          break;
+        }
+        if (editMezz(op.moduleId, leafEdit)) break;
+        if (editUpper(op.moduleId, leafEdit)) break;
+        /*
+         * Кладовку над колонной движок собирает заново на каждой правке, и
+         * свой фасад одной её створки не пережил бы пересборку — сказано.
+         */
+        warnings.push(
+          isStorage(op.moduleId)
+            ? 'Кладовка над колонной пересобирается на каждой правке: фасад у неё задаётся всем модулем.'
+            : `Модуль ${op.moduleId} не найден: фасад створки менять не у чего.`,
+        );
         break;
       }
 
@@ -3545,6 +3642,36 @@ export function applyOps({
     nextRun.upperSegments = nextRun.upperSegments.map((segment) => ({
       ...segment,
       modules: segment.modules.map(paint),
+    }));
+  }
+
+  /*
+   * СВОЙ ФАСАД СТВОРКИ, КОТОРОЙ БОЛЬШЕ НЕТ (P3D-MDF).
+   *
+   * Модуль стал уже — двух створок нет, вместо створок ящики, — и фасад
+   * исчезнувшей детали лежал бы в данных, ни на что не влияя. Он снимается,
+   * и это сказано словами: правка человека не пропадает молча.
+   */
+  const leafIds = new Set(openablePartIds(nextRun));
+  const keepLeaves = (unit: Module): Module => {
+    if (!unit.leafFronts) return unit;
+    const kept: Record<string, FrontSpec> = {};
+    const lost: string[] = [];
+    for (const [leaf, spec] of Object.entries(unit.leafFronts)) {
+      if (leafIds.has(`${unit.id}:${leaf}`)) kept[leaf] = spec;
+      else lost.push(leaf);
+    }
+    if (lost.length === 0) return unit;
+    warnings.push(leafLossNote(unit, lost));
+    const { leafFronts: _before, ...rest } = unit;
+    void _before;
+    return Object.keys(kept).length > 0 ? { ...rest, leafFronts: kept } : rest;
+  };
+  if (allModules(nextRun).some((unit) => unit.leafFronts)) {
+    nextRun.modules = nextRun.modules.map(keepLeaves);
+    nextRun.upperSegments = nextRun.upperSegments.map((segment) => ({
+      ...segment,
+      modules: segment.modules.map(keepLeaves),
     }));
   }
 
