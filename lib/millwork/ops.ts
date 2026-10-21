@@ -53,7 +53,8 @@ import { hasFacade } from './applianceFront';
 import { fillRefusal } from './fill';
 import { bayEnvelope, bayLayout, bayLossNote, baysRefusal, baysWidthRefusal, type BayEnvelope } from './bays';
 import { allModules } from './layout';
-import { DEFAULT_ALLOWANCES } from '@/types/catalog';
+import { DEFAULT_ALLOWANCES, type HardwareItem } from '@/types/catalog';
+import { FITTING_SLOT_TITLE, fittingVerdict, slidingVerdict, withFitting } from './fittings';
 import {
   moveConflict,
   moveRefusal,
@@ -68,6 +69,7 @@ import type {
   ApplianceKind,
   MillworkOp,
   Module,
+  ModuleFitting,
   FrontSpec,
   ModuleFill,
   ModuleKind,
@@ -247,6 +249,12 @@ export interface ApplyOpsInput {
    * противоположной стеной должно быть, где разойтись.
    */
   roomDepthMm?: number;
+  /**
+   * ФУРНИТУРА ОРГАНИЗАЦИИ (HARDWARE-01) — для `set_fitting` и
+   * `set_sliding_system`: позицию проверяют по её паспорту ДО записи. Нет
+   * каталога — проверить нечем, и операция отказывает словами.
+   */
+  hardware?: Map<string, HardwareItem>;
 }
 
 /**
@@ -281,6 +289,7 @@ export function applyOps({
   ops,
   openings = [],
   roomDepthMm,
+  hardware,
 }: ApplyOpsInput): Run {
   let modules = [...run.modules];
   let options = { ...run.options };
@@ -417,6 +426,8 @@ export function applyOps({
    * выбор антресоли целиком (P3D-TEX) терял бы её корпус на пересборке.
    */
   const storageCarcass = new Map<string, string>();
+  /** Фурнитура кладовки над колонной (HARDWARE-01) — тем же путём, что её фасад. */
+  const storageFittings = new Map<string, ModuleFitting[] | undefined>();
   const isStorage = (id: string) =>
     run.upperSegments
       .flatMap((segment) => segment.modules)
@@ -439,6 +450,8 @@ export function applyOps({
     : undefined;
   /* Материал фасадов кухни — держится на ряду и красит новые модули. */
   let kitchenFront: Run['kitchenFront'] = run.kitchenFront ? { ...run.kitchenFront } : undefined;
+  /* Система купе ряда (HARDWARE-01) — ссылкой на позицию каталога. */
+  let slidingSystemItemId: string | undefined = run.slidingSystemItemId;
 
   /**
    * МОДУЛИ АНТРЕСОЛИ — РЯД, А НЕ ПРОИЗВОДНАЯ.
@@ -3047,6 +3060,96 @@ export function applyOps({
         break;
       }
 
+      case 'set_fitting': {
+        /*
+         * ФУРНИТУРА ПРОИЗВОДИТЕЛЯ НА МЕСТО МОДУЛЯ (HARDWARE-01).
+         *
+         * Ставится только то, что встаёт: `fittingVerdict` сверяет паспорт
+         * позиции с модулем ДО записи. Отказ — словами с миллиметрами, ряд
+         * прежний. «Не проверено» — ставится: чего нет в паспорте, названо
+         * в вердикте, и выпуск в цех это помнит. Ряд выбирается ОДИН, как у
+         * `set_fill`: нижний, верхний, антресоль или кладовка над колонной.
+         */
+        const fitAt = modules.findIndex((m) => m.id === op.moduleId);
+        const storageUnit = run.upperSegments
+          .flatMap((segment) => segment.modules)
+          .find((m) => m.id === op.moduleId && m.section === 'mezzanine' && isStorage(m.id));
+        const fitTarget =
+          fitAt >= 0
+            ? modules[fitAt]
+            : (mezzModules.find((m) => m.id === op.moduleId) ??
+              upperModules.find((m) => m.id === op.moduleId) ??
+              storageUnit);
+        if (!fitTarget) {
+          warnings.push(`Модуль ${op.moduleId} не найден: фурнитуру ставить некуда.`);
+          break;
+        }
+        const write = (edited: Module) => {
+          if (fitAt >= 0) modules[fitAt] = edited;
+          else if (editMezz(fitTarget.id, () => edited)) return;
+          else if (editUpper(fitTarget.id, () => edited)) return;
+          else storageFittings.set(fitTarget.id, edited.fittings);
+        };
+        if (op.itemId === null) {
+          write(withFitting(fitTarget, op.slot, null, op.bayId));
+          break;
+        }
+        const fitItem = hardware?.get(op.itemId);
+        if (!fitItem) {
+          warnings.push(
+            hardware
+              ? `«${fitTarget.label}»: позиции ${op.itemId} нет в каталоге фурнитуры организации — ставить нечего.`
+              : `«${fitTarget.label}»: каталог фурнитуры не передан — позицию проверить нечем, и она не ставится.`,
+          );
+          break;
+        }
+        const fitShell: Run = {
+          ...run,
+          options,
+          modules,
+          mezzanine: mezzanine ?? undefined,
+        };
+        const verdict = fittingVerdict({
+          unit: fitTarget,
+          run: fitShell,
+          slot: op.slot,
+          item: fitItem,
+          bayId: op.bayId,
+          production: shopOf(run.production),
+          catalog: hardware,
+        });
+        if (verdict.state === 'refused') {
+          warnings.push(`«${fitTarget.label}» · ${FITTING_SLOT_TITLE[op.slot]}: «${fitItem.name}» — ${verdict.summary}`);
+          break;
+        }
+        write(withFitting(fitTarget, op.slot, op.itemId, op.bayId));
+        break;
+      }
+
+      case 'set_sliding_system': {
+        /* Система купе — одна на ряд: полотна закрывают его целиком. */
+        if (op.itemId === null) {
+          slidingSystemItemId = undefined;
+          break;
+        }
+        const system = hardware?.get(op.itemId);
+        if (!system) {
+          warnings.push(
+            hardware
+              ? `Позиции ${op.itemId} нет в каталоге фурнитуры организации — систему купе ставить нечего.`
+              : 'Каталог фурнитуры не передан — систему купе проверить нечем, и она не ставится.',
+          );
+          break;
+        }
+        const verdict = slidingVerdict({ ...run, options, modules }, system, shopOf(run.production));
+        if (verdict.state === 'refused') {
+          warnings.push(`Система купе «${system.name}» — ${verdict.summary}`);
+          break;
+        }
+        slidingSystemItemId = op.itemId;
+        break;
+      }
+
       case 'set_countertop': {
         /*
          * СТОЛЕШНИЦА ИЗ КАТАЛОГА — ССЫЛКОЙ НА ПОЗИЦИЮ.
@@ -3335,12 +3438,15 @@ export function applyOps({
         /* Материал, выбранный в этом вызове, сильнее прежнего (`storageFronts`). */
         const painted = storageFronts.get(unit.id);
         const decor = storageCarcass.get(unit.id) ?? had?.carcassItemId;
-        if (!had && !edited && !painted && !decor) return unit;
+        /* Фурнитура, поставленная в этом вызове, сильнее прежней (HARDWARE-01). */
+        const fittings = storageFittings.has(unit.id) ? storageFittings.get(unit.id) : had?.fittings;
+        if (!had && !edited && !painted && !decor && !fittings) return unit;
         return {
           ...unit,
           fill: edited ?? had?.fill ?? unit.fill,
           front: painted ?? had?.front ?? unit.front,
           ...(decor ? { carcassItemId: decor } : {}),
+          ...(fittings && fittings.length > 0 ? { fittings } : {}),
         };
       }),
     }));
@@ -3479,6 +3585,9 @@ export function applyOps({
   nextRun.carcass = carcass;
   nextRun.countertopMaterial = countertopMaterial;
   nextRun.kitchenFront = kitchenFront;
+  /* Пусто не пишется: у рядов без системы купе запись прежняя до символа. */
+  if (slidingSystemItemId) nextRun.slidingSystemItemId = slidingSystemItemId;
+  else delete nextRun.slidingSystemItemId;
   nextRun.mezzanine = mezzanine ?? undefined;
   /*
    * ДЕРЖИМ ПОЛОСУ АНТРЕСОЛИ ВСЕГДА, СОБИРАЕМ — ТОЛЬКО ЗАКАЗАННУЮ.
@@ -3687,6 +3796,38 @@ export function applyOps({
       ...segment,
       modules: segment.modules.map(keepLeaves),
     }));
+  }
+
+  /*
+   * ПОСТАВЛЕННАЯ ФУРНИТУРА ПОСЛЕ ПРАВКИ (HARDWARE-01).
+   *
+   * Сузили модуль — карго под 300 мм в корпусе 400 уже не встанет; сняли
+   * ящики — направляющим больше не на что. Выбор человека при этом не
+   * выбрасывается молча: позиция остаётся на модуле, а последствие
+   * названо словами — что именно больше не встаёт и почему. Только то,
+   * что встало ДО правки и перестало ПОСЛЕ: давний отказ не повторяется.
+   */
+  if (hardware && hardware.size > 0) {
+    const before = new Map(allModules(run).map((unit) => [unit.id, unit] as const));
+    const shop = shopOf(run.production);
+    for (const unit of allModules(nextRun)) {
+      for (const fitting of unit.fittings ?? []) {
+        const item = hardware.get(fitting.itemId);
+        if (!item) continue;
+        const was = before.get(unit.id);
+        const wasOk =
+          was?.fittings?.some((f) => f.slot === fitting.slot && f.itemId === fitting.itemId && (f.bayId ?? null) === (fitting.bayId ?? null)) &&
+          fittingVerdict({ unit: was, run, slot: fitting.slot, item, bayId: fitting.bayId, production: shop, catalog: hardware }).state !== 'refused';
+        if (!wasOk) continue;
+        const now = fittingVerdict({ unit, run: nextRun, slot: fitting.slot, item, bayId: fitting.bayId, production: shop, catalog: hardware });
+        if (now.state === 'refused') {
+          warnings.push(
+            `«${unit.label}» · ${FITTING_SLOT_TITLE[fitting.slot]}: «${item.name}» после правки не встаёт — ${now.summary} ` +
+              'Позиция осталась на модуле: замените её или верните размер.',
+          );
+        }
+      }
+    }
   }
 
   /*

@@ -11,6 +11,8 @@ import { CORNER_HINGE_TITLE, frontDrawerSlides, liftKey, openingHardware } from 
 import { buildPanels, panelMaterials, partOfPanel } from './panels';
 import { DEFAULT_PRODUCTION, type HardwareItem, type ProductionSettings } from '@/types/catalog';
 import { resolveHardware } from './hardware';
+import { FITTING_SLOT_TITLE, installedItem } from './fittings';
+import { moduleDrawerKits } from './drawerKit';
 import { SLIDING_DOOR, displayLedMeters, sectionSpec, slidingDoorCount } from './sections';
 import { MODULE_VARIANTS, isSinkBase, variantEstimateKeys } from './moduleVariants';
 import { zoneProfile } from './zones';
@@ -26,6 +28,7 @@ import type {
   Estimate,
   EstimateLine,
   EstimateUnit,
+  FittingSlot,
   Module,
   Run,
   VariantKey, Panel,
@@ -122,7 +125,11 @@ const round3 = (v: number) => Math.round(v * 1000) / 1000;
  * зеркало в прихожей дороже фасада. Считаем их от того же ряда, что даёт
  * чертёж, чтобы смета и рисунок не разошлись.
  */
-function sectionDrafts(run: Run): Draft[] {
+function sectionDrafts(
+  run: Run,
+  production: ProductionSettings = DEFAULT_PRODUCTION,
+  hardwareItems: Map<string, HardwareItem> = new Map(),
+): Draft[] {
   const zone = zoneProfile(run.zone);
   if (!run.zone || run.zone === 'kitchen') return [];
 
@@ -191,14 +198,27 @@ function sectionDrafts(run: Run): Draft[] {
       case 'open':
         break;
 
-      case 'drawers':
-        drafts.push({
-          key: 'drawer_box',
-          title: 'Ящики в сборе',
-          unit: 'set',
-          quantity: unit.fill?.drawerHeights.length || unit.drawerCount || spec.drawerCount,
-        });
+      case 'drawers': {
+        /*
+         * КОРОБ РАССЧИТАН — ЕГО ДЕТАЛИ В РАСКРОЕ (HARDWARE-01): плита,
+         * распил и кромка короба уже в строках материалов, и «Ящик в сборе»
+         * по ставке оплатил бы его второй раз. Строка остаётся у ящиков без
+         * короба — их число, а не все ящики секции.
+         */
+        const all = unit.fill?.drawerHeights.length || unit.drawerCount || spec.drawerCount;
+        const boxed = moduleDrawerKits(unit, run, production, hardwareItems).filter(
+          (kit) => kit.state === 'box' && !kit.place.bayId,
+        ).length;
+        if (all - boxed > 0) {
+          drafts.push({
+            key: 'drawer_box',
+            title: 'Ящики в сборе',
+            unit: 'set',
+            quantity: all - boxed,
+          });
+        }
         break;
+      }
 
       case 'hooks':
         // Крючки по одному на 150 мм ширины: куртка, сумка, зонт.
@@ -283,6 +303,158 @@ function sectionDrafts(run: Run): Draft[] {
   return drafts;
 }
 
+/**
+ * МЕХАНИЗМ ВАРИАНТА МЕСТА — МЕСТО ФУРНИТУРЫ (HARDWARE-01): карго и
+ * бутылочница — «карго», сушилка — «сушилка», карусель — «угловой механизм».
+ */
+const VARIANT_SLOT: Record<string, FittingSlot | undefined> = {
+  cargo: 'cargo',
+  bottle: 'cargo',
+  tall_cargo: 'cargo',
+  upper_dryer: 'dryer',
+  corner_carousel: 'corner_unit',
+};
+
+/** Сколько физических изделий на месте: штуки, пары направляющих, механизмы. */
+const SLOT_PER: Record<FittingSlot, 'piece' | 'pair' | 'mechanism'> = {
+  hinge: 'piece',
+  hinge_plate: 'piece',
+  slide: 'pair',
+  lift: 'mechanism',
+  handle: 'piece',
+  pantograph: 'mechanism',
+  wardrobe_pullout: 'mechanism',
+  cargo: 'mechanism',
+  dryer: 'mechanism',
+  corner_unit: 'mechanism',
+  waste: 'mechanism',
+  shelf_support: 'piece',
+  leg: 'piece',
+};
+
+/**
+ * СКОЛЬКО ЕДИНИЦ ПРОДАЖИ НА МЕСТО (HARDWARE-01).
+ *
+ * Позиция производителя (`meta.hardware.manufacturer`) считается по
+ * единице из паспорта (`saleUnit`): направляющие — парой на ящик или
+ * поштучно (две на ящик); петли, планки, ручки, опоры — штуками;
+ * механизмы — комплектом или штукой на место. Единица не названа — цену
+ * применить нельзя, и это сказано: «компл.» у Hettich KA не расшифрован
+ * (пара или одна направляющая), и сосчитать его наугад значит выписать
+ * вдвое больше или вдвое меньше.
+ *
+ * Позиция компании без записи производителя — как всегда считала смета:
+ * штуки, комплект на ящик, механизм на место. Её цену заводила компания
+ * под эту единицу.
+ */
+function saleQuantity(
+  item: HardwareItem,
+  per: 'piece' | 'pair' | 'mechanism',
+  count: number,
+): { quantity: number; unit: EstimateUnit; note: string; unsure?: string } {
+  const sale = item.hardware.saleUnit;
+  const ownRow = !item.hardware.manufacturer;
+  if (per === 'pair') {
+    if (sale === 'piece') return { quantity: count * 2, unit: 'pcs', note: ' (по две на ящик)' };
+    if (sale === 'pair' || ownRow) return { quantity: count, unit: 'set', note: ' (пара на ящик)' };
+    return {
+      quantity: count,
+      unit: 'set',
+      note: ' (пар на ящик)',
+      unsure:
+        `единица продажи «${item.hardware.packaging ?? 'не указана'}» в паспорте не расшифрована — пара или одна направляющая; ` +
+        'цену не применяем, пока компания не укажет единицу',
+    };
+  }
+  if (per === 'piece') {
+    if (sale === 'piece' || ownRow) return { quantity: count, unit: 'pcs', note: '' };
+    return {
+      quantity: count,
+      unit: 'pcs',
+      note: '',
+      unsure: `единица продажи «${item.hardware.packaging ?? 'не указана'}» — штука или упаковка, в паспорте не сказано; цену не применяем`,
+    };
+  }
+  if (sale === 'set' || sale === 'piece' || ownRow) return { quantity: count, unit: 'set', note: '' };
+  return {
+    quantity: count,
+    unit: 'set',
+    note: '',
+    unsure: `сколько единиц «${item.hardware.packaging ?? 'не указана'}» на одно место — в паспорте не сказано; цену не применяем`,
+  };
+}
+
+/**
+ * СЧЁТ ФУРНИТУРЫ ПО МЕСТАМ (HARDWARE-01).
+ *
+ * `take` — место модуля занято позицией каталога: количество уходит в её
+ * строку, и вызывающий вычитает его из общей. Позиции нет в каталоге или
+ * она отключена — место считается как раньше, по общей строке (ответ
+ * `false`). Цены нет — строка есть, денег в ней нет: «цена не задана»,
+ * итог «неполный» (ловушка 452) — бесплатной фурнитуры не бывает.
+ *
+ * Единица строки — из паспорта (`saleUnit`): направляющие — комплектом
+ * на ящик, а позиция «поштучно» — две на ящик; остальное — штуками и
+ * механизмами, как в общих строках.
+ */
+function fittingTally(catalog: Map<string, HardwareItem>) {
+  const lines = new Map<string, { item: HardwareItem; slot: FittingSlot; quantity: number }>();
+  const missing = new Map<FittingSlot, { title: string; quantity: number }>();
+  const pantographs = new Set<string>();
+  /* Что стоит на месте — `installedItem`, та же функция, по которой сцена рисует механизм. */
+  const itemOf = (unit: Module, slot: FittingSlot, bayId?: string): HardwareItem | null => installedItem(unit, slot, catalog, bayId);
+  const take = (unit: Module, slot: FittingSlot, quantity: number, bayId?: string): boolean => {
+    const item = itemOf(unit, slot, bayId);
+    if (!item || quantity <= 0) return false;
+    const key = `${slot}|${item.id}`;
+    const row = lines.get(key) ?? { item, slot, quantity: 0 };
+    row.quantity += quantity;
+    lines.set(key, row);
+    if (slot === 'pantograph' && bayId) pantographs.add(`${unit.id}:${bayId}`);
+    return true;
+  };
+  return {
+    take,
+    /** Место, без которого выбранное не ставится: не выбрано — строка «не выбрано» без цены. */
+    needs(unit: Module, slot: FittingSlot, quantity: number, title: string): void {
+      if (take(unit, slot, quantity)) return;
+      const row = missing.get(slot) ?? { title, quantity: 0 };
+      row.quantity += quantity;
+      missing.set(slot, row);
+    },
+    pantographBays(): Set<string> {
+      return pantographs;
+    },
+    drafts(): Draft[] {
+      const out: Draft[] = [];
+      for (const { item, slot, quantity } of Array.from(lines.values())) {
+        const sale = saleQuantity(item, SLOT_PER[slot], quantity);
+        out.push({
+          key: `fitting_${slot}_${item.id}`,
+          title: `${item.name} — ${FITTING_SLOT_TITLE[slot].toLowerCase()}${sale.note}`,
+          unit: sale.unit,
+          quantity: sale.quantity,
+          ...(sale.unsure
+            ? { priceUnset: sale.unsure }
+            : Number.isFinite(item.price) && item.price > 0
+              ? { rate: item.price }
+              : { priceUnset: 'цена не задана: позицию производителя компания ещё не оценила' }),
+        });
+      }
+      for (const [slot, { title, quantity }] of Array.from(missing.entries())) {
+        out.push({
+          key: `fitting_${slot}_missing`,
+          title,
+          unit: 'pcs',
+          quantity,
+          priceUnset: 'позиция не выбрана: без неё выбранная фурнитура не ставится',
+        });
+      }
+      return out;
+    },
+  };
+}
+
 export function buildEstimateDrafts(
   run: Run,
   production: ProductionSettings = DEFAULT_PRODUCTION,
@@ -340,7 +512,7 @@ export function buildEstimateDrafts(
    * вызов `buildPanels` с другими аргументами дал бы две раскладки одной
    * мебели.
    */
-  const panels = buildPanels({ run, production, milling: millingItems });
+  const panels = buildPanels({ run, production, milling: millingItems, hardware: hardwareItems });
   const materials = panelMaterials(panels);
 
   /*
@@ -373,6 +545,15 @@ export function buildEstimateDrafts(
 
   let hinges = hardware.hinges;
   let slides = 0;
+  /*
+   * ФУРНИТУРА ПРОИЗВОДИТЕЛЯ НА МЕСТАХ МОДУЛЕЙ (HARDWARE-01) — своими
+   * строками. Количество то же, что у общих строк (те же счётчики), и
+   * из общей строки оно ВЫЧИТАЕТСЯ: петля, посчитанная позицией, в
+   * «Петлях (стандарт)» второй раз не оплачивается.
+   */
+  const fit = fittingTally(hardwareItems);
+  let lifts = hardware.lifts;
+  let handleBar = hardware.handleBar;
 
   /**
    * ВЫБРАННАЯ ФУРНИТУРА СЧИТАЕТСЯ СВОЕЙ СТРОКОЙ.
@@ -403,15 +584,23 @@ export function buildEstimateDrafts(
 
   for (const unit of modules) {
     const pick = pickOf(unit);
-    if (pick) {
-      /*
-       * Петли этого модуля — из того же разреза, что и итог ряда: числа
-       * накоплены одним циклом, и вычитание не может увести их в минус.
-       */
-      const own = hardware.byModule[unit.id]?.hinges ?? 0;
-      pick.hinges += own;
-      hinges -= own;
+    const ownHw = hardware.byModule[unit.id];
+    /*
+     * Петли этого модуля — из того же разреза, что и итог ряда: числа
+     * накоплены одним циклом, и вычитание не может увести их в минус.
+     * Петля на месте модуля (HARDWARE-01) сильнее прежней ссылки модуля.
+     */
+    const ownHinges = ownHw?.hinges ?? 0;
+    if (ownHinges > 0 && fit.take(unit, 'hinge', ownHinges)) {
+      hinges -= ownHinges;
+      /* Петля производителя ставится на ответную планку: не выбрана — названо строкой. */
+      fit.needs(unit, 'hinge_plate', ownHinges, 'Ответные планки к выбранным петлям — не выбраны');
+    } else if (pick) {
+      pick.hinges += ownHinges;
+      hinges -= ownHinges;
     }
+    if ((ownHw?.lifts ?? 0) > 0 && fit.take(unit, 'lift', ownHw!.lifts)) lifts -= ownHw!.lifts;
+    if ((ownHw?.handleBar ?? 0) > 0 && fit.take(unit, 'handle', ownHw!.handleBar)) handleBar -= ownHw!.handleBar;
 
     {
       /*
@@ -434,7 +623,9 @@ export function buildEstimateDrafts(
        */
       /* Ящики отсеков (R02A.1) — своей строкой оценки ниже (`bayDrawerDrafts`). */
       const drawers = frontDrawerSlides(unit);
-      if (pick) pick.slides += drawers;
+      if (drawers > 0 && fit.take(unit, 'slide', drawers)) {
+        /* Направляющая на месте модуля — своей строкой (HARDWARE-01). */
+      } else if (pick) pick.slides += drawers;
       else slides += drawers;
     }
 
@@ -730,7 +921,7 @@ export function buildEstimateDrafts(
       key: liftKey(run.options.hardwareClass),
       title: 'Подъёмник фасада',
       unit: 'pcs',
-      quantity: hardware.lifts,
+      quantity: lifts,
     },
     ...(hardware.flaps > 0
       ? [
@@ -752,13 +943,13 @@ export function buildEstimateDrafts(
      * Строка появляется, только если такая ручка в ряду есть: «Ручки: 0»
      * читается как забытая позиция (ловушка 195).
      */
-    ...(hardware.handleBar > 0
+    ...(handleBar > 0
       ? [
           {
             key: 'handle_standard',
             title: 'Ручки накладные',
             unit: 'pcs' as const,
-            quantity: hardware.handleBar,
+            quantity: handleBar,
           },
         ]
       : []),
@@ -810,8 +1001,13 @@ export function buildEstimateDrafts(
       }
       return rows;
     }),
-    // Четыре регулируемые опоры на каждый нижний модуль.
-    { key: 'leg_support', title: 'Опоры регулируемые', unit: 'pcs', quantity: floorModules.length * 4 },
+    // Четыре регулируемые опоры на каждый нижний модуль — кроме тех, где опора выбрана позицией.
+    {
+      key: 'leg_support',
+      title: 'Опоры регулируемые',
+      unit: 'pcs',
+      quantity: floorModules.filter((unit) => !fit.take(unit, 'leg', 4)).length * 4,
+    },
     { key: 'fasteners', title: 'Крепёж и эксцентрики', unit: 'percent', quantity: materials.carcassM2 },
     { key: 'cutting', title: 'Распил и присадка', unit: 'm2', quantity: round2(materials.carcassM2 + materials.shelfM2 + materials.frontM2) },
   );
@@ -852,6 +1048,12 @@ export function buildEstimateDrafts(
    * иначе он растворится в стоимости ЛДСП и пропадёт из сметы.
    */
   for (const unit of modules) {
+    /*
+     * Механизм выбран позицией производителя (HARDWARE-01) — строка
+     * варианта по типовой ставке уходит: механизм оплачен своей строкой.
+     */
+    const variantSlot = VARIANT_SLOT[unit.variant ?? ''];
+    if (variantSlot && fit.take(unit, variantSlot, 1)) continue;
     for (const key of variantEstimateKeys(unit)) {
       const spec = MODULE_VARIANTS[unit.variant!];
       drafts.push({
@@ -868,10 +1070,17 @@ export function buildEstimateDrafts(
     }
   }
 
-  drafts.push(...sectionDrafts(run));
+  drafts.push(...sectionDrafts(run, production, hardwareItems));
 
-  drafts.push(...bayDrawerDrafts(run, hardwareItems));
-  drafts.push(...bayRodDrafts(run, production));
+  drafts.push(...bayDrawerDrafts(run, hardwareItems, production));
+  /* Пантограф отсека (HARDWARE-01) — вместо штанги этого отсека. */
+  for (const unit of modules) {
+    for (const f of unit.fittings ?? []) {
+      if (f.bayId && (f.slot === 'pantograph' || f.slot === 'wardrobe_pullout')) fit.take(unit, f.slot, 1, f.bayId);
+    }
+  }
+  drafts.push(...bayRodDrafts(run, production, fit.pantographBays()));
+  drafts.push(...fit.drafts());
 
   /*
    * Техника и мойка — отдельными позициями, их клиент часто покупает сам.
@@ -948,7 +1157,11 @@ function countertopTitle(kind: Run['options']['countertop']): string {
  * позиции, как у фурнитуры модуля (`hardware_<позиция>_slides`), и это
  * уже не оценка. Короб — оценка всегда, пока у цеха нет правил короба.
  */
-function bayDrawerDrafts(run: Run, hardwareItems: Map<string, HardwareItem>): Draft[] {
+function bayDrawerDrafts(
+  run: Run,
+  hardwareItems: Map<string, HardwareItem>,
+  production: ProductionSettings = DEFAULT_PRODUCTION,
+): Draft[] {
   let drawers = 0;
   let unchosen = 0;
   let notInCatalog = 0;
@@ -992,22 +1205,45 @@ function bayDrawerDrafts(run: Run, hardwareItems: Map<string, HardwareItem>): Dr
     });
   }
   for (const { item, count } of Array.from(chosen.values())) {
+    /* Единица — по паспорту позиции производителя (`saleQuantity`); своя позиция компании — комплект на ящик. */
+    const sale = saleQuantity(item, 'pair', count);
     drafts.push({
       key: `hardware_${item.id}_slides`,
       title: `${item.name} (направляющие)`,
-      unit: 'set',
-      quantity: count,
-      rate: item.price,
+      unit: sale.unit,
+      quantity: sale.quantity,
+      /*
+       * Ноль в цене позиции — «цена не задана», а не бесплатная
+       * направляющая (ловушка 452): строка с количеством, итог неполный.
+       */
+      ...(sale.unsure
+        ? { priceUnset: sale.unsure }
+        : Number.isFinite(item.price) && item.price > 0
+          ? { rate: item.price }
+          : { priceUnset: 'цена не задана: направляющую компания ещё не оценила' }),
     });
   }
-  drafts.push({
-    key: 'bay_drawer_box',
-    title: 'Ящики отсеков в сборе — короб не рассчитан',
-    unit: 'set',
-    quantity: drawers,
-    rateKey: 'drawer_box',
-    estimated: 'короб не рассчитан: правил короба цеха нет — оценка по ставке «Ящик в сборе»',
-  });
+  /*
+   * КОРОБ РАССЧИТАН — ОЦЕНКИ НЕТ (HARDWARE-01): плита, распил и кромка
+   * короба уже в строках материалов из раскроя. Оценкой остаются только
+   * ящики без короба — их число, а не все ящики отсеков.
+   */
+  const boxed = allModules(run).reduce(
+    (sum, unit) =>
+      sum +
+      moduleDrawerKits(unit, run, production, hardwareItems).filter((kit) => kit.state === 'box' && Boolean(kit.place.bayId)).length,
+    0,
+  );
+  if (drawers - boxed > 0) {
+    drafts.push({
+      key: 'bay_drawer_box',
+      title: 'Ящики отсеков в сборе — короб не рассчитан',
+      unit: 'set',
+      quantity: drawers - boxed,
+      rateKey: 'drawer_box',
+      estimated: 'короб не рассчитан: правил короба цеха нет — оценка по ставке «Ящик в сборе»',
+    });
+  }
   return drafts;
 }
 
@@ -1021,12 +1257,14 @@ function bayDrawerDrafts(run: Run, hardwareItems: Map<string, HardwareItem>): Dr
  * ставке «Держатель штанги», тоже оценкой: какие держатели, никто не
  * выбирал. Прежние строки штанг секций (`wardrobe_rod`) не тронуты.
  */
-function bayRodDrafts(run: Run, production: ProductionSettings): Draft[] {
+function bayRodDrafts(run: Run, production: ProductionSettings, pantographBays: Set<string> = new Set()): Draft[] {
   let lengthMm = 0;
   let rods = 0;
   for (const unit of allModules(run)) {
     if (!unit.fill?.bays?.some((bay) => bay.zones?.some((zone) => zone.rod))) continue;
     for (const bay of bayLayout(unit, bayEnvelope(unit, run, production))?.bays ?? []) {
+      /* Пантограф отсека — это и есть его штанга (HARDWARE-01): оплачен своей строкой. */
+      if (pantographBays.has(`${unit.id}:${bay.id}`)) continue;
       for (const rod of bay.rods) {
         lengthMm += rod.lengthMm;
         rods += 1;

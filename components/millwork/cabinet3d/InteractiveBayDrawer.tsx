@@ -13,9 +13,10 @@ import { DRAWER_TRAVEL_M, type PartBox } from '@/lib/millwork/cabinetBoxes';
  * ЯЩИК ОТСЕКА (R02A), КОТОРЫЙ ВЫЕЗЖАЕТ.
  *
  * Рисует РОВНО те коробки, что лежат в общей пачке, — фасад и габарит
- * рабочей зоны из `bayDrawerBoxes`, — только своим мешем и со сдвигом:
- * второй геометрии ящика в сцене нет. Ход — наглядный: 300 мм
- * (`DRAWER_TRAVEL_M`), а не механика направляющей — та не выбрана.
+ * рабочей зоны из `bayDrawerBoxes` либо детали короба по комплекту и
+ * ходовую половину направляющей (HARDWARE-01), — только своим мешем и со
+ * сдвигом: второй геометрии ящика в сцене нет. Ход — наглядный: 300 мм
+ * (`DRAWER_TRAVEL_M`), а не ход направляющей из паспорта.
  *
  * Каждый ящик — свой ключ: открытый один не трогает остальные.
  */
@@ -31,9 +32,16 @@ type Props = {
   frontMaterial?: THREE.MeshStandardMaterial;
   /** Ящик поехал или встал: задвинутый рисуется вместе со всем рядом. */
   onActive?: (id: string, active: boolean) => void;
+  /**
+   * ХОД, метры (HARDWARE-01). Пусто — вперёд на `DRAWER_TRAVEL_M`, как у
+   * ящика. Пантограф едет вниз и вперёд, полотно купе — вбок: вектор
+   * считает движок (`sceneSlides`), здесь он только применяется.
+   */
+  vectorM?: [number, number, number];
 };
 
-export default function InteractiveBayDrawer({ id, open, onToggle, boxes, parts, frontMaterial, onActive }: Props) {
+export default function InteractiveBayDrawer({ id, open, onToggle, boxes, parts, frontMaterial, onActive, vectorM }: Props) {
+  const travel: [number, number, number] = vectorM ?? [0, 0, DRAWER_TRAVEL_M];
   const group = useRef<THREE.Group>(null);
   const touch = useRef<THREE.Mesh>(null);
   const [active, setActive] = useState(open);
@@ -49,11 +57,11 @@ export default function InteractiveBayDrawer({ id, open, onToggle, boxes, parts,
   }, [id, active, onActive]);
 
   useSlide({
-    target: open ? DRAWER_TRAVEL_M : 0,
-    initial: open ? DRAWER_TRAVEL_M : 0,
+    target: open ? 1 : 0,
+    initial: open ? 1 : 0,
     apply: (value) => {
       const el = group.current;
-      if (el) el.position.z = value;
+      if (el) el.position.set(travel[0] * value, travel[1] * value, travel[2] * value);
     },
     onSettle: () => {
       if (!openRef.current) setActive(false);
@@ -93,7 +101,13 @@ export default function InteractiveBayDrawer({ id, open, onToggle, boxes, parts,
     realSizeShiftOf(id),
   );
   const materialOf = (box: PartBox) =>
-    box.material === 'front' ? (frontMaterial ?? parts.front) : box.material === 'inner' ? parts.inner : parts.carcass;
+    box.material === 'front'
+      ? (frontMaterial ?? parts.front)
+      : box.material === 'inner'
+        ? parts.inner
+        : box.material === 'metal'
+          ? parts.metal
+          : parts.carcass;
 
   return (
     <group ref={group}>
@@ -121,6 +135,7 @@ export default function InteractiveBayDrawer({ id, open, onToggle, boxes, parts,
         boxes.map((box, i) => (
           <mesh
             key={`${box.partId ?? box.panel ?? 'box'}-${i}`}
+            name={box.node ? `mech:${box.node}` : box.panel ? `panel:${box.panel}` : undefined}
             geometry={box.material === 'front' ? (reliefGeometry ?? frontBox) : parts.box}
             material={materialOf(box)}
             position={box.position}

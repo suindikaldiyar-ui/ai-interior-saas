@@ -10,7 +10,7 @@ import PlanDrawing from './PlanDrawing';
 import AxonometryDrawing from './AxonometryDrawing';
 import SectionDrawing, { findModuleRow, hasFilling, sectionSizeMm } from './SectionDrawing';
 import { axonometryExtentMm } from '@/lib/millwork/axonometry';
-import { DEFAULT_PRODUCTION, type ProductionSettings } from '@/types/catalog';
+import { DEFAULT_PRODUCTION, type HardwareItem, type ProductionSettings } from '@/types/catalog';
 import SheetLayout, { type SheetViewNode } from './SheetLayout';
 import SheetNotes from './SheetNotes';
 import { PRODUCT_TITLE, moduleNumbers, positionCode } from '@/lib/millwork/positions';
@@ -101,6 +101,8 @@ type Props = {
    * Пусто — обычная плита цеха, как и раньше.
    */
   carcass?: Map<string, CarcassItem>;
+  /** Фурнитура организации: короба ящиков в деталях листа (HARDWARE-01). */
+  hardware?: Map<string, HardwareItem>;
   /** Правки идут по фасаду: он остаётся живым, а не картинкой на листе. */
   elevation?: ElevationHandlers;
   /** Заказчик — в штамп: лист уходит и ему тоже. */
@@ -136,6 +138,7 @@ export default function DrawingSheet({
   issues = [],
   production = DEFAULT_PRODUCTION,
   carcass,
+  hardware,
   elevation = {},
   client,
   company,
@@ -173,7 +176,7 @@ export default function DrawingSheet({
    * настройках цеха цех получит на чертеже одну «3.2», а в раскрое
    * другую.
    */
-  const panels = buildPanels({ run, production, carcass });
+  const panels = buildPanels({ run, production, carcass, hardware });
 
   const leaders = buildLeaders(run, panels, {
     facade: entryFor(FACADE_TARGET),

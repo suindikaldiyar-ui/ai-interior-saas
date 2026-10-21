@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchCatalog, patchCatalogItem, previewUrl } from '@/lib/catalog';
+import { decodeCsvBuffer } from '@/lib/csv';
 import { REFERENCE_SOURCE_TITLE, referenceKeyOf, referenceUrl } from '@/lib/millwork/referenceTextures';
 import { TYPICAL_PRICE_LIST } from '@/lib/millwork/rates';
 import { supabaseBrowser } from '@/lib/supabase/client';
@@ -9,6 +10,7 @@ import {
   APPLIES_TO,
   APPLIES_TO_LABEL,
   CATALOG_UNITS,
+  HARDWARE_GROUPS,
   UNIT_LABEL,
   isSurfaceKind,
   type AppliesTo,
@@ -46,6 +48,25 @@ type KiraSummary = {
   unchanged: number;
   conflicts: { article: string; why: string }[];
 };
+/** Ответ `/api/catalog/hardware` на «что ляжет» (HARDWARE-01). */
+type HardwareCount = { found: number; insert: number; update: number; unchanged: number; verified: number };
+type HardwareSummary = {
+  source: 'facts' | 'upload';
+  checkedAt: string;
+  sources: { key: string; manufacturer: string; file: string; pages: number | null; pageRule: string }[];
+  notFound: string[];
+  items: number;
+  byGroup: Record<string, HardwareCount>;
+  byManufacturer: Record<string, HardwareCount>;
+  insert: number;
+  update: number;
+  unchanged: number;
+  conflicts: { article: string; why: string }[];
+  errors: { article: string; why: string }[];
+};
+/** Своя пачка, показанная в «что ляжет»: та же уходит в запись. Пусто — факты производителей. */
+type HardwarePayload = { csv: string } | { rows: unknown } | null;
+
 const OVERSCAN = 8;
 
 const inputCls =
@@ -346,6 +367,84 @@ export default function CatalogAdmin({
     await reload();
   };
 
+  /*
+   * ── Фурнитура производителей (HARDWARE-01): то же правило, что у KIRA —
+   * сначала «что ляжет», запись только по «Загрузить». Своя пачка (CSV или
+   * JSON) читается здесь, а разбирается и проверяется на сервере той же
+   * `uploadedFacts`: в бандл админки не едут ни факты, ни разбор.
+   */
+  const hardwareInput = useRef<HTMLInputElement>(null);
+  const [hardware, setHardware] = useState<{ summary: HardwareSummary; payload: HardwarePayload; file: string | null } | null>(null);
+  const hardwareRequest = async (confirm: boolean, payload: HardwarePayload, file: string | null) => {
+    setBusy(true);
+    setNotice(confirm ? 'Записываем фурнитуру…' : 'Считаем, что ляжет…');
+    let res: Response;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 70_000);
+    try {
+      res = await fetch('/api/catalog/hardware', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orgId, ...(confirm ? { confirm: true } : { dryRun: true }), ...(payload ?? {}) }),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      setBusy(false);
+      setNotice(
+        controller.signal.aborted
+          ? 'Фурнитура: сервер не ответил за 70 с. Нажмите ещё раз — «что ляжет» покажет, что уже в каталоге.'
+          : `Фурнитура: запрос не дошёл до сервера (${error instanceof Error ? error.message : 'нет связи'}). Повторите.`,
+      );
+      return;
+    } finally {
+      clearTimeout(timer);
+    }
+    const data = await res.json().catch(() => ({}));
+    setBusy(false);
+    if (!res.ok) {
+      setNotice(data.error ?? 'Фурнитура не загрузилась.');
+      return;
+    }
+    if (!confirm) {
+      setNotice(null);
+      setHardware({ summary: data as HardwareSummary, payload, file });
+      return;
+    }
+    setHardware(null);
+    setNotice(
+      `Фурнитура: добавлено ${data.added}, обновлено ${data.updated}, без изменений ${data.unchanged}` +
+        (data.conflicts?.length ? `, не тронуто из-за конфликта артикула: ${data.conflicts.length}` : '') +
+        (data.errors?.length ? `, не принято строк: ${data.errors.length}` : '') +
+        '. Цен у позиций нет — «цена не задана», пока компания не укажет свою.',
+    );
+    await reload();
+  };
+  const onHardwareFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const text = decodeCsvBuffer(bytes);
+    if (/\.json$/i.test(file.name)) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch (error) {
+        setNotice(`${file.name}: не JSON (${error instanceof Error ? error.message : 'разбор не удался'}).`);
+        return;
+      }
+      /* Выгрузка фактов (`{ items: [...] }`) и просто список строк — одна пачка. */
+      const rows = Array.isArray(parsed) ? parsed : (parsed as { items?: unknown } | null)?.items;
+      if (!Array.isArray(rows)) {
+        setNotice(`${file.name}: в JSON нет списка позиций — ждём массив строк или «items».`);
+        return;
+      }
+      await hardwareRequest(false, { rows }, file.name);
+      return;
+    }
+    await hardwareRequest(false, { csv: text }, file.name);
+  };
+
   /* ── Сортировка перетаскиванием ── */
 
   const onDrop = async (targetId: string) => {
@@ -390,6 +489,14 @@ export default function CatalogAdmin({
         onChange={onFileChosen}
       />
       <input ref={csvInput} type="file" accept=".csv,text/csv" hidden onChange={onCsvChosen} />
+      <input
+        ref={hardwareInput}
+        type="file"
+        accept=".csv,.json,text/csv,application/json"
+        hidden
+        data-admin-hardware-file
+        onChange={onHardwareFile}
+      />
       <datalist id="estimate-keys">
         {TYPICAL_PRICE_LIST.map((r) => (
           <option key={r.estimateKey} value={r.estimateKey} />
@@ -508,6 +615,26 @@ export default function CatalogAdmin({
           >
             Модели KIRA
           </button>
+          <button
+            type="button"
+            onClick={() => hardwareRequest(false, null, null)}
+            disabled={busy}
+            data-admin-hardware
+            className="mw-touch border border-navyLine px-3 text-[13px] text-graphiteMw hover:border-cyan hover:text-textMw disabled:opacity-40"
+            title="Позиции Blum, Hettich, Häfele из каталогов производителей: артикул, размеры, страница источника — без цен"
+          >
+            Фурнитура производителей
+          </button>
+          <button
+            type="button"
+            onClick={() => hardwareInput.current?.click()}
+            disabled={busy}
+            data-admin-hardware-upload
+            className="mw-touch border border-navyLine px-3 text-[13px] text-graphiteMw hover:border-cyan hover:text-textMw disabled:opacity-40"
+            title="Своя пачка фурнитуры: CSV («;», 1С) или JSON — сначала покажем, что ляжет"
+          >
+            Фурнитура из файла
+          </button>
           <input
             type="search"
             data-admin-search
@@ -588,6 +715,120 @@ export default function CatalogAdmin({
               <button
                 type="button"
                 onClick={() => setKira(null)}
+                className="mw-touch border border-navyLine px-3 text-[13px] text-graphiteMw"
+              >
+                Отмена
+              </button>
+            </div>
+          </div>
+        )}
+
+        {hardware && (
+          <div className="border-b border-navyLine bg-navy px-3 py-3 text-[13px]" data-admin-hardware-plan={hardware.summary.source}>
+            <p className="mb-2">
+              {hardware.file
+                ? `Файл «${hardware.file}»: позиций ${hardware.summary.items}.`
+                : `Фурнитура производителей: позиций ${hardware.summary.items}, сверено ${hardware.summary.checkedAt}.`}{' '}
+              Цен нет — «цена не задана», пока компания не укажет свою; рыночные не подставляются. CAD производителей не
+              загружается: в сцене — приближение по размерам паспорта. Своё в уже заведённых позициях (цена, название,
+              единица продажи) импорт не трогает и ничего не удаляет.
+            </p>
+            <table className="mb-2 border-collapse">
+              <thead>
+                <tr className="text-left text-graphiteMw">
+                  {['Группа', 'Найдено', 'Новых', 'Обновить', 'Без изменений', 'Размеры сверены'].map((title) => (
+                    <th key={title} className="pr-4 font-normal">
+                      {title}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {HARDWARE_GROUPS.map((group) => {
+                  const n = hardware.summary.byGroup[group.key];
+                  return (
+                    <tr key={group.key} data-admin-hardware-group={group.key} data-found={n?.found ?? 0}>
+                      <td className="pr-4">
+                        {group.letter} · {group.title}
+                      </td>
+                      <td className="pr-4">{n?.found || '—'}</td>
+                      <td className="pr-4">{n?.found ? n.insert : ''}</td>
+                      <td className="pr-4">{n?.found ? n.update : ''}</td>
+                      <td className="pr-4">{n?.found ? n.unchanged : ''}</td>
+                      <td className="pr-4">{n?.found ? n.verified : ''}</td>
+                    </tr>
+                  );
+                })}
+                {Object.entries(hardware.summary.byManufacturer).map(([name, n]) => (
+                  <tr key={name} className="text-graphiteMw" data-admin-hardware-manufacturer={name} data-found={n.found}>
+                    <td className="pr-4">{name}</td>
+                    <td className="pr-4">{n.found}</td>
+                    <td className="pr-4">{n.insert}</td>
+                    <td className="pr-4">{n.update}</td>
+                    <td className="pr-4">{n.unchanged}</td>
+                    <td className="pr-4">{n.verified}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="mb-2 text-graphiteMw">
+              Всего новых {hardware.summary.insert}, обновить {hardware.summary.update}, без изменений{' '}
+              {hardware.summary.unchanged}. Пустая группа — в каталогах производителей, что лежат у нас, позиций этой
+              группы не нашлось; придуманных позиций нет.
+            </p>
+            {!hardware.file && hardware.summary.sources.length > 0 && (
+              <ul className="mb-2 text-graphiteMw" data-admin-hardware-sources={hardware.summary.sources.length}>
+                {hardware.summary.sources.map((source) => (
+                  <li key={source.key}>
+                    {source.manufacturer}: {source.file}
+                    {source.pages ? ` · ${source.pages} с.` : ''} — {source.pageRule}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {!hardware.file && hardware.summary.notFound.length > 0 && (
+              <details className="mb-2 text-graphiteMw" data-admin-hardware-not-found={hardware.summary.notFound.length}>
+                <summary>Чего в источниках нет: {hardware.summary.notFound.length}</summary>
+                <ul className="mt-1 list-disc pl-5">
+                  {hardware.summary.notFound.map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+              </details>
+            )}
+            {hardware.summary.conflicts.length > 0 && (
+              <ul className="mb-2 text-alert" data-admin-hardware-conflicts={hardware.summary.conflicts.length}>
+                {hardware.summary.conflicts.slice(0, 6).map((c) => (
+                  <li key={c.article}>
+                    {c.article}: {c.why}
+                  </li>
+                ))}
+                {hardware.summary.conflicts.length > 6 && <li>и ещё {hardware.summary.conflicts.length - 6}</li>}
+              </ul>
+            )}
+            {hardware.summary.errors.length > 0 && (
+              <ul className="mb-2 text-alert" data-admin-hardware-errors={hardware.summary.errors.length}>
+                {hardware.summary.errors.slice(0, 8).map((e, i) => (
+                  <li key={`${e.article}-${i}`}>
+                    {e.article}: {e.why}
+                  </li>
+                ))}
+                {hardware.summary.errors.length > 8 && <li>и ещё {hardware.summary.errors.length - 8}</li>}
+              </ul>
+            )}
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => hardwareRequest(true, hardware.payload, hardware.file)}
+                disabled={busy || hardware.summary.insert + hardware.summary.update === 0}
+                data-admin-hardware-confirm
+                className="mw-touch border border-cyanBright bg-cyanBright px-3 text-[13px] text-navyDeep disabled:opacity-40"
+              >
+                {hardware.summary.insert + hardware.summary.update === 0 ? 'Всё уже в каталоге' : 'Загрузить'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setHardware(null)}
                 className="mw-touch border border-navyLine px-3 text-[13px] text-graphiteMw"
               >
                 Отмена

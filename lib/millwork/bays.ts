@@ -14,6 +14,15 @@ import {
 } from './fill';
 import { shopOf } from './shop';
 import { bayDrawerCount, bayDrawerStackOf, drawerHeights } from './drawerCount';
+import {
+  drawerBoxPlan,
+  drawerBoxRulesOf,
+  drawerProfileFor,
+  type DrawerBoxPart,
+  type DrawerBoxRules,
+  type DrawerProfile,
+  type ProfileVerdict,
+} from './drawerBox';
 
 /* Число ящиков и высоты их зон — в модуле без зависимостей (см. drawerCount.ts). */
 export { bayDrawerCount, bayDrawerStackOf, drawerHeights };
@@ -818,27 +827,13 @@ function stackRefusal(stack: BayDrawerStack, label: string, where: string, room:
 }
 
 /**
- * ПРАВИЛА КОРОБА ЦЕХА: толщины боковин и дна, насколько короб ниже своей
- * зоны. В настройках организации их пока нет — и подставлять их нельзя:
- * по выдуманному коробу цех распилит плиту.
+ * ПРАВИЛА КОРОБА, ПРОФИЛЬ И ДЕТАЛИ КОРОБА — В `drawerBox.ts` (HARDWARE-01):
+ * их зовут и ящики отсеков, и ящики с фронтами на всю ширину, и сцена, и
+ * присадка. Здесь — ответ для блока ящиков отсека.
  */
-export type DrawerBoxRules = { boxSideMm: number; boxBottomMm: number; boxHeightGapMm: number; source: string };
+export type { DrawerBoxRules, DrawerProfile } from './drawerBox';
 
-/**
- * ПОДТВЕРЖДЁННЫЙ ПРОФИЛЬ ЯЩИКА: направляющая (длина, боковой зазор — из
- * паспорта, `mounting.extra` позиции каталога) плюс правила короба цеха.
- * У каждого числа — откуда оно (`provenance`).
- */
-export type DrawerProfile = {
-  slideLengthMm: number;
-  sideClearanceMm: number;
-  boxSideMm: number;
-  boxBottomMm: number;
-  boxHeightGapMm: number;
-  provenance: { slide: string; box: string };
-};
-
-export type DrawerReadiness = { ready: true; profile: DrawerProfile; missing: [] } | { ready: false; missing: string[] };
+export type DrawerReadiness = ProfileVerdict;
 
 /**
  * ГОТОВ ЛИ БЛОК ЯЩИКОВ К ВЫПУСКУ В ЦЕХ — и если нет, чего не хватает.
@@ -846,93 +841,120 @@ export type DrawerReadiness = { ready: true; profile: DrawerProfile; missing: []
  * Черновик — не ошибка: эскиз, 3D и смета работают. Но без длины и
  * бокового зазора направляющей из каталога и без правил короба цеха
  * размеров короба нет, и выпуск заперт (`drawerReleaseBlock`).
+ *
+ * Проём и полезная глубина — числа отсека (`bayLayout`); не переданы —
+ * проверка места не делается, только паспорт и правила. Фасад ящика
+ * отсека вкладной: KT паспорта (для накладного) здесь не применяется.
  */
 export function drawerStackReadiness(
   stack: BayDrawerStack,
   slide: HardwareItem | null | undefined,
   rules: DrawerBoxRules | null | undefined,
   usableDepthMm?: number,
+  openingWidthMm?: number,
 ): DrawerReadiness {
-  const missing: string[] = [];
-  let slideLengthMm: number | null = null;
-  let sideClearanceMm: number | null = null;
-  if (stack.slideItemId === null) {
-    missing.push('направляющая не выбрана — нужна позиция каталога с длиной и боковым зазором');
-  } else if (!slide) {
-    missing.push('выбранной направляющей нет в каталоге организации');
-  } else {
-    const extra = slide.mounting.extra;
-    slideLengthMm = typeof extra.slideLengthMm === 'number' ? extra.slideLengthMm : null;
-    sideClearanceMm = typeof extra.sideClearanceMm === 'number' ? extra.sideClearanceMm : null;
-    if (slideLengthMm === null) missing.push(`у направляющей «${slide.name}» в каталоге нет длины (slideLengthMm)`);
-    if (sideClearanceMm === null) missing.push(`у направляющей «${slide.name}» в каталоге нет бокового зазора (sideClearanceMm)`);
-    if (slideLengthMm !== null && usableDepthMm !== undefined && slideLengthMm > usableDepthMm) {
-      missing.push(
-        `направляющая ${slideLengthMm} мм длиннее полезной глубины ящика ${usableDepthMm} мм — ${shortage(usableDepthMm, slideLengthMm)}`,
-      );
-    }
-  }
-  if (!rules) {
-    missing.push('правил короба цеха нет: толщина боковин и дна, насколько короб ниже своей зоны');
-  }
-  if (missing.length > 0 || !rules || slideLengthMm === null || sideClearanceMm === null || !slide) {
-    return { ready: false, missing };
-  }
-  return {
-    ready: true,
-    profile: {
-      slideLengthMm,
-      sideClearanceMm,
-      boxSideMm: rules.boxSideMm,
-      boxBottomMm: rules.boxBottomMm,
-      boxHeightGapMm: rules.boxHeightGapMm,
-      provenance: { slide: `паспорт «${slide.name}» (${slide.article})`, box: rules.source },
-    },
-    missing: [],
-  };
+  return drawerProfileFor({
+    slide,
+    slideItemId: stack.slideItemId,
+    rules,
+    openingWidthMm: openingWidthMm ?? Number.POSITIVE_INFINITY,
+    usableDepthMm: usableDepthMm ?? Number.POSITIVE_INFINITY,
+    overlay: false,
+  });
 }
 
 /**
  * ДЕТАЛИ КОРОБА ПО ПОДТВЕРЖДЁННОМУ ПРОФИЛЮ.
  *
- * Конструкция одна и названа: боковины во всю длину направляющей, торцы
- * между боковинами, дно вкладное между стенками. Ширина короба — проём
- * отсека минус боковой зазор направляющей с двух сторон, высота — зона
- * ящика минус зазор цеха. Без профиля функция не зовётся вовсе.
+ * Конструкция названа: боковины во всю длину направляющей, торцы между
+ * боковинами и дно — по правилу цеха (`drawerBoxPlan`; без правила — как в
+ * R02A, вкладное заподлицо между стенками). Ширина короба — проём отсека
+ * минус боковой зазор направляющей с двух сторон, высота — зона ящика
+ * минус зазоры цеха. Без профиля функция не зовётся вовсе.
  */
-export function drawerBoxParts(
-  drawer: BayDrawerPart,
-  profile: DrawerProfile,
-): { name: string; lengthMm: number; widthMm: number; thicknessMm: number; qty: number }[] {
-  const outerW = drawer.envelope.xToMm - drawer.envelope.xFromMm - 2 * profile.sideClearanceMm;
-  const height = drawer.slotToMm - drawer.slotFromMm - profile.boxHeightGapMm;
-  const innerW = outerW - 2 * profile.boxSideMm;
-  return [
-    { name: 'Боковина ящика', lengthMm: profile.slideLengthMm, widthMm: height, thicknessMm: profile.boxSideMm, qty: 2 },
-    { name: 'Торец ящика', lengthMm: innerW, widthMm: height, thicknessMm: profile.boxSideMm, qty: 2 },
-    { name: 'Дно ящика', lengthMm: innerW, widthMm: profile.slideLengthMm - 2 * profile.boxSideMm, thicknessMm: profile.boxBottomMm, qty: 1 },
-  ];
+export function drawerBoxParts(drawer: BayDrawerPart, profile: DrawerProfile): DrawerBoxPart[] {
+  return drawerBoxPlan(
+    drawer.envelope.xToMm - drawer.envelope.xFromMm,
+    drawer.slotToMm - drawer.slotFromMm,
+    profile,
+  ).parts;
+}
+
+/**
+ * ПРОФИЛЬ БЛОКА ЯЩИКОВ ОТСЕКА ПО КАТАЛОГУ И НАСТРОЙКАМ ЦЕХА — то, что
+ * знает экран: направляющая блока из каталога организации, правила
+ * короба из `ProductionSettings.drawerBox`, проём и глубина — из `bayLayout`.
+ */
+export function bayStackProfile(
+  stack: ResolvedDrawerStack,
+  hardware: Map<string, HardwareItem> | undefined,
+  production: ProductionSettings,
+): DrawerReadiness {
+  const first = stack.drawers[0];
+  const opening = first ? first.envelope.xToMm - first.envelope.xFromMm : 0;
+  return drawerProfileFor({
+    slide: stack.slideItemId ? hardware?.get(stack.slideItemId) : undefined,
+    slideItemId: stack.slideItemId,
+    rules: drawerBoxRulesOf(production.drawerBox),
+    openingWidthMm: opening,
+    usableDepthMm: stack.depthMm,
+    overlay: false,
+  });
 }
 
 /**
  * ВЫПУСК В ЦЕХ ЗАПЕРТ, ПОКА ЯЩИКИ ОТСЕКОВ — ЧЕРНОВИК.
  *
- * Правил короба в настройках организации нет, поэтому сегодня любой блок
- * ящиков отсека — черновик: фасады режутся, а короба нет ни в раскрое, ни
- * в присадке. Печать и выгрузка для цеха — только когда короб рассчитан.
+ * Ящик отсека выпускается, когда у его блока есть профиль (направляющая
+ * из каталога с паспортом и правила короба цеха) И цех подтвердил правила,
+ * а паспорт направляющей полный. Без каталога и настроек (`options` пусто)
+ * — как в R02A: каждый блок ящиков отсека черновик.
+ *
+ * Замок не снимается удалением проверки: он считает блоки, у которых
+ * профиля нет или он не подтверждён, и молчит только когда таких нет.
  */
-export function drawerReleaseBlock(runs: Run[]): string | null {
-  let drawers = 0;
+export function drawerReleaseBlock(
+  runs: Run[],
+  options: { hardware?: Map<string, HardwareItem>; production?: ProductionSettings } = {},
+): string | null {
+  let drafts = 0;
+  let unconfirmed = 0;
+  const reasons = new Set<string>();
   for (const run of runs) {
+    const production = options.production ?? shopOf(run.production);
     for (const unit of [...run.modules, ...run.upperSegments.flatMap((segment) => segment.modules)]) {
-      drawers += bayDrawerCount(unit.fill);
+      const count = bayDrawerCount(unit.fill);
+      if (count === 0) continue;
+      if (!options.hardware) {
+        drafts += count;
+        continue;
+      }
+      const layout = bayLayout(unit, bayEnvelope(unit, run, production));
+      for (const bay of layout?.bays ?? []) {
+        const stack = bay.drawerStack;
+        if (!stack) continue;
+        const verdict = bayStackProfile(stack, options.hardware, production);
+        if (!verdict.ready) {
+          drafts += stack.drawers.length;
+          for (const m of verdict.missing) reasons.add(m);
+        } else if (!verdict.profile.confirmed) {
+          unconfirmed += stack.drawers.length;
+        }
+      }
     }
   }
-  if (drawers === 0) return null;
+  if (drafts === 0 && unconfirmed === 0) return null;
+  if (drafts > 0) {
+    const why = reasons.size > 0 ? ` Не хватает: ${Array.from(reasons).slice(0, 2).join('; ')}.` : '';
+    return (
+      `Выпуск в цех заперт: ящики отсеков (${drafts} шт.) — черновик. Короб не рассчитан: нет правил короба цеха ` +
+      'и подтверждённой направляющей (длина, боковой зазор). Эскиз, 3D и смета работают; раскрой и печать для цеха — ' +
+      `после правил.${why}`
+    );
+  }
   return (
-    `Выпуск в цех заперт: ящики отсеков (${drawers} шт.) — черновик. Короб не рассчитан: нет правил короба цеха ` +
-    'и подтверждённой направляющей (длина, боковой зазор). Эскиз, 3D и смета работают; раскрой и печать для цеха — ' +
-    'после правил.'
+    `Выпуск в цех заперт: короба ящиков отсеков (${unconfirmed} шт.) рассчитаны, но правила короба не подтверждены цехом ` +
+    'или паспорт направляющей неполный — по ним цех распилит плиту.'
   );
 }
 

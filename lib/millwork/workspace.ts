@@ -10,7 +10,7 @@ import type {
   WallSegment,
 } from '@/types/millwork';
 import { buildEstimate, recalcTotal, type RateTable } from './estimate';
-import type { ProductionSettings } from '@/types/catalog';
+import type { HardwareItem, ProductionSettings } from '@/types/catalog';
 import type { MillingItem } from './milling';
 import type { CarcassItem } from './carcassMaterial';
 import type { MaterialItem } from './materialCollection';
@@ -87,6 +87,8 @@ export type WorkspaceSeed = {
    * дизайнера снимка не передаёт — он считает по каталогу на сегодня.
    */
   frozen?: Record<string, number>;
+  /** Фурнитура организации (HARDWARE-01) — см. `WorkspaceInput.hardware`. */
+  hardware?: Map<string, HardwareItem>;
 };
 
 export type WorkspaceInput = {
@@ -177,6 +179,15 @@ export type WorkspaceInput = {
    * дизайнера снимка не передаёт — он считает по каталогу на сегодня.
    */
   frozen?: Record<string, number>;
+  /**
+   * ФУРНИТУРА ОРГАНИЗАЦИИ (HARDWARE-01): позиции, выбранные на местах
+   * модулей, и направляющие ящиков. Едет тем же путём, что фрезеровка:
+   * смета считает по тому же каталогу, что видит Studio. Пусто — смета
+   * ровно такая, какой была (ни одна сохранённая от параметра не едет).
+   * Поле, которое хранится и не доезжает до суммы, — дефект: до этого
+   * слоя выбранная направляющая блока ящиков в сумму экрана не попадала.
+   */
+  hardware?: Map<string, HardwareItem>;
 };
 
 /** Рабочая стена: указанная явно либо самая длинная в замере. */
@@ -230,6 +241,7 @@ export function workspaceInput(seed: WorkspaceSeed): WorkspaceInput {
     carcass: seed.carcass,
     materials: seed.materials,
     frozen: seed.frozen,
+    ...(seed.hardware ? { hardware: seed.hardware } : {}),
   };
 }
 
@@ -246,7 +258,7 @@ export function workspaceInput(seed: WorkspaceSeed): WorkspaceInput {
 export function editedRunEstimate(
   run: Run,
   key: VariantKey,
-  input: Pick<WorkspaceInput, 'rates' | 'production' | 'milling' | 'carcass' | 'materials' | 'frozen'>,
+  input: Pick<WorkspaceInput, 'rates' | 'production' | 'milling' | 'carcass' | 'materials' | 'frozen' | 'hardware'>,
   disabled: Record<VariantKey, string[]>,
 ) {
   return recalcTotal(
@@ -257,7 +269,7 @@ export function editedRunEstimate(
       disabled[key],
       undefined,
       input.production,
-      undefined,
+      input.hardware,
       input.milling,
       input.carcass,
       input.materials,
@@ -326,6 +338,7 @@ export function composeVariants(
     carcass: input.carcass,
     materials: input.materials,
     frozen: input.frozen,
+    hardware: input.hardware,
   });
 
   return base.map((variant) => {

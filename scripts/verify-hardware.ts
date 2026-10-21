@@ -1,0 +1,973 @@
+/**
+ * ПРИЁМКА ФУРНИТУРЫ ПРОИЗВОДИТЕЛЕЙ (HARDWARE-01). `npm run test:hardware`.
+ *
+ * Путь экрана: замер демо → `objectInput` (с каталогом фурнитуры) →
+ * `composeVariants` → правка `applyOps` с тем же каталогом → правленый ряд
+ * снова через `composeVariants` → детали `buildPanels` / `objectPanels`,
+ * карта `cuttingPlan`, смета, сцена `runBoxes`, присадка `moduleDrilling`.
+ * Каталог — строки, которые лягут в каталог организации из фактов
+ * (`data/catalog/hardware.json` → `hardwareCatalogRow`), без правки руками.
+ *
+ * Числа ниже не подобраны под код: размеры короба выводятся из паспорта
+ * (KA 4532: NL, монтажная ширина 12,7) и правил цеха фикстуры (боковина 16,
+ * дно ХДФ 4 в паз 6, зазоры 10 и 30, ось направляющей 40) — расчёт
+ * расписан у каждой проверки.
+ */
+
+import { DEFAULT_PRODUCTION, TYPICAL_CUTTING, type CatalogEntryFull, type CuttingSettings, type HardwareItem, type ProductionSettings } from '../types/catalog';
+import type { Measurement, MillworkOp, Module, ModuleFill, Run, RunRequirements, VariantKey } from '../types/millwork';
+import { composeVariants, workspaceInput } from '../lib/millwork/workspace';
+import { objectInput, panelWallsOf, wallSegments } from '../lib/millwork/objectEstimate';
+import { DEMO_MEASUREMENT, DEMO_RATES, DEMO_REQUIREMENTS } from '../lib/millwork/demo';
+import { applyOps } from '../lib/millwork/ops';
+import { allModules } from '../lib/millwork/layout';
+import { hardwareCatalog } from '../lib/millwork/hardware';
+import {
+  HARDWARE_FACTS,
+  csvHardwareRows,
+  hardwareCatalogRow,
+  manufacturerArticleKey,
+  planHardwareImport,
+  uploadedFacts,
+  type HardwareFact,
+} from '../lib/millwork/hardwareCatalog';
+import { fittingSlotsOf, fittingVerdict, slidingAccepts, slidingVerdict, slotAccepts } from '../lib/millwork/fittings';
+import { buildPanels, objectPanels, type ObjectPanel } from '../lib/millwork/panels';
+import { boxedDrawerCount, cuttingPlan, drawerCount } from '../lib/millwork/cutting';
+import { drawerDrafts, moduleDrawerKits } from '../lib/millwork/drawerKit';
+import { drawerReleaseBlock } from '../lib/millwork/bays';
+import { buildEstimate, totalCaption, unpricedLines } from '../lib/millwork/estimate';
+import { kupeLeaves, runBoxes, runPlaces, sceneLeaves, sceneSlides } from '../lib/millwork/cabinetBoxes';
+import { moduleDrilling, panelDrilling } from '../lib/millwork/drilling';
+import { configurationFingerprint } from '../lib/millwork/fingerprint';
+
+let passed = 0;
+let failed = 0;
+function check(name: string, ok: boolean, detail = ''): void {
+  if (ok) passed += 1;
+  else failed += 1;
+  console.log(`  ${ok ? 'ok  ' : 'FAIL'} ${name}${detail ? `  ${detail}` : ''}`);
+}
+
+/* ─────────────────────────  каталог из фактов  ───────────────────────── */
+
+/** Строки каталога организации — тем же `hardwareCatalogRow`, что импорт; цена — 0, если не задана. */
+function rowsOf(facts: HardwareFact[], patch: Record<string, { price?: number; saleUnit?: 'pair' | 'piece' | 'set' }> = {}): CatalogEntryFull[] {
+  return facts.map((fact) => {
+    const row = hardwareCatalogRow(fact);
+    const own = patch[fact.article] ?? {};
+    const hardware = own.saleUnit ? { ...fact.hardware, saleUnit: own.saleUnit } : fact.hardware;
+    return {
+      id: `hw:${fact.article}`,
+      org_id: 'org-hw',
+      category_id: 'cat-hardware',
+      article: row.article,
+      name_ru: row.name_ru,
+      name_kk: row.name_kk,
+      description: '',
+      price: own.price ?? row.price,
+      unit: row.unit,
+      dimensions: {},
+      tiling: {},
+      meta: { hardware } as unknown as CatalogEntryFull['meta'],
+      is_active: true,
+      assets: [],
+    } as unknown as CatalogEntryFull;
+  });
+}
+
+const CATALOG = hardwareCatalog(rowsOf(HARDWARE_FACTS));
+function item(article: string, catalog: Map<string, HardwareItem> = CATALOG): HardwareItem {
+  const found = catalog.get(`hw:${article}`);
+  if (!found) throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: позиции ${article} в фактах нет`);
+  return found;
+}
+
+/* ─────────────────────────  кухня путём экрана  ───────────────────────── */
+
+const DISABLED = { basic: [], optimal: [], premium: [] } as Record<VariantKey, string[]>;
+
+/** Правила короба цеха фикстуры — подтверждены цехом (кроме проверки без подтверждения). */
+const RULES = {
+  sideMm: 16,
+  bottomMm: 4,
+  bottomMaterial: 'hdf' as const,
+  bottomMount: 'groove' as const,
+  bottomGrooveMm: 6,
+  gapBelowMm: 10,
+  gapAboveMm: 30,
+  runnerAxisMm: 40,
+  edge: '0.4' as const,
+  confirmed: true,
+};
+const SHOP: ProductionSettings = { ...DEFAULT_PRODUCTION, drawerBox: RULES };
+/** Раскрой цеха подтверждён: в карте остаются только причины про ящики и листы. */
+const CUT_SETTINGS: CuttingSettings = { ...TYPICAL_CUTTING, confirmed: true };
+
+/** `null` — каталога фурнитуры нет вовсе: `undefined` взял бы значение по умолчанию, и проверка «без каталога» шла бы с каталогом. */
+function kitchen(production: ProductionSettings = DEFAULT_PRODUCTION, hardware: Map<string, HardwareItem> | null = CATALOG) {
+  const requirements = DEMO_REQUIREMENTS;
+  const base = workspaceInput({ title: 'HW-01', zone: 'Кухня', measurement: DEMO_MEASUREMENT, requirements, rates: DEMO_RATES, cornerAt: null });
+  const input = objectInput({
+    base,
+    resolution: null,
+    requirements,
+    rates: DEMO_RATES,
+    production,
+    milling: new Map(),
+    carcass: new Map(),
+    materials: new Map(),
+    ...(hardware ? { hardware } : {}),
+  });
+  let edited: Partial<Record<VariantKey, Run>> = {};
+  const shown = () => composeVariants(input, DISABLED, edited).find((variant) => variant.key === 'optimal')!;
+  const ops = (list: MillworkOp[], catalog: Map<string, HardwareItem> | null = hardware) => {
+    const next = applyOps({ run: shown().run, requirements, ops: list, openings: input.openings, ...(catalog ? { hardware: catalog } : {}) });
+    edited = { optimal: next };
+    return { next, shown: shown() };
+  };
+  return { input, shown, ops, production };
+}
+
+function moduleOf(run: Run, id: string): Module {
+  const unit = allModules(run).find((m) => m.id === id);
+  if (!unit) throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: модуля ${id} в ряду нет`);
+  return unit;
+}
+
+const HOB = 'base-2700-hob@w1';
+const DOOR = 'base-1200@w1';
+const UPPER = 'upper-1200@w1';
+
+/* ═════════════════════════  A. Факты производителей  ═════════════════════════ */
+
+console.log('\nHW.A: факты производителей — артикул, страница, статус');
+{
+  const by = (manufacturer: string) => HARDWARE_FACTS.filter((fact) => fact.hardware.manufacturer === manufacturer).length;
+  check(
+    'A1 записей в фактах: Hettich 290, Blum 318, Häfele 591, всего 1199 — число не уменьшается молча',
+    by('Hettich') === 290 && by('Blum') === 318 && by('Häfele') === 591 && HARDWARE_FACTS.length === 1199,
+    `Hettich ${by('Hettich')} · Blum ${by('Blum')} · Häfele ${by('Häfele')} · всего ${HARDWARE_FACTS.length}`,
+  );
+  const articles = HARDWARE_FACTS.map((fact) => fact.article);
+  const broken = HARDWARE_FACTS.filter(
+    (fact) =>
+      !fact.article.startsWith('MFR-') ||
+      !fact.hardware.source?.file ||
+      !fact.hardware.source?.checkedAt ||
+      (fact.hardware.source?.pdfPage === undefined && fact.hardware.source?.printedPage === undefined) ||
+      !fact.hardware.engineeringStatus ||
+      fact.hardware.rightsStatus !== 'NOT_VERIFIED' ||
+      fact.hardware.visualStatus !== 'VISUAL_APPROXIMATION' ||
+      /* Ключ генератора фактов и ключ загрузки — одна формула: иначе повтор своей выгрузки ляжет дублем. */
+      fact.article !== manufacturerArticleKey(fact.hardware.manufacturer ?? '', fact.hardware.manufacturerArticle ?? ''),
+  );
+  check(
+    'A2 у каждой записи артикул MFR-, файл и страница источника, дата сверки, статус; права не подтверждены; 3D — приближение',
+    broken.length === 0 && new Set(articles).size === articles.length && rowsOf(HARDWARE_FACTS).every((row) => row.price === 0),
+    `сломанных ${broken.length}${broken[0] ? ` (${broken[0].article})` : ''} · повторов ${articles.length - new Set(articles).size}`,
+  );
+
+  /* KA 4532 Silent System, HET печ. 1252 / PDF 1258: NL 300…700, KT = NL + 4, 12,7 мм, рейка 46, боковина корпуса ≥ 16. */
+  const ka: [string, number][] = [
+    ['9114271', 300], ['9114273', 350], ['9114274', 400], ['9114275', 450], ['9114276', 500],
+    ['9114277', 550], ['9114278', 600], ['9114279', 650], ['9114280', 700],
+  ];
+  const kaWrong = ka.filter(([a, nl]) => {
+    const d = item(`MFR-HETTICH-${a}`).hardware.dimensionsMm ?? {};
+    return d.nominalLength !== nl || d.minCabinetDepth !== nl + 4 || d.sideClearance !== 12.7 || d.railHeight !== 46 || d.minCabinetSide !== 16;
+  });
+  check(
+    'A3 KA 4532: девять артикулов, NL = 300…700, KT = NL + 4, монтажная ширина 12,7, рейка 46, боковина корпуса от 16 — как в таблице паспорта',
+    kaWrong.length === 0 && !CATALOG.has('hw:MFR-HETTICH-9114272') && ka.every(([a]) => item(`MFR-HETTICH-${a}`).hardware.saleUnit === undefined),
+    kaWrong.length ? `не совпало: ${kaWrong.map(([a]) => a).join(', ')}` : '9 из 9; 9 114 272 в источнике нет; «компл.» не расшифрован — единицы продажи нет',
+  );
+
+  const clip = item('MFR-BLUM-71B3550').hardware;
+  check(
+    'A4 Blum CLIP top 71B3550: TB 3–7, наложение по планкам MD 0/3/6/9 — 14–18, 11–15, 8–12, 5–9; чашка Ø35, глубина 13',
+    JSON.stringify(clip.ranges) ===
+      JSON.stringify({ boringDistance: [3, 7], overlayMd0: [14, 18], overlayMd3: [11, 15], overlayMd6: [8, 12], overlayMd9: [5, 9] }) &&
+      clip.drilling?.some((d) => d.part === 'door' && d.diameterMm === 35 && d.depthMm === 13) === true,
+    JSON.stringify(clip.ranges),
+  );
+  check(
+    'A5 ответные планки Blum: 175H3100 — MD 0, 175H3130 — MD 3',
+    item('MFR-BLUM-175H3100').hardware.dimensionsMm?.plateHeight === 0 && item('MFR-BLUM-175H3130').hardware.dimensionsMm?.plateHeight === 3,
+    `${item('MFR-BLUM-175H3100').hardware.dimensionsMm?.plateHeight} / ${item('MFR-BLUM-175H3130').hardware.dimensionsMm?.plateHeight}`,
+  );
+  const hk = item('MFR-BLUM-22K2310').hardware;
+  check(
+    'A6 AVENTOS HK top 22K2310: LF 420–1610, KH 205–600, корпус до 1800, продаётся комплектом (2 силовых механизма)',
+    JSON.stringify(hk.ranges?.powerFactor) === '[420,1610]' &&
+      JSON.stringify(hk.ranges?.cabinetHeight) === '[205,600]' &&
+      hk.dimensionsMm?.maxCabinetWidth === 1800 &&
+      hk.saleUnit === 'set',
+    JSON.stringify({ ranges: hk.ranges, dims: hk.dimensionsMm, sale: hk.saleUnit }),
+  );
+
+  /* MOVENTO 760H, Blum печ. 413 / pdf.js 417: «Необходимое пространство (глубина): NL + 3», боковина ящика max 16. */
+  const movento = item('MFR-BLUM-760H5000S').hardware;
+  check(
+    'A7 Blum MOVENTO 760H5000S: скрытого монтажа, NL 500, глубина корпуса 503 по формуле паспорта NL + 3, боковина ящика до 16',
+    movento.subcategory === 'undermount' &&
+      movento.dimensionsMm?.nominalLength === 500 &&
+      movento.dimensionsMm?.minCabinetDepth === 503 &&
+      movento.dimensionsMm?.maxDrawerSide === 16 &&
+      (movento.printed ?? []).some((p) => p.label.includes('NL + 3') && p.value === '503'),
+    JSON.stringify({ sub: movento.subcategory, dims: movento.dimensionsMm }),
+  );
+  /* Häfele 422.25.507, KOMPAKT с. 64: «длина 500 мм», зазор 12,7 на чертеже; высота шины не читается — её нет. */
+  const ball = item('MFR-HAFELE-422.25.507').hardware;
+  check(
+    'A8 Häfele 422.25.507: шариковая боковая, NL 500, монтажная ширина 12,7; высоты шины нет — не выдумана',
+    ball.subcategory === 'side_mount' && ball.dimensionsMm?.nominalLength === 500 && ball.dimensionsMm?.sideClearance === 12.7 && ball.dimensionsMm?.railHeight === undefined,
+    JSON.stringify({ sub: ball.subcategory, dims: ball.dimensionsMm }),
+  );
+  /* Metalla 510 SM 105°, KOMPAKT с. 44: тип — словом в варианте; таблицы наложения по планкам 2 / 4 / 6 при E 3…6. */
+  const metalla = ['329.14.100', '329.14.101', '329.14.102'].map((a) => item(`MFR-HAFELE-${a}`).hardware);
+  check(
+    'A9 Häfele Metalla 510: накладная / полунакладная / вкладная по напечатанному варианту; FA при планке 2 мм у накладной 16–19, E 3–6',
+    metalla.map((h) => h.subcategory).join() === 'overlay,half_overlay,inset' &&
+      JSON.stringify(metalla[0].ranges?.overlayMd2) === '[16,19]' &&
+      JSON.stringify(metalla[0].ranges?.overlayMd6) === '[12,15]' &&
+      JSON.stringify(metalla[0].ranges?.boringDistance) === '[3,6]',
+    metalla.map((h) => `${h.manufacturerArticle} ${h.subcategory} ${JSON.stringify(h.ranges)}`).join(' | '),
+  );
+  /* Free Fold / Free Flap / Free Space: «высота корпуса» в заголовке и «высота фасада» в колонке — спор источника, числа не сводятся. */
+  const hafeleLifts = HARDWARE_FACTS.filter((f) => f.hardware.manufacturer === 'Häfele' && f.hardware.category === 'lift');
+  const heightOfConflict = hafeleLifts.filter((f) => f.hardware.engineeringStatus === 'CONFLICT' && (f.hardware.ranges?.cabinetHeight || f.hardware.ranges?.frontHeight));
+  const sized = hafeleLifts.filter((f) => f.hardware.ranges?.frontHeight);
+  check(
+    'A10 подъёмники Häfele: спорные высоты (CONFLICT) не сведены в подбор — ни одной; высота фасада сведена только у записей без спора',
+    hafeleLifts.length === 125 && heightOfConflict.length === 0 && sized.length > 0 && sized.every((f) => f.hardware.engineeringStatus !== 'CONFLICT'),
+    `подъёмников ${hafeleLifts.length} · спорных со сведённой высотой ${heightOfConflict.length} · с высотой фасада ${sized.length}`,
+  );
+  /* Повтор артикула: те же размеры — одна запись; другие размеры — спор источника словами. */
+  const rail = item('MFR-HAFELE-400.52.954').hardware;
+  const sink = item('MFR-HAFELE-545.48.262').hardware;
+  const trouser = item('MFR-HAFELE-805.60.705').hardware;
+  check(
+    'A11 артикул напечатан дважды: шина 400.52.954 (те же размеры) — PARTIAL; 545.48.262 и 805.60.705 (другие изделия) — CONFLICT со словами',
+    rail.engineeringStatus === 'PARTIAL' &&
+      sink.engineeringStatus === 'CONFLICT' &&
+      trouser.engineeringStatus === 'CONFLICT' &&
+      /545\.48\.262/.test(sink.notes ?? '') &&
+      /805\.60\.705/.test(trouser.notes ?? ''),
+    `${rail.engineeringStatus} · ${sink.engineeringStatus} · ${trouser.engineeringStatus}`,
+  );
+}
+
+/* ═════════════════════════  B. Импорт в каталог организации  ═════════════════════════ */
+
+console.log('\nHW.B: импорт — что ляжет, повтор без дублей, своё компании цело');
+{
+  const empty = planHardwareImport([]);
+  check('B1 пустой каталог: ляжет каждая запись, конфликтов нет', empty.insert.length === HARDWARE_FACTS.length && empty.conflicts.length === 0, `${empty.insert.length} из ${HARDWARE_FACTS.length}`);
+  const existing = empty.insert.map((row, i) => ({ id: `r${i}`, article: row.article, meta: row.meta as unknown as Record<string, unknown> }));
+  const again = planHardwareImport(existing);
+  check('B2 повтор того же файла: 0 новых, 0 обновлений, все «без изменений»', again.insert.length === 0 && again.update.length === 0 && again.unchanged.length === HARDWARE_FACTS.length, `новых ${again.insert.length} · обновлений ${again.update.length} · без изменений ${again.unchanged.length}`);
+
+  /* Компания указала единицу продажи у KA 500; факт поменялся — единица остаётся, цены и названия в плане нет вовсе. */
+  const kaArticle = 'MFR-HETTICH-9114276';
+  const kaFact = HARDWARE_FACTS.find((fact) => fact.article === kaArticle)!;
+  const withSale = existing.map((row) =>
+    row.article === kaArticle ? { ...row, meta: { ...row.meta, hardware: { ...(row.meta.hardware as object), saleUnit: 'pair', notes: 'старое' } } } : row,
+  );
+  const plan3 = planHardwareImport(withSale);
+  const upd = plan3.update.find((row) => row.article === kaArticle);
+  check(
+    'B3 своя единица продажи компании переживает импорт; цена и название в обновление не входят',
+    Boolean(upd) && (upd!.meta.hardware as { saleUnit?: string }).saleUnit === 'pair' && !('price' in upd!) && !('name_ru' in upd!) && plan3.update.length === 1,
+    upd ? `обновлений ${plan3.update.length}, saleUnit ${(upd.meta.hardware as { saleUnit?: string }).saleUnit}` : 'ОБНОВЛЕНИЯ НЕТ',
+  );
+  const occupied = planHardwareImport([{ id: 'x', article: kaArticle, meta: { estimateKey: 'slide_standard' } }], [kaFact]);
+  const doubled = planHardwareImport(
+    [
+      { id: 'a', article: kaArticle, meta: {} },
+      { id: 'b', article: kaArticle, meta: {} },
+    ],
+    [kaFact],
+  );
+  check(
+    'B4 артикул занят чужой позицией или задвоен — конфликт словами, строка не трогается',
+    occupied.conflicts[0]?.why.includes('не из каталога производителя') === true && doubled.conflicts[0]?.why.includes('2 позиции') === true && occupied.update.length === 0,
+    `${occupied.conflicts[0]?.why ?? 'НЕТ'} · ${doubled.conflicts[0]?.why ?? 'НЕТ'}`,
+  );
+  const csv = [
+    'manufacturer;article;name;category;subcategory;series;saleUnit;packaging;engineeringStatus;sourceFile;pdfPage;printedPage;checkedAt;dimensions;ranges;missing',
+    'Компания;K-1;Направляющая своя 450;slide;side_mount;Своя;pair;пара;;прайс;;;2026-10-21;nominalLength=450, sideClearance=13;;',
+    'Компания;K-2;Петля своя;hinge;overlay;Своя;piece;шт;;;;;;;doorThickness=16..22;',
+    'Компания;K-3;Неизвестное;lamp;;;;;;;;;;;;',
+    'Компания;;Без артикула;hinge;;;;;;;;;;;;',
+  ].join('\n');
+  const upload = uploadedFacts(csvHardwareRows(csv));
+  const k1 = upload.facts.find((fact) => fact.article === 'MFR-KOMPANIYA-K-1');
+  check(
+    'B5 своя пачка CSV: 2 строки приняты с размерами, «lamp» и строка без артикула отклонены словами',
+    upload.facts.length === 2 &&
+      upload.errors.length === 2 &&
+      k1?.hardware.dimensionsMm?.nominalLength === 450 &&
+      k1?.hardware.saleUnit === 'pair' &&
+      upload.errors.some((e) => e.why.includes('lamp')) &&
+      upload.errors.some((e) => e.why.includes('артикула')),
+    `принято ${upload.facts.length} (${upload.facts.map((f) => f.article).join(', ')}) · отклонено: ${upload.errors.map((e) => `${e.article}: ${e.why}`).join(' | ')}`,
+  );
+
+  /* Выгрузка фактов как есть (`{ article, name, hardware }`) — та же пачка: повтор не даёт ни новых, ни обновлений. */
+  const sample = HARDWARE_FACTS;
+  const reread = uploadedFacts(JSON.parse(JSON.stringify(sample)));
+  const loaded = sample.map((fact, i) => ({ id: `row-${i}`, article: fact.article, meta: hardwareCatalogRow(fact).meta as Record<string, unknown> }));
+  const replay = planHardwareImport(loaded, reread.facts);
+  check(
+    'B6 JSON в форме фактов читается обратно: те же артикулы, повтор — 0 новых и 0 обновлений',
+    sample.length === HARDWARE_FACTS.length &&
+      reread.errors.length === 0 &&
+      reread.facts.map((f) => f.article).join() === sample.map((f) => f.article).join() &&
+      replay.insert.length === 0 &&
+      replay.update.length === 0 &&
+      replay.unchanged.length === sample.length,
+    `записей ${sample.length} · принято ${reread.facts.length} · новых ${replay.insert.length} · обновлений ${replay.update.length} · без изменений ${replay.unchanged.length}${reread.errors[0] ? ` · ${reread.errors[0].why}` : ''}`,
+  );
+  const k1Source = k1?.hardware.source;
+  const k2 = upload.facts.find((fact) => fact.article === 'MFR-KOMPANIYA-K-2');
+  check(
+    'B7 дата сверки — из файла; не указана — «не указано», а не сегодняшняя',
+    k1Source?.checkedAt === '2026-10-21' && k2 !== undefined && k2.hardware.source === undefined,
+    `K-1 ${k1Source?.checkedAt ?? 'НЕТ'} · K-2 источник ${k2?.hardware.source ? JSON.stringify(k2.hardware.source) : 'не указан'}`,
+  );
+  const dated = uploadedFacts(
+    csvHardwareRows(['manufacturer;article;name;category;sourceFile;pdfPage', 'Компания;K-9;Опора;carcass;прайс.pdf;3'].join('\n')),
+  );
+  const both = uploadedFacts(
+    csvHardwareRows(['manufacturer;article;name;category', 'Боярд;K-1;Петля;hinge', 'Компания;K-1;Петля;hinge', 'Häfele;K-1;Петля;hinge'].join('\n')),
+  );
+  check(
+    'B8 источник без даты — «не указано»; производители кириллицей не сливаются: «Боярд» и «Компания» с артикулом K-1 — разные строки',
+    dated.facts[0]?.hardware.source?.checkedAt === 'не указано' &&
+      both.facts.map((f) => f.article).join() === 'MFR-BOYARD-K-1,MFR-KOMPANIYA-K-1,MFR-HAFELE-K-1',
+    `${dated.facts[0]?.hardware.source?.checkedAt ?? 'НЕТ'} · ${both.facts.map((f) => f.article).join(', ')}`,
+  );
+}
+
+/* ═════════════════════════  C. Места и совместимость  ═════════════════════════ */
+
+console.log('\nHW.C: места модуля и проверка совместимости по паспорту');
+{
+  const k = kitchen();
+  const run = k.shown().run;
+  const slots = (id: string) => fittingSlotsOf(moduleOf(run, id), run, DEFAULT_PRODUCTION).map((s) => `${s.slot}:${s.quantity}`).join(',');
+  check(
+    'C1 места: под варочной — направляющие 2 пары, ручки 2, опоры 4; дверца 450 — петли 2, планки 2, ручка 1, опоры 4; у вытяжки мест нет',
+    slots(HOB) === 'slide:2,handle:2,leg:4' && slots(DOOR) === 'hinge:2,hinge_plate:2,handle:1,leg:4' && slots('upper-2700-hood@w1') === '',
+    `${slots(HOB)} | ${slots(DOOR)} | вытяжка «${slots('upper-2700-hood@w1')}»`,
+  );
+  /* Полезная глубина = 560 − припуск цеха 20 = 540. */
+  const v500 = fittingVerdict({ unit: moduleOf(run, HOB), run, slot: 'slide', item: item('MFR-HETTICH-9114276'), production: DEFAULT_PRODUCTION, catalog: CATALOG });
+  const v550 = fittingVerdict({ unit: moduleOf(run, HOB), run, slot: 'slide', item: item('MFR-HETTICH-9114277'), production: DEFAULT_PRODUCTION, catalog: CATALOG });
+  check(
+    'C2 KA 4532 NL 500 в корпусе 560 (полезно 540): NL 500 ≤ 540, KT 504 ≤ 540 — встаёт; правил короба нет — «не проверено»',
+    v500.state === 'unverified' && v500.checks.filter((c) => c.state === 'fail').length === 0 && v500.checks.some((c) => c.words.includes('правил короба цеха нет')),
+    v500.summary,
+  );
+  check(
+    'C3 KA 4532 NL 550: нужно 550 мм, есть 540 — отказ «не хватает 10 мм»',
+    v550.state === 'refused' && v550.summary.includes('не хватает 10 мм'),
+    v550.summary,
+  );
+  const before = JSON.stringify(run.modules);
+  const refused = k.ops([{ op: 'set_fitting', moduleId: HOB, slot: 'slide', itemId: item('MFR-HETTICH-9114277').id }]);
+  check(
+    'C4 «Установить» NL 550 — операция отказывает словами, ряд прежний',
+    refused.next.warnings.some((w) => w.includes('не хватает 10 мм')) && JSON.stringify(refused.next.modules) === before,
+    refused.next.warnings[0] ?? 'ОТКАЗА НЕТ',
+  );
+  const noCatalog = kitchen(DEFAULT_PRODUCTION, null).ops([{ op: 'set_fitting', moduleId: HOB, slot: 'slide', itemId: item('MFR-HETTICH-9114276').id }]);
+  check('C5 без каталога фурнитуры позиция не ставится: «проверить нечем»', noCatalog.next.warnings.some((w) => w.includes('проверить нечем')), noCatalog.next.warnings[0] ?? 'ОТКАЗА НЕТ');
+
+  /* Наложение FA = корпус 16 − зазор 4 = 12: MD 3 (11–15) и MD 6 (8–12) дают его, MD 0 (14–18) — нет. */
+  const hinge = item('MFR-BLUM-71B3550');
+  const onDoor = (r: Run) => fittingVerdict({ unit: moduleOf(r, DOOR), run: r, slot: 'hinge', item: hinge, production: DEFAULT_PRODUCTION, catalog: CATALOG });
+  const vNoPlate = onDoor(run);
+  const withMd3 = kitchen();
+  withMd3.ops([{ op: 'set_fitting', moduleId: DOOR, slot: 'hinge_plate', itemId: item('MFR-BLUM-175H3130').id }]);
+  const vMd3 = onDoor(withMd3.shown().run);
+  const withMd0 = kitchen();
+  withMd0.ops([{ op: 'set_fitting', moduleId: DOOR, slot: 'hinge_plate', itemId: item('MFR-BLUM-175H3100').id }]);
+  const vMd0 = onDoor(withMd0.shown().run);
+  check(
+    'C6 CLIP top на накладной дверце, FA 12: без планки «подойдёт MD 3, 6»; планка MD 3 — TB = 12 − 11 + 3 = 4 мм; планка MD 0 — отказ',
+    vNoPlate.state === 'unverified' &&
+      vNoPlate.checks.some((c) => c.words.includes('подойдёт MD 3, 6')) &&
+      vMd3.checks.some((c) => c.state === 'ok' && c.words.includes('TB = 4 мм')) &&
+      vMd0.state === 'refused' &&
+      vMd0.summary.includes('MD 0'),
+    `${vNoPlate.checks.find((c) => c.label === 'наложение')?.words} | ${vMd3.checks.find((c) => c.label === 'наложение')?.words} | ${vMd0.summary}`,
+  );
+  const inset = HARDWARE_FACTS.find((fact) => fact.hardware.manufacturer === 'Blum' && fact.hardware.subcategory === 'inset');
+  if (!inset) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: вкладной петли Blum в фактах нет');
+  const vInset = fittingVerdict({ unit: moduleOf(run, DOOR), run, slot: 'hinge', item: item(inset.article), production: DEFAULT_PRODUCTION, catalog: CATALOG });
+  check('C7 вкладная петля на накладную дверцу — отказ словами', vInset.state === 'refused' && vInset.summary.includes('вкладная петля'), `${inset.hardware.manufacturerArticle}: ${vInset.summary}`);
+
+  /* Верхний шкаф 300 × 720 с подъёмником. */
+  const lift = kitchen();
+  lift.ops([{ op: 'set_opening', moduleId: UPPER, opening: 'lift' }]);
+  const liftRun = lift.shown().run;
+  const onUpper = (article: string) =>
+    fittingVerdict({ unit: moduleOf(liftRun, UPPER), run: liftRun, slot: 'lift', item: item(article), production: DEFAULT_PRODUCTION, catalog: CATALOG });
+  const hkTop = onUpper('MFR-BLUM-22K2310');
+  const hsTop = onUpper('MFR-BLUM-22S2800');
+  const hfTop = onUpper('MFR-BLUM-22F2500');
+  check(
+    'C8 подъёмник на шкафу 720: HK top (KH 205–600) — отказ «больше на 120 мм»; HS top (KH 650–800) — встаёт, вес фасада не проверен; HF — отказ: фасад из двух частей',
+    hkTop.state === 'refused' && hkTop.summary.includes('больше на 120') && hsTop.state === 'unverified' && hfTop.state === 'refused' && hfTop.summary.includes('двух частей'),
+    `${hkTop.summary} | ${hsTop.summary} | ${hfTop.summary}`,
+  );
+  const wrongSlot = fittingVerdict({ unit: moduleOf(run, DOOR), run, slot: 'hinge', item: item('MFR-HETTICH-9114276'), production: DEFAULT_PRODUCTION, catalog: CATALOG });
+  const accessory = HARDWARE_FACTS.find((fact) => fact.hardware.subcategory === 'lift_accessory');
+  check(
+    'C9 направляющая на место петель и принадлежность подъёмника на место механизма — отказ: «ставится на другое место»',
+    wrongSlot.state === 'refused' && wrongSlot.summary.includes('другое место') && Boolean(accessory) &&
+      onUpper(accessory!.article).state === 'refused',
+    `${wrongSlot.summary} | ${accessory ? onUpper(accessory.article).summary : 'принадлежностей нет'}`,
+  );
+
+  /* Принадлежность — не изделие места: стабилизатор не направляющая, прокладка не планка, шина не система купе. */
+  const runnerAccessories = HARDWARE_FACTS.filter((f) => f.hardware.category === 'slide' && f.hardware.subcategory === 'runner_accessory');
+  const spacers = HARDWARE_FACTS.filter((f) => f.hardware.category === 'hinge' && /spacer/.test(f.hardware.variant ?? ''));
+  const railFact = HARDWARE_FACTS.find((f) => f.hardware.subcategory === 'sliding_rail');
+  const kitFact = HARDWARE_FACTS.find((f) => slidingAccepts(f));
+  if (!railFact || !kitFact || runnerAccessories.length === 0 || spacers.length === 0) {
+    throw new Error('НУЛЕВОЙ СЕЛЕКТОР: нет принадлежностей направляющих, прокладок планок, шины или комплекта купе');
+  }
+  const kupe = { ...run, doorSystem: 'sliding' as const };
+  const vRail = slidingVerdict(kupe, item(railFact.article), DEFAULT_PRODUCTION);
+  const vKit = slidingVerdict(kupe, item(kitFact.article), DEFAULT_PRODUCTION);
+  check(
+    'C10 принадлежности на место изделия не встают: стабилизаторы и упоры (12) — не направляющая, прокладки (4) — не планка, шина — не система купе',
+    runnerAccessories.length === 12 &&
+      runnerAccessories.every((f) => !slotAccepts('slide', f)) &&
+      spacers.length === 4 &&
+      spacers.every((f) => !slotAccepts('hinge_plate', f) && !slotAccepts('hinge', f)) &&
+      vRail.state === 'refused' &&
+      vRail.summary.includes('часть системы') &&
+      vKit.state !== 'refused',
+    `принадлежностей ${runnerAccessories.length} · прокладок ${spacers.length} · ${vRail.summary} | ${kitFact.hardware.manufacturerArticle}: ${vKit.summary}`,
+  );
+  /* Metalla на накладной дверце: FA 12 даёт планка 6 мм (12–15), вкладная — отказ. */
+  const vMetalla = fittingVerdict({ unit: moduleOf(run, DOOR), run, slot: 'hinge', item: item('MFR-HAFELE-329.14.100'), production: DEFAULT_PRODUCTION, catalog: CATALOG });
+  const vMetallaInset = fittingVerdict({ unit: moduleOf(run, DOOR), run, slot: 'hinge', item: item('MFR-HAFELE-329.14.102'), production: DEFAULT_PRODUCTION, catalog: CATALOG });
+  check(
+    'C11 Häfele Metalla 510 на накладной дверце, FA 12: без планки «подойдёт MD 6»; вкладная 329.14.102 — отказ словами',
+    vMetalla.state === 'unverified' && vMetalla.checks.some((c) => c.words.includes('подойдёт MD 6')) && vMetallaInset.state === 'refused' && vMetallaInset.summary.includes('вкладная'),
+    `${vMetalla.checks.find((c) => c.label === 'наложение')?.words} | ${vMetallaInset.summary}`,
+  );
+}
+
+/* ═════════════════════════  D. Ящики: направляющая + короб цеха  ═════════════════════════ */
+
+console.log('\nHW.D: ящики — направляющая из каталога, короб по правилам цеха, раскрой, карта, 3D, присадка');
+{
+  const words = (rows: { name: string; lengthMm: number; widthMm: number; thicknessMm: number; qty: number }[]) =>
+    rows.map((p) => `${p.name} ${p.lengthMm}×${p.widthMm}×${p.thicknessMm}·${p.qty}`).join(' | ');
+  const boxNames = new Set(['Боковина ящика', 'Торец ящика', 'Дно ящика']);
+
+  /* Без правил цеха: короба нет нигде, карта заперта по ящикам — как в CUT-01. */
+  const plain = kitchen();
+  plain.ops([{ op: 'set_fitting', moduleId: HOB, slot: 'slide', itemId: item('MFR-HETTICH-9114276').id }]);
+  const plainParts = objectPanels({ walls: panelWallsOf(null, wallSegments(null, plain.shown().run, {}), plain.input.runWallId), hardware: CATALOG });
+  const plainPlan = cuttingPlan({ parts: plainParts, settings: CUT_SETTINGS, fingerprint: 'x' });
+  check(
+    'D1 без правил короба цеха: в раскрое ни одной детали короба, карта «Ящиков 2: короба в раскрое нет»',
+    plainParts.every((p) => !boxNames.has(p.name)) && plainPlan.drawers === 2 && plainPlan.release.reasons.some((r) => r.startsWith('Ящиков 2:')),
+    `${plainPlan.drawers} · ${plainPlan.release.reasons.find((r) => r.startsWith('Ящиков')) ?? 'ПРИЧИНЫ НЕТ'}`,
+  );
+
+  /* Правила цеха + KA 500. Зоны: верхний фронт 140 → 580…704 (планки 16), нижний 580 → 16…580.
+   * Высота короба = зона − 10 − 30: 84 и 524. Ширина = 568 − 2 × 12,7 = 542,6; торцы 542,6 − 32 = 510,6.
+   * Дно в паз 6: (510,6 + 12) × (500 − 32 + 12) = 522,6 × 480, ХДФ 4. */
+  const k = kitchen(SHOP);
+  const fitted = k.ops([{ op: 'set_fitting', moduleId: HOB, slot: 'slide', itemId: item('MFR-HETTICH-9114276').id }]);
+  const run = fitted.shown.run;
+  const boxes = buildPanels({ run, production: SHOP, hardware: CATALOG }).filter((p) => p.moduleId === HOB && boxNames.has(p.name));
+  check(
+    'D2 короба двух ящиков в раскрое: боковины 500×84 и 500×524, торцы 510.6, дно ХДФ 522.6×480 в паз',
+    words(boxes) ===
+      'Боковина ящика 500×84×16·2 | Торец ящика 510.6×84×16·2 | Дно ящика 522.6×480×4·2 | Боковина ящика 500×524×16·2 | Торец ящика 510.6×524×16·2',
+    words(boxes) || 'КОРОБОВ НЕТ',
+  );
+  const ids = boxes.flatMap((p) => p.partIds ?? []);
+  check(
+    'D3 у каждой детали короба свой ИД ящика: боковин 4, торцов 4, днищ 2, без повторов',
+    ids.length === 10 && new Set(ids).size === 10 && ids.filter((id) => id.includes(':box:side:')).length === 4 && ids.filter((id) => id.endsWith(':box:bottom')).length === 2,
+    ids.join(' '),
+  );
+  const parts = objectPanels({ walls: panelWallsOf(null, wallSegments(null, run, {}), k.input.runWallId), production: SHOP, hardware: CATALOG });
+  const plan = cuttingPlan({ parts, settings: CUT_SETTINGS, fingerprint: 'x' });
+  check(
+    'D4 карта раскроя: фронтов ящиков 2, коробов 2 — причины «Ящиков …» нет',
+    drawerCount(parts) === 2 && boxedDrawerCount(parts) === 2 && plan.drawers === 0 && !plan.release.reasons.some((r) => r.startsWith('Ящиков')),
+    `фронтов ${drawerCount(parts)} · коробов ${boxedDrawerCount(parts)} · ${plan.release.reasons.find((r) => r.startsWith('Ящиков')) ?? 'причины нет'}`,
+  );
+  const unconfirmed: ProductionSettings = { ...DEFAULT_PRODUCTION, drawerBox: { ...RULES, confirmed: false } };
+  const drafts = drawerDrafts([{ ...run, production: unconfirmed }], CATALOG, unconfirmed);
+  const planU = cuttingPlan({
+    parts,
+    settings: CUT_SETTINGS,
+    fingerprint: 'x',
+    drawerBoxUnconfirmed: drafts.unconfirmed,
+  });
+  check(
+    'D5 правила короба не подтверждены цехом: коробов 2 рассчитаны, выпуск заперт словами',
+    drafts.boxes === 2 && drafts.unconfirmed === 2 && planU.release.reasons.some((r) => r.includes('не подтверждённым цехом')),
+    `${JSON.stringify(drafts)} · ${planU.release.reasons.find((r) => r.includes('цехом')) ?? 'ПРИЧИНЫ НЕТ'}`,
+  );
+  const mounts = (['inset', 'under'] as const).map((bottomMount) => {
+    const shop = { ...DEFAULT_PRODUCTION, drawerBox: { ...RULES, bottomMount, bottomGrooveMm: 0 } };
+    return words(buildPanels({ run, production: shop, hardware: CATALOG }).filter((p) => p.moduleId === HOB && boxNames.has(p.name)));
+  });
+  check(
+    'D6 дно вкладное заподлицо — 510.6×468; накладное снизу — 542.6×500, стенки ниже на толщину дна (80 и 520)',
+    mounts[0].includes('Дно ящика 510.6×468×4·2') && mounts[1].includes('Дно ящика 542.6×500×4·2') && mounts[1].includes('Боковина ящика 500×80×16·2') && mounts[1].includes('Торец ящика 510.6×520×16·2'),
+    `${mounts[0]} || ${mounts[1]}`,
+  );
+
+  /* Сцена — те же детали: ИД коробок сцены = ИД деталей раскроя; направляющая — 4 куска на ящик. */
+  const scene = runBoxes({ ...run, production: SHOP }, { thicknessMm: 16, frontThicknessMm: 16, gapMm: 4, hardware: CATALOG });
+  const sceneIds = scene.filter((b) => b.partId?.includes(':box:')).map((b) => b.partId!).sort();
+  const runners = scene.filter((b) => b.node === 'runner');
+  check(
+    'D7 3D: коробки короба несут ИД деталей раскроя (10 = 10); направляющих 8 кусков: 4 ходовых едут с ящиком, 4 на корпусе стоят',
+    JSON.stringify(sceneIds) === JSON.stringify([...ids].sort()) &&
+      runners.length === 8 &&
+      runners.filter((b) => b.part?.startsWith(`${HOB}:drawer:`)).length === 4 &&
+      runners.filter((b) => !b.part).length === 4,
+    `ИД сцены ${sceneIds.length} · направляющих ${runners.length} (ходовых ${runners.filter((b) => b.part).length})`,
+  );
+
+  /* Присадка: цепочка 37 / 128 / 96 / 64 → 37, 165, 261, 325 от передней кромки; по высоте — зона + 10 + 40: 630 и 66. */
+  const drilling = moduleDrilling(moduleOf(run, HOB), { ...run, production: SHOP }, SHOP, CATALOG).filter((d) => d.slot === 'slide');
+  const cab = drilling.flatMap((d) => d.holes.filter((h) => h.panel === 'Боковина'));
+  check(
+    'D8 присадка направляющих: на боковине корпуса 37/165/261/325 на высотах 630 и 66; диаметр под винт не напечатан — DRILLING_NOT_VERIFIED',
+    drilling.length === 2 &&
+      drilling.every((d) => d.status === 'DRILLING_NOT_VERIFIED' && d.missing.some((m) => m.includes('диаметр отверстия на корпусе не напечатан'))) &&
+      JSON.stringify(Array.from(new Set(cab.map((h) => h.fromFrontMm)))) === '[37,165,261,325]' &&
+      JSON.stringify(Array.from(new Set(cab.map((h) => h.heightMm))).sort((a, b) => (a ?? 0) - (b ?? 0))) === '[66,630]',
+    drilling.map((d) => `${d.title}: ${d.status}`).join(' | '),
+  );
+  /* Карточка детали: строки присадки — той же moduleDrilling, по имени детали раскроя. */
+  const allDrilling = moduleDrilling(moduleOf(run, HOB), { ...run, production: SHOP }, SHOP, CATALOG);
+  const sideCard = panelDrilling(allDrilling, 'Боковина');
+  const boxCard = panelDrilling(allDrilling, 'Боковина ящика');
+  const bottomCard = panelDrilling(allDrilling, 'Дно ящика');
+  check(
+    'D11 карточка детали: у боковины корпуса и у боковины ящика по строке на ящик (2), DRILLING_NOT_VERIFIED, места по паспорту и чего нет; у дна ящика — ни одной',
+    sideCard.length === 2 &&
+      boxCard.length === 2 &&
+      bottomCard.length === 0 &&
+      [...sideCard, ...boxCard].every((line) => line.status === 'DRILLING_NOT_VERIFIED' && line.missing.length > 0) &&
+      sideCard.every((line) => line.known.includes('от передней кромки 37 / 165 / 261 / 325 мм')) &&
+      sideCard[0].known.includes('по высоте 630 мм') &&
+      sideCard[1].known.includes('по высоте 66 мм'),
+    sideCard.map((line) => `${line.title}: ${line.known}`).join(' | '),
+  );
+
+  /* Смета: короб — детали раскроя; общие «Направляющие» −2; строка позиции — «цена не задана» (единица «компл.» не расшифрована). */
+  const est0 = kitchen(SHOP).shown().estimate;
+  const est1 = fitted.shown.estimate;
+  const line = (e: typeof est0, key: string) => e.lines.find((l) => l.key === key);
+  const fitLine = est1.lines.find((l) => l.key.startsWith('fitting_slide_'));
+  check(
+    'D9 смета: «Направляющие» 2 → нет, строка KA 500 — 2, «цена не задана»; ЛДСП 16.14 → 17.37, ХДФ 5.8 → 6.3, кромка 70.82 → 74.86; итог «неполный»',
+    line(est0, 'slide_soft_close')?.quantity === 2 &&
+      !line(est1, 'slide_soft_close') &&
+      fitLine?.quantity === 2 &&
+      Boolean(fitLine?.priceUnset?.includes('1/10 компл.')) &&
+      line(est0, 'ldsp_carcass')?.quantity === 16.14 &&
+      line(est1, 'ldsp_carcass')?.quantity === 17.37 &&
+      line(est1, 'hdf_back')?.quantity === 6.3 &&
+      line(est1, 'pvc_edge')?.quantity === 74.86 &&
+      unpricedLines(est1).length > 0 &&
+      totalCaption(est1).includes('неполный'),
+    `${fitLine ? `${fitLine.title} ${fitLine.quantity} · ${fitLine.priceUnset}` : 'СТРОКИ НЕТ'} · ЛДСП ${line(est1, 'ldsp_carcass')?.quantity} · итог ${Math.round(est1.total)} «${totalCaption(est1)}»`,
+  );
+
+  /* Ящики стали дверцей: позиция на модуле остаётся, последствие названо. */
+  const door = kitchen(SHOP);
+  door.ops([{ op: 'set_variant', moduleId: 'base-3300@w1', variant: 'drawers' }]);
+  const doorRun = door.ops([{ op: 'set_fitting', moduleId: 'base-3300@w1', slot: 'slide', itemId: item('MFR-HETTICH-9114276').id }]);
+  const back = door.ops([{ op: 'set_variant', moduleId: 'base-3300@w1', variant: 'door' }]);
+  check(
+    'D10 модуль с направляющими сменили на дверцу: позиция осталась на модуле, сказано «после правки не встаёт»',
+    doorRun.next.warnings.length === 0 &&
+      moduleOf(back.next, 'base-3300@w1').fittings?.some((f) => f.slot === 'slide') === true &&
+      back.next.warnings.some((w) => w.includes('после правки не встаёт')),
+    back.next.warnings.find((w) => w.includes('после правки')) ?? `ПРЕДУПРЕЖДЕНИЯ НЕТ: ${back.next.warnings.join(' | ')}`,
+  );
+}
+
+/* ═════════════════════════  E. Ящики отсеков (шкаф)  ═════════════════════════ */
+
+console.log('\nHW.E: ящики отсеков — направляющая блока, короб, смета, выпуск');
+{
+  const R_REQ: RunRequirements = { ...DEMO_REQUIREMENTS, zone: 'bedroom', mode: 'free', appliances: [], sections: [] };
+  const wardrobe = (production: ProductionSettings) => {
+    const measurement: Measurement = {
+      id: 'hw-e',
+      ceilingHeightMm: 2500,
+      walls: [{ id: 'w1', lengthMm: 3000, angleDeg: 90, openings: [] }],
+      comms: [],
+      photos: [],
+      measuredBy: 'HW-01',
+      measuredAt: '2026-10-21',
+      notes: '',
+    };
+    const input = workspaceInput({ title: 'HW-E', zone: 'Спальня', measurement, requirements: R_REQ, rates: DEMO_RATES, wallId: 'w1', cornerAt: null, production, hardware: CATALOG });
+    let edited: Partial<Record<VariantKey, Run>> = {};
+    const shown = () => composeVariants(input, DISABLED, edited).find((v) => v.key === 'optimal')!;
+    const ops = (list: MillworkOp[]) => {
+      const next = applyOps({ run: shown().run, requirements: R_REQ, ops: list, openings: input.openings, hardware: CATALOG });
+      edited = { optimal: next };
+      return next;
+    };
+    const start = shown().run;
+    const cabinet = start.modules.find((m) => m.section === 'shelves');
+    if (!cabinet) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: в ряду спальни нет шкафа «Полки»');
+    ops(start.modules.filter((m) => m.offsetMm > cabinet.offsetMm).map((m) => ({ op: 'remove_module' as const, moduleId: m.id })));
+    ops([{ op: 'set_width', moduleId: cabinet.id, widthMm: 1000 }]);
+    const unit = shown().run.modules.find((m) => m.id === cabinet.id)!;
+    const stack = { id: 'd1', fromMm: 0, heightMm: 600, drawers: { mode: 'even', count: 3 }, front: 'inset', slideItemId: item('MFR-HETTICH-9114276').id };
+    const fill = {
+      ...unit.fill!,
+      shelves: [],
+      dividerMm: 0,
+      rodsMm: [],
+      drawerHeights: [],
+      bays: [
+        { id: 'b1', widthMm: 476, shelves: { mode: 'even', count: 4 } },
+        { id: 'b2', shelves: { mode: 'even', count: 0 }, drawers: stack },
+      ],
+    } as unknown as ModuleFill;
+    const next = ops([{ op: 'set_fill', moduleId: cabinet.id, fill }]);
+    return { run: shown().run, next, id: cabinet.id, estimate: shown().estimate };
+  };
+  const w = wardrobe(SHOP);
+  const bayBoxes = buildPanels({ run: w.run, production: SHOP, hardware: CATALOG }).filter((p) => p.moduleId === w.id && p.bayId === 'b2' && p.name.includes('ящика'));
+  /* Отсек b2 в свету 476 (1000 − 2×16 − 476 − 16): ширина короба 476 − 25,4 = 450,6, торцы 450,6 − 2×16 = 418,6, дно в паз 418,6 + 2×6 = 430,6; длина дна 500 − 2×16 + 2×6 = 480; зоны по 200 → короб 160. */
+  const bayWords = bayBoxes.map((p) => `${p.name} ${p.lengthMm}×${p.widthMm}·${p.qty}`).join(' | ');
+  check(
+    'E1 три ящика отсека b2 на KA 500: боковины 500×160·6, торцы 418.6×160·6, днища 430.6×480·3 — по отсеку',
+    w.next.warnings.length === 0 && bayWords.includes('Боковина ящика 500×160·6') && bayWords.includes('Торец ящика 418.6×160·6') && bayWords.includes('Дно ящика 430.6×480·3'),
+    bayWords || `КОРОБОВ НЕТ · ${w.next.warnings.join(' | ')}`,
+  );
+  const est = w.estimate;
+  check(
+    'E2 смета отсеков: оценки «Ящики отсеков в сборе» нет (короб в раскрое), строка направляющей — 3, «цена не задана»',
+    !est.lines.some((l) => l.key === 'bay_drawer_box') &&
+      est.lines.some((l) => l.key === `hardware_${item('MFR-HETTICH-9114276').id}_slides` && l.quantity === 3 && Boolean(l.priceUnset)),
+    est.lines.filter((l) => /drawer|slide/.test(l.key)).map((l) => `${l.key} ${l.quantity}${l.priceUnset ? ' (цена не задана)' : ''}`).join(' | '),
+  );
+  check(
+    'E3 выпуск: правила подтверждены — замка ящиков отсеков нет; правила не подтверждены — заперт словами; без каталога — как раньше черновик',
+    drawerReleaseBlock([w.run], { hardware: CATALOG, production: SHOP }) === null &&
+      (drawerReleaseBlock([w.run], { hardware: CATALOG, production: { ...SHOP, drawerBox: { ...RULES, confirmed: false } } }) ?? '').includes('не подтверждены') &&
+      (drawerReleaseBlock([w.run]) ?? '').includes('черновик'),
+    `${drawerReleaseBlock([w.run], { hardware: CATALOG, production: SHOP }) ?? 'null'}`,
+  );
+  const kits = moduleDrawerKits(moduleOf(w.run, w.id), w.run, SHOP, CATALOG);
+  check('E4 комплект ящика отсека — фасад вкладной: KT паспорта (для накладного) не применяется, короб есть у всех 3', kits.length === 3 && kits.every((kit) => kit.state === 'box' && !kit.place.overlay), kits.map((kit) => kit.state).join(','));
+}
+
+/* ═════════════════════════  F. Смета позиций и цена  ═════════════════════════ */
+
+console.log('\nHW.F: смета — строка позиции, вычет из общей, «цена не задана», не ноль');
+{
+  const k = kitchen();
+  const before = k.shown().estimate;
+  const hingeLine = (e: typeof before) => e.lines.find((l) => l.key.startsWith('hinge_') && l.key !== 'hinge_corner_175');
+  const after = k.ops([{ op: 'set_fitting', moduleId: DOOR, slot: 'hinge', itemId: item('MFR-BLUM-71B3550').id }]).shown.estimate;
+  const own = after.lines.find((l) => l.key.startsWith('fitting_hinge_'));
+  const plates = after.lines.find((l) => l.key === 'fitting_hinge_plate_missing');
+  check(
+    'F1 петля Blum на дверце 450: общие петли −2, своя строка 2 шт., ответные планки «не выбраны» — 2 шт. без цены',
+    (hingeLine(before)?.quantity ?? 0) - (hingeLine(after)?.quantity ?? 0) === 2 && own?.quantity === 2 && plates?.quantity === 2 && Boolean(plates?.priceUnset),
+    `${hingeLine(before)?.quantity} → ${hingeLine(after)?.quantity} · ${own?.title} ${own?.quantity} · ${plates?.title} ${plates?.quantity}`,
+  );
+  /* Hettich 9 073 605 «50 шт.» — единица продажи штука; цена компании 1 500 ₸. */
+  const priced = hardwareCatalog(rowsOf(HARDWARE_FACTS, { 'MFR-HETTICH-9073605': { price: 1500 } }));
+  const kp = kitchen(DEFAULT_PRODUCTION, priced);
+  const paid = kp.ops([{ op: 'set_fitting', moduleId: DOOR, slot: 'hinge', itemId: item('MFR-HETTICH-9073605', priced).id }]).shown.estimate;
+  const paidLine = paid.lines.find((l) => l.key.startsWith('fitting_hinge_') && !l.key.endsWith('_missing'));
+  check(
+    'F2 цена компании задана (1 500 ₸ за штуку): строка 2 × 1 500 = 3 000 ₸',
+    paidLine?.quantity === 2 && paidLine.rate === 1500 && paidLine.total === 3000 && !paidLine.priceUnset,
+    paidLine ? `${paidLine.quantity} × ${paidLine.rate} = ${paidLine.total}` : 'СТРОКИ НЕТ',
+  );
+  const zero = after.lines.find((l) => l.key.startsWith('fitting_hinge_') && !l.key.endsWith('_missing'));
+  check(
+    'F3 цены нет — «цена не задана», не 0 ₸: строка в «неполных», итог «неполный»',
+    Boolean(zero?.priceUnset) && zero?.total === 0 && unpricedLines(after).some((l) => l.key === zero?.key) && totalCaption(after).includes('неполный'),
+    `${zero?.priceUnset ?? 'ЦЕНА ЕСТЬ'} · «${totalCaption(after)}»`,
+  );
+}
+
+/* ═════════════════════════  G. Отпечаток, купе, без фурнитуры — прежнее  ═════════════════════════ */
+
+console.log('\nHW.G: отпечаток, система купе, ряды без фурнитуры не едут');
+{
+  const plainInput = kitchen(DEFAULT_PRODUCTION, null).shown();
+  const withCatalog = kitchen(SHOP).shown();
+  check(
+    'G1 каталог и правила короба без установленной фурнитуры: итог и отпечаток прежние (1 901 192 ₸, 7a46ede4)',
+    Math.round(plainInput.estimate.total) === 1901192 && Math.round(withCatalog.estimate.total) === 1901192 && plainInput.run.fingerprint === '7a46ede4' && withCatalog.run.fingerprint === '7a46ede4',
+    `${Math.round(plainInput.estimate.total)} / ${Math.round(withCatalog.estimate.total)} · ${plainInput.run.fingerprint} / ${withCatalog.run.fingerprint}`,
+  );
+  const k = kitchen();
+  const on = k.ops([{ op: 'set_fitting', moduleId: HOB, slot: 'slide', itemId: item('MFR-HETTICH-9114276').id }]).next;
+  const off = k.ops([{ op: 'set_fitting', moduleId: HOB, slot: 'slide', itemId: null }]).next;
+  check(
+    'G2 позиция на месте меняет отпечаток; снятая — отпечаток прежний, поля fittings нет',
+    on.fingerprint !== '7a46ede4' && off.fingerprint === '7a46ede4' && moduleOf(off, HOB).fittings === undefined && configurationFingerprint(off.modules) === configurationFingerprint(plainInput.run.modules),
+    `${on.fingerprint} → ${off.fingerprint}`,
+  );
+  const sliding = HARDWARE_FACTS.find((fact) => slidingAccepts(fact));
+  if (!sliding) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: системы купе в фактах нет');
+  const kitchenVerdict = slidingVerdict(withCatalog.run, item(sliding.article), DEFAULT_PRODUCTION);
+  const wardrobeRun = { ...withCatalog.run, doorSystem: 'sliding' as const };
+  const wardrobeVerdict = slidingVerdict(wardrobeRun, item(sliding.article), DEFAULT_PRODUCTION);
+  check(
+    'G3 система купе: на кухне с распашными — отказ; на ряду купе — «не проверено»: толщина и вес полотна в продукте не заданы',
+    kitchenVerdict.state === 'refused' && kitchenVerdict.summary.includes('распашные') && wardrobeVerdict.state !== 'fits' && wardrobeVerdict.checks.some((c) => c.words.includes('вес полотна')),
+    `${kitchenVerdict.summary} | ${wardrobeVerdict.summary}`,
+  );
+}
+
+/* ═════════════════════════  H. 3D и движение механизмов  ═════════════════════════ */
+
+console.log('\nHW.H: 3D и движение — механизм по позиции на месте (VISUAL_APPROXIMATION), ход считает движок');
+{
+  const sceneOf = (r: Run) => runBoxes(r, { thicknessMm: 16, frontThicknessMm: 16, gapMm: 4, hardware: CATALOG });
+  const within = (r: Run, id: string, boxes: { position: [number, number, number]; scale: [number, number, number] }[]) => {
+    const place = runPlaces(r).find((entry) => entry.unit.id === id);
+    if (!place) throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: модуля ${id} нет в раскладке`);
+    const x0 = place.x - 1e-6;
+    const x1 = place.x + place.unit.widthMm / 1000 + 1e-6;
+    return boxes.every((b) => b.position[0] - b.scale[0] / 2 >= x0 && b.position[0] + b.scale[0] / 2 <= x1);
+  };
+
+  /* Петли: чашки на ключе полотна — открылась створка, они едут с ней (сцена рисует их с полотном). */
+  const hk = kitchen();
+  hk.ops([{ op: 'set_fitting', moduleId: DOOR, slot: 'hinge', itemId: item('MFR-BLUM-71B3550').id }]);
+  const r1 = hk.shown().run;
+  const cups = sceneOf(r1).filter((b) => b.node === 'hinge' && b.part?.startsWith(`${DOOR}:door:`));
+  const hingeSlot = fittingSlotsOf(moduleOf(r1, DOOR), r1, DEFAULT_PRODUCTION).find((slot) => slot.slot === 'hinge');
+  check(
+    'H1 петли: чашек на дверце 450 столько же, сколько петель на месте (2), каждая на ключе полотна — едет с ним',
+    hingeSlot?.quantity === 2 && cups.length === 2,
+    `мест под петли ${hingeSlot?.quantity ?? 'НЕТ'} · чашек на полотне ${cups.length}`,
+  );
+
+  /* Подъёмник: без позиции механизма в сцене нет; с позицией — корпуса у боковин и рычаги на ключе фасада. */
+  const lk = kitchen();
+  lk.ops([{ op: 'set_opening', moduleId: UPPER, opening: 'lift' }]);
+  const liftBefore = sceneOf(lk.shown().run).filter((b) => b.node === 'lift').length;
+  const liftOn = lk.ops([{ op: 'set_fitting', moduleId: UPPER, slot: 'lift', itemId: item('MFR-BLUM-22S2800').id }]);
+  const liftBoxes = sceneOf(liftOn.shown.run).filter((b) => b.node === 'lift');
+  const housings = liftBoxes.filter((b) => !b.part);
+  const arms = liftBoxes.filter((b) => b.part === `${UPPER}:door:0`);
+  /* Правка нижнего ряда пересобирает верхний: позиция на месте обязана пережить пересборку. */
+  const liftKept = lk.ops([{ op: 'set_handle', moduleId: DOOR, handle: 'profile' } as unknown as MillworkOp]);
+  const keptFitting = moduleOf(liftKept.shown.run, UPPER).fittings?.find((f) => f.slot === 'lift')?.itemId;
+  check(
+    'H2 подъёмник: без позиции — 0 коробок механизма; HS top 22S2800 на месте — 2 корпуса у боковин (стоят) и 2 рычага на ключе фасада (едут), все в габарите модуля; правка нижнего ряда позицию не теряет',
+    liftBefore === 0 &&
+      liftOn.next.warnings.length === 0 &&
+      housings.length === 2 &&
+      arms.length === 2 &&
+      within(liftOn.shown.run, UPPER, liftBoxes) &&
+      keptFitting === item('MFR-BLUM-22S2800').id,
+    `до ${liftBefore} · корпусов ${housings.length} · рычагов ${arms.length} · после правки низа ${keptFitting ?? 'ПОЗИЦИИ НЕТ'} · ${liftOn.next.warnings.join(' | ')}`,
+  );
+
+  /* Карго: фасад не открывается, а выдвигается; корзины на ключе фасада. Своя кухня — свободная сборка с одним модулем. */
+  const FREE: RunRequirements = { ...DEMO_REQUIREMENTS, mode: 'free', appliances: [] };
+  const freeInput = workspaceInput({ title: 'HW-H', zone: 'Кухня', measurement: DEMO_MEASUREMENT, requirements: FREE, rates: DEMO_RATES, cornerAt: null, hardware: CATALOG });
+  let freeEdited: Partial<Record<VariantKey, Run>> = {};
+  const freeShown = () => composeVariants(freeInput, DISABLED, freeEdited).find((v) => v.key === 'optimal')!.run;
+  const freeOps = (list: MillworkOp[]) => {
+    const next = applyOps({ run: freeShown(), requirements: FREE, ops: list, openings: freeInput.openings, hardware: CATALOG });
+    freeEdited = { optimal: next };
+    return next;
+  };
+  freeOps([{ op: 'add_module', kind: 'base', widthMm: 200, variant: 'cargo' }]);
+  const cargoUnit = freeShown().modules.find((m) => m.variant === 'cargo');
+  if (!cargoUnit) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: карго 200 не встало в свободную сборку');
+  const tallOnBase = fittingVerdict({ unit: cargoUnit, run: freeShown(), slot: 'cargo', item: item('MFR-HAFELE-548.91.462'), production: DEFAULT_PRODUCTION, catalog: CATALOG });
+  /* 547.10.481L: «264 мм для корпуса 200» — источник спорит сам с собой: ширина сошлась, но «встаёт» не говорим. */
+  const conflictVerdict = fittingVerdict({ unit: cargoUnit, run: freeShown(), slot: 'cargo', item: item('MFR-HAFELE-547.10.481L'), production: DEFAULT_PRODUCTION, catalog: CATALOG });
+  const cargoOn = freeOps([{ op: 'set_fitting', moduleId: cargoUnit.id, slot: 'cargo', itemId: item('MFR-HAFELE-547.10.481L').id }]);
+  const cargoRun = freeShown();
+  const cargoPlace = runPlaces(cargoRun).find((entry) => entry.unit.id === cargoUnit.id)!;
+  const cargoLeaves = sceneLeaves(cargoPlace.unit, cargoPlace.heightM);
+  const cargoBoxes = sceneOf(cargoRun).filter((b) => b.part === `${cargoUnit.id}:door:0`);
+  const baskets = cargoBoxes.filter((b) => b.node === 'basket');
+  check(
+    'H3 карго 200: высокое карго на нижний модуль — отказ словами; 547.10.481L (источник спорит — «не проверено») ставится; фасад выдвигается (pullout), 2 корзины × 3 коробки едут с фасадом, петель нет',
+    tallOnBase.state === 'refused' &&
+      tallOnBase.summary.includes('высокое карго') &&
+      conflictVerdict.state === 'unverified' &&
+      conflictVerdict.checks.some((c) => c.label === 'источник' && c.words.includes('противоречат')) &&
+      cargoOn.warnings.length === 0 &&
+      cargoLeaves.length === 1 &&
+      cargoLeaves[0].kind === 'pullout' &&
+      baskets.length === 6 &&
+      cargoBoxes.some((b) => b.material === 'front') &&
+      !sceneOf(cargoRun).some((b) => b.node === 'hinge' && b.part?.startsWith(cargoUnit.id)),
+    `${tallOnBase.summary} · створок ${cargoLeaves.map((l) => l.kind).join(',')} · корзин ${baskets.length} · ${cargoOn.warnings.join(' | ')}`,
+  );
+
+  /*
+   * Сушилка: в шкафу над мойкой, неподвижна. В демо над мойкой окно — верхнего
+   * шкафа там нет; та же стена без окна, тот же путь экрана.
+   */
+  const noWindow = { ...DEMO_MEASUREMENT, walls: DEMO_MEASUREMENT.walls.map((wall) => ({ ...wall, openings: [] })) };
+  const dInput = workspaceInput({ title: 'HW-H', zone: 'Кухня', measurement: noWindow, requirements: DEMO_REQUIREMENTS, rates: DEMO_RATES, cornerAt: null, hardware: CATALOG });
+  let dEdited: Partial<Record<VariantKey, Run>> = {};
+  const dShown = () => composeVariants(dInput, DISABLED, dEdited).find((v) => v.key === 'optimal')!.run;
+  const dOps = (list: MillworkOp[]) => {
+    const next = applyOps({ run: dShown(), requirements: DEMO_REQUIREMENTS, ops: list, openings: dInput.openings, hardware: CATALOG });
+    dEdited = { optimal: next };
+    return { next, shown: { run: dShown() } };
+  };
+  const dRun = dShown();
+  const sink = dRun.modules.find((m) => m.appliance?.startsWith('sink'));
+  if (!sink) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: мойки в ряду нет');
+  const mid = sink.offsetMm + sink.widthMm / 2;
+  const over = dRun.upperSegments.flatMap((sg) => sg.modules).find((u) => u.offsetMm <= mid && u.offsetMm + u.widthMm >= mid && u.section !== 'mezzanine');
+  if (!over) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: над мойкой нет верхнего шкафа');
+  const dryVariant = dOps([{ op: 'set_variant', moduleId: over.id, variant: 'upper_dryer' }]);
+  const dryOn = dOps([{ op: 'set_fitting', moduleId: over.id, slot: 'dryer', itemId: item('MFR-HAFELE-544.07.206').id }]);
+  const racks = sceneOf(dryOn.shown.run).filter((b) => b.node === 'dryer');
+  const plainDoor = dRun.modules.find((m) => !m.appliance && m.frontType === 'door');
+  if (!plainDoor) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: в ряду нет нижней дверцы для правки');
+  const dryKept = dOps([{ op: 'set_handle', moduleId: plainDoor.id, handle: 'profile' } as unknown as MillworkOp]);
+  check(
+    'H4 сушилка 544.07.206 в шкафу над мойкой: две решётки — 2 поддона и 16 прутков, неподвижны, в габарите шкафа; правка нижнего ряда позицию не теряет',
+    dryVariant.next.warnings.length === 0 &&
+      dryOn.next.warnings.length === 0 &&
+      racks.length === 18 &&
+      racks.every((b) => !b.part) &&
+      within(dryOn.shown.run, over.id, racks) &&
+      moduleOf(dryKept.shown.run, over.id).fittings?.some((f) => f.slot === 'dryer') === true,
+    `${over.id} ${over.widthMm} · коробок ${racks.length} · ${[...dryVariant.next.warnings, ...dryOn.next.warnings].join(' | ')}`,
+  );
+
+  /* Пантограф и купе: шкаф спальни 1000, отсек b1 со штангой (476 в свету), система купе ряда. */
+  const W_REQ: RunRequirements = { ...DEMO_REQUIREMENTS, zone: 'bedroom', mode: 'free', appliances: [], sections: [] };
+  const measurement: Measurement = {
+    id: 'hw-h',
+    ceilingHeightMm: 2500,
+    walls: [{ id: 'w1', lengthMm: 3000, angleDeg: 90, openings: [] }],
+    comms: [],
+    photos: [],
+    measuredBy: 'HW-01',
+    measuredAt: '2026-10-21',
+    notes: '',
+  };
+  const wInput = workspaceInput({ title: 'HW-H', zone: 'Спальня', measurement, requirements: W_REQ, rates: DEMO_RATES, wallId: 'w1', cornerAt: null, production: SHOP, hardware: CATALOG });
+  let wEdited: Partial<Record<VariantKey, Run>> = {};
+  const wShown = () => composeVariants(wInput, DISABLED, wEdited).find((v) => v.key === 'optimal')!;
+  const wOps = (list: MillworkOp[]) => {
+    const next = applyOps({ run: wShown().run, requirements: W_REQ, ops: list, openings: wInput.openings, hardware: CATALOG });
+    wEdited = { optimal: next };
+    return next;
+  };
+  const start = wShown().run;
+  const cabinet = start.modules.find((m) => m.section === 'shelves');
+  if (!cabinet) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: в ряду спальни нет шкафа «Полки»');
+  wOps(start.modules.filter((m) => m.offsetMm > cabinet.offsetMm).map((m) => ({ op: 'remove_module' as const, moduleId: m.id })));
+  wOps([{ op: 'set_width', moduleId: cabinet.id, widthMm: 1000 }]);
+  const unit = wShown().run.modules.find((m) => m.id === cabinet.id)!;
+  const fill = {
+    ...unit.fill!,
+    shelves: [],
+    dividerMm: 0,
+    rodsMm: [],
+    drawerHeights: [],
+    bays: [
+      { id: 'b1', widthMm: 476, shelves: { mode: 'even', count: 0 }, zones: [{ id: 'z1', rod: { belowTopMm: 60 } }] },
+      { id: 'b2', shelves: { mode: 'even', count: 4 } },
+    ],
+  } as unknown as ModuleFill;
+  const fillOn = wOps([{ op: 'set_fill', moduleId: cabinet.id, fill }]);
+  const rodsBefore = sceneOf(wShown().run).filter((b) => b.node === 'rod' && b.bayId === 'b1').length;
+  const rodLineBefore = wShown().estimate.lines.find((l) => l.key === 'bay_rod')?.quantity ?? 0;
+  const pgOn = wOps([{ op: 'set_fitting', moduleId: cabinet.id, slot: 'pantograph', bayId: 'b1', itemId: item('MFR-HAFELE-805.20.625').id }]);
+  const pgRun = wShown().run;
+  const pgBoxes = sceneOf(pgRun).filter((b) => b.node === 'pantograph' && b.bayId === 'b1');
+  const pgMoving = pgBoxes.filter((b) => b.part === `${cabinet.id}:b1:pantograph`);
+  const pgSlide = sceneSlides(pgRun, CATALOG).find((slide) => slide.id === `${cabinet.id}:b1:pantograph`);
+  const pgEstimate = wShown().estimate;
+  check(
+    'H5 пантограф 805.20.625 в отсеке b1 (476 в свету при паспорте 440–610): штанга отсека в сцене и в смете уступает ему место; штанга с тягами (3) едет вниз и вперёд, кронштейны (2) стоят; строка позиции 1 шт. «цена не задана»',
+    fillOn.warnings.length === 0 &&
+      pgOn.warnings.length === 0 &&
+      rodsBefore === 1 &&
+      rodLineBefore > 0 &&
+      sceneOf(pgRun).filter((b) => b.node === 'rod' && b.bayId === 'b1').length === 0 &&
+      !pgEstimate.lines.some((l) => l.key === 'bay_rod') &&
+      pgMoving.length === 3 &&
+      pgBoxes.length - pgMoving.length === 2 &&
+      pgSlide !== undefined &&
+      pgSlide.vectorM[1] < 0 &&
+      pgSlide.vectorM[2] > 0 &&
+      pgEstimate.lines.some((l) => l.key === `fitting_pantograph_${item('MFR-HAFELE-805.20.625').id}` && l.quantity === 1 && Boolean(l.priceUnset)),
+    `штанг b1 до ${rodsBefore} · строка штанг до ${rodLineBefore} · подвижных ${pgMoving.length} · стоят ${pgBoxes.length - pgMoving.length} · ход ${JSON.stringify(pgSlide?.vectorM ?? null)} · ${[...fillOn.warnings, ...pgOn.warnings].join(' | ')}`,
+  );
+
+  /* Выдвижная штанга 807.61.774 (длина 410 по паспорту) в пустом отсеке b2: едет вперёд на 0,9 длины, направляющая стоит. */
+  const poOn = wOps([{ op: 'set_fitting', moduleId: cabinet.id, slot: 'wardrobe_pullout', bayId: 'b2', itemId: item('MFR-HAFELE-807.61.774').id }]);
+  const poRun = wShown().run;
+  const poBoxes = sceneOf(poRun).filter((b) => b.node === 'pullout' && b.bayId === 'b2');
+  const poMoving = poBoxes.filter((b) => b.part === `${cabinet.id}:b2:pullout`);
+  const poSlide = sceneSlides(poRun, CATALOG).find((slide) => slide.id === `${cabinet.id}:b2:pullout`);
+  check(
+    'H7 выдвижная штанга 807.61.774 в отсеке b2: штанга длиной 410 по паспорту едет вперёд на 369 мм, направляющая под крышей стоит',
+    poOn.warnings.length === 0 &&
+      poMoving.length === 1 &&
+      poBoxes.length === 2 &&
+      Math.abs(poMoving[0].scale[2] - 0.41) < 1e-9 &&
+      poSlide !== undefined &&
+      JSON.stringify(poSlide.vectorM) === JSON.stringify([0, 0, 0.369]),
+    `коробок ${poBoxes.length} (едет ${poMoving.length}) · длина ${poMoving[0]?.scale[2]} · ход ${JSON.stringify(poSlide?.vectorM ?? null)} · ${poOn.warnings.join(' | ')}`,
+  );
+
+  const kit = HARDWARE_FACTS.find((fact) => slidingAccepts(fact));
+  if (!kit) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: комплекта купе в фактах нет');
+  const kupeBefore = sceneOf(wShown().run).filter((b) => b.panel === 'Дверь-купе').length;
+  const kupeOn = wOps([{ op: 'set_sliding_system', itemId: item(kit.article).id }]);
+  const kRun = wShown().run;
+  const leaves = kupeLeaves(kRun, CATALOG);
+  const doorBoxes = sceneOf(kRun).filter((b) => b.panel === 'Дверь-купе');
+  const tracks = sceneOf(kRun).filter((b) => b.node === 'track');
+  const L = kRun.lengthMm;
+  const doorsWanted = wShown().estimate.lines.find((l) => l.key === 'sliding_system')?.quantity;
+  const insideAfter = leaves.every((leaf) => leaf.x0Mm + leaf.slideMm >= -0.5 && leaf.x1Mm + leaf.slideMm <= L + 0.5);
+  check(
+    'H6 купе: без системы полотен в сцене нет; комплект на ряду — полотен столько же, сколько комплектов в смете (3 на 3000), шин 2; каждое полотно едет вбок и остаётся в длине ряда',
+    kRun.doorSystem === 'sliding' &&
+      kupeBefore === 0 &&
+      kupeOn.warnings.length === 0 &&
+      leaves.length === 3 &&
+      doorsWanted === 3 &&
+      doorBoxes.length === 3 &&
+      tracks.length === 2 &&
+      insideAfter &&
+      sceneSlides(kRun, CATALOG).filter((slide) => slide.id.includes(':kupe:')).length === 3,
+    `ряд ${kRun.doorSystem} · до ${kupeBefore} · полотен ${leaves.length} (смета ${doorsWanted ?? 'НЕТ'}) · шин ${tracks.length} · в длине ${insideAfter} · ${kupeOn.warnings.join(' | ')}`,
+  );
+}
+
+console.log(`\n${passed} passed, ${failed} failed`);
+if (failed > 0) process.exit(1);

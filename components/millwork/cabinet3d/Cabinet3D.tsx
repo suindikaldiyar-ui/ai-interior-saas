@@ -10,9 +10,12 @@ import SceneCamera, { type OrthoProjection } from './SceneCamera';
 import {
   runBoxes,
   openablePartIds,
+  sceneSlides,
   type BoxMaterial,
   type PartBox,
 } from '@/lib/millwork/cabinetBoxes';
+import InteractiveBayDrawer from './InteractiveBayDrawer';
+import { movingParts } from './motion';
 import { useCabinetParts, useCarcassMaterials, useFrontMaterials, useSurfaceLook } from './parts';
 import { DEFAULT_FRONT, frontKey } from '@/lib/millwork/frontMaterial';
 import type { FrontSpec } from '@/types/millwork';
@@ -39,6 +42,7 @@ import { reliefMeshKey, type ReliefLeaf, type ReliefOrient } from '@/lib/millwor
 import { leafOfBox } from './reliefGeometry';
 import type { FrontRelief } from '@/types/millwork';
 import { carcassCatalog } from '@/lib/millwork/carcassMaterial';
+import { hardwareCatalog } from '@/lib/millwork/hardware';
 import { useInteriorStore } from '@/store/useInteriorStore';
 import { DEFAULT_PRODUCTION, type ProductionSettings } from '@/types/catalog';
 import { DEFAULT_SCENE_VIEW, type SceneView } from '@/lib/cameraFraming';
@@ -384,18 +388,44 @@ export default function Cabinet3D({
    * материал. Второго списка декоров в сцене нет.
    */
   const carcassItems = useMemo(() => carcassCatalog(catalog), [catalog]);
+  /* Фурнитура организации (HARDWARE-01): короба ящиков по комплекту — те же, что режет раскрой. */
+  const hardwareItems = useMemo(() => hardwareCatalog(catalog), [catalog]);
 
   const boxes = useMemo(
     () =>
       runBoxes(run, {
         carcass: carcassItems,
+        hardware: hardwareItems,
+        /* Короб ящика — по той же школе цеха, что деталировка экрана. */
+        production,
         thicknessMm: production.carcassMm,
         frontThicknessMm: production.frontMm,
         gapMm: production.frontGapMm,
         cutaway,
       }),
-    [run, production.carcassMm, production.frontMm, production.frontGapMm, cutaway, carcassItems],
+    [run, production, cutaway, carcassItems, hardwareItems],
   );
+  /*
+   * ПОДВИЖНАЯ ДЕТАЛЬ — РОВНО ТЕ КОРОБКИ, ЧТО В ПАЧКЕ (HARDWARE-01).
+   *
+   * Короб ящика по комплекту (детали раскроя и ходовая половина
+   * направляющей) рисует `runBoxes`; выехавший ящик обязан нести их же,
+   * а не свой условный короб: иначе открытый ящик показывает не ту
+   * мебель, которую распилит цех. Ключ — деталь (`PartBox.part`).
+   */
+  const boxesByPart = useMemo(() => {
+    const out = new Map<string, PartBox[]>();
+    for (const box of boxes) {
+      if (!box.part) continue;
+      const list = out.get(box.part);
+      if (list) list.push(box);
+      else out.set(box.part, [box]);
+    }
+    return out;
+  }, [boxes]);
+  const partBoxes = useCallback((id: string) => boxesByPart.get(id), [boxesByPart]);
+  /* Что едет по прямой — пантографы отсеков и полотна купе (`sceneSlides`): ход считает движок. */
+  const slides = useMemo(() => sceneSlides(run, hardwareItems), [run, hardwareItems]);
 
   /*
    * МАТЕРИАЛ И ФОТО — ТОЛЬКО У ДЕКОРОВ, КОТОРЫЕ СТОЯТ В РЯДУ (P3D-LDSP).
@@ -891,6 +921,24 @@ export default function Cabinet3D({
         castShadow={shadows}
       />
 
+      {slides.map((slide) => {
+        const own = (boxesByPart.get(slide.id) ?? []).filter((box) => boxShown(box, layers));
+        if (own.length === 0) return null;
+        return (
+          <InteractiveBayDrawer
+            key={slide.id}
+            id={slide.id}
+            open={openParts.includes(slide.id)}
+            onToggle={handleToggle}
+            boxes={own}
+            parts={parts}
+            frontMaterial={own[0]?.frontKey ? frontMaterials.get(own[0].frontKey) : undefined}
+            onActive={handleActive}
+            vectorM={slide.vectorM}
+          />
+        );
+      })}
+
       {[...modules, ...uppers].map((entry) => (
         <CabinetModule3D
           key={entry.unit.id}
@@ -920,6 +968,7 @@ export default function Cabinet3D({
           openWidthM={
             blindPartMm(entry.unit, run) > 0 ? openFrontMm(entry.unit, run) / MM : undefined
           }
+          partBoxes={partBoxes}
         />
       ))}
 
@@ -1391,10 +1440,40 @@ function SceneProbe({ group, run }: { group: React.RefObject<THREE.Group>; run: 
       return target?.parent ? Math.round(target.parent.position.z * 1000) : null;
     };
 
+    /*
+     * ЧТО ЕДЕТ С ДЕТАЛЬЮ (HARDWARE-01): сдвиг и поворот группы, которая её
+     * везёт, и что в этой группе нарисовано — чашки петель и рычаги
+     * (`rider:*`), корзины, штанга пантографа, полотно купе (`mech:*`, `panel:*`).
+     * Меряется нарисованное, а не флаг в сторе.
+     */
+    /* Сколько деталей сейчас едет (`movingParts`) — тот же учёт, по которому ждёт захват кадра. */
+    (w as { __mwMovingCount?: () => number }).__mwMovingCount = () => movingParts();
+    (w as { __mwMoving?: (id: string) => unknown }).__mwMoving = (id: string) => {
+      const target = group.current?.getObjectByName(`part:${id}`);
+      const carrier = target?.parent;
+      if (!carrier) return null;
+      const names: Record<string, number> = {};
+      carrier.traverse((object) => {
+        if (object === carrier || !(object as THREE.Mesh).isMesh || !object.name || object.name.startsWith('part:')) return;
+        names[object.name] = (names[object.name] ?? 0) + 1;
+      });
+      /* Где деталь в мире (центр зоны касания), метры: приёмке — куда навести камеру для снимка. */
+      const world = new THREE.Vector3();
+      target.getWorldPosition(world);
+      return {
+        shift: [carrier.position.x, carrier.position.y, carrier.position.z].map((v) => Math.round(v * 1000)),
+        rotationDeg: [carrier.rotation.x, carrier.rotation.y].map((v) => Math.round((v * 180) / Math.PI)),
+        names,
+        world: [world.x, world.y, world.z],
+      };
+    };
+
     return () => {
       delete w.__mwScene;
       delete w.__mwPartPoint;
       delete (w as { __mwPartSlide?: unknown }).__mwPartSlide;
+      delete (w as { __mwMoving?: unknown }).__mwMoving;
+      delete (w as { __mwMovingCount?: unknown }).__mwMovingCount;
       delete (w as { __mwOpenableIds?: unknown }).__mwOpenableIds;
       delete (w as { __mwPartSize?: unknown }).__mwPartSize;
       delete (w as { __mwRunBox?: unknown }).__mwRunBox;

@@ -19,11 +19,14 @@ import {
 import {
   DEFAULT_ALLOWANCES,
   DEFAULT_PRODUCTION,
+  type HardwareItem,
   type ProductionSettings,
 } from '@/types/catalog';
 import { moduleNumbers } from './positions';
 import { blindPartMm, cornerFillersOf, openFrontMm } from './corner';
 import { tailFillersOf } from './countertop';
+import { moduleDrawerKits } from './drawerKit';
+import { DRAWER_BOTTOM_PANEL_NAME, type DrawerBoxPart } from './drawerBox';
 import type { Module, Panel, PanelStock, PanelTotals, Run } from '@/types/millwork';
 
 /**
@@ -67,6 +70,12 @@ export type PanelInput = {
    * НАЗВАНИЕ и цену, а не второй раскрой.
    */
   carcass?: Map<string, CarcassItem>;
+  /**
+   * ФУРНИТУРА ОРГАНИЗАЦИИ (HARDWARE-01): направляющие ящиков — по ним и по
+   * правилам короба цеха режется короб. Пусто — коробов нет, раскрой ровно
+   * такой, каким был: ни один сохранённый лист от параметра не едет.
+   */
+  hardware?: Map<string, HardwareItem>;
 };
 
 /**
@@ -180,7 +189,7 @@ function edgeType(production: ProductionSettings): Panel['edgeType'] {
  * фасады. Технолог читает список сверху вниз, и порядок не должен плавать
  * от пересчёта к пересчёту.
  */
-function modulePanels(
+function moduleBodyPanels(
   unit: Module,
   run: Run,
   production: ProductionSettings,
@@ -760,8 +769,82 @@ function modulePanels(
   return panels;
 }
 
+/**
+ * ДЕТАЛИ МОДУЛЯ И КОРОБА ЕГО ЯЩИКОВ (HARDWARE-01).
+ *
+ * Короб — после всех деталей модуля и своими номерами: детали, которые
+ * были до него, номеров не меняют. Короб есть только у ящика с
+ * рассчитанным комплектом (`moduleDrawerKits`): направляющая из каталога
+ * с паспортом и правила короба цеха. Нет — короба нет, ящик черновик, и
+ * выпуск в цех это называет (ловушка 578).
+ */
+function modulePanels(
+  unit: Module,
+  run: Run,
+  production: ProductionSettings,
+  moduleNumber: number,
+  milling?: Map<string, MillingItem>,
+  carcass?: Map<string, CarcassItem>,
+  hardware?: Map<string, HardwareItem>,
+): Panel[] {
+  const body = moduleBodyPanels(unit, run, production, moduleNumber, milling, carcass);
+  /* Без правил цеха и каталога коробов не бывает — раскрой прежний до байта. */
+  if (!hardware || hardware.size === 0 || !production.drawerBox) return body;
+  const kits = moduleDrawerKits(unit, run, production, hardware).filter((kit) => kit.state === 'box');
+  if (kits.length === 0) return body;
+
+  const label = unit.label || unit.kind;
+  const sideStock = carcassStock(unit, run, carcass ?? new Map());
+  /*
+   * ОДИНАКОВЫЕ ДЕТАЛИ — ОДНОЙ СТРОКОЙ, У КАЖДОЙ СВОИ ИД: «Боковина ящика ·
+   * 6 шт.» у трёх ящиков — это шесть деталей, и ИД каждой ведёт к своему
+   * ящику (`<ящик>:box:side:1`).
+   */
+  const rows = new Map<string, { part: DrawerBoxPart; bayId?: string; partIds: string[] }>();
+  for (const kit of kits) {
+    if (kit.state !== 'box') continue;
+    for (const part of kit.plan.parts) {
+      const key = `${part.name}|${part.lengthMm}|${part.widthMm}|${part.thicknessMm}|${kit.place.bayId ?? ''}`;
+      const ids =
+        part.name === DRAWER_BOTTOM_PANEL_NAME
+          ? [`${kit.place.key}:box:bottom`]
+          : Array.from({ length: part.qty }, (_, i) => `${kit.place.key}:box:${part.sheet === 'side' && part.name.startsWith('Боковина') ? 'side' : 'wall'}:${i + 1}`);
+      const row = rows.get(key);
+      if (row) {
+        row.part = { ...row.part, qty: row.part.qty + part.qty };
+        row.partIds.push(...ids);
+      } else rows.set(key, { part, ...(kit.place.bayId ? { bayId: kit.place.bayId } : {}), partIds: ids });
+    }
+  }
+  const edge = kits[0].state === 'box' ? kits[0].profile.edge : undefined;
+  const extra: Panel[] = Array.from(rows.values()).map(({ part, bayId, partIds }, i) => {
+    const bottomHdf = part.sheet === 'bottom' && kits[0].state === 'box' && kits[0].profile.bottomMaterial === 'hdf';
+    return {
+      moduleId: unit.id,
+      moduleLabel: label,
+      number: `${moduleNumber}.${body.length + i + 1}`,
+      name: part.name,
+      material: bottomHdf
+        ? `ХДФ ${part.thicknessMm}`
+        : carcassMaterialName(`ЛДСП ${part.thicknessMm}`, unit, run, carcass ?? new Map()),
+      /* Лист (CUT-01): боковины и торцы — корпусная плита модуля; дно ХДФ — лист задней стенки. */
+      stock: bottomHdf ? BACK_STOCK : sideStock,
+      thicknessMm: part.thicknessMm,
+      lengthMm: part.lengthMm,
+      widthMm: part.widthMm,
+      qty: part.qty,
+      edges: part.edges,
+      edgeType: edge === '0.4' || edge === '1' || edge === '2' ? edge : edgeType(production),
+      grain: bottomHdf ? 'none' : 'along',
+      ...(bayId ? { bayId } : {}),
+      partIds,
+    };
+  });
+  return [...body, ...extra];
+}
+
 /** Все детали ряда, сгруппированные по модулям слева направо. */
-export function buildPanels({ run, production = DEFAULT_PRODUCTION, milling, carcass }: PanelInput): Panel[] {
+export function buildPanels({ run, production = DEFAULT_PRODUCTION, milling, carcass, hardware }: PanelInput): Panel[] {
   const modules = [...run.modules, ...run.upperSegments.flatMap((s) => s.modules)];
 
   /*
@@ -786,7 +869,7 @@ export function buildPanels({ run, production = DEFAULT_PRODUCTION, milling, car
       );
     }
 
-    return modulePanels(unit, run, production, number, milling, carcass);
+    return modulePanels(unit, run, production, number, milling, carcass, hardware);
   });
 
   /*
@@ -921,8 +1004,10 @@ export function objectPanels(input: {
   production?: ProductionSettings;
   milling?: Map<string, MillingItem>;
   carcass?: Map<string, CarcassItem>;
+  /** Фурнитура организации — короба ящиков (HARDWARE-01). */
+  hardware?: Map<string, HardwareItem>;
 }): ObjectPanel[] {
-  const { walls, production = DEFAULT_PRODUCTION, milling, carcass } = input;
+  const { walls, production = DEFAULT_PRODUCTION, milling, carcass, hardware } = input;
   const many = walls.length > 1;
   const seen = new Set<string>();
   return walls.flatMap((wall) => {
@@ -931,7 +1016,7 @@ export function objectPanels(input: {
     }
     seen.add(wall.wallId);
     const mark = wall.label.slice(wall.label.indexOf(' ') + 1);
-    return buildPanels({ run: wall.run, production, milling, carcass }).map((panel) => ({
+    return buildPanels({ run: wall.run, production, milling, carcass, hardware }).map((panel) => ({
       ...panel,
       number: many ? `${mark}-${panel.number}` : panel.number,
       rowNumber: panel.number,

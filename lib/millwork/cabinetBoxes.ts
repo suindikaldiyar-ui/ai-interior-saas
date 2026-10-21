@@ -20,11 +20,16 @@ import { blindPartMm, cornerFillersOf, cornerOfModule, openFrontMm } from './cor
 import { tailFillersOf } from './countertop';
 import { moduleDepthMm, rowStandardDepthMm } from './fill';
 import { bayDrawerStackOf, bayEnvelope, bayLayout, placeEnvelope } from './bays';
-import type { ProductionSettings } from '@/types/catalog';
+import type { HardwareItem, ProductionSettings } from '@/types/catalog';
 import type { ApplianceKind } from '@/types/millwork';
+import { moduleDrawerKits, type DrawerKit } from './drawerKit';
+import { DRAWER_BOTTOM_PANEL_NAME, DRAWER_SIDE_PANEL_NAME, DRAWER_WALL_PANEL_NAME } from './drawerBox';
+import { shopOf } from './shop';
 import { FRAME_WIDTH_MM, frontKey, frontOf, isFramed } from './frontMaterial';
 import { moduleFronts, type FacadeSpan } from './applianceFront';
 import { carcassKeyOf, type CarcassItem } from './carcassMaterial';
+import { installedItem, slidingAccepts } from './fittings';
+import { SLIDING_DOOR, slidingDoorCount } from './sections';
 import { handleBoxOf, handleSpotOf } from './handlePlace';
 
 /**
@@ -45,7 +50,7 @@ import { leafFrontWithMilling } from './milling';
 import type { FrontRelief } from '@/types/millwork';
 import { gripOrient, reliefGlassMm, type ReliefOrient } from './facadeRelief';
 import { isUpperRow } from './modules';
-import { leafHinges, milledGrip, openingHardware, openingOf } from './opening';
+import { isPullOut, leafHinges, milledGrip, openingHardware, openingOf } from './opening';
 import type { Module, Run } from '@/types/millwork';
 import type { SceneLayer } from './sceneLayers';
 
@@ -96,7 +101,7 @@ export type BoxDraw = {
    * чтобы проверка могла спросить «петель в сцене столько же, сколько в
    * смете».
    */
-  node?: 'hinge' | 'hinge-arm' | 'handle' | 'rod' | 'glass';
+  node?: 'hinge' | 'hinge-arm' | 'handle' | 'rod' | 'glass' | 'runner' | 'lift' | 'pantograph' | 'pullout' | 'basket' | 'dryer' | 'track';
   /**
    * ИД ФИЗИЧЕСКОЙ ДЕТАЛИ (R01): тот же, что в строке раскроя (`Panel.partIds`).
    * Есть у полок и перегородок отсеков — по нему сверяются сцена и цех.
@@ -207,7 +212,16 @@ export function boxLayer(box: Pick<PartBox, 'material' | 'panel' | 'part' | 'nod
 export function boxShown(box: Pick<PartBox, 'material' | 'panel' | 'part' | 'node'>, layers: Record<SceneLayer, boolean>): boolean {
   const layer = boxLayer(box);
   if (!layers[layer]) return false;
-  const onFront = layer === 'hardware' && box.part !== undefined && box.node !== 'rod' && box.node !== 'hinge-arm';
+  /* Направляющая и механизмы наполнения стоят в корпусе, а не на фасаде (HARDWARE-01). */
+  const onFront =
+    layer === 'hardware' &&
+    box.part !== undefined &&
+    box.node !== 'rod' &&
+    box.node !== 'hinge-arm' &&
+    box.node !== 'runner' &&
+    box.node !== 'pantograph' &&
+    box.node !== 'pullout' &&
+    box.node !== 'basket';
   if (!onFront || layers.fronts) return true;
   const hardwareOnly = !layers.carcass && !layers.partitions && !layers.shelves && !layers.drawers;
   return hardwareOnly;
@@ -261,11 +275,16 @@ export type ModulePlacement = {
  * словами в инспекторе и на листе. Коробка несёт ИД штанги: по нему
  * сверяются сцена, лист и проверка пересечений.
  */
-export function bayRodBoxes(unit: Module, place: ModulePlacement, production?: ProductionSettings): PartBox[] {
+export function bayRodBoxes(
+  unit: Module,
+  place: ModulePlacement,
+  production?: ProductionSettings,
+  hardware?: Map<string, HardwareItem>,
+): PartBox[] {
   const layout = bayLayout(unit, placeEnvelope(unit, place, production));
   if (!layout) return [];
   return layout.bays.flatMap((bay) =>
-    bay.rods.map(
+    (installedItem(unit, 'pantograph', hardware, bay.id) ? [] : bay.rods).map(
       (rod): PartBox => ({
         material: 'metal',
         node: 'rod',
@@ -483,6 +502,12 @@ export type FrontOptions = {
    */
   carcassKey?: string | null;
   /**
+   * КОМПЛЕКТЫ ЯЩИКОВ МОДУЛЯ (HARDWARE-01): у ящика с рассчитанным коробом
+   * сцена рисует ТЕ ЖЕ детали, что режет раскрой (`moduleDrawerKits`), и
+   * направляющую. Пусто — короб условный, как раньше.
+   */
+  drawerKits?: DrawerKit[];
+  /**
    * КЛЮЧИ ДЕКОРА ПОЛОК И ПЕРЕГОРОДОК — та же `carcassKeyOf` с родом детали.
    * Своего декора нет — ключ тот же, что у корпуса.
    */
@@ -504,6 +529,12 @@ export type FrontOptions = {
    * не у слепого угла, фасад во всю ширину.
    */
   openWidthMm?: number;
+  /**
+   * ФУРНИТУРА ОРГАНИЗАЦИИ (HARDWARE-01): механизм на месте модуля рисуется по
+   * позиции, которая там стоит (`installedItem`). Пусто — механизмов в
+   * сцене нет, как до каталога.
+   */
+  hardware?: Map<string, HardwareItem>;
 };
 
 /**
@@ -632,7 +663,9 @@ export function doorLeaves(
 export type SceneLeaf =
   | { kind: 'door'; id: string; opening: 'left' | 'right' | 'lift' | 'flap'; xM: number; widthM: number }
   | { kind: 'bifold'; id: string }
-  | { kind: 'drawer'; id: string; bottomM: number; heightM: number };
+  | { kind: 'drawer'; id: string; bottomM: number; heightM: number }
+  /** Карго: фасад не открывается, а выдвигается — вместе с корзинами (HARDWARE-01). */
+  | { kind: 'pullout'; id: string };
 
 export function sceneLeaves(unit: Module, heightM: number, openWidthM?: number): SceneLeaf[] {
   const out: SceneLeaf[] = [];
@@ -663,6 +696,15 @@ export function sceneLeaves(unit: Module, heightM: number, openWidthM?: number):
    * и у слепого угла, где доступной части не осталось.
    */
   if (hasVisibleAppliance(unit) || unit.column || unit.section === 'glass_display' || openWidthM === 0) {
+    return out;
+  }
+  /*
+   * КАРГО ВЫДВИГАЕТСЯ, А НЕ ОТКРЫВАЕТСЯ (ловушка 316): петель у него нет ни
+   * в смете, ни в сцене, и фасад едет вперёд вместе с корзинами. Ключ —
+   * тот же, что у его фасада (`door:0`): фасад детали и раскрой его знают.
+   */
+  if (isPullOut(unit) && doorCount(unit) > 0 && openWidthM === undefined) {
+    out.push({ kind: 'pullout', id: `${unit.id}:door:0` });
     return out;
   }
   /*
@@ -996,7 +1038,11 @@ export function bayDrawerBoxes(
     for (const drawer of bay.drawerStack?.drawers ?? []) {
       const env = drawer.envelope;
       const front = drawer.front;
-      out.push({
+      /* Короб рассчитан (HARDWARE-01) — его детали и направляющая вместо габарита. */
+      const kit = options.drawerKits?.find((k) => k.place.key === drawer.id);
+      if (kit && kit.state === 'box') {
+        out.push(...kitBoxes(kit, place, drawer.id, options.carcassKey ?? null, bay.id));
+      } else out.push({
         material: 'inner',
         part: drawer.id,
         inside: true,
@@ -1064,6 +1110,8 @@ export function drawerBoxes(
   const { gapM: gap, frontThicknessM: thickness, integratedHandles, cutaway } = options;
   const boxH = Math.max(0.06, height - 0.04);
   const inner = Math.max(0.05, widthM - 2 * thickness);
+  /* Короб рассчитан (HARDWARE-01) — рисуем его детали из комплекта, а не условный. */
+  const kit = options.drawerKits?.find((k) => k.place.key === part);
 
   /*
    * ЯЩИК СТОИТ В КОРПУСЕ, А НЕ ПЕРЕД НИМ.
@@ -1078,7 +1126,7 @@ export function drawerBoxes(
    */
   const boxZ = -innerDepth / 2;
 
-  const boxes: PartBox[] = [
+  const boxes: PartBox[] = kit && kit.state === 'box' ? kitBoxes(kit, place, part, options.carcassKey ?? null) : [
     // Короб: дно, две боковины, задняя стенка. Всё это ВНУТРИ модуля.
     {
       material: 'carcass',
@@ -1691,7 +1739,9 @@ export function moduleBoxes(
   });
 
   boxes.push(...applianceBoxes(unit, place, production));
-  boxes.push(...bayRodBoxes(unit, place, production));
+  boxes.push(...bayRodBoxes(unit, place, production, options.hardware));
+  /* Механизмы по позиции на месте (HARDWARE-01): картинка по паспорту, без CAD производителя. */
+  boxes.push(...mechanismBoxes(unit, place, options, production));
 
 
   /*
@@ -1866,6 +1916,15 @@ export function runBoxes(
     cutaway?: boolean;
     /** Материалы корпуса организации: по ним корпус красится своим декором. */
     carcass?: Map<string, CarcassItem>;
+    /** Фурнитура организации: короба ящиков по комплекту (HARDWARE-01). Пусто — как раньше. */
+    hardware?: Map<string, HardwareItem>;
+    /**
+     * ШКОЛА ЦЕХА ЭКРАНА — та же, по которой режет деталировка. По ней
+     * считаются короба ящиков: `run.production` у сохранённого ряда — снимок
+     * на момент записи, и короб по нему разошёлся бы с раскроем. Пусто —
+     * школа ряда.
+     */
+    production?: ProductionSettings;
   },
 ): PartBox[] {
   /* Глубину ряда считает `runPlaces`: передать её снаружи больше нельзя. */
@@ -1957,6 +2016,9 @@ export function runBoxes(
     });
   }
 
+  /* Система купе ряда (HARDWARE-01): шины и полотна — по позиции ряда. */
+  filler.push(...kupeBoxes(run, options));
+
   return filler.concat(placed.flatMap((entry) =>
     moduleBoxes(
       entry.unit,
@@ -1984,10 +2046,392 @@ export function runBoxes(
         },
         /* У слепого угла фасад — только на доступной части (`openFrontMm`). */
         ...(blindPartMm(entry.unit, run) > 0 ? { openWidthMm: openFrontMm(entry.unit, run) } : {}),
+        /* Комплекты ящиков — тем же `moduleDrawerKits`, что режет короб в раскрое. */
+        ...(options.hardware && options.hardware.size > 0 && (options.production ?? shopOf(run.production)).drawerBox
+          ? { drawerKits: moduleDrawerKits(entry.unit, run, options.production ?? shopOf(run.production), options.hardware) }
+          : {}),
+        ...(options.hardware && options.hardware.size > 0 ? { hardware: options.hardware } : {}),
       },
       run.production,
     ),
   ));
+}
+
+/* ─────────────────  Механизмы по позиции каталога (HARDWARE-01)  ───────────────── */
+
+/**
+ * КАРТИНКА МЕХАНИЗМА — VISUAL_APPROXIMATION.
+ *
+ * CAD производителей у нас нет (Blum — за входом, Hettich — согласие с
+ * условиями, Häfele — недоступен), поэтому механизм — коробки условного
+ * размера на своём месте. Это изображение узла, а не деталь: по этим числам
+ * ничего не сверлят и не заказывают. Где паспорт печатает габарит (глубина
+ * механизма подъёмника), картинка берёт его; остальное — константы ниже,
+ * и они названы условными.
+ */
+const MECH = {
+  /** Корпус силового механизма подъёмника: толщина у боковины, высота, глубина. */
+  liftWidthMm: 30,
+  liftHeightMm: 120,
+  liftDepthMm: 160,
+  /** Корзина карго: шаг по высоте, высота бортика, толщина прутка. */
+  basketStepMm: 300,
+  basketRailMm: 60,
+  wireMm: 4,
+  /** Сушилка: высота решёток (тарелки, чашки) и число прутков. */
+  dryerPlateMm: 120,
+  dryerCupMm: 80,
+  dryerBars: 8,
+  /** Пантограф: высота тяги над штангой; ход вниз — не больше; вылет вперёд (условно, паспорт печатает его для монтажа). */
+  pantographArmMm: 350,
+  pantographDropMm: 600,
+  pantographReachMm: 350,
+  /** Купе: шины и плоскости полотен перед корпусом. */
+  /** Выдвижное наполнение шкафа: высота рамки от низа отсека, ход вперёд. */
+  pulloutFromBottomMm: 400,
+  pulloutTravelMm: 350,
+  trackDepthMm: 90,
+  trackTopMm: 40,
+  trackBottomMm: 10,
+  kupeLeafMm: 18,
+} as const;
+
+const mm = (v: number) => v / MM;
+
+/**
+ * ПАНТОГРАФ ОТСЕКА — где его штанга и куда она едет. Одна функция на
+ * коробки и на ход: картинка и движение не расходятся.
+ */
+export function pantographPlan(
+  unit: Module,
+  place: ModulePlacement,
+  production: ProductionSettings | undefined,
+  bayId: string,
+): { rodAtMm: number; rodZMm: number; x0Mm: number; x1Mm: number; dropMm: number; reachMm: number } | null {
+  const layout = bayLayout(unit, placeEnvelope(unit, place, production));
+  const bay = layout?.bays.find((b) => b.id === bayId);
+  if (!layout || !bay) return null;
+  const t = layout.envelope.thicknessMm;
+  const top = layout.envelope.heightMm - t;
+  /* Штанга пантографа — на месте верхней штанги отсека; штанг нет — под крышей. */
+  const rodAtMm = bay.rods.length > 0 ? Math.max(...bay.rods.map((rod) => rod.atMm)) : top - 80;
+  const rodZMm = bay.rods.length > 0 ? bay.rods[0].zMm : -layout.envelope.depthMm / 2;
+  return {
+    rodAtMm,
+    rodZMm,
+    x0Mm: bay.xFromMm,
+    x1Mm: bay.xToMm,
+    /* Ход вниз — не ниже пояса (900 мм от низа корпуса) и не больше условного. */
+    dropMm: Math.max(0, Math.min(MECH.pantographDropMm, rodAtMm - 900)),
+    reachMm: MECH.pantographReachMm,
+  };
+}
+
+/**
+ * ВЫДВИЖНОЕ НАПОЛНЕНИЕ ОТСЕКА — где стоит и куда едет. Выдвижная штанга —
+ * вдоль глубины под крышей, её длина из паспорта (нет — по глубине отсека);
+ * брючница, корзина, обувница, галстучница — рамка на условной высоте.
+ */
+export function pulloutPlan(
+  unit: Module,
+  place: ModulePlacement,
+  production: ProductionSettings | undefined,
+  bayId: string,
+  item: HardwareItem,
+): { rod: boolean; x0Mm: number; x1Mm: number; atMm: number; lengthMm: number; travelMm: number } | null {
+  const layout = bayLayout(unit, placeEnvelope(unit, place, production));
+  const bay = layout?.bays.find((b) => b.id === bayId);
+  if (!layout || !bay) return null;
+  const t = layout.envelope.thicknessMm;
+  const depth = layout.envelope.depthMm - t - 40;
+  const rod = item.hardware.subcategory === 'pullout_rod';
+  const length = Math.min(depth, item.hardware.dimensionsMm?.length ?? depth);
+  return {
+    rod,
+    x0Mm: bay.xFromMm,
+    x1Mm: bay.xToMm,
+    atMm: rod ? layout.envelope.heightMm - t - 60 : Math.min(t + MECH.pulloutFromBottomMm, layout.envelope.heightMm - t - 200),
+    lengthMm: length,
+    travelMm: rod ? Math.round(length * 0.9) : MECH.pulloutTravelMm,
+  };
+}
+
+/** Механизмы на местах модуля: подъёмник, корзины карго, сушилка, пантографы отсеков. */
+export function mechanismBoxes(
+  unit: Module,
+  place: ModulePlacement,
+  options: FrontOptions,
+  production?: ProductionSettings,
+): PartBox[] {
+  const hardware = options.hardware;
+  if (!hardware || hardware.size === 0 || !unit.fittings?.length) return [];
+  const out: PartBox[] = [];
+  const W = unit.widthMm;
+  const H = place.heightM * MM;
+  const D = place.depthM * MM;
+  const t = place.thicknessM * MM;
+  const at = (xMm: number, yMm: number, zMm: number): [number, number, number] => [place.x + mm(xMm), place.y + mm(yMm), mm(zMm)];
+  const size = (x: number, y: number, z: number): [number, number, number] => [mm(x), mm(y), mm(z)];
+
+  /* Подъёмник: два силовых механизма у боковин под крышей; рычаг едет с фасадом. */
+  const lift = installedItem(unit, 'lift', hardware);
+  if (lift && openingOf(unit).opening === 'lift' && !options.cutaway) {
+    const h = lift.hardware.dimensionsMm?.mechanismHeight ?? MECH.liftHeightMm;
+    const d = Math.min(lift.hardware.dimensionsMm?.mechanismDepth ?? MECH.liftDepthMm, Math.max(40, D - t - 20));
+    const y = H - t - 10 - h / 2;
+    for (const x of [t + MECH.liftWidthMm / 2, W - t - MECH.liftWidthMm / 2]) {
+      out.push({ material: 'metal', node: 'lift', inside: true, position: at(x, y, -(20 + d / 2)), scale: size(MECH.liftWidthMm, h, d) });
+      out.push({
+        material: 'metal',
+        node: 'lift',
+        inside: true,
+        part: `${unit.id}:door:0`,
+        position: at(x, y + h / 2 - 15, -10),
+        scale: size(12, 30, 20),
+      });
+    }
+  }
+
+  /* Карго: корзины выезжают с фасадом — тот же ключ, что у его фасада. */
+  const cargo = installedItem(unit, 'cargo', hardware);
+  if (cargo && isPullOut(unit)) {
+    const inner = H - 2 * t;
+    const n = Math.max(1, Math.floor(inner / MECH.basketStepMm));
+    const step = (inner - 80) / n;
+    const w = W - 2 * t - 20;
+    const depth = D - t - 60;
+    const zc = -(30 + depth / 2);
+    for (let i = 0; i < n; i += 1) {
+      const y0 = t + 40 + i * step;
+      const part = `${unit.id}:door:0`;
+      out.push({ material: 'metal', node: 'basket', inside: true, part, position: at(W / 2, y0, zc), scale: size(w, MECH.wireMm, depth) });
+      out.push({ material: 'metal', node: 'basket', inside: true, part, position: at(W / 2, y0 + MECH.basketRailMm / 2, -30), scale: size(w, MECH.basketRailMm, MECH.wireMm) });
+      out.push({ material: 'metal', node: 'basket', inside: true, part, position: at(W / 2, y0 + MECH.basketRailMm / 2, -(30 + depth)), scale: size(w, MECH.basketRailMm, MECH.wireMm) });
+    }
+  }
+
+  /* Сушилка: решётка тарелок внизу и решётка чашек выше — в корпусе, неподвижно. */
+  const dryer = installedItem(unit, 'dryer', hardware);
+  if (dryer) {
+    const w = W - 2 * t - 20;
+    const depth = D - t - 40;
+    const zc = -(20 + depth / 2);
+    const levels: [number, number][] = [
+      [t + 40, MECH.dryerPlateMm],
+      [t + 40 + Math.min(300, (H - 2 * t) / 2), MECH.dryerCupMm],
+    ];
+    for (const [y0, barH] of levels) {
+      out.push({ material: 'metal', node: 'dryer', inside: true, position: at(W / 2, y0, zc), scale: size(w, MECH.wireMm, depth) });
+      for (let b = 0; b < MECH.dryerBars; b += 1) {
+        const x = t + 10 + ((b + 0.5) * w) / MECH.dryerBars;
+        out.push({ material: 'metal', node: 'dryer', inside: true, position: at(x, y0 + barH / 2, zc), scale: size(MECH.wireMm, barH, depth) });
+      }
+    }
+  }
+
+  /* Выдвижное наполнение отсека: едет вперёд; направляющая выдвижной штанги под крышей стоит. */
+  for (const fitting of unit.fittings) {
+    if (fitting.slot !== 'wardrobe_pullout' || !fitting.bayId) continue;
+    const item = installedItem(unit, 'wardrobe_pullout', hardware, fitting.bayId);
+    if (!item) continue;
+    const plan = pulloutPlan(unit, place, production, fitting.bayId, item);
+    if (!plan) continue;
+    const part = `${unit.id}:${fitting.bayId}:pullout`;
+    const xc = (plan.x0Mm + plan.x1Mm) / 2;
+    const zc = -(20 + plan.lengthMm / 2);
+    if (plan.rod) {
+      out.push({ material: 'metal', node: 'pullout', inside: true, part, bayId: fitting.bayId, position: at(xc, plan.atMm, zc), scale: size(25, 25, plan.lengthMm) });
+      out.push({ material: 'metal', node: 'pullout', inside: true, bayId: fitting.bayId, position: at(xc, plan.atMm + 30, zc), scale: size(30, 20, plan.lengthMm) });
+    } else {
+      const w = plan.x1Mm - plan.x0Mm - 40;
+      out.push({ material: 'metal', node: 'pullout', inside: true, part, bayId: fitting.bayId, position: at(xc, plan.atMm, zc), scale: size(w, MECH.wireMm, plan.lengthMm) });
+      out.push({ material: 'metal', node: 'pullout', inside: true, part, bayId: fitting.bayId, position: at(xc, plan.atMm + 40, -20), scale: size(w, 80, MECH.wireMm) });
+    }
+  }
+
+  /* Пантограф отсека: штанга с тягами едет вниз и вперёд; кронштейны на боковинах стоят. */
+  for (const fitting of unit.fittings) {
+    if (fitting.slot !== 'pantograph' || !fitting.bayId) continue;
+    if (!installedItem(unit, 'pantograph', hardware, fitting.bayId)) continue;
+    const plan = pantographPlan(unit, place, production, fitting.bayId);
+    if (!plan) continue;
+    const part = `${unit.id}:${fitting.bayId}:pantograph`;
+    const len = plan.x1Mm - plan.x0Mm - 50;
+    const xc = (plan.x0Mm + plan.x1Mm) / 2;
+    out.push({ material: 'metal', node: 'pantograph', inside: true, part, bayId: fitting.bayId, position: at(xc, plan.rodAtMm, plan.rodZMm), scale: size(len, 25, 25) });
+    for (const x of [plan.x0Mm + 12, plan.x1Mm - 12]) {
+      out.push({
+        material: 'metal',
+        node: 'pantograph',
+        inside: true,
+        part,
+        bayId: fitting.bayId,
+        position: at(x, plan.rodAtMm + MECH.pantographArmMm / 2, plan.rodZMm),
+        scale: size(12, MECH.pantographArmMm, 25),
+      });
+      out.push({
+        material: 'metal',
+        node: 'pantograph',
+        inside: true,
+        bayId: fitting.bayId,
+        position: at(x, plan.rodAtMm + MECH.pantographArmMm + 30, plan.rodZMm),
+        scale: size(20, 60, 80),
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * СИСТЕМА КУПЕ НА РЯДУ — шины и полотна (HARDWARE-01, VISUAL_APPROXIMATION).
+ *
+ * Полотен столько, сколько считает смета (`slidingDoorCount`), ширина — та
+ * же, что у строки «Двери-купе» (длина ряда / число + нахлёст). Без
+ * выбранной системы полотна купе в сцене не рисуются — как до задачи.
+ * Материал полотна в продукте не выбирается: картинка берёт фасад ряда.
+ */
+export function kupeLeaves(run: Run, hardware?: Map<string, HardwareItem>): {
+  id: string;
+  x0Mm: number;
+  x1Mm: number;
+  front: boolean;
+  slideMm: number;
+}[] {
+  const id = run.slidingSystemItemId;
+  const item = id ? hardware?.get(id) : undefined;
+  if (run.doorSystem !== 'sliding' || !item || !item.active || !slidingAccepts(item) || run.modules.length === 0) return [];
+  const L = run.lengthMm;
+  const n = slidingDoorCount(L);
+  const pitch = L / n;
+  const half = SLIDING_DOOR.overlapMm / 2;
+  return Array.from({ length: n }, (_, i) => ({
+    id: `${run.modules[0].id}:kupe:${i}`,
+    x0Mm: Math.max(0, i * pitch - half),
+    x1Mm: Math.min(L, (i + 1) * pitch + half),
+    front: i % 2 === 0,
+    /* Переднее полотно едет на соседа справа, последнее и заднее — влево. */
+    slideMm: (i % 2 === 0 && i + 1 < n ? 1 : -1) * (pitch - SLIDING_DOOR.overlapMm),
+  }));
+}
+
+function kupeBoxes(run: Run, options: { hardware?: Map<string, HardwareItem>; frontThicknessMm: number }): PartBox[] {
+  const leaves = kupeLeaves(run, options.hardware);
+  if (leaves.length === 0) return [];
+  const topMm = Math.max(...runPlaces(run).filter((entry) => run.modules.includes(entry.unit)).map((entry) => (entry.y + entry.heightM) * MM));
+  const L = run.lengthMm;
+  const key = frontKey(frontOf(run.modules[0]));
+  const out: PartBox[] = [
+    { material: 'metal', node: 'track', position: [mm(L / 2), mm(topMm - MECH.trackTopMm / 2), mm(MECH.trackDepthMm / 2)], scale: [mm(L), mm(MECH.trackTopMm), mm(MECH.trackDepthMm)] },
+    { material: 'metal', node: 'track', position: [mm(L / 2), mm(MECH.trackBottomMm / 2), mm(MECH.trackDepthMm / 2)], scale: [mm(L), mm(MECH.trackBottomMm), mm(MECH.trackDepthMm)] },
+  ];
+  const leafH = topMm - MECH.trackTopMm - MECH.trackBottomMm - 10;
+  for (const leaf of leaves) {
+    const z = leaf.front ? 50 + MECH.kupeLeafMm / 2 : 20 + MECH.kupeLeafMm / 2;
+    out.push({
+      material: 'front',
+      part: leaf.id,
+      frontKey: key,
+      panel: 'Дверь-купе',
+      position: [mm((leaf.x0Mm + leaf.x1Mm) / 2), mm(MECH.trackBottomMm + 5 + leafH / 2), mm(z)],
+      scale: [mm(leaf.x1Mm - leaf.x0Mm), mm(leafH), mm(MECH.kupeLeafMm)],
+    });
+  }
+  return out;
+}
+
+/**
+ * ЧТО В РЯДУ ЕДЕТ ПО ПРЯМОЙ — пантографы отсеков и полотна купе: ключ и
+ * вектор хода, метры. Одна функция на сцену, «Открыть всё» и проверку.
+ */
+export function sceneSlides(run: Run, hardware?: Map<string, HardwareItem>): { id: string; vectorM: [number, number, number] }[] {
+  const out: { id: string; vectorM: [number, number, number] }[] = [];
+  if (hardware && hardware.size > 0) {
+    for (const entry of runPlaces(run)) {
+      for (const fitting of entry.unit.fittings ?? []) {
+        if (fitting.slot !== 'pantograph' || !fitting.bayId) continue;
+        if (!installedItem(entry.unit, 'pantograph', hardware, fitting.bayId)) continue;
+        const plan = pantographPlan(
+          entry.unit,
+          { x: entry.x, y: entry.y, heightM: entry.heightM, depthM: entry.depthM, zM: entry.zM, thicknessM: shopOf(run.production).carcassMm / MM },
+          run.production,
+          fitting.bayId,
+        );
+        if (plan) out.push({ id: `${entry.unit.id}:${fitting.bayId}:pantograph`, vectorM: [0, -mm(plan.dropMm), mm(plan.reachMm)] });
+      }
+      for (const fitting of entry.unit.fittings ?? []) {
+        if (fitting.slot !== 'wardrobe_pullout' || !fitting.bayId) continue;
+        const item = installedItem(entry.unit, 'wardrobe_pullout', hardware, fitting.bayId);
+        if (!item) continue;
+        const plan = pulloutPlan(
+          entry.unit,
+          { x: entry.x, y: entry.y, heightM: entry.heightM, depthM: entry.depthM, zM: entry.zM, thicknessM: shopOf(run.production).carcassMm / MM },
+          run.production,
+          fitting.bayId,
+          item,
+        );
+        if (plan) out.push({ id: `${entry.unit.id}:${fitting.bayId}:pullout`, vectorM: [0, 0, mm(plan.travelMm)] });
+      }
+    }
+  }
+  for (const leaf of kupeLeaves(run, hardware)) out.push({ id: leaf.id, vectorM: [mm(leaf.slideMm), 0, 0] });
+  return out;
+}
+
+/**
+ * КОРОБ ЯЩИКА ПО КОМПЛЕКТУ (HARDWARE-01) — коробки сцены из того же плана,
+ * по которому режется раскрой (`drawerBoxPlan`): боковины, торцы и дно с
+ * ИД своих деталей и направляющая — неподвижная половина на корпусе,
+ * ходовая на коробе (едет с ящиком). Направляющая без правила цеха по
+ * высоте стоит условно — это видно по признаку плана, а не угадано.
+ */
+function kitBoxes(
+  kit: DrawerKit & { state: 'box' },
+  place: ModulePlacement,
+  part: string,
+  carcassKey: string | null,
+  bayId?: string,
+): PartBox[] {
+  const out: PartBox[] = [];
+  const { xFromMm, zoneFromMm, boxFrontZMm, key } = kit.place;
+  const idOf: Record<string, string> = {
+    'side-left': `${key}:box:side:1`,
+    'side-right': `${key}:box:side:2`,
+    'wall-front': `${key}:box:wall:1`,
+    'wall-back': `${key}:box:wall:2`,
+    bottom: `${key}:box:bottom`,
+  };
+  for (const piece of kit.plan.pieces) {
+    const position: [number, number, number] = [
+      place.x + (xFromMm + (piece.x0 + piece.x1) / 2) / MM,
+      place.y + (zoneFromMm + (piece.y0 + piece.y1) / 2) / MM,
+      (boxFrontZMm + (piece.z0 + piece.z1) / 2) / MM,
+    ];
+    const scale: [number, number, number] = [(piece.x1 - piece.x0) / MM, (piece.y1 - piece.y0) / MM, (piece.z1 - piece.z0) / MM];
+    if (piece.member) {
+      out.push({
+        material: 'metal',
+        node: 'runner',
+        inside: true,
+        position,
+        scale,
+        ...(piece.member === 'drawer' ? { part } : {}),
+        ...(bayId ? { bayId } : {}),
+      });
+      continue;
+    }
+    out.push({
+      material: 'carcass',
+      inside: true,
+      part,
+      carcassKey,
+      panel: piece.key.startsWith('side') ? DRAWER_SIDE_PANEL_NAME : piece.key === 'bottom' ? DRAWER_BOTTOM_PANEL_NAME : DRAWER_WALL_PANEL_NAME,
+      partId: idOf[piece.key],
+      position,
+      scale,
+      ...(bayId ? { bayId } : {}),
+    });
+  }
+  return out;
 }
 
 /**

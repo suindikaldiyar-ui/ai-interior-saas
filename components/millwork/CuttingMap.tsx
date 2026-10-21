@@ -31,8 +31,10 @@ import {
   TRIM_RANGE_MM,
   type CatalogEntryFull,
   type CuttingSettings,
+  type HardwareItem,
   type ProductionSettings,
 } from '@/types/catalog';
+import { drawerDrafts } from '@/lib/millwork/drawerKit';
 import type { MillingItem } from '@/lib/millwork/milling';
 import type { CarcassItem } from '@/lib/millwork/carcassMaterial';
 
@@ -56,6 +58,8 @@ type Props = {
   production: ProductionSettings;
   milling?: Map<string, MillingItem>;
   carcass?: Map<string, CarcassItem>;
+  /** Фурнитура организации: короба ящиков режутся по направляющей и правилам цеха (HARDWARE-01). */
+  hardware?: Map<string, HardwareItem>;
   /** Каталог организации: по нему карта называет декор листа и узнаёт его рисунок. */
   catalog: CatalogEntryFull[];
   fingerprint: string;
@@ -292,6 +296,7 @@ export default function CuttingMap({
   production,
   milling,
   carcass,
+  hardware,
   catalog,
   fingerprint,
   exportLock,
@@ -301,11 +306,19 @@ export default function CuttingMap({
   dirty,
 }: Props) {
   /* Детали — той же функцией и с теми же входами, что таблица деталировки. */
-  const parts = useMemo(() => objectPanels({ walls, production, milling, carcass }), [walls, production, milling, carcass]);
+  const parts = useMemo(
+    () => objectPanels({ walls, production, milling, carcass, hardware }),
+    [walls, production, milling, carcass, hardware],
+  );
   const decors = useMemo(() => decorCatalog(catalog), [catalog]);
+  /* Короба, рассчитанные по правилам, не подтверждённым цехом, — тем же счётом, что раскрой (HARDWARE-01). */
+  const drawerBoxUnconfirmed = useMemo(
+    () => drawerDrafts(walls.map((wall) => wall.run), hardware, production).unconfirmed,
+    [walls, hardware, production],
+  );
   const plan: CuttingPlan = useMemo(
-    () => cuttingPlan({ parts, settings, decors, exportLock, fingerprint }),
-    [parts, settings, decors, exportLock, fingerprint],
+    () => cuttingPlan({ parts, settings, decors, exportLock, fingerprint, drawerBoxUnconfirmed }),
+    [parts, settings, decors, exportLock, fingerprint, drawerBoxUnconfirmed],
   );
 
   const [groupKey, setGroupKey] = useState<string | null>(null);

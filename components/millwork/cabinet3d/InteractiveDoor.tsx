@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import type * as THREE from 'three';
 import { useSlide } from './useSlide';
 import { useTouchTarget } from './useTouchTarget';
-import { doorKick, doorPivot, leafLocal } from '@/lib/millwork/cabinetBoxes';
+import { doorKick, doorPivot, leafLocal, type PartBox } from '@/lib/millwork/cabinetBoxes';
 import { useShiftedBox, type CabinetParts } from './parts';
 import type { FrontRelief } from '@/types/millwork';
 import { realSizeShiftOf } from './realSizeMap';
@@ -66,6 +66,12 @@ type Props = {
    * ряд убирает её из своей пачки, чтобы не было двух дверей сразу.
    */
   onActive?: (id: string, active: boolean) => void;
+  /**
+   * ЧТО ЕДЕТ С ПОЛОТНОМ (HARDWARE-01): чашки петель и рычаг подъёмника —
+   * коробки той же пачки (координаты модуля). Закрытую створку их рисует
+   * пачка; открытую — она сама, иначе петли пропадали на ходу.
+   */
+  riders?: PartBox[];
 };
 
 
@@ -88,6 +94,7 @@ export default function InteractiveDoor({
   integratedHandle,
   milledGrip = false,
   onActive,
+  riders,
 }: Props) {
   const group = useRef<THREE.Group>(null);
   const touch = useRef<THREE.Mesh>(null);
@@ -240,6 +247,17 @@ export default function InteractiveDoor({
           scale={local.handle.size}
         />
       )}
+      {/* Петли и рычаг: место в пачке минус ось — в кадре полотна они стоят там же, где у закрытого. */}
+      {riders?.map((box, i) => (
+        <mesh
+          key={`rider-${i}`}
+          name={`rider:${box.node ?? 'metal'}`}
+          geometry={parts.box}
+          material={parts.metal}
+          position={[box.position[0] - pivot.origin[0], box.position[1] - pivot.origin[1], box.position[2] - pivot.origin[2]]}
+          scale={box.scale}
+        />
+      ))}
         </>
       )}
     </group>

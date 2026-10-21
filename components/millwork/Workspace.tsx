@@ -276,6 +276,16 @@ const CuttingMap = dynamic(() => import('./CuttingMap'), {
   loading: () => <p className="m-4 text-[13px] text-graphiteMw">Собираем карту раскроя…</p>,
 });
 
+/*
+ * Фурнитура производителей (HARDWARE-01) — по требованию: панель, проверка
+ * совместимости по каждой позиции и факты производителей нужны только на
+ * инструменте «Фурнитура», и первая загрузка Studio от них не растёт.
+ */
+const HardwarePanel = dynamic(() => import('./studio/HardwarePanel'), {
+  ssr: false,
+  loading: () => <p className="text-[13px] text-graphiteMw">Открываем фурнитуру…</p>,
+});
+
 const KitchenScene = dynamic(() => import('./KitchenScene'), {
   ssr: false,
   loading: () => (
@@ -487,6 +497,8 @@ export default function Workspace(props: WorkspaceProps) {
   );
   /** Жёлтая строка под сценой: правку не отменяем, но о последствии говорим. */
   const [sceneNotice, setSceneNotice] = useState<string | null>(null);
+  /* Отказ движка на установке фурнитуры — словами в панели «Фурнитура» (HARDWARE-01). */
+  const [hardwareNotice, setHardwareNotice] = useState<string | null>(null);
   /* Скрытая сцена захвата кадра не поднялась (нет WebGL): словами, а не падением страницы. */
   const [captureFailure, setCaptureFailure] = useState<string | null>(null);
 
@@ -1126,7 +1138,14 @@ export default function Workspace(props: WorkspaceProps) {
    * фурнитура: из них выбирают направляющую блока ящиков. Пусто — выбирать
    * не из чего, и инспектор говорит это словами.
    */
-  const slideItems = useMemo(() => hardwareByCategory(hardwareCatalog(catalog), 'slide'), [catalog]);
+  /*
+   * ФУРНИТУРА ОРГАНИЗАЦИИ (HARDWARE-01) — один список на смету, раскрой,
+   * сцену и Studio. До этого слоя он сюда не доезжал вовсе: выбранная
+   * направляющая блока ящиков лежала в данных и в сумму экрана не
+   * попадала (смета звалась с пустым каталогом фурнитуры).
+   */
+  const hardwareItems = useMemo(() => hardwareCatalog(catalog), [catalog]);
+  const slideItems = useMemo(() => hardwareByCategory(hardwareItems, 'slide'), [hardwareItems]);
   /* Что открыто в сцене: кнопки «Открыть / Закрыть» ящика — тот же список, что у сцены. */
   const openParts = useInteriorStore((s) => s.openParts);
   const toggleOpenPart = useInteriorStore((s) => s.toggleOpenPart);
@@ -1196,6 +1215,7 @@ export default function Workspace(props: WorkspaceProps) {
         milling: millingItems,
         carcass: carcassItems,
         materials: materialItems,
+        hardware: hardwareItems,
         /*
          * Угол стены А — тот, что композиция положила своему первому
          * ряду: без него в конце ряда А нет углового модуля, а у угла
@@ -1203,7 +1223,7 @@ export default function Workspace(props: WorkspaceProps) {
          */
         corner: wallCornerOf(layout),
       }),
-    [props, resolution, wallRequirements, liveRates, production, millingItems, carcassItems, materialItems, layout],
+    [props, resolution, wallRequirements, liveRates, production, millingItems, carcassItems, materialItems, hardwareItems, layout],
   );
 
   /**
@@ -1650,6 +1670,7 @@ export default function Workspace(props: WorkspaceProps) {
       ops: designOps(design, uppers),
       openings: wallOpenings(0),
       roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
+      hardware: hardwareItems,
     });
 
     dirty.current = true;
@@ -2091,6 +2112,8 @@ export default function Workspace(props: WorkspaceProps) {
   const STUDIO_TOOL_FIELDS: Record<StudioTool, StepField[]> = {
     select: [],
     measure: [],
+    /* Фурнитура (HARDWARE-01) — своя панель, блоков мастера у неё нет. */
+    hardware: [],
     documents: [],
     furniture: ['walls', 'modules', 'appliance-wall', 'arrangements', 'command'],
     construction: ['variants', 'shop'],
@@ -2509,6 +2532,7 @@ export default function Workspace(props: WorkspaceProps) {
           ops,
           openings: wallOpenings(wall),
           roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
+          hardware: hardwareItems,
         });
         const kept = removedAppliances.filter((a) =>
           allModules(exact).some((m) => moduleAppliances(m).includes(a)),
@@ -2533,6 +2557,7 @@ export default function Workspace(props: WorkspaceProps) {
         ops,
         openings: wallOpenings(wall),
         roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
+        hardware: hardwareItems,
       });
       dirty.current = true;
       /*
@@ -2596,7 +2621,7 @@ export default function Workspace(props: WorkspaceProps) {
           .map((m) => m.id),
       );
     },
-    [active, activeRun, wall, requirements, wallOpenings, props.roomDepthM, flash, selectedId, layout, wallEdited, wallIdAt],
+    [active, activeRun, wall, requirements, wallOpenings, props.roomDepthM, flash, selectedId, layout, wallEdited, wallIdAt, hardwareItems],
   );
 
   /* Подтверждение — та же правка, с разрешением снять отсеки; отмена — ничего. */
@@ -2683,6 +2708,7 @@ export default function Workspace(props: WorkspaceProps) {
           ops: plan.ops,
           openings: wallOpenings(index),
           roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
+          hardware: hardwareItems,
         });
         /* Отказ движка — словами, а ряд записывается с тем, что прошло. */
         if (next.warnings[0]) said.push(next.warnings[0]);
@@ -2694,7 +2720,7 @@ export default function Workspace(props: WorkspaceProps) {
       if (changed) dirty.current = true;
       return said[0] ?? (changed ? null : (refused[0] ?? null));
     },
-    [wall, segments, selectedId, selectedLeaf, requirements, wallOpenings, props.roomDepthM, active.key, wallIdAt],
+    [wall, segments, selectedId, selectedLeaf, requirements, wallOpenings, props.roomDepthM, active.key, wallIdAt, hardwareItems],
   );
 
   /*
@@ -2731,6 +2757,7 @@ export default function Workspace(props: WorkspaceProps) {
           ops: plan.ops,
           openings: wallOpenings(index),
           roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
+          hardware: hardwareItems,
         });
         /*
          * Пояснение плана («фасад теперь МДФ в эмали») — только если фасады
@@ -2748,7 +2775,7 @@ export default function Workspace(props: WorkspaceProps) {
       if (changed) dirty.current = true;
       return said[0] ?? (changed ? null : (refused[0] ?? null));
     },
-    [wall, segments, selectedId, selectedLeaf, requirements, wallOpenings, props.roomDepthM, active.key, wallIdAt],
+    [wall, segments, selectedId, selectedLeaf, requirements, wallOpenings, props.roomDepthM, active.key, wallIdAt, hardwareItems],
   );
 
   /*
@@ -3290,7 +3317,10 @@ export default function Workspace(props: WorkspaceProps) {
    * нельзя: это ровно тот второй расчёт, от которого продукт уходит.
    */
   /* Ящики отсеков без правил короба: одна строка на замок экрана и на карту раскроя. */
-  const drawerDraft = useMemo(() => drawerReleaseBlock(segments), [segments]);
+  const drawerDraft = useMemo(
+    () => drawerReleaseBlock(segments, { hardware: hardwareItems, production }),
+    [segments, hardwareItems, production],
+  );
   const screen = useMemo(
     () =>
       screenState({
@@ -3551,6 +3581,7 @@ export default function Workspace(props: WorkspaceProps) {
             milling: millingItems,
             carcass: carcassItems,
             materials: materialItems,
+            hardware: hardwareItems,
             corner: wallCornerOf(layout),
           }),
           disabled,
@@ -3575,6 +3606,7 @@ export default function Workspace(props: WorkspaceProps) {
       millingItems,
       carcassItems,
       materialItems,
+      hardwareItems,
       layout,
       disabled,
     ],
@@ -3638,6 +3670,7 @@ export default function Workspace(props: WorkspaceProps) {
               ops: [],
               openings: wallOpenings(furniture.index),
               roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
+              hardware: hardwareItems,
             })
           : null;
 
@@ -3651,7 +3684,7 @@ export default function Workspace(props: WorkspaceProps) {
       if (mode === 'rebuild' && furniture) rebuildWall(furniture.index);
       setWallVerdict({ wallId, refusal: null, note: verdict.note, lengthMm });
     },
-    [survey, wallFurniture, layoutRefusalFor, requirements, wallOpenings, props, active.key, wallIdAt, rebuildWall],
+    [survey, wallFurniture, layoutRefusalFor, requirements, wallOpenings, props, active.key, wallIdAt, rebuildWall, hardwareItems],
   );
 
   /** Стена выбрана на плане или в списке: выбор один — стена, а не модуль. */
@@ -4825,6 +4858,7 @@ export default function Workspace(props: WorkspaceProps) {
             production={production}
             milling={millingItems}
             carcass={carcassItems}
+            hardware={hardwareItems}
             fingerprint={objectEstimate.fingerprint}
             exportLock={screen.exportLockText}
             onCuttingMap={() => setStudioView('cutting')}
@@ -4843,6 +4877,7 @@ export default function Workspace(props: WorkspaceProps) {
             production={production}
             milling={millingItems}
             carcass={carcassItems}
+            hardware={hardwareItems}
             catalog={catalog}
             fingerprint={objectEstimate.fingerprint}
             exportLock={screen.exportLockText === drawerDraft ? null : screen.exportLockText}
@@ -4939,6 +4974,20 @@ export default function Workspace(props: WorkspaceProps) {
               Замера в режиме замерщика у объекта нет — стены и проёмы правятся на форме замера.
             </p>
           ))}
+
+        {studioTool === 'hardware' && (
+          <HardwarePanel
+            unit={selectedUnit ?? null}
+            run={activeRun}
+            production={production}
+            hardware={hardwareItems}
+            catalog={catalog}
+            orgId={orgId}
+            onCatalogAdded={addCatalogEntries}
+            onOps={(ops) => runOps(ops, setHardwareNotice)}
+            notice={hardwareNotice}
+          />
+        )}
 
         {studioTool === 'documents' && (
           <div className="grid gap-1" data-studio-documents>
@@ -5116,6 +5165,7 @@ export default function Workspace(props: WorkspaceProps) {
                     ops,
                     openings: wallOpenings(wall),
                     roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
+                    hardware: hardwareItems,
                   })
                 }
                 onSelect={selectModule}
@@ -5964,6 +6014,7 @@ export default function Workspace(props: WorkspaceProps) {
                   production={production}
                   milling={millingItems}
                   carcass={carcassItems}
+                  hardware={hardwareItems}
                   fingerprint={objectEstimate.fingerprint}
                   exportLock={screen.exportLockText}
                 />
@@ -6012,6 +6063,7 @@ export default function Workspace(props: WorkspaceProps) {
                 comms={input.comms}
                 issues={issues}
                 production={production}
+                hardware={hardwareItems}
                 client={props.clientName}
                 company={props.company}
                 /*

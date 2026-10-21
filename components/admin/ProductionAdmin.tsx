@@ -7,6 +7,8 @@ import {
   DEFAULT_HEIGHTS,
   COUNTERTOP_STRIP_RANGE_MM,
   DEFAULT_PRODUCTION,
+  DRAWER_BOX_RANGES_MM,
+  drawerBoxSettings,
   FALSE_PANEL_RANGE_MM,
   cornerSizes,
   countertopStrip,
@@ -146,6 +148,24 @@ export default function ProductionAdmin({ initial }: Props) {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   /*
+   * ПРАВИЛА КОРОБА ЯЩИКА (HARDWARE-01): поля держат то, что набрано, а в
+   * настройки уходит только целый набор (`drawerBoxSettings`). Пусто — правил
+   * нет, и это не ошибка: короб не считается, ящик черновик, выпуск заперт.
+   */
+  const box0 = initial.drawerBox;
+  const [box, setBox] = useState<Record<string, string>>({
+    sideMm: box0 ? String(box0.sideMm) : '',
+    bottomMm: box0 ? String(box0.bottomMm) : '',
+    bottomMaterial: box0?.bottomMaterial ?? 'hdf',
+    bottomMount: box0?.bottomMount ?? '',
+    bottomGrooveMm: box0 && box0.bottomMount === 'groove' ? String(box0.bottomGrooveMm) : '',
+    gapBelowMm: box0 ? String(box0.gapBelowMm) : '',
+    gapAboveMm: box0 ? String(box0.gapAboveMm) : '',
+    runnerAxisMm: box0?.runnerAxisMm !== null && box0?.runnerAxisMm !== undefined ? String(box0.runnerAxisMm) : '',
+    edge: box0?.edge ?? 'none',
+    confirmed: box0?.confirmed ? '1' : '',
+  });
+  /*
    * Размеры угла: не заведены — типовые, и экран говорит об этом (слой 55).
    * Поле панели держит то, что набрано (по пути к «70» бывает «7»); число
    * вне границ названо словами под полем — сервер его не примет.
@@ -181,6 +201,63 @@ export default function ProductionAdmin({ initial }: Props) {
         ...patch,
       },
     }));
+
+  const boxEmpty = !box.sideMm && !box.bottomMm && !box.bottomMount && !box.gapBelowMm && !box.gapAboveMm;
+  const boxParsed = boxEmpty
+    ? null
+    : drawerBoxSettings({
+        sideMm: box.sideMm === '' ? null : Number(box.sideMm),
+        bottomMm: box.bottomMm === '' ? null : Number(box.bottomMm),
+        bottomMaterial: box.bottomMaterial,
+        bottomMount: box.bottomMount,
+        bottomGrooveMm: box.bottomGrooveMm === '' ? null : Number(box.bottomGrooveMm),
+        gapBelowMm: box.gapBelowMm === '' ? null : Number(box.gapBelowMm),
+        gapAboveMm: box.gapAboveMm === '' ? null : Number(box.gapAboveMm),
+        runnerAxisMm: box.runnerAxisMm === '' ? null : Number(box.runnerAxisMm),
+        edge: box.edge,
+        confirmed: box.confirmed === '1',
+      });
+  const setBoxField = (key: string, next: string) => {
+    const draft = { ...box, [key]: next };
+    setBox(draft);
+    const empty = !draft.sideMm && !draft.bottomMm && !draft.bottomMount && !draft.gapBelowMm && !draft.gapAboveMm;
+    const parsed = empty
+      ? null
+      : drawerBoxSettings({
+          sideMm: draft.sideMm === '' ? null : Number(draft.sideMm),
+          bottomMm: draft.bottomMm === '' ? null : Number(draft.bottomMm),
+          bottomMaterial: draft.bottomMaterial,
+          bottomMount: draft.bottomMount,
+          bottomGrooveMm: draft.bottomGrooveMm === '' ? null : Number(draft.bottomGrooveMm),
+          gapBelowMm: draft.gapBelowMm === '' ? null : Number(draft.gapBelowMm),
+          gapAboveMm: draft.gapAboveMm === '' ? null : Number(draft.gapAboveMm),
+          runnerAxisMm: draft.runnerAxisMm === '' ? null : Number(draft.runnerAxisMm),
+          edge: draft.edge,
+          confirmed: draft.confirmed === '1',
+        });
+    setValue((prev) => {
+      const { drawerBox: _drop, ...rest } = prev;
+      void _drop;
+      return parsed ? { ...rest, drawerBox: parsed } : rest;
+    });
+  };
+  const boxField = (key: string, title: string, range: readonly [number, number], hint: string) => (
+    <label className="block">
+      <span className="mw-label">{title}</span>
+      <input
+        type="number"
+        inputMode="decimal"
+        min={range[0]}
+        max={range[1]}
+        step="0.1"
+        data-drawer-box-field={key}
+        value={box[key]}
+        onChange={(event) => setBoxField(key, event.target.value)}
+        className="mw-field mt-1 w-full"
+      />
+      <span className="mt-0.5 block text-[13px] leading-snug text-graphiteMw">{hint}</span>
+    </label>
+  );
 
   const save = async () => {
     setBusy(true);
@@ -485,6 +562,75 @@ export default function ProductionAdmin({ initial }: Props) {
                 Не подтверждено цехом: замерщик видит эту пометку у каждого выреза и разрыва столешницы.
               </p>
             )}
+          </div>
+
+          {/*
+            * КОРОБ ЯЩИКА (HARDWARE-01). Длину и ширину короба даёт паспорт
+            * направляющей (NL и монтажная ширина) — здесь только школа цеха:
+            * толщины, дно, зазоры по высоте, ось направляющей на боковине.
+            * Пусто — короба нет, выпуск в цех с ящиками заперт словами.
+            */}
+          <div className="mt-6 border-t border-navyLine/60 pt-4" data-drawer-box data-drawer-box-state={boxEmpty ? 'empty' : boxParsed ? (boxParsed.confirmed ? 'confirmed' : 'unconfirmed') : 'invalid'}>
+            <p className="text-[15px] font-medium">Короб ящика</p>
+            <p className="mt-0.5 text-[13px] leading-snug text-graphiteMw">
+              Длина короба — номинальная длина NL выбранной направляющей, ширина — проём минус её монтажная ширина с
+              двух сторон: это паспорт направляющей. Здесь — как короб собирает ваш цех. Боковины и торцы режутся из
+              корпусной ЛДСП модуля.
+            </p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              {boxField('sideMm', 'Боковины и торцы, мм', DRAWER_BOX_RANGES_MM.sideMm, `от ${DRAWER_BOX_RANGES_MM.sideMm[0]} до ${DRAWER_BOX_RANGES_MM.sideMm[1]} мм`)}
+              {boxField('bottomMm', 'Дно, мм', DRAWER_BOX_RANGES_MM.bottomMm, 'толщина плиты дна')}
+              <label className="block">
+                <span className="mw-label">Дно из</span>
+                <select data-drawer-box-field="bottomMaterial" value={box.bottomMaterial} onChange={(event) => setBoxField('bottomMaterial', event.target.value)} className="mw-field mt-1 w-full">
+                  <option value="hdf">ХДФ</option>
+                  <option value="ldsp">корпусной ЛДСП</option>
+                </select>
+              </label>
+              <label className="block">
+                <span className="mw-label">Как стоит дно</span>
+                <select data-drawer-box-field="bottomMount" value={box.bottomMount} onChange={(event) => setBoxField('bottomMount', event.target.value)} className="mw-field mt-1 w-full">
+                  <option value="">не задано</option>
+                  <option value="groove">в паз всех стенок</option>
+                  <option value="inset">вкладное заподлицо между стенками</option>
+                  <option value="under">накладное снизу</option>
+                </select>
+              </label>
+              {box.bottomMount === 'groove' && boxField('bottomGrooveMm', 'Глубина паза под дно, мм', DRAWER_BOX_RANGES_MM.bottomGrooveMm, 'дно в паз: внутренний размер плюс паз с каждой стороны')}
+              {boxField('gapBelowMm', 'Зазор под коробом, мм', DRAWER_BOX_RANGES_MM.gapBelowMm, 'от низа зоны ящика до низа короба')}
+              {boxField('gapAboveMm', 'Зазор над коробом, мм', DRAWER_BOX_RANGES_MM.gapAboveMm, 'от верха короба до верха зоны ящика')}
+              {boxField('runnerAxisMm', 'Ось направляющей от низа короба, мм', DRAWER_BOX_RANGES_MM.runnerAxisMm, 'не задано — присадка направляющих по высоте не рассчитывается')}
+              <label className="block">
+                <span className="mw-label">Кромка по верхним торцам</span>
+                <select data-drawer-box-field="edge" value={box.edge} onChange={(event) => setBoxField('edge', event.target.value)} className="mw-field mt-1 w-full">
+                  <option value="none">без кромки</option>
+                  <option value="0.4">0.4 мм</option>
+                  <option value="1">1 мм</option>
+                  <option value="2">2 мм</option>
+                </select>
+              </label>
+            </div>
+            <label className="mt-3 flex items-center gap-2 text-[15px]">
+              <input
+                type="checkbox"
+                data-drawer-box-confirmed
+                checked={box.confirmed === '1'}
+                onChange={(event) => setBoxField('confirmed', event.target.checked ? '1' : '')}
+              />
+              Цех подтвердил эти числа
+            </label>
+            <p
+              className={`mt-1 text-[13px] leading-snug ${!boxEmpty && !boxParsed ? 'text-alert' : boxParsed?.confirmed ? 'text-graphiteMw' : 'text-tape'}`}
+              data-drawer-box-note
+            >
+              {boxEmpty
+                ? 'Правил короба нет: ящики остаются черновиком — короб не считается, выпуск в цех с ящиками заперт.'
+                : !boxParsed
+                  ? 'Правила не сохранятся: заполните толщины, дно и зазоры в пределах — набор принимается только целиком.'
+                  : boxParsed.confirmed
+                    ? 'Короб считается по этим правилам и выбранной направляющей; выпуск открывается, когда и паспорт направляющей полный.'
+                    : 'Не подтверждено цехом: короба посчитаны, но выпуск в цех с ними заперт.'}
+            </p>
           </div>
 
           <div className="mt-5 flex flex-wrap items-center gap-3">

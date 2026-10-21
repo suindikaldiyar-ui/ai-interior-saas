@@ -1,6 +1,6 @@
 import { buildRun, type BuildRunInput } from './layout';
 import { buildEstimate, type RateTable } from './estimate';
-import type { ProductionSettings } from '@/types/catalog';
+import type { HardwareItem, ProductionSettings } from '@/types/catalog';
 import type { MillingItem } from './milling';
 import type { CarcassItem } from './carcassMaterial';
 import type { MaterialItem } from './materialCollection';
@@ -139,6 +139,8 @@ export interface BuildVariantsInput extends Omit<BuildRunInput, 'requirements'> 
   strategies?: VariantStrategy[];
   disabledKeys?: Record<VariantKey, string[]>;
   calculatedAt?: string;
+  /** Фурнитура организации (HARDWARE-01): выбранные позиции — своей строкой в смете. */
+  hardware?: Map<string, HardwareItem>;
 }
 
 /**
@@ -181,7 +183,7 @@ export function buildVariants(input: BuildVariantsInput): Variant[] {
       input.disabledKeys?.[strategy.key] ?? [],
       input.calculatedAt,
       input.production,
-      undefined,
+      input.hardware,
       input.milling,
       input.carcass,
       input.materials,

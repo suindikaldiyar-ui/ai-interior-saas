@@ -174,7 +174,78 @@ export type CatalogEntryFull = CatalogItem & {
  * или без. Сколько их нужно — считает раскрой и состав ряда, и второго
  * счёта каталог не заводит.
  */
-export type HardwareCategory = 'hinge' | 'slide' | 'fastener' | 'filling' | 'other';
+export type HardwareCategory =
+  | 'hinge'
+  | 'slide'
+  | 'fastener'
+  | 'filling'
+  | 'other'
+  /*
+   * ГРУППЫ КАТАЛОГА ПРОИЗВОДИТЕЛЕЙ (HARDWARE-01). Прежние пять ключей
+   * читаются как были: позиции, заведённые раньше, не переезжают.
+   */
+  | 'drawer_system'
+  | 'lift'
+  | 'wardrobe'
+  | 'kitchen'
+  | 'handle'
+  | 'carcass'
+  | 'sliding';
+
+/**
+ * ГРУППЫ ФУРНИТУРЫ НА ЭКРАНЕ — девять, как у мебельщика (HARDWARE-01).
+ * Ключ — категория позиции; прежние `fastener`, `filling`, `other` идут
+ * в свою группу, чтобы позиции, заведённые до каталога, не потерялись.
+ */
+export const HARDWARE_GROUPS: { key: string; letter: string; title: string; categories: HardwareCategory[] }[] = [
+  { key: 'hinge', letter: 'A', title: 'Петли', categories: ['hinge'] },
+  { key: 'slide', letter: 'B', title: 'Направляющие', categories: ['slide'] },
+  { key: 'drawer_system', letter: 'C', title: 'Системы ящиков', categories: ['drawer_system'] },
+  { key: 'lift', letter: 'D', title: 'Подъёмные механизмы', categories: ['lift'] },
+  { key: 'wardrobe', letter: 'E', title: 'Гардеробные механизмы', categories: ['wardrobe', 'filling'] },
+  { key: 'kitchen', letter: 'F', title: 'Кухонная фурнитура', categories: ['kitchen'] },
+  { key: 'handle', letter: 'G', title: 'Ручки', categories: ['handle'] },
+  { key: 'carcass', letter: 'H', title: 'Корпусная фурнитура', categories: ['carcass', 'fastener', 'other'] },
+  { key: 'sliding', letter: 'I', title: 'Раздвижные системы', categories: ['sliding'] },
+];
+
+/** Как движется механизм — по источнику; по нему сцена выбирает движение. */
+export type HardwareMovement = 'rotate' | 'slide_out' | 'lift_up' | 'fold_up' | 'lower' | 'slide_lateral' | 'push_open' | 'none';
+
+/**
+ * ИНЖЕНЕРНЫЙ СТАТУС ПОЗИЦИИ — по источнику, а не по нашему желанию.
+ *
+ *   VERIFIED      артикул и размеры для подбора напечатаны и сверены по изображению;
+ *   PARTIAL       артикул и часть размеров есть — чего нет, сказано в `missing`;
+ *   MISSING_DATA  изделие упомянуто, технических данных нет;
+ *   CONFLICT      источник противоречит сам себе;
+ *   NOT_READABLE  данные на странице есть, но не читаются.
+ */
+export type HardwareEngineeringStatus = 'VERIFIED' | 'PARTIAL' | 'MISSING_DATA' | 'CONFLICT' | 'NOT_READABLE';
+
+/** Откуда данные позиции: файл и страница либо адрес, и дата проверки. */
+export type HardwareSource = {
+  file?: string;
+  url?: string;
+  pdfPage?: number;
+  printedPage?: string;
+  checkedAt: string;
+};
+
+/**
+ * ПРИСАДКА ПО ИСТОЧНИКУ — как напечатана: размерная цепочка и база.
+ * Чего не напечатано, того нет (`null`): отверстие по нему не ставится.
+ */
+export type HardwareDrillingSpec = {
+  part: 'door' | 'cabinet_side' | 'drawer_side' | 'front' | 'other';
+  what: string;
+  diameterMm: number | null;
+  depthMm: number | null;
+  /** Цепочка размеров как напечатана: «37 / 128 / 64». */
+  positionsMm: string | null;
+  /** От чего отсчёт — как напечатано; не подписано — так и сказано. */
+  datum: string | null;
+};
 
 export const HARDWARE_BRANDS = ['blum', 'hettich', 'hafele', 'boyard', 'gtv', 'dtc'] as const;
 export type HardwareBrand = (typeof HARDWARE_BRANDS)[number];
@@ -259,6 +330,68 @@ export type HardwareMeta = {
    */
   currency?: string;
   mounting?: Partial<MountingData>;
+  /*
+   * ── ЗАПИСЬ ИЗДЕЛИЯ ПРОИЗВОДИТЕЛЯ (HARDWARE-01) ──
+   *
+   * Всё ниже необязательно и лежит в том же `meta.hardware`: второго
+   * каталога и второй таблицы нет (ловушка 19). Неизвестное — отсутствие
+   * поля, а не ноль: по нулю цех просверлит отверстие на кромке.
+   */
+  /** Производитель словом, как в каталоге: «Hettich», «Häfele». */
+  manufacturer?: string;
+  /** Артикул производителя ровно как напечатан: «9 114 271». */
+  manufacturerArticle?: string;
+  /** Название как в каталоге производителя. */
+  officialName?: string;
+  /** Подвид: `overlay`, `ball_bearing_full_extension`, `pantograph`, `cargo`… */
+  subcategory?: string;
+  series?: string;
+  /** Чем артикул отличается внутри серии — как напечатано. */
+  variant?: string;
+  /**
+   * РАЗМЕРЫ ДЛЯ ПОДБОРА — под каноническими именами, которые читает движок
+   * (`nominalLength`, `sideClearance`, `minCabinetDepth`, `plateHeight`…;
+   * таблица — `FIT_KEYS` в `lib/millwork/hardwareCatalog.ts`). Число одно:
+   * как напечатано, оно лежит словами в `printed`, а здесь — то, по чему
+   * проверяется посадка.
+   */
+  dimensionsMm?: Record<string, number>;
+  /** Пределы для подбора под каноническими именами: «doorThickness» → [мин, макс], мм. */
+  ranges?: Record<string, [number, number]>;
+  /** Размеры и пределы так, как они напечатаны в источнике: подпись и значение словами. */
+  printed?: { label: string; value: string }[];
+  /** Формулы ровно как напечатаны: «SKW = LW − 42». */
+  formulas?: string[];
+  loadCapacityKg?: number;
+  material?: string;
+  finish?: string;
+  movementType?: HardwareMovement;
+  openingAngleDeg?: number;
+  strokeMm?: number;
+  /** Упаковка как напечатана: «1/10 компл.». */
+  packaging?: string;
+  /**
+   * ЧТО ТАКОЕ ОДНА ЕДИНИЦА ПРОДАЖИ — по источнику: пара, штука, комплект.
+   * Не сказано в источнике — поля нет, и смета это называет, а не угадывает.
+   */
+  saleUnit?: 'pair' | 'piece' | 'set';
+  compatibleWith?: string;
+  drilling?: HardwareDrillingSpec[];
+  source?: HardwareSource;
+  /** Права на картинки и CAD производителя: не проверены — не публикуем. */
+  rightsStatus?: 'NOT_VERIFIED' | 'PERMITTED' | 'RESTRICTED';
+  engineeringStatus?: HardwareEngineeringStatus;
+  /**
+   * ЧЕМ ИЗДЕЛИЕ НАРИСОВАНО В 3D: настоящей CAD-моделью производителя или
+   * своим приближением по размерам источника. Приближение не выдаётся
+   * за инженерную модель — так и подписано.
+   */
+  visualStatus?: 'CAD' | 'VISUAL_APPROXIMATION';
+  /** CAD-модель, переведённая в GLB, — только если права подтверждены. */
+  model3d?: { url: string; format: 'glb'; units: 'mm' };
+  /** Чего в источнике нет, но нужно для установки или присадки. */
+  missing?: string[];
+  notes?: string;
 };
 
 /**
@@ -441,7 +574,105 @@ export type ProductionSettings = {
    * подтверждено цехом» и НИ ОДНОГО формата: лист выбирает человек.
    */
   cutting?: CuttingSettings;
+  /**
+   * ПРАВИЛА КОРОБА ЯЩИКА ЦЕХА (HARDWARE-01).
+   *
+   * Короб деревянного ящика — две боковины во всю длину направляющей,
+   * торцы между боковинами и дно — режется из плиты цеха, и его толщины,
+   * дно и высота — школа цеха, а не данные направляющей. Пусто — правил
+   * нет, и короб не считается вовсе: ящик остаётся черновиком, выпуск в
+   * цех заперт (ловушка 578). Умолчаний нет: выдуманный короб — это
+   * распиленная плита.
+   */
+  drawerBox?: DrawerBoxSettings;
 };
+
+/**
+ * ПРАВИЛА КОРОБА ЯЩИКА ЦЕХА. Длину короба и его ширину даёт направляющая
+ * (её паспорт), а не цех; толщины, дно, зазоры по высоте и место
+ * направляющей на боковине — школа цеха, и умолчаний у них нет.
+ */
+export type DrawerBoxSettings = {
+  /**
+   * Толщина боковин и торцов короба, мм. Режутся из корпусной ЛДСП модуля
+   * — того же декора, что корпус; другая толщина — другой лист.
+   */
+  sideMm: number;
+  /** Толщина дна, мм. */
+  bottomMm: number;
+  /** Дно из корпусной ЛДСП или из ХДФ, как задняя стенка. */
+  bottomMaterial: 'ldsp' | 'hdf';
+  /**
+   * КАК СТОИТ ДНО:
+   *   groove — в паз всех четырёх стенок (`bottomGrooveMm`);
+   *   inset  — вкладное заподлицо между стенками;
+   *   under  — накладное снизу на весь короб.
+   */
+  bottomMount: 'groove' | 'inset' | 'under';
+  /** Глубина паза под дно, мм — только у `groove`. */
+  bottomGrooveMm: number;
+  /** От низа зоны ящика до низа короба, мм. */
+  gapBelowMm: number;
+  /** От верха короба до верха зоны ящика, мм. */
+  gapAboveMm: number;
+  /**
+   * Ось направляющей на боковине короба от его низа, мм. Не задано —
+   * присадка направляющих по высоте не рассчитывается (DRILLING_NOT_VERIFIED).
+   */
+  runnerAxisMm: number | null;
+  /** Кромка по верхним торцам боковин и торцов короба. */
+  edge: 'none' | '0.4' | '1' | '2';
+  /** Цех подтвердил эти числа. Нет — «не подтверждено цехом», и выпуск заперт. */
+  confirmed: boolean;
+};
+
+export const DRAWER_BOX_RANGES_MM = {
+  sideMm: [10, 25],
+  bottomMm: [3, 25],
+  bottomGrooveMm: [0, 12],
+  gapBelowMm: [0, 100],
+  gapAboveMm: [0, 200],
+  runnerAxisMm: [0, 300],
+} as const;
+
+/**
+ * Правила короба организации; мусор не принимается — тогда правил нет
+ * (`null`): короб, собранный из половины чисел, — та же выдумка.
+ */
+export function drawerBoxSettings(raw: unknown): DrawerBoxSettings | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const value = raw as Partial<Record<keyof DrawerBoxSettings, unknown>>;
+  const mm = (key: keyof typeof DRAWER_BOX_RANGES_MM) => {
+    if (value[key] === null || value[key] === undefined || value[key] === '') return null;
+    const n = Number(value[key]);
+    const [min, max] = DRAWER_BOX_RANGES_MM[key];
+    return Number.isFinite(n) && n >= min && n <= max ? Math.round(n * 10) / 10 : null;
+  };
+  const sideMm = mm('sideMm');
+  const bottomMm = mm('bottomMm');
+  const gapBelowMm = mm('gapBelowMm');
+  const gapAboveMm = mm('gapAboveMm');
+  const mount = value.bottomMount;
+  if (mount !== 'groove' && mount !== 'inset' && mount !== 'under') return null;
+  const groove = mm('bottomGrooveMm');
+  /* Паз есть только у дна в паз — и у него он не ноль. */
+  const bottomGrooveMm = mount === 'groove' ? groove : 0;
+  if (sideMm === null || bottomMm === null || gapBelowMm === null || gapAboveMm === null) return null;
+  if (bottomGrooveMm === null || (mount === 'groove' && bottomGrooveMm <= 0)) return null;
+  const edge = value.edge;
+  return {
+    sideMm,
+    bottomMm,
+    bottomMaterial: value.bottomMaterial === 'hdf' ? 'hdf' : 'ldsp',
+    bottomMount: mount,
+    bottomGrooveMm,
+    gapBelowMm,
+    gapAboveMm,
+    runnerAxisMm: mm('runnerAxisMm'),
+    edge: edge === '0.4' || edge === '1' || edge === '2' ? edge : 'none',
+    confirmed: value.confirmed === true,
+  };
+}
 
 /**
  * ФОРМАТ ЛИСТА ЦЕХА (CUT-01).
@@ -763,6 +994,8 @@ export function productionSettings(raw: unknown): ProductionSettings {
     ...(value.countertopStrip ? { countertopStrip: countertopStrip(value.countertopStrip) } : {}),
     /* Раскрой листов (CUT-01) — так же: не заводили — типовые числа без форматов. */
     ...(value.cutting ? { cutting: cuttingSettings(value.cutting) } : {}),
+    /* Правила короба ящика (HARDWARE-01): только заведённые и целые — иначе правил нет. */
+    ...(drawerBoxSettings(value.drawerBox) ? { drawerBox: drawerBoxSettings(value.drawerBox)! } : {}),
   };
 }
 

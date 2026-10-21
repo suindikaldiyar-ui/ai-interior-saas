@@ -146,6 +146,18 @@ function extrasPart(unit: Module): string | undefined {
           .map((leaf) => `${leaf}=${frontKey(unit.leafFronts![leaf])}`)
           .join(';')
       : '',
+    /*
+     * Установленная фурнитура производителя (HARDWARE-01): другая петля —
+     * другая присадка, другая направляющая — другой короб и другие деньги.
+     * По месту в устойчивом порядке; пусто не пишется (ловушка 246) — у
+     * рядов без фурнитуры отпечаток прежний до символа.
+     */
+    unit.fittings && unit.fittings.length > 0
+      ? unit.fittings
+          .map((f) => `${f.slot}${f.bayId ? `@${f.bayId}` : ''}=${f.itemId}`)
+          .sort()
+          .join(';')
+      : '',
   ].filter(Boolean);
 
   return parts.length > 0 ? parts.join(',') : undefined;
@@ -198,7 +210,7 @@ export function configurationFingerprint(modules: Module[]): string {
  * остаётся прежним до символа.
  */
 export function runFingerprint(
-  run: Pick<Run, 'modules' | 'upperSegments'> & Partial<Pick<Run, 'beams'>>,
+  run: Pick<Run, 'modules' | 'upperSegments'> & Partial<Pick<Run, 'beams' | 'slidingSystemItemId'>>,
 ): string {
   const modules = configurationFingerprint([
     ...run.modules,
@@ -206,10 +218,15 @@ export function runFingerprint(
   ]);
 
   const beams = beamsPart(run.beams);
-  if (!beams) return modules;
+  /*
+   * Система купе ряда (HARDWARE-01) — так же: пусто не пишется, у рядов
+   * без неё отпечаток прежний до символа.
+   */
+  const sliding = run.slidingSystemItemId ? `sliding=${run.slidingSystemItemId}` : '';
+  if (!beams && !sliding) return modules;
 
   let hash = 0x811c9dc5;
-  for (const ch of `${modules}|${beams}`) {
+  for (const ch of `${modules}|${beams ?? ''}${sliding ? `|${sliding}` : ''}`) {
     hash ^= ch.charCodeAt(0);
     hash = Math.imul(hash, 0x01000193) >>> 0;
   }

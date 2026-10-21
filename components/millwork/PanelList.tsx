@@ -11,13 +11,14 @@ import {
 } from '@/lib/millwork/panels';
 import ModuleAssembly from './ModuleAssembly';
 import PartCard from './PartCard';
+import { moduleDrilling, panelDrilling } from '@/lib/millwork/drilling';
 import { allModules } from '@/lib/millwork/layout';
 import {
   panelsCsvFile,
   panelsFileName,
   type CsvEncoding,
 } from '@/lib/millwork/csv-export';
-import { DEFAULT_PRODUCTION, type ProductionSettings } from '@/types/catalog';
+import { DEFAULT_PRODUCTION, type HardwareItem, type ProductionSettings } from '@/types/catalog';
 import type { Panel } from '@/types/millwork';
 import type { CarcassItem } from '@/lib/millwork/carcassMaterial';
 import type { MillingItem } from '@/lib/millwork/milling';
@@ -61,6 +62,8 @@ type Props = {
    * Пусто — корпус остаётся обычной плитой цеха, как и раньше.
    */
   carcass?: Map<string, CarcassItem>;
+  /** Фурнитура организации: направляющие ящиков — по ним режется короб (HARDWARE-01). */
+  hardware?: Map<string, HardwareItem>;
   /**
    * ОТПЕЧАТОК ОБЪЕКТА: по нему сверяют, что распилили ту мебель, которую
    * подписал клиент. У угловой кухни — отпечаток композиции, а не стены А.
@@ -105,6 +108,7 @@ export default function PanelList({
   production = DEFAULT_PRODUCTION,
   milling,
   carcass,
+  hardware,
   fingerprint,
   exportLock = null,
   onCuttingMap,
@@ -119,8 +123,8 @@ export default function PanelList({
    * идентификатор. Второго расчёта размеров в листе нет.
    */
   const parts = useMemo(
-    () => objectPanels({ walls, production, milling, carcass }),
-    [walls, production, milling, carcass],
+    () => objectPanels({ walls, production, milling, carcass, hardware }),
+    [walls, production, milling, carcass, hardware],
   );
   const summaries = useMemo(() => wallPanelSummaries(walls, parts), [walls, parts]);
 
@@ -464,7 +468,10 @@ export default function PanelList({
               </div>
             </div>
 
-            <PartCard panel={selectedPanel} />
+            <PartCard
+              panel={selectedPanel}
+              drilling={panelDrilling(moduleDrilling(selectedUnit, selectedWall.run, production, hardware), selectedPanel.name)}
+            />
           </div>
         )}
 

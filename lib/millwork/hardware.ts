@@ -4,8 +4,10 @@ import {
   type CatalogEntryFull,
   type HardwareBrand,
   type HardwareCategory,
+  type HardwareDrillingSpec,
   type HardwareItem,
   type HardwareMeta,
+  type HardwareSource,
   type MountingData,
 } from '@/types/catalog';
 import type { Module, Run } from '@/types/millwork';
@@ -33,7 +35,152 @@ const CATEGORIES = new Set<HardwareCategory>([
   'fastener',
   'filling',
   'other',
+  /* Группы каталога производителей (HARDWARE-01). */
+  'drawer_system',
+  'lift',
+  'wardrobe',
+  'kitchen',
+  'handle',
+  'carcass',
+  'sliding',
 ]);
+
+const MOVEMENTS = new Set<string>(['rotate', 'slide_out', 'lift_up', 'fold_up', 'lower', 'slide_lateral', 'push_open', 'none']);
+const ENGINEERING = new Set<string>(['VERIFIED', 'PARTIAL', 'MISSING_DATA', 'CONFLICT', 'NOT_READABLE']);
+
+const text = (value: unknown): string | undefined =>
+  typeof value === 'string' && value.trim() ? value.trim() : undefined;
+const number = (value: unknown): number | undefined =>
+  typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+
+/** Размеры по источнику: только конечные числа под непустыми именами. */
+function numbers(value: unknown): Record<string, number> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const out: Record<string, number> = {};
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    const n = number(raw);
+    if (key.trim() && n !== undefined) out[key.trim()] = n;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** Пределы по источнику: пара чисел, меньшее первым. Мусор не принимается. */
+function ranges(value: unknown): Record<string, [number, number]> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const out: Record<string, [number, number]> = {};
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (!Array.isArray(raw) || raw.length !== 2) continue;
+    const a = number(raw[0]);
+    const b = number(raw[1]);
+    if (key.trim() && a !== undefined && b !== undefined && a <= b) out[key.trim()] = [a, b];
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function strings(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const out = value.map(text).filter((v): v is string => Boolean(v));
+  return out.length > 0 ? out : undefined;
+}
+
+/** Размеры «как напечатано»: подпись и значение — только непустые строки. */
+function printedList(value: unknown): { label: string; value: string }[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const out: { label: string; value: string }[] = [];
+  for (const raw of value) {
+    const row = (raw ?? {}) as Record<string, unknown>;
+    const label = text(row.label);
+    const val = typeof row.value === 'number' ? String(row.value) : text(row.value);
+    if (label && val) out.push({ label, value: val });
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+/** Присадка по источнику: неизвестное остаётся `null`, а не нулём. */
+function drillingSpecs(value: unknown): HardwareDrillingSpec[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const parts = new Set(['door', 'cabinet_side', 'drawer_side', 'front', 'other']);
+  const out: HardwareDrillingSpec[] = [];
+  for (const raw of value) {
+    const spec = (raw ?? {}) as Record<string, unknown>;
+    const part = String(spec.part ?? '');
+    const what = text(spec.what);
+    if (!parts.has(part) || !what) continue;
+    out.push({
+      part: part as HardwareDrillingSpec['part'],
+      what,
+      diameterMm: number(spec.diameterMm) ?? null,
+      depthMm: number(spec.depthMm) ?? null,
+      positionsMm: text(spec.positionsMm) ?? null,
+      datum: text(spec.datum) ?? null,
+    });
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+function sourceOf(value: unknown): HardwareSource | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const raw = value as Record<string, unknown>;
+  const checkedAt = text(raw.checkedAt);
+  if (!checkedAt) return undefined;
+  const page = number(raw.pdfPage);
+  return {
+    checkedAt,
+    ...(text(raw.file) ? { file: text(raw.file) } : {}),
+    ...(text(raw.url) ? { url: text(raw.url) } : {}),
+    ...(page !== undefined ? { pdfPage: page } : {}),
+    ...(raw.printedPage !== undefined && raw.printedPage !== null ? { printedPage: String(raw.printedPage) } : {}),
+  };
+}
+
+/**
+ * ЗАПИСЬ ИЗДЕЛИЯ ПРОИЗВОДИТЕЛЯ ИЗ `meta.hardware` (HARDWARE-01).
+ *
+ * Читается то, что положено и того типа, что положено; остальное — как
+ * будто его нет. Неизвестное число не превращается в ноль.
+ */
+function productRecord(raw: Partial<HardwareMeta> | undefined): Partial<HardwareMeta> {
+  if (!raw) return {};
+  const model3d = raw.model3d as HardwareMeta['model3d'] | undefined;
+  const out: Partial<HardwareMeta> = {
+    manufacturer: text(raw.manufacturer),
+    manufacturerArticle: text(raw.manufacturerArticle),
+    officialName: text(raw.officialName),
+    subcategory: text(raw.subcategory),
+    series: text(raw.series),
+    variant: text(raw.variant),
+    dimensionsMm: numbers(raw.dimensionsMm),
+    ranges: ranges(raw.ranges),
+    formulas: strings(raw.formulas),
+    printed: printedList(raw.printed),
+    loadCapacityKg: number(raw.loadCapacityKg),
+    material: text(raw.material),
+    finish: text(raw.finish),
+    movementType: MOVEMENTS.has(String(raw.movementType)) ? raw.movementType : undefined,
+    openingAngleDeg: number(raw.openingAngleDeg),
+    strokeMm: number(raw.strokeMm),
+    packaging: text(raw.packaging),
+    saleUnit: raw.saleUnit === 'pair' || raw.saleUnit === 'piece' || raw.saleUnit === 'set' ? raw.saleUnit : undefined,
+    compatibleWith: text(raw.compatibleWith),
+    drilling: drillingSpecs(raw.drilling),
+    source: sourceOf(raw.source),
+    rightsStatus:
+      raw.rightsStatus === 'PERMITTED' || raw.rightsStatus === 'RESTRICTED' || raw.rightsStatus === 'NOT_VERIFIED'
+        ? raw.rightsStatus
+        : undefined,
+    engineeringStatus: ENGINEERING.has(String(raw.engineeringStatus)) ? raw.engineeringStatus : undefined,
+    visualStatus: raw.visualStatus === 'CAD' || raw.visualStatus === 'VISUAL_APPROXIMATION' ? raw.visualStatus : undefined,
+    model3d:
+      model3d && typeof model3d.url === 'string' && model3d.format === 'glb' && model3d.units === 'mm'
+        ? { url: model3d.url, format: 'glb', units: 'mm' }
+        : undefined,
+    missing: strings(raw.missing),
+    notes: text(raw.notes),
+  };
+  /* Пустые поля не держим вовсе: запись сравнивается и сохраняется без мусора. */
+  for (const key of Object.keys(out) as (keyof HardwareMeta)[]) if (out[key] === undefined) delete out[key];
+  return out;
+}
 
 /** Монтажные размеры товара: чего не подтверждено — то `null`. */
 export function mountingOf(meta: Partial<MountingData> | undefined): MountingData {
@@ -112,9 +259,24 @@ export function hardwareOf(item: CatalogEntryFull): HardwareItem | null {
       otherKind: raw?.otherKind,
       pricingUnit: raw?.pricingUnit,
       currency: typeof raw?.currency === 'string' ? raw.currency : undefined,
+      ...productRecord(raw),
     },
     mounting: mountingOf(raw?.mounting),
   };
+}
+
+/**
+ * ЗАПИСЬ ИЗДЕЛИЯ ИЗ ЧУЖОГО ВХОДА (HARDWARE-01): загрузка файла, импорт
+ * фактов. Тот же разбор, что у `hardwareOf`: категория из списка, бренд
+ * из списка, поля производителя — только своих типов. Нет категории —
+ * записи нет (`null`): позиция без группы в каталоге не живёт.
+ */
+export function sanitizeHardwareMeta(raw: unknown): HardwareMeta | null {
+  const value = (raw ?? {}) as Partial<HardwareMeta>;
+  const category = value.category;
+  if (!category || !CATEGORIES.has(category)) return null;
+  const brand = value.brand && BRANDS.has(value.brand) ? (value.brand as HardwareBrand) : undefined;
+  return { category, ...(brand ? { brand } : {}), ...productRecord(value) };
 }
 
 /** Вся фурнитура каталога по идентификатору позиции. */

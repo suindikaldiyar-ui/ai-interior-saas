@@ -4,6 +4,7 @@ import * as THREE from 'three';
 
 import { useMemo } from 'react';
 import { bayDrawerBoxes, boxShown, sceneLeaves, type PartBox } from '@/lib/millwork/cabinetBoxes';
+import { DRAWER_SIDE_PANEL_NAME } from '@/lib/millwork/drawerBox';
 import { ALL_LAYERS, type SceneLayers } from '@/lib/millwork/sceneLayers';
 import { ROD_VISUAL_DIAMETER_MM } from '@/lib/millwork/bays';
 import type { ProductionSettings } from '@/types/catalog';
@@ -77,6 +78,12 @@ type Props = {
    * `boxLayer`, что у неподвижной пачки.
    */
   layers?: SceneLayers;
+  /**
+   * КОРОБКИ ПОДВИЖНОЙ ДЕТАЛИ В КООРДИНАТАХ РЯДА — те же, что лежат в пачке
+   * (`runBoxes`, HARDWARE-01). По ним едет ящик с коробом по комплекту и
+   * ящик отсека: открытый несёт ровно то, что нарисовано задвинутым.
+   */
+  partBoxes?: (partId: string) => PartBox[] | undefined;
 };
 
 /** Штанга: условное сечение — то же число, что у штанги зоны отсека (`ROD_VISUAL_DIAMETER_MM`). */
@@ -110,6 +117,7 @@ export default function CabinetModule3D({
   openWidthM,
   production,
   layers = ALL_LAYERS,
+  partBoxes,
 }: Props) {
   /* Деталь модуля по идентификатору сцены: `<модуль>:door:0` → `door:0`. */
   const lookOf = (partId: string) => leafLook?.(partId.slice(unit.id.length + 1));
@@ -122,6 +130,15 @@ export default function CabinetModule3D({
   const innerDepth = depthM - thicknessM;
 
   const isOpen = (id: string) => openParts.includes(id);
+
+  /* Коробки детали из пачки ряда — в координатах модуля, только включённых слоёв. */
+  const localBoxesOf = (id: string): PartBox[] | undefined =>
+    partBoxes?.(id)
+      ?.filter((box) => boxShown(box, layers))
+      .map((box) => ({
+        ...box,
+        position: [box.position[0] - x, box.position[1] - y, box.position[2] - zM] as [number, number, number],
+      }));
 
   const isDisplay = unit.section === 'glass_display';
 
@@ -145,8 +162,20 @@ export default function CabinetModule3D({
       if (list) list.push(box);
       else byDrawer.set(box.part, [box]);
     }
-    return Array.from(byDrawer.entries());
-  }, [unit, heightM, depthM, thicknessM, gapM, frontThicknessM, integratedHandles, cutaway, production, layers]);
+    /*
+     * Короб по комплекту (HARDWARE-01) знает только пачка ряда — у неё есть
+     * каталог фурнитуры и правила цеха. Есть её коробки — едут они.
+     */
+    return Array.from(byDrawer.entries()).map(([id, own]) => {
+      const fromRow = partBoxes?.(id)
+        ?.filter((box) => boxShown(box, layers))
+        .map((box) => ({
+          ...box,
+          position: [box.position[0] - x, box.position[1] - y, box.position[2] - zM] as [number, number, number],
+        }));
+      return [id, fromRow && fromRow.length > 0 ? fromRow : own] as [string, PartBox[]];
+    });
+  }, [unit, heightM, depthM, thicknessM, gapM, frontThicknessM, integratedHandles, cutaway, production, layers, partBoxes, x, y, zM]);
 
   return (
     <group position={[x, y, zM]}>
@@ -236,6 +265,26 @@ export default function CabinetModule3D({
         if (!layers.fronts) return null;
         const look = lookOf(leaf.id);
         if (leaf.kind === 'drawer') {
+          /*
+           * КОРОБ ПО КОМПЛЕКТУ (HARDWARE-01): выезжают детали раскроя и
+           * ходовая половина направляющей — те же коробки, что в пачке.
+           * Условный короб `InteractiveDrawer` здесь показал бы другую мебель.
+           */
+          const kit = localBoxesOf(leaf.id);
+          if (kit && kit.some((box) => box.node === 'runner' || box.panel === DRAWER_SIDE_PANEL_NAME)) {
+            return (
+              <InteractiveBayDrawer
+                key={leaf.id}
+                id={leaf.id}
+                open={isOpen(leaf.id)}
+                onToggle={onToggle}
+                boxes={kit}
+                parts={parts}
+                frontMaterial={look?.material ?? frontMaterial}
+                onActive={onActive}
+              />
+            );
+          }
           return (
             <InteractiveDrawer
               key={leaf.id}
@@ -261,6 +310,23 @@ export default function CabinetModule3D({
           );
         }
         if (cutaway) return null;
+        if (leaf.kind === 'pullout') {
+          /* Карго: фасад и корзины — коробки пачки ряда, едут вперёд вместе. */
+          const moving = localBoxesOf(leaf.id);
+          if (!moving || moving.length === 0) return null;
+          return (
+            <InteractiveBayDrawer
+              key={leaf.id}
+              id={leaf.id}
+              open={isOpen(leaf.id)}
+              onToggle={onToggle}
+              boxes={moving}
+              parts={parts}
+              frontMaterial={look?.material ?? frontMaterial}
+              onActive={onActive}
+            />
+          );
+        }
         if (leaf.kind === 'bifold') {
           return (
             <InteractiveBifold
@@ -301,6 +367,7 @@ export default function CabinetModule3D({
             frontMaterial={look?.material ?? frontMaterial}
             relief={look?.relief}
             reliefOrient={gripOrient(look?.relief, leaf.opening, isUpperRow(unit))}
+            riders={localBoxesOf(leaf.id)?.filter((box) => box.material === 'metal' && (box.node === 'hinge' || box.node === 'lift'))}
           />
         );
       })}

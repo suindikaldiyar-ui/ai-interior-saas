@@ -73,6 +73,8 @@ import type { Run } from '@/types/millwork';
 import type { SceneView } from '@/lib/cameraFraming';
 import type { OrthoProjection } from './SceneCamera';
 import { useInteriorStore } from '@/store/useInteriorStore';
+import { hardwareCatalog } from '@/lib/millwork/hardware';
+import type { HardwareItem } from '@/types/catalog';
 
 /**
  * САПР-ВИД, А НЕ ФОТОРЕАЛИЗМ.
@@ -445,7 +447,7 @@ export default function CadScene({
         */}
       {roomWorld && <RoomScene room={roomWorld} />}
 
-      <RunEdges rows={rows} inside={frame} layers={layers} />
+      <RunEdges rows={rows} inside={frame} layers={layers} production={production} />
 
       <ShadowSync rows={rows} room={roomWorld} inside={frame} layers={layers} />
 
@@ -1620,6 +1622,10 @@ function rowCorners(
   layers: SceneLayers = ALL_LAYERS,
   /** Открытые детали (P3D-MDF): у створки на ходу контура закрытого положения нет. */
   open: ReadonlySet<string> = NO_OPEN,
+  /** Фурнитура организации (HARDWARE-01): рёбра короба ящика — по тем же коробкам, что сетка. */
+  hardware?: Map<string, HardwareItem>,
+  /** Школа цеха экрана: короб ящика в рёбрах — тот же, что в сетке и в раскрое. */
+  production?: ProductionSettings,
 ): [number, number, number][] {
   const points: [number, number, number][] = [];
 
@@ -1628,6 +1634,8 @@ function rowCorners(
         thicknessMm: 16,
         frontThicknessMm: 18,
         gapMm: 3,
+        hardware,
+        ...(production ? { production } : {}),
       }).filter((box) => (inside || !box.inside) && boxShown(box, layers) && !(box.part && open.has(box.part)));
 
       const place = rowPlacement(row);
@@ -1673,7 +1681,17 @@ const RUN_EDGES_NAME = 'run-edges';
 /** Пустой набор открытых деталей: габарит мебели и пересечения меряются по закрытой. */
 const NO_OPEN: ReadonlySet<string> = new Set();
 
-function RunEdges({ rows, inside, layers }: { rows: SceneRow[]; inside: boolean; layers: SceneLayers }) {
+function RunEdges({
+  rows,
+  inside,
+  layers,
+  production,
+}: {
+  rows: SceneRow[];
+  inside: boolean;
+  layers: SceneLayers;
+  production?: ProductionSettings;
+}) {
   /*
    * ОТКРЫТАЯ СТВОРКА — БЕЗ КОНТУРА ЗАКРЫТОГО ПОЛОЖЕНИЯ (P3D-MDF).
    *
@@ -1684,9 +1702,11 @@ function RunEdges({ rows, inside, layers }: { rows: SceneRow[]; inside: boolean;
    */
   const openParts = useInteriorStore((state) => state.openParts);
   const open = useMemo(() => new Set(openParts), [openParts]);
+  const catalog = useInteriorStore((state) => state.catalog);
+  const hardware = useMemo(() => hardwareCatalog(catalog), [catalog]);
   const geometry = useMemo(() => {
     const points: number[] = [];
-    const corners = rowCorners(rows, inside, layers, open);
+    const corners = rowCorners(rows, inside, layers, open, hardware, production);
 
     // Двенадцать рёбер на каждые восемь вершин коробки.
     const edges: [number, number][] = [
@@ -1705,7 +1725,7 @@ function RunEdges({ rows, inside, layers }: { rows: SceneRow[]; inside: boolean;
     buffer.setAttribute('position', new THREE.BufferAttribute(new Float32Array(points), 3));
     buffer.computeBoundingSphere();
     return buffer;
-  }, [rows, inside, layers, open]);
+  }, [rows, inside, layers, open, hardware, production]);
 
   return (
     /*

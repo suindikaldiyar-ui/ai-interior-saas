@@ -21321,6 +21321,24 @@ console.log('\nСлой 55: угол Г и П — владелец, места, 
                           options,
                           s,
                         ).map((box) => worldBox(places[me], box.center, box.size, { yaw: box.yaw, pitch: box.pitch }, `${leaf.id}:${box.role}`))
+                      : leaf.kind === 'pullout'
+                        ? /* Карго выдвигается (HARDWARE-01): фасад и всё, что едет с ним, — коробки пачки, вперёд на ход ящика. */
+                          moduleBoxes(
+                            entry.unit,
+                            { x: entry.x, y: entry.y, heightM: entry.heightM, depthM: entry.depthM, thicknessM: production.carcassMm / 1000, zM: entry.zM },
+                            { ...options, cutaway: false },
+                            run.production,
+                          )
+                            .filter((box) => box.part === leaf.id)
+                            .map((box) =>
+                              worldBox(
+                                places[me],
+                                [box.position[0], box.position[1], box.position[2] + DRAWER_TRAVEL_M * s],
+                                box.scale as V3,
+                                {},
+                                `${leaf.id}:${box.panel ?? box.node ?? box.material}`,
+                              ),
+                            )
                       : drawerBoxes(
                           entry.unit,
                           { x: entry.x, y: entry.y, heightM: entry.heightM, depthM: entry.depthM, thicknessM: production.carcassMm / 1000, zM: entry.zM },

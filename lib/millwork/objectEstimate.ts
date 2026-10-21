@@ -13,7 +13,8 @@ import type {
   VariantKey,
   ApplianceKind,
 } from '@/types/millwork';
-import type { CatalogEntryFull, ProductionSettings } from '@/types/catalog';
+import type { CatalogEntryFull, HardwareItem, ProductionSettings } from '@/types/catalog';
+import { hardwareCatalog } from './hardware';
 import { resolveSurvey, type SurveyResolution } from '@/types/survey';
 import type { MillworkState } from '@/lib/projects';
 import { buildEstimate, type RateTable } from './estimate';
@@ -212,6 +213,8 @@ export function objectInput(args: {
    * Угол стены А в композиции (`wallCornerOf`, слой 55). Пусто — прямая.
    */
   corner?: RunCorner;
+  /** Фурнитура организации (HARDWARE-01). */
+  hardware?: Map<string, HardwareItem>;
 }): WorkspaceInput {
   const { base, resolution } = args;
   const corner = args.corner ? { corner: args.corner } : {};
@@ -239,6 +242,7 @@ export function objectInput(args: {
       carcass: args.carcass,
       materials: args.materials,
       frozen: args.frozen,
+      ...(args.hardware ? { hardware: args.hardware } : {}),
     };
   }
 
@@ -255,6 +259,7 @@ export function objectInput(args: {
     carcass: args.carcass,
     materials: args.materials,
     frozen: args.frozen,
+    ...(args.hardware ? { hardware: args.hardware } : {}),
   });
 
   // Пока стены не введены, ряд брать неоткуда — держим габарит объекта.
@@ -453,7 +458,7 @@ export function objectEstimateOf(args: {
   segments: Run[];
   wallAEstimate: Estimate;
   variantKey: VariantKey;
-  input: Pick<WorkspaceInput, 'rates' | 'production' | 'milling' | 'carcass' | 'materials' | 'frozen'>;
+  input: Pick<WorkspaceInput, 'rates' | 'production' | 'milling' | 'carcass' | 'materials' | 'frozen' | 'hardware'>;
   disabled: Record<VariantKey, string[]>;
 }): Estimate {
   const { layout, segments, wallAEstimate, variantKey, input, disabled } = args;
@@ -470,7 +475,7 @@ export function objectEstimateOf(args: {
             disabled[variantKey],
             undefined,
             input.production,
-            undefined,
+            input.hardware,
             input.milling,
             input.carcass,
             input.materials,
@@ -560,6 +565,8 @@ export function projectOffer(args: {
     materials: materialCatalog(catalog),
     frozen: snapshot && Object.keys(snapshot).length > 0 ? snapshot : undefined,
     corner: wallCornerOf(layout),
+    /* Фурнитура организации — та же, что считает экран (HARDWARE-01). */
+    hardware: hardwareCatalog(catalog),
   });
 
   const disabled: Record<VariantKey, string[]> = {

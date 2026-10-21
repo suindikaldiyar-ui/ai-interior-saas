@@ -2,6 +2,7 @@
 
 import type { Panel } from '@/types/millwork';
 import { edgeSides, type EdgeSide } from '@/lib/millwork/panels';
+import type { PanelDrillingLine } from '@/lib/millwork/drilling';
 
 /**
  * КАРТОЧКА ДЕТАЛИ: как деталь вышла из листа.
@@ -29,6 +30,12 @@ type Props = {
    * Пока список пуст, деталь честно подписана «присадка не рассчитана».
    */
   holes?: { xMm: number; yMm: number; diameterMm: number }[];
+  /**
+   * ПРИСАДКА ПО ПОЗИЦИЯМ КАТАЛОГА (HARDWARE-01): что известно из паспорта и
+   * чего не хватает (`panelDrilling`). Отверстие рисуется, только когда
+   * известно всё; иначе — DRILLING_NOT_VERIFIED словами.
+   */
+  drilling?: PanelDrillingLine[];
 };
 
 const GRAIN_TITLE: Record<Panel['grain'], string> = {
@@ -44,7 +51,7 @@ const SIDE_TITLE: Record<EdgeSide, string> = {
   bottom: 'нижний',
 };
 
-export default function PartCard({ panel, holes = [] }: Props) {
+export default function PartCard({ panel, holes = [], drilling = [] }: Props) {
   const sides = edgeSides(panel);
   const banded = new Set(sides);
 
@@ -180,8 +187,25 @@ export default function PartCard({ panel, holes = [] }: Props) {
         <dt className="text-graphiteMw">Текстура</dt>
         <dd>{GRAIN_TITLE[panel.grain]}</dd>
         <dt className="text-graphiteMw">Присадка</dt>
-        <dd>{holes.length === 0 ? 'не рассчитана' : `${holes.length} отв.`}</dd>
+        <dd data-part-drilling={drilling.length > 0 ? drilling.map((d) => d.status).join(',') : 'none'}>
+          {holes.length > 0
+            ? `${holes.length} отв.`
+            : drilling.length > 0
+              ? 'DRILLING_NOT_VERIFIED — отверстия не ставятся'
+              : 'не рассчитана'}
+        </dd>
       </dl>
+      {drilling.length > 0 && (
+        <ul className="mt-2 grid gap-1 text-[13px] leading-snug" data-part-drilling-lines={drilling.length}>
+          {drilling.map((d) => (
+            <li key={d.title}>
+              <span className="font-medium">{d.title}</span>
+              {d.known && <span className="block text-graphiteMw">по паспорту: {d.known}</span>}
+              {d.missing.length > 0 && <span className="block text-tape">нет: {d.missing.join('; ')}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

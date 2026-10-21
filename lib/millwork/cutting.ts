@@ -1,4 +1,5 @@
 import { DRAWER_FRONT_PANEL_NAME, edgeSides, panelEdgeMm, type EdgeSide, type ObjectPanel } from './panels';
+import { DRAWER_SIDE_PANEL_NAME } from './drawerBox';
 import { finishParams } from './materialFinishes';
 import { collectionOf } from './materialCollection';
 import { cell, csvFile, type CsvEncoding } from './csv-export';
@@ -243,7 +244,10 @@ export type CuttingPlan = {
   utilization: number;
   /** Кромка по типам — та же формула, что итоги деталировки (`panelEdgeMm`). */
   edges: CutEdgeTotal[];
-  /** Ящиков в деталировке (фронтов ящиков): короба у них в раскрое нет. */
+  /**
+   * Ящиков БЕЗ КОРОБА в деталировке: фронты ящиков минус ящики, у которых
+   * короб рассчитан (HARDWARE-01). Без правил цеха и направляющей — все ящики.
+   */
   drawers: number;
   /** Выпуск в цех: открыт или заперт — и почему, словами. */
   release: { ok: boolean; reasons: string[] };
@@ -571,6 +575,23 @@ export function drawerCount(parts: Pick<Panel, 'name' | 'qty'>[]): number {
     .reduce((sum, part) => sum + part.qty, 0);
 }
 
+/**
+ * У СКОЛЬКИХ ЯЩИКОВ КОРОБ В ДЕТАЛИРОВКЕ (HARDWARE-01) — по ИД боковин
+ * короба: `<ящик>:box:side:<n>`. Ящик считается по детали, которую режут,
+ * а не по флагу «короб есть»: флаг без деталей — это фронт без короба.
+ */
+export function boxedDrawerCount(parts: Pick<Panel, 'name' | 'partIds'>[]): number {
+  const keys = new Set<string>();
+  for (const part of parts) {
+    if (part.name !== DRAWER_SIDE_PANEL_NAME) continue;
+    for (const id of part.partIds ?? []) {
+      const at = id.lastIndexOf(':box:side:');
+      if (at > 0) keys.add(id.slice(0, at));
+    }
+  }
+  return keys.size;
+}
+
 const EDGE_LABEL: Record<Panel['edgeType'], string> = {
   '2': 'кромка 2 мм',
   '1': 'кромка 1 мм',
@@ -617,8 +638,15 @@ export function cuttingPlan(input: {
   decors?: Map<string, DecorInfo>;
   exportLock?: string | null;
   fingerprint: string;
+  /**
+   * КОРОБА ПО ПРАВИЛАМ, НЕ ПОДТВЕРЖДЁННЫМ ЦЕХОМ (HARDWARE-01): сколько
+   * ящиков с рассчитанным коробом, у которых правила короба не подтверждены
+   * или паспорт направляющей неполный (`drawerDrafts`). Короб в раскрое
+   * есть, но цех распилит его по числам, которых сам не подтверждал.
+   */
+  drawerBoxUnconfirmed?: number;
 }): CuttingPlan {
-  const { parts, settings, decors = new Map(), exportLock = null, fingerprint } = input;
+  const { parts, settings, decors = new Map(), exportLock = null, fingerprint, drawerBoxUnconfirmed = 0 } = input;
   const kerf = Math.round(settings.kerfMm * U);
   const trim = Math.round(settings.trimMm * U);
   const minRemnant = settings.minRemnantMm * U;
@@ -839,7 +867,17 @@ export function cuttingPlan(input: {
 
   errors.push(...cuttingErrors({ groups, sheets, parts, settings }));
 
-  const drawers = drawerCount(parts);
+  /* Ящики без короба: фронты есть, а короба в раскрое нет (ловушка 578). */
+  const drawerFronts = drawerCount(parts);
+  const boxed = boxedDrawerCount(parts);
+  /*
+   * Коробов больше, чем фронтов, — деталировка разошлась сама с собой: это
+   * ошибка проверки, и она запирает выпуск, а не прячется в нуле.
+   */
+  if (boxed > drawerFronts) {
+    errors.push(`коробов ящиков ${boxed}, а фронтов ящиков ${drawerFronts} — деталировка разошлась`);
+  }
+  const drawers = boxed > drawerFronts ? 0 : drawerFronts - boxed;
   const reasons: string[] = [];
   if (exportLock) reasons.push(exportLock);
   const noFormat = groups.filter((group) => !group.format);
@@ -862,6 +900,12 @@ export function cuttingPlan(input: {
     reasons.push(
       `Ящиков ${drawers}: короба в раскрое нет — нет правил короба цеха и подтверждённой направляющей. ` +
         'По этой карте цех распилит фронты без коробов.',
+    );
+  }
+  if (drawerBoxUnconfirmed > 0) {
+    reasons.push(
+      `Короба ящиков (${drawerBoxUnconfirmed} шт.) рассчитаны по правилам короба, не подтверждённым цехом, ` +
+        'или по неполному паспорту направляющей — по такой карте цех распилит короб по числам, которых не подтверждал.',
     );
   }
   if (errors.length > 0) {
