@@ -18,6 +18,7 @@ import { buildVariants } from './variants';
 import { runWithCorner } from './corner';
 import { obstaclesOnRun, runWithObstacles } from './obstacles';
 import { uniqueModuleIds } from './layout';
+import { runInContext } from './runContext';
 
 /**
  * Замер → входные данные конфигуратора.
@@ -356,9 +357,15 @@ export function composeVariants(
      * угловых петель и глухой части. Угол кладётся здесь, и этот же ряд
      * видят сцена и раскрой: стену А `wallSegments` больше не трогает.
      */
+    /*
+     * Отметки цеха и объекта и потолок замера — живые, как угол и
+     * препятствия (STAGE 01, `runInContext`): снимок с минуты правки
+     * держал размеры, которые человек уже поменял.
+     */
+    const live = runInContext(saved, { production: input.production, ceilingHeightMm: input.ceilingHeightMm }).run;
     const edited = runWithObstacles(
       /* Сохранённый ряд с дублем ключа чинится на показе (P0, `uniqueModuleIds`). */
-      runWithCorner(uniqueModuleIds(saved), input.corner),
+      runWithCorner(uniqueModuleIds(live), input.corner),
       /* Препятствия стены — из замера, как угол — из композиции (слой 56). */
       obstaclesOnRun(input.openings, saved.lengthMm),
     );

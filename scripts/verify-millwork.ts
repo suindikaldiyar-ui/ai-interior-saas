@@ -110,6 +110,7 @@ import {
 } from '../lib/millwork/panels';
 import { panelsCsvFile, panelsToCsv } from '../lib/millwork/csv-export';
 import { cuttingChecks } from './verify-cutting';
+import { stage01Checks } from './verify-stage01';
 import { runFingerprint } from '../lib/millwork/fingerprint';
 import { surfaceFinish, surfaceLook } from '../lib/millwork/surfaces';
 import { GROUP_ORDER, estimateGroups, groupsTotal } from '../lib/millwork/estimateGroups';
@@ -28662,6 +28663,9 @@ import { milledGrip as kiraMilledGrip } from '../lib/millwork/opening';
 
 /* ═══════════  CUT-01: карта раскроя — детали деталировки на листах цеха  ═══════════ */
 cuttingChecks(check);
+
+/* ═══════════  STAGE 01: размеры правленого ряда, антресоль в каждой зоне, своя глубина  ═══════════ */
+stage01Checks(check);
 
 Promise.allSettled(asyncChecks).then((results) => {
   for (const result of results) {

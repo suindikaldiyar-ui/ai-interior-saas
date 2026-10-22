@@ -21,6 +21,7 @@ import { buildEstimate, type RateTable } from './estimate';
 import { segmentCount, tryBuildComposition, type CompositionAttempt } from './composition';
 import { choiceFromSolution, runWithCorner } from './corner';
 import { runWithObstacles } from './obstacles';
+import { runInContext } from './runContext';
 import { compositionOf, compositionWalls, mergeEstimates, wallLabel, type SelectedWall } from './walls';
 import type { PanelWall } from './panels';
 import { onWall, uniqueModuleIds } from './layout';
@@ -416,7 +417,17 @@ export function wallSegments(
   function wallRun(segment: Composition['segments'][number], i: number): Run {
     const saved = wallEditOf(editedWalls, segment.wallId, i);
     if (!saved) return segment.run;
+    /*
+     * Отметки цеха и объекта и потолок — у ряда композиции этой стены: он
+     * собран сейчас, на живом замере и живых отметках (STAGE 01).
+     */
+    return runInContext(stamped(saved, segment), {
+      production: segment.run.production,
+      ceilingHeightMm: segment.run.ceilingHeightMm,
+    }).run;
+  }
 
+  function stamped(saved: Run, segment: Composition['segments'][number]): Run {
     /*
      * РЯД ИЗ СОХРАНЕНИЯ ПОЛУЧАЕТ ИДЕНТИЧНОСТЬ СВОЕЙ СТЕНЫ.
      *

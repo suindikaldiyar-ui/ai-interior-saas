@@ -14,7 +14,6 @@ import {
   upperBottomMm,
   workTopMm,
 } from '@/lib/millwork/shop';
-import { sectionSpec } from '@/lib/millwork/sections';
 import { runPlaces } from '@/lib/millwork/cabinetBoxes';
 import { bayEnvelope, bayLayout, type BayLayout } from '@/lib/millwork/bays';
 import { countertopSlabs, plinthSpans } from '@/lib/millwork/countertop';
@@ -1073,21 +1072,19 @@ export default function ElevationDrawing({
     });
   }, [gaps, run, onSelectGap, compact, placeOf, workTop, upperTop, upperBottom]);
 
-  /** Верх и низ модуля секционной зоны: у каждой секции своя высота. */
-  const sectionBounds = (unit: Module, isUpper: boolean): { top: number; bottom: number } => {
-    const spec = unit.section ? sectionSpec(unit.section) : null;
-
-    // Антресоль и подвесные модули висят, остальное стоит на цоколе.
-    if (isUpper || spec?.moduleKind === 'upper') {
-      const height = spec?.heightMm || GEOMETRY.upper.carcassH;
-      return { top: zoneTop, bottom: Math.max(0, zoneTop - height) };
-    }
-
-    if (spec && spec.heightMm > 0 && spec.moduleKind === 'base') {
-      return { top: spec.heightMm, bottom: plinthMm(run.production) };
-    }
-
-    return { top: zoneTop, bottom: plinthMm(run.production) };
+  /*
+   * ВЕРХ И НИЗ МОДУЛЯ СЕКЦИОННОЙ ЗОНЫ — ПО `runPlaces` (STAGE 01).
+   *
+   * Здесь стояла своя формула: антресоль — высотой из справочника секций,
+   * шкаф — до верха зоны, комод — до высоты секции без цоколя. На чертеже
+   * антресоль была 500 при любой выбранной высоте, шкаф под ней шёл до
+   * потолка — сквозь неё, а комод кончался на 800 при корпусе до 900. Сцена
+   * и раскрой стоят по `runPlaces`; чертёж спрашивает её же.
+   */
+  const sectionBounds = (unit: Module): { top: number; bottom: number } => {
+    const placed = placeOf.get(unit.id);
+    if (!placed) throw new Error(`Чертёж: модуля ${unit.id} нет в раскладке ряда`);
+    return { top: placed.topMm, bottom: placed.bottomMm };
   };
 
   /**
@@ -1199,7 +1196,7 @@ export default function ElevationDrawing({
         const isUpper = list !== run.modules;
         const placed = isUpper ? placeOf.get(left.id) : undefined;
         const bounds = sectionZone
-          ? sectionBounds(left, isUpper)
+          ? sectionBounds(left)
           : placed
             ? { top: placed.topMm, bottom: placed.bottomMm }
             : { top: isUpper ? upperTop : workTop, bottom: isUpper ? upperBottom : 0 };
@@ -1411,7 +1408,7 @@ export default function ElevationDrawing({
      */
     const placed = isUpper ? placeOf.get(unit.id) : undefined;
     const bounds = sectionZone
-      ? sectionBounds(unit, isUpper)
+      ? sectionBounds(unit)
       : placed
         ? { top: placed.topMm, bottom: placed.bottomMm }
         : { top: isUpper ? upperTop : workTop, bottom: isUpper ? upperBottom : 0 };

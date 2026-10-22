@@ -6,6 +6,7 @@ import { MIN_WIDTH, SINGLE_DOOR_MAX_MM, isUpperRow, standsOnFloor } from './modu
 import { rowSpansOfRun } from './layout';
 import { runPlaces, sceneLeaves, type SceneLeaf } from './cabinetBoxes';
 import { leavesForFront } from './moduleVariants';
+import { runInContext, type ContextLoss, type RunContext } from './runContext';
 import type {
   Composition,
   CornerChoice,
@@ -226,6 +227,13 @@ export type WallMismatch = {
   /** Роль стены в углах, когда ряд правили, — и сейчас. */
   cornerBefore?: RunCorner;
   cornerNow?: RunCorner;
+  /**
+   * НАПОЛНЕНИЕ НЕ ВСТАЁТ В НОВУЮ ВЫСОТУ КОРПУСА (STAGE 01): школа цеха или
+   * потолок замера сменились, когда ряд уже правили руками, и полки, штанга,
+   * ящики или отсеки, поставленные под прежнюю высоту, не встают. Каждая
+   * строка — модуль и что именно (`runInContext`).
+   */
+  heights?: ContextLoss[];
 };
 
 /** Створка шире предела — числами, из которых строятся слова. */
@@ -518,6 +526,13 @@ export function leafRefusalText(refusal: LeafRefusal): string {
  * не поймёт, чем это ему грозит.
  */
 export function wallMismatchMessage(mismatch: WallMismatch): string {
+  if (mismatch.heights?.length) {
+    return (
+      `${mismatch.label}: ${mismatch.heights.map((loss) => loss.words).join('; ')} — высота корпуса сменилась после ` +
+      'правки (школа цеха, отметки объекта или потолок замера), а наполнение ставили под прежнюю. Поправьте его ' +
+      'у этих модулей или пересоберите стену — правки по ней придётся сделать заново.'
+    );
+  }
   const leaves = (mismatch.leaves ?? []).map(leafRefusalText);
   if (mismatch.corner?.length) {
     const text = [...mismatch.corner, ...leaves].join('; ');
@@ -586,8 +601,40 @@ export function obstacleMismatches(input: {
   return found;
 }
 
+/**
+ * ПРАВЛЕНЫЕ РЯДЫ, ЧЬЁ НАПОЛНЕНИЕ НЕ ВСТАЛО В НОВУЮ ВЫСОТУ (STAGE 01).
+ *
+ * Отметки объекта экран проверяет до записи (`contextChange`), поэтому
+ * отсюда приходит то, что сменилось ВНЕ экрана: школа цеха организации или
+ * потолок в замере. Ряд по шаблону собирается заново, и такого у него нет.
+ * Стена, у которой уже есть расхождение длины или препятствие, второй
+ * строкой не идёт — «Пересобрать» снимает всё.
+ */
+export function contextMismatches(input: {
+  count: number;
+  /** Сохранённая правка стены — та же, что кладёт на показ `runInContext`. */
+  saved: (index: number) => Run | undefined;
+  /** Окружение стены сейчас: отметки и потолок. */
+  live: (index: number) => RunContext;
+  skip?: number[];
+}): WallMismatch[] {
+  const found: WallMismatch[] = [];
+  for (let index = 0; index < input.count; index += 1) {
+    if (input.skip?.includes(index)) continue;
+    const saved = input.saved(index);
+    if (!saved) continue;
+    const { losses } = runInContext(saved, input.live(index));
+    if (losses.length === 0) continue;
+    found.push({ index, label: wallLabel(index), runLengthMm: saved.lengthMm, usableMm: saved.lengthMm, heights: losses });
+  }
+  return found;
+}
+
 /** Почему цены нет — у расхождения длины и у мебели в препятствии слова разные. */
 export function mismatchPriceText(mismatch: WallMismatch): string {
+  if (mismatch.heights?.length) {
+    return `Цены нет: ${mismatch.label}: наполнение правленых модулей не встаёт в новую высоту корпуса.`;
+  }
   if (mismatch.corner?.length) {
     return `Цены нет: ${mismatch.label}: раскладка угла не совпадает с новой ролью стены.`;
   }

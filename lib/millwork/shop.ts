@@ -91,6 +91,12 @@ export function productionFor(
 ): ProductionSettings {
   const base = shopOf(org);
   if (!own) return base;
+  /*
+   * Свои глубины — ещё и отдельно: в зоне из секций глубину задаёт профиль
+   * зоны, а не `depths` кухонной школы, и сильнее профиля только то, что
+   * ввели на объекте (`rowStandardDepthMm`). Пустое не пишется.
+   */
+  const ownDepths = own.depths && Object.keys(own.depths).length > 0 ? { ownDepths: { ...own.depths } } : {};
 
   return {
     ...base,
@@ -105,6 +111,7 @@ export function productionFor(
       upperMm: own.depths?.upperMm ?? base.depths.upperMm,
       mezzanineMm: own.depths?.mezzanineMm ?? base.depths.mezzanineMm,
     },
+    ...ownDepths,
   };
 }
 

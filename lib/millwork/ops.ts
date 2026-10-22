@@ -12,7 +12,7 @@ import {
   isStandardWidth,
   snapToStandard,
 } from './modules';
-import { rowSpansOfRun, upperSpansOfRun, buildUpperRow, fillGap, moduleId, onWall, uniqueModuleIds } from './layout';
+import { rowSpansOfRun, upperSpansOfRun, buildUpperRow, fillGap, moduleId, onWall, sectionMezzanineBand, uniqueModuleIds } from './layout';
 import { blindPartMm, blindVariantRefusal, cornerDoorHinge, cornerGeometry, upperBoundsOf } from './corner';
 import { counterTailsOf } from './countertop';
 import { obstaclesInBand, rowBandMm, wallObstacles, type WallObstacle } from './obstacles';
@@ -33,8 +33,9 @@ import {
   mezzanineBaseOf,
   mezzanineBlockedByBeam,
   overheadBaseOf,
+  shelfAboveRoof,
 } from './fill';
-import { zoneHeightMm } from './zones';
+import { mezzanineOf, zoneHeightMm, zoneProfile } from './zones';
 import { isMechanism, openingRejection } from './opening';
 import { frontConflict, frontOf, leafTitle } from './frontMaterial';
 import { reliefParamRefusal } from './facadeRelief';
@@ -220,8 +221,7 @@ function overheadFillLoss(before: Module, after: Module, shell: Run, heightMm: n
   if (!fill) return [];
   const out: string[] = [];
   const roof = heightMm - t;
-  /* Полка стоит центром на своей отметке: её верх — отметка плюс половина толщины. */
-  const shelves = fill.shelves.filter((mm) => mm + t / 2 > roof);
+  const shelves = fill.shelves.filter((mm) => shelfAboveRoof(mm, roof, t));
   if (shelves.length > 0) {
     out.push(`${shelves.length === 1 ? 'полка' : 'полки'} на ${shelves.join(', ')} мм выше новой крыши ${roof} мм`);
   }
@@ -845,6 +845,23 @@ export function applyOps({
      */
     if (edge === run.lengthMm || baseObstacles.some((obstacle) => obstacle.from === edge)) {
       let x = edge - deltaMm;
+      /*
+       * ХВОСТ УЖЕ САМОГО УЗКОГО КОРПУСА — ДОБОРНАЯ ПЛАНКА (STAGE 01), как у
+       * раскладки (`buildRun`). Здесь вставал обычный модуль любой ширины:
+       * сужение на 50 мм ставило у стены «Дверцу» 50 мм — две боковины
+       * 720 × 560, дно 18 × 560, фасад 716 × 42 на петлях. Такого шкафа не
+       * бывает, а раскрой его резал. Соседа не подращиваем, в отличие от
+       * раскладки: правка человека не расширяет модуль, которого он не трогал.
+       */
+      if (deltaMm < MIN_WIDTH) {
+        modules.push({
+          ...makePlainModule('filler', deltaMm, run.wallId),
+          isFiller: true,
+          label: 'Доборная планка',
+          offsetMm: x,
+        });
+        return;
+      }
       for (const widthMm of fillGap(deltaMm)) {
         modules.push({ ...makePlainModule('base', widthMm, run.wallId), offsetMm: x });
         x += widthMm;
@@ -3198,17 +3215,59 @@ export function applyOps({
         }
 
         /*
-         * Антресоль садится НА верхний ряд, и вдвоём они обязаны влезть
-         * между отметкой навески и потолком. Иначе это не антресоль, а
-         * шкаф, задавивший тот, на котором стоит.
+         * ГДЕ АНТРЕСОЛЬ БЫВАЕТ — РЕШАЕТ ПРОФИЛЬ ЗОНЫ (STAGE 01).
+         *
+         * Операция принималась в любой зоне. В зале и санузле она писала
+         * `run.mezzanine` без единого модуля и без слов — скрытое состояние,
+         * которое не видно и не выбрать. Профиль — тот же источник, что
+         * решает состав зоны (ловушка 145): на кухне антресоль садится на
+         * верхний ряд, в шкафу спальни и прихожей — полосой над шкафом.
          */
-        const room = run.ceilingHeightMm - upperBottomMm(run.production);
-        if (wanted + GEOMETRY.upper.carcassH > room) {
+        const place = mezzanineOf(zone);
+        if (place === null) {
+          const { locative } = zoneProfile(zone);
+          const where = locative.charAt(0).toUpperCase() + locative.slice(1);
           warnings.push(
-            `Антресоль ${wanted} мм не встаёт: над верхним рядом остаётся ` +
-              `${room - GEOMETRY.upper.carcassH} мм до потолка.`,
+            `${where} антресоли не бывает — её нет в составе зоны. ` +
+              'Полосой над шкафом её ставят на кухне, в спальне и в прихожей.',
           );
           break;
+        }
+
+        if (place === 'over_cabinet') {
+          /*
+           * ШКАФ ПОД АНТРЕСОЛЬЮ СТАНОВИТСЯ НИЖЕ НА НЕЁ: секции стоят во всю
+           * высоту ряда, а полоса антресоли занимает верх. Секции, у которой
+           * в спецификации есть своя высота (штанга под длинное, две штанги,
+           * вешалка), обязано остаться не меньше неё — иначе пальто не
+           * повесить. Высоту корпуса считает та же `moduleCarcassHeightMm`.
+           */
+          const probe = { ...run, zone, modules, options, mezzanine: { heightMm: wanted } };
+          const short = modules
+            .filter((unit) => unit.section && sectionSpec(unit.section).moduleKind === 'tall' && sectionSpec(unit.section).heightMm > 0)
+            .map((unit) => ({ unit, body: moduleCarcassHeightMm(unit, probe), need: sectionSpec(unit.section!).heightMm }))
+            .filter((item) => item.body < item.need);
+          if (short.length > 0) {
+            const { unit, body, need } = short[0];
+            warnings.push(
+              `Антресоль ${wanted} мм не встаёт: секции «${unit.label}» под ней останется ${body} мм, а ей нужно ${need} мм.`,
+            );
+            break;
+          }
+        } else {
+          /*
+           * Антресоль садится НА верхний ряд, и вдвоём они обязаны влезть
+           * между отметкой навески и потолком. Иначе это не антресоль, а
+           * шкаф, задавивший тот, на котором стоит.
+           */
+          const room = run.ceilingHeightMm - upperBottomMm(run.production);
+          if (wanted + GEOMETRY.upper.carcassH > room) {
+            warnings.push(
+              `Антресоль ${wanted} мм не встаёт: над верхним рядом остаётся ` +
+                `${room - GEOMETRY.upper.carcassH} мм до потолка.`,
+            );
+            break;
+          }
         }
 
         mezzanine = { heightMm: wanted };
@@ -3296,12 +3355,18 @@ export function applyOps({
    * Ригели — часть оболочки ряда наравне с высотой потолка: без них
    * наполнение считается по НЕУРЕЗАННОЙ высоте, и полки под балкой
    * встают не туда, где корпус кончается.
+   *
+   * Школа цеха — тоже (STAGE 01): без неё наполнение считалось по высоте
+   * корпуса по умолчанию (720), а корпус стоит по отметке цеха. У цеха с
+   * боковиной 760 «Фасад: 3 ящика» давал фронты 720 при корпусе 760 —
+   * 40 мм корпуса не закрыто, и в раскрой уходили фронты не того размера.
    */
   const shell = {
     zone,
     ceilingHeightMm: run.ceilingHeightMm,
     options,
     beams: run.beams,
+    production: run.production,
   };
   modules = modules.map((unit, i) => {
     if (!unit.fill) {
@@ -3653,18 +3718,40 @@ export function applyOps({
      */
     /* Антресоль растёт сама только на включение и только по шаблону. */
     const mezzGrows = requirements.mode !== 'free' && !run.mezzanine;
+    /*
+     * ШКАФ, НАД КОТОРЫМ ВЕРХНЕГО РЯДА НЕТ (спальня, прихожая; STAGE 01).
+     *
+     * Модулей верхнего ряда, с которых снять антресоль, тут нет вовсе, и
+     * «Добавить» опускало шкаф на её высоту, не ставя над ним ничего:
+     * секции 2600 → 2200, модулей антресоли 0. Полоса над шкафом — той же
+     * раскладкой, что у шаблона с антресолью (`sectionMezzanineBand`).
+     */
+    const overCabinet = mezzanineOf(zone) === 'over_cabinet';
     const grown =
       mezzModules.length > 0 || !mezzGrows
         ? mezzModules
         : !mezzanine
           ? []
-          : spans.flatMap((segment) =>
-            segment.modules.map((unit) => {
-              const mezz = asMezzanine(unit, nextRun.wallId);
-              const front = kept.get(mezz.id) ?? upperFrontAll ?? unit.front;
-              return front ? { ...mezz, front } : mezz;
-            }),
-            );
+          : overCabinet
+            ? sectionMezzanineBand({
+                lengthMm: nextRun.lengthMm,
+                beams: nextRun.beams ?? [],
+                zone,
+                ceilingHeightMm: nextRun.ceilingHeightMm,
+                heightMm: mezzanine.heightMm,
+              })
+                .flatMap((segment) => onWall(segment.modules, nextRun.wallId))
+                .map((unit) => {
+                  const front = kept.get(unit.id) ?? upperFrontAll;
+                  return front ? { ...unit, front } : unit;
+                })
+            : spans.flatMap((segment) =>
+              segment.modules.map((unit) => {
+                const mezz = asMezzanine(unit, nextRun.wallId);
+                const front = kept.get(mezz.id) ?? upperFrontAll ?? unit.front;
+                return front ? { ...mezz, front } : mezz;
+              }),
+              );
 
     /*
      * РИГЕЛЬ ПРОВЕРЯЕТСЯ И У ДЕРЖАННОГО РЯДА.
@@ -3691,6 +3778,23 @@ export function applyOps({
         `Под выступом на потолке антресоли нет: ${lost} ` +
           `${lost === 1 ? 'модуль убран' : 'модуля убрано'} — её низ выше низа ригеля, ` +
           'и никакая высота её туда не впишет.',
+      );
+    }
+
+    /*
+     * ЗАКАЗАННАЯ АНТРЕСОЛЬ БЕЗ ЕДИНОГО МОДУЛЯ — СЛОВАМИ (STAGE 01).
+     *
+     * «Добавить» прошло, а над рядом ничего: в свободной сборке ряд растёт
+     * только руками (слой 50), на кухне без верхнего ряда садиться не на что.
+     * Молча это читается «кнопка не работает» — и нажимают ещё раз.
+     */
+    if (mezzanine && !run.mezzanine && grown.length === 0) {
+      warnings.push(
+        requirements.mode === 'free'
+          ? 'Антресоль добавлена пустой: в свободной сборке ряд растёт только руками — нажмите на её пустое место на схеме и поставьте модуль из библиотеки.'
+          : overCabinet
+            ? 'Антресоли над шкафом не встать: по всей длине ряда её низ выше низа ригеля.'
+            : 'Антресоль садится на верхний ряд, а его на этой стене нет — модулей антресоли нет. Включите верхний ряд или поставьте антресоль над высоким шкафом.',
       );
     }
 

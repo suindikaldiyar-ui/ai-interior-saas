@@ -141,8 +141,8 @@ export default function StudioInspector({ run, wall, selectedId, gap }: Props) {
           <dd>{frontWords(fronts.leaves.length, fronts.drawers.length)}</dd>
           <dd className="col-span-2 mt-1 text-[12px] leading-snug text-graphiteMw">
             Ширину правят полем «Ширина, мм» ниже или ручкой на схеме. Высоту и глубину задают
-            отметки объекта (вкладка «Размеры»): у отдельного модуля они пока не правятся —
-            иначе раскрой и смета разошлись бы с тем, что нарисовано.
+            отметки объекта («Конструкция» → «Отметки объекта»): у отдельного модуля они пока не
+            правятся — иначе раскрой и смета разошлись бы с тем, что нарисовано.
           </dd>
         </dl>
       ) : gap ? (

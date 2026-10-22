@@ -1,6 +1,6 @@
 import { textureUrl } from '@/lib/catalog';
 import type { CatalogCategory, CatalogEntryFull, CatalogUnit, TilingSpec } from '@/types/catalog';
-import type { FrontBase, FrontFinish, FrontSpec, MillworkOp, Module, Run } from '@/types/millwork';
+import type { FrontBase, FrontFinish, FrontSpec, MillworkOp, Module, Run, ZoneKind } from '@/types/millwork';
 import { hasFacade } from './applianceFront';
 import { CARCASS_SCOPES, isAntresol } from './carcassMaterial';
 import { DEFAULT_FRONT, frontConflict, frontOf, leafFrontOf } from './frontMaterial';
@@ -800,6 +800,20 @@ export const TARGET_TITLE: Record<MaterialTarget, string> = {
   leaf: 'Выбранная дверь',
   'module-carcass': 'Корпус выбранного модуля',
 };
+
+/**
+ * ПОДПИСЬ ЦЕЛИ — ПО КОМНАТЕ ОБЪЕКТА (STAGE 01).
+ *
+ * «Фасады всей кухни» и «Корпус всей кухни» ложатся на все стены ЭТОГО
+ * объекта, а объект — одна комната. В спальне подпись называла кухню,
+ * которой здесь нет, и читалась как правка чужой комнаты.
+ */
+export function targetTitle(target: MaterialTarget, zone?: ZoneKind | null): string {
+  if (!zone || zone === 'kitchen') return TARGET_TITLE[target];
+  if (target === 'fronts') return 'Фасады всей комнаты';
+  if (target === 'carcass') return 'Корпус всей комнаты';
+  return TARGET_TITLE[target];
+}
 
 /** Выбранный модуль — это его фасад: корпус модуля красит панель модуля. */
 export const TARGET_ROLE: Record<MaterialTarget, MaterialRole> = {

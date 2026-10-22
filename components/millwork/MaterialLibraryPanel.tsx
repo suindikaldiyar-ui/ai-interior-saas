@@ -8,7 +8,7 @@ import {
   MATERIAL_TARGETS,
   PRICE_UNIT_LABEL,
   TARGET_ROLE,
-  TARGET_TITLE,
+  targetTitle,
   catalogEntriesFromRows,
   collectionOf,
   collectionRateKey,
@@ -32,7 +32,7 @@ import { MATERIAL_FINISHES } from '@/lib/millwork/materialFinishes';
 import { formatMoney } from '@/lib/millwork/estimate';
 import { REFERENCE_SOURCE_TITLE, referenceScaleWords } from '@/lib/millwork/referenceTextures';
 import type { CatalogEntryFull } from '@/types/catalog';
-import type { FrontSpec } from '@/types/millwork';
+import type { FrontSpec, ZoneKind } from '@/types/millwork';
 import MdfFacadeTab from './MdfFacadeTab';
 import type { FacadePatch, FacadeTarget } from '@/lib/millwork/mdfFacade';
 import type { MillingItem } from '@/lib/millwork/milling';
@@ -54,6 +54,8 @@ export type AppliedMaterial = { itemId: string | null; surface?: string };
 type PricePatch = { price?: number | null; finishPrices?: Record<string, number | null> };
 
 type Props = {
+  /** Комната объекта: подпись цели «вся …» называет её, а не кухню. */
+  zone?: ZoneKind;
   /**
    * Панель на экране. Смонтирована она на всех шагах (шаг — это только
    * то, что показано, ловушка 60), а каталог грузит, лишь когда её видно:
@@ -228,6 +230,7 @@ export default function MaterialLibraryPanel({
   selectedLeaf = null,
   onSelectLeaf,
   facade,
+  zone,
 }: Props) {
   const [defs, setDefs] = useState<MaterialDefs | null>(null);
   const [defsError, setDefsError] = useState<string | null>(null);
@@ -552,7 +555,7 @@ export default function MaterialLibraryPanel({
                 }}
                 className={`mw-btn ${target === key ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
               >
-                {TARGET_TITLE[key]}
+                {targetTitle(key, zone)}
               </button>
             ))}
           </div>

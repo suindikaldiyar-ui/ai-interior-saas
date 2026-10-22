@@ -328,6 +328,8 @@ export type ZoneOptions = {
   countertop: boolean;
   /** Витрина с подсветкой как отдельная опция ряда. */
   glassDisplay: boolean;
+  /** «Добавить антресоль» полосой над шкафом (`mezzanineOf`). */
+  mezzanineOverCabinet: boolean;
 };
 
 export function zoneOptions(zone: ZoneKind | undefined | null): ZoneOptions {
@@ -341,5 +343,24 @@ export function zoneOptions(zone: ZoneKind | undefined | null): ZoneOptions {
     countertop: profile.hasCountertop,
     // В остальных зонах витрина — это секция состава, а не опция ряда.
     glassDisplay: kitchen,
+    // Антресоль над шкафом — где верхнего ряда нет, а в составе она есть.
+    mezzanineOverCabinet: mezzanineOf(zone) === 'over_cabinet',
   };
+}
+
+/**
+ * ГДЕ В ЗОНЕ БЫВАЕТ АНТРЕСОЛЬ — ОДИН ОТВЕТ НА ДВИЖОК И ЭКРАН (STAGE 01).
+ *
+ *   over_upper    кухня: садится на верхний ряд;
+ *   over_cabinet  шкаф спальни и прихожей: полоса над шкафом;
+ *   null          в составе зоны её нет — отказ словами.
+ *
+ * `set_mezzanine` спрашивал свой вопрос («есть ли верхний ряд») и в
+ * спальне опускал шкаф, ничего над ним не ставя, а экран — свой («кухня
+ * ли это») и кнопки там не показывал. Два условия — два ответа.
+ */
+export function mezzanineOf(zone: ZoneKind | undefined | null): 'over_upper' | 'over_cabinet' | null {
+  const profile = zoneProfile(zone);
+  if (profile.kind === 'kitchen') return 'over_upper';
+  return profile.sections.includes('mezzanine') ? 'over_cabinet' : null;
 }

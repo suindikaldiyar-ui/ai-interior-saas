@@ -17,6 +17,7 @@ import { freeSpaceMm } from '@/lib/millwork/layout';
 import { widestGapMm } from '@/lib/millwork/freeRun';
 import { variantsToAdd } from '@/lib/millwork/moduleVariants';
 import { DEFAULT_MEZZANINE_MM, SECTION_SPECS } from '@/lib/millwork/sections';
+import { hasMezzanine, mezzanineHeightMm } from '@/lib/millwork/fill';
 import {
   zoneAppliances,
   zoneOptions,
@@ -271,6 +272,73 @@ export default function RunEditor({
   const options = zoneOptions(zone);
 
   /*
+   * АНТРЕСОЛЬ — ОТДЕЛЬНАЯ ПОЗИЦИЯ, А НЕ СВОЙСТВО ВЕРХНЕГО РЯДА.
+   *
+   * Мебельщик продаёт её отдельной строкой: своя высота, свой
+   * материал, своя цена. Пока она была признаком ряда, ни
+   * снять её отдельно, ни покрасить было нельзя.
+   *
+   * Блок один на кухню (на верхнем ряду) и на шкаф спальни и прихожей
+   * (полосой над шкафом, STAGE 01). «Есть ли антресоль» спрашивает та же
+   * `hasMezzanine`, по которой шкаф под ней становится ниже, — в том числе
+   * полоса из шаблона «с антресолью», у которой своей высоты не задано.
+   */
+  const mezzanineOn = hasMezzanine(run);
+  const mezzanineBlock = (
+    <div className="mt-2" data-mezzanine>
+      <span className="mw-label">Антресоль</span>
+      <div className="mt-1 flex flex-wrap items-center gap-1">
+        <button
+          type="button"
+          data-mezzanine-toggle
+          aria-pressed={mezzanineOn}
+          onClick={() =>
+            onOps([
+              {
+                op: 'set_mezzanine',
+                heightMm: mezzanineOn ? null : DEFAULT_MEZZANINE_MM,
+              },
+            ])
+          }
+          className={`mw-btn ${mezzanineOn ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+        >
+          {mezzanineOn ? 'Убрать' : 'Добавить'}
+        </button>
+
+        {mezzanineOn && (
+          <label className="flex items-center gap-1 text-[13px]">
+            Высота
+            <input
+              type="number"
+              inputMode="numeric"
+              data-mezzanine-height
+              key={mezzanineHeightMm(run)}
+              defaultValue={mezzanineHeightMm(run)}
+              onBlur={(event) => {
+                const raw = Number(event.target.value);
+                if (Number.isFinite(raw) && raw > 0) {
+                  onOps([{ op: 'set_mezzanine', heightMm: Math.round(raw) }]);
+                }
+                /*
+                 * Поле показывает то, что в ряду, а не то, что набрали (как
+                 * ширина): отказ — высота прежняя, и поле возвращается к ней;
+                 * приняли — ключ сменится, и поле придёт новым числом.
+                 */
+                event.target.value = String(mezzanineHeightMm(run));
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter')
+                  (event.target as HTMLInputElement).blur();
+              }}
+              className="mw-num mw-touch w-[72px] border border-blueprint/40 bg-field px-1.5 text-[13px]"
+            />
+          </label>
+        )}
+      </div>
+    </div>
+  );
+
+  /*
    * Состав зоны: на кухне это приборы, в остальных зонах — секции.
    * Списки берутся из профиля зоны, а не из константы экрана: четыре
    * независимых списка разъехались бы на первой же правке.
@@ -284,7 +352,12 @@ export default function RunEditor({
    * не над плитой — это ошибка монтажа, а не свобода выбора.
    */
   const appliances = APPLIANCE_ORDER.filter((a) => zoneAppliances(zone).includes(a));
-  const sections = profile.sections;
+  /*
+   * Антресоль над шкафом — не «что внутри», а позиция над рядом: у неё свой
+   * блок с высотой (ниже), он идёт операцией и правки ряда не теряет. Чип
+   * секции рядом с ним был бы вторым местом того же выбора (ловушка 257).
+   */
+  const sections = profile.sections.filter((section) => !(options.mezzanineOverCabinet && section === 'mezzanine'));
 
   /*
    * Что считается «прибор выбран». В свободной сборке правда — это ряд:
@@ -374,7 +447,7 @@ export default function RunEditor({
          * фасад выбранного модуля, и разводить их по разным шагам значило
          * бы искать половину состава на другом экране.
          */
-        <div className={`mw-panel mb-3 ${hide(onLayout)}`}>
+        <div className={`mw-panel mb-3 ${hide(onLayout)}`} data-composition>
           {/* Кухня собирается приборами, шкаф — секциями. */}
           {appliances.length > 0 ? (
             <>
@@ -485,58 +558,16 @@ export default function RunEditor({
                 ))}
               </div>
 
-              {/*
-                * АНТРЕСОЛЬ — ОТДЕЛЬНАЯ ПОЗИЦИЯ, А НЕ СВОЙСТВО ВЕРХНЕГО РЯДА.
-                *
-                * Мебельщик продаёт её отдельной строкой: своя высота, свой
-                * материал, своя цена. Пока она была признаком ряда, ни
-                * снять её отдельно, ни покрасить было нельзя.
-                */}
-              <div className="mt-2" data-mezzanine>
-                <span className="mw-label">Антресоль</span>
-                <div className="mt-1 flex flex-wrap items-center gap-1">
-                  <button
-                    type="button"
-                    data-mezzanine-toggle
-                    aria-pressed={Boolean(run.mezzanine)}
-                    onClick={() =>
-                      onOps([
-                        {
-                          op: 'set_mezzanine',
-                          heightMm: run.mezzanine ? null : DEFAULT_MEZZANINE_MM,
-                        },
-                      ])
-                    }
-                    className={`mw-btn ${run.mezzanine ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
-                  >
-                    {run.mezzanine ? 'Убрать' : 'Добавить'}
-                  </button>
-
-                  {run.mezzanine && (
-                    <label className="flex items-center gap-1 text-[13px]">
-                      Высота
-                      <input
-                        type="number"
-                        inputMode="numeric"
-                        data-mezzanine-height
-                        defaultValue={run.mezzanine.heightMm}
-                        onBlur={(event) => {
-                          const raw = Number(event.target.value);
-                          if (!Number.isFinite(raw) || raw <= 0) return;
-                          onOps([{ op: 'set_mezzanine', heightMm: Math.round(raw) }]);
-                        }}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter')
-                            (event.target as HTMLInputElement).blur();
-                        }}
-                        className="mw-num mw-touch w-[72px] border border-blueprint/40 bg-field px-1.5 text-[13px]"
-                      />
-                    </label>
-                  )}
-                </div>
-              </div>
+              {mezzanineBlock}
             </div>
           )}
+
+          {/*
+            * АНТРЕСОЛЬ НАД ШКАФОМ (спальня, прихожая; STAGE 01): тот же блок,
+            * та же операция — полосой над шкафом. Верхнего ряда тут нет, и
+            * блок под «Верхним рядом» здесь не показывался вовсе.
+            */}
+          {options.mezzanineOverCabinet && <div className="mt-3">{mezzanineBlock}</div>}
 
           {/*
             * Купе или распашные — главное решение шкафа и разные деньги:

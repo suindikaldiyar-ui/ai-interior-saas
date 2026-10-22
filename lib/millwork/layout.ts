@@ -50,6 +50,7 @@ import type {
   RunRequirements,
   SectionKind,
   UpperSegment,
+  ZoneKind,
 } from '@/types/millwork';
 
 /** Подписи угловых модулей — одно место на раскладку и на правку угла. */
@@ -834,6 +835,56 @@ function planSections(
   return { kinds, widths };
 }
 
+/**
+ * ПОЛОСА АНТРЕСОЛИ НАД ШКАФОМ ЗОНЫ ИЗ СЕКЦИЙ (шкаф-купе, прихожая).
+ *
+ * Одна раскладка на шаблон с антресолью (`buildSectionRun`) и на «Добавить
+ * антресоль» над уже стоящим шкафом (`set_mezzanine`, STAGE 01): вторая
+ * разошлась бы с первой шириной модулей и разрывами под ригелем.
+ *
+ * Антресоль — сплошной верхний ряд по всей длине. Разрывов под окна здесь
+ * не делаем: шкаф ставят к глухой стене, а если окно есть, его поймает
+ * проверка проёмов. Под ригелем антресоли может не остаться места вовсе:
+ * она идёт верхней полосой, у самого потолка, и выступ съедает её первой.
+ * Разрыв тот же, что у верхнего ряда кухни, — и считает его та же функция.
+ */
+export function sectionMezzanineBand(input: {
+  lengthMm: number;
+  /** Ригели на длине ряда (`beamsOnRun`). */
+  beams: Opening[];
+  zone?: ZoneKind;
+  ceilingHeightMm: number;
+  /** Высота антресоли: у шаблона — из спецификации, у заказанной — своя. */
+  heightMm: number;
+}): UpperSegment[] {
+  const spec = SECTION_SPECS.mezzanine;
+  const mezzanineBottom = Math.max(0, zoneHeightMm(input.zone, input.ceilingHeightMm) - input.heightMm);
+  const blocked = beamBlockedSpans(input.beams, input.ceilingHeightMm, mezzanineBottom);
+  const segments: UpperSegment[] = [];
+
+  for (const span of freeSpans(input.lengthMm, blocked)) {
+    const width = span.to - span.from;
+    if (width < MIN_WIDTH) continue;
+
+    const mezzanine: Module[] = [];
+    let mAt = span.from;
+    for (const piece of fillGap(width)) {
+      const unit = makeModule('upper', Math.min(piece, spec.maxWidthMm), mAt);
+      unit.section = 'mezzanine';
+      unit.label = spec.title;
+      mezzanine.push(unit);
+      mAt += unit.widthMm;
+    }
+    if (mAt < span.to && mezzanine.length > 0) {
+      mezzanine[mezzanine.length - 1].widthMm += span.to - mAt;
+    }
+    if (mezzanine.length > 0) {
+      segments.push({ fromMm: span.from, toMm: span.to, modules: mezzanine });
+    }
+  }
+  return segments;
+}
+
 function buildSectionRun(input: BuildRunInput): Run {
   const { lengthMm, ceilingHeightMm, requirements, openings = [], cornerAt = null } = input;
 
@@ -937,41 +988,15 @@ function buildSectionRun(input: BuildRunInput): Run {
    */
   const upperSegments: UpperSegment[] = [];
   if (hasMezzanine && usable > 0) {
-    const spec = SECTION_SPECS.mezzanine;
-
-    /*
-     * Под ригелем антресоли может не остаться места вовсе: она идёт
-     * верхней полосой, у самого потолка, и выступ съедает её первой.
-     * Разрыв тот же, что у верхнего ряда кухни, — и считает его та же
-     * функция.
-     */
-    const beamsHere = beamsOnRun(openings, usable);
-    const mezzanineBottom = Math.max(
-      0,
-      zoneHeightMm(requirements.zone, ceilingHeightMm) - spec.heightMm,
+    upperSegments.push(
+      ...sectionMezzanineBand({
+        lengthMm: usable,
+        beams: beamsOnRun(openings, usable),
+        zone: requirements.zone,
+        ceilingHeightMm,
+        heightMm: SECTION_SPECS.mezzanine.heightMm,
+      }),
     );
-    const blocked = beamBlockedSpans(beamsHere, ceilingHeightMm, mezzanineBottom);
-
-    for (const span of freeSpans(usable, blocked)) {
-      const width = span.to - span.from;
-      if (width < MIN_WIDTH) continue;
-
-      const mezzanine: Module[] = [];
-      let mAt = span.from;
-      for (const piece of fillGap(width)) {
-        const unit = makeModule('upper', Math.min(piece, spec.maxWidthMm), mAt);
-        unit.section = 'mezzanine';
-        unit.label = spec.title;
-        mezzanine.push(unit);
-        mAt += unit.widthMm;
-      }
-      if (mAt < span.to && mezzanine.length > 0) {
-        mezzanine[mezzanine.length - 1].widthMm += span.to - mAt;
-      }
-      if (mezzanine.length > 0) {
-        upperSegments.push({ fromMm: span.from, toMm: span.to, modules: mezzanine });
-      }
-    }
   }
 
   // Ригели обрезаются по длине ряда и дальше едут с ним: см. кухонную ветку.

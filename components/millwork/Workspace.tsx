@@ -30,12 +30,14 @@ import { facadeOps, leafFrontSizes, moduleLeaves, reliefMisfits, type FacadePatc
 import type { ReliefLeaf } from '@/lib/millwork/facadeRelief';
 import { paletteFromCatalog } from '@/lib/millwork/palette';
 import {
+  contextMismatches,
   lowerWall,
   wallLabel,
   wallMismatches,
   mismatchPriceText,
   obstacleMismatches,
 } from '@/lib/millwork/walls';
+import { contextChange } from '@/lib/millwork/runContext';
 import {
   SHAPE_TITLE,
   runPlacements,
@@ -60,7 +62,7 @@ import {
   type WallEdits,
 } from '@/lib/millwork/objectEstimate';
 import { ratesFromCatalog } from '@/lib/millwork/rates';
-import { rowStandardDepthMm } from '@/lib/millwork/fill';
+import { markShownMm, marksOfZone, rowStandardDepthMm } from '@/lib/millwork/fill';
 import { bayEnvelope, drawerReleaseBlock } from '@/lib/millwork/bays';
 import { hardwareByCategory, hardwareCatalog, lightReferences } from '@/lib/millwork/hardware';
 import { roomSourceOf, type RoomSource } from '@/lib/millwork/room';
@@ -161,11 +163,9 @@ import { snapMove } from '@/lib/millwork/freeRun';
  * арифметики «цоколь плюс боковина» на экране нет.
  */
 import {
-  OBJECT_MARKS,
   cornerSizesOf,
   cuttingOf,
   markOwn,
-  markValue,
   productionFor,
   upperBottomMm,
   withMark,
@@ -1621,8 +1621,31 @@ export default function Workspace(props: WorkspaceProps) {
       edited: wallEdited,
       skip: byLength.map((mismatch) => mismatch.index),
     });
-    return [...byLength, ...byObstacle];
-  }, [layout, segments, wallOpenings, wallEdited, editedRuns, active.key, input.runWallId, editedWalls, requirements]);
+    /*
+     * НАПОЛНЕНИЕ, НЕ ВСТАВШЕЕ В НОВУЮ ВЫСОТУ (STAGE 01): школа цеха или
+     * потолок замера сменились, когда ряд уже правили. Отметки объекта сюда
+     * не приводят — `changeMark` проверяет их до записи. Окружение то же,
+     * что кладёт на показ `runInContext`: стене А — вход экрана, соседним —
+     * ряд композиции их стены.
+     */
+    const byHeights = contextMismatches({
+      count: layout ? layout.segments.length : 1,
+      saved: (index) =>
+        index === 0
+          ? workingWallEdit(editedRuns[active.key], input.runWallId)
+          : layout?.segments[index]
+            ? wallEditOf(editedWalls, layout.segments[index].wallId, index)
+            : undefined,
+      live: (index) => {
+        const segment = index > 0 ? layout?.segments[index] : undefined;
+        return segment
+          ? { production: segment.run.production, ceilingHeightMm: segment.run.ceilingHeightMm }
+          : { production: input.production, ceilingHeightMm: input.ceilingHeightMm };
+      },
+      skip: [...byLength, ...byObstacle].map((mismatch) => mismatch.index),
+    });
+    return [...byLength, ...byObstacle, ...byHeights];
+  }, [layout, segments, wallOpenings, wallEdited, editedRuns, active.key, input.runWallId, input.production, input.ceilingHeightMm, editedWalls, requirements]);
 
   /**
    * КОММУНИКАЦИИ ВЫБРАННОЙ СТЕНЫ.
@@ -2123,15 +2146,44 @@ export default function Workspace(props: WorkspaceProps) {
         return;
       }
 
+      /*
+       * ПРАВЛЕНЫЕ РЯДЫ — ТОЖЕ (STAGE 01). Шаблон выше собирается заново, а
+       * у правленого наполнение выбирал человек под прежнюю высоту: что не
+       * встанет, названо, и отметка не пишется — наполнение молча не
+       * снимается. Окружение то же, что кладёт на показ `runInContext`.
+       */
+      const change = contextChange(
+        (layout ? layout.segments : [null]).flatMap((segment, index) => {
+          const saved =
+            index === 0
+              ? workingWallEdit(editedRuns[active.key], input.runWallId)
+              : segment
+                ? wallEditOf(editedWalls, segment.wallId, index)
+                : undefined;
+          if (!saved) return [];
+          return [{ saved, live: { production: nextProduction, ceilingHeightMm: index > 0 && segment ? segment.run.ceilingHeightMm : input.ceilingHeightMm } }];
+        }),
+      );
+      if (change.losses.length > 0) {
+        const named = change.losses.slice(0, 2).map((loss) => loss.words).join('; ');
+        const more = change.losses.length > 2 ? ` и ещё ${change.losses.length - 2}` : '';
+        setMarksNotice(
+          `${mark.title} ${valueMm ?? ''}: правленое наполнение не встаёт в новую высоту — ${named}${more}. ` +
+            'Отметка не применена: наполнение молча не снимается — поправьте его или пересоберите стену.',
+        );
+        return;
+      }
+      const refitted = change.refitted.length > 0 ? ` Фронты ящиков подогнаны под новую высоту у ${change.refitted.length} мод.` : '';
+
       dirty.current = true;
       setOwnMarks(next);
       setMarksNotice(
         valueMm === null
-          ? `${mark.title}: снова как у цеха — ${markValue(mark, productionFor(props.production, next))} мм. Раскрой и смета пересчитаны.`
-          : `${mark.title}: ${valueMm} мм на этом объекте. Пересчитаны детали, смета, чертёж и сцена.`,
+          ? `${mark.title}: снова как у цеха — ${markShownMm(mark, productionFor(props.production, next), zone)} мм. Раскрой и смета пересчитаны.${refitted}`
+          : `${mark.title}: ${valueMm} мм на этом объекте. Пересчитаны детали, смета, чертёж и сцена.${refitted}`,
       );
     },
-    [ownMarks, props.production, input, ceilingMm, requirements, zone],
+    [ownMarks, props.production, input, ceilingMm, requirements, zone, layout, editedRuns, active.key, editedWalls],
   );
 
   /**
@@ -4425,8 +4477,14 @@ export default function Workspace(props: WorkspaceProps) {
           * снимает поле, а не пишет в него сегодняшнее число.
           */}
         <div className="grid gap-3">
-          {OBJECT_MARKS.map((mark) => {
+          {/*
+            * ТОЛЬКО ТЕ ОТМЕТКИ, ЧТО ДВИГАЮТ МЕБЕЛЬ ЭТОЙ ЗОНЫ, И ТЕ ЧИСЛА, ПО
+            * КОТОРЫМ ОНА СТОИТ (STAGE 01): в спальне «Глубина нижнего» —
+            * глубина шкафа, а не кухонной школы цеха; «Столешницы» там нет.
+            */}
+          {marksOfZone(zone).map((mark) => {
             const own = markOwn(mark, ownMarks);
+            const shown = markShownMm(mark, production, zone);
             return (
               <label key={mark.key} className="block" data-mark={mark.key}>
                 <span className="mw-label flex items-baseline justify-between gap-2">
@@ -4451,21 +4509,28 @@ export default function Workspace(props: WorkspaceProps) {
                   min={mark.min}
                   max={mark.max}
                   step={1}
-                  defaultValue={markValue(mark, production)}
-                  key={`${mark.key}-${markValue(mark, production)}`}
+                  defaultValue={shown}
+                  key={`${mark.key}-${shown}`}
+                  data-mark-shown={shown}
                   onBlur={(event) => {
                     const raw = Number(event.target.value);
                     if (!Number.isFinite(raw)) return;
-                    if (raw === markValue(mark, production)) return;
+                    if (raw === shown) return;
                     if (raw < mark.min || raw > mark.max) {
                       setMarksNotice(
                         `${mark.title}: от ${mark.min} до ${mark.max} мм — ` +
                           'за этими границами мебель не собирается.',
                       );
-                      event.target.value = String(markValue(mark, production));
+                      event.target.value = String(shown);
                       return;
                     }
                     changeMark(mark, raw);
+                    /*
+                     * Поле показывает число, по которому стоит мебель: отказ —
+                     * отметка прежняя, и поле возвращается к ней (STAGE 01);
+                     * приняли — ключ сменится, и поле придёт новым числом.
+                     */
+                    event.target.value = String(shown);
                   }}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') (event.target as HTMLInputElement).blur();
@@ -4611,6 +4676,7 @@ export default function Workspace(props: WorkspaceProps) {
             setSelectedLeaf(selection.unit && leaf ? { moduleId: selection.unit.id, leaf } : null)
           }
           facade={facadePanel}
+          zone={zone}
           onPrice={saveMaterialPrice}
           rates={liveRates}
           onCollectionPrice={saveCollectionPrice}

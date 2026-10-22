@@ -11,12 +11,15 @@ import { defaultOpening } from './opening';
 import { sectionSpec } from './sections';
 import { ceilingOverModuleMm, ceilingOverSpanMm } from './ceiling';
 import {
+  OBJECT_MARKS,
   carcassHeightMm,
+  markValue,
   mezzanineDepthMm,
   plinthMm,
   rowDepthMm,
   shopOf,
   upperBottomMm,
+  type ObjectMark,
 } from './shop';
 import type { ProductionSettings } from '@/types/catalog';
 import { upperRowBottomMm, zoneHeightMm, zoneProfile } from './zones';
@@ -694,9 +697,59 @@ export function rowStandardDepthMm(
   section?: Module['section'],
 ): number {
   const profile = zoneProfile(zone);
-  if (profile.kind !== 'kitchen') return profile.depthMm;
+  if (profile.kind !== 'kitchen') {
+    /*
+     * СВОЯ ОТМЕТКА ОБЪЕКТА СИЛЬНЕЕ ПРОФИЛЯ ЗОНЫ (STAGE 01). Кухонная школа
+     * цеха шкафу спальни не указ — а то, что замерщик ввёл для этой
+     * комнаты, указ: без этого поле «Глубина нижнего» показывало 450, а
+     * шкаф стоял 600, и антресоль была той же глубины, что шкаф под ней.
+     */
+    const own = production?.ownDepths;
+    const mark =
+      section === 'mezzanine' ? own?.mezzanineMm : kind === 'upper' || kind === 'corner_upper' ? own?.upperMm : own?.baseMm;
+    return mark ?? profile.depthMm;
+  }
   if (section === 'mezzanine') return mezzanineDepthMm(production);
   return rowDepthMm(kind, production);
+}
+
+/**
+ * ЧТО СТОИТ В ПОЛЕ ОТМЕТКИ — ТО ЖЕ ЧИСЛО, ПО КОТОРОМУ СТОИТ МЕБЕЛЬ ЗОНЫ (STAGE 01).
+ *
+ * Поле глубины показывало кухонную школу цеха в любой зоне: в спальне
+ * «Глубина нижнего 560» при шкафе 600. Глубину спрашивают у той же
+ * `rowStandardDepthMm`, что ставит ряд, — второго ответа на экране нет.
+ */
+export function markShownMm(mark: ObjectMark, production: ProductionSettings, zone: ZoneKind | undefined): number {
+  if (mark.group === 'heights') return markValue(mark, production);
+  return rowStandardDepthMm(zone, mark.key === 'upperMm' ? 'upper' : 'base', production, mark.key === 'mezzanineMm' ? 'mezzanine' : undefined);
+}
+
+/**
+ * КАКИЕ ОТМЕТКИ В ЭТОЙ ЗОНЕ ЧТО-ТО ДВИГАЮТ (STAGE 01).
+ *
+ * Поле, которое ничего не меняет, — та же ложь, что чужая кнопка (ловушка
+ * 148): в шкафу спальни «Столешница» и «Фартук» ни на что не влияли, а
+ * стояли в форме наравне с цоколем. Кухня — все семь. В зоне из секций:
+ * цоколь (на нём стоит шкаф), глубина того, что в зоне есть (нижний —
+ * напольные секции, верхний — подвесные, антресоль — если она есть в
+ * составе), столешница и фартук — если они есть у зоны. Высоту корпуса
+ * секций задаёт их спецификация, а не «Боковина» кухонного ряда.
+ */
+export function marksOfZone(zone: ZoneKind | undefined): ObjectMark[] {
+  const profile = zoneProfile(zone);
+  if (profile.kind === 'kitchen') return [...OBJECT_MARKS];
+  const kinds = profile.sections.map((section) => ({ section, kind: sectionSpec(section).moduleKind }));
+  const has = {
+    plinthMm: true,
+    carcassMm: false,
+    countertopMm: profile.hasCountertop,
+    apronMm: profile.hasApron,
+    baseMm: kinds.some(({ section, kind }) => section !== 'mezzanine' && kind !== 'upper'),
+    upperMm: kinds.some(({ section, kind }) => section !== 'mezzanine' && kind === 'upper'),
+    mezzanineMm: profile.sections.includes('mezzanine'),
+  } as Record<ObjectMark['key'], boolean>;
+  return OBJECT_MARKS.filter((mark) => has[mark.key]);
 }
 
 /**
@@ -859,6 +912,38 @@ function drawerHeights(heightMm: number, count: number): number[] {
   const sum = heights.reduce((s, h) => s + h, 0);
   heights[heights.length - 1] += heightMm - sum;
   return heights;
+}
+
+/**
+ * ФРОНТЫ ЯЩИКОВ ПОД НОВУЮ ВЫСОТУ КОРПУСА — когда высоту сменил не человек.
+ *
+ * Отметка объекта, школа цеха или потолок замера поменяли корпус ПРАВЛЕНОГО
+ * модуля, а его фронты лежат под прежнюю высоту. Сумма фронтов обязана
+ * равняться высоте (ловушка 83), и решает это то же правило, что их
+ * раскладывает (`drawerHeights`): раскладка по умолчанию остаётся раскладкой
+ * по умолчанию на новой высоте — ровно как у ряда без правки; своя — держит
+ * верхние фронты, а разница идёт в нижний, «он самый большой». Нижний
+ * становится меньше `MIN_DRAWER_MM` — `null`: подгонять нечем, и это
+ * называется словами, а не режется.
+ */
+export function refitDrawerFronts(fronts: number[], fromMm: number, toMm: number): number[] | null {
+  if (fronts.length === 0) return fronts;
+  const sum = fronts.reduce((total, h) => total + h, 0);
+  if (sum === toMm) return fronts;
+  const standard = drawerHeights(fromMm, fronts.length);
+  const isStandard = standard.length === fronts.length && standard.every((h, i) => h === fronts[i]);
+  const next = isStandard ? drawerHeights(toMm, fronts.length) : [...fronts];
+  if (!isStandard) next[next.length - 1] += toMm - sum;
+  return next.every((h) => h >= MIN_DRAWER_MM) ? next : null;
+}
+
+/**
+ * Полка выше крыши корпуса: она стоит центром на своей отметке, и её верх —
+ * отметка плюс половина толщины. Одно правило на «опустили шкаф под
+ * антресолью» и «корпус сменил высоту сам».
+ */
+export function shelfAboveRoof(shelfMm: number, roofMm: number, thicknessMm: number): boolean {
+  return shelfMm + thicknessMm / 2 > roofMm;
 }
 
 /**
