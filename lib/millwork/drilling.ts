@@ -83,6 +83,17 @@ function spec(item: HardwareItem, part: HardwareDrillingSpec['part']): HardwareD
 }
 
 /**
+ * ПАСПОРТ НЕ ДОЧИТАН (HARDWARE-PHOTO-PERF-01). Позиция пришла лёгким чтением
+ * каталога: присадки в записи нет потому, что её не дочитали, а не потому,
+ * что её нет в источнике. Отверстий не ставим и говорим это словами.
+ */
+export const DRILLING_UNREAD = 'паспорт позиции ещё не дочитан — присадка не рассчитана';
+
+function unread(slot: FittingSlot, item: HardwareItem, title: string): FittingDrilling {
+  return { slot, itemId: item.id, title, status: 'DRILLING_NOT_VERIFIED', holes: [], missing: [DRILLING_UNREAD] };
+}
+
+/**
  * ПРИСАДКА ФУРНИТУРЫ МОДУЛЯ — по местам, где выбрана позиция.
  *
  * Пусто — у модуля фурнитуры производителя нет: прежняя деталь подписана
@@ -102,6 +113,10 @@ export function moduleDrilling(
     if (kit.state !== 'box') continue;
     const item = kit.profile.slideItemId ? hardware.get(kit.profile.slideItemId) : undefined;
     if (!item) continue;
+    if (item.detail === 'light') {
+      out.push(unread('slide', item, `${item.name} — ${kit.place.bayId ? `отсек ${kit.place.bayId}, ` : ''}ящик ${kit.place.key.split(':').pop()}`));
+      continue;
+    }
     const missing: string[] = [];
     const holes: DrillHole[] = [];
     const cab = spec(item, 'cabinet_side');
@@ -163,35 +178,40 @@ export function moduleDrilling(
   if (hinge && fittingSlotsOf(unit, run, production).some((p) => p.slot === 'hinge')) {
     const plateId = fittingItemId(unit, 'hinge_plate');
     const plate = plateId ? (hardware.get(plateId) ?? null) : null;
-    const missing: string[] = [];
-    const cup = spec(hinge, 'door');
-    const tb = hingeBoringMm({ carcassMm: production.carcassMm, gapMm: production.frontGapMm }, hinge, plate);
-    if (!cup) missing.push('присадки чашки в паспорте нет');
-    if (cup && cup.diameterMm === null) missing.push('диаметр чашки не напечатан');
-    if (cup && cup.depthMm === null) missing.push('глубина сверления чашки не напечатана');
-    if (tb === null) missing.push(plate ? 'TB с выбранной планкой не получается из таблицы паспорта' : 'ответная планка не выбрана — TB не вычислить');
-    missing.push('место чашек по высоте фасада — правило цеха не задано');
-    out.push({
-      slot: 'hinge',
-      itemId: hinge.id,
-      title: `${hinge.name} — чашки на фасадах`,
-      status: 'DRILLING_NOT_VERIFIED',
-      holes: cup
-        ? [
-            {
-              panel: 'Фасад',
-              where: 'со стороны петель',
-              what: cup.what,
-              fromFrontMm: tb === null || cup.diameterMm === null ? null : Math.round((tb + cup.diameterMm / 2) * 10) / 10,
-              heightMm: null,
-              diameterMm: cup.diameterMm,
-              depthMm: cup.depthMm,
-              source: sourceOf(hinge),
-            },
-          ]
-        : [],
-      missing,
-    });
+    /* Чашка — из паспорта петли; планке хватает размеров подбора, они в лёгком чтении есть. */
+    if (hinge.detail === 'light') {
+      out.push(unread('hinge', hinge, `${hinge.name} — чашки на фасадах`));
+    } else {
+      const missing: string[] = [];
+      const cup = spec(hinge, 'door');
+      const tb = hingeBoringMm({ carcassMm: production.carcassMm, gapMm: production.frontGapMm }, hinge, plate);
+      if (!cup) missing.push('присадки чашки в паспорте нет');
+      if (cup && cup.diameterMm === null) missing.push('диаметр чашки не напечатан');
+      if (cup && cup.depthMm === null) missing.push('глубина сверления чашки не напечатана');
+      if (tb === null) missing.push(plate ? 'TB с выбранной планкой не получается из таблицы паспорта' : 'ответная планка не выбрана — TB не вычислить');
+      missing.push('место чашек по высоте фасада — правило цеха не задано');
+      out.push({
+        slot: 'hinge',
+        itemId: hinge.id,
+        title: `${hinge.name} — чашки на фасадах`,
+        status: 'DRILLING_NOT_VERIFIED',
+        holes: cup
+          ? [
+              {
+                panel: 'Фасад',
+                where: 'со стороны петель',
+                what: cup.what,
+                fromFrontMm: tb === null || cup.diameterMm === null ? null : Math.round((tb + cup.diameterMm / 2) * 10) / 10,
+                heightMm: null,
+                diameterMm: cup.diameterMm,
+                depthMm: cup.depthMm,
+                source: sourceOf(hinge),
+              },
+            ]
+          : [],
+        missing,
+      });
+    }
   }
 
   /* ── Механизмы и наполнение: присадка как напечатана, без привязки ── */
@@ -199,11 +219,16 @@ export function moduleDrilling(
     if (fitting.slot === 'slide' || fitting.slot === 'hinge' || fitting.slot === 'hinge_plate') continue;
     const item = hardware.get(fitting.itemId);
     if (!item) continue;
+    const title = `${item.name} — ${FITTING_SLOT_TITLE[fitting.slot].toLowerCase()}${fitting.bayId ? `, отсек ${fitting.bayId}` : ''}`;
+    if (item.detail === 'light') {
+      out.push(unread(fitting.slot, item, title));
+      continue;
+    }
     const specs = item.hardware.drilling ?? [];
     out.push({
       slot: fitting.slot,
       itemId: item.id,
-      title: `${item.name} — ${FITTING_SLOT_TITLE[fitting.slot].toLowerCase()}${fitting.bayId ? `, отсек ${fitting.bayId}` : ''}`,
+      title,
       status: 'DRILLING_NOT_VERIFIED',
       holes: [],
       missing:

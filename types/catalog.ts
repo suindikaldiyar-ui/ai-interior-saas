@@ -99,7 +99,8 @@ export type CatalogAsset = {
   id: string;
   item_id: string;
   kind: AssetKind;
-  role: AssetRole;
+  /** Поверхность товара; у фурнитуры — изображение `hw-1`, `hw-2`… (`HardwareMediaEntry.role`). */
+  role: AssetRole | `hw-${number}`;
   storage_path: string;
   sort_order: number;
 };
@@ -158,6 +159,19 @@ export type CatalogEntryFull = CatalogItem & {
    * поля нет.
    */
   reference?: ReferenceTexture;
+  /**
+   * СТРОКА ПРОЧИТАНА БЕЗ ПАСПОРТА (HARDWARE-PHOTO-PERF-01) — производное
+   * чтения, в базу не пишется.
+   *
+   * У позиции производителя (артикул «MFR-…») лёгкое чтение каталога
+   * (`fetchCatalog(…, { hardware: 'light' })`) берёт из `meta.hardware`
+   * только то, что читают подбор, смета и сцена. Напечатанные размеры,
+   * присадка, формулы, заметки и «чего нет» дочитываются по позиции
+   * (`fetchCatalogDetails`). Пока поле стоит, отсутствие присадки в записи
+   * значит «не дочитано», а не «в паспорте нет», — и `meta` такой строки
+   * обратно в базу не пишется: она неполная.
+   */
+  detail?: 'light';
 };
 
 /* ─────────────────────────  Фурнитура организации  ───────────────────────── */
@@ -412,7 +426,65 @@ export type HardwareItem = {
   estimateKey: string;
   hardware: HardwareMeta;
   mounting: MountingData;
+  /**
+   * Запись изделия прочитана без паспорта карточки (`CatalogEntryFull.detail`).
+   * Присадки, напечатанных размеров и заметок здесь нет потому, что их не
+   * дочитали, — не потому, что их нет в источнике.
+   */
+  detail?: 'light';
 };
+
+/* ─────────────────  Изображения фурнитуры (HARDWARE-PHOTO-PERF-01)  ───────────────── */
+
+/**
+ * ЧТО ИЗОБРАЖЕНО — по отношению к артикулу.
+ *
+ *   EXACT_PRODUCT        именно этот артикул;
+ *   SERIES_REFERENCE     изделие серии: точное исполнение артикула не подтверждено;
+ *   INSTALLATION_EXAMPLE изделие в мебели — пример установки;
+ *   TECHNICAL_DRAWING    чертёж с размерами.
+ */
+export const HARDWARE_IMAGE_KINDS = ['EXACT_PRODUCT', 'SERIES_REFERENCE', 'INSTALLATION_EXAMPLE', 'TECHNICAL_DRAWING'] as const;
+export type HardwareImageKind = (typeof HARDWARE_IMAGE_KINDS)[number];
+
+/** Права на изображение: файл в продукте живёт только у VERIFIED. */
+export const HARDWARE_IMAGE_RIGHTS = ['VERIFIED', 'NOT_VERIFIED', 'RESTRICTED'] as const;
+export type HardwareImageRights = (typeof HARDWARE_IMAGE_RIGHTS)[number];
+
+/**
+ * ИЗОБРАЖЕНИЕ ПОЗИЦИИ — запись в `meta.media` той же строки `catalog_items`.
+ *
+ * Файлы — строки `catalog_assets` этой позиции с ролью `role`: оригинал
+ * (kind 'photo') и миниатюра без обрезки (kind 'swatch'). Нет роли — у
+ * изображения только ссылка у производителя: права не подтверждены, и
+ * копии файла в продукте нет.
+ */
+export type HardwareMediaEntry = {
+  /** Роль файлов в `catalog_assets`: `hw-1`, `hw-2`… Только у `rights: 'VERIFIED'`. */
+  role?: string;
+  kind: HardwareImageKind;
+  rights: HardwareImageRights;
+  /** Где изображение у производителя — страница товара или каталога. */
+  sourceUrl?: string;
+  /** Чем подтверждено право — словами: «своя съёмка», «письмо производителя от …». У файла обязательно. */
+  rightsNote?: string;
+  /** Когда проверено: ГГГГ-ММ-ДД. */
+  checkedAt: string;
+  /** Главное изображение карточки списка. */
+  primary?: true;
+  /** Ракурс или подпись: «спереди», «в шкафу». */
+  caption?: string;
+};
+
+/**
+ * ЧЕМ ПОЗИЦИЯ НАРИСОВАНА В 3D — выводится, а не хранится (`model3dStatusOf`).
+ *
+ *   OFFICIAL_CAD          CAD-модель производителя с подтверждёнными правами;
+ *   VISUAL_RECONSTRUCTION модель по чертежу производителя с его размерами;
+ *   VISUAL_APPROXIMATION  условная модель сцены — приближение, не CAD;
+ *   NO_3D                 сцена позицию не рисует.
+ */
+export type HardwareModel3dStatus = 'OFFICIAL_CAD' | 'VISUAL_RECONSTRUCTION' | 'VISUAL_APPROXIMATION' | 'NO_3D';
 
 /* ─────────────────────────  Цели назначения  ───────────────────────── */
 

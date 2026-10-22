@@ -262,6 +262,7 @@ export function hardwareOf(item: CatalogEntryFull): HardwareItem | null {
       ...productRecord(raw),
     },
     mounting: mountingOf(raw?.mounting),
+    ...(item.detail === 'light' ? { detail: 'light' as const } : {}),
   };
 }
 
@@ -279,14 +280,56 @@ export function sanitizeHardwareMeta(raw: unknown): HardwareMeta | null {
   return { category, ...(brand ? { brand } : {}), ...productRecord(value) };
 }
 
+/**
+ * РАЗОБРАННАЯ ФУРНИТУРА — ОДНА НА МАССИВ КАТАЛОГА (HARDWARE-PHOTO-PERF-01).
+ *
+ * Каталог в сторе меняется заменой массива, а не правкой на месте, поэтому
+ * массив — ключ: рабочее место, схема, сцена каждой стены и смета объекта
+ * спрашивали `hardwareCatalog` у одного и того же массива и разбирали
+ * 1199 записей изделий каждый по-своему. Теперь разбор один на массив, а
+ * карта общая — её не меняют, только читают.
+ */
+const PARSED = new WeakMap<CatalogEntryFull[], Map<string, HardwareItem>>();
+
 /** Вся фурнитура каталога по идентификатору позиции. */
 export function hardwareCatalog(items: CatalogEntryFull[]): Map<string, HardwareItem> {
+  const known = PARSED.get(items);
+  if (known) return known;
   const out = new Map<string, HardwareItem>();
   for (const item of items) {
     const hardware = hardwareOf(item);
     if (hardware) out.set(hardware.id, hardware);
   }
+  PARSED.set(items, out);
   return out;
+}
+
+/**
+ * НА КАКИЕ ПОЗИЦИИ БЕЗ ПАСПОРТА ССЫЛАЕТСЯ СОСТОЯНИЕ.
+ *
+ * Обходит значение целиком (ряды стен: `fittings`, `hardwareItemId`,
+ * `slideItemId` отсеков, `slidingSystemItemId` — и любое будущее место
+ * ссылки) и возвращает идентификаторы строк каталога с `detail: 'light'`,
+ * которые в нём встречаются. Лишняя строка в ответе стоит одного лишнего
+ * чтения; пропущенная — присадки «не дочитано» у установленной позиции,
+ * поэтому обход не знает мест ссылки поимённо.
+ */
+export function lightReferences(state: unknown, catalog: CatalogEntryFull[]): string[] {
+  const light = new Set(catalog.filter((entry) => entry.detail === 'light').map((entry) => entry.id));
+  if (light.size === 0) return [];
+  const found = new Set<string>();
+  const seen = new Set<object>();
+  const walk = (value: unknown) => {
+    if (typeof value === 'string') {
+      if (light.has(value)) found.add(value);
+      return;
+    }
+    if (!value || typeof value !== 'object' || seen.has(value)) return;
+    seen.add(value);
+    for (const child of Array.isArray(value) ? value : Object.values(value)) walk(child);
+  };
+  walk(state);
+  return Array.from(found).sort();
 }
 
 /** Фурнитура одной категории: из чего организация выбирает. */

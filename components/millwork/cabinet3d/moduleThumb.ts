@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { moduleBoxes, type PartBox } from '@/lib/millwork/cabinetBoxes';
+import type { DrawerKit } from '@/lib/millwork/drawerKit';
 import { frontOf } from '@/lib/millwork/frontMaterial';
 import { frontSwatch } from '@/lib/millwork/frontSwatch';
 import { moduleCarcassHeightMm, moduleDepthMm } from '@/lib/millwork/fill';
@@ -15,7 +16,7 @@ import {
   frontLookOf,
 } from './cadLook';
 import { MATERIAL_FINISHES } from '@/lib/millwork/materialFinishes';
-import type { ProductionSettings } from '@/types/catalog';
+import type { HardwareItem, ProductionSettings } from '@/types/catalog';
 import type { Module, Run } from '@/types/millwork';
 
 /**
@@ -102,6 +103,21 @@ export function thumbKey(unit: Module, heightMm: number): string {
 
 
 /**
+ * ФУРНИТУРА НА КАРТИНКЕ (HARDWARE-PHOTO-PERF-01): превью позиции в
+ * карточке фурнитуры — модуль с установленной позицией, механизм рисует
+ * та же `moduleBoxes`, что сцена. Числа петель и комплекты ящиков считает
+ * вызывающий теми же функциями, что ряд (`openingHardware`,
+ * `moduleDrawerKits`): своей формулы здесь нет.
+ */
+export type ThumbExtra = {
+  hardware?: Map<string, HardwareItem>;
+  hinges?: number;
+  drawerKits?: DrawerKit[];
+  /** Без фасадов: механизм внутри корпуса видно. */
+  cutaway?: boolean;
+};
+
+/**
  * Нарисовать модуль и отдать PNG.
  *
  * Возвращает `null`, если рисовать нечем: карточка тогда показывает
@@ -111,9 +127,13 @@ export function renderThumb(
   unit: Module,
   run: Pick<Run, 'zone' | 'ceilingHeightMm' | 'options' | 'production'> & Partial<Run>,
   production?: ProductionSettings,
+  extra: ThumbExtra = {},
 ): string | null {
   const heightMm = moduleCarcassHeightMm(unit, run);
-  const key = thumbKey(unit, heightMm);
+  const withHardware = Boolean(extra.hardware && extra.hardware.size > 0);
+  const key = withHardware
+    ? [thumbKey(unit, heightMm), JSON.stringify(unit.fittings ?? []), extra.hinges ?? 0, extra.drawerKits?.length ?? 0, extra.cutaway ? 1 : 0].join('|')
+    : thumbKey(unit, heightMm);
   const ready = cache.get(key);
   if (ready) return ready;
 
@@ -135,7 +155,10 @@ export function renderThumb(
       gapM: 0.003,
       frontThicknessM: 0.018,
       integratedHandles: false,
-      cutaway: false,
+      cutaway: Boolean(extra.cutaway),
+      ...(withHardware ? { hardware: extra.hardware } : {}),
+      ...(extra.hinges ? { hinges: extra.hinges } : {}),
+      ...(extra.drawerKits?.length ? { drawerKits: extra.drawerKits } : {}),
     },
     production,
   );

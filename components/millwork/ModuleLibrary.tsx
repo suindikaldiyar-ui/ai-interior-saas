@@ -8,6 +8,7 @@ import { rowStandardDepthMm } from '@/lib/millwork/fill';
 import { shopOf } from '@/lib/millwork/shop';
 import type { ProductionSettings } from '@/types/catalog';
 import type { Run } from '@/types/millwork';
+import { useInteriorStore } from '@/store/useInteriorStore';
 
 /**
  * БИБЛИОТЕКА МОДУЛЕЙ: ВЫБРАЛ МЕСТО — ВИДИШЬ, ЧТО ТУДА СТАВЯТ.
@@ -154,13 +155,22 @@ export default function ModuleLibrary({
    * посчитано. Пачкой считать нельзя — шестьдесят цен подряд это 290 мс
    * тишины на планшете.
    */
+  /*
+   * ЭКОНОМИЧНЫЙ РЕЖИМ (HARDWARE-PHOTO-PERF-01): картинки — по нажатию.
+   * Цена считается как всегда — она и есть ответ карточки; отрисовщик
+   * three.js в экономичном режиме даже не подгружается, пока не попросили.
+   */
+  const economy = useInteriorStore((state) => state.economyMode);
+  const [thumbsAsked, setThumbsAsked] = useState(false);
+  const drawThumbs = !economy || thumbsAsked;
+
   useEffect(() => {
-    const pending = seen.filter((key) => !(key in prices) && byKey.has(key));
+    const pending = seen.filter((key) => byKey.has(key) && (!(key in prices) || (drawThumbs && !(key in thumbs))));
     if (pending.length === 0) return;
 
     let alive = true;
     const frame = requestAnimationFrame(async () => {
-      const thumbOf = await loadThumbs();
+      const thumbOf = drawThumbs ? await loadThumbs() : null;
       if (!alive) return;
 
       const price: Record<string, number | null> = {};
@@ -169,19 +179,19 @@ export default function ModuleLibrary({
       for (const key of pending.slice(0, PER_FRAME)) {
         const card = byKey.get(key);
         if (!card) continue;
-        price[key] = card.refusal ? null : priceOf(card);
-        picture[key] = card.preview && thumbOf ? thumbOf(card.preview, run, production) : null;
+        if (!(key in prices)) price[key] = card.refusal ? null : priceOf(card);
+        if (drawThumbs) picture[key] = card.preview && thumbOf ? thumbOf(card.preview, run, production) : null;
       }
 
       setPrices((prev) => ({ ...prev, ...price }));
-      setThumbs((prev) => ({ ...prev, ...picture }));
+      if (drawThumbs) setThumbs((prev) => ({ ...prev, ...picture }));
     });
 
     return () => {
       alive = false;
       cancelAnimationFrame(frame);
     };
-  }, [seen, prices, byKey, priceOf, run, production]);
+  }, [seen, prices, thumbs, drawThumbs, byKey, priceOf, run, production]);
 
   const cornerSection = corner ? (
     <CornerSection corner={corner} run={run} production={production} />
@@ -227,6 +237,14 @@ export default function ModuleLibrary({
       {loss && (
         <p className="mb-3 text-[13px] leading-snug text-graphiteMw" data-library-loss>
           Замена: {loss}
+        </p>
+      )}
+      {!drawThumbs && cards.length > 0 && (
+        <p className="mb-3 flex flex-wrap items-center gap-2 text-[13px] leading-snug text-dim" data-library-economy>
+          Экономичный режим: картинки модулей не рисуются.
+          <button type="button" className="mw-btn mw-btn-ghost" data-library-draw-thumbs onClick={() => setThumbsAsked(true)}>
+            Нарисовать картинки
+          </button>
         </p>
       )}
 

@@ -40,6 +40,12 @@ import { buildEstimate, totalCaption, unpricedLines } from '../lib/millwork/esti
 import { kupeLeaves, runBoxes, runPlaces, sceneLeaves, sceneSlides } from '../lib/millwork/cabinetBoxes';
 import { moduleDrilling, panelDrilling } from '../lib/millwork/drilling';
 import { configurationFingerprint } from '../lib/millwork/fingerprint';
+import { DRILLING_UNREAD } from '../lib/millwork/drilling';
+import { HARDWARE_LIGHT_FIELDS } from '../lib/catalog';
+import { lightReferences } from '../lib/millwork/hardware';
+import { hasDrawing, listPhoto, manufacturerPhotoLink, matchMediaFiles, mediaCoverage, mediaEntries, mediaViews, model3dStatusOf } from '../lib/millwork/hardwareMedia';
+import type { CatalogAsset } from '../types/catalog';
+import type { FittingSlot } from '../types/millwork';
 
 let passed = 0;
 let failed = 0;
@@ -966,6 +972,264 @@ console.log('\nHW.H: 3D и движение — механизм по позиц
       insideAfter &&
       sceneSlides(kRun, CATALOG).filter((slide) => slide.id.includes(':kupe:')).length === 3,
     `ряд ${kRun.doorSystem} · до ${kupeBefore} · полотен ${leaves.length} (смета ${doorsWanted ?? 'НЕТ'}) · шин ${tracks.length} · в длине ${insideAfter} · ${kupeOn.warnings.join(' | ')}`,
+  );
+}
+
+
+/* ═════════════  I. Изображения, статус 3D, пакет файлов, лёгкое чтение (HARDWARE-PHOTO-PERF-01)  ═════════════ */
+
+console.log('\nHW.I: изображения позиции, статус 3D, пакет файлов, лёгкое чтение каталога');
+{
+  const day = '2026-10-21';
+  /* Адрес файла в фикстуре — уже адрес: `catalogUrl` отдаёт его как есть, Supabase тесту не нужен. */
+  const at = (path: string) => `https://storage.test/catalog/${path}`;
+  const asset = (role: string, kind: 'photo' | 'swatch', path: string) =>
+    ({ id: `${role}-${kind}`, item_id: 'x', kind, role, storage_path: at(path), sort_order: 0 }) as CatalogAsset;
+
+  const parsed = mediaEntries([
+    { role: 'hw-1', kind: 'EXACT_PRODUCT', rights: 'VERIFIED', rightsNote: 'своя съёмка', checkedAt: day, primary: true },
+    /* Права не проверены: роль файла отбрасывается, остаётся ссылка. */
+    { role: 'hw-2', kind: 'SERIES_REFERENCE', rights: 'NOT_VERIFIED', sourceUrl: 'https://example.test/series', checkedAt: day },
+    /* Ни файла (права ограничены), ни ссылки — изображения нет. */
+    { role: 'hw-3', kind: 'EXACT_PRODUCT', rights: 'RESTRICTED', checkedAt: day },
+    { role: 'hw-4', kind: 'PHOTO', rights: 'VERIFIED', checkedAt: day },
+    { role: 'hw-5', kind: 'EXACT_PRODUCT', rights: 'VERIFIED' },
+    { kind: 'EXACT_PRODUCT', rights: 'NOT_VERIFIED', sourceUrl: 'http://example.test/plain', checkedAt: day },
+    { kind: 'TECHNICAL_DRAWING', rights: 'NOT_VERIFIED', sourceUrl: 'https://example.test/drawing', checkedAt: day },
+    'мусор',
+    null,
+  ]);
+  check(
+    'I1 разбор meta.media: без вида, прав или даты — нет записи; у непроверенных прав роль файла снимается; http и пустая запись не читаются',
+    parsed.length === 3 &&
+      parsed[0].role === 'hw-1' &&
+      parsed[0].primary === true &&
+      parsed[1].role === undefined &&
+      parsed[1].sourceUrl === 'https://example.test/series' &&
+      parsed[2].kind === 'TECHNICAL_DRAWING',
+    JSON.stringify(parsed.map((m) => [m.kind, m.rights, m.role ?? '-', m.sourceUrl ?? '-'])),
+  );
+
+  const withFiles = {
+    meta: {
+      media: [
+        { role: 'hw-2', kind: 'SERIES_REFERENCE', rights: 'VERIFIED', rightsNote: 'своя съёмка', checkedAt: day },
+        { role: 'hw-1', kind: 'EXACT_PRODUCT', rights: 'VERIFIED', rightsNote: 'своя съёмка', checkedAt: day, primary: true },
+        /* Запись есть, строк файла нет: файл не найден — не показывается. */
+        { role: 'hw-9', kind: 'EXACT_PRODUCT', rights: 'VERIFIED', rightsNote: 'своя съёмка', checkedAt: day },
+        { kind: 'EXACT_PRODUCT', rights: 'NOT_VERIFIED', sourceUrl: 'https://example.test/maker', checkedAt: day },
+        { kind: 'TECHNICAL_DRAWING', rights: 'NOT_VERIFIED', sourceUrl: 'https://example.test/drawing', checkedAt: day },
+      ],
+    },
+    assets: [
+      asset('hw-1', 'photo', 'org/hardware/x/hw-1-photo.jpg'),
+      asset('hw-1', 'swatch', 'org/hardware/x/hw-1-thumb.webp'),
+      asset('hw-2', 'photo', 'org/hardware/x/hw-2-photo.jpg'),
+      /* Файл другой позиции с той же ролью не подхватывается: роль ищется в строках ЭТОЙ позиции. */
+    ],
+  } as unknown as CatalogEntryFull;
+  const views = mediaViews(withFiles);
+  const first = listPhoto(views);
+  check(
+    'I2 изображения позиции: главное первым, файл — по роли из строк этой позиции, миниатюра без своей строки — оригинал; запись без файла и ссылка — не фото',
+    views.length === 5 &&
+      first?.role === 'hw-1' &&
+      first.url === at('org/hardware/x/hw-1-photo.jpg') &&
+      first.thumbUrl === at('org/hardware/x/hw-1-thumb.webp') &&
+      views.find((v) => v.role === 'hw-2')?.thumbUrl === at('org/hardware/x/hw-2-photo.jpg') &&
+      views.find((v) => v.role === 'hw-9')?.url === null &&
+      manufacturerPhotoLink(views)?.sourceUrl === 'https://example.test/maker' &&
+      hasDrawing(views) &&
+      listPhoto(mediaViews({ meta: { media: [{ role: 'hw-9', kind: 'EXACT_PRODUCT', rights: 'VERIFIED', checkedAt: day }] }, assets: [] } as unknown as CatalogEntryFull)) === null,
+    views.map((v) => `${v.kind}:${v.role ?? 'ссылка'}:${v.url ? 'файл' : 'нет'}`).join(' · '),
+  );
+
+  /* Пакет: только точное совпадение артикула. */
+  const matchItems = HARDWARE_FACTS.map((fact) => ({
+    id: `hw:${fact.article}`,
+    article: fact.article,
+    manufacturer: fact.hardware.manufacturer,
+    manufacturerArticle: fact.hardware.manufacturerArticle,
+  }));
+  const files = ['805.11.354.jpg', '9 114 276.png', 'MFR-HETTICH-9114276.webp', '71B3550_2.jpg', '805.11.35.jpg', '71B355.jpg', 'Hettich KA 4532.jpg'];
+  const plan = matchMediaFiles(files, matchItems);
+  const state = (file: string) => plan.find((m) => m.file === file);
+  check(
+    'I3 пакет файлов: артикул как напечатан, без пробелов и ключом строки — привязка; «_2» — второй ракурс; обрезанный артикул и название серии — «не найдено»',
+    state('805.11.354.jpg')?.itemId === 'hw:MFR-HAFELE-805.11.354' &&
+      state('9 114 276.png')?.itemId === 'hw:MFR-HETTICH-9114276' &&
+      state('MFR-HETTICH-9114276.webp')?.itemId === 'hw:MFR-HETTICH-9114276' &&
+      state('71B3550_2.jpg')?.itemId === 'hw:MFR-BLUM-71B3550' &&
+      state('71B3550_2.jpg')?.angle === 2 &&
+      state('805.11.35.jpg')?.state === 'unmatched' &&
+      state('71B355.jpg')?.state === 'unmatched' &&
+      state('Hettich KA 4532.jpg')?.state === 'unmatched',
+    plan.map((m) => `${m.file}→${m.state}${m.itemId ? `:${m.itemId}` : ''}`).join(' · '),
+  );
+  const twin = matchMediaFiles(['805.11.354.jpg'], [...matchItems, { id: 'own', article: 'OWN-1', manufacturer: 'Компания', manufacturerArticle: '805 11 354' }]);
+  check(
+    'I4 один артикул у двух позиций — НЕ выбирается: «неоднозначно» и список кандидатов словами',
+    twin[0].state === 'ambiguous' && twin[0].itemId === null && twin[0].candidates.length === 2,
+    `${twin[0].state} · ${twin[0].candidates.join(', ')}`,
+  );
+  /* Два прочтения одного имени: целиком «805113543» — своя позиция, «805.11.354» + ракурс 3 — Häfele. */
+  const twoReadings = matchMediaFiles(['805.11.354_3.jpg'], [...matchItems, { id: 'own3', article: 'OWN-3', manufacturer: 'Компания', manufacturerArticle: '805.11.3543' }]);
+  check(
+    'I4b имя читается и артикулом целиком, и «артикул_ракурс» — у обоих прочтений по позиции: НЕ выбирается, оба кандидата словами',
+    twoReadings[0].state === 'ambiguous' && twoReadings[0].itemId === null && twoReadings[0].candidates.length === 2,
+    `${twoReadings[0].state}${twoReadings[0].itemId ? `:${twoReadings[0].itemId}` : ''} · ${twoReadings[0].candidates.join(', ')}`,
+  );
+
+  /* Статус 3D — выводится по тем же местам, что рисует сцена. */
+  const status = (article: string) => model3dStatusOf(item(article));
+  const statuses = Array.from(CATALOG.values()).map((it) => model3dStatusOf(it));
+  const approx = statuses.filter((s) => s === 'VISUAL_APPROXIMATION').length;
+  const none = statuses.filter((s) => s === 'NO_3D').length;
+  check(
+    'I5 статус 3D: пантограф 805.11.354, петля 71B3550 и направляющая 9 114 276 — условная модель; планка 173L6100 — 3D нет; CAD и модели по чертежу — ни у одной позиции',
+    status('MFR-HAFELE-805.11.354') === 'VISUAL_APPROXIMATION' &&
+      status('MFR-BLUM-71B3550') === 'VISUAL_APPROXIMATION' &&
+      status('MFR-HETTICH-9114276') === 'VISUAL_APPROXIMATION' &&
+      status('MFR-BLUM-173L6100') === 'NO_3D' &&
+      approx + none === CATALOG.size &&
+      statuses.every((s) => s !== 'OFFICIAL_CAD' && s !== 'VISUAL_RECONSTRUCTION'),
+    `условная ${approx} · нет ${none} · всего ${CATALOG.size}`,
+  );
+
+  /* Покрытие фото: на фактах — ноль фото; привязанные файлы и ссылки меняют ровно свои строки. */
+  const rows = rowsOf(HARDWARE_FACTS);
+  const makerOf = (entry: CatalogEntryFull) => (entry.meta?.hardware as { manufacturer?: string } | undefined)?.manufacturer ?? null;
+  const bare = mediaCoverage(rows, makerOf);
+  const zeroPhotos = ['Blum', 'Hettich', 'Häfele'].every((m) => bare[m] && bare[m].exact === 0 && bare[m].series === 0 && bare[m].none === bare[m].total && bare[m].rightsNotVerified === 0);
+  const bound = rows.map((row) => {
+    if (row.article === 'MFR-HAFELE-805.11.354') {
+      return { ...row, meta: { ...row.meta, media: [{ role: 'hw-1', kind: 'EXACT_PRODUCT', rights: 'VERIFIED', rightsNote: 'своя съёмка', checkedAt: day }] }, assets: [asset('hw-1', 'photo', 'a.jpg'), asset('hw-1', 'swatch', 'a.webp')] };
+    }
+    if (row.article === 'MFR-BLUM-71B3550') {
+      return { ...row, meta: { ...row.meta, media: [{ role: 'hw-1', kind: 'SERIES_REFERENCE', rights: 'VERIFIED', rightsNote: 'своя съёмка', checkedAt: day }] }, assets: [asset('hw-1', 'photo', 'b.jpg')] };
+    }
+    if (row.article === 'MFR-HETTICH-9114276') {
+      return { ...row, meta: { ...row.meta, media: [{ kind: 'EXACT_PRODUCT', rights: 'NOT_VERIFIED', sourceUrl: 'https://example.test/9114276', checkedAt: day }] } };
+    }
+    return row;
+  }) as CatalogEntryFull[];
+  const cov = mediaCoverage(bound, makerOf);
+  check(
+    'I6 покрытие фото: Blum 318, Hettich 290, Häfele 591 — точных и серии 0, «нет фото» = всего; точное фото, фото серии и ссылка без файла меняют ровно свои строки',
+    zeroPhotos &&
+      bare.Blum.total === 318 &&
+      bare.Hettich.total === 290 &&
+      bare['Häfele'].total === 591 &&
+      cov['Häfele'].exact === 1 &&
+      cov['Häfele'].none === 590 &&
+      cov.Blum.series === 1 &&
+      cov.Blum.exact === 0 &&
+      cov.Blum.none === 317 &&
+      cov.Hettich.rightsNotVerified === 1 &&
+      cov.Hettich.none === 290,
+    JSON.stringify(cov),
+  );
+
+  /*
+   * ЛЁГКОЕ ЧТЕНИЕ НЕ МЕНЯЕТ НИ ОДНОГО ЧИСЛА. Строки — те же, что отдаёт
+   * `fetchCatalog(…, { hardware: 'light' })`: запись изделия — только поля
+   * `HARDWARE_LIGHT_FIELDS`, пометка `detail`. Подбор каждой позиции на
+   * каждое место, смета и сцена кухни с установленной фурнитурой —
+   * одинаковы при лёгком и полном каталоге; присадка говорит «не дочитано».
+   */
+  const lightRows = rows.map((row) => {
+    const full = (row.meta?.hardware ?? {}) as Record<string, unknown>;
+    const light: Record<string, unknown> = {};
+    for (const key of HARDWARE_LIGHT_FIELDS) if (full[key] !== undefined) light[key] = full[key];
+    return { ...row, meta: { hardware: light }, detail: 'light' as const };
+  }) as CatalogEntryFull[];
+  const LIGHT = hardwareCatalog(lightRows);
+  const SLOTS: FittingSlot[] = ['hinge', 'hinge_plate', 'slide', 'lift', 'handle', 'pantograph', 'wardrobe_pullout', 'cargo', 'dryer', 'corner_unit', 'waste', 'shelf_support', 'leg'];
+  const acceptDiff = Array.from(CATALOG.values()).filter((it) => {
+    const lite = LIGHT.get(it.id);
+    return !lite || SLOTS.some((slot) => slotAccepts(slot, it) !== slotAccepts(slot, lite)) || slidingAccepts(it) !== slidingAccepts(lite) || model3dStatusOf(it) !== model3dStatusOf(lite);
+  });
+  const k = kitchen(SHOP);
+  const run0 = k.shown().run;
+  let verdicts = 0;
+  const verdictDiff: string[] = [];
+  for (const id of [HOB, DOOR, UPPER]) {
+    const unit = moduleOf(run0, id);
+    for (const place of fittingSlotsOf(unit, run0, SHOP)) {
+      for (const it of Array.from(CATALOG.values())) {
+        if (!slotAccepts(place.slot, it)) continue;
+        verdicts += 1;
+        const a = fittingVerdict({ unit, run: run0, slot: place.slot, item: it, bayId: place.bayId, production: SHOP, catalog: CATALOG });
+        const b = fittingVerdict({ unit, run: run0, slot: place.slot, item: LIGHT.get(it.id)!, bayId: place.bayId, production: SHOP, catalog: LIGHT });
+        if (JSON.stringify(a) !== JSON.stringify(b)) verdictDiff.push(`${id}/${place.slot}/${it.article}`);
+      }
+    }
+  }
+  check(
+    'I7 лёгкое чтение: у всех 1199 позиций те же места и тот же статус 3D; проверка совместимости на местах трёх модулей кухни — та же до слова',
+    acceptDiff.length === 0 && verdictDiff.length === 0 && verdicts > 500,
+    `позиций с разницей ${acceptDiff.length} · проверок ${verdicts}, разошлось ${verdictDiff.length}${verdictDiff[0] ? ` (${verdictDiff[0]})` : ''}`,
+  );
+
+  const fit = (catalog: Map<string, HardwareItem>) => {
+    const kk = kitchen(SHOP, catalog);
+    kk.ops([{ op: 'set_fitting', moduleId: HOB, slot: 'slide', itemId: 'hw:MFR-HETTICH-9114276' }], catalog);
+    kk.ops([{ op: 'set_fitting', moduleId: DOOR, slot: 'hinge', itemId: 'hw:MFR-BLUM-71B3550' }], catalog);
+    const last = kk.ops([{ op: 'set_fitting', moduleId: DOOR, slot: 'hinge_plate', itemId: 'hw:MFR-BLUM-175H3130' }], catalog);
+    return last.shown;
+  };
+  const fullShown = fit(CATALOG);
+  const lightShown = fit(LIGHT);
+  const lines = (shown: typeof fullShown) => JSON.stringify(shown.estimate.lines.map((l) => [l.key, l.quantity, l.total]));
+  const scene = (run: Run, catalog: Map<string, HardwareItem>) =>
+    JSON.stringify(runBoxes({ ...run, production: SHOP }, { thicknessMm: 16, frontThicknessMm: 16, gapMm: 4, hardware: catalog, production: SHOP }));
+  check(
+    'I8 смета и сцена кухни с направляющей KA 500, петлёй CLIP top и планкой — те же при лёгком и полном каталоге: итог, строки, коробки сцены',
+    fullShown.estimate.total === lightShown.estimate.total &&
+      lines(fullShown) === lines(lightShown) &&
+      scene(fullShown.run, CATALOG) === scene(lightShown.run, LIGHT) &&
+      fullShown.run.fingerprint === lightShown.run.fingerprint && configurationFingerprint(allModules(fullShown.run)) === configurationFingerprint(allModules(lightShown.run)),
+    `итог ${fullShown.estimate.total} / ${lightShown.estimate.total} · строк ${fullShown.estimate.lines.length} / ${lightShown.estimate.lines.length}`,
+  );
+
+  const lightDrill = moduleDrilling(moduleOf(lightShown.run, HOB), { ...lightShown.run, production: SHOP }, SHOP, LIGHT).filter((d) => d.slot === 'slide');
+  const fullDrill = moduleDrilling(moduleOf(fullShown.run, HOB), { ...fullShown.run, production: SHOP }, SHOP, CATALOG).filter((d) => d.slot === 'slide');
+  const lightHinge = moduleDrilling(moduleOf(lightShown.run, DOOR), { ...lightShown.run, production: SHOP }, SHOP, LIGHT).filter((d) => d.slot === 'hinge');
+  check(
+    'I9 присадка позиции без паспорта: «паспорт не дочитан», отверстий 0 — а не «в паспорте нет»; дочитанный паспорт даёт прежние отверстия',
+    lightDrill.length === 2 &&
+      lightDrill.every((d) => d.holes.length === 0 && d.status === 'DRILLING_NOT_VERIFIED' && JSON.stringify(d.missing) === JSON.stringify([DRILLING_UNREAD])) &&
+      lightHinge.length === 1 &&
+      JSON.stringify(lightHinge[0].missing) === JSON.stringify([DRILLING_UNREAD]) &&
+      fullDrill.length === 2 &&
+      fullDrill.every((d) => d.holes.length > 0) &&
+      [...lightDrill, ...lightHinge].every((d) => d.missing.every((m) => !m.includes('в паспорте нет'))),
+    `${lightDrill.map((d) => d.missing.join(';')).join(' | ')} · полный: отверстий ${fullDrill.reduce((s, d) => s + d.holes.length, 0)}`,
+  );
+
+  const refs = lightReferences([lightShown.run], lightRows);
+  check(
+    'I10 какие позиции без паспорта установлены: ровно направляющая, петля и планка кухни; каталог без лёгких строк — пусто',
+    JSON.stringify(refs) === JSON.stringify(['hw:MFR-BLUM-175H3130', 'hw:MFR-BLUM-71B3550', 'hw:MFR-HETTICH-9114276']) &&
+      lightReferences([lightShown.run], rows).length === 0,
+    refs.join(', '),
+  );
+
+  const same = rowsOf(HARDWARE_FACTS.slice(0, 5));
+  check(
+    'I11 разбор фурнитуры — один на массив каталога: тот же массив — та же карта, новый массив — новая',
+    hardwareCatalog(same) === hardwareCatalog(same) && hardwareCatalog(same) !== hardwareCatalog([...same]),
+  );
+
+  /* Импорт производителя не стирает изображения компании: они в `meta.media`, рядом с `meta.hardware`. */
+  const fact = HARDWARE_FACTS.find((f) => f.article === 'MFR-HAFELE-805.11.354')!;
+  const media = [{ kind: 'EXACT_PRODUCT', rights: 'NOT_VERIFIED', sourceUrl: 'https://example.test/805', checkedAt: day }];
+  const kept = planHardwareImport([{ id: 'row-1', article: fact.article, meta: { hardware: fact.hardware, media } }], [fact]);
+  const changed = planHardwareImport([{ id: 'row-1', article: fact.article, meta: { hardware: { ...fact.hardware, notes: 'прежняя запись' }, media } }], [fact]);
+  check(
+    'I12 повтор импорта фактов: позиция с изображениями компании — «без изменений»; обновление записи изделия изображения сохраняет',
+    kept.unchanged.length === 1 && kept.update.length === 0 && changed.update.length === 1 && JSON.stringify(changed.update[0].meta.media) === JSON.stringify(media),
+    `без изменений ${kept.unchanged.length} · обновлений ${changed.update.length}`,
   );
 }
 

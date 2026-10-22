@@ -17,7 +17,7 @@ import { useInteriorStore } from '@/store/useInteriorStore';
  * коллекции «ждёт импорта», а смета — фасады RAL по ставке цеха. Теперь
  * в стор уходят слова (`catalogError`), причина — в консоль.
  */
-export default function CatalogLoader() {
+export default function CatalogLoader({ orgId: knownOrg }: { orgId?: string } = {}) {
   const setCatalog = useInteriorStore((s) => s.setCatalog);
   const setCatalogError = useInteriorStore((s) => s.setCatalogError);
   const setOrgId = useInteriorStore((s) => s.setOrgId);
@@ -29,26 +29,38 @@ export default function CatalogLoader() {
     let cancelled = false;
 
     (async () => {
-      const { data: userData } = await supabase.auth.getUser();
-      if (!userData.user || cancelled) return;
+      /*
+       * ОРГАНИЗАЦИЮ ОБЪЕКТА ЗНАЕТ СЕРВЕР (HARDWARE-PHOTO-PERF-01). Страница
+       * объекта её уже проверила: спросить пользователя и членство ещё раз —
+       * два ожидания сети перед каталогом. Чтение всё равно идёт под RLS.
+       */
+      let orgId = knownOrg;
+      if (!orgId) {
+        const { data: userData } = await supabase.auth.getUser();
+        if (!userData.user || cancelled) return;
 
-      const { data: membership, error: membershipError } = await supabase
-        .from('org_members')
-        .select('org_id')
-        .eq('user_id', userData.user.id)
-        .limit(1);
+        const { data: membership, error: membershipError } = await supabase
+          .from('org_members')
+          .select('org_id')
+          .eq('user_id', userData.user.id)
+          .limit(1);
 
-      if (membershipError) {
-        console.error('[каталог] организация не определилась:', membershipError.message);
-        if (!cancelled) setCatalogError(CATALOG_READ_ERROR);
-        return;
+        if (membershipError) {
+          console.error('[каталог] организация не определилась:', membershipError.message);
+          if (!cancelled) setCatalogError(CATALOG_READ_ERROR);
+          return;
+        }
+        orgId = membership?.[0]?.org_id as string | undefined;
       }
-
-      const orgId = membership?.[0]?.org_id as string | undefined;
       if (!orgId || cancelled) return;
 
       setOrgId(orgId);
-      const read = await fetchCatalog(supabase, orgId);
+      /*
+       * Лёгкое чтение (HARDWARE-PHOTO-PERF-01): позиции производителей — без
+       * паспорта карточки. Паспорт установленной фурнитуры дочитывает
+       * рабочее место, открытой карточки — панель фурнитуры.
+       */
+      const read = await fetchCatalog(supabase, orgId, { hardware: 'light' });
       if (cancelled) return;
       if (read.error !== null) setCatalogError(read.error);
       else setCatalog(read.entries);
@@ -60,7 +72,7 @@ export default function CatalogLoader() {
     return () => {
       cancelled = true;
     };
-  }, [setCatalog, setCatalogError, setOrgId]);
+  }, [knownOrg, setCatalog, setCatalogError, setOrgId]);
 
   return null;
 }

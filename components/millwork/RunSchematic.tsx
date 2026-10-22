@@ -24,7 +24,7 @@ import type { PathTraceSource } from './cabinet3d/pathTrace';
  */
 import type { PathImage } from '@/lib/millwork/pathtrace';
 import type { SceneView } from '@/lib/cameraFraming';
-import { useInteriorStore } from '@/store/useInteriorStore';
+import { ECONOMY_KEY, useInteriorStore } from '@/store/useInteriorStore';
 
 /*
  * СЦЕНА ГРУЗИТСЯ ПО ТРЕБОВАНИЮ И УМЕЕТ СКАЗАТЬ, ЧТО НЕ ЗАГРУЗИЛАСЬ (R01.1).
@@ -496,6 +496,20 @@ export default function RunSchematic({
    */
   const frame = useInteriorStore((state) => state.cutaway);
   const setFrame = useInteriorStore((state) => state.setCutaway);
+  /*
+   * ЭКОНОМИЧНЫЙ РЕЖИМ 3D (HARDWARE-PHOTO-PERF-01) — настройка устройства:
+   * читается из хранилища браузера после монтирования, а не при отрисовке
+   * на сервере, иначе разметка разошлась бы с гидратацией.
+   */
+  const economy = useInteriorStore((state) => state.economyMode);
+  const setEconomy = useInteriorStore((state) => state.setEconomyMode);
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem(ECONOMY_KEY) === '1') setEconomy(true);
+    } catch {
+      /* хранилище закрыто — режим по умолчанию, выключен */
+    }
+  }, [setEconomy]);
 
   const allRows = useMemo(
     () => (sceneRows.length > 0 ? sceneRows : [{ run }]),
@@ -838,6 +852,7 @@ export default function RunSchematic({
               onSelectModule={onSelect}
               onRenderSource={onRenderSource}
               onFurnitureRect={onPathImage ? setFurniture : undefined}
+              economy={economy}
             />
             </SceneBoundary>
             )}

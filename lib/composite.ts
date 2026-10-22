@@ -106,3 +106,29 @@ export async function buildPhoto(input: Buffer, max = 1280): Promise<Buffer> {
     .jpeg({ quality: 86 })
     .toBuffer();
 }
+
+/**
+ * ФОТО ФУРНИТУРЫ (HARDWARE-PHOTO-PERF-01) — без обрезки и без правки цвета.
+ *
+ * Изделие целиком: `fit: 'inside'`, кадр не режется ни у оригинала, ни у
+ * миниатюры (обрезка в квадрат, как у образца материала, срезала бы
+ * механизм). Поворот — по EXIF: метаданные снимаются, и снимок с телефона
+ * без него лёг бы боком. Цвет переводится в sRGB по профилю входа — тот же
+ * вид, без фильтров. Оригинал — JPEG для увеличенного вида, миниатюра —
+ * WebP для списка.
+ */
+export async function buildHardwareImage(input: Buffer, max = 1600): Promise<Buffer> {
+  return sharp(input)
+    .rotate()
+    .resize(max, max, { fit: 'inside', withoutEnlargement: true })
+    .jpeg({ quality: 86 })
+    .toBuffer();
+}
+
+export async function buildHardwareThumb(input: Buffer, max = 320): Promise<Buffer> {
+  return sharp(input)
+    .rotate()
+    .resize(max, max, { fit: 'inside', withoutEnlargement: true })
+    .webp({ quality: 80 })
+    .toBuffer();
+}

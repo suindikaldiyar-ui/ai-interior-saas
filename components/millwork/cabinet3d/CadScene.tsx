@@ -151,6 +151,13 @@ type Props = {
    */
   environment?: boolean;
   /**
+   * ЭКОНОМИЧНЫЙ РЕЖИМ (HARDWARE-PHOTO-PERF-01): плотность пикселей 1, без
+   * теней и карты окружения. Холст, сцена и геометрия НЕ пересоздаются —
+   * меняются настройки рендерера (`EconomySync`). Рендер по чертежу его не
+   * видит: у трассировщика своё окружение и свои тени (слой 54).
+   */
+  economy?: boolean;
+  /**
    * Где мебель на холсте — проекция её габарита (тот же расчёт, что
    * `__mwCadFit`). По нему строка кнопок рендера встаёт туда, где мебели
    * нет: на широком холсте кухня вписана по высоте и свободно справа, на
@@ -260,6 +267,7 @@ export default function CadScene({
   onRenderSource,
   instantCamera = false,
   environment = true,
+  economy = false,
   onFurnitureRect,
   onReady,
   onLost,
@@ -373,8 +381,8 @@ export default function CadScene({
        * Тень мягкая и БЕЗ автопересчёта: карта обновляется по правке, а не
        * каждым кадром вращения — камера тени не меняет (`ShadowSync`).
        */
-      shadows={CAD_SHADOW_MAP}
-      dpr={[1, 1.75]}
+      shadows={economy ? false : CAD_SHADOW_MAP}
+      dpr={economy ? 1 : [1, 1.75]}
       gl={{ antialias: true, alpha: true }}
       camera={{ position: [3, 2.2, 4], fov: 40 }}
       /* Тон-маппинг и цветовое пространство — из того же места, что у картинок. */
@@ -389,7 +397,8 @@ export default function CadScene({
         * полусферический и ОДИН направленный с мягкой тенью. Тот же набор у
         * картинок библиотеки.
         */}
-      {environment && <CadEnvironment facing={facing} />}
+      {environment && !economy && <CadEnvironment facing={facing} />}
+      <EconomySync economy={economy} />
       <hemisphereLight args={[CAD_LIGHT.hemisphereSky, CAD_LIGHT.hemisphereGround, CAD_LIGHT.hemisphere]} />
       <KeyLight center={lightBounds.center} radius={lightBounds.radius} open={open} />
 
@@ -459,6 +468,52 @@ export default function CadScene({
       <SceneReady onReady={onReady} onLost={onLost} />
     </Canvas>
   );
+}
+
+/**
+ * ЭКОНОМИЧНЫЙ РЕЖИМ НА ЖИВОМ ХОЛСТЕ.
+ *
+ * Тени и плотность пикселей рендереру ставит сам `Canvas` по свойствам
+ * (`shadows`, `dpr`); здесь — то, чего он не делает: программы материалов
+ * собраны с тенями или без них, и при переключении их пересобирают ОДИН
+ * раз, а кадр рисуется по требованию (`frameloop="demand"`). Первый показ
+ * ничего не пересобирает — сцена и так собрана в нужном режиме.
+ */
+function EconomySync({ economy }: { economy: boolean }) {
+  const scene = useThree((state) => state.scene);
+  const gl = useThree((state) => state.gl);
+  const invalidate = useThree((state) => state.invalidate);
+  const shown = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (shown.current === null) {
+      shown.current = economy;
+      return;
+    }
+    if (shown.current === economy) return;
+    shown.current = economy;
+    scene.traverse((object) => {
+      const material = (object as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
+      if (!material) return;
+      for (const item of Array.isArray(material) ? material : [material]) item.needsUpdate = true;
+    });
+    if (!economy) gl.shadowMap.needsUpdate = true;
+    invalidate();
+  }, [economy, scene, gl, invalidate]);
+
+  /* Приёмка сверяет режим числами рендерера, а не подписью кнопки. */
+  useEffect(() => {
+    const w = window as unknown as { __mwCadEconomy?: () => { economy: boolean; dpr: number; shadows: boolean; environment: boolean } };
+    w.__mwCadEconomy = () => ({
+      economy,
+      dpr: gl.getPixelRatio(),
+      shadows: gl.shadowMap.enabled,
+      environment: scene.environment !== null,
+    });
+    return () => {
+      delete w.__mwCadEconomy;
+    };
+  }, [economy, gl, scene]);
+  return null;
 }
 
 /**

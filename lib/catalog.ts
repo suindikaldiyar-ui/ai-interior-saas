@@ -54,56 +54,159 @@ export type CatalogRead =
 export const CATALOG_READ_ERROR =
   'Каталог организации не прочитался — цены материалов неизвестны. Обновите страницу.';
 
-/**
- * Весь активный каталог организации.
- * Категории и файлы приезжают вложенными — отдельных round-trip нет.
- */
-export async function fetchCatalog(
-  supabase: SupabaseClient,
-  orgId: string,
-): Promise<CatalogRead> {
-  /*
-   * КАТАЛОГ ЧИТАЕТСЯ СТРАНИЦАМИ.
-   *
-   * PostgREST отдаёт за запрос не больше 1000 строк (`max-rows` у
-   * Supabase по умолчанию) и не говорит, что обрезал. Пока каталог был
-   * прайсом на сотню позиций, этого не было видно; 1825 цветов RAL
-   * — это каталог, у которого пропала бы половина молча. Порядок —
-   * артикул и id: иначе страница может отдать строку дважды, а другую
-   * не отдать вовсе.
-   */
-  const PAGE = 1000;
-  const rows: RawItem[] = [];
-  for (let from = 0; ; from += PAGE) {
-    const { data, error } = await supabase
-      .from('catalog_items')
-      .select(
-        `id, org_id, category_id, article, name_ru, name_kk, description, price, unit,
+/** Строка целиком: категория и файлы приезжают вложенными — отдельных round-trip нет. */
+const FULL_COLUMNS = `id, org_id, category_id, article, name_ru, name_kk, description, price, unit,
          dimensions, tiling, meta, is_active,
          catalog_categories!inner(id, org_id, key, name_ru, name_kk, applies_to, unit, sort_order, is_active),
-         catalog_assets(id, item_id, kind, storage_path, sort_order)`,
-      )
-      .eq('org_id', orgId)
-      .eq('is_active', true)
-      .order('article')
-      .order('id')
-      .range(from, from + PAGE - 1);
+         catalog_assets(id, item_id, kind, role, storage_path, sort_order)`;
 
-    if (error || !data) {
-      /*
-       * Половина каталога — тоже не каталог: строки, прочитанные до
-       * ошибки, не отдаются. Причина уходит в лог, человеку — слова.
-       */
-      console.error(
-        `[каталог] организация ${orgId}: чтение строк ${from}…${from + PAGE - 1} не удалось —`,
-        error?.message ?? 'пустой ответ без ошибки',
-      );
-      return { entries: null, error: CATALOG_READ_ERROR };
+/** Артикул позиции производителя: «MFR-<производитель>-<артикул>» (HARDWARE-01). */
+const MFR_PATTERN = 'MFR-%';
+
+/**
+ * ЗАПИСЬ ИЗДЕЛИЯ БЕЗ ПАСПОРТА КАРТОЧКИ (HARDWARE-PHOTO-PERF-01).
+ *
+ * Поля `meta.hardware`, которые читают подбор (`fittingVerdict`), смета
+ * (единица продажи, упаковка), сцена (размеры механизмов) и список
+ * (производитель, артикул, серия, источник). Не читаются:
+ * напечатанные размеры, присадка, формулы, заметки, «чего нет», материал,
+ * покрытие, совместимость словами, права и вид 3D — это паспорт карточки
+ * и присадка установленной позиции, они дочитываются по позиции. Замерено
+ * на 1199 позициях: 2.3 МБ записи изделия, из них 1.8 МБ — паспорт.
+ */
+export const HARDWARE_LIGHT_FIELDS = [
+  'category',
+  'brand',
+  'model',
+  'softClose',
+  'slideKind',
+  'fastenerKind',
+  'fillingKind',
+  'otherKind',
+  'pricingUnit',
+  'currency',
+  'mounting',
+  'manufacturer',
+  'manufacturerArticle',
+  'officialName',
+  'subcategory',
+  'series',
+  'variant',
+  'dimensionsMm',
+  'ranges',
+  'loadCapacityKg',
+  'movementType',
+  'openingAngleDeg',
+  'strokeMm',
+  'packaging',
+  'saleUnit',
+  'source',
+  'engineeringStatus',
+  'model3d',
+] as const;
+
+const LIGHT_COLUMNS = [
+  'id, org_id, category_id, article, name_ru, name_kk, description, price, unit, dimensions, tiling, is_active',
+  'meta_estimateKey:meta->estimateKey',
+  'meta_media:meta->media',
+  ...HARDWARE_LIGHT_FIELDS.map((key) => `hw_${key}:meta->hardware->${key}`),
+  'catalog_categories!inner(id, org_id, key, name_ru, name_kk, applies_to, unit, sort_order, is_active)',
+  'catalog_assets(id, item_id, kind, role, storage_path, sort_order)',
+].join(', ');
+
+/**
+ * КАК ЧИТАТЬ ПОЗИЦИИ ПРОИЗВОДИТЕЛЕЙ.
+ *
+ *   'full'  — строка целиком: админка, кабинет клиента, автопроект;
+ *   'light' — у позиций «MFR-…» без паспорта карточки (`detail: 'light'`):
+ *             рабочее место и Studio. Паспорт установленной позиции и
+ *             открытой карточки дочитывает `fetchCatalogDetails`.
+ */
+export type CatalogReadOptions = { hardware?: 'full' | 'light' };
+
+type LightRow = Omit<RawItem, 'meta'> & Record<string, unknown>;
+
+/** Строка лёгкого чтения → позиция: запись изделия из прочитанных полей, пустые не пишутся. */
+function lightRowItem(row: LightRow): RawItem & { detail: 'light' } {
+  const hardware: Record<string, unknown> = {};
+  for (const key of HARDWARE_LIGHT_FIELDS) {
+    const value = row[`hw_${key}`];
+    if (value !== null && value !== undefined) hardware[key] = value;
+  }
+  const meta: Record<string, unknown> = {};
+  if (row.meta_estimateKey !== null && row.meta_estimateKey !== undefined) meta.estimateKey = row.meta_estimateKey;
+  /* Изображения позиции (`meta.media`) — малы и нужны списку целиком. */
+  if (row.meta_media !== null && row.meta_media !== undefined) meta.media = row.meta_media;
+  if (Object.keys(hardware).length > 0) meta.hardware = hardware;
+  const item: Record<string, unknown> = { ...row, meta, detail: 'light' };
+  for (const key of Object.keys(item)) if (key.startsWith('hw_') || key.startsWith('meta_')) delete item[key];
+  return item as RawItem & { detail: 'light' };
+}
+
+type PageAnswer = { data: unknown[] | null; error: { message: string } | null; count?: number | null };
+
+/**
+ * Строки каталога ПОСТРАНИЧНО. Ошибка любой страницы — ошибка всего чтения.
+ *
+ * PostgREST отдаёт за запрос не больше 1000 строк (`max-rows` у Supabase
+ * по умолчанию) и не говорит, что обрезал. Пока каталог был прайсом на
+ * сотню позиций, этого не было видно; 1825 цветов RAL — это каталог, у
+ * которого пропала бы половина молча. Порядок — артикул и id: иначе
+ * страница может отдать строку дважды, а другую не отдать вовсе.
+ *
+ * СТРАНИЦЫ — РАЗОМ (HARDWARE-PHOTO-PERF-01). Первая страница приносит число
+ * строк (`count: 'exact'`), остальные запрашиваются одновременно: каждая
+ * страница — это ожидание сети, и четыре подряд стоили Studio четырёх
+ * ожиданий. Прочитано не столько, сколько назвала база (каталог менялся
+ * во время чтения), — ошибка, а не урезанный каталог. Число не пришло —
+ * страницы по одной, как раньше.
+ */
+async function readPages(
+  what: string,
+  page: (from: number, to: number, count: boolean) => PromiseLike<PageAnswer>,
+): Promise<unknown[] | null> {
+  const PAGE = 1000;
+  const failed = (from: number, error: { message: string } | null) => {
+    /*
+     * Половина каталога — тоже не каталог: строки, прочитанные до
+     * ошибки, не отдаются. Причина уходит в лог, человеку — слова.
+     */
+    console.error(`[каталог] ${what}: чтение строк ${from}…${from + PAGE - 1} не удалось —`, error?.message ?? 'пустой ответ без ошибки');
+    return null;
+  };
+  const first = await page(0, PAGE - 1, true);
+  if (first.error || !first.data) return failed(0, first.error);
+  const rows: unknown[] = [...first.data];
+  if (first.data.length < PAGE) return rows;
+
+  const total = typeof first.count === 'number' ? first.count : null;
+  if (total === null) {
+    for (let from = PAGE; ; from += PAGE) {
+      const { data, error } = await page(from, from + PAGE - 1, false);
+      if (error || !data) return failed(from, error);
+      rows.push(...data);
+      if (data.length < PAGE) break;
     }
-    rows.push(...(data as unknown as RawItem[]));
-    if (data.length < PAGE) break;
+    return rows;
   }
 
+  const starts: number[] = [];
+  for (let from = PAGE; from < total; from += PAGE) starts.push(from);
+  const answers = await Promise.all(starts.map((from) => page(from, from + PAGE - 1, false)));
+  for (let i = 0; i < answers.length; i += 1) {
+    const answer = answers[i];
+    if (answer.error || !answer.data) return failed(starts[i], answer.error);
+    rows.push(...answer.data);
+  }
+  if (rows.length !== total) {
+    console.error(`[каталог] ${what}: база назвала ${total} строк, прочитано ${rows.length} — каталог менялся во время чтения`);
+    return null;
+  }
+  return rows;
+}
+
+/** Сырые строки → позиции интерфейса: категория, файлы по порядку, образцы декоров. */
+async function entriesOf(rows: RawItem[]): Promise<CatalogEntryFull[]> {
   const entries = rows
     .filter((row) => row.catalog_categories?.is_active !== false)
     .map((row) => ({
@@ -120,7 +223,101 @@ export async function fetchCatalog(
    * экран, админка, перечитывание и кабинет получают позиции одинаковыми.
    * Это производное от `meta.provenance.preview`, в базу оно не пишется.
    */
-  return { error: null, entries: withReferences(entries, await loadReferenceTable()) };
+  return withReferences(entries, await loadReferenceTable());
+}
+
+/**
+ * Весь активный каталог организации.
+ * Категории и файлы приезжают вложенными — отдельных round-trip нет.
+ *
+ * ЛЁГКОЕ ЧТЕНИЕ (`hardware: 'light'`, HARDWARE-PHOTO-PERF-01). Studio
+ * открывалась с 3208 строками рабочего каталога, из них 1199 — фурнитура
+ * производителей с паспортом для карточки (1.8 из 2.3 МБ записи изделия).
+ * Паспорт нужен открытой карточке и присадке установленной позиции, а не
+ * открытию экрана: в лёгком чтении позиции «MFR-…» идут вторым запросом без
+ * него и с пометкой `detail: 'light'`. Порядок внутри каждой части — тот же
+ * (артикул, id); части идут друг за другом: списки фурнитуры сортируются
+ * сами (`hardwareByCategory`, панель), остальным позициям соседство с
+ * «MFR-…» безразлично.
+ */
+export async function fetchCatalog(
+  supabase: SupabaseClient,
+  orgId: string,
+  options: CatalogReadOptions = {},
+): Promise<CatalogRead> {
+  const items = () => supabase.from('catalog_items');
+  const counted = (count: boolean) => (count ? { count: 'exact' as const } : undefined);
+  if (options.hardware !== 'light') {
+    const rows = await readPages(`организация ${orgId}`, (from, to, count) =>
+      items().select(FULL_COLUMNS, counted(count)).eq('org_id', orgId).eq('is_active', true).order('article').order('id').range(from, to),
+    );
+    if (!rows) return { entries: null, error: CATALOG_READ_ERROR };
+    return { error: null, entries: await entriesOf(rows as RawItem[]) };
+  }
+
+  /* Две части — одновременно: ожидание сети одно на обе. */
+  const [own, makers] = await Promise.all([
+    readPages(`организация ${orgId}, позиции компании`, (from, to, count) =>
+      items()
+        .select(FULL_COLUMNS, counted(count))
+        .eq('org_id', orgId)
+        .eq('is_active', true)
+        .not('article', 'like', MFR_PATTERN)
+        .order('article')
+        .order('id')
+        .range(from, to),
+    ),
+    readPages(`организация ${orgId}, позиции производителей`, (from, to, count) =>
+      items()
+        .select(LIGHT_COLUMNS, counted(count))
+        .eq('org_id', orgId)
+        .eq('is_active', true)
+        .like('article', MFR_PATTERN)
+        .order('article')
+        .order('id')
+        .range(from, to),
+    ),
+  ]);
+  if (!own || !makers) return { entries: null, error: CATALOG_READ_ERROR };
+  return {
+    error: null,
+    entries: await entriesOf([...(own as RawItem[]), ...(makers as LightRow[]).map(lightRowItem)]),
+  };
+}
+
+/** Что сказать, когда паспорт позиции не дочитался. */
+export const CATALOG_DETAIL_ERROR =
+  'Паспорт позиции не дочитался — присадка и напечатанные размеры неизвестны. Откройте ещё раз.';
+
+/**
+ * ПАСПОРТ ПОЗИЦИЙ — строки целиком по идентификаторам (HARDWARE-PHOTO-PERF-01).
+ *
+ * Та же строка той же таблицы, что пришла лёгкой: второго источника нет.
+ * Зовут: рабочее место — для установленной фурнитуры (присадка, раскрой),
+ * панель фурнитуры — для открытой карточки. Не нашлась позиция — её нет в
+ * ответе (удалили или отключили); ошибка чтения — слова.
+ */
+export async function fetchCatalogDetails(
+  supabase: SupabaseClient,
+  orgId: string,
+  ids: string[],
+): Promise<CatalogRead> {
+  const unique = Array.from(new Set(ids));
+  const rows: RawItem[] = [];
+  /* По 100 идентификаторов: список уходит в адрес запроса. */
+  for (let at = 0; at < unique.length; at += 100) {
+    const part = unique.slice(at, at + 100);
+    const { data, error } = await supabase.from('catalog_items').select(FULL_COLUMNS).eq('org_id', orgId).in('id', part);
+    if (error || !data) {
+      console.error(
+        `[каталог] организация ${orgId}: паспорт ${part.length} позиций не дочитался —`,
+        error?.message ?? 'пустой ответ без ошибки',
+      );
+      return { entries: null, error: CATALOG_DETAIL_ERROR };
+    }
+    rows.push(...(data as unknown as RawItem[]));
+  }
+  return { error: null, entries: await entriesOf(rows) };
 }
 
 export async function fetchCategories(

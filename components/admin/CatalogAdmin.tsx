@@ -6,6 +6,7 @@ import { decodeCsvBuffer } from '@/lib/csv';
 import { REFERENCE_SOURCE_TITLE, referenceKeyOf, referenceUrl } from '@/lib/millwork/referenceTextures';
 import { TYPICAL_PRICE_LIST } from '@/lib/millwork/rates';
 import { supabaseBrowser } from '@/lib/supabase/client';
+import HardwareMediaAdmin from './HardwareMediaAdmin';
 import {
   APPLIES_TO,
   APPLIES_TO_LABEL,
@@ -14,9 +15,11 @@ import {
   UNIT_LABEL,
   isSurfaceKind,
   type AppliesTo,
+  type CatalogAsset,
   type CatalogCategory,
   type CatalogEntryFull,
   type CatalogUnit,
+  type HardwareMediaEntry,
 } from '@/types/catalog';
 
 type Props = {
@@ -374,6 +377,29 @@ export default function CatalogAdmin({
    * `uploadedFacts`: в бандл админки не едут ни факты, ни разбор.
    */
   const hardwareInput = useRef<HTMLInputElement>(null);
+  /*
+   * ФОТО ФУРНИТУРЫ (HARDWARE-PHOTO-PERF-01): изменились изображения позиции —
+   * строка обновляется на месте (`meta.media` и файлы `hw-…`), без
+   * перечитывания каталога на 3000 строк.
+   */
+  const [mediaOpen, setMediaOpen] = useState(false);
+  const onMediaChanged = useCallback(
+    (itemId: string, media: HardwareMediaEntry[], added: Pick<CatalogAsset, 'kind' | 'role' | 'storage_path'>[]) => {
+      const roles = new Set(media.map((entry) => entry.role).filter(Boolean));
+      setItems((prev) =>
+        prev.map((item) => {
+          if (item.id !== itemId) return item;
+          const meta = { ...(item.meta ?? {}) };
+          if (media.length > 0) meta.media = media;
+          else delete meta.media;
+          const kept = item.assets.filter((asset) => !String(asset.role).startsWith('hw-') || roles.has(String(asset.role)));
+          const fresh = added.map((asset, i) => ({ id: `new-${asset.role}-${asset.kind}`, item_id: itemId, sort_order: i, ...asset }) as CatalogAsset);
+          return { ...item, meta, assets: [...kept, ...fresh] };
+        }),
+      );
+    },
+    [],
+  );
   const [hardware, setHardware] = useState<{ summary: HardwareSummary; payload: HardwarePayload; file: string | null } | null>(null);
   const hardwareRequest = async (confirm: boolean, payload: HardwarePayload, file: string | null) => {
     setBusy(true);
@@ -635,6 +661,16 @@ export default function CatalogAdmin({
           >
             Фурнитура из файла
           </button>
+          <button
+            type="button"
+            onClick={() => setMediaOpen((on) => !on)}
+            aria-pressed={mediaOpen}
+            data-admin-hardware-media
+            className="mw-touch border border-navyLine px-3 text-[13px] text-graphiteMw hover:border-cyan hover:text-textMw"
+            title="Изображения позиций фурнитуры: своё фото с подтверждёнными правами или ссылка у производителя"
+          >
+            Фото фурнитуры
+          </button>
           <input
             type="search"
             data-admin-search
@@ -836,6 +872,8 @@ export default function CatalogAdmin({
             </div>
           </div>
         )}
+
+        {mediaOpen && <HardwareMediaAdmin items={items} onChanged={onMediaChanged} />}
 
         {readError && (
           <p className="border-b border-alert/50 bg-navy px-3 py-2 text-[13px] text-alert" data-catalog-error>

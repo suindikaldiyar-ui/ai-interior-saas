@@ -3,6 +3,9 @@
 import { create } from 'zustand';
 import type { SceneView } from '@/lib/cameraFraming';
 import { ALL_LAYERS, type SceneLayers } from '@/lib/millwork/sceneLayers';
+
+/** Ключ экономичного режима 3D в хранилище браузера: настройка устройства, не объекта. */
+export const ECONOMY_KEY = 'mw-economy-3d';
 import { getEntry, isFurnitureType } from '@/lib/furnitureCatalog';
 import { kitchenFootprint, readKitchenMeta } from '@/lib/kitchen';
 import {
@@ -81,6 +84,15 @@ export type InteriorState = {
    * смета от него не меняются, в объект оно не пишется.
    */
   sceneLayers: SceneLayers;
+  /**
+   * ЭКОНОМИЧНЫЙ РЕЖИМ 3D (HARDWARE-PHOTO-PERF-01) — для слабого ноутбука и
+   * планшета: плотность пикселей 1, без теней и карты окружения, картинки
+   * библиотеки и превью фурнитуры — только по нажатию. Настройка ЭТОГО
+   * устройства (`localStorage`), а не объекта: ряд, раскрой, смета и
+   * рендер по чертежу от неё не меняются. По умолчанию выключен — никому
+   * не навязывается.
+   */
+  economyMode: boolean;
   /**
    * Выбранный отсек шкафа (R01): подсветка в сцене и на схеме и цель
    * правок «Внутреннего наполнения». Состояние выделения, а не
@@ -170,6 +182,7 @@ export type InteriorState = {
   closeAllParts: () => void;
   setCutaway: (value: boolean) => void;
   setSceneLayers: (value: SceneLayers) => void;
+  setEconomyMode: (value: boolean) => void;
   setSelectedBay: (value: { moduleId: string; bayId: string; zoneId?: string; drawerId?: string } | null) => void;
   setDisplayLit: (value: boolean) => void;
   setCadAngle: (value: SceneView) => void;
@@ -209,6 +222,13 @@ export type InteriorState = {
    * Позиция с тем же id заменяется: вторая копия товара разошлась бы с первой.
    */
   addCatalogEntries: (entries: CatalogEntryFull[]) => void;
+  /**
+   * ПАСПОРТ ДОЧИТАН (HARDWARE-PHOTO-PERF-01): строки целиком заменяют свои
+   * лёгкие копии НА ТОМ ЖЕ МЕСТЕ — та же строка `catalog_items`, а не
+   * новая позиция. Строки, которой в каталоге нет, здесь не появляется:
+   * паспорт не добавляет товар.
+   */
+  mergeCatalogDetails: (entries: CatalogEntryFull[]) => void;
   setSelection: (targetKey: TargetKey, itemId: string | null) => void;
   clearSelections: () => void;
   setAnalysis: (analysis: RoomAnalysis | null) => void;
@@ -322,6 +342,7 @@ export const useInteriorStore = create<InteriorState>((set, get) => ({
   openParts: [],
   cutaway: false,
   sceneLayers: ALL_LAYERS,
+  economyMode: false,
   selectedBay: null,
   displayLit: true,
   cadAngle: 'iso',
@@ -663,6 +684,15 @@ export const useInteriorStore = create<InteriorState>((set, get) => ({
   closeAllParts: () => set({ openParts: [] }),
   setCutaway: (value) => set({ cutaway: value }),
   setSceneLayers: (value) => set({ sceneLayers: { ...value } }),
+  setEconomyMode: (value) => {
+    /* Удобство этого устройства: хранилище браузера бывает закрыто — тогда только до перезагрузки. */
+    try {
+      window.localStorage.setItem(ECONOMY_KEY, value ? '1' : '0');
+    } catch {
+      /* приватное окно или запрет хранилища — режим живёт до перезагрузки */
+    }
+    set({ economyMode: value });
+  },
   setSelectedBay: (value) => set({ selectedBay: value }),
   setDisplayLit: (value) => set({ displayLit: value }),
   setCadAngle: (value) => set({ cadAngle: value }),
@@ -722,6 +752,13 @@ export const useInteriorStore = create<InteriorState>((set, get) => ({
           ...entries,
         ],
       };
+    }),
+
+  mergeCatalogDetails: (entries) =>
+    set((state) => {
+      const full = new Map(entries.map((entry) => [entry.id, entry]));
+      if (!state.catalog.some((item) => full.has(item.id) && item.detail === 'light')) return {};
+      return { catalog: state.catalog.map((item) => (item.detail === 'light' ? (full.get(item.id) ?? item) : item)) };
     }),
 
   setSelection: (targetKey, itemId) =>

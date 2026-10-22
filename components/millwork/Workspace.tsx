@@ -62,7 +62,7 @@ import {
 import { ratesFromCatalog } from '@/lib/millwork/rates';
 import { rowStandardDepthMm } from '@/lib/millwork/fill';
 import { bayEnvelope, drawerReleaseBlock } from '@/lib/millwork/bays';
-import { hardwareByCategory, hardwareCatalog } from '@/lib/millwork/hardware';
+import { hardwareByCategory, hardwareCatalog, lightReferences } from '@/lib/millwork/hardware';
 import { roomSourceOf, type RoomSource } from '@/lib/millwork/room';
 import { openingAssumptions } from '@/lib/millwork/warnings';
 import {
@@ -312,6 +312,13 @@ type ResultView = 'facade' | 'panels';
 
 
 export type WorkspaceProps = {
+  /**
+   * ОРГАНИЗАЦИЯ ОБЪЕКТА — её уже проверила страница на сервере
+   * (HARDWARE-PHOTO-PERF-01). Каталог читается сразу по ней, без двух
+   * ожиданий сети (пользователь, членство). Нет — демонстрация или старый
+   * вход: `CatalogLoader` определит её сам.
+   */
+  orgId?: string;
   title: string;
   zone: string;
   measuredBy: string;
@@ -1342,6 +1349,40 @@ export default function Workspace(props: WorkspaceProps) {
     () => panelWallsOf(layout, segments, input.runWallId),
     [layout, segments, input.runWallId],
   );
+
+  /*
+   * ПАСПОРТ УСТАНОВЛЕННОЙ ФУРНИТУРЫ (HARDWARE-PHOTO-PERF-01).
+   *
+   * Каталог приходит лёгким: у позиций производителей нет присадки и
+   * напечатанных размеров (`detail: 'light'`). Установленной позиции они
+   * нужны — присадку детали и раскрой считают по паспорту, — поэтому
+   * позиции, на которые ссылаются ряды стен на экране, дочитываются
+   * целиком и встают в каталог стора на свои места. Пока не дочитаны,
+   * присадка говорит «паспорт не дочитан», а не «в паспорте нет». Не
+   * дочиталось — словами в строке панели фурнитуры; следующая правка
+   * спрашивает снова.
+   */
+  const mergeCatalogDetails = useInteriorStore((s) => s.mergeCatalogDetails);
+  const detailsInFlight = useRef(new Set<string>());
+  useEffect(() => {
+    if (!orgId) return;
+    const wanted = lightReferences(segments, catalog).filter((id) => !detailsInFlight.current.has(id));
+    if (wanted.length === 0) return;
+    for (const id of wanted) detailsInFlight.current.add(id);
+    void (async () => {
+      try {
+        const { supabaseBrowser } = await import('@/lib/supabase/client');
+        const supabase = supabaseBrowser();
+        if (!supabase) return;
+        const { fetchCatalogDetails } = await import('@/lib/catalog');
+        const read = await fetchCatalogDetails(supabase, orgId, wanted);
+        if (read.error !== null) setHardwareNotice(read.error);
+        else mergeCatalogDetails(read.entries);
+      } finally {
+        for (const id of wanted) detailsInFlight.current.delete(id);
+      }
+    })();
+  }, [segments, catalog, orgId, mergeCatalogDetails]);
 
   /**
    * СТЕНА КОМПОЗИЦИИ ПОД ЭТИМ НОМЕРОМ — КЛЮЧ ЕЁ ПРАВОК.
@@ -2894,6 +2935,10 @@ export default function Workspace(props: WorkspaceProps) {
     ): Promise<string | null> => {
       const entry = catalog.find((e) => e.id === itemId);
       if (!entry) return 'Позиции нет в каталоге — цену записать некуда.';
+      /* Лёгкая строка неполная: записать её `meta` в базу значило бы стереть паспорт. */
+      if (entry.detail === 'light' && patch.finishPrices) {
+        return `«${entry.article}»: позиция прочитана без паспорта — цену по поверхностям здесь не записать.`;
+      }
       const next = patch.finishPrices
         ? { meta: { ...entry.meta, finishPrices: { ...(metaFinishPrices(entry.meta) ?? {}), ...patch.finishPrices } } }
         : { price: patch.price ?? 0 };
@@ -2916,7 +2961,8 @@ export default function Workspace(props: WorkspaceProps) {
     const supabase = supabaseBrowser();
     if (!supabase) return 'Supabase не настроен: каталог не перечитан.';
     const { fetchCatalog } = await import('@/lib/catalog');
-    const read = await fetchCatalog(supabase, orgId);
+    /* Тем же лёгким чтением, что `CatalogLoader`: паспорт установленного дочитается сам. */
+    const read = await fetchCatalog(supabase, orgId, { hardware: 'light' });
     if (read.error !== null) {
       setCatalogError(read.error);
       return read.error;
@@ -4712,7 +4758,7 @@ export default function Workspace(props: WorkspaceProps) {
       )}
 
       <div className={`mt-4 ${onStep('catalog')}`}>
-        <CatalogLoader />
+        <CatalogLoader orgId={props.orgId} />
         <MaterialsStep
           zone={zone}
           kitchenItemId={kitchenItemId}
@@ -5905,7 +5951,7 @@ export default function Workspace(props: WorkspaceProps) {
               * всегда: на виде «3D» — во всю высоту, иначе уезжает за экран.
               * `display:none` не годится — канвас нулевого размера не рисуется.
               */}
-            <CatalogLoader />
+            <CatalogLoader orgId={props.orgId} />
 
             {/*
               * СТАРАЯ СЦЕНА ОСТАЁТСЯ — ЗА ЭКРАНОМ И НАВСЕГДА.

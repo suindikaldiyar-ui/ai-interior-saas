@@ -63,8 +63,12 @@ export default async function ProjectWorkspace({ id, studio = false }: { id: str
   // RLS уже отсекает чужие объекты, но проверка org_id здесь стоит дёшево.
   if (!project || project.org_id !== org.id) notFound();
 
+  /*
+   * Серверу каталог нужен ради ставок (`ratesFromCatalog`): паспорт
+   * фурнитуры производителей их не задаёт — лёгкое чтение (HARDWARE-PHOTO-PERF-01).
+   */
   const [catalogRead, { data: orgRow }] = await Promise.all([
-    fetchCatalog(supabase, org.id),
+    fetchCatalog(supabase, org.id, { hardware: 'light' }),
     supabase.from('orgs').select('run_templates, production').eq('id', org.id).maybeSingle(),
   ]);
 
@@ -167,6 +171,7 @@ export default async function ProjectWorkspace({ id, studio = false }: { id: str
   return (
     <Workspace
       {...input}
+      orgId={org.id}
       studio={studio}
       roomPhoto={roomPhoto}
       pathRender={pathRender}

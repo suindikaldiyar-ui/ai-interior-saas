@@ -1057,6 +1057,159 @@ async function catalogReadChecks() {
     Array.isArray(paged.entries) && paged.entries.length === 1845,
     Array.isArray(paged.entries) ? `${paged.entries.length} позиций` : 'НЕ СПИСОК',
   );
+
+  await lightReadChecks();
+}
+
+/**
+ * ЛЁГКОЕ ЧТЕНИЕ КАТАЛОГА (HARDWARE-PHOTO-PERF-01).
+ *
+ * Заглушка отвечает по фильтру артикула, как PostgREST: позиции компании
+ * (`not like MFR-%`) — строкой целиком, позиции производителей (`like
+ * MFR-%`) — колонками путей `meta->hardware->…`, без паспорта. Проверяется
+ * сборка: запись изделия из прочитанных полей, `detail: 'light'`, изображения
+ * (`meta.media`) и ключ сметы на месте, служебных колонок в позиции нет;
+ * полное чтение — прежнее. Что так отвечает НАСТОЯЩИЙ PostgREST, меряет
+ * браузер (`check-hardware-media`, PART=perf и media).
+ */
+async function lightReadChecks() {
+  console.log('\nКаталог: лёгкое чтение позиций производителей (HARDWARE-PHOTO-PERF-01)');
+  const calls: { select: string; filters: string[] }[] = [];
+  const mfrLight = {
+    ...rawRow(1),
+    meta: undefined,
+    article: 'MFR-HETTICH-9114276',
+    meta_estimateKey: null,
+    meta_media: [{ kind: 'EXACT_PRODUCT', rights: 'NOT_VERIFIED', sourceUrl: 'https://example.test/9114276', checkedAt: '2026-10-21' }],
+    hw_category: 'slide',
+    hw_manufacturer: 'Hettich',
+    hw_manufacturerArticle: '9 114 276',
+    hw_subcategory: 'side_mount',
+    hw_dimensionsMm: { nominalLength: 500, sideClearance: 12.7 },
+    hw_ranges: null,
+    hw_source: { file: 'TA.pdf', printedPage: '1252', checkedAt: '2026-10-21' },
+    hw_engineeringStatus: 'VERIFIED',
+    hw_saleUnit: null,
+  };
+  delete (mfrLight as Record<string, unknown>).meta;
+  const own = { ...rawRow(2), article: 'A-OWN', meta: { estimateKey: 'front_panel', hardware: { category: 'hinge', notes: 'своя позиция — целиком' } } };
+  const client = () => {
+    const make = () => {
+      const call = { select: '', filters: [] as string[] };
+      const chain: Record<string, unknown> = {};
+      chain.select = (columns: string) => {
+        call.select = columns;
+        return chain;
+      };
+      for (const name of ['eq', 'order']) chain[name] = () => chain;
+      chain.not = (column: string, op: string, value: string) => {
+        call.filters.push(`${column} not ${op} ${value}`);
+        return chain;
+      };
+      chain.like = (column: string, value: string) => {
+        call.filters.push(`${column} like ${value}`);
+        return chain;
+      };
+      chain.range = () => {
+        calls.push(call);
+        const makers = call.filters.some((f) => f.includes('like MFR-%') && !f.includes('not'));
+        return Promise.resolve({ data: makers ? [mfrLight] : [own], error: null });
+      };
+      return chain;
+    };
+    return { from: () => make() };
+  };
+  const read = (await fetchCatalog(client() as never, 'org', { hardware: 'light' })) as { entries: CatalogEntryFull[] | null; error: string | null };
+  const entries = read.entries ?? [];
+  const maker = entries.find((e) => e.article === 'MFR-HETTICH-9114276');
+  const mine = entries.find((e) => e.article === 'A-OWN');
+  const hardware = (maker?.meta?.hardware ?? {}) as Record<string, unknown>;
+  check(
+    'LR1 лёгкое чтение — два запроса: позиции компании целиком (not like MFR-%), позиции производителей — путями meta->hardware без паспорта',
+    calls.length === 2 &&
+      calls[0].filters.join() === 'article not like MFR-%' &&
+      /\bmeta\b/.test(calls[0].select) &&
+      calls[1].filters.join() === 'article like MFR-%' &&
+      !/(^|[\s,])meta([\s,]|$)/.test(calls[1].select) &&
+      calls[1].select.includes('hw_category:meta->hardware->category') &&
+      calls[1].select.includes('meta_media:meta->media') &&
+      !/printed|drilling|formulas|notes|missing/.test(calls[1].select),
+    calls.map((c) => c.filters.join(' ')).join(' | '),
+  );
+  check(
+    'LR2 позиция производителя: detail «light», запись изделия из прочитанных полей (пустые не пишутся), изображения и источник на месте, служебных колонок нет',
+    read.error === null &&
+      maker?.detail === 'light' &&
+      hardware.category === 'slide' &&
+      hardware.manufacturerArticle === '9 114 276' &&
+      JSON.stringify(hardware.dimensionsMm) === JSON.stringify({ nominalLength: 500, sideClearance: 12.7 }) &&
+      !('ranges' in hardware) &&
+      !('saleUnit' in hardware) &&
+      !('estimateKey' in (maker?.meta ?? {})) &&
+      Array.isArray(maker?.meta?.media) &&
+      Object.keys(maker ?? {}).every((key) => !key.startsWith('hw_') && !key.startsWith('meta_')),
+    JSON.stringify({ detail: maker?.detail, hardware, keys: Object.keys(maker ?? {}).filter((k) => k.startsWith('hw_') || k.startsWith('meta_')) }),
+  );
+  check(
+    'LR3 позиция компании — строкой целиком, без пометки: её паспорт приходит сразу',
+    mine?.detail === undefined && (mine?.meta?.hardware as Record<string, unknown> | undefined)?.notes === 'своя позиция — целиком' && mine?.meta?.estimateKey === 'front_panel',
+    JSON.stringify(mine?.meta ?? null),
+  );
+  calls.length = 0;
+  const full = (await fetchCatalog(client() as never, 'org')) as { entries: CatalogEntryFull[] | null };
+  check(
+    'LR4 полное чтение — прежнее: один запрос без фильтра артикула, пометки «light» нет ни у одной позиции',
+    calls.length === 1 && calls[0].filters.length === 0 && (full.entries ?? []).every((e) => e.detail === undefined),
+    `${calls.length} запрос(а) · фильтры ${calls[0]?.filters.join() || 'нет'}`,
+  );
+
+  /*
+   * СТРАНИЦЫ РАЗОМ: первая приносит число строк, остальные идут
+   * одновременно. Заглушка держит каждую страницу на один такт и считает,
+   * сколько их в полёте сразу; число строк не сошлось — ошибка словами.
+   */
+  const counted = (total: number, served: number) => {
+    let inFlight = 0;
+    let peak = 0;
+    const asked: string[] = [];
+    const make = () => {
+      let wantsCount = false;
+      const chain: Record<string, unknown> = {};
+      chain.select = (_columns: string, options?: { count?: string }) => {
+        wantsCount = options?.count === 'exact';
+        return chain;
+      };
+      for (const name of ['eq', 'order', 'not', 'like']) chain[name] = () => chain;
+      chain.range = (from: number, to: number) => {
+        asked.push(`${from}-${to}${wantsCount ? ' +число' : ''}`);
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        const size = Math.max(0, Math.min(to + 1, served) - from);
+        return new Promise((done) =>
+          setTimeout(() => {
+            inFlight -= 1;
+            done({ data: Array.from({ length: size }, (_, i) => rawRow(from + i)), error: null, count: wantsCount ? total : null });
+          }, 5),
+        );
+      };
+      return chain;
+    };
+    return { client: { from: () => make() }, peak: () => peak, asked };
+  };
+  const whole = counted(2400, 2400);
+  const parallel = (await fetchCatalog(whole.client as never, 'org')) as { entries: CatalogEntryFull[] | null };
+  check(
+    'LR5 каталог 2400 строк: первая страница с числом строк, остальные две — одновременно; прочитано всё',
+    (parallel.entries ?? []).length === 2400 && whole.peak() === 2 && whole.asked.join() === '0-999 +число,1000-1999,2000-2999',
+    `${(parallel.entries ?? []).length} строк · в полёте сразу ${whole.peak()} · ${whole.asked.join(', ')}`,
+  );
+  const shrunk = counted(2400, 2300);
+  const lost = (await fetchCatalog(shrunk.client as never, 'org')) as { entries: unknown; error: string | null };
+  check(
+    'LR6 база назвала 2400 строк, пришло 2300 (каталог менялся во время чтения) — не урезанный каталог, а слова',
+    lost.entries === null && typeof lost.error === 'string' && /Каталог/.test(lost.error),
+    String(lost.error),
+  );
 }
 
 

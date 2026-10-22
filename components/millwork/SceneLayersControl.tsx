@@ -24,11 +24,18 @@ import {
  *
  * «Рентген» (прозрачный корпус) — прежний переключатель разреза, он живёт
  * рядом и в «Дизайн» не протекает: выбор «Дизайн» его снимает.
+ *
+ * «Экономичный режим» (HARDWARE-PHOTO-PERF-01) — тоже настройка вида, но
+ * не объекта, а устройства: слабый ноутбук или планшет. Плотность пикселей
+ * 1, без теней и карты окружения, картинки библиотеки и превью фурнитуры —
+ * по нажатию. По умолчанию выключен.
  */
 export default function SceneLayersControl({ counts }: { counts: Partial<Record<SceneLayer, number>> }) {
   const layers = useInteriorStore((state) => state.sceneLayers);
   const setLayers = useInteriorStore((state) => state.setSceneLayers);
   const setCutaway = useInteriorStore((state) => state.setCutaway);
+  const economy = useInteriorStore((state) => state.economyMode);
+  const setEconomy = useInteriorStore((state) => state.setEconomyMode);
   const [open, setOpen] = useState(false);
   const preset = presetOf(layers);
 
@@ -98,6 +105,16 @@ export default function SceneLayersControl({ counts }: { counts: Partial<Record<
               </button>
             );
           })}
+          <button
+            type="button"
+            data-scene-economy
+            aria-pressed={economy}
+            onClick={() => setEconomy(!economy)}
+            className={`mw-btn ${economy ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+            title="Для слабого ноутбука и планшета: плотность пикселей 1, без теней и карты окружения, картинки библиотеки и превью фурнитуры — по нажатию. Мебель, раскрой и смета не меняются."
+          >
+            Экономичный режим
+          </button>
         </div>
       )}
     </div>
