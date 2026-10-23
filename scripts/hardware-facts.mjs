@@ -152,6 +152,53 @@ const DIM_MAP = {
     'Размер C (межосевое крайних)': 'holeSpacing',
     'межосевое отверстий': 'holeSpacing',
   },
+  /*
+   * ФОРМА РУЧКИ (HANDLE-REAL) — только для картинки сцены, подбор её не читает.
+   * Подписи — подвида: «высота» у скобы и кнопки — вылет от фасада, а у ручки
+   * для кромок — высота пластины; общей таблицей их не развести.
+   */
+  'Hafele/handle/bar_handle': {
+    'Размер B (высота)': 'projection',
+    диаметр: 'diameter',
+    'на чертеже: высота': 'projection',
+    'на чертеже: диаметр': 'diameter',
+  },
+  'Hafele/handle/knob': {
+    'Размер A (диаметр)': 'diameter',
+    'Размер B (высота)': 'projection',
+    диаметр: 'diameter',
+    высота: 'projection',
+  },
+  'Hafele/handle/flush_handle': {
+    'Размер A (диаметр фланца)': 'flangeDiameter',
+    'Размер B (диаметр корпуса)': 'bodyDiameter',
+    'Размер C (глубина корпуса)': 'bodyDepth',
+    '3 (на чертеже, фланец)': 'flangeThickness',
+    'диаметр фланца': 'flangeDiameter',
+    'диаметр корпуса': 'bodyDiameter',
+    'глубина корпуса': 'bodyDepth',
+    'толщина фланца': 'flangeThickness',
+  },
+  /*
+   * Ручка для кромок — по чертежам стр. 276–277: «ширина» — длина вдоль кромки
+   * (28 и 80 мм у малых), B — глубина профиля в плане (у 126.14 подписана
+   * «высотой», на чертеже это вид сверху), у волнистой у краёв 20 мм;
+   * 16 и 19 — стенка по тылу фасада, 11 и 27 — губа по лицу.
+   */
+  'Hafele/handle/edge_handle': {
+    ширина: 'length',
+    'Размер B (ширина профиля)': 'edgeDepth',
+    'Размер B (высота)': 'edgeDepth',
+    '20 (на чертеже)': 'edgeDepthEnd',
+    'профиль: 19 (на чертеже)': 'backLeg',
+    '16 (на чертеже)': 'backLeg',
+    высота: 'backLeg',
+    'профиль: 11 (на чертеже)': 'lipHeight',
+    '27 (на чертеже)': 'lipHeight',
+    вылет: 'edgeReach',
+    '19.8 (на чертеже, вылет)': 'edgeReach',
+    толщина: 'sheetThickness',
+  },
   'Hafele/kitchen': { 'Ширина корпуса': 'cabinetWidth' },
   'Hafele/wardrobe': {
     'Номинальная длина': 'nominalLength',
@@ -308,7 +355,9 @@ for (const file of files) {
     firstRaw.set(key, it);
 
     const family = `${manufacturer === 'Häfele' ? 'Hafele' : manufacturer}/${category}`;
-    const dimMap = DIM_MAP[family] ?? {};
+    const sub = canonicalSub(category, it.subcategory, it);
+    /* Подписи подвида дополняют подписи семейства: «высота» скобы и ручки для кромок — разные величины. */
+    const dimMap = { ...(DIM_MAP[family] ?? {}), ...(sub ? (DIM_MAP[`${family}/${sub}`] ?? {}) : {}) };
     const rangeMap = RANGE_MAP[family] ?? {};
     const dims = {};
     const ranges = {};
@@ -328,7 +377,6 @@ for (const file of files) {
       if (finite(a) && finite(b) && a <= b) ranges[canon] = [a, b];
       else if (!finite(a) && finite(b) && canon === 'cabinetOuterWidth') dims.maxCabinetWidth = b;
     }
-    const sub = canonicalSub(category, it.subcategory, it);
     const ktFormula = (Array.isArray(it.formulas) ? it.formulas : [])
       .map((f) => /Необходимое пространство \(глубина\):\s*NL\s*\+\s*(\d+(?:[.,]\d+)?)/.exec(String(f)))
       .find(Boolean);

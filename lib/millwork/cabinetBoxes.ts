@@ -28,9 +28,17 @@ import { shopOf } from './shop';
 import { FRAME_WIDTH_MM, frontKey, frontOf, isFramed } from './frontMaterial';
 import { moduleFronts, type FacadeSpan } from './applianceFront';
 import { carcassKeyOf, type CarcassItem } from './carcassMaterial';
-import { installedItem, slidingAccepts } from './fittings';
+import { handleItemOf, installedItem, slidingAccepts } from './fittings';
 import { SLIDING_DOOR, slidingDoorCount } from './sections';
-import { handleBoxOf, handleSpotOf } from './handlePlace';
+import { handleBoxOf, handleSpotOf, type HandleSpot, type LeafGeometry } from './handlePlace';
+import {
+  genericBarModel,
+  genericStripModel,
+  handleItemModel,
+  placeHandle,
+  type HandleModel,
+  type HandleOrient,
+} from './handleModel';
 
 /**
  * ОТСТУП ЧАШКИ ОТ КРОМКИ — УСЛОВНЫЙ, ДЛЯ КАРТИНКИ.
@@ -167,6 +175,26 @@ export type PartBox = BoxDraw & {
    * и коробка у него узкая по X. Рельеф ложится на лицо, а не на торец.
    */
   face?: '-x';
+  /**
+   * РУЧКА ЭТОЙ КОРОБКИ (HANDLE-REAL): модель, поворот и откуда она. Есть —
+   * сцена рисует сетку модели на месте коробки (центр тот же, масштаб 1);
+   * коробка — её габарит, по нему меряют проверки открывания и рёбра.
+   */
+  handle?: HandleDraw;
+};
+
+/** Ручка в сцене: что нарисовано, как повёрнуто и какая позиция за ним стоит. */
+export type HandleDraw = {
+  model: HandleModel;
+  orient: HandleOrient;
+  /** Толщина фасада, мм: у ручки на кромке стенка идёт по тылу фасада. */
+  frontMm: number;
+  /** Позиция каталога на этой детали; `null` — условная ручка типа модуля. */
+  itemId: string | null;
+  /** Деталь фасада: `door:0`, `drawer:1`. */
+  leaf: string;
+  /** Ручка помещается на полотне; нет — нарисована, а вердикт места говорит словами. */
+  fits: boolean;
 };
 
 /**
@@ -802,6 +830,73 @@ export function doorKick(pivot: { kick: number; angle: number }, angle: number):
   return pivot.kick * Math.abs(Math.sin(angle));
 }
 
+/** Ручка на кромке: у навесных — на нижней, у механизма — на свободной, у остальных — на верхней. */
+function edgeMountOf(spot: HandleSpot, seat: 'spot' | 'center', upper: boolean): 'top' | 'bottom' {
+  if (seat === 'spot' && spot.place === 'top-center') return 'top';
+  if (seat === 'spot' && spot.place === 'bottom-center') return 'bottom';
+  return upper ? 'bottom' : 'top';
+}
+
+/**
+ * РУЧКА НА ЭТОЙ ДЕТАЛИ ФАСАДА — ОДНА ФУНКЦИЯ НА ВСЮ СЦЕНУ (HANDLE-REAL).
+ *
+ * Закрытая створка, ящик, Г-модуль, едущая створка (её коробки — те же,
+ * `riders`) и проверка открывания у угла берут ручку отсюда. Раньше у
+ * закрытой двери был брусок по `handleBoxOf`, у открытой — свой по
+ * `leafLocal`, у ящика — свой по опции ряда: «Без ручки» на ящике рисовал
+ * скобу, а открытая дверь с «Без ручки» получала ручку на ходу.
+ *
+ *   «Без ручки» или ручка фрезерована в фасаде → ручки нет;
+ *   «Профиль»   → условный уголок во всю ширину полотна;
+ *   «Скоба»     → позиция каталога этой детали (`handleItemOf`: своя у
+ *                 створки сильнее ручки модуля) по её модели; нет позиции
+ *                 или у неё нет модели — условная скоба по правилу места.
+ *
+ * `geometry` — полотно в координатах ряда (центр, размер в свету зазоров,
+ * толщина фасада); ручка ставится на его лицо.
+ */
+export function leafHandleBox(input: {
+  unit: Module;
+  leaf: string;
+  part: string;
+  geometry: LeafGeometry;
+  spot: HandleSpot;
+  /** `center` — у ящика: ручка посередине фронта. */
+  seat: 'spot' | 'center';
+  options: Pick<FrontOptions, 'integratedHandles' | 'hardware'>;
+}): PartBox | null {
+  const { unit, leaf, geometry, spot, seat } = input;
+  if (milledGrip(unit, leaf)) return null;
+  const kind = unit.fill?.handle ?? (input.options.integratedHandles ? 'profile' : 'bar');
+  if (kind === 'none') return null;
+  let model: HandleModel;
+  const item = kind === 'bar' ? handleItemOf(unit, leaf, input.options.hardware) : null;
+  const shaped = item ? handleItemModel(item).model : null;
+  if (kind === 'profile') model = genericStripModel(geometry.widthM * MM);
+  else if (shaped) model = shaped;
+  else {
+    /* Условная скоба — длиной прежнего бруска: доля стороны, вдоль которой она стоит. */
+    const box = handleBoxOf(seat === 'center' ? { place: 'top-center', turn: 'horizontal' } : spot, geometry);
+    model = genericBarModel(Math.max(box.scale[0], box.scale[1]) * MM);
+  }
+  const placed = placeHandle(model, spot, geometry, { seat, edge: edgeMountOf(spot, seat, isUpperRow(unit)) });
+  return {
+    material: 'metal',
+    part: input.part,
+    node: 'handle',
+    position: placed.position,
+    scale: placed.scale,
+    handle: {
+      model,
+      orient: placed.orient,
+      frontMm: Math.round(geometry.thicknessM * MM * 10) / 10,
+      itemId: item?.id ?? null,
+      leaf,
+      fits: placed.fits,
+    },
+  };
+}
+
 /**
  * Фасад одной створки в ЗАКРЫТОМ положении и его ручка.
  *
@@ -855,45 +950,22 @@ export function doorBoxes(
 
 
   /*
-   * ЧЕМ ОТКРЫВАЮТ — ВЫБОР МОДУЛЯ, А НЕ ОПЦИЯ РЯДА.
+   * ЧЕМ ОТКРЫВАЮТ И ГДЕ РУЧКА — `leafHandleBox` (HANDLE-REAL).
    *
-   * Скоба, врезной профиль или нажатие. «Без ручки» рисуется буквально:
-   * на фасаде нет ничего, и это видно — именно за этим её и выбирают.
+   * Тип ручки — выбор модуля («Без ручки» рисуется буквально: на фасаде
+   * нет ничего), модель — позиция каталога этой створки, место — правило
+   * `handleSpotOf`: сторона выводится из открывания, высота и поворот — у
+   * человека. Та же коробка едет с открытой створкой (`riders`).
    */
-  const kind = unit.fill?.handle ?? (integratedHandles ? 'profile' : 'bar');
-
-  /*
-   * ГДЕ РУЧКА — ВЫБОР МОДУЛЯ, А НЕ СЛЕДСТВИЕ СТОРОНЫ ПЕТЕЛЬ.
-   *
-   * Здесь стояли три ветки: профиль по верхней кромке, механизм по
-   * свободной, скоба вертикально у края напротив петель. Это ровно три
-   * из восьми положений — остальных пяти в продукте не было вовсе,
-   * хотя мебельщик ставит ручку и так, и поперёк.
-   *
-   * Умолчание повторяет прежние три случая до последнего, поэтому ряды,
-   * собранные раньше, выглядят так же (`defaultHandlePlace`).
-   */
-  /*
-   * СТОРОНА ВЫВОДИТСЯ ИЗ ОТКРЫВАНИЯ, А НЕ ХРАНИТСЯ.
-   *
-   * Одна функция на сцену, чертёж и таблицу фурнитуры: сменилось
-   * направление — ручка переехала везде разом.
-   */
-  const geometry = handleBoxOf(handleSpotOf(unit, { options: { integratedHandles } } as Run, hinge), {
-    cx,
-    cy,
-    widthM: doorW - 2 * gap,
-    heightM: heightM - 2 * gap,
-    thicknessM: thickness,
-  });
-
-  const handle: PartBox = {
-    material: 'metal',
+  const handle = leafHandleBox({
+    unit,
+    leaf: `door:${index}`,
     part,
-    node: 'handle',
-    position: geometry.position,
-    scale: geometry.scale,
-  };
+    geometry: { cx, cy, widthM: doorW - 2 * gap, heightM: heightM - 2 * gap, thicknessM: thickness },
+    spot: handleSpotOf(unit, { options: { integratedHandles } } as Run, hinge),
+    seat: 'spot',
+    options,
+  });
 
   /*
    * ПЕТЛИ — УЗЕЛ, А НЕ КООРДИНАТА СВЕРЛЕНИЯ.
@@ -950,9 +1022,8 @@ export function doorBoxes(
    * подписывает раскрой на другое. Рисуется так же, как делается: четыре
    * бруска обвязки по контуру и вставка, утопленная внутрь.
    */
-  /* Ручка фрезерована в фасаде створки (KIRA «Интегрированные ручки») — скобы на нём нет. */
-  const noHandle = kind === 'none' || milledGrip(unit, `door:${index}`);
-  const withHandle = (parts: PartBox[]) => (noHandle ? [...parts, ...hingeNodes] : [...parts, handle, ...hingeNodes]);
+  /* Ручки нет — «Без ручки» или ручка фрезерована в фасаде (KIRA «Интегрированные ручки»). */
+  const withHandle = (parts: PartBox[]) => (handle ? [...parts, handle, ...hingeNodes] : [...parts, ...hingeNodes]);
 
   if (isFramed(spec)) {
     const frame = FRAME_WIDTH_MM / MM;
@@ -1174,23 +1245,24 @@ export function drawerBoxes(
     ...(drawerOrient ? { reliefOrient: drawerOrient } : {}),
   });
 
-  /* Ручка фрезерована во фронте ящика (`milledGrip`) — накладной нет. */
-  if (milledGrip(unit, `drawer:${index}`)) return boxes;
-  boxes.push(
-    integratedHandles
-      ? {
-          material: 'metal',
-          part,
-          position: [cx, cy + height / 2 - gap - 0.01, thickness + 0.004],
-          scale: [widthM - 2 * gap, 0.02, 0.015],
-        }
-      : {
-          material: 'metal',
-          part,
-          position: [cx, cy, thickness + 0.012],
-          scale: [Math.min(0.26, widthM * 0.5), 0.016, 0.016],
-        },
-  );
+  /*
+   * РУЧКА ЯЩИКА — ТА ЖЕ `leafHandleBox`, что у створок (HANDLE-REAL).
+   *
+   * Здесь стояла своя ветка по опции ряда: выбор модуля («Без ручки»,
+   * «Профиль») до ящика не доезжал, и на фронте с механизмом нажатия
+   * рисовалась скоба, висевшая в 4 мм от лица. Ручка ящика — посередине
+   * фронта; фрезерованная во фронте (`milledGrip`) накладной не даёт.
+   */
+  const handle = leafHandleBox({
+    unit,
+    leaf: `drawer:${index}`,
+    part,
+    geometry: { cx, cy, widthM: widthM - 2 * gap, heightM: height - 2 * gap, thicknessM: thickness },
+    spot: { place: 'top-center', turn: 'horizontal' },
+    seat: 'center',
+    options: { integratedHandles, hardware: options.hardware },
+  });
+  if (handle) boxes.push(handle);
 
   return boxes;
 }
@@ -1305,20 +1377,16 @@ export function lCornerBoxes(unit: Module, place: ModulePlacement, options: Fron
    * Ручка — на свободном краю фасада А (левом): за неё тянут, и пара
    * складывается. Место и габарит — тем же `handleBoxOf`, что у створок.
    */
-  const kind = unit.fill?.handle ?? (options.integratedHandles ? 'profile' : 'bar');
-  if (kind !== 'none' && !milledGrip(unit, 'door:0')) {
-    const geometry = handleBoxOf(
-      handleSpotOf(unit, { options: { integratedHandles: options.integratedHandles } } as Run, 'right'),
-      { cx: x + legB / 2, cy: y + H / 2, widthM: aW, heightM: h, thicknessM: tf },
-    );
-    boxes.push({
-      material: 'metal',
-      part,
-      node: 'handle',
-      position: [geometry.position[0], geometry.position[1], zM + geometry.position[2]],
-      scale: geometry.scale,
-    });
-  }
+  const handle = leafHandleBox({
+    unit,
+    leaf: 'door:0',
+    part,
+    geometry: { cx: x + legB / 2, cy: y + H / 2, widthM: aW, heightM: h, thicknessM: tf },
+    spot: handleSpotOf(unit, { options: { integratedHandles: options.integratedHandles } } as Run, 'right'),
+    seat: 'spot',
+    options,
+  });
+  if (handle) boxes.push({ ...handle, position: [handle.position[0], handle.position[1], zM + handle.position[2]] });
 
   /*
    * Петли — узлом, а не присадкой (как у створок): у боковины Б, по
@@ -1350,6 +1418,8 @@ export type PosedBox = {
   pitch?: number;
   role: 'front' | 'handle';
   panel?: string;
+  /** Ручка (HANDLE-REAL): сцена рисует её модель, коробка — её габарит. */
+  handle?: HandleDraw;
 };
 
 /**
@@ -1365,8 +1435,13 @@ export type PosedBox = {
  * модуля (`x`, `y` — левый нижний угол полотна относительно модуля).
  */
 /**
- * Полотно и ручка створки В ОСЯХ ЕЁ ПЕТЕЛЬ — то, что `InteractiveDoor`
- * кладёт в свою группу. Одно место на компонент и на `leafPoses`.
+ * Полотно створки В ОСЯХ ЕЁ ПЕТЕЛЬ — то, что `InteractiveDoor` кладёт в
+ * свою группу. Одно место на компонент и на `leafPoses`.
+ *
+ * Ручки здесь нет (HANDLE-REAL): у открытой створки своя формула ручки
+ * ставила её не туда, где она стояла закрытой, и рисовала её при «Без
+ * ручки». Ручка едет с полотном той же коробкой, что у закрытой створки
+ * (`doorBoxes` → `riders`, `leafPoses({ handle })`).
  */
 export function leafLocal(input: {
   opening: 'left' | 'right' | 'lift' | 'flap';
@@ -1374,33 +1449,13 @@ export function leafLocal(input: {
   height: number;
   thickness: number;
   gap: number;
-  integratedHandle: boolean;
 }): {
   panel: { at: [number, number, number]; size: [number, number, number] };
-  handle: { at: [number, number, number]; size: [number, number, number] };
 } {
-  const { opening, width, height, thickness, gap, integratedHandle } = input;
+  const { opening, width, height, thickness, gap } = input;
   const [panelX, panelY] = doorPivot(opening, 0, 0, width, height).panel;
   return {
     panel: { at: [panelX, panelY, thickness / 2], size: [width - 2 * gap, height - 2 * gap, thickness] },
-    handle: integratedHandle
-      ? {
-          at: [panelX, panelY + height / 2 - gap - 0.01, thickness + 0.004],
-          size: [width - 2 * gap, 0.02, 0.015],
-        }
-      : opening === 'lift' || opening === 'flap'
-        ? {
-            at: [
-              panelX,
-              panelY + (opening === 'lift' ? -height / 2 + 0.04 : height / 2 - 0.04),
-              thickness + 0.012,
-            ],
-            size: [Math.min(0.24, width * 0.5), 0.016, 0.016],
-          }
-        : {
-            at: [panelX + (opening === 'left' ? width / 2 - 0.05 : -width / 2 + 0.05), panelY, thickness + 0.012],
-            size: [0.016, Math.min(0.22, height * 0.4), 0.016],
-          },
   };
 }
 
@@ -1412,15 +1467,19 @@ export function leafPoses(input: {
   height: number;
   thickness: number;
   gap: number;
-  integratedHandle: boolean;
+  /**
+   * РУЧКА ЗАКРЫТОЙ СТВОРКИ в координатах модуля — коробка из `doorBoxes`.
+   * Пусто — ручки на створке нет (её нет и в сцене).
+   */
+  handle?: Pick<PartBox, 'position' | 'scale' | 'handle'> | null;
   s: number;
 }): PosedBox[] {
-  const { opening, x, y, width, height, thickness, gap, integratedHandle } = input;
+  const { opening, x, y, width, height, thickness, gap } = input;
   const pivot = doorPivot(opening, x, y, width, height, thickness);
   const angle = pivot.angle * Math.max(0, Math.min(1, input.s));
   /* Вынос вперёд по ходу — тот же, что двигает группу `InteractiveDoor`. */
   const kick = doorKick(pivot, angle);
-  const local = leafLocal({ opening, width, height, thickness, gap, integratedHandle });
+  const local = leafLocal({ opening, width, height, thickness, gap });
 
   /* Локальные точки группы на оси → координаты модуля. */
   const place = (local: [number, number, number]): [number, number, number] => {
@@ -1439,10 +1498,23 @@ export function leafPoses(input: {
   };
   const turn = pivot.axis === 'y' ? { yaw: angle } : { yaw: 0, pitch: angle };
 
-  return [
-    { center: place(local.panel.at), size: local.panel.size, role: 'front', ...turn },
-    { center: place(local.handle.at), size: local.handle.size, role: 'handle', ...turn },
-  ];
+  const out: PosedBox[] = [{ center: place(local.panel.at), size: local.panel.size, role: 'front', ...turn }];
+  if (input.handle) {
+    /* Ручка в осях петель — её место у закрытой створки минус ось; дальше она едет с полотном. */
+    const at: [number, number, number] = [
+      input.handle.position[0] - pivot.origin[0],
+      input.handle.position[1] - pivot.origin[1],
+      input.handle.position[2] - pivot.origin[2],
+    ];
+    out.push({
+      center: place(at),
+      size: input.handle.scale,
+      role: 'handle',
+      ...turn,
+      ...(input.handle.handle ? { handle: input.handle.handle } : {}),
+    });
+  }
+  return out;
 }
 
 /** Ход ящика при «Открыть всё», метры: столько выдвигает сцена. */
@@ -1462,7 +1534,7 @@ export const DRAWER_TRAVEL_M = 0.3;
 export function bifoldPoses(
   unit: Module,
   place: ModulePlacement,
-  options: Pick<FrontOptions, 'gapM' | 'frontThicknessM' | 'integratedHandles'>,
+  options: Pick<FrontOptions, 'gapM' | 'frontThicknessM' | 'integratedHandles' | 'hardware'>,
   s: number,
 ): PosedBox[] {
   const { x, y, heightM: H, depthM: D } = place;
@@ -1512,13 +1584,17 @@ export function bifoldPoses(
     },
   ];
 
-  /* Ручка — на свободном краю фасада А, тем же `handleBoxOf`, что у створок. */
-  const kind = unit.fill?.handle ?? (options.integratedHandles ? 'profile' : 'bar');
-  if (kind !== 'none' && !milledGrip(unit, 'door:0')) {
-    const closed = handleBoxOf(
-      handleSpotOf(unit, { options: { integratedHandles: options.integratedHandles } } as Run, 'right'),
-      { cx: legB / 2, cy: H / 2, widthM: aW, heightM: h, thicknessM: tf },
-    );
+  /* Ручка — на свободном краю фасада А, той же `leafHandleBox`, что у створок и закрытого Г-модуля. */
+  const closed = leafHandleBox({
+    unit,
+    leaf: 'door:0',
+    part: `${unit.id}:door:0`,
+    geometry: { cx: legB / 2, cy: H / 2, widthM: aW, heightM: h, thicknessM: tf },
+    spot: handleSpotOf(unit, { options: { integratedHandles: options.integratedHandles } } as Run, 'right'),
+    seat: 'spot',
+    options,
+  });
+  if (closed) {
     /* Ручка относительно центра фасада А в его закрытом положении. */
     const off = turn(closed.position[0] - legB / 2, closed.position[2] - tf / 2, theta + psi);
     boxes.push({
@@ -1526,6 +1602,7 @@ export function bifoldPoses(
       size: closed.scale,
       yaw: theta + psi,
       role: 'handle',
+      ...(closed.handle ? { handle: closed.handle } : {}),
     });
   }
 

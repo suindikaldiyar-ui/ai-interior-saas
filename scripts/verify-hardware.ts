@@ -46,6 +46,7 @@ import { lightReferences } from '../lib/millwork/hardware';
 import { hasDrawing, listPhoto, manufacturerPhotoLink, matchMediaFiles, mediaCoverage, mediaEntries, mediaViews, model3dStatusOf } from '../lib/millwork/hardwareMedia';
 import type { CatalogAsset } from '../types/catalog';
 import type { FittingSlot } from '../types/millwork';
+import { handleChecks } from './verify-handles';
 
 let passed = 0;
 let failed = 0;
@@ -1085,15 +1086,31 @@ console.log('\nHW.I: изображения позиции, статус 3D, п�
   const statuses = Array.from(CATALOG.values()).map((it) => model3dStatusOf(it));
   const approx = statuses.filter((s) => s === 'VISUAL_APPROXIMATION').length;
   const none = statuses.filter((s) => s === 'NO_3D').length;
+  /*
+   * HANDLE-REAL: у ручек своя модель — по размерам паспорта (MEASURED) или по
+   * чертежу с недостающими размерами (VISUAL_RECONSTRUCTION). До слоя ручки
+   * сцена не рисовала вовсе — у всех 63 было «3D нет»; теперь 38 из них с
+   * моделью, и только ручки. Числа зафиксированы: тихо уменьшиться не могут.
+   */
+  const measured = statuses.filter((s) => s === 'MEASURED_RECONSTRUCTION').length;
+  const reconstructed = statuses.filter((s) => s === 'VISUAL_RECONSTRUCTION').length;
+  const modelOutsideHandles = Array.from(CATALOG.values()).filter(
+    (it) => (model3dStatusOf(it) === 'MEASURED_RECONSTRUCTION' || model3dStatusOf(it) === 'VISUAL_RECONSTRUCTION') && it.hardware.category !== 'handle',
+  );
   check(
-    'I5 статус 3D: пантограф 805.11.354, петля 71B3550 и направляющая 9 114 276 — условная модель; планка 173L6100 — 3D нет; CAD и модели по чертежу — ни у одной позиции',
+    'I5 статус 3D: пантограф 805.11.354, петля 71B3550 и направляющая 9 114 276 — условная модель; планка 173L6100 — 3D нет; CAD — ни у одной позиции; условных 619, без 3D 542, ручек по размерам паспорта 13 и по чертежу 25 — и только ручки',
     status('MFR-HAFELE-805.11.354') === 'VISUAL_APPROXIMATION' &&
       status('MFR-BLUM-71B3550') === 'VISUAL_APPROXIMATION' &&
       status('MFR-HETTICH-9114276') === 'VISUAL_APPROXIMATION' &&
       status('MFR-BLUM-173L6100') === 'NO_3D' &&
-      approx + none === CATALOG.size &&
-      statuses.every((s) => s !== 'OFFICIAL_CAD' && s !== 'VISUAL_RECONSTRUCTION'),
-    `условная ${approx} · нет ${none} · всего ${CATALOG.size}`,
+      approx === 619 &&
+      none === 542 &&
+      measured === 13 &&
+      reconstructed === 25 &&
+      approx + none + measured + reconstructed === CATALOG.size &&
+      modelOutsideHandles.length === 0 &&
+      statuses.every((s) => s !== 'OFFICIAL_CAD'),
+    `условная ${approx} · нет ${none} · по размерам ${measured} · по чертежу ${reconstructed} · всего ${CATALOG.size}${modelOutsideHandles.length ? ` · не ручки: ${modelOutsideHandles.length}` : ''}`,
   );
 
   /* Покрытие фото: на фактах — ноль фото; привязанные файлы и ссылки меняют ровно свои строки. */
@@ -1232,6 +1249,11 @@ console.log('\nHW.I: изображения позиции, статус 3D, п�
     `без изменений ${kept.unchanged.length} · обновлений ${changed.update.length}`,
   );
 }
+
+/* ═════════════════════════  HANDLE-REAL: ручки своей формой  ═════════════════════════ */
+
+console.log('\nHANDLE-REAL: ручки своей формой — модель по паспорту, деталь, сцена, смета, раскрой');
+handleChecks(check);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

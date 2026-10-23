@@ -101,6 +101,19 @@ export const FIT_KEYS: Record<string, { title: string; kind: 'mm' | 'range' }> =
   powerFactor: { title: 'Фактор мощности', kind: 'range' },
   legHeight: { title: 'Высота опоры', kind: 'range' },
   drawerSide: { title: 'Толщина боковины ящика', kind: 'range' },
+  /* Ручки (HANDLE-REAL): размеры, по которым строится модель ручки. */
+  projection: { title: 'B — вылет ручки от фасада', kind: 'mm' },
+  diameter: { title: 'Диаметр', kind: 'mm' },
+  flangeDiameter: { title: 'A — диаметр фланца', kind: 'mm' },
+  bodyDiameter: { title: 'B — диаметр корпуса', kind: 'mm' },
+  bodyDepth: { title: 'C — глубина корпуса', kind: 'mm' },
+  flangeThickness: { title: 'Толщина фланца', kind: 'mm' },
+  edgeDepth: { title: 'Глубина профиля в плане', kind: 'mm' },
+  edgeDepthEnd: { title: 'Глубина профиля на краю (волна)', kind: 'mm' },
+  backLeg: { title: 'Стенка по тылу фасада', kind: 'mm' },
+  lipHeight: { title: 'Губа по лицу фасада', kind: 'mm' },
+  edgeReach: { title: 'Вылет губы', kind: 'mm' },
+  sheetThickness: { title: 'Толщина листа', kind: 'mm' },
 };
 
 /** Наложение по высоте планки: «overlayMd3» — FA при MD 3 мм. */

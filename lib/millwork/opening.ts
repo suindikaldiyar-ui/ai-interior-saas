@@ -284,6 +284,14 @@ export type OpeningHardware = {
    * модулям равна итогу по построению.
    */
   byModule: Record<string, ModuleHardware>;
+  /**
+   * ДЕТАЛИ СО ШТУЧНОЙ РУЧКОЙ ПО МОДУЛЯМ (HANDLE-REAL): `door:0`, `drawer:1`…
+   * — те же, что посчитаны в `handleBar`, в том же цикле. По ним смета
+   * берёт ручку своей детали (`handleItemOf`): у двери слева одна позиция,
+   * справа — другая. Рядом со счётчиками, а не в них: разрез по модулям —
+   * числа, их складывает сборочный лист.
+   */
+  handleLeaves: Record<string, string[]>;
 };
 
 /** Фурнитура одного модуля: те же величины, что в итоге ряда. */
@@ -362,6 +370,7 @@ export function openingHardware(
     handles: 0,
     assumed: [],
     byModule: {},
+    handleLeaves: {},
   };
 
   /**
@@ -393,11 +402,14 @@ export function openingHardware(
    * (`milledGrip`) фурнитуры ручки не берёт: браться есть за фасад.
    */
   const addHandles = (unit: Module, leaves: string[]) => {
-    const plain = leaves.filter((leaf) => !milledGrip(unit, leaf)).length;
+    const own = leaves.filter((leaf) => !milledGrip(unit, leaf));
+    const plain = own.length;
     if (plain === 0) return;
     const { handle } = handleOf(unit, run);
-    if (handle === 'bar') add('handleBar', plain);
-    else if (handle === 'profile') add('handleProfileMm', unit.widthMm);
+    if (handle === 'bar') {
+      add('handleBar', plain);
+      (result.handleLeaves[unit.id] ??= []).push(...own);
+    } else if (handle === 'profile') add('handleProfileMm', unit.widthMm);
     else add('handlePush', plain);
     result.handles += plain;
   };

@@ -12,6 +12,7 @@ import {
 import { catalogUrl } from '@/lib/supabase/config';
 import { runnerGeometry } from './drawerBox';
 import { slidingAccepts, slotAccepts } from './fittings';
+import { handleItemModel } from './handleModel';
 
 /**
  * ИЗОБРАЖЕНИЯ ФУРНИТУРЫ (HARDWARE-PHOTO-PERF-01) — привязка к артикулу.
@@ -160,11 +161,16 @@ export function manufacturerPhotoLink(views: MediaView[]): MediaView | null {
  * сцена: петли (чашка и плечо по числу петель модуля), боковые
  * направляющие (комплект ящика, `runnerGeometry`), подъёмник, корзины
  * карго, сушилка, выдвижное и пантограф гардероба (`mechanismBoxes`) и
- * комплект купе (`kupeBoxes`). Планки, ручки, крепёж, опоры,
- * полкодержатели, угловые и мусорные системы, донные направляющие сцена
- * не рисует — `null`.
+ * комплект купе (`kupeBoxes`), ручки — своей формой по размерам паспорта
+ * (`handleItemModel`, HANDLE-REAL). Планки, крепёж, опоры, полкодержатели,
+ * угловые и мусорные системы, донные направляющие, профиль системы без
+ * ручек сцена не рисует — `null`.
  */
 export function sceneDrawing(item: HardwareItem): string | null {
+  if (item.hardware.category === 'handle') {
+    const shaped = handleItemModel(item);
+    return shaped.model ? shaped.words : null;
+  }
   if (slidingAccepts(item)) return 'шины и полотна купе перед корпусом — условного сечения';
   if (slotAccepts('hinge', item)) return 'чашка и плечо петли — одинаковые для всех артикулов петель, по числу петель модуля';
   if (slotAccepts('slide', item)) {
@@ -180,17 +186,20 @@ export function sceneDrawing(item: HardwareItem): string | null {
 
 /**
  * СТАТУС 3D ПОЗИЦИИ — выводится, а не хранится: CAD производителя с
- * правами (`model3d`), иначе условная модель сцены, иначе 3D нет. Модели
- * по чертежу производителя (VISUAL_RECONSTRUCTION) в продукте нет ни у
- * одной позиции.
+ * правами (`model3d`), иначе то, чем позицию рисует сцена. Ручка — своей
+ * моделью (`handleItemModel`): по всем размерам паспорта — MEASURED, по
+ * чертежу с недостающими размерами — VISUAL_RECONSTRUCTION; остальные
+ * места — условной моделью, иначе 3D нет.
  */
 export function model3dStatusOf(item: HardwareItem): HardwareModel3dStatus {
   if (item.hardware.model3d) return 'OFFICIAL_CAD';
+  if (item.hardware.category === 'handle') return handleItemModel(item).status;
   return sceneDrawing(item) ? 'VISUAL_APPROXIMATION' : 'NO_3D';
 }
 
 export const MODEL3D_WORDS: Record<HardwareModel3dStatus, string> = {
   OFFICIAL_CAD: 'CAD-модель производителя',
+  MEASURED_RECONSTRUCTION: 'Модель по размерам паспорта',
   VISUAL_RECONSTRUCTION: 'Модель по чертежу производителя',
   VISUAL_APPROXIMATION: 'Условная 3D-модель',
   NO_3D: '3D-модели нет',

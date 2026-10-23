@@ -21283,6 +21283,13 @@ console.log('\nСлой 55: угол Г и П — владелец, места, 
           const obstacles = partsOf[other].filter(
             ({ part }) => part.material === 'front' || part.material === 'glass' || part.node === 'handle',
           );
+          /* Закрытая ручка створки из пачки ряда — в осях модуля. */
+          const closedHandle = (leafId: string, entry: { x: number; y: number; zM: number }) => {
+            const box = partsOf[me].find(({ part }) => part.part === leafId && part.node === 'handle')?.part;
+            return box
+              ? { ...box, position: [box.position[0] - entry.x, box.position[1] - entry.y, box.position[2] - entry.zM] as V3 }
+              : null;
+          };
           for (const entry of runPlaces(run)) {
             const openW = blindPartMm(entry.unit, run) > 0 ? openFrontMm(entry.unit, run) / 1000 : undefined;
             const leaves = sceneLeaves(entry.unit, entry.heightM, openW);
@@ -21304,7 +21311,11 @@ console.log('\nСлой 55: угол Г и П — владелец, места, 
                         height: entry.heightM,
                         thickness: options.frontThicknessM,
                         gap: options.gapM,
-                        integratedHandle: options.integratedHandles,
+                        /*
+                         * Ручка створки — коробка той же пачки (HANDLE-REAL), в осях
+                         * модуля: ровно та, что едет с открытой створкой в сцене.
+                         */
+                        handle: closedHandle(leaf.id, entry),
                         s,
                       }).map((box) =>
                         worldBox(

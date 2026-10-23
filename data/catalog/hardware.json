@@ -26762,6 +26762,12 @@
     "subcategory": "edge_handle",
     "series": "Мебельные ручки Timeless",
     "variant": "edge_handle · малая, 28 × 45, шурупы Hospa Ø 3,5",
+    "dimensionsMm": {
+     "length": 28,
+     "backLeg": 45,
+     "edgeReach": 32,
+     "sheetThickness": 2
+    },
     "printed": [
      {
       "label": "ширина",
@@ -26827,6 +26833,10 @@
     "subcategory": "bar_handle",
     "series": "Мебельные ручки Timeless",
     "variant": "bar_handle · Фиксированная (длина до 1800 мм)",
+    "dimensionsMm": {
+     "projection": 45,
+     "diameter": 14
+    },
     "printed": [
      {
       "label": "на чертеже: высота",
@@ -26878,7 +26888,9 @@
     "variant": "bar_handle · A 142 · B 45 · C 128 мм",
     "dimensionsMm": {
      "length": 142,
-     "holeSpacing": 128
+     "projection": 45,
+     "holeSpacing": 128,
+     "diameter": 14
     },
     "printed": [
      {
@@ -26943,7 +26955,9 @@
     "variant": "bar_handle · A 174 · B 45 · C 160 мм",
     "dimensionsMm": {
      "length": 174,
-     "holeSpacing": 160
+     "projection": 45,
+     "holeSpacing": 160,
+     "diameter": 14
     },
     "printed": [
      {
@@ -27008,7 +27022,9 @@
     "variant": "bar_handle · A 206 · B 45 · C 192 мм",
     "dimensionsMm": {
      "length": 206,
-     "holeSpacing": 192
+     "projection": 45,
+     "holeSpacing": 192,
+     "diameter": 14
     },
     "printed": [
      {
@@ -27073,7 +27089,9 @@
     "variant": "bar_handle · A 238 · B 45 · C 224 мм",
     "dimensionsMm": {
      "length": 238,
-     "holeSpacing": 224
+     "projection": 45,
+     "holeSpacing": 224,
+     "diameter": 14
     },
     "printed": [
      {
@@ -27138,7 +27156,9 @@
     "variant": "bar_handle · A 302 · B 45 · C 288 мм",
     "dimensionsMm": {
      "length": 302,
-     "holeSpacing": 288
+     "projection": 45,
+     "holeSpacing": 288,
+     "diameter": 14
     },
     "printed": [
      {
@@ -27203,7 +27223,9 @@
     "variant": "bar_handle · A 462 · B 45 · C 448 мм",
     "dimensionsMm": {
      "length": 462,
-     "holeSpacing": 448
+     "projection": 45,
+     "holeSpacing": 448,
+     "diameter": 14
     },
     "printed": [
      {
@@ -27267,7 +27289,12 @@
     "series": "Мебельные ручки Timeless",
     "variant": "edge_handle · 80 × 55, шурупы Hospa Ø 2,5",
     "dimensionsMm": {
-     "holeSpacing": 64
+     "length": 80,
+     "backLeg": 55,
+     "holeSpacing": 64,
+     "edgeReach": 22,
+     "lipHeight": 27,
+     "sheetThickness": 2
     },
     "printed": [
      {
@@ -27343,7 +27370,12 @@
     "series": "Мебельные ручки Timeless",
     "variant": "edge_handle · 80 × 58, шурупы Hospa Ø 2,5",
     "dimensionsMm": {
-     "holeSpacing": 64
+     "length": 80,
+     "backLeg": 58,
+     "holeSpacing": 64,
+     "edgeReach": 15,
+     "lipHeight": 27,
+     "sheetThickness": 2
     },
     "printed": [
      {
@@ -27416,7 +27448,11 @@
     "variant": "edge_handle · A 50 · B 36 · C 30 мм",
     "dimensionsMm": {
      "length": 50,
-     "holeSpacing": 30
+     "edgeDepth": 36,
+     "holeSpacing": 30,
+     "backLeg": 19,
+     "lipHeight": 11,
+     "sheetThickness": 2
     },
     "printed": [
      {
@@ -27489,7 +27525,11 @@
     "variant": "edge_handle · A 100 · B 36 · C 80 мм",
     "dimensionsMm": {
      "length": 100,
-     "holeSpacing": 80
+     "edgeDepth": 36,
+     "holeSpacing": 80,
+     "backLeg": 19,
+     "lipHeight": 11,
+     "sheetThickness": 2
     },
     "printed": [
      {
@@ -27562,7 +27602,11 @@
     "variant": "edge_handle · A 200 · B 36 · C 180 мм",
     "dimensionsMm": {
      "length": 200,
-     "holeSpacing": 180
+     "edgeDepth": 36,
+     "holeSpacing": 180,
+     "backLeg": 19,
+     "lipHeight": 11,
+     "sheetThickness": 2
     },
     "printed": [
      {
@@ -27635,7 +27679,11 @@
     "variant": "edge_handle · A 300 · B 36 · C 280 мм",
     "dimensionsMm": {
      "length": 300,
-     "holeSpacing": 280
+     "edgeDepth": 36,
+     "holeSpacing": 280,
+     "backLeg": 19,
+     "lipHeight": 11,
+     "sheetThickness": 2
     },
     "printed": [
      {
@@ -27708,7 +27756,11 @@
     "variant": "edge_handle · A 400 · B 36 · C 380 · C1 190 мм",
     "dimensionsMm": {
      "length": 400,
-     "holeSpacing": 380
+     "edgeDepth": 36,
+     "holeSpacing": 380,
+     "backLeg": 19,
+     "lipHeight": 11,
+     "sheetThickness": 2
     },
     "printed": [
      {
@@ -27785,7 +27837,9 @@
     "variant": "bar_handle · A 110 · B 45 · C 96 мм",
     "dimensionsMm": {
      "length": 110,
-     "holeSpacing": 96
+     "projection": 45,
+     "holeSpacing": 96,
+     "diameter": 14
     },
     "printed": [
      {
@@ -27850,7 +27904,11 @@
     "variant": "edge_handle · волнистая, A 200 · B 38 · C 128 мм, цвета нержавеющей стали",
     "dimensionsMm": {
      "length": 200,
-     "holeSpacing": 128
+     "edgeDepth": 38,
+     "holeSpacing": 128,
+     "backLeg": 16,
+     "edgeReach": 19.8,
+     "edgeDepthEnd": 20
     },
     "printed": [
      {
@@ -27927,7 +27985,11 @@
     "variant": "edge_handle · волнистая, A 350 · B 38 · C 256 мм, цвета нержавеющей стали",
     "dimensionsMm": {
      "length": 350,
-     "holeSpacing": 256
+     "edgeDepth": 38,
+     "holeSpacing": 256,
+     "backLeg": 16,
+     "edgeReach": 19.8,
+     "edgeDepthEnd": 20
     },
     "printed": [
      {
@@ -28004,7 +28066,9 @@
     "variant": "edge_handle · прямая, A 100 · B 36 · C 64 мм",
     "dimensionsMm": {
      "length": 100,
-     "holeSpacing": 64
+     "edgeDepth": 36,
+     "holeSpacing": 64,
+     "backLeg": 16
     },
     "printed": [
      {
@@ -28073,7 +28137,9 @@
     "variant": "edge_handle · прямая, A 200 · B 36 · C 128 мм",
     "dimensionsMm": {
      "length": 200,
-     "holeSpacing": 128
+     "edgeDepth": 36,
+     "holeSpacing": 128,
+     "backLeg": 16
     },
     "printed": [
      {
@@ -28142,7 +28208,9 @@
     "variant": "edge_handle · прямая, A 300 · B 36 · C 192 мм",
     "dimensionsMm": {
      "length": 300,
-     "holeSpacing": 192
+     "edgeDepth": 36,
+     "holeSpacing": 192,
+     "backLeg": 16
     },
     "printed": [
      {
@@ -28211,7 +28279,9 @@
     "variant": "edge_handle · прямая, A 400 · B 36 · C 320 · C1 160 мм",
     "dimensionsMm": {
      "length": 400,
-     "holeSpacing": 320
+     "edgeDepth": 36,
+     "holeSpacing": 320,
+     "backLeg": 16
     },
     "printed": [
      {
@@ -28284,7 +28354,9 @@
     "variant": "edge_handle · прямая, A 500 · B 36 · C 416 · C1 208 мм",
     "dimensionsMm": {
      "length": 500,
-     "holeSpacing": 416
+     "edgeDepth": 36,
+     "holeSpacing": 416,
+     "backLeg": 16
     },
     "printed": [
      {
@@ -29445,7 +29517,11 @@
     "variant": "edge_handle · волнистая, A 200 · B 38 · C 128 мм, цвета бронзы, античная",
     "dimensionsMm": {
      "length": 200,
-     "holeSpacing": 128
+     "edgeDepth": 38,
+     "holeSpacing": 128,
+     "backLeg": 16,
+     "edgeReach": 19.8,
+     "edgeDepthEnd": 20
     },
     "printed": [
      {
@@ -29522,7 +29598,11 @@
     "variant": "edge_handle · волнистая, A 350 · B 38 · C 256 мм, цвета бронзы, античная",
     "dimensionsMm": {
      "length": 350,
-     "holeSpacing": 256
+     "edgeDepth": 38,
+     "holeSpacing": 256,
+     "backLeg": 16,
+     "edgeReach": 19.8,
+     "edgeDepthEnd": 20
     },
     "printed": [
      {
@@ -29597,6 +29677,10 @@
     "subcategory": "knob",
     "series": "Мебельные ручки Timeless",
     "variant": "knob · Ø8 × 20",
+    "dimensionsMm": {
+     "diameter": 8,
+     "projection": 20
+    },
     "printed": [
      {
       "label": "диаметр",
@@ -29650,6 +29734,10 @@
     "subcategory": "knob",
     "series": "Мебельные ручки Timeless",
     "variant": "knob · ØA 15 · B 30, резиновые кольца черные",
+    "dimensionsMm": {
+     "diameter": 15,
+     "projection": 30
+    },
     "printed": [
      {
       "label": "Размер A (диаметр)",
@@ -29703,6 +29791,10 @@
     "subcategory": "knob",
     "series": "Мебельные ручки Timeless",
     "variant": "knob · ØA 20 · B 30, резиновые кольца черные",
+    "dimensionsMm": {
+     "diameter": 20,
+     "projection": 30
+    },
     "printed": [
      {
       "label": "Размер A (диаметр)",
@@ -29756,6 +29848,10 @@
     "subcategory": "knob",
     "series": "Мебельные ручки Timeless",
     "variant": "knob · A 28 · B 28",
+    "dimensionsMm": {
+     "diameter": 28,
+     "projection": 28
+    },
     "printed": [
      {
       "label": "Размер A (диаметр)",
@@ -29809,6 +29905,12 @@
     "subcategory": "flush_handle",
     "series": "Мебельные ручки Timeless",
     "variant": "flush_handle · ØA 50 · ØB 40 · C 15 мм, под бронзу, PVD покрытие",
+    "dimensionsMm": {
+     "flangeDiameter": 50,
+     "bodyDiameter": 40,
+     "bodyDepth": 15,
+     "flangeThickness": 3
+    },
     "printed": [
      {
       "label": "Размер A (диаметр фланца)",
@@ -29879,6 +29981,12 @@
     "subcategory": "flush_handle",
     "series": "Мебельные ручки Timeless",
     "variant": "flush_handle · ØA 60 · ØB 50 · C 15 мм, под бронзу, PVD покрытие",
+    "dimensionsMm": {
+     "flangeDiameter": 60,
+     "bodyDiameter": 50,
+     "bodyDepth": 15,
+     "flangeThickness": 3
+    },
     "printed": [
      {
       "label": "Размер A (диаметр фланца)",
@@ -29949,6 +30057,12 @@
     "subcategory": "flush_handle",
     "series": "Мебельные ручки Timeless",
     "variant": "flush_handle · ØA 50 · ØB 40 · C 15 мм, черная матовая, PVD покрытие",
+    "dimensionsMm": {
+     "flangeDiameter": 50,
+     "bodyDiameter": 40,
+     "bodyDepth": 15,
+     "flangeThickness": 3
+    },
     "printed": [
      {
       "label": "Размер A (диаметр фланца)",
@@ -30019,6 +30133,12 @@
     "subcategory": "flush_handle",
     "series": "Мебельные ручки Timeless",
     "variant": "flush_handle · ØA 60 · ØB 50 · C 15 мм, черная матовая, PVD покрытие",
+    "dimensionsMm": {
+     "flangeDiameter": 60,
+     "bodyDiameter": 50,
+     "bodyDepth": 15,
+     "flangeThickness": 3
+    },
     "printed": [
      {
       "label": "Размер A (диаметр фланца)",
@@ -30089,6 +30209,10 @@
     "subcategory": "knob",
     "series": "Мебельные ручки Timeless",
     "variant": "knob · ØA 15 · B 30",
+    "dimensionsMm": {
+     "diameter": 15,
+     "projection": 30
+    },
     "printed": [
      {
       "label": "Размер A (диаметр)",
@@ -30142,6 +30266,10 @@
     "subcategory": "knob",
     "series": "Мебельные ручки Timeless",
     "variant": "knob · ØA 20 · B 30",
+    "dimensionsMm": {
+     "diameter": 20,
+     "projection": 30
+    },
     "printed": [
      {
       "label": "Размер A (диаметр)",
@@ -30195,6 +30323,12 @@
     "subcategory": "flush_handle",
     "series": "Мебельные ручки Timeless",
     "variant": "flush_handle · ØA 50 · ØB 40 · C 12 мм, матовая, шлифованная",
+    "dimensionsMm": {
+     "flangeDiameter": 50,
+     "bodyDiameter": 40,
+     "bodyDepth": 12,
+     "flangeThickness": 3
+    },
     "printed": [
      {
       "label": "Размер A (диаметр фланца)",
@@ -30265,6 +30399,12 @@
     "subcategory": "flush_handle",
     "series": "Мебельные ручки Timeless",
     "variant": "flush_handle · ØA 60 · ØB 50 · C 12 мм, матовая, шлифованная",
+    "dimensionsMm": {
+     "flangeDiameter": 60,
+     "bodyDiameter": 50,
+     "bodyDepth": 12,
+     "flangeThickness": 3
+    },
     "printed": [
      {
       "label": "Размер A (диаметр фланца)",
@@ -30335,6 +30475,12 @@
     "subcategory": "flush_handle",
     "series": "Мебельные ручки Timeless",
     "variant": "flush_handle · ØA 80 · ØB 62 · C 14 мм, матовая, шлифованная",
+    "dimensionsMm": {
+     "flangeDiameter": 80,
+     "bodyDiameter": 62,
+     "bodyDepth": 14,
+     "flangeThickness": 3
+    },
     "printed": [
      {
       "label": "Размер A (диаметр фланца)",
@@ -30405,6 +30551,12 @@
     "subcategory": "flush_handle",
     "series": "Мебельные ручки Timeless",
     "variant": "flush_handle · Ø35, матовая, шлифованная",
+    "dimensionsMm": {
+     "flangeDiameter": 35,
+     "bodyDiameter": 25.8,
+     "bodyDepth": 10,
+     "flangeThickness": 2
+    },
     "printed": [
      {
       "label": "диаметр фланца",

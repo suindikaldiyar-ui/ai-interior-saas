@@ -11,7 +11,7 @@ import { CORNER_HINGE_TITLE, frontDrawerSlides, liftKey, openingHardware } from 
 import { buildPanels, panelMaterials, partOfPanel } from './panels';
 import { DEFAULT_PRODUCTION, type HardwareItem, type ProductionSettings } from '@/types/catalog';
 import { resolveHardware } from './hardware';
-import { FITTING_SLOT_TITLE, installedItem } from './fittings';
+import { FITTING_SLOT_TITLE, handleItemOf, installedItem } from './fittings';
 import { moduleDrawerKits } from './drawerKit';
 import { SLIDING_DOOR, displayLedMeters, sectionSpec, slidingDoorCount } from './sections';
 import { MODULE_VARIANTS, isSinkBase, variantEstimateKeys } from './moduleVariants';
@@ -403,18 +403,23 @@ function fittingTally(catalog: Map<string, HardwareItem>) {
   const pantographs = new Set<string>();
   /* Что стоит на месте — `installedItem`, та же функция, по которой сцена рисует механизм. */
   const itemOf = (unit: Module, slot: FittingSlot, bayId?: string): HardwareItem | null => installedItem(unit, slot, catalog, bayId);
-  const take = (unit: Module, slot: FittingSlot, quantity: number, bayId?: string): boolean => {
-    const item = itemOf(unit, slot, bayId);
+  /* Позиция уже найдена (ручка детали — `handleItemOf`): строка по ней. */
+  const takeItem = (item: HardwareItem | null, slot: FittingSlot, quantity: number): boolean => {
     if (!item || quantity <= 0) return false;
     const key = `${slot}|${item.id}`;
     const row = lines.get(key) ?? { item, slot, quantity: 0 };
     row.quantity += quantity;
     lines.set(key, row);
+    return true;
+  };
+  const take = (unit: Module, slot: FittingSlot, quantity: number, bayId?: string): boolean => {
+    if (!takeItem(itemOf(unit, slot, bayId), slot, quantity)) return false;
     if (slot === 'pantograph' && bayId) pantographs.add(`${unit.id}:${bayId}`);
     return true;
   };
   return {
     take,
+    takeItem,
     /** Место, без которого выбранное не ставится: не выбрано — строка «не выбрано» без цены. */
     needs(unit: Module, slot: FittingSlot, quantity: number, title: string): void {
       if (take(unit, slot, quantity)) return;
@@ -600,7 +605,15 @@ export function buildEstimateDrafts(
       hinges -= ownHinges;
     }
     if ((ownHw?.lifts ?? 0) > 0 && fit.take(unit, 'lift', ownHw!.lifts)) lifts -= ownHw!.lifts;
-    if ((ownHw?.handleBar ?? 0) > 0 && fit.take(unit, 'handle', ownHw!.handleBar)) handleBar -= ownHw!.handleBar;
+    /*
+     * РУЧКИ — ПО ДЕТАЛЯМ (HANDLE-REAL): позиция своей створки или ящика
+     * сильнее ручки модуля (`handleItemOf` — та же функция, по которой сцена
+     * рисует ручку). Детали — те же, что посчитаны в общей строке скоб;
+     * деталь без позиции остаётся в ней.
+     */
+    for (const leaf of hardware.handleLeaves[unit.id] ?? []) {
+      if (fit.takeItem(handleItemOf(unit, leaf, hardwareItems), 'handle', 1)) handleBar -= 1;
+    }
 
     {
       /*

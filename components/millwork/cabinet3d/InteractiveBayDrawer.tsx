@@ -8,6 +8,8 @@ import { useShiftedBox, type CabinetParts } from './parts';
 import { realSizeShiftOf } from './realSizeMap';
 import { leafOfBox, useReliefGeometry, useShiftedRelief } from './reliefGeometry';
 import { DRAWER_TRAVEL_M, type PartBox } from '@/lib/millwork/cabinetBoxes';
+import { useInteriorStore } from '@/store/useInteriorStore';
+import { HandleMesh } from './handleMesh';
 
 /**
  * ЯЩИК ОТСЕКА (R02A), КОТОРЫЙ ВЫЕЗЖАЕТ.
@@ -42,6 +44,7 @@ type Props = {
 
 export default function InteractiveBayDrawer({ id, open, onToggle, boxes, parts, frontMaterial, onActive, vectorM }: Props) {
   const travel: [number, number, number] = vectorM ?? [0, 0, DRAWER_TRAVEL_M];
+  const economy = useInteriorStore((state) => state.economyMode);
   const group = useRef<THREE.Group>(null);
   const touch = useRef<THREE.Mesh>(null);
   const [active, setActive] = useState(open);
@@ -132,17 +135,22 @@ export default function InteractiveBayDrawer({ id, open, onToggle, boxes, parts,
         }}
       />
       {active &&
-        boxes.map((box, i) => (
-          <mesh
-            key={`${box.partId ?? box.panel ?? 'box'}-${i}`}
-            name={box.node ? `mech:${box.node}` : box.panel ? `panel:${box.panel}` : undefined}
-            geometry={box.material === 'front' ? (reliefGeometry ?? frontBox) : parts.box}
-            material={materialOf(box)}
-            position={box.position}
-            scale={box.material === 'front' && reliefGeometry ? [1, 1, 1] : box.scale}
-            castShadow={box.material === 'front'}
-          />
-        ))}
+        boxes.map((box, i) =>
+          /* Ручка едет своей моделью, той же, что у задвинутого в пачке (HANDLE-REAL). */
+          box.handle ? (
+            <HandleMesh key={`handle-${i}`} draw={box.handle} position={box.position} fine={!economy} part={box.part ?? id} />
+          ) : (
+            <mesh
+              key={`${box.partId ?? box.panel ?? 'box'}-${i}`}
+              name={box.node ? `mech:${box.node}` : box.panel ? `panel:${box.panel}` : undefined}
+              geometry={box.material === 'front' ? (reliefGeometry ?? frontBox) : parts.box}
+              material={materialOf(box)}
+              position={box.position}
+              scale={box.material === 'front' && reliefGeometry ? [1, 1, 1] : box.scale}
+              castShadow={box.material === 'front'}
+            />
+          ),
+        )}
     </group>
   );
 }

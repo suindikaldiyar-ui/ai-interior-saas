@@ -517,6 +517,13 @@ export interface ModuleFitting {
   itemId: string;
   /** Отсек модуля (R01) — у пантографа и наполнения гардероба. Пусто — весь модуль. */
   bayId?: string;
+  /**
+   * ДЕТАЛЬ ФАСАДА (HANDLE-REAL) — у ручки: `door:1`, `drawer:0`, тот же ключ,
+   * что у фасада створки (`leafFronts`). Ручка створки сильнее ручки модуля:
+   * поменяли ручку левой двери — правая осталась прежней. Пусто — все
+   * фасады модуля, у которых своей нет.
+   */
+  leaf?: string;
 }
 
 /** Высота ручки на полотне. Сторона не хранится: она напротив петель. */
@@ -1759,7 +1766,15 @@ export type MillworkOp =
    * `fittingVerdict` по данным позиции и модуля ДО записи, отказ — словами
    * с миллиметрами, и ряд прежний.
    */
-  | { op: 'set_fitting'; moduleId: string; slot: FittingSlot; itemId: string | null; bayId?: string }
+  | {
+      op: 'set_fitting';
+      moduleId: string;
+      slot: FittingSlot;
+      itemId: string | null;
+      bayId?: string;
+      /** Ручка одной детали фасада (`door:1`, `drawer:0`) — только у места «Ручки». */
+      leaf?: string;
+    }
   /** Система купе ряда — позиция каталога (`category: 'sliding'`); `null` снимает. */
   | { op: 'set_sliding_system'; itemId: string | null }
   /**

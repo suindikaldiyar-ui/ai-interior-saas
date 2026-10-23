@@ -11,10 +11,13 @@ import {
   CAD_LIGHT,
   CARCASS_ROUGHNESS,
   INNER_ROUGHNESS,
+  HANDLE_LOOK,
   applyCadLook,
   cadEnvironment,
+  cavityLook,
   frontLookOf,
 } from './cadLook';
+import { accentKindOf, buildHandleGeometry } from './handleGeometry';
 import { MATERIAL_FINISHES } from '@/lib/millwork/materialFinishes';
 import type { HardwareItem, ProductionSettings } from '@/types/catalog';
 import type { Module, Run } from '@/types/millwork';
@@ -115,7 +118,16 @@ export type ThumbExtra = {
   drawerKits?: DrawerKit[];
   /** Без фасадов: механизм внутри корпуса видно. */
   cutaway?: boolean;
+  /**
+   * КРУПНЫЙ ПЛАН РУЧКИ (HANDLE-REAL): кадр по ручкам модуля — по ручке этой
+   * детали, если она названа, — а не по модулю целиком: ручку 128 мм на
+   * шкафу 720 мм в картинке 256 px не разглядеть. Ручек нет — кадр по модулю.
+   */
+  focus?: { leaf?: string };
 };
+
+/** Крупный план рисуется в два раза плотнее: карточка показывает его на 300 px. */
+const FOCUS_PX = 512;
 
 /**
  * Нарисовать модуль и отдать PNG.
@@ -131,9 +143,15 @@ export function renderThumb(
 ): string | null {
   const heightMm = moduleCarcassHeightMm(unit, run);
   const withHardware = Boolean(extra.hardware && extra.hardware.size > 0);
-  const key = withHardware
-    ? [thumbKey(unit, heightMm), JSON.stringify(unit.fittings ?? []), extra.hinges ?? 0, extra.drawerKits?.length ?? 0, extra.cutaway ? 1 : 0].join('|')
-    : thumbKey(unit, heightMm);
+  const key = [
+    withHardware
+      ? [thumbKey(unit, heightMm), JSON.stringify(unit.fittings ?? []), extra.hinges ?? 0, extra.drawerKits?.length ?? 0, extra.cutaway ? 1 : 0].join('|')
+      : thumbKey(unit, heightMm),
+    /* Ручка модуля видна на картинке: её тип и место — часть картинки. */
+    unit.fill?.handle ?? '',
+    `${unit.fill?.handleLevel ?? ''}:${unit.fill?.handleTurn ?? ''}:${unit.fill?.handlePlace ?? ''}`,
+    extra.focus ? `focus:${extra.focus.leaf ?? '*'}` : '',
+  ].join('|');
   const ready = cache.get(key);
   if (ready) return ready;
 
@@ -176,6 +194,17 @@ export function renderThumb(
   const geometry = new THREE.BoxGeometry(1, 1, 1);
   const made = new Map<string, THREE.MeshStandardMaterial>();
   const meshes: THREE.Mesh[] = [];
+  /* Сетки ручек — свои у картинки: живут, пока она рисуется. */
+  const handleGeometries: THREE.BufferGeometry[] = [];
+  const handleBounds = new THREE.Box3();
+  const materialOf = (key: string, look: { color: string; metalness: number; roughness: number }) => {
+    let material = made.get(key);
+    if (!material) {
+      material = new THREE.MeshStandardMaterial({ color: new THREE.Color(look.color), metalness: look.metalness, roughness: look.roughness });
+      made.set(key, material);
+    }
+    return material;
+  };
 
   /*
    * Шероховатость фасада — та же функция, что у сцены (`frontLookOf`):
@@ -184,6 +213,39 @@ export function renderThumb(
   const frontLook = frontLookOf(spec, MATERIAL_FINISHES);
 
   for (const box of boxes) {
+    /*
+     * РУЧКА — ЕЁ МОДЕЛЬЮ (HANDLE-REAL): та же сетка, что в сцене, на месте
+     * коробки ручки без растяжения; покрытие — по исполнению позиции.
+     */
+    if (box.node === 'handle' && box.handle) {
+      const draw = box.handle;
+      const shape = buildHandleGeometry(draw, true);
+      const look = HANDLE_LOOK[draw.model.finish] ?? HANDLE_LOOK.demo;
+      const accent = accentKindOf(draw, shape);
+      const parts: [THREE.BufferGeometry, THREE.MeshStandardMaterial][] = [
+        [shape.body, materialOf(`handle:${draw.model.finish}`, look)],
+      ];
+      if (shape.accent && accent) {
+        parts.push([
+          shape.accent,
+          accent === 'cavity'
+            ? materialOf(`handle:${draw.model.finish}:cavity`, cavityLook(look))
+            : materialOf('handle:rubber', HANDLE_LOOK.rubber),
+        ]);
+      }
+      for (const [part, material] of parts) {
+        handleGeometries.push(part);
+        const mesh = new THREE.Mesh(part, material);
+        mesh.position.set(...box.position);
+        scene.add(mesh);
+        meshes.push(mesh);
+      }
+      if (!extra.focus?.leaf || draw.leaf === extra.focus.leaf) {
+        handleBounds.expandByPoint(new THREE.Vector3(box.position[0] - box.scale[0] / 2, box.position[1] - box.scale[1] / 2, box.position[2] - box.scale[2] / 2));
+        handleBounds.expandByPoint(new THREE.Vector3(box.position[0] + box.scale[0] / 2, box.position[1] + box.scale[1] / 2, box.position[2] + box.scale[2] / 2));
+      }
+      continue;
+    }
     const isFront = box.material === 'front';
     const key = box.material;
     let material = made.get(key);
@@ -228,21 +290,34 @@ export function renderThumb(
   bounds.getSize(size);
   bounds.getCenter(centre);
 
-  const span = Math.max(size.x, size.y, size.z) || 1;
+  /*
+   * КРУПНЫЙ ПЛАН (HANDLE-REAL): кадр по ручке и пол-ладони фасада вокруг —
+   * с той же стороны трёх четвертей, чтобы читался вылет от фасада.
+   */
+  const focused = Boolean(extra.focus) && !handleBounds.isEmpty();
+  if (focused) {
+    handleBounds.getSize(size);
+    handleBounds.getCenter(centre);
+  }
+  const span = focused ? Math.max(size.x, size.y, size.z) * 0.85 + 0.035 : Math.max(size.x, size.y, size.z) || 1;
   const camera = new THREE.OrthographicCamera(-span, span, span, -span, 0.01, 100);
   /* Три четверти: видно фасад, бок и глубину — как на общем виде сцены. */
-  camera.position.set(centre.x + span, centre.y + span * 0.8, centre.z + span * 1.6);
+  if (focused) camera.position.set(centre.x + span * 0.9, centre.y + span * 0.55, centre.z + span * 1.8);
+  else camera.position.set(centre.x + span, centre.y + span * 0.8, centre.z + span * 1.6);
   camera.lookAt(centre);
-  camera.zoom = 1.45;
+  camera.zoom = focused ? 1 : 1.45;
   camera.updateProjectionMatrix();
 
+  if (focused) gl.setSize(FOCUS_PX, FOCUS_PX, false);
   gl.setClearColor(0x000000, 0);
   gl.render(scene, camera);
 
   const png = gl.domElement.toDataURL('image/png');
+  if (focused) gl.setSize(PX, PX, false);
 
   /* Геометрия и материалы освобождаются сразу: их тут десятки в минуту. */
   geometry.dispose();
+  for (const part of handleGeometries) part.dispose();
   made.forEach((material) => material.dispose());
   for (const mesh of meshes) scene.remove(mesh);
 

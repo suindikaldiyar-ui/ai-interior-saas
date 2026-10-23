@@ -9,6 +9,9 @@ import type { FrontRelief } from '@/types/millwork';
 import { realSizeShiftOf } from './realSizeMap';
 import { useReliefGeometry, useShiftedRelief } from './reliefGeometry';
 import type { Module } from '@/types/millwork';
+import type { HardwareItem } from '@/types/catalog';
+import { useInteriorStore } from '@/store/useInteriorStore';
+import { HandleMesh } from './handleMesh';
 
 /**
  * ДВА ФАСАДА Г-ОБРАЗНОГО МОДУЛЯ, КОТОРЫЕ ОТКРЫВАЮТСЯ ВМЕСТЕ (слой 55).
@@ -35,6 +38,8 @@ type Props = {
   gap: number;
   thickness: number;
   integratedHandle: boolean;
+  /** Фурнитура организации: ручка пары — та же позиция, что у закрытой в пачке (HANDLE-REAL). */
+  hardware?: Map<string, HardwareItem>;
   parts: CabinetParts;
   frontMaterial?: THREE.MeshStandardMaterial;
   /** Рельеф МДФ пары (P3D-MDF): у обоих фасадов он один — фасад створки `door:0`. */
@@ -51,12 +56,14 @@ export default function InteractiveBifold({
   gap,
   thickness,
   integratedHandle,
+  hardware,
   parts,
   frontMaterial,
   relief,
   onActive,
 }: Props) {
-  const meshes = useRef<(THREE.Mesh | null)[]>([]);
+  const economy = useInteriorStore((state) => state.economyMode);
+  const meshes = useRef<(THREE.Object3D | null)[]>([]);
   /* Добавка к повороту полотна: фасад Б с рельефом повёрнут лицом влево. */
   const turns = useRef<number[]>([]);
   const [active, setActive] = useState(open);
@@ -74,7 +81,7 @@ export default function InteractiveBifold({
   }, [id, active, onActive]);
 
   const posesAt = (s: number): PosedBox[] =>
-    bifoldPoses(unit, place, { gapM: gap, frontThicknessM: thickness, integratedHandles: integratedHandle }, s);
+    bifoldPoses(unit, place, { gapM: gap, frontThicknessM: thickness, integratedHandles: integratedHandle, hardware }, s);
 
   const target = open ? 1 : 0;
   useSlide({
@@ -156,20 +163,34 @@ export default function InteractiveBifold({
         ))}
 
       {active &&
-        shown.map((pose, i) => (
-          <mesh
-            key={`leaf-${i}`}
-            ref={(mesh) => {
-              meshes.current[i] = mesh;
-            }}
-            geometry={pose.role === 'handle' ? parts.box : (reliefOf(pose) ?? leafBox)}
-            material={pose.role === 'handle' ? parts.metal : (frontMaterial ?? parts.front)}
-            position={pose.center}
-            rotation={[0, pose.yaw + turnOf(pose), 0]}
-            scale={reliefOf(pose) ? [1, 1, 1] : pose.size}
-            castShadow={pose.role === 'front'}
-          />
-        ))}
+        shown.map((pose, i) =>
+          /* Ручка — своей моделью в группе, которую ведёт тот же ход (HANDLE-REAL). */
+          pose.role === 'handle' && pose.handle ? (
+            <group
+              key={`leaf-${i}`}
+              ref={(group) => {
+                meshes.current[i] = group;
+              }}
+              position={pose.center}
+              rotation={[0, pose.yaw, 0]}
+            >
+              <HandleMesh draw={pose.handle} position={[0, 0, 0]} fine={!economy} part={id} />
+            </group>
+          ) : (
+            <mesh
+              key={`leaf-${i}`}
+              ref={(mesh) => {
+                meshes.current[i] = mesh;
+              }}
+              geometry={pose.role === 'handle' ? parts.box : (reliefOf(pose) ?? leafBox)}
+              material={pose.role === 'handle' ? parts.metal : (frontMaterial ?? parts.front)}
+              position={pose.center}
+              rotation={[0, pose.yaw + turnOf(pose), 0]}
+              scale={reliefOf(pose) ? [1, 1, 1] : pose.size}
+              castShadow={pose.role === 'front'}
+            />
+          ),
+        )}
     </group>
   );
 }

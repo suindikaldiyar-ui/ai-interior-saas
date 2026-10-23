@@ -7,7 +7,7 @@ import { bayDrawerBoxes, boxShown, sceneLeaves, type PartBox } from '@/lib/millw
 import { DRAWER_SIDE_PANEL_NAME } from '@/lib/millwork/drawerBox';
 import { ALL_LAYERS, type SceneLayers } from '@/lib/millwork/sceneLayers';
 import { ROD_VISUAL_DIAMETER_MM } from '@/lib/millwork/bays';
-import type { ProductionSettings } from '@/types/catalog';
+import type { HardwareItem, ProductionSettings } from '@/types/catalog';
 import InteractiveBayDrawer from './InteractiveBayDrawer';
 import InteractiveDoor from './InteractiveDoor';
 import InteractiveBifold from './InteractiveBifold';
@@ -16,7 +16,6 @@ import type { CabinetParts } from './parts';
 import type { FrontRelief, Module } from '@/types/millwork';
 import { gripOrient } from '@/lib/millwork/facadeRelief';
 import { isUpperRow } from '@/lib/millwork/modules';
-import { milledGrip } from '@/lib/millwork/opening';
 
 /**
  * Один модуль в 3D: корпус и его настоящее наполнение.
@@ -84,6 +83,8 @@ type Props = {
    * ящик отсека: открытый несёт ровно то, что нарисовано задвинутым.
    */
   partBoxes?: (partId: string) => PartBox[] | undefined;
+  /** Фурнитура организации: ручка Г-модуля на ходу — та же позиция, что у закрытого (HANDLE-REAL). */
+  hardware?: Map<string, HardwareItem>;
 };
 
 /** Штанга: условное сечение — то же число, что у штанги зоны отсека (`ROD_VISUAL_DIAMETER_MM`). */
@@ -118,6 +119,7 @@ export default function CabinetModule3D({
   production,
   layers = ALL_LAYERS,
   partBoxes,
+  hardware,
 }: Props) {
   /* Деталь модуля по идентификатору сцены: `<модуль>:door:0` → `door:0`. */
   const lookOf = (partId: string) => leafLook?.(partId.slice(unit.id.length + 1));
@@ -300,8 +302,7 @@ export default function CabinetModule3D({
               parts={parts}
               cutaway={cutaway}
               gap={gapM}
-              integratedHandle={integratedHandles}
-              milledGrip={milledGrip(unit, leaf.id.slice(unit.id.length + 1))}
+              handle={localBoxesOf(leaf.id)?.find((box) => box.node === 'handle')}
               onActive={onActive}
               frontMaterial={look?.material ?? frontMaterial}
               relief={look?.relief}
@@ -339,6 +340,7 @@ export default function CabinetModule3D({
               gap={gapM}
               thickness={frontThicknessM}
               integratedHandle={integratedHandles}
+              hardware={hardware}
               parts={parts}
               frontMaterial={look?.material ?? frontMaterial}
               relief={look?.relief}
@@ -361,13 +363,13 @@ export default function CabinetModule3D({
             thickness={frontThicknessM}
             parts={parts}
             gap={gapM}
-            integratedHandle={integratedHandles}
-            milledGrip={milledGrip(unit, leaf.id.slice(unit.id.length + 1))}
             onActive={onActive}
             frontMaterial={look?.material ?? frontMaterial}
             relief={look?.relief}
             reliefOrient={gripOrient(look?.relief, leaf.opening, isUpperRow(unit))}
-            riders={localBoxesOf(leaf.id)?.filter((box) => box.material === 'metal' && (box.node === 'hinge' || box.node === 'lift'))}
+            riders={localBoxesOf(leaf.id)?.filter(
+              (box) => box.material === 'metal' && (box.node === 'hinge' || box.node === 'lift' || box.node === 'handle'),
+            )}
           />
         );
       })}

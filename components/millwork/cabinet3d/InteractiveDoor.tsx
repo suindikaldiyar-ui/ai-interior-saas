@@ -11,6 +11,8 @@ import { realSizeShiftOf } from './realSizeMap';
 import { glassOfRelief, useReliefGeometry, useShiftedRelief } from './reliefGeometry';
 import type { ReliefOrient } from '@/lib/millwork/facadeRelief';
 import { GLASS_PANE_M, GLASS_PANE_Z_M } from '@/lib/millwork/cabinetBoxes';
+import { useInteriorStore } from '@/store/useInteriorStore';
+import { HandleMesh } from './handleMesh';
 
 /**
  * Дверь, которая распахивается.
@@ -55,10 +57,6 @@ type Props = {
   reliefOrient?: ReliefOrient;
   /** Зазор вокруг полотна, метры. По нему читается щель между фасадами. */
   gap: number;
-  /** Ручка-профиль по верхней кромке вместо накладной скобы. */
-  integratedHandle: boolean;
-  /** Ручка фрезерована в фасаде (`milledGrip`): накладной на полотне нет — как у створки в пачке. */
-  milledGrip?: boolean;
   /**
    * Створка поехала или встала.
    *
@@ -67,9 +65,10 @@ type Props = {
    */
   onActive?: (id: string, active: boolean) => void;
   /**
-   * ЧТО ЕДЕТ С ПОЛОТНОМ (HARDWARE-01): чашки петель и рычаг подъёмника —
-   * коробки той же пачки (координаты модуля). Закрытую створку их рисует
-   * пачка; открытую — она сама, иначе петли пропадали на ходу.
+   * ЧТО ЕДЕТ С ПОЛОТНОМ (HARDWARE-01): чашки петель, рычаг подъёмника и
+   * ручка (HANDLE-REAL) — коробки той же пачки (координаты модуля).
+   * Закрытую створку их рисует пачка; открытую — она сама, иначе петли
+   * пропадали на ходу, а ручка ставилась своей формулой не туда.
    */
   riders?: PartBox[];
 };
@@ -91,11 +90,10 @@ export default function InteractiveDoor({
   relief,
   reliefOrient,
   gap,
-  integratedHandle,
-  milledGrip = false,
   onActive,
   riders,
 }: Props) {
+  const economy = useInteriorStore((state) => state.economyMode);
   const group = useRef<THREE.Group>(null);
   const touch = useRef<THREE.Mesh>(null);
 
@@ -144,7 +142,7 @@ export default function InteractiveDoor({
   });
 
   const [panelX, panelY] = pivot.panel;
-  const local = leafLocal({ opening, width, height, thickness, gap, integratedHandle });
+  const local = leafLocal({ opening, width, height, thickness, gap });
   /* Рисунок полотна — тот же кусок дерева, что у него закрытого в пачке. */
   const panelBox = useShiftedBox(parts.box, id);
   /* Сетка рельефа — того же габарита, что закрытое полотно (`leafLocal` = `doorBoxes`). */
@@ -235,29 +233,22 @@ export default function InteractiveDoor({
       )}
 
       {/*
-        * Ручка. Без неё фасад читается как панель, а не как дверь.
-        * Профиль по верхней кромке при integratedHandles, у механизма — на
-        * свободном крае, иначе скоба.
+        * Петли, рычаг и ручка: место в пачке минус ось — в кадре полотна они
+        * стоят там же, где у закрытого. Ручка — своей моделью (HANDLE-REAL);
+        * «Без ручки» и фрезерованная ручка коробки не дают вовсе.
         */}
-      {!milledGrip && (
-        <mesh
-          geometry={parts.box}
-          material={parts.metal}
-          position={local.handle.at}
-          scale={local.handle.size}
-        />
-      )}
-      {/* Петли и рычаг: место в пачке минус ось — в кадре полотна они стоят там же, где у закрытого. */}
-      {riders?.map((box, i) => (
-        <mesh
-          key={`rider-${i}`}
-          name={`rider:${box.node ?? 'metal'}`}
-          geometry={parts.box}
-          material={parts.metal}
-          position={[box.position[0] - pivot.origin[0], box.position[1] - pivot.origin[1], box.position[2] - pivot.origin[2]]}
-          scale={box.scale}
-        />
-      ))}
+      {riders?.map((box, i) => {
+        const at: [number, number, number] = [
+          box.position[0] - pivot.origin[0],
+          box.position[1] - pivot.origin[1],
+          box.position[2] - pivot.origin[2],
+        ];
+        return box.handle ? (
+          <HandleMesh key={`rider-${i}`} draw={box.handle} position={at} fine={!economy} part={box.part ?? id} />
+        ) : (
+          <mesh key={`rider-${i}`} name={`rider:${box.node ?? 'metal'}`} geometry={parts.box} material={parts.metal} position={at} scale={box.scale} />
+        );
+      })}
         </>
       )}
     </group>

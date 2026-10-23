@@ -9,7 +9,9 @@ import type { FrontRelief } from '@/types/millwork';
 import { realSizeShiftOf } from './realSizeMap';
 import { useReliefGeometry, useShiftedRelief } from './reliefGeometry';
 import type { ReliefOrient } from '@/lib/millwork/facadeRelief';
-import { DRAWER_TRAVEL_M } from '@/lib/millwork/cabinetBoxes';
+import { DRAWER_TRAVEL_M, type PartBox } from '@/lib/millwork/cabinetBoxes';
+import { useInteriorStore } from '@/store/useInteriorStore';
+import { HandleMesh } from './handleMesh';
 
 /**
  * Ящик, который выезжает.
@@ -51,9 +53,12 @@ type Props = {
   /** Разрез: фасады убраны, видно короб ящика. */
   cutaway: boolean;
   gap: number;
-  integratedHandle: boolean;
-  /** Ручка фрезерована во фронте (`milledGrip`): накладной нет — как у фронта в пачке. */
-  milledGrip?: boolean;
+  /**
+   * РУЧКА ФРОНТА (HANDLE-REAL) — коробка той же пачки, в координатах модуля:
+   * своей формулы ручки у ящика больше нет. «Без ручки» и фрезерованная во
+   * фронте ручка коробки не дают — на ходу ручки нет, как и у задвинутого.
+   */
+  handle?: PartBox;
   /** Ящик поехал или встал: задвинутый рисуется вместе со всем рядом. */
   onActive?: (id: string, active: boolean) => void;
 };
@@ -74,10 +79,10 @@ export default function InteractiveDrawer({
   reliefOrient,
   cutaway,
   gap,
-  integratedHandle,
-  milledGrip = false,
+  handle,
   onActive,
 }: Props) {
+  const economy = useInteriorStore((state) => state.economyMode);
   const group = useRef<THREE.Group>(null);
   const touch = useRef<THREE.Mesh>(null);
 
@@ -206,20 +211,13 @@ export default function InteractiveDrawer({
             castShadow
           />
 
-          {/* Ручка: профиль по верхней кромке либо накладная скоба. */}
-          {milledGrip ? null : integratedHandle ? (
-            <mesh
-              geometry={parts.box}
-              material={parts.metal}
-              position={[0, height / 2 - gap - 0.01, thickness + 0.004]}
-              scale={[width - 2 * gap, 0.02, 0.015]}
-            />
-          ) : (
-            <mesh
-              geometry={parts.box}
-              material={parts.metal}
-              position={[0, 0, thickness + 0.012]}
-              scale={[Math.min(0.26, width * 0.5), 0.016, 0.016]}
+          {/* Ручка — та же коробка пачки, своей моделью: место в модуле минус начало группы ящика. */}
+          {handle?.handle && (
+            <HandleMesh
+              draw={handle.handle}
+              position={[handle.position[0] - (x + width / 2), handle.position[1] - (y + height / 2), handle.position[2]]}
+              fine={!economy}
+              part={handle.part ?? id}
             />
           )}
         </>

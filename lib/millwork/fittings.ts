@@ -1,7 +1,7 @@
 import { DEFAULT_ALLOWANCES, type HardwareCategory, type HardwareItem, type ProductionSettings } from '@/types/catalog';
 import type { FittingSlot, Module, ModuleFitting, Run } from '@/types/millwork';
 import { moduleCarcassHeightMm, moduleDepthMm } from './fill';
-import { frontDrawerSlides, handleOf, isPullOut, openingHardware, openingOf } from './opening';
+import { HANDLE_TITLE, frontDrawerSlides, handleOf, isPullOut, openingHardware, openingOf } from './opening';
 import { moduleFronts } from './applianceFront';
 import { cornerOfModule } from './corner';
 import { bayEnvelope, bayLayout } from './bays';
@@ -9,6 +9,8 @@ import { shopOf } from './shop';
 import { isUpperRow, standsOnFloor } from './modules';
 import { drawerBoxRulesOf, drawerProfileFor, runnerGeometry } from './drawerBox';
 import { slidingDoorCount } from './sections';
+import { handleItemModel } from './handleModel';
+import { handleSpotOf } from './handlePlace';
 
 /**
  * ФУРНИТУРА ПРОИЗВОДИТЕЛЯ НА МЕСТЕ МОДУЛЯ (HARDWARE-01).
@@ -74,7 +76,8 @@ export function slotAccepts(slot: FittingSlot, item: Pick<HardwareItem, 'hardwar
       /* Рычаги, крепления фасада, заглушки — принадлежности механизма, место механизма они не занимают. */
       return category === 'lift' && subcategory !== 'lift_accessory';
     case 'handle':
-      return category === 'handle';
+      /* Уголок и заглушка профиля — принадлежности, а не ручка: место ручки они не занимают. */
+      return category === 'handle' && subcategory !== 'profile_accessory' && subcategory !== 'profile_end_cap';
     case 'pantograph':
       return category === 'wardrobe' && subcategory === 'pantograph';
     case 'wardrobe_pullout':
@@ -122,10 +125,18 @@ export const SLOT_CATEGORIES: Record<FittingSlot, HardwareCategory[]> = {
  * выбор места сильнее выбора модуля. Второго ответа на вопрос «какая
  * петля на этом модуле» нет.
  */
-export function fittingItemId(unit: Pick<Module, 'fittings' | 'hardwareItemId'>, slot: FittingSlot, bayId?: string): string | null {
-  const own = unit.fittings?.find((f) => f.slot === slot && (f.bayId ?? null) === (bayId ?? null));
+export function fittingItemId(
+  unit: Pick<Module, 'fittings' | 'hardwareItemId'>,
+  slot: FittingSlot,
+  bayId?: string,
+  /** Деталь фасада (HANDLE-REAL): ручка одной створки. Пусто — место модуля целиком. */
+  leaf?: string,
+): string | null {
+  const own = unit.fittings?.find(
+    (f) => f.slot === slot && (f.bayId ?? null) === (bayId ?? null) && (f.leaf ?? null) === (leaf ?? null),
+  );
   if (own) return own.itemId;
-  if (!bayId && (slot === 'hinge' || slot === 'slide') && unit.hardwareItemId) return unit.hardwareItemId;
+  if (!bayId && !leaf && (slot === 'hinge' || slot === 'slide') && unit.hardwareItemId) return unit.hardwareItemId;
   return null;
 }
 
@@ -142,26 +153,79 @@ export function installedItem(
   slot: FittingSlot,
   catalog: Map<string, HardwareItem> | undefined,
   bayId?: string,
+  leaf?: string,
 ): HardwareItem | null {
-  const id = unit.fittings?.find((f) => f.slot === slot && (f.bayId ?? null) === (bayId ?? null))?.itemId;
+  const id = unit.fittings?.find(
+    (f) => f.slot === slot && (f.bayId ?? null) === (bayId ?? null) && (f.leaf ?? null) === (leaf ?? null),
+  )?.itemId;
   const item = id ? catalog?.get(id) : undefined;
   return item && item.active ? item : null;
 }
 
+/**
+ * РУЧКА ЭТОЙ ДЕТАЛИ ФАСАДА (HANDLE-REAL) — одна функция на сцену, смету и экран.
+ *
+ * Своя у створки сильнее ручки модуля: смена ручки левой двери не трогает
+ * правую. Своей нет — ручка модуля. Нет и её — `null`: тогда сцена рисует
+ * условную скобу, а смета считает ручку общей строкой.
+ */
+export function handleItemOf(
+  unit: Pick<Module, 'fittings'>,
+  leaf: string,
+  catalog: Map<string, HardwareItem> | undefined,
+): HardwareItem | null {
+  return installedItem(unit, 'handle', catalog, undefined, leaf) ?? installedItem(unit, 'handle', catalog);
+}
+
+/** Деталь фасада словами: «дверь 2», «ящик 1», «ящик 1 отсека b2». */
+export function leafWords(leaf: string): string {
+  const bay = /^(b\d+):drawer:(\d+)$/.exec(leaf);
+  if (bay) return `ящик ${Number(bay[2]) + 1} отсека ${bay[1]}`;
+  const m = /^(door|drawer):(\d+)$/.exec(leaf);
+  if (!m) return leaf;
+  return `${m[1] === 'door' ? 'дверь' : 'ящик'} ${Number(m[2]) + 1}`;
+}
+
 /** Модуль с позицией на месте (или без неё). Пустой список не пишется (ловушка 246). */
-export function withFitting(unit: Module, slot: FittingSlot, itemId: string | null, bayId?: string): Module {
-  const rest = (unit.fittings ?? []).filter((f) => !(f.slot === slot && (f.bayId ?? null) === (bayId ?? null)));
-  const next: ModuleFitting[] = itemId ? [...rest, { slot, itemId, ...(bayId ? { bayId } : {}) }] : rest;
+export function withFitting(unit: Module, slot: FittingSlot, itemId: string | null, bayId?: string, leaf?: string): Module {
+  const rest = (unit.fittings ?? []).filter(
+    (f) => !(f.slot === slot && (f.bayId ?? null) === (bayId ?? null) && (f.leaf ?? null) === (leaf ?? null)),
+  );
+  const next: ModuleFitting[] = itemId
+    ? [...rest, { slot, itemId, ...(bayId ? { bayId } : {}), ...(leaf ? { leaf } : {}) }]
+    : rest;
   const out: Module = { ...unit };
   if (next.length > 0) {
     /* Порядок записи стабилен: отпечаток не должен зависеть от порядка нажатий. */
     out.fittings = [...next].sort((a, b) =>
-      a.slot === b.slot ? (a.bayId ?? '').localeCompare(b.bayId ?? '') : a.slot.localeCompare(b.slot),
+      a.slot !== b.slot
+        ? a.slot.localeCompare(b.slot)
+        : (a.bayId ?? '') !== (b.bayId ?? '')
+          ? (a.bayId ?? '').localeCompare(b.bayId ?? '')
+          : (a.leaf ?? '').localeCompare(b.leaf ?? ''),
     );
   } else {
     delete out.fittings;
   }
   return out;
+}
+
+/**
+ * РУЧКА НА МОДУЛЬ ИЛИ НА ДЕТАЛЬ (HANDLE-REAL) — одно правило на операцию
+ * и превью карточки. Ручка модуля целиком ставится на все его фасады: свои
+ * ручки деталей уходят (экран называет это до нажатия). Ручка детали —
+ * только на неё, у второй створки остаётся своя. Снять ручку модуля — свои
+ * ручки деталей остаются: их выбирали отдельно.
+ */
+export function withHandle(unit: Module, itemId: string | null, leaf?: string): Module {
+  if (leaf || itemId === null) return withFitting(unit, 'handle', itemId, undefined, leaf);
+  const base: Module = { ...unit, fittings: (unit.fittings ?? []).filter((f) => !(f.slot === 'handle' && f.leaf)) };
+  return withFitting(base, 'handle', itemId);
+}
+
+/** Свои ручки деталей модуля: `door:1` → позиция. */
+export function leafHandleFittings(unit: Pick<Module, 'fittings'>): ModuleFitting[] {
+  return (unit.fittings ?? []).filter((f) => f.slot === 'handle' && f.leaf);
 }
 
 /* ─────────────────────────  Места модуля  ───────────────────────── */
@@ -209,8 +273,44 @@ function geometryOf(unit: Module, run: Run, production: ProductionSettings): Mod
 }
 
 /** Фурнитура фасадов модуля — тем же счётом, что смета (с углами ряда). */
+function frontHardwareOf(unit: Module, run: Run) {
+  return openingHardware([{ unit, heightMm: moduleCarcassHeightMm(unit, run) }], run, cornerOfModule(run));
+}
+
 function frontHardware(unit: Module, run: Run) {
-  return openingHardware([{ unit, heightMm: moduleCarcassHeightMm(unit, run) }], run, cornerOfModule(run)).byModule[unit.id];
+  return frontHardwareOf(unit, run).byModule[unit.id];
+}
+
+/**
+ * ФАСАДЫ СО ШТУЧНОЙ РУЧКОЙ И ИХ РАЗМЕР В СВЕТУ ЗАЗОРОВ, мм (HANDLE-REAL).
+ *
+ * Какие детали несут ручку — тот же счёт, что у сметы (`handleLeaves` из
+ * `openingHardware`); размер — из того, что висит на модуле
+ * (`moduleFronts`): створки в ряд делят ширину, участки колонны и двери
+ * встройки идут на всю ширину друг над другом, фронты ящиков — во всю
+ * ширину своей высотой.
+ */
+export function handleLeafSizes(
+  unit: Module,
+  run: Run,
+  g: Pick<ModuleGeometry, 'heightMm' | 'widthMm' | 'gapMm'>,
+): { leaf: string; wMm: number; hMm: number; drawer: boolean }[] {
+  const leaves = frontHardwareOf(unit, run).handleLeaves[unit.id] ?? [];
+  const fronts = moduleFronts(unit, g.heightMm);
+  const sideBySide = fronts.leaves.length > 1 && fronts.leaves.every((s) => s.fromMm === 0 && s.heightMm === g.heightMm);
+  return leaves.map((leaf) => {
+    const drawer = /^drawer:(\d+)$/.exec(leaf);
+    if (drawer) {
+      const heightMm = fronts.drawers[Number(drawer[1])] ?? g.heightMm;
+      return { leaf, wMm: g.widthMm - 2 * g.gapMm, hMm: heightMm - 2 * g.gapMm, drawer: true };
+    }
+    const index = Number(/^door:(\d+)$/.exec(leaf)?.[1] ?? 0);
+    const span = fronts.leaves[index];
+    if (sideBySide) {
+      return { leaf, wMm: g.widthMm / fronts.leaves.length - 2 * g.gapMm, hMm: g.heightMm - 2 * g.gapMm, drawer: false };
+    }
+    return { leaf, wMm: g.widthMm - 2 * g.gapMm, hMm: (span?.heightMm ?? g.heightMm) - 2 * g.gapMm, drawer: false };
+  });
 }
 
 /**
@@ -380,6 +480,8 @@ export function fittingVerdict(input: {
   slot: FittingSlot;
   item: HardwareItem;
   bayId?: string;
+  /** Деталь фасада (HANDLE-REAL): ручка одной створки или одного ящика. */
+  leaf?: string;
   production?: ProductionSettings;
   /** Каталог организации: петле нужна её планка, планке — её петля. */
   catalog?: Map<string, HardwareItem>;
@@ -395,6 +497,13 @@ export function fittingVerdict(input: {
   }
   const place = fittingSlotsOf(unit, run, production).find((p) => p.slot === slot && (p.bayId ?? null) === (bayId ?? null));
   if (!place) {
+    /* Места ручки нет из-за типа ручки модуля (HANDLE-REAL) — так и сказано, с тем, что нажать. */
+    const kind = slot === 'handle' ? handleOf(unit, run).handle : null;
+    if (kind && kind !== 'bar') {
+      return refuse(
+        `У «${unit.label}» тип ручки «${HANDLE_TITLE[kind]}» — штучной ручки на фасадах нет: сначала выберите «${HANDLE_TITLE.bar}» у модуля.`,
+      );
+    }
     return refuse(`У «${unit.label}» нет места «${FITTING_SLOT_TITLE[slot]}»${bayId ? ` в отсеке ${bayId}` : ''}.`);
   }
 
@@ -560,21 +669,65 @@ export function fittingVerdict(input: {
       break;
     }
     case 'handle': {
+      /*
+       * РУЧКА — ПО ВИДУ И ПО МЕСТУ НА КАЖДОМ ФАСАДЕ (HANDLE-REAL).
+       *
+       * Штучная ручка (скоба, кнопка, врезная, для кромок) ставится, когда у
+       * модуля тип «Скоба»: так её и считает смета. Профиль системы без ручек
+       * (Gola) крепится к корпусу между столешницей и укороченным фасадом —
+       * такой конструкции в правилах цеха нет, и на фасад модуля он не
+       * встаёт. Помещается ли ручка — по каждому фасаду, где она будет, с
+       * поворотом планки: вертикальная скоба меряется высотой полотна.
+       */
       const { handle } = handleOf(unit, run);
-      const kind = item.hardware.subcategory;
-      const wants = kind === 'profile' ? 'profile' : kind === 'push' ? 'none' : 'bar';
+      const shaped = handleItemModel(item);
+      if (item.hardware.subcategory === 'profile_handle') {
+        checks.push({ label: 'конструкция', state: 'fail', words: shaped.words });
+        break;
+      }
       checks.push(
-        wants === handle
-          ? { label: 'тип ручки', state: 'ok', words: 'тип ручки совпадает с выбранным у модуля' }
-          : { label: 'тип ручки', state: 'fail', words: `у модуля ручка «${handle === 'bar' ? 'скоба' : handle === 'profile' ? 'профиль' : 'без ручки'}», а позиция — ${kind ?? 'другого типа'}` },
+        handle === 'bar'
+          ? { label: 'тип ручки', state: 'ok', words: 'у модуля штучная ручка на каждом фасаде' }
+          : {
+              label: 'тип ручки',
+              state: 'fail',
+              words: `у модуля тип ручки «${handle === 'profile' ? 'профиль' : 'без ручки'}» — сначала выберите «Скоба» у модуля`,
+            },
       );
-      const length = dim(item, 'length');
-      const fronts = moduleFronts(unit, g.heightMm);
-      const narrowest = Math.min(
-        g.widthMm - 2 * g.gapMm,
-        ...(fronts.leaves.length > 1 ? [Math.round((g.widthMm - g.gapMm * (fronts.leaves.length + 1)) / fronts.leaves.length)] : []),
+      const leaves = handleLeafSizes(unit, run, g);
+      const targets = input.leaf ? leaves.filter((l) => l.leaf === input.leaf) : leaves;
+      if (input.leaf && targets.length === 0) {
+        return refuse(`У «${unit.label}» нет фасада «${leafWords(input.leaf)}» со штучной ручкой.`);
+      }
+      if (!shaped.model) {
+        checks.push({ label: 'модель', state: 'unknown', words: `${shaped.words} — в сцене будет условная скоба` });
+        break;
+      }
+      const model = shaped.model;
+      const misfit = targets
+        .map((l) => {
+          const turn = l.drawer ? 'horizontal' : handleSpotOf(unit, run).turn;
+          const along = model.shape === 'bar' && turn === 'vertical' ? l.hMm : l.wMm;
+          const need =
+            model.shape === 'knob' || model.shape === 'flush'
+              ? { size: model.diameterMm, room: Math.min(l.wMm, l.hMm), what: `ручка Ø${model.diameterMm}` }
+              : { size: model.lengthMm, room: along, what: `ручка ${model.lengthMm} мм` };
+          return { l, ...need };
+        })
+        .find((x) => x.size > x.room);
+      checks.push(
+        misfit
+          ? {
+              label: 'длина ручки',
+              state: 'fail',
+              words: `${misfit.what} не помещается на ${leafWords(misfit.l.leaf)}: фасад ${Math.round(misfit.room)} мм — не хватает ${Math.round((misfit.size - misfit.room) * 10) / 10} мм`,
+            }
+          : {
+              label: 'длина ручки',
+              state: 'ok',
+              words: `${targets.length === 1 ? leafWords(targets[0].leaf) : `фасадов ${targets.length}`}: ручка помещается`,
+            },
       );
-      checks.push(atMost('длина ручки', length, narrowest, 'ручка на самом узком фасаде'));
       break;
     }
     case 'pantograph':

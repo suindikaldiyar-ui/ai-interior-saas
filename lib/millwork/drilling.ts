@@ -1,7 +1,7 @@
 import type { HardwareDrillingSpec, HardwareItem, ProductionSettings } from '@/types/catalog';
 import type { FittingSlot, Module, Run } from '@/types/millwork';
 import { moduleDrawerKits } from './drawerKit';
-import { FITTING_SLOT_TITLE, fittingItemId, fittingSlotsOf, hingeBoringMm } from './fittings';
+import { FITTING_SLOT_TITLE, fittingItemId, fittingSlotsOf, hingeBoringMm, leafWords } from './fittings';
 import { shopOf } from './shop';
 import { DRAWER_SIDE_PANEL_NAME } from './drawerBox';
 import { SIDE_PANEL_NAME } from './panels';
@@ -219,7 +219,7 @@ export function moduleDrilling(
     if (fitting.slot === 'slide' || fitting.slot === 'hinge' || fitting.slot === 'hinge_plate') continue;
     const item = hardware.get(fitting.itemId);
     if (!item) continue;
-    const title = `${item.name} — ${FITTING_SLOT_TITLE[fitting.slot].toLowerCase()}${fitting.bayId ? `, отсек ${fitting.bayId}` : ''}`;
+    const title = `${item.name} — ${FITTING_SLOT_TITLE[fitting.slot].toLowerCase()}${fitting.bayId ? `, отсек ${fitting.bayId}` : ''}${fitting.leaf ? `, ${leafWords(fitting.leaf)}` : ''}`;
     if (item.detail === 'light') {
       out.push(unread(fitting.slot, item, title));
       continue;
@@ -233,7 +233,18 @@ export function moduleDrilling(
       holes: [],
       missing:
         specs.length === 0
-          ? ['присадки в источнике нет — механизм не выпускается с выдуманными отверстиями']
+          ? fitting.slot === 'handle'
+            ? /*
+               * РУЧКА (HANDLE-REAL): межосевое напечатано, а диаметра под винт,
+               * глубины и привязки к кромке фасада в источнике нет — отверстий
+               * нет, деталь помечена словами.
+               */
+              [
+                item.hardware.dimensionsMm?.holeSpacing
+                  ? `межосевое ${item.hardware.dimensionsMm.holeSpacing} мм напечатано, а диаметра отверстия под винт, глубины и привязки к кромке фасада в источнике нет — отверстия под ручку не ставятся`
+                  : 'присадки ручки в источнике нет — отверстия под ручку не ставятся',
+              ]
+            : ['присадки в источнике нет — механизм не выпускается с выдуманными отверстиями']
           : specs.map((s) => `${s.what}: ${s.positionsMm ?? 'координат нет'}${s.datum ? ` (база: ${s.datum})` : ''} — к детали не привязано`),
     });
   }

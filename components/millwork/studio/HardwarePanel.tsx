@@ -12,10 +12,14 @@ import {
   slidingAccepts,
   slidingVerdict,
   slotAccepts,
+  leafHandleFittings,
+  leafWords,
   withFitting,
+  withHandle,
   type FittingVerdict,
   type SlotPlace,
 } from '@/lib/millwork/fittings';
+import { HANDLE_FINISH_TITLE, handleItemModel } from '@/lib/millwork/handleModel';
 import { hardwareOf } from '@/lib/millwork/hardware';
 import {
   IMAGE_KIND_WORDS,
@@ -183,6 +187,16 @@ function keyDims(item: HardwareItem): string {
   if (r.powerFactor) parts.push(`LF ${r.powerFactor[0]}–${r.powerFactor[1]}`);
   if (d.cabinetWidth) parts.push(`под ${d.cabinetWidth}`);
   if (d.length) parts.push(`L ${d.length}`);
+  /* Ручка (HANDLE-REAL): размеры, по которым построена её модель. */
+  if (item.hardware.category === 'handle') {
+    if (d.holeSpacing) parts.push(`C ${d.holeSpacing}`);
+    if (d.projection) parts.push(`B ${d.projection}`);
+    if (d.diameter) parts.push(`Ø${d.diameter}`);
+    if (d.flangeDiameter) parts.push(`фланец Ø${d.flangeDiameter}`);
+    if (d.bodyDiameter) parts.push(`корпус Ø${d.bodyDiameter}`);
+    if (d.bodyDepth) parts.push(`глубина ${d.bodyDepth}`);
+    if (d.edgeDepth) parts.push(`профиль ${d.edgeDepth}`);
+  }
   if (item.hardware.loadCapacityKg) parts.push(`${item.hardware.loadCapacityKg} кг`);
   return parts.join(' · ');
 }
@@ -317,9 +331,27 @@ export default function HardwarePanel({ unit, run, production, hardware, catalog
   const slidingOpen = slotKey === 'sliding';
   const chosen = Boolean(place || slidingOpen);
 
+  /*
+   * РУЧКА ОДНОЙ ДЕТАЛИ (HANDLE-REAL): у места «Ручки» — кому ставим: модулю
+   * целиком или одной створке / ящику. Детали — те же, что считает смета
+   * (`openingHardware().handleLeaves`), и та же функция ставит ручку в сцене.
+   */
+  const handleLeaves = useMemo(
+    () =>
+      unit
+        ? (openingHardware([{ unit, heightMm: moduleCarcassHeightMm(unit, run) }], run, cornerOfModule(run)).handleLeaves[unit.id] ?? [])
+        : [],
+    [unit, run],
+  );
+  const [leafTarget, setLeafTarget] = useState<string | null>(null);
+  const handleSlot = place?.slot === 'handle';
+  const leaf = handleSlot && leafTarget && handleLeaves.includes(leafTarget) ? leafTarget : null;
+  const leafOverrides = unit ? leafHandleFittings(unit) : [];
+
   /* Модуль сменился — место сбрасывается: у другого модуля другие места. */
   useEffect(() => {
     setSlotKey(null);
+    setLeafTarget(null);
   }, [unit?.id]);
 
   const [maker, setMaker] = useState<string>('all');
@@ -376,7 +408,7 @@ export default function HardwarePanel({ unit, run, production, hardware, catalog
     () => new Map<string, FittingVerdict | null>(),
     // Ключ запоминания — входы проверки: новая карта, когда поменялся любой из них.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [slidingOpen, run, production, unit, place, hardware],
+    [slidingOpen, run, production, unit, place, hardware, leaf],
   );
   const verdictOf = useCallback(
     (item: HardwareItem): FittingVerdict | null => {
@@ -386,11 +418,11 @@ export default function HardwarePanel({ unit, run, production, hardware, catalog
         ? slidingVerdict(run, item, production)
         : !unit || !place
           ? null
-          : fittingVerdict({ unit, run, slot: place.slot, item, bayId: place.bayId, production, catalog: hardware });
+          : fittingVerdict({ unit, run, slot: place.slot, item, bayId: place.bayId, leaf: leaf ?? undefined, production, catalog: hardware });
       verdicts.set(item.id, value);
       return value;
     },
-    [verdicts, slidingOpen, run, production, unit, place, hardware],
+    [verdicts, slidingOpen, run, production, unit, place, hardware, leaf],
   );
 
   /* Всё, кроме производителя: по этому набору считаются числа на кнопках производителей. */
@@ -446,23 +478,60 @@ export default function HardwarePanel({ unit, run, production, hardware, catalog
   const card = picked ? (hardware.get(picked) ?? null) : null;
   /* Модуль и место для 3D-превью — одним объектом на выбор, а не новым на каждую отрисовку панели. */
   const preview = useMemo<PreviewInput | null>(
-    () => (unit && place && !slidingOpen ? { unit, run, production, slot: place.slot, bayId: place.bayId, hardware } : null),
-    [unit, place, slidingOpen, run, production, hardware],
+    () =>
+      unit && place && !slidingOpen
+        ? { unit, run, production, slot: place.slot, bayId: place.bayId, hardware, ...(leaf ? { leaf } : {}) }
+        : null,
+    [unit, place, slidingOpen, run, production, hardware, leaf],
   );
 
-  const installed = (p: Pick<SlotPlace, 'slot' | 'bayId'>) => (unit ? fittingItemId(unit, p.slot, p.bayId) : null);
+  /* Что стоит на месте; у ручки с выбранной деталью — ручка этой детали. */
+  const installed = (p: Pick<SlotPlace, 'slot' | 'bayId'>, own?: string | null) =>
+    unit ? fittingItemId(unit, p.slot, p.bayId, p.slot === 'handle' ? (own ?? undefined) : undefined) : null;
   const install = (item: HardwareItem) => {
     if (slidingOpen) {
       onOps([{ op: 'set_sliding_system', itemId: item.id }]);
       return;
     }
     if (!unit || !place) return;
-    onOps([{ op: 'set_fitting', moduleId: unit.id, slot: place.slot, itemId: item.id, ...(place.bayId ? { bayId: place.bayId } : {}) }]);
+    onOps([
+      {
+        op: 'set_fitting',
+        moduleId: unit.id,
+        slot: place.slot,
+        itemId: item.id,
+        ...(place.bayId ? { bayId: place.bayId } : {}),
+        ...(handleSlot && leaf ? { leaf } : {}),
+      },
+    ]);
   };
-  const remove = (p: Pick<SlotPlace, 'slot' | 'bayId'>) => {
+  const remove = (p: Pick<SlotPlace, 'slot' | 'bayId'>, own?: string | null) => {
     if (!unit) return;
-    onOps([{ op: 'set_fitting', moduleId: unit.id, slot: p.slot, itemId: null, ...(p.bayId ? { bayId: p.bayId } : {}) }]);
+    onOps([
+      {
+        op: 'set_fitting',
+        moduleId: unit.id,
+        slot: p.slot,
+        itemId: null,
+        ...(p.bayId ? { bayId: p.bayId } : {}),
+        ...(p.slot === 'handle' && own ? { leaf: own } : {}),
+      },
+    ]);
   };
+
+  /* Та же ручка в других покрытиях (HANDLE-REAL): одна модель — исполнения разными позициями. */
+  const finishSiblings = useMemo(() => {
+    const byKey = new Map<string, HardwareItem[]>();
+    for (const item of all) {
+      if (item.hardware.category !== 'handle') continue;
+      const model = handleItemModel(item).model;
+      if (!model) continue;
+      const list = byKey.get(model.key) ?? [];
+      list.push(item);
+      byKey.set(model.key, list);
+    }
+    return byKey;
+  }, [all]);
 
   const scope = [
     maker === 'all' ? 'Все производители' : maker,
@@ -538,6 +607,31 @@ export default function HardwarePanel({ unit, run, production, hardware, catalog
                       Снять
                     </button>
                   )}
+                  {/* Свои ручки деталей (HANDLE-REAL): у двери слева одна, справа — другая. */}
+                  {p.slot === 'handle' &&
+                    leafOverrides.map((f) => {
+                      const own = hardware.get(f.itemId);
+                      return (
+                        <div
+                          key={f.leaf}
+                          className="mt-1 flex items-center gap-2 text-[12px]"
+                          data-hw-leaf-installed={f.leaf}
+                          data-hw-leaf-article={own?.article ?? ''}
+                        >
+                          <span className="min-w-0 flex-1">
+                            {leafWords(f.leaf!)}: {own ? own.name : <span className="text-alert">позиции нет в каталоге организации</span>}
+                          </span>
+                          <button
+                            type="button"
+                            data-hw-leaf-remove={f.leaf}
+                            onClick={() => remove(p, f.leaf)}
+                            className="mw-btn mw-btn-ghost text-[12px]"
+                          >
+                            Снять
+                          </button>
+                        </div>
+                      );
+                    })}
                 </li>
               );
             })}
@@ -578,6 +672,40 @@ export default function HardwarePanel({ unit, run, production, hardware, catalog
             <p className="mt-1 text-[13px] leading-snug text-graphiteMw">
               У модуля нет мест под фурнитуру производителя: ни петель, ни ящиков, ни механизма.
             </p>
+          )}
+          {handleSlot && handleLeaves.length > 1 && (
+            <div className="mt-2" data-hw-leaf-targets={handleLeaves.length}>
+              <p className="mw-label mb-1">Ручка для</p>
+              <div className="flex flex-wrap gap-1" role="group" aria-label="Деталь фасада">
+                <button
+                  type="button"
+                  data-hw-leaf=""
+                  aria-pressed={leaf === null}
+                  onClick={() => {
+                    setLeafTarget(null);
+                    setPicked(null);
+                  }}
+                  className="mw-btn mw-btn-ghost text-[12px]"
+                >
+                  Весь модуль
+                </button>
+                {handleLeaves.map((l) => (
+                  <button
+                    key={l}
+                    type="button"
+                    data-hw-leaf={l}
+                    aria-pressed={leaf === l}
+                    onClick={() => {
+                      setLeafTarget(l);
+                      setPicked(null);
+                    }}
+                    className="mw-btn mw-btn-ghost text-[12px]"
+                  >
+                    {leafWords(l).replace(/^./, (c) => c.toUpperCase())}
+                  </button>
+                ))}
+              </div>
+            </div>
           )}
         </div>
       )}
@@ -681,11 +809,24 @@ export default function HardwarePanel({ unit, run, production, hardware, catalog
           item={card}
           facts={facts.get(card.id) ?? null}
           verdict={chosen ? verdictOf(card) : null}
-          placeTitle={slidingOpen ? 'система купе ряда' : place ? `${FITTING_SLOT_TITLE[place.slot].toLowerCase()} · ${place.where}` : null}
-          installedHere={slidingOpen ? run.slidingSystemItemId === card.id : place ? installed(place) === card.id : false}
+          placeTitle={
+            slidingOpen
+              ? 'система купе ряда'
+              : place
+                ? `${FITTING_SLOT_TITLE[place.slot].toLowerCase()} · ${handleSlot && leaf ? leafWords(leaf) : place.where}`
+                : null
+          }
+          installedHere={slidingOpen ? run.slidingSystemItemId === card.id : place ? installed(place, leaf) === card.id : false}
+          replaces={
+            handleSlot && !leaf && leafOverrides.length > 0
+              ? `Ручка ставится на все фасады модуля: свои ручки — ${leafOverrides.map((f) => leafWords(f.leaf!)).join(', ')} — сменятся этой.`
+              : null
+          }
+          siblings={siblingsOf(card, finishSiblings)}
+          onPick={setPicked}
           notice={notice}
           onInstall={() => install(card)}
-          onRemove={() => (slidingOpen ? onOps([{ op: 'set_sliding_system', itemId: null }]) : place && remove(place))}
+          onRemove={() => (slidingOpen ? onOps([{ op: 'set_sliding_system', itemId: null }]) : place && remove(place, leaf))}
           onClose={() => setPicked(null)}
           orgId={orgId}
           preview={preview}
@@ -862,8 +1003,16 @@ type PreviewInput = {
   production: ProductionSettings;
   slot: FittingSlot;
   bayId?: string;
+  /** Ручка одной детали (HANDLE-REAL): превью — с ручкой на ней и крупным планом её. */
+  leaf?: string;
   hardware: Map<string, HardwareItem>;
 };
+
+/** Позиции той же модели ручки — исполнения в других покрытиях, по названию покрытия. */
+function siblingsOf(card: HardwareItem, byKey: Map<string, HardwareItem[]>): HardwareItem[] {
+  const key = card.hardware.category === 'handle' ? handleItemModel(card).model?.key : undefined;
+  return key ? (byKey.get(key) ?? []) : [];
+}
 
 type Detail = { state: 'ready'; item: HardwareItem } | { state: 'loading' } | { state: 'error'; words: string };
 
@@ -939,6 +1088,9 @@ function HardwareDetail({
   verdict,
   placeTitle,
   installedHere,
+  replaces,
+  siblings,
+  onPick,
   notice,
   onInstall,
   onRemove,
@@ -951,6 +1103,11 @@ function HardwareDetail({
   verdict: FittingVerdict | null;
   placeTitle: string | null;
   installedHere: boolean;
+  /** Что сменит установка — словами ДО нажатия (ручка модуля поверх своих ручек деталей). */
+  replaces: string | null;
+  /** Та же модель ручки другими позициями — другие покрытия (HANDLE-REAL). */
+  siblings: HardwareItem[];
+  onPick: (id: string) => void;
   /** Последний отказ движка: панель под карточкой его не покажет. */
   notice: string | null;
   onInstall: () => void;
@@ -993,6 +1150,8 @@ function HardwareDetail({
   const photo = photos[Math.min(shownPhoto, Math.max(0, photos.length - 1))] ?? null;
   const status3d = facts?.model3d ?? 'NO_3D';
   const drawingWords = sceneDrawing(item);
+  /* Модель ручки (HANDLE-REAL): что показано по размерам паспорта, а что условно. */
+  const shaped = item.hardware.category === 'handle' ? handleItemModel(item) : null;
   const purpose = SLOTS_FOR_PURPOSE.filter((slot) => slotAccepts(slot, item)).map((slot) => FITTING_SLOT_TITLE[slot]);
   const groupTitle = HARDWARE_GROUPS.find((g) => g.categories.includes(item.hardware.category))?.title ?? 'Прочее';
   const dims = keyDims(item);
@@ -1031,6 +1190,33 @@ function HardwareDetail({
                 {h.series && h.variant ? ' · ' : ''}
                 {h.variant ?? ''}
               </p>
+            )}
+            {/*
+              * ПОКРЫТИЕ — ДРУГОЙ ПОЗИЦИЕЙ (HANDLE-REAL): та же модель у другого
+              * артикула. Чужой цвет на артикул без такого исполнения не ложится.
+              */}
+            {shaped?.model && (
+              <div className="mt-1 flex flex-wrap items-center gap-1" data-hw-finishes={Math.max(1, siblings.length)}>
+                <span className="text-graphiteMw">Покрытие:</span>
+                {(siblings.length > 0 ? siblings : [item]).map((other) => {
+                  const finish = handleItemModel(other).model?.finish ?? 'demo';
+                  return (
+                    <button
+                      key={other.id}
+                      type="button"
+                      data-hw-finish={finish}
+                      data-hw-finish-article={other.hardware.manufacturerArticle ?? other.article}
+                      aria-pressed={other.id === item.id}
+                      onClick={() => other.id !== item.id && onPick(other.id)}
+                      className="mw-btn mw-btn-ghost text-[12px]"
+                      title={other.hardware.manufacturerArticle ?? other.article}
+                    >
+                      {HANDLE_FINISH_TITLE[finish]}
+                    </button>
+                  );
+                })}
+                {siblings.length <= 1 && <span className="text-graphiteMw">другого покрытия у этой модели в каталоге нет</span>}
+              </div>
             )}
           </div>
           <button ref={close} type="button" className="mw-btn mw-btn-ghost" data-hw-detail-close onClick={onClose}>
@@ -1253,6 +1439,11 @@ function HardwareDetail({
                   геометрии модуля.
                 </p>
               )}
+              {replaces && !installedHere && (
+                <p className="mt-1 text-tape" data-hw-replaces>
+                  {replaces}
+                </p>
+              )}
               <div className="mt-2 flex gap-2">
                 {installedHere ? (
                   <button type="button" data-hw-uninstall onClick={onRemove} className="mw-btn mw-btn-ghost flex-1">
@@ -1317,8 +1508,26 @@ function HardwareDetail({
               </p>
               <p data-hw-visual={status3d}>
                 3D: {MODEL3D_WORDS[status3d]}
-                {status3d === 'VISUAL_APPROXIMATION' ? ' — приближение по размерам паспорта, не CAD производителя' : ''}
+                {status3d === 'VISUAL_APPROXIMATION'
+                  ? ' — приближение по размерам паспорта, не CAD производителя'
+                  : status3d === 'MEASURED_RECONSTRUCTION'
+                    ? ' — построена по напечатанным размерам, не CAD производителя'
+                    : status3d === 'VISUAL_RECONSTRUCTION'
+                      ? ' — по чертежу производителя, часть размеров условна'
+                      : ''}
               </p>
+              {shaped && (
+                <div data-hw-model-words={shaped.status}>
+                  <p>{shaped.words}</p>
+                  {shaped.model && shaped.model.notes.length > 0 && (
+                    <ul className="list-disc pl-4" data-hw-model-notes={shaped.model.notes.length}>
+                      {shaped.model.notes.map((note, i) => (
+                        <li key={i}>{note}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
               {detail.state === 'ready' && h.missing && h.missing.length > 0 && (
                 <div>
                   <p className="mt-1">Чего нет в источнике:</p>
@@ -1375,7 +1584,9 @@ function Preview3d({
       try {
         thumbModule ??= await import('../cabinet3d/moduleThumb');
         if (!alive) return;
-        const unit = withFitting(input.unit, input.slot, item.id, input.bayId);
+        /* Ручка — тем же правилом, что операция (`withHandle`): модулю целиком или одной детали. */
+        const unit =
+          input.slot === 'handle' ? withHandle(input.unit, item.id, input.leaf) : withFitting(input.unit, input.slot, item.id, input.bayId);
         const hardware = new Map(input.hardware);
         hardware.set(item.id, item);
         const all = [...input.run.modules, ...input.run.upperSegments.flatMap((segment) => segment.modules)].map((u) =>
@@ -1389,9 +1600,16 @@ function Preview3d({
         const mine = opening.byModule[unit.id];
         const hinges = (mine?.hinges ?? 0) + (mine?.cornerHinges ?? 0);
         const kits = input.production.drawerBox ? moduleDrawerKits(unit, input.run, input.production, hardware) : [];
-        /* Механизм внутри корпуса видно без фасадов; петлю и подъёмник — только с фасадом. */
-        const cutaway = !(input.slot === 'hinge' || input.slot === 'hinge_plate' || input.slot === 'lift');
-        const png = thumbModule.renderThumb(unit, input.run, input.production, { hardware, hinges, drawerKits: kits, cutaway });
+        /* Механизм внутри корпуса видно без фасадов; петлю, подъёмник и ручку — только с фасадом. */
+        const cutaway = !(input.slot === 'hinge' || input.slot === 'hinge_plate' || input.slot === 'lift' || input.slot === 'handle');
+        const png = thumbModule.renderThumb(unit, input.run, input.production, {
+          hardware,
+          hinges,
+          drawerKits: kits,
+          cutaway,
+          /* Ручку на шкафу в 256 px не разглядеть — крупный план (HANDLE-REAL). */
+          ...(input.slot === 'handle' ? { focus: { ...(input.leaf ? { leaf: input.leaf } : {}) } } : {}),
+        });
         if (alive) setPicture({ state: png ? 'ready' : 'none', png });
       } catch (error) {
         console.error('[фурнитура] 3D-превью не нарисовалось:', error);
@@ -1406,7 +1624,7 @@ function Preview3d({
 
   return (
     <div className="grid gap-2" data-hw-tab-body="model3d" data-hw-model3d={status}>
-      <p className={status === 'VISUAL_APPROXIMATION' ? 'text-tape' : 'text-graphiteMw'} data-hw-model3d-label>
+      <p className={status === 'VISUAL_APPROXIMATION' || status === 'VISUAL_RECONSTRUCTION' ? 'text-tape' : 'text-graphiteMw'} data-hw-model3d-label>
         {MODEL3D_WORDS[status]}
         {words ? `: ${words}` : ''}
       </p>
@@ -1427,7 +1645,7 @@ function Preview3d({
         <div className="flex h-[300px] items-center justify-center overflow-hidden rounded-[var(--r-control)] bg-navy" data-hw-preview={picture.state}>
           {picture.png ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={picture.png} alt="Условная 3D-модель модуля с позицией" className="max-h-full max-w-full object-contain" />
+            <img src={picture.png} alt={`${MODEL3D_WORDS[status]}: модуль с позицией`} className="max-h-full max-w-full object-contain" data-hw-preview-image />
           ) : (
             <span className="text-graphiteMw">{picture.state === 'none' ? 'Превью не нарисовалось: WebGL недоступен.' : 'Рисуется…'}</span>
           )}
@@ -1435,7 +1653,9 @@ function Preview3d({
       )}
       {status !== 'NO_3D' && (
         <p className="text-graphiteMw">
-          Условная модель: не фото и не CAD производителя. По ней ничего не сверлят и не заказывают.
+          {status === 'MEASURED_RECONSTRUCTION' || status === 'VISUAL_RECONSTRUCTION'
+            ? 'Модель по размерам каталога: не фото и не CAD производителя. По ней ничего не сверлят и не заказывают.'
+            : 'Условная модель: не фото и не CAD производителя. По ней ничего не сверлят и не заказывают.'}
         </p>
       )}
     </div>

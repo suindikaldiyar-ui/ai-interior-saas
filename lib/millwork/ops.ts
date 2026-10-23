@@ -36,7 +36,7 @@ import {
   shelfAboveRoof,
 } from './fill';
 import { mezzanineOf, zoneHeightMm, zoneProfile } from './zones';
-import { isMechanism, openingRejection } from './opening';
+import { handleOf, isMechanism, openingRejection } from './opening';
 import { frontConflict, frontOf, leafTitle } from './frontMaterial';
 import { reliefParamRefusal } from './facadeRelief';
 import { openablePartIds } from './cabinetBoxes';
@@ -55,7 +55,7 @@ import { fillRefusal } from './fill';
 import { bayEnvelope, bayLayout, bayLossNote, baysRefusal, baysWidthRefusal, type BayEnvelope } from './bays';
 import { allModules } from './layout';
 import { DEFAULT_ALLOWANCES, type HardwareItem } from '@/types/catalog';
-import { FITTING_SLOT_TITLE, fittingVerdict, slidingVerdict, withFitting } from './fittings';
+import { FITTING_SLOT_TITLE, fittingVerdict, slidingVerdict, withFitting, withHandle } from './fittings';
 import {
   moveConflict,
   moveRefusal,
@@ -3107,8 +3107,13 @@ export function applyOps({
           else if (editUpper(fitTarget.id, () => edited)) return;
           else storageFittings.set(fitTarget.id, edited.fittings);
         };
+        /* Деталь фасада (HANDLE-REAL) — только у ручки: петли и направляющие ставятся на модуль. */
+        if (op.leaf !== undefined && op.slot !== 'handle') {
+          warnings.push(`«${fitTarget.label}» · ${FITTING_SLOT_TITLE[op.slot]}: отдельной детали фасада у этого места нет — позиция ставится на модуль.`);
+          break;
+        }
         if (op.itemId === null) {
-          write(withFitting(fitTarget, op.slot, null, op.bayId));
+          write(withFitting(fitTarget, op.slot, null, op.bayId, op.leaf));
           break;
         }
         const fitItem = hardware?.get(op.itemId);
@@ -3132,6 +3137,7 @@ export function applyOps({
           slot: op.slot,
           item: fitItem,
           bayId: op.bayId,
+          leaf: op.leaf,
           production: shopOf(run.production),
           catalog: hardware,
         });
@@ -3139,7 +3145,15 @@ export function applyOps({
           warnings.push(`«${fitTarget.label}» · ${FITTING_SLOT_TITLE[op.slot]}: «${fitItem.name}» — ${verdict.summary}`);
           break;
         }
-        write(withFitting(fitTarget, op.slot, op.itemId, op.bayId));
+        /*
+         * Ручка — `withHandle`: модулю целиком — на все его фасады (свои ручки
+         * деталей уходят, экран называет это ДО нажатия), детали — только ей.
+         */
+        write(
+          op.slot === 'handle'
+            ? withHandle(fitTarget, op.itemId, op.leaf)
+            : withFitting(fitTarget, op.slot, op.itemId, op.bayId, op.leaf),
+        );
         break;
       }
 
@@ -3918,12 +3932,26 @@ export function applyOps({
       for (const fitting of unit.fittings ?? []) {
         const item = hardware.get(fitting.itemId);
         if (!item) continue;
+        /*
+         * Ручка каталога при типе «Профиль» или «Без ручки» (HANDLE-REAL)
+         * помнится и не ставится — это выбор человека, и сказано это у
+         * кнопок типа ручки («сохранены, но не ставятся»), а не отказом.
+         */
+        if (fitting.slot === 'handle' && handleOf(unit, nextRun).handle !== 'bar') continue;
         const was = before.get(unit.id);
+        /* Ручка одной детали (HANDLE-REAL) сверяется по своей детали. */
+        const leaf = fitting.leaf;
         const wasOk =
-          was?.fittings?.some((f) => f.slot === fitting.slot && f.itemId === fitting.itemId && (f.bayId ?? null) === (fitting.bayId ?? null)) &&
-          fittingVerdict({ unit: was, run, slot: fitting.slot, item, bayId: fitting.bayId, production: shop, catalog: hardware }).state !== 'refused';
+          was?.fittings?.some(
+            (f) =>
+              f.slot === fitting.slot &&
+              f.itemId === fitting.itemId &&
+              (f.bayId ?? null) === (fitting.bayId ?? null) &&
+              (f.leaf ?? null) === (leaf ?? null),
+          ) &&
+          fittingVerdict({ unit: was, run, slot: fitting.slot, item, bayId: fitting.bayId, leaf, production: shop, catalog: hardware }).state !== 'refused';
         if (!wasOk) continue;
-        const now = fittingVerdict({ unit, run: nextRun, slot: fitting.slot, item, bayId: fitting.bayId, production: shop, catalog: hardware });
+        const now = fittingVerdict({ unit, run: nextRun, slot: fitting.slot, item, bayId: fitting.bayId, leaf, production: shop, catalog: hardware });
         if (now.state === 'refused') {
           warnings.push(
             `«${unit.label}» · ${FITTING_SLOT_TITLE[fitting.slot]}: «${item.name}» после правки не встаёт — ${now.summary} ` +

@@ -92,6 +92,8 @@ export const HARDWARE_LIGHT_FIELDS = [
   'subcategory',
   'series',
   'variant',
+  /* Покрытие ручки (HANDLE-REAL): им ручка нарисована в сцене — список без паспорта. */
+  'finish',
   'dimensionsMm',
   'ranges',
   'loadCapacityKg',

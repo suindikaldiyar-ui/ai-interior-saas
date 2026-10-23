@@ -479,12 +479,21 @@ export type HardwareMediaEntry = {
 /**
  * ЧЕМ ПОЗИЦИЯ НАРИСОВАНА В 3D — выводится, а не хранится (`model3dStatusOf`).
  *
- *   OFFICIAL_CAD          CAD-модель производителя с подтверждёнными правами;
- *   VISUAL_RECONSTRUCTION модель по чертежу производителя с его размерами;
- *   VISUAL_APPROXIMATION  условная модель сцены — приближение, не CAD;
- *   NO_3D                 сцена позицию не рисует.
+ *   OFFICIAL_CAD            CAD-модель производителя с подтверждёнными правами;
+ *   MEASURED_RECONSTRUCTION своя модель, все размеры формы — напечатанные
+ *                           производителем (HANDLE-REAL); мелочи без размера
+ *                           (радиус гиба, проточки) — условно и названы;
+ *   VISUAL_RECONSTRUCTION   модель по чертежу производителя: форма с чертежа,
+ *                           части размеров нет — взяты условно и названы;
+ *   VISUAL_APPROXIMATION    условная модель сцены — приближение, не CAD;
+ *   NO_3D                   сцена позицию не рисует.
  */
-export type HardwareModel3dStatus = 'OFFICIAL_CAD' | 'VISUAL_RECONSTRUCTION' | 'VISUAL_APPROXIMATION' | 'NO_3D';
+export type HardwareModel3dStatus =
+  | 'OFFICIAL_CAD'
+  | 'MEASURED_RECONSTRUCTION'
+  | 'VISUAL_RECONSTRUCTION'
+  | 'VISUAL_APPROXIMATION'
+  | 'NO_3D';
 
 /* ─────────────────────────  Цели назначения  ───────────────────────── */
 

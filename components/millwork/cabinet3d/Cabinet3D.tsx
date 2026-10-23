@@ -15,6 +15,7 @@ import {
   type PartBox,
 } from '@/lib/millwork/cabinetBoxes';
 import InteractiveBayDrawer from './InteractiveBayDrawer';
+import { HandleBatch, handleGeometryKey } from './handleMesh';
 import { movingParts } from './motion';
 import { useCabinetParts, useCarcassMaterials, useFrontMaterials, useSurfaceLook } from './parts';
 import { DEFAULT_FRONT, frontKey } from '@/lib/millwork/frontMaterial';
@@ -390,6 +391,8 @@ export default function Cabinet3D({
   const carcassItems = useMemo(() => carcassCatalog(catalog), [catalog]);
   /* Фурнитура организации (HARDWARE-01): короба ящиков по комплекту — те же, что режет раскрой. */
   const hardwareItems = useMemo(() => hardwareCatalog(catalog), [catalog]);
+  /* Экономичный режим (слой 61): ручки — грубой сеткой и без отражений. */
+  const economy = useInteriorStore((s) => s.economyMode);
 
   const boxes = useMemo(
     () =>
@@ -543,6 +546,11 @@ export default function Cabinet3D({
       string,
       { key: string; relief: FrontRelief; leaf: ReliefLeaf; face?: '-x'; orient?: ReliefOrient; boxes: PartBox[] }
     >();
+    /*
+     * РУЧКИ (HANDLE-REAL) — пачка на модель и покрытие: сетка одна на
+     * модель, поворот и толщину фасада, экземпляры встают на места коробок.
+     */
+    const handles = new Map<string, PartBox[]>();
 
     for (const box of boxes) {
       if (box.part && active.has(box.part)) continue;
@@ -564,6 +572,13 @@ export default function Cabinet3D({
         else fronts.set(key, [box]);
         continue;
       }
+      if (box.node === 'handle' && box.handle) {
+        const batch = `${handleGeometryKey(box.handle, true)}|${box.handle.model.finish}`;
+        const list = handles.get(batch);
+        if (list) list.push(box);
+        else handles.set(batch, [box]);
+        continue;
+      }
       if ((box.material === 'carcass' || box.material === 'inner') && box.carcassKey) {
         const bucket = box.material === 'inner' ? inner : carcass;
         const list = bucket.get(box.carcassKey);
@@ -573,7 +588,7 @@ export default function Cabinet3D({
       }
       groups[box.material].push(box);
     }
-    return { groups, fronts, carcass, inner, reliefFronts };
+    return { groups, fronts, carcass, inner, reliefFronts, handles };
   }, [boxes, activeParts, layers]);
 
   /*
@@ -907,6 +922,15 @@ export default function Cabinet3D({
         />
       ))}
       <InstancedBoxes name="metal" boxes={grouped.groups.metal} geometry={parts.box} material={parts.metal} />
+      {/*
+        * РУЧКИ — СВОЕЙ ФОРМОЙ (HANDLE-REAL): скоба, кнопка, врезная и
+        * торцевая по размерам позиции; без позиции — условная скоба. Имя
+        * пачки то же — `metal`: счётчик металла на фасадах считает их так же.
+        * Экономичный режим — грубая сетка и без отражений, сцена та же.
+        */}
+      {Array.from(grouped.handles.entries()).map(([batch, list]) => (
+        <HandleBatch key={batch} boxes={list} fine={!economy} castShadow={shadows} />
+      ))}
       {/* Стекло дверцы прибора: по нему духовка узнаётся с трёх метров. */}
       <InstancedBoxes
         name={APPLIANCE_GLASS_NAME}
@@ -969,6 +993,7 @@ export default function Cabinet3D({
             blindPartMm(entry.unit, run) > 0 ? openFrontMm(entry.unit, run) / MM : undefined
           }
           partBoxes={partBoxes}
+          hardware={hardwareItems}
         />
       ))}
 

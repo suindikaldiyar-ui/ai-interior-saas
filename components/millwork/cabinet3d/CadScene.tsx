@@ -50,7 +50,31 @@ type ReliefReadout = {
   /** Окно рамы витрины, мм от центра фасада; `null` — окон нет. */
   glassMm: number[] | null;
 };
+/**
+ * НАРИСОВАННАЯ РУЧКА (HANDLE-REAL): экземпляр пачки закрытых ручек или ручка
+ * едущей детали. Приёмка сверяет форму, габарит сетки, покрытие и место в
+ * мире с позицией каталога — не данные с данными.
+ */
+type HandleReadout = {
+  moving: boolean;
+  part: string | null;
+  leaf: string | null;
+  itemId: string | null;
+  key: string | null;
+  shape: string | null;
+  status: string | null;
+  orient: string | null;
+  fits: boolean | null;
+  /** Центр габарита ручки в мире, мм. */
+  worldMm: [number, number, number];
+  /** Габарит НАРИСОВАННОЙ сетки, мм. */
+  sizeMm: [number, number, number] | null;
+  triangles: number;
+  accent: string | null;
+  material: { name: string; color: number[]; metalness: number; roughness: number; envMap: boolean };
+};
 import Cabinet3D, { APPLIANCE_GLASS_NAME } from './Cabinet3D';
+import { handleGeometryCount } from './handleMesh';
 import RoomScene from './RoomScene';
 import type { PathTraceSource } from './pathTrace';
 import { movingParts } from './motion';
@@ -926,6 +950,7 @@ function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
       __mwCadSurfaces?: () => SurfaceReadout[];
       __mwCadReliefs?: () => ReliefReadout[];
       __mwCadMetal?: () => number;
+      __mwHandles?: () => { handles: HandleReadout[]; geometries: number };
       __mwCadLook?: () => {
         frontColors: string[];
         carcassColors: string[];
@@ -1079,6 +1104,89 @@ function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
         count += mesh.isInstancedMesh && typeof mesh.count === 'number' ? mesh.count : 1;
       });
       return count;
+    };
+
+    /*
+     * РУЧКИ ПО НАРИСОВАННОМУ (HANDLE-REAL): экземпляры пачек `metal` со
+     * сводкой ручек и ручки едущих деталей (`rider:handle`). Место — по
+     * матрице экземпляра в мире, габарит — по сетке, которую видит клиент.
+     */
+    w.__mwHandles = () => {
+      const out: HandleReadout[] = [];
+      const round = (v: number) => Math.round(v * MM * 10) / 10;
+      const sizeOf = (geometry: THREE.BufferGeometry) => {
+        if (!geometry.boundingBox) geometry.computeBoundingBox();
+        const box = geometry.boundingBox!;
+        return [box.max.x - box.min.x, box.max.y - box.min.y, box.max.z - box.min.z].map(round) as [number, number, number];
+      };
+      const materialOf = (mesh: THREE.Mesh) => {
+        const material = mesh.material as THREE.MeshStandardMaterial;
+        return {
+          name: material.name,
+          color: [material.color.r, material.color.g, material.color.b],
+          metalness: material.metalness,
+          roughness: material.roughness,
+          envMap: Boolean(material.envMap),
+        };
+      };
+      scene.updateMatrixWorld();
+      const matrix = new THREE.Matrix4();
+      const at = new THREE.Vector3();
+      scene.traverse((object) => {
+        const mesh = object as THREE.InstancedMesh;
+        if (mesh.isInstancedMesh && mesh.name === 'metal' && mesh.visible !== false && Array.isArray(mesh.userData?.handles)) {
+          const list = mesh.userData.handles as {
+            part: string | null; leaf: string; itemId: string | null; key: string; shape: string; status: string; orient: string; fits: boolean;
+          }[];
+          const info = (mesh.geometry.userData ?? {}) as { triangles?: number; accent?: string | null };
+          list.forEach((handle, i) => {
+            if (i >= mesh.count) return;
+            mesh.getMatrixAt(i, matrix);
+            at.setFromMatrixPosition(matrix).applyMatrix4(mesh.matrixWorld);
+            out.push({
+              moving: false,
+              part: handle.part,
+              leaf: handle.leaf,
+              itemId: handle.itemId,
+              key: handle.key,
+              shape: handle.shape,
+              status: handle.status,
+              orient: handle.orient,
+              fits: handle.fits,
+              worldMm: [round(at.x), round(at.y), round(at.z)],
+              sizeMm: sizeOf(mesh.geometry),
+              triangles: info.triangles ?? 0,
+              accent: info.accent ?? null,
+              material: materialOf(mesh),
+            });
+          });
+          return;
+        }
+        if (object.name !== 'rider:handle' || !object.visible) return;
+        const body = object.children.find((child) => (child as THREE.Mesh).isMesh) as THREE.Mesh | undefined;
+        if (!body) return;
+        const info = (body.geometry.userData ?? {}) as {
+          key?: string; shape?: string; status?: string; orient?: string; triangles?: number; accent?: string | null;
+        };
+        object.getWorldPosition(at);
+        out.push({
+          moving: true,
+          part: (object.userData.part as string | undefined) ?? null,
+          leaf: (object.userData.handle as string | undefined) ?? null,
+          itemId: (object.userData.itemId as string | null | undefined) ?? null,
+          key: info.key ?? null,
+          shape: info.shape ?? null,
+          status: info.status ?? null,
+          orient: info.orient ?? null,
+          fits: (object.userData.fits as boolean | undefined) ?? null,
+          worldMm: [round(at.x), round(at.y), round(at.z)],
+          sizeMm: sizeOf(body.geometry),
+          triangles: info.triangles ?? 0,
+          accent: info.accent ?? null,
+          material: materialOf(body),
+        });
+      });
+      return { handles: out, geometries: handleGeometryCount() };
     };
 
     /*
@@ -1601,6 +1709,7 @@ function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
       delete w.__mwCadSurfaces;
       delete w.__mwCadReliefs;
       delete w.__mwCadMetal;
+      delete w.__mwHandles;
       delete w.__mwCadState;
       delete (w as { __mwCadBays?: unknown }).__mwCadBays;
       delete w.__mwCadFit;
@@ -1681,6 +1790,12 @@ function rowCorners(
   hardware?: Map<string, HardwareItem>,
   /** Школа цеха экрана: короб ящика в рёбрах — тот же, что в сетке и в раскрое. */
   production?: ProductionSettings,
+  /**
+   * ДЛЯ РЁБЕР (HANDLE-REAL): у ручки своя форма — скоба, кнопка, профиль, —
+   * и контур коробки вокруг неё рисовал бы проволочный ящик поверх ручки.
+   * Габарит мебели и пересечения ручку по-прежнему видят.
+   */
+  outline = false,
 ): [number, number, number][] {
   const points: [number, number, number][] = [];
 
@@ -1691,7 +1806,13 @@ function rowCorners(
         gapMm: 3,
         hardware,
         ...(production ? { production } : {}),
-      }).filter((box) => (inside || !box.inside) && boxShown(box, layers) && !(box.part && open.has(box.part)));
+      }).filter(
+        (box) =>
+          (inside || !box.inside) &&
+          boxShown(box, layers) &&
+          !(box.part && open.has(box.part)) &&
+          !(outline && box.node === 'handle' && box.handle),
+      );
 
       const place = rowPlacement(row);
       const angle = (place.rotationYDeg * Math.PI) / 180;
@@ -1761,7 +1882,7 @@ function RunEdges({
   const hardware = useMemo(() => hardwareCatalog(catalog), [catalog]);
   const geometry = useMemo(() => {
     const points: number[] = [];
-    const corners = rowCorners(rows, inside, layers, open, hardware, production);
+    const corners = rowCorners(rows, inside, layers, open, hardware, production, true);
 
     // Двенадцать рёбер на каждые восемь вершин коробки.
     const edges: [number, number][] = [

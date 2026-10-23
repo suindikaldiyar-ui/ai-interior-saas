@@ -393,3 +393,53 @@ export function applyFrontLook(
     material.clearcoatRoughness = look.clearcoatRoughness;
   }
 }
+
+/* ────────────────  Покрытие ручки (HANDLE-REAL)  ──────────────── */
+
+/**
+ * КАК ВЫГЛЯДИТ ПОКРЫТИЕ РУЧКИ — ОДНА ТАБЛИЦА НА СЦЕНУ, ЕДУЩИЕ СТВОРКИ И КАРТИНКИ.
+ *
+ * Металл различается шероховатостью и цветом отражения, а не подкраской:
+ * хром — почти зеркало, шлифованная нержавейка — мягкий блик, анодированный
+ * алюминий — матовее, порошковый чёрный и белый — не металл вовсе. Цвет —
+ * sRGB, как у фасадов (`color.set` переводит его в линейный).
+ *
+ * Отражения — от того же окружения сцены (`cadEnvironment`), но своей
+ * яркостью: у фасадов окружение приглушено (`CAD_ENVIRONMENT.intensity`), а
+ * металл без отражения выглядит пластиком. В экономичном режиме окружения
+ * нет — металличность снижается, иначе ручка выходит чёрным пятном.
+ */
+export type HandleLook = { color: string; metalness: number; roughness: number };
+
+export const HANDLE_LOOK: Record<string, HandleLook> = {
+  stainless_brushed: { color: '#C3C6C8', metalness: 1, roughness: 0.32 },
+  stainless_look: { color: '#BEC1C2', metalness: 0.95, roughness: 0.38 },
+  aluminium: { color: '#C8CBCF', metalness: 0.9, roughness: 0.42 },
+  silver_anodized: { color: '#D2D5D9', metalness: 0.85, roughness: 0.46 },
+  chrome: { color: '#EEF0F2', metalness: 1, roughness: 0.06 },
+  matte_chrome: { color: '#D5D7D9', metalness: 1, roughness: 0.28 },
+  black_matte: { color: '#1B1C1E', metalness: 0.25, roughness: 0.55 },
+  white_matte: { color: '#EDEAE2', metalness: 0, roughness: 0.5 },
+  bronze_pvd: { color: '#B8944F', metalness: 1, roughness: 0.3 },
+  bronze_antique: { color: '#6B4A33', metalness: 0.85, roughness: 0.45 },
+  brass: { color: '#C8A14D', metalness: 1, roughness: 0.28 },
+  gold: { color: '#D4AF37', metalness: 1, roughness: 0.22 },
+  /* Покрытие не названо (условная ручка) — прежний металл сцены. */
+  demo: { color: '#9DA3A8', metalness: 0.85, roughness: 0.35 },
+  /* Резиновые кольца кнопки и тёмное дно врезной — не металл. */
+  rubber: { color: '#141414', metalness: 0, roughness: 0.9 },
+};
+
+/** Яркость отражений у металла ручек — своя, а не приглушённая фасадная. */
+export const HANDLE_ENV_INTENSITY = 1.15;
+
+/** Дно врезной ручки: то же покрытие, втрое темнее — углубление читается светом. */
+export function cavityLook(look: HandleLook): HandleLook {
+  const c = new THREE.Color(look.color).multiplyScalar(0.33);
+  return { color: `#${c.getHexString()}`, metalness: look.metalness, roughness: Math.min(1, look.roughness + 0.15) };
+}
+
+/** Экономичный режим: окружения нет — металличность ниже, ручка читается светом ключа. */
+export function economyLook(look: HandleLook): HandleLook {
+  return { ...look, metalness: Math.min(look.metalness, 0.35), roughness: Math.max(look.roughness, 0.35) };
+}

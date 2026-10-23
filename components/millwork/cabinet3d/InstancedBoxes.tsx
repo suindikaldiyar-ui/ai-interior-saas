@@ -55,6 +55,13 @@ type Props = {
    * лицо (фасад Б угла — влево). Нет — единичный куб, растянутый по коробке.
    */
   relief?: { relief: FrontRelief; leaf: ReliefLeaf; face?: '-x'; orient?: ReliefOrient };
+  /**
+   * СЕТКА УЖЕ В МЕТРАХ И С ЦЕНТРОМ В ЦЕНТРЕ КОРОБКИ (HANDLE-REAL): ручка
+   * модели ставится на место коробки с масштабом 1, как рельеф фасада.
+   */
+  placed?: boolean;
+  /** Сводка для приёмки: что нарисовано на какой детали (ручки — `handles`). */
+  userData?: Record<string, unknown>;
 };
 
 export default function InstancedBoxes({
@@ -66,6 +73,8 @@ export default function InstancedBoxes({
   name,
   shiftSalt,
   relief,
+  placed: placedGeometry = false,
+  userData,
 }: Props) {
   const ref = useRef<THREE.InstancedMesh>(null);
   const invalidate = useThree((state) => state.invalidate);
@@ -132,8 +141,8 @@ export default function InstancedBoxes({
     const scale = new THREE.Vector3();
     const quaternion = new THREE.Quaternion();
 
-    /* Рельеф: сетка уже в метрах фасада — на место коробки, масштаб 1, лицо куда смотрит фасад. */
-    const placed = reliefGeometry !== null;
+    /* Рельеф и ручка: сетка уже в метрах — на место коробки, масштаб 1, лицо куда смотрит фасад. */
+    const placed = reliefGeometry !== null || placedGeometry;
     if (placed && relief?.face === '-x') quaternion.copy(FACE_LEFT);
     boxes.forEach((box, i) => {
       position.set(box.position[0], box.position[1], box.position[2]);
@@ -151,7 +160,7 @@ export default function InstancedBoxes({
     invalidate();
     // `key` меняется вместе с составом; сам массив пересоздаётся чаще.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, invalidate, batchGeometry]);
+  }, [key, invalidate, batchGeometry, placedGeometry]);
 
   if (boxes.length === 0) return null;
 
@@ -170,7 +179,7 @@ export default function InstancedBoxes({
        * ИД ДЕТАЛИ ПО ЭКЗЕМПЛЯРУ (R01): приёмка находит полку и перегородку
        * отсека в НАРИСОВАННОМ графе и сверяет её матрицу с раскроем.
        */
-      userData={{ partIds: boxes.map((box) => box.partId ?? null) }}
+      userData={{ partIds: boxes.map((box) => box.partId ?? null), ...(userData ?? {}) }}
       castShadow={castShadow}
       receiveShadow={receiveShadow}
     />
