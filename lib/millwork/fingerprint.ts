@@ -1,5 +1,6 @@
 import { beamsPart } from './ceiling';
 import { frontKey, frontPart } from './frontMaterial';
+import { shelvesAreGlass } from './glass';
 import type { BayDrawerStack, BayShelves, Module, Run } from '@/types/millwork';
 
 /**
@@ -159,6 +160,10 @@ function extrasPart(unit: Module): string | undefined {
           .sort()
           .join(';')
       : '',
+    /* Вид стекла витрины (V3D-02): бронзовое — другой лист. Прозрачное не пишется (ловушка 246). */
+    unit.glass && unit.glass !== 'clear' ? `glass=${unit.glass}` : '',
+    /* Стеклянные полки (V3D-02): другой раскрой и другая смета. ЛДСП не пишется. */
+    shelvesAreGlass(unit) ? 'shelf=glass' : '',
   ].filter(Boolean);
 
   return parts.length > 0 ? parts.join(',') : undefined;

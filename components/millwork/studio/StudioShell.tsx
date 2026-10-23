@@ -20,7 +20,7 @@ import type { ReactNode } from 'react';
  * автосохранение. Второго конфигуратора нет.
  */
 
-export type StudioTool = 'select' | 'measure' | 'furniture' | 'construction' | 'materials' | 'hardware' | 'documents';
+export type StudioTool = 'select' | 'measure' | 'furniture' | 'construction' | 'materials' | 'hardware' | 'lighting' | 'documents';
 export type StudioView = 'plan' | 'facade' | '3d' | 'panels' | 'cutting';
 
 export const STUDIO_TOOLS: { key: StudioTool; title: string; hint: string }[] = [
@@ -30,6 +30,7 @@ export const STUDIO_TOOLS: { key: StudioTool; title: string; hint: string }[] = 
   { key: 'construction', title: 'Конструкция', hint: 'начинка модуля и отметки объекта' },
   { key: 'materials', title: 'Материалы', hint: 'фасады, корпус, столешница' },
   { key: 'hardware', title: 'Фурнитура', hint: 'петли, направляющие, механизмы — артикулы производителей' },
+  { key: 'lighting', title: 'Освещение', hint: 'трековые споты, подсветка фартука и витрин, день · вечер · ночь' },
   { key: 'documents', title: 'Документы', hint: 'деталировка, карта раскроя и смета' },
 ];
 
@@ -97,6 +98,16 @@ function ToolIcon({ tool }: { tool: StudioTool }) {
           <circle cx="8" cy="8" r="3.2" />
           <path d="M11 10.5l8 8" />
           <path d="M15 18.5l2-2M17.5 21l2-2" />
+        </svg>
+      );
+    case 'lighting':
+      return (
+        <svg {...common}>
+          <path d="M3 4h18" />
+          <path d="M8 4v3M16 4v3" />
+          <path d="M5.5 7h5l-1 6h-3z" />
+          <path d="M13.5 7h5l-1 6h-3z" />
+          <path d="M8 13l-1.5 6M16 13l1.5 6" />
         </svg>
       );
     case 'documents':

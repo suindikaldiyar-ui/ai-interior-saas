@@ -13,6 +13,8 @@ import InteractiveDoor from './InteractiveDoor';
 import InteractiveBifold from './InteractiveBifold';
 import InteractiveDrawer from './InteractiveDrawer';
 import type { CabinetParts } from './parts';
+import type { GlassMaterials } from './glassLook';
+import { glassOf } from '@/lib/millwork/glass';
 import type { FrontRelief, Module } from '@/types/millwork';
 import { gripOrient } from '@/lib/millwork/facadeRelief';
 import { isUpperRow } from '@/lib/millwork/modules';
@@ -85,6 +87,8 @@ type Props = {
   partBoxes?: (partId: string) => PartBox[] | undefined;
   /** Фурнитура организации: ручка Г-модуля на ходу — та же позиция, что у закрытого (HANDLE-REAL). */
   hardware?: Map<string, HardwareItem>;
+  /** Материалы стекла ряда (V3D-02): едущая дверь витрины — того же вида, что закрытая в пачке. */
+  glass?: GlassMaterials;
 };
 
 /** Штанга: условное сечение — то же число, что у штанги зоны отсека (`ROD_VISUAL_DIAMETER_MM`). */
@@ -120,6 +124,7 @@ export default function CabinetModule3D({
   layers = ALL_LAYERS,
   partBoxes,
   hardware,
+  glass,
 }: Props) {
   /* Деталь модуля по идентификатору сцены: `<модуль>:door:0` → `door:0`. */
   const lookOf = (partId: string) => leafLook?.(partId.slice(unit.id.length + 1));
@@ -143,6 +148,8 @@ export default function CabinetModule3D({
       }));
 
   const isDisplay = unit.section === 'glass_display';
+  /* Стекло этого модуля — вида, выбранного у него (`Module.glass`). */
+  const glassMaterial = glass?.door[glassOf(unit)];
 
   /*
    * ЯЩИКИ ОТСЕКОВ (R02A): коробки — те же, что в общей пачке
@@ -208,42 +215,19 @@ export default function CabinetModule3D({
         */}
 
       {/*
-        * ВИТРИНА: стеклянная дверь в раме и лента по контуру. Подсветка
-        * гаснет перед захватом кадра — светящаяся полоса в clay читается
-        * моделью как часть мебели.
+        * ВИТРИНА: дверь в раме — рама и стекло коробками пачки ряда
+        * (`displayDoorBoxes`), открывается как створка (V3D-02). Здесь —
+        * только свечение ленты САПР-вида; в «Интерьере» ленту и её свет
+        * рисует освещение комнаты. Подсветка гаснет перед захватом кадра —
+        * светящаяся полоса в clay читается моделью как часть мебели.
         */}
-      {isDisplay && !cutaway && layers.fronts && (
-        <>
-          <mesh
-            geometry={parts.box}
-            material={parts.glass}
-            position={[widthM / 2, heightM / 2, frontThicknessM / 2]}
-            scale={[widthM - 2 * gapM, heightM - 2 * gapM, frontThicknessM]}
-          />
-          {/* Рама: планки по верху и низу стекла. */}
-          {(
-            [
-              [widthM / 2, gapM + 0.02, widthM, 0.04],
-              [widthM / 2, heightM - gapM - 0.02, widthM, 0.04],
-            ] as [number, number, number, number][]
-          ).map(([cx, cy, w, h]) => (
-            <mesh
-              key={`frame-${cy}`}
-              geometry={parts.box}
-              material={parts.metal}
-              position={[cx, cy, frontThicknessM]}
-              scale={[w, h, frontThicknessM]}
-            />
-          ))}
-          {displayLit && (
-            <mesh
-              geometry={parts.box}
-              material={parts.glow}
-              position={[widthM / 2, heightM - thicknessM * 1.5, -depthM / 2]}
-              scale={[widthM - 2 * thicknessM, 0.012, depthM - thicknessM]}
-            />
-          )}
-        </>
+      {isDisplay && !cutaway && layers.fronts && displayLit && (
+        <mesh
+          geometry={parts.box}
+          material={parts.glow}
+          position={[widthM / 2, heightM - thicknessM * 1.5, -depthM / 2]}
+          scale={[widthM - 2 * thicknessM, 0.012, depthM - thicknessM]}
+        />
       )}
 
       {/*
@@ -368,8 +352,13 @@ export default function CabinetModule3D({
             relief={look?.relief}
             reliefOrient={gripOrient(look?.relief, leaf.opening, isUpperRow(unit))}
             riders={localBoxesOf(leaf.id)?.filter(
-              (box) => box.material === 'metal' && (box.node === 'hinge' || box.node === 'lift' || box.node === 'handle'),
+              (box) =>
+                (box.material === 'metal' && (box.node === 'hinge' || box.node === 'lift' || box.node === 'handle')) ||
+                /* Дверь витрины в раме: едут рама и её стекло. */
+                (leaf.glass === true && (box.node === 'frame' || (box.material === 'glass' && box.node === 'glass'))),
             )}
+            panelless={leaf.glass === true}
+            glassMaterial={glassMaterial}
           />
         );
       })}

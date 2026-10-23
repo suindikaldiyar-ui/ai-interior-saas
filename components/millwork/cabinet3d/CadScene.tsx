@@ -99,6 +99,18 @@ import type { OrthoProjection } from './SceneCamera';
 import { useInteriorStore } from '@/store/useInteriorStore';
 import { hardwareCatalog } from '@/lib/millwork/hardware';
 import type { HardwareItem } from '@/types/catalog';
+import { DEFAULT_PRODUCTION } from '@/types/catalog';
+import { workTopMm } from '@/lib/millwork/shop';
+import {
+  AMBIENT_RIG,
+  daylightOf,
+  kelvinHex,
+  lightingPlan,
+  type AmbientRig,
+  type RoomLighting,
+  type Vec3,
+} from '@/lib/millwork/lighting';
+import DesignLights from './DesignLights';
 
 /**
  * САПР-ВИД, А НЕ ФОТОРЕАЛИЗМ.
@@ -196,6 +208,13 @@ type Props = {
   onReady?: () => void;
   /** Видеокарта сбросила сцену: потерян контекст WebGL. */
   onLost?: () => void;
+  /**
+   * ОСВЕЩЕНИЕ КОМНАТЫ (V3D-02): изделия и предпросмотр из
+   * `MillworkState.lighting`. Режим «Интерьер» (`preview.design`) — тот же
+   * холст и та же мебель: меняются свет, фон и стекло, а не геометрия.
+   * Нет или выключено — САПР-вид, как был.
+   */
+  lighting?: RoomLighting | null;
 };
 
 /**
@@ -295,6 +314,7 @@ export default function CadScene({
   onFurnitureRect,
   onReady,
   onLost,
+  lighting = null,
 }: Props) {
   /*
    * ГАБАРИТ МЕБЕЛИ, А НЕ КОМНАТЫ.
@@ -392,6 +412,33 @@ export default function CadScene({
     [bounds, open],
   );
 
+  /*
+   * РЕЖИМ «ИНТЕРЬЕР» (V3D-02): день, вечер и ночь — множители к свету
+   * САПР-вида (`AMBIENT_RIG`), солнце — из окна замера (`daylightOf`), план
+   * источников — `lightingPlan`. Всё это числа: переключение не пересоздаёт
+   * ни меши, ни холст, и камера стоит, где стояла.
+   */
+  const design = Boolean(lighting?.preview.design);
+  const ambient = lighting?.preview.ambient ?? 'day';
+  const rig: AmbientRig | null = design ? AMBIENT_RIG[ambient] : null;
+  const daylight = useMemo(() => (rig ? daylightOf(roomWorld, rig.sunElevationDeg) : null), [rig, roomWorld]);
+  const carcassMm = (production ?? DEFAULT_PRODUCTION).carcassMm;
+  const plan = useMemo(
+    () => (design && lighting ? lightingPlan(lighting, rows, roomWorld, carcassMm) : null),
+    [design, lighting, rows, roomWorld, carcassMm],
+  );
+  const sun = useMemo(
+    () =>
+      rig
+        ? {
+            intensity: rig.sun,
+            color: kelvinHex(rig.sunKelvin),
+            travel: daylight?.source === 'windows' ? daylight.travel : null,
+          }
+        : null,
+    [rig, daylight],
+  );
+
   return (
     <Canvas
       /*
@@ -421,10 +468,14 @@ export default function CadScene({
         * полусферический и ОДИН направленный с мягкой тенью. Тот же набор у
         * картинок библиотеки.
         */}
-      {environment && !economy && <CadEnvironment facing={facing} />}
+      {environment && !economy && <CadEnvironment facing={facing} scale={rig?.environment ?? 1} />}
       <EconomySync economy={economy} />
-      <hemisphereLight args={[CAD_LIGHT.hemisphereSky, CAD_LIGHT.hemisphereGround, CAD_LIGHT.hemisphere]} />
-      <KeyLight center={lightBounds.center} radius={lightBounds.radius} open={open} />
+      <DesignBackdrop rig={rig} />
+      <hemisphereLight
+        args={[CAD_LIGHT.hemisphereSky, CAD_LIGHT.hemisphereGround, CAD_LIGHT.hemisphere]}
+        intensity={CAD_LIGHT.hemisphere * (rig?.hemisphere ?? 1)}
+      />
+      <KeyLight center={lightBounds.center} radius={lightBounds.radius} open={open} sun={sun} />
 
       {rows.map((row, i) => (
         <Cabinet3D
@@ -464,6 +515,7 @@ export default function CadScene({
           onSelectModule={onSelectModule}
           onWidth={i === 0 ? onWidth : undefined}
           onMoveModule={i === 0 ? onMoveModule : undefined}
+          design={design}
         />
       ))}
 
@@ -480,9 +532,22 @@ export default function CadScene({
         */}
       {roomWorld && <RoomScene room={roomWorld} />}
 
-      <RunEdges rows={rows} inside={frame} layers={layers} production={production} />
+      {/* В «Интерьере» рёбер САПР нет: буфер прячется, а не пересобирается. */}
+      <RunEdges rows={rows} inside={frame} layers={layers} production={production} visible={!design} />
 
-      <ShadowSync rows={rows} room={roomWorld} inside={frame} layers={layers} />
+      {design && lighting && plan && rig && daylight && (
+        <DesignLights
+          lighting={lighting}
+          plan={plan}
+          rows={rows}
+          room={roomWorld}
+          rig={rig}
+          daylight={daylight}
+          workTopMm={workTopMm(rows[0]?.run.production)}
+        />
+      )}
+
+      <ShadowSync rows={rows} room={roomWorld} inside={frame} layers={layers} lighting={lighting} />
 
       {orbit && <OrbitScene bounds={bounds} open={open} />}
       <FrameProbe rows={rows} room={roomWorld} />
@@ -782,7 +847,7 @@ function OrbitScene({
  * у прямой кухни есть у `open`). Собирается один раз на контекст
  * (`cadEnvironment`); поворот меняется с формой кухни.
  */
-function CadEnvironment({ facing }: { facing: [number, number] }) {
+function CadEnvironment({ facing, scale = 1 }: { facing: [number, number]; scale?: number }) {
   const gl = useThree((state) => state.gl);
   const scene = useThree((state) => state.scene);
   const invalidate = useThree((state) => state.invalidate);
@@ -803,6 +868,29 @@ function CadEnvironment({ facing }: { facing: [number, number] }) {
     invalidate();
   }, [scene, ox, oz, invalidate]);
 
+  /* День, вечер, ночь (V3D-02): яркость окружения — число, а не новая карта. */
+  useEffect(() => {
+    scene.environmentIntensity = CAD_ENVIRONMENT.intensity * scale;
+    invalidate();
+  }, [scene, scale, invalidate]);
+
+  return null;
+}
+
+/**
+ * ФОН И ЭКСПОЗИЦИЯ «ИНТЕРЬЕРА» (V3D-02): у САПР-вида фона нет (холст
+ * прозрачный, под ним лист), у дня — светлый, у ночи — тёмный. Это цвет
+ * очистки и число рендерера: шейдеры от них не пересобираются.
+ */
+function DesignBackdrop({ rig }: { rig: AmbientRig | null }) {
+  const scene = useThree((state) => state.scene);
+  const gl = useThree((state) => state.gl);
+  const invalidate = useThree((state) => state.invalidate);
+  useEffect(() => {
+    scene.background = rig ? new THREE.Color(rig.background) : null;
+    gl.toneMappingExposure = rig ? rig.exposure : 1;
+    invalidate();
+  }, [rig, scene, gl, invalidate]);
   return null;
 }
 
@@ -817,10 +905,17 @@ function KeyLight({
   center,
   radius,
   open,
+  sun = null,
 }: {
   center: [number, number, number];
   radius: number;
   open: [number, number];
+  /**
+   * СОЛНЦЕ «ИНТЕРЬЕРА» (V3D-02): яркость дня, цвет по температуре и
+   * направление — из окна замера (`travel`, куда идёт свет). Окна нет —
+   * направление прежнее, с открытой стороны, и это названо в панели.
+   */
+  sun?: { intensity: number; color: string; travel: Vec3 | null } | null;
 }) {
   const invalidate = useThree((state) => state.invalidate);
   const gl = useThree((state) => state.gl);
@@ -838,15 +933,20 @@ function KeyLight({
 
   const [cx, cy, cz] = center;
   const [ox, oz] = open;
+  const travel = sun?.travel ?? null;
+  const [tx, ty, tz] = travel ?? [0, 0, 0];
   useEffect(() => {
     // Сбоку — перпендикуляр открытой стороны, влево от зрителя.
     const sx = -oz;
     const sz = ox;
-    const dir = new THREE.Vector3(
-      ox * CAD_LIGHT.keyFromOpen + sx * CAD_LIGHT.keySide,
-      CAD_LIGHT.keyUp,
-      oz * CAD_LIGHT.keyFromOpen + sz * CAD_LIGHT.keySide,
-    ).normalize();
+    /* Солнце из окна: свет идёт по `travel`, источник — против хода. */
+    const dir = travel
+      ? new THREE.Vector3(-tx, -ty, -tz).normalize()
+      : new THREE.Vector3(
+          ox * CAD_LIGHT.keyFromOpen + sx * CAD_LIGHT.keySide,
+          CAD_LIGHT.keyUp,
+          oz * CAD_LIGHT.keyFromOpen + sz * CAD_LIGHT.keySide,
+        ).normalize();
     const distance = radius + 6;
     light.position.set(cx + dir.x * distance, cy + dir.y * distance, cz + dir.z * distance);
     light.target.position.set(cx, cy, cz);
@@ -861,7 +961,19 @@ function KeyLight({
     camera.updateProjectionMatrix();
     gl.shadowMap.needsUpdate = true;
     invalidate();
-  }, [light, cx, cy, cz, ox, oz, radius, gl, invalidate]);
+    // `travel` — по компонентам: новый массив с теми же числами — не новое солнце.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [light, cx, cy, cz, ox, oz, radius, gl, invalidate, Boolean(travel), tx, ty, tz]);
+
+  /* Яркость и цвет солнца — числа, а не новый источник. */
+  const intensity = CAD_LIGHT.keyIntensity * (sun ? sun.intensity : 1);
+  const color = sun?.color ?? '#FFFFFF';
+  useEffect(() => {
+    light.intensity = intensity;
+    light.color.set(color);
+    gl.shadowMap.needsUpdate = true;
+    invalidate();
+  }, [light, intensity, color, gl, invalidate]);
 
   return (
     <>
@@ -880,7 +992,20 @@ function KeyLight({
  * створки или ящика: пока они едут, тень старая, остановились — одна
  * новая. Ничего здесь не зовёт кадр сам по себе в покое.
  */
-function ShadowSync({ rows, room, inside, layers }: { rows: SceneRow[]; room: Room | null; inside: boolean; layers: SceneLayers }) {
+function ShadowSync({
+  rows,
+  room,
+  inside,
+  layers,
+  lighting,
+}: {
+  rows: SceneRow[];
+  room: Room | null;
+  inside: boolean;
+  layers: SceneLayers;
+  /** Освещение комнаты (V3D-02): повернул головку — новая тень спота. */
+  lighting: RoomLighting | null;
+}) {
   const gl = useThree((state) => state.gl);
   const invalidate = useThree((state) => state.invalidate);
   const moving = useRef(false);
@@ -888,7 +1013,7 @@ function ShadowSync({ rows, room, inside, layers }: { rows: SceneRow[]; room: Ro
   useEffect(() => {
     gl.shadowMap.needsUpdate = true;
     invalidate();
-  }, [rows, room, inside, layers, gl, invalidate]);
+  }, [rows, room, inside, layers, lighting, gl, invalidate]);
 
   useFrame(() => {
     const now = movingParts() > 0;
@@ -958,6 +1083,7 @@ function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
         opaque: number;
         transparent: number;
         applianceGlass: number;
+        vitrineGlass: number;
         edgeDrift: number | null;
         edgePoints: number;
         boxes: Record<string, number>;
@@ -1303,12 +1429,20 @@ function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
        * неё видно не становится.
        */
       const roomGroup = scene.getObjectByName('room');
+      /* Освещение комнаты (V3D-02) — тоже не мебель: трек, ленты, потолок, небо в окнах. */
+      const lightingGroup = scene.getObjectByName('lighting');
       const inRoom = (object: THREE.Object3D) => {
         for (let node: THREE.Object3D | null = object; node; node = node.parent) {
-          if (node === roomGroup) return true;
+          if (node === roomGroup || node === lightingGroup) return true;
         }
         return false;
       };
+      /**
+       * Стекло ВИТРИНЫ (V3D-02) — дверь в раме и стеклянные полки: сквозь него
+       * видно нутро самой витрины, а не стену. Считается отдельно и числом,
+       * как стекло прибора, а не пропадает из счёта.
+       */
+      let vitrineGlass = 0;
       scene.traverse((object) => {
         const mesh = object as THREE.Mesh;
         /*
@@ -1318,6 +1452,10 @@ function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
         if (!mesh.isMesh || mesh.visible === false || inRoom(mesh) || mesh.userData?.shade === true) return;
         if (mesh.name === APPLIANCE_GLASS_NAME) {
           applianceGlass += 1;
+          return;
+        }
+        if (mesh.name.startsWith('glass:') || mesh.name === 'rider:glass') {
+          vitrineGlass += 1;
           return;
         }
         const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
@@ -1405,6 +1543,7 @@ function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
         opaque,
         transparent,
         applianceGlass,
+        vitrineGlass,
         /** На сколько метров буфер рёбер разошёлся с мебелью. */
         edgeDrift: drift === null ? null : Math.round(drift * 1000) / 1000,
         edgePoints: edges ? edges.geometry.getAttribute('position').count : 0,
@@ -1862,11 +2001,14 @@ function RunEdges({
   inside,
   layers,
   production,
+  visible = true,
 }: {
   rows: SceneRow[];
   inside: boolean;
   layers: SceneLayers;
   production?: ProductionSettings;
+  /** «Интерьер» (V3D-02): рёбер нет, буфер тот же. */
+  visible?: boolean;
 }) {
   /*
    * ОТКРЫТАЯ СТВОРКА — БЕЗ КОНТУРА ЗАКРЫТОГО ПОЛОЖЕНИЯ (P3D-MDF).
@@ -1909,7 +2051,7 @@ function RunEdges({
      * незамеренного выноса ригеля), и «первый буфер линий в сцене» перестал
      * быть рёбрами мебели — мерилось расхождение контура балки с гарнитуром.
      */
-    <lineSegments name={RUN_EDGES_NAME} geometry={geometry} renderOrder={2}>
+    <lineSegments name={RUN_EDGES_NAME} geometry={geometry} renderOrder={2} visible={visible}>
       {/*
         * Толщина линии в WebGL почти везде игнорируется — разницу держим
         * цветом и прозрачностью, а не `linewidth`, на который нельзя

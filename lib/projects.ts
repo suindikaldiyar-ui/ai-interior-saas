@@ -7,6 +7,7 @@ import type {
   RunRequirements,
   VariantKey,
 } from '@/types/millwork';
+import type { RoomLighting } from '@/lib/millwork/lightingState';
 import type { Survey } from '@/types/survey';
 import type { ProductionOverrides } from '@/types/catalog';
 
@@ -101,6 +102,14 @@ export type MillworkState = {
   priceSnapshot?: Record<string, number>;
   /** Стиль рендера: его выбирает человек, и он обязан пережить закрытие. */
   renderStyle?: string;
+  /**
+   * ОСВЕЩЕНИЕ КОМНАТЫ (V3D-02): установленные светильники (трек на потолке,
+   * лента под верхними шкафами), свет витрин и предпросмотр — «Интерьер»,
+   * день/вечер/ночь, что включено. Объект комнаты, а не мебель: ряд, смета,
+   * раскрой и отпечаток его не видят. Поля нет — освещения нет, объект
+   * открывается как раньше (`normalizeLighting`).
+   */
+  lighting?: RoomLighting;
   savedAt?: string;
   /**
    * Демо-объект организации, положенный сидом при её создании.

@@ -71,6 +71,13 @@ type Props = {
    * пропадали на ходу, а ручка ставилась своей формулой не туда.
    */
   riders?: PartBox[];
+  /**
+   * ДВЕРЬ ВИТРИНЫ В РАМЕ (V3D-02): полотна ЛДСП нет — едут рама и стекло
+   * («седоками», коробки `displayDoorBoxes` той же пачки).
+   */
+  panelless?: boolean;
+  /** Стекло этой двери — вида, выбранного у модуля (`glassLook`). Нет — прежнее стекло сцены. */
+  glassMaterial?: THREE.Material;
 };
 
 
@@ -92,6 +99,8 @@ export default function InteractiveDoor({
   gap,
   onActive,
   riders,
+  panelless = false,
+  glassMaterial,
 }: Props) {
   const economy = useInteriorStore((state) => state.economyMode);
   const group = useRef<THREE.Group>(null);
@@ -212,17 +221,20 @@ export default function InteractiveDoor({
         * проверка открывания у угла (`leafPoses`). Своих координат у
         * компонента нет — иначе картинка и проверка разойдутся.
         */}
-      <mesh
-        geometry={reliefGeometry ?? panelBox}
-        material={frontMaterial ?? parts.front}
-        position={local.panel.at}
-        scale={reliefGeometry ? [1, 1, 1] : local.panel.size}
-        castShadow
-      />
+      {!panelless && (
+        <mesh
+          geometry={reliefGeometry ?? panelBox}
+          material={frontMaterial ?? parts.front}
+          position={local.panel.at}
+          scale={reliefGeometry ? [1, 1, 1] : local.panel.size}
+          castShadow
+        />
+      )}
       {glass && (
         <mesh
           geometry={parts.box}
-          material={parts.glass}
+          material={glassMaterial ?? parts.glass}
+          renderOrder={2}
           position={[
             local.panel.at[0] + (glass[0] + glass[2]) / 2 / 1000,
             local.panel.at[1] + (glass[1] + glass[3]) / 2 / 1000,
@@ -246,7 +258,16 @@ export default function InteractiveDoor({
         return box.handle ? (
           <HandleMesh key={`rider-${i}`} draw={box.handle} position={at} fine={!economy} part={box.part ?? id} />
         ) : (
-          <mesh key={`rider-${i}`} name={`rider:${box.node ?? 'metal'}`} geometry={parts.box} material={parts.metal} position={at} scale={box.scale} />
+          <mesh
+            key={`rider-${i}`}
+            name={`rider:${box.node ?? 'metal'}`}
+            geometry={parts.box}
+            material={box.material === 'glass' ? (glassMaterial ?? parts.glass) : parts.metal}
+            renderOrder={box.material === 'glass' ? 2 : 0}
+            position={at}
+            scale={box.scale}
+            castShadow={box.node === 'frame'}
+          />
         );
       })}
         </>

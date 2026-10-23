@@ -65,7 +65,8 @@ import { ratesFromCatalog } from '@/lib/millwork/rates';
 import { markShownMm, marksOfZone, rowStandardDepthMm } from '@/lib/millwork/fill';
 import { bayEnvelope, drawerReleaseBlock } from '@/lib/millwork/bays';
 import { hardwareByCategory, hardwareCatalog, lightReferences } from '@/lib/millwork/hardware';
-import { roomSourceOf, type RoomSource } from '@/lib/millwork/room';
+import { roomAroundRows, roomSourceOf, type RoomSource } from '@/lib/millwork/room';
+import { normalizeLighting, type RoomLighting } from '@/lib/millwork/lightingState';
 import { openingAssumptions } from '@/lib/millwork/warnings';
 import {
   LOWER_CORNER_TITLE,
@@ -286,6 +287,12 @@ const HardwarePanel = dynamic(() => import('./studio/HardwarePanel'), {
   loading: () => <p className="text-[13px] text-graphiteMw">Открываем фурнитуру…</p>,
 });
 
+/* Освещение комнаты (V3D-02) — тоже по требованию: панель нужна только на инструменте «Освещение». */
+const LightingPanel = dynamic(() => import('./studio/LightingPanel'), {
+  ssr: false,
+  loading: () => <p className="text-[13px] text-graphiteMw">Открываем освещение…</p>,
+});
+
 const KitchenScene = dynamic(() => import('./KitchenScene'), {
   ssr: false,
   loading: () => (
@@ -415,6 +422,8 @@ export type WorkspaceProps = {
 
 /** Пауза после последнего изменения перед записью в базу. */
 const AUTOSAVE_DELAY_MS = 2000;
+/** Предел одной записи: дольше — «ждём связи», следующая запись уходит. */
+const SAVE_TIMEOUT_MS = 60_000;
 
 /** «1 модуль», «2 модуля», «5 модулей» — для слов на экране. */
 function modulesWord(count: number): string {
@@ -506,6 +515,8 @@ export default function Workspace(props: WorkspaceProps) {
   const [sceneNotice, setSceneNotice] = useState<string | null>(null);
   /* Отказ движка на установке фурнитуры — словами в панели «Фурнитура» (HARDWARE-01). */
   const [hardwareNotice, setHardwareNotice] = useState<string | null>(null);
+  /* Отказ движка на вид стекла и стеклянные полки — в панели «Освещение». */
+  const [lightingNotice, setLightingNotice] = useState<string | null>(null);
   /* Скрытая сцена захвата кадра не поднялась (нет WebGL): словами, а не падением страницы. */
   const [captureFailure, setCaptureFailure] = useState<string | null>(null);
 
@@ -615,6 +626,12 @@ export default function Workspace(props: WorkspaceProps) {
       ? (props.initialState?.renderStyle as string)
       : DEFAULT_RENDER_STYLE,
   );
+  /*
+   * ОСВЕЩЕНИЕ КОМНАТЫ (V3D-02): изделия и предпросмотр — одно поле объекта
+   * (`MillworkState.lighting`). Нет у объекта — `null`: освещения нет, и
+   * открывается он как раньше. Меняется только действием человека.
+   */
+  const [lighting, setLightingRaw] = useState<RoomLighting | null>(() => normalizeLighting(props.initialState?.lighting));
   /*
    * Позиции техники, заданные замерщиком руками. Живут в состоянии объекта
    * вместе с требованиями, поэтому переживают пересчёт и сохранение.
@@ -860,9 +877,26 @@ export default function Workspace(props: WorkspaceProps) {
   const [showAllWarnings, setShowAllWarnings] = useState(false);
   const [warningAt, setWarningAt] = useState<number | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /*
+   * НОМЕР ПРАВКИ, КОТОРУЮ ПИШЕТ АВТОСОХРАНЕНИЕ, И ОЧЕРЕДЬ ЗАПИСЕЙ.
+   *
+   * Ответ на запись прежней правки не говорит «Сохранено», пока новая ждёт
+   * своей записи: экран сказал бы «Сохранено», человек перезагрузил
+   * страницу — и последняя правка пропала (поймано TEST 6 V3D-02: ночь,
+   * включённая, пока писалась лента, — в базе «день» при «Сохранено» на
+   * экране). Записи идут по одной: две в полёте сервер вправе записать в
+   * любом порядке, и прежняя легла бы поверх новой.
+   */
+  const saveSeq = useRef(0);
+  const saveQueue = useRef<Promise<void>>(Promise.resolve());
   // Объект без сохранённого состояния пишется сразу: клиенту могут отправить
   // ссылку, не тронув ни одного модуля.
   const dirty = useRef(Boolean(props.projectId) && !props.initialState?.savedAt);
+  /* Освещение — часть состояния объекта: правка записывается тем же автосохранением. */
+  const setLighting = useCallback((next: RoomLighting | null) => {
+    dirty.current = true;
+    setLightingRaw(next);
+  }, []);
   const [busy, setBusy] = useState(false);
   const [reply, setReply] = useState<string | null>(null);
   const [changedIds, setChangedIds] = useState<string[]>([]);
@@ -1577,6 +1611,9 @@ export default function Workspace(props: WorkspaceProps) {
     return segments.map((run, i) => ({ run, placement: places[i] }));
   }, [segments, legacyCorner, cornerChoices, zone, production]);
 
+  /* Комната вокруг рядов сцены — стены, к которым крепится трек (V3D-02). */
+  const lightingRoom = useMemo(() => roomAroundRows(roomSource, sceneRows, null), [roomSource, sceneRows]);
+
   /**
    * РЯД, СОБРАННЫЙ НА ДРУГОЙ ДЛИНЕ СТЕНЫ.
    *
@@ -2207,6 +2244,8 @@ export default function Workspace(props: WorkspaceProps) {
     measure: [],
     /* Фурнитура (HARDWARE-01) — своя панель, блоков мастера у неё нет. */
     hardware: [],
+    /* Освещение (V3D-02) — тоже своя панель. */
+    lighting: [],
     documents: [],
     furniture: ['walls', 'modules', 'appliance-wall', 'arrangements', 'command'],
     construction: ['variants', 'shop'],
@@ -3817,6 +3856,8 @@ export default function Workspace(props: WorkspaceProps) {
       setStudioTool(next);
       setStudioContextOpen(true);
       if (next === 'measure') setStudioView('plan');
+      /* Свет смотрят в 3D: схема и план его не показывают. */
+      else if (next === 'lighting') setStudioView('3d');
       else if (
         (next === 'furniture' || next === 'construction' || next === 'materials') &&
         (studioView === 'plan' || studioView === 'panels' || studioView === 'cutting')
@@ -3844,11 +3885,14 @@ export default function Workspace(props: WorkspaceProps) {
      * пока замерщик сведёт углы; состояние в шапке говорит об этом.
      */
     if (screen.autosaveLocked) {
+      /* Запись, ушедшая до замка, «Сохранено» уже не скажет: правка после неё не записана. */
+      saveSeq.current += 1;
       setSaveState('error');
       return;
     }
 
     if (saveTimer.current) clearTimeout(saveTimer.current);
+    const seq = ++saveSeq.current;
     setSaveState('saving');
 
     saveTimer.current = setTimeout(async () => {
@@ -3883,6 +3927,8 @@ export default function Workspace(props: WorkspaceProps) {
         runs: editedRuns,
         selectedVariant: variantKey,
         renderStyle,
+        /* Освещение (V3D-02): нет — поля нет, у прежних объектов запись та же. */
+        ...(lighting ? { lighting } : {}),
         disabled,
         /*
          * СНИМОК ЦЕН — СМЕТЫ ОБЪЕКТА, А НЕ СТЕНЫ А (слой 52).
@@ -3920,18 +3966,25 @@ export default function Workspace(props: WorkspaceProps) {
         return;
       }
 
-      try {
-        const res = await fetch('/api/projects/save', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-        setSaveState(res.ok ? 'saved' : 'error');
-        if (res.ok) dirty.current = false;
-      } catch {
-        // Сеть отвалилась в момент отправки — это тоже «ждём связи».
-        setSaveState('offline');
-      }
+      const send = async () => {
+        try {
+          const res = await fetch('/api/projects/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+            /* Записи идут по одной: зависшая без предела держала бы все следующие. */
+            signal: AbortSignal.timeout(SAVE_TIMEOUT_MS),
+          });
+          /* Пока писалась эта, пришла новая правка: «Сохранено» скажет её запись. */
+          if (seq !== saveSeq.current) return;
+          setSaveState(res.ok ? 'saved' : 'error');
+          if (res.ok) dirty.current = false;
+        } catch {
+          // Сеть отвалилась в момент отправки — это тоже «ждём связи».
+          if (seq === saveSeq.current) setSaveState('offline');
+        }
+      };
+      saveQueue.current = saveQueue.current.then(send);
     }, AUTOSAVE_DELAY_MS);
 
     return () => {
@@ -3953,6 +4006,7 @@ export default function Workspace(props: WorkspaceProps) {
     disabled,
     variantKey,
     renderStyle,
+    lighting,
     active.estimate,
     objectEstimate,
     catalogError,
@@ -3977,23 +4031,31 @@ export default function Workspace(props: WorkspaceProps) {
         return;
       }
       if (!raw) return;
+      const body = raw;
 
+      const seq = saveSeq.current;
       setSaveState('saving');
-      try {
-        const res = await fetch('/api/projects/save', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: raw,
-        });
-        if (res.ok) {
-          dirty.current = false;
-          setSaveState('saved');
-        } else {
-          setSaveState('error');
+      const send = async () => {
+        try {
+          const res = await fetch('/api/projects/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body,
+            signal: AbortSignal.timeout(SAVE_TIMEOUT_MS),
+          });
+          /* Правка после этой записи ещё не записана — «Сохранено» не говорим. */
+          if (seq !== saveSeq.current) return;
+          if (res.ok) {
+            dirty.current = false;
+            setSaveState('saved');
+          } else {
+            setSaveState('error');
+          }
+        } catch {
+          if (seq === saveSeq.current) setSaveState('offline');
         }
-      } catch {
-        setSaveState('offline');
-      }
+      };
+      saveQueue.current = saveQueue.current.then(send);
     };
 
     window.addEventListener('online', flush);
@@ -4243,6 +4305,7 @@ export default function Workspace(props: WorkspaceProps) {
       moveMode={freeMode ? 'place' : 'reorder'}
       onWidth={dragWidth}
       changedIds={changedIds}
+      lighting={lighting}
     />
   );
 
@@ -5098,6 +5161,25 @@ export default function Workspace(props: WorkspaceProps) {
             onCatalogAdded={addCatalogEntries}
             onOps={(ops) => runOps(ops, setHardwareNotice)}
             notice={hardwareNotice}
+          />
+        )}
+
+        {studioTool === 'lighting' && (
+          <LightingPanel
+            lighting={lighting}
+            onLighting={setLighting}
+            rows={sceneRows}
+            activeRun={activeRun}
+            room={lightingRoom}
+            production={production}
+            wallTitle={(wallId) => {
+              const index = segments.findIndex((run) => run.wallId === wallId);
+              return index >= 0 ? wallLabel(index) : 'стена не найдена';
+            }}
+            selectedUnit={selectedUnit ?? null}
+            onOps={(ops) => runOps(ops, setLightingNotice)}
+            notice={lightingNotice}
+            onShow3d={() => setStudioView('3d')}
           />
         )}
 

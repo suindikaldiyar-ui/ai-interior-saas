@@ -127,6 +127,18 @@ export type InteriorState = {
    * фасад створки лежит в `Module.leafFronts`. `null` — не выбрана.
    */
   selectedLeaf: { moduleId: string; leaf: string } | null;
+  /**
+   * ВЫБРАННЫЙ СВЕТИЛЬНИК (V3D-02): изделие освещения и его головка. Это
+   * выделение, как створка: само изделие лежит в `MillworkState.lighting`.
+   */
+  selectedLight: { id: string; head: number | null } | null;
+  /**
+   * С КАКОГО МИГА ГОТОВЯТСЯ ПРОГРАММЫ НОВЫХ ИСТОЧНИКОВ (V3D-02), мс эпохи;
+   * `null` — свет на экране тот, что поставлен. Состояние сцены, как
+   * выделение: новый источник показывается, когда видеокарта собрала
+   * шейдеры, а до того сцена работает со светом, который уже готов.
+   */
+  lightingWarmup: number | null;
   renderFraming: CaptureFraming;
   customNotes: string;
   selectedReferenceIds: string[];
@@ -188,6 +200,8 @@ export type InteriorState = {
   setCadAngle: (value: SceneView) => void;
   setCompareWhiteId: (value: string | null) => void;
   setSelectedLeaf: (value: { moduleId: string; leaf: string } | null) => void;
+  setSelectedLight: (value: { id: string; head: number | null } | null) => void;
+  setLightingWarmup: (value: number | null) => void;
   setRenderFraming: (framing: CaptureFraming) => void;
   setCustomNotes: (value: string) => void;
   toggleReference: (id: string) => void;
@@ -348,6 +362,8 @@ export const useInteriorStore = create<InteriorState>((set, get) => ({
   cadAngle: 'iso',
   compareWhiteId: null,
   selectedLeaf: null,
+  selectedLight: null,
+  lightingWarmup: null,
   captureMode: false,
   renderFraming: 'hero',
   customNotes: '',
@@ -698,6 +714,8 @@ export const useInteriorStore = create<InteriorState>((set, get) => ({
   setCadAngle: (value) => set({ cadAngle: value }),
   setCompareWhiteId: (value) => set({ compareWhiteId: value }),
   setSelectedLeaf: (value) => set({ selectedLeaf: value }),
+  setSelectedLight: (value) => set({ selectedLight: value }),
+  setLightingWarmup: (value) => set({ lightingWarmup: value }),
   setRenderFraming: (framing) => set({ renderFraming: framing }),
   setCustomNotes: (value) => set({ customNotes: value }),
 

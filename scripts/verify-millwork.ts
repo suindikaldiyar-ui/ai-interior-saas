@@ -111,6 +111,7 @@ import {
 import { panelsCsvFile, panelsToCsv } from '../lib/millwork/csv-export';
 import { cuttingChecks } from './verify-cutting';
 import { stage01Checks } from './verify-stage01';
+import { lightingChecks } from './verify-lighting';
 import { runFingerprint } from '../lib/millwork/fingerprint';
 import { surfaceFinish, surfaceLook } from '../lib/millwork/surfaces';
 import { GROUP_ORDER, estimateGroups, groupsTotal } from '../lib/millwork/estimateGroups';
@@ -28677,6 +28678,9 @@ cuttingChecks(check);
 
 /* ═══════════  STAGE 01: размеры правленого ряда, антресоль в каждой зоне, своя глубина  ═══════════ */
 stage01Checks(check);
+
+/* ═══════════  V3D-02: стекло, витрина, свет комнаты  ═══════════ */
+lightingChecks(check);
 
 Promise.allSettled(asyncChecks).then((results) => {
   for (const result of results) {

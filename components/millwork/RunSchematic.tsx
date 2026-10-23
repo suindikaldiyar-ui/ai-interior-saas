@@ -227,6 +227,8 @@ type Props = {
   onPathImage?: (image: PathImage) => void;
   /** Объект в базе: картинка сохраняется с ним. */
   projectId?: string | null;
+  /** Освещение комнаты (V3D-02): режим «Интерьер», светильники, день и ночь — в сцену как есть. */
+  lighting?: import('@/lib/millwork/lighting').RoomLighting | null;
 };
 
 type View = 'front' | 'plan' | 'scene';
@@ -351,6 +353,7 @@ export default function RunSchematic({
   pathImage = null,
   onPathImage,
   projectId = null,
+  lighting = null,
 }: Props) {
   const [ownView, setView] = useState<View>('front');
   const view: View = controlledView ?? ownView;
@@ -853,6 +856,7 @@ export default function RunSchematic({
               onRenderSource={onRenderSource}
               onFurnitureRect={onPathImage ? setFurniture : undefined}
               economy={economy}
+              lighting={lighting}
             />
             </SceneBoundary>
             )}

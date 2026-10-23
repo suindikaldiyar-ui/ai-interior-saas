@@ -37,6 +37,7 @@ import {
 } from './fill';
 import { mezzanineOf, zoneHeightMm, zoneProfile } from './zones';
 import { handleOf, isMechanism, openingRejection } from './opening';
+import { glassRefusal, glassShelvesRefusal } from './glass';
 import { frontConflict, frontOf, leafTitle } from './frontMaterial';
 import { reliefParamRefusal } from './facadeRelief';
 import { openablePartIds } from './cabinetBoxes';
@@ -2919,6 +2920,65 @@ export function applyOps({
           fill: target.fill ? { ...target.fill, handle: op.handle } : target.fill,
         };
 
+        if (at >= 0) modules[at] = edited;
+        else if (editMezz(target.id, () => edited)) break;
+        else if (editUpper(target.id, () => edited)) break;
+        break;
+      }
+
+      case 'set_glass': {
+        /*
+         * ВИД СТЕКЛА ВИТРИНЫ (V3D-02). Стекло — там, где оно есть в изделии:
+         * витрина в раме или рама KIRA со сквозными окнами. У глухой двери
+         * отказ словами — стекла, которого никто не оплатил, не рисуем.
+         * Прозрачное не пишется: у рядов до V3D-02 поля нет (ловушка 246).
+         */
+        const at = modules.findIndex((m) => m.id === op.moduleId);
+        const upperUnit =
+          at < 0 ? (mezzModules.find((m) => m.id === op.moduleId) ?? upperModules.find((m) => m.id === op.moduleId)) : null;
+        const target = at >= 0 ? modules[at] : upperUnit;
+        if (!target) {
+          warnings.push(`Модуль ${op.moduleId} не найден.`);
+          break;
+        }
+        const refusal = glassRefusal(target, { ...run, milling: run.milling });
+        if (refusal) {
+          warnings.push(refusal);
+          break;
+        }
+        const { glass: _previous, ...rest } = target;
+        void _previous;
+        const edited: Module = op.glass && op.glass !== 'clear' ? { ...rest, glass: op.glass } : rest;
+        if (at >= 0) modules[at] = edited;
+        else if (editMezz(target.id, () => edited)) break;
+        else if (editUpper(target.id, () => edited)) break;
+        break;
+      }
+
+      case 'set_glass_shelves': {
+        /*
+         * СТЕКЛЯННЫЕ ПОЛКИ ВИТРИНЫ (V3D-02): из раскроя ЛДСП полки модуля
+         * уходят, в смете — своя строка. Только у модуля со стеклом и без
+         * отсеков; иначе отказ словами. ЛДСП не пишется (ловушка 246).
+         */
+        const at = modules.findIndex((m) => m.id === op.moduleId);
+        const upperUnit =
+          at < 0 ? (mezzModules.find((m) => m.id === op.moduleId) ?? upperModules.find((m) => m.id === op.moduleId)) : null;
+        const target = at >= 0 ? modules[at] : upperUnit;
+        if (!target) {
+          warnings.push(`Модуль ${op.moduleId} не найден.`);
+          break;
+        }
+        if (op.glass) {
+          const refusal = glassShelvesRefusal(target, { ...run, milling: run.milling });
+          if (refusal) {
+            warnings.push(refusal);
+            break;
+          }
+        }
+        const { glassShelves: _previous, ...rest } = target;
+        void _previous;
+        const edited: Module = op.glass ? { ...rest, glassShelves: true } : rest;
         if (at >= 0) modules[at] = edited;
         else if (editMezz(target.id, () => edited)) break;
         else if (editUpper(target.id, () => edited)) break;

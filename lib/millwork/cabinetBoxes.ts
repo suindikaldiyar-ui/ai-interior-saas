@@ -59,7 +59,8 @@ import type { FrontRelief } from '@/types/millwork';
 import { gripOrient, reliefGlassMm, type ReliefOrient } from './facadeRelief';
 import { isUpperRow } from './modules';
 import { isPullOut, leafHinges, milledGrip, openingHardware, openingOf } from './opening';
-import type { Module, Run } from '@/types/millwork';
+import type { GlassKind, Module, Run } from '@/types/millwork';
+import { GLASS_SHELF_MM, glassOf, shelvesAreGlass } from './glass';
 import type { SceneLayer } from './sceneLayers';
 
 /**
@@ -109,7 +110,7 @@ export type BoxDraw = {
    * чтобы проверка могла спросить «петель в сцене столько же, сколько в
    * смете».
    */
-  node?: 'hinge' | 'hinge-arm' | 'handle' | 'rod' | 'glass' | 'runner' | 'lift' | 'pantograph' | 'pullout' | 'basket' | 'dryer' | 'track';
+  node?: 'hinge' | 'hinge-arm' | 'handle' | 'rod' | 'glass' | 'runner' | 'lift' | 'pantograph' | 'pullout' | 'basket' | 'dryer' | 'track' | 'frame' | 'glass-shelf';
   /**
    * ИД ФИЗИЧЕСКОЙ ДЕТАЛИ (R01): тот же, что в строке раскроя (`Panel.partIds`).
    * Есть у полок и перегородок отсеков — по нему сверяются сцена и цех.
@@ -125,6 +126,12 @@ export type BoxDraw = {
    * фасады по `frontKey` (ловушка 248).
    */
   carcassKey?: string | null;
+  /**
+   * ВИД СТЕКЛА (V3D-02) — у стекла витрины: двери в раме и окон рамы KIRA
+   * (`Module.glass`, не выбран — прозрачное). У стекла прибора поля нет: его
+   * вид не выбирают.
+   */
+  glass?: GlassKind;
 };
 
 /** Материал коробки: по нему они собираются в группы отрисовки. */
@@ -218,6 +225,10 @@ export type HandleDraw = {
  */
 export function boxLayer(box: Pick<PartBox, 'material' | 'panel' | 'part' | 'node'>): SceneLayer {
   if (box.material === 'front') return 'fronts';
+  /* Рама двери витрины (V3D-02) — сама дверь, а не фурнитура на ней. */
+  if (box.node === 'frame') return 'fronts';
+  /* Стеклянная полка витрины (V3D-02) — полка, хоть и не из листа. */
+  if (box.node === 'glass-shelf') return 'shelves';
   /* Стекло рамы витрины — часть фасада: без фасада оно висело бы в воздухе. */
   if (box.material === 'glass' && box.node === 'glass') return 'fronts';
   if (box.material === 'metal' && (box.node !== undefined || box.part !== undefined)) return 'hardware';
@@ -689,7 +700,15 @@ export function doorLeaves(
  * слепого угла (`openFrontMm`); ноль — створки нет.
  */
 export type SceneLeaf =
-  | { kind: 'door'; id: string; opening: 'left' | 'right' | 'lift' | 'flap'; xM: number; widthM: number }
+  | {
+      kind: 'door';
+      id: string;
+      opening: 'left' | 'right' | 'lift' | 'flap';
+      xM: number;
+      widthM: number;
+      /** Дверь витрины в раме (V3D-02): полотна ЛДСП нет — стекло и рама едут «седоками». */
+      glass?: true;
+    }
   | { kind: 'bifold'; id: string }
   | { kind: 'drawer'; id: string; bottomM: number; heightM: number }
   /** Карго: фасад не открывается, а выдвигается — вместе с корзинами (HARDWARE-01). */
@@ -723,7 +742,23 @@ export function sceneLeaves(unit: Module, heightM: number, openWidthM?: number):
    * нишами, их рисует общая отрисовка), у витрины (стекло рисует свой код)
    * и у слепого угла, где доступной части не осталось.
    */
-  if (hasVisibleAppliance(unit) || unit.column || unit.section === 'glass_display' || openWidthM === 0) {
+  /*
+   * ВИТРИНА В РАМЕ (V3D-02) открывается: стекло и профиль — коробки
+   * `displayDoorBoxes` на ключе `door:0`, полотна ЛДСП у неё нет.
+   */
+  if (unit.section === 'glass_display') {
+    const opening = doorOpening(unit, 0, 1);
+    out.push({
+      kind: 'door',
+      id: `${unit.id}:door:0`,
+      opening: opening === 'lift' || opening === 'flap' ? 'left' : opening,
+      xM: 0,
+      widthM: unit.widthMm / MM,
+      glass: true,
+    });
+    return out;
+  }
+  if (hasVisibleAppliance(unit) || unit.column || openWidthM === 0) {
     return out;
   }
   /*
@@ -1071,6 +1106,7 @@ export function doorBoxes(
       material: 'glass',
       part,
       node: 'glass',
+      glass: glassOf(unit),
       position: [cx + (glass[0] + glass[2]) / 2 / MM, cy + (glass[1] + glass[3]) / 2 / MM, GLASS_PANE_Z_M],
       scale: [(glass[2] - glass[0]) / MM, (glass[3] - glass[1]) / MM, GLASS_PANE_M],
     });
@@ -1081,6 +1117,53 @@ export function doorBoxes(
 /** Стекло рамы витрины: 4 мм у самого тыла полотна (VISUAL_ONLY — толщины стекла цех не давал). */
 export const GLASS_PANE_M = 0.004;
 export const GLASS_PANE_Z_M = 0.0035;
+
+/** Профиль рамы двери витрины, м: ширина планки — условно (VISUAL_ONLY, профиля в каталоге нет). */
+export const DISPLAY_FRAME_M = 0.02;
+
+/**
+ * ДВЕРЬ ВИТРИНЫ В РАМЕ (V3D-02) — рама из профиля и стекло, деталь `door:0`.
+ *
+ * Фасада ЛДСП у витрины нет (`frontType: 'none'`): дверь — покупное стекло в
+ * раме, строкой `glass_front` («Стеклянная дверь в раме»). Здесь она нарисована
+ * теми же коробками, что едут, когда дверь открывают: закрытую — пачка ряда,
+ * открытую — `InteractiveDoor` своими «седоками». Петель на ней нет: смета их
+ * не покупает отдельно — они в строке стеклянной двери.
+ */
+export function displayDoorBoxes(unit: Module, place: ModulePlacement, options: Pick<FrontOptions, 'gapM' | 'frontThicknessM'>): PartBox[] {
+  if (unit.section !== 'glass_display') return [];
+  const { x, y, heightM } = place;
+  const gap = options.gapM;
+  const t = options.frontThicknessM;
+  const w = unit.widthMm / MM - 2 * gap;
+  const h = heightM - 2 * gap;
+  const cx = x + unit.widthMm / MM / 2;
+  const cy = y + heightM / 2;
+  const bar = Math.min(DISPLAY_FRAME_M, w / 4, h / 4);
+  const part = `${unit.id}:door:0`;
+  const frame = (dx: number, dy: number, sx: number, sy: number): PartBox => ({
+    material: 'metal',
+    part,
+    node: 'frame',
+    position: [cx + dx, cy + dy, t / 2],
+    scale: [sx, sy, t],
+  });
+  return [
+    frame(-w / 2 + bar / 2, 0, bar, h),
+    frame(w / 2 - bar / 2, 0, bar, h),
+    frame(0, h / 2 - bar / 2, w - 2 * bar, bar),
+    frame(0, -h / 2 + bar / 2, w - 2 * bar, bar),
+    {
+      material: 'glass',
+      part,
+      node: 'glass',
+      glass: glassOf(unit),
+      /* Стекло — в пазу профиля: на 4 мм заходит под планки с каждой стороны. */
+      position: [cx, cy, t / 2],
+      scale: [Math.max(0.01, w - 2 * bar + 0.008), Math.max(0.01, h - 2 * bar + 0.008), GLASS_PANE_M],
+    },
+  ];
+}
 
 /** Справочный габарит ящика отсека в сцене: не деталь, в раскрое его нет. */
 export const DRAWER_ENVELOPE_NAME = 'Габарит ящика (справочно)';
@@ -1803,7 +1886,20 @@ export function moduleBoxes(
    * ним рёбра. Цвет берётся оттуда же: второго признака «это внутри»
    * заводить нельзя, он разойдётся с первым.
    */
-  const boxes: PartBox[] = carcassBoxes(unit, place, production).map((box) => {
+  /* Стеклянные полки витрины (V3D-02): та же высота и место, стекло вместо листа. */
+  const glassShelves = shelvesAreGlass(unit);
+  const boxes: PartBox[] = carcassBoxes(unit, place, production).map((box): PartBox => {
+    if (glassShelves && box.panel === SHELF_PANEL_NAME) {
+      const { panel: _panel, ...rest } = box;
+      void _panel;
+      return {
+        ...rest,
+        material: 'glass',
+        node: 'glass-shelf',
+        glass: 'clear',
+        scale: [box.scale[0], GLASS_SHELF_MM / MM, box.scale[2]],
+      };
+    }
     /* Полки и перегородки — свой декор, если выбран (`partOfPanel`, та же таблица, что у раскроя). */
     const part = partOfPanel(box.panel);
     const partKey = part ? options.partKeys?.[part] : undefined;
@@ -1853,6 +1949,8 @@ export function moduleBoxes(
     const blind = options.openWidthMm !== undefined && options.openWidthMm < unit.widthMm;
     const all = options.openWidthMm === 0 ? [] : doorLeaves(unit, Math.round(place.heightM * MM));
     const leaves = blind ? all.slice(0, 1) : all;
+    /* Витрина: стекло в раме своей функцией (V3D-02) — `doorLeaves` её не знает. */
+    boxes.push(...displayDoorBoxes(unit, place, options));
 
     /*
      * ПЕТЛИ РАСКЛАДЫВАЮТСЯ ПО ПОЛОТНАМ, А НЕ СЧИТАЮТСЯ ЗАНОВО.
@@ -2600,6 +2698,11 @@ export function openablePartIds(run: Run): string[] {
      */
     if (unit.kind === 'corner_base' || unit.kind === 'corner_upper') {
       if (!unit.fill || unit.fill.drawerHeights.length === 0) ids.push(`${unit.id}:door:0`);
+      continue;
+    }
+    /* Витрина в раме (V3D-02): дверь из стекла — тот же ключ, что у её коробок. */
+    if (unit.section === 'glass_display') {
+      ids.push(`${unit.id}:door:0`);
       continue;
     }
 

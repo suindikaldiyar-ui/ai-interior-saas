@@ -796,6 +796,43 @@ input[type='color']::-webkit-color-swatch {
   }
 }
 
+/*
+ * Телефон (уже 640 px, V3D-02): панель справа съедала рабочую область до
+ * 42 px из 390 — 3D было не видно вовсе. Панель инструмента ложится ПОД
+ * рабочую область и не выше 36 % экрана (при 40 % холсту на 390 × 844
+ * оставалось 34 % экрана: над ним ещё строка кнопок сцены); инспектор при
+ * открытой панели прячется (одна колонка — одно окно), при свёрнутой —
+ * встаёт на её место. Шире 640 px ничего не меняется.
+ */
+@media (max-width: 639.98px) {
+  .studio-cad .cad-body {
+    grid-template-columns: 48px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'rail viewport'
+      'rail context';
+  }
+  .studio-cad .cad-body[data-context-open='true'] aside[data-studio-inspector] {
+    display: none;
+  }
+  .studio-cad .cad-body[data-context-open='false'] {
+    grid-template-columns: 48px minmax(0, 1fr);
+    grid-template-areas:
+      'rail viewport'
+      'rail inspector';
+  }
+  .studio-cad aside[data-studio-context],
+  .studio-cad aside[data-studio-inspector] {
+    max-height: 36vh;
+    border-right: 0;
+    border-left: 0;
+    border-top: 1px solid var(--cad-line);
+  }
+  .studio-cad .cad-rail {
+    overflow-y: auto;
+  }
+}
+
 .studio-cad .cad-brand {
   font-size: 14px;
   font-weight: 600;

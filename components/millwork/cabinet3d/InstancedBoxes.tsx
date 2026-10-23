@@ -62,6 +62,12 @@ type Props = {
   placed?: boolean;
   /** Сводка для приёмки: что нарисовано на какой детали (ручки — `handles`). */
   userData?: Record<string, unknown>;
+  /**
+   * ПОРЯДОК ПРОЗРАЧНОГО (V3D-02): у пачки один центр на все экземпляры, и
+   * сортировка по расстоянию её не различает — стеклянные полки рисуются
+   * раньше дверей витрины явно.
+   */
+  renderOrder?: number;
 };
 
 export default function InstancedBoxes({
@@ -75,6 +81,7 @@ export default function InstancedBoxes({
   relief,
   placed: placedGeometry = false,
   userData,
+  renderOrder,
 }: Props) {
   const ref = useRef<THREE.InstancedMesh>(null);
   const invalidate = useThree((state) => state.invalidate);
@@ -182,6 +189,7 @@ export default function InstancedBoxes({
       userData={{ partIds: boxes.map((box) => box.partId ?? null), ...(userData ?? {}) }}
       castShadow={castShadow}
       receiveShadow={receiveShadow}
+      renderOrder={renderOrder}
     />
   );
 }

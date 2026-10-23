@@ -12,6 +12,7 @@ import { buildPanels, panelMaterials, partOfPanel } from './panels';
 import { DEFAULT_PRODUCTION, type HardwareItem, type ProductionSettings } from '@/types/catalog';
 import { resolveHardware } from './hardware';
 import { FITTING_SLOT_TITLE, handleItemOf, installedItem } from './fittings';
+import { GLASS_SHELF_LINE, glassLine, glassOf, shelvesAreGlass } from './glass';
 import { moduleDrawerKits } from './drawerKit';
 import { SLIDING_DOOR, displayLedMeters, sectionSpec, slidingDoorCount } from './sections';
 import { MODULE_VARIANTS, isSinkBase, variantEstimateKeys } from './moduleVariants';
@@ -75,6 +76,12 @@ type Draft = {
    * цеха не подменить — эмаль по RAL не стоит как типовой фасад.
    */
   priceUnset?: string;
+  /**
+   * НЕТ СТАВКИ СТАТЬИ — «ЦЕНА НЕ ЗАДАНА» ЭТИМИ СЛОВАМИ (V3D-02): вид стекла
+   * без своей ставки в каталоге не считается по цене прозрачного и не
+   * становится «0 ₸» — строка остаётся с количеством, итог «неполный».
+   */
+  unsetWithoutRate?: string;
   /**
    * СТАВКА ДРУГОЙ СТАТЬИ (R02A.1): строка своя, а цена — по ключу этой
    * статьи. Так ящики отсеков идут ОТДЕЛЬНОЙ строкой оценки, не сливаясь
@@ -1038,13 +1045,16 @@ export function buildEstimateDrafts(
   for (const unit of modules) {
     if (unit.section !== 'glass_display') continue;
     const h = moduleCarcassHeightMm(unit, run);
+    /* Вид стекла (V3D-02): прозрачное — прежняя статья, другой вид — своя ставка. */
+    const glass = glassLine(glassOf(unit));
 
     drafts.push(
       {
-        key: 'glass_front',
-        title: 'Стеклянная дверь в раме',
+        key: glass.key,
+        title: `Стеклянная дверь в раме${glass.suffix}`,
         unit: 'm2',
         quantity: round2((unit.widthMm * h) / MM2_IN_M2),
+        ...(glass.unsetWithoutRate ? { unsetWithoutRate: glass.unsetWithoutRate } : {}),
       },
       {
         key: 'led_display',
@@ -1069,9 +1079,11 @@ export function buildEstimateDrafts(
     if (variantSlot && fit.take(unit, variantSlot, 1)) continue;
     for (const key of variantEstimateKeys(unit)) {
       const spec = MODULE_VARIANTS[unit.variant!];
+      /* Стекло варианта — по виду стекла модуля (V3D-02), как у витрины в раме. */
+      const glass = key === 'glass_front' ? glassLine(glassOf(unit)) : null;
       drafts.push({
-        key,
-        title: `${spec.title} (${unit.widthMm} мм)`,
+        key: glass ? glass.key : key,
+        title: `${spec.title} (${unit.widthMm} мм)${glass ? glass.suffix : ''}`,
         unit: key === 'glass_front' ? 'm2' : 'pcs',
         quantity:
           key === 'glass_front'
@@ -1079,8 +1091,26 @@ export function buildEstimateDrafts(
                 (unit.widthMm * moduleCarcassHeightMm(unit, run)) / MM2_IN_M2,
               )
             : 1,
+        ...(glass?.unsetWithoutRate ? { unsetWithoutRate: glass.unsetWithoutRate } : {}),
       });
     }
+  }
+
+  /*
+   * СТЕКЛЯННЫЕ ПОЛКИ (V3D-02): из раскроя ЛДСП они ушли (`shelvesAreGlass`),
+   * здесь — штуками по ставке каталога. Нет ставки — «цена не задана».
+   */
+  for (const unit of modules) {
+    if (!shelvesAreGlass(unit)) continue;
+    const count = unit.fill?.shelves.length ?? 0;
+    if (count === 0) continue;
+    drafts.push({
+      key: GLASS_SHELF_LINE.key,
+      title: `Полка стеклянная (${unit.label}, ${unit.widthMm} мм)`,
+      unit: 'pcs',
+      quantity: count,
+      unsetWithoutRate: GLASS_SHELF_LINE.unsetWithoutRate,
+    });
   }
 
   drafts.push(...sectionDrafts(run, production, hardwareItems));
@@ -1677,6 +1707,10 @@ export function buildEstimate(
       if (itemPriced) priceUnset = rate > 0 ? undefined : (draft.priceUnset ?? PRICE_UNSET);
     } else {
       rate = draft.priceUnset ? 0 : (draft.rate ?? rates[rateKey] ?? 0);
+    }
+    /* Нет ставки статьи вида стекла — цена не задана словами, а не ноль (V3D-02). */
+    if (draft.unsetWithoutRate && (inSnapshot(draft.key) ? !(frozen![draft.key] > 0) : rates[rateKey] === undefined)) {
+      priceUnset = draft.unsetWithoutRate;
     }
     if (priceUnset) rate = 0;
     priceSnapshot[draft.key] = rate;

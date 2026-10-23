@@ -1,3 +1,4 @@
+import { shelvesAreGlass } from './glass';
 import { moduleCarcassHeightMm, moduleDepthMm } from './fill';
 import { carcassHeightMm, shopOf } from './shop';
 import { millingLink, type MillingItem } from './milling';
@@ -458,7 +459,11 @@ function moduleBodyPanels(
     }
   }
 
-  const shelves = bays ? 0 : (unit.fill?.shelves.length ?? 0);
+  /*
+   * СТЕКЛЯННЫЕ ПОЛКИ ВИТРИНЫ (V3D-02) из листа не режут: это покупное
+   * стекло, и в смете у него своя строка (`glass_shelf`).
+   */
+  const shelves = bays || shelvesAreGlass(unit) ? 0 : (unit.fill?.shelves.length ?? 0);
   if (shelves > 0) {
     push({
       name: SHELF_PANEL_NAME,

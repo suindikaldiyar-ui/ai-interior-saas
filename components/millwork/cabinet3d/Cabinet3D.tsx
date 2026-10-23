@@ -18,6 +18,7 @@ import InteractiveBayDrawer from './InteractiveBayDrawer';
 import { HandleBatch, handleGeometryKey } from './handleMesh';
 import { movingParts } from './motion';
 import { useCabinetParts, useCarcassMaterials, useFrontMaterials, useSurfaceLook } from './parts';
+import { useGlassMaterials } from './glassLook';
 import { DEFAULT_FRONT, frontKey } from '@/lib/millwork/frontMaterial';
 import type { FrontSpec } from '@/types/millwork';
 import { materialSurfaceLook, surfaceLook } from '@/lib/millwork/surfaces';
@@ -47,7 +48,7 @@ import { hardwareCatalog } from '@/lib/millwork/hardware';
 import { useInteriorStore } from '@/store/useInteriorStore';
 import { DEFAULT_PRODUCTION, type ProductionSettings } from '@/types/catalog';
 import { DEFAULT_SCENE_VIEW, type SceneView } from '@/lib/cameraFraming';
-import type { Module, Run } from '@/types/millwork';
+import type { GlassKind, Module, Run } from '@/types/millwork';
 
 /**
  * Интерактивный гарнитур.
@@ -135,6 +136,12 @@ type Props = {
   shadows?: boolean;
   /** Камера встаёт сразу, без перелёта (сцена рендера за экраном, слой 54). */
   instantCamera?: boolean;
+  /**
+   * РЕЖИМ «ИНТЕРЬЕР» (V3D-02): стекло — физическим материалом, лента витрины
+   * — освещением комнаты. Геометрия и экземпляры те же: меняются ссылки на
+   * материалы, а не меши.
+   */
+  design?: boolean;
 };
 
 /** Модуль из верхнего сегмента: у него своя отметка низа. */
@@ -167,6 +174,7 @@ export default function Cabinet3D({
   general,
   shadows = false,
   instantCamera = false,
+  design = false,
 }: Props) {
   const groupRef = useRef<THREE.Group>(null);
   const invalidate = useThree((state) => state.invalidate);
@@ -284,6 +292,9 @@ export default function Cabinet3D({
     { facade: facadeLook, counter: counterLook },
     cutaway,
   );
+
+  /* Стекло витрин (V3D-02): по виду, у САПР-вида и «Интерьера» свои материалы. */
+  const glass = useGlassMaterials(design);
 
   /*
    * Фартук — это СТЕНА, а не мебель: он и живёт отдельным мешем за
@@ -551,6 +562,13 @@ export default function Cabinet3D({
      * модель, поворот и толщину фасада, экземпляры встают на места коробок.
      */
     const handles = new Map<string, PartBox[]>();
+    /*
+     * СТЕКЛО ВИТРИН (V3D-02) — пачка на вид: дверь в раме и окна рамы KIRA
+     * несут вид модуля (`PartBox.glass`); стеклянные полки — своей пачкой.
+     * Стекло приборов вида не имеет и остаётся пачкой прибора.
+     */
+    const glassKinds = new Map<GlassKind, PartBox[]>();
+    const glassShelves: PartBox[] = [];
 
     for (const box of boxes) {
       if (box.part && active.has(box.part)) continue;
@@ -586,9 +604,19 @@ export default function Cabinet3D({
         else bucket.set(box.carcassKey, [box]);
         continue;
       }
+      if (box.material === 'glass' && box.node === 'glass-shelf') {
+        glassShelves.push(box);
+        continue;
+      }
+      if (box.material === 'glass' && box.glass) {
+        const list = glassKinds.get(box.glass);
+        if (list) list.push(box);
+        else glassKinds.set(box.glass, [box]);
+        continue;
+      }
       groups[box.material].push(box);
     }
-    return { groups, fronts, carcass, inner, reliefFronts, handles };
+    return { groups, fronts, carcass, inner, reliefFronts, handles, glassKinds, glassShelves };
   }, [boxes, activeParts, layers]);
 
   /*
@@ -944,6 +972,24 @@ export default function Cabinet3D({
         material={parts.appliance}
         castShadow={shadows}
       />
+      {/*
+        * СТЕКЛО ВИТРИН (V3D-02): полки раньше дверей (`renderOrder`) — у
+        * пачки один центр на все экземпляры, и сортировка по расстоянию их
+        * не различает. Имя `glass:<вид>` — для приёмки: это стекло двери,
+        * а не прозрачная мебель.
+        */}
+      <InstancedBoxes name="glass:shelf" boxes={grouped.glassShelves} geometry={parts.box} material={glass.shelf} renderOrder={1} />
+      {Array.from(grouped.glassKinds.entries()).map(([kind, list]) => (
+        <InstancedBoxes
+          key={`glass-${kind}`}
+          name={`glass:${kind}`}
+          boxes={list}
+          geometry={parts.box}
+          material={glass.door[kind]}
+          renderOrder={2}
+          castShadow={shadows && kind === 'mirror'}
+        />
+      ))}
 
       {slides.map((slide) => {
         const own = (boxesByPart.get(slide.id) ?? []).filter((box) => boxShown(box, layers));
@@ -982,7 +1028,9 @@ export default function Cabinet3D({
           onToggle={handleToggle}
           cutaway={cutaway}
           layers={layers}
-          displayLit={displayLit}
+          /* В «Интерьере» ленту витрины и её свет рисует освещение комнаты. */
+          displayLit={displayLit && !design}
+          glass={glass}
           onActive={handleActive}
           frontMaterial={frontMaterials.get(frontKey(frontWithMilling(entry.unit, run)))}
           leafLook={(leaf) => {
