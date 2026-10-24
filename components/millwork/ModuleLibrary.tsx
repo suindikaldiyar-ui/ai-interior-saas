@@ -60,6 +60,11 @@ export type CornerPanel = {
   now: string;
   /** «Не подтверждено цехом» с числами; пусто — цех подтвердил. */
   unconfirmed: string | null;
+  /**
+   * Фальш-панели шире настройки цеха — по ходу створок и ящиков (STAGE A):
+   * какая, сколько и почему. Пусто — хватило настройки.
+   */
+  clearance: string | null;
   cards: CornerCard[];
   priceOf: (card: CornerCard) => number | null;
   onPick: (card: CornerCard) => void;
@@ -373,6 +378,11 @@ function CornerSection({
       {corner.unconfirmed && (
         <p className="mb-2 text-[13px] leading-snug text-tape" data-corner-unconfirmed>
           {corner.unconfirmed}
+        </p>
+      )}
+      {corner.clearance && (
+        <p className="mb-2 text-[13px] leading-snug text-dim" data-corner-clearance>
+          {corner.clearance}
         </p>
       )}
       <div className="grid grid-cols-2 gap-2" data-corner-cards={corner.cards.length}>

@@ -45,6 +45,9 @@ type Props = {
   /** Рельеф МДФ пары (P3D-MDF): у обоих фасадов он один — фасад створки `door:0`. */
   relief?: FrontRelief;
   onActive?: (id: string, active: boolean) => void;
+  /** Слои (STAGE A): полотна — «Фасады», ручки — как в пачке (`boxShown`); нажать можно видимое полотно. */
+  showFronts?: boolean;
+  showHandles?: boolean;
 };
 
 export default function InteractiveBifold({
@@ -61,6 +64,8 @@ export default function InteractiveBifold({
   frontMaterial,
   relief,
   onActive,
+  showFronts = true,
+  showHandles = true,
 }: Props) {
   const economy = useInteriorStore((state) => state.economyMode);
   const meshes = useRef<(THREE.Object3D | null)[]>([]);
@@ -140,7 +145,7 @@ export default function InteractiveBifold({
         * закрыта. Не рисуются (ловушка 179), но луч их находит.
         */}
       {closed
-        .filter((pose) => pose.role === 'front')
+        .filter((pose) => pose.role === 'front' && showFronts)
         .map((pose, i) => (
           <mesh
             key={`hit-${i}`}
@@ -164,10 +169,11 @@ export default function InteractiveBifold({
 
       {active &&
         shown.map((pose, i) =>
-          /* Ручка — своей моделью в группе, которую ведёт тот же ход (HANDLE-REAL). */
+          (pose.role === 'front' ? !showFronts : !showHandles) ? null : /* Ручка — своей моделью в группе, которую ведёт тот же ход (HANDLE-REAL). */
           pose.role === 'handle' && pose.handle ? (
             <group
               key={`leaf-${i}`}
+              name={`leaf:${id}:${i}`}
               ref={(group) => {
                 meshes.current[i] = group;
               }}
@@ -179,6 +185,7 @@ export default function InteractiveBifold({
           ) : (
             <mesh
               key={`leaf-${i}`}
+              name={`leaf:${id}:${i}`}
               ref={(mesh) => {
                 meshes.current[i] = mesh;
               }}

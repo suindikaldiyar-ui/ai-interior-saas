@@ -19,7 +19,7 @@ import { resolveSurvey, type SurveyResolution } from '@/types/survey';
 import type { MillworkState } from '@/lib/projects';
 import { buildEstimate, type RateTable } from './estimate';
 import { segmentCount, tryBuildComposition, type CompositionAttempt } from './composition';
-import { choiceFromSolution, runWithCorner } from './corner';
+import { choiceFromSolution, editedRunCorner, runWithCorner } from './corner';
 import { runWithObstacles } from './obstacles';
 import { runInContext } from './runContext';
 import { compositionOf, compositionWalls, mergeEstimates, wallLabel, type SelectedWall } from './walls';
@@ -404,15 +404,19 @@ export function wallSegments(
 ): Run[] {
   if (!layout) return [wallARun];
 
-  return layout.segments.map((segment, i) =>
-    i === 0
-      ? wallARun
-      : runWithObstacles(
-          /* Сохранённый ряд с дублем ключа чинится на показе (P0, `uniqueModuleIds`). */
-          runWithCorner(uniqueModuleIds(wallRun(segment, i)), segment.run.corner),
-          segment.run.obstacles,
-        ),
-  );
+  return layout.segments.map((segment, i) => {
+    if (i === 0) return wallARun;
+    const saved = wallEditOf(editedWalls, segment.wallId, i);
+    return runWithObstacles(
+      /*
+       * Сохранённый ряд с дублем ключа чинится на показе (P0, `uniqueModuleIds`).
+       * У правленого ряда панели по ходу — те, с которыми его правили
+       * (`editedRunCorner`, STAGE A); у ряда шаблона — композиции.
+       */
+      runWithCorner(uniqueModuleIds(wallRun(segment, i)), saved ? editedRunCorner(saved, segment.run.corner) : segment.run.corner),
+      segment.run.obstacles,
+    );
+  });
 
   function wallRun(segment: Composition['segments'][number], i: number): Run {
     const saved = wallEditOf(editedWalls, segment.wallId, i);

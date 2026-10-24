@@ -31,6 +31,7 @@ import type { ReliefLeaf } from '@/lib/millwork/facadeRelief';
 import { paletteFromCatalog } from '@/lib/millwork/palette';
 import {
   contextMismatches,
+  cornerClashMismatches,
   lowerWall,
   wallLabel,
   wallMismatches,
@@ -1681,8 +1682,23 @@ export default function Workspace(props: WorkspaceProps) {
       },
       skip: [...byLength, ...byObstacle].map((mismatch) => mismatch.index),
     });
-    return [...byLength, ...byObstacle, ...byHeights];
-  }, [layout, segments, wallOpenings, wallEdited, editedRuns, active.key, input.runWallId, input.production, input.ceilingHeightMm, editedWalls, requirements]);
+    /*
+     * ЗАХОД У УГЛА (STAGE A): створка или ящик у угла на ходу заходят в
+     * мебель соседней стены. У рядов шаблона — то, что композиция панелью не
+     * сняла; у правленых (панели по ходу у них свои, `editedRunCorner`) —
+     * ход по рядам экрана с позициями каталога. Ничего не двигается.
+     */
+    const byClash = cornerClashMismatches({
+      runs: segments,
+      places: sceneRows.map((row) => row.placement),
+      production,
+      hardware: hardwareItems,
+      edited: wallEdited,
+      composed: layout?.cornerClashes,
+      skip: [...byLength, ...byObstacle, ...byHeights].map((mismatch) => mismatch.index),
+    });
+    return [...byLength, ...byObstacle, ...byHeights, ...byClash];
+  }, [layout, segments, wallOpenings, wallEdited, editedRuns, active.key, input.runWallId, input.production, input.ceilingHeightMm, editedWalls, requirements, sceneRows, production, hardwareItems]);
 
   /**
    * КОММУНИКАЦИИ ВЫБРАННОЙ СТЕНЫ.
@@ -2399,12 +2415,19 @@ export default function Workspace(props: WorkspaceProps) {
         : {
             runs: segments,
             index: selectedCorner,
-            corners: cornerChoices,
+            /*
+             * Выбор углов — как он стоит в композиции: с фальш-панелями по ходу
+             * (STAGE A). Смена угла сдвигает соседний ряд на разницу занятого,
+             * и прежнее занятое обязано быть тем, по которому ряд урезан.
+             */
+            corners: layout ? layout.corners.map((corner) => corner.choice) : cornerChoices,
             requirements,
             wallOpenings: site.walls.map((w) => w.openings),
             labels: segments.map((_, i) => wallLabel(i)),
+            /* Ход петли и направляющей, ручки — по позициям каталога (STAGE A). */
+            hardware: hardwareItems,
           },
-    [selectedCorner, segments, cornerChoices, requirements, site],
+    [selectedCorner, segments, layout, cornerChoices, requirements, site, hardwareItems],
   );
 
   /*
@@ -2525,11 +2548,14 @@ export default function Workspace(props: WorkspaceProps) {
         ? null
         : `Размеры угла типовые — не подтверждено цехом: фальш-панель ${sizes.falsePanelMm} мм, ` +
           `Г-модуль ${sizes.lowerLMm}×${sizes.lowerLMm}, верхний ${sizes.upperLMm}×${sizes.upperLMm}.`,
+      clearance: layout?.corners[selectedCorner]?.clearanceWhy?.length
+        ? `По ходу створок и ящиков: ${layout.corners[selectedCorner].clearanceWhy!.join('; ')}.`
+        : null,
       cards: cornerList,
       priceOf: cornerPrice,
       onPick: applyCorner,
     };
-  }, [selectedCorner, cornerChoices, production, cornerList, cornerPrice, applyCorner]);
+  }, [selectedCorner, cornerChoices, production, layout, cornerList, cornerPrice, applyCorner]);
 
   /**
    * ПЕРЕНОС ПРИБОРА НА ДРУГУЮ СТЕНУ.

@@ -190,7 +190,14 @@ export default function Cabinet3D({
     invalidate();
   }, [invalidate, placement?.xM, placement?.zM, placement?.rotationYDeg]);
   const openParts = useInteriorStore((s) => s.openParts);
-  const cutaway = useInteriorStore((s) => s.cutaway);
+  /*
+   * РЕНТГЕН — ОТЛАДОЧНЫЙ ВИД, В «ИНТЕРЬЕРЕ» ЕГО НЕТ (STAGE A).
+   *
+   * «Интерьер» показывает мебель, какой её привезут: сплошные фасады и
+   * непрозрачный корпус. Включённый до него рентген снимал фасады и делал
+   * корпус полупрозрачным — серый просвечивающий короб вместо кухни.
+   */
+  const cutaway = useInteriorStore((s) => s.cutaway) && !design;
   /* Слои вида (P1): что показано. Ряд, раскрой и смета от них не меняются. */
   const layers = useInteriorStore((s) => s.sceneLayers);
   // Подсветка витрины: гаснет перед захватом кадра, см. lib/millwork/capture.ts
@@ -479,7 +486,7 @@ export default function Cabinet3D({
     return out;
   }, [carcassColors, materialItems, compareWhite]);
 
-  const carcassMaterials = useCarcassMaterials(carcassColors, false, carcassPhotos);
+  const carcassMaterials = useCarcassMaterials(carcassColors, false, carcassPhotos, cutaway);
   const innerMaterials = useCarcassMaterials(carcassColors, true, carcassPhotos);
 
   /*

@@ -1,10 +1,22 @@
-import { buildRun } from './layout';
-import { CORNER, CORNER_SIZE_MM, MIN_WIDTH, moduleAppliances } from './modules';
+import { allModules, buildRun } from './layout';
+import { APPLIANCE_SLOTS, CORNER, CORNER_SIZE_MM, MIN_WIDTH, moduleAppliances } from './modules';
 import { compositionFingerprint } from './fingerprint';
 import { assertCornerFits } from './invariants';
-import { rowStandardDepthMm } from './fill';
-import { wallLabel } from './walls';
-import { cornerSizesOf } from './shop';
+import { APPLIANCE_BACK_GAP_MM, rowStandardDepthMm } from './fill';
+import {
+  clashWords,
+  cornerKinematics,
+  fixKey,
+  panelWidthMm,
+  raisedChoice,
+  stripWords,
+  stuckWords,
+  type CornerClash,
+  type CornerKinematics,
+  type CornerPair,
+} from './cornerKinematics';
+import { lowerWall, wallLabel } from './walls';
+import { cornerSizesOf, shopOf } from './shop';
 import {
   choiceFromSolution,
   cornerChoicesOf,
@@ -20,6 +32,7 @@ import type {
   Composition,
   CompositionKind,
   CornerChoice,
+  CornerClashNote,
   CornerJoin,
   Opening,
   Run,
@@ -256,6 +269,89 @@ export function pinnedWallIndex(pin: number | string | undefined, wallIds?: stri
   return -1;
 }
 
+/**
+ * ПРИБОР, НЕ ВСТАВШИЙ НА СВОЮ СТЕНУ, ИЩЕТ ДРУГУЮ — ДО ОТКАЗА (ADVANCED CAD, STAGE A).
+ *
+ * Рабочий треугольник ставит пеналы на короткую стену, не спрашивая, влезут
+ * ли они там. На Г 3800 + 1140 короткой стене после угла остаётся 480 мм, и
+ * холодильник с духовкой отказывались словами («не помещается — свободно
+ * 480 мм, нужно 600 мм»), хотя стена А той же длины, что у прямой кухни,
+ * где обе колонны встают. Угловая кухня из замера выходила без
+ * холодильника.
+ *
+ * Прибор, который человек НЕ закреплял за стеной (`applianceWalls`) и
+ * который раскладка его стены не поставила, пробует остальные стены от
+ * самой длинной. Остаётся там, где встал, не выбив ни одного прибора ни на
+ * той стене, ни на своей. Нигде не встал — отказ прежний, словами, на
+ * своей стене. Ряд пересобирает та же `buildRun`: второй раскладки
+ * «влезет ли» нет.
+ *
+ * Едут вместе: духовка с микроволновкой своей колонны, варочная с
+ * вытяжкой над ней. Переезжает только то, чему нужна одна розетка
+ * (`APPLIANCE_SLOTS.needs`): мойка, посудомойка и вытяжка привязаны к
+ * воде, канализации и вентканалу, и увести их на стену, где вывода нет, —
+ * переделка на объекте. Это решение замерщика: он закрепляет прибор за
+ * стеной сам.
+ */
+const STANDS_WITH: Partial<Record<ApplianceKind, ApplianceKind>> = {
+  oven: 'microwave',
+  microwave: 'oven',
+  hob: 'hood',
+  hood: 'hob',
+};
+
+export function rehomeRefused(input: {
+  /** Приборы по стенам — правится на месте. */
+  assigned: ApplianceKind[][];
+  /** Ряды по стенам — правятся на месте. */
+  runs: Run[];
+  usable: number[];
+  runOf: (wall: number, appliances: ApplianceKind[]) => Run;
+  /** Закреплён ли прибор человеком: такой не переезжает никогда. */
+  pinned: (appliance: ApplianceKind) => boolean;
+}): void {
+  const { assigned, runs } = input;
+  const holds = (run: Run, appliance: ApplianceKind) =>
+    allModules(run).some((unit) => moduleAppliances(unit).includes(appliance));
+  const socketOnly = (appliance: ApplianceKind) =>
+    APPLIANCE_SLOTS[appliance].needs.every((need) => need === 'socket');
+  const byLength = input.usable
+    .map((length, index) => ({ length, index }))
+    .sort((a, b) => b.length - a.length || a.index - b.index)
+    .map((entry) => entry.index);
+
+  for (let i = 0; i < assigned.length; i += 1) {
+    const groups: ApplianceKind[][] = [];
+    for (const appliance of assigned[i]) {
+      if (holds(runs[i], appliance) || groups.some((group) => group.includes(appliance))) continue;
+      const partner = STANDS_WITH[appliance];
+      const group = partner && assigned[i].includes(partner) ? [appliance, partner] : [appliance];
+      if (group.some((member) => input.pinned(member) || !socketOnly(member))) continue;
+      groups.push(group);
+    }
+
+    for (const group of groups) {
+      const stoodHere = assigned[i].filter((appliance) => holds(runs[i], appliance));
+      const rest = assigned[i].filter((appliance) => !group.includes(appliance));
+      const restRun = input.runOf(i, rest);
+      if (!stoodHere.every((appliance) => holds(restRun, appliance))) continue;
+      for (const j of byLength) {
+        if (j === i) continue;
+        const trial = [...assigned[j], ...group];
+        const run = input.runOf(j, trial);
+        const stoodThere = assigned[j].filter((appliance) => holds(runs[j], appliance));
+        if (!group.every((appliance) => holds(run, appliance))) continue;
+        if (!stoodThere.every((appliance) => holds(run, appliance))) continue;
+        assigned[j] = trial;
+        runs[j] = run;
+        assigned[i] = rest;
+        runs[i] = restRun;
+        break;
+      }
+    }
+  }
+}
+
 /** Правка состава кухни — те её поля, по которым видно, каких стен она касается. */
 export type CompositionChange = {
   appliances?: ApplianceKind[];
@@ -471,33 +567,23 @@ export function buildComposition(input: BuildCompositionInput): Composition {
   /* Выбор угла — за физической парой стен, где бы она ни стояла в обходе. */
   const choices = cornerChoicesOf(requirements, walls.length - 1, walls.map((wall) => wall.id));
 
-  const usable = walls.map((wall, i) => {
-    if (i === 0) return Math.max(0, Math.round(wall.lengthMm));
-
-    /*
-     * Сколько второй ряд теряет в углу.
-     *
-     * Г-образный модуль — квадрат: он занимает свою сторону и вдоль своей
-     * стены, и вдоль соседней. Считать здесь глубину ряда (560) значит
-     * налезть на него на 340 мм — ровно та ошибка, которую замечают
-     * на монтаже, когда мебель уже распилена.
-     *
-     * Слепой угол: там глубина соседнего ряда плюс фальш-панель,
-     * отодвигающая фасад от чужого фасада. Считает `cornerGeometry`.
-     */
-    const lost = cornerGeometry(choices[i - 1], requirements.zone, input.production).lostMm;
-
-    const value = Math.round(wall.lengthMm) - lost;
-
-    assertCornerFits({
-      label: wallLabel(i),
-      wallLengthMm: Math.round(wall.lengthMm),
-      lostMm: lost,
-      minWidthMm: MIN_WIDTH,
-    });
-
-    return value;
-  });
+  /*
+   * РЯДЫ ДРУГ ПРОТИВ ДРУГА НЕ ВХОДЯТ ДРУГ В ДРУГА (ADVANCED CAD, STAGE A).
+   *
+   * Стены А и В П-образной кухни стоят напротив, и между ними — длина
+   * стены Б. Нижнему ряду с каждой стороны нужен корпус и фасад; меньше —
+   * фасады входят друг в друга, и такую кухню не собрать и не открыть. На
+   * П 3800 + 1140 + 1740 нижние ряды заходили друг в друга на 12 мм, а
+   * композиция собиралась с предупреждением «проход 20 мм» — проход
+   * считался между корпусами, без фасадов. Это отказ, а не предупреждение:
+   * отрицательного прохода не бывает. Что делать — словами
+   * (`facingRefusal`): какой нужна стена Б, можно ли уменьшить глубину и
+   * какая композиция на этих стенах собирается.
+   */
+  if (kind === 'u_shape') {
+    const refusal = facingRefusal({ walls, depthMm, production: input.production, requirements });
+    if (refusal) throw new Error(refusal);
+  }
 
   /*
    * П-образная кухня с узким проходом — это кухня, в которой не
@@ -514,95 +600,278 @@ export function buildComposition(input: BuildCompositionInput): Composition {
     }
   }
 
-  const perSegment = splitAppliances(
-    requirements.appliances,
-    usable,
-    requirements.applianceWalls,
-    walls.map((wall) => wall.id),
-  );
+  const wallIds = walls.map((wall) => wall.id);
 
-  const segments: RunSegment[] = walls.map((wall, i) => {
-    /*
-     * Коммуникации ЭТОЙ стены, пересчитанные от начала ряда. Чужие сюда
-     * не попадают вовсе: у коммуникации есть своя стена, и спрашивают
-     * именно её.
-     */
-    const lostHere = Math.round(wall.lengthMm) - usable[i];
-    const wallComms = commsOnRun(input.comms, wall.id, lostHere, usable[i]);
+  /*
+   * РАСКЛАДКА ВСЕХ СТЕН ПО ВЫБОРУ УГЛОВ — одна на первую сборку и на
+   * пересборку под фальш-панели по ходу (STAGE A). `fixed` — раздача
+   * приборов первой сборки: панели не должны переселять технику.
+   */
+  const assemble = (now: CornerChoice[], fixed: ApplianceKind[][] | null) => {
+    const siteWarnings: string[] = [];
+    const usable = walls.map((wall, i) => {
+      if (i === 0) return Math.max(0, Math.round(wall.lengthMm));
 
-    /*
-     * Попавшее в угол не пропадает молча: этот кусок стены закрыт
-     * соседним рядом, и привязать к нему мойку ЭТОГО ряда нельзя.
-     */
-    for (const comm of wallComms.inCorner) {
       /*
-       * Подлежащее — «точка»: у видов коммуникаций разный род, и
-       * «канализация попал в угол» читается как машинный текст.
+       * Сколько второй ряд теряет в углу.
+       *
+       * Г-образный модуль — квадрат: он занимает свою сторону и вдоль своей
+       * стены, и вдоль соседней. Считать здесь глубину ряда (560) значит
+       * налезть на него на 340 мм — ровно та ошибка, которую замечают
+       * на монтаже, когда мебель уже распилена.
+       *
+       * Слепой угол: там глубина соседнего ряда плюс фальш-панель,
+       * отодвигающая фасад от чужого фасада. Считает `cornerGeometry`.
        */
-      warnings.push(
-        `${wallLabel(i)}: точка «${COMM_TITLE[comm.kind]}» на ${comm.fromCornerMm} мм от угла ` +
-          `попала в угол — там стоит соседний ряд. Мебель этой стены начинается ` +
-          `с ${lostHere} мм, и привязать к этой точке её нельзя.`,
-      );
-    }
+      const lost = cornerGeometry(now[i - 1], requirements.zone, input.production).lostMm;
 
-    /*
-     * РОЛЬ РЯДА В ЕГО УГЛАХ — ДО РАСКЛАДКИ, А НЕ ПОСЛЕ.
-     *
-     * Ряд-владелец собирает угловой модуль в своём конце (Г-образный или
-     * слепой), ряд после угла начинает верхний ряд раньше нуля — и всё
-     * это решает раскладка. Кладёт роль та же функция, что и шов экрана
-     * (`cornerOfSegment`), поэтому у стены А, собранной из вариантов,
-     * угол тот же, что у композиции.
-     */
-    const corner: RunCorner | undefined = cornerOfSegment(choices, i, walls.length);
-    const upperFromMm = corner?.dock
-      ? (() => {
-          const g = cornerGeometry(corner.dock!, requirements.zone, input.production);
-          return g.upperStartMm - g.lostMm;
-        })()
-      : 0;
-    /*
-     * Проёмы этой стены, пересчитанные от начала РЯДА: угол занят
-     * соседним рядом, и отметки замера сдвинуты на него. У ряда после
-     * угла остаётся и полоса перед нулём, куда заходит его верхний ряд:
-     * окно там рвёт верхний ряд так же, как на остальной стене.
-     */
-    const openings = openingsOnRun(wall.openings, lostHere, usable[i], Math.min(0, upperFromMm));
+      const value = Math.round(wall.lengthMm) - lost;
 
-    /*
-     * ПЕНАЛЫ — У СТЕНЫ КОМНАТЫ, А НЕ В УГЛУ (слой 55).
-     *
-     * «Пеналы у стены: холодильник в самом торце» — у ряда стены А торец
-     * у стены комнаты — его начало (`tallSide: 'left'`). У ряда, который к
-     * углу только стыкуется, начало — угол, а торец у стены комнаты — его
-     * конец; то же правило ставило холодильник вплотную к углу. Пенал
-     * глубиной нижнего ряда выступает там на 240 мм перед верхними шкафами
-     * стены-владельца, и их створки, открываясь, упирались в его фасад —
-     * это и поймала проверка открывания у угла. Сторона зеркалится: выбор
-     * «у стены» остаётся выбором «у стены».
-     */
-    const dockOnly = Boolean(corner?.dock) && !corner?.own;
-    const tallSide = dockOnly
-      ? requirements.tallSide === 'right'
-        ? ('left' as const)
-        : ('right' as const)
-      : requirements.tallSide;
+      assertCornerFits({
+        label: wallLabel(i),
+        wallLengthMm: Math.round(wall.lengthMm),
+        lostMm: lost,
+        minWidthMm: MIN_WIDTH,
+      });
 
-    const run = buildRun({
-      id: `${input.id ?? 'composition'}-${i}`,
-      lengthMm: usable[i],
-      ceilingHeightMm,
-      requirements: { ...requirements, appliances: perSegment[i], tallSide },
-      openings,
-      comms: wallComms.kept,
-      corner,
-      production: input.production,
-      // Стена замера едет в ряд: она же идентичность его модулей.
-      wallId: wall.id,
+      return value;
     });
 
-    warnings.push(...run.warnings.map((w) => `${wallLabel(i)}: ${w}`));
+    const perSegment = fixed ?? splitAppliances(requirements.appliances, usable, requirements.applianceWalls, wallIds);
+
+    /* Что у стены своё, кроме приборов, — один раз: при переезде прибора ряд собирается заново. */
+    const sites = walls.map((wall, i) => {
+      /*
+       * Коммуникации ЭТОЙ стены, пересчитанные от начала ряда. Чужие сюда
+       * не попадают вовсе: у коммуникации есть своя стена, и спрашивают
+       * именно её.
+       */
+      const lostHere = Math.round(wall.lengthMm) - usable[i];
+      const wallComms = commsOnRun(input.comms, wall.id, lostHere, usable[i]);
+
+      /*
+       * Попавшее в угол не пропадает молча: этот кусок стены закрыт
+       * соседним рядом, и привязать к нему мойку ЭТОГО ряда нельзя.
+       */
+      for (const comm of wallComms.inCorner) {
+        /*
+         * Подлежащее — «точка»: у видов коммуникаций разный род, и
+         * «канализация попал в угол» читается как машинный текст.
+         */
+        siteWarnings.push(
+          `${wallLabel(i)}: точка «${COMM_TITLE[comm.kind]}» на ${comm.fromCornerMm} мм от угла ` +
+            `попала в угол — там стоит соседний ряд. Мебель этой стены начинается ` +
+            `с ${lostHere} мм, и привязать к этой точке её нельзя.`,
+        );
+      }
+
+      /*
+       * РОЛЬ РЯДА В ЕГО УГЛАХ — ДО РАСКЛАДКИ, А НЕ ПОСЛЕ.
+       *
+       * Ряд-владелец собирает угловой модуль в своём конце (Г-образный или
+       * слепой), ряд после угла начинает верхний ряд раньше нуля — и всё
+       * это решает раскладка. Кладёт роль та же функция, что и шов экрана
+       * (`cornerOfSegment`), поэтому у стены А, собранной из вариантов,
+       * угол тот же, что у композиции.
+       */
+      const corner: RunCorner | undefined = cornerOfSegment(now, i, walls.length);
+      const upperFromMm = corner?.dock
+        ? (() => {
+            const g = cornerGeometry(corner.dock!, requirements.zone, input.production);
+            return g.upperStartMm - g.lostMm;
+          })()
+        : 0;
+      /*
+       * Проёмы этой стены, пересчитанные от начала РЯДА: угол занят
+       * соседним рядом, и отметки замера сдвинуты на него. У ряда после
+       * угла остаётся и полоса перед нулём, куда заходит его верхний ряд:
+       * окно там рвёт верхний ряд так же, как на остальной стене.
+       */
+      const openings = openingsOnRun(wall.openings, lostHere, usable[i], Math.min(0, upperFromMm));
+
+      /*
+       * ПЕНАЛЫ — У СТЕНЫ КОМНАТЫ, А НЕ В УГЛУ (слой 55).
+       *
+       * «Пеналы у стены: холодильник в самом торце» — у ряда стены А торец
+       * у стены комнаты — его начало (`tallSide: 'left'`). У ряда, который к
+       * углу только стыкуется, начало — угол, а торец у стены комнаты — его
+       * конец; то же правило ставило холодильник вплотную к углу. Пенал
+       * глубиной нижнего ряда выступает там на 240 мм перед верхними шкафами
+       * стены-владельца, и их створки, открываясь, упирались в его фасад —
+       * это и поймала проверка открывания у угла. Сторона зеркалится: выбор
+       * «у стены» остаётся выбором «у стены».
+       */
+      const dockOnly = Boolean(corner?.dock) && !corner?.own;
+      const tallSide = dockOnly
+        ? requirements.tallSide === 'right'
+          ? ('left' as const)
+          : ('right' as const)
+        : requirements.tallSide;
+
+      return { wall, wallComms, corner, openings, tallSide };
+    });
+
+    /* Ряд стены `i` с этими приборами — одна сборка на раздачу и на переезд прибора. */
+    const runOf = (i: number, appliances: ApplianceKind[]): Run =>
+      buildRun({
+        id: `${input.id ?? 'composition'}-${i}`,
+        lengthMm: usable[i],
+        ceilingHeightMm,
+        requirements: { ...requirements, appliances, tallSide: sites[i].tallSide },
+        openings: sites[i].openings,
+        comms: sites[i].wallComms.kept,
+        corner: sites[i].corner,
+        production: input.production,
+        // Стена замера едет в ряд: она же идентичность его модулей.
+        wallId: sites[i].wall.id,
+      });
+
+    const assigned = perSegment.map((list) => [...list]);
+    const runs = walls.map((_, i) => runOf(i, assigned[i]));
+    if (!fixed && requirements.mode !== 'free') {
+      rehomeRefused({ assigned, runs, usable, runOf, pinned: (appliance) => pinnedWallIndex(requirements.applianceWalls?.[appliance], wallIds) >= 0 });
+    }
+    return { usable, sites, runs, assigned, siteWarnings };
+  };
+
+  /*
+   * ФАЛЬШ-ПАНЕЛИ ПО ХОДУ (ADVANCED CAD · STAGE A).
+   *
+   * Слепой угол держат две полосы фасада: фальш-панель соседа и — когда
+   * нужно — фальш-панель владельца. Ширина первой — настройка цеха, но
+   * створка соседа у угла на полном ходу ложилась ручкой в ручку владельца
+   * (П смешанная, школа «угол 60/1000»: на 4 мм), а ящик владельца у
+   * слепого модуля, выезжая, заходил в ручку первой двери соседа (П 3800 +
+   * 2400 + 1740, 600/300: на 12 мм). Здесь каждая створка, ящик и Г-фасад
+   * обоих рядов угла проходит весь свой ход (`cornerKinematics`), и панель
+   * того ряда, что движется, становится шире ровно настолько, чтобы заход
+   * стал касанием. Ряды пересобираются той же раскладкой с той же раздачей
+   * приборов: сумма модулей по-прежнему равна стене, приборы не переезжают.
+   * Не встаёт прибор или заход панелью не снять — отказ словами, с
+   * миллиметрами и тем, что можно сделать.
+   *
+   * Свободная сборка ряды не раскладывает — их ставит человек, и его
+   * модули композиция не двигает: заход там называет проверка экрана
+   * (`cornerClashMismatches`).
+   */
+  const wallOf = (wall: number) => lowerWall(wallLabel(wall), 'genitive');
+  let current = choices;
+  let built = assemble(current, null);
+  /*
+   * Почему панель шире — заход БЕЗ неё (первый проход, самый глубокий на эту
+   * панель); ширина — та, что встала после всех пересборок. Слова проходов
+   * не копятся: «20 мм», а потом «22 мм» про одну панель — две правды.
+   */
+  let reasons: Map<string, { fix: NonNullable<CornerClash['fix']>; clash: CornerClash; pass: number }>[] = [];
+  let basis: string[][] = [];
+  /*
+   * НЕ ПОДЕЙСТВОВАВШЕЕ РЕШЕНИЕ ОТБРАСЫВАЕТСЯ. Сдвиг ряда по модели — это
+   * сдвиг всего ряда, а раскладка двигает то, что у угла: панель владельца
+   * не уводит пенал, стоящий в другом конце его ряда (П 3600 + 2800 + 3600:
+   * створка стены В и духовой шкаф стены Б — 114,2 мм до и 114,2 после).
+   * Пара, у которой заход после её решения не уменьшился, получает другое
+   * решение, и расчёт идёт заново от выбора человека — без накопленных
+   * панелей.
+   */
+  const avoid = new Set<string>();
+  /*
+   * ЗАХОД, КОТОРЫЙ ПАНЕЛЬЮ НЕ СНЯТЬ, — НЕ ИСКЛЮЧЕНИЕ, А БЛОКИРУЮЩЕЕ.
+   * Ряды остаются на экране (их правят руками: сторона петель, ручка,
+   * решение угла), а цена спрятана и «Дальше» заперто, пока заход есть
+   * (`cornerClashes` → `cornerClashMismatches`). Места под панель нет —
+   * панель не расширяется: слова называют, какой прибор тогда не встал бы.
+   */
+  const noRoom = new Map<string, string>();
+  let left: CornerKinematics | null = null;
+  if (requirements.mode !== 'free' && walls.length > 1) {
+    settle: for (let attempt = 0; ; attempt += 1) {
+      current = choices;
+      built = attempt === 0 ? built : assemble(current, null);
+      reasons = choices.map(() => new Map());
+      basis = choices.map(() => []);
+      let last = new Map<string, CornerPair>();
+      for (let pass = 0; ; pass += 1) {
+        const places = runPlacements({ runs: built.runs, corners: current, zone: requirements.zone, production: input.production });
+        const kin = cornerKinematics({ runs: built.runs, places, production: shopOf(input.production), avoid });
+        left = kin;
+        if (kin.clashes.length === 0) break settle;
+        const stale = kin.pairs.filter((pair) => {
+          const was = last.get(pair.pair);
+          return was?.fix && pair.depthMm >= was.depthMm - 0.05;
+        });
+        if (stale.length > 0 && attempt < 3) {
+          for (const pair of stale) avoid.add(fixKey(pair.pair, last.get(pair.pair)!.fix!));
+          continue settle;
+        }
+        /* Снимать панелью больше нечего — то, что осталось, называет экран. */
+        if (!kin.pairs.some((pair) => pair.fix) || pass >= 4) break settle;
+        const next = current.map((choice, c) => raisedChoice(choice, kin.raise[c], requirements.zone, input.production));
+        /* Из чего посчитано: ход из сцены, условные ручки — словами, рядом с шириной панели. */
+        for (const clash of kin.clashes) basis[clash.corner].push(...kin.assumptions);
+        kin.clashes.forEach((clash) => {
+          if (!clash.fix) return;
+          const key = `${clash.fix.side}:${clash.fix.level}`;
+          const was = reasons[clash.corner].get(key);
+          if (!was || (was.pass === pass && (clash.needMm ?? 0) > (was.clash.needMm ?? 0))) {
+            reasons[clash.corner].set(key, { fix: clash.fix, clash, pass });
+          }
+        });
+        const again = assemble(next, built.assigned);
+        /*
+         * МЕСТА ДЛЯ ПАНЕЛИ ФИЗИЧЕСКИ НЕТ — не расширяем. Панель забирает у
+         * ряда длину; если после этого ряд не ставит прибор, который стоял,
+         * панели этого прохода не годятся: расчёт заново без них, а заход
+         * назван словами — какой прибор тогда не встал бы.
+         */
+        const lost = droppedAppliances(built.runs, again.runs);
+        if (lost) {
+          for (const pair of kin.pairs) {
+            if (!pair.fix) continue;
+            avoid.add(fixKey(pair.pair, pair.fix));
+            noRoom.set(
+              pair.pair,
+              `фальш-панель шире сняла бы это, но места под неё нет: на ${lowerWall(lost.label, 'prepositional')} ` +
+                `тогда не помещается «${APPLIANCE_SLOTS[lost.appliance].title}»`,
+            );
+          }
+          if (attempt < 3) continue settle;
+          break settle;
+        }
+        last = new Map(kin.pairs.map((pair) => [pair.pair, pair]));
+        current = next;
+        built = again;
+      }
+    }
+  } else {
+    reasons = choices.map(() => new Map());
+    basis = choices.map(() => []);
+  }
+  /* Заходы, которые остались: по одной строке на пару, самой глубокой коробкой. */
+  const cornerClashes: CornerClashNote[] = [];
+  if (left) {
+    const deepest = new Map<string, CornerClash>();
+    for (const clash of left.clashes) {
+      const was = deepest.get(clash.pair);
+      if (!was || clash.depthMm > was.depthMm) deepest.set(clash.pair, clash);
+    }
+    for (const clash of Array.from(deepest.values())) {
+      cornerClashes.push({
+        corner: clash.corner,
+        wall: clash.wall,
+        obstacleWall: clash.obstacleWall,
+        leaf: clash.leaf,
+        pair: clash.pair,
+        depthMm: Math.round(clash.depthMm * 10) / 10,
+        words: `${clashWords(clash, wallOf)} — ${noRoom.get(clash.pair) ?? stuckWords(clash, current[clash.corner], wallOf)}`,
+      });
+    }
+  }
+
+  warnings.push(...built.siteWarnings);
+  const { runs, assigned, sites } = built;
+
+  const segments: RunSegment[] = walls.map((wall, i) => {
+    warnings.push(...runs[i].warnings.map((w) => `${wallLabel(i)}: ${w}`));
 
     return {
       id: `seg-${i}`,
@@ -610,30 +879,53 @@ export function buildComposition(input: BuildCompositionInput): Composition {
       wallId: wall.id,
       angleDeg: i === 0 ? 0 : 90,
       wallLengthMm: Math.round(wall.lengthMm),
-      appliances: perSegment[i],
-      comms: wallComms.kept,
-      openings,
-      run,
+      appliances: assigned[i],
+      comms: sites[i].wallComms.kept,
+      openings: sites[i].openings,
+      run: runs[i],
     };
   });
 
   /*
    * УГЛЫ КОМПОЗИЦИИ: владелец — стена ДО угла по обходу, одно поле.
    *
-   * Фальш-панель и угол раскрытия петли — из того же выбора и той же
+   * Фальш-панели и угол раскрытия петли — из того же выбора и той же
    * школы цеха, что урезали длину: второго расчёта занятого в углу нет.
+   * Ширины — те, что стоят (`cornerGeometry` с панелями по ходу).
    */
-  const sizes = cornerSizesOf(input.production);
-  const corners: CornerJoin[] = segments.slice(1).map((segment, i) => ({
-    fromSegmentId: segments[i].id,
-    toSegmentId: segment.id,
-    ownerSegmentId: segments[i].id,
-    choice: { ...choices[i] },
-    solution: solutionOf(choices[i]),
-    falsePanelMm: choices[i].lower === 'blind' ? sizes.falsePanelMm : undefined,
-    hingeAngleDeg: CORNER.hingeAngleDeg,
-    frontGapMm: CORNER.frontGapMm,
-  }));
+  const corners: CornerJoin[] = segments.slice(1).map((segment, i) => {
+    const g = cornerGeometry(current[i], requirements.zone, input.production);
+    return {
+      fromSegmentId: segments[i].id,
+      toSegmentId: segment.id,
+      ownerSegmentId: segments[i].id,
+      choice: { ...current[i] },
+      solution: solutionOf(current[i]),
+      /* У Г-угла панель есть только по ходу — и тогда она в отпечатке, как у слепого. */
+      falsePanelMm: current[i].lower === 'blind' || g.fillerMm > 0 ? g.fillerMm : undefined,
+      ...(g.ownerFillerMm > 0 ? { ownerPanelMm: g.ownerFillerMm } : {}),
+      ...(current[i].clearance?.upperDockMm
+        ? { upperPanelMm: panelWidthMm(current[i], { side: 'dock', level: 'upper' }, requirements.zone, input.production) }
+        : {}),
+      ...(current[i].clearance?.upperOwnerMm
+        ? { ownerUpperPanelMm: panelWidthMm(current[i], { side: 'owner', level: 'upper' }, requirements.zone, input.production) }
+        : {}),
+      ...(reasons[i].size > 0
+        ? {
+            clearanceWhy: [
+              ...Array.from(reasons[i].values()).map(
+                ({ fix, clash }) =>
+                  `${stripWords(current[i], fix, i, wallOf, panelWidthMm(current[i], fix, requirements.zone, input.production), input.production)}: ` +
+                  `без этого ${clashWords(clash, wallOf)}`,
+              ),
+              ...(basis[i].length > 0 ? [`посчитано так: ${Array.from(new Set(basis[i])).join(', ')}`] : []),
+            ],
+          }
+        : {}),
+      hingeAngleDeg: CORNER.hingeAngleDeg,
+      frontGapMm: CORNER.frontGapMm,
+    };
+  });
 
   return {
     kind,
@@ -641,7 +933,78 @@ export function buildComposition(input: BuildCompositionInput): Composition {
     corners,
     fingerprint: compositionFingerprint({ segments, corners }),
     warnings,
+    ...(cornerClashes.length > 0 ? { cornerClashes } : {}),
   };
+}
+
+/** Прибор, который стоял в ряду, а после пересборки — нет. */
+function droppedAppliances(before: Run[], after: Run[]): { label: string; appliance: ApplianceKind } | null {
+  for (let i = 0; i < before.length; i += 1) {
+    const now = new Set(allModules(after[i]).flatMap((unit) => moduleAppliances(unit)));
+    for (const appliance of allModules(before[i]).flatMap((unit) => moduleAppliances(unit))) {
+      if (!now.has(appliance)) return { label: wallLabel(i), appliance };
+    }
+  }
+  return null;
+}
+
+/**
+ * П-ОБРАЗНАЯ НЕ СОБИРАЕТСЯ — ПРИЧИНА, НУЖНЫЙ РАЗМЕР И ЧТО МОЖНО СДЕЛАТЬ.
+ *
+ * Стены А и В стоят друг против друга в длину стены Б. Ряду с каждой
+ * стороны нужен корпус и фасад; между рядами — проход, в котором
+ * открываются ящики и расходятся двое (`CORNER.minAisleMm`). Отсюда три
+ * числа: сколько нужно рядам, сколько — рабочей П, и можно ли выйти из
+ * положения мельче шкафами: глубину ниже той, что нужна приборам с
+ * замеренной глубиной, взять нельзя, а у прибора без замера глубина
+ * неизвестна, и обещать её нельзя тоже.
+ *
+ * Замер стен не меняется: что не помещается — называется, а не
+ * подгоняется.
+ */
+export function facingRefusal(input: {
+  walls: { lengthMm: number }[];
+  depthMm: number;
+  production?: ProductionSettings;
+  requirements: Pick<RunRequirements, 'appliances' | 'applianceSizes'>;
+}): string | null {
+  const { walls, depthMm } = input;
+  const facingMm = Math.round(walls[1].lengthMm);
+  const frontMm = shopOf(input.production).frontMm;
+  const needMm = 2 * (depthMm + frontMm);
+  if (facingMm >= needMm) return null;
+
+  const workMm = needMm + CORNER.minAisleMm;
+  /* Глубина, при которой рядам и проходу хватило бы стены Б: (Б − проход) / 2 − фасад. */
+  const fitDepthMm = Math.floor((facingMm - CORNER.minAisleMm) / 2 - frontMm);
+  /* Приборы с замеренной глубиной не встанут в корпус мельче «прибор + просвет 20 мм». */
+  const measured = Object.entries(input.requirements.applianceSizes ?? {})
+    .filter(([kind, size]) => input.requirements.appliances.includes(kind as ApplianceKind) && (size?.depthMm ?? 0) > 0)
+    .map(([kind, size]) => ({ kind: kind as ApplianceKind, needMm: Math.round(size!.depthMm!) + APPLIANCE_BACK_GAP_MM }));
+  const deepest = measured.sort((a, b) => b.needMm - a.needMm)[0];
+  const unknown = input.requirements.appliances.filter(
+    (kind) => APPLIANCE_SLOTS[kind].kind !== 'upper' && !measured.some((entry) => entry.kind === kind),
+  );
+
+  const depthWords =
+    fitDepthMm <= 0
+      ? `Мельче шкафами не выйти: одному проходу нужно ${CORNER.minAisleMm} мм, а это не меньше всей стены Б (${facingMm} мм).`
+      : deepest && fitDepthMm < deepest.needMm
+        ? `Мельче шкафами не выйти: рядам и проходу хватило бы глубины ${fitDepthMm} мм, а «${APPLIANCE_SLOTS[deepest.kind].title}» нужен корпус не мельче ${deepest.needMm} мм.`
+        : `Рядам и проходу хватило бы глубины ${fitDepthMm} мм${
+            unknown.length > 0
+              ? `, но глубина ${unknown.map((kind) => `«${APPLIANCE_SLOTS[kind].title}»`).join(', ')} не замерена — встанут ли они в такой корпус, неизвестно`
+              : ''
+          }.`;
+
+  return (
+    `${SHAPE_TITLE.u_shape} на этих стенах не собирается: ${lowerWall(wallLabel(0))} и ${lowerWall(wallLabel(2))} ` +
+    `стоят друг против друга в ${facingMm} мм — это длина ${lowerWall(wallLabel(1), 'genitive')}, — а двум нижним рядам ` +
+    `нужно ${needMm} мм: корпус ${depthMm} мм и фасад ${frontMm} мм с каждой стороны. Фасады вошли бы друг ` +
+    `в друга на ${needMm - facingMm} мм, и ни одна дверца не открылась бы. Рабочей П-образной нужна стена Б ` +
+    `не короче ${workMm} мм: два ряда по ${depthMm + frontMm} мм и проход ${CORNER.minAisleMm} мм. ${depthWords} ` +
+    `Что можно: угловая кухня на стенах А и Б или проверьте замер ${lowerWall(wallLabel(1), 'genitive')}.`
+  );
 }
 
 /** Общая длина столешницы: сумма полезных длин всех рядов. */
@@ -832,8 +1195,13 @@ export type RunPlacement = {
  * смета.
  */
 export function runPlacements(input: {
-  /** Ряды композиции слева направо: их ПОЛЕЗНЫЕ длины, а не длины стен. */
-  runs: Pick<Run, 'lengthMm'>[];
+  /**
+   * Ряды композиции слева направо: их ПОЛЕЗНЫЕ длины, а не длины стен.
+   * Угол на ряду (`run.corner.dock`) — главнее `corners`: на нём лежат
+   * фальш-панели по ходу (STAGE A), и занятое в углу считается ровно тем
+   * выбором, по которому ряд урезан.
+   */
+  runs: (Pick<Run, 'lengthMm'> & Partial<Pick<Run, 'corner'>>)[];
   /**
    * Прежнее решение угла — одно на все углы. Читается, только если
    * выбора по углам (`corners`) нет: так считают старые места и приёмки.
@@ -865,8 +1233,11 @@ export function runPlacements(input: {
     input.corners ??
     Array.from({ length: Math.max(0, input.runs.length - 1) }, () => choiceFromSolution(input.solution));
   const lostOf = (corner: number) =>
-    cornerGeometry(choices[corner] ?? choiceFromSolution(input.solution), input.zone, input.production).lostMm /
-    MM_IN_M;
+    cornerGeometry(
+      input.runs[corner + 1]?.corner?.dock ?? choices[corner] ?? choiceFromSolution(input.solution),
+      input.zone,
+      input.production,
+    ).lostMm / MM_IN_M;
   const depthM = depthMm / MM_IN_M;
 
   const places: RunPlacement[] = [];

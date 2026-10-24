@@ -256,10 +256,14 @@ export function screenState(input: ScreenInput): ScreenState {
    * композиции нет вовсе, и своей кнопки у него не бывает. Поэтому
    * ищется расхождение, а не «первое, у чего есть выход».
    */
-  const staleId = blocking.find((w) => w.id.startsWith(STALE_PREFIX))?.id;
-  const stale = mismatches.find(
-    (mismatch) => `${STALE_PREFIX}${mismatch.index}` === staleId,
-  );
+  /*
+   * Заход у угла на рядах ШАБЛОНА пересборкой не лечится: стена и так
+   * собрана раскладкой (STAGE A). Выход у него — правка руками и решение
+   * угла, и кнопки пересборки у него нет; у правленого ряда — есть. Кнопка
+   * — у первого расхождения канала, которое пересборкой лечится.
+   */
+  const rebuildable = (mismatch: WallMismatch) => !mismatch.clashes?.length || mismatch.clashes.some((entry) => entry.edited);
+  const stale = mismatches.find(rebuildable);
   /*
    * Прибор в составе есть, а в правленом ряду стены его нет: выход тот
    * же — пересобрать эту стену. Её правки при этом пропадут, и это сказано
@@ -289,10 +293,15 @@ export function screenState(input: ScreenInput): ScreenState {
    * потеряла бы ровно их. Створка шире предела после смены роли (P0-3b) —
    * тот же случай: правки замерщика целы, их и пишем.
    */
+  /*
+   * Заход у угла (STAGE A) — тот же случай: ряды и правки целы, причина —
+   * ход створки, и запертая запись потеряла бы правки, которыми его лечат.
+   */
   const locked =
     Boolean(refusal) ||
     mismatches.some(
-      (mismatch) => !mismatch.obstacles?.length && !mismatch.corner?.length && !mismatch.leaves?.length,
+      (mismatch) =>
+        !mismatch.obstacles?.length && !mismatch.corner?.length && !mismatch.leaves?.length && !mismatch.clashes?.length,
     );
   const unpriced = locked || mismatches.length > 0 || catalogError !== null;
   /*
@@ -303,9 +312,12 @@ export function screenState(input: ScreenInput): ScreenState {
   const exportLockText = refusal
     ? `Выгрузки для раскроя и печати для цеха нет: ${SHAPE_TITLE[shape]} не сошлась — раскраивать нечего.`
     : mismatches.length > 0
-      ? `Выгрузки для раскроя и печати для цеха нет: ${mismatches[0].label} не собирается — по таким ` +
-        'документам цех распилит детали, которые на объекте не встанут. Сначала пересоберите стену или ' +
-        'верните прежнюю расстановку.'
+      ? mismatches[0].clashes?.length
+        ? `Выгрузки для раскроя и печати для цеха нет: ${mismatches[0].label} — у угла деталь на ходу заходит в ` +
+          'мебель соседней стены, и по таким документам цех сделает мебель, которая не откроется.'
+        : `Выгрузки для раскроя и печати для цеха нет: ${mismatches[0].label} не собирается — по таким ` +
+          'документам цех распилит детали, которые на объекте не встанут. Сначала пересоберите стену или ' +
+          'верните прежнюю расстановку.'
       : (input.drawerDraft ?? null);
   const exportLocked = exportLockText !== null;
 

@@ -221,6 +221,8 @@ export default function LightingPanel({
   const setSelected = useInteriorStore((state) => state.setSelectedLight);
   const openParts = useInteriorStore((state) => state.openParts);
   const toggleOpenPart = useInteriorStore((state) => state.toggleOpenPart);
+  /* «Интерьер» снимает рентген — то же правило, что у предустановки слоёв «Дизайн» (STAGE A). */
+  const setCutaway = useInteriorStore((state) => state.setCutaway);
 
   const plan = useMemo(() => lightingPlan(current, rows, room, production.carcassMm), [current, rows, room, production.carcassMm]);
   const tracks = current.fixtures.filter((f): f is TrackFixture => f.kind === 'track');
@@ -283,7 +285,10 @@ export default function LightingPanel({
             aria-pressed={current.preview.design}
             onClick={() => {
               commit(withPreview(current, { design: !current.preview.design }));
-              if (!current.preview.design) onShow3d();
+              if (!current.preview.design) {
+                setCutaway(false);
+                onShow3d();
+              }
             }}
             className={`mw-btn ${current.preview.design ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
           >

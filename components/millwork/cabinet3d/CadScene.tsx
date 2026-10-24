@@ -78,7 +78,7 @@ import { handleGeometryCount } from './handleMesh';
 import RoomScene from './RoomScene';
 import type { PathTraceSource } from './pathTrace';
 import { movingParts } from './motion';
-import { plinthMm } from '@/lib/millwork/shop';
+import { plinthMm, shopOf } from '@/lib/millwork/shop';
 import { boxLayer, boxShown, moduleBoxes, runBoxes, runPlaces } from '@/lib/millwork/cabinetBoxes';
 import { ALL_LAYERS, presetOf, type SceneLayers } from '@/lib/millwork/sceneLayers';
 import { generalCamera } from '@/lib/cameraFraming';
@@ -347,7 +347,9 @@ export default function CadScene({
    * рядом второй флаг про то же самое значило бы однажды получить
    * сцену, где фасады сняты, а рёбра думают, что они на месте.
    */
-  const frame = useInteriorStore((state) => state.cutaway);
+  const xrayOn = useInteriorStore((state) => state.cutaway);
+  /* В «Интерьере» рентгена нет (STAGE A): тот же признак, что у `Cabinet3D`. */
+  const frame = xrayOn && !lighting?.preview.design;
   /* Рёбра идут по тем же слоям вида, что и меши (P1). */
   const layers = useInteriorStore((state) => state.sceneLayers);
 
@@ -550,7 +552,7 @@ export default function CadScene({
       <ShadowSync rows={rows} room={roomWorld} inside={frame} layers={layers} lighting={lighting} />
 
       {orbit && <OrbitScene bounds={bounds} open={open} />}
-      <FrameProbe rows={rows} room={roomWorld} />
+      <FrameProbe rows={rows} room={roomWorld} design={design} />
       {onFurnitureRect && <FurnitureRectProbe bounds={bounds} onRect={onFurnitureRect} />}
       {/* Последним: к этому эффекту камера поставлена и стены спрятаны. */}
       <RenderSource onRenderSource={onRenderSource} />
@@ -1031,7 +1033,10 @@ function ShadowSync({
  * свой, и последний зарегистрированный затирает предыдущий — мерили бы
  * не то. Число нужно для приёмки: «быстро» это не измерение.
  */
-function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
+function FrameProbe({ rows, room, design }: { rows: SceneRow[]; room: Room | null; design: boolean }) {
+  /* «Интерьер» — в момент замера, а не из замыкания: рентгена в нём нет (STAGE A). */
+  const designRef = useRef(design);
+  designRef.current = design;
   const gl = useThree((state) => state.gl);
   const camera = useThree((state) => state.camera);
   const scene = useThree((state) => state.scene);
@@ -1607,7 +1612,8 @@ function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
       return {
         layers: { ...state.sceneLayers },
         preset: presetOf(state.sceneLayers),
-        cutaway: state.cutaway,
+        cutaway: state.cutaway && !designRef.current,
+        xray: state.cutaway,
         total,
         shown,
         instances,
@@ -1817,6 +1823,102 @@ function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
       };
     };
 
+    /*
+     * ПОДВИЖНЫЕ ДЕТАЛИ ВСЕХ СТЕН (STAGE A).
+     *
+     * `__mwPartPoint`, `__mwMoving` и соседи регистрирует каждый ряд поверх
+     * соседнего, и у угловой кухни они видят одну стену — проверить, что
+     * дверь стены А не трогает стену Б, ими нельзя. Здесь вся сцена: каждая
+     * зона касания `part:<id>`, место её центра в мире (мм), поза группы,
+     * которая её везёт, и ловит ли она указатель. Меряется нарисованное, а
+     * не флаг в сторе.
+     */
+    (w as { __mwCadLeaves?: () => unknown }).__mwCadLeaves = () => {
+      const out: {
+        id: string;
+        world: number[];
+        shift: number[] | null;
+        rotationDeg: number[] | null;
+        clickable: boolean;
+        /** Видимые меши группы хода: седоки (`rider:*` — петли, ручки, рама) и остальное (полотно, стекло). */
+        riders: number;
+        body: number;
+      }[] = [];
+      const seen = new Set<string>();
+      scene.traverse((object) => {
+        if (!object.name.startsWith('part:')) return;
+        const id = object.name.slice(5);
+        if (seen.has(id)) return;
+        seen.add(id);
+        const carrier = object.parent;
+        const at = new THREE.Vector3();
+        object.getWorldPosition(at);
+        /* Зона касания ловит указатель, только если у неё есть обработчики (R3F регистрирует лишь такие). */
+        const local = (object as unknown as { __r3f?: { eventCount?: number } }).__r3f;
+        /* Что едет с деталью, кроме зоны касания: у закрытой — ничего (её рисует пачка ряда). */
+        let riders = 0;
+        let body = 0;
+        carrier?.traverse((child) => {
+          if (child === object || !(child as THREE.Mesh).isMesh || !child.visible) return;
+          let rider = false;
+          for (let up: THREE.Object3D | null = child; up && up !== carrier; up = up.parent) {
+            if (up.name.startsWith('rider:')) rider = true;
+          }
+          if (rider) riders += 1;
+          else body += 1;
+        });
+        out.push({
+          id,
+          world: [at.x, at.y, at.z].map((v) => Math.round(v * 1000)),
+          shift: carrier ? [carrier.position.x, carrier.position.y, carrier.position.z].map((v) => Math.round(v * 1000)) : null,
+          rotationDeg: carrier ? [carrier.rotation.x, carrier.rotation.y].map((v) => Math.round((v * 180) / Math.PI)) : null,
+          clickable: (local?.eventCount ?? 0) > 0,
+          riders,
+          body,
+        });
+      });
+      /* Фасады Г-модуля едут своими мешами (`leaf:<id>:<n>`), а не группой зоны касания. */
+      const bifold: Record<string, number[][]> = {};
+      scene.traverse((object) => {
+        const m = /^leaf:(.+):(\d+)$/.exec(object.name);
+        if (!m) return;
+        const at = new THREE.Vector3();
+        object.getWorldPosition(at);
+        (bifold[m[1]] ??= []).push([at.x, at.y, at.z].map((v) => Math.round(v * 1000)));
+      });
+      return { leaves: out.sort((a, b) => a.id.localeCompare(b.id)), bifold };
+    };
+    /*
+     * Экранная точка ЛЮБОЙ детали сцены — нажимать по мебели любой стены, а не наугад. Точка — центр ЛИЦЕВОЙ грани
+     * зоны касания: у ящика зона уходит в корпус на полглубины, и её центр в перспективе ложится на соседний модуль.
+     */
+    (w as { __mwCadPartPoint?: (id: string) => { x: number; y: number } | null }).__mwCadPartPoint = (id: string) => {
+      /* У Г-модуля зон касания две (фасады А и Б на одном ключе): берётся та, что смотрит на камеру. */
+      const targets: THREE.Object3D[] = [];
+      scene.traverse((object) => {
+        if (object.name === `part:${id}`) targets.push(object);
+      });
+      if (targets.length === 0) return null;
+      const camera = get().camera;
+      let point: THREE.Vector3 | null = null;
+      let facing = -Infinity;
+      for (const target of targets) {
+        target.updateWorldMatrix(true, false);
+        const center = target.localToWorld(new THREE.Vector3(0, 0, 0));
+        const front = target.localToWorld(new THREE.Vector3(0, 0, 0.5));
+        const normal = front.clone().sub(center).normalize();
+        const score = normal.dot(camera.position.clone().sub(front).normalize());
+        if (score > facing) {
+          facing = score;
+          point = front;
+        }
+      }
+      if (!point) return null;
+      point.project(camera);
+      const rect = gl.domElement.getBoundingClientRect();
+      return { x: rect.left + ((point.x + 1) / 2) * rect.width, y: rect.top + ((1 - point.y) / 2) * rect.height };
+    };
+
     w.__mwCadState = () => ({
       fronts: Array.from(
         new Set(
@@ -1858,6 +1960,8 @@ function FrameProbe({ rows, room }: { rows: SceneRow[]; room: Room | null }) {
       delete w.__mwCadRoom;
       delete w.__mwCadModules;
       delete w.__mwCadShadows;
+      delete (w as { __mwCadLeaves?: unknown }).__mwCadLeaves;
+      delete (w as { __mwCadPartPoint?: unknown }).__mwCadPartPoint;
     };
   }, [gl, camera, scene, get, rows, room]);
 
@@ -1939,10 +2043,20 @@ function rowCorners(
   const points: [number, number, number][] = [];
 
   for (const row of rows) {
+      /*
+       * ТОЛЩИНЫ И ЗАЗОР — ШКОЛЫ ЦЕХА, А НЕ ЧИСЛА В КОДЕ (STAGE A).
+       *
+       * Здесь стояли 16 / 18 / 3 мм, а сетка рисуется по школе цеха
+       * (`Cabinet3D`: корпус, фасад, зазор): при типовых 16 / 16 / 4 контур
+       * фасада висел на 2 мм перед полотном и на миллиметр шире его с каждой
+       * стороны, а у цеха с корпусом 18 мм рёбра корпуса шли не по корпусу.
+       */
+      /* Та же школа, что у `Cabinet3D` (пусто — типовая). */
+      const shop = shopOf(production);
       const boxes = runBoxes(row.run, {
-        thicknessMm: 16,
-        frontThicknessMm: 18,
-        gapMm: 3,
+        thicknessMm: shop.carcassMm,
+        frontThicknessMm: shop.frontMm,
+        gapMm: shop.frontGapMm,
         hardware,
         ...(production ? { production } : {}),
       }).filter(

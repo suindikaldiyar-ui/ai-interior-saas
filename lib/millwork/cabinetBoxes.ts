@@ -3,8 +3,6 @@ import { carcassHeightMm, plinthMm } from './shop';
 import {
   BACK_PANEL_NAME,
   BOTTOM_PANEL_NAME,
-  CORNER_FILLER_PANEL_NAME,
-  CORNER_UPPER_FILLER_PANEL_NAME,
   DIVIDER_PANEL_NAME,
   FACADE_PANEL_NAME,
   SHELF_PANEL_NAME,
@@ -13,10 +11,11 @@ import {
   TOP_PANEL_NAME,
   TOP_RAIL_PANEL_NAME,
   HDIVIDER_PANEL_NAME,
+  cornerFillerName,
   legName,
   partOfPanel,
 } from './panels';
-import { blindPartMm, cornerFillersOf, cornerOfModule, openFrontMm } from './corner';
+import { blindPartMm, cornerFillersOf, cornerOfModule, fillerNeighbour, openFrontMm } from './corner';
 import { tailFillersOf } from './countertop';
 import { moduleDepthMm, rowStandardDepthMm } from './fill';
 import { bayDrawerStackOf, bayEnvelope, bayLayout, placeEnvelope } from './bays';
@@ -26,7 +25,7 @@ import { moduleDrawerKits, type DrawerKit } from './drawerKit';
 import { DRAWER_BOTTOM_PANEL_NAME, DRAWER_SIDE_PANEL_NAME, DRAWER_WALL_PANEL_NAME } from './drawerBox';
 import { shopOf } from './shop';
 import { FRAME_WIDTH_MM, frontKey, frontOf, isFramed } from './frontMaterial';
-import { moduleFronts, type FacadeSpan } from './applianceFront';
+import { moduleFronts, tallNicheOf, type FacadeSpan } from './applianceFront';
 import { carcassKeyOf, type CarcassItem } from './carcassMaterial';
 import { handleItemOf, installedItem, slidingAccepts } from './fittings';
 import { SLIDING_DOOR, slidingDoorCount } from './sections';
@@ -706,6 +705,14 @@ export type SceneLeaf =
       opening: 'left' | 'right' | 'lift' | 'flap';
       xM: number;
       widthM: number;
+      /**
+       * Низ и высота полотна от низа корпуса (STAGE A). Во всю высоту —
+       * 0 и высота модуля; у фасада, разбитого по высоте (дверь камеры и
+       * морозильника, створки над нишей и под ней), — участок
+       * `doorLeaves`, тот же, по которому полотно закрыто и режется.
+       */
+      bottomM: number;
+      heightM: number;
       /** Дверь витрины в раме (V3D-02): полотна ЛДСП нет — стекло и рама едут «седоками». */
       glass?: true;
     }
@@ -754,8 +761,38 @@ export function sceneLeaves(unit: Module, heightM: number, openWidthM?: number):
       opening: opening === 'lift' || opening === 'flap' ? 'left' : opening,
       xM: 0,
       widthM: unit.widthMm / MM,
+      bottomM: 0,
+      heightM,
       glass: true,
     });
+    return out;
+  }
+  /*
+   * ФАСАД, РАЗБИТЫЙ ПО ВЫСОТЕ, ОТКРЫВАЕТСЯ ПО УЧАСТКАМ (STAGE A).
+   *
+   * Встроенный холодильник закрыт дверью камеры и дверью морозильника,
+   * колонна и пенал с духовкой — створками над нишей и под ней. Закрытыми
+   * их рисует `doorBoxes` по участкам `doorLeaves`, раскрой режет, смета
+   * покупает им петли и ручки. А открывалось другое: у холодильника —
+   * одно полотно во всю высоту под ключом нижней двери (нижняя половина
+   * пропадала, полотно на всю высоту уходило вбок, верхняя оставалась
+   * закрытой), у колонны — ничего; «Открыть всё» отмечало их открытыми,
+   * и закрытые коробки исчезали из пачки, а едущих не было. Участок
+   * закрывается ОДНИМ полотном во всю ширину — как в `doorBoxes`.
+   */
+  const spans = openWidthM === undefined ? doorLeaves(unit, Math.round(heightM * MM)).filter((leaf) => leaf.span) : [];
+  if (spans.length > 0) {
+    for (const leaf of spans) {
+      out.push({
+        kind: 'door',
+        id: `${unit.id}:door:${leaf.index}`,
+        opening: doorHinge(unit, 0, 1),
+        xM: 0,
+        widthM: unit.widthMm / MM,
+        bottomM: leaf.span!.fromMm / MM,
+        heightM: leaf.span!.heightMm / MM,
+      });
+    }
     return out;
   }
   if (hasVisibleAppliance(unit) || unit.column || openWidthM === 0) {
@@ -783,6 +820,8 @@ export function sceneLeaves(unit: Module, heightM: number, openWidthM?: number):
       opening: doorOpening(unit, i, doors),
       xM: i * doorW,
       widthM: doorW,
+      bottomM: 0,
+      heightM,
     });
   }
   return out;
@@ -1556,10 +1595,16 @@ export function leafPoses(input: {
    */
   handle?: Pick<PartBox, 'position' | 'scale' | 'handle'> | null;
   s: number;
+  /**
+   * ПОЛНЫЙ УГОЛ РАСКРЫТИЯ, радианы (STAGE A): петля каталога раскрывается
+   * на свой паспортный угол (`openingAngleDeg`). Пусто — как в сцене, 90°.
+   */
+  openAngle?: number;
 }): PosedBox[] {
   const { opening, x, y, width, height, thickness, gap } = input;
   const pivot = doorPivot(opening, x, y, width, height, thickness);
-  const angle = pivot.angle * Math.max(0, Math.min(1, input.s));
+  const full = input.openAngle !== undefined ? Math.sign(pivot.angle) * input.openAngle : pivot.angle;
+  const angle = full * Math.max(0, Math.min(1, input.s));
   /* Вынос вперёд по ходу — тот же, что двигает группу `InteractiveDoor`. */
   const kick = doorKick(pivot, angle);
   const local = leafLocal({ opening, width, height, thickness, gap });
@@ -1837,7 +1882,18 @@ export function applianceBoxes(
   const boxes: PartBox[] = [];
 
   if (hasVisibleAppliance(unit)) {
-    boxes.push(...applianceFace(unit.appliance, x, y, widthM, heightM, depthM));
+    /* Прибор пенала — в своей нише, той же, что разбила фасад на створки (`tallNicheOf`); без ниши — во весь модуль. */
+    const niche = tallNicheOf(unit, Math.round(heightM * MM));
+    boxes.push(
+      ...applianceFace(
+        unit.appliance,
+        x,
+        niche ? y + niche.fromMm / MM : y,
+        widthM,
+        niche ? niche.heightMm / MM : heightM,
+        depthM,
+      ),
+    );
   }
 
   for (const niche of unit.column ? columnNiches(unit, heightM * MM, production) : []) {
@@ -1958,10 +2014,9 @@ export function moduleBoxes(
      * Сколько их куплено — знает смета, и это число приходит сюда целым.
      * Каждому полотну достаётся столько, сколько держит его высота
      * (`leafHinges` — та же функция, которой считала смета), а остаток
-     * ложится на первое: у встроенного холодильника смета берёт петли на
-     * ДВЕ створки, а сцена рисует одно полотно во всю высоту (известное
-     * расхождение слоя 43). Сумма при этом сходится всегда, и петель на
-     * картинке ровно столько, сколько в смете.
+     * ложится на первое. Сумма при этом сходится всегда, и петель на
+     * картинке ровно столько, сколько в смете; у встроенного холодильника
+     * они на двух его створках — так же, как полотна сцены (STAGE A).
      */
     const total = Math.max(0, Math.round(options.hinges ?? 0));
     const byLeaf = leaves.map((leaf) =>
@@ -2082,26 +2137,41 @@ export function runPlaces(
   ];
 }
 
-export function runBoxes(
+export type RunBoxesOptions = {
+  thicknessMm: number;
+  frontThicknessMm: number;
+  gapMm: number;
+  cutaway?: boolean;
+  /** Материалы корпуса организации: по ним корпус красится своим декором. */
+  carcass?: Map<string, CarcassItem>;
+  /** Фурнитура организации: короба ящиков по комплекту (HARDWARE-01). Пусто — как раньше. */
+  hardware?: Map<string, HardwareItem>;
+  /**
+   * ШКОЛА ЦЕХА ЭКРАНА — та же, по которой режет деталировка. По ней
+   * считаются короба ящиков: `run.production` у сохранённого ряда — снимок
+   * на момент записи, и короб по нему разошёлся бы с раскроем. Пусто —
+   * школа ряда.
+   */
+  production?: ProductionSettings;
+};
+
+export function runBoxes(run: Run, options: RunBoxesOptions): PartBox[] {
+  const { fillers, modules } = runBoxesByModule(run, options);
+  return fillers.concat(modules.flatMap((entry) => entry.boxes));
+}
+
+/**
+ * ТЕ ЖЕ КОРОБКИ РЯДА — ПО МОДУЛЯМ (STAGE A).
+ *
+ * Сцена рисует `runBoxes` одной пачкой; приёмке нужно знать, чья коробка:
+ * фасад модуля обязан лежать в плоскости ЕГО корпуса, а деталь одного
+ * модуля не входит в деталь другого. Это не второй расчёт — `runBoxes`
+ * складывает ровно этот ответ.
+ */
+export function runBoxesByModule(
   run: Run,
-  options: {
-    thicknessMm: number;
-    frontThicknessMm: number;
-    gapMm: number;
-    cutaway?: boolean;
-    /** Материалы корпуса организации: по ним корпус красится своим декором. */
-    carcass?: Map<string, CarcassItem>;
-    /** Фурнитура организации: короба ящиков по комплекту (HARDWARE-01). Пусто — как раньше. */
-    hardware?: Map<string, HardwareItem>;
-    /**
-     * ШКОЛА ЦЕХА ЭКРАНА — та же, по которой режет деталировка. По ней
-     * считаются короба ящиков: `run.production` у сохранённого ряда — снимок
-     * на момент записи, и короб по нему разошёлся бы с раскроем. Пусто —
-     * школа ряда.
-     */
-    production?: ProductionSettings;
-  },
-): PartBox[] {
+  options: RunBoxesOptions,
+): { fillers: PartBox[]; modules: { unit: Module; boxes: PartBox[] }[] } {
   /* Глубину ряда считает `runPlaces`: передать её снаружи больше нельзя. */
   const placed = runPlaces(run);
 
@@ -2149,11 +2219,8 @@ export function runBoxes(
   for (const piece of cornerFillersOf(run)) {
     const widthM = (piece.toMm - piece.fromMm) / MM;
     const lower = piece.level === 'lower';
-    const neighbour = lower
-      ? run.modules[0]
-      : [...run.upperSegments.flatMap((sg) => sg.modules)]
-          .filter((unit) => unit.section !== 'mezzanine' && !unit.overhead)
-          .sort((a, b) => a.offsetMm - b.offsetMm)[0];
+    /* Чей фасад продолжает панель — та же функция, что у раскроя: цвет и высота от него. */
+    const neighbour = fillerNeighbour(run, piece);
     if (!neighbour) continue;
     const heightM = lower
       ? carcassHeightMm(run.production) / MM
@@ -2166,11 +2233,13 @@ export function runBoxes(
           rowStandardDepthMm(run.zone, 'base', run.production)) /
         MM;
 
+    /* Фальш-панель — фасад: в рентгене она снята вместе с остальными фасадами (STAGE A). */
+    if (options.cutaway) continue;
     filler.push({
       position: [(piece.fromMm + piece.toMm) / 2 / MM, bottomM + heightM / 2, planeM + frontM / 2],
       scale: [Math.max(0, widthM - gapM), Math.max(0, heightM - gapM), frontM],
       material: 'front',
-      panel: lower ? CORNER_FILLER_PANEL_NAME : CORNER_UPPER_FILLER_PANEL_NAME,
+      panel: cornerFillerName(piece),
       frontKey: frontKey(frontOf(neighbour)),
     });
   }
@@ -2194,7 +2263,7 @@ export function runBoxes(
   /* Система купе ряда (HARDWARE-01): шины и полотна — по позиции ряда. */
   filler.push(...kupeBoxes(run, options));
 
-  return filler.concat(placed.flatMap((entry) =>
+  return { fillers: filler, modules: placed.map((entry) => ({ unit: entry.unit, boxes:
     moduleBoxes(
       entry.unit,
       {
@@ -2229,7 +2298,7 @@ export function runBoxes(
       },
       run.production,
     ),
-  ));
+  })) };
 }
 
 /* ─────────────────  Механизмы по позиции каталога (HARDWARE-01)  ───────────────── */
@@ -2489,7 +2558,10 @@ export function kupeLeaves(run: Run, hardware?: Map<string, HardwareItem>): {
   }));
 }
 
-function kupeBoxes(run: Run, options: { hardware?: Map<string, HardwareItem>; frontThicknessMm: number }): PartBox[] {
+function kupeBoxes(
+  run: Run,
+  options: { hardware?: Map<string, HardwareItem>; frontThicknessMm: number; cutaway?: boolean },
+): PartBox[] {
   const leaves = kupeLeaves(run, options.hardware);
   if (leaves.length === 0) return [];
   const topMm = Math.max(...runPlaces(run).filter((entry) => run.modules.includes(entry.unit)).map((entry) => (entry.y + entry.heightM) * MM));
@@ -2500,6 +2572,8 @@ function kupeBoxes(run: Run, options: { hardware?: Map<string, HardwareItem>; fr
     { material: 'metal', node: 'track', position: [mm(L / 2), mm(MECH.trackBottomMm / 2), mm(MECH.trackDepthMm / 2)], scale: [mm(L), mm(MECH.trackBottomMm), mm(MECH.trackDepthMm)] },
   ];
   const leafH = topMm - MECH.trackTopMm - MECH.trackBottomMm - 10;
+  /* Полотна купе — фасады: в рентгене сняты, шины остаются (STAGE A). */
+  if (options.cutaway) return out;
   for (const leaf of leaves) {
     const z = leaf.front ? 50 + MECH.kupeLeafMm / 2 : 20 + MECH.kupeLeafMm / 2;
     out.push({

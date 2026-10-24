@@ -248,14 +248,30 @@ export function runFingerprint(
  */
 export function compositionFingerprint(composition: {
   segments: { run: Pick<Run, 'modules' | 'upperSegments' | 'lengthMm'> }[];
-  corners: { solution: string; falsePanelMm?: number; hingeAngleDeg?: number }[];
+  corners: {
+    solution: string;
+    falsePanelMm?: number;
+    ownerPanelMm?: number;
+    upperPanelMm?: number;
+    ownerUpperPanelMm?: number;
+    hingeAngleDeg?: number;
+  }[];
 }): string {
   const text = [
     ...composition.segments.map(
       (segment) => `${segment.run.lengthMm}:${runFingerprint(segment.run)}`,
     ),
+    /*
+     * Фальш-панели по ходу (STAGE A) — другая мебель: лишняя деталь в
+     * раскрое и сдвинутые модули. Пишутся, только когда они есть, — у
+     * угла без них отпечаток прежний до символа (ловушка 246).
+     */
     ...composition.corners.map(
-      (corner) => `${corner.solution}/${corner.falsePanelMm ?? 0}/${corner.hingeAngleDeg ?? 0}`,
+      (corner) =>
+        `${corner.solution}/${corner.falsePanelMm ?? 0}/${corner.hingeAngleDeg ?? 0}` +
+        (corner.ownerPanelMm ? `/o${corner.ownerPanelMm}` : '') +
+        (corner.upperPanelMm ? `/u${corner.upperPanelMm}` : '') +
+        (corner.ownerUpperPanelMm ? `/uo${corner.ownerUpperPanelMm}` : ''),
     ),
   ].join('|');
 

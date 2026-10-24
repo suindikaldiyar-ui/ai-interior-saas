@@ -15,7 +15,7 @@ import type { MillingItem } from './milling';
 import type { CarcassItem } from './carcassMaterial';
 import type { MaterialItem } from './materialCollection';
 import { buildVariants } from './variants';
-import { runWithCorner } from './corner';
+import { editedRunCorner, runWithCorner } from './corner';
 import { obstaclesOnRun, runWithObstacles } from './obstacles';
 import { uniqueModuleIds } from './layout';
 import { runInContext } from './runContext';
@@ -364,8 +364,11 @@ export function composeVariants(
      */
     const live = runInContext(saved, { production: input.production, ceilingHeightMm: input.ceilingHeightMm }).run;
     const edited = runWithObstacles(
-      /* Сохранённый ряд с дублем ключа чинится на показе (P0, `uniqueModuleIds`). */
-      runWithCorner(uniqueModuleIds(live), input.corner),
+      /*
+       * Сохранённый ряд с дублем ключа чинится на показе (P0, `uniqueModuleIds`).
+       * Панели по ходу — те, с которыми ряд правили (`editedRunCorner`, STAGE A).
+       */
+      runWithCorner(uniqueModuleIds(live), editedRunCorner(saved, input.corner)),
       /* Препятствия стены — из замера, как угол — из композиции (слой 56). */
       obstaclesOnRun(input.openings, saved.lengthMm),
     );

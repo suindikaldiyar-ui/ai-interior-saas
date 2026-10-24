@@ -404,9 +404,9 @@ export function handleChecks(check: Check): void {
         leafPoses({
           opening: leaf.opening,
           x: leaf.xM,
-          y: 0,
+          y: leaf.bottomM,
           width: leaf.widthM,
-          height: entry.heightM,
+          height: leaf.heightM,
           thickness: SHOP.frontMm / MM,
           gap: SHOP.frontGapMm / MM,
           handle: boxes.find((b) => b.part === leaf.id && b.node === 'handle') ?? null,
@@ -463,9 +463,9 @@ export function handleChecks(check: Check): void {
           const posed = leafPoses({
             opening: leaf.opening,
             x: leaf.xM,
-            y: 0,
+            y: leaf.bottomM,
             width: leaf.widthM,
-            height: entry.heightM,
+            height: leaf.heightM,
             thickness: SHOP.frontMm / MM,
             gap: SHOP.frontGapMm / MM,
             handle: local,

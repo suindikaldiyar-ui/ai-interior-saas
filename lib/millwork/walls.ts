@@ -1,15 +1,19 @@
 import { recalcTotal } from './estimate';
 import { compositionFingerprint } from './fingerprint';
 import { obstacleConflictText, obstacleConflicts, type ObstacleConflict } from './obstacles';
-import { BLIND_VARIANTS, blindPartMm, cornerGeometry } from './corner';
+import { BLIND_VARIANTS, blindPartMm, cornerGeometry, dockLostMm } from './corner';
 import { MIN_WIDTH, SINGLE_DOOR_MAX_MM, isUpperRow, standsOnFloor } from './modules';
 import { rowSpansOfRun } from './layout';
 import { runPlaces, sceneLeaves, type SceneLeaf } from './cabinetBoxes';
 import { leavesForFront } from './moduleVariants';
 import { runInContext, type ContextLoss, type RunContext } from './runContext';
+import { clashWords, cornerKinematics, panelWidthMm, panelWords, stuckWords, type CornerClash, type RowPlace } from './cornerKinematics';
+import { shopOf } from './shop';
+import type { HardwareItem, ProductionSettings } from '@/types/catalog';
 import type {
   Composition,
   CornerChoice,
+  CornerClashNote,
   Estimate,
   EstimateLine,
   Module,
@@ -234,6 +238,13 @@ export type WallMismatch = {
    * строка — модуль и что именно (`runInContext`).
    */
   heights?: ContextLoss[];
+  /**
+   * ДЕТАЛЬ У УГЛА НА ХОДУ ЗАХОДИТ В МЕБЕЛЬ СОСЕДНЕЙ СТЕНЫ (STAGE A).
+   * Каждая строка — что во что и на сколько; у правленого ряда — какая
+   * панель развела бы (`edited`: ряд сам не сдвигается), у ряда шаблона —
+   * почему панелью не снять (`Composition.cornerClashes`).
+   */
+  clashes?: { leaf: string; words: string; edited: boolean }[];
 };
 
 /** Створка шире предела — числами, из которых строятся слова. */
@@ -271,8 +282,8 @@ export function wallMismatches(
    * а роль угла у правленого ряда стены А сверяется — форма стала прямой,
    * и угол она потеряла (P0-3b).
    */
-  layout: { segments: { label: string; run: Pick<Run, 'lengthMm'> }[] } | null,
-  runs: Pick<Run, 'lengthMm'>[],
+  layout: { segments: { label: string; run: Pick<Run, 'lengthMm' | 'corner' | 'zone' | 'production'> }[] } | null,
+  runs: Pick<Run, 'lengthMm' | 'corner' | 'zone' | 'production'>[],
   /**
    * РОЛЬ УГЛА ПРАВЛЕНЫХ РЯДОВ. Длина не выдаёт стену, которая была
    * стыкующейся, а стала владельцем угла: полезная длина у них одна, а
@@ -287,13 +298,21 @@ export function wallMismatches(
 ): WallMismatch[] {
   const found: WallMismatch[] = [];
   const segments =
-    layout?.segments ?? runs.slice(0, 1).map((run) => ({ label: wallLabel(0), run: { lengthMm: run.lengthMm } }));
+    layout?.segments ?? runs.slice(0, 1).map((run) => ({ label: wallLabel(0), run }));
 
   segments.forEach((segment, index) => {
     const run = runs[index];
     if (!run) return;
 
-    const usableMm = segment.run.lengthMm;
+    /*
+     * Полезная длина — у ряда на экране: правленый ряд стоит за своей
+     * фальш-панелью по ходу (`editedRunCorner`), и на её разницу с панелью
+     * шаблона его стена длиннее или короче, а не «собрана на другой длине».
+     * Разница — только в панелях по ходу (`clearanceShiftMm`): выбор угла у
+     * ряда на экране тот же, что у композиции, а ряд без угла меряется
+     * полезной длиной композиции, как всегда.
+     */
+    const usableMm = segment.run.lengthMm + clearanceShiftMm(segment.run, run);
     if (Math.abs(run.lengthMm - usableMm) <= 1) return;
 
     found.push({
@@ -332,6 +351,24 @@ export function wallMismatches(
   }
 
   return found;
+}
+
+/**
+ * НА СКОЛЬКО ПАНЕЛИ ПО ХОДУ РЯДА НА ЭКРАНЕ МЕНЯЮТ ЕГО ПОЛЕЗНУЮ ДЛИНУ, мм.
+ *
+ * Тот же выбор угла, что у композиции, с панелями по ходу ряда на экране:
+ * плюс — ряд на экране стоит за более узкой панелью, и места у него
+ * больше. Ряд без угла (или композиция без угла) — ноль.
+ */
+function clearanceShiftMm(
+  composed: Pick<Run, 'corner' | 'zone' | 'production'>,
+  shown: Pick<Run, 'corner'>,
+): number {
+  const dock = composed.corner?.dock;
+  const mine = shown.corner?.dock;
+  if (!dock || !mine) return 0;
+  const asShown = { ...composed, corner: { ...composed.corner, dock: { ...dock, clearance: mine.clearance } } };
+  return dockLostMm(composed) - dockLostMm(asShown);
 }
 
 /** Роль ряда в его углах одной строкой — для сравнения «тогда» и «сейчас». */
@@ -487,8 +524,9 @@ export function leafRefusals(input: { run: Run; before: RunCorner | undefined })
   const out: LeafRefusal[] = [];
   for (const { unit, heightM } of runPlaces(run)) {
     if (blindPartMm(unit, run) > 0 || blindPartMm(unit, then) === 0) continue;
+    /* Створки во всю высоту — они стоят рядом и делят ширину; участки по высоте (холодильник, колонна) — по одной во всю ширину. */
     const doors = sceneLeaves(unit, heightM).filter(
-      (leaf): leaf is Extract<SceneLeaf, { kind: 'door' }> => leaf.kind === 'door',
+      (leaf): leaf is Extract<SceneLeaf, { kind: 'door' }> => leaf.kind === 'door' && leaf.bottomM === 0 && leaf.heightM === heightM,
     );
     if (doors.length === 0) continue;
     if (doors.some((leaf) => leaf.opening === 'lift' || leaf.opening === 'flap')) continue;
@@ -526,6 +564,21 @@ export function leafRefusalText(refusal: LeafRefusal): string {
  * не поймёт, чем это ему грозит.
  */
 export function wallMismatchMessage(mismatch: WallMismatch): string {
+  if (mismatch.clashes?.length) {
+    const leaves = mismatch.clashes.map((entry) => entry.leaf);
+    const drawers = leaves.every((leaf) => leaf.startsWith('drawer'));
+    const consequence = drawers
+      ? leaves.length > 1 ? 'эти ящики не выдвинутся до конца' : 'этот ящик не выдвинется до конца'
+      : leaves.length > 1 ? 'эти детали не откроются до конца' : 'эта створка не откроется до конца';
+    const hinge = drawers ? '' : ', поменяйте сторону петель у этой створки';
+    const what = `${mismatch.label}: ${mismatch.clashes.map((entry) => entry.words).join('; ')}. На объекте ${consequence}.`;
+    return mismatch.clashes.some((entry) => entry.edited)
+      ? `${what} Ряд правили руками, и сам он не сдвигается: пересоберите эту стену — раскладка встанет с панелью ` +
+          `по ходу, правки по ней придётся сделать заново, — или поставьте у угла ручку с меньшим вылетом или ` +
+          `«Без ручки»${hinge}.`
+      : `${what} Поставьте у угла ручку с меньшим вылетом или «Без ручки»${hinge}, выберите в этом углу другое ` +
+          'решение (кнопка угла) или закрепите пенал у этого угла за другой стеной.';
+  }
   if (mismatch.heights?.length) {
     return (
       `${mismatch.label}: ${mismatch.heights.map((loss) => loss.words).join('; ')} — высота корпуса сменилась после ` +
@@ -630,8 +683,107 @@ export function contextMismatches(input: {
   return found;
 }
 
+/**
+ * ЗАХОД У УГЛА НА РЯДАХ ЭКРАНА (STAGE A).
+ *
+ * Ряды шаблона композиция разводит панелями по ходу сама. Правленый ряд
+ * стоит, как его поставил человек: его модули, ручки и фурнитура — не
+ * шаблона, а панели по ходу у него те, с которыми его правили. Поэтому
+ * ход меряется по рядам ЭКРАНА, с позициями каталога (`cornerKinematics`),
+ * и заход — блокирующее: что во что, на сколько и какая панель развела бы.
+ * Ничего не двигается: правку человека меняет только он сам.
+ *
+ * Стена, у которой уже есть расхождение, второй строкой не идёт —
+ * «Пересобрать» снимает всё.
+ */
+export function cornerClashMismatches(input: {
+  runs: Run[];
+  /** Места рядов — те же, что у сцены (`runPlacements`). */
+  places: RowPlace[];
+  production: ProductionSettings | undefined;
+  hardware?: Map<string, HardwareItem>;
+  /** Правлен ли ряд руками. */
+  edited: (index: number) => boolean;
+  /** Что композиция панелью не сняла (`Composition.cornerClashes`). */
+  composed?: CornerClashNote[];
+  skip?: number[];
+}): WallMismatch[] {
+  const { runs } = input;
+  if (runs.length < 2) return [];
+  const wallOf = (wall: number) => lowerWall(wallLabel(wall), 'genitive');
+  const byWall = new Map<number, { leaf: string; words: string; edited: boolean }[]>();
+  const push = (index: number, entry: { leaf: string; words: string; edited: boolean }) => {
+    if (input.skip?.includes(index)) return;
+    byWall.set(index, [...(byWall.get(index) ?? []), entry]);
+  };
+
+  if (!runs.some((_, index) => input.edited(index))) {
+    /* Ряды экрана — ряды композиции: что осталось, она уже назвала словами. */
+    for (const note of input.composed ?? []) push(note.wall, { leaf: note.leaf, words: note.words, edited: false });
+  } else {
+    const kin = cornerKinematics({
+      runs,
+      places: input.places,
+      production: shopOf(input.production),
+      ...(input.hardware ? { hardware: input.hardware } : {}),
+    });
+    /* Одна строка на пару «деталь — модуль»: её самая глубокая коробка. */
+    const deepest = new Map<string, CornerClash>();
+    for (const clash of kin.clashes) {
+      const was = deepest.get(clash.pair);
+      if (!was || clash.depthMm > was.depthMm) deepest.set(clash.pair, clash);
+    }
+    for (const clash of Array.from(deepest.values())) {
+      const editedWall = input.edited(clash.wall) ? clash.wall : input.edited(clash.obstacleWall) ? clash.obstacleWall : null;
+      if (editedWall === null) {
+        /* Пара двух рядов шаблона — её слова у композиции. */
+        const note = input.composed?.find((entry) => entry.pair === clash.pair);
+        const choice = runs[clash.corner + 1]?.corner?.dock ?? runs[clash.corner]?.corner?.own;
+        push(clash.wall, {
+          leaf: clash.leaf,
+          words: note?.words ?? `${clashWords(clash, wallOf)} — ${choice ? stuckWords(clash, choice, wallOf) : 'фальш-панелью у этого угла этот заход не снять'}`,
+          edited: false,
+        });
+        continue;
+      }
+      /* Панель — у того ряда, что отходит от угла: у правленого она своя, у шаблона — композиции. */
+      const choice = clash.fix?.side === 'owner' ? runs[clash.corner]?.corner?.own : runs[clash.corner + 1]?.corner?.dock;
+      const zone = runs[clash.corner]?.zone;
+      let need = choice ? stuckWords(clash, choice, wallOf) : 'фальш-панелью у этого угла этот заход не снять';
+      if (clash.fix && clash.needWholeMm !== null && choice) {
+        const panel = panelWords(choice, clash.fix, clash.corner, wallOf);
+        const now = panelWidthMm(choice, clash.fix, zone, input.production);
+        const width = now + clash.needWholeMm;
+        const gap = shopOf(input.production).frontGapMm;
+        const empty = clash.fix.level === 'upper' && choice.upper === 'empty';
+        need =
+          width <= gap && !empty
+            ? `развёл бы зазор у угла ${wallOf(clash.fix.side === 'dock' ? clash.corner + 1 : clash.corner)} в ${width} мм — без детали`
+            : now > 0
+              ? `развела бы ${panel} шире на ${clash.needWholeMm} мм: ${width} мм вместо ${now}`
+              : `развела бы ${panel} ${clash.needWholeMm} мм`;
+      }
+      push(editedWall, { leaf: clash.leaf, words: `${clashWords(clash, wallOf)} — ${need}`, edited: true });
+    }
+  }
+  return Array.from(byWall.entries())
+    .sort(([a], [b]) => a - b)
+    .map(([index, clashes]) => ({
+      index,
+      label: wallLabel(index),
+      runLengthMm: runs[index].lengthMm,
+      usableMm: runs[index].lengthMm,
+      clashes,
+    }));
+}
+
 /** Почему цены нет — у расхождения длины и у мебели в препятствии слова разные. */
 export function mismatchPriceText(mismatch: WallMismatch): string {
+  if (mismatch.clashes?.length) {
+    const leaf = mismatch.clashes[0].leaf;
+    const what = leaf.startsWith('drawer') ? 'ящик' : leaf.startsWith('door') ? 'створка' : 'фасад';
+    return `Цены нет: ${mismatch.label}: у угла ${what} на ходу заходит в мебель соседней стены.`;
+  }
   if (mismatch.heights?.length) {
     return `Цены нет: ${mismatch.label}: наполнение правленых модулей не встаёт в новую высоту корпуса.`;
   }

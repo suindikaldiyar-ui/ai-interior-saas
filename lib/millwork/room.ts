@@ -1,4 +1,4 @@
-import type { CornerChoice, CornerJoin, Opening, OpeningKind, ZoneKind } from '@/types/millwork';
+import type { CornerChoice, CornerJoin, Opening, OpeningKind, RunCorner, ZoneKind } from '@/types/millwork';
 import { OPENING_KIND_TITLE } from '@/types/millwork';
 import type { ProductionSettings } from '@/types/catalog';
 import { heightAssumedToCeiling, type KnownState, type Survey, type SurveyOpening } from '@/types/survey';
@@ -628,7 +628,10 @@ export function roomSourceOf(input: {
  */
 export function roomAroundRows(
   source: RoomSource,
-  rows: { run: { lengthMm: number; wallId?: string }; placement?: { xM: number; zM: number; rotationYDeg: number } }[],
+  rows: {
+    run: { lengthMm: number; wallId?: string; corner?: RunCorner; zone?: ZoneKind; production?: ProductionSettings };
+    placement?: { xM: number; zM: number; rotationYDeg: number };
+  }[],
   frontZM: number | null,
 ): Room | null {
   if (rows.length === 0) return null;
@@ -637,8 +640,26 @@ export function roomAroundRows(
   const at = source.walls.findIndex((wall) => wall.id === first.run.wallId);
   const wallLineZ = place.zM - source.depthMm / 1000;
   const front = frontZM ?? wallLineZ;
+  /*
+   * Начало ряда на стене — по углу САМОГО ряда (STAGE A): на нём лежат
+   * фальш-панели по ходу, и ряд стоит ровно там, где его урезал этот выбор
+   * (`runPlacements`). Выбор из состояния их не знает: проёмы на чертеже
+   * стены после угла уехали бы на ширину добавки.
+   */
+  const fromRows = rows.slice(1).map((row) => row.run.corner?.dock);
+  const own = fromRows.length > 0 && fromRows.every(Boolean);
+  const corners = own ? (fromRows as CornerChoice[]) : source.corners;
+  /* Числа угла считаются школой цеха и зоной самого ряда, если у источника их нет. */
+  const dockRun = rows[1]?.run;
   return roomLayout({
     ...source,
+    ...(corners
+      ? {
+          corners,
+          zone: source.zone ?? (own ? dockRun?.zone : undefined),
+          production: source.production ?? (own ? dockRun?.production : undefined),
+        }
+      : {}),
     anchor: { wallIndex: at >= 0 ? at : 0, ...place },
     footprintDepthMm: Math.max(0, Math.round((front - wallLineZ) * 1000)),
   });

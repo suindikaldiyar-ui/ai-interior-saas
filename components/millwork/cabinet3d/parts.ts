@@ -75,6 +75,23 @@ export type CabinetPalette = {
  * Поэтому цвет, шероховатость и текстура присваиваются существующим
  * материалам, а сами материалы живут, пока живёт сцена.
  */
+/**
+ * КОРПУС В РЕНТГЕНЕ — ОДНО ПРАВИЛО НА ВСЕ ДЕКОРЫ (STAGE A).
+ *
+ * Корпус по умолчанию просвечивал, а корпус с декором каталога оставался
+ * глухим: у кухни с белым корпусом под цветной фасад рентген не показывал
+ * ничего. Прозрачность меняет саму программу шейдера — `needsUpdate`.
+ */
+export const XRAY_CARCASS_OPACITY = 0.38;
+
+export function xrayLook(material: THREE.Material, frame: boolean): void {
+  if (material.transparent === frame && material.opacity === (frame ? XRAY_CARCASS_OPACITY : 1)) return;
+  material.transparent = frame;
+  material.opacity = frame ? XRAY_CARCASS_OPACITY : 1;
+  material.depthWrite = !frame;
+  material.needsUpdate = true;
+}
+
 export function useCabinetParts(
   palette: CabinetPalette,
   looks?: { facade?: SurfaceLook; counter?: SurfaceLook },
@@ -206,12 +223,7 @@ export function useCabinetParts(
    * `needsUpdate` обязателен: прозрачность меняет саму программу.
    */
   useEffect(() => {
-    for (const material of [parts.carcass, parts.plinth]) {
-      material.transparent = frame;
-      material.opacity = frame ? 0.38 : 1;
-      material.depthWrite = !frame;
-      material.needsUpdate = true;
-    }
+    for (const material of [parts.carcass, parts.plinth]) xrayLook(material, frame);
   }, [parts, frame]);
 
   /* ── Цвета: присвоение, а не новый материал ── */
@@ -567,6 +579,8 @@ export function useCarcassMaterials(
   inner: boolean,
   /** Фото декора по тому же ключу пачки: ложится в настоящем размере. */
   photos: Map<string, MaterialPhoto> = new Map(),
+  /** Рентген: наружный корпус декора просвечивает, как корпус по умолчанию (`xrayLook`). */
+  frame = false,
 ): Map<string, THREE.MeshStandardMaterial> {
   const invalidate = useThree((state) => state.invalidate);
   const cache = useMemo(() => new Map<string, THREE.MeshStandardMaterial>(), []);
@@ -589,6 +603,12 @@ export function useCarcassMaterials(
     }
     return out;
   }, [keys, cache]);
+
+  useEffect(() => {
+    if (inner) return;
+    for (const material of Array.from(materials.values())) xrayLook(material, frame);
+    invalidate();
+  }, [materials, inner, frame, invalidate]);
 
   useEffect(() => {
     let cancelled = false;

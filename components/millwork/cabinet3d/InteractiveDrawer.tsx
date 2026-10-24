@@ -61,6 +61,13 @@ type Props = {
   handle?: PartBox;
   /** Ящик поехал или встал: задвинутый рисуется вместе со всем рядом. */
   onActive?: (id: string, active: boolean) => void;
+  /**
+   * СЛОИ (STAGE A): фронт — слой «Фасады», короб — слой «Ящики». Ящик едет
+   * всегда, а в кадре — только включённое: короб в «Наполнении» выезжает
+   * без фронта, фронт в «Фасадах» — без короба. Нажать можно то, что видно.
+   */
+  showFront?: boolean;
+  showBox?: boolean;
 };
 
 export default function InteractiveDrawer({
@@ -81,8 +88,11 @@ export default function InteractiveDrawer({
   gap,
   handle,
   onActive,
+  showFront = true,
+  showBox = true,
 }: Props) {
   const economy = useInteriorStore((state) => state.economyMode);
+  const hit = showFront || showBox || Boolean(handle);
   const group = useRef<THREE.Group>(null);
   const touch = useRef<THREE.Mesh>(null);
 
@@ -156,17 +166,29 @@ export default function InteractiveDrawer({
          */
         visible={false}
         scale={[width, height, depth]}
-        onClick={(event) => {
-          event.stopPropagation();
-          onToggle(id);
-        }}
-        onPointerOver={(event) => {
-          event.stopPropagation();
-          document.body.style.cursor = 'pointer';
-        }}
-        onPointerOut={() => {
-          document.body.style.cursor = '';
-        }}
+        onClick={
+          hit
+            ? (event) => {
+                event.stopPropagation();
+                onToggle(id);
+              }
+            : undefined
+        }
+        onPointerOver={
+          hit
+            ? (event) => {
+                event.stopPropagation();
+                document.body.style.cursor = 'pointer';
+              }
+            : undefined
+        }
+        onPointerOut={
+          hit
+            ? () => {
+                document.body.style.cursor = '';
+              }
+            : undefined
+        }
       />
 
       {/*
@@ -174,6 +196,8 @@ export default function InteractiveDrawer({
         * только пока ящик выехал: задвинутый живёт в общей отрисовке.
         */}
       {active && (
+        <>
+      {showBox && (
         <>
       <mesh
         geometry={parts.box}
@@ -199,10 +223,13 @@ export default function InteractiveDrawer({
         position={[0, 0, -depth / 2 - depth * 0.45]}
         scale={[inner, boxH, thickness]}
       />
+        </>
+      )}
 
       {/* Фронт. В разрезе его нет: он закрывает ровно то, ради чего смотрят. */}
       {!cutaway && (
         <>
+          {showFront && (
           <mesh
             geometry={reliefGeometry ?? frontBox}
             material={frontMaterial ?? parts.front}
@@ -210,6 +237,7 @@ export default function InteractiveDrawer({
             scale={reliefGeometry ? [1, 1, 1] : [width - 2 * gap, height - 2 * gap, thickness]}
             castShadow
           />
+          )}
 
           {/* Ручка — та же коробка пачки, своей моделью: место в модуле минус начало группы ящика. */}
           {handle?.handle && (

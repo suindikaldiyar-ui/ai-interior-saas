@@ -24,7 +24,7 @@ import {
   type ProductionSettings,
 } from '@/types/catalog';
 import { moduleNumbers } from './positions';
-import { blindPartMm, cornerFillersOf, openFrontMm } from './corner';
+import { blindPartMm, cornerFillersOf, fillerNeighbour, openFrontMm } from './corner';
 import { tailFillersOf } from './countertop';
 import { moduleDrawerKits } from './drawerKit';
 import { DRAWER_BOTTOM_PANEL_NAME, type DrawerBoxPart } from './drawerBox';
@@ -130,6 +130,25 @@ export const DRAWER_FRONT_PANEL_NAME = 'Фронт ящика';
 export const CORNER_FILLER_PANEL_NAME = 'Фальш-панель угла';
 /** Фальш-панель верхнего ряда у слепого верхнего угла (слой 55). */
 export const CORNER_UPPER_FILLER_PANEL_NAME = 'Фальш-панель угла верхняя';
+/**
+ * ФАЛЬШ-ПАНЕЛЬ ВЛАДЕЛЬЦА (STAGE A): полоса фасада в плоскости фасадов
+ * стены-владельца, между её последним открывающимся модулем и фасадами
+ * соседа. Есть, только когда ящик или створка владельца на ходу иначе
+ * заходят в ручку или фасад соседа (`cornerKinematics`).
+ */
+export const CORNER_OWNER_FILLER_PANEL_NAME = 'Фальш-панель угла у слепого модуля';
+export const CORNER_OWNER_UPPER_FILLER_PANEL_NAME = 'Фальш-панель угла у слепого модуля верхняя';
+
+/** Имя детали фальш-панели — одно на сцену и раскрой. */
+export function cornerFillerName(piece: { level: 'lower' | 'upper'; side: 'dock' | 'owner' }): string {
+  if (piece.side === 'owner') return piece.level === 'lower' ? CORNER_OWNER_FILLER_PANEL_NAME : CORNER_OWNER_UPPER_FILLER_PANEL_NAME;
+  return piece.level === 'lower' ? CORNER_FILLER_PANEL_NAME : CORNER_UPPER_FILLER_PANEL_NAME;
+}
+
+/** Деталь — фальш-панель угла (любая): фасадом модуля она не считается. */
+export function isCornerFillerName(name: string): boolean {
+  return name.startsWith(CORNER_FILLER_PANEL_NAME);
+}
 /**
  * ДОБОР ХВОСТА У СТЕНЫ (слой 55): у ряда угловой кухни хвост меньше
  * 150 мм под плитой закрывает планка — щели у стены под столешницей нет.
@@ -699,10 +718,14 @@ function moduleBodyPanels(
   if (unit.builtIn && hasFacade(unit)) {
     const doorHeight = Math.round((heightMm - gap * (BUILT_IN_FRIDGE_FRONTS + 1)) / BUILT_IN_FRIDGE_FRONTS);
     /*
-     * Сцена рисует встройку ОДНИМ полотном (известное расхождение слоя 43),
-     * и это полотно — `door:0`: его фасад у обеих деталей встройки.
+     * ДЕТАЛЬ — СВОЕЙ СТВОРКИ (STAGE A): нижняя дверь — `door:0`, верхняя —
+     * `door:1`, в том же порядке, что участки `moduleFronts` и полотна
+     * сцены. Пока сцена рисовала встройку одним полотном, обе детали
+     * несли `door:0`: свой фасад верхней двери до раскроя не доезжал, а
+     * фасад нижней ложился на обе. Без своих фасадов строка та же — две
+     * штуки одной детали.
      */
-    pushFront('Фасад встройки', doorHeight, unit.widthMm - gap, Array.from({ length: BUILT_IN_FRIDGE_FRONTS }, () => 'door:0'));
+    pushFront('Фасад встройки', doorHeight, unit.widthMm - gap, Array.from({ length: BUILT_IN_FRIDGE_FRONTS }, (_, i) => `door:${i}`));
     return panels;
   }
 
@@ -896,11 +919,7 @@ export function buildPanels({ run, production = DEFAULT_PRODUCTION, milling, car
   let cornerNo = 0;
   for (const piece of cornerFillersOf(run)) {
     const lower = piece.level === 'lower';
-    const neighbour = lower
-      ? run.modules[0]
-      : [...run.upperSegments.flatMap((sg) => sg.modules)]
-          .filter((unit) => unit.section !== 'mezzanine' && !unit.overhead)
-          .sort((a, b) => a.offsetMm - b.offsetMm)[0];
+    const neighbour = fillerNeighbour(run, piece);
     if (!neighbour) continue;
     const spec = frontOf(neighbour);
     cornerNo += 1;
@@ -908,7 +927,7 @@ export function buildPanels({ run, production = DEFAULT_PRODUCTION, milling, car
       moduleId: `${run.id}:corner`,
       moduleLabel: 'Угол',
       number: `У.${cornerNo}`,
-      name: lower ? CORNER_FILLER_PANEL_NAME : CORNER_UPPER_FILLER_PANEL_NAME,
+      name: cornerFillerName(piece),
       material: `Фасад ${shop.frontMm}`,
       /* Лист — фасада соседа: панель обязана быть с ним одного цвета (CUT-01). */
       stock: frontStock(spec),
@@ -1210,8 +1229,7 @@ export function wallPanelSummaries(walls: PanelWall[], parts: ObjectPanel[]): Wa
           (part) =>
             part.material.startsWith('Фасад') &&
             !part.name.endsWith(': вставка') &&
-            part.name !== CORNER_FILLER_PANEL_NAME &&
-            part.name !== CORNER_UPPER_FILLER_PANEL_NAME,
+            !isCornerFillerName(part.name),
         )
         .reduce((sum, part) => sum + part.qty, 0),
     };

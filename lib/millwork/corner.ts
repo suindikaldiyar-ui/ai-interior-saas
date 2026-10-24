@@ -1,6 +1,7 @@
 import type { ProductionSettings } from '@/types/catalog';
 import type {
   CornerChoice,
+  CornerClearance,
   CornerJoin,
   LowerCornerKind,
   Module,
@@ -188,6 +189,42 @@ export function runWithCorner(run: Run, corner: RunCorner | undefined): Run {
   return { ...run, corner };
 }
 
+/** Поля панелей по ходу, которые двигают ряд после угла и ряд-владелец. */
+const DOCK_CLEARANCE = ['dockMm', 'upperDockMm'] as const;
+const OWNER_CLEARANCE = ['ownerMm', 'upperOwnerMm'] as const;
+
+/**
+ * УГОЛ ПРАВЛЕНОГО РЯДА: РОЛЬ И ВЫБОР — ОТ КОМПОЗИЦИИ, ПАНЕЛИ ПО ХОДУ — СВОИ.
+ *
+ * Панели по ходу (`CornerChoice.clearance`) композиция считает по рядам
+ * шаблона. Правленый ряд стоит не ими: чужая ширина панели сдвинула бы
+ * всю его мебель за панелью (ряд после угла) или сузила бы створку у
+ * слепого модуля (владелец) — правку, которой человек не делал. Поэтому
+ * поля СВОЕЙ стороны угла правленый ряд держит те, с которыми его правили
+ * (при том же выборе угла), а заход, если он есть, называет экран
+ * (`cornerClashMismatches`). Выбор угла другой — своих панелей по ходу у
+ * ряда нет: правили не этот угол.
+ */
+export function editedRunCorner(saved: Pick<Run, 'corner'>, composed: RunCorner | undefined): RunCorner | undefined {
+  if (!composed) return composed;
+  const own = (now: CornerChoice, then: CornerChoice | undefined, fields: readonly (keyof CornerClearance)[]): CornerChoice => {
+    const same = Boolean(then) && then!.lower === now.lower && then!.upper === now.upper;
+    const clearance: CornerClearance = { ...(now.clearance ?? {}) };
+    for (const field of fields) {
+      const value = same ? then!.clearance?.[field] : undefined;
+      if (value && value > 0) clearance[field] = value;
+      else delete clearance[field];
+    }
+    const { clearance: _composed, ...rest } = now;
+    void _composed;
+    return Object.keys(clearance).length > 0 ? { ...rest, clearance } : rest;
+  };
+  return {
+    ...(composed.dock ? { dock: own(composed.dock, saved.corner?.dock, DOCK_CLEARANCE) } : {}),
+    ...(composed.own ? { own: own(composed.own, saved.corner?.own, OWNER_CLEARANCE) } : {}),
+  };
+}
+
 /**
  * РОЛЬ РЯДА В ЕГО УГЛАХ — ОДНА ФУНКЦИЯ НА КОМПОЗИЦИЮ И НА ШОВ ЭКРАНА.
  *
@@ -219,10 +256,21 @@ export type CornerGeometry = {
   upperFillerMm: number;
   /** На сколько раньше стены кончается верхний ряд владельца (пустой угол). */
   ownerUpperCutMm: number;
-  /** Глухая часть фасада у последнего нижнего модуля владельца (слепой угол). */
+  /**
+   * Зона без створки у конца нижнего ряда владельца (слепой угол): то, что
+   * стоит за корпусом и фасадом соседа, и фальш-панель владельца перед ними.
+   */
   ownerBlindMm: number;
-  /** То же у последнего верхнего модуля владельца. */
+  /** То же у верхнего ряда владельца. */
   ownerUpperBlindMm: number;
+  /**
+   * ФАЛЬШ-ПАНЕЛЬ ВЛАДЕЛЬЦА нижнего ряда (STAGE A): полоса фасада в его
+   * плоскости, между последним открывающимся модулем и фасадами соседа.
+   * Ноль — её нет; ширину даёт кинематика угла (`CornerChoice.clearance`).
+   */
+  ownerFillerMm: number;
+  /** То же у навесного ряда владельца. */
+  ownerUpperFillerMm: number;
   /** Сторона нижнего Г-модуля. Ноль — Г-модуля нет. */
   lowerLegMm: number;
   /** Сторона верхнего Г-модуля. Ноль — его нет. */
@@ -257,34 +305,70 @@ export function cornerGeometry(
   const upperMm = rowStandardDepthMm(zone, 'upper', production);
   const frontMm = shopOf(production).frontMm;
   const panelMm = sizes.falsePanelMm;
+  /*
+   * ФАЛЬШ-ПАНЕЛИ ПО ХОДУ (STAGE A). Ширина фальш-панели соседа — настройка
+   * цеха; шире она только тогда, когда этого требует ход створок и ящиков
+   * (`cornerKinematics`), уже — никогда. Фальш-панели владельца у цеха нет
+   * вовсе: она появляется, когда ящик или створка владельца на ходу заходят
+   * в ручку или фасад соседа.
+   */
+  const clear = choice.clearance;
+  const lowerPanelMm = Math.max(panelMm, clear?.dockMm ?? 0);
+  const ownerPanelMm = Math.max(0, clear?.ownerMm ?? 0);
+  const upperPanelMm = Math.max(panelMm, clear?.upperDockMm ?? 0);
+  const ownerUpperPanelMm = Math.max(0, clear?.upperOwnerMm ?? 0);
+  /*
+   * У Г-угла фальш-панели нет — полосу закрывает нога модуля. Но ручка
+   * первой двери соседа у ноги стоит на пути складывающихся фасадов (П
+   * 3600 + 2800 + 3600: на 7,8 мм), и тогда сосед отходит от ноги на
+   * полосу, закрытую фальш-панелью той ширины, что требует ход.
+   */
+  const lowerLPanelMm = Math.max(0, clear?.dockMm ?? 0);
+  const upperLPanelMm = Math.max(0, clear?.upperDockMm ?? 0);
 
   const lower =
     choice.lower === 'l_shape'
-      ? { lostMm: sizes.lowerLMm, fillerMm: 0, ownerBlindMm: 0, lowerLegMm: sizes.lowerLMm }
-      : { lostMm: depthMm + panelMm, fillerMm: panelMm, ownerBlindMm: depthMm + frontMm, lowerLegMm: 0 };
+      ? {
+          lostMm: sizes.lowerLMm + lowerLPanelMm,
+          fillerMm: lowerLPanelMm,
+          ownerBlindMm: 0,
+          ownerFillerMm: 0,
+          lowerLegMm: sizes.lowerLMm,
+        }
+      : {
+          lostMm: depthMm + lowerPanelMm,
+          fillerMm: lowerPanelMm,
+          ownerBlindMm: depthMm + frontMm + ownerPanelMm,
+          ownerFillerMm: ownerPanelMm,
+          lowerLegMm: 0,
+        };
 
   const upper =
     choice.upper === 'l_shape'
       ? {
-          upperStartMm: sizes.upperLMm,
-          upperFillerMm: 0,
+          upperStartMm: sizes.upperLMm + upperLPanelMm,
+          upperFillerMm: upperLPanelMm,
           ownerUpperCutMm: 0,
           ownerUpperBlindMm: 0,
+          ownerUpperFillerMm: 0,
           upperLegMm: sizes.upperLMm,
         }
       : choice.upper === 'empty'
         ? {
-            upperStartMm: upperMm + panelMm,
+            /* Пустой угол шире настройки — только по ходу; детали там нет, угол просто шире. */
+            upperStartMm: upperMm + Math.max(panelMm, clear?.upperDockMm ?? 0),
             upperFillerMm: 0,
-            ownerUpperCutMm: upperMm + panelMm,
+            ownerUpperCutMm: upperMm + Math.max(panelMm, clear?.upperOwnerMm ?? 0),
             ownerUpperBlindMm: 0,
+            ownerUpperFillerMm: 0,
             upperLegMm: 0,
           }
         : {
-            upperStartMm: upperMm + panelMm,
-            upperFillerMm: panelMm,
+            upperStartMm: upperMm + upperPanelMm,
+            upperFillerMm: upperPanelMm,
             ownerUpperCutMm: 0,
-            ownerUpperBlindMm: upperMm + frontMm,
+            ownerUpperBlindMm: upperMm + frontMm + ownerUpperPanelMm,
+            ownerUpperFillerMm: ownerUpperPanelMm,
             upperLegMm: 0,
           };
 
@@ -364,8 +448,12 @@ export function upperBoundsOf(
   return { fromMm, toMm };
 }
 
-/** Место фальш-панели ряда после угла: нижней и верхней. Отметки в координатах ряда. */
-export type CornerFiller = { level: 'lower' | 'upper'; fromMm: number; toMm: number };
+/**
+ * Место фальш-панели ряда: нижней и верхней. Отметки в координатах ряда.
+ * `dock` — панель ряда после угла (перед его началом), `owner` — панель
+ * владельца (STAGE A) в начале его зоны без створки, перед фасадами соседа.
+ */
+export type CornerFiller = { level: 'lower' | 'upper'; side: 'dock' | 'owner'; fromMm: number; toMm: number };
 
 /**
  * ФАЛЬШ-ПАНЕЛИ РЯДА — ГДЕ ОНИ СТОЯТ.
@@ -376,22 +464,52 @@ export type CornerFiller = { level: 'lower' | 'upper'; fromMm: number; toMm: num
  * ряда осталось уже самого узкого корпуса, панель закрывает и это — щели
  * в углу не остаётся, а модулю туда не встать.
  *
+ * Панель владельца (STAGE A): в начале его зоны без створки — от конца
+ * последнего открывающегося модуля до фасадов соседа, `[L − зона, L − зона
+ * + панель]`. Есть, только когда её требует ход (`ownerFillerMm`).
+ *
  * Одна функция на сцену, раскрой и смету: размер детали отсюда.
+ *
+ * Полоса не шире зазора между фасадами цеха (`frontGapMm`) — не деталь, а
+ * зазор: ход Г-фасада, задевший ручку соседа на 0,2 мм, требует 1 мм, и
+ * распилить «панель» в 1 мм нельзя. Ряд отходит от угла на эти миллиметры,
+ * фасады у угла стоят с зазором чуть шире обычного, детали в раскрое нет.
  */
 export function cornerFillersOf(run: Run): CornerFiller[] {
-  const dock = run.corner?.dock;
-  if (!dock) return [];
-  const g = cornerGeometry(dock, run.zone, run.production);
+  const gapMm = shopOf(run.production).frontGapMm;
+  return fillerPieces(run).filter((piece) => piece.toMm - piece.fromMm > gapMm);
+}
+
+function fillerPieces(run: Run): CornerFiller[] {
   const out: CornerFiller[] = [];
-
-  /* Пустой ряд угла не получает: панель стоит к мебели, а мебели нет. */
-  if (g.fillerMm > 0 && run.modules.length > 0) {
-    out.push({ level: 'lower', fromMm: -g.fillerMm, toMm: 0 });
-  }
-
   const uppers = run.upperSegments
     .flatMap((segment) => segment.modules)
     .filter((unit) => unit.section !== 'mezzanine' && !unit.overhead);
+
+  const own = run.corner?.own;
+  if (own) {
+    const g = cornerGeometry(own, run.zone, run.production);
+    const L = run.lengthMm;
+    /* Ряд целиком за соседом — перед фасадами соседа фасада владельца нет, и полосу закрывать нечем. */
+    if (own.lower === 'blind' && g.ownerFillerMm > 0 && run.modules.some((unit) => standsOnFloor(unit)) && L > g.ownerBlindMm) {
+      const from = L - g.ownerBlindMm;
+      out.push({ level: 'lower', side: 'owner', fromMm: from, toMm: from + g.ownerFillerMm });
+    }
+    if (own.upper === 'blind' && g.ownerUpperFillerMm > 0 && run.options.hasUpper && uppers.length > 0 && L > g.ownerUpperBlindMm) {
+      const from = L - g.ownerUpperBlindMm;
+      out.push({ level: 'upper', side: 'owner', fromMm: from, toMm: from + g.ownerUpperFillerMm });
+    }
+  }
+
+  const dock = run.corner?.dock;
+  if (!dock) return out;
+  const g = cornerGeometry(dock, run.zone, run.production);
+
+  /* Пустой ряд угла не получает: панель стоит к мебели, а мебели нет. */
+  if (g.fillerMm > 0 && run.modules.length > 0) {
+    out.push({ level: 'lower', side: 'dock', fromMm: -g.fillerMm, toMm: 0 });
+  }
+
   if (!run.options.hasUpper || uppers.length === 0) return out;
 
   const start = g.upperStartMm - g.lostMm;
@@ -417,8 +535,27 @@ export function cornerFillersOf(run: Run): CornerFiller[] {
   }
 
   const from = start - g.upperFillerMm;
-  if (to - from > 0) out.push({ level: 'upper', fromMm: from, toMm: to });
+  if (to - from > 0) out.push({ level: 'upper', side: 'dock', fromMm: from, toMm: to });
   return out;
+}
+
+/**
+ * ЧЕЙ ФАСАД ПРОДОЛЖАЕТ ПАНЕЛЬ — одна функция на сцену и раскрой.
+ *
+ * Панель соседа — его первого модуля (нижняя) или первого навесного
+ * (верхняя): она стоит перед ними. Панель владельца — модуля, чью зону без
+ * створки она закрывает: того, на чьё место приходится её начало. Цвет,
+ * лист и высота панели — от него.
+ */
+export function fillerNeighbour(run: Run, piece: CornerFiller): Module | undefined {
+  const lower = piece.level === 'lower';
+  const list = (
+    lower
+      ? run.modules.filter((unit) => standsOnFloor(unit))
+      : run.upperSegments.flatMap((segment) => segment.modules).filter((unit) => unit.section !== 'mezzanine' && !unit.overhead)
+  ).sort((a, b) => a.offsetMm - b.offsetMm);
+  if (piece.side === 'dock') return lower ? run.modules[0] : list[0];
+  return list.find((unit) => unit.offsetMm <= piece.fromMm && piece.fromMm < unit.offsetMm + unit.widthMm) ?? list[list.length - 1];
 }
 
 /**
@@ -533,16 +670,35 @@ export function lLegOf(
  * стены (ногу Г-модуля), и это поймала проверка открывания у угла
  * (слой 55). Только одностворчатый распашной и только умолчание: у двух
  * створок, подъёмника и карго стороны нет, а выбор человека сильнее.
+ *
+ * Модуль владельца прямо перед его Г-модулем — тоже от угла (STAGE A): на
+ * петлях у угла его полотно на ходу ложится в плоскость фасадов соседа, а
+ * там у стыкующегося ряда может стоять колонна. На П 3600 + 2800 + 3600 с
+ * Г-модулями (школа 600/300: угловой верхний 600 мм — ровно глубина ряда)
+ * верхняя дверь стены А входила в боковину холодильника стены Б на 12 мм.
  */
 export function cornerDoorHinge(
   unit: Module,
   run: Pick<Run, 'corner' | 'zone' | 'production' | 'lengthMm' | 'modules' | 'upperSegments'>,
 ): 'left' | 'right' | null {
   if (blindPartMm(unit, run) > 0) return 'left';
-  const dock = run.corner?.dock;
-  if (!dock) return null;
   const side = defaultOpening(unit);
   if (side !== 'left' && side !== 'right') return null;
+  if (run.corner?.own) {
+    const uppers = run.upperSegments
+      .flatMap((segment) => segment.modules)
+      .filter((m) => m.section !== 'mezzanine' && !m.overhead);
+    const pool = standsOnFloor(unit)
+      ? run.modules.filter((m) => standsOnFloor(m))
+      : isUpperRow(unit) && unit.section !== 'mezzanine' && !unit.overhead
+        ? uppers
+        : [];
+    const corner = pool.find((m) => m.kind === 'corner_base' || m.kind === 'corner_upper');
+    const gap = corner ? corner.offsetMm - (unit.offsetMm + unit.widthMm) : -1;
+    if (corner && corner !== unit && gap >= 0 && gap < MIN_WIDTH) return 'left';
+  }
+  const dock = run.corner?.dock;
+  if (!dock) return null;
 
   if (standsOnFloor(unit)) {
     const first = Math.min(...run.modules.filter((m) => standsOnFloor(m)).map((m) => m.offsetMm));

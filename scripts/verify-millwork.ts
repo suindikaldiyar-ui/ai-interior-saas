@@ -112,6 +112,7 @@ import { panelsCsvFile, panelsToCsv } from '../lib/millwork/csv-export';
 import { cuttingChecks } from './verify-cutting';
 import { stage01Checks } from './verify-stage01';
 import { lightingChecks } from './verify-lighting';
+import { stageAChecks } from './verify-stage-a';
 import { runFingerprint } from '../lib/millwork/fingerprint';
 import { surfaceFinish, surfaceLook } from '../lib/millwork/surfaces';
 import { GROUP_ORDER, estimateGroups, groupsTotal } from '../lib/millwork/estimateGroups';
@@ -4475,8 +4476,14 @@ console.log('\nВсе стены на одной схеме');
       comms: COMMS,
     });
 
+  /*
+   * П — на стене Б 2400 (STAGE A): на 1140 стены А и В стоят друг против
+   * друга ближе, чем два нижних ряда с фасадами (1152 мм), и композиция
+   * отказывает словами. Угловая — на прежних 3800 + 1140.
+   */
+  const WALLS_U = [WALLS_3[0], { id: 'w2', lengthMm: 2400, openings: [] as Opening[] }, WALLS_3[2]];
   const corner = composed('corner_l', [WALLS_3[0], WALLS_3[1]]);
-  const uShape = composed('u_shape', WALLS_3);
+  const uShape = composed('u_shape', WALLS_U);
 
   check(
     'композиции для схемы собрались — рисовать есть что',
@@ -4531,8 +4538,8 @@ console.log('\nВсе стены на одной схеме');
      */
     check(
       'соседняя стена приходит полезной длиной, а не замеренной',
-      uRows[1].lengthMm < 1140 && uRows[1].lengthMm === uShape.composition.segments[1].run.lengthMm,
-      `замер 1140 → полезных ${uRows[1].lengthMm} мм`,
+      uRows[1].lengthMm < WALLS_U[1].lengthMm && uRows[1].lengthMm === uShape.composition.segments[1].run.lengthMm,
+      `замер ${WALLS_U[1].lengthMm} → полезных ${uRows[1].lengthMm} мм`,
     );
 
     /* ─── Выделение сквозное по композиции ─── */
@@ -9884,7 +9891,8 @@ console.log('\nСмета объекта — сумма стен, а не вто
   const shapes: { title: string; walls: number[] }[] = [
     { title: 'одна стена', walls: [3800] },
     { title: 'две стены', walls: [3800, 1140] },
-    { title: 'три стены', walls: [3800, 1140, 1740] },
+    /* Стена Б 2400, а не 1140: на 1140 ряды А и В входят друг в друга, и П не собирается (STAGE A). */
+    { title: 'три стены', walls: [3800, 2400, 1740] },
   ];
 
   for (const shape of shapes) {
@@ -10835,9 +10843,15 @@ console.log('\nСохранённый ряд сверяется с длиной 
   const walls = (ls: number[]) =>
     ls.map((lengthMm, i) => ({ id: `w${i}`, lengthMm, openings: [] }));
 
+  /*
+   * Стена Б — 2400 (STAGE A): на 1140 ряды А и В стоят друг против друга
+   * ближе двух нижних рядов с фасадами, и П-образная отказывает словами.
+   * Сценарий тот же: ряд, собранный на всей стене Б без угла, при
+   * полезной длине за вычетом угла.
+   */
   const layout = buildComposition({
     kind: 'u_shape',
-    walls: walls([3800, 1140, 1740]),
+    walls: walls([3800, 2400, 1740]),
     ceilingHeightMm: 2700,
     requirements: REQ,
     comms: COMMS,
@@ -10859,9 +10873,9 @@ console.log('\nСохранённый ряд сверяется с длиной 
       wallMismatches(layout, fresh).map((m) => m.label).join(' ') || 'расхождений нет',
     );
 
-    /* Ряд, собранный на полной стене 1140, при полезных 480. */
+    /* Ряд, собранный на полной стене 2400, при полезных 1740. */
     const stale = buildRun({
-      lengthMm: 1140,
+      lengthMm: 2400,
       ceilingHeightMm: 2700,
       requirements: REQ,
       openings: [],
@@ -10871,11 +10885,11 @@ console.log('\nСохранённый ряд сверяется с длиной 
     const found = wallMismatches(layout, withStale);
 
     check(
-      'ряд на 1140 при стене 480 расхождение ПОКАЗЫВАЕТ',
+      'ряд на 2400 при стене 1740 расхождение ПОКАЗЫВАЕТ',
       found.length === 1 &&
         found[0].index === 1 &&
-        found[0].runLengthMm === 1140 &&
-        found[0].usableMm === 480,
+        found[0].runLengthMm === 2400 &&
+        found[0].usableMm === 1740,
       found.length === 0
         ? 'РАСХОЖДЕНИЕ НЕ НАЙДЕНО — ряд встал молча'
         : `${found[0].label}: ряд ${found[0].runLengthMm} при стене ${found[0].usableMm}`,
@@ -21024,6 +21038,8 @@ console.log('\nСлой 55: угол Г и П — владелец, места, 
   const keys11: string[] = [];
   const hits11: string[] = [];
   const drift12: string[] = [];
+  /* Углы, у которых панель по ходу шире настройки цеха (STAGE A), — объявлены списком ниже. */
+  const clearance55: string[] = [];
 
   for (const shape of SHAPES) {
     for (const [school, production] of SCHOOLS) {
@@ -21040,6 +21056,16 @@ console.log('\nСлой 55: угол Г и П — владелец, места, 
       }
       configs55 += 1;
       const corners = shape.corners;
+      /*
+       * Числа угла — того угла, что собрала композиция (STAGE A): у выбора
+       * человека те же виды, а панели по ходу (`clearance`) — её. Ширина
+       * панели больше не равна настройке цеха там, где этого требует ход;
+       * где и насколько — объявлено ниже списком (`clearance55`).
+       */
+      const builtCorners = screen.layout.corners.map((corner) => corner.choice);
+      builtCorners.forEach((choice, c) => {
+        if (choice.clearance) clearance55.push(`${tag} · угол ${c + 1}: ${JSON.stringify(choice.clearance)}`);
+      });
       const shop = { thicknessMm: production.carcassMm, frontThicknessMm: production.frontMm, gapMm: production.frontGapMm };
       const depthMm = rowStandardDepthMm(zone, 'base', production);
       const places = rows.map((row) => roomRowPlacement(row));
@@ -21071,7 +21097,7 @@ console.log('\nСлой 55: угол Г и П — владелец, места, 
           drift8.push(`${tag}: ряд ${row.run.wallId} — стены нет в комнате`);
           return;
         }
-        const lost = i > 0 ? cornerGeometry(corners[i - 1], zone, production).lostMm : 0;
+        const lost = i > 0 ? cornerGeometry(builtCorners[i - 1], zone, production).lostMm : 0;
         const place = places[i];
         const a = (place.rotationYDeg * Math.PI) / 180;
         const start = rotY([0, 0, -depthMm / 1000], a);
@@ -21131,14 +21157,15 @@ console.log('\nСлой 55: угол Г и П — владелец, места, 
         gaps55 += 1;
         const owner = segments[c];
         const dock = segments[c + 1];
-        const g = cornerGeometry(choice, zone, production);
+        const g = cornerGeometry(builtCorners[c], zone, production);
         const floorOwner = owner.modules.filter((unit) => standsOnFloor(unit));
         const ownerEnd = Math.max(...floorOwner.map((unit) => unit.offsetMm + unit.widthMm));
         const floorDock = dock.modules.filter((unit) => standsOnFloor(unit));
         const dockStart = Math.min(...floorDock.map((unit) => unit.offsetMm));
         const fillers = cornerFillersOf(dock);
         const lower = fillers.find((piece) => piece.level === 'lower');
-        const wantLower = choice.lower === 'blind' ? g.fillerMm : 0;
+        /* Полоса не шире зазора между фасадами — зазор, а не деталь (`cornerFillersOf`). */
+        const wantLower = choice.lower === 'blind' || g.fillerMm > production.frontGapMm ? g.fillerMm : 0;
         if (ownerEnd !== owner.lengthMm || dockStart !== 0 || (lower ? lower.toMm - lower.fromMm : 0) !== wantLower || (lower && lower.toMm !== 0)) {
           gaps9.push(
             `${tag} · угол ${c + 1}, низ: владелец кончается на ${ownerEnd} при стене ${owner.lengthMm}, ` +
@@ -21180,7 +21207,7 @@ console.log('\nСлой 55: угол Г и П — владелец, места, 
         joints55 += 1;
         const owner = segments[c];
         const dock = segments[c + 1];
-        const lost = cornerGeometry(choice, zone, production).lostMm;
+        const lost = cornerGeometry(builtCorners[c], zone, production).lostMm;
         const ownSlabs = countertopSlabs(owner);
         const dockSlabs = countertopSlabs(dock);
         const lastOwn = ownSlabs[ownSlabs.length - 1];
@@ -21307,9 +21334,9 @@ console.log('\nСлой 55: угол Г и П — владелец, места, 
                     ? leafPoses({
                         opening: leaf.opening,
                         x: leaf.xM,
-                        y: 0,
+                        y: leaf.bottomM,
                         width: leaf.widthM,
-                        height: entry.heightM,
+                        height: leaf.heightM,
                         thickness: options.frontThicknessM,
                         gap: options.gapM,
                         /*
@@ -21445,6 +21472,26 @@ console.log('\nСлой 55: угол Г и П — владелец, места, 
     '10. плита одна на угол, без щели и нахлёста; цоколь и фартук сходятся; материал один, стыков столько, сколько углов',
     drift10.length === 0 && joints55 > 0,
     drift10.length === 0 ? `углов ${joints55}` : `${drift10.length}: ${drift10.slice(0, 3).join(' | ')}`,
+  );
+  /*
+   * ПАНЕЛИ ПО ХОДУ (STAGE A) — ОБЪЯВЛЕННЫЙ СПИСОК. Где ход створок и ящиков
+   * у угла потребовал панель шире настройки цеха (или полосу у Г-модуля),
+   * это перечислено здесь поимённо и числом: ни новая, ни пропавшая панель
+   * не проходит молча.
+   */
+  /*
+   * Одна панель на 56 конфигураций: стена В П смешанной у цеха «угол
+   * 60/1000» отходит от угла на 64 мм вместо 60 — без этого ручка её двери
+   * на полном ходу заходит в ручку ящика под варочной стены Б на 4 мм
+   * (заход, найденный в слое 63 и оставленный владельцу).
+   */
+  const WANT_CLEARANCE55: string[] = [
+    'П смешанная l_shape/empty+blind/l_shape · 560/320, угол 60/1000 · угол 2: {"dockMm":64}',
+  ];
+  check(
+    '55.SA панели по ходу — ровно там и ровно той ширины, что объявлено',
+    clearance55.join(' | ') === WANT_CLEARANCE55.join(' | '),
+    clearance55.length === 0 ? 'ни у одного угла' : clearance55.join(' | '),
   );
   check(
     '11. ключ створки свой у каждой стены: створка А не открывает створку Б',
@@ -22933,9 +22980,18 @@ console.log('\nP0: идентичность стен угловой и П-обр
 
   /* ── 4. Духовка на П 3200 + 2400 + 3200: стоит или названа миллиметрами ── */
   {
+    /*
+     * ОТКАЗ — У ДУХОВКИ, ЗАКРЕПЛЁННОЙ ЗА СТЕНОЙ Б (STAGE A). По правилу
+     * духовка, которой не хватило стены Б, теперь переезжает туда, где
+     * встаёт (`rehomeRefused`; это меряет SA.1), и ветка «нет на схеме —
+     * названо миллиметрами» по правилу больше не наступает. Закреплённый
+     * человеком прибор не переезжает никогда: здесь меряется его отказ —
+     * те же слова, те же миллиметры из геометрии, та же красная полоса.
+     */
+    const pinnedOven: RunRequirements = { ...DEMO_REQUIREMENTS, applianceWalls: { ...(DEMO_REQUIREMENTS.applianceWalls ?? {}), oven: 'b' } };
     let dropped = 0;
     for (const [school, production] of SCHOOLS_P0) {
-      const screen = screenP0(U_NARROW, 'a', production);
+      const screen = screenP0(U_NARROW, 'a', production, {}, pinnedOven);
       const ovenWall = screen.layout.segments.findIndex((segment) => segment.appliances.includes('oven'));
       if (ovenWall < 0) throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: P0.4 ${school} — духовка не роздана ни одной стене`);
       const shown = screen.segments.some((run) => allModules(run).some((unit) => moduleAppliances(unit).includes('oven')));
@@ -28681,6 +28737,9 @@ stage01Checks(check);
 
 /* ═══════════  V3D-02: стекло, витрина, свет комнаты  ═══════════ */
 lightingChecks(check);
+
+/* ═══════════  ADVANCED CAD · STAGE A: угол и чистота 3D  ═══════════ */
+stageAChecks(check);
 
 Promise.allSettled(asyncChecks).then((results) => {
   for (const result of results) {

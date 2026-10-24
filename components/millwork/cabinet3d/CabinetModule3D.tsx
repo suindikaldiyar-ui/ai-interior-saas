@@ -245,19 +245,27 @@ export default function CabinetModule3D({
         */}
       {sceneLeaves(unit, heightM, openWidthM).map((leaf) => {
         /*
-         * Слой фасадов выключен — подвижного полотна нет вовсе: его нельзя
-         * ни увидеть, ни нажать. Короб ящика остаётся в пачке слоя «Ящики».
+         * СЛОИ — ЭТО ЧТО ВИДНО, А НЕ ЧТО ОТКРЫВАЕТСЯ (STAGE A).
+         *
+         * Выключенный слой «Фасады» убирал подвижную деталь целиком: в
+         * «Наполнении» короб ящика не выезжал, корзины карго стояли, петли в
+         * виде «только фурнитура» оставались на месте открытой створки.
+         * Теперь деталь ходит всегда, а в кадре — коробки включённых слоёв
+         * (`localBoxesOf` → `boxShown`); нажать можно то, что видно.
          */
-        if (!layers.fronts) return null;
         const look = lookOf(leaf.id);
         if (leaf.kind === 'drawer') {
           /*
            * КОРОБ ПО КОМПЛЕКТУ (HARDWARE-01): выезжают детали раскроя и
            * ходовая половина направляющей — те же коробки, что в пачке.
            * Условный короб `InteractiveDrawer` здесь показал бы другую мебель.
+           * Комплект ли это — по ВСЕМ коробкам детали: при выключенном слое
+           * «Ящики» его коробок в кадре нет, но это всё тот же комплект.
            */
-          const kit = localBoxesOf(leaf.id);
-          if (kit && kit.some((box) => box.node === 'runner' || box.panel === DRAWER_SIDE_PANEL_NAME)) {
+          const kitOwn = partBoxes?.(leaf.id)?.some((box) => box.node === 'runner' || box.panel === DRAWER_SIDE_PANEL_NAME);
+          const kit = localBoxesOf(leaf.id) ?? [];
+          if (kitOwn) {
+            if (kit.length === 0) return null;
             return (
               <InteractiveBayDrawer
                 key={leaf.id}
@@ -287,6 +295,8 @@ export default function CabinetModule3D({
               cutaway={cutaway}
               gap={gapM}
               handle={localBoxesOf(leaf.id)?.find((box) => box.node === 'handle')}
+              showFront={layers.fronts}
+              showBox={layers.drawers}
               onActive={onActive}
               frontMaterial={look?.material ?? frontMaterial}
               relief={look?.relief}
@@ -313,6 +323,8 @@ export default function CabinetModule3D({
           );
         }
         if (leaf.kind === 'bifold') {
+          const showHandles = boxShown({ material: 'metal', node: 'handle', part: leaf.id }, layers);
+          if (!layers.fronts && !showHandles) return null;
           return (
             <InteractiveBifold
               key={leaf.id}
@@ -329,9 +341,19 @@ export default function CabinetModule3D({
               frontMaterial={look?.material ?? frontMaterial}
               relief={look?.relief}
               onActive={onActive}
+              showFronts={layers.fronts}
+              showHandles={showHandles}
             />
           );
         }
+        const riders = localBoxesOf(leaf.id)?.filter(
+          (box) =>
+            (box.material === 'metal' && (box.node === 'hinge' || box.node === 'lift' || box.node === 'handle')) ||
+            /* Дверь витрины в раме: едут рама и её стекло. */
+            (leaf.glass === true && (box.node === 'frame' || (box.material === 'glass' && box.node === 'glass'))),
+        );
+        /* Ни полотна, ни седоков в кадре — показывать и нажимать нечего. */
+        if (!layers.fronts && (riders?.length ?? 0) === 0) return null;
         return (
           <InteractiveDoor
             key={leaf.id}
@@ -340,9 +362,9 @@ export default function CabinetModule3D({
             onToggle={onToggle}
             opening={leaf.opening}
             x={leaf.xM}
-            y={0}
+            y={leaf.bottomM}
             width={leaf.widthM}
-            height={heightM}
+            height={leaf.heightM}
             depth={depthM}
             thickness={frontThicknessM}
             parts={parts}
@@ -351,13 +373,9 @@ export default function CabinetModule3D({
             frontMaterial={look?.material ?? frontMaterial}
             relief={look?.relief}
             reliefOrient={gripOrient(look?.relief, leaf.opening, isUpperRow(unit))}
-            riders={localBoxesOf(leaf.id)?.filter(
-              (box) =>
-                (box.material === 'metal' && (box.node === 'hinge' || box.node === 'lift' || box.node === 'handle')) ||
-                /* Дверь витрины в раме: едут рама и её стекло. */
-                (leaf.glass === true && (box.node === 'frame' || (box.material === 'glass' && box.node === 'glass'))),
-            )}
+            riders={riders}
             panelless={leaf.glass === true}
+            showPanel={layers.fronts}
             glassMaterial={glassMaterial}
           />
         );

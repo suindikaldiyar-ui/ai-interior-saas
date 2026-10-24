@@ -1,0 +1,958 @@
+import { FALSE_PANEL_RANGE_MM, type HardwareItem, type ProductionSettings } from '@/types/catalog';
+import type { CornerChoice, CornerClearance, Module, Run, ZoneKind } from '@/types/millwork';
+import {
+  DRAWER_TRAVEL_M,
+  OPEN_ANGLE,
+  bifoldPoses,
+  leafPoses,
+  runBoxesByModule,
+  runPlaces,
+  sceneLeaves,
+  type PartBox,
+} from './cabinetBoxes';
+import { blindPartMm, cornerGeometry, openFrontMm } from './corner';
+import { rowStandardDepthMm } from './fill';
+import { installedItem } from './fittings';
+import { shopOf } from './shop';
+import { isUpperRow, standsOnFloor } from './modules';
+
+/**
+ * КИНЕМАТИКА УГЛА — ЧТО ЗАДЕВАЕТ НА ХОДУ И КАКАЯ ФАЛЬШ-ПАНЕЛЬ ЭТО СНИМАЕТ
+ * (ADVANCED CAD · STAGE A).
+ *
+ * У слепого угла зазор между стенами держат две полосы фасада:
+ *
+ *   фальш-панель СОСЕДА — в плоскости фасадов ряда, который к углу
+ *   стыкуется, между фасадами владельца и его первым модулем (`fillerMm`);
+ *   фальш-панель ВЛАДЕЛЬЦА — в плоскости фасадов владельца, между его
+ *   последним открывающимся модулем и фасадами соседа (`ownerFillerMm`).
+ *
+ * Обе считаются здесь: каждая створка, ящик и Г-фасад одного ряда угла
+ * проходит свой ход целиком мимо закрытых фасадов, ручек, корпусов и
+ * фальш-панелей другого ряда.
+ *
+ * ХОД — ТОТ, ЧТО ИЗВЕСТЕН (`assumptions` говорит, что взято из сцены):
+ *   створка — до угла раскрытия петли из каталога (`openingAngleDeg`);
+ *             петля не выбрана — до 90°, как её открывает сцена;
+ *   ящик    — на ход направляющей из каталога (`strokeMm`); не выбрана —
+ *             на 300 мм, как в сцене (`DRAWER_TRAVEL_M`);
+ *   ручка   — та коробка, что нарисована (`runBoxes`): модель позиции
+ *             каталога или условная скоба, когда позиция не выбрана.
+ *
+ * ВЕСЬ ХОД, А НЕ ЧЕТЫРЕ ТОЧКИ. Заход меряется с шагом 0,25° у створки и
+ * 1 мм у ящика, и каждый локальный максимум, который между точками мог
+ * дойти до касания, уточняется золотым сечением. Четыре точки (¼…1) на
+ * П 3800 + 2400 + 1740 (600/300) показывали 9,8 мм там, где ящик заходил
+ * в ручку соседа на 11,3 мм.
+ *
+ * ЧЬЯ ПАНЕЛЬ СНИМАЕТ ЗАХОД — ТОГО РЯДА, ЧТО ДВИЖЕТСЯ. Створка или ящик
+ * соседа отходит от фасадов владельца вместе со своим рядом (его панель
+ * шире), створка или ящик владельца — от фасадов соседа (панель владельца
+ * шире). Сколько — наименьший сдвиг, при котором заход по всему ходу не
+ * больше нуля, в целых миллиметрах вверх. Допусков сверх касания нет.
+ */
+
+const MM = 1000;
+
+type V3 = [number, number, number];
+/** Коробка в мире, мм: центр, полуразмеры, оси; `r` — полуразмеры по осям мира; `aligned` — оси коробки совпадают с осями мира. */
+type Obb = { c: V3; e: V3; u: [V3, V3, V3]; r: V3; aligned: boolean };
+type Box = { min: V3; max: V3 };
+
+/** Место ряда в мире: начало (метры) и поворот вокруг вертикали — как у `runPlacements`. */
+export type RowPlace = { xM: number; zM: number; rotationYDeg: number };
+
+export type ClashSide = 'dock' | 'owner';
+export type ClashLevel = 'lower' | 'upper';
+
+/** Одна подвижная деталь, заходящая на ходу в деталь другого ряда угла. */
+export type CornerClash = {
+  /** Угол: стык стен `corner` и `corner + 1`. */
+  corner: number;
+  /** Чей ряд движется: стыкующийся (`dock`) или владелец (`owner`). */
+  side: ClashSide;
+  /** Ряд движущейся детали: нижний (с колоннами) или навесной. `null` — антресоль, полка над шкафом. */
+  level: ClashLevel | null;
+  /** Стена движущейся детали и деталь словами. */
+  wall: number;
+  moduleId: string;
+  moduleLabel: string;
+  leaf: string;
+  /** Что именно заходит: полотно, ручка, короб. */
+  part: string;
+  /** Стена, модуль и деталь, в которую заходит. */
+  obstacleWall: number;
+  obstacleModuleId: string | null;
+  obstacleLabel: string;
+  obstaclePart: string;
+  /** Наибольший заход по всему ходу, мм, и где он (доля хода, 0…1). */
+  depthMm: number;
+  atS: number;
+  /**
+   * Наименьший сдвиг, при котором заход по всему ходу не больше касания,
+   * мм. `null` — сдвигом панели не снимается (до 400 мм) или у этого угла
+   * панели нет ни у одного из двух рядов.
+   */
+  needMm: number | null;
+  /** Тот же сдвиг в целых миллиметрах — проверенный прямо, им панель и шире. */
+  needWholeMm: number | null;
+  /** Чья панель это снимает: ряд и уровень, который отходит от угла. `null` — ничья. */
+  fix: { side: ClashSide; level: ClashLevel } | null;
+  /**
+   * Пара «деталь — модуль, в который она заходит»: у всех коробок одной
+   * пары (корпус, фасад, ручка, фурнитура) решение одно.
+   */
+  pair: string;
+  /**
+   * Решение, которое сняло бы заход, но не годится: панель вышла бы шире
+   * `FALSE_PANEL_RANGE_MM` («шире 100 — это уже модуль») или пустому углу
+   * не хватает ряда. Для слов отказа: что понадобилось бы и почему нельзя.
+   */
+  blocked: { fix: PanelFix; needWholeMm: number; widthMm: number; limitMm: number } | null;
+};
+
+/** Сколько добавить к панелям угла, целые миллиметры. Ноль — ничего. */
+export type CornerRaise = { dockMm: number; ownerMm: number; upperDockMm: number; upperOwnerMm: number };
+
+/** Пара и решение, выбранное ей, — для проверки, что решение подействовало. */
+export type CornerPair = { pair: string; corner: number; fix: PanelFix | null; depthMm: number };
+
+export type CornerKinematics = {
+  clashes: CornerClash[];
+  /** По каждому углу. */
+  raise: CornerRaise[];
+  /** Заходы, которые панелью не снимаются. */
+  unresolved: CornerClash[];
+  /** Пары с заходом и выбранное им решение. */
+  pairs: CornerPair[];
+  /** Что взято из сцены, а не из паспорта, — словами. */
+  assumptions: string[];
+};
+
+/** Решение пары одной строкой: `пара|сторона:ряд` — ключ того, что не подействовало. */
+export function fixKey(pair: string, fix: PanelFix): string {
+  return `${pair}|${fix.side}:${fix.level}`;
+}
+
+/**
+ * Предел ПОИСКА сдвига, мм, — не допуск: дальше заход не меряется, и деталь
+ * названа «не снять». Годится ли найденный сдвиг, решает не он, а правило
+ * панели (`FALSE_PANEL_RANGE_MM`) и длина ряда у пустого угла.
+ */
+export const MAX_PANEL_SHIFT_MM = 400;
+
+/* ─────────────────────────  панели угла  ───────────────────────── */
+
+/** Чья панель и какого ряда: та, которой ряд отходит от угла. */
+export type PanelFix = { side: ClashSide; level: ClashLevel };
+
+/**
+ * ШИРИНА ТОГО, ЧЕМ РЯД ОТХОДИТ ОТ УГЛА, мм — та, что стоит сейчас.
+ *
+ * Фальш-панель соседа (у слепого — от настройки цеха, у Г-угла — полоса у
+ * ноги, по умолчанию ноль), панель владельца у слепого модуля, а у пустого
+ * верхнего угла — сама пустота: детали там нет, угол просто шире.
+ * Числа — из `cornerGeometry`, второго расчёта угла здесь нет.
+ */
+export function panelWidthMm(
+  choice: CornerChoice,
+  fix: PanelFix,
+  zone: ZoneKind | undefined,
+  production: ProductionSettings | undefined,
+): number {
+  const g = cornerGeometry(choice, zone, production);
+  const upperDepth = rowStandardDepthMm(zone, 'upper', production);
+  if (fix.level === 'lower') return fix.side === 'dock' ? g.fillerMm : g.ownerFillerMm;
+  if (choice.upper === 'empty') return fix.side === 'dock' ? g.upperStartMm - upperDepth : g.ownerUpperCutMm - upperDepth;
+  return fix.side === 'dock' ? g.upperFillerMm : g.ownerUpperFillerMm;
+}
+
+/**
+ * ВЫБОР УГЛА С ПАНЕЛЯМИ ПО ХОДУ: к тем, что стоят, — то, что требует ход.
+ * Поля, которым добавлять нечего, остаются прежними (или отсутствуют).
+ */
+export function raisedChoice(
+  choice: CornerChoice,
+  raise: CornerRaise | undefined,
+  zone: ZoneKind | undefined,
+  production: ProductionSettings | undefined,
+): CornerChoice {
+  if (!raise || (raise.dockMm <= 0 && raise.ownerMm <= 0 && raise.upperDockMm <= 0 && raise.upperOwnerMm <= 0)) return choice;
+  const width = (side: ClashSide, level: ClashLevel) => panelWidthMm(choice, { side, level }, zone, production);
+  const clearance: CornerClearance = { ...(choice.clearance ?? {}) };
+  if (raise.dockMm > 0) clearance.dockMm = width('dock', 'lower') + raise.dockMm;
+  if (raise.ownerMm > 0) clearance.ownerMm = width('owner', 'lower') + raise.ownerMm;
+  if (raise.upperDockMm > 0) clearance.upperDockMm = width('dock', 'upper') + raise.upperDockMm;
+  if (raise.upperOwnerMm > 0) clearance.upperOwnerMm = width('owner', 'upper') + raise.upperOwnerMm;
+  return { ...choice, clearance };
+}
+
+/**
+ * Полоса такой ширины — деталь или зазор: не шире зазора между фасадами цеха
+ * (`frontGapMm`) — зазор, детали нет (`cornerFillersOf`). Слова — те же.
+ */
+export function stripWords(
+  choice: CornerChoice,
+  fix: PanelFix,
+  corner: number,
+  wallOf: (wall: number) => string,
+  widthMm: number,
+  production: ProductionSettings | undefined,
+): string {
+  const gap = shopOf(production).frontGapMm;
+  if (widthMm > gap || (fix.level === 'upper' && choice.upper === 'empty')) return `${panelWords(choice, fix, corner, wallOf)} — ${widthMm} мм`;
+  const wall = wallOf(fix.side === 'dock' ? corner + 1 : corner);
+  return (
+    `у угла ${wall} зазор${fix.level === 'upper' ? ' навесного ряда' : ''} — ${widthMm} мм, ` +
+    `без детали: он не шире зазора между фасадами (${gap} мм)`
+  );
+}
+
+/** Что именно шире — словами: «фальш-панель стены В», «пустой угол над столешницей у стены Б». */
+export function panelWords(choice: CornerChoice, fix: PanelFix, corner: number, wallOf: (wall: number) => string): string {
+  const wall = wallOf(fix.side === 'dock' ? corner + 1 : corner);
+  if (fix.level === 'upper' && choice.upper === 'empty') return `пустой угол над столешницей у ${wall}`;
+  const owner = fix.side === 'owner' ? ' у слепого модуля' : choice[fix.level] === 'l_shape' ? ' у Г-модуля' : '';
+  return `фальш-панель ${wall}${owner}${fix.level === 'upper' ? ' (навесной ряд)' : ''}`;
+}
+
+/* ─────────────────────────  геометрия  ───────────────────────── */
+
+const cross = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+
+function turnOf(place: RowPlace) {
+  const a = (place.rotationYDeg * Math.PI) / 180;
+  return (v: V3): V3 => [v[0] * Math.cos(a) + v[2] * Math.sin(a), v[1], -v[0] * Math.sin(a) + v[2] * Math.cos(a)];
+}
+
+/** Коробка ряда (метры, в осях ряда; повороты створки — `yaw`/`pitch`) → коробка мира, мм. */
+function obbOf(place: RowPlace, center: V3, size: V3, yaw = 0, pitch = 0): Obb {
+  const a = (place.rotationYDeg * Math.PI) / 180;
+  const ca = Math.cos(a);
+  const sa = Math.sin(a);
+  const cy = Math.cos(yaw);
+  const sy = Math.sin(yaw);
+  const cp = Math.cos(pitch);
+  const sp = Math.sin(pitch);
+  /* Оси коробки в осях ряда (наклон вокруг x, затем поворот вокруг y) — и поворот ряда. */
+  const u: [V3, V3, V3] = [
+    [cy * ca - sy * sa, 0, -cy * sa - sy * ca],
+    [sy * sp * ca + cy * sp * sa, cp, -sy * sp * sa + cy * sp * ca],
+    [sy * cp * ca + cy * cp * sa, -sp, -sy * cp * sa + cy * cp * ca],
+  ];
+  const e: V3 = [(size[0] * MM) / 2, (size[1] * MM) / 2, (size[2] * MM) / 2];
+  const r: V3 = [
+    e[0] * Math.abs(u[0][0]) + e[1] * Math.abs(u[1][0]) + e[2] * Math.abs(u[2][0]),
+    e[0] * Math.abs(u[0][1]) + e[1] * Math.abs(u[1][1]) + e[2] * Math.abs(u[2][1]),
+    e[0] * Math.abs(u[0][2]) + e[1] * Math.abs(u[1][2]) + e[2] * Math.abs(u[2][2]),
+  ];
+  /* Выровнена по осям мира: поворот ряда кратен 90°, и у коробки нет своего поворота, кроме кратного 90°. */
+  const right = (v: number) => Math.abs(Math.sin(2 * v)) < 1e-12;
+  const aligned = right(a) && right(yaw) && right(pitch);
+  const c: V3 = [
+    (center[0] * ca + center[2] * sa + place.xM) * MM,
+    center[1] * MM,
+    (-center[0] * sa + center[2] * ca + place.zM) * MM,
+  ];
+  return { c, e, u, r, aligned };
+}
+
+function boxOf(obb: Obb): Box {
+  return {
+    min: [obb.c[0] - obb.r[0], obb.c[1] - obb.r[1], obb.c[2] - obb.r[2]],
+    max: [obb.c[0] + obb.r[0], obb.c[1] + obb.r[1], obb.c[2] + obb.r[2]],
+  };
+}
+
+function boxesMeet(a: Box, b: Box): boolean {
+  return (
+    a.min[0] <= b.max[0] && b.min[0] <= a.max[0] &&
+    a.min[1] <= b.max[1] && b.min[1] <= a.max[1] &&
+    a.min[2] <= b.max[2] && b.min[2] <= a.max[2]
+  );
+}
+
+/** Перекрытие проекций двух коробок на ось (x, y, z), мм. */
+function overlapOn(A: Obb, B: Obb, d: V3, x: number, y: number, z: number): number {
+  let ra = 0;
+  let rb = 0;
+  for (let k = 0; k < 3; k += 1) {
+    ra += A.e[k] * Math.abs(A.u[k][0] * x + A.u[k][1] * y + A.u[k][2] * z);
+    rb += B.e[k] * Math.abs(B.u[k][0] * x + B.u[k][1] * y + B.u[k][2] * z);
+  }
+  return ra + rb - Math.abs(d[0] * x + d[1] * y + d[2] * z);
+}
+
+/**
+ * Насколько коробки входят друг в друга, мм: теорема о разделяющей оси,
+ * 15 осей. Ноль и меньше — не входят (минус — зазор по найденной оси, он
+ * не больше настоящего расстояния).
+ *
+ * Две коробки, выровненные по осям мира, — три оси: остальные двенадцать
+ * у них нулевые или повторяют эти, и ответ тот же. `stop` — порог, ниже
+ * которого точное число вызывающему не нужно: проверка выходит, как только
+ * заход опустился под него.
+ */
+function depthOf(A: Obb, B: Obb, stop = -Infinity): number {
+  const d: V3 = [B.c[0] - A.c[0], B.c[1] - A.c[1], B.c[2] - A.c[2]];
+  if (A.aligned && B.aligned) {
+    return Math.min(
+      A.r[0] + B.r[0] - Math.abs(d[0]),
+      A.r[1] + B.r[1] - Math.abs(d[1]),
+      A.r[2] + B.r[2] - Math.abs(d[2]),
+    );
+  }
+  let least = Infinity;
+  for (const axis of [A.u[0], A.u[1], A.u[2], B.u[0], B.u[1], B.u[2]]) {
+    least = Math.min(least, overlapOn(A, B, d, axis[0], axis[1], axis[2]));
+    if (least < stop) return least;
+  }
+  for (const a of A.u) {
+    for (const b of B.u) {
+      const n = cross(a, b);
+      const len = Math.hypot(n[0], n[1], n[2]);
+      if (len <= 1e-9) continue;
+      least = Math.min(least, overlapOn(A, B, d, n[0] / len, n[1] / len, n[2] / len));
+      if (least < stop) return least;
+    }
+  }
+  return least;
+}
+
+/* ─────────────────────────  что движется и обо что  ───────────────────────── */
+
+type Moving = {
+  wall: number;
+  unit: Module;
+  leaf: string;
+  level: ClashLevel | null;
+  /** Коробки детали в мире при доле хода `s`. */
+  at: (s: number) => { obb: Obb; part: string }[];
+  /** Шаг выборки по доле хода и наибольшая скорость точки, мм на единицу доли. */
+  steps: number;
+  speed: number;
+  /** Положения на шагах выборки — один раз на деталь, а не на каждую пару. */
+  samples: { obbs: Obb[]; box: Box }[];
+  /** Ручка детали — условная скоба (позиции каталога нет). */
+  conditionalHandle: boolean;
+  /** Габарит всего хода в мире — для отбора пар. */
+  swept: Box;
+};
+
+type Solid = {
+  wall: number;
+  obb: Obb;
+  box: Box;
+  moduleId: string | null;
+  label: string;
+  part: string;
+  /** Ручка без позиции каталога — условная скоба (её размер — не паспорт). */
+  conditional: boolean;
+  /** Ряд детали: нижний (с колоннами), навесной; `null` — антресоль, полка над шкафом. */
+  level: ClashLevel | null;
+};
+
+/**
+ * ЕСТЬ ЛИ У ЭТОГО УГЛА ПАНЕЛЬ, КОТОРОЙ РЯД ОТХОДИТ ОТ УГЛА.
+ *
+ *   сосед внизу    — у слепого (фальш-панель) и у Г-угла (полоса у ноги);
+ *   владелец внизу — у слепого (панель у слепого модуля); Г-модуль от угла не отходит;
+ *   сосед наверху  — у слепого, у Г и у пустого (пустой угол шире);
+ *   владелец наверху — у слепого и у пустого.
+ */
+function panelAt(choice: CornerChoice | undefined, side: ClashSide, level: ClashLevel): boolean {
+  if (!choice) return false;
+  if (level === 'lower') return side === 'dock' ? true : choice.lower === 'blind';
+  return side === 'dock' ? true : choice.upper === 'blind' || choice.upper === 'empty';
+}
+
+function shopBoxes(run: Run, production: ProductionSettings, hardware?: Map<string, HardwareItem>) {
+  return runBoxesByModule(run, {
+    thicknessMm: production.carcassMm,
+    frontThicknessMm: production.frontMm,
+    gapMm: production.frontGapMm,
+    production,
+    ...(hardware ? { hardware } : {}),
+  });
+}
+
+/** Деталь словами — в винительном падеже: «заходит в ручку», «в корпус». */
+function partWords(box: Pick<PartBox, 'node' | 'material' | 'panel'>): string {
+  if (box.node === 'handle') return 'ручку';
+  if (box.material === 'front') return 'фасад';
+  if (box.material === 'glass') return 'стекло';
+  if (box.material === 'metal') return 'фурнитуру';
+  if (box.material === 'appliance') return 'прибор';
+  return 'корпус';
+}
+
+function levelOf(unit: Module): ClashLevel | null {
+  if (standsOnFloor(unit)) return 'lower';
+  if (isUpperRow(unit) && unit.section !== 'mezzanine' && !unit.overhead) return 'upper';
+  return null;
+}
+
+/** Угол раскрытия створки, радианы: петля каталога — её паспорт; нет — как в сцене. */
+function openAngleOf(unit: Module, leaf: string, hardware: Map<string, HardwareItem> | undefined, opening: string): {
+  angle: number;
+  known: boolean;
+} {
+  const slot = opening === 'lift' || opening === 'flap' ? 'lift' : 'hinge';
+  const item = installedItem(unit, slot, hardware, undefined, leaf) ?? installedItem(unit, slot, hardware);
+  const deg = item?.hardware.openingAngleDeg;
+  return deg && deg > 0 ? { angle: (deg * Math.PI) / 180, known: true } : { angle: OPEN_ANGLE, known: false };
+}
+
+/** Ход ящика, метры: направляющая каталога — её паспорт; нет — как в сцене. */
+function travelOf(unit: Module, hardware: Map<string, HardwareItem> | undefined): { travelM: number; known: boolean } {
+  const stroke = installedItem(unit, 'slide', hardware)?.hardware.strokeMm;
+  return stroke && stroke > 0 ? { travelM: stroke / MM, known: true } : { travelM: DRAWER_TRAVEL_M, known: false };
+}
+
+function movingOf(
+  run: Run,
+  wall: number,
+  place: RowPlace,
+  production: ProductionSettings,
+  hardware: Map<string, HardwareItem> | undefined,
+  rowBoxes: PartBox[],
+  told: Set<string>,
+  /** Встречает ли габарит хода соседние ряды угла. */
+  near: (box: Box) => boolean,
+): Moving[] {
+  const out: Moving[] = [];
+  const tf = production.frontMm / MM;
+  const gap = production.frontGapMm / MM;
+  for (const entry of runPlaces(run)) {
+    const unit = entry.unit;
+    const blind = blindPartMm(unit, run) > 0;
+    const leaves = sceneLeaves(unit, entry.heightM, blind ? openFrontMm(unit, run) / MM : undefined);
+    for (const leaf of leaves) {
+      const level = levelOf(unit);
+      let at: Moving['at'];
+      let steps: number;
+      let speed: number;
+      if (leaf.kind === 'door') {
+        const own = rowBoxes.find((box) => box.part === leaf.id && box.node === 'handle');
+        const handle = own
+          ? { ...own, position: [own.position[0] - entry.x, own.position[1] - entry.y, own.position[2] - entry.zM] as V3 }
+          : null;
+        const { angle, known } = openAngleOf(unit, leaf.id.slice(unit.id.length + 1), hardware, leaf.opening);
+        if (!known) told.add('створка — до 90°, как в сцене: петля каталога не выбрана');
+        at = (s) =>
+          leafPoses({
+            opening: leaf.opening,
+            x: leaf.xM,
+            y: leaf.bottomM,
+            width: leaf.widthM,
+            height: leaf.heightM,
+            thickness: tf,
+            gap,
+            handle,
+            s,
+            openAngle: angle,
+          }).map((box) => ({
+            obb: obbOf(place, [box.center[0] + entry.x, box.center[1] + entry.y, box.center[2] + entry.zM], box.size, box.yaw ?? 0, box.pitch ?? 0),
+            part: box.role === 'handle' ? 'ручка' : 'полотно',
+          }));
+        /*
+         * Шаг 0,5°. Скорость — верхняя оценка для отбора максимумов на
+         * уточнение, а не допуск результата: точка дальше всех от оси — край
+         * полотна или ручки, и до неё не больше полотна плюс 250 мм.
+         */
+        steps = Math.max(8, Math.ceil(((angle * 180) / Math.PI) / 0.5));
+        const reach = (leaf.opening === 'lift' || leaf.opening === 'flap' ? leaf.heightM : leaf.widthM) + 0.25;
+        speed = reach * angle * MM;
+      } else if (leaf.kind === 'bifold') {
+        at = (s) =>
+          bifoldPoses(
+            unit,
+            { x: entry.x, y: entry.y, heightM: entry.heightM, depthM: entry.depthM, thicknessM: production.carcassMm / MM, zM: entry.zM },
+            { gapM: gap, frontThicknessM: tf, integratedHandles: Boolean(run.options.integratedHandles), ...(hardware ? { hardware } : {}) },
+            s,
+          ).map((box) => ({
+            obb: obbOf(place, box.center, box.size, box.yaw ?? 0, box.pitch ?? 0),
+            part: box.role === 'handle' ? 'ручка' : 'фасад',
+          }));
+        told.add('Г-фасады — до 90° и ещё 90°, как в сцене');
+        steps = 720;
+        speed = (unit.widthMm / MM) * Math.PI * MM;
+      } else {
+        const parts = rowBoxes.filter((box) => box.part === leaf.id);
+        if (parts.length === 0) continue;
+        const { travelM, known } = travelOf(unit, hardware);
+        if (!known) told.add('ящик — на 300 мм, как в сцене: ход направляющей каталога не выбран');
+        at = (s) =>
+          parts.map((box) => ({
+            obb: obbOf(place, [box.position[0], box.position[1], box.position[2] + travelM * s], box.scale),
+            part: box.node === 'handle' ? 'ручка' : box.material === 'front' ? 'фасад' : 'короб',
+          }));
+        steps = Math.max(8, Math.ceil(travelM * MM));
+        speed = travelM * MM;
+      }
+      /*
+       * Грубый отбор: ход по восьми долям с запасом на путь точки между ними.
+       * Не встречает соседние ряды угла — полной выборки не нужно: деталь
+       * далеко от угла, и запас шире любого пути между долями.
+       */
+      const coarsePad = speed / 8;
+      let coarse: Box | null = null;
+      for (let i = 0; i <= 8; i += 1) {
+        for (const { obb } of at(i / 8)) {
+          const b = boxOf(obb);
+          coarse = coarse
+            ? { min: [0, 1, 2].map((k) => Math.min(coarse!.min[k], b.min[k])) as V3, max: [0, 1, 2].map((k) => Math.max(coarse!.max[k], b.max[k])) as V3 }
+            : b;
+        }
+      }
+      if (!coarse) continue;
+      coarse = { min: coarse.min.map((v) => v - coarsePad) as V3, max: coarse.max.map((v) => v + coarsePad) as V3 };
+      if (!near(coarse)) continue;
+
+      /* Положения на всех шагах и габарит хода — с запасом на то, что между шагами. */
+      const pad = speed / steps;
+      const samples: Moving['samples'] = [];
+      let swept: Box | null = null;
+      for (let i = 0; i <= steps; i += 1) {
+        const obbs = at(i / steps).map((entry) => entry.obb);
+        if (obbs.length === 0) continue;
+        const boxes = obbs.map(boxOf);
+        const box: Box = {
+          min: [0, 1, 2].map((k) => Math.min(...boxes.map((b) => b.min[k])) - pad) as V3,
+          max: [0, 1, 2].map((k) => Math.max(...boxes.map((b) => b.max[k])) + pad) as V3,
+        };
+        samples.push({ obbs, box });
+        swept = swept
+          ? { min: [0, 1, 2].map((k) => Math.min(swept!.min[k], box.min[k])) as V3, max: [0, 1, 2].map((k) => Math.max(swept!.max[k], box.max[k])) as V3 }
+          : box;
+      }
+      if (!swept || samples.length !== steps + 1) continue;
+      const handleBox = rowBoxes.find((box) => box.part === leaf.id && box.node === 'handle');
+      out.push({
+        wall,
+        unit,
+        leaf: leaf.id.slice(unit.id.length + 1),
+        level,
+        at,
+        steps,
+        speed,
+        samples,
+        swept,
+        conditionalHandle: Boolean(handleBox) && !handleBox!.handle?.itemId,
+      });
+    }
+  }
+  return out;
+}
+
+function solidsOf(grouped: ReturnType<typeof shopBoxes>, wall: number, place: RowPlace): Solid[] {
+  const out: Solid[] = [];
+  for (const box of grouped.fillers) {
+    const obb = obbOf(place, box.position, box.scale);
+    out.push({
+      wall,
+      obb,
+      box: boxOf(obb),
+      moduleId: null,
+      label: box.panel ?? 'добор',
+      part: 'фальш-панель',
+      conditional: false,
+      /* Панель навесного ряда — та, что выше столешницы (её имя «…верхняя»). */
+      level: box.panel?.endsWith('верхняя') ? 'upper' : 'lower',
+    });
+  }
+  for (const { unit, boxes } of grouped.modules) {
+    for (const box of boxes) {
+      const obb = obbOf(place, box.position, box.scale);
+      out.push({
+        wall,
+        obb,
+        box: boxOf(obb),
+        moduleId: unit.id,
+        label: unit.label,
+        part: partWords(box),
+        conditional: box.node === 'handle' && !box.handle?.itemId,
+        level: levelOf(unit),
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * НАИБОЛЬШИЙ ЗАХОД ПО ВСЕМУ ХОДУ, мм, и где он.
+ *
+ * Выборка с шагом `1/steps`; каждый локальный максимум, который между
+ * соседними точками мог подняться до касания (запас — скорость точки на
+ * шаг), уточняется золотым сечением на двух шагах вокруг.
+ */
+function worstOf(moving: Moving, solid: Solid, shift: V3): { depth: number; s: number } {
+  const moveOf = (obb: Obb): Obb => ({ ...obb, c: [obb.c[0] + shift[0], obb.c[1] + shift[1], obb.c[2] + shift[2]] });
+  const shiftedSolid: Box = {
+    min: [solid.box.min[0] - shift[0], solid.box.min[1] - shift[1], solid.box.min[2] - shift[2]],
+    max: [solid.box.max[0] - shift[0], solid.box.max[1] - shift[1], solid.box.max[2] - shift[2]],
+  };
+  const n = moving.steps;
+  const slack = moving.speed / n;
+  /*
+   * Ниже «касание минус путь точки за шаг» точное число не нужно: такая
+   * точка не касание и между соседними шагами им не станет.
+   */
+  const stop = TOUCH_MM - slack - 1;
+  const depthOfObbs = (obbs: Obb[]) => {
+    let worst = -Infinity;
+    for (const obb of obbs) worst = Math.max(worst, depthOf(moveOf(obb), solid.obb, stop));
+    return worst;
+  };
+  const depthAt = (s: number) => depthOfObbs(moving.at(s).map((entry) => entry.obb));
+  /*
+   * Точка хода, чей габарит (с запасом на шаг) не встречает деталь, —
+   * не касание и на соседних долях: ей ставится «далеко», и SAT там не
+   * считается. Это не допуск: запас шире пути точки за шаг.
+   */
+  const values: number[] = moving.samples.map((sample) =>
+    boxesMeet(sample.box, shiftedSolid) ? depthOfObbs(sample.obbs) : -Infinity,
+  );
+  let best = { depth: -Infinity, s: 0 };
+  for (let i = 0; i <= n; i += 1) {
+    const v = values[i];
+    if (v > best.depth) best = { depth: v, s: i / n };
+    const left = i > 0 ? values[i - 1] : -Infinity;
+    const right = i < n ? values[i + 1] : -Infinity;
+    if (v < left || v < right) continue;
+    if (!(v > -slack)) continue;
+    /*
+     * Внутри плато уточнять нечего: заход там постоянный (ящик идёт мимо
+     * ручки, перекрытие по ширине одно), а края плато уточняются.
+     */
+    if (v === left && v === right) continue;
+    /* Золотое сечение на [i − 1, i + 1]: максимум между точками. */
+    let a = Math.max(0, (i - 1) / n);
+    let b = Math.min(1, (i + 1) / n);
+    const g = (Math.sqrt(5) - 1) / 2;
+    let x1 = b - g * (b - a);
+    let x2 = a + g * (b - a);
+    let f1 = depthAt(x1);
+    let f2 = depthAt(x2);
+    for (let k = 0; k < 40 && b - a > 1e-7; k += 1) {
+      if (f1 < f2) {
+        a = x1;
+        x1 = x2;
+        f1 = f2;
+        x2 = a + g * (b - a);
+        f2 = depthAt(x2);
+      } else {
+        b = x2;
+        x2 = x1;
+        f2 = f1;
+        x1 = b - g * (b - a);
+        f1 = depthAt(x1);
+      }
+    }
+    for (const [s, f] of [
+      [x1, f1],
+      [x2, f2],
+    ] as [number, number][]) {
+      if (f > best.depth) best = { depth: f, s };
+    }
+  }
+  return best;
+}
+
+/**
+ * Касание — это ноль захода. Сравнение идёт с микрометром, а не с нулём:
+ * сдвиг ровно на заход даёт ноль, а сумма косинусов — 1e-13 мм.
+ */
+const TOUCH_MM = 1e-3;
+
+/**
+ * НАИМЕНЬШИЙ СДВИГ вдоль `dir` (единичный, мир), при котором заход по всему
+ * ходу не больше касания: точный (до 0,01 мм) и в целых миллиметрах — его
+ * проверяют прямо, а не округляют вверх, иначе сдвиг ровно 4 мм стал бы 5.
+ * `null` — не нашёлся до предела.
+ */
+function needOf(moving: Moving, solid: Solid, dir: V3, depthMm: number, searchMm: number): { exact: number; whole: number } | null {
+  const at = (mm: number) => worstOf(moving, solid, [dir[0] * mm, dir[1] * mm, dir[2] * mm]).depth;
+  /* Вилка: от найденного захода, удваивая до предела поиска. */
+  let lo = 0;
+  let hi = Math.min(searchMm, Math.max(1, depthMm));
+  while (at(hi) > TOUCH_MM) {
+    if (hi >= searchMm) return null;
+    lo = hi;
+    hi = Math.min(searchMm, hi * 2);
+  }
+  while (hi - lo > 0.01) {
+    const mid = (lo + hi) / 2;
+    if (at(mid) > TOUCH_MM) lo = mid;
+    else hi = mid;
+  }
+  const first = Math.ceil(lo);
+  const whole = at(first) > TOUCH_MM ? first + 1 : first;
+  return { exact: hi, whole };
+}
+
+/**
+ * ЧТО ЗАДЕВАЕТ У УГЛОВ И КАКИЕ ПАНЕЛИ ЭТО СНИМАЮТ.
+ *
+ * `runs` — ряды композиции по обходу, каждый со своим углом (`run.corner`);
+ * `places` — их места (`runPlacements`). Меряется каждый угол: подвижные
+ * детали владельца против закрытых деталей соседа и наоборот. Стены
+ * напротив друг друга (А и В у П) здесь не меряются — их держит проход.
+ */
+export function cornerKinematics(input: {
+  runs: Run[];
+  places: RowPlace[];
+  production: ProductionSettings;
+  hardware?: Map<string, HardwareItem>;
+  /**
+   * Решения, которые уже пробовали и которые не подействовали (`fixKey`).
+   * Сдвиг по модели — это сдвиг всего ряда, а раскладка двигает то, что у
+   * угла: пенал в другом конце ряда с панелью владельца не уезжает.
+   */
+  avoid?: ReadonlySet<string>;
+}): CornerKinematics {
+  const { runs, places, production, hardware } = input;
+  const avoid = input.avoid ?? new Set<string>();
+  const told = new Set<string>();
+  const grouped = runs.map((run) => shopBoxes(run, production, hardware));
+  const solids = runs.map((_, wall) => solidsOf(grouped[wall], wall, places[wall]));
+  /* Габарит каждого ряда — для грубого отбора: створке у противоположного конца ряда до угла не дотянуться. */
+  const rowBox = solids.map((list) =>
+    list.length === 0
+      ? null
+      : {
+          min: [0, 1, 2].map((k) => Math.min(...list.map((s) => s.box.min[k]))) as V3,
+          max: [0, 1, 2].map((k) => Math.max(...list.map((s) => s.box.max[k]))) as V3,
+        },
+  );
+  const moving = runs.map((run, wall) =>
+    movingOf(run, wall, places[wall], production, hardware, grouped[wall].modules.flatMap((m) => m.boxes), told, (box) =>
+      [wall - 1, wall + 1].some((other) => {
+        const b = rowBox[other];
+        return Boolean(b) && boxesMeet(box, b!);
+      }),
+    ),
+  );
+
+  const clashes: CornerClash[] = [];
+  const raise: CornerRaise[] = runs.slice(1).map(() => ({ dockMm: 0, ownerMm: 0, upperDockMm: 0, upperOwnerMm: 0 }));
+  /*
+   * Варианты решения у каждой коробки: чья панель и на сколько — и годится
+   * ли. Панель — деталь, и шире `FALSE_PANEL_RANGE_MM` её не делают («шире
+   * 100 — это уже модуль»): сдвиг сверх этого — не решение, а слова отказа.
+   * Пустой верхний угол — не деталь: его предел — длина ряда.
+   */
+  type Option = { fix: PanelFix; need: { exact: number; whole: number }; widthMm: number; limitMm: number };
+  const allowed = (option: Option) => option.need.whole <= option.limitMm;
+  const optionsOf = new Map<CornerClash, Option[]>();
+
+  for (let corner = 0; corner + 1 < runs.length; corner += 1) {
+    const choice: CornerChoice | undefined = runs[corner + 1].corner?.dock ?? runs[corner].corner?.own;
+    /* Прочь от угла: сосед — вдоль своего ряда, владелец — против своего. */
+    const away: Record<ClashSide, V3> = {
+      dock: turnOf(places[corner + 1])([1, 0, 0]),
+      owner: turnOf(places[corner])([-1, 0, 0]),
+    };
+    for (const side of ['owner', 'dock'] as ClashSide[]) {
+      const wall = side === 'owner' ? corner : corner + 1;
+      const other = side === 'owner' ? corner + 1 : corner;
+      const otherSide: ClashSide = side === 'owner' ? 'dock' : 'owner';
+      for (const m of moving[wall]) {
+        for (const solid of solids[other]) {
+          if (!boxesMeet(m.swept, solid.box)) continue;
+          const worst = worstOf(m, solid, [0, 0, 0]);
+          if (worst.depth <= TOUCH_MM) continue;
+          /*
+           * ЧЕЙ СДВИГ СНИМАЕТ ЗАХОД — ДВА КАНДИДАТА.
+           * Ряд детали отходит от угла (деталь уезжает от препятствия) или
+           * ряд препятствия (препятствие уезжает от детали) — тот, у кого
+           * у этого угла есть панель (`panelAt`). Ящик владельца у слепого
+           * модуля и ручка соседа: владельцу хватает 12 мм, соседу не хватило
+           * бы и 160. Г-модуль от угла не отходит — отходит сосед.
+           */
+          const candidates: { fix: PanelFix; dir: V3 }[] = [];
+          if (m.level && panelAt(choice, side, m.level)) candidates.push({ fix: { side, level: m.level }, dir: away[side] });
+          if (solid.level && panelAt(choice, otherSide, solid.level)) {
+            const d = away[otherSide];
+            candidates.push({ fix: { side: otherSide, level: solid.level }, dir: [-d[0], -d[1], -d[2]] });
+          }
+          const options: Option[] = [];
+          for (const candidate of candidates) {
+            const empty = candidate.fix.level === 'upper' && choice?.upper === 'empty';
+            const widthMm = panelWidthMm(choice!, candidate.fix, runs[corner].zone, production);
+            const limitMm = empty
+              ? runs[candidate.fix.side === 'owner' ? corner : corner + 1].lengthMm
+              : FALSE_PANEL_RANGE_MM[1] - widthMm;
+            const found = needOf(m, solid, candidate.dir, worst.depth, Math.max(limitMm, MAX_PANEL_SHIFT_MM));
+            if (found) options.push({ fix: candidate.fix, need: found, widthMm, limitMm });
+          }
+          const clash: CornerClash = {
+            corner,
+            side,
+            level: m.level,
+            wall,
+            moduleId: m.unit.id,
+            moduleLabel: m.unit.label,
+            leaf: m.leaf,
+            part: m.at(worst.s).length > 0 ? partAt(m, solid, worst.s) : 'деталь',
+            obstacleWall: other,
+            obstacleModuleId: solid.moduleId,
+            obstacleLabel: solid.label,
+            obstaclePart: solid.part,
+            depthMm: worst.depth,
+            atS: worst.s,
+            needMm: null,
+            needWholeMm: null,
+            fix: null,
+            blocked: null,
+            /* Подписи, а не id: id выводится из места, и после пересборки ряда у той же пары он другой. */
+            pair: `${corner}|${wall}:${m.unit.label}:${m.leaf}|${other}:${solid.moduleId ? solid.label : solid.part}`,
+          };
+          clashes.push(clash);
+          optionsOf.set(clash, options);
+          if ((clash.part === 'ручка' && m.conditionalHandle) || solid.conditional) {
+            told.add('ручки — условные скобы: позиции каталога не выбраны');
+          }
+        }
+      }
+    }
+  }
+
+  /*
+   * РЕШЕНИЕ ОДНО НА ПАРУ. Корпус, фасад, ручка и фурнитура пенала — одна
+   * мебель: дай им разные решения, и пенал «отодвинут» и панелью владельца,
+   * и сдвигом всего ряда соседа, а сдвиг ряда уводит его пеналы к другому
+   * углу. Берётся решение, которое годится каждой коробке пары, с
+   * наименьшим наибольшим сдвигом; не подействовавшее раньше (`avoid`) —
+   * не берётся.
+   */
+  const pairs: CornerPair[] = [];
+  const byPair = new Map<string, CornerClash[]>();
+  for (const clash of clashes) byPair.set(clash.pair, [...(byPair.get(clash.pair) ?? []), clash]);
+  const same = (a: PanelFix, b: PanelFix) => a.side === b.side && a.level === b.level;
+  for (const [pair, list] of Array.from(byPair.entries())) {
+    let best: { fix: PanelFix; whole: number } | null = null;
+    /* Лучшее из негодных — для слов отказа: что понадобилось бы. */
+    let blocked: { option: Option; whole: number } | null = null;
+    for (const option of optionsOf.get(list[0]) ?? []) {
+      if (avoid.has(fixKey(pair, option.fix))) continue;
+      let whole = 0;
+      let fits = true;
+      let ok = true;
+      for (const clash of list) {
+        const mine = (optionsOf.get(clash) ?? []).find((o) => same(o.fix, option.fix));
+        if (!mine) {
+          fits = false;
+          break;
+        }
+        whole = Math.max(whole, mine.need.whole);
+        ok &&= allowed(mine);
+      }
+      if (!fits) continue;
+      if (ok && whole <= option.limitMm) {
+        if (!best || whole < best.whole) best = { fix: option.fix, whole };
+        continue;
+      }
+      /*
+       * Для слов отказа — только решение, которое правда двигает деталь:
+       * ряд самой детали или ряд соседа, начало которого уходит от угла.
+       * Панель владельца пенал в другом конце его ряда не двигает, и число
+       * «развела бы N мм» про неё было бы неправдой.
+       */
+      const honest = option.fix.side === list[0].side || option.fix.side === 'dock';
+      if (honest && (!blocked || whole < blocked.whole)) blocked = { option, whole };
+    }
+    pairs.push({ pair, corner: list[0].corner, fix: best?.fix ?? null, depthMm: Math.max(...list.map((clash) => clash.depthMm)) });
+    if (!best) {
+      if (blocked) {
+        for (const clash of list) {
+          clash.blocked = { fix: { ...blocked.option.fix }, needWholeMm: blocked.whole, widthMm: blocked.option.widthMm, limitMm: blocked.option.limitMm };
+        }
+      }
+      continue;
+    }
+    for (const clash of list) {
+      const mine = optionsOf.get(clash)!.find((o) => same(o.fix, best!.fix))!;
+      clash.fix = { ...best.fix };
+      clash.needMm = mine.need.exact;
+      clash.needWholeMm = mine.need.whole;
+    }
+    const r = raise[list[0].corner];
+    const key: keyof CornerRaise =
+      best.fix.level === 'lower' ? (best.fix.side === 'dock' ? 'dockMm' : 'ownerMm') : best.fix.side === 'dock' ? 'upperDockMm' : 'upperOwnerMm';
+    r[key] = Math.max(r[key], best.whole);
+  }
+
+  return {
+    clashes,
+    raise,
+    unresolved: clashes.filter((clash) => clash.needMm === null),
+    pairs,
+    assumptions: Array.from(told),
+  };
+}
+
+/** Какая коробка детали заходит глубже всех в этом положении — словами. */
+function partAt(moving: Moving, solid: Solid, s: number): string {
+  let best = { depth: -Infinity, part: 'деталь' };
+  for (const { obb, part } of moving.at(s)) {
+    const d = depthOf(obb, solid.obb);
+    if (d > best.depth) best = { depth: d, part };
+  }
+  return best.part;
+}
+
+/**
+ * ЗАХОД СЛОВАМИ — одна строка на экран, отказ композиции и отчёт.
+ *
+ * «ручка створки модуля «2 дверцы» стены В на ходу заходит в ручку модуля
+ * «Варочная панель» стены Б на 4 мм». Название стены в родительном падеже
+ * даёт вызывающий (`lowerWall(wallLabel(i), 'genitive')`): словарь стен
+ * живёт в `walls.ts`, и второго здесь нет.
+ */
+export function clashWords(clash: CornerClash, wallOf: (wall: number) => string): string {
+  const kind = clash.leaf.startsWith('door') ? 'створк' : clash.leaf.startsWith('drawer') ? 'ящик' : 'фасад';
+  const subject =
+    clash.part === 'ручка'
+      ? `ручка ${kind === 'створк' ? 'створки' : kind === 'ящик' ? 'ящика' : 'фасада'}`
+      : kind === 'створк'
+        ? clash.part === 'полотно' || clash.part === 'фасад'
+          ? 'створка'
+          : `створка (${clash.part})`
+        : kind === 'ящик'
+          ? clash.part === 'фасад'
+            ? 'ящик'
+            : `ящик (${clash.part})`
+          : 'фасад';
+  const into =
+    clash.obstaclePart === 'фальш-панель'
+      ? 'фальш-панель угла'
+      : `${clash.obstaclePart} модуля «${clash.obstacleLabel}»`;
+  return (
+    `${subject} модуля «${clash.moduleLabel}» ${wallOf(clash.wall)} на ходу заходит в ${into} ` +
+    `${wallOf(clash.obstacleWall)} на ${formatMm(clash.depthMm)} мм`
+  );
+}
+
+/**
+ * ПОЧЕМУ ЗАХОД НЕ СНЯТЬ ПАНЕЛЬЮ — словами: что понадобилось бы и почему
+ * нельзя. Одна строка на отказ композиции и на смену угла.
+ */
+export function stuckWords(clash: CornerClash, choice: CornerChoice, wallOf: (wall: number) => string): string {
+  const b = clash.blocked;
+  if (b) {
+    return b.fix.level === 'upper' && choice.upper === 'empty'
+      ? `развести можно, только сделав ${panelWords(choice, b.fix, clash.corner, wallOf)} шире на ${b.needWholeMm} мм, а ряда на это нет`
+      : `развела бы ${panelWords(choice, b.fix, clash.corner, wallOf)} ${b.widthMm + b.needWholeMm} мм, ` +
+          `а шире ${FALSE_PANEL_RANGE_MM[1]} мм — это уже модуль, а не панель`;
+  }
+  return clash.level === null
+    ? 'у этой детали своего ряда у угла нет — панелью её не отодвинуть'
+    : 'фальш-панелью у этого угла этот заход не снять';
+}
+
+/** Миллиметры словами: целые без дроби, иначе одна цифра после запятой. */
+export function formatMm(value: number): string {
+  const rounded = Math.round(value * 10) / 10;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1).replace('.', ',');
+}

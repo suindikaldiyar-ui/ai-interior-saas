@@ -46,7 +46,12 @@ export default function SceneLayersControl({ counts }: { counts: Partial<Record<
    */
   const current = SCENE_PRESETS.find((item) => item.key === preset);
   return (
-    <div className="flex shrink-0 flex-wrap items-center gap-1" data-scene-layers-group data-scene-preset-current={preset ?? 'custom'}>
+    /* С `md` — не шире полосы над сценой: раскрытые слои переносятся, а не ложатся на «На весь экран». */
+    <div
+      className="flex shrink-0 flex-wrap items-center gap-1 md:min-w-0 md:max-w-full md:shrink"
+      data-scene-layers-group
+      data-scene-preset-current={preset ?? 'custom'}
+    >
       <label className="flex items-center gap-1 text-[13px] text-graphiteMw">
         <span>Вид</span>
         <select

@@ -659,8 +659,13 @@ export default function RunSchematic({
            * этого пять кнопок «что делаем» держали строку в 518 px и
            * уезжали за правый край экрана 390: сама полоса перенос
            * умела, а группа внутри неё — нет.
+           *
+           * С `md` группа ещё и СЖИМАЕТСЯ до ширины полосы: с раскрытыми
+           * «Слоями» её строка выходила шире полосы и ложилась на «На весь
+           * экран» (STAGE A, 1440 px с панелью «Освещение»). До `md` полоса
+           * прокручивается одной строкой, и сжиматься группе там нельзя.
            */
-          <div className="flex shrink-0 flex-wrap gap-1" data-group="do">
+          <div className="flex shrink-0 flex-wrap gap-1 md:min-w-0 md:max-w-full md:shrink" data-group="do">
             {openable.length > 0 && (
               <>
                 <button
@@ -699,16 +704,24 @@ export default function RunSchematic({
               * вид, а не «Каркас» (P1): непрозрачный каркас — предустановка
               * слоёв рядом. В «Дизайн» рентген не протекает.
               */}
+            {/*
+              * В «Интерьере» рентгена нет (STAGE A): там мебель такая, какой её
+              * привезут. Кнопка не притворяется работающей — она недоступна, и
+              * причина сказана.
+              */}
             <button
               type="button"
-              data-scene-mode={frame ? 'frame' : 'fronts'}
-              aria-pressed={frame}
+              data-scene-mode={frame && !lighting?.preview.design ? 'frame' : 'fronts'}
+              aria-pressed={frame && !lighting?.preview.design}
+              disabled={Boolean(lighting?.preview.design)}
               onClick={() => setFrame(!frame)}
-              className={`mw-btn ${frame ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+              className={`mw-btn ${frame && !lighting?.preview.design ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
               title={
-                frame
-                  ? 'Рентген включён: корпус просвечивает, фасады сняты — отладочный вид'
-                  : 'Рентген: корпус просвечивает, видны внутренние детали — отладочный вид'
+                lighting?.preview.design
+                  ? 'В «Интерьере» рентгена нет: мебель показана такой, какой её привезут. Выключите «Интерьер», чтобы заглянуть внутрь'
+                  : frame
+                    ? 'Рентген включён: корпус просвечивает, фасады сняты — отладочный вид'
+                    : 'Рентген: корпус просвечивает, видны внутренние детали — отладочный вид'
               }
             >
               Рентген

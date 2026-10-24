@@ -105,6 +105,20 @@ export function nicheFacadeSpans(unit: Module, heightMm: number): FacadeSpan[] |
 }
 
 /**
+ * НИША ПРИБОРА ПЕНАЛА — ТА, ЧТО РАЗБИЛА ЕГО ФАСАД, — ИЛИ `null`.
+ *
+ * Пенал с одним прибором режется створками над нишей и под ней
+ * (`facadeSpans` по `nicheOf`), и прибор рисуется в этой же нише:
+ * нарисованный во всю высоту модуля, он вставал за открытыми створками
+ * чёрной плитой вместо полок (STAGE A). У колонны ниши свои
+ * (`columnNiches`); прибор без фасада занимает модуль целиком — `null`.
+ */
+export function tallNicheOf(unit: Module, heightMm: number): FacadeSpan | null {
+  if (unit.column || !hasFacade(unit)) return null;
+  return nicheOf(unit, heightMm)[0] ?? null;
+}
+
+/**
  * ЧТО ФИЗИЧЕСКИ ВИСИТ НА ЭТОМ МОДУЛЕ — ОДИН ОТВЕТ НА ПРОДУКТ.
  *
  * До этого вопрос решался по `frontType`, и решался неверно. `frontType`

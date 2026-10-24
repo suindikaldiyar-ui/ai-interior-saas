@@ -78,6 +78,13 @@ type Props = {
   panelless?: boolean;
   /** Стекло этой двери — вида, выбранного у модуля (`glassLook`). Нет — прежнее стекло сцены. */
   glassMaterial?: THREE.Material;
+  /**
+   * СЛОЙ «ФАСАДЫ» (STAGE A): выключен — полотна в кадре нет, но створка
+   * по-прежнему ходит, и «седоки» включённых слоёв (петли в виде «только
+   * фурнитура») едут с ней. Нажать невидимое полотно нельзя: зона касания
+   * тогда не ловит указатель, и нажатие доходит до того, что видно за ним.
+   */
+  showPanel?: boolean;
 };
 
 
@@ -101,6 +108,7 @@ export default function InteractiveDoor({
   riders,
   panelless = false,
   glassMaterial,
+  showPanel = true,
 }: Props) {
   const economy = useInteriorStore((state) => state.economyMode);
   const group = useRef<THREE.Group>(null);
@@ -193,17 +201,29 @@ export default function InteractiveDoor({
         visible={false}
         position={[panelX, panelY, 0]}
         scale={[width, height, 0.06]}
-        onClick={(event) => {
-          event.stopPropagation();
-          onToggle(id);
-        }}
-        onPointerOver={(event) => {
-          event.stopPropagation();
-          document.body.style.cursor = 'pointer';
-        }}
-        onPointerOut={() => {
-          document.body.style.cursor = '';
-        }}
+        onClick={
+          showPanel
+            ? (event) => {
+                event.stopPropagation();
+                onToggle(id);
+              }
+            : undefined
+        }
+        onPointerOver={
+          showPanel
+            ? (event) => {
+                event.stopPropagation();
+                document.body.style.cursor = 'pointer';
+              }
+            : undefined
+        }
+        onPointerOut={
+          showPanel
+            ? () => {
+                document.body.style.cursor = '';
+              }
+            : undefined
+        }
       />
 
       {/*
@@ -221,7 +241,7 @@ export default function InteractiveDoor({
         * проверка открывания у угла (`leafPoses`). Своих координат у
         * компонента нет — иначе картинка и проверка разойдутся.
         */}
-      {!panelless && (
+      {!panelless && showPanel && (
         <mesh
           geometry={reliefGeometry ?? panelBox}
           material={frontMaterial ?? parts.front}
@@ -230,7 +250,7 @@ export default function InteractiveDoor({
           castShadow
         />
       )}
-      {glass && (
+      {glass && showPanel && (
         <mesh
           geometry={parts.box}
           material={glassMaterial ?? parts.glass}

@@ -333,7 +333,8 @@ console.log('\nКомпозиция в мировых координатах');
   const shapes: { title: string; kind: CompositionKind; walls: number[] }[] = [
     { title: 'прямая', kind: 'linear', walls: [3800] },
     { title: 'угловая', kind: 'corner_l', walls: [3800, 1140] },
-    { title: 'П-образная', kind: 'u_shape', walls: [3800, 1140, 1740] },
+    /* Стена Б 2400: на 1140 ряды А и В входят друг в друга, и П не собирается (STAGE A). */
+    { title: 'П-образная', kind: 'u_shape', walls: [3800, 2400, 1740] },
   ];
 
   for (const shape of shapes) {
@@ -468,7 +469,8 @@ console.log('\nП замыкается, и угол считается одно�
   const worldOf = (production: ProductionSettings) => {
     const layout = buildComposition({
       kind: 'u_shape',
-      walls: [3800, 1140, 1740].map((lengthMm, i) => ({
+      /* Стена Б 2400: на 1140 ряды А и В входят друг в друга, и П не собирается (STAGE A). */
+      walls: [3800, 2400, 1740].map((lengthMm, i) => ({
         id: `w${i}`,
         lengthMm,
         openings: [],
@@ -539,12 +541,18 @@ console.log('\nП замыкается, и угол считается одно�
       `раскладка ${fromLayout} мм, сцена ${declared} мм`,
     );
 
-    /* ── Стена В стоит НАПРОТИВ стены А, а не за 680 мм от неё ── */
+    /*
+     * ── Стена В стоит НАПРОТИВ стены А, а не за 680 мм от неё ──
+     * Проход между корпусами А и В — ровно длина стены Б минус две глубины
+     * ряда (± 1 мм). На стене Б 1140 это было «меньше 100 мм»; стена Б
+     * теперь 2400 (STAGE A), и сверяется само число, а не порог под 1140.
+     */
     const aisleMm = Math.round((boxes[2].minZ - boxes[0].maxZ) * 1000);
+    const wantAisleMm = 2400 - 2 * Math.round(depthM * 1000);
     check(
       `${name}: П замыкается — проход между А и В, а не пустота`,
-      aisleMm >= 0 && aisleMm < 100,
-      `между А и В ${aisleMm} мм`,
+      Math.abs(aisleMm - wantAisleMm) <= 1,
+      `между А и В ${aisleMm} мм при ${wantAisleMm} = 2400 − 2 × ${Math.round(depthM * 1000)}`,
     );
 
     /* ── Габариты не пересекаются, стыки сходятся ── */
@@ -575,8 +583,9 @@ console.log('\nП замыкается, и угол считается одно�
    * ПОКАЗЫВАЕТ, а не встаёт молча.
    */
   const { layout, runs } = worldOf(DEFAULT_PRODUCTION);
+  /* Ряд, собранный на всей стене Б (2400) без угла, при полезных 1740 — тот же сценарий, что был на 1140 при 480. */
   const stale = buildRun({
-    lengthMm: 1140,
+    lengthMm: 2400,
     ceilingHeightMm: 2700,
     requirements: DEMO_REQUIREMENTS,
     openings: [],
@@ -586,7 +595,7 @@ console.log('\nП замыкается, и угол считается одно�
   const found = wallMismatches(layout, [runs[0], stale, runs[2]]);
 
   check(
-    'ряд, собранный на 1140 при стене 480, не проходит молча',
+    'ряд, собранный на 2400 при стене 1740, не проходит молча',
     found.length === 1,
     found.map((m) => `${m.label}: ${m.runLengthMm} при ${m.usableMm}`).join(' ') ||
       'РАСХОЖДЕНИЕ НЕ НАЙДЕНО',
@@ -595,7 +604,7 @@ console.log('\nП замыкается, и угол считается одно�
   /*
    * И число из сообщения на экране — это НЕ фигура речи, а та самая
    * пустота в сцене: «сдвинет соседний ряд на 660 мм» означает, что
-   * между стеной А и стеной В станет 20 + 660 = 680 мм.
+   * между стеной А и стеной В станет 1280 + 660 = 1940 мм.
    */
   const aisleOf = (rs: Pick<Run, 'lengthMm'>[]) => {
     const places = runPlacements({

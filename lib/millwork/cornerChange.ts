@@ -1,10 +1,13 @@
 import { applyOps } from './ops';
 import { CORNER_LABEL, describeFronts, moduleId } from './layout';
 import { cornerGeometry, LOWER_CORNER_TITLE, UPPER_CORNER_TITLE } from './corner';
-import { openingsOnRun } from './composition';
+import { openingsOnRun, runPlacements } from './composition';
 import { beamsOnRun } from './ceiling';
 import { MIN_WIDTH, frontPlan, isUpperRow, standsOnFloor } from './modules';
 import { lowerWall } from './walls';
+import { clashWords, cornerKinematics, fixKey, raisedChoice, stuckWords, type CornerPair } from './cornerKinematics';
+import { shopOf } from './shop';
+import type { HardwareItem } from '@/types/catalog';
 import type {
   CornerChoice,
   Module,
@@ -117,7 +120,70 @@ function shifted(unit: Module, deltaMm: number, wallId: string | undefined): Mod
   };
 }
 
-export function changeCorner(input: {
+/**
+ * СМЕНА УГЛА С ПАНЕЛЯМИ ПО ХОДУ (STAGE A).
+ *
+ * Угол меняется на месте (`changeOnce`), и ряды после смены проходят ход
+ * створок, ящиков и Г-фасадов этого угла (`cornerKinematics`, с позициями
+ * каталога). Заходит — панель того ряда, что отходит от угла, шире ровно на
+ * нужное, и смена применяется заново с ней: мебель в мире по-прежнему на
+ * месте, а нет места под панель — отказ с миллиметрами и тем, чего требует
+ * ход. Панель прежнего угла в новый не переезжает: её считали под другой
+ * угол.
+ */
+export function changeCorner(input: Parameters<typeof changeOnce>[0] & {
+  /** Фурнитура организации: ход петли и направляющей, ручки — по позициям. */
+  hardware?: Map<string, HardwareItem>;
+}): CornerChange {
+  const owner = input.runs[input.index];
+  const zone = owner?.zone ?? input.requirements.zone;
+  const production = owner?.production;
+  const wallOf = (wall: number) => lowerWall(input.labels[wall] ?? `Стена ${wall + 1}`, 'genitive');
+  const bare: CornerChoice = { lower: input.next.lower, upper: input.next.upper };
+  let next = bare;
+  let because: string | null = null;
+  /* Решение пары, после которого заход не уменьшился, отбрасывается — как у композиции. */
+  const avoid = new Set<string>();
+  let last = new Map<string, CornerPair>();
+  for (let pass = 0; pass < 8; pass += 1) {
+    const change = changeOnce({ ...input, next });
+    if (!change.ok) return because ? { ok: false, why: `${change.why} ${because}` } : change;
+    if (change.runs === input.runs) return change;
+    const places = runPlacements({ runs: change.runs, corners: change.corners, zone, production });
+    const kin = cornerKinematics({
+      runs: change.runs,
+      places,
+      production: shopOf(production),
+      avoid,
+      ...(input.hardware ? { hardware: input.hardware } : {}),
+    });
+    const here = kin.clashes.filter((clash) => clash.corner === input.index);
+    if (here.length === 0) return change;
+    const stale = kin.pairs.filter((pair) => pair.corner === input.index && last.get(pair.pair)?.fix && pair.depthMm >= last.get(pair.pair)!.depthMm - 0.05);
+    if (stale.length > 0) {
+      for (const pair of stale) avoid.add(fixKey(pair.pair, last.get(pair.pair)!.fix!));
+      next = bare;
+      last = new Map();
+      continue;
+    }
+    const stuck = here.find((clash) => !clash.fix || clash.needWholeMm === null);
+    if (stuck) {
+      const drawer = stuck.leaf.startsWith('drawer');
+      return {
+        ok: false,
+        why:
+          `При этом угле ${clashWords(stuck, wallOf)} — ${stuckWords(stuck, next, wallOf)}. ` +
+          `Поставьте у угла ручку с меньшим вылетом или «Без ручки»${drawer ? '' : ' или поменяйте сторону петель у этой створки'}.`,
+      };
+    }
+    because ??= `Столько требует ход: без панели ${clashWords(here[0], wallOf)}.`;
+    last = new Map(kin.pairs.filter((pair) => pair.corner === input.index).map((pair) => [pair.pair, pair]));
+    next = raisedChoice(next, kin.raise[input.index], zone, production);
+  }
+  return { ok: false, why: `Панели угла не сходятся и после восьми пересборок. ${because ?? ''}`.trim() };
+}
+
+function changeOnce(input: {
   /** Ряды стен — с углами от композиции (шов экрана, `wallSegments`). */
   runs: Run[];
   /** Номер угла: 0 — между стенами А и Б. */
@@ -412,7 +478,10 @@ export function cornerCards(input: Omit<Parameters<typeof changeCorner>[0], 'nex
 
   const make = (level: 'lower' | 'upper', choice: CornerChoice): CornerCard => {
     const current = choice.lower === prev.lower && choice.upper === prev.upper;
-    const geometry = cornerGeometry(choice, zone, owner?.production);
+    const change = current ? null : changeCorner({ ...input, next: choice });
+    /* Ширины — те, что встанут: у текущего — как стоит, у смены — с панелями по ходу. */
+    const shown = current ? prev : change?.ok ? (change.corners[input.index] ?? choice) : choice;
+    const geometry = cornerGeometry(shown, zone, owner?.production);
     const kind = level === 'lower' ? choice.lower : choice.upper;
     const title =
       level === 'lower'
@@ -427,16 +496,16 @@ export function cornerCards(input: Omit<Parameters<typeof changeCorner>[0], 'nex
         : kind === 'l_shape'
           ? `${widthMm}×${widthMm} мм, два фасада вместе`
           : 'над столешницей в углу шкафа нет';
-    if (current) return { key: `${level}:${kind}`, level, title, hint, widthMm, choice, current, runs: input.runs };
-    const change = changeCorner({ ...input, next: choice });
+    if (current || !change) return { key: `${level}:${kind}`, level, title, hint, widthMm, choice, current, runs: input.runs };
     return change.ok
       ? { key: `${level}:${kind}`, level, title, hint, widthMm, choice, current, runs: change.runs }
       : { key: `${level}:${kind}`, level, title, hint, widthMm, choice, current, refusal: change.why, runs: null };
   };
 
-  const lower = (['blind', 'l_shape'] as const).map((kind) => make('lower', { ...prev, lower: kind }));
+  /* Выбор карточки — только вид угла: панели по ходу прежнего угла под новый не годятся. */
+  const lower = (['blind', 'l_shape'] as const).map((kind) => make('lower', { lower: kind, upper: prev.upper }));
   const upper = owner?.options.hasUpper
-    ? (['l_shape', 'blind', 'empty'] as const).map((kind) => make('upper', { ...prev, upper: kind }))
+    ? (['l_shape', 'blind', 'empty'] as const).map((kind) => make('upper', { lower: prev.lower, upper: kind }))
     : [];
   return [...lower, ...upper];
 }
