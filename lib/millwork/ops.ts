@@ -13,7 +13,7 @@ import {
   snapToStandard,
 } from './modules';
 import { rowSpansOfRun, upperSpansOfRun, buildUpperRow, fillGap, moduleId, onWall, sectionMezzanineBand, uniqueModuleIds } from './layout';
-import { blindPartMm, blindVariantRefusal, cornerDoorHinge, cornerGeometry, upperBoundsOf } from './corner';
+import { blindPartMm, blindVariantRefusal, cornerDoorHinge, levelBoundsOf, upperCornerOf } from './corner';
 import { counterTailsOf } from './countertop';
 import { obstaclesInBand, rowBandMm, wallObstacles, type WallObstacle } from './obstacles';
 import {
@@ -116,6 +116,47 @@ function asMezzanine(unit: Module, wallId?: string): Module {
     fill: undefined,
     label: 'Антресоль',
   };
+}
+
+/**
+ * АНТРЕСОЛЬ НАД ВЕРХНИМ РЯДОМ — В СВОИХ ГРАНИЦАХ У УГЛОВ (P0).
+ *
+ * Копии модулей верха стоят там, где стоит верх. У угла, который антресоль
+ * ведёт не так, как верх (своим владельцем или пустым углом), верх и
+ * антресоль кончаются в разных местах: копия за границей антресоли режется
+ * по ней (а уже самого узкого корпуса — не ставится), а у угла, который
+ * антресоль ведёт, а верх нет, она доходит до стены соседа своим модулем.
+ * Без этого антресоль стыкующейся стены стояла над верхом до самого угла —
+ * в фальш-панели антресоли и под антресолью владельца (16 мм на Г 3800 +
+ * 2400, «верх ведёт Б, антресоль — А»). Границы — `levelBoundsOf`, те же,
+ * по которым стоят её фальш-панели и участки (`rowSpansOfRun`).
+ */
+function mezzanineInBounds(copies: Module[], run: Run, wallId?: string): Module[] {
+  if (!run.corner || copies.length === 0) return copies;
+  const mezz = levelBoundsOf(run, 'mezzanine');
+  const upper = levelBoundsOf(run, 'upper');
+  const out: Module[] = [];
+  for (const unit of [...copies].sort((a, b) => a.offsetMm - b.offsetMm)) {
+    const from = Math.max(unit.offsetMm, mezz.fromMm);
+    const to = Math.min(unit.offsetMm + unit.widthMm, mezz.toMm);
+    if (to - from < MIN_WIDTH) continue;
+    out.push(
+      from === unit.offsetMm && to - from === unit.widthMm
+        ? unit
+        : /* Срезанная копия Г-модуля — уже не Г: прямой модуль антресоли. */
+          { ...unit, kind: unit.kind === 'corner_upper' ? 'upper' : unit.kind, offsetMm: from, widthMm: to - from, id: moduleId('mezz', from, undefined, wallId) },
+    );
+  }
+  const first = out[0];
+  const last = out[out.length - 1];
+  if (first && mezz.fromMm < upper.fromMm && first.offsetMm <= upper.fromMm + 0.5 && first.offsetMm - mezz.fromMm >= MIN_WIDTH) {
+    out.unshift(asMezzanine({ ...first, kind: 'upper', offsetMm: mezz.fromMm, widthMm: first.offsetMm - mezz.fromMm }, wallId));
+  }
+  if (last && mezz.toMm > upper.toMm && last.offsetMm + last.widthMm >= upper.toMm - 0.5 && mezz.toMm - (last.offsetMm + last.widthMm) >= MIN_WIDTH) {
+    const at = last.offsetMm + last.widthMm;
+    out.push(asMezzanine({ ...last, kind: 'upper', offsetMm: at, widthMm: mezz.toMm - at }, wallId));
+  }
+  return out;
 }
 
 function makePlainModule(
@@ -3527,7 +3568,6 @@ export function applyOps({
    * и держанный шкаф над угловым модулем соседа снимался бы как «вне
    * участка».
    */
-  const cornerOwn = run.corner?.own;
   const fresh = options.hasUpper
     ? buildUpperRow(
         modules,
@@ -3536,13 +3576,7 @@ export function applyOps({
         { ...requirements, options },
         run.ceilingHeightMm,
         undefined,
-        run.corner
-          ? {
-              ...upperBoundsOf({ ...run, zone }),
-              own: cornerOwn,
-              geometry: cornerOwn ? cornerGeometry(cornerOwn, zone, run.production) : null,
-            }
-          : undefined,
+        upperCornerOf({ ...run, zone }),
       ).map((segment) => ({ ...segment, modules: onWall(segment.modules, run.wallId) }))
     : [];
 
@@ -3819,12 +3853,16 @@ export function applyOps({
                   const front = kept.get(unit.id) ?? upperFrontAll;
                   return front ? { ...unit, front } : unit;
                 })
-            : spans.flatMap((segment) =>
-              segment.modules.map((unit) => {
-                const mezz = asMezzanine(unit, nextRun.wallId);
-                const front = kept.get(mezz.id) ?? upperFrontAll ?? unit.front;
-                return front ? { ...mezz, front } : mezz;
-              }),
+            : mezzanineInBounds(
+                spans.flatMap((segment) =>
+                  segment.modules.map((unit) => {
+                    const mezz = asMezzanine(unit, nextRun.wallId);
+                    const front = kept.get(mezz.id) ?? upperFrontAll ?? unit.front;
+                    return front ? { ...mezz, front } : mezz;
+                  }),
+                ),
+                { ...nextRun, zone },
+                nextRun.wallId,
               );
 
     /*

@@ -138,9 +138,13 @@ export const CORNER_UPPER_FILLER_PANEL_NAME = 'Фальш-панель угла 
  */
 export const CORNER_OWNER_FILLER_PANEL_NAME = 'Фальш-панель угла у слепого модуля';
 export const CORNER_OWNER_UPPER_FILLER_PANEL_NAME = 'Фальш-панель угла у слепого модуля верхняя';
+/** Фальш-панели антресоли со своим стыком в углу (P0). */
+export const CORNER_MEZZ_FILLER_PANEL_NAME = 'Фальш-панель угла антресоли';
+export const CORNER_OWNER_MEZZ_FILLER_PANEL_NAME = 'Фальш-панель угла у слепого модуля антресоли';
 
 /** Имя детали фальш-панели — одно на сцену и раскрой. */
-export function cornerFillerName(piece: { level: 'lower' | 'upper'; side: 'dock' | 'owner' }): string {
+export function cornerFillerName(piece: { level: 'lower' | 'upper' | 'mezzanine'; side: 'dock' | 'owner' }): string {
+  if (piece.level === 'mezzanine') return piece.side === 'owner' ? CORNER_OWNER_MEZZ_FILLER_PANEL_NAME : CORNER_MEZZ_FILLER_PANEL_NAME;
   if (piece.side === 'owner') return piece.level === 'lower' ? CORNER_OWNER_FILLER_PANEL_NAME : CORNER_OWNER_UPPER_FILLER_PANEL_NAME;
   return piece.level === 'lower' ? CORNER_FILLER_PANEL_NAME : CORNER_UPPER_FILLER_PANEL_NAME;
 }
@@ -704,9 +708,15 @@ function moduleBodyPanels(
    * до боковины Б (S − глубина − толщина фасада). Зазор — как у всех.
    */
   if (lCorner) {
-    /* Пара открывается вместе, и фасад у неё один — створки `door:0` (P3D-MDF). */
+    /*
+     * «Книжка» открывается вместе, и фасад у неё один — створки `door:0`
+     * (P3D-MDF). Две дверцы на своих петлях (P0, видео) — две створки: у Б
+     * свой ключ `door:1` и свой фасад детали. Размеры те же: деталь та же,
+     * меняется, как она висит.
+     */
+    const second = unit.kind === 'corner_upper' && unit.cornerDoors === 'pair' ? 'door:1' : 'door:0';
     pushFront(legName(FACADE_PANEL_NAME, 'А'), heightMm - gap, legB - gap, ['door:0']);
-    pushFront(legName(FACADE_PANEL_NAME, 'Б'), heightMm - gap, legB - production.frontMm - gap, ['door:0']);
+    pushFront(legName(FACADE_PANEL_NAME, 'Б'), heightMm - gap, legB - production.frontMm - gap, [second]);
     return panels;
   }
 

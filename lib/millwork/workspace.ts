@@ -15,7 +15,7 @@ import type { MillingItem } from './milling';
 import type { CarcassItem } from './carcassMaterial';
 import type { MaterialItem } from './materialCollection';
 import { buildVariants } from './variants';
-import { editedRunCorner, runWithCorner } from './corner';
+import { editedRunCorner, lowerGapMm, runWithCorner } from './corner';
 import { obstaclesOnRun, runWithObstacles } from './obstacles';
 import { uniqueModuleIds } from './layout';
 import { runInContext } from './runContext';
@@ -305,6 +305,13 @@ export function workingWallEdit(saved: Run | undefined, runWallId: string | unde
   return saved;
 }
 
+/** Длина ряда рабочей стены: стена минус то, что нижний ряд отдал своим углам. */
+export function wallRunLengthMm(input: Pick<WorkspaceInput, 'lengthMm' | 'corner' | 'production' | 'requirements'>): number {
+  if (!input.corner) return input.lengthMm;
+  const shell = { corner: input.corner, zone: input.requirements.zone, production: input.production };
+  return Math.max(0, input.lengthMm - lowerGapMm(shell, 'start') - lowerGapMm(shell, 'end'));
+}
+
 export function composeVariants(
   input: WorkspaceInput,
   disabled: Record<VariantKey, string[]>,
@@ -325,7 +332,15 @@ export function composeVariants(
      * ряда, и совпасть им негде.
      */
     wallId: input.runWallId,
-    lengthMm: input.lengthMm,
+    /*
+     * ДЛИНА РЯДА СТЕНЫ А — СТЕНА МИНУС ТО, ЧТО ОТДАНО УГЛАМ (P0).
+     *
+     * Стена А ведёт свой угол всегда — и ряд шёл на всю стену. Теперь угол
+     * может вести стена Б: тогда низ стены А к углу стыкуется и кончается
+     * раньше её стены ровно на то, что занял угол (`lowerGapMm`), — те же
+     * числа, что урезали её ряд в композиции.
+     */
+    lengthMm: wallRunLengthMm(input),
     ceilingHeightMm: input.ceilingHeightMm,
     requirements: input.requirements,
     openings: input.openings,

@@ -1,13 +1,33 @@
 import { recalcTotal } from './estimate';
 import { compositionFingerprint } from './fingerprint';
 import { obstacleConflictText, obstacleConflicts, type ObstacleConflict } from './obstacles';
-import { BLIND_VARIANTS, blindPartMm, cornerGeometry, dockLostMm } from './corner';
+import {
+  BLIND_VARIANTS,
+  blindPartMm,
+  choiceOnly,
+  cornerOwnerOf,
+  levelAt,
+  levelBoundsOf,
+  lLegOf,
+  lowerGapMm,
+  wallOfRole,
+  type CornerEnd,
+} from './corner';
 import { MIN_WIDTH, SINGLE_DOOR_MAX_MM, isUpperRow, standsOnFloor } from './modules';
 import { rowSpansOfRun } from './layout';
 import { runPlaces, sceneLeaves, type SceneLeaf } from './cabinetBoxes';
 import { leavesForFront } from './moduleVariants';
 import { runInContext, type ContextLoss, type RunContext } from './runContext';
-import { clashWords, cornerKinematics, panelWidthMm, panelWords, stuckWords, type CornerClash, type RowPlace } from './cornerKinematics';
+import {
+  choiceOfCorner,
+  clashWords,
+  cornerKinematics,
+  panelWidthMm,
+  panelWords,
+  stuckWords,
+  type CornerClash,
+  type RowPlace,
+} from './cornerKinematics';
 import { shopOf } from './shop';
 import type { HardwareItem, ProductionSettings } from '@/types/catalog';
 import type {
@@ -244,7 +264,8 @@ export type WallMismatch = {
    * панель развела бы (`edited`: ряд сам не сдвигается), у ряда шаблона —
    * почему панелью не снять (`Composition.cornerClashes`).
    */
-  clashes?: { leaf: string; words: string; edited: boolean }[];
+  /** `own` — заход внутри пары дверец верхнего Г-модуля (P0), а не в мебель соседней стены. */
+  clashes?: { leaf: string; words: string; edited: boolean; own?: true }[];
 };
 
 /** Створка шире предела — числами, из которых строятся слова. */
@@ -364,22 +385,53 @@ function clearanceShiftMm(
   composed: Pick<Run, 'corner' | 'zone' | 'production'>,
   shown: Pick<Run, 'corner'>,
 ): number {
-  const dock = composed.corner?.dock;
-  const mine = shown.corner?.dock;
-  if (!dock || !mine) return 0;
-  const asShown = { ...composed, corner: { ...composed.corner, dock: { ...dock, clearance: mine.clearance } } };
-  return dockLostMm(composed) - dockLostMm(asShown);
+  /* У каждого конца, где ряд к углу стыкуется (P0: и у конца ряда тоже). */
+  let shift = 0;
+  for (const end of ['start', 'end'] as CornerEnd[]) {
+    const now = composed.corner?.[end];
+    const mine = shown.corner?.[end];
+    if (!now || !mine) continue;
+    const asShown = { ...composed, corner: { ...composed.corner, [end]: { ...now, clearance: mine.clearance } } };
+    shift += lowerGapMm(composed, end) - lowerGapMm(asShown, end);
+  }
+  return shift;
+}
+
+/** Углы ряда по местам — сохранённые до P0 лежат полями `dock`/`own` на тех же местах. */
+function endsOf(corner: RunCorner | undefined): RunCorner | undefined {
+  if (!corner) return corner;
+  const legacy = corner as RunCorner & { dock?: CornerChoice; own?: CornerChoice };
+  const start = corner.start ?? legacy.dock;
+  const end = corner.end ?? legacy.own;
+  return start || end ? { ...(start ? { start } : {}), ...(end ? { end } : {}) } : undefined;
 }
 
 /** Роль ряда в его углах одной строкой — для сравнения «тогда» и «сейчас». */
 function roleKey(corner: RunCorner | undefined): string {
-  const part = (choice?: CornerChoice) => (choice ? `${choice.lower}/${choice.upper}` : '—');
-  return `own ${part(corner?.own)} · dock ${part(corner?.dock)}`;
+  const ends = endsOf(corner);
+  const part = (choice?: CornerChoice) => {
+    if (!choice) return '—';
+    const only = choiceOnly(choice);
+    return (
+      `${only.lower}/${only.upper}` +
+      (only.mezzanine ? `/m:${only.mezzanine}` : '') +
+      (only.owners ? `/o:${(['lower', 'upper', 'mezzanine', 'countertop'] as const).map((level) => only.owners?.[level] ?? '').join(',')}` : '')
+    );
+  };
+  return `own ${part(ends?.end)} · dock ${part(ends?.start)}`;
 }
 
-/** Роль ряда в углах словами. */
+/** Роль ряда в углах словами — по нижнему ряду: им ряд стоит на стене. */
 function roleWords(corner: RunCorner | undefined): string {
-  const parts = [corner?.dock ? 'стыкуется к углу' : null, corner?.own ? 'владеет углом' : null].filter(Boolean);
+  const ends = endsOf(corner);
+  const leads = (end: CornerEnd) => {
+    const choice = ends?.[end];
+    return choice ? cornerOwnerOf(choice, 'lower') === (end === 'start' ? 'next' : 'prev') : false;
+  };
+  const parts = [
+    ends?.start ? (leads('start') ? 'ведёт угол в начале ряда' : 'стыкуется к углу') : null,
+    ends?.end ? (leads('end') ? 'владеет углом' : 'стыкуется к углу в конце ряда') : null,
+  ].filter(Boolean);
   return parts.length > 0 ? parts.join(' и ') : 'без угла';
 }
 
@@ -412,14 +464,12 @@ export function cornerRoleConflicts(input: {
   openings: Opening[];
   requirements: RunRequirements;
 }): string[] {
-  const { run, before } = input;
-  if (!before?.own && !before?.dock) return [];
+  const { run } = input;
+  const before = endsOf(input.before);
+  if (!before?.end && !before?.start) return [];
   if (roleKey(before) === roleKey(run.corner)) return [];
 
   const out: string[] = [];
-  const length = run.lengthMm;
-  const own = run.corner?.own;
-  const g = own ? cornerGeometry(own, run.zone, run.production) : null;
   const byOffset = (a: Module, b: Module) => a.offsetMm - b.offsetMm;
   const floor = run.modules.filter((unit) => standsOnFloor(unit)).sort(byOffset);
   const uppers = run.upperSegments
@@ -427,29 +477,54 @@ export function cornerRoleConflicts(input: {
     .filter((unit) => isUpperRow(unit) && unit.section !== 'mezzanine' && !unit.overhead)
     .sort(byOffset);
   const name = (unit: Module) => `«${unit.label}» ${unit.widthMm} мм (${unit.offsetMm}…${unit.offsetMm + unit.widthMm})`;
+  const where = (end: CornerEnd) => (end === 'end' ? 'в конце ряда' : 'в начале ряда');
+  const bounds = { lower: { fromMm: 0, toMm: run.lengthMm }, upper: levelBoundsOf(run, 'upper') };
 
-  /* Г-модуль: у владельца с Г-углом — в конце ряда, у остальных — нигде. */
-  const cornerUnit = (level: 'lower' | 'upper', list: Module[], kind: 'corner_base' | 'corner_upper', legMm: number, wants: boolean) => {
-    const last = list[list.length - 1];
-    if (wants) {
-      if (!last || last.kind !== kind || last.offsetMm + last.widthMm !== length || last.widthMm !== legMm) {
+  /*
+   * Г-модуль: у ведущего с Г-углом — у того конца, где он ведёт (P0: и в
+   * начале), у остальных — нигде.
+   */
+  const cornerUnit = (level: 'lower' | 'upper', list: Module[], kind: 'corner_base' | 'corner_upper') => {
+    const wanted = (['start', 'end'] as CornerEnd[]).filter((end) => {
+      const at = levelAt(run, end, level);
+      return Boolean(at?.owns && at.legMm > 0);
+    });
+    for (const end of wanted) {
+      const at = levelAt(run, end, level)!;
+      const edge = end === 'end' ? list[list.length - 1] : list[0];
+      const placed =
+        edge &&
+        edge.kind === kind &&
+        edge.widthMm === at.legMm &&
+        (end === 'end'
+          ? edge.offsetMm + edge.widthMm === bounds[level].toMm
+          : edge.offsetMm === bounds[level].fromMm);
+      if (!placed) {
         out.push(
-          `у угла нужен ${level === 'lower' ? 'нижний' : 'верхний'} Г-модуль ${legMm}×${legMm} мм в конце ряда, а там ${last ? name(last) : 'пусто'}`,
+          `у угла нужен ${level === 'lower' ? 'нижний' : 'верхний'} Г-модуль ${at.legMm}×${at.legMm} мм ${where(end)}, а там ${edge ? name(edge) : 'пусто'}`,
         );
       }
-      return;
     }
     for (const unit of list.filter((u) => u.kind === kind)) {
-      out.push(`${name(unit)} — угловой Г-модуль, а угла с этой стороны у стены теперь нет`);
+      const side = lLegOf(unit, run)?.side;
+      const atWanted = wanted.some((end) => (end === 'end' ? side === 'right' : side === 'left'));
+      if (!atWanted) out.push(`${name(unit)} — угловой Г-модуль, а угла с этой стороны у стены теперь нет`);
     }
   };
-  cornerUnit('lower', floor, 'corner_base', g?.lowerLegMm ?? 0, own?.lower === 'l_shape');
-  cornerUnit('upper', uppers, 'corner_upper', g?.upperLegMm ?? 0, own?.upper === 'l_shape');
+  cornerUnit('lower', floor, 'corner_base');
+  cornerUnit('upper', uppers, 'corner_upper');
 
-  /* Слепая зона владельца: одна распашная створка на доступной части. */
-  const blindZone = (level: 'lower' | 'upper', list: Module[], kind: 'base' | 'upper', zone: number) => {
+  /* Слепая зона ведущего: одна распашная створка на доступной части — у того конца, где он ведёт. */
+  const blindZone = (level: 'lower' | 'upper', list: Module[], kind: 'base' | 'upper', end: CornerEnd) => {
+    const at = levelAt(run, end, level);
+    const zone = at?.owns && at.legMm === 0 ? at.blindMm : 0;
     if (zone <= 0) return;
-    const inZone = list.filter((unit) => unit.offsetMm + unit.widthMm > length - zone);
+    const { fromMm, toMm } = bounds[level];
+    const length = toMm - fromMm;
+    const zoneFrom = end === 'end' ? toMm - zone : fromMm;
+    const zoneTo = end === 'end' ? toMm : fromMm + zone;
+    const into = (unit: Module) => Math.max(0, Math.min(unit.widthMm, Math.min(unit.offsetMm + unit.widthMm, zoneTo) - Math.max(unit.offsetMm, zoneFrom)));
+    const inZone = list.filter((unit) => into(unit) > 0);
     const fits = (unit: Module) => {
       const plain =
         unit.kind === kind &&
@@ -460,22 +535,23 @@ export function cornerRoleConflicts(input: {
         (!unit.variant || BLIND_VARIANTS.includes(unit.variant)) &&
         unit.doorCount === 1;
       if (!plain) return false;
-      const blind = Math.max(0, Math.min(unit.widthMm, unit.offsetMm + unit.widthMm - (length - zone)));
-      const open = unit.widthMm - blind;
+      const open = unit.widthMm - into(unit);
       return open === 0 || (open >= MIN_WIDTH && open <= SINGLE_DOOR_MAX_MM);
     };
     /* Ряд короче зоны — все его модули глухие, и каждый обязан быть дверцей. */
-    const extra = zone < length ? inZone.slice(0, -1) : [];
+    const extra = zone < length ? (end === 'end' ? inZone.slice(0, -1) : inZone.slice(1)) : [];
     const bad = [...extra, ...inZone.filter((unit) => !extra.includes(unit) && !fits(unit))];
     for (const unit of bad) {
       out.push(
-        `в слепой зоне ${level === 'lower' ? 'нижнего' : 'верхнего'} угла (последние ${zone} мм ряда) стоит ${name(unit)}: ` +
+        `в слепой зоне ${level === 'lower' ? 'нижнего' : 'верхнего'} угла (${end === 'end' ? 'последние' : 'первые'} ${zone} мм ряда) стоит ${name(unit)}: ` +
           `там встаёт одна распашная створка на доступной части, ${MIN_WIDTH}…${SINGLE_DOOR_MAX_MM} мм`,
       );
     }
   };
-  if (own?.lower === 'blind' && g) blindZone('lower', floor, 'base', g.ownerBlindMm);
-  if (own?.upper === 'blind' && g) blindZone('upper', uppers, 'upper', g.ownerUpperBlindMm);
+  for (const end of ['start', 'end'] as CornerEnd[]) {
+    blindZone('lower', floor, 'base', end);
+    blindZone('upper', uppers, 'upper', end);
+  }
 
   /* Верхний ряд — внутри своих участков с текущей ролью в углах. */
   const spans = rowSpansOfRun('upper', run, run.modules, input.openings, input.requirements, run.options).free;
@@ -516,8 +592,9 @@ export function cornerRoleConflicts(input: {
  * модулю створки ставит ширина — поэтому предел — порог `frontPlan`.
  */
 export function leafRefusals(input: { run: Run; before: RunCorner | undefined }): LeafRefusal[] {
-  const { run, before } = input;
-  if (!before?.own && !before?.dock) return [];
+  const { run } = input;
+  const before = endsOf(input.before);
+  if (!before?.end && !before?.start) return [];
   if (roleKey(before) === roleKey(run.corner)) return [];
 
   const then = { ...run, corner: before };
@@ -572,6 +649,12 @@ export function wallMismatchMessage(mismatch: WallMismatch): string {
       : leaves.length > 1 ? 'эти детали не откроются до конца' : 'эта створка не откроется до конца';
     const hinge = drawers ? '' : ', поменяйте сторону петель у этой створки';
     const what = `${mismatch.label}: ${mismatch.clashes.map((entry) => entry.words).join('; ')}. На объекте ${consequence}.`;
+    /*
+     * Заход внутри пары дверец верхнего Г-модуля (P0): что делать, сказано в его
+     * словах (ручка у угла, угол раскрытия петель, «книжка»). Сторона петель и
+     * пенал у угла здесь не помогают — общий совет ниже был бы неправдой.
+     */
+    if (mismatch.clashes.every((entry) => entry.own)) return what;
     return mismatch.clashes.some((entry) => entry.edited)
       ? `${what} Ряд правили руками, и сам он не сдвигается: пересоберите эту стену — раскладка встанет с панелью ` +
           `по ходу, правки по ней придётся сделать заново, — или поставьте у угла ручку с меньшим вылетом или ` +
@@ -592,7 +675,7 @@ export function wallMismatchMessage(mismatch: WallMismatch): string {
     return (
       `${mismatch.label}: ряд правили, когда стена ${roleWords(mismatch.cornerBefore)}, а теперь она ` +
       `${roleWords(mismatch.cornerNow)} — ${text}. На объекте такой угол не собрать. ` +
-      'Пересоберите эту стену — правки по ней пропадут — или верните прежнюю расстановку стен: ряд и правки на месте.'
+      'Пересоберите эту стену — правки по ней пропадут — или верните прежнее решение угла и расстановку стен: ряд и правки на месте.'
     );
   }
   if (leaves.length > 0) {
@@ -711,15 +794,17 @@ export function cornerClashMismatches(input: {
   const { runs } = input;
   if (runs.length < 2) return [];
   const wallOf = (wall: number) => lowerWall(wallLabel(wall), 'genitive');
-  const byWall = new Map<number, { leaf: string; words: string; edited: boolean }[]>();
-  const push = (index: number, entry: { leaf: string; words: string; edited: boolean }) => {
+  const byWall = new Map<number, { leaf: string; words: string; edited: boolean; own?: true }[]>();
+  const push = (index: number, entry: { leaf: string; words: string; edited: boolean; own?: true }) => {
     if (input.skip?.includes(index)) return;
     byWall.set(index, [...(byWall.get(index) ?? []), entry]);
   };
 
   if (!runs.some((_, index) => input.edited(index))) {
     /* Ряды экрана — ряды композиции: что осталось, она уже назвала словами. */
-    for (const note of input.composed ?? []) push(note.wall, { leaf: note.leaf, words: note.words, edited: false });
+    for (const note of input.composed ?? []) {
+      push(note.wall, { leaf: note.leaf, words: note.words, edited: false, ...(note.own ? { own: true as const } : {}) });
+    }
   } else {
     const kin = cornerKinematics({
       runs,
@@ -738,16 +823,22 @@ export function cornerClashMismatches(input: {
       if (editedWall === null) {
         /* Пара двух рядов шаблона — её слова у композиции. */
         const note = input.composed?.find((entry) => entry.pair === clash.pair);
-        const choice = runs[clash.corner + 1]?.corner?.dock ?? runs[clash.corner]?.corner?.own;
+        const choice = choiceOfCorner(runs, clash.corner);
         push(clash.wall, {
           leaf: clash.leaf,
           words: note?.words ?? `${clashWords(clash, wallOf)} — ${choice ? stuckWords(clash, choice, wallOf) : 'фальш-панелью у этого угла этот заход не снять'}`,
           edited: false,
+          ...(clash.own ? { own: true as const } : {}),
         });
         continue;
       }
-      /* Панель — у того ряда, что отходит от угла: у правленого она своя, у шаблона — композиции. */
-      const choice = clash.fix?.side === 'owner' ? runs[clash.corner]?.corner?.own : runs[clash.corner + 1]?.corner?.dock;
+      /*
+       * Панель — у того ряда, что отходит от угла: у правленого она своя, у
+       * шаблона — композиции. Какой это ряд, говорит роль на уровне панели
+       * (P0): ведущим бывает и стена после угла.
+       */
+      const fixWall = clash.fix ? wallOfRole(choiceOfCorner(runs, clash.corner), clash.corner, clash.fix.level, clash.fix.side) : clash.corner + 1;
+      const choice = fixWall === clash.corner ? runs[clash.corner]?.corner?.end : runs[clash.corner + 1]?.corner?.start;
       const zone = runs[clash.corner]?.zone;
       let need = choice ? stuckWords(clash, choice, wallOf) : 'фальш-панелью у этого угла этот заход не снять';
       if (clash.fix && clash.needWholeMm !== null && choice) {
@@ -758,12 +849,12 @@ export function cornerClashMismatches(input: {
         const empty = clash.fix.level === 'upper' && choice.upper === 'empty';
         need =
           width <= gap && !empty
-            ? `развёл бы зазор у угла ${wallOf(clash.fix.side === 'dock' ? clash.corner + 1 : clash.corner)} в ${width} мм — без детали`
+            ? `развёл бы зазор у угла ${wallOf(fixWall)} в ${width} мм — без детали`
             : now > 0
               ? `развела бы ${panel} шире на ${clash.needWholeMm} мм: ${width} мм вместо ${now}`
               : `развела бы ${panel} ${clash.needWholeMm} мм`;
       }
-      push(editedWall, { leaf: clash.leaf, words: `${clashWords(clash, wallOf)} — ${need}`, edited: true });
+      push(editedWall, { leaf: clash.leaf, words: `${clashWords(clash, wallOf)} — ${need}`, edited: true, ...(clash.own ? { own: true as const } : {}) });
     }
   }
   return Array.from(byWall.entries())
@@ -780,6 +871,9 @@ export function cornerClashMismatches(input: {
 /** Почему цены нет — у расхождения длины и у мебели в препятствии слова разные. */
 export function mismatchPriceText(mismatch: WallMismatch): string {
   if (mismatch.clashes?.length) {
+    if (mismatch.clashes[0].own) {
+      return `Цены нет: ${mismatch.label}: дверцы углового шкафа на ходу задевают друг друга.`;
+    }
     const leaf = mismatch.clashes[0].leaf;
     const what = leaf.startsWith('drawer') ? 'ящик' : leaf.startsWith('door') ? 'створка' : 'фасад';
     return `Цены нет: ${mismatch.label}: у угла ${what} на ходу заходит в мебель соседней стены.`;

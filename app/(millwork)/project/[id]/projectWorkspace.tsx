@@ -182,6 +182,7 @@ export default async function ProjectWorkspace({ id, studio = false }: { id: str
       shareToken={project.share_token}
       clientName={project.client_name}
       initialState={project.millwork ?? null}
+      savedTotal={project.total}
       survey={project.millwork?.survey ?? null}
       orgTemplates={parseOrgTemplates(orgRow?.run_templates)}
       production={productionSettings(orgRow?.production)}

@@ -994,7 +994,7 @@ export function stageAChecks(check: Check): void {
         'SA.7 правленая стена В (ряд 2180 за панелью 60) стоит за своей панелью: расхождения длины нет, ряд на месте, заход 4 мм назван с «64 мм вместо 60»',
         old.lengthMm === 2180 &&
           shown.lengthMm === 2180 &&
-          !shown.corner?.dock?.clearance &&
+          !shown.corner?.start?.clearance &&
           lengthMismatches.length === 0 &&
           clashes.length === 1 &&
           clashes[0].index === 2 &&
@@ -1067,7 +1067,7 @@ export function stageAChecks(check: Check): void {
       check(
         'SA.7 правленый ряд держит свою панель: мебель на месте, расхождения длины нет, заход назван блокирующим с мм и нужной панелью; цены нет, «Дальше» заперто, запись — нет, пересобрать — стену Б',
         JSON.stringify(shown.modules.map((unit) => [unit.offsetMm, unit.widthMm])) === JSON.stringify(old.modules.map((unit) => [unit.offsetMm, unit.widthMm])) &&
-          !shown.corner?.own?.clearance &&
+          !shown.corner?.end?.clearance &&
           lengthMismatches.length === 0 &&
           mismatches.length === 1 &&
           mismatches[0].index === 1 &&

@@ -4,7 +4,7 @@ import type { ProductionSettings } from '@/types/catalog';
 import { heightAssumedToCeiling, type KnownState, type Survey, type SurveyOpening } from '@/types/survey';
 import { beamDropMm } from './ceiling';
 import { cornerLostMm, markOnRun } from './composition';
-import { cornerGeometry } from './corner';
+import { levelOfChoice } from './corner';
 import { wallLabel } from './walls';
 
 /**
@@ -174,8 +174,9 @@ export function rowStartOnWallMm(
 ): number {
   if (wallIndex === 0) return 0;
   const choice = corners?.choices[wallIndex - 1];
+  /* Стена после угла, которая ведёт низ сама (P0), начинается от стены соседа. */
   return choice
-    ? cornerGeometry(choice, corners!.zone, corners!.production).lostMm
+    ? levelOfChoice(choice, 'next', 'lower', corners!.zone, corners!.production).gapMm
     : cornerLostMm(solution, depthMm);
 }
 
@@ -646,7 +647,7 @@ export function roomAroundRows(
    * (`runPlacements`). Выбор из состояния их не знает: проёмы на чертеже
    * стены после угла уехали бы на ширину добавки.
    */
-  const fromRows = rows.slice(1).map((row) => row.run.corner?.dock);
+  const fromRows = rows.slice(1).map((row) => row.run.corner?.start);
   const own = fromRows.length > 0 && fromRows.every(Boolean);
   const corners = own ? (fromRows as CornerChoice[]) : source.corners;
   /* Числа угла считаются школой цеха и зоной самого ряда, если у источника их нет. */

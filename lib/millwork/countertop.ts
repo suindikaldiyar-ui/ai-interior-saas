@@ -1,4 +1,4 @@
-import { cornerBandMm } from './corner';
+import { cornerBandMm, cornerOwnerOf, lowerGapMm, sideAt } from './corner';
 import { bearsCountertop, counterSlabDepthMm, moduleDepthMm, rowStandardDepthMm, upperBottomFor } from './fill';
 import { standsOnFloor } from './modules';
 import { obstaclesInBand, wallObstacles, type WallObstacle } from './obstacles';
@@ -128,7 +128,7 @@ export function counterTailsOf(run: RunLike): CounterTail[] {
       end: 'start',
       widthMm: first.offsetMm,
       filler: first.offsetMm < TAIL_FILLER_MAX_MM,
-      corner: Boolean(run.corner.dock),
+      corner: Boolean(run.corner.start),
       fromMm: 0,
       toMm: first.offsetMm,
     });
@@ -141,7 +141,7 @@ export function counterTailsOf(run: RunLike): CounterTail[] {
       end: 'end',
       widthMm: run.lengthMm - lastEnd,
       filler: run.lengthMm - lastEnd < TAIL_FILLER_MAX_MM,
-      corner: Boolean(run.corner.own),
+      corner: Boolean(run.corner.end),
       fromMm: lastEnd,
       toMm: run.lengthMm,
     });
@@ -189,19 +189,46 @@ function slabsOverModules(run: RunLike): CounterSlab[] {
     else slabs[slabs.length - 1] = { ...slabs[slabs.length - 1], toMm: run.lengthMm };
   }
 
+  /*
+   * ПЛИТА — СВОЙ КОНТУР (P0): через угол идёт плита той стены, что выбрана
+   * для плиты (`owners.countertop`, умолчание — кто ведёт низ). Она заходит
+   * до стены соседа, даже если её нижний ряд к углу стыкуется; плита второго
+   * ряда кончается по её краю, даже если её нижний ряд идёт в угол.
+   */
   const band = cornerBandMm({
     corner: run.corner,
     bandDepthMm: counterSlabDepthMm(run.zone, run.production),
     zone: run.zone,
     production: run.production,
+    level: 'countertop',
   });
 
-  if (band.backMm > 0) {
-    if (slabs[0].fromMm === 0) slabs[0] = { ...slabs[0], fromMm: -band.backMm };
-    else slabs.unshift({ fromMm: -band.backMm, toMm: 0 });
-  }
+  return reachCorners(slabs, band, run.lengthMm);
+}
 
-  return slabs;
+/**
+ * ПОЛОСА У УГЛОВ — ТЕМ, ЧТО ОТДАЛ `cornerBandMm`: плюс — заход за край ряда,
+ * минус — не доходит до него. У начала плита ряда, начатая не с нуля, —
+ * отдельным куском; у конца — так же.
+ */
+function reachCorners(spans: CounterSlab[], band: { startMm: number; endMm: number }, lengthMm: number): CounterSlab[] {
+  let out = [...spans];
+  if (out.length === 0) return out;
+  if (band.startMm > 0) {
+    if (out[0].fromMm === 0) out[0] = { ...out[0], fromMm: -band.startMm };
+    else out.unshift({ fromMm: -band.startMm, toMm: 0 });
+  } else if (band.startMm < 0) {
+    out = out.map((span) => ({ ...span, fromMm: Math.max(span.fromMm, -band.startMm) })).filter((span) => span.toMm > span.fromMm);
+  }
+  if (out.length === 0) return out;
+  const last = out.length - 1;
+  if (band.endMm > 0) {
+    if (out[last].toMm === lengthMm) out[last] = { ...out[last], toMm: lengthMm + band.endMm };
+    else out.push({ fromMm: lengthMm, toMm: lengthMm + band.endMm });
+  } else if (band.endMm < 0) {
+    out = out.map((span) => ({ ...span, toMm: Math.min(span.toMm, lengthMm + band.endMm) })).filter((span) => span.toMm > span.fromMm);
+  }
+  return out;
 }
 
 /** Препятствие в толщине столешницы и что с ним делает плита (слой 56). */
@@ -298,6 +325,23 @@ export function countertopCuts(run: RunLike): CounterCut[] {
   return countertopSlabs(run).flatMap((slab) => slab.cuts ?? []);
 }
 
+/**
+ * СТЫКИ ПЛИТЫ У УГЛОВ РЯДА — у тех его концов, где через угол идёт ЕГО плита.
+ *
+ * Стык — операция над плитой, которая идёт через угол: на кухню один на
+ * угол, и считается он у того ряда, чья плита ведёт угол (P0: это выбор,
+ * а не всегда стена до угла). У средней стены П, ведущей плиту в оба угла,
+ * стыков два.
+ */
+export function counterMitersOf(run: Pick<Run, 'corner'>): number {
+  let miters = 0;
+  for (const end of ['start', 'end'] as const) {
+    const choice = run.corner?.[end];
+    if (choice && cornerOwnerOf(choice, 'countertop') === sideAt(end)) miters += 1;
+  }
+  return miters;
+}
+
 /** Сколько столешницы, мм: сумма плит. */
 export function countertopLengthMm(run: Parameters<typeof countertopSlabs>[0]): number {
   return countertopSlabs(run).reduce((sum, slab) => sum + slab.toMm - slab.fromMm, 0);
@@ -328,20 +372,30 @@ export function apronSpans(run: RunLike): CounterSlab[] {
    */
   const inApron = obstaclesAt(run, workTopMm(run.production), upperBottomMm(run.production));
 
+  /*
+   * У угла фартук идёт до линии угла — до стены соседа, чья бы плита ни шла
+   * через угол (P0): стена над плитой соседа тоже открыта. Край плиты у угла
+   * — тот, что поставил `cornerBandMm`; плита, до угла не дошедшая (колонна у
+   * угла), фартук к углу не тянет.
+   */
   const band = cornerBandMm({
     corner: run.corner,
     bandDepthMm: counterSlabDepthMm(run.zone, run.production),
     zone: run.zone,
     production: run.production,
+    level: 'countertop',
   });
-  if (band.backMm <= 0) return withoutObstacles(slabs, inApron);
-
-  /* Заход угла у стыкующегося ряда — до стены владельца целиком. */
-  const lostMm = band.backMm + counterSlabDepthMm(run.zone, run.production);
-  return withoutObstacles(
-    slabs.map((slab, i) => (i === 0 && slab.fromMm === -band.backMm ? { ...slab, fromMm: -lostMm } : slab)),
-    inApron,
-  );
+  let out = slabs;
+  if (run.corner?.start) {
+    const edge = -band.startMm;
+    out = out.map((slab, i) => (i === 0 && slab.fromMm === edge ? { ...slab, fromMm: -lowerGapMm(run, 'start') } : slab));
+  }
+  if (run.corner?.end) {
+    const edge = run.lengthMm + band.endMm;
+    const last = out.length - 1;
+    out = out.map((slab, i) => (i === last && slab.toMm === edge ? { ...slab, toMm: run.lengthMm + lowerGapMm(run, 'end') } : slab));
+  }
+  return withoutObstacles(out, inApron);
 }
 
 /** Сколько фартука, мм — то же число в сцене и в смете. */
@@ -434,18 +488,15 @@ export function plinthSpans(run: RunLike): CounterSlab[] {
     if (filler.toMm === run.lengthMm && last.toMm === filler.fromMm) last.toMm = run.lengthMm;
   }
 
+  /* Цоколь ведёт тот, кто ведёт низ: он под корпусами. */
   const band = cornerBandMm({
     corner: run.corner,
     bandDepthMm: rowStandardDepthMm(run.zone, 'base', run.production) - PLINTH_SETBACK_MM,
     zone: run.zone,
     production: run.production,
   });
-  if (band.backMm > 0) {
-    if (spans[0].fromMm === 0) spans[0] = { ...spans[0], fromMm: -band.backMm };
-    else spans.unshift({ fromMm: -band.backMm, toMm: 0 });
-  }
   /* Препятствие у пола рвёт цоколь там же, где ряд (слой 56). */
-  return withoutObstacles(spans, obstaclesAt(run, 0, plinthMm(run.production))).filter(
+  return withoutObstacles(reachCorners(spans, band, run.lengthMm), obstaclesAt(run, 0, plinthMm(run.production))).filter(
     (span) => span.toMm > span.fromMm,
   );
 }

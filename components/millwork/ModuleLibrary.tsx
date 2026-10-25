@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LibraryCard } from '@/lib/millwork/moduleLibrary';
 import type { CornerCard } from '@/lib/millwork/cornerChange';
-import { cornerGeometry } from '@/lib/millwork/corner';
-import { rowStandardDepthMm } from '@/lib/millwork/fill';
+import { cornerOwnerOf, levelOfChoice } from '@/lib/millwork/corner';
+import { counterSlabDepthMm, rowStandardDepthMm } from '@/lib/millwork/fill';
 import { shopOf } from '@/lib/millwork/shop';
 import type { ProductionSettings } from '@/types/catalog';
 import type { Run } from '@/types/millwork';
@@ -66,6 +66,16 @@ export type CornerPanel = {
    */
   clearance: string | null;
   cards: CornerCard[];
+  /**
+   * КТО ВЕДЁТ УГОЛ — ПО УРОВНЯМ (P0): низ, верх, антресоль и плита
+   * столешницы, у каждого свои переключатели. Пусто — их нет (прямая).
+   */
+  owners?: CornerCard[];
+  /**
+   * ДВЕРЦЫ ВЕРХНЕГО Г-МОДУЛЯ (P0): «книжкой» или каждая на своих петлях.
+   * Пусто — верх угла не Г-модуль.
+   */
+  doors?: CornerCard[];
   priceOf: (card: CornerCard) => number | null;
   onPick: (card: CornerCard) => void;
 };
@@ -356,20 +366,86 @@ function CornerSection({
   production?: ProductionSettings;
 }) {
   const [prices, setPrices] = useState<Record<string, number | null>>({});
+  const all = useMemo(
+    () => [...corner.cards, ...(corner.owners ?? []), ...(corner.doors ?? [])],
+    [corner.cards, corner.owners, corner.doors],
+  );
 
   /* Другие карточки — другой угол или другой ряд: прежние числа не годятся. */
   useEffect(() => {
     setPrices({});
-  }, [corner.cards]);
+  }, [all]);
 
   useEffect(() => {
-    const next = corner.cards.find((card) => !(card.key in prices));
+    const next = all.find((card) => !(card.key in prices));
     if (!next) return;
     const frame = requestAnimationFrame(() => {
       setPrices((prev) => ({ ...prev, [next.key]: corner.priceOf(next) }));
     });
     return () => cancelAnimationFrame(frame);
-  }, [corner, prices]);
+  }, [corner, all, prices]);
+
+  /* Переключатели «кто ведёт угол» — по уровням, в порядке низ, верх, антресоль, плита. */
+  const ownerLevels = (['lower', 'upper', 'mezzanine', 'countertop'] as const)
+    .map((level) => ({ level, cards: (corner.owners ?? []).filter((card) => card.level === level) }))
+    .filter((group) => group.cards.length > 0);
+
+  /*
+   * ПЕРЕКЛЮЧАТЕЛЬ — ОДНА РАЗМЕТКА НА «КТО ВЕДЁТ УГОЛ» И НА ДВЕРЦЫ ВЕРХНЕГО
+   * Г-МОДУЛЯ (P0): картинка плана, название, цена и то, что изменится, —
+   * словами до нажатия. Атрибуты приёмки — свои у каждой группы.
+   */
+  const optionButton = (card: CornerCard, kind: 'owner' | 'door') => {
+    const delta = prices[card.key];
+    return (
+      <button
+        key={card.key}
+        type="button"
+        {...{ [`data-corner-${kind}`]: card.key }}
+        data-refused={card.refusal ? '1' : '0'}
+        data-delta={delta === undefined || delta === null ? '' : String(delta)}
+        disabled={Boolean(card.refusal)}
+        aria-pressed={card.current}
+        title={card.refusal ?? card.hint}
+        onClick={() => {
+          if (!card.refusal && !card.current) corner.onPick(card);
+        }}
+        className={[
+          'mw-card flex flex-col gap-1 rounded-[var(--r-control)] p-2 text-left',
+          card.current ? 'ring-inset ring-2 ring-accent' : '',
+          card.refusal ? 'cursor-not-allowed opacity-45' : 'hover:bg-surface-2',
+        ].join(' ')}
+      >
+        <span className="flex aspect-[4/3] items-center justify-center overflow-hidden rounded-[8px] bg-surface-2">
+          <CornerGlyph card={card} run={run} production={production} />
+        </span>
+        <span className="text-[13px] leading-tight">{card.title}</span>
+        <span className="text-[12px] text-dim">{card.hint}</span>
+        {card.refusal ? (
+          <span className="text-[12px] leading-snug text-alert">{card.refusal}</span>
+        ) : card.current ? (
+          <span className="text-[12px] text-accent">стоит сейчас</span>
+        ) : (
+          <>
+            <span className="text-[12px] font-medium">
+              {delta === undefined
+                ? '…'
+                : delta === null
+                  ? 'цена не считается'
+                  : delta === 0
+                    ? 'без изменения цены'
+                    : `${delta > 0 ? '+' : '−'}${Math.abs(delta).toLocaleString('ru-RU')} ₸`}
+            </span>
+            {(card.changes ?? []).map((line, i) => (
+              <span key={i} className="text-[12px] leading-snug text-tape" {...{ [`data-corner-${kind}-change`]: '' }}>
+                {line}
+              </span>
+            ))}
+          </>
+        )}
+      </button>
+    );
+  };
 
   return (
     <div className="mb-4" data-corner-panel>
@@ -431,6 +507,32 @@ function CornerSection({
           );
         })}
       </div>
+
+      {/*
+        * КТО ВЕДЁТ УГОЛ (P0): по уровню — свои кнопки. Что изменится в рядах
+        * и чьи правки снимутся — словами ДО нажатия, рядом с ценой.
+        */}
+      {ownerLevels.length > 0 && (
+        <div className="mt-4 flex flex-col gap-3" data-corner-owners={corner.owners?.length ?? 0}>
+          <p className="mw-label">Кто ведёт угол</p>
+          {ownerLevels.map((group) => (
+            <div key={group.level} data-corner-owner-level={group.level}>
+              <div className="grid grid-cols-2 gap-2">{group.cards.map((card) => optionButton(card, 'owner'))}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/*
+        * ДВЕРЦЫ ВЕРХНЕГО Г-МОДУЛЯ (P0, видео заказчика): «книжкой» или каждая
+        * на своих петлях. Заход дверцы в дверцу — словами до нажатия.
+        */}
+      {(corner.doors?.length ?? 0) > 0 && (
+        <div className="mt-4 flex flex-col gap-2" data-corner-doors={corner.doors!.length}>
+          <p className="mw-label">Дверцы верхнего углового шкафа</p>
+          <div className="grid grid-cols-2 gap-2">{corner.doors!.map((card) => optionButton(card, 'door'))}</div>
+        </div>
+      )}
     </div>
   );
 }
@@ -451,53 +553,80 @@ function CornerGlyph({
   run: Run;
   production?: ProductionSettings;
 }) {
-  const g = cornerGeometry(card.choice, run.zone, production);
-  const lower = card.level === 'lower';
-  const depth = rowStandardDepthMm(run.zone, lower ? 'base' : 'upper', production);
+  /*
+   * Стена до угла — сверху, стена после — справа. Кто из двух ведёт уровень,
+   * считает `levelOfChoice` — те же числа, что ставят ряд (P0): ведущий
+   * доходит до стены соседа, второй — нет, на свой отступ.
+   */
+  const level = card.level === 'countertop' ? 'lower' : card.level;
+  const choice = card.choice;
+  const prev = levelOfChoice(choice, 'prev', level, run.zone, production);
+  const next = levelOfChoice(choice, 'next', level, run.zone, production);
+  const depth = rowStandardDepthMm(
+    run.zone,
+    level === 'lower' ? 'base' : 'upper',
+    production,
+    level === 'mezzanine' ? 'mezzanine' : undefined,
+  );
   const front = shopOf(production).frontMm;
-  const size = Math.max(g.lostMm, g.upperStartMm, g.lowerLegMm, g.upperLegMm) + 500;
-  const W = size;
-  const kind = lower ? card.choice.lower : card.choice.upper;
-  const start = lower ? g.lostMm : g.upperStartMm;
-  const leg = lower ? g.lowerLegMm : g.upperLegMm;
-  const ownerEnd = lower ? W : W - g.ownerUpperCutMm;
-  const blind = lower ? g.ownerBlindMm : g.ownerUpperBlindMm;
-  const filler = lower ? g.fillerMm : g.upperFillerMm;
+  const W = Math.max(prev.gapMm, next.gapMm, prev.legMm, next.legMm, prev.blindMm, next.blindMm, depth) + 500;
+  const leg = Math.max(prev.legMm, next.legMm);
+  const slab = counterSlabDepthMm(run.zone, production);
+  const slabByPrev = cornerOwnerOf(choice, 'countertop') === 'prev';
+
+  if (card.level === 'countertop') {
+    return (
+      <svg viewBox={`-60 -60 ${W + 120} ${W + 120}`} className="h-full w-full" aria-hidden>
+        <path d={`M 0 0 H ${W} V ${W}`} fill="none" stroke="currentColor" strokeWidth={50} opacity={0.5} />
+        {/* плита стены до угла и плита стены после — ведущая идёт до стены соседа */}
+        <rect x={0} y={0} width={slabByPrev ? W : W - slab} height={slab} fill="currentColor" opacity={slabByPrev ? 0.45 : 0.2} />
+        <rect
+          x={W - slab}
+          y={slabByPrev ? slab : 0}
+          width={slab}
+          height={slabByPrev ? W - slab : W}
+          fill="currentColor"
+          opacity={slabByPrev ? 0.2 : 0.45}
+        />
+      </svg>
+    );
+  }
 
   return (
     <svg viewBox={`-60 -60 ${W + 120} ${W + 120}`} className="h-full w-full" aria-hidden>
       {/* стены */}
       <path d={`M 0 0 H ${W} V ${W}`} fill="none" stroke="currentColor" strokeWidth={50} opacity={0.5} />
-      {/* ряд владельца */}
-      {kind === 'l_shape' ? (
+      {leg > 0 ? (
         <>
+          {/* Г-модуль — у ведущего, фигура в две ноги; ряды — до его ног */}
           <rect x={0} y={0} width={W - leg} height={depth} fill="currentColor" opacity={0.18} />
           <path
             d={`M ${W - leg} 0 H ${W} V ${leg} H ${W - depth} V ${depth} H ${W - leg} Z`}
             fill="currentColor"
             opacity={0.45}
           />
+          <rect x={W - depth} y={leg} width={depth} height={W - leg} fill="currentColor" opacity={0.18} />
         </>
       ) : (
         <>
-          <rect x={0} y={0} width={ownerEnd} height={depth} fill="currentColor" opacity={0.18} />
-          {blind > 0 && (
-            <rect x={W - blind} y={0} width={blind} height={depth} fill="currentColor" opacity={0.4} />
+          {/* ряд стены до угла */}
+          <rect x={0} y={0} width={W - prev.gapMm} height={depth} fill="currentColor" opacity={0.18} />
+          {prev.blindMm > 0 && (
+            <rect x={W - prev.blindMm} y={0} width={prev.blindMm} height={depth} fill="currentColor" opacity={0.4} />
+          )}
+          {/* ряд стены после угла */}
+          <rect x={W - depth} y={next.gapMm} width={depth} height={W - next.gapMm} fill="currentColor" opacity={0.18} />
+          {next.blindMm > 0 && (
+            <rect x={W - depth} y={0} width={depth} height={next.blindMm} fill="currentColor" opacity={0.4} />
           )}
         </>
       )}
-      {/* ряд соседа */}
-      <rect x={W - depth} y={start} width={depth} height={W - start} fill="currentColor" opacity={0.18} />
-      {/* фальш-панель */}
-      {filler > 0 && (
-        <rect
-          x={W - depth - front}
-          y={start - filler}
-          width={front}
-          height={filler}
-          fill="currentColor"
-          opacity={0.9}
-        />
+      {/* фальш-панели стыкующегося ряда — в плоскости его фасадов */}
+      {!prev.owns && prev.panelMm > 0 && (
+        <rect x={W - prev.gapMm} y={depth} width={prev.panelMm} height={front} fill="currentColor" opacity={0.9} />
+      )}
+      {!next.owns && next.panelMm > 0 && (
+        <rect x={W - depth - front} y={next.gapMm - next.panelMm} width={front} height={next.panelMm} fill="currentColor" opacity={0.9} />
       )}
     </svg>
   );

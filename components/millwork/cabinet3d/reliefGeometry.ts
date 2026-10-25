@@ -88,9 +88,9 @@ export function reliefGeometryCount(): number {
 }
 
 /** Габарит фасада по коробке: лицо на зрителя — X × Y × Z, фасад Б угла — Z × Y × X. */
-export function leafOfBox(scale: [number, number, number], face?: '-x'): ReliefLeaf {
+export function leafOfBox(scale: [number, number, number], face?: '-x' | '+x'): ReliefLeaf {
   const [sx, sy, sz] = scale;
-  return face === '-x'
+  return face === '-x' || face === '+x'
     ? { widthMm: sz * 1000, heightMm: sy * 1000, thicknessMm: sx * 1000 }
     : { widthMm: sx * 1000, heightMm: sy * 1000, thicknessMm: sz * 1000 };
 }

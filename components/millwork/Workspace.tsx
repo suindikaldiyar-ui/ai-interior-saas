@@ -73,6 +73,7 @@ import {
   LOWER_CORNER_TITLE,
   UPPER_CORNER_TITLE,
   cornerChoicesOf,
+  cornerOwnerOf,
   mergedCorners,
   stampedCorners,
 } from '@/lib/millwork/corner';
@@ -80,6 +81,8 @@ import {
   changeCorner,
   cornerCards,
   cornerOfUnit,
+  cornerOwnerCards,
+  cornerDoorCards,
   type CornerCard,
 } from '@/lib/millwork/cornerChange';
 
@@ -354,6 +357,12 @@ export type WorkspaceProps = {
   clientName?: string;
   /** Состояние, с которым объект закрыли в прошлый раз. */
   initialState?: MillworkState | null;
+  /**
+   * СУММА, СОХРАНЁННАЯ С ОБЪЕКТОМ (`projects.total`): её назвали клиенту.
+   * Пересчёт текущей версией дал другую — экран показывает разницу и не
+   * пишет новую сумму, пока её не примут (P0, ТЗ проверка 23).
+   */
+  savedTotal?: number | null;
   /** Ставки каталога не заполнены — считать смету нечем. */
   ratesMissing?: boolean;
   /**
@@ -2408,6 +2417,32 @@ export default function Workspace(props: WorkspaceProps) {
     [shape, requirements, applianceWallsNow, legacyCorner, site, production, variantKey],
   );
 
+  /*
+   * РЯДЫ ЭКРАНА ПО ГОТОВОМУ РЕШЕНИЮ С ДРУГИМ ВЫБОРОМ УГЛОВ (P0).
+   *
+   * Смену того, кто ведёт уровень в угол, движок делает пересборкой двух
+   * стен угла — той же композицией и тем же путём экрана, что строят ряды
+   * сейчас: стена А — из вариантов (`composeVariants`), соседние — из
+   * композиции. Приборы держатся своих стен (закрепление, как у смены вида).
+   */
+  const screenRowsWith = useCallback(
+    (corners: CornerChoice[]): { runs: Run[] } | { why: string } => {
+      const attempt = compositionWith(corners, true);
+      if (!attempt) return { why: 'Композиция стен не собрана.' };
+      if (attempt.state === 'refused') return { why: attempt.reason };
+      const next = attempt.composition;
+      const pinned = { ...requirements, applianceWalls: applianceWallsNow };
+      const wallA = composeVariants(
+        { ...input, requirements: wallRequirementsOf(next, pinned), corner: wallCornerOf(next) },
+        disabled,
+        {},
+      ).find((variant) => variant.key === variantKey)?.run;
+      if (!wallA) return { why: 'Ряд стены А с этим углом не собрался.' };
+      return { runs: wallSegments(next, wallA, {}) };
+    },
+    [compositionWith, requirements, applianceWallsNow, input, disabled, variantKey],
+  );
+
   const cornerInput = useMemo(
     () =>
       selectedCorner === null
@@ -2426,8 +2461,11 @@ export default function Workspace(props: WorkspaceProps) {
             labels: segments.map((_, i) => wallLabel(i)),
             /* Ход петли и направляющей, ручки — по позициям каталога (STAGE A). */
             hardware: hardwareItems,
+            /* Смена того, кто ведёт угол (P0), — пересборкой двух стен угла. */
+            recompose: screenRowsWith,
+            edited: wallEdited,
           },
-    [selectedCorner, segments, layout, cornerChoices, requirements, site, hardwareItems],
+    [selectedCorner, segments, layout, cornerChoices, requirements, site, hardwareItems, screenRowsWith, wallEdited],
   );
 
   /*
@@ -2438,6 +2476,43 @@ export default function Workspace(props: WorkspaceProps) {
   const cornerList = useMemo<CornerCard[]>(() => {
     if (!cornerInput) return [];
     return cornerCards(cornerInput).map((card) => {
+      if (card.refusal || card.current) return card;
+      const corners = cornerChoices.map((choice, i) => (i === cornerInput.index ? card.choice : choice));
+      const attempt = compositionWith(corners, true);
+      return attempt?.state === 'refused' ? { ...card, refusal: attempt.reason, runs: null } : card;
+    });
+  }, [cornerInput, cornerChoices, compositionWith]);
+
+  /*
+   * КТО ВЕДЁТ УГОЛ — ПЕРЕКЛЮЧАТЕЛИ ПО УРОВНЯМ (P0). Та же проверка до
+   * нажатия: не собралась композиция — переключатель серый с её причиной;
+   * собралась с заходом, которого панелью не снять, — заход назван рядом.
+   */
+  const cornerOwnerList = useMemo<CornerCard[]>(() => {
+    if (!cornerInput) return [];
+    return cornerOwnerCards(cornerInput).map((card) => {
+      if (card.refusal || card.current) return card;
+      const corners = cornerChoices.map((choice, i) => (i === cornerInput.index ? card.choice : choice));
+      const attempt = compositionWith(corners, true);
+      if (attempt?.state === 'refused') return { ...card, refusal: attempt.reason, runs: null };
+      const clashes = (attempt?.state === 'built' ? (attempt.composition.cornerClashes ?? []) : []).filter(
+        (note) => note.corner === cornerInput.index,
+      );
+      return clashes.length > 0
+        ? { ...card, changes: [...(card.changes ?? []), ...clashes.map((note) => `после смены цены не будет: ${note.words}`)] }
+        : card;
+    });
+  }, [cornerInput, cornerChoices, compositionWith]);
+
+  /*
+   * ДВЕРЦЫ ВЕРХНЕГО Г-МОДУЛЯ (P0): «книжкой» или каждая на своих петлях.
+   * Заход дверцы в дверцу уже назван карточкой (`cornerDoorCards`, по рядам
+   * экрана с позициями каталога); здесь — та же проверка, что композиция
+   * с этим выбором собирается.
+   */
+  const cornerDoorList = useMemo<CornerCard[]>(() => {
+    if (!cornerInput) return [];
+    return cornerDoorCards(cornerInput).map((card) => {
       if (card.refusal || card.current) return card;
       const corners = cornerChoices.map((choice, i) => (i === cornerInput.index ? card.choice : choice));
       const attempt = compositionWith(corners, true);
@@ -2509,8 +2584,42 @@ export default function Workspace(props: WorkspaceProps) {
 
       const owner = cornerInput.index;
       dirty.current = true;
+      /*
+       * Название карточки в строке — строчными («низ: слепой с фальш-панелью»); имя стены — как есть:
+       * «низ: Стена Б идёт в угол», а не «стена б» (P0).
+       */
+      const picked = /Стена [А-ЯЁ]/.test(card.title)
+        ? card.title.charAt(0).toLowerCase() + card.title.slice(1)
+        : card.title.toLowerCase();
       /* Выбор углов — за парами стен; углы, которых сейчас нет, не теряются. */
       setCornerPicks((prev) => mergedCorners(prev, change.corners, compositionWallIds));
+      if (change.keep) {
+        /* Плита через угол и дверцы верхнего Г-модуля (P0): ряды стоят как стоят. */
+        setSceneNotice(`${wallLabel(owner)} — ${wallLabel(owner + 1)}: ${picked}. Модули на своих местах.`);
+        return;
+      }
+      if (change.rebuild) {
+        /*
+         * КТО ВЕДЁТ УГОЛ СМЕНИЛСЯ (P0): обе стены угла собираются по готовому
+         * решению — их правки снимаются, и это было сказано на карточке.
+         */
+        for (const index of change.rebuild) {
+          if (index === 0) {
+            setEditedRuns((prev) => {
+              const next = { ...prev };
+              delete next[active.key];
+              return next;
+            });
+          } else {
+            setEditedWalls((prev) => withoutWallEdit(prev, wallIdAt(index), index));
+          }
+        }
+        setSceneNotice(
+          `${wallLabel(owner)} — ${wallLabel(owner + 1)}: ${picked}. ` +
+            (card.changes?.length ? `Изменилось: ${card.changes.join('; ')}.` : 'Модули на своих местах.'),
+        );
+        return;
+      }
       for (const index of [owner, owner + 1]) {
         const run = change.runs[index];
         if (!run) continue;
@@ -2518,7 +2627,7 @@ export default function Workspace(props: WorkspaceProps) {
         else setEditedWalls((prev) => withWallEdit(prev, wallIdAt(index), index, run));
       }
       setSceneNotice(
-        `${wallLabel(owner)} — ${wallLabel(owner + 1)}: ${card.title.toLowerCase()}. ` +
+        `${wallLabel(owner)} — ${wallLabel(owner + 1)}: ${picked}. ` +
           'Остальные модули на своих местах.',
       );
     },
@@ -2539,10 +2648,15 @@ export default function Workspace(props: WorkspaceProps) {
     if (selectedCorner === null) return null;
     const choice = cornerChoices[selectedCorner];
     const sizes = cornerSizesOf(production);
+    /* Кто ведёт каждый уровень — словами (P0): «низ ведёт стена А, верх — стена Б». */
+    const leads = (level: 'lower' | 'upper' | 'mezzanine' | 'countertop') =>
+      lowerWall(wallLabel(cornerOwnerOf(choice, level) === 'prev' ? selectedCorner : selectedCorner + 1), 'nominative');
     return {
       title: `Угол ${wallLabel(selectedCorner)} — ${wallLabel(selectedCorner + 1)}`,
       now:
-        `Владелец угла — ${lowerWall(wallLabel(selectedCorner), 'nominative')}: её ряд идёт до стены соседа. ` +
+        `Низ ведёт в угол ${leads('lower')}` +
+        (choice.upper === 'empty' ? ', над столешницей угол пустой' : `, верх — ${leads('upper')}`) +
+        `, плита через угол — ${leads('countertop')}. ` +
         `Низ: ${LOWER_CORNER_TITLE[choice.lower].toLowerCase()}, верх: ${UPPER_CORNER_TITLE[choice.upper].toLowerCase()}.`,
       unconfirmed: sizes.confirmed
         ? null
@@ -2552,10 +2666,12 @@ export default function Workspace(props: WorkspaceProps) {
         ? `По ходу створок и ящиков: ${layout.corners[selectedCorner].clearanceWhy!.join('; ')}.`
         : null,
       cards: cornerList,
+      owners: cornerOwnerList,
+      doors: cornerDoorList,
       priceOf: cornerPrice,
       onPick: applyCorner,
     };
-  }, [selectedCorner, cornerChoices, production, layout, cornerList, cornerPrice, applyCorner]);
+  }, [selectedCorner, cornerChoices, production, layout, cornerList, cornerOwnerList, cornerDoorList, cornerPrice, applyCorner]);
 
   /**
    * ПЕРЕНОС ПРИБОРА НА ДРУГУЮ СТЕНУ.
@@ -3895,6 +4011,61 @@ export default function Workspace(props: WorkspaceProps) {
   );
 
   /*
+   * СОГЛАСОВАННАЯ СУММА НЕ МЕНЯЕТСЯ МОЛЧА (P0, ТЗ проверка 23).
+   *
+   * Объект открылся, и расчёт текущей версии дал не ту сумму, что сохранена
+   * с ним (`projects.total`): в смете появились строки, которых при записи не
+   * было (направляющие под варочной, петли мойки), или ушли лишние. Сумму,
+   * которую назвали клиенту, программа сама не переписывает: разница —
+   * числом на экране, а новая сумма в объект не пишется, пока человек её не
+   * примет. Состав, правки и снимок цен пишутся как всегда.
+   *
+   * Сравнивается сумма НА ОТКРЫТИИ — когда каталог организации доехал
+   * (ставки каталога лежат поверх пропсов, `liveRates`), — а не после правок
+   * человека: его правка меняет сумму законно и вслух.
+   */
+  const agreedTotal = props.projectId && props.savedTotal && props.savedTotal > 0 ? Math.round(props.savedTotal) : null;
+  const [openTotal, setOpenTotal] = useState<number | null>(null);
+  const [totalAccepted, setTotalAccepted] = useState(false);
+  useEffect(() => {
+    if (openTotal !== null || agreedTotal === null) return;
+    /* Каталог ещё едет — ставки на экране не те, что будут через секунду. */
+    if (catalog.length === 0 && catalogError === null) return;
+    if (catalogError !== null || screen.priceHidden) return;
+    setOpenTotal(Math.round(objectEstimate.total));
+  }, [openTotal, agreedTotal, catalog.length, catalogError, screen.priceHidden, objectEstimate.total]);
+  const holdTotal = agreedTotal !== null && openTotal !== null && openTotal !== agreedTotal && !totalAccepted;
+  const shownTotal = Math.round(objectEstimate.total);
+  const driftNotice =
+    holdTotal && agreedTotal !== null && openTotal !== null ? (
+      <div
+        data-total-drift={openTotal - agreedTotal}
+        role="alert"
+        className="fixed left-1/2 top-16 z-40 w-[min(640px,calc(100vw-32px))] -translate-x-1/2 rounded-[var(--r-panel)] bg-surface px-4 py-3 shadow-[0_1px_2px_rgba(0,0,0,.28)] print:hidden"
+      >
+        <p className="text-[13px] leading-snug">
+          Сумма объекта по текущему расчёту — <span className="mw-num font-medium">{shownTotal.toLocaleString('ru-RU')} ₸</span>, а сохранена
+          с ним — <span className="mw-num font-medium">{agreedTotal.toLocaleString('ru-RU')} ₸</span>
+          {' '}(на открытии {openTotal - agreedTotal > 0 ? '+' : '−'}
+          {Math.abs(openTotal - agreedTotal).toLocaleString('ru-RU')} ₸). Расчёт изменился с тех пор, как объект сохранили:
+          новая сумма не запишется в объект, пока вы её не примете. Состав и правки сохраняются как обычно.
+        </p>
+        <button
+          type="button"
+          data-total-accept
+          onClick={() => {
+            /* Принятая сумма пишется следующей записью — с тем же составом. */
+            dirty.current = true;
+            setTotalAccepted(true);
+          }}
+          className="mw-btn mw-btn-primary mt-2"
+        >
+          Принять новую сумму
+        </button>
+      </div>
+    ) : null;
+
+  /*
    * Автосохранение через паузу после последнего изменения. Замерщик правит
    * состав при клиенте и не должен помнить про кнопку «сохранить»; писать же
    * на каждый клик — это запрос в базу на каждое нажатие.
@@ -3979,7 +4150,8 @@ export default function Workspace(props: WorkspaceProps) {
       const payload = {
         projectId: props.projectId,
         millwork: state,
-        ...(catalogError ? {} : { total: objectEstimate.total }),
+        /* Новая сумма не пишется, пока разницу с согласованной не приняли (P0, проверка 23). */
+        ...(catalogError || holdTotal ? {} : { total: objectEstimate.total }),
       };
       try {
         localStorage.setItem(`millwork:${props.projectId}`, JSON.stringify(payload));
@@ -4036,6 +4208,7 @@ export default function Workspace(props: WorkspaceProps) {
     active.estimate,
     objectEstimate,
     catalogError,
+    holdTotal,
     props.initialState?.priceSnapshot,
     survey,
     templateId,
@@ -5578,6 +5751,7 @@ export default function Workspace(props: WorkspaceProps) {
               </button>
             )}
             {lossDialog}
+            {driftNotice}
           </>
         }
       />
@@ -5587,6 +5761,7 @@ export default function Workspace(props: WorkspaceProps) {
   return (
     <div className="mw-root flex h-screen flex-col overflow-hidden">
       {lossDialog}
+      {driftNotice}
       {/* ── Шапка: имя объекта и состояние сохранения, больше ничего ── */}
       <header className="flex items-center gap-3 px-4 py-3 print:hidden">
         <div className="min-w-0">

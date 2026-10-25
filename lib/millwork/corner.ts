@@ -3,7 +3,10 @@ import type {
   CornerChoice,
   CornerClearance,
   CornerJoin,
+  CornerLevel,
+  CornerOwner,
   LowerCornerKind,
+  MezzanineCornerKind,
   Module,
   ModuleVariantKind,
   Run,
@@ -14,26 +17,28 @@ import type {
   ZoneKind,
 } from '@/types/millwork';
 import { CORNER, MIN_WIDTH, isUpperRow, standsOnFloor } from './modules';
-import { moduleCarcassHeightMm, rowStandardDepthMm } from './fill';
+import { mezzanineBaseOf, moduleCarcassHeightMm, rowStandardDepthMm } from './fill';
 import { defaultOpening } from './opening';
 import { cornerSizesOf, plinthMm, shopOf, upperBottomMm } from './shop';
 
 /**
- * УГОЛ КАК У МЕБЕЛЬЩИКА — ОДИН ФАЙЛ НА ВСЕ ЧИСЛА УГЛА (слой 55).
+ * УГОЛ КАК У МЕБЕЛЬЩИКА — ОДИН ФАЙЛ НА ВСЕ ЧИСЛА УГЛА (слой 55, P0).
  *
- * В каждом углу одна стена ВЛАДЕЕТ угловой зоной — её ряд идёт до стены
+ * В каждом углу одна стена ВЕДЁТ уровень в угол — её ряд идёт до стены
  * соседа, и в угловой зоне стоит её угловой модуль, — а вторая к ней
- * СТЫКУЕТСЯ. До этого слоя владение не было записано нигде: его выводили
+ * СТЫКУЕТСЯ. До слоя 55 владение не было записано нигде: его выводили
  * из порядка рядов, а флаги «угол впереди» и «угол позади» лежали на двух
- * рядах порознь. Стена А на экране собиралась из вариантов и флага не
- * получала вовсе — и у угла оказывалось НОЛЬ владельцев: столешница А и Б
- * ложилась в угловой квадрат дважды, запила в смете не было.
+ * рядах порознь. До P0 угол вела всегда стена ДО угла по обходу, и одна
+ * для всех уровней: провести до угла стену Б было нельзя, а на фото
+ * заказчика низ ведёт одна стена, верх — другая.
  *
- * Здесь три вещи и больше ничего:
+ * Здесь четыре вещи и больше ничего:
  *   выбор по каждому углу (`cornerChoicesOf`) — из требований или из
  *     прежнего `cornerSolution`;
- *   роль ряда в каждом его углу (`cornerOfSegment`) — одна функция кладёт
- *     `own` владельцу и `dock` соседу по одному выбору;
+ *   кто ведёт уровень (`cornerOwnerOf`) — низ, верх, антресоль и плита
+ *     столешницы, каждый свой;
+ *   роль ряда в каждом его углу (`cornerOfSegment`, `levelAt`) — одна
+ *     функция кладёт угол обоим рядам по одному выбору;
  *   числа угла (`cornerGeometry`) — сколько угол занял, фальш-панели,
  *     ноги Г-модулей, слепые части фасадов. Их спрашивают раскладка,
  *     сцена, раскрой, смета и комната.
@@ -48,6 +53,19 @@ export const UPPER_CORNER_TITLE: Record<UpperCornerKind, string> = {
   l_shape: 'Г-образный навесной',
   blind: 'Слепой',
   empty: 'Пустой',
+};
+
+export const MEZZANINE_CORNER_TITLE: Record<MezzanineCornerKind, string> = {
+  blind: 'Одна идёт в угол',
+  empty: 'Пустой',
+};
+
+/** Как уровень угла называется человеку. */
+export const CORNER_LEVEL_TITLE: Record<CornerLevel, string> = {
+  lower: 'Низ',
+  upper: 'Верх',
+  mezzanine: 'Антресоль',
+  countertop: 'Столешница',
 };
 
 /** Что это значит — одна строка, которую замерщик пересказывает клиенту. */
@@ -86,6 +104,75 @@ export function solutionOf(choice: CornerChoice): CornerJoin['solution'] {
   return choice.lower === 'l_shape' ? 'corner_module' : 'false_panel';
 }
 
+/* ─────────────────────────  кто ведёт уровень  ───────────────────────── */
+
+/** Какая сторона угла — ряд у этого своего конца: у начала он стена ПОСЛЕ угла, у конца — ДО. */
+export type CornerEnd = 'start' | 'end';
+
+export function sideAt(end: CornerEnd): CornerOwner {
+  return end === 'start' ? 'next' : 'prev';
+}
+
+/**
+ * КТО ВЕДЁТ УРОВЕНЬ В УГОЛ (P0).
+ *
+ * Пусто — как было всегда: низ и верх ведёт стена до угла, плиту — тот,
+ * кто ведёт низ, антресоль — тот, кто ведёт верх. Антресоль без своего
+ * вида идёт за верхом целиком, и её владелец тогда — владелец верха.
+ */
+export function cornerOwnerOf(choice: Pick<CornerChoice, 'owners' | 'mezzanine'>, level: CornerLevel): CornerOwner {
+  if (level === 'mezzanine' && !choice.mezzanine) return cornerOwnerOf(choice, 'upper');
+  const set = choice.owners?.[level];
+  if (set) return set;
+  if (level === 'mezzanine') return cornerOwnerOf(choice, 'upper');
+  if (level === 'countertop') return cornerOwnerOf(choice, 'lower');
+  return 'prev';
+}
+
+/**
+ * ВЛАДЕЛЬЦЫ, КОТОРЫЕ ПИШУТСЯ В ЗАПИСЬ, — только выбранные.
+ *
+ * Низ и верх у стены до угла — умолчание, и в записи их нет: у угла без
+ * выбора запись и отпечаток прежние до символа (ловушка 246). Антресоль и
+ * плита держат свой выбор и тогда, когда он совпал с умолчанием: «плита
+ * стены А» остаётся плитой стены А, когда низ потом отдали стене Б.
+ */
+export function ownersOf(choice: Pick<CornerChoice, 'owners' | 'mezzanine'>): CornerChoice['owners'] | undefined {
+  const out: NonNullable<CornerChoice['owners']> = {};
+  const set = choice.owners ?? {};
+  if (set.lower === 'next') out.lower = 'next';
+  if (set.upper === 'next') out.upper = 'next';
+  if (set.mezzanine && choice.mezzanine) out.mezzanine = set.mezzanine;
+  if (set.countertop) out.countertop = set.countertop;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** Выбор угла без меток стен и панелей по ходу: виды по уровням и владельцы. */
+export function choiceOnly(choice: CornerChoice): CornerChoice {
+  const owners = ownersOf(choice);
+  return {
+    lower: choice.lower,
+    upper: choice.upper,
+    ...(choice.mezzanine ? { mezzanine: choice.mezzanine } : {}),
+    ...(owners ? { owners } : {}),
+    ...(choice.upper === 'l_shape' && choice.upperDoors === 'pair' ? { upperDoors: 'pair' as const } : {}),
+  };
+}
+
+/** Тот же ли это угол — виды, двери верхнего Г-модуля и владельцы всех уровней (панели по ходу не в счёт). */
+export function sameCorner(a: CornerChoice | undefined, b: CornerChoice | undefined): boolean {
+  if (!a || !b) return a === b;
+  return (
+    a.lower === b.lower &&
+    a.upper === b.upper &&
+    (a.mezzanine ?? '') === (b.mezzanine ?? '') &&
+    (choiceOnly(a).upperDoors ?? '') === (choiceOnly(b).upperDoors ?? '') &&
+    (['lower', 'upper', 'mezzanine', 'countertop'] as CornerLevel[]).every(
+      (level) => cornerOwnerOf(a, level) === cornerOwnerOf(b, level),
+    )
+  );
+}
+
 /**
  * ВЫБОР ПО КАЖДОМУ УГЛУ.
  *
@@ -112,7 +199,7 @@ export function cornerChoicesOf(
     const own = owner && dock ? saved.find((entry) => entry.walls?.[0] === owner && entry.walls?.[1] === dock) : undefined;
     const byNumber = saved[i] && !saved[i].walls ? saved[i] : undefined;
     const chosen = own ?? byNumber;
-    return chosen ? { lower: chosen.lower, upper: chosen.upper } : { ...legacy };
+    return chosen ? choiceOnly(chosen) : { ...legacy };
   });
 }
 
@@ -134,7 +221,7 @@ export function stampedCorners(
   return choices.map((choice, i) =>
     choice.walls || !wallIds[i] || !wallIds[i + 1]
       ? choice
-      : { lower: choice.lower, upper: choice.upper, walls: [wallIds[i], wallIds[i + 1]] },
+      : { ...choiceOnly(choice), walls: [wallIds[i], wallIds[i + 1]] },
   );
 }
 
@@ -152,8 +239,7 @@ export function mergedCorners(
   wallIds: string[],
 ): SavedCornerChoice[] {
   const here = current.map((choice, i) => ({
-    lower: choice.lower,
-    upper: choice.upper,
+    ...choiceOnly(choice),
     walls: [wallIds[i], wallIds[i + 1]] as [string, string],
   }));
   const kept = (stored ?? []).filter(
@@ -186,20 +272,66 @@ export function runWithCorner(run: Run, corner: RunCorner | undefined): Run {
     void _stale;
     return rest;
   }
-  return { ...run, corner };
+  return stampCornerDoors({ ...run, corner });
 }
 
-/** Поля панелей по ходу, которые двигают ряд после угла и ряд-владелец. */
-const DOCK_CLEARANCE = ['dockMm', 'upperDockMm'] as const;
-const OWNER_CLEARANCE = ['ownerMm', 'upperOwnerMm'] as const;
+/**
+ * ДВЕРИ ВЕРХНЕГО Г-МОДУЛЯ — НА МОДУЛЬ, ПО ВЫБОРУ УГЛА, НА КАЖДОМ ПОКАЗЕ (P0).
+ *
+ * Выбор живёт в угле (`CornerChoice.upperDoors`), а сцена, раскрой и смета
+ * видят модуль: признак кладётся на верхний Г-модуль того конца ряда, где
+ * ряд ведёт верх, и снимается, когда выбор — «книжка». Ряд без таких модулей
+ * возвращается тем же объектом.
+ */
+export function stampCornerDoors(run: Run): Run {
+  if (!run.corner) return run;
+  let changed = false;
+  const stamp = (unit: Module): Module => {
+    if (unit.kind !== 'corner_upper' || unit.section === 'mezzanine') return unit;
+    const side = lLegOf(unit, run)?.side;
+    const choice = side === 'left' ? run.corner?.start : run.corner?.end;
+    const pair = Boolean(choice && choice.upper === 'l_shape' && choice.upperDoors === 'pair');
+    if (pair === (unit.cornerDoors === 'pair')) return unit;
+    changed = true;
+    if (pair) return { ...unit, cornerDoors: 'pair' };
+    const { cornerDoors: _old, ...rest } = unit;
+    void _old;
+    return rest;
+  };
+  const upperSegments = run.upperSegments.map((segment) => ({ ...segment, modules: segment.modules.map(stamp) }));
+  return changed ? { ...run, upperSegments } : run;
+}
+
+/** Угол у конца сохранённого ряда: прежние поля `dock`/`own` стоят на тех же местах. */
+function savedEndOf(corner: RunCorner | undefined, end: CornerEnd): CornerChoice | undefined {
+  const legacy = corner as (RunCorner & { dock?: CornerChoice; own?: CornerChoice }) | undefined;
+  return end === 'start' ? (legacy?.start ?? legacy?.dock) : (legacy?.end ?? legacy?.own);
+}
+
+/**
+ * ПОЛЯ ПАНЕЛЕЙ ПО ХОДУ, КОТОРЫЕ ПРИНАДЛЕЖАТ РЯДУ С ЭТОЙ СТОРОНЫ УГЛА.
+ *
+ * Панель стыкующегося ряда двигает его мебель после угла, панель ведущего
+ * — его глухую зону. Какая из двух у ряда, говорит роль ряда на уровне,
+ * а не его место в обходе (P0): стена после угла, которая ведёт низ, держит
+ * панель владельца.
+ */
+export function clearanceFieldsOf(choice: CornerChoice, side: CornerOwner): (keyof CornerClearance)[] {
+  const owns = (level: CornerLevel) => cornerOwnerOf(choice, level) === side;
+  return [
+    owns('lower') ? 'ownerMm' : 'dockMm',
+    owns('upper') ? 'upperOwnerMm' : 'upperDockMm',
+    owns('mezzanine') ? 'mezzOwnerMm' : 'mezzDockMm',
+  ];
+}
 
 /**
  * УГОЛ ПРАВЛЕНОГО РЯДА: РОЛЬ И ВЫБОР — ОТ КОМПОЗИЦИИ, ПАНЕЛИ ПО ХОДУ — СВОИ.
  *
  * Панели по ходу (`CornerChoice.clearance`) композиция считает по рядам
  * шаблона. Правленый ряд стоит не ими: чужая ширина панели сдвинула бы
- * всю его мебель за панелью (ряд после угла) или сузила бы створку у
- * слепого модуля (владелец) — правку, которой человек не делал. Поэтому
+ * всю его мебель за панелью (стыкующийся ряд) или сузила бы створку у
+ * слепого модуля (ведущий) — правку, которой человек не делал. Поэтому
  * поля СВОЕЙ стороны угла правленый ряд держит те, с которыми его правили
  * (при том же выборе угла), а заход, если он есть, называет экран
  * (`cornerClashMismatches`). Выбор угла другой — своих панелей по ходу у
@@ -207,10 +339,10 @@ const OWNER_CLEARANCE = ['ownerMm', 'upperOwnerMm'] as const;
  */
 export function editedRunCorner(saved: Pick<Run, 'corner'>, composed: RunCorner | undefined): RunCorner | undefined {
   if (!composed) return composed;
-  const own = (now: CornerChoice, then: CornerChoice | undefined, fields: readonly (keyof CornerClearance)[]): CornerChoice => {
-    const same = Boolean(then) && then!.lower === now.lower && then!.upper === now.upper;
+  const keep = (now: CornerChoice, then: CornerChoice | undefined, side: CornerOwner): CornerChoice => {
+    const same = sameCorner(then, now);
     const clearance: CornerClearance = { ...(now.clearance ?? {}) };
-    for (const field of fields) {
+    for (const field of clearanceFieldsOf(now, side)) {
       const value = same ? then!.clearance?.[field] : undefined;
       if (value && value > 0) clearance[field] = value;
       else delete clearance[field];
@@ -220,18 +352,17 @@ export function editedRunCorner(saved: Pick<Run, 'corner'>, composed: RunCorner 
     return Object.keys(clearance).length > 0 ? { ...rest, clearance } : rest;
   };
   return {
-    ...(composed.dock ? { dock: own(composed.dock, saved.corner?.dock, DOCK_CLEARANCE) } : {}),
-    ...(composed.own ? { own: own(composed.own, saved.corner?.own, OWNER_CLEARANCE) } : {}),
+    ...(composed.start ? { start: keep(composed.start, savedEndOf(saved.corner, 'start'), 'next') } : {}),
+    ...(composed.end ? { end: keep(composed.end, savedEndOf(saved.corner, 'end'), 'prev') } : {}),
   };
 }
 
 /**
  * РОЛЬ РЯДА В ЕГО УГЛАХ — ОДНА ФУНКЦИЯ НА КОМПОЗИЦИЮ И НА ШОВ ЭКРАНА.
  *
- * Ряд `index` из `segments`: угол ПЕРЕД ним — номер `index − 1` (он к нему
- * стыкуется), угол ЗА ним — номер `index` (им он владеет). Владелец —
- * стена ДО угла по обходу замера: её ряд идёт до стены соседа, как и
- * было всегда, только теперь это записано.
+ * Ряд `index` из `segments`: угол ПЕРЕД ним — номер `index − 1` (ряд —
+ * стена после него), угол ЗА ним — номер `index` (ряд — стена до него).
+ * Кто из двух ведёт каждый уровень, говорит выбор угла (`cornerOwnerOf`).
  */
 export function cornerOfSegment(
   choices: CornerChoice[],
@@ -239,61 +370,71 @@ export function cornerOfSegment(
   segments: number,
 ): RunCorner | undefined {
   const corner: RunCorner = {};
-  if (index > 0 && choices[index - 1]) corner.dock = { ...choices[index - 1] };
-  if (index < segments - 1 && choices[index]) corner.own = { ...choices[index] };
-  return corner.dock || corner.own ? corner : undefined;
+  if (index > 0 && choices[index - 1]) corner.start = { ...choices[index - 1] };
+  if (index < segments - 1 && choices[index]) corner.end = { ...choices[index] };
+  return corner.start || corner.end ? corner : undefined;
 }
 
-/** Числа одного угла — в миллиметрах, от стены-владельца и от конца её ряда. */
+/** Числа одного угла — в миллиметрах, от стены ведущего ряда и от конца его ряда. */
 export type CornerGeometry = {
-  /** Нижний ряд стены после угла начинается на этом расстоянии от стены-владельца. */
+  /** Нижний ряд стыкующейся стены начинается на этом расстоянии от стены ведущей. */
   lostMm: number;
-  /** Фальш-панель нижнего ряда (у ряда после угла). Ноль — её нет. */
+  /** Фальш-панель нижнего ряда (у стыкующегося). Ноль — её нет. */
   fillerMm: number;
-  /** Верхний ряд стены после угла начинается на этом расстоянии от стены-владельца. */
+  /** Верхний ряд стыкующейся стены начинается на этом расстоянии от стены ведущей. */
   upperStartMm: number;
-  /** Фальш-панель верхнего ряда (у ряда после угла). Ноль — её нет. */
+  /** Фальш-панель верхнего ряда (у стыкующегося). Ноль — её нет. */
   upperFillerMm: number;
-  /** На сколько раньше стены кончается верхний ряд владельца (пустой угол). */
+  /** На сколько раньше стены кончается верхний ряд ведущего (пустой угол). */
   ownerUpperCutMm: number;
   /**
-   * Зона без створки у конца нижнего ряда владельца (слепой угол): то, что
-   * стоит за корпусом и фасадом соседа, и фальш-панель владельца перед ними.
+   * Зона без створки у конца нижнего ряда ведущего (слепой угол): то, что
+   * стоит за корпусом и фасадом соседа, и фальш-панель ведущего перед ними.
    */
   ownerBlindMm: number;
-  /** То же у верхнего ряда владельца. */
+  /** То же у верхнего ряда ведущего. */
   ownerUpperBlindMm: number;
   /**
-   * ФАЛЬШ-ПАНЕЛЬ ВЛАДЕЛЬЦА нижнего ряда (STAGE A): полоса фасада в его
+   * ФАЛЬШ-ПАНЕЛЬ ВЕДУЩЕГО нижнего ряда (STAGE A): полоса фасада в его
    * плоскости, между последним открывающимся модулем и фасадами соседа.
    * Ноль — её нет; ширину даёт кинематика угла (`CornerChoice.clearance`).
    */
   ownerFillerMm: number;
-  /** То же у навесного ряда владельца. */
+  /** То же у навесного ряда ведущего. */
   ownerUpperFillerMm: number;
   /** Сторона нижнего Г-модуля. Ноль — Г-модуля нет. */
   lowerLegMm: number;
   /** Сторона верхнего Г-модуля. Ноль — его нет. */
   upperLegMm: number;
+  /**
+   * АНТРЕСОЛЬ (P0). Без своего вида она идёт за верхом: те же отступы, что
+   * у верхнего ряда, ни глухой зоны, ни панелей — как было до P0.
+   */
+  mezzStartMm: number;
+  mezzFillerMm: number;
+  ownerMezzCutMm: number;
+  ownerMezzBlindMm: number;
+  ownerMezzFillerMm: number;
 };
 
 /**
  * ЧИСЛА УГЛА — ОДНА ФУНКЦИЯ НА РАСКЛАДКУ, СЦЕНУ, РАСКРОЙ, СМЕТУ И КОМНАТУ.
  *
- * Слепой угол: ряд-владелец идёт до стены; у его последнего модуля глухая
+ * Слепой угол: ведущий ряд идёт до стены; у его крайнего модуля глухая
  * та часть, за которой стоит корпус соседа и его фасад (глубина ряда +
  * толщина фасада). Сосед начинается за фальш-панелью: глубина + панель.
  *
- * Г-образный: модуль-владелец — квадрат S×S; сосед начинается за его
+ * Г-образный: модуль ведущего — квадрат S×S; сосед начинается за его
  * второй ногой, на S от стены. Фальш-панели нет: полосу между фасадами
  * закрывает сама нога и её фасад.
  *
- * Пустой верх: верхний ряд владельца кончается раньше стены на глубину
+ * Пустой верх: верхний ряд ведущего кончается раньше стены на глубину
  * верхнего ряда соседа плюс панель, сосед начинается так же — угловой
  * квадрат над столешницей пуст, а створки у угла раскрываются мимо
  * чужих фасадов и ручек.
  *
- * Обе стены угла одной зоны и одной школы цеха, поэтому глубина одна.
+ * Числа не зависят от того, КАКАЯ стена ведёт (P0): обе стены угла одной
+ * зоны и одной школы цеха, поэтому глубина одна.
  */
 export function cornerGeometry(
   choice: CornerChoice,
@@ -308,8 +449,8 @@ export function cornerGeometry(
   /*
    * ФАЛЬШ-ПАНЕЛИ ПО ХОДУ (STAGE A). Ширина фальш-панели соседа — настройка
    * цеха; шире она только тогда, когда этого требует ход створок и ящиков
-   * (`cornerKinematics`), уже — никогда. Фальш-панели владельца у цеха нет
-   * вовсе: она появляется, когда ящик или створка владельца на ходу заходят
+   * (`cornerKinematics`), уже — никогда. Фальш-панели ведущего у цеха нет
+   * вовсе: она появляется, когда ящик или створка ведущего на ходу заходят
    * в ручку или фасад соседа.
    */
   const clear = choice.clearance;
@@ -372,7 +513,183 @@ export function cornerGeometry(
             upperLegMm: 0,
           };
 
-  return { ...lower, ...upper };
+  /*
+   * АНТРЕСОЛЬ СО СВОИМ СТЫКОМ (P0) — глубиной антресоли цеха, а не верха.
+   * Без своего вида — за верхом: те же отступы и ничего своего.
+   */
+  const mezzMm = rowStandardDepthMm(zone, 'upper', production, 'mezzanine');
+  const mezzPanelMm = Math.max(panelMm, clear?.mezzDockMm ?? 0);
+  const ownerMezzPanelMm = Math.max(0, clear?.mezzOwnerMm ?? 0);
+  const mezz = !choice.mezzanine
+    ? {
+        mezzStartMm: upper.upperStartMm,
+        mezzFillerMm: 0,
+        ownerMezzCutMm: upper.ownerUpperCutMm,
+        ownerMezzBlindMm: 0,
+        ownerMezzFillerMm: 0,
+      }
+    : choice.mezzanine === 'empty'
+      ? {
+          mezzStartMm: mezzMm + mezzPanelMm,
+          mezzFillerMm: 0,
+          ownerMezzCutMm: mezzMm + Math.max(panelMm, clear?.mezzOwnerMm ?? 0),
+          ownerMezzBlindMm: 0,
+          ownerMezzFillerMm: 0,
+        }
+      : {
+          mezzStartMm: mezzMm + mezzPanelMm,
+          mezzFillerMm: mezzPanelMm,
+          ownerMezzCutMm: 0,
+          ownerMezzBlindMm: mezzMm + frontMm + ownerMezzPanelMm,
+          ownerMezzFillerMm: ownerMezzPanelMm,
+        };
+
+  return { ...lower, ...upper, ...mezz };
+}
+
+/* ───────────────────  уровень ряда у его конца (P0)  ─────────────────── */
+
+/** Уровни ряда, у которых в углу своя граница. */
+export type RowLevel = 'lower' | 'upper' | 'mezzanine';
+
+/** Что у ряда в углу на одном уровне — числами, от стены соседа. */
+export type LevelAtCorner = {
+  choice: CornerChoice;
+  /** Ряд ведёт уровень в угол — до стены соседа. */
+  owns: boolean;
+  /**
+   * Ряд — та сторона, что ВЕДЁТ по выбору человека. У пустого угла не ведёт
+   * никто, но панели по ходу записаны за выбранной стороной (`clearance`).
+   */
+  designated: boolean;
+  /** Сколько уровень не доходит до стены соседа, мм. Ноль у ведущего. */
+  gapMm: number;
+  /** Сторона Г-модуля у этого конца, мм. Ноль — Г-модуля нет. */
+  legMm: number;
+  /** Глухая зона ведущего у этого конца, мм. Ноль — её нет. */
+  blindMm: number;
+  /** Фальш-панель ряда у этого конца: у стыкующегося — перед углом, у ведущего — у глухой зоны. */
+  panelMm: number;
+};
+
+/** Уровень угла для стороны `side` — без ряда: по выбору, зоне и школе цеха. */
+export function levelOfChoice(
+  choice: CornerChoice,
+  side: CornerOwner,
+  level: RowLevel,
+  zone: ZoneKind | undefined,
+  production?: ProductionSettings,
+): LevelAtCorner {
+  const g = cornerGeometry(choice, zone, production);
+  const designated = cornerOwnerOf(choice, level) === side;
+  const none = { choice, designated, legMm: 0, blindMm: 0 };
+  if (level === 'lower') {
+    return designated
+      ? { ...none, owns: true, gapMm: 0, legMm: g.lowerLegMm, blindMm: choice.lower === 'blind' ? g.ownerBlindMm : 0, panelMm: g.ownerFillerMm }
+      : { ...none, owns: false, gapMm: g.lostMm, panelMm: g.fillerMm };
+  }
+  if (level === 'upper') {
+    if (choice.upper === 'empty') {
+      return { ...none, owns: false, gapMm: designated ? g.ownerUpperCutMm : g.upperStartMm, panelMm: 0 };
+    }
+    return designated
+      ? {
+          ...none,
+          owns: true,
+          gapMm: 0,
+          legMm: g.upperLegMm,
+          blindMm: choice.upper === 'blind' ? g.ownerUpperBlindMm : 0,
+          panelMm: g.ownerUpperFillerMm,
+        }
+      : { ...none, owns: false, gapMm: g.upperStartMm, panelMm: g.upperFillerMm };
+  }
+  /* Антресоль за верхом: отступы верха, у пустого верха — оба ряда в стороне. */
+  if (!choice.mezzanine) {
+    if (choice.upper === 'empty') {
+      return { ...none, owns: false, gapMm: designated ? g.ownerMezzCutMm : g.mezzStartMm, panelMm: 0 };
+    }
+    return designated ? { ...none, owns: true, gapMm: 0, panelMm: 0 } : { ...none, owns: false, gapMm: g.mezzStartMm, panelMm: 0 };
+  }
+  if (choice.mezzanine === 'empty') {
+    return { ...none, owns: false, gapMm: designated ? g.ownerMezzCutMm : g.mezzStartMm, panelMm: 0 };
+  }
+  return designated
+    ? { ...none, owns: true, gapMm: 0, blindMm: g.ownerMezzBlindMm, panelMm: g.ownerMezzFillerMm }
+    : { ...none, owns: false, gapMm: g.mezzStartMm, panelMm: g.mezzFillerMm };
+}
+
+/** Уровень ряда у его конца: ведёт ли он угол и на сколько не доходит до стены соседа. */
+export function levelAt(
+  run: Pick<Run, 'corner' | 'zone' | 'production'>,
+  end: CornerEnd,
+  level: RowLevel,
+): LevelAtCorner | null {
+  const choice = run.corner?.[end];
+  return choice ? levelOfChoice(choice, sideAt(end), level, run.zone, run.production) : null;
+}
+
+/** Сколько нижний ряд не доходит до стены соседа у этого конца, мм. */
+export function lowerGapMm(run: Pick<Run, 'corner' | 'zone' | 'production'>, end: CornerEnd): number {
+  return levelAt(run, end, 'lower')?.gapMm ?? 0;
+}
+
+/**
+ * ГДЕ УРОВЕНЬ РЯДА СТОИТ ПО УГЛАМ — В КООРДИНАТАХ РЯДА.
+ *
+ * Ноль ряда — начало нижнего ряда. Верхний ряд и антресоль начинаются
+ * там, где их отпускает угол перед рядом: раньше нуля, когда нижний ряд
+ * уступил углу больше (шкафы висят над угловым модулем соседа, как их и
+ * вешают), позже — когда больше уступил верх. В конце ряда — так же, и
+ * у ряда, нижний ряд которого стыкуется, а верх ведёт угол, верх идёт
+ * ДАЛЬШЕ его нижнего ряда, до стены соседа (P0).
+ */
+export function levelBoundsOf(
+  run: Pick<Run, 'corner' | 'zone' | 'production' | 'lengthMm'>,
+  level: Exclude<RowLevel, 'lower'>,
+): { fromMm: number; toMm: number } {
+  const gap = (end: CornerEnd, of: RowLevel) => levelAt(run, end, of)?.gapMm ?? 0;
+  return {
+    fromMm: gap('start', level) - gap('start', 'lower'),
+    toMm: run.lengthMm + gap('end', 'lower') - gap('end', level),
+  };
+}
+
+/** Верхний ряд по углам — `levelBoundsOf(run, 'upper')`; прежнее имя для старых мест. */
+export function upperBoundsOf(
+  run: Pick<Run, 'corner' | 'zone' | 'production' | 'lengthMm'>,
+): { fromMm: number; toMm: number } {
+  return levelBoundsOf(run, 'upper');
+}
+
+/**
+ * ЧТО ВИСЯЩЕМУ РЯДУ ОСТАВИТЬ У УГЛОВ — ОДИН ОТВЕТ НА РАСКЛАДКУ И ПРАВКУ.
+ *
+ * Границы верхнего ряда и то, что ведущий ряд ставит у своего конца:
+ * Г-модуль (его сторону) или слепую зону. Раньше это было одно поле
+ * «угол за концом ряда» (`own`), и в начале ряда угла не бывало вовсе.
+ */
+export type UpperCorner = {
+  fromMm: number;
+  toMm: number;
+  /** `pair` — у верхнего Г-модуля две независимые дверцы (`CornerChoice.upperDoors`, P0). */
+  start?: { legMm: number; blindMm: number; pair?: true };
+  end?: { legMm: number; blindMm: number; pair?: true };
+};
+
+export function upperCornerOf(run: Pick<Run, 'corner' | 'zone' | 'production' | 'lengthMm'>): UpperCorner | undefined {
+  if (!run.corner) return undefined;
+  const out: UpperCorner = { ...levelBoundsOf(run, 'upper') };
+  for (const end of ['start', 'end'] as CornerEnd[]) {
+    const at = levelAt(run, end, 'upper');
+    if (at?.owns && (at.legMm > 0 || at.blindMm > 0)) {
+      out[end] = {
+        legMm: at.legMm,
+        blindMm: at.blindMm,
+        ...(at.legMm > 0 && at.choice.upperDoors === 'pair' ? { pair: true as const } : {}),
+      };
+    }
+  }
+  return out;
 }
 
 /**
@@ -383,20 +700,25 @@ export function cornerGeometry(
  * нахлёста: щель видно на любом ракурсе, нахлёст — это вторая плита
  * поверх первой, которой в цехе никто не режет.
  *
- * ПРАВИЛО СЛОЯ 55 — ВЛАДЕЛЕЦ ДАЁТ УГОЛ:
+ * ПРАВИЛО — ВЕДУЩИЙ ДАЁТ УГОЛ (слой 55), и ведущий у полосы СВОЙ (P0):
  *
- *   ряд-ВЛАДЕЛЕЦ идёт своей полосой до стены соседа — на всю глубину угла;
- *   ряд, который к нему СТЫКУЕТСЯ, заходит назад ровно до края полосы
- *   владельца: на занятое в углу минус глубина полосы.
+ *   полоса ведущего идёт до стены соседа — на всю глубину угла, даже
+ *   если его нижний ряд к углу стыкуется;
+ *   полоса второго ряда заходит или не доходит до края полосы ведущего:
+ *   на то, что не дошёл его нижний ряд, минус глубина полосы.
  *
- * До слоя 55 было наоборот: угловой квадрат накрывала полоса соседа, а
- * владелец обрезался — то есть над угловым модулем владельца лежала
- * чужая плита. На экране стена А вовсе не получала угла, и плиты А и Б
- * ложились в квадрат дважды.
+ * Цоколь ведёт тот, кто ведёт низ; плиту — тот, кто ведёт плиту
+ * (`owners.countertop`, умолчание — низ). Плита — отдельный контур: низ
+ * ведёт стена А, а через угол может идти плита стены Б, и тогда плита А
+ * обрезана по краю плиты Б, а не лежит под ней.
  *
  * Глубину своей полосы вызывающий знает сам — он её и рисует: у
  * столешницы это корпус со свесом, у цоколя корпус минус утопление, у
  * ниши глубина верхнего ряда. Сколько занято в углу — `cornerGeometry`.
+ *
+ * `startMm`/`endMm` — со знаком: плюс — полоса выходит за край нижнего
+ * ряда к углу, минус — не доходит до него. `backMm`/`cutMm` — прежние
+ * поля: заход в начале и обрезка в конце.
  */
 export function cornerBandMm(input: {
   corner: RunCorner | undefined;
@@ -404,69 +726,52 @@ export function cornerBandMm(input: {
   bandDepthMm: number;
   zone?: ZoneKind;
   production?: ProductionSettings;
-}): { backMm: number; cutMm: number } {
-  const dock = input.corner?.dock;
-  if (!dock) return { backMm: 0, cutMm: 0 };
-
-  const lostMm = cornerGeometry(dock, input.zone, input.production).lostMm;
-  return {
-    backMm: Math.max(0, Math.round(lostMm - input.bandDepthMm)),
-    cutMm: 0,
+  /** Чей это уровень: цоколь и ниша — низа, плита — свой (`countertop`). */
+  level?: 'lower' | 'countertop';
+}): { backMm: number; cutMm: number; startMm: number; endMm: number } {
+  const reach = (end: CornerEnd): number => {
+    const choice = input.corner?.[end];
+    if (!choice) return 0;
+    const lower = levelOfChoice(choice, sideAt(end), 'lower', input.zone, input.production);
+    const leads = cornerOwnerOf(choice, input.level ?? 'lower') === sideAt(end);
+    return Math.round(lower.gapMm - (leads ? 0 : input.bandDepthMm));
   };
+  const startMm = reach('start');
+  const endMm = reach('end');
+  return { backMm: Math.max(0, startMm), cutMm: Math.max(0, -endMm), startMm, endMm };
 }
 
-/** Сколько угол занял перед рядом — нижний ряд. Ноль, если перед рядом угла нет. */
+/** Сколько угол занял перед рядом — нижний ряд. Ноль, если перед рядом угла нет или ряд его ведёт. */
 export function dockLostMm(run: Pick<Run, 'corner' | 'zone' | 'production'>): number {
-  const dock = run.corner?.dock;
-  return dock ? cornerGeometry(dock, run.zone, run.production).lostMm : 0;
+  return lowerGapMm(run, 'start');
 }
 
 /**
- * ГДЕ ВЕРХНИЙ РЯД МОЖЕТ СТОЯТЬ ПО УГЛАМ — В КООРДИНАТАХ РЯДА.
- *
- * У ряда после угла верх начинается РАНЬШЕ его нуля: нижний ряд уступил
- * углу глубину соседа и фальш-панель (или ногу Г-модуля), а верхний —
- * свою глубину и панель (или ногу верхнего Г). Отсюда отрицательное
- * `fromMm`: шкафы висят над угловым модулем соседа, как их и вешают.
- *
- * У владельца при пустом верхнем угле ряд кончается раньше стены.
+ * Место фальш-панели ряда: нижней, верхней и антресоли. Отметки в
+ * координатах ряда. `dock` — панель стыкующегося ряда (между ним и углом),
+ * `owner` — панель ведущего (STAGE A) в начале его зоны без створки, перед
+ * фасадами соседа. `end` — у какого конца ряда она стоит (P0).
  */
-export function upperBoundsOf(
-  run: Pick<Run, 'corner' | 'zone' | 'production' | 'lengthMm'>,
-): { fromMm: number; toMm: number } {
-  const dock = run.corner?.dock;
-  const own = run.corner?.own;
-  const fromMm = dock
-    ? (() => {
-        const g = cornerGeometry(dock, run.zone, run.production);
-        return g.upperStartMm - g.lostMm;
-      })()
-    : 0;
-  const toMm = own
-    ? run.lengthMm - cornerGeometry(own, run.zone, run.production).ownerUpperCutMm
-    : run.lengthMm;
-  return { fromMm, toMm };
-}
-
-/**
- * Место фальш-панели ряда: нижней и верхней. Отметки в координатах ряда.
- * `dock` — панель ряда после угла (перед его началом), `owner` — панель
- * владельца (STAGE A) в начале его зоны без створки, перед фасадами соседа.
- */
-export type CornerFiller = { level: 'lower' | 'upper'; side: 'dock' | 'owner'; fromMm: number; toMm: number };
+export type CornerFiller = {
+  level: RowLevel;
+  side: 'dock' | 'owner';
+  end: CornerEnd;
+  fromMm: number;
+  toMm: number;
+};
 
 /**
  * ФАЛЬШ-ПАНЕЛИ РЯДА — ГДЕ ОНИ СТОЯТ.
  *
- * Нижняя: от фасада соседа-владельца до начала ряда, `[−панель, 0]`.
- * Верхняя: от фасада верхнего ряда владельца до начала верхнего ряда,
- * `[старт − панель, старт]`; если между её краем и колонной этого же
- * ряда осталось уже самого узкого корпуса, панель закрывает и это — щели
- * в углу не остаётся, а модулю туда не встать.
+ * Стыкующийся ряд: нижняя — от фасада ведущего до края ряда (`[−панель, 0]`
+ * в начале, `[L, L + панель]` в конце); верхняя — так же у края верхнего
+ * ряда; если между её краем и колонной этого же ряда осталось уже самого
+ * узкого корпуса, панель закрывает и это — щели в углу не остаётся, а
+ * модулю туда не встать.
  *
- * Панель владельца (STAGE A): в начале его зоны без створки — от конца
- * последнего открывающегося модуля до фасадов соседа, `[L − зона, L − зона
- * + панель]`. Есть, только когда её требует ход (`ownerFillerMm`).
+ * Ведущий (STAGE A): у начала его зоны без створки — от последнего
+ * открывающегося модуля до фасадов соседа. Есть, только когда её требует
+ * ход (`ownerFillerMm`).
  *
  * Одна функция на сцену, раскрой и смету: размер детали отсюда.
  *
@@ -480,117 +785,221 @@ export function cornerFillersOf(run: Run): CornerFiller[] {
   return fillerPieces(run).filter((piece) => piece.toMm - piece.fromMm > gapMm);
 }
 
-function fillerPieces(run: Run): CornerFiller[] {
-  const out: CornerFiller[] = [];
-  const uppers = run.upperSegments
+/** Модули висящего ряда без антресоли и отдельного корпуса — сам верхний ряд. */
+function hangingOf(run: Pick<Run, 'upperSegments'>): Module[] {
+  return run.upperSegments
     .flatMap((segment) => segment.modules)
     .filter((unit) => unit.section !== 'mezzanine' && !unit.overhead);
+}
 
-  const own = run.corner?.own;
-  if (own) {
-    const g = cornerGeometry(own, run.zone, run.production);
-    const L = run.lengthMm;
-    /* Ряд целиком за соседом — перед фасадами соседа фасада владельца нет, и полосу закрывать нечем. */
-    if (own.lower === 'blind' && g.ownerFillerMm > 0 && run.modules.some((unit) => standsOnFloor(unit)) && L > g.ownerBlindMm) {
-      const from = L - g.ownerBlindMm;
-      out.push({ level: 'lower', side: 'owner', fromMm: from, toMm: from + g.ownerFillerMm });
+/**
+ * Модули антресоли над верхним рядом. Кладовка над колонной холодильника —
+ * не она: у той опора — колонна (`mezzanineBaseOf`), и угла она не касается.
+ */
+function mezzOf(run: Run): Module[] {
+  return run.upperSegments
+    .flatMap((segment) => segment.modules)
+    .filter((unit) => unit.section === 'mezzanine' && mezzanineBaseOf(unit, run) === null);
+}
+
+function fillerPieces(run: Run): CornerFiller[] {
+  const out: CornerFiller[] = [];
+  if (!run.corner) return out;
+  const L = run.lengthMm;
+  const uppers = hangingOf(run);
+  const floorAny = run.modules.some((unit) => standsOnFloor(unit));
+  const up = levelBoundsOf(run, 'upper');
+  /* Колонны ряда — то, что поднимается выше отметки навески. */
+  const talls = [...run.modules].filter(
+    (unit) => plinthMm(run.production) + moduleCarcassHeightMm(unit, run) > upperBottomMm(run.production),
+  );
+
+  for (const end of ['start', 'end'] as CornerEnd[]) {
+    if (!run.corner[end]) continue;
+
+    /* ── низ ── */
+    const lo = levelAt(run, end, 'lower')!;
+    if (lo.owns) {
+      /* Ряд целиком за соседом — перед фасадами соседа фасада ведущего нет, и полосу закрывать нечем. */
+      if (lo.blindMm > 0 && lo.panelMm > 0 && floorAny && L > lo.blindMm) {
+        const from = end === 'end' ? L - lo.blindMm : lo.blindMm - lo.panelMm;
+        out.push({ level: 'lower', side: 'owner', end, fromMm: from, toMm: from + lo.panelMm });
+      }
+    } else if (lo.panelMm > 0 && run.modules.length > 0) {
+      /* Пустой ряд угла не получает: панель стоит к мебели, а мебели нет. */
+      out.push(
+        end === 'start'
+          ? { level: 'lower', side: 'dock', end, fromMm: -lo.panelMm, toMm: 0 }
+          : { level: 'lower', side: 'dock', end, fromMm: L, toMm: L + lo.panelMm },
+      );
     }
-    if (own.upper === 'blind' && g.ownerUpperFillerMm > 0 && run.options.hasUpper && uppers.length > 0 && L > g.ownerUpperBlindMm) {
-      const from = L - g.ownerUpperBlindMm;
-      out.push({ level: 'upper', side: 'owner', fromMm: from, toMm: from + g.ownerUpperFillerMm });
+
+    /* ── верх ── */
+    if (!run.options.hasUpper || uppers.length === 0) continue;
+    const hi = levelAt(run, end, 'upper')!;
+    if (hi.owns) {
+      if (hi.blindMm > 0 && hi.panelMm > 0 && up.toMm - up.fromMm > hi.blindMm) {
+        const from = end === 'end' ? up.toMm - hi.blindMm : up.fromMm + hi.blindMm - hi.panelMm;
+        out.push({ level: 'upper', side: 'owner', end, fromMm: from, toMm: from + hi.panelMm });
+      }
+      continue;
+    }
+    if (hi.panelMm <= 0) continue;
+
+    /*
+     * Колонна этого ряда, перекрывающая полосу верхнего ряда у угла: между
+     * краем панели и ею — щель уже корпуса, и закрывает её та же панель.
+     */
+    if (end === 'start') {
+      const start = up.fromMm;
+      let to = start;
+      const firstTall = [...talls].sort((a, b) => a.offsetMm - b.offsetMm)[0];
+      const firstUpper = [...uppers].sort((a, b) => a.offsetMm - b.offsetMm)[0];
+      if (
+        firstTall &&
+        firstTall.offsetMm > start &&
+        firstTall.offsetMm - start < MIN_WIDTH &&
+        (!firstUpper || firstUpper.offsetMm >= firstTall.offsetMm)
+      ) {
+        to = firstTall.offsetMm;
+      }
+      const from = start - hi.panelMm;
+      if (to - from > 0) out.push({ level: 'upper', side: 'dock', end, fromMm: from, toMm: to });
+    } else {
+      const stop = up.toMm;
+      let from = stop;
+      const edge = (unit: Module) => unit.offsetMm + unit.widthMm;
+      const lastTall = [...talls].sort((a, b) => edge(b) - edge(a))[0];
+      const lastUpper = [...uppers].sort((a, b) => edge(b) - edge(a))[0];
+      if (
+        lastTall &&
+        edge(lastTall) < stop &&
+        stop - edge(lastTall) < MIN_WIDTH &&
+        (!lastUpper || edge(lastUpper) <= edge(lastTall))
+      ) {
+        from = edge(lastTall);
+      }
+      const to = stop + hi.panelMm;
+      if (to - from > 0) out.push({ level: 'upper', side: 'dock', end, fromMm: from, toMm: to });
     }
   }
 
-  const dock = run.corner?.dock;
-  if (!dock) return out;
-  const g = cornerGeometry(dock, run.zone, run.production);
-
-  /* Пустой ряд угла не получает: панель стоит к мебели, а мебели нет. */
-  if (g.fillerMm > 0 && run.modules.length > 0) {
-    out.push({ level: 'lower', side: 'dock', fromMm: -g.fillerMm, toMm: 0 });
+  /* ── антресоль со своим стыком (P0) ── */
+  const mezz = mezzOf(run);
+  if (mezz.length > 0) {
+    const band = levelBoundsOf(run, 'mezzanine');
+    for (const end of ['start', 'end'] as CornerEnd[]) {
+      const choice = run.corner[end];
+      if (!choice?.mezzanine) continue;
+      const m = levelAt(run, end, 'mezzanine')!;
+      if (m.panelMm <= 0) continue;
+      if (m.owns) {
+        if (m.blindMm > 0 && band.toMm - band.fromMm > m.blindMm) {
+          const from = end === 'end' ? band.toMm - m.blindMm : band.fromMm + m.blindMm - m.panelMm;
+          out.push({ level: 'mezzanine', side: 'owner', end, fromMm: from, toMm: from + m.panelMm });
+        }
+      } else {
+        out.push(
+          end === 'start'
+            ? { level: 'mezzanine', side: 'dock', end, fromMm: band.fromMm - m.panelMm, toMm: band.fromMm }
+            : { level: 'mezzanine', side: 'dock', end, fromMm: band.toMm, toMm: band.toMm + m.panelMm },
+        );
+      }
+    }
   }
-
-  if (!run.options.hasUpper || uppers.length === 0) return out;
-
-  const start = g.upperStartMm - g.lostMm;
-  let to = start;
-  /*
-   * Колонна этого ряда, перекрывающая полосу верхнего ряда у угла: между
-   * краем панели и ею — щель уже корпуса, и закрывает её та же панель.
-   */
-  const firstTall = [...run.modules]
-    .filter(
-      (unit) =>
-        plinthMm(run.production) + moduleCarcassHeightMm(unit, run) > upperBottomMm(run.production),
-    )
-    .sort((a, b) => a.offsetMm - b.offsetMm)[0];
-  const firstUpper = [...uppers].sort((a, b) => a.offsetMm - b.offsetMm)[0];
-  if (
-    firstTall &&
-    firstTall.offsetMm > start &&
-    firstTall.offsetMm - start < MIN_WIDTH &&
-    (!firstUpper || firstUpper.offsetMm >= firstTall.offsetMm)
-  ) {
-    to = firstTall.offsetMm;
-  }
-
-  const from = start - g.upperFillerMm;
-  if (to - from > 0) out.push({ level: 'upper', side: 'dock', fromMm: from, toMm: to });
   return out;
 }
 
 /**
  * ЧЕЙ ФАСАД ПРОДОЛЖАЕТ ПАНЕЛЬ — одна функция на сцену и раскрой.
  *
- * Панель соседа — его первого модуля (нижняя) или первого навесного
- * (верхняя): она стоит перед ними. Панель владельца — модуля, чью зону без
- * створки она закрывает: того, на чьё место приходится её начало. Цвет,
- * лист и высота панели — от него.
+ * Панель стыкующегося ряда — его крайнего модуля у этого угла (нижнего,
+ * навесного или антресоли): она стоит перед ним. Панель ведущего — модуля,
+ * чью зону без створки она закрывает: того, на чьё место приходится её
+ * начало. Цвет, лист и высота панели — от него.
  */
 export function fillerNeighbour(run: Run, piece: CornerFiller): Module | undefined {
-  const lower = piece.level === 'lower';
   const list = (
-    lower
+    piece.level === 'lower'
       ? run.modules.filter((unit) => standsOnFloor(unit))
-      : run.upperSegments.flatMap((segment) => segment.modules).filter((unit) => unit.section !== 'mezzanine' && !unit.overhead)
+      : piece.level === 'upper'
+        ? hangingOf(run)
+        : mezzOf(run)
   ).sort((a, b) => a.offsetMm - b.offsetMm);
-  if (piece.side === 'dock') return lower ? run.modules[0] : list[0];
-  return list.find((unit) => unit.offsetMm <= piece.fromMm && piece.fromMm < unit.offsetMm + unit.widthMm) ?? list[list.length - 1];
+  if (piece.side === 'dock') {
+    if (piece.level === 'lower') return piece.end === 'start' ? run.modules[0] : run.modules[run.modules.length - 1];
+    return piece.end === 'start' ? list[0] : list[list.length - 1];
+  }
+  const at = piece.end === 'end' ? piece.fromMm : piece.toMm - 0.5;
+  return list.find((unit) => unit.offsetMm <= at && at < unit.offsetMm + unit.widthMm) ?? list[piece.end === 'end' ? list.length - 1 : 0];
+}
+
+/** Уровень модуля в углу: нижний, навесной или антресоль. `null` — не у угла по построению. */
+function levelOfUnit(unit: Module): RowLevel | null {
+  if (standsOnFloor(unit)) return 'lower';
+  if (!isUpperRow(unit) || unit.overhead) return null;
+  return unit.section === 'mezzanine' ? 'mezzanine' : 'upper';
+}
+
+/** Где уровень ряда кончается в его координатах: низ — ряд, верх и антресоль — свои границы. */
+function boundsOfLevel(run: Pick<Run, 'corner' | 'zone' | 'production' | 'lengthMm'>, level: RowLevel): { fromMm: number; toMm: number } {
+  return level === 'lower' ? { fromMm: 0, toMm: run.lengthMm } : levelBoundsOf(run, level);
 }
 
 /**
- * ГЛУХАЯ ЧАСТЬ ФАСАДА МОДУЛЯ У СЛЕПОГО УГЛА, мм от его правого края.
+ * ГЛУХАЯ ЧАСТЬ МОДУЛЯ У СЛЕПОГО УГЛА И С КАКОЙ ОНА СТОРОНЫ.
  *
- * Последний модуль владельца стоит в угол: за его правой частью — корпус
+ * Крайний модуль ведущего стоит в угол: за его частью у угла — корпус
  * соседнего ряда и фасад, а перед ней фальш-панель. Створка там не
  * откроется — она упрётся в панель — и её там нет: фасад закрывает
- * доступную часть, глухая остаётся за панелью.
+ * доступную часть, глухая остаётся за панелью. Угол в конце ряда — глухая
+ * часть справа, в начале (P0: ряд после угла ведёт угол) — слева.
  *
- * Считается от ЗОНЫ, а не от «последнего модуля»: зона — это последние
- * `ownerBlindMm` ряда, и всякий модуль, зашедший в неё, теряет столько,
- * сколько зашёл.
+ * Считается от ЗОНЫ, а не от «последнего модуля»: зона — это крайние
+ * `blindMm` уровня у угла, и всякий модуль, зашедший в неё, теряет
+ * столько, сколько зашёл.
  */
-export function blindPartMm(
+export function blindOf(
   unit: Module,
   run: Pick<Run, 'corner' | 'zone' | 'production' | 'lengthMm'>,
-): number {
-  const own = run.corner?.own;
-  if (!own) return 0;
+): { mm: number; side: 'left' | 'right' } | null {
+  if (!run.corner) return null;
   /*
    * Глухой бывает только обычный распашной модуль. Прибор, колонна и
    * угловой модуль в слепой зоне — это не «укороченный фасад», а мебель,
    * которой в слепом углу не место: её найдёт проверка открывания.
    */
-  if (unit.appliance || unit.column || (unit.kind !== 'base' && unit.kind !== 'upper')) return 0;
-  const g = cornerGeometry(own, run.zone, run.production);
-  const upper = isUpperRow(unit) && unit.section !== 'mezzanine' && !unit.overhead;
-  const lower = standsOnFloor(unit);
-  const zone = upper && own.upper === 'blind' ? g.ownerUpperBlindMm : lower && own.lower === 'blind' ? g.ownerBlindMm : 0;
-  if (zone <= 0) return 0;
+  if (unit.appliance || unit.column || (unit.kind !== 'base' && unit.kind !== 'upper')) return null;
+  const level = levelOfUnit(unit);
+  if (!level) return null;
+  /* Кладовка над колонной стоит на колонне, а не в полосе антресоли у угла. */
+  const full = run as Partial<Run>;
+  if (level === 'mezzanine' && full.modules && full.ceilingHeightMm !== undefined && mezzanineBaseOf(unit, full as Run) !== null) {
+    return null;
+  }
+  const bounds = boundsOfLevel(run, level);
+  const from = unit.offsetMm;
+  const to = unit.offsetMm + unit.widthMm;
+  let mm = 0;
+  let side: 'left' | 'right' | null = null;
+  for (const end of ['start', 'end'] as CornerEnd[]) {
+    const at = levelAt(run, end, level);
+    if (!at?.owns || at.blindMm <= 0) continue;
+    const zone = end === 'end' ? [bounds.toMm - at.blindMm, bounds.toMm] : [bounds.fromMm, bounds.fromMm + at.blindMm];
+    const into = Math.max(0, Math.min(to, zone[1]) - Math.max(from, zone[0]));
+    if (into <= 0) continue;
+    mm += into;
+    side = end === 'end' ? 'right' : 'left';
+  }
+  return side ? { mm: Math.min(unit.widthMm, mm), side } : null;
+}
 
-  const end = unit.offsetMm + unit.widthMm;
-  const into = end - (run.lengthMm - zone);
-  return Math.max(0, Math.min(unit.widthMm, into));
+/** Глухая часть фасада модуля у слепого угла, мм. Ноль — модуль не у слепого угла. */
+export function blindPartMm(
+  unit: Module,
+  run: Pick<Run, 'corner' | 'zone' | 'production' | 'lengthMm'>,
+): number {
+  return blindOf(unit, run)?.mm ?? 0;
 }
 
 /**
@@ -644,18 +1053,44 @@ export function openFrontMm(
 }
 
 /**
+ * ГДЕ У МОДУЛЯ ДОСТУПНАЯ ЧАСТЬ ФАСАДА — отметка от его левого края и ширина,
+ * мм. Пусто — модуль не у слепого угла, фасад во всю ширину. Одна функция на
+ * сцену, кинематику и приёмку: у угла в начале ряда (P0) глухая часть слева,
+ * и створка стоит справа.
+ */
+export function openFrontOf(
+  unit: Module,
+  run: Pick<Run, 'corner' | 'zone' | 'production' | 'lengthMm'>,
+): { fromMm: number; widthMm: number } | null {
+  const blind = blindOf(unit, run);
+  if (!blind || blind.mm <= 0) return null;
+  const widthMm = openFrontMm(unit, run);
+  return { fromMm: blind.side === 'left' ? unit.widthMm - widthMm : 0, widthMm };
+}
+
+/**
  * ГДЕ У Г-МОДУЛЯ ВТОРАЯ НОГА.
  *
  * Г-модуль — квадрат: нога вдоль своей стены (`widthMm`) и такая же вдоль
- * соседней, глубиной ряда. Вторая нога уходит ВПЕРЁД от фасада владельца
- * у того края, что стоит в углу: у модуля в конце ряда — справа.
+ * соседней, глубиной ряда. Вторая нога уходит ВПЕРЁД от фасада ведущего
+ * у того края, что стоит в углу: у модуля в конце ряда — справа, у модуля
+ * в начале ряда (угол перед рядом ведёт он, P0) — слева.
  */
 export function lLegOf(
   unit: Module,
-  run: Pick<Run, 'zone' | 'production' | 'lengthMm'>,
+  run: Pick<Run, 'zone' | 'production' | 'lengthMm'> & Partial<Pick<Run, 'corner'>>,
 ): { side: 'left' | 'right'; legMm: number; depthMm: number } | null {
   if (unit.kind !== 'corner_base' && unit.kind !== 'corner_upper') return null;
   const depthMm = rowStandardDepthMm(run.zone, unit.kind === 'corner_upper' ? 'upper' : 'base', run.production);
+  const level: RowLevel = unit.kind === 'corner_upper' ? (unit.section === 'mezzanine' ? 'mezzanine' : 'upper') : 'lower';
+  const corner = run.corner ? (run as Pick<Run, 'corner' | 'zone' | 'production' | 'lengthMm'>) : null;
+  if (corner?.corner?.start) {
+    const at = levelAt(corner, 'start', level === 'mezzanine' ? 'upper' : level);
+    const from = boundsOfLevel(corner, level === 'mezzanine' ? 'upper' : level).fromMm;
+    if (at?.owns && at.legMm > 0 && Math.abs(unit.offsetMm - from) < 0.5) {
+      return { side: 'left', legMm: unit.widthMm, depthMm };
+    }
+  }
   const atEnd = unit.offsetMm + unit.widthMm >= run.lengthMm;
   const side: 'left' | 'right' = atEnd || unit.offsetMm > 0 ? 'right' : 'left';
   return { side, legMm: unit.widthMm, depthMm };
@@ -664,54 +1099,69 @@ export function lLegOf(
 /**
  * СТВОРКА У УГЛА ОТКРЫВАЕТСЯ ОТ УГЛА — ОДИН ОТВЕТ НА РАСКЛАДКУ И ПРАВКУ.
  *
- * Слепой модуль владельца — от угла: петли у угла упрутся в фальш-панель.
- * Первый модуль ряда, который к углу стыкуется, — тоже от угла: на петлях
+ * Слепой модуль ведущего — от угла: петли у угла упрутся в фальш-панель.
+ * Крайний модуль ряда, который к углу стыкуется, — тоже от угла: на петлях
  * у угла его полотно, распахиваясь, заходит кромкой в фасад соседней
  * стены (ногу Г-модуля), и это поймала проверка открывания у угла
  * (слой 55). Только одностворчатый распашной и только умолчание: у двух
  * створок, подъёмника и карго стороны нет, а выбор человека сильнее.
  *
- * Модуль владельца прямо перед его Г-модулем — тоже от угла (STAGE A): на
+ * Модуль ведущего вплотную к его Г-модулю — тоже от угла (STAGE A): на
  * петлях у угла его полотно на ходу ложится в плоскость фасадов соседа, а
  * там у стыкующегося ряда может стоять колонна. На П 3600 + 2800 + 3600 с
  * Г-модулями (школа 600/300: угловой верхний 600 мм — ровно глубина ряда)
  * верхняя дверь стены А входила в боковину холодильника стены Б на 12 мм.
+ *
+ * «От угла» — сторона, где угла нет: угол в конце ряда — петли слева, в
+ * начале (P0) — справа.
  */
 export function cornerDoorHinge(
   unit: Module,
   run: Pick<Run, 'corner' | 'zone' | 'production' | 'lengthMm' | 'modules' | 'upperSegments'>,
 ): 'left' | 'right' | null {
-  if (blindPartMm(unit, run) > 0) return 'left';
+  const blind = blindOf(unit, run);
+  if (blind && blind.mm > 0) return blind.side === 'right' ? 'left' : 'right';
   const side = defaultOpening(unit);
   if (side !== 'left' && side !== 'right') return null;
-  if (run.corner?.own) {
-    const uppers = run.upperSegments
-      .flatMap((segment) => segment.modules)
-      .filter((m) => m.section !== 'mezzanine' && !m.overhead);
-    const pool = standsOnFloor(unit)
-      ? run.modules.filter((m) => standsOnFloor(m))
-      : isUpperRow(unit) && unit.section !== 'mezzanine' && !unit.overhead
-        ? uppers
-        : [];
-    const corner = pool.find((m) => m.kind === 'corner_base' || m.kind === 'corner_upper');
-    const gap = corner ? corner.offsetMm - (unit.offsetMm + unit.widthMm) : -1;
-    if (corner && corner !== unit && gap >= 0 && gap < MIN_WIDTH) return 'left';
-  }
-  const dock = run.corner?.dock;
-  if (!dock) return null;
+  if (!run.corner) return null;
 
-  if (standsOnFloor(unit)) {
-    const first = Math.min(...run.modules.filter((m) => standsOnFloor(m)).map((m) => m.offsetMm));
-    return unit.offsetMm === first && first < MIN_WIDTH ? 'right' : null;
+  const level: 'lower' | 'upper' | null = standsOnFloor(unit)
+    ? 'lower'
+    : isUpperRow(unit) && unit.section !== 'mezzanine' && !unit.overhead
+      ? 'upper'
+      : null;
+  if (!level) return null;
+  const pool = level === 'lower' ? run.modules.filter((m) => standsOnFloor(m)) : hangingOf(run);
+
+  /* Вплотную к своему Г-модулю — от него. */
+  for (const corner of pool.filter((m) => m.kind === 'corner_base' || m.kind === 'corner_upper')) {
+    if (corner === unit) continue;
+    const leg = lLegOf(corner, run);
+    if (leg?.side === 'left') {
+      const gap = unit.offsetMm - (corner.offsetMm + corner.widthMm);
+      if (gap >= 0 && gap < MIN_WIDTH) return 'right';
+    } else {
+      const gap = corner.offsetMm - (unit.offsetMm + unit.widthMm);
+      if (gap >= 0 && gap < MIN_WIDTH) return 'left';
+    }
   }
-  if (isUpperRow(unit) && unit.section !== 'mezzanine' && !unit.overhead) {
-    const g = cornerGeometry(dock, run.zone, run.production);
-    const start = g.upperStartMm - g.lostMm;
-    const uppers = run.upperSegments
-      .flatMap((segment) => segment.modules)
-      .filter((m) => m.section !== 'mezzanine' && !m.overhead);
-    const first = Math.min(...uppers.map((m) => m.offsetMm));
-    return unit.offsetMm === first && first < start + MIN_WIDTH ? 'right' : null;
+
+  /*
+   * Крайний модуль у угла, который ведёт другая стена. Ведущий — по выбору
+   * человека: у пустого верхнего угла правило стоит у той стены, что
+   * пустоты не выбирала, как и до P0.
+   */
+  const bounds = boundsOfLevel(run, level);
+  for (const end of ['start', 'end'] as CornerEnd[]) {
+    const at = levelAt(run, end, level);
+    if (!at || at.designated) continue;
+    if (end === 'start') {
+      const first = Math.min(...pool.map((m) => m.offsetMm));
+      if (unit.offsetMm === first && first < bounds.fromMm + MIN_WIDTH) return 'right';
+    } else {
+      const last = Math.max(...pool.map((m) => m.offsetMm + m.widthMm));
+      if (unit.offsetMm + unit.widthMm === last && last > bounds.toMm - MIN_WIDTH) return 'left';
+    }
   }
   return null;
 }
@@ -720,14 +1170,15 @@ export function cornerDoorHinge(
  * КАКИЕ МОДУЛИ ИДУТ НА УГЛОВЫХ ПЕТЛЯХ.
  *
  * Г-модуль — всегда: два фасада вместе раскрываются только на угловой
- * петле. Слепой угол — створка последнего модуля владельца: она стоит у
+ * петле. Слепой угол — створка крайнего модуля ведущего: она стоит у
  * фальш-панели, и обычная петля на 110° не даёт достать до глухой части.
  * Строка сметы — `hinge_corner_175`, угол раскрытия — `CORNER.hingeAngleDeg`.
  */
 export function cornerHingeModules(run: Run): Set<string> {
   const out = new Set<string>();
   for (const unit of [...run.modules, ...run.upperSegments.flatMap((s) => s.modules)]) {
-    if (unit.kind === 'corner_base' || unit.kind === 'corner_upper') out.add(unit.id);
+    /* Две независимые дверцы верхнего Г-модуля (P0) висят на обычных петлях — каждая на своей боковине. */
+    if (unit.kind === 'corner_base' || (unit.kind === 'corner_upper' && unit.cornerDoors !== 'pair')) out.add(unit.id);
     else if (blindPartMm(unit, run) > 0 && openFrontMm(unit, run) > 0) out.add(unit.id);
   }
   return out;
@@ -752,10 +1203,23 @@ export function cornerOfModule(run: Run): (unit: Module) => 'corner' | 'closed' 
 /** Угол раскрытия угловой петли — тот же, что держит стык рядов. */
 export const CORNER_HINGE_DEG = CORNER.hingeAngleDeg;
 
-/** Какой у угла номер по обходу у ряда: перед ним и за ним. */
-export function cornerIndicesOf(segmentIndex: number, segments: number): { dock: number | null; own: number | null } {
+/** Какой у угла номер по обходу у ряда: перед его началом и за его концом. */
+export function cornerIndicesOf(segmentIndex: number, segments: number): { start: number | null; end: number | null } {
   return {
-    dock: segmentIndex > 0 ? segmentIndex - 1 : null,
-    own: segmentIndex < segments - 1 ? segmentIndex : null,
+    start: segmentIndex > 0 ? segmentIndex - 1 : null,
+    end: segmentIndex < segments - 1 ? segmentIndex : null,
   };
+}
+
+/**
+ * КАКАЯ СТЕНА ДЕРЖИТ ДЕТАЛЬ УРОВНЯ У УГЛА — номер стены композиции.
+ *
+ * У угла `corner` две стены: `corner` (до угла) и `corner + 1` (после).
+ * Роль — «ведёт» или «стыкуется» на уровне — переводится в стену по выбору
+ * человека (P0): раньше ведущей была всегда первая.
+ */
+export function wallOfRole(choice: CornerChoice | undefined, corner: number, level: RowLevel, role: 'dock' | 'owner'): number {
+  const owner = choice ? cornerOwnerOf(choice, level) : 'prev';
+  const leading = owner === 'prev' ? corner : corner + 1;
+  return role === 'owner' ? leading : leading === corner ? corner + 1 : corner;
 }

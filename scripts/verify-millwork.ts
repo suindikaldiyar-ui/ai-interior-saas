@@ -113,6 +113,7 @@ import { cuttingChecks } from './verify-cutting';
 import { stage01Checks } from './verify-stage01';
 import { lightingChecks } from './verify-lighting';
 import { stageAChecks } from './verify-stage-a';
+import { p0CornerChecks } from './verify-p0-corners';
 import { runFingerprint } from '../lib/millwork/fingerprint';
 import { surfaceFinish, surfaceLook } from '../lib/millwork/surfaces';
 import { GROUP_ORDER, estimateGroups, groupsTotal } from '../lib/millwork/estimateGroups';
@@ -21071,15 +21072,15 @@ console.log('\nСлой 55: угол Г и П — владелец, места, 
       const places = rows.map((row) => roomRowPlacement(row));
 
       /* ── 8. Владелец ровно один; ряды Б и В стоят на своих стенах до миллиметра ── */
-      const ownFlags = segments.filter((run) => run.corner?.own).length;
-      const dockFlags = segments.filter((run) => run.corner?.dock).length;
+      const ownFlags = segments.filter((run) => run.corner?.end).length;
+      const dockFlags = segments.filter((run) => run.corner?.start).length;
       if (ownFlags !== corners.length || dockFlags !== corners.length) {
         drift8.push(`${tag}: владельцев ${ownFlags}, стыкующихся ${dockFlags} при углах ${corners.length}`);
       }
       corners.forEach((choice, c) => {
         owners55 += 1;
-        const own = segments[c]?.corner?.own;
-        const dock = segments[c + 1]?.corner?.dock;
+        const own = segments[c]?.corner?.end;
+        const dock = segments[c + 1]?.corner?.start;
         if (!own || own.lower !== choice.lower || own.upper !== choice.upper) {
           drift8.push(`${tag} · угол ${c + 1}: у стены ${c + 1} владения нет или не тот выбор (${JSON.stringify(own ?? null)})`);
         }
@@ -21087,7 +21088,7 @@ console.log('\nСлой 55: угол Г и П — владелец, места, 
           drift8.push(`${tag} · угол ${c + 1}: у стены ${c + 2} стыка нет или не тот выбор (${JSON.stringify(dock ?? null)})`);
         }
       });
-      if (segments[0]?.corner?.dock || segments[segments.length - 1]?.corner?.own) {
+      if (segments[0]?.corner?.start || segments[segments.length - 1]?.corner?.end) {
         drift8.push(`${tag}: у крайних стен лишний угол — ${JSON.stringify(segments[0]?.corner)} / ${JSON.stringify(segments[segments.length - 1]?.corner)}`);
       }
       rows.forEach((row, i) => {
@@ -23311,7 +23312,7 @@ console.log('\nP0-3: физическая идентичность стен, п�
       return { screen, mismatches };
     };
     const conflict = shifted(twoAtTail);
-    const own = conflict.screen.segments[1].corner?.own;
+    const own = conflict.screen.segments[1].corner?.end;
     const g = own ? cornerGeometry(own, DEMO_REQUIREMENTS.zone, DEFAULT_PRODUCTION) : null;
     const found = conflict.mismatches.find((mismatch) => mismatch.index === 1) as (WallMismatch & { corner?: string[] }) | undefined;
     check(
@@ -23395,7 +23396,7 @@ console.log('\nP0-3: физическая идентичность стен, п�
     const hingeScene = runBoxes(run, { thicknessMm: 16, frontThicknessMm: 18, gapMm: 3 }).filter((box) => box.node === 'hinge').length;
     const cornerLine = estimate.lines.find((line) => line.key === 'hinge_corner_175')?.quantity ?? 0;
     const facts = {
-      lostOwn: Boolean(editedB.corner?.own) && Boolean(run.corner?.dock) && !run.corner?.own,
+      lostOwn: Boolean(editedB.corner?.end) && Boolean(run.corner?.start) && !run.corner?.end,
       usable: run.lengthMm === fromD.layout.segments[bAt].run.lengthMm && run.lengthMm === editedB.lengthMm,
       places: allModules(run).map((u) => `${u.id}:${u.offsetMm}:${u.widthMm}`).join(' ') === allModules(editedB).map((u) => `${u.id}:${u.offsetMm}:${u.widthMm}`).join(' '),
       overlaps: moduleOverlaps(run).length === 0,
@@ -23403,7 +23404,7 @@ console.log('\nP0-3: физическая идентичность стен, п�
       cornerHinges: cornerLine === 0,
       hinges: hingeEstimate === hingeScene,
       frontsCut: Math.abs(fronts - cut.frontM2) <= 0.01,
-      filler: cornerFillersOf(run).some((piece) => piece.level === 'lower' && piece.toMm === 0 && piece.fromMm === -cornerGeometry(run.corner!.dock!, run.zone, run.production).fillerMm),
+      filler: cornerFillersOf(run).some((piece) => piece.level === 'lower' && piece.toMm === 0 && piece.fromMm === -cornerGeometry(run.corner!.start!, run.zone, run.production).fillerMm),
       named: fine.some(
         (mismatch) => mismatch.index === bAt && ((mismatch as WallMismatch & { leaves?: unknown[] }).leaves?.length ?? 0) > 0,
       ),
@@ -23442,7 +23443,7 @@ console.log('\nP0-3: физическая идентичность стен, п�
   {
     const LOWERS: LowerCornerKind[] = ['blind', 'l_shape'];
     const UPPERS: UpperCornerKind[] = ['l_shape', 'blind', 'empty'];
-    const FAKE: RunCorner = { dock: { lower: 'l_shape', upper: 'l_shape' } };
+    const FAKE: RunCorner = { start: { lower: 'l_shape', upper: 'l_shape' } };
     const schools: [string, ProductionSettings][] = [
       ['560/320', DEFAULT_PRODUCTION],
       ['550/350', { ...DEFAULT_PRODUCTION, depths: { baseMm: 550, upperMm: 350, mezzanineMm: 550 } }],
@@ -28740,6 +28741,9 @@ lightingChecks(check);
 
 /* ═══════════  ADVANCED CAD · STAGE A: угол и чистота 3D  ═══════════ */
 stageAChecks(check);
+
+/* ═══════════  P0: настоящие Г- и П-образные углы — владелец по уровням, пара дверец  ═══════════ */
+p0CornerChecks(check);
 
 Promise.allSettled(asyncChecks).then((results) => {
   for (const result of results) {

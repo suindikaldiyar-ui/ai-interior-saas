@@ -41,7 +41,7 @@ import {
 } from '../lib/millwork/objectEstimate';
 import { runPlacements } from '../lib/millwork/composition';
 import { runPlaces, sceneLeaves } from '../lib/millwork/cabinetBoxes';
-import { blindPartMm, openFrontMm } from '../lib/millwork/corner';
+import { blindPartMm, openFrontMm, openFrontOf } from '../lib/millwork/corner';
 import { DEMO_RATES, DEMO_REQUIREMENTS } from '../lib/millwork/demo';
 import { DEFAULT_PRODUCTION } from '../types/catalog';
 import { surveyFromMeasurement, type Survey } from '../types/survey';
@@ -68,6 +68,13 @@ const MM = 1000;
  */
 export const openWidthOf = (unit: Run['modules'][number], run: Run) =>
   blindPartMm(unit, run) > 0 ? openFrontMm(unit, run) / MM : undefined;
+
+/**
+ * С какой отметки модуля доступная часть, метры (P0): у слепого модуля в
+ * начале ряда (угол перед рядом ведёт он) створка стоит справа — так её
+ * ставит сцена (`openFrontOf` → `openFromM`).
+ */
+export const openFromOf = (unit: Run['modules'][number], run: Run) => (openFrontOf(unit, run)?.fromMm ?? 0) / MM;
 
 /** Замер как замеренный: приёмка не про допущения (как у `lighting-fixture`). */
 function measuredSurvey(measurement: Measurement, runWallId?: string): Survey {
@@ -283,7 +290,7 @@ export function buildObject(spec: Spec) {
         section: unit.section ?? null,
         rowLocal: { x: Math.round(place.x * MM), y: Math.round(place.y * MM), zFront: Math.round(place.zM * MM), w: unit.widthMm, h: Math.round(place.heightM * MM), d: Math.round(place.depthM * MM) },
         world: { min: worldMin, max: worldMax },
-        leaves: sceneLeaves(unit, place.heightM, openWidthOf(unit, run)).map((leaf) => ({ id: leaf.id, kind: leaf.kind })),
+        leaves: sceneLeaves(unit, place.heightM, openWidthOf(unit, run), openFromOf(unit, run)).map((leaf) => ({ id: leaf.id, kind: leaf.kind })),
       };
     });
     return {

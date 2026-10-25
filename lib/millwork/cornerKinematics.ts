@@ -2,15 +2,18 @@ import { FALSE_PANEL_RANGE_MM, type HardwareItem, type ProductionSettings } from
 import type { CornerChoice, CornerClearance, Module, Run, ZoneKind } from '@/types/millwork';
 import {
   DRAWER_TRAVEL_M,
-  OPEN_ANGLE,
-  bifoldPoses,
+  L_PAIR_FIRST_LEG,
+  bifoldMotion,
+  lPairMotion,
+  leafOpenAngle,
   leafPoses,
+  legOptions,
   runBoxesByModule,
   runPlaces,
   sceneLeaves,
   type PartBox,
 } from './cabinetBoxes';
-import { blindPartMm, cornerGeometry, openFrontMm } from './corner';
+import { cornerGeometry, cornerOwnerOf, openFrontOf, wallOfRole } from './corner';
 import { rowStandardDepthMm } from './fill';
 import { installedItem } from './fittings';
 import { shopOf } from './shop';
@@ -69,7 +72,10 @@ export type ClashLevel = 'lower' | 'upper';
 export type CornerClash = {
   /** Угол: стык стен `corner` и `corner + 1`. */
   corner: number;
-  /** Чей ряд движется: стыкующийся (`dock`) или владелец (`owner`). */
+  /**
+   * Чей ряд движется: стыкующийся (`dock`) или ведущий (`owner`) — на уровне
+   * этой детали (P0): у низа и у верха одной стены роли бывают разными.
+   */
   side: ClashSide;
   /** Ряд движущейся детали: нижний (с колоннами) или навесной. `null` — антресоль, полка над шкафом. */
   level: ClashLevel | null;
@@ -109,6 +115,22 @@ export type CornerClash = {
    * не хватает ряда. Для слов отказа: что понадобилось бы и почему нельзя.
    */
   blocked: { fix: PanelFix; needWholeMm: number; widthMm: number; limitMm: number } | null;
+  /**
+   * ЗАХОД ВНУТРИ ПАРЫ ДВЕРЕЦ ВЕРХНЕГО Г-МОДУЛЯ (P0): одна дверца пары — в
+   * другую. Панелью его не снять: решают ручка у угла и угол раскрытия
+   * петель. `first` — заходит дверца, которая открывается первой (Б — мимо
+   * закрытой А); иначе вторая (А — мимо открытой Б). Стены дверец — для слов.
+   * `needDeg` — наименьший угол раскрытия дверцы Б, при котором А проходит,
+   * градусы, найденный тем же ходом; `null` — не нашёлся до 180°.
+   */
+  own?: {
+    first: boolean;
+    doorWall: number;
+    partnerWall: number;
+    partnerAngleDeg: number;
+    partnerKnown: boolean;
+    needDeg: number | null;
+  };
 };
 
 /** Сколько добавить к панелям угла, целые миллиметры. Ноль — ничего. */
@@ -140,6 +162,11 @@ export function fixKey(pair: string, fix: PanelFix): string {
  * панели (`FALSE_PANEL_RANGE_MM`) и длина ряда у пустого угла.
  */
 export const MAX_PANEL_SHIFT_MM = 400;
+
+/** Выбор угла `corner` — как он лежит на рядах (с их панелями по ходу). */
+export function choiceOfCorner(runs: Pick<Run, 'corner'>[], corner: number): CornerChoice | undefined {
+  return runs[corner + 1]?.corner?.start ?? runs[corner]?.corner?.end;
+}
 
 /* ─────────────────────────  панели угла  ───────────────────────── */
 
@@ -201,7 +228,7 @@ export function stripWords(
 ): string {
   const gap = shopOf(production).frontGapMm;
   if (widthMm > gap || (fix.level === 'upper' && choice.upper === 'empty')) return `${panelWords(choice, fix, corner, wallOf)} — ${widthMm} мм`;
-  const wall = wallOf(fix.side === 'dock' ? corner + 1 : corner);
+  const wall = wallOf(wallOfRole(choice, corner, fix.level, fix.side));
   return (
     `у угла ${wall} зазор${fix.level === 'upper' ? ' навесного ряда' : ''} — ${widthMm} мм, ` +
     `без детали: он не шире зазора между фасадами (${gap} мм)`
@@ -210,7 +237,7 @@ export function stripWords(
 
 /** Что именно шире — словами: «фальш-панель стены В», «пустой угол над столешницей у стены Б». */
 export function panelWords(choice: CornerChoice, fix: PanelFix, corner: number, wallOf: (wall: number) => string): string {
-  const wall = wallOf(fix.side === 'dock' ? corner + 1 : corner);
+  const wall = wallOf(wallOfRole(choice, corner, fix.level, fix.side));
   if (fix.level === 'upper' && choice.upper === 'empty') return `пустой угол над столешницей у ${wall}`;
   const owner = fix.side === 'owner' ? ' у слепого модуля' : choice[fix.level] === 'l_shape' ? ' у Г-модуля' : '';
   return `фальш-панель ${wall}${owner}${fix.level === 'upper' ? ' (навесной ряд)' : ''}`;
@@ -337,6 +364,23 @@ type Moving = {
   conditionalHandle: boolean;
   /** Габарит всего хода в мире — для отбора пар. */
   swept: Box;
+  /**
+   * ВТОРАЯ ДВЕРЦА ПАРЫ Г-МОДУЛЯ (P0) — в том положении, в каком она стоит,
+   * пока эта едет: первая (Б) идёт мимо закрытой А, вторая (А) — мимо
+   * открытой Б (`L_PAIR_FIRST_LEG`). `openB` — коробки Б при угле `angle`,
+   * для поиска угла, при котором А проходит.
+   */
+  partner?: {
+    corner: number;
+    leaf: string;
+    first: boolean;
+    doorWall: number;
+    partnerWall: number;
+    solids: Solid[];
+    angleDeg: number;
+    known: boolean;
+    openB?: (angle: number) => Solid[];
+  };
 };
 
 type Solid = {
@@ -392,17 +436,6 @@ function levelOf(unit: Module): ClashLevel | null {
   return null;
 }
 
-/** Угол раскрытия створки, радианы: петля каталога — её паспорт; нет — как в сцене. */
-function openAngleOf(unit: Module, leaf: string, hardware: Map<string, HardwareItem> | undefined, opening: string): {
-  angle: number;
-  known: boolean;
-} {
-  const slot = opening === 'lift' || opening === 'flap' ? 'lift' : 'hinge';
-  const item = installedItem(unit, slot, hardware, undefined, leaf) ?? installedItem(unit, slot, hardware);
-  const deg = item?.hardware.openingAngleDeg;
-  return deg && deg > 0 ? { angle: (deg * Math.PI) / 180, known: true } : { angle: OPEN_ANGLE, known: false };
-}
-
 /** Ход ящика, метры: направляющая каталога — её паспорт; нет — как в сцене. */
 function travelOf(unit: Module, hardware: Map<string, HardwareItem> | undefined): { travelM: number; known: boolean } {
   const stroke = installedItem(unit, 'slide', hardware)?.hardware.strokeMm;
@@ -425,19 +458,21 @@ function movingOf(
   const gap = production.frontGapMm / MM;
   for (const entry of runPlaces(run)) {
     const unit = entry.unit;
-    const blind = blindPartMm(unit, run) > 0;
-    const leaves = sceneLeaves(unit, entry.heightM, blind ? openFrontMm(unit, run) / MM : undefined);
+    /* Доступная часть у слепого угла — та же, что ставит сцена: ширина и сторона (`openFrontOf`, P0). */
+    const open = openFrontOf(unit, run);
+    const leaves = sceneLeaves(unit, entry.heightM, open ? open.widthMm / MM : undefined, open ? open.fromMm / MM : 0);
     for (const leaf of leaves) {
       const level = levelOf(unit);
       let at: Moving['at'];
       let steps: number;
       let speed: number;
+      let partner: Moving['partner'];
       if (leaf.kind === 'door') {
         const own = rowBoxes.find((box) => box.part === leaf.id && box.node === 'handle');
         const handle = own
           ? { ...own, position: [own.position[0] - entry.x, own.position[1] - entry.y, own.position[2] - entry.zM] as V3 }
           : null;
-        const { angle, known } = openAngleOf(unit, leaf.id.slice(unit.id.length + 1), hardware, leaf.opening);
+        const { angle, known } = leafOpenAngle(unit, leaf.id.slice(unit.id.length + 1), hardware, leaf.opening);
         if (!known) told.add('створка — до 90°, как в сцене: петля каталога не выбрана');
         at = (s) =>
           leafPoses({
@@ -463,14 +498,87 @@ function movingOf(
         steps = Math.max(8, Math.ceil(((angle * 180) / Math.PI) / 0.5));
         const reach = (leaf.opening === 'lift' || leaf.opening === 'flap' ? leaf.heightM : leaf.widthM) + 0.25;
         speed = reach * angle * MM;
+      } else if (leaf.kind === 'lpair') {
+        /*
+         * ДВЕРЦА ПАРЫ ВЕРХНЕГО Г-МОДУЛЯ (P0): своя петля у дальнего края ноги,
+         * угол — петли каталога на этой дверце (или модуле), не выбрана — 90°,
+         * как в сцене. Дверцы ходят по очереди (`L_PAIR_FIRST_LEG`): первая —
+         * мимо закрытой второй, вторая — мимо открытой первой.
+         */
+        const placeM = { x: entry.x, y: entry.y, heightM: entry.heightM, depthM: entry.depthM, thicknessM: production.carcassMm / MM, zM: entry.zM };
+        const opts = {
+          gapM: gap,
+          frontThicknessM: tf,
+          integratedHandles: Boolean(run.options.integratedHandles),
+          ...(hardware ? { hardware } : {}),
+          ...legOptions(unit, run),
+        };
+        const angleOf = (leg: 0 | 1) => leafOpenAngle(unit, `door:${leg}`, hardware, 'left');
+        const own = angleOf(leaf.leg);
+        if (!own.known) told.add('створка — до 90°, как в сцене: петля каталога не выбрана');
+        /* Ход дверцы — функция доли (`lPairMotion`): ручка и размеры считаются один раз на ход. */
+        const motionOf = (leg: 0 | 1, angle: number) => {
+          const motion = lPairMotion(unit, placeM, leg, { ...opts, openAngle: angle });
+          return (s: number) =>
+            motion(s)
+              .filter((box) => box.role !== 'hinge')
+              .map((box) => ({
+                obb: obbOf(place, box.center, box.size, box.yaw ?? 0, box.pitch ?? 0),
+                part: box.role === 'handle' ? 'ручка' : 'полотно',
+              }));
+        };
+        const posesAt = (leg: 0 | 1, s: number, angle: number) => motionOf(leg, angle)(s);
+        at = motionOf(leaf.leg, own.angle);
+        steps = Math.max(8, Math.ceil(((own.angle * 180) / Math.PI) / 0.5));
+        speed = (unit.widthMm / MM + 0.25) * own.angle * MM;
+        /* Стены дверец: А — ряд модуля, Б — соседний (Г-модуль у начала ряда — угол перед рядом). */
+        const atStart = legOptions(unit, run).legSide === 'left';
+        const corner = atStart ? wall - 1 : wall;
+        const neighbour = atStart ? wall - 1 : wall + 1;
+        const doorWall = leaf.leg === 0 ? wall : neighbour;
+        const partnerWall = leaf.leg === 0 ? neighbour : wall;
+        const otherLeg: 0 | 1 = leaf.leg === 0 ? 1 : 0;
+        const other = angleOf(otherLeg);
+        const first = leaf.leg === L_PAIR_FIRST_LEG;
+        const solidsOfPoses = (list: { obb: Obb; part: string }[]): Solid[] =>
+          list.map(({ obb, part }) => ({
+            wall,
+            obb,
+            box: boxOf(obb),
+            moduleId: unit.id,
+            label: unit.label,
+            part: part === 'ручка' ? 'ручку' : 'фасад',
+            conditional: part === 'ручка',
+            level: 'upper' as const,
+          }));
+        partner = {
+          corner,
+          leaf: `door:${otherLeg}`,
+          first,
+          doorWall,
+          partnerWall,
+          /* Первая едет мимо закрытой второй; вторая — мимо первой, открытой на свой угол. */
+          solids: solidsOfPoses(first ? posesAt(otherLeg, 0, other.angle) : posesAt(otherLeg, 1, other.angle)),
+          angleDeg: Math.round((other.angle * 180) / Math.PI),
+          known: other.known,
+          ...(first ? {} : { openB: (angle: number) => solidsOfPoses(posesAt(otherLeg, 1, angle)) }),
+        };
       } else if (leaf.kind === 'bifold') {
+        /* Ход «книжки» — функция доли (`bifoldMotion`): ручка фасада А считается один раз на ход, а не на каждом шаге. */
+        const motion = bifoldMotion(
+          unit,
+          { x: entry.x, y: entry.y, heightM: entry.heightM, depthM: entry.depthM, thicknessM: production.carcassMm / MM, zM: entry.zM },
+          {
+            gapM: gap,
+            frontThicknessM: tf,
+            integratedHandles: Boolean(run.options.integratedHandles),
+            ...(hardware ? { hardware } : {}),
+            /* Г-модуль в начале ряда (P0) — нога слева, фасады складываются зеркально. */
+            ...legOptions(unit, run),
+          },
+        );
         at = (s) =>
-          bifoldPoses(
-            unit,
-            { x: entry.x, y: entry.y, heightM: entry.heightM, depthM: entry.depthM, thicknessM: production.carcassMm / MM, zM: entry.zM },
-            { gapM: gap, frontThicknessM: tf, integratedHandles: Boolean(run.options.integratedHandles), ...(hardware ? { hardware } : {}) },
-            s,
-          ).map((box) => ({
+          motion(s).map((box) => ({
             obb: obbOf(place, box.center, box.size, box.yaw ?? 0, box.pitch ?? 0),
             part: box.role === 'handle' ? 'ручка' : 'фасад',
           }));
@@ -507,7 +615,8 @@ function movingOf(
       }
       if (!coarse) continue;
       coarse = { min: coarse.min.map((v) => v - coarsePad) as V3, max: coarse.max.map((v) => v + coarsePad) as V3 };
-      if (!near(coarse)) continue;
+      /* Дверца пары меряется и против второй дверцы своего модуля — она всегда у угла. */
+      if (!near(coarse) && !partner) continue;
 
       /* Положения на всех шагах и габарит хода — с запасом на то, что между шагами. */
       const pad = speed / steps;
@@ -539,6 +648,7 @@ function movingOf(
         samples,
         swept,
         conditionalHandle: Boolean(handleBox) && !handleBox!.handle?.itemId,
+        ...(partner ? { partner } : {}),
       });
     }
   }
@@ -557,8 +667,8 @@ function solidsOf(grouped: ReturnType<typeof shopBoxes>, wall: number, place: Ro
       label: box.panel ?? 'добор',
       part: 'фальш-панель',
       conditional: false,
-      /* Панель навесного ряда — та, что выше столешницы (её имя «…верхняя»). */
-      level: box.panel?.endsWith('верхняя') ? 'upper' : 'lower',
+      /* Панель навесного ряда — та, что выше столешницы (её имя «…верхняя»); у антресоли уровня нет. */
+      level: box.panel?.includes('антресоли') ? null : box.panel?.endsWith('верхняя') ? 'upper' : 'lower',
     });
   }
   for (const { unit, boxes } of grouped.modules) {
@@ -747,17 +857,29 @@ export function cornerKinematics(input: {
   const optionsOf = new Map<CornerClash, Option[]>();
 
   for (let corner = 0; corner + 1 < runs.length; corner += 1) {
-    const choice: CornerChoice | undefined = runs[corner + 1].corner?.dock ?? runs[corner].corner?.own;
-    /* Прочь от угла: сосед — вдоль своего ряда, владелец — против своего. */
-    const away: Record<ClashSide, V3> = {
-      dock: turnOf(places[corner + 1])([1, 0, 0]),
-      owner: turnOf(places[corner])([-1, 0, 0]),
+    const choice: CornerChoice | undefined = choiceOfCorner(runs, corner);
+    /* Прочь от угла: стена после угла — вдоль своего ряда, стена до угла — против своего. */
+    const away: Record<'prev' | 'next', V3> = {
+      next: turnOf(places[corner + 1])([1, 0, 0]),
+      prev: turnOf(places[corner])([-1, 0, 0]),
     };
-    for (const side of ['owner', 'dock'] as ClashSide[]) {
-      const wall = side === 'owner' ? corner : corner + 1;
-      const other = side === 'owner' ? corner + 1 : corner;
-      const otherSide: ClashSide = side === 'owner' ? 'dock' : 'owner';
+    /*
+     * РОЛЬ РЯДА — ПО УРОВНЮ ДЕТАЛИ (P0). Ведущий и стыкующийся — свои у низа
+     * и у верха: низ стены А может вести угол, а её верх — стыковаться к
+     * верху стены Б. Панель, которую ход сделает шире, — того ряда и того
+     * уровня, что отходит от угла.
+     */
+    const roleAt = (pos: 'prev' | 'next', level: ClashLevel): ClashSide => {
+      if (!choice) return pos === 'prev' ? 'owner' : 'dock';
+      return cornerOwnerOf(choice, level) === pos ? 'owner' : 'dock';
+    };
+    for (const pos of ['prev', 'next'] as const) {
+      const wall = pos === 'prev' ? corner : corner + 1;
+      const other = pos === 'prev' ? corner + 1 : corner;
+      const otherPos = pos === 'prev' ? 'next' : 'prev';
       for (const m of moving[wall]) {
+        /* Деталь без уровня (антресоль, полка над шкафом) — сторона по месту в обходе, как было. */
+        const side: ClashSide = m.level ? roleAt(pos, m.level) : pos === 'prev' ? 'owner' : 'dock';
         for (const solid of solids[other]) {
           if (!boxesMeet(m.swept, solid.box)) continue;
           const worst = worstOf(m, solid, [0, 0, 0]);
@@ -771,17 +893,20 @@ export function cornerKinematics(input: {
            * бы и 160. Г-модуль от угла не отходит — отходит сосед.
            */
           const candidates: { fix: PanelFix; dir: V3 }[] = [];
-          if (m.level && panelAt(choice, side, m.level)) candidates.push({ fix: { side, level: m.level }, dir: away[side] });
-          if (solid.level && panelAt(choice, otherSide, solid.level)) {
-            const d = away[otherSide];
-            candidates.push({ fix: { side: otherSide, level: solid.level }, dir: [-d[0], -d[1], -d[2]] });
+          if (m.level && panelAt(choice, side, m.level)) candidates.push({ fix: { side, level: m.level }, dir: away[pos] });
+          if (solid.level) {
+            const otherSide = roleAt(otherPos, solid.level);
+            if (panelAt(choice, otherSide, solid.level)) {
+              const d = away[otherPos];
+              candidates.push({ fix: { side: otherSide, level: solid.level }, dir: [-d[0], -d[1], -d[2]] });
+            }
           }
           const options: Option[] = [];
           for (const candidate of candidates) {
             const empty = candidate.fix.level === 'upper' && choice?.upper === 'empty';
             const widthMm = panelWidthMm(choice!, candidate.fix, runs[corner].zone, production);
             const limitMm = empty
-              ? runs[candidate.fix.side === 'owner' ? corner : corner + 1].lengthMm
+              ? runs[wallOfRole(choice, corner, candidate.fix.level, candidate.fix.side)].lengthMm
               : FALSE_PANEL_RANGE_MM[1] - widthMm;
             const found = needOf(m, solid, candidate.dir, worst.depth, Math.max(limitMm, MAX_PANEL_SHIFT_MM));
             if (found) options.push({ fix: candidate.fix, need: found, widthMm, limitMm });
@@ -815,6 +940,72 @@ export function cornerKinematics(input: {
           }
         }
       }
+    }
+  }
+
+  /*
+   * ПАРА ДВЕРЕЦ ВЕРХНЕГО Г-МОДУЛЯ — ДРУГ МИМО ДРУГА (P0). Первая (Б) идёт
+   * мимо закрытой А: у угла на её пути ручка А. Вторая (А) — мимо открытой Б:
+   * свободные кромки обеих сходятся в один угол, и Б, открытая только на
+   * 90°, стоит на пути А. Панелью это не снять — заход называется словами,
+   * а для второй ищется угол раскрытия Б, при котором А проходит.
+   */
+  for (const list of moving) {
+    for (const m of list) {
+      const own = m.partner;
+      if (!own) continue;
+      const worstOver = (solids: Solid[]) => {
+        let best: { depth: number; s: number; solid: Solid | null } = { depth: -Infinity, s: 0, solid: null };
+        for (const solid of solids) {
+          if (!boxesMeet(m.swept, solid.box)) continue;
+          const w = worstOf(m, solid, [0, 0, 0]);
+          if (w.depth > best.depth) best = { depth: w.depth, s: w.s, solid };
+        }
+        return best;
+      };
+      const found = worstOver(own.solids);
+      if (!found.solid || found.depth <= TOUCH_MM) continue;
+      let needDeg: number | null = null;
+      if (own.openB) {
+        for (let deg = own.angleDeg + 1; deg <= 180; deg += 1) {
+          if (worstOver(own.openB((deg * Math.PI) / 180)).depth <= TOUCH_MM) {
+            needDeg = deg;
+            break;
+          }
+        }
+      }
+      const clash: CornerClash = {
+        corner: own.corner,
+        side: 'owner',
+        level: 'upper',
+        wall: m.wall,
+        moduleId: m.unit.id,
+        moduleLabel: m.unit.label,
+        leaf: m.leaf,
+        part: partAt(m, found.solid, found.s),
+        obstacleWall: m.wall,
+        obstacleModuleId: m.unit.id,
+        obstacleLabel: m.unit.label,
+        obstaclePart: found.solid.part,
+        depthMm: found.depth,
+        atS: found.s,
+        needMm: null,
+        needWholeMm: null,
+        fix: null,
+        blocked: null,
+        pair: `${own.corner}|${m.wall}:${m.unit.label}:${m.leaf}|${m.wall}:${m.unit.label}:${own.leaf}`,
+        own: {
+          first: own.first,
+          doorWall: own.doorWall,
+          partnerWall: own.partnerWall,
+          partnerAngleDeg: own.angleDeg,
+          partnerKnown: own.known,
+          needDeg,
+        },
+      };
+      clashes.push(clash);
+      optionsOf.set(clash, []);
+      if (found.solid.conditional || m.conditionalHandle) told.add('ручки — условные скобы: позиции каталога не выбраны');
     }
   }
 
@@ -859,7 +1050,8 @@ export function cornerKinematics(input: {
        * Панель владельца пенал в другом конце его ряда не двигает, и число
        * «развела бы N мм» про неё было бы неправдой.
        */
-      const honest = option.fix.side === list[0].side || option.fix.side === 'dock';
+      const fixWall = wallOfRole(choiceOfCorner(runs, list[0].corner), list[0].corner, option.fix.level, option.fix.side);
+      const honest = fixWall === list[0].wall || option.fix.side === 'dock';
       if (honest && (!blocked || whole < blocked.whole)) blocked = { option, whole };
     }
     pairs.push({ pair, corner: list[0].corner, fix: best?.fix ?? null, depthMm: Math.max(...list.map((clash) => clash.depthMm)) });
@@ -911,6 +1103,19 @@ function partAt(moving: Moving, solid: Solid, s: number): string {
  * живёт в `walls.ts`, и второго здесь нет.
  */
 export function clashWords(clash: CornerClash, wallOf: (wall: number) => string): string {
+  if (clash.own) {
+    /* Внутри пары дверец Г-модуля: «дверца стены Б углового шкафа … заходит в ручку его дверцы стены А». */
+    const subject = clash.part === 'ручка' ? `ручка дверцы ${wallOf(clash.own.doorWall)}` : `дверца ${wallOf(clash.own.doorWall)}`;
+    const partner = wallOf(clash.own.partnerWall);
+    const into = clash.own.first
+      ? clash.obstaclePart === 'ручку'
+        ? `ручку дверцы ${partner}`
+        : `закрытую дверцу ${partner}`
+      : clash.obstaclePart === 'ручку'
+        ? `ручку открытой дверцы ${partner}`
+        : `открытую дверцу ${partner}`;
+    return `${subject} углового шкафа «${clash.moduleLabel}» на ходу заходит в ${into} на ${formatMm(clash.depthMm)} мм`;
+  }
   const kind = clash.leaf.startsWith('door') ? 'створк' : clash.leaf.startsWith('drawer') ? 'ящик' : 'фасад';
   const subject =
     clash.part === 'ручка'
@@ -939,6 +1144,24 @@ export function clashWords(clash: CornerClash, wallOf: (wall: number) => string)
  * нельзя. Одна строка на отказ композиции и на смену угла.
  */
 export function stuckWords(clash: CornerClash, choice: CornerChoice, wallOf: (wall: number) => string): string {
+  if (clash.own) {
+    const first = wallOf(clash.own.first ? clash.own.doorWall : clash.own.partnerWall);
+    const second = wallOf(clash.own.first ? clash.own.partnerWall : clash.own.doorWall);
+    if (clash.own.first) {
+      return (
+        `дверцы открываются по очереди: сначала дверца ${first}, потом ${second}, и ручка у угла стоит на пути первой — ` +
+        'снимите её («Без ручки», как на видео) или верните две дверцы вместе («книжка»)'
+      );
+    }
+    const angle = clash.own.partnerKnown
+      ? `петля дверцы ${first} раскрывается на ${clash.own.partnerAngleDeg}°`
+      : `петля каталога не выбрана — дверцы до ${clash.own.partnerAngleDeg}°, как в сцене`;
+    return clash.own.needDeg !== null
+      ? `дверца ${second} закрывает угол и открывается второй, после дверцы ${first}; ${angle}, а дверце ${first} нужен ` +
+          `угол раскрытия не меньше ${clash.own.needDeg}° — поставьте петлю каталога с таким углом`
+      : `дверца ${second} закрывает угол и открывается второй, после дверцы ${first}; ${angle}, и до 180° угол раскрытия ` +
+          'этот заход не снимает — верните две дверцы вместе («книжка»)';
+  }
   const b = clash.blocked;
   if (b) {
     return b.fix.level === 'upper' && choice.upper === 'empty'

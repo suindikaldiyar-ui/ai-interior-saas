@@ -4,7 +4,7 @@ import {
   standsOnFloor,
 } from './modules';
 import { allModules } from './layout';
-import { apronLengthMm, countertopCuts, countertopLengthMm } from './countertop';
+import { apronLengthMm, counterMitersOf, countertopCuts, countertopLengthMm } from './countertop';
 import { cornerOfModule } from './corner';
 import { moduleCarcassHeightMm } from './fill';
 import { CORNER_HINGE_TITLE, frontDrawerSlides, liftKey, openingHardware } from './opening';
@@ -679,9 +679,16 @@ export function buildEstimateDrafts(
    * Ряд без поля угла (прежний вход `cornerAt`, старые места) — по виду
    * углового модуля, как и было.
    */
-  const hasCorner = run.corner
-    ? Boolean(run.corner.own)
-    : run.modules.some((m) => m.kind === 'corner_base');
+  /*
+   * Стык — у ряда, чья ПЛИТА идёт через угол (P0, `counterMitersOf`): плита
+   * — свой контур, и через угол её может вести не та стена, что ведёт низ.
+   * У средней стены П, ведущей плиту в оба угла, стыков два.
+   */
+  const miters = run.corner
+    ? counterMitersOf(run)
+    : run.modules.some((m) => m.kind === 'corner_base')
+      ? 1
+      : 0;
 
   /*
    * ДЛИНА СОБРАННОГО РЯДА, А НЕ ДЛИНА СТЕНЫ.
@@ -868,8 +875,8 @@ export function buildEstimateDrafts(
      * стена углового объекта иначе стоила бы 25 000 ₸ за стык двух
      * столешниц, которых ещё нет.
      */
-    if (hasCorner && counterMp > 0) {
-      drafts.push({ key: 'countertop_miter', title: 'Запил столешницы на угол', unit: 'pcs', quantity: 1 });
+    if (miters > 0 && counterMp > 0) {
+      drafts.push({ key: 'countertop_miter', title: 'Запил столешницы на угол', unit: 'pcs', quantity: miters });
     }
 
     /*

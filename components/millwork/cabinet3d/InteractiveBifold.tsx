@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type * as THREE from 'three';
 import { useSlide } from './useSlide';
-import { bifoldPoses, type ModulePlacement, type PosedBox } from '@/lib/millwork/cabinetBoxes';
+import { bifoldMotion, type ModulePlacement, type PosedBox } from '@/lib/millwork/cabinetBoxes';
 import { useShiftedBox, type CabinetParts } from './parts';
 import type { FrontRelief } from '@/types/millwork';
 import { realSizeShiftOf } from './realSizeMap';
@@ -48,6 +48,8 @@ type Props = {
   /** Слои (STAGE A): полотна — «Фасады», ручки — как в пачке (`boxShown`); нажать можно видимое полотно. */
   showFronts?: boolean;
   showHandles?: boolean;
+  /** Нога Г-модуля слева — модуль в начале ряда, угол перед рядом ведёт он (P0, `lLegOf`). */
+  legSide?: 'left' | 'right';
 };
 
 export default function InteractiveBifold({
@@ -66,6 +68,7 @@ export default function InteractiveBifold({
   onActive,
   showFronts = true,
   showHandles = true,
+  legSide,
 }: Props) {
   const economy = useInteriorStore((state) => state.economyMode);
   const meshes = useRef<(THREE.Object3D | null)[]>([]);
@@ -85,8 +88,17 @@ export default function InteractiveBifold({
     onActive?.(id, active);
   }, [id, active, onActive]);
 
-  const posesAt = (s: number): PosedBox[] =>
-    bifoldPoses(unit, place, { gapM: gap, frontThicknessM: thickness, integratedHandles: integratedHandle, hardware }, s);
+  /* Ход — функция доли (`bifoldMotion`): ручка фасада А считается один раз, а не в каждом кадре хода. */
+  const motion = useMemo(
+    () =>
+      bifoldMotion(
+        unit,
+        { x: place.x, y: place.y, heightM: place.heightM, depthM: place.depthM, thicknessM: place.thicknessM, zM: place.zM },
+        { gapM: gap, frontThicknessM: thickness, integratedHandles: integratedHandle, hardware, ...(legSide ? { legSide } : {}) },
+      ),
+    [unit, place.x, place.y, place.heightM, place.depthM, place.thicknessM, place.zM, gap, thickness, integratedHandle, hardware, legSide],
+  );
+  const posesAt = (s: number): PosedBox[] => motion(s);
 
   const target = open ? 1 : 0;
   useSlide({
@@ -135,7 +147,9 @@ export default function InteractiveBifold({
   );
   const reliefOf = (pose: PosedBox) =>
     pose.role !== 'front' ? null : pose.size[0] < pose.size[2] ? reliefB : reliefA;
-  const turnOf = (pose: PosedBox) => (reliefOf(pose) && pose.size[0] < pose.size[2] ? -Math.PI / 2 : 0);
+  /* Лицо фасада Б смотрит в сторону, противоположную ноге: нога справа — влево, нога слева — вправо. */
+  const turnOf = (pose: PosedBox) =>
+    reliefOf(pose) && pose.size[0] < pose.size[2] ? (legSide === 'left' ? Math.PI / 2 : -Math.PI / 2) : 0;
   turns.current = shown.map(turnOf);
 
   return (

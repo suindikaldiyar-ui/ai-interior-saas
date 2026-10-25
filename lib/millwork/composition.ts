@@ -22,6 +22,9 @@ import {
   cornerChoicesOf,
   cornerGeometry,
   cornerOfSegment,
+  cornerOwnerOf,
+  levelBoundsOf,
+  levelOfChoice,
   solutionOf,
 } from './corner';
 import type { ProductionSettings } from '@/types/catalog';
@@ -609,28 +612,35 @@ export function buildComposition(input: BuildCompositionInput): Composition {
    */
   const assemble = (now: CornerChoice[], fixed: ApplianceKind[][] | null) => {
     const siteWarnings: string[] = [];
+    /*
+     * Сколько ряд теряет в каждом своём углу.
+     *
+     * Г-образный модуль — квадрат: он занимает свою сторону и вдоль своей
+     * стены, и вдоль соседней. Считать здесь глубину ряда (560) значит
+     * налезть на него на 340 мм — ровно та ошибка, которую замечают
+     * на монтаже, когда мебель уже распилена.
+     *
+     * Слепой угол: там глубина соседнего ряда плюс фальш-панель,
+     * отодвигающая фасад от чужого фасада. Считает `cornerGeometry`.
+     *
+     * Теряет тот, кто к углу СТЫКУЕТСЯ, — у начала ряда или у его конца
+     * (P0): стена после угла, которая идёт в угол сама, начинается от стены
+     * соседа, а стена до угла кончается раньше неё.
+     */
+    const gapsOf = (i: number) => ({
+      start: i > 0 ? levelOfChoice(now[i - 1], 'next', 'lower', requirements.zone, input.production).gapMm : 0,
+      end: i < walls.length - 1 ? levelOfChoice(now[i], 'prev', 'lower', requirements.zone, input.production).gapMm : 0,
+    });
     const usable = walls.map((wall, i) => {
-      if (i === 0) return Math.max(0, Math.round(wall.lengthMm));
+      const gaps = gapsOf(i);
+      if (gaps.start + gaps.end === 0) return Math.max(0, Math.round(wall.lengthMm));
 
-      /*
-       * Сколько второй ряд теряет в углу.
-       *
-       * Г-образный модуль — квадрат: он занимает свою сторону и вдоль своей
-       * стены, и вдоль соседней. Считать здесь глубину ряда (560) значит
-       * налезть на него на 340 мм — ровно та ошибка, которую замечают
-       * на монтаже, когда мебель уже распилена.
-       *
-       * Слепой угол: там глубина соседнего ряда плюс фальш-панель,
-       * отодвигающая фасад от чужого фасада. Считает `cornerGeometry`.
-       */
-      const lost = cornerGeometry(now[i - 1], requirements.zone, input.production).lostMm;
-
-      const value = Math.round(wall.lengthMm) - lost;
+      const value = Math.round(wall.lengthMm) - gaps.start - gaps.end;
 
       assertCornerFits({
         label: wallLabel(i),
         wallLengthMm: Math.round(wall.lengthMm),
-        lostMm: lost,
+        lostMm: gaps.start + gaps.end,
         minWidthMm: MIN_WIDTH,
       });
 
@@ -646,7 +656,8 @@ export function buildComposition(input: BuildCompositionInput): Composition {
        * не попадают вовсе: у коммуникации есть своя стена, и спрашивают
        * именно её.
        */
-      const lostHere = Math.round(wall.lengthMm) - usable[i];
+      const gaps = gapsOf(i);
+      const lostHere = gaps.start;
       const wallComms = commsOnRun(input.comms, wall.id, lostHere, usable[i]);
 
       /*
@@ -658,36 +669,42 @@ export function buildComposition(input: BuildCompositionInput): Composition {
          * Подлежащее — «точка»: у видов коммуникаций разный род, и
          * «канализация попал в угол» читается как машинный текст.
          */
+        const atEnd = comm.fromCornerMm > lostHere + usable[i];
         siteWarnings.push(
           `${wallLabel(i)}: точка «${COMM_TITLE[comm.kind]}» на ${comm.fromCornerMm} мм от угла ` +
-            `попала в угол — там стоит соседний ряд. Мебель этой стены начинается ` +
-            `с ${lostHere} мм, и привязать к этой точке её нельзя.`,
+            `попала в угол — там стоит соседний ряд. Мебель этой стены ` +
+            (atEnd ? `кончается на ${lostHere + usable[i]} мм` : `начинается с ${lostHere} мм`) +
+            ', и привязать к этой точке её нельзя.',
         );
       }
 
       /*
        * РОЛЬ РЯДА В ЕГО УГЛАХ — ДО РАСКЛАДКИ, А НЕ ПОСЛЕ.
        *
-       * Ряд-владелец собирает угловой модуль в своём конце (Г-образный или
-       * слепой), ряд после угла начинает верхний ряд раньше нуля — и всё
-       * это решает раскладка. Кладёт роль та же функция, что и шов экрана
-       * (`cornerOfSegment`), поэтому у стены А, собранной из вариантов,
-       * угол тот же, что у композиции.
+       * Ведущий ряд собирает угловой модуль у своего конца (Г-образный или
+       * слепой), стыкующийся начинает или кончает верхний ряд иначе, чем
+       * нижний, — и всё это решает раскладка. Кладёт роль та же функция,
+       * что и шов экрана (`cornerOfSegment`), поэтому у стены А, собранной
+       * из вариантов, угол тот же, что у композиции.
        */
       const corner: RunCorner | undefined = cornerOfSegment(now, i, walls.length);
-      const upperFromMm = corner?.dock
-        ? (() => {
-            const g = cornerGeometry(corner.dock!, requirements.zone, input.production);
-            return g.upperStartMm - g.lostMm;
-          })()
-        : 0;
+      const shell = { corner, zone: requirements.zone, production: input.production, lengthMm: usable[i] };
+      const upper = levelBoundsOf(shell, 'upper');
+      const mezz = levelBoundsOf(shell, 'mezzanine');
       /*
        * Проёмы этой стены, пересчитанные от начала РЯДА: угол занят
-       * соседним рядом, и отметки замера сдвинуты на него. У ряда после
-       * угла остаётся и полоса перед нулём, куда заходит его верхний ряд:
-       * окно там рвёт верхний ряд так же, как на остальной стене.
+       * соседним рядом, и отметки замера сдвинуты на него. У ряда остаётся
+       * и полоса за краем нижнего ряда, куда заходит его верхний ряд или
+       * антресоль (раньше нуля или дальше длины, P0): окно там рвёт их так
+       * же, как на остальной стене.
        */
-      const openings = openingsOnRun(wall.openings, lostHere, usable[i], Math.min(0, upperFromMm));
+      const openings = openingsOnRun(
+        wall.openings,
+        lostHere,
+        usable[i],
+        Math.min(0, upper.fromMm, mezz.fromMm),
+        Math.max(usable[i], upper.toMm, mezz.toMm),
+      );
 
       /*
        * ПЕНАЛЫ — У СТЕНЫ КОМНАТЫ, А НЕ В УГЛУ (слой 55).
@@ -701,8 +718,9 @@ export function buildComposition(input: BuildCompositionInput): Composition {
        * это и поймала проверка открывания у угла. Сторона зеркалится: выбор
        * «у стены» остаётся выбором «у стены».
        */
-      const dockOnly = Boolean(corner?.dock) && !corner?.own;
-      const tallSide = dockOnly
+      /* Угол только в начале ряда: торец у стены комнаты — его конец (P0: кто бы угол ни вёл). */
+      const startOnly = Boolean(corner?.start) && !corner?.end;
+      const tallSide = startOnly
         ? requirements.tallSide === 'right'
           ? ('left' as const)
           : ('right' as const)
@@ -863,6 +881,7 @@ export function buildComposition(input: BuildCompositionInput): Composition {
         pair: clash.pair,
         depthMm: Math.round(clash.depthMm * 10) / 10,
         words: `${clashWords(clash, wallOf)} — ${noRoom.get(clash.pair) ?? stuckWords(clash, current[clash.corner], wallOf)}`,
+        ...(clash.own ? { own: true as const } : {}),
       });
     }
   }
@@ -898,7 +917,8 @@ export function buildComposition(input: BuildCompositionInput): Composition {
     return {
       fromSegmentId: segments[i].id,
       toSegmentId: segment.id,
-      ownerSegmentId: segments[i].id,
+      /* Низ ведёт стена, выбранная человеком (P0); умолчание — стена до угла. */
+      ownerSegmentId: cornerOwnerOf(current[i], 'lower') === 'next' ? segment.id : segments[i].id,
       choice: { ...current[i] },
       solution: solutionOf(current[i]),
       /* У Г-угла панель есть только по ходу — и тогда она в отпечатке, как у слепого. */
@@ -1079,17 +1099,22 @@ export function markOnRun(
    * верхний ряд начинается раньше нуля (слой 55), и окно там тоже его.
    */
   fromMm = 0,
+  /**
+   * До какой отметки ряд есть. Длина у нижнего ряда; у ряда, который верхом
+   * ведёт угол, а низом к нему стыкуется (P0), верх идёт дальше длины.
+   */
+  toMm = lengthMm,
 ): { fromCornerMm: number; widthMm: number } | null {
   const width = mark.widthMm ?? 0;
   const from = mark.fromCornerMm - lostMm;
 
   if (width === 0) {
-    if (from < fromMm || from > lengthMm) return null;
+    if (from < fromMm || from > toMm) return null;
     return { fromCornerMm: Math.round(from), widthMm: 0 };
   }
 
   const clippedFrom = Math.max(fromMm, from);
-  const clippedTo = Math.min(lengthMm, from + width);
+  const clippedTo = Math.min(toMm, from + width);
   if (clippedTo - clippedFrom <= 0) return null;
 
   return {
@@ -1125,11 +1150,13 @@ export function openingsOnRun(
   lengthMm: number,
   /** С какой отметки ряд есть: у ряда после угла верх начинается раньше нуля. */
   fromMm = 0,
+  /** До какой отметки ряд есть: верх, ведущий угол над стыкующимся низом, — дальше длины (P0). */
+  toMm = lengthMm,
 ): Opening[] {
   const moved: Opening[] = [];
 
   for (const opening of openings ?? []) {
-    const at = markOnRun(opening, lostMm, lengthMm, fromMm);
+    const at = markOnRun(opening, lostMm, lengthMm, fromMm, toMm);
     if (!at) continue;
     moved.push({ ...opening, ...at });
   }
@@ -1197,7 +1224,7 @@ export type RunPlacement = {
 export function runPlacements(input: {
   /**
    * Ряды композиции слева направо: их ПОЛЕЗНЫЕ длины, а не длины стен.
-   * Угол на ряду (`run.corner.dock`) — главнее `corners`: на нём лежат
+   * Угол на ряду (`run.corner.start`/`end`) — главнее `corners`: на нём лежат
    * фальш-панели по ходу (STAGE A), и занятое в углу считается ровно тем
    * выбором, по которому ряд урезан.
    */
@@ -1232,12 +1259,18 @@ export function runPlacements(input: {
   const choices =
     input.corners ??
     Array.from({ length: Math.max(0, input.runs.length - 1) }, () => choiceFromSolution(input.solution));
-  const lostOf = (corner: number) =>
-    cornerGeometry(
-      input.runs[corner + 1]?.corner?.dock ?? choices[corner] ?? choiceFromSolution(input.solution),
-      input.zone,
-      input.production,
-    ).lostMm / MM_IN_M;
+  /*
+   * Сколько ряд не доходит до стены соседа у своего конца, метры: у начала —
+   * если угол перед ним ведёт стена до угла, у конца — если угол за ним ведёт
+   * стена после (P0). Угол — свой у ряда (на нём панели по ходу), иначе
+   * выбор композиции.
+   */
+  const gapOf = (row: number, end: 'start' | 'end'): number => {
+    const corner = end === 'start' ? row - 1 : row;
+    if (corner < 0 || corner >= input.runs.length - 1) return 0;
+    const choice = input.runs[row]?.corner?.[end] ?? choices[corner] ?? choiceFromSolution(input.solution);
+    return levelOfChoice(choice, end === 'start' ? 'next' : 'prev', 'lower', input.zone, input.production).gapMm / MM_IN_M;
+  };
   const depthM = depthMm / MM_IN_M;
 
   const places: RunPlacement[] = [];
@@ -1255,10 +1288,13 @@ export function runPlacements(input: {
    * Считаем через две точки, которые имеют физический смысл:
    *   P — начало ряда У СТЕНЫ, E — его конец у стены.
    *   E(i) = P(i) + длина · направление
-   *   P(i+1) = E(i) + занято_в_углу · направление(i+1)
+   *   угол(i) = E(i) + недошёл_в_конце(i) · направление(i)
+   *   P(i+1) = угол(i) + недошёл_в_начале(i+1) · направление(i+1)
+   * До P0 в угол шёл всегда ряд до угла, и `недошёл_в_конце` был нулём.
    * Отсюда и начало координат ряда: P минус глубина по нормали.
    */
   let point: [number, number] = [0, 0];
+  let prevDir: [number, number] = [1, 0];
 
   for (let i = 0; i < input.runs.length; i += 1) {
     const lengthM = input.runs[i].lengthMm / MM_IN_M;
@@ -1285,8 +1321,12 @@ export function runPlacements(input: {
       // Первый ряд стоит по центру: от −L/2 до +L/2, фасады на z = 0.
       point = [-lengthM / 2, -depthM];
     } else {
-      const lostM = lostOf(i - 1);
-      point = [point[0] + lostM * dir[0], point[1] + lostM * dir[1]];
+      const endM = gapOf(i - 1, 'end');
+      const startM = gapOf(i, 'start');
+      point = [
+        point[0] + endM * prevDir[0] + startM * dir[0],
+        point[1] + endM * prevDir[1] + startM * dir[1],
+      ];
     }
 
     places.push({
@@ -1297,6 +1337,7 @@ export function runPlacements(input: {
 
     // Конец ряда у стены — начало отсчёта для следующего угла.
     point = [point[0] + lengthM * dir[0], point[1] + lengthM * dir[1]];
+    prevDir = dir;
   }
 
   return places;

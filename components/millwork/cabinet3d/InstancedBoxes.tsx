@@ -13,6 +13,8 @@ import { useReliefGeometry } from './reliefGeometry';
 const NO_LEAF: ReliefLeaf = { widthMm: 0, heightMm: 0, thicknessMm: 0 };
 /** Фасад Б Г-образного модуля смотрит влево: +Z сетки поворачивается в −X. */
 const FACE_LEFT = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -Math.PI / 2);
+/* Фасад Б Г-модуля в начале ряда (P0) — нога слева, лицо вправо. */
+const FACE_RIGHT = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);
 
 /**
  * ОДИН ВЫЗОВ ОТРИСОВКИ НА ВЕСЬ КОРПУС.
@@ -32,8 +34,11 @@ const FACE_LEFT = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1
  */
 
 type Props = {
-  /** `part` — идентификатор подвижной детали: по нему её рисунок тот же и закрытой, и на ходу. */
-  boxes: (BoxDraw & { part?: string })[];
+  /**
+   * `part` — идентификатор подвижной детали: по нему её рисунок тот же и закрытой, и на ходу.
+   * `yaw` — поворот поставленной сетки (P0): ручка дверцы Б верхнего Г-модуля смотрит вбок.
+   */
+  boxes: (BoxDraw & { part?: string; yaw?: number })[];
   geometry: THREE.BufferGeometry;
   material: THREE.Material;
   castShadow?: boolean;
@@ -54,7 +59,7 @@ type Props = {
    * же центр, масштаб 1: сетка уже в метрах фасада. `face` — куда смотрит
    * лицо (фасад Б угла — влево). Нет — единичный куб, растянутый по коробке.
    */
-  relief?: { relief: FrontRelief; leaf: ReliefLeaf; face?: '-x'; orient?: ReliefOrient };
+  relief?: { relief: FrontRelief; leaf: ReliefLeaf; face?: '-x' | '+x'; orient?: ReliefOrient };
   /**
    * СЕТКА УЖЕ В МЕТРАХ И С ЦЕНТРОМ В ЦЕНТРЕ КОРОБКИ (HANDLE-REAL): ручка
    * модели ставится на место коробки с масштабом 1, как рельеф фасада.
@@ -93,7 +98,7 @@ export default function InstancedBoxes({
    * их каждый кадр — та же трата, от которой мы уходим.
    */
   const key = useMemo(
-    () => boxes.map((b) => `${b.position.join(',')}|${b.scale.join(',')}|${b.part ?? ''}`).join(';'),
+    () => boxes.map((b) => `${b.position.join(',')}|${b.scale.join(',')}|${b.part ?? ''}|${b.yaw ?? ''}`).join(';'),
     [boxes],
   );
 
@@ -151,11 +156,16 @@ export default function InstancedBoxes({
     /* Рельеф и ручка: сетка уже в метрах — на место коробки, масштаб 1, лицо куда смотрит фасад. */
     const placed = reliefGeometry !== null || placedGeometry;
     if (placed && relief?.face === '-x') quaternion.copy(FACE_LEFT);
+    if (placed && relief?.face === '+x') quaternion.copy(FACE_RIGHT);
+    const turned = new THREE.Quaternion();
+    const up = new THREE.Vector3(0, 1, 0);
     boxes.forEach((box, i) => {
       position.set(box.position[0], box.position[1], box.position[2]);
       if (placed) scale.set(1, 1, 1);
       else scale.set(box.scale[0], box.scale[1], box.scale[2]);
-      matrix.compose(position, quaternion, scale);
+      /* Поставленная сетка с поворотом (ручка дверцы Б угла): габарит коробки уже повёрнут, модель — нет. */
+      const turn = placed && box.yaw ? turned.setFromAxisAngle(up, box.yaw) : quaternion;
+      matrix.compose(position, turn, scale);
       mesh.setMatrixAt(i, matrix);
     });
 

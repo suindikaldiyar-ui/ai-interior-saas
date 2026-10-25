@@ -20,9 +20,13 @@ import type { FrontOpening, HandleKind, Module, Run } from '@/types/millwork';
  * модуля, и оно названо словами, а не подставлено молча.
  */
 
+/*
+ * «Петли слева / справа», а не «влево / вправо» (P0): сторону ручки с
+ * этой кнопкой путали — ручка стоит на свободном краю, напротив петель.
+ */
 export const OPENING_TITLE: Record<FrontOpening, string> = {
-  left: 'Влево',
-  right: 'Вправо',
+  left: 'Петли слева',
+  right: 'Петли справа',
   lift: 'Вверх (подъёмник)',
   flap: 'Вниз (откидной)',
   double: 'Две створки',
@@ -519,8 +523,11 @@ export function openingHardware(
       continue;
     }
 
+    /* Две независимые дверцы верхнего Г-модуля (P0) — на обычных петлях, у каждой своя боковина. */
     const isCorner =
-      unit.kind === 'corner_base' || unit.kind === 'corner_upper' || cornerOf?.(unit) === 'corner';
+      unit.kind === 'corner_base' ||
+      (unit.kind === 'corner_upper' && unit.cornerDoors !== 'pair') ||
+      cornerOf?.(unit) === 'corner';
 
     if (isSwing(opening)) {
       /*

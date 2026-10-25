@@ -15,7 +15,7 @@ import {
   legName,
   partOfPanel,
 } from './panels';
-import { blindPartMm, cornerFillersOf, cornerOfModule, fillerNeighbour, openFrontMm } from './corner';
+import { blindPartMm, cornerFillersOf, cornerOfModule, fillerNeighbour, lLegOf, openFrontMm, openFrontOf } from './corner';
 import { tailFillersOf } from './countertop';
 import { moduleDepthMm, rowStandardDepthMm } from './fill';
 import { bayDrawerStackOf, bayEnvelope, bayLayout, placeEnvelope } from './bays';
@@ -180,7 +180,13 @@ export type PartBox = BoxDraw & {
    * Г-образного модуля: он стоит в плоскости фасадов соседа, лицом влево,
    * и коробка у него узкая по X. Рельеф ложится на лицо, а не на торец.
    */
-  face?: '-x';
+  face?: '-x' | '+x';
+  /**
+   * ПОВОРОТ КОРОБКИ ВОКРУГ ВЕРТИКАЛИ, радианы (P0): ручка на дверце Б
+   * верхнего Г-модуля смотрит вбок, а не на зрителя. Габарит (`scale`) — уже
+   * повёрнутый; поворот нужен модели ручки. Пусто — на зрителя.
+   */
+  yaw?: number;
   /**
    * РУЧКА ЭТОЙ КОРОБКИ (HANDLE-REAL): модель, поворот и откуда она. Есть —
    * сцена рисует сетку модели на месте коробки (центр тот же, масштаб 1);
@@ -568,6 +574,19 @@ export type FrontOptions = {
    */
   openWidthMm?: number;
   /**
+   * С КАКОЙ ОТМЕТКИ МОДУЛЯ НАЧИНАЕТСЯ ДОСТУПНАЯ ЧАСТЬ, мм (P0): у угла в конце
+   * ряда глухая часть справа и створка с левого края (ноль), у угла в
+   * начале ряда — глухая слева, створка у правого края. Считает
+   * `openFrontOf`, та же функция, по которой ставит створку сцена.
+   */
+  openFromMm?: number;
+  /**
+   * С КАКОЙ СТОРОНЫ У Г-МОДУЛЯ ВТОРАЯ НОГА (P0): у модуля в конце ряда —
+   * справа (как было всегда), у модуля в начале ряда, когда угол перед
+   * рядом ведёт он, — слева. Считает `lLegOf`; пусто — справа.
+   */
+  legSide?: 'left' | 'right';
+  /**
    * ФУРНИТУРА ОРГАНИЗАЦИИ (HARDWARE-01): механизм на месте модуля рисуется по
    * позиции, которая там стоит (`installedItem`). Пусто — механизмов в
    * сцене нет, как до каталога.
@@ -717,11 +736,43 @@ export type SceneLeaf =
       glass?: true;
     }
   | { kind: 'bifold'; id: string }
+  /** Дверца пары верхнего Г-модуля (P0): каждая на своих петлях, `leg` 0 — нога А, 1 — нога Б. */
+  | { kind: 'lpair'; id: string; leg: 0 | 1 }
   | { kind: 'drawer'; id: string; bottomM: number; heightM: number }
   /** Карго: фасад не открывается, а выдвигается — вместе с корзинами (HARDWARE-01). */
   | { kind: 'pullout'; id: string };
 
-export function sceneLeaves(unit: Module, heightM: number, openWidthM?: number): SceneLeaf[] {
+/**
+ * ДОСТУПНАЯ ЧАСТЬ ФАСАДА У СЛЕПОГО УГЛА — В ОПЦИИ ОТРИСОВКИ (P0).
+ *
+ * Ширина и сторона — `openFrontOf`, та же функция, по которой створку
+ * ставит сцена (`sceneLeaves`) и режет раскрой. Модуль не у слепого угла —
+ * опций нет, фасад во всю ширину.
+ */
+export function openOptions(
+  unit: Module,
+  run: Pick<Run, 'corner' | 'zone' | 'production' | 'lengthMm'>,
+): Pick<FrontOptions, 'openWidthMm' | 'openFromMm'> {
+  const open = openFrontOf(unit, run);
+  return open ? { openWidthMm: open.widthMm, openFromMm: open.fromMm } : {};
+}
+
+/** Сторона второй ноги Г-модуля — в опции отрисовки (`lLegOf`). У прочих модулей опций нет. */
+export function legOptions(
+  unit: Module,
+  run: Pick<Run, 'zone' | 'production' | 'lengthMm'> & Partial<Pick<Run, 'corner'>>,
+): Pick<FrontOptions, 'legSide'> {
+  const leg = lLegOf(unit, run);
+  return leg?.side === 'left' ? { legSide: 'left' } : {};
+}
+
+export function sceneLeaves(
+  unit: Module,
+  heightM: number,
+  openWidthM?: number,
+  /** С какой отметки модуля начинается доступная часть, метры: у угла в начале ряда — справа (P0). */
+  openFromM = 0,
+): SceneLeaf[] {
   const out: SceneLeaf[] = [];
   const fill = unit.fill;
   /*
@@ -739,7 +790,11 @@ export function sceneLeaves(unit: Module, heightM: number, openWidthM?: number):
       });
     });
   }
-  /* Г-образный: два фасада на одном ключе, открываются вместе. */
+  /* Г-образный: два фасада на одном ключе, открываются вместе — или две дверцы на своих петлях (P0). */
+  if (unit.kind === 'corner_upper' && unit.cornerDoors === 'pair') {
+    out.push({ kind: 'lpair', id: `${unit.id}:door:0`, leg: 0 }, { kind: 'lpair', id: `${unit.id}:door:1`, leg: 1 });
+    return out;
+  }
   if (unit.kind === 'corner_base' || unit.kind === 'corner_upper') {
     out.push({ kind: 'bifold', id: `${unit.id}:door:0` });
     return out;
@@ -813,12 +868,13 @@ export function sceneLeaves(unit: Module, heightM: number, openWidthM?: number):
    */
   const doors = openWidthM !== undefined ? 1 : doorCount(unit);
   const doorW = (openWidthM ?? unit.widthMm / MM) / doors;
+  const fromM = openWidthM !== undefined ? openFromM : 0;
   for (let i = 0; i < doors; i += 1) {
     out.push({
       kind: 'door',
       id: `${unit.id}:door:${i}`,
       opening: doorOpening(unit, i, doors),
-      xM: i * doorW,
+      xM: fromM + i * doorW,
       widthM: doorW,
       bottomM: 0,
       heightM,
@@ -829,6 +885,24 @@ export function sceneLeaves(unit: Module, heightM: number, openWidthM?: number):
 
 /** Распахнутая створка: 90°. */
 export const OPEN_ANGLE = Math.PI / 2;
+
+/**
+ * УГОЛ РАСКРЫТИЯ ДЕТАЛИ, радианы: петля (или подъёмник) каталога на этой
+ * детали или на модуле — её паспорт (`openingAngleDeg`); не выбрана — как
+ * открывает сцена, 90°, и это помечено (`known: false`). Одно число на
+ * проверку хода у угла и на пару дверец Г-модуля в сцене (P0).
+ */
+export function leafOpenAngle(
+  unit: Pick<Module, 'fittings'>,
+  leaf: string,
+  hardware: Map<string, HardwareItem> | undefined,
+  opening: string,
+): { angle: number; known: boolean } {
+  const slot = opening === 'lift' || opening === 'flap' ? 'lift' : 'hinge';
+  const item = installedItem(unit, slot, hardware, undefined, leaf) ?? installedItem(unit, slot, hardware);
+  const deg = item?.hardware.openingAngleDeg;
+  return deg && deg > 0 ? { angle: (deg * Math.PI) / 180, known: true } : { angle: OPEN_ANGLE, known: false };
+}
 
 /**
  * ГДЕ СТОИТ ОСЬ И ВОКРУГ ЧЕГО ИДЁТ ПОВОРОТ.
@@ -1008,9 +1082,11 @@ export function doorBoxes(
   const widthM = (blind ? options.openWidthMm! : unit.widthMm) / MM;
   const doorW = widthM / doors;
   const hinge = doorHinge(unit, span ? 0 : index, doors);
+  /* Доступная часть у угла в начале ряда — у правого края модуля (P0). */
+  const fromM = blind ? (options.openFromMm ?? 0) / MM : 0;
 
   const { gapM: gap, frontThicknessM: thickness, integratedHandles } = options;
-  const hingeX = x + (span ? 0 : index) * doorW + (hinge === 'left' ? 0 : doorW);
+  const hingeX = x + fromM + (span ? 0 : index) * doorW + (hinge === 'left' ? 0 : doorW);
   const panelX = hinge === 'left' ? doorW / 2 : -doorW / 2;
   const cx = hingeX + panelX;
   const cy = y + heightM / 2;
@@ -1406,6 +1482,19 @@ export function drawerBoxes(
  * (`<модуль>:door:0`), поэтому «открыть» одну без другой нельзя.
  */
 export function lCornerBoxes(unit: Module, place: ModulePlacement, options: FrontOptions): PartBox[] {
+  const boxes = lCornerBoxesRight(unit, place, options);
+  /* Нога слева (угол в начале ряда, P0) — те же коробки зеркально: деталь та же, что режется. */
+  if (options.legSide !== 'left') return boxes;
+  const axis = 2 * place.x + unit.widthMm / MM;
+  return boxes.map((box) => ({
+    ...box,
+    position: [axis - box.position[0], box.position[1], box.position[2]] as [number, number, number],
+    ...(box.face ? { face: box.face === '-x' ? ('+x' as const) : ('-x' as const) } : {}),
+    ...(box.yaw !== undefined ? { yaw: -box.yaw } : {}),
+  }));
+}
+
+function lCornerBoxesRight(unit: Module, place: ModulePlacement, options: FrontOptions): PartBox[] {
   const { x, y, heightM: H, depthM: D, thicknessM: t } = place;
   const S = unit.widthMm / MM;
   const legB = Math.max(0, S - D);
@@ -1460,6 +1549,15 @@ export function lCornerBoxes(unit: Module, place: ModulePlacement, options: Fron
   }
 
   if (options.cutaway) return boxes;
+
+  /*
+   * ДВЕ НЕЗАВИСИМЫЕ ДВЕРЦЫ (P0, видео заказчика): те же фасады А и Б, что
+   * режутся у «книжки», но каждая на своих петлях у дальнего края своей
+   * ноги — закрытыми их рисует то же `lPairPoses`, что ведёт их на ходу.
+   */
+  if (unit.kind === 'corner_upper' && unit.cornerDoors === 'pair') {
+    return [...boxes, ...lPairClosedBoxes(unit, place, options)];
+  }
 
   const { gapM: gap, frontThicknessM: tf } = options;
   const part = `${unit.id}:door:0`;
@@ -1529,6 +1627,230 @@ export function lCornerBoxes(unit: Module, place: ModulePlacement, options: Fron
   return boxes;
 }
 
+/**
+ * ДВЕ НЕЗАВИСИМЫЕ ДВЕРЦЫ ВЕРХНЕГО Г-МОДУЛЯ НА ХОДУ (P0, видео заказчика).
+ *
+ * Дверца А — фасад ноги А в плоскости своего ряда, петли у дальнего края
+ * (у боковины ноги А, слева у модуля в конце ряда). Дверца Б — фасад ноги Б
+ * в плоскости фасадов соседней стены, петли у дальнего края ноги Б. Каждая
+ * открывается наружу, от угла, и сама по себе: за ними — сплошное угловое
+ * пространство с Г-образными полками. Карусели и выдвижного механизма на
+ * видео нет, и здесь их нет.
+ *
+ * Полотна — те же фасады А и Б, что режутся у «книжки» (`H − зазор` по
+ * высоте; А — до плоскости корпуса соседа, Б — от лица фасада А): деталь
+ * та же, меняются только петли и то, как полотно открывается. Ход — та же
+ * `leafPoses`, что у любой створки: у дверцы Б — в осях фасадов соседа
+ * (поворот на −90° и сдвиг на ногу), поэтому ось петли, вынос полотна и
+ * ручка на ходу считаются одной функцией.
+ *
+ * Координаты — ряда, как у остальных коробок модуля (`ModulePlacement`),
+ * модуль — справа в углу; нога слева (угол в начале ряда) — зеркально
+ * (`lPairPoses`).
+ */
+function lPairMotionRight(
+  unit: Module,
+  place: ModulePlacement,
+  leg: 0 | 1,
+  options: Pick<FrontOptions, 'gapM' | 'frontThicknessM' | 'integratedHandles' | 'hardware' | 'hinges'> & { openAngle?: number },
+): { at: (s: number) => PosedBox[]; arms: PartBox[] } {
+  const { x, y, heightM: H, depthM: D } = place;
+  const S = unit.widthMm / MM;
+  const legB = Math.max(0, S - D);
+  const { gapM: gap, frontThicknessM: tf } = options;
+  const zM = place.zM;
+  const h = H - gap;
+  const leaf = `door:${leg}`;
+  const part = `${unit.id}:${leaf}`;
+  /* Полотно — в осях своей ноги: у А это ряд, у Б — плоскость фасадов соседа от угла. */
+  const width = leg === 0 ? Math.max(0, legB - gap) : Math.max(0, legB - tf - gap);
+  const startX = leg === 0 ? x + gap / 2 : tf + gap / 2;
+  const cx = startX + width / 2;
+  const cy = y + H / 2;
+  /* Петли у дальнего края ноги: у А — слева, у Б — справа (дальше от угла по стене соседа). */
+  const opening: 'left' | 'right' = leg === 0 ? 'left' : 'right';
+  const handle = leafHandleBox({
+    unit,
+    leaf,
+    part,
+    geometry: { cx, cy, widthM: width, heightM: h, thicknessM: tf },
+    spot: handleSpotOf(unit, { options: { integratedHandles: options.integratedHandles } } as Run, opening),
+    seat: 'spot',
+    options,
+  });
+  /* `leafPoses` даёт полотно `ширина − 2 зазора`: ширина и высота шире на зазор с каждой стороны. */
+  const W = width + 2 * gap;
+  const Hh = h + 2 * gap;
+  const panel0 = leafPoses({ opening, x: cx - W / 2, y: cy - Hh / 2, width: W, height: Hh, thickness: tf, gap, s: 0 })[0];
+
+  /* Чашки петель — на полотне у петельного края, едут с ним; корпусная часть — на боковине. */
+  const total = Math.max(0, Math.round(options.hinges ?? 0));
+  const count = leg === 0 ? Math.ceil(total / 2) : Math.floor(total / 2);
+  const edge = opening === 'left' ? startX + HINGE_NODE_EDGE_MM / MM : startX + width - HINGE_NODE_EDGE_MM / MM;
+  const cupsAt: [number, number, number][] = [];
+  const armsLocal: { at: [number, number, number]; size: [number, number, number] }[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const at = y + (H * (i + 1)) / (count + 1);
+    cupsAt.push([edge, at, -HINGE_CUP_DEPTH_M / 2]);
+    armsLocal.push({ at: [edge, at, -HINGE_ARM_DEPTH_M / 2 - HINGE_CUP_DEPTH_M], size: [HINGE_CUP_M * 1.2, HINGE_CUP_M * 0.4, HINGE_ARM_DEPTH_M] });
+  }
+  /* Из осей ноги — в оси ряда: А — сдвиг на перёд корпуса; Б — поворот на −90° у плоскости соседа. */
+  const toRow = (p: [number, number, number]): [number, number, number] =>
+    leg === 0 ? [p[0], p[1], zM + p[2]] : [x + legB - p[2], p[1], zM + p[0]];
+  const turn = leg === 0 ? 0 : -Math.PI / 2;
+
+  /* Ручка, размеры, петли — один раз; на каждой доле хода — только положение полотна и того, что едет с ним. */
+  const at = (s: number): PosedBox[] => {
+    const local = leafPoses({
+      opening,
+      x: cx - W / 2,
+      y: cy - Hh / 2,
+      width: W,
+      height: Hh,
+      thickness: tf,
+      gap,
+      handle,
+      s,
+      ...(options.openAngle !== undefined ? { openAngle: options.openAngle } : {}),
+    });
+    const panelS = local[0];
+    const dyaw = panelS.yaw - panel0.yaw;
+    const rigid = (p: [number, number, number]): [number, number, number] => {
+      const dx = p[0] - panel0.center[0];
+      const dz = p[2] - panel0.center[2];
+      return [
+        panelS.center[0] + dx * Math.cos(dyaw) + dz * Math.sin(dyaw),
+        p[1],
+        panelS.center[2] - dx * Math.sin(dyaw) + dz * Math.cos(dyaw),
+      ];
+    };
+    const posesLocal: PosedBox[] = [
+      { ...panelS, panel: legName(FACADE_PANEL_NAME, leg === 0 ? 'А' : 'Б') },
+      ...local.slice(1),
+      ...cupsAt.map((cup) => ({ center: rigid(cup), size: [HINGE_CUP_M, HINGE_CUP_M, HINGE_CUP_DEPTH_M] as [number, number, number], yaw: panelS.yaw, role: 'hinge' as const })),
+    ];
+    return posesLocal.map((pose) => ({ ...pose, center: toRow(pose.center), yaw: pose.yaw + turn }));
+  };
+  return {
+    at,
+    arms: armsLocal.map((arm) => ({
+      material: 'metal' as const,
+      node: 'hinge-arm' as const,
+      position: toRow(arm.at),
+      scale: leg === 0 ? arm.size : ([arm.size[2], arm.size[1], arm.size[0]] as [number, number, number]),
+    })),
+  };
+}
+
+/**
+ * Дверца пары на ходу — с ногой справа или слева (`legSide`, P0): зеркально по
+ * оси модуля. `openAngle` — полный угол раскрытия, радианы: петля каталога —
+ * её паспорт; пусто — как у створок сцены, 90°.
+ */
+export function lPairPoses(
+  unit: Module,
+  place: ModulePlacement,
+  leg: 0 | 1,
+  s: number,
+  options: Pick<FrontOptions, 'gapM' | 'frontThicknessM' | 'integratedHandles' | 'hardware' | 'hinges' | 'legSide'> & {
+    openAngle?: number;
+  },
+): PosedBox[] {
+  return lPairMotion(unit, place, leg, options)(s);
+}
+
+/**
+ * ХОД ДВЕРЦЫ ПАРЫ — ФУНКЦИЯ ДОЛИ ХОДА (P0): ручка, размеры полотна и петли
+ * считаются один раз, на каждой доле — только положение. Сцена и проверка
+ * хода спрашивают её сотни раз за ход; числа те же, что у `lPairPoses`.
+ */
+export function lPairMotion(
+  unit: Module,
+  place: ModulePlacement,
+  leg: 0 | 1,
+  options: Pick<FrontOptions, 'gapM' | 'frontThicknessM' | 'integratedHandles' | 'hardware' | 'hinges' | 'legSide'> & {
+    openAngle?: number;
+  },
+): (s: number) => PosedBox[] {
+  const { at } = lPairMotionRight(unit, place, leg, options);
+  if (options.legSide !== 'left') return at;
+  const axis = 2 * place.x + unit.widthMm / MM;
+  return (s) =>
+    at(s).map((box) => ({ ...box, center: [axis - box.center[0], box.center[1], box.center[2]] as [number, number, number], yaw: -box.yaw }));
+}
+
+/**
+ * ПОРЯДОК ДВЕРЕЦ ПАРЫ — ОДИН ХОД НА ОБЕ (P0, видео заказчика).
+ *
+ * Дверца А закрывает угол: её свободная кромка стоит в плоскости дверцы Б,
+ * а дверца Б упирается в её лицо. На ходу кромка А идёт вперёд — прямо в
+ * закрытую Б (на 13,5 мм уже на 3°), поэтому первой открывается Б, а
+ * закрывается она последней; на видео так и открывают — по очереди. Обе
+ * разом не открываются вовсе: свободные кромки обеих идут в один угол.
+ *
+ * Ход пары `u` — от 0 до 2: до 1 едет дверца Б, после 1 — дверца А. Его
+ * читают сцена (`InteractiveCornerPair`) и проверка хода (`cornerKinematics`):
+ * Б меряется при закрытой А, А — при открытой Б.
+ */
+export const L_PAIR_FIRST_LEG = 1 as const;
+
+export function lPairStroke(u: number): { a: number; b: number } {
+  return { b: Math.max(0, Math.min(1, u)), a: Math.max(0, Math.min(1, u - 1)) };
+}
+
+/** Куда едет ход пары: А открыта — открыты обе (без Б ей не открыться); только Б — 1; закрыто — 0. */
+export function lPairTarget(openA: boolean, openB: boolean): number {
+  return openA ? 2 : openB ? 1 : 0;
+}
+
+/**
+ * ЗАКРЫТАЯ ПАРА ДВЕРЕЦ — КОРОБКИ ПАЧКИ: полотна, ручки, чашки и корпусные
+ * части петель. Те же числа, что у хода в нуле (`lPairMotionRight` при `s =
+ * 0`): закрытая дверца и открытая — одна деталь.
+ */
+function lPairClosedBoxes(unit: Module, place: ModulePlacement, options: FrontOptions): PartBox[] {
+  const out: PartBox[] = [];
+  for (const leg of [0, 1] as const) {
+    const leaf = `door:${leg}`;
+    const part = `${unit.id}:${leaf}`;
+    const spec = leafFrontWithMilling(unit, leaf, { milling: options.rowMilling });
+    const key = frontKey(spec);
+    const motion = lPairMotionRight(unit, place, leg, options);
+    const arms = motion.arms;
+    for (const pose of motion.at(0)) {
+      /* Поворот на четверть: у дверцы Б коробка узкая по X, лицом в сторону от ноги. */
+      const across = Math.abs(Math.abs(pose.yaw) - Math.PI / 2) < 1e-6;
+      const scale: [number, number, number] = across ? [pose.size[2], pose.size[1], pose.size[0]] : pose.size;
+      if (pose.role === 'front') {
+        out.push({
+          material: 'front',
+          part,
+          frontKey: key,
+          position: pose.center,
+          scale,
+          ...(pose.panel ? { panel: pose.panel } : {}),
+          ...(spec.relief ? { relief: spec.relief } : {}),
+          ...(across ? { face: '-x' as const } : {}),
+        });
+      } else if (pose.role === 'handle') {
+        out.push({
+          material: 'metal',
+          part,
+          node: 'handle',
+          position: pose.center,
+          scale,
+          ...(pose.handle ? { handle: pose.handle } : {}),
+          ...(across ? { yaw: pose.yaw } : {}),
+        });
+      } else {
+        out.push({ material: 'metal', part, node: 'hinge', position: pose.center, scale });
+      }
+    }
+    out.push(...arms);
+  }
+  return out;
+}
+
 /** Коробка с поворотом: так стоят фасады на ходу. */
 export type PosedBox = {
   center: [number, number, number];
@@ -1538,7 +1860,8 @@ export type PosedBox = {
   yaw: number;
   /** Поворот вокруг горизонтали вдоль ряда (подъёмник, откидной), радианы. */
   pitch?: number;
-  role: 'front' | 'handle';
+  /** `hinge` — чашка петли на полотне: едет вместе с ним (пара дверец Г-модуля, P0). */
+  role: 'front' | 'handle' | 'hinge';
   panel?: string;
   /** Ручка (HANDLE-REAL): сцена рисует её модель, коробка — её габарит. */
   handle?: HandleDraw;
@@ -1662,9 +1985,41 @@ export const DRAWER_TRAVEL_M = 0.3;
 export function bifoldPoses(
   unit: Module,
   place: ModulePlacement,
-  options: Pick<FrontOptions, 'gapM' | 'frontThicknessM' | 'integratedHandles' | 'hardware'>,
+  options: Pick<FrontOptions, 'gapM' | 'frontThicknessM' | 'integratedHandles' | 'hardware' | 'legSide'>,
   s: number,
 ): PosedBox[] {
+  return bifoldMotion(unit, place, options)(s);
+}
+
+/**
+ * ХОД «КНИЖКИ» — ФУНКЦИЯ ДОЛИ ХОДА (P0). Всё, что от хода не зависит, —
+ * ручка закрытого фасада А (модель позиции каталога, место, габарит),
+ * размеры фасадов и оси — считается один раз; на каждой доле только
+ * повороты. Проверка хода у угла спрашивала ручку на каждом из сотен шагов
+ * и уточнений; числа те же — меняется только то, сколько раз их считают.
+ */
+export function bifoldMotion(
+  unit: Module,
+  place: ModulePlacement,
+  options: Pick<FrontOptions, 'gapM' | 'frontThicknessM' | 'integratedHandles' | 'hardware' | 'legSide'>,
+): (s: number) => PosedBox[] {
+  const right = bifoldMotionRight(unit, place, options);
+  /* Нога слева (P0) — зеркально: центр по оси модуля, поворот в другую сторону. */
+  if (options.legSide !== 'left') return right;
+  const axis = 2 * place.x + unit.widthMm / MM;
+  return (s) =>
+    right(s).map((box) => ({
+      ...box,
+      center: [axis - box.center[0], box.center[1], box.center[2]] as [number, number, number],
+      yaw: -box.yaw,
+    }));
+}
+
+function bifoldMotionRight(
+  unit: Module,
+  place: ModulePlacement,
+  options: Pick<FrontOptions, 'gapM' | 'frontThicknessM' | 'integratedHandles' | 'hardware'>,
+): (s: number) => PosedBox[] {
   const { x, y, heightM: H, depthM: D } = place;
   const S = unit.widthMm / MM;
   const legB = Math.max(0, S - D);
@@ -1675,8 +2030,6 @@ export function bifoldPoses(
   const bW = Math.max(0, legB - tf - gap);
   const zM = place.zM;
 
-  const theta = (Math.PI / 2) * Math.max(0, Math.min(1, s));
-  const psi = theta;
   const turn = (px: number, pz: number, angle: number): [number, number] => [
     px * Math.cos(angle) + pz * Math.sin(angle),
     -px * Math.sin(angle) + pz * Math.cos(angle),
@@ -1691,6 +2044,20 @@ export function bifoldPoses(
   /* Фасад А относительно шарнира. */
   const aRel: [number, number] = [tf - legB / 2, -tf / 2];
 
+  /* Ручка — на свободном краю фасада А, той же `leafHandleBox`, что у створок и закрытого Г-модуля. Один раз на ход. */
+  const closed = leafHandleBox({
+    unit,
+    leaf: 'door:0',
+    part: `${unit.id}:door:0`,
+    geometry: { cx: legB / 2, cy: H / 2, widthM: aW, heightM: h, thicknessM: tf },
+    spot: handleSpotOf(unit, { options: { integratedHandles: options.integratedHandles } } as Run, 'right'),
+    seat: 'spot',
+    options,
+  });
+
+  return (s) => {
+  const theta = (Math.PI / 2) * Math.max(0, Math.min(1, s));
+  const psi = theta;
   const bTurned = turn(bRel[0], bRel[1], theta);
   const aLocal = turn(aRel[0], aRel[1], psi);
   const aTurned = turn(jRel[0] + aLocal[0], jRel[1] + aLocal[1], theta);
@@ -1712,16 +2079,6 @@ export function bifoldPoses(
     },
   ];
 
-  /* Ручка — на свободном краю фасада А, той же `leafHandleBox`, что у створок и закрытого Г-модуля. */
-  const closed = leafHandleBox({
-    unit,
-    leaf: 'door:0',
-    part: `${unit.id}:door:0`,
-    geometry: { cx: legB / 2, cy: H / 2, widthM: aW, heightM: h, thicknessM: tf },
-    spot: handleSpotOf(unit, { options: { integratedHandles: options.integratedHandles } } as Run, 'right'),
-    seat: 'spot',
-    options,
-  });
   if (closed) {
     /* Ручка относительно центра фасада А в его закрытом положении. */
     const off = turn(closed.position[0] - legB / 2, closed.position[2] - tf / 2, theta + psi);
@@ -1735,6 +2092,7 @@ export function bifoldPoses(
   }
 
   return boxes;
+  };
 }
 
 /**
@@ -2288,8 +2646,10 @@ export function runBoxesByModule(
           shelves: carcassKeyOf(entry.unit, run, carcassItems, 'shelves'),
           partitions: carcassKeyOf(entry.unit, run, carcassItems, 'partitions'),
         },
-        /* У слепого угла фасад — только на доступной части (`openFrontMm`). */
-        ...(blindPartMm(entry.unit, run) > 0 ? { openWidthMm: openFrontMm(entry.unit, run) } : {}),
+        /* У слепого угла фасад — только на доступной части (`openFrontOf`): её ширина и с какой стороны. */
+        ...openOptions(entry.unit, run),
+        /* Г-модуль в начале ряда (P0) — нога слева (`lLegOf`). */
+        ...legOptions(entry.unit, run),
         /* Комплекты ящиков — тем же `moduleDrawerKits`, что режет короб в раскрое. */
         ...(options.hardware && options.hardware.size > 0 && (options.production ?? shopOf(run.production)).drawerBox
           ? { drawerKits: moduleDrawerKits(entry.unit, run, options.production ?? shopOf(run.production), options.hardware) }
@@ -2772,6 +3132,8 @@ export function openablePartIds(run: Run): string[] {
      */
     if (unit.kind === 'corner_base' || unit.kind === 'corner_upper') {
       if (!unit.fill || unit.fill.drawerHeights.length === 0) ids.push(`${unit.id}:door:0`);
+      /* Пара дверец верхнего Г-модуля (P0): у дверцы Б свой ключ. */
+      if (unit.kind === 'corner_upper' && unit.cornerDoors === 'pair') ids.push(`${unit.id}:door:1`);
       continue;
     }
     /* Витрина в раме (V3D-02): дверь из стекла — тот же ключ, что у её коробок. */

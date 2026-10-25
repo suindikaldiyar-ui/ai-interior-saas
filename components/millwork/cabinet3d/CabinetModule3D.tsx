@@ -11,6 +11,7 @@ import type { HardwareItem, ProductionSettings } from '@/types/catalog';
 import InteractiveBayDrawer from './InteractiveBayDrawer';
 import InteractiveDoor from './InteractiveDoor';
 import InteractiveBifold from './InteractiveBifold';
+import InteractiveCornerPair from './InteractiveCornerPair';
 import InteractiveDrawer from './InteractiveDrawer';
 import type { CabinetParts } from './parts';
 import type { GlassMaterials } from './glassLook';
@@ -71,6 +72,10 @@ type Props = {
    * Число — `openFrontMm`, то же, что у неподвижной отрисовки и раскроя.
    */
   openWidthM?: number;
+  /** С какой отметки модуля доступная часть, метры: у угла в начале ряда — справа (P0, `openFrontOf`). */
+  openFromM?: number;
+  /** Нога Г-модуля слева — модуль в начале ряда (P0, `lLegOf`). */
+  legSide?: 'left' | 'right';
   /** Школа цеха ряда: по ней `bayLayout` считает ящики отсеков — те же числа, что в пачке (R02A). */
   production?: ProductionSettings;
   /**
@@ -120,6 +125,8 @@ export default function CabinetModule3D({
   frontMaterial,
   leafLook,
   openWidthM,
+  openFromM = 0,
+  legSide,
   production,
   layers = ALL_LAYERS,
   partBoxes,
@@ -243,7 +250,7 @@ export default function CabinetModule3D({
         * Встроенная техника (холодильник, посудомойка, мойка) закрыта
         * фасадом наравне с обычным модулем: так это и выглядит в квартире.
         */}
-      {sceneLeaves(unit, heightM, openWidthM).map((leaf) => {
+      {sceneLeaves(unit, heightM, openWidthM, openFromM).map((leaf) => {
         /*
          * СЛОИ — ЭТО ЧТО ВИДНО, А НЕ ЧТО ОТКРЫВАЕТСЯ (STAGE A).
          *
@@ -322,6 +329,33 @@ export default function CabinetModule3D({
             />
           );
         }
+        if (leaf.kind === 'lpair') {
+          /* Пара дверец ходит одним ходом (`lPairStroke`): рисует её первая дверца списка, вторая — та же пара. */
+          if (leaf.leg !== 0) return null;
+          const showHandles = boxShown({ material: 'metal', node: 'handle', part: leaf.id }, layers);
+          if (!layers.fronts && !showHandles) return null;
+          return (
+            <InteractiveCornerPair
+              key={leaf.id}
+              unit={unit}
+              openA={isOpen(`${unit.id}:door:0`)}
+              openB={isOpen(`${unit.id}:door:1`)}
+              onToggle={onToggle}
+              place={{ x: 0, y: 0, heightM, depthM, thicknessM, zM: 0 }}
+              gap={gapM}
+              thickness={frontThicknessM}
+              integratedHandle={integratedHandles}
+              hardware={hardware}
+              parts={parts}
+              lookOf={(part) => leafLook?.(part)}
+              frontMaterial={frontMaterial}
+              onActive={onActive}
+              showFronts={layers.fronts}
+              showHandles={showHandles}
+              {...(legSide ? { legSide } : {})}
+            />
+          );
+        }
         if (leaf.kind === 'bifold') {
           const showHandles = boxShown({ material: 'metal', node: 'handle', part: leaf.id }, layers);
           if (!layers.fronts && !showHandles) return null;
@@ -343,6 +377,7 @@ export default function CabinetModule3D({
               onActive={onActive}
               showFronts={layers.fronts}
               showHandles={showHandles}
+              {...(legSide ? { legSide } : {})}
             />
           );
         }

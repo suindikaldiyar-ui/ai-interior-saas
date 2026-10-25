@@ -30,7 +30,7 @@ import { bayLayout, placeEnvelope } from '@/lib/millwork/bays';
 import { COUNTER_OVERHANG_MM, rowStandardDepthMm } from '@/lib/millwork/fill';
 import { moduleOfPart } from '@/lib/millwork/selection';
 import { PLINTH_SETBACK_MM, apronSpans, countertopSlabs, plinthSpans, slabPieces, upperNicheSpans } from '@/lib/millwork/countertop';
-import { blindPartMm, openFrontMm } from '@/lib/millwork/corner';
+import { lLegOf, openFrontOf } from '@/lib/millwork/corner';
 import { CAD_CARCASS_BASE, CAD_ROOM, cadShadeMaterial, cadShadeQuaternion } from './cadLook';
 import {
   countertopMm,
@@ -562,7 +562,7 @@ export default function Cabinet3D({
      */
     const reliefFronts = new Map<
       string,
-      { key: string; relief: FrontRelief; leaf: ReliefLeaf; face?: '-x'; orient?: ReliefOrient; boxes: PartBox[] }
+      { key: string; relief: FrontRelief; leaf: ReliefLeaf; face?: '-x' | '+x'; orient?: ReliefOrient; boxes: PartBox[] }
     >();
     /*
      * РУЧКИ (HANDLE-REAL) — пачка на модель и покрытие: сетка одна на
@@ -1044,9 +1044,9 @@ export default function Cabinet3D({
             const spec = leafFrontWithMilling(entry.unit, leaf, run);
             return { material: frontMaterials.get(frontKey(spec)), relief: spec.relief };
           }}
-          openWidthM={
-            blindPartMm(entry.unit, run) > 0 ? openFrontMm(entry.unit, run) / MM : undefined
-          }
+          openWidthM={openFrontOf(entry.unit, run) ? openFrontOf(entry.unit, run)!.widthMm / MM : undefined}
+          openFromM={(openFrontOf(entry.unit, run)?.fromMm ?? 0) / MM}
+          legSide={lLegOf(entry.unit, run)?.side}
           partBoxes={partBoxes}
           hardware={hardwareItems}
         />

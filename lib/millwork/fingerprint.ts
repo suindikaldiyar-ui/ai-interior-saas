@@ -1,7 +1,8 @@
 import { beamsPart } from './ceiling';
 import { frontKey, frontPart } from './frontMaterial';
 import { shelvesAreGlass } from './glass';
-import type { BayDrawerStack, BayShelves, Module, Run } from '@/types/millwork';
+import type { BayDrawerStack, BayShelves, CornerChoice, Module, Run } from '@/types/millwork';
+import { cornerOwnerOf } from './corner';
 
 /**
  * Отпечаток конфигурации.
@@ -137,6 +138,11 @@ function extrasPart(unit: Module): string | undefined {
     unit.heightMm !== undefined ? `h${unit.heightMm}` : '',
     unit.overhead ? `over${unit.overhead.depthMm}` : '',
     /*
+     * Две независимые дверцы верхнего Г-модуля (P0) — другая фурнитура
+     * (обычные петли вместо угловых) и другие ручки. Пусто не пишется.
+     */
+    unit.cornerDoors ? `doors=${unit.cornerDoors}` : '',
+    /*
      * Свои фасады створок (P3D-MDF): дверь 2 в эмали RAL рядом с дверью 1 в
      * ЛДСП — другая мебель и другие деньги. По детали в устойчивом порядке;
      * пусто не пишется (ловушка 246) — у прежних рядов отпечаток прежний.
@@ -240,6 +246,29 @@ export function runFingerprint(
 }
 
 /**
+ * КТО ВЕДЁТ УРОВНИ УГЛА — В ОТПЕЧАТОК, ТОЛЬКО КОГДА ЭТО НЕ УМОЛЧАНИЕ (P0).
+ *
+ * Стена Б, ведущая плиту через угол, — та же мебель, тот же метраж, но
+ * другая плита на чертеже и в сцене: отпечаток обязан это различать. Угол,
+ * где всё ведёт стена до угла, не пишет ничего — отпечаток прежний до
+ * символа (ловушка 246).
+ */
+function cornerOwnersPart(
+  choice: Pick<CornerChoice, 'owners' | 'mezzanine' | 'upper' | 'lower' | 'upperDoors'> | undefined,
+): string {
+  if (!choice) return '';
+  const levels = ['lower', 'upper', 'mezzanine', 'countertop'] as const;
+  const owners = levels.map((level) => cornerOwnerOf(choice, level));
+  const pair = choice.upper === 'l_shape' && choice.upperDoors === 'pair';
+  const changed = owners.some((owner) => owner === 'next') || Boolean(choice.mezzanine);
+  return (
+    (changed
+      ? `/own:${owners.map((owner) => (owner === 'next' ? 'n' : 'p')).join('')}${choice.mezzanine ? `/m:${choice.mezzanine}` : ''}`
+      : '') + (pair ? '/ud:pair' : '')
+  );
+}
+
+/**
  * Отпечаток всей композиции.
  *
  * Считается от отпечатков сегментов И от решения угла: сменил фальш-панель
@@ -255,6 +284,8 @@ export function compositionFingerprint(composition: {
     upperPanelMm?: number;
     ownerUpperPanelMm?: number;
     hingeAngleDeg?: number;
+    /** Выбор угла: кто ведёт уровни, стык антресоли и двери верхнего Г (P0). Пишется только не умолчание. */
+    choice?: Pick<CornerChoice, 'owners' | 'mezzanine' | 'upper' | 'lower' | 'upperDoors'>;
   }[];
 }): string {
   const text = [
@@ -271,7 +302,8 @@ export function compositionFingerprint(composition: {
         `${corner.solution}/${corner.falsePanelMm ?? 0}/${corner.hingeAngleDeg ?? 0}` +
         (corner.ownerPanelMm ? `/o${corner.ownerPanelMm}` : '') +
         (corner.upperPanelMm ? `/u${corner.upperPanelMm}` : '') +
-        (corner.ownerUpperPanelMm ? `/uo${corner.ownerUpperPanelMm}` : ''),
+        (corner.ownerUpperPanelMm ? `/uo${corner.ownerUpperPanelMm}` : '') +
+        cornerOwnersPart(corner.choice),
     ),
   ].join('|');
 

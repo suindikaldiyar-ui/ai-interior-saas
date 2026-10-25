@@ -34,13 +34,19 @@ import { OPENING_KIND_TITLE } from '@/types/millwork';
 import { plinthMm, upperBottomMm } from './shop';
 import type { ProductionSettings } from '@/types/catalog';
 import { runFingerprint } from './fingerprint';
-import { cornerDoorHinge, cornerGeometry, upperBoundsOf, type CornerGeometry } from './corner';
+import {
+  cornerDoorHinge,
+  levelAt,
+  levelBoundsOf,
+  upperCornerOf,
+  type CornerEnd,
+  type UpperCorner,
+} from './corner';
 import { obstacleBlockers, obstaclesInBand, obstaclesOnRun, rowBandMm, wallObstacles } from './obstacles';
 import type {
   ApplianceColumn,
   ApplianceKind,
   CommPoint,
-  CornerChoice,
   Module,
   ModuleKind,
   Opening,
@@ -656,6 +662,50 @@ function attachBlind(
 }
 
 /**
+ * ГЛУХАЯ ЧАСТЬ УГЛА В НАЧАЛЕ РЯДА — К ПЕРВОМУ ОБЫЧНОМУ МОДУЛЮ (P0).
+ *
+ * Зеркало `attachBlind`: угол перед рядом ведёт этот ряд (стена после угла
+ * идёт в угол), место под глухую часть отведено слева — `fromMm`…`fromMm +
+ * blindMm`. Первый обычный модуль за ним становится угловым слепым: корпус
+ * шире на глухую часть влево, дверца прежней ширины и одна. Шире предела —
+ * делится на слепой с дверцей не шире `SINGLE_DOOR_MAX_MM` и обычный; не
+ * обычный модуль — в угол встаёт свой глухой корпус без дверцы.
+ */
+function attachBlindStart(
+  modules: Module[],
+  fromMm: number,
+  blindMm: number,
+  kind: 'base' | 'upper',
+  label: string,
+): void {
+  const at = modules.findIndex((unit) => unit.offsetMm === fromMm + blindMm);
+  const first = at >= 0 ? modules[at] : undefined;
+  if (first && plainDoorModule(first, kind)) {
+    const door = first.widthMm;
+    if (door <= SINGLE_DOOR_MAX_MM) {
+      const blind = makeModule(kind, door + blindMm, fromMm);
+      blind.doorCount = 1;
+      blind.label = label;
+      modules[at] = blind;
+      return;
+    }
+    const blindDoor = Math.min(SINGLE_DOOR_MAX_MM, door - MIN_WIDTH);
+    if (blindDoor >= MIN_WIDTH) {
+      const blind = makeModule(kind, blindDoor + blindMm, fromMm);
+      blind.doorCount = 1;
+      blind.label = label;
+      modules.splice(at, 1, blind, makeModule(kind, door - blindDoor, fromMm + blindMm + blindDoor));
+      return;
+    }
+  }
+  const blind = makeModule(kind, blindMm, fromMm);
+  blind.doorCount = 1;
+  blind.label = label;
+  const pos = modules.findIndex((unit) => unit.offsetMm > fromMm);
+  modules.splice(pos < 0 ? modules.length : pos, 0, blind);
+}
+
+/**
  * Сколько места в ряду занимает техника.
  *
  * Микроволновка вместе с духовкой стоит в ОДНОМ пенале, поэтому дважды
@@ -908,22 +958,29 @@ function buildSectionRun(input: BuildRunInput): Run {
   let limit = usable;
 
   /*
-   * Г-образный угол композиции — тот же угловой модуль в конце ряда,
+   * Г-образный угол композиции — тот же угловой модуль у того конца ряда,
+   * где ряд ведёт угол (P0: и в начале, если угол перед рядом ведёт он),
    * сторона — из настройки организации. Слепой угол в зонах из секций
    * своей раскладки не имеет: ряд идёт в угол, как и шёл.
    */
-  const ownL = input.corner?.own?.lower === 'l_shape';
-  const cornerEnd = cornerAt === 'end' || ownL;
-  const cornerSize = ownL
-    ? cornerGeometry(input.corner!.own!, requirements.zone, input.production).lowerLegMm
-    : CORNER_SIZE_MM;
+  const legOf = (end: CornerEnd) => {
+    const at = levelAt({ corner: input.corner, zone: requirements.zone, production: input.production }, end, 'lower');
+    return at?.owns ? at.legMm : 0;
+  };
+  const startLeg = legOf('start');
+  const endLeg = legOf('end');
+  const cornerStart = cornerAt === 'start' || startLeg > 0;
+  const cornerEnd = cornerAt === 'end' || endLeg > 0;
+  const startSize = startLeg > 0 ? startLeg : CORNER_SIZE_MM;
+  const cornerSize = endLeg > 0 ? endLeg : CORNER_SIZE_MM;
 
-  if (cornerAt === 'start') {
-    modules.push(makeModule('corner_base', CORNER_SIZE_MM, 0));
-    at = CORNER_SIZE_MM;
-  } else if (cornerEnd) {
-    limit = Math.max(0, usable - cornerSize);
+  if (cornerStart) {
+    const corner = makeModule('corner_base', startSize, 0);
+    if (startLeg > 0) corner.label = CORNER_LABEL.lowerL;
+    modules.push(corner);
+    at = startSize;
   }
+  if (cornerEnd) limit = Math.max(at, usable - cornerSize);
 
   const plan = planSections(inRow, profile.fillSection, Math.max(0, limit - at));
   const { kinds, widths } = plan;
@@ -976,7 +1033,7 @@ function buildSectionRun(input: BuildRunInput): Run {
 
   if (cornerEnd) {
     const corner = makeModule('corner_base', cornerSize, at);
-    if (ownL) corner.label = CORNER_LABEL.lowerL;
+    if (endLeg > 0) corner.label = CORNER_LABEL.lowerL;
     modules.push(corner);
     at += cornerSize;
   }
@@ -1117,23 +1174,45 @@ export function buildRun(input: BuildRunInput): Run {
    * попадали случайные модули: на П-образной туда вставал модуль 255 мм,
    * за которым целиком стоял соседний ряд, — ни открыть, ни достать.
    */
-  const own = input.corner?.own;
-  const ownGeometry: CornerGeometry | null = own
-    ? cornerGeometry(own, requirements.zone, input.production)
-    : null;
-  const cornerEnd = cornerAt === 'end' || own?.lower === 'l_shape';
-  const cornerSize = own?.lower === 'l_shape' ? ownGeometry!.lowerLegMm : CORNER_SIZE_MM;
+  /*
+   * Что ряд ставит у своих концов, где он ведёт нижний угол: Г-модуль или
+   * слепую зону. До P0 угол вёл только конец ряда; теперь и начало — когда
+   * стена после угла идёт в угол сама.
+   */
+  const lowerAt = (end: CornerEnd) => {
+    const at = levelAt({ corner: input.corner, zone: requirements.zone, production: input.production }, end, 'lower');
+    return at?.owns ? at : null;
+  };
+  const startOwn = lowerAt('start');
+  const endOwn = lowerAt('end');
+  const startLeg = startOwn?.legMm ?? 0;
+  const endLeg = endOwn?.legMm ?? 0;
+  const startBlind = startOwn && startLeg === 0 ? startOwn.blindMm : 0;
+  const endBlind = endOwn && endLeg === 0 ? endOwn.blindMm : 0;
+  const cornerStart = cornerAt === 'start' || startLeg > 0;
+  const cornerEnd = cornerAt === 'end' || endLeg > 0;
+  const startSize = startLeg > 0 ? startLeg : CORNER_SIZE_MM;
+  const cornerSize = endLeg > 0 ? endLeg : CORNER_SIZE_MM;
   /*
    * СЛЕПОЙ УГОЛ — СНАЧАЛА ПРЕЖНЯЯ РАСКЛАДКА.
    *
-   * Глухая часть съедает край последнего модуля, и если он обычный, а
+   * Глухая часть съедает край крайнего модуля, и если он обычный, а
    * после неё у дверцы остаётся не меньше самого узкого корпуса, ряд
    * остаётся каким был: мойка у воды не уезжает из-за того, что угол
    * назвали слепым. Не вышло (в углу узкий модуль, прибор, колонна) —
    * место под глухую часть отводится до раскладки.
    */
-  const blindMode = own?.lower === 'blind' ? (input.blindLayout ?? 'fit') : null;
-  const blindZone = own?.lower === 'blind' ? ownGeometry!.ownerBlindMm : 0;
+  const blindMode = startBlind > 0 || endBlind > 0 ? (input.blindLayout ?? 'fit') : null;
+  const blindZone = startBlind + endBlind;
+
+  if (cornerStart) {
+    const corner = makeModule('corner_base', startSize, 0);
+    if (startLeg > 0) corner.label = CORNER_LABEL.lowerL;
+    cornerModules.push(corner);
+    cursor = startSize;
+  }
+  if (cornerEnd) limit = Math.max(cursor, usable - cornerSize);
+
   /*
    * РЯД КОРОЧЕ ГЛУХОЙ ЗОНЫ. Между двумя углами П-образной стена бывает
    * такой, что ряд целиком стоит за соседним рядом: отвести под глухую
@@ -1142,22 +1221,18 @@ export function buildRun(input: BuildRunInput): Run {
    * целиком глухие (`blindPartMm`), и это сказано словами — дверце там
    * открыться некуда.
    */
-  const blindFits = usable - cursor >= blindZone;
-  const blindReserve = blindMode === 'reserve' && blindFits ? blindZone : 0;
+  const blindFits = limit - cursor >= blindZone;
+  const reserveBlind = blindMode === 'reserve' && blindFits;
   if (blindMode === 'reserve' && !blindFits) {
     warnings.push(
       `Ряд ${usable} мм целиком за соседним рядом угла: глухая часть угла ${blindZone} мм длиннее ряда — ` +
         'дверце там открыться некуда, модули глухие.',
     );
   }
-
-  if (cornerAt === 'start') {
-    cornerModules.push(makeModule('corner_base', CORNER_SIZE_MM, 0));
-    cursor = CORNER_SIZE_MM;
-  } else if (cornerEnd) {
-    limit = Math.max(0, usable - cornerSize);
+  if (reserveBlind) {
+    cursor += startBlind;
+    limit = Math.max(cursor, limit - endBlind);
   }
-  if (blindReserve > 0) limit = Math.max(cursor, limit - blindReserve);
 
   /*
    * Витрина занимает своё место ДО раскладки техники и встаёт в свободный
@@ -1523,27 +1598,39 @@ export function buildRun(input: BuildRunInput): Run {
   }
 
   if (blindMode === 'fit') {
+    /* Глухую часть берёт крайний модуль, если он обычный и дверце остаётся от корпуса до предела. */
+    const takes = (unit: Module | undefined, atEdge: boolean, zone: number): unit is Module => {
+      const door = unit ? unit.widthMm - zone : 0;
+      return Boolean(unit) && atEdge && plainDoorModule(unit!, 'base') && door >= MIN_WIDTH && door <= SINGLE_DOOR_MAX_MM;
+    };
     const last = modules[modules.length - 1];
-    const door = last ? last.widthMm - blindZone : 0;
+    const first = modules[0];
     const fits =
-      last &&
-      last.offsetMm + last.widthMm === usable &&
-      plainDoorModule(last, 'base') &&
-      door >= MIN_WIDTH &&
-      door <= SINGLE_DOOR_MAX_MM;
+      (endBlind === 0 || takes(last, Boolean(last) && last.offsetMm + last.widthMm === usable, endBlind)) &&
+      (startBlind === 0 || takes(first, Boolean(first) && first.offsetMm === 0, startBlind)) &&
+      !(startBlind > 0 && endBlind > 0 && first === last);
     if (!fits) return buildRun({ ...input, blindLayout: 'reserve' });
-    last.doorCount = 1;
-    last.label = CORNER_LABEL.lowerBlind;
+    if (endBlind > 0) {
+      last.doorCount = 1;
+      last.label = CORNER_LABEL.lowerBlind;
+    }
+    if (startBlind > 0) {
+      first.doorCount = 1;
+      first.label = CORNER_LABEL.lowerBlind;
+    }
   }
 
-  if (blindReserve > 0) {
-    attachBlind(modules, at, blindReserve, 'base', CORNER_LABEL.lowerBlind);
-    at += blindReserve;
+  if (reserveBlind) {
+    if (endBlind > 0) {
+      attachBlind(modules, at, endBlind, 'base', CORNER_LABEL.lowerBlind);
+      at += endBlind;
+    }
+    if (startBlind > 0) attachBlindStart(modules, 0, startBlind, 'base', CORNER_LABEL.lowerBlind);
   }
 
   if (cornerEnd) {
     const corner = makeModule('corner_base', cornerSize, at);
-    if (own?.lower === 'l_shape') corner.label = CORNER_LABEL.lowerL;
+    if (endLeg > 0) corner.label = CORNER_LABEL.lowerL;
     modules.push(corner);
     at += cornerSize;
   }
@@ -1559,22 +1646,17 @@ export function buildRun(input: BuildRunInput): Run {
   const obstaclesHere = obstaclesOnRun(openings, usable);
 
   /*
-   * Верхний ряд знает про углы: у ряда после угла он начинается раньше
-   * нуля, у владельца в конце встаёт верхний угловой модуль или ряд
-   * кончается раньше стены (пустой угол). Границы — `upperBoundsOf`.
+   * Верхний ряд знает про углы: у стыкующегося он начинается раньше нуля
+   * или кончается раньше стены, у ведущего у его конца встаёт верхний
+   * угловой модуль или слепая зона (P0: у любого конца). Границы и что
+   * поставить — `upperCornerOf`.
    */
-  const cornerUpper = input.corner
-    ? {
-        ...upperBoundsOf({
-          corner: input.corner,
-          zone: requirements.zone,
-          production: input.production,
-          lengthMm: usable,
-        }),
-        own: input.corner.own,
-        geometry: ownGeometry,
-      }
-    : undefined;
+  const cornerUpper = upperCornerOf({
+    corner: input.corner,
+    zone: requirements.zone,
+    production: input.production,
+    lengthMm: usable,
+  });
 
   const upperSegments = requirements.options.hasUpper
     ? buildUpperRow(
@@ -1788,7 +1870,11 @@ export function rowSpansOfRun(
     return { free: freeSpans(run.lengthMm, blockers), blockers };
   }
 
-  const upper = rowUpperSpans(run, baseModules, openings, requirements, options);
+  /*
+   * Антресоль со своим стыком в углу (P0) стоит в своих границах; без него
+   * — в границах верха, как было.
+   */
+  const upper = rowUpperSpans(run, baseModules, openings, requirements, options, row);
   if (row === 'upper') return upper;
 
   /*
@@ -1852,6 +1938,8 @@ function rowUpperSpans(
   openings: Opening[],
   requirements: RunRequirements,
   options: RunOptions,
+  /** Чьи границы у углов: верха или антресоли (P0). */
+  level: 'upper' | 'mezzanine' = 'upper',
 ): { free: { from: number; to: number }[]; blockers: UpperBlocker[] } {
   return upperSpans(
     baseModules,
@@ -1869,15 +1957,29 @@ function rowUpperSpans(
      * правка и библиотека обязаны видеть верхний ряд ряда после угла
      * с той же отметки, с какой он начинается в сцене.
      */
-    run.corner
-      ? upperBoundsOf({
-          corner: run.corner,
-          zone: run.zone ?? requirements.zone,
-          production: run.production,
-          lengthMm: run.lengthMm,
-        })
-      : undefined,
+    levelBoundsFor(run, requirements.zone, level),
   );
+}
+
+/**
+ * ГРАНИЦЫ ВИСЯЩЕГО УРОВНЯ ПО УГЛАМ — С ИМЕНЕМ ТОГО, ЧТО У КОНЦА.
+ *
+ * Отказ правки называет, что справа: пустой угол — выбор человека,
+ * а угол, который этим уровнем ведёт соседняя стена (P0), — «угол».
+ */
+export function levelBoundsFor(
+  run: Pick<Run, 'lengthMm' | 'production'> & Partial<Pick<Run, 'zone' | 'corner'>>,
+  zone: ZoneKind | undefined,
+  level: 'upper' | 'mezzanine',
+): { fromMm: number; toMm: number; endReason: string } | undefined {
+  if (!run.corner) return undefined;
+  const bounds = levelBoundsOf(
+    { corner: run.corner, zone: run.zone ?? zone, production: run.production, lengthMm: run.lengthMm },
+    level,
+  );
+  const end = run.corner.end;
+  const empty = end && (level === 'upper' ? end.upper === 'empty' : (end.mezzanine ?? (end.upper === 'empty' ? 'empty' : '')) === 'empty');
+  return { ...bounds, endReason: !end || empty ? 'пустой угол' : 'угол' };
 }
 
 /**
@@ -1905,11 +2007,12 @@ export function upperSpans(
   ceilingHeightMm: number,
   production?: ProductionSettings,
   /**
-   * ГРАНИЦЫ ПО УГЛАМ (слой 55): у ряда после угла верх начинается раньше
-   * нуля, у владельца при пустом верхнем угле — кончается раньше стены.
-   * Пусто — ряд от нуля до длины, как и было.
+   * ГРАНИЦЫ ПО УГЛАМ (слой 55, P0): верх начинается раньше нуля или позже
+   * него, кончается раньше длины ряда или позже — как его отпустили углы.
+   * Пусто — ряд от нуля до длины, как и было. `endReason` — как назвать
+   * отказ у конца (пустой угол или угол, который ведёт соседняя стена).
    */
-  bounds?: { fromMm: number; toMm: number },
+  bounds?: { fromMm: number; toMm: number; endReason?: string },
 ): { free: { from: number; to: number }[]; blockers: UpperBlocker[] } {
   const beams = beamsOnRun(openings, lengthMm);
   const shell = {
@@ -1957,14 +2060,19 @@ export function upperSpans(
     ...tall,
     /*
      * Пустой верхний угол — это выбор, и отказ правки называет его словом
-     * («справа пустой угол»), а не краем стены.
+     * («справа пустой угол»), а не краем стены. Угол, который верхом ведёт
+     * соседняя стена (P0), — тоже словом: «справа угол».
      */
     ...(bounds && bounds.toMm < lengthMm
-      ? [{ from: bounds.toMm, to: lengthMm, reason: 'пустой угол' }]
+      ? [{ from: bounds.toMm, to: lengthMm, reason: bounds.endReason ?? 'пустой угол' }]
       : []),
   ].sort((a, b) => a.from - b.from);
 
-  return { free: freeSpans(lengthMm, blockers, bounds?.fromMm ?? 0), blockers };
+  /*
+   * У ряда, который верхом ведёт угол, а низом к нему стыкуется (P0), верх
+   * идёт дальше нижнего ряда — до стены соседа: участки до `toMm`.
+   */
+  return { free: freeSpans(Math.max(lengthMm, bounds?.toMm ?? lengthMm), blockers, bounds?.fromMm ?? 0), blockers };
 }
 
 /**
@@ -1980,15 +2088,11 @@ export function buildUpperRow(
   /** Школа цеха: от неё зависит отметка навески и высота верхнего ряда. */
   production?: ProductionSettings,
   /**
-   * УГЛЫ ЭТОГО РЯДА (слой 55): границы верхнего ряда и верхний угол,
-   * которым ряд владеет. Пусто — ряд без углов, как и было.
+   * УГЛЫ ЭТОГО РЯДА (слой 55, P0): границы верхнего ряда и что ряд ставит
+   * у конца, где ведёт верхний угол, — у любого из двух (`upperCornerOf`).
+   * Пусто — ряд без углов, как и было.
    */
-  corner?: {
-    fromMm: number;
-    toMm: number;
-    own?: CornerChoice;
-    geometry?: CornerGeometry | null;
-  },
+  corner?: UpperCorner,
 ): UpperSegment[] {
   /*
    * ЧТО ЗАНИМАЕТ МЕСТО ВЕРХНЕГО РЯДА.
@@ -2053,28 +2157,33 @@ export function buildUpperRow(
     if (interval.to - interval.from < MIN_WIDTH) continue;
 
     const modules: Module[] = [];
-    let at = interval.from;
 
     /*
-     * ВЕРХНИЙ УГОЛ, КОТОРЫМ ВЛАДЕЕТ РЯД (слой 55).
+     * ВЕРХНИЙ УГОЛ, КОТОРЫЙ ВЕДЁТ РЯД (слой 55, P0).
      *
      * Участок, дошедший до стены соседа, оставляет место угловому модулю:
      * Г-образному — его сторону, слепому — глухую часть, которую потом
-     * получит последний обычный шкаф. Раскладка участка идёт до `end`.
+     * получит крайний обычный шкаф. У конца ряда — справа, у начала (угол
+     * перед рядом ведёт он) — слева. Раскладка участка идёт от `begin` до `end`.
      */
-    const atCorner = Boolean(corner?.own && corner.geometry) && interval.to >= lengthMm;
-    const upperL =
-      atCorner && corner!.own!.upper === 'l_shape' ? corner!.geometry!.upperLegMm : 0;
-    const upperBlind =
-      atCorner && corner!.own!.upper === 'blind' ? corner!.geometry!.ownerUpperBlindMm : 0;
+    const atEnd = Boolean(corner?.end) && interval.to >= corner!.toMm;
+    const atStart = Boolean(corner?.start) && interval.from <= corner!.fromMm;
+    const upperL = atEnd ? corner!.end!.legMm : 0;
+    const upperBlind = atEnd && upperL === 0 ? corner!.end!.blindMm : 0;
+    const startL = atStart ? corner!.start!.legMm : 0;
+    const startBlind = atStart && startL === 0 ? corner!.start!.blindMm : 0;
     const reserve = upperL + upperBlind;
     const room = reserve > 0 && interval.to - interval.from >= reserve ? reserve : 0;
+    const startReserve = startL + startBlind;
+    const startRoom = startReserve > 0 && interval.to - interval.from - room >= startReserve ? startReserve : 0;
+    const begin = interval.from + startRoom;
     const end = interval.to - room;
+    let at = begin;
 
     const hoodInside =
       wantsHood &&
       hob !== undefined &&
-      hob.offsetMm >= interval.from &&
+      hob.offsetMm >= begin &&
       hob.offsetMm + hob.widthMm <= end;
 
     /*
@@ -2085,7 +2194,7 @@ export function buildUpperRow(
     const anchors: { fromMm: number; widthMm: number; appliance?: ApplianceKind }[] = [];
 
     const inside = (unit: Module) =>
-      unit.offsetMm >= interval.from && unit.offsetMm + unit.widthMm <= end;
+      unit.offsetMm >= begin && unit.offsetMm + unit.widthMm <= end;
 
     if (sink && inside(sink)) {
       anchors.push({ fromMm: sink.offsetMm, widthMm: sink.widthMm });
@@ -2103,13 +2212,13 @@ export function buildUpperRow(
       const own = applianceWidthMm('hood', req.applianceSizes, req.applianceTypes);
       const wide = Math.min(
         Math.max(own, hob.widthMm),
-        end - interval.from,
+        end - begin,
       );
 
       // Вытяжка стоит по центру варочной — и не вылезает из участка.
       const centre = hob.offsetMm + hob.widthMm / 2;
       const from = Math.round(
-        Math.min(Math.max(centre - wide / 2, interval.from), end - wide),
+        Math.min(Math.max(centre - wide / 2, begin), end - wide),
       );
 
       anchors.push({ fromMm: from, widthMm: wide, appliance: 'hood' });
@@ -2151,11 +2260,23 @@ export function buildUpperRow(
       attachBlind(modules, end, upperBlind, 'upper', CORNER_LABEL.upperBlind);
     }
     if (room > 0 && upperL > 0) {
-      /* Г-образный навесной: две ноги, два фасада открываются вместе. */
+      /* Г-образный навесной: две ноги, два фасада — книжкой или двумя дверцами (P0, `upperDoors`). */
       const cornerUnit = makeModule('corner_upper', upperL, end);
       cornerUnit.doorCount = 2;
       cornerUnit.label = CORNER_LABEL.upperL;
+      if (corner?.end?.pair) cornerUnit.cornerDoors = 'pair';
       modules.push(cornerUnit);
+    }
+    /* Угол в начале ряда (P0) — то же самое зеркально: слепая зона — к первому шкафу, Г-модуль — первым. */
+    if (startRoom > 0 && startBlind > 0) {
+      attachBlindStart(modules, interval.from, startBlind, 'upper', CORNER_LABEL.upperBlind);
+    }
+    if (startRoom > 0 && startL > 0) {
+      const cornerUnit = makeModule('corner_upper', startL, interval.from);
+      cornerUnit.doorCount = 2;
+      cornerUnit.label = CORNER_LABEL.upperL;
+      if (corner?.start?.pair) cornerUnit.cornerDoors = 'pair';
+      modules.unshift(cornerUnit);
     }
 
     if (modules.length > 0) {
