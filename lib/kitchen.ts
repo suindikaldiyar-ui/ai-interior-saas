@@ -466,6 +466,25 @@ export type RunModuleLike = {
    * снаружи — см. `interiorVisible` в `promptFronts`.
    */
   fill?: { shelves: number[]; rodsMm: number[]; drawerHeights: number[] };
+  /**
+   * Витрина (P1) — разобранная `vitrineOf`, а не вариантом: конструкция,
+   * стекло, профиль, подсветка, двери. Без неё промпт знал витрину только по
+   * прежним вариантам, и витрина, собранная в панели «Витрина», уезжала в
+   * рендер глухим шкафом. Собирает `vitrineMeta` в `promptFronts`.
+   */
+  vitrine?: {
+    construction: string;
+    glass: string;
+    /** Покрытие профиля; нет — не выбрано (у цельностеклянной профиля нет вовсе). */
+    profile?: string;
+    led: string;
+    /** Стеклянные боковины — у каркаса и у цельностеклянной. */
+    sidesGlass: boolean;
+    back: string;
+    doors: number;
+    shelvesGlass: boolean;
+    onCounter: boolean;
+  };
 };
 
 export function modulesFromRun(

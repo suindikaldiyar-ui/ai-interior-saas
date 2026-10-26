@@ -58,8 +58,9 @@ import type { FrontRelief } from '@/types/millwork';
 import { gripOrient, reliefGlassMm, type ReliefOrient } from './facadeRelief';
 import { isUpperRow } from './modules';
 import { isPullOut, leafHinges, milledGrip, openingHardware, openingOf } from './opening';
-import type { GlassKind, Module, Run } from '@/types/millwork';
-import { GLASS_SHELF_MM, glassOf, shelvesAreGlass } from './glass';
+import type { GlassKind, Module, ProfileFinish, Run } from '@/types/millwork';
+import { GLASS_SHELF_MM, glassOf, shelvesAreGlass, vitrineDoorKind } from './glass';
+import { VITRINE_GLASS_SHOWN_MM, VITRINE_PROFILE_MM, vitrineBackMm, vitrineBodyGlassMm, vitrineDoorCount, vitrineGrooveMm, vitrineOf } from './vitrine';
 import type { SceneLayer } from './sceneLayers';
 
 /**
@@ -109,7 +110,13 @@ export type BoxDraw = {
    * чтобы проверка могла спросить «петель в сцене столько же, сколько в
    * смете».
    */
-  node?: 'hinge' | 'hinge-arm' | 'handle' | 'rod' | 'glass' | 'runner' | 'lift' | 'pantograph' | 'pullout' | 'basket' | 'dryer' | 'track' | 'frame' | 'glass-shelf';
+  node?: 'hinge' | 'hinge-arm' | 'handle' | 'rod' | 'glass' | 'runner' | 'lift' | 'pantograph' | 'pullout' | 'basket' | 'dryer' | 'track' | 'frame' | 'glass-shelf' | 'glass-panel' | 'vitrine-frame';
+  /**
+   * ЧЕЙ ЭТО КУСОК ВИТРИНЫ (P1): `side:left`, `side:right`, `top`, `bottom`,
+   * `back`, `profile` — та же роль, что у строки `vitrineParts`. По ней сцена
+   * сверяется со списком стекла и изделий: деталь в кадре = деталь в заказе.
+   */
+  vitrineRole?: string;
   /**
    * ИД ФИЗИЧЕСКОЙ ДЕТАЛИ (R01): тот же, что в строке раскроя (`Panel.partIds`).
    * Есть у полок и перегородок отсеков — по нему сверяются сцена и цех.
@@ -131,6 +138,12 @@ export type BoxDraw = {
    * вид не выбирают.
    */
   glass?: GlassKind;
+  /**
+   * ПОКРЫТИЕ ПРОФИЛЯ (P1) — у рамки двери витрины и каркаса из профиля. Пусто
+   * у прочего металла; у профиля без выбранного покрытия — `silver` с
+   * пометкой в спецификации «покрытие не выбрано» (цвет здесь VISUAL_ONLY).
+   */
+  profile?: ProfileFinish;
 };
 
 /** Материал коробки: по нему они собираются в группы отрисовки. */
@@ -232,6 +245,8 @@ export function boxLayer(box: Pick<PartBox, 'material' | 'panel' | 'part' | 'nod
   if (box.material === 'front') return 'fronts';
   /* Рама двери витрины (V3D-02) — сама дверь, а не фурнитура на ней. */
   if (box.node === 'frame') return 'fronts';
+  /* Стекло корпуса и каркас из профиля витрины (P1) — корпус, хоть и не из листа. */
+  if (box.node === 'glass-panel' || box.node === 'vitrine-frame') return 'carcass';
   /* Стеклянная полка витрины (V3D-02) — полка, хоть и не из листа. */
   if (box.node === 'glass-shelf') return 'shelves';
   /* Стекло рамы витрины — часть фасада: без фасада оно висело бы в воздухе. */
@@ -654,6 +669,8 @@ export function doorHinge(unit: Module, index: number, doors: number): 'left' | 
  * и число створок в данных не проставлено.
  */
 export function doorCount(unit: Module): number {
+  /* Секция-витрина хранит свою стеклянную дверь не створкой (`frontType: 'none'`) — дверь у неё одна (P1). */
+  if (unit.section === 'glass_display' && unit.frontType === 'none') return vitrineDoorCount(unit);
   if (unit.frontType === 'drawers' || unit.frontType === 'none') return 0;
   return Math.max(1, unit.doorCount);
 }
@@ -675,13 +692,12 @@ export function doorLeaves(
   heightMm: number,
 ): { index: number; span: FacadeSpan | null }[] {
   /*
-   * ВИТРИНА ЗАКРЫТА СТЕКЛОМ, И РИСУЕТ ЕГО СВОЙ КОД.
-   *
-   * Полотно у неё есть — оно и режется, и висит на петлях, — но это
-   * стекло в раме, а не глухая панель: нарисуй её здесь, и клиент увидит
-   * закрытый ящик там, где заказывал витрину.
+   * ВИТРИНА — ТЕ ЖЕ СТВОРКИ (P1). Здесь стоял выход для секции-витрины: её
+   * стекло рисовал свой код, без ручки и петель, а у вариантов со стеклом
+   * рисовалась глухая дверь ЛДСП. Теперь створки витрины — обычные створки
+   * модуля (`moduleFronts`), а ЧЕМ они сделаны — стекло в рамке, рама KIRA
+   * или стекло без рамки — решает `doorBoxes` по `vitrineDoorKind`.
    */
-  if (unit.section === 'glass_display') return [];
 
   /*
    * ЧТО ВИСИТ НА МОДУЛЕ — СПРАШИВАЕМ, А НЕ ВЫВОДИМ ЗДЕСЬ.
@@ -743,6 +759,21 @@ export type SceneLeaf =
   | { kind: 'pullout'; id: string };
 
 /**
+ * ЧТО ЕДЕТ С ПОЛОТНОМ СТВОРКИ — ОДНА ВЫБОРКА НА СЦЕНУ И ПРИЁМКУ.
+ *
+ * Петли, механизм подъёмника и ручка — у любой створки (HARDWARE-01); у двери
+ * витрины в рамке (V3D-02, P1) — ещё рамка и её стекло: полотна из плиты у
+ * неё нет, и дверь открывается рамкой со стеклом как одним целым.
+ */
+export function leafRiders(boxes: PartBox[] | undefined, leaf: { glass?: true }): PartBox[] | undefined {
+  return boxes?.filter(
+    (box) =>
+      (box.material === 'metal' && (box.node === 'hinge' || box.node === 'lift' || box.node === 'handle')) ||
+      (leaf.glass === true && (box.node === 'frame' || (box.material === 'glass' && box.node === 'glass'))),
+  );
+}
+
+/**
  * ДОСТУПНАЯ ЧАСТЬ ФАСАДА У СЛЕПОГО УГЛА — В ОПЦИИ ОТРИСОВКИ (P0).
  *
  * Ширина и сторона — `openFrontOf`, та же функция, по которой створку
@@ -801,27 +832,11 @@ export function sceneLeaves(
   }
   /*
    * Створок нет у видимого прибора, у колонны (её фасады — над и под
-   * нишами, их рисует общая отрисовка), у витрины (стекло рисует свой код)
-   * и у слепого угла, где доступной части не осталось.
+   * нишами, их рисует общая отрисовка) и у слепого угла, где доступной
+   * части не осталось. Витрина — обычные створки (P1): секция-витрина
+   * считает свою дверь одной (`doorCount`), и раньше у неё была своя ветка
+   * здесь — ровно на одну дверь и без подъёмника.
    */
-  /*
-   * ВИТРИНА В РАМЕ (V3D-02) открывается: стекло и профиль — коробки
-   * `displayDoorBoxes` на ключе `door:0`, полотна ЛДСП у неё нет.
-   */
-  if (unit.section === 'glass_display') {
-    const opening = doorOpening(unit, 0, 1);
-    out.push({
-      kind: 'door',
-      id: `${unit.id}:door:0`,
-      opening: opening === 'lift' || opening === 'flap' ? 'left' : opening,
-      xM: 0,
-      widthM: unit.widthMm / MM,
-      bottomM: 0,
-      heightM,
-      glass: true,
-    });
-    return out;
-  }
   /*
    * ФАСАД, РАЗБИТЫЙ ПО ВЫСОТЕ, ОТКРЫВАЕТСЯ ПО УЧАСТКАМ (STAGE A).
    *
@@ -870,6 +885,12 @@ export function sceneLeaves(
   const doorW = (openWidthM ?? unit.widthMm / MM) / doors;
   const fromM = openWidthM !== undefined ? openFromM : 0;
   for (let i = 0; i < doors; i += 1) {
+    /*
+     * ДВЕРЬ ВИТРИНЫ БЕЗ ПОЛОТНА ПЛИТЫ (P1): стекло в рамке и стекло без рамки —
+     * коробки `doorBoxes` той же створки, едут «седоками». Рама KIRA — полотно
+     * МДФ с окнами, как у обычной створки.
+     */
+    const kind = vitrineDoorKind(unit, `door:${i}`, undefined);
     out.push({
       kind: 'door',
       id: `${unit.id}:door:${i}`,
@@ -878,6 +899,7 @@ export function sceneLeaves(
       widthM: doorW,
       bottomM: 0,
       heightM,
+      ...(kind === 'alu' || kind === 'glass' ? { glass: true as const } : {}),
     });
   }
   return out;
@@ -1175,6 +1197,16 @@ export function doorBoxes(
   /* Ручки нет — «Без ручки» или ручка фрезерована в фасаде (KIRA «Интегрированные ручки»). */
   const withHandle = (parts: PartBox[]) => (handle ? [...parts, handle, ...hingeNodes] : [...parts, ...hingeNodes]);
 
+  /*
+   * ДВЕРЬ ВИТРИНЫ (P1): стекло в алюминиевой рамке или стекло без рамки —
+   * своей сборкой, а не полотном плиты. Ручка и чашки петель те же, что у
+   * любой створки: их место считает `leafHandleBox`, число — смета.
+   */
+  const vitrineKind = vitrineDoorKind(unit, `door:${index}`, { milling: options.rowMilling });
+  if (vitrineKind === 'alu' || vitrineKind === 'glass') {
+    return withHandle(vitrineDoorAssembly(unit, part, cx, cy, w, h, thickness, vitrineKind));
+  }
+
   if (isFramed(spec)) {
     const frame = FRAME_WIDTH_MM / MM;
     const bar = Math.min(frame, Math.min(w, h) / 3);
@@ -1234,50 +1266,205 @@ export const GLASS_PANE_M = 0.004;
 export const GLASS_PANE_Z_M = 0.0035;
 
 /** Профиль рамы двери витрины, м: ширина планки — условно (VISUAL_ONLY, профиля в каталоге нет). */
-export const DISPLAY_FRAME_M = 0.02;
+export const DISPLAY_FRAME_M = VITRINE_PROFILE_MM / MM;
 
 /**
- * ДВЕРЬ ВИТРИНЫ В РАМЕ (V3D-02) — рама из профиля и стекло, деталь `door:0`.
+ * КОРПУС ВИТРИНЫ В СЦЕНЕ (P1): часть из стекла встаёт ВМЕСТО детали из плиты —
+ * своей толщиной и видом стекла, — а не плитой с прозрачностью.
  *
- * Фасада ЛДСП у витрины нет (`frontType: 'none'`): дверь — покупное стекло в
- * раме, строкой `glass_front` («Стеклянная дверь в раме»). Здесь она нарисована
- * теми же коробками, что едут, когда дверь открывают: закрытую — пачка ряда,
- * открытую — `InteractiveDoor` своими «седоками». Петель на ней нет: смета их
- * не покупает отдельно — они в строке стеклянной двери.
+ *   carcass  корпус из плиты; задняя стенка — плита, стекло, зеркало или её нет;
+ *   frame    каркас — 12 планок профиля по рёбрам корпуса, части — в пазу
+ *            профиля (по середине планки): стекло или плита;
+ *   glass    части из стекла на своих местах, верх и низ — между боковинами.
+ *
+ * Сечение профиля и толщина стекла без выбора — условные (VISUAL_ONLY); в
+ * заказе это сказано словами (`vitrineParts`). Роль куска (`vitrineRole`) —
+ * та же, что у строки списка стекла: по ней сцена сверяется с заказом.
  */
-export function displayDoorBoxes(unit: Module, place: ModulePlacement, options: Pick<FrontOptions, 'gapM' | 'frontThicknessM'>): PartBox[] {
-  if (unit.section !== 'glass_display') return [];
-  const { x, y, heightM } = place;
-  const gap = options.gapM;
-  const t = options.frontThicknessM;
-  const w = unit.widthMm / MM - 2 * gap;
-  const h = heightM - 2 * gap;
-  const cx = x + unit.widthMm / MM / 2;
-  const cy = y + heightM / 2;
+function vitrineBodyBoxes(unit: Module, place: ModulePlacement, boxes: PartBox[]): PartBox[] {
+  const v = vitrineOf(unit);
+  if (!v) return boxes;
+  const glass = glassOf(unit);
+  const paneM = (v.glassMm ?? GLASS_SHELF_MM) / MM;
+  const widthM = unit.widthMm / MM;
+  const x0 = place.x;
+  const x1 = place.x + widthM;
+  const frame = v.construction === 'frame';
+  /* В каркасе из профиля часть стоит в пазу: по середине планки, а не по краю. */
+  const inset = vitrineGrooveMm(v) / MM;
+  const heightMm = Math.round(place.heightM * MM);
+  const depthMm = Math.round(place.depthM * MM);
+  const carcassMm = Math.round(place.thicknessM * MM);
+  const glassBox = (box: PartBox, role: string, kind: GlassKind, position: [number, number, number], scale: [number, number, number]): PartBox => {
+    const { panel: _panel, carcassKey: _key, inside: _inside, ...rest } = box;
+    void _panel;
+    void _key;
+    void _inside;
+    return { ...rest, material: 'glass', node: 'glass-panel', glass: kind, vitrineRole: role, position, scale };
+  };
+  const out: PartBox[] = [];
+  for (const box of boxes) {
+    if (box.panel === SIDE_PANEL_NAME) {
+      const side: 'left' | 'right' = box.position[0] < x0 + widthM / 2 ? 'left' : 'right';
+      if (v[side] !== 'glass') {
+        out.push(frame ? { ...box, position: [box.position[0] + (side === 'left' ? inset : -inset), box.position[1], box.position[2]] } : box);
+        continue;
+      }
+      const at = side === 'left' ? x0 + inset + paneM / 2 : x1 - inset - paneM / 2;
+      /* Размер — тот же, что в списке стекла (`vitrineBodyGlassMm`). */
+      const size = vitrineBodyGlassMm('side', unit, v, heightMm, depthMm, carcassMm);
+      out.push(glassBox(box, `side:${side}`, glass, [at, place.y + place.heightM / 2, -place.depthM / 2], [paneM, size.lengthMm / MM, size.widthMm / MM]));
+      continue;
+    }
+    if (box.panel === BOTTOM_PANEL_NAME || box.panel === TOP_PANEL_NAME || box.panel === TOP_RAIL_PANEL_NAME) {
+      const role: 'top' | 'bottom' = box.panel === BOTTOM_PANEL_NAME ? 'bottom' : 'top';
+      if (v[role] !== 'glass') {
+        out.push(frame ? { ...box, position: [box.position[0], box.position[1] + (role === 'bottom' ? inset : -inset), box.position[2]] } : box);
+        continue;
+      }
+      const y = role === 'bottom' ? place.y + inset + paneM / 2 : place.y + place.heightM - inset - paneM / 2;
+      const size = vitrineBodyGlassMm(role, unit, v, heightMm, depthMm, carcassMm);
+      out.push(glassBox(box, role, glass, [x0 + widthM / 2, y, -place.depthM / 2], [size.lengthMm / MM, paneM, size.widthMm / MM]));
+      continue;
+    }
+    if (box.panel === BACK_PANEL_NAME) {
+      if (v.back === 'board') {
+        out.push(frame ? { ...box, position: [box.position[0], box.position[1], box.position[2] + inset] } : box);
+        continue;
+      }
+      if (v.back === 'none') continue;
+      /* Стекло и зеркало задней стенки — между боковинами, во всю высоту: тот же размер, что в списке стекла (`vitrineBackMm`). */
+      const backMm = vitrineBackMm(unit, v, Math.round(place.heightM * MM), Math.round(place.thicknessM * MM));
+      const leftMm = (v.left === 'glass' ? (v.glassMm ?? VITRINE_GLASS_SHOWN_MM) : Math.round(place.thicknessM * MM)) + inset * MM;
+      out.push(
+        glassBox(
+          box,
+          'back',
+          v.back === 'mirror' ? 'mirror' : glass,
+          [x0 + (leftMm + backMm.widthMm / 2) / MM, place.y + place.heightM / 2, -place.depthM + inset + paneM / 2],
+          [backMm.widthMm / MM, backMm.heightMm / MM, paneM],
+        ),
+      );
+      continue;
+    }
+    out.push(box);
+  }
+  if (frame) {
+    /*
+     * Части каркаса — в пазу профиля: каждая подрезана до середины планки
+     * с тех сторон, где планка идёт. Иначе грань плиты легла бы в плоскость
+     * грани профиля, и они мерцали бы в кадре друг сквозь друга.
+     */
+    const lo: [number, number, number] = [x0 + inset, place.y + inset, -place.depthM + inset];
+    const hi: [number, number, number] = [x1 - inset, place.y + place.heightM - inset, -inset];
+    for (let i = 0; i < out.length; i += 1) {
+      const box = out[i];
+      const min = [0, 1, 2].map((k) => Math.max(lo[k], box.position[k] - box.scale[k] / 2));
+      const max = [0, 1, 2].map((k) => Math.min(hi[k], box.position[k] + box.scale[k] / 2));
+      if (max.some((value, k) => value <= min[k])) continue;
+      out[i] = {
+        ...box,
+        position: [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2],
+        scale: [max[0] - min[0], max[1] - min[1], max[2] - min[2]],
+      };
+    }
+    const s = DISPLAY_FRAME_M;
+    const profile: ProfileFinish = v.profile ?? 'silver';
+    const bar = (position: [number, number, number], scale: [number, number, number]): PartBox => ({
+      material: 'metal',
+      node: 'vitrine-frame',
+      profile,
+      vitrineRole: 'profile',
+      position,
+      scale,
+    });
+    const xs = [x0 + s / 2, x1 - s / 2];
+    const zs = [-s / 2, -place.depthM + s / 2];
+    const ys = [place.y + s / 2, place.y + place.heightM - s / 2];
+    for (const x of xs) for (const z of zs) out.push(bar([x, place.y + place.heightM / 2, z], [s, place.heightM, s]));
+    for (const y of ys) for (const z of zs) out.push(bar([x0 + widthM / 2, y, z], [widthM - 2 * s, s, s]));
+    for (const y of ys) for (const x of xs) out.push(bar([x, y, -place.depthM / 2], [s, s, place.depthM - 2 * s]));
+  }
+  return out;
+}
+
+/**
+ * ДВЕРЬ ВИТРИНЫ (P1) — СБОРКА, А НЕ ПОЛОТНО: рамка из профиля и стекло либо
+ * одно стекло, на ключе своей створки.
+ *
+ * Фасада плиты у такой двери нет: это покупная дверь по наружному размеру
+ * створки (стекло в алюминиевой рамке) или стекло без рамки. Нарисована она
+ * теми же коробками, что едут, когда дверь открывают: закрытую — пачка ряда,
+ * открытую — `InteractiveDoor` своими «седоками». Ширина планки профиля и
+ * толщина стекла двери в рамке — условные (VISUAL_ONLY): сечения профиля в
+ * каталоге нет, стекло двери — часть покупной двери. Стекло без рамки — той
+ * толщины, что выбрана у витрины; не выбрана — 6 мм условно.
+ */
+/** Часть двери витрины в осях полотна: центр полотна — ноль, лицо — к +z. */
+type VitrineDoorPiece = {
+  role: 'frame' | 'glass';
+  offset: [number, number, number];
+  size: [number, number, number];
+  profile?: ProfileFinish;
+  glass: GlassKind;
+};
+
+/**
+ * ДВЕРЬ ВИТРИНЫ — ЧАСТИ В ОСЯХ ПОЛОТНА (P1): рамка из четырёх планок и
+ * стекло в её пазу, у цельностеклянной — одно стекло. Одна геометрия на
+ * створку ряда (`doorBoxes`) и на дверцы пары Г-модуля (`lPairMotion`):
+ * закрытая и едущая дверь — одни и те же части.
+ */
+function vitrineDoorPieces(unit: Module, w: number, h: number, thickness: number, kind: 'alu' | 'glass'): VitrineDoorPiece[] {
+  const v = vitrineOf(unit);
+  const glass = glassOf(unit);
+  if (kind === 'glass') {
+    const paneM = (v?.glassMm ?? GLASS_SHELF_MM) / MM;
+    /* Стекло без рамки — у передней плоскости корпуса, как у створки: от неё вперёд на свою толщину. */
+    return [{ role: 'glass', offset: [0, 0, paneM / 2 - thickness / 2], size: [Math.max(0.01, w), Math.max(0.01, h), paneM], glass }];
+  }
   const bar = Math.min(DISPLAY_FRAME_M, w / 4, h / 4);
-  const part = `${unit.id}:door:0`;
-  const frame = (dx: number, dy: number, sx: number, sy: number): PartBox => ({
-    material: 'metal',
-    part,
-    node: 'frame',
-    position: [cx + dx, cy + dy, t / 2],
-    scale: [sx, sy, t],
-  });
+  const profile: ProfileFinish = v?.profile ?? 'silver';
+  const frame = (dx: number, dy: number, sx: number, sy: number): VitrineDoorPiece => ({ role: 'frame', offset: [dx, dy, 0], size: [sx, sy, thickness], profile, glass });
   return [
     frame(-w / 2 + bar / 2, 0, bar, h),
     frame(w / 2 - bar / 2, 0, bar, h),
     frame(0, h / 2 - bar / 2, w - 2 * bar, bar),
     frame(0, -h / 2 + bar / 2, w - 2 * bar, bar),
-    {
-      material: 'glass',
-      part,
-      node: 'glass',
-      glass: glassOf(unit),
-      /* Стекло — в пазу профиля: на 4 мм заходит под планки с каждой стороны. */
-      position: [cx, cy, t / 2],
-      scale: [Math.max(0.01, w - 2 * bar + 0.008), Math.max(0.01, h - 2 * bar + 0.008), GLASS_PANE_M],
-    },
+    /* Стекло — в пазу профиля: на 4 мм заходит под планки с каждой стороны. */
+    { role: 'glass', offset: [0, 0, 0], size: [Math.max(0.01, w - 2 * bar + 0.008), Math.max(0.01, h - 2 * bar + 0.008), GLASS_PANE_M], glass },
   ];
+}
+
+function vitrineDoorAssembly(
+  unit: Module,
+  part: string,
+  cx: number,
+  cy: number,
+  w: number,
+  h: number,
+  thickness: number,
+  kind: 'alu' | 'glass',
+): PartBox[] {
+  return vitrineDoorPieces(unit, w, h, thickness, kind).map((piece) =>
+    piece.role === 'frame'
+      ? {
+          material: 'metal',
+          part,
+          node: 'frame',
+          ...(piece.profile ? { profile: piece.profile } : {}),
+          position: [cx + piece.offset[0], cy + piece.offset[1], thickness / 2 + piece.offset[2]],
+          scale: piece.size,
+        }
+      : {
+          material: 'glass',
+          part,
+          node: 'glass',
+          glass: piece.glass,
+          position: [cx + piece.offset[0], cy + piece.offset[1], thickness / 2 + piece.offset[2]],
+          scale: piece.size,
+        },
+  );
 }
 
 /** Справочный габарит ящика отсека в сцене: не деталь, в раскрое его нет. */
@@ -1682,6 +1869,9 @@ function lPairMotionRight(
   const W = width + 2 * gap;
   const Hh = h + 2 * gap;
   const panel0 = leafPoses({ opening, x: cx - W / 2, y: cy - Hh / 2, width: W, height: Hh, thickness: tf, gap, s: 0 })[0];
+  /* Дверца витрины (P1): рамка и стекло — части полотна той же позы (`vitrineDoorPieces`). */
+  const vitrineKind = vitrineDoorKind(unit, leaf, undefined);
+  const pieces = vitrineKind === 'alu' || vitrineKind === 'glass' ? vitrineDoorPieces(unit, panel0.size[0], panel0.size[1], panel0.size[2], vitrineKind) : [];
 
   /* Чашки петель — на полотне у петельного края, едут с ним; корпусная часть — на боковине. */
   const total = Math.max(0, Math.round(options.hinges ?? 0));
@@ -1724,10 +1914,26 @@ function lPairMotionRight(
         panelS.center[2] - dx * Math.sin(dyaw) + dz * Math.cos(dyaw),
       ];
     };
+    /* Часть двери витрины — от центра полотна, повёрнутая вместе с ним. */
+    const onPanel = (offset: [number, number, number]): [number, number, number] => [
+      panelS.center[0] + offset[0] * Math.cos(panelS.yaw) + offset[2] * Math.sin(panelS.yaw),
+      panelS.center[1] + offset[1],
+      panelS.center[2] - offset[0] * Math.sin(panelS.yaw) + offset[2] * Math.cos(panelS.yaw),
+    ];
     const posesLocal: PosedBox[] = [
-      { ...panelS, panel: legName(FACADE_PANEL_NAME, leg === 0 ? 'А' : 'Б') },
+      { ...panelS, panel: legName(FACADE_PANEL_NAME, leg === 0 ? 'А' : 'Б'), ...(pieces.length > 0 ? { panelless: true as const } : {}) },
       ...local.slice(1),
       ...cupsAt.map((cup) => ({ center: rigid(cup), size: [HINGE_CUP_M, HINGE_CUP_M, HINGE_CUP_DEPTH_M] as [number, number, number], yaw: panelS.yaw, role: 'hinge' as const })),
+      ...pieces.map(
+        (piece): PosedBox => ({
+          center: onPanel(piece.offset),
+          size: piece.size,
+          yaw: panelS.yaw,
+          role: piece.role,
+          ...(piece.profile ? { profile: piece.profile } : {}),
+          glass: piece.glass,
+        }),
+      ),
     ];
     return posesLocal.map((pose) => ({ ...pose, center: toRow(pose.center), yaw: pose.yaw + turn }));
   };
@@ -1822,6 +2028,8 @@ function lPairClosedBoxes(unit: Module, place: ModulePlacement, options: FrontOp
       const across = Math.abs(Math.abs(pose.yaw) - Math.PI / 2) < 1e-6;
       const scale: [number, number, number] = across ? [pose.size[2], pose.size[1], pose.size[0]] : pose.size;
       if (pose.role === 'front') {
+        /* Дверца витрины (P1): плиты нет — её рамка и стекло ниже, своими позами. */
+        if (pose.panelless) continue;
         out.push({
           material: 'front',
           part,
@@ -1832,6 +2040,10 @@ function lPairClosedBoxes(unit: Module, place: ModulePlacement, options: FrontOp
           ...(spec.relief ? { relief: spec.relief } : {}),
           ...(across ? { face: '-x' as const } : {}),
         });
+      } else if (pose.role === 'frame') {
+        out.push({ material: 'metal', part, node: 'frame', ...(pose.profile ? { profile: pose.profile } : {}), position: pose.center, scale });
+      } else if (pose.role === 'glass') {
+        out.push({ material: 'glass', part, node: 'glass', ...(pose.glass ? { glass: pose.glass } : {}), position: pose.center, scale });
       } else if (pose.role === 'handle') {
         out.push({
           material: 'metal',
@@ -1860,11 +2072,19 @@ export type PosedBox = {
   yaw: number;
   /** Поворот вокруг горизонтали вдоль ряда (подъёмник, откидной), радианы. */
   pitch?: number;
-  /** `hinge` — чашка петли на полотне: едет вместе с ним (пара дверец Г-модуля, P0). */
-  role: 'front' | 'handle' | 'hinge';
+  /**
+   * `hinge` — чашка петли на полотне: едет вместе с ним (пара дверец Г-модуля, P0).
+   * `frame` и `glass` — рамка и стекло двери витрины (P1): у такой двери полотно
+   * (`front`) — только габарит хода и зона касания, плиты нет (`panelless`).
+   */
+  role: 'front' | 'handle' | 'hinge' | 'frame' | 'glass';
   panel?: string;
   /** Ручка (HANDLE-REAL): сцена рисует её модель, коробка — её габарит. */
   handle?: HandleDraw;
+  /** Дверь витрины (P1): полотна из плиты нет — рамка и стекло своими позами. */
+  panelless?: true;
+  profile?: ProfileFinish;
+  glass?: GlassKind;
 };
 
 /**
@@ -2302,7 +2522,10 @@ export function moduleBoxes(
    */
   /* Стеклянные полки витрины (V3D-02): та же высота и место, стекло вместо листа. */
   const glassShelves = shelvesAreGlass(unit);
-  const boxes: PartBox[] = carcassBoxes(unit, place, production).map((box): PartBox => {
+  /* Толщина стеклянной полки — выбранная у витрины (P1); не выбрана — 6 мм условно. */
+  const shelfGlassM = (vitrineOf(unit)?.glassMm ?? GLASS_SHELF_MM) / MM;
+  /* Части корпуса витрины из стекла и каркас из профиля (P1) — `vitrineBodyBoxes`. */
+  const boxes: PartBox[] = vitrineBodyBoxes(unit, place, carcassBoxes(unit, place, production).map((box): PartBox => {
     if (glassShelves && box.panel === SHELF_PANEL_NAME) {
       const { panel: _panel, ...rest } = box;
       void _panel;
@@ -2311,7 +2534,7 @@ export function moduleBoxes(
         material: 'glass',
         node: 'glass-shelf',
         glass: 'clear',
-        scale: [box.scale[0], GLASS_SHELF_MM / MM, box.scale[2]],
+        scale: [box.scale[0], shelfGlassM, box.scale[2]],
       };
     }
     /* Полки и перегородки — свой декор, если выбран (`partOfPanel`, та же таблица, что у раскроя). */
@@ -2323,7 +2546,7 @@ export function moduleBoxes(
       /* Декор корпуса: пусто — красит роль, как и раньше. */
       carcassKey: partKey !== undefined ? partKey : (options.carcassKey ?? null),
     };
-  });
+  }));
 
   boxes.push(...applianceBoxes(unit, place, production));
   boxes.push(...bayRodBoxes(unit, place, production, options.hardware));
@@ -2363,8 +2586,6 @@ export function moduleBoxes(
     const blind = options.openWidthMm !== undefined && options.openWidthMm < unit.widthMm;
     const all = options.openWidthMm === 0 ? [] : doorLeaves(unit, Math.round(place.heightM * MM));
     const leaves = blind ? all.slice(0, 1) : all;
-    /* Витрина: стекло в раме своей функцией (V3D-02) — `doorLeaves` её не знает. */
-    boxes.push(...displayDoorBoxes(unit, place, options));
 
     /*
      * ПЕТЛИ РАСКЛАДЫВАЮТСЯ ПО ПОЛОТНАМ, А НЕ СЧИТАЮТСЯ ЗАНОВО.
@@ -2640,7 +2861,9 @@ export function runBoxesByModule(
         cutaway: Boolean(options.cutaway),
         hinges:
           (hardware.byModule[entry.unit.id]?.hinges ?? 0) +
-          (hardware.byModule[entry.unit.id]?.cornerHinges ?? 0),
+          (hardware.byModule[entry.unit.id]?.cornerHinges ?? 0) +
+          /* Петли двери витрины (P1) — свои, но на картинке их столько же, сколько в смете. */
+          (hardware.byModule[entry.unit.id]?.frameHinges ?? 0),
         carcassKey: carcassKeyOf(entry.unit, run, carcassItems),
         partKeys: {
           shelves: carcassKeyOf(entry.unit, run, carcassItems, 'shelves'),
@@ -3136,11 +3359,10 @@ export function openablePartIds(run: Run): string[] {
       if (unit.kind === 'corner_upper' && unit.cornerDoors === 'pair') ids.push(`${unit.id}:door:1`);
       continue;
     }
-    /* Витрина в раме (V3D-02): дверь из стекла — тот же ключ, что у её коробок. */
-    if (unit.section === 'glass_display') {
-      ids.push(`${unit.id}:door:0`);
-      continue;
-    }
+    /*
+     * Витрина (P1) — обычные створки: секция-витрина считает свою дверь
+     * одной (`doorLeaves`), стекло и рамка едут на её ключе.
+     */
 
     /*
      * СЛЕПОЙ УГОЛ: створка одна, на доступной части; доступной части

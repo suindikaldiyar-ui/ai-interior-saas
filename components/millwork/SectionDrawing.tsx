@@ -11,6 +11,8 @@ import {
 import { rowStandardDepthMm } from '@/lib/millwork/fill';
 import { bayEnvelope, bayLayout, fillShelfCount } from '@/lib/millwork/bays';
 import { runPlaces } from '@/lib/millwork/cabinetBoxes';
+import { shelvesAreGlass } from '@/lib/millwork/glass';
+import { vitrineOf } from '@/lib/millwork/vitrine';
 import { DRAWER_FRONT_PANEL_NAME, SHELF_PANEL_NAME, panelNumberOf } from '@/lib/millwork/panels';
 import { GEOMETRY, isUpperRow } from '@/lib/millwork/modules';
 import { moduleNumbers, POSITION_CIRCLE_MM } from '@/lib/millwork/positions';
@@ -188,7 +190,7 @@ export default function SectionDrawing({
    * одного ряда — это одна линия на разрезе, а не четыре наложенных.
    */
   const upperBands = (() => {
-    const bands = new Map<string, { bottomMm: number; topMm: number; depthMm: number; id: string }>();
+    const bands = new Map<string, { bottomMm: number; topMm: number; depthMm: number; id: string; vitrine: boolean }>();
 
     for (const place of runPlaces(run)) {
       if (!isUpperRow(place.unit)) continue;
@@ -196,9 +198,11 @@ export default function SectionDrawing({
       const bottomMm = Math.round(place.y * 1000);
       const topMm = Math.round((place.y + place.heightM) * 1000);
       const depthMm = Math.round(place.depthM * 1000);
-      const key = `${bottomMm}:${topMm}:${depthMm}`;
+      /* Витрина (P1) — своя полоса: её фасад — стекло, и сливать её с глухими шкафами ряда нельзя. */
+      const vitrine = vitrineOf(place.unit) !== null;
+      const key = `${bottomMm}:${topMm}:${depthMm}:${vitrine ? 'v' : ''}`;
 
-      if (!bands.has(key)) bands.set(key, { bottomMm, topMm, depthMm, id: place.unit.id });
+      if (!bands.has(key)) bands.set(key, { bottomMm, topMm, depthMm, id: place.unit.id, vitrine });
     }
 
     return Array.from(bands.values());
@@ -259,9 +263,17 @@ export default function SectionDrawing({
         ? { ...picked.unit.fill!, shelves: sectionBay.shelves.map((shelf) => shelf.atMm) }
         : picked.unit.fill!
       : null;
-  const fillDatum = picked?.upper ? upperBottom : plinth;
+  /*
+   * Низ и глубина выбранного модуля — у `runPlaces`, той же раскладки, что
+   * ставит сцену (ловушка 344): витрина на столешнице (P1) стоит на рабочей
+   * поверхности, а не на отметке навески, и бывает своей глубины.
+   */
+  const pickedAt = picked ? (runPlaces(run).find((place) => place.unit.id === picked.unit.id) ?? null) : null;
+  const fillDatum = pickedAt ? Math.round(pickedAt.y * 1000) : picked?.upper ? upperBottom : plinth;
   const fillFrom = xOf(16);
-  const fillTo = xOf((picked?.upper ? upperDepth : baseDepth) - 16);
+  const fillTo = xOf((pickedAt ? Math.round(pickedAt.depthM * 1000) : picked?.upper ? upperDepth : baseDepth) - 16);
+  /* Стеклянные полки (P1) — та же `shelvesAreGlass`, что у раскроя и сметы. */
+  const glassShelves = picked ? shelvesAreGlass(picked.unit) : false;
 
   /*
    * ЯЩИКИ ОТСЕКА НА РАЗРЕЗЕ (R02A.1) — из той же `bayLayout`, что фасад, 3D
@@ -361,6 +373,7 @@ export default function SectionDrawing({
       {pickedFill && !picked!.upper && (
         <Filling
           shelfNumber={shelfNumber}
+          glass={glassShelves}
           fill={pickedFill}
           datumMm={fillDatum}
           x1={fillFrom}
@@ -593,28 +606,54 @@ export default function SectionDrawing({
       {hasUpper && (
         <>
           {upperBands.map((band) => (
-            <rect
-              key={band.id}
-              data-fill
-              /*
-               * Плоскости наружу: приёмка сверяет их с `runPlaces`, а не
-               * смотрит на картинку. Задняя у всех рядов — стена, ноль.
-               */
-              data-module-id={band.id}
-              data-back-mm={0}
-              data-front-mm={band.depthMm}
-              x={xOf(0)}
-              y={yOf(band.topMm)}
-              width={band.depthMm}
-              height={band.topMm - band.bottomMm}
-              fill={inside ? cut : PAPER_FILL.carcass}
-              stroke={line}
-              strokeWidth={lw.contour}
-            />
+            <g key={band.id}>
+              <rect
+                data-fill
+                /*
+                 * Плоскости наружу: приёмка сверяет их с `runPlaces`, а не
+                 * смотрит на картинку. Задняя у всех рядов — стена, ноль.
+                 */
+                data-module-id={band.id}
+                data-back-mm={0}
+                data-front-mm={band.depthMm}
+                data-bottom-mm={band.bottomMm}
+                data-top-mm={band.topMm}
+                {...(band.vitrine ? { 'data-vitrine': '' } : {})}
+                x={xOf(0)}
+                y={yOf(band.topMm)}
+                width={band.depthMm}
+                height={band.topMm - band.bottomMm}
+                fill={inside ? cut : PAPER_FILL.carcass}
+                stroke={line}
+                strokeWidth={lw.contour}
+              />
+              {/* Фасад витрины — стекло: тонкая двойная линия по передней плоскости, как стекло на строительном чертеже. */}
+              {band.vitrine && (
+                <>
+                  <line
+                    x1={xOf(band.depthMm + 6)}
+                    y1={yOf(band.topMm)}
+                    x2={xOf(band.depthMm + 6)}
+                    y2={yOf(band.bottomMm)}
+                    stroke={line}
+                    strokeWidth={lw.inner}
+                  />
+                  <line
+                    x1={xOf(band.depthMm + 14)}
+                    y1={yOf(band.topMm)}
+                    x2={xOf(band.depthMm + 14)}
+                    y2={yOf(band.bottomMm)}
+                    stroke={line}
+                    strokeWidth={lw.inner}
+                  />
+                </>
+              )}
+            </g>
           ))}
           {pickedFill && picked!.upper && (
             <Filling
               shelfNumber={shelfNumber}
+              glass={glassShelves}
               fill={pickedFill}
               datumMm={fillDatum}
               x1={fillFrom}
@@ -713,7 +752,10 @@ function Filling({
   stroke,
   inner,
   labelSize,
+  glass = false,
 }: {
+  /** Стеклянные полки (P1): не деталь раскроя — пунктиром и словом «стекло». */
+  glass?: boolean;
   /** Номер детали «Полка» этого модуля. Полок несколько, деталь одна. */
   shelfNumber: string | null;
   fill: ModuleFill;
@@ -729,7 +771,7 @@ function Filling({
   return (
     <g>
       {fill.shelves.map((mm) => (
-        <g key={`shelf-${mm}`}>
+        <g key={`shelf-${mm}`} {...(glass ? { 'data-section-glass-shelf': mm } : {})}>
           <line
             x1={x1}
             y1={yOf(datumMm + mm)}
@@ -737,6 +779,7 @@ function Filling({
             y2={yOf(datumMm + mm)}
             stroke={stroke}
             strokeWidth={inner}
+            strokeDasharray={glass ? '18 8' : undefined}
           />
           <text
             className="mw-num"
@@ -745,7 +788,7 @@ function Filling({
             fontSize={labelSize}
             fill="var(--graphite-mw)"
           >
-            {shelfNumber ? `${shelfNumber} · ${mm}` : mm}
+            {glass ? `стекло · ${mm}` : shelfNumber ? `${shelfNumber} · ${mm}` : mm}
           </text>
         </g>
       ))}

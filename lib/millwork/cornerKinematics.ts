@@ -18,6 +18,7 @@ import { rowStandardDepthMm } from './fill';
 import { installedItem } from './fittings';
 import { shopOf } from './shop';
 import { isUpperRow, standsOnFloor } from './modules';
+import { vitrineOf } from './vitrine';
 
 /**
  * КИНЕМАТИКА УГЛА — ЧТО ЗАДЕВАЕТ НА ХОДУ И КАКАЯ ФАЛЬШ-ПАНЕЛЬ ЭТО СНИМАЕТ
@@ -452,12 +453,15 @@ function movingOf(
   told: Set<string>,
   /** Встречает ли габарит хода соседние ряды угла. */
   near: (box: Box) => boolean,
+  /** Чьи детали меряются: у угла — все, вдоль ряда (P1) — двери витрин. */
+  pick?: (unit: Module) => boolean,
 ): Moving[] {
   const out: Moving[] = [];
   const tf = production.frontMm / MM;
   const gap = production.frontGapMm / MM;
   for (const entry of runPlaces(run)) {
     const unit = entry.unit;
+    if (pick && !pick(unit)) continue;
     /* Доступная часть у слепого угла — та же, что ставит сцена: ширина и сторона (`openFrontOf`, P0). */
     const open = openFrontOf(unit, run);
     const leaves = sceneLeaves(unit, entry.heightM, open ? open.widthMm / MM : undefined, open ? open.fromMm / MM : 0);
@@ -519,9 +523,10 @@ function movingOf(
         /* Ход дверцы — функция доли (`lPairMotion`): ручка и размеры считаются один раз на ход. */
         const motionOf = (leg: 0 | 1, angle: number) => {
           const motion = lPairMotion(unit, placeM, leg, { ...opts, openAngle: angle });
+          /* Полотно — габаритом хода; рамка и стекло двери витрины лежат внутри него (P1). */
           return (s: number) =>
             motion(s)
-              .filter((box) => box.role !== 'hinge')
+              .filter((box) => box.role === 'front' || box.role === 'handle')
               .map((box) => ({
                 obb: obbOf(place, box.center, box.size, box.yaw ?? 0, box.pitch ?? 0),
                 part: box.role === 'handle' ? 'ручка' : 'полотно',
@@ -1092,6 +1097,82 @@ function partAt(moving: Moving, solid: Solid, s: number): string {
     if (d > best.depth) best = { depth: d, part };
   }
   return best.part;
+}
+
+/** Заход двери витрины вдоль своего ряда (P1): что, во что и на сколько. */
+export type RowSweepClash = {
+  moduleId: string;
+  moduleLabel: string;
+  leaf: string;
+  /** Чем задевает: «ручка» или «полотно». */
+  part: string;
+  obstacleModuleId: string | null;
+  obstacleLabel: string;
+  /** Во что — в винительном падеже: «корпус», «фасад», «ручку», «фальш-панель». */
+  obstaclePart: string;
+  depthMm: number;
+  atS: number;
+};
+
+/**
+ * ХОД ДВЕРЕЙ ВИТРИНЫ ВДОЛЬ СВОЕГО РЯДА (P1).
+ *
+ * У угла ход меряет `cornerKinematics`; вдоль ряда не мерил никто — а витрина
+ * на столешнице или в верхнем ряду стоит мельче пенала рядом, и дверь на
+ * петлях у пенала на полном ходу встречает его боковину. Здесь та же
+ * выборка (шаг 0,5°, уточнение максимумов), те же позы полотна и ручки
+ * (`leafPoses` с выносом `doorKick`) и тот же заход по 15 осям — против
+ * корпусов, фасадов, ручек и фальш-панелей ДРУГИХ модулей своего ряда.
+ * Меряются двери витрин; ход обычных створок вдоль ряда держит вынос полотна
+ * (ловушка 525), и его здесь не трогают.
+ */
+export function vitrineSweep(input: {
+  run: Run;
+  production: ProductionSettings;
+  hardware?: Map<string, HardwareItem>;
+}): { clashes: RowSweepClash[]; assumptions: string[] } {
+  const { run, production, hardware } = input;
+  const isVitrine = (unit: Module) => vitrineOf(unit) !== null;
+  if (!runPlaces(run).some((entry) => isVitrine(entry.unit))) return { clashes: [], assumptions: [] };
+  const told = new Set<string>();
+  const place: RowPlace = { xM: 0, zM: 0, rotationYDeg: 0 };
+  const grouped = shopBoxes(run, production, hardware);
+  const solids = solidsOf(grouped, 0, place);
+  const moving = movingOf(run, 0, place, production, hardware, grouped.modules.flatMap((m) => m.boxes), told, () => true, isVitrine);
+  /* Одна строка на пару «дверь — модуль»: её самая глубокая коробка. */
+  const deepest = new Map<string, RowSweepClash>();
+  for (const m of moving) {
+    for (const solid of solids) {
+      if (solid.moduleId === m.unit.id) continue;
+      if (!boxesMeet(m.swept, solid.box)) continue;
+      const worst = worstOf(m, solid, [0, 0, 0]);
+      if (worst.depth <= TOUCH_MM) continue;
+      const key = `${m.unit.id}:${m.leaf}|${solid.moduleId ?? solid.label}`;
+      const was = deepest.get(key);
+      if (was && was.depthMm >= worst.depth) continue;
+      deepest.set(key, {
+        moduleId: m.unit.id,
+        moduleLabel: m.unit.label,
+        leaf: m.leaf,
+        part: partAt(m, solid, worst.s),
+        obstacleModuleId: solid.moduleId,
+        obstacleLabel: solid.label,
+        obstaclePart: solid.part,
+        depthMm: worst.depth,
+        atS: worst.s,
+      });
+    }
+  }
+  return { clashes: Array.from(deepest.values()), assumptions: Array.from(told) };
+}
+
+/** Заход двери витрины словами: «дверь 1 витрины «Витрина» на ходу заходит в корпус модуля «Холодильник» на 12 мм». */
+export function rowSweepWords(clash: RowSweepClash): string {
+  const leaf = /^door:(\d+)$/.exec(clash.leaf);
+  const door = leaf ? `дверь ${Number(leaf[1]) + 1}` : 'дверь';
+  const subject = clash.part === 'ручка' ? `ручка: ${door}` : door;
+  const into = clash.obstaclePart === 'фальш-панель' ? 'фальш-панель' : `${clash.obstaclePart} модуля «${clash.obstacleLabel}»`;
+  return `${subject} витрины «${clash.moduleLabel}» на ходу заходит в ${into} на ${formatMm(clash.depthMm)} мм`;
 }
 
 /**

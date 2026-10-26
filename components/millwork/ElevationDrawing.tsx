@@ -27,6 +27,7 @@ import { frontOf } from '@/lib/millwork/frontMaterial';
 import { hasFacade } from '@/lib/millwork/applianceFront';
 import { beamDropMm } from '@/lib/millwork/ceiling';
 import { OPENING_TITLE } from '@/lib/millwork/opening';
+import { vitrineOf } from '@/lib/millwork/vitrine';
 import FrontSwatchDefs, { swatchId } from './FrontSwatchDefs';
 import { zoneHeightMm, zoneProfile } from '@/lib/millwork/zones';
 import {
@@ -1457,7 +1458,8 @@ export default function ElevationDrawing({
       unit.appliance && niches.length === 0 && unit.builtIn !== true
         ? APPLIANCE_MARK[unit.appliance]
         : null;
-    const isDisplay = unit.section === 'glass_display';
+    /* Витрина (P1): секция, вариант со стеклом или своя спецификация — один ответ `vitrineOf`. */
+    const isDisplay = vitrineOf(unit) !== null;
 
     /*
      * Вытяжка не перетаскивается: она обязана висеть над варочной и едет
@@ -2514,10 +2516,9 @@ function paperFill(unit: Module, isDisplay: boolean): string {
 }
 
 /** Прозрачный фасад: витрина, стекло в раме, стеклянная секция. */
+/** Прозрачный фасад — у витрины любой конструкции (P1, `vitrineOf`), а не по списку вариантов. */
 function glassFront(unit: Module, isDisplay: boolean): boolean {
-  if (isDisplay) return true;
-  const kind = unit.variant;
-  return kind === 'upper_glass' || kind === 'upper_display' || kind === 'tall_display';
+  return isDisplay || vitrineOf(unit) !== null;
 }
 
 function allModulesOf(run: Run): Module[] {

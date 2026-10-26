@@ -13,7 +13,7 @@ import {
   snapToStandard,
 } from './modules';
 import { rowSpansOfRun, upperSpansOfRun, buildUpperRow, fillGap, moduleId, onWall, sectionMezzanineBand, uniqueModuleIds } from './layout';
-import { blindPartMm, blindVariantRefusal, cornerDoorHinge, levelBoundsOf, upperCornerOf } from './corner';
+import { blindPartMm, blindVariantRefusal, cornerDoorHinge, cornerOfModule, levelBoundsOf, upperCornerOf } from './corner';
 import { counterTailsOf } from './countertop';
 import { obstaclesInBand, rowBandMm, wallObstacles, type WallObstacle } from './obstacles';
 import {
@@ -38,6 +38,8 @@ import {
 import { mezzanineOf, zoneHeightMm, zoneProfile } from './zones';
 import { handleOf, isMechanism, openingRejection } from './opening';
 import { glassRefusal, glassShelvesRefusal } from './glass';
+import { vitrineEdit } from './vitrinePlace';
+import { vitrineFrameRefusal } from './vitrine';
 import { frontConflict, frontOf, leafTitle } from './frontMaterial';
 import { reliefParamRefusal } from './facadeRelief';
 import { openablePartIds } from './cabinetBoxes';
@@ -66,7 +68,7 @@ import {
 } from './freeRun';
 import { SECTION_SPECS } from './sections';
 import { allowsAppliance, allowsSection, applianceRefusal, sectionRefusal } from './zones';
-import { MODULE_VARIANTS, applyVariant, leavesAfterWidth, variantsForModule, vitrineRefusal } from './moduleVariants';
+import { MODULE_VARIANTS, applyVariant, leavesAfterWidth, variantsForModule } from './moduleVariants';
 import type {
   ApplianceKind,
   MillworkOp,
@@ -325,6 +327,33 @@ export function leafLossNotes(before: Run, after: Run): string[] {
   return out;
 }
 
+/**
+ * ЧТО ВИТРИНА МЕНЯЕТ У КЛАДОВКИ НАД КОЛОННОЙ (P1): спецификация, вид стекла,
+ * стеклянные полки, подпись и число дверей. Габарит кладовки по-прежнему
+ * считает раскладка — сюда он не входит.
+ */
+type StorageVitrine = Partial<Pick<Module, 'vitrine' | 'glass' | 'glassShelves' | 'label' | 'doorCount' | 'frontType'>>;
+
+/** Поля витрины у модуля — то, что едет на пересборку кладовки; у не-витрины без стекла — пусто. */
+function storageVitrineOf(unit: Module): StorageVitrine | null {
+  if (!unit.vitrine && !unit.glass && !unit.glassShelves) return null;
+  return {
+    ...(unit.vitrine ? { vitrine: unit.vitrine, label: unit.label, doorCount: unit.doorCount, frontType: unit.frontType } : {}),
+    ...(unit.glass ? { glass: unit.glass } : {}),
+    ...(unit.glassShelves ? { glassShelves: true } : {}),
+  };
+}
+
+/** Кладовка с полями витрины: снятое не остаётся ключом со значением `undefined`. */
+function withStorageVitrine(unit: Module, own: StorageVitrine | null): Module {
+  const { vitrine: _v, glass: _g, glassShelves: _s, ...rest } = unit;
+  void _v;
+  void _g;
+  void _s;
+  if (!own) return rest;
+  return { ...rest, ...own };
+}
+
 export function applyOps({
   run,
   requirements,
@@ -474,6 +503,26 @@ export function applyOps({
     run.upperSegments
       .flatMap((segment) => segment.modules)
       .some((unit) => unit.id === id && unit.section === 'mezzanine' && mezzanineBaseOf(unit, run) !== null);
+  /**
+   * ВИТРИНА НА КЛАДОВКЕ НАД КОЛОННОЙ (P1) — тем же путём, что её фасад и
+   * наполнение: кладовку пересобирает `buildUpperRow`, и `set_vitrine`,
+   * `set_glass`, `set_glass_shelves` на ней отвечали «модуль не найден».
+   * На пересборку едут спецификация витрины, вид стекла, стеклянные полки и
+   * то, что витрина поменяла у двери: подпись и число дверей. Здесь — только
+   * правка этого вызова; после него всё живёт на модуле в `upperSegments`.
+   */
+  /* Значение `null` — витрину и стекло сняли в этом вызове: «снято» и «не трогали» — разные состояния. */
+  const storageVitrine = new Map<string, StorageVitrine | null>();
+  /** Кладовка сейчас — сохранённая, с правками этого вызова поверх. */
+  const storageNow = (id: string): Module | null => {
+    if (!isStorage(id)) return null;
+    const had = run.upperSegments.flatMap((segment) => segment.modules).find((unit) => unit.id === id);
+    if (!had) return null;
+    const own = storageVitrine.has(id) ? (storageVitrine.get(id) ?? null) : storageVitrineOf(had);
+    const fill = storageFills.get(id);
+    const front = storageFronts.get(id);
+    return withStorageVitrine({ ...had, ...(fill ? { fill } : {}), ...(front ? { front } : {}) }, own);
+  };
 
   /**
    * Фрезеровка, назначенная полосам объекта.
@@ -2483,7 +2532,7 @@ export function applyOps({
           break;
         }
         /* Рама витрины — только на модуль, у которого стекло есть в смете (KIRA «Витрины»). */
-        const glassSaid = vitrineRefusal(
+        const glassSaid = vitrineFrameRefusal(
           op.moduleId === 'all' ? { label: 'Весь ряд' } : (allModules(run).find((unit) => unit.id === op.moduleId) ?? { label: op.moduleId }),
           op.front.relief,
         );
@@ -2566,7 +2615,7 @@ export function applyOps({
             warnings.push(reliefSaid);
             break;
           }
-          const glassSaid = vitrineRefusal(allModules(run).find((unit) => unit.id === op.moduleId) ?? { label: op.moduleId }, op.front.relief);
+          const glassSaid = vitrineFrameRefusal(allModules(run).find((unit) => unit.id === op.moduleId) ?? { label: op.moduleId }, op.front.relief);
           if (glassSaid) {
             warnings.push(glassSaid);
             break;
@@ -2977,7 +3026,8 @@ export function applyOps({
         const at = modules.findIndex((m) => m.id === op.moduleId);
         const upperUnit =
           at < 0 ? (mezzModules.find((m) => m.id === op.moduleId) ?? upperModules.find((m) => m.id === op.moduleId)) : null;
-        const target = at >= 0 ? modules[at] : upperUnit;
+        const stored = at < 0 && !upperUnit ? storageNow(op.moduleId) : null;
+        const target = at >= 0 ? modules[at] : (upperUnit ?? stored);
         if (!target) {
           warnings.push(`Модуль ${op.moduleId} не найден.`);
           break;
@@ -2990,6 +3040,11 @@ export function applyOps({
         const { glass: _previous, ...rest } = target;
         void _previous;
         const edited: Module = op.glass && op.glass !== 'clear' ? { ...rest, glass: op.glass } : rest;
+        /* Кладовка над колонной (P1): правка едет на её пересборку. */
+        if (stored) {
+          storageVitrine.set(target.id, storageVitrineOf(edited));
+          break;
+        }
         if (at >= 0) modules[at] = edited;
         else if (editMezz(target.id, () => edited)) break;
         else if (editUpper(target.id, () => edited)) break;
@@ -3005,7 +3060,8 @@ export function applyOps({
         const at = modules.findIndex((m) => m.id === op.moduleId);
         const upperUnit =
           at < 0 ? (mezzModules.find((m) => m.id === op.moduleId) ?? upperModules.find((m) => m.id === op.moduleId)) : null;
-        const target = at >= 0 ? modules[at] : upperUnit;
+        const stored = at < 0 && !upperUnit ? storageNow(op.moduleId) : null;
+        const target = at >= 0 ? modules[at] : (upperUnit ?? stored);
         if (!target) {
           warnings.push(`Модуль ${op.moduleId} не найден.`);
           break;
@@ -3020,7 +3076,52 @@ export function applyOps({
         const { glassShelves: _previous, ...rest } = target;
         void _previous;
         const edited: Module = op.glass ? { ...rest, glassShelves: true } : rest;
+        /* Кладовка над колонной (P1): правка едет на её пересборку. */
+        if (stored) {
+          storageVitrine.set(target.id, storageVitrineOf(edited));
+          break;
+        }
         if (at >= 0) modules[at] = edited;
+        else if (editMezz(target.id, () => edited)) break;
+        else if (editUpper(target.id, () => edited)) break;
+        break;
+      }
+
+      case 'set_vitrine': {
+        /*
+         * ВИТРИНА (P1): конструкция, стекло корпуса, профиль, подсветка, двери,
+         * своя высота, глубина и место на столешнице — одной правкой. Что
+         * встанет и почему нет — одна `vitrineEdit`: отказ словами, ряд
+         * прежний. Модуль ищется во всех рядах: нижнем, верхнем, антресоли и
+         * среди корпусов над шкафом.
+         */
+        const at = modules.findIndex((m) => m.id === op.moduleId);
+        const overAt = at < 0 ? overModules.findIndex((m) => m.id === op.moduleId) : -1;
+        const upperUnit =
+          at < 0 && overAt < 0
+            ? (mezzModules.find((m) => m.id === op.moduleId) ?? upperModules.find((m) => m.id === op.moduleId))
+            : null;
+        const stored = at < 0 && overAt < 0 && !upperUnit ? storageNow(op.moduleId) : null;
+        const target = at >= 0 ? modules[at] : overAt >= 0 ? overModules[overAt] : (upperUnit ?? stored);
+        if (!target) {
+          warnings.push(`Модуль ${op.moduleId} не найден.`);
+          break;
+        }
+        const outcome = vitrineEdit(target, op, { ...run, modules }, cornerOfModule(run));
+        if ('refusal' in outcome) {
+          warnings.push(outcome.refusal);
+          break;
+        }
+        if (outcome.note) warnings.push(outcome.note);
+        const edited = outcome.unit;
+        /* Кладовка над колонной (P1): витрина и то, что она поменяла у двери, едут на пересборку. */
+        if (stored) {
+          storageVitrine.set(target.id, storageVitrineOf(edited));
+          if (edited.fill && edited.fill !== target.fill) storageFills.set(target.id, edited.fill);
+          break;
+        }
+        if (at >= 0) modules[at] = edited;
+        else if (overAt >= 0) overModules = overModules.map((m, i) => (i === overAt ? edited : m));
         else if (editMezz(target.id, () => edited)) break;
         else if (editUpper(target.id, () => edited)) break;
         break;
@@ -3613,14 +3714,19 @@ export function applyOps({
         const decor = storageCarcass.get(unit.id) ?? had?.carcassItemId;
         /* Фурнитура, поставленная в этом вызове, сильнее прежней (HARDWARE-01). */
         const fittings = storageFittings.has(unit.id) ? storageFittings.get(unit.id) : had?.fittings;
-        if (!had && !edited && !painted && !decor && !fittings) return unit;
-        return {
-          ...unit,
-          fill: edited ?? had?.fill ?? unit.fill,
-          front: painted ?? had?.front ?? unit.front,
-          ...(decor ? { carcassItemId: decor } : {}),
-          ...(fittings && fittings.length > 0 ? { fittings } : {}),
-        };
+        /* Витрина, стекло и стеклянные полки (P1): правка этого вызова сильнее сохранённой. */
+        const vitrine = storageVitrine.has(unit.id) ? (storageVitrine.get(unit.id) ?? null) : had ? storageVitrineOf(had) : null;
+        if (!had && !edited && !painted && !decor && !fittings && !vitrine) return unit;
+        return withStorageVitrine(
+          {
+            ...unit,
+            fill: edited ?? had?.fill ?? unit.fill,
+            front: painted ?? had?.front ?? unit.front,
+            ...(decor ? { carcassItemId: decor } : {}),
+            ...(fittings && fittings.length > 0 ? { fittings } : {}),
+          },
+          vitrine,
+        );
       }),
     }));
 

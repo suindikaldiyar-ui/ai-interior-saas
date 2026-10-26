@@ -241,6 +241,11 @@ export type SlotPlace = {
   quantity: number;
   /** В чём это число: штуки, пары направляющих, механизмы. */
   per: 'piece' | 'pair' | 'mechanism';
+  /**
+   * Петли двери витрины (P1): стекло в алюминиевой рамке или стекло без
+   * рамки. Петля под чашку в фасаде из плиты на такую дверь не встаёт.
+   */
+  vitrine?: 'alu' | 'glass';
 };
 
 /** Геометрия модуля для проверки: все числа — мм. */
@@ -328,7 +333,23 @@ export function fittingSlotsOf(unit: Module, run: Run, production: ProductionSet
   const out: SlotPlace[] = [];
   if (unit.kind === 'filler') return out;
   const hw = frontHardware(unit, run);
-  if (hw && hw.hinges > 0) {
+  if (hw && hw.frameHinges > 0) {
+    /*
+     * ДВЕРИ ВИТРИНЫ (P1) — своё место петель: чашку в алюминиевой рамке и в
+     * стекле не сверлят. Счёт — тот же `openingHardware`, что у сметы; у
+     * двери в рамке петля встаёт на ответную планку корпуса, у стекла без
+     * рамки — нет (крепление стекла цехом не подтверждено).
+     */
+    const glass = hw.glassHinges === hw.frameHinges;
+    out.push({
+      slot: 'hinge',
+      where: glass ? 'петли стеклянных дверей без рамки' : 'петли двери в алюминиевой рамке',
+      quantity: hw.hinges + hw.frameHinges,
+      per: 'piece',
+      vitrine: glass ? 'glass' : 'alu',
+    });
+    if (!glass) out.push({ slot: 'hinge_plate', where: 'по одной на петлю', quantity: hw.hinges + hw.frameHinges, per: 'piece' });
+  } else if (hw && hw.hinges > 0) {
     out.push({ slot: 'hinge', where: 'петли распашных полотен', quantity: hw.hinges, per: 'piece' });
     out.push({ slot: 'hinge_plate', where: 'по одной на петлю', quantity: hw.hinges, per: 'piece' });
   }
@@ -524,6 +545,40 @@ export function fittingVerdict(input: {
 
   switch (slot) {
     case 'hinge': {
+      /*
+       * ДВЕРЬ ВИТРИНЫ (P1). Петля под чашку в фасаде из плиты на стекло и на
+       * алюминиевую рамку не встаёт; петли «для алюминиевых рамок» в фактах
+       * производителей — только подъёмника AVENTOS HF, а дверь витрины
+       * распашная. Петля под рамку или под стекло (позиция организации) —
+       * «не проверено»: сечения профиля и толщины стекла в паспорте рамки нет.
+       */
+      if (place.vitrine) {
+        const text = `${item.name} ${item.hardware.officialName ?? ''} ${item.hardware.variant ?? ''} ${item.hardware.compatibleWith ?? ''}`.toLowerCase();
+        const lift = /(^|\s)lift_|aventos/.test(text);
+        const forFrame = /алюмин\S*\s+рамк/.test(text);
+        const forGlass = /стекл/.test(text);
+        if (lift) {
+          return refuse(`«${item.name}» — петля подъёмника, а дверь витрины распашная: на неё нужна распашная петля ${place.vitrine === 'glass' ? 'для стекла' : 'для алюминиевых рамок'}.`);
+        }
+        if (place.vitrine === 'alu' && !forFrame) {
+          return refuse(
+            `«${item.name}» — петля под чашку в фасаде из плиты: у двери в алюминиевой рамке чашку сверлить некуда. Нужна распашная петля для алюминиевых рамок.`,
+          );
+        }
+        if (place.vitrine === 'glass' && !forGlass) {
+          return refuse(`«${item.name}» — петля под чашку в фасаде из плиты: у стеклянной двери без рамки чашки нет. Нужна петля для стекла.`);
+        }
+        checks.push({ label: 'конструкция', state: 'ok', words: place.vitrine === 'glass' ? 'петля для стекла' : 'петля для алюминиевых рамок' });
+        checks.push({
+          label: 'профиль',
+          state: 'unknown',
+          words:
+            place.vitrine === 'glass'
+              ? 'толщина стекла и крепление петли к стеклу цехом не подтверждены — посадку проверить нечем'
+              : 'сечение профиля рамки не задано — посадку петли на рамку проверить нечем',
+        });
+        break;
+      }
       checks.push(inRange('толщина фасада', g.frontMm, range(item, 'doorThickness'), 'фасад'));
       const kind = item.hardware.subcategory;
       checks.push(

@@ -35,6 +35,9 @@ import {
   type ProductionSettings,
 } from '@/types/catalog';
 import { drawerDrafts } from '@/lib/millwork/drawerKit';
+import { allModules } from '@/lib/millwork/layout';
+import { vitrineProductionReasons } from '@/lib/millwork/vitrine';
+import { vitrineParts } from '@/lib/millwork/vitrineParts';
 import type { MillingItem } from '@/lib/millwork/milling';
 import type { CarcassItem } from '@/lib/millwork/carcassMaterial';
 
@@ -316,9 +319,17 @@ export default function CuttingMap({
     () => drawerDrafts(walls.map((wall) => wall.run), hardware, production).unconfirmed,
     [walls, hardware, production],
   );
+  /* Стекло и покупные изделия витрин (P1) — тот же список, что у деталировки и сметы (`vitrineParts`). */
+  const vitrine = useMemo(
+    () => ({
+      parts: walls.flatMap((wall) => vitrineParts(wall.run, production)),
+      reasons: walls.flatMap((wall) => allModules(wall.run).flatMap((unit) => vitrineProductionReasons(unit))),
+    }),
+    [walls, production],
+  );
   const plan: CuttingPlan = useMemo(
-    () => cuttingPlan({ parts, settings, decors, exportLock, fingerprint, drawerBoxUnconfirmed }),
-    [parts, settings, decors, exportLock, fingerprint, drawerBoxUnconfirmed],
+    () => cuttingPlan({ parts, settings, decors, exportLock, fingerprint, drawerBoxUnconfirmed, vitrine }),
+    [parts, settings, decors, exportLock, fingerprint, drawerBoxUnconfirmed, vitrine],
   );
 
   const [groupKey, setGroupKey] = useState<string | null>(null);
@@ -524,6 +535,53 @@ export default function CuttingMap({
           </div>
         )}
       </div>
+
+      {/* ── Стекло и покупные изделия витрин (P1): не на листах ── */}
+      {plan.outside.length > 0 && (
+        <div className="grid gap-2" data-cut-outside data-cut-outside-count={plan.outside.length}>
+          <span className="mw-label">Стекло и покупные изделия — из плиты не режутся</span>
+          <p className="text-[13px] leading-snug text-graphiteMw">
+            Заказ у стекольщика и поставщика профиля. В CSV для пилы их нет; отверстий и обработки стекла карта не ставит.
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-[13px]">
+              <thead>
+                <tr className="text-left text-graphiteMw">
+                  <th className="py-1 pr-2 font-normal">Модуль</th>
+                  <th className="py-1 pr-2 font-normal">Деталь</th>
+                  <th className="py-1 pr-2 text-right font-normal">Д × Ш, мм</th>
+                  <th className="py-1 pr-2 text-right font-normal">Т, мм</th>
+                  <th className="py-1 pr-2 font-normal">Материал</th>
+                  <th className="py-1 pr-2 text-right font-normal">Шт.</th>
+                  <th className="py-1 font-normal">Требует подтверждения</th>
+                </tr>
+              </thead>
+              <tbody>
+                {plan.outside.map((part, i) => (
+                  <tr
+                    key={`${part.moduleId}:${part.role}:${i}`}
+                    data-cut-outside-row={part.role}
+                    data-kind={part.kind}
+                    data-size={`${part.lengthMm}x${part.widthMm}`}
+                    data-qty={part.qty}
+                    className="border-t border-[var(--line-warm)]"
+                  >
+                    <td className="py-1 pr-2">{part.moduleLabel}</td>
+                    <td className="py-1 pr-2">{part.name}</td>
+                    <td className="mw-num py-1 pr-2 text-right">
+                      {part.lengthMm} × {part.widthMm}
+                    </td>
+                    <td className="mw-num py-1 pr-2 text-right">{part.thicknessMm ?? 'не выбрана'}</td>
+                    <td className="py-1 pr-2">{part.material}</td>
+                    <td className="mw-num py-1 pr-2 text-right">{part.qty}</td>
+                    <td className="py-1 text-tape">{part.unconfirmed.join('; ') || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* ── Материалы: группы листов ── */}
       <div className="grid gap-2" data-cut-groups>

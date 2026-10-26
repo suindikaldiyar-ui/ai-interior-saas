@@ -175,7 +175,22 @@ export function moduleDrilling(
   /* ── Петли: чашка на фасаде ── */
   const hingeId = fittingItemId(unit, 'hinge');
   const hinge = hingeId ? hardware.get(hingeId) : undefined;
-  if (hinge && fittingSlotsOf(unit, run, production).some((p) => p.slot === 'hinge')) {
+  const hingePlace = fittingSlotsOf(unit, run, production).find((p) => p.slot === 'hinge');
+  if (hinge && hingePlace?.vitrine) {
+    /* Дверь витрины (P1): в стекле и в алюминиевой рамке чашку не сверлят — отверстий нет, причина словами. */
+    out.push({
+      slot: 'hinge',
+      itemId: hinge.id,
+      title: `${hinge.name} — петли двери витрины`,
+      status: 'DRILLING_NOT_VERIFIED',
+      holes: [],
+      missing: [
+        hingePlace.vitrine === 'glass'
+          ? 'стеклянная дверь без рамки: чашку не сверлят, крепление петли к стеклу цехом не подтверждено'
+          : 'дверь в алюминиевой рамке: чашку в фасаде не сверлят, посадка петли на рамку — по паспорту профиля, а его в каталоге нет',
+      ],
+    });
+  } else if (hinge && hingePlace) {
     const plateId = fittingItemId(unit, 'hinge_plate');
     const plate = plateId ? (hardware.get(plateId) ?? null) : null;
     /* Чашка — из паспорта петли; планке хватает размеров подбора, они в лёгком чтении есть. */

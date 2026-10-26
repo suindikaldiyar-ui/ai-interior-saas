@@ -13,6 +13,7 @@ import ModuleAssembly from './ModuleAssembly';
 import PartCard from './PartCard';
 import { moduleDrilling, panelDrilling } from '@/lib/millwork/drilling';
 import { allModules } from '@/lib/millwork/layout';
+import { vitrineParts } from '@/lib/millwork/vitrineParts';
 import {
   panelsCsvFile,
   panelsFileName,
@@ -127,6 +128,12 @@ export default function PanelList({
     [walls, production, milling, carcass, hardware],
   );
   const summaries = useMemo(() => wallPanelSummaries(walls, parts), [walls, parts]);
+  /*
+   * СТЕКЛО И ПОКУПНЫЕ ИЗДЕЛИЯ ВИТРИН (P1) — не детали плиты: своим списком под
+   * таблицей, тем же `vitrineParts`, что считают смета и карта раскроя. В
+   * выгрузку для пилы они не идут.
+   */
+  const outside = useMemo(() => walls.flatMap((wall) => vitrineParts(wall.run, production)), [walls, production]);
 
   /*
    * ВЫБРАННАЯ ДЕТАЛЬ — ОДНО СОСТОЯНИЕ НА ТАБЛИЦУ И НА ЧЕРТЁЖ.
@@ -432,6 +439,51 @@ export default function PanelList({
             </tr>
           </tfoot>
         </table>
+
+        {outside.length > 0 && (
+          <div className="mt-4 grid gap-1" data-panel-outside data-panel-outside-count={outside.length}>
+            <span className="mw-label">Стекло и покупные изделия витрин — из плиты не режутся</span>
+            <table className="w-full border-collapse text-[11px]">
+              <thead>
+                <tr className="text-left">
+                  <th className="py-1 pr-2 font-medium">Модуль</th>
+                  <th className="py-1 pr-2 font-medium">Деталь</th>
+                  <th className="py-1 pr-2 text-right font-medium">Д × Ш, мм</th>
+                  <th className="py-1 pr-2 text-right font-medium">Т, мм</th>
+                  <th className="py-1 pr-2 font-medium">Материал</th>
+                  <th className="py-1 pr-2 text-right font-medium">Шт.</th>
+                  <th className="py-1 font-medium">Требует подтверждения</th>
+                </tr>
+              </thead>
+              <tbody>
+                {outside.map((part, i) => (
+                  <tr
+                    key={`${part.moduleId}:${part.role}:${i}`}
+                    data-panel-outside-row={part.role}
+                    data-kind={part.kind}
+                    data-size={`${part.lengthMm}x${part.widthMm}`}
+                    data-qty={part.qty}
+                    className="border-t border-blueprint/30"
+                  >
+                    <td className="py-1 pr-2">{part.moduleLabel}</td>
+                    <td className="py-1 pr-2">{part.name}</td>
+                    <td className="mw-num py-1 pr-2 text-right">
+                      {part.widthMm > 0 ? `${part.lengthMm} × ${part.widthMm}` : `${part.lengthMm} (длина)`}
+                    </td>
+                    <td className="mw-num py-1 pr-2 text-right">{part.thicknessMm ?? 'не выбрана'}</td>
+                    <td className="py-1 pr-2">{part.material}</td>
+                    <td className="mw-num py-1 pr-2 text-right">{part.qty}</td>
+                    <td className="py-1">{part.unconfirmed.join('; ') || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="text-[11px] text-graphiteMw">
+              Отверстий и обработки стекла здесь нет: присадку стекла и крепёж цех не подтверждал. В выгрузке для раскроя этих
+              позиций нет — заказ у стекольщика и поставщика профиля.
+            </p>
+          </div>
+        )}
 
         {/*
           * СБОРОЧНЫЙ ЧЕРТЁЖ И КАРТОЧКА ДЕТАЛИ — ПОД ТАБЛИЦЕЙ.

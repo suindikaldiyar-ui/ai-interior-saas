@@ -100,7 +100,10 @@ function groupOf(line: EstimateLine): EstimateGroupKey {
     key === 'hanging_bracket' ||
     key === 'cable_channel' ||
     key === 'led_niche' ||
-    key === 'led_display'
+    key === 'led_display' ||
+    /* Держатели стеклянных полок и крепёж стекла к стеклу витрины (P1) — фурнитура, как полкодержатели. */
+    key === 'glass_shelf_support' ||
+    key === 'vitrine_glass_joint'
   ) {
     return 'hardware';
   }

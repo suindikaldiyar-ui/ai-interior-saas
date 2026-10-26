@@ -133,6 +133,11 @@ export type Spec = {
   edits?: Record<string, Run>;
   /** Рабочая стена замера; по умолчанию — самая длинная, как у экрана. */
   wallId?: string;
+  /**
+   * Правленый ряд РАБОЧЕЙ стены (`editedRuns` экрана, P1): стену А экран берёт
+   * из `composeVariants`, а не из `editedWalls`, — и правку туда же.
+   */
+  working?: Run;
 };
 
 export const NEW_CORNER: CornerChoice = { lower: 'blind', upper: 'blind' };
@@ -263,7 +268,7 @@ export function buildObject(spec: Spec) {
     materials: new Map(),
     ...(layout ? { corner: wallCornerOf(layout) } : {}),
   });
-  const active = composeVariants(input, DISABLED, {}).find((variant) => variant.key === 'optimal');
+  const active = composeVariants(input, DISABLED, spec.working ? { optimal: spec.working } : {}).find((variant) => variant.key === 'optimal');
   if (!active) throw new Error(`STAGE A ${spec.title}: варианта optimal нет`);
   const segments: Run[] = wallSegments(layout, active.run, spec.edits ?? {});
   const places = runPlacements({ runs: segments, corners: spec.corners, zone: active.run.zone, production });

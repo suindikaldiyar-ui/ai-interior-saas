@@ -7,14 +7,16 @@ import { allModules } from './layout';
 import { apronLengthMm, counterMitersOf, countertopCuts, countertopLengthMm } from './countertop';
 import { cornerOfModule } from './corner';
 import { moduleCarcassHeightMm } from './fill';
-import { CORNER_HINGE_TITLE, frontDrawerSlides, liftKey, openingHardware } from './opening';
+import { CORNER_HINGE_TITLE, frontDrawerSlides, liftKey, openingHardware, type ModuleHardware } from './opening';
 import { buildPanels, panelMaterials, partOfPanel } from './panels';
 import { DEFAULT_PRODUCTION, type HardwareItem, type ProductionSettings } from '@/types/catalog';
 import { resolveHardware } from './hardware';
 import { FITTING_SLOT_TITLE, handleItemOf, installedItem } from './fittings';
-import { GLASS_SHELF_LINE, glassLine, glassOf, shelvesAreGlass } from './glass';
+import { GLASS_MATERIAL, GLASS_SHELF_LINE, glassLine, glassOf } from './glass';
+import { PROFILE_TITLE, VITRINE_LED_TITLE, vitrineLedMeters, vitrineLedStrips, vitrineOf } from './vitrine';
+import { vitrineModuleParts, type VitrinePart } from './vitrineParts';
 import { moduleDrawerKits } from './drawerKit';
-import { SLIDING_DOOR, displayLedMeters, sectionSpec, slidingDoorCount } from './sections';
+import { SLIDING_DOOR, sectionSpec, slidingDoorCount } from './sections';
 import { MODULE_VARIANTS, isSinkBase, variantEstimateKeys } from './moduleVariants';
 import { zoneProfile } from './zones';
 import { bayDrawerStackOf, drawerHeights } from './drawerCount';
@@ -30,6 +32,7 @@ import type {
   EstimateLine,
   EstimateUnit,
   FittingSlot,
+  GlassKind,
   Module,
   Run,
   VariantKey, Panel,
@@ -465,6 +468,163 @@ function fittingTally(catalog: Map<string, HardwareItem>) {
       return out;
     },
   };
+}
+
+/** Строки витрины без ставки: что именно не оценено — словами. */
+const VITRINE_UNSET = {
+  hinge_alu_frame: 'цена: петля для алюминиевой рамки — в каталоге организации ставки нет (ключ hinge_alu_frame)',
+  hinge_glass_door: 'цена: петля для стеклянной двери — в каталоге организации ставки нет (ключ hinge_glass_door)',
+  glass_shelf_support: 'цена: держатель стеклянной полки — в каталоге организации ставки нет (ключ glass_shelf_support)',
+  vitrine_frame_profile: 'цена: профиль каркаса витрины — в каталоге организации ставки нет (ключ vitrine_frame_profile)',
+  vitrine_glass_joint: 'цена: крепёж стекла к стеклу — изделие не выбрано, в каталоге организации ставки нет (ключ vitrine_glass_joint)',
+} as const;
+
+/** Ключ стекла по размеру: вид и толщина — разные листы у стекольщика. */
+export function glassSheetKey(kind: GlassKind, thicknessMm: number | null): string {
+  return thicknessMm ? `glass_sheet_${kind}_${thicknessMm}` : `glass_sheet_${kind}`;
+}
+
+/**
+ * СТРОКИ ОДНОЙ ВИТРИНЫ (P1) — из её списка стекла и изделий и из её же
+ * петель и ленты. Количества не считаются здесь второй раз: площади — у
+ * строк `vitrineModuleParts`, петли — `openingHardware.byModule`, лента —
+ * `vitrineLedStrips`, та же раскладка, что рисует сцена.
+ */
+function vitrineDrafts(
+  unit: Module,
+  v: ReturnType<typeof vitrineOf>,
+  parts: VitrinePart[],
+  name: string,
+  run: Run,
+  production: ProductionSettings,
+  own: ModuleHardware | undefined,
+  fit: ReturnType<typeof fittingTally>,
+): Draft[] {
+  const out: Draft[] = [];
+  const area = (list: VitrinePart[]) => round2(list.reduce((sum, part) => sum + (part.lengthMm * part.widthMm * part.qty) / MM2_IN_M2, 0));
+
+  /* Дверь в раме (и стекло за рамой KIRA) — прежняя статья по виду стекла. */
+  const frameDoors = parts.filter((part) => part.line === 'frame_door');
+  if (frameDoors.length > 0) {
+    const glass = glassLine(glassOf(unit));
+    /* Покрытие профиля рамки — словом в строке: у двери в рамке это часть заказа. */
+    const profile =
+      v && v.construction !== 'glass' && frameDoors.every((part) => part.kind === 'door')
+        ? `, профиль: ${v.profile ? PROFILE_TITLE[v.profile].toLowerCase() : 'покрытие не выбрано'}`
+        : '';
+    out.push({
+      key: glass.key,
+      title: `Стеклянная дверь в раме (${name})${profile}${glass.suffix}`,
+      unit: 'm2',
+      quantity: area(frameDoors),
+      ...(glass.unsetWithoutRate ? { unsetWithoutRate: glass.unsetWithoutRate } : {}),
+    });
+  }
+
+  /* Стекло по размеру — по виду и толщине: дверь без рамки, боковины, крыша, дно, задняя стенка. */
+  const sheets = new Map<string, VitrinePart[]>();
+  for (const part of parts.filter((p) => p.line === 'glass_sheet')) {
+    const key = glassSheetKey(part.glass ?? 'clear', part.thicknessMm);
+    sheets.set(key, [...(sheets.get(key) ?? []), part]);
+  }
+  for (const [key, list] of Array.from(sheets.entries())) {
+    const first = list[0];
+    const kindWord = GLASS_MATERIAL[first.glass ?? 'clear'];
+    out.push({
+      key,
+      title: `Стекло ${kindWord} ${first.thicknessMm ? `${first.thicknessMm} мм` : '(толщина не выбрана)'} по размеру — ${list.map((p) => p.name.toLowerCase()).join(', ')} (${name})`,
+      unit: 'm2',
+      quantity: area(list),
+      unsetWithoutRate: `цена: стекло ${kindWord}${first.thicknessMm ? ` ${first.thicknessMm} мм` : ', толщина не выбрана'} — в каталоге организации ставки нет (ключ ${key})`,
+    });
+  }
+
+  /* Стеклянные полки и держатели к ним: по четыре на полку — на четырёх опорах лежит любая полка. */
+  const shelves = parts.filter((part) => part.line === 'glass_shelf').reduce((sum, part) => sum + part.qty, 0);
+  if (shelves > 0) {
+    out.push(
+      {
+        key: GLASS_SHELF_LINE.key,
+        title: `Полка стеклянная (${name})`,
+        unit: 'pcs',
+        quantity: shelves,
+        unsetWithoutRate: GLASS_SHELF_LINE.unsetWithoutRate,
+      },
+      {
+        key: 'glass_shelf_support',
+        title: `Держатели стеклянной полки — по 4 на полку, позиция не выбрана (${name})`,
+        unit: 'pcs',
+        quantity: shelves * 4,
+        unsetWithoutRate: VITRINE_UNSET.glass_shelf_support,
+      },
+    );
+  }
+
+  /* Стыки стекла с стеклом (C) — погонные метры стыков; изделие крепежа не выбрано. */
+  const joints = parts.filter((part) => part.line === 'glass_joint');
+  if (joints.length > 0) {
+    out.push({
+      key: 'vitrine_glass_joint',
+      title: `Крепёж стекла к стеклу по стыкам — изделие не выбрано, требует подтверждения (${name})`,
+      unit: 'mp',
+      quantity: round3(joints.reduce((sum, part) => sum + part.lengthMm * part.qty, 0) / MM_IN_M),
+      unsetWithoutRate: VITRINE_UNSET.vitrine_glass_joint,
+    });
+  }
+
+  /* Профиль каркаса (B) — погонные метры всех планок. */
+  const profile = parts.filter((part) => part.line === 'profile');
+  if (profile.length > 0) {
+    out.push({
+      key: 'vitrine_frame_profile',
+      title: `Профиль каркаса витрины — система не выбрана (${name})`,
+      unit: 'mp',
+      quantity: round3(profile.reduce((sum, part) => sum + part.lengthMm * part.qty, 0) / MM_IN_M),
+      unsetWithoutRate: VITRINE_UNSET.vitrine_frame_profile,
+    });
+  }
+
+  /*
+   * Петли двери витрины — своим счётчиком `openingHardware`: на рамку и на
+   * стекло петля для фасада из плиты не встаёт. Петля на месте модуля
+   * (HARDWARE-01) — своей строкой по цене позиции.
+   */
+  const frameHinges = own?.frameHinges ?? 0;
+  const glassHinges = own?.glassHinges ?? 0;
+  if (frameHinges > 0 && !fit.take(unit, 'hinge', frameHinges)) {
+    if (frameHinges - glassHinges > 0) {
+      out.push({
+        key: 'hinge_alu_frame',
+        title: `Петли для двери в алюминиевой рамке — тип по профилю, требует подтверждения (${name})`,
+        unit: 'pcs',
+        quantity: frameHinges - glassHinges,
+        unsetWithoutRate: VITRINE_UNSET.hinge_alu_frame,
+      });
+    }
+    if (glassHinges > 0) {
+      out.push({
+        key: 'hinge_glass_door',
+        title: `Петли для стеклянной двери — позиции в каталоге нет (${name})`,
+        unit: 'pcs',
+        quantity: glassHinges,
+        unsetWithoutRate: VITRINE_UNSET.hinge_glass_door,
+      });
+    }
+  }
+
+  /* Лента — по своим полосам, той же раскладке, что рисует сцена. */
+  if (v && v.led !== 'off') {
+    const meters = vitrineLedMeters(vitrineLedStrips(unit, v.led, moduleCarcassHeightMm(unit, run), production.carcassMm));
+    if (meters > 0) {
+      out.push({
+        key: 'led_display',
+        title: `Подсветка витрины LED, ${VITRINE_LED_TITLE[v.led].toLowerCase()} (${name})`,
+        unit: 'mp',
+        quantity: meters,
+      });
+    }
+  }
+  return out;
 }
 
 export function buildEstimateDrafts(
@@ -1044,32 +1204,22 @@ export function buildEstimateDrafts(
   }
 
   /*
-   * Витрина живёт и в кухне, и в зале, поэтому считается отдельно от
-   * секционных зон: `sectionDrafts` на кухне не работает вовсе. Стекло в
-   * раме — это не фасад ЛДСП, и подсветка идёт по контуру погонными
-   * метрами, а не «комплектом».
+   * ВИТРИНЫ (P1) — СТРОКИ ИЗ ОДНОГО СПИСКА (`vitrineModuleParts`).
+   *
+   * До P1 у витрины было две сметы: секция считала стеклянную дверь по
+   * габариту модуля и ленту по наружному контуру, вариант «Стекло в раме» —
+   * стекло поверх уже нарезанного фасада ЛДСП и ленту «комплектом» при
+   * ставке за метр. Теперь дверь — по размеру створки (та же формула, что у
+   * фасада из листа), стекло корпуса — по размеру детали, которую оно
+   * заменило, лента — по своим полосам, петли двери — своим счётчиком.
+   * Строки без ставки — «цена не задана» и итог «неполный», а не чужая цена.
    */
   for (const unit of modules) {
-    if (unit.section !== 'glass_display') continue;
-    const h = moduleCarcassHeightMm(unit, run);
-    /* Вид стекла (V3D-02): прозрачное — прежняя статья, другой вид — своя ставка. */
-    const glass = glassLine(glassOf(unit));
-
-    drafts.push(
-      {
-        key: glass.key,
-        title: `Стеклянная дверь в раме${glass.suffix}`,
-        unit: 'm2',
-        quantity: round2((unit.widthMm * h) / MM2_IN_M2),
-        ...(glass.unsetWithoutRate ? { unsetWithoutRate: glass.unsetWithoutRate } : {}),
-      },
-      {
-        key: 'led_display',
-        title: 'Подсветка витрины LED',
-        unit: 'mp',
-        quantity: displayLedMeters(unit.widthMm, h),
-      },
-    );
+    const v = vitrineOf(unit);
+    const parts = vitrineModuleParts(unit, run, production);
+    if (!v && parts.length === 0) continue;
+    const name = `${unit.label}, ${unit.widthMm} мм`;
+    drafts.push(...vitrineDrafts(unit, v, parts, name, run, production, hardware.byModule[unit.id], fit));
   }
 
   /*
@@ -1084,40 +1234,18 @@ export function buildEstimateDrafts(
      */
     const variantSlot = VARIANT_SLOT[unit.variant ?? ''];
     if (variantSlot && fit.take(unit, variantSlot, 1)) continue;
+    /* Стекло и лента витрины — строками витрины выше (P1): здесь их второй раз не пишем. */
+    const vitrine = vitrineOf(unit) !== null;
     for (const key of variantEstimateKeys(unit)) {
+      if (vitrine && (key === 'glass_front' || key === 'led_display')) continue;
       const spec = MODULE_VARIANTS[unit.variant!];
-      /* Стекло варианта — по виду стекла модуля (V3D-02), как у витрины в раме. */
-      const glass = key === 'glass_front' ? glassLine(glassOf(unit)) : null;
       drafts.push({
-        key: glass ? glass.key : key,
-        title: `${spec.title} (${unit.widthMm} мм)${glass ? glass.suffix : ''}`,
-        unit: key === 'glass_front' ? 'm2' : 'pcs',
-        quantity:
-          key === 'glass_front'
-            ? round2(
-                (unit.widthMm * moduleCarcassHeightMm(unit, run)) / MM2_IN_M2,
-              )
-            : 1,
-        ...(glass?.unsetWithoutRate ? { unsetWithoutRate: glass.unsetWithoutRate } : {}),
+        key,
+        title: `${spec.title} (${unit.widthMm} мм)`,
+        unit: 'pcs',
+        quantity: 1,
       });
     }
-  }
-
-  /*
-   * СТЕКЛЯННЫЕ ПОЛКИ (V3D-02): из раскроя ЛДСП они ушли (`shelvesAreGlass`),
-   * здесь — штуками по ставке каталога. Нет ставки — «цена не задана».
-   */
-  for (const unit of modules) {
-    if (!shelvesAreGlass(unit)) continue;
-    const count = unit.fill?.shelves.length ?? 0;
-    if (count === 0) continue;
-    drafts.push({
-      key: GLASS_SHELF_LINE.key,
-      title: `Полка стеклянная (${unit.label}, ${unit.widthMm} мм)`,
-      unit: 'pcs',
-      quantity: count,
-      unsetWithoutRate: GLASS_SHELF_LINE.unsetWithoutRate,
-    });
   }
 
   drafts.push(...sectionDrafts(run, production, hardwareItems));

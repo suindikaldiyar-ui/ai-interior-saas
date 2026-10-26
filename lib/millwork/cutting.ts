@@ -5,6 +5,7 @@ import { collectionOf } from './materialCollection';
 import { cell, csvFile, type CsvEncoding } from './csv-export';
 import type { CatalogEntryFull, CuttingSettings, SheetFormat } from '@/types/catalog';
 import type { Panel, PanelStock, StockKind } from '@/types/millwork';
+import type { VitrinePart } from './vitrineParts';
 
 /**
  * КАРТА РАСКРОЯ (CUT-01): детали деталировки на листах цеха.
@@ -258,6 +259,12 @@ export type CuttingPlan = {
   /** Подпись раскладки: та же деталировка и те же настройки — та же подпись. */
   signature: string;
   fingerprint: string;
+  /**
+   * СТЕКЛО И ПОКУПНЫЕ ИЗДЕЛИЯ ВИТРИН (P1) — из плиты не режутся: список
+   * `vitrineParts` рядом с листами. Подписи раскладки они не меняют — на
+   * листах их нет.
+   */
+  outside: VitrinePart[];
 };
 
 /* ─────────────────────────  Текстура и повороты  ───────────────────────── */
@@ -645,8 +652,15 @@ export function cuttingPlan(input: {
    * есть, но цех распилит его по числам, которых сам не подтверждал.
    */
   drawerBoxUnconfirmed?: number;
+  /**
+   * ВИТРИНЫ (P1): стекло и покупные изделия (`vitrineParts`) и причины, по
+   * которым витрину не собрать в цехе (`vitrineProductionReasons`). Причины
+   * запирают выпуск словами: цех не распилит корпус витрины, которую не
+   * собрать.
+   */
+  vitrine?: { parts: VitrinePart[]; reasons: string[] };
 }): CuttingPlan {
-  const { parts, settings, decors = new Map(), exportLock = null, fingerprint, drawerBoxUnconfirmed = 0 } = input;
+  const { parts, settings, decors = new Map(), exportLock = null, fingerprint, drawerBoxUnconfirmed = 0, vitrine } = input;
   const kerf = Math.round(settings.kerfMm * U);
   const trim = Math.round(settings.trimMm * U);
   const minRemnant = settings.minRemnantMm * U;
@@ -911,6 +925,7 @@ export function cuttingPlan(input: {
   if (errors.length > 0) {
     reasons.push(`Проверка раскладки нашла ${errors.length} ошибок: ${errors.slice(0, 2).join('; ')}.`);
   }
+  for (const reason of vitrine?.reasons ?? []) reasons.push(`Витрина ${reason}.`);
   if (!settings.confirmed) {
     reasons.push(
       `Пропил ${settings.kerfMm} мм, обрезка ${settings.trimMm} мм и остаток от ${settings.minRemnantMm} мм — ` +
@@ -954,6 +969,7 @@ export function cuttingPlan(input: {
     errors,
     signature,
     fingerprint,
+    outside: vitrine?.parts ?? [],
   };
 }
 

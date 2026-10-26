@@ -3,6 +3,8 @@ import { MODULE_VARIANTS } from './moduleVariants';
 import { moduleFronts, nicheFacadeSpans } from './applianceFront';
 import { bayDrawerCount } from './drawerCount';
 import { leafFrontOf } from './frontMaterial';
+import { vitrineDoorKind } from './glass';
+import { vitrineDoorCount } from './vitrine';
 import type { FrontOpening, HandleKind, Module, Run } from '@/types/millwork';
 
 /**
@@ -161,10 +163,22 @@ export function openingRejection(unit: Module, opening: FrontOpening): string | 
     return `«${name}» выдвигается целиком на направляющих: петель у него нет, и открывать его некуда.`;
   }
 
-  if (unit.frontType !== 'door') {
+  /* Дверь витрины — распашная створка, даже у секции, где она хранится не створкой (P1). */
+  const vitrineDoors = vitrineDoorCount(unit);
+  if (unit.frontType !== 'door' && vitrineDoors === 0) {
     return unit.frontType === 'drawers' || (unit.fill?.drawerHeights.length ?? 0) > 0
       ? `«${name}» — ящики: они выдвигаются, а не открываются. Направление выбирают у распашного фасада.`
       : `У «${name}» распашного фасада нет: выбирать направление не у чего.`;
+  }
+
+  /*
+   * ПОДЪЁМНИК У СТЕКЛЯННОЙ ДВЕРИ — ТОЛЬКО С ПОДТВЕРЖДЁННЫМ КРЕПЛЕНИЕМ (P1).
+   * Подъёмник ряда — типовая строка без паспорта, а алюминиевой рамке и
+   * стеклу нужно своё крепление фасада; выдавать типовую строку за него
+   * значило бы обещать то, что на объекте не встанет.
+   */
+  if (vitrineDoors > 0 && isMechanism(opening)) {
+    return `«${name}»: ${opening === 'lift' ? 'подъёмник' : 'откидной механизм'} у стеклянной двери не подтверждён — крепление фасада под алюминиевую рамку и стекло это позиция с паспортом, а не типовая строка. Выберите «Петли слева» или «Петли справа».`;
   }
 
   if (isMechanism(opening) && !isUpperRow(unit)) {
@@ -173,11 +187,13 @@ export function openingRejection(unit: Module, opening: FrontOpening): string | 
       : `Откидной фасад ставят на верхний ряд и антресоль. Внизу он открывается человеку на ноги, и подойти к шкафу становится нельзя.`;
   }
 
-  if (opening === 'double' && unit.doorCount < 2) {
-    return `У «${name}» одна створка ${unit.widthMm} мм. Две створки — это вариант места «Две дверцы»: там пересчитывается ширина каждой.`;
+  if (opening === 'double' && (vitrineDoors > 0 ? vitrineDoors : unit.doorCount) < 2) {
+    return vitrineDoors > 0
+      ? `У «${name}» одна стеклянная дверь ${unit.widthMm} мм. Две двери выбирают в блоке «Витрина» → «Двери»: там пересчитывается ширина каждой.`
+      : `У «${name}» одна створка ${unit.widthMm} мм. Две створки — это вариант места «Две дверцы»: там пересчитывается ширина каждой.`;
   }
 
-  if ((opening === 'left' || opening === 'right') && unit.doorCount >= 2) {
+  if ((opening === 'left' || opening === 'right') && (vitrineDoors > 0 ? vitrineDoors : unit.doorCount) >= 2) {
     return `У «${name}» две створки: левая на левой петле, правая на правой. Сторону выбирают, когда створка одна.`;
   }
 
@@ -271,6 +287,15 @@ export type OpeningHardware = {
   handlePush: number;
   /** Петли 175° для угловых модулей: фальш-панель и карусель без них не открываются. */
   cornerHinges: number;
+  /**
+   * ПЕТЛИ ДВЕРИ ВИТРИНЫ (P1): у стекла в алюминиевой рамке и у стекла без
+   * рамки петля своя — обычная чашка 35 мм в профиль и в стекло не
+   * ставится. Рядом с обычными петлями, а не в них: иначе смета купила бы
+   * на рамку петлю для фасада из плиты.
+   */
+  frameHinges: number;
+  /** Из них — у стекла без рамки (цельностеклянная витрина): петля для стеклянной двери. */
+  glassHinges: number;
   lifts: number;
   flaps: number;
   handles: number;
@@ -302,6 +327,8 @@ export type OpeningHardware = {
 export type ModuleHardware = {
   hinges: number;
   cornerHinges: number;
+  frameHinges: number;
+  glassHinges: number;
   lifts: number;
   flaps: number;
   handleBar: number;
@@ -369,6 +396,8 @@ export function openingHardware(
     handleProfileMm: 0,
     handlePush: 0,
     cornerHinges: 0,
+    frameHinges: 0,
+    glassHinges: 0,
     lifts: 0,
     flaps: 0,
     handles: 0,
@@ -384,6 +413,8 @@ export function openingHardware(
   let current: ModuleHardware = {
     hinges: 0,
     cornerHinges: 0,
+    frameHinges: 0,
+    glassHinges: 0,
     lifts: 0,
     flaps: 0,
     handleBar: 0,
@@ -396,9 +427,24 @@ export function openingHardware(
     else if (field === 'handleBar') result.handleBar += value;
     else if (field === 'handlePush') result.handlePush += value;
     else if (field === 'cornerHinges') result.cornerHinges += value;
+    else if (field === 'frameHinges') result.frameHinges += value;
+    else if (field === 'glassHinges') result.glassHinges += value;
     else if (field === 'lifts') result.lifts += value;
     else if (field === 'flaps') result.flaps += value;
     else result.hinges += value;
+  };
+  /*
+   * ПЕТЛИ СТВОРКИ ВИТРИНЫ (P1) — своим счётчиком: у стекла в рамке и у
+   * стекла без рамки петля другая. Рама KIRA — фасад МДФ, петли обычные.
+   */
+  const addLeafHinges = (unit: Module, leafIndex: number, count: number, corner: boolean) => {
+    const kind = vitrineDoorKind(unit, `door:${leafIndex}`, undefined);
+    if (kind === 'alu' || kind === 'glass') {
+      add('frameHinges', count);
+      if (kind === 'glass') add('glassHinges', count);
+      return;
+    }
+    add(corner ? 'cornerHinges' : 'hinges', count);
   };
 
   /**
@@ -423,6 +469,8 @@ export function openingHardware(
     current = {
       hinges: 0,
       cornerHinges: 0,
+      frameHinges: 0,
+      glassHinges: 0,
       lifts: 0,
       flaps: 0,
       handleBar: 0,
@@ -518,7 +566,7 @@ export function openingHardware(
         continue;
       }
 
-      for (const leaf of fronts.leaves) add('hinges', leafHinges(leaf.heightMm, 'left'));
+      fronts.leaves.forEach((leaf, i) => addLeafHinges(unit, i, leafHinges(leaf.heightMm, 'left'), false));
       addHandles(unit, doorsOf(fronts.leaves.length));
       continue;
     }
@@ -534,11 +582,7 @@ export function openingHardware(
        * Петли считаются ПО ПОЛОТНАМ: у встроенного холодильника их два и
        * они вдвое ниже, и `leafHinges` это уже знает.
        */
-      for (const leaf of fronts.leaves) {
-        const perLeaf = leafHinges(leaf.heightMm, opening);
-        if (isCorner) add('cornerHinges', perLeaf);
-        else add('hinges', perLeaf);
-      }
+      fronts.leaves.forEach((leaf, i) => addLeafHinges(unit, i, leafHinges(leaf.heightMm, opening), isCorner));
     }
 
     if (opening === 'lift') {
@@ -552,7 +596,7 @@ export function openingHardware(
 
     if (opening === 'flap') {
       add('flaps', 1);
-      add('hinges', leafHinges(heightMm, opening));
+      addLeafHinges(unit, 0, leafHinges(heightMm, opening), false);
     }
 
     /*

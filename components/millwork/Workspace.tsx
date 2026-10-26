@@ -32,6 +32,7 @@ import { paletteFromCatalog } from '@/lib/millwork/palette';
 import {
   contextMismatches,
   cornerClashMismatches,
+  vitrineSweepMismatches,
   lowerWall,
   wallLabel,
   wallMismatches,
@@ -63,7 +64,7 @@ import {
   type WallEdits,
 } from '@/lib/millwork/objectEstimate';
 import { ratesFromCatalog } from '@/lib/millwork/rates';
-import { markShownMm, marksOfZone, rowStandardDepthMm } from '@/lib/millwork/fill';
+import { markShownMm, marksOfZone, moduleCarcassHeightMm, rowStandardDepthMm } from '@/lib/millwork/fill';
 import { bayEnvelope, drawerReleaseBlock } from '@/lib/millwork/bays';
 import { hardwareByCategory, hardwareCatalog, lightReferences } from '@/lib/millwork/hardware';
 import { roomAroundRows, roomSourceOf, type RoomSource } from '@/lib/millwork/room';
@@ -1706,7 +1707,17 @@ export default function Workspace(props: WorkspaceProps) {
       composed: layout?.cornerClashes,
       skip: [...byLength, ...byObstacle, ...byHeights].map((mismatch) => mismatch.index),
     });
-    return [...byLength, ...byObstacle, ...byHeights, ...byClash];
+    /*
+     * ДВЕРЬ ВИТРИНЫ ВДОЛЬ РЯДА (P1): витрина мельче пенала рядом, и дверь на
+     * петлях у него на ходу встречает его боковину. Тот же ход, что у угла.
+     */
+    const bySweep = vitrineSweepMismatches({
+      runs: segments,
+      production,
+      hardware: hardwareItems,
+      skip: [...byLength, ...byObstacle, ...byHeights, ...byClash].map((mismatch) => mismatch.index),
+    });
+    return [...byLength, ...byObstacle, ...byHeights, ...byClash, ...bySweep];
   }, [layout, segments, wallOpenings, wallEdited, editedRuns, active.key, input.runWallId, input.production, input.ceilingHeightMm, editedWalls, requirements, sceneRows, production, hardwareItems]);
 
   /**
@@ -5166,7 +5177,7 @@ export default function Workspace(props: WorkspaceProps) {
         'Studio открыт без оболочки: страница Studio обязана обернуть рабочее место в StudioKitProvider.',
       );
     }
-    const { StudioShell, RoomPlan, WallInspector, StudioObjects, StudioInspector, FillEditor, OverheadEditor } = studioKit;
+    const { StudioShell, RoomPlan, WallInspector, StudioObjects, StudioInspector, FillEditor, OverheadEditor, VitrineEditor } = studioKit;
     const surveyWalls = survey?.walls ?? [];
     const turnWords = (item: Survey['walls'][number]) =>
       item.turn === 'custom' ? `${item.turnDeg}° (другой угол)` : `90° ${item.turn === 'left' ? 'влево' : 'вправо'}`;
@@ -5562,6 +5573,20 @@ export default function Workspace(props: WorkspaceProps) {
                   })
                 }
                 onSelect={selectModule}
+              />
+            )}
+            {/*
+              * ВИТРИНА (P1): конструкция, место, стекло, двери, полки, профиль и
+              * подсветка — правками движка (`set_vitrine`, `set_glass`,
+              * `set_glass_shelves`) тем же `runOps`. Ключ — по записанной
+              * витрине и высоте: поля после правки показывают число ряда.
+              */}
+            {selectedUnit && (
+              <VitrineEditor
+                key={`${selectedUnit.id}:${JSON.stringify(selectedUnit.vitrine ?? null)}:${selectedUnit.heightMm ?? ''}:${moduleCarcassHeightMm(selectedUnit, activeRun)}`}
+                unit={selectedUnit}
+                run={activeRun}
+                onOps={(ops, onRefusal) => runOps(ops, onRefusal)}
               />
             )}
             {selectedUnit && (

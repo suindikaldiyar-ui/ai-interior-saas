@@ -175,9 +175,16 @@ export default function InstancedBoxes({
     // отсечении по камере, хотя стоит в кадре.
     mesh.computeBoundingSphere();
     invalidate();
-    // `key` меняется вместе с составом; сам массив пересоздаётся чаще.
+    /*
+     * МАТЕРИАЛ — ТОЖЕ В `args`, И R3F ПЕРЕСОЗДАЁТ МЕШ ПРИ ЕГО СМЕНЕ (P1).
+     * Новый `InstancedMesh` рождается с единичными матрицами: все экземпляры
+     * в начале координат ряда. Пачки стекла и профиля меняют материал при
+     * переходе в «Интерьер» — и рисовались там, а не на витрине (замерено
+     * `__mwCadVitrine`: центр пачки −1900, 0 при двери 1650, 1775 мм).
+     * `key` меняется вместе с составом; сам массив пересоздаётся чаще.
+     */
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, invalidate, batchGeometry, placedGeometry]);
+  }, [key, invalidate, batchGeometry, placedGeometry, material]);
 
   if (boxes.length === 0) return null;
 

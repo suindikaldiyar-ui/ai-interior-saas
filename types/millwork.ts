@@ -841,7 +841,56 @@ export interface ApplianceSize {
  * рифлёное, зеркало. Цены у вида — в каталоге организации ключом
  * `glass_front_<вид>`; у прозрачного — прежний `glass_front`.
  */
-export type GlassKind = 'clear' | 'frosted' | 'bronze' | 'grey' | 'fluted' | 'mirror';
+export type GlassKind = 'clear' | 'extra_clear' | 'frosted' | 'bronze' | 'grey' | 'fluted' | 'mirror';
+
+/**
+ * ВИТРИНА (P1) — КОНСТРУКЦИЯ МОДУЛЯ СО СТЕКЛОМ.
+ *
+ *   carcass  A — корпус из плиты, дверь — стекло в алюминиевой рамке;
+ *   frame    B — каркас из алюминиевого профиля, стекло в его пазах;
+ *   glass    C — цельностеклянная: боковины, фасад, верх и низ — стекло.
+ *
+ * Стекло витрины — отдельные детали со своей толщиной и видом, а не
+ * прозрачная плита: боковина из стекла уходит из раскроя ЛДСП и встаёт
+ * строкой стекла. Вид стекла — `Module.glass`, полки — `glassShelves`,
+ * двери — `doorCount` и `fill.hinge`: своих копий у витрины нет. Читает
+ * спецификацию одна `vitrineOf` (lib/millwork/vitrine.ts); прежние
+ * витрины — секция `glass_display` и варианты со стеклом — читаются ею
+ * же как конструкция A, и в данные умолчание не пишется (ловушка 246).
+ */
+export type VitrineConstruction = 'carcass' | 'frame' | 'glass';
+/** Часть корпуса витрины: плита или стекло. */
+export type VitrinePanel = 'board' | 'glass';
+/** Задняя стенка: плита цеха, стекло, зеркало или без задней стенки. */
+export type VitrineBack = 'board' | 'glass' | 'mirror' | 'none';
+/** Где лента подсветки: у боковин, под полками, под крышей, по контуру проёма. */
+export type VitrineLed = 'off' | 'left' | 'right' | 'sides' | 'top' | 'shelves' | 'contour';
+/** Покрытие профиля рамки и каркаса. */
+export type ProfileFinish = 'silver' | 'black' | 'champagne' | 'bronze' | 'gold';
+/** С какой стороны витрину смотрят и открывают. */
+export type VitrineView = 'front' | 'back' | 'both';
+
+export interface VitrineSpec {
+  construction: VitrineConstruction;
+  /** Боковины, верх и низ. Пусто — по конструкции (`vitrineOf`). */
+  left?: VitrinePanel;
+  right?: VitrinePanel;
+  top?: VitrinePanel;
+  bottom?: VitrinePanel;
+  back?: VitrineBack;
+  /** Толщина стекла корпуса и полок, мм — выбор человека; пусто — не выбрана, и это сказано. */
+  glassMm?: number;
+  /** Покрытие профиля; пусто — не выбрано. */
+  profile?: ProfileFinish;
+  /** Подсветка; пусто — по виду витрины (секция и «Витрина» — по контуру, «Стекло в раме» — нет). */
+  led?: VitrineLed;
+  /** Пусто — спереди. */
+  view?: VitrineView;
+  /** Стоит на столешнице: низ — рабочая поверхность, а не отметка навески. */
+  onCounter?: true;
+  /** Своя глубина, мм; пусто — глубина ряда. */
+  depthMm?: number;
+}
 
 export interface Module {
   id: string;
@@ -942,6 +991,12 @@ export interface Module {
    * (ловушка 246).
    */
   glassShelves?: true;
+  /**
+   * ВИТРИНА (P1): конструкция, стекло корпуса, профиль, подсветка, место.
+   * Пусто — не витрина (или прежняя витрина: секция и варианты со стеклом
+   * читаются `vitrineOf` без этого поля, и отпечаток у них прежний).
+   */
+  vitrine?: VitrineSpec;
   /**
    * МАТЕРИАЛ КОРПУСА ЭТОГО МОДУЛЯ: ссылка на позицию каталога.
    *
@@ -1925,6 +1980,13 @@ export type MillworkOp =
   | { op: 'set_glass'; moduleId: string; glass: GlassKind | null }
   /** Стеклянные полки витрины (V3D-02): `true` — стекло, `false` — ЛДСП. */
   | { op: 'set_glass_shelves'; moduleId: string; glass: boolean }
+  /**
+   * ВИТРИНА (P1): спецификация модуля целиком; `null` — модуль больше не
+   * витрина. Проверка — `vitrineRefusal` ДО записи, отказ словами, ряд
+   * прежний. `heightMm` — своя высота корпуса витрины (то же поле модуля,
+   * что у шкафа ниже потолка), `null` снимает.
+   */
+  | { op: 'set_vitrine'; moduleId: string; vitrine: VitrineSpec | null; heightMm?: number | null; doors?: 1 | 2 }
   /** Система купе ряда — позиция каталога (`category: 'sliding'`); `null` снимает. */
   | { op: 'set_sliding_system'; itemId: string | null }
   /**

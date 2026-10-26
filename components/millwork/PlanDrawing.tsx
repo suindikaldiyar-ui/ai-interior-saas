@@ -5,6 +5,7 @@ import { CommLegend, COMM_SYMBOL } from './DrawingSymbols';
 import { GEOMETRY, isUpperRow } from '@/lib/millwork/modules';
 import { moduleDepthMm } from '@/lib/millwork/fill';
 import { runPlaces } from '@/lib/millwork/cabinetBoxes';
+import { vitrineOnCounter } from '@/lib/millwork/vitrine';
 import { countertopSlabs, slabPieces } from '@/lib/millwork/countertop';
 import { LINE_MM, unitsPerPaperMm } from '@/lib/millwork/sheetStyle';
 import type { CommPoint, LayoutIssue, Run } from '@/types/millwork';
@@ -240,6 +241,12 @@ export default function PlanDrawing({
           const x = PADDING_LEFT + place.unit.offsetMm * scale;
           const w = place.unit.widthMm * scale;
           const d = Math.round(place.depthM * 1000) * scale;
+          /*
+           * Витрина на столешнице (P1) стоит от рабочей поверхности вверх — её
+           * плоскость реза плана пересекает: она не висит над ним, а стоит в
+           * нём, поэтому сплошной линией, как нижний ряд.
+           */
+          const onCounter = vitrineOnCounter(place.unit);
 
           return (
             <rect
@@ -248,15 +255,16 @@ export default function PlanDrawing({
               /* Задняя плоскость у всех рядов одна — стена. */
               data-back-mm={0}
               data-front-mm={Math.round(place.depthM * 1000)}
+              {...(onCounter ? { 'data-vitrine-counter': '' } : {})}
               x={x}
               y={wallY}
               width={w}
               height={d}
               fill="none"
               stroke="var(--blueprint)"
-              strokeWidth={0.6}
-              strokeDasharray="4 3"
-              opacity={0.75}
+              strokeWidth={onCounter ? 0.9 : 0.6}
+              strokeDasharray={onCounter ? undefined : '4 3'}
+              opacity={onCounter ? 1 : 0.75}
             />
           );
         })}

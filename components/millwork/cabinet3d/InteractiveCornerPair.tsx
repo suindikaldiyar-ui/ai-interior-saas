@@ -62,6 +62,9 @@ type Props = {
   showHandles?: boolean;
   /** Нога Г-модуля слева — модуль в начале ряда (`lLegOf`). */
   legSide?: 'left' | 'right';
+  /** Дверцы витрины (P1): стекло и профиль рамки — материалы отрисовщика. */
+  glassMaterial?: THREE.Material;
+  profileMaterial?: THREE.Material;
 };
 
 export default function InteractiveCornerPair({
@@ -81,6 +84,8 @@ export default function InteractiveCornerPair({
   showFronts = true,
   showHandles = true,
   legSide,
+  glassMaterial,
+  profileMaterial,
 }: Props) {
   const economy = useInteriorStore((state) => state.economyMode);
   const idA = `${unit.id}:door:0`;
@@ -195,8 +200,27 @@ export default function InteractiveCornerPair({
 
       {active &&
         shown.map(({ leg, pose }, i) => {
-          if (pose.role === 'front') {
+          /* Рамка и стекло дверцы витрины (P1) — слой «Фасады», как полотно. */
+          if (pose.role === 'frame' || pose.role === 'glass') {
             if (!showFronts) return null;
+            return (
+              <mesh
+                key={`leaf-${i}`}
+                name={`leaf:${leg === 0 ? idA : idB}:${i}`}
+                ref={(mesh) => {
+                  meshes.current[i] = mesh;
+                }}
+                geometry={parts.box}
+                material={pose.role === 'glass' ? (glassMaterial ?? parts.metal) : (profileMaterial ?? parts.metal)}
+                position={pose.center}
+                rotation={[0, pose.yaw, 0]}
+                scale={pose.size}
+                renderOrder={pose.role === 'glass' ? 2 : 0}
+              />
+            );
+          }
+          if (pose.role === 'front') {
+            if (!showFronts || pose.panelless) return null;
             const relief = leg === 0 ? reliefA : reliefB;
             const look = leg === 0 ? lookA : lookB;
             return (

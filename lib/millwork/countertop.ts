@@ -3,6 +3,7 @@ import { bearsCountertop, counterSlabDepthMm, moduleDepthMm, rowStandardDepthMm,
 import { standsOnFloor } from './modules';
 import { obstaclesInBand, wallObstacles, type WallObstacle } from './obstacles';
 import { countertopMm, countertopStripOf, plinthMm, upperBottomMm, workTopMm } from './shop';
+import { vitrineOnCounter } from './vitrine';
 import type { Run } from '@/types/millwork';
 
 /**
@@ -371,6 +372,14 @@ export function apronSpans(run: RunLike): CounterSlab[] {
    * стена там закрыта препятствием, и плитка на нём — уже не фартук.
    */
   const inApron = obstaclesAt(run, workTopMm(run.production), upperBottomMm(run.production));
+  /*
+   * Витрина на столешнице (P1) закрывает стену от плиты до верхнего ряда:
+   * фартука за ней нет — плитку под мебель не кладут и не оплачивают.
+   */
+  const onCounter = (run.upperSegments ?? [])
+    .flatMap((segment) => segment.modules)
+    .filter((unit) => vitrineOnCounter(unit))
+    .map((unit) => ({ from: unit.offsetMm, to: unit.offsetMm + unit.widthMm }));
 
   /*
    * У угла фартук идёт до линии угла — до стены соседа, чья бы плита ни шла
@@ -395,7 +404,7 @@ export function apronSpans(run: RunLike): CounterSlab[] {
     const last = out.length - 1;
     out = out.map((slab, i) => (i === last && slab.toMm === edge ? { ...slab, toMm: run.lengthMm + lowerGapMm(run, 'end') } : slab));
   }
-  return withoutObstacles(out, inApron);
+  return withoutObstacles(withoutObstacles(out, inApron), onCounter);
 }
 
 /** Сколько фартука, мм — то же число в сцене и в смете. */
@@ -432,6 +441,8 @@ export function upperNicheSpans(run: Run): NicheSpan[] {
         (unit.kind === 'upper' || unit.kind === 'corner_upper') &&
         unit.section !== 'mezzanine' &&
         !unit.overhead &&
+        /* Витрина на столешнице (P1) не висит: тени-ниши под ней нет. */
+        !vitrineOnCounter(unit) &&
         unit.widthMm > 0,
     )
     .map((unit) => ({

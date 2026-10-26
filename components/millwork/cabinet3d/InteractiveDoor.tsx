@@ -78,6 +78,8 @@ type Props = {
   panelless?: boolean;
   /** Стекло этой двери — вида, выбранного у модуля (`glassLook`). Нет — прежнее стекло сцены. */
   glassMaterial?: THREE.Material;
+  /** Рамка двери витрины (P1) — покрытия, выбранного у модуля (`profileLook`). Нет — металл сцены. */
+  profileMaterial?: THREE.Material;
   /**
    * СЛОЙ «ФАСАДЫ» (STAGE A): выключен — полотна в кадре нет, но створка
    * по-прежнему ходит, и «седоки» включённых слоёв (петли в виде «только
@@ -108,6 +110,7 @@ export default function InteractiveDoor({
   riders,
   panelless = false,
   glassMaterial,
+  profileMaterial,
   showPanel = true,
 }: Props) {
   const economy = useInteriorStore((state) => state.economyMode);
@@ -282,7 +285,13 @@ export default function InteractiveDoor({
             key={`rider-${i}`}
             name={`rider:${box.node ?? 'metal'}`}
             geometry={parts.box}
-            material={box.material === 'glass' ? (glassMaterial ?? parts.glass) : parts.metal}
+            material={
+              box.material === 'glass'
+                ? (glassMaterial ?? parts.glass)
+                : box.profile && profileMaterial
+                  ? profileMaterial
+                  : parts.metal
+            }
             renderOrder={box.material === 'glass' ? 2 : 0}
             position={at}
             scale={box.scale}

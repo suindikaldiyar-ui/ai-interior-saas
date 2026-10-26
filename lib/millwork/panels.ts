@@ -1,4 +1,5 @@
-import { shelvesAreGlass } from './glass';
+import { shelvesAreGlass, vitrineDoorKind } from './glass';
+import { vitrineOf } from './vitrine';
 import { moduleCarcassHeightMm, moduleDepthMm } from './fill';
 import { carcassHeightMm, shopOf } from './shop';
 import { millingLink, type MillingItem } from './milling';
@@ -201,6 +202,33 @@ export function edgeSides(panel: Pick<Panel, 'edges'>): EdgeSide[] {
 /** Лист задней стенки: ХДФ, декор в продукте не выбирается (CUT-01). */
 const BACK_STOCK: PanelStock = { kind: 'hdf', decor: null };
 
+/**
+ * ШИРИНА СТВОРКИ ПО ПРОЁМУ, мм — одна формула на фасад из листа и на дверь
+ * витрины по наружному размеру (P1): зазор по краям и между створками.
+ */
+export function facadeDoorWidthMm(openMm: number, doors: number, gapMm: number): number {
+  return Math.round((openMm - gapMm * (doors + 1)) / doors);
+}
+
+/**
+ * РАЗМЕР ПОЛКИ ПРЯМОГО КОРПУСА, мм — одна формула на полку из листа и на
+ * стеклянную полку (P1): уже проёма и мельче корпуса на припуски цеха.
+ */
+export function shelfSizeMm(widthMm: number, depthMm: number, production: ProductionSettings): { lengthMm: number; widthMm: number } {
+  const allow = production.allowances ?? DEFAULT_ALLOWANCES;
+  return { lengthMm: widthMm - 2 * production.carcassMm - allow.shelfSideMm, widthMm: depthMm - allow.shelfDepthMm };
+}
+
+/**
+ * ФАСАДЫ Г-МОДУЛЯ, мм (слой 55): А — до плоскости корпуса соседа, Б — от лица
+ * А до боковины Б. Одна формула на фасады из листа и на двери витрины (P1).
+ */
+export function lCornerFrontWidthsMm(unit: Pick<Module, 'widthMm'>, depthMm: number, production: ProductionSettings): { a: number; b: number } {
+  const legB = Math.max(0, unit.widthMm - depthMm);
+  const gap = production.frontGapMm;
+  return { a: legB - gap, b: legB - production.frontMm - gap };
+}
+
 /** Кромка: видимые торцы толстой, скрытые — тонкой. */
 function edgeType(production: ProductionSettings): Panel['edgeType'] {
   return production.visibleEdgeMm === 1 ? '1' : '2';
@@ -367,26 +395,37 @@ function moduleBodyPanels(
     }
   }
 
+  /*
+   * ВИТРИНА (P1): часть корпуса из стекла — не деталь листа. Она уходит из
+   * раскроя ЛДСП и встаёт стеклом в `vitrineParts` (та же функция считает её
+   * в смете и рисует в сцене). Прозрачной плиты здесь не бывает.
+   */
+  const vit = vitrineOf(unit);
+  const board = (part: 'left' | 'right' | 'top' | 'bottom') => !vit || vit[part] === 'board';
+  const boardSides = (board('left') ? 1 : 0) + (board('right') ? 1 : 0);
+
   if (!lCorner) {
-  push({
-    name: SIDE_PANEL_NAME,
-    material,
-    stock,
-    thicknessMm: t,
-    lengthMm: heightMm,
-    widthMm: depthMm,
-    qty: 2,
-    // Видимый торец у боковины один — передний.
-    edges: { long: 1, short: 0 },
-    edgeType: thick,
-    grain: 'along',
-  });
+  if (boardSides > 0) {
+    push({
+      name: SIDE_PANEL_NAME,
+      material,
+      stock,
+      thicknessMm: t,
+      lengthMm: heightMm,
+      widthMm: depthMm,
+      qty: boardSides,
+      // Видимый торец у боковины один — передний.
+      edges: { long: 1, short: 0 },
+      edgeType: thick,
+      grain: 'along',
+    });
+  }
 
   /*
    * У модуля под мойку дна нет: там сифон. Деталь не должна попасть
    * в раскрой — цех распилит лист и выбросит его.
    */
-  if (hasBottom(unit)) {
+  if (hasBottom(unit) && board('bottom')) {
     push({
       name: BOTTOM_PANEL_NAME,
       material,
@@ -401,21 +440,23 @@ function moduleBodyPanels(
     });
   }
 
-  push({
-    name:
-      unit.kind === 'base' || unit.kind === 'corner_base'
-        ? TOP_RAIL_PANEL_NAME
-        : TOP_PANEL_NAME,
-    material,
-    stock,
-    thicknessMm: t,
-    lengthMm: inner,
-    widthMm: depthMm,
-    qty: 1,
-    edges: { long: 1, short: 0 },
-    edgeType: thick,
-    grain: 'across',
-  });
+  if (board('top')) {
+    push({
+      name:
+        unit.kind === 'base' || unit.kind === 'corner_base'
+          ? TOP_RAIL_PANEL_NAME
+          : TOP_PANEL_NAME,
+      material,
+      stock,
+      thicknessMm: t,
+      lengthMm: inner,
+      widthMm: depthMm,
+      qty: 1,
+      edges: { long: 1, short: 0 },
+      edgeType: thick,
+      grain: 'across',
+    });
+  }
 
   /*
    * ОТСЕКИ (R01): полки и перегородки — из `bayLayout`, той же геометрии,
@@ -425,7 +466,8 @@ function moduleBodyPanels(
    */
   if (bays) {
     for (const bay of bays.bays) {
-      if (bay.shelves.length === 0) continue;
+      /* Стеклянные полки отсеков (P1) — стекло в `vitrineParts`, из листа их не режут. */
+      if (bay.shelves.length === 0 || shelvesAreGlass(unit)) continue;
       push({
         name: SHELF_PANEL_NAME,
         material: shelfMaterial,
@@ -488,13 +530,14 @@ function moduleBodyPanels(
    */
   const shelves = bays || shelvesAreGlass(unit) ? 0 : (unit.fill?.shelves.length ?? 0);
   if (shelves > 0) {
+    const size = shelfSizeMm(unit.widthMm, depthMm, production);
     push({
       name: SHELF_PANEL_NAME,
       material: shelfMaterial,
       stock: shelfStock,
       thicknessMm: t,
-      lengthMm: inner - allow.shelfSideMm,
-      widthMm: depthMm - allow.shelfDepthMm,
+      lengthMm: size.lengthMm,
+      widthMm: size.widthMm,
       qty: shelves,
       edges: { long: 1, short: 0 },
       edgeType: thick,
@@ -519,18 +562,21 @@ function moduleBodyPanels(
 
   // Задняя стенка: вкладная садится в паз, накладная кроется по габариту.
   const backInset = production.backMount === 'inset' ? allow.backInsetMm : 0;
-  push({
-    name: BACK_PANEL_NAME,
-    material: `ХДФ ${production.backMm}`,
-    stock: BACK_STOCK,
-    thicknessMm: production.backMm,
-    lengthMm: heightMm - backInset,
-    widthMm: unit.widthMm - backInset,
-    qty: 1,
-    edges: { long: 0, short: 0 },
-    edgeType: '0.4',
-    grain: 'none',
-  });
+  /* Стеклянная или зеркальная задняя стенка витрины — стекло; без задней стенки — ничего (P1). */
+  if (!vit || vit.back === 'board') {
+    push({
+      name: BACK_PANEL_NAME,
+      material: `ХДФ ${production.backMm}`,
+      stock: BACK_STOCK,
+      thicknessMm: production.backMm,
+      lengthMm: heightMm - backInset,
+      widthMm: unit.widthMm - backInset,
+      qty: 1,
+      edges: { long: 0, short: 0 },
+      edgeType: '0.4',
+      grain: 'none',
+    });
+  }
   }
 
   const gap = production.frontGapMm;
@@ -715,8 +761,14 @@ function moduleBodyPanels(
      * меняется, как она висит.
      */
     const second = unit.kind === 'corner_upper' && unit.cornerDoors === 'pair' ? 'door:1' : 'door:0';
-    pushFront(legName(FACADE_PANEL_NAME, 'А'), heightMm - gap, legB - gap, ['door:0']);
-    pushFront(legName(FACADE_PANEL_NAME, 'Б'), heightMm - gap, legB - production.frontMm - gap, [second]);
+    /* Пара дверец витрины (P1) — стекло в рамке: покупные двери в `vitrineParts`, не фасад из листа. */
+    const glassDoor = (leaf: string) => {
+      const kind = vitrineDoorKind(unit, leaf, run);
+      return kind === 'alu' || kind === 'glass';
+    };
+    const legs = lCornerFrontWidthsMm(unit, depthMm, production);
+    if (!glassDoor('door:0')) pushFront(legName(FACADE_PANEL_NAME, 'А'), heightMm - gap, legs.a, ['door:0']);
+    if (!glassDoor(second)) pushFront(legName(FACADE_PANEL_NAME, 'Б'), heightMm - gap, legs.b, [second]);
     return panels;
   }
 
@@ -791,9 +843,19 @@ function moduleBodyPanels(
     const openMm = blind ? openFrontMm(unit, run) : unit.widthMm;
     const doors = blind ? 1 : unit.doorCount;
     if (openMm > 0) {
-      const doorWidth = Math.round((openMm - gap * (doors + 1)) / doors);
+      const doorWidth = facadeDoorWidthMm(openMm, doors, gap);
+      /*
+       * Дверь витрины из стекла (в алюминиевой рамке или без рамки) — покупное
+       * изделие, а не фасад из листа: она в `vitrineParts`, а здесь не режется
+       * (P1). До P1 у вариантов со стеклом резался фасад ЛДСП И оплачивалось
+       * стекло — клиент платил за дверь дважды.
+       */
+      const cut = Array.from({ length: doors }, (_, i) => `door:${i}`).filter((leaf) => {
+        const kind = vitrineDoorKind(unit, leaf, run);
+        return kind !== 'alu' && kind !== 'glass';
+      });
       // У фасада видны все четыре торца — если кромка на нём вообще есть.
-      pushFront(FACADE_PANEL_NAME, heightMm - gap, doorWidth, Array.from({ length: doors }, (_, i) => `door:${i}`));
+      if (cut.length > 0) pushFront(FACADE_PANEL_NAME, heightMm - gap, doorWidth, cut);
     }
   }
 

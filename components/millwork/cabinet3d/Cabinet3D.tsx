@@ -19,6 +19,7 @@ import { HandleBatch, handleGeometryKey } from './handleMesh';
 import { movingParts } from './motion';
 import { useCabinetParts, useCarcassMaterials, useFrontMaterials, useSurfaceLook } from './parts';
 import { useGlassMaterials } from './glassLook';
+import { useProfileMaterials } from './profileLook';
 import { DEFAULT_FRONT, frontKey } from '@/lib/millwork/frontMaterial';
 import type { FrontSpec } from '@/types/millwork';
 import { materialSurfaceLook, surfaceLook } from '@/lib/millwork/surfaces';
@@ -48,7 +49,7 @@ import { hardwareCatalog } from '@/lib/millwork/hardware';
 import { useInteriorStore } from '@/store/useInteriorStore';
 import { DEFAULT_PRODUCTION, type ProductionSettings } from '@/types/catalog';
 import { DEFAULT_SCENE_VIEW, type SceneView } from '@/lib/cameraFraming';
-import type { GlassKind, Module, Run } from '@/types/millwork';
+import type { GlassKind, Module, ProfileFinish, Run } from '@/types/millwork';
 
 /**
  * Интерактивный гарнитур.
@@ -302,6 +303,7 @@ export default function Cabinet3D({
 
   /* Стекло витрин (V3D-02): по виду, у САПР-вида и «Интерьера» свои материалы. */
   const glass = useGlassMaterials(design);
+  const profileMaterials = useProfileMaterials(design);
 
   /*
    * Фартук — это СТЕНА, а не мебель: он и живёт отдельным мешем за
@@ -576,6 +578,8 @@ export default function Cabinet3D({
      */
     const glassKinds = new Map<GlassKind, PartBox[]>();
     const glassShelves: PartBox[] = [];
+    /* ПРОФИЛЬ ВИТРИНЫ (P1) — пачка на покрытие: рамка двери и каркас несут `PartBox.profile`. */
+    const profiles = new Map<ProfileFinish, PartBox[]>();
 
     for (const box of boxes) {
       if (box.part && active.has(box.part)) continue;
@@ -621,9 +625,15 @@ export default function Cabinet3D({
         else glassKinds.set(box.glass, [box]);
         continue;
       }
+      if (box.material === 'metal' && box.profile) {
+        const list = profiles.get(box.profile);
+        if (list) list.push(box);
+        else profiles.set(box.profile, [box]);
+        continue;
+      }
       groups[box.material].push(box);
     }
-    return { groups, fronts, carcass, inner, reliefFronts, handles, glassKinds, glassShelves };
+    return { groups, fronts, carcass, inner, reliefFronts, handles, glassKinds, glassShelves, profiles };
   }, [boxes, activeParts, layers]);
 
   /*
@@ -997,6 +1007,17 @@ export default function Cabinet3D({
           castShadow={shadows && kind === 'mirror'}
         />
       ))}
+      {/* Профиль витрины (P1): рамка двери и каркас — пачкой на покрытие, имя `profile:<покрытие>` для приёмки. */}
+      {Array.from(grouped.profiles.entries()).map(([finish, list]) => (
+        <InstancedBoxes
+          key={`profile-${finish}`}
+          name={`profile:${finish}`}
+          boxes={list}
+          geometry={parts.box}
+          material={profileMaterials[finish]}
+          castShadow={shadows}
+        />
+      ))}
 
       {slides.map((slide) => {
         const own = (boxesByPart.get(slide.id) ?? []).filter((box) => boxShown(box, layers));
@@ -1038,6 +1059,7 @@ export default function Cabinet3D({
           /* В «Интерьере» ленту витрины и её свет рисует освещение комнаты. */
           displayLit={displayLit && !design}
           glass={glass}
+          profiles={profileMaterials}
           onActive={handleActive}
           frontMaterial={frontMaterials.get(frontKey(frontWithMilling(entry.unit, run)))}
           leafLook={(leaf) => {

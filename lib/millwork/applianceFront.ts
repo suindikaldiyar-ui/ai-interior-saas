@@ -193,10 +193,10 @@ export function moduleFronts(unit: Module, heightMm: number): ModuleFronts {
   }
 
   /*
-   * ВИТРИНА ЗАКРЫТА СТЕКЛОМ, А НЕ ГЛУХОЙ СТВОРКОЙ.
-   *
-   * Полотно у неё есть и в раскрое, и в фурнитуре — на петлях, как
-   * обычная дверца; рисует его сцена своим стеклом, а не этой пачкой.
+   * ВИТРИНА ЗАКРЫТА СТЕКЛОМ, А НЕ ГЛУХОЙ СТВОРКОЙ — но створка у неё есть:
+   * на петлях, с ручкой, как обычная дверца (P1). Чем она сделана — стекло
+   * в алюминиевой рамке, рама KIRA или стекло без рамки — решает
+   * `vitrineDoorKind`, а не этот список.
    */
   if (hasVisibleWholeAppliance(unit) || unit.column) return empty;
 
@@ -249,6 +249,13 @@ export function hasVisibleWholeAppliance(unit: Module): boolean {
  * там створки нет ни в раскрое, ни в сцене, ни в смете.
  */
 function doorCountOf(unit: Module): number {
+  /*
+   * СЕКЦИЯ-ВИТРИНА (P1): её стеклянная дверь хранится не створкой
+   * (`frontType: 'none'`, чтобы ей не резали фасад ЛДСП), но висит она на
+   * петлях и за ручку её открывают — створка одна. До P1 здесь был ноль, и
+   * петель с ручкой для этой двери не покупал никто.
+   */
+  if (unit.section === 'glass_display' && unit.frontType === 'none') return 1;
   if (unit.frontType === 'drawers' || unit.frontType === 'none') return 0;
   return Math.max(1, unit.doorCount);
 }

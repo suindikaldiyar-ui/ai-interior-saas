@@ -472,6 +472,35 @@ export function cuttingPdfPages(plan: CuttingPlan, meta: PdfMeta): string[] {
     );
   }
 
+  /* ── Стекло и покупные изделия витрин (P1): не на листах — заказ у стекольщика и поставщика профиля ── */
+  if (plan.outside.length > 0) {
+    const outsideRows = plan.outside.map((part) => [
+      clip(part.moduleLabel, 16),
+      clip(part.name, 40),
+      `${part.lengthMm} × ${part.widthMm}`,
+      part.thicknessMm === null ? 'не выбр.' : `${part.thicknessMm}`,
+      clip(part.material, 30),
+      `${part.qty}`,
+      clip(part.unconfirmed.join('; ') || '—', 52),
+    ]);
+    const outsideColumns: Column[] = [
+      { title: 'Модуль', x: 10 },
+      { title: 'Деталь', x: 40 },
+      { title: 'Д × Ш', x: 128, anchor: 'end' },
+      { title: 'Т', x: 142, anchor: 'end' },
+      { title: 'Материал', x: 146 },
+      { title: 'Шт.', x: 206, anchor: 'end' },
+      { title: 'Требует подтверждения', x: 210 },
+    ];
+    for (let from = 0; from < outsideRows.length; from += perPage) {
+      bodies.push(
+        `<text x="10" y="13" font-size="5" font-weight="700">Стекло и покупные изделия</text>` +
+          `<text x="100" y="13" font-size="${PAGE_FONT}">Из плиты не режутся — заказ у стекольщика и поставщика профиля; отверстий и обработки стекла здесь нет</text>` +
+          table(outsideColumns, outsideRows.slice(from, from + perPage), 22, 3.6, 2.4),
+      );
+    }
+  }
+
   return bodies.map((body, i) => page(body, meta, i + 1, bodies.length));
 }
 

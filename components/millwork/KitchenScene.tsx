@@ -4,6 +4,7 @@ import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { KITCHEN } from '@/lib/kitchen';
 import { moduleCarcassHeightMm } from '@/lib/millwork/fill';
+import { vitrineMeta } from '@/lib/millwork/promptFronts';
 import type { RunShape } from '@/lib/millwork/composition';
 import { useInteriorStore } from '@/store/useInteriorStore';
 import Cabinet3D from './cabinet3d/Cabinet3D';
@@ -190,6 +191,8 @@ export default function KitchenScene({
                 drawerHeights: unit.fill.drawerHeights,
               }
             : undefined,
+          // Витрина (P1): конструкция, стекло, профиль, подсветка — `vitrineOf`.
+          vitrine: vitrineMeta(unit),
         })),
         /*
          * Верхний ряд отдельным списком: по одному clay-кадру модель
@@ -236,6 +239,8 @@ export default function KitchenScene({
                   drawerHeights: unit.fill.drawerHeights,
                 }
               : undefined,
+            // Витрина (P1) живёт и в верхнем ряду — тем же разбором.
+            vitrine: vitrineMeta(unit),
           })),
           /*
            * Вытяжка живёт в верхнем ряду, а не в списке модулей ряда.

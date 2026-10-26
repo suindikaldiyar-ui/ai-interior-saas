@@ -114,6 +114,7 @@ import { stage01Checks } from './verify-stage01';
 import { lightingChecks } from './verify-lighting';
 import { stageAChecks } from './verify-stage-a';
 import { p0CornerChecks } from './verify-p0-corners';
+import { p1VitrineChecks } from './verify-p1-vitrines';
 import { runFingerprint } from '../lib/millwork/fingerprint';
 import { surfaceFinish, surfaceLook } from '../lib/millwork/surfaces';
 import { GROUP_ORDER, estimateGroups, groupsTotal } from '../lib/millwork/estimateGroups';
@@ -348,6 +349,7 @@ import SectionDrawing, { hasFilling } from '../components/millwork/SectionDrawin
 import PlanDrawing from '../components/millwork/PlanDrawing';
 import AxonometryDrawing from '../components/millwork/AxonometryDrawing';
 import { describeFront, interiorVisible } from '../lib/millwork/promptFronts';
+import { vitrineOf } from '../lib/millwork/vitrine';
 import {
   REQUIRED_RATE_KEYS,
   TYPICAL_PRICE_LIST,
@@ -5508,8 +5510,16 @@ console.log('\nКаждый вариант виден на чертеже');
     insideSignatures.set(inside, spec.title);
   }
 
-  /* Витрина: стекло, полки сквозь него и подсветка — все три обязательны. */
-  const display = applyVariant({ ...upper, appliance: undefined }, 'upper_glass');
+  /*
+   * Витрина: стекло, полки сквозь него и подсветка — все три обязательны.
+   *
+   * P1: проверка шла по «Стеклу в раме» — у него подсветки нет ни в смете, ни
+   * в сцене, а рисунок её показывал: лист обещал ленту, которую никто не
+   * покупал. Подсветка на листе теперь — `vitrineOf(...).led`, тот же ответ,
+   * что у сметы и сцены; «Витрина» (`upper_display`) с лентой в смете её
+   * рисует, «Стекло в раме» — нет.
+   */
+  const display = applyVariant({ ...upper, appliance: undefined }, 'upper_display');
   const displayFront = frontGlyph(display, 'fronts');
   check(
     'у витрины есть стекло, рама, полки и подсветка',
@@ -5517,6 +5527,15 @@ console.log('\nКаждый вариант виден на чертеже');
       displayFront.some((el) => el.kind === kind),
     ),
     glyphSignature(displayFront),
+  );
+  const framedGlass = applyVariant({ ...upper, appliance: undefined }, 'upper_glass');
+  const framedGlassFront = frontGlyph(framedGlass, 'fronts');
+  check(
+    'у «Стекла в раме» стекло, рама и полки есть, а ленты на листе нет — её нет ни в смете, ни в сцене',
+    ['glass', 'frame', 'shelf'].every((kind) => framedGlassFront.some((el) => el.kind === kind)) &&
+      !framedGlassFront.some((el) => el.kind === 'led') &&
+      vitrineOf(framedGlass)?.led === 'off',
+    glyphSignature(framedGlassFront),
   );
   check(
     'стекло не закрашено сплошной заливкой',
@@ -28709,24 +28728,37 @@ import { milledGrip as kiraMilledGrip } from '../lib/millwork/opening';
   const framedGlass = applyModel(glassy.run, 'KIRA-V2', 'door:0', plainUpper.id, kOps);
   const kBoxes = (run: Run) => runBoxes(run, { thicknessMm: 16, frontThicknessMm: DEFAULT_PRODUCTION.frontMm, gapMm: DEFAULT_PRODUCTION.frontGapMm });
   const panes = (run: Run) => kBoxes(run).filter((b) => b.material === 'glass' && b.node === 'glass' && b.part === `${plainUpper.id}:door:0`).length;
+  /*
+   * P1: «Стекло в раме» без рамы KIRA — витрина, дверь из стекла в алюминиевой
+   * рамке (4 планки профиля и стекло). До P1 здесь стояло «стекла 0»: дверь
+   * рисовалась глухим фасадом ЛДСП, а стекло оплачивалось — дефект, который
+   * проверка закрепляла. С рамой KIRA дверь — фасад МДФ с рисунком, стекло за
+   * его окнами, планок профиля нет.
+   */
+  const profileBars = (run: Run) => kBoxes(run).filter((b) => b.node === 'frame' && b.part === `${plainUpper.id}:door:0`).length;
+  const mdfDoor = (run: Run) => kBoxes(run).some((b) => b.material === 'front' && b.relief && b.part === `${plainUpper.id}:door:0`);
   const glassQty = (run: Run) =>
     buildEstimate(run, 'optimal', MDF_RATES, [], undefined, DEFAULT_PRODUCTION, new Map(), kiraMillings).lines.find((l) => l.key === 'glass_front')?.quantity ?? 0;
   const handleUp = applyModel(kitchen, 'KIRA-IR-2', 'door:0', otherUpper.id, kOps);
   const upperOrient = kBoxes(handleUp.run).find((b) => b.part === `${otherUpper.id}:door:0` && b.material === 'front')?.reliefOrient;
   check(
-    'KIRA.K8 рама витрины: на глухой шкаф спальни «В2» не ложится — отказ словами (рама под стекло, нужен вариант со стеклом), ряд прежний; на верхний шкаф «Стекло в раме» — ложится, за окнами рамы стекло той же створки; стекла в смете столько же, сколько считал вариант шкафа; у верхнего шкафа ручка ИР — у нижней кромки (рисунок развёрнут по вертикали)',
+    'KIRA.K8 рама витрины: на глухой шкаф спальни «В2» не ложится — отказ словами (рама под стекло, нужен вариант со стеклом), ряд прежний; на верхний шкаф «Стекло в раме» — ложится: до рамы дверь — стекло в алюминиевой рамке (4 планки профиля, стекло), с рамой — фасад МДФ с рисунком и стекло за окнами той же створки, планок профиля нет; стекла в смете столько же, сколько считал вариант шкафа; у верхнего шкафа ручка ИР — у нижней кромки (рисунок развёрнут по вертикали)',
     v2 !== null &&
       /под стекло/.test(v2.warnings[0] ?? '') &&
       /Стекло в раме/.test(v2.warnings[0] ?? '') &&
       v2.run.fingerprint === startK.fingerprint &&
       framedGlass.warnings.length === 0 &&
-      panes(glassy.run) === 0 &&
+      panes(glassy.run) === 1 &&
+      profileBars(glassy.run) === 4 &&
+      !mdfDoor(glassy.run) &&
       panes(framedGlass.run) === 1 &&
+      profileBars(framedGlass.run) === 0 &&
+      mdfDoor(framedGlass.run) &&
       glassQty(glassy.run) > 0 &&
       glassQty(framedGlass.run) === glassQty(glassy.run) &&
       handleUp.warnings.length === 0 &&
       upperOrient?.flipY === true,
-    `спальня: «${v2?.warnings[0] ?? ('refusal' in v2plan ? v2plan.refusal : 'МОЛЧА')}» · стекло за рамой ${panes(glassy.run)} → ${panes(framedGlass.run)} · стекло в смете ${glassQty(glassy.run)} → ${glassQty(framedGlass.run)} м² · ИР 2 наверху ${JSON.stringify(upperOrient ?? null)}`,
+    `спальня: «${v2?.warnings[0] ?? ('refusal' in v2plan ? v2plan.refusal : 'МОЛЧА')}» · стекло ${panes(glassy.run)} → ${panes(framedGlass.run)}, планок профиля ${profileBars(glassy.run)} → ${profileBars(framedGlass.run)}, фасад МДФ ${mdfDoor(glassy.run)} → ${mdfDoor(framedGlass.run)} · стекло в смете ${glassQty(glassy.run)} → ${glassQty(framedGlass.run)} м² · ИР 2 наверху ${JSON.stringify(upperOrient ?? null)}`,
   );
 }
 
@@ -28744,6 +28776,9 @@ stageAChecks(check);
 
 /* ═══════════  P0: настоящие Г- и П-образные углы — владелец по уровням, пара дверец  ═══════════ */
 p0CornerChecks(check);
+
+/* ═══════════  P1: стеклянные витрины — три конструкции, место, двери, стекло, лента, производство  ═══════════ */
+p1VitrineChecks(check);
 
 Promise.allSettled(asyncChecks).then((results) => {
   for (const result of results) {

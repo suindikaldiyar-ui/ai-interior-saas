@@ -1223,6 +1223,62 @@ function FrameProbe({ rows, room, design }: { rows: SceneRow[]; room: Room | nul
     };
 
     /*
+     * ВИТРИНЫ ПО НАРИСОВАННОМУ (P1): пачки стекла по виду (`glass:<вид>`,
+     * `glass:shelf`), пачки профиля по покрытию (`profile:<покрытие>`),
+     * свечение лент (`vitrine-led`) и то, что едет с открытой дверью
+     * (`rider:frame`, `rider:glass`). Граф сцены, а не данные: приёмка сверяет
+     * его с тем, что посчитал движок тем же путём экрана.
+     */
+    (w as { __mwCadVitrine?: () => unknown }).__mwCadVitrine = () => {
+      const packs: { name: string; count: number; opacity: number; transmission: number; color: string; metalness: number; boundsMm: number[] | null }[] = [];
+      const matrix = new THREE.Matrix4();
+      const at = new THREE.Vector3();
+      let led = 0;
+      /* В «Интерьере» ленту рисует свет комнаты (`DesignLights`): диффузор полосы и горит ли он. */
+      let diffusers = 0;
+      let lit = 0;
+      let riderFrames = 0;
+      let riderGlass = 0;
+      scene.traverse((object) => {
+        const mesh = object as THREE.Mesh & { count?: number };
+        if (!mesh.isMesh || mesh.visible === false) return;
+        if (mesh.name.startsWith('glass:') || mesh.name.startsWith('profile:')) {
+          const material = mesh.material as THREE.MeshPhysicalMaterial;
+          /* Где экземпляры стоят в мире, мм: центры по матрицам — пачка, нарисованная не там, видна числом. */
+          let boundsMm: number[] | null = null;
+          const instanced = mesh as unknown as THREE.InstancedMesh;
+          if (instanced.isInstancedMesh) {
+            mesh.updateWorldMatrix(true, false);
+            for (let i = 0; i < instanced.count; i += 1) {
+              instanced.getMatrixAt(i, matrix);
+              at.setFromMatrixPosition(matrix).applyMatrix4(mesh.matrixWorld);
+              const p = [at.x, at.y, at.z].map((v) => Math.round(v * 1000));
+              boundsMm = boundsMm ? [0, 1, 2].map((k) => Math.min(boundsMm![k], p[k])).concat([0, 1, 2].map((k) => Math.max(boundsMm![k + 3], p[k]))) : [...p, ...p];
+            }
+          }
+          packs.push({
+            name: mesh.name,
+            count: typeof mesh.count === 'number' ? mesh.count : 1,
+            opacity: Math.round(material.opacity * 1000) / 1000,
+            transmission: Math.round((material.transmission ?? 0) * 1000) / 1000,
+            color: `#${material.color.getHexString()}`,
+            metalness: Math.round((material.metalness ?? 0) * 1000) / 1000,
+            boundsMm,
+          });
+        }
+        if (mesh.name === 'vitrine-led') led += 1;
+        if (mesh.name === 'led:diffuser:display') {
+          diffusers += 1;
+          const glow = mesh.material as THREE.MeshStandardMaterial;
+          if (glow.emissiveIntensity > 0 && Math.max(glow.emissive.r, glow.emissive.g, glow.emissive.b) > 0) lit += 1;
+        }
+        if (mesh.name === 'rider:frame') riderFrames += 1;
+        if (mesh.name === 'rider:glass') riderGlass += 1;
+      });
+      return { packs, led, diffusers, lit, riderFrames, riderGlass };
+    };
+
+    /*
      * МЕТАЛЛ НА ФАСАДАХ ПО НАРИСОВАННОМУ (слой 58): экземпляров в пачках
      * `metal` — ручки, чашки петель, штанги. Фасад с фрезерованной ручкой
      * (`milledGrip`) скобы не несёт — пачка становится меньше ровно на неё.
@@ -1950,6 +2006,7 @@ function FrameProbe({ rows, room, design }: { rows: SceneRow[]; room: Room | nul
       delete w.__mwCadSurfaces;
       delete w.__mwCadReliefs;
       delete w.__mwCadMetal;
+      delete (w as { __mwCadVitrine?: unknown }).__mwCadVitrine;
       delete w.__mwHandles;
       delete w.__mwCadState;
       delete (w as { __mwCadBays?: unknown }).__mwCadBays;

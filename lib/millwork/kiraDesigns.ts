@@ -629,7 +629,7 @@ const RIBBED: Record<string, KiraDesignEntry> = {
 
 /**
  * Рама витрины: окно со шпросами, края окна — профилем. Ставится только на
- * модуль-витрину (`vitrineRefusal`): стекло в смете считает вариант шкафа.
+ * модуль-витрину (`vitrineFrameRefusal`): прежний вариант со стеклом или витрину из панели.
  */
 const vitrine = (opening: ReliefShape, rim: ReliefShape, bars: ReliefPath[], barW: number): ReliefDesign =>
   design(level(rim, 3, 8, 'cove'), { op: 'cut', shape: opening, ...(bars.length ? { bars: { paths: bars, w: barW } } : {}) });

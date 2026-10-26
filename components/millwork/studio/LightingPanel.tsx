@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import type { MillworkOp, Module, Run } from '@/types/millwork';
+import type { MillworkOp, Module, Run, VitrineLed } from '@/types/millwork';
+import { VITRINE_LEDS, VITRINE_LED_TITLE, vitrineDoorCount, vitrinePatched } from '@/lib/millwork/vitrine';
 import type { ProductionSettings } from '@/types/catalog';
 import {
   AMBIENT_RIG,
@@ -17,6 +18,7 @@ import {
   applyScene,
   daylightOf,
   displayKey,
+  displayLedLayout,
   headKey,
   headOn,
   lightingPlan,
@@ -619,12 +621,25 @@ export default function LightingPanel({
             </p>
           )}
           {plan.displays.map((display) => {
-            const own: DisplayLight = current.displays[display.moduleId] ?? { brightness: 70, kelvin: DEFAULT_KELVIN, mode: 'contour' };
+            const own: DisplayLight = current.displays[display.moduleId] ?? { brightness: 70, kelvin: DEFAULT_KELVIN };
             const setOwn = (patch: Partial<DisplayLight>) =>
               commit({ ...current, displays: { ...current.displays, [display.moduleId]: { ...own, ...patch } } });
             const unit = allModules.find((m) => m.id === display.moduleId) ?? null;
             const onActive = activeModules.some((m) => m.id === display.moduleId);
             const door = `${display.moduleId}:door:0`;
+            /* Раскладка ленты — изделие витрины (P1): правка пишет модуль и снимает прежний предпросмотр. */
+            const layout = unit ? displayLedLayout(unit, current.displays[display.moduleId]) : 'contour';
+            const setLayout = (led: VitrineLed) => {
+              if (!unit) return;
+              const spec = vitrinePatched(unit, { led });
+              if (!spec) return;
+              onOps([{ op: 'set_vitrine', moduleId: unit.id, vitrine: spec }]);
+              if (own.mode) {
+                const { mode: _mode, ...rest } = own;
+                void _mode;
+                commit({ ...current, displays: { ...current.displays, [display.moduleId]: rest } });
+              }
+            };
             return (
               <div key={display.moduleId} className="mb-2 rounded-[var(--r-panel)] bg-surface-2 p-2" data-light-vitrine={display.moduleId}>
                 <p className="text-[13px] font-medium">
@@ -632,7 +647,7 @@ export default function LightingPanel({
                 </p>
                 <div className="mt-2 flex flex-wrap gap-1">
                   <OnOff name={displayKey(display.moduleId)} title="LED витрины" on={sourceOn(current, displayKey(display.moduleId))} onChange={(on) => commit(withOn(current, displayKey(display.moduleId), on))} />
-                  {unit?.section === 'glass_display' && (
+                  {unit && vitrineDoorCount(unit) > 0 && (
                     <button
                       type="button"
                       data-light-door={door}
@@ -647,24 +662,23 @@ export default function LightingPanel({
                 <Range name={`display-brightness`} label="Яркость предпросмотра" unit="%" min={5} max={100} value={own.brightness} onChange={(v) => setOwn({ brightness: v })} />
                 <Kelvin name="display" value={own.kelvin} onChange={(kelvin) => setOwn({ kelvin })} />
                 <div className="mt-2 flex flex-wrap gap-1" data-light-display-mode>
-                  {(
-                    [
-                      ['contour', 'по контуру'],
-                      ['shelves', 'под полками'],
-                    ] as const
-                  ).map(([mode, title]) => (
+                  {VITRINE_LEDS.filter((mode) => mode !== 'off').map((mode) => (
                     <button
                       key={mode}
                       type="button"
                       data-display-mode={mode}
-                      aria-pressed={own.mode === mode}
-                      onClick={() => setOwn({ mode })}
-                      className={`mw-btn ${own.mode === mode ? 'mw-btn-primary' : 'mw-btn-ghost'} text-[12px]`}
+                      aria-pressed={layout === mode}
+                      disabled={!onActive}
+                      onClick={() => setLayout(mode)}
+                      className={`mw-btn ${layout === mode ? 'mw-btn-primary' : 'mw-btn-ghost'} text-[12px] disabled:opacity-40`}
                     >
-                      {title}
+                      {VITRINE_LED_TITLE[mode].toLowerCase()}
                     </button>
                   ))}
                 </div>
+                <p className="mt-1 text-[12px] leading-snug text-graphiteMw" data-light-display-layout-hint>
+                  Раскладка ленты — изделие витрины: метры ленты в смете считаются по ней. Яркость и температура — предпросмотр.
+                </p>
                 {unit && moduleShowsGlass(unit, activeRun) && (
                   <div className="mt-2" data-light-glass={display.moduleId}>
                     <p className="mw-label mb-1">Стекло двери {onActive ? '' : '— на другой стене: переключите стену'}</p>

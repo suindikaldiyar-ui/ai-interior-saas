@@ -24,11 +24,14 @@ import {
   cornerKinematics,
   panelWidthMm,
   panelWords,
+  rowSweepWords,
   stuckWords,
+  vitrineSweep,
   type CornerClash,
   type RowPlace,
 } from './cornerKinematics';
 import { shopOf } from './shop';
+import { vitrineDoorCount } from './vitrine';
 import type { HardwareItem, ProductionSettings } from '@/types/catalog';
 import type {
   Composition,
@@ -266,6 +269,11 @@ export type WallMismatch = {
    */
   /** `own` — заход внутри пары дверец верхнего Г-модуля (P0), а не в мебель соседней стены. */
   clashes?: { leaf: string; words: string; edited: boolean; own?: true }[];
+  /**
+   * ДВЕРЬ ВИТРИНЫ НА ХОДУ ЗАХОДИТ В СОСЕДНИЙ МОДУЛЬ СВОЕГО РЯДА (P1) —
+   * `vitrineSweep`. Каждая строка — что во что и на сколько.
+   */
+  sweep?: { leaf: string; words: string; single: boolean }[];
 };
 
 /** Створка шире предела — числами, из которых строятся слова. */
@@ -641,6 +649,22 @@ export function leafRefusalText(refusal: LeafRefusal): string {
  * не поймёт, чем это ему грозит.
  */
 export function wallMismatchMessage(mismatch: WallMismatch): string {
+  if (mismatch.sweep?.length) {
+    const many = mismatch.sweep.length > 1;
+    /*
+     * Что делать — по двери: у одной двери петли можно перенести от соседа; у
+     * двух петли у краёв модуля, и сторону не поменять — общий совет там был
+     * бы неправдой (как у пары дверец Г-модуля, `wallMismatchMessage`).
+     */
+    const fix = mismatch.sweep.every((entry) => entry.single)
+      ? 'Поменяйте сторону петель у этой двери (в «Открывании») — петли от соседнего модуля'
+      : 'У двух дверей петли у краёв модуля, сторону не поменять: оставьте этот модуль глухим или сделайте витриной модуль не у соседа, что стоит впереди фасада';
+    return (
+      `${mismatch.label}: ${mismatch.sweep.map((entry) => entry.words).join('; ')}. На объекте ` +
+      `${many ? 'эти двери не откроются' : 'эта дверь не откроется'} до конца: открытая, она встаёт в плоскость соседнего ` +
+      `модуля, а он стоит впереди её фасада. ${fix}.`
+    );
+  }
   if (mismatch.clashes?.length) {
     const leaves = mismatch.clashes.map((entry) => entry.leaf);
     const drawers = leaves.every((leaf) => leaf.startsWith('drawer'));
@@ -868,8 +892,45 @@ export function cornerClashMismatches(input: {
     }));
 }
 
+/**
+ * ДВЕРИ ВИТРИН ВДОЛЬ РЯДА (P1): каждая стена — тем же ходом, что сцена и
+ * проверка угла (`vitrineSweep`). Ничего не двигается: заход назван, цена
+ * спрятана, запись идёт — правка, которая его снимает, — сторона петель.
+ */
+export function vitrineSweepMismatches(input: {
+  runs: Run[];
+  production: ProductionSettings | undefined;
+  hardware?: Map<string, HardwareItem>;
+  skip?: number[];
+}): WallMismatch[] {
+  const out: WallMismatch[] = [];
+  input.runs.forEach((run, index) => {
+    if (input.skip?.includes(index)) return;
+    const { clashes } = vitrineSweep({
+      run,
+      production: shopOf(input.production),
+      ...(input.hardware ? { hardware: input.hardware } : {}),
+    });
+    if (clashes.length === 0) return;
+    out.push({
+      index,
+      label: wallLabel(index),
+      runLengthMm: run.lengthMm,
+      usableMm: run.lengthMm,
+      sweep: clashes.map((clash) => {
+        const unit = runPlaces(run).find((place) => place.unit.id === clash.moduleId)?.unit;
+        return { leaf: `${clash.moduleId}:${clash.leaf}`, words: rowSweepWords(clash), single: unit ? vitrineDoorCount(unit) === 1 : false };
+      }),
+    });
+  });
+  return out;
+}
+
 /** Почему цены нет — у расхождения длины и у мебели в препятствии слова разные. */
 export function mismatchPriceText(mismatch: WallMismatch): string {
+  if (mismatch.sweep?.length) {
+    return `Цены нет: ${mismatch.label}: дверь витрины на ходу заходит в соседний модуль.`;
+  }
   if (mismatch.clashes?.length) {
     if (mismatch.clashes[0].own) {
       return `Цены нет: ${mismatch.label}: дверцы углового шкафа на ходу задевают друг друга.`;

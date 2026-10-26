@@ -1,7 +1,6 @@
 import { CORNER_SIZE_MM, SINGLE_DOOR_MAX_MM, frontPlan, isUpperRow } from './modules';
 import { zoneProfile } from './zones';
 import type {
-  FrontRelief,
   FrontType,
   Module,
   ModuleKind,
@@ -9,7 +8,6 @@ import type {
   Run,
   ZoneKind,
 } from '@/types/millwork';
-import { designHasCut } from './reliefDesign';
 
 /**
  * ВАРИАНТЫ МОДУЛЯ.
@@ -724,21 +722,3 @@ export function isSinkBase(unit: Module): boolean {
   return Boolean(unit.appliance?.startsWith('sink')) || unit.variant === 'sink_base';
 }
 
-/**
- * РАМА ВИТРИНЫ ЛОЖИТСЯ ТОЛЬКО ТУДА, ГДЕ СТЕКЛО ЕСТЬ В СМЕТЕ (KIRA «Витрины»).
- *
- * Рама со сквозными окнами (`cut`) — это створка под стекло. Стекло в смете
- * считает вариант шкафа («Стекло в раме», витрины — `transparentFront`,
- * строка `glass_front`). Поставь раму на глухую дверь — сцена покажет стекло,
- * которого никто не оплатил. Поэтому сначала вариант шкафа, потом рама, и
- * отказ это называет.
- */
-export function vitrineRefusal(unit: { label: string; variant?: ModuleVariantKind }, relief: FrontRelief | undefined): string | null {
-  if (!relief || relief.kind !== 'design' || !designHasCut(relief.design)) return null;
-  if (unit.variant && MODULE_VARIANTS[unit.variant]?.transparentFront) return null;
-  const glassy = (Object.values(MODULE_VARIANTS) as ModuleVariantSpec[])
-    .filter((spec) => spec.transparentFront)
-    .map((spec) => `«${spec.title}»`)
-    .join(', ');
-  return `«${unit.label}»: рама витрины — под стекло, а стекла у этого шкафа в смете нет. Сначала вариант шкафа ${glassy}, потом рама.`;
-}

@@ -10,11 +10,13 @@
 import type { GlassKind, Module, Run } from '@/types/millwork';
 import { designHasCut } from './reliefDesign';
 import { frontWithMilling, leafFrontWithMilling } from './milling';
+import { vitrineOf } from './vitrine';
 
-export const GLASS_KINDS: readonly GlassKind[] = ['clear', 'frosted', 'bronze', 'grey', 'fluted', 'mirror'];
+export const GLASS_KINDS: readonly GlassKind[] = ['clear', 'extra_clear', 'frosted', 'bronze', 'grey', 'fluted', 'mirror'];
 
 export const GLASS_TITLE: Record<GlassKind, string> = {
   clear: 'Прозрачное',
+  extra_clear: 'Осветлённое',
   frosted: 'Матовое',
   bronze: 'Бронзовое',
   grey: 'Серое тонированное',
@@ -24,6 +26,7 @@ export const GLASS_TITLE: Record<GlassKind, string> = {
 
 /** Род. падеж — для строки сметы: «Стеклянная дверь в раме — бронзовое стекло». */
 const GLASS_LINE: Record<Exclude<GlassKind, 'clear'>, string> = {
+  extra_clear: 'осветлённое стекло',
   frosted: 'матовое стекло',
   bronze: 'бронзовое стекло',
   grey: 'серое тонированное стекло',
@@ -34,13 +37,47 @@ const GLASS_LINE: Record<Exclude<GlassKind, 'clear'>, string> = {
 /** Вид стекла модуля: не выбран — прозрачное. */
 export const glassOf = (unit: Pick<Module, 'glass'>): GlassKind => unit.glass ?? 'clear';
 
+/** Вид стекла в родительном падеже — для подписи детали: «Стекло бронзовое 6 мм». */
+export const GLASS_MATERIAL: Record<GlassKind, string> = {
+  clear: 'прозрачное',
+  extra_clear: 'осветлённое',
+  frosted: 'матовое',
+  bronze: 'бронзовое',
+  grey: 'серое тонированное',
+  fluted: 'рифлёное',
+  mirror: 'зеркальное',
+};
+
 /**
- * ЕСТЬ ЛИ У МОДУЛЯ СТЕКЛО В СЦЕНЕ — витрина в раме либо рама KIRA со
- * сквозными окнами на модульном фасаде или на фасаде створки (фрезеровка
- * ряда учитывается: `frontWithMilling`).
+ * ДВЕРЬ ВИТРИНЫ — ЧЕМ ОНА СДЕЛАНА (P1), по створке.
+ *
+ *   alu    стекло в алюминиевой рамке — покупная дверь по наружному размеру,
+ *          фасада из плиты у неё нет;
+ *   mdf    рама витрины KIRA: фасад МДФ режется и фрезеруется, стекло — за
+ *          окнами рамы (как до P1);
+ *   glass  цельностеклянная витрина: дверь — стекло без рамки.
+ *
+ * `null` — не витрина: створка обычная.
+ */
+export function vitrineDoorKind(unit: Module, leaf: string, run: Pick<Run, 'milling'> | undefined): 'alu' | 'mdf' | 'glass' | null {
+  const v = vitrineOf(unit);
+  if (!v) return null;
+  const relief = leafFrontWithMilling(unit, leaf, { milling: run?.milling } as Pick<Run, 'milling'>).relief;
+  if (relief?.kind === 'design' && designHasCut(relief.design)) return 'mdf';
+  return v.construction === 'glass' ? 'glass' : 'alu';
+}
+
+/**
+ * ЕСТЬ ЛИ У МОДУЛЯ СТЕКЛО В СЦЕНЕ — витрина (любая конструкция, P1) либо
+ * рама KIRA со сквозными окнами на модульном фасаде или на фасаде створки
+ * (фрезеровка ряда учитывается: `frontWithMilling`).
  */
 export function moduleShowsGlass(unit: Module, run: Pick<Run, 'milling'> | undefined): boolean {
-  if (unit.section === 'glass_display') return true;
+  return vitrineOf(unit) !== null || hasCutFrame(unit, run);
+}
+
+/** Стоит ли на модуле рама KIRA со сквозными окнами — модульным фасадом или фасадом створки (с фрезеровкой ряда). */
+export function hasCutFrame(unit: Module, run: Pick<Run, 'milling'> | undefined): boolean {
   const shell = { milling: run?.milling } as Pick<Run, 'milling'>;
   const relief = frontWithMilling(unit, shell).relief;
   if (relief?.kind === 'design' && designHasCut(relief.design)) return true;
@@ -65,7 +102,7 @@ export const GLASS_SHELF_MM = 6;
 /** Почему стеклянные полки не ставятся — словами; `null` — ставятся. */
 export function glassShelvesRefusal(unit: Module, run: Pick<Run, 'milling'> | undefined): string | null {
   if (!moduleShowsGlass(unit, run)) {
-    return `«${unit.label}»: стеклянные полки — у витрины: у модуля без стекла полки остаются из ЛДСП.`;
+    return `«${unit.label}»: стеклянные полки — у витрины: у модуля без стекла полки остаются из ЛДСП. Сделайте модуль витриной в блоке «Витрина».`;
   }
   if (unit.fill?.bays) {
     return `«${unit.label}»: у модуля отсеки — полки режутся по отсекам, стеклянные сюда не ставятся.`;
@@ -83,7 +120,7 @@ export const GLASS_SHELF_LINE = {
 /** Почему вид стекла не ставится — словами; `null` — ставится. */
 export function glassRefusal(unit: Module, run: Pick<Run, 'milling'> | undefined): string | null {
   if (moduleShowsGlass(unit, run)) return null;
-  return `«${unit.label}»: стекла у модуля нет — вид стекла выбирается у витрины в раме или у фасада с рамой витрины.`;
+  return `«${unit.label}»: стекла у модуля нет — вид стекла выбирается у витрины или у фасада с рамой витрины.`;
 }
 
 /**

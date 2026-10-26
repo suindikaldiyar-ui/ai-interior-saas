@@ -8,6 +8,7 @@ import { gripOnEvery, handleOf, openingOf } from './opening';
 import { schemeLeaves } from './frontSwatch';
 import { fillShelfCount } from './bays';
 import { handleSpotOf, type HandleSpot } from './handlePlace';
+import { vitrineDoorCount, vitrineOf } from './vitrine';
 import type { Module, ModuleVariantKind, Run } from '@/types/millwork';
 
 /**
@@ -136,6 +137,38 @@ function pushOpening(unit: Module, elements: GlyphElement[]): void {
 }
 
 /**
+ * РИСУНОК ВИТРИНЫ (P1): рамка и стекло (незакрашенное поле, а не заливка —
+ * на чёрно-белой печати витрина иначе становится шкафом), диагонали петель
+ * у каждой двери, полки и ленту — только если лента есть в изделии.
+ *
+ * До P1 у «Стекла в раме» рисовалась подсветка, которой в смете не было
+ * (у варианта нет статьи ленты), а сторона петель витрины на листе не
+ * показывалась вовсе. Секция-витрина хранит дверь не створкой — сторона
+ * её петель та же, что у сцены (`doorOpening`: не выбрана — слева).
+ */
+function vitrineGlyph(unit: Module, vitrine: NonNullable<ReturnType<typeof vitrineOf>>, variant: ModuleVariantKind, mode: GlyphMode): GlyphElement[] {
+  const elements: GlyphElement[] = [{ kind: 'frame' }];
+  if (mode === 'fronts') {
+    elements.push({ kind: 'glass' });
+    const doors = vitrineDoorCount(unit);
+    const { opening } = openingOf(unit);
+    if (doors >= 2 || opening === 'double') {
+      elements.push({ kind: 'split' }, { kind: 'swing', hinge: 'left' }, { kind: 'swing', hinge: 'right' });
+    } else if (doors === 1) {
+      elements.push({ kind: 'swing', hinge: opening === 'right' ? 'right' : 'left' });
+    }
+  }
+  const fallback = variant === 'tall_display' ? 4 : variant === 'upper_display' ? 3 : 2;
+  elements.push({ kind: 'shelf', count: shelfCount(unit, fallback) });
+  if (vitrine.led !== 'off') elements.push({ kind: 'led' });
+  /* «Витрина с подсветкой» и на листе отличается от «Стекла в раме» не только лентой — как до P1. */
+  if (variant === 'upper_display') elements.push({ kind: 'open' });
+  /* Ручка двери витрины — та же, что у сцены и сметы: на свободной кромке, «Без ручки» — нет. */
+  if (mode === 'fronts') pushHandle(unit, elements);
+  return elements;
+}
+
+/**
  * Что рисуется на фасаде модуля.
  *
  * `fronts` — вид для клиента: створки, ящики, стекло. `inside` — разрез:
@@ -146,6 +179,10 @@ function pushOpening(unit: Module, elements: GlyphElement[]): void {
 export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts'): GlyphElement[] {
   const variant: ModuleVariantKind = currentVariant(unit);
   const elements: GlyphElement[] = [];
+
+  /* Витрина (P1) — одним рисунком по `vitrineOf`, какой бы вариант и секция её ни дали. */
+  const vitrine = vitrineOf(unit);
+  if (vitrine) return vitrineGlyph(unit, vitrine, variant, mode);
 
   /**
    * СКОЛЬКО ФРОНТОВ РИСОВАТЬ — ТА ЖЕ ВЕЛИЧИНА, ЧТО В РАСКРОЕ.
@@ -275,30 +312,7 @@ export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts'): GlyphEleme
       }
       break;
 
-    case 'upper_glass':
-      /*
-       * ВИТРИНА: стекло — не заливка, а незакрашенное поле с рамой.
-       * Сплошная плашка на чёрно-белой печати схлопывается, и витрина
-       * становится обычным шкафом.
-       */
-      elements.push({ kind: 'frame' });
-      if (mode === 'fronts') elements.push({ kind: 'glass' });
-      elements.push({ kind: 'shelf', count: shelfCount(unit, 2) });
-      elements.push({ kind: 'led' });
-      break;
-
-    case 'upper_display':
-      /*
-       * Витрина с подсветкой отличается от «стекла в раме» именно
-       * подсветкой и стеклянными полками: это другие деньги в смете,
-       * значит и рисунок обязан быть другим.
-       */
-      elements.push({ kind: 'frame' });
-      if (mode === 'fronts') elements.push({ kind: 'glass' });
-      elements.push({ kind: 'shelf', count: shelfCount(unit, 3) });
-      elements.push({ kind: 'led' });
-      elements.push({ kind: 'open' });
-      break;
+    /* «Стекло в раме» и «Витрина с подсветкой» — витрины: рисует их `vitrineGlyph` выше (P1). */
 
     case 'upper_micro':
       // Ниша под микроволновку: открытый проём и полка под прибор.
@@ -354,12 +368,7 @@ export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts'): GlyphEleme
       elements.push({ kind: 'niche', count: 1 });
       break;
 
-    case 'tall_display':
-      elements.push({ kind: 'frame' });
-      if (mode === 'fronts') elements.push({ kind: 'glass' });
-      elements.push({ kind: 'shelf', count: shelfCount(unit, 4) });
-      elements.push({ kind: 'led' });
-      break;
+    /* «Витрина» во всю высоту — тоже `vitrineGlyph` (P1). */
 
     case 'tall_cargo':
       elements.push({ kind: 'panel' });
@@ -396,21 +405,24 @@ export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts'): GlyphEleme
    * именно за этим её и выбирают. У открытой секции и у видимого прибора
    * фасада нет вовсе — брать не за что.
    */
-  if (mode === 'fronts') {
-    const run = { options: {} as Run['options'] };
-    const handle = handleOf(unit, run);
-    const fronts = elements.some(
-      (el) => el.kind === 'panel' || el.kind === 'drawer' || el.kind === 'glass',
-    );
-
-    /* Ручка фрезерована во всех фасадах модуля (KIRA «Интегрированные ручки», `milledGrip`) — значка ручки нет. */
-    const milled = gripOnEvery(unit, schemeLeaves(unit).map((place) => place.leaf));
-    if (fronts && handle.handle !== 'none' && !milled) {
-      elements.push({ kind: 'handle', spot: handleSpotOf(unit, run) });
-    }
-  }
+  if (mode === 'fronts') pushHandle(unit, elements);
 
   return elements;
+}
+
+/** Ручка на рисунке фасада — одна для обычного модуля и витрины (P1). */
+function pushHandle(unit: Module, elements: GlyphElement[]): void {
+  const run = { options: {} as Run['options'] };
+  const handle = handleOf(unit, run);
+  const fronts = elements.some(
+    (el) => el.kind === 'panel' || el.kind === 'drawer' || el.kind === 'glass',
+  );
+
+  /* Ручка фрезерована во всех фасадах модуля (KIRA «Интегрированные ручки», `milledGrip`) — значка ручки нет. */
+  const milled = gripOnEvery(unit, schemeLeaves(unit).map((place) => place.leaf));
+  if (fronts && handle.handle !== 'none' && !milled) {
+    elements.push({ kind: 'handle', spot: handleSpotOf(unit, run) });
+  }
 }
 
 

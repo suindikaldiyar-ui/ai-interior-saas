@@ -3,12 +3,18 @@ import { MODULE_VARIANTS } from './moduleVariants';
 import { sectionSpec } from './sections';
 import type { RunModuleLike } from '@/lib/kitchen';
 import { FRONT_BASES, FRONT_FINISHES, FRAME_WIDTH_MM } from './frontMaterial';
+import { GLASS_MATERIAL, glassOf, shelvesAreGlass } from './glass';
+import { PROFILE_TITLE, VITRINE_LED_TITLE, vitrineDoorCount, vitrineOf } from './vitrine';
 import type {
   ApplianceKind,
   FrontBase,
   FrontFinish,
+  GlassKind,
+  Module,
   ModuleVariantKind,
+  ProfileFinish,
   SectionKind,
+  VitrineLed,
 } from '@/types/millwork';
 
 /**
@@ -88,6 +94,80 @@ function variantText(variant: ModuleVariantKind, unit: RunModuleLike): string | 
   }
 }
 
+/* ─────────────────  Витрина (P1): из `vitrineOf`, а не из варианта  ───────────────── */
+
+/**
+ * ВИТРИНА ДЛЯ МЕТЫ СЦЕНЫ — то, что промпт скажет о ней словами.
+ *
+ * Собирается из `vitrineOf` (одна функция на продукт), а не из варианта: у
+ * витрины из панели «Витрина» варианта нет вовсе, и промпт описывал её глухим
+ * шкафом. Виды и число дверей — те же, что режут и считают раскрой и смета.
+ */
+export function vitrineMeta(unit: Module): RunModuleLike['vitrine'] {
+  const v = vitrineOf(unit);
+  if (!v) return undefined;
+  return {
+    construction: v.construction,
+    glass: glassOf(unit),
+    ...(v.profile ? { profile: v.profile } : {}),
+    led: v.led,
+    sidesGlass: v.left === 'glass' || v.right === 'glass',
+    back: v.back,
+    doors: vitrineDoorCount(unit),
+    shelvesGlass: shelvesAreGlass(unit),
+    onCounter: v.onCounter,
+  };
+}
+
+/** Сквозь какое стекло видно нутро: тонированное темнит, но не прячет. */
+const SEE_THROUGH: ReadonlySet<string> = new Set<GlassKind>(['clear', 'extra_clear', 'bronze', 'grey']);
+
+/** Видно ли нутро витрины сквозь её стекло. Матовое, рифлёное и зеркало — нет. */
+export const vitrineSeeThrough = (vitrine: NonNullable<RunModuleLike['vitrine']>): boolean => SEE_THROUGH.has(vitrine.glass);
+
+/**
+ * ВИТРИНА СЛОВАМИ: конструкция, стекло, профиль, двери, подсветка.
+ *
+ * Конструкция называется так, как её видно: у корпусной — корпус и стекло в
+ * рамке, у каркаса — тонкий профиль по рёбрам и стекло в пазах, у
+ * цельностеклянной — стекло без рамок. Подсветка — только та, что стоит в
+ * смете: «подсветки НЕТ» сказано явно, иначе модель зажигает витрину сама.
+ */
+function vitrineText(vitrine: NonNullable<RunModuleLike['vitrine']>): string {
+  const glass = GLASS_MATERIAL[vitrine.glass as GlassKind] ?? vitrine.glass;
+  const doors = vitrine.doors >= 2 ? `${vitrine.doors} стеклянные двери` : 'одна стеклянная дверь';
+  const profile = vitrine.profile
+    ? `профиль ${PROFILE_TITLE[vitrine.profile as ProfileFinish]?.toLowerCase() ?? vitrine.profile}`
+    : 'профиль серебристый, как в сцене (цвет профиля не выбран)';
+  const back =
+    vitrine.back === 'glass'
+      ? 'задняя стенка стеклянная'
+      : vitrine.back === 'mirror'
+        ? 'задняя стенка — зеркало'
+        : vitrine.back === 'none'
+          ? 'задней стенки нет — за полками стена'
+          : 'задняя стенка из плиты';
+  const body =
+    vitrine.construction === 'glass'
+      ? `ЦЕЛЬНОСТЕКЛЯННАЯ ВИТРИНА: боковины, верх, низ и ${doors} — стекло ${glass} без рамок, стыки стекла открыты`
+      : vitrine.construction === 'frame'
+        ? `ВИТРИНА В АЛЮМИНИЕВОМ КАРКАСЕ: тонкий ${profile} по всем рёбрам, стекло ${glass} в его пазах, ` +
+          `${vitrine.sidesGlass ? 'боковины стеклянные' : 'боковины из плиты'}, ${doors}`
+        : `ВИТРИНА: корпус шкафа, ${doors} — стекло ${glass} в тонкой алюминиевой рамке, ${profile}`;
+  const seen =
+    vitrine.glass === 'mirror'
+      ? 'стекло зеркальное: нутро НЕ видно, в двери отражается кухня'
+      : vitrineSeeThrough(vitrine)
+        ? 'нутро видно насквозь'
+        : 'стекло непрозрачное для взгляда: полки и посуда за ним размыты и не читаются';
+  const led =
+    vitrine.led === 'off'
+      ? 'подсветки НЕТ — витрина не светится'
+      : `подсветка ВКЛЮЧЕНА: лента — ${VITRINE_LED_TITLE[vitrine.led as VitrineLed]?.toLowerCase() ?? vitrine.led}`;
+  const counter = vitrine.onCounter ? '; стоит НА СТОЛЕШНИЦЕ: низ витрины — рабочая поверхность, фартука за ней не видно' : '';
+  return `${body}, ${back}, ${seen}; ${led}${counter}`;
+}
+
 /* ─────────────────  Наполнение: только там, где его видно  ───────────────── */
 
 /**
@@ -112,6 +192,8 @@ function variantText(variant: ModuleVariantKind, unit: RunModuleLike): string | 
 export function interiorVisible(unit: RunModuleLike): boolean {
   // Прибор занимает модуль целиком: полок за ним нет и быть не может.
   if (unit.appliance || unit.column) return false;
+  /* Витрина (P1): нутро видно сквозь прозрачное и тонированное стекло, за матовым и зеркалом — нет. */
+  if (unit.vitrine) return vitrineSeeThrough(unit.vitrine);
   if (unit.frontType === 'none') return true;
 
   const variant = unit.variant as ModuleVariantKind | undefined;
@@ -145,7 +227,7 @@ export function fillText(unit: RunModuleLike): string | null {
   if (fill.shelves.length > 0) {
     const heights = fill.shelves.join(', ');
     parts.push(
-      `РОВНО ${fill.shelves.length} ${shelfWord(fill.shelves.length)} ` +
+      `РОВНО ${fill.shelves.length} ${unit.vitrine?.shelvesGlass ? 'стеклянных ' : ''}${shelfWord(fill.shelves.length)} ` +
         `на ${fill.shelves.length === 1 ? 'высоте' : 'высотах'} ${heights} мм от дна модуля`,
     );
   } else {
@@ -197,6 +279,8 @@ export function describeFront(unit: RunModuleLike): FrontDescription {
                 ? `${title} встроена в шкаф`
                 : `${title}, закрыт фасадом`;
     if (unit.appliance === 'hob') drawerFronts = 2;
+  } else if (unit.vitrine) {
+    text = vitrineText(unit.vitrine);
   } else if (variant && variantText(variant, unit)) {
     text = variantText(variant, unit) as string;
     const spec = MODULE_VARIANTS[variant];
@@ -336,8 +420,10 @@ export function frontRules(moduleCount: number): string {
 Нарисовать ящики дверцами — ошибка.
 
 ОТКРЫТЫЕ СЕКЦИИ И ВИТРИНЫ ОСТАЮТСЯ ОТКРЫТЫМИ.
-Витрина — прозрачная дверь в раме, сквозь неё видны полки и подсветка.
-Закрыть её глухим фасадом — ошибка. Открытая ниша остаётся без дверцы.
+Витрина — стеклянная дверь в рамке или без неё; сквозь прозрачное стекло
+видны полки, за матовым и зеркальным — как сказано у модуля. Подсветка
+горит только там, где сказано «подсветка ВКЛЮЧЕНА». Закрыть витрину
+глухим фасадом — ошибка. Открытая ниша остаётся без дверцы.
 
 НАПОЛНЕНИЕ — ПО ЧИСЛАМ, А НЕ ПО ВКУСУ.
 Где выше сказано «внутри РОВНО N полок на высотах …» — полок ровно N и

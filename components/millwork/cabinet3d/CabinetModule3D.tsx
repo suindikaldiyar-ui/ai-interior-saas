@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 
 import { useMemo } from 'react';
-import { bayDrawerBoxes, boxShown, sceneLeaves, type PartBox } from '@/lib/millwork/cabinetBoxes';
+import { bayDrawerBoxes, boxShown, leafRiders, sceneLeaves, type PartBox } from '@/lib/millwork/cabinetBoxes';
 import { DRAWER_SIDE_PANEL_NAME } from '@/lib/millwork/drawerBox';
 import { ALL_LAYERS, type SceneLayers } from '@/lib/millwork/sceneLayers';
 import { ROD_VISUAL_DIAMETER_MM } from '@/lib/millwork/bays';
@@ -15,6 +15,8 @@ import InteractiveCornerPair from './InteractiveCornerPair';
 import InteractiveDrawer from './InteractiveDrawer';
 import type { CabinetParts } from './parts';
 import type { GlassMaterials } from './glassLook';
+import type { ProfileMaterials } from './profileLook';
+import { vitrineLedStrips, vitrineOf } from '@/lib/millwork/vitrine';
 import { glassOf } from '@/lib/millwork/glass';
 import type { FrontRelief, Module } from '@/types/millwork';
 import { gripOrient } from '@/lib/millwork/facadeRelief';
@@ -94,6 +96,8 @@ type Props = {
   hardware?: Map<string, HardwareItem>;
   /** Материалы стекла ряда (V3D-02): едущая дверь витрины — того же вида, что закрытая в пачке. */
   glass?: GlassMaterials;
+  /** Материалы профиля витрины (P1): рамка едущей двери — того же покрытия, что закрытая в пачке. */
+  profiles?: ProfileMaterials;
 };
 
 /** Штанга: условное сечение — то же число, что у штанги зоны отсека (`ROD_VISUAL_DIAMETER_MM`). */
@@ -132,6 +136,7 @@ export default function CabinetModule3D({
   partBoxes,
   hardware,
   glass,
+  profiles,
 }: Props) {
   /* Деталь модуля по идентификатору сцены: `<модуль>:door:0` → `door:0`. */
   const lookOf = (partId: string) => leafLook?.(partId.slice(unit.id.length + 1));
@@ -154,9 +159,17 @@ export default function CabinetModule3D({
         position: [box.position[0] - x, box.position[1] - y, box.position[2] - zM] as [number, number, number],
       }));
 
-  const isDisplay = unit.section === 'glass_display';
+  /*
+   * ЛЕНТА ВИТРИНЫ В САПР-ВИДЕ (P1) — по раскладке изделия (`vitrineLedStrips`),
+   * той же, что считает смета: у боковин, сверху, под полками, по контуру.
+   * До P1 здесь была одна полоса под крышей и только у секции-витрины.
+   */
+  const vitrine = vitrineOf(unit);
+  const ledStrips = vitrine && vitrine.led !== 'off' ? vitrineLedStrips(unit, vitrine.led, Math.round(heightM * MM), Math.round(thicknessM * MM)) : [];
   /* Стекло этого модуля — вида, выбранного у него (`Module.glass`). */
   const glassMaterial = glass?.door[glassOf(unit)];
+  /* Профиль витрины — того покрытия, что выбрано у неё; не выбрано — серебро (VISUAL_ONLY). */
+  const profileMaterial = profiles?.[vitrine?.profile ?? 'silver'];
 
   /*
    * ЯЩИКИ ОТСЕКОВ (R02A): коробки — те же, что в общей пачке
@@ -222,20 +235,23 @@ export default function CabinetModule3D({
         */}
 
       {/*
-        * ВИТРИНА: дверь в раме — рама и стекло коробками пачки ряда
-        * (`displayDoorBoxes`), открывается как створка (V3D-02). Здесь —
-        * только свечение ленты САПР-вида; в «Интерьере» ленту и её свет
-        * рисует освещение комнаты. Подсветка гаснет перед захватом кадра —
-        * светящаяся полоса в clay читается моделью как часть мебели.
+        * ВИТРИНА: дверь — рамка из профиля и стекло коробками пачки ряда
+        * (`doorBoxes`), открывается как створка. Здесь — только свечение
+        * ленты САПР-вида, полосами раскладки изделия; в «Интерьере» ленту и
+        * её свет рисует освещение комнаты. Подсветка гаснет перед захватом
+        * кадра — светящаяся полоса в clay читается моделью как часть мебели.
         */}
-      {isDisplay && !cutaway && layers.fronts && displayLit && (
-        <mesh
-          geometry={parts.box}
-          material={parts.glow}
-          position={[widthM / 2, heightM - thicknessM * 1.5, -depthM / 2]}
-          scale={[widthM - 2 * thicknessM, 0.012, depthM - thicknessM]}
-        />
-      )}
+      {!cutaway && layers.fronts && displayLit &&
+        ledStrips.map((strip) => (
+          <mesh
+            key={`led-${strip.key}`}
+            name="vitrine-led"
+            geometry={parts.box}
+            material={parts.glow}
+            position={[strip.center[0] / MM, strip.center[1] / MM, strip.center[2] / MM]}
+            scale={strip.axis === 'x' ? [strip.lengthMm / MM, 0.012, 0.012] : [0.012, strip.lengthMm / MM, 0.012]}
+          />
+        ))}
 
       {/*
         * ЯЩИКИ И СТВОРКИ — СПИСКОМ `sceneLeaves` (слой 55).
@@ -353,6 +369,8 @@ export default function CabinetModule3D({
               showFronts={layers.fronts}
               showHandles={showHandles}
               {...(legSide ? { legSide } : {})}
+              glassMaterial={glassMaterial}
+              profileMaterial={profileMaterial}
             />
           );
         }
@@ -381,12 +399,8 @@ export default function CabinetModule3D({
             />
           );
         }
-        const riders = localBoxesOf(leaf.id)?.filter(
-          (box) =>
-            (box.material === 'metal' && (box.node === 'hinge' || box.node === 'lift' || box.node === 'handle')) ||
-            /* Дверь витрины в раме: едут рама и её стекло. */
-            (leaf.glass === true && (box.node === 'frame' || (box.material === 'glass' && box.node === 'glass'))),
-        );
+        /* Петли, механизм, ручка — и у двери витрины рамка со стеклом (`leafRiders`). */
+        const riders = leafRiders(localBoxesOf(leaf.id), leaf);
         /* Ни полотна, ни седоков в кадре — показывать и нажимать нечего. */
         if (!layers.fronts && (riders?.length ?? 0) === 0) return null;
         return (
@@ -412,6 +426,7 @@ export default function CabinetModule3D({
             panelless={leaf.glass === true}
             showPanel={layers.fronts}
             glassMaterial={glassMaterial}
+            profileMaterial={profileMaterial}
           />
         );
       })}

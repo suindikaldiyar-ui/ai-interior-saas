@@ -86,9 +86,11 @@ export type LightFixture = TrackFixture | UnderCabinetFixture | ModuleLedFixture
 
 /**
  * Настройка ленты ВИТРИНЫ: сама лента — изделие модуля (строка `led_display`),
- * здесь только её свет: по контуру (как её считает смета) или под полками.
+ * здесь только её свет. Раскладка ленты с P1 — тоже изделие (`VitrineSpec.led`,
+ * её считает смета); `mode` — прежний предпросмотр у витрин до P1 без своей
+ * раскладки: сцена показывает его, пока человек не выбрал раскладку изделия.
  */
-export type DisplayLight = { brightness: number; kelvin: LightKelvin; mode: 'contour' | 'shelves' };
+export type DisplayLight = { brightness: number; kelvin: LightKelvin; mode?: 'contour' | 'shelves' };
 
 export type LightingAmbient = 'day' | 'evening' | 'night';
 
@@ -197,7 +199,8 @@ export function normalizeLighting(raw: unknown): RoomLighting | null {
     displays[moduleId] = {
       brightness: clamp(v.brightness, 5, 100, 70),
       kelvin: kelvinOf(v.kelvin),
-      mode: v.mode === 'shelves' ? 'shelves' : 'contour',
+      /* Прежний предпросмотр раскладки (до P1) — как сохранён; нет — нет поля. */
+      ...(v.mode === 'shelves' || v.mode === 'contour' ? { mode: v.mode } : {}),
     };
   }
   const p = (source.preview ?? {}) as Partial<LightingPreview>;

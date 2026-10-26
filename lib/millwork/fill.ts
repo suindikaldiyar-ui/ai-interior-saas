@@ -19,8 +19,10 @@ import {
   rowDepthMm,
   shopOf,
   upperBottomMm,
+  workTopMm,
   type ObjectMark,
 } from './shop';
+import { vitrineOnCounter } from './vitrine';
 import type { ProductionSettings } from '@/types/catalog';
 import { upperRowBottomMm, zoneHeightMm, zoneProfile } from './zones';
 import type { ApplianceKind, Module, ModuleFill, ModuleKind, Run, ZoneKind } from '@/types/millwork';
@@ -202,6 +204,21 @@ export function moduleCarcassHeightMm(
   if (unit.overhead) return Math.max(0, Math.round(unit.heightMm ?? 0));
 
   /*
+   * ВИТРИНА В НАВЕСНОМ РЯДУ (P1): своя высота, выбранная человеком, — или,
+   * на столешнице, от рабочей поверхности до верха верхнего ряда: витрина
+   * встаёт на плиту и кончается вровень с соседними шкафами. Выше потолка и
+   * ригеля не бывает — тот же ограничитель, что у всех (`capped`); правка,
+   * после которой не помещается, отказывает словами (`vitrineHeightRefusal`).
+   */
+  if (unit.vitrine && !standsOnFloor(unit) && unit.section !== 'mezzanine') {
+    if (unit.heightMm !== undefined && unit.heightMm > 0) return capped(Math.round(unit.heightMm));
+    if (unit.vitrine.onCounter) {
+      const rowTop = upperRowBottomMm(run.zone, run.ceilingHeightMm, 0, run.production) + upperRowHeightMm(run);
+      return capped(Math.max(0, rowTop - workTopMm(run.production)));
+    }
+  }
+
+  /*
    * Шкаф до потолка ДЕЛИТ высоту с антресолью, а не занимает её всю.
    * Пока корпус доходил до потолка сам, антресоли было некуда встать —
    * и она садилась внутрь него.
@@ -337,6 +354,8 @@ function bottomFromFloorMm(
     if (base) return plinthMm(run.production) + moduleCarcassHeightMm(base, run);
     return mezzanineBottomMm(run);
   }
+  /* Витрина на столешнице (P1) стоит на рабочей поверхности. */
+  if (vitrineOnCounter(unit)) return workTopMm(run.production);
 
   if (unit.kind === 'upper' || unit.kind === 'corner_upper') {
     return upperRowBottomMm(run.zone, run.ceilingHeightMm, 0, run.production);
@@ -391,8 +410,13 @@ function capByCeiling(
 
   const room = Math.max(0, ceiling - bottomFromFloorMm(unit, run));
 
+  /*
+   * Витрина своей высоты и витрина на столешнице (P1) к ригелю не
+   * тянутся: высоту выбрал человек или задала плита; выступ — предел.
+   */
+  const ownHeight = Boolean(unit.vitrine) && (unit.vitrine?.onCounter === true || (unit.heightMm ?? 0) > 0);
   const hangsOnWall =
-    (unit.kind === 'upper' || unit.kind === 'corner_upper') && unit.section !== 'mezzanine';
+    (unit.kind === 'upper' || unit.kind === 'corner_upper') && unit.section !== 'mezzanine' && !ownHeight;
 
   return hangsOnWall ? room : Math.min(heightMm, room);
 }
@@ -634,6 +658,8 @@ export function upperBottomFor(
 ): number {
   /* Антресоль над шкафом (P2) стоит на его крыше — `overheadBottomMm`. */
   if (unit.overhead) return overheadBottomMm(unit, run);
+  /* Витрина на столешнице (P1) стоит на рабочей поверхности — верх плиты, `workTopMm`. */
+  if (vitrineOnCounter(unit)) return workTopMm(run.production);
   if (unit.section === 'mezzanine') {
     const base = mezzanineBaseOf(unit, run);
     // Антресоль стоит НА своей опоре: на колонне — на её крыше.
@@ -788,6 +814,8 @@ export function moduleDepthMm(
 ): number {
   /* Отдельный верхний корпус над шкафом (P2) — своя глубина, выбранная человеком. */
   if (unit.overhead) return Math.max(0, Math.round(unit.overhead.depthMm));
+  /* Своя глубина витрины (P1): задняя плоскость на стене, уходит передняя (`runPlaces`). */
+  if (unit.vitrine?.depthMm) return Math.max(0, Math.round(unit.vitrine.depthMm));
 
   /*
    * Зону спрашивают на уровень ниже: `rowStandardDepthMm` решает, чья

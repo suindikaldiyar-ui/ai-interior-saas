@@ -44,6 +44,8 @@ type GlassSpec = {
 /** САПР-вид: прозрачное — прежнее стекло сцены, остальные различимы цветом и плотностью. */
 const CAD_GLASS: Record<GlassKind, GlassSpec> = {
   clear: { color: '#DFE6E8', opacity: 0.18, roughness: 0.06, metalness: 0.1 },
+  /* Осветлённое (P1): без зелени торца — светлее и прозрачнее прозрачного. */
+  extra_clear: { color: '#F2F6F7', opacity: 0.12, roughness: 0.05, metalness: 0.1 },
   frosted: { color: '#EEF1F2', opacity: 0.66, roughness: 0.7, metalness: 0 },
   bronze: { color: '#8C6A45', opacity: 0.46, roughness: 0.08, metalness: 0.1 },
   grey: { color: '#5B6064', opacity: 0.5, roughness: 0.08, metalness: 0.1 },
@@ -54,6 +56,7 @@ const CAD_GLASS: Record<GlassKind, GlassSpec> = {
 /** «Интерьер»: физическое стекло. Числа — условные (VISUAL_ONLY), подобраны по виду на демо. */
 const DESIGN_GLASS: Record<GlassKind, GlassSpec> = {
   clear: { color: '#EEF5F2', opacity: 0.16, roughness: 0.02, metalness: 0, envMapIntensity: 1.6 },
+  extra_clear: { color: '#FAFCFC', opacity: 0.1, roughness: 0.02, metalness: 0, envMapIntensity: 1.6 },
   frosted: { color: '#F6F8F8', opacity: 1, roughness: 0.5, metalness: 0, transmission: 1, envMapIntensity: 1 },
   bronze: { color: '#7E5732', opacity: 0.55, roughness: 0.03, metalness: 0, envMapIntensity: 1.6 },
   grey: { color: '#454A4E', opacity: 0.6, roughness: 0.03, metalness: 0, envMapIntensity: 1.6 },

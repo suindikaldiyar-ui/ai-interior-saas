@@ -50,8 +50,10 @@ import {
 /* Хранимая часть (типы, ключи, разбор сохранённого) — своим модулем: она в первой загрузке рабочего места. */
 export * from './lightingState';
 import { rowPlacement, type Room, type RoomWall } from './room';
+import { vitrineLedStrips, vitrineOnCounter, vitrineOf } from './vitrine';
+import type { VitrineLed } from '@/types/millwork';
 import { runPlaces } from './cabinetBoxes';
-import { variantEstimateKeys } from './moduleVariants';
+
 
 const MM = 1000;
 const DEG = Math.PI / 180;
@@ -475,6 +477,8 @@ function bearsUnderLight(unit: Module): boolean {
   if (unit.kind !== 'upper') return false;
   if (unit.appliance) return false;
   if (unit.section === 'mezzanine') return false;
+  /* Витрина на столешнице (P1) стоит на плите: под ней ленте некуда встать, линия рвётся. */
+  if (vitrineOnCounter(unit)) return false;
   return true;
 }
 
@@ -530,9 +534,24 @@ export function underCabinetLine(span: UnderCabinetSpan, fixture: Pick<UnderCabi
 
 /* ─────────────────────────  лента витрины и модуля  ───────────────────────── */
 
-/** Есть ли у модуля лента витрины — тот же признак, что выписывает её в смету. */
-export function hasDisplayLed(unit: Pick<Module, 'section' | 'variant'>): boolean {
-  return unit.section === 'glass_display' || variantEstimateKeys(unit as Module).includes('led_display');
+/**
+ * Есть ли у модуля лента витрины — тот же признак, что выписывает её в смету:
+ * витрина, у которой подсветка не «без подсветки» (`vitrineOf`, P1).
+ */
+export function hasDisplayLed(unit: Pick<Module, 'section' | 'variant' | 'vitrine'>): boolean {
+  const v = vitrineOf(unit);
+  return v !== null && v.led !== 'off';
+}
+
+/**
+ * РАСКЛАДКА ЛЕНТЫ ВИТРИНЫ В СЦЕНЕ (P1): раскладка изделия, если её выбрали; у
+ * витрины до P1 без своей раскладки — прежний предпросмотр (`DisplayLight.mode`),
+ * иначе — раскладка изделия по умолчанию. Смета считает раскладку изделия.
+ */
+export function displayLedLayout(unit: Pick<Module, 'section' | 'variant' | 'vitrine'>, own: DisplayLight | undefined): VitrineLed {
+  const v = vitrineOf(unit);
+  if (!v) return 'off';
+  return unit.vitrine?.led ?? own?.mode ?? v.led;
 }
 
 /** Модуль, в который можно поставить свою ленту: корпус есть, это не прибор и не планка. */
@@ -675,7 +694,7 @@ export const SPOT_SHADOW_BUDGET = 3;
 /** Окна со своим источником света — не больше: остальные светят небом в проёме. */
 export const WINDOW_LIGHT_BUDGET = 4;
 
-export const DEFAULT_DISPLAY_LIGHT: DisplayLight = { brightness: 70, kelvin: DEFAULT_KELVIN, mode: 'contour' };
+export const DEFAULT_DISPLAY_LIGHT: DisplayLight = { brightness: 70, kelvin: DEFAULT_KELVIN };
 
 /** Полоса ленты в сцене: в осях РЯДА (x от левого края ряда, y от пола, z от фасадов назад — минус), мм. */
 export type PlannedStrip = {
@@ -757,7 +776,8 @@ export function lightingPlan(
       if (hasDisplayLed(unit)) {
         displays.push({ moduleId: unit.id, label: unit.label, rowIndex });
         const own = lighting.displays[unit.id] ?? DEFAULT_DISPLAY_LIGHT;
-        for (const strip of moduleLedStrips(unit, heightMm, carcassMm, own.mode)) {
+        /* Полосы — та же раскладка, что в смете (`vitrineLedStrips`, P1). */
+        for (const strip of vitrineLedStrips(unit, displayLedLayout(unit, lighting.displays[unit.id]), heightMm, carcassMm)) {
           strips.push({
             key: `display:${unit.id}:${strip.key}`,
             source: displayKey(unit.id),

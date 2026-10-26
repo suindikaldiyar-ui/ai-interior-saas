@@ -1,6 +1,7 @@
 import { beamsPart } from './ceiling';
 import { frontKey, frontPart } from './frontMaterial';
 import { shelvesAreGlass } from './glass';
+import { vitrinePart } from './vitrine';
 import type { BayDrawerStack, BayShelves, CornerChoice, Module, Run } from '@/types/millwork';
 import { cornerOwnerOf } from './corner';
 
@@ -170,6 +171,12 @@ function extrasPart(unit: Module): string | undefined {
     unit.glass && unit.glass !== 'clear' ? `glass=${unit.glass}` : '',
     /* Стеклянные полки (V3D-02): другой раскрой и другая смета. ЛДСП не пишется. */
     shelvesAreGlass(unit) ? 'shelf=glass' : '',
+    /*
+     * Витрина (P1): стеклянные боковины, зеркальный зад, подсветка, место на
+     * столешнице — другая мебель и другие деньги. Только записанное: у прежних
+     * витрин и у рядов без витрин отпечаток прежний (ловушка 246).
+     */
+    vitrinePart(unit),
   ].filter(Boolean);
 
   return parts.length > 0 ? parts.join(',') : undefined;

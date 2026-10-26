@@ -262,7 +262,9 @@ export function screenState(input: ScreenInput): ScreenState {
    * угла, и кнопки пересборки у него нет; у правленого ряда — есть. Кнопка
    * — у первого расхождения канала, которое пересборкой лечится.
    */
-  const rebuildable = (mismatch: WallMismatch) => !mismatch.clashes?.length || mismatch.clashes.some((entry) => entry.edited);
+  /* Заход двери витрины вдоль ряда (P1) пересборкой не лечится: витрина — правка, пересборка её сняла бы. */
+  const rebuildable = (mismatch: WallMismatch) =>
+    !mismatch.sweep?.length && (!mismatch.clashes?.length || mismatch.clashes.some((entry) => entry.edited));
   const stale = mismatches.find(rebuildable);
   /*
    * Прибор в составе есть, а в правленом ряду стены его нет: выход тот
@@ -301,7 +303,11 @@ export function screenState(input: ScreenInput): ScreenState {
     Boolean(refusal) ||
     mismatches.some(
       (mismatch) =>
-        !mismatch.obstacles?.length && !mismatch.corner?.length && !mismatch.leaves?.length && !mismatch.clashes?.length,
+        !mismatch.obstacles?.length &&
+        !mismatch.corner?.length &&
+        !mismatch.leaves?.length &&
+        !mismatch.clashes?.length &&
+        !mismatch.sweep?.length,
     );
   const unpriced = locked || mismatches.length > 0 || catalogError !== null;
   /*
@@ -312,7 +318,10 @@ export function screenState(input: ScreenInput): ScreenState {
   const exportLockText = refusal
     ? `Выгрузки для раскроя и печати для цеха нет: ${SHAPE_TITLE[shape]} не сошлась — раскраивать нечего.`
     : mismatches.length > 0
-      ? mismatches[0].clashes?.length
+      ? mismatches[0].sweep?.length
+        ? `Выгрузки для раскроя и печати для цеха нет: ${mismatches[0].label} — дверь витрины на ходу заходит в ` +
+          'соседний модуль, и по таким документам цех сделает мебель, которая не откроется.'
+        : mismatches[0].clashes?.length
         ? `Выгрузки для раскроя и печати для цеха нет: ${mismatches[0].label} — у угла деталь на ходу заходит в ` +
           'мебель соседней стены, и по таким документам цех сделает мебель, которая не откроется.'
         : `Выгрузки для раскроя и печати для цеха нет: ${mismatches[0].label} не собирается — по таким ` +
