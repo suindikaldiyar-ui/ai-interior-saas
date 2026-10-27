@@ -19,7 +19,7 @@ import {
   assertUnderCeiling,
   runWidthSum,
 } from './invariants';
-import { defaultFill, mezzanineBlockedByBeam, moduleCarcassHeightMm } from './fill';
+import { defaultFill, mezzanineBlockedByBeam, mezzanineHeightMm, moduleCarcassHeightMm } from './fill';
 import {
   BOTTLE_MAX_MM,
   BOTTLE_MIN_MM,
@@ -906,9 +906,11 @@ export function sectionMezzanineBand(input: {
   ceilingHeightMm: number;
   /** Высота антресоли: у шаблона — из спецификации, у заказанной — своя. */
   heightMm: number;
+  /** Школа цеха: зазор до потолка (Measurement 2.0). */
+  production?: ProductionSettings;
 }): UpperSegment[] {
   const spec = SECTION_SPECS.mezzanine;
-  const mezzanineBottom = Math.max(0, zoneHeightMm(input.zone, input.ceilingHeightMm) - input.heightMm);
+  const mezzanineBottom = Math.max(0, zoneHeightMm(input.zone, input.ceilingHeightMm, input.production) - input.heightMm);
   const blocked = beamBlockedSpans(input.beams, input.ceilingHeightMm, mezzanineBottom);
   const segments: UpperSegment[] = [];
 
@@ -1052,6 +1054,7 @@ function buildSectionRun(input: BuildRunInput): Run {
         zone: requirements.zone,
         ceilingHeightMm,
         heightMm: SECTION_SPECS.mezzanine.heightMm,
+        production: input.production,
       }),
     );
   }
@@ -1904,7 +1907,7 @@ export function rowSpansOfRun(
       ceilingHeightMm: run.ceilingHeightMm,
       options,
       production: run.production,
-      mezzanineMm: run.mezzanine?.heightMm ?? null,
+      mezzanineMm: run.mezzanine ? mezzanineHeightMm(run) : null,
     }),
     run.ceilingHeightMm,
   );
@@ -2305,7 +2308,7 @@ export function buildUpperRow(
      * в балку.
      */
     const ceiling = Math.min(
-      zoneHeightMm(req.zone, ceilingHeightMm),
+      zoneHeightMm(req.zone, ceilingHeightMm, shell.production),
       ceilingOverSpanMm(unit.offsetMm, unit.offsetMm + unit.widthMm, beams, ceilingHeightMm),
     );
     const room = ceiling - top;
@@ -2342,7 +2345,7 @@ export function fridgeRoomMm(
 ): number | null {
   if (unit.appliance !== 'fridge') return null;
   const top = plinthMm(run.production) + moduleCarcassHeightMm(unit, run);
-  return zoneHeightMm(run.zone, run.ceilingHeightMm) - top;
+  return zoneHeightMm(run.zone, run.ceilingHeightMm, run.production) - top;
 }
 
 /* ─────────────────────────  Помощь интерфейсу  ───────────────────────── */

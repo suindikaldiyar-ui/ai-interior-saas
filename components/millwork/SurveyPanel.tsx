@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import KnownField from './KnownField';
 import SurveyPlan from './SurveyPlan';
 import { compressPhoto } from '@/lib/photo';
@@ -8,12 +8,12 @@ import { dictate } from '@/lib/speech';
 import { buildRun } from '@/lib/millwork/layout';
 import { GEOMETRY } from '@/lib/millwork/modules';
 import { DEFAULT_REQUIREMENTS } from '@/lib/millwork/workspace';
+import { wallRemovalLosses, withWallAdded, withoutWall } from '@/lib/millwork/roomWalk';
 import {
   COMM_TITLE,
   STEP_TITLE,
   SURVEY_STEPS,
   UNKNOWN,
-  newWall,
   resolveSurvey,
   type Survey,
   type SurveyComm,
@@ -53,6 +53,11 @@ type Props = {
    * внутри шага не рисуется: стена одна на экран, и выбирают её на плане.
    */
   wallId?: string | null;
+  /**
+   * ФОРМА КОМНАТЫ (Measurement 2.0) — над стенами шага «Стены». Панель
+   * собирает экран: ей нужны мебель и смета объекта для предпросмотра.
+   */
+  roomPanel?: ReactNode;
 };
 
 const OPENING_KINDS: OpeningKind[] = [
@@ -144,10 +149,13 @@ export default function SurveyPanel({
   highlightAtMm = null,
   only,
   wallId,
+  roomPanel,
 }: Props) {
   const [step, setStep] = useState<SurveyStep>('ceiling');
   const [activeWallId, setActiveWallId] = useState<string | null>(survey.walls[0]?.id ?? null);
   const [listening, setListening] = useState(false);
+  /** Стена, удаление которой показано: что пропадёт — до нажатия. */
+  const [removing, setRemoving] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const patch = (next: Partial<Survey>) => onChange({ ...survey, ...next });
@@ -243,6 +251,7 @@ export default function SurveyPanel({
       case 'walls':
         return (
           <div data-survey-step="walls">
+            {roomPanel && <div className="mb-3">{roomPanel}</div>}
             {survey.walls.map((w, i) => (
               <div
                 key={w.id}
@@ -268,15 +277,46 @@ export default function SurveyPanel({
                   </button>
                   <button
                     type="button"
-                    onClick={() =>
-                      patch({ walls: survey.walls.filter((x) => x.id !== w.id) })
-                    }
+                    onClick={() => setRemoving(removing === w.id ? null : w.id)}
                     className="ml-auto text-[13px] text-alert"
                     aria-label={`Удалить стену ${i + 1}`}
+                    aria-expanded={removing === w.id}
                   >
                     ×
                   </button>
                 </div>
+
+                {/*
+                  * ЧТО ПРОПАДЁТ — ДО НАЖАТИЯ. Проёмы и точки стены уходят вместе
+                  * с ней (`withoutWall`), «ряд здесь» переходит к соседней;
+                  * раньше точки коммуникаций оставались ссылаться на стену,
+                  * которой нет.
+                  */}
+                {removing === w.id && (
+                  <div className="mb-1.5 border border-alert p-1.5 text-[13px] leading-snug" data-survey-remove={w.id}>
+                    <p>
+                      Удалить стену {i + 1}?{' '}
+                      {wallRemovalLosses(survey, w.id).length > 0
+                        ? `Пропадут ${wallRemovalLosses(survey, w.id).join('; ')}.`
+                        : 'Проёмов и точек на ней нет.'}
+                    </p>
+                    <div className="mt-1 flex gap-1">
+                      <button
+                        type="button"
+                        className="mw-btn mw-btn-ghost text-alert"
+                        onClick={() => {
+                          setRemoving(null);
+                          onChange(withoutWall(survey, w.id));
+                        }}
+                      >
+                        Удалить
+                      </button>
+                      <button type="button" className="mw-btn mw-btn-ghost" onClick={() => setRemoving(null)}>
+                        Отмена
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 <KnownField
                   label="Длина"
@@ -319,7 +359,8 @@ export default function SurveyPanel({
                       value={w.turnDeg}
                       onChange={(e) => patchWall(w.id, { turnDeg: Number(e.target.value) })}
                       className="mw-num mw-touch w-20 rounded-[var(--r-control)] bg-surface2 px-2 text-[15px]"
-                      aria-label="Угол поворота"
+                      aria-label="Угол поворота, градусы: вправо — плюс, влево — минус"
+                      title="вправо — плюс, влево — минус"
                     />
                   )}
                 </div>
@@ -329,9 +370,10 @@ export default function SurveyPanel({
             <button
               type="button"
               onClick={() => {
-                const next = newWall(survey.walls.length);
-                patch({ walls: [...survey.walls, next], steps: { ...survey.steps, walls: 'done' } });
-                setActiveWallId(next.id);
+                /* Идентификатор не повторяет ни одного живого: у удалённой w2 новая — не второй w3 (`nextWallId`). */
+                const added = withWallAdded(survey);
+                onChange({ ...added.survey, steps: { ...survey.steps, walls: 'done' } });
+                setActiveWallId(added.wallId);
               }}
               className="mw-btn mw-btn-ghost w-full"
             >

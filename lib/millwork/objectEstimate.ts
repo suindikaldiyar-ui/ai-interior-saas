@@ -23,6 +23,7 @@ import { choiceFromSolution, editedRunCorner, runWithCorner } from './corner';
 import { runWithObstacles } from './obstacles';
 import { runInContext } from './runContext';
 import { compositionOf, compositionWalls, mergeEstimates, wallLabel, type SelectedWall } from './walls';
+import { kitchenChain } from './roomWalk';
 import type { PanelWall } from './panels';
 import { onWall, uniqueModuleIds } from './layout';
 import { productionFor } from './shop';
@@ -71,6 +72,19 @@ export type ObjectSite = {
   walls: SelectedWall[];
   /** Все коммуникации замера: отбор по стене делает композиция. */
   comms: CommPoint[];
+  /**
+   * СТЕНА А — первая стена цепочки под мебель. У прежнего замера это
+   * отмеченная «ряд здесь»; у замера 2.0 — первая по часовой
+   * (`kitchenChain`): у Г, обойдённой налево, ею оказывается вторая стена.
+   */
+  runWallId: string;
+  /**
+   * Стены комнаты по часовой, без разрывов, вокруг цепочки (замер 2.0).
+   * Пусто — комната строится по `walls`, как всегда.
+   */
+  roomWalls?: SelectedWall[];
+  /** Почему стены замера не держат эту форму — словами (замер 2.0). */
+  chainRefusal?: string | null;
 };
 
 /**
@@ -79,21 +93,57 @@ export type ObjectSite = {
  * Живой замер главнее: его правят прямо сейчас. Нет его — стены пришли
  * с объектом (`workspaceInput`). Отбор при этом ОДИН: два источника
  * данных, одна функция над ними.
+ *
+ * `segments` — сколько стен ставит под мебель форма (`segmentCount`):
+ * у замера 2.0 цепочка — окно стольких стен по часовой, и у незамкнутого
+ * обхода оно сдвигается назад, если вперёд стен не хватает.
  */
-export function objectSite(base: SiteBase, resolution: SurveyResolution | null): ObjectSite {
+export function objectSite(base: SiteBase, resolution: SurveyResolution | null, segments = 1): ObjectSite {
+  if (resolution?.walk) return walkSite(resolution, resolution.walk, segments);
+
   const wall = resolution ? workingWall(resolution.measurement, resolution.runWallId) : null;
   const runLengthMm = wall && wall.lengthMm > 0 ? wall.lengthMm : base.lengthMm;
+  const walls = compositionWalls({
+    measured: resolution?.measurement.walls ?? base.measuredWalls ?? [],
+    runWallId: resolution?.runWallId ?? base.runWallId,
+    runLengthMm,
+    runOpenings: base.openings,
+  });
 
   return {
     runLengthMm,
     ceilingMm: resolution?.measurement.ceilingHeightMm ?? base.ceilingHeightMm,
-    walls: compositionWalls({
-      measured: resolution?.measurement.walls ?? base.measuredWalls ?? [],
-      runWallId: resolution?.runWallId ?? base.runWallId,
-      runLengthMm,
-      runOpenings: base.openings,
-    }),
+    walls,
     comms: resolution?.measurement.comms ?? base.measuredComms ?? base.comms,
+    runWallId: walls[0]?.id ?? resolution?.runWallId ?? base.runWallId ?? 'a',
+  };
+}
+
+/**
+ * МЕСТО ОБЪЕКТА ПО ЗАМЕРУ 2.0: стены цепочки по часовой (`kitchenChain`).
+ * Длина и проёмы стены А — из живого замера, как у всех стен: прежний
+ * путь брал проёмы стены А из объекта на момент его создания.
+ */
+function walkSite(resolution: SurveyResolution, walk: NonNullable<SurveyResolution['walk']>, segments: number): ObjectSite {
+  const m = resolution.measurement;
+  const byId = new Map(m.walls.map((wall) => [wall.id, wall]));
+  const chain = kitchenChain(walk, resolution.runWallId, segments);
+  const selected = (id: string): SelectedWall | null => {
+    const wall = byId.get(id);
+    return wall && wall.lengthMm > 0 ? { id, lengthMm: Math.round(wall.lengthMm), openings: wall.openings } : null;
+  };
+  const pick = (ids: string[]) => ids.map(selected).filter((wall): wall is SelectedWall => wall !== null);
+  const walls = pick([...chain.chain, ...chain.rest]);
+  const first = selected(chain.chain[0] ?? '') ?? walls[0] ?? null;
+
+  return {
+    runLengthMm: first?.lengthMm ?? 0,
+    ceilingMm: m.ceilingHeightMm,
+    walls,
+    comms: m.comms,
+    runWallId: first?.id ?? resolution.runWallId,
+    roomWalls: pick(chain.room),
+    chainRefusal: chain.refusal,
   };
 }
 
@@ -112,7 +162,7 @@ export function compositionFor(input: {
   cornerSolution: CornerSolution;
   /** Выбор по каждому углу (слой 55). Пусто — из `cornerSolution`. */
   corners?: SavedCornerChoice[];
-  site: Pick<ObjectSite, 'ceilingMm' | 'walls' | 'comms'>;
+  site: Pick<ObjectSite, 'ceilingMm' | 'walls' | 'comms' | 'chainRefusal'>;
   production: ProductionSettings;
   /**
    * КОМПЛЕКТАЦИЯ, ПО КОТОРОЙ СОБРАНА СТЕНА А (слой 55).
@@ -125,6 +175,14 @@ export function compositionFor(input: {
   variantKey?: VariantKey;
 }): CompositionAttempt | null {
   if (input.shape === 'linear') return null;
+  /*
+   * Стены замера 2.0 не держат форму (стена без длины, выступ или угол не
+   * 90° внутри цепочки) — это отказ словами, а не угловая кухня, собранная
+   * на «склеенных» соседях.
+   */
+  if (input.site.chainRefusal) {
+    return { state: 'refused', error: `WalkChain: ${input.site.chainRefusal}`, reason: input.site.chainRefusal };
+  }
   const strategy =
     DEFAULT_STRATEGIES.find((item) => item.key === (input.variantKey ?? MAIN_VARIANT)) ??
     DEFAULT_STRATEGIES.find((item) => item.key === MAIN_VARIANT)!;
@@ -216,6 +274,12 @@ export function objectInput(args: {
   corner?: RunCorner;
   /** Фурнитура организации (HARDWARE-01). */
   hardware?: Map<string, HardwareItem>;
+  /**
+   * СТЕНА А ОБЪЕКТА (`objectSite(...).runWallId`). У замера 2.0 это первая
+   * стена цепочки по часовой, а не обязательно отмеченная «ряд здесь».
+   * Пусто — отмеченная, как было.
+   */
+  runWallId?: string;
 }): WorkspaceInput {
   const { base, resolution } = args;
   const corner = args.corner ? { corner: args.corner } : {};
@@ -253,7 +317,7 @@ export function objectInput(args: {
     measurement: resolution.measurement,
     requirements: args.requirements,
     rates: args.rates,
-    wallId: resolution.runWallId,
+    wallId: args.runWallId ?? resolution.runWallId,
     cornerAt: base.cornerAt ?? null,
     production: args.production,
     milling: args.milling,
@@ -543,8 +607,6 @@ export function projectOffer(args: {
   const { state, catalog } = args;
   const rates = args.rates ?? ratesFromCatalog(catalog);
   const requirements = state.requirements ?? DEFAULT_REQUIREMENTS;
-  const production = productionFor(args.production, state.production);
-  const resolution = state.survey ? resolveSurvey(state.survey) : null;
 
   const base = workspaceInput({
     title: args.title,
@@ -554,7 +616,47 @@ export function projectOffer(args: {
     rates,
     cornerAt: null,
   });
-  const site = objectSite(base, resolution);
+  const snapshot = state.priceSnapshot;
+  return offerOf({
+    base,
+    state,
+    production: productionFor(args.production, state.production),
+    rates,
+    milling: millingCatalog(catalog),
+    carcass: carcassCatalog(catalog),
+    materials: materialCatalog(catalog),
+    /* Фурнитура организации — та же, что считает экран (HARDWARE-01). */
+    hardware: hardwareCatalog(catalog),
+    frozen: snapshot && Object.keys(snapshot).length > 0 ? snapshot : undefined,
+  });
+}
+
+/**
+ * ОБЪЕКТ ПО ЕГО СОСТОЯНИЮ — ОТ ГОТОВОГО ВХОДА (`base`).
+ *
+ * Одна сборка на кабинет клиента (`projectOffer`, вход из замера формы) и
+ * на предпросмотр правки замера на экране (Measurement 2.0): «отразить
+ * комнату», «перестроить по замеру», смена формы — сначала собирается то,
+ * что получится, и только потом пишется. Вторая сборка разошлась бы с этой
+ * на первом же угле.
+ */
+export function offerOf(args: {
+  base: ObjectBase;
+  state: MillworkState;
+  /** Школа цеха объекта — уже с его отметками (`productionFor`). */
+  production: ProductionSettings;
+  rates: RateTable;
+  milling: Map<string, MillingItem>;
+  carcass: Map<string, CarcassItem>;
+  materials: Map<string, MaterialItem>;
+  hardware?: Map<string, HardwareItem>;
+  /** Снимок цен отправленного предложения — только у кабинета клиента. */
+  frozen?: Record<string, number>;
+}): ProjectOffer {
+  const { state, base, production, rates } = args;
+  const requirements = state.requirements ?? DEFAULT_REQUIREMENTS;
+  const resolution = state.survey ? resolveSurvey(state.survey) : null;
+  const site = objectSite(base, resolution, segmentCount(state.shape ?? 'linear'));
 
   const attempt = compositionFor({
     shape: state.shape ?? 'linear',
@@ -568,20 +670,19 @@ export function projectOffer(args: {
   if (attempt?.state === 'refused') return { state: 'refused', refusal: attempt.reason };
   const layout = attempt?.state === 'built' ? attempt.composition : null;
 
-  const snapshot = state.priceSnapshot;
   const input = objectInput({
     base,
     resolution,
     requirements: wallRequirementsOf(layout, requirements),
     rates,
     production,
-    milling: millingCatalog(catalog),
-    carcass: carcassCatalog(catalog),
-    materials: materialCatalog(catalog),
-    frozen: snapshot && Object.keys(snapshot).length > 0 ? snapshot : undefined,
+    milling: args.milling,
+    carcass: args.carcass,
+    materials: args.materials,
+    frozen: args.frozen,
     corner: wallCornerOf(layout),
-    /* Фурнитура организации — та же, что считает экран (HARDWARE-01). */
-    hardware: hardwareCatalog(catalog),
+    hardware: args.hardware,
+    runWallId: site.runWallId,
   });
 
   const disabled: Record<VariantKey, string[]> = {

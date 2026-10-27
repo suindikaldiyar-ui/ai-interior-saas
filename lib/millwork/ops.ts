@@ -54,7 +54,7 @@ import { CORNER } from './modules';
 import { MAX_MEZZANINE_MM, MIN_MEZZANINE_MM, sectionSpec } from './sections';
 import { ceilingOverSpanMm } from './ceiling';
 import { hasFacade } from './applianceFront';
-import { fillRefusal } from './fill';
+import { fillRefusal, tallStorageOf } from './fill';
 import { bayEnvelope, bayLayout, bayLossNote, baysRefusal, baysWidthRefusal, type BayEnvelope } from './bays';
 import { allModules } from './layout';
 import { DEFAULT_ALLOWANCES, type HardwareItem } from '@/types/catalog';
@@ -459,6 +459,13 @@ export function applyOps({
   let upperFrontAll: Module['front'] | null = null;
   /** Антресоль ряда: отдельная позиция, переживает пересборку верха. */
   let mezzanine = run.mezzanine ?? null;
+  /*
+   * АНТРЕСОЛЬ СНЯЛИ В ЭТОЙ ЖЕ ПРАВКЕ (Measurement 2.0). «Снять и поставить»
+   * одной правкой — пересборка в новых границах (смена того, кто ведёт её
+   * угол): растёт заново по верхнему ряду, фасады модулей на тех же местах
+   * — прежние (`kept` ниже читает исходный ряд).
+   */
+  let mezzanineDropped = false;
 
   /**
    * НАПОЛНЕНИЕ КЛАДОВКИ НАД КОЛОННОЙ, ПОПРАВЛЕННОЕ В ЭТОМ ЖЕ ВЫЗОВЕ.
@@ -1098,7 +1105,7 @@ export function applyOps({
     }
 
     const ceiling = Math.min(
-      zoneHeightMm(zone, run.ceilingHeightMm),
+      zoneHeightMm(zone, run.ceilingHeightMm, run.production),
       ceilingOverSpanMm(base.offsetMm, base.offsetMm + width, run.beams, run.ceilingHeightMm),
     );
     const room = ceiling - plinth - baseHeight;
@@ -1174,7 +1181,7 @@ export function applyOps({
       }
       const top = plinthMm(run.production) + moduleCarcassHeightMm(base, shell) + (over.heightMm ?? 0);
       const ceiling = Math.min(
-        zoneHeightMm(zone, run.ceilingHeightMm),
+        zoneHeightMm(zone, run.ceilingHeightMm, run.production),
         ceilingOverSpanMm(over.offsetMm, over.offsetMm + over.widthMm, run.beams, run.ceilingHeightMm),
       );
       if (top > ceiling) {
@@ -1384,6 +1391,59 @@ export function applyOps({
          * отметка; помещается ли — участки ряда (`rowSpansOfRun`), у
          * антресоли с вычетом того, что съел ригель.
          */
+        /*
+         * ПЕРЕЕЗД СО СТЕНЫ НА СТЕНУ — МОДУЛЬ ЦЕЛИКОМ (Measurement 2.0).
+         *
+         * Встаёт на отметку своего ряда таким, каким был: ширина в мм, а не
+         * ближайший стандарт; наполнение, фасады, фурнитура — его. Место
+         * проверяется теми же функциями, что у добавления на отметку:
+         * занято или за краем — отказ с числом, ряд прежний.
+         */
+        if (op.module) {
+          if (op.atMm === undefined) {
+            warnings.push(`«${op.module.label}» переносится на отметку: отметки нет — ставить некуда.`);
+            break;
+          }
+          const at = Math.round(op.atMm);
+          const moved = op.module;
+          const hanging = op.row === 'upper' || op.row === 'mezzanine';
+          if (hanging) {
+            const toMezz = op.row === 'mezzanine';
+            if (toMezz && !mezzanine) {
+              warnings.push('Антресоль не включена: ставить модуль некуда.');
+              break;
+            }
+            const list = toMezz ? mezzModules : upperModules;
+            const spans = toMezz
+              ? rowSpansOfRun('mezzanine', { ...run, mezzanine: mezzanine ?? undefined }, modules, openings, requirements, options)
+              : spansNow();
+            const noRoom = noRoomAt(at, moved.widthMm, list, spans);
+            if (noRoom) {
+              warnings.push(noRoom);
+              break;
+            }
+            const placed: Module = { ...moved, id: moduleId(toMezz ? 'mezz' : 'upper', at, undefined, run.wallId), offsetMm: at };
+            if (toMezz) placeMezz([...mezzModules, placed], `«${moved.label}»`);
+            else placeUpper([...upperModules, placed], `«${moved.label}»`);
+            break;
+          }
+          if (at < 0 || at + moved.widthMm > run.lengthMm) {
+            warnings.push(
+              `«${moved.label}» шириной ${moved.widthMm} мм с отметки ${at} мм не встаёт: ` +
+                (at < 0 ? `вышел бы за начало ряда на ${-at} мм.` : `до конца ряда ${run.lengthMm - at} мм.`),
+            );
+            break;
+          }
+          const placed: Module = { ...moved, id: moduleId(moved.kind, at, moved.appliance, run.wallId), offsetMm: at };
+          const clash = moveConflict([...modules, { ...placed, id: `${placed.id}:проба` }], `${placed.id}:проба`, at, run.lengthMm, baseBlocked);
+          if (clash) {
+            warnings.push(moveRefusal(clash));
+            break;
+          }
+          modules.push(placed);
+          break;
+        }
+
         if (op.row === 'upper' || op.row === 'mezzanine') {
           const widthMm = Math.max(MIN_WIDTH, Math.round(op.widthMm ?? MIN_WIDTH));
           const toMezz = op.row === 'mezzanine';
@@ -2461,10 +2521,22 @@ export function applyOps({
           }
 
           const unit = modules[at];
-          const wanted = Math.min(
-            Math.max(0, snapMove(op.offsetMm)),
-            Math.max(0, run.lengthMm - unit.widthMm),
-          );
+          /* Точная отметка — целые мм (`exact`); рука ведёт шагом 50 мм. */
+          const asked = op.exact ? Math.round(op.offsetMm) : snapMove(op.offsetMm);
+          const wanted = Math.min(Math.max(0, asked), Math.max(0, run.lengthMm - unit.widthMm));
+          /*
+           * Число, вписанное человеком, молча не подрезается: модуль, который
+           * с этой отметки вышел бы за ряд, не встаёт — и сказано на сколько.
+           */
+          if (op.exact && asked !== wanted) {
+            warnings.push(
+              asked < 0
+                ? `«${unit.label}» с отметки ${asked} мм вышел бы за начало ряда на ${-asked} мм.`
+                : `«${unit.label}» шириной ${unit.widthMm} мм с отметки ${asked} мм вышел бы за конец ряда ` +
+                    `(${run.lengthMm} мм) на ${asked + unit.widthMm - run.lengthMm} мм.`,
+            );
+            break;
+          }
 
           const conflict = moveConflict(modules, unit.id, wanted, run.lengthMm, baseBlocked);
           if (conflict) {
@@ -2666,7 +2738,7 @@ export function applyOps({
          * встаёт, и сказать об этом надо ЧИСЛОМ: «останется 180 мм».
          */
         if (op.appliance === 'fridge' && op.size.heightMm) {
-          const top = zoneHeightMm(zone, run.ceilingHeightMm);
+          const top = zoneHeightMm(zone, run.ceilingHeightMm, run.production);
           const left = top - plinthMm(run.production) - (op.size.heightMm + NICHE_CLEARANCE_MM);
           if (left < FRIDGE_MEZZANINE_MIN_MM) {
             warnings.push(
@@ -3408,6 +3480,7 @@ export function applyOps({
          * тем же `set_front`, что и всем.
          */
         if (op.heightMm === null) {
+          if (mezzanine) mezzanineDropped = true;
           mezzanine = null;
           /*
            * СНЯТАЯ АНТРЕСОЛЬ УНОСИТ СВОИ МОДУЛИ.
@@ -3419,6 +3492,29 @@ export function applyOps({
            * её нет по построению (`mezzanineBaseOf`).
            */
           mezzModules = [];
+          break;
+        }
+
+        /*
+         * В ЛИНИЮ С ВЫСОКИМ БЛОКОМ (Measurement 2.0): только на кухне и только
+         * если на стене есть колонна холодильника с кладовкой — иначе ставить
+         * в линию не с чем, и это сказано словами. Своя высота помнится.
+         */
+        if (op.alignTall !== undefined) {
+          if (op.alignTall) {
+            if (mezzanineOf(zone) !== 'over_upper') {
+              warnings.push('«В линию с высоким блоком» — у антресоли над верхним рядом кухни.');
+              break;
+            }
+            const storage = tallStorageOf({ ...run, zone, modules, options });
+            if (!storage) {
+              warnings.push('На этой стене нет колонны холодильника с кладовкой: ставить антресоль в линию не с чем.');
+              break;
+            }
+            mezzanine = { heightMm: mezzanine?.heightMm ?? Math.round(op.heightMm), alignTall: true };
+          } else {
+            mezzanine = mezzanine ? { heightMm: mezzanine.heightMm } : { heightMm: Math.round(op.heightMm) };
+          }
           break;
         }
 
@@ -3486,7 +3582,7 @@ export function applyOps({
           }
         }
 
-        mezzanine = { heightMm: wanted };
+        mezzanine = { heightMm: wanted, ...(mezzanine?.alignTall ? { alignTall: true as const } : {}) };
         break;
       }
 
@@ -3930,8 +4026,8 @@ export function applyOps({
      * Замерщик от этого ничего не теряет: первое появление по-прежнему
      * даёт готовый ряд по верхнему, собирать с нуля не приходится.
      */
-    /* Антресоль растёт сама только на включение и только по шаблону. */
-    const mezzGrows = requirements.mode !== 'free' && !run.mezzanine;
+    /* Антресоль растёт сама только на включение и только по шаблону — в том числе снятая и поставленная в этой же правке. */
+    const mezzGrows = requirements.mode !== 'free' && (!run.mezzanine || mezzanineDropped);
     /*
      * ШКАФ, НАД КОТОРЫМ ВЕРХНЕГО РЯДА НЕТ (спальня, прихожая; STAGE 01).
      *
@@ -3953,6 +4049,7 @@ export function applyOps({
                 zone,
                 ceilingHeightMm: nextRun.ceilingHeightMm,
                 heightMm: mezzanine.heightMm,
+                production: nextRun.production,
               })
                 .flatMap((segment) => onWall(segment.modules, nextRun.wallId))
                 .map((unit) => {
@@ -4006,7 +4103,7 @@ export function applyOps({
      * только руками (слой 50), на кухне без верхнего ряда садиться не на что.
      * Молча это читается «кнопка не работает» — и нажимают ещё раз.
      */
-    if (mezzanine && !run.mezzanine && grown.length === 0) {
+    if (mezzanine && (!run.mezzanine || mezzanineDropped) && grown.length === 0) {
       warnings.push(
         requirements.mode === 'free'
           ? 'Антресоль добавлена пустой: в свободной сборке ряд растёт только руками — нажмите на её пустое место на схеме и поставьте модуль из библиотеки.'
@@ -4037,17 +4134,19 @@ export function applyOps({
 
     nextRun.upperSegments = nextRun.upperSegments.map((segment) => ({
       ...segment,
-      modules: segment.modules.map((unit, i) =>
-        unit.fill
-          ? unit
-          : {
-              ...unit,
-              fill: withKeptHandle(
-                unit,
-                defaultFill(unit, nextRun, i, segment.modules.length),
-              ),
-            },
-      ),
+      modules: segment.modules.map((unit, i) => {
+        if (unit.fill) return unit;
+        const fill = withKeptHandle(unit, defaultFill(unit, nextRun, i, segment.modules.length));
+        /*
+         * СЛЕПОЙ МОДУЛЬ АНТРЕСОЛИ У УГЛА — ПЕТЛИ ОТ УГЛА (Measurement 2.0),
+         * как внизу и у верхнего ряда (слой 55, `cornerDoorHinge`). Умолчание
+         * по месту в ряду ставило петли у угла: петля выходила в плоскость
+         * фасадов антресоли соседа, и полотно на ходу входило в её
+         * фальш-панель на 16 мм (Г 3600 + 2800, антресоль ведёт стена А).
+         */
+        const cornerHinge = fill.openingChosen ? null : cornerDoorHinge(unit, { ...nextRun, zone });
+        return { ...unit, fill: cornerHinge ? { ...fill, hinge: cornerHinge } : fill };
+      }),
     }));
   }
 

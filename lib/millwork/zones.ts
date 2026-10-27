@@ -1,4 +1,4 @@
-import { upperBottomMm } from './shop';
+import { ceilingGapOf, upperBottomMm } from './shop';
 import type { ProductionSettings } from '@/types/catalog';
 import { APPLIANCE_SLOTS } from './modules';
 import { SECTION_SPECS } from './sections';
@@ -222,9 +222,22 @@ export const ZONE_DRAFT_NOTE =
   'Зоны с пометкой «в разработке» считаются как корпусный ряд без своей специфики.';
 
 /** Высота ряда в мм: «до потолка» разрешается по замеру. */
-export function zoneHeightMm(kind: ZoneKind | undefined | null, ceilingHeightMm: number): number {
+/**
+ * ВЕРХ МЕБЕЛИ ЗОНЫ — ОДНА ОТМЕТКА НА ПРОДУКТ.
+ *
+ * Зона «до потолка» кончается на монтажный зазор ниже потолка
+ * (`ceilingGap` цеха, Measurement 2.0): пенал, шкаф-купе, верхний ряд до
+ * потолка, антресоль и кладовка над колонной спрашивают эту функцию и
+ * получают один ответ. Зазор считается здесь и только здесь — второй
+ * «потолок минус зазор» где-то ещё развёл бы кладовку с антресолью.
+ */
+export function zoneHeightMm(
+  kind: ZoneKind | undefined | null,
+  ceilingHeightMm: number,
+  production?: ProductionSettings,
+): number {
   const profile = zoneProfile(kind);
-  return profile.height === 'ceiling' ? ceilingHeightMm : profile.height;
+  return profile.height === 'ceiling' ? ceilingHeightMm - ceilingGapOf(production).gapMm : profile.height;
 }
 
 /**
@@ -249,7 +262,7 @@ export function upperRowBottomMm(
   const profile = zoneProfile(kind);
   if (profile.upperBottomMm === 'worktop') return upperBottomMm(production);
   if (profile.upperBottomMm !== undefined) return profile.upperBottomMm;
-  return Math.max(0, zoneHeightMm(kind, ceilingHeightMm) - upperHeightMm);
+  return Math.max(0, zoneHeightMm(kind, ceilingHeightMm, production) - upperHeightMm);
 }
 
 /* ─────────────────  Что бывает в этой зоне, а что нет  ───────────────── */

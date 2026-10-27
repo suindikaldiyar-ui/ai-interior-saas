@@ -391,6 +391,29 @@ function CornerSection({
     .filter((group) => group.cards.length > 0);
 
   /*
+   * ОТКРЫВАНИЕ У УГЛА — СТРОКОЙ ДО НАЖАТИЯ («Соединить в углу»,
+   * Measurement 2.0). Заход, уже названный в «что изменится» (P0 пишет его
+   * туда: «после смены цены не будет: …»), второй раз не повторяется.
+   */
+  const openingLine = (card: CornerCard) => {
+    if (!card.opening) return null;
+    const named = (card.changes ?? []).some((line) => line.startsWith('после смены цены не будет'));
+    const ok = card.opening.ok && !named;
+    return (
+      <span
+        className={`text-[12px] leading-snug ${ok ? 'text-dim' : 'text-alert'}`}
+        data-corner-opening={ok ? 'ok' : 'clash'}
+      >
+        {ok
+          ? `Открывание у угла: ${card.opening.words}`
+          : named
+            ? 'Открывание у угла: есть заход — он назван выше, цены после смены не будет'
+            : `Открывание у угла: ${card.opening.words} — цены после смены не будет`}
+      </span>
+    );
+  };
+
+  /*
    * ПЕРЕКЛЮЧАТЕЛЬ — ОДНА РАЗМЕТКА НА «КТО ВЕДЁТ УГОЛ» И НА ДВЕРЦЫ ВЕРХНЕГО
    * Г-МОДУЛЯ (P0): картинка плана, название, цена и то, что изменится, —
    * словами до нажатия. Атрибуты приёмки — свои у каждой группы.
@@ -441,6 +464,7 @@ function CornerSection({
                 {line}
               </span>
             ))}
+            {openingLine(card)}
           </>
         )}
       </button>
@@ -503,6 +527,7 @@ function CornerSection({
                     : `${delta > 0 ? '+' : '−'}${Math.abs(delta).toLocaleString('ru-RU')} ₸`}
                 </span>
               )}
+              {!card.refusal && !card.current && openingLine(card)}
             </button>
           );
         })}

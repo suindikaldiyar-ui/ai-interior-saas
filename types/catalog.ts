@@ -658,6 +658,17 @@ export type ProductionSettings = {
    */
   countertopStrip?: CountertopStrip;
   /**
+   * МОНТАЖНЫЙ ЗАЗОР ДО ПОТОЛКА — НАСТРОЙКА ЦЕХА, ПОКА НЕ ПОДТВЕРЖДЁННАЯ
+   * (Measurement 2.0).
+   *
+   * Всё, что идёт «до потолка» — пенал, шкаф-купе, верхний ряд до потолка,
+   * антресоль над ним, кладовка над колонной, — кончается на этот зазор
+   * ниже потолка: корпус надо завести на место, а потолок не бывает ровным.
+   * Сколько оставлять, знает цех, а не код. Пусто — ноль, ровно как было до
+   * этой настройки, и это сказано: «не подтверждено цехом».
+   */
+  ceilingGap?: CeilingGap;
+  /**
    * РАСКРОЙ ЛИСТОВ — НАСТРОЙКА ЦЕХА (CUT-01).
    *
    * Пропил, обрезка кромки листа, полезный остаток и форматы листов у
@@ -878,6 +889,36 @@ export const DEFAULT_COUNTERTOP_STRIP: CountertopStrip = { minStripMm: 300, conf
 /** Границы физические: полосы шире самой плиты не бывает. */
 export const COUNTERTOP_STRIP_RANGE_MM = [0, 900] as const;
 
+export type CeilingGap = {
+  /** Сколько мм остаётся между верхом мебели «до потолка» и потолком. */
+  gapMm: number;
+  /** Цех подтвердил это число. Нет — «не подтверждено цехом». */
+  confirmed: boolean;
+};
+
+/**
+ * Ноль — то, как продукт ставил мебель до этой настройки: верх ровно в
+ * потолок. Суммы сохранённых объектов от неё не едут, а неподтверждённость
+ * названа словами рядом с каждым «до потолка».
+ */
+export const DEFAULT_CEILING_GAP: CeilingGap = { gapMm: 0, confirmed: false };
+
+/** Границы физические: зазор больше 150 мм — это уже антресоль, а не зазор. */
+export const CEILING_GAP_RANGE_MM = [0, 150] as const;
+
+/** Зазор до потолка организации с подстановкой нуля. Мусор не принимается. */
+export function ceilingGap(raw: unknown): CeilingGap {
+  const value = (raw ?? {}) as Partial<CeilingGap>;
+  const gap = Number(value.gapMm);
+  return {
+    gapMm:
+      Number.isFinite(gap) && gap >= CEILING_GAP_RANGE_MM[0] && gap <= CEILING_GAP_RANGE_MM[1]
+        ? Math.round(gap)
+        : DEFAULT_CEILING_GAP.gapMm,
+    confirmed: value.confirmed === true,
+  };
+}
+
 /** Полоса столешницы организации с подстановкой типовой. Мусор не принимается. */
 export function countertopStrip(raw: unknown): CountertopStrip {
   const value = (raw ?? {}) as Partial<CountertopStrip>;
@@ -1084,6 +1125,8 @@ export function productionSettings(raw: unknown): ProductionSettings {
     ...(value.corner ? { corner: cornerSizes(value.corner) } : {}),
     /* Полоса столешницы — так же: не заводили — типовая, с пометкой. */
     ...(value.countertopStrip ? { countertopStrip: countertopStrip(value.countertopStrip) } : {}),
+    /* Зазор до потолка — так же: не заводили — ноль, как было, с пометкой. */
+    ...(value.ceilingGap ? { ceilingGap: ceilingGap(value.ceilingGap) } : {}),
     /* Раскрой листов (CUT-01) — так же: не заводили — типовые числа без форматов. */
     ...(value.cutting ? { cutting: cuttingSettings(value.cutting) } : {}),
     /* Правила короба ящика (HARDWARE-01): только заведённые и целые — иначе правил нет. */

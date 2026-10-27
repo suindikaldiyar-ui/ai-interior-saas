@@ -183,7 +183,7 @@ export function moduleCarcassHeightMm(
     Partial<Pick<Run, 'options' | 'upperSegments' | 'mezzanine' | 'modules' | 'beams' | 'production'>>,
 ): number {
   const zone = zoneProfile(run.zone);
-  const top = zoneHeightMm(run.zone, run.ceilingHeightMm);
+  const top = zoneHeightMm(run.zone, run.ceilingHeightMm, run.production);
 
   /*
    * РИГЕЛЬ ОПУСКАЕТ ПОТОЛОК НАД ЭТИМ МЕСТОМ.
@@ -260,7 +260,7 @@ export function moduleCarcassHeightMm(
        */
       const base = mezzanineBaseOf(unit, run);
       if (base) {
-        const top = zoneHeightMm(run.zone, run.ceilingHeightMm);
+        const top = zoneHeightMm(run.zone, run.ceilingHeightMm, run.production);
         return capped(
           Math.max(0, top - plinthMm(run.production) - moduleCarcassHeightMm(base, run)),
         );
@@ -275,7 +275,8 @@ export function moduleCarcassHeightMm(
 
   const standard = standardHeightMm(unit.kind, {
     upperToCeiling: run.options?.upperToCeiling,
-    ceilingHeightMm: run.ceilingHeightMm,
+    /* «До потолка» — до верха зоны: потолок минус монтажный зазор цеха (`zoneHeightMm`). */
+    ceilingHeightMm: top,
     production: run.production,
   });
 
@@ -300,7 +301,7 @@ export function moduleCarcassHeightMm(
    * становятся модулем, а не пустотой.
    */
   if (unit.appliance === 'fridge') {
-    const top = zoneHeightMm(run.zone, run.ceilingHeightMm);
+    const top = zoneHeightMm(run.zone, run.ceilingHeightMm, run.production);
     const cap = top - plinthMm(run.production) - FRIDGE_MEZZANINE_MIN_MM;
 
     /*
@@ -406,7 +407,7 @@ function capByCeiling(
   if (!run.beams || run.beams.length === 0) return heightMm;
 
   const ceiling = ceilingOverModuleMm(unit, run);
-  if (ceiling >= zoneHeightMm(run.zone, run.ceilingHeightMm)) return heightMm;
+  if (ceiling >= zoneHeightMm(run.zone, run.ceilingHeightMm, run.production)) return heightMm;
 
   const room = Math.max(0, ceiling - bottomFromFloorMm(unit, run));
 
@@ -445,13 +446,46 @@ export function hasMezzanine(
 }
 
 /**
- * Высота антресоли этого ряда: своя, если задана, иначе отраслевая.
+ * КЛАДОВКА НАД КОЛОННОЙ ХОЛОДИЛЬНИКА — ГДЕ ЕЁ НИЗ И КАКОЙ ВЫСОТЫ (Measurement 2.0).
+ *
+ * Колонна холодильника кончается ниже верха зоны, и над ней встаёт кладовка
+ * (`FRIDGE_MEZZANINE_MIN_MM`, раскладка верхнего ряда). Её низ — крыша
+ * колонны, верх — верх зоны. Высота колонны считается на ГОЛОМ ряде, как у
+ * опоры антресоли (`mezzanineBaseOf`): она от антресоли не зависит, а спросить
+ * её с антресолью значило бы позвать саму эту функцию.
+ *
+ * Колонн несколько — берётся первая по ряду, у которой кладовка встаёт. Нет —
+ * `null`: «в линию» ставить не с чем, и это сказано словами (`set_mezzanine`).
+ */
+export function tallStorageOf(
+  run: Pick<Run, 'zone' | 'ceilingHeightMm'> & Partial<Pick<Run, 'modules' | 'options' | 'beams' | 'production'>>,
+): { column: Module; bottomMm: number; heightMm: number } | null {
+  const top = zoneHeightMm(run.zone, run.ceilingHeightMm, run.production);
+  const bare = { zone: run.zone, ceilingHeightMm: run.ceilingHeightMm, options: run.options, beams: run.beams, production: run.production };
+  for (const unit of [...(run.modules ?? [])].sort((a, b) => a.offsetMm - b.offsetMm)) {
+    if (unit.appliance !== 'fridge' || !standsOnFloor(unit)) continue;
+    const bottomMm = plinthMm(run.production) + moduleCarcassHeightMm(unit, bare);
+    const heightMm = top - bottomMm;
+    if (heightMm >= FRIDGE_MEZZANINE_MIN_MM) return { column: unit, bottomMm, heightMm };
+  }
+  return null;
+}
+
+/**
+ * Высота антресоли этого ряда: своя, если задана, иначе отраслевая; в линию
+ * с высоким блоком — высота кладовки над колонной (`tallStorageOf`).
  *
  * Одна функция на весь продукт: высоту спрашивают наполнение, раскрой,
  * чертёж и инвариант непересечения. Второе число развело бы антресоль
  * с тем местом, которое под неё оставил верхний ряд.
  */
-export function mezzanineHeightMm(run: Partial<Pick<Run, 'mezzanine' | 'production'>>): number {
+export function mezzanineHeightMm(
+  run: Partial<Pick<Run, 'mezzanine' | 'production' | 'zone' | 'ceilingHeightMm' | 'modules' | 'options' | 'beams'>>,
+): number {
+  if (run.mezzanine?.alignTall && run.ceilingHeightMm !== undefined) {
+    const storage = tallStorageOf({ ...run, ceilingHeightMm: run.ceilingHeightMm, zone: run.zone });
+    if (storage) return storage.heightMm;
+  }
   const own = run.mezzanine?.heightMm;
   return own && own > 0 ? Math.round(own) : sectionSpec('mezzanine').heightMm;
 }
@@ -519,7 +553,7 @@ export function mezzanineBottomMm(
  */
 export function upperRowHeightMm(
   run: Pick<Run, 'zone' | 'ceilingHeightMm'> &
-    Partial<Pick<Run, 'mezzanine' | 'options' | 'upperSegments' | 'production'>>,
+    Partial<Pick<Run, 'mezzanine' | 'options' | 'upperSegments' | 'production' | 'modules' | 'beams'>>,
 ): number {
   /*
    * Зона по-прежнему решает, где низ верхнего ряда, — просто спрашивают
@@ -529,10 +563,15 @@ export function upperRowHeightMm(
    * Местная копия профиля осталась без читателей.
    */
   const bottom = upperRowBottomMm(run.zone, run.ceilingHeightMm, 0, run.production);
-  const top = zoneHeightMm(run.zone, run.ceilingHeightMm);
+  const top = zoneHeightMm(run.zone, run.ceilingHeightMm, run.production);
   const mezzanine = hasMezzanine(run) ? mezzanineHeightMm(run) : 0;
 
-  if (run.options?.upperToCeiling) {
+  /*
+   * «До потолка» и «антресоль в линию с высоким блоком» — одна формула: ряд
+   * дорастает до низа антресоли, а она — до верха зоны. Иначе между шкафом
+   * и антресолью, выровненной по кладовке, осталась бы щель.
+   */
+  if (run.options?.upperToCeiling || (run.mezzanine?.alignTall && hasMezzanine(run))) {
     return Math.max(GEOMETRY.upper.carcassH, top - bottom - mezzanine);
   }
   return GEOMETRY.upper.carcassH;
@@ -642,7 +681,7 @@ function overheadBottomMm(
 ): number {
   const base = overheadBaseOf(unit, run);
   if (base) return plinthMm(run.production) + moduleCarcassHeightMm(base, run);
-  return Math.max(0, zoneHeightMm(run.zone, run.ceilingHeightMm) - moduleCarcassHeightMm(unit, run));
+  return Math.max(0, zoneHeightMm(run.zone, run.ceilingHeightMm, run.production) - moduleCarcassHeightMm(unit, run));
 }
 
 /**

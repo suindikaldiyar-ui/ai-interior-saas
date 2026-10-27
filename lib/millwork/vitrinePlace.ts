@@ -76,10 +76,10 @@ export function vitrineHeightRefusal(unit: Module, run: RowShell, heightMm: numb
     return `${name}: высота ${Math.round(heightMm)} мм — ниже ${VITRINE_MIN_HEIGHT_MM} мм полка в витрину не встанет.`;
   }
   const bottom = bottomOf(unit, run, onCounter);
-  const ceiling = Math.min(ceilingOverModuleMm(unit, run), zoneHeightMm(run.zone, run.ceilingHeightMm));
+  const ceiling = Math.min(ceilingOverModuleMm(unit, run), zoneHeightMm(run.zone, run.ceilingHeightMm, run.production));
   const limit = !standsOnFloor(unit) && hasMezzanine(run) ? Math.min(ceiling, mezzanineBottomMm(run)) : ceiling;
   if (bottom + heightMm > limit) {
-    const what = limit < ceiling ? 'низа антресоли' : ceiling < zoneHeightMm(run.zone, run.ceilingHeightMm) ? 'низа ригеля' : 'потолка';
+    const what = limit < ceiling ? 'низа антресоли' : ceiling < zoneHeightMm(run.zone, run.ceilingHeightMm, run.production) ? 'низа ригеля' : 'потолка';
     return `${name}: ${Math.round(heightMm)} мм не встают — от ${bottom} мм до ${what} ${limit} мм остаётся ${limit - bottom} мм.`;
   }
   return null;

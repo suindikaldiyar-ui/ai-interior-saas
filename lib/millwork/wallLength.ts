@@ -1,3 +1,4 @@
+import { lowerGapMm } from './corner';
 import { allModules } from './layout';
 import { OPENING_KIND_TITLE, type Module, type Run } from '@/types/millwork';
 import { COMM_TITLE, valueOf, type Survey } from '@/types/survey';
@@ -42,11 +43,14 @@ export type WallFurniture = {
  * МЕБЕЛЬ НА СТЕНАХ ЗАМЕРА — какой ряд стоит на какой стене и с какой её
  * отметки он начинается.
  *
- * У стены после угла начало занял соседний ряд: её ряд стоит с `lostMm`
- * угла, а это ровно разница длины стены и её полезной длины в композиции —
- * те же числа, что урезали ряд (`buildComposition`). Стена А — владелец
- * своего угла, её ряд идёт от начала стены. Одна функция на план комнаты
- * (мебель на своих отметках) и на правку длины (встанет ли то, что стоит).
+ * У стены после угла начало занял соседний ряд: её ряд стоит с того, что
+ * угол у её начала отнял у нижнего ряда (`lowerGapMm` угла на самом ряду) —
+ * то же число, по которому ряд ставит сцена (`runPlacements`). Раньше
+ * здесь стояла разница длины стены и длины ряда: она верна, только пока
+ * ряд доходит до конца стены. Угол за рядом, который ведёт следующая стена
+ * (P0), отнимает у ряда и конец — и план сдвигал всю мебель стены на эту
+ * добавку. Одна функция на план комнаты (мебель на своих отметках) и на
+ * правку длины (встанет ли то, что стоит).
  */
 export function wallFurnitureOf(input: {
   /** Ряды стен композиции — те, что видят сцена, смета и раскрой. */
@@ -62,8 +66,7 @@ export function wallFurnitureOf(input: {
   input.runs.forEach((run, index) => {
     const wallId = index === 0 ? input.runWallId : input.layout?.segments[index]?.wallId;
     if (!wallId) return;
-    const segment = input.layout?.segments[index];
-    const startMm = index === 0 || !segment ? 0 : Math.max(0, segment.wallLengthMm - segment.run.lengthMm);
+    const startMm = index === 0 ? 0 : lowerGapMm(run, 'start');
     out.push({ wallId, index, run, startMm, edited: input.edited(index), free: input.free });
   });
   return out;

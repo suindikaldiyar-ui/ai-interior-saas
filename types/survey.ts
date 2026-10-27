@@ -158,9 +158,141 @@ export interface Survey {
   measuredAt: string;
   /** Замер объявлен завершённым: показывается сводка и замерный лист. */
   finishedAt?: string;
+  /**
+   * ВЕРСИЯ ОБХОДА (Measurement 2.0). `2` — повороты замера доходят до
+   * мебели: обход «налево» строит кухню налево (`roomWalk`). Пусто —
+   * замер записан до 2.0: мебель стоит так, как стояла (все углы —
+   * поворот направо), и это не меняется без действия человека.
+   */
+  version?: 2;
+  /**
+   * С КАКОЙ СТОРОНЫ ОБХОДА КОМНАТА — выбор человека. Пусто — по сумме
+   * поворотов (`interiorOf`). У одной стены поворотов нет вовсе, и
+   * сторону знает только замерщик.
+   */
+  interior?: 'right' | 'left';
+  /** Поворот ТОЛЬКО изображения плана, градусы по часовой. В геометрию не идёт. */
+  planRotationDeg?: 0 | 90 | 180 | 270;
 }
 
 export const DEFAULT_TURN_DEG = 90;
+
+/* ─────────────────  Обход по часовой (Measurement 2.0)  ───────────────── */
+
+/**
+ * ПОВОРОТЫ ЗАМЕРА — В ГЕОМЕТРИЮ. Ядро лежит здесь, рядом с
+ * `resolveSurvey`: она переводит замер версии 2 в обход по часовой, и
+ * держать эти функции в библиотеке значило бы завести круговой импорт.
+ * Цепочка стен под мебель, отражение и формы — `lib/millwork/roomWalk`.
+ */
+export const WALK_VERSION = 2 as const;
+
+/** Повороты замера доходят до мебели. Пусто — замер до 2.0, все углы — направо. */
+export function walkHonored(survey: Pick<Survey, 'version'> | null | undefined): boolean {
+  return survey?.version === WALK_VERSION;
+}
+
+/** Поворот после стены со знаком, градусы: направо — плюс, налево — минус. */
+export function signedTurn(wall: Pick<SurveyWall, 'turn' | 'turnDeg'>): number {
+  return wall.turn === 'left' ? -wall.turnDeg : wall.turnDeg;
+}
+
+/**
+ * ЗАМКНУТ ЛИ ОБХОД. Три стены и больше, поворот в сумме ±360° — комната
+ * обойдена целиком, и за последней стеной снова первая. У незамкнутого
+ * обхода (Г, П, одна стена) поворот после последней стены ничего не
+ * значит: за ней стены нет.
+ */
+export function isClosedWalk(walls: Pick<SurveyWall, 'turn' | 'turnDeg'>[]): boolean {
+  const total = walls.reduce((sum, wall) => sum + signedTurn(wall), 0);
+  return walls.length >= 3 && Math.abs(Math.abs(total) - 360) <= 0.5;
+}
+
+/** Повороты МЕЖДУ стенами: у незамкнутого обхода поворот после последней не считается. */
+export function cornerTurns(walls: Pick<SurveyWall, 'turn' | 'turnDeg'>[]): number[] {
+  const closed = isClosedWalk(walls);
+  return walls.slice(0, closed ? walls.length : Math.max(0, walls.length - 1)).map(signedTurn);
+}
+
+export type InteriorSide = 'right' | 'left';
+
+/**
+ * С КАКОЙ СТОРОНЫ ОБХОДА КОМНАТА.
+ *
+ * Выбор человека сильнее всего. Нет его — знак суммы поворотов между
+ * стенами: обход «направо» держит комнату справа. Одна стена или зигзаг
+ * без перевеса — справа, как обходил всегда мастер.
+ */
+export function interiorOf(survey: Pick<Survey, 'walls' | 'interior'>): InteriorSide {
+  if (survey.interior) return survey.interior;
+  const sum = cornerTurns(survey.walls).reduce((a, b) => a + b, 0);
+  return sum < 0 ? 'left' : 'right';
+}
+
+/** Стена обхода по часовой. */
+export type WalkWall = {
+  id: string;
+  /** Номер стены в замере человека: «Стена 1» — 0. */
+  walkIndex: number;
+  /** Длина; 0 — не замерена. */
+  lengthMm: number;
+  /** Поворот к следующей стене по часовой: +90 — внутренний угол, −90 — выступ; 0 — за стеной стены нет. */
+  turnDeg: number;
+};
+
+export type CanonicalWalk = {
+  walls: WalkWall[];
+  closed: boolean;
+  /** Обход человека шёл против часовой и развёрнут. */
+  reversed: boolean;
+};
+
+/**
+ * ОБХОД ПО ЧАСОВОЙ. Комната справа — порядок замера как есть; слева —
+ * стены в обратном порядке, и поворот после стены — это угол между ней и
+ * следующей по часовой, со знаком наоборот: «налево» против часовой — тот
+ * же угол, что «направо» по часовой.
+ *
+ * Привязки проёмов «от левого угла» (если стоять лицом к стене) — это и
+ * есть начало стены по часовой: при развороте они не меняются.
+ */
+export function canonicalWalk(survey: Pick<Survey, 'walls' | 'interior'>): CanonicalWalk {
+  const walls = survey.walls;
+  const n = walls.length;
+  const closed = isClosedWalk(walls);
+  const reversed = interiorOf(survey) === 'left';
+  const lengthOf = (wall: SurveyWall) => Math.max(0, Math.round(valueOf(wall.lengthMm) ?? 0));
+
+  if (!reversed) {
+    return {
+      closed,
+      reversed,
+      walls: walls.map((wall, i) => ({
+        id: wall.id,
+        walkIndex: i,
+        lengthMm: lengthOf(wall),
+        turnDeg: i < n - 1 || closed ? signedTurn(wall) : 0,
+      })),
+    };
+  }
+
+  return {
+    closed,
+    reversed,
+    walls: walls.map((_, k) => {
+      const i = n - 1 - k;
+      const wall = walls[i];
+      /* Угол после стены по часовой — угол замера ПЕРЕД ней, со знаком наоборот. */
+      const before = i - 1 >= 0 ? walls[i - 1] : closed ? walls[n - 1] : null;
+      return {
+        id: wall.id,
+        walkIndex: i,
+        lengthMm: lengthOf(wall),
+        turnDeg: before ? -signedTurn(before) : 0,
+      };
+    }),
+  };
+}
 
 export function emptySurvey(measuredBy = '', measuredAt = ''): Survey {
   return {
@@ -249,6 +381,12 @@ export function surveyFromMeasurement(
     steps: { ceiling: 'todo', walls: 'todo', openings: 'todo', comms: 'todo', photos: 'todo' },
     measuredBy,
     measuredAt,
+    /*
+     * Замер, снятый в 2.0 (`walk: 'clockwise'`), — стены по часовой с углами
+     * со знаком: таким он и возвращается. Прежний замер библиотеки — без
+     * версии: его мебель стоит, как стояла (ловушка 705).
+     */
+    ...(measurement.walk === 'clockwise' ? { version: WALK_VERSION } : {}),
   };
 }
 
@@ -394,8 +532,14 @@ export function assumptionsAffectPrice(stats: SurveyStats): boolean {
 export type SurveyResolution = {
   measurement: Measurement;
   stats: SurveyStats;
-  /** Стена, вдоль которой строится ряд. */
+  /** Стена, отмеченная «ряд здесь» (или самая длинная). Цепочку под мебель от неё считает `kitchenChain`. */
   runWallId: string;
+  /**
+   * Обход по часовой со стенами без длины — у замера 2.0. Из него
+   * берётся цепочка стен под мебель: стена без длины рвёт её, а не
+   * исчезает молча (у прежнего замера соседи такой стены «склеивались»).
+   */
+  walk?: CanonicalWalk;
 };
 
 /**
@@ -431,11 +575,26 @@ export function resolveSurvey(survey: Survey): SurveyResolution {
     })),
   };
 
-  const walls: WallSegment[] = resolved.walls.map((wall) => ({
+  /*
+   * ЗАМЕР 2.0 ИДЁТ В КОНФИГУРАТОР ПО ЧАСОВОЙ (`canonicalWalk`): стены в том
+   * порядке, в каком их ставят ряды, углы со знаком (+90 внутренний, −90
+   * выступ). Прежний замер — как был: порядок обхода и знак, который
+   * мебель не читает.
+   */
+  const walk = walkHonored(survey) ? canonicalWalk(resolved) : null;
+  const ordered = walk ? walk.walls.map((item) => resolved.walls[item.walkIndex]) : resolved.walls;
+
+  const walls: WallSegment[] = ordered.map((wall, k) => ({
     id: wall.id,
     // Стена без длины в конфигуратор не попадает вовсе — её просто нет.
     lengthMm: valueOf(wall.lengthMm) ?? 0,
-    angleDeg: wall.turn === 'left' ? -wall.turnDeg : wall.turnDeg,
+    angleDeg: walk
+      ? k === walk.walls.length - 1 && !walk.closed
+        ? DEFAULT_TURN_DEG
+        : walk.walls[k].turnDeg
+      : wall.turn === 'left'
+        ? -wall.turnDeg
+        : wall.turnDeg,
     openings: wall.openings
       .filter((o) => valueOf(o.fromCornerMm) !== undefined && valueOf(o.widthMm) !== undefined)
       .map((o) => ({
@@ -467,6 +626,7 @@ export function resolveSurvey(survey: Survey): SurveyResolution {
     measuredBy: survey.measuredBy,
     measuredAt: survey.measuredAt,
     notes: survey.clientNotes,
+    ...(walk ? { walk: 'clockwise' as const } : {}),
   };
 
   const runWall = resolved.walls.find((w) => w.isRunWall && valueOf(w.lengthMm));
@@ -476,5 +636,6 @@ export function resolveSurvey(survey: Survey): SurveyResolution {
     measurement,
     stats: surveyStats(resolved),
     runWallId: runWall?.id ?? longest?.id ?? 'w1',
+    ...(walk ? { walk } : {}),
   };
 }

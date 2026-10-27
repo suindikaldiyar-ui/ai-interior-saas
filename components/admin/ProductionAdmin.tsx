@@ -12,6 +12,9 @@ import {
   FALSE_PANEL_RANGE_MM,
   cornerSizes,
   countertopStrip,
+  ceilingGap,
+  CEILING_GAP_RANGE_MM,
+  type CeilingGap,
   type CornerSizes,
   type CountertopStrip,
   type PartAllowances,
@@ -200,6 +203,19 @@ export default function ProductionAdmin({ initial }: Props) {
         minStripMm: prev.countertopStrip?.minStripMm ?? strip.minStripMm,
         ...patch,
       },
+    }));
+
+  /*
+   * Зазор до потолка (Measurement 2.0): не заведён — ноль, как было, и экран
+   * говорит об этом. Поле держит набранное; вне границ — словами.
+   */
+  const gap = ceilingGap(value.ceilingGap);
+  const gapTyped = value.ceilingGap?.gapMm ?? gap.gapMm;
+  const gapOutside = !Number.isFinite(gapTyped) || gapTyped < CEILING_GAP_RANGE_MM[0] || gapTyped > CEILING_GAP_RANGE_MM[1];
+  const setGap = (patch: Partial<CeilingGap>) =>
+    setValue((prev) => ({
+      ...prev,
+      ceilingGap: { ...ceilingGap(prev.ceilingGap), gapMm: prev.ceilingGap?.gapMm ?? gap.gapMm, ...patch },
     }));
 
   const boxEmpty = !box.sideMm && !box.bottomMm && !box.bottomMount && !box.gapBelowMm && !box.gapAboveMm;
@@ -560,6 +576,53 @@ export default function ProductionAdmin({ initial }: Props) {
             {!strip.confirmed && (
               <p className="mt-1 text-[13px] leading-snug text-tape">
                 Не подтверждено цехом: замерщик видит эту пометку у каждого выреза и разрыва столешницы.
+              </p>
+            )}
+          </div>
+
+          {/*
+            * ЗАЗОР ДО ПОТОЛКА (Measurement 2.0): всё «до потолка» — пенал,
+            * шкаф-купе, верхний ряд до потолка, антресоль, кладовка над
+            * колонной — кончается на него ниже потолка. Сколько оставлять,
+            * знает цех; пока галочки нет — «не подтверждено цехом».
+            */}
+          <div className="mt-6 border-t border-navyLine/60 pt-4" data-ceiling-gap>
+            <p className="text-[15px] font-medium">Зазор до потолка</p>
+            <p className="mt-0.5 text-[13px] leading-snug text-graphiteMw">
+              Мебель «до потолка» — пенал, шкаф-купе, верхний ряд до потолка, антресоль и кладовка над
+              колонной — кончается на столько ниже потолка: корпус заводят на место, потолок не бывает
+              ровным. Ноль — верх ровно в потолок, как считалось до этой настройки.
+            </p>
+            <label className="mt-3 block max-w-[320px]">
+              <span className="mw-label">Зазор, мм</span>
+              <input
+                type="number"
+                inputMode="numeric"
+                min={CEILING_GAP_RANGE_MM[0]}
+                max={CEILING_GAP_RANGE_MM[1]}
+                data-ceiling-gap-mm
+                value={Number.isFinite(gapTyped) ? gapTyped : ''}
+                onChange={(event) => setGap({ gapMm: Number(event.target.value) })}
+                className="mw-field mt-1 w-full"
+              />
+              <span className={`mt-0.5 block text-[13px] leading-snug ${gapOutside ? 'text-alert' : 'text-graphiteMw'}`}>
+                {gapOutside
+                  ? `Вне ${CEILING_GAP_RANGE_MM[0]}–${CEILING_GAP_RANGE_MM[1]} мм: такое число не сохранится, останется ${gap.gapMm}.`
+                  : 'под ригелем мебель стоит до низа балки, как прежде'}
+              </span>
+            </label>
+            <label className="mt-3 flex items-center gap-2 text-[15px]">
+              <input
+                type="checkbox"
+                data-ceiling-gap-confirmed
+                checked={gap.confirmed}
+                onChange={(event) => setGap({ confirmed: event.target.checked })}
+              />
+              Цех подтвердил это число
+            </label>
+            {!gap.confirmed && (
+              <p className="mt-1 text-[13px] leading-snug text-tape">
+                Не подтверждено цехом: у «до потолка» в объектах стоит эта пометка.
               </p>
             )}
           </div>

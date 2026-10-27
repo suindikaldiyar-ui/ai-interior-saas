@@ -5,6 +5,7 @@ import {
   cornerGeometry,
   cornerOwnerOf,
   levelAt,
+  levelBoundsOf,
   LOWER_CORNER_TITLE,
   lowerGapMm,
   sameCorner,
@@ -65,6 +66,11 @@ export type CornerChange =
       rebuild?: number[];
       /** Ряды не меняются вовсе (плита через угол — свой контур): писать нечего, меняется выбор. */
       keep?: true;
+      /**
+       * МЕНЯЕТСЯ ТОЛЬКО АНТРЕСОЛЬ (Measurement 2.0): низ, верх и плита на
+       * месте, антресоль собрана заново в новых границах угла (`mezzanineChange`).
+       */
+      mezzanine?: true;
     }
   | { ok: false; why: string };
 
@@ -83,6 +89,24 @@ function countertopOnly(prev: CornerChoice, next: CornerChoice): boolean {
     prev.upper === next.upper &&
     (prev.mezzanine ?? '') === (next.mezzanine ?? '') &&
     (['lower', 'upper', 'mezzanine'] as const).every((level) => cornerOwnerOf(prev, level) === cornerOwnerOf(next, level))
+  );
+}
+
+/**
+ * МЕНЯЕТСЯ ТОЛЬКО АНТРЕСОЛЬ УГЛА (Measurement 2.0): вид её стыка или кто её
+ * ведёт. Виды низа и верха, их владельцы, плита и дверцы верхнего Г-модуля —
+ * те же.
+ */
+function mezzanineOnly(prev: CornerChoice, next: CornerChoice): boolean {
+  const same = (level: CornerLevel) => cornerOwnerOf(prev, level) === cornerOwnerOf(next, level);
+  return (
+    prev.lower === next.lower &&
+    prev.upper === next.upper &&
+    (choiceOnly(prev).upperDoors ?? '') === (choiceOnly(next).upperDoors ?? '') &&
+    same('lower') &&
+    same('upper') &&
+    same('countertop') &&
+    ((prev.mezzanine ?? '') !== (next.mezzanine ?? '') || !same('mezzanine'))
   );
 }
 
@@ -191,6 +215,117 @@ function shifted(unit: Module, deltaMm: number, wallId: string | undefined): Mod
 }
 
 /**
+ * АНТРЕСОЛЬ УГЛА В НОВЫХ ГРАНИЦАХ (Measurement 2.0).
+ *
+ * Угол кладётся на оба ряда, а антресоль, если она на стене есть, собирается
+ * заново той же правкой, что у блока «Антресоль»: снять и поставить той же
+ * высоты, «в линию с высоким блоком» — если была (`applyOps`). Растёт она
+ * по верхнему ряду в новых границах уровня (`mezzanineInBounds`), фасады
+ * модулей на тех же местах — прежние, петли слепого модуля — от угла.
+ * Низ и верх не трогаются, панели по ходу низа и верха — прежние (их угол
+ * тот же); у антресоли — с нуля: её угол другой.
+ */
+function mezzanineChange(
+  input: Parameters<typeof changeOnce>[0] & { prev: CornerChoice },
+): CornerChange {
+  const { runs, index, requirements } = input;
+  const owner = runs[index];
+  if (!owner || !runs[index + 1]) return { ok: false, why: `Угла ${index + 1} в этой кухне нет: стен ${runs.length}.` };
+  const zone = owner.zone ?? requirements.zone;
+  const { mezzDockMm: _dock, mezzOwnerMm: _own, ...keptClearance } = input.prev.clearance ?? {};
+  void _dock;
+  void _own;
+  const next: CornerChoice = {
+    ...choiceOnly(input.next),
+    ...(Object.keys(keptClearance).length > 0 ? { clearance: keptClearance } : {}),
+  };
+  const corners = input.corners.map((choice, i) => (i === index ? next : choice));
+  /* Проёмы ряда — той же `openingsOnRun`, что у композиции: нужны правке для участков верха. */
+  const rowOpenings = (wall: number, lengthMm: number): Opening[] => {
+    const before = wall > 0 ? corners[wall - 1] : undefined;
+    const g = before ? cornerGeometry(before, zone, owner.production) : null;
+    return openingsOnRun(input.wallOpenings[wall], g?.lostMm ?? 0, lengthMm, Math.min(0, g ? g.upperStartMm - g.lostMm : 0));
+  };
+
+  const out = [...runs];
+  for (const wall of [index, index + 1]) {
+    const run = runs[wall];
+    if (!run?.corner) continue;
+    const placed: Run = stampCornerDoors({
+      ...run,
+      corner: wall === index ? { ...run.corner, end: next } : { ...run.corner, start: next },
+    });
+    const spec = placed.mezzanine;
+    if (!spec) {
+      out[wall] = placed;
+      continue;
+    }
+    let rebuilt: Run;
+    try {
+      rebuilt = applyOps({
+        run: placed,
+        requirements,
+        openings: rowOpenings(wall, placed.lengthMm),
+        ops: [
+          { op: 'set_mezzanine', heightMm: null },
+          { op: 'set_mezzanine', heightMm: spec.heightMm },
+          ...(spec.alignTall ? [{ op: 'set_mezzanine' as const, heightMm: spec.heightMm, alignTall: true }] : []),
+        ],
+      });
+    } catch (error) {
+      return { ok: false, why: error instanceof Error ? error.message : 'Антресоль при этом угле не собирается.' };
+    }
+    /* Под антресолью мебель та же: модуль, который правка сняла бы, — не смена угла, а потеря мебели. */
+    if (rebuilt.modules.length !== placed.modules.length || upperOf(rebuilt).length !== upperOf(placed).length) {
+      return {
+        ok: false,
+        why: rebuilt.warnings[0] ?? `${input.labels[wall] ?? 'Стена'}: при этом угле под антресолью мебели стало бы меньше.`,
+      };
+    }
+    out[wall] = rebuilt;
+  }
+  return { ok: true, runs: out, corners, mezzanine: true };
+}
+
+/**
+ * ЧТО МЕНЯЕТ СМЕНА АНТРЕСОЛИ УГЛА — СЛОВАМИ И В МИЛЛИМЕТРАХ ОТ УГЛА (Measurement 2.0):
+ * где антресоль стены до угла кончается и где антресоль стены после угла
+ * начинается — до и после. Строки только о том, что меняется.
+ */
+function mezzanineChanges(before: Run[], after: Run[], index: number, labels: string[]): string[] {
+  const name = (wall: number) => labels[wall] ?? `Стена ${wall + 1}`;
+  const genitive = (wall: number) => lowerWall(name(wall), 'genitive');
+  const has = (run: Run | undefined): run is Run =>
+    Boolean(run) && hangingOf(run!).some((unit) => unit.section === 'mezzanine' && mezzanineBaseOf(unit, run!) === null);
+  const out: string[] = [];
+  const endGap = (run: Run) => Math.round(run.lengthMm - levelBoundsOf(run, 'mezzanine').toMm + lowerGapMm(run, 'end'));
+  const startGap = (run: Run) => Math.round(levelBoundsOf(run, 'mezzanine').fromMm + lowerGapMm(run, 'start'));
+  const [a0, a1, b0, b1] = [before[index], after[index], before[index + 1], after[index + 1]];
+  if (has(a0) && has(a1) && endGap(a0) !== endGap(a1)) {
+    const was = endGap(a0);
+    const now = endGap(a1);
+    out.push(
+      `${name(index)}: антресоль ${now === 0 ? `доходит до ${genitive(index + 1)}` : `кончается в ${now} мм от ${genitive(index + 1)}`} ` +
+        `(было ${was === 0 ? 'до стены' : `${was} мм`})`,
+    );
+  }
+  if (has(b0) && has(b1) && startGap(b0) !== startGap(b1)) {
+    const was = startGap(b0);
+    const now = startGap(b1);
+    out.push(
+      `${name(index + 1)}: антресоль ${now === 0 ? `от самой ${genitive(index)}` : `начинается в ${now} мм от ${genitive(index)}`} ` +
+        `(было ${was === 0 ? 'от стены' : `${was} мм`})`,
+    );
+  }
+  return out;
+}
+
+/** Модули висящих рядов ряда — верх, антресоль и кладовки. */
+function hangingOf(run: Run): Module[] {
+  return run.upperSegments.flatMap((segment) => segment.modules);
+}
+
+/**
  * СМЕНА УГЛА С ПАНЕЛЯМИ ПО ХОДУ (STAGE A).
  *
  * Угол меняется на месте (`changeOnce`), и ряды после смены проходят ход
@@ -225,6 +360,16 @@ export function changeCorner(input: Parameters<typeof changeOnce>[0] & {
   /* Плита — свой контур (P0): ряды не меняются, меняется выбор. */
   if (prevChoice && countertopOnly(prevChoice, input.next)) {
     return { ok: true, runs: input.runs, corners: chosen, keep: true };
+  }
+  /*
+   * МЕНЯЕТСЯ ТОЛЬКО АНТРЕСОЛЬ (Measurement 2.0): кто ведёт её угол или вид её
+   * стыка. Низ, верх и плита те же — пересобирать стены по готовому решению
+   * незачем, а пересборка снимала саму антресоль (в готовом решении её нет)
+   * вместе с правками обеих стен: «Антресоль: Стена Б идёт в угол» давало
+   * кухню без антресоли.
+   */
+  if (prevChoice && mezzanineOnly(prevChoice, input.next)) {
+    return mezzanineChange({ ...input, prev: prevChoice });
   }
   /*
    * КТО ВЕДЁТ УРОВЕНЬ — СМЕНА КРАЙНИХ МОДУЛЕЙ ОБЕИХ СТЕН (P0). Угловой модуль
@@ -585,6 +730,13 @@ export type CornerCard = {
   rebuild?: number[];
   /** Ряды не меняются — меняется только выбор (плита через угол). */
   keep?: true;
+  /**
+   * «СОЕДИНИТЬ В УГЛУ» (Measurement 2.0): открывание у угла с этой схемой —
+   * тем же ходом, что запрёт цену после смены (`cornerClashes` композиции).
+   * Заход — словами; нет — сказано, что проверено. Пусто — не проверялось
+   * (схема не собралась или это то, что стоит сейчас).
+   */
+  opening?: { ok: boolean; words: string };
 };
 
 type CardInput = Omit<Parameters<typeof changeCorner>[0], 'next'> & {
@@ -610,6 +762,35 @@ function cardOf(
   const card: CornerCard = { key, level, title, hint, widthMm, choice, current, runs: input.runs };
   if (current || !change) return card;
   if (!change.ok) return { ...card, refusal: change.why, runs: null };
+  /*
+   * ТОЛЬКО АНТРЕСОЛЬ (Measurement 2.0): ряды те же, кроме антресоли, — что
+   * изменится, это её границы у угла, а ход у угла меряется по НОВЫМ рядам,
+   * с позициями каталога, тем же `cornerKinematics`, по которому экран
+   * запрёт цену после смены. Готовое решение антресоли не знает — его
+   * композиция заход антресоли не увидела бы.
+   */
+  if (change.mezzanine) {
+    const zone = input.runs[input.index]?.zone ?? input.requirements.zone;
+    const production = input.runs[input.index]?.production;
+    const places = runPlacements({ runs: change.runs, corners: change.corners, zone, production });
+    const kin = cornerKinematics({
+      runs: change.runs,
+      places,
+      production: shopOf(production),
+      ...(input.hardware ? { hardware: input.hardware } : {}),
+    });
+    const here = kin.clashes.filter((clash) => clash.corner === input.index);
+    const wallOf = (wall: number) => lowerWall(input.labels[wall] ?? `Стена ${wall + 1}`, 'genitive');
+    return {
+      ...card,
+      runs: change.runs,
+      changes: mezzanineChanges(input.runs, change.runs, input.index, input.labels),
+      opening:
+        here.length > 0
+          ? { ok: false, words: here.slice(0, 2).map((clash) => clashWords(clash, wallOf)).join('; ') }
+          : { ok: true, words: 'заходов при открывании у угла нет (проверено по рядам с антресолью)' },
+    };
+  }
   return {
     ...card,
     runs: change.runs,
@@ -651,7 +832,7 @@ export function cornerCards(input: CardInput): CornerCard[] {
             ? `фальш-панель ${geometry.fillerMm} мм, петли угловые`
             : `фальш-панель ${geometry.upperFillerMm} мм`
           : kind === 'l_shape'
-            ? `${widthMm}×${widthMm} мм, два фасада вместе`
+            ? `${widthMm}×${widthMm} мм, два фасада вместе, фальш-панель не нужна`
             : 'над столешницей в углу шкафа нет';
       return { hint, widthMm };
     });

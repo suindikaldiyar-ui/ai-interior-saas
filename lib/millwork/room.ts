@@ -151,6 +151,13 @@ export type RoomInput = {
   /** Живой замер: откуда состояния величин. Нет — всё в замере замерено. */
   survey?: Survey | null;
   /**
+   * УГЛЫ СО ЗНАКОМ (замер 2.0, `Measurement.walk`). Стены — по часовой,
+   * `angleDeg` +90 — внутренний угол, −90 — выступ: стена за выступом
+   * поворачивает в другую сторону. Пусто — как всегда: каждый угол —
+   * поворот направо, знак замера не читается.
+   */
+  signedTurns?: boolean;
+  /**
    * Глубина мебели от стены, мм: пол под ней, когда комната не замкнута
    * ничем (одна стена). Это не размер комнаты — это то место, где мебель
    * стоит, и оно известно.
@@ -318,7 +325,15 @@ export function roomLayout(input: RoomInput): Room {
 
   /* ── Цепочка стен от опорной ── */
   const anchorIndex = Math.max(0, Math.min(n - 1, input.anchor.wallIndex));
-  const rotOf = (j: number) => input.anchor.rotationYDeg - 90 * (j - anchorIndex);
+  /* Поворот к следующей стене: прежний замер — всегда направо; замер 2.0 — со знаком и своим углом. */
+  const turnAfter = (j: number) => (input.signedTurns ? walls[j]?.angleDeg ?? 90 : 90);
+  const rotations: number[] = new Array(n);
+  if (n > 0) {
+    rotations[anchorIndex] = input.anchor.rotationYDeg;
+    for (let j = anchorIndex + 1; j < n; j += 1) rotations[j] = rotations[j - 1] - turnAfter(j - 1);
+    for (let j = anchorIndex - 1; j >= 0; j -= 1) rotations[j] = rotations[j + 1] + turnAfter(j);
+  }
+  const rotOf = (j: number) => rotations[j] ?? input.anchor.rotationYDeg - 90 * (j - anchorIndex);
   const dirOf = (j: number): [number, number] => [Math.cos(rotOf(j) * DEG), -Math.sin(rotOf(j) * DEG)];
   const inwardOf = (j: number): [number, number] => [Math.sin(rotOf(j) * DEG), Math.cos(rotOf(j) * DEG)];
 
@@ -346,7 +361,8 @@ export function roomLayout(input: RoomInput): Room {
   /* ── Объекты стен ── */
   const objects: RoomObject[] = [];
   walls.forEach((wall, index) => {
-    if (wall.angleDeg !== undefined && Math.abs(Math.abs(wall.angleDeg) - 90) > 0.5 && index < n - 1) {
+    /* Замер 2.0 стоит под своим углом; ряд через такой угол не ставится — это скажет отказ цепочки. */
+    if (!input.signedTurns && wall.angleDeg !== undefined && Math.abs(Math.abs(wall.angleDeg) - 90) > 0.5 && index < n - 1) {
       missing.push(
         `${wallTitle(wall.id, index)}: угол к следующей стене ${wall.angleDeg}° — ряды и комната собраны под 90°`,
       );
@@ -593,8 +609,12 @@ export function roomSourceOf(input: {
   walls: { id: string; lengthMm: number; openings: Opening[] }[];
   /** Проёмы рабочей стены, по которым собран ряд. */
   runOpenings: Opening[];
+  /** Стена А — та, чьи проёмы `runOpenings`. Пусто — первая в списке, как было. */
+  runWallId?: string;
   /** Стены замера: откуда угол к следующей стене. */
   measuredWalls: { id: string; angleDeg?: number }[];
+  /** Углы замера со знаком (замер 2.0, `Measurement.walk`). */
+  signedTurns?: boolean;
   ceilingMm: number;
   depthMm: number;
   solution: CornerJoin['solution'];
@@ -607,9 +627,10 @@ export function roomSourceOf(input: {
   return {
     walls: input.walls.map((wall, i) => ({
       ...wall,
-      openings: i === 0 ? input.runOpenings : wall.openings,
+      openings: (input.runWallId ? wall.id === input.runWallId : i === 0) ? input.runOpenings : wall.openings,
       angleDeg: input.measuredWalls.find((measured) => measured.id === wall.id)?.angleDeg,
     })),
+    ...(input.signedTurns ? { signedTurns: true } : {}),
     ceilingMm: input.ceilingMm,
     depthMm: input.depthMm,
     solution: input.solution,

@@ -36,6 +36,7 @@ import {
   lowerWall,
   wallLabel,
   wallMismatches,
+  wallMismatchMessage,
   mismatchPriceText,
   obstacleMismatches,
 } from '@/lib/millwork/walls';
@@ -52,6 +53,7 @@ import {
   objectEstimateOf,
   objectInput,
   objectSite,
+  offerOf,
   panelWallsOf,
   savedCornerChoices,
   savedWallRuns,
@@ -61,8 +63,10 @@ import {
   wallSegments,
   withWallEdit,
   withoutWallEdit,
+  type ProjectOffer,
   type WallEdits,
 } from '@/lib/millwork/objectEstimate';
+import { mirroredState, rechainedState, type MirrorContext } from '@/lib/millwork/mirror';
 import { ratesFromCatalog } from '@/lib/millwork/rates';
 import { markShownMm, marksOfZone, moduleCarcassHeightMm, rowStandardDepthMm } from '@/lib/millwork/fill';
 import { bayEnvelope, drawerReleaseBlock } from '@/lib/millwork/bays';
@@ -75,6 +79,7 @@ import {
   UPPER_CORNER_TITLE,
   cornerChoicesOf,
   cornerOwnerOf,
+  lowerGapMm,
   mergedCorners,
   stampedCorners,
 } from '@/lib/millwork/corner';
@@ -122,6 +127,15 @@ import {
   type StepKey,
 } from '@/lib/millwork/steps';
 import SurveyPanel from './SurveyPanel';
+/*
+ * ФОРМА КОМНАТЫ И МЕСТО МОДУЛЯ (Measurement 2.0) — по требованию: нужны на
+ * шаге замера и в инспекторе Studio, а не в первой загрузке мастера и демо
+ * (замерено: +13 кБ на `/demo` статическим импортом).
+ */
+const RoomShapePanel = dynamic(() => import('./RoomShapePanel'), { ssr: false });
+const ModulePlacement = dynamic(() => import('./ModulePlacement'), { ssr: false });
+import type { RoomChange, RoomPreview } from './RoomShapePanel';
+import type { TransferPreview } from './ModulePlacement';
 import type { StudioWall } from './StudioInspector';
 import type { StudioTool, StudioView } from './studio/StudioShell';
 import type { PlanCommand, PlanFurniture } from './studio/RoomPlan';
@@ -735,6 +749,7 @@ export default function Workspace(props: WorkspaceProps) {
           runWallId: props.runWallId,
         },
         opened ? resolveSurvey(opened) : null,
+        segmentCount(props.initialState?.shape ?? 'linear'),
       ).walls.map((wall) => wall.id);
     }
     return openOrder.current;
@@ -1086,6 +1101,8 @@ export default function Workspace(props: WorkspaceProps) {
           runWallId: props.runWallId,
         },
         resolution,
+        /* Замер 2.0: окно стольких стен по часовой встаёт под мебель (`kitchenChain`). */
+        segmentCount(shape),
       ),
     [
       props.lengthMm,
@@ -1096,6 +1113,7 @@ export default function Workspace(props: WorkspaceProps) {
       props.measuredComms,
       props.runWallId,
       resolution,
+      shape,
     ],
   );
   const walls = site.walls;
@@ -1274,8 +1292,10 @@ export default function Workspace(props: WorkspaceProps) {
          * нет владельца (слой 55).
          */
         corner: wallCornerOf(layout),
+        /* Стена А — первая стена цепочки: у замера 2.0 это не обязательно «ряд здесь». */
+        runWallId: site.runWallId,
       }),
-    [props, resolution, wallRequirements, liveRates, production, millingItems, carcassItems, materialItems, hardwareItems, layout],
+    [props, resolution, wallRequirements, liveRates, production, millingItems, carcassItems, materialItems, hardwareItems, layout, site.runWallId],
   );
 
   /**
@@ -1291,8 +1311,11 @@ export default function Workspace(props: WorkspaceProps) {
   const roomSource = useMemo<RoomSource>(
     () =>
       roomSourceOf({
-        walls: site.walls,
+        /* Замер 2.0: стены комнаты по часовой вокруг цепочки — и те, что стоят до неё. */
+        walls: site.roomWalls ?? site.walls,
         runOpenings: input.openings,
+        runWallId: site.runWallId,
+        signedTurns: resolution?.measurement.walk === 'clockwise',
         measuredWalls: resolution?.measurement.walls ?? props.measuredWalls ?? [],
         ceilingMm: site.ceilingMm,
         depthMm: rowStandardDepthMm(zone, 'base', production),
@@ -1833,8 +1856,15 @@ export default function Workspace(props: WorkspaceProps) {
    * Обе ветки — ОДНА операция `move_module`: она умеет и то, и другое, и
    * умеет это для всех трёх рядов. Второго пути записи не появляется.
    */
-  const moveModule = (moduleId: string, offsetMm: number) => {
-    const row = rowOfModule(active.run, moduleId);
+  const moveModule = (moduleId: string, offsetMm: number, exact = false) => {
+    /*
+     * РЯД ВЫБРАННОЙ СТЕНЫ, А НЕ СТЕНЫ А (Measurement 2.0).
+     *
+     * Здесь искался `active.run` — ряд стены А, — и модуль стены Б или В
+     * не находился: жест на соседней стене молча не делал ничего, хотя
+     * `runOps` пишет правку именно в ряд выбранной стены.
+     */
+    const row = rowOfModule(activeRun, moduleId);
     if (!row) return;
 
     /*
@@ -1868,12 +1898,12 @@ export default function Workspace(props: WorkspaceProps) {
      * id. Отметку, на которую он встал, посчитала `reorderTarget` — та
      * же функция, что рисовала подсветку под пальцем.
      */
-    const landed = byPlace ? snapMove(offsetMm) : target!.offsetMm;
+    const landed = byPlace ? (exact ? Math.round(offsetMm) : snapMove(offsetMm)) : target!.offsetMm;
 
     runOps(
       [
         byPlace
-          ? { op: 'move_module', moduleId, offsetMm }
+          ? { op: 'move_module', moduleId, offsetMm, ...(exact ? { exact: true } : {}) }
           : { op: 'move_module', moduleId, afterModuleId: target!.afterModuleId },
       ],
       setMoveNotice,
@@ -2480,6 +2510,23 @@ export default function Workspace(props: WorkspaceProps) {
   );
 
   /*
+   * «СОЕДИНИТЬ В УГЛУ» (Measurement 2.0): у каждой схемы до нажатия — и
+   * открывание у этого угла. Та же композиция, что проверяет схему, и тот же
+   * ход у угла (`cornerClashes`), что после смены запрёт цену: заход —
+   * словами, нет — сказано, что проверено.
+   */
+  const openingOf = useCallback(
+    (attempt: ReturnType<typeof compositionWith>, index: number): CornerCard['opening'] => {
+      if (attempt?.state !== 'built') return undefined;
+      const clashes = (attempt.composition.cornerClashes ?? []).filter((note) => note.corner === index);
+      return clashes.length > 0
+        ? { ok: false, words: clashes.map((note) => note.words).join('; ') }
+        : { ok: true, words: 'заходов при открывании у угла нет' };
+    },
+    [],
+  );
+
+  /*
    * КАРТОЧКИ УГЛА. Смена, которую движок принял, ещё обязана собраться
    * композицией: не собралась — карточка серая с её причиной, а не экран
    * с отказом после нажатия.
@@ -2490,9 +2537,11 @@ export default function Workspace(props: WorkspaceProps) {
       if (card.refusal || card.current) return card;
       const corners = cornerChoices.map((choice, i) => (i === cornerInput.index ? card.choice : choice));
       const attempt = compositionWith(corners, true);
-      return attempt?.state === 'refused' ? { ...card, refusal: attempt.reason, runs: null } : card;
+      return attempt?.state === 'refused'
+        ? { ...card, refusal: attempt.reason, runs: null }
+        : { ...card, opening: openingOf(attempt, cornerInput.index) };
     });
-  }, [cornerInput, cornerChoices, compositionWith]);
+  }, [cornerInput, cornerChoices, compositionWith, openingOf]);
 
   /*
    * КТО ВЕДЁТ УГОЛ — ПЕРЕКЛЮЧАТЕЛИ ПО УРОВНЯМ (P0). Та же проверка до
@@ -2509,11 +2558,13 @@ export default function Workspace(props: WorkspaceProps) {
       const clashes = (attempt?.state === 'built' ? (attempt.composition.cornerClashes ?? []) : []).filter(
         (note) => note.corner === cornerInput.index,
       );
+      /* Смена одной антресоли: ход уже измерен движком по новым рядам с антресолью (`cardOf`). */
+      const opening = card.opening ?? openingOf(attempt, cornerInput.index);
       return clashes.length > 0
-        ? { ...card, changes: [...(card.changes ?? []), ...clashes.map((note) => `после смены цены не будет: ${note.words}`)] }
-        : card;
+        ? { ...card, opening, changes: [...(card.changes ?? []), ...clashes.map((note) => `после смены цены не будет: ${note.words}`)] }
+        : { ...card, opening };
     });
-  }, [cornerInput, cornerChoices, compositionWith]);
+  }, [cornerInput, cornerChoices, compositionWith, openingOf]);
 
   /*
    * ДВЕРЦЫ ВЕРХНЕГО Г-МОДУЛЯ (P0): «книжкой» или каждая на своих петлях.
@@ -2527,9 +2578,11 @@ export default function Workspace(props: WorkspaceProps) {
       if (card.refusal || card.current) return card;
       const corners = cornerChoices.map((choice, i) => (i === cornerInput.index ? card.choice : choice));
       const attempt = compositionWith(corners, true);
-      return attempt?.state === 'refused' ? { ...card, refusal: attempt.reason, runs: null } : card;
+      return attempt?.state === 'refused'
+        ? { ...card, refusal: attempt.reason, runs: null }
+        : { ...card, opening: openingOf(attempt, cornerInput.index) };
     });
-  }, [cornerInput, cornerChoices, compositionWith]);
+  }, [cornerInput, cornerChoices, compositionWith, openingOf]);
 
   /** Сдвиг итога на экране — той же сметой объекта, что и сам итог. */
   const cornerPrice = useCallback(
@@ -2663,7 +2716,8 @@ export default function Workspace(props: WorkspaceProps) {
     const leads = (level: 'lower' | 'upper' | 'mezzanine' | 'countertop') =>
       lowerWall(wallLabel(cornerOwnerOf(choice, level) === 'prev' ? selectedCorner : selectedCorner + 1), 'nominative');
     return {
-      title: `Угол ${wallLabel(selectedCorner)} — ${wallLabel(selectedCorner + 1)}`,
+      /* «Соединить в углу» (Measurement 2.0): пара соседних рядов и схемы их соединения. */
+      title: `Соединить в углу: ${wallLabel(selectedCorner)} — ${wallLabel(selectedCorner + 1)}`,
       now:
         `Низ ведёт в угол ${leads('lower')}` +
         (choice.upper === 'empty' ? ', над столешницей угол пустой' : `, верх — ${leads('upper')}`) +
@@ -3426,7 +3480,8 @@ export default function Workspace(props: WorkspaceProps) {
    */
   const dragWidth = useCallback(
     (moduleId: string, widthMm: number) => {
-      const unit = allModules(active.run).find((m) => m.id === moduleId);
+      /* Ряд выбранной стены: на стенах Б и В ручка искала модуль в ряду стены А и молчала. */
+      const unit = allModules(activeRun).find((m) => m.id === moduleId);
       if (!unit) return;
 
       const wanted = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, widthMm));
@@ -3457,7 +3512,7 @@ export default function Workspace(props: WorkspaceProps) {
       // Выделение переживает правку: замерщик тянет ширину подряд.
       setSelectedId(moduleId);
     },
-    [active.run, runOps],
+    [activeRun, runOps],
   );
 
   /**
@@ -3567,7 +3622,7 @@ export default function Workspace(props: WorkspaceProps) {
    * Ряд построен по стене, длину которой не мерили? Тогда общий размер
    * на чертеже идёт пунктиром — отраслевая норма для размеров из допущений.
    */
-  const runWallLength = survey?.walls.find((w) => w.id === resolution?.runWallId)?.lengthMm;
+  const runWallLength = survey?.walls.find((w) => w.id === site.runWallId)?.lengthMm;
   const assumedTotal = runWallLength ? runWallLength.state !== 'measured' : false;
 
   /*
@@ -3822,6 +3877,11 @@ export default function Workspace(props: WorkspaceProps) {
     () => wallFurniture.map(({ wallId, run, startMm }) => ({ wallId, run, startMm })),
     [wallFurniture],
   );
+  /* Имена стен под мебелью на плане — те же, что у композиции: «Стена А» — первая по часовой. */
+  const planWallNames = useMemo<Record<string, string>>(
+    () => Object.fromEntries(wallFurniture.map(({ wallId, index }) => [wallId, wallLabel(index)])),
+    [wallFurniture],
+  );
 
   /**
    * СОБЕРЁТСЯ ЛИ ГОТОВОЕ РЕШЕНИЕ НА НОВОЙ ДЛИНЕ СТЕНЫ.
@@ -3836,19 +3896,20 @@ export default function Workspace(props: WorkspaceProps) {
   const layoutRefusalFor = useCallback(
     (nextSurvey: Survey): string | null => {
       const nextResolution = resolveSurvey(nextSurvey);
+      const nextSite = objectSite(
+        {
+          lengthMm: props.lengthMm,
+          ceilingHeightMm: props.ceilingHeightMm,
+          openings: props.openings,
+          comms: props.comms,
+          measuredWalls: props.measuredWalls,
+          measuredComms: props.measuredComms,
+          runWallId: props.runWallId,
+        },
+        nextResolution,
+        segmentCount(shape),
+      );
       if (shape !== 'linear') {
-        const nextSite = objectSite(
-          {
-            lengthMm: props.lengthMm,
-            ceilingHeightMm: props.ceilingHeightMm,
-            openings: props.openings,
-            comms: props.comms,
-            measuredWalls: props.measuredWalls,
-            measuredComms: props.measuredComms,
-            runWallId: props.runWallId,
-          },
-          nextResolution,
-        );
         const attempt = compositionFor({
           shape,
           requirements,
@@ -3873,6 +3934,7 @@ export default function Workspace(props: WorkspaceProps) {
             materials: materialItems,
             hardware: hardwareItems,
             corner: wallCornerOf(layout),
+            runWallId: nextSite.runWallId,
           }),
           disabled,
           {},
@@ -4076,6 +4138,301 @@ export default function Workspace(props: WorkspaceProps) {
       </div>
     ) : null;
 
+  /**
+   * СОСТОЯНИЕ ОБЪЕКТА СЕЙЧАС — ОДНА СБОРКА НА ЗАПИСЬ И НА ПРЕДПРОСМОТР ЗАМЕРА.
+   *
+   * Автосохранение кладёт его в базу (плюс снимок цен и время), а правка
+   * комнаты (Measurement 2.0) — показывает, что из него получится после
+   * «Отразить» или новой формы. Две сборки одного объекта однажды разошлись
+   * бы: предпросмотр показал бы не то, что запишется.
+   */
+  const stateNow = useCallback(
+    (): MillworkState => ({
+      survey: survey ?? undefined,
+      templateId,
+      /*
+       * Форма, решение угла и ряды соседних стен. Без них угловая
+       * кухня открывалась бы прямой, а работа замерщика по второй
+       * стене пропадала бы молча.
+       */
+      shape,
+      /*
+       * Выбор по углам — единственное место, где он хранится (слой 55).
+       * Прежнее `cornerSolution` больше не пишется: два поля об одном
+       * угле однажды разошлись бы, и объект открылся бы не тем углом.
+       *
+       * Пишется выбор КАЖДОГО угла формы, включая умолчания: угол,
+       * добавленный сменой формы, берёт низ из прежнего решения, а оно
+       * больше не сохраняется — записанный частично, такой угол открылся
+       * бы другим низом.
+       */
+      corners: shape === 'linear' ? cornerPicks : mergedCorners(cornerPicks, cornerChoices, compositionWallIds),
+      /* Ключ — стена замера (`wallId`); старые номера читает `savedWallRuns`. */
+      wallRuns: editedWalls,
+      requirements,
+      /*
+       * Только изменённое: объект без своей правки читает организацию
+       * и едет за её настройкой.
+       */
+      production: ownMarks,
+      runs: editedRuns,
+      selectedVariant: variantKey,
+      renderStyle,
+      /* Освещение (V3D-02): нет — поля нет, у прежних объектов запись та же. */
+      ...(lighting ? { lighting } : {}),
+      disabled,
+    }),
+    [
+      survey,
+      templateId,
+      shape,
+      cornerPicks,
+      cornerChoices,
+      compositionWallIds,
+      editedWalls,
+      requirements,
+      ownMarks,
+      editedRuns,
+      variantKey,
+      renderStyle,
+      lighting,
+      disabled,
+    ],
+  );
+
+  /**
+   * ОБЪЕКТ ПО СОСТОЯНИЮ — ТЕ ЖЕ ШАГИ, ЧТО У ЭКРАНА И КАБИНЕТА (`offerOf`).
+   *
+   * Им считается предпросмотр правки комнаты: до и после — одной функцией,
+   * поэтому разница итогов честная, даже если экран считает свои числа
+   * чуть иначе (снятые галочки, живые ставки — у обоих одни и те же).
+   */
+  const offerFor = useCallback(
+    (state: MillworkState): ProjectOffer =>
+      offerOf({
+        base: props,
+        state,
+        production,
+        rates: liveRates,
+        milling: millingItems,
+        carcass: carcassItems,
+        materials: materialItems,
+        hardware: hardwareItems,
+      }),
+    [props, production, liveRates, millingItems, carcassItems, materialItems, hardwareItems],
+  );
+
+  /** Что нужно отражению мебели: стены под мебелью сейчас, длины рядов и стен, где стоит прибор. */
+  const mirrorContextNow = useCallback(
+    (): MirrorContext => ({
+      chainBefore: compositionWallIds,
+      rowLengthMm: Object.fromEntries(segments.map((run, i) => [run.wallId ?? compositionWallIds[i], run.lengthMm])),
+      wallLengthMm: Object.fromEntries((survey?.walls ?? []).map((item) => [item.id, valueOf(item.lengthMm) ?? 0])),
+      applianceWall: (appliance) =>
+        layout
+          ? (layout.segments.find((segment) => segment.appliances.includes(appliance as ApplianceKind))?.wallId ?? null)
+          : (compositionWallIds[0] ?? null),
+    }),
+    [compositionWallIds, segments, survey, layout],
+  );
+
+  /**
+   * ПРЕДПРОСМОТР ПРАВКИ КОМНАТЫ (Measurement 2.0).
+   *
+   * Собирается то, что получится: замер после правки, мебель — отражённая
+   * вместе с комнатой (`mirroredState`) либо на новых стенах
+   * (`rechainedState`: правка, у стены которой сменилась роль, снимается и
+   * называется), композиция, ряды и итог. Ничего не пишется до «Применить».
+   */
+  const roomPreview = useCallback(
+    (change: RoomChange): RoomPreview => {
+      const now = stateNow();
+      let candidate: MillworkState = { ...now, survey: change.survey, shape: change.shape ?? now.shape };
+      const lines: string[] = [];
+      const nameOf = (wallId: string) => {
+        const index = (survey?.walls ?? []).findIndex((item) => item.id === wallId);
+        return index >= 0 ? `стены ${index + 1}` : `стены ${wallId}`;
+      };
+      if (change.mirror) {
+        const mirrored = mirroredState(candidate, mirrorContextNow());
+        candidate = mirrored.state;
+        lines.push(...mirrored.notes);
+      }
+      const before = offerFor(now);
+      let after = offerFor(candidate);
+      const chainOf = (offer: ProjectOffer): string[] =>
+        offer.state !== 'built'
+          ? []
+          : offer.layout
+            ? offer.layout.segments.map((segment) => segment.wallId)
+            : [offer.run.wallId ?? ''].filter(Boolean);
+      if (!change.mirror && after.state === 'built') {
+        const rechained = rechainedState(candidate, compositionWallIds, chainOf(after), nameOf);
+        if (rechained.notes.length > 0) {
+          candidate = rechained.state;
+          lines.push(...rechained.notes);
+          after = offerFor(candidate);
+        }
+      }
+      const chainBefore = compositionWallIds;
+      const chainAfter = chainOf(after);
+      const chainWords = (chain: string[]) =>
+        chain.map((wallId, i) => `${nameOf(wallId).replace('стены', 'стена')} (${'АБВГ'[i] ?? i + 1})`).join(' → ');
+      if (chainAfter.length > 0 && chainAfter.join() !== chainBefore.join()) {
+        lines.unshift(`Стены под мебелью: ${chainWords(chainBefore)} станут ${chainWords(chainAfter)}.`);
+      }
+      const furniture =
+        after.state === 'built'
+          ? wallFurnitureOf({
+              runs: after.segments,
+              layout: after.layout,
+              runWallId: chainAfter[0],
+              edited: () => false,
+              free: requirements.mode === 'free',
+            })
+          : [];
+      return {
+        change,
+        refusal: after.state === 'refused' ? after.refusal : null,
+        lines,
+        totalBefore: before.state === 'built' ? before.estimate.total : null,
+        totalAfter: after.state === 'built' ? after.estimate.total : null,
+        furniture: furniture.map(({ wallId, run, startMm }) => ({ wallId, run, startMm })),
+        wallNames: Object.fromEntries(furniture.map(({ wallId, index }) => [wallId, wallLabel(index)])),
+        state: candidate,
+      };
+    },
+    [stateNow, survey, mirrorContextNow, offerFor, compositionWallIds, requirements.mode],
+  );
+
+  /**
+   * ПРИМЕНИТЬ ПОКАЗАННОЕ — ВСЕМИ ПОЛЯМИ СРАЗУ.
+   *
+   * Замер, форма, углы, правки рядов, закрепления и ручные позиции приборов,
+   * свет — из одного состояния, в одном обработчике (ловушка 54: два
+   * `patch()` подряд из одного снимка затирали друг друга).
+   */
+  const applyRoomState = useCallback(
+    (next: MillworkState) => {
+      dirty.current = true;
+      if (next.survey) {
+        setSurvey(next.survey);
+        props.onSurveyChange?.(next.survey);
+      }
+      setShape(next.shape ?? 'linear');
+      setCornerPicks(next.corners);
+      setEditedWalls(savedWallRuns(next.wallRuns));
+      setEditedRuns(next.runs ?? {});
+      const req = next.requirements;
+      if (req) {
+        setManualAnchors(req.manualAnchors ?? {});
+        if (req.tallSide !== requirements.tallSide || req.applianceWalls !== requirements.applianceWalls) {
+          setComposition((prev) => ({ ...prev, tallSide: req.tallSide, applianceWalls: req.applianceWalls }));
+        }
+      }
+      setLightingRaw(normalizeLighting(next.lighting));
+      setWallIndex(0);
+      setSelectedId(null);
+      setCornerPick(null);
+    },
+    [props, requirements.tallSide, requirements.applianceWalls],
+  );
+
+  /**
+   * МОДУЛЬ НА ДРУГУЮ СТЕНУ — ПРЕДПРОСМОТР И ЗАПИСЬ (Measurement 2.0).
+   *
+   * Две правки тем же движком, что у всех кнопок: снять модуль с ряда
+   * выбранной стены (`remove_module`) и поставить его ЦЕЛИКОМ на отметку
+   * ряда другой стены (`add_module` с `module`). Отметка — от левого угла
+   * той стены, как рулеткой: ряд там начинается с того, что отнял угол
+   * (`lowerGapMm`). Не встал — отказ движка словами, ничего не пишется;
+   * встал — итог до и после той же `offerOf`, запись — по «Применить».
+   *
+   * ЧТО ЭКРАН ЗАПРЁТ ПОСЛЕ ПЕРЕНОСА — ДО НАЖАТИЯ. Ход у угла и ход двери
+   * витрины экран меряет по своим рядам (`cornerClashMismatches`,
+   * `vitrineSweepMismatches`): модуль, вставший в глухую часть чужого угла,
+   * не откроется, и цены после записи нет. Предпросмотр спрашивает те же
+   * функции по рядам после переноса и говорит теми же словами
+   * (`wallMismatchMessage`) — иначе он называл итог, которого экран уже не
+   * покажет. Запись не запирается: правит человек (сторона петель, место).
+   */
+  const transferPreview = useCallback(
+    (toIndex: number, fromLeftMm: number): TransferPreview => {
+      const refuse = (refusal: string): TransferPreview => ({ refusal, lines: [], blocked: [], totalBefore: null, totalAfter: null, commit: () => undefined });
+      const unit = selectedId ? allModules(activeRun).find((m) => m.id === selectedId) : undefined;
+      const target = segments[toIndex];
+      if (!unit || !target) return refuse('Модуль или стена не найдены.');
+      const placed = rowOfModule(activeRun, unit.id);
+      if (!placed || placed.row === 'storage') return refuse('Кладовку над колонной не переносят: её собирает колонна своей стены.');
+      if (!Number.isInteger(fromLeftMm)) return refuse('Отметка — целое число миллиметров.');
+      const common = { requirements, roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000), hardware: hardwareItems };
+      const sourceNext = applyOps({ ...common, run: activeRun, ops: [{ op: 'remove_module', moduleId: unit.id }], openings: wallOpenings(wall) });
+      if (allModules(sourceNext).some((m) => m.id === unit.id)) return refuse(sourceNext.warnings[0] ?? 'Модуль со стены не снимается.');
+      const row = placed.row === 'upper' ? 'upper' : placed.row === 'mezzanine' ? 'mezzanine' : undefined;
+      const targetStart = lowerGapMm(target, 'start');
+      const targetNext = applyOps({
+        ...common,
+        run: target,
+        ops: [{ op: 'add_module', kind: unit.kind, module: unit, atMm: fromLeftMm - targetStart, ...(row ? { row } : {}) }],
+        openings: wallOpenings(toIndex),
+      });
+      const fresh = allModules(targetNext).find((m) => !allModules(target).some((x) => x.id === m.id));
+      if (!fresh) return refuse(targetNext.warnings[0] ?? `На ${lowerWall(wallLabel(toIndex), 'accusative')} модуль не встаёт.`);
+
+      const nextRuns = segments.map((run, i) => (i === wall ? sourceNext : i === toIndex ? targetNext : run));
+      const byClash = cornerClashMismatches({
+        runs: nextRuns,
+        places: runPlacements({ runs: nextRuns, solution: legacyCorner, corners: cornerChoices, zone, production }),
+        production,
+        hardware: hardwareItems,
+        edited: (index) => index === wall || index === toIndex || wallEdited(index),
+        composed: layout?.cornerClashes,
+      });
+      const bySweep = vitrineSweepMismatches({
+        runs: nextRuns,
+        production,
+        hardware: hardwareItems,
+        skip: byClash.map((mismatch) => mismatch.index),
+      });
+      const blocked = [...byClash, ...bySweep].map((mismatch) => wallMismatchMessage(mismatch));
+
+      const now = stateNow();
+      const withEdit = (state: MillworkState, index: number, run: Run): MillworkState =>
+        index === 0
+          ? { ...state, runs: { ...state.runs, [active.key]: run } }
+          : { ...state, wallRuns: withWallEdit(savedWallRuns(state.wallRuns), wallIdAt(index), index, run) };
+      const candidate = withEdit(withEdit(now, wall, sourceNext), toIndex, targetNext);
+      const before = offerFor(now);
+      const after = offerFor(candidate);
+      const sourceStart = lowerGapMm(activeRun, 'start');
+      return {
+        refusal: after.state === 'refused' ? after.refusal : null,
+        lines: [
+          `«${unit.label}» ${unit.widthMm} мм: ${wallLabel(wall)}, ${sourceStart + unit.offsetMm}…${sourceStart + unit.offsetMm + unit.widthMm} мм от левого угла → ` +
+            `${wallLabel(toIndex)}, ${fromLeftMm}…${fromLeftMm + unit.widthMm} мм.`,
+          ...sourceNext.warnings.slice(0, 1),
+          ...targetNext.warnings.slice(0, 1),
+        ],
+        blocked,
+        totalBefore: before.state === 'built' ? before.estimate.total : null,
+        totalAfter: after.state === 'built' && blocked.length === 0 ? after.estimate.total : null,
+        commit: () => {
+          dirty.current = true;
+          const write = (index: number, run: Run) => {
+            if (index === 0) setEditedRuns((prev) => ({ ...prev, [active.key]: run }));
+            else setEditedWalls((prev) => withWallEdit(prev, wallIdAt(index), index, run));
+          };
+          write(wall, sourceNext);
+          write(toIndex, targetNext);
+          setWallIndex(toIndex);
+          setSelectedId(fresh.id);
+          setMoveNotice(null);
+        },
+      };
+    },
+    [selectedId, activeRun, segments, requirements, props.roomDepthM, hardwareItems, wallOpenings, wall, stateNow, active.key, wallIdAt, offerFor, legacyCorner, cornerChoices, zone, production, wallEdited, layout],
+  );
+
   /*
    * Автосохранение через паузу после последнего изменения. Замерщик правит
    * состав при клиенте и не должен помнить про кнопку «сохранить»; писать же
@@ -4105,39 +4462,8 @@ export default function Workspace(props: WorkspaceProps) {
 
     saveTimer.current = setTimeout(async () => {
       const state: MillworkState = {
-        survey: survey ?? undefined,
-        templateId,
-        /*
-         * Форма, решение угла и ряды соседних стен. Без них угловая
-         * кухня открывалась бы прямой, а работа замерщика по второй
-         * стене пропадала бы молча.
-         */
-        shape,
-        /*
-         * Выбор по углам — единственное место, где он хранится (слой 55).
-         * Прежнее `cornerSolution` больше не пишется: два поля об одном
-         * угле однажды разошлись бы, и объект открылся бы не тем углом.
-         *
-         * Пишется выбор КАЖДОГО угла формы, включая умолчания: угол,
-         * добавленный сменой формы, берёт низ из прежнего решения, а оно
-         * больше не сохраняется — записанный частично, такой угол открылся
-         * бы другим низом.
-         */
-        corners: shape === 'linear' ? cornerPicks : mergedCorners(cornerPicks, cornerChoices, compositionWallIds),
-        /* Ключ — стена замера (`wallId`); старые номера читает `savedWallRuns`. */
-        wallRuns: editedWalls,
-        requirements,
-        /*
-         * Только изменённое: объект без своей правки читает организацию
-         * и едет за её настройкой.
-         */
-        production: ownMarks,
-        runs: editedRuns,
-        selectedVariant: variantKey,
-        renderStyle,
-        /* Освещение (V3D-02): нет — поля нет, у прежних объектов запись та же. */
-        ...(lighting ? { lighting } : {}),
-        disabled,
+        /* Состав, форма, углы, правки и свет — та же сборка, что у предпросмотра замера. */
+        ...stateNow(),
         /*
          * СНИМОК ЦЕН — СМЕТЫ ОБЪЕКТА, А НЕ СТЕНЫ А (слой 52).
          *
@@ -4200,6 +4526,7 @@ export default function Workspace(props: WorkspaceProps) {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
   }, [
+    stateNow,
     editedRuns,
     // Отказ сборки запирает запись: снялся — запись обязана проснуться.
     screen.autosaveLocked,
@@ -4698,7 +5025,7 @@ export default function Workspace(props: WorkspaceProps) {
               * остальные модули стоят, где стояли.
               */}
             <div className="mt-2" data-corner>
-              <p className="mw-label mb-1">{cornerChoices.length > 1 ? 'Углы' : 'Угол'}</p>
+              <p className="mw-label mb-1">Соединить в углу</p>
               <div className="grid gap-1">
                 {cornerChoices.map((choice, i) => (
                   <button
@@ -4717,9 +5044,10 @@ export default function Workspace(props: WorkspaceProps) {
                 ))}
               </div>
               <p className="mt-1 text-[13px] leading-snug text-graphiteMw" data-corner-note>
-                Углом владеет стена до него: её ряд идёт до стены соседа, сосед стыкуется к
-                нему. Нажмите угол или угловой модуль в сцене — варианты угла покажет
-                библиотека.
+                Выберите пару соседних рядов (или угловой модуль в сцене): библиотека покажет
+                схемы соединения — какой ряд займёт угол на каждом уровне, какой примкнёт, нужна
+                ли фальш-панель, что изменится в размерах, нет ли захода при открывании и как
+                сдвинется цена, — до нажатия.
               </p>
             </div>
           </>
@@ -5225,6 +5553,7 @@ export default function Workspace(props: WorkspaceProps) {
             onSelectModule={selectModule}
             onWallLength={(wallId, lengthMm) => applyWallLength(wallId, lengthMm)}
             onZoom={setPlanZoom}
+            wallNames={planWallNames}
           />
         ) : (
           <p className="m-6 max-w-md text-[15px] leading-snug" data-plan-missing>
@@ -5304,30 +5633,23 @@ export default function Workspace(props: WorkspaceProps) {
           (survey ? (
             <div className="grid gap-4" data-studio-measure>
               <div>
-                <p className="mw-label mb-1">Стены по обходу</p>
-                <ul className="grid gap-1">
-                  {surveyWalls.map((item, i) => (
-                    <li key={item.id}>
-                      <button
-                        type="button"
-                        data-measure-wall={item.id}
-                        aria-pressed={item.id === selectedWallId}
-                        onClick={() => selectWall(item.id)}
-                        className="cad-row"
-                      >
-                        <span>Стена {i + 1}</span>
-                        <span className="mw-num text-graphiteMw">{item.id}</span>
-                        <span className={`mw-num ml-auto ${item.lengthMm.state === 'measured' ? '' : 'text-tape'}`}>
-                          {valueOf(item.lengthMm) === undefined
-                            ? 'не замерена'
-                            : `${valueOf(item.lengthMm)}${item.lengthMm.state === 'assumed' ? '*' : ''}`}
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+                {/*
+                  * ФОРМА И СТЕНЫ (Measurement 2.0): плитки формы, повороты,
+                  * отражение, обход — с предпросмотром. Список стен здесь же:
+                  * второго списка на экране нет (ловушка 257).
+                  */}
+                <RoomShapePanel
+                  survey={survey}
+                  chain={compositionWallIds}
+                  preview={roomPreview}
+                  apply={applyRoomState}
+                  stateNow={stateNow}
+                  withWalls
+                  selectedWallId={selectedWallId}
+                  onSelectWall={selectWall}
+                />
                 <p className="mt-1 text-[13px] leading-snug text-graphiteMw">
-                  Нажмите на стену на плане или здесь: длина правится в инспекторе справа, конец
+                  Нажмите на стену на плане или в списке: длина правится в инспекторе справа, конец
                   выбранной стены тянется мышью вдоль неё.
                 </p>
               </div>
@@ -5602,6 +5924,32 @@ export default function Workspace(props: WorkspaceProps) {
                 requirements={requirements}
                 onComposition={changeComposition}
                 freeMode={freeMode}
+              />
+            )}
+            {/*
+              * МЕСТО МОДУЛЯ (Measurement 2.0): отметка от левого угла стены
+              * числом, «прижать» к соседу или краю ряда, перенос на другую
+              * стену с предпросмотром — теми же операциями движка.
+              */}
+            {selectedUnit && rowOfModule(activeRun, selectedUnit.id) && (
+              <ModulePlacement
+                unit={selectedUnit}
+                row={rowOfModule(activeRun, selectedUnit.id)!.row}
+                run={activeRun}
+                wallName={wallLabel(wall)}
+                startOnWallMm={lowerGapMm(activeRun, 'start')}
+                freeMode={freeMode}
+                walls={segments
+                  .map((run, index) => ({ run, index }))
+                  .filter(({ index }) => index !== wall)
+                  .map(({ run, index }) => ({
+                    index,
+                    name: wallLabel(index),
+                    startOnWallMm: lowerGapMm(run, 'start'),
+                    lengthMm: run.lengthMm,
+                  }))}
+                onMove={(offsetMm) => moveModule(selectedUnit.id, offsetMm, true)}
+                transferPreview={transferPreview}
               />
             )}
             {frontEditors(() => '')}
@@ -5945,6 +6293,15 @@ export default function Workspace(props: WorkspaceProps) {
                 props.onSurveyChange?.(next);
               }}
               onFinish={() => setShowSheet(true)}
+              roomPanel={
+                <RoomShapePanel
+                  survey={survey}
+                  chain={compositionWallIds}
+                  preview={roomPreview}
+                  apply={applyRoomState}
+                  stateNow={stateNow}
+                />
+              }
             />
           ))}
 

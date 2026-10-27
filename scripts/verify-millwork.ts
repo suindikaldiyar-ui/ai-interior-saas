@@ -115,6 +115,7 @@ import { lightingChecks } from './verify-lighting';
 import { stageAChecks } from './verify-stage-a';
 import { p0CornerChecks } from './verify-p0-corners';
 import { p1VitrineChecks } from './verify-p1-vitrines';
+import { measurementV2Checks } from './verify-measurement-v2';
 import { runFingerprint } from '../lib/millwork/fingerprint';
 import { surfaceFinish, surfaceLook } from '../lib/millwork/surfaces';
 import { GROUP_ORDER, estimateGroups, groupsTotal } from '../lib/millwork/estimateGroups';
@@ -28779,6 +28780,9 @@ p0CornerChecks(check);
 
 /* ═══════════  P1: стеклянные витрины — три конструкции, место, двери, стекло, лента, производство  ═══════════ */
 p1VitrineChecks(check);
+
+/* ═══════════  MEASUREMENT 2.0: обход замера, сторона кухни, план против мира  ═══════════ */
+measurementV2Checks(check);
 
 Promise.allSettled(asyncChecks).then((results) => {
   for (const result of results) {

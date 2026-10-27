@@ -41,6 +41,7 @@ import {
   removeShelf,
   snapTo32,
   mezzanineBottomMm,
+  mezzanineHeightMm,
 } from '@/lib/millwork/fill';
 import { formatMoney } from '@/lib/millwork/estimate';
 import SheetDefs from './SheetDefs';
@@ -983,7 +984,7 @@ export default function ElevationDrawing({
    */
   const zone = zoneProfile(run.zone);
   const sectionZone = Boolean(run.zone) && run.zone !== 'kitchen';
-  const zoneTop = Math.min(zoneHeightMm(run.zone, ceiling), ceiling);
+  const zoneTop = Math.min(zoneHeightMm(run.zone, ceiling, run.production), ceiling);
 
   const marks: [number, string][] = sectionZone
     ? [
@@ -1062,7 +1063,7 @@ export default function ElevationDrawing({
       }
       if (!place && gap.row === 'mezzanine' && run.mezzanine) {
         const bottomMm = mezzanineBottomMm(run);
-        return { ...gap, topMm: bottomMm + run.mezzanine.heightMm, bottomMm };
+        return { ...gap, topMm: bottomMm + mezzanineHeightMm(run), bottomMm };
       }
 
       return {

@@ -41,7 +41,7 @@ export default function OverheadEditor({ unit, run, onOps, preview, onSelect }: 
   const eligible = Boolean(base) && base!.kind === 'tall' && !base!.appliance && !base!.column;
 
   const plinth = plinthMm(run.production);
-  const ceiling = zoneHeightMm(run.zone, run.ceilingHeightMm);
+  const ceiling = zoneHeightMm(run.zone, run.ceilingHeightMm, run.production);
   const baseHeight = base ? moduleCarcassHeightMm(base, run) : 0;
   const room = ceiling - plinth - baseHeight;
   const minH = GEOMETRY.upper.minCarcassH;

@@ -1776,6 +1776,18 @@ function FrameProbe({ rows, room, design }: { rows: SceneRow[]; room: Room | nul
           heightMm: wall.heightMm,
         })),
         /*
+         * ВНУТРЕННЯЯ ГРАНЬ КАЖДОЙ СТЕНЫ В МИРЕ, мм (Measurement 2.0): начало,
+         * направление и нормаль в комнату. По ним приёмка находит угол двух
+         * стен и сторону кухни в 3D — и сверяет с планом замера.
+         */
+        lines: (room?.walls ?? []).map((wall) => ({
+          id: wall.id,
+          start: wall.startMm,
+          dir: wall.dir,
+          inward: wall.inward,
+          lengthMm: wall.lengthMm,
+        })),
+        /*
          * РАЗМЕРЫ СТЕН ПО НАРИСОВАННОМУ: габарит кусков стены (без
          * углового блока) — длина вдоль, высота по вертикали. Стена стоит
          * под прямым углом, поэтому длина — большая из горизонталей.
@@ -1828,7 +1840,34 @@ function FrameProbe({ rows, room, design }: { rows: SceneRow[]; room: Room | nul
         }
       }
 
-      return { drawn: drawn.size, ids: Array.from(drawn).sort() };
+      /*
+       * ГДЕ МОДУЛЬ СТОИТ В МИРЕ — ГАБАРИТ НА ПОЛУ, мм (Measurement 2.0).
+       *
+       * Место модуля в ряду (`runPlaces`) и место ряда в мире — те же числа,
+       * по которым сцена ставит группу ряда (`row.placement`). По ним приёмка
+       * меряет модуль от угла комнаты и сверяет с планом замера.
+       */
+      /* `y` — низ и верх модуля от пола, мм: отметки, по которым приёмка сверяет антресоль с кладовкой. */
+      const boxes: Record<string, { min: [number, number]; max: [number, number]; y: [number, number] }> = {};
+      for (const row of rows) {
+        const place = row.placement ?? { xM: 0, zM: 0, rotationYDeg: 0 };
+        const a = (place.rotationYDeg * Math.PI) / 180;
+        const toWorld = (x: number, z: number): [number, number] => [
+          Math.round((x * Math.cos(a) + z * Math.sin(a) + place.xM) * MM * 10) / 10,
+          Math.round((-x * Math.sin(a) + z * Math.cos(a) + place.zM) * MM * 10) / 10,
+        ];
+        for (const item of runPlaces(row.run)) {
+          const p0 = toWorld(item.x, item.zM - item.depthM);
+          const p1 = toWorld(item.x + item.unit.widthMm / MM, item.zM);
+          boxes[item.unit.id] = {
+            min: [Math.min(p0[0], p1[0]), Math.min(p0[1], p1[1])],
+            max: [Math.max(p0[0], p1[0]), Math.max(p0[1], p1[1])],
+            y: [Math.round(item.y * MM), Math.round((item.y + item.heightM) * MM)],
+          };
+        }
+      }
+
+      return { drawn: drawn.size, ids: Array.from(drawn).sort(), boxes };
     };
 
     /*

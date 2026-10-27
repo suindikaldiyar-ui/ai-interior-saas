@@ -17,8 +17,10 @@ import { freeSpaceMm } from '@/lib/millwork/layout';
 import { widestGapMm } from '@/lib/millwork/freeRun';
 import { variantsToAdd } from '@/lib/millwork/moduleVariants';
 import { DEFAULT_MEZZANINE_MM, SECTION_SPECS } from '@/lib/millwork/sections';
-import { hasMezzanine, mezzanineHeightMm } from '@/lib/millwork/fill';
+import { hasMezzanine, mezzanineHeightMm, tallStorageOf } from '@/lib/millwork/fill';
+import { ceilingGapOf } from '@/lib/millwork/shop';
 import {
+  mezzanineOf,
   zoneAppliances,
   zoneOptions,
   zoneProfile,
@@ -305,7 +307,7 @@ export default function RunEditor({
           {mezzanineOn ? 'Убрать' : 'Добавить'}
         </button>
 
-        {mezzanineOn && (
+        {mezzanineOn && !run.mezzanine?.alignTall && (
           <label className="flex items-center gap-1 text-[13px]">
             Высота
             <input
@@ -334,7 +336,42 @@ export default function RunEditor({
             />
           </label>
         )}
+
+        {/*
+          * В ЛИНИЮ С ВЫСОКИМ БЛОКОМ (Measurement 2.0): низ и верх антресоли —
+          * те же, что у кладовки над колонной холодильника этой стены; высота
+          * выводится, своя помнится и вернётся. Нет колонны — отказ движка
+          * словами, а кнопка не прячется: видно, чего не хватает.
+          */}
+        {mezzanineOn && run.mezzanine && mezzanineOf(run.zone) === 'over_upper' && (
+          <button
+            type="button"
+            data-mezzanine-align
+            aria-pressed={Boolean(run.mezzanine.alignTall)}
+            onClick={() =>
+              onOps([{ op: 'set_mezzanine', heightMm: run.mezzanine?.heightMm ?? DEFAULT_MEZZANINE_MM, alignTall: !run.mezzanine?.alignTall }])
+            }
+            className={`mw-btn ${run.mezzanine.alignTall ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+          >
+            В линию с кладовкой над колонной
+          </button>
+        )}
       </div>
+      {mezzanineOn && run.mezzanine?.alignTall && (() => {
+        const storage = tallStorageOf(run);
+        return (
+          <p className="mt-1 text-[13px] leading-snug text-graphiteMw" data-mezzanine-aligned>
+            {storage
+              ? `Антресоль ${storage.bottomMm}…${storage.bottomMm + storage.heightMm} мм от пола — как кладовка над «${storage.column.label}»; верхние шкафы до её низа.`
+              : 'Колонны холодильника с кладовкой на этой стене нет — высота своя.'}
+          </p>
+        );
+      })()}
+      {(mezzanineOn || run.options.upperToCeiling) && !ceilingGapOf(run.production).confirmed && (
+        <p className="mt-1 text-[13px] leading-snug text-tape" data-ceiling-gap-note>
+          До потолка: зазор {ceilingGapOf(run.production).gapMm} мм — не подтверждено цехом («Настройки цеха»).
+        </p>
+      )}
     </div>
   );
 

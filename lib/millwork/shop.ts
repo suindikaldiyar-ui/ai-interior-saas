@@ -1,8 +1,10 @@
 import {
+  DEFAULT_CEILING_GAP,
   DEFAULT_CORNER_SIZES,
   DEFAULT_COUNTERTOP_STRIP,
   DEFAULT_PRODUCTION,
   TYPICAL_CUTTING,
+  type CeilingGap,
   type CornerSizes,
   type CountertopStrip,
   type CuttingSettings,
@@ -57,6 +59,11 @@ export function cornerSizesOf(production?: ProductionSettings): CornerSizes {
  */
 export function countertopStripOf(production?: ProductionSettings): CountertopStrip {
   return production?.countertopStrip ?? DEFAULT_COUNTERTOP_STRIP;
+}
+
+/** Монтажный зазор до потолка: свой у организации, иначе ноль с пометкой «не подтверждено цехом». */
+export function ceilingGapOf(production?: ProductionSettings): CeilingGap {
+  return production?.ceilingGap ?? DEFAULT_CEILING_GAP;
 }
 
 /**

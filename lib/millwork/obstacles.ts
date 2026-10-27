@@ -3,6 +3,8 @@ import type { Opening, OpeningKind, Run, RunOptions } from '@/types/millwork';
 import type { ProductionSettings } from '@/types/catalog';
 import { GEOMETRY } from './modules';
 import { upperBottomMm, workTopMm } from './shop';
+import { mezzanineHeightMm } from './fill';
+import { zoneHeightMm } from './zones';
 
 /**
  * ПРЕПЯТСТВИЯ У СТЕНЫ — ОДНО МЕСТО НА ВСЕ РЯДЫ (слой 56).
@@ -147,11 +149,13 @@ export function rowBandMm(
   if (row === 'base') return { row, bottomMm: 0, topMm: workTopMm(input.production) };
 
   const bottom = upperBottomMm(input.production);
-  const upperTop = input.options.upperToCeiling ? input.ceilingHeightMm : bottom + GEOMETRY.upper.carcassH;
+  /* Верх мебели — верх зоны: потолок минус монтажный зазор цеха (`zoneHeightMm`). */
+  const top = zoneHeightMm('kitchen', input.ceilingHeightMm, input.production);
+  const upperTop = input.options.upperToCeiling ? top : bottom + GEOMETRY.upper.carcassH;
   if (row === 'upper') return { row, bottomMm: bottom, topMm: upperTop };
 
-  const mezzBottom = input.mezzanineMm ? input.ceilingHeightMm - input.mezzanineMm : upperTop;
-  return { row, bottomMm: Math.min(mezzBottom, input.ceilingHeightMm), topMm: input.ceilingHeightMm };
+  const mezzBottom = input.mezzanineMm ? top - input.mezzanineMm : upperTop;
+  return { row, bottomMm: Math.min(mezzBottom, top), topMm: top };
 }
 
 /** ЗАХОДИТ ЛИ ПРЕПЯТСТВИЕ В ПОЛОСУ РЯДА. Касание — не захождение. */
@@ -219,7 +223,7 @@ export function obstacleConflicts(
     ceilingHeightMm: run.ceilingHeightMm,
     options: run.options,
     production: run.production,
-    mezzanineMm: run.mezzanine?.heightMm ?? null,
+    mezzanineMm: run.mezzanine ? mezzanineHeightMm(run) : null,
   };
   const inBand = (row: RowName) => obstaclesInBand(all, rowBandMm(row, shell));
   const tall = all;

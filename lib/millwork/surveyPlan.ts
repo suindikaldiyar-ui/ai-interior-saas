@@ -1,4 +1,4 @@
-import { valueOf, type SurveyWall } from '@/types/survey';
+import { interiorOf, valueOf, walkHonored, type InteriorSide, type Survey, type SurveyWall } from '@/types/survey';
 
 /**
  * ГДЕ СТОИТ КАЖДАЯ СТЕНА ЗАМЕРА НА ПЛАНЕ — ОДНА ФУНКЦИЯ НА ДВА ПЛАНА.
@@ -17,6 +17,10 @@ import { valueOf, type SurveyWall } from '@/types/survey';
  * вправо, поворот «направо» увеличивает курс. Стена без замеренной длины
  * стоит в цепочке нулевой длины: её нет на плане, но место в обходе за
  * ней сохраняется — следующая стена идёт от того же угла.
+ *
+ * Поворот плана (`Survey.planRotationDeg`, замер 2.0) — это курс первой
+ * стены: изображение поворачивается целиком, по часовой на экране. В
+ * геометрию он не идёт — мебель, смета и 3D его не видят.
  */
 export type PlanPoint = { x: number; y: number };
 
@@ -32,10 +36,10 @@ export type PlacedWall = {
   angle: number;
 };
 
-export function surveyWalk(walls: SurveyWall[]): PlacedWall[] {
+export function surveyWalk(walls: SurveyWall[], startHeadingDeg = 0): PlacedWall[] {
   const placed: PlacedWall[] = [];
   let cursor: PlanPoint = { x: 0, y: 0 };
-  let heading = 0; // 0° — вправо
+  let heading = startHeadingDeg; // 0° — вправо
 
   walls.forEach((wall, index) => {
     const lengthMm = valueOf(wall.lengthMm) ?? 0;
@@ -58,17 +62,18 @@ export function surveyWalk(walls: SurveyWall[]): PlacedWall[] {
  * С КАКОЙ СТОРОНЫ СТЕНЫ КОМНАТА.
  *
  * Обход «направо» (по часовой на экране, ось Y вниз) держит комнату справа
- * от направления стены; обход «налево» — слева. Решает сумма поворотов: у
- * замкнутого контура она ±360°, у незамкнутого — знак преобладающего
- * поворота. Ряд мебели на плане рисуется полосой внутрь комнаты, и сторона
- * обязана быть одной на все стены.
+ * от направления стены; обход «налево» — слева. Решает та же `interiorOf`,
+ * что разворачивает обход для мебели: выбор человека, иначе знак поворотов
+ * МЕЖДУ стенами. Поворот после последней стены незамкнутого обхода не
+ * считается — за ней стены нет. Раньше он входил в сумму, и Г «стена 1 →
+ * налево → стена 2» с умолчанием «направо» у стены 2 давала ноль: ряд и
+ * тело стены рисовались не с той стороны.
  *
  * Возвращает множитель нормали: `+1` — комната по нормали (−dy, dx),
  * `−1` — по противоположной.
  */
-export function interiorSide(walls: SurveyWall[]): 1 | -1 {
-  const total = walls.reduce((sum, wall) => sum + (wall.turn === 'left' ? -wall.turnDeg : wall.turnDeg), 0);
-  return total < 0 ? -1 : 1;
+export function interiorSide(walls: SurveyWall[], interior?: InteriorSide): 1 | -1 {
+  return interiorOf({ walls, interior }) === 'left' ? -1 : 1;
 }
 
 /** Точка на стене в `atMm` от её начала. */
@@ -79,6 +84,29 @@ export function pointOnWall(placed: PlacedWall, atMm: number): PlanPoint {
     x: placed.from.x + (placed.to.x - placed.from.x) * t,
     y: placed.from.y + (placed.to.y - placed.from.y) * t,
   };
+}
+
+/**
+ * ОТКУДА НА ЭТОМ ПЛАНЕ МЕРЯЕТСЯ «ОТ ЛЕВОГО УГЛА».
+ *
+ * Проёмы и точки замера привязаны «от левого угла, если стоять в комнате
+ * лицом к стене», и ряд мебели идёт оттуда же. Комната справа от обхода —
+ * левый угол это начало стены, слева — её конец.
+ *
+ * Замер до 2.0 (`walkHonored` нет) меряется от начала стены, как раньше:
+ * его мебель стоит по обходу «направо», и план рисует её вместе с
+ * проёмами там, где их видит она. Что такая мебель стоит зеркально к
+ * замеру, экран говорит словами (`legacyMirrored`), а не план молча.
+ *
+ * Возвращает `+1` — от начала стены, `−1` — от конца.
+ */
+export function leftCornerOf(survey: Pick<Survey, 'version'>, side: 1 | -1): 1 | -1 {
+  return walkHonored(survey) ? side : 1;
+}
+
+/** Точка на стене в `atMm` от левого угла (`leftCornerOf`). */
+export function pointFromLeft(placed: PlacedWall, atMm: number, from: 1 | -1): PlanPoint {
+  return pointOnWall(placed, from === 1 ? atMm : placed.lengthMm - atMm);
 }
 
 /**

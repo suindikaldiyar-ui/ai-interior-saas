@@ -7,7 +7,8 @@ import { ROOM_WALL_THICKNESS_MM } from '@/lib/millwork/room';
 import {
   contourGapMm,
   interiorSide,
-  pointOnWall,
+  leftCornerOf,
+  pointFromLeft,
   surveyWalk,
   type PlacedWall,
   type PlanPoint,
@@ -20,9 +21,10 @@ import { OPENING_KIND_TITLE, type Run } from '@/types/millwork';
  *
  * Строится из `survey` и только из него: стены — тот же обход
  * (`surveyWalk`), что у плана на шаге замера мастера; проёмы и точки
- * коммуникаций — по их привязке от угла; мебель — те же ряды, что видят
- * сцена, смета и раскрой, на своих отметках (`runPlaces`). Второй
- * геометрии комнаты здесь нет: план только рисует.
+ * коммуникаций — по их привязке от левого угла (`pointFromLeft`); мебель —
+ * те же ряды, что видят сцена, смета и раскрой, на своих отметках
+ * (`runPlaces`). Второй геометрии комнаты здесь нет: план только рисует.
+ * Поворот плана (`planRotationDeg`) поворачивает изображение, а не комнату.
  *
  * Координаты листа — миллиметры: `viewBox` в мм, масштаб и сдвиг меняют
  * только его. Перевод указателя в мм — обратной матрицей экрана
@@ -54,6 +56,11 @@ type Props = {
   onZoom?: (percent: number) => void;
   /** Команда масштаба из нижней строки оболочки. */
   command?: PlanCommand | null;
+  /**
+   * Стены под мебелью по именам композиции: «Стена А», «Стена Б» — как их
+   * называет экран (`wallLabel`). Стена А — левая, если стоять лицом к углу.
+   */
+  wallNames?: Record<string, string>;
 };
 
 type ViewBox = { x: number; y: number; w: number; h: number };
@@ -99,6 +106,7 @@ export default function RoomPlan({
   onWallLength,
   onZoom,
   command,
+  wallNames,
 }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [size, setSize] = useState({ w: 800, h: 600 });
@@ -118,15 +126,18 @@ export default function RoomPlan({
         : survey.walls,
     [survey.walls, drag],
   );
-  const placed = useMemo(() => surveyWalk(walls), [walls]);
-  const side = useMemo(() => interiorSide(walls), [walls]);
+  const rotation = survey.planRotationDeg ?? 0;
+  const placed = useMemo(() => surveyWalk(walls, rotation), [walls, rotation]);
+  const side = useMemo(() => interiorSide(walls, survey.interior), [walls, survey.interior]);
+  /* Откуда меряется «от левого угла»: у замера 2.0 — с той стороны, где левый угол. */
+  const leftEnd = leftCornerOf(survey, side);
   const known = placed.filter((wall) => wall.lengthMm > 0);
   /* Зазор контура — и во время жеста: тянешь конец стены и видишь, когда комната сойдётся. */
   const gapMm = useMemo(() => contourGapMm(walls), [walls]);
 
   /* Рамка «вписать»: стены плюс поле под размеры. Считается по замеру, а не по жесту. */
   const fitBox = useMemo<ViewBox>(() => {
-    const base = surveyWalk(survey.walls).filter((wall) => wall.lengthMm > 0);
+    const base = surveyWalk(survey.walls, rotation).filter((wall) => wall.lengthMm > 0);
     const xs = base.flatMap((wall) => [wall.from.x, wall.to.x]);
     const ys = base.flatMap((wall) => [wall.from.y, wall.to.y]);
     if (xs.length === 0) return { x: -1000, y: -1000, w: 4000, h: 3000 };
@@ -136,7 +147,7 @@ export default function RoomPlan({
     const maxY = Math.max(...ys);
     const margin = Math.max(900, 0.12 * Math.max(maxX - minX, maxY - minY));
     return { x: minX - margin, y: minY - margin, w: maxX - minX + margin * 2, h: maxY - minY + margin * 2 };
-  }, [survey.walls]);
+  }, [survey.walls, rotation]);
 
   const [view, setView] = useState<ViewBox>(fitBox);
   const fitted = useRef(false);
@@ -343,6 +354,7 @@ export default function RoomPlan({
         let angle = (Math.atan2(f.dir.y, f.dir.x) * 180) / Math.PI;
         if (angle > 90 || angle <= -90) angle += 180;
         const textAt = add(mid, mul(f.outward, px(6)));
+        const letterAt = add(textAt, mul(f.outward, px(16)));
         const tick = px(6);
         const slash = (p: PlanPoint) => {
           const a = add(p, mul(add(f.dir, f.outward), tick / Math.SQRT2));
@@ -365,7 +377,7 @@ export default function RoomPlan({
             }}
             style={{ cursor: 'pointer' }}
           >
-            <title>{`Стена ${wall.index + 1} · ${wall.wall.id} · ${Math.round(wall.lengthMm)} мм`}</title>
+            <title>{`Стена ${wall.index + 1}${wallNames?.[wall.wall.id] ? ` · ${wallNames[wall.wall.id]}` : ''} · ${wall.wall.id} · ${Math.round(wall.lengthMm)} мм`}</title>
             <polygon
               points={poly}
               fill={selected ? 'var(--cad-accent)' : 'var(--cad-wall)'}
@@ -419,6 +431,23 @@ export default function RoomPlan({
               {lengthText}
               {assumedLength ? '*' : ''}
             </text>
+            {wallNames?.[wall.wall.id] && (
+              /* Имя стены композиции — рядом с размером, отдельной строкой: размер читают числом. */
+              <text
+                data-plan-wall-name={wall.wall.id}
+                x={letterAt.x}
+                y={letterAt.y}
+                fontSize={font}
+                fontWeight={600}
+                textAnchor="middle"
+                dominantBaseline="central"
+                fill={selected ? 'var(--cad-accent)' : 'var(--cad-dim-text)'}
+                transform={`rotate(${angle} ${letterAt.x} ${letterAt.y})`}
+                pointerEvents="none"
+              >
+                {wallNames[wall.wall.id]}
+              </text>
+            )}
           </g>
         );
       })}
@@ -431,8 +460,8 @@ export default function RoomPlan({
           if (from === undefined || width === undefined || width <= 0) return null;
           const end = Math.min(wall.lengthMm, from + width);
           if (end <= from) return null;
-          const a = pointOnWall(wall, from);
-          const b = pointOnWall(wall, end);
+          const a = pointFromLeft(wall, from, leftEnd);
+          const b = pointFromLeft(wall, end, leftEnd);
           const depth = valueOf(opening.depthMm);
           const protrudes = opening.kind === 'column' || opening.kind === 'pipe_box' || opening.kind === 'protrusion';
           const cut = opening.kind === 'window' || opening.kind === 'door' || opening.kind === 'arch';
@@ -507,8 +536,8 @@ export default function RoomPlan({
           const s = item.startMm + place.unit.offsetMm;
           const e = s + place.unit.widthMm;
           const depth = Math.round(place.depthM * 1000);
-          const a = pointOnWall(wall, s);
-          const b = pointOnWall(wall, e);
+          const a = pointFromLeft(wall, s, leftEnd);
+          const b = pointFromLeft(wall, e, leftEnd);
           const upper = isUpperRow(place.unit);
           const selected = place.unit.id === selectedModuleId;
           return (
@@ -539,7 +568,7 @@ export default function RoomPlan({
         const from = valueOf(comm.fromCornerMm);
         if (!wall || from === undefined || from > wall.lengthMm) return null;
         const f = frame(wall, side);
-        const at = add(pointOnWall(wall, from), mul(f.inward, px(10)));
+        const at = add(pointFromLeft(wall, from, leftEnd), mul(f.inward, px(10)));
         return (
           <g key={comm.id} data-plan-comm={comm.id} pointerEvents="none">
             <circle cx={at.x} cy={at.y} r={px(5)} fill="var(--cad-comm)" />

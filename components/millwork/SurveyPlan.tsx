@@ -3,7 +3,7 @@
 import { useMemo } from 'react';
 import { COMM_TITLE, valueOf, type Survey } from '@/types/survey';
 import { OPENING_KIND_TITLE, type Module } from '@/types/millwork';
-import { surveyWalk } from '@/lib/millwork/surveyPlan';
+import { interiorSide, leftCornerOf, pointFromLeft, surveyWalk } from '@/lib/millwork/surveyPlan';
 
 /**
  * План сверху, который дорисовывается по мере ввода.
@@ -25,7 +25,10 @@ type Props = {
 
 /*
  * Цепочка сегментов — `surveyWalk`: тот же обход строит план комнаты
- * Studio, и второй копии формулы нет (STAGE 01B).
+ * Studio, и второй копии формулы нет (STAGE 01B). Сторона комнаты и
+ * «от левого угла» — те же `interiorSide` и `pointFromLeft`: у обхода
+ * «налево» левый угол стены — её конец, и ряд встаёт с той стороны,
+ * где комната, а не снаружи.
  */
 
 const PAD = 26;
@@ -38,7 +41,10 @@ export default function SurveyPlan({
   onPickWall,
   activeWallId,
 }: Props) {
-  const placed = useMemo(() => surveyWalk(survey.walls), [survey.walls]);
+  const rotation = survey.planRotationDeg ?? 0;
+  const placed = useMemo(() => surveyWalk(survey.walls, rotation), [survey.walls, rotation]);
+  const side = interiorSide(survey.walls, survey.interior);
+  const leftEnd = leftCornerOf(survey, side);
 
   const known = placed.filter((p) => p.lengthMm > 0);
   const bounds = useMemo(() => {
@@ -96,7 +102,7 @@ export default function SurveyPlan({
         const assumedLength = p.wall.lengthMm.state === 'assumed';
 
         return (
-          <g key={p.wall.id} onClick={() => onPickWall?.(p.wall.id)} className="cursor-pointer">
+          <g key={p.wall.id} data-survey-wall={p.wall.id} onClick={() => onPickWall?.(p.wall.id)} className="cursor-pointer">
             <line
               x1={sx(p.from.x)}
               y1={sy(p.from.y)}
@@ -128,19 +134,13 @@ export default function SurveyPlan({
           const openWidth = valueOf(opening.widthMm);
           if (from === undefined || openWidth === undefined || p.lengthMm <= 0) return null;
 
-          const t1 = from / p.lengthMm;
-          const t2 = (from + openWidth) / p.lengthMm;
-          const at = (t: number) => ({
-            x: p.from.x + (p.to.x - p.from.x) * t,
-            y: p.from.y + (p.to.y - p.from.y) * t,
-          });
-          const a = at(Math.min(1, t1));
-          const b = at(Math.min(1, t2));
+          const a = pointFromLeft(p, Math.min(p.lengthMm, from), leftEnd);
+          const b = pointFromLeft(p, Math.min(p.lengthMm, from + openWidth), leftEnd);
           const assumedSpot =
             opening.fromCornerMm.state === 'assumed' || opening.widthMm.state === 'assumed';
 
           return (
-            <g key={opening.id}>
+            <g key={opening.id} data-survey-opening={opening.id}>
               <line
                 x1={sx(a.x)}
                 y1={sy(a.y)}
@@ -174,22 +174,17 @@ export default function SurveyPlan({
         const nx = (run.to.x - run.from.x) / run.lengthMm;
         const ny = (run.to.y - run.from.y) / run.lengthMm;
         // Ряд рисуется полосой внутрь помещения, глубиной 600 мм.
-        const px = -ny * 600;
-        const py = nx * 600;
+        const px = -ny * 600 * side;
+        const py = nx * 600 * side;
 
         return modules.map((unit) => {
-          const a = {
-            x: run.from.x + nx * unit.offsetMm,
-            y: run.from.y + ny * unit.offsetMm,
-          };
-          const b = {
-            x: run.from.x + nx * (unit.offsetMm + unit.widthMm),
-            y: run.from.y + ny * (unit.offsetMm + unit.widthMm),
-          };
+          const a = pointFromLeft(run, unit.offsetMm, leftEnd);
+          const b = pointFromLeft(run, unit.offsetMm + unit.widthMm, leftEnd);
 
           return (
             <polygon
               key={unit.id}
+              data-survey-module={unit.id}
               points={[
                 `${sx(a.x)},${sy(a.y)}`,
                 `${sx(b.x)},${sy(b.y)}`,
@@ -210,14 +205,10 @@ export default function SurveyPlan({
         const from = valueOf(comm.fromCornerMm);
         if (!wall || wall.lengthMm <= 0 || from === undefined) return null;
 
-        const t = Math.min(1, from / wall.lengthMm);
-        const point = {
-          x: wall.from.x + (wall.to.x - wall.from.x) * t,
-          y: wall.from.y + (wall.to.y - wall.from.y) * t,
-        };
+        const point = pointFromLeft(wall, Math.min(wall.lengthMm, from), leftEnd);
 
         return (
-          <g key={comm.id}>
+          <g key={comm.id} data-survey-comm={comm.id}>
             <circle cx={sx(point.x)} cy={sy(point.y)} r={4} fill="var(--tape)" />
             <text
               className="mw-num"
@@ -237,11 +228,7 @@ export default function SurveyPlan({
       {(() => {
         const run = placed.find((p) => p.wall.id === runWallId);
         if (!run || highlightAtMm == null || run.lengthMm <= 0) return null;
-        const t = Math.min(1, highlightAtMm / run.lengthMm);
-        const point = {
-          x: run.from.x + (run.to.x - run.from.x) * t,
-          y: run.from.y + (run.to.y - run.from.y) * t,
-        };
+        const point = pointFromLeft(run, Math.min(run.lengthMm, highlightAtMm), leftEnd);
         return (
           <circle
             cx={sx(point.x)}

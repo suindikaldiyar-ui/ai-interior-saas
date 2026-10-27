@@ -17,6 +17,7 @@ import {
 import { zoneReadiness } from '@/lib/millwork/templates';
 import type { ZoneKind } from '@/types/millwork';
 import {
+  WALK_VERSION,
   emptySurvey,
   newWall,
   resolveSurvey,
@@ -54,8 +55,12 @@ export default function MeasurePage() {
   const [zone, setZone] = useState<ZoneKind>('kitchen');
   const [survey, setSurvey] = useState<Survey>(() => {
     const base = emptySurvey('', new Date().toISOString().slice(0, 10));
+    /*
+     * Новый замер — версии 2.0: повороты «налево» и «направо» доходят до
+     * мебели (`canonicalWalk`). Прежние объекты открываются как были.
+     */
     // Первая стена заводится сразу: замер всегда начинается с неё.
-    return { ...base, walls: [newWall(0)] };
+    return { ...base, version: WALK_VERSION, walls: [newWall(0)] };
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
