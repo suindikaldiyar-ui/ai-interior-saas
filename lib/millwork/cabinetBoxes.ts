@@ -14,7 +14,10 @@ import {
   cornerFillerName,
   legName,
   partOfPanel,
+  RADIUS_PART_NAME,
 } from './panels';
+import { bentLeavesOf, partBounds, radiusParts, type RadiusForm } from './radius';
+import { radiusDimsOf } from './radiusDims';
 import { blindPartMm, cornerFillersOf, cornerOfModule, fillerNeighbour, lLegOf, openFrontMm, openFrontOf } from './corner';
 import { tailFillersOf } from './countertop';
 import { moduleDepthMm, rowStandardDepthMm } from './fill';
@@ -25,6 +28,7 @@ import { moduleDrawerKits, type DrawerKit } from './drawerKit';
 import { DRAWER_BOTTOM_PANEL_NAME, DRAWER_SIDE_PANEL_NAME, DRAWER_WALL_PANEL_NAME } from './drawerBox';
 import { shopOf } from './shop';
 import { FRAME_WIDTH_MM, frontKey, frontOf, isFramed } from './frontMaterial';
+import { ISLAND_BACK_PANEL_NAME, islandBackOf } from './island';
 import { moduleFronts, tallNicheOf, type FacadeSpan } from './applianceFront';
 import { carcassKeyOf, type CarcassItem } from './carcassMaterial';
 import { handleItemOf, installedItem, slidingAccepts } from './fittings';
@@ -53,11 +57,11 @@ const HINGE_CUP_M = 0.035;
 const HINGE_CUP_DEPTH_M = 0.012;
 /** Корпусная часть уходит вглубь шкафа: её видно, когда створка открыта. */
 const HINGE_ARM_DEPTH_M = 0.07;
-import { leafFrontWithMilling } from './milling';
+import { frontWithMilling, leafFrontWithMilling } from './milling';
 import type { FrontRelief } from '@/types/millwork';
 import { gripOrient, reliefGlassMm, type ReliefOrient } from './facadeRelief';
 import { isUpperRow } from './modules';
-import { isPullOut, leafHinges, milledGrip, openingHardware, openingOf } from './opening';
+import { bentHingeOf, isPullOut, leafHinges, milledGrip, openingHardware, openingOf } from './opening';
 import type { GlassKind, Module, ProfileFinish, Run } from '@/types/millwork';
 import { GLASS_SHELF_MM, glassOf, shelvesAreGlass, vitrineDoorKind } from './glass';
 import { VITRINE_GLASS_SHOWN_MM, VITRINE_PROFILE_MM, vitrineBackMm, vitrineBodyGlassMm, vitrineDoorCount, vitrineGrooveMm, vitrineOf } from './vitrine';
@@ -144,6 +148,14 @@ export type BoxDraw = {
    * пометкой в спецификации «покрытие не выбрано» (цвет здесь VISUAL_ONLY).
    */
   profile?: ProfileFinish;
+  /**
+   * ИСТИННАЯ ФОРМА ДЕТАЛИ (OVAL & RADIUS, этап A) — дно и полка по контуру,
+   * гнутая дверца, подложка и рейка на дуге. Коробка (`position`, `scale`) —
+   * её ГАБАРИТ: по нему меряют входы деталей, ставят камеру и кадр; рисует
+   * сцена форму. `form` — в мм модуля, деталь `radiusParts`, та же, что
+   * режет раскрой; `originM` — где в ряду стоит ноль модуля, метры.
+   */
+  shape?: { form: RadiusForm; originM: [number, number, number] };
 };
 
 /** Материал коробки: по нему они собираются в группы отрисовки. */
@@ -756,7 +768,13 @@ export type SceneLeaf =
   | { kind: 'lpair'; id: string; leg: 0 | 1 }
   | { kind: 'drawer'; id: string; bottomM: number; heightM: number }
   /** Карго: фасад не открывается, а выдвигается — вместе с корзинами (HARDWARE-01). */
-  | { kind: 'pullout'; id: string };
+  | { kind: 'pullout'; id: string }
+  /**
+   * ГНУТАЯ СТВОРКА РАДИУСНОГО МОДУЛЯ (OVAL & RADIUS): полотно — форма её
+   * коробки в пачке ряда, ось — у конца дуги корпуса (`bentLeavesOf`), метры
+   * модуля [x, z]. Поворот — как у плоской створки: от петли наружу.
+   */
+  | { kind: 'bent'; id: string; opening: 'left' | 'right'; pivotM: [number, number] };
 
 /**
  * ЧТО ЕДЕТ С ПОЛОТНОМ СТВОРКИ — ОДНА ВЫБОРКА НА СЦЕНУ И ПРИЁМКУ.
@@ -806,6 +824,17 @@ export function sceneLeaves(
 ): SceneLeaf[] {
   const out: SceneLeaf[] = [];
   const fill = unit.fill;
+  /*
+   * РАДИУСНЫЙ МОДУЛЬ — СВОИ СТВОРКИ (OVAL & RADIUS): гнутые, по `bentLeavesOf`,
+   * той же функции, что режет их в раскрое. Ящиков у него нет
+   * (`radiusRefusal`), открытые полки и рейки не открываются.
+   */
+  if (unit.radius) {
+    for (const leaf of bentLeavesOf(unit, bentHingeOf(unit))) {
+      out.push({ kind: 'bent', id: `${unit.id}:${leaf.leaf}`, opening: leaf.hinge, pivotM: [leaf.pivotMm[0] / MM, leaf.pivotMm[1] / MM] });
+    }
+    return out;
+  }
   /*
    * Ящики выдвигаются и под варочной: прибор занимает нишу, под ним
    * обычные ящики (ловушка 358). Высоты идут сверху вниз, сцена — от пола.
@@ -2513,6 +2542,12 @@ export function moduleBoxes(
   if (unit.kind === 'corner_base' || unit.kind === 'corner_upper') {
     return lCornerBoxes(unit, place, options);
   }
+  /*
+   * РАДИУСНЫЙ МОДУЛЬ (OVAL & RADIUS, этап A) — КОРОБКИ ИЗ ТЕХ ЖЕ ДЕТАЛЕЙ, ЧТО У
+   * РАСКРОЯ (`radiusParts`): прямые — коробками пачки, по контуру и гнутые —
+   * коробкой-габаритом с формой. Сдвиг по глубине — тот же, что у всех.
+   */
+  if (unit.radius) return withDepthShift(radiusModuleBoxes(unit, place, options, production), place.zM ?? 0);
 
   /*
    * Полки, перегородки и короба ящиков уже помечены в данных
@@ -2624,17 +2659,163 @@ export function moduleBoxes(
    * (фасада). Раздавать им смещение поимённо значило бы завести пять
    * мест, где его можно забыть; здесь оно применяется к готовому списку.
    */
-  const zM = place.zM ?? 0;
-  if (zM === 0) return boxes;
+  return withDepthShift(boxes, place.zM ?? 0);
+}
 
+/**
+ * СДВИГ ПО ГЛУБИНЕ — ОДИН НА ВСЕ КОРОБКИ МОДУЛЯ, и на ноль формы радиусной
+ * детали: её сетка стоит там же, где габарит.
+ */
+function withDepthShift(boxes: PartBox[], zM: number): PartBox[] {
+  if (zM === 0) return boxes;
   return boxes.map((box) => ({
     ...box,
-    position: [box.position[0], box.position[1], box.position[2] + zM] as [
-      number,
-      number,
-      number,
-    ],
+    position: [box.position[0], box.position[1], box.position[2] + zM] as [number, number, number],
+    ...(box.shape
+      ? { shape: { form: box.shape.form, originM: [box.shape.originM[0], box.shape.originM[1], box.shape.originM[2] + zM] as [number, number, number] } }
+      : {}),
   }));
+}
+
+/**
+ * КОРОБКИ РАДИУСНОГО МОДУЛЯ — ИЗ `radiusParts`, ТЕХ ЖЕ ДЕТАЛЕЙ, ЧТО У РАСКРОЯ.
+ *
+ * Боковины и задняя стенка — обычные коробки пачки; дно, крыша и полки по
+ * контуру, гнутая дверца, подложка и рейки — коробка-габарит с формой
+ * (`BoxDraw.shape`). Имя детали — из той же таблицы, что у раскроя
+ * (`RADIUS_PART_NAME`). Цоколь под модулем — деталь ряда (`radiusPlinths`),
+ * как и прямой цоколь. В рентгене фасадов и реек нет — как у всех модулей.
+ *
+ * Петли гнутой створки — чашкой у петельного конца дуги, на её тыльной
+ * стороне: ИЗОБРАЖЕНИЕ УЗЛА, а не присадка (как `HINGE_NODE_EDGE_MM`); их
+ * столько, сколько купила смета (`options.hinges`), по высоте — равномерно.
+ */
+function radiusModuleBoxes(unit: Module, place: ModulePlacement, options: FrontOptions, production?: ProductionSettings): PartBox[] {
+  const dims = radiusDimsOf(unit, { heightMm: place.heightM * MM, depthMm: place.depthM * MM }, production);
+  const origin: [number, number, number] = [place.x, place.y, 0];
+  /* Рейки режут из листа фасада модуля: ключ — тот же, что у пачки фасадов ряда. */
+  const moduleFront = frontKey(frontWithMilling(unit, { milling: options.rowMilling }));
+  const out: PartBox[] = [];
+  const doors: { part: string; form: Extract<RadiusForm, { kind: 'shell' }>; hinge: 'left' | 'right' }[] = [];
+  for (const part of radiusParts(unit, dims)) {
+    if (part.kind === 'plinth') continue;
+    if ((part.kind === 'door' || part.kind === 'slat') && options.cutaway) continue;
+    const b = partBounds(part.form);
+    const shaped = part.form.kind !== 'box' || Boolean(part.form.yaw);
+    const base = {
+      position: [
+        origin[0] + (b.min[0] + b.max[0]) / 2 / MM,
+        origin[1] + (b.min[1] + b.max[1]) / 2 / MM,
+        origin[2] + (b.min[2] + b.max[2]) / 2 / MM,
+      ] as [number, number, number],
+      scale: [(b.max[0] - b.min[0]) / MM, (b.max[1] - b.min[1]) / MM, (b.max[2] - b.min[2]) / MM] as [number, number, number],
+      panel: RADIUS_PART_NAME[part.kind],
+      ...(shaped ? { shape: { form: part.form, originM: origin } } : {}),
+    };
+    if (part.kind === 'door' && part.leaf && part.form.kind === 'shell') {
+      const spec = leafFrontWithMilling(unit, part.leaf, { milling: options.rowMilling });
+      const id = `${unit.id}:${part.leaf}`;
+      out.push({ ...base, material: 'front', frontKey: frontKey(spec), part: id });
+      doors.push({ part: id, form: part.form, hinge: part.hinge ?? 'left' });
+      continue;
+    }
+    if (part.kind === 'slat') {
+      out.push({ ...base, material: 'front', frontKey: moduleFront });
+      continue;
+    }
+    const inner = part.inside === true;
+    const key = part.kind === 'shelf' ? options.partKeys?.shelves : undefined;
+    out.push({
+      ...base,
+      material: inner ? 'inner' : 'carcass',
+      ...(inner ? { inside: true } : {}),
+      carcassKey: key !== undefined ? key : (options.carcassKey ?? null),
+    });
+  }
+
+  /* Петли гнутых створок — по высоте модуля, как у полотна во всю высоту (`openingHardware`); остаток — на первую. */
+  const total = Math.max(0, Math.round(options.hinges ?? 0));
+  const byLeaf = doors.map(() => leafHinges(dims.heightMm, 'left'));
+  const spread = byLeaf.reduce((sum, v) => sum + v, 0);
+  if (byLeaf.length > 0) byLeaf[0] += total - spread;
+  doors.forEach((door, i) => {
+    const { form } = door;
+    const xAt = (a: number) => form.c[0] + form.r0 * Math.cos(a);
+    /* Петельный конец дуги — левый или правый по x. */
+    const fromIsLeft = xAt(form.from) <= xAt(form.to);
+    const hingeEnd = (door.hinge === 'left') === fromIsLeft ? form.from : form.to;
+    const freeEnd = hingeEnd === form.from ? form.to : form.from;
+    const mid = (form.r0 + form.r1) / 2;
+    const a = hingeEnd + (Math.sign(freeEnd - hingeEnd) * HINGE_NODE_EDGE_MM) / mid;
+    /* Тыльная сторона полотна — к корпусу: у выпуклой дуги это внутренний радиус, у вогнутой — наружный. */
+    const concave = unit.radius?.place === 'front' && unit.radius.direction === 'concave';
+    const rc = concave ? form.r1 + (HINGE_CUP_DEPTH_M * MM) / 2 : form.r0 - (HINGE_CUP_DEPTH_M * MM) / 2;
+    const count = Math.max(0, byLeaf[i] ?? 0);
+    for (let k = 0; k < count; k += 1) {
+      const y = form.y0 + ((form.y1 - form.y0) * (k + 1)) / (count + 1);
+      out.push({
+        material: 'metal',
+        part: door.part,
+        node: 'hinge',
+        position: [origin[0] + (form.c[0] + rc * Math.cos(a)) / MM, origin[1] + y / MM, origin[2] + (form.c[1] + rc * Math.sin(a)) / MM],
+        scale: [HINGE_CUP_M, HINGE_CUP_M, HINGE_CUP_DEPTH_M],
+      });
+    }
+  });
+  return out;
+}
+
+/**
+ * ГНУТАЯ СТВОРКА НА ХОДУ — ОДНА ФУНКЦИЯ НА СЦЕНУ И ПРОВЕРКУ ХОДА.
+ *
+ * Ось — у петельного конца дуги корпуса на передней плоскости (`bentLeavesOf`),
+ * поворот и вынос вперёд — те же, что у плоской створки (`doorPivot`,
+ * `doorKick`): петля выносит полотно на толщину фасада. Полотно для проверки
+ * — хордами дуги по её средней линии (шесть отрезков на створку: дуга
+ * створки не больше 90° и 600 мм, отход хорды от дуги — меньше 6 мм).
+ * Координаты модуля, метры.
+ */
+export function bentLeafPoses(input: {
+  form: Extract<RadiusForm, { kind: 'shell' }>;
+  opening: 'left' | 'right';
+  pivotM: [number, number];
+  thickness: number;
+  s: number;
+  openAngle?: number;
+}): PosedBox[] {
+  const { form, opening, pivotM, thickness } = input;
+  const sign = opening === 'left' ? -1 : 1;
+  const full = sign * (input.openAngle ?? OPEN_ANGLE);
+  const angle = full * Math.max(0, Math.min(1, input.s));
+  const kick = thickness * Math.abs(Math.sin(angle));
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  /* Точка модуля (мм) → повёрнутая вокруг оси (метры): тот же поворот, что `rotation.y` группы. */
+  const turn = (xMm: number, zMm: number): [number, number] => {
+    const lx = xMm / MM - pivotM[0];
+    const lz = zMm / MM - pivotM[1];
+    return [pivotM[0] + lx * cos + lz * sin, pivotM[1] + kick - lx * sin + lz * cos];
+  };
+  const pieces = 6;
+  const mid = (form.r0 + form.r1) / 2;
+  const heightM = (form.y1 - form.y0) / MM;
+  const out: PosedBox[] = [];
+  for (let i = 0; i < pieces; i += 1) {
+    const a0 = form.from + ((form.to - form.from) * i) / pieces;
+    const a1 = form.from + ((form.to - form.from) * (i + 1)) / pieces;
+    const p0 = turn(form.c[0] + mid * Math.cos(a0), form.c[1] + mid * Math.sin(a0));
+    const p1 = turn(form.c[0] + mid * Math.cos(a1), form.c[1] + mid * Math.sin(a1));
+    const chord = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]);
+    /* Поворот коробки: её ось x вдоль хорды (yaw — как `rotation.y`: x → (cos, −sin)). */
+    const yaw = Math.atan2(-(p1[1] - p0[1]), p1[0] - p0[0]);
+    out.push({
+      center: [(p0[0] + p1[0]) / 2, (form.y0 + form.y1) / 2 / MM, (p0[1] + p1[1]) / 2],
+      size: [chord, heightM, (form.r1 - form.r0) / MM],
+      role: 'front',
+      yaw,
+    });
+  }
+  return out;
 }
 
 
@@ -2842,8 +3023,30 @@ export function runBoxesByModule(
   /* Система купе ряда (HARDWARE-01): шины и полотна — по позиции ряда. */
   filler.push(...kupeBoxes(run, options));
 
-  return { fillers: filler, modules: placed.map((entry) => ({ unit: entry.unit, boxes:
-    moduleBoxes(
+  /*
+   * ПАНЕЛЬ ТЫЛА ОСТРОВА (OVAL & RADIUS) — коробка своего модуля за его задней
+   * стенкой: размер — `islandBackOf`, та же функция режет деталь; фасадный
+   * материал модуля; в рентгене снята, как фасады.
+   */
+  const rowDepthM = rowStandardDepthMm(run.zone, 'base', run.production) / MM;
+  const islandBack = (unit: Module): PartBox[] => {
+    const back = islandBackOf(unit, run);
+    if (!back || options.cutaway) return [];
+    const t = back.thicknessMm / MM;
+    return [
+      {
+        position: [(unit.offsetMm + unit.widthMm / 2) / MM, (back.bottomMm + back.heightMm / 2) / MM, -rowDepthM - t / 2],
+        scale: [back.widthMm / MM, back.heightMm / MM, t],
+        material: 'front',
+        panel: ISLAND_BACK_PANEL_NAME,
+        frontKey: frontKey(frontOf(unit)),
+      },
+    ];
+  };
+
+  return { fillers: filler, modules: placed.map((entry) => ({ unit: entry.unit, boxes: [
+    ...islandBack(entry.unit),
+    ...moduleBoxes(
       entry.unit,
       {
         x: entry.x,
@@ -2881,7 +3084,7 @@ export function runBoxesByModule(
       },
       run.production,
     ),
-  })) };
+  ] })) };
 }
 
 /* ─────────────────  Механизмы по позиции каталога (HARDWARE-01)  ───────────────── */
@@ -3357,6 +3560,11 @@ export function openablePartIds(run: Run): string[] {
       if (!unit.fill || unit.fill.drawerHeights.length === 0) ids.push(`${unit.id}:door:0`);
       /* Пара дверец верхнего Г-модуля (P0): у дверцы Б свой ключ. */
       if (unit.kind === 'corner_upper' && unit.cornerDoors === 'pair') ids.push(`${unit.id}:door:1`);
+      continue;
+    }
+    /* Радиусный модуль (OVAL & RADIUS): гнутые створки — те же, что ставит сцена (`bentLeavesOf`). */
+    if (unit.radius) {
+      for (const leaf of bentLeavesOf(unit, bentHingeOf(unit))) ids.push(`${unit.id}:${leaf.leaf}`);
       continue;
     }
     /*

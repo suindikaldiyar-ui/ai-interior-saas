@@ -14,6 +14,11 @@ import {
   countertopStrip,
   ceilingGap,
   CEILING_GAP_RANGE_MM,
+  BEND_METHOD_TITLE,
+  BEND_RADIUS_RANGE_MM,
+  radiusMethods,
+  type BendMethod,
+  type RadiusMethods,
   type CeilingGap,
   type CornerSizes,
   type CountertopStrip,
@@ -216,6 +221,25 @@ export default function ProductionAdmin({ initial }: Props) {
     setValue((prev) => ({
       ...prev,
       ceilingGap: { ...ceilingGap(prev.ceilingGap), gapMm: prev.ceilingGap?.gapMm ?? gap.gapMm, ...patch },
+    }));
+
+  /*
+   * Радиусная мебель (OVAL & RADIUS): способы цеха; не заведены — ничего не
+   * подтверждено, и радиусные модули DEMO ONLY.
+   */
+  const radius = radiusMethods(value.radius);
+  /* Поле радиуса держит набранное (по пути к «400» бывает «4»); вне границ — словами. */
+  const bendTyped = value.radius?.bend?.minRadiusMm ?? null;
+  const bendOutside =
+    bendTyped !== null && (!Number.isFinite(bendTyped) || bendTyped < BEND_RADIUS_RANGE_MM[0] || bendTyped > BEND_RADIUS_RANGE_MM[1]);
+  const setRadius = (patch: Partial<RadiusMethods>) =>
+    setValue((prev) => ({
+      ...prev,
+      radius: {
+        ...radiusMethods(prev.radius),
+        bend: { ...radiusMethods(prev.radius).bend, minRadiusMm: prev.radius?.bend?.minRadiusMm ?? null },
+        ...patch,
+      },
     }));
 
   const boxEmpty = !box.sideMm && !box.bottomMm && !box.bottomMount && !box.gapBelowMm && !box.gapAboveMm;
@@ -623,6 +647,88 @@ export default function ProductionAdmin({ initial }: Props) {
             {!gap.confirmed && (
               <p className="mt-1 text-[13px] leading-snug text-tape">
                 Не подтверждено цехом: у «до потолка» в объектах стоит эта пометка.
+              </p>
+            )}
+          </div>
+
+          {/*
+            * РАДИУСНАЯ МЕБЕЛЬ (OVAL & RADIUS). Контур по дуге — ЧПУ, гнутые
+            * детали — способ гибки и наименьший радиус цеха. Пока цех не
+            * подтвердил способ — радиусные модули DEMO ONLY: показаны и
+            * посчитаны, а карта раскроя заперта словами.
+            */}
+          <div
+            className="mt-6 border-t border-navyLine/60 pt-4"
+            data-radius-methods
+            data-radius-methods-state={radius.cnc.confirmed && radius.bend.confirmed && radius.bend.method && radius.bend.minRadiusMm ? 'confirmed' : 'demo'}
+          >
+            <p className="text-[15px] font-medium">Радиусная мебель</p>
+            <p className="mt-0.5 text-[13px] leading-snug text-graphiteMw">
+              Скруглённые торцы, фасады дугой, остров с полукруглыми торцами. Дно, крыша, полки и столешница по дуге
+              режутся на ЧПУ из заготовки; дверца, подложка реек и цоколь по дуге — гнутые. Пока способы не подтверждены,
+              такие модули — DEMO ONLY: в цех они не уходят.
+            </p>
+            <label className="mt-3 flex items-center gap-2 text-[15px]">
+              <input
+                type="checkbox"
+                data-radius-cnc-confirmed
+                checked={radius.cnc.confirmed}
+                onChange={(event) => setRadius({ cnc: { confirmed: event.target.checked } })}
+              />
+              Цех режет контур по дуге на ЧПУ
+            </label>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <label className="block">
+                <span className="mw-label">Способ гибки</span>
+                <select
+                  data-radius-bend-method
+                  value={radius.bend.method ?? ''}
+                  onChange={(event) =>
+                    setRadius({ bend: { ...radius.bend, minRadiusMm: bendTyped, method: (event.target.value || null) as BendMethod | null } })
+                  }
+                  className="mw-field mt-1 w-full"
+                >
+                  <option value="">не выбран</option>
+                  {(Object.keys(BEND_METHOD_TITLE) as BendMethod[]).map((method) => (
+                    <option key={method} value={method}>
+                      {BEND_METHOD_TITLE[method]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block">
+                <span className="mw-label">Наименьший радиус гибки, мм</span>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={BEND_RADIUS_RANGE_MM[0]}
+                  max={BEND_RADIUS_RANGE_MM[1]}
+                  data-radius-bend-min
+                  value={bendTyped ?? ''}
+                  onChange={(event) =>
+                    setRadius({ bend: { ...radius.bend, minRadiusMm: event.target.value === '' ? null : Number(event.target.value) } })
+                  }
+                  className="mw-field mt-1 w-full"
+                />
+                <span className={`mt-0.5 block text-[13px] leading-snug ${bendOutside ? 'text-alert' : 'text-graphiteMw'}`}>
+                  {bendOutside
+                    ? `Вне ${BEND_RADIUS_RANGE_MM[0]}–${BEND_RADIUS_RANGE_MM[1]} мм: такое число не сохранится — радиус гибки останется не названным.`
+                    : 'меньше — гнутую деталь не примут: отказ словами до записи'}
+                </span>
+              </label>
+            </div>
+            <label className="mt-3 flex items-center gap-2 text-[15px]">
+              <input
+                type="checkbox"
+                data-radius-bend-confirmed
+                checked={radius.bend.confirmed}
+                onChange={(event) => setRadius({ bend: { ...radius.bend, minRadiusMm: bendTyped, confirmed: event.target.checked } })}
+              />
+              Цех подтвердил способ гибки и радиус
+            </label>
+            {!(radius.cnc.confirmed && radius.bend.confirmed && radius.bend.method && radius.bend.minRadiusMm) && (
+              <p className="mt-1 text-[13px] leading-snug text-tape">
+                Не подтверждено цехом: радиусные модули объектов — DEMO ONLY, выпуск карты раскроя заперт.
               </p>
             )}
           </div>

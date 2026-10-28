@@ -251,6 +251,8 @@ export function vitrineBlocker(unit: Module, run: VitrineRunContext): string | n
   const name = `«${unit.label || 'модуль'}»`;
   if (unit.kind === 'filler') return `${name}: доборная планка — не шкаф, витрины из неё не сделать.`;
   if (unit.appliance || unit.column) return `${name}: в модуле прибор — стекло двери закрыло бы технику.`;
+  /* Радиусный модуль (OVAL & RADIUS): стекло и профиль витрины — по прямой, дуги у них нет. */
+  if (unit.radius) return `${name}: модуль по дуге, а стекло и профиль витрины — прямые. Сначала снимите радиус в блоке «Форма».`;
   if (unit.kind === 'corner_base' || (unit.kind === 'corner_upper' && unit.cornerDoors !== 'pair')) {
     return `${name}: «книжка» углового модуля висит на угловых петлях 175°, а под алюминиевую рамку таких петель в каталоге нет — у верхнего Г-модуля выберите «Две дверцы» в карточке угла.`;
   }

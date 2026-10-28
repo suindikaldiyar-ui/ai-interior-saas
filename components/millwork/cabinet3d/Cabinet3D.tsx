@@ -5,6 +5,7 @@ import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import CabinetModule3D from './CabinetModule3D';
 import InstancedBoxes from './InstancedBoxes';
+import ShapedBatch, { PlanPlate } from './ShapedBatch';
 import ModuleHandles from './ModuleHandles';
 import SceneCamera, { type OrthoProjection } from './SceneCamera';
 import {
@@ -30,7 +31,7 @@ import { boxShown, runPlaces } from '@/lib/millwork/cabinetBoxes';
 import { bayLayout, placeEnvelope } from '@/lib/millwork/bays';
 import { COUNTER_OVERHANG_MM, rowStandardDepthMm } from '@/lib/millwork/fill';
 import { moduleOfPart } from '@/lib/millwork/selection';
-import { PLINTH_SETBACK_MM, apronSpans, countertopSlabs, plinthSpans, slabPieces, upperNicheSpans } from '@/lib/millwork/countertop';
+import { PLINTH_SETBACK_MM, apronSpans, countertopSlabs, plinthSpans, radiusPlinths, slabPieces, upperNicheSpans } from '@/lib/millwork/countertop';
 import { lLegOf, openFrontOf } from '@/lib/millwork/corner';
 import { CAD_CARCASS_BASE, CAD_ROOM, cadShadeMaterial, cadShadeQuaternion } from './cadLook';
 import {
@@ -580,11 +581,24 @@ export default function Cabinet3D({
     const glassShelves: PartBox[] = [];
     /* ПРОФИЛЬ ВИТРИНЫ (P1) — пачка на покрытие: рамка двери и каркас несут `PartBox.profile`. */
     const profiles = new Map<ProfileFinish, PartBox[]>();
+    /*
+     * РАДИУСНЫЕ ДЕТАЛИ (OVAL & RADIUS) — своей формой, по сетке на материал:
+     * роль и ключ материала те же, что у коробок (`ShapedBatch`).
+     */
+    const shaped = new Map<string, { material: BoxMaterial; key: string | null; boxes: PartBox[] }>();
 
     for (const box of boxes) {
       if (box.part && active.has(box.part)) continue;
       /* Слой выключен — коробки нет в кадре (P1); в раскрое и смете она остаётся. */
       if (!boxShown(box, layers)) continue;
+      if (box.shape) {
+        const key = box.material === 'front' ? (box.frontKey ?? frontKey(DEFAULT_FRONT)) : (box.carcassKey ?? null);
+        const batch = `${box.material}|${key ?? ''}`;
+        const at = shaped.get(batch);
+        if (at) at.boxes.push(box);
+        else shaped.set(batch, { material: box.material, key, boxes: [box] });
+        continue;
+      }
       if (box.material === 'front' && box.relief) {
         const key = box.frontKey ?? frontKey(DEFAULT_FRONT);
         const leaf = leafOfBox(box.scale, box.face);
@@ -633,7 +647,7 @@ export default function Cabinet3D({
       }
       groups[box.material].push(box);
     }
-    return { groups, fronts, carcass, inner, reliefFronts, handles, glassKinds, glassShelves, profiles };
+    return { groups, fronts, carcass, inner, reliefFronts, handles, glassKinds, glassShelves, profiles, shaped };
   }, [boxes, activeParts, layers]);
 
   /*
@@ -772,6 +786,8 @@ export default function Cabinet3D({
    * считает `countertop.ts`, и рисуется ровно то, что посчитано.
    */
   const plinthStrips = useMemo(() => plinthSpans(run), [run]);
+  /* Цоколь под радиусными модулями (OVAL & RADIUS) — контуром `radiusPlinths`. */
+  const curvedPlinths = useMemo(() => radiusPlinths(run), [run]);
   const apronStrips = useMemo(() => apronSpans(run), [run]);
   /*
    * НИША ПОД ВИСЯЩИМ РЯДОМ — `upperNicheSpans` (P0): только под висящими
@@ -856,6 +872,20 @@ export default function Cabinet3D({
               -depthM / 2 - plinthSetbackM / 2,
             ]}
             scale={[(strip.toMm - strip.fromMm) / MM, plinthM, depthM - plinthSetbackM]}
+            receiveShadow
+            castShadow={shadows}
+          />
+        ))}
+      {assembled &&
+        layers.carcass &&
+        curvedPlinths.map((plinth) => (
+          <PlanPlate
+            key={`plinth-r-${plinth.moduleId}`}
+            name={`plinth:${run.wallId ?? 'a'}`}
+            path={plinth.path}
+            y0Mm={0}
+            y1Mm={plinthM * MM}
+            material={parts.plinth}
             receiveShadow
             castShadow={shadows}
           />
@@ -1007,6 +1037,27 @@ export default function Cabinet3D({
           castShadow={shadows && kind === 'mirror'}
         />
       ))}
+      {/*
+        * РАДИУСНЫЕ ДЕТАЛИ (OVAL & RADIUS): дно и полки по контуру, гнутые
+        * дверцы, подложка и рейки — сеткой своей формы, по одной на материал.
+        * Материал — тот же, что у коробок этой роли и ключа.
+        */}
+      {Array.from(grouped.shaped.entries()).map(([batch, entry]) => (
+        <ShapedBatch
+          key={`shaped-${batch}`}
+          name={`shaped:${entry.material}:${entry.key ?? ''}`}
+          boxes={entry.boxes}
+          material={
+            entry.material === 'front'
+              ? (frontMaterials.get(entry.key ?? '') ?? parts.front)
+              : entry.material === 'inner'
+                ? ((entry.key ? innerMaterials.get(entry.key) : undefined) ?? parts.inner)
+                : ((entry.key ? carcassMaterials.get(entry.key) : undefined) ?? parts.carcass)
+          }
+          castShadow={shadows}
+          receiveShadow
+        />
+      ))}
       {/* Профиль витрины (P1): рамка двери и каркас — пачкой на покрытие, имя `profile:<покрытие>` для приёмки. */}
       {Array.from(grouped.profiles.entries()).map(([finish, list]) => (
         <InstancedBoxes
@@ -1144,7 +1195,21 @@ export default function Cabinet3D({
       {hasCountertop &&
         layers.carcass &&
         counterSlabs.flatMap((slab) =>
-          slabPieces(slab).map((piece) => {
+          /* Плита над радиусными модулями (OVAL & RADIUS) — своим контуром, той же `slabOutline`, что считает смета. */
+          slab.outline
+            ? [
+                <PlanPlate
+                  key={`counter-${slab.fromMm}`}
+                  name={`counter:${run.wallId ?? 'a'}`}
+                  path={slab.outline}
+                  y0Mm={counterTopY}
+                  y1Mm={counterTopY + countertopMm(run.production)}
+                  material={parts.counter}
+                  castShadow
+                  receiveShadow
+                />,
+              ]
+            : slabPieces(slab).map((piece) => {
             const cutM = piece.backCutMm / MM;
             return (
               <mesh

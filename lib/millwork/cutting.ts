@@ -265,6 +265,12 @@ export type CuttingPlan = {
    * листах их нет.
    */
   outside: VitrinePart[];
+  /**
+   * ГНУТЫЕ ДЕТАЛИ (OVAL & RADIUS) — дверца, подложка реек, цоколь по дуге:
+   * делаются гибкой, а не распилом листа, и на листах их нет. Развёртка,
+   * радиус и угол — в самой детали (`Panel.shape`).
+   */
+  bent: ObjectPanel[];
 };
 
 /* ─────────────────────────  Текстура и повороты  ───────────────────────── */
@@ -659,8 +665,22 @@ export function cuttingPlan(input: {
    * собрать.
    */
   vitrine?: { parts: VitrinePart[]; reasons: string[] };
+  /**
+   * РАДИУСНАЯ МЕБЕЛЬ (OVAL & RADIUS): причины «не для цеха» (`radiusMethodState`)
+   * запирают выпуск словами — способ гибки и ЧПУ цех не подтвердил.
+   */
+  radius?: { reasons: string[] };
 }): CuttingPlan {
-  const { parts, settings, decors = new Map(), exportLock = null, fingerprint, drawerBoxUnconfirmed = 0, vitrine } = input;
+  const { settings, decors = new Map(), exportLock = null, fingerprint, drawerBoxUnconfirmed = 0, vitrine, radius } = input;
+  /*
+   * ГНУТЫЕ ДЕТАЛИ — НЕ С ЛИСТА РАСКРОЯ (OVAL & RADIUS). Дверца, подложка реек и
+   * цоколь по дуге делаются гибкой (`Panel.shape.kind === 'bent'`): прямоугольник
+   * развёртки на листе ЛДСП выдал бы гибку за обычный распил. Они — своим
+   * списком рядом с листами. Детали по контуру (ЧПУ) остаются на листах
+   * заготовкой и подписаны контуром.
+   */
+  const bent = input.parts.filter((part) => part.shape?.kind === 'bent');
+  const parts = input.parts.filter((part) => part.shape?.kind !== 'bent');
   const kerf = Math.round(settings.kerfMm * U);
   const trim = Math.round(settings.trimMm * U);
   const minRemnant = settings.minRemnantMm * U;
@@ -871,7 +891,8 @@ export function cuttingPlan(input: {
 
   /* Кромка — по типам, той же `panelEdgeMm`, что итоги деталировки и смета. */
   const edgeMm = new Map<Panel['edgeType'], number>();
-  for (const part of parts) {
+  /* По всем деталям, и гнутым тоже: итог кромки — тот же, что у деталировки. */
+  for (const part of input.parts) {
     const length = panelEdgeMm(part) * part.qty;
     if (length > 0) edgeMm.set(part.edgeType, (edgeMm.get(part.edgeType) ?? 0) + length);
   }
@@ -926,6 +947,7 @@ export function cuttingPlan(input: {
     reasons.push(`Проверка раскладки нашла ${errors.length} ошибок: ${errors.slice(0, 2).join('; ')}.`);
   }
   for (const reason of vitrine?.reasons ?? []) reasons.push(`Витрина ${reason}.`);
+  for (const reason of radius?.reasons ?? []) reasons.push(`Радиусная мебель — DEMO ONLY: ${reason}.`);
   if (!settings.confirmed) {
     reasons.push(
       `Пропил ${settings.kerfMm} мм, обрезка ${settings.trimMm} мм и остаток от ${settings.minRemnantMm} мм — ` +
@@ -970,6 +992,7 @@ export function cuttingPlan(input: {
     signature,
     fingerprint,
     outside: vitrine?.parts ?? [],
+    bent,
   };
 }
 
@@ -1140,7 +1163,10 @@ export function cuttingCsvRows(plan: CuttingPlan): (string | number)[][] {
     sheet.placements.map((p) => [
       p.piece.id,
       p.piece.part.moduleId,
-      p.piece.part.name,
+      /* Деталь по контуру (OVAL & RADIUS): с пилы уходит заготовка — контур по дуге режут на ЧПУ. */
+      p.piece.part.shape?.kind === 'contour'
+        ? `${p.piece.part.name} · заготовка, контур по дуге на ЧПУ (${Math.round(p.piece.part.shape.curvedMm)} мм)`
+        : p.piece.part.name,
       p.piece.lengthMm,
       p.piece.widthMm,
       1,

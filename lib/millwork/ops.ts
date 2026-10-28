@@ -10,11 +10,12 @@ import {
   MIN_WIDTH,
   frontPlan,
   isStandardWidth,
+  plainModuleLabel,
   snapToStandard,
 } from './modules';
 import { rowSpansOfRun, upperSpansOfRun, buildUpperRow, fillGap, moduleId, onWall, sectionMezzanineBand, uniqueModuleIds } from './layout';
 import { blindPartMm, blindVariantRefusal, cornerDoorHinge, cornerOfModule, levelBoundsOf, upperCornerOf } from './corner';
-import { counterTailsOf } from './countertop';
+import { counterCornerRefusal, counterTailsOf } from './countertop';
 import { obstaclesInBand, rowBandMm, wallObstacles, type WallObstacle } from './obstacles';
 import {
   assertNoOverlap,
@@ -39,6 +40,8 @@ import { mezzanineOf, zoneHeightMm, zoneProfile } from './zones';
 import { handleOf, isMechanism, openingRejection } from './opening';
 import { glassRefusal, glassShelvesRefusal } from './glass';
 import { vitrineEdit } from './vitrinePlace';
+import { radiusAfterEdit, radiusEdit, radiusRowOf } from './radiusPlace';
+import { islandTopRefusal } from './island';
 import { vitrineFrameRefusal } from './vitrine';
 import { frontConflict, frontOf, leafTitle } from './frontMaterial';
 import { reliefParamRefusal } from './facadeRelief';
@@ -161,7 +164,7 @@ function mezzanineInBounds(copies: Module[], run: Run, wallId?: string): Module[
   return out;
 }
 
-function makePlainModule(
+export function makePlainModule(
   kind: ModuleKind,
   widthMm: number,
   /** Стена ряда: она же идентичность модуля. */
@@ -201,15 +204,7 @@ function makePlainModule(
     drawerCount: fronts.drawerCount,
     doorCount: fronts.doorCount,
     isFiller: !isStandardWidth(widthMm),
-    label: appliance
-      ? APPLIANCE_SLOTS[appliance].title
-      : kind === 'tall'
-        ? 'Пенал'
-        : fronts.drawerCount > 0
-          ? `${fronts.drawerCount} ящика`
-          : fronts.doorCount >= 2
-            ? `${fronts.doorCount} дверцы`
-            : 'Дверца',
+    label: appliance ? APPLIANCE_SLOTS[appliance].title : plainModuleLabel(kind, fronts),
   };
 }
 
@@ -1871,6 +1866,25 @@ export function applyOps({
         break;
       }
 
+      case 'set_counter_corner': {
+        /*
+         * СКРУГЛЁННЫЙ УГОЛ СТОЛЕШНИЦЫ У СВОБОДНОГО КОНЦА РЯДА (OVAL & RADIUS):
+         * где можно и каким радиусом — `counterCornerRefusal`, словами до записи.
+         */
+        const corners = { ...(run.counterCorners ?? {}) };
+        if (op.radiusMm === null) delete corners[op.end];
+        else {
+          const refusal = counterCornerRefusal({ ...run, modules }, op.end, op.radiusMm);
+          if (refusal) {
+            warnings.push(refusal);
+            break;
+          }
+          corners[op.end] = op.radiusMm;
+        }
+        run = { ...run, counterCorners: Object.keys(corners).length > 0 ? corners : undefined };
+        break;
+      }
+
       case 'replace_module': {
         /*
          * ЗАМЕНА РАБОТАЕТ НА ЛЮБОМ РЯДУ.
@@ -3199,6 +3213,39 @@ export function applyOps({
         break;
       }
 
+      case 'set_radius': {
+        /*
+         * РАДИУС МОДУЛЯ (OVAL & RADIUS): форма — `radiusRefusal`, место в
+         * ряду и фрезеровка — `radiusPlaceRefusal`, одной `radiusEdit` ДО
+         * записи; отказ словами, ряд прежний. Ряд — текущий, с правками
+         * этого вызова. Корпус над шкафом и кладовка над колонной по дуге не
+         * делаются: их строит своя раскладка.
+         */
+        const at = modules.findIndex((m) => m.id === op.moduleId);
+        const upperUnit =
+          at < 0 ? (mezzModules.find((m) => m.id === op.moduleId) ?? upperModules.find((m) => m.id === op.moduleId)) : null;
+        const target = at >= 0 ? modules[at] : upperUnit;
+        if (!target) {
+          warnings.push(
+            overModules.some((m) => m.id === op.moduleId) || storageNow(op.moduleId)
+              ? 'Корпус над шкафом и кладовка над колонной по дуге не делаются: их место и высоту задаёт шкаф под ними.'
+              : `Модуль ${op.moduleId} не найден.`,
+          );
+          break;
+        }
+        const lists = { modules, upper: upperModules, mezz: mezzModules, over: overModules };
+        const outcome = radiusEdit(target, op.radius, radiusRowOf(target, lists, run), { ...run, milling });
+        if ('refusal' in outcome) {
+          warnings.push(outcome.refusal);
+          break;
+        }
+        const edited = outcome.unit;
+        if (at >= 0) modules[at] = edited;
+        else if (editMezz(target.id, () => edited)) break;
+        else if (editUpper(target.id, () => edited)) break;
+        break;
+      }
+
       case 'set_handle_spot': {
         /*
          * ВЫСОТА И ПОВОРОТ РУЧКИ — И ТОЛЬКО ОНИ.
@@ -4270,6 +4317,44 @@ export function applyOps({
    * дублем, чинится первой же правкой, и новая правка дубля не заводит.
    */
   const owned = uniqueModuleIds(nextRun);
+
+  /*
+   * РАДИУСНЫЙ МОДУЛЬ ПОСЛЕ ПРАВКИ (OVAL & RADIUS): правка, после которой его
+   * не собрать (сосед встал за скруглённым торцом, ширина ушла от радиуса,
+   * фасад стал ЛДСП, на ряд легла фрезеровка), отклоняется целиком — ряд
+   * прежний, причина словами. Дугу, которую нельзя сделать, в цех не пускаем.
+   */
+  const brokenRadius = radiusAfterEdit(run, owned);
+  if (brokenRadius) return { ...run, warnings: [brokenRadius] };
+  /*
+   * ОВАЛ ОСТРОВА ЛЕЖИТ НА ДВУХ ПОЛУКРУГЛЫХ ТОРЦАХ (OVAL & RADIUS): правка,
+   * после которой столешницу острова не построить (сняли торец, сменили его
+   * радиус), отклоняется целиком — словами. Давнее не повторяется.
+   */
+  if (run.island && !islandTopRefusal(run)) {
+    const top = islandTopRefusal(owned);
+    if (top) return { ...run, warnings: [`Правка не применена: ${top.charAt(0).toLowerCase()}${top.slice(1)}`] };
+  }
+  /*
+   * СКРУГЛЁННЫЙ УГОЛ СТОЛЕШНИЦЫ ПОСЛЕ ПРАВКИ (OVAL & RADIUS): правка, после
+   * которой угол плиты у конца ряда скруглить нельзя (крайний модуль не несёт
+   * плиту, скруглён сам), отклоняется словами — хранить радиус, который ни на
+   * что не влияет, нельзя. Давнее не повторяется.
+   */
+  for (const end of ['start', 'end'] as const) {
+    const radius = owned.counterCorners?.[end];
+    if (!radius) continue;
+    const now = counterCornerRefusal(owned, end, radius);
+    const was = run.counterCorners?.[end] ? counterCornerRefusal(run, end, run.counterCorners[end]!) : 'нет';
+    if (now && !was) {
+      return {
+        ...run,
+        warnings: [
+          `Правка не применена: у ${end === 'start' ? 'начала' : 'конца'} ряда скруглён угол столешницы R${radius}, а после правки — ${now.charAt(0).toLowerCase()}${now.slice(1)} Сначала верните прямой угол.`,
+        ],
+      };
+    }
+  }
 
   // Отпечаток пересчитывается вместе с составом — иначе смета и чертёж
   // разойдутся молча, а это ровно то, от чего он защищает.

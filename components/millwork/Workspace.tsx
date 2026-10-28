@@ -50,6 +50,8 @@ import {
 import {
   appliancePinsByWall,
   compositionFor,
+  islandOnShow,
+  islandPanelWall,
   objectEstimateOf,
   objectInput,
   objectSite,
@@ -67,6 +69,10 @@ import {
   type WallEdits,
 } from '@/lib/millwork/objectEstimate';
 import { mirroredState, rechainedState, type MirrorContext } from '@/lib/millwork/mirror';
+import { ISLAND_LABEL, islandPlacement } from '@/lib/millwork/island';
+import { islandOpsRefusal, islandRequirements } from '@/lib/millwork/islandEdit';
+import { islandIssues, islandWallClearance } from '@/lib/millwork/islandCheck';
+import { flatRadiusFronts, staleRadius } from '@/lib/millwork/radiusPlace';
 import { ratesFromCatalog } from '@/lib/millwork/rates';
 import { markShownMm, marksOfZone, moduleCarcassHeightMm, rowStandardDepthMm } from '@/lib/millwork/fill';
 import { bayEnvelope, drawerReleaseBlock } from '@/lib/millwork/bays';
@@ -98,6 +104,7 @@ import {
   RUN_DESIGNS,
   designAvailability,
   designOps,
+  designRadiusPlan,
   designSummary,
 } from '@/lib/millwork/designs';
 import type { DrawingMode } from './ElevationDrawing';
@@ -460,6 +467,9 @@ function modulesWord(count: number): string {
   return 'модулей';
 }
 
+/** Номер ряда острова среди рядов экрана: у стен номера 0, 1, 2. */
+const ISLAND_ROW = -1;
+
 export default function Workspace(props: WorkspaceProps) {
   /*
    * Комплектация одна (см. SINGLE_VARIANT). Ключ остаётся: он держит
@@ -593,6 +603,8 @@ export default function Workspace(props: WorkspaceProps) {
   const [studioTool, setStudioTool] = useState<StudioTool>(studioHasFurniture ? 'furniture' : 'measure');
   /** Оболочка Studio — её приносит страница Studio (`StudioKitProvider`), мастер её не грузит. */
   const studioKit = useContext(StudioKitContext);
+  /* Блок острова — из кита Studio: в мастере и демо его нет. */
+  const IslandKit = studioKit?.IslandEditor ?? null;
   const [studioContextOpen, setStudioContextOpen] = useState(true);
   /** Что в рабочей области Studio: план комнаты, фасад, 3D, деталировка или карта раскроя. */
   const [studioView, setStudioView] = useState<StudioView>(studioHasFurniture ? 'facade' : 'plan');
@@ -846,6 +858,14 @@ export default function Workspace(props: WorkspaceProps) {
   const [editedWalls, setEditedWalls] = useState<WallEdits>(() =>
     savedWallRuns(props.initialState?.wallRuns),
   );
+  /**
+   * ОСТРОВ (OVAL & RADIUS, этап A) — ряд без стены, сохранённый целиком
+   * (ловушка 42). На показе он получает окружение объекта (`islandOnShow`),
+   * а правится теми же операциями (`runOps`), что ряд выбранной стены, —
+   * когда выбран он (`islandActive`).
+   */
+  const [savedIsland, setSavedIsland] = useState<Run | null>(() => props.initialState?.island ?? null);
+  const [islandActive, setIslandActive] = useState(false);
 
   /*
    * STUDIO НЕ НАВЯЗЫВАЕТ ГОТОВОЕ РЕШЕНИЕ (STAGE 01A).
@@ -1402,9 +1422,20 @@ export default function Workspace(props: WorkspaceProps) {
    * рядами и правятся ТЕМИ ЖЕ операциями.
    */
   const segments = useMemo(
-    () => wallSegments(layout, active.run, editedWalls),
-    [layout, active.run, editedWalls],
+    () => wallSegments(layout, active.run, editedWalls, input.wallEnds),
+    [layout, active.run, editedWalls, input.wallEnds],
   );
+  const island = useMemo(
+    () => islandOnShow(savedIsland, { production: input.production, ceilingHeightMm: input.ceilingHeightMm }),
+    [savedIsland, input.production, input.ceilingHeightMm],
+  );
+  /** Выбран остров: правка, библиотека и панель модуля — его ряда. */
+  const onIsland = islandActive && island !== null;
+  /**
+   * РЯДЫ ОБЪЕКТА — СТЕНЫ И ОСТРОВ: смета, раскрой, сцена, ящики и паспорта
+   * фурнитуры. Углы, расхождения со стеной и комната — только у стен.
+   */
+  const rowsAll = useMemo(() => (island ? [...segments, island] : segments), [segments, island]);
 
   /*
    * СТЕНЫ РАСКРОЯ — ТЕ ЖЕ РЯДЫ, ЧТО ВИДЯТ СЦЕНА, ЧЕРТЁЖ И СМЕТА (P0-5).
@@ -1414,8 +1445,8 @@ export default function Workspace(props: WorkspaceProps) {
    * ряды — те же `segments`: второго набора рядов для раскроя нет.
    */
   const panelWalls = useMemo(
-    () => panelWallsOf(layout, segments, input.runWallId),
-    [layout, segments, input.runWallId],
+    () => [...panelWallsOf(layout, segments, input.runWallId), ...islandPanelWall(island)],
+    [layout, segments, input.runWallId, island],
   );
 
   /*
@@ -1434,7 +1465,7 @@ export default function Workspace(props: WorkspaceProps) {
   const detailsInFlight = useRef(new Set<string>());
   useEffect(() => {
     if (!orgId) return;
-    const wanted = lightReferences(segments, catalog).filter((id) => !detailsInFlight.current.has(id));
+    const wanted = lightReferences(rowsAll, catalog).filter((id) => !detailsInFlight.current.has(id));
     if (wanted.length === 0) return;
     for (const id of wanted) detailsInFlight.current.add(id);
     void (async () => {
@@ -1450,7 +1481,7 @@ export default function Workspace(props: WorkspaceProps) {
         for (const id of wanted) detailsInFlight.current.delete(id);
       }
     })();
-  }, [segments, catalog, orgId, mergeCatalogDetails]);
+  }, [rowsAll, catalog, orgId, mergeCatalogDetails]);
 
   /**
    * СТЕНА КОМПОЗИЦИИ ПОД ЭТИМ НОМЕРОМ — КЛЮЧ ЕЁ ПРАВОК.
@@ -1461,6 +1492,15 @@ export default function Workspace(props: WorkspaceProps) {
   const wallIdAt = useCallback(
     (index: number) => layout?.segments[index]?.wallId ?? String(index),
     [layout],
+  );
+  /** Правка ряда — в тот, чей он: стена А, соседняя стена или остров. */
+  const writeRow = useCallback(
+    (index: number, next: Run) => {
+      if (index === ISLAND_ROW) setSavedIsland(next);
+      else if (index === 0) setEditedRuns((prev) => ({ ...prev, [active.key]: next }));
+      else setEditedWalls((prev) => withWallEdit(prev, wallIdAt(index), index, next));
+    },
+    [active.key, wallIdAt],
   );
 
   /**
@@ -1480,7 +1520,7 @@ export default function Workspace(props: WorkspaceProps) {
   );
 
   const wall = Math.min(wallIndex, segments.length - 1);
-  const activeRun = segments[wall] ?? active.run;
+  const activeRun = onIsland && island ? island : (segments[wall] ?? active.run);
 
   /**
    * СТЕНА АКТИВНОГО РЯДА ДЛЯ ИНСПЕКТОРА STUDIO (STAGE 01A).
@@ -1491,6 +1531,8 @@ export default function Workspace(props: WorkspaceProps) {
    * длина та, с которой объект открыли.
    */
   const studioWall = useMemo<StudioWall>(() => {
+    /* Остров стоит без стены: его длина — число проекта, а не замер. */
+    if (onIsland && island) return { id: 'island', label: ISLAND_LABEL, lengthMm: island.lengthMm, state: 'measured', designed: true };
     const id = wall === 0 ? (input.runWallId ?? null) : wallIdAt(wall);
     const known = id ? survey?.walls.find((item) => item.id === id)?.lengthMm : undefined;
     const siteWall = id ? site.walls.find((item) => item.id === id) : undefined;
@@ -1502,13 +1544,13 @@ export default function Workspace(props: WorkspaceProps) {
       state: known?.state ?? 'measured',
       basis: known?.state === 'assumed' ? known.basis : undefined,
     };
-  }, [wall, input.runWallId, wallIdAt, survey, site.walls, activeRun.lengthMm]);
+  }, [onIsland, island, wall, input.runWallId, wallIdAt, survey, site.walls, activeRun.lengthMm]);
   /** Цвет фасада для сцены: один на экран и на сцену рендера по чертежу. */
   const sceneFacadeColor = frontOf(
     activeRun.modules.find((unit) => hasFacade(unit)) ?? activeRun.modules[0] ?? {},
   ).colorHex;
   /** Соседний ряд: на схеме он идёт контуром, чтобы был виден угол. */
-  const neighbourRun = layout ? (segments[wall === 0 ? 1 : wall - 1] ?? null) : null;
+  const neighbourRun = layout && !onIsland ? (segments[wall === 0 ? 1 : wall - 1] ?? null) : null;
 
   /*
    * ПРОЁМЫ СТЕНЫ — ТЕ, ПО КОТОРЫМ СОБРАН ЕЁ РЯД (слой 55).
@@ -1529,8 +1571,20 @@ export default function Workspace(props: WorkspaceProps) {
    */
   const wallOpenings = useCallback(
     (index: number): Opening[] =>
-      index === 0 || !layout ? input.openings : (layout.segments[index]?.openings ?? []),
+      index === ISLAND_ROW ? [] : index === 0 || !layout ? input.openings : (layout.segments[index]?.openings ?? []),
     [input.openings, layout],
+  );
+  /**
+   * РЯД ПО НОМЕРУ — СТЕНЫ И ОСТРОВ (`ISLAND_ROW`). Правка уходит туда, чей
+   * это ряд: стена А — в `editedRuns`, соседние — в `editedWalls` под своим
+   * `wallId`, остров — целиком в его состояние. Состав острова — без техники
+   * и навесного ряда (`islandRequirements`).
+   */
+  const activeIndex = onIsland ? ISLAND_ROW : wall;
+  const rowAt = useCallback((index: number) => (index === ISLAND_ROW ? island : segments[index]), [island, segments]);
+  const requirementsOf = useCallback(
+    (index: number) => (index === ISLAND_ROW ? islandRequirements(requirements) : requirements),
+    [requirements],
   );
 
   /**
@@ -1550,8 +1604,8 @@ export default function Workspace(props: WorkspaceProps) {
    * именно там и видна.
    */
   const estimateAssumptions = useMemo(
-    () => segments.flatMap((run) => openingAssumptions(run)).map((w) => w.message),
-    [segments],
+    () => rowsAll.flatMap((run) => openingAssumptions(run)).map((w) => w.message),
+    [rowsAll],
   );
 
   /**
@@ -1565,9 +1619,9 @@ export default function Workspace(props: WorkspaceProps) {
    * разовых статей.
    */
   const objectEstimateFor = useCallback(
-    (wallRuns: Run[], wallAEstimate: Estimate) =>
-      objectEstimateOf({ layout, segments: wallRuns, wallAEstimate, variantKey, input, disabled }),
-    [layout, variantKey, input, disabled],
+    (wallRuns: Run[], wallAEstimate: Estimate, islandRun: Run | null = island) =>
+      objectEstimateOf({ layout, segments: wallRuns, wallAEstimate, variantKey, input, disabled, island: islandRun }),
+    [layout, variantKey, input, disabled, island],
   );
 
   /*
@@ -1647,6 +1701,53 @@ export default function Workspace(props: WorkspaceProps) {
 
   /* Комната вокруг рядов сцены — стены, к которым крепится трек (V3D-02). */
   const lightingRoom = useMemo(() => roomAroundRows(roomSource, sceneRows, null), [roomSource, sceneRows]);
+
+  /*
+   * ОСТРОВ В СЦЕНЕ (OVAL & RADIUS) — от места ряда стены А (`islandPlacement`),
+   * последним рядом: камеру ставит стена А, комната стоит вокруг стен.
+   */
+  const sceneRowsAll = useMemo<SceneRow[]>(
+    () =>
+      island && sceneRows[0]?.placement
+        ? [...sceneRows, { run: island, placement: islandPlacement(sceneRows[0].placement, island) }]
+        : sceneRows,
+    [sceneRows, island],
+  );
+
+  /*
+   * ЧТО СЛЕДУЕТ ИЗ МЕСТА ОСТРОВА: вошёл в мебель, стену или колонну —
+   * блокирующее; проход меньше нормы — уточнение (`islandIssues`).
+   */
+  /* Стены комнаты по именам: под мебелью — «Стена А», остальные — номером замера. */
+  const roomWallName = useCallback(
+    (wall: { id: string }) => {
+      const chain = compositionWallIds.indexOf(wall.id);
+      if (chain >= 0) return wallLabel(chain);
+      const at = survey?.walls.findIndex((item) => item.id === wall.id) ?? -1;
+      return at >= 0 ? `стена ${at + 1} замера` : `стена ${wall.id}`;
+    },
+    [compositionWallIds, survey],
+  );
+  const islandProblems = useMemo(
+    () =>
+      island
+        ? islandIssues({
+            island,
+            rows: sceneRows.flatMap((row) => (row.placement ? [{ run: row.run, placement: row.placement }] : [])),
+            room: lightingRoom,
+            nameOf: roomWallName,
+          })
+        : [],
+    [island, sceneRows, lightingRoom, roomWallName],
+  );
+  /* До стены без мебели — числом; нормы прохода до голой стены в продукте нет. */
+  const islandBehind = useMemo(
+    () =>
+      island && sceneRows[0]?.placement
+        ? islandWallClearance({ island, rowA: sceneRows[0].placement, room: lightingRoom, rowWallIds: compositionWallIds, nameOf: roomWallName })
+        : null,
+    [island, sceneRows, lightingRoom, compositionWallIds, roomWallName],
+  );
 
   /**
    * РЯД, СОБРАННЫЙ НА ДРУГОЙ ДЛИНЕ СТЕНЫ.
@@ -1751,8 +1852,8 @@ export default function Workspace(props: WorkspaceProps) {
    * про свой. Композиция уже разложила точки по стенам — берём оттуда.
    */
   const activeComms = useMemo(
-    () => layout?.segments[wall]?.comms ?? props.comms,
-    [layout, wall, props.comms],
+    () => (onIsland ? [] : (layout?.segments[wall]?.comms ?? props.comms)),
+    [onIsland, layout, wall, props.comms],
   );
 
   const issues = useMemo(
@@ -1824,10 +1925,12 @@ export default function Workspace(props: WorkspaceProps) {
       .flatMap((segment) => segment.modules)
       .map((unit) => unit.id);
 
+    /* Скругление торцов — формой модуля (`set_radius`), что не встаёт — словами (OVAL & RADIUS). */
+    const rounding = designRadiusPlan(design, active.run);
     const next = applyOps({
       run: active.run,
       requirements,
-      ops: designOps(design, uppers),
+      ops: [...designOps(design, uppers), ...rounding.ops],
       openings: wallOpenings(0),
       roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
       hardware: hardwareItems,
@@ -1837,7 +1940,10 @@ export default function Workspace(props: WorkspaceProps) {
     setEditedRuns((prev) => ({ ...prev, [active.key]: next }));
     setMoveNotice(
       next.warnings[0] ??
-        `Дизайн «${design.name}» применён ко всему ряду. Отдельный модуль можно поменять — правка сильнее дизайна.`,
+        [
+          `Дизайн «${design.name}» применён ко всему ряду. Отдельный модуль можно поменять — правка сильнее дизайна.`,
+          ...rounding.notes,
+        ].join(' '),
     );
   };
 
@@ -2170,8 +2276,15 @@ export default function Workspace(props: WorkspaceProps) {
    */
   const selectModule = useCallback(
     (moduleId: string | null) => {
-      const at = wallOfModule(segments, moduleId);
-      if (at !== null) setWallIndex(at);
+      /* Модуль острова — выбран остров; модуль стены — её стена. */
+      if (moduleId && island && allModules(island).some((unit) => unit.id === moduleId)) setIslandActive(true);
+      else if (moduleId) {
+        const at = wallOfModule(segments, moduleId);
+        if (at !== null) {
+          setIslandActive(false);
+          setWallIndex(at);
+        }
+      }
       setSelectedId(moduleId);
       /* Выделено что-то одно: модуль ИЛИ пустота ИЛИ угол ИЛИ стена замера. */
       setSelectedGap(null);
@@ -2179,7 +2292,7 @@ export default function Workspace(props: WorkspaceProps) {
       /* Угол дальше решает выделенный модуль: угловой — его угол (слой 55). */
       setCornerPick(null);
     },
-    [segments],
+    [segments, island],
   );
 
   /** Нажатие на пустое место ряда: библиотека открывается для него. */
@@ -2197,6 +2310,7 @@ export default function Workspace(props: WorkspaceProps) {
   const selectCorner = useCallback((index: number) => {
     setSelectedId(null);
     setSelectedGap(null);
+    setIslandActive(false);
     setWallIndex(index);
     setCornerPick(index);
   }, []);
@@ -2338,21 +2452,21 @@ export default function Workspace(props: WorkspaceProps) {
   const libraryInput = useMemo(
     () => ({
       run: activeRun,
-      requirements,
-      openings: wallOpenings(wall),
+      requirements: requirementsOf(activeIndex),
+      openings: wallOpenings(activeIndex),
       roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
       moduleId: selectedId,
       gap: selectedGap,
     }),
-    [activeRun, requirements, wallOpenings, wall, props.roomDepthM, selectedId, selectedGap],
+    [activeRun, requirementsOf, wallOpenings, activeIndex, props.roomDepthM, selectedId, selectedGap],
   );
 
   const libraryList = useMemo(() => libraryCards(libraryInput), [libraryInput]);
 
   /* Пустоты выбранной стены: схема их только рисует. */
   const libraryGapList = useMemo(
-    () => libraryGaps(activeRun, wallOpenings(wall), requirements),
-    [activeRun, wallOpenings, wall, requirements],
+    () => libraryGaps(activeRun, wallOpenings(activeIndex), requirementsOf(activeIndex)),
+    [activeRun, wallOpenings, activeIndex, requirementsOf],
   );
   const libraryReason = useMemo(() => libraryLock(libraryInput), [libraryInput]);
 
@@ -2367,11 +2481,13 @@ export default function Workspace(props: WorkspaceProps) {
    */
   const totalOf = useCallback(
     (run: Run) =>
-      objectEstimateFor(
-        segments.map((segment, i) => (i === wall ? run : segment)),
-        wall === 0 ? editedRunEstimate(run, variantKey, input, disabled) : active.estimate,
-      ).total,
-    [objectEstimateFor, segments, wall, variantKey, input, disabled, active.estimate],
+      onIsland
+        ? objectEstimateFor(segments, active.estimate, run).total
+        : objectEstimateFor(
+            segments.map((segment, i) => (i === wall ? run : segment)),
+            wall === 0 ? editedRunEstimate(run, variantKey, input, disabled) : active.estimate,
+          ).total,
+    [onIsland, objectEstimateFor, segments, wall, variantKey, input, disabled, active.estimate],
   );
 
   const libraryPrice = useCallback(
@@ -2420,10 +2536,10 @@ export default function Workspace(props: WorkspaceProps) {
    */
   const selectedCorner = useMemo(() => {
     if (cornerPick !== null) return cornerPick < cornerChoices.length ? cornerPick : null;
-    if (!selectedUnit) return null;
+    if (!selectedUnit || onIsland) return null;
     const index = cornerOfUnit(selectedUnit, activeRun, wall);
     return index !== null && index < cornerChoices.length ? index : null;
-  }, [cornerPick, cornerChoices.length, selectedUnit, activeRun, wall]);
+  }, [cornerPick, cornerChoices.length, selectedUnit, activeRun, wall, onIsland]);
 
   /**
    * РАЗДАЧА ПРИБОРОВ СЕЙЧАС: прибор → стена.
@@ -2479,7 +2595,7 @@ export default function Workspace(props: WorkspaceProps) {
         {},
       ).find((variant) => variant.key === variantKey)?.run;
       if (!wallA) return { why: 'Ряд стены А с этим углом не собрался.' };
-      return { runs: wallSegments(next, wallA, {}) };
+      return { runs: wallSegments(next, wallA, {}, input.wallEnds) };
     },
     [compositionWith, requirements, applianceWallsNow, input, disabled, variantKey],
   );
@@ -2855,7 +2971,7 @@ export default function Workspace(props: WorkspaceProps) {
        * операцией, что и любой другой, и её правки остаются. Остальные
        * стены не трогаются ни в том, ни в другом случае.
        */
-      if (removedAppliances.length > 0 && layout) {
+      if (removedAppliances.length > 0 && layout && !onIsland) {
         const titles = removedAppliances.map((a) => APPLIANCE_SLOTS[a].title).join(', ');
         const remaining = requirements.appliances.filter((item) => !removedAppliances.includes(item));
         if (!wallEdited(wall)) {
@@ -2889,12 +3005,18 @@ export default function Workspace(props: WorkspaceProps) {
         setMoveNotice(`${titles}: убран со всей кухни — прибор один на все стены.`);
         return;
       }
+      /* На острове техники и навесного ряда нет (`islandOpsRefusal`) — словами, ряд прежний. */
+      const islandRefusal = onIsland ? islandOpsRefusal(ops) : null;
+      if (islandRefusal) {
+        onRefusal(islandRefusal);
+        return;
+      }
       const before = new Map(activeRun.modules.map((m) => [m.id, m.widthMm]));
       const next = applyOps({
         run: activeRun,
-        requirements,
+        requirements: requirementsOf(activeIndex),
         ops,
-        openings: wallOpenings(wall),
+        openings: wallOpenings(activeIndex),
         roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
         hardware: hardwareItems,
       });
@@ -2909,8 +3031,7 @@ export default function Workspace(props: WorkspaceProps) {
        * Правка уходит в ТУ стену, которая выбрана. Операция одна и та
        * же — меняется только, чей ряд она правит.
        */
-      if (wall === 0) setEditedRuns((prev) => ({ ...prev, [active.key]: next }));
-      else setEditedWalls((prev) => withWallEdit(prev, wallIdAt(wall), wall, next));
+      writeRow(activeIndex, next);
 
       /*
        * ДОБАВЛЕННЫЙ МОДУЛЬ СРАЗУ ВЫДЕЛЕН.
@@ -2960,7 +3081,7 @@ export default function Workspace(props: WorkspaceProps) {
           .map((m) => m.id),
       );
     },
-    [active, activeRun, wall, requirements, wallOpenings, props.roomDepthM, flash, selectedId, layout, wallEdited, wallIdAt, hardwareItems],
+    [active, activeRun, wall, requirements, wallOpenings, props.roomDepthM, flash, selectedId, layout, wallEdited, wallIdAt, hardwareItems, onIsland, activeIndex, requirementsOf, writeRow],
   );
 
   /* Подтверждение — та же правка, с разрешением снять отсеки; отмена — ничего. */
@@ -3014,7 +3135,8 @@ export default function Workspace(props: WorkspaceProps) {
   const applyMaterial = useCallback(
     (target: MaterialTarget, choice: MaterialChoice): string | null => {
       const one = target === 'module' || target === 'module-carcass' || target === 'leaf';
-      const walls = one ? [wall] : segments.map((_, index) => index);
+      /* «Вся кухня» — все стены и остров; модуль и дверь — выбранный ряд. */
+      const walls = one ? [activeIndex] : [...segments.map((_, index) => index), ...(island ? [ISLAND_ROW] : [])];
       const said: string[] = [];
       /*
        * Отказ одной стены («антресоли на этой стене нет») — не ответ всему
@@ -3025,7 +3147,7 @@ export default function Workspace(props: WorkspaceProps) {
       let changed = false;
 
       for (const index of walls) {
-        const run = segments[index];
+        const run = rowAt(index);
         if (!run) continue;
         const plan = materialOps(
           target,
@@ -3043,7 +3165,7 @@ export default function Workspace(props: WorkspaceProps) {
 
         const next = applyOps({
           run,
-          requirements,
+          requirements: requirementsOf(index),
           ops: plan.ops,
           openings: wallOpenings(index),
           roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
@@ -3051,15 +3173,14 @@ export default function Workspace(props: WorkspaceProps) {
         });
         /* Отказ движка — словами, а ряд записывается с тем, что прошло. */
         if (next.warnings[0]) said.push(next.warnings[0]);
-        if (index === 0) setEditedRuns((prev) => ({ ...prev, [active.key]: next }));
-        else setEditedWalls((prev) => withWallEdit(prev, wallIdAt(index), index, next));
+        writeRow(index, next);
         changed = true;
       }
 
       if (changed) dirty.current = true;
       return said[0] ?? (changed ? null : (refused[0] ?? null));
     },
-    [wall, segments, selectedId, selectedLeaf, requirements, wallOpenings, props.roomDepthM, active.key, wallIdAt, hardwareItems],
+    [activeIndex, island, segments, rowAt, selectedId, selectedLeaf, requirementsOf, wallOpenings, props.roomDepthM, hardwareItems, writeRow],
   );
 
   /*
@@ -3072,12 +3193,12 @@ export default function Workspace(props: WorkspaceProps) {
    */
   const applyFacade = useCallback(
     (target: FacadeTarget, patch: FacadePatch): string | null => {
-      const walls = target === 'fronts' ? segments.map((_, index) => index) : [wall];
+      const walls = target === 'fronts' ? [...segments.map((_, index) => index), ...(island ? [ISLAND_ROW] : [])] : [activeIndex];
       const said: string[] = [];
       const refused: string[] = [];
       let changed = false;
       for (const index of walls) {
-        const run = segments[index];
+        const run = rowAt(index);
         if (!run) continue;
         const plan = facadeOps(
           target,
@@ -3092,7 +3213,7 @@ export default function Workspace(props: WorkspaceProps) {
         }
         const next = applyOps({
           run,
-          requirements,
+          requirements: requirementsOf(index),
           ops: plan.ops,
           openings: wallOpenings(index),
           roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
@@ -3107,14 +3228,13 @@ export default function Workspace(props: WorkspaceProps) {
         if (plan.note && frontsOf(next) !== frontsOf(run)) said.push(plan.note);
         /* Отказ движка — словами, ряд записывается с тем, что прошло. */
         if (next.warnings[0]) said.push(next.warnings[0]);
-        if (index === 0) setEditedRuns((prev) => ({ ...prev, [active.key]: next }));
-        else setEditedWalls((prev) => withWallEdit(prev, wallIdAt(index), index, next));
+        writeRow(index, next);
         changed = true;
       }
       if (changed) dirty.current = true;
       return said[0] ?? (changed ? null : (refused[0] ?? null));
     },
-    [wall, segments, selectedId, selectedLeaf, requirements, wallOpenings, props.roomDepthM, active.key, wallIdAt, hardwareItems],
+    [activeIndex, island, segments, rowAt, selectedId, selectedLeaf, requirementsOf, wallOpenings, props.roomDepthM, hardwareItems, writeRow],
   );
 
   /*
@@ -3606,7 +3726,7 @@ export default function Workspace(props: WorkspaceProps) {
          * стена Б: предупреждение про мойку описывало не ту мебель.
          */
         run: activeRun,
-        openings: input.openings,
+        openings: onIsland ? [] : input.openings,
         comms: activeComms,
         stats: resolution?.stats ?? null,
         // Как только замерщик взял расстановку в свои руки, расхождение
@@ -3614,8 +3734,15 @@ export default function Workspace(props: WorkspaceProps) {
         // вывод своими глазами.
         manualSink: Object.keys(manualAnchors).length > 0,
         hoodRequested: requirements.appliances.includes('hood'),
-      }),
-    [missing, issues, activeRun, input.openings, activeComms, resolution, manualAnchors, requirements],
+      }).concat(
+        /* Проход у острова меньше нормы — уточнение с последствием (`islandIssues`). */
+        islandProblems.filter((problem) => problem.severity === 'clarify'),
+        /* Пометка «радиусный» без формы — прямая деталь, и это сказано (`flatRadiusFronts`). */
+        flatRadiusFronts(rowsAll),
+        /* Форма, заданная раньше, которая по замеру и цеху сейчас не встала бы (`staleRadius`). */
+        staleRadius(rowsAll, production),
+      ),
+    [missing, issues, activeRun, onIsland, input.openings, activeComms, resolution, manualAnchors, requirements, islandProblems, rowsAll, production],
   );
 
   /*
@@ -3663,8 +3790,8 @@ export default function Workspace(props: WorkspaceProps) {
    */
   /* Ящики отсеков без правил короба: одна строка на замок экрана и на карту раскроя. */
   const drawerDraft = useMemo(
-    () => drawerReleaseBlock(segments, { hardware: hardwareItems, production }),
-    [segments, hardwareItems, production],
+    () => drawerReleaseBlock(rowsAll, { hardware: hardwareItems, production }),
+    [rowsAll, hardwareItems, production],
   );
   const screen = useMemo(
     () =>
@@ -3678,6 +3805,8 @@ export default function Workspace(props: WorkspaceProps) {
         catalogError,
         /* Ящики отсеков без правил короба — черновик: выпуск в цех заперт словами (R02A). */
         drawerDraft,
+        /* Остров вошёл в мебель, стену или колонну — цены нет, выпуск заперт (OVAL & RADIUS). */
+        islandBlock: islandProblems.find((problem) => problem.severity === 'blocking')?.message ?? null,
         /*
          * Правки и закрепления, которые сейчас не участвуют: те же
          * `editedRuns`, `editedWalls` и `applianceWalls`, что держит экран.
@@ -3704,6 +3833,7 @@ export default function Workspace(props: WorkspaceProps) {
       warnings,
       catalogError,
       drawerDraft,
+      islandProblems,
       input.runWallId,
       editedRuns,
       active.key,
@@ -3828,7 +3958,7 @@ export default function Workspace(props: WorkspaceProps) {
             screen.exportLockText ??
             'цены нет: смету по этой мебели показывать нельзя.',
         }
-      : segments.every((run) => allModules(run).length === 0)
+      : rowsAll.every((run) => allModules(run).length === 0)
         ? {
             key: 'draft',
             title: 'Черновик',
@@ -3872,6 +4002,12 @@ export default function Workspace(props: WorkspaceProps) {
       }),
     [segments, input.runWallId, layout, wallEdited, requirements.mode],
   );
+
+  /* Остров на плане — от ряда стены А, той же `islandFrame`, что ставит его в сцене. */
+  const planIsland = useMemo(() => {
+    const rowA = wallFurniture.find((item) => item.index === 0);
+    return island && rowA ? { run: island, rowA: { wallId: rowA.wallId, run: rowA.run, startMm: rowA.startMm } } : null;
+  }, [island, wallFurniture]);
 
   const planFurniture = useMemo<PlanFurniture[]>(
     () => wallFurniture.map(({ wallId, run, startMm }) => ({ wallId, run, startMm })),
@@ -4046,9 +4182,16 @@ export default function Workspace(props: WorkspaceProps) {
       setSelectedId(null);
       setSelectedGap(null);
       setCornerPick(null);
-      /* Стена с рядом становится рабочей: её мебель и покажет «Мебель». */
+      /*
+       * Стена с рядом становится рабочей: её мебель и покажет «Мебель». С
+       * острова — тоже (OVAL & RADIUS): нажали на стену — рабочий её ряд, как у
+       * кнопки стены в «Мебели»; иначе список и правка оставались на острове.
+       */
       const furniture = wallFurniture.find((item) => item.wallId === wallId);
-      if (furniture) setWallIndex(furniture.index);
+      if (furniture) {
+        setIslandActive(false);
+        setWallIndex(furniture.index);
+      }
       setWallVerdict((prev) => (prev?.wallId === wallId ? prev : null));
     },
     [wallFurniture],
@@ -4180,6 +4323,8 @@ export default function Workspace(props: WorkspaceProps) {
       renderStyle,
       /* Освещение (V3D-02): нет — поля нет, у прежних объектов запись та же. */
       ...(lighting ? { lighting } : {}),
+      /* Остров (OVAL & RADIUS): нет — поля нет, у прежних объектов запись та же. */
+      ...(savedIsland ? { island: savedIsland } : {}),
       disabled,
     }),
     [
@@ -4196,6 +4341,7 @@ export default function Workspace(props: WorkspaceProps) {
       variantKey,
       renderStyle,
       lighting,
+      savedIsland,
       disabled,
     ],
   );
@@ -4331,6 +4477,8 @@ export default function Workspace(props: WorkspaceProps) {
         }
       }
       setLightingRaw(normalizeLighting(next.lighting));
+      setSavedIsland(next.island ?? null);
+      setIslandActive(false);
       setWallIndex(0);
       setSelectedId(null);
       setCornerPick(null);
@@ -4774,7 +4922,7 @@ export default function Workspace(props: WorkspaceProps) {
    */
   const emptyRunLock =
     allModules(activeRun).length === 0
-      ? `${wallLabel(wall)}: мебели нет. Дальше выбирают материал и ` +
+      ? `${onIsland ? ISLAND_LABEL : wallLabel(wall)}: мебели нет. Дальше выбирают материал и ` +
         'показывают смету, а показывать пока нечего — нажмите на стену и ' +
         'поставьте модуль из библиотеки.'
       : null;
@@ -4819,7 +4967,7 @@ export default function Workspace(props: WorkspaceProps) {
       panelHidden={panelHidden}
       onTogglePanel={props.studio ? undefined : () => setPanelHidden((on) => !on)}
       run={activeRun}
-      sceneRows={sceneRows}
+      sceneRows={sceneRowsAll}
       room={roomSource}
       production={production}
       roomWidthM={Math.max(input.lengthMm / 1000, 2)}
@@ -4830,7 +4978,7 @@ export default function Workspace(props: WorkspaceProps) {
       projectId={props.projectId}
       neighbour={neighbourRun}
       neighbourLabel={
-        layout ? wallLabel(wall === 0 ? 1 : wall - 1) : undefined
+        layout && !onIsland ? wallLabel(wall === 0 ? 1 : wall - 1) : undefined
       }
       comms={props.comms}
       selectedModuleId={selectedId}
@@ -4870,6 +5018,7 @@ export default function Workspace(props: WorkspaceProps) {
               onOps={runOps}
               onRefuse={setSceneNotice}
               palette={palette}
+              run={activeRun}
             />
           </div>
         </div>
@@ -4882,7 +5031,7 @@ export default function Workspace(props: WorkspaceProps) {
           * где человек делает одно, и половина настроек по
           * дороге теряется.
           */}
-        {layout && moduleAppliances(selectedUnit).length > 0 && (
+        {layout && !onIsland && moduleAppliances(selectedUnit).length > 0 && (
           <div className={`mt-3 ${show('appliance-wall')}`} data-appliance-move>
             <p className="mw-label mb-2">
               Прибор стоит на {lowerWall(wallLabel(wall), 'prepositional')}
@@ -5001,12 +5150,13 @@ export default function Workspace(props: WorkspaceProps) {
                   key={segment.id}
                   type="button"
                   data-wall={i}
-                  aria-pressed={wall === i}
+                  aria-pressed={!onIsland && wall === i}
                   onClick={() => {
+                    setIslandActive(false);
                     setWallIndex(i);
                     setSelectedId(null);
                   }}
-                  className={`mw-btn ${wall === i ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+                  className={`mw-btn ${!onIsland && wall === i ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
                 >
                   {wallLabel(i)} · {segment.run.lengthMm}
                 </button>
@@ -5051,6 +5201,35 @@ export default function Workspace(props: WorkspaceProps) {
               </p>
             </div>
           </>
+        )}
+
+        {/*
+          * ОСТРОВ (OVAL & RADIUS, этап A) — ряд без стены у стены А: форма,
+          * место, столешница. Только Studio (кит) и только кухня.
+          */}
+        {IslandKit && zone === 'kitchen' && (
+          <IslandKit
+            key={`${JSON.stringify(savedIsland?.island ?? null)}:${savedIsland?.lengthMm ?? 0}:${savedIsland?.fingerprint ?? ''}`}
+            island={island}
+            active={onIsland}
+            rowALengthMm={(segments[0] ?? active.run).lengthMm}
+            base={{ requirements, ceilingHeightMm: input.ceilingHeightMm, production: input.production }}
+            issues={islandProblems}
+            behind={islandBehind}
+            onSelect={() => {
+              setIslandActive(true);
+              setSelectedId(null);
+              setSelectedGap(null);
+              setCornerPick(null);
+            }}
+            onWrite={(next) => {
+              dirty.current = true;
+              setSavedIsland(next);
+              if (!next) setIslandActive(false);
+              setSelectedId(null);
+              setSelectedGap(null);
+            }}
+          />
         )}
       </div>
 
@@ -5505,7 +5684,7 @@ export default function Workspace(props: WorkspaceProps) {
         'Studio открыт без оболочки: страница Studio обязана обернуть рабочее место в StudioKitProvider.',
       );
     }
-    const { StudioShell, RoomPlan, WallInspector, StudioObjects, StudioInspector, FillEditor, OverheadEditor, VitrineEditor } = studioKit;
+    const { StudioShell, RoomPlan, WallInspector, StudioObjects, StudioInspector, FillEditor, OverheadEditor, VitrineEditor, RadiusEditor } = studioKit;
     const surveyWalls = survey?.walls ?? [];
     const turnWords = (item: Survey['walls'][number]) =>
       item.turn === 'custom' ? `${item.turnDeg}° (другой угол)` : `90° ${item.turn === 'left' ? 'влево' : 'вправо'}`;
@@ -5554,6 +5733,7 @@ export default function Workspace(props: WorkspaceProps) {
             onWallLength={(wallId, lengthMm) => applyWallLength(wallId, lengthMm)}
             onZoom={setPlanZoom}
             wallNames={planWallNames}
+            island={planIsland}
           />
         ) : (
           <p className="m-6 max-w-md text-[15px] leading-snug" data-plan-missing>
@@ -5621,7 +5801,7 @@ export default function Workspace(props: WorkspaceProps) {
               offsetMm: unit.offsetMm,
               widthMm: unit.widthMm,
             }))}
-            modulesOf={`${wallLabel(wall)} · ${studioWall.id}`}
+            modulesOf={`${onIsland ? ISLAND_LABEL : wallLabel(wall)} · ${studioWall.id}`}
             selectedWallId={selectedWallId}
             selectedModuleId={selectedId}
             onSelectWall={selectWall}
@@ -5887,9 +6067,9 @@ export default function Workspace(props: WorkspaceProps) {
                 preview={(ops) =>
                   applyOps({
                     run: activeRun,
-                    requirements,
+                    requirements: requirementsOf(activeIndex),
                     ops,
-                    openings: wallOpenings(wall),
+                    openings: wallOpenings(activeIndex),
                     roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
                     hardware: hardwareItems,
                   })
@@ -5911,6 +6091,19 @@ export default function Workspace(props: WorkspaceProps) {
                 onOps={(ops, onRefusal) => runOps(ops, onRefusal)}
               />
             )}
+            {/*
+              * ФОРМА · РАДИУС (OVAL & RADIUS): торец по дуге, фасад дугой — одной
+              * правкой движка (`set_radius`) тем же `runOps`. Ключ — по записанной
+              * форме: поле радиуса после правки показывает число ряда.
+              */}
+            {selectedUnit && !selectedUnit.vitrine && (
+              <RadiusEditor
+                key={`${selectedUnit.id}:${JSON.stringify(selectedUnit.radius ?? null)}:${selectedUnit.widthMm}:${JSON.stringify(activeRun.counterCorners ?? null)}`}
+                unit={selectedUnit}
+                run={activeRun}
+                onOps={(ops, onRefusal) => runOps(ops, onRefusal)}
+              />
+            )}
             {selectedUnit && (
               <RunEditor
                 part="selected"
@@ -5921,9 +6114,9 @@ export default function Workspace(props: WorkspaceProps) {
                 selectedModuleId={selectedId}
                 onSelect={selectModule}
                 onOps={runOps}
-                requirements={requirements}
+                requirements={requirementsOf(activeIndex)}
                 onComposition={changeComposition}
-                freeMode={freeMode}
+                freeMode={onIsland || freeMode}
               />
             )}
             {/*
@@ -5936,12 +6129,13 @@ export default function Workspace(props: WorkspaceProps) {
                 unit={selectedUnit}
                 row={rowOfModule(activeRun, selectedUnit.id)!.row}
                 run={activeRun}
-                wallName={wallLabel(wall)}
-                startOnWallMm={lowerGapMm(activeRun, 'start')}
-                freeMode={freeMode}
+                wallName={onIsland ? ISLAND_LABEL : wallLabel(wall)}
+                startOnWallMm={onIsland ? 0 : lowerGapMm(activeRun, 'start')}
+                freeMode={onIsland || freeMode}
                 walls={segments
                   .map((run, index) => ({ run, index }))
-                  .filter(({ index }) => index !== wall)
+                  /* С острова и на остров модуль не переносится: у острова нет стены. */
+                  .filter(({ index }) => !onIsland && index !== wall)
                   .map(({ run, index }) => ({
                     index,
                     name: wallLabel(index),
@@ -6589,7 +6783,7 @@ export default function Workspace(props: WorkspaceProps) {
               onImage={takePathImage}
               projectId={props.projectId}
               readError={props.pathRenderError}
-              rows={rowsForAngle<SceneRow>(sceneRows.length > 0 ? sceneRows : [{ run: activeRun }], cadAngle, activeRun.id)}
+              rows={rowsForAngle<SceneRow>(sceneRowsAll.length > 0 ? sceneRowsAll : [{ run: activeRun }], cadAngle, activeRun.id)}
               room={roomSource}
               production={production}
               roomWidthM={Math.max(input.lengthMm / 1000, 2)}

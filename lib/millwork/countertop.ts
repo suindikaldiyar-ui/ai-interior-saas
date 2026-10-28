@@ -4,6 +4,19 @@ import { standsOnFloor } from './modules';
 import { obstaclesInBand, wallObstacles, type WallObstacle } from './obstacles';
 import { countertopMm, countertopStripOf, plinthMm, upperBottomMm, workTopMm } from './shop';
 import { vitrineOnCounter } from './vitrine';
+import { islandDepthMm, islandOvalOf, islandReachMm, ovalPath } from './island';
+import {
+  curvedLengthOf,
+  frontArcCenter,
+  pathArc,
+  pathBounds,
+  pathLine,
+  plinthOutline,
+  translatePath,
+  type PathSeg,
+  type PlanPath,
+  type PlanPoint,
+} from './radius';
 import type { Run } from '@/types/millwork';
 
 /**
@@ -41,6 +54,13 @@ export type CounterSlab = {
   toMm: number;
   /** Вырезы сзади под препятствия у стены: где и на сколько плита мельче. */
   cuts?: CounterCut[];
+  /**
+   * КОНТУР ПЛИТЫ НАД РАДИУСНЫМИ МОДУЛЯМИ (OVAL & RADIUS) — мм ряда: x вдоль
+   * ряда, z — 0 на лицевой плоскости корпусов, к стене минус. Есть только у
+   * плиты, под которой стоит радиусный модуль (`slabOutline`): её режут по
+   * дуге, и рисуют контуром. `fromMm` и `toMm` — габарит контура по ряду.
+   */
+  outline?: PlanPath;
 };
 
 /** Вырез плиты под препятствие: отрезок ряда и глубина выреза от стены. */
@@ -122,9 +142,13 @@ export function counterTailsOf(run: RunLike): CounterTail[] {
   const floor = [...run.modules].filter((unit) => standsOnFloor(unit)).sort((a, b) => a.offsetMm - b.offsetMm);
   const tails: CounterTail[] = [];
 
-  /* Начало: крайний модуль у начала ряда несёт плиту — иначе это колонна. */
+  /*
+   * Начало: крайний модуль у начала ряда несёт плиту — иначе это колонна.
+   * Скруглённый торец (OVAL & RADIUS) — сам конец плиты: она идёт по его дуге,
+   * а не до стены.
+   */
   const first = floor[0];
-  if (first && bearing[0] === first && first.offsetMm > 0) {
+  if (first && bearing[0] === first && first.offsetMm > 0 && first.radius?.place !== 'left') {
     tails.push({
       end: 'start',
       widthMm: first.offsetMm,
@@ -137,7 +161,7 @@ export function counterTailsOf(run: RunLike): CounterTail[] {
 
   const last = floor[floor.length - 1];
   const lastEnd = last ? last.offsetMm + last.widthMm : 0;
-  if (last && bearing[bearing.length - 1] === last && lastEnd < run.lengthMm) {
+  if (last && bearing[bearing.length - 1] === last && lastEnd < run.lengthMm && last.radius?.place !== 'right') {
     tails.push({
       end: 'end',
       widthMm: run.lengthMm - lastEnd,
@@ -296,7 +320,283 @@ export function countertopSlabs(run: RunLike): CounterSlab[] {
           depthMm: obstacle.depthMm!,
           reason: obstacle.reason,
         }));
-      return cuts.length > 0 ? { ...slab, cuts } : slab;
+      const withCuts: CounterSlab = cuts.length > 0 ? { ...slab, cuts } : slab;
+      /*
+       * ПЛИТА НАД РАДИУСНЫМ МОДУЛЕМ — КОНТУРОМ (OVAL & RADIUS): у скруглённого
+       * торца она выходит за модуль на свес и по дуге, и её габарит по ряду —
+       * габарит контура: столько плиты и покупают.
+       */
+      const outline = run.island ? islandSlabOutline(run, withCuts) : slabOutline(run, withCuts);
+      if (!outline) return withCuts;
+      const bounds = pathBounds(outline);
+      return { ...withCuts, fromMm: Math.round(bounds.minX * 10) / 10, toMm: Math.round(bounds.maxX * 10) / 10, outline };
+    });
+}
+
+/**
+ * КОНТУР ПЛИТЫ НАД РАДИУСНЫМИ МОДУЛЯМИ — ОДИН НА СЦЕНУ, СМЕТУ И ЛИСТ.
+ *
+ * Дуга плиты — того же центра, что дуга корпуса, радиусом больше на свес:
+ * фасад и свес плиты (`counterSlabDepthMm` минус глубина ряда) — плита обходит
+ * гнутую дверцу на те же 25 мм, что прямой фасад. Скруглённый торец — дугой до
+ * боковины и дальше вдоль неё до стены (сбоку плита выходит за модуль на
+ * свес); фасад дугой — дугой между точками, где она встречает фасадную линию
+ * соседей. Сзади — у стены, с вырезами под препятствия (`slabPieces`). Под
+ * плитой нет радиусного модуля — `null`: её рисуют куски, как раньше.
+ */
+export function slabOutline(run: RunLike, slab: CounterSlab): PlanPath | null {
+  const round = run.modules
+    .filter(
+      (unit) =>
+        unit.radius &&
+        bearsCountertop(unit, run) &&
+        unit.offsetMm < slab.toMm &&
+        unit.offsetMm + unit.widthMm > slab.fromMm,
+    )
+    .sort((a, b) => a.offsetMm - b.offsetMm);
+  /* Скруглённый угол плиты у свободного конца ряда — тоже контур (`counterCornerOf`). */
+  const rStart = slabCorner(run, slab, 'start');
+  const rEnd = slabCorner(run, slab, 'end');
+  if (round.length === 0 && !rStart && !rEnd) return null;
+
+  const depthMm = rowStandardDepthMm(run.zone, 'base', run.production);
+  const reach = counterSlabDepthMm(run.zone, run.production) - depthMm;
+  const backZ = -depthMm;
+  const leftEnd = round.find((unit) => unit.radius!.place === 'left' && unit.offsetMm === slab.fromMm);
+  const rightEnd = round.find((unit) => unit.radius!.place === 'right' && unit.offsetMm + unit.widthMm === slab.toMm);
+
+  const segs: PathSeg[] = [];
+  let start: PlanPoint;
+  let cursor: PlanPoint;
+  if (leftEnd) {
+    const R = leftEnd.radius!.radiusMm;
+    const c: PlanPoint = [leftEnd.offsetMm + R, -R];
+    start = [c[0] - (R + reach), -R];
+    segs.push(...pathArc(c, R + reach, Math.PI, Math.PI / 2));
+    cursor = [c[0], reach];
+  } else if (rStart) {
+    start = [slab.fromMm, reach - rStart];
+    segs.push(...pathArc([slab.fromMm + rStart, reach - rStart], rStart, Math.PI, Math.PI / 2));
+    cursor = [slab.fromMm + rStart, reach];
+  } else {
+    start = [slab.fromMm, reach];
+    cursor = start;
+  }
+  cursor = frontArcSegs(round, reach, cursor, segs);
+  let end: PlanPoint;
+  if (rightEnd) {
+    const R = rightEnd.radius!.radiusMm;
+    const c: PlanPoint = [rightEnd.offsetMm + rightEnd.widthMm - R, -R];
+    segs.push(...pathLine(cursor, [c[0], reach]));
+    segs.push(...pathArc(c, R + reach, Math.PI / 2, 0));
+    end = [c[0] + R + reach, -R];
+  } else if (rEnd) {
+    segs.push(...pathLine(cursor, [slab.toMm - rEnd, reach]), ...pathArc([slab.toMm - rEnd, reach - rEnd], rEnd, Math.PI / 2, 0));
+    end = [slab.toMm, reach - rEnd];
+  } else {
+    segs.push(...pathLine(cursor, [slab.toMm, reach]));
+    end = [slab.toMm, reach];
+  }
+  /* Правая сторона до стены, задняя — справа налево с вырезами, левая — от стены. */
+  segs.push(...pathLine(end, [end[0], backZ]));
+  let at: PlanPoint = [end[0], backZ];
+  for (const cut of [...(slab.cuts ?? [])].sort((a, b) => b.fromMm - a.fromMm)) {
+    const inner = backZ + cut.depthMm;
+    segs.push(...pathLine(at, [cut.toMm, backZ]), ...pathLine([cut.toMm, backZ], [cut.toMm, inner]), ...pathLine([cut.toMm, inner], [cut.fromMm, inner]));
+    segs.push(...pathLine([cut.fromMm, inner], [cut.fromMm, backZ]));
+    at = [cut.fromMm, backZ];
+  }
+  segs.push(...pathLine(at, [start[0], backZ]), ...pathLine([start[0], backZ], start));
+  return segs;
+}
+
+/**
+ * ФАСАДЫ ДУГОЙ ПОД ПЛИТОЙ — дуги плиты того же центра, радиусом больше на
+ * свес (у вогнутой — меньше), между точками, где они встречают фасадную
+ * линию соседей. Одна функция на плиту ряда у стены и плиту острова.
+ * Отрезки кладутся в `segs`; возвращается, где кончилась фасадная линия.
+ */
+function frontArcSegs(round: Run['modules'], reach: number, from: PlanPoint, segs: PathSeg[]): PlanPoint {
+  let cursor = from;
+  for (const unit of round) {
+    if (unit.radius!.place !== 'front') continue;
+    const convex = unit.radius!.direction !== 'concave';
+    const R = unit.radius!.radiusMm;
+    const local = frontArcCenter(unit.widthMm, R, convex);
+    const c: PlanPoint = [unit.offsetMm + local[0], local[1]];
+    const r = convex ? R + reach : R - reach;
+    const dz = reach - c[1];
+    const dx = Math.sqrt(Math.max(0, r * r - dz * dz));
+    /* Где дуга плиты встречает фасадную линию соседей; соседняя дуга уже ушла дальше — с её конца. */
+    const xa = Math.max(c[0] - dx, cursor[0]);
+    const xb = c[0] + dx;
+    const za = c[1] + (convex ? 1 : -1) * Math.sqrt(Math.max(0, r * r - (xa - c[0]) ** 2));
+    segs.push(...pathLine(cursor, [xa, reach]));
+    if (Math.abs(za - reach) > 1e-6) segs.push(...pathLine([xa, reach], [xa, za]));
+    segs.push(...pathArc(c, r, Math.atan2(za - c[1], xa - c[0]), Math.atan2(dz, dx)));
+    cursor = [xb, reach];
+  }
+  return cursor;
+}
+
+/**
+ * КОНТУР СТОЛЕШНИЦЫ ОСТРОВА — ВСЕГДА КОНТУРОМ (OVAL & RADIUS).
+ *
+ * У острова нет стены: плита выходит за корпус и спереди (фасад и свес), и
+ * сзади (панель тыла и свес с тыла, `islandReachMm`). Скруглённый торец
+ * плита обходит дугами тех же центров, что дуги корпуса: спереди и сзади —
+ * четверти одного радиуса R + меньший из свесов, а разница свесов — прямой
+ * вдоль торца между ними, с касанием на обоих концах. Овал — своим контуром
+ * из четырёх дуг (`islandOvalOf`). Без модулей плиты нет.
+ */
+function islandSlabOutline(run: RunLike, slab: CounterSlab): PlanPath | null {
+  const oval = islandOvalOf(run);
+  if (oval) return ovalPath(oval);
+  const depthMm = rowStandardDepthMm(run.zone, 'base', run.production);
+  const { front: reach, back } = islandReachMm(run);
+  const backZ = -depthMm - back;
+  const m = Math.min(reach, back);
+  /*
+   * Торец плиты над скруглённым торцом острова. Только передний угол — дуга
+   * R + свес центра (cx, −R), дальше прямой бок до тыла. Оба угла — четверти
+   * одного радиуса R + меньший свес: передняя сдвинута к фасаду, задняя — к
+   * тылу на разницу свесов, между ними прямой вдоль торца.
+   */
+  const endOf = (unit: Run['modules'][number], side: 'left' | 'right') => {
+    const R = unit.radius!.radiusMm;
+    const cx = side === 'left' ? unit.offsetMm + R : unit.offsetMm + unit.widthMm - R;
+    if (!unit.radius!.back) return { cx, front: -R, back: null, r: R + reach };
+    return { cx, front: -R + (reach - m), back: -depthMm + R - (back - m), r: R + m };
+  };
+  const leftUnit = run.modules.find((unit) => unit.radius?.place === 'left' && unit.offsetMm === slab.fromMm);
+  const rightUnit = run.modules.find((unit) => unit.radius?.place === 'right' && unit.offsetMm + unit.widthMm === slab.toMm);
+  const left = leftUnit ? endOf(leftUnit, 'left') : null;
+  const right = rightUnit ? endOf(rightUnit, 'right') : null;
+  /* Прямой торец острова со скруглёнными углами плиты — передний и задний одного радиуса (`counterCornerOf`). */
+  const rStart = left ? null : slabCorner(run, slab, 'start');
+  const rEnd = right ? null : slabCorner(run, slab, 'end');
+
+  const segs: PathSeg[] = [];
+  const start: PlanPoint = left ? [left.cx - left.r, left.front] : rStart ? [slab.fromMm, reach - rStart] : [slab.fromMm, reach];
+  let cursor: PlanPoint = start;
+  if (left) {
+    segs.push(...pathArc([left.cx, left.front], left.r, Math.PI, Math.PI / 2));
+    cursor = [left.cx, reach];
+  } else if (rStart) {
+    segs.push(...pathArc([slab.fromMm + rStart, reach - rStart], rStart, Math.PI, Math.PI / 2));
+    cursor = [slab.fromMm + rStart, reach];
+  }
+  const round = run.modules
+    .filter((unit) => unit.radius?.place === 'front' && bearsCountertop(unit, run) && unit.offsetMm < slab.toMm && unit.offsetMm + unit.widthMm > slab.fromMm)
+    .sort((a, b) => a.offsetMm - b.offsetMm);
+  cursor = frontArcSegs(round, reach, cursor, segs);
+
+  let backFrom: number;
+  if (right) {
+    segs.push(...pathLine(cursor, [right.cx, reach]), ...pathArc([right.cx, right.front], right.r, Math.PI / 2, 0));
+    if (right.back !== null) {
+      segs.push(...pathLine([right.cx + right.r, right.front], [right.cx + right.r, right.back]));
+      segs.push(...pathArc([right.cx, right.back], right.r, 0, -Math.PI / 2));
+      backFrom = right.cx;
+    } else {
+      segs.push(...pathLine([right.cx + right.r, right.front], [right.cx + right.r, backZ]));
+      backFrom = right.cx + right.r;
+    }
+  } else if (rEnd) {
+    segs.push(...pathLine(cursor, [slab.toMm - rEnd, reach]), ...pathArc([slab.toMm - rEnd, reach - rEnd], rEnd, Math.PI / 2, 0));
+    segs.push(...pathLine([slab.toMm, reach - rEnd], [slab.toMm, backZ + rEnd]), ...pathArc([slab.toMm - rEnd, backZ + rEnd], rEnd, 0, -Math.PI / 2));
+    backFrom = slab.toMm - rEnd;
+  } else {
+    segs.push(...pathLine(cursor, [slab.toMm, reach]), ...pathLine([slab.toMm, reach], [slab.toMm, backZ]));
+    backFrom = slab.toMm;
+  }
+  if (left && left.back !== null) {
+    segs.push(...pathLine([backFrom, backZ], [left.cx, backZ]), ...pathArc([left.cx, left.back], left.r, -Math.PI / 2, -Math.PI));
+    segs.push(...pathLine([left.cx - left.r, left.back], start));
+  } else if (rStart) {
+    segs.push(...pathLine([backFrom, backZ], [slab.fromMm + rStart, backZ]), ...pathArc([slab.fromMm + rStart, backZ + rStart], rStart, -Math.PI / 2, -Math.PI));
+    segs.push(...pathLine([slab.fromMm, backZ + rStart], start));
+  } else {
+    const x0 = start[0];
+    segs.push(...pathLine([backFrom, backZ], [x0, backZ]), ...pathLine([x0, backZ], start));
+  }
+  return segs;
+}
+
+/**
+ * СКРУГЛЁННЫЙ УГОЛ СТОЛЕШНИЦЫ У СВОБОДНОГО КОНЦА РЯДА (OVAL & RADIUS).
+ *
+ * Радиус угла плиты в плане — у конца ряда, где нет угла кухни и торец
+ * крайнего модуля прямой: у скруглённого торца плита и так идёт по его дуге.
+ * У ряда у стены скругляется передний угол, у острова — передний и задний.
+ * Дуга касается фасадной линии и торца плиты; рез по ней — та же строка
+ * «Рез столешницы по дуге», способ — ЧПУ (DEMO ONLY, пока цех не подтвердил).
+ * Меньше 10 мм — это профиль кромки, а не угол плиты в плане.
+ */
+export const COUNTER_CORNER_MIN_MM = 10;
+
+/** Крайний модуль ряда на полу у начала или конца. */
+function endFloorModule(run: RunLike, end: 'start' | 'end'): Run['modules'][number] | null {
+  const floor = run.modules.filter((unit) => standsOnFloor(unit)).sort((a, b) => a.offsetMm - b.offsetMm);
+  return (end === 'start' ? floor[0] : floor[floor.length - 1]) ?? null;
+}
+
+/** Можно ли скруглить угол плиты у этого конца ряда этим радиусом — словами; `null` — можно. */
+export function counterCornerRefusal(run: RunLike, end: 'start' | 'end', radiusMm: number): string | null {
+  const where = end === 'start' ? 'начала' : 'конца';
+  if (!Number.isInteger(radiusMm) || radiusMm < COUNTER_CORNER_MIN_MM) {
+    return `Радиус угла столешницы — целое число миллиметров, от ${COUNTER_CORNER_MIN_MM}: меньше — это профиль кромки, а не угол плиты.`;
+  }
+  if (run.corner?.[end]) return `У ${where} ряда угол кухни: там стык с плитой соседней стены — скруглять нечего.`;
+  const unit = endFloorModule(run, end);
+  if (!unit || !bearsCountertop(unit, run)) return `У ${where} ряда столешницы нет: крайний модуль её не несёт.`;
+  if (unit.radius && unit.radius.place !== 'front') return `«${unit.label}» скруглён сам: плита у ${where} ряда идёт по его дуге.`;
+  /* Стена комнаты поперёк конца ряда (`Run.wallEnds`): хвост до неё меньше добора — плита у стены (слой 55). */
+  const gap = end === 'start' ? unit.offsetMm : run.lengthMm - (unit.offsetMm + unit.widthMm);
+  if (run.wallEnds?.[end] && gap < TAIL_FILLER_MAX_MM) {
+    const toWall = Math.max(0, Math.round(gap));
+    return `У ${where} ряда стена комнаты${toWall > 0 ? ` (до неё ${toWall} мм)` : ''}: угол плиты у стены не скругляют — между дугой и стеной осталась бы щель.`;
+  }
+  const reach = run.island ? islandReachMm(run) : null;
+  const depth = reach ? islandDepthMm(run) + reach.front + reach.back : counterSlabDepthMm(run.zone, run.production);
+  const limit = run.island ? Math.floor(depth / 2) : depth;
+  if (radiusMm > limit) {
+    return `Радиус ${radiusMm} мм больше ${run.island ? 'половины глубины' : 'глубины'} плиты (${limit} мм): дуга в плиту не помещается.`;
+  }
+  return null;
+}
+
+/** Действующий радиус угла плиты у конца ряда; `null` — угол прямой. */
+export function counterCornerOf(run: RunLike, end: 'start' | 'end'): number | null {
+  const radius = run.counterCorners?.[end];
+  if (!radius) return null;
+  return counterCornerRefusal(run, end, radius) ? null : radius;
+}
+
+/** Угол плиты у конца ряда — только у плиты, что доходит до крайнего модуля этого конца. */
+function slabCorner(run: RunLike, slab: CounterSlab, end: 'start' | 'end'): number | null {
+  const radius = counterCornerOf(run, end);
+  const unit = endFloorModule(run, end);
+  if (!radius || !unit) return null;
+  return end === 'start' ? (unit.offsetMm === slab.fromMm ? radius : null) : unit.offsetMm + unit.widthMm === slab.toMm ? radius : null;
+}
+
+/** Рез плиты по дуге, мм — по контурам плит (`slabOutline`): строка сметы «Рез столешницы по дуге». */
+export function countertopCurveMm(run: Parameters<typeof countertopSlabs>[0]): number {
+  return countertopSlabs(run).reduce((sum, slab) => sum + (slab.outline ? curvedLengthOf(slab.outline) : 0), 0);
+}
+
+/**
+ * ЦОКОЛЬ ПОД РАДИУСНЫМИ МОДУЛЯМИ — КОНТУРОМ (OVAL & RADIUS), мм ряда.
+ * Контур — `plinthOutline`, той же дугой, что гнутая планка цоколя в раскрое;
+ * прямой цоколь (`plinthSpans`) под этими модулями не идёт.
+ */
+export function radiusPlinths(run: RunLike): { moduleId: string; path: PlanPath }[] {
+  return run.modules
+    .filter((unit) => unit.radius && standsOnFloor(unit))
+    .flatMap((unit) => {
+      const path = plinthOutline(unit, { widthMm: unit.widthMm, depthMm: moduleDepthMm(unit, run.zone, run.production) });
+      return path ? [{ moduleId: unit.id, path: translatePath(path, unit.offsetMm, 0) }] : [];
     });
 }
 
@@ -477,8 +777,10 @@ export function upperNicheSpans(run: Run): NicheSpan[] {
  * стыкующийся ряд заходит назад до лицевой плоскости цоколя владельца.
  */
 export function plinthSpans(run: RunLike): CounterSlab[] {
+  /* Под радиусным модулем цоколь — его контуром (`radiusPlinths`), прямой туда не идёт. */
+  const curved = new Set(radiusPlinths(run).map((plinth) => plinth.moduleId));
   const floor = [...run.modules]
-    .filter((unit) => standsOnFloor(unit))
+    .filter((unit) => standsOnFloor(unit) && !curved.has(unit.id))
     .sort((a, b) => a.offsetMm - b.offsetMm);
   const spans: CounterSlab[] = [];
   for (const unit of floor) {

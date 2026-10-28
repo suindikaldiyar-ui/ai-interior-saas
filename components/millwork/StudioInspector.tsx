@@ -35,6 +35,8 @@ export type StudioWall = {
   state: KnownState;
   /** Откуда взято допущение — словами. */
   basis?: string;
+  /** Длина задана в проекте, а не замерена: остров стоит без стены (OVAL & RADIUS). */
+  designed?: boolean;
 };
 
 type Props = {
@@ -103,7 +105,7 @@ export default function StudioInspector({ run, wall, selectedId, gap }: Props) {
         <span className="mw-num">{wall.lengthMm} мм</span>
         <span className={wall.state === 'measured' ? 'text-graphiteMw' : 'text-tape'}>
           {' '}
-          · {STATE_TITLE[wall.state]}
+          · {wall.designed ? 'задано в проекте' : STATE_TITLE[wall.state]}
           {wall.state === 'assumed' && wall.basis ? ` (${wall.basis})` : ''}
         </span>
         {run.lengthMm !== wall.lengthMm && (

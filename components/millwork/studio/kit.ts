@@ -5,6 +5,8 @@ import type StudioInspector from '../StudioInspector';
 import type FillEditor from './FillEditor';
 import type OverheadEditor from './OverheadEditor';
 import type VitrineEditor from './VitrineEditor';
+import type RadiusEditor from './RadiusEditor';
+import type IslandEditor from './IslandEditor';
 import type RoomPlan from './RoomPlan';
 import type StudioObjects from './StudioObjects';
 import type StudioShell from './StudioShell';
@@ -34,6 +36,8 @@ export type StudioKit = {
   FillEditor: typeof FillEditor;
   OverheadEditor: typeof OverheadEditor;
   VitrineEditor: typeof VitrineEditor;
+  RadiusEditor: typeof RadiusEditor;
+  IslandEditor: typeof IslandEditor;
 };
 
 export const StudioKitContext = createContext<StudioKit | null>(null);

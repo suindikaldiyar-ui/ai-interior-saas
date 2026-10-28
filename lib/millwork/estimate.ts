@@ -4,11 +4,12 @@ import {
   standsOnFloor,
 } from './modules';
 import { allModules } from './layout';
-import { apronLengthMm, counterMitersOf, countertopCuts, countertopLengthMm } from './countertop';
+import { apronLengthMm, counterMitersOf, countertopCurveMm, countertopCuts, countertopLengthMm } from './countertop';
+import { islandTopDepthMm } from './island';
 import { cornerOfModule } from './corner';
 import { moduleCarcassHeightMm } from './fill';
 import { CORNER_HINGE_TITLE, frontDrawerSlides, liftKey, openingHardware, type ModuleHardware } from './opening';
-import { buildPanels, panelMaterials, partOfPanel } from './panels';
+import { buildPanels, panelMaterials, partOfPanel, type PanelMaterials } from './panels';
 import { DEFAULT_PRODUCTION, type HardwareItem, type ProductionSettings } from '@/types/catalog';
 import { resolveHardware } from './hardware';
 import { FITTING_SLOT_TITLE, handleItemOf, installedItem } from './fittings';
@@ -991,6 +992,7 @@ export function buildEstimateDrafts(
     ...reliefDrafts(run, panels, millingItems),
     ...carcassDrafts(run, panels, carcassItems, materialItems, rates),
     { key: 'pvc_edge', title: 'Кромка ПВХ', unit: 'mp', quantity: materials.edgeM },
+    ...radiusDrafts(materials),
   ];
 
   if (zone.hasCountertop && zone.moistureProof) {
@@ -1012,7 +1014,25 @@ export function buildEstimateDrafts(
     const counterItem = run.countertopMaterial
       ? materialItems.get(run.countertopMaterial.itemId)
       : undefined;
-    if (counterItem) {
+    /*
+     * СТОЛЕШНИЦА ОСТРОВА (OVAL & RADIUS) — СВОЕЙ СТРОКОЙ.
+     *
+     * Плита острова глубже плиты ряда у стены: спереди фасад и свес, сзади
+     * панель тыла и свес с тыла (`islandReachMm`). Её режут из более широкой
+     * заготовки, и ставка цеха за погонный метр плиты у стены к ней не
+     * подходит: ставки «Столешница острова» нет — «цена не задана», итог
+     * «неполный». Метраж — тот же контур, что рисует сцена.
+     */
+    const islandTop = run.island ? islandTopDepthMm(run) : null;
+    if (islandTop !== null && counterMp > 0) {
+      drafts.push({
+        key: 'countertop_island',
+        title: `Столешница острова (${counterItem ? counterItem.code : countertopTitle(run.options.countertop)}), глубина ${islandTop} мм`,
+        unit: 'mp',
+        quantity: counterMp,
+        unsetWithoutRate: `цена не задана: плита острова глубиной ${islandTop} мм — ставка столешницы ряда у стены к ней не подходит`,
+      });
+    } else if (counterItem) {
       const price = priceState(counterItem, run.countertopMaterial?.surface, 'running_m', rates);
       drafts.push({
         key: `countertop_item_${counterItem.id}`,
@@ -1040,6 +1060,23 @@ export function buildEstimateDrafts(
     }
 
     /*
+     * РЕЗ СТОЛЕШНИЦЫ ПО ДУГЕ (OVAL & RADIUS) — по контурам тех же плит, что
+     * рисует сцена (`slabOutline`): над скруглённым торцом и фасадом дугой
+     * плиту режут по кривой. Ставки нет — «цена не задана», итог неполный.
+     * У рядов без радиуса строки нет вовсе.
+     */
+    const counterCurveM = round3(countertopCurveMm(run) / MM_IN_M);
+    if (counterCurveM > 0 && counterMp > 0) {
+      drafts.push({
+        key: 'radius_countertop_cut',
+        title: 'Рез столешницы по дуге',
+        unit: 'mp',
+        quantity: counterCurveM,
+        unsetWithoutRate: 'цена не задана: радиусные работы цех ещё не оценил',
+      });
+    }
+
+    /*
      * ВЫРЕЗ СТОЛЕШНИЦЫ ПОД ПРЕПЯТСТВИЕ (слой 56) — работа цеха, штуками.
      *
      * Плиту вырезают сзади под короб или колонну, когда перед ними
@@ -1061,12 +1098,15 @@ export function buildEstimateDrafts(
       });
     }
 
-    drafts.push({
-      key: 'countertop_plinth',
-      title: 'Плинтус столешницы',
-      unit: 'mp',
-      quantity: counterMp,
-    });
+    /* Плинтус столешницы — к стене; у острова стены нет. */
+    if (!run.island) {
+      drafts.push({
+        key: 'countertop_plinth',
+        title: 'Плинтус столешницы',
+        unit: 'mp',
+        quantity: counterMp,
+      });
+    }
   }
 
   if (zone.hasApron) {
@@ -1607,6 +1647,26 @@ function carcassDrafts(
 }
 
 /**
+ * РАДИУСНЫЕ РАБОТЫ (OVAL & RADIUS, этап A) — ИЗ ТОГО ЖЕ РАСКРОЯ, ЧТО ВСЁ ОСТАЛЬНОЕ.
+ *
+ * Гнутые фасады — своя строка по развёртке: в «Фасады» они не входят, плоский
+ * фасад по ставке цеха гнутого не стоит. Гнутая подложка реек — своя строка.
+ * Фрезеровка контура на ЧПУ — по длине дуг дна, крыши и полок (заготовки этих
+ * деталей уже в корпусе и полках: их режут с листа). Ставок в типовом прайсе
+ * нет — строки «цена не задана», итог неполный, пока цех их не завёл.
+ * У рядов без радиуса количества нулевые, и строк нет вовсе.
+ */
+function radiusDrafts(materials: PanelMaterials): Draft[] {
+  const unset = 'цена не задана: радиусные работы цех ещё не оценил';
+  const rows: Draft[] = [
+    { key: 'radius_bent_front', title: 'Фасады гнутые (по развёртке)', unit: 'm2', quantity: materials.bentFrontM2, unsetWithoutRate: unset },
+    { key: 'radius_bent_panel', title: 'Подложка реек гнутая', unit: 'm2', quantity: materials.bentPanelM2, unsetWithoutRate: unset },
+    { key: 'radius_cnc', title: 'Фрезеровка контура по дуге (ЧПУ)', unit: 'mp', quantity: materials.cncCurveM, unsetWithoutRate: unset },
+  ];
+  return rows.filter((row) => row.quantity > 0);
+}
+
+/**
  * ПЛОЩАДЬ ФАСАДОВ ПО ПОЗИЦИЯМ КОЛЛЕКЦИЙ — ИЗ УЖЕ НАРЕЗАННЫХ ПАНЕЛЕЙ.
  *
  * Какая позиция у фасада, говорит `FrontSpec.itemId` модуля — то же поле,
@@ -1626,6 +1686,8 @@ function frontMaterialAreas(
 
   for (const panel of panels) {
     if (!panel.material.startsWith('Фасад')) continue;
+    /* Гнутый фасад (OVAL & RADIUS) — своя строка по развёртке, а не плоский фасад позиции. */
+    if (panel.shape?.kind === 'bent') continue;
     const unit = byModule.get(panel.moduleId);
     if (!unit) continue;
 
@@ -1696,6 +1758,8 @@ function millingDrafts(
 
   for (const panel of panels) {
     if (!panel.material.startsWith('Фасад')) continue;
+    /* Гнутый фасад (OVAL & RADIUS) — своя строка по развёртке, а не плоский фасад позиции. */
+    if (panel.shape?.kind === 'bent') continue;
 
     const unit = byModule.get(panel.moduleId);
     if (!unit) continue;
@@ -1738,6 +1802,8 @@ function reliefDrafts(run: Run, panels: Panel[], catalog: Map<string, MillingIte
   const areas = new Map<string, { title: string; m2: number }>();
   for (const panel of panels) {
     if (!panel.material.startsWith('Фасад')) continue;
+    /* Гнутый фасад (OVAL & RADIUS) — своя строка по развёртке, а не плоский фасад позиции. */
+    if (panel.shape?.kind === 'bent') continue;
     const unit = byModule.get(panel.moduleId);
     if (!unit) continue;
     const leaf = panel.frontLeaf ?? null;

@@ -2,6 +2,7 @@ import { beamsPart } from './ceiling';
 import { frontKey, frontPart } from './frontMaterial';
 import { shelvesAreGlass } from './glass';
 import { vitrinePart } from './vitrine';
+import { radiusKey } from './radius';
 import type { BayDrawerStack, BayShelves, CornerChoice, Module, Run } from '@/types/millwork';
 import { cornerOwnerOf } from './corner';
 
@@ -177,6 +178,11 @@ function extrasPart(unit: Module): string | undefined {
      * витрин и у рядов без витрин отпечаток прежний (ловушка 246).
      */
     vitrinePart(unit),
+    /*
+     * Форма модуля (OVAL & RADIUS): торец по дуге, фасад дугой — другая
+     * мебель, другой раскрой и другие деньги. Пусто не пишется (ловушка 246).
+     */
+    radiusKey(unit),
   ].filter(Boolean);
 
   return parts.length > 0 ? parts.join(',') : undefined;
@@ -229,7 +235,7 @@ export function configurationFingerprint(modules: Module[]): string {
  * остаётся прежним до символа.
  */
 export function runFingerprint(
-  run: Pick<Run, 'modules' | 'upperSegments'> & Partial<Pick<Run, 'beams' | 'slidingSystemItemId'>>,
+  run: Pick<Run, 'modules' | 'upperSegments'> & Partial<Pick<Run, 'beams' | 'slidingSystemItemId' | 'counterCorners'>>,
 ): string {
   const modules = configurationFingerprint([
     ...run.modules,
@@ -242,10 +248,17 @@ export function runFingerprint(
    * без неё отпечаток прежний до символа.
    */
   const sliding = run.slidingSystemItemId ? `sliding=${run.slidingSystemItemId}` : '';
-  if (!beams && !sliding) return modules;
+  /*
+   * Скруглённый угол столешницы (OVAL & RADIUS) — другая плита и другой рез:
+   * пусто не пишется, у рядов без него отпечаток прежний до символа.
+   */
+  const corners = run.counterCorners && (run.counterCorners.start || run.counterCorners.end)
+    ? `cc=${run.counterCorners.start ?? 0}/${run.counterCorners.end ?? 0}`
+    : '';
+  if (!beams && !sliding && !corners) return modules;
 
   let hash = 0x811c9dc5;
-  for (const ch of `${modules}|${beams ?? ''}${sliding ? `|${sliding}` : ''}`) {
+  for (const ch of `${modules}|${beams ?? ''}${sliding ? `|${sliding}` : ''}${corners ? `|${corners}` : ''}`) {
     hash ^= ch.charCodeAt(0);
     hash = Math.imul(hash, 0x01000193) >>> 0;
   }
@@ -314,6 +327,27 @@ export function compositionFingerprint(composition: {
     ),
   ].join('|');
 
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, '0');
+}
+
+/**
+ * ОТПЕЧАТОК ОБЪЕКТА С ОСТРОВОМ (OVAL & RADIUS, этап A): отпечаток стен и
+ * острова — его модулей, длины и столешницы (`topKey`: форма, радиус боковой
+ * дуги овала, свес с тыла). Это другая мебель и другие деньги. Место острова
+ * в комнате не входит, как не входит место ряда у стены. Острова нет —
+ * отпечаток стен до символа (ловушка 246).
+ */
+export function withIslandFingerprint(
+  walls: string,
+  island: { run: Pick<Run, 'modules' | 'upperSegments' | 'lengthMm'>; topKey: string } | null,
+): string {
+  if (!island) return walls;
+  const text = `${walls}|island:${island.run.lengthMm}:${runFingerprint(island.run)}:${island.topKey}`;
   let hash = 0x811c9dc5;
   for (let i = 0; i < text.length; i++) {
     hash ^= text.charCodeAt(i);

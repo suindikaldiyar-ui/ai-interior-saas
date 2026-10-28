@@ -3,10 +3,11 @@
 import DimensionChain from './DimensionChain';
 import { CommLegend, COMM_SYMBOL } from './DrawingSymbols';
 import { GEOMETRY, isUpperRow } from '@/lib/millwork/modules';
-import { moduleDepthMm } from '@/lib/millwork/fill';
+import { moduleDepthMm, rowStandardDepthMm } from '@/lib/millwork/fill';
 import { runPlaces } from '@/lib/millwork/cabinetBoxes';
 import { vitrineOnCounter } from '@/lib/millwork/vitrine';
 import { countertopSlabs, slabPieces } from '@/lib/millwork/countertop';
+import { moduleOutline, samplePath, type PlanPath } from '@/lib/millwork/radius';
 import { LINE_MM, unitsPerPaperMm } from '@/lib/millwork/sheetStyle';
 import type { CommPoint, LayoutIssue, Run } from '@/types/millwork';
 import type { RoomState, RowRoomObject } from '@/lib/millwork/room';
@@ -43,6 +44,19 @@ type Props = {
 const PADDING_LEFT = 74;
 const PADDING_TOP = 34;
 const DRAW_WIDTH = 640;
+
+/**
+ * КОНТУР В ПЛАНЕ — SVG-путём (OVAL & RADIUS): дуги — точками с отходом хорды
+ * не больше 0,5 мм (`samplePath`), та же форма, что у сцены и раскроя.
+ * `x0` — где на листе ноль контура, `y` — отметка от стены по z контура.
+ */
+function planPathD(path: PlanPath, x0: number, scale: number, y: (zMm: number) => number): string {
+  return (
+    samplePath(path)
+      .map((p, i) => `${i === 0 ? 'M' : 'L'}${(x0 + p[0] * scale).toFixed(2)} ${y(p[1]).toFixed(2)}`)
+      .join(' ') + ' Z'
+  );
+}
 
 /**
  * ЗНАК КОММУНИКАЦИИ, А НЕ БУКВА.
@@ -247,6 +261,26 @@ export default function PlanDrawing({
            * нём, поэтому сплошной линией, как нижний ряд.
            */
           const onCounter = vitrineOnCounter(place.unit);
+          const depthMm = Math.round(place.depthM * 1000);
+
+          /* Радиусный модуль (OVAL & RADIUS) — своим контуром, той же `moduleOutline`, что у деталей. */
+          if (place.unit.radius) {
+            return (
+              <path
+                key={`upper-${place.unit.id}`}
+                data-module-id={place.unit.id}
+                data-back-mm={0}
+                data-front-mm={depthMm}
+                data-plan-radius={`${place.unit.radius.place}:${place.unit.radius.radiusMm}`}
+                d={planPathD(moduleOutline(place.unit, { widthMm: place.unit.widthMm, depthMm }), x, scale, (z) => wallY + (depthMm + z) * scale)}
+                fill="none"
+                stroke="var(--blueprint)"
+                strokeWidth={0.6}
+                strokeDasharray="4 3"
+                opacity={0.75}
+              />
+            );
+          }
 
           return (
             <rect
@@ -296,16 +330,33 @@ export default function PlanDrawing({
             onClick={onSelect ? () => onSelect(unit.id) : undefined}
             style={{ cursor: onSelect ? 'pointer' : 'default' }}
           >
-            <rect
-              x={x}
-              y={wallY}
-              width={w}
-              height={d}
-              fill={active ? 'var(--tape)' : 'var(--sheet)'}
-              fillOpacity={active ? 0.3 : 1}
-              stroke={issue ? 'var(--alert)' : 'var(--blueprint)'}
-              strokeWidth={issue ? 1.4 : 0.8}
-            />
+            {unit.radius ? (
+              /* Радиусный модуль (OVAL & RADIUS) — своим контуром (`moduleOutline`): дуга торца или фасада в плане. */
+              <path
+                data-plan-radius={`${unit.radius.place}:${unit.radius.radiusMm}`}
+                d={planPathD(
+                  moduleOutline(unit, { widthMm: unit.widthMm, depthMm: moduleDepthMm(unit, run.zone, run.production) }),
+                  x,
+                  scale,
+                  (z) => wallY + (moduleDepthMm(unit, run.zone, run.production) + z) * scale,
+                )}
+                fill={active ? 'var(--tape)' : 'var(--sheet)'}
+                fillOpacity={active ? 0.3 : 1}
+                stroke={issue ? 'var(--alert)' : 'var(--blueprint)'}
+                strokeWidth={issue ? 1.4 : 0.8}
+              />
+            ) : (
+              <rect
+                x={x}
+                y={wallY}
+                width={w}
+                height={d}
+                fill={active ? 'var(--tape)' : 'var(--sheet)'}
+                fillOpacity={active ? 0.3 : 1}
+                stroke={issue ? 'var(--alert)' : 'var(--blueprint)'}
+                strokeWidth={issue ? 1.4 : 0.8}
+              />
+            )}
             {unit.appliance && (
               <text
                 x={x + w / 2}
@@ -344,8 +395,29 @@ export default function PlanDrawing({
         * обходит короб или колонну (`slabPieces`). Без препятствий —
         * прежний контур на всю длину ряда.
         */}
-      {(run.obstacles?.length
-        ? countertopSlabs(run).flatMap((slab) => slabPieces(slab))
+      {/*
+        * Плита над радиусными модулями (OVAL & RADIUS) — своим контуром
+        * (`slabOutline`): дуга со свесом, та же, что режет смета и рисует сцена.
+        */}
+      {countertopSlabs(run)
+        .filter((slab) => slab.outline)
+        .map((slab) => (
+          <path
+            key={`counter-r-${slab.fromMm}`}
+            data-counter-piece="outline"
+            data-from-mm={slab.fromMm}
+            data-to-mm={slab.toMm}
+            d={planPathD(slab.outline!, PADDING_LEFT, scale, (z) => wallY + (rowStandardDepthMm(run.zone, 'base', run.production) + z) * scale)}
+            fill="none"
+            stroke="var(--blueprint)"
+            strokeWidth={0.5 * k}
+            strokeDasharray="3 2"
+          />
+        ))}
+      {(run.obstacles?.length || countertopSlabs(run).some((slab) => slab.outline)
+        ? countertopSlabs(run)
+            .filter((slab) => !slab.outline)
+            .flatMap((slab) => slabPieces(slab))
         : [{ fromMm: 0, toMm: run.lengthMm, backCutMm: 0 }]
       ).map((piece) => (
         <rect

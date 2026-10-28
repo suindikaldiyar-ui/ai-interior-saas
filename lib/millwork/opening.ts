@@ -5,6 +5,7 @@ import { bayDrawerCount } from './drawerCount';
 import { leafFrontOf } from './frontMaterial';
 import { vitrineDoorKind } from './glass';
 import { vitrineDoorCount } from './vitrine';
+import { BENT_LEAF_MAX_MM, bentLeavesOf } from './radius';
 import type { FrontOpening, HandleKind, Module, Run } from '@/types/millwork';
 
 /**
@@ -88,6 +89,12 @@ export function defaultOpening(unit: Module, index = 0, total = 1): FrontOpening
   if (unit.frontType !== 'door') return 'none';
 
   /*
+   * ГНУТАЯ ДВЕРЦА ТОРЦА (OVAL & RADIUS) висит на петлях у боковины стыка:
+   * с другой стороны дуга, петлю там не поставить (`bentLeavesOf`).
+   */
+  if (unit.radius && unit.radius.place !== 'front') return unit.radius.place === 'right' ? 'left' : 'right';
+
+  /*
    * Вариант места «Подъёмник» — это и есть выбор направления: другого
    * признака у него нет. Правило стоит здесь, а не в наполнении, потому
    * что спрашивают его и там, где наполнение ещё не посчитано — на
@@ -151,6 +158,15 @@ export function openingOf(unit: Module, index = 0, total = 1): ResolvedOpening {
 }
 
 /**
+ * СТОРОНА ПЕТЕЛЬ ОДНОЙ ГНУТОЙ СТВОРКИ ФАСАДА ДУГОЙ (OVAL & RADIUS) — то же
+ * поле, что у плоской (`openingOf`). У торца сторону задаёт сама дуга
+ * (`bentLeavesOf`): петли у боковины стыка.
+ */
+export function bentHingeOf(unit: Module): 'left' | 'right' {
+  return openingOf(unit).opening === 'right' ? 'right' : 'left';
+}
+
+/**
  * ПОЧЕМУ ТАК НЕЛЬЗЯ.
  *
  * Отказ объясняет МИР, а не запрещает: эту фразу замерщик пересказывает
@@ -158,6 +174,30 @@ export function openingOf(unit: Module, index = 0, total = 1): ResolvedOpening {
  */
 export function openingRejection(unit: Module, opening: FrontOpening): string | null {
   const name = unit.label || 'модуль';
+
+  /*
+   * ГНУТАЯ СТВОРКА (OVAL & RADIUS): механизма на неё нет — подъёмник и
+   * откидной крепятся к плоскому фасаду; у торца петли только у боковины
+   * стыка — с другой стороны дуга, петлю там не на что поставить; у фасада
+   * дугой из двух створок — каждая на своей петле.
+   */
+  if (unit.radius) {
+    if (unit.radius.cover !== 'door') return `У «${name}» гнутой дверцы нет: выбирать направление не у чего.`;
+    if (isMechanism(opening)) {
+      return `«${name}»: ${opening === 'lift' ? 'подъёмник' : 'откидной механизм'} крепится к плоскому фасаду — на гнутую дверцу его не ставят.`;
+    }
+    const leaves = bentLeavesOf(unit, bentHingeOf(unit));
+    if (unit.radius.place !== 'front') {
+      const own = leaves[0]?.hinge ?? 'left';
+      return opening === own
+        ? null
+        : `У «${name}» дверца торца висит на петлях у боковины стыка: с другой стороны — дуга, петлю там не поставить.`;
+    }
+    if (leaves.length >= 2) {
+      return opening === 'double' ? null : `У «${name}» две гнутые створки: левая на левой петле, правая на правой.`;
+    }
+    return opening === 'double' ? `У «${name}» одна гнутая створка: дуга короче ${BENT_LEAF_MAX_MM} мм.` : null;
+  }
 
   if (isPullOut(unit)) {
     return `«${name}» выдвигается целиком на направляющих: петель у него нет, и открывать его некуда.`;
@@ -478,6 +518,23 @@ export function openingHardware(
       handlePush: 0,
     };
     result.byModule[unit.id] = current;
+
+    /*
+     * ГНУТЫЕ СТВОРКИ (OVAL & RADIUS) — по `bentLeavesOf`, той же функции, что
+     * режет их в раскрое и ставит в сцене. Петли — по высоте полотна, как у
+     * плоской створки. Ручки-скобы нет: на дугу она садится двумя точками, и
+     * типовой строкой её не посчитать, — створка открывается нажатием, и за
+     * этим стоит механизм (`handlePush`), а не пустота.
+     */
+    if (unit.radius) {
+      const leaves = bentLeavesOf(unit, bentHingeOf(unit));
+      for (let i = 0; i < leaves.length; i += 1) add('hinges', leafHinges(heightMm, 'left'));
+      if (leaves.length > 0) {
+        add('handlePush', leaves.length);
+        result.handles += leaves.length;
+      }
+      continue;
+    }
 
     /*
      * ЯЩИКИ И ФАСАДЫ ВСТРОЙКИ — ТОЖЕ ФАСАДЫ.

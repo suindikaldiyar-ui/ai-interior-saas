@@ -37,6 +37,7 @@ import {
 import { drawerDrafts } from '@/lib/millwork/drawerKit';
 import { allModules } from '@/lib/millwork/layout';
 import { vitrineProductionReasons } from '@/lib/millwork/vitrine';
+import { radiusMethodState } from '@/lib/millwork/radiusPlace';
 import { vitrineParts } from '@/lib/millwork/vitrineParts';
 import type { MillingItem } from '@/lib/millwork/milling';
 import type { CarcassItem } from '@/lib/millwork/carcassMaterial';
@@ -327,9 +328,14 @@ export default function CuttingMap({
     }),
     [walls, production],
   );
+  /* Радиусная мебель (OVAL & RADIUS): способ ЧПУ и гибки цеха — тот же разбор, что у блока «Форма» (`radiusMethodState`). */
+  const radius = useMemo(
+    () => ({ reasons: Array.from(new Set(walls.flatMap((wall) => radiusMethodState(wall.run, production).reasons))) }),
+    [walls, production],
+  );
   const plan: CuttingPlan = useMemo(
-    () => cuttingPlan({ parts, settings, decors, exportLock, fingerprint, drawerBoxUnconfirmed, vitrine }),
-    [parts, settings, decors, exportLock, fingerprint, drawerBoxUnconfirmed, vitrine],
+    () => cuttingPlan({ parts, settings, decors, exportLock, fingerprint, drawerBoxUnconfirmed, vitrine, radius }),
+    [parts, settings, decors, exportLock, fingerprint, drawerBoxUnconfirmed, vitrine, radius],
   );
 
   const [groupKey, setGroupKey] = useState<string | null>(null);
@@ -577,6 +583,57 @@ export default function CuttingMap({
                     <td className="py-1 text-tape">{part.unconfirmed.join('; ') || '—'}</td>
                   </tr>
                 ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ── Гнутые детали (OVAL & RADIUS): не на листах ── */}
+      {plan.bent.length > 0 && (
+        <div className="grid gap-2" data-cut-bent data-cut-bent-count={plan.bent.length}>
+          <span className="mw-label">Гнутые детали — не с листа раскроя</span>
+          <p className="text-[13px] leading-snug text-graphiteMw">
+            Делаются гибкой по шаблону: длина — развёртка по средней линии, ширина — высота детали. В CSV для пилы их нет.
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-[13px]">
+              <thead>
+                <tr className="text-left text-graphiteMw">
+                  <th className="py-1 pr-2 font-normal">Модуль</th>
+                  <th className="py-1 pr-2 font-normal">Деталь</th>
+                  <th className="py-1 pr-2 text-right font-normal">Развёртка × В, мм</th>
+                  <th className="py-1 pr-2 text-right font-normal">Радиус</th>
+                  <th className="py-1 pr-2 text-right font-normal">Угол</th>
+                  <th className="py-1 pr-2 font-normal">Материал</th>
+                  <th className="py-1 text-right font-normal">Шт.</th>
+                </tr>
+              </thead>
+              <tbody>
+                {plan.bent.map((part, i) =>
+                  part.shape?.kind === 'bent' ? (
+                    <tr
+                      key={`${part.moduleId}:${part.number}:${i}`}
+                      data-cut-bent-row={part.name}
+                      data-size={`${part.lengthMm}x${part.widthMm}`}
+                      data-radius={part.shape.radiusMm}
+                      className="border-t border-[var(--line-warm)]"
+                    >
+                      <td className="py-1 pr-2">{part.moduleLabel}</td>
+                      <td className="py-1 pr-2">{part.name}</td>
+                      <td className="mw-num py-1 pr-2 text-right">
+                        {part.lengthMm} × {part.widthMm}
+                      </td>
+                      <td className="mw-num py-1 pr-2 text-right">
+                        R{part.shape.radiusMm}
+                        {part.shape.concave ? ' вогн.' : ''}
+                      </td>
+                      <td className="mw-num py-1 pr-2 text-right">{part.shape.angleDeg}°</td>
+                      <td className="py-1 pr-2">{part.material}</td>
+                      <td className="mw-num py-1 text-right">{part.qty}</td>
+                    </tr>
+                  ) : null,
+                )}
               </tbody>
             </table>
           </div>

@@ -3,6 +3,7 @@ import type { CornerChoice, CornerClearance, Module, Run, ZoneKind } from '@/typ
 import {
   DRAWER_TRAVEL_M,
   L_PAIR_FIRST_LEG,
+  bentLeafPoses,
   bifoldMotion,
   lPairMotion,
   leafOpenAngle,
@@ -590,6 +591,24 @@ function movingOf(
         told.add('Г-фасады — до 90° и ещё 90°, как в сцене');
         steps = 720;
         speed = (unit.widthMm / MM) * Math.PI * MM;
+      } else if (leaf.kind === 'bent') {
+        /*
+         * ГНУТАЯ СТВОРКА (OVAL & RADIUS): полотно — та же форма, что в пачке
+         * ряда, на ходу — хордами (`bentLeafPoses`), ось и вынос — как у
+         * плоской. Угол — петли каталога на этой дверце, не выбрана — 90°.
+         */
+        const panel = rowBoxes.find((box) => box.part === leaf.id && box.material === 'front' && box.shape?.form.kind === 'shell');
+        if (!panel?.shape || panel.shape.form.kind !== 'shell') continue;
+        const form = panel.shape.form;
+        const { angle, known } = leafOpenAngle(unit, leaf.id.slice(unit.id.length + 1), hardware, leaf.opening);
+        if (!known) told.add('створка — до 90°, как в сцене: петля каталога не выбрана');
+        at = (s) =>
+          bentLeafPoses({ form, opening: leaf.opening, pivotM: leaf.pivotM, thickness: tf, s, openAngle: angle }).map((box) => ({
+            obb: obbOf(place, [box.center[0] + entry.x, box.center[1] + entry.y, box.center[2] + entry.zM], box.size, box.yaw, 0),
+            part: 'полотно',
+          }));
+        steps = Math.max(8, Math.ceil(((angle * 180) / Math.PI) / 0.5));
+        speed = (Math.hypot(form.r1, unit.widthMm) / MM + 0.25) * angle * MM;
       } else {
         const parts = rowBoxes.filter((box) => box.part === leaf.id);
         if (parts.length === 0) continue;

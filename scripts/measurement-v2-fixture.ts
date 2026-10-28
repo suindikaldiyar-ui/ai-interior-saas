@@ -196,7 +196,7 @@ export function buildFromSurvey(spec: BuildSpec): Built {
   });
   const variant = composeVariants(input, DISABLED, spec.working ? { optimal: spec.working } : {}).find((item) => item.key === 'optimal');
   if (!variant) throw new Error(`${spec.title}: варианта optimal нет`);
-  const segments = wallSegments(layout, variant.run, spec.editedWalls ?? {});
+  const segments = wallSegments(layout, variant.run, spec.editedWalls ?? {}, input.wallEnds);
   const places = runPlacements({ runs: segments, solution: 'false_panel', corners: choices, zone: variant.run.zone, production });
   const source = roomSourceOf({
     walls: site.roomWalls ?? site.walls,

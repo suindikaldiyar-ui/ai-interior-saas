@@ -9,6 +9,7 @@ import { ALL_LAYERS, type SceneLayers } from '@/lib/millwork/sceneLayers';
 import { ROD_VISUAL_DIAMETER_MM } from '@/lib/millwork/bays';
 import type { HardwareItem, ProductionSettings } from '@/types/catalog';
 import InteractiveBayDrawer from './InteractiveBayDrawer';
+import InteractiveBentDoor from './InteractiveBentDoor';
 import InteractiveDoor from './InteractiveDoor';
 import InteractiveBifold from './InteractiveBifold';
 import InteractiveCornerPair from './InteractiveCornerPair';
@@ -396,6 +397,34 @@ export default function CabinetModule3D({
               showFronts={layers.fronts}
               showHandles={showHandles}
               {...(legSide ? { legSide } : {})}
+            />
+          );
+        }
+        if (leaf.kind === 'bent') {
+          /*
+           * ГНУТАЯ СТВОРКА (OVAL & RADIUS): полотно — коробка пачки с формой
+           * (по ВСЕМ коробкам детали: без слоя «Фасады» оно не видно, но ход
+           * тот же), петли едут с ним.
+           */
+          const panel = partBoxes?.(leaf.id)?.find((box) => box.material === 'front' && box.shape);
+          if (!panel) return null;
+          const riders = leafRiders(localBoxesOf(leaf.id), {});
+          if (!layers.fronts && (riders?.length ?? 0) === 0) return null;
+          return (
+            <InteractiveBentDoor
+              key={leaf.id}
+              id={leaf.id}
+              open={isOpen(leaf.id)}
+              onToggle={onToggle}
+              opening={leaf.opening}
+              pivotM={leaf.pivotM}
+              panel={{ ...panel, position: [panel.position[0] - x, panel.position[1] - y, panel.position[2] - zM] }}
+              thickness={frontThicknessM}
+              parts={parts}
+              frontMaterial={look?.material ?? frontMaterial}
+              onActive={onActive}
+              riders={riders}
+              showPanel={layers.fronts}
             />
           );
         }

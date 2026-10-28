@@ -378,6 +378,17 @@ export const CORNER = {
 export const SINGLE_DOOR_MAX_MM = 600;
 
 /**
+ * ПОДПИСЬ ОБЫЧНОГО МОДУЛЯ — по виду и фронтам (`frontPlan`): «Пенал»,
+ * «3 ящика», «2 дверцы», «Дверца». Одна на модуль, поставленный рукой, и на
+ * модуль, с которого сняли радиус.
+ */
+export function plainModuleLabel(kind: ModuleKind, fronts: { doorCount: number; drawerCount: number }): string {
+  if (kind === 'tall') return 'Пенал';
+  if (fronts.drawerCount > 0) return `${fronts.drawerCount} ящика`;
+  return fronts.doorCount >= 2 ? `${fronts.doorCount} дверцы` : 'Дверца';
+}
+
+/**
  * Число дверей и ящиков от ширины и типа модуля. Таблица фиксирована:
  * это то, что цех умеет делать, а не свободный параметр.
  */

@@ -193,6 +193,8 @@ export default function KitchenScene({
             : undefined,
           // Витрина (P1): конструкция, стекло, профиль, подсветка — `vitrineOf`.
           vitrine: vitrineMeta(unit),
+          // Форма модуля в плане (OVAL & RADIUS): торец по дуге, фасад дугой.
+          radius: unit.radius,
         })),
         /*
          * Верхний ряд отдельным списком: по одному clay-кадру модель

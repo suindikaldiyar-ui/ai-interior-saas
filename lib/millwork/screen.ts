@@ -57,6 +57,13 @@ export type ScreenInput = {
    */
   drawerDraft?: string | null;
   /**
+   * ОСТРОВ НЕ ВСТАНЕТ (OVAL & RADIUS): вошёл в мебель ряда, в стену или в
+   * колонну — словами (`islandIssues`). Цены нет, «Дальше» и выпуск в цех
+   * заперты; запись идёт — данные целы, а запертая запись потеряла бы
+   * место острова, которым это и лечат. Пусто — острова нет или встаёт.
+   */
+  islandBlock?: string | null;
+  /**
    * ПРАВКИ И ЗАКРЕПЛЕНИЯ, КОТОРЫЕ СЕЙЧАС НЕ ИСПОЛЬЗУЮТСЯ. Пусто —
    * экран про них не спрашивает (прямая без правок соседних стен).
    */
@@ -216,6 +223,9 @@ export function screenState(input: ScreenInput): ScreenState {
      * Каталог не дошёл — сумма без его позиций назвала бы клиенту цену
      * фасадов RAL по ставке цеха. Последствие словами, отправка заперта.
      */
+    ...(input.islandBlock
+      ? [{ id: 'island-blocked', severity: 'blocking' as const, message: `${input.islandBlock} Пока он не встанет, цены нет и отправить клиенту нельзя.` }]
+      : []),
     ...(catalogError
       ? [
           {
@@ -309,7 +319,8 @@ export function screenState(input: ScreenInput): ScreenState {
         !mismatch.clashes?.length &&
         !mismatch.sweep?.length,
     );
-  const unpriced = locked || mismatches.length > 0 || catalogError !== null;
+  const islandBlock = input.islandBlock ?? null;
+  const unpriced = locked || mismatches.length > 0 || catalogError !== null || islandBlock !== null;
   /*
    * Выгрузку для раскроя запирает геометрия, а не каталог: непрочитанные
    * цены деталей не меняют, а несобравшаяся композиция и несходящаяся
@@ -327,7 +338,9 @@ export function screenState(input: ScreenInput): ScreenState {
         : `Выгрузки для раскроя и печати для цеха нет: ${mismatches[0].label} не собирается — по таким ` +
           'документам цех распилит детали, которые на объекте не встанут. Сначала пересоберите стену или ' +
           'верните прежнюю расстановку.'
-      : (input.drawerDraft ?? null);
+      : islandBlock !== null
+        ? `Выгрузки для раскроя и печати для цеха нет: остров не встаёт на своё место — ${islandBlock.charAt(0).toLowerCase()}${islandBlock.slice(1)}`
+        : (input.drawerDraft ?? null);
   const exportLocked = exportLockText !== null;
 
   return {

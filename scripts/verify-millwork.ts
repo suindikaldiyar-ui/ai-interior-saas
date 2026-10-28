@@ -116,6 +116,7 @@ import { stageAChecks } from './verify-stage-a';
 import { p0CornerChecks } from './verify-p0-corners';
 import { p1VitrineChecks } from './verify-p1-vitrines';
 import { measurementV2Checks } from './verify-measurement-v2';
+import { counterCornerChecks, radiusChecks, radiusPickerChecks, wallEndChecks } from './verify-radius';
 import { runFingerprint } from '../lib/millwork/fingerprint';
 import { surfaceFinish, surfaceLook } from '../lib/millwork/surfaces';
 import { GROUP_ORDER, estimateGroups, groupsTotal } from '../lib/millwork/estimateGroups';
@@ -28783,6 +28784,12 @@ p1VitrineChecks(check);
 
 /* ═══════════  MEASUREMENT 2.0: обход замера, сторона кухни, план против мира  ═══════════ */
 measurementV2Checks(check);
+
+/* ═══════════  OVAL & RADIUS, этап A: радиусный движок, остров, ТВ-зона, фасад и рейки  ═══════════ */
+radiusChecks(check);
+radiusPickerChecks(check);
+counterCornerChecks(check);
+wallEndChecks(check);
 
 Promise.allSettled(asyncChecks).then((results) => {
   for (const result of results) {

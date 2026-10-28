@@ -1,4 +1,4 @@
-import type { CornerChoice, CornerJoin, Opening, OpeningKind, RunCorner, ZoneKind } from '@/types/millwork';
+import type { CornerChoice, CornerJoin, Opening, OpeningKind, Run, RunCorner, RunWallEnds, ZoneKind } from '@/types/millwork';
 import { OPENING_KIND_TITLE } from '@/types/millwork';
 import type { ProductionSettings } from '@/types/catalog';
 import { heightAssumedToCeiling, type KnownState, type Survey, type SurveyOpening } from '@/types/survey';
@@ -166,6 +166,42 @@ export type RoomInput = {
 };
 
 const DEG = Math.PI / 180;
+
+/**
+ * СТЕНЫ КОМНАТЫ ПОПЕРЁК КОНЦОВ РЯДОВ — ПО ТОМУ ЖЕ ОБХОДУ, ЧТО СТРОИТ КОМНАТУ
+ * (OVAL & RADIUS).
+ *
+ * Поворот к следующей стене — как у `roomLayout`: замер 2.0 — со знаком
+ * (плюс — внутренний угол, минус — выступ), прежний — всегда направо. Где
+ * обход поворачивает внутрь, поперёк ряда стоит следующая стена (у конца) или
+ * предыдущая (у начала). До первой стены и после последней у незамкнутого
+ * обхода стен нет; замкнутый (повороты на 360°) идёт по кругу. Мебели на той
+ * стене может и не быть — это не угол кухни, а стена.
+ */
+export function wallEndsOf(measurement: { walls: { id: string; angleDeg?: number }[]; walk?: 'clockwise' }): Record<string, RunWallEnds> {
+  const walls = measurement.walls;
+  const n = walls.length;
+  const turn = (i: number) => (measurement.walk === 'clockwise' ? walls[i].angleDeg ?? 90 : 90);
+  const total = walls.reduce((sum, _, i) => sum + turn(i), 0);
+  const closed = n >= 3 && Math.abs(Math.abs(total) - 360) <= 0.5;
+  const out: Record<string, RunWallEnds> = {};
+  walls.forEach((wall, i) => {
+    const prev = i > 0 ? i - 1 : closed ? n - 1 : -1;
+    const hasNext = i < n - 1 || closed;
+    out[wall.id] = {
+      ...(prev >= 0 && turn(prev) > 0 ? { start: true as const } : {}),
+      ...(hasNext && turn(i) > 0 ? { end: true as const } : {}),
+    };
+  });
+  return out;
+}
+
+/** Стены комнаты у концов ряда — кладутся на каждом показе, как препятствия (`runWithObstacles`). */
+export function runWithWallEnds(run: Run, ends: RunWallEnds | undefined): Run {
+  const { wallEnds: _stale, ...rest } = run;
+  void _stale;
+  return ends && (ends.start || ends.end) ? { ...rest, wallEnds: { ...ends } } : rest;
+}
 
 function round(value: number): number {
   return Math.round(value * 1000) / 1000;

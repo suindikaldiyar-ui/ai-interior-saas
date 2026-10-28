@@ -80,6 +80,7 @@ import type { PathTraceSource } from './pathTrace';
 import { movingParts } from './motion';
 import { plinthMm, shopOf } from '@/lib/millwork/shop';
 import { boxLayer, boxShown, moduleBoxes, runBoxes, runPlaces } from '@/lib/millwork/cabinetBoxes';
+import { prismEdgesMm } from '@/lib/millwork/radius';
 import { ALL_LAYERS, presetOf, type SceneLayers } from '@/lib/millwork/sceneLayers';
 import { generalCamera } from '@/lib/cameraFraming';
 import {
@@ -325,6 +326,12 @@ export default function CadScene({
    * камера крутилась вокруг центра комнаты, а не вокруг мебели.
    */
   const bounds = useMemo(() => sceneBounds(rows), [rows]);
+  /*
+   * РЯДЫ У СТЕН — КОМНАТА, ОТКРЫТАЯ СТОРОНА И СВЕТ (OVAL & RADIUS): остров
+   * стоит без стены, и в цепочку стен его не берут. Кадр и пол — по всей
+   * мебели, острову тоже.
+   */
+  const wallRows = useMemo(() => rows.filter((row) => !row.run.island), [rows]);
 
   /**
    * ГАБАРИТ СЪЁМКИ: мебель плюс поле вокруг.
@@ -370,15 +377,15 @@ export default function CadScene({
            * мебелью — от грани стены до переда габарита. Это место
            * мебели, а не размер комнаты, и оно известно.
            */
-          roomAroundRows(room, rows, bounds.empty ? null : bounds.center[2] + bounds.size[2] / 2)
+          roomAroundRows(room, wallRows, bounds.empty ? null : bounds.center[2] + bounds.size[2] / 2)
         : null,
-    [room, rows, bounds],
+    [room, wallRows, bounds],
   );
 
   /* ОТКРЫТАЯ СТОРОНА КОМНАТЫ — с неё камера, свет и скрытие стен. */
-  const open = useMemo<[number, number]>(() => openSideOf(roomWorld, rows), [roomWorld, rows]);
+  const open = useMemo<[number, number]>(() => openSideOf(roomWorld, wallRows), [roomWorld, wallRows]);
   /* Куда смотрят фасады — без сдвига камеры вбок: по нему ставится окружение (P3D-LDSP). */
-  const facing = useMemo<[number, number]>(() => facingSideOf(roomWorld, rows), [roomWorld, rows]);
+  const facing = useMemo<[number, number]>(() => facingSideOf(roomWorld, wallRows), [roomWorld, wallRows]);
 
   /*
    * ГАБАРИТ ДЛЯ СВЕТА: комната вместе с мебелью. По нему ставится камера
@@ -426,8 +433,8 @@ export default function CadScene({
   const daylight = useMemo(() => (rig ? daylightOf(roomWorld, rig.sunElevationDeg) : null), [rig, roomWorld]);
   const carcassMm = (production ?? DEFAULT_PRODUCTION).carcassMm;
   const plan = useMemo(
-    () => (design && lighting ? lightingPlan(lighting, rows, roomWorld, carcassMm) : null),
-    [design, lighting, rows, roomWorld, carcassMm],
+    () => (design && lighting ? lightingPlan(lighting, wallRows, roomWorld, carcassMm) : null),
+    [design, lighting, wallRows, roomWorld, carcassMm],
   );
   const sun = useMemo(
     () =>
@@ -1279,6 +1286,36 @@ function FrameProbe({ rows, room, design }: { rows: SceneRow[]; room: Room | nul
     };
 
     /*
+     * РАДИУСНАЯ МЕБЕЛЬ ПО НАРИСОВАННОМУ (OVAL & RADIUS): пачки деталей по
+     * контуру и гнутых (`shaped:*`, `ShapedBatch`), плиты и цоколь по контуру
+     * (`counter:*`, `plinth:*`, `PlanPlate`), едущие гнутые створки (`bent:*`)
+     * — с габаритом в мире, мм; ряды острова и их место. Граф сцены, а не
+     * данные: приёмка сверяет его с движком тем же путём экрана.
+     */
+    (w as { __mwCadRadius?: () => unknown }).__mwCadRadius = () => {
+      const box = new THREE.Box3();
+      const boundsOf = (object: THREE.Object3D) => {
+        box.setFromObject(object);
+        return box.isEmpty() ? null : [box.min.x, box.min.y, box.min.z, box.max.x, box.max.y, box.max.z].map((v) => Math.round(v * 1000));
+      };
+      const shaped: { name: string; parts: number; boundsMm: number[] | null }[] = [];
+      const plates: { name: string; boundsMm: number[] | null; vertices: number }[] = [];
+      const bent: { name: string; boundsMm: number[] | null }[] = [];
+      scene.traverse((object) => {
+        const mesh = object as THREE.Mesh;
+        if (!mesh.isMesh || mesh.visible === false) return;
+        if (mesh.name.startsWith('shaped:')) shaped.push({ name: mesh.name, parts: Number(mesh.userData.shapedParts ?? 0), boundsMm: boundsOf(mesh) });
+        else if (mesh.name.startsWith('counter:') || mesh.name.startsWith('plinth:')) {
+          plates.push({ name: mesh.name, boundsMm: boundsOf(mesh), vertices: mesh.geometry?.attributes?.position?.count ?? 0 });
+        } else if (mesh.name.startsWith('bent:')) bent.push({ name: mesh.name, boundsMm: boundsOf(mesh) });
+      });
+      const islands = rows
+        .filter((row) => row.run.island)
+        .map((row) => ({ id: row.run.id, wallId: row.run.wallId ?? null, modules: row.run.modules.map((unit) => unit.id), placement: row.placement ?? null }));
+      return { shaped, plates, bent, islands };
+    };
+
+    /*
      * МЕТАЛЛ НА ФАСАДАХ ПО НАРИСОВАННОМУ (слой 58): экземпляров в пачках
      * `metal` — ручки, чашки петель, штанги. Фасад с фрезерованной ручкой
      * (`milledGrip`) скобы не несёт — пачка становится меньше ровно на неё.
@@ -2046,6 +2083,7 @@ function FrameProbe({ rows, room, design }: { rows: SceneRow[]; room: Room | nul
       delete w.__mwCadReliefs;
       delete w.__mwCadMetal;
       delete (w as { __mwCadVitrine?: unknown }).__mwCadVitrine;
+      delete (w as { __mwCadRadius?: unknown }).__mwCadRadius;
       delete w.__mwHandles;
       delete w.__mwCadState;
       delete (w as { __mwCadBays?: unknown }).__mwCadBays;
@@ -2135,6 +2173,13 @@ function rowCorners(
    * Габарит мебели и пересечения ручку по-прежнему видят.
    */
   outline = false,
+  /**
+   * РАДИУСНЫЕ ДЕТАЛИ (OVAL & RADIUS) — в рёбрах их контуром (`shapeLines`),
+   * а не габаритом: коробка вокруг дуги рисовала бы проволочный ящик поверх
+   * гнутой дверцы. Сюда (`lines`) кладутся их отрезки; габарит мебели и
+   * пересечения дугу по-прежнему видят коробкой.
+   */
+  lines?: [number, number, number][],
 ): [number, number, number][] {
   const points: [number, number, number][] = [];
 
@@ -2171,6 +2216,17 @@ function rowCorners(
       const dz = place.zM;
 
       for (const box of boxes) {
+        if (lines && box.shape) {
+          const [ox, oy, oz] = box.shape.originM;
+          for (const [a, b] of prismEdgesMm(box.shape.form)) {
+            for (const [mx, my, mz] of [a, b]) {
+              const x = ox + mx / MM;
+              const z = oz + mz / MM;
+              lines.push([x * cos + z * sin + dx, oy + my / MM, -x * sin + z * cos + dz]);
+            }
+          }
+          continue;
+        }
         const [px, py, pz] = box.position;
         const [sx, sy, sz] = box.scale;
         const hx = sx / 2;
@@ -2234,7 +2290,9 @@ function RunEdges({
   const hardware = useMemo(() => hardwareCatalog(catalog), [catalog]);
   const geometry = useMemo(() => {
     const points: number[] = [];
-    const corners = rowCorners(rows, inside, layers, open, hardware, production, true);
+    const lines: [number, number, number][] = [];
+    const corners = rowCorners(rows, inside, layers, open, hardware, production, true, lines);
+    for (const point of lines) points.push(...point);
 
     // Двенадцать рёбер на каждые восемь вершин коробки.
     const edges: [number, number][] = [

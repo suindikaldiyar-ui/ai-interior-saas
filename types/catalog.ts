@@ -669,6 +669,16 @@ export type ProductionSettings = {
    */
   ceilingGap?: CeilingGap;
   /**
+   * РАДИУСНЫЕ ДЕТАЛИ — МЕТОДЫ ИЗГОТОВЛЕНИЯ ЦЕХА (OVAL & RADIUS, этап A).
+   *
+   * Деталь по дуге делают двумя способами: контур фрезеруют на ЧПУ из
+   * заготовки (дно, крыша, полки, столешница) или деталь гнут (фасад,
+   * цоколь, подложка реек). Умеет ли цех и как именно — знает цех, а не
+   * код. Пусто — ни один способ не подтверждён: радиусная мебель показана
+   * со статусом DEMO ONLY, выпуск в цех заперт словами.
+   */
+  radius?: RadiusMethods;
+  /**
    * РАСКРОЙ ЛИСТОВ — НАСТРОЙКА ЦЕХА (CUT-01).
    *
    * Пропил, обрезка кромки листа, полезный остаток и форматы листов у
@@ -919,6 +929,56 @@ export function ceilingGap(raw: unknown): CeilingGap {
   };
 }
 
+/**
+ * СПОСОБ ГИБКИ — СЛОВО ЦЕХА, А НЕ КОДА.
+ *
+ *   flex_mdf      гибкий МДФ слоями в шаблоне (пресс), лицо — эмаль или шпон;
+ *   kerf_mdf      МДФ с пропилами с тыльной стороны;
+ *   bent_plywood  гнутая фанера (гнутоклеёная).
+ */
+export type BendMethod = 'flex_mdf' | 'kerf_mdf' | 'bent_plywood';
+
+export const BEND_METHOD_TITLE: Record<BendMethod, string> = {
+  flex_mdf: 'гибкий МДФ в шаблоне',
+  kerf_mdf: 'МДФ с пропилами',
+  bent_plywood: 'гнутая фанера',
+};
+
+export type RadiusMethods = {
+  /** Контур на ЧПУ: дно, крыша, полки и столешница по дуге, кромка по дуге. */
+  cnc: { confirmed: boolean };
+  /**
+   * Гнутые детали: фасад, цоколь, подложка реек. Способ и наименьший радиус
+   * гибки — цеха; пока способа нет, гнутая деталь не подтверждена.
+   */
+  bend: { method: BendMethod | null; minRadiusMm: number | null; confirmed: boolean };
+};
+
+/** Ни один способ не подтверждён: так продукт и показывает радиус — DEMO ONLY. */
+export const DEFAULT_RADIUS_METHODS: RadiusMethods = {
+  cnc: { confirmed: false },
+  bend: { method: null, minRadiusMm: null, confirmed: false },
+};
+
+/** Наименьший радиус гибки, который вообще принимается полем: меньше — уже не гнут. */
+export const BEND_RADIUS_RANGE_MM = [30, 5000] as const;
+
+/** Методы цеха с подстановкой «не подтверждено». Мусор не принимается. */
+export function radiusMethods(raw: unknown): RadiusMethods {
+  const value = (raw ?? {}) as { cnc?: { confirmed?: unknown }; bend?: { method?: unknown; minRadiusMm?: unknown; confirmed?: unknown } };
+  const method = value.bend?.method;
+  const min = Number(value.bend?.minRadiusMm);
+  return {
+    cnc: { confirmed: value.cnc?.confirmed === true },
+    bend: {
+      method: method === 'flex_mdf' || method === 'kerf_mdf' || method === 'bent_plywood' ? method : null,
+      minRadiusMm:
+        Number.isFinite(min) && min >= BEND_RADIUS_RANGE_MM[0] && min <= BEND_RADIUS_RANGE_MM[1] ? Math.round(min) : null,
+      confirmed: value.bend?.confirmed === true,
+    },
+  };
+}
+
 /** Полоса столешницы организации с подстановкой типовой. Мусор не принимается. */
 export function countertopStrip(raw: unknown): CountertopStrip {
   const value = (raw ?? {}) as Partial<CountertopStrip>;
@@ -1127,6 +1187,8 @@ export function productionSettings(raw: unknown): ProductionSettings {
     ...(value.countertopStrip ? { countertopStrip: countertopStrip(value.countertopStrip) } : {}),
     /* Зазор до потолка — так же: не заводили — ноль, как было, с пометкой. */
     ...(value.ceilingGap ? { ceilingGap: ceilingGap(value.ceilingGap) } : {}),
+    /* Методы радиусных деталей — так же: не заводили — ни один не подтверждён (DEMO ONLY). */
+    ...(value.radius ? { radius: radiusMethods(value.radius) } : {}),
     /* Раскрой листов (CUT-01) — так же: не заводили — типовые числа без форматов. */
     ...(value.cutting ? { cutting: cuttingSettings(value.cutting) } : {}),
     /* Правила короба ящика (HARDWARE-01): только заведённые и целые — иначе правил нет. */

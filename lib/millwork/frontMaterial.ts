@@ -142,8 +142,14 @@ const RADIUS_BASES: FrontBase[] = ['mdf_film', 'mdf_enamel', 'veneer_solid'];
 
 /** Какие конструкции доступны этой базе. Интерфейс не показывает лишнего. */
 export function constructsFor(base: FrontBase): FrontConstruct[] {
+  /*
+   * РАДИУС — ФОРМА МОДУЛЯ, А НЕ ПОМЕТКА ФАСАДА (OVAL & RADIUS). Пометка
+   * «радиусный» без формы резала прямую деталь и рисовала прямой шкаф;
+   * дуга задаётся блоком «Форма · радиус» (`set_radius`). Прежняя пометка
+   * у сохранённых модулей читается, но не предлагается.
+   */
   return (Object.keys(FRONT_CONSTRUCTS) as FrontConstruct[]).filter(
-    (construct) => frontConflict({ base, construct, finish: 'matte' }) === null,
+    (construct) => construct !== 'radius' && frontConflict({ base, construct, finish: 'matte' }) === null,
   );
 }
 

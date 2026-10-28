@@ -134,6 +134,10 @@ function mirroredModule(unit: Module, run: Run, lengthMm: number, thicknessMm: n
     next.fittings = unit.fittings.map((fitting) => (fitting.leaf ? { ...fitting, leaf: mirroredLeafKey(fitting.leaf, count) } : fitting));
   }
   if (unit.vitrine?.led && MIRROR_LED[unit.vitrine.led]) next.vitrine = { ...unit.vitrine, led: MIRROR_LED[unit.vitrine.led] };
+  /* Скруглённый торец (OVAL & RADIUS) — у другого края ряда; фасад дугой симметричен. */
+  if (unit.radius && unit.radius.place !== 'front') {
+    next.radius = { ...unit.radius, place: unit.radius.place === 'left' ? 'right' : 'left' };
+  }
   return next;
 }
 
@@ -189,6 +193,17 @@ export function mirroredRun(run: Run): Run {
     if (run.counterEnds.end) ends.start = run.counterEnds.end;
     if (run.counterEnds.start) ends.end = run.counterEnds.start;
     next.counterEnds = ends;
+  }
+  /* Скруглённый угол столешницы (OVAL & RADIUS) — у другого конца ряда. */
+  if (run.counterCorners) {
+    const corners: NonNullable<Run['counterCorners']> = {};
+    if (run.counterCorners.end) corners.start = run.counterCorners.end;
+    if (run.counterCorners.start) corners.end = run.counterCorners.start;
+    next.counterCorners = corners;
+  }
+  /* Стена комнаты у конца ряда — у другого конца (показ кладёт её заново из отражённого замера). */
+  if (run.wallEnds) {
+    next.wallEnds = { ...(run.wallEnds.end ? { start: true as const } : {}), ...(run.wallEnds.start ? { end: true as const } : {}) };
   }
   next.fingerprint = runFingerprint(next);
   return next;
@@ -332,6 +347,27 @@ export function mirroredState(state: MillworkState, ctx: MirrorContext): Mirrore
   if (state.corners) next.corners = mirroredCorners(state.corners, chain);
   if (state.lighting) next.lighting = mirroredLighting(state.lighting, ctx.wallLengthMm);
 
+  /*
+   * ОСТРОВ (OVAL & RADIUS): у прямой кухни стена А та же — остров отражается
+   * вдоль её ряда (модули и торцы в обратном порядке, отметка — от другого
+   * края). У угловой и П стеной А становится другая стена: место острова у
+   * неё не выводится — он снимается, и это сказано до нажатия.
+   */
+  if (state.island?.island) {
+    const rowA = n === 1 ? ctx.rowLengthMm[chain[0]] : undefined;
+    if (rowA !== undefined) {
+      const island = mirroredRun(state.island);
+      next.island = {
+        ...island,
+        island: { ...state.island.island, fromLeftMm: rowA - state.island.island.fromLeftMm - state.island.lengthMm },
+      };
+      notes.push('Остров отражён вместе с рядом стены А: модули и торцы — в обратном порядке, отметка — от другого края.');
+    } else {
+      delete next.island;
+      notes.push('Остров снят: после отражения стена А — другая стена, и его место у неё надо задать заново.');
+    }
+  }
+
   const mirrored = edits.size;
   if (mirrored > 0) notes.unshift(`Правленых рядов: ${mirrored} — модули встанут в обратном порядке, петли — на другую сторону.`);
   return { state: next, notes };
@@ -386,5 +422,10 @@ export function rechainedState(
   }
   if (Object.keys(kept).length > 0) next.wallRuns = kept;
   else delete next.wallRuns;
+  /* Остров стоит от ряда стены А: стена А стала другой — его место у неё не выводится. */
+  if (state.island && chainBefore[0] && chainAfter[0] !== chainBefore[0]) {
+    delete next.island;
+    notes.push(`Остров снят: он стоял у ${nameOf(chainBefore[0])}, а стеной А станет другая — его место надо задать заново.`);
+  }
   return { state: next, notes };
 }

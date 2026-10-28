@@ -5,6 +5,7 @@ import type {
   Run,
   RunCorner,
   RunRequirements,
+  RunWallEnds,
   Variant,
   VariantKey,
   WallSegment,
@@ -19,6 +20,7 @@ import { editedRunCorner, lowerGapMm, runWithCorner } from './corner';
 import { obstaclesOnRun, runWithObstacles } from './obstacles';
 import { uniqueModuleIds } from './layout';
 import { runInContext } from './runContext';
+import { runWithWallEnds, wallEndsOf } from './room';
 
 /**
  * Замер → входные данные конфигуратора.
@@ -138,6 +140,13 @@ export type WorkspaceInput = {
   measuredComms: CommPoint[];
   /** Идентификатор рабочей стены: по нему отбираются соседние. */
   runWallId: string;
+  /**
+   * СТЕНЫ КОМНАТЫ ПОПЕРЁК КОНЦОВ КАЖДОЙ СТЕНЫ ЗАМЕРА (OVAL & RADIUS,
+   * `wallEndsOf`) — по тому же обходу, что строит комнату. Ряду их кладёт
+   * показ (`runWithWallEnds`): стене А — `composeVariants`, соседним —
+   * `wallSegments`. Пусто — как раньше: у концов рядов стен никто не знает.
+   */
+  wallEnds?: Record<string, RunWallEnds>;
   /** Глубина помещения для 3D: соседняя стена, если она есть в замере. */
   roomDepthM: number;
   /**
@@ -236,6 +245,7 @@ export function workspaceInput(seed: WorkspaceSeed): WorkspaceInput {
     measuredWalls: seed.measurement.walls,
     measuredComms: seed.measurement.comms,
     runWallId: wall.id,
+    wallEnds: wallEndsOf(seed.measurement),
     roomDepthM: roomDepth(seed.measurement, wall.id),
     production: seed.production,
     milling: seed.milling,
@@ -357,9 +367,14 @@ export function composeVariants(
     hardware: input.hardware,
   });
 
+  /*
+   * Стены комнаты у концов ряда стены А — из замера на каждом показе, как
+   * препятствия: правленому ряду и ряду шаблона одинаково (OVAL & RADIUS).
+   */
+  const ends = input.wallEnds?.[input.runWallId];
   return base.map((variant) => {
     const saved = workingWallEdit(editedRuns[variant.key], input.runWallId);
-    if (!saved) return variant;
+    if (!saved) return ends ? { ...variant, run: runWithWallEnds(variant.run, ends) } : variant;
 
     /*
      * УГОЛ ПРАВЛЕНОМУ РЯДУ СТЕНЫ А КЛАДЁТ КОМПОЗИЦИЯ — ДО СМЕТЫ (слой 55).
@@ -378,14 +393,17 @@ export function composeVariants(
      * держал размеры, которые человек уже поменял.
      */
     const live = runInContext(saved, { production: input.production, ceilingHeightMm: input.ceilingHeightMm }).run;
-    const edited = runWithObstacles(
-      /*
-       * Сохранённый ряд с дублем ключа чинится на показе (P0, `uniqueModuleIds`).
-       * Панели по ходу — те, с которыми ряд правили (`editedRunCorner`, STAGE A).
-       */
-      runWithCorner(uniqueModuleIds(live), editedRunCorner(saved, input.corner)),
-      /* Препятствия стены — из замера, как угол — из композиции (слой 56). */
-      obstaclesOnRun(input.openings, saved.lengthMm),
+    const edited = runWithWallEnds(
+      runWithObstacles(
+        /*
+         * Сохранённый ряд с дублем ключа чинится на показе (P0, `uniqueModuleIds`).
+         * Панели по ходу — те, с которыми ряд правили (`editedRunCorner`, STAGE A).
+         */
+        runWithCorner(uniqueModuleIds(live), editedRunCorner(saved, input.corner)),
+        /* Препятствия стены — из замера, как угол — из композиции (слой 56). */
+        obstaclesOnRun(input.openings, saved.lengthMm),
+      ),
+      ends,
     );
     const estimate = editedRunEstimate(edited, variant.key, input, disabled);
     return { ...variant, run: edited, estimate };

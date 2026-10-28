@@ -2,6 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { runPlaces } from '@/lib/millwork/cabinetBoxes';
+import { countertopSlabs } from '@/lib/millwork/countertop';
+import { rowStandardDepthMm } from '@/lib/millwork/fill';
+import { ISLAND_LABEL, islandBackOf, islandDepthMm, islandFrame, islandPoint } from '@/lib/millwork/island';
+import { moduleOutline, samplePath, type PlanPath } from '@/lib/millwork/radius';
 import { isUpperRow } from '@/lib/millwork/modules';
 import { ROOM_WALL_THICKNESS_MM } from '@/lib/millwork/room';
 import {
@@ -38,6 +42,12 @@ import { OPENING_KIND_TITLE, type Run } from '@/types/millwork';
 export type PlanFurniture = { wallId: string; run: Run; startMm: number };
 
 /**
+ * ОСТРОВ НА ПЛАНЕ (OVAL & RADIUS): его ряд и ряд стены А, от которого он
+ * стоит (`islandFrame` — та же функция, что ставит его в сцене).
+ */
+export type PlanIsland = { run: Run; rowA: PlanFurniture };
+
+/**
  * КОМАНДА МАСШТАБА ИЗ НИЖНЕЙ СТРОКИ: «вписать», «ближе», «дальше».
  * Номер команды — чтобы повторное «вписать» тоже сработало.
  */
@@ -61,6 +71,8 @@ type Props = {
    * называет экран (`wallLabel`). Стена А — левая, если стоять лицом к углу.
    */
   wallNames?: Record<string, string>;
+  /** Остров у ряда стены А; нет — острова нет. */
+  island?: PlanIsland | null;
 };
 
 type ViewBox = { x: number; y: number; w: number; h: number };
@@ -107,6 +119,7 @@ export default function RoomPlan({
   onZoom,
   command,
   wallNames,
+  island,
 }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [size, setSize] = useState({ w: 800, h: 600 });
@@ -540,11 +553,21 @@ export default function RoomPlan({
           const b = pointFromLeft(wall, e, leftEnd);
           const upper = isUpperRow(place.unit);
           const selected = place.unit.id === selectedModuleId;
+          /*
+           * Радиусный модуль (OVAL & RADIUS) — его контуром (`moduleOutline`):
+           * x вдоль стены от его левого края, z — 0 на фасаде, тыл на стене.
+           */
+          const corners = place.unit.radius
+            ? samplePath(moduleOutline(place.unit, { widthMm: place.unit.widthMm, depthMm: depth }), 2).map(([x, z]) =>
+                add(pointFromLeft(wall, s + x, leftEnd), mul(f.inward, depth + z)),
+              )
+            : [a, b, add(b, mul(f.inward, depth)), add(a, mul(f.inward, depth))];
           return (
             <polygon
               key={`${item.wallId}-${place.unit.id}`}
               data-plan-module={place.unit.id}
-              points={[a, b, add(b, mul(f.inward, depth)), add(a, mul(f.inward, depth))].map((p) => `${p.x},${p.y}`).join(' ')}
+              {...(place.unit.radius ? { 'data-plan-radius': `${place.unit.radius.place}:${place.unit.radius.radiusMm}` } : {})}
+              points={corners.map((p) => `${p.x},${p.y}`).join(' ')}
               fill={upper ? 'none' : selected ? 'var(--cad-accent-soft)' : 'var(--cad-module)'}
               stroke={selected ? 'var(--cad-accent)' : 'var(--cad-module-line)'}
               strokeWidth={px(selected ? 2 : 1)}
@@ -561,6 +584,82 @@ export default function RoomPlan({
           );
         });
       })}
+
+      {/* ── Остров: его модули, панели тыла и столешница — от ряда стены А ── */}
+      {island &&
+        (() => {
+          const wall = placed.find((p) => p.wall.id === island.rowA.wallId && p.lengthMm > 0);
+          if (!wall || !island.run.island) return null;
+          const f = frame(wall, side);
+          const frameI = islandFrame(island.run);
+          const depthA = rowStandardDepthMm(island.rowA.run.zone, 'base', island.rowA.run.production);
+          /* Точка острова → точка плана: ряд стены А, затем стена замера. */
+          const toPlan = (x: number, z: number): PlanPoint => {
+            const [X, Z] = islandPoint(frameI, x, z);
+            return add(pointFromLeft(wall, island.rowA.startMm + X, leftEnd), mul(f.inward, depthA + Z));
+          };
+          const pathPoints = (path: PlanPath, dx: number) =>
+            samplePath(path, 2)
+              .map(([x, z]) => toPlan(dx + x, z))
+              .map((p) => `${p.x},${p.y}`)
+              .join(' ');
+          const D = islandDepthMm(island.run);
+          return (
+            <g data-plan-island={island.run.lengthMm}>
+              {countertopSlabs(island.run).map((slab, i) => (
+                <polygon
+                  key={`top-${i}`}
+                  data-plan-island-top={slab.outline ? 'outline' : 'rect'}
+                  points={slab.outline ? pathPoints(slab.outline, 0) : ''}
+                  fill="none"
+                  stroke="var(--cad-module-line)"
+                  strokeWidth={px(1)}
+                  strokeDasharray={`${px(4)} ${px(3)}`}
+                  pointerEvents="none"
+                />
+              ))}
+              {island.run.modules.map((unit) => {
+                const selected = unit.id === selectedModuleId;
+                const back = islandBackOf(unit, island.run);
+                return (
+                  <g key={unit.id}>
+                    <polygon
+                      data-plan-module={unit.id}
+                      {...(unit.radius ? { 'data-plan-radius': `${unit.radius.place}:${unit.radius.radiusMm}` } : {})}
+                      points={pathPoints(moduleOutline(unit, { widthMm: unit.widthMm, depthMm: D }), unit.offsetMm)}
+                      fill={selected ? 'var(--cad-accent-soft)' : 'var(--cad-module)'}
+                      stroke={selected ? 'var(--cad-accent)' : 'var(--cad-module-line)'}
+                      strokeWidth={px(selected ? 2 : 1)}
+                      style={{ cursor: onSelectModule ? 'pointer' : undefined }}
+                      onPointerDown={(event) => {
+                        if (!onSelectModule || event.button !== 0) return;
+                        event.stopPropagation();
+                        onSelectModule(unit.id);
+                      }}
+                    >
+                      <title>{`${ISLAND_LABEL} · ${unit.label} · ${unit.id} · ${unit.widthMm} мм`}</title>
+                    </polygon>
+                    {back && (
+                      <polygon
+                        data-plan-island-back={unit.id}
+                        points={[
+                          toPlan(unit.offsetMm + (unit.widthMm - back.widthMm) / 2, -D),
+                          toPlan(unit.offsetMm + (unit.widthMm + back.widthMm) / 2, -D),
+                          toPlan(unit.offsetMm + (unit.widthMm + back.widthMm) / 2, -D - back.thicknessMm),
+                          toPlan(unit.offsetMm + (unit.widthMm - back.widthMm) / 2, -D - back.thicknessMm),
+                        ]
+                          .map((p) => `${p.x},${p.y}`)
+                          .join(' ')}
+                        fill="var(--cad-module-line)"
+                        pointerEvents="none"
+                      />
+                    )}
+                  </g>
+                );
+              })}
+            </g>
+          );
+        })()}
 
       {/* ── Коммуникации: только с замеренной привязкой ── */}
       {survey.comms.map((comm) => {

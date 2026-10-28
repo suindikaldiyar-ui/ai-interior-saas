@@ -30,6 +30,19 @@ import { tailFillersOf } from './countertop';
 import { moduleDrawerKits } from './drawerKit';
 import { DRAWER_BOTTOM_PANEL_NAME, type DrawerBoxPart } from './drawerBox';
 import type { Module, Panel, PanelStock, PanelTotals, Run } from '@/types/millwork';
+import {
+  SLATS,
+  bandedEdgeMm,
+  curvedLengthOf,
+  pathArea,
+  pathBounds,
+  radiusParts,
+  shellAngleDeg,
+  shellDevelopedMm,
+  type RadiusPartKind,
+} from './radius';
+import { radiusDimsOf } from './radiusDims';
+import { ISLAND_BACK_PANEL_NAME, islandBackOf } from './island';
 
 /**
  * ДЕТАЛИРОВКА — карта деталей для цеха.
@@ -159,6 +172,29 @@ export function isCornerFillerName(name: string): boolean {
  * 150 мм под плитой закрывает планка — щели у стены под столешницей нет.
  */
 export const TAIL_FILLER_PANEL_NAME = 'Доборная планка у стены';
+
+/** Гнутый фасад радиусного модуля (OVAL & RADIUS): развёртка × высота, способ — в `shape`. */
+export const BENT_FACADE_PANEL_NAME = 'Фасад гнутый';
+
+/**
+ * ИМЕНА ДЕТАЛЕЙ РАДИУСНОГО МОДУЛЯ — ОДНА ТАБЛИЦА НА СЦЕНУ И РАСКРОЙ.
+ *
+ * Ядро формы (`radius.ts`) отдаёт вид детали, а не имя: имена живут здесь, и
+ * сцена (`radiusModuleBoxes`) ставит коробке то же имя, по которому деталь
+ * лежит в раскрое. Дно, крыша и полка — те же имена, что у прямого модуля:
+ * это те же детали, только по контуру.
+ */
+export const RADIUS_PART_NAME: Record<RadiusPartKind, string> = {
+  side: SIDE_PANEL_NAME,
+  bottom: BOTTOM_PANEL_NAME,
+  top: TOP_PANEL_NAME,
+  back: BACK_PANEL_NAME,
+  shelf: SHELF_PANEL_NAME,
+  door: BENT_FACADE_PANEL_NAME,
+  plinth: 'Цоколь гнутый',
+  substrate: 'Подложка реек гнутая',
+  slat: 'Рейка декора',
+};
 
 /**
  * ДЕТАЛЬ НОГИ Г-ОБРАЗНОГО МОДУЛЯ: «Дно (нога А)».
@@ -315,6 +351,140 @@ function moduleBodyPanels(
       number: `${moduleNumber}.${panels.length + 1}`,
       ...panel,
     });
+
+  /*
+   * ФАСАД ДЕТАЛИ — ФАСАД ЕЁ СТВОРКИ (P3D-MDF). Своего у створки нет —
+   * фасад модуля, и строка та же, что была. Створки с разными фасадами —
+   * разные строки: одна строка «Фасад · 2 шт.» означала бы, что обе двери
+   * одного материала.
+   */
+  const lookOf = (leaf: string | null) => {
+    const spec = leafFrontOf(unit, leaf);
+    const link = milling ? millingLink(unit, run, milling, leaf) : null;
+    const millingName = link && (link.state === 'resolved' || link.state === 'priceless') ? link.item.name : null;
+    return {
+      spec,
+      /* Лист фасада (CUT-01): вид плиты и декор — из того же фасада, что подпись. */
+      stock: frontStock(spec),
+      edged: hasEdgeBanding(spec),
+      material: millingName
+        ? `${frontMaterialName(spec, production.frontMm)}, фрезеровка ${millingName}`
+        : frontMaterialName(spec, production.frontMm),
+      own: Boolean(leaf && unit.leafFronts?.[leaf]),
+    };
+  };
+  /*
+   * РАДИУСНЫЙ МОДУЛЬ (OVAL & RADIUS, этап A) — ДЕТАЛИ ИЗ ТОЙ ЖЕ ФОРМЫ, ЧТО У СЦЕНЫ.
+   *
+   * `radiusParts` отдаёт и коробки сцены, и эти строки: дно, крыша и полки по
+   * контуру — заготовка с листа и фрезеровка на ЧПУ (`shape.contour`, кромка
+   * точной длиной); гнутая дверца и подложка реек — развёртка (`shape.bent`);
+   * боковины, задняя стенка и рейки — прямые детали с форматки. Гнутый цоколь
+   * деталью листа не является (как и прямой цоколь ряда) — он в спецификации
+   * радиуса. Одинаковые детали — одной строкой.
+   */
+  if (unit.radius) {
+    const spec = unit.radius;
+    const dims = radiusDimsOf(unit, { heightMm, depthMm }, production);
+    const joint = spec.place === 'front' ? 'both' : spec.place === 'right' ? 'left' : 'right';
+    const backInset = production.backMount === 'inset' ? allow.backInsetMm : 0;
+    const r0 = (v: number) => Math.round(v);
+    const r1 = (v: number) => Math.round(v * 10) / 10;
+    const rows: Omit<Panel, 'moduleId' | 'moduleLabel' | 'number'>[] = [];
+    const add = (row: Omit<Panel, 'moduleId' | 'moduleLabel' | 'number'>) => {
+      const same = rows.find(
+        (r) =>
+          r.name === row.name &&
+          r.material === row.material &&
+          r.thicknessMm === row.thicknessMm &&
+          r.lengthMm === row.lengthMm &&
+          r.widthMm === row.widthMm &&
+          r.frontLeaf === row.frontLeaf &&
+          JSON.stringify(r.shape ?? null) === JSON.stringify(row.shape ?? null),
+      );
+      if (same) same.qty += row.qty;
+      else rows.push(row);
+    };
+    for (const part of radiusParts(unit, dims)) {
+      const form = part.form;
+      if (part.kind === 'plinth') continue;
+      if (form.kind === 'box') {
+        const [sx, sy, sz] = form.size;
+        if (part.kind === 'back') {
+          add({ name: BACK_PANEL_NAME, material: `ХДФ ${production.backMm}`, stock: BACK_STOCK, thicknessMm: production.backMm, lengthMm: r0(sy - backInset), widthMm: r0(sx - backInset), qty: 1, edges: { long: 0, short: 0 }, edgeType: '0.4', grain: 'none' });
+        } else if (part.kind === 'slat') {
+          /* Рейка — из того же листа, что фасад модуля, той же кромкой. */
+          const look = lookOf(null);
+          add({ name: RADIUS_PART_NAME.slat, material: look.material, stock: look.stock, thicknessMm: r0(sz), lengthMm: r0(sy), widthMm: r0(sx), qty: 1, edges: look.edged ? { long: 2, short: 2 } : { long: 0, short: 0 }, edgeType: thick, grain: 'along' });
+        } else {
+          add({ name: SIDE_PANEL_NAME, material, stock, thicknessMm: t, lengthMm: r0(sy), widthMm: r0(sz), qty: 1, edges: { long: 1, short: 0 }, edgeType: thick, grain: 'along' });
+        }
+        continue;
+      }
+      if (form.kind === 'plate') {
+        const b = pathBounds(form.path);
+        const shelf = part.kind === 'shelf';
+        add({
+          name: RADIUS_PART_NAME[part.kind],
+          material: shelf ? shelfMaterial : material,
+          stock: shelf ? shelfStock : stock,
+          thicknessMm: t,
+          lengthMm: r0(b.maxX - b.minX),
+          widthMm: r0(b.maxZ - b.minZ),
+          qty: 1,
+          edges: { long: 0, short: 0 },
+          edgeType: thick,
+          grain: 'across',
+          shape: {
+            kind: 'contour',
+            curvedMm: r1(curvedLengthOf(form.path)),
+            edgeMm: r1(bandedEdgeMm(form.path, { joint, shelf })),
+            areaM2: Math.round((pathArea(form.path) / 1_000_000) * 10_000) / 10_000,
+          },
+        });
+        continue;
+      }
+      const bent = {
+        kind: 'bent' as const,
+        radiusMm: r0(form.r0),
+        angleDeg: r1(shellAngleDeg(form)),
+        ...(spec.place === 'front' && spec.direction === 'concave' && part.kind === 'door' ? { concave: true as const } : {}),
+      };
+      if (part.kind === 'door') {
+        const look = lookOf(part.leaf ?? null);
+        add({
+          name: RADIUS_PART_NAME.door,
+          material: look.material,
+          stock: look.stock,
+          thicknessMm: production.frontMm,
+          lengthMm: r0(form.y1 - form.y0),
+          widthMm: r0(shellDevelopedMm(form)),
+          qty: 1,
+          edges: look.edged ? { long: 2, short: 2 } : { long: 0, short: 0 },
+          edgeType: thick,
+          grain: 'along',
+          shape: bent,
+          ...(look.own && part.leaf ? { frontLeaf: part.leaf } : {}),
+        });
+      } else {
+        add({
+          name: RADIUS_PART_NAME.substrate,
+          material: `Подложка гнутая ${SLATS.substrateMm}`,
+          stock: { kind: 'mdf', decor: 'raw' },
+          thicknessMm: SLATS.substrateMm,
+          lengthMm: r0(form.y1 - form.y0),
+          widthMm: r0(shellDevelopedMm(form)),
+          qty: 1,
+          edges: { long: 0, short: 0 },
+          edgeType: '0.4',
+          grain: 'none',
+          shape: bent,
+        });
+      }
+    }
+    for (const row of rows) push(row);
+    return panels;
+  }
 
   if (unit.kind === 'filler') {
     push({
@@ -596,27 +766,6 @@ function moduleBodyPanels(
    *     разного. Одна панель означала бы, что цех сделает гладкий фасад,
    *     а узнает об этом на сборке.
    */
-  /*
-   * ФАСАД ДЕТАЛИ — ФАСАД ЕЁ СТВОРКИ (P3D-MDF). Своего у створки нет —
-   * фасад модуля, и строка та же, что была. Створки с разными фасадами —
-   * разные строки: одна строка «Фасад · 2 шт.» означала бы, что обе двери
-   * одного материала.
-   */
-  const lookOf = (leaf: string | null) => {
-    const spec = leafFrontOf(unit, leaf);
-    const link = milling ? millingLink(unit, run, milling, leaf) : null;
-    const millingName = link && (link.state === 'resolved' || link.state === 'priceless') ? link.item.name : null;
-    return {
-      spec,
-      /* Лист фасада (CUT-01): вид плиты и декор — из того же фасада, что подпись. */
-      stock: frontStock(spec),
-      edged: hasEdgeBanding(spec),
-      material: millingName
-        ? `${frontMaterialName(spec, production.frontMm)}, фрезеровка ${millingName}`
-        : frontMaterialName(spec, production.frontMm),
-      own: Boolean(leaf && unit.leafFronts?.[leaf]),
-    };
-  };
   /*
    * ФРЕЗЕРОВКА НАЗВАНА В МАТЕРИАЛЕ ДЕТАЛИ (`lookOf` выше).
    *
@@ -969,7 +1118,34 @@ export function buildPanels({ run, production = DEFAULT_PRODUCTION, milling, car
       );
     }
 
-    return modulePanels(unit, run, production, number, milling, carcass, hardware);
+    const own = modulePanels(unit, run, production, number, milling, carcass, hardware);
+    /*
+     * ПАНЕЛЬ ТЫЛА ОСТРОВА (OVAL & RADIUS) — деталь своего модуля: лист, декор,
+     * кромка и цена — его фасада; размер — `islandBackOf`, та же функция
+     * ставит её в сцену. Номер — следующий в модуле.
+     */
+    const back = islandBackOf(unit, { ...run, production });
+    if (!back) return own;
+    const spec = frontOf(unit);
+    return [
+      ...own,
+      {
+        moduleId: unit.id,
+        moduleLabel: unit.label || unit.kind,
+        number: `${number}.${own.length + 1}`,
+        name: ISLAND_BACK_PANEL_NAME,
+        material: frontMaterialName(spec, production.frontMm),
+        stock: frontStock(spec),
+        thicknessMm: back.thicknessMm,
+        lengthMm: back.heightMm,
+        widthMm: back.widthMm,
+        qty: 1,
+        /* Видны все четыре торца; у эмали и плёнки кромки нет — то же правило, что у фасада. */
+        edges: hasEdgeBanding(spec) ? { long: 2, short: 2 } : { long: 0, short: 0 },
+        edgeType: edgeType(production),
+        grain: 'along',
+      } satisfies Panel,
+    ];
   });
 
   /*
@@ -1143,7 +1319,9 @@ export function panelNumberOf(
  * КРОМКА ОДНОЙ ДЕТАЛИ, мм — одна формула на итоги листа, смету и карту
  * раскроя (CUT-01): длинные торцы на длину, короткие на ширину.
  */
-export function panelEdgeMm(panel: Pick<Panel, 'edges' | 'lengthMm' | 'widthMm'>): number {
+export function panelEdgeMm(panel: Pick<Panel, 'edges' | 'lengthMm' | 'widthMm' | 'shape'>): number {
+  /* Деталь по контуру (OVAL & RADIUS): кромка точной длиной — дуги и видимые прямые. */
+  if (panel.shape?.kind === 'contour') return panel.shape.edgeMm;
   return panel.edges.long * panel.lengthMm + panel.edges.short * panel.widthMm;
 }
 
@@ -1160,11 +1338,14 @@ export function panelTotals(panels: Panel[]): PanelTotals {
   let edgeThinM = 0;
   let count = 0;
 
+  let bentM2 = 0;
   for (const panel of panels) {
     const areaM2 = (panel.lengthMm * panel.widthMm * panel.qty) / 1_000_000;
     count += panel.qty;
 
-    if (panel.material.startsWith('ХДФ')) hdfM2 += areaM2;
+    /* Гнутая деталь (OVAL & RADIUS) не режется с листа на форматке — своя площадь, по развёртке. */
+    if (panel.shape?.kind === 'bent') bentM2 += areaM2;
+    else if (panel.material.startsWith('ХДФ')) hdfM2 += areaM2;
     else if (panel.material.startsWith('Фасад')) frontM2 += areaM2;
     else ldspM2 += areaM2;
 
@@ -1182,6 +1363,7 @@ export function panelTotals(panels: Panel[]): PanelTotals {
     ldspM2: round2(ldspM2),
     hdfM2: round2(hdfM2),
     frontM2: round2(frontM2),
+    bentM2: round2(bentM2),
     edgeThickM: round2(edgeThickM),
     edgeThinM: round2(edgeThinM),
   };
@@ -1223,6 +1405,15 @@ export function panelTotals(panels: Panel[]): PanelTotals {
 export type PanelMaterials = {
   /** Корпус ЛДСП без полок: боковины, дно, крыша, перегородки, доборы. */
   carcassM2: number;
+  /**
+   * РАДИУСНЫЕ ДЕТАЛИ (OVAL & RADIUS, этап A) — своими статьями, а не плоскими:
+   * гнутые фасады и гнутая подложка — по развёртке (`shape.bent`), фрезеровка
+   * контура на ЧПУ — по длине дуг деталей по контуру (`shape.contour`). У рядов
+   * без радиуса все три — ноль, и строк сметы под них нет.
+   */
+  bentFrontM2: number;
+  bentPanelM2: number;
+  cncCurveM: number;
   /** Полки — отдельной статьёй, как и в смете. */
   shelfM2: number;
   backM2: number;
@@ -1240,15 +1431,22 @@ export function panelMaterials(panels: Panel[]): PanelMaterials {
   let frontM2 = 0;
   let edgeM = 0;
   let count = 0;
+  let bentFrontM2 = 0;
+  let bentPanelM2 = 0;
+  let cncCurveM = 0;
 
   for (const panel of panels) {
     const areaM2 = (panel.lengthMm * panel.widthMm * panel.qty) / 1_000_000;
     count += panel.qty;
 
-    if (panel.material.startsWith('ХДФ')) backM2 += areaM2;
+    if (panel.shape?.kind === 'bent') {
+      if (panel.name === BENT_FACADE_PANEL_NAME) bentFrontM2 += areaM2;
+      else bentPanelM2 += areaM2;
+    } else if (panel.material.startsWith('ХДФ')) backM2 += areaM2;
     else if (panel.material.startsWith('Фасад')) frontM2 += areaM2;
     else if (panel.name === SHELF_PANEL_NAME) shelfM2 += areaM2;
     else carcassM2 += areaM2;
+    if (panel.shape?.kind === 'contour') cncCurveM += (panel.shape.curvedMm / 1000) * panel.qty;
 
     edgeM += (panelEdgeMm(panel) / 1000) * panel.qty;
   }
@@ -1261,6 +1459,9 @@ export function panelMaterials(panels: Panel[]): PanelMaterials {
     frontM2: r2(frontM2),
     edgeM: r2(edgeM),
     count,
+    bentFrontM2: r2(bentFrontM2),
+    bentPanelM2: r2(bentPanelM2),
+    cncCurveM: r2(cncCurveM),
   };
 }
 

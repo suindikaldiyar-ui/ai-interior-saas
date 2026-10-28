@@ -9,6 +9,7 @@ import {
   frontOf,
 } from '@/lib/millwork/frontMaterial';
 import { hasFacade } from '@/lib/millwork/applianceFront';
+import { radiusOfferFor } from '@/lib/millwork/radiusPlace';
 import { paletteFor, type PaletteColor } from '@/lib/millwork/palette';
 import type {
   FrontBase,
@@ -16,6 +17,7 @@ import type {
   FrontFinish,
   MillworkOp,
   Module,
+  Run,
 } from '@/types/millwork';
 
 /**
@@ -45,6 +47,11 @@ type Props = {
    */
   palette?: PaletteColor[];
   compact?: boolean;
+  /**
+   * Ряд модуля: «Радиусный» ставит ФОРМУ модуля (`radiusOfferFor`), а ей
+   * нужно место в ряду — край ряда или середина. Нет ряда — кнопки нет.
+   */
+  run?: Run;
 };
 
 export default function FrontMaterialPicker({
@@ -53,6 +60,7 @@ export default function FrontMaterialPicker({
   onRefuse,
   compact,
   palette = [],
+  run,
 }: Props) {
   /*
    * Материал есть у всего, что закрыто фасадом: у мойки под чашей
@@ -92,6 +100,22 @@ export default function FrontMaterialPicker({
   };
 
   const constructs = constructsFor(current.base);
+  /*
+   * «РАДИУСНЫЙ» — ФОРМА МОДУЛЯ, А НЕ ПОМЕТКА (OVAL & RADIUS). У баз, из
+   * которых гнут (`frontConflict` с радиусом молчит), кнопка ставит
+   * скруглённый торец или фасад дугой правкой `set_radius`; что ставится и
+   * почему нет — `radiusOfferFor`. Нажата — у модуля есть форма.
+   */
+  const bendable = frontConflict({ base: current.base, construct: 'radius', finish: current.finish }) === null;
+  const rounding = () => {
+    if (!run || unit.radius) return;
+    const offer = radiusOfferFor({ ...unit, front: current }, run);
+    if ('refusal' in offer) {
+      onRefuse?.(offer.refusal);
+      return;
+    }
+    onOps([{ op: 'set_radius', moduleId: unit.id, radius: offer.spec }]);
+  };
 
   return (
     <div
@@ -128,16 +152,31 @@ export default function FrontMaterialPicker({
             {FRONT_CONSTRUCTS[construct].title}
           </button>
         ))}
+        {run && bendable && (
+          <button
+            type="button"
+            data-front-construct="radius"
+            aria-pressed={Boolean(unit.radius)}
+            title="Форма модуля: скруглённый торец у края ряда или фасад дугой"
+            onClick={rounding}
+            className={`mw-btn ${unit.radius ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+          >
+            {FRONT_CONSTRUCTS.radius.title}
+          </button>
+        )}
         {/*
           * Чего у этой базы не бывает — сказано словами, а не серой
           * кнопкой: серая кнопка это вопрос «почему нельзя», а задавать
           * его на встрече с клиентом некому.
           */}
-        {constructs.length < 3 && (
+        {constructs.length < 2 && (
           <span className="text-[13px] leading-snug text-graphiteMw">
             {FRONT_BASES[current.base].title}: только цельный — пилится прямыми
           </span>
         )}
+        <span className="text-[12px] leading-snug text-graphiteMw" data-front-radius-note>
+          «Радиусный» — форма модуля, а не пометка фасада: у края ряда — скруглённый торец, иначе фасад дугой. Радиус и чем закрыта дуга — в Studio, блок «Форма · радиус».
+        </span>
       </div>
 
       {/*

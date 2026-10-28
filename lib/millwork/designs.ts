@@ -1,7 +1,10 @@
 import { TYPICAL_PRICE_LIST } from './rates';
 import { frontTitle } from './frontMaterial';
 import type { RateTable } from './estimate';
-import type { CountertopKind, FrontSpec, MillworkOp } from '@/types/millwork';
+import { moduleDepthMm } from './fill';
+import { standsOnFloor } from './modules';
+import { radiusEdit, radiusLists, radiusRowOf } from './radiusPlace';
+import type { CountertopKind, FrontSpec, MillworkOp, RadiusSpec, Run } from '@/types/millwork';
 
 /**
  * ГОТОВЫЕ ДИЗАЙНЫ.
@@ -35,6 +38,13 @@ export type RunDesign = {
   countertop: CountertopKind;
   /** Ручка-профиль вместо накладной. */
   integratedHandles: boolean;
+  /**
+   * СКРУГЛИТЬ СВОБОДНЫЕ ТОРЦЫ НИЖНЕГО РЯДА (OVAL & RADIUS) — формой модуля
+   * (`set_radius`), а не пометкой фасада: пометка «радиусный» без формы
+   * резала прямую деталь и рисовала прямой шкаф. Встаёт ли — та же
+   * `radiusEdit`, что у кнопки «Скруглить» (`designRadiusPlan`).
+   */
+  roundEnds?: boolean;
   /**
    * Ставки, без которых дизайн не посчитать. Столешница и фартук — свои
    * строки сметы, фасад — общая статья `front_panel`.
@@ -118,11 +128,12 @@ export const RUN_DESIGNS: RunDesign[] = [
   {
     id: 'radius-enamel',
     name: 'Эмаль с радиусом',
-    hint: 'гнутые торцевые фасады: скругляют угол ряда, куда упираются коленом',
-    lower: { base: 'mdf_enamel', construct: 'radius', finish: 'matte', colorHex: H('#C7CBC4') },
+    hint: 'свободный торец нижнего ряда — по дуге: гнутая дверца, где ширина модуля равна радиусу, иначе открытые полки',
+    lower: { base: 'mdf_enamel', construct: 'solid', finish: 'matte', colorHex: H('#C7CBC4') },
     upper: { base: 'mdf_enamel', construct: 'solid', finish: 'matte', colorHex: H('#E8E9E4') },
     countertop: 'quartz',
     integratedHandles: true,
+    roundEnds: true,
     requires: ['front_panel', 'countertop_quartz', 'wall_panel', 'handle_integrated'],
   },
 ];
@@ -178,6 +189,44 @@ export function designOps(design: RunDesign, upperModuleIds: string[]): Millwork
     { op: 'set_option', key: 'countertop', value: design.countertop },
     { op: 'set_option', key: 'integratedHandles', value: design.integratedHandles },
   ];
+}
+
+/**
+ * СКРУГЛЕНИЕ ТОРЦОВ ДИЗАЙНА — ПРАВКИ ФОРМЫ И СЛОВА (OVAL & RADIUS).
+ *
+ * Свободный торец — крайний модуль нижнего ряда, у которого нет угла. Радиус
+ * — ширина модуля, но не больше глубины корпуса; гнутая дверца — если
+ * ширина равна радиусу (дверца закрывает дугу целиком), иначе открытые
+ * полки. Проверка — `radiusEdit` с фасадом дизайна, та же, что у правки:
+ * торец, который не встаёт (ящики, техника, угол), не скругляется, и это
+ * сказано словами — молча дизайн не пропускает ничего.
+ */
+export function designRadiusPlan(design: RunDesign, run: Run): { ops: MillworkOp[]; notes: string[] } {
+  if (!design.roundEnds) return { ops: [], notes: [] };
+  const floor = run.modules.filter((unit) => standsOnFloor(unit)).sort((a, b) => a.offsetMm - b.offsetMm);
+  const ends = [
+    { unit: floor[0], place: 'left' as const, corner: Boolean(run.corner?.start) },
+    { unit: floor[floor.length - 1], place: 'right' as const, corner: Boolean(run.corner?.end) },
+  ].filter((end, i, all) => end.unit && (i === 0 || end.unit !== all[0].unit));
+  const ops: MillworkOp[] = [];
+  const notes: string[] = [];
+  const lists = radiusLists(run);
+  for (const end of ends) {
+    const unit = { ...end.unit, front: design.lower };
+    if (end.corner) {
+      notes.push(`Торец ${end.place === 'left' ? 'слева' : 'справа'} не скруглён: там угол, и стыкуется соседняя стена.`);
+      continue;
+    }
+    const R = Math.min(unit.widthMm, moduleDepthMm(unit, run.zone, run.production));
+    const spec: RadiusSpec = { place: end.place, radiusMm: R, cover: R === unit.widthMm ? 'door' : 'open' };
+    const outcome = radiusEdit(unit, spec, radiusRowOf(unit, lists, run), run);
+    if ('refusal' in outcome) {
+      notes.push(`«${end.unit.label}» не скруглён: ${outcome.refusal.charAt(0).toLowerCase()}${outcome.refusal.slice(1)}`);
+      continue;
+    }
+    ops.push({ op: 'set_radius', moduleId: end.unit.id, radius: spec });
+  }
+  return { ops, notes };
 }
 
 /** Состав дизайна одной строкой — для карточки и для отчёта. */

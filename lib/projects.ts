@@ -96,6 +96,12 @@ export type MillworkState = {
    * (читает `savedWallRuns`).
    */
   wallRuns?: Record<string, Run>;
+  /**
+   * ОСТРОВ (OVAL & RADIUS, этап A) — ряд без стены, целиком, как правки стен
+   * (ловушка 42): модули, форма торцов и его место у ряда стены А
+   * (`Run.island`). Поля нет — острова нет, объект открывается как раньше.
+   */
+  island?: Run;
   /** Снятые галочки сметы по вариантам. */
   disabled?: Partial<Record<VariantKey, string[]>>;
   /** Снимок ставок на момент расчёта. */

@@ -270,7 +270,7 @@ export function buildObject(spec: Spec) {
   });
   const active = composeVariants(input, DISABLED, spec.working ? { optimal: spec.working } : {}).find((variant) => variant.key === 'optimal');
   if (!active) throw new Error(`STAGE A ${spec.title}: варианта optimal нет`);
-  const segments: Run[] = wallSegments(layout, active.run, spec.edits ?? {});
+  const segments: Run[] = wallSegments(layout, active.run, spec.edits ?? {}, input.wallEnds);
   const places = runPlacements({ runs: segments, corners: spec.corners, zone: active.run.zone, production });
 
   const rows = segments.map((run, i) => {

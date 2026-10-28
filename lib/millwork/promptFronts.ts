@@ -245,6 +245,30 @@ export function fillText(unit: RunModuleLike): string | null {
   return `внутри ${parts.join(', ')}`;
 }
 
+/**
+ * ФОРМА В ПЛАНЕ СЛОВАМИ (OVAL & RADIUS): где дуга, точный радиус и чем она
+ * закрыта. Числа — с модуля (`Module.radius`), руками здесь не пишутся.
+ */
+function radiusText(radius: NonNullable<RunModuleLike['radius']>): string {
+  const cover =
+    radius.cover === 'door'
+      ? 'закрыт ГНУТОЙ дверцей по дуге'
+      : radius.cover === 'slats'
+        ? 'по дуге вертикальные рейки на гнутой подложке'
+        : 'по дуге ОТКРЫТЫЕ полки без фасада';
+  if (radius.place === 'front') {
+    return (
+      `фасад ДУГОЙ в плане: ${radius.direction === 'concave' ? 'вогнутый' : 'выпуклый'}, радиус ${radius.radiusMm} мм, ` +
+      `${radius.cover === 'door' ? 'гнутые дверцы по дуге' : 'открытые полки по дуге'} — НЕ плоский шкаф`
+    );
+  }
+  const side = radius.place === 'left' ? 'слева' : 'справа';
+  return (
+    `торец ${side} СКРУГЛЁН в плане: ${radius.back ? 'полуокружность (скруглены передний и задний угол)' : 'четверть окружности от фасада к боковине'}, ` +
+    `радиус ${radius.radiusMm} мм; ${cover} — НЕ прямоугольный модуль`
+  );
+}
+
 /** Описание одного модуля: диапазон по стене и что видно снаружи. */
 export function describeFront(unit: RunModuleLike): FrontDescription {
   const from = Math.round(unit.offsetMm);
@@ -279,6 +303,8 @@ export function describeFront(unit: RunModuleLike): FrontDescription {
                 ? `${title} встроена в шкаф`
                 : `${title}, закрыт фасадом`;
     if (unit.appliance === 'hob') drawerFronts = 2;
+  } else if (unit.radius) {
+    text = radiusText(unit.radius);
   } else if (unit.vitrine) {
     text = vitrineText(unit.vitrine);
   } else if (variant && variantText(variant, unit)) {
@@ -341,7 +367,12 @@ function materialText(unit: RunModuleLike): string {
     );
   }
 
-  if (front.construct === 'radius') {
+  /*
+   * ГНУТЫЙ — ТОЛЬКО ПРИ ФОРМЕ МОДУЛЯ (OVAL & RADIUS). Пометка «радиусный» у
+   * фасада без формы — прямая деталь в раскрое и в сцене: назвать её гнутой
+   * значило бы нарисовать клиенту не ту мебель.
+   */
+  if (unit.radius?.cover === 'door' || (front.construct === 'radius' && unit.radius)) {
     return `материал: ${base}, РАДИУСНЫЙ — фасад гнутый по дуге, поверхность ${finish}${color}`;
   }
 

@@ -28,6 +28,7 @@ import { hasFacade } from '@/lib/millwork/applianceFront';
 import { beamDropMm } from '@/lib/millwork/ceiling';
 import { OPENING_TITLE } from '@/lib/millwork/opening';
 import { vitrineOf } from '@/lib/millwork/vitrine';
+import { frontArcCenter } from '@/lib/millwork/radius';
 import FrontSwatchDefs, { swatchId } from './FrontSwatchDefs';
 import { zoneHeightMm, zoneProfile } from '@/lib/millwork/zones';
 import {
@@ -269,6 +270,71 @@ const APPLIANCE_MARK: Record<string, string> = {
   fridge: 'Х',
   microwave: 'МК',
 };
+
+/**
+ * ДУГА МОДУЛЯ НА ВИДЕ СПЕРЕДИ (OVAL & RADIUS).
+ *
+ * Криволинейная часть — вертикальные линии через равный угол дуги: у края
+ * силуэта они густеют, как у цилиндра на строительном чертеже. Где дуга —
+ * из `Module.radius` (торец: крайние R мм ширины; фасад дугой — вся ширина,
+ * центр — `frontArcCenter`, тот же, что у деталей). Подпись — точный радиус.
+ */
+function RadiusMark({
+  unit,
+  x,
+  width,
+  yTop,
+  height,
+  k,
+}: {
+  unit: Module;
+  x: number;
+  width: number;
+  yTop: number;
+  height: number;
+  k: number;
+}) {
+  const spec = unit.radius;
+  if (!spec) return null;
+  const W = unit.widthMm;
+  const R = spec.radiusMm;
+  const px = width / Math.max(W, 1);
+  const LINES = 7;
+  const xs: number[] = [];
+  if (spec.place === 'front') {
+    const c = frontArcCenter(W, R, spec.direction !== 'concave');
+    const a0 = Math.acos(Math.max(-1, Math.min(1, (0 - c[0]) / R)));
+    const a1 = Math.acos(Math.max(-1, Math.min(1, (W - c[0]) / R)));
+    for (let i = 1; i < LINES * 2; i += 1) xs.push(c[0] + R * Math.cos(a0 + ((a1 - a0) * i) / (LINES * 2)));
+  } else {
+    for (let i = 1; i < LINES; i += 1) {
+      const t = (Math.PI / 2) * (i / LINES);
+      /* Справа: от начала дуги (W − R) к краю W; слева — зеркально. */
+      xs.push(spec.place === 'right' ? W - R + R * Math.sin(t) : R - R * Math.sin(t));
+    }
+  }
+  const labelX = spec.place === 'front' ? W / 2 : spec.place === 'right' ? W - R / 2 : R / 2;
+  return (
+    <g data-radius-mark={`${spec.place}:${R}`} data-radius-lines={xs.length} pointerEvents="none">
+      {xs.map((mm, i) => (
+        <line
+          key={i}
+          x1={x + mm * px}
+          y1={yTop}
+          x2={x + mm * px}
+          y2={yTop + height}
+          stroke="var(--blueprint)"
+          strokeWidth={0.35 * k}
+          opacity={0.7}
+        />
+      ))}
+      <text className="mw-num" x={x + labelX * px} y={yTop + 9} textAnchor="middle" fontSize={7} fill="var(--blueprint)">
+        R{R}
+        {spec.place === 'front' && spec.direction === 'concave' ? ' вогн.' : ''}
+      </text>
+    </g>
+  );
+}
 
 /**
  * НАПРАВЛЕНИЕ ОТКРЫВАНИЯ — ДИАГОНАЛЯМИ, КАК В ОТРАСЛИ.
@@ -1670,6 +1736,14 @@ export default function ElevationDrawing({
         />
 
         {/*
+          * ДУГА НА ФАСАДЕ (OVAL & RADIUS): на виде спереди криволинейная часть
+          * — вертикальной «цилиндрической» штриховкой, густеющей к краю дуги, и
+          * радиусом числом. Лист печатают чёрно-белым: дуга читается линиями,
+          * а не заливкой.
+          */}
+        {unit.radius && <RadiusMark unit={unit} x={x} width={w} yTop={yTop} height={h} k={k} />}
+
+        {/*
           * НОМЕР ПОЗИЦИИ МОДУЛЯ. Тот же номер стоит в разрезе и в
           * детализировке — по нему цех сверяет деталь с чертежом.
           * На макете решения и в оверлее над сценой его нет: там это
@@ -1731,7 +1805,8 @@ export default function ElevationDrawing({
             yTop={yTop}
             height={h}
             onFlip={
-              onFillChange && unit.fill.hinge !== 'none'
+              /* У скруглённого торца петли — у боковины стыка: сторону задаёт дуга (`bentLeavesOf`). */
+              onFillChange && unit.fill.hinge !== 'none' && (!unit.radius || unit.radius.place === 'front')
                 ? () => onFillChange(unit.id, flipHinge(unit.fill as ModuleFill))
                 : undefined
             }

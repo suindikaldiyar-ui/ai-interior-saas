@@ -21,12 +21,15 @@ import { buildEstimate, type RateTable } from './estimate';
 import { segmentCount, tryBuildComposition, type CompositionAttempt } from './composition';
 import { choiceFromSolution, editedRunCorner, runWithCorner } from './corner';
 import { runWithObstacles } from './obstacles';
+import { runWithWallEnds, wallEndsOf } from './room';
 import { runInContext } from './runContext';
 import { compositionOf, compositionWalls, mergeEstimates, wallLabel, type SelectedWall } from './walls';
 import { kitchenChain } from './roomWalk';
 import type { PanelWall } from './panels';
 import { onWall, uniqueModuleIds } from './layout';
 import { productionFor } from './shop';
+import { withIslandFingerprint } from './fingerprint';
+import { ISLAND_LABEL, ISLAND_WALL_ID, islandTopKey } from './island';
 import { millingCatalog, type MillingItem } from './milling';
 import { carcassCatalog, type CarcassItem } from './carcassMaterial';
 import { materialCatalog } from './materialCatalog';
@@ -302,6 +305,8 @@ export function objectInput(args: {
       measuredWalls: base.measuredWalls ?? [],
       measuredComms: base.measuredComms ?? base.comms,
       runWallId: base.runWallId ?? 'a',
+      /* Без живого замера углы читаются поворотом направо — так же их рисует комната. */
+      wallEnds: wallEndsOf({ walls: base.measuredWalls ?? [] }),
       roomDepthM: base.roomDepthM ?? 3.2,
       milling: args.milling,
       carcass: args.carcass,
@@ -465,20 +470,25 @@ export function wallSegments(
   layout: Composition | null,
   wallARun: Run,
   editedWalls: WallEdits,
+  /** Стены комнаты у концов стен замера (`WorkspaceInput.wallEnds`): соседним рядам — на показе, как стене А. */
+  wallEnds?: WorkspaceInput['wallEnds'],
 ): Run[] {
   if (!layout) return [wallARun];
 
   return layout.segments.map((segment, i) => {
     if (i === 0) return wallARun;
     const saved = wallEditOf(editedWalls, segment.wallId, i);
-    return runWithObstacles(
-      /*
-       * Сохранённый ряд с дублем ключа чинится на показе (P0, `uniqueModuleIds`).
-       * У правленого ряда панели по ходу — те, с которыми его правили
-       * (`editedRunCorner`, STAGE A); у ряда шаблона — композиции.
-       */
-      runWithCorner(uniqueModuleIds(wallRun(segment, i)), saved ? editedRunCorner(saved, segment.run.corner) : segment.run.corner),
-      segment.run.obstacles,
+    return runWithWallEnds(
+      runWithObstacles(
+        /*
+         * Сохранённый ряд с дублем ключа чинится на показе (P0, `uniqueModuleIds`).
+         * У правленого ряда панели по ходу — те, с которыми его правили
+         * (`editedRunCorner`, STAGE A); у ряда шаблона — композиции.
+         */
+        runWithCorner(uniqueModuleIds(wallRun(segment, i)), saved ? editedRunCorner(saved, segment.run.corner) : segment.run.corner),
+        segment.run.obstacles,
+      ),
+      wallEnds?.[segment.wallId],
     );
   });
 
@@ -523,6 +533,25 @@ export function wallSegments(
 }
 
 /**
+ * ОСТРОВ НА ПОКАЗЕ (OVAL & RADIUS, этап A) — сохранённый ряд острова в
+ * окружении объекта: школа цеха и потолок кладутся на каждом показе
+ * (`runInContext`), как у правленых рядов стен (ловушка 616). Острова нет —
+ * `null`; стена у него не нужна, место — его же поле (`Run.island`).
+ */
+export function islandOnShow(
+  saved: Run | null | undefined,
+  live: { production?: ProductionSettings; ceilingHeightMm: number },
+): Run | null {
+  if (!saved?.island) return null;
+  return runInContext(uniqueModuleIds(saved), live).run;
+}
+
+/** Стена раскроя острова — та же запись, что у стен: ряд и подпись. */
+export function islandPanelWall(island: Run | null): PanelWall[] {
+  return island ? [{ wallId: ISLAND_WALL_ID, label: ISLAND_LABEL, run: island }] : [];
+}
+
+/**
  * СМЕТА ВСЕГО ОБЪЕКТА, А НЕ ОДНОЙ СТЕНЫ.
  *
  * Складываются сметы рядов — по ключу статьи (`mergeEstimates`), разовые
@@ -539,31 +568,42 @@ export function objectEstimateOf(args: {
   variantKey: VariantKey;
   input: Pick<WorkspaceInput, 'rates' | 'production' | 'milling' | 'carcass' | 'materials' | 'frozen' | 'hardware'>;
   disabled: Record<VariantKey, string[]>;
+  /**
+   * ОСТРОВ (OVAL & RADIUS, этап A) — ещё один ряд объекта: его смета
+   * складывается со сметами стен тем же `mergeEstimates`, отпечаток объекта
+   * получает остров (`withIslandFingerprint`). Пусто — смета и отпечаток
+   * прежние до тенге и символа.
+   */
+  island?: Run | null;
 }): Estimate {
   const { layout, segments, wallAEstimate, variantKey, input, disabled } = args;
-  if (!layout) return wallAEstimate;
+  const rowEstimate = (run: Run) =>
+    buildEstimate(
+      run,
+      variantKey,
+      input.rates,
+      disabled[variantKey],
+      undefined,
+      input.production,
+      input.hardware,
+      input.milling,
+      input.carcass,
+      input.materials,
+      { frozen: input.frozen },
+    );
+  const walls = layout
+    ? {
+        ...mergeEstimates(segments.map((run, i) => (i === 0 ? wallAEstimate : rowEstimate(run)))),
+        fingerprint: compositionOf(layout, segments).fingerprint,
+      }
+    : wallAEstimate;
+  const island = args.island ?? null;
+  if (!island) return walls;
 
-  const merged = mergeEstimates(
-    segments.map((run, i) =>
-      i === 0
-        ? wallAEstimate
-        : buildEstimate(
-            run,
-            variantKey,
-            input.rates,
-            disabled[variantKey],
-            undefined,
-            input.production,
-            input.hardware,
-            input.milling,
-            input.carcass,
-            input.materials,
-            { frozen: input.frozen },
-          ),
-    ),
-  );
-
-  return { ...merged, fingerprint: compositionOf(layout, segments).fingerprint };
+  return {
+    ...mergeEstimates([walls, rowEstimate(island)]),
+    fingerprint: withIslandFingerprint(walls.fingerprint, { run: island, topKey: islandTopKey(island) }),
+  };
 }
 
 export type ProjectOffer =
@@ -574,7 +614,9 @@ export type ProjectOffer =
       run: Run;
       segments: Run[];
       layout: Composition | null;
-      /** Смета ОБЪЕКТА: все стены, снятые галочки, снимок цен. */
+      /** Остров объекта на показе (`islandOnShow`); нет — `null`. */
+      island: Run | null;
+      /** Смета ОБЪЕКТА: все стены, остров, снятые галочки, снимок цен. */
       estimate: Estimate;
       disabled: Record<VariantKey, string[]>;
       resolution: SurveyResolution | null;
@@ -694,7 +736,8 @@ export function offerOf(args: {
   const key = state.selectedVariant ?? MAIN_VARIANT;
   const variant = variants.find((v) => v.key === key) ?? variants[0];
 
-  const segments = wallSegments(layout, variant.run, savedWallRuns(state.wallRuns));
+  const segments = wallSegments(layout, variant.run, savedWallRuns(state.wallRuns), input.wallEnds);
+  const island = islandOnShow(state.island, { production: input.production, ceilingHeightMm: input.ceilingHeightMm });
   const estimate = objectEstimateOf({
     layout,
     segments,
@@ -702,6 +745,7 @@ export function offerOf(args: {
     variantKey: variant.key,
     input,
     disabled,
+    island,
   });
 
   return {
@@ -710,6 +754,7 @@ export function offerOf(args: {
     run: variant.run,
     segments,
     layout,
+    island,
     estimate,
     disabled,
     resolution,
