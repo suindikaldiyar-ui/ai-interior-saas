@@ -270,7 +270,8 @@ const fixture = () => {
 };
 
 async function openStudio(page, projectId) {
-  await page.goto(`${BASE}/project/${projectId}/room`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+  /* Рентген — только в отладке (STAGE B): P0.2 и P1 его включают, поэтому Studio — с `?debug=1`. */
+  await page.goto(`${BASE}/project/${projectId}/room?debug=1`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
   await page.waitForSelector('[data-studio-root]', { timeout: 60_000 });
   await sleep(1500);
 }

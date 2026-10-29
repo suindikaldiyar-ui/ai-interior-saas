@@ -43,6 +43,7 @@ import {
 } from './radius';
 import { radiusDimsOf } from './radiusDims';
 import { ISLAND_BACK_PANEL_NAME, islandBackOf } from './island';
+import { WALL_PANEL_TITLE, wallPanelPartAreaM2, wallPanelPartCurvedMm, wallPanelPartCut, wallPanelParts } from './tvZone';
 
 /**
  * ДЕТАЛИРОВКА — карта деталей для цеха.
@@ -1229,7 +1230,66 @@ export function buildPanels({ run, production = DEFAULT_PRODUCTION, milling, car
     });
   }
 
+  /*
+   * ДЕКОРАТИВНЫЕ ПАНЕЛИ СТЕНЫ (STAGE B) — после мебели и своими номерами
+   * («П1.1» — первая строка первой панели). Детали — `wallPanelParts`, та же
+   * функция ставит их в сцену и на чертёж. Одинаковые детали панели (рейки,
+   * равные части) — одной строкой с количеством. Лист — по лицу панели
+   * (`frontStock`), кромки нет у эмали и плёнки (`hasEdgeBanding`), углы по
+   * дуге — заготовка и контур на ЧПУ, как у радиусных деталей.
+   */
+  [...(run.wallPanels ?? [])]
+    .sort((a, b) => a.fromMm - b.fromMm || a.bottomMm - b.bottomMm)
+    .forEach((wallPanel, index) => {
+      const rows = new Map<string, Panel>();
+      for (const part of wallPanelParts(wallPanel)) {
+        const banded = hasEdgeBanding(part.front);
+        const cut = wallPanelPartCut(part, banded);
+        const curvedMm = wallPanelPartCurvedMm(part);
+        const shape =
+          curvedMm > 0
+            ? { kind: 'contour' as const, curvedMm: Math.round(curvedMm * 10) / 10, edgeMm: cut.edgeMm, areaM2: Math.round(wallPanelPartAreaM2(part) * 10000) / 10000 }
+            : undefined;
+        const material = wallPanelMaterialName(part.front, part.w1 - part.w0);
+        const key = [part.name, material, frontKey(part.front), cut.lengthMm, cut.widthMm, cut.edges.long, cut.edges.short, shape ? `${shape.curvedMm}/${shape.edgeMm}` : ''].join('|');
+        const row = rows.get(key);
+        if (row) {
+          row.qty += 1;
+          row.partIds = [...(row.partIds ?? []), part.key];
+          continue;
+        }
+        rows.set(key, {
+          moduleId: `${run.id}:panel:${wallPanel.id}`,
+          moduleLabel: `${WALL_PANEL_TITLE[wallPanel.kind]} ${wallPanel.widthMm} × ${wallPanel.heightMm}`,
+          number: '',
+          name: part.name,
+          material,
+          stock: frontStock(part.front),
+          thicknessMm: part.w1 - part.w0,
+          lengthMm: cut.lengthMm,
+          widthMm: cut.widthMm,
+          qty: 1,
+          edges: cut.edges,
+          edgeType: edgeType(production),
+          grain: 'along',
+          partIds: [part.key],
+          decor: wallPanel.kind,
+          ...(shape ? { shape } : {}),
+        });
+      }
+      Array.from(rows.values()).forEach((row, k) => {
+        extra.push({ ...row, number: `П${index + 1}.${k + 1}` });
+      });
+    });
+
   return extra.length > 0 ? [...fromModules, ...extra] : fromModules;
+}
+
+/** Подпись материала детали панели стены: «Панель стены Эмаль 16» — не «Фасад»: у панели своя статья сметы. */
+export const WALL_PANEL_MATERIAL = 'Панель стены';
+
+export function wallPanelMaterialName(spec: Parameters<typeof frontMaterialName>[0], thicknessMm: number): string {
+  return frontMaterialName(spec, thicknessMm).replace(/^Фасад/, WALL_PANEL_MATERIAL);
 }
 
 /* ─────────────────────────  Раскрой объекта: все стены композиции  ───────────────────────── */
@@ -1339,12 +1399,15 @@ export function panelTotals(panels: Panel[]): PanelTotals {
   let count = 0;
 
   let bentM2 = 0;
+  let decorM2 = 0;
   for (const panel of panels) {
     const areaM2 = (panel.lengthMm * panel.widthMm * panel.qty) / 1_000_000;
     count += panel.qty;
 
     /* Гнутая деталь (OVAL & RADIUS) не режется с листа на форматке — своя площадь, по развёртке. */
     if (panel.shape?.kind === 'bent') bentM2 += areaM2;
+    /* Декоративная панель стены (STAGE B) — своя строка итогов: не корпус и не фасад. */
+    else if (panel.decor) decorM2 += areaM2;
     else if (panel.material.startsWith('ХДФ')) hdfM2 += areaM2;
     else if (panel.material.startsWith('Фасад')) frontM2 += areaM2;
     else ldspM2 += areaM2;
@@ -1364,6 +1427,7 @@ export function panelTotals(panels: Panel[]): PanelTotals {
     hdfM2: round2(hdfM2),
     frontM2: round2(frontM2),
     bentM2: round2(bentM2),
+    decorM2: round2(decorM2),
     edgeThickM: round2(edgeThickM),
     edgeThinM: round2(edgeThinM),
   };
@@ -1416,6 +1480,8 @@ export type PanelMaterials = {
   cncCurveM: number;
   /** Полки — отдельной статьёй, как и в смете. */
   shelfM2: number;
+  /** Декоративные панели стены (STAGE B) — своя статья: не корпус и не фасады. */
+  decorM2: number;
   backM2: number;
   frontM2: number;
   /** Кромка, погонные метры. */
@@ -1434,12 +1500,14 @@ export function panelMaterials(panels: Panel[]): PanelMaterials {
   let bentFrontM2 = 0;
   let bentPanelM2 = 0;
   let cncCurveM = 0;
+  let decorM2 = 0;
 
   for (const panel of panels) {
     const areaM2 = (panel.lengthMm * panel.widthMm * panel.qty) / 1_000_000;
     count += panel.qty;
 
-    if (panel.shape?.kind === 'bent') {
+    if (panel.decor) decorM2 += areaM2;
+    else if (panel.shape?.kind === 'bent') {
       if (panel.name === BENT_FACADE_PANEL_NAME) bentFrontM2 += areaM2;
       else bentPanelM2 += areaM2;
     } else if (panel.material.startsWith('ХДФ')) backM2 += areaM2;
@@ -1462,6 +1530,7 @@ export function panelMaterials(panels: Panel[]): PanelMaterials {
     bentFrontM2: r2(bentFrontM2),
     bentPanelM2: r2(bentPanelM2),
     cncCurveM: r2(cncCurveM),
+    decorM2: r2(decorM2),
   };
 }
 

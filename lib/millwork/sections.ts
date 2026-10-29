@@ -181,6 +181,48 @@ export const SECTION_SPECS: Record<SectionKind, SectionSpec> = {
     heightMm: 400,
     hint: 'висит на стене, опор нет',
   },
+  /*
+   * ТВ-ТУМБА (STAGE B) — модули одной тумбы: ящики, дверцы, открытая полка.
+   * Вид модуля в спецификации — напольный; подвесная тумба — те же секции
+   * навесным модулем со своим низом (`Module.hangMm`): начинка одна, место —
+   * своё. Высота корпуса 450 мм — под ресивер и приставку на полке.
+   */
+  tv_drawers: {
+    kind: 'tv_drawers',
+    title: 'Тумба · ящики',
+    moduleKind: 'base',
+    frontType: 'drawers',
+    drawerCount: 2,
+    minWidthMm: 400,
+    maxWidthMm: 1000,
+    preferredWidthMm: 600,
+    heightMm: 450,
+    hint: 'два ящика, без ручек — от нажатия',
+  },
+  tv_doors: {
+    kind: 'tv_doors',
+    title: 'Тумба · дверцы',
+    moduleKind: 'base',
+    frontType: 'door',
+    drawerCount: 0,
+    minWidthMm: 400,
+    maxWidthMm: 1000,
+    preferredWidthMm: 800,
+    heightMm: 450,
+    hint: 'распашные дверцы, без ручек — от нажатия',
+  },
+  tv_open: {
+    kind: 'tv_open',
+    title: 'Тумба · открытая полка',
+    moduleKind: 'base',
+    frontType: 'none',
+    drawerCount: 0,
+    minWidthMm: 300,
+    maxWidthMm: 1000,
+    preferredWidthMm: 400,
+    heightMm: 450,
+    hint: 'приставка, ресивер, подсветка',
+  },
 
   /* ── Витрина: кухня и зал ── */
   glass_display: {

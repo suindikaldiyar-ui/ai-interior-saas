@@ -1,7 +1,7 @@
 import { SHAPE_TITLE, SHAPE_WALLS, segmentCount } from './composition';
 import { allModules } from './layout';
 import { APPLIANCE_SLOTS, moduleAppliances } from './modules';
-import { lowerWall, wallLabel, wallMismatchMessage, type WallMismatch } from './walls';
+import { lowerWall, mismatchPriceText, wallLabel, wallMismatchMessage, type WallMismatch } from './walls';
 import type { SurveyWarning } from './warnings';
 import type { Arrangement } from './variants';
 import type { ApplianceKind, Composition, CompositionKind, Run } from '@/types/millwork';
@@ -64,6 +64,13 @@ export type ScreenInput = {
    */
   islandBlock?: string | null;
   /**
+   * ГОТОВАЯ ТВ-ЗОНА НЕ СОБРАЛАСЬ (STAGE B): вариант A, B или C не помещается на
+   * стене — словами раскладки, с миллиметрами (`tvZoneFitRefusal`). Цены нет,
+   * «Дальше» и выпуск в цех заперты; запись идёт — выбор варианта и замер
+   * целы, лечат это они же. Пусто — не ТВ-зона или собралась.
+   */
+  tvZoneBlock?: string | null;
+  /**
    * ПРАВКИ И ЗАКРЕПЛЕНИЯ, КОТОРЫЕ СЕЙЧАС НЕ ИСПОЛЬЗУЮТСЯ. Пусто —
    * экран про них не спрашивает (прямая без правок соседних стен).
    */
@@ -100,6 +107,12 @@ export type ScreenState = {
   clarify: SurveyWarning[];
   /** Цены нет вовсе: показать сумму по мебели, которой нет, нельзя. */
   priceHidden: boolean;
+  /**
+   * Почему цены нет — словами на месте суммы; `null` — цена есть. Одна строка
+   * на Studio и мастер: место суммы спрашивало расхождение стены, даже когда
+   * цену спрятал остров или ТВ-зона, а расхождения не было вовсе.
+   */
+  priceHiddenText: string | null;
   /** Защищённая часть замка «Дальше». Шаги мастера сюда не входят. */
   nextLocked: boolean;
   /** Автосохранение не пишет: состояние, которое не собирается, открывать нечем. */
@@ -226,6 +239,9 @@ export function screenState(input: ScreenInput): ScreenState {
     ...(input.islandBlock
       ? [{ id: 'island-blocked', severity: 'blocking' as const, message: `${input.islandBlock} Пока он не встанет, цены нет и отправить клиенту нельзя.` }]
       : []),
+    ...(input.tvZoneBlock
+      ? [{ id: 'tv-zone-refused', severity: 'blocking' as const, message: `${input.tvZoneBlock} Пока она не встанет, цены нет и отправить клиенту нельзя.` }]
+      : []),
     ...(catalogError
       ? [
           {
@@ -320,7 +336,8 @@ export function screenState(input: ScreenInput): ScreenState {
         !mismatch.sweep?.length,
     );
   const islandBlock = input.islandBlock ?? null;
-  const unpriced = locked || mismatches.length > 0 || catalogError !== null || islandBlock !== null;
+  const tvZoneBlock = input.tvZoneBlock ?? null;
+  const unpriced = locked || mismatches.length > 0 || catalogError !== null || islandBlock !== null || tvZoneBlock !== null;
   /*
    * Выгрузку для раскроя запирает геометрия, а не каталог: непрочитанные
    * цены деталей не меняют, а несобравшаяся композиция и несходящаяся
@@ -340,7 +357,9 @@ export function screenState(input: ScreenInput): ScreenState {
           'верните прежнюю расстановку.'
       : islandBlock !== null
         ? `Выгрузки для раскроя и печати для цеха нет: остров не встаёт на своё место — ${islandBlock.charAt(0).toLowerCase()}${islandBlock.slice(1)}`
-        : (input.drawerDraft ?? null);
+        : tvZoneBlock !== null
+          ? 'Выгрузки для раскроя и печати для цеха нет: готовая ТВ-зона не собралась — раскраивать нечего.'
+          : (input.drawerDraft ?? null);
   const exportLocked = exportLockText !== null;
 
   return {
@@ -348,6 +367,17 @@ export function screenState(input: ScreenInput): ScreenState {
     blocking,
     clarify,
     priceHidden: unpriced,
+    priceHiddenText: !unpriced
+      ? null
+      : refusal
+        ? `Цены нет: ${SHAPE_TITLE[shape]} не сошлась.`
+        : mismatches.length > 0
+          ? mismatchPriceText(mismatches[0])
+          : catalogError !== null
+            ? 'Цены нет: каталог организации не прочитался.'
+            : islandBlock !== null
+              ? 'Цены нет: остров не встаёт на своё место.'
+              : 'Цены нет: готовая ТВ-зона не собралась на этой стене.',
     nextLocked: unpriced,
     autosaveLocked: locked,
     exportLocked,

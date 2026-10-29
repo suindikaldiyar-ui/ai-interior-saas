@@ -19,6 +19,7 @@ import { millingFor } from './milling';
 import { frontPlan, plainModuleLabel } from './modules';
 import { MODULE_VARIANTS } from './moduleVariants';
 import { RADIUS_MIN_MM, bentLeavesOf, defaultRadiusMm, radiusLabel, radiusParts, radiusRefusal, type RadiusPartKind } from './radius';
+import { wallPanelPartCurvedMm, wallPanelParts } from './tvZone';
 
 /** Варианты места, у которых начинка встаёт и в радиусный корпус: дверца и открытые полки. */
 const RADIUS_VARIANTS = new Set(['door', 'door_two', 'upper_door', 'upper_door_two', 'open_base', 'upper_open', 'tall_shelves']);
@@ -253,8 +254,13 @@ export function radiusMethodState(
 ): { demoOnly: boolean; reasons: string[]; modules: number } {
   const lists = radiusLists(run);
   const round = [...lists.modules, ...lists.upper, ...lists.mezz, ...lists.over].filter((unit) => unit.radius);
-  /* Плита по дуге бывает и без радиусного модуля: скруглённый угол столешницы у конца ряда — тот же рез на ЧПУ. */
-  let cnc = countertopCurveMm(run) > 0;
+  /*
+   * Плита по дуге бывает и без радиусного модуля: скруглённый угол столешницы у
+   * конца ряда — тот же рез на ЧПУ. И скруглённые углы декоративной панели
+   * стены (STAGE B) — контур на ЧПУ (`wallPanelPartCurvedMm`).
+   */
+  const panelCurve = (run.wallPanels ?? []).some((panel) => wallPanelParts(panel).some((part) => wallPanelPartCurvedMm(part) > 0));
+  let cnc = countertopCurveMm(run) > 0 || panelCurve;
   if (round.length === 0 && !cnc) return { demoOnly: false, reasons: [], modules: 0 };
   const methods = radiusMethods((production ?? run.production)?.radius);
   const bent = new Set<string>();
@@ -280,7 +286,11 @@ export function radiusMethodState(
   }
   const reasons: string[] = [];
   if (cnc && !methods.cnc.confirmed) {
-    reasons.push('контур по дуге (дно, крыша, полки, столешница) режут на ЧПУ — цех этот способ не подтвердил');
+    const what = [
+      ...(round.length > 0 || countertopCurveMm(run) > 0 ? ['дно, крыша, полки, столешница'] : []),
+      ...(panelCurve ? ['скруглённые углы панели стены'] : []),
+    ].join('; ');
+    reasons.push(`контур по дуге (${what}) режут на ЧПУ — цех этот способ не подтвердил`);
   }
   if (bent.size > 0) {
     const what = Array.from(bent).join(', ');

@@ -2724,16 +2724,32 @@ try {
       fronts ? `расхождение ${fronts.edgeDrift} м, точек ${fronts.edgePoints}` : '',
     );
 
-    /* 2. Переключатель режима меняет разметку сцены. */
-    check('переключатель «Фасады / Каркас» есть', (await lk.locator('[data-scene-mode]').count()) === 1);
+    /*
+     * 2. Переключатель режима меняет разметку сцены.
+     *
+     * Рентген (STAGE B) — только в отладке: у человека кнопки нет, и это
+     * проверяется на этой же странице. Сам переключатель меряется прежними
+     * проверками на странице с `?debug=1` — тем же путём к сцене.
+     */
+    check('без отладки переключателя «Фасады / Каркас» (рентгена) нет', (await lk.locator('[data-scene-mode]').count()) === 0);
+    const dbg = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await dbg.goto(`${BASE}/demo?debug=1`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+    await whenReady(dbg);
+    await toStep(dbg, 'Раскладка');
+    await sleep(2200);
+    await dbg.locator('[data-schematic-tab="scene"]').click();
+    await sleep(3200);
+    const dbgLook = () => dbg.evaluate(() => (window.__mwCadLook ? window.__mwCadLook() : null));
+    const dbgFronts = await dbgLook();
+    check('переключатель «Фасады / Каркас» есть', (await dbg.locator('[data-scene-mode]').count()) === 1);
     check(
       'и по умолчанию показаны фасады',
-      (await lk.locator('[data-scene-mode]').getAttribute('data-scene-mode')) === 'fronts',
+      (await dbg.locator('[data-scene-mode]').getAttribute('data-scene-mode')) === 'fronts',
     );
 
-    await lk.locator('[data-scene-mode]').click();
+    await dbg.locator('[data-scene-mode]').click();
     await sleep(2000);
-    const frame = await look();
+    const frame = await dbgLook();
 
     check(
       '«Каркас» делает корпус просвечивающим',
@@ -2742,18 +2758,19 @@ try {
     );
     check(
       'и показывает рёбра внутренних деталей',
-      Boolean(frame) && Boolean(fronts) && frame.edgePoints > fronts.edgePoints,
-      `точек рёбер ${fronts?.edgePoints} → ${frame?.edgePoints}`,
+      Boolean(frame) && Boolean(dbgFronts) && frame.edgePoints > dbgFronts.edgePoints,
+      `точек рёбер ${dbgFronts?.edgePoints} → ${frame?.edgePoints}`,
     );
 
-    await lk.locator('[data-scene-mode]').click();
+    await dbg.locator('[data-scene-mode]').click();
     await sleep(1600);
-    const back = await look();
+    const back = await dbgLook();
     check(
       'возврат в «Фасады» снова закрывает мебель',
       back?.transparent === 0,
       back ? `прозрачных ${back.transparent}` : '',
     );
+    await dbg.close();
 
     /* 3. 3D занимает весь экран, панель возвращается кнопкой. */
     const width = () =>

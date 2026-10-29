@@ -8,6 +8,7 @@ import { ISLAND_LABEL, islandBackOf, islandDepthMm, islandFrame, islandPoint } f
 import { moduleOutline, samplePath, type PlanPath } from '@/lib/millwork/radius';
 import { isUpperRow } from '@/lib/millwork/modules';
 import { ROOM_WALL_THICKNESS_MM } from '@/lib/millwork/room';
+import { tvBoxMm, wallPanelDepthMm } from '@/lib/millwork/tvZone';
 import {
   contourGapMm,
   interiorSide,
@@ -583,6 +584,61 @@ export default function RoomPlan({
             </polygon>
           );
         });
+      })}
+
+      {/*
+        * ── ТВ-зона (STAGE B): панели стены и телевизор — те же коробки, что у
+        * сцены (`wallPanelDepthMm`, `tvBoxMm`): панель от стены на свою толщину,
+        * телевизор — за панелью и кронштейном. Своей арифметики здесь нет.
+        */}
+      {furniture.map((item) => {
+        const wall = placed.find((p) => p.wall.id === item.wallId && p.lengthMm > 0);
+        const tv = item.run.tv;
+        const panels = item.run.wallPanels ?? [];
+        if (!wall || (!tv && panels.length === 0)) return null;
+        const f = frame(wall, side);
+        const quad = (from: number, to: number, z0: number, z1: number) => {
+          const a = pointFromLeft(wall, item.startMm + from, leftEnd);
+          const b = pointFromLeft(wall, item.startMm + to, leftEnd);
+          return [add(a, mul(f.inward, z0)), add(b, mul(f.inward, z0)), add(b, mul(f.inward, z1)), add(a, mul(f.inward, z1))]
+            .map((p) => `${p.x},${p.y}`)
+            .join(' ');
+        };
+        const box = tv ? tvBoxMm(item.run, tv) : null;
+        const label = box ? add(pointFromLeft(wall, item.startMm + (box.x0 + box.x1) / 2, leftEnd), mul(f.inward, box.z1 + px(14))) : null;
+        return (
+          <g key={`tv-zone-${item.wallId}`} data-plan-tv-zone={item.wallId} pointerEvents="none">
+            {panels.map((panel) => (
+              <polygon
+                key={panel.id}
+                data-plan-panel={panel.id}
+                data-from-mm={panel.fromMm}
+                data-width-mm={panel.widthMm}
+                data-front-mm={wallPanelDepthMm(panel)}
+                points={quad(panel.fromMm, panel.fromMm + panel.widthMm, 0, wallPanelDepthMm(panel))}
+                fill="var(--cad-module)"
+                stroke="var(--cad-module-line)"
+                strokeWidth={px(1)}
+              />
+            ))}
+            {tv && box && label && (
+              <>
+                <polygon
+                  data-plan-tv={tv.diagonalIn}
+                  data-from-mm={box.x0}
+                  data-to-mm={box.x1}
+                  data-back-mm={box.z0}
+                  data-front-mm={box.z1}
+                  points={quad(box.x0, box.x1, box.z0, box.z1)}
+                  fill="var(--cad-module-line)"
+                />
+                <text x={label.x} y={label.y} fontSize={smallFont} textAnchor="middle" dominantBaseline="central" fill="var(--cad-dim-text)">
+                  ТВ {tv.diagonalIn}″
+                </text>
+              </>
+            )}
+          </g>
+        );
       })}
 
       {/* ── Остров: его модули, панели тыла и столешница — от ряда стены А ── */}

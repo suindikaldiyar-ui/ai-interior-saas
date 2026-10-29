@@ -106,6 +106,12 @@ export type InteriorState = {
    */
   displayLit: boolean;
   /**
+   * ЭКРАН ТЕЛЕВИЗОРА В СЦЕНЕ (STAGE B): выключен, включён (заставка) или
+   * демонстрационное изображение. Это вид, а не изделие: в смету, отпечаток и
+   * раскрой не идёт и с объектом не пишется.
+   */
+  tvScreen: 'off' | 'on' | 'demo';
+  /**
    * Ракурс САПР-вида: «Спереди», «Слева», «Справа», «Сверху», «Общий вид».
    *
    * Живёт в сторе, а не в компоненте схемы: рендер по чертежу на шаге
@@ -197,6 +203,7 @@ export type InteriorState = {
   setEconomyMode: (value: boolean) => void;
   setSelectedBay: (value: { moduleId: string; bayId: string; zoneId?: string; drawerId?: string } | null) => void;
   setDisplayLit: (value: boolean) => void;
+  setTvScreen: (value: 'off' | 'on' | 'demo') => void;
   setCadAngle: (value: SceneView) => void;
   setCompareWhiteId: (value: string | null) => void;
   setSelectedLeaf: (value: { moduleId: string; leaf: string } | null) => void;
@@ -359,6 +366,7 @@ export const useInteriorStore = create<InteriorState>((set, get) => ({
   economyMode: false,
   selectedBay: null,
   displayLit: true,
+  tvScreen: 'off',
   cadAngle: 'iso',
   compareWhiteId: null,
   selectedLeaf: null,
@@ -711,6 +719,7 @@ export const useInteriorStore = create<InteriorState>((set, get) => ({
   },
   setSelectedBay: (value) => set({ selectedBay: value }),
   setDisplayLit: (value) => set({ displayLit: value }),
+  setTvScreen: (value) => set({ tvScreen: value }),
   setCadAngle: (value) => set({ cadAngle: value }),
   setCompareWhiteId: (value) => set({ compareWhiteId: value }),
   setSelectedLeaf: (value) => set({ selectedLeaf: value }),

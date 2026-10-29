@@ -42,6 +42,7 @@ import { glassRefusal, glassShelvesRefusal } from './glass';
 import { vitrineEdit } from './vitrinePlace';
 import { radiusAfterEdit, radiusEdit, radiusRowOf } from './radiusPlace';
 import { islandTopRefusal } from './island';
+import { normalizedPanel, normalizedTv, tvRefusal, tvZoneRefusal, wallPanelRefusal } from './tvZone';
 import { vitrineFrameRefusal } from './vitrine';
 import { frontConflict, frontOf, leafTitle } from './frontMaterial';
 import { reliefParamRefusal } from './facadeRelief';
@@ -1882,6 +1883,107 @@ export function applyOps({
           corners[op.end] = op.radiusMm;
         }
         run = { ...run, counterCorners: Object.keys(corners).length > 0 ? corners : undefined };
+        break;
+      }
+
+      case 'set_tv': {
+        /*
+         * ТЕЛЕВИЗОР НА СТЕНЕ (STAGE B) — покупное изделие ряда зала. Встанет ли —
+         * одна `tvRefusal` ДО записи: в ряду, ниже потолка, не в мебели, не
+         * наполовину на панели. Отказ словами, ряд прежний.
+         */
+        const refusal = tvZoneRefusal(zone);
+        if (refusal) {
+          warnings.push(refusal);
+          break;
+        }
+        if (op.tv === null) {
+          const { tv: _removed, ...rest } = run;
+          void _removed;
+          run = rest;
+          break;
+        }
+        const tv = normalizedTv(op.tv);
+        const words = tv ? tvRefusal({ ...run, modules }, tv) : 'Телевизор: габариты и место — целыми миллиметрами.';
+        if (words) {
+          warnings.push(words);
+          break;
+        }
+        run = { ...run, tv: tv! };
+        break;
+      }
+
+      case 'set_wall_panel': {
+        /*
+         * ДЕКОРАТИВНАЯ ПАНЕЛЬ СТЕНЫ (STAGE B): новая или правка по ключу. Встанет
+         * ли — `wallPanelRefusal` (размеры, рисунок, мебель, другие панели) и
+         * телевизор на ней — `tvRefusal`: наполовину на панели он не висит.
+         */
+        const refusal = tvZoneRefusal(zone);
+        if (refusal) {
+          warnings.push(refusal);
+          break;
+        }
+        const panel = normalizedPanel(op.panel);
+        if (!panel) {
+          warnings.push('Панель: ключ, вид и размеры — целыми миллиметрами.');
+          break;
+        }
+        const panels = [...(run.wallPanels ?? []).filter((p) => p.id !== panel.id), panel].sort((a, b) => a.fromMm - b.fromMm);
+        const candidate = { ...run, modules, wallPanels: panels };
+        const words = wallPanelRefusal(candidate, panel) ?? (run.tv ? tvRefusal(candidate, run.tv) : null);
+        if (words) {
+          warnings.push(words);
+          break;
+        }
+        run = { ...run, wallPanels: panels };
+        break;
+      }
+
+      case 'remove_wall_panel': {
+        const panels = run.wallPanels ?? [];
+        if (!panels.some((p) => p.id === op.id)) {
+          warnings.push(`Панели ${op.id} на этой стене нет.`);
+          break;
+        }
+        const rest = panels.filter((p) => p.id !== op.id);
+        if (rest.length > 0) run = { ...run, wallPanels: rest };
+        else {
+          const { wallPanels: _removed, ...plain } = run;
+          void _removed;
+          run = plain;
+        }
+        break;
+      }
+
+      case 'set_hang': {
+        /*
+         * НИЗ ПОДВЕСНОЙ ТУМБЫ ЗАЛА (STAGE B). Только навесной модуль зала; верх —
+         * не выше зоны. Встречу с телевизором и панелями ловит проверка после
+         * правки (как у любой правки мебели).
+         */
+        const at = modules.findIndex((m) => m.id === op.moduleId);
+        const target = at >= 0 ? modules[at] : null;
+        if (!target) {
+          warnings.push(`Модуль ${op.moduleId} не найден.`);
+          break;
+        }
+        if (zone !== 'living' || target.kind !== 'upper') {
+          warnings.push(`«${target.label}»: низ от пола задают только подвесным модулям зала — этот стоит ${target.kind === 'upper' ? 'на отметке навески ряда' : 'на полу'}.`);
+          break;
+        }
+        const hang = op.hangMm;
+        if (!Number.isInteger(hang) || hang < 0) {
+          warnings.push(`«${target.label}»: низ ${hang} мм — целым числом от пола, от 0 мм.`);
+          break;
+        }
+        const height = moduleCarcassHeightMm(target, { ...run, modules });
+        const top = zoneHeightMm(zone, run.ceilingHeightMm, run.production);
+        if (hang + height > top) {
+          warnings.push(`«${target.label}»: низ ${hang} мм — верх ушёл бы на ${hang + height} мм, а зона кончается на ${top} мм.`);
+          break;
+        }
+        modules[at] = { ...target, hangMm: hang };
         break;
       }
 
@@ -4354,6 +4456,24 @@ export function applyOps({
         ],
       };
     }
+  }
+
+  /*
+   * ТЕЛЕВИЗОР И ПАНЕЛИ ПОСЛЕ ПРАВКИ (STAGE B): правка мебели, после которой
+   * модуль зашёл в телевизор или в панель (шире, выше, тумба поднята, модуль
+   * вставлен под телевизор), отклоняется целиком — словами, ряд прежний.
+   * Давнее не повторяется.
+   */
+  if (owned.tv) {
+    const now = tvRefusal(owned, owned.tv);
+    const was = run.tv ? tvRefusal(run, run.tv) : null;
+    if (now && !was) return { ...run, warnings: [`Правка не применена: ${now.charAt(0).toLowerCase()}${now.slice(1)}`] };
+  }
+  for (const panel of owned.wallPanels ?? []) {
+    const now = wallPanelRefusal(owned, panel);
+    const before = run.wallPanels?.find((p) => p.id === panel.id);
+    const was = before ? wallPanelRefusal(run, before) : null;
+    if (now && !was) return { ...run, warnings: [`Правка не применена: ${now.charAt(0).toLowerCase()}${now.slice(1)}`] };
   }
 
   // Отпечаток пересчитывается вместе с составом — иначе смета и чертёж

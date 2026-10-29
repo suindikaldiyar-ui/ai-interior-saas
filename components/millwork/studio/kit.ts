@@ -7,6 +7,7 @@ import type OverheadEditor from './OverheadEditor';
 import type VitrineEditor from './VitrineEditor';
 import type RadiusEditor from './RadiusEditor';
 import type IslandEditor from './IslandEditor';
+import type TvZoneEditor from './TvZoneEditor';
 import type RoomPlan from './RoomPlan';
 import type StudioObjects from './StudioObjects';
 import type StudioShell from './StudioShell';
@@ -38,6 +39,7 @@ export type StudioKit = {
   VitrineEditor: typeof VitrineEditor;
   RadiusEditor: typeof RadiusEditor;
   IslandEditor: typeof IslandEditor;
+  TvZoneEditor: typeof TvZoneEditor;
 };
 
 export const StudioKitContext = createContext<StudioKit | null>(null);

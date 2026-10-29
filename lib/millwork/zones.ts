@@ -165,7 +165,7 @@ export const ZONE_PROFILES: Record<ZoneKind, ZoneProfile> = {
     facadeTitle: 'Фасады модулей',
     yours: 'Ваш зал',
     locative: 'в зале',
-    sections: ['tv_niche', 'hanging_module', 'open', 'drawers', 'shelves'],
+    sections: ['tv_niche', 'hanging_module', 'open', 'drawers', 'shelves', 'tv_drawers', 'tv_doors', 'tv_open', 'glass_display'],
     defaultSections: ['hanging_module', 'tv_niche', 'hanging_module', 'drawers'],
     fillSection: 'hanging_module',
     doorSystem: 'hinged',

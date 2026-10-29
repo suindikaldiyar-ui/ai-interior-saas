@@ -10,6 +10,7 @@
  */
 
 import { buildRun, fillGap, rowSpansOfRun, runWidthSum } from '../lib/millwork/layout';
+import { shelvesAreGlass } from '../lib/millwork/glass';
 import { applyOps } from '../lib/millwork/ops';
 import {
   COUNTERTOP_CUTOUT_KEY,
@@ -117,6 +118,7 @@ import { p0CornerChecks } from './verify-p0-corners';
 import { p1VitrineChecks } from './verify-p1-vitrines';
 import { measurementV2Checks } from './verify-measurement-v2';
 import { counterCornerChecks, radiusChecks, radiusPickerChecks, wallEndChecks } from './verify-radius';
+import { tvZoneChecks } from './verify-tvzone';
 import { runFingerprint } from '../lib/millwork/fingerprint';
 import { surfaceFinish, surfaceLook } from '../lib/millwork/surfaces';
 import { GROUP_ORDER, estimateGroups, groupsTotal } from '../lib/millwork/estimateGroups';
@@ -5746,8 +5748,13 @@ console.log('\nСмета берёт количества из раскроя');
    * Числа растут вместе с шаблонами: добавили шаблон — подняли и здесь,
    * осознанно и одной строкой.
    */
-  const EXPECTED_CONFIGS = 99;
-  const EXPECTED_COMPARED = 486;
+  /*
+   * STAGE B: +3 шаблона ТВ-зоны зала (A, B, C) × 3 длины = +9 конфигураций и
+   * 9 × 5 пар «строка сметы — площадь раскроя» = +45 сверок. Числа подняты —
+   * тихо уменьшиться они по-прежнему не могут.
+   */
+  const EXPECTED_CONFIGS = 108;
+  const EXPECTED_COMPARED = 531;
 
   check(
     `конфигураций не меньше объявленных ${EXPECTED_CONFIGS}`,
@@ -5992,6 +5999,14 @@ console.log('\nПравка наполнения меняет смету');
      */
     let mismatched = 0;
     let configs = 0;
+    /*
+     * СТЕКЛЯННЫЕ ПОЛКИ (V3D-02) — не деталь раскроя ЛДСП: их место — строка
+     * сметы `glass_shelf` штуками (`shelvesAreGlass`). С этапа B стеклянные
+     * полки есть и у шаблона (витрины большой ТВ-зоны): их полки сверяются со
+     * строкой стекла, а ЛДСП — с раскроем. Ни одна полка не выпадает из сверки.
+     */
+    let glassMismatched = 0;
+    let glassShelves = 0;
 
     for (const t of RUN_TEMPLATES) {
       for (const len of [t.minLengthMm, Math.round((t.minLengthMm + t.maxLengthMm) / 2)]) {
@@ -6007,17 +6022,23 @@ console.log('\nПравка наполнения меняет смету');
           .filter((panel) => panel.name === 'Полка')
           .reduce((sum, panel) => sum + panel.qty, 0);
         const inFill = allModules(sample).reduce(
-          (sum, u) => sum + (u.fill?.shelves.length ?? 0),
+          (sum, u) => sum + (shelvesAreGlass(u) ? 0 : (u.fill?.shelves.length ?? 0)),
           0,
         );
         if (cut !== inFill) mismatched += 1;
+        const glassInFill = allModules(sample).reduce((sum, u) => sum + (shelvesAreGlass(u) ? (u.fill?.shelves.length ?? 0) : 0), 0);
+        const glassInEstimate = buildEstimate(sample, 'optimal', DEMO_RATES)
+          .lines.filter((line) => line.key === 'glass_shelf')
+          .reduce((sum, line) => sum + line.quantity, 0);
+        glassShelves += glassInFill;
+        if (glassInFill !== glassInEstimate) glassMismatched += 1;
       }
     }
 
     check(
       'полок в смете столько же, сколько в раскрое — на всех шаблонах',
-      mismatched === 0 && configs > 20,
-      `конфигураций ${configs}, расхождений ${mismatched}`,
+      mismatched === 0 && glassMismatched === 0 && configs > 20,
+      `конфигураций ${configs}, расхождений ${mismatched} · стеклянных полок ${glassShelves}, расхождений со строкой стекла ${glassMismatched}`,
     );
 
     /*
@@ -28790,6 +28811,9 @@ radiusChecks(check);
 radiusPickerChecks(check);
 counterCornerChecks(check);
 wallEndChecks(check);
+
+/* ═══════════  STAGE B: ТВ-зона — телевизор, панели стены, варианты A, B, C  ═══════════ */
+tvZoneChecks(check);
 
 Promise.allSettled(asyncChecks).then((results) => {
   for (const result of results) {

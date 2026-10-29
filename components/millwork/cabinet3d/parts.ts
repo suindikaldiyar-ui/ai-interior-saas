@@ -2,6 +2,7 @@
 
 import { CARCASS_ROUGHNESS, INNER_ROUGHNESS, applyFrontLook, frontColor } from './cadLook';
 import { WOOD_TILE_MM, veneerPatternOf, woodPatternUrl } from '@/lib/millwork/woodPattern';
+import { STONE_TILE_MM, stonePatternOf, stonePatternUrl } from '@/lib/millwork/stonePattern';
 import { realSizeShiftOf, setRealSizeMap, shiftedBox, unpatch } from './realSizeMap';
 import { MATERIAL_FINISHES } from '@/lib/millwork/materialFinishes';
 import type { MaterialPhoto } from '@/lib/millwork/materialCollection';
@@ -519,11 +520,14 @@ export function useFrontMaterials(
        * цвет фасада (`veneerPatternOf`), в настоящем размере, как у плиты-дерева.
        */
       const veneer = spec.base === 'veneer_solid' ? veneerPatternOf(frontColor(spec, fallbackColor)) : null;
+      /* Панель «под камень» без позиции плёнки (STAGE B) — демонстрационный рисунок камня в её цвет. */
+      const stone = spec.pattern === 'stone' ? stonePatternOf(frontColor(spec, fallbackColor)) : null;
       const photo: MaterialPhoto | undefined =
         (spec.itemId ? photos.get(spec.itemId) : undefined) ??
         (veneer
           ? { url: woodPatternUrl(veneer), sizeM: [WOOD_TILE_MM[0] / 1000, WOOD_TILE_MM[1] / 1000], procedural: veneer, mirror: false }
-          : undefined);
+          : undefined) ??
+        (stone ? { url: stonePatternUrl(stone), sizeM: [STONE_TILE_MM[0] / 1000, STONE_TILE_MM[1] / 1000], mirror: false } : undefined);
       /* Карта другой позиции снимается до загрузки: не приедет новая — фасад её цвета, а не чужой рисунок. */
       if (material.userData.photoUrl !== (photo?.url ?? null)) dropPhoto(material);
       if (!photo) continue;

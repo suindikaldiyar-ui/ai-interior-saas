@@ -183,6 +183,8 @@ function extrasPart(unit: Module): string | undefined {
      * мебель, другой раскрой и другие деньги. Пусто не пишется (ловушка 246).
      */
     radiusKey(unit),
+    /* Низ подвесной ТВ-тумбы (STAGE B): та же мебель на другой высоте — другой чертёж. Пусто не пишется. */
+    unit.hangMm !== undefined ? `hang${unit.hangMm}` : '',
   ].filter(Boolean);
 
   return parts.length > 0 ? parts.join(',') : undefined;
@@ -235,7 +237,8 @@ export function configurationFingerprint(modules: Module[]): string {
  * остаётся прежним до символа.
  */
 export function runFingerprint(
-  run: Pick<Run, 'modules' | 'upperSegments'> & Partial<Pick<Run, 'beams' | 'slidingSystemItemId' | 'counterCorners'>>,
+  run: Pick<Run, 'modules' | 'upperSegments'> &
+    Partial<Pick<Run, 'beams' | 'slidingSystemItemId' | 'counterCorners' | 'tv' | 'wallPanels'>>,
 ): string {
   const modules = configurationFingerprint([
     ...run.modules,
@@ -255,14 +258,39 @@ export function runFingerprint(
   const corners = run.counterCorners && (run.counterCorners.start || run.counterCorners.end)
     ? `cc=${run.counterCorners.start ?? 0}/${run.counterCorners.end ?? 0}`
     : '';
-  if (!beams && !sliding && !corners) return modules;
+  /*
+   * ТВ-зона (STAGE B): телевизор (его место и габарит — в кадре и на чертеже)
+   * и декоративные панели (изделия цеха). Пусто не пишется (ловушка 246).
+   */
+  const tvZone = tvZonePart(run);
+  if (!beams && !sliding && !corners && !tvZone) return modules;
 
   let hash = 0x811c9dc5;
-  for (const ch of `${modules}|${beams ?? ''}${sliding ? `|${sliding}` : ''}${corners ? `|${corners}` : ''}`) {
+  for (const ch of `${modules}|${beams ?? ''}${sliding ? `|${sliding}` : ''}${corners ? `|${corners}` : ''}${tvZone ? `|${tvZone}` : ''}`) {
     hash ^= ch.charCodeAt(0);
     hash = Math.imul(hash, 0x01000193) >>> 0;
   }
   return hash.toString(16).padStart(8, '0');
+}
+
+/** Телевизор и панели ряда строкой — устойчиво: панели по ключу, поля в одном порядке. */
+function tvZonePart(run: Partial<Pick<Run, 'tv' | 'wallPanels'>>): string {
+  const tv = run.tv
+    ? `tv=${run.tv.diagonalIn}:${run.tv.widthMm}x${run.tv.heightMm}x${run.tv.depthMm}@${run.tv.centerMm}/${run.tv.bottomMm}${run.tv.mountMm !== undefined ? `m${run.tv.mountMm}` : ''}:${run.tv.supply}`
+    : '';
+  const panels = (run.wallPanels ?? [])
+    .slice()
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map(
+      (p) =>
+        `${p.id}:${p.kind}:${p.fromMm}/${p.bottomMm}:${p.widthMm}x${p.heightMm}x${p.thicknessMm}:${frontKey(p.front)}` +
+        (p.slats ? `:s${p.slats.direction[0]}${p.slats.widthMm}/${p.slats.gapMm}` : '') +
+        (p.insert ? `:i${p.insert.marginMm}=${frontKey(p.insert.front)}` : '') +
+        (p.cornerRadiusMm ? `:r${p.cornerRadiusMm}` : '') +
+        (p.pieces && p.pieces > 1 ? `:n${p.pieces}` : ''),
+    )
+    .join(';');
+  return [tv, panels ? `wp=${panels}` : ''].filter(Boolean).join('|');
 }
 
 /**

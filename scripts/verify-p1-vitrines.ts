@@ -67,7 +67,7 @@ import { fittingSlotsOf, fittingVerdict } from '../lib/millwork/fittings';
 import { hardwareCatalog } from '../lib/millwork/hardware';
 import { HARDWARE_FACTS, hardwareCatalogRow } from '../lib/millwork/hardwareCatalog';
 import { RUN_TEMPLATES, requirementsFromTemplate } from '../lib/millwork/templates';
-import { baselineEntry, baselineKeys, baselineRun, type BaselineEntry } from './p1-baseline';
+import { baselineEntry, baselineRun, type BaselineEntry } from './p1-baseline';
 import { buildObject, NEW_CORNER, type Spec } from './corner-quality-fixture';
 import { facadeOps as mdfFacadeOps } from '../lib/millwork/mdfFacade';
 import { millingCatalog } from '../lib/millwork/milling';
@@ -929,7 +929,15 @@ export function p1VitrineChecks(check: Check): void {
   /* ── P1.20 старые проекты без витрин — те же до символа ── */
   {
     const baseline = JSON.parse(readFileSync(new URL('./p1-baseline.json', import.meta.url), 'utf8')) as Record<string, BaselineEntry>;
-    const keys = baselineKeys();
+    /*
+     * Конфигурации ЭТАЛОНА, а не сегодняшних шаблонов: эталон снят до этапа B,
+     * и шаблоны ТВ-зоны (их сверяет приёмка ТВ-зоны) в нём не значатся. Шаблон
+     * эталона пропал — `baselineRun` падает нулевым селектором.
+     */
+    const keys = Object.keys(baseline).map((key) => {
+      const at = key.lastIndexOf('@');
+      return { key, templateId: key.slice(0, at), lengthMm: Number(key.slice(at + 1)) };
+    });
     const VITRINE_LINES = new Set(['handle_standard', 'led_display', 'glass_front', 'hinge_alu_frame']);
     let same = 0;
     let legacy = 0;

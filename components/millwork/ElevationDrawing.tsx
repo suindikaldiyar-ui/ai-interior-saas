@@ -26,6 +26,7 @@ import { leafSwatches, moduleSwatch } from '@/lib/millwork/frontSwatch';
 import { frontOf } from '@/lib/millwork/frontMaterial';
 import { hasFacade } from '@/lib/millwork/applianceFront';
 import { beamDropMm } from '@/lib/millwork/ceiling';
+import { WALL_PANEL_TITLE, panelOutlineMm, tvRect, tvScreenMm, wallPanelParts } from '@/lib/millwork/tvZone';
 import { OPENING_TITLE } from '@/lib/millwork/opening';
 import { vitrineOf } from '@/lib/millwork/vitrine';
 import { frontArcCenter } from '@/lib/millwork/radius';
@@ -2236,6 +2237,108 @@ export default function ElevationDrawing({
               </g>
             );
           })}
+        </g>
+      )}
+
+      {/*
+        * ТВ-ЗОНА (STAGE B): декоративные панели стены и телевизор — на стене,
+        * позади мебели. Детали панели — `wallPanelParts` (рейки — каждая, как их
+        * режет цех), скругление углов — контуром `panelOutlineMm`; телевизор —
+        * габарит `tvRect` и экран по диагонали внутри. Корпус телевизора до
+        * паспорта модели условный — пунктиром.
+        */}
+      {((run.wallPanels?.length ?? 0) > 0 || run.tv) && (
+        <g data-tv-zone-drawing pointerEvents="none" opacity={overlay ? 0.55 : 1}>
+          {(run.wallPanels ?? []).map((panel) => (
+            <g
+              key={panel.id}
+              data-wall-panel={panel.id}
+              data-kind={panel.kind}
+              data-from-mm={panel.fromMm}
+              data-width-mm={panel.widthMm}
+              data-bottom-mm={panel.bottomMm}
+              data-top-mm={panel.bottomMm + panel.heightMm}
+            >
+              {wallPanelParts(panel).map((part) => {
+                if (part.corners) {
+                  const cx = padLeft + ((part.u0 + part.u1) / 2) * scale;
+                  const cy = yOf((part.v0 + part.v1) / 2);
+                  const d =
+                    panelOutlineMm(part.u1 - part.u0, part.v1 - part.v0, part.corners)
+                      .map(([px, py], i) => `${i ? 'L' : 'M'}${(cx + px * scale).toFixed(2)},${(cy - py * scale).toFixed(2)}`)
+                      .join(' ') + ' Z';
+                  return <path key={part.key} data-panel-part={part.kind} d={d} fill="none" stroke="var(--blueprint)" strokeWidth={0.5 * k} />;
+                }
+                return (
+                  <rect
+                    key={part.key}
+                    data-panel-part={part.kind}
+                    x={padLeft + part.u0 * scale}
+                    y={yOf(part.v1)}
+                    width={(part.u1 - part.u0) * scale}
+                    height={yOf(part.v0) - yOf(part.v1)}
+                    fill="none"
+                    stroke="var(--blueprint)"
+                    strokeWidth={(part.kind === 'slat' ? 0.35 : 0.5) * k}
+                  />
+                );
+              })}
+              {!compact && (
+                <text
+                  x={padLeft + panel.fromMm * scale + 4}
+                  y={yOf(panel.bottomMm + panel.heightMm) + 10}
+                  fontSize={7}
+                  fill="var(--graphite-mw)"
+                >
+                  {WALL_PANEL_TITLE[panel.kind]} {panel.widthMm}×{panel.heightMm}
+                </text>
+              )}
+            </g>
+          ))}
+          {run.tv &&
+            (() => {
+              const r = tvRect(run.tv);
+              const screen = tvScreenMm(run.tv.diagonalIn);
+              const cx = padLeft + run.tv.centerMm * scale;
+              const cy = yOf((r.y0 + r.y1) / 2);
+              return (
+                <g
+                  data-tv
+                  data-from-mm={r.x0}
+                  data-width-mm={r.x1 - r.x0}
+                  data-bottom-mm={r.y0}
+                  data-top-mm={r.y1}
+                  data-diagonal={run.tv.diagonalIn}
+                >
+                  <rect
+                    x={padLeft + r.x0 * scale}
+                    y={yOf(r.y1)}
+                    width={(r.x1 - r.x0) * scale}
+                    height={yOf(r.y0) - yOf(r.y1)}
+                    fill="none"
+                    stroke="var(--ink)"
+                    strokeWidth={0.7 * k}
+                    strokeDasharray={run.tv.measured ? undefined : '4 3'}
+                  />
+                  <rect
+                    data-tv-screen
+                    x={cx - (screen.widthMm / 2) * scale}
+                    y={cy - (screen.heightMm / 2) * scale}
+                    width={screen.widthMm * scale}
+                    height={screen.heightMm * scale}
+                    fill="var(--blueprint)"
+                    fillOpacity={0.08}
+                    stroke="var(--ink)"
+                    strokeWidth={0.4 * k}
+                  />
+                  {!compact && (
+                    <text x={cx} y={cy + 3} textAnchor="middle" fontSize={8} fill="var(--ink)">
+                      ТВ {run.tv.diagonalIn}″
+                    </text>
+                  )}
+                </g>
+              );
+            })()}
         </g>
       )}
 

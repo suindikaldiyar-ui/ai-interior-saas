@@ -66,6 +66,8 @@ import type { GlassKind, Module, ProfileFinish, Run } from '@/types/millwork';
 import { GLASS_SHELF_MM, glassOf, shelvesAreGlass, vitrineDoorKind } from './glass';
 import { VITRINE_GLASS_SHOWN_MM, VITRINE_PROFILE_MM, vitrineBackMm, vitrineBodyGlassMm, vitrineDoorCount, vitrineGrooveMm, vitrineOf } from './vitrine';
 import type { SceneLayer } from './sceneLayers';
+import { tvBoxMm, wallPanelParts, type PanelCorners } from './tvZone';
+import type { WallPanelKind } from '@/types/millwork';
 
 /**
  * КОРПУС МОДУЛЯ ЧИСЛАМИ.
@@ -114,7 +116,7 @@ export type BoxDraw = {
    * чтобы проверка могла спросить «петель в сцене столько же, сколько в
    * смете».
    */
-  node?: 'hinge' | 'hinge-arm' | 'handle' | 'rod' | 'glass' | 'runner' | 'lift' | 'pantograph' | 'pullout' | 'basket' | 'dryer' | 'track' | 'frame' | 'glass-shelf' | 'glass-panel' | 'vitrine-frame';
+  node?: 'hinge' | 'hinge-arm' | 'handle' | 'rod' | 'glass' | 'runner' | 'lift' | 'pantograph' | 'pullout' | 'basket' | 'dryer' | 'track' | 'frame' | 'glass-shelf' | 'glass-panel' | 'vitrine-frame' | 'tv';
   /**
    * ЧЕЙ ЭТО КУСОК ВИТРИНЫ (P1): `side:left`, `side:right`, `top`, `bottom`,
    * `back`, `profile` — та же роль, что у строки `vitrineParts`. По ней сцена
@@ -156,6 +158,16 @@ export type BoxDraw = {
    * режет раскрой; `originM` — где в ряду стоит ноль модуля, метры.
    */
   shape?: { form: RadiusForm; originM: [number, number, number] };
+  /**
+   * ДЕТАЛЬ ДЕКОРАТИВНОЙ ПАНЕЛИ СТЕНЫ (STAGE B) — вид панели; та же деталь, что
+   * в раскрое (`wallPanelParts`, `partId`). Пусто — деталь мебели.
+   */
+  decor?: WallPanelKind;
+  /**
+   * СКРУГЛЁННЫЕ УГЛЫ ДЕТАЛИ ПАНЕЛИ (STAGE B): коробка — её габарит, рисует
+   * сцена контур с дугами радиуса `r` у отмеченных углов (как режет ЧПУ).
+   */
+  rounded?: PanelCorners;
 };
 
 /** Материал коробки: по нему они собираются в группы отрисовки. */
@@ -3022,6 +3034,42 @@ export function runBoxesByModule(
 
   /* Система купе ряда (HARDWARE-01): шины и полотна — по позиции ряда. */
   filler.push(...kupeBoxes(run, options));
+
+  /*
+   * ДЕКОРАТИВНЫЕ ПАНЕЛИ И ТЕЛЕВИЗОР (STAGE B) — на стене ряда: задняя плоскость
+   * ряда лежит на стене (`−глубина нижнего ряда`), панель — от стены в комнату
+   * своими деталями (`wallPanelParts` — та же функция режет их в раскрое),
+   * телевизор — за панелью и кронштейном (`tvBoxMm`). Панели — фасадный
+   * материал: в рентгене сняты, как фасады. Телевизор — прибор: коробка — его
+   * габарит (по ней кадр, рёбра и пересечения), рисует сцена модель.
+   */
+  const wallZ = -rowStandardDepthMm(run.zone, 'base', run.production) / MM;
+  if (!options.cutaway) {
+    for (const wallPanel of run.wallPanels ?? []) {
+      for (const part of wallPanelParts(wallPanel)) {
+        filler.push({
+          position: [(part.u0 + part.u1) / 2 / MM, (part.v0 + part.v1) / 2 / MM, wallZ + (part.w0 + part.w1) / 2 / MM],
+          scale: [(part.u1 - part.u0) / MM, (part.v1 - part.v0) / MM, (part.w1 - part.w0) / MM],
+          material: 'front',
+          panel: part.name,
+          frontKey: frontKey(part.front),
+          partId: part.key,
+          decor: wallPanel.kind,
+          ...(part.kind === 'board' && part.front.relief ? { relief: part.front.relief } : {}),
+          ...(part.corners ? { rounded: part.corners } : {}),
+        });
+      }
+    }
+  }
+  if (run.tv) {
+    const tv = tvBoxMm(run, run.tv);
+    filler.push({
+      position: [(tv.x0 + tv.x1) / 2 / MM, (tv.y0 + tv.y1) / 2 / MM, wallZ + (tv.z0 + tv.z1) / 2 / MM],
+      scale: [(tv.x1 - tv.x0) / MM, (tv.y1 - tv.y0) / MM, (tv.z1 - tv.z0) / MM],
+      material: 'appliance',
+      node: 'tv',
+    });
+  }
 
   /*
    * ПАНЕЛЬ ТЫЛА ОСТРОВА (OVAL & RADIUS) — коробка своего модуля за его задней

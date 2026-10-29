@@ -37,7 +37,6 @@ import {
   wallLabel,
   wallMismatches,
   wallMismatchMessage,
-  mismatchPriceText,
   obstacleMismatches,
 } from '@/lib/millwork/walls';
 import { contextChange } from '@/lib/millwork/runContext';
@@ -70,6 +69,7 @@ import {
 } from '@/lib/millwork/objectEstimate';
 import { mirroredState, rechainedState, type MirrorContext } from '@/lib/millwork/mirror';
 import { ISLAND_LABEL, islandPlacement } from '@/lib/millwork/island';
+import { tvZoneFitRefusal } from '@/lib/millwork/tvZone';
 import { islandOpsRefusal, islandRequirements } from '@/lib/millwork/islandEdit';
 import { islandIssues, islandWallClearance } from '@/lib/millwork/islandCheck';
 import { flatRadiusFronts, staleRadius } from '@/lib/millwork/radiusPlace';
@@ -605,6 +605,8 @@ export default function Workspace(props: WorkspaceProps) {
   const studioKit = useContext(StudioKitContext);
   /* Блок острова — из кита Studio: в мастере и демо его нет. */
   const IslandKit = studioKit?.IslandEditor ?? null;
+  /* ТВ-зона (STAGE B): телевизор, панели стены и низ подвесной тумбы — только Studio (кит) и зал. */
+  const TvZoneKit = studioKit?.TvZoneEditor ?? null;
   const [studioContextOpen, setStudioContextOpen] = useState(true);
   /** Что в рабочей области Studio: план комнаты, фасад, 3D, деталировка или карта раскроя. */
   const [studioView, setStudioView] = useState<StudioView>(studioHasFurniture ? 'facade' : 'plan');
@@ -3807,6 +3809,8 @@ export default function Workspace(props: WorkspaceProps) {
         drawerDraft,
         /* Остров вошёл в мебель, стену или колонну — цены нет, выпуск заперт (OVAL & RADIUS). */
         islandBlock: islandProblems.find((problem) => problem.severity === 'blocking')?.message ?? null,
+        /* Готовая ТВ-зона не помещается на стене — словами раскладки, цены нет (STAGE B). */
+        tvZoneBlock: tvZoneFitRefusal(requirements, active.run),
         /*
          * Правки и закрепления, которые сейчас не участвуют: те же
          * `editedRuns`, `editedWalls` и `applianceWalls`, что держит экран.
@@ -3834,6 +3838,7 @@ export default function Workspace(props: WorkspaceProps) {
       catalogError,
       drawerDraft,
       islandProblems,
+      active.run,
       input.runWallId,
       editedRuns,
       active.key,
@@ -5231,6 +5236,15 @@ export default function Workspace(props: WorkspaceProps) {
             }}
           />
         )}
+
+        {/*
+          * ТВ-ЗОНА (STAGE B) — телевизор, декоративные панели стены и низ
+          * подвесной тумбы ряда зала: правки движка (`set_tv`,
+          * `set_wall_panel`, `remove_wall_panel`, `set_hang`) тем же `runOps`.
+          */}
+        {TvZoneKit && zone === 'living' && !onIsland && (
+          <TvZoneKit run={activeRun} production={input.production} onOps={(ops, onRefusal) => runOps(ops, onRefusal)} />
+        )}
       </div>
 
       {/*
@@ -6282,11 +6296,7 @@ export default function Workspace(props: WorkspaceProps) {
         price={
           screen.priceHidden ? (
             <p data-price-hidden className="truncate text-[13px] text-alert">
-              {!refusal && mismatches.length === 0 && catalogError
-                ? 'Цены нет: каталог организации не прочитался.'
-                : refusal
-                  ? `Цены нет: ${SHAPE_TITLE[shape]} не сошлась.`
-                  : mismatchPriceText(mismatches[0])}
+              {screen.priceHiddenText}
             </p>
           ) : (
             <EstimateSheet
@@ -7213,9 +7223,7 @@ export default function Workspace(props: WorkspaceProps) {
               data-composition-refused
               className="text-[15px] leading-snug text-alert"
             >
-              {refusal
-                ? `Цены нет: ${SHAPE_TITLE[shape]} не сошлась.`
-                : mismatchPriceText(mismatches[0])}
+              {screen.priceHiddenText}
             </p>
           ) : (
           <EstimateSheet

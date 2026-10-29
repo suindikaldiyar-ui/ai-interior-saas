@@ -201,6 +201,15 @@ export function mirroredRun(run: Run): Run {
     if (run.counterCorners.start) corners.end = run.counterCorners.start;
     next.counterCorners = corners;
   }
+  /*
+   * Телевизор и декоративные панели (STAGE B) — от другого угла: центр
+   * телевизора `c → L − c`, панель — участок ряда. Рисунок реек и стыки
+   * частей симметричны, скругления — у обоих крайних углов.
+   */
+  if (run.tv) next.tv = { ...run.tv, centerMm: L - run.tv.centerMm };
+  if (run.wallPanels) {
+    next.wallPanels = run.wallPanels.map((panel) => ({ ...panel, fromMm: mirroredSpan(L, panel.fromMm, panel.widthMm) }));
+  }
   /* Стена комнаты у конца ряда — у другого конца (показ кладёт её заново из отражённого замера). */
   if (run.wallEnds) {
     next.wallEnds = { ...(run.wallEnds.end ? { start: true as const } : {}), ...(run.wallEnds.start ? { end: true as const } : {}) };

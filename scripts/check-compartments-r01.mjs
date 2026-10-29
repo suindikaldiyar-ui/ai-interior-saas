@@ -418,7 +418,8 @@ async function scenario(browser) {
 
     /* ── K1. Шкаф 1000 × 2400 × 600 ── */
     console.log('\n── K1. Studio спальни: шкаф «Полки» 1000 мм');
-    await page.goto(`${BASE}/project/${project.id}/room`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+    /* Рентген — только в отладке (STAGE B): K5 включает его, поэтому Studio — с `?debug=1`. */
+    await page.goto(`${BASE}/project/${project.id}/room?debug=1`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
     await page.waitForSelector('[data-studio-root]', { timeout: 60_000 }).catch(() => undefined);
     await saved(page);
     must('K1 инструмент «Мебель»', await tool(page, 'furniture'), 'НУЛЕВОЙ СЕЛЕКТОР: инструмента «Мебель» нет');

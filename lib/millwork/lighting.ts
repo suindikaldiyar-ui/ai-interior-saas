@@ -43,6 +43,7 @@ import {
   type LightingAmbient,
   type LightingPreview,
   type ModuleLedFixture,
+  type PanelLedFixture,
   type RoomLighting,
   type TrackFixture,
   type UnderCabinetFixture,
@@ -53,6 +54,8 @@ import { rowPlacement, type Room, type RoomWall } from './room';
 import { vitrineLedStrips, vitrineOnCounter, vitrineOf } from './vitrine';
 import type { VitrineLed } from '@/types/millwork';
 import { runPlaces } from './cabinetBoxes';
+import { standsOnFloor } from './modules';
+import { rowStandardDepthMm } from './fill';
 
 
 const MM = 1000;
@@ -149,7 +152,7 @@ export type LightGroup = 'tracks' | 'apron' | 'furniture';
 
 export function groupOfKey(key: string): LightGroup {
   if (key === UNDER_CABINET_KEY) return 'apron';
-  if (key.startsWith('display:') || key.startsWith('module-led:')) return 'furniture';
+  if (key.startsWith('display:') || key.startsWith('module-led:') || key.startsWith('panel-led:')) return 'furniture';
   return 'tracks';
 }
 
@@ -187,6 +190,7 @@ export function sourceKeys(lighting: RoomLighting, displayModuleIds: string[]): 
   for (const fixture of lighting.fixtures) {
     if (fixture.kind === 'track') keys.push(trackKey(fixture));
     else if (fixture.kind === 'under_cabinet') keys.push(UNDER_CABINET_KEY);
+    else if (fixture.kind === 'panel_led') keys.push(fixture.id);
     else keys.push(moduleLedKey(fixture.moduleId));
   }
   for (const id of displayModuleIds) keys.push(displayKey(id));
@@ -561,8 +565,17 @@ export function moduleTakesLed(unit: Module): boolean {
   return !hasDisplayLed(unit);
 }
 
+/**
+ * ЛЕНТА ПОД ДНОМ — ТОЛЬКО У ПОДВЕСНОГО МОДУЛЯ (STAGE B): под тумбой у пола свет
+ * ложится на пол; у модуля на цоколе под дном цоколь, у навесного шкафа кухни —
+ * своя лента фартука (`under_cabinet`).
+ */
+export function moduleTakesUnderLed(unit: Module): boolean {
+  return moduleTakesLed(unit) && !standsOnFloor(unit) && unit.hangMm !== undefined;
+}
+
 /** Полоса ленты в осях модуля, мм: x от левого края, y от низа корпуса, z от фасада назад (минус). */
-export type LedStrip = { key: string; center: Vec3; lengthMm: number; axis: 'x' | 'y'; facing: 'down' | 'left' | 'right' };
+export type LedStrip = { key: string; center: Vec3; lengthMm: number; axis: 'x' | 'y'; facing: 'down' | 'up' | 'left' | 'right' };
 
 /**
  * ЛЕНТЫ В МОДУЛЕ. Контур — две вертикали у боковин и горизонтали под крышей и
@@ -575,13 +588,15 @@ export function moduleLedStrips(
   unit: Pick<Module, 'widthMm' | 'fill'>,
   heightMm: number,
   carcassMm: number,
-  mode: 'contour' | 'shelves' | 'top',
+  mode: 'contour' | 'shelves' | 'top' | 'under',
 ): LedStrip[] {
   const w = unit.widthMm;
   const t = carcassMm;
   const z = -UNDER_CABINET_INSET_MM;
   const innerH = Math.max(0, heightMm - 2 * t);
   const innerW = Math.max(0, w - 2 * t);
+  /* Под дном подвесного модуля (STAGE B): лента у фасада под дном, светит на пол. */
+  if (mode === 'under') return [{ key: 'under', center: [w / 2, -4, z], lengthMm: innerW, axis: 'x', facing: 'down' }];
   const top: LedStrip = { key: 'top', center: [w / 2, heightMm - t - 6, z], lengthMm: innerW, axis: 'x', facing: 'down' };
   if (mode === 'top') return [top];
   if (mode === 'contour') {
@@ -701,13 +716,13 @@ export type PlannedStrip = {
   key: string;
   /** Ключ включения (`sourceOn`). */
   source: string;
-  kind: 'under' | 'display' | 'module';
+  kind: 'under' | 'display' | 'module' | 'panel';
   rowIndex: number;
   moduleId: string | null;
   centerMm: Vec3;
   lengthMm: number;
   axis: 'x' | 'y';
-  facing: 'down' | 'left' | 'right';
+  facing: 'down' | 'up' | 'left' | 'right';
   brightness: number;
   kelvin: LightKelvin;
   /** Получила ли полоса свой источник света (в пределах бюджета). */
@@ -745,9 +760,55 @@ export function lightingPlan(
   const displays: LightingPlan['displays'] = [];
   const under = lighting.fixtures.find((f): f is UnderCabinetFixture => f.kind === 'under_cabinet');
   const moduleLeds = lighting.fixtures.filter((f): f is ModuleLedFixture => f.kind === 'module_led');
+  const panelLeds = lighting.fixtures.filter((f): f is PanelLedFixture => f.kind === 'panel_led');
   const seenModules = new Set<string>();
+  const seenPanels = new Set<string>();
 
   rows.forEach((row, rowIndex) => {
+    /*
+     * ЛЕНТА ЗА ПАНЕЛЬЮ СТЕНЫ (STAGE B): полосы у краёв панели на стене, за её
+     * плитой — свет по стене наружу от панели (ореол). Панель — та же
+     * `Run.wallPanels`, что режет цех; стена ряда — задняя плоскость ряда.
+     */
+    const wallZ = -rowStandardDepthMm(row.run.zone, 'base', row.run.production);
+    for (const panel of row.run.wallPanels ?? []) {
+      const led = panelLeds.find((f) => f.panelId === panel.id && (f.wallId ?? null) === (row.run.wallId ?? null));
+      if (!led) continue;
+      seenPanels.add(led.id);
+      const x0 = panel.fromMm;
+      const x1 = panel.fromMm + panel.widthMm;
+      const y0 = panel.bottomMm;
+      const y1 = panel.bottomMm + panel.heightMm;
+      const inset = 20;
+      const z = wallZ + 4;
+      const sides: LedStrip[] = [
+        { key: 'top', center: [(x0 + x1) / 2, y1 - inset, z], lengthMm: panel.widthMm - 2 * inset, axis: 'x', facing: 'up' },
+      ];
+      if (led.mode === 'contour') {
+        sides.push(
+          { key: 'left', center: [x0 + inset, (y0 + y1) / 2, z], lengthMm: panel.heightMm - 2 * inset, axis: 'y', facing: 'left' },
+          { key: 'right', center: [x1 - inset, (y0 + y1) / 2, z], lengthMm: panel.heightMm - 2 * inset, axis: 'y', facing: 'right' },
+          { key: 'bottom', center: [(x0 + x1) / 2, y0 + inset, z], lengthMm: panel.widthMm - 2 * inset, axis: 'x', facing: 'down' },
+        );
+      }
+      for (const strip of sides) {
+        if (strip.lengthMm < LED_MIN_LENGTH_MM) continue;
+        strips.push({
+          key: `panel:${row.run.id}:${panel.id}:${strip.key}`,
+          source: led.id,
+          kind: 'panel',
+          rowIndex,
+          moduleId: null,
+          centerMm: strip.center,
+          lengthMm: strip.lengthMm,
+          axis: strip.axis,
+          facing: strip.facing,
+          brightness: led.brightness,
+          kelvin: led.kelvin,
+          light: false,
+        });
+      }
+    }
     if (under) {
       underCabinetSpans(row.run).forEach((span, i) => {
         const line = underCabinetLine(span, under);
@@ -795,7 +856,7 @@ export function lightingPlan(
         }
       }
       const led = moduleLeds.find((f) => f.moduleId === unit.id);
-      if (led && moduleTakesLed(unit)) {
+      if (led && moduleTakesLed(unit) && (led.mode !== 'under' || moduleTakesUnderLed(unit))) {
         for (const strip of moduleLedStrips(unit, heightMm, carcassMm, led.mode)) {
           strips.push({
             key: `module:${unit.id}:${strip.key}`,
@@ -823,25 +884,30 @@ export function lightingPlan(
     budget -= 1;
     return true;
   });
-  /* Порядок раздачи: фартук, витрины (кроме нижней полосы контура), ленты модулей. */
-  const order: PlannedStrip['kind'][] = ['under', 'display', 'module'];
+  /* Порядок раздачи: фартук, витрины (кроме нижней полосы контура), ленты за панелями, ленты модулей. */
+  const order: PlannedStrip['kind'][] = ['under', 'display', 'panel', 'module'];
   for (const kind of order) {
     for (const strip of strips) {
       if (strip.kind !== kind || budget <= 0) continue;
-      if (strip.key.endsWith(':bottom')) continue;
+      if (strip.kind !== 'panel' && strip.key.endsWith(':bottom')) continue;
       strip.light = true;
       budget -= 1;
     }
   }
-  const orphans = moduleLeds
-    .filter((f) => !seenModules.has(f.moduleId))
-    .map((f) => `Подсветка модуля ${f.moduleId}: модуля в этой сцене нет — лента не показывается.`);
+  const orphans = [
+    ...moduleLeds
+      .filter((f) => !seenModules.has(f.moduleId))
+      .map((f) => `Подсветка модуля ${f.moduleId}: модуля в этой сцене нет — лента не показывается.`),
+    ...panelLeds
+      .filter((f) => !seenPanels.has(f.id))
+      .map((f) => `Подсветка панели ${f.panelId}: панели на этой стене нет — лента не показывается.`),
+  ];
   return {
     strips,
     windows,
     windowLight,
     rectLights: RECT_LIGHT_BUDGET - budget,
-    overBudget: strips.filter((s) => !s.light && !s.key.endsWith(':bottom')).length,
+    overBudget: strips.filter((s) => !s.light && (s.kind === 'panel' || !s.key.endsWith(':bottom'))).length,
     orphans,
     displays,
   };

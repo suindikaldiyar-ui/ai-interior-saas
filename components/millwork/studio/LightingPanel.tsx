@@ -24,6 +24,8 @@ import {
   lightingPlan,
   moduleLedKey,
   moduleTakesLed,
+  moduleTakesUnderLed,
+  panelLedKey,
   newTrack,
   nextTrackId,
   sceneOf,
@@ -42,6 +44,7 @@ import {
   type LightingAmbient,
   type LightingSceneKey,
   type ModuleLedFixture,
+  type PanelLedFixture,
   type RoomLighting,
   type TrackFixture,
   type UnderCabinetFixture,
@@ -51,6 +54,7 @@ import { rowStandardDepthMm } from '@/lib/millwork/fill';
 import { workTopMm } from '@/lib/millwork/shop';
 import type { Room } from '@/lib/millwork/room';
 import { useInteriorStore } from '@/store/useInteriorStore';
+import { WALL_PANEL_TITLE } from '@/lib/millwork/tvZone';
 
 /**
  * ОСВЕЩЕНИЕ (V3D-02) — ПАНЕЛЬ STUDIO.
@@ -230,6 +234,7 @@ export default function LightingPanel({
   const tracks = current.fixtures.filter((f): f is TrackFixture => f.kind === 'track');
   const under = current.fixtures.find((f): f is UnderCabinetFixture => f.kind === 'under_cabinet') ?? null;
   const moduleLeds = current.fixtures.filter((f): f is ModuleLedFixture => f.kind === 'module_led');
+  const panelLeds = current.fixtures.filter((f): f is PanelLedFixture => f.kind === 'panel_led');
   const scene = sceneOf(current);
   const daylight = daylightOf(room, AMBIENT_RIG.day.sunElevationDeg);
   const allModules = rows.flatMap((row) => [...row.run.modules, ...row.run.upperSegments.flatMap((s) => s.modules)]);
@@ -736,6 +741,8 @@ export default function LightingPanel({
                   [
                     ['top', 'под крышей'],
                     ['shelves', 'под полками'],
+                    /* Подвесная тумба (STAGE B): лента под дном — свет на пол. */
+                    ...(moduleTakesUnderLed(selectedUnit) ? ([['under', 'под тумбой']] as const) : []),
                   ] as const
                 ).map(([mode, title]) => (
                   <button
@@ -782,6 +789,82 @@ export default function LightingPanel({
                 </div>
               );
             })}
+            {/*
+              * ЛЕНТА ЗА ДЕКОРАТИВНОЙ ПАНЕЛЬЮ СТЕНЫ (STAGE B): по контуру или сверху —
+              * свет по стене вокруг панели. Панели — стены, выбранной сейчас.
+              */}
+            {(activeRun.wallPanels ?? []).length > 0 && (
+              <div className="mt-3" data-light-panel-leds>
+                <p className="mw-label mb-1">Панели стены</p>
+                {(activeRun.wallPanels ?? []).map((panel) => {
+                  const key = panelLedKey(panel.id, activeRun.wallId);
+                  const led = panelLeds.find((f) => f.id === key);
+                  const title = `${WALL_PANEL_TITLE[panel.kind]} ${panel.widthMm} × ${panel.heightMm}`;
+                  if (!led) {
+                    return (
+                      <div key={panel.id} className="flex flex-wrap items-center gap-1" data-light-panel={panel.id}>
+                        {(
+                          [
+                            ['contour', 'по контуру'],
+                            ['top', 'сверху'],
+                          ] as const
+                        ).map(([mode, word]) => (
+                          <button
+                            key={mode}
+                            type="button"
+                            data-light-add-panel={mode}
+                            onClick={() => {
+                              commit(
+                                withPreview(
+                                  withFixture(current, {
+                                    id: key,
+                                    kind: 'panel_led',
+                                    panelId: panel.id,
+                                    ...(activeRun.wallId ? { wallId: activeRun.wallId } : {}),
+                                    mode,
+                                    brightness: 70,
+                                    kelvin: DEFAULT_KELVIN,
+                                  }),
+                                  { design: true },
+                                ),
+                              );
+                              onShow3d();
+                            }}
+                            className="mw-btn mw-btn-ghost text-[12px]"
+                          >
+                            + {title}: подсветка {word}
+                          </button>
+                        ))}
+                      </div>
+                    );
+                  }
+                  return (
+                    <div key={panel.id} className="mt-2 rounded-[var(--r-panel)] bg-surface-2 p-2" data-light-panel-led={panel.id}>
+                      <p className="text-[13px] font-medium">
+                        {title} · подсветка {led.mode === 'contour' ? 'по контуру' : 'сверху'}
+                      </p>
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        <OnOff name={key} title="LED" on={sourceOn(current, key)} onChange={(on) => commit(withOn(current, key, on))} />
+                        <button
+                          type="button"
+                          data-light-panel-mode={led.mode === 'contour' ? 'top' : 'contour'}
+                          onClick={() => commit(withFixture(current, { ...led, mode: led.mode === 'contour' ? 'top' : 'contour' }))}
+                          className="mw-btn mw-btn-ghost text-[13px]"
+                        >
+                          {led.mode === 'contour' ? 'Только сверху' : 'По контуру'}
+                        </button>
+                        <button type="button" data-light-remove={led.id} onClick={() => commit(withoutFixture(current, led.id))} className="mw-btn mw-btn-ghost text-[13px]">
+                          Снять
+                        </button>
+                      </div>
+                      <Range name="panel-brightness" label="Яркость предпросмотра" unit="%" min={5} max={100} value={led.brightness} onChange={(v) => commit(withFixture(current, { ...led, brightness: v }))} />
+                      <Kelvin name="panel" value={led.kelvin} onChange={(kelvin) => commit(withFixture(current, { ...led, kelvin }))} />
+                    </div>
+                  );
+                })}
+                <p className="mt-1 text-[12px] leading-snug text-graphiteMw">Лента за панелью — предпросмотр: позиции в каталоге нет, в смету не входит.</p>
+              </div>
+            )}
             {plan.orphans.map((words) => (
               <p key={words} className="mt-1 text-[12px] text-graphiteMw" data-light-orphan>
                 {words}

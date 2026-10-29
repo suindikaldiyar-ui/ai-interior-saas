@@ -25,6 +25,7 @@ import type { PathTraceSource } from './cabinet3d/pathTrace';
 import type { PathImage } from '@/lib/millwork/pathtrace';
 import type { SceneView } from '@/lib/cameraFraming';
 import { ECONOMY_KEY, useInteriorStore } from '@/store/useInteriorStore';
+import { useDebug } from '@/lib/debug';
 
 /*
  * СЦЕНА ГРУЗИТСЯ ПО ТРЕБОВАНИЮ И УМЕЕТ СКАЗАТЬ, ЧТО НЕ ЗАГРУЗИЛАСЬ (R01.1).
@@ -499,6 +500,8 @@ export default function RunSchematic({
    */
   const frame = useInteriorStore((state) => state.cutaway);
   const setFrame = useInteriorStore((state) => state.setCutaway);
+  /* Рентген в 3D — только в режиме отладки (STAGE B). */
+  const debug = useDebug();
   /*
    * ЭКОНОМИЧНЫЙ РЕЖИМ 3D (HARDWARE-PHOTO-PERF-01) — настройка устройства:
    * читается из хранилища браузера после монтирования, а не при отрисовке
@@ -709,6 +712,12 @@ export default function RunSchematic({
               * привезут. Кнопка не притворяется работающей — она недоступна, и
               * причина сказана.
               */}
+            {/*
+              * Рентген — ТОЛЬКО В РЕЖИМЕ ОТЛАДКИ (`?debug=1`, STAGE B): клиенту
+              * мебель показывается такой, какой её привезут; внутрь смотрят
+              * слоями («Каркас», «Наполнение»), а прозрачный корпус — для нас.
+              */}
+            {debug && (
             <button
               type="button"
               data-scene-mode={frame && !lighting?.preview.design ? 'frame' : 'fronts'}
@@ -726,6 +735,7 @@ export default function RunSchematic({
             >
               Рентген
             </button>
+            )}
             <button
               type="button"
               data-dims-toggle

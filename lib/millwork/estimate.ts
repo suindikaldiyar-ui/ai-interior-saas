@@ -6,6 +6,7 @@ import {
 import { allModules } from './layout';
 import { apronLengthMm, counterMitersOf, countertopCurveMm, countertopCuts, countertopLengthMm } from './countertop';
 import { islandTopDepthMm } from './island';
+import { WALL_PANEL_TITLE, tvCableMm } from './tvZone';
 import { cornerOfModule } from './corner';
 import { moduleCarcassHeightMm } from './fill';
 import { CORNER_HINGE_TITLE, frontDrawerSlides, liftKey, openingHardware, type ModuleHardware } from './opening';
@@ -207,8 +208,12 @@ function sectionDrafts(
        */
       case 'shelves':
       case 'open':
+      case 'tv_open':
+      case 'tv_doors':
         break;
 
+      /* Ящики ТВ-тумбы (STAGE B) — те же ящики: короб по комплекту или «Ящики в сборе». */
+      case 'tv_drawers':
       case 'drawers': {
         /*
          * КОРОБ РАССЧИТАН — ЕГО ДЕТАЛИ В РАСКРОЕ (HARDWARE-01): плита,
@@ -294,6 +299,15 @@ function sectionDrafts(
 
       default:
         break;
+    }
+
+    /*
+     * ПОДВЕСНАЯ ТВ-ТУМБА (STAGE B) висит на стене у пола (`hangMm`): опор у
+     * неё нет, крепёж — тот же подвесной комплект на модуль, что у навесного
+     * модуля зала. У «Подвесного модуля» он уже посчитан выше.
+     */
+    if (unit.hangMm !== undefined && unit.section !== 'hanging_module') {
+      drafts.push({ key: 'hanging_bracket', title: 'Подвесной крепёж (комплект на модуль)', unit: 'set', quantity: 1 });
     }
   }
 
@@ -993,6 +1007,13 @@ export function buildEstimateDrafts(
     ...carcassDrafts(run, panels, carcassItems, materialItems, rates),
     { key: 'pvc_edge', title: 'Кромка ПВХ', unit: 'mp', quantity: materials.edgeM },
     ...radiusDrafts(materials),
+    /*
+     * ДЕКОРАТИВНЫЕ ПАНЕЛИ СТЕНЫ (STAGE B) — свои строки по виду панели, площадь
+     * из раскроя (`Panel.decor`): рейки, камень и МДФ стоят по-разному, и
+     * средняя цена между ними — цена, которой нет. Ставки нет — «цена не
+     * задана», итог «неполный».
+     */
+    ...decorDrafts(run, panels),
   ];
 
   if (zone.hasCountertop && zone.moistureProof) {
@@ -1236,7 +1257,8 @@ export function buildEstimateDrafts(
       quantity: floorModules.filter((unit) => !fit.take(unit, 'leg', 4)).length * 4,
     },
     { key: 'fasteners', title: 'Крепёж и эксцентрики', unit: 'percent', quantity: materials.carcassM2 },
-    { key: 'cutting', title: 'Распил и присадка', unit: 'm2', quantity: round2(materials.carcassM2 + materials.shelfM2 + materials.frontM2) },
+    /* Панели стены (STAGE B) режут на той же пиле: их площадь — в распил. У рядов без панелей — ноль. */
+    { key: 'cutting', title: 'Распил и присадка', unit: 'm2', quantity: round2(materials.carcassM2 + materials.shelfM2 + materials.frontM2 + materials.decorM2) },
   );
 
   if (run.options.hasCornice) {
@@ -1319,6 +1341,35 @@ export function buildEstimateDrafts(
 
   if (modules.some((m) => m.appliance === 'sink600' || m.appliance === 'sink800')) {
     drafts.push({ key: 'faucet', title: 'Смеситель', unit: 'pcs', quantity: 1 });
+  }
+
+  /*
+   * ТЕЛЕВИЗОР (STAGE B) — покупное изделие, «Техника», и только когда его
+   * покупает компания: телевизор заказчика в смету не идёт. Модели и цены в
+   * коде нет — ставка каталога организации, иначе «цена не задана». Кабель-
+   * канал от телевизора к тумбе — покупная позиция той же ставки, что у ниши ТВ.
+   */
+  if (run.tv) {
+    if (run.tv.supply === 'company') {
+      drafts.push(
+        {
+          key: 'appliance_tv',
+          title: `Телевизор ${run.tv.diagonalIn}″`,
+          unit: 'pcs',
+          quantity: 1,
+          unsetWithoutRate: 'цена не задана: модель телевизора выбирает компания — в каталоге организации ставки нет',
+        },
+        {
+          key: 'appliance_tv_mount',
+          title: 'Кронштейн телевизора',
+          unit: 'pcs',
+          quantity: 1,
+          unsetWithoutRate: 'цена не задана: кронштейн подбирают по креплению (VESA) модели — в каталоге организации ставки нет',
+        },
+      );
+    }
+    const cableM = round3(tvCableMm(run, run.tv) / MM_IN_M);
+    if (cableM > 0) drafts.push({ key: 'cable_channel', title: 'Кабель-канал от телевизора', unit: 'mp', quantity: cableM });
   }
 
   /*
@@ -1828,6 +1879,42 @@ function reliefDrafts(run: Run, panels: Panel[], catalog: Map<string, MillingIte
       quantity: round2(m2),
       priceUnset: 'рисунок для показа: чертежа фрезы и цены цеха нет — цену задаёт цех',
     }));
+}
+
+/**
+ * СТРОКИ ДЕКОРАТИВНЫХ ПАНЕЛЕЙ СТЕНЫ (STAGE B): площадь — строк раскроя этой
+ * панели (`Panel.decor`), по виду. Фрезерованная панель — ещё строка рисунка
+ * без цены (VISUAL_ONLY), как у фасада с рисунком (`reliefDrafts`).
+ */
+function decorDrafts(run: Run, panels: Panel[]): Draft[] {
+  const byKind = new Map<string, number>();
+  const relief = new Map<string, { title: string; m2: number }>();
+  for (const panel of panels) {
+    if (!panel.decor) continue;
+    const m2 = (panel.lengthMm * panel.widthMm * panel.qty) / MM2_IN_M2;
+    byKind.set(panel.decor, (byKind.get(panel.decor) ?? 0) + m2);
+    const owner = (run.wallPanels ?? []).find((p) => panel.moduleId === `${run.id}:panel:${p.id}`);
+    const kind = owner?.front.relief?.kind;
+    if (owner?.kind === 'milled' && kind && kind !== 'slab') {
+      const key = `decor_relief_${kind}`;
+      const at = relief.get(key);
+      if (at) at.m2 += m2;
+      else relief.set(key, { title: `Фрезеровка панели стены «${reliefKindDef(kind).title}» — ${RELIEF_STATUS}`, m2 });
+    }
+  }
+  const lines: Draft[] = Array.from(byKind.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([kind, m2]) => ({
+      key: `decor_panel_${kind}`,
+      title: `Панели стены: ${WALL_PANEL_TITLE[kind as keyof typeof WALL_PANEL_TITLE]}`,
+      unit: 'm2' as const,
+      quantity: round2(m2),
+      unsetWithoutRate: 'цена не задана: декоративные панели стены цех ещё не оценил — в каталоге организации ставки нет',
+    }));
+  for (const [key, { title, m2 }] of Array.from(relief.entries()).sort(([a], [b]) => a.localeCompare(b))) {
+    lines.push({ key, title, unit: 'm2', quantity: round2(m2), priceUnset: 'рисунок для показа: чертежа фрезы и цены цеха нет — цену задаёт цех' });
+  }
+  return lines;
 }
 
 export function buildEstimate(

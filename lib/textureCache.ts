@@ -33,6 +33,7 @@ function getLoader(): THREE.TextureLoader {
  * видеокарты), мип-уровни строятся сами: стороны — степени двойки.
  */
 async function proceduralTexture(url: string): Promise<THREE.Texture> {
+  if (url.startsWith('procedural:stone?')) return stoneTexture(url);
   const [{ woodPatternFromUrl, WOOD_TILE_PX }, { woodPixelsAsync }] = await Promise.all([
     import('./millwork/woodPattern'),
     import('./woodTextureClient'),
@@ -47,6 +48,35 @@ async function proceduralTexture(url: string): Promise<THREE.Texture> {
   const context = canvas.getContext('2d');
   if (!context) throw new Error('Холст 2D недоступен: рисунок дерева не нарисовать.');
   context.putImageData(new ImageData(new Uint8ClampedArray(pixels), width, height), 0, 0);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 16;
+  texture.generateMipmaps = true;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.userData.procedural = url;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+/**
+ * ДЕМОНСТРАЦИОННЫЙ РИСУНОК КАМНЯ (STAGE B) — та же текстура без файла:
+ * плитка 512 × 512 считается на месте (десятки миллисекунд, один раз на цвет —
+ * дальше кэш), повтор прямой — плитка бесшовная.
+ */
+async function stoneTexture(url: string): Promise<THREE.Texture> {
+  const { stonePatternFromUrl, stonePixels, STONE_TILE_PX } = await import('./millwork/stonePattern');
+  const pattern = stonePatternFromUrl(url);
+  if (!pattern) throw new Error(`Рисунок камня не разобран из адреса: ${url}`);
+  const [width, height] = STONE_TILE_PX;
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('Холст 2D недоступен: рисунок камня не нарисовать.');
+  context.putImageData(new ImageData(new Uint8ClampedArray(stonePixels(pattern, width, height)), width, height), 0, 0);
   const texture = new THREE.CanvasTexture(canvas);
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.RepeatWrapping;

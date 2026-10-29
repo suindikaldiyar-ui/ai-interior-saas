@@ -76,13 +76,32 @@ export type ModuleLedFixture = {
   id: string;
   kind: 'module_led';
   moduleId: string;
-  /** Под крышей у фасада — или под каждой полкой. */
-  mode: 'top' | 'shelves';
+  /**
+   * Под крышей у фасада, под каждой полкой — или под дном подвесного модуля
+   * (STAGE B, подвесная ТВ-тумба: свет на пол, «парящая» тумба).
+   */
+  mode: 'top' | 'shelves' | 'under';
   brightness: number;
   kelvin: LightKelvin;
 };
 
-export type LightFixture = TrackFixture | UnderCabinetFixture | ModuleLedFixture;
+/**
+ * ЛЕНТА ЗА ДЕКОРАТИВНОЙ ПАНЕЛЬЮ СТЕНЫ (STAGE B): свет на стену вокруг панели —
+ * по контуру или только сверху. Подсветка предпросмотра, не изделие сметы
+ * (как у всех лент: мощности и профиля в каталоге нет).
+ */
+export type PanelLedFixture = {
+  id: string;
+  kind: 'panel_led';
+  /** Панель ряда (`WallPanel.id`) и стена ряда (`Run.wallId`; пусто — стена А). */
+  panelId: string;
+  wallId?: string;
+  mode: 'contour' | 'top';
+  brightness: number;
+  kelvin: LightKelvin;
+};
+
+export type LightFixture = TrackFixture | UnderCabinetFixture | ModuleLedFixture | PanelLedFixture;
 
 /**
  * Настройка ленты ВИТРИНЫ: сама лента — изделие модуля (строка `led_display`),
@@ -126,6 +145,7 @@ export const headKey = (fixture: Pick<TrackFixture, 'id'>, index: number) => `${
 export const UNDER_CABINET_KEY = 'under-cabinet';
 export const displayKey = (moduleId: string) => `display:${moduleId}`;
 export const moduleLedKey = (moduleId: string) => `module-led:${moduleId}`;
+export const panelLedKey = (panelId: string, wallId?: string) => `panel-led:${wallId ?? '-'}:${panelId}`;
 
 /* ── разбор сохранённого: мусор не превращается ни в свет, ни в NaN ── */
 
@@ -147,7 +167,9 @@ export function normalizeLighting(raw: unknown): RoomLighting | null {
   const ids = new Set<string>();
   for (const item of Array.isArray(source.fixtures) ? source.fixtures : []) {
     if (!item || typeof item !== 'object') continue;
-    const f = item as Partial<TrackFixture> & Partial<UnderCabinetFixture> & Partial<ModuleLedFixture>;
+    const f = item as Partial<TrackFixture> & Partial<UnderCabinetFixture> & Omit<Partial<ModuleLedFixture>, 'mode'> & Omit<Partial<PanelLedFixture>, 'mode'>;
+    /* Режим у ленты модуля и у ленты за панелью — разные наборы: читается строкой. */
+    const mode = (item as { mode?: unknown }).mode;
     if (f.kind === 'track' && typeof f.id === 'string' && typeof f.wallId === 'string' && !ids.has(f.id)) {
       ids.add(f.id);
       const heads = Array.isArray(f.heads) ? f.heads : [];
@@ -186,7 +208,22 @@ export function normalizeLighting(raw: unknown): RoomLighting | null {
         id: moduleLedKey(f.moduleId),
         kind: 'module_led',
         moduleId: f.moduleId,
-        mode: f.mode === 'shelves' ? 'shelves' : 'top',
+        mode: mode === 'shelves' ? 'shelves' : mode === 'under' ? 'under' : 'top',
+        brightness: clamp(f.brightness, 5, 100, 70),
+        kelvin: kelvinOf(f.kelvin),
+      });
+    }
+    if (f.kind === 'panel_led' && typeof f.panelId === 'string') {
+      const wallId = typeof f.wallId === 'string' ? f.wallId : undefined;
+      const key = panelLedKey(f.panelId, wallId);
+      if (ids.has(key)) continue;
+      ids.add(key);
+      fixtures.push({
+        id: key,
+        kind: 'panel_led',
+        panelId: f.panelId,
+        ...(wallId ? { wallId } : {}),
+        mode: mode === 'top' ? 'top' : 'contour',
         brightness: clamp(f.brightness, 5, 100, 70),
         kelvin: kelvinOf(f.kelvin),
       });

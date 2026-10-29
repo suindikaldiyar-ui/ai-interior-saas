@@ -75,6 +75,8 @@ export const DESIGN_LIGHT = {
   under: 45,
   display: 40,
   module: 35,
+  /** Лента за панелью стены (STAGE B): свет по стене наружу от края панели. */
+  panel: 30,
   window: 2.2,
   lensGlow: 6,
   stripGlow: 3.5,
@@ -758,7 +760,15 @@ function Strip({
   }, [strip.light, strip.key, strip.kind, strip.source]);
   useEffect(() => () => light?.dispose(), [light]);
   const intensity =
-    (on ? (strip.kind === 'under' ? DESIGN_LIGHT.under : strip.kind === 'display' ? DESIGN_LIGHT.display : DESIGN_LIGHT.module) : 0) *
+    (on
+      ? strip.kind === 'under'
+        ? DESIGN_LIGHT.under
+        : strip.kind === 'display'
+          ? DESIGN_LIGHT.display
+          : strip.kind === 'panel'
+            ? DESIGN_LIGHT.panel
+            : DESIGN_LIGHT.module
+      : 0) *
     (strip.brightness / 100);
   if (light) {
     light.color.set(kelvinHex(strip.kelvin));
@@ -778,9 +788,22 @@ function Strip({
   const vertical = strip.axis === 'y';
   const profileScale: [number, number, number] = vertical ? [0.007, len, 0.016] : [len, 0.007, 0.016];
   const diffuserScale: [number, number, number] = vertical ? [0.002, len, 0.01] : [len, 0.002, 0.01];
-  const shift = strip.facing === 'down' ? [0, -0.0045, 0] : strip.facing === 'right' ? [0.0045, 0, 0] : [-0.0045, 0, 0];
+  const shift =
+    strip.facing === 'down'
+      ? [0, -0.0045, 0]
+      : strip.facing === 'up'
+        ? [0, 0.0045, 0]
+        : strip.facing === 'right'
+          ? [0.0045, 0, 0]
+          : [-0.0045, 0, 0];
   const rotation: [number, number, number] =
-    strip.facing === 'down' ? [-Math.PI / 2, 0, 0] : strip.facing === 'right' ? [0, -Math.PI / 2, 0] : [0, Math.PI / 2, 0];
+    strip.facing === 'down'
+      ? [-Math.PI / 2, 0, 0]
+      : strip.facing === 'up'
+        ? [Math.PI / 2, 0, 0]
+        : strip.facing === 'right'
+          ? [0, -Math.PI / 2, 0]
+          : [0, Math.PI / 2, 0];
   return (
     <group position={c}>
       <mesh name="led:profile" geometry={unitBox} material={selected ? materials.accent : materials.profile} scale={profileScale} raycast={() => null} />

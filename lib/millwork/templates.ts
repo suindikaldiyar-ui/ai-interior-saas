@@ -2,12 +2,14 @@ import { APPLIANCE_SLOTS } from './modules';
 import { applianceRowWidthMm } from './layout';
 import { SECTION_SPECS, sectionSpec } from './sections';
 import { ZONE_ORDER, zoneProfile } from './zones';
+import { TV_ZONE_HINT, TV_ZONE_TITLE, tvZoneMinLengthMm } from './tvZone';
 import type {
   ApplianceKind,
   DoorSystem,
   RunOptions,
   RunRequirements,
   SectionKind,
+  TvZoneVariant,
   ZoneKind,
 } from '@/types/millwork';
 
@@ -42,6 +44,8 @@ export interface RunTemplate {
   glassDisplay?: boolean;
   /** Отличия от базовых опций ряда. */
   options?: Partial<RunOptions>;
+  /** Готовая ТВ-зона (STAGE B): раскладка зала под длину стены — `tvZonePlan`. */
+  tvZone?: TvZoneVariant;
 }
 
 export const DEFAULT_OPTIONS: RunOptions = {
@@ -461,6 +465,54 @@ export const RUN_TEMPLATES: RunTemplate[] = [
     options: { hasUpper: false },
   },
 
+  /*
+   * ГОТОВАЯ ТВ-ЗОНА (STAGE B): тумба, витрины, панели и телевизор под длину
+   * стены — `tvZonePlan`. Наименьшая длина — та же функция, что отказывает
+   * раскладке (`tvZoneMinLengthMm`), чтобы карточка не обещала того, что не соберётся.
+   */
+  {
+    id: 'living-tv-a',
+    name: TV_ZONE_TITLE.A,
+    hint: TV_ZONE_HINT.A,
+    zone: 'living',
+    layout: 'linear',
+    minLengthMm: tvZoneMinLengthMm('A'),
+    maxLengthMm: 5000,
+    appliances: [],
+    tallSide: 'left',
+    doorSystem: 'hinged',
+    tvZone: 'A',
+    options: { hasUpper: false },
+  },
+  {
+    id: 'living-tv-b',
+    name: TV_ZONE_TITLE.B,
+    hint: TV_ZONE_HINT.B,
+    zone: 'living',
+    layout: 'linear',
+    minLengthMm: tvZoneMinLengthMm('B'),
+    maxLengthMm: 5000,
+    appliances: [],
+    tallSide: 'left',
+    doorSystem: 'hinged',
+    tvZone: 'B',
+    options: { hasUpper: false },
+  },
+  {
+    id: 'living-tv-c',
+    name: TV_ZONE_TITLE.C,
+    hint: TV_ZONE_HINT.C,
+    zone: 'living',
+    layout: 'linear',
+    minLengthMm: tvZoneMinLengthMm('C'),
+    maxLengthMm: 5000,
+    appliances: [],
+    tallSide: 'left',
+    doorSystem: 'hinged',
+    tvZone: 'C',
+    options: { hasUpper: false },
+  },
+
   /* ─────────────  Санузел  ───────────── */
   {
     id: 'bath-vanity',
@@ -578,6 +630,8 @@ export function templateBlockedReason(template: RunTemplate, lengthMm: number): 
  * не соберётся, и обещать его нельзя.
  */
 export function templateAppliancesWidthMm(template: RunTemplate): number {
+  /* ТВ-зона: наименьшая стена — та, с которой собирается её раскладка (`tvZonePlan`). */
+  if (template.tvZone) return tvZoneMinLengthMm(template.tvZone);
   if (template.sections?.length) {
     return template.sections
       .filter((kind) => kind !== 'mezzanine')
@@ -606,6 +660,7 @@ export function requirementsFromTemplate(
   return {
     zone,
     sections: template.sections ? [...template.sections] : undefined,
+    ...(template.tvZone ? { tvZone: template.tvZone } : {}),
     doorSystem: template.doorSystem ?? profile.doorSystem,
     glassDisplay: template.glassDisplay,
     appliances: [...template.appliances],

@@ -11,6 +11,7 @@ import { moduleOutline, samplePath, type PlanPath } from '@/lib/millwork/radius'
 import { LINE_MM, unitsPerPaperMm } from '@/lib/millwork/sheetStyle';
 import type { CommPoint, LayoutIssue, Run } from '@/types/millwork';
 import type { RoomState, RowRoomObject } from '@/lib/millwork/room';
+import { tvBoxMm, wallPanelDepthMm } from '@/lib/millwork/tvZone';
 
 /**
  * Вид сверху: глубины, привязки к стенам, точки коммуникаций с расстоянием
@@ -302,6 +303,46 @@ export default function PlanDrawing({
             />
           );
         })}
+
+      {/*
+        * ТВ-ЗОНА НА ПЛАНЕ (STAGE B): декоративная панель — полосой своей толщины
+        * у стены, телевизор — от выноса кронштейна на свою толщину (`tvBoxMm`):
+        * так монтажник видит, сколько он выходит в комнату.
+        */}
+      {(run.wallPanels ?? []).map((panel) => (
+        <rect
+          key={`panel-${panel.id}`}
+          data-plan-panel={panel.id}
+          data-front-mm={wallPanelDepthMm(panel)}
+          x={PADDING_LEFT + panel.fromMm * scale}
+          y={wallY}
+          width={panel.widthMm * scale}
+          height={Math.max(1, wallPanelDepthMm(panel) * scale)}
+          fill="var(--blueprint)"
+          fillOpacity={0.25}
+          stroke="var(--blueprint)"
+          strokeWidth={0.4 * k}
+        />
+      ))}
+      {run.tv &&
+        (() => {
+          const box = tvBoxMm(run, run.tv);
+          return (
+            <rect
+              data-plan-tv
+              data-back-mm={box.z0}
+              data-front-mm={box.z1}
+              x={PADDING_LEFT + box.x0 * scale}
+              y={wallY + box.z0 * scale}
+              width={(box.x1 - box.x0) * scale}
+              height={Math.max(1, (box.z1 - box.z0) * scale)}
+              fill="var(--ink)"
+              fillOpacity={0.35}
+              stroke="var(--ink)"
+              strokeWidth={0.5 * k}
+            />
+          );
+        })()}
 
       {/* Модули сверху вниз: глубина от стены */}
       {run.modules.map((unit) => {

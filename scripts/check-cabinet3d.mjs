@@ -49,7 +49,8 @@ const fpsProbe = `(async () => {
 async function openScene(page, width, height) {
   await page.setViewportSize({ width, height });
   await fetch(`${BASE}/demo`).catch(() => undefined);
-  await page.goto(`${BASE}/demo`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+  /* Рентген («Каркас» сцены) — только в отладке (STAGE B): проверка его нажимает, поэтому страница — с `?debug=1`. */
+  await page.goto(`${BASE}/demo?debug=1`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
   await sleep(3500);
   /*
    * ПЕРЕКЛЮЧАТЕЛЬ 3D ЖИВЁТ НА «КОНФИГУРАТОРЕ», А НЕ НА «РЕЗУЛЬТАТЕ».

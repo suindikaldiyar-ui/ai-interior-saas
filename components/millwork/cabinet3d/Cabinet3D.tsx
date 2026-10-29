@@ -6,6 +6,8 @@ import * as THREE from 'three';
 import CabinetModule3D from './CabinetModule3D';
 import InstancedBoxes from './InstancedBoxes';
 import ShapedBatch, { PlanPlate } from './ShapedBatch';
+import { RoundedPanels, TvModel } from './WallDecor3D';
+import { wallPanelParts } from '@/lib/millwork/tvZone';
 import ModuleHandles from './ModuleHandles';
 import SceneCamera, { type OrthoProjection } from './SceneCamera';
 import {
@@ -414,6 +416,8 @@ export default function Cabinet3D({
   const hardwareItems = useMemo(() => hardwareCatalog(catalog), [catalog]);
   /* Экономичный режим (слой 61): ручки — грубой сеткой и без отражений. */
   const economy = useInteriorStore((s) => s.economyMode);
+  /* Экран телевизора (STAGE B) — вид, а не изделие: выключен, включён, демо. */
+  const tvScreen = useInteriorStore((s) => s.tvScreen);
 
   const boxes = useMemo(
     () =>
@@ -586,11 +590,36 @@ export default function Cabinet3D({
      * роль и ключ материала те же, что у коробок (`ShapedBatch`).
      */
     const shaped = new Map<string, { material: BoxMaterial; key: string | null; boxes: PartBox[] }>();
+    /*
+     * ТВ-ЗОНА (STAGE B): детали декоративных панелей — своими пачками
+     * (`decor:<вид>:<ключ>`, материал — тот же фасадный по ключу лица), со
+     * скруглёнными углами — своим контуром; телевизор — моделью.
+     */
+    const decor = new Map<string, { kind: string; key: string; boxes: PartBox[]; relief?: FrontRelief; leaf?: ReliefLeaf }>();
+    const rounded: PartBox[] = [];
+    let tv: PartBox | null = null;
 
     for (const box of boxes) {
       if (box.part && active.has(box.part)) continue;
       /* Слой выключен — коробки нет в кадре (P1); в раскрое и смете она остаётся. */
       if (!boxShown(box, layers)) continue;
+      if (box.node === 'tv') {
+        tv = box;
+        continue;
+      }
+      if (box.decor && box.rounded) {
+        rounded.push(box);
+        continue;
+      }
+      if (box.decor) {
+        const key = box.frontKey ?? frontKey(DEFAULT_FRONT);
+        const leaf = box.relief ? leafOfBox(box.scale, box.face) : undefined;
+        const batch = `${box.decor}|${key}${box.relief && leaf ? `|${reliefMeshKey(box.relief, leaf, box.reliefOrient)}` : ''}`;
+        const at = decor.get(batch);
+        if (at) at.boxes.push(box);
+        else decor.set(batch, { kind: box.decor, key, boxes: [box], ...(box.relief && leaf ? { relief: box.relief, leaf } : {}) });
+        continue;
+      }
       if (box.shape) {
         const key = box.material === 'front' ? (box.frontKey ?? frontKey(DEFAULT_FRONT)) : (box.carcassKey ?? null);
         const batch = `${box.material}|${key ?? ''}`;
@@ -647,7 +676,7 @@ export default function Cabinet3D({
       }
       groups[box.material].push(box);
     }
-    return { groups, fronts, carcass, inner, reliefFronts, handles, glassKinds, glassShelves, profiles, shaped };
+    return { groups, fronts, carcass, inner, reliefFronts, handles, glassKinds, glassShelves, profiles, shaped, decor, rounded, tv };
   }, [boxes, activeParts, layers]);
 
   /*
@@ -665,6 +694,10 @@ export default function Cabinet3D({
         const own = leafFrontWithMilling(entry.unit, leaf, run);
         map.set(frontKey(own), own);
       }
+    }
+    /* Лица декоративных панелей стены (STAGE B) — те же материалы фасадов по ключу. */
+    for (const panel of run.wallPanels ?? []) {
+      for (const part of wallPanelParts(panel)) map.set(frontKey(part.front), part.front);
     }
     if (map.size === 0) map.set(frontKey(DEFAULT_FRONT), DEFAULT_FRONT);
     return map;
@@ -1058,6 +1091,31 @@ export default function Cabinet3D({
           receiveShadow
         />
       ))}
+      {/*
+        * ДЕКОРАТИВНЫЕ ПАНЕЛИ СТЕНЫ (STAGE B): пачка на вид и лицо панели — рейки,
+        * МДФ, камень, дерево; материал — фасадный по ключу лица (шпон — рисунком
+        * дерева, камень — рисунком камня). Фрезерованная — сеткой рисунка того же
+        * габарита, как фасад с рельефом.
+        */}
+      {Array.from(grouped.decor.entries()).map(([batch, entry]) => (
+        <InstancedBoxes
+          key={`decor-${batch}`}
+          name={`decor:${entry.kind}:${entry.key}`}
+          boxes={entry.boxes}
+          shiftSalt={run.id}
+          geometry={parts.box}
+          material={frontMaterials.get(entry.key) ?? parts.front}
+          castShadow={shadows}
+          receiveShadow
+          {...(entry.relief && entry.leaf ? { relief: { relief: entry.relief, leaf: entry.leaf } } : {})}
+        />
+      ))}
+      <RoundedPanels
+        boxes={grouped.rounded}
+        materialOf={(box) => frontMaterials.get(box.frontKey ?? '') ?? parts.front}
+        shadows={shadows}
+      />
+      {grouped.tv && run.tv && <TvModel box={grouped.tv} tv={run.tv} screen={tvScreen} shadows={shadows} />}
       {/* Профиль витрины (P1): рамка двери и каркас — пачкой на покрытие, имя `profile:<покрытие>` для приёмки. */}
       {Array.from(grouped.profiles.entries()).map(([finish, list]) => (
         <InstancedBoxes

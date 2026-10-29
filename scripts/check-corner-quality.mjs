@@ -109,8 +109,8 @@ async function waitFor(page, fn, test, ms = 20_000, arg = undefined) {
   }
   return value;
 }
-async function openStudio(page, projectId) {
-  await page.goto(`${BASE}/project/${projectId}/room`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+async function openStudio(page, projectId, query = '') {
+  await page.goto(`${BASE}/project/${projectId}/room${query}`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
   await page.waitForSelector('[data-studio-root]', { timeout: 60_000 });
   await page.waitForFunction(() => {
     const el = document.querySelector('[data-studio-rail] [data-studio-tool]');
@@ -443,7 +443,14 @@ async function partLook(browser) {
       const layersOf = () => page.evaluate(() => window.__mwCadLayers());
       const look = () => page.evaluate(() => window.__mwCadLook());
 
-      /* ── Рентген — отладочный вид: корпус просвечивает ── */
+      /*
+       * ── Рентген — отладочный вид (STAGE B: только в отладке) ──
+       * Без `?debug=1` кнопки нет; дальше часть идёт прежними проверками в Studio с отладкой.
+       */
+      const plainXray = await page.locator('[data-scene-mode]').count();
+      check('без отладки кнопки «Рентген» нет', plainXray === 0, `кнопок ${plainXray}`);
+      await openStudio(page, id, '?debug=1');
+      await view3d(page);
       await click(page, '[data-scene-mode]', 'кнопка «Рентген»');
       const xray = await waitFor(page, () => window.__mwCadLayers(), (v) => v.cutaway === true, 10_000);
       const xrayLook = await look();

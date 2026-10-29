@@ -19,7 +19,10 @@ import {
   assertUnderCeiling,
   runWidthSum,
 } from './invariants';
-import { defaultFill, mezzanineBlockedByBeam, mezzanineHeightMm, moduleCarcassHeightMm } from './fill';
+import { defaultFill, mezzanineBlockedByBeam, mezzanineHeightMm, moduleCarcassHeightMm, rowStandardDepthMm } from './fill';
+import { tvRefusal, tvZonePlan, wallPanelRefusal } from './tvZone';
+import { radiusEdit, radiusLists, radiusRowOf } from './radiusPlace';
+import { vitrineEdit } from './vitrinePlace';
 import {
   BOTTLE_MAX_MM,
   BOTTLE_MIN_MM,
@@ -1105,6 +1108,113 @@ function buildSectionRun(input: BuildRunInput): Run {
 }
 
 /**
+ * ГОТОВАЯ ТВ-ЗОНА (STAGE B) — вариант A, B или C под длину стены.
+ *
+ * Раскладку считает `tvZonePlan`; здесь она становится рядом теми же
+ * средствами, что любой ряд: модули — `makeModule` и наполнение `withFill`,
+ * скруглённые торцы — `radiusEdit` (те же проверки, что у блока «Форма ·
+ * радиус»), витрины — `vitrineEdit` (те же, что у блока «Витрина»).
+ * Телевизор и панели — поля ряда. Не помещается — пустой ряд и отказ словами
+ * в `warnings`; экран называет его блокирующим (`tvZoneFitRefusal`).
+ *
+ * Тумба без ручек — от нажатия (`fill.handle: 'none'`): так её и продают.
+ * Пересечений мебели, телевизора и панелей нет по раскладке; не так —
+ * исключение, как у любого инварианта ряда.
+ */
+function buildTvZoneRun(input: BuildRunInput): Run {
+  const { lengthMm, ceilingHeightMm, requirements, openings = [] } = input;
+  const usable = Math.max(0, Math.round(lengthMm));
+  const zone = requirements.zone ?? 'living';
+  const variant = requirements.tvZone!;
+  const plan = tvZonePlan(variant, {
+    lengthMm: usable,
+    ceilingHeightMm,
+    zone,
+    production: input.production,
+    depthMm: rowStandardDepthMm(zone, 'base', input.production),
+  });
+  if ('refusal' in plan) return { ...emptyRun(input, usable), warnings: [plan.refusal] };
+
+  const beams = beamsOnRun(openings, usable);
+  const shell = { zone, ceilingHeightMm, options: requirements.options, beams, production: input.production };
+  const warnings: string[] = [];
+  let modules: Module[] = plan.modules.map((item) => {
+    const spec = SECTION_SPECS[item.section];
+    const unit = makeModule(item.kind, item.widthMm, item.offsetMm, undefined, spec.frontType === 'drawers' ? spec.drawerCount : undefined);
+    unit.section = item.section;
+    unit.label = spec.title;
+    if (spec.frontType === 'none') {
+      unit.frontType = 'none';
+      unit.doorCount = 0;
+      unit.drawerCount = 0;
+    }
+    if (item.hangMm !== undefined) unit.hangMm = item.hangMm;
+    if (item.glassShelves) unit.glassShelves = true;
+    return unit;
+  });
+  withFill(modules, shell);
+
+  const shellRun = (): Run => ({
+    id: input.id ?? 'run',
+    zone,
+    doorSystem: 'hinged',
+    lengthMm: usable,
+    ceilingHeightMm,
+    modules,
+    upperSegments: [],
+    options: requirements.options,
+    production: input.production,
+    wallId: input.wallId,
+    residualMm: 0,
+    warnings: [],
+    fingerprint: '',
+  });
+  /* Скруглённые торцы и витрины — теми же правками, что на экране. */
+  modules = modules.map((unit, i) => {
+    const item = plan.modules[i];
+    let next = unit;
+    if (item.radius) {
+      const row = shellRun();
+      const outcome = radiusEdit(next, item.radius, radiusRowOf(next, radiusLists(row), row), row);
+      if ('refusal' in outcome) warnings.push(`«${next.label}»: ${outcome.refusal}`);
+      else next = outcome.unit;
+    }
+    if (item.vitrine) {
+      const outcome = vitrineEdit(next, { op: 'set_vitrine', moduleId: next.id, vitrine: item.vitrine }, shellRun());
+      if ('refusal' in outcome) warnings.push(outcome.refusal);
+      else next = outcome.unit;
+    }
+    return next;
+  });
+  withFill(modules, shell);
+  modules = modules.map((unit) =>
+    unit.section && unit.section.startsWith('tv_') && unit.fill ? { ...unit, fill: { ...unit.fill, handle: 'none' as const } } : unit,
+  );
+
+  const walledModules = onWall(modules, input.wallId);
+  const run: Run = {
+    ...shellRun(),
+    modules: walledModules,
+    beams: beams.length > 0 ? beams : undefined,
+    tv: plan.tv,
+    ...(plan.panels.length > 0 ? { wallPanels: plan.panels } : {}),
+    residualMm: usable - walledModules.reduce((sum, unit) => sum + unit.widthMm, 0),
+    warnings,
+    fingerprint: '',
+  };
+  run.fingerprint = runFingerprint(run);
+
+  assertRunFits(run);
+  assertNoOverlap(run);
+  assertUnderCeiling(run);
+  /* Мебель, витрины, телевизор и панели не пересекаются — по раскладке; иначе это ошибка раскладки. */
+  const tvWords = tvRefusal(run, plan.tv);
+  const panelWords = plan.panels.map((panel) => wallPanelRefusal(run, panel)).find(Boolean) ?? null;
+  if (tvWords || panelWords) throw new Error(`ТВ-зона ${variant} на ${usable} мм: ${tvWords ?? panelWords}`);
+  return run;
+}
+
+/**
  * Пустой ряд: стена есть, мебели нет.
  *
  * Собирается той же сборкой `Run`, что и любой другой, чтобы чертёж,
@@ -1142,6 +1252,8 @@ export function buildRun(input: BuildRunInput): Run {
     cornerAt = null,
   } = input;
 
+  /* Готовая ТВ-зона (STAGE B) — своя раскладка под длину стены: тумба, витрины, панели, телевизор. */
+  if (requirements.tvZone && requirements.zone === 'living') return buildTvZoneRun(input);
   // Зоны без техники собираются из секций: у них нет ни мойки, ни варочной.
   if (isSectionZone(requirements.zone)) return buildSectionRun(input);
 

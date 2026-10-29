@@ -705,6 +705,8 @@ export function upperBottomFor(
     if (base) return plinthMm(run.production) + moduleCarcassHeightMm(base, run);
     return mezzanineBottomMm(run);
   }
+  /* Подвесная ТВ-тумба (STAGE B) висит у пола на своей отметке, а не на отметке навески ряда. */
+  if (unit.hangMm !== undefined) return Math.max(0, Math.round(unit.hangMm));
 
   return upperRowBottomMm(
     run.zone,
@@ -1152,6 +1154,20 @@ export function defaultFill(
 
       case 'hanging_module':
         return { ...empty, shelves: evenShelves(heightMm, 1), hinge };
+
+      /*
+       * ТВ-ТУМБА (STAGE B): ящики — фронтами во всю высоту корпуса (их режут,
+       * рисуют и покупают по `drawerHeights`), за дверцами и в открытой полке —
+       * одна полка под ресивер и приставку.
+       */
+      case 'tv_drawers':
+        return { ...empty, drawerHeights: drawerHeights(heightMm, unit.drawerCount || 2) };
+
+      case 'tv_doors':
+        return { ...empty, shelves: evenShelves(heightMm, 1), hinge };
+
+      case 'tv_open':
+        return { ...empty, shelves: evenShelves(heightMm, 1) };
 
       case 'vanity':
         // Под раковиной сифон: полок нет вовсе.

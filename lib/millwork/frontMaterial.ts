@@ -259,7 +259,7 @@ export function frontKey(spec: FrontSpec): string {
    */
   return `${spec.base}/${spec.construct}/${spec.finish}/${spec.colorHex ?? '-'}/${spec.itemId ?? '-'}${
     spec.millingId ? `/${spec.millingId}` : ''
-  }${spec.surface ? `~${spec.surface}` : ''}${spec.relief ? `#${reliefKey(spec.relief)}` : ''}`;
+  }${spec.surface ? `~${spec.surface}` : ''}${spec.relief ? `#${reliefKey(spec.relief)}` : ''}${spec.pattern ? `^${spec.pattern}` : ''}`;
 }
 
 /**

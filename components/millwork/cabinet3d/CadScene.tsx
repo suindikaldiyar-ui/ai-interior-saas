@@ -80,6 +80,7 @@ import type { PathTraceSource } from './pathTrace';
 import { movingParts } from './motion';
 import { plinthMm, shopOf } from '@/lib/millwork/shop';
 import { boxLayer, boxShown, moduleBoxes, runBoxes, runPlaces } from '@/lib/millwork/cabinetBoxes';
+import { panelOutlineMm } from '@/lib/millwork/tvZone';
 import { prismEdgesMm } from '@/lib/millwork/radius';
 import { ALL_LAYERS, presetOf, type SceneLayers } from '@/lib/millwork/sceneLayers';
 import { generalCamera } from '@/lib/cameraFraming';
@@ -112,6 +113,7 @@ import {
   type Vec3,
 } from '@/lib/millwork/lighting';
 import DesignLights from './DesignLights';
+import { useDebug } from '@/lib/debug';
 
 /**
  * САПР-ВИД, А НЕ ФОТОРЕАЛИЗМ.
@@ -355,8 +357,13 @@ export default function CadScene({
    * сцену, где фасады сняты, а рёбра думают, что они на месте.
    */
   const xrayOn = useInteriorStore((state) => state.cutaway);
-  /* В «Интерьере» рентгена нет (STAGE A): тот же признак, что у `Cabinet3D`. */
-  const frame = xrayOn && !lighting?.preview.design;
+  /*
+   * Рентген — только в режиме отладки (`?debug=1`, STAGE B): в обычной работе
+   * мебель видна такой, какой её привезут; «Каркас» схемы и слоёв — другое. В
+   * «Интерьере» рентгена нет (STAGE A): тот же признак, что у `Cabinet3D`.
+   */
+  const debug = useDebug();
+  const frame = xrayOn && debug && !lighting?.preview.design;
   /* Рёбра идут по тем же слоям вида, что и меши (P1). */
   const layers = useInteriorStore((state) => state.sceneLayers);
 
@@ -1044,6 +1051,10 @@ function FrameProbe({ rows, room, design }: { rows: SceneRow[]; room: Room | nul
   /* «Интерьер» — в момент замера, а не из замыкания: рентгена в нём нет (STAGE A). */
   const designRef = useRef(design);
   designRef.current = design;
+  /* Рентген — только в режиме отладки (STAGE B): тот же признак, что у сцены. */
+  const debug = useDebug();
+  const debugRef = useRef(debug);
+  debugRef.current = debug;
   const gl = useThree((state) => state.gl);
   const camera = useThree((state) => state.camera);
   const scene = useThree((state) => state.scene);
@@ -1313,6 +1324,87 @@ function FrameProbe({ rows, room, design }: { rows: SceneRow[]; room: Room | nul
         .filter((row) => row.run.island)
         .map((row) => ({ id: row.run.id, wallId: row.run.wallId ?? null, modules: row.run.modules.map((unit) => unit.id), placement: row.placement ?? null }));
       return { shaped, plates, bent, islands };
+    };
+
+    /*
+     * ТВ-ЗОНА ПО НАРИСОВАННОМУ (STAGE B): телевизор (группа `tv` — габарит в
+     * мире, экран и его картинка), детали панелей (экземпляры пачек `decor:*`,
+     * сетки `decor-rounded:*`) — и те же коробки движка (`runBoxes`), переведённые
+     * в мир тем же местом ряда (`rowPlacement`): сцена сверяется с движком.
+     */
+    (w as { __mwCadTvZone?: () => unknown }).__mwCadTvZone = () => {
+      const box = new THREE.Box3();
+      const boundsOf = (object: THREE.Object3D) => {
+        /*
+         * Мировые матрицы родителей обновляются кадром; зонд между коммитом и
+         * кадром читал бы ряд на прежнем месте (длина стены сменилась — место
+         * ряда в мире другое). Матрицы цепочки — заново от их позиций.
+         */
+        object.updateWorldMatrix(true, true);
+        box.setFromObject(object);
+        return box.isEmpty() ? null : [box.min.x, box.min.y, box.min.z, box.max.x, box.max.y, box.max.z].map((v) => Math.round(v * 1000));
+      };
+      const tvs: { boundsMm: number[] | null; screen: string | null; lit: boolean; diagonalIn: number | null; parts: string[] }[] = [];
+      const decor: { name: string; count: number; boundsMm: number[] | null }[] = [];
+      const rounded: { name: string; boundsMm: number[] | null }[] = [];
+      scene.traverse((object) => {
+        if (object.name === 'tv' && (object as THREE.Group).isGroup) {
+          if (!object.visible) return;
+          const screenMesh = object.getObjectByName('tv-screen') as THREE.Mesh | undefined;
+          const material = screenMesh?.material as THREE.MeshPhysicalMaterial | undefined;
+          const parts: string[] = [];
+          object.traverse((child) => {
+            if ((child as THREE.Mesh).isMesh) parts.push(child.name);
+          });
+          tvs.push({
+            boundsMm: boundsOf(object),
+            screen: (object.userData.tvScreen as string | undefined) ?? null,
+            lit: Boolean(material?.emissiveMap) && (material?.emissiveIntensity ?? 0) > 0,
+            diagonalIn: (object.userData.diagonalIn as number | undefined) ?? null,
+            parts,
+          });
+          return;
+        }
+        const mesh = object as THREE.Mesh & { count?: number; isInstancedMesh?: boolean };
+        if (!mesh.isMesh || mesh.visible === false) return;
+        /* Габарит пачки three кэширует при первом замере: после правки панели он прежний — считаем заново. */
+        if (mesh.isInstancedMesh) (mesh as unknown as THREE.InstancedMesh).computeBoundingBox();
+        if (mesh.name.startsWith('decor:')) decor.push({ name: mesh.name, count: mesh.isInstancedMesh ? (mesh.count ?? 0) : 1, boundsMm: boundsOf(mesh) });
+        else if (mesh.name.startsWith('decor-rounded:')) rounded.push({ name: mesh.name, boundsMm: boundsOf(mesh) });
+      });
+      /* Те же коробки движка в мире: восемь углов коробки через место ряда — как у рёбер. */
+      const world = (row: SceneRow, b: { position: [number, number, number]; scale: [number, number, number] }) => {
+        const place = rowPlacement(row);
+        const angle = (place.rotationYDeg * Math.PI) / 180;
+        const cos = Math.cos(angle);
+        const sin = Math.sin(angle);
+        const out = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+        for (const ox of [-1, 1]) for (const oy of [-1, 1]) for (const oz of [-1, 1]) {
+          const x = b.position[0] + (ox * b.scale[0]) / 2;
+          const y = b.position[1] + (oy * b.scale[1]) / 2;
+          const z = b.position[2] + (oz * b.scale[2]) / 2;
+          const p = [x * cos + z * sin + place.xM, y, -x * sin + z * cos + place.zM];
+          for (let k = 0; k < 3; k += 1) {
+            out[k] = Math.min(out[k], p[k]);
+            out[k + 3] = Math.max(out[k + 3], p[k]);
+          }
+        }
+        return out.map((v) => Math.round(v * 1000));
+      };
+      const engine = rows.map((row) => {
+        const boxes = runBoxes(row.run, { thicknessMm: 16, frontThicknessMm: 16, gapMm: 3 });
+        const tvBox = boxes.find((b) => b.node === 'tv');
+        return {
+          id: row.run.id,
+          wallId: row.run.wallId ?? null,
+          tv: row.run.tv ?? null,
+          tvBoundsMm: tvBox ? world(row, tvBox) : null,
+          panels: (row.run.wallPanels ?? []).map((panel) => ({ id: panel.id, kind: panel.kind })),
+          decorParts: boxes.filter((b) => b.decor).length,
+          roundedParts: boxes.filter((b) => b.decor && b.rounded).length,
+        };
+      });
+      return { tvs, decor, rounded, engine };
     };
 
     /*
@@ -1705,8 +1797,8 @@ function FrameProbe({ rows, room, design }: { rows: SceneRow[]; room: Room | nul
       return {
         layers: { ...state.sceneLayers },
         preset: presetOf(state.sceneLayers),
-        cutaway: state.cutaway && !designRef.current,
-        xray: state.cutaway,
+        cutaway: state.cutaway && debugRef.current && !designRef.current,
+        xray: state.cutaway && debugRef.current,
         total,
         shown,
         instances,
@@ -2084,6 +2176,7 @@ function FrameProbe({ rows, room, design }: { rows: SceneRow[]; room: Room | nul
       delete w.__mwCadMetal;
       delete (w as { __mwCadVitrine?: unknown }).__mwCadVitrine;
       delete (w as { __mwCadRadius?: unknown }).__mwCadRadius;
+      delete (w as { __mwCadTvZone?: unknown }).__mwCadTvZone;
       delete w.__mwHandles;
       delete w.__mwCadState;
       delete (w as { __mwCadBays?: unknown }).__mwCadBays;
@@ -2223,6 +2316,21 @@ function rowCorners(
               const x = ox + mx / MM;
               const z = oz + mz / MM;
               lines.push([x * cos + z * sin + dx, oy + my / MM, -x * sin + z * cos + dz]);
+            }
+          }
+          continue;
+        }
+        /* Деталь панели со скруглёнными углами (STAGE B) — в рёбрах контуром (`panelOutlineMm`), а не габаритом. */
+        if (lines && box.rounded) {
+          const [rx, ry, rz] = box.position;
+          const [rsx, rsy, rsz] = box.scale;
+          const outline = panelOutlineMm(rsx * MM, rsy * MM, box.rounded);
+          for (const zf of [rz - rsz / 2, rz + rsz / 2]) {
+            for (let i = 0; i < outline.length; i += 1) {
+              for (const [mx, my] of [outline[i], outline[(i + 1) % outline.length]]) {
+                const x = rx + mx / MM;
+                lines.push([x * cos + zf * sin + dx, ry + my / MM, -x * sin + zf * cos + dz]);
+              }
             }
           }
           continue;
