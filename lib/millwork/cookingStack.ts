@@ -1,9 +1,9 @@
 import type { ProductionSettings } from '@/types/catalog';
 import type { Module, Run } from '@/types/millwork';
 import { applianceModel, modelTitle, ruleSource, type ApplianceModel } from './appliances';
-import { COUNTER_OVERHANG_MM, columnNiches, counterSlabDepthMm, moduleCarcassHeightMm, moduleDepthMm, singleNicheOf, upperBottomFor } from './fill';
+import { COUNTER_OVERHANG_MM, columnNiches, counterSlabDepthMm, moduleCarcassHeightMm, moduleDepthMm, rowStandardDepthMm, singleNicheOf, upperBottomFor } from './fill';
 import { APPLIANCE_SLOTS, nicheHeightMm } from './modules';
-import { countertopMm, plinthMm, shopOf, workTopMm } from './shop';
+import { countertopMm, plinthMm, shopOf, upperBottomMm, workTopMm } from './shop';
 import { TOP_RAIL_PANEL_NAME } from './panelNames';
 
 /**
@@ -240,7 +240,9 @@ export function applianceDoorIds(run: Pick<Run, 'modules'> & Partial<Run>): stri
     .map((unit) => ovenDoorId(unit.id));
   /* Духовой шкаф в пенале и колонне (ЭТАП 4): его дверь — та же модель и тот же ход. */
   const tall = run.zone !== undefined && run.ceilingHeightMm !== undefined ? tallOvensOf(run as Run).map((oven) => ovenDoorId(oven.unit.id)) : [];
-  return [...below, ...tall];
+  /* Техника этапа 4: дверь СВЧ, двери холодильника, корзины посудомойки, экран вытяжки. */
+  const stageFour = run.zone !== undefined && run.ceilingHeightMm !== undefined ? stageFourModelsOf(run as Run).flatMap((entry) => entry.moverIds) : [];
+  return [...below, ...tall, ...stageFour];
 }
 
 /* ─────────────────────────  Проверка по документам  ───────────────────────── */
@@ -322,17 +324,47 @@ export function cookingFindings(
      */
     const carcass = moduleCarcassHeightMm(unit, run);
     const single = singleNicheOf(unit, carcass);
+    /*
+     * ПРОСВЕТ НИШИ ДУХОВОГО ШКАФА В ПЕНАЛЕ И КОЛОННЕ (ЭТАП 4, A4). Ниша — между
+     * осями опор на отверстиях 32, просвет — минус толщина полки: 608 − 16 = 592
+     * при заявленных 595. Молча не меняем: сверяем с нишей модели по инструкции —
+     * в пределах — сказано с документом и страницей, вне — блокирующее с числами.
+     */
+    const t = shopOf(production).carcassMm;
+    const tall = tallOvensOf({ ...run, modules: [unit] } as Run, production)[0] ?? null;
+    const clearMm = tall ? tall.nicheToMm - tall.nicheFromMm - t : null;
+    const tallModel = tall?.model ?? null;
+    const range = tallModel?.oven?.column?.nicheHeightMm ?? null;
+    const inRange = clearMm !== null && range !== null && clearMm >= range[0] && clearMm <= range[1];
+    if (tall && tallModel && range && !inRange) {
+      out.push({
+        moduleId: unit.id,
+        level: 'blocking',
+        words:
+          `${modelTitle(tallModel)} в «${unit.label}»: просвет ниши между опорами ${clearMm} мм, а нужно ${range[0]}…${range[1]} мм (${ruleSource(tallModel, 'column')}) — ` +
+          `прибор не встаёт в нишу ровно, ${clearMm! < range[0] ? `не хватает ${range[0] - clearMm!} мм` : `лишние ${clearMm! - range[1]} мм`}.`,
+      });
+    }
     if (single) {
       const appliance = unit.appliance ? APPLIANCE_SLOTS[unit.appliance].title : 'прибор';
       const model = unit.appliance ? applianceModel(unit.applianceModels?.[unit.appliance]) : null;
+      const nicheWords =
+        clearMm === null
+          ? ''
+          : `, просвет между опорами ${clearMm} мм` +
+            (model && range
+              ? inRange
+                ? ` — в пределах ${range[0]}…${range[1]} мм (${ruleSource(model, 'column')})`
+                : ''
+              : model
+                ? ` — ниши модели ${modelTitle(model)} в пенале в фактах нет, не проверено`
+                : ' — монтажная высота ниши не проверена, модель прибора не выбрана');
       out.push({
         moduleId: unit.id,
         level: 'release',
         words:
-          `«${unit.label}»: ${appliance.toLowerCase()} стоит на полке-опоре на отверстиях ${single.fromMm} мм от дна пенала, ниша ${single.fromMm}…${single.toMm} мм; ` +
-          'как цех крепит опору под нагрузку прибора и какие монтажные размеры ниши ' +
-          (model ? `модели ${modelTitle(model)} в высоком пенале — не сведено по инструкции` : 'модели в высоком пенале — модель прибора не выбрана') +
-          ' — выпуск заперт.',
+          `«${unit.label}»: ${appliance.toLowerCase()} стоит на полке-опоре на отверстиях ${single.fromMm} мм от дна пенала, ниша ${single.fromMm}…${single.toMm} мм${nicheWords}; ` +
+          'как цех крепит опору под нагрузку прибора, не подтверждено — выпуск заперт.',
       });
       continue;
     }
@@ -477,6 +509,64 @@ export function cookingStackWords(stack: CookingStack): string[] {
           stack.ovenAt.rearTopMm !== null ? `, до корпуса сзади ${stack.worktop.topMm - stack.ovenAt.rearTopMm} мм` : ''
         }`,
       );
+    }
+  }
+  return out;
+}
+
+/**
+ * ТЕХНИКА ЭТАПА 4 В СЦЕНЕ — ГДЕ СТОИТ МОДЕЛЬ И ЧТО У НЕЁ ХОДИТ.
+ *
+ * Только выбранная модель (без модели прибор рисуется прежним лицом): СВЧ — на
+ * полке своей ниши (`columnNiches`, `singleNicheOf` — те же, что у раскроя),
+ * отдельностоящий холодильник — на полу перед рядом на свою глубину,
+ * встраиваемый — на дне колонны, посудомойка — на полу за фасадом, вытяжка —
+ * под дном навесного шкафа. Одна функция на сцену, «Открыть всё» и слой.
+ */
+export type StageFourModel = {
+  unit: Module;
+  kind: 'microwave' | 'fridge-free' | 'fridge-built' | 'dishwasher' | 'hood';
+  model: ApplianceModel;
+  xMm: number;
+  bottomMm: number;
+  /** Плоскость отсчёта по глубине от плоскости фасадов ряда, мм. */
+  zMm: number;
+  /** Ключи хода — `<модуль>:<ключ>`, как в `openParts`. */
+  moverIds: string[];
+};
+
+export function stageFourModelsOf(run: Pick<Run, 'modules' | 'zone' | 'ceilingHeightMm'> & Partial<Run>, production: ProductionSettings = shopOf(run.production)): StageFourModel[] {
+  const t = shopOf(production).carcassMm;
+  const plinth = plinthMm(production);
+  const out: StageFourModel[] = [];
+  for (const unit of run.modules) {
+    const x = unit.offsetMm + unit.widthMm / 2;
+    const mw = applianceModel(unit.applianceModels?.microwave);
+    if (mw?.microwave) {
+      const carcass = moduleCarcassHeightMm(unit, run as Run);
+      const niche = unit.column
+        ? (columnNiches(unit, carcass, production).find((n) => n.appliance === 'microwave') ?? null)
+        : unit.appliance === 'microwave'
+          ? singleNicheOf(unit, carcass)
+          : null;
+      if (niche) out.push({ unit, kind: 'microwave', model: mw, xMm: x, bottomMm: plinth + niche.fromMm + t / 2, zMm: 0, moverIds: [`${unit.id}:microwave:door`] });
+    }
+    const fridge = unit.appliance === 'fridge' ? applianceModel(unit.applianceModels?.fridge) : null;
+    if (fridge?.fridge) {
+      if (fridge.fridge.builtIn) {
+        out.push({ unit, kind: 'fridge-built', model: fridge, xMm: x, bottomMm: plinth + t, zMm: 0, moverIds: [] });
+      } else {
+        const shift = moduleDepthMm(unit, run.zone, production) - rowStandardDepthMm(run.zone, unit.kind, production, unit.section);
+        out.push({ unit, kind: 'fridge-free', model: fridge, xMm: x, bottomMm: 0, zMm: Math.max(0, shift), moverIds: [`${unit.id}:fridge:door:0`, `${unit.id}:fridge:door:1`] });
+      }
+    }
+    const dw = unit.appliance === 'dishwasher45' || unit.appliance === 'dishwasher60' ? applianceModel(unit.applianceModels?.[unit.appliance]) : null;
+    if (dw?.dishwasher) out.push({ unit, kind: 'dishwasher', model: dw, xMm: x, bottomMm: 0, zMm: 0, moverIds: [`${unit.id}:dishwasher:baskets`] });
+  }
+  for (const unit of (run.upperSegments ?? []).flatMap((segment) => segment.modules)) {
+    const hood = unit.appliance === 'hood' ? applianceModel(unit.applianceModels?.hood) : null;
+    if (hood?.hood) {
+      out.push({ unit, kind: 'hood', model: hood, xMm: unit.offsetMm + unit.widthMm / 2, bottomMm: upperBottomMm(production), zMm: 0, moverIds: [`${unit.id}:hood:screen`] });
     }
   }
   return out;

@@ -6,6 +6,7 @@ import { leafFrontOf } from './frontMaterial';
 import { vitrineDoorKind } from './glass';
 import { vitrineDoorCount } from './vitrine';
 import { BENT_LEAF_MAX_MM, bentLeavesOf } from './radius';
+import { frontOnApplianceDoor } from './appliances';
 import type { FrontOpening, HandleKind, Module, Run } from '@/types/millwork';
 
 /**
@@ -603,6 +604,16 @@ export function openingHardware(
      * взялся, а не что на модуле висит.
      */
     if (fronts.leaves.length === 0) continue;
+
+    /*
+     * ФАСАД НА ДВЕРИ ПРИБОРА (ЭТАП 4): модель велит крепить мебельный фасад на
+     * дверь прибора — петли у него приборные, мебельных не покупают; ручка
+     * остаётся (`frontOnApplianceDoor`).
+     */
+    if (frontOnApplianceDoor(unit)) {
+      addHandles(unit, doorsOf(fronts.leaves.length));
+      continue;
+    }
 
     const { opening, assumed, basis } = openingOf(unit, index, total);
     if (opening === 'none') {

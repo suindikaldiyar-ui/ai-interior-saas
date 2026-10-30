@@ -1,6 +1,6 @@
 import { columnNiches, moduleCarcassHeightMm, upperBottomFor } from '@/lib/millwork/fill';
 import { carcassHeightMm, plinthMm } from './shop';
-import { cookingModules, ovenNicheOf, tallOvensOf } from './cookingStack';
+import { cookingModules, ovenNicheOf, stageFourModelsOf, tallOvensOf } from './cookingStack';
 import {
   BACK_PANEL_NAME,
   OVEN_FRONT_PANEL_NAME,
@@ -70,6 +70,7 @@ import { GLASS_SHELF_MM, glassOf, shelvesAreGlass, vitrineDoorKind } from './gla
 import { VITRINE_GLASS_SHOWN_MM, VITRINE_PROFILE_MM, vitrineBackMm, vitrineBodyGlassMm, vitrineDoorCount, vitrineGrooveMm, vitrineOf } from './vitrine';
 import type { SceneLayer } from './sceneLayers';
 import { tvBoxMm, wallPanelParts, type PanelCorners } from './tvZone';
+import { applianceModel, frontOnApplianceDoor } from './appliances';
 import type { WallPanelKind } from '@/types/millwork';
 
 /**
@@ -326,7 +327,7 @@ export function layerCounts(runs: Run[]): Partial<Record<SceneLayer, number>> {
     /* Модели техники (ЭТАП 3): варочная и шкаф под ней — коробок у них нет, слой «Техника» их видит. */
     for (const unit of cookingModules(run)) out.appliances = (out.appliances ?? 0) + (unit.ovenBelow ? 2 : 1);
     /* Духовой шкаф в пенале и колонне (ЭТАП 4) — тоже модель, коробки-лица у него нет. */
-    out.appliances = (out.appliances ?? 0) + tallOvensOf(run).length;
+    out.appliances = (out.appliances ?? 0) + tallOvensOf(run).length + stageFourModelsOf(run).length;
   }
   return out;
 }
@@ -692,6 +693,8 @@ export function doorOpening(
   index: number,
   doors: number,
 ): 'left' | 'right' | 'lift' | 'flap' {
+  /* Посудомойка модели (ЭТАП 4): мебельный фасад на её двери — открывается вниз, с ней. */
+  if (frontOnApplianceDoor(unit) === 'down') return 'flap';
   if (doors > 1) return index === 0 ? 'left' : 'right';
   const { opening } = openingOf(unit);
   if (opening === 'lift' || opening === 'flap' || opening === 'right') return opening;
@@ -2548,7 +2551,14 @@ export function applianceBoxes(
    * Духовой шкаф в пенале — модель (`ApplianceModels3D`, `tallOvensOf`), а не
    * коробка (ЭТАП 4): иначе прибор стоит дважды, как варочная до этапа 3.
    */
-  if (hasVisibleAppliance(unit) && !(unit.appliance === 'oven' && unit.kind === 'tall' && !unit.column)) {
+  /*
+   * Модель этапа 4 рисует сама (`ApplianceModels3D`, `stageFourModelsOf`):
+   * отдельностоящий холодильник, вытяжка и СВЧ модели — без лица-коробки,
+   * иначе прибор стоит дважды. Без модели — прежнее лицо.
+   */
+  const ownModel = (kind: ApplianceKind | undefined) =>
+    Boolean(kind && applianceModel(unit.applianceModels?.[kind]) && (kind === 'microwave' || kind === 'hood' || (kind === 'fridge' && unit.builtIn === false)));
+  if (hasVisibleAppliance(unit) && !(unit.appliance === 'oven' && unit.kind === 'tall' && !unit.column) && !ownModel(unit.appliance)) {
     /* Прибор пенала — в своей нише, той же, что разбила фасад на створки (`tallNicheOf`); без ниши — во весь модуль. */
     const niche = tallNicheOf(unit, Math.round(heightM * MM));
     boxes.push(
@@ -2566,6 +2576,7 @@ export function applianceBoxes(
   for (const niche of unit.column ? columnNiches(unit, heightM * MM, production) : []) {
     /* Духовой шкаф колонны — модель (ЭТАП 4); микроволновка — пока лицом, модели нет. */
     if (niche.appliance === 'oven') continue;
+    if (ownModel(niche.appliance)) continue;
     const nicheH = (niche.toMm - niche.fromMm) / MM;
     boxes.push(
       ...applianceFace(

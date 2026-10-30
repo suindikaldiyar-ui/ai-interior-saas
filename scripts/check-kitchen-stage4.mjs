@@ -23,7 +23,7 @@ const PORT = Number(process.env.PORT_STAGE4 ?? 3325);
 const BASE = `http://localhost:${PORT}`;
 const OUT = '.capture-check/stage4';
 const PARTS = (process.env.PART ?? 'storage').split(',').map((s) => s.trim()).filter(Boolean);
-const KNOWN = ['storage', 'hood', 'column', 'tablet'];
+const KNOWN = ['storage', 'hood', 'column', 'tablet', 'bosch'];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let failed = 0;
@@ -271,7 +271,7 @@ async function withOrg(label, browser, body, { viewport, touch = false, producti
       made.projects.push(row.id);
       return row.id;
     };
-    await body({ page, errors, project, service });
+    await body({ page, errors, project, service, orgId: org.id });
     await context.close();
   } finally {
     for (const id of made.projects) await service.from('projects').delete().eq('id', id);
@@ -389,6 +389,12 @@ async function partStorage(browser) {
       check('STOR.3 глубина 400: высота 600 та же — глубина не трогает высоту', s2?.d === E.d400.d && s2?.h === E.d400.h, JSON.stringify(s2));
       const st3 = await page.evaluate(READ_STATUS);
       check('STOR.10 у кладовки 400 рядом с пеналом 560 — заходов на ходу нет, цена показана (сосед меряется только против кладовки)', st3.hidden === 0 && !/на ходу/.test(st3.strip), JSON.stringify(st3).slice(0, 300));
+      const statusText = await page.evaluate(() => document.querySelector('[data-studio-status]')?.textContent ?? '');
+      check(
+        'STOR.11 (A1) геометрия цела, заперт только выпуск — статус «Требуется подтверждение производства», а не «ошибки конструкции»; цена показана',
+        st3.status === 'production' && statusText.startsWith('Требуется подтверждение производства') && !/ошибки конструкции/.test(statusText) && st3.hidden === 0,
+        `${st3.status} · ${statusText.slice(0, 200)}`,
+      );
       await shot(page, 'storage-2-d400.png');
 
       await setStorageField(page, 'height', 2000);
@@ -451,7 +457,7 @@ async function partHood(browser) {
         `в сцене: ${(ids1 ?? []).filter((x) => /hob|hood/.test(x)).join(', ')}`,
       );
       const status = await page.evaluate(READ_STATUS);
-      check('HOOD.3 блокирующих нет, цена показана', status.hidden === 0 && !/Вытяжка закреплена/.test(status.strip), JSON.stringify(status).slice(0, 300));
+      check('HOOD.3 блокирующих нет, цена показана; статус — «требуется подтверждение производства» (замки выпуска), а не ошибка конструкции', status.hidden === 0 && !/Вытяжка закреплена/.test(status.strip) && status.status === 'production', JSON.stringify(status).slice(0, 300));
       await shot(page, 'hood-1-after-move.png');
       await saved(page);
       const mw = await millworkOf(service, id);
@@ -562,6 +568,134 @@ async function partTablet(browser) {
 
 /* ═════════════════════════  запуск  ═════════════════════════ */
 
+/* ═════════════════════════  BOSCH (ЭТАП 4, части B и C)  ═════════════════════════ */
+
+/** Модели и двери этапа 4 в сцене: что нарисовано и как стоит каждая подвижная деталь. */
+const DRAWN_S4 = () => Object.values(window.__mwApplianceModels ?? {}).flat().filter((m) => m.kind);
+const DOORS = () => (window.__mwApplianceDoors ? window.__mwApplianceDoors() : null);
+const APRON = () => (window.__mwCadSurfaces ? window.__mwCadSurfaces().filter((s) => s.name.startsWith('apron:')).map((s) => s.color) : null);
+const nearColor = (a, b, eps = 0.003) => Array.isArray(a) && a.length === 3 && a.every((v, i) => Math.abs(v - b[i]) <= eps);
+
+async function pickApron(page, tab, brand, article) {
+  const open = await page.locator('[data-materials-panel]').first().isVisible().catch(() => false);
+  if (!open) await ensureTool(page, 'materials');
+  await page.waitForSelector('[data-materials-panel][data-loaded="1"]', { timeout: 60_000 });
+  await press(page, '[data-material-target="apron"]', 'цель «Фартук всех стен»');
+  await page.locator(`[data-material-tab="${tab}"]`).first().click();
+  await page.locator(`[data-material-brand="${brand}"]`).first().click().catch(() => undefined);
+  await page.locator('[data-material-search]').first().fill(article);
+  await sleep(700);
+  const row = page.locator(`[data-material-item="${article}"]`);
+  await row.first().waitFor({ state: 'attached', timeout: 20_000 });
+  await row.first().click();
+  await sleep(1500);
+}
+
+async function partBosch(browser) {
+  console.log('\n── BOSCH (1440 × 900): СВЧ, холодильник, посудомойка, вытяжка Bosch; отдельностоящий кнопкой; фартуки EGGER и GRANDEX');
+  await withOrg(
+    'BOSCH',
+    browser,
+    async ({ page, errors, project, service, orgId }) => {
+      const fx = fixture('bosch');
+      const E = fx.expect;
+      const id = await project(fx);
+      const imported = await page.request.post(`${BASE}/api/catalog/materials`, { data: { orgId, collections: E.apronCollections, confirm: true }, timeout: 180_000 });
+      check('BOSCH.0 коллекции на проверке (с фартуками EGGER Splashback) загружены в каталог временной организации', imported.ok(), `${imported.status()} · ${E.apronCollections.join(', ')}`);
+      await openStudio(page, id);
+      await view3d(page);
+      const drawn = await waitFor(page, DRAWN_S4, (list) => Array.isArray(list) && list.length === E.models.length, 30_000);
+      const sameModels = (got, want) =>
+        Array.isArray(got) && got.length === want.length && want.every((w) => got.some((g) => g.moduleId === w.moduleId && g.model === w.model && g.kind === w.kind && g.bottomMm === w.bottomMm && g.zMm === w.zMm));
+      check(
+        'BOSCH.1 в сцене модели Bosch на местах движка: СВЧ BFL524MB2 на полке ниши колонны, KIN86AF3M8 на дне колонны, SPV4HMX14Q за фасадом, DFT63CA60Q под шкафом',
+        sameModels(drawn, E.models),
+        `${JSON.stringify(drawn)} · движок ${JSON.stringify(E.models)}`,
+      );
+      const st = await page.evaluate(READ_STATUS);
+      check(
+        'BOSCH.2 BFL524MB2 в колонне — «Есть ошибки конструкции»: просвет 400 мм при 380…382 словами движка, цены нет',
+        st.status === 'blocked' && st.hidden > 0 && E.blocking.length > 0 && st.strip.includes('просвет ниши между опорами 400 мм'),
+        `${st.status} · ${st.strip.slice(0, 260)}`,
+      );
+      await shot(page, 'bosch-0-closed.png');
+
+      await press(page, '[data-open-all]', '«Открыть всё»');
+      const opened = await waitFor(
+        page,
+        DOORS,
+        (list) => Array.isArray(list) && E.models.flatMap((m) => m.movers).every((mid) => list.some((d) => d.id === mid && (Math.abs(d.angleDeg) > 85 || d.slideMm > 100))),
+        20_000,
+      );
+      const of = (suffix) => (opened ?? []).find((d) => d.id.endsWith(suffix));
+      check(
+        'BOSCH.3 «Открыть всё»: дверь СВЧ на 90°, корзины посудомойки выехали за открытым фасадом, экран вытяжки выдвинут',
+        Math.abs(Math.abs(of(':microwave:door')?.angleDeg ?? 0) - 90) < 1 && (of(':dishwasher:baskets')?.slideMm ?? 0) > 300 && (of(':hood:screen')?.slideMm ?? 0) >= 149,
+        JSON.stringify(opened),
+      );
+      await shot(page, 'bosch-1-open-microwave-dishwasher.png');
+      await press(page, '[data-close-all]', '«Закрыть всё»');
+      /* Ход выдвижного — сдвиг группы; у двери на оси группа стоит на оси (сдвиг — место оси), меряется угол. */
+      const shut = (list) =>
+        Array.isArray(list) && list.length > 0 && list.every((d) => Math.abs(d.angleDeg) < 1 && (!/:(baskets|screen)$/.test(d.id) || d.slideMm < 2));
+      const closed = await waitFor(page, DOORS, shut, 20_000);
+      check('BOSCH.4 «Закрыть всё» — двери на 0°, корзины и экран на месте', shut(closed), JSON.stringify(closed));
+
+      /* Отдельностоящий холодильник — кнопкой модели в составе. */
+      await ensureTool(page, 'furniture');
+      await press(page, '[data-appliance-models="fridge"] [data-appliance-model="KGN39LB30U"]', 'холодильник KGN39LB30U');
+      const freeDrawn = await waitFor(page, DRAWN_S4, (list) => Array.isArray(list) && list.some((m) => m.model === 'KGN39LB30U'), 30_000);
+      check(
+        'BOSCH.5 кнопка «Bosch KGN39LB30U»: отдельностоящий на полу, на 120 мм перед рядом — как в движке',
+        sameModels(freeDrawn, E.freeModels),
+        `${JSON.stringify(freeDrawn)} · движок ${JSON.stringify(E.freeModels)}`,
+      );
+      await press(page, '[data-open-all]', '«Открыть всё»');
+      const fridgeOpen = await waitFor(page, DOORS, (list) => Array.isArray(list) && list.filter((d) => /:fridge:door:/.test(d.id) && Math.abs(Math.abs(d.angleDeg) - 90) < 1).length === 2, 20_000);
+      check('BOSCH.6 двери KGN39LB30U открываются на 90° (обе)', Array.isArray(fridgeOpen), JSON.stringify(fridgeOpen));
+      await shot(page, 'bosch-2-open-fridge.png');
+      await press(page, '[data-close-all]', '«Закрыть всё»');
+
+      const okSaved = await saved(page);
+      const mw = await millworkOf(service, id);
+      const models = mw?.requirements?.applianceModels ?? null;
+      check('BOSCH.7 записано: модели кухни в составе объекта, холодильник — KGN39LB30U', okSaved && models?.fridge === 'KGN39LB30U' && models?.microwave === 'BFL524MB2', JSON.stringify(models));
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.waitForSelector('[data-studio-root]', { timeout: 60_000 });
+      await view3d(page);
+      const again = await waitFor(page, DRAWN_S4, (list) => Array.isArray(list) && list.length === E.freeModels.length, 30_000);
+      check('BOSCH.8 после перезагрузки — те же модели на тех же местах', sameModels(again, E.freeModels), JSON.stringify(again));
+
+      /* Фартуки: EGGER Splashback, затем GRANDEX — цвет сцены = цвет позиции (sRGB → линейный). */
+      await pickApron(page, 'apron', 'EGGER', E.apronEgger.code);
+      const egger = await waitFor(page, APRON, (list) => Array.isArray(list) && list.length > 0 && list.every((c) => nearColor(c, E.apronEgger.linear)), 20_000);
+      check(`BOSCH.9 фартук EGGER ${E.apronEgger.code} — в сцене его цвет ${E.apronEgger.hex}`, Array.isArray(egger), JSON.stringify(egger));
+      /* Уточнений на экране не больше двух — остальное под «ещё N»: раскрываем, как человек. */
+      const more = page.getByRole('button', { name: /^ещё \d+$/ });
+      if ((await more.count()) > 0) await more.first().click();
+      await sleep(400);
+      const apronWords = await page.evaluate(() =>
+        Array.from(document.querySelectorAll('li')).map((li) => li.innerText).find((t) => t.includes('толщина панели не подтверждена')) ?? null,
+      );
+      check(
+        'BOSCH.10 фартук EGGER: толщина 8 / 9 мм по документам EGGER не сведена — уточнение словами в списке экрана (выпуск заперт)',
+        Boolean(apronWords) && /9 мм/.test(apronWords) && /8 мм/.test(apronWords),
+        apronWords?.slice(0, 300) ?? 'СЛОВ НЕТ',
+      );
+      await shot(page, 'bosch-3-apron-egger.png');
+      await pickApron(page, 'countertop', 'GRANDEX', E.apronGrandex.code);
+      const grandex = await waitFor(page, APRON, (list) => Array.isArray(list) && list.length > 0 && list.every((c) => nearColor(c, E.apronGrandex.linear)), 20_000);
+      check(`BOSCH.11 фартук GRANDEX ${E.apronGrandex.code} — в сцене его цвет ${E.apronGrandex.hex}`, Array.isArray(grandex), JSON.stringify(grandex));
+      await shot(page, 'bosch-4-apron-grandex.png');
+      const okSaved2 = await saved(page);
+      const mw2 = await millworkOf(service, id);
+      check('BOSCH.12 записано: фартук ряда — позиция GRANDEX', okSaved2 && JSON.stringify(mw2 ?? {}).includes('"apronMaterial"'), (JSON.stringify(mw2 ?? {}).match(/"apronMaterial":\{[^}]*\}/) ?? ['В БАЗЕ НЕТ'])[0]);
+      check('BOSCH.13 ошибок страницы нет', errors.length === 0, errors.join(' | '));
+    },
+    { viewport: { width: 1440, height: 900 } },
+  );
+}
+
 async function main() {
   const unknown = PARTS.filter((p) => !KNOWN.includes(p));
   if (unknown.length > 0) throw new Stop(`неизвестная часть: ${unknown.join(', ')} — есть ${KNOWN.join(', ')}`);
@@ -595,6 +729,7 @@ async function main() {
           if (part === 'hood') await partHood(browser);
           if (part === 'column') await partColumn(browser);
           if (part === 'tablet') await partTablet(browser);
+          if (part === 'bosch') await partBosch(browser);
           check(`часть ${part} дошла до конца`, true, `${Math.round((Date.now() - started) / 1000)} с`);
         } catch (error) {
           check(`часть ${part} дошла до конца`, false, error instanceof Error ? error.message.slice(0, 300) : String(error));

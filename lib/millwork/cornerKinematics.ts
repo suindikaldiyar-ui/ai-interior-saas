@@ -1176,7 +1176,26 @@ export function vitrineSweep(input: {
     storage.y < entry.y + entry.heightM;
   const storageIds = new Set(ownStorage.map((entry) => entry.unit.id));
   const neighbours = new Set(entries.filter((entry) => ownStorage.some((storage) => nextTo(entry, storage))).map((entry) => entry.unit.id));
-  const storageSide = new Set<string>([...Array.from(storageIds), ...Array.from(neighbours)]);
+  /*
+   * СТВОРКИ АНТРЕСОЛИ РЯДОМ С БОЛЕЕ ГЛУБОКИМ СОСЕДОМ (ЭТАП 4, A5): антресоль
+   * ряда и кладовка 320 рядом с колонной 560 — дверь на петлях у колонны на
+   * ходу встречает её боковину. Меряется против этого соседа (и только него):
+   * ход вдоль остального ряда держит вынос полотна (ловушка 525).
+   */
+  const deeper = new Map<string, Set<string>>();
+  for (const entry of entries) {
+    if (entry.unit.section !== 'mezzanine') continue;
+    const near = entries.filter(
+      (other) =>
+        other.unit.id !== entry.unit.id &&
+        (other.depthM - entry.depthM) * MM > TOUCH_MM &&
+        (other.unit.offsetMm + other.unit.widthMm === entry.unit.offsetMm || entry.unit.offsetMm + entry.unit.widthMm === other.unit.offsetMm) &&
+        other.y < entry.y + entry.heightM &&
+        entry.y < other.y + other.heightM,
+    );
+    if (near.length > 0) deeper.set(entry.unit.id, new Set(near.map((other) => other.unit.id)));
+  }
+  const storageSide = new Set<string>([...Array.from(storageIds), ...Array.from(neighbours), ...Array.from(deeper.keys())]);
   const isVitrine = (unit: Module) => vitrineOf(unit) !== null || storageSide.has(unit.id);
   if (!entries.some((entry) => isVitrine(entry.unit))) return { clashes: [], assumptions: [] };
   const told = new Set<string>();
@@ -1193,9 +1212,15 @@ export function vitrineSweep(input: {
      * не связанный с кладовкой, не должен всплывать оттого, что у неё своя глубина.
      */
     const onlyStorage = vitrineOf(m.unit) === null && neighbours.has(m.unit.id) && !storageIds.has(m.unit.id);
+    const onlyDeeper = vitrineOf(m.unit) === null && !storageIds.has(m.unit.id) ? deeper.get(m.unit.id) : undefined;
     for (const solid of solids) {
       if (solid.moduleId === m.unit.id) continue;
-      if (onlyStorage && !(solid.moduleId && storageIds.has(solid.moduleId))) continue;
+      if (onlyStorage || onlyDeeper) {
+        const allowed =
+          (onlyStorage && solid.moduleId !== null && storageIds.has(solid.moduleId)) ||
+          (onlyDeeper !== undefined && solid.moduleId !== null && onlyDeeper.has(solid.moduleId));
+        if (!allowed) continue;
+      }
       if (!boxesMeet(m.swept, solid.box)) continue;
       const worst = worstOf(m, solid, [0, 0, 0]);
       if (worst.depth <= TOUCH_MM) continue;

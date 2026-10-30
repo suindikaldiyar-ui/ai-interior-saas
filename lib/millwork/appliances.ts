@@ -78,6 +78,74 @@ export type OvenInstall = {
   frontsTempMinC: number;
 };
 
+/** Встраиваемая СВЧ (ЭТАП 4): ниша в колонне и в навесном шкафу — по рисункам инструкции. */
+export type MicrowaveInstall = {
+  column: { nicheHeightMm: [number, number]; nicheWidthMm: [number, number]; nicheDepthMinMm: number; backGapMm: number };
+  wall: { nicheHeightMm: [number, number]; nicheWidthMm: [number, number]; nicheDepthMinMm: number; backGapMm: number };
+  installFromFloorMinMm: number;
+  /** «У шкафа не должно быть задней стенки». */
+  noBackPanel: boolean;
+  neighbourGapMinMm: number;
+  /** Документ противоречит себе: [одна страница, другая] — проверка берёт строгое. */
+  furnitureTempMinC: [number, number];
+  frontsTempMinC: [number, number];
+  turntables: number;
+  volumeL: number;
+};
+
+/** Холодильник (ЭТАП 4): встраиваемый — ниша и вентиляция; отдельностоящий — расстояния и ход двери. */
+export type FridgeInstall = {
+  builtIn: boolean;
+  niche?: { heightMm: [number, number]; cardHeightMm: number; widthMinMm: number; depthMinMm: number; depthRecommendedMm: number; sideBoardMm: [number, number] };
+  ventilation?: { inletCm2: number; outletCm2: number; how: string };
+  /** Мебельный фасад — на двери прибора: мебельных петель у него нет. */
+  doorOnDoor?: boolean;
+  hinge: 'left' | 'right';
+  frontGapMinMm?: number;
+  pairGapMinMm: number;
+  bodyDepthMm?: number;
+  doorOpenDepthMm?: number;
+  widthDoorOpenMm?: number;
+  cookerSideMinMm?: number;
+  shelves: number;
+  doorShelves: number;
+  freezerDrawers: number;
+};
+
+/** Полновстраиваемая посудомойка (ЭТАП 4): ниша, мебельный фасад на двери, цоколь. */
+export type DishwasherInstall = {
+  nicheHeightMm: [number, number];
+  nicheWidthMm: [number, number];
+  nicheDepthMinMm: number;
+  front: { maxHeightMm: number; maxWidthMm: number; massKg: [number, number]; flexMaxMm: number };
+  /** Цоколь — только по чертежу другой модели семейства: не подтверждено. */
+  plinthMm: [number, number];
+  legsMm: [number, number];
+  doorOpenDepthMm: number;
+  drainMaxHeightMm: number;
+  baskets: number;
+  placeSettings: number;
+};
+
+/** Встраиваемая вытяжка (ЭТАП 4): высота над панелью, посадка в шкаф. */
+export type HoodInstall = {
+  aboveElectricMinMm: number;
+  aboveGasMinMm: number;
+  installWidthMm: number;
+  installDepthMm: number;
+  bodyDepthMm: number;
+  boxHeightMm: number;
+  totalHeightMm: number;
+  shelfToCabinetBottomMm: number;
+  ductMm: { recommended: number; min: number };
+  furnitureTempMinC: number;
+  /** Названа ли модель в инструкции по монтажу. */
+  modelNamedInInstallDoc: boolean;
+  /** Ход экрана — в документах нет: `null`. */
+  screenTravelMm: number | null;
+  airM3h: number;
+};
+
 export type ApplianceDoc = { id: string; url: string; title: string; pages: string };
 export type ApplianceRule = { id: string; doc: string; page: number | null; figure?: string; text: string };
 
@@ -104,6 +172,10 @@ export type ApplianceModel = {
   grates?: number;
   hob?: HobInstall;
   oven?: OvenInstall;
+  microwave?: MicrowaveInstall;
+  fridge?: FridgeInstall;
+  dishwasher?: DishwasherInstall;
+  hood?: HoodInstall;
   docs: ApplianceDoc[];
   rules: ApplianceRule[];
   /** Чем модель нарисована и что в ней условно — словами. */
@@ -134,6 +206,11 @@ function checked(file: FactsFile): ApplianceModel[] {
       if (!ordered(h.cutoutWidthMm) || !ordered(h.cutoutDepthMm) || !ordered(h.cutoutRadiusMm)) throw new Error(`${where} — вырез задан не «от меньшего к большему»`);
     }
     if (m.kind === 'oven' && !m.oven) throw new Error(`${where} — у духового шкафа нет монтажа`);
+    /* Техника этапа 4: без своего раздела монтажа модель не проверить — ошибка файла, а не «модели нет». */
+    if (m.kind === 'microwave' && !m.microwave) throw new Error(`${where} — у СВЧ нет монтажа`);
+    if (m.kind === 'fridge' && !m.fridge) throw new Error(`${where} — у холодильника нет монтажа`);
+    if ((m.kind === 'dishwasher45' || m.kind === 'dishwasher60') && !m.dishwasher) throw new Error(`${where} — у посудомойки нет монтажа`);
+    if (m.kind === 'hood' && !m.hood) throw new Error(`${where} — у вытяжки нет монтажа`);
   }
   return file.models;
 }
@@ -155,6 +232,21 @@ export function modelsFor(kind: ApplianceKind): ApplianceModel[] {
 /** Модель прибора в этом модуле — только выбранная. */
 export function unitModel(unit: Pick<Module, 'applianceModels'>, kind: ApplianceKind): ApplianceModel | null {
   return applianceModel(unit.applianceModels?.[kind]);
+}
+
+/**
+ * МЕБЕЛЬНЫЙ ФАСАД НА ДВЕРИ ПРИБОРА (ЭТАП 4) — у модели, чья инструкция так
+ * велит: встраиваемый KIN86AF3M8 («дверь на дверь», 8001221617, с. 3–4) и
+ * полновстраиваемые посудомойки (фасад на дверь, рис. 5 листа монтажа).
+ * Мебельных петель у такого фасада нет — он ходит с дверью прибора; у
+ * посудомойки — вниз. Без модели — как было: типовой прибор не трогаем.
+ */
+export function frontOnApplianceDoor(unit: Pick<Module, 'appliance' | 'applianceModels'>): 'side' | 'down' | null {
+  if (!unit.appliance) return null;
+  const model = unitModel(unit, unit.appliance);
+  if (model?.dishwasher) return 'down';
+  if (model?.fridge?.doorOnDoor) return 'side';
+  return null;
 }
 
 /** «инструкция 9001867766, с. 10, рис. 7.5» — откуда правило. */

@@ -24,6 +24,7 @@ import {
   type ObjectMark,
 } from './shop';
 import { vitrineOnCounter } from './vitrine';
+import { applianceModel } from './appliances';
 import type { ProductionSettings } from '@/types/catalog';
 import { upperRowBottomMm, zoneHeightMm, zoneProfile } from './zones';
 import type { ApplianceKind, Module, ModuleFill, ModuleKind, Run, ZoneKind } from '@/types/millwork';
@@ -365,9 +366,22 @@ export function moduleCarcassHeightMm(
      * Не введено — остаётся `standard`: умолчание в данные не пишется, и
      * отпечатки рядов, собранных до этого, не едут (ловушка 246).
      */
-    const measured = unit.applianceSizes?.fridge?.heightMm
-      ? nicheHeightMm('fridge', unit.applianceSizes.fridge)
+    /*
+     * МОДЕЛЬ ХОЛОДИЛЬНИКА (ЭТАП 4) сильнее введённой высоты: прибор — это она.
+     * Встраиваемому нужна НИША между дном и крышей колонны (KIN86AF3M8 —
+     * 1775 по карточке, 1772…1780 по чертежу): корпус = ниша + дно + крыша.
+     * Отдельностоящий — слот по его высоте, как введённая высота.
+     */
+    const model = applianceModel(unit.applianceModels?.fridge);
+    const fridge = model?.fridge;
+    const own = fridge
+      ? fridge.builtIn && fridge.niche
+        ? fridge.niche.cardHeightMm + 2 * shopOf(run.production).carcassMm
+        : nicheHeightMm('fridge', { widthMm: model.sizeMm.width, heightMm: model.sizeMm.height })
       : null;
+    const measured = own ?? (unit.applianceSizes?.fridge?.heightMm
+      ? nicheHeightMm('fridge', unit.applianceSizes.fridge)
+      : null);
 
     return capped(
       Math.max(carcassHeightMm(run.production), Math.min(measured ?? standard, cap)),
@@ -996,9 +1010,12 @@ export function moduleDepthMm(
    *
    * Зазор сзади наш: прибору нужен просвет на вентиляцию и подводку.
    */
+  /* Отдельностоящий холодильник модели (ЭТАП 4) — глубиной самого прибора, как введённая глубина. */
+  const freestanding = applianceModel(unit.applianceModels?.fridge);
   const deepest = Math.max(
     0,
     ...Object.values(unit.applianceSizes ?? {}).map((size) => size?.depthMm ?? 0),
+    freestanding?.fridge && !freestanding.fridge.builtIn ? freestanding.sizeMm.depth : 0,
   );
 
   return deepest > 0 ? Math.max(standard, deepest + APPLIANCE_BACK_GAP_MM) : standard;

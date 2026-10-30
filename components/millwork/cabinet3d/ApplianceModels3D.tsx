@@ -6,8 +6,20 @@ import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { ProductionSettings } from '@/types/catalog';
 import type { Run } from '@/types/millwork';
-import { cookingModules, cookingStackOf, ovenDoorId, tallOvensOf, type CookingStack, type TallOven } from '@/lib/millwork/cookingStack';
-import { hobShape, ovenShape, type ShapeMaterial, type ShapePart } from '@/lib/millwork/applianceShapes';
+import { cookingModules, cookingStackOf, ovenDoorId, stageFourModelsOf, tallOvensOf, type CookingStack, type StageFourModel, type TallOven } from '@/lib/millwork/cookingStack';
+import {
+  builtInFridgeShape,
+  dishwasherShape,
+  freestandingFridgeShape,
+  hobShape,
+  hoodShape,
+  microwaveShape,
+  ovenShape,
+  type ModelShape,
+  type ShapeMaterial,
+  type ShapeMover,
+  type ShapePart,
+} from '@/lib/millwork/applianceShapes';
 import { useInteriorStore } from '@/store/useInteriorStore';
 import { HANDLE_ENV_INTENSITY, cadEnvironment } from './cadLook';
 import { useSlide } from './useSlide';
@@ -249,6 +261,100 @@ function TallOvenModel({ oven, economy, shadows }: { oven: TallOven; economy: bo
 }
 
 /**
+ * ХОД ДЕТАЛИ МОДЕЛИ ЭТАПА 4: дверь на оси (СВЧ, отдельностоящий холодильник) или
+ * выдвижение (корзины посудомойки, экран вытяжки). Ключ — `<модуль>:<ключ>`,
+ * тот же, что у «Открыть всё»; корзины едут, только когда открыт фасад (`after`).
+ */
+function ModelMover({ id, mover, merged, economy, shadows }: { id: string; mover: ShapeMover; merged: Merged; economy: boolean; shadows: boolean }) {
+  const ref = useRef<THREE.Group>(null);
+  const own = useInteriorStore((state) => state.openParts.includes(id));
+  /* Корпус хода: корзины — за фасадом (`after` — полный ключ фасада). */
+  const after = mover.kind === 'slide' && mover.after ? mover.after : null;
+  const gate = useInteriorStore((state) => (after ? state.openParts.includes(after) : true));
+  const toggle = useInteriorStore((state) => state.toggleOpenPart);
+  const open = own && gate;
+  useSlide({
+    target: open ? 1 : 0,
+    apply: (value) => {
+      const group = ref.current;
+      if (!group) return;
+      if (mover.kind === 'hinge') {
+        if (mover.axis === 'y') group.rotation.y = mover.angle * value;
+        else group.rotation.x = mover.angle * value;
+      } else {
+        group.position.set(
+          (mover.offsetMm[0] * value) / MM,
+          (mover.offsetMm[1] * value) / MM,
+          (mover.offsetMm[2] * value) / MM,
+        );
+      }
+    },
+  });
+  const pivot: [number, number, number] = mover.kind === 'hinge' ? [mover.pivotMm[0] / MM, mover.pivotMm[1] / MM, mover.pivotMm[2] / MM] : [0, 0, 0];
+  return (
+    <group position={pivot}>
+      <group
+        ref={ref}
+        name={`appliance-mover:${id}`}
+        userData={{ applianceDoor: id, moverKind: mover.kind }}
+        onClick={(event: ThreeEvent<MouseEvent>) => {
+          event.stopPropagation();
+          toggle(id);
+        }}
+      >
+        <group position={[-pivot[0], -pivot[1], -pivot[2]]}>
+          <Meshes merged={merged} economy={economy} shadows={shadows} name="appliance-mover" />
+        </group>
+      </group>
+    </group>
+  );
+}
+
+function MoverParts({ id, mover, parts, economy, shadows }: { id: string; mover: ShapeMover; parts: ShapePart[]; economy: boolean; shadows: boolean }) {
+  const merged = useMerged(parts);
+  return <ModelMover id={id} mover={mover} merged={merged} economy={economy} shadows={shadows} />;
+}
+
+function shapeOf(entry: StageFourModel): ModelShape {
+  if (entry.kind === 'microwave') return microwaveShape(entry.model);
+  if (entry.kind === 'fridge-free') return freestandingFridgeShape(entry.model);
+  if (entry.kind === 'fridge-built') return builtInFridgeShape(entry.model);
+  if (entry.kind === 'dishwasher') return dishwasherShape(entry.model, `${entry.unit.id}:door:0`);
+  return hoodShape(entry.model);
+}
+
+/**
+ * ТЕХНИКА ЭТАПА 4 — МОДЕЛЬ ПО ФАКТАМ BOSCH (`stageFourModelsOf`): СВЧ, холодильник,
+ * посудомойка, вытяжка. Неподвижное — сетками по материалу, у каждого хода — своя группа.
+ */
+function StageFourModel3D({ entry, economy, shadows }: { entry: StageFourModel; economy: boolean; shadows: boolean }) {
+  const shape = useMemo(() => shapeOf(entry), [entry]);
+  const fixedParts = useMemo(() => shape.parts.filter((p) => !('moving' in p && p.moving)), [shape]);
+  const fixed = useMerged(fixedParts);
+  const moverParts = useMemo(
+    () => shape.movers.map((mover) => ({ mover, parts: shape.parts.filter((p) => 'moving' in p && p.moving === mover.key) })),
+    [shape],
+  );
+  return (
+    <group name={`appliances:${entry.unit.id}:${entry.kind}`} userData={{ applianceModule: entry.unit.id }}>
+      <group position={[entry.xMm / MM, entry.bottomMm / MM, entry.zMm / MM]} name={entry.kind}>
+        <Meshes merged={fixed} economy={economy} shadows={shadows} name={entry.kind} />
+        {moverParts.map(({ mover, parts }) => (
+          <MoverParts
+            key={mover.key}
+            id={`${entry.unit.id}:${mover.key}`}
+            mover={mover}
+            parts={parts}
+            economy={economy}
+            shadows={shadows}
+          />
+        ))}
+      </group>
+    </group>
+  );
+}
+
+/**
  * ВСЯ ТЕХНИКА РЯДА В МОДЕЛЯХ — варочные панели и духовые шкафы под ними.
  * Слой «Техника» выключен — прибора в кадре нет, как коробок слоя.
  */
@@ -264,8 +370,10 @@ export default function ApplianceModels3D({ run, production, shadows = false }: 
   );
   /* Духовые шкафы в пенале и колонне (ЭТАП 4) — та же модель на полке своей ниши. */
   const tallOvens = useMemo(() => tallOvensOf(run, production), [run, production]);
+  /* Техника этапа 4 — модели Bosch, выбранные кухней. */
+  const stageFour = useMemo(() => stageFourModelsOf(run, production), [run, production]);
   const invalidate = useThree((state) => state.invalidate);
-  useEffect(() => invalidate(), [invalidate, stacks, tallOvens, layers.appliances]);
+  useEffect(() => invalidate(), [invalidate, stacks, tallOvens, stageFour, layers.appliances]);
 
   /*
    * Окошки для приёмки — только у холста, который рисует. Скрытая сцена захвата
@@ -299,11 +407,21 @@ export default function ApplianceModels3D({ run, production, shadows = false }: 
         niche: [oven.nicheFromMm, oven.nicheToMm],
         doorId: ovenDoorId(oven.unit.id),
       })),
+      ...stageFour.map((entry) => ({
+        moduleId: entry.unit.id,
+        hob: null,
+        oven: null,
+        model: entry.model.article,
+        kind: entry.kind,
+        bottomMm: entry.bottomMm,
+        zMm: entry.zMm,
+        movers: entry.moverIds,
+      })),
     ];
     return () => {
       delete own[key];
     };
-  }, [stacks, tallOvens, run.id, drawsFrames]);
+  }, [stacks, tallOvens, stageFour, run.id, drawsFrames]);
 
   /* Дверь при смене слоя и состава перерисовывается сама; поворот окружения — как у ручек. */
   const scene = useThree((state) => state.scene);
@@ -316,9 +434,9 @@ export default function ApplianceModels3D({ run, production, shadows = false }: 
    */
   useEffect(() => {
     if (!drawsFrames) return;
-    const w = window as unknown as { __mwApplianceDoors?: () => { id: string; angleDeg: number; x: number; y: number }[] };
+    const w = window as unknown as { __mwApplianceDoors?: () => { id: string; angleDeg: number; slideMm: number; x: number; y: number }[] };
     const probe = () => {
-      const out: { id: string; angleDeg: number; x: number; y: number }[] = [];
+      const out: { id: string; angleDeg: number; slideMm: number; x: number; y: number }[] = [];
       const camera = get().camera;
       const rect = gl.domElement.getBoundingClientRect();
       scene.traverse((object) => {
@@ -326,9 +444,12 @@ export default function ApplianceModels3D({ run, production, shadows = false }: 
         if (!id) return;
         object.updateWorldMatrix(true, true);
         const center = new THREE.Box3().setFromObject(object).getCenter(new THREE.Vector3()).project(camera);
+        /* Дверь на оси — угол (по x у шкафа и посудомойки, по y у СВЧ и холодильника); выдвижение — ход в мм. */
+        const turn = Math.abs(object.rotation.x) > Math.abs(object.rotation.y) ? object.rotation.x : object.rotation.y;
         out.push({
           id,
-          angleDeg: Math.round(((object.rotation.x * 180) / Math.PI) * 10) / 10,
+          slideMm: Math.round(object.position.length() * 1000),
+          angleDeg: Math.round(((turn * 180) / Math.PI) * 10) / 10,
           x: rect.left + ((center.x + 1) / 2) * rect.width,
           y: rect.top + ((1 - center.y) / 2) * rect.height,
         });
@@ -364,6 +485,9 @@ export default function ApplianceModels3D({ run, production, shadows = false }: 
       ))}
       {tallOvens.map((oven) => (
         <TallOvenModel key={`tall:${oven.unit.id}`} oven={oven} economy={economy} shadows={shadows} />
+      ))}
+      {stageFour.map((entry) => (
+        <StageFourModel3D key={`s4:${entry.unit.id}:${entry.kind}`} entry={entry} economy={economy} shadows={shadows} />
       ))}
     </group>
   );

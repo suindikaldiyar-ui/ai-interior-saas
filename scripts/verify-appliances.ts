@@ -36,7 +36,9 @@ import { allModules } from '../lib/millwork/layout';
 import { applyOps } from '../lib/millwork/ops';
 import { moduleAppliances, nicheHeightMm } from '../lib/millwork/modules';
 import { APPLIANCE_MODELS, applianceModel } from '../lib/millwork/appliances';
-import { applianceDoorIds, cookingFindings, cookingModules, cookingStackOf, tallOvensOf } from '../lib/millwork/cookingStack';
+import { applianceDoorIds, cookingFindings, cookingModules, cookingStackOf, stageFourModelsOf, tallOvensOf } from '../lib/millwork/cookingStack';
+import { applianceModelFindings } from '../lib/millwork/applianceChecks';
+import { openingHardware } from '../lib/millwork/opening';
 import { hobShape, ovenShape } from '../lib/millwork/applianceShapes';
 import { SHELF_PANEL_NAME, buildPanels } from '../lib/millwork/panels';
 import { boxLayer, layerCounts, openablePartIds, runBoxesByModule, runPlaces, sceneLeaves } from '../lib/millwork/cabinetBoxes';
@@ -45,7 +47,7 @@ import { wallsTouchedByChange } from '../lib/millwork/composition';
 import { totalCaption, unpricedLines } from '../lib/millwork/estimate';
 import { applianceDoorFindings, wallLabel } from '../lib/millwork/walls';
 import { doorRoomSolids, roomAroundRows, roomSourceOf } from '../lib/millwork/room';
-import { columnNiches, moduleCarcassHeightMm, rowStandardDepthMm, singleNicheOf } from '../lib/millwork/fill';
+import { columnNiches, fridgeStorageOf, moduleCarcassHeightMm, rowStandardDepthMm, singleNicheOf } from '../lib/millwork/fill';
 import { islandPlacement } from '../lib/millwork/island';
 import { islandRequirements, islandWithPlacement, newIsland } from '../lib/millwork/islandEdit';
 import { buildObject, NEW_CORNER } from './corner-quality-fixture';
@@ -100,8 +102,9 @@ export function applianceChecks(check: Check): void {
     const kinds = APPLIANCE_MODELS.map((m) => `${m.kind}:${m.article}`).join(' ');
     const orphan = APPLIANCE_MODELS.flatMap((m) => m.rules.filter((r) => !m.docs.some((d) => d.id === r.doc)).map((r) => `${m.article}:${r.id}`));
     check(
-      'AP1 факты техники: 5 моделей Bosch (варочных 4 — индукция 60 и 90, газ 60 и 75; духовой шкаф 1), у каждой документ монтажа и правила со ссылкой на документ записи',
-      APPLIANCE_MODELS.length === 5 &&
+      /* Этап 4 добавил шесть моделей (AP27): здесь — модели этапа 3, варочные и духовой шкаф, тем же счётом. */
+      'AP1 факты техники этапа 3: 5 моделей Bosch (варочных 4 — индукция 60 и 90, газ 60 и 75; духовой шкаф 1), у каждой документ монтажа и правила со ссылкой на документ записи',
+      APPLIANCE_MODELS.filter((m) => m.kind === 'hob' || m.kind === 'oven').length === 5 &&
         APPLIANCE_MODELS.filter((m) => m.kind === 'hob').length === 4 &&
         APPLIANCE_MODELS.filter((m) => m.kind === 'oven').length === 1 &&
         orphan.length === 0 &&
@@ -900,6 +903,215 @@ export function applianceChecks(check: Check): void {
         narrowU.length === 1 &&
         narrowU[0].words.endsWith('заходит в фасад модуля «2 дверцы» стены А на 153,8 мм'),
       `1050: ${corridor.map((f) => `[${f.level}] ${f.words}`).join(' | ') || 'МОЛЧА'} · 1100: ${corridorWide.length} · 3000: ${roomy.length} · колонна: ${withColumn.map((f) => f.words).join(' | ') || 'МОЛЧА'} · выступ: ${withProtrusion.map((f) => f.words).join(' | ') || 'МОЛЧА'} · без выноса: ${columnUnknown.map((f) => `[${f.level}] ${f.words}`).join(' | ') || 'МОЛЧА'} · П 1500: ${narrowU.map((f) => f.words).join(' | ')}`,
+    );
+
+    /* ── AP26. Дверь духового шкафа в пенале (A5) и просвет его ниши по инструкции (A4) ── */
+    const pencilRoom = (key: string, depth: number) =>
+      doorWithRoom({ key, title: `пенал в комнате 3800 × ${depth}`, lengths: [3800, depth, 3800, depth], shape: 'linear', corners: [], requirements: DEMO_REQUIREMENTS });
+    const pencilCorridor = pencilRoom('ap26-1050', 1050);
+    const pencilRoomy = pencilRoom('ap26-3000', 3000);
+    const pencilWords = (requirements: RunRequirements) =>
+      cookingFindings(buildObject({ key: 'ap26', title: 'пенал', lengths: [3800], shape: 'linear', corners: [], requirements }).engine.segments[0], DEFAULT_PRODUCTION).filter(
+        (f) => !f.words.includes('Варочная') && !f.words.includes('Планки'),
+      );
+    const withModel = pencilWords({ ...DEMO_REQUIREMENTS, applianceModels: { oven: 'HBG272EB3' } });
+    const tooTall = pencilWords({ ...DEMO_REQUIREMENTS, applianceModels: { oven: 'HBG272EB3' }, applianceSizes: { oven: { widthMm: 600, heightMm: 600, depthMm: 550 } } });
+    check(
+      'AP26 духовой шкаф в пенале: дверь (тот же ход) в коридоре 1050 заходит в стену напротив — блокирующее словами, в комнате 3000 — 0; просвет ниши HBG272EB3 592 мм — «в пределах 585…595 мм (инструкция 9001910443, с. 33)»; прибор 600 даёт просвет 624 — блокирующее «лишние 29 мм»',
+      pencilCorridor.some((f) => f.level === 'blocking' && f.words.includes('«Духовой шкаф»') && f.words.includes('заходит в стену 3 замера')) &&
+        pencilRoomy.length === 0 &&
+        withModel.length === 1 &&
+        withModel[0].level === 'release' &&
+        withModel[0].words.includes('просвет между опорами 592 мм — в пределах 585…595 мм (инструкция 9001910443, с. 33') &&
+        tooTall.some((f) => f.level === 'blocking' && f.words.includes('просвет ниши между опорами 624 мм') && f.words.includes('лишние 29 мм')),
+      `коридор: ${pencilCorridor.map((f) => `[${f.level}] ${f.words}`).join(' | ') || 'МОЛЧА'} · 3000: ${pencilRoomy.length} · модель: ${withModel.map((f) => `[${f.level}] ${f.words}`).join(' | ')} · 600: ${tooTall.map((f) => `[${f.level}] ${f.words}`).join(' | ') || 'МОЛЧА'}`,
+    );
+  }
+
+  /* ═══════════  ЭТАП 4, часть B: СВЧ, холодильники, посудомойки, вытяжка Bosch  ═══════════ */
+  {
+    const S4 = { microwave: 'BFL524MB2', fridge: 'KIN86AF3M8', dishwasher45: 'SPV4HMX14Q', hood: 'DFT63CA60Q' } as const;
+    const withMw = (models: RunRequirements['applianceModels'], extra: Partial<RunRequirements> = {}): RunRequirements => ({
+      ...DEMO_REQUIREMENTS,
+      appliances: [...DEMO_REQUIREMENTS.appliances, 'microwave'],
+      applianceModels: models,
+      ...extra,
+    });
+    const words = (list: { level: string; words: string }[]) => list.map((f) => `[${f.level}] ${f.words}`).join(' | ') || 'МОЛЧА';
+    const allUnits = (run: Run) => [...run.modules, ...run.upperSegments.flatMap((s) => s.modules)];
+    const unitOf = (run: Run, test: (m: Run['modules'][number]) => boolean, what: string) => {
+      const unit = allUnits(run).find(test);
+      if (!unit) throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: ${what} в ряду нет`);
+      return unit;
+    };
+    const P4 = DEFAULT_PRODUCTION;
+    const faceBoxes = (run: Run, id: string) =>
+      (runBoxesByModule(run, { production: P4, thicknessMm: P4.carcassMm, frontThicknessMm: P4.frontMm, gapMm: P4.frontGapMm }).modules.find((m) => m.unit.id === id)?.boxes ?? []).filter((b) => b.material === 'appliance').length;
+
+    /* AP27: факты — шесть моделей с документами; противоречия документов — словами в правиле. */
+    const kinds = ['microwave', 'fridge', 'dishwasher60', 'dishwasher45', 'hood'] as const;
+    const byKind = kinds.map((k) => `${k}:${APPLIANCE_MODELS.filter((m) => m.kind === k).map((m) => m.article).join('+')}`).join(' ');
+    const temp = applianceModel('BFL524MB2')?.rules.find((r) => r.id === 'temperature')?.text ?? '';
+    check(
+      'AP27 факты этапа 4: 11 моделей; СВЧ BFL524MB2, холодильники KIN86AF3M8 и KGN39LB30U, посудомойки SMV4HMX25Q и SPV4HMX14Q, вытяжка DFT63CA60Q — у каждой раздел монтажа и правила с документом; противоречие 90/65 и 95/70 °C — словами, вытяжка в инструкции не названа',
+      APPLIANCE_MODELS.length === 11 &&
+        byKind === 'microwave:BFL524MB2 fridge:KIN86AF3M8+KGN39LB30U dishwasher60:SMV4HMX25Q dishwasher45:SPV4HMX14Q hood:DFT63CA60Q' &&
+        APPLIANCE_MODELS.every((m) => m.rules.every((r) => m.docs.some((d) => d.id === r.doc))) &&
+        /90 °C.*95 °C/.test(temp) &&
+        applianceModel('DFT63CA60Q')?.hood?.modelNamedInInstallDoc === false,
+      `${APPLIANCE_MODELS.length} · ${byKind}`,
+    );
+
+    /* AP28: СВЧ в колонне — путь экрана. */
+    const typical = shown(withMw({}));
+    const mw = shown(withMw({ microwave: 'BFL524MB2' }));
+    const col = unitOf(mw.run, (m) => Boolean(m.column), 'колонны');
+    const colT = unitOf(typical.run, (m) => Boolean(m.column), 'колонны');
+    const mwFind = applianceModelFindings(mw.run, mw.production);
+    const mwPlace = stageFourModelsOf(mw.run, mw.production).find((e) => e.kind === 'microwave');
+    const mwLine = mw.estimate.lines.find((l) => l.key === 'appliance_microwave_BFL524MB2');
+    const screenMw = screenState({ refusal: null, mismatches: [], walls: [], segments: [], shape: 'linear', warnings: [], catalogError: null, appliances: mwFind });
+    check(
+      'AP28 СВЧ BFL524MB2 в колонне: просвет ниши 400 мм при 380…382 (9001974035, с. 21, рис. 16.7) — блокирующее «лишние 18 мм», цены нет; задняя стенка во всю колонну — выпуск заперт; модель на полке ниши (низ 1196 ≥ 850), лица-коробки нет, дверь в «Открыть всё», строка сметы с артикулом «цена не задана»; без модели — проверок нет, лицо прежнее',
+      applianceModelFindings(typical.run, typical.production).length === 0 &&
+        faceBoxes(typical.run, colT.id) > 0 &&
+        faceBoxes(mw.run, col.id) === 0 &&
+        mwFind.some((f) => f.level === 'blocking' && f.words.includes('просвет ниши между опорами 400 мм') && f.words.includes('380…382') && f.words.includes('лишние 18 мм') && f.words.includes('9001974035, с. 21, рис. 16.7')) &&
+        mwFind.some((f) => f.level === 'release' && f.words.includes('не должно быть задней стенки')) &&
+        screenMw.priceHidden &&
+        mwPlace?.bottomMm === 1196 &&
+        applianceDoorIds(mw.run).includes(`${col.id}:microwave:door`) &&
+        Boolean(mwLine?.priceUnset),
+      `${words(mwFind)} · низ ${mwPlace?.bottomMm ?? 'НЕТ'} · лицо ${faceBoxes(typical.run, colT.id)} → ${faceBoxes(mw.run, col.id)} · строка ${mwLine ? mwLine.title : 'НЕТ'}`,
+    );
+
+    /* AP29: встраиваемый KIN86AF3M8 — ниша 1775 в колонне, кладовка над ней, фасад на двери прибора. */
+    const built = shown({ ...DEMO_REQUIREMENTS, applianceModels: { fridge: 'KIN86AF3M8' } });
+    const fridgeB = unitOf(built.run, (m) => m.appliance === 'fridge', 'холодильника');
+    const fridgeT = unitOf(typical.run, (m) => m.appliance === 'fridge', 'холодильника');
+    const carcassB = moduleCarcassHeightMm(fridgeB, built.run);
+    const storageB = fridgeStorageOf(fridgeB, built.run);
+    const hwB = openingHardware([{ unit: fridgeB, heightMm: carcassB }], built.run).byModule[fridgeB.id];
+    const hwT = openingHardware([{ unit: fridgeT, heightMm: moduleCarcassHeightMm(fridgeT, typical.run) }], typical.run).byModule[fridgeT.id];
+    const findB = applianceModelFindings(built.run, built.production);
+    const placeB = stageFourModelsOf(built.run, built.production).find((e) => e.kind === 'fridge-built');
+    check(
+      'AP29 встраиваемый KIN86AF3M8: колонна 1807 = ниша 1775 (карточка, в пределах 1772…1780) + дно и крыша 16; кладовка над ней с 1907 мм; фасад на двери прибора — мебельных петель 0 (типовой — 4), ручек 2; вентиляция 200 см² — выпуск заперт словами; камера в колонне на дне ниши (116)',
+      fridgeB.builtIn === true &&
+        carcassB === 1807 &&
+        storageB !== null &&
+        storageB.bottomMm === 1907 &&
+        hwB.hinges === 0 &&
+        hwT.hinges === 4 &&
+        hwB.handleBar + hwB.handlePush === 2 &&
+        !findB.some((f) => f.level === 'blocking') &&
+        findB.some((f) => f.level === 'release' && f.words.includes('200 см²') && f.words.includes('8001221617, с. 1')) &&
+        placeB?.bottomMm === 116,
+      `колонна ${carcassB} · кладовка с ${storageB?.bottomMm ?? 'НЕТ'} · петли ${hwT.hinges} → ${hwB.hinges} · ${words(findB)} · камера ${placeB?.bottomMm ?? 'НЕТ'}`,
+    );
+
+    /* AP30: отдельностоящий KGN39LB30U — слот по его высоте и глубине, двери на петлях справа; варочная вплотную — 30 мм. */
+    const free = shown({ ...DEMO_REQUIREMENTS, applianceModels: { fridge: 'KGN39LB30U' } });
+    const fridgeF = unitOf(free.run, (m) => m.appliance === 'fridge', 'холодильника');
+    const placeF = stageFourModelsOf(free.run, free.production).find((e) => e.kind === 'fridge-free');
+    const hwF = openingHardware([{ unit: fridgeF, heightMm: moduleCarcassHeightMm(fridgeF, free.run) }], free.run).byModule[fridgeF.id];
+    const nearReq = (hob: string | null): RunRequirements => ({
+      ...DEMO_REQUIREMENTS,
+      appliances: ['fridge', 'hob', 'sink600'],
+      manualAnchors: { hob: 900 },
+      applianceModels: hob ? { fridge: 'KGN39LB30U', hob } : { fridge: 'KGN39LB30U' },
+    });
+    const near = shown(nearReq('PUE611BB5E'));
+    const nearT = shown(nearReq(null));
+    const nearFind = applianceModelFindings(near.run, near.production);
+    const nearTFind = applianceModelFindings(nearT.run, nearT.production);
+    check(
+      'AP30 отдельностоящий KGN39LB30U: не встроенный, слот 2040 (2030 + просвет) глубиной 680 — модель стоит на полу и выходит на 120 мм перед рядом; фасада нет — петель и ручек 0; две двери в «Открыть всё»; PUE611BB5E вплотную — 4 мм при норме 30 (9001848450, с. 91) — блокирующее; типовая панель — «не проверено»',
+      fridgeF.builtIn === false &&
+        moduleCarcassHeightMm(fridgeF, free.run) === 2040 &&
+        placeF?.zMm === 120 &&
+        placeF.bottomMm === 0 &&
+        hwF.hinges === 0 &&
+        hwF.handleBar + hwF.handlePush === 0 &&
+        placeF.moverIds.every((id) => applianceDoorIds(free.run).includes(id)) &&
+        nearFind.some((f) => f.level === 'blocking' && f.words.includes('4 мм') && f.words.includes('не меньше 30 мм') && f.words.includes('9001848450, с. 91')) &&
+        nearTFind.some((f) => f.level === 'release' && f.words.includes('расстояние не проверено')),
+      `слот ${moduleCarcassHeightMm(fridgeF, free.run)} · вынос ${placeF?.zMm ?? 'НЕТ'} · петли ${hwF.hinges} · вплотную: ${words(nearFind)} · типовая: ${words(nearTFind)}`,
+    );
+
+    /* AP31: посудомойки — фасад на двери, вниз; ниша и фасад по листу монтажа на трёх школах. */
+    const dwReq = (article: 'SPV4HMX14Q' | 'SMV4HMX25Q'): RunRequirements =>
+      article === 'SPV4HMX14Q'
+        ? { ...DEMO_REQUIREMENTS, applianceModels: { dishwasher45: article } }
+        : { ...DEMO_REQUIREMENTS, appliances: DEMO_REQUIREMENTS.appliances.map((a) => (a === 'dishwasher45' ? 'dishwasher60' : a)), applianceModels: { dishwasher60: article } };
+    const dw45 = shown(dwReq('SPV4HMX14Q'));
+    const dw60 = shown(dwReq('SMV4HMX25Q'));
+    const dwTall = shown(dwReq('SMV4HMX25Q'), shop({ heights: { carcassMm: 760 } }));
+    const dwHigh = shown(dwReq('SMV4HMX25Q'), shop({ heights: { plinthMm: 150, carcassMm: 760 } }));
+    const dwUnit = unitOf(dw45.run, (m) => m.appliance === 'dishwasher45', 'посудомойки');
+    const dwTyp = unitOf(typical.run, (m) => m.appliance === 'dishwasher45', 'посудомойки');
+    const hw45 = openingHardware([{ unit: dwUnit, heightMm: moduleCarcassHeightMm(dwUnit, dw45.run) }], dw45.run).byModule[dwUnit.id];
+    const hwTyp = openingHardware([{ unit: dwTyp, heightMm: moduleCarcassHeightMm(dwTyp, typical.run) }], typical.run).byModule[dwTyp.id];
+    const leaf45 = sceneLeaves(dwUnit, moduleCarcassHeightMm(dwUnit, dw45.run) / 1000)[0];
+    const leafTyp = sceneLeaves(dwTyp, moduleCarcassHeightMm(dwTyp, typical.run) / 1000)[0];
+    const f45 = applianceModelFindings(dw45.run, dw45.production);
+    const f60 = applianceModelFindings(dw60.run, dw60.production);
+    const fTall = applianceModelFindings(dwTall.run, dwTall.production);
+    const fHigh = applianceModelFindings(dwHigh.run, dwHigh.production);
+    const baskets = stageFourModelsOf(dw45.run, dw45.production).find((e) => e.kind === 'dishwasher');
+    check(
+      'AP31 посудомойки: SPV4HMX14Q — фасад на двери прибора вниз (flap), мебельных петель 0 (типовая — 2, створка вбок), ручка 1; ниша 820 в 815…875 — блокирующих нет, масса фасада и 446 > 444 шаблона — выпуск заперт; SMV4HMX25Q — 596 > 594; корпус 760 — фасад 756 > 725 (рис. 5) блокирующее; цоколь 150 + корпус 760 — ниша 910, «лишние 35 мм»; корзины в «Открыть всё»',
+      leaf45?.kind === 'door' && leaf45.opening === 'flap' &&
+        leafTyp?.kind === 'door' && leafTyp.opening !== 'flap' &&
+        hw45.hinges === 0 && hw45.flaps === 0 && hwTyp.hinges === 2 &&
+        hw45.handleBar + hw45.handlePush === 1 &&
+        !f45.some((f) => f.level === 'blocking') &&
+        f45.some((f) => f.level === 'release' && f.words.includes('масса не рассчитана') && f.words.includes('446 мм шире 444')) &&
+        f60.some((f) => f.level === 'release' && f.words.includes('596 мм шире 594')) &&
+        !f60.some((f) => f.level === 'blocking') &&
+        fTall.some((f) => f.level === 'blocking' && f.words.includes('фасад 756 мм выше 725 мм') && f.words.includes('9001999507, с. 1, рис. 5')) &&
+        fHigh.some((f) => f.level === 'blocking' && f.words.includes('910 мм') && f.words.includes('лишние 35 мм')) &&
+        Boolean(baskets) &&
+        applianceDoorIds(dw45.run).includes(`${dwUnit.id}:dishwasher:baskets`),
+      `створка ${leafTyp?.kind === 'door' ? leafTyp.opening : '—'} → ${leaf45?.kind === 'door' ? leaf45.opening : '—'} · петли ${hwTyp.hinges} → ${hw45.hinges} · 45: ${words(f45)} · 60: ${words(f60)} · 760: ${words(fTall)} · 150+760: ${words(fHigh)}`,
+    );
+
+    /* AP32: вытяжка DFT63CA60Q — низ на 40 мм ниже шкафа; электрическая 552 ≥ 500, газовая — нет. */
+    const hoodE = shown({ ...DEMO_REQUIREMENTS, applianceModels: { hood: 'DFT63CA60Q', hob: 'PUE611BB5E' } });
+    const hoodG = shown({ ...DEMO_REQUIREMENTS, applianceModels: { hood: 'DFT63CA60Q', hob: 'PGH6B5K90R' } });
+    const hoodN = shown({ ...DEMO_REQUIREMENTS, applianceModels: { hood: 'DFT63CA60Q' } });
+    const hoodUnit = unitOf(hoodE.run, (m) => m.appliance === 'hood', 'вытяжки');
+    const hoodTyp = unitOf(typical.run, (m) => m.appliance === 'hood', 'вытяжки');
+    const fE = applianceModelFindings(hoodE.run, hoodE.production);
+    const fG = applianceModelFindings(hoodG.run, hoodG.production);
+    const fN = applianceModelFindings(hoodN.run, hoodN.production);
+    const hoodPlace = stageFourModelsOf(hoodE.run, hoodE.production).find((e) => e.kind === 'hood');
+    check(
+      'AP32 вытяжка DFT63CA60Q: низ в 552 мм над столешницей (на 40 мм ниже шкафа, рис. A) — над индукцией 552 ≥ 500 блокирующих нет; над газом — блокирующее «поднимите … на 98 мм»; без модели панели — «над газовой нужно 650»; в инструкции не названа — выпуск заперт; модель под дном шкафа (1450), лица-коробки нет, экран в «Открыть всё»',
+      !fE.some((f) => f.level === 'blocking') &&
+        fE.some((f) => f.level === 'release' && f.words.includes('в инструкции по монтажу не названа')) &&
+        fG.some((f) => f.level === 'blocking' && f.words.includes('552 мм') && f.words.includes('газовой') && f.words.includes('на 98 мм')) &&
+        fN.some((f) => f.level === 'release' && f.words.includes('над газовой нужно 650 мм')) &&
+        hoodPlace?.bottomMm === 1450 &&
+        faceBoxes(typical.run, hoodTyp.id) > 0 &&
+        faceBoxes(hoodE.run, hoodUnit.id) === 0 &&
+        applianceDoorIds(hoodE.run).includes(`${hoodUnit.id}:hood:screen`),
+      `индукция: ${words(fE)} · газ: ${words(fG)} · без панели: ${words(fN)} · низ ${hoodPlace?.bottomMm ?? 'НЕТ'}`,
+    );
+
+    /* AP33: без выбора моделей — ничего не едет; со всеми — смета пишет модели с артикулом, петли 26 → 20. */
+    const all = shown(withMw(S4));
+    /* Петли обычной навески — строка класса фурнитуры ряда (`hinge_<класс>`). */
+    const hingesOf = (est: typeof all.estimate) => est.lines.filter((l) => l.key === `hinge_${all.run.options.hardwareClass}`).reduce((sum, l) => sum + l.quantity, 0);
+    const keys = all.estimate.lines.map((l) => l.key);
+    check(
+      'AP33 без выбора моделей проверок этапа 4 нет и отпечаток прежний; со всеми моделями — строки appliance_<прибор>_<артикул> «цена не задана», петель 24 → 18 — минус 4 у холодильника и 2 у посудомойки: их фасады на дверях приборов',
+      applianceModelFindings(typical.run, typical.production).length === 0 &&
+        stageFourModelsOf(typical.run, typical.production).length === 0 &&
+        ['appliance_microwave_BFL524MB2', 'appliance_fridge_KIN86AF3M8', 'appliance_dishwasher45_SPV4HMX14Q', 'appliance_hood_DFT63CA60Q'].every((k) => keys.includes(k)) &&
+        hingesOf(typical.estimate) === 24 &&
+        hingesOf(all.estimate) === 18,
+      `петли ${hingesOf(typical.estimate)} → ${hingesOf(all.estimate)} · моделей в сцене ${stageFourModelsOf(all.run, all.production).length}`,
     );
   }
 }

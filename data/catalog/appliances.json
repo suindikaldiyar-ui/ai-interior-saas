@@ -1,5 +1,5 @@
 {
-  "checkedAt": "2026-10-29",
+  "checkedAt": "2026-10-30",
   "source": "https://www.bosch-home.com/kz/ru",
   "note": "Факты техники Bosch: размеры и ниши — JSON-LD карточек bosch-home.com/kz/ru; монтажные правила — инструкции media3.bsh-group.com/Documents (номер, страница, рисунок). Карточки и PDF сохранены вне git: CATALOG_STAGING/05_APPLIANCES/BOSCH. Сверку с карточками делает scripts/appliance-facts.mjs. Цена — розница карточки на дату проверки: справка, не ставка сметы.",
   "models": [
@@ -273,6 +273,617 @@
         { "id": "sides", "doc": "9001910443", "page": 34, "figure": "22.8", "text": "по центру ниши; до соседних фасадов ≥ 5" }
       ],
       "visual": "VISUAL_RECONSTRUCTION: фронт, панель с дисплеем, ручка, камера с направляющими — по габаритному чертежу и фото карточки (PGA1, PGA2); CAD Bosch нет"
+    },
+    {
+      "article": "BFL524MB2",
+      "brand": "Bosch",
+      "kind": "microwave",
+      "type": "built_in_microwave",
+      "series": "Серия 4",
+      "name": "Встраиваемая микроволновая печь, черный",
+      "url": "https://www.bosch-home.com/kz/ru/product/prigotovlenie-pishhi-i-vypechka/mikrovolnovaja-pech/vstraivaemaja-mikrovolnovaja-pech/BFL524MB2",
+      "gtin": "4242005481521",
+      "priceKzt": 269990,
+      "sizeMm": {
+        "height": 382,
+        "width": 594,
+        "depth": 317
+      },
+      "colour": "Черный",
+      "surface": "дверь: черное стекло",
+      "frame": "",
+      "controls": "электронное открывание двери кнопкой; панель справа",
+      "powerW": null,
+      "microwave": {
+        "column": {
+          "nicheHeightMm": [
+            380,
+            382
+          ],
+          "nicheWidthMm": [
+            560,
+            568
+          ],
+          "nicheDepthMinMm": 550,
+          "backGapMm": 35
+        },
+        "wall": {
+          "nicheHeightMm": [
+            362,
+            365
+          ],
+          "nicheWidthMm": [
+            560,
+            568
+          ],
+          "nicheDepthMinMm": 300,
+          "backGapMm": 16
+        },
+        "installFromFloorMinMm": 850,
+        "noBackPanel": true,
+        "neighbourGapMinMm": 3,
+        "furnitureTempMinC": [
+          90,
+          95
+        ],
+        "frontsTempMinC": [
+          65,
+          70
+        ],
+        "turntables": 1,
+        "volumeL": 20
+      },
+      "docs": [
+        {
+          "id": "9001974035",
+          "url": "https://media3.bsh-group.com/Documents/9001974035_E.pdf",
+          "title": "Руководство по эксплуатации и монтажу BFL524MB2 (en, с. 20–23)",
+          "pages": "7, 20–23"
+        },
+        {
+          "id": "9001973974",
+          "url": "https://media3.bsh-group.com/Documents/9001973974_J.pdf",
+          "title": "Руководство по эксплуатации и монтажу BFL524M.2 (ru, с. 20–22)",
+          "pages": "20–22"
+        }
+      ],
+      "rules": [
+        {
+          "id": "column",
+          "doc": "9001974035",
+          "page": 21,
+          "figure": "16.7",
+          "text": "шкаф-колонна 600: ниша 560⁺⁸ × 380⁺² × ≥ 550, сзади 35 мм; в колонне — рамка и 4 ножки (п. 16.9, с. 22)"
+        },
+        {
+          "id": "wall",
+          "doc": "9001974035",
+          "page": 21,
+          "figure": "16.5",
+          "text": "навесной шкаф 600: ниша 560⁺⁸ × 362⁺³ × ≥ 300, от задней кромки шкафа до стены 16 мм"
+        },
+        {
+          "id": "general",
+          "doc": "9001974035",
+          "page": 21,
+          "figure": "16.4",
+          "text": "высота установки ≥ 850 мм; у шкафа не должно быть задней стенки; вентиляционные щели не закрывать; не в кухню без ручек с вертикальным профилем"
+        },
+        {
+          "id": "temperature",
+          "doc": "9001974035",
+          "page": 21,
+          "text": "термостойкость мебели 90 °C, соседних фасадов 65 °C; на с. 20 того же документа — 95 °C и 70 °C (документ противоречит себе: принимается строгое 95 / 70)"
+        },
+        {
+          "id": "neighbours",
+          "doc": "9001974035",
+          "page": 23,
+          "text": "до соседних приборов ≥ 3 мм"
+        },
+        {
+          "id": "pair",
+          "doc": "9001973974",
+          "page": 22,
+          "figure": "16.8",
+          "text": "два прибора в колонне: отверстия в промежуточных полках, вентиляция в цоколе ≥ 200 см²"
+        }
+      ],
+      "visual": "VISUAL_RECONSTRUCTION: корпус, дверь со стеклом, панель с кнопкой справа, камера и вращающаяся подставка — по габариту карточки и рис. с. 7; сторона навески двери и диаметр подставки в документах не указаны — условно; CAD Bosch нет"
+    },
+    {
+      "article": "KIN86AF3M8",
+      "brand": "Bosch",
+      "kind": "fridge",
+      "type": "built_in_bottom_freezer",
+      "series": "Серия 6",
+      "name": "Встраиваемый холодильник с нижней морозильной камерой 177,2 × 55,8 cm, плоская петля",
+      "url": "https://www.bosch-home.com/kz/ru/product/holodilniki-i-morozilniki/holodilno-morozilnaja-kombinacija/aksessuary-dlja-vypechki-i-prigotovlenija-pishhi/KIN86AF3M8",
+      "gtin": "4242005329977",
+      "priceKzt": 789990,
+      "sizeMm": {
+        "height": 1772,
+        "width": 558,
+        "depth": 545
+      },
+      "colour": "встраиваемый",
+      "surface": "дверь под мебельный фасад",
+      "frame": "",
+      "controls": "кнопки",
+      "powerW": null,
+      "fridge": {
+        "builtIn": true,
+        "niche": {
+          "heightMm": [
+            1772,
+            1780
+          ],
+          "cardHeightMm": 1775,
+          "widthMinMm": 560,
+          "depthMinMm": 550,
+          "depthRecommendedMm": 560,
+          "sideBoardMm": [
+            16,
+            19
+          ]
+        },
+        "ventilation": {
+          "inletCm2": 200,
+          "outletCm2": 200,
+          "how": "вход через цоколь снизу, выход сверху"
+        },
+        "doorOnDoor": true,
+        "hinge": "right",
+        "frontGapMinMm": 2,
+        "pairGapMinMm": 150,
+        "shelves": 5,
+        "doorShelves": 4,
+        "freezerDrawers": 3
+      },
+      "docs": [
+        {
+          "id": "8001221617",
+          "url": "https://media3.bsh-group.com/Documents/8001221617_A.pdf",
+          "title": "Инструкция по монтажу (пиктограммы, 4 с.)",
+          "pages": "1–4"
+        },
+        {
+          "id": "9001929741",
+          "url": "https://media3.bsh-group.com/Documents/9001929741_E.pdf",
+          "title": "Руководство по эксплуатации (ru)",
+          "pages": "10–11"
+        },
+        {
+          "id": "MCZ_00453976",
+          "url": "https://media3.bsh-group.com/Line_Drawings/1200x/MCZ_00453976_79227_KI86SAF30_ru-KZ.webp",
+          "title": "Габаритный чертёж карточки (подписан KI86SAF30 — другой модели семейства)",
+          "pages": ""
+        },
+        {
+          "id": "16877937",
+          "url": "https://media3.bsh-group.com/Line_Drawings/1200x/16877937_Air_ventilation_ru-KZ.webp",
+          "title": "Чертёж вентиляции с карточки",
+          "pages": ""
+        }
+      ],
+      "rules": [
+        {
+          "id": "niche",
+          "doc": "MCZ_00453976",
+          "page": null,
+          "figure": "габаритный",
+          "text": "ниша 1772⁺⁸ × ≥ 560 × 560 (≥ 550); карточка: высота при установке 1775 (мин = макс), ширина 560, глубина 550 — чертёж другой модели, в пределах 1772…1780 оба"
+        },
+        {
+          "id": "ventilation",
+          "doc": "8001221617",
+          "page": 1,
+          "text": "вентиляция 200 см²: вход через цоколь снизу, выход сверху; ниша под 90°"
+        },
+        {
+          "id": "sides",
+          "doc": "8001221617",
+          "page": 2,
+          "figure": "B1a / B1b",
+          "text": "боковины ниши 16 или 19 мм"
+        },
+        {
+          "id": "door",
+          "doc": "8001221617",
+          "page": 3,
+          "figure": "C1–C23",
+          "text": "мебельный фасад крепится на дверь прибора; между фасадами ≥ 2 мм (C11, C22); дверь правая перевешиваемая, плоская петля (карточка)"
+        },
+        {
+          "id": "depth",
+          "doc": "9001929741",
+          "page": 10,
+          "text": "глубина ниши 560 рекомендовано, не меньше 550; ширина внутри ≥ 560"
+        },
+        {
+          "id": "pair",
+          "doc": "9001929741",
+          "page": 11,
+          "text": "два холодильника рядом или друг над другом — ≥ 150 мм между ними"
+        }
+      ],
+      "visual": "VISUAL_RECONSTRUCTION: камера, 5 полок, 3 ящика морозильной камеры, 4 полки на двери — по карточке; дверь прибора за мебельным фасадом; CAD Bosch нет"
+    },
+    {
+      "article": "KGN39LB30U",
+      "brand": "Bosch",
+      "kind": "fridge",
+      "type": "freestanding_bottom_freezer",
+      "series": "Серия 6",
+      "name": "Отдельностоящий холодильник с нижней морозильной камерой 203 × 60 cm, чёрный, Total No Frost",
+      "url": "https://www.bosch-home.com/kz/ru/product/holodilniki-i-morozilniki/holodilno-morozilnaja-kombinacija/holodilnik-s-nijney-morozilnoy/KGN39LB30U",
+      "gtin": "4242005428731",
+      "priceKzt": 559990,
+      "sizeMm": {
+        "height": 2030,
+        "width": 600,
+        "depth": 660
+      },
+      "colour": "Черный",
+      "surface": "двери: черные",
+      "frame": "",
+      "controls": "кнопки; встроенная вертикальная ручка",
+      "powerW": null,
+      "fridge": {
+        "builtIn": false,
+        "bodyDepthMm": 590,
+        "doorOpenDepthMm": 1210,
+        "widthDoorOpenMm": 600,
+        "cookerSideMinMm": 30,
+        "pairGapMinMm": 150,
+        "hinge": "right",
+        "shelves": 5,
+        "doorShelves": 4,
+        "freezerDrawers": 3
+      },
+      "docs": [
+        {
+          "id": "9001848450",
+          "url": "https://media3.bsh-group.com/Documents/9001848450_F.pdf",
+          "title": "Руководство по эксплуатации KGN39.. (ru, с. 84–110)",
+          "pages": "91–93"
+        },
+        {
+          "id": "8001286632",
+          "url": "https://media3.bsh-group.com/Documents/8001286632_A.pdf",
+          "title": "Инструкция по установке отдельностоящего прибора (пиктограммы)",
+          "pages": "1–3"
+        }
+      ],
+      "rules": [
+        {
+          "id": "cooker",
+          "doc": "9001848450",
+          "page": 91,
+          "text": "до электрических и газовых плит 30 мм, до печей на жидком топливе и угле 300 мм; до боковой стены — «небольшой отступ», числом не дан"
+        },
+        {
+          "id": "room",
+          "doc": "9001848450",
+          "page": 92,
+          "text": "1 м³ помещения на 8 г хладагента; окружающая среда 10…43 °C; масса до 90 кг"
+        },
+        {
+          "id": "pair",
+          "doc": "9001848450",
+          "page": 93,
+          "text": "два прибора рядом — ≥ 150 мм"
+        },
+        {
+          "id": "wall",
+          "doc": "8001286632",
+          "page": 3,
+          "figure": "2A / 2B / 2C",
+          "text": "дистанционные упоры при глубине ≥ 600 и < 600 мм; зазор до стены числом не дан"
+        }
+      ],
+      "visual": "VISUAL_RECONSTRUCTION: корпус, две двери на правых петлях, 5 полок, 4 полки на двери, 3 ящика морозильной камеры — по карточке; деление дверей по высоте в документах не указано — условно; CAD Bosch нет"
+    },
+    {
+      "article": "SMV4HMX25Q",
+      "brand": "Bosch",
+      "kind": "dishwasher60",
+      "type": "fully_integrated",
+      "series": "Серия 4",
+      "name": "Полновстраиваемая посудомоечная машина 60 cm",
+      "url": "https://www.bosch-home.com/kz/ru/product/posudomoechnye-mashiny/vstraivaemye-posudomoechnye-mashiny/bifulldishwashers60width/SMV4HMX25Q",
+      "gtin": "4242005514786",
+      "priceKzt": 399990,
+      "sizeMm": {
+        "height": 815,
+        "width": 598,
+        "depth": 550
+      },
+      "colour": "полновстраиваемая",
+      "surface": "дверь под мебельный фасад",
+      "frame": "",
+      "controls": "на торце двери",
+      "powerW": null,
+      "dishwasher": {
+        "nicheHeightMm": [
+          815,
+          875
+        ],
+        "nicheWidthMm": [
+          600,
+          608
+        ],
+        "nicheDepthMinMm": 550,
+        "front": {
+          "maxHeightMm": 725,
+          "maxWidthMm": 594,
+          "massKg": [
+            2.5,
+            8.5
+          ],
+          "flexMaxMm": 1.2
+        },
+        "plinthMm": [
+          90,
+          220
+        ],
+        "legsMm": [
+          0,
+          60
+        ],
+        "doorOpenDepthMm": 1150,
+        "drainMaxHeightMm": 1100,
+        "baskets": 3,
+        "placeSettings": 13
+      },
+      "docs": [
+        {
+          "id": "9001999507",
+          "url": "https://media3.bsh-group.com/Documents/9001999507_A.pdf",
+          "title": "Лист монтажа «GV 64x Voll-I 81,5 cm» (2 с.)",
+          "pages": "1–2"
+        },
+        {
+          "id": "9002038399",
+          "url": "https://media3.bsh-group.com/Documents/9002038399_A.pdf",
+          "title": "Руководство по эксплуатации SMV4HMX25Q (ru)",
+          "pages": "51"
+        },
+        {
+          "id": "16027521",
+          "url": "https://media3.bsh-group.com/Line_Drawings/1200x/16027521_6xx_EU_with_Aquastop_ru-KZ.webp",
+          "title": "Чертёж шлангов и кабеля с карточки",
+          "pages": ""
+        }
+      ],
+      "rules": [
+        {
+          "id": "niche",
+          "doc": "9001999507",
+          "page": 1,
+          "figure": "1",
+          "text": "ниша 815…875 × 600 (до 608, рис. 2b) × 550; отверстие ≈ 100 × 50 в соседнем шкафу под шланги; ниша > 608 — скоба к столешнице 10011641 (рис. 2a)"
+        },
+        {
+          "id": "front",
+          "doc": "9001999507",
+          "page": 1,
+          "figure": "5",
+          "text": "мебельный фасад на дверь прибора: не больше 725 × 594 мм, масса 2,5…8,5 кг, прогиб ≤ 1,2 мм"
+        },
+        {
+          "id": "legs",
+          "doc": "9001999507",
+          "page": 1,
+          "figure": "4",
+          "text": "ножки 0…60 мм"
+        },
+        {
+          "id": "plinth",
+          "doc": "16027521",
+          "page": null,
+          "text": "цоколь 90…220 и фасад 655…725 при нише 815…875 — только на чертеже другой модели семейства (SMV50M00EU): не подтверждено для этой модели"
+        },
+        {
+          "id": "drain",
+          "doc": "9001999507",
+          "page": 2,
+          "text": "слив — не выше 1,1 м"
+        }
+      ],
+      "visual": "VISUAL_RECONSTRUCTION: корпус, камера, дверь вниз с мебельным фасадом, две корзины и третий уровень для приборов — по карточке; CAD Bosch нет"
+    },
+    {
+      "article": "SPV4HMX14Q",
+      "brand": "Bosch",
+      "kind": "dishwasher45",
+      "type": "fully_integrated",
+      "series": "Серия 4",
+      "name": "Полновстраиваемая посудомоечная машина 45 cm",
+      "url": "https://www.bosch-home.com/kz/ru/product/posudomoechnye-mashiny/vstraivaemye-posudomoechnye-mashiny/bifulldishwashers45width/SPV4HMX14Q",
+      "gtin": "4242005538355",
+      "priceKzt": 359990,
+      "sizeMm": {
+        "height": 815,
+        "width": 448,
+        "depth": 550
+      },
+      "colour": "полновстраиваемая",
+      "surface": "дверь под мебельный фасад",
+      "frame": "",
+      "controls": "на торце двери",
+      "powerW": null,
+      "dishwasher": {
+        "nicheHeightMm": [
+          815,
+          875
+        ],
+        "nicheWidthMm": [
+          450,
+          458
+        ],
+        "nicheDepthMinMm": 550,
+        "front": {
+          "maxHeightMm": 725,
+          "maxWidthMm": 444,
+          "massKg": [
+            2.5,
+            7.5
+          ],
+          "flexMaxMm": 1.2
+        },
+        "plinthMm": [
+          90,
+          220
+        ],
+        "legsMm": [
+          0,
+          60
+        ],
+        "doorOpenDepthMm": 1150,
+        "drainMaxHeightMm": 1100,
+        "baskets": 2,
+        "placeSettings": 10
+      },
+      "docs": [
+        {
+          "id": "9001999323",
+          "url": "https://media3.bsh-group.com/Documents/9001999323_C.pdf",
+          "title": "Лист монтажа «GV 44x Voll-I»",
+          "pages": "1–2"
+        },
+        {
+          "id": "9002038353",
+          "url": "https://media3.bsh-group.com/Documents/9002038353_A.pdf",
+          "title": "Руководство по эксплуатации SPV4HMX14Q (ru)",
+          "pages": "52"
+        },
+        {
+          "id": "101960",
+          "url": "https://media3.bsh-group.com/Line_Drawings/1200x/101960_SPV40C00GB_ru-KZ.webp",
+          "title": "Габаритный чертёж карточки (подписан SPV40C00GB — другой модели семейства)",
+          "pages": ""
+        }
+      ],
+      "rules": [
+        {
+          "id": "niche",
+          "doc": "9001999323",
+          "page": 1,
+          "figure": "1",
+          "text": "ниша 815…875 × 450 (до 458) × 550; отверстие ≈ 100 × 50 под шланги; ниша > 458 — скоба 10011641 (рис. 2a)"
+        },
+        {
+          "id": "front",
+          "doc": "9001999323",
+          "page": 1,
+          "figure": "5",
+          "text": "мебельный фасад на дверь прибора: не больше 725 × 444 мм, масса 2,5…7,5 кг, прогиб ≤ 1,2 мм"
+        },
+        {
+          "id": "legs",
+          "doc": "9001999323",
+          "page": 1,
+          "figure": "4",
+          "text": "ножки 0…60 мм"
+        },
+        {
+          "id": "plinth",
+          "doc": "101960",
+          "page": null,
+          "text": "цоколь 90…220 и фасад 655…725 — только на чертеже другой модели семейства (SPV40C00GB): не подтверждено для этой модели"
+        }
+      ],
+      "visual": "VISUAL_RECONSTRUCTION: корпус, камера, дверь вниз с мебельным фасадом, корзины и VarioDrawer — по карточке; CAD Bosch нет"
+    },
+    {
+      "article": "DFT63CA60Q",
+      "brand": "Bosch",
+      "kind": "hood",
+      "type": "telescopic",
+      "series": "Серия 2",
+      "name": "Встраиваемая вытяжка с выдвижным экраном 60 cm, черный",
+      "url": "https://www.bosch-home.com/kz/ru/product/prigotovlenie-pishhi-i-vypechka/vytjazhka/builtincookerhoods/DFT63CA60Q",
+      "gtin": "4242002985091",
+      "priceKzt": 134990,
+      "sizeMm": {
+        "height": 175,
+        "width": 600,
+        "depth": 280
+      },
+      "colour": "Черный",
+      "surface": "выдвижной экран",
+      "frame": "",
+      "controls": "механический ползунок, 3 скорости",
+      "powerW": null,
+      "hood": {
+        "aboveElectricMinMm": 500,
+        "aboveGasMinMm": 650,
+        "installWidthMm": 598,
+        "installDepthMm": 264,
+        "bodyDepthMm": 280,
+        "boxHeightMm": 135,
+        "totalHeightMm": 175,
+        "shelfToCabinetBottomMm": 135,
+        "ductMm": {
+          "recommended": 150,
+          "min": 120
+        },
+        "furnitureTempMinC": 90,
+        "modelNamedInInstallDoc": false,
+        "screenTravelMm": null,
+        "airM3h": 300
+      },
+      "docs": [
+        {
+          "id": "9000990839",
+          "url": "https://media3.bsh-group.com/Documents/9000990839_E.pdf",
+          "title": "Инструкция по монтажу встраиваемых вытяжек (модель DFT63CA60Q на с. 1 не названа)",
+          "pages": "1–2, 6, 9"
+        },
+        {
+          "id": "9001240143",
+          "url": "https://media3.bsh-group.com/Documents/9001240143_C.pdf",
+          "title": "Руководство по эксплуатации DFT63CA.0Q (монтажных размеров нет)",
+          "pages": ""
+        }
+      ],
+      "rules": [
+        {
+          "id": "height",
+          "doc": "9000990839",
+          "page": 2,
+          "figure": "B",
+          "text": "над электрической панелью не меньше 500 мм, над газовой — 650 мм; если в инструкции газовой панели больше — берётся больше (также карточка)"
+        },
+        {
+          "id": "size",
+          "doc": "9000990839",
+          "page": 1,
+          "figure": "A",
+          "text": "ширина 598, глубина 280, высота короба 135, общая 175, патрубок Ø150; карточка: ширина установки 598, глубина установки 264"
+        },
+        {
+          "id": "mount",
+          "doc": "9000990839",
+          "page": 2,
+          "figure": "1",
+          "text": "от промежуточной полки до нижней кромки шкафа 135 мм, 4 отверстия Ø4,5 по шаблону"
+        },
+        {
+          "id": "duct",
+          "doc": "9000990839",
+          "page": 6,
+          "text": "воздуховод Ø150 рекомендовано, не меньше 120; мебель — 90 °C; шнур «примерно 1 м» (карточка — 130 см)"
+        },
+        {
+          "id": "notNamed",
+          "doc": "9000990839",
+          "page": 1,
+          "text": "в списке моделей инструкции DFT63CA60Q нет (DHI…, LI28…, ATS6S…, ATT6A…, LI63TCA10T) — монтаж по ней для этой модели не подтверждён"
+        }
+      ],
+      "visual": "VISUAL_RECONSTRUCTION: короб в шкафу, выдвижной экран, жироулавливающий фильтр, свет — по рис. A и карточке; ход экрана в документах нет — условно; CAD Bosch нет"
     }
   ]
 }

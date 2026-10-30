@@ -33,6 +33,7 @@ import {
 import { SECTION_SPECS, sectionSpec } from './sections';
 import { isSectionZone, zoneHeightMm, zoneProfile } from './zones';
 import { beamBottomMm, beamsOnRun } from './ceiling';
+import { applianceModel } from './appliances';
 import { OPENING_KIND_TITLE } from '@/types/millwork';
 import { plinthMm, upperBottomMm } from './shop';
 import type { ProductionSettings } from '@/types/catalog';
@@ -305,7 +306,9 @@ function planAnchors(
    * В ряду он занимает одно и то же место, но это разные деньги и разный
    * вид, поэтому признак едет с якорем до самого модуля.
    */
-  if (has('fridge')) pushTall('fridge', { builtIn: (req.fridgeType ?? 'built_in') === 'built_in' });
+  /* Модель холодильника (ЭТАП 4) решает сама: KGN39LB30U — отдельностоящий, KIN86AF3M8 — встраиваемый. */
+  const fridgeModel = applianceModel(req.applianceModels?.fridge)?.fridge;
+  if (has('fridge')) pushTall('fridge', { builtIn: fridgeModel ? fridgeModel.builtIn : (req.fridgeType ?? 'built_in') === 'built_in' });
 
   /*
    * Духовка и микроволновка в ОДНОМ пенале, если заказаны обе. Двумя
@@ -2464,6 +2467,8 @@ export function buildUpperRow(
         makeModule('upper', anchor.widthMm, at, anchor.appliance, undefined, {
           sizes: req.applianceSizes,
           types: req.applianceTypes,
+          /* Модель вытяжки (ЭТАП 4) — в модуль, как модели нижнего ряда; без выбора — ничего. */
+          models: req.applianceModels,
         }),
       );
       at += anchor.widthMm;

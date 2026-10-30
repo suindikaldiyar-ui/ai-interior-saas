@@ -38,8 +38,12 @@ export type ShapeMaterial =
   | 'body'
   | 'rubber';
 
-/** Что едет вместе с дверью духового шкафа. */
-export type ShapeMoving = 'ovenDoor';
+/**
+ * Что едет: `ovenDoor` — дверь духового шкафа; у техники этапа 4 — ключ
+ * своего хода (`ModelShape.movers`): дверь СВЧ, двери холодильника,
+ * корзины посудомойки, экран вытяжки.
+ */
+export type ShapeMoving = string;
 
 export type ShapePart =
   | { kind: 'box'; at: [number, number, number]; size: [number, number, number]; material: ShapeMaterial; moving?: ShapeMoving; name?: string }
@@ -260,5 +264,230 @@ export function ovenShape(model: ApplianceModel | null): OvenShape {
     parts,
     door: { heightMm: doorH, widthMm: width, thicknessMm: frame, pivotMm: [0, 0, frame] },
     cavityLitres: Math.round(((cw * ch * cd) / 1e6) * 10) / 10,
+  };
+}
+
+/* ─────────────────────────  техника этапа 4  ───────────────────────── */
+
+/**
+ * ХОД ДЕТАЛИ ПРИБОРА (ЭТАП 4): дверь на оси (`hinge`) или выдвижение (`slide`).
+ * Ключ — суффикс к id модуля (`<модуль>:<ключ>`), тот же, что у «Открыть всё».
+ * `after` — ход начинается, только когда открыта эта деталь (корзины — за
+ * дверью посудомойки).
+ */
+export type ShapeMover =
+  | { key: string; kind: 'hinge'; axis: 'x' | 'y'; pivotMm: [number, number, number]; angle: number }
+  | { key: string; kind: 'slide'; offsetMm: [number, number, number]; after?: string };
+
+export type ModelShape = { parts: ShapePart[]; movers: ShapeMover[] };
+
+/** Условные числа моделей этапа 4 — в документах их нет, сказано у модели (`visual`). */
+export const MODEL_NOTES = {
+  /** Толщина рамки и двери СВЧ — условно 20 мм; сторона петель в документах не указана — слева. */
+  microwaveFrontMm: 20,
+  /** Ширина панели управления СВЧ справа — по рис. с. 7, условно. */
+  microwavePanelMm: 120,
+  /** Камера 20 л — 330 × 210 × 290 мм (0,0201 м³), пропорции условно; подставка Ø245 — условно. */
+  microwaveCavityMm: [330, 210, 290] as [number, number, number],
+  turntableMm: 245,
+  /** Двери отдельностоящего холодильника: морозильная — 700 мм снизу, условно (в документах нет). */
+  freezerDoorMm: 700,
+  fridgeDoorMm: 50,
+  /** Ход экрана вытяжки — в документах нет: условно 150 мм. */
+  hoodScreenTravelMm: 150,
+  /** Ход корзин посудомойки — условно на 0,8 глубины камеры. */
+  basketTravel: 0.8,
+};
+
+/**
+ * ВСТРАИВАЕМАЯ СВЧ (BFL524MB2): корпус в нише, дверь со стеклом на петлях
+ * слева, панель справа с кнопкой, камера и вращающаяся подставка. Ноль по y —
+ * низ прибора, по z — плоскость фасадов корпуса; дверь ходит вокруг
+ * вертикальной оси у левой кромки на 90° к человеку.
+ */
+export function microwaveShape(model: ApplianceModel | null): ModelShape {
+  const width = model?.sizeMm.width ?? 594;
+  const height = model?.sizeMm.height ?? 382;
+  const depth = model?.sizeMm.depth ?? 317;
+  const front = MODEL_NOTES.microwaveFrontMm;
+  const panel = MODEL_NOTES.microwavePanelMm;
+  const doorW = width - panel;
+  const [cw, ch, cd] = MODEL_NOTES.microwaveCavityMm;
+  const parts: ShapePart[] = [];
+  const bodyW = Math.min(556, width - 20);
+  parts.push({ kind: 'box', at: [0, height / 2, -(depth - front) / 2], size: [bodyW, height - 12, depth - front], material: 'body', name: 'корпус' });
+  /* Панель управления справа: чёрное стекло, дисплей, кнопка открывания. */
+  const panelX = width / 2 - panel / 2;
+  parts.push({ kind: 'box', at: [panelX, height / 2, front / 2], size: [panel, height, front], material: 'blackGlass', name: 'панель' });
+  parts.push({ kind: 'box', at: [panelX, height * 0.72, front + 0.4], size: [70, 22, 0.8], material: 'display', name: 'дисплей' });
+  parts.push({ kind: 'box', at: [panelX, height * 0.3, front + 1], size: [26, 26, 2], material: 'chrome', name: 'кнопка открывания' });
+  /* Камера: эмаль и подставка — видно при открытой двери. */
+  const cx = -panel / 2;
+  const bottom = (height - ch) / 2;
+  const wall = 3;
+  parts.push({ kind: 'box', at: [cx, bottom - wall / 2, -cd / 2], size: [cw, wall, cd], material: 'enamel', name: 'дно камеры' });
+  parts.push({ kind: 'box', at: [cx, bottom + ch + wall / 2, -cd / 2], size: [cw, wall, cd], material: 'enamel', name: 'свод камеры' });
+  parts.push({ kind: 'box', at: [cx - cw / 2 - wall / 2, bottom + ch / 2, -cd / 2], size: [wall, ch, cd], material: 'enamel', name: 'стенка камеры' });
+  parts.push({ kind: 'box', at: [cx + cw / 2 + wall / 2, bottom + ch / 2, -cd / 2], size: [wall, ch, cd], material: 'enamel', name: 'стенка камеры' });
+  parts.push({ kind: 'box', at: [cx, bottom + ch / 2, -cd - wall / 2], size: [cw, ch, wall], material: 'enamel', name: 'задняя стенка камеры' });
+  parts.push({ kind: 'cylinder', at: [cx, bottom + 6, -cd / 2], radius: MODEL_NOTES.turntableMm / 2, height: 4, material: 'doorGlass', segments: 40, name: 'подставка' });
+  /* Дверь: полотно чёрного стекла и окно. */
+  const left = -width / 2;
+  parts.push({ kind: 'box', at: [left + doorW / 2, height / 2, front / 2], size: [doorW, height, front], material: 'blackGlass', moving: 'microwave:door', name: 'дверь' });
+  parts.push({ kind: 'box', at: [left + doorW / 2 + 10, height / 2, front + 0.4], size: [doorW - 90, height - 110, 0.8], material: 'doorGlass', moving: 'microwave:door', name: 'окно двери' });
+  return {
+    parts,
+    movers: [{ key: 'microwave:door', kind: 'hinge', axis: 'y', pivotMm: [left, 0, front], angle: -Math.PI / 2 }],
+  };
+}
+
+/**
+ * ОТДЕЛЬНОСТОЯЩИЙ ХОЛОДИЛЬНИК (KGN39LB30U): корпус, две двери на петлях
+ * справа, полки, полки на двери, ящики морозильной камеры. Ноль по y — пол,
+ * по z — перед двери; двери — вокруг вертикальной оси у кромки петель.
+ */
+export function freestandingFridgeShape(model: ApplianceModel): ModelShape {
+  const { width, height } = model.sizeMm;
+  const f = model.fridge!;
+  const door = MODEL_NOTES.fridgeDoorMm;
+  const body = f.bodyDepthMm ?? model.sizeMm.depth - door;
+  const freezer = MODEL_NOTES.freezerDoorMm;
+  const parts: ShapePart[] = [];
+  const zBody = -door - body / 2;
+  const wall = 30;
+  parts.push({ kind: 'box', at: [-width / 2 + wall / 2, height / 2, zBody], size: [wall, height, body], material: 'body', name: 'боковина' });
+  parts.push({ kind: 'box', at: [width / 2 - wall / 2, height / 2, zBody], size: [wall, height, body], material: 'body', name: 'боковина' });
+  parts.push({ kind: 'box', at: [0, height - wall / 2, zBody], size: [width, wall, body], material: 'body', name: 'крыша' });
+  parts.push({ kind: 'box', at: [0, (wall + 80) / 2, zBody], size: [width, wall + 80, body], material: 'body', name: 'низ' });
+  parts.push({ kind: 'box', at: [0, freezer + wall / 2, zBody], size: [width, wall, body], material: 'body', name: 'перегородка' });
+  parts.push({ kind: 'box', at: [0, height / 2, -door - body + 10], size: [width - 2 * wall, height, 20], material: 'printWhite', name: 'задняя стенка камеры' });
+  const innerW = width - 2 * wall;
+  for (let i = 0; i < f.shelves; i += 1) {
+    const y = freezer + 120 + i * ((height - freezer - 200) / f.shelves);
+    parts.push({ kind: 'box', at: [0, y, zBody + 10], size: [innerW - 6, 5, body - 40], material: 'doorGlass', name: 'полка' });
+  }
+  for (let i = 0; i < f.freezerDrawers; i += 1) {
+    const h = (freezer - 160) / f.freezerDrawers;
+    parts.push({ kind: 'box', at: [0, 130 + h * i + h / 2, zBody + 20], size: [innerW - 10, h - 14, body - 60], material: 'printWhite', name: 'ящик морозильной камеры' });
+  }
+  /* Двери: морозильная внизу, холодильная выше; ручка встроенная — полосой у кромки без петель. */
+  const sign = f.hinge === 'right' ? 1 : -1;
+  const gripX = -sign * (width / 2 - 12);
+  const fridgeH = height - freezer - 4;
+  parts.push({ kind: 'box', at: [0, freezer / 2, -door / 2], size: [width, freezer - 4, door], material: 'blackGlass', moving: 'fridge:door:1', name: 'дверь морозильной' });
+  parts.push({ kind: 'box', at: [gripX, freezer * 0.7, 1], size: [10, 160, 2], material: 'stainless', moving: 'fridge:door:1', name: 'ручка' });
+  parts.push({ kind: 'box', at: [0, freezer + fridgeH / 2 + 4, -door / 2], size: [width, fridgeH, door], material: 'blackGlass', moving: 'fridge:door:0', name: 'дверь холодильной' });
+  parts.push({ kind: 'box', at: [gripX, freezer + 260, 1], size: [10, 300, 2], material: 'stainless', moving: 'fridge:door:0', name: 'ручка' });
+  for (let i = 0; i < f.doorShelves; i += 1) {
+    const y = freezer + 200 + i * ((fridgeH - 300) / f.doorShelves);
+    parts.push({ kind: 'box', at: [0, y, -door - 45], size: [innerW - 60, 70, 80], material: 'printWhite', moving: 'fridge:door:0', name: 'полка на двери' });
+  }
+  return {
+    parts,
+    movers: [
+      { key: 'fridge:door:0', kind: 'hinge', axis: 'y', pivotMm: [(sign * width) / 2, 0, 0], angle: (sign * Math.PI) / 2 },
+      { key: 'fridge:door:1', kind: 'hinge', axis: 'y', pivotMm: [(sign * width) / 2, 0, 0], angle: (sign * Math.PI) / 2 },
+    ],
+  };
+}
+
+/**
+ * ВСТРАИВАЕМЫЙ ХОЛОДИЛЬНИК (KIN86AF3M8) В КОЛОННЕ: камера за мебельным
+ * фасадом — полки и ящики морозильной камеры; дверь прибора — на мебельном
+ * фасаде («дверь на дверь») и ходит с ним. Ноль по y — дно ниши, по z —
+ * плоскость фасадов корпуса.
+ */
+export function builtInFridgeShape(model: ApplianceModel): ModelShape {
+  const { width, height, depth } = model.sizeMm;
+  const f = model.fridge!;
+  const parts: ShapePart[] = [];
+  const wall = 28;
+  const d = depth - 30;
+  const zBody = -30 - d / 2;
+  parts.push({ kind: 'box', at: [-width / 2 + wall / 2, height / 2, zBody], size: [wall, height, d], material: 'printWhite', name: 'стенка камеры' });
+  parts.push({ kind: 'box', at: [width / 2 - wall / 2, height / 2, zBody], size: [wall, height, d], material: 'printWhite', name: 'стенка камеры' });
+  parts.push({ kind: 'box', at: [0, height - wall / 2, zBody], size: [width, wall, d], material: 'printWhite', name: 'свод' });
+  parts.push({ kind: 'box', at: [0, wall / 2, zBody], size: [width, wall, d], material: 'printWhite', name: 'дно' });
+  parts.push({ kind: 'box', at: [0, height / 2, -depth + 10], size: [width, height, 20], material: 'printWhite', name: 'задняя стенка' });
+  const freezer = Math.round(height * 0.4);
+  parts.push({ kind: 'box', at: [0, freezer, zBody], size: [width, wall, d], material: 'printWhite', name: 'перегородка' });
+  const innerW = width - 2 * wall;
+  for (let i = 0; i < f.shelves; i += 1) {
+    const y = freezer + 120 + i * ((height - freezer - 180) / f.shelves);
+    parts.push({ kind: 'box', at: [0, y, zBody], size: [innerW - 6, 5, d - 30], material: 'doorGlass', name: 'полка' });
+  }
+  for (let i = 0; i < f.freezerDrawers; i += 1) {
+    const h = (freezer - 60) / f.freezerDrawers;
+    parts.push({ kind: 'box', at: [0, 40 + h * i + h / 2, zBody + 10], size: [innerW - 10, h - 14, d - 50], material: 'stainlessBrushed', name: 'ящик морозильной камеры' });
+  }
+  return { parts, movers: [] };
+}
+
+/**
+ * ПОЛНОВСТРАИВАЕМАЯ ПОСУДОМОЙКА (SMV4HMX25Q, SPV4HMX14Q): камера из нержавейки
+ * и корзины за мебельным фасадом. Дверь прибора — на фасаде, ходит с ним вниз
+ * (`doorOpening` → `flap`); корзины выезжают, когда фасад открыт. Ноль по y — пол.
+ */
+export function dishwasherShape(model: ApplianceModel, frontKey: string): ModelShape {
+  const { width, height, depth } = model.sizeMm;
+  const dw = model.dishwasher!;
+  const parts: ShapePart[] = [];
+  const wall = 4;
+  const bottom = 90;
+  const tubH = height - bottom - 40;
+  const d = depth - 60;
+  const zc = -40 - d / 2;
+  const w = width - 40;
+  parts.push({ kind: 'box', at: [0, bottom / 2, zc], size: [width, bottom, d], material: 'body', name: 'основание' });
+  parts.push({ kind: 'box', at: [-w / 2 - wall / 2, bottom + tubH / 2, zc], size: [wall, tubH, d], material: 'stainlessBrushed', name: 'стенка камеры' });
+  parts.push({ kind: 'box', at: [w / 2 + wall / 2, bottom + tubH / 2, zc], size: [wall, tubH, d], material: 'stainlessBrushed', name: 'стенка камеры' });
+  parts.push({ kind: 'box', at: [0, bottom + tubH + wall / 2, zc], size: [w, wall, d], material: 'stainlessBrushed', name: 'свод камеры' });
+  parts.push({ kind: 'box', at: [0, bottom - wall / 2, zc], size: [w, wall, d], material: 'stainlessBrushed', name: 'дно камеры' });
+  parts.push({ kind: 'box', at: [0, bottom + tubH / 2, -40 - d - wall / 2], size: [w, tubH, wall], material: 'stainlessBrushed', name: 'задняя стенка камеры' });
+  const basketKey = 'dishwasher:baskets';
+  /* Нижняя и верхняя корзины, у 60 см — ещё полка для приборов под сводом. */
+  const half = (tubH - 80) / 2;
+  const levels: { y: number; h: number; name: string }[] = [
+    { y: bottom + 30, h: half - 40, name: 'нижняя корзина' },
+    { y: bottom + 40 + half, h: half - 60, name: 'верхняя корзина' },
+  ];
+  if (dw.baskets >= 3) levels.push({ y: bottom + tubH - 60, h: 40, name: 'полка для приборов' });
+  for (const level of levels) {
+    const cy = level.y + level.h / 2;
+    parts.push({ kind: 'box', at: [0, level.y + 2, zc + 10], size: [w - 30, 4, d - 40], material: 'chrome', moving: basketKey, name: level.name });
+    for (const sx of [-1, 1]) {
+      parts.push({ kind: 'box', at: [sx * (w / 2 - 17), cy, zc + 10], size: [4, level.h, d - 40], material: 'chrome', moving: basketKey, name: 'борт корзины' });
+    }
+    parts.push({ kind: 'box', at: [0, cy, zc + 10 + (d - 40) / 2], size: [w - 30, level.h, 4], material: 'chrome', moving: basketKey, name: 'борт корзины' });
+  }
+  return {
+    parts,
+    movers: [{ key: basketKey, kind: 'slide', offsetMm: [0, 0, Math.round(d * MODEL_NOTES.basketTravel)], after: frontKey }],
+  };
+}
+
+/**
+ * ВСТРАИВАЕМАЯ ВЫТЯЖКА С ВЫДВИЖНЫМ ЭКРАНОМ (DFT63CA60Q): короб в шкафу (в
+ * сцене его закрывает корпус), под дном шкафа — 40 мм прибора (175 − 135, рис.
+ * A): жироулавливающий фильтр, свет и выдвижной экран. Ноль по y — дно
+ * навесного шкафа, по z — плоскость фасадов корпуса.
+ */
+export function hoodShape(model: ApplianceModel): ModelShape {
+  const h = model.hood!;
+  const width = h.installWidthMm;
+  const below = h.totalHeightMm - h.boxHeightMm;
+  const depth = h.bodyDepthMm;
+  const parts: ShapePart[] = [];
+  const z = -depth / 2;
+  parts.push({ kind: 'box', at: [0, -below / 2, z - 20], size: [width, below, depth - 40], material: 'body', name: 'короб под шкафом' });
+  parts.push({ kind: 'box', at: [0, -below - 0.5, z - 20], size: [width - 80, 1, depth - 90], material: 'stainlessBrushed', name: 'жироулавливающий фильтр' });
+  for (const sx of [-1, 1]) {
+    parts.push({ kind: 'box', at: [sx * (width / 2 - 70), -below - 0.6, z - 40], size: [40, 1, 40], material: 'printWhite', name: 'свет' });
+  }
+  parts.push({ kind: 'box', at: [0, -below / 2, -10], size: [width, below, 20], material: 'blackGlass', moving: 'hood:screen', name: 'выдвижной экран' });
+  parts.push({ kind: 'box', at: [width / 2 - 60, -below / 2, 0.4], size: [40, 8, 0.8], material: 'stainless', moving: 'hood:screen', name: 'ползунок скоростей' });
+  return {
+    parts,
+    movers: [{ key: 'hood:screen', kind: 'slide', offsetMm: [0, 0, h.screenTravelMm ?? MODEL_NOTES.hoodScreenTravelMm] }],
   };
 }

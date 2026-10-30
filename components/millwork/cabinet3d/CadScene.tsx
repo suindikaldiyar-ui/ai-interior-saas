@@ -1177,7 +1177,7 @@ function FrameProbe({ rows, room, design }: { rows: SceneRow[]; room: Room | nul
       const out: SurfaceReadout[] = [];
       scene.traverse((object) => {
         const mesh = object as THREE.Mesh & { count?: number };
-        if (!mesh.isMesh || mesh.visible === false || !/^(front|carcass|inner|counter):/.test(mesh.name)) return;
+        if (!mesh.isMesh || mesh.visible === false || !/^(front|carcass|inner|counter|apron):/.test(mesh.name)) return;
         const material = mesh.material as THREE.MeshStandardMaterial;
         const map = material.map;
         const image = map?.image as { currentSrc?: string; src?: string } | undefined;

@@ -755,6 +755,8 @@ export const MATERIAL_TABS: { key: string; title: string }[] = [
   { key: 'mdf_paint', title: 'Эмаль RAL' },
   { key: 'veneer', title: 'Шпон' },
   { key: 'countertop', title: 'Столешницы' },
+  /* Фартуки (ЭТАП 4, часть C): EGGER Splashback; GRANDEX фартуком — из «Столешниц» (роль «фартук» у коллекции). */
+  { key: 'apron', title: 'Фартуки' },
 ];
 
 /**
@@ -772,6 +774,9 @@ export type MaterialTarget =
   | 'partitions'
   | 'antresol'
   | 'countertop'
+  /* Фартук (ЭТАП 4, часть C): всех стен кухни и одной выбранной стены. */
+  | 'apron'
+  | 'apron-wall'
   | 'module'
   | 'leaf'
   | 'module-carcass';
@@ -783,6 +788,8 @@ export const MATERIAL_TARGETS: MaterialTarget[] = [
   'partitions',
   'antresol',
   'countertop',
+  'apron',
+  'apron-wall',
   'module',
   'leaf',
   'module-carcass',
@@ -795,6 +802,8 @@ export const TARGET_TITLE: Record<MaterialTarget, string> = {
   partitions: 'Перегородки',
   antresol: 'Антресоль',
   countertop: 'Столешница',
+  apron: 'Фартук всех стен',
+  'apron-wall': 'Фартук этой стены',
   module: 'Выбранный модуль',
   /* Одна створка или ящик (P3D-MDF): соседняя створка и корпус не трогаются. */
   leaf: 'Выбранная дверь',
@@ -824,6 +833,8 @@ export const TARGET_ROLE: Record<MaterialTarget, MaterialRole> = {
   /* Антресоль — её корпус; фасады ложатся вместе с ним, если позиция идёт и на фасад. */
   antresol: 'carcass',
   countertop: 'countertop',
+  apron: 'backsplash',
+  'apron-wall': 'backsplash',
   module: 'front',
   leaf: 'front',
   'module-carcass': 'carcass',
@@ -837,6 +848,8 @@ const TARGET_ON: Record<MaterialTarget, string> = {
   partitions: 'на перегородки',
   antresol: 'на корпус антресоли',
   countertop: 'на столешницу',
+  apron: 'на фартук',
+  'apron-wall': 'на фартук',
   module: 'на фасад модуля',
   leaf: 'на фасад двери',
   'module-carcass': 'на корпус модуля',
@@ -1009,6 +1022,19 @@ export function materialOps(
     return {
       refusal: `У «${choice.collection.label}» нет поверхности «${choice.surface}».`,
     };
+  }
+
+  /*
+   * ФАРТУК (ЭТАП 4, часть C) — позицией с ролью «фартук» на ряд: у каждой стены
+   * свой. В зоне без фартука класть некуда — словами.
+   */
+  if (target === 'apron' || target === 'apron-wall') {
+    const zone = zoneProfile(run.zone);
+    if (!zone.hasApron) {
+      const where = zone.locative.charAt(0).toUpperCase() + zone.locative.slice(1);
+      return { refusal: `${where} фартука нет — класть его некуда.` };
+    }
+    return { ops: [{ op: 'set_apron', itemId: choice.item.id, surface: choice.surface }], note: null };
   }
 
   if (target === 'countertop') {

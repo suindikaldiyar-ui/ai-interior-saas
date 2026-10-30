@@ -78,6 +78,8 @@ import { ratesFromCatalog } from '@/lib/millwork/rates';
 import { markShownMm, marksOfZone, moduleCarcassHeightMm, rowStandardDepthMm } from '@/lib/millwork/fill';
 import { bayEnvelope, drawerReleaseBlock } from '@/lib/millwork/bays';
 import { cookingFindings } from '@/lib/millwork/cookingStack';
+import { apronFindings } from '@/lib/millwork/apron';
+import { applianceModelFindings } from '@/lib/millwork/applianceChecks';
 import { hardwareByCategory, hardwareCatalog, lightReferences } from '@/lib/millwork/hardware';
 import { doorRoomSolids, roomAroundRows, roomSourceOf, type RoomSource } from '@/lib/millwork/room';
 import { normalizeLighting, type RoomLighting } from '@/lib/millwork/lightingState';
@@ -3200,7 +3202,8 @@ export default function Workspace(props: WorkspaceProps) {
    */
   const applyMaterial = useCallback(
     (target: MaterialTarget, choice: MaterialChoice): string | null => {
-      const one = target === 'module' || target === 'module-carcass' || target === 'leaf';
+      /* «Фартук этой стены» (ЭТАП 4) — выбранная стена, как модуль и дверь. */
+      const one = target === 'module' || target === 'module-carcass' || target === 'leaf' || target === 'apron-wall';
       /* «Вся кухня» — все стены и остров; модуль и дверь — выбранный ряд. */
       const walls = one ? [activeIndex] : [...segments.map((_, index) => index), ...(island ? [ISLAND_ROW] : [])];
       const said: string[] = [];
@@ -3343,6 +3346,13 @@ export default function Workspace(props: WorkspaceProps) {
       partitions: { itemId: known(segments[0]?.carcass?.partitions) },
       antresol: { itemId: antresolTop ? antresolTop[0] : null },
       countertop: counter ? { itemId: counter.itemId, surface: counter.surface } : { itemId: null },
+      /* Фартук (ЭТАП 4): всех стен — у первой стены; этой стены — у выбранной. */
+      apron: segments[0]?.apronMaterial && materialItems.has(segments[0].apronMaterial.itemId)
+        ? { itemId: segments[0].apronMaterial.itemId, surface: segments[0].apronMaterial.surface }
+        : { itemId: null },
+      'apron-wall': activeRun.apronMaterial && materialItems.has(activeRun.apronMaterial.itemId)
+        ? { itemId: activeRun.apronMaterial.itemId, surface: activeRun.apronMaterial.surface }
+        : { itemId: null },
       module:
         moduleFront?.itemId && materialItems.has(moduleFront.itemId)
           ? { itemId: moduleFront.itemId, surface: moduleFront.surface }
@@ -3866,6 +3876,8 @@ export default function Workspace(props: WorkspaceProps) {
   const applianceFindings = useMemo(
     () => [
       ...rowsAll.flatMap((row) => cookingFindings(row, production)),
+      /* СВЧ, холодильник, посудомойка и вытяжка модели (ЭТАП 4) — по их инструкциям. */
+      ...rowsAll.flatMap((row) => applianceModelFindings(row, production)),
       ...applianceDoorFindings({
         rows: sceneRowsAll,
         production,
@@ -3875,6 +3887,11 @@ export default function Workspace(props: WorkspaceProps) {
       }),
     ],
     [rowsAll, sceneRowsAll, production, hardwareItems, lightingRoom, roomWallName],
+  );
+  /* Фартук из каталога (ЭТАП 4, часть C): размеры не подтверждены документами — заперт только выпуск. */
+  const materialFindings = useMemo(
+    () => segments.flatMap((row, i) => apronFindings(row, materialItems, production, wallLabel(i))),
+    [segments, materialItems, production],
   );
   const screen = useMemo(
     () =>
@@ -3894,6 +3911,7 @@ export default function Workspace(props: WorkspaceProps) {
         tvZoneBlock: tvZoneFitRefusal(requirements, active.run),
         /* Варочная и духовой шкаф по документам Bosch (ЭТАП 3): нарушено — цены нет; нечем выпустить — выпуск заперт. */
         appliances: applianceFindings,
+        materials: materialFindings,
         /*
          * Правки и закрепления, которые сейчас не участвуют: те же
          * `editedRuns`, `editedWalls` и `applianceWalls`, что держит экран.
@@ -3921,6 +3939,7 @@ export default function Workspace(props: WorkspaceProps) {
       catalogError,
       drawerDraft,
       applianceFindings,
+      materialFindings,
       islandProblems,
       active.run,
       input.runWallId,

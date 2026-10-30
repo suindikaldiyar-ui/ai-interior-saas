@@ -244,6 +244,14 @@ export type ReviewNote = {
   textureStatus: string;
   rightsStatus: string;
   priceStatus: string;
+  /**
+   * Размеры изделия по документам производителя (ЭТАП 4, часть C): толщина и
+   * формат панели фартука EGGER; `null` — в документах их нет. Расхождение
+   * документов — словами (`thicknessConflict`), а не выбранным числом.
+   */
+  thicknessMm: number | null;
+  formatMm: { length: number; width: number } | null;
+  thicknessConflict: string;
 };
 
 /** Карточка поставщика из `meta.provenance` позиции; у прочих — `null`. */
@@ -263,6 +271,14 @@ export function reviewNoteOf(meta: Record<string, unknown> | null | undefined): 
     textureStatus: str('textureStatus'),
     rightsStatus: str('rightsStatus'),
     priceStatus: str('priceStatus'),
+    thicknessMm: typeof p.thicknessMm === 'number' && p.thicknessMm > 0 ? p.thicknessMm : null,
+    formatMm:
+      p.formatMm && typeof p.formatMm === 'object' &&
+      typeof (p.formatMm as Record<string, unknown>).length === 'number' &&
+      typeof (p.formatMm as Record<string, unknown>).width === 'number'
+        ? { length: (p.formatMm as { length: number }).length, width: (p.formatMm as { width: number }).width }
+        : null,
+    thicknessConflict: str('thicknessConflict'),
   };
 }
 

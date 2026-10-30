@@ -1444,6 +1444,13 @@ export interface Run {
    */
   countertopMaterial?: { itemId: string; surface?: string };
   /**
+   * ФАРТУК ЭТОЙ СТЕНЫ ИЗ КАТАЛОГА МАТЕРИАЛОВ (ЭТАП 4, часть C) — ссылкой на
+   * позицию с ролью «фартук» (`backsplash`): EGGER Splashback, GRANDEX. Лежит
+   * на ряду, как столешница, — у каждой стены свой; пусто — серый по
+   * умолчанию и строка «Стеновая панель (фартук)» по ставке цеха, как было.
+   */
+  apronMaterial?: { itemId: string; surface?: string };
+  /**
    * МАТЕРИАЛ ФАСАДОВ КУХНИ — выбор «на всю кухню» по роли «фасад» (слой 52).
    *
    * Лежит на ряду рядом с `carcass` (роль «корпус») и `countertopMaterial`
@@ -2251,6 +2258,8 @@ export type MillworkOp =
    * правка не трогает: отказ — словами с миллиметрами до записи.
    */
   | { op: 'set_storage'; moduleId: string; heightMm?: number | null; depthMm?: number | null; removed?: boolean }
+  /** Фартук этой стены из каталога материалов (ЭТАП 4, часть C); `null` — снять выбор. */
+  | { op: 'set_apron'; itemId: string | null; surface?: string }
   /**
    * ФРЕЗЕРОВКА: ряду или одному модулю.
    *

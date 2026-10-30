@@ -578,7 +578,8 @@ export default function RunEditor({
             * монтажными правилами документа. «Типовая» — прибор без модели,
             * как до этапа.
             */}
-          {(['hob', 'oven'] as ApplianceKind[])
+          {/* Этап 4: СВЧ, холодильник, посудомойки и вытяжка — модели Bosch из того же файла фактов. */}
+          {(['hob', 'oven', 'microwave', 'fridge', 'dishwasher60', 'dishwasher45', 'hood'] as ApplianceKind[])
             .filter((appliance) => wanted.has(appliance))
             .map((appliance) => (
               <ApplianceModelPicker

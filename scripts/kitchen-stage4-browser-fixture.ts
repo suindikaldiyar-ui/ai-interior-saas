@@ -11,7 +11,10 @@ import { DEMO_REQUIREMENTS } from '../lib/millwork/demo';
 import { applyOps } from '../lib/millwork/ops';
 import { runPlaces } from '../lib/millwork/cabinetBoxes';
 import { buildPanels } from '../lib/millwork/panels';
-import { tallOvensOf, ovenDoorId } from '../lib/millwork/cookingStack';
+import { tallOvensOf, ovenDoorId, stageFourModelsOf } from '../lib/millwork/cookingStack';
+import { applianceModelFindings } from '../lib/millwork/applianceChecks';
+import { parseMaterialFile } from '../lib/millwork/materialCatalog';
+import catalogJson from '../data/catalog/catalog.json';
 import { NEW_PROJECT_STORAGE_DEPTH_MM } from '../lib/millwork/modules';
 import { buildObject, NEW_CORNER } from './corner-quality-fixture';
 
@@ -77,8 +80,55 @@ const colOven = tallOvensOf(colRun, plinth150)[0];
 const pencil = buildObject({ key: 'st4-pencil', title: 'Этап 4 · духовка в пенале', lengths: [3800], shape: 'linear', corners: [], requirements: DEMO_REQUIREMENTS });
 const pencilOven = tallOvensOf(pencil.engine.segments[0], DEFAULT_PRODUCTION)[0];
 
+/* ── BOSCH (ЭТАП 4, части B и C): СВЧ, встраиваемый холодильник, посудомойка, вытяжка; затем отдельностоящий кнопкой; фартуки ── */
+const boschReq: RunRequirements = {
+  ...DEMO_REQUIREMENTS,
+  appliances: [...DEMO_REQUIREMENTS.appliances, 'microwave'],
+  storageDepthMm: NEW_PROJECT_STORAGE_DEPTH_MM,
+  applianceModels: { microwave: 'BFL524MB2', fridge: 'KIN86AF3M8', dishwasher45: 'SPV4HMX14Q', hood: 'DFT63CA60Q' },
+};
+const bosch = buildObject({ key: 'st4-bosch', title: 'Этап 4 · техника Bosch', lengths: [3800], shape: 'linear', corners: [], requirements: boschReq });
+const boschFree = buildObject({
+  key: 'st4-bosch-free',
+  title: 'Этап 4 · отдельностоящий',
+  lengths: [3800],
+  shape: 'linear',
+  corners: [],
+  requirements: { ...boschReq, applianceModels: { ...boschReq.applianceModels, fridge: 'KGN39LB30U' } },
+});
+const modelsOf = (o: ReturnType<typeof buildObject>) =>
+  stageFourModelsOf(o.engine.segments[0], DEFAULT_PRODUCTION).map((e) => ({ moduleId: e.unit.id, kind: e.kind, model: e.model.article, bottomMm: e.bottomMm, zMm: e.zMm, movers: e.moverIds }));
+const boschFind = applianceModelFindings(bosch.engine.segments[0], DEFAULT_PRODUCTION);
+const file = parseMaterialFile(catalogJson);
+const srgb = (hex: string) =>
+  [1, 3, 5].map((i) => {
+    const c = parseInt(hex.slice(i, i + 2), 16) / 255;
+    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  });
+const itemOf = (collection: string, code: string) => {
+  const item = file.collections.find((c) => c.id === collection)?.items.find((i) => i.code === code);
+  if (!item?.hex) throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: ${collection}/${code}`);
+  return { code, hex: item.hex, linear: srgb(item.hex) };
+};
+const eggerSplash = file.collections.find((c) => c.id === 'egger-splashbacks')?.items[0];
+if (!eggerSplash) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: коллекции egger-splashbacks нет');
+
 process.stdout.write(
   JSON.stringify({
+    bosch: {
+      ...object(bosch),
+      expect: {
+        models: modelsOf(bosch),
+        freeModels: modelsOf(boschFree),
+        blocking: boschFind.filter((f) => f.level === 'blocking').map((f) => f.words),
+        release: boschFind.filter((f) => f.level === 'release').length,
+        fridgeId: bosch.engine.segments[0].modules.find((m) => m.appliance === 'fridge')!.id,
+        dishwasherFront: `${bosch.engine.segments[0].modules.find((m) => m.appliance === 'dishwasher45')!.id}:door:0`,
+        apronCollections: file.collections.filter((c) => c.review).map((c) => c.id),
+        apronEgger: itemOf('egger-splashbacks', eggerSplash.code),
+        apronGrandex: itemOf('grandex-acrylic', 'GRANDEX-A-410'),
+      },
+    },
     storage: {
       ...object(storage),
       expect: {

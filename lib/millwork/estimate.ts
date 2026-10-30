@@ -1143,12 +1143,29 @@ export function buildEstimateDrafts(
      * столешница при верхнем ряде, — а в углу у стыкующейся стены фартук
      * идёт до стены владельца: над угловой плитой её стена тоже открыта.
      */
-    drafts.push({
-      key: 'wall_panel',
-      title: 'Стеновая панель (фартук)',
-      unit: 'mp',
-      quantity: round3(apronLengthMm(run) / MM_IN_M),
-    });
+    /*
+     * ФАРТУК ИЗ КАТАЛОГА (ЭТАП 4, часть C): позиция задаёт строку и цену; цены
+     * нет — «цена не задана», итог неполный. Не выбран — как было, ставкой цеха.
+     */
+    const apronItem = run.apronMaterial ? materialItems.get(run.apronMaterial.itemId) : undefined;
+    const apronMp = round3(apronLengthMm(run) / MM_IN_M);
+    if (apronItem) {
+      const price = priceState(apronItem, run.apronMaterial?.surface, 'running_m', rates);
+      drafts.push({
+        key: `apron_item_${apronItem.id}`,
+        title: `Фартук ${apronItem.code}${apronItem.name ? ` «${apronItem.name}»` : ''}`,
+        unit: 'mp',
+        quantity: apronMp,
+        ...(price.state === 'priced' ? { rate: price.rate } : { priceUnset: price.reason }),
+      });
+    } else {
+      drafts.push({
+        key: 'wall_panel',
+        title: 'Стеновая панель (фартук)',
+        unit: 'mp',
+        quantity: apronMp,
+      });
+    }
   }
 
   drafts.push(

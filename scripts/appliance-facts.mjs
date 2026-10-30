@@ -63,7 +63,13 @@ for (const model of facts.models) {
     continue;
   }
   const offer = Array.isArray(product.offers) ? product.offers[0] : product.offers;
-  const size = props.get('Размеры прибора (мм)') ?? null;
+  /*
+   * У вытяжки карточка не даёт «Размеры прибора (мм)» — только «Высота»,
+   * «Ширина», «Глубина» отдельными свойствами (DFT63CA60Q, ЭТАП 4): габарит
+   * собирается из них, иначе — НЕТ свойства.
+   */
+  const apart = ['Высота', 'Ширина', 'Глубина'].map((name) => props.get(name));
+  const size = props.get('Размеры прибора (мм)') ?? (apart.every(Boolean) ? apart.join('x') : null);
   const ours = `${model.sizeMm.height}x${model.sizeMm.width}x${model.sizeMm.depth}`;
   check(
     `${model.article}: артикул, GTIN и адрес карточки — как на странице`,

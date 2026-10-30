@@ -553,6 +553,8 @@ export function applyOps({
    * Столешница из каталога материалов — на ряду, как `carcass`: так она
    * переживает правки ряда и закрытие объекта (слой 51).
    */
+  /* Фартук стены (ЭТАП 4, часть C) — на ряду, как столешница. */
+  let apronMaterial: Run['apronMaterial'] = run.apronMaterial ? { ...run.apronMaterial } : undefined;
   let countertopMaterial: Run['countertopMaterial'] = run.countertopMaterial
     ? { ...run.countertopMaterial }
     : undefined;
@@ -3881,6 +3883,15 @@ export function applyOps({
         break;
       }
 
+      case 'set_apron': {
+        /*
+         * ФАРТУК СТЕНЫ ИЗ КАТАЛОГА (ЭТАП 4, часть C) — ссылкой на позицию, как
+         * столешница. Метраж — `apronSpans`, позиция задаёт вид, цену и толщину.
+         */
+        apronMaterial = op.itemId ? { itemId: op.itemId, ...(op.surface ? { surface: op.surface } : {}) } : undefined;
+        break;
+      }
+
       case 'set_mezzanine': {
         /*
          * АНТРЕСОЛЬ — ОТДЕЛЬНАЯ ПОЗИЦИЯ СОСТАВА.
@@ -4213,9 +4224,21 @@ export function applyOps({
     .map((segment) => ({
       ...segment,
       modules: segment.modules.map((unit) => {
-        const had = run.upperSegments
-          .flatMap((old) => old.modules)
-          .find((prev) => prev.id === unit.id && prev.section === 'mezzanine');
+        /*
+         * ТА ЖЕ КЛАДОВКА НА НОВОМ МЕСТЕ (ЭТАП 4, A3). Её идентификатор выведен из
+         * места колонны: колонну холодильника сдвинули — идентификатор новый, и
+         * фасад, корпус, открывание, ручка и фурнитура кладовки терялись молча.
+         * Холодильник в ряду один и до правки, и после — кладовка над ним та же.
+         */
+        const fridges = (list: Module[]) => list.filter((m) => m.appliance === 'fridge');
+        const sameFridge = fridges(run.modules).length === 1 && fridges(modules).length === 1;
+        const had =
+          run.upperSegments.flatMap((old) => old.modules).find((prev) => prev.id === unit.id && prev.section === 'mezzanine') ??
+          (sameFridge
+            ? run.upperSegments
+                .flatMap((old) => old.modules)
+                .find((prev) => prev.section === 'mezzanine' && mezzanineBaseOf(prev, run)?.appliance === 'fridge')
+            : undefined);
         const edited = storageFills.get(unit.id);
         /* Материал, выбранный в этом вызове, сильнее прежнего (`storageFronts`). */
         const painted = storageFronts.get(unit.id);
@@ -4251,6 +4274,8 @@ export function applyOps({
             front: painted ?? had?.front ?? unit.front,
             ...(decor ? { carcassItemId: decor } : {}),
             ...(fittings && fittings.length > 0 ? { fittings } : {}),
+            /* Фасады отдельных створок (P3D-MDF) — выбор человека, едут с кладовкой. */
+            ...(had?.leafFronts ? { leafFronts: had.leafFronts } : {}),
           },
           vitrine,
         );
@@ -4391,6 +4416,8 @@ export function applyOps({
   nextRun.milling = milling;
   nextRun.carcass = carcass;
   nextRun.countertopMaterial = countertopMaterial;
+  if (apronMaterial) nextRun.apronMaterial = apronMaterial;
+  else delete nextRun.apronMaterial;
   nextRun.kitchenFront = kitchenFront;
   /* Пусто не пишется: у рядов без системы купе запись прежняя до символа. */
   if (slidingSystemItemId) nextRun.slidingSystemItemId = slidingSystemItemId;

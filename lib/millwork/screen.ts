@@ -78,6 +78,12 @@ export type ScreenInput = {
    */
   appliances?: { level: 'blocking' | 'release'; words: string }[];
   /**
+   * МАТЕРИАЛЫ (ЭТАП 4, часть C): фартук из каталога, чьи размеры документы
+   * производителя не подтверждают однозначно, — заперт только выпуск в цех;
+   * цена, правка и запись остаются (`apronFindings`).
+   */
+  materials?: { words: string }[];
+  /**
    * ПРАВКИ И ЗАКРЕПЛЕНИЯ, КОТОРЫЕ СЕЙЧАС НЕ ИСПОЛЬЗУЮТСЯ. Пусто —
    * экран про них не спрашивает (прямая без правок соседних стен).
    */
@@ -224,6 +230,7 @@ export function screenState(input: ScreenInput): ScreenState {
 
   const applianceBlocks = (input.appliances ?? []).filter((f) => f.level === 'blocking').map((f) => f.words);
   const applianceRelease = (input.appliances ?? []).filter((f) => f.level === 'release').map((f) => f.words);
+  const materialRelease = (input.materials ?? []).map((f) => f.words);
 
   const channel: SurveyWarning[] = [
     ...(refusal
@@ -259,6 +266,7 @@ export function screenState(input: ScreenInput): ScreenState {
       message: `${words}. Пока это не исправлено, цены нет и выпуска в цех нет.`,
     })),
     ...applianceRelease.map((words, i) => ({ id: `appliance-release-${i}`, severity: 'clarify' as const, message: `${words}.` })),
+    ...materialRelease.map((words, i) => ({ id: `material-release-${i}`, severity: 'clarify' as const, message: `${words}.` })),
     ...(catalogError
       ? [
           {
@@ -381,7 +389,9 @@ export function screenState(input: ScreenInput): ScreenState {
             ? `Выгрузки для раскроя и печати для цеха нет: ${applianceBlocks[0]}.`
             : applianceRelease.length > 0
               ? `Выгрузки для раскроя и печати для цеха нет: ${applianceRelease[0]}.`
-              : (input.drawerDraft ?? null);
+              : materialRelease.length > 0
+                ? `Выгрузки для раскроя и печати для цеха нет: ${materialRelease[0]}.`
+                : (input.drawerDraft ?? null);
   const exportLocked = exportLockText !== null;
 
   return {

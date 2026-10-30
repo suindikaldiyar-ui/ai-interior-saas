@@ -352,16 +352,57 @@ export function storageChecks(check: Check): void {
     const flipped = applyOps({ run, requirements, ops: [{ op: 'set_opening', moduleId: neighbour.id, opening: 'right' }] });
     const level = applyOps({ run, requirements, ops: [{ op: 'set_storage', moduleId: run.modules.find((m) => m.appliance === 'fridge')!.id, depthMm: 320 }] });
     check(
-      'ST.11 кладовка 560 рядом с антресолью ряда 320: дверь соседа на петлях у кладовки на ходу заходит в её корпус на 16 мм — блокирующее словами с советом «поменяйте сторону петель»; петли справа — заходов 0; кладовка вровень с соседом (320) — не меряется',
+      'ST.11 кладовка 560 рядом с антресолью ряда 320: дверь соседа на петлях у кладовки на ходу заходит в её корпус на 16 мм и в более глубокую колонну холодильника на 16 мм (A5) — блокирующее словами с советом «поменяйте сторону петель»; петли справа — заходов 0; кладовка вровень с соседом (320) — остаётся только заход в колонну',
       neighbour.fill?.hinge === 'left' &&
         words.includes('дверь 1 модуля «Антресоль» на ходу заходит в корпус модуля «Антресоль над холодильником» на 16 мм') &&
-        /* Сосед меряется только против кладовки: его ход вдоль остального ряда — не её дело (ловушка 525). */
-        words.length === 1 &&
+        /* A5: дверь антресоли меряется и против более глубокой колонны рядом — и только против них. */
+        words.includes('дверь 1 модуля «Антресоль» на ходу заходит в корпус модуля «Холодильник» на 16 мм') &&
+        words.length === 2 &&
         screenWords.length === 1 &&
         screenWords[0].includes('Поменяйте сторону петель у этой двери') &&
         vitrineSweep({ run: flipped, production: DEFAULT_PRODUCTION }).clashes.length === 0 &&
-        vitrineSweep({ run: level, production: DEFAULT_PRODUCTION }).clashes.length === 0,
+        JSON.stringify(vitrineSweep({ run: level, production: DEFAULT_PRODUCTION }).clashes.map(rowSweepWords)) ===
+          JSON.stringify(['дверь 1 модуля «Антресоль» на ходу заходит в корпус модуля «Холодильник» на 16 мм']),
       `сосед ${neighbour.id} петли ${neighbour.fill?.hinge} · ${words.join(' | ') || 'ЗАХОДОВ НЕТ'} · экран: ${screenWords.join(' | ').slice(0, 220) || 'МОЛЧА'}`,
+    );
+  }
+
+  /* ── ST.12 правки кладовки переживают сдвиг колонны холодильника и повторное открытие (A3) ── */
+  {
+    const before = screen(DEFAULT_PRODUCTION);
+    const sid = before.storage!.id;
+    const enamel = { base: 'mdf_enamel' as const, construct: 'solid' as const, finish: 'matte' as const };
+    const edited = edit(before, [
+      { op: 'set_front', moduleId: sid, front: enamel },
+      { op: 'set_opening', moduleId: sid, opening: 'lift' },
+      { op: 'set_handle', moduleId: sid, handle: 'none' },
+    ]).view;
+    const storageUnit = (run: Run) => run.upperSegments.flatMap((segment) => segment.modules).find((m) => m.section === 'mezzanine' && m.label === 'Антресоль над холодильником');
+    const oven = edited.run.modules.find((m) => m.appliance === 'oven' || m.column)!;
+    const moved = edit(edited, [{ op: 'move_module', moduleId: edited.fridge!.id, afterModuleId: oven.id }]);
+    const reopened = screen(DEFAULT_PRODUCTION, JSON.parse(JSON.stringify(moved.view.run)) as Run);
+    const look = (run: Run) => {
+      const u = storageUnit(run);
+      return u ? { id: u.id, front: JSON.stringify(u.front ?? null), hinge: u.fill?.hinge, handle: u.fill?.handle ?? null, doors: u.doorCount } : null;
+    };
+    const a = look(edited.run);
+    const b = look(moved.view.run);
+    const c = look(reopened.run);
+    check(
+      'ST.12 у кладовки эмаль, «вверх (подъёмник)», без ручки; холодильник переставили за духовку — кладовка на новом месте с тем же фасадом, открыванием, ручкой и числом створок; после записи и повторного открытия — то же',
+      a !== null &&
+        b !== null &&
+        c !== null &&
+        a.front.includes('mdf_enamel') &&
+        a.hinge === 'lift' &&
+        b.id !== a.id &&
+        b.front === a.front &&
+        b.hinge === 'lift' &&
+        b.handle === a.handle &&
+        b.doors === a.doors &&
+        JSON.stringify(c) === JSON.stringify(b) &&
+        reopened.fingerprint === moved.view.fingerprint,
+      `до ${JSON.stringify(a)} · после сдвига ${JSON.stringify(b)} · после открытия ${JSON.stringify(c)}${moved.warnings.length ? ` · ${moved.warnings.join(' | ')}` : ''}`,
     );
   }
 }

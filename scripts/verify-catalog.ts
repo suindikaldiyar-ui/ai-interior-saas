@@ -1449,6 +1449,77 @@ console.log('\nP3: EGGER и GRANDEX — сопоставление, показ �
       /неполный/.test(totalCaption(bedEstimate)),
     `${topLine ? `${topLine.title}: ${topLine.priceUnset}` : 'СТРОКИ НЕТ'} · ${totalCaption(estimate)} · спальня: ${totalCaption(bedEstimate)} · ${dressed.warnings.join(' | ') || 'отказов нет'}`,
   );
+
+  /*
+   * ФАРТУК (ЭТАП 4, часть C): позиция с ролью «фартук» — на ряд стены; EGGER
+   * Splashback по декорам столешниц EGGER (82), GRANDEX — роль у коллекции;
+   * столешница EGGER на фартук не идёт. Комбинации: EGGER + EGGER, GRANDEX +
+   * GRANDEX, GRANDEX-столешница + EGGER-фартук; у каждой стены свой фартук.
+   */
+  const splashCollection = file.collections.find((c) => c.id === 'egger-splashbacks');
+  if (!splashCollection) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: коллекции egger-splashbacks нет — scripts/build-egger-splashbacks.ts');
+  /* Путём панели «Материалы»: она грузит ВСЕ коллекции на проверке (`review`), не только пакет. */
+  const panelReview = file.collections.filter((c) => c.review).map((c) => c.id);
+  const panelPreview = importPreview(file, [], panelReview);
+  const panelItems = materialCatalog(catalogEntriesFromRows(planMaterialImport(file, [], { collections: panelReview }).rows, file, 'org-a', 'a:'));
+  const panelChoice = (code: string, collectionId: string) => {
+    const item = Array.from(panelItems.values()).find((i) => i.code === code);
+    const collection = file.collections.find((c) => c.id === collectionId)!;
+    if (!item) throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: позиции ${code} нет в каталоге панели`);
+    return { item, collection, surface: collection.finishes[0] };
+  };
+  const eggerSplash = panelChoice(splashCollection.items[0].code, 'egger-splashbacks');
+  const apronVerdicts = {
+    grandex: verdict('apron', grandex, kitchen),
+    eggerSplash: verdict('apron', eggerSplash, kitchen),
+    eggerTop: verdict('apron', eggerTop, kitchen),
+    bedroom: verdict('apron', grandex, bedroom),
+    wallOnly: verdict('apron-wall', eggerSplash, kitchen),
+  };
+  const dress = (counter: typeof grandex, apron: typeof grandex) =>
+    applyOps({
+      run: kitchen,
+      requirements: DEFAULT_REQUIREMENTS,
+      ops: [
+        ...(materialOps('countertop', counter, kitchen, null, MATERIAL_FINISHES) as { ops: MillworkOp[] }).ops,
+        ...(materialOps('apron', apron, kitchen, null, MATERIAL_FINISHES) as { ops: MillworkOp[] }).ops,
+      ],
+      openings: [],
+    });
+  const lineKeys = (run: typeof kitchen) => buildEstimate(run, 'optimal', DEMO_RATES, [], undefined, undefined, undefined, undefined, carcassItems, panelItems).lines.map((line) => line.key);
+  const eggerEgger = dress(eggerTop, eggerSplash);
+  const grandexGrandex = dress(grandex, grandex);
+  const grandexEgger = dress(grandex, eggerSplash);
+  const mixedEstimate = buildEstimate(grandexEgger, 'optimal', DEMO_RATES, [], undefined, undefined, undefined, undefined, carcassItems, panelItems);
+  const apronLine = mixedEstimate.lines.find((line) => line.key.startsWith('apron_item_'));
+  const removed = applyOps({ run: grandexEgger, requirements: DEFAULT_REQUIREMENTS, ops: [{ op: 'set_apron', itemId: null }], openings: [] });
+  const sameCut = (a: typeof kitchen, b: typeof kitchen) =>
+    buildPanels({ run: a }).map((p) => `${p.moduleId}:${p.name}:${p.lengthMm}x${p.widthMm}x${p.thicknessMm}x${p.qty}`).join('|') ===
+    buildPanels({ run: b }).map((p) => `${p.moduleId}:${p.name}:${p.lengthMm}x${p.widthMm}x${p.thicknessMm}x${p.qty}`).join('|');
+  check(
+    'P3.C9 фартук: GRANDEX и EGGER Splashback (82 по декорам столешниц) — на фартук, столешница EGGER — нет, в спальне фартука нет; EGGER + EGGER, GRANDEX + GRANDEX и GRANDEX-столешница + EGGER-фартук — свои строки сметы «Фартук …» без цены, «Стеновая панель» не дублируется; сняли — снова «Стеновая панель»; детали корпуса те же',
+    splashCollection.items.length === 82 &&
+      panelReview.includes('egger-splashbacks') &&
+      panelPreview.fresh === 337 + 82 &&
+      panelPreview.unpriced === 337 + 82 &&
+      apronVerdicts.grandex === 'да: set_apron' &&
+      apronVerdicts.eggerSplash === 'да: set_apron' &&
+      apronVerdicts.eggerTop.startsWith('нет') &&
+      /фартука нет/.test(apronVerdicts.bedroom) &&
+      apronVerdicts.wallOnly === 'да: set_apron' &&
+      eggerEgger.apronMaterial?.itemId === eggerSplash.item.id &&
+      eggerEgger.countertopMaterial?.itemId === eggerTop.item.id &&
+      grandexGrandex.apronMaterial?.itemId === grandex.item.id &&
+      grandexEgger.apronMaterial?.itemId === eggerSplash.item.id &&
+      grandexEgger.countertopMaterial?.itemId === grandex.item.id &&
+      [eggerEgger, grandexGrandex, grandexEgger].every((run) => lineKeys(run).some((k) => k.startsWith('apron_item_')) && !lineKeys(run).includes('wall_panel')) &&
+      Boolean(apronLine?.priceUnset) &&
+      /неполный/.test(totalCaption(mixedEstimate)) &&
+      removed.apronMaterial === undefined &&
+      lineKeys(removed).includes('wall_panel') &&
+      sameCut(kitchen, grandexEgger),
+    `панель грузит ${panelReview.join(', ')}: новых ${panelPreview.fresh}, без цены ${panelPreview.unpriced} · ${Object.entries(apronVerdicts).map(([k, v]) => `${k} ${v.slice(0, 50)}`).join(' | ')} · ${apronLine ? `${apronLine.title} ${apronLine.quantity} м.п.: ${apronLine.priceUnset}` : 'СТРОКИ ФАРТУКА НЕТ'} · ${totalCaption(mixedEstimate)}`,
+  );
 }
 
 /* ═══════════  P3D-TEX: образцы декоров из брошюр — точно по артикулу, на карточке и на детали  ═══════════ */

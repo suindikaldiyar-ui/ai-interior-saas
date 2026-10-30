@@ -290,11 +290,19 @@ export default function Cabinet3D({
         { color: counterColor, roughness: 0.28, metalness: 0.04 },
         [run.lengthMm / MM, 0.6],
       );
-  const apronLook = surfaceLook(
-    entryFor(APRON_TARGET),
-    { color: '#D8D2C6', roughness: 0.35 },
-    [run.lengthMm / MM, 0.6],
-  );
+  /*
+   * ФАРТУК ИЗ КАТАЛОГА ЛЕЖИТ НА РЯДУ (`apronMaterial`, ЭТАП 4) — сильнее
+   * прежнего выбора артикула, как столешница: сцена показывает ту позицию, за
+   * которую выставлена строка сметы. Не выбран — как было.
+   */
+  const apronItem = run.apronMaterial ? materialItems.get(run.apronMaterial.itemId) : undefined;
+  const apronLook = apronItem
+    ? materialSurfaceLook(apronItem, run.apronMaterial?.surface, { color: '#D8D2C6', roughness: 0.35 })
+    : surfaceLook(
+        entryFor(APRON_TARGET),
+        { color: '#D8D2C6', roughness: 0.35 },
+        [run.lengthMm / MM, 0.6],
+      );
 
   const parts = useCabinetParts(
     useMemo(

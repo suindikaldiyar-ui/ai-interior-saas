@@ -28481,6 +28481,4128 @@
    ]
   },
   {
+   "id": "egger-splashbacks",
+   "category": "apron",
+   "label": "Фартук · EGGER Splashback",
+   "roles": [
+    "backsplash"
+   ],
+   "finishes": [
+    "wood_texture",
+    "matte"
+   ],
+   "priceUnit": "sheet",
+   "status": "review",
+   "review": true,
+   "source": {
+    "type": "manufacturer_documents",
+    "pdf": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+    "note": "Фартук EGGER Splashback: ДСП с ламинатом с двух сторон, формат 4100 × 640, номинальная толщина 9 мм по техлисту (страница UK — 8 мм, расхождение названо). Декор — как у столешницы EGGER того же кода. Цен нет, наличие в Казахстане не подтверждено; образец — REFERENCE_ONLY, права не подтверждены."
+   },
+   "items": [
+    {
+     "code": "EGGER-SB-F021-ST75",
+     "name": "",
+     "hex": "#98948d",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F021",
+      "surfaceCode": "ST75",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F021_ST75_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F021-ST75",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F030-ST75",
+     "name": "",
+     "hex": "#e4cfb7",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F030",
+      "surfaceCode": "ST75",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F030_ST75_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F030-ST75",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F031-ST78",
+     "name": "",
+     "hex": "#c6c1bd",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F031",
+      "surfaceCode": "ST78",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F031_ST78_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F031-ST78",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F032-ST78",
+     "name": "",
+     "hex": "#6f6c67",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F032",
+      "surfaceCode": "ST78",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F032_ST78_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F032-ST78",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F052-ST75",
+     "name": "",
+     "hex": "#c2b9b1",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F052",
+      "surfaceCode": "ST75",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F052_ST75_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F052-ST75",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F093-ST7",
+     "name": "",
+     "hex": "#928b84",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F093",
+      "surfaceCode": "ST7",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F093_ST7_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F093-ST7",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F095-ST87",
+     "name": "",
+     "hex": "#958d83",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F095",
+      "surfaceCode": "ST87",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F095_ST87_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F095-ST87",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F108-ST9",
+     "name": "",
+     "hex": "#e0d6c3",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F108",
+      "surfaceCode": "ST9",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F108_ST9_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F108-ST9",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F121-ST87",
+     "name": "",
+     "hex": "#5d5953",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F121",
+      "surfaceCode": "ST87",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F121_ST87_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F121-ST87",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F128-PA",
+     "name": "Black Ambiance Granite",
+     "hex": "#4c4b48",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F128",
+      "surfaceCode": "PA",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F128_PA_p77.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F128-PA",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F129-PA",
+     "name": "Beige Ambiance Granite",
+     "hex": "#ded2c1",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F129",
+      "surfaceCode": "PA",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F129_PA_p77.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F129-PA",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F186-ST9",
+     "name": "",
+     "hex": "#9b9794",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F186",
+      "surfaceCode": "ST9",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F186_ST9_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F186-ST9",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F1861-ST9",
+     "name": "",
+     "hex": "#9c9794",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F1861",
+      "surfaceCode": "ST9",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F1861_ST9_p77.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F1861-ST9",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F187-ST9",
+     "name": "",
+     "hex": "#605548",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F187",
+      "surfaceCode": "ST9",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F187_ST9_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F187-ST9",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F199-PA",
+     "name": "Black Ambiance Marble",
+     "hex": "#312c2b",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F199",
+      "surfaceCode": "PA",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F199_PA_p77.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F199-PA",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F205-ST9",
+     "name": "",
+     "hex": "#696157",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F205",
+      "surfaceCode": "ST9",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F205_ST9_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F205-ST9",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F206-PM",
+     "name": "",
+     "hex": "#322e2e",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F206",
+      "surfaceCode": "PM",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F206_PM_p77.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F206-PM",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F206-ST9",
+     "name": "",
+     "hex": "#343030",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F206",
+      "surfaceCode": "ST9",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F206_ST9_p77.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F206-ST9",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F208-ST75",
+     "name": "",
+     "hex": "#7f7b78",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F208",
+      "surfaceCode": "ST75",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F208_ST75_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F208-ST75",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F221-ST87",
+     "name": "",
+     "hex": "#bdb4a2",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F221",
+      "surfaceCode": "ST87",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F221_ST87_p77.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F221-ST87",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F226-ST78",
+     "name": "",
+     "hex": "#8c7661",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F226",
+      "surfaceCode": "ST78",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F226_ST78_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F226-ST78",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F227-ST78",
+     "name": "",
+     "hex": "#60564c",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F227",
+      "surfaceCode": "ST78",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F227_ST78_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F227-ST78",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F228-ST78",
+     "name": "",
+     "hex": "#413833",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F228",
+      "surfaceCode": "ST78",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F228_ST78_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F228-ST78",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F229-ST75",
+     "name": "",
+     "hex": "#ece5dd",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F229",
+      "surfaceCode": "ST75",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F229_ST75_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F229-ST75",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F230-ST75",
+     "name": "",
+     "hex": "#beb5aa",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F230",
+      "surfaceCode": "ST75",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F230_ST75_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F230-ST75",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F234-ST76",
+     "name": "",
+     "hex": "#b3aeaa",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F234",
+      "surfaceCode": "ST76",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F234_ST76_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F234-ST76",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F235-ST76",
+     "name": "",
+     "hex": "#464344",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F235",
+      "surfaceCode": "ST76",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F235_ST76_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F235-ST76",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F237-ST76",
+     "name": "",
+     "hex": "#312a28",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F237",
+      "surfaceCode": "ST76",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F237_ST76_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F237-ST76",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F243-ST76",
+     "name": "",
+     "hex": "#aaa5a1",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F243",
+      "surfaceCode": "ST76",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F243_ST76_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F243-ST76",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F244-ST76",
+     "name": "Anthracite Candela Marble",
+     "hex": "#5b5959",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F244",
+      "surfaceCode": "ST76",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F244_ST76_p77.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F244-ST76",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F251-ST9",
+     "name": "",
+     "hex": "#7e776b",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F251",
+      "surfaceCode": "ST9",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F251_ST9_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F251-ST9",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F267-ST76",
+     "name": "",
+     "hex": "#6e6259",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F267",
+      "surfaceCode": "ST76",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F267_ST76_p77.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F267-ST76",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F302-ST87",
+     "name": "",
+     "hex": "#70594a",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F302",
+      "surfaceCode": "ST87",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F302_ST87_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F302-ST87",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F311-ST87",
+     "name": "",
+     "hex": "#3a3630",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F311",
+      "surfaceCode": "ST87",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F311_ST87_p77.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F311-ST87",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F352-ST76",
+     "name": "",
+     "hex": "#6c6458",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F352",
+      "surfaceCode": "ST76",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F352_ST76_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F352-ST76",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F486-ST76",
+     "name": "",
+     "hex": "#d4cdc2",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F486",
+      "surfaceCode": "ST76",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F486_ST76_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F486-ST76",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F502-ST7",
+     "name": "",
+     "hex": "#928f88",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F502",
+      "surfaceCode": "ST7",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F502_ST7_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F502-ST7",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F620-ST87",
+     "name": "",
+     "hex": "#6a6562",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F620",
+      "surfaceCode": "ST87",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F620_ST87_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F620-ST87",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F638-ST10",
+     "name": "Chromix Silver",
+     "hex": "#a19a92",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F638",
+      "surfaceCode": "ST10",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F638_ST10_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F638-ST10",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F661-ST76",
+     "name": "",
+     "hex": "#d7c6b7",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F661",
+      "surfaceCode": "ST76",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F661_ST76_p77.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F661-ST76",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F662-ST76",
+     "name": "",
+     "hex": "#b3a598",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F662",
+      "surfaceCode": "ST76",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F662_ST76_p77.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F662-ST76",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F675-ST75",
+     "name": "Light Grey Calvia Stone",
+     "hex": "#d9d3cb",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F675",
+      "surfaceCode": "ST75",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F675_ST75_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F675-ST75",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F676-ST75",
+     "name": "",
+     "hex": "#d6cbc0",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F676",
+      "surfaceCode": "ST75",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F676_ST75_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F676-ST75",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F800-ST9",
+     "name": "",
+     "hex": "#efebe6",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F800",
+      "surfaceCode": "ST9",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F800_ST9_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F800-ST9",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F8001-ST9",
+     "name": "",
+     "hex": "#efebe6",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F8001",
+      "surfaceCode": "ST9",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F8001_ST9_p77.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F8001-ST9",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-F836-ST75",
+     "name": "",
+     "hex": "#c8c0bc",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "F836",
+      "surfaceCode": "ST75",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/F836_ST75_p77.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-F836-ST75",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-H011-STG8",
+     "name": "",
+     "hex": "#b9936f",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "H011",
+      "surfaceCode": "STG8",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/H011_STG8_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-H011-STG8",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-H1145-ST10",
+     "name": "",
+     "hex": "#c0a284",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "H1145",
+      "surfaceCode": "ST10",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/H1145_ST10_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-H1145-ST10",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-H1180-ST37",
+     "name": "",
+     "hex": "#b89771",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "H1180",
+      "surfaceCode": "ST37",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/H1180_ST37_p77.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-H1180-ST37",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-H1181-ST37",
+     "name": "",
+     "hex": "#896d51",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "H1181",
+      "surfaceCode": "ST37",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/H1181_ST37_p77.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-H1181-ST37",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-H1303-ST12",
+     "name": "",
+     "hex": "#896e55",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "H1303",
+      "surfaceCode": "ST12",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/H1303_ST12_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-H1303-ST12",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-H1313-ST10",
+     "name": "",
+     "hex": "#7d726c",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "H1313",
+      "surfaceCode": "ST10",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/H1313_ST10_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-H1313-ST10",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-H1318-ST10",
+     "name": "",
+     "hex": "#be976c",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "H1318",
+      "surfaceCode": "ST10",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/H1318_ST10_p77.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-H1318-ST10",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-H1330-ST10",
+     "name": "",
+     "hex": "#76604b",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "H1330",
+      "surfaceCode": "ST10",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/H1330_ST10_p77.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-H1330-ST10",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-H1344-ST32",
+     "name": "Cognac Brown Sherman Oak",
+     "hex": "#936d42",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "H1344",
+      "surfaceCode": "ST32",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/H1344_ST32_p77.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-H1344-ST32",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-H1357-ST10",
+     "name": "",
+     "hex": "#ab9781",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "H1357",
+      "surfaceCode": "ST10",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/H1357_ST10_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-H1357-ST10",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-H1367-ST40",
+     "name": "Light Natural Casella Oak",
+     "hex": "#caad89",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "H1367",
+      "surfaceCode": "ST40",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/H1367_ST40_p77.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-H1367-ST40",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-H1385-ST40",
+     "name": "Natural Casella Oak",
+     "hex": "#b68f68",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "H1385",
+      "surfaceCode": "ST40",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/H1385_ST40_p77.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-H1385-ST40",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-H1386-ST40",
+     "name": "Brown Casella Oak",
+     "hex": "#916d4e",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "H1386",
+      "surfaceCode": "ST40",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/H1386_ST40_p77.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-H1386-ST40",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-H1401-ST22",
+     "name": "",
+     "hex": "#d5d0c4",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "H1401",
+      "surfaceCode": "ST22",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/H1401_ST22_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-H1401-ST22",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-H193-ST12",
+     "name": "",
+     "hex": "#c1ab87",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "H193",
+      "surfaceCode": "ST12",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/H193_ST12_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-H193-ST12",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-H197-ST10",
+     "name": "",
+     "hex": "#a07d59",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "H197",
+      "surfaceCode": "ST10",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/H197_ST10_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-H197-ST10",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-H2032-ST10",
+     "name": "",
+     "hex": "#93734d",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "H2032",
+      "surfaceCode": "ST10",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/H2032_ST10_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-H2032-ST10",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-H2033-ST10",
+     "name": "",
+     "hex": "#6e4e33",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "H2033",
+      "surfaceCode": "ST10",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/H2033_ST10_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-H2033-ST10",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-H2409-STG8",
+     "name": "",
+     "hex": "#493629",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "H2409",
+      "surfaceCode": "STG8",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/H2409_STG8_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-H2409-STG8",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-H305-ST12",
+     "name": "",
+     "hex": "#bfa68c",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "H305",
+      "surfaceCode": "ST12",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/H305_ST12_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-H305-ST12",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-H3133-ST12",
+     "name": "",
+     "hex": "#866c58",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "H3133",
+      "surfaceCode": "ST12",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/H3133_ST12_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-H3133-ST12",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-H3157-ST12",
+     "name": "",
+     "hex": "#d2b288",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "H3157",
+      "surfaceCode": "ST12",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/H3157_ST12_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-H3157-ST12",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-H3176-ST37",
+     "name": "Pewter Halifax Oak",
+     "hex": "#7e6249",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "H3176",
+      "surfaceCode": "ST37",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/H3176_ST37_p77.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-H3176-ST37",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-H3303-ST10",
+     "name": "",
+     "hex": "#c0a072",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "H3303",
+      "surfaceCode": "ST10",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/H3303_ST10_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-H3303-ST10",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-H3331-ST10",
+     "name": "",
+     "hex": "#c0a17c",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "H3331",
+      "surfaceCode": "ST10",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/H3331_ST10_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-H3331-ST10",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-H3359-ST32",
+     "name": "",
+     "hex": "#c1a07d",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "H3359",
+      "surfaceCode": "ST32",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/H3359_ST32_p77.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-H3359-ST32",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-H3730-ST10",
+     "name": "Natural Hickory",
+     "hex": "#c49f6f",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "H3730",
+      "surfaceCode": "ST10",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/H3730_ST10_p77.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-H3730-ST10",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-U702-ST78",
+     "name": "",
+     "hex": "#d8cbbd",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "U702",
+      "surfaceCode": "ST78",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/U702_ST78_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-U702-ST78",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-U7081-ST76",
+     "name": "",
+     "hex": "#d2cfc8",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "U7081",
+      "surfaceCode": "ST76",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/U7081_ST76_p77.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-U7081-ST76",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-U763-ST76",
+     "name": "",
+     "hex": "#c3c0bb",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "U763",
+      "surfaceCode": "ST76",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/U763_ST76_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-U763-ST76",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-U999-PM",
+     "name": "Black",
+     "hex": "#040305",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "U999",
+      "surfaceCode": "PM",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/U999_PM_p77.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-U999-PM",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-U999-ST76",
+     "name": "Black",
+     "hex": "#040305",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "U999",
+      "surfaceCode": "ST76",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/U999_ST76_p77.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-U999-ST76",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-U999-ST78",
+     "name": "Black",
+     "hex": "#040305",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "U999",
+      "surfaceCode": "ST78",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/U999_ST78_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-U999-ST78",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-W1000-ST76",
+     "name": "",
+     "hex": "#fcfcf3",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "W1000",
+      "surfaceCode": "ST76",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/W1000_ST76_p78.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-W1000-ST76",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-W1100-PM",
+     "name": "",
+     "hex": "#fffefa",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "W1100",
+      "surfaceCode": "PM",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/W1100_PM_p77.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-W1100-PM",
+      "checkedAt": "2026-10-30"
+     }
+    },
+    {
+     "code": "EGGER-SB-W1101-ST76",
+     "name": "",
+     "hex": "#fffefa",
+     "price": null,
+     "provenance": {
+      "brand": "EGGER",
+      "product": "EGGER Splashback",
+      "manufacturerDecorCode": "W1101",
+      "surfaceCode": "ST76",
+      "productClass": "egger_splashback",
+      "manufacturerArticle": null,
+      "articleNote": "отдельного артикула у фартука в документах нет — позиция по коду декора столешницы EGGER",
+      "formatMm": {
+       "length": 4100,
+       "width": 640
+      },
+      "thicknessMm": 9,
+      "thicknessConflict": "страница EGGER UK: 4100 × 640 × 8 мм; техлист ред. 02 (15.01.2024): номинальная толщина 9 мм — уточнить по артикулу",
+      "decorMatch": "EGGER UK: все столешницы EGGER — с фартуком в том же декоре; наличие в Казахстане не подтверждено",
+      "sources": [
+       {
+        "doc": "TD_EGGER_UK_Splashback_Panels_en_UK.pdf",
+        "title": "Technical data sheet EGGER Splashbacks, rev. 02, 15.01.2024",
+        "fact": "модель 90; ДСП Eurospan, ламинат с двух сторон; номинальная толщина 9 мм"
+       },
+       {
+        "doc": "PI_EGGER_Splashback_Panels.pdf",
+        "title": "Processing instructions EGGER Splashbacks, rev. 01, 14.12.2023",
+        "fact": "номинальная толщина 9 мм; вплотную к стене и корпусам не ставят — зазор под силикон"
+       },
+       {
+        "doc": "splashbacks_upstands_GB.html",
+        "title": "EGGER UK — Kitchen Upstands & Splashbacks",
+        "fact": "все столешницы EGGER — с фартуком в том же декоре; 4100 × 640 × 8 мм"
+       }
+      ],
+      "preview": "EGGER/W1101_ST76_p77.webp",
+      "previewStatus": "PDF_PRINT_SWATCH_REFERENCE_ONLY",
+      "textureStatus": "NOT_PBR",
+      "rightsStatus": "NOT_VERIFIED",
+      "priceStatus": "UNPRICED",
+      "eligibleUse": [
+       "backsplash"
+      ],
+      "colorSource": "mean_of_pdf_swatch",
+      "fromWorktop": "EGGER-WT-W1101-ST76",
+      "checkedAt": "2026-10-30"
+     }
+    }
+   ]
+  },
+  {
    "id": "veneer",
    "category": "veneer",
    "label": "Шпон",
