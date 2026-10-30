@@ -302,7 +302,7 @@ export function handleLeafSizes(
   g: Pick<ModuleGeometry, 'heightMm' | 'widthMm' | 'gapMm'>,
 ): { leaf: string; wMm: number; hMm: number; drawer: boolean }[] {
   const leaves = frontHardwareOf(unit, run).handleLeaves[unit.id] ?? [];
-  const fronts = moduleFronts(unit, g.heightMm);
+  const fronts = moduleFronts(unit, g.heightMm, run.production);
   const sideBySide = fronts.leaves.length > 1 && fronts.leaves.every((s) => s.fromMm === 0 && s.heightMm === g.heightMm);
   return leaves.map((leaf) => {
     const drawer = /^drawer:(\d+)$/.exec(leaf);

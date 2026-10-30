@@ -1,5 +1,5 @@
 import { FALSE_PANEL_RANGE_MM, type HardwareItem, type ProductionSettings } from '@/types/catalog';
-import type { CornerChoice, CornerClearance, Module, Run, ZoneKind } from '@/types/millwork';
+import type { CornerChoice, CornerClearance, Module, OpeningKind, Run, ZoneKind } from '@/types/millwork';
 import {
   DRAWER_TRAVEL_M,
   L_PAIR_FIRST_LEG,
@@ -15,13 +15,15 @@ import {
   type PartBox,
 } from './cabinetBoxes';
 import { ovenShape } from './applianceShapes';
-import { cookingStackOf, ovenDoorId } from './cookingStack';
+import { cookingStackOf, ovenDoorId, tallOvensOf } from './cookingStack';
 import { cornerGeometry, cornerOwnerOf, openFrontOf, wallOfRole } from './corner';
 import { rowStandardDepthMm } from './fill';
 import { installedItem } from './fittings';
 import { shopOf } from './shop';
 import { isUpperRow, standsOnFloor } from './modules';
 import { vitrineOf } from './vitrine';
+/* Только тип: `room.ts` берёт `walls.ts`, а тот — этот модуль; значение здесь замкнуло бы цикл. */
+import type { DoorRoomSolid } from './room';
 
 /**
  * КИНЕМАТИКА УГЛА — ЧТО ЗАДЕВАЕТ НА ХОДУ И КАКАЯ ФАЛЬШ-ПАНЕЛЬ ЭТО СНИМАЕТ
@@ -398,6 +400,8 @@ type Solid = {
   conditional: boolean;
   /** Ряд детали: нижний (с колоннами), навесной; `null` — антресоль, полка над шкафом. */
   level: ClashLevel | null;
+  /** Тело комнаты (ход двери прибора): стена, угловой блок, колонна, короб, выступ. */
+  room?: DoorRoomSolid;
 };
 
 /**
@@ -467,7 +471,7 @@ function movingOf(
     if (pick && !pick(unit)) continue;
     /* Доступная часть у слепого угла — та же, что ставит сцена: ширина и сторона (`openFrontOf`, P0). */
     const open = openFrontOf(unit, run);
-    const leaves = sceneLeaves(unit, entry.heightM, open ? open.widthMm / MM : undefined, open ? open.fromMm / MM : 0);
+    const leaves = sceneLeaves(unit, entry.heightM, open ? open.widthMm / MM : undefined, open ? open.fromMm / MM : 0, production);
     for (const leaf of leaves) {
       const level = levelOf(unit);
       let at: Moving['at'];
@@ -1133,6 +1137,8 @@ export type RowSweepClash = {
   obstaclePart: string;
   depthMm: number;
   atS: number;
+  /** Дверь витрины или створка кладовки своей глубины и её соседа (ЭТАП 4). */
+  vitrine?: boolean;
 };
 
 /**
@@ -1153,8 +1159,26 @@ export function vitrineSweep(input: {
   hardware?: Map<string, HardwareItem>;
 }): { clashes: RowSweepClash[]; assumptions: string[] } {
   const { run, production, hardware } = input;
-  const isVitrine = (unit: Module) => vitrineOf(unit) !== null;
-  if (!runPlaces(run).some((entry) => isVitrine(entry.unit))) return { clashes: [], assumptions: [] };
+  /*
+   * КЛАДОВКА НАД ХОЛОДИЛЬНИКОМ СВОЕЙ ГЛУБИНЫ (ЭТАП 4) — та же выборка: её
+   * створки и створки соседей, что стоят с ней на одной высоте вплотную. При
+   * глубине 560 рядом с антресолью 320 дверь соседа на петлях у кладовки на
+   * ходу встречает её боковину. Глубина по умолчанию (антресоли цеха) — как у
+   * соседа, ход держит вынос полотна (ловушка 525), и здесь его не мерят.
+   */
+  const entries = runPlaces(run);
+  const ownStorage = entries.filter((entry) => entry.unit.section === 'mezzanine' && entry.unit.storageSize?.depthMm !== undefined);
+  const nextTo = (entry: (typeof entries)[number], storage: (typeof entries)[number]) =>
+    entry.unit.id !== storage.unit.id &&
+    Math.abs(entry.depthM - storage.depthM) * MM > TOUCH_MM &&
+    (entry.unit.offsetMm + entry.unit.widthMm === storage.unit.offsetMm || storage.unit.offsetMm + storage.unit.widthMm === entry.unit.offsetMm) &&
+    entry.y < storage.y + storage.heightM &&
+    storage.y < entry.y + entry.heightM;
+  const storageIds = new Set(ownStorage.map((entry) => entry.unit.id));
+  const neighbours = new Set(entries.filter((entry) => ownStorage.some((storage) => nextTo(entry, storage))).map((entry) => entry.unit.id));
+  const storageSide = new Set<string>([...Array.from(storageIds), ...Array.from(neighbours)]);
+  const isVitrine = (unit: Module) => vitrineOf(unit) !== null || storageSide.has(unit.id);
+  if (!entries.some((entry) => isVitrine(entry.unit))) return { clashes: [], assumptions: [] };
   const told = new Set<string>();
   const place: RowPlace = { xM: 0, zM: 0, rotationYDeg: 0 };
   const grouped = shopBoxes(run, production, hardware);
@@ -1163,8 +1187,15 @@ export function vitrineSweep(input: {
   /* Одна строка на пару «дверь — модуль»: её самая глубокая коробка. */
   const deepest = new Map<string, RowSweepClash>();
   for (const m of moving) {
+    /*
+     * Сосед кладовки (ЭТАП 4) меряется только против самой кладовки: его ход
+     * вдоль остального ряда держит вынос полотна (ловушка 525), и чужой заход,
+     * не связанный с кладовкой, не должен всплывать оттого, что у неё своя глубина.
+     */
+    const onlyStorage = vitrineOf(m.unit) === null && neighbours.has(m.unit.id) && !storageIds.has(m.unit.id);
     for (const solid of solids) {
       if (solid.moduleId === m.unit.id) continue;
+      if (onlyStorage && !(solid.moduleId && storageIds.has(solid.moduleId))) continue;
       if (!boxesMeet(m.swept, solid.box)) continue;
       const worst = worstOf(m, solid, [0, 0, 0]);
       if (worst.depth <= TOUCH_MM) continue;
@@ -1181,6 +1212,7 @@ export function vitrineSweep(input: {
         obstaclePart: solid.part,
         depthMm: worst.depth,
         atS: worst.s,
+        vitrine: vitrineOf(m.unit) !== null,
       });
     }
   }
@@ -1193,7 +1225,9 @@ export function rowSweepWords(clash: RowSweepClash): string {
   const door = leaf ? `дверь ${Number(leaf[1]) + 1}` : 'дверь';
   const subject = clash.part === 'ручка' ? `ручка: ${door}` : door;
   const into = clash.obstaclePart === 'фальш-панель' ? 'фальш-панель' : `${clash.obstaclePart} модуля «${clash.obstacleLabel}»`;
-  return `${subject} витрины «${clash.moduleLabel}» на ходу заходит в ${into} на ${formatMm(clash.depthMm)} мм`;
+  /* Кладовка и её соседи (ЭТАП 4) — не витрины: «модуля», а не «витрины». */
+  const whose = clash.vitrine === false ? 'модуля' : 'витрины';
+  return `${subject} ${whose} «${clash.moduleLabel}» на ходу заходит в ${into} на ${formatMm(clash.depthMm)} мм`;
 }
 
 /** Заход двери духового шкафа на ходу (ЭТАП 3): что, во что и на сколько. */
@@ -1216,6 +1250,12 @@ export type ApplianceDoorClash = {
   atDeg: number;
   /** Насколько открытая дверь выходит перед плоскостью корпусов, мм. */
   reachMm: number;
+  /**
+   * Заход не в мебель, а в комнату (ЭТАП 4): стену, колонну, короб, выступ.
+   * `unknownDepth` — вынос объекта не замерен, и задето его наибольшее тело:
+   * это «не проверено», а не «упирается».
+   */
+  room?: { wallId: string; wallIndex: number; kind?: OpeningKind; role: DoorRoomSolid['role']; unknownDepth: boolean };
 };
 
 /** Ход двери духового шкафа: 90° вниз — полотно встаёт горизонтально (`ovenShape`, сцена). */
@@ -1240,15 +1280,32 @@ export function applianceDoorSweep(input: {
   rows: { run: Run; placement: RowPlace }[];
   production: ProductionSettings;
   hardware?: Map<string, HardwareItem>;
+  /**
+   * Комната вокруг рядов (ЭТАП 4) — те же коробки, что рисует сцена
+   * (`doorRoomSolids` из `roomAroundRows`): стена напротив, колонна, короб,
+   * выступ. Без неё дверь, упёршаяся в стену коридора, проходила с ценой.
+   */
+  room?: DoorRoomSolid[];
 }): ApplianceDoorClash[] {
   const { rows, production, hardware } = input;
   const doors: { row: number; moving: Moving; reachMm: number }[] = [];
   rows.forEach(({ run, placement }, row) => {
-    for (const unit of run.modules) {
-      if (unit.appliance !== 'hob' || !unit.ovenBelow) continue;
-      const stack = cookingStackOf(unit, run, production);
-      if (!stack?.ovenAt) continue;
-      const shape = ovenShape(stack.oven);
+    /*
+     * ДВЕРИ ДУХОВЫХ ШКАФОВ РЯДА: под варочной (ЭТАП 3) и в пенале и колонне
+     * (ЭТАП 4, A5) — та же модель (`ovenShape`), та же ось у нижней кромки и
+     * те же препятствия; место — у шкафа под панелью `cookingStackOf`, у
+     * пенала — верх полки-опоры его ниши (`tallOvensOf`).
+     */
+    const ovens = [
+      ...run.modules.flatMap((unit) => {
+        if (unit.appliance !== 'hob' || !unit.ovenBelow) return [];
+        const stack = cookingStackOf(unit, run, production);
+        return stack?.ovenAt ? [{ unit, xMm: stack.hobAt.xMm, bottomMm: stack.ovenAt.bottomMm, model: stack.oven }] : [];
+      }),
+      ...tallOvensOf(run, production).map((oven) => ({ unit: oven.unit, xMm: oven.xMm, bottomMm: oven.bottomMm, model: oven.model })),
+    ];
+    for (const { unit, xMm, bottomMm, model } of ovens) {
+      const shape = ovenShape(model);
       const [, pivotY, pivotZ] = shape.door.pivotMm;
       const pieces = shape.parts
         .filter((part) => 'moving' in part && part.moving === 'ovenDoor')
@@ -1275,7 +1332,7 @@ export function applianceDoorSweep(input: {
           return {
             obb: obbOf(
               placement,
-              [(stack.hobAt.xMm + piece.center[0]) / MM, (stack.ovenAt!.bottomMm + pivotY + dy * c - dz * sn) / MM, (pivotZ + dy * sn + dz * c) / MM],
+              [(xMm + piece.center[0]) / MM, (bottomMm + pivotY + dy * c - dz * sn) / MM, (pivotZ + dy * sn + dz * c) / MM],
               [piece.size[0] / MM, piece.size[1] / MM, piece.size[2] / MM],
               0,
               t,
@@ -1328,7 +1385,14 @@ export function applianceDoorSweep(input: {
   });
   if (doors.length === 0) return [];
 
-  const solids = rows.flatMap(({ run, placement }, row) => solidsOf(shopBoxes(run, production, hardware), row, placement));
+  const solids = [
+    ...rows.flatMap(({ run, placement }, row) => solidsOf(shopBoxes(run, production, hardware), row, placement)),
+    /* Комната — в том же мире, что ряды: `obbOf` с местом стены вместо места ряда. */
+    ...(input.room ?? []).map((body): Solid => {
+      const obb = obbOf({ xM: body.center[0], zM: body.center[2], rotationYDeg: body.rotationYDeg }, [0, body.center[1], 0], body.size);
+      return { wall: -1, obb, box: boxOf(obb), moduleId: null, label: body.key, part: 'стену', conditional: false, level: null, room: body };
+    }),
+  ];
   /* Одна строка на пару «дверь — модуль»: её самая глубокая коробка. */
   const deepest = new Map<string, ApplianceDoorClash>();
   for (const { row, moving, reachMm } of doors) {
@@ -1352,6 +1416,17 @@ export function applianceDoorSweep(input: {
         depthMm: worst.depth,
         atDeg: Math.round(worst.s * ((OVEN_DOOR_ANGLE * 180) / Math.PI) * 10) / 10,
         reachMm,
+        ...(solid.room
+          ? {
+              room: {
+                wallId: solid.room.wallId,
+                wallIndex: solid.room.wallIndex,
+                ...(solid.room.kind ? { kind: solid.room.kind } : {}),
+                role: solid.room.role,
+                unknownDepth: solid.room.unknownDepth,
+              },
+            }
+          : {}),
       });
     }
   }

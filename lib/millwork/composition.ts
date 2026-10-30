@@ -258,8 +258,16 @@ export function splitAppliances(
   put('dishwasher60', longest);
 
   put('hob', middle);
-  // Вытяжка обязана висеть над варочной — значит и в том же ряду.
-  put('hood', middle);
+  /*
+   * ВЫТЯЖКА — НА СТЕНЕ ВАРОЧНОЙ (ЭТАП 4, часть 1.1), а не по правилу.
+   *
+   * Висит она над варочной, значит и в её ряду: туда, куда варочную унесло
+   * закрепление человека, — как духовка под варочной ниже. Своё закрепление
+   * вытяжки сильнее (`put` спрашивает его первым): разошлись — это конфликт,
+   * его называет `hoodApartOf`, а не молчаливая пропажа вытяжки.
+   */
+  const hobWall = out.findIndex((list) => list.includes('hob'));
+  put('hood', hobWall >= 0 ? hobWall : middle);
   // Духовой шкаф под варочной — в её модуле, на её стене (ЭТАП 3).
   if (underHob) {
     const hobAt = out.findIndex((list) => list.includes('hob'));
@@ -449,10 +457,16 @@ export function wallsTouchedByChange(
   if (change.appliances) {
     for (const appliance of req.appliances) if (!change.appliances.includes(appliance)) touch(appliance);
     const pinned = { ...(req.applianceWalls ?? {}), ...(change.applianceWalls ?? {}) };
+    /*
+     * Стену нового прибора даёт раздача ВСЕГО нового состава: вытяжка идёт на
+     * стену варочной (ЭТАП 4), а раздача одного прибора отправляла её по
+     * правилу — мимо правленой стены, где варочная стоит на самом деле.
+     */
+    const next = splitAppliances(change.appliances, current.usableMm, pinned, current.wallIds, change.ovenUnderHob ?? req.ovenUnderHob);
     for (const appliance of change.appliances) {
       if (req.appliances.includes(appliance)) continue;
-      splitAppliances([appliance], current.usableMm, pinned, current.wallIds).forEach((list, i) => {
-        if (list.length > 0) walls.add(i);
+      next.forEach((list, i) => {
+        if (list.includes(appliance)) walls.add(i);
       });
     }
   }

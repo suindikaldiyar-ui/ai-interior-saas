@@ -4,7 +4,6 @@ import {
   ovenUnderHobOf,
   chosenApplianceType,
   CORNER_SIZE_MM,
-  FRIDGE_MEZZANINE_MIN_MM,
   GEOMETRY,
   MIN_WIDTH,
   SINGLE_DOOR_MAX_MM,
@@ -20,7 +19,7 @@ import {
   assertUnderCeiling,
   runWidthSum,
 } from './invariants';
-import { defaultFill, mezzanineBlockedByBeam, mezzanineHeightMm, moduleCarcassHeightMm, rowStandardDepthMm } from './fill';
+import { defaultFill, fridgeStorageOf, mezzanineBlockedByBeam, mezzanineHeightMm, moduleCarcassHeightMm, moduleDepthMm, rowStandardDepthMm } from './fill';
 import { tvRefusal, tvZonePlan, wallPanelRefusal } from './tvZone';
 import { radiusEdit, radiusLists, radiusRowOf } from './radiusPlace';
 import { vitrineEdit } from './vitrinePlace';
@@ -33,7 +32,7 @@ import {
 } from './moduleVariants';
 import { SECTION_SPECS, sectionSpec } from './sections';
 import { isSectionZone, zoneHeightMm, zoneProfile } from './zones';
-import { beamBottomMm, beamsOnRun, ceilingOverSpanMm } from './ceiling';
+import { beamBottomMm, beamsOnRun } from './ceiling';
 import { OPENING_KIND_TITLE } from '@/types/millwork';
 import { plinthMm, upperBottomMm } from './shop';
 import type { ProductionSettings } from '@/types/catalog';
@@ -210,7 +209,7 @@ function cargoWhereNarrow(modules: Module[]): Module[] {
  */
 function withFill(
   modules: Module[],
-  shell: Pick<Run, 'zone' | 'ceilingHeightMm' | 'options'>,
+  shell: Parameters<typeof defaultFill>[1],
 ): void {
   modules.forEach((unit, i) => {
     unit.fill = defaultFill(unit, shell, i, modules.length);
@@ -585,12 +584,12 @@ function makeModule(
 
     /*
      * Замеренное сильнее типового: тип даёт умолчания, а замер — факт.
-     * Ниша при этом считается из высоты прибора, поэтому высоту типа
-     * кладём в модуль так же, как замеренную.
+     * У типа есть НИША, а не высота прибора: кладётся нишей (`nicheMm`),
+     * иначе зазор прибавлялся дважды (ЭТАП 4).
      */
     const merged = {
       ...(type
-        ? { widthMm: type.widthMm, heightMm: type.nicheHMm, depthMm: type.depthMm }
+        ? { widthMm: type.widthMm, ...(type.nicheHMm ? { nicheMm: type.nicheHMm } : {}), depthMm: type.depthMm }
         : {}),
       ...(size ?? {}),
     };
@@ -1808,6 +1807,28 @@ export function buildRun(input: BuildRunInput): Run {
     lengthMm: usable,
   });
 
+  /*
+   * ИСХОДНАЯ ГЛУБИНА КЛАДОВКИ ПРОЕКТА (ЭТАП 4, решение владельца: у новых
+   * проектов 560). Ложится на колонну холодильника выбором, если своей
+   * глубины ещё нет; глубже колонны кладовка повисла бы — тогда вровень с
+   * колонной, и это сказано словами. Проекты без поля — как были (320).
+   */
+  const projectStorageDepth = requirements.storageDepthMm;
+  if (projectStorageDepth !== undefined) {
+    modules.forEach((unit, i) => {
+      if (unit.appliance !== 'fridge' || unit.storageOver?.depthMm !== undefined) return;
+      const columnDepth = moduleDepthMm(unit, requirements.zone, input.production);
+      const depthMm = Math.min(Math.round(projectStorageDepth), columnDepth);
+      modules[i] = { ...unit, storageOver: { ...(unit.storageOver ?? {}), depthMm } };
+      if (depthMm < projectStorageDepth) {
+        warnings.push(
+          `Кладовка над холодильником: исходная глубина проекта ${projectStorageDepth} мм больше колонны ${columnDepth} мм — ` +
+            `стоит ${depthMm} мм, вровень с колонной: глубже передняя часть повисла бы перед фасадом холодильника.`,
+        );
+      }
+    });
+  }
+
   const upperSegments = requirements.options.hasUpper
     ? buildUpperRow(
         modules,
@@ -1820,6 +1841,25 @@ export function buildRun(input: BuildRunInput): Run {
       )
     : [];
 
+  /*
+   * ВЫТЯЖКА ЗАКАЗАНА ДЛЯ ЭТОЙ СТЕНЫ, А НАД ВАРОЧНОЙ НЕ ВСТАЛА (ЭТАП 4) —
+   * причина словами, а не вшитое «разрыв над окном» на любой случай.
+   * Преграду с именем даёт та же `upperSpans`, по которой ряд и не встал.
+   */
+  {
+    const hob = modules.find((unit) => unit.appliance === 'hob');
+    const hung = upperSegments.some((segment) => segment.modules.some((unit) => unit.appliance === 'hood'));
+    if (hob && requirements.appliances.includes('hood') && !hung) {
+      warnings.push(hoodMissingWords(hob, requirements, () =>
+        upperSpans(modules, usable, openings, requirements, ceilingHeightMm, input.production, cornerUpper ? { fromMm: cornerUpper.fromMm, toMm: cornerUpper.toMm } : undefined),
+      ));
+    }
+    /* Вытяжка этой стене роздана, а варочной на ней нет: молча она пропадала со схемы и из сметы. */
+    if (!hob && requirements.appliances.includes('hood') && !requirements.appliances.includes('hob')) {
+      warnings.push('Вытяжка: на этой стене нет варочной — вешать вытяжку не над чем, её нет ни на схеме, ни в смете. Добавьте варочную или уберите вытяжку из состава.');
+    }
+  }
+
   const kitchenShell = {
     zone: requirements.zone ?? 'kitchen',
     ceilingHeightMm,
@@ -1828,7 +1868,15 @@ export function buildRun(input: BuildRunInput): Run {
     production: input.production,
   };
   withFill(modules, kitchenShell);
-  for (const segment of upperSegments) withFill(segment.modules, kitchenShell);
+  /*
+   * НАПОЛНЕНИЕ ВЕРХНИХ СЕГМЕНТОВ — ПО ОБОЛОЧКЕ С НИЖНИМ РЯДОМ (ЭТАП 4).
+   *
+   * Без нижних модулей у кладовки над холодильником не видно опоры, и её
+   * высота считалась как у антресоли ряда — 500: полка вставала на 256 мм в
+   * корпусе 300, в 20 мм под крышей, а у кладовки 820 — там же. Опору видит
+   * только оболочка, в которой есть колонна.
+   */
+  for (const segment of upperSegments) withFill(segment.modules, { ...kitchenShell, modules });
 
   /*
    * СТВОРКИ У УГЛА ОТКРЫВАЮТСЯ ОТ УГЛА (`cornerDoorHinge`).
@@ -2229,6 +2277,31 @@ export function upperSpans(
  * Верхний ряд идёт по проекции нижнего и РАЗРЫВАЕТСЯ на участке окна.
  * Шкафы поперёк окна — грубая ошибка, которую клиент замечает мгновенно.
  */
+/**
+ * ПОЧЕМУ ВЫТЯЖКА НЕ ВСТАЛА НАД ВАРОЧНОЙ — СЛОВАМИ (ЭТАП 4, часть 1.1).
+ *
+ * Прежде экран говорил «разрыв верхнего ряда над окном» на любой случай,
+ * и в замере без единого окна тоже. Причин три: верхнего ряда нет вовсе;
+ * над варочной ряд прерван — окном, пеналом, ригелем, колонной (имя и мм
+ * даёт `upperSpans`); участок над ней уже вытяжки. Строка начинается с
+ * «Вытяжка:» — по этому началу её узнают экран и проверки.
+ */
+export function hoodMissingWords(
+  hob: Module,
+  req: RunRequirements,
+  spans: () => { blockers: UpperBlocker[] },
+): string {
+  if (!req.options.hasUpper) return 'Вытяжка: верхнего ряда нет — вешать её не на что. Включите верхний ряд или уберите вытяжку из состава.';
+  const from = hob.offsetMm;
+  const to = hob.offsetMm + hob.widthMm;
+  const over = spans().blockers.filter((blocker) => blocker.from < to && blocker.to > from);
+  if (over.length > 0) {
+    const named = over.map((blocker) => `${blocker.reason} ${blocker.from}…${blocker.to} мм`).join(', ');
+    return `Вытяжка: над варочной ${from}…${to} мм верхний ряд прерван — ${named}; вешать вытяжку некуда.`;
+  }
+  return `Вытяжка: над варочной ${from}…${to} мм участок верхнего ряда уже вытяжки — вешать её некуда.`;
+}
+
 export function buildUpperRow(
   baseModules: Module[],
   lengthMm: number,
@@ -2446,29 +2519,34 @@ export function buildUpperRow(
    * Пустое место в смете не стоит ничего, а кладовка стоит.
    */
   for (const unit of baseModules) {
-    if (unit.appliance !== 'fridge') continue;
-
-    const top = plinthMm(shell.production) + moduleCarcassHeightMm(unit, shell);
     /*
-     * Потолок НАД КОЛОННОЙ, а не потолок зоны: под ригелем кладовки
-     * может не остаться вовсе, и выдать её значило бы поставить модуль
-     * в балку.
+     * Встаёт ли кладовка, какой она высоты и глубины — одна `fridgeStorageOf`
+     * (ЭТАП 4, часть 2). Потолок там НАД КОЛОННОЙ, а не потолок зоны: под
+     * ригелем кладовки может не остаться вовсе, и выдать её значило бы
+     * поставить модуль в балку.
      */
-    const ceiling = Math.min(
-      zoneHeightMm(req.zone, ceilingHeightMm, shell.production),
-      ceilingOverSpanMm(unit.offsetMm, unit.offsetMm + unit.widthMm, beams, ceilingHeightMm),
-    );
-    const room = ceiling - top;
-    if (room < FRIDGE_MEZZANINE_MIN_MM) continue;
+    const storage = fridgeStorageOf(unit, shell);
+    if (!storage?.fits) continue;
 
     const mezzanine = makeModule('upper', unit.widthMm, unit.offsetMm);
     mezzanine.id = moduleId('mezz', unit.offsetMm);
     mezzanine.section = 'mezzanine';
     mezzanine.label = 'Антресоль над холодильником';
     mezzanine.frontType = 'door';
-    mezzanine.doorCount = 1;
+    /*
+     * Створок — по ширине, как у любой дверцы (`frontPlan`): над
+     * холодильником 900 одна дверца 892 мм провисала бы на петлях.
+     */
+    mezzanine.doorCount = frontPlan('upper', unit.widthMm).doorCount;
     mezzanine.drawerCount = 0;
     if (unit.front) mezzanine.front = unit.front;
+    /* Свой габарит — копия выбора с колонны: его читают глубина и наполнение. */
+    if (storage.own && (storage.own.heightMm !== undefined || storage.own.depthMm !== undefined)) {
+      mezzanine.storageSize = {
+        ...(storage.own.heightMm !== undefined ? { heightMm: storage.own.heightMm } : {}),
+        ...(storage.own.depthMm !== undefined ? { depthMm: storage.own.depthMm } : {}),
+      };
+    }
 
     segments.push({
       fromMm: unit.offsetMm,
@@ -2490,9 +2568,11 @@ export function fridgeRoomMm(
   unit: Module,
   run: Parameters<typeof moduleCarcassHeightMm>[1],
 ): number | null {
-  if (unit.appliance !== 'fridge') return null;
-  const top = plinthMm(run.production) + moduleCarcassHeightMm(unit, run);
-  return zoneHeightMm(run.zone, run.ceilingHeightMm, run.production) - top;
+  /*
+   * Та же `fridgeStorageOf`, что ставит кладовку: здесь потолок считался без
+   * ригеля, и под балкой над колонной кладовка пропадала без единого слова.
+   */
+  return fridgeStorageOf(unit, run)?.roomMm ?? null;
 }
 
 /* ─────────────────────────  Помощь интерфейсу  ───────────────────────── */

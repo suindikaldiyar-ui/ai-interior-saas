@@ -40,6 +40,8 @@ import { cuttingPlan, stockBaseKey } from '../lib/millwork/cutting';
 import { DEMO_RATES } from '../lib/millwork/demo';
 import { applyOps } from '../lib/millwork/ops';
 import { carcassHeightMm, plinthMm } from '../lib/millwork/shop';
+import { tallOvensOf } from '../lib/millwork/cookingStack';
+import { ovenShape } from '../lib/millwork/applianceShapes';
 import { rowStandardDepthMm } from '../lib/millwork/fill';
 import { CORNER_FILLER_PANEL_NAME, CORNER_OWNER_FILLER_PANEL_NAME, CORNER_UPPER_FILLER_PANEL_NAME } from '../lib/millwork/panels';
 import { cornerClashMismatches, mismatchPriceText, wallMismatchMessage, wallMismatches } from '../lib/millwork/walls';
@@ -565,18 +567,32 @@ export function stageAChecks(check: Check): void {
     let split = 0;
     let faces = 0;
     const drift: string[] = [];
+    let models = 0;
     for (const { title, run } of runs) {
       const byModule = new Map(runBoxesByModule(run, shopOf(DEFAULT_PRODUCTION)).modules.map((entry) => [entry.unit.id, entry.boxes]));
+      /*
+       * Духовой шкаф в пенале и колонне — модель, а не коробка (ЭТАП 4): его габарит
+       * по высоте — от верха полки-опоры (`tallOvensOf`) на высоту модели (`ovenShape`).
+       */
+      const ovens = new Map(tallOvensOf(run, DEFAULT_PRODUCTION).map((oven) => [oven.unit.id, oven]));
       for (const place of runPlaces(run)) {
         const unit = place.unit;
         const spans = nicheFacadeSpans(unit, Math.round(place.heightM * MM));
         if (!spans) continue;
         split += 1;
         /* Лицо прибора — коробки без подвижной детали; узел у них один — «прибор» (слой «Техника», ЭТАП 3), не ручка и не петля. */
-        const face = (byModule.get(unit.id) ?? []).filter(
+        const face: { position: number[]; scale: number[] }[] = (byModule.get(unit.id) ?? []).filter(
           (box) =>
             (box.material === 'appliance' || box.material === 'glass') && box.part === undefined && (box.node === undefined || box.node === 'appliance'),
         );
+        const oven = ovens.get(unit.id);
+        if (oven) {
+          const ys = ovenShape(oven.model).parts.flatMap((part) => ('at' in part && 'size' in part ? [part.at[1] - part.size[1] / 2, part.at[1] + part.size[1] / 2] : []));
+          const lo = oven.bottomMm / MM + Math.min(0, ...ys) / MM;
+          const hi = oven.bottomMm / MM + Math.max(...ys) / MM;
+          face.push({ position: [0, (lo + hi) / 2, 0], scale: [0, hi - lo, 0] });
+          models += 1;
+        }
         if (face.length === 0) {
           drift.push(`${title} ${unit.id}: прибора в нише не нарисовано`);
           continue;
@@ -600,8 +616,8 @@ export function stageAChecks(check: Check): void {
     }
     check(
       'SA.3 за открытой створкой — то, что режется: прибор пенала стоит в своей нише и за створки над и под ней не заходит',
-      drift.length === 0 && split > 0 && faces > 0,
-      drift.length === 0 ? `модулей с нишей ${split}, коробок прибора ${faces}` : `${drift.length}: ${drift.slice(0, 3).join(' | ')}`,
+      drift.length === 0 && split > 0 && faces > 0 && models > 0,
+      drift.length === 0 ? `модулей с нишей ${split}, коробок прибора и моделей ${faces} (из них моделей духового шкафа ${models})` : `${drift.length}: ${drift.slice(0, 3).join(' | ')}`,
     );
   }
 
@@ -1015,13 +1031,19 @@ export function stageAChecks(check: Check): void {
       const drawn = runBoxes(owner, shopOf(SIX)).find((box) => box.panel === CORNER_OWNER_FILLER_PANEL_NAME);
       const { found } = sweepClashes(object.engine.segments, object.engine.places, SIX);
       check(
-        'SA.7 П 3800 + 2400 + 1740 (600/300): заход ящика 12 мм снят — фальш-панель стены Б у слепого модуля 12 мм (деталь 12 − зазор 4 = 8 мм в раскрое и в сцене), отпечаток 466a5605, по всему ходу заходов 0',
+        'SA.7 П 3800 + 2400 + 1740 (600/300): заход ящика 12 мм снят — фальш-панель стены Б у слепого модуля 12 мм (деталь 12 − зазор 4 = 8 мм в раскрое и в сцене), отпечаток 92872717, по всему ходу заходов 0',
         layout.corners[1]?.choice.clearance?.ownerMm === 12 &&
           layout.corners[1]?.ownerPanelMm === 12 &&
           part?.widthMm === 12 - SIX.frontGapMm &&
           Boolean(drawn) &&
           Math.abs(drawn!.scale[0] * MM - (12 - SIX.frontGapMm)) < 0.01 &&
-          layout.fingerprint === '466a5605' &&
+          /*
+           * 466a5605 → 92872717 (ЭТАП 4): полка кладовки над холодильником
+           * встала по высоте кладовки (160 вместо 256 в корпусе 300), у
+           * одиночного прибора в пенале появились полки-опоры; панели угла и
+           * ход те же.
+           */
+          layout.fingerprint === '92872717' &&
           found.length === 0,
         `панель ${layout.corners[1]?.choice.clearance?.ownerMm ?? 'нет'} · деталь ${part?.widthMm ?? 'НЕТ'} · сцена ${drawn ? Math.round(drawn.scale[0] * MM) : 'НЕТ'} · отпечаток ${layout.fingerprint} · заходов ${found.length}${found.length ? `: ${fmt(found)}` : ''}`,
       );

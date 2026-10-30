@@ -1455,7 +1455,12 @@ function SceneProbe({ group, run }: { group: React.RefObject<THREE.Group>; run: 
      * ряда, прячется, кадр рисуется, число снимается и видимость
      * возвращается на место.
      */
-    (w as { __mwCabinetCalls?: () => number | null }).__mwCabinetCalls = () => {
+    /*
+     * `withoutAppliances` (ЭТАП 4): модели техники (`appliance-models`) — не
+     * мебель ряда; их вызовы меряются отдельно, чтобы порог инстансинга мебели
+     * остался прежним, а у моделей был свой.
+     */
+    (w as { __mwCabinetCalls?: (options?: { withoutAppliances?: boolean }) => number | null }).__mwCabinetCalls = (options) => {
       const root = group.current;
       if (!root) return null;
 
@@ -1475,6 +1480,14 @@ function SceneProbe({ group, run }: { group: React.RefObject<THREE.Group>; run: 
         }
       };
       hideSiblings(scene);
+      if (options?.withoutAppliances) {
+        root.traverse((node) => {
+          if (node.name === 'appliance-models') {
+            restore.push([node, node.visible]);
+            node.visible = false;
+          }
+        });
+      }
 
       try {
         gl.info.reset();

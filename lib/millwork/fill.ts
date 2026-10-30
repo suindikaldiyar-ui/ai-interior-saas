@@ -2,6 +2,7 @@ import {
   APPLIANCE_COLUMN,
   FRIDGE_MEZZANINE_MIN_MM,
   GEOMETRY,
+  moduleAppliances,
   standardHeightMm,
   nicheHeightMm,
   standsOnFloor,
@@ -116,6 +117,34 @@ export function columnNiches(
     { appliance: column.bottom as ApplianceKind, fromMm: base, toMm: boundary },
     { appliance: column.top as ApplianceKind, fromMm: boundary, toMm: snapUp32(boundary + topH) },
   ];
+}
+
+/** Низ ниши духовки от дна пенала: на этой высоте её и ставят. */
+export const OVEN_FROM_FLOOR_MM = 850;
+
+/**
+ * НИША ОДИНОЧНОГО ПРИБОРА В ПЕНАЛЕ (ЭТАП 4) — одна функция на фасады
+ * (`nicheOf` → `facadeSpans`), полки-опоры (`defaultFill`) и сцену.
+ *
+ * Прибор в пенале ставят на удобную высоту, а не на пол: духовка на уровне
+ * пояса — отраслевая норма. ПРИБОР СТОИТ НА ПОЛКЕ, А ПОЛКА — НА ОТВЕРСТИЯХ
+ * СИСТЕМЫ 32: ниша садилась на 850 мм мимо сетки, и опорной полки не было ни
+ * в раскрое, ни в сцене — духовка висела в воздухе. Теперь границы ниши — оси
+ * опор, как у колонны (`columnNiches`): низ — ближайшее отверстие снизу от
+ * 850, верх — вверх по сетке; ниша может стать выше прибора, ниже — нет
+ * (ловушка 103). Правило «низ не выше 600 от пола» сюда не идёт: оно про пару
+ * в колонне, документа под одиночный пенал нет (решение владельца).
+ */
+export function singleNicheOf(unit: Module, heightMm: number): { fromMm: number; toMm: number } | null {
+  if (unit.column || unit.kind !== 'tall') return null;
+  const appliance = moduleAppliances(unit)[0];
+  if (!appliance) return null;
+  const niche = nicheHeightMm(appliance, unit.applianceSizes?.[appliance]);
+  if (!niche) return null;
+  const wanted = Math.max(0, Math.min(heightMm - niche, OVEN_FROM_FLOOR_MM));
+  const snapped = snapUp32(wanted);
+  const fromMm = snapped > wanted ? Math.max(0, snapped - SYSTEM32_STEP_MM) : snapped;
+  return { fromMm, toMm: snapUp32(fromMm + niche) };
 }
 
 /**
@@ -259,12 +288,24 @@ export function moduleCarcassHeightMm(
        * Антресоль над верхним рядом — своя высота, её выбирает заказчик.
        */
       const base = mezzanineBaseOf(unit, run);
+      /*
+       * Кладовка над холодильником — одна `fridgeStorageOf` (ЭТАП 4, часть 2):
+       * своя высота человека или всё место над колонной.
+       */
+      const storage = base?.appliance === 'fridge' ? fridgeStorageOf(base, run) : null;
+      if (storage) return capped(Math.max(0, storage.heightMm));
       if (base) {
         const top = zoneHeightMm(run.zone, run.ceilingHeightMm, run.production);
         return capped(
           Math.max(0, top - plinthMm(run.production) - moduleCarcassHeightMm(base, run)),
         );
       }
+      /*
+       * Опоры не видно — наполнение считают по оболочке ряда без нижних
+       * модулей. Своя высота кладовки едет на ней копией (`storageSize`):
+       * без неё полки кладовки высотой 600 считались бы по антресоли 500.
+       */
+      if (unit.storageSize?.heightMm !== undefined) return capped(Math.max(0, unit.storageSize.heightMm));
       return capped(mezzanineHeightMm(run));
     }
     if (spec.heightMm > 0) return capped(spec.heightMm);
@@ -461,14 +502,87 @@ export function tallStorageOf(
   run: Pick<Run, 'zone' | 'ceilingHeightMm'> & Partial<Pick<Run, 'modules' | 'options' | 'beams' | 'production'>>,
 ): { column: Module; bottomMm: number; heightMm: number } | null {
   const top = zoneHeightMm(run.zone, run.ceilingHeightMm, run.production);
-  const bare = { zone: run.zone, ceilingHeightMm: run.ceilingHeightMm, options: run.options, beams: run.beams, production: run.production };
   for (const unit of [...(run.modules ?? [])].sort((a, b) => a.offsetMm - b.offsetMm)) {
-    if (unit.appliance !== 'fridge' || !standsOnFloor(unit)) continue;
-    const bottomMm = plinthMm(run.production) + moduleCarcassHeightMm(unit, bare);
-    const heightMm = top - bottomMm;
-    if (heightMm >= FRIDGE_MEZZANINE_MIN_MM) return { column: unit, bottomMm, heightMm };
+    /*
+     * Низ кладовки и то, встаёт ли она, — та же `fridgeStorageOf`, что
+     * строит её в ряду. «В линию» ставят по НИЗУ кладовки: антресоль ряда
+     * идёт от него до верха зоны, и своя высота кладовки линию не двигает.
+     */
+    const storage = fridgeStorageOf(unit, run);
+    if (storage?.fits) return { column: unit, bottomMm: storage.bottomMm, heightMm: top - storage.bottomMm };
   }
   return null;
+}
+
+/** Кладовка над колонной холодильника: где она, какой высоты и глубины, и встаёт ли. */
+export type FridgeStorage = {
+  column: Module;
+  /** Крыша колонны от пола — низ кладовки. */
+  bottomMm: number;
+  /** Потолок над колонной: верх зоны (с зазором цеха) и ригели над её шириной. */
+  ceilingMm: number;
+  /** Сколько места над колонной до этого потолка. */
+  roomMm: number;
+  /** Высота корпуса кладовки: своя, если задана и встаёт, иначе всё место. */
+  heightMm: number;
+  /** Глубина корпуса: своя или антресоли цеха (`rowStandardDepthMm`). */
+  depthMm: number;
+  /** Глубина колонны под ней — передняя плоскость кладовки дальше неё не выходит. */
+  columnDepthMm: number;
+  /** Выбор человека (`Module.storageOver` колонны); пусто — по месту и по цеху. */
+  own: { heightMm?: number; depthMm?: number } | null;
+  /** Встаёт ли: не ниже `FRIDGE_MEZZANINE_MIN_MM` и не убрана человеком. */
+  fits: boolean;
+  /** Кладовку убрал человек: место есть, кладовки нет (решение владельца, ЭТАП 4). */
+  removed: boolean;
+};
+
+/**
+ * КЛАДОВКА НАД КОЛОННОЙ ХОЛОДИЛЬНИКА — ОДИН РАСЧЁТ НА ПРОДУКТ (ЭТАП 4, часть 2).
+ *
+ * Высоту и глубину ЭТОЙ кладовки задать было нельзя: высота выводилась
+ * остатком над колонной в трёх местах (высота корпуса, раскладка верхнего
+ * ряда, предупреждение) — и в предупреждении без ригеля, — а глубина была
+ * общей отметкой антресоли на все антресоли объекта. Здесь одно место:
+ * низ — крыша колонны на ГОЛОМ ряде (колонна от кладовки не зависит),
+ * потолок — верх зоны и ригели над шириной колонны, высота — своя ИЛИ всё
+ * место, глубина — своя ИЛИ антресоли цеха. Своя высота больше места не
+ * растёт: правка, после которой так вышло, не применяется (`set_storage`,
+ * проверка после любой правки в `applyOps`), а здесь — не выше места.
+ *
+ * `null` — это не колонна холодильника на полу.
+ */
+export function fridgeStorageOf(
+  column: Module,
+  run: Pick<Run, 'zone' | 'ceilingHeightMm'> & Partial<Pick<Run, 'options' | 'beams' | 'production'>>,
+): FridgeStorage | null {
+  if (column.appliance !== 'fridge' || !standsOnFloor(column)) return null;
+  const bare = { zone: run.zone, ceilingHeightMm: run.ceilingHeightMm, options: run.options, beams: run.beams, production: run.production };
+  const bottomMm = plinthMm(run.production) + moduleCarcassHeightMm(column, bare);
+  const ceilingMm = Math.min(
+    zoneHeightMm(run.zone, run.ceilingHeightMm, run.production),
+    ceilingOverSpanMm(column.offsetMm, column.offsetMm + column.widthMm, run.beams ?? [], run.ceilingHeightMm),
+  );
+  const roomMm = ceilingMm - bottomMm;
+  const own = column.storageOver ?? null;
+  const removed = own?.removed === true;
+  const heightMm = own?.heightMm !== undefined ? Math.min(Math.round(own.heightMm), roomMm) : roomMm;
+  const depthMm =
+    own?.depthMm !== undefined
+      ? Math.round(own.depthMm)
+      : rowStandardDepthMm(run.zone, 'upper', run.production, 'mezzanine');
+  return {
+    column,
+    bottomMm,
+    ceilingMm,
+    roomMm,
+    heightMm,
+    depthMm,
+    columnDepthMm: moduleDepthMm(column, run.zone, run.production),
+    own,
+    fits: !removed && heightMm >= FRIDGE_MEZZANINE_MIN_MM,
+    removed,
+  };
 }
 
 /**
@@ -857,6 +971,14 @@ export function moduleDepthMm(
   if (unit.overhead) return Math.max(0, Math.round(unit.overhead.depthMm));
   /* Своя глубина витрины (P1): задняя плоскость на стене, уходит передняя (`runPlaces`). */
   if (unit.vitrine?.depthMm) return Math.max(0, Math.round(unit.vitrine.depthMm));
+  /*
+   * Своя глубина кладовки над холодильником (ЭТАП 4, часть 2) — копия выбора
+   * с колонны (`storageSize`, кладёт `buildUpperRow`): задняя плоскость на
+   * стене, уходит передняя; высоту глубина не трогает.
+   */
+  if (unit.section === 'mezzanine' && unit.storageSize?.depthMm !== undefined) {
+    return Math.max(0, Math.round(unit.storageSize.depthMm));
+  }
 
   /*
    * Зону спрашивают на уровень ниже: `rowStandardDepthMm` решает, чья
@@ -1097,6 +1219,15 @@ export function defaultFill(
      */
     const count = unit.drawerCount > 0 ? unit.drawerCount : byPlace;
     if (count > 0) return { ...empty, drawerHeights: drawerHeights(heightMm, count) };
+  }
+
+  /*
+   * Одиночный прибор в пенале стоит на полке-опоре (ЭТАП 4): полки — границы
+   * его ниши (`singleNicheOf`), те же, по которым режутся фасады.
+   */
+  const single = singleNicheOf(unit, heightMm);
+  if (single) {
+    return { ...empty, shelves: [single.fromMm, single.toMm].filter((mm) => mm > 0 && mm < heightMm - MIN_SHELF_GAP_MM) };
   }
 
   // У прочей техники и доборной планки наполнения нет: внутри прибор.

@@ -4,6 +4,7 @@ import { createContext } from 'react';
 import type StudioInspector from '../StudioInspector';
 import type FillEditor from './FillEditor';
 import type OverheadEditor from './OverheadEditor';
+import type StorageEditor from './StorageEditor';
 import type VitrineEditor from './VitrineEditor';
 import type RadiusEditor from './RadiusEditor';
 import type IslandEditor from './IslandEditor';
@@ -36,6 +37,7 @@ export type StudioKit = {
   StudioInspector: typeof StudioInspector;
   FillEditor: typeof FillEditor;
   OverheadEditor: typeof OverheadEditor;
+  StorageEditor: typeof StorageEditor;
   VitrineEditor: typeof VitrineEditor;
   RadiusEditor: typeof RadiusEditor;
   IslandEditor: typeof IslandEditor;

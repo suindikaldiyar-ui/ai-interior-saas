@@ -111,7 +111,7 @@ function mirroredFill(fill: ModuleFill, unit: Module, thicknessMm: number): Modu
  */
 function sideBySideLeaves(unit: Module, run: Run): number {
   const heightMm = moduleCarcassHeightMm(unit, run);
-  const { leaves } = moduleFronts(unit, heightMm);
+  const { leaves } = moduleFronts(unit, heightMm, run.production);
   if (leaves.length < 2) return 0;
   return leaves.every((leaf) => leaf.fromMm === 0) ? leaves.length : 0;
 }

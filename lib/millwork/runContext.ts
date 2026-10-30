@@ -1,5 +1,5 @@
 import type { Module, Run } from '@/types/millwork';
-import { moduleCarcassHeightMm, refitDrawerFronts, shelfAboveRoof } from './fill';
+import { defaultFill, moduleCarcassHeightMm, refitDrawerFronts, shelfAboveRoof } from './fill';
 import { bayEnvelope, bayLayout } from './bays';
 import { shopOf } from './shop';
 
@@ -78,6 +78,17 @@ export function runInContext(saved: Run, live: RunContext): InContext {
   const refit = (unit: Module): Module => {
     const fill = unit.fill;
     if (!fill) return unit;
+    /*
+     * ОПОРЫ НИШ КОЛОННЫ — ПРОИЗВОДНАЯ НИШ (ЭТАП 4, часть 4). Ниши садятся от
+     * пола, и при другом цоколе полки правленого ряда оставались на прежних
+     * отметках — сквозь духовку и микроволновку. Корпус колонны той же высоты,
+     * поэтому проверка «высота сменилась» ниже их не трогала. Руками опоры не
+     * двигают (`set_fill` отказывает), значит пересчитать — не потерять правку.
+     */
+    if (unit.column) {
+      const supports = defaultFill(unit, shell).shelves;
+      return supports.join(',') === fill.shelves.join(',') ? unit : { ...unit, fill: { ...fill, shelves: supports } };
+    }
     const was = moduleCarcassHeightMm(unit, saved);
     const now = moduleCarcassHeightMm(unit, shell);
     if (was === now) return unit;

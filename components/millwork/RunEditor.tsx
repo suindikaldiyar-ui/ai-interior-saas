@@ -75,6 +75,12 @@ export type CompositionPatch = {
   applianceModels?: Partial<Record<ApplianceKind, string>>;
   /** Духовой шкаф под варочной, а не в колонне (ЭТАП 3). */
   ovenUnderHob?: boolean;
+  /**
+   * Исходная глубина кладовки над холодильником проекта (ЭТАП 4): живёт в
+   * составе объекта; без неё в патче объект с выбранным решением терял поле
+   * на открытии — основа состава у него шаблон.
+   */
+  storageDepthMm?: number;
 };
 
 /**

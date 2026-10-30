@@ -88,8 +88,13 @@ export function hobShape(model: ApplianceModel | null, gas: boolean): HobShape {
   /* Отметка «от заднего левого угла» → оси прибора. */
   const at = (xy: [number, number], y: number): [number, number, number] => [xy[0] - width / 2, y, xy[1] - depth / 2];
 
-  /* Корпус под столешницей — виден только в вырезе снизу. */
-  parts.push({ kind: 'box', at: [0, -below / 2, 0], size: [width - 32, below - 2, depth - 32], material: 'body', name: 'корпус' });
+  /*
+   * Корпус под столешницей — виден только в вырезе снизу. Низ — ровно на
+   * глубине встраивания (`builtInDepthMm`): та же отметка, что
+   * `cookingStackOf.hobBottomMm` меряет до шкафа под панелью; верх — на 1 мм
+   * под поверхностью плиты, чтобы не спорить с ней в одном пикселе.
+   */
+  parts.push({ kind: 'box', at: [0, -(below + 1) / 2, 0], size: [width - 32, below - 1, depth - 32], material: 'body', name: 'корпус' });
 
   if (!gas) {
     const glass = SHAPE_NOTES.hobGlassMm;

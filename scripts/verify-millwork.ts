@@ -119,6 +119,7 @@ import { p1VitrineChecks } from './verify-p1-vitrines';
 import { measurementV2Checks } from './verify-measurement-v2';
 import { counterCornerChecks, radiusChecks, radiusPickerChecks, wallEndChecks } from './verify-radius';
 import { tvZoneChecks } from './verify-tvzone';
+import { storageChecks } from './verify-storage';
 import { runFingerprint } from '../lib/millwork/fingerprint';
 import { surfaceFinish, surfaceLook } from '../lib/millwork/surfaces';
 import { GROUP_ORDER, estimateGroups, groupsTotal } from '../lib/millwork/estimateGroups';
@@ -17105,7 +17106,13 @@ console.log('\n' + 'Правка на чертеже: ряды, инвариан
   const rowNames = ['base', 'upper', 'mezz'] as const;
 
   for (const where of rowNames) {
-    const unit = withShelf(before[where]);
+    /*
+     * Модуль ряда, у которого полку ЕСТЬ куда сдвинуть на 3 шага. Первым в
+     * антресоли стоит кладовка над холодильником 300 мм: её полка теперь на
+     * 160 (ЭТАП 4 — наполнение по оболочке с нижним рядом), и на 96 мм ей
+     * физически некуда; раньше она стояла на 256 по чужой высоте 500.
+     */
+    const unit = before[where].find((u) => (u.fill?.shelves.length ?? 0) > 0 && moved(u, three) !== null) ?? withShelf(before[where]);
     check(
       `в ряду «${where}» есть модуль с полкой — править есть`,
       Boolean(unit),
@@ -28836,6 +28843,7 @@ wallEndChecks(check);
 
 /* ═══════════  STAGE B: ТВ-зона — телевизор, панели стены, варианты A, B, C  ═══════════ */
 tvZoneChecks(check);
+storageChecks(check);
 
 Promise.allSettled(asyncChecks).then((results) => {
   for (const result of results) {

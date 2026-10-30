@@ -58,7 +58,7 @@ import { CORNER } from './modules';
 import { MAX_MEZZANINE_MM, MIN_MEZZANINE_MM, sectionSpec } from './sections';
 import { ceilingOverSpanMm } from './ceiling';
 import { hasFacade } from './applianceFront';
-import { fillRefusal, tallStorageOf } from './fill';
+import { columnNiches, fillRefusal, fridgeStorageOf, tallStorageOf } from './fill';
 import { bayEnvelope, bayLayout, bayLossNote, baysRefusal, baysWidthRefusal, type BayEnvelope } from './bays';
 import { allModules } from './layout';
 import { DEFAULT_ALLOWANCES, type HardwareItem } from '@/types/catalog';
@@ -187,7 +187,8 @@ export function makePlainModule(
   const size = appliance ? req?.applianceSizes?.[appliance] : undefined;
   const merged = appliance
     ? {
-        ...(type ? { widthMm: type.widthMm, heightMm: type.nicheHMm, depthMm: type.depthMm } : {}),
+        /* У типа — ниша, а не высота прибора (ЭТАП 4): зазор в ней уже есть. */
+        ...(type ? { widthMm: type.widthMm, ...(type.nicheHMm ? { nicheMm: type.nicheHMm } : {}), depthMm: type.depthMm } : {}),
         ...(size ?? {}),
       }
     : {};
@@ -526,6 +527,19 @@ export function applyOps({
     const front = storageFronts.get(id);
     return withStorageVitrine({ ...had, ...(fill ? { fill } : {}), ...(front ? { front } : {}) }, own);
   };
+  /*
+   * МЕСТО И ШИРИНА КЛАДОВКИ — КОЛОННЫ ПОД НЕЙ (ЭТАП 4, часть 2). Её ширина,
+   * перестановка, сосед справа и снятие отвечали молча или «не найден», а
+   * «Добавить справа» ставило навесной модуль в НИЖНИЙ ряд и сдвигало технику.
+   */
+  const STORAGE_PLACE_WORDS =
+    'Кладовка над холодильником стоит на крыше его колонны: ширина и место у неё — колонны, их меняют у холодильника. ' +
+    'Высоту и глубину кладовки задают в блоке «Кладовка над холодильником».';
+  /** Кладовка над этой колонной — по опоре, а не по идентификатору: он выведен из места колонны. */
+  const storageOverColumn = (column: Module): Module | null =>
+    run.upperSegments
+      .flatMap((segment) => segment.modules)
+      .find((unit) => unit.section === 'mezzanine' && mezzanineBaseOf(unit, run)?.id === column.id) ?? null;
 
   /**
    * Фрезеровка, назначенная полосам объекта.
@@ -1188,6 +1202,29 @@ export function applyOps({
   };
 
   /**
+   * КЛАДОВКА СВОЕГО РАЗМЕРА ПОСЛЕ ПРАВКИ (ЭТАП 4, часть 2): встаёт ли она ещё
+   * над своей колонной. Холодильник выше, мельче, другая колонна — молча
+   * кладовку не урезаем: правка не применяется, и сказано почему.
+   */
+  const storageProblem = (list: Module[]): string | null => {
+    const shell = { ...run, zone, modules: list, options };
+    for (const column of list) {
+      if (!column.storageOver || column.storageOver.removed) continue;
+      const storage = fridgeStorageOf(column, shell);
+      if (!storage) continue;
+      const height = column.storageOver.heightMm;
+      if (height !== undefined && height > storage.roomMm) {
+        return `кладовка ${height} мм над «${column.label}» упёрлась бы в потолок: над колонной осталось бы ${Math.max(0, storage.roomMm)} мм — лишние ${height - storage.roomMm} мм`;
+      }
+      const depth = column.storageOver.depthMm;
+      if (depth !== undefined && depth > storage.columnDepthMm) {
+        return `кладовка глубиной ${depth} мм над «${column.label}» повисла бы перед колонной на ${depth - storage.columnDepthMm} мм`;
+      }
+    }
+    return null;
+  };
+
+  /**
    * ПРАВКА ЛОЖИТСЯ НА МОДУЛЬ АНТРЕСОЛИ, А НЕ В КАРТУ.
    *
    * Верхний ряд пересобирается каждый раз, поэтому его правки живут в
@@ -1295,7 +1332,15 @@ export function applyOps({
      * прежний, отказ словами.
      */
     const beforeOver = overModules.length > 0 ? { modules: [...modules], over: [...overModules] } : null;
+    const beforeStorage = modules.some((unit) => unit.storageOver) ? [...modules] : null;
     applyOne(op);
+    if (beforeStorage) {
+      const problem = storageProblem(modules);
+      if (problem) {
+        modules = beforeStorage;
+        warnings.push(`Правка не применена: ${problem}. Сначала поправьте кладовку над холодильником.`);
+      }
+    }
     if (beforeOver) {
       const problem = overheadProblem(modules);
       if (problem) {
@@ -1370,6 +1415,10 @@ export function applyOps({
 
     switch (op.op) {
       case 'add_module': {
+        if (op.afterModuleId !== undefined && isStorage(op.afterModuleId)) {
+          warnings.push(STORAGE_PLACE_WORDS);
+          break;
+        }
         /*
          * ДОБАВЛЯЕМ ТУДА, ГДЕ СТОИТ СОСЕД.
          *
@@ -1807,7 +1856,140 @@ export function applyOps({
         break;
       }
 
+      case 'set_storage': {
+        /*
+         * КЛАДОВКА НАД ХОЛОДИЛЬНИКОМ — СВОЯ ВЫСОТА И ГЛУБИНА (ЭТАП 4, часть 2).
+         *
+         * Выбор пишется на КОЛОННУ (`storageOver`): она едет со своими
+         * полями, а идентификатор кладовки выведен из её места. Считает одна
+         * `fridgeStorageOf`; холодильник и колонну правка не трогает — вниз
+         * кладовка растёт, только когда введена настоящая высота прибора.
+         * Глубина не трогает высоту, высота — глубину.
+         */
+        const shellNow = { ...run, zone, modules, options };
+        const named = run.upperSegments.flatMap((segment) => segment.modules).find((unit) => unit.id === op.moduleId);
+        const columnId = named && isStorage(named.id) ? mezzanineBaseOf(named, shellNow)?.id : op.moduleId;
+        const at = modules.findIndex((m) => m.id === columnId && m.appliance === 'fridge');
+        if (at < 0) {
+          warnings.push(
+            `У ${named?.label ? `«${named.label}»` : op.moduleId} кладовки над холодильником нет: высоту и глубину задают у кладовки над колонной холодильника.`,
+          );
+          break;
+        }
+        const column = modules[at];
+        const own: NonNullable<Module['storageOver']> = { ...(column.storageOver ?? {}) };
+        /*
+         * УБРАТЬ И ВОССТАНОВИТЬ (решение владельца, ЭТАП 4). Убранная кладовка —
+         * признак на колонне: холодильник, колонна и их размеры те же, над
+         * колонной пусто. Своя высота и глубина помнятся и вернутся с ней.
+         */
+        if (op.removed === true) {
+          modules[at] = { ...column, storageOver: { ...own, removed: true } };
+          break;
+        }
+        if (op.removed === false) {
+          delete own.removed;
+          const back: Module = { ...column, storageOver: own };
+          if (Object.keys(own).length === 0) delete back.storageOver;
+          const returned = fridgeStorageOf(back, shellNow);
+          if (!returned?.fits) {
+            warnings.push(
+              `Кладовку над «${column.label}» не вернуть: над колонной ${Math.max(0, returned?.roomMm ?? 0)} мм до потолка, а ей нужно от ${FRIDGE_MEZZANINE_MIN_MM} мм.`,
+            );
+            break;
+          }
+          modules[at] = back;
+          break;
+        }
+        if (own.removed) {
+          warnings.push(`Кладовка над «${column.label}» убрана: сначала верните её — «Восстановить кладовку».`);
+          break;
+        }
+        if (op.heightMm === null) delete own.heightMm;
+        else if (op.heightMm !== undefined) own.heightMm = Math.round(op.heightMm);
+        if (op.depthMm === null) delete own.depthMm;
+        else if (op.depthMm !== undefined) own.depthMm = Math.round(op.depthMm);
+        const probe: Module = { ...column, storageOver: own };
+        if (Object.keys(own).length === 0) delete probe.storageOver;
+        const storage = fridgeStorageOf(probe, shellNow);
+        const t = shopOf(run.production).carcassMm;
+        const name = `Кладовка над «${column.label}»`;
+        if (!storage) {
+          warnings.push(`${name}: колонна не стоит на полу — кладовки над ней нет.`);
+          break;
+        }
+        if (own.heightMm !== undefined) {
+          if (!Number.isFinite(own.heightMm) || own.heightMm < FRIDGE_MEZZANINE_MIN_MM) {
+            warnings.push(`${name} ниже ${FRIDGE_MEZZANINE_MIN_MM} мм не собирается: полезного корпуса не останется — просили ${op.heightMm} мм.`);
+            break;
+          }
+          if (own.heightMm > storage.roomMm) {
+            warnings.push(
+              `${name} ${own.heightMm} мм не встаёт: над колонной до потолка ${storage.roomMm} мм ` +
+                `(крыша колонны ${storage.bottomMm} мм, потолок над ней ${storage.ceilingMm} мм) — не хватает ${own.heightMm - storage.roomMm} мм. ` +
+                'Колонну задаёт холодильник: выше кладовка станет, только если ввести настоящую высоту прибора.',
+            );
+            break;
+          }
+        }
+        if (own.depthMm !== undefined) {
+          if (!Number.isFinite(own.depthMm) || own.depthMm <= 2 * t) {
+            warnings.push(`${name} глубиной ${op.depthMm} мм не собрать: это не больше двух толщин плиты корпуса (${2 * t} мм).`);
+            break;
+          }
+          if (own.depthMm > storage.columnDepthMm) {
+            warnings.push(
+              `${name} глубиной ${own.depthMm} мм не встаёт: колонна под ней ${storage.columnDepthMm} мм — ` +
+                `передняя часть кладовки повисла бы на ${own.depthMm - storage.columnDepthMm} мм перед фасадом холодильника.`,
+            );
+            break;
+          }
+        }
+        /*
+         * ПОЛКИ КЛАДОВКИ ПРИ НОВОЙ ВЫСОТЕ. Полки по умолчанию раскладываются
+         * заново; поставленные рукой не двигаются, и та, что окажется выше
+         * новой крыши, называется поимённо — правка не применяется.
+         */
+        const had = storageOverColumn(column);
+        if (had && own.heightMm !== column.storageOver?.heightMm) {
+          const now = storageNow(had.id) ?? had;
+          /* Та же оболочка, что у наполнения ряда: с нижним рядом, иначе опоры кладовки не видно. */
+          const bare = { zone, ceilingHeightMm: run.ceilingHeightMm, options, beams: run.beams, production: run.production };
+          const resized: Module = { ...now, storageSize: probe.storageOver ? { ...probe.storageOver } : undefined };
+          if (!resized.storageSize) delete resized.storageSize;
+          const usual = defaultFill(now, { ...bare, modules }, 0, 1).shelves;
+          const fill = now.fill;
+          if (fill && fill.shelves.join(',') === usual.join(',')) {
+            const after = modules.map((unit, i) => (i === at ? probe : unit));
+            storageFills.set(had.id, { ...fill, shelves: defaultFill(resized, { ...bare, modules: after }, 0, 1).shelves });
+          } else if (fill) {
+            const roof = storage.heightMm - t;
+            const above = fill.shelves.filter((mm) => shelfAboveRoof(mm, roof, t));
+            if (above.length > 0) {
+              warnings.push(
+                `${name} не опустить до ${storage.heightMm} мм: ${above.length === 1 ? 'полка' : 'полки'} на ${above.join(', ')} мм выше новой крыши ${roof} мм. ` +
+                  'Наполнение молча не снимается — поправьте полки.',
+              );
+              break;
+            }
+          }
+        }
+        modules[at] = probe;
+        break;
+      }
+
       case 'remove_module': {
+        /*
+         * «Удалить» у кладовки над холодильником — убрать её (решение владельца,
+         * ЭТАП 4): признак на колонне, холодильник и колонна не трогаются.
+         */
+        if (isStorage(op.moduleId)) {
+          const storage = run.upperSegments.flatMap((segment) => segment.modules).find((unit) => unit.id === op.moduleId);
+          const base = storage ? mezzanineBaseOf(storage, { ...run, zone, modules, options }) : null;
+          const at = base ? modules.findIndex((m) => m.id === base.id) : -1;
+          if (at >= 0) modules[at] = { ...modules[at], storageOver: { ...(modules[at].storageOver ?? {}), removed: true } };
+          break;
+        }
         /* Антресоль над шкафом снимается сама: наполнение шкафа под ней не трогается. */
         const overGone = overModules.findIndex((m) => m.id === op.moduleId);
         if (overGone >= 0) {
@@ -2092,6 +2274,31 @@ export function applyOps({
           break;
         }
 
+        /*
+         * ПРИБОР ПРИНАДЛЕЖИТ КУХНЕ, А НЕ МЕСТУ (ЭТАП 4, часть 4; ловушки 351–353).
+         *
+         * «Тип» и «Техника» в списке модуля зовут замену прямо, и колонна
+         * «духовка + СВЧ», заменённая нижним модулем, молча теряла оба прибора:
+         * из ряда и из сметы они пропадали, в составе кухни оставались, слов не
+         * было. Замена правит место, а не состав, — прибор из состава убирают
+         * отдельно, тогда место освобождается.
+         */
+        if (replacing) {
+          const keeps = new Set(op.appliance ? [op.appliance] : []);
+          const lost = moduleAppliances(replacing).filter(
+            (kind) => requirements.appliances.includes(kind) && !keeps.has(kind),
+          );
+          if (lost.length > 0) {
+            warnings.push(
+              `«${replacing.label}» так не заменить: из ряда и из сметы пропали бы ${lost
+                .map((kind) => APPLIANCE_SLOTS[kind].title.toLowerCase())
+                .join(' и ')}, а из состава кухни ${lost.length > 1 ? 'эти приборы' : 'этот прибор'} никто не убирал. Прибор принадлежит кухне: уберите его из состава ` +
+                'или перенесите на другую стену — тогда место освободится.',
+            );
+            break;
+          }
+        }
+
         if (editMezz(op.moduleId, swap)) {
           placeMezz(mezzModules, 'Замена');
           break;
@@ -2129,6 +2336,10 @@ export function applyOps({
       }
 
       case 'set_width': {
+        if (isStorage(op.moduleId)) {
+          warnings.push(STORAGE_PLACE_WORDS);
+          break;
+        }
         /*
          * ШИРИНА МОДУЛЯ АНТРЕСОЛИ ПРАВИТСЯ ТАМ ЖЕ, ГДЕ ШИРИНА НИЖНЕГО.
          *
@@ -2531,6 +2742,10 @@ export function applyOps({
       }
 
       case 'move_module': {
+        if (isStorage(op.moduleId) || (op.afterModuleId !== undefined && isStorage(op.afterModuleId))) {
+          warnings.push(STORAGE_PLACE_WORDS);
+          break;
+        }
         /*
          * ПЕРЕСТАНОВКА ВНУТРИ АНТРЕСОЛИ.
          *
@@ -2960,6 +3175,26 @@ export function applyOps({
         const sizes = { ...(unit.applianceSizes ?? {}) };
         sizes[op.appliance] = { ...op.size, widthMm: wanted };
 
+        /*
+         * ПАРА ПРИБОРОВ КОЛОННЫ ДОЛЖНА ВСТАТЬ В КОРПУС (ЭТАП 4, часть 4).
+         * Духовка 1500 давала верх ниши на 4 мм выше корпуса, а отказа не было —
+         * только жёлтое «вместе 1952 мм». Ниши — та же `columnNiches`, что
+         * режет створки, полки и ставит прибор в сцене.
+         */
+        if (unit.column) {
+          const shellNow = { ...run, zone, modules, options };
+          const carcass = moduleCarcassHeightMm(unit, shellNow);
+          const roof = carcass - shopOf(run.production).carcassMm;
+          const top = Math.max(...columnNiches({ column: unit.column, applianceSizes: sizes }, carcass, run.production).map((niche) => niche.toMm));
+          if (top > roof) {
+            warnings.push(
+              `${unit.label}: с прибором ${op.size.heightMm ?? '—'} мм ниши колонны кончаются на ${top} мм от дна, а крыша корпуса — на ${roof} мм: ` +
+                `пара не встаёт, лишние ${top - roof} мм.`,
+            );
+            break;
+          }
+        }
+
         modules[at] = {
           ...unit,
           /*
@@ -2972,6 +3207,16 @@ export function applyOps({
           ),
           applianceSizes: sizes,
         };
+        /*
+         * Опоры ниш колонны — производная ниш (ЭТАП 4, часть 4): прибор стал
+         * выше — ниши поехали, а полки в наполнении оставались прежними, и
+         * полка 1504 проходила сквозь микроволновку 460. Пересчитываются тем
+         * же `defaultFill`; петли и ручка остаются.
+         */
+        if (unit.column && unit.fill) {
+          const supports = defaultFill(modules[at], { ...run, zone, modules, options }).shelves;
+          modules[at] = { ...modules[at], fill: { ...unit.fill, shelves: supports } };
+        }
         closeUp(unit.offsetMm + unit.widthMm, unit.widthMm - modules[at].widthMm);
 
         const nextDepth = moduleDepthMm(modules[at], zone);
@@ -3041,6 +3286,19 @@ export function applyOps({
 
         if (!fillTarget) {
           warnings.push(`Модуль ${op.moduleId} не найден: наполнение менять не у чего.`);
+          break;
+        }
+        /*
+         * ПОЛКИ КОЛОННЫ — ОПОРЫ НИШ (ЭТАП 4, часть 4). Ниша считается заново по
+         * приборам (`columnNiches`), а полка лежала в наполнении: утащенная
+         * мышью, она проходила сквозь микроволновку, а ниша и прибор стояли
+         * на месте. Их место задают приборы — меняют высоту прибора.
+         */
+        if (fillTarget.column && fillTarget.fill && op.fill.shelves.join(',') !== fillTarget.fill.shelves.join(',')) {
+          warnings.push(
+            `Полки «${fillTarget.label}» — опоры ниш: на них стоят приборы, и их место задают высоты приборов. ` +
+              'Поправьте высоту духового шкафа или микроволновки — опоры встанут сами.',
+          );
           break;
         }
 
@@ -3120,7 +3378,9 @@ export function applyOps({
               upperModules.find((m) => m.id === op.moduleId))
             : null;
 
-        const target = at >= 0 ? modules[at] : upperUnit;
+        /* Кладовка над колонной (ЭТАП 4, часть 2) — тем же путём, что её полки: `storageFills`. */
+        const stored = at < 0 && !upperUnit ? storageNow(op.moduleId) : null;
+        const target = at >= 0 ? modules[at] : (upperUnit ?? stored);
         if (!target) {
           warnings.push(`Модуль ${op.moduleId} не найден.`);
           break;
@@ -3156,6 +3416,7 @@ export function applyOps({
         if (at >= 0) modules[at] = edited;
         else if (editMezz(target.id, () => edited)) break;
         else if (editUpper(target.id, () => edited)) break;
+        else if (stored && edited.fill) storageFills.set(target.id, edited.fill);
         break;
       }
 
@@ -3180,7 +3441,8 @@ export function applyOps({
               upperModules.find((m) => m.id === op.moduleId))
             : null;
 
-        const target = at >= 0 ? modules[at] : upperUnit;
+        const stored = at < 0 && !upperUnit ? storageNow(op.moduleId) : null;
+        const target = at >= 0 ? modules[at] : (upperUnit ?? stored);
         if (!target) {
           warnings.push(`Модуль ${op.moduleId} не найден.`);
           break;
@@ -3201,6 +3463,7 @@ export function applyOps({
         if (at >= 0) modules[at] = edited;
         else if (editMezz(target.id, () => edited)) break;
         else if (editUpper(target.id, () => edited)) break;
+        else if (stored && edited.fill) storageFills.set(target.id, edited.fill);
         break;
       }
 
@@ -3962,10 +4225,29 @@ export function applyOps({
         /* Витрина, стекло и стеклянные полки (P1): правка этого вызова сильнее сохранённой. */
         const vitrine = storageVitrine.has(unit.id) ? (storageVitrine.get(unit.id) ?? null) : had ? storageVitrineOf(had) : null;
         if (!had && !edited && !painted && !decor && !fittings && !vitrine) return unit;
+        /*
+         * ПОЛКИ ПО УМОЛЧАНИЮ СЛЕДУЮТ ЗА ВЫСОТОЙ КЛАДОВКИ (ЭТАП 4). Холодильник
+         * ниже — кладовка выше, а полка ехала прежней: в кладовке 820 она
+         * стояла на 160, как в кладовке 300. Полка, поставленная рукой (не
+         * равная раскладке по прежней высоте), не двигается.
+         */
+        let fill = edited ?? had?.fill ?? unit.fill;
+        if (!edited && had?.fill) {
+          const bare = { zone, ceilingHeightMm: run.ceilingHeightMm, options, beams: run.beams, production: run.production };
+          const was = { ...bare, modules: run.modules };
+          const now = { ...bare, modules };
+          const wasHeight = moduleCarcassHeightMm(had, was);
+          const nowHeight = moduleCarcassHeightMm(unit, now);
+          if (wasHeight !== nowHeight && had.fill.shelves.join(',') === defaultFill(had, was, 0, 1).shelves.join(',')) {
+            fill = { ...had.fill, shelves: defaultFill(unit, now, 0, 1).shelves };
+          }
+        }
         return withStorageVitrine(
           {
             ...unit,
-            fill: edited ?? had?.fill ?? unit.fill,
+            /* Подъёмник и откидной — на ОДИН фасад (`set_opening`): створки по ширине объединены. */
+            ...(fill && isMechanism(fill.hinge) ? { doorCount: 1 } : {}),
+            fill,
             front: painted ?? had?.front ?? unit.front,
             ...(decor ? { carcassItemId: decor } : {}),
             ...(fittings && fittings.length > 0 ? { fittings } : {}),
@@ -4081,7 +4363,8 @@ export function applyOps({
           : unit;
 
       if (painted.fill) return painted;
-      const fill = withKeptHandle(painted, defaultFill(painted, shell, i, segment.modules.length));
+      /* С нижним рядом: опору кладовки над холодильником видно только так (ЭТАП 4). */
+      const fill = withKeptHandle(painted, defaultFill(painted, { ...shell, modules }, i, segment.modules.length));
       /*
        * Створки верхнего ряда у угла — от угла (слой 55), как внизу:
        * у слепого петли упрутся в фальш-панель, у первого после угла

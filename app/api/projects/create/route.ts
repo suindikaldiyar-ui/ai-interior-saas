@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase/server';
 import { DEFAULT_REQUIREMENTS } from '@/lib/millwork/workspace';
+import { NEW_PROJECT_STORAGE_DEPTH_MM } from '@/lib/millwork/modules';
 import type { Measurement, RunRequirements } from '@/types/millwork';
 import type { Survey } from '@/types/survey';
 
@@ -67,7 +68,15 @@ export async function POST(request: Request) {
       floor_plan_id: body.floorPlanId ?? null,
       measurements: body.measurement ?? {},
       millwork: {
-        requirements: body.requirements ?? DEFAULT_REQUIREMENTS,
+        /*
+         * Новый проект: исходная глубина кладовки над холодильником — 560 мм
+         * (решение владельца, ЭТАП 4). Проекты, заведённые раньше, поля не
+         * имеют и остаются с глубиной антресоли цеха.
+         */
+        requirements: {
+          ...(body.requirements ?? DEFAULT_REQUIREMENTS),
+          storageDepthMm: body.requirements?.storageDepthMm ?? NEW_PROJECT_STORAGE_DEPTH_MM,
+        },
         // Состояния величин обязаны пережить перезагрузку: иначе «принято
         // по умолчанию» при следующем открытии станет «замерено».
         ...(body.survey ? { survey: body.survey } : {}),

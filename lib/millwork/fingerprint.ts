@@ -140,6 +140,14 @@ function extrasPart(unit: Module): string | undefined {
     unit.heightMm !== undefined ? `h${unit.heightMm}` : '',
     unit.overhead ? `over${unit.overhead.depthMm}` : '',
     /*
+     * Своя высота и глубина кладовки над этим холодильником (ЭТАП 4, часть
+     * 2) — другие боковины и дно в раскрое. На колонне и только заданное:
+     * копия на самой кладовке (`storageSize`) не пишется — одно число дважды.
+     */
+    unit.storageOver
+      ? `store${unit.storageOver.heightMm !== undefined ? `h${unit.storageOver.heightMm}` : ''}${unit.storageOver.depthMm !== undefined ? `d${unit.storageOver.depthMm}` : ''}${unit.storageOver.removed ? '-removed' : ''}`
+      : '',
+    /*
      * Две независимые дверцы верхнего Г-модуля (P0) — другая фурнитура
      * (обычные петли вместо угловых) и другие ручки. Пусто не пишется.
      */
@@ -212,7 +220,7 @@ function applianceSizesPart(unit: Module): string {
     .map((key) => {
       const size = sizes[key as keyof typeof sizes];
       return size
-        ? `${key}:${size.widthMm}x${size.heightMm ?? 0}x${size.depthMm ?? 0}`
+        ? `${key}:${size.widthMm}x${size.heightMm ?? 0}x${size.depthMm ?? 0}${size.nicheMm ? `n${size.nicheMm}` : ''}`
         : '';
     })
     .filter(Boolean)

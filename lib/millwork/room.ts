@@ -829,6 +829,31 @@ export type RoomBox = {
 export const ROOM_CONTOUR_MM = 4;
 
 /**
+ * ТЕЛО КОМНАТЫ ДЛЯ ХОДА ДВЕРИ ПРИБОРА — та же коробка, что рисует сцена
+ * (`roomBoxes`): кусок стены, угловой блок, объём колонны, короба или
+ * выступа, стенка за нишей. Метры, мир, поворот стены.
+ *
+ * Объект с незамеренным выносом сцена рисует контуром — ход двери такой
+ * объект не пропускает молча (ловушка 537): его тело — наибольший вынос
+ * (`unknownDepth`), и задетое — это «не проверено», а не «упирается».
+ */
+export type DoorRoomSolid = {
+  key: string;
+  wallIndex: number;
+  wallId: string;
+  kind?: OpeningKind;
+  role: Exclude<RoomBoxRole, 'contour'>;
+  center: [number, number, number];
+  /** Вдоль стены, по высоте, поперёк стены. */
+  size: [number, number, number];
+  rotationYDeg: number;
+  unknownDepth: boolean;
+};
+
+/** Вынос объекта, чей вынос не замерен, для хода двери, мм: больше любой кухни — на пути двери он её перекроет. */
+const UNKNOWN_DEPTH_SWEEP_MM = 10_000;
+
+/**
  * КОРОБКИ КОМНАТЫ ДЛЯ СЦЕНЫ — ИЗ ТОЙ ЖЕ `roomLayout`.
  *
  * Стена стоит от внутренней грани НАРУЖУ: задняя плоскость ряда лежит на
@@ -922,4 +947,49 @@ export function roomBoxes(room: Room): RoomBox[] {
   }
 
   return out;
+}
+
+/**
+ * ТЕЛА КОМНАТЫ ДЛЯ ХОДА ДВЕРИ ПРИБОРА (`applianceDoorSweep`) — из `roomBoxes`.
+ *
+ * Контур объекта без выноса встаёт телом НАИБОЛЬШЕГО выноса от своей
+ * стены: дверь, проходящая мимо него при любом выносе, его не заденет и
+ * слов не будет; дверь на его пути — «вынос не замерен, не проверено».
+ * Ниша без глубины — углубление в стене: на пути двери её нет.
+ */
+export function doorRoomSolids(room: Room): DoorRoomSolid[] {
+  return roomBoxes(room).flatMap((box): DoorRoomSolid[] => {
+    const wall = room.walls[box.wallIndex];
+    if (!wall) return [];
+    if (box.role !== 'contour') {
+      return [
+        {
+          key: box.key,
+          wallIndex: box.wallIndex,
+          wallId: wall.id,
+          ...(box.kind ? { kind: box.kind } : {}),
+          role: box.role,
+          center: box.center,
+          size: box.size,
+          rotationYDeg: box.rotationYDeg,
+          unknownDepth: false,
+        },
+      ];
+    }
+    if (box.key.startsWith('niche:')) return [];
+    const shiftM = (UNKNOWN_DEPTH_SWEEP_MM - ROOM_CONTOUR_MM) / 2 / 1000;
+    return [
+      {
+        key: box.key,
+        wallIndex: box.wallIndex,
+        wallId: wall.id,
+        ...(box.kind ? { kind: box.kind } : {}),
+        role: 'object',
+        center: [box.center[0] + wall.inward[0] * shiftM, box.center[1], box.center[2] + wall.inward[1] * shiftM],
+        size: [box.size[0], box.size[1], UNKNOWN_DEPTH_SWEEP_MM / 1000],
+        rotationYDeg: box.rotationYDeg,
+        unknownDepth: true,
+      },
+    ];
+  });
 }

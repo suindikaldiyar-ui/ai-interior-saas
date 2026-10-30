@@ -1,6 +1,7 @@
-import { BUILT_IN_FRIDGE_FRONTS, moduleAppliances, nicheHeightMm } from './modules';
-import { columnNiches } from './fill';
+import { BUILT_IN_FRIDGE_FRONTS, moduleAppliances } from './modules';
+import { columnNiches, singleNicheOf, OVEN_FROM_FLOOR_MM } from './fill';
 import type { Module } from '@/types/millwork';
+import type { ProductionSettings } from '@/types/catalog';
 
 /**
  * ЕСТЬ ЛИ У ПРИБОРНОГО МОДУЛЯ ФАСАД — И ГДЕ ИМЕННО.
@@ -51,11 +52,21 @@ export type FacadeSpan = {
  * считает `columnNiches`, и разойдясь с ней, раскрой начнёт пилить
  * фасад поверх духовки.
  */
-export function facadeSpans(unit: Module, heightMm: number): FacadeSpan[] {
+export function facadeSpans(
+  unit: Module,
+  heightMm: number,
+  /*
+   * Школа цеха (ЭТАП 4, часть 4): ниши колонны садятся ОТ ПОЛА, а цоколь у
+   * цеха свой. Без неё раскрой и створки шли по нишам цоколя 100, а полки и
+   * прибор в сцене — по своей школе: при цоколе 150 створка заходила на
+   * духовку на 22 мм, над микроволновкой оставалась щель 28 мм.
+   */
+  production?: ProductionSettings,
+): FacadeSpan[] {
   if (!hasFacade(unit)) return [];
 
   const niches = unit.column
-    ? columnNiches(unit, heightMm).map((niche) => ({
+    ? columnNiches(unit, heightMm, production).map((niche) => ({
         fromMm: niche.fromMm,
         heightMm: niche.toMm - niche.fromMm,
       }))
@@ -93,8 +104,8 @@ export function facadeSpans(unit: Module, heightMm: number): FacadeSpan[] {
  * которого фасады уже лежали в раскрое и не рисовались в сцене: цех
  * получал детали, которых на картинке не было.
  */
-export function nicheFacadeSpans(unit: Module, heightMm: number): FacadeSpan[] | null {
-  const spans = facadeSpans(unit, heightMm);
+export function nicheFacadeSpans(unit: Module, heightMm: number, production?: ProductionSettings): FacadeSpan[] | null {
+  const spans = facadeSpans(unit, heightMm, production);
   if (spans.length === 0) return null;
   /*
    * Разбит — значит хотя бы один участок короче модуля. Считать по числу
@@ -152,7 +163,7 @@ export type ModuleFronts = {
   drawers: number[];
 };
 
-export function moduleFronts(unit: Module, heightMm: number): ModuleFronts {
+export function moduleFronts(unit: Module, heightMm: number, production?: ProductionSettings): ModuleFronts {
   const empty: ModuleFronts = { leaves: [], drawers: [] };
 
   /* Отдельностоящий прибор: он виден целиком, полотна перед ним нет. */
@@ -169,7 +180,7 @@ export function moduleFronts(unit: Module, heightMm: number): ModuleFronts {
   if (drawers.length > 0) return { leaves: [], drawers: [...drawers] };
 
   /* Фасад разбит приборами — створка на каждом свободном участке. */
-  const spans = nicheFacadeSpans(unit, heightMm);
+  const spans = nicheFacadeSpans(unit, heightMm, production);
   if (spans) return { leaves: spans, drawers: [] };
 
   /*
@@ -273,16 +284,9 @@ function nicheOf(unit: Module, heightMm: number): FacadeSpan[] {
   const appliance = moduleAppliances(unit)[0];
   if (!appliance || unit.kind !== 'tall') return [];
 
-  const niche = nicheHeightMm(appliance, unit.applianceSizes?.[appliance]);
-  if (!niche) return [];
-
-  /*
-   * Прибор в пенале ставят на удобную высоту, а не на пол: духовка на
-   * уровне пояса — это отраслевая норма, а не предпочтение.
-   */
-  const from = Math.max(0, Math.min(heightMm - niche, OVEN_FROM_FLOOR_MM));
-  return [{ fromMm: from, heightMm: niche }];
+  /* Ниша — одна `singleNicheOf` (ЭТАП 4): её границы — оси полок-опор, их же режет раскрой. */
+  const niche = singleNicheOf(unit, heightMm);
+  return niche ? [{ fromMm: niche.fromMm, heightMm: niche.toMm - niche.fromMm }] : [];
 }
 
-/** Низ ниши духовки от дна пенала: на этой высоте её и ставят. */
-export const OVEN_FROM_FLOOR_MM = 850;
+export { OVEN_FROM_FLOOR_MM };

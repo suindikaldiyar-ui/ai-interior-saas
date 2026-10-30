@@ -420,7 +420,7 @@ export function frontDrawerSlides(unit: Module): number {
 export function openingHardware(
   units: { unit: Module; heightMm: number; index?: number; total?: number }[],
   /** Ряд нужен ради умолчания ручки: оно живёт в опциях ряда. */
-  run: Pick<Run, 'options'> = { options: {} as Run['options'] },
+  run: Pick<Run, 'options'> & Partial<Pick<Run, 'production'>> = { options: {} as Run['options'] },
   /**
    * МОДУЛЬ У УГЛА (слой 55): `corner` — идёт на угловых петлях (Г-модуль,
    * створка слепого угла у фальш-панели); `closed` — глухой целиком,
@@ -552,7 +552,7 @@ export function openingHardware(
      * панелью не покупал никто: тип фасада там `appliance`. Спрашиваем
      * факты — фронты в наполнении и створки по участкам.
      */
-    const fronts = moduleFronts(unit, heightMm);
+    const fronts = moduleFronts(unit, heightMm, run.production);
 
     /*
      * Глухой модуль слепого угла: створки нет — ни петель, ни ручки на
@@ -585,7 +585,7 @@ export function openingHardware(
      * участка: полотно 480 мм и полотно 796 мм держатся разным числом
      * петель, и `hingesPerDoor` это уже знает.
      */
-    const facades = nicheFacadeSpans(unit, heightMm);
+    const facades = nicheFacadeSpans(unit, heightMm, run.production);
     if (facades) {
       /* Свободные участки — обычные распашные полотна. */
       const opening: FrontOpening = 'left';

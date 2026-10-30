@@ -1,9 +1,10 @@
 import type { ProductionSettings } from '@/types/catalog';
 import type { Module, Run } from '@/types/millwork';
 import { applianceModel, modelTitle, ruleSource, type ApplianceModel } from './appliances';
-import { COUNTER_OVERHANG_MM, counterSlabDepthMm, moduleCarcassHeightMm, moduleDepthMm, upperBottomFor } from './fill';
+import { COUNTER_OVERHANG_MM, columnNiches, counterSlabDepthMm, moduleCarcassHeightMm, moduleDepthMm, singleNicheOf, upperBottomFor } from './fill';
 import { APPLIANCE_SLOTS, nicheHeightMm } from './modules';
 import { countertopMm, plinthMm, shopOf, workTopMm } from './shop';
+import { TOP_RAIL_PANEL_NAME } from './panelNames';
 
 /**
  * ВАРОЧНАЯ И ДУХОВОЙ ШКАФ ПОД НЕЙ — ОДНА ГЕОМЕТРИЯ НА РАСКРОЙ, СЦЕНУ И ПРОВЕРКУ
@@ -186,11 +187,60 @@ export function cookingModules(run: Pick<Run, 'modules'>): Module[] {
   return run.modules.filter((unit) => unit.appliance === 'hob');
 }
 
+/** Духовой шкаф в пенале или колонне (ЭТАП 4): чей он, какая модель и где стоит. */
+export type TallOven = {
+  unit: Module;
+  /** Модель кухни для духового шкафа; нет — типовой (VISUAL, по размерам ниши). */
+  model: ApplianceModel | null;
+  /** Центр модуля по ряду, мм. */
+  xMm: number;
+  /** Низ прибора от пола: верх полки-опоры ниши. */
+  bottomMm: number;
+  /** Ниша между осями опор, мм от дна корпуса. */
+  nicheFromMm: number;
+  nicheToMm: number;
+};
+
+/**
+ * ДУХОВОЙ ШКАФ В ПЕНАЛЕ И КОЛОННЕ (ЭТАП 4) — МОДЕЛЬ НА СВОЕЙ ПОЛКЕ.
+ *
+ * В пенале и колонне прибор рисовался серой коробкой по нише, а модель
+ * (`ovenShape`) была только у шкафа под варочной. Место — ниша, по которой
+ * режутся опоры и фасады (`singleNicheOf`, `columnNiches`): низ прибора —
+ * верх полки-опоры. Одна функция на сцену, «Открыть всё» и слой «Техника».
+ */
+export function tallOvensOf(run: Pick<Run, 'modules' | 'zone' | 'ceilingHeightMm'> & Partial<Run>, production: ProductionSettings = shopOf(run.production)): TallOven[] {
+  const t = shopOf(production).carcassMm;
+  const plinth = plinthMm(production);
+  const out: TallOven[] = [];
+  for (const unit of run.modules) {
+    const carcass = moduleCarcassHeightMm(unit, run as Run);
+    const niche = unit.column
+      ? columnNiches(unit, carcass, production).find((n) => n.appliance === 'oven') ?? null
+      : unit.appliance === 'oven'
+        ? singleNicheOf(unit, carcass)
+        : null;
+    if (!niche) continue;
+    out.push({
+      unit,
+      model: applianceModel(unit.applianceModels?.oven),
+      xMm: unit.offsetMm + unit.widthMm / 2,
+      bottomMm: plinth + niche.fromMm + t / 2,
+      nicheFromMm: niche.fromMm,
+      nicheToMm: niche.toMm,
+    });
+  }
+  return out;
+}
+
 /** Двери приборов ряда, которые открываются в сцене. */
-export function applianceDoorIds(run: Pick<Run, 'modules'>): string[] {
-  return cookingModules(run)
+export function applianceDoorIds(run: Pick<Run, 'modules'> & Partial<Run>): string[] {
+  const below = cookingModules(run)
     .filter((unit) => unit.ovenBelow)
     .map((unit) => ovenDoorId(unit.id));
+  /* Духовой шкаф в пенале и колонне (ЭТАП 4): его дверь — та же модель и тот же ход. */
+  const tall = run.zone !== undefined && run.ceilingHeightMm !== undefined ? tallOvensOf(run as Run).map((oven) => ovenDoorId(oven.unit.id)) : [];
+  return [...below, ...tall];
 }
 
 /* ─────────────────────────  Проверка по документам  ───────────────────────── */
@@ -229,15 +279,71 @@ function sideObstacles(unit: Module, run: Pick<Run, 'modules' | 'lengthMm' | 'wa
 
 const mm = (n: number) => `${Math.round(n * 10) / 10} мм`;
 
+/**
+ * ВЕРХ МОДУЛЯ ПОД ВАРОЧНОЙ БЕЗ ШКАФА (ЭТАП 4) — СЛОВАМИ И ЧИСЛАМИ ДВИЖКА.
+ *
+ * У нижнего модуля верх — сплошная деталь «Планки верхние» (внутренний
+ * размер × глубина корпуса, как её режет `panels.ts` и рисует сцена): под
+ * вырезом варочной она лежит целиком, и корпус панели в неё входит. Как цех
+ * ставит планки под варочной — две планки мимо выреза, вырез в детали, —
+ * в настройках цеха не задано. Деталь не удаляется (решение цеха не
+ * выдумывается), выпуск заперт, цена есть.
+ *
+ * Без модели панели неизвестны ни вырез, ни глубина корпуса — это и сказано.
+ */
+function hobTopWords(unit: Module, stack: CookingStack, production: ProductionSettings): string {
+  const t = shopOf(production).carcassMm;
+  const under = (unit.fill?.drawerHeights.length ?? 0) > 0 ? 'ящиками' : 'шкафом';
+  const board = `сплошная деталь «${TOP_RAIL_PANEL_NAME}» ${unit.widthMm - 2 * t} × ${stack.depthMm} мм`;
+  const { hob, cutout } = stack;
+  if (!hob?.hob || !cutout || stack.hobBottomMm === null) {
+    return `Варочная без модели над ${under}: размер выреза и глубина корпуса панели неизвестны, а под всей столешницей модуля лежит ${board} — пройдёт ли корпус панели и где лягут планки, в раскрое не заложено, выпуск заперт. Выберите модель панели`;
+  }
+  const intoMm = stack.worktop.underMm - stack.hobBottomMm;
+  const body = intoMm > 0 ? `, корпус панели входит в неё на ${mm(intoMm)}` : '';
+  const air = hob.rules.some((rule) => rule.id === 'air')
+    ? `; вентиляция панели (зазор за задней стенкой или вырез в ней, ${ruleSource(hob, 'air')}) не заложена`
+    : '';
+  return `${modelTitle(hob)} над ${under}: под вырезом ${cutout.widthMm} × ${cutout.depthMm} мм лежит ${board}${body}; как цех ставит планки под варочной, в настройках цеха не задано${air} — выпуск заперт`;
+}
+
 export function cookingFindings(
   run: Run,
   production: ProductionSettings = shopOf(run.production),
 ): CookingFinding[] {
   const out: CookingFinding[] = [];
   for (const unit of run.modules) {
+    /*
+     * ОДИНОЧНЫЙ ПРИБОР В ПЕНАЛЕ (ЭТАП 4, решение владельца): прибор стоит на
+     * полке-опоре на отверстиях системы 32, а подтверждённой конструкции у
+     * продукта нет — как цех крепит опору под нагрузку прибора и какие
+     * монтажные размеры ниши модели в высоком пенале. Выпуск заперт словами;
+     * универсальное «низ не выше 600 мм» без документа сюда не идёт.
+     */
+    const carcass = moduleCarcassHeightMm(unit, run);
+    const single = singleNicheOf(unit, carcass);
+    if (single) {
+      const appliance = unit.appliance ? APPLIANCE_SLOTS[unit.appliance].title : 'прибор';
+      const model = unit.appliance ? applianceModel(unit.applianceModels?.[unit.appliance]) : null;
+      out.push({
+        moduleId: unit.id,
+        level: 'release',
+        words:
+          `«${unit.label}»: ${appliance.toLowerCase()} стоит на полке-опоре на отверстиях ${single.fromMm} мм от дна пенала, ниша ${single.fromMm}…${single.toMm} мм; ` +
+          'как цех крепит опору под нагрузку прибора и какие монтажные размеры ниши ' +
+          (model ? `модели ${modelTitle(model)} в высоком пенале — не сведено по инструкции` : 'модели в высоком пенале — модель прибора не выбрана') +
+          ' — выпуск заперт.',
+      });
+      continue;
+    }
     const stack = cookingStackOf(unit, run, production);
-    if (!stack || (!stack.hob && !stack.ovenBelow)) continue;
+    if (!stack) continue;
     const add = (level: CookingFinding['level'], words: string) => out.push({ moduleId: unit.id, level, words });
+    /* Варочная без модели и без шкафа под ней: верх модуля под ней не проверить — выпуск заперт словами (ЭТАП 4). */
+    if (!stack.hob && !stack.ovenBelow) {
+      add('release', hobTopWords(unit, stack, production));
+      continue;
+    }
     const { hob, oven, worktop } = stack;
     const T = worktop.thicknessMm;
 
@@ -302,13 +408,8 @@ export function cookingFindings(
         }
       }
 
-      /* Без духового шкафа: вентиляция под панелью и планки — в раскрое не заложены. */
-      if (!stack.ovenBelow) {
-        add(
-          'release',
-          `${name} над ящиками: вентиляция панели (зазор за задней стенкой или вырез в ней, ${ruleSource(hob, 'air')}) и место верхних планок под вырезом в раскрое не заложены — выпуск заперт`,
-        );
-      }
+      /* Без духового шкафа: под вырезом — сплошной верх модуля; планки и вентиляция в раскрое не заложены (ЭТАП 4 — с числами). */
+      if (!stack.ovenBelow) add('release', hobTopWords(unit, stack, production));
     }
 
     if (stack.ovenBelow && stack.ovenAt !== null) {

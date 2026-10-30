@@ -79,7 +79,7 @@ import { markShownMm, marksOfZone, moduleCarcassHeightMm, rowStandardDepthMm } f
 import { bayEnvelope, drawerReleaseBlock } from '@/lib/millwork/bays';
 import { cookingFindings } from '@/lib/millwork/cookingStack';
 import { hardwareByCategory, hardwareCatalog, lightReferences } from '@/lib/millwork/hardware';
-import { roomAroundRows, roomSourceOf, type RoomSource } from '@/lib/millwork/room';
+import { doorRoomSolids, roomAroundRows, roomSourceOf, type RoomSource } from '@/lib/millwork/room';
 import { normalizeLighting, type RoomLighting } from '@/lib/millwork/lightingState';
 import { openingAssumptions } from '@/lib/millwork/warnings';
 import {
@@ -804,6 +804,8 @@ export default function Workspace(props: WorkspaceProps) {
     applianceTypes: props.initialState?.requirements?.applianceTypes,
     applianceModels: props.initialState?.requirements?.applianceModels,
     ovenUnderHob: props.initialState?.requirements?.ovenUnderHob,
+    /* Исходная глубина кладовки нового проекта (ЭТАП 4) — с объектом, поверх шаблона. */
+    storageDepthMm: props.initialState?.requirements?.storageDepthMm ?? props.requirements.storageDepthMm,
     upperToCeiling: props.initialState?.requirements?.options?.upperToCeiling,
     /*
      * ЗАКРЕПЛЕНИЕ ПРИБОРА ЗА СТЕНОЙ И ЕГО ГАБАРИТЫ ВОЗВРАЩАЮТСЯ С ОБЪЕКТОМ.
@@ -1037,6 +1039,7 @@ export default function Workspace(props: WorkspaceProps) {
       applianceSizes: composition.applianceSizes ?? base.applianceSizes,
       applianceTypes: composition.applianceTypes ?? base.applianceTypes,
       ...modelChoice(composition, base),
+      ...(composition.storageDepthMm !== undefined ? { storageDepthMm: composition.storageDepthMm } : {}),
       manualAnchors: {},
       options: {
         ...base.options,
@@ -1090,6 +1093,8 @@ export default function Workspace(props: WorkspaceProps) {
       applianceTypes: composition.applianceTypes ?? base.applianceTypes,
       /* Модель прибора и место духовки (ЭТАП 3) — выбор кухни, как тип прибора. */
       ...modelChoice(composition, base),
+      /* Исходная глубина кладовки проекта (ЭТАП 4): пусто — как у прежних проектов. */
+      ...(composition.storageDepthMm !== undefined ? { storageDepthMm: composition.storageDepthMm } : {}),
       options: {
         ...base.options,
         upperToCeiling: composition.upperToCeiling ?? base.options.upperToCeiling,
@@ -2581,10 +2586,20 @@ export default function Workspace(props: WorkspaceProps) {
     () =>
       layout
         ? Object.fromEntries(
-            layout.segments.flatMap((segment) => segment.appliances.map((a) => [a, segment.wallId] as const)),
+            layout.segments.flatMap((segment) =>
+              segment.appliances
+                /*
+                 * Вытяжка своего закрепления не получает: она идёт за варочной
+                 * (`splitAppliances`, ЭТАП 4). Системное закрепление неотличимо
+                 * от человеческого — и следующий перенос варочной оставил бы
+                 * вытяжку на прежней стене ложным конфликтом.
+                 */
+                .filter((a) => a !== 'hood' || composition.applianceWalls?.hood !== undefined)
+                .map((a) => [a, segment.wallId] as const),
+            ),
           )
         : {},
-    [layout],
+    [layout, composition.applianceWalls?.hood],
   );
 
   /** Композиция с другим выбором по углам — для проверки до нажатия. */
@@ -2896,10 +2911,23 @@ export default function Workspace(props: WorkspaceProps) {
       );
 
       /* Прибор закрепляется за ФИЗИЧЕСКОЙ стеной: номер в обходе сдвинет «ряд здесь?». */
+      const target = layout?.segments[toWall]?.wallId ?? toWall;
+      const pins = composition.applianceWalls ?? {};
+      /*
+       * ВЫТЯЖКА ЕДЕТ С ВАРОЧНОЙ (ЭТАП 4). Своё закрепление вытяжки, стоящее на
+       * прежней стене варочной, — это пара, а не выбор «вытяжка отдельно»: оно
+       * переезжает вместе. Закреплённую человеком на ДРУГОЙ стене не трогаем —
+       * это конфликт, и его называет экран.
+       */
+      const hobFrom = layout?.segments.findIndex((segment) => segment.appliances.includes('hob')) ?? -1;
+      const hoodFrom = layout?.segments.findIndex((segment) => segment.appliances.includes('hood')) ?? -1;
+      const hoodRides = appliance === 'hob' && pins.hood !== undefined && hoodFrom === hobFrom;
+      const hoodStays = appliance === 'hob' && pins.hood !== undefined && hoodFrom !== hobFrom && hoodFrom >= 0;
       const lost = changeComposition({
         applianceWalls: {
-          ...(composition.applianceWalls ?? {}),
-          [appliance]: layout?.segments[toWall]?.wallId ?? toWall,
+          ...pins,
+          [appliance]: target,
+          ...(hoodRides ? { hood: target } : {}),
         },
         applianceSizes: unit?.applianceSizes?.[appliance]
           ? {
@@ -2909,9 +2937,19 @@ export default function Workspace(props: WorkspaceProps) {
           : composition.applianceSizes,
       });
 
+      /* Род прибора не согласуем глаголом: «Варочная панель — теперь на стене Б». */
+      const companion =
+        appliance === 'hob' && requirements.appliances.includes('hood')
+          ? hoodStays
+            ? ` Вытяжка закреплена за ${lowerWall(wallLabel(hoodFrom), 'instrumental')} — над варочной её не будет, пока её не перенести.`
+            : ' Вытяжка переехала вместе с ней.'
+          : appliance === 'hood' && hobFrom >= 0 && hobFrom !== toWall
+            ? ` Варочная осталась на ${lowerWall(wallLabel(hobFrom), 'prepositional')} — вытяжки над ней не будет.`
+            : '';
       setMoveNotice(
-        `${APPLIANCE_SLOTS[appliance].title} переехал на ${lowerWall(wallLabel(toWall), 'accusative')}. ` +
+        `${APPLIANCE_SLOTS[appliance].title} — теперь на ${lowerWall(wallLabel(toWall), 'prepositional')}. ` +
           'Размеры прибора переехали вместе с ним.' +
+          companion +
           (lost ? ` ${lost}` : ''),
       );
     },
@@ -3828,9 +3866,15 @@ export default function Workspace(props: WorkspaceProps) {
   const applianceFindings = useMemo(
     () => [
       ...rowsAll.flatMap((row) => cookingFindings(row, production)),
-      ...applianceDoorFindings({ rows: sceneRowsAll, production, hardware: hardwareItems }),
+      ...applianceDoorFindings({
+        rows: sceneRowsAll,
+        production,
+        hardware: hardwareItems,
+        /* Комната вокруг рядов — та же, что у сцены и острова: стена напротив, колонна, короб, выступ (ЭТАП 4). */
+        room: lightingRoom ? { solids: doorRoomSolids(lightingRoom), nameOf: roomWallName } : null,
+      }),
     ],
-    [rowsAll, sceneRowsAll, production, hardwareItems],
+    [rowsAll, sceneRowsAll, production, hardwareItems, lightingRoom, roomWallName],
   );
   const screen = useMemo(
     () =>
@@ -3962,7 +4006,13 @@ export default function Workspace(props: WorkspaceProps) {
           <button
             type="button"
             onClick={() => setShowAllWarnings(true)}
-            className="text-[13px] text-graphiteMw underline"
+            /*
+             * Цель для пальца — не меньше 44 px, как у всех кнопок экрана: строка
+             * в 20 px не попадалась на телефоне. На демо её не было видно, пока
+             * предупреждений было не больше двух (ЭТАП 4: третьим стал замок
+             * выпуска «планки под варочной не заложены»).
+             */
+            className="min-h-[44px] text-[13px] text-graphiteMw underline"
           >
             ещё {hiddenSoft}
           </button>
@@ -3993,16 +4043,27 @@ export default function Workspace(props: WorkspaceProps) {
    *                        раскрой можно отдавать на проверку цеху, но не
    *                        в производство без неё.
    */
-  const studioStatus: { key: 'blocked' | 'draft' | 'ready'; title: string; reason: string } =
-    screen.blocking.length > 0 || screen.exportLocked || screen.priceHidden
+  /*
+   * ОШИБКА КОНСТРУКЦИИ И НЕПОДТВЕРЖДЁННОЕ ПРОИЗВОДСТВО — РАЗНЫЕ СОСТОЯНИЯ
+   * (ЭТАП 4, решение владельца A1). Оба звались «Есть блокирующие ошибки»: у
+   * типовой кухни с замком выпуска (планки под варочной, опора духовки в
+   * пенале) это читалось поломкой мебели, хотя геометрия цела, цена видна и
+   * правка, 3D, 2D, деталировка и запись работают. Заперт только выпуск в цех —
+   * так и сказано; блокировки не ослаблены.
+   */
+  const studioStatus: { key: 'blocked' | 'production' | 'draft' | 'ready'; title: string; reason: string } =
+    screen.blocking.length > 0 || screen.priceHidden
       ? {
           key: 'blocked',
-          title: 'Есть блокирующие ошибки',
-          reason:
-            screen.blocking[0]?.message ??
-            screen.exportLockText ??
-            'цены нет: смету по этой мебели показывать нельзя.',
+          title: 'Есть ошибки конструкции',
+          reason: screen.blocking[0]?.message ?? 'цены нет: смету по этой мебели показывать нельзя.',
         }
+      : screen.exportLocked
+        ? {
+            key: 'production',
+            title: 'Требуется подтверждение производства',
+            reason: `${screen.exportLockText ?? 'выпуск в цех заперт.'} Смотреть, править, сохранять и считать смету можно; выпуск в цех — после подтверждения.`,
+          }
       : rowsAll.every((run) => allModules(run).length === 0)
         ? {
             key: 'draft',
@@ -5738,7 +5799,7 @@ export default function Workspace(props: WorkspaceProps) {
         'Studio открыт без оболочки: страница Studio обязана обернуть рабочее место в StudioKitProvider.',
       );
     }
-    const { StudioShell, RoomPlan, WallInspector, StudioObjects, StudioInspector, FillEditor, OverheadEditor, VitrineEditor, RadiusEditor } = studioKit;
+    const { StudioShell, RoomPlan, WallInspector, StudioObjects, StudioInspector, FillEditor, OverheadEditor, StorageEditor, VitrineEditor, RadiusEditor } = studioKit;
     const surveyWalls = survey?.walls ?? [];
     const turnWords = (item: Survey['walls'][number]) =>
       item.turn === 'custom' ? `${item.turnDeg}° (другой угол)` : `90° ${item.turn === 'left' ? 'влево' : 'вправо'}`;
@@ -6132,6 +6193,31 @@ export default function Workspace(props: WorkspaceProps) {
               />
             )}
             {/*
+              * КЛАДОВКА НАД ХОЛОДИЛЬНИКОМ (ЭТАП 4, часть 2): своя высота и
+              * глубина — у самой кладовки и у колонны под ней. Ответ «встанет
+              * ли» — тот же `applyOps` вхолостую, правка — тот же `runOps`.
+              * Ключ — по записанному выбору: поля после правки показывают
+              * число ряда.
+              */}
+            {selectedUnit && (selectedUnit.appliance === 'fridge' || selectedUnit.section === 'mezzanine') && (
+              <StorageEditor
+                key={`${selectedUnit.id}:${JSON.stringify(activeRun.modules.find((m) => m.appliance === 'fridge')?.storageOver ?? null)}:${activeRun.fingerprint}`}
+                unit={selectedUnit}
+                run={activeRun}
+                onOps={(ops, onRefusal) => runOps(ops, onRefusal)}
+                preview={(ops) =>
+                  applyOps({
+                    run: activeRun,
+                    requirements: requirementsOf(activeIndex),
+                    ops,
+                    openings: wallOpenings(activeIndex),
+                    roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
+                    hardware: hardwareItems,
+                  })
+                }
+              />
+            )}
+            {/*
               * ВИТРИНА (P1): конструкция, место, стекло, двери, полки, профиль и
               * подсветка — правками движка (`set_vitrine`, `set_glass`,
               * `set_glass_shelves`) тем же `runOps`. Ключ — по записанной
@@ -6327,7 +6413,7 @@ export default function Workspace(props: WorkspaceProps) {
             data-studio-status={studioStatus.key}
             title={`${studioStatus.title}: ${studioStatus.reason}`}
             className={`truncate text-[13px] ${
-              studioStatus.key === 'blocked' ? 'text-alert' : studioStatus.key === 'ready' ? 'text-cyan' : 'text-graphiteMw'
+              studioStatus.key === 'blocked' ? 'text-alert' : studioStatus.key === 'production' ? 'text-tape' : studioStatus.key === 'ready' ? 'text-cyan' : 'text-graphiteMw'
             }`}
           >
             <span className="font-medium">{studioStatus.title}</span>: {studioStatus.reason}

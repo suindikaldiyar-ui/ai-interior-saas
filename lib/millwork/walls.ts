@@ -1,6 +1,6 @@
 import { recalcTotal } from './estimate';
 import { compositionFingerprint } from './fingerprint';
-import { obstacleConflictText, obstacleConflicts, type ObstacleConflict } from './obstacles';
+import { obstacleConflictText, obstacleConflicts, obstacleGenitive, type ObstacleConflict } from './obstacles';
 import {
   BLIND_VARIANTS,
   blindPartMm,
@@ -24,6 +24,7 @@ import {
   choiceOfCorner,
   clashWords,
   cornerKinematics,
+  formatMm,
   panelWidthMm,
   panelWords,
   rowSweepWords,
@@ -34,8 +35,10 @@ import {
   type RowPlace,
 } from './cornerKinematics';
 import { shopOf } from './shop';
-import { vitrineDoorCount } from './vitrine';
+import { vitrineDoorCount, vitrineOf } from './vitrine';
 import type { CookingFinding } from './cookingStack';
+/* Только тип: `room.ts` берёт `wallLabel` отсюда. */
+import type { DoorRoomSolid } from './room';
 import type { HardwareItem, ProductionSettings } from '@/types/catalog';
 import type {
   Composition,
@@ -45,10 +48,12 @@ import type {
   EstimateLine,
   Module,
   Opening,
+  OpeningKind,
   Run,
   RunCorner,
   RunRequirements,
 } from '@/types/millwork';
+import { OPENING_KIND_TITLE } from '@/types/millwork';
 
 /**
  * НЕСКОЛЬКО СТЕН НА ОДНОМ РАБОЧЕМ ЭКРАНЕ.
@@ -71,13 +76,15 @@ export function wallLabel(index: number): string {
 }
 
 /** Падеж, в котором стена стоит во фразе. */
-export type WallCase = 'nominative' | 'accusative' | 'prepositional' | 'genitive';
+export type WallCase = 'nominative' | 'accusative' | 'prepositional' | 'genitive' | 'instrumental';
 
 /** Слово «стена» по падежам. Буква стены не склоняется — это обозначение. */
 const WALL_WORD: Record<WallCase, string> = {
   nominative: 'стена',
   accusative: 'стену',
   prepositional: 'стене',
+  /* «закреплена за стеной А» (ЭТАП 4). */
+  instrumental: 'стеной',
   /* «вдоль стены Б» — отказ смены угла называет стену так (слой 55). */
   genitive: 'стены',
 };
@@ -277,7 +284,7 @@ export type WallMismatch = {
    * ДВЕРЬ ВИТРИНЫ НА ХОДУ ЗАХОДИТ В СОСЕДНИЙ МОДУЛЬ СВОЕГО РЯДА (P1) —
    * `vitrineSweep`. Каждая строка — что во что и на сколько.
    */
-  sweep?: { leaf: string; words: string; single: boolean }[];
+  sweep?: { leaf: string; words: string; single: boolean; vitrine?: boolean }[];
 };
 
 /** Створка шире предела — числами, из которых строятся слова. */
@@ -614,7 +621,7 @@ export function leafRefusals(input: { run: Run; before: RunCorner | undefined })
   for (const { unit, heightM } of runPlaces(run)) {
     if (blindPartMm(unit, run) > 0 || blindPartMm(unit, then) === 0) continue;
     /* Створки во всю высоту — они стоят рядом и делят ширину; участки по высоте (холодильник, колонна) — по одной во всю ширину. */
-    const doors = sceneLeaves(unit, heightM).filter(
+    const doors = sceneLeaves(unit, heightM, undefined, 0, run.production).filter(
       (leaf): leaf is Extract<SceneLeaf, { kind: 'door' }> => leaf.kind === 'door' && leaf.bottomM === 0 && leaf.heightM === heightM,
     );
     if (doors.length === 0) continue;
@@ -662,7 +669,9 @@ export function wallMismatchMessage(mismatch: WallMismatch): string {
      */
     const fix = mismatch.sweep.every((entry) => entry.single)
       ? 'Поменяйте сторону петель у этой двери (в «Открывании») — петли от соседнего модуля'
-      : 'У двух дверей петли у краёв модуля, сторону не поменять: оставьте этот модуль глухим или сделайте витриной модуль не у соседа, что стоит впереди фасада';
+      : mismatch.sweep.some((entry) => entry.vitrine)
+        ? 'У двух дверей петли у краёв модуля, сторону не поменять: оставьте этот модуль глухим или сделайте витриной модуль не у соседа, что стоит впереди фасада'
+        : 'У двух дверей петли у краёв модуля, сторону не поменять: выровняйте глубину кладовки над холодильником с соседом или поставьте этот модуль не у неё';
     return (
       `${mismatch.label}: ${mismatch.sweep.map((entry) => entry.words).join('; ')}. На объекте ` +
       `${many ? 'эти двери не откроются' : 'эта дверь не откроется'} до конца: открытая, она встаёт в плоскость соседнего ` +
@@ -923,7 +932,9 @@ export function vitrineSweepMismatches(input: {
       usableMm: run.lengthMm,
       sweep: clashes.map((clash) => {
         const unit = runPlaces(run).find((place) => place.unit.id === clash.moduleId)?.unit;
-        return { leaf: `${clash.moduleId}:${clash.leaf}`, words: rowSweepWords(clash), single: unit ? vitrineDoorCount(unit) === 1 : false };
+        /* У витрины двери считает витрина; у кладовки и её соседа (ЭТАП 4) — сам модуль. */
+        const doors = unit ? (vitrineOf(unit) ? vitrineDoorCount(unit) : unit.doorCount) : 0;
+        return { leaf: `${clash.moduleId}:${clash.leaf}`, words: rowSweepWords(clash), single: doors === 1, vitrine: clash.vitrine !== false };
       }),
     });
   });
@@ -935,31 +946,78 @@ export function vitrineSweepMismatches(input: {
  * ходом, что меряет сцена (`applianceDoorSweep`). Заход — блокирующее: шкаф
  * не открыть, цены нет, «Дальше» и выпуск заперты, запись идёт (лечат проход
  * и место шкафа). Ряды — стены композиции по порядку и остров.
+ *
+ * Комната (ЭТАП 4) — стены, колонны, короба и выступы вокруг рядов
+ * (`doorRoomSolids`): заход в них — тоже блокирующее. Объект с незамеренным
+ * выносом на пути двери — «не проверено»: выпуск заперт, цена есть, и слова
+ * просят замерить вынос (ловушка 537: неизвестное — не «препятствия нет»).
  */
 export function applianceDoorFindings(input: {
   rows: { run: Run; placement: RowPlace }[];
   production: ProductionSettings | undefined;
   hardware?: Map<string, HardwareItem>;
+  /** Комната вокруг рядов экрана и имя её стены (`roomWallName`: «Стена Б», «стена 3 замера»). */
+  room?: { solids: DoorRoomSolid[]; nameOf: (wall: { id: string }) => string } | null;
 }): CookingFinding[] {
   const rowOf = (row: number) =>
     input.rows[row]?.run.island ? 'острова' : lowerWall(wallLabel(row), 'genitive');
   /* Одна строка на дверь — самый глубокий заход: что мешает дальше, лечится тем же проходом (ловушка 57). */
   const deepest = new Map<string, ApplianceDoorClash>();
+  /* Задетое тело незамеренного выноса — своя строка двери, если настоящего захода у неё нет. */
+  const unknown = new Map<string, ApplianceDoorClash>();
   for (const clash of applianceDoorSweep({
     rows: input.rows,
     production: shopOf(input.production),
     ...(input.hardware ? { hardware: input.hardware } : {}),
+    ...(input.room ? { room: input.room.solids } : {}),
   })) {
-    const was = deepest.get(clash.doorId);
-    if (!was || clash.depthMm > was.depthMm) deepest.set(clash.doorId, clash);
+    const into = clash.room?.unknownDepth ? unknown : deepest;
+    const was = into.get(clash.doorId);
+    if (!was || clash.depthMm > was.depthMm) into.set(clash.doorId, clash);
   }
-  return Array.from(deepest.values()).map((clash) => ({ moduleId: clash.moduleId, level: 'blocking' as const, words: applianceDoorWords(clash, rowOf) }));
+  const nameOf = (wallId: string) => input.room?.nameOf({ id: wallId }) ?? `стена ${wallId}`;
+  const blocking = Array.from(deepest.values()).map((clash) => ({
+    moduleId: clash.moduleId,
+    level: 'blocking' as const,
+    words: clash.room ? applianceDoorRoomWords(clash, rowOf, nameOf(clash.room.wallId)) : applianceDoorWords(clash, rowOf),
+  }));
+  const unchecked = Array.from(unknown.values())
+    .filter((clash) => !deepest.has(clash.doorId))
+    .map((clash) => ({ moduleId: clash.moduleId, level: 'release' as const, words: applianceDoorRoomWords(clash, rowOf, nameOf(clash.room!.wallId)) }));
+  return [...blocking, ...unchecked];
+}
+
+/** Вид объекта комнаты в винительном падеже: «в колонну», «в короб», «в выступ стены». */
+function roomObjectAccusative(kind: OpeningKind | undefined): string {
+  if (!kind) return 'выступ';
+  const title = OPENING_KIND_TITLE[kind].toLowerCase();
+  return kind === 'column' ? 'колонну' : title;
+}
+
+/**
+ * Заход двери шкафа в комнату словами: «… на ходу заходит в стену 3 замера на
+ * 28,5 мм», «… в колонну у стены 3 замера на 78,5 мм»; вынос не замерен —
+ * «откроется ли дверь, не проверено. Замерьте вынос колонны».
+ */
+function applianceDoorRoomWords(clash: ApplianceDoorClash, rowOf: (row: number) => string, wallName: string): string {
+  const room = clash.room!;
+  const head = `Духовой шкаф в модуле «${clash.moduleLabel}» ${rowOf(clash.row)}`;
+  const reach = `дверь откидывается на ${formatMm(clash.reachMm)} мм перед корпусом`;
+  if (room.unknownDepth) {
+    const kind = room.kind ? OPENING_KIND_TITLE[room.kind].toLowerCase() : 'препятствие';
+    return `${head}: у ${lowerWall(wallName, 'genitive')} ${kind} с незамеренным выносом стоит на пути двери (${reach}) — откроется ли она, не проверено. Замерьте вынос ${room.kind ? obstacleGenitive(room.kind) : 'препятствия'}`;
+  }
+  const into = room.role === 'object' ? `${roomObjectAccusative(room.kind)} у ${lowerWall(wallName, 'genitive')}` : lowerWall(wallName, 'accusative');
+  const subject = clash.part === 'ручка' ? ', и её ручка' : ' и';
+  return `${head} не открыть: ${reach}${subject} на ходу заходит в ${into} на ${formatMm(clash.depthMm)} мм`;
 }
 
 /** Почему цены нет — у расхождения длины и у мебели в препятствии слова разные. */
 export function mismatchPriceText(mismatch: WallMismatch): string {
   if (mismatch.sweep?.length) {
-    return `Цены нет: ${mismatch.label}: дверь витрины на ходу заходит в соседний модуль.`;
+    /* У кладовки и её соседа (ЭТАП 4) — не витрина: слово по тому, чья дверь. */
+    const whose = mismatch.sweep.some((entry) => entry.vitrine !== false) ? 'дверь витрины' : 'дверь у кладовки над холодильником';
+    return `Цены нет: ${mismatch.label}: ${whose} на ходу заходит в соседний модуль.`;
   }
   if (mismatch.clashes?.length) {
     if (mismatch.clashes[0].own) {

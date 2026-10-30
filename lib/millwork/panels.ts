@@ -8,6 +8,7 @@ import { BUILT_IN_FRIDGE_FRONTS } from './modules';
 import { hasBottom } from './moduleVariants';
 import { hasFacade, MIN_FACADE_SPAN_MM, moduleFronts } from './applianceFront';
 import { cookingStackOf } from './cookingStack';
+import { TOP_RAIL_PANEL_NAME } from './panelNames';
 import { bayLayout } from './bays';
 import {
   FRAME_WIDTH_MM,
@@ -110,8 +111,8 @@ export const FACADE_PANEL_NAME = 'Фасад';
 export const BOTTOM_PANEL_NAME = 'Дно';
 /** Крыша верхнего модуля и пенала — сплошная. */
 export const TOP_PANEL_NAME = 'Крыша';
-/** У нижнего модуля крыши нет: её заменяют две планки под столешницей. */
-export const TOP_RAIL_PANEL_NAME = 'Планки верхние';
+/* У нижнего модуля крыши нет: её заменяют две планки под столешницей. Имя — одно с проверкой техники. */
+export { TOP_RAIL_PANEL_NAME };
 export const BACK_PANEL_NAME = 'Задняя стенка';
 /** Полка под духовым шкафом в модуле варочной (ЭТАП 3): на ней стоит шкаф. */
 export const OVEN_SHELF_PANEL_NAME = 'Полка под духовой шкаф';
@@ -1002,7 +1003,7 @@ function moduleBodyPanels(
      * ответ: у вытяжки створки нет вовсе, и лист под неё больше не
      * пилится, а у мойки она есть — и режется, и оплачивается петлями.
      */
-    const fronts = moduleFronts(unit, heightMm);
+    const fronts = moduleFronts(unit, heightMm, production);
 
     fronts.drawers.forEach((front, i) => {
       pushFront('Фронт ящика', front - gap, unit.widthMm - gap, [`drawer:${i}`]);

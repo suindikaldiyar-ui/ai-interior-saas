@@ -125,23 +125,20 @@ export function validateRun(run: Run, comms: CommPoint[]): LayoutIssue[] {
     .flatMap((s) => s.modules)
     .find((m) => m.appliance === 'hood');
 
-  if (hob && !hood) {
-    issues.push({
-      kind: 'fit',
-      level: 'warning',
-      moduleId: hob.id,
-      atMm: centerOf(hob),
-      message: 'Вытяжка не встала над варочной панелью: мешает разрыв верхнего ряда над окном.',
-    });
-  }
-
+  /*
+   * Вытяжка не встала — причину с именем преграды пишет раскладка
+   * («Вытяжка: …» в `run.warnings`, `hoodMissingWords`), она уже выше в
+   * списке. Вшитое «мешает разрыв верхнего ряда над окном» звучало и без
+   * единого окна в замере, и у кухни, где вытяжку не заказывали (ЭТАП 4).
+   */
   if (hob && hood && Math.abs(centerOf(hob) - centerOf(hood)) > 20) {
+    const span = (unit: Module) => `${unit.offsetMm}…${unit.offsetMm + unit.widthMm} мм`;
     issues.push({
       kind: 'layout',
       level: 'error',
       moduleId: hood.id,
       atMm: centerOf(hood),
-      message: 'Вытяжка смещена относительно варочной панели.',
+      message: `Вытяжка ${span(hood)} смещена от варочной ${span(hob)} на ${Math.round(Math.abs(centerOf(hob) - centerOf(hood)))} мм — вешают её над центром панели; пересоберите верхний ряд этой стены.`,
     });
   }
 

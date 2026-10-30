@@ -138,6 +138,13 @@ export const APPLIANCE_COLUMN = {
 export const FRIDGE_MEZZANINE_MIN_MM = 300;
 
 /**
+ * ИСХОДНАЯ ГЛУБИНА КЛАДОВКИ НАД ХОЛОДИЛЬНИКОМ У НОВОГО ПРОЕКТА, мм — решение
+ * владельца (ЭТАП 4, 30.10.2026). Кладётся в состав кухни при создании
+ * проекта (`storageDepthMm`); глубже колонны не бывает — тогда вровень с ней.
+ */
+export const NEW_PROJECT_STORAGE_DEPTH_MM = 560;
+
+/**
  * ТИПЫ ПРИБОРОВ: ХОДОВЫЕ ИСПОЛНЕНИЯ.
  *
  * Мебельщик не заказывает «варочную» — он заказывает газовую или
@@ -291,6 +298,8 @@ export function nicheHeightMm(
    * другим. Зазор вокруг прибора при этом остаётся наш: его считает код.
    */
   if (size?.heightMm) return size.heightMm + NICHE_CLEARANCE_MM;
+  /* Ниша типа уже с зазором — второй раз его не прибавляют (ЭТАП 4). */
+  if (size?.nicheMm) return size.nicheMm;
   if (type?.nicheHMm) return type.nicheHMm;
   return APPLIANCE_SLOTS[appliance].nicheHMm ?? 0;
 }

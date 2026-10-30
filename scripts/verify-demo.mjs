@@ -2409,12 +2409,26 @@ try {
     const cabinetCalls = await cad.evaluate(() =>
       window.__mwCabinetCalls ? window.__mwCabinetCalls() : null,
     );
+    /*
+     * Мебель ряда — без моделей техники (ЭТАП 4): у неё прежний порог 24.
+     * Модели техники (духовой шкаф в пенале, варочная…) — свой предел: не
+     * больше 10 вызовов на нарисованную модель (сетка на материал и дверь).
+     */
+    const furnitureCalls = await cad.evaluate(() =>
+      window.__mwCabinetCalls ? window.__mwCabinetCalls({ withoutAppliances: true }) : null,
+    );
+    const modelCount = await cad.evaluate(() => Object.values(window.__mwApplianceModels ?? {}).flat().length);
     check(
       'ряд рисуется десятком вызовов, а не сотней',
-      typeof cabinetCalls === 'number' && cabinetCalls > 0 && cabinetCalls <= 24,
-      cabinetCalls === null
+      typeof furnitureCalls === 'number' && furnitureCalls > 0 && furnitureCalls <= 24,
+      furnitureCalls === null
         ? 'счётчика вызовов гарнитура на странице нет'
-        : `гарнитур ${cabinetCalls} вызовов · вся сцена с комнатой ${scene?.calls}, мешей ${scene?.scene.meshes}, треугольников ${scene?.triangles}`,
+        : `мебель ${furnitureCalls} вызовов · с моделями техники ${cabinetCalls} · вся сцена с комнатой ${scene?.calls}, мешей ${scene?.scene.meshes}, треугольников ${scene?.triangles}`,
+    );
+    check(
+      'модели техники — не больше 10 вызовов на модель',
+      typeof cabinetCalls === 'number' && typeof furnitureCalls === 'number' && cabinetCalls - furnitureCalls <= 10 * modelCount,
+      `моделей ${modelCount}, их вызовов ${typeof cabinetCalls === 'number' && typeof furnitureCalls === 'number' ? cabinetCalls - furnitureCalls : '—'}`,
     );
 
     const frames = () =>

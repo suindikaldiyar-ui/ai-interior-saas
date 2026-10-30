@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import StudioInspector from '../StudioInspector';
 import FillEditor from './FillEditor';
 import OverheadEditor from './OverheadEditor';
+import StorageEditor from './StorageEditor';
 import VitrineEditor from './VitrineEditor';
 import RadiusEditor from './RadiusEditor';
 import IslandEditor from './IslandEditor';
@@ -14,7 +15,7 @@ import StudioObjects from './StudioObjects';
 import StudioShell from './StudioShell';
 import WallInspector from './WallInspector';
 
-const KIT: StudioKit = { StudioShell, RoomPlan, WallInspector, StudioObjects, StudioInspector, FillEditor, OverheadEditor, VitrineEditor, RadiusEditor, IslandEditor, TvZoneEditor };
+const KIT: StudioKit = { StudioShell, RoomPlan, WallInspector, StudioObjects, StudioInspector, FillEditor, OverheadEditor, StorageEditor, VitrineEditor, RadiusEditor, IslandEditor, TvZoneEditor };
 
 /** Оболочка Studio для рабочего места — только на странице Studio (см. `kit.ts`). */
 export default function StudioKitProvider({ children }: { children: ReactNode }) {

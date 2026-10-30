@@ -1,6 +1,6 @@
 import { columnNiches, moduleCarcassHeightMm, upperBottomFor } from '@/lib/millwork/fill';
 import { carcassHeightMm, plinthMm } from './shop';
-import { cookingModules, ovenNicheOf } from './cookingStack';
+import { cookingModules, ovenNicheOf, tallOvensOf } from './cookingStack';
 import {
   BACK_PANEL_NAME,
   OVEN_FRONT_PANEL_NAME,
@@ -325,6 +325,8 @@ export function layerCounts(runs: Run[]): Partial<Record<SceneLayer, number>> {
     }
     /* Модели техники (ЭТАП 3): варочная и шкаф под ней — коробок у них нет, слой «Техника» их видит. */
     for (const unit of cookingModules(run)) out.appliances = (out.appliances ?? 0) + (unit.ovenBelow ? 2 : 1);
+    /* Духовой шкаф в пенале и колонне (ЭТАП 4) — тоже модель, коробки-лица у него нет. */
+    out.appliances = (out.appliances ?? 0) + tallOvensOf(run).length;
   }
   return out;
 }
@@ -742,6 +744,8 @@ export function doorCount(unit: Module): number {
 export function doorLeaves(
   unit: Module,
   heightMm: number,
+  /** Школа цеха: ниши колонны — от пола (`facadeSpans`). */
+  production?: ProductionSettings,
 ): { index: number; span: FacadeSpan | null }[] {
   /*
    * ВИТРИНА — ТЕ ЖЕ СТВОРКИ (P1). Здесь стоял выход для секции-витрины: её
@@ -759,7 +763,7 @@ export function doorLeaves(
    * фурнитуры и в направлении открывания, и расходились они молча — у
    * вытяжки фасад резался и не рисовался, у мойки висел без петель.
    */
-  const fronts = moduleFronts(unit, heightMm);
+  const fronts = moduleFronts(unit, heightMm, production);
   if (fronts.drawers.length > 0) return [];
 
   return fronts.leaves.map((span, index) => ({
@@ -861,6 +865,8 @@ export function sceneLeaves(
   openWidthM?: number,
   /** С какой отметки модуля начинается доступная часть, метры: у угла в начале ряда — справа (P0). */
   openFromM = 0,
+  /** Школа цеха: створки колонны — по нишам от пола (`facadeSpans`). */
+  production?: ProductionSettings,
 ): SceneLeaf[] {
   const out: SceneLeaf[] = [];
   const fill = unit.fill;
@@ -919,7 +925,7 @@ export function sceneLeaves(
    * и закрытые коробки исчезали из пачки, а едущих не было. Участок
    * закрывается ОДНИМ полотном во всю ширину — как в `doorBoxes`.
    */
-  const spans = openWidthM === undefined ? doorLeaves(unit, Math.round(heightM * MM)).filter((leaf) => leaf.span) : [];
+  const spans = openWidthM === undefined ? doorLeaves(unit, Math.round(heightM * MM), production).filter((leaf) => leaf.span) : [];
   if (spans.length > 0) {
     for (const leaf of spans) {
       out.push({
@@ -2538,7 +2544,11 @@ export function applianceBoxes(
    */
   if (unit.appliance === 'hob') return boxes;
 
-  if (hasVisibleAppliance(unit)) {
+  /*
+   * Духовой шкаф в пенале — модель (`ApplianceModels3D`, `tallOvensOf`), а не
+   * коробка (ЭТАП 4): иначе прибор стоит дважды, как варочная до этапа 3.
+   */
+  if (hasVisibleAppliance(unit) && !(unit.appliance === 'oven' && unit.kind === 'tall' && !unit.column)) {
     /* Прибор пенала — в своей нише, той же, что разбила фасад на створки (`tallNicheOf`); без ниши — во весь модуль. */
     const niche = tallNicheOf(unit, Math.round(heightM * MM));
     boxes.push(
@@ -2554,6 +2564,8 @@ export function applianceBoxes(
   }
 
   for (const niche of unit.column ? columnNiches(unit, heightM * MM, production) : []) {
+    /* Духовой шкаф колонны — модель (ЭТАП 4); микроволновка — пока лицом, модели нет. */
+    if (niche.appliance === 'oven') continue;
     const nicheH = (niche.toMm - niche.fromMm) / MM;
     boxes.push(
       ...applianceFace(
@@ -2670,7 +2682,7 @@ export function moduleBoxes(
      * доступной части меньше самого узкого корпуса — створки нет вовсе.
      */
     const blind = options.openWidthMm !== undefined && options.openWidthMm < unit.widthMm;
-    const all = options.openWidthMm === 0 ? [] : doorLeaves(unit, Math.round(place.heightM * MM));
+    const all = options.openWidthMm === 0 ? [] : doorLeaves(unit, Math.round(place.heightM * MM), production);
     const leaves = blind ? all.slice(0, 1) : all;
 
     /*
@@ -3687,7 +3699,7 @@ export function openablePartIds(run: Run): string[] {
      */
     const blind = blindPartMm(unit, run) > 0;
     const open = blind ? openFrontMm(unit, run) : unit.widthMm;
-    const leaves = open === 0 ? [] : doorLeaves(unit, moduleCarcassHeightMm(unit, run));
+    const leaves = open === 0 ? [] : doorLeaves(unit, moduleCarcassHeightMm(unit, run), run.production);
     for (const leaf of blind ? leaves.slice(0, 1) : leaves) {
       ids.push(`${unit.id}:door:${leaf.index}`);
     }

@@ -607,7 +607,7 @@ console.log('\nHW.D: ящики — направляющая из каталог
   const line = (e: typeof est0, key: string) => e.lines.find((l) => l.key === key);
   const fitLine = est1.lines.find((l) => l.key.startsWith('fitting_slide_'));
   check(
-    'D9 смета: «Направляющие» 2 → нет, строка KA 500 — 2, «цена не задана»; ЛДСП 16.14 → 17.37, ХДФ 5.8 → 6.3, кромка 70.82 → 74.86; итог «неполный»',
+    'D9 смета: «Направляющие» 2 → нет, строка KA 500 — 2, «цена не задана»; ЛДСП 16.14 → 17.37, ХДФ 5.8 → 6.3, кромка 71.92 → 75.97 (ЭТАП 4: +1.10 — торцы опор духового шкафа в пенале); итог «неполный»',
     line(est0, 'slide_soft_close')?.quantity === 2 &&
       !line(est1, 'slide_soft_close') &&
       fitLine?.quantity === 2 &&
@@ -615,10 +615,11 @@ console.log('\nHW.D: ящики — направляющая из каталог
       line(est0, 'ldsp_carcass')?.quantity === 16.14 &&
       line(est1, 'ldsp_carcass')?.quantity === 17.37 &&
       line(est1, 'hdf_back')?.quantity === 6.3 &&
-      line(est1, 'pvc_edge')?.quantity === 74.86 &&
+      line(est0, 'pvc_edge')?.quantity === 71.92 &&
+      line(est1, 'pvc_edge')?.quantity === 75.97 &&
       unpricedLines(est1).length > 0 &&
       totalCaption(est1).includes('неполный'),
-    `${fitLine ? `${fitLine.title} ${fitLine.quantity} · ${fitLine.priceUnset}` : 'СТРОКИ НЕТ'} · ЛДСП ${line(est1, 'ldsp_carcass')?.quantity} · итог ${Math.round(est1.total)} «${totalCaption(est1)}»`,
+    `${fitLine ? `${fitLine.title} ${fitLine.quantity} · ${fitLine.priceUnset}` : 'СТРОКИ НЕТ'} · ЛДСП ${line(est0, 'ldsp_carcass')?.quantity} → ${line(est1, 'ldsp_carcass')?.quantity} · ХДФ ${line(est1, 'hdf_back')?.quantity} · кромка ${line(est0, 'pvc_edge')?.quantity} → ${line(est1, 'pvc_edge')?.quantity} · итог ${Math.round(est1.total)} «${totalCaption(est1)}»`,
   );
 
   /* Ящики стали дверцей: позиция на модуле остаётся, последствие названо. */
@@ -747,8 +748,13 @@ console.log('\nHW.G: отпечаток, система купе, ряды бе�
   const plainInput = kitchen(DEFAULT_PRODUCTION, null).shown();
   const withCatalog = kitchen(SHOP).shown();
   check(
-    'G1 каталог и правила короба без установленной фурнитуры: итог и отпечаток прежние (1 901 192 ₸, 7a46ede4)',
-    Math.round(plainInput.estimate.total) === 1901192 && Math.round(withCatalog.estimate.total) === 1901192 && plainInput.run.fingerprint === '7a46ede4' && withCatalog.run.fingerprint === '7a46ede4',
+    'G1 каталог и правила короба без установленной фурнитуры: итог и отпечаток прежние (1 910 297 ₸, 50239c81)',
+    /*
+     * Демо 1 901 192 → 1 910 297 ₸ и 7a46ede4 → 50239c81 (ЭТАП 4): полка
+     * кладовки над холодильником по её высоте (смета та же) и полки-опоры
+     * духового шкафа в пенале (+9 105 ₸: полки 0.61 м², кромка 1.10 м, распил).
+     */
+    Math.round(plainInput.estimate.total) === 1910297 && Math.round(withCatalog.estimate.total) === 1910297 && plainInput.run.fingerprint === '50239c81' && withCatalog.run.fingerprint === '50239c81',
     `${Math.round(plainInput.estimate.total)} / ${Math.round(withCatalog.estimate.total)} · ${plainInput.run.fingerprint} / ${withCatalog.run.fingerprint}`,
   );
   const k = kitchen();
@@ -756,7 +762,7 @@ console.log('\nHW.G: отпечаток, система купе, ряды бе�
   const off = k.ops([{ op: 'set_fitting', moduleId: HOB, slot: 'slide', itemId: null }]).next;
   check(
     'G2 позиция на месте меняет отпечаток; снятая — отпечаток прежний, поля fittings нет',
-    on.fingerprint !== '7a46ede4' && off.fingerprint === '7a46ede4' && moduleOf(off, HOB).fittings === undefined && configurationFingerprint(off.modules) === configurationFingerprint(plainInput.run.modules),
+    on.fingerprint !== '50239c81' && off.fingerprint === '50239c81' && moduleOf(off, HOB).fittings === undefined && configurationFingerprint(off.modules) === configurationFingerprint(plainInput.run.modules),
     `${on.fingerprint} → ${off.fingerprint}`,
   );
   const sliding = HARDWARE_FACTS.find((fact) => slidingAccepts(fact));

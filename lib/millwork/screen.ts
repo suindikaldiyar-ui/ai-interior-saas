@@ -505,14 +505,45 @@ export function missingAppliances(input: {
     const wall = wallLabel(index);
 
     if (appliance === 'hood') {
+      /*
+       * Вытяжка в составе без варочной: строку пишет раскладка её стены
+       * («Вытяжка: на этой стене нет варочной…»); здесь — только если та
+       * стена не выбрана, иначе строка и так на экране (ЭТАП 4).
+       */
+      if (!input.requested.includes('hob')) {
+        if (index === input.active) return [];
+        const words = layout.segments[index]?.run.warnings.find((warning) => warning.startsWith('Вытяжка:'));
+        return words ? [{ id: 'appliance-missing-hood', severity: 'clarify', message: `${wall}: ${words}` }] : [];
+      }
       if (missing.includes('hob')) return [];
+      /*
+       * КОНФЛИКТ ЗАКРЕПЛЕНИЙ (ЭТАП 4, часть 1.1). Вытяжка идёт на стену
+       * варочной сама (`splitAppliances`); на другой она — только когда её
+       * закрепил человек. Молча её не двигаем: называем и даём выход.
+       */
+      const hobLayoutWall = wallOf('hob');
+      if (hobLayoutWall >= 0 && hobLayoutWall !== index) {
+        const hobWallTitle = wallLabel(hobLayoutWall);
+        return [
+          {
+            id: 'appliance-hood-apart',
+            severity: 'blocking',
+            message:
+              `Вытяжка закреплена за ${lowerWall(wall, 'instrumental')}, а варочная стоит на ${lowerWall(hobWallTitle, 'prepositional')}: ` +
+              'вытяжку вешают над варочной — сейчас её нет ни на схеме, ни в смете. ' +
+              `Перенесите вытяжку на ${lowerWall(hobWallTitle, 'accusative')} или варочную на ${lowerWall(wall, 'accusative')}.`,
+          },
+        ];
+      }
       const hobWall = input.shown.findIndex((run) => holds(run, 'hob'));
       if (hobWall < 0 || hobWall === input.active) return [];
+      /* Причину называет раскладка той стены (`hoodMissingWords`), а не вшитая фраза. */
+      const reason = input.shown[hobWall]?.warnings.find((warning) => warning.startsWith('Вытяжка:'));
       return [
         {
           id: 'appliance-missing-hood',
           severity: 'clarify',
-          message: `${wallLabel(hobWall)}: над варочной вытяжку не повесить — там разрыв верхнего ряда.`,
+          message: `${wallLabel(hobWall)}: ${reason ? `вытяжка — ${reason.slice('Вытяжка:'.length).trim()}` : 'над варочной вытяжку не повесить.'}`,
         },
       ];
     }

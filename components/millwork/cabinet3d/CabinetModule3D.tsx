@@ -267,7 +267,7 @@ export default function CabinetModule3D({
         * Встроенная техника (холодильник, посудомойка, мойка) закрыта
         * фасадом наравне с обычным модулем: так это и выглядит в квартире.
         */}
-      {sceneLeaves(unit, heightM, openWidthM, openFromM).map((leaf) => {
+      {sceneLeaves(unit, heightM, openWidthM, openFromM, production).map((leaf) => {
         /*
          * СЛОИ — ЭТО ЧТО ВИДНО, А НЕ ЧТО ОТКРЫВАЕТСЯ (STAGE A).
          *

@@ -6,7 +6,7 @@ import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { ProductionSettings } from '@/types/catalog';
 import type { Run } from '@/types/millwork';
-import { cookingModules, cookingStackOf, ovenDoorId, type CookingStack } from '@/lib/millwork/cookingStack';
+import { cookingModules, cookingStackOf, ovenDoorId, tallOvensOf, type CookingStack, type TallOven } from '@/lib/millwork/cookingStack';
 import { hobShape, ovenShape, type ShapeMaterial, type ShapePart } from '@/lib/millwork/applianceShapes';
 import { useInteriorStore } from '@/store/useInteriorStore';
 import { HANDLE_ENV_INTENSITY, cadEnvironment } from './cadLook';
@@ -222,6 +222,33 @@ function CookingAppliances({ stack, unitId, economy, shadows, gas }: { stack: Co
 }
 
 /**
+ * ДУХОВОЙ ШКАФ В ПЕНАЛЕ И КОЛОННЕ (ЭТАП 4): та же модель (`ovenShape`), что под
+ * варочной, на полке-опоре своей ниши (`tallOvensOf`); дверь — та же, на оси у
+ * нижней кромки, ключ — `ovenDoorId`, как в «Открыть всё».
+ */
+function TallOvenModel({ oven, economy, shadows }: { oven: TallOven; economy: boolean; shadows: boolean }) {
+  const shape = useMemo(() => ovenShape(oven.model), [oven.model]);
+  const fixedParts = useMemo(() => shape.parts.filter((p) => !('moving' in p && p.moving)), [shape]);
+  const doorParts = useMemo(() => shape.parts.filter((p) => 'moving' in p && p.moving === 'ovenDoor'), [shape]);
+  const fixed = useMerged(fixedParts);
+  const door = useMerged(doorParts);
+  return (
+    <group name={`appliances:${oven.unit.id}`} userData={{ applianceModule: oven.unit.id }}>
+      <group position={[oven.xMm / MM, oven.bottomMm / MM, 0]} name="oven">
+        <Meshes merged={fixed} economy={economy} shadows={shadows} name="oven" />
+        <OvenDoor
+          id={ovenDoorId(oven.unit.id)}
+          merged={door}
+          economy={economy}
+          shadows={shadows}
+          pivot={[shape.door.pivotMm[0] / MM, shape.door.pivotMm[1] / MM, shape.door.pivotMm[2] / MM]}
+        />
+      </group>
+    </group>
+  );
+}
+
+/**
  * ВСЯ ТЕХНИКА РЯДА В МОДЕЛЯХ — варочные панели и духовые шкафы под ними.
  * Слой «Техника» выключен — прибора в кадре нет, как коробок слоя.
  */
@@ -235,8 +262,10 @@ export default function ApplianceModels3D({ run, production, shadows = false }: 
         .filter((entry): entry is { unit: (typeof run.modules)[number]; stack: CookingStack } => entry.stack !== null),
     [run, production],
   );
+  /* Духовые шкафы в пенале и колонне (ЭТАП 4) — та же модель на полке своей ниши. */
+  const tallOvens = useMemo(() => tallOvensOf(run, production), [run, production]);
   const invalidate = useThree((state) => state.invalidate);
-  useEffect(() => invalidate(), [invalidate, stacks, layers.appliances]);
+  useEffect(() => invalidate(), [invalidate, stacks, tallOvens, layers.appliances]);
 
   /*
    * Окошки для приёмки — только у холста, который рисует. Скрытая сцена захвата
@@ -251,19 +280,30 @@ export default function ApplianceModels3D({ run, production, shadows = false }: 
     const w = window as unknown as { __mwApplianceModels?: Record<string, unknown> };
     const own = (w.__mwApplianceModels ??= {});
     const key = run.id ?? 'run';
-    own[key] = stacks.map(({ unit, stack }) => ({
-      moduleId: unit.id,
-      hob: stack.hob?.article ?? null,
-      oven: stack.ovenBelow ? (stack.oven?.article ?? 'типовой') : null,
-      hobAt: stack.hobAt,
-      ovenBottomMm: stack.ovenAt?.bottomMm ?? null,
-      cutout: stack.cutout,
-      doorId: stack.ovenBelow ? ovenDoorId(unit.id) : null,
-    }));
+    own[key] = [
+      ...stacks.map(({ unit, stack }) => ({
+        moduleId: unit.id,
+        hob: stack.hob?.article ?? null,
+        oven: stack.ovenBelow ? (stack.oven?.article ?? 'типовой') : null,
+        hobAt: stack.hobAt,
+        ovenBottomMm: stack.ovenAt?.bottomMm ?? null,
+        cutout: stack.cutout,
+        doorId: stack.ovenBelow ? ovenDoorId(unit.id) : null,
+      })),
+      ...tallOvens.map((oven) => ({
+        moduleId: oven.unit.id,
+        hob: null,
+        oven: oven.model?.article ?? 'типовой',
+        tall: true,
+        ovenBottomMm: oven.bottomMm,
+        niche: [oven.nicheFromMm, oven.nicheToMm],
+        doorId: ovenDoorId(oven.unit.id),
+      })),
+    ];
     return () => {
       delete own[key];
     };
-  }, [stacks, run.id, drawsFrames]);
+  }, [stacks, tallOvens, run.id, drawsFrames]);
 
   /* Дверь при смене слоя и состава перерисовывается сама; поворот окружения — как у ручек. */
   const scene = useThree((state) => state.scene);
@@ -321,6 +361,9 @@ export default function ApplianceModels3D({ run, production, shadows = false }: 
           shadows={shadows}
           gas={stack.hob?.type === 'gas'}
         />
+      ))}
+      {tallOvens.map((oven) => (
+        <TallOvenModel key={`tall:${oven.unit.id}`} oven={oven} economy={economy} shadows={shadows} />
       ))}
     </group>
   );

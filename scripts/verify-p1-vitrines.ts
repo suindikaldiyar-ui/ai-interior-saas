@@ -53,7 +53,8 @@ import { BOTTOM_PANEL_NAME, FACADE_PANEL_NAME, SHELF_PANEL_NAME, SIDE_PANEL_NAME
 import { vitrineParts, type VitrinePart } from '../lib/millwork/vitrineParts';
 import { vitrineBlocker, vitrineDoorCount as vitrineDoorsOf, vitrineLedMeters, vitrineLedStrips, vitrineOf, vitrineProductionReasons } from '../lib/millwork/vitrine';
 import { glassOf } from '../lib/millwork/glass';
-import { moduleCarcassHeightMm, moduleDepthMm } from '../lib/millwork/fill';
+import { defaultFill, mezzanineBaseOf, moduleCarcassHeightMm, moduleDepthMm, singleNicheOf } from '../lib/millwork/fill';
+import { runFingerprint } from '../lib/millwork/fingerprint';
 import { workTopMm } from '../lib/millwork/shop';
 import { apronSpans, countertopSlabs } from '../lib/millwork/countertop';
 import { underCabinetSpans, lightingPlan, EMPTY_LIGHTING } from '../lib/millwork/lighting';
@@ -927,6 +928,10 @@ export function p1VitrineChecks(check: Check): void {
   }
 
   /* ── P1.20 старые проекты без витрин — те же до символа ── */
+  /** Конфигураций эталона, у которых отпечаток сдвинули только полка кладовки над холодильником и опоры пенала (ЭТАП 4). */
+  const STORAGE_SHELF_SHIFTED = 25;
+  /** Конфигураций эталона без витрин, где смету сдвинули только опорные полки одиночного прибора в пенале (ЭТАП 4). */
+  const PENCIL_SUPPORTS_ADDED = 12;
   {
     const baseline = JSON.parse(readFileSync(new URL('./p1-baseline.json', import.meta.url), 'utf8')) as Record<string, BaselineEntry>;
     /*
@@ -939,6 +944,54 @@ export function p1VitrineChecks(check: Check): void {
       return { key, templateId: key.slice(0, at), lengthMm: Number(key.slice(at + 1)) };
     });
     const VITRINE_LINES = new Set(['handle_standard', 'led_display', 'glass_front', 'hinge_alu_frame']);
+    /*
+     * ПОЛКА КЛАДОВКИ НАД ХОЛОДИЛЬНИКОМ (ЭТАП 4). Наполнение кладовки считалось
+     * по оболочке без нижнего ряда — по высоте антресоли 500, и полка стояла на
+     * 256 в корпусе 300. Теперь она на 160, и отпечаток таких рядов законно
+     * другой. Расхождение принимается, только если ВСЁ оно — эта полка: ряд с
+     * полкой кладовки, разложенной по прежней оболочке, даёт отпечаток эталона
+     * до символа, а смета та же до строки. Число таких — явно.
+     */
+    /*
+     * ОПОРНЫЕ ПОЛКИ ОДИНОЧНОГО ПРИБОРА В ПЕНАЛЕ (ЭТАП 4). Прибор висел в
+     * воздухе: наполнения у пенала не было, ниша садилась мимо сетки 32. Теперь
+     * полка под прибором и над ним — в наполнении, раскрое и сцене, ниша — на
+     * отверстиях (608 вместо 595: фасады над и под ней на 13 мм короче). Ряд с
+     * прежним (пустым) наполнением пенала даёт отпечаток эталона.
+     */
+    const pencils = (run: Run) => run.modules.filter((unit) => singleNicheOf(unit, moduleCarcassHeightMm(unit, run)) !== null);
+    const withLegacyStorageShelf = (run: Run): string =>
+      runFingerprint({
+        ...run,
+        modules: run.modules.map((unit) =>
+          unit.fill && singleNicheOf(unit, moduleCarcassHeightMm(unit, run)) ? { ...unit, fill: { ...unit.fill, shelves: [] } } : unit,
+        ),
+        upperSegments: run.upperSegments.map((segment) => ({
+          ...segment,
+          modules: segment.modules.map((unit) =>
+            unit.section === 'mezzanine' && unit.fill && mezzanineBaseOf(unit, run)?.appliance === 'fridge'
+              ? {
+                  ...unit,
+                  fill: {
+                    ...unit.fill,
+                    shelves: defaultFill(unit, {
+                      zone: run.zone,
+                      ceilingHeightMm: run.ceilingHeightMm,
+                      options: run.options,
+                      beams: run.beams,
+                      production: run.production,
+                    }).shelves,
+                  },
+                }
+              : unit,
+          ),
+        })),
+      });
+    let storageShelf = 0;
+    let supports = 0;
+    /* Строки, которые двигают опоры пенала: полки, кромка их передних торцов, распил и фасады над и под нишей. */
+    const SUPPORT_LINES = new Set(['shelf_panel', 'pvc_edge', 'cutting', 'front_panel']);
+    const SUPPORT_AREA_M2 = (566 * 540 * 2) / 1e6;
     let same = 0;
     let legacy = 0;
     const problems: string[] = [];
@@ -958,10 +1011,18 @@ export function p1VitrineChecks(check: Check): void {
         continue;
       }
       const vitrine = !('refused' in run) && allModules(run).some((unit) => vitrineOf(unit));
-      if (was.fingerprint !== now.fingerprint) problems.push(`${key}: отпечаток ${was.fingerprint} → ${now.fingerprint}`);
+      if (was.fingerprint !== now.fingerprint) {
+        if (!('refused' in run) && withLegacyStorageShelf(run) === was.fingerprint) storageShelf += 1;
+        else problems.push(`${key}: отпечаток ${was.fingerprint} → ${now.fingerprint}`);
+      }
       if (!vitrine) {
-        if (was.total !== now.total || JSON.stringify(was.lines) !== JSON.stringify(now.lines)) problems.push(`${key}: без витрины, а смета другая (${was.total} → ${now.total})`);
-        else same += 1;
+        const pencilCount = 'refused' in run ? 0 : pencils(run).length;
+        if (was.total !== now.total || JSON.stringify(was.lines) !== JSON.stringify(now.lines)) {
+          const changed = Array.from(new Set([...Object.keys(was.lines), ...Object.keys(now.lines)])).filter((line) => was.lines[line] !== now.lines[line]);
+          const shelfDelta = (now.lines.shelf_panel ?? 0) - (was.lines.shelf_panel ?? 0);
+          if (pencilCount > 0 && changed.every((line) => SUPPORT_LINES.has(line)) && Math.abs(shelfDelta - SUPPORT_AREA_M2 * pencilCount) <= 0.011) supports += 1;
+          else problems.push(`${key}: без витрины, а смета другая (${was.total} → ${now.total}; ${changed.join(', ')})`);
+        } else same += 1;
         continue;
       }
       legacy += 1;
@@ -971,8 +1032,8 @@ export function p1VitrineChecks(check: Check): void {
     }
     check(
       'P1.20 старые объекты: из 99 конфигураций эталона f2fbf9d без витрин — тот же отпечаток и та же смета до строки; с прежней витриной — тот же отпечаток, а сдвинуты только строки витрины (ручка двери, лента по полосам сцены, стекло по размеру двери, петли под рамку)',
-      problems.length === 0 && seen.size === 99 && same + legacy === 99 && legacy === 6,
-      `конфигураций ${seen.size}: без витрин тех же ${same}, с прежней витриной ${legacy} · ${problems.slice(0, 3).join(' | ') || 'расхождений нет'}`,
+      problems.length === 0 && seen.size === 99 && same + supports + legacy === 99 && legacy === 6 && storageShelf === STORAGE_SHELF_SHIFTED && supports === PENCIL_SUPPORTS_ADDED,
+      `конфигураций ${seen.size}: без витрин тех же ${same}, с опорами пенала ${supports} (объявлено ${PENCIL_SUPPORTS_ADDED}), с прежней витриной ${legacy}; отпечаток сдвинут только полкой кладовки и опорами пенала у ${storageShelf} (объявлено ${STORAGE_SHELF_SHIFTED}) · ${problems.slice(0, 3).join(' | ') || 'расхождений нет'}`,
     );
   }
 }

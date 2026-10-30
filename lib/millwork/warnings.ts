@@ -214,23 +214,26 @@ export function manualPlacementWarnings(
   }
 
   /*
-   * Вытяжка висит строго над варочной, а верхний ряд разорван над окном.
-   * Значит варочная под окном — это кухня без вытяжки, и сказать об этом
-   * надо сразу, а не на монтаже.
+   * Вытяжка висит строго над варочной, а над ней её не повесить — это
+   * кухня без вытяжки, и сказать об этом надо сразу, а не на монтаже.
+   * Причину называет раскладка (`hoodMissingWords`: окно, пенал, ригель,
+   * «верхнего ряда нет») — та же строка, что у ряда, и экран её схлопнет.
+   * Нет строки — вытяжка этой стене не раздана: конфликт закреплений
+   * говорит `missingAppliances` (ЭТАП 4).
    */
   if (hoodRequested && hob) {
     const hasHood = run.upperSegments
       .flatMap((segment) => segment.modules)
       .some((unit) => unit.appliance === 'hood');
+    const reason = run.warnings.find((warning) => warning.startsWith('Вытяжка:'));
 
-    if (!hasHood) {
+    if (!hasHood && reason) {
       out.push({
         id: `hood-missing-${hob.id}`,
         severity: 'clarify',
         moduleId: hob.id,
         atMm: hob.offsetMm + hob.widthMm / 2,
-        message:
-          'На этом месте вытяжку над варочной не повесить — там разрыв верхнего ряда.',
+        message: reason,
       });
     }
   }
@@ -504,6 +507,22 @@ export function ergonomicWarnings(run: Run | null): SurveyWarning[] {
      * которого не дотянуться.
      */
     const room = fridgeRoomMm(unit, run);
+    /*
+     * Своя высота кладовки (ЭТАП 4, часть 2), которая больше не встаёт: потолок
+     * или школа цеха сменились вне экрана. Правки ряда такого не пропускают
+     * (`set_storage`, проверка после правки), а здесь — словами, не молча.
+     */
+    const own = unit.storageOver?.heightMm;
+    if (room !== null && own !== undefined && own > room && room >= FRIDGE_MEZZANINE_MIN_MM) {
+      found.push({
+        id: `fridge-storage-${unit.id}`,
+        severity: 'clarify',
+        moduleId: unit.id,
+        message:
+          `Кладовка над холодильником задана ${own} мм, а над колонной теперь ${Math.round(room)} мм: ` +
+          `стоит ${Math.round(room)} мм — задайте высоту кладовки заново.`,
+      });
+    }
     if (room !== null && room < FRIDGE_MEZZANINE_MIN_MM) {
       found.push({
         id: `fridge-mezzanine-${unit.id}`,

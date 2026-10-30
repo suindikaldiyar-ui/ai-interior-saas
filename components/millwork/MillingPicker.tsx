@@ -203,7 +203,7 @@ export default function MillingPicker({ run, catalog, selectedModuleId, onOps }:
     if (!unit) return { widthMm: 0, heightMm: 0, aspect: 2 };
 
     const carcassMm = moduleCarcassHeightMm(unit, run);
-    const spans = facadeSpans(unit, carcassMm);
+    const spans = facadeSpans(unit, carcassMm, run.production);
     const heightMm = spans[0]?.heightMm ?? carcassMm;
     const leaves = Math.max(1, unit.doorCount || 1);
     const widthMm = Math.round(unit.widthMm / leaves);

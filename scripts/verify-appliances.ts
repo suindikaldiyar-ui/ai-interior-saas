@@ -28,20 +28,24 @@
  */
 
 import { DEFAULT_PRODUCTION, type ProductionSettings } from '../types/catalog';
-import type { Run, RunRequirements, VariantKey } from '../types/millwork';
+import type { MillworkOp, Opening, Run, RunRequirements, VariantKey } from '../types/millwork';
 import { composeVariants, workspaceInput } from '../lib/millwork/workspace';
-import { objectInput } from '../lib/millwork/objectEstimate';
+import { objectEstimateOf, objectInput, objectSite } from '../lib/millwork/objectEstimate';
 import { DEMO_MEASUREMENT, DEMO_RATES, DEMO_REQUIREMENTS } from '../lib/millwork/demo';
 import { allModules } from '../lib/millwork/layout';
+import { applyOps } from '../lib/millwork/ops';
+import { moduleAppliances, nicheHeightMm } from '../lib/millwork/modules';
 import { APPLIANCE_MODELS, applianceModel } from '../lib/millwork/appliances';
-import { applianceDoorIds, cookingFindings, cookingModules, cookingStackOf } from '../lib/millwork/cookingStack';
+import { applianceDoorIds, cookingFindings, cookingModules, cookingStackOf, tallOvensOf } from '../lib/millwork/cookingStack';
 import { hobShape, ovenShape } from '../lib/millwork/applianceShapes';
-import { buildPanels } from '../lib/millwork/panels';
-import { boxLayer, layerCounts, openablePartIds, runBoxesByModule } from '../lib/millwork/cabinetBoxes';
-import { screenState } from '../lib/millwork/screen';
+import { SHELF_PANEL_NAME, buildPanels } from '../lib/millwork/panels';
+import { boxLayer, layerCounts, openablePartIds, runBoxesByModule, runPlaces, sceneLeaves } from '../lib/millwork/cabinetBoxes';
+import { missingAppliances, screenState } from '../lib/millwork/screen';
 import { wallsTouchedByChange } from '../lib/millwork/composition';
 import { totalCaption, unpricedLines } from '../lib/millwork/estimate';
-import { applianceDoorFindings } from '../lib/millwork/walls';
+import { applianceDoorFindings, wallLabel } from '../lib/millwork/walls';
+import { doorRoomSolids, roomAroundRows, roomSourceOf } from '../lib/millwork/room';
+import { columnNiches, moduleCarcassHeightMm, rowStandardDepthMm, singleNicheOf } from '../lib/millwork/fill';
 import { islandPlacement } from '../lib/millwork/island';
 import { islandRequirements, islandWithPlacement, newIsland } from '../lib/millwork/islandEdit';
 import { buildObject, NEW_CORNER } from './corner-quality-fixture';
@@ -110,10 +114,27 @@ export function applianceChecks(check: Check): void {
   const demo = shown(DEMO_REQUIREMENTS);
   {
     const touched = allModules(demo.run).filter((m) => m.applianceModels || m.ovenBelow);
+    /*
+     * ЭТАП 4, часть 1.2: под типовой варочной над ящиками лежит сплошная
+     * «Планки верхние» — решения цеха нет, и выпуск заперт словами. До этапа
+     * здесь стояло «проверок 0»: модуль без модели проверка пропускала молча.
+     */
+    const hobTop =
+      'Варочная без модели над ящиками: размер выреза и глубина корпуса панели неизвестны, а под всей столешницей модуля лежит сплошная деталь «Планки верхние» 568 × 560 мм — пройдёт ли корпус панели и где лягут планки, в раскрое не заложено, выпуск заперт. Выберите модель панели';
     check(
-      'AP2 без модели и без «под варочной» кухня прежняя: отпечаток 7a46ede4, у модулей нет ни моделей, ни духовки под панелью, проверок техники 0',
-      demo.run.fingerprint === '7a46ede4' && touched.length === 0 && demo.findings.length === 0,
-      `отпечаток ${demo.run.fingerprint} · тронутых модулей ${touched.length} · проверок ${demo.findings.length}`,
+      'AP2 без модели и без «под варочной» кухня прежняя: отпечаток 50239c81, у модулей нет ни моделей, ни духовки под панелью; проверок техники две, обе «выпуск заперт» — под типовой варочной (сплошная «Планки верхние» 568 × 560) и опора духового шкафа в пенале (832…1440, модель не выбрана); блокирующих 0',
+      /*
+       * Контрольный отпечаток демо 7a46ede4 → 50239c81 (ЭТАП 4): полка кладовки
+       * над холодильником 256 → 160 по её высоте 300, у духового шкафа в пенале
+       * полки-опоры 832 и 1440 (решение владельца 1.4).
+       */
+      demo.run.fingerprint === '50239c81' &&
+        touched.length === 0 &&
+        demo.findings.length === 2 &&
+        demo.findings.every((f) => f.level === 'release') &&
+        demo.findings.some((f) => f.words === hobTop) &&
+        demo.findings.some((f) => f.words.startsWith('«Духовой шкаф»: духовой шкаф стоит на полке-опоре на отверстиях 832 мм от дна пенала, ниша 832…1440 мм')),
+      `отпечаток ${demo.run.fingerprint} · тронутых модулей ${touched.length} · проверок ${demo.findings.length}: ${demo.findings.map((f) => `[${f.level}] ${f.words}`).join(' | ')}`,
     );
   }
 
@@ -261,6 +282,325 @@ export function applianceChecks(check: Check): void {
     );
   }
 
+  /* ── AP18. Верх модуля под варочной без шкафа (ЭТАП 4, часть 1.2): числа движка на трёх школах цеха ── */
+  {
+    const schools: [string, ProductionSettings][] = [
+      ['560/320', DEFAULT_PRODUCTION],
+      ['550/350, столешница 40', shop({ depths: { baseMm: 550, upperMm: 350 }, heights: { countertopMm: 40 } })],
+      ['600/300, корпус 18', { ...shop({ depths: { baseMm: 600, upperMm: 300 } }), carcassMm: 18 }],
+    ];
+    const rows = schools.map(([title, production]) => {
+      const induction = shown({ ...DEMO_REQUIREMENTS, applianceModels: { hob: 'PUE611BB5E' } }, production);
+      const gas = shown({ ...DEMO_REQUIREMENTS, applianceModels: { hob: 'PGH6B5K90R' } }, production);
+      const generic = shown(DEMO_REQUIREMENTS, production);
+      const all = (k: ReturnType<typeof shown>) => k.findings.filter((f) => f.level === 'release').map((f) => f.words);
+      /* Опора духового шкафа в пенале (ЭТАП 4, 1.4) — своя строка у каждой из трёх кухонь; варочная сверяется отдельно. */
+      const PENCIL = 'стоит на полке-опоре на отверстиях 832 мм от дна пенала';
+      const release = (k: ReturnType<typeof shown>) => all(k).filter((words) => !words.includes(PENCIL));
+      const pencil = [induction, gas, generic].every((k) => all(k).filter((words) => words.includes(PENCIL)).length === 1);
+      return { title, induction: release(induction), gas: release(gas), generic: release(generic), pencil };
+    });
+    const want = [
+      ['568 × 560', 13, 7],
+      ['568 × 550', 11, 5],
+      ['564 × 600', 13, 7],
+    ] as const;
+    const ok = rows.every((row, i) => {
+      const [board, pue, pgh] = want[i];
+      return (
+        row.induction.length === 1 &&
+        row.induction[0].includes(`под вырезом 560 × 490 мм лежит сплошная деталь «Планки верхние» ${board} мм, корпус панели входит в неё на ${pue} мм`) &&
+        row.induction[0].includes('вентиляция панели (зазор за задней стенкой или вырез в ней, инструкция 9001867766, с. 10) не заложена') &&
+        row.gas.length === 1 &&
+        row.gas[0].includes(`под вырезом 560 × 480 мм лежит сплошная деталь «Планки верхние» ${board} мм, корпус панели входит в неё на ${pgh} мм`) &&
+        !row.gas[0].includes('вентиляция') &&
+        row.pencil &&
+        row.generic.length === 1 &&
+        row.generic[0].includes(`«Планки верхние» ${board} мм`)
+      );
+    });
+    check(
+      'AP18 варочная над ящиками: деталь «Планки верхние» под вырезом не удаляется, выпуск заперт словами с числами движка — PUE611BB5E входит в неё на 13 / 11 / 13 мм, PGH6B5K90R — на 7 / 5 / 7 (школы 560/320, 550/350 со столешницей 40, 600/300 с корпусом 18); у газа правила вентиляции нет — и слов о ней нет; типовая — «размер выреза и глубина корпуса неизвестны»',
+      ok,
+      rows.map((row) => `${row.title}: ${row.induction.join(' | ')} || ${row.gas.join(' | ')} || ${row.generic.join(' | ')}`).join(' ### '),
+    );
+  }
+
+  /* ── AP19. Вытяжка идёт за варочной (ЭТАП 4, часть 1.1): перенос варочной, конфликт закреплений, причина словами ── */
+  {
+    const objectOf = (key: string, lengths: number[], requirements: RunRequirements) =>
+      buildObject({
+        key,
+        title: key,
+        lengths,
+        shape: lengths.length === 1 ? 'linear' : lengths.length === 2 ? 'corner_l' : 'u_shape',
+        corners: lengths.length === 1 ? [] : lengths.length === 2 ? [NEW_CORNER] : [NEW_CORNER, NEW_CORNER],
+        requirements,
+      });
+    /* Где на стенах объекта варочная и вытяжка, сколько вытяжек в смете объекта и что говорит экран. */
+    const facts = (object: ReturnType<typeof buildObject>, requirements: RunRequirements) => {
+      const { layout, segments, active, input } = object.engine;
+      const estimate = objectEstimateOf({ layout, segments, wallAEstimate: active.estimate, variantKey: 'optimal', input, disabled: DISABLED });
+      const where = (appliance: 'hob' | 'hood') =>
+        segments.flatMap((run, i) =>
+          allModules(run)
+            .filter((unit) => unit.appliance === appliance)
+            .map((unit) => `${i}:${unit.offsetMm}…${unit.offsetMm + unit.widthMm}`),
+        );
+      return {
+        hob: where('hob'),
+        hood: where('hood'),
+        hoods: estimate.lines.filter((line) => line.key.startsWith('appliance_hood')).reduce((sum, line) => sum + line.quantity, 0),
+        total: Math.round(estimate.total),
+        missing: missingAppliances({ requested: requirements.appliances, shown: segments, layout, edited: () => false, active: 0 }),
+        warnings: segments.flatMap((run) => run.warnings.filter((warning) => warning.startsWith('Вытяжка:'))),
+      };
+    };
+    const pinHob = { ...DEMO_REQUIREMENTS, applianceWalls: { hob: 'w2' } };
+    const apart = { ...DEMO_REQUIREMENTS, applianceWalls: { hob: 'w2', hood: 'w1' } };
+    const noUpper = { ...DEMO_REQUIREMENTS, options: { ...DEMO_REQUIREMENTS.options, hasUpper: false } };
+    const noHob = { ...DEMO_REQUIREMENTS, appliances: DEMO_REQUIREMENTS.appliances.filter((a) => a !== 'hob') };
+    const l = facts(objectOf('ap19-l', [3600, 2800], pinHob), pinHob);
+    const u = facts(objectOf('ap19-u', [3600, 2800, 3600], { ...DEMO_REQUIREMENTS, applianceWalls: { hob: 'w1' } }), DEMO_REQUIREMENTS);
+    const conflict = facts(objectOf('ap19-apart', [3600, 2800], apart), apart);
+    const bare = facts(objectOf('ap19-up', [3800], noUpper), noUpper);
+    const alone = facts(objectOf('ap19-nohob', [3800], noHob), noHob);
+    const apartWords =
+      'Вытяжка закреплена за стеной А, а варочная стоит на стене Б: вытяжку вешают над варочной — сейчас её нет ни на схеме, ни в смете. Перенесите вытяжку на стену Б или варочную на стену А.';
+    check(
+      'AP19 вытяжка за варочной: Г 3600 + 2800, варочная закреплена за стеной Б — вытяжка над ней на Б 940…1540, в смете одна; П 3600 + 2800 + 3600, варочная за А — вытяжка на А; вытяжка закреплена за А, варочная за Б — блокирующее словами с выходом, вытяжки в смете нет; без верхнего ряда и без варочной — причина словами, «разрыв над окном» не звучит',
+      JSON.stringify(l.hob) === JSON.stringify(['1:940…1540']) &&
+        JSON.stringify(l.hood) === JSON.stringify(['1:940…1540']) &&
+        l.hoods === 1 &&
+        l.missing.length === 0 &&
+        u.hob.length === 1 &&
+        u.hob[0].startsWith('0:') &&
+        u.hood.length === 1 &&
+        u.hood[0] === u.hob[0] &&
+        conflict.hood.length === 0 &&
+        conflict.hoods === 0 &&
+        conflict.missing.length === 1 &&
+        conflict.missing[0].severity === 'blocking' &&
+        conflict.missing[0].message === apartWords &&
+        bare.warnings.length === 1 &&
+        bare.warnings[0].startsWith('Вытяжка: верхнего ряда нет') &&
+        alone.warnings.length === 1 &&
+        alone.warnings[0].startsWith('Вытяжка: на этой стене нет варочной') &&
+        [l, u, conflict, bare, alone].every((k) => k.warnings.every((w) => !w.includes('над окном'))),
+      `Г: варочная ${l.hob} вытяжка ${l.hood} × ${l.hoods}, итог ${l.total} · П: ${u.hob} / ${u.hood} · конфликт: ${conflict.missing.map((m) => `[${m.severity}] ${m.message}`).join(' | ') || 'МОЛЧА'}, в смете ${conflict.hoods} · без верха: ${bare.warnings.join(' | ') || 'МОЛЧА'} · без варочной: ${alone.warnings.join(' | ') || 'МОЛЧА'}`,
+    );
+  }
+
+  /* ── AP20–AP22. Колонна «духовка + СВЧ» (ЭТАП 4, часть 4): одни ниши на раскрой, створки и опоры; замена; размер прибора ── */
+  {
+    const withMicrowave = { ...DEMO_REQUIREMENTS, appliances: [...DEMO_REQUIREMENTS.appliances, 'microwave' as const] };
+    const plinth150: ProductionSettings = { ...DEFAULT_PRODUCTION, heights: { ...DEFAULT_PRODUCTION.heights, plinthMm: 150 } };
+    const columnView = (production: ProductionSettings, working?: Run) => {
+      const object = buildObject({
+        key: 'ap20',
+        title: 'Колонна духовки и СВЧ',
+        lengths: [3800],
+        shape: 'linear',
+        corners: [],
+        requirements: withMicrowave,
+        production,
+        ...(working ? { working } : {}),
+      });
+      const shown = object.engine.segments[0];
+      const place = runPlaces(shown).find((p) => p.unit.column)!;
+      const heightMm = moduleCarcassHeightMm(place.unit, shown);
+      const niches = columnNiches(place.unit, heightMm, production).sort((a, b) => a.fromMm - b.fromMm);
+      /* Свободные участки фасада — то, что ниши оставили сверху и снизу. */
+      const gaps = [`0…${niches[0].fromMm}`, `${niches[niches.length - 1].toMm}…${heightMm}`];
+      const leaves = sceneLeaves(place.unit, place.heightM, undefined, 0, production).map((leaf) =>
+        'bottomM' in leaf && leaf.bottomM !== undefined && leaf.heightM !== undefined
+          ? `${Math.round(leaf.bottomM * 1000)}…${Math.round((leaf.bottomM + leaf.heightM) * 1000)}`
+          : `${leaf.kind}`,
+      );
+      const fronts = buildPanels({ run: shown, production })
+        .filter((panel) => panel.moduleId === place.unit.id && panel.name === 'Фасад')
+        .map((panel) => panel.lengthMm)
+        .sort((a, b) => a - b);
+      const supports = [...niches.map((n) => n.fromMm), niches[niches.length - 1].toMm];
+      return {
+        run: object.engine.active.run,
+        unit: place.unit,
+        niches,
+        gaps,
+        leaves,
+        fronts,
+        shelves: place.unit.fill?.shelves ?? [],
+        supports,
+        fingerprint: object.engine.active.run.fingerprint,
+      };
+    };
+    const editColumn = (from: ReturnType<typeof columnView>, production: ProductionSettings, ops: MillworkOp[]) => {
+      const next = applyOps({ run: from.run, requirements: withMicrowave, ops });
+      return { warnings: next.warnings, view: columnView(production, next) };
+    };
+    const nicheText = (k: ReturnType<typeof columnView>) => k.niches.map((n) => `${n.fromMm}…${n.toMm}`).join(', ');
+    /* Створки сцены = свободные участки; опоры = границы ниш; фасады раскроя = участки минус зазор (по 2 мм с краёв). */
+    const agrees = (k: ReturnType<typeof columnView>) =>
+      JSON.stringify(k.leaves) === JSON.stringify(k.gaps) &&
+      JSON.stringify(k.shelves) === JSON.stringify(k.supports) &&
+      JSON.stringify(k.fronts) ===
+        JSON.stringify(k.gaps.map((g) => Number(g.split('…')[1]) - Number(g.split('…')[0]) - 4).sort((a, b) => a - b));
+    const c100 = columnView(DEFAULT_PRODUCTION);
+    const c150 = columnView(plinth150);
+    const painted = applyOps({
+      run: c100.run,
+      requirements: withMicrowave,
+      ops: [{ op: 'set_front', moduleId: 'all', front: { base: 'mdf_enamel', construct: 'solid', finish: 'matte' } }],
+    });
+    const edited150 = columnView(plinth150, painted);
+    check(
+      'AP20 колонна на цоколе цеха 150: ниши, полки-опоры, створки сцены и фасады раскроя — от одних ниш (448…1056 и 1056…1472; фасады 444 и 824, а не 476 и 792 по цоколю 100); правленый на 100 ряд на цоколе 150 — опоры переехали вместе с нишами',
+      agrees(c100) &&
+        agrees(c150) &&
+        agrees(edited150) &&
+        nicheText(c150) === '448…1056, 1056…1472' &&
+        JSON.stringify(c150.fronts) === JSON.stringify([444, 824]) &&
+        JSON.stringify(c100.fronts) === JSON.stringify([476, 792]) &&
+        JSON.stringify(edited150.shelves) === JSON.stringify([448, 1056, 1472]),
+      `100: ниши ${nicheText(c100)}, створки ${c100.leaves}, фасады ${c100.fronts}, опоры ${c100.shelves} · 150: ниши ${nicheText(c150)}, створки ${c150.leaves}, фасады ${c150.fronts}, опоры ${c150.shelves} · правлен → 150: створки ${edited150.leaves}, фасады ${edited150.fronts}, опоры ${edited150.shelves}`,
+    );
+    /*
+     * Ряд после замены читается прямо, без поиска колонны: на сломанном
+     * продукте её там уже нет, и проверка обязана упасть строкой, а не
+     * исключением помощника.
+     */
+    const replaced = (ops: MillworkOp[]) => {
+      const next = applyOps({ run: c100.run, requirements: withMicrowave, ops });
+      const appliances = next.modules.flatMap((unit) => moduleAppliances(unit));
+      return { warnings: next.warnings, fingerprint: next.fingerprint, appliances };
+    };
+    const untouched = replaced([]);
+    const asBase = replaced([{ op: 'replace_module', moduleId: c100.unit.id, kind: 'base' }]);
+    const asMicrowave = replaced([{ op: 'replace_module', moduleId: c100.unit.id, kind: 'tall', appliance: 'microwave' }]);
+    check(
+      'AP21 «Тип» и «Техника» у колонны: замена, после которой духовка или микроволновка пропали бы из ряда и сметы при составе с ними, — отказ словами; приборы в ряду и отпечаток прежние',
+      asBase.warnings.length === 1 &&
+        asBase.warnings[0].includes('пропали бы духовой шкаф и микроволновка, а из состава кухни эти приборы никто не убирал') &&
+        asMicrowave.warnings.length === 1 &&
+        asMicrowave.warnings[0].includes('пропали бы духовой шкаф, а из состава кухни этот прибор никто не убирал') &&
+        asBase.fingerprint === untouched.fingerprint &&
+        asMicrowave.fingerprint === untouched.fingerprint &&
+        JSON.stringify(asBase.appliances) === JSON.stringify(untouched.appliances) &&
+        JSON.stringify(asMicrowave.appliances) === JSON.stringify(untouched.appliances),
+      `приборы в ряду: было ${untouched.appliances} · Нижний: ${asBase.appliances} — ${asBase.warnings.join(' | ') || 'МОЛЧА'} · СВЧ: ${asMicrowave.appliances} — ${asMicrowave.warnings.join(' | ') || 'МОЛЧА'}`,
+    );
+    const t = DEFAULT_PRODUCTION.carcassMm;
+    const mw460 = editColumn(c100, DEFAULT_PRODUCTION, [
+      { op: 'set_appliance_size', moduleId: c100.unit.id, appliance: 'microwave', size: { widthMm: 600, heightMm: 460, depthMm: 400 } },
+    ]);
+    const oven1500 = editColumn(c100, DEFAULT_PRODUCTION, [
+      { op: 'set_appliance_size', moduleId: c100.unit.id, appliance: 'oven', size: { widthMm: 600, heightMm: 1500, depthMm: 550 } },
+    ]);
+    const dragged = editColumn(c100, DEFAULT_PRODUCTION, [
+      { op: 'set_fill', moduleId: c100.unit.id, fill: { ...c100.unit.fill!, shelves: [480, 1120, 1504] } },
+    ]);
+    const inside = (k: ReturnType<typeof columnView>) =>
+      k.shelves.filter((mm) => k.niches.some((n) => mm - t / 2 > n.fromMm && mm + t / 2 < n.toMm));
+    check(
+      'AP22 размер прибора колонны: СВЧ 460 — ниши, опоры, створки и фасады снова от одних ниш, ни одна полка не внутри ниши; духовка 1500 — пара не встаёт, отказ числом; полку-опору мышью не утащить — словами; ряд прежний',
+      mw460.warnings.length === 0 &&
+        agrees(mw460.view) &&
+        inside(mw460.view).length === 0 &&
+        mw460.view.niches[1].toMm === 1568 &&
+        oven1500.warnings.length === 1 &&
+        oven1500.warnings[0].includes('пара не встаёт, лишние 20 мм') &&
+        oven1500.view.fingerprint === c100.fingerprint &&
+        dragged.warnings.length === 1 &&
+        dragged.warnings[0].includes('опоры ниш') &&
+        dragged.view.fingerprint === c100.fingerprint,
+      `СВЧ 460: ниши ${nicheText(mw460.view)}, опоры ${mw460.view.shelves}, внутри ниш ${inside(mw460.view).length}, фасады ${mw460.view.fronts} · 1500: ${oven1500.warnings.join(' | ') || 'МОЛЧА'} · мышью: ${dragged.warnings.join(' | ') || 'МОЛЧА'}`,
+    );
+  }
+
+  /* ── AP23–AP24. Одиночный прибор в пенале стоит на полке-опоре; ниша типа без двойного зазора (ЭТАП 4) ── */
+  {
+    const pencilView = (requirements: RunRequirements) => {
+      const object = buildObject({ key: 'ap23', title: 'Пенал', lengths: [3800], shape: 'linear', corners: [], requirements });
+      const shown = object.engine.segments[0];
+      const place = runPlaces(shown).find((p) => p.unit.kind === 'tall' && !p.unit.column && (p.unit.appliance === 'oven' || p.unit.appliance === 'microwave'));
+      if (!place) throw new Error('AP23: пенала с одиночным прибором в ряду нет — мерить нечего');
+      const heightMm = moduleCarcassHeightMm(place.unit, shown);
+      const niche = singleNicheOf(place.unit, heightMm);
+      const panels = buildPanels({ run: shown, production: DEFAULT_PRODUCTION }).filter((panel) => panel.moduleId === place.unit.id);
+      const shelves = panels.filter((panel) => panel.name === SHELF_PANEL_NAME).reduce((n, panel) => n + panel.qty, 0);
+      const fronts = panels.filter((panel) => panel.name === 'Фасад').map((panel) => panel.lengthMm).sort((a, b) => a - b);
+      const P = DEFAULT_PRODUCTION;
+      const drawn = runBoxesByModule(shown, { production: P, thicknessMm: P.carcassMm, frontThicknessMm: P.frontMm, gapMm: P.frontGapMm }).modules.find((m) => m.unit.id === place.unit.id);
+      const sceneShelves = (drawn?.boxes ?? []).filter((box) => box.panel === SHELF_PANEL_NAME).length;
+      return { unit: place.unit, heightMm, niche, fill: place.unit.fill?.shelves ?? [], shelves, fronts, sceneShelves, findings: cookingFindings(shown) };
+    };
+    const oven = pencilView(DEMO_REQUIREMENTS);
+    const lock = oven.findings.filter((f) => f.moduleId === oven.unit.id);
+    check(
+      'AP23 духовой шкаф в пенале стоит на полке-опоре: ниша на отверстиях системы 32 (832…1440, ближайшее снизу от 850), в наполнении, раскрое и сцене две полки на границах ниши, фасады над и под нишей — по ней (828 и 856); подтверждённой конструкции опоры нет — выпуск заперт словами, «не выше 600» не применяется',
+      oven.niche !== null &&
+        oven.niche.fromMm === 832 &&
+        oven.niche.toMm === 1440 &&
+        JSON.stringify(oven.fill) === JSON.stringify([832, 1440]) &&
+        oven.shelves === 2 &&
+        oven.sceneShelves === 2 &&
+        JSON.stringify(oven.fronts) === JSON.stringify([828, oven.heightMm - 1440 - 4]) &&
+        lock.length === 1 &&
+        lock[0].level === 'release' &&
+        lock[0].words.includes('стоит на полке-опоре на отверстиях 832 мм от дна пенала, ниша 832…1440 мм') &&
+        lock[0].words.includes('модель прибора не выбрана'),
+      `ниша ${oven.niche ? `${oven.niche.fromMm}…${oven.niche.toMm}` : 'НЕТ'}, полки наполнения ${oven.fill}, в раскрое ${oven.shelves}, в сцене ${oven.sceneShelves}, фасады ${oven.fronts} · ${lock.map((f) => `[${f.level}] ${f.words}`).join(' | ') || 'ЗАМКА НЕТ'}`,
+    );
+    const microwaveOnly = { ...DEMO_REQUIREMENTS, appliances: DEMO_REQUIREMENTS.appliances.filter((a) => a !== 'oven').concat('microwave') };
+    const table = pencilView({ ...microwaveOnly, applianceTypes: { microwave: 'microwave_table' } });
+    const builtIn = pencilView({ ...microwaveOnly, applianceTypes: { microwave: 'microwave_builtin' } });
+    const measured = pencilView({ ...microwaveOnly, applianceTypes: { microwave: 'microwave_table' }, applianceSizes: { microwave: { widthMm: 600, heightMm: 300, depthMm: 400 } } });
+    const span = (k: ReturnType<typeof pencilView>) => (k.niche ? k.niche.toMm - k.niche.fromMm : 0);
+    const nicheOfType = (k: ReturnType<typeof pencilView>) => nicheHeightMm('microwave', k.unit.applianceSizes?.microwave);
+    check(
+      'AP24 ниша типа прибора — без второго зазора: «Настольная» СВЧ 320 (было 330), «Встроенная» 400 (было 410); введённая высота сильнее типа — 300 + зазор 10 = 310; в модуле ниша типа лежит нишей, а не высотой прибора',
+      nicheOfType(table) === 320 &&
+        nicheOfType(builtIn) === 400 &&
+        nicheOfType(measured) === 310 &&
+        table.unit.applianceSizes?.microwave?.heightMm === undefined &&
+        table.unit.applianceSizes?.microwave?.nicheMm === 320 &&
+        span(table) >= 320 &&
+        span(builtIn) >= 400,
+      `настольная ${nicheOfType(table)} (ниша на сетке ${span(table)}), встроенная ${nicheOfType(builtIn)} (${span(builtIn)}), введено 300 → ${nicheOfType(measured)} · в модуле ${JSON.stringify(table.unit.applianceSizes?.microwave ?? null)}`,
+    );
+  }
+
+  /* ── AP25. Духовой шкаф в пенале и колонне — модель на полке своей ниши, а не серая коробка (ЭТАП 4) ── */
+  {
+    const P = DEFAULT_PRODUCTION;
+    const view = (requirements: RunRequirements) => {
+      const run = buildObject({ key: 'ap25', title: 'Пенал', lengths: [3800], shape: 'linear', corners: [], requirements }).engine.segments[0];
+      const ovens = tallOvensOf(run, P);
+      const boxes = runBoxesByModule(run, { production: P, thicknessMm: P.carcassMm, frontThicknessMm: P.frontMm, gapMm: P.frontGapMm }).modules;
+      const faces = (id: string) => (boxes.find((m) => m.unit.id === id)?.boxes ?? []).filter((box) => box.material === 'appliance' && box.node === 'appliance').length;
+      return { run, ovens, faces, doors: applianceDoorIds(run), layer: layerCounts([run]).appliances ?? 0 };
+    };
+    const single = view(DEMO_REQUIREMENTS);
+    const column = view({ ...DEMO_REQUIREMENTS, appliances: [...DEMO_REQUIREMENTS.appliances, 'microwave'] });
+    const model = view({ ...DEMO_REQUIREMENTS, applianceModels: { oven: 'HBG272EB3' } });
+    const s0 = single.ovens[0];
+    const c0 = column.ovens[0];
+    check(
+      'AP25 духовой шкаф в пенале и колонне — модель (`ovenShape`) на верху полки-опоры своей ниши: пенал — низ 940 (цоколь 100 + 832 + 8), колонна — 588 (100 + 480 + 8); коробки-лица духовки нет, микроволновки в колонне — есть; дверь — в «Открыть всё»; слой «Техника» считает модель; выбранная HBG272EB3 едет в пенал',
+      single.ovens.length === 1 &&
+        s0.bottomMm === 940 &&
+        single.faces(s0.unit.id) === 0 &&
+        single.doors.includes(`${s0.unit.id}:oven:door`) &&
+        column.ovens.length === 1 &&
+        c0.bottomMm === 588 &&
+        column.faces(c0.unit.id) > 0 &&
+        column.doors.includes(`${c0.unit.id}:oven:door`) &&
+        single.layer >= 2 &&
+        model.ovens[0]?.model?.article === 'HBG272EB3',
+      `пенал: ${s0 ? `${s0.unit.id} низ ${s0.bottomMm}, ниша ${s0.nicheFromMm}…${s0.nicheToMm}, коробок лица ${single.faces(s0.unit.id)}` : 'НЕТ'} · колонна: ${c0 ? `низ ${c0.bottomMm}, коробок лица (СВЧ) ${column.faces(c0.unit.id)}` : 'НЕТ'} · двери ${single.doors.join(', ')} · «Техника» ${single.layer} · модель ${model.ovens[0]?.model?.article ?? 'типовой'}`,
+    );
+  }
+
   /* ── AP9. Без модели: ниша отраслевая, проверить нечем — выпуск заперт словами ── */
   const generic = shown({ ...DEMO_REQUIREMENTS, ovenUnderHob: true });
   {
@@ -381,8 +721,8 @@ export function applianceChecks(check: Check): void {
     const again = shown(JSON.parse(JSON.stringify(MAIN)) as RunRequirements);
     const back = shown({ ...MAIN, applianceModels: undefined, ovenUnderHob: undefined });
     check(
-      'AP14 записал — открыл: та же кухня (отпечаток f8a7e4fb); модели и духовка под варочной входят в отпечаток, сняли их — снова 7a46ede4',
-      again.run.fingerprint === main.run.fingerprint && main.run.fingerprint === 'f8a7e4fb' && back.run.fingerprint === '7a46ede4',
+      'AP14 записал — открыл: та же кухня (отпечаток 257c260b); модели и духовка под варочной входят в отпечаток, сняли их — снова 50239c81',
+      again.run.fingerprint === main.run.fingerprint && /* f8a7e4fb → 257c260b (ЭТАП 4): полка кладовки над холодильником по её высоте; духового шкафа в пенале у этой кухни нет. */ main.run.fingerprint === '257c260b' && back.run.fingerprint === '50239c81',
       `${main.run.fingerprint} → ${again.run.fingerprint} · без выбора ${back.run.fingerprint}`,
     );
   }
@@ -478,6 +818,88 @@ export function applianceChecks(check: Check): void {
         at400[0].words.includes('заходит в фасад модуля «Дверца» острова на 102,5 мм') &&
         at900.length === 0,
       `прямая ${onStraight.map((f) => f.words).join(' | ') || 0} · П 1500: ${onNarrow.map((f) => f.words).join(' | ') || 'МОЛЧА'} · П 1700: ${onWide.length} · остров 400: ${at400.map((f) => f.words).join(' | ') || 'МОЛЧА'} · 900: ${at900.length}`,
+    );
+  }
+
+  /* ── AP17. Дверь шкафа и комната (ЭТАП 4): стена напротив, колонна, вынос не замерен ── */
+  {
+    /* Комната — те же шаги, что у экрана: место объекта → `roomSourceOf` → `roomAroundRows` по рядам сцены → `doorRoomSolids`. */
+    const doorWithRoom = (spec: Parameters<typeof buildObject>[0]) => {
+      const object = buildObject(spec);
+      const rows = sceneRowsOf(object);
+      const base = workspaceInput({ title: spec.title, zone: 'Кухня', measurement: object.measurement, requirements: object.requirements, rates: DEMO_RATES, cornerAt: null });
+      const site = objectSite(base, null);
+      const room = roomAroundRows(
+        roomSourceOf({
+          walls: site.roomWalls ?? site.walls,
+          runOpenings: object.engine.input.openings,
+          runWallId: site.runWallId,
+          measuredWalls: object.measurement.walls,
+          ceilingMm: site.ceilingMm,
+          depthMm: rowStandardDepthMm('kitchen', 'base', DEFAULT_PRODUCTION),
+          solution: 'false_panel',
+          corners: spec.corners,
+          zone: 'kitchen',
+          production: DEFAULT_PRODUCTION,
+          survey: null,
+        }),
+        rows,
+        null,
+      );
+      if (!room) throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: у «${spec.title}» комнаты нет`);
+      /* Имя стены — как `roomWallName` экрана: под мебелью — «Стена А», остальные — номером замера. */
+      const chain = rows.map((row) => row.run.wallId);
+      const nameOf = (wall: { id: string }) => {
+        const at = chain.indexOf(wall.id);
+        if (at >= 0) return wallLabel(at);
+        const n = object.measurement.walls.findIndex((w) => w.id === wall.id);
+        return n >= 0 ? `стена ${n + 1} замера` : `стена ${wall.id}`;
+      };
+      return applianceDoorFindings({ rows, production: DEFAULT_PRODUCTION, room: { solids: doorRoomSolids(room), nameOf } });
+    };
+    const straight = buildObject({ key: 'ap17-s', title: 'прямая 3800', lengths: [3800], shape: 'linear', corners: [], requirements: MAIN });
+    const hob = straight.engine.segments[0].modules.find((m) => m.appliance === 'hob');
+    if (!hob) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: AP17 — модуля варочной нет');
+    /* Стена 3 замкнутой комнаты идёт от угла со стеной 2 назад: колонна напротив двери — от её начала. */
+    const opposite = (kind: 'column' | 'protrusion', depthMm?: number): Opening =>
+      ({
+        id: `ap17-${kind}`,
+        kind,
+        fromCornerMm: 3800 - (hob.offsetMm + hob.widthMm) - 100,
+        widthMm: 800,
+        heightMm: 2700,
+        sillMm: 0,
+        ...(depthMm !== undefined ? { depthMm } : {}),
+      }) as Opening;
+    const room = (key: string, depth: number, openings?: Opening[][]) =>
+      doorWithRoom({ key, title: `прямая 3800 в комнате 3800 × ${depth}`, lengths: [3800, depth, 3800, depth], shape: 'linear', corners: [], requirements: MAIN, ...(openings ? { openings } : {}) });
+    const corridor = room('ap17-1050', 1050);
+    const corridorWide = room('ap17-1100', 1100);
+    const roomy = room('ap17-3000', 3000);
+    const withColumn = room('ap17-col', 1600, [[], [], [opposite('column', 600)], []]);
+    const withProtrusion = room('ap17-pro', 1600, [[], [], [opposite('protrusion', 600)], []]);
+    const columnUnknown = room('ap17-col-x', 1600, [[], [], [opposite('column')], []]);
+    const narrowU = doorWithRoom({ key: 'ap17-u', title: 'П 3800 + 1500 + 1740', lengths: [3800, 1500, 1740], shape: 'u_shape', corners: [NEW_CORNER, NEW_CORNER], requirements: MAIN });
+    check(
+      'AP17 ход двери шкафа и комната: коридор 1050 — дверь (518,5 мм) заходит в стену напротив на 28,5 мм, блокирующее; 1100 и 3000 — 0; колонна и выступ 800 × вынос 600 напротив в комнате 1600 — 78,5 мм; колонна без выноса — «не проверено», выпуск заперт, цена есть; П 3800 + 1500 + 1740 — прежняя строка мебели (153,8 мм)',
+      corridor.length === 1 &&
+        corridor[0].level === 'blocking' &&
+        corridor[0].words ===
+          'Духовой шкаф в модуле «Варочная и духовой шкаф» стены А не открыть: дверь откидывается на 518,5 мм перед корпусом и на ходу заходит в стену 3 замера на 28,5 мм' &&
+        corridorWide.length === 0 &&
+        roomy.length === 0 &&
+        withColumn.length === 1 &&
+        withColumn[0].level === 'blocking' &&
+        withColumn[0].words.endsWith('заходит в колонну у стены 3 замера на 78,5 мм') &&
+        withProtrusion.length === 1 &&
+        withProtrusion[0].words.endsWith('заходит в выступ стены у стены 3 замера на 78,5 мм') &&
+        columnUnknown.length === 1 &&
+        columnUnknown[0].level === 'release' &&
+        columnUnknown[0].words.includes('колонна с незамеренным выносом стоит на пути двери') &&
+        columnUnknown[0].words.endsWith('Замерьте вынос колонны') &&
+        narrowU.length === 1 &&
+        narrowU[0].words.endsWith('заходит в фасад модуля «2 дверцы» стены А на 153,8 мм'),
+      `1050: ${corridor.map((f) => `[${f.level}] ${f.words}`).join(' | ') || 'МОЛЧА'} · 1100: ${corridorWide.length} · 3000: ${roomy.length} · колонна: ${withColumn.map((f) => f.words).join(' | ') || 'МОЛЧА'} · выступ: ${withProtrusion.map((f) => f.words).join(' | ') || 'МОЛЧА'} · без выноса: ${columnUnknown.map((f) => `[${f.level}] ${f.words}`).join(' | ') || 'МОЛЧА'} · П 1500: ${narrowU.map((f) => f.words).join(' | ')}`,
     );
   }
 }

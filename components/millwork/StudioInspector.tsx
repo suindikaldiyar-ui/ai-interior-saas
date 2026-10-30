@@ -80,7 +80,7 @@ export default function StudioInspector({ run, wall, selectedId, gap }: Props) {
   const unit = place?.unit ?? null;
   const heightMm = place ? Math.round(place.heightM * 1000) : null;
   const depthMm = place ? Math.round(place.depthM * 1000) : null;
-  const fronts = unit && heightMm ? moduleFronts(unit, heightMm) : null;
+  const fronts = unit && heightMm ? moduleFronts(unit, heightMm, run.production) : null;
   const row = unit ? (rowOfModule(run, unit.id)?.row ?? null) : null;
 
   return (
@@ -141,10 +141,10 @@ export default function StudioInspector({ run, wall, selectedId, gap }: Props) {
           <dd className="mw-num">{depthMm} мм</dd>
           <dt className="text-graphiteMw">Фасад</dt>
           <dd>{frontWords(fronts.leaves.length, fronts.drawers.length)}</dd>
-          <dd className="col-span-2 mt-1 text-[12px] leading-snug text-graphiteMw">
-            Ширину правят полем «Ширина, мм» ниже или ручкой на схеме. Высоту и глубину задают
-            отметки объекта («Конструкция» → «Отметки объекта»): у отдельного модуля они пока не
-            правятся — иначе раскрой и смета разошлись бы с тем, что нарисовано.
+          <dd className="col-span-2 mt-1 text-[12px] leading-snug text-graphiteMw" data-inspector-hint={row ?? ''}>
+            {row === 'storage'
+              ? 'Ширина и место кладовки — колонны холодильника под ней. Её высоту и глубину правят в блоке «Кладовка над холодильником» ниже.'
+              : 'Ширину правят полем «Ширина, мм» ниже или ручкой на схеме. Высоту и глубину задают отметки объекта («Конструкция» → «Отметки объекта»): у отдельного модуля они пока не правятся — иначе раскрой и смета разошлись бы с тем, что нарисовано.'}
           </dd>
         </dl>
       ) : gap ? (
