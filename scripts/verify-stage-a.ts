@@ -572,8 +572,10 @@ export function stageAChecks(check: Check): void {
         const spans = nicheFacadeSpans(unit, Math.round(place.heightM * MM));
         if (!spans) continue;
         split += 1;
+        /* Лицо прибора — коробки без подвижной детали; узел у них один — «прибор» (слой «Техника», ЭТАП 3), не ручка и не петля. */
         const face = (byModule.get(unit.id) ?? []).filter(
-          (box) => (box.material === 'appliance' || box.material === 'glass') && box.part === undefined && box.node === undefined,
+          (box) =>
+            (box.material === 'appliance' || box.material === 'glass') && box.part === undefined && (box.node === undefined || box.node === 'appliance'),
         );
         if (face.length === 0) {
           drift.push(`${title} ${unit.id}: прибора в нише не нарисовано`);

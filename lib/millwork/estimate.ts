@@ -21,6 +21,8 @@ import { moduleDrawerKits } from './drawerKit';
 import { SLIDING_DOOR, sectionSpec, slidingDoorCount } from './sections';
 import { MODULE_VARIANTS, isSinkBase, variantEstimateKeys } from './moduleVariants';
 import { zoneProfile } from './zones';
+import { modelTitle, retailWords, unitModel } from './appliances';
+import { cookingStackOf } from './cookingStack';
 import { bayDrawerStackOf, drawerHeights } from './drawerCount';
 import { bayEnvelope, bayLayout } from './bays';
 import { millingLink, type MillingItem } from './milling';
@@ -42,6 +44,8 @@ import type {
 
 /** Ключ работы «вырез столешницы под препятствие» — позиция каталога работ (слой 56). */
 export const COUNTERTOP_CUTOUT_KEY = 'countertop_cutout';
+/** Ключ работы «вырез под варочную панель» (ЭТАП 3) — позиция каталога работ. */
+export const HOB_CUTOUT_KEY = 'hob_cutout';
 
 /**
  * Смета из спецификации материалов.
@@ -1330,11 +1334,44 @@ export function buildEstimateDrafts(
    */
   for (const unit of modules) {
     for (const appliance of moduleAppliances(unit)) {
+      /*
+       * МОДЕЛЬ ПРОИЗВОДИТЕЛЯ (ЭТАП 3) — своя строка с артикулом и своей
+       * ставкой каталога (`appliance_<прибор>_<артикул>`). Ставка типового
+       * прибора к модели не подходит: «варочная 120 000» за PUE611BB5E — это
+       * выдуманная цена. Нет ставки — «цена не задана», розница карточки —
+       * справкой в словах, не в итоге.
+       */
+      const model = unitModel(unit, appliance);
+      if (model) {
+        drafts.push({
+          key: `appliance_${appliance}_${model.article}`,
+          title: `${APPLIANCE_SLOTS[appliance].title} ${modelTitle(model)}`,
+          unit: 'pcs',
+          quantity: 1,
+          unsetWithoutRate: `цена не задана: модель ${modelTitle(model)} — ставку задаёт компания (${retailWords(model)})`,
+        });
+        continue;
+      }
       drafts.push({
         key: `appliance_${appliance}`,
         title: APPLIANCE_SLOTS[appliance].title,
         unit: 'pcs',
         quantity: 1,
+      });
+    }
+    /*
+     * ВЫРЕЗ ПОД ВАРОЧНУЮ ПАНЕЛЬ (ЭТАП 3) — работа по столешнице, размер из
+     * инструкции модели (`cookingStackOf`). Только у панели с моделью: у
+     * типовой выреза в смете не было и нет — её суммы не едут.
+     */
+    const cooking = unit.applianceModels?.hob ? cookingStackOf(unit, run, production) : null;
+    if (cooking?.cutout && cooking.hob) {
+      drafts.push({
+        key: HOB_CUTOUT_KEY,
+        title: `Вырез под варочную панель ${modelTitle(cooking.hob)}: ${cooking.cutout.widthMm} × ${cooking.cutout.depthMm} мм`,
+        unit: 'pcs',
+        quantity: 1,
+        unsetWithoutRate: 'цена не задана: вырез столешницы под варочную — позиция каталога работ организации',
       });
     }
   }

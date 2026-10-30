@@ -1,6 +1,7 @@
 import {
   APPLIANCE_SLOTS,
   applianceWidthMm,
+  ovenUnderHobOf,
   chosenApplianceType,
   CORNER_SIZE_MM,
   FRIDGE_MEZZANINE_MIN_MM,
@@ -286,7 +287,7 @@ function planAnchors(
     appliance: ApplianceKind,
     extra: { columnWith?: ApplianceKind; builtIn?: boolean } = {},
   ) => {
-    const width = applianceWidthMm(appliance, req.applianceSizes, req.applianceTypes);
+    const width = applianceWidthMm(appliance, req.applianceSizes, req.applianceTypes, req.applianceModels);
     const center = tallLeft ? tallCursor + width / 2 : tallCursor - width / 2;
     anchors.push({
       kind: 'tall',
@@ -312,9 +313,15 @@ function planAnchors(
    * отдельными пеналами по 600 мм это съело бы лишний метр стены —
    * мебельщик так не делает никогда.
    */
-  const wantsColumn = has('oven') && has('microwave');
+  /*
+   * ДУХОВОЙ ШКАФ ПОД ВАРОЧНОЙ (ЭТАП 3) — в нижнем модуле варочной, а не в
+   * пенале: якорь варочной несёт его с собой (`ovenBelow`). Микроволновка
+   * при этом встаёт пеналом одна — колонны из двух приборов больше нет.
+   */
+  const ovenUnderHob = ovenUnderHobOf(req);
+  const wantsColumn = !ovenUnderHob && has('oven') && has('microwave');
   if (wantsColumn) pushTall('oven', { columnWith: 'microwave' });
-  else if (has('oven')) pushTall('oven');
+  else if (has('oven') && !ovenUnderHob) pushTall('oven');
   else if (has('microwave')) pushTall('microwave');
 
   let sinkCenter = lengthMm * 0.35;
@@ -353,7 +360,10 @@ function planAnchors(
   }
 
   if (has('hob')) {
-    const width = APPLIANCE_SLOTS.hob.widthMm;
+    /* Модуль под модель (ЭТАП 3): варочной 90 см — 900; без модели — 600, как было. */
+    const width = req.applianceModels?.hob
+      ? applianceWidthMm('hob', req.applianceSizes, req.applianceTypes, req.applianceModels)
+      : APPLIANCE_SLOTS.hob.widthMm;
     const low = HOB_EDGE_CLEARANCE_MM + width / 2;
     const high = Math.max(low, lengthMm - HOB_EDGE_CLEARANCE_MM - width / 2);
     const sinkWidth = sinkKind
@@ -534,6 +544,10 @@ function makeModule(
      * или отдельностоящая. Габариты и ниша приходят оттуда.
      */
     types?: RunRequirements['applianceTypes'];
+    /** Модели производителя кухни (ЭТАП 3): в модуль — только его приборов. */
+    models?: RunRequirements['applianceModels'];
+    /** Духовой шкаф в нише под варочной (ЭТАП 3). */
+    ovenBelow?: boolean;
   } = {},
 ): Module {
   const spec = appliance ? APPLIANCE_SLOTS[appliance] : null;
@@ -559,6 +573,12 @@ function makeModule(
 
   /* Габариты ЭТОГО модуля: только те приборы, что в нём стоят. */
   const mine = [appliance, extra.columnWith].filter(Boolean) as ApplianceKind[];
+  const ovenBelow = appliance === 'hob' && extra.ovenBelow === true;
+  /* Модели этого модуля (ЭТАП 3): выбранные кухней для его приборов — и духового шкафа под панелью. */
+  const modelOf = [...mine, ...(ovenBelow ? (['oven'] as ApplianceKind[]) : [])].reduce<NonNullable<Module['applianceModels']>>(
+    (acc, kind2) => (extra.models?.[kind2] ? { ...acc, [kind2]: extra.models[kind2] } : acc),
+    {},
+  );
   const applianceSizes = mine.reduce<NonNullable<Module['applianceSizes']>>((acc, kind2) => {
     const size = extra.sizes?.[kind2];
     const type = chosenApplianceType(kind2, extra.types);
@@ -583,6 +603,9 @@ function makeModule(
     column,
     builtIn: extra.builtIn,
     applianceSizes: Object.keys(applianceSizes).length > 0 ? applianceSizes : undefined,
+    /* Пусто — не пишется вовсе: отпечатки и сохранения типовых приборов прежние (ловушка 246). */
+    ...(Object.keys(modelOf).length > 0 ? { applianceModels: modelOf } : {}),
+    ...(ovenBelow ? { ovenBelow: true as const } : {}),
     kind,
     widthMm,
     offsetMm,
@@ -595,7 +618,9 @@ function makeModule(
       ? `Колонна: ${APPLIANCE_SLOTS[column.bottom as ApplianceKind].title.toLowerCase()} и ${APPLIANCE_SLOTS[
           column.top as ApplianceKind
         ].title.toLowerCase()}`
-      : spec
+      : ovenBelow
+        ? 'Варочная и духовой шкаф'
+        : spec
         ? spec.title
         : kind === 'tall'
           ? 'Пенал'
@@ -720,16 +745,23 @@ export function applianceRowWidthMm(
   sizes?: RunRequirements['applianceSizes'],
   /** Исполнение прибора: у него своя ширина, и резерв считается по ней. */
   types?: RunRequirements['applianceTypes'],
+  /**
+   * Модели и место духовки (ЭТАП 3): у модели — ширина модуля под её вырез;
+   * духовой шкаф под варочной места на стене не занимает — он в её модуле.
+   */
+  choice?: Pick<RunRequirements, 'applianceModels' | 'ovenUnderHob'>,
 ): number {
   const wanted = new Set(appliances);
-  const column = wanted.has('oven') && wanted.has('microwave');
+  const underHob = ovenUnderHobOf({ appliances, ovenUnderHob: choice?.ovenUnderHob });
+  const column = !underHob && wanted.has('oven') && wanted.has('microwave');
 
   let sum = 0;
   for (const appliance of Array.from(wanted)) {
     // Вытяжка висит в верхнем ряду и места на стене не занимает.
     if (appliance === 'hood') continue;
     if (appliance === 'microwave' && column) continue;
-    sum += applianceWidthMm(appliance, sizes, types);
+    if (appliance === 'oven' && underHob) continue;
+    sum += applianceWidthMm(appliance, sizes, types, choice?.applianceModels);
   }
   return sum;
 }
@@ -1365,6 +1397,7 @@ export function buildRun(input: BuildRunInput): Run {
         requirements.appliances,
         requirements.applianceSizes,
         requirements.applianceTypes,
+        requirements,
       )
     ) {
       display = { widthMm: width, side: requirements.tallSide === 'left' ? 'end' : 'start' };
@@ -1698,6 +1731,8 @@ export function buildRun(input: BuildRunInput): Run {
         columnTop: requirements.columnTop,
         sizes: requirements.applianceSizes,
         types: requirements.applianceTypes,
+        models: requirements.applianceModels,
+        ovenBelow: anchor.appliance === 'hob' && ovenUnderHobOf(requirements),
       }),
     );
     at += anchor.widthMm;

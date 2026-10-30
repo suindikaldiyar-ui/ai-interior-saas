@@ -11,6 +11,7 @@ import { drawerBoxRulesOf, drawerProfileFor, runnerGeometry } from './drawerBox'
 import { slidingDoorCount } from './sections';
 import { handleItemModel } from './handleModel';
 import { handleSpotOf } from './handlePlace';
+import { isMechanism, mechanismOf, TYPE_TITLE } from './mechanisms';
 
 /**
  * ФУРНИТУРА ПРОИЗВОДИТЕЛЯ НА МЕСТЕ МОДУЛЯ (HARDWARE-01).
@@ -714,9 +715,23 @@ export function fittingVerdict(input: {
         });
       }
       if (range(item, 'carcassSide')) checks.push(inRange('боковина корпуса', g.carcassMm, range(item, 'carcassSide'), 'боковина цеха'));
-      /* Складной подъёмник (HF) держит фасад из двух частей; у модуля фасад один. */
-      if (/hf/.test(item.hardware.subcategory ?? '')) {
+      /*
+       * СКЛАДНОЙ ПОДЪЁМНИК ДЕРЖИТ ФАСАД ИЗ ДВУХ ЧАСТЕЙ — у модуля фасад один.
+       * Вид хода — класс механизма (`mechanismOf`), а не буквы «hf» в подвиде:
+       * по буквам ловился только Blum HF top, а складной FREE FOLD Häfele
+       * (`bifold_lift`) вставал на цельный фасад как обычный подъёмник.
+       */
+      const mechanism = mechanismOf(item);
+      if (isMechanism(mechanism) && mechanism.type === 'bifold') {
         checks.push({ label: 'фасад', state: 'fail', words: 'складной подъёмник — фасад из двух частей, а у модуля фасад один' });
+      }
+      /* Вертикальный и откидной над корпусом ходят не поворотом: сцена их хода пока не строит, место над корпусом не проверено. */
+      if (isMechanism(mechanism) && (mechanism.type === 'parallel' || mechanism.type === 'up_and_over')) {
+        checks.push({
+          label: 'ход',
+          state: 'unknown',
+          words: `${TYPE_TITLE[mechanism.type]}: ход этого вида в сцене не построен — показан поворот вверх, место над корпусом не проверено`,
+        });
       }
       if (openingOf(unit).opening !== 'lift') {
         checks.push({ label: 'открывание', state: 'fail', words: 'фасад модуля открывается не вверх — сначала выберите «Вверх (подъёмник)»' });

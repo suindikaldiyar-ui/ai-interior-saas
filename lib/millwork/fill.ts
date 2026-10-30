@@ -1072,6 +1072,13 @@ export function defaultFill(
    * читает `frontGlyph`. Высоты раскладываются здесь, и дальше их видят
    * все: раскрой, чертёж, промпт и 3D.
    */
+  /*
+   * ДУХОВОЙ ШКАФ ПОД ВАРОЧНОЙ (ЭТАП 3): ящиков нет — под панелью ниша шкафа.
+   * Его полка — деталь корпуса на высоте `cookingStackOf`, а не полка
+   * наполнения: глубина у неё своя, с воздухом у стены.
+   */
+  if (unit.appliance === 'hob' && unit.ovenBelow) return empty;
+
   if (unit.appliance && !unit.column) {
     const spec = MODULE_VARIANTS[currentVariant(unit)];
     const byPlace = spec?.frontType === 'drawers' ? (spec.drawerCount ?? 0) : 0;

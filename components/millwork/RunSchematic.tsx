@@ -11,6 +11,7 @@ import type { FurnitureRect, SceneRow } from './cabinet3d/CadScene';
  * `/demo`, хотя сама сцена подключается динамически (слой 53).
  */
 import { layerCounts, openablePartIds, sceneSlides } from '@/lib/millwork/cabinetBoxes';
+import { applianceDoorIds } from '@/lib/millwork/cookingStack';
 import { hardwareCatalog } from '@/lib/millwork/hardware';
 import SceneLayersControl from './SceneLayersControl';
 import { roomAroundRows, roomOnRow, type RoomSource } from '@/lib/millwork/room';
@@ -544,11 +545,19 @@ export default function RunSchematic({
   );
   const onRow = (target: Run) => roomOnRow(roomPlan, target);
 
-  /* «Открыть всё» берёт и механизмы, которые едут (`sceneSlides`): пантографы отсеков, полотна купе (HARDWARE-01). */
+  /*
+   * «Открыть всё» берёт и механизмы, которые едут (`sceneSlides`): пантографы отсеков, полотна купе (HARDWARE-01),
+   * и двери приборов (ЭТАП 3): духовой шкаф под варочной открывается вниз.
+   */
   const storeCatalog = useInteriorStore((state) => state.catalog);
   const hardwareItems = useMemo(() => hardwareCatalog(storeCatalog), [storeCatalog]);
   const openable = useMemo(
-    () => allRows.flatMap((row) => [...openablePartIds(row.run), ...sceneSlides(row.run, hardwareItems).map((slide) => slide.id)]),
+    () =>
+      allRows.flatMap((row) => [
+        ...openablePartIds(row.run),
+        ...sceneSlides(row.run, hardwareItems).map((slide) => slide.id),
+        ...applianceDoorIds(row.run),
+      ]),
     [allRows, hardwareItems],
   );
 

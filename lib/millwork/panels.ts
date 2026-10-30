@@ -6,7 +6,8 @@ import { millingLink, type MillingItem } from './milling';
 import { carcassMaterialName, carcassStock, type CarcassItem } from './carcassMaterial';
 import { BUILT_IN_FRIDGE_FRONTS } from './modules';
 import { hasBottom } from './moduleVariants';
-import { hasFacade, moduleFronts } from './applianceFront';
+import { hasFacade, MIN_FACADE_SPAN_MM, moduleFronts } from './applianceFront';
+import { cookingStackOf } from './cookingStack';
 import { bayLayout } from './bays';
 import {
   FRAME_WIDTH_MM,
@@ -112,6 +113,10 @@ export const TOP_PANEL_NAME = 'Крыша';
 /** У нижнего модуля крыши нет: её заменяют две планки под столешницей. */
 export const TOP_RAIL_PANEL_NAME = 'Планки верхние';
 export const BACK_PANEL_NAME = 'Задняя стенка';
+/** Полка под духовым шкафом в модуле варочной (ЭТАП 3): на ней стоит шкаф. */
+export const OVEN_SHELF_PANEL_NAME = 'Полка под духовой шкаф';
+/** Неподвижный фасад под духовым шкафом (ЭТАП 3): не створка, без петель и ручки. */
+export const OVEN_FRONT_PANEL_NAME = 'Фасад под духовым шкафом';
 export const DIVIDER_PANEL_NAME = 'Перегородка вертикальная';
 /**
  * ГОРИЗОНТАЛЬНАЯ ПЕРЕГОРОДКА ОТСЕКА (R02B) — несущая панель между зонами.
@@ -505,6 +510,8 @@ function moduleBodyPanels(
 
   // Ниша под технику: корпуса нет, есть только боковины соседей.
   const isAppliance = Boolean(unit.appliance);
+  /* Варочная с духовым шкафом под ней (ЭТАП 3): полка, ниша и фасад под шкафом — `cookingStackOf`. */
+  const cooking = unit.ovenBelow ? cookingStackOf(unit, run, production) : null;
 
   /*
    * Г-ОБРАЗНЫЙ УГЛОВОЙ МОДУЛЬ — КОРПУС В ДВЕ НОГИ (слой 55).
@@ -611,7 +618,12 @@ function moduleBodyPanels(
     });
   }
 
-  if (board('top')) {
+  /*
+   * ДУХОВОЙ ШКАФ ПОД ВАРОЧНОЙ (ЭТАП 3): верхних планок нет — ниша шкафа идёт
+   * до столешницы, а панель уходит в неё вырезом (рис. 22.3 инструкции
+   * духового шкафа). Задней стенки тоже нет — ниже.
+   */
+  if (board('top') && !cooking) {
     push({
       name:
         unit.kind === 'base' || unit.kind === 'corner_base'
@@ -734,7 +746,7 @@ function moduleBodyPanels(
   // Задняя стенка: вкладная садится в паз, накладная кроется по габариту.
   const backInset = production.backMount === 'inset' ? allow.backInsetMm : 0;
   /* Стеклянная или зеркальная задняя стенка витрины — стекло; без задней стенки — ничего (P1). */
-  if (!vit || vit.back === 'board') {
+  if ((!vit || vit.back === 'board') && !cooking) {
     push({
       name: BACK_PANEL_NAME,
       material: `ХДФ ${production.backMm}`,
@@ -746,6 +758,26 @@ function moduleBodyPanels(
       edges: { long: 0, short: 0 },
       edgeType: '0.4',
       grain: 'none',
+    });
+  }
+
+  /*
+   * ПОЛКА ДУХОВОГО ШКАФА (ЭТАП 3) — на высоте и глубины `cookingStackOf`:
+   * короче корпуса на воздух у стены (≥ 20 мм у HBG272EB3, рис. 22.3), на ней
+   * стоит шкаф. Задней стенки у модуля нет: ниша открыта сзади для воздуха.
+   */
+  if (cooking && cooking.shelfDepthMm !== null) {
+    push({
+      name: OVEN_SHELF_PANEL_NAME,
+      material,
+      stock,
+      thicknessMm: t,
+      lengthMm: inner,
+      widthMm: cooking.shelfDepthMm,
+      qty: 1,
+      edges: { long: 1, short: 0 },
+      edgeType: thick,
+      grain: 'across',
     });
   }
   }
@@ -979,6 +1011,14 @@ function moduleBodyPanels(
     fronts.leaves.forEach((leaf, i) => {
       pushFront(FACADE_PANEL_NAME, leaf.heightMm - gap, unit.widthMm - gap, [`door:${i}`]);
     });
+    /*
+     * НЕПОДВИЖНЫЙ ФАСАД ПОД ДУХОВЫМ ШКАФОМ (ЭТАП 3): от дна корпуса до полки
+     * шкафа. Не створка — петель и ручки у него нет; полоска уже фасадного
+     * минимума не режется вовсе (её закрывает рамка шкафа и цоколь).
+     */
+    if (cooking && cooking.lowerFrontMm !== null && cooking.lowerFrontMm >= MIN_FACADE_SPAN_MM) {
+      pushFront(OVEN_FRONT_PANEL_NAME, cooking.lowerFrontMm - gap, unit.widthMm - gap, ['panel:0']);
+    }
     return panels;
   }
 

@@ -185,6 +185,18 @@ function extrasPart(unit: Module): string | undefined {
     radiusKey(unit),
     /* Низ подвесной ТВ-тумбы (STAGE B): та же мебель на другой высоте — другой чертёж. Пусто не пишется. */
     unit.hangMm !== undefined ? `hang${unit.hangMm}` : '',
+    /*
+     * Модели приборов и духовой шкаф под варочной (ЭТАП 3): другой вырез,
+     * другая ниша, другой раскрой и другие деньги. Пусто не пишется
+     * (ловушка 246) — у типовых приборов отпечаток прежний до символа.
+     */
+    unit.applianceModels
+      ? Object.keys(unit.applianceModels)
+          .sort()
+          .map((kind) => `model:${kind}=${unit.applianceModels![kind as keyof typeof unit.applianceModels]}`)
+          .join(';')
+      : '',
+    unit.ovenBelow ? 'oven_below' : '',
   ].filter(Boolean);
 
   return parts.length > 0 ? parts.join(',') : undefined;

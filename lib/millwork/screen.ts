@@ -71,6 +71,13 @@ export type ScreenInput = {
    */
   tvZoneBlock?: string | null;
   /**
+   * ТЕХНИКА ПО ИНСТРУКЦИИ ПРОИЗВОДИТЕЛЯ (ЭТАП 3): `cookingFindings` рядов
+   * экрана. `blocking` — инструкция нарушена: цены нет, «Дальше» и выпуск
+   * заперты, запись идёт; `release` — нарушения нет, но выпустить нечем
+   * (модели нет, обработки движок не строит): заперт только выпуск в цех.
+   */
+  appliances?: { level: 'blocking' | 'release'; words: string }[];
+  /**
    * ПРАВКИ И ЗАКРЕПЛЕНИЯ, КОТОРЫЕ СЕЙЧАС НЕ ИСПОЛЬЗУЮТСЯ. Пусто —
    * экран про них не спрашивает (прямая без правок соседних стен).
    */
@@ -215,6 +222,9 @@ export function screenState(input: ScreenInput): ScreenState {
    */
   const hiddenEdits = input.edits ? hiddenEditsNote(input.edits) : null;
 
+  const applianceBlocks = (input.appliances ?? []).filter((f) => f.level === 'blocking').map((f) => f.words);
+  const applianceRelease = (input.appliances ?? []).filter((f) => f.level === 'release').map((f) => f.words);
+
   const channel: SurveyWarning[] = [
     ...(refusal
       ? [
@@ -242,6 +252,13 @@ export function screenState(input: ScreenInput): ScreenState {
     ...(input.tvZoneBlock
       ? [{ id: 'tv-zone-refused', severity: 'blocking' as const, message: `${input.tvZoneBlock} Пока она не встанет, цены нет и отправить клиенту нельзя.` }]
       : []),
+    ...applianceBlocks.map((words, i) => ({
+      id: `appliance-mounting-${i}`,
+      severity: 'blocking' as const,
+      /* Причина и документ — в словах проверки: нарушенная инструкция или дверь, упёршаяся в мебель. */
+      message: `${words}. Пока это не исправлено, цены нет и выпуска в цех нет.`,
+    })),
+    ...applianceRelease.map((words, i) => ({ id: `appliance-release-${i}`, severity: 'clarify' as const, message: `${words}.` })),
     ...(catalogError
       ? [
           {
@@ -337,7 +354,8 @@ export function screenState(input: ScreenInput): ScreenState {
     );
   const islandBlock = input.islandBlock ?? null;
   const tvZoneBlock = input.tvZoneBlock ?? null;
-  const unpriced = locked || mismatches.length > 0 || catalogError !== null || islandBlock !== null || tvZoneBlock !== null;
+  const unpriced =
+    locked || mismatches.length > 0 || catalogError !== null || islandBlock !== null || tvZoneBlock !== null || applianceBlocks.length > 0;
   /*
    * Выгрузку для раскроя запирает геометрия, а не каталог: непрочитанные
    * цены деталей не меняют, а несобравшаяся композиция и несходящаяся
@@ -359,7 +377,11 @@ export function screenState(input: ScreenInput): ScreenState {
         ? `Выгрузки для раскроя и печати для цеха нет: остров не встаёт на своё место — ${islandBlock.charAt(0).toLowerCase()}${islandBlock.slice(1)}`
         : tvZoneBlock !== null
           ? 'Выгрузки для раскроя и печати для цеха нет: готовая ТВ-зона не собралась — раскраивать нечего.'
-          : (input.drawerDraft ?? null);
+          : applianceBlocks.length > 0
+            ? `Выгрузки для раскроя и печати для цеха нет: ${applianceBlocks[0]}.`
+            : applianceRelease.length > 0
+              ? `Выгрузки для раскроя и печати для цеха нет: ${applianceRelease[0]}.`
+              : (input.drawerDraft ?? null);
   const exportLocked = exportLockText !== null;
 
   return {
@@ -377,7 +399,9 @@ export function screenState(input: ScreenInput): ScreenState {
             ? 'Цены нет: каталог организации не прочитался.'
             : islandBlock !== null
               ? 'Цены нет: остров не встаёт на своё место.'
-              : 'Цены нет: готовая ТВ-зона не собралась на этой стене.',
+              : tvZoneBlock !== null
+                ? 'Цены нет: готовая ТВ-зона не собралась на этой стене.'
+                : 'Цены нет: техника на этом месте не встаёт.',
     nextLocked: unpriced,
     autosaveLocked: locked,
     exportLocked,

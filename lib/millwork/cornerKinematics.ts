@@ -14,6 +14,8 @@ import {
   sceneLeaves,
   type PartBox,
 } from './cabinetBoxes';
+import { ovenShape } from './applianceShapes';
+import { cookingStackOf, ovenDoorId } from './cookingStack';
 import { cornerGeometry, cornerOwnerOf, openFrontOf, wallOfRole } from './corner';
 import { rowStandardDepthMm } from './fill';
 import { installedItem } from './fittings';
@@ -1192,6 +1194,184 @@ export function rowSweepWords(clash: RowSweepClash): string {
   const subject = clash.part === 'ручка' ? `ручка: ${door}` : door;
   const into = clash.obstaclePart === 'фальш-панель' ? 'фальш-панель' : `${clash.obstaclePart} модуля «${clash.obstacleLabel}»`;
   return `${subject} витрины «${clash.moduleLabel}» на ходу заходит в ${into} на ${formatMm(clash.depthMm)} мм`;
+}
+
+/** Заход двери духового шкафа на ходу (ЭТАП 3): что, во что и на сколько. */
+export type ApplianceDoorClash = {
+  /** Ряд двери — номер в `rows`. */
+  row: number;
+  moduleId: string;
+  moduleLabel: string;
+  /** Ключ двери в «Открыть всё» (`ovenDoorId`). */
+  doorId: string;
+  /** Чем задевает: «полотно» или «ручка». */
+  part: string;
+  obstacleRow: number;
+  obstacleModuleId: string | null;
+  obstacleLabel: string;
+  /** Во что — в винительном падеже: «корпус», «фасад», «ручку», «фальш-панель». */
+  obstaclePart: string;
+  depthMm: number;
+  /** Где наибольший заход: угол двери, градусы (0 — закрыта, 90 — горизонтально). */
+  atDeg: number;
+  /** Насколько открытая дверь выходит перед плоскостью корпусов, мм. */
+  reachMm: number;
+};
+
+/** Ход двери духового шкафа: 90° вниз — полотно встаёт горизонтально (`ovenShape`, сцена). */
+const OVEN_DOOR_ANGLE = Math.PI / 2;
+
+/**
+ * ХОД ДВЕРИ ДУХОВОГО ШКАФА ПОД ВАРОЧНОЙ (ЭТАП 3).
+ *
+ * Дверь шкафа откидывается вниз на 90° вокруг нижней кромки и встаёт
+ * горизонтально перед рядом — на полметра. Вдоль своего ряда её держит
+ * ширина ниши; а НАПРОТИВ стоят ряд через проход П-образной и остров —
+ * их `cornerKinematics` не меряет («держит проход»), а проход уже двери
+ * её не пускает. Выборка та же, что у угла и витрины (шаг 0,5°, уточнение
+ * максимумов, заход по 15 осям); дверь — те же детали, что рисует сцена
+ * (`ovenShape`: полотно, окно, ручка), на той же оси (`door.pivotMm`);
+ * препятствия — всё, что стоит мебелью: модули и фальш-панели всех рядов
+ * объекта (`runBoxesByModule`), и свой модуль тоже — фасад под шкафом и
+ * боковины ниши: ось не у той кромки уводит полотно в них.
+ */
+export function applianceDoorSweep(input: {
+  /** Ряды объекта с местами — те же, что у сцены (`runPlacements`, остров — `islandPlacement`). */
+  rows: { run: Run; placement: RowPlace }[];
+  production: ProductionSettings;
+  hardware?: Map<string, HardwareItem>;
+}): ApplianceDoorClash[] {
+  const { rows, production, hardware } = input;
+  const doors: { row: number; moving: Moving; reachMm: number }[] = [];
+  rows.forEach(({ run, placement }, row) => {
+    for (const unit of run.modules) {
+      if (unit.appliance !== 'hob' || !unit.ovenBelow) continue;
+      const stack = cookingStackOf(unit, run, production);
+      if (!stack?.ovenAt) continue;
+      const shape = ovenShape(stack.oven);
+      const [, pivotY, pivotZ] = shape.door.pivotMm;
+      const pieces = shape.parts
+        .filter((part) => 'moving' in part && part.moving === 'ovenDoor')
+        .map((part) => {
+          const size: V3 =
+            part.kind === 'box'
+              ? part.size
+              : part.kind === 'rod'
+                ? [part.length, part.radius * 2, part.radius * 2]
+                : part.kind === 'cylinder'
+                  ? [part.radius * 2, part.height, part.radius * 2]
+                  : [part.outer * 2, 1, part.outer * 2];
+          const center: V3 = part.kind === 'cylinder' ? [part.at[0], part.at[1] + part.height / 2, part.at[2]] : part.at;
+          return { center, size, part: part.name === 'ручка' || part.name === 'держатель ручки' ? 'ручка' : 'полотно' };
+        });
+      /* Деталь в осях ряда при угле `t`: поворот вокруг оси двери, вдоль ряда. */
+      const at = (s: number) => {
+        const t = OVEN_DOOR_ANGLE * s;
+        const c = Math.cos(t);
+        const sn = Math.sin(t);
+        return pieces.map((piece) => {
+          const dy = piece.center[1] - pivotY;
+          const dz = piece.center[2] - pivotZ;
+          return {
+            obb: obbOf(
+              placement,
+              [(stack.hobAt.xMm + piece.center[0]) / MM, (stack.ovenAt!.bottomMm + pivotY + dy * c - dz * sn) / MM, (pivotZ + dy * sn + dz * c) / MM],
+              [piece.size[0] / MM, piece.size[1] / MM, piece.size[2] / MM],
+              0,
+              t,
+            ),
+            part: piece.part,
+          };
+        });
+      };
+      /* Дальняя от оси точка — для отбора максимумов на уточнение (как у створки: верхняя оценка, не допуск). */
+      const reachFromPivot = Math.max(
+        ...pieces.map((piece) => Math.hypot(Math.abs(piece.center[1] - pivotY) + piece.size[1] / 2, Math.abs(piece.center[2] - pivotZ) + piece.size[2] / 2)),
+      );
+      const steps = Math.ceil(((OVEN_DOOR_ANGLE * 180) / Math.PI) / 0.5);
+      const speed = reachFromPivot * OVEN_DOOR_ANGLE;
+      const pad = speed / steps;
+      const samples: Moving['samples'] = [];
+      let swept: Box | null = null;
+      for (let i = 0; i <= steps; i += 1) {
+        const obbs = at(i / steps).map((entry) => entry.obb);
+        const boxes = obbs.map(boxOf);
+        const box: Box = {
+          min: [0, 1, 2].map((k) => Math.min(...boxes.map((b) => b.min[k])) - pad) as V3,
+          max: [0, 1, 2].map((k) => Math.max(...boxes.map((b) => b.max[k])) + pad) as V3,
+        };
+        samples.push({ obbs, box });
+        swept = swept
+          ? { min: [0, 1, 2].map((k) => Math.min(swept!.min[k], box.min[k])) as V3, max: [0, 1, 2].map((k) => Math.max(swept!.max[k], box.max[k])) as V3 }
+          : box;
+      }
+      if (!swept) continue;
+      /* Открытая дверь перед корпусом: передняя грань полотна в горизонтали — ось плюс полотно. */
+      const reachMm = Math.round((pivotZ + Math.max(...pieces.map((piece) => piece.center[1] - pivotY + piece.size[1] / 2))) * 10) / 10;
+      doors.push({
+        row,
+        reachMm,
+        moving: {
+          wall: row,
+          unit,
+          leaf: ovenDoorId(unit.id),
+          level: 'lower',
+          at,
+          steps,
+          speed,
+          samples,
+          swept,
+          conditionalHandle: false,
+        },
+      });
+    }
+  });
+  if (doors.length === 0) return [];
+
+  const solids = rows.flatMap(({ run, placement }, row) => solidsOf(shopBoxes(run, production, hardware), row, placement));
+  /* Одна строка на пару «дверь — модуль»: её самая глубокая коробка. */
+  const deepest = new Map<string, ApplianceDoorClash>();
+  for (const { row, moving, reachMm } of doors) {
+    for (const solid of solids) {
+      if (!boxesMeet(moving.swept, solid.box)) continue;
+      const worst = worstOf(moving, solid, [0, 0, 0]);
+      if (worst.depth <= TOUCH_MM) continue;
+      const key = `${moving.leaf}|${solid.wall}:${solid.moduleId ?? solid.label}`;
+      const was = deepest.get(key);
+      if (was && was.depthMm >= worst.depth) continue;
+      deepest.set(key, {
+        row,
+        moduleId: moving.unit.id,
+        moduleLabel: moving.unit.label,
+        doorId: moving.leaf,
+        part: partAt(moving, solid, worst.s),
+        obstacleRow: solid.wall,
+        obstacleModuleId: solid.moduleId,
+        obstacleLabel: solid.label,
+        obstaclePart: solid.part,
+        depthMm: worst.depth,
+        atDeg: Math.round(worst.s * ((OVEN_DOOR_ANGLE * 180) / Math.PI) * 10) / 10,
+        reachMm,
+      });
+    }
+  }
+  return Array.from(deepest.values()).sort((a, b) => a.row - b.row || b.depthMm - a.depthMm);
+}
+
+/**
+ * Заход двери шкафа словами — последствие первым: «Духовой шкаф в модуле
+ * «Варочная и духовой шкаф» стены В не открыть: дверь откидывается на 518,5 мм
+ * перед корпусом и на ходу заходит в фасад модуля «2 дверцы» стены А на
+ * 153,8 мм». Ряд в родительном падеже даёт вызывающий: словарь стен живёт в
+ * `walls.ts`.
+ */
+export function applianceDoorWords(clash: ApplianceDoorClash, rowOf: (row: number) => string): string {
+  const into =
+    clash.obstaclePart === 'фальш-панель'
+      ? `фальш-панель ${rowOf(clash.obstacleRow)}`
+      : `${clash.obstaclePart} модуля «${clash.obstacleLabel}» ${rowOf(clash.obstacleRow)}`;
+  const subject = clash.part === 'ручка' ? ', и её ручка' : ' и';
+  return `Духовой шкаф в модуле «${clash.moduleLabel}» ${rowOf(clash.row)} не открыть: дверь откидывается на ${formatMm(clash.reachMm)} мм перед корпусом${subject} на ходу заходит в ${into} на ${formatMm(clash.depthMm)} мм`;
 }
 
 /**

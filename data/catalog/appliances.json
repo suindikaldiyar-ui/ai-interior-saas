@@ -1,0 +1,278 @@
+{
+  "checkedAt": "2026-10-29",
+  "source": "https://www.bosch-home.com/kz/ru",
+  "note": "Факты техники Bosch: размеры и ниши — JSON-LD карточек bosch-home.com/kz/ru; монтажные правила — инструкции media3.bsh-group.com/Documents (номер, страница, рисунок). Карточки и PDF сохранены вне git: CATALOG_STAGING/05_APPLIANCES/BOSCH. Сверку с карточками делает scripts/appliance-facts.mjs. Цена — розница карточки на дату проверки: справка, не ставка сметы.",
+  "models": [
+    {
+      "article": "PUE611BB5E",
+      "brand": "Bosch",
+      "kind": "hob",
+      "type": "induction",
+      "series": "Серия 4",
+      "name": "Индукционная варочная панель, встраивание внакладку на столешницу, без рамы",
+      "url": "https://www.bosch-home.com/kz/ru/product/prigotovlenie-pishhi-i-vypechka/inductionandelectrohobs/inductionandelectrohobsinductionhobs/PUE611BB5E",
+      "gtin": "4242005285082",
+      "priceKzt": 229990,
+      "sizeMm": { "height": 51, "width": 592, "depth": 522 },
+      "colour": "Черный",
+      "surface": "Стеклокерамика",
+      "frame": "без рамки",
+      "controls": "TouchSelect",
+      "powerW": 4600,
+      "cooking": [
+        { "diameterMm": 180, "kw": 1.8, "boostKw": 3.1, "atMm": [132, 130] },
+        { "diameterMm": 145, "kw": 1.4, "boostKw": 2.2, "atMm": [445, 119] },
+        { "diameterMm": 180, "kw": 1.8, "boostKw": 3.1, "atMm": [132, 343] },
+        { "diameterMm": 210, "kw": 2.2, "boostKw": 3.7, "atMm": [445, 326] }
+      ],
+      "controlsAtMm": [296, 470],
+      "hob": {
+        "cutoutWidthMm": [560, 562],
+        "cutoutDepthMm": [490, 502],
+        "cutoutRadiusMm": [3, 5],
+        "builtInDepthMm": 51,
+        "worktopMinMm": 16,
+        "sideMinMm": 40,
+        "worktopDepths": [
+          { "fromMm": 585, "toMm": 600, "backMm": 50, "frontMinMm": 35 },
+          { "fromMm": 601, "toMm": null, "backMinMm": 50, "frontMinMm": 50 }
+        ],
+        "overOven": { "worktopToOvenFrontMinMm": 30, "hobToOvenMinMm": 5, "ovenNeedsFan": true },
+        "notAbove": ["fridge", "dishwasher45", "dishwasher60"],
+        "backAirGapMinMm": 20,
+        "furnitureTempMinC": 90
+      },
+      "docs": [
+        { "id": "9001867766", "url": "https://media3.bsh-group.com/Documents/9001867766_G.pdf", "title": "Руководство по эксплуатации и инструкция по монтажу (ru)", "pages": "9–11" }
+      ],
+      "rules": [
+        { "id": "cutout", "doc": "9001867766", "page": 10, "figure": "7.5", "text": "вырез 560⁺² × 490/500⁺², R3⁺²; угол среза 90°" },
+        { "id": "side", "doc": "9001867766", "page": 10, "figure": "7.5", "text": "A ≥ 40 — от выреза до стены сбоку" },
+        { "id": "worktop", "doc": "9001867766", "page": 10, "figure": "7.5", "text": "B ≥ 16 — толщина столешницы; глубина 585…600 → сзади 50, спереди ≥ 35; > 600 → сзади ≥ 50, спереди ≥ 50" },
+        { "id": "notAbove", "doc": "9001867766", "page": 9, "text": "только над шкафом подогрева или духовым шкафом с вытяжным вентилятором; не над холодильником, посудомоечной машиной, невентилируемым духовым шкафом" },
+        { "id": "overOven", "doc": "9001867766", "page": 10, "text": "над духовым шкафом: от поверхности столешницы до передней панели духового шкафа 30 мм (рис. «min. 30»), между духовым шкафом и панелью ≥ 5 мм" },
+        { "id": "air", "doc": "9001867766", "page": 10, "text": "≥ 20 между задней стенкой мебели и стеной; отверстие сверху задней стенки ≥ 550 × ≥ 45; цоколь не закрывать герметично" },
+        { "id": "temp", "doc": "9001867766", "page": 9, "text": "мебель выдерживает не менее 90 °C; столешница — прим. 60 кг" }
+      ],
+      "visual": "VISUAL_RECONSTRUCTION: зоны и панель управления — по фото карточки (STP), диаметры зон — из карточки; CAD Bosch нет"
+    },
+    {
+      "article": "PIV975DC1E",
+      "brand": "Bosch",
+      "kind": "hob",
+      "type": "induction",
+      "series": "Серия 8",
+      "name": "Индукционная варочная панель 90 cm, встраивание внакладку на столешницу, с рамой",
+      "url": "https://www.bosch-home.com/kz/ru/product/prigotovlenie-pishhi-i-vypechka/inductionandelectrohobs/inductionandelectrohobsinductionhobs/PIV975DC1E",
+      "gtin": "4242002838854",
+      "priceKzt": 684990,
+      "sizeMm": { "height": 51, "width": 916, "depth": 527 },
+      "colour": "Черный",
+      "surface": "Стеклокерамика",
+      "frame": "дизайнерская рамка",
+      "controls": "DirectSelect Premium",
+      "powerW": 11100,
+      "cooking": [
+        { "diameterMm": 180, "kw": 1.8, "boostKw": 3.1, "atMm": [147, 137] },
+        { "diameterMm": 180, "kw": 1.8, "boostKw": 3.1, "atMm": [147, 344] },
+        { "diameterMm": 320, "kw": 3.3, "boostKw": 3.7, "atMm": [458, 212] },
+        { "diameterMm": 145, "kw": 1.4, "boostKw": 2.2, "atMm": [753, 122] },
+        { "diameterMm": 210, "kw": 2.2, "boostKw": 3.7, "atMm": [753, 330] }
+      ],
+      "controlsAtMm": [458, 482],
+      "hob": {
+        "cutoutWidthMm": [880, 882],
+        "cutoutDepthMm": [490, 502],
+        "cutoutRadiusMm": [3, 5],
+        "builtInDepthMm": 51,
+        "worktopMinMm": 16,
+        "sideMinMm": 40,
+        "worktopDepths": [
+          { "fromMm": 585, "toMm": 600, "backMm": 50, "frontMinMm": 35 },
+          { "fromMm": 601, "toMm": null, "backMinMm": 50, "frontMinMm": 50 }
+        ],
+        "overOven": { "worktopToOvenFrontMinMm": 30, "hobToOvenMinMm": 5, "ovenNeedsFan": true },
+        "notAbove": ["fridge", "dishwasher45", "dishwasher60"],
+        "backAirGapMinMm": 20,
+        "furnitureTempMinC": 90,
+        "sideSlotsBelowInnerWidthMm": 880
+      },
+      "docs": [
+        { "id": "9001703323", "url": "https://media3.bsh-group.com/Documents/9001703323_C.pdf", "title": "Инструкция по установке (ru — с. 31–32)", "pages": "1–3, 31–32" },
+        { "id": "9001906411", "url": "https://media3.bsh-group.com/Documents/9001906411_F.pdf", "title": "Руководство по эксплуатации (ru)", "pages": "" }
+      ],
+      "rules": [
+        { "id": "cutout", "doc": "9001703323", "page": 1, "figure": "1", "text": "вырез 880⁺² × 490/500⁺², R3⁺²; A ≥ 40; B ≥ 16; C/D/E — как у 60 см" },
+        { "id": "slots", "doc": "9001703323", "page": 31, "figure": "5", "text": "если ширина мебели внутри меньше 880 мм, на боковых стенках делают пазы (рис. 5: ≥ 55)" },
+        { "id": "overOven", "doc": "9001703323", "page": 31, "figure": "7", "text": "над духовым шкафом: 30 мм до передней панели, ≥ 5 мм между духовым шкафом и панелью" },
+        { "id": "air", "doc": "9001703323", "page": 1, "figure": "2–3", "text": "≥ 20 за задней стенкой; отверстие сверху задней стенки ≥ 820 × ≥ 45" }
+      ],
+      "visual": "VISUAL_RECONSTRUCTION: места зон — по крестам на фото карточки (639321); какой зоне какой диаметр — по составу карточки и размеру креста, на фото не подписано; CAD Bosch нет"
+    },
+    {
+      "article": "PGH6B5K90R",
+      "brand": "Bosch",
+      "kind": "hob",
+      "type": "gas",
+      "series": "Серия 4",
+      "name": "Газовая варочная панель 60 cm, нержавеющая сталь",
+      "url": "https://www.bosch-home.com/kz/ru/product/prigotovlenie-pishhi-i-vypechka/gashobs/gashobsgashobs60cm/PGH6B5K90R",
+      "gtin": "4242005473687",
+      "priceKzt": 179990,
+      "sizeMm": { "height": 45, "width": 582, "depth": 520 },
+      "colour": "Нержавеющая сталь",
+      "surface": "Нержавеющая сталь",
+      "frame": "без рамки",
+      "controls": "поворотные ручки",
+      "powerW": 8000,
+      "cooking": [
+        { "diameterMm": 76, "kw": 1.75, "atMm": [137, 140] },
+        { "diameterMm": 108, "kw": 3.5, "atMm": [445, 140], "wok": true },
+        { "diameterMm": 76, "kw": 1.75, "atMm": [137, 339] },
+        { "diameterMm": 52, "kw": 1.0, "atMm": [445, 339] }
+      ],
+      "knobsAtMm": { "y": 466, "x": [204, 259, 314, 370], "diameterMm": 42 },
+      "grates": 2,
+      "hob": {
+        "cutoutWidthMm": [560, 562],
+        "cutoutDepthMm": [480, 492],
+        "cutoutRadiusMm": null,
+        "builtInDepthMm": 45,
+        "worktopMinMm": 20,
+        "worktopMaxMm": 49,
+        "sideMinMm": 100,
+        "backMinMm": 50,
+        "frontMinMm": 50,
+        "worktopDepthMinMm": 600,
+        "overOven": { "worktopToOvenRearMinMm": 80, "hobToOvenMinMm": 5, "ovenNeedsFan": true },
+        "hoodMinMm": 650,
+        "wallCabinetsAboveHobMinMm": 340,
+        "wallCabinetsAboveWorktopMinMm": 400,
+        "worktopFromFloorMinMm": 850,
+        "notAbove": ["fridge", "dishwasher45", "dishwasher60"],
+        "gas": { "thread": "G 1/2", "connectorDownMm": 55, "connectorFromBackMm": 35 }
+      },
+      "docs": [
+        { "id": "8001313192", "url": "https://media3.bsh-group.com/Documents/8001313192_I.pdf", "title": "Инструкция по установке (ru — с. 11–12, рис. 1–7)", "pages": "1–3, 11–12" },
+        { "id": "9002041209", "url": "https://media3.bsh-group.com/Documents/9002041209_A.pdf", "title": "Руководство по эксплуатации (ru)", "pages": "" },
+        { "id": "27988575", "url": "https://media3.bsh-group.com/Line_Drawings/1200x/27988575_Line_Gas_60cm_F_CV_SV_3GW_Steel_all_ru-KZ.webp", "title": "Габаритный чертёж карточки", "pages": "" }
+      ],
+      "rules": [
+        { "id": "cutout", "doc": "8001313192", "page": 1, "figure": "3", "text": "вырез 560⁺² × 480/490⁺²; ≥ 50 сзади и спереди; глубина столешницы ≥ 600" },
+        { "id": "side", "doc": "27988575", "page": null, "figure": "A", "text": "до стены сбоку ≥ 100 (чертёж карточки); в инструкции 8001313192 рис. 3 — ≥ 60: документы расходятся, берётся строгое" },
+        { "id": "worktop", "doc": "8001313192", "page": 11, "text": "столешница толщиной от 20 до 50 мм (рис. 3: ≥ 20 < 50; чертёж карточки: ≥ 20 ≤ 50 — берётся строгое < 50); 12…20 — с распоркой сервиса" },
+        { "id": "notAbove", "doc": "8001313192", "page": 11, "text": "не устанавливать на холодильник, стиральную и посудомоечную машины; на духовой шкаф — только при наличии в шкафу системы принудительной вентиляции" },
+        { "id": "overOven", "doc": "8001313192", "page": 2, "figure": "7", "text": "над духовым шкафом: от поверхности столешницы до духового шкафа ≥ 80 (под газовым штуцером), панель уходит в столешницу на 45, между панелью и духовым шкафом ≥ 5" },
+        { "id": "hood", "doc": "8001313192", "page": 1, "figure": "1", "text": "вытяжка ≥ 650 над панелью; навесные шкафы сбоку ≥ 340 над панелью и ≥ 400 над столешницей; столешница ≥ 850 от пола" },
+        { "id": "gas", "doc": "8001313192", "page": 12, "text": "угловое соединение G 1/2; гибкая подводка не касается выдвижных элементов мебели и не идёт через шкаф" }
+      ],
+      "visual": "VISUAL_RECONSTRUCTION: горелки, решётки и ручки — по фото карточки (STP) и чертежу 27988575; диаметры горелок сняты с фото, в карточке их нет; CAD Bosch нет"
+    },
+    {
+      "article": "PCS7A5I90",
+      "brand": "Bosch",
+      "kind": "hob",
+      "type": "gas",
+      "series": "Серия 6",
+      "name": "Газовая варочная панель 75 cm, нержавеющая сталь",
+      "url": "https://www.bosch-home.com/kz/ru/product/prigotovlenie-pishhi-i-vypechka/gashobs/gashobsgashobs75cm/PCS7A5I90",
+      "gtin": "4242005496129",
+      "priceKzt": 416990,
+      "sizeMm": { "height": 45, "width": 750, "depth": 520 },
+      "colour": "Нержавеющая сталь",
+      "surface": "Нержавеющая сталь",
+      "frame": "без рамки",
+      "controls": "поворотные ручки FlameSelect",
+      "powerW": 12500,
+      "cooking": [
+        { "diameterMm": 128, "kw": 5.0, "atMm": [161, 238], "wok": true },
+        { "diameterMm": 76, "kw": 1.75, "atMm": [375, 125] },
+        { "diameterMm": 92, "kw": 3.0, "atMm": [601, 125] },
+        { "diameterMm": 52, "kw": 1.0, "atMm": [375, 353] },
+        { "diameterMm": 76, "kw": 1.75, "atMm": [600, 337] }
+      ],
+      "knobsAtMm": { "y": 469, "x": [204, 255, 304, 431, 480], "diameterMm": 42 },
+      "grates": 3,
+      "hob": {
+        "cutoutWidthMm": [560, 562],
+        "cutoutDepthMm": [480, 492],
+        "cutoutRadiusMm": null,
+        "builtInDepthMm": 45,
+        "worktopMinMm": 20,
+        "worktopMaxMm": 49,
+        "sideMinMm": 150,
+        "backMinMm": 55,
+        "frontMinMm": 50,
+        "worktopDepthMinMm": 600,
+        "overOven": { "worktopToOvenRearMinMm": 80, "hobToOvenMinMm": 5, "ovenNeedsFan": true },
+        "hoodMinMm": 650,
+        "wallCabinetsAboveHobMinMm": 370,
+        "wallCabinetsAboveWorktopMinMm": 430,
+        "worktopFromFloorMinMm": 850,
+        "notAbove": ["fridge", "dishwasher45", "dishwasher60"],
+        "gas": { "thread": "G 1/2", "connectorDownMm": 55, "connectorFromBackMm": 35 }
+      },
+      "docs": [
+        { "id": "8001328097", "url": "https://media3.bsh-group.com/Documents/8001328097_I.pdf", "title": "Инструкция по установке (ru — с. 13, рис. 2, 4)", "pages": "1–2, 13" },
+        { "id": "8001327366", "url": "https://media3.bsh-group.com/Documents/8001327366_H.pdf", "title": "Руководство по эксплуатации (kk/ru)", "pages": "" },
+        { "id": "27825541", "url": "https://media3.bsh-group.com/Line_Drawings/1200x/27825541_Line_Gas_75cm_F_SV_4GdWF_Steel_Continous_all_ru-KZ.webp", "title": "Габаритный чертёж карточки", "pages": "" }
+      ],
+      "rules": [
+        { "id": "cutout", "doc": "8001328097", "page": 1, "figure": "4", "text": "вырез 560⁺² × 480/490⁺²; ≥ 55 сзади; ≥ 50 спереди; глубина столешницы ≥ 600" },
+        { "id": "side", "doc": "8001328097", "page": 1, "figure": "4", "text": "до стены сбоку ≥ 150 (рис. 4 и чертёж карточки 27825541)" },
+        { "id": "worktop", "doc": "8001328097", "page": 1, "figure": "4", "text": "столешница ≥ 20 < 50 (чертёж карточки: ≤ 50 — берётся строгое)" },
+        { "id": "overOven", "doc": "8001328097", "page": 2, "figure": "7", "text": "над духовым шкафом: от поверхности столешницы до духового шкафа ≥ 80, между панелью и духовым шкафом ≥ 5" },
+        { "id": "hood", "doc": "8001328097", "page": 1, "figure": "2", "text": "вытяжка ≥ 650 над панелью; навесные шкафы сбоку ≥ 370 над панелью и ≥ 430 над столешницей; столешница ≥ 850 от пола" }
+      ],
+      "visual": "VISUAL_RECONSTRUCTION: горелки, три решётки и пять ручек — по фото карточки (STP) и чертежу 27825541; диаметры горелок сняты с фото; CAD Bosch нет"
+    },
+    {
+      "article": "HBG272EB3",
+      "brand": "Bosch",
+      "kind": "oven",
+      "type": "built_in_electric",
+      "series": "Серия 4",
+      "name": "Встраиваемый электрический духовой шкаф 60 × 60 cm, черный",
+      "url": "https://www.bosch-home.com/kz/ru/product/prigotovlenie-pishhi-i-vypechka/plity-i-duhovye-shkafy/vstraivaemyj-jelektricheskij-duhovoj-shkaf/HBG272EB3",
+      "gtin": "4242005464760",
+      "priceKzt": 499990,
+      "sizeMm": { "height": 595, "width": 594, "depth": 548 },
+      "colour": "Черный",
+      "surface": "дверь: нержавеющая сталь, панель черная",
+      "frame": "рамка 19,5",
+      "controls": "сенсорное управление, белый LED",
+      "powerW": null,
+      "oven": {
+        "bodyFrontMm": { "height": 570, "depth": 405 },
+        "bodyRearHeightMm": 535,
+        "frameMm": 19.5,
+        "panelHeightMm": 96,
+        "handleMaxMm": 50,
+        "volumeL": 71,
+        "coolingFan": true,
+        "softClose": true,
+        "underWorktop": { "nicheHeightMm": [600, 604], "nicheWidthMm": [560, 568], "nicheDepthMinMm": 550, "backAirGapMinMm": 20, "worktopDepthMinMm": 600 },
+        "column": { "nicheHeightMm": [585, 595], "nicheHeightNominalMm": 590, "nicheWidthMm": [560, 568], "nicheDepthMinMm": 550, "backAirGapMinMm": 20 },
+        "sideGapMinMm": 5,
+        "furnitureTempMinC": 95,
+        "frontsTempMinC": 70
+      },
+      "docs": [
+        { "id": "9001910443", "url": "https://media3.bsh-group.com/Documents/9001910443_C.pdf", "title": "Руководство по эксплуатации и монтажу (ru, с. 31–34)", "pages": "9, 31–34" },
+        { "id": "9001333487", "url": "https://media3.bsh-group.com/Documents/9001333487_A.pdf", "title": "Лист 1 с.", "pages": "" },
+        { "id": "MCZ_01971963", "url": "https://media3.bsh-group.com/Line_Drawings/1200x/MCZ_01971963_1375445_E1ACP4FN1_ru-KZ.webp", "title": "Габаритный чертёж карточки", "pages": "" }
+      ],
+      "rules": [
+        { "id": "body", "doc": "MCZ_01971963", "page": null, "figure": "габаритный", "text": "фронт 595 × 594, корпус 548 вглубь; корпус 570 (405 от рамки), сзади 535; панель управления 96; рамка 19,5; ручка до 50" },
+        { "id": "underWorktop", "doc": "9001910443", "page": 32, "figure": "22.3", "text": "под столешницей: ниша ≥ 600⁺⁴ × 560⁺⁸ × ≥ 550, сзади ≥ 20; отверстие для вентиляции в разделительной перегородке; глубина столешницы ≥ 600" },
+        { "id": "induction", "doc": "9001910443", "page": 32, "text": "в комбинации с индукционной варочной панелью зазор между столешницей и прибором не закрывать дополнительной планкой" },
+        { "id": "gas", "doc": "9001910443", "page": 32, "text": "под газовой варочной панелью прибор не должен соприкасаться с газовым штуцером панели" },
+        { "id": "fan", "doc": "9001910443", "page": 9, "text": "охлаждающий вентилятор включается во время работы автоматически" },
+        { "id": "column", "doc": "9001910443", "page": 33, "figure": "22.4–22.5", "text": "в колонне: 585…595 (590) × 560⁺⁸ × ≥ 550, сзади ≥ 20; два прибора — отверстия в промежуточных полках, вентиляция цоколя ≥ 200 см²" },
+        { "id": "temp", "doc": "9001910443", "page": 31, "text": "мебель выдерживает до 95 °C, соседние фасады — до 70 °C; не устанавливать за мебельной дверцей" },
+        { "id": "sides", "doc": "9001910443", "page": 34, "figure": "22.8", "text": "по центру ниши; до соседних фасадов ≥ 5" }
+      ],
+      "visual": "VISUAL_RECONSTRUCTION: фронт, панель с дисплеем, ручка, камера с направляющими — по габаритному чертежу и фото карточки (PGA1, PGA2); CAD Bosch нет"
+    }
+  ]
+}

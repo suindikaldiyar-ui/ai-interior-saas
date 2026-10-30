@@ -18,6 +18,7 @@ export const MAX_WIDTH = STANDARD_WIDTHS[STANDARD_WIDTHS.length - 1];
 
 import { carcassHeightMm, plinthMm, upperBottomMm } from './shop';
 import type { ProductionSettings } from '@/types/catalog';
+import { applianceModel, type ApplianceModel } from './appliances';
 
 export const GEOMETRY = {
   base: {
@@ -317,7 +318,14 @@ export function applianceWidthMm(
    * ширина обязана прийти оттуда, а не из головы замерщика.
    */
   types?: Partial<Record<ApplianceKind, string>>,
+  /**
+   * Выбранные модели производителя (ЭТАП 3): у модели ширина модуля под
+   * её вырез — варочной 90 см нужен модуль 900, а не 600.
+   */
+  models?: Partial<Record<ApplianceKind, string>>,
 ): number {
+  const model = applianceModel(models?.[appliance]);
+  if (model) return modelModuleWidthMm(model);
   const custom = sizes?.[appliance]?.widthMm;
   if (custom && custom > 0) return Math.round(custom);
 
@@ -330,11 +338,38 @@ export function applianceWidthMm(
  * Какие приборы стоят в модуле. У колонны их два, и потерять второй
  * нельзя: в смете это духовка без микроволновки, за которую заплатили.
  */
-export function moduleAppliances(unit: Pick<Module, 'appliance' | 'column'>): ApplianceKind[] {
+export function moduleAppliances(unit: Pick<Module, 'appliance' | 'column' | 'ovenBelow'>): ApplianceKind[] {
   if (unit.column) {
     return [unit.column.bottom as ApplianceKind, unit.column.top as ApplianceKind];
   }
+  /* Духовой шкаф под варочной (ЭТАП 3): два прибора в одном нижнем модуле, оба — в смету. */
+  if (unit.appliance === 'hob' && unit.ovenBelow) return ['hob', 'oven'];
   return unit.appliance ? [unit.appliance] : [];
+}
+
+/**
+ * ДУХОВКА ПОД ВАРОЧНОЙ — ЕСЛИ ВЫБРАНО И ОБА ПРИБОРА В СОСТАВЕ (ЭТАП 3).
+ * Выбор без одного из приборов ничего не меняет: духовка без панели стоит
+ * пеналом, панель без духовки — над ящиками, как до этапа.
+ */
+export function ovenUnderHobOf(req: { appliances: ApplianceKind[]; ovenUnderHob?: true | boolean }): boolean {
+  return req.ovenUnderHob === true && req.appliances.includes('hob') && req.appliances.includes('oven');
+}
+
+/**
+ * ШИРИНА МОДУЛЯ ПОД МОДЕЛЬ — наименьшая стандартная, в которую ложится вырез (ЭТАП 3).
+ *
+ * Варочная 60 и 75 см (вырез 560) — модуль 600; 90 см (вырез 880) — 900.
+ * Это ширина КОРПУСА, а не прибора: панель 750 накрывает модуль 600 сверху,
+ * и её свес по бокам — не повод ставить модуль шире. Духовой шкаф — 600:
+ * ниша 560…568 и есть внутренняя ширина корпуса 600 при боковинах 16…20.
+ */
+export function modelModuleWidthMm(model: ApplianceModel): number {
+  if (model.kind === 'hob' && model.hob) {
+    const need = model.hob.cutoutWidthMm[1];
+    return STANDARD_WIDTHS.find((w) => w >= need) ?? MAX_WIDTH;
+  }
+  return APPLIANCE_SLOTS[model.kind].widthMm;
 }
 
 /**

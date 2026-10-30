@@ -13,9 +13,13 @@
  * кнопки над сценой, и приёмка.
  */
 
-export type SceneLayer = 'carcass' | 'partitions' | 'shelves' | 'drawers' | 'fronts' | 'hardware';
+/*
+ * ТЕХНИКА (ЭТАП 3) — свой слой: варочная, духовой шкаф и прочие приборы — не
+ * корпус и не фурнитура. До этапа коробки приборов шли слоем корпуса.
+ */
+export type SceneLayer = 'carcass' | 'partitions' | 'shelves' | 'drawers' | 'fronts' | 'hardware' | 'appliances';
 
-export const SCENE_LAYERS: readonly SceneLayer[] = ['carcass', 'partitions', 'shelves', 'drawers', 'fronts', 'hardware'];
+export const SCENE_LAYERS: readonly SceneLayer[] = ['carcass', 'partitions', 'shelves', 'drawers', 'fronts', 'hardware', 'appliances'];
 
 export const SCENE_LAYER_TITLE: Record<SceneLayer, string> = {
   carcass: 'Корпус',
@@ -24,6 +28,7 @@ export const SCENE_LAYER_TITLE: Record<SceneLayer, string> = {
   drawers: 'Ящики',
   fronts: 'Фасады',
   hardware: 'Фурнитура',
+  appliances: 'Техника',
 };
 
 export type SceneLayers = Record<SceneLayer, boolean>;
@@ -35,6 +40,7 @@ export const ALL_LAYERS: SceneLayers = {
   drawers: true,
   fronts: true,
   hardware: true,
+  appliances: true,
 };
 
 /**
@@ -59,25 +65,25 @@ export const SCENE_PRESETS: readonly { key: ScenePreset; title: string; note: st
     key: 'frame',
     title: 'Каркас',
     note: 'Корпус и перегородки без фасадов и наполнения.',
-    layers: { carcass: true, partitions: true, shelves: false, drawers: false, fronts: false, hardware: false },
+    layers: { carcass: true, partitions: true, shelves: false, drawers: false, fronts: false, hardware: false, appliances: false },
   },
   {
     key: 'fill',
     title: 'Наполнение',
     note: 'Только содержимое: полки, перегородки, ящики, штанги — без корпуса и фасадов.',
-    layers: { carcass: false, partitions: true, shelves: true, drawers: true, fronts: false, hardware: true },
+    layers: { carcass: false, partitions: true, shelves: true, drawers: true, fronts: false, hardware: true, appliances: false },
   },
   {
     key: 'fronts',
     title: 'Фасады',
     note: 'Фасады и их фурнитура без корпуса: видно, что открывается.',
-    layers: { carcass: false, partitions: false, shelves: false, drawers: false, fronts: true, hardware: true },
+    layers: { carcass: false, partitions: false, shelves: false, drawers: false, fronts: true, hardware: true, appliances: false },
   },
   {
     key: 'hardware',
     title: 'Фурнитура',
     note: 'Только фурнитура: петли, ручки, штанги — условные узлы, не артикулы.',
-    layers: { carcass: false, partitions: false, shelves: false, drawers: false, fronts: false, hardware: true },
+    layers: { carcass: false, partitions: false, shelves: false, drawers: false, fronts: false, hardware: true, appliances: false },
   },
 ];
 

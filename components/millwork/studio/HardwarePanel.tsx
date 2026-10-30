@@ -21,6 +21,7 @@ import {
 } from '@/lib/millwork/fittings';
 import { HANDLE_FINISH_TITLE, handleItemModel } from '@/lib/millwork/handleModel';
 import { hardwareOf } from '@/lib/millwork/hardware';
+import { isMechanism, mechanismOf, mechanismWords } from '@/lib/millwork/mechanisms';
 import {
   IMAGE_KIND_WORDS,
   MODEL3D_WORDS,
@@ -1152,6 +1153,8 @@ function HardwareDetail({
   const drawingWords = sceneDrawing(item);
   /* Модель ручки (HANDLE-REAL): что показано по размерам паспорта, а что условно. */
   const shaped = item.hardware.category === 'handle' ? handleItemModel(item) : null;
+  /* Класс механизма (ЭТАП 2): только у изделий производителя — у позиции компании записи изделия нет. */
+  const mechanism = item.hardware.manufacturer ? mechanismOf(item) : null;
   const purpose = SLOTS_FOR_PURPOSE.filter((slot) => slotAccepts(slot, item)).map((slot) => FITTING_SLOT_TITLE[slot]);
   const groupTitle = HARDWARE_GROUPS.find((g) => g.categories.includes(item.hardware.category))?.title ?? 'Прочее';
   const dims = keyDims(item);
@@ -1384,6 +1387,14 @@ function HardwareDetail({
                 {groupTitle}
                 {purpose.length > 0 ? ` · место: ${purpose.join(', ').toLowerCase()}` : ''}
               </dd>
+              {mechanism && (
+                <>
+                  <dt className="text-graphiteMw">Класс</dt>
+                  <dd data-hw-class={isMechanism(mechanism) ? `${mechanism.system}:${mechanism.type ?? mechanism.role}` : 'none'}>
+                    {isMechanism(mechanism) ? mechanismWords(mechanism) : `не механизм: ${mechanism.why}`}
+                  </dd>
+                </>
+              )}
               {h.movementType && (
                 <>
                   <dt className="text-graphiteMw">Механизм</dt>

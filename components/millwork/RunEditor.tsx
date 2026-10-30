@@ -19,6 +19,7 @@ import { variantsToAdd } from '@/lib/millwork/moduleVariants';
 import { DEFAULT_MEZZANINE_MM, SECTION_SPECS } from '@/lib/millwork/sections';
 import { hasMezzanine, mezzanineHeightMm, tallStorageOf } from '@/lib/millwork/fill';
 import { ceilingGapOf } from '@/lib/millwork/shop';
+import { applianceModel, modelsFor } from '@/lib/millwork/appliances';
 import {
   mezzanineOf,
   zoneAppliances,
@@ -70,6 +71,10 @@ export type CompositionPatch = {
   applianceSizes?: Partial<Record<ApplianceKind, ApplianceSize>>;
   /** Исполнение прибора: газовая или электрическая, наклонная или купольная. */
   applianceTypes?: Partial<Record<ApplianceKind, string>>;
+  /** Модель производителя (ЭТАП 3): артикул по прибору; пустая строка — снять модель. */
+  applianceModels?: Partial<Record<ApplianceKind, string>>;
+  /** Духовой шкаф под варочной, а не в колонне (ЭТАП 3). */
+  ovenUnderHob?: boolean;
 };
 
 /**
@@ -562,7 +567,61 @@ export default function RunEditor({
                 />
               ))}
 
-          {wanted.has('oven') && wanted.has('microwave') && (
+          {/*
+            * МОДЕЛЬ ПРОИЗВОДИТЕЛЯ (ЭТАП 3) — артикул с вырезом, нишей и
+            * монтажными правилами документа. «Типовая» — прибор без модели,
+            * как до этапа.
+            */}
+          {(['hob', 'oven'] as ApplianceKind[])
+            .filter((appliance) => wanted.has(appliance))
+            .map((appliance) => (
+              <ApplianceModelPicker
+                key={`model-${appliance}`}
+                appliance={appliance}
+                chosen={requirements.applianceModels?.[appliance] ?? ''}
+                onPick={(article) =>
+                  onComposition({
+                    applianceModels: { ...(requirements.applianceModels ?? {}), [appliance]: article },
+                  })
+                }
+              />
+            ))}
+
+          {wanted.has('oven') && wanted.has('hob') && (
+            <div className="mt-3" data-oven-place>
+              <span className="mw-label">Духовой шкаф</span>
+              <div className="mt-1 flex flex-wrap gap-1">
+                {(
+                  [
+                    [false, 'В колонне'],
+                    [true, 'Под варочной'],
+                  ] as [boolean, string][]
+                ).map(([value, title]) => {
+                  const on = (requirements.ovenUnderHob === true) === value;
+                  return (
+                    <button
+                      key={title}
+                      type="button"
+                      onClick={() => onComposition({ ovenUnderHob: value })}
+                      aria-pressed={on}
+                      data-oven-under-hob={value ? 'yes' : 'no'}
+                      className={`mw-btn ${on ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+                    >
+                      {title}
+                    </button>
+                  );
+                })}
+              </div>
+              {requirements.ovenUnderHob === true && (
+                <p className="mt-1 text-[13px] leading-snug text-graphiteMw">
+                  Два прибора в одном нижнем модуле: панель — в вырезе столешницы, духовой шкаф — в нише под ней на
+                  своей полке. Зазоры между ними проверяются по инструкциям моделей.
+                </p>
+              )}
+            </div>
+          )}
+
+          {wanted.has('oven') && wanted.has('microwave') && requirements.ovenUnderHob !== true && (
             <p className="mt-2 text-[13px] leading-snug text-graphiteMw">
               Духовка и микроволновка встают в одну колонну 600 мм — так их
               и ставят, двумя пеналами это лишние 600 мм стены.
@@ -1284,6 +1343,67 @@ export default function RunEditor({
  * Замеренный габарит по-прежнему сильнее типа — про это сказано прямо,
  * иначе замерщик решит, что кнопка ничего не делает.
  */
+/**
+ * МОДЕЛЬ ПРИБОРА ПРОИЗВОДИТЕЛЯ (ЭТАП 3): «Типовая» и модели из фактов.
+ * Под кнопками — что выбрано: габарит, вырез или ниша и документ монтажа.
+ */
+function ApplianceModelPicker({
+  appliance,
+  chosen,
+  onPick,
+}: {
+  appliance: ApplianceKind;
+  chosen: string;
+  onPick: (article: string) => void;
+}) {
+  const list = modelsFor(appliance);
+  if (list.length === 0) return null;
+  const current = applianceModel(chosen);
+  return (
+    <div className="mt-3" data-appliance-models={appliance}>
+      <span className="mw-label">{APPLIANCE_SLOTS[appliance].title}: модель</span>
+      <div className="mt-1 flex flex-wrap gap-1">
+        <button
+          type="button"
+          onClick={() => onPick('')}
+          aria-pressed={!current}
+          data-appliance-model=""
+          className={`mw-btn ${!current ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+        >
+          Типовая
+        </button>
+        {list.map((model) => {
+          const on = current?.article === model.article;
+          return (
+            <button
+              key={model.article}
+              type="button"
+              onClick={() => onPick(model.article)}
+              aria-pressed={on}
+              data-appliance-model={model.article}
+              title={model.name}
+              className={`mw-btn ${on ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+            >
+              {model.brand} {model.article}
+            </button>
+          );
+        })}
+      </div>
+      <p className="mt-1 text-[13px] leading-snug text-graphiteMw" data-appliance-model-words>
+        {current
+          ? `${current.name} · ${current.sizeMm.width} × ${current.sizeMm.depth} мм${
+              current.hob
+                ? `, вырез ${current.hob.cutoutWidthMm[0]} × ${current.hob.cutoutDepthMm[0]}…${current.hob.cutoutDepthMm[1]} мм`
+                : current.oven
+                  ? `, ниша под столешницей ${current.oven.underWorktop.nicheHeightMm[0]}…${current.oven.underWorktop.nicheHeightMm[1]} мм`
+                  : ''
+            } · монтаж — ${current.docs[0].id}`
+          : 'Без модели: размеры типовые, монтажные правила производителя не проверяются.'}
+      </p>
+    </div>
+  );
+}
+
 function ApplianceTypePicker({
   appliance,
   chosen,

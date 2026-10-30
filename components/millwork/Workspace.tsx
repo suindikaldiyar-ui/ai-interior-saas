@@ -30,6 +30,7 @@ import { facadeOps, leafFrontSizes, moduleLeaves, reliefMisfits, type FacadePatc
 import type { ReliefLeaf } from '@/lib/millwork/facadeRelief';
 import { paletteFromCatalog } from '@/lib/millwork/palette';
 import {
+  applianceDoorFindings,
   contextMismatches,
   cornerClashMismatches,
   vitrineSweepMismatches,
@@ -76,6 +77,7 @@ import { flatRadiusFronts, staleRadius } from '@/lib/millwork/radiusPlace';
 import { ratesFromCatalog } from '@/lib/millwork/rates';
 import { markShownMm, marksOfZone, moduleCarcassHeightMm, rowStandardDepthMm } from '@/lib/millwork/fill';
 import { bayEnvelope, drawerReleaseBlock } from '@/lib/millwork/bays';
+import { cookingFindings } from '@/lib/millwork/cookingStack';
 import { hardwareByCategory, hardwareCatalog, lightReferences } from '@/lib/millwork/hardware';
 import { roomAroundRows, roomSourceOf, type RoomSource } from '@/lib/millwork/room';
 import { normalizeLighting, type RoomLighting } from '@/lib/millwork/lightingState';
@@ -470,6 +472,24 @@ function modulesWord(count: number): string {
 /** Номер ряда острова среди рядов экрана: у стен номера 0, 1, 2. */
 const ISLAND_ROW = -1;
 
+/**
+ * МОДЕЛЬ ПРИБОРА И МЕСТО ДУХОВКИ (ЭТАП 3) — поверх шаблона, как тип прибора.
+ * Пустая строка в выборе — «снять модель»: прибор снова типовой, и ключа в
+ * требованиях нет вовсе (ловушка 246).
+ */
+function modelChoice(
+  composition: CompositionPatch,
+  base: RunRequirements,
+): Pick<RunRequirements, 'applianceModels' | 'ovenUnderHob'> {
+  const models: Partial<Record<ApplianceKind, string>> = { ...(base.applianceModels ?? {}), ...(composition.applianceModels ?? {}) };
+  for (const key of Object.keys(models) as ApplianceKind[]) if (!models[key]) delete models[key];
+  const under = composition.ovenUnderHob ?? base.ovenUnderHob === true;
+  return {
+    applianceModels: Object.keys(models).length > 0 ? models : undefined,
+    ovenUnderHob: under ? true : undefined,
+  };
+}
+
 export default function Workspace(props: WorkspaceProps) {
   /*
    * Комплектация одна (см. SINGLE_VARIANT). Ключ остаётся: он держит
@@ -782,6 +802,8 @@ export default function Workspace(props: WorkspaceProps) {
     fridgeType: props.initialState?.requirements?.fridgeType,
     glassDisplay: props.initialState?.requirements?.glassDisplay,
     applianceTypes: props.initialState?.requirements?.applianceTypes,
+    applianceModels: props.initialState?.requirements?.applianceModels,
+    ovenUnderHob: props.initialState?.requirements?.ovenUnderHob,
     upperToCeiling: props.initialState?.requirements?.options?.upperToCeiling,
     /*
      * ЗАКРЕПЛЕНИЕ ПРИБОРА ЗА СТЕНОЙ И ЕГО ГАБАРИТЫ ВОЗВРАЩАЮТСЯ С ОБЪЕКТОМ.
@@ -1014,6 +1036,7 @@ export default function Workspace(props: WorkspaceProps) {
       applianceWalls: composition.applianceWalls ?? base.applianceWalls,
       applianceSizes: composition.applianceSizes ?? base.applianceSizes,
       applianceTypes: composition.applianceTypes ?? base.applianceTypes,
+      ...modelChoice(composition, base),
       manualAnchors: {},
       options: {
         ...base.options,
@@ -1065,6 +1088,8 @@ export default function Workspace(props: WorkspaceProps) {
       applianceWalls: composition.applianceWalls ?? base.applianceWalls,
       applianceSizes: composition.applianceSizes ?? base.applianceSizes,
       applianceTypes: composition.applianceTypes ?? base.applianceTypes,
+      /* Модель прибора и место духовки (ЭТАП 3) — выбор кухни, как тип прибора. */
+      ...modelChoice(composition, base),
       options: {
         ...base.options,
         upperToCeiling: composition.upperToCeiling ?? base.options.upperToCeiling,
@@ -1708,7 +1733,8 @@ export default function Workspace(props: WorkspaceProps) {
    * ОСТРОВ В СЦЕНЕ (OVAL & RADIUS) — от места ряда стены А (`islandPlacement`),
    * последним рядом: камеру ставит стена А, комната стоит вокруг стен.
    */
-  const sceneRowsAll = useMemo<SceneRow[]>(
+  /* Место у каждого ряда есть — стены от `runPlacements`, остров от `islandPlacement`: им меряют и ход двери шкафа. */
+  const sceneRowsAll = useMemo<(SceneRow & { placement: NonNullable<SceneRow['placement']> })[]>(
     () =>
       island && sceneRows[0]?.placement
         ? [...sceneRows, { run: island, placement: islandPlacement(sceneRows[0].placement, island) }]
@@ -3795,6 +3821,17 @@ export default function Workspace(props: WorkspaceProps) {
     () => drawerReleaseBlock(rowsAll, { hardware: hardwareItems, production }),
     [rowsAll, hardwareItems, production],
   );
+  /*
+   * Техника по инструкции производителя (ЭТАП 3): вырез, ниша и зазоры — по рядам экрана;
+   * дверь духового шкафа на ходу — по рядам сцены с их местами, как у угла и витрины.
+   */
+  const applianceFindings = useMemo(
+    () => [
+      ...rowsAll.flatMap((row) => cookingFindings(row, production)),
+      ...applianceDoorFindings({ rows: sceneRowsAll, production, hardware: hardwareItems }),
+    ],
+    [rowsAll, sceneRowsAll, production, hardwareItems],
+  );
   const screen = useMemo(
     () =>
       screenState({
@@ -3811,6 +3848,8 @@ export default function Workspace(props: WorkspaceProps) {
         islandBlock: islandProblems.find((problem) => problem.severity === 'blocking')?.message ?? null,
         /* Готовая ТВ-зона не помещается на стене — словами раскладки, цены нет (STAGE B). */
         tvZoneBlock: tvZoneFitRefusal(requirements, active.run),
+        /* Варочная и духовой шкаф по документам Bosch (ЭТАП 3): нарушено — цены нет; нечем выпустить — выпуск заперт. */
+        appliances: applianceFindings,
         /*
          * Правки и закрепления, которые сейчас не участвуют: те же
          * `editedRuns`, `editedWalls` и `applianceWalls`, что держит экран.
@@ -3837,6 +3876,7 @@ export default function Workspace(props: WorkspaceProps) {
       warnings,
       catalogError,
       drawerDraft,
+      applianceFindings,
       islandProblems,
       active.run,
       input.runWallId,

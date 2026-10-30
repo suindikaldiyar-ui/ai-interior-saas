@@ -1,7 +1,10 @@
 import { columnNiches, moduleCarcassHeightMm, upperBottomFor } from '@/lib/millwork/fill';
 import { carcassHeightMm, plinthMm } from './shop';
+import { cookingModules, ovenNicheOf } from './cookingStack';
 import {
   BACK_PANEL_NAME,
+  OVEN_FRONT_PANEL_NAME,
+  OVEN_SHELF_PANEL_NAME,
   BOTTOM_PANEL_NAME,
   DIVIDER_PANEL_NAME,
   FACADE_PANEL_NAME,
@@ -29,7 +32,7 @@ import { DRAWER_BOTTOM_PANEL_NAME, DRAWER_SIDE_PANEL_NAME, DRAWER_WALL_PANEL_NAM
 import { shopOf } from './shop';
 import { FRAME_WIDTH_MM, frontKey, frontOf, isFramed } from './frontMaterial';
 import { ISLAND_BACK_PANEL_NAME, islandBackOf } from './island';
-import { moduleFronts, tallNicheOf, type FacadeSpan } from './applianceFront';
+import { MIN_FACADE_SPAN_MM, moduleFronts, tallNicheOf, type FacadeSpan } from './applianceFront';
 import { carcassKeyOf, type CarcassItem } from './carcassMaterial';
 import { handleItemOf, installedItem, slidingAccepts } from './fittings';
 import { SLIDING_DOOR, slidingDoorCount } from './sections';
@@ -116,7 +119,7 @@ export type BoxDraw = {
    * чтобы проверка могла спросить «петель в сцене столько же, сколько в
    * смете».
    */
-  node?: 'hinge' | 'hinge-arm' | 'handle' | 'rod' | 'glass' | 'runner' | 'lift' | 'pantograph' | 'pullout' | 'basket' | 'dryer' | 'track' | 'frame' | 'glass-shelf' | 'glass-panel' | 'vitrine-frame' | 'tv';
+  node?: 'hinge' | 'hinge-arm' | 'handle' | 'rod' | 'glass' | 'runner' | 'lift' | 'pantograph' | 'pullout' | 'basket' | 'dryer' | 'track' | 'frame' | 'glass-shelf' | 'glass-panel' | 'vitrine-frame' | 'tv' | 'appliance';
   /**
    * ЧЕЙ ЭТО КУСОК ВИТРИНЫ (P1): `side:left`, `side:right`, `top`, `bottom`,
    * `back`, `profile` — та же роль, что у строки `vitrineParts`. По ней сцена
@@ -266,6 +269,8 @@ export type HandleDraw = {
  * панель духовки): он идёт с прибором, а не с фурнитурой мебели.
  */
 export function boxLayer(box: Pick<PartBox, 'material' | 'panel' | 'part' | 'node'>): SceneLayer {
+  /* Техника (ЭТАП 3) — свой слой: лицо прибора, его стекло и металл. */
+  if (box.material === 'appliance' || box.node === 'appliance') return 'appliances';
   if (box.material === 'front') return 'fronts';
   /* Рама двери витрины (V3D-02) — сама дверь, а не фурнитура на ней. */
   if (box.node === 'frame') return 'fronts';
@@ -318,6 +323,8 @@ export function layerCounts(runs: Run[]): Partial<Record<SceneLayer, number>> {
       const layer = boxLayer(box);
       out[layer] = (out[layer] ?? 0) + 1;
     }
+    /* Модели техники (ЭТАП 3): варочная и шкаф под ней — коробок у них нет, слой «Техника» их видит. */
+    for (const unit of cookingModules(run)) out.appliances = (out.appliances ?? 0) + (unit.ovenBelow ? 2 : 1);
   }
   return out;
 }
@@ -441,15 +448,36 @@ export function carcassBoxes(
   const backZ = -depthM + 0.004;
   const backFaceZ = backZ + 0.004 / 2;
 
+  /*
+   * ДУХОВОЙ ШКАФ ПОД ВАРОЧНОЙ (ЭТАП 3): верхних планок и задней стенки нет —
+   * ниша открыта до столешницы и сзади; полка шкафа — на высоте и глубины
+   * `ovenNicheOf`, той же, что режет раскрой.
+   */
+  const oven = ovenNicheOf(unit, shopOf(production));
   const boxes: BoxDraw[] = [
     // Боковины
     at(thicknessM / 2, heightM / 2, -depthM / 2, thicknessM, heightM, depthM, false, SIDE_PANEL_NAME),
     at(widthM - thicknessM / 2, heightM / 2, -depthM / 2, thicknessM, heightM, depthM, false, SIDE_PANEL_NAME),
     // Дно и крыша
     at(widthM / 2, thicknessM / 2, -depthM / 2, innerW, thicknessM, depthM, false, BOTTOM_PANEL_NAME),
-    at(widthM / 2, heightM - thicknessM / 2, -depthM / 2, innerW, thicknessM, depthM, false, topName),
-    // Задняя стенка
-    at(widthM / 2, heightM / 2, backZ, widthM, heightM, 0.004, false, BACK_PANEL_NAME),
+    ...(oven
+      ? [
+          at(
+            widthM / 2,
+            heightM - oven.nicheMm / MM - thicknessM / 2,
+            -(depthM - oven.backGapMm / MM) / 2,
+            innerW,
+            thicknessM,
+            depthM - oven.backGapMm / MM,
+            false,
+            OVEN_SHELF_PANEL_NAME,
+          ),
+        ]
+      : [
+          at(widthM / 2, heightM - thicknessM / 2, -depthM / 2, innerW, thicknessM, depthM, false, topName),
+          // Задняя стенка
+          at(widthM / 2, heightM / 2, backZ, widthM, heightM, 0.004, false, BACK_PANEL_NAME),
+        ]),
   ];
 
   /*
@@ -2500,6 +2528,16 @@ export function applianceBoxes(
   const widthM = unit.widthMm / MM;
   const boxes: PartBox[] = [];
 
+  /*
+   * ВАРОЧНАЯ И ДУХОВОЙ ШКАФ ПОД НЕЙ (ЭТАП 3) — МОДЕЛЬ, А НЕ КОРОБКА.
+   *
+   * Панель лежала плитой ПОД столешницей (на крыше корпуса) — её не было
+   * видно вовсе; духовка под панелью — коробкой. Их рисует
+   * `ApplianceModels3D` по габаритам модели и тому же `cookingStackOf`, что
+   * режет раскрой; здесь коробок у них нет, чтобы прибор не стоял дважды.
+   */
+  if (unit.appliance === 'hob') return boxes;
+
   if (hasVisibleAppliance(unit)) {
     /* Прибор пенала — в своей нише, той же, что разбила фасад на створки (`tallNicheOf`); без ниши — во весь модуль. */
     const niche = tallNicheOf(unit, Math.round(heightM * MM));
@@ -2529,7 +2567,8 @@ export function applianceBoxes(
     );
   }
 
-  return boxes;
+  /* Слой «Техника» (ЭТАП 3): металл и стекло лица прибора — тоже техника, а не корпус. */
+  return boxes.map((box) => (box.node ? box : { ...box, node: 'appliance' as const }));
 }
 
 /**
@@ -2662,6 +2701,27 @@ export function moduleBoxes(
         ),
       );
     });
+
+    /*
+     * НЕПОДВИЖНЫЙ ФАСАД ПОД ДУХОВЫМ ШКАФОМ (ЭТАП 3): от дна корпуса до полки
+     * шкафа — высота `ovenNicheOf`, та же, что режет раскрой. Не створка: не
+     * открывается, петель и ручки нет; уже фасадного минимума не рисуется,
+     * как не режется.
+     */
+    const ovenNiche = ovenNicheOf(unit, shopOf(production));
+    if (ovenNiche) {
+      const lowerMm = Math.round(place.heightM * MM) - ovenNiche.nicheMm;
+      if (lowerMm >= MIN_FACADE_SPAN_MM) {
+        const gap = options.gapM;
+        boxes.push({
+          material: 'front',
+          frontKey: frontKey(frontWithMilling(unit, { milling: options.rowMilling })),
+          panel: OVEN_FRONT_PANEL_NAME,
+          position: [place.x + unit.widthMm / MM / 2, place.y + lowerMm / MM / 2, options.frontThicknessM / 2],
+          scale: [unit.widthMm / MM - 2 * gap, lowerMm / MM - 2 * gap, options.frontThicknessM],
+        });
+      }
+    }
   }
 
   /*

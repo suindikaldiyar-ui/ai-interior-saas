@@ -1,5 +1,5 @@
 import { allModules, buildRun } from './layout';
-import { APPLIANCE_SLOTS, CORNER, CORNER_SIZE_MM, MIN_WIDTH, moduleAppliances } from './modules';
+import { APPLIANCE_SLOTS, CORNER, CORNER_SIZE_MM, MIN_WIDTH, moduleAppliances, ovenUnderHobOf } from './modules';
 import { compositionFingerprint } from './fingerprint';
 import { assertCornerFits } from './invariants';
 import { APPLIANCE_BACK_GAP_MM, rowStandardDepthMm } from './fill';
@@ -211,10 +211,16 @@ export function splitAppliances(
   walls?: Partial<Record<ApplianceKind, number | string>>,
   /** Стены композиции по порядку (`wallId`): по ним ищется закреплённая стена. */
   wallIds?: string[],
+  /**
+   * Духовой шкаф под варочной (ЭТАП 3): он в модуле варочной и стоит там же,
+   * где она, — на чужой стене он стал бы пеналом, которого не заказывали.
+   */
+  ovenUnderHob?: true | boolean,
 ): ApplianceKind[][] {
   const out: ApplianceKind[][] = usableMm.map(() => []);
   if (usableMm.length === 0) return out;
   if (usableMm.length === 1) return [[...appliances]];
+  const underHob = ovenUnderHobOf({ appliances, ovenUnderHob: ovenUnderHob === true });
 
   const order = usableMm
     .map((length, index) => ({ length, index }))
@@ -242,7 +248,7 @@ export function splitAppliances(
 
   // Пеналы держат короткую стену: они не требуют рабочей поверхности рядом.
   put('fridge', shortest);
-  put('oven', shortest);
+  if (!underHob) put('oven', shortest);
   put('microwave', shortest);
 
   // Мокрая группа — на самую длинную: там помещается и мойка, и посудомойка.
@@ -254,6 +260,11 @@ export function splitAppliances(
   put('hob', middle);
   // Вытяжка обязана висеть над варочной — значит и в том же ряду.
   put('hood', middle);
+  // Духовой шкаф под варочной — в её модуле, на её стене (ЭТАП 3).
+  if (underHob) {
+    const hobAt = out.findIndex((list) => list.includes('hob'));
+    if (hobAt >= 0) out[hobAt].push('oven');
+  }
 
   return out;
 }
@@ -312,6 +323,8 @@ export function rehomeRefused(input: {
   runOf: (wall: number, appliances: ApplianceKind[]) => Run;
   /** Закреплён ли прибор человеком: такой не переезжает никогда. */
   pinned: (appliance: ApplianceKind) => boolean;
+  /** Духовой шкаф под варочной (ЭТАП 3): едет только вместе с ней — он в её модуле. */
+  ovenUnderHob?: boolean;
 }): void {
   const { assigned, runs } = input;
   const holds = (run: Run, appliance: ApplianceKind) =>
@@ -327,8 +340,12 @@ export function rehomeRefused(input: {
     const groups: ApplianceKind[][] = [];
     for (const appliance of assigned[i]) {
       if (holds(runs[i], appliance) || groups.some((group) => group.includes(appliance))) continue;
-      const partner = STANDS_WITH[appliance];
+      /* Духовой шкаф под варочной сам не переезжает: его везёт группа варочной. */
+      const underHob = input.ovenUnderHob === true && assigned[i].includes('hob');
+      if (underHob && appliance === 'oven') continue;
+      const partner = underHob && appliance === 'microwave' ? undefined : STANDS_WITH[appliance];
       const group = partner && assigned[i].includes(partner) ? [appliance, partner] : [appliance];
+      if (underHob && appliance === 'hob' && assigned[i].includes('oven')) group.push('oven');
       if (group.some((member) => input.pinned(member) || !socketOnly(member))) continue;
       groups.push(group);
     }
@@ -368,6 +385,10 @@ export type CompositionChange = {
   applianceWalls?: Partial<Record<ApplianceKind, number | string>>;
   applianceSizes?: RunRequirements['applianceSizes'];
   applianceTypes?: RunRequirements['applianceTypes'];
+  /** Модели производителя (ЭТАП 3): стена прибора известна, правка — его стены. */
+  applianceModels?: RunRequirements['applianceModels'];
+  /** Духовой шкаф под варочной (ЭТАП 3): касается стен варочной, духовки и микроволновки. */
+  ovenUnderHob?: boolean;
 };
 
 /** Поля, которые меняют ВСЕ стены: секции, двери, сторона пеналов, витрина, высота верхнего ряда. */
@@ -381,6 +402,8 @@ const BY_APPLIANCE: (keyof CompositionChange)[] = [
   'applianceWalls',
   'applianceSizes',
   'applianceTypes',
+  'applianceModels',
+  'ovenUnderHob',
 ];
 
 /**
@@ -406,7 +429,7 @@ export function wallsTouchedByChange(
     usableMm: number[];
     requirements: Pick<
       RunRequirements,
-      'appliances' | 'applianceWalls' | 'applianceSizes' | 'applianceTypes' | 'columnTop' | 'fridgeType'
+      'appliances' | 'applianceWalls' | 'applianceSizes' | 'applianceTypes' | 'columnTop' | 'fridgeType' | 'applianceModels' | 'ovenUnderHob'
     >;
     /** Стены композиции по порядку (`wallId`): закрепление прибора — за физической стеной. */
     wallIds?: string[];
@@ -440,6 +463,14 @@ export function wallsTouchedByChange(
   }
   for (const [appliance, id] of Object.entries(change.applianceTypes ?? {}) as [ApplianceKind, string][]) {
     if (req.applianceTypes?.[appliance] !== id) touch(appliance);
+  }
+  for (const [appliance, article] of Object.entries(change.applianceModels ?? {}) as [ApplianceKind, string][]) {
+    if (req.applianceModels?.[appliance] !== article) touch(appliance);
+  }
+  if (change.ovenUnderHob !== undefined && change.ovenUnderHob !== Boolean(req.ovenUnderHob)) {
+    touch('hob');
+    touch('oven');
+    touch('microwave');
   }
   for (const [appliance, size] of Object.entries(change.applianceSizes ?? {}) as [ApplianceKind, unknown][]) {
     if (JSON.stringify(req.applianceSizes?.[appliance]) !== JSON.stringify(size)) touch(appliance);
@@ -647,7 +678,8 @@ export function buildComposition(input: BuildCompositionInput): Composition {
       return value;
     });
 
-    const perSegment = fixed ?? splitAppliances(requirements.appliances, usable, requirements.applianceWalls, wallIds);
+    const perSegment =
+      fixed ?? splitAppliances(requirements.appliances, usable, requirements.applianceWalls, wallIds, requirements.ovenUnderHob);
 
     /* Что у стены своё, кроме приборов, — один раз: при переезде прибора ряд собирается заново. */
     const sites = walls.map((wall, i) => {
@@ -747,7 +779,14 @@ export function buildComposition(input: BuildCompositionInput): Composition {
     const assigned = perSegment.map((list) => [...list]);
     const runs = walls.map((_, i) => runOf(i, assigned[i]));
     if (!fixed && requirements.mode !== 'free') {
-      rehomeRefused({ assigned, runs, usable, runOf, pinned: (appliance) => pinnedWallIndex(requirements.applianceWalls?.[appliance], wallIds) >= 0 });
+      rehomeRefused({
+        assigned,
+        runs,
+        usable,
+        runOf,
+        pinned: (appliance) => pinnedWallIndex(requirements.applianceWalls?.[appliance], wallIds) >= 0,
+        ovenUnderHob: ovenUnderHobOf(requirements),
+      });
     }
     return { usable, sites, runs, assigned, siteWarnings };
   };

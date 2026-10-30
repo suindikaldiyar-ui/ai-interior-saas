@@ -19,6 +19,7 @@ import {
 } from '@/lib/millwork/cabinetBoxes';
 import InteractiveBayDrawer from './InteractiveBayDrawer';
 import { HandleBatch, handleGeometryKey } from './handleMesh';
+import ApplianceModels3D from './ApplianceModels3D';
 import { movingParts } from './motion';
 import { useCabinetParts, useCarcassMaterials, useFrontMaterials, useSurfaceLook } from './parts';
 import { useGlassMaterials } from './glassLook';
@@ -1145,6 +1146,12 @@ export default function Cabinet3D({
           />
         );
       })}
+
+      {/*
+        * ТЕХНИКА МОДЕЛЬЮ (ЭТАП 3): варочная на столешнице и духовой шкаф под
+        * ней — по `cookingStackOf`, тем же вырезу и полке, что у раскроя.
+        */}
+      <ApplianceModels3D run={run} production={production} shadows={shadows} />
 
       {[...modules, ...uppers].map((entry) => (
         <CabinetModule3D

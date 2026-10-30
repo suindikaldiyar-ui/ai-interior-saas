@@ -47,6 +47,8 @@ import { hasDrawing, listPhoto, manufacturerPhotoLink, matchMediaFiles, mediaCov
 import type { CatalogAsset } from '../types/catalog';
 import type { FittingSlot } from '../types/millwork';
 import { handleChecks } from './verify-handles';
+import { mechanismChecks } from './verify-mechanisms';
+import { applianceChecks } from './verify-appliances';
 
 let passed = 0;
 let failed = 0;
@@ -429,6 +431,25 @@ console.log('\nHW.C: места модуля и проверка совмест�
     'C8 подъёмник на шкафу 720: HK top (KH 205–600) — отказ «больше на 120 мм»; HS top (KH 650–800) — встаёт, вес фасада не проверен; HF — отказ: фасад из двух частей',
     hkTop.state === 'refused' && hkTop.summary.includes('больше на 120') && hsTop.state === 'unverified' && hfTop.state === 'refused' && hfTop.summary.includes('двух частей'),
     `${hkTop.summary} | ${hsTop.summary} | ${hfTop.summary}`,
+  );
+  /*
+   * СКЛАДНОЙ FREE FOLD — ТОТ ЖЕ ОТКАЗ, ЧТО У HF (ЭТАП 2). Проверка искала буквы
+   * «hf» в подвиде и пропускала складной Häfele (`bifold_lift`): он ставился на
+   * цельный фасад как поворотный подъёмник. Путь экрана — `set_fitting`.
+   */
+  const freeFold = HARDWARE_FACTS.find((f) => f.hardware.subcategory === 'bifold_lift');
+  if (!freeFold) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: складного FREE FOLD в фактах нет');
+  const vFold = onUpper(freeFold.article);
+  const foldTried = lift.ops([{ op: 'set_fitting', moduleId: UPPER, slot: 'lift', itemId: item(freeFold.article).id }]);
+  const foldKept = moduleOf(foldTried.shown.run, UPPER).fittings?.some((f) => f.slot === 'lift') ?? false;
+  check(
+    'C8б складной FREE FOLD Häfele на цельный фасад — отказ «фасад из двух частей», и путём экрана позиция не встаёт; HS top — «ход не построен» словами',
+    vFold.state === 'refused' &&
+      vFold.summary.includes('двух частей') &&
+      !foldKept &&
+      foldTried.next.warnings.some((w) => w.includes('двух частей')) &&
+      hsTop.checks.some((c) => c.label === 'ход' && c.state === 'unknown' && c.words.includes('не построен')),
+    `${freeFold.hardware.manufacturerArticle}: ${vFold.summary} · на модуле ${foldKept ? 'ВСТАЛ' : 'нет'} · ${foldTried.next.warnings.join(' | ')}`,
   );
   const wrongSlot = fittingVerdict({ unit: moduleOf(run, DOOR), run, slot: 'hinge', item: item('MFR-HETTICH-9114276'), production: DEFAULT_PRODUCTION, catalog: CATALOG });
   const accessory = HARDWARE_FACTS.find((fact) => fact.hardware.subcategory === 'lift_accessory');
@@ -1254,6 +1275,16 @@ console.log('\nHW.I: изображения позиции, статус 3D, п�
 
 console.log('\nHANDLE-REAL: ручки своей формой — модель по паспорту, деталь, сцена, смета, раскрой');
 handleChecks(check);
+
+/* ═════════════════════════  ЭТАП 2: классы механизмов  ═════════════════════════ */
+
+console.log('\nЭТАП 2: классы механизмов из записи производителя');
+mechanismChecks(check);
+
+/* ═════════════════════════  ЭТАП 3: варочная Bosch и духовой шкаф под ней  ═════════════════════════ */
+
+console.log('\nЭТАП 3: техника производителя — варочная и духовой шкаф под ней, монтаж по инструкции, ход двери');
+applianceChecks(check);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

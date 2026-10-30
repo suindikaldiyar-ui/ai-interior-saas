@@ -27224,14 +27224,36 @@ console.log('\nR01: независимые отсеки — полки толь�
       tally[layer] = (tally[layer] ?? 0) + 1;
     }
     const tallyWords = Object.entries(tally).map(([k, v]) => `${k} ${v}`).join(' · ');
+    /*
+     * Седьмой слой — «Техника» (ЭТАП 3): лицо прибора, его стекло и металл. У
+     * шкафа без приборов он пуст; у демо-кухни в нём лица приборов пеналов —
+     * все до одной коробки, ни одной в «Каркасе».
+     */
+    const FURNITURE_LAYERS = LAYERS.filter((layer) => layer !== 'appliances');
+    const kitchen = buildRun({
+      lengthMm: DEMO_PROJECT.lengthMm,
+      ceilingHeightMm: DEMO_PROJECT.ceilingHeightMm,
+      requirements: DEMO_REQUIREMENTS,
+      openings: DEMO_OPENINGS,
+      comms: DEMO_COMMS,
+      cornerAt: DEMO_PROJECT.cornerAt,
+    });
+    const applianceParts = runBoxes(kitchen, { thicknessMm: 16, frontThicknessMm: 18, gapMm: 3 }).filter(
+      (box) => box.material === 'appliance' || box.node === 'appliance',
+    );
+    const inApplianceLayer = boxLayerFn ? applianceParts.filter((box) => boxLayerFn(box) === 'appliances').length : 0;
     check(
-      'P1.L1 каждая коробка ряда — ровно в одном из шести слоёв; у шкафа с отсеками, ящиками, штангой и дверями заняты все шесть',
+      'P1.L1 каждая коробка ряда — ровно в одном из семи слоёв; у шкафа с отсеками, ящиками, штангой и дверями заняты все шесть мебельных, «Техника» пуста; у демо-кухни все коробки приборов — в «Технике»',
       Boolean(boxLayerFn) &&
-        LAYERS.length === 6 &&
+        LAYERS.length === 7 &&
+        FURNITURE_LAYERS.length === 6 &&
         boxes.every((box) => LAYERS.includes(boxLayerFn!(box))) &&
-        LAYERS.every((layer) => (tally[layer] ?? 0) > 0) &&
+        FURNITURE_LAYERS.every((layer) => (tally[layer] ?? 0) > 0) &&
+        (tally.appliances ?? 0) === 0 &&
+        applianceParts.length > 0 &&
+        inApplianceLayer === applianceParts.length &&
         Object.values(tally).reduce((s, v) => s + v, 0) === boxes.length,
-      `${boxes.length} коробок: ${tallyWords}`,
+      `${boxes.length} коробок: ${tallyWords} · демо-кухня: коробок приборов ${applianceParts.length}, в «Технике» ${inApplianceLayer}`,
     );
     const panelsBefore = JSON.stringify(buildPanels({ run: zoned }));
     const fpBefore = zoned.fingerprint;

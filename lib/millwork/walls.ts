@@ -19,6 +19,8 @@ import { runPlaces, sceneLeaves, type SceneLeaf } from './cabinetBoxes';
 import { leavesForFront } from './moduleVariants';
 import { runInContext, type ContextLoss, type RunContext } from './runContext';
 import {
+  applianceDoorSweep,
+  applianceDoorWords,
   choiceOfCorner,
   clashWords,
   cornerKinematics,
@@ -27,11 +29,13 @@ import {
   rowSweepWords,
   stuckWords,
   vitrineSweep,
+  type ApplianceDoorClash,
   type CornerClash,
   type RowPlace,
 } from './cornerKinematics';
 import { shopOf } from './shop';
 import { vitrineDoorCount } from './vitrine';
+import type { CookingFinding } from './cookingStack';
 import type { HardwareItem, ProductionSettings } from '@/types/catalog';
 import type {
   Composition,
@@ -924,6 +928,32 @@ export function vitrineSweepMismatches(input: {
     });
   });
   return out;
+}
+
+/**
+ * ДВЕРЬ ДУХОВОГО ШКАФА ПОД ВАРОЧНОЙ НА ХОДУ (ЭТАП 3): строки экрана тем же
+ * ходом, что меряет сцена (`applianceDoorSweep`). Заход — блокирующее: шкаф
+ * не открыть, цены нет, «Дальше» и выпуск заперты, запись идёт (лечат проход
+ * и место шкафа). Ряды — стены композиции по порядку и остров.
+ */
+export function applianceDoorFindings(input: {
+  rows: { run: Run; placement: RowPlace }[];
+  production: ProductionSettings | undefined;
+  hardware?: Map<string, HardwareItem>;
+}): CookingFinding[] {
+  const rowOf = (row: number) =>
+    input.rows[row]?.run.island ? 'острова' : lowerWall(wallLabel(row), 'genitive');
+  /* Одна строка на дверь — самый глубокий заход: что мешает дальше, лечится тем же проходом (ловушка 57). */
+  const deepest = new Map<string, ApplianceDoorClash>();
+  for (const clash of applianceDoorSweep({
+    rows: input.rows,
+    production: shopOf(input.production),
+    ...(input.hardware ? { hardware: input.hardware } : {}),
+  })) {
+    const was = deepest.get(clash.doorId);
+    if (!was || clash.depthMm > was.depthMm) deepest.set(clash.doorId, clash);
+  }
+  return Array.from(deepest.values()).map((clash) => ({ moduleId: clash.moduleId, level: 'blocking' as const, words: applianceDoorWords(clash, rowOf) }));
 }
 
 /** Почему цены нет — у расхождения длины и у мебели в препятствии слова разные. */
