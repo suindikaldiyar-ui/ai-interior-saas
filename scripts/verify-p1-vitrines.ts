@@ -769,14 +769,13 @@ export function p1VitrineChecks(check: Check): void {
         compared += 1;
         if (part.role.startsWith('door:')) {
           /*
-           * ДВЕРЬ: в заказе — размер фасада деталировки (В − зазор), в сцене —
-           * створка на зазор с каждой стороны (В − 2 · зазор): давнее
-           * расхождение сцены и деталировки (слой 59, F9), здесь оно названо
-           * числом, а не спрятано допуском. Ширина одной створки — та же.
+           * ДВЕРЬ: в заказе — размер фасада деталировки (В − зазор). До F9
+           * сцена рисовала створку на зазор с каждой стороны (В − 2 · зазор), и
+           * здесь это стояло числом (+ зазор). F9 свёл: полотно сцены — деталь
+           * деталировки, поэтому сцена = заказ без поправок.
            */
-          const gap = SHOP.frontGapMm;
-          if (!near(size[1] + gap, part.lengthMm, 0.5) || !near(size[0], part.widthMm, 0.5) || vitrineDoorsOf(unit) !== 1) {
-            problems.push(`${id} ${part.name}: сцена ${size[1].toFixed(1)} + зазор ${gap} × ${size[0].toFixed(1)} ≠ заказ ${part.lengthMm}×${part.widthMm}`);
+          if (!near(size[1], part.lengthMm, 0.5) || !near(size[0], part.widthMm, 0.5) || vitrineDoorsOf(unit) !== 1) {
+            problems.push(`${id} ${part.name}: сцена ${size[1].toFixed(1)} × ${size[0].toFixed(1)} ≠ заказ ${part.lengthMm}×${part.widthMm}`);
           }
           continue;
         }

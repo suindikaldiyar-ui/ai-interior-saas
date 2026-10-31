@@ -28,6 +28,7 @@ import {
   lPairPoses,
   lPairStroke,
   lPairTarget,
+  closedFrontRect,
   leafOpenAngle,
   leafPoses,
   legOptions,
@@ -402,8 +403,9 @@ export function p0CornerChecks(check: Check): void {
     const clashes = object.engine.layout?.cornerClashes ?? [];
     const panel = object.engine.layout?.corners.map((corner) => corner.ownerPanelMm ?? 0) ?? [];
     check(
-      'P0.10 П 3800 + 2400 + 1740 (600/300): собирается, заходов у углов нет (панель по ходу 12 мм), входов 0',
-      clashes.length === 0 && hits.length === 0 && panel.includes(12),
+      /* F9: 12 → 14 мм — фронт ящика под варочной стены Б ходит настоящей деталью «ширина − зазор» (см. SA.7). */
+      'P0.10 П 3800 + 2400 + 1740 (600/300): собирается, заходов у углов нет (панель по ходу 14 мм), входов 0',
+      clashes.length === 0 && hits.length === 0 && panel.includes(14),
       `заходов ${clashes.length} · входов ${hits.length} · панели владельца ${panel.join(', ')} мм · отпечаток ${object.engine.layout?.fingerprint}`,
     );
   }
@@ -480,7 +482,21 @@ export function p0CornerChecks(check: Check): void {
           ?.boxes.find((box) => box.node === 'handle');
         const center = entry.x + unit.widthMm / MM / 2;
         const open = leaf.kind === 'door'
-          ? leafPoses({ opening: leaf.opening, x: leaf.xM, y: leaf.bottomM, width: leaf.widthM, height: leaf.heightM, thickness: shop.frontMm / MM, gap: shop.frontGapMm / MM, s: 1 })[0]
+          ? leafPoses({
+              opening: leaf.opening,
+              x: leaf.xM,
+              y: leaf.bottomM,
+              width: leaf.widthM,
+              height: leaf.heightM,
+              thickness: shop.frontMm / MM,
+              gap: shop.frontGapMm / MM,
+              s: 1,
+              /* Ходит деталь деталировки (F9) — та же, что нарисована закрытой. */
+              rect: closedFrontRect(
+                runBoxesByModule(edited, boxOptions(production)).modules.find((m) => m.unit.id === id)?.boxes.filter((box) => box.part === leaf.id),
+                [entry.x + leaf.xM, entry.y + leaf.bottomM],
+              ),
+            })[0]
           : null;
         const fp = configurationFingerprint(allModules(edited));
         const back = JSON.parse(JSON.stringify(edited)) as Run;

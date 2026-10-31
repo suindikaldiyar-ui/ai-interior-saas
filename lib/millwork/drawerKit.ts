@@ -2,7 +2,7 @@ import { DEFAULT_ALLOWANCES, type HardwareItem, type ProductionSettings } from '
 import type { Module, Run } from '@/types/millwork';
 import { moduleCarcassHeightMm, moduleDepthMm } from './fill';
 import { bayEnvelope, bayLayout } from './bays';
-import { fittingItemId } from './fittings';
+import { fittingItemId, installedItem } from './fittings';
 import { shopOf } from './shop';
 import {
   drawerBoxPlan,
@@ -116,6 +116,8 @@ export function moduleDrawerKits(
       openingWidthMm: place.openingWidthMm,
       usableDepthMm: place.usableDepthMm,
       overlay: place.overlay,
+      /* Царги системы ящика (HW-04) — позиция на месте модуля. */
+      drawerSide: hardware ? installedItem(unit, 'drawer_side', hardware, place.bayId) : null,
     });
     if (!verdict.ready) return { place, state: 'draft', missing: verdict.missing };
     const zoneH = place.zoneToMm - place.zoneFromMm;
@@ -138,11 +140,13 @@ export function drawerDrafts(
   runs: Run[],
   hardware?: Map<string, HardwareItem>,
   production?: ProductionSettings,
-): { drawers: number; boxes: number; unconfirmed: number; reasons: string[] } {
+): { drawers: number; boxes: number; unconfirmed: number; reasons: string[]; unconfirmedWhy: string[] } {
   let drawers = 0;
   let boxes = 0;
   let unconfirmed = 0;
   const reasons = new Set<string>();
+  /* Почему рассчитанный короб не выпускается (HW-04) — словами профиля, отдельно от причин черновиков. */
+  const unconfirmedWhy = new Set<string>();
   for (const run of runs) {
     const shop = production ?? shopOf(run.production);
     for (const unit of [...run.modules, ...run.upperSegments.flatMap((segment) => segment.modules)]) {
@@ -151,11 +155,15 @@ export function drawerDrafts(
         if (kit.state === 'box') {
           boxes += 1;
           if (!kit.profile.confirmed) unconfirmed += 1;
+          for (const why of kit.profile.releaseWhy ?? []) {
+            reasons.add(why);
+            unconfirmedWhy.add(why);
+          }
         } else {
           for (const m of kit.missing) reasons.add(m);
         }
       }
     }
   }
-  return { drawers, boxes, unconfirmed, reasons: Array.from(reasons) };
+  return { drawers, boxes, unconfirmed, reasons: Array.from(reasons), unconfirmedWhy: Array.from(unconfirmedWhy) };
 }

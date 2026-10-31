@@ -9,7 +9,7 @@ import type { FrontRelief } from '@/types/millwork';
 import { realSizeShiftOf } from './realSizeMap';
 import { useReliefGeometry, useShiftedRelief } from './reliefGeometry';
 import type { ReliefOrient } from '@/lib/millwork/facadeRelief';
-import { DRAWER_TRAVEL_M, type PartBox } from '@/lib/millwork/cabinetBoxes';
+import { DRAWER_TRAVEL_M, type FrontRect, type PartBox } from '@/lib/millwork/cabinetBoxes';
 import { useInteriorStore } from '@/store/useInteriorStore';
 import { HandleMesh } from './handleMesh';
 
@@ -68,6 +68,10 @@ type Props = {
    */
   showFront?: boolean;
   showBox?: boolean;
+  /** Фронт — деталь деталировки (F9): размер закрытой коробки пачки. Пусто — место минус два зазора. */
+  front?: FrontRect | null;
+  /** Ход, метры (HW-04): модель направляющей на месте модуля (`runnerModelOf`). Пусто — условные 300 мм. */
+  travelM?: number;
 };
 
 export default function InteractiveDrawer({
@@ -90,6 +94,8 @@ export default function InteractiveDrawer({
   onActive,
   showFront = true,
   showBox = true,
+  front = null,
+  travelM = DRAWER_TRAVEL_M,
 }: Props) {
   const economy = useInteriorStore((state) => state.economyMode);
   const hit = showFront || showBox || Boolean(handle);
@@ -104,13 +110,15 @@ export default function InteractiveDrawer({
   const openRef = useRef(open);
   /* Фронт ящика — тот же кусок дерева, что у него задвинутого в пачке. */
   const frontBox = useShiftedBox(parts.box, id);
-  /* Габарит фронта — тот же, что в `drawerBoxes`: ширина и высота минус зазоры. */
+  /* Габарит фронта — тот же, что в `drawerBoxes`: деталь деталировки (F9). */
+  const frontW = front ? front.w : width - 2 * gap;
+  const frontH = front ? front.h : height - 2 * gap;
   const reliefGeometry = useShiftedRelief(
     useReliefGeometry(
       relief,
       {
-        widthMm: (width - 2 * gap) * 1000,
-        heightMm: (height - 2 * gap) * 1000,
+        widthMm: frontW * 1000,
+        heightMm: frontH * 1000,
         thicknessMm: thickness * 1000,
       },
       reliefOrient,
@@ -128,8 +136,8 @@ export default function InteractiveDrawer({
   }, [id, active, onActive]);
 
   useSlide({
-    target: open ? DRAWER_TRAVEL_M : 0,
-    initial: open ? DRAWER_TRAVEL_M : 0,
+    target: open ? travelM : 0,
+    initial: open ? travelM : 0,
     apply: (value) => {
       const el = group.current;
       if (el) el.position.z = value;
@@ -234,7 +242,7 @@ export default function InteractiveDrawer({
             geometry={reliefGeometry ?? frontBox}
             material={frontMaterial ?? parts.front}
             position={[0, 0, thickness / 2]}
-            scale={reliefGeometry ? [1, 1, 1] : [width - 2 * gap, height - 2 * gap, thickness]}
+            scale={reliefGeometry ? [1, 1, 1] : [frontW, frontH, thickness]}
             castShadow
           />
           )}

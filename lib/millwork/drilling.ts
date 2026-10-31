@@ -3,7 +3,7 @@ import type { FittingSlot, Module, Run } from '@/types/millwork';
 import { moduleDrawerKits } from './drawerKit';
 import { FITTING_SLOT_TITLE, fittingItemId, fittingSlotsOf, hingeBoringMm, leafWords } from './fittings';
 import { shopOf } from './shop';
-import { DRAWER_SIDE_PANEL_NAME } from './drawerBox';
+import { DRAWER_SIDE_PANEL_NAME, runnerAxisMissingWhy } from './drawerBox';
 import { SIDE_PANEL_NAME } from './panels';
 
 /**
@@ -129,7 +129,7 @@ export function moduleDrilling(
     if (!cabChain) missing.push('цепочки отверстий на корпусе в паспорте нет');
     if (!drwChain) missing.push('цепочки отверстий на ящике в паспорте нет');
     const axis = kit.plan.runnerAxisFromZoneMm;
-    if (axis === null) missing.push('ось направляющей по высоте — правило короба цеха не задано');
+    if (axis === null) missing.push(runnerAxisMissingWhy(kit.profile));
     if (cab && cab.diameterMm === null) missing.push(`диаметр отверстия на корпусе не напечатан: ${cab.what}`);
     if (cab && cab.depthMm === null) missing.push('глубина отверстия на корпусе не напечатана');
     if (drw && drw.diameterMm === null) missing.push(`диаметр отверстия на ящике не напечатан: ${drw.what}`);

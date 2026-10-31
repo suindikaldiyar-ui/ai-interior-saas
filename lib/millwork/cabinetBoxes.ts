@@ -18,6 +18,10 @@ import {
   legName,
   partOfPanel,
   RADIUS_PART_NAME,
+  buildPanels,
+  facadeDoorWidthMm,
+  panelLeafCut,
+  panelLeaves,
 } from './panels';
 import { bentLeavesOf, partBounds, radiusParts, type RadiusForm } from './radius';
 import { radiusDimsOf } from './radiusDims';
@@ -28,13 +32,16 @@ import { bayDrawerStackOf, bayEnvelope, bayLayout, placeEnvelope } from './bays'
 import type { HardwareItem, ProductionSettings } from '@/types/catalog';
 import type { ApplianceKind } from '@/types/millwork';
 import { moduleDrawerKits, type DrawerKit } from './drawerKit';
-import { DRAWER_BOTTOM_PANEL_NAME, DRAWER_SIDE_PANEL_NAME, DRAWER_WALL_PANEL_NAME } from './drawerBox';
+import { DRAWER_BOTTOM_PANEL_NAME, DRAWER_SIDE_PANEL_NAME, DRAWER_WALL_PANEL_NAME, drawerPieceId } from './drawerBox';
 import { shopOf } from './shop';
 import { FRAME_WIDTH_MM, frontKey, frontOf, isFramed } from './frontMaterial';
 import { ISLAND_BACK_PANEL_NAME, islandBackOf } from './island';
 import { MIN_FACADE_SPAN_MM, moduleFronts, tallNicheOf, type FacadeSpan } from './applianceFront';
 import { carcassKeyOf, type CarcassItem } from './carcassMaterial';
-import { handleItemOf, installedItem, slidingAccepts } from './fittings';
+import { fittingItemId, handleItemOf, installedItem, slidingAccepts } from './fittings';
+import { HINGE_IMAGE_EDGE_MM, hingeCupPlace, hingeHeightsMm } from './hingePlace';
+import { hingeModelOf, type HingeModel } from './hingeModel';
+import { liftPlace, liftPose, type LiftMotion } from './liftKinematics';
 import { SLIDING_DOOR, slidingDoorCount } from './sections';
 import { handleBoxOf, handleSpotOf, type HandleSpot, type LeafGeometry } from './handlePlace';
 import {
@@ -121,6 +128,11 @@ export type BoxDraw = {
    * смете».
    */
   node?: 'hinge' | 'hinge-arm' | 'handle' | 'rod' | 'glass' | 'runner' | 'lift' | 'pantograph' | 'pullout' | 'basket' | 'dryer' | 'track' | 'frame' | 'glass-shelf' | 'glass-panel' | 'vitrine-frame' | 'tv' | 'appliance';
+  /**
+   * ДОЛЯ ХОДА ДЕТАЛИ (HW-04): средняя секция направляющей полного выдвижения
+   * едет на половину хода ящика (0,5). Пусто — на весь ход, как сама деталь.
+   */
+  slideShare?: number;
   /**
    * ЧЕЙ ЭТО КУСОК ВИТРИНЫ (P1): `side:left`, `side:right`, `top`, `bottom`,
    * `back`, `profile` — та же роль, что у строки `vitrineParts`. По ней сцена
@@ -234,6 +246,27 @@ export type PartBox = BoxDraw & {
    * коробка — её габарит, по нему меряют проверки открывания и рёбра.
    */
   handle?: HandleDraw;
+  /**
+   * ПЕТЛЯ ЭТОЙ КОРОБКИ (HW-03): модель по паспорту и половина узла. Есть —
+   * сцена рисует сетку петли (`hingeHalfMesh`) с началом в оси чашки;
+   * коробка остаётся габаритом узла для проверок открывания и рёбер.
+   */
+  hinge?: HingeDraw;
+};
+
+/** Петля в сцене: модель, половина узла, сторона и ось чашки (метры ряда). */
+export type HingeDraw = {
+  model: HingeModel;
+  /** `cup` — едет с полотном, `arm` — стоит на боковине. */
+  half: 'cup' | 'arm';
+  /** Петли справа — сетка отражена по X. */
+  mirror: boolean;
+  /** Внутренняя плоскость боковины в осях петли, мм. */
+  sideInnerXMm: number;
+  /** Ось чашки на тыльной плоскости фасада в закрытом положении, метры ряда. */
+  origin: [number, number, number];
+  /** Место по паспорту (TB + радиус) или условный отступ картинки. */
+  passport: boolean;
 };
 
 /** Ручка в сцене: что нарисовано, как повёрнуто и какая позиция за ним стоит. */
@@ -662,6 +695,10 @@ export type FrontOptions = {
    * сцене нет, как до каталога.
    */
   hardware?: Map<string, HardwareItem>;
+  /** Школа цеха ряда (HW-03): место петли по паспорту и высоты по правилу присадки цеха. */
+  production?: ProductionSettings;
+  /** Размеры деталей фасадов из деталировки (F9, `frontCutsOf`): полотно сцены — этого размера. */
+  cuts?: Map<string, FrontCut>;
 };
 
 /**
@@ -1152,6 +1189,47 @@ export function leafHandleBox(input: {
  * мешем: пока положение считается в одном месте, закрытая и открытая
  * дверь не могут оказаться разной мебелью.
  */
+/** Наружный размер детали фасада, мм: высота (`lengthMm`) и ширина — как режет цех. */
+export type FrontCut = { lengthMm: number; widthMm: number };
+
+const CUTS = new WeakMap<Run, { key: string; cuts: Map<string, FrontCut> }>();
+
+/**
+ * РАЗМЕРЫ ДЕТАЛЕЙ ФАСАДОВ РЯДА ИЗ ДЕТАЛИРОВКИ (F9) — по ключу створки
+ * (`<модуль>:door:0`, `<модуль>:drawer:1`). Сцена рисует полотно этого
+ * размера: второго расчёта размера фасада у неё нет. Один раз на ряд и
+ * школу цеха (ряд неизменяем: правка `applyOps` даёт новый объект).
+ */
+export function frontCutsOf(run: Run, production: ProductionSettings, hardware?: Map<string, HardwareItem>): Map<string, FrontCut> {
+  const key = JSON.stringify(production);
+  const hit = CUTS.get(run);
+  if (hit && hit.key === key) return hit.cuts;
+  const cuts = new Map<string, FrontCut>();
+  for (const panel of buildPanels({ run, production, ...(hardware ? { hardware } : {}) })) {
+    const cut = panelLeafCut(panel);
+    const leaves = panelLeaves(panel);
+    if (!cut || !leaves) continue;
+    for (const leaf of leaves) cuts.set(`${panel.moduleId}:${leaf}`, cut);
+  }
+  CUTS.set(run, { key, cuts });
+  return cuts;
+}
+
+/**
+ * РАЗМЕР ПОЛОТНА В СЦЕНЕ = ДЕТАЛЬ ДЕТАЛИРОВКИ. Строки нет (дверь витрины
+ * из стекла — покупная, листом не режется) — та же формула, что у
+ * деталировки: створка `facadeDoorWidthMm` × (высота − зазор), участок
+ * колонны и фронт ящика — (ширина − зазор) × (высота − зазор).
+ */
+export function frontLeafMm(
+  cut: FrontCut | undefined,
+  input: { openMm: number; heightMm: number; doors: number; gapMm: number; kind: 'door' | 'span' | 'drawer' },
+): { widthMm: number; heightMm: number } {
+  if (cut) return { widthMm: cut.widthMm, heightMm: cut.lengthMm };
+  const widthMm = input.kind === 'door' ? facadeDoorWidthMm(input.openMm, input.doors, input.gapMm) : input.openMm - input.gapMm;
+  return { widthMm, heightMm: input.heightMm - input.gapMm };
+}
+
 export function doorBoxes(
   unit: Module,
   place: ModulePlacement,
@@ -1180,17 +1258,32 @@ export function doorBoxes(
   const blind = options.openWidthMm !== undefined && options.openWidthMm < unit.widthMm;
   const doors = span || blind ? 1 : doorCount(unit);
   const widthM = (blind ? options.openWidthMm! : unit.widthMm) / MM;
-  const doorW = widthM / doors;
   const hinge = doorHinge(unit, span ? 0 : index, doors);
   /* Доступная часть у угла в начале ряда — у правого края модуля (P0). */
   const fromM = blind ? (options.openFromMm ?? 0) / MM : 0;
 
   const { gapM: gap, frontThicknessM: thickness, integratedHandles } = options;
-  const hingeX = x + fromM + (span ? 0 : index) * doorW + (hinge === 'left' ? 0 : doorW);
-  const panelX = hinge === 'left' ? doorW / 2 : -doorW / 2;
-  const cx = hingeX + panelX;
-  const cy = y + heightM / 2;
+  /*
+   * ПОЛОТНО — ДЕТАЛЬ ДЕТАЛИРОВКИ (F9). Размер — тот, по которому режет цех
+   * (`frontCutsOf` → `buildPanels`); зазор — расстояние между деталями: по
+   * краям проёма поровну, между створками — зазор цеха. Своей формулы
+   * «место минус два зазора» у сцены больше нет: она рисовала створку на
+   * зазор уже детали, и петля стояла не там, где её сверлит присадка.
+   */
   const part = unit.id + ':door:' + index;
+  const leafSize = frontLeafMm(options.cuts?.get(part), {
+    openMm: widthM * MM,
+    heightMm: heightM * MM,
+    doors,
+    gapMm: gap * MM,
+    kind: span ? 'span' : 'door',
+  });
+  const edgeMm = (widthM * MM - doors * leafSize.widthMm - (doors - 1) * gap * MM) / 2;
+  const leafX0 = x + fromM + (edgeMm + (span ? 0 : index) * (leafSize.widthMm + gap * MM)) / MM;
+  const w = leafSize.widthMm / MM;
+  const h = leafSize.heightMm / MM;
+  const cx = leafX0 + w / 2;
+  const cy = y + heightM / 2;
 
   /*
    * Где ручка — отвечает `handleSpotOf` ниже: у механизма она на
@@ -1211,7 +1304,7 @@ export function doorBoxes(
     unit,
     leaf: `door:${index}`,
     part,
-    geometry: { cx, cy, widthM: doorW - 2 * gap, heightM: heightM - 2 * gap, thicknessM: thickness },
+    geometry: { cx, cy, widthM: w, heightM: h, thicknessM: thickness },
     spot: handleSpotOf(unit, { options: { integratedHandles } } as Run, hinge),
     seat: 'spot',
     options,
@@ -1232,13 +1325,41 @@ export function doorBoxes(
    */
   const hingeNodes: PartBox[] = [];
   const count = Math.max(0, Math.round(options.hinges ?? 0));
+  /*
+   * МЕСТО ЧАШКИ — ТОТ ЖЕ РАСЧЁТ, ЧТО У ПРИСАДКИ (`hingePlace`, HW-03): петля
+   * и планка выбраны — ось чашки на TB + радиус от кромки детали (полотно
+   * раскроя по центру своего места), высоты — по правилу цеха. Иначе —
+   * прежняя картинка узла: условные 22 мм от края места, поровну по высоте.
+   */
+  const hingeItemId = fittingItemId(unit, 'hinge');
+  const hingeItem = hingeItemId ? options.hardware?.get(hingeItemId) : undefined;
+  const plateItemId = fittingItemId(unit, 'hinge_plate');
+  const plateItem = plateItemId ? options.hardware?.get(plateItemId) : undefined;
+  const gapMm = gap * MM;
+  const cupPlace = hingeCupPlace(
+    { carcassMm: options.production?.carcassMm ?? Math.round(place.thicknessM * MM), frontGapMm: options.production?.frontGapMm ?? Math.round(gapMm) },
+    hingeItem,
+    plateItem,
+  );
+  /* От кромки и низа НАРИСОВАННОЙ детали — той же, от которой считает присадка (F9). */
+  const cupEdgeMm = cupPlace.passport ? cupPlace.fromEdgeMm : HINGE_IMAGE_EDGE_MM;
+  const ruleEdge = cupPlace.passport ? (options.production?.drilling?.hingeEdgeMm ?? null) : null;
+  const leafBottom = cy - h / 2;
+  void gapMm;
+  const heights =
+    ruleEdge !== null
+      ? hingeHeightsMm(leafSize.heightMm, count, ruleEdge).map((hh) => leafBottom + hh / MM)
+      : Array.from({ length: count }, (_, i) => leafBottom + (h * (i + 1)) / (count + 1));
+  const model = hingeModelOf(hingeItem, plateItem);
+  const mirror = hinge === 'right';
 
   for (let i = 0; i < count; i += 1) {
-    const edgeX =
-      hinge === 'left'
-        ? cx - doorW / 2 + HINGE_NODE_EDGE_MM / MM
-        : cx + doorW / 2 - HINGE_NODE_EDGE_MM / MM;
-    const at = y + (heightM * (i + 1)) / (count + 1);
+    const edgeX = hinge === 'left' ? cx - w / 2 + cupEdgeMm / MM : cx + w / 2 - cupEdgeMm / MM;
+    const at = heights[i];
+    /* Внутренняя плоскость боковины со стороны петель — в осях петли (от оси чашки к кромке — минус). */
+    const sideX = hinge === 'left' ? x + place.thicknessM : x + unit.widthMm / MM - place.thicknessM;
+    const sideInnerXMm = Math.round((mirror ? edgeX - sideX : sideX - edgeX) * MM * 10) / 10;
+    const draw = (half: 'cup' | 'arm'): HingeDraw => ({ model, half, mirror, sideInnerXMm, origin: [edgeX, at, 0], passport: cupPlace.passport });
 
     /* Чашка живёт на ПОЛОТНЕ: открылась створка — уехала вместе с ней. */
     hingeNodes.push({
@@ -1247,6 +1368,7 @@ export function doorBoxes(
       node: 'hinge',
       position: [edgeX, at, -HINGE_CUP_DEPTH_M / 2],
       scale: [HINGE_CUP_M, HINGE_CUP_M, HINGE_CUP_DEPTH_M],
+      hinge: draw('cup'),
     });
 
     /* Корпусная часть стоит на боковине и с места не двигается. */
@@ -1255,14 +1377,13 @@ export function doorBoxes(
       node: 'hinge-arm',
       position: [edgeX, at, -HINGE_ARM_DEPTH_M / 2 - HINGE_CUP_DEPTH_M],
       scale: [HINGE_CUP_M * 1.2, HINGE_CUP_M * 0.4, HINGE_ARM_DEPTH_M],
+      hinge: draw('arm'),
     });
   }
 
   /* Фасад ЭТОЙ створки (P3D-MDF): свой у створки или модульный — одна функция. */
   const spec = leafFrontWithMilling(unit, `door:${index}`, { milling: options.rowMilling });
   const key = frontKey(spec);
-  const w = doorW - 2 * gap;
-  const h = heightM - 2 * gap;
 
   /*
    * ФИЛЁНКА — ЭТО РАМА И ВСТАВКА, А НЕ ГЛАДКАЯ ПАНЕЛЬ.
@@ -1698,12 +1819,16 @@ export function drawerBoxes(
   const spec = leafFrontWithMilling(unit, `drawer:${index}`, { milling: options.rowMilling });
   /* Ящик выдвигают за верх; у верхнего ряда — за низ. */
   const drawerOrient = gripOrient(spec.relief, 'flap', isUpperRow(unit));
+  /* Фронт — деталь деталировки (F9): ширина и высота места минус зазор, а не два. */
+  const front = frontLeafMm(options.cuts?.get(part), { openMm: unit.widthMm, heightMm: frontMm, doors: 1, gapMm: gap * MM, kind: 'drawer' });
+  const frontW = front.widthMm / MM;
+  const frontH = front.heightMm / MM;
   boxes.push({
     material: 'front',
     part,
     frontKey: frontKey(spec),
     position: [cx, cy, thickness / 2],
-    scale: [widthM - 2 * gap, height - 2 * gap, thickness],
+    scale: [frontW, frontH, thickness],
     ...(spec.relief ? { relief: spec.relief } : {}),
     ...(drawerOrient ? { reliefOrient: drawerOrient } : {}),
   });
@@ -1720,7 +1845,7 @@ export function drawerBoxes(
     unit,
     leaf: `drawer:${index}`,
     part,
-    geometry: { cx, cy, widthM: widthM - 2 * gap, heightM: height - 2 * gap, thicknessM: thickness },
+    geometry: { cx, cy, widthM: frontW, heightM: frontH, thicknessM: thickness },
     spot: { place: 'top-center', turn: 'horizontal' },
     seat: 'center',
     options: { integratedHandles, hardware: options.hardware },
@@ -2192,14 +2317,44 @@ export function leafLocal(input: {
   height: number;
   thickness: number;
   gap: number;
+  /**
+   * ДЕТАЛЬ ПОЛОТНА (F9) — закрытая коробка створки в осях её места (от
+   * левого нижнего угла места): та же деталь деталировки, что нарисована
+   * закрытой (`closedFrontRect`). Пусто — прежнее «место минус два зазора»
+   * (только у того, у чего детали из листа нет).
+   */
+  rect?: FrontRect | null;
 }): {
   panel: { at: [number, number, number]; size: [number, number, number] };
 } {
-  const { opening, width, height, thickness, gap } = input;
+  const { opening, width, height, thickness, gap, rect } = input;
   const [panelX, panelY] = doorPivot(opening, 0, 0, width, height).panel;
+  if (rect) {
+    return {
+      panel: { at: [panelX + rect.cx - width / 2, panelY + rect.cy - height / 2, thickness / 2], size: [rect.w, rect.h, thickness] },
+    };
+  }
   return {
     panel: { at: [panelX, panelY, thickness / 2], size: [width - 2 * gap, height - 2 * gap, thickness] },
   };
+}
+
+/** Прямоугольник детали фасада: центр и размер, метры. */
+export type FrontRect = { cx: number; cy: number; w: number; h: number };
+
+/**
+ * ЗАКРЫТАЯ ДЕТАЛЬ ФАСАДА ПО КОРОБКАМ ПАЧКИ (F9): габарит коробок полотна
+ * (у филёнки — рама и вставка), без ручки, петель и стекла. Сдвиг `origin`
+ * переводит в оси места створки. Коробок полотна нет — `null`.
+ */
+export function closedFrontRect(boxes: PartBox[] | undefined, origin: [number, number] = [0, 0]): FrontRect | null {
+  const own = (boxes ?? []).filter((box) => box.material === 'front' && !box.node);
+  if (own.length === 0) return null;
+  const x0 = Math.min(...own.map((b) => b.position[0] - b.scale[0] / 2));
+  const x1 = Math.max(...own.map((b) => b.position[0] + b.scale[0] / 2));
+  const y0 = Math.min(...own.map((b) => b.position[1] - b.scale[1] / 2));
+  const y1 = Math.max(...own.map((b) => b.position[1] + b.scale[1] / 2));
+  return { cx: (x0 + x1) / 2 - origin[0], cy: (y0 + y1) / 2 - origin[1], w: x1 - x0, h: y1 - y0 };
 }
 
 export function leafPoses(input: {
@@ -2221,14 +2376,32 @@ export function leafPoses(input: {
    * на свой паспортный угол (`openingAngleDeg`). Пусто — как в сцене, 90°.
    */
   openAngle?: number;
+  /** ВИД ХОДА ПОДЪЁМНИКА (HW-07) — та же поза, что у сцены (`liftPose`). Пусто — поворот вверх. */
+  lift?: LiftMotion | null;
+  /** Деталь полотна в осях места (F9, `closedFrontRect`): ходит та же деталь, что нарисована закрытой. */
+  rect?: FrontRect | null;
 }): PosedBox[] {
   const { opening, x, y, width, height, thickness, gap } = input;
   const pivot = doorPivot(opening, x, y, width, height, thickness);
+  if (opening === 'lift' && (input.lift === 'parallel_lift' || input.lift === 'swing_over')) {
+    const pose = liftPose(input.lift, input.s, height, thickness);
+    const local = leafLocal({ opening, width, height, thickness, gap, rect: input.rect });
+    const out: PosedBox[] = [{ center: liftPlace(pivot.origin, pose, local.panel.at), size: local.panel.size, role: 'front', yaw: 0, pitch: pose.angle }];
+    if (input.handle) {
+      const at: [number, number, number] = [
+        input.handle.position[0] - pivot.origin[0],
+        input.handle.position[1] - pivot.origin[1],
+        input.handle.position[2] - pivot.origin[2],
+      ];
+      out.push({ center: liftPlace(pivot.origin, pose, at), size: input.handle.scale, role: 'handle', yaw: 0, pitch: pose.angle, ...(input.handle.handle ? { handle: input.handle.handle } : {}) });
+    }
+    return out;
+  }
   const full = input.openAngle !== undefined ? Math.sign(pivot.angle) * input.openAngle : pivot.angle;
   const angle = full * Math.max(0, Math.min(1, input.s));
   /* Вынос вперёд по ходу — тот же, что двигает группу `InteractiveDoor`. */
   const kick = doorKick(pivot, angle);
-  const local = leafLocal({ opening, width, height, thickness, gap });
+  const local = leafLocal({ opening, width, height, thickness, gap, rect: input.rect });
 
   /* Локальные точки группы на оси → координаты модуля. */
   const place = (local: [number, number, number]): [number, number, number] => {
@@ -2708,7 +2881,7 @@ export function moduleBoxes(
      */
     const total = Math.max(0, Math.round(options.hinges ?? 0));
     const byLeaf = leaves.map((leaf) =>
-      leafHinges(leaf.span ? leaf.span.heightMm : Math.round(place.heightM * MM), openingOf(unit).opening),
+      leafHinges(leaf.span ? leaf.span.heightMm : Math.round(place.heightM * MM), openingOf(unit).opening, production),
     );
     const spread = byLeaf.reduce((sum, v) => sum + v, 0);
     if (byLeaf.length > 0) byLeaf[0] += total - spread;
@@ -2830,7 +3003,7 @@ function radiusModuleBoxes(unit: Module, place: ModulePlacement, options: FrontO
 
   /* Петли гнутых створок — по высоте модуля, как у полотна во всю высоту (`openingHardware`); остаток — на первую. */
   const total = Math.max(0, Math.round(options.hinges ?? 0));
-  const byLeaf = doors.map(() => leafHinges(dims.heightMm, 'left'));
+  const byLeaf = doors.map(() => leafHinges(dims.heightMm, 'left', production));
   const spread = byLeaf.reduce((sum, v) => sum + v, 0);
   if (byLeaf.length > 0) byLeaf[0] += total - spread;
   doors.forEach((door, i) => {
@@ -3055,6 +3228,8 @@ export function runBoxesByModule(
   );
 
   const carcassItems = options.carcass ?? new Map<string, CarcassItem>();
+  /* Размеры фасадов — из деталировки той же школы цеха (F9). */
+  const cuts = frontCutsOf(run, options.production ?? shopOf(run.production), options.hardware);
 
   /*
    * ФАЛЬШ-ПАНЕЛИ УГЛА — КОРОБКИ НАРАВНЕ С ОСТАЛЬНЫМИ.
@@ -3212,6 +3387,8 @@ export function runBoxesByModule(
           ? { drawerKits: moduleDrawerKits(entry.unit, run, options.production ?? shopOf(run.production), options.hardware) }
           : {}),
         ...(options.hardware && options.hardware.size > 0 ? { hardware: options.hardware } : {}),
+        production: options.production ?? shopOf(run.production),
+        cuts,
       },
       run.production,
     ),
@@ -3559,13 +3736,6 @@ function kitBoxes(
 ): PartBox[] {
   const out: PartBox[] = [];
   const { xFromMm, zoneFromMm, boxFrontZMm, key } = kit.place;
-  const idOf: Record<string, string> = {
-    'side-left': `${key}:box:side:1`,
-    'side-right': `${key}:box:side:2`,
-    'wall-front': `${key}:box:wall:1`,
-    'wall-back': `${key}:box:wall:2`,
-    bottom: `${key}:box:bottom`,
-  };
   for (const piece of kit.plan.pieces) {
     const position: [number, number, number] = [
       place.x + (xFromMm + (piece.x0 + piece.x1) / 2) / MM,
@@ -3580,9 +3750,16 @@ function kitBoxes(
         inside: true,
         position,
         scale,
-        ...(piece.member === 'drawer' ? { part } : {}),
+        /* Ходовая едет с ящиком, средняя — на половину хода (HW-04), корпусная стоит. */
+        ...(piece.member !== 'cabinet' ? { part } : {}),
+        ...(piece.member === 'middle' ? { slideShare: 0.5 } : {}),
         ...(bayId ? { bayId } : {}),
       });
+      continue;
+    }
+    /* Царга системы ящика (HW-04) — металл, покупная: детали раскроя у неё нет. */
+    if (piece.metal) {
+      out.push({ material: 'metal', node: 'runner', inside: true, part, position, scale, ...(bayId ? { bayId } : {}) });
       continue;
     }
     out.push({
@@ -3591,7 +3768,7 @@ function kitBoxes(
       part,
       carcassKey,
       panel: piece.key.startsWith('side') ? DRAWER_SIDE_PANEL_NAME : piece.key === 'bottom' ? DRAWER_BOTTOM_PANEL_NAME : DRAWER_WALL_PANEL_NAME,
-      partId: idOf[piece.key],
+      partId: drawerPieceId(key, piece.key),
       position,
       scale,
       ...(bayId ? { bayId } : {}),

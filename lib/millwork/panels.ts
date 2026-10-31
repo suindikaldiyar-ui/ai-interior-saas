@@ -30,7 +30,7 @@ import { moduleNumbers } from './positions';
 import { blindPartMm, cornerFillersOf, fillerNeighbour, openFrontMm } from './corner';
 import { tailFillersOf } from './countertop';
 import { moduleDrawerKits } from './drawerKit';
-import { DRAWER_BOTTOM_PANEL_NAME, type DrawerBoxPart } from './drawerBox';
+import { drawerPartPieces, drawerPieceId, type DrawerBoxPart } from './drawerBox';
 import type { Module, Panel, PanelStock, PanelTotals, Run } from '@/types/millwork';
 import {
   SLATS,
@@ -105,6 +105,34 @@ export type PanelInput = {
  * подписью, от которой уводит номер.
  */
 export const SIDE_PANEL_NAME = 'Боковина';
+
+/*
+ * СТВОРКИ СТРОКИ ФАСАДОВ (HW-08) — для присадки: «Фасад · 2 шт.» это
+ * `door:0` и `door:1` в этом порядке. Лежат рядом со строкой, а не в ней:
+ * поле в строке сдвинуло бы раскрой и его отпечатки, а створок в раскрое
+ * не нужно. Пишет `modulePanels` там же, где рождается строка; читает
+ * `panelLeaves`.
+ */
+const ROW_LEAVES = new WeakMap<Panel, string[]>();
+
+/** Створки строки фасадов по порядку штук; у нефасадной строки — нет. */
+export function panelLeaves(panel: Panel): string[] | undefined {
+  return ROW_LEAVES.get(panel);
+}
+
+/*
+ * РАЗМЕР ДЕТАЛИ ФАСАДА СТРОКИ (F9) — наружный, как его режет цех: высота и
+ * ширина створки или фронта ящика (у филёнки — и у рамы, и у вставки
+ * наружный размер всего фасада). Сцена рисует полотно ЭТОГО размера: зазор —
+ * расстояние между деталями, а не скрытое уменьшение детали. Лежит рядом со
+ * строкой, как створки: в строке поле сдвинуло бы отпечатки раскроя.
+ */
+const ROW_CUT = new WeakMap<Panel, { lengthMm: number; widthMm: number }>();
+
+/** Наружный размер детали фасада строки: высота (`lengthMm`) и ширина; у нефасадной строки — нет. */
+export function panelLeafCut(panel: Panel): { lengthMm: number; widthMm: number } | undefined {
+  return ROW_CUT.get(panel);
+}
 /** Имя детали-полки в раскрое. По нему полки уходят в свою статью сметы. */
 export const SHELF_PANEL_NAME = 'Полка';
 export const FACADE_PANEL_NAME = 'Фасад';
@@ -825,18 +853,24 @@ function moduleBodyPanels(
     /** Фасад ящика отсека (R02A): его отсек и ИД физических деталей — по одному на деталь. */
     tag?: { bayId: string; partIds: string[] },
   ) => {
-    const groups = new Map<string, { look: ReturnType<typeof lookOf>; leaf: string; count: number; partIds: string[] }>();
+    const groups = new Map<string, { look: ReturnType<typeof lookOf>; leaf: string; count: number; partIds: string[]; leaves: string[] }>();
     leaves.forEach((leaf, i) => {
       const look = lookOf(leaf);
       const key = look.own ? `${look.material}|${frontKey(look.spec)}` : '';
       const at = groups.get(key);
       if (at) {
         at.count += 1;
+        at.leaves.push(leaf);
         if (tag) at.partIds.push(tag.partIds[i]);
-      } else groups.set(key, { look, leaf, count: 1, partIds: tag ? [tag.partIds[i]] : [] });
+      } else groups.set(key, { look, leaf, count: 1, partIds: tag ? [tag.partIds[i]] : [], leaves: [leaf] });
     });
-    for (const { look, leaf, count, partIds } of Array.from(groups.values())) {
+    for (const { look, leaf, count, partIds, leaves: rowLeaves } of Array.from(groups.values())) {
+      const before = panels.length;
       pushFrontRow(name, lengthMm, widthMm, count, look, look.own ? leaf : undefined, tag ? { bayId: tag.bayId, partIds } : undefined);
+      for (let i = before; i < panels.length; i += 1) {
+        ROW_LEAVES.set(panels[i], rowLeaves);
+        ROW_CUT.set(panels[i], { lengthMm, widthMm });
+      }
     }
   };
 
@@ -1096,10 +1130,8 @@ function modulePanels(
     if (kit.state !== 'box') continue;
     for (const part of kit.plan.parts) {
       const key = `${part.name}|${part.lengthMm}|${part.widthMm}|${part.thicknessMm}|${kit.place.bayId ?? ''}`;
-      const ids =
-        part.name === DRAWER_BOTTOM_PANEL_NAME
-          ? [`${kit.place.key}:box:bottom`]
-          : Array.from({ length: part.qty }, (_, i) => `${kit.place.key}:box:${part.sheet === 'side' && part.name.startsWith('Боковина') ? 'side' : 'wall'}:${i + 1}`);
+      /* ИД — та же `drawerPieceId`, что у коробок сцены: деталь раскроя ведёт к своему куску (HW-04). */
+      const ids = drawerPartPieces(part).map((piece) => drawerPieceId(kit.place.key, piece));
       const row = rows.get(key);
       if (row) {
         row.part = { ...row.part, qty: row.part.qty + part.qty };
@@ -1389,15 +1421,22 @@ export function objectPanels(input: {
     }
     seen.add(wall.wallId);
     const mark = wall.label.slice(wall.label.indexOf(' ') + 1);
-    return buildPanels({ run: wall.run, production, milling, carcass, hardware }).map((panel) => ({
-      ...panel,
-      number: many ? `${mark}-${panel.number}` : panel.number,
-      rowNumber: panel.number,
-      wallId: wall.wallId,
-      wallLabel: wall.label,
-      partId: `${wall.wallId}:${panel.number}`,
-      comment: `${wall.label} (${wall.wallId}) · ${panel.moduleLabel}`,
-    }));
+    return buildPanels({ run: wall.run, production, milling, carcass, hardware }).map((panel) => {
+      const out: ObjectPanel = {
+        ...panel,
+        number: many ? `${mark}-${panel.number}` : panel.number,
+        rowNumber: panel.number,
+        wallId: wall.wallId,
+        wallLabel: wall.label,
+        partId: `${wall.wallId}:${panel.number}`,
+        comment: `${wall.label} (${wall.wallId}) · ${panel.moduleLabel}`,
+      };
+      const leaves = ROW_LEAVES.get(panel);
+      if (leaves) ROW_LEAVES.set(out, leaves);
+      const cut = ROW_CUT.get(panel);
+      if (cut) ROW_CUT.set(out, cut);
+      return out;
+    });
   });
 }
 

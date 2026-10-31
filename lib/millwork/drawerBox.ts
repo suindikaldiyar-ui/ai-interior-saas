@@ -1,4 +1,5 @@
 import type { DrawerBoxSettings, HardwareItem } from '@/types/catalog';
+import { runnerModelOf } from './runnerModel';
 
 /**
  * КОРОБ ДЕРЕВЯННОГО ЯЩИКА — ОДНА ГЕОМЕТРИЯ НА РАСКРОЙ, СЦЕНУ И ПРИСАДКУ
@@ -32,7 +33,7 @@ export type RunnerGeometry = {
    * другой — в паз боковины ящика, ходовая системы ящика: короб у них своей
    * конструкции, в правилах цеха её нет.
    */
-  mount: 'side' | 'under' | 'other';
+  mount: 'side' | 'under' | 'system' | 'other';
   /** NL — номинальная длина = длина короба у бокового монтажа, мм. */
   nominalLengthMm: number | null;
   /** Монтажная ширина направляющей с каждой стороны короба, мм. */
@@ -44,6 +45,9 @@ export type RunnerGeometry = {
   maxDrawerSideMm: number | null;
   /** Высота направляющей, мм — для сцены и присадки по высоте. */
   railHeightMm: number | null;
+  /** Скрытый монтаж (HW-04): «SKW = LW − x» и «SKL = NL − y» паспорта; не напечатано — null. */
+  innerDeductMm: number | null;
+  lengthDeductMm: number | null;
 };
 
 /** Число из записи позиции; нет или мусор — `null`, а не ноль. */
@@ -63,15 +67,19 @@ export function runnerGeometry(item: HardwareItem): RunnerGeometry {
     mount:
       item.hardware.subcategory === 'undermount'
         ? 'under'
-        : item.hardware.subcategory === undefined || item.hardware.subcategory === 'side_mount'
-          ? 'side'
-          : 'other',
+        : item.hardware.category === 'drawer_system' && /(^|_)runner$/.test(item.hardware.subcategory ?? '')
+          ? 'system'
+          : item.hardware.subcategory === undefined || item.hardware.subcategory === 'side_mount'
+            ? 'side'
+            : 'other',
     nominalLengthMm: dim(item, 'nominalLength') ?? legacy(item, 'slideLengthMm'),
     sideClearanceMm: dim(item, 'sideClearance') ?? legacy(item, 'sideClearanceMm'),
     minCabinetDepthMm: dim(item, 'minCabinetDepth'),
     minDrawerSideMm: dim(item, 'minDrawerSide'),
     maxDrawerSideMm: dim(item, 'maxDrawerSide'),
     railHeightMm: dim(item, 'railHeight'),
+    innerDeductMm: dim(item, 'drawerInnerDeduct'),
+    lengthDeductMm: dim(item, 'drawerLengthDeduct'),
   };
 }
 
@@ -139,6 +147,19 @@ export type DrawerProfile = {
   slideItemId?: string;
   /** Правила подтверждены цехом И паспорт направляющей полный. */
   confirmed?: boolean;
+  /** Секций у направляющей одной стороны (HW-04, `runnerModelOf`): 2 — частичное, 3 — полное выдвижение. */
+  runnerMembers?: 2 | 3;
+  /** Направляющая под дном (HW-04): короб по формулам паспорта, направляющая под боковинами. */
+  mount?: 'side' | 'under';
+  /** Длина короба, мм: у скрытого монтажа — SKL паспорта; пусто — NL. */
+  boxLengthMm?: number;
+  /** Почему короб не выпускается в цех, хотя размеры посчитаны (скрытый монтаж, система). */
+  releaseWhy?: string[];
+  /**
+   * СИСТЕМА ЯЩИКА (HW-04): царги металлические (покупные), дно и задняя стенка —
+   * ДСП по формулам паспорта от внутренней ширины корпуса LW и NL.
+   */
+  system?: { sideHeightMm: number; bottomWidthDeductMm: number; bottomLengthDeductMm: number; backWidthDeductMm: number; backHeightMm: number; sideItemId: string };
 };
 
 export type ProfileVerdict = { ready: true; profile: DrawerProfile; missing: [] } | { ready: false; missing: string[] };
@@ -162,6 +183,8 @@ export function drawerProfileFor(input: {
   usableDepthMm: number;
   /** Фасад накладной (KT паспорта — для него) или вкладной в проём. */
   overlay: boolean;
+  /** Царги системы ящика на месте модуля (HW-04): нужны, когда направляющая — ходовая системы. */
+  drawerSide?: HardwareItem | null;
 }): ProfileVerdict {
   const { slide, slideItemId, rules, openingWidthMm, usableDepthMm, overlay } = input;
   const missing: string[] = [];
@@ -180,13 +203,40 @@ export function drawerProfileFor(input: {
       );
     }
     if (geometry.mount === 'under') {
-      missing.push(
-        `«${slide.name}» — скрытого монтажа: у короба под неё своя конструкция (дно утоплено, ширина по формуле паспорта), ` +
-          'в правилах цеха её нет — короб не рассчитывается',
-      );
+      /*
+       * СКРЫТЫЙ МОНТАЖ (HW-04): размеры короба — по формулам паспорта
+       * («SKW = LW − x», «SKL = NL − y»). Нет формулы — короб не считается,
+       * и это сказано словами; ширину «по похожей» не подбираем.
+       */
+      if (geometry.innerDeductMm === null) missing.push(`«${slide.name}» — скрытого монтажа: формулы внутренней ширины ящика (SKW = LW − …) в паспорте нет — короб не рассчитывается`);
+      if (geometry.lengthDeductMm === null) missing.push(`«${slide.name}» — скрытого монтажа: формулы длины ящика (SKL = NL − …) в паспорте нет — короб не рассчитывается`);
+    }
+    if (geometry.mount === 'system') {
+      /* СИСТЕМА (HW-04): короб — царги к этой ходовой и раскрой дна и задней стенки по их паспорту. */
+      const side = input.drawerSide;
+      if (!side) missing.push(`«${slide.name}» — ходовая системы ящика: царги не выбраны (место «Царги системы ящика») — короб не собрать`);
+      else {
+        const sd = (key: string) => {
+          const v = side.hardware.dimensionsMm?.[key];
+          return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null;
+        };
+        const sideNl = sd('nominalLength');
+        if (sideNl !== null && geometry.nominalLengthMm !== null && sideNl !== geometry.nominalLengthMm) {
+          missing.push(`царги NL ${sideNl} мм к ходовой NL ${geometry.nominalLengthMm} мм не подходят — нужна та же NL`);
+        }
+        const need: [string, string][] = [
+          ['sideHeight', 'высота царги'],
+          ['bottomWidthDeduct', 'ширина дна (LW − …)'],
+          ['bottomLengthDeduct', 'длина дна (NL − …)'],
+          ['backWidthDeduct', 'ширина задней стенки (LW − …)'],
+          ['backHeight', 'высота задней стенки'],
+        ];
+        const gaps = need.filter(([key]) => sd(key) === null).map(([, words]) => words);
+        if (gaps.length > 0) missing.push(`в паспорте царг «${side.name}» не напечатано: ${gaps.join(', ')} — дно и задняя стенка не рассчитываются`);
+      }
     }
     if (geometry.nominalLengthMm === null) missing.push(`у направляющей «${slide.name}» в каталоге нет длины (slideLengthMm)`);
-    if (geometry.sideClearanceMm === null) missing.push(`у направляющей «${slide.name}» в каталоге нет бокового зазора (sideClearanceMm)`);
+    if (geometry.mount !== 'under' && geometry.mount !== 'system' && geometry.sideClearanceMm === null) missing.push(`у направляющей «${slide.name}» в каталоге нет бокового зазора (sideClearanceMm)`);
     const nl = geometry.nominalLengthMm;
     if (nl !== null && nl > usableDepthMm) {
       missing.push(
@@ -220,7 +270,14 @@ export function drawerProfileFor(input: {
         `боковина короба ${rules.boxSideMm} мм толще, чем допускает паспорт (до ${geometry.maxDrawerSideMm} мм)`,
       );
     }
-    const clearance = geometry.sideClearanceMm;
+    /* Формулы раскроя системы Blum напечатаны для ДСП 16 мм: у другого листа цеха вычеты другие. */
+    if (geometry.mount === 'system' && rules.boxSideMm !== 16) {
+      missing.push(`формулы раскроя дна и задней стенки в паспорте — для ДСП 16 мм, а короб цеха из ${rules.boxSideMm} мм — не рассчитываются`);
+    }
+    if (geometry.mount === 'under' && geometry.innerDeductMm !== null && geometry.innerDeductMm - 2 * rules.boxSideMm < 0) {
+      missing.push(`боковины короба по ${rules.boxSideMm} мм не входят в SKW = LW − ${geometry.innerDeductMm}: между коробом и корпусом не остаётся места`);
+    }
+    const clearance = geometry.mount === 'under' ? null : geometry.sideClearanceMm;
     if (clearance !== null) {
       const inner = openingWidthMm - 2 * clearance - 2 * rules.boxSideMm;
       if (inner <= 0) {
@@ -232,9 +289,14 @@ export function drawerProfileFor(input: {
     }
   }
 
-  if (missing.length > 0 || !rules || !slide || !geometry || geometry.nominalLengthMm === null || geometry.sideClearanceMm === null) {
+  const under = geometry?.mount === 'under' && geometry.innerDeductMm !== null && geometry.lengthDeductMm !== null;
+  const sys = geometry?.mount === 'system' ? input.drawerSide : null;
+  if (missing.length > 0 || !rules || !slide || !geometry || geometry.nominalLengthMm === null || (!under && !sys && geometry.sideClearanceMm === null)) {
     return { ready: false, missing };
   }
+  /* Зазор между коробом и корпусом у скрытого монтажа — из SKW: (x − 2 · боковина) / 2 с каждой стороны. */
+  const sideClearanceMm = under ? (geometry.innerDeductMm! - 2 * rules.boxSideMm) / 2 : sys ? 0 : geometry.sideClearanceMm!;
+  const sysDim = (key: string) => sys!.hardware.dimensionsMm![key] as number;
 
   const status = slide.hardware.engineeringStatus;
   /* Позиция без записи производителя — данные компании: их ввела организация. */
@@ -248,7 +310,7 @@ export function drawerProfileFor(input: {
     ready: true,
     profile: {
       slideLengthMm: geometry.nominalLengthMm,
-      sideClearanceMm: geometry.sideClearanceMm,
+      sideClearanceMm,
       boxSideMm: rules.boxSideMm,
       boxBottomMm: rules.boxBottomMm,
       boxHeightGapMm: rules.boxHeightGapMm,
@@ -261,7 +323,28 @@ export function drawerProfileFor(input: {
       runnerAxisMm: rules.runnerAxisMm ?? null,
       railHeightMm: geometry.railHeightMm,
       slideItemId: slide.id,
-      confirmed: rules.confirmed === true && passportFull,
+      confirmed: rules.confirmed === true && passportFull && !under && !sys,
+      runnerMembers: runnerModelOf(slide).members,
+      ...(sys
+        ? {
+            system: {
+              sideHeightMm: sysDim('sideHeight'),
+              bottomWidthDeductMm: sysDim('bottomWidthDeduct'),
+              bottomLengthDeductMm: sysDim('bottomLengthDeduct'),
+              backWidthDeductMm: sysDim('backWidthDeduct'),
+              backHeightMm: sysDim('backHeight'),
+              sideItemId: sys.id,
+            },
+            releaseWhy: ['система ящика: толщина царги, держатели задней стенки и присадка крепления фасада в паспорте не образмерены — выпуск заперт'],
+          }
+        : {}),
+      ...(under
+        ? {
+            mount: 'under' as const,
+            boxLengthMm: geometry.nominalLengthMm - geometry.lengthDeductMm!,
+            releaseWhy: ['короб скрытого монтажа: утопление дна, вырез задней стенки под направляющую и присадка защёлок в паспорте не образмерены — выпуск заперт'],
+          }
+        : {}),
     },
     missing: [],
   };
@@ -277,7 +360,40 @@ export type DrawerBoxPart = {
   /** Лист: боковины и торцы — корпусная ЛДСП, дно — по правилу цеха. */
   sheet: 'side' | 'bottom';
   edges: { long: number; short: number };
+  /**
+   * Какие куски короба эта строка режет (HW-04), по порядку штук. Пусто —
+   * пара боковин, пара торцов (передний, задний) или дно. У системы ящика
+   * торец один — задний: без этого ИД детали раскроя (`wall:1`) разошёлся бы
+   * с ИД коробки сцены (`wall:2`).
+   */
+  pieces?: DrawerPiece['key'][];
 };
+
+/** ИД куска короба — один на сцену (`kitBoxes`) и деталировку (`panels`). */
+export function drawerPieceId(kitKey: string, piece: DrawerPiece['key']): string {
+  switch (piece) {
+    case 'side-left':
+      return `${kitKey}:box:side:1`;
+    case 'side-right':
+      return `${kitKey}:box:side:2`;
+    case 'wall-front':
+      return `${kitKey}:box:wall:1`;
+    case 'wall-back':
+      return `${kitKey}:box:wall:2`;
+    case 'bottom':
+      return `${kitKey}:box:bottom`;
+    default:
+      return `${kitKey}:box:${piece}`;
+  }
+}
+
+/** Куски строки короба по порядку штук: свои у строки, иначе пара боковин, пара торцов или дно. */
+export function drawerPartPieces(part: DrawerBoxPart): DrawerPiece['key'][] {
+  if (part.pieces) return part.pieces;
+  if (part.name === DRAWER_BOTTOM_PANEL_NAME) return ['bottom'];
+  const pair: DrawerPiece['key'][] = part.name === DRAWER_SIDE_PANEL_NAME ? ['side-left', 'side-right'] : ['wall-front', 'wall-back'];
+  return pair.slice(0, part.qty);
+}
 
 export const DRAWER_SIDE_PANEL_NAME = 'Боковина ящика';
 /** Передняя и задняя стенки короба — между боковинами. */
@@ -294,10 +410,15 @@ export type DrawerPiece = {
   y1: number;
   z0: number;
   z1: number;
-  /** Направляющая — неподвижная часть на корпусе (`cabinet`) или ходовая на ящике (`drawer`). */
-  member?: 'cabinet' | 'drawer';
+  /**
+   * Направляющая — неподвижная секция на корпусе (`cabinet`), средняя (`middle`,
+   * у полного выдвижения: едет на половину хода) или ходовая на ящике (`drawer`).
+   */
+  member?: 'cabinet' | 'middle' | 'drawer';
   /** Положение по высоте не задано правилом цеха — рисуется условно. */
   approximate?: boolean;
+  /** Царга системы ящика (HW-04): металл, покупная, в раскрое её нет. */
+  metal?: true;
 };
 
 export type DrawerBoxPlan = {
@@ -328,9 +449,10 @@ export type DrawerBoxPlan = {
  * ширину короба, иначе направляющая не встанет (ловушка 575).
  */
 export function drawerBoxPlan(openingWidthMm: number, zoneHeightMm: number, profile: DrawerProfile): DrawerBoxPlan {
+  if (profile.system) return systemBoxPlan(openingWidthMm, zoneHeightMm, profile, profile.system);
   const c = profile.sideClearanceMm;
   const s = profile.boxSideMm;
-  const L = profile.slideLengthMm;
+  const L = profile.boxLengthMm ?? profile.slideLengthMm;
   const bottomMm = profile.boxBottomMm;
   const mount = profile.bottomMount ?? 'inset';
   const groove = mount === 'groove' ? (profile.bottomGrooveMm ?? 0) : 0;
@@ -381,7 +503,7 @@ export function drawerBoxPlan(openingWidthMm: number, zoneHeightMm: number, prof
   const axisRule = profile.runnerAxisMm ?? null;
   const axis = y0 + (axisRule ?? height / 2);
   const railH = Math.min(profile.railHeightMm ?? 35, height);
-  const rail = (x0: number, x1: number, key: DrawerPiece['key'], member: 'cabinet' | 'drawer'): DrawerPiece => ({
+  const rail = (x0: number, x1: number, key: DrawerPiece['key'], member: 'cabinet' | 'middle' | 'drawer'): DrawerPiece => ({
     key,
     x0,
     x1,
@@ -392,12 +514,51 @@ export function drawerBoxPlan(openingWidthMm: number, zoneHeightMm: number, prof
     member,
     ...(axisRule === null || profile.railHeightMm == null ? { approximate: true } : {}),
   });
-  pieces.push(
-    rail(0, c / 2, 'rail-left', 'cabinet'),
-    rail(c / 2, c, 'rail-left', 'drawer'),
-    rail(openingWidthMm - c, openingWidthMm - c / 2, 'rail-right', 'drawer'),
-    rail(openingWidthMm - c / 2, openingWidthMm, 'rail-right', 'cabinet'),
-  );
+  /*
+   * СЕКЦИИ ПО ВИДУ ВЫДВИЖЕНИЯ (HW-04): у частичного — корпусная и ходовая, у
+   * полного и сверхполного — ещё средняя между ними. Монтажная ширина делится
+   * поровну — сечение секций в паспорте не образмерено (картинка узла).
+   */
+  if (profile.mount === 'under') {
+    /*
+     * ПОД ДНОМ (HW-04): направляющая под каждой боковиной, во всю длину NL;
+     * сечение секций в паспорте не образмерено — картинка узла (`approximate`).
+     */
+    const nl = profile.slideLengthMm;
+    const h = Math.min(profile.railHeightMm ?? 20, Math.max(4, y0));
+    const under = (x0: number, x1: number, key: DrawerPiece['key'], member: 'cabinet' | 'middle' | 'drawer', share: number, of: number): DrawerPiece => ({
+      key,
+      x0,
+      x1,
+      y0: y0 - h + (h * share) / of,
+      y1: y0 - h + (h * (share + 1)) / of,
+      z0: -nl,
+      z1: 0,
+      member,
+      approximate: true,
+    });
+    const of = profile.runnerMembers ?? 2;
+    const members: ('cabinet' | 'middle' | 'drawer')[] = of === 3 ? ['cabinet', 'middle', 'drawer'] : ['cabinet', 'drawer'];
+    members.forEach((member, i) => {
+      pieces.push(under(xL, xL + s, 'rail-left', member, i, of), under(xR - s, xR, 'rail-right', member, i, of));
+    });
+  } else if ((profile.runnerMembers ?? 2) === 3) {
+    pieces.push(
+      rail(0, c / 3, 'rail-left', 'cabinet'),
+      rail(c / 3, (2 * c) / 3, 'rail-left', 'middle'),
+      rail((2 * c) / 3, c, 'rail-left', 'drawer'),
+      rail(openingWidthMm - c, openingWidthMm - (2 * c) / 3, 'rail-right', 'drawer'),
+      rail(openingWidthMm - (2 * c) / 3, openingWidthMm - c / 3, 'rail-right', 'middle'),
+      rail(openingWidthMm - c / 3, openingWidthMm, 'rail-right', 'cabinet'),
+    );
+  } else {
+    pieces.push(
+      rail(0, c / 2, 'rail-left', 'cabinet'),
+      rail(c / 2, c, 'rail-left', 'drawer'),
+      rail(openingWidthMm - c, openingWidthMm - c / 2, 'rail-right', 'drawer'),
+      rail(openingWidthMm - c / 2, openingWidthMm, 'rail-right', 'cabinet'),
+    );
+  }
 
   return {
     outerWidthMm: outerW,
@@ -407,7 +568,80 @@ export function drawerBoxPlan(openingWidthMm: number, zoneHeightMm: number, prof
     bottomFromMm: y0,
     parts,
     pieces,
-    runnerAxisFromZoneMm: axisRule === null ? null : tenth(y0 + axisRule),
+    /* У направляющей под дном оси короба нет: правило цеха «ось от низа зоны» к ней не относится (HW-04). */
+    runnerAxisFromZoneMm: axisRule === null || profile.mount === 'under' ? null : tenth(y0 + axisRule),
+  };
+}
+
+/**
+ * ПОЧЕМУ У НАПРАВЛЯЮЩЕЙ НЕТ ВЫСОТЫ НА КОРПУСЕ (HW-04) — одни слова на карточку
+ * детали (`moduleDrilling`) и план присадки (`drillingPlan`). У боковой
+ * направляющей высоту даёт правило короба цеха; у направляющей под дном и у
+ * ходовой системы ящика оси короба нет, а высоты паспорт не образмерил.
+ */
+export function runnerAxisMissingWhy(profile: Pick<DrawerProfile, 'mount' | 'system'>): string {
+  if (profile.system) return 'высота ходовой системы ящика на корпусе в паспорте не образмерена: ходовая под дном, оси короба у неё нет';
+  if (profile.mount === 'under') return 'высота направляющей скрытого монтажа на корпусе в паспорте не образмерена: направляющая под дном, оси короба у неё нет';
+  return 'ось направляющей по высоте — правило короба цеха не задано';
+}
+
+/**
+ * КОРОБ СИСТЕМЫ ЯЩИКА (HW-04) — TANDEMBOX, LEGRABOX. Режутся два куска ДСП
+ * по формулам паспорта от LW (внутренняя ширина корпуса) и NL: дно и задняя
+ * стенка. Царги — покупные металлические: в раскрое их нет, в сцене они
+ * металлом высоты царги во всю NL; толщина царги в паспорте не напечатана,
+ * поэтому место царг по ширине — картинка узла (`approximate`).
+ */
+const SYSTEM_SIDE_PICTURE_MM = 15;
+function systemBoxPlan(
+  openingWidthMm: number,
+  zoneHeightMm: number,
+  profile: DrawerProfile,
+  sys: NonNullable<DrawerProfile['system']>,
+): DrawerBoxPlan {
+  const LW = openingWidthMm;
+  const NL = profile.slideLengthMm;
+  const t = profile.boxSideMm;
+  const below = profile.gapBelowMm ?? 0;
+  const bottomW = tenth(LW - sys.bottomWidthDeductMm);
+  const bottomL = tenth(NL - sys.bottomLengthDeductMm);
+  const backW = tenth(LW - sys.backWidthDeductMm);
+  const height = Math.min(sys.sideHeightMm, zoneHeightMm - below);
+  const parts: DrawerBoxPart[] = [
+    { name: DRAWER_BOTTOM_PANEL_NAME, lengthMm: bottomW, widthMm: bottomL, thicknessMm: t, qty: 1, sheet: 'side', edges: { long: 0, short: 0 } },
+    { name: DRAWER_WALL_PANEL_NAME, lengthMm: backW, widthMm: sys.backHeightMm, thicknessMm: t, qty: 1, sheet: 'side', edges: { long: 0, short: 0 }, pieces: ['wall-back'] },
+  ];
+  const y0 = below;
+  const x0 = (LW - bottomW) / 2;
+  const x1 = x0 + bottomW;
+  const sideW = SYSTEM_SIDE_PICTURE_MM;
+  const pieces: DrawerPiece[] = [
+    { key: 'side-left', x0: x0 - sideW, x1: x0, y0, y1: y0 + height, z0: -NL, z1: 0, metal: true, approximate: true },
+    { key: 'side-right', x0: x1, x1: x1 + sideW, y0, y1: y0 + height, z0: -NL, z1: 0, metal: true, approximate: true },
+    { key: 'bottom', x0, x1, y0, y1: y0 + t, z0: -bottomL, z1: 0 },
+    { key: 'wall-back', x0: (LW - backW) / 2, x1: (LW + backW) / 2, y0: y0 + t, y1: y0 + t + sys.backHeightMm, z0: -bottomL - t, z1: -bottomL },
+  ];
+  /* Ходовая под царгой, во всю NL; секции — по виду выдвижения (`runnerModelOf`). */
+  const of = profile.runnerMembers ?? 2;
+  const members: ('cabinet' | 'middle' | 'drawer')[] = of === 3 ? ['cabinet', 'middle', 'drawer'] : ['cabinet', 'drawer'];
+  const h = Math.max(4, Math.min(20, y0 || 20));
+  members.forEach((member, i) => {
+    const ya = y0 - h + (h * i) / of;
+    const yb = y0 - h + (h * (i + 1)) / of;
+    pieces.push(
+      { key: 'rail-left', x0: x0 - sideW, x1: x0, y0: ya, y1: yb, z0: -NL, z1: 0, member, approximate: true },
+      { key: 'rail-right', x0: x1, x1: x1 + sideW, y0: ya, y1: yb, z0: -NL, z1: 0, member, approximate: true },
+    );
+  });
+  return {
+    outerWidthMm: tenth(bottomW + 2 * sideW),
+    innerWidthMm: bottomW,
+    lengthMm: NL,
+    heightMm: tenth(height),
+    bottomFromMm: y0,
+    parts,
+    pieces,
+    runnerAxisFromZoneMm: null,
   };
 }
 

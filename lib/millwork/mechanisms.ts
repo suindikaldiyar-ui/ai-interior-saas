@@ -91,7 +91,8 @@ export type MechanismRecord = {
   /** CAD производителя в продукте нет ни у одной позиции — и сказано почему. */
   cad: null;
   cadWhy: string;
-  source: { file: string | null; url: string | null; pdfPage: number | null; printedPage: string | null; checkedAt: string | null };
+  /** `entry` — запись базы номенклатуры в архиве библиотеки БАЗИС: у неё нет страницы. */
+  source: { file: string | null; entry: string | null; url: string | null; pdfPage: number | null; printedPage: string | null; checkedAt: string | null };
   verification: NonNullable<HardwareMeta['engineeringStatus']> | 'NOT_STATED';
   /** Чего нет в источнике для выпуска — словами записи; противоречие источника — первой строкой. */
   constraints: string[];
@@ -163,6 +164,8 @@ function classify(hardware: HardwareMeta, text: string): Classified | NotMechani
         motion: 'swing_up',
         basis: `подвид ${sub}: ${sub.startsWith('lift_hki') ? BLUM_LIFT_WORDS.lift_hki : BLUM_LIFT_WORDS.lift_hk}`,
       };
+    /* Подъём с наклоном над корпусом (как Blum HS) — подвид свидетельств HW-01. */
+    if (sub === 'up_over_lift') return { system: 'LIFT_SYSTEM', role: 'mechanism', type: 'up_and_over', motion: 'swing_over', basis: `подвид ${sub}: подъём с наклоном над корпусом (как записан в своде фактов)` };
     if (sub === 'flap_lift')
       return {
         system: 'LIFT_SYSTEM',
@@ -292,6 +295,7 @@ export function mechanismOf(item: { name?: string; hardware: HardwareMeta }): Me
     cadWhy: cadWhyOf(hw.manufacturer ?? hw.brand ?? ''),
     source: {
       file: source?.file ?? null,
+      entry: source?.entry ?? null,
       url: source?.url ?? null,
       pdfPage: source?.pdfPage ?? null,
       printedPage: source?.printedPage ?? null,

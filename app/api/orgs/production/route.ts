@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { cuttingSettings, productionSettings } from '@/types/catalog';
+import { cuttingSettings, drillingSettings, productionSettings } from '@/types/catalog';
 import { currentOrg, supabaseServer } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
@@ -29,7 +29,7 @@ export async function POST(request: Request) {
     );
   }
 
-  let body: { production?: unknown; cutting?: unknown } = {};
+  let body: { production?: unknown; cutting?: unknown; drilling?: unknown } = {};
   try {
     body = await request.json();
   } catch {
@@ -42,11 +42,19 @@ export async function POST(request: Request) {
    * как было. Экран объекта несёт отметки объекта поверх цеховых, и отдай
    * он весь набор, отметки одного объекта стали бы школой всего цеха.
    */
-  if (body.production === undefined && body.cutting !== undefined) {
+  /*
+   * ТОЛЬКО ПРИСАДКА (HW-08) — так же: экран «Присадка» присылает правила
+   * присадки цеха, остальное читается из базы и пишется как было.
+   */
+  if (body.production === undefined && (body.cutting !== undefined || body.drilling !== undefined)) {
     const { data, error: readError } = await supabase.from('orgs').select('production').eq('id', org.id).maybeSingle();
     if (readError) return NextResponse.json({ error: `Настройки цеха не прочитались: ${readError.message}` }, { status: 500 });
     const stored = (data?.production ?? {}) as Record<string, unknown>;
-    const production = productionSettings({ ...stored, cutting: cuttingSettings(body.cutting) });
+    const production = productionSettings({
+      ...stored,
+      ...(body.cutting !== undefined ? { cutting: cuttingSettings(body.cutting) } : {}),
+      ...(body.drilling !== undefined ? { drilling: drillingSettings(body.drilling) } : {}),
+    });
     const { error } = await supabase.from('orgs').update({ production }).eq('id', org.id);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json({ ok: true, production });

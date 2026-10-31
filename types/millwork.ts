@@ -520,7 +520,9 @@ export type FittingSlot =
   | 'corner_unit'
   | 'waste'
   | 'shelf_support'
-  | 'leg';
+  | 'leg'
+  /** Царги системы ящика (TANDEMBOX, LEGRABOX — HW-04): металлические боковины к ходовой системы. */
+  | 'drawer_side';
 
 /** Установленная фурнитура: место, позиция каталога и (у отсека) его ИД. */
 export interface ModuleFitting {

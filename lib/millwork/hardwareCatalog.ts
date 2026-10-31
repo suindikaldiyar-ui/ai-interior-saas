@@ -85,6 +85,19 @@ export const FIT_KEYS: Record<string, { title: string; kind: 'mm' | 'range' }> =
   plateHeight: { title: 'MD — подъём ответной планки', kind: 'mm' },
   cupDiameter: { title: 'Чашка петли, Ø', kind: 'mm' },
   cupDepth: { title: 'Глубина сверления чашки', kind: 'mm' },
+  /* Петля и планка (HW-03): числа присадки паспорта под своими именами — сцена читает их без паспорта. */
+  flangeWidth: { title: 'FLB — ширина фланца чашки', kind: 'mm' },
+  plateHoleSpacing: { title: 'Планка: между отверстиями', kind: 'mm' },
+  plateHoleFromEdge: { title: 'Планка: отверстия от передней кромки', kind: 'mm' },
+  /* Короб скрытого монтажа (HW-04): формулы паспорта «SKW = LW − …» и «SKL = NL − …». */
+  drawerInnerDeduct: { title: 'SKW = LW − … — внутренняя ширина ящика', kind: 'mm' },
+  drawerLengthDeduct: { title: 'SKL = NL − … — длина ящика', kind: 'mm' },
+  /* Система ящика (HW-04): высота царги и раскрой дна и задней стенки по формулам паспорта. */
+  sideHeight: { title: 'Высота царги', kind: 'mm' },
+  bottomWidthDeduct: { title: 'Дно: ширина LW − …', kind: 'mm' },
+  bottomLengthDeduct: { title: 'Дно: длина NL − … (задняя стенка из ДСП)', kind: 'mm' },
+  backWidthDeduct: { title: 'Задняя стенка: ширина LW − …', kind: 'mm' },
+  backHeight: { title: 'Задняя стенка: высота', kind: 'mm' },
   cabinetWidth: { title: 'Под корпус шириной', kind: 'mm' },
   minInnerDepth: { title: 'Мин. глубина корпуса в свету', kind: 'mm' },
   length: { title: 'Длина', kind: 'mm' },

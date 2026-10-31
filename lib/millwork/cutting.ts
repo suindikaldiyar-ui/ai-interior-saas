@@ -659,6 +659,12 @@ export function cuttingPlan(input: {
    */
   drawerBoxUnconfirmed?: number;
   /**
+   * ЧЕГО НЕТ У ЭТИХ КОРОБОВ (HW-04): слова профиля ящика (`drawerDrafts`
+   * → `unconfirmedWhy`) — скрытый монтаж, система ящика. Общая фраза
+   * «неполный паспорт» не говорит цеху, какого числа ждать.
+   */
+  drawerBoxWhy?: string[];
+  /**
    * ВИТРИНЫ (P1): стекло и покупные изделия (`vitrineParts`) и причины, по
    * которым витрину не собрать в цехе (`vitrineProductionReasons`). Причины
    * запирают выпуск словами: цех не распилит корпус витрины, которую не
@@ -671,7 +677,7 @@ export function cuttingPlan(input: {
    */
   radius?: { reasons: string[] };
 }): CuttingPlan {
-  const { settings, decors = new Map(), exportLock = null, fingerprint, drawerBoxUnconfirmed = 0, vitrine, radius } = input;
+  const { settings, decors = new Map(), exportLock = null, fingerprint, drawerBoxUnconfirmed = 0, drawerBoxWhy = [], vitrine, radius } = input;
   /*
    * ГНУТЫЕ ДЕТАЛИ — НЕ С ЛИСТА РАСКРОЯ (OVAL & RADIUS). Дверца, подложка реек и
    * цоколь по дуге делаются гибкой (`Panel.shape.kind === 'bent'`): прямоугольник
@@ -940,7 +946,8 @@ export function cuttingPlan(input: {
   if (drawerBoxUnconfirmed > 0) {
     reasons.push(
       `Короба ящиков (${drawerBoxUnconfirmed} шт.) рассчитаны по правилам короба, не подтверждённым цехом, ` +
-        'или по неполному паспорту направляющей — по такой карте цех распилит короб по числам, которых не подтверждал.',
+        'или по неполному паспорту направляющей — по такой карте цех распилит короб по числам, которых не подтверждал' +
+        (drawerBoxWhy.length > 0 ? `: ${drawerBoxWhy.join('; ')}.` : '.'),
     );
   }
   if (errors.length > 0) {

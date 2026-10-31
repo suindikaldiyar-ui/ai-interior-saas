@@ -27,7 +27,16 @@ function record(article: string): MechanismRecord {
 }
 
 export function mechanismChecks(check: Check): void {
-  const all = HARDWARE_FACTS.map((f) => ({ f, m: mechanismOf(f) }));
+  /*
+   * HW-01 добавил BOYARD, DTC, Firmax, Alphalux, Unihopper и МФ-Комплект.
+   * Прежние числа MC1 и MC2 — у Blum, Hettich и Häfele (1199 записей), и они
+   * не сдвинулись ни на запись; у новых производителей — свои, объявленные.
+   * Проверки MC3–MC7 идут по всем записям (`every`).
+   */
+  const OLD_MAKERS = new Set(['Blum', 'Hettich', 'Häfele']);
+  const every = HARDWARE_FACTS.map((f) => ({ f, m: mechanismOf(f) }));
+  const all = every.filter(({ f }) => OLD_MAKERS.has(f.hardware.manufacturer ?? ''));
+  const added = every.filter(({ f }) => !OLD_MAKERS.has(f.hardware.manufacturer ?? ''));
 
   /* ── MC1. Каждая запись — класс или причина словами ── */
   {
@@ -43,10 +52,36 @@ export function mechanismChecks(check: Check): void {
         if (!m.why) silent.push(`${f.article}: не механизм без причины`);
       }
     }
+    const NEW_ROLES: Record<string, Record<string, number>> = {
+      BOYARD: { mechanism: 1846, component: 287, accessory: 140, none: 489 },
+      DTC: { mechanism: 367, component: 205, accessory: 164, none: 156 },
+      Firmax: { mechanism: 147, component: 25, accessory: 3, none: 51 },
+      Alphalux: { mechanism: 45, component: 70, accessory: 16, none: 35 },
+      Unihopper: { none: 11 },
+      'МФ-Комплект': { mechanism: 7, none: 1 },
+    };
+    const newRoles: Record<string, Record<string, number>> = {};
+    for (const { f, m } of added) {
+      const maker = f.hardware.manufacturer ?? '—';
+      const role = isMechanism(m) ? m.role : 'none';
+      (newRoles[maker] ??= {})[role] = (newRoles[maker]?.[role] ?? 0) + 1;
+      if (isMechanism(m) && !m.basis) silent.push(`${f.article}: класс без основания`);
+      if (isMechanism(m) && m.role !== 'accessory' && !m.type) silent.push(`${f.article}: механизм без вида`);
+      if (!isMechanism(m) && !m.why) silent.push(`${f.article}: не механизм без причины`);
+    }
+    const sorted = (o: Record<string, number> | undefined) => JSON.stringify(Object.entries(o ?? {}).sort());
+    const rolesDiffer = Object.keys({ ...NEW_ROLES, ...newRoles }).filter((maker) => sorted(NEW_ROLES[maker]) !== sorted(newRoles[maker]));
     check(
-      'MC1 записей 1199: механизмов 669, деталей систем 90, принадлежностей 135, вне пяти классов 305 — у каждой основание или причина словами',
-      all.length === 1199 && roles.mechanism === 669 && roles.component === 90 && roles.accessory === 135 && roles.none === 305 && silent.length === 0,
-      `${JSON.stringify(roles)}${silent.length ? ` · молча: ${silent.slice(0, 3).join('; ')}` : ''}`,
+      'MC1 записей Blum, Hettich и Häfele 1199: механизмов 669, деталей систем 90, принадлежностей 135, вне пяти классов 305; у новых производителей (4065) — объявленные числа; у каждой основание или причина словами',
+      all.length === 1199 &&
+        roles.mechanism === 669 &&
+        roles.component === 90 &&
+        roles.accessory === 135 &&
+        roles.none === 305 &&
+        added.length === 4065 &&
+        rolesDiffer.length === 0 &&
+        silent.length === 0,
+      `${JSON.stringify(roles)} · новые ${JSON.stringify(newRoles)}${rolesDiffer.length ? ` · РАСХОДЯТСЯ ${rolesDiffer.join(', ')}` : ''}${silent.length ? ` · молча: ${silent.slice(0, 3).join('; ')}` : ''}`,
     );
   }
 
@@ -83,17 +118,49 @@ export function mechanismChecks(check: Check): void {
     };
     const got = Object.fromEntries(Array.from(tally.entries()).sort());
     const differ = Object.keys({ ...want, ...got }).filter((k) => want[k] !== got[k]);
+    /* Новые производители: виды механизмов — числами свода (HW-01). */
+    const wantNew: Record<string, number> = {
+      'LIFT_SYSTEM:bifold': 54,
+      'LIFT_SYSTEM:parallel': 15,
+      'LIFT_SYSTEM:stay_lift': 73,
+      'RUNNER_SYSTEM:concealed': 168,
+      'RUNNER_SYSTEM:ball_bearing': 56,
+      'RUNNER_SYSTEM:drawer_box': 22,
+      'RUNNER_SYSTEM:full_extension': 3,
+      'RUNNER_SYSTEM:partial_extension': 16,
+      'STORAGE_SYSTEM:cargo': 218,
+      'STORAGE_SYSTEM:pantograph': 4,
+      'STORAGE_SYSTEM:dish_dryer': 66,
+      'STORAGE_SYSTEM:pull_down_storage': 38,
+      'HINGE_SYSTEM:concealed_hinge': 107,
+      'HINGE_SYSTEM:wide_angle': 14,
+      'HINGE_SYSTEM:special_application': 133,
+      'HANDLE_SYSTEM:bar': 671,
+      'HANDLE_SYSTEM:profile': 479,
+      'HANDLE_SYSTEM:knob': 275,
+    };
+    const tallyNew = new Map<string, number>();
+    for (const { m } of added) {
+      if (!isMechanism(m) || m.role !== 'mechanism') continue;
+      const key = `${m.system}:${m.type}`;
+      tallyNew.set(key, (tallyNew.get(key) ?? 0) + 1);
+    }
+    const gotNew = Object.fromEntries(Array.from(tallyNew.entries()).sort());
+    const differNew = Object.keys({ ...wantNew, ...gotNew }).filter((k) => wantNew[k] !== gotNew[k]);
     check(
-      'MC2 виды механизмов по классам — ровно как в своде фактов (складных 54, вертикальных 5, поворотных 92, откидных над корпусом 6; шариковых 131, скрытых 62…)',
-      differ.length === 0,
-      differ.length ? differ.map((k) => `${k}: ждали ${want[k] ?? 0}, есть ${got[k] ?? 0}`).join(' | ') : `${Object.keys(got).length} видов`,
+      'MC2 виды механизмов по классам — ровно как в своде фактов: Blum, Hettich и Häfele (складных 54, вертикальных 5, поворотных 92, откидных над корпусом 6; шариковых 131, скрытых 62…) и новые производители (складных 54, вертикальных 15, поворотных 73; скрытых 168, карго 218, сушилок 66…)',
+      differ.length === 0 && differNew.length === 0,
+      [
+        differ.length ? differ.map((k) => `${k}: ждали ${want[k] ?? 0}, есть ${got[k] ?? 0}`).join(' | ') : `${Object.keys(got).length} видов`,
+        differNew.length ? `новые: ${differNew.map((k) => `${k}: ждали ${wantNew[k] ?? 0}, есть ${gotNew[k] ?? 0}`).join(' | ')}` : `новые: ${Object.keys(gotNew).length} видов`,
+      ].join(' · '),
     );
   }
 
   /* ── MC3. Лёгкая запись Studio и полный паспорт — один класс ── */
   {
     const differ: string[] = [];
-    for (const { f, m } of all) {
+    for (const { f, m } of every) {
       const light: Partial<HardwareMeta> = {};
       for (const key of HARDWARE_LIGHT_FIELDS) {
         const v = (f.hardware as Record<string, unknown>)[key];
@@ -103,7 +170,11 @@ export function mechanismChecks(check: Check): void {
       const same = isMechanism(m) && isMechanism(lm) ? mechanismWords(m) === mechanismWords(lm) && m.basis === lm.basis : !isMechanism(m) && !isMechanism(lm) && m.why === lm.why;
       if (!same) differ.push(f.article);
     }
-    check('MC3 класс по лёгкой записи (карточка Studio) = класс по полному паспорту у всех 1199', differ.length === 0, differ.slice(0, 5).join(', '));
+    check(
+      'MC3 класс по лёгкой записи (карточка Studio) = класс по полному паспорту у всех 5264 записей',
+      every.length === 5264 && differ.length === 0,
+      `записей ${every.length}${differ.length ? ` · расходятся ${differ.slice(0, 5).join(', ')}` : ''}`,
+    );
   }
 
   /* ── MC4. Вид хода Blum — словами каталога ── */
@@ -172,16 +243,17 @@ export function mechanismChecks(check: Check): void {
   /* ── MC7. Поля записи по ТЗ: источник, статус, присадка, CAD — у каждого механизма ── */
   {
     const gaps: string[] = [];
-    for (const { f, m } of all) {
+    for (const { f, m } of every) {
       if (!isMechanism(m)) continue;
       if (!m.article || !m.manufacturer) gaps.push(`${f.article}: без артикула или производителя`);
-      if (!m.source.file || m.source.pdfPage === null || !m.source.checkedAt) gaps.push(`${f.article}: без источника`);
+      /* Страница — у каталога; у базы номенклатуры библиотеки БАЗИС — запись в архиве (как в A2). */
+      if (!m.source.file || (m.source.pdfPage === null && !m.source.entry) || !m.source.checkedAt) gaps.push(`${f.article}: без источника`);
       if (m.cad !== null || !m.cadWhy) gaps.push(`${f.article}: CAD без слов`);
       if (m.verification === 'NOT_STATED') gaps.push(`${f.article}: без инженерного статуса`);
     }
-    const conflicts = all.filter(({ m }) => isMechanism(m) && m.verification === 'CONFLICT');
+    const conflicts = every.filter(({ m }) => isMechanism(m) && m.verification === 'CONFLICT');
     check(
-      'MC7 у каждого механизма — артикул, производитель, файл и страница источника, дата сверки, инженерный статус и слова «почему нет CAD»; у CONFLICT первая строка ограничений — противоречие источника',
+      'MC7 у каждого механизма всех производителей — артикул, производитель, файл и страница источника (у библиотеки БАЗИС — запись в архиве), дата сверки, инженерный статус и слова «почему нет CAD»; у CONFLICT первая строка ограничений — противоречие источника',
       gaps.length === 0 && conflicts.length > 0 && conflicts.every(({ m }) => isMechanism(m) && m.constraints[0]?.includes('противоречит')),
       `${gaps.slice(0, 3).join('; ')} · CONFLICT ${conflicts.length}`,
     );

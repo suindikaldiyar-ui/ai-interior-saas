@@ -359,6 +359,7 @@ const SLOT_PER: Record<FittingSlot, 'piece' | 'pair' | 'mechanism'> = {
   waste: 'mechanism',
   shelf_support: 'piece',
   leg: 'piece',
+  drawer_side: 'pair',
 };
 
 /**
@@ -826,6 +827,8 @@ export function buildEstimateDrafts(
         /* Направляющая на месте модуля — своей строкой (HARDWARE-01). */
       } else if (pick) pick.slides += drawers;
       else slides += drawers;
+      /* Царги системы ящика (HW-04) — своей строкой, комплект на ящик; общей строки у них нет. */
+      if (drawers > 0) fit.take(unit, 'drawer_side', drawers);
     }
 
     /*

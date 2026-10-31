@@ -39,6 +39,19 @@ import { openingHardware } from '@/lib/millwork/opening';
 import { cornerOfModule } from '@/lib/millwork/corner';
 import { moduleCarcassHeightMm } from '@/lib/millwork/fill';
 import { moduleDrawerKits } from '@/lib/millwork/drawerKit';
+import {
+  ANALOG_KEY_TITLE,
+  NO_SERIES,
+  analogKeyOf,
+  analogsOf,
+  favoriteArticles,
+  pushRecent,
+  recentArticles,
+  seriesOf,
+  sizeMatches,
+  toggleFavorite,
+  type DeviceList,
+} from '@/lib/millwork/hardwareAnalogs';
 import { useInteriorStore } from '@/store/useInteriorStore';
 
 /**
@@ -118,8 +131,23 @@ const MOVEMENT_WORDS: Record<string, string> = {
 };
 
 /** Производители фильтра — всегда; есть ли у них позиции, решает каталог, а не список. */
-const MAKERS = ['Blum', 'Hettich', 'Häfele', 'BOYARD'] as const;
-const BRAND_MAKER: Record<string, string> = { blum: 'Blum', hettich: 'Hettich', hafele: 'Häfele', boyard: 'BOYARD' };
+const MAKERS = ['Blum', 'Hettich', 'Häfele', 'BOYARD', 'DTC', 'Firmax', 'Alphalux', 'Unihopper', 'МФ-Комплект'] as const;
+const BRAND_MAKER: Record<string, string> = {
+  blum: 'Blum',
+  hettich: 'Hettich',
+  hafele: 'Häfele',
+  boyard: 'BOYARD',
+  dtc: 'DTC',
+  firmax: 'Firmax',
+  alphalux: 'Alphalux',
+  unihopper: 'Unihopper',
+  mf: 'МФ-Комплект',
+};
+/** Серий у производителя бывает сотни: кнопками — самые полные, остальные находятся поиском. */
+const SERIES_CHIPS_MAX = 24;
+/** Аналогов в карточке — первые по статусу паспорта; остальные — поиском по ключевому размеру. */
+const ANALOGS_MAX = 8;
+type ListMode = 'all' | 'favorites' | 'recent';
 const COMPANY = 'Компания';
 
 /** Подписи групп в фильтре — короче заголовков групп каталога. */
@@ -324,7 +352,7 @@ export default function HardwarePanel({ unit, run, production, hardware, catalog
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId]);
 
-  const places = useMemo(() => (unit ? fittingSlotsOf(unit, run, production) : []), [unit, run, production]);
+  const places = useMemo(() => (unit ? fittingSlotsOf(unit, run, production, hardware) : []), [unit, run, production, hardware]);
   const sliding = run.doorSystem === 'sliding';
   const [slotKey, setSlotKey] = useState<string | null>(null);
   const placeKey = (place: Pick<SlotPlace, 'slot' | 'bayId'>) => `${place.slot}${place.bayId ? `@${place.bayId}` : ''}`;
@@ -366,7 +394,35 @@ export default function HardwarePanel({ unit, run, production, hardware, catalog
     check: false,
   });
   const [query, setQuery] = useState('');
-  const [picked, setPicked] = useState<string | null>(null);
+  const [picked, setPickedState] = useState<string | null>(null);
+  /* Серия — внутри производителя: сменился производитель — серия сбрасывается. */
+  const [series, setSeries] = useState<string>('all');
+  const [sizeText, setSizeText] = useState('');
+  const sizeMm = Number(sizeText.replace(',', '.'));
+  const [listMode, setListMode] = useState<ListMode>('all');
+
+  /*
+   * ИЗБРАННОЕ И ПОСЛЕДНИЕ — удобство устройства (`hardwareAnalogs`), не
+   * данные объекта. Хранилище браузера недоступно — список живёт до
+   * перезагрузки, и это сказано под кнопками.
+   */
+  const [favorites, setFavorites] = useState<DeviceList>({ list: [], available: true });
+  const [recent, setRecent] = useState<DeviceList>({ list: [], available: true });
+  useEffect(() => {
+    setFavorites(favoriteArticles());
+    setRecent(recentArticles());
+  }, []);
+  const favoriteSet = useMemo(() => new Set(favorites.list), [favorites]);
+  const recentRank = useMemo(() => new Map(recent.list.map((article, i) => [article, i])), [recent]);
+  const setPicked = useCallback(
+    (id: string | null) => {
+      setPickedState(id);
+      const opened = id ? hardware.get(id) : undefined;
+      if (opened) setRecent((prev) => pushRecent(opened.article, prev.list));
+    },
+    [hardware],
+  );
+  const flipFavorite = useCallback((article: string) => setFavorites((prev) => toggleFavorite(article, prev.list)), []);
 
   const all = useMemo(() => Array.from(hardware.values()).filter((item) => item.active), [hardware]);
   const entryById = useMemo(() => new Map(catalog.map((entry) => [entry.id, entry])), [catalog]);
@@ -427,7 +483,12 @@ export default function HardwarePanel({ unit, run, production, hardware, catalog
   );
 
   /* Всё, кроме производителя: по этому набору считаются числа на кнопках производителей. */
-  const base = useMemo(() => {
+  /*
+   * Список места без отбора по размеру: по нему считаются кнопки NL (HW-04).
+   * Посчитанные по уже отобранному списку, они схлопывались до выбранной
+   * длины — переключить NL 450 на 500 было нечем.
+   */
+  const unsized = useMemo(() => {
     const q = query.trim().toLowerCase().replace(/[\s.]/g, '');
     return all
       .filter((item) => (slidingOpen ? slidingAccepts(item) : place ? slotAccepts(place.slot, item) : true))
@@ -440,6 +501,8 @@ export default function HardwarePanel({ unit, run, production, hardware, catalog
         const status = item.hardware.engineeringStatus;
         if (toggles.verified && status !== 'VERIFIED') return false;
         if (toggles.check && (!status || status === 'VERIFIED')) return false;
+        if (listMode === 'favorites' && !favoriteSet.has(item.article)) return false;
+        if (listMode === 'recent' && !recentRank.has(item.article)) return false;
         return true;
       })
       .filter((item) => {
@@ -449,7 +512,8 @@ export default function HardwarePanel({ unit, run, production, hardware, catalog
           .replace(/[\s.]/g, '');
         return hay.includes(q);
       });
-  }, [all, slidingOpen, place, chosen, group, facts, toggles, query]);
+  }, [all, slidingOpen, place, chosen, group, facts, toggles, query, listMode, favoriteSet, recentRank]);
+  const base = useMemo(() => (sizeMm > 0 ? unsized.filter((item) => sizeMatches(item, sizeMm)) : unsized), [unsized, sizeMm]);
 
   const byMaker = useMemo(() => {
     const out = new Map<string, number>();
@@ -460,12 +524,42 @@ export default function HardwarePanel({ unit, run, production, hardware, catalog
     return out;
   }, [base, facts]);
 
+  /* Серии выбранного производителя — по тому же набору, самые полные первыми. */
+  const ofMaker = useMemo(() => (maker === 'all' ? base : base.filter((item) => facts.get(item.id)?.maker === maker)), [base, maker, facts]);
+  /*
+   * ДЛИНА НАПРАВЛЯЮЩЕЙ (HW-04): у мест «Направляющие» и «Царги системы ящика» —
+   * кнопки NL из позиций этого места (после производителя и серии):
+   * Производитель → Серия → Длина → Артикул. Нажатие — тот же отбор
+   * «Размер, мм», второго фильтра нет.
+   */
+  const nlCounts = useMemo(() => {
+    if (!place || (place.slot !== 'slide' && place.slot !== 'drawer_side')) return [] as [number, number][];
+    const out = new Map<number, number>();
+    for (const item of unsized) {
+      if (maker !== 'all' && facts.get(item.id)?.maker !== maker) continue;
+      if (series !== 'all' && seriesOf(item) !== series) continue;
+      const nl = item.hardware.dimensionsMm?.nominalLength;
+      if (typeof nl === 'number' && nl > 0) out.set(nl, (out.get(nl) ?? 0) + 1);
+    }
+    return Array.from(out.entries()).sort((a, b) => a[0] - b[0]);
+  }, [place, unsized, maker, facts, series]);
+  const seriesCounts = useMemo(() => {
+    if (maker === 'all') return [] as [string, number][];
+    const out = new Map<string, number>();
+    for (const item of ofMaker) out.set(seriesOf(item), (out.get(seriesOf(item)) ?? 0) + 1);
+    return Array.from(out.entries()).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'ru'));
+  }, [ofMaker, maker]);
+
   const candidates = useMemo(
     () =>
-      base
-        .filter((item) => maker === 'all' || facts.get(item.id)?.maker === maker)
-        .sort((a, b) => a.name.localeCompare(b.name, 'ru')),
-    [base, maker, facts],
+      ofMaker
+        .filter((item) => series === 'all' || seriesOf(item) === series)
+        .sort((a, b) =>
+          listMode === 'recent'
+            ? (recentRank.get(a.article) ?? 0) - (recentRank.get(b.article) ?? 0)
+            : a.name.localeCompare(b.name, 'ru'),
+        ),
+    [ofMaker, series, listMode, recentRank],
   );
 
   /* «Только подходящие» — проверка по каждой позиции: только по запросу и только у выбранного места. */
@@ -475,7 +569,7 @@ export default function HardwarePanel({ unit, run, production, hardware, catalog
   );
 
   /* Смена места, отбора или поиска — список с начала. */
-  const listKey = [slotKey ?? '', maker, group, JSON.stringify(toggles), query].join('|');
+  const listKey = [slotKey ?? '', maker, group, series, JSON.stringify(toggles), query, sizeText, listMode].join('|');
   const card = picked ? (hardware.get(picked) ?? null) : null;
   /* Модуль и место для 3D-превью — одним объектом на выбор, а не новым на каждую отрисовку панели. */
   const preview = useMemo<PreviewInput | null>(
@@ -536,6 +630,7 @@ export default function HardwarePanel({ unit, run, production, hardware, catalog
 
   const scope = [
     maker === 'all' ? 'Все производители' : maker,
+    ...(series !== 'all' ? [series === NO_SERIES ? 'без серии' : `серия ${series}`] : []),
     chosen ? (slidingOpen ? 'Системы купе' : FITTING_SLOT_TITLE[place!.slot]) : group === 'all' ? 'Все группы' : GROUP_CHIP[group],
   ].join(' · ');
 
@@ -733,7 +828,10 @@ export default function HardwarePanel({ unit, run, production, hardware, catalog
                   data-hw-brand={key}
                   data-hw-brand-count={count}
                   aria-pressed={maker === key}
-                  onClick={() => setMaker(key)}
+                  onClick={() => {
+                    setMaker(key);
+                    setSeries('all');
+                  }}
                   title={count === 0 && key !== 'all' ? `${key}: позиций нет — каталога этого производителя в организации нет` : undefined}
                   className="mw-btn mw-btn-ghost text-[12px]"
                 >
@@ -778,19 +876,113 @@ export default function HardwarePanel({ unit, run, production, hardware, catalog
               );
             })}
           </div>
-          <label className="mt-2 block">
-            <span className="sr-only">Поиск по артикулу, производителю, названию и серии</span>
-            <input
-              data-hw-search
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Артикул, производитель, серия, название"
-              className="mw-field w-full"
-            />
-          </label>
+          {nlCounts.length > 0 && (
+            <div className="mt-1 flex flex-wrap gap-1" role="group" aria-label="Длина NL" data-hw-nl-list={nlCounts.length}>
+              {nlCounts.map(([nl, count]) => (
+                <button
+                  key={nl}
+                  type="button"
+                  data-hw-nl={nl}
+                  aria-pressed={sizeMm === nl}
+                  onClick={() => setSizeText(sizeMm === nl ? '' : String(nl))}
+                  className="mw-btn mw-btn-ghost text-[12px]"
+                >
+                  NL {nl} <span className="mw-num text-graphiteMw">{count}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {/* ── Серия: Категория → Производитель → Серия → Артикул ── */}
+          {maker !== 'all' && seriesCounts.length > 0 && (
+            <div className="mt-1" data-hw-series-list={seriesCounts.length}>
+              <div className="flex max-h-[104px] flex-wrap gap-1 overflow-y-auto" role="group" aria-label="Серия">
+                <button
+                  type="button"
+                  data-hw-series="all"
+                  aria-pressed={series === 'all'}
+                  onClick={() => setSeries('all')}
+                  className="mw-btn mw-btn-ghost text-[12px]"
+                >
+                  Все серии <span className="mw-num text-graphiteMw">{ofMaker.length}</span>
+                </button>
+                {seriesCounts.slice(0, SERIES_CHIPS_MAX).map(([name, count]) => (
+                  <button
+                    key={name}
+                    type="button"
+                    data-hw-series={name}
+                    data-hw-series-count={count}
+                    aria-pressed={series === name}
+                    onClick={() => setSeries(series === name ? 'all' : name)}
+                    className="mw-btn mw-btn-ghost text-[12px]"
+                  >
+                    {name} <span className="mw-num text-graphiteMw">{count}</span>
+                  </button>
+                ))}
+              </div>
+              {seriesCounts.length > SERIES_CHIPS_MAX && (
+                <p className="mt-1 text-[12px] text-graphiteMw">
+                  Серий у {maker} {seriesCounts.length}: кнопками — {SERIES_CHIPS_MAX} самых полных, остальные находятся поиском по названию
+                  серии.
+                </p>
+              )}
+            </div>
+          )}
+          <div className="mt-2 flex flex-wrap items-end gap-2">
+            <label className="block min-w-0 flex-1">
+              <span className="sr-only">Поиск по артикулу, производителю, названию и серии</span>
+              <input
+                data-hw-search
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Артикул, производитель, серия, название"
+                className="mw-field w-full"
+              />
+            </label>
+            <label className="block w-[132px]">
+              <span className="mw-label mb-1 block">Размер, мм</span>
+              <input
+                data-hw-size
+                inputMode="decimal"
+                value={sizeText}
+                onChange={(event) => setSizeText(event.target.value)}
+                placeholder="NL, C, MD…"
+                title="Позиция остаётся, если число стоит среди её размеров для подбора или попадает в её пределы"
+                className="mw-field w-full"
+              />
+            </label>
+          </div>
+          <div className="mt-1 flex flex-wrap gap-1" role="group" aria-label="Список">
+            {(
+              [
+                ['all', 'Весь каталог', null],
+                ['favorites', 'Избранное', favorites.list.length],
+                ['recent', 'Недавние', recent.list.length],
+              ] as const
+            ).map(([key, title, count]) => (
+              <button
+                key={key}
+                type="button"
+                data-hw-list-mode={key}
+                aria-pressed={listMode === key}
+                onClick={() => setListMode(key)}
+                className="mw-btn mw-btn-ghost text-[12px]"
+              >
+                {title}
+                {count !== null && <span className="mw-num text-graphiteMw"> {count}</span>}
+              </button>
+            ))}
+          </div>
+          {(!favorites.available || !recent.available) && (
+            <p className="mt-1 text-[12px] text-tape" data-hw-device-list="unavailable">
+              Хранилище браузера недоступно: избранное и недавние живут до перезагрузки страницы.
+            </p>
+          )}
           <p className="mt-1 text-[13px] text-graphiteMw" data-hw-count={shown.length} data-hw-scope={scope}>
             {scope} · {shown.length} {plural(shown.length, 'позиция', 'позиции', 'позиций')}
             {shown.length === 0 && maker !== 'all' && (byMaker.get(maker) ?? 0) === 0 ? ' — каталога этого производителя в организации нет' : ''}
+            {shown.length === 0 && listMode === 'favorites' && favorites.list.length === 0 ? ' — в избранном пусто: «В избранное» в карточке позиции' : ''}
+            {shown.length === 0 && listMode === 'recent' && recent.list.length === 0 ? ' — недавних нет: здесь будут открытые карточки' : ''}
+            {shown.length === 0 && sizeMm > 0 ? ` — размера ${sizeMm} мм нет среди размеров для подбора` : ''}
           </p>
           <HardwareList
             key={listKey}
@@ -824,6 +1016,10 @@ export default function HardwarePanel({ unit, run, production, hardware, catalog
               : null
           }
           siblings={siblingsOf(card, finishSiblings)}
+          analogs={analogsOf(card, all, Number.POSITIVE_INFINITY)}
+          analogVerdict={chosen ? verdictOf : null}
+          favorite={favoriteSet.has(card.article)}
+          onFavorite={() => flipFavorite(card.article)}
           onPick={setPicked}
           notice={notice}
           onInstall={() => install(card)}
@@ -1009,6 +1205,83 @@ type PreviewInput = {
   hardware: Map<string, HardwareItem>;
 };
 
+/**
+ * ЗАМЕНА ПРОИЗВОДИТЕЛЯ (HW-02). Аналог — та же группа и подвид у другого
+ * производителя с тем же ключевым размером (`analogsOf`); открывается своей
+ * карточкой и ставится там той же «Установить» — с тем же вердиктом
+ * паспорта. Здесь — только что подходит и почему нет.
+ */
+function AnalogBlock({
+  item,
+  analogs,
+  verdictOf,
+  onPick,
+}: {
+  item: HardwareItem;
+  analogs: ReturnType<typeof analogsOf>;
+  verdictOf: ((item: HardwareItem) => FittingVerdict | null) | null;
+  onPick: (id: string) => void;
+}) {
+  if (!item.hardware.manufacturer) return null;
+  const key = analogKeyOf(item);
+  const shown = analogs.slice(0, ANALOGS_MAX);
+  return (
+    <div className="mt-3" data-hw-analogs={analogs.length}>
+      <p className="mw-label mb-1">Замена производителя{analogs.length > 0 ? ` · ${analogs.length}` : ''}</p>
+      {!key ? (
+        <p className="text-graphiteMw" data-hw-analog-none="key">
+          {item.hardware.category === 'lift'
+            ? 'У подъёмника аналог не подбирается по одному размеру: решают фактор мощности, высота фасада и корпус — ищите по месту модуля, проверка паспорта скажет, встаёт ли.'
+            : 'Ключевого размера для подбора в паспорте этой позиции нет — аналог по похожему названию не предлагается.'}
+        </p>
+      ) : shown.length === 0 ? (
+        <p className="text-graphiteMw" data-hw-analog-none="empty">
+          Других производителей с {ANALOG_KEY_TITLE[key.key] ?? key.key} {key.value} в этой группе в каталоге организации нет.
+        </p>
+      ) : (
+        <ul className="grid gap-1">
+          {shown.map(({ item: other, by }) => {
+            const v = verdictOf ? verdictOf(other) : null;
+            return (
+              <li key={other.id}>
+                <button
+                  type="button"
+                  data-hw-analog={other.article}
+                  data-hw-analog-verdict={v?.state ?? ''}
+                  onClick={() => onPick(other.id)}
+                  className="cad-row items-start text-left"
+                >
+                  <span className="grid min-w-0">
+                    <span className="truncate">
+                      {other.hardware.manufacturer} · {other.hardware.manufacturerArticle ?? other.article}
+                    </span>
+                    <span className="truncate text-[12px] text-graphiteMw">
+                      {by} · {STATUS_WORDS[other.hardware.engineeringStatus ?? ''] ?? 'позиция компании'}
+                    </span>
+                    {v ? (
+                      <span className={`text-[12px] ${v.state === 'refused' ? 'text-alert' : v.state === 'unverified' ? 'text-tape' : ''}`}>
+                        {VERDICT_WORDS[v.state]}
+                        {v.state === 'refused' ? ` — ${v.summary.replace(/^Не встаёт:\s*/, '')}` : ''}
+                      </span>
+                    ) : (
+                      <span className="text-[12px] text-graphiteMw">место не выбрано — совместимость не проверена</span>
+                    )}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {analogs.length > ANALOGS_MAX && (
+        <p className="mt-1 text-[12px] text-graphiteMw">
+          Показаны {ANALOGS_MAX} из {analogs.length} — подтверждённые паспорта первыми; остальные — поиском «{key ? key.value : ''}» с отбором «Размер, мм».
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** Позиции той же модели ручки — исполнения в других покрытиях, по названию покрытия. */
 function siblingsOf(card: HardwareItem, byKey: Map<string, HardwareItem[]>): HardwareItem[] {
   const key = card.hardware.category === 'handle' ? handleItemModel(card).model?.key : undefined;
@@ -1091,6 +1364,10 @@ function HardwareDetail({
   installedHere,
   replaces,
   siblings,
+  analogs,
+  analogVerdict,
+  favorite,
+  onFavorite,
   onPick,
   notice,
   onInstall,
@@ -1108,6 +1385,12 @@ function HardwareDetail({
   replaces: string | null;
   /** Та же модель ручки другими позициями — другие покрытия (HANDLE-REAL). */
   siblings: HardwareItem[];
+  /** Замена производителя (HW-02): та же группа и подвид, тот же ключевой размер (`analogsOf`). */
+  analogs: ReturnType<typeof analogsOf>;
+  /** Проверка аналога на выбранном месте — та же, что у строки списка; места нет — null. */
+  analogVerdict: ((item: HardwareItem) => FittingVerdict | null) | null;
+  favorite: boolean;
+  onFavorite: () => void;
   onPick: (id: string) => void;
   /** Последний отказ движка: панель под карточкой его не покажет. */
   notice: string | null;
@@ -1222,6 +1505,9 @@ function HardwareDetail({
               </div>
             )}
           </div>
+          <button type="button" className="mw-btn mw-btn-ghost" data-hw-favorite={favorite ? 'on' : 'off'} aria-pressed={favorite} onClick={onFavorite}>
+            {favorite ? '★ В избранном' : '☆ В избранное'}
+          </button>
           <button ref={close} type="button" className="mw-btn mw-btn-ghost" data-hw-detail-close onClick={onClose}>
             Закрыть
           </button>
@@ -1477,6 +1763,7 @@ function HardwareDetail({
                 )}
               </div>
               {installedHere && <p className="mt-1 text-graphiteMw" data-hw-installed-here>Установлено на этом месте.</p>}
+              <AnalogBlock item={item} analogs={analogs} verdictOf={analogVerdict} onPick={onPick} />
               {asked && !installedHere && notice ? (
                 <p className="mt-1 text-[13px] leading-snug text-alert" data-hw-card-notice>
                   {notice}

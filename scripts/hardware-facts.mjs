@@ -1,7 +1,11 @@
 // Свод фактов фурнитуры производителей (HARDWARE-01).
 //
 // Вход — записи, сверенные по изображениям страниц каталогов в
-// MANUFACTURER_CATALOGS (Blum, Hettich, Häfele): CATALOG_STAGING/02_HARDWARE/**/HW01_*_evidence.json.
+// MANUFACTURER_CATALOGS и CATALOG_STAGING/HARDWARE_2026_10_30 (Blum, Hettich,
+// Häfele, BOYARD, DTC и др.): CATALOG_STAGING/02_HARDWARE/**/HW01_*_evidence.json;
+// вторым проходом — базы номенклатуры библиотек БАЗИС
+// (HW01_*_library.json, их пишет scripts/hardware-library-facts.mjs): артикул,
+// уже выписанный из каталога, библиотека только дополняет сведениями о 3D.
 // Выход — data/catalog/hardware.json: запись изделия на каждый артикул.
 //
 // Что делает свод и чего не делает:
@@ -37,7 +41,21 @@ const CATEGORY = {
   handles: 'handle',
 };
 
-const BRAND = { Blum: 'blum', Hettich: 'hettich', 'Häfele': 'hafele', Hafele: 'hafele' };
+const BRAND = {
+  Blum: 'blum',
+  Hettich: 'hettich',
+  'Häfele': 'hafele',
+  Hafele: 'hafele',
+  BOYARD: 'boyard',
+  DTC: 'dtc',
+  Firmax: 'firmax',
+  FIRMAX: 'firmax',
+  Alphalux: 'alphalux',
+  ALPHALUX: 'alphalux',
+  Unihopper: 'unihopper',
+  UNIHOPPER: 'unihopper',
+  'МФ-Комплект': 'mf',
+};
 
 /**
  * Производитель в артикуле — как в lib/millwork/hardwareCatalog.ts (manufacturerSlug);
@@ -88,6 +106,8 @@ function canonicalSub(category, raw, item) {
     if (/stabilizer|depth_stop|adjuster|locking_device/.test(s)) return 'runner_accessory';
     if (/undermount|underfloor|concealed|hidden|movento|tandem/.test(s)) return 'undermount';
     if (/side_mount|ball_bearing|over_extension|heavy_duty/.test(s)) return 'side_mount';
+    /* Роликовые (BOYARD DS / MB) — своя конструкция: под шариковую боковую короб не считается. */
+    if (/roller/.test(s)) return 'roller';
     if (/groove/.test(s)) return 'groove_mount';
     if (/double_wall|drawer_system/.test(s)) return 'system_runner';
     return 'other';
@@ -121,6 +141,8 @@ function canonicalSub(category, raw, item) {
 
 /* ── Канонические размеры: явная таблица «как напечатано» → имя движка ── */
 const DIM_MAP = {
+  /* Системы ящиков Blum (HW-04): NL и высота царги — как напечатаны в строке заказа. */
+  'Blum/drawer_system': { NL: 'nominalLength', 'Высота царги': 'sideHeight' },
   'Hettich/slide': {
     NL: 'nominalLength',
     KTmin: 'minCabinetDepth',
@@ -216,6 +238,48 @@ const DIM_MAP = {
     '187 (глубина механизма)': 'mechanismDepth',
   },
 };
+/*
+ * НОВЫЕ МАРКИ HW-01 (BOYARD, DTC) — только однозначные подписи свидетельств.
+ * «D» у ручек BOYARD (не сказано, что это) и «глубина чашки» DTC (глубина
+ * самой чашки, а не сверления) не сводятся: остаются словами в `printed`.
+ */
+Object.assign(DIM_MAP, {
+  'BOYARD/hinge': { 'd отверстия (Ø чашки)': 'cupDiameter', 'Глубина сверления': 'cupDepth', 'H (высота планки)': 'plateHeight' },
+  'BOYARD/slide': {
+    NL: 'nominalLength',
+    'NL (номинальная длина направляющей)': 'nominalLength',
+    'NL (по коду и по «Для размеров: 450 / 500» схемы присадки)': 'nominalLength',
+    'монтажный зазор 12,7 (±0,2)': 'sideClearance',
+  },
+  'BOYARD/drawer_system': { 'NL (монтажная длина = длина направляющих с боковой стенкой)': 'nominalLength' },
+  'BOYARD/kitchen': { 'A — ширина кухонного шкафа': 'cabinetWidth' },
+  'BOYARD/handle': { L: 'length', N: 'holeSpacing', 'N по коду артикула': 'holeSpacing' },
+  'BOYARD/handle/bar_handle': { H: 'projection' },
+  'BOYARD/handle/rail_handle': { H: 'projection' },
+  'BOYARD/handle/knob': { L: 'diameter', H: 'projection' },
+  'DTC/hinge': { 'Диаметр чашки петли': 'cupDiameter', 'Высота планки H': 'plateHeight' },
+  'DTC/kitchen': { 'Ширина корпуса': 'cabinetWidth', 'KB (ширина корпуса)': 'cabinetWidth' },
+  'DTC/lift': {
+    'Min200 (внутренняя высота шкафа)': 'minInnerHeight',
+    'Min240 (внутренняя глубина шкафа)': 'minInnerDepth',
+    'min280 (внутренняя глубина корпуса)': 'minInnerDepth',
+    'min285 (Internal Cabinet Depth)': 'minInnerDepth',
+  },
+  'DTC/wardrobe': { 'NL (направляющая)': 'nominalLength', 'внутренняя глубина короба min': 'minInnerDepth' },
+});
+
+/*
+ * ПОДПИСИ БИБЛИОТЕК БАЗИС (scripts/hardware-library-facts.mjs) — число из
+ * текста названия позиции; подпись говорит это сама. Сводятся только те,
+ * по которым подбор проверяет посадку.
+ */
+const LIBRARY_DIM_MAP = {
+  'NL (по названию)': 'nominalLength',
+  'Подъём планки H (по названию)': 'plateHeight',
+  'Ширина корпуса («в базу», по названию)': 'cabinetWidth',
+  'Длина (по названию)': 'length',
+};
+
 const RANGE_MAP = {
   'Hettich/hinge': {
     'Толщина двери, мм': 'doorThickness',
@@ -260,13 +324,38 @@ const RANGE_MAP = {
   },
 };
 
+Object.assign(RANGE_MAP, {
+  'BOYARD/hinge': { 'наложение D при H=0': 'overlayMd0', 'наложение D при H=2': 'overlayMd2', 'наложение D при H=4': 'overlayMd4' },
+  'BOYARD/slide': { 'толщина плиты (боковины ящика), мм — обзор стр. 174': 'drawerSide' },
+  'DTC/hinge': { 'Диапазон толщины двери': 'doorThickness', 'Диапазон толщин фасада': 'doorThickness' },
+  'DTC/lift': {
+    'индекс мощности LF (KH мм x вес двери кг)': 'powerFactor',
+    'толщина двери, мм': 'doorThickness',
+    'высота фасада, мм': 'frontHeight',
+    'высота фасада KH, мм': 'frontHeight',
+    'высота фасада (KH), мм': 'frontHeight',
+    'высота корпуса KH, мм': 'cabinetHeight',
+    'высота шкафа KH, мм': 'cabinetHeight',
+  },
+});
+
+/*
+ * TB ПЕТЛИ BOYARD: таблица даёт K + ½d (от кромки фасада до ЦЕНТРА чашки) и d —
+ * TB (до края чашки) = (K + ½d) − d / 2. Арифметика двух напечатанных чисел,
+ * а не допущение; в `printed` остаётся и исходная подпись, и вывод.
+ */
+const BOYARD_K = 'K+½d (от кромки фасада до центра чашки)';
+
 const finite = (v) => typeof v === 'number' && Number.isFinite(v);
 
 /** Единица продажи — только названная источником. */
 function saleUnitOf(category, packaging) {
-  const p = String(packaging ?? '');
-  if (!p) return undefined;
+  /* «от 1000 шт. с индивид. логотипом» — минимальный тираж, а не единица продажи (HW-04). */
+  const p = String(packaging ?? '').replace(/от\s+\d+\s*шт\.?/gi, '');
+  if (!p.trim()) return undefined;
   if (/пара/i.test(p)) return 'pair';
+  /* «1 x царги, левая/правая» — комплект на ящик: левая и правая одной позицией. */
+  if (/(^|\s)1\s*[xх×]\s*[^;|]*лев\S*\s*\/\s*прав/i.test(p)) return 'pair';
   if (/Состав комплекта:\s*2\s+направляющ/i.test(p)) return 'pair';
   if (/Комплект:\s*2\s*x/i.test(p)) return category === 'slide' ? 'pair' : 'set';
   if (/(^|\s)\d+\s*шт/i.test(p)) return 'piece';
@@ -286,6 +375,18 @@ function printedOf(dims, ranges) {
   return out;
 }
 
+/** «32 между отверстиями; 37 от кромки» → { spacing: 32, fromEdge: 37 }. Не напечатано обоих — null. */
+/** Текст поля — как его читает разбор записи (`text` в lib/millwork/hardware.ts): без краевых пробелов, пустое не пишется. */
+const clean = (value) => (typeof value === 'string' && value.trim() ? value.trim() : undefined);
+
+function plateHolesOfText(value) {
+  const text = String(value ?? '');
+  const spacing = /(\d+(?:[.,]\d+)?)\s*между\s+отверсти/.exec(text) ?? /межосев\S*\s+расстояни\S*\s+(\d+(?:[.,]\d+)?)/.exec(text);
+  const edge = /(\d+(?:[.,]\d+)?)\s*от\s+(?:передней\s+)?кромки/.exec(text) ?? /LR\s+(\d+(?:[.,]\d+)?)\s+от\s+передней/.exec(text);
+  if (!spacing || !edge) return null;
+  return { spacing: Number(spacing[1].replace(',', '.')), fromEdge: Number(edge[1].replace(',', '.')) };
+}
+
 function nameOf(item, category, dims) {
   const parts = [item.manufacturer, item.series || '', ''];
   if (category === 'slide' && finite(dims.nominalLength)) parts[2] = `NL ${dims.nominalLength}`;
@@ -299,12 +400,16 @@ function walk(dir, out = []) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) walk(full, out);
-    else if (/^HW01_.*_evidence\.json$/.test(entry.name)) out.push(full);
+    else if (/^HW01_.*_(evidence|library)\.json$/.test(entry.name)) out.push(full);
   }
   return out;
 }
 
-const files = walk(STAGING).sort();
+/* Сначала каталоги производителей, потом библиотеки: повтор артикула из библиотеки — дополнение, а не спор. */
+const all = walk(STAGING).sort();
+const files = [...all.filter((f) => f.endsWith('_evidence.json')), ...all.filter((f) => f.endsWith('_library.json'))];
+let libraryOnly = 0;
+let libraryMerged = 0;
 const items = [];
 const seen = new Map();
 /* Первая запись артикула: сырьё для сравнения повтора и место в своде. */
@@ -340,9 +445,23 @@ for (const file of files) {
       continue;
     }
     const key = articleKey(manufacturer, article);
+    const fromLibrary = file.endsWith('_library.json');
+    if (fromLibrary && seen.has(key)) {
+      /* Артикул выписан из каталога — библиотека добавляет только то, что у неё есть 3D (формат БАЗИС, права не подтверждены). */
+      const kept = items[keptAt.get(key)];
+      if (kept && it.library) {
+        const ref = { format: 'BAZIS', file: it.library.zip, rightsStatus: 'NOT_VERIFIED', files: it.library.cadFiles };
+        kept.hardware.cad = [...(kept.hardware.cad ?? []).filter((c) => c.file !== ref.file), ref];
+      }
+      libraryMerged += 1;
+      continue;
+    }
     if (seen.has(key)) {
       const kept = items[keptAt.get(key)];
-      const same = JSON.stringify(Object.values(it.dimensionsMm ?? {}).sort()) === JSON.stringify(Object.values(firstRaw.get(key)?.dimensionsMm ?? {}).sort());
+      /* Размеры есть только у одной записи — это недостающее, а не спор источника. */
+      const dimsA = Object.values(it.dimensionsMm ?? {});
+      const dimsB = Object.values(firstRaw.get(key)?.dimensionsMm ?? {});
+      const same = dimsA.length === 0 || dimsB.length === 0 || JSON.stringify(dimsA.sort()) === JSON.stringify(dimsB.sort());
       if (kept && !same) {
         kept.hardware.engineeringStatus = 'CONFLICT';
         const note = `Артикул ${article} напечатан и у «${it.officialName ?? '—'}» (${where}) с другими размерами — какое изделие под ним, не угадываем.`;
@@ -357,7 +476,7 @@ for (const file of files) {
     const family = `${manufacturer === 'Häfele' ? 'Hafele' : manufacturer}/${category}`;
     const sub = canonicalSub(category, it.subcategory, it);
     /* Подписи подвида дополняют подписи семейства: «высота» скобы и ручки для кромок — разные величины. */
-    const dimMap = { ...(DIM_MAP[family] ?? {}), ...(sub ? (DIM_MAP[`${family}/${sub}`] ?? {}) : {}) };
+    const dimMap = { ...LIBRARY_DIM_MAP, ...(DIM_MAP[family] ?? {}), ...(sub ? (DIM_MAP[`${family}/${sub}`] ?? {}) : {}) };
     const rangeMap = RANGE_MAP[family] ?? {};
     const dims = {};
     const ranges = {};
@@ -377,6 +496,56 @@ for (const file of files) {
       if (finite(a) && finite(b) && a <= b) ranges[canon] = [a, b];
       else if (!finite(a) && finite(b) && canon === 'cabinetOuterWidth') dims.maxCabinetWidth = b;
     }
+    if (family === 'BOYARD/hinge' && Array.isArray(it.ranges?.[BOYARD_K]) && finite(dims.cupDiameter)) {
+      const [a, b] = it.ranges[BOYARD_K];
+      if (finite(a) && finite(b)) ranges.boringDistance = [Math.round((a - dims.cupDiameter / 2) * 10) / 10, Math.round((b - dims.cupDiameter / 2) * 10) / 10];
+    }
+    /*
+     * ПЕТЛЯ И ПЛАНКА (HW-03): напечатанные числа присадки — ещё и под
+     * каноническими именами. Сцена читает лёгкую запись (без присадки и
+     * заметок), присадка — паспорт; одно число под одним именем даёт обеим
+     * одно место чашки и одну планку. Разбор строки расстояний — только здесь.
+     */
+    const specs = Array.isArray(it.drilling) ? it.drilling : [];
+    const cupSpec = specs.find((d) => d.part === 'door' && /чашк/i.test(String(d.what ?? ''))) ?? specs.find((d) => d.part === 'door');
+    if (category === 'hinge' && cupSpec) {
+      if (finite(cupSpec.diameterMm) && !finite(dims.cupDiameter)) dims.cupDiameter = cupSpec.diameterMm;
+      if (finite(cupSpec.depthMm) && !finite(dims.cupDepth)) dims.cupDepth = cupSpec.depthMm;
+    }
+    const flb = category === 'hinge' ? /FLB\s+(\d+(?:[.,]\d+)?)/.exec(String(it.notes ?? '')) : null;
+    if (flb) dims.flangeWidth = Number(flb[1].replace(',', '.'));
+    const plateHoles = category === 'hinge' ? plateHolesOfText(specs.find((d) => d.part === 'cabinet_side')?.positionsMm) : null;
+    if (plateHoles) {
+      dims.plateHoleSpacing = plateHoles.spacing;
+      dims.plateHoleFromEdge = plateHoles.fromEdge;
+    }
+    /*
+     * КОРОБ СКРЫТОГО МОНТАЖА (HW-04): формулы паспорта — под каноническими
+     * именами. «SKW = LW – 42» — внутренняя ширина ящика на 42 мм меньше
+     * внутренней ширины корпуса; «SKL = NL – 10» — длина ящика. Только как
+     * напечатано; нет формулы — имени нет, и короб не считается.
+     */
+    const formulaText = (Array.isArray(it.formulas) ? it.formulas : []).join(' | ');
+    const skw = /SKW\s*=\s*LW\s*[–-]\s*(\d+(?:[.,]\d+)?)/.exec(formulaText);
+    if (skw && category === 'slide') dims.drawerInnerDeduct = Number(skw[1].replace(',', '.'));
+    const skl = /SKL\s*=\s*NL\s*[–-]\s*(\d+(?:[.,]\d+)?)/.exec(formulaText);
+    if (skl && category === 'slide') dims.drawerLengthDeduct = Number(skl[1].replace(',', '.'));
+    /*
+     * СИСТЕМА ЯЩИКА (HW-04): раскрой дна и задней стенки по формулам паспорта
+     * («Дно A — ширина LW – 75 мм; длина NL – 24 мм (задняя стенка из ДСП)»,
+     * «задняя стенка из ДСП B — 84 мм x (LW – 87 мм)»). Только как напечатано.
+     */
+    if (category === 'drawer_system') {
+      const bw = /[Дд]но[^|]*?(?:ширина\s*)?LW\s*[–-]\s*(\d+(?:[.,]\d+)?)/.exec(formulaText);
+      const bl = /длина\s*NL\s*[–-]\s*(\d+(?:[.,]\d+)?)\s*мм\s*\(задняя стенка из ДСП\)/.exec(formulaText);
+      const back = /задн\S*\s+стенк\S*\s+из\s+ДСП\s+B\s*[—-]\s*(\d+(?:[.,]\d+)?)\s*мм\s*x\s*\(LW\s*[–-]\s*(\d+(?:[.,]\d+)?)/.exec(formulaText);
+      if (bw) dims.bottomWidthDeduct = Number(bw[1].replace(',', '.'));
+      if (bl) dims.bottomLengthDeduct = Number(bl[1].replace(',', '.'));
+      if (back) {
+        dims.backHeight = Number(back[1].replace(',', '.'));
+        dims.backWidthDeduct = Number(back[2].replace(',', '.'));
+      }
+    }
     const ktFormula = (Array.isArray(it.formulas) ? it.formulas : [])
       .map((f) => /Необходимое пространство \(глубина\):\s*NL\s*\+\s*(\d+(?:[.,]\d+)?)/.exec(String(f)))
       .find(Boolean);
@@ -385,6 +554,9 @@ for (const file of files) {
     const sale = saleUnitOf(category, it.packaging);
     /* Пустой список не пишется — как у разбора записи: иначе повтор своей выгрузки читался бы обновлением. */
     const printed = printedOf(it.dimensionsMm, it.ranges);
+    if (ranges.boringDistance && family === 'BOYARD/hinge') {
+      printed.push({ label: 'TB = (K + ½d) − d/2 (по таблице)', value: `${ranges.boringDistance[0]}…${ranges.boringDistance[1]}` });
+    }
     if (ktAdd !== null && finite(dims.minCabinetDepth)) {
       printed.push({ label: 'Глубина корпуса по формуле паспорта (NL + ' + ktAdd + ')', value: String(dims.minCabinetDepth) });
     }
@@ -393,23 +565,23 @@ for (const file of files) {
       ...(BRAND[manufacturer] ? { brand: BRAND[manufacturer] } : {}),
       manufacturer,
       manufacturerArticle: article,
-      ...(it.officialName ? { officialName: it.officialName } : {}),
+      ...(clean(it.officialName) ? { officialName: clean(it.officialName) } : {}),
       ...(sub ? { subcategory: sub } : {}),
-      ...(it.series ? { series: it.series } : {}),
+      ...(clean(it.series) ? { series: clean(it.series) } : {}),
       ...(it.variant ? { variant: [it.subcategory, it.variant].filter(Boolean).join(' · ') } : it.subcategory ? { variant: it.subcategory } : {}),
       ...(Object.keys(dims).length ? { dimensionsMm: dims } : {}),
       ...(Object.keys(ranges).length ? { ranges } : {}),
       ...(printed.length ? { printed } : {}),
       ...(Array.isArray(it.formulas) && it.formulas.length ? { formulas: it.formulas } : {}),
       ...(finite(it.loadCapacityKg) ? { loadCapacityKg: it.loadCapacityKg } : {}),
-      ...(it.material ? { material: it.material } : {}),
-      ...(it.finish ? { finish: it.finish } : {}),
-      ...(it.movementType ? { movementType: it.movementType } : {}),
+      ...(clean(it.material) ? { material: clean(it.material) } : {}),
+      ...(clean(it.finish) ? { finish: clean(it.finish) } : {}),
+      ...(clean(it.movementType) ? { movementType: clean(it.movementType) } : {}),
       ...(finite(it.motion?.openingAngleDeg) ? { openingAngleDeg: it.motion.openingAngleDeg } : {}),
       ...(finite(it.motion?.strokeMm) ? { strokeMm: it.motion.strokeMm } : {}),
-      ...(it.packaging ? { packaging: it.packaging } : {}),
+      ...(clean(it.packaging) ? { packaging: clean(it.packaging) } : {}),
       ...(sale ? { saleUnit: sale } : {}),
-      ...(it.compatibleWith ? { compatibleWith: it.compatibleWith } : {}),
+      ...(clean(it.compatibleWith) ? { compatibleWith: clean(it.compatibleWith) } : {}),
       ...(Array.isArray(it.drilling) && it.drilling.length
         ? {
             drilling: it.drilling.map((d) => ({
@@ -422,8 +594,13 @@ for (const file of files) {
             })),
           }
         : {}),
+      ...(it.library
+        ? { cad: [{ format: 'BAZIS', file: it.library.zip, rightsStatus: 'NOT_VERIFIED', files: it.library.cadFiles }] }
+        : {}),
       source: {
-        file: it.source?.file,
+        /* Библиотека: файл — архив, запись — база номенклатуры внутри него. */
+        file: it.library ? it.library.zip : it.source?.file,
+        ...(it.library ? { entry: String(it.source?.file ?? '').split('!').slice(1).join('!') } : {}),
         ...(finite(it.source?.pdfPage) ? { pdfPage: it.source.pdfPage } : {}),
         ...(it.source?.printedPage !== undefined && it.source?.printedPage !== null ? { printedPage: String(it.source.printedPage) } : {}),
         checkedAt: it.source?.checkedAt ?? CHECKED_AT,
@@ -432,8 +609,9 @@ for (const file of files) {
       engineeringStatus: it.engineeringStatus ?? 'MISSING_DATA',
       visualStatus: 'VISUAL_APPROXIMATION',
       ...(Array.isArray(it.missing) && it.missing.length ? { missing: it.missing } : {}),
-      ...(it.notes ? { notes: it.notes } : {}),
+      ...(clean(it.notes) ? { notes: clean(it.notes) } : {}),
     };
+    if (fromLibrary) libraryOnly += 1;
     keptAt.set(key, items.length);
     items.push({ article: key, ...(hardware.brand ? { brand: hardware.brand } : {}), name: nameOf(it, category, dims), hardware });
   }
@@ -469,12 +647,26 @@ const sources = [
     pages: 176,
     pageRule: 'печатная = индекс PDF; текста нет — читалось изображением',
   },
+  { key: 'HK-BIG', manufacturer: 'Häfele', file: 'MANUFACTURER_CATALOGS/HAFELE/raw/Большой каталог HAFELE. Мебельная фурнитура. Дизайн.pdf', pages: 687, pageRule: 'ручки (слой 63) — номер страницы как в записи' },
+  { key: 'BOYARD-F', manufacturer: 'BOYARD', file: 'MANUFACTURER_CATALOGS/BOYARD/raw/Каталог функциональной фурнитуры BOYARD 2024.pdf', pages: 352, pageRule: 'печатная = индекс PDF; оглавление каталога занижено на 2' },
+  { key: 'BOYARD-D', manufacturer: 'BOYARD', file: 'MANUFACTURER_CATALOGS/BOYARD/raw/Каталог лицевой фурнитуры BOYARD 2024.pdf', pages: 300, pageRule: 'печатная = индекс PDF' },
+  { key: 'DTC-AXERA', manufacturer: 'DTC', file: 'CATALOG_STAGING/HARDWARE_2026_10_30/AXERA_RU.pdf', pages: 35, pageRule: 'страница PDF — разворот: печатные 2n−3 и 2n−2' },
+  { key: 'DTC-AXERA-X', manufacturer: 'DTC', file: 'CATALOG_STAGING/HARDWARE_2026_10_30/AXERA_X_RU.pdf', pages: 43, pageRule: 'страница PDF — разворот: печатные 2n−3 и 2n−2' },
+  { key: 'DTC-PIVOT', manufacturer: 'DTC', file: 'CATALOG_STAGING/HARDWARE_2026_10_30/Pivot_Star.pdf', pages: 16, pageRule: 'печатная = индекс PDF + 12' },
+  { key: 'DTC-STYLISH', manufacturer: 'DTC', file: 'CATALOG_STAGING/HARDWARE_2026_10_30/Stylish.pdf', pages: 18, pageRule: 'печатная = индекс PDF + 28 (стр. 1–11) и + 30 (стр. 12–18)' },
+  { key: 'DTC-TOPSTAY', manufacturer: 'DTC', file: 'CATALOG_STAGING/HARDWARE_2026_10_30/Top_Stay.pdf', pages: 20, pageRule: 'печатная = индекс PDF + 129 (стр. 1–8), + 130 (стр. 11–20); стр. 9–10 без номера' },
+  { key: 'DTC-LEAFLETS', manufacturer: 'DTC', file: 'CATALOG_STAGING/HARDWARE_2026_10_30 (10 листовок PURE-PRO: HQ, LK, LQ, LY)', pages: null, pageRule: 'листовки по 1–4 страницы, печатных номеров нет' },
+  { key: 'LIB-TBM', manufacturer: 'DTC, Firmax, Alphalux', file: 'CATALOG_STAGING/HARDWARE_2026_10_30/TBM_11_25.zip', pages: null, pageRule: 'база номенклатуры БАЗИС (XML) — страниц нет' },
+  { key: 'LIB-COKA', manufacturer: 'Unihopper', file: 'CATALOG_STAGING/HARDWARE_2026_10_30/Гардеробные системы COKA.zip', pages: null, pageRule: 'база номенклатуры БАЗИС (XML) — страниц нет' },
+  { key: 'LIB-MF', manufacturer: 'МФ-Комплект', file: 'CATALOG_STAGING/HARDWARE_2026_10_30/MF Посудосушители Var3e.zip', pages: null, pageRule: 'база номенклатуры БАЗИС (XML) — страниц нет' },
+  { key: 'LIB-BOYARD', manufacturer: 'BOYARD', file: 'CATALOG_STAGING/04_IMPORTED_CAD_ASSETS/BOYARD/raw_downloads (11 архивов БАЗИС)', pages: null, pageRule: 'базы номенклатуры архивов (XML) — страниц нет' },
 ];
 const notFound = [
-  'BOYARD, GTV, DTC: каталогов в MANUFACTURER_CATALOGS нет — ни одного артикула этих марок.',
+  'GTV: каталога нет — ни одного артикула этой марки.',
+  'Firmax, Alphalux, Unihopper, МФ-Комплект: PDF-каталогов нет — артикулы только из баз номенклатуры библиотек БАЗИС (без чертежей, статус не выше PARTIAL).',
   'CAD Blum — только во входе на портал (MISSING_CAD).',
   'CAD Hettich публичен, но скачивание — согласие с условиями производителя (использовать только для продажи Hettich, без правок): решение владельца, не скачано.',
-  'CAD BOYARD (11 архивов БАЗИС/К3/3ds Max) лежит локально в CATALOG_STAGING/04_IMPORTED_CAD_ASSETS/BOYARD — права не подтверждены, в продукт не идёт.',
+  'CAD BOYARD (11 архивов БАЗИС/3ds Max) и библиотеки ТБМ, COKA, MF Var3e (формат БАЗИС .f3d/.fr3d/.b3d, двоичный) лежат локально — права не подтверждены, в продукт не идут; у записей отмечено наличием (`cad`).',
   'Häfele: сайт отвечает 403 / TLS — CAD и паспорта не проверены.',
 ];
 
@@ -493,7 +685,7 @@ for (const item of items) {
   if (item.hardware.saleUnit) row.sale += 1;
   table.set(k, row);
 }
-console.log(`файлов ${files.length} · записей ${items.length} · повторов ${duplicates.length}`);
+console.log(`файлов ${files.length} · записей ${items.length} · повторов ${duplicates.length} · из библиотек БАЗИС: своих ${libraryOnly}, дополнили каталог ${libraryMerged}`);
 for (const [k, r] of Array.from(table.entries()).sort()) {
   console.log(`${k.padEnd(28)} ${String(r.total).padStart(4)}  VERIFIED ${r.VERIFIED}  PARTIAL ${r.PARTIAL}  CONFLICT ${r.CONFLICT}  прочее ${r.other}  единица продажи ${r.sale}`);
 }

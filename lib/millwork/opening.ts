@@ -8,6 +8,7 @@ import { vitrineDoorCount } from './vitrine';
 import { BENT_LEAF_MAX_MM, bentLeavesOf } from './radius';
 import { frontOnApplianceDoor } from './appliances';
 import type { FrontOpening, HandleKind, Module, Run } from '@/types/millwork';
+import type { ProductionSettings } from '@/types/catalog';
 
 /**
  * НАПРАВЛЕНИЕ ОТКРЫВАНИЯ — ОДНО МЕСТО НА ВЕСЬ ПРОДУКТ.
@@ -399,9 +400,9 @@ export type ModuleHardware = {
  * рисует. Своя формула в сцене означала бы створку с тремя петлями на
  * картинке и двумя в смете — клиент считает их глазами.
  */
-export function leafHinges(leafHeightMm: number, opening: FrontOpening): number {
+export function leafHinges(leafHeightMm: number, opening: FrontOpening, production?: Pick<ProductionSettings, 'drilling'>): number {
   if (opening === 'lift') return 0;
-  return hingesPerDoor(leafHeightMm);
+  return hingesPerDoor(leafHeightMm, production?.drilling?.hingeCount);
 }
 
 export function drawerSlides(unit: Module): number {
@@ -529,7 +530,7 @@ export function openingHardware(
      */
     if (unit.radius) {
       const leaves = bentLeavesOf(unit, bentHingeOf(unit));
-      for (let i = 0; i < leaves.length; i += 1) add('hinges', leafHinges(heightMm, 'left'));
+      for (let i = 0; i < leaves.length; i += 1) add('hinges', leafHinges(heightMm, 'left', run.production));
       if (leaves.length > 0) {
         add('handlePush', leaves.length);
         result.handles += leaves.length;
@@ -590,7 +591,7 @@ export function openingHardware(
     if (facades) {
       /* Свободные участки — обычные распашные полотна. */
       const opening: FrontOpening = 'left';
-      for (const facade of facades) add('hinges', leafHinges(facade.heightMm, opening));
+      for (const facade of facades) add('hinges', leafHinges(facade.heightMm, opening, run.production));
       addHandles(unit, doorsOf(facades.length));
       continue;
     }
@@ -634,7 +635,7 @@ export function openingHardware(
         continue;
       }
 
-      fronts.leaves.forEach((leaf, i) => addLeafHinges(unit, i, leafHinges(leaf.heightMm, 'left'), false));
+      fronts.leaves.forEach((leaf, i) => addLeafHinges(unit, i, leafHinges(leaf.heightMm, 'left', run.production), false));
       addHandles(unit, doorsOf(fronts.leaves.length));
       continue;
     }
@@ -650,7 +651,7 @@ export function openingHardware(
        * Петли считаются ПО ПОЛОТНАМ: у встроенного холодильника их два и
        * они вдвое ниже, и `leafHinges` это уже знает.
        */
-      fronts.leaves.forEach((leaf, i) => addLeafHinges(unit, i, leafHinges(leaf.heightMm, opening), isCorner));
+      fronts.leaves.forEach((leaf, i) => addLeafHinges(unit, i, leafHinges(leaf.heightMm, opening, run.production), isCorner));
     }
 
     if (opening === 'lift') {
@@ -664,7 +665,7 @@ export function openingHardware(
 
     if (opening === 'flap') {
       add('flaps', 1);
-      addLeafHinges(unit, 0, leafHinges(heightMm, opening), false);
+      addLeafHinges(unit, 0, leafHinges(heightMm, opening, run.production), false);
     }
 
     /*

@@ -452,9 +452,25 @@ export function frontPlan(
   return { doorCount, drawerCount: 0 };
 }
 
-/** Петель на дверь: от высоты полотна. */
-export function hingesPerDoor(doorHeightMm: number): number {
+/**
+ * Петель на дверь: от высоты полотна.
+ *
+ * Таблица цеха (`ProductionSettings.drilling.hingeCount`, «до N мм — k
+ * петель») сильнее правила продукта; её нет — выше 1200 мм три, иначе две.
+ * Полотно выше последней строки таблицы — правило продукта, и присадка это
+ * называет (`hingeCountBasis`).
+ */
+export function hingesPerDoor(doorHeightMm: number, table?: { upToMm: number; hinges: number }[]): number {
+  const row = table?.find((r) => doorHeightMm <= r.upToMm);
+  if (row) return row.hinges;
   return doorHeightMm > 1200 ? 3 : 2;
+}
+
+/** Откуда число петель полотна: таблица цеха или правило продукта (с причиной). */
+export function hingeCountBasis(doorHeightMm: number, table?: { upToMm: number; hinges: number }[]): { shop: boolean; words: string } {
+  if (!table || table.length === 0) return { shop: false, words: 'число петель — правило продукта (выше 1200 мм — три, иначе две): таблицы цеха нет' };
+  if (table.some((r) => doorHeightMm <= r.upToMm)) return { shop: true, words: '' };
+  return { shop: false, words: `полотно ${doorHeightMm} мм выше последней строки таблицы петель цеха (до ${table[table.length - 1].upToMm} мм) — число по правилу продукта` };
 }
 
 /**

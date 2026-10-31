@@ -48,6 +48,7 @@ export const FITTING_SLOT_TITLE: Record<FittingSlot, string> = {
   waste: 'Система для мусора',
   shelf_support: 'Полкодержатели',
   leg: 'Опоры',
+  drawer_side: 'Царги системы ящика',
 };
 
 /** Подвиды гардеробного наполнения, которые выдвигаются из отсека. */
@@ -71,8 +72,13 @@ export function slotAccepts(slot: FittingSlot, item: Pick<HardwareItem, 'hardwar
     case 'hinge_plate':
       return category === 'hinge' && subcategory === 'mounting_plate';
     case 'slide':
-      /* Стабилизатор, упор глубины, фиксатор — принадлежности направляющей: место направляющей они не занимают. */
-      return category === 'slide' && subcategory !== 'runner_accessory';
+      /*
+       * Стабилизатор, упор глубины, фиксатор — принадлежности направляющей: место направляющей они не занимают.
+       * Ходовая системы ящика (TANDEMBOX, LEGRABOX — HW-04) — тоже направляющая этого места.
+       */
+      return (category === 'slide' && subcategory !== 'runner_accessory') || (category === 'drawer_system' && /(^|_)runner$/.test(subcategory ?? '') && subcategory !== 'runner_accessory');
+    case 'drawer_side':
+      return category === 'drawer_system' && /drawer_side$/.test(subcategory ?? '');
     case 'lift':
       /* Рычаги, крепления фасада, заглушки — принадлежности механизма, место механизма они не занимают. */
       return category === 'lift' && subcategory !== 'lift_accessory';
@@ -102,7 +108,8 @@ export function slotAccepts(slot: FittingSlot, item: Pick<HardwareItem, 'hardwar
 export const SLOT_CATEGORIES: Record<FittingSlot, HardwareCategory[]> = {
   hinge: ['hinge'],
   hinge_plate: ['hinge'],
-  slide: ['slide'],
+  slide: ['slide', 'drawer_system'],
+  drawer_side: ['drawer_system'],
   lift: ['lift'],
   handle: ['handle'],
   pantograph: ['wardrobe'],
@@ -330,7 +337,13 @@ export function handleLeafSizes(
  * шкафа. Карго, сушка, угол — по варианту места. Опоры — у того, что
  * стоит на полу.
  */
-export function fittingSlotsOf(unit: Module, run: Run, production: ProductionSettings = shopOf(run.production)): SlotPlace[] {
+export function fittingSlotsOf(
+  unit: Module,
+  run: Run,
+  production: ProductionSettings = shopOf(run.production),
+  /** Каталог организации (HW-04): по нему видно, что на месте направляющей стоит ходовая системы, и появляется место царг. */
+  hardware?: Map<string, HardwareItem>,
+): SlotPlace[] {
   const out: SlotPlace[] = [];
   if (unit.kind === 'filler') return out;
   const hw = frontHardware(unit, run);
@@ -356,6 +369,9 @@ export function fittingSlotsOf(unit: Module, run: Run, production: ProductionSet
   }
   const drawers = frontDrawerSlides(unit);
   if (drawers > 0) out.push({ slot: 'slide', where: `ящиков ${drawers}`, quantity: drawers, per: 'pair' });
+  /* Царги — у ящика с ходовой системы (HW-04): без неё место не появляется. */
+  const runner = drawers > 0 && hardware ? installedItem(unit, 'slide', hardware) : null;
+  if (runner && runner.hardware.category === 'drawer_system') out.push({ slot: 'drawer_side', where: `ящиков ${drawers}`, quantity: drawers, per: 'pair' });
   if (hw && hw.lifts > 0) out.push({ slot: 'lift', where: 'фасад вверх', quantity: hw.lifts, per: 'mechanism' });
   if (hw && hw.handleBar > 0) out.push({ slot: 'handle', where: 'скобы на фасадах', quantity: hw.handleBar, per: 'piece' });
 
@@ -517,7 +533,7 @@ export function fittingVerdict(input: {
   if (!slotAccepts(slot, item)) {
     return refuse(`«${item.name}» — не ${FITTING_SLOT_TITLE[slot].toLowerCase()}: эта позиция ставится на другое место.`);
   }
-  const place = fittingSlotsOf(unit, run, production).find((p) => p.slot === slot && (p.bayId ?? null) === (bayId ?? null));
+  const place = fittingSlotsOf(unit, run, production, input.catalog).find((p) => p.slot === slot && (p.bayId ?? null) === (bayId ?? null));
   if (!place) {
     /* Места ручки нет из-за типа ручки модуля (HANDLE-REAL) — так и сказано, с тем, что нажать. */
     const kind = slot === 'handle' ? handleOf(unit, run).handle : null;
@@ -628,10 +644,21 @@ export function fittingVerdict(input: {
     case 'slide': {
       const geo = runnerGeometry(item);
       if (geo.mount === 'under') {
+        /* HW-04: короб скрытого монтажа считается по формулам паспорта; чего нет — словами. */
         checks.push({
           label: 'короб',
           state: 'unknown',
-          words: 'скрытая направляющая: короб под неё — своя конструкция (дно утоплено, ширина по формуле), в правилах цеха её нет',
+          words:
+            geo.innerDeductMm !== null && geo.lengthDeductMm !== null
+              ? `скрытого монтажа: короб по формулам паспорта (SKW = LW − ${geo.innerDeductMm}, SKL = NL − ${geo.lengthDeductMm}); утопление дна, вырез задней стенки и защёлки не образмерены — выпуск заперт`
+              : `скрытого монтажа: формулы ${geo.innerDeductMm === null ? 'SKW' : ''}${geo.innerDeductMm === null && geo.lengthDeductMm === null ? ' и ' : ''}${geo.lengthDeductMm === null ? 'SKL' : ''} в паспорте нет — короб не рассчитывается`,
+        });
+      }
+      if (geo.mount === 'system') {
+        checks.push({
+          label: 'короб',
+          state: 'unknown',
+          words: 'ходовая системы ящика: короб — царги той же NL (место «Царги системы ящика»), дно и задняя стенка по их паспорту',
         });
       }
       if (geo.mount === 'other') {
@@ -846,6 +873,26 @@ export function fittingVerdict(input: {
       const h = range(item, 'cabinetInnerHeight');
       if (h) checks.push(inRange('высота в свету', g.heightMm - 2 * g.carcassMm, h, 'корпус в свету'));
       if (slot === 'dryer' && !isUpperRow(unit)) checks.push({ label: 'ряд', state: 'fail', words: 'сушилка ставится в верхний шкаф' });
+      break;
+    }
+    case 'drawer_side': {
+      /* Царги системы ящика (HW-04): той же NL, что ходовая на месте модуля. */
+      const runner = input.catalog ? installedItem(unit, 'slide', input.catalog) : null;
+      const sideNl = dim(item, 'nominalLength');
+      const runnerNl = runner ? dim(runner, 'nominalLength') : null;
+      checks.push(
+        sideNl === null || runnerNl === null
+          ? { label: 'длина NL', state: 'unknown', words: `NL царг ${sideNl ?? 'не напечатана'}, ходовой ${runnerNl ?? 'не напечатана'} — не сверено` }
+          : { label: 'длина NL', state: sideNl === runnerNl ? 'ok' : 'fail', words: `царги NL ${sideNl} мм, ходовая NL ${runnerNl} мм${sideNl === runnerNl ? '' : ' — нужна та же NL'}` },
+      );
+      checks.push({
+        label: 'раскрой',
+        state: ['bottomWidthDeduct', 'bottomLengthDeduct', 'backWidthDeduct', 'backHeight'].every((k) => dim(item, k) !== null) ? 'ok' : 'unknown',
+        words: ['bottomWidthDeduct', 'bottomLengthDeduct', 'backWidthDeduct', 'backHeight'].every((k) => dim(item, k) !== null)
+          ? `дно LW − ${dim(item, 'bottomWidthDeduct')} × NL − ${dim(item, 'bottomLengthDeduct')}, задняя стенка LW − ${dim(item, 'backWidthDeduct')} × ${dim(item, 'backHeight')} — по паспорту`
+          : 'формул раскроя дна и задней стенки в паспорте нет — короб не рассчитывается',
+      });
+      checks.push({ label: 'крепление фасада', state: 'unknown', words: 'толщина царги и присадка крепления фасада в паспорте не образмерены — выпуск заперт' });
       break;
     }
     case 'leg': {

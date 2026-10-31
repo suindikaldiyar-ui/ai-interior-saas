@@ -21,6 +21,12 @@ import { DEMO_MEASUREMENT, DEMO_RATES, DEMO_REQUIREMENTS } from '../lib/millwork
 import { DEFAULT_PRODUCTION } from '../types/catalog';
 import { surveyFromMeasurement, type Survey } from '../types/survey';
 import type { Measurement, MillworkOp, ModuleFill, Run, RunRequirements } from '../types/millwork';
+import type { CatalogEntryFull, ProductionSettings } from '../types/catalog';
+import { HARDWARE_FACTS, hardwareCatalogRow } from '../lib/millwork/hardwareCatalog';
+import { hardwareCatalog } from '../lib/millwork/hardware';
+import { runnerModelOf } from '../lib/millwork/runnerModel';
+import { drawerDrafts, moduleDrawerKits } from '../lib/millwork/drawerKit';
+import { allModules } from '../lib/millwork/layout';
 
 type Fixture = { requirements: RunRequirements; measurement: Measurement; survey: Survey; run: Run };
 
@@ -139,4 +145,63 @@ const fill = {
 w.apply([{ op: 'set_fill', moduleId: cabinet.id, fill }]);
 const wardrobe: Fixture = { requirements: W_REQ, measurement: wMeasurement, survey: measuredSurvey(wMeasurement), run: w.shown() };
 
-process.stdout.write(JSON.stringify({ kitchen, cargo, wardrobe }));
+/*
+ * ── drawers (HW-04): ожидания TANDEMBOX antaro на ящиках base-3300@w1 —
+ * тем же движком, что экран: ходовая 576.4501M на месте направляющей,
+ * царги 378M4502SA на месте царг. Каталог — строки фактов
+ * (`hardwareCatalogRow`), правила короба — те же, что у организации части.
+ */
+const TB_RUNNER = 'MFR-BLUM-576.4501M';
+const TB_SIDES = 'MFR-BLUM-378M4502SA';
+const TB_MODULE = 'base-3300@w1';
+const TB_RULES = { sideMm: 16, bottomMm: 4, bottomMaterial: 'hdf', bottomMount: 'groove', bottomGrooveMm: 6, gapBelowMm: 10, gapAboveMm: 30, runnerAxisMm: 40, edge: '0.4', confirmed: true } as const;
+const tbShop: ProductionSettings = { ...DEFAULT_PRODUCTION, drawerBox: TB_RULES };
+const tbCatalog = hardwareCatalog(
+  HARDWARE_FACTS.filter((fact) => fact.article === TB_RUNNER || fact.article === TB_SIDES).map((fact) => {
+    const row = hardwareCatalogRow(fact);
+    return { id: `hw:${fact.article}`, article: row.article, name_ru: row.name_ru, price: row.price, unit: row.unit, meta: { hardware: fact.hardware }, is_active: true, assets: [] } as unknown as CatalogEntryFull;
+  }),
+);
+const tbItem = (article: string) => {
+  const found = tbCatalog.get(`hw:${article}`);
+  if (!found) throw new Error(`drawers: позиции ${article} в фактах нет`);
+  return found;
+};
+const tbRun = applyOps({
+  run: { ...kitchen.run, production: tbShop },
+  requirements: DEMO_REQUIREMENTS,
+  ops: [
+    { op: 'set_fitting', moduleId: TB_MODULE, slot: 'slide', itemId: tbItem(TB_RUNNER).id },
+    { op: 'set_fitting', moduleId: TB_MODULE, slot: 'drawer_side', itemId: tbItem(TB_SIDES).id },
+  ],
+  openings: noWindow.walls[0].openings,
+  hardware: tbCatalog,
+});
+if (tbRun.warnings.length) throw new Error(`drawers: движок отказал: ${tbRun.warnings.join(' | ')}`);
+const tbUnit = allModules(tbRun).find((m) => m.id === TB_MODULE);
+if (!tbUnit) throw new Error(`drawers: модуля ${TB_MODULE} нет`);
+const tbKits = moduleDrawerKits(tbUnit, tbRun, tbShop, tbCatalog);
+const notBox = tbKits.filter((kit) => kit.state !== 'box');
+if (tbKits.length === 0 || notBox.length) throw new Error(`drawers: короба TANDEMBOX не встали: ${tbKits.length} комплектов, черновиков ${notBox.length}`);
+const tbParts = tbKits.flatMap((kit) => (kit.state === 'box' ? kit.plan.parts : []));
+const sizes = (name: string) =>
+  tbParts
+    .filter((p) => p.name === name)
+    .flatMap((p) => Array.from({ length: p.qty }, () => `${p.lengthMm}x${p.widthMm}`))
+    .sort();
+const runner = runnerModelOf(tbItem(TB_RUNNER));
+const drawersExpect = {
+  module: TB_MODULE,
+  runner: TB_RUNNER,
+  sides: TB_SIDES,
+  drawers: tbKits.length,
+  travelMm: runner.travelMm,
+  members: runner.members,
+  travelWords: runner.words,
+  bottoms: sizes('Дно ящика'),
+  backs: sizes('Торец ящика'),
+  ldspSides: sizes('Боковина ящика').length,
+  releaseWords: drawerDrafts([tbRun], tbCatalog, tbShop).reasons.filter((r) => r.includes('система ящика')),
+};
+
+process.stdout.write(JSON.stringify({ kitchen, cargo, wardrobe, drawersExpect }));

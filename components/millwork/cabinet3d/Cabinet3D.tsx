@@ -19,6 +19,7 @@ import {
 } from '@/lib/millwork/cabinetBoxes';
 import InteractiveBayDrawer from './InteractiveBayDrawer';
 import { HandleBatch, handleGeometryKey } from './handleMesh';
+import { HingeBatch, hingeGeometryKey } from './hingeMesh';
 import ApplianceModels3D from './ApplianceModels3D';
 import { movingParts } from './motion';
 import { useCabinetParts, useCarcassMaterials, useFrontMaterials, useSurfaceLook } from './parts';
@@ -585,6 +586,8 @@ export default function Cabinet3D({
      * модель, поворот и толщину фасада, экземпляры встают на места коробок.
      */
     const handles = new Map<string, PartBox[]>();
+    /* Петли своей сеткой (HW-03): пачка на модель, половину узла и сторону. */
+    const hinges = new Map<string, PartBox[]>();
     /*
      * СТЕКЛО ВИТРИН (V3D-02) — пачка на вид: дверь в раме и окна рамы KIRA
      * несут вид модуля (`PartBox.glass`); стеклянные полки — своей пачкой.
@@ -653,6 +656,13 @@ export default function Cabinet3D({
         else fronts.set(key, [box]);
         continue;
       }
+      if (box.hinge) {
+        const batch = hingeGeometryKey(box.hinge, true, box.hinge.half === 'cup');
+        const list = hinges.get(batch);
+        if (list) list.push(box);
+        else hinges.set(batch, [box]);
+        continue;
+      }
       if (box.node === 'handle' && box.handle) {
         const batch = `${handleGeometryKey(box.handle, true)}|${box.handle.model.finish}`;
         const list = handles.get(batch);
@@ -685,7 +695,7 @@ export default function Cabinet3D({
       }
       groups[box.material].push(box);
     }
-    return { groups, fronts, carcass, inner, reliefFronts, handles, glassKinds, glassShelves, profiles, shaped, decor, rounded, tv };
+    return { groups, fronts, carcass, inner, reliefFronts, handles, hinges, glassKinds, glassShelves, profiles, shaped, decor, rounded, tv };
   }, [boxes, activeParts, layers]);
 
   /*
@@ -1045,6 +1055,10 @@ export default function Cabinet3D({
         * пачки то же — `metal`: счётчик металла на фасадах считает их так же.
         * Экономичный режим — грубая сетка и без отражений, сцена та же.
         */}
+      {/* ПЕТЛИ (HW-03): чашка, фланец, шарнир и звенья — на фасаде; планка и плечо — на боковине. */}
+      {Array.from(grouped.hinges.entries()).map(([batch, list]) => (
+        <HingeBatch key={batch} boxes={list} material={parts.metal} fine={!economy} castShadow={shadows} />
+      ))}
       {Array.from(grouped.handles.entries()).map(([batch, list]) => (
         <HandleBatch key={batch} boxes={list} fine={!economy} castShadow={shadows} />
       ))}
@@ -1713,9 +1727,27 @@ function SceneProbe({ group, run }: { group: React.RefObject<THREE.Group>; run: 
       /* Где деталь в мире (центр зоны касания), метры: приёмке — куда навести камеру для снимка. */
       const world = new THREE.Vector3();
       target.getWorldPosition(world);
+      /* Средняя секция направляющей (HW-04) — своя группа внутри ящика: её сдвиг вместе с ящиком, мм. */
+      let middle: number[] | null = null;
+      carrier.traverse((object) => {
+        if (middle || object.name !== 'mech:runner-middle' || !object.parent) return;
+        const p = object.parent.position;
+        middle = [carrier.position.x + p.x, carrier.position.y + p.y, carrier.position.z + p.z].map((v) => Math.round(v * 1000));
+      });
+      /*
+       * Поворот детали — относительно мебели, а не своей группы: зона касания
+       * створки лежит во внутренней группе хода подъёмника (HW-07), и её
+       * собственный поворот всегда 0 — поза читалась закрытой у открытой двери.
+       */
+      const own = new THREE.Quaternion();
+      const root = new THREE.Quaternion();
+      carrier.getWorldQuaternion(own);
+      group.current!.getWorldQuaternion(root);
+      const turn = new THREE.Euler().setFromQuaternion(root.invert().multiply(own), 'XYZ');
       return {
+        middleShift: middle,
         shift: [carrier.position.x, carrier.position.y, carrier.position.z].map((v) => Math.round(v * 1000)),
-        rotationDeg: [carrier.rotation.x, carrier.rotation.y].map((v) => Math.round((v * 180) / Math.PI)),
+        rotationDeg: [turn.x, turn.y].map((v) => Math.round((v * 180) / Math.PI)),
         names,
         world: [world.x, world.y, world.z],
       };

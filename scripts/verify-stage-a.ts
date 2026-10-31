@@ -21,6 +21,7 @@ import { RUN_TEMPLATES, requirementsFromTemplate, templateFits } from '../lib/mi
 import {
   DRAWER_TRAVEL_M,
   bifoldPoses,
+  closedFrontRect,
   doorLeaves,
   leafPoses,
   openablePartIds,
@@ -233,6 +234,8 @@ function sweepClashes(segments: Run[], places: Place[], production: ProductionSe
               gap: production.frontGapMm / MM,
               handle,
               s,
+              /* Ходит деталь деталировки (F9) — та же, что нарисована закрытой. */
+              rect: closedFrontRect(rowBoxes.filter((box) => box.part === leaf.id), [entry.x + leaf.xM, entry.y + leaf.bottomM]),
             }).map((box) => obbOf(places[wall], { ...box, center: [box.center[0] + entry.x, box.center[1] + entry.y, box.center[2] + entry.zM] }, leaf.id));
           }
           if (leaf.kind === 'bifold') {
@@ -526,8 +529,10 @@ export function stageAChecks(check: Check): void {
             drift.push(`${title} ${leaf.id}: закрытого полотна нет`);
             continue;
           }
+          /* Путь экрана (F9): ходовое полотно — деталь закрытой коробки (`closedFrontRect`), как в `CabinetModule3D`. */
+          const rect = closedFrontRect(boxes.filter((box) => box.part === leaf.id), [place.x + leaf.xM, place.y + leaf.bottomM]);
           const pose = (s: number) =>
-            leafPoses({ opening: leaf.opening, x: leaf.xM, y: leaf.bottomM, width: leaf.widthM, height: leaf.heightM, thickness: tf, gap, handle: null, s }).find(
+            leafPoses({ opening: leaf.opening, x: leaf.xM, y: leaf.bottomM, width: leaf.widthM, height: leaf.heightM, thickness: tf, gap, handle: null, s, rect }).find(
               (box) => box.role === 'front',
             )!;
           const rest = pose(0);
@@ -802,6 +807,7 @@ export function stageAChecks(check: Check): void {
                     gap: production.frontGapMm / MM,
                     handle,
                     s,
+                    rect: closedFrontRect(rowBoxes.filter((box) => box.part === leaf.id), [entry.x + leaf.xM, entry.y + leaf.bottomM]),
                   }).map((box) => ({
                     ...obbOf(places[wall], { ...box, center: [box.center[0] + entry.x, box.center[1] + entry.y, box.center[2] + entry.zM] }, `стена ${wall + 1} ${leaf.id}${box.role === 'handle' ? ' ручка' : ''}`),
                     handle: box.role === 'handle',
@@ -1022,7 +1028,7 @@ export function stageAChecks(check: Check): void {
       );
     }
 
-    /* Случай 2: П 3800 + 2400 + 1740, школа 600/300 — панель стены Б у слепого модуля 12 мм. */
+    /* Случай 2: П 3800 + 2400 + 1740, школа 600/300 — панель стены Б у слепого модуля 14 мм (до F9 — 12). */
     {
       const object = buildObject({ ...SPECS[2], production: SIX });
       const layout = object.engine.layout!;
@@ -1031,19 +1037,26 @@ export function stageAChecks(check: Check): void {
       const drawn = runBoxes(owner, shopOf(SIX)).find((box) => box.panel === CORNER_OWNER_FILLER_PANEL_NAME);
       const { found } = sweepClashes(object.engine.segments, object.engine.places, SIX);
       check(
-        'SA.7 П 3800 + 2400 + 1740 (600/300): заход ящика 12 мм снят — фальш-панель стены Б у слепого модуля 12 мм (деталь 12 − зазор 4 = 8 мм в раскрое и в сцене), отпечаток 92872717, по всему ходу заходов 0',
-        layout.corners[1]?.choice.clearance?.ownerMm === 12 &&
-          layout.corners[1]?.ownerPanelMm === 12 &&
-          part?.widthMm === 12 - SIX.frontGapMm &&
+        'SA.7 П 3800 + 2400 + 1740 (600/300): заход ящика 12 мм снят — фальш-панель стены Б у слепого модуля 14 мм (деталь 14 − зазор 4 = 10 мм в раскрое и в сцене), отпечаток 39eb9664, по всему ходу заходов 0',
+          /*
+           * F9 (2026-10-31): 12 → 14 мм. Фронт ящика под варочной режется
+           * «ширина модуля − зазор» (деталировка), а сцена рисовала его на
+           * два зазора уже; ход меряется по настоящей детали — она на 2 мм
+           * ближе к углу, и панели по ходу нужно на 2 мм больше. Ряд за
+           * панелью сдвинут на эти 2 мм: отпечаток 92872717 → 39eb9664.
+           */
+        layout.corners[1]?.choice.clearance?.ownerMm === 14 &&
+          layout.corners[1]?.ownerPanelMm === 14 &&
+          part?.widthMm === 14 - SIX.frontGapMm &&
           Boolean(drawn) &&
-          Math.abs(drawn!.scale[0] * MM - (12 - SIX.frontGapMm)) < 0.01 &&
+          Math.abs(drawn!.scale[0] * MM - (14 - SIX.frontGapMm)) < 0.01 &&
           /*
            * 466a5605 → 92872717 (ЭТАП 4): полка кладовки над холодильником
            * встала по высоте кладовки (160 вместо 256 в корпусе 300), у
            * одиночного прибора в пенале появились полки-опоры; панели угла и
            * ход те же.
            */
-          layout.fingerprint === '92872717' &&
+          layout.fingerprint === '39eb9664' &&
           found.length === 0,
         `панель ${layout.corners[1]?.choice.clearance?.ownerMm ?? 'нет'} · деталь ${part?.widthMm ?? 'НЕТ'} · сцена ${drawn ? Math.round(drawn.scale[0] * MM) : 'НЕТ'} · отпечаток ${layout.fingerprint} · заходов ${found.length}${found.length ? `: ${fmt(found)}` : ''}`,
       );
@@ -1096,7 +1109,8 @@ export function stageAChecks(check: Check): void {
           mismatches.length === 1 &&
           mismatches[0].index === 1 &&
           text.includes('на 12 мм') &&
-          text.includes('у слепого модуля 12 мм') &&
+          /* F9: панель, которая развела бы заход, — 14 мм (фронт ящика — деталь «ширина − зазор»). */
+          text.includes('у слепого модуля 14 мм') &&
           text.includes('пересоберите эту стену') &&
           mismatchPriceText(mismatches[0]).startsWith('Цены нет') &&
           state.priceHidden &&
@@ -1147,7 +1161,7 @@ export function stageAChecks(check: Check): void {
     {
       const cases = [
         { title: 'стена В П смешанной («угол 60/1000»)', spec: { key: 'u-mixed', title: 'П 2800 + 3600 + 2800 смешанная', lengths: [2800, 3600, 2800], shape: 'u_shape' as const, corners: [{ lower: 'l_shape', upper: 'empty' }, { lower: 'blind', upper: 'l_shape' }] as CornerChoice[], production: MIXED60, wallId: 'w1' }, wall: 2, name: CORNER_FILLER_PANEL_NAME, width: 64 - MIXED60.frontGapMm },
-        { title: 'стена Б П 3800 + 2400 + 1740 (600/300)', spec: { ...SPECS[2], production: SIX }, wall: 1, name: CORNER_OWNER_FILLER_PANEL_NAME, width: 12 - SIX.frontGapMm },
+        { title: 'стена Б П 3800 + 2400 + 1740 (600/300)', spec: { ...SPECS[2], production: SIX }, wall: 1, name: CORNER_OWNER_FILLER_PANEL_NAME, width: 14 - SIX.frontGapMm },
       ];
       const drift: string[] = [];
       for (const item of cases) {
@@ -1310,13 +1324,26 @@ export function stageAChecks(check: Check): void {
         { lower: 'l_shape', upper: 'l_shape' },
       ]);
       const notes = blocked.cornerClashes ?? [];
+      /*
+       * F9 (2026-10-31): до правки здесь стояло «Г-модули снимают заход — 0».
+       * Сцена рисовала створки на зазор меньше деталей, и ход у угла мерил не
+       * ту мебель. По настоящим деталям у Г-модулей два захода: Г-фасад
+       * верхнего угла — в ручку «Дверцы» стены Б (её полотно выше на 2 мм
+       * сверху, ручка с ним), дверь холодильника стены Б — в фасад Г-модуля
+       * (фасад встройки режется «ширина − зазор»). Оба — блокирующее словами:
+       * фальш-панель шире сняла бы, но места под неё нет.
+       */
+      const lmodNotes = lmod.cornerClashes ?? [];
       check(
-        'SA.7 П 3600 + 3000 + 3600 (комната демонстрации до STAGE A): заход у угла А — Б назван блокирующим; «пустой верх» у этого угла и Г-модули его снимают — заходов 0',
+        'SA.7 П 3600 + 3000 + 3600 (комната демонстрации до STAGE A): заход у угла А — Б назван блокирующим; «пустой верх» у этого угла его снимает — заходов 0; Г-модули по настоящим деталям — два захода у угла А — Б (ручка «Дверцы» 7,8 мм, фасад Г-модуля 0,3 мм), оба словами, панели нет места',
         notes.length > 0 &&
           notes.every((note) => note.corner === 0 && note.words.includes('Холодильник')) &&
           (empty.cornerClashes ?? []).length === 0 &&
-          (lmod.cornerClashes ?? []).length === 0,
-        `слепые: ${notes.length} (${notes[0]?.words.slice(0, 120) ?? 'НЕТ'}) · пустой верх: ${(empty.cornerClashes ?? []).length} · Г-модули: ${(lmod.cornerClashes ?? []).length}`,
+          lmodNotes.length === 2 &&
+          lmodNotes.every((note) => note.corner === 0 && note.words.includes('места под неё нет')) &&
+          lmodNotes.some((note) => note.words.includes('в ручку модуля «Дверца»') && note.words.includes('7,8 мм')) &&
+          lmodNotes.some((note) => note.words.includes('Холодильник') && note.words.includes('0,3 мм')),
+        `слепые: ${notes.length} (${notes[0]?.words.slice(0, 120) ?? 'НЕТ'}) · пустой верх: ${(empty.cornerClashes ?? []).length} · Г-модули: ${lmodNotes.length} (${lmodNotes.map((n) => n.words.slice(0, 90)).join(' | ')})`,
       );
     }
 

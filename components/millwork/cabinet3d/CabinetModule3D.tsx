@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 
 import { useMemo } from 'react';
-import { bayDrawerBoxes, boxShown, leafRiders, sceneLeaves, type PartBox } from '@/lib/millwork/cabinetBoxes';
+import { bayDrawerBoxes, boxShown, closedFrontRect, leafRiders, sceneLeaves, type PartBox } from '@/lib/millwork/cabinetBoxes';
 import { DRAWER_SIDE_PANEL_NAME } from '@/lib/millwork/drawerBox';
 import { ALL_LAYERS, type SceneLayers } from '@/lib/millwork/sceneLayers';
 import { ROD_VISUAL_DIAMETER_MM } from '@/lib/millwork/bays';
@@ -22,6 +22,9 @@ import { glassOf } from '@/lib/millwork/glass';
 import type { FrontRelief, Module } from '@/types/millwork';
 import { gripOrient } from '@/lib/millwork/facadeRelief';
 import { isUpperRow } from '@/lib/millwork/modules';
+import { liftMotionOf } from '@/lib/millwork/liftKinematics';
+import { runnerModelOf } from '@/lib/millwork/runnerModel';
+import { installedItem } from '@/lib/millwork/fittings';
 
 /**
  * Один модуль в 3D: корпус и его настоящее наполнение.
@@ -141,6 +144,8 @@ export default function CabinetModule3D({
 }: Props) {
   /* Деталь модуля по идентификатору сцены: `<модуль>:door:0` → `door:0`. */
   const lookOf = (partId: string) => leafLook?.(partId.slice(unit.id.length + 1));
+  /* Ход ящика — модель направляющей на месте модуля (HW-04): та же, что меряет ход у угла. */
+  const drawerTravelM = runnerModelOf(installedItem(unit, 'slide', hardware)).travelMm / 1000;
   const widthM = unit.widthMm / MM;
   const fill = unit.fill;
 
@@ -300,6 +305,7 @@ export default function CabinetModule3D({
                 parts={parts}
                 frontMaterial={look?.material ?? frontMaterial}
                 onActive={onActive}
+                vectorM={[0, 0, drawerTravelM]}
               />
             );
           }
@@ -325,6 +331,8 @@ export default function CabinetModule3D({
               frontMaterial={look?.material ?? frontMaterial}
               relief={look?.relief}
               reliefOrient={gripOrient(look?.relief, 'flap', isUpperRow(unit))}
+              front={closedFrontRect(partBoxes?.(leaf.id))}
+              travelM={drawerTravelM}
             />
           );
         }
@@ -456,6 +464,8 @@ export default function CabinetModule3D({
             showPanel={layers.fronts}
             glassMaterial={glassMaterial}
             profileMaterial={profileMaterial}
+            liftMotion={leaf.opening === 'lift' ? liftMotionOf(unit, hardware) : null}
+            rect={closedFrontRect(partBoxes?.(leaf.id), [x + leaf.xM, y + leaf.bottomM])}
           />
         );
       })}

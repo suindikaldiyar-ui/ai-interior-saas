@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import type * as THREE from 'three';
 import { useSlide } from './useSlide';
 import { useTouchTarget } from './useTouchTarget';
-import { doorKick, doorPivot, leafLocal, type PartBox } from '@/lib/millwork/cabinetBoxes';
+import { doorKick, doorPivot, leafLocal, type FrontRect, type PartBox } from '@/lib/millwork/cabinetBoxes';
 import { useShiftedBox, type CabinetParts } from './parts';
 import type { FrontRelief } from '@/types/millwork';
 import { realSizeShiftOf } from './realSizeMap';
@@ -13,6 +13,9 @@ import type { ReliefOrient } from '@/lib/millwork/facadeRelief';
 import { GLASS_PANE_M, GLASS_PANE_Z_M } from '@/lib/millwork/cabinetBoxes';
 import { useInteriorStore } from '@/store/useInteriorStore';
 import { HandleMesh } from './handleMesh';
+import { HingeLinks, HingeMesh } from './hingeMesh';
+import type { HingeDraw } from '@/lib/millwork/cabinetBoxes';
+import { liftPose, type LiftMotion } from '@/lib/millwork/liftKinematics';
 
 /**
  * Дверь, которая распахивается.
@@ -87,6 +90,13 @@ type Props = {
    * тогда не ловит указатель, и нажатие доходит до того, что видно за ним.
    */
   showPanel?: boolean;
+  /**
+   * ВИД ХОДА ПОДЪЁМНИКА (HW-07): по классу позиции на месте модуля. Пусто —
+   * поворот вверх, как было. Поза — `liftPose`, та же, что меряет `leafPoses`.
+   */
+  liftMotion?: LiftMotion | null;
+  /** Деталь полотна в осях места (F9): закрытая коробка пачки — ходит та же деталь. */
+  rect?: FrontRect | null;
 };
 
 
@@ -112,9 +122,13 @@ export default function InteractiveDoor({
   glassMaterial,
   profileMaterial,
   showPanel = true,
+  liftMotion = null,
+  rect = null,
 }: Props) {
   const economy = useInteriorStore((state) => state.economyMode);
   const group = useRef<THREE.Group>(null);
+  /* Сдвиг полотна до поворота — у параллельного и «вверх и назад» подъёмника. */
+  const lifted = useRef<THREE.Group>(null);
   const touch = useRef<THREE.Mesh>(null);
 
   /*
@@ -142,13 +156,38 @@ export default function InteractiveDoor({
 
   const pivot = doorPivot(opening, x, y, width, height, thickness);
   const target = open ? pivot.angle : 0;
+  /* Угол створки на этом кадре — для звеньев петли (HW-03). */
+  const angleRef = useRef(target);
+  const hingeDraws = (riders ?? []).filter((box) => box.hinge?.half === 'cup').map((box) => box.hinge as HingeDraw);
+  /* Точка полотна в закрытой позе (метры ряда) → та же точка при угле: поворот группы створки вокруг оси и вынос петли. */
+  const toCarcass = (p: [number, number, number], angle: number): [number, number, number] => {
+    const lx = p[0] - pivot.origin[0];
+    const ly = p[1] - pivot.origin[1];
+    const lz = p[2] - pivot.origin[2];
+    if (pivot.axis === 'x') {
+      const c = Math.cos(angle);
+      const s = Math.sin(angle);
+      return [pivot.origin[0] + lx, pivot.origin[1] + ly * c - lz * s, pivot.origin[2] + ly * s + lz * c];
+    }
+    const c = Math.cos(angle);
+    const s = Math.sin(angle);
+    return [pivot.origin[0] + lx * c + lz * s, pivot.origin[1] + ly, pivot.origin[2] + doorKick(pivot, angle) - lx * s + lz * c];
+  };
 
   useSlide({
     target,
     initial: target,
     apply: (value) => {
+      angleRef.current = value;
       const el = group.current;
       if (!el) return;
+      if (opening === 'lift' && (liftMotion === 'parallel_lift' || liftMotion === 'swing_over')) {
+        /* Доля хода — от угла, которым его ведёт `useSlide`; поза — одна функция со проверкой. */
+        const pose = liftPose(liftMotion, pivot.angle === 0 ? 0 : value / pivot.angle, height, thickness);
+        el.rotation.x = pose.angle;
+        if (lifted.current) lifted.current.position.set(0, pose.liftY, pose.liftZ);
+        return;
+      }
       if (pivot.axis === 'x') el.rotation.x = value;
       else {
         el.rotation.y = value;
@@ -162,7 +201,7 @@ export default function InteractiveDoor({
   });
 
   const [panelX, panelY] = pivot.panel;
-  const local = leafLocal({ opening, width, height, thickness, gap });
+  const local = leafLocal({ opening, width, height, thickness, gap, rect });
   /* Рисунок полотна — тот же кусок дерева, что у него закрытого в пачке. */
   const panelBox = useShiftedBox(parts.box, id);
   /* Сетка рельефа — того же габарита, что закрытое полотно (`leafLocal` = `doorBoxes`). */
@@ -186,10 +225,14 @@ export default function InteractiveDoor({
      * нарисован от нуля вглубь, и петля живёт именно здесь. Смещать группу
      * на половину глубины нельзя — дверь оторвётся от шкафа.
      */
+    <>
+    {/* Звенья петли — вне группы полотна: одним концом на плече корпуса, другим на чашке (HW-03). */}
+    {active && hingeDraws.length > 0 && <HingeLinks draws={hingeDraws} material={parts.metal} toCarcass={toCarcass} angleRef={angleRef} />}
     <group
       ref={group}
       position={[pivot.origin[0], pivot.origin[1], pivot.origin[2] + doorKick(pivot, target)]}
     >
+      <group ref={lifted} name={liftMotion ? `lift:${liftMotion}` : undefined}>
       <mesh
         ref={touch}
         name={`part:${id}`}
@@ -278,6 +321,11 @@ export default function InteractiveDoor({
           box.position[1] - pivot.origin[1],
           box.position[2] - pivot.origin[2],
         ];
+        if (box.hinge) {
+          /* Чашка петли своей сеткой: начало сетки — ось чашки, а не центр коробки узла. */
+          const o = box.hinge.origin;
+          return <HingeMesh key={`rider-${i}`} draw={box.hinge} position={[o[0] - pivot.origin[0], o[1] - pivot.origin[1], o[2] - pivot.origin[2]]} material={parts.metal} fine={!economy} />;
+        }
         return box.handle ? (
           <HandleMesh key={`rider-${i}`} draw={box.handle} position={at} fine={!economy} part={box.part ?? id} />
         ) : (
@@ -301,6 +349,8 @@ export default function InteractiveDoor({
       })}
         </>
       )}
+      </group>
     </group>
+    </>
   );
 }

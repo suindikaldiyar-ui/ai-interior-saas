@@ -21,7 +21,7 @@ import type { ReactNode } from 'react';
  */
 
 export type StudioTool = 'select' | 'measure' | 'furniture' | 'construction' | 'materials' | 'hardware' | 'lighting' | 'documents';
-export type StudioView = 'plan' | 'facade' | '3d' | 'panels' | 'cutting';
+export type StudioView = 'plan' | 'facade' | '3d' | 'panels' | 'cutting' | 'drilling';
 
 export const STUDIO_TOOLS: { key: StudioTool; title: string; hint: string }[] = [
   { key: 'select', title: 'Выбор', hint: 'стены и модули объекта списком' },
@@ -34,7 +34,7 @@ export const STUDIO_TOOLS: { key: StudioTool; title: string; hint: string }[] = 
   { key: 'documents', title: 'Документы', hint: 'деталировка, карта раскроя и смета' },
 ];
 
-export const STUDIO_VIEWS: { key: Exclude<StudioView, 'panels' | 'cutting'>; title: string }[] = [
+export const STUDIO_VIEWS: { key: Exclude<StudioView, 'panels' | 'cutting' | 'drilling'>; title: string }[] = [
   { key: 'plan', title: 'План' },
   { key: 'facade', title: 'Фасад' },
   { key: '3d', title: '3D' },
@@ -134,7 +134,7 @@ type Props = {
   contextOpen: boolean;
   context: ReactNode;
   view: StudioView;
-  onView: (view: Exclude<StudioView, 'panels' | 'cutting'>) => void;
+  onView: (view: Exclude<StudioView, 'panels' | 'cutting' | 'drilling'>) => void;
   viewport: ReactNode;
   inspector: ReactNode;
   zoom: ReactNode;

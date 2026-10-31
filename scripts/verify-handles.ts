@@ -25,7 +25,7 @@ import { allModules } from '../lib/millwork/layout';
 import { hardwareCatalog } from '../lib/millwork/hardware';
 import { HARDWARE_FACTS, hardwareCatalogRow, type HardwareFact } from '../lib/millwork/hardwareCatalog';
 import { HARDWARE_LIGHT_FIELDS } from '../lib/catalog';
-import { leafPoses, runBoxes, runPlaces, sceneLeaves, type PartBox } from '../lib/millwork/cabinetBoxes';
+import { closedFrontRect, leafPoses, runBoxes, runPlaces, sceneLeaves, type PartBox } from '../lib/millwork/cabinetBoxes';
 import { buildPanels } from '../lib/millwork/panels';
 import { moduleDrilling } from '../lib/millwork/drilling';
 import { model3dStatusOf } from '../lib/millwork/hardwareMedia';
@@ -218,7 +218,15 @@ function meshFlaws(data: HandleMeshData): string[] {
 /* ═════════════════════════════════════════════════════════════════════════ */
 
 export function handleChecks(check: Check): void {
-  const handleFacts = HARDWARE_FACTS.filter((fact) => fact.hardware.category === 'handle');
+  /*
+   * HW-01 добавил ручки BOYARD (1682). Прежние числа HANDLE-REAL — у ручек
+   * Blum, Hettich и Häfele (63), и они не сдвинулись; у BOYARD — свои,
+   * объявленные ниже. Сетки проверяются у ВСЕХ ручек с моделью.
+   */
+  const OLD_MAKERS = new Set(['Blum', 'Hettich', 'Häfele']);
+  const allHandleFacts = HARDWARE_FACTS.filter((fact) => fact.hardware.category === 'handle');
+  const handleFacts = allHandleFacts.filter((fact) => OLD_MAKERS.has(fact.hardware.manufacturer ?? ''));
+  const newHandleFacts = allHandleFacts.filter((fact) => !OLD_MAKERS.has(fact.hardware.manufacturer ?? ''));
 
   /* ── H1. Статус модели — по размерам паспорта, словами ── */
   {
@@ -231,11 +239,25 @@ export function handleChecks(check: Check): void {
       /* Статус карточки — тот же, что рисует сцена. */
       if (model3dStatusOf(CATALOG.get(`hw:${fact.article}`)!) !== shaped.status) silent.push(`${fact.article}: карточка ≠ сцена`);
     }
+    /* Ручки новых производителей: те же правила — слова у каждой, карточка = сцена. */
+    const newTally = new Map<string, number>();
+    for (const fact of newHandleFacts) {
+      const shaped = handleItemModel(fact);
+      newTally.set(shaped.status, (newTally.get(shaped.status) ?? 0) + 1);
+      if (!shaped.words) silent.push(fact.hardware.manufacturerArticle ?? fact.article);
+      if (model3dStatusOf(CATALOG.get(`hw:${fact.article}`)!) !== shaped.status) silent.push(`${fact.article}: карточка ≠ сцена`);
+    }
     const gola = handleFacts.filter((f) => f.hardware.subcategory === 'profile_handle').map((f) => handleItemModel(f));
     const conflict = handleItemModel(handleFacts.find((f) => f.hardware.manufacturerArticle === '115.52.619')!);
     check(
-      'H1 ручек в фактах 63: по размерам паспорта 13 (скобы 7, кнопки 6), по чертежу 25 (кромочные 17, врезные 8), без 3D 25 (Gola 8, принадлежности 16, скоба без длины 1); у каждой — слова, карточка = сцена',
+      'H1 ручек Blum, Hettich и Häfele 63: по размерам паспорта 13 (скобы 7, кнопки 6), по чертежу 25 (кромочные 17, врезные 8), без 3D 25 (Gola 8, принадлежности 16, скоба без длины 1); ручек BOYARD 1682: по размерам 263, по чертежу 1113, без 3D 306; у каждой — слова, карточка = сцена',
       handleFacts.length === 63 &&
+        newHandleFacts.length === 1682 &&
+        newHandleFacts.every((f) => f.hardware.manufacturer === 'BOYARD') &&
+        newTally.get('MEASURED_RECONSTRUCTION') === 263 &&
+        newTally.get('VISUAL_RECONSTRUCTION') === 1113 &&
+        newTally.get('NO_3D') === 306 &&
+        !newTally.has('OFFICIAL_CAD') &&
         tally.get('MEASURED_RECONSTRUCTION') === 13 &&
         tally.get('VISUAL_RECONSTRUCTION') === 25 &&
         tally.get('NO_3D') === 25 &&
@@ -245,23 +267,26 @@ export function handleChecks(check: Check): void {
         gola.every((g) => g.model === null && /системы без ручек/.test(g.words)) &&
         conflict.model === null &&
         /длина ручки не задана/.test(conflict.words),
-      `${JSON.stringify(Object.fromEntries(tally))} · без слов ${silent.slice(0, 3).join(', ') || 0}`,
+      `${JSON.stringify(Object.fromEntries(tally))} · BOYARD ${JSON.stringify(Object.fromEntries(newTally))} · без слов ${silent.slice(0, 3).join(', ') || 0}`,
     );
   }
 
   /* ── H2. Каждая сетка замкнута, смотрит наружу и совпадает с габаритом модели ── */
   {
     let meshes = 0;
+    let oldMeshes = 0;
     const bad: string[] = [];
     let fineTris = 0;
     let coarseTris = 0;
-    for (const fact of handleFacts) {
+    for (const fact of allHandleFacts) {
+      const old = OLD_MAKERS.has(fact.hardware.manufacturer ?? '');
       const model = handleItemModel(fact).model;
       if (!model) continue;
       const orients: HandleOrient[] = model.shape === 'edge' ? ['top', 'bottom'] : ['h', 'v'];
       for (const orient of orients) {
         for (const fine of [true, false]) {
           meshes += 1;
+          if (old) oldMeshes += 1;
           const mesh = handleMesh(model, orient, 18, fine);
           const tris = mesh.body.indices.length / 3 + (mesh.accent ? mesh.accent.indices.length / 3 : 0);
           if (fine) fineTris += tris;
@@ -276,9 +301,9 @@ export function handleChecks(check: Check): void {
       }
     }
     check(
-      'H2 сеток 152 (38 моделей × 2 поворота × 2 подробности): замкнуты, рёбра парные, граней без площади 0, объём наружу, габарит сетки = габарит модели ± 0,01 мм; грубая сетка легче',
-      meshes === 152 && bad.length === 0 && coarseTris < fineTris,
-      `сеток ${meshes}, с изъяном ${bad.length}${bad[0] ? ` (${bad[0]})` : ''} · треугольников ${fineTris} → ${coarseTris}`,
+      'H2 сеток 5656: у Blum, Hettich и Häfele 152 (38 моделей × 2 поворота × 2 подробности), у BOYARD 5504 (1376 моделей); замкнуты, рёбра парные, граней без площади 0, объём наружу, габарит сетки = габарит модели ± 0,01 мм; грубая сетка легче',
+      oldMeshes === 152 && meshes === 5656 && bad.length === 0 && coarseTris < fineTris,
+      `сеток ${meshes} (прежних ${oldMeshes}), с изъяном ${bad.length}${bad[0] ? ` (${bad[0]})` : ''} · треугольников ${fineTris} → ${coarseTris}`,
     );
   }
 
@@ -411,6 +436,8 @@ export function handleChecks(check: Check): void {
           gap: SHOP.frontGapMm / MM,
           handle: boxes.find((b) => b.part === leaf.id && b.node === 'handle') ?? null,
           s: 1,
+          /* Ходит деталь деталировки (F9) — та же, что нарисована закрытой. */
+          rect: closedFrontRect(boxes.filter((b) => b.part === leaf.id), [entry.x + leaf.xM, entry.y + leaf.bottomM]),
         }),
       );
     const items = off.estimate.lines.filter((l) => l.key.startsWith('fitting_handle_'));
@@ -469,6 +496,7 @@ export function handleChecks(check: Check): void {
             thickness: SHOP.frontMm / MM,
             gap: SHOP.frontGapMm / MM,
             handle: local,
+            rect: closedFrontRect(boxes.filter((b) => b.part === leaf.id), [entry.x + leaf.xM, entry.y + leaf.bottomM]),
             s,
           });
           const front = posed.find((p) => p.role === 'front')!;

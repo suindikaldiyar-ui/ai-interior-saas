@@ -118,6 +118,20 @@ function drillingSpecs(value: unknown): HardwareDrillingSpec[] | undefined {
   return out.length > 0 ? out : undefined;
 }
 
+/** Где есть 3D (HW-01): архив библиотеки БАЗИС, права не подтверждены; число файлов. */
+function cadRefs(value: unknown): HardwareMeta['cad'] {
+  if (!Array.isArray(value)) return undefined;
+  const out: NonNullable<HardwareMeta['cad']> = [];
+  for (const raw of value) {
+    const ref = (raw ?? {}) as Record<string, unknown>;
+    const file = text(ref.file);
+    const files = number(ref.files);
+    if (ref.format !== 'BAZIS' || !file || files === undefined) continue;
+    out.push({ format: 'BAZIS', file, rightsStatus: 'NOT_VERIFIED', files });
+  }
+  return out.length > 0 ? out : undefined;
+}
+
 function sourceOf(value: unknown): HardwareSource | undefined {
   if (!value || typeof value !== 'object') return undefined;
   const raw = value as Record<string, unknown>;
@@ -127,6 +141,8 @@ function sourceOf(value: unknown): HardwareSource | undefined {
   return {
     checkedAt,
     ...(text(raw.file) ? { file: text(raw.file) } : {}),
+    /* Источник — архив библиотеки БАЗИС: запись базы номенклатуры внутри него (HW-01). */
+    ...(text(raw.entry) ? { entry: text(raw.entry) } : {}),
     ...(text(raw.url) ? { url: text(raw.url) } : {}),
     ...(page !== undefined ? { pdfPage: page } : {}),
     ...(raw.printedPage !== undefined && raw.printedPage !== null ? { printedPage: String(raw.printedPage) } : {}),
@@ -174,6 +190,7 @@ function productRecord(raw: Partial<HardwareMeta> | undefined): Partial<Hardware
       model3d && typeof model3d.url === 'string' && model3d.format === 'glb' && model3d.units === 'mm'
         ? { url: model3d.url, format: 'glb', units: 'mm' }
         : undefined,
+    cad: cadRefs(raw.cad),
     missing: strings(raw.missing),
     notes: text(raw.notes),
   };

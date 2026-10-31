@@ -59,12 +59,17 @@ export default function InteractiveBayDrawer({ id, open, onToggle, boxes, parts,
     onActive?.(id, active);
   }, [id, active, onActive]);
 
+  /* Средняя секция направляющей едет на свою долю хода (HW-04): обратный сдвиг внутри группы ящика. */
+  const middle = useRef<THREE.Group>(null);
+  const share = boxes.find((box) => box.slideShare !== undefined)?.slideShare ?? 1;
   useSlide({
     target: open ? 1 : 0,
     initial: open ? 1 : 0,
     apply: (value) => {
       const el = group.current;
       if (el) el.position.set(travel[0] * value, travel[1] * value, travel[2] * value);
+      const mid = middle.current;
+      if (mid) mid.position.set(-travel[0] * value * (1 - share), -travel[1] * value * (1 - share), -travel[2] * value * (1 - share));
     },
     onSettle: () => {
       if (!openRef.current) setActive(false);
@@ -134,9 +139,18 @@ export default function InteractiveBayDrawer({ id, open, onToggle, boxes, parts,
           document.body.style.cursor = '';
         }}
       />
+      {/* Средние секции направляющих — своей группой на долю хода. */}
+      <group ref={middle}>
+        {active &&
+          boxes.map((box, i) =>
+            box.slideShare !== undefined ? (
+              <mesh key={`mid-${i}`} name="mech:runner-middle" geometry={parts.box} material={parts.metal} position={box.position} scale={box.scale} />
+            ) : null,
+          )}
+      </group>
       {active &&
         boxes.map((box, i) =>
-          /* Ручка едет своей моделью, той же, что у задвинутого в пачке (HANDLE-REAL). */
+          box.slideShare !== undefined ? null : /* Ручка едет своей моделью, той же, что у задвинутого в пачке (HANDLE-REAL). */
           box.handle ? (
             <HandleMesh key={`handle-${i}`} draw={box.handle} position={box.position} fine={!economy} part={box.part ?? id} />
           ) : (

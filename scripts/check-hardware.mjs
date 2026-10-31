@@ -7,10 +7,13 @@
  *     столько позиций, сколько в фактах, все с ценой 0 («цена не задана»);
  *     повтор — «Всё уже в каталоге»; своя пачка CSV — строки и отказы словами.
  *   PART=kitchen — 1440 × 900, Studio кухни: петли и планка на дверце 450
- *     (чашки едут с полотном), направляющие KA на трёх ящиках (короб в
- *     деталировке, в карте раскроя и в 3D, присадка на карточке детали),
- *     подъёмник HS на верхнем шкафу (корпуса и рычаги), сушилка в шкафу над
- *     мойкой; сохранить → база → перезагрузить → позиции на местах.
+ *     (чашки едут с полотном); сохранить → база → перезагрузить.
+ *   PART=kitchen-drawers — направляющие KA на трёх ящиках (короб в
+ *     деталировке, в карте раскроя и в 3D, присадка на карточке детали);
+ *     сохранить → база → перезагрузить.
+ *   PART=kitchen-lift — подъёмник HS на верхнем шкафу (корпуса и рычаги),
+ *     сушилка в шкафу над мойкой; сохранить → база → перезагрузить.
+ *     Три кухонные части — по своей организации, каждая в пределах вызова.
  *   PART=wardrobe — 1440 × 900, Studio шкафа-купе: пантограф в отсеке b1
  *     (едет вниз и вперёд), выдвижная штанга в b2 (вперёд), система купе
  *     ряда (полотна едут вбок).
@@ -18,11 +21,21 @@
  *   PART=corner  — 1440 × 900: угловая кухня — петля на модуле стены Б.
  *   PART=tablet  — 1024 × 768 с касанием: панель «Фурнитура» в экране,
  *     прокрутки по ширине нет, список виртуальный, установка касанием.
+ *   PART=catalog2 — 1440 × 900 (HW-02): кнопки новых производителей
+ *     числами фактов, серии BOYARD, отбор по размеру, замена KA 500 на
+ *     аналог через карточку, избранное и недавние после перезагрузки.
+ *   PART=drawers — 1440 × 900 (HW-04): TANDEMBOX antaro путём «Производитель →
+ *     Серия → NL → Артикул»: место царг появляется с ходовой, царги другой NL —
+ *     отказ, ход по модели, царги металлом, дно и задняя стенка = движку,
+ *     выпуск заперт словами, смета, запись → перезагрузка.
+ *   PART=drilling — 1440 × 900 (HW-08, HW-09): CLIP top + планка →
+ *     «Документы» → «Присадка»: числа чашек и планки = приёмке движка,
+ *     выпуск заперт словами, «Экспорт для БАЗИС» — ZIP без присадки.
  * Каждая часть — своя временная организация, заводится служебным ключом и
  * удаляется; уборка проверяется чтением. Снимки: .capture-check/hardware.
  */
 import { execSync, spawn } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createWriteStream, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { chromium } from 'playwright';
 import { createClient } from '@supabase/supabase-js';
@@ -31,8 +44,8 @@ import { createServerClient } from '@supabase/ssr';
 const PORT = Number(process.env.PORT_HW ?? 3291);
 const BASE = `http://localhost:${PORT}`;
 const OUT = '.capture-check/hardware';
-const PARTS = (process.env.PART ?? 'import,kitchen,wardrobe,cargo,corner,tablet').split(',').map((s) => s.trim()).filter(Boolean);
-const KNOWN = ['import', 'kitchen', 'wardrobe', 'cargo', 'corner', 'tablet'];
+const PARTS = (process.env.PART ?? 'import,kitchen,kitchen-drawers,kitchen-lift,wardrobe,cargo,corner,tablet').split(',').map((s) => s.trim()).filter(Boolean);
+const KNOWN = ['import', 'kitchen', 'kitchen-drawers', 'kitchen-lift', 'wardrobe', 'cargo', 'corner', 'tablet', 'catalog2', 'drilling', 'drawers'];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let failed = 0;
@@ -139,7 +152,13 @@ async function open3d(page, label) {
 const saved = (page) => waitFor(page, () => document.querySelector('[data-save-state]')?.getAttribute('data-save-state') ?? null, (v) => v === 'saved', 30_000);
 async function openStudio(page, projectId) {
   await page.goto(`${BASE}/project/${projectId}/room`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
-  await page.waitForSelector('[data-studio-root]', { timeout: 60_000 });
+  /* Studio не открылась — что на экране вместо неё: адрес, снимок и текст страницы, а не только «таймаут». */
+  const opened = await page.waitForSelector('[data-studio-root]', { timeout: 60_000 }).then(() => true, () => false);
+  if (!opened) {
+    await page.screenshot({ path: `${OUT}/studio-not-opened.png`, timeout: 30_000 }).catch((e) => console.log(`  снимок не снят: ${e.message}`));
+    const said = await page.evaluate(() => (document.body?.innerText ?? '').replace(/\s+/g, ' ').slice(0, 300));
+    throw new Stop(`Studio не открылась за 60 с: ${page.url()} · на экране: «${said}» · снимок ${OUT}/studio-not-opened.png`);
+  }
   await page.waitForFunction(() => {
     const el = document.querySelector('[data-studio-rail] [data-studio-tool]');
     return Boolean(el && Object.keys(el).some((k) => k.startsWith('__reactProps')));
@@ -175,7 +194,9 @@ async function hardwareFor(page, label, moduleId) {
   }
   must(`${label}: инструмент «Фурнитура»`, await tool(page, 'hardware'), 'НУЛЕВОЙ СЕЛЕКТОР: [data-studio-tool="hardware"]');
   const items = await waitFor(page, () => Number(document.querySelector('[data-hw-panel]')?.getAttribute('data-hw-items') ?? 0), (n) => n >= 1, 60_000);
-  must(`${label}: панель «Фурнитура» видит каталог организации`, items >= FACT_COUNT, `позиций ${items} при ${FACT_COUNT} в фактах`);
+  /* Не доехал — что панель говорит словами (ошибка чтения каталога называется там же). */
+  const said = items >= FACT_COUNT ? '' : await page.evaluate(() => (document.querySelector('[data-hw-panel]')?.textContent ?? 'ПАНЕЛИ НЕТ').replace(/\s+/g, ' ').slice(0, 240));
+  must(`${label}: панель «Фурнитура» видит каталог организации`, items >= FACT_COUNT, `позиций ${items} при ${FACT_COUNT} в фактах · панель: «${said}»`);
 }
 
 /** Место → поиск → строка → «Установить»; место называет поставленный артикул. */
@@ -202,7 +223,9 @@ async function installVia(page, label, slot, article, query) {
 /** Открыть всё — ждётся факт сдвига/поворота детали, а не таймер. */
 async function openAll(page, id, test, ms = 120_000) {
   await page.locator('[data-open-all]').first().click();
-  await waitFor(page, (key) => (window.__mwMoving ? window.__mwMoving(key) : null), (v) => Boolean(v) && test(v), ms, id);
+  /* Ход не дошёл за время — падение с тем, что прочитано, а не молчаливое «последнее значение». */
+  const reached = await waitFor(page, (key) => (window.__mwMoving ? window.__mwMoving(key) : null), (v) => Boolean(v) && test(v), ms, id);
+  must(`«Открыть всё»: ${id} дошла до открытой позы`, Boolean(reached) && test(reached), `за ${Math.round(ms / 1000)} с прочитано: ${JSON.stringify(reached)}`);
   /* Читается доехавшее: ход меряется, когда в сцене ничего не едет. */
   await waitFor(page, () => (window.__mwMovingCount ? window.__mwMovingCount() : -1), (n) => n === 0, ms);
   return moving(page, id);
@@ -239,6 +262,48 @@ async function closeAll(page) {
 }
 
 /* ─────────────────────────  организация  ───────────────────────── */
+
+/*
+ * ЗАСЕВ КАТАЛОГА ФУРНИТУРЫ (PART 7): строки, которые маршрут импорта вставил
+ * бы в пустой каталог (`scripts/hardware-import-rows.ts` →
+ * `planHardwareImport`), разобраны ОДИН раз на процесс и пишутся служебным
+ * ключом пачками. Импорт через API — 27 запросов по 200 строк подряд — на
+ * каждой части съедал до двух минут и не всегда укладывался. Импорт путём
+ * экрана проверяет часть `import`.
+ */
+let importRows = null;
+function hardwareImportRows() {
+  if (!importRows) {
+    const out = JSON.parse(execSync('npx tsx scripts/hardware-import-rows.ts', { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] }));
+    if (out.count !== FACT_COUNT || out.rows.length !== FACT_COUNT) throw new Stop(`строк засева ${out.rows.length} при ${FACT_COUNT} в фактах`);
+    importRows = out.rows;
+  }
+  return importRows;
+}
+async function seedHardware(service, orgId) {
+  const startedAt = Date.now();
+  const rows = hardwareImportRows();
+  const { data: category, error } = await service.from('catalog_categories').select('id').eq('org_id', orgId).eq('key', 'hardware').single();
+  if (error || !category) throw new Error(`категории «Фурнитура» нет после типового прайса: ${error?.message ?? 'пусто'}`);
+  const CHUNK = 400;
+  const chunks = [];
+  for (let at = 0; at < rows.length; at += CHUNK) chunks.push(rows.slice(at, at + CHUNK));
+  let added = 0;
+  for (let i = 0; i < chunks.length; i += 4) {
+    const results = await Promise.all(
+      chunks.slice(i, i + 4).map((chunk) =>
+        service.from('catalog_items').insert(chunk.map((row) => ({ org_id: orgId, category_id: category.id, ...row, is_active: true }))).select('id'),
+      ),
+    );
+    for (const result of results) {
+      if (result.error) throw new Error(`засев фурнитуры: записано ${added} из ${rows.length}, дальше: ${result.error.message}`);
+      added += result.data?.length ?? 0;
+    }
+  }
+  const { count, error: countError } = await service.from('catalog_items').select('id', { count: 'exact', head: true }).eq('org_id', orgId).like('article', 'MFR-%');
+  if (countError || count !== FACT_COUNT) throw new Error(`после засева позиций ${count} при ${FACT_COUNT} в фактах${countError ? `: ${countError.message}` : ''}`);
+  console.log(`  ·    каталог фурнитуры засеян: ${added} строк за ${Math.round((Date.now() - startedAt) / 1000)} с`);
+}
 
 async function withOrg(label, browser, body, { viewport, touch = false, projects = [], importHardware = true, production = null }) {
   const URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -286,11 +351,7 @@ async function withOrg(label, browser, body, { viewport, touch = false, projects
     });
     const seeded = await page.request.post(`${BASE}/api/catalog/seed-rates`, { data: { orgId: org.id } });
     if (!seeded.ok()) throw new Error(`типовой прайс не заведён: ${seeded.status()}`);
-    if (importHardware) {
-      const res = await page.request.post(`${BASE}/api/catalog/hardware`, { data: { orgId: org.id, confirm: true }, timeout: 120_000 });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok() || body.added !== FACT_COUNT) throw new Error(`фурнитура не загрузилась: ${res.status()} · ${JSON.stringify(body).slice(0, 200)}`);
-    }
+    if (importHardware) await seedHardware(service, org.id);
     const ids = {};
     for (const p of projects) {
       const { data: project, error: projectError } = await service
@@ -427,18 +488,62 @@ async function partImport(browser) {
 
 /* ═════════════════════════  KITCHEN  ═════════════════════════ */
 
+/*
+ * KITCHEN — ТРИ НЕЗАВИСИМЫЕ ЧАСТИ (PART 7): одна часть шла 12 мин 39 с и не
+ * укладывалась в предел вызова. Каждая часть — своя временная организация,
+ * свой объект кухни и своя проверка «записал → база → перезагрузил» по тем
+ * позициям, что она поставила; вместе они покрывают прежний KITCHEN.J
+ * (петля, планка, направляющая, подъёмник, сушилка). Проверки — прежние.
+ */
+async function kitchenOpen(page, ids) {
+  await openStudio(page, ids.kitchen);
+  await open3d(page, 'KITCHEN');
+  await saved(page);
+  const metal0 = await settledMetal(page);
+  must('KITCHEN металл читается со сцены', typeof metal0 === 'number' && metal0 > 0, `__mwCadMetal: ${metal0}`);
+}
+
+/** Сохранить → база → перезагрузить: позиции части на местах, механизмов в сцене столько же (всё закрыто). */
+async function kitchenReopen({ page, service, ids, errors, consoleErrors }, label, want, probe) {
+  /* «До» — тоже когда каталог дочитан: без него механизмы позиций не нарисованы, и разница — каталог, а не запись. */
+  await hardwareFor(page, 'KITCHEN', probe.module);
+  await closeAll(page);
+  const metalClosed = await settledMetal(page);
+  await saved(page);
+  const row = (await service.from('projects').select('millwork').eq('id', ids.kitchen).single()).data;
+  const all = [...(row?.millwork?.runs?.optimal?.modules ?? []), ...(row?.millwork?.runs?.optimal?.upperSegments ?? []).flatMap((s) => s.modules)];
+  const stored = all.flatMap((m) => (m.fittings ?? []).map((f) => `${m.id}:${f.slot}`)).sort();
+  check(`${label} в базе у модулей позиции на местах: ${want.join(', ')}`, JSON.stringify(stored) === JSON.stringify([...want].sort()), stored.join(', ') || 'НИЧЕГО');
+  await page.reload({ waitUntil: 'domcontentloaded', timeout: 120_000 });
+  await page.waitForSelector('[data-studio-root]', { timeout: 60_000 });
+  await sleep(1500);
+  await open3d(page, 'KITCHEN');
+  await hardwareFor(page, 'KITCHEN', probe.module);
+  const metalAfter = await settledMetal(page);
+  const installed = await page.evaluate((slot) => document.querySelector(`[data-hw-slot="${slot}"]`)?.getAttribute('data-hw-installed') ?? null, probe.slot);
+  check(
+    `${label}2 после перезагрузки: ${probe.article} на месте «${probe.slot}» у ${probe.module}, механизмов в сцене столько же, сколько до неё (всё закрыто)`,
+    installed === probe.article && metalAfter === metalClosed,
+    `${probe.slot}: ${installed} · металл ${metalClosed} → ${metalAfter}`,
+  );
+  check(`${label.split('.')[0]} ошибок страницы и консоли нет`, errors.length === 0 && consoleErrors.length === 0, [...errors, ...consoleErrors].slice(0, 3).join(' | '));
+}
+
+const KITCHEN_ORG = (fx) => ({
+  viewport: { width: 1440, height: 900 },
+  production: { drawerBox: DRAWER_BOX },
+  projects: [{ key: 'kitchen', zone: 'Кухня', fx }],
+});
+
 async function partKitchen(browser) {
-  console.log('\n── KITCHEN (1440 × 900): петли · ящики KA → короб → деталировка → карта раскроя · подъёмник · сушилка · сохранить → перезагрузить');
+  console.log('\n── KITCHEN (1440 × 900): петли и планка на дверце 450 → чашки едут с полотном → сохранить → перезагрузить');
   const fx = fixture('kitchen');
   await withOrg(
     'KITCHEN',
     browser,
-    async ({ service, page, errors, consoleErrors, ids }) => {
-      await openStudio(page, ids.kitchen);
-      await open3d(page, 'KITCHEN');
-      await saved(page);
-      const metal0 = await settledMetal(page);
-      must('KITCHEN металл читается со сцены', typeof metal0 === 'number' && metal0 > 0, `__mwCadMetal: ${metal0}`);
+    async (ctx) => {
+      const { page, ids } = ctx;
+      await kitchenOpen(page, ids);
 
       /* A. Петли на дверце 450 + планка. */
       await hardwareFor(page, 'KITCHEN', 'base-1200@w1');
@@ -450,19 +555,47 @@ async function partKitchen(browser) {
       const door = await openAll(page, 'base-1200@w1:door:0', (v) => Math.abs(v.rotationDeg[1]) >= 80);
       await closeUp(page, 'base-1200@w1:door:0');
       await page.screenshot({ path: `${OUT}/kitchen-1-hinges.png`, timeout: 120_000 });
-      check('KITCHEN.A2 дверца открыта: чашки петель (2) едут с полотном — нарисованы в группе створки', Boolean(door) && door.names['rider:hinge'] === 2, JSON.stringify(door));
+      check('KITCHEN.A2 дверца открыта (поворот ≥ 80°): чашки петель (2) едут с полотном — нарисованы в группе створки', Boolean(door) && Math.abs(door.rotationDeg[1]) >= 80 && door.names['rider:hinge'] === 2, JSON.stringify(door));
       await closeAll(page);
+
+
+      await kitchenReopen(ctx, 'KITCHEN.J', ['base-1200@w1:hinge', 'base-1200@w1:hinge_plate'], { module: 'base-1200@w1', slot: 'hinge', article: 'MFR-BLUM-71B3550' });
+    },
+    KITCHEN_ORG(fx),
+  );
+}
+
+async function partKitchenDrawers(browser) {
+  console.log('\n── KITCHEN-DRAWERS (1440 × 900): направляющие KA на трёх ящиках → короб → деталировка → присадка на карточке → карта раскроя → сохранить → перезагрузить');
+  const fx = fixture('kitchen');
+  await withOrg(
+    'KITCHEN',
+    browser,
+    async (ctx) => {
+      const { page, ids } = ctx;
+      await kitchenOpen(page, ids);
 
       /* B. Три ящика base-3300 на KA 4532 NL 500. */
       await hardwareFor(page, 'KITCHEN', 'base-3300@w1');
       const slide = await installVia(page, 'KITCHEN', 'slide', 'MFR-HETTICH-9114276', '9114276');
       check('KITCHEN.B направляющая KA 4532 NL 500 на трёх ящиках поставлена — не отказ', slide.installed && slide.cardVerdict !== 'refused', `${slide.cardVerdict}`);
-      const drawer = await openAll(page, 'base-3300@w1:drawer:0', (v) => v.shift[2] >= 299);
+      /*
+       * HW-04: KA 4532 — полное выдвижение (класс механизма), ход не напечатан —
+       * ящик выходит на NL 500 (было условно 300); у направляющей три секции:
+       * ходовая едет с ящиком, средняя — на половину хода.
+       */
+      const drawer = await openAll(page, 'base-3300@w1:drawer:0', (v) => v.shift[2] >= 499);
       await closeUp(page, 'base-3300@w1:drawer:0', [-0.7, 0.8, 0.9]);
       await page.screenshot({ path: `${OUT}/kitchen-2-drawer-runners.png`, timeout: 120_000 });
       check(
-        'KITCHEN.B2 ящик выехал на 300 мм с деталями короба раскроя и ходовой половиной направляющей',
-        Boolean(drawer) && drawer.shift[2] === 300 && (drawer.names['panel:Боковина ящика'] ?? 0) === 2 && (drawer.names['mech:runner'] ?? 0) === 2,
+        'KITCHEN.B2 ящик выехал на NL 500 мм (полное выдвижение) с деталями короба раскроя; ходовая секция едет с ящиком, средняя — на 250 мм',
+        Boolean(drawer) &&
+          drawer.shift[2] === 500 &&
+          (drawer.names['panel:Боковина ящика'] ?? 0) === 2 &&
+          (drawer.names['mech:runner'] ?? 0) === 2 &&
+          (drawer.names['mech:runner-middle'] ?? 0) === 2 &&
+          Array.isArray(drawer.middleShift) &&
+          drawer.middleShift[2] === 250,
         JSON.stringify(drawer),
       );
       await closeAll(page);
@@ -532,10 +665,26 @@ async function partKitchen(browser) {
         `деталей короба ${boxParts.reduce((s, p) => s + p.qty, 0)} · «${drawerReason.slice(0, 90) || 'ПРИЧИНЫ НЕТ'}»`,
       );
 
-      /* E. Подъёмник HS top на верхнем шкафу. */
       await openStudio(page, ids.kitchen);
       await open3d(page, 'KITCHEN');
-      /* Металл до подъёмника — когда каталог дочитан: иначе в разницу войдут направляющие ящиков. */
+      await kitchenReopen(ctx, 'KITCHEN.JD', ['base-3300@w1:slide'], { module: 'base-3300@w1', slot: 'slide', article: 'MFR-HETTICH-9114276' });
+    },
+    KITCHEN_ORG(fx),
+  );
+}
+
+async function partKitchenLift(browser) {
+  console.log('\n── KITCHEN-LIFT (1440 × 900): подъёмник HS на верхнем шкафу (корпуса и рычаги) · сушилка над мойкой → сохранить → перезагрузить');
+  const fx = fixture('kitchen');
+  await withOrg(
+    'KITCHEN',
+    browser,
+    async (ctx) => {
+      const { page, ids } = ctx;
+      await kitchenOpen(page, ids);
+
+      /* E. Подъёмник HS top на верхнем шкафу. */
+      /* Металл до подъёмника — когда каталог дочитан и сцена тиха: иначе в разницу войдут чужие узлы. */
       await hardwareFor(page, 'KITCHEN', 'upper-1200@w1');
       const metal1 = await settledMetal(page);
       const lift = await installVia(page, 'KITCHEN', 'lift', 'MFR-BLUM-22S2800', '22S2800');
@@ -544,7 +693,7 @@ async function partKitchen(browser) {
       const up = await openAll(page, 'upper-1200@w1:door:0', (v) => Math.abs(v.rotationDeg[0]) >= 60);
       await closeUp(page, 'upper-1200@w1:door:0', [-0.6, -0.3, 1.2]);
       await page.screenshot({ path: `${OUT}/kitchen-4-lift.png`, timeout: 120_000 });
-      check('KITCHEN.E2 фасад поднят: рычаги (2) едут с ним', Boolean(up) && up.names['rider:lift'] === 2, JSON.stringify(up));
+      check('KITCHEN.E2 фасад поднят (поворот ≥ 60°): рычаги (2) едут с ним', Boolean(up) && Math.abs(up.rotationDeg[0]) >= 60 && up.names['rider:lift'] === 2, JSON.stringify(up));
       await closeAll(page);
 
       /* G. Сушилка в шкафу над мойкой. */
@@ -557,24 +706,208 @@ async function partKitchen(browser) {
       await closeUp(page, 'upper-1650@w1:door:0', [0.3, -0.2, 1.3]);
       await page.screenshot({ path: `${OUT}/kitchen-5-dryer.png`, timeout: 120_000 });
       await closeAll(page);
-      const metalClosed = await settledMetal(page);
 
-      /* J. Сохранить → база → перезагрузить. */
+      await kitchenReopen(ctx, 'KITCHEN.JL', ['upper-1200@w1:lift', 'upper-1650@w1:dryer'], { module: 'upper-1200@w1', slot: 'lift', article: 'MFR-BLUM-22S2800' });
+    },
+    KITCHEN_ORG(fx),
+  );
+}
+
+/* ═════════════════════════  DRAWERS (HW-04)  ═════════════════════════ */
+
+/** Кнопка-переключатель: нажать, только если ещё не нажата (второе нажатие снимает выбор). */
+async function press(page, selector, label) {
+  const b = page.locator(selector);
+  must(`${label}: кнопка ${selector}`, (await b.count()) > 0, `НУЛЕВОЙ СЕЛЕКТОР: ${selector}`);
+  if ((await b.first().getAttribute('aria-pressed')) !== 'true') await b.first().click();
+  await sleep(300);
+}
+
+/** Производитель → Серия → Длина NL → Артикул → «Установить» — путь МЕБЕЛЬ → ФУРНИТУРА → НАПРАВЛЯЮЩИЕ. */
+async function installByPath(page, label, slot, { brand, series, nl, article }) {
+  await press(page, `[data-hw-slot="${slot}"]`, `${label} место «${slot}»`);
+  await page.locator('[data-hw-search]').first().fill('');
+  await press(page, `[data-hw-brand="${brand}"]`, label);
+  await press(page, `[data-hw-series="${series}"]`, label);
+  const nlChips = await page.evaluate(() => Array.from(document.querySelectorAll('[data-hw-nl]')).map((b) => Number(b.getAttribute('data-hw-nl'))));
+  await press(page, `[data-hw-nl="${nl}"]`, label);
+  const rows = await page.evaluate(() => Array.from(document.querySelectorAll('[data-hw-item]')).map((r) => r.getAttribute('data-hw-item')));
+  const row = page.locator(`[data-hw-item="${article}"]`);
+  must(`${label}: ${article} в списке «${brand} → ${series} → NL ${nl}»`, (await row.count()) > 0, `НУЛЕВОЙ СЕЛЕКТОР: [data-hw-item="${article}"] · в списке: ${rows.slice(0, 8).join(', ')}`);
+  await row.first().click();
+  await sleep(300);
+  const cardVerdict = await page.evaluate(() => document.querySelector('[data-hw-card-verdict]')?.getAttribute('data-hw-card-verdict') ?? null);
+  const button = page.locator('[data-hw-install]');
+  must(`${label}: кнопка «Установить» у ${article}`, (await button.count()) > 0, 'НУЛЕВОЙ СЕЛЕКТОР: [data-hw-install]');
+  await button.first().click();
+  const installed = await waitFor(page, (key) => document.querySelector(`[data-hw-slot="${key}"]`)?.getAttribute('data-hw-installed') ?? null, (v) => v === article, 20_000, slot);
+  return { nlChips, rows, cardVerdict, installed: installed === article };
+}
+
+async function partDrawers(browser) {
+  console.log('\n── DRAWERS (1440 × 900, HW-04): TANDEMBOX antaro — Производитель → Серия → NL → Артикул; ход, царги металлом, дно и задняя стенка в раскрое, смета, запись → перезагрузка');
+  const fx = fixture('kitchen');
+  const want = fixture('drawersExpect');
+  await withOrg(
+    'DRAWERS',
+    browser,
+    async ({ service, page, errors, consoleErrors, ids }) => {
+      await openStudio(page, ids.kitchen);
+      await open3d(page, 'DRAWERS');
+      await saved(page);
+      await hardwareFor(page, 'DRAWERS', want.module);
+      const sidesBefore = await page.locator('[data-hw-slot="drawer_side"]').count();
+      const runner = await installByPath(page, 'DRAWERS', 'slide', { brand: 'Blum', series: 'TANDEMBOX antaro', nl: 450, article: want.runner });
+      const sidesAfter = await waitFor(page, () => document.querySelectorAll('[data-hw-slot="drawer_side"]').length, (n) => n > 0, 20_000);
+      check(
+        'DRAWERS.A ходовая TANDEMBOX antaro 576.4501M поставлена путём Blum → TANDEMBOX antaro → NL 450; места «Царги системы ящика» до неё нет, после — есть',
+        runner.installed && runner.cardVerdict !== 'refused' && runner.nlChips.includes(450) && sidesBefore === 0 && sidesAfter > 0,
+        `ходовая ${runner.installed ? 'стоит' : 'НЕТ'} (${runner.cardVerdict}) · NL кнопками ${runner.nlChips.join('/')} · мест царг ${sidesBefore} → ${sidesAfter}`,
+      );
+      /* Царги другой NL к ходовой 450 — отказ на строке списка, до нажатия. */
+      await press(page, '[data-hw-slot="drawer_side"]', 'DRAWERS место царг');
+      await press(page, '[data-hw-brand="Blum"]', 'DRAWERS');
+      await press(page, '[data-hw-series="TANDEMBOX antaro"]', 'DRAWERS');
+      await press(page, '[data-hw-nl="500"]', 'DRAWERS');
+      const wrong = await page.evaluate(() => document.querySelector('[data-hw-item="MFR-BLUM-378M5002SA"]')?.getAttribute('data-hw-item-verdict') ?? null);
+      check('DRAWERS.A2 царги 378M5002SA (NL 500) к ходовой NL 450 — отказ на строке списка до установки', wrong === 'refused', `вердикт строки: ${wrong ?? 'СТРОКИ НЕТ'}`);
+      const sides = await installByPath(page, 'DRAWERS', 'drawer_side', { brand: 'Blum', series: 'TANDEMBOX antaro', nl: 450, article: want.sides });
+      check('DRAWERS.A3 царги 378M4502SA поставлены тем же путём', sides.installed && sides.cardVerdict !== 'refused', `${sides.installed ? 'стоят' : 'НЕТ'} (${sides.cardVerdict})`);
+
+      /* 3D: ход — по модели позиции (в паспорте не назван — условно, словами), царги — металлом, ходовые секции — по числу секций модели. */
+      const drawer = await openAll(page, `${want.module}:drawer:0`, (v) => v.shift[2] >= want.travelMm - 1);
+      await closeUp(page, `${want.module}:drawer:0`, [-0.7, 0.8, 0.9]);
+      await page.screenshot({ path: `${OUT}/drawers-1-tandembox-open.png`, timeout: 120_000 });
+      check(
+        `DRAWERS.B ящик выехал на ${want.travelMm} мм (${want.travelWords}); едут: царги металлом 2 + ходовые секции 2 (секций у модели ${want.members}, средней нет), дно и задняя стенка раскроя; боковин ЛДСП нет`,
+        Boolean(drawer) &&
+          drawer.shift[2] === want.travelMm &&
+          (drawer.names['mech:runner'] ?? 0) === 4 &&
+          (drawer.names['mech:runner-middle'] ?? 0) === (want.members === 3 ? 2 : 0) &&
+          (drawer.names['panel:Дно ящика'] ?? 0) === 1 &&
+          (drawer.names['panel:Торец ящика'] ?? 0) === 1 &&
+          (drawer.names['panel:Боковина ящика'] ?? 0) === 0,
+        JSON.stringify(drawer),
+      );
+      await closeAll(page);
+
+      /* Деталировка: дно и задняя стенка по формулам паспорта, боковин из плиты нет. */
+      must('DRAWERS инструмент «Документы»', await tool(page, 'documents'), 'НУЛЕВОЙ СЕЛЕКТОР: [data-studio-tool="documents"]');
+      await page.locator('[data-studio-doc="panels"]').first().click();
+      await page.waitForSelector('[data-panel-row]', { timeout: 30_000 });
+      const boxRows = await page.evaluate(
+        (id) =>
+          Array.from(document.querySelectorAll(`[data-panel-row][data-module-id="${id}"]`))
+            .map((tr) => ({ name: tr.children[1]?.textContent ?? '', size: tr.getAttribute('data-part-size') ?? '', qty: Number(tr.getAttribute('data-part-qty') ?? 0), part: tr.getAttribute('data-part-id') }))
+            .filter((r) => /^(Дно|Торец|Боковина) ящика$/.test(r.name.trim())),
+        want.module,
+      );
+      const flat = (name) =>
+        boxRows
+          .filter((r) => r.name.trim() === name)
+          .flatMap((r) => Array.from({ length: r.qty }, () => r.size.split('x').slice(0, 2).join('x')))
+          .sort();
+      await page.screenshot({ path: `${OUT}/drawers-2-detailing.png`, timeout: 120_000 });
+      check(
+        `DRAWERS.C деталировка = движок: дно ${want.bottoms[0]} ×${want.bottoms.length} (LW − 75 × NL − 24), задняя стенка ${want.backs[0]} ×${want.backs.length} (LW − 87 × 84); боковин ящика из плиты 0`,
+        JSON.stringify(flat('Дно ящика')) === JSON.stringify(want.bottoms) &&
+          JSON.stringify(flat('Торец ящика')) === JSON.stringify(want.backs) &&
+          flat('Боковина ящика').length === want.ldspSides,
+        `дно ${flat('Дно ящика').join(', ')} · задняя ${flat('Торец ящика').join(', ')} · боковин ${flat('Боковина ящика').length}`,
+      );
+      const toMap = page.locator('[data-open-cutting]');
+      must('DRAWERS в деталировке кнопка «Карта раскроя →»', (await toMap.count()) === 1, `НУЛЕВОЙ СЕЛЕКТОР: [data-open-cutting] ×${await toMap.count()}`);
+      await toMap.first().click();
+      await page.waitForSelector('[data-cutting-map]', { timeout: 60_000 });
+      const map = await waitFor(page, () => (window.__mwCutting ? window.__mwCutting() : null), (s) => Boolean(s), 30_000);
+      const reasons = map?.release.reasons ?? [];
+      const boxIds = new Set(boxRows.map((r) => r.part));
+      const onSheets = (map?.parts ?? []).filter((p) => boxIds.has(p.partId)).reduce((s, p) => s + p.qty, 0);
+      check(
+        'DRAWERS.D карта раскроя: дно и задняя стенка трёх ящиков на листах (6 деталей); выпуск заперт словами системы ящика',
+        Boolean(map) && onSheets === want.bottoms.length + want.backs.length && want.releaseWords.length > 0 && reasons.some((r) => r.includes('система ящика')),
+        `на листах ${onSheets} · причин ${reasons.length}: «${(reasons.find((r) => r.includes('система ящика')) ?? 'СЛОВ СИСТЕМЫ НЕТ').slice(0, 110)}»`,
+      );
+
+      /* Смета экрана: строка ходовой и строка царг — по комплекту на ящик, цены нет — «цена не задана». */
+      const lines = await waitFor(
+        page,
+        () => (window.__mwEstimateLines ? window.__mwEstimateLines() : []),
+        (l) => l.some((x) => x.key.startsWith('fitting_drawer_side_') && !x.key.endsWith('_missing')),
+        30_000,
+      );
+      const sideLine = lines.find((x) => x.key.startsWith('fitting_drawer_side_') && !x.key.endsWith('_missing'));
+      const slideLine = lines.find((x) => x.key.startsWith('fitting_slide_') && !x.key.endsWith('_missing'));
+      check(
+        `DRAWERS.E смета экрана: ходовая и царги — своими строками по ${want.drawers} (комплект на ящик), «цена не задана»`,
+        sideLine?.quantity === want.drawers && slideLine?.quantity === want.drawers && Boolean(sideLine?.priceUnset) && Boolean(slideLine?.priceUnset),
+        `царги ${sideLine ? `${sideLine.quantity} ${sideLine.unit} · ${sideLine.priceUnset}` : 'НЕТ'} · ходовая ${slideLine ? `${slideLine.quantity} ${slideLine.unit}` : 'НЕТ'}`,
+      );
+
+      /* Присадка — тот же план, что движок (TB5): отверстий системы нет, у фронта и задней стенки — напечатанное словами, выпуск заперт. */
+      await openStudio(page, ids.kitchen);
+      must('DRAWERS инструмент «Документы» (присадка)', await tool(page, 'documents'), 'НУЛЕВОЙ СЕЛЕКТОР: [data-studio-tool="documents"]');
+      const drillRow = page.locator('[data-studio-doc="drilling"]');
+      must('DRAWERS строка «Присадка» в документах', (await drillRow.count()) === 1, `НУЛЕВОЙ СЕЛЕКТОР: [data-studio-doc="drilling"] ×${await drillRow.count()}`);
+      await drillRow.first().click();
+      await page.waitForSelector('[data-drilling-map]', { timeout: 60_000 });
+      /*
+       * План — когда каталог фурнитуры доехал до экрана (у модуля есть детали
+       * короба ящика) и паспорта поставленных позиций дочитаны: до этого план
+       * честно без коробов или с «паспорт ещё не дочитан».
+       */
+      const drill = await waitFor(
+        page,
+        () => window.__mwDrilling ?? null,
+        (v) =>
+          Boolean(v) &&
+          v.parts.some((p) => p.moduleId === want.module && p.name === 'Дно ящика') &&
+          !v.parts.some((p) => p.moduleId === want.module && p.pending.some((x) => x.why.some((w) => w.includes('не дочитан')))),
+        90_000,
+      );
+      must('DRAWERS окошко присадки', Boolean(drill), 'нет window.__mwDrilling');
+      const mine = drill.parts.filter((p) => p.moduleId === want.module);
+      const fronts = mine.filter((p) => p.role === 'drawer_front');
+      const backs = mine.filter((p) => (p.leaf ?? '').endsWith(':box:wall:2'));
+      const carcassSides = mine.filter((p) => p.role === 'side_left' || p.role === 'side_right');
+      await page.screenshot({ path: `${OUT}/drawers-3-drilling.png`, timeout: 120_000 });
+      check(
+        'DRAWERS.G «Присадка»: отверстий направляющей системы 0; у боковин корпуса — «высота ходовой системы ящика … не образмерена»; у каждого из 3 фронтов — крепление фасада INSERTA (Ø 10) словами; у каждой задней стенки — держатель словами; выпуск заперт',
+        mine.every((p) => p.ops.every((o) => o.role !== 'runner_cabinet' && o.role !== 'runner_drawer')) &&
+          carcassSides.length === 2 &&
+          carcassSides.every((p) => p.pending.some((x) => x.why.some((w) => w.includes('ходовой системы ящика')))) &&
+          fronts.length === want.drawers &&
+          fronts.every((p) => p.pending.some((x) => x.what.includes('INSERTA') && x.why.some((w) => w.includes('Ø 10')))) &&
+          backs.length === want.drawers &&
+          backs.every((p) => p.pending.some((x) => x.what.includes('держатель задней стенки'))) &&
+          drill.release.open === false,
+        `фронтов ${fronts.length} (INSERTA ${fronts.filter((p) => p.pending.some((x) => x.what.includes('INSERTA'))).length}) · задних ${backs.length} · боковин ${carcassSides.length} · выпуск ${drill.release.open ? 'ОТКРЫТ' : 'заперт'} · детали: ${mine.map((p) => `${p.name}=${p.leaf}[${p.pending.map((x) => x.what.slice(0, 24)).join('/')}]`).join('; ').slice(0, 900)}`,
+      );
+
+      /* Запись → база → перезагрузка: обе позиции на местах. */
+      await openStudio(page, ids.kitchen);
       await saved(page);
       const row = (await service.from('projects').select('millwork').eq('id', ids.kitchen).single()).data;
-      const all = [...(row?.millwork?.runs?.optimal?.modules ?? []), ...(row?.millwork?.runs?.optimal?.upperSegments ?? []).flatMap((s) => s.modules)];
-      const stored = all.flatMap((m) => (m.fittings ?? []).map((f) => `${m.id}:${f.slot}`)).sort();
-      const want = ['base-1200@w1:hinge', 'base-1200@w1:hinge_plate', 'base-3300@w1:slide', 'upper-1200@w1:lift', 'upper-1650@w1:dryer'].sort();
-      check('KITCHEN.J в базе у модулей позиции на местах: петля, планка, направляющая, подъёмник, сушилка', JSON.stringify(stored) === JSON.stringify(want), stored.join(', ') || 'НИЧЕГО');
+      const unit = (row?.millwork?.runs?.optimal?.modules ?? []).find((m) => m.id === want.module);
+      const stored = (unit?.fittings ?? []).map((f) => f.slot).sort();
+      check('DRAWERS.F в базе у ящиков: ходовая на месте направляющей и царги на месте царг', JSON.stringify(stored) === JSON.stringify(['drawer_side', 'slide']), stored.join(', ') || 'НИЧЕГО');
       await page.reload({ waitUntil: 'domcontentloaded', timeout: 120_000 });
       await page.waitForSelector('[data-studio-root]', { timeout: 60_000 });
       await sleep(1500);
-      await open3d(page, 'KITCHEN');
-      await hardwareFor(page, 'KITCHEN', 'base-1200@w1');
-      const metal5 = await settledMetal(page);
-      const afterReload = await page.evaluate(() => document.querySelector('[data-hw-slot="hinge"]')?.getAttribute('data-hw-installed') ?? null);
-      check('KITCHEN.J2 после перезагрузки: петля на месте, механизмов в сцене столько же, сколько до неё (всё закрыто)', afterReload === 'MFR-BLUM-71B3550' && metal5 === metalClosed, `петля ${afterReload} · металл ${metalClosed} → ${metal5}`);
-      check('KITCHEN ошибок страницы и консоли нет', errors.length === 0 && consoleErrors.length === 0, [...errors, ...consoleErrors].slice(0, 3).join(' | '));
+      await open3d(page, 'DRAWERS');
+      await hardwareFor(page, 'DRAWERS', want.module);
+      const back = await page.evaluate(() => ({
+        slide: document.querySelector('[data-hw-slot="slide"]')?.getAttribute('data-hw-installed') ?? null,
+        sides: document.querySelector('[data-hw-slot="drawer_side"]')?.getAttribute('data-hw-installed') ?? null,
+      }));
+      const again = await openAll(page, `${want.module}:drawer:0`, (v) => v.shift[2] >= want.travelMm - 1);
+      check(
+        'DRAWERS.F2 после перезагрузки: ходовая и царги на местах, ящик выезжает на тот же ход с теми же деталями',
+        back.slide === want.runner && back.sides === want.sides && again?.shift[2] === want.travelMm && (again?.names['mech:runner'] ?? 0) === 4,
+        `${back.slide} · ${back.sides} · ход ${again?.shift[2]}`,
+      );
+      await closeAll(page);
+      check('DRAWERS ошибок страницы и консоли нет', errors.length === 0 && consoleErrors.length === 0, [...errors, ...consoleErrors].slice(0, 3).join(' | '));
     },
     {
       viewport: { width: 1440, height: 900 },
@@ -751,6 +1084,217 @@ async function partTablet(browser) {
   );
 }
 
+/* ═════════════════════════  CATALOG2 (HW-02)  ═════════════════════════ */
+
+/** Серия как её считает панель (`seriesOf`): напечатанная, иначе «без серии». */
+const seriesOfFact = (it) => (it.hardware.series ?? '').trim() || 'без серии';
+
+async function partCatalog2(browser) {
+  console.log('\n── CATALOG2 (1440 × 900): производитель → серия → артикул, размер, замена производителя, избранное и недавние');
+  const fx = fixture('kitchen');
+  await withOrg(
+    'CATALOG2',
+    browser,
+    async ({ page, errors, consoleErrors, ids }) => {
+      await openStudio(page, ids.kitchen);
+      await hardwareFor(page, 'CATALOG2', 'base-3300@w1');
+      /* Без места — весь каталог: числа на кнопках новых производителей = фактам. */
+      const brands = await page.evaluate(() =>
+        Object.fromEntries(Array.from(document.querySelectorAll('[data-hw-brand]')).map((b) => [b.getAttribute('data-hw-brand'), Number(b.getAttribute('data-hw-brand-count'))])),
+      );
+      const NEW = ['DTC', 'Firmax', 'Alphalux', 'Unihopper', 'МФ-Комплект', 'BOYARD'];
+      check(
+        'CAT.1 кнопки производителей: DTC, Firmax, Alphalux, Unihopper, МФ-Комплект и BOYARD — числами фактов',
+        NEW.every((m) => brands[m] === byManufacturer[m]),
+        NEW.map((m) => `${m} ${brands[m]}/${byManufacturer[m]}`).join(' · '),
+      );
+      await page.locator('[data-hw-brand="BOYARD"]').first().click();
+      await sleep(400);
+      const boyardSeries = new Map();
+      for (const it of FACTS.items.filter((x) => x.hardware.manufacturer === 'BOYARD')) boyardSeries.set(seriesOfFact(it), (boyardSeries.get(seriesOfFact(it)) ?? 0) + 1);
+      const top = Array.from(boyardSeries.entries()).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'ru'))[0];
+      const seriesList = Number((await page.locator('[data-hw-series-list]').first().getAttribute('data-hw-series-list').catch(() => '0')) ?? 0);
+      const chip = page.locator(`[data-hw-series="${top[0]}"]`);
+      must('CAT.2 серии BOYARD кнопками', (await chip.count()) > 0, `НУЛЕВОЙ СЕЛЕКТОР: [data-hw-series="${top[0]}"]`);
+      await chip.first().click();
+      await sleep(400);
+      const count = Number(await page.locator('[data-hw-count]').first().getAttribute('data-hw-count'));
+      await page.screenshot({ path: `${OUT}/catalog2-1-series.png`, timeout: 120_000 });
+      check(
+        `CAT.2 серий у BOYARD ${boyardSeries.size} (как в фактах); «${top[0]}» — ${top[1]} позиций в списке`,
+        seriesList === boyardSeries.size && count === top[1],
+        `серий на экране ${seriesList} · в списке ${count}`,
+      );
+      await page.locator('[data-hw-brand="all"]').first().click();
+      await sleep(300);
+
+      /* Место «Направляющие» и отбор по размеру 500: каждая видимая строка — с 500 среди размеров или в пределах. */
+      await page.locator('[data-hw-slot="slide"]').first().click();
+      await page.locator('[data-hw-size]').first().fill('500');
+      await sleep(500);
+      const sized = await page.evaluate(() => Array.from(document.querySelectorAll('[data-hw-item]')).map((b) => b.getAttribute('data-hw-item')));
+      const factBy = new Map(FACTS.items.map((it) => [it.article, it]));
+      const fits500 = (it) =>
+        Object.values(it.hardware.dimensionsMm ?? {}).some((v) => Math.abs(v - 500) < 0.05) || Object.values(it.hardware.ranges ?? {}).some(([a, b]) => 500 >= a && 500 <= b);
+      check(
+        'CAT.3 размер 500 мм у места «Направляющие»: каждая строка списка — с 500 среди размеров для подбора или в пределах паспорта',
+        sized.length > 0 && sized.every((a) => factBy.get(a) && fits500(factBy.get(a))),
+        `строк на экране ${sized.length}${sized.find((a) => !fits500(factBy.get(a) ?? { hardware: {} })) ? ` · не по размеру: ${sized.find((a) => !fits500(factBy.get(a) ?? { hardware: {} }))}` : ''}`,
+      );
+      await page.locator('[data-hw-size]').first().fill('');
+
+      /* Замена производителя: KA 500 → карточка → аналог → его карточка → «Установить». */
+      const ka = await installVia(page, 'CATALOG2', 'slide', 'MFR-HETTICH-9114276', '9114276');
+      must('CAT.4 KA 500 на месте', ka.installed, `${JSON.stringify(ka)}`);
+      await page.locator('[data-hw-search]').first().fill('9114276');
+      await sleep(400);
+      await page.locator('[data-hw-item="MFR-HETTICH-9114276"]').first().click();
+      const analogs = Number(await waitFor(page, () => document.querySelector('[data-hw-analogs]')?.getAttribute('data-hw-analogs') ?? '0', (v) => v !== '0', 10_000));
+      const firstAnalog = await page.locator('[data-hw-analog]').first().getAttribute('data-hw-analog');
+      const analogVerdict = await page.locator('[data-hw-analog]').first().getAttribute('data-hw-analog-verdict');
+      await page.screenshot({ path: `${OUT}/catalog2-2-analogs.png`, timeout: 120_000 });
+      await page.locator('[data-hw-favorite]').first().click();
+      const fav = await page.locator('[data-hw-favorite]').first().getAttribute('data-hw-favorite');
+      await page.locator('[data-hw-analog]').first().click();
+      const card = await waitFor(page, () => document.querySelector('[data-hw-card]')?.getAttribute('data-hw-card') ?? null, (v) => v !== 'MFR-HETTICH-9114276', 10_000);
+      await page.locator('[data-hw-install]').first().click();
+      const swapped = await waitFor(page, () => document.querySelector('[data-hw-slot="slide"]')?.getAttribute('data-hw-installed') ?? null, (v) => v === card, 20_000);
+      check(
+        'CAT.4 карточка KA 500: аналогов 14 (как в движке, HK1), первый открывается своей карточкой и ставится той же «Установить» — на месте его артикул',
+        analogs === 14 && firstAnalog === card && analogVerdict !== 'refused' && swapped === card,
+        `аналогов ${analogs} · первый ${firstAnalog} (${analogVerdict}) · карточка ${card} · на месте ${swapped}`,
+      );
+      check('CAT.5 «В избранное» в карточке', fav === 'on', `${fav}`);
+      await saved(page);
+
+      /* Избранное и недавние — устройство: после перезагрузки на месте. */
+      await openStudio(page, ids.kitchen);
+      await hardwareFor(page, 'CATALOG2', 'base-3300@w1');
+      const favCount = await page.locator('[data-hw-list-mode="favorites"]').first().textContent();
+      await page.locator('[data-hw-list-mode="favorites"]').first().click();
+      await sleep(400);
+      const favRows = await page.evaluate(() => Array.from(document.querySelectorAll('[data-hw-item]')).map((b) => b.getAttribute('data-hw-item')));
+      await page.locator('[data-hw-list-mode="recent"]').first().click();
+      await sleep(400);
+      const recentRows = await page.evaluate(() => Array.from(document.querySelectorAll('[data-hw-item]')).map((b) => b.getAttribute('data-hw-item')));
+      const slideNow = await page.evaluate(() => document.querySelector('[data-hw-slot="slide"]')?.getAttribute('data-hw-installed') ?? null);
+      await page.screenshot({ path: `${OUT}/catalog2-3-recent.png`, timeout: 120_000 });
+      check(
+        'CAT.5 после перезагрузки: в избранном KA 500; в недавних первым — аналог, потом KA 500; на месте — аналог',
+        /1/.test(favCount ?? '') &&
+          JSON.stringify(favRows) === JSON.stringify(['MFR-HETTICH-9114276']) &&
+          recentRows[0] === card &&
+          recentRows.includes('MFR-HETTICH-9114276') &&
+          slideNow === card,
+        `избранное «${favCount}» ${favRows.join(',')} · недавние ${recentRows.slice(0, 3).join(',')} · на месте ${slideNow}`,
+      );
+      check('CATALOG2 ошибок страницы и консоли нет', errors.length === 0 && consoleErrors.length === 0, [...errors, ...consoleErrors].slice(0, 3).join(' | '));
+    },
+    { viewport: { width: 1440, height: 900 }, projects: [{ key: 'kitchen', zone: 'Кухня', fx }] },
+  );
+}
+
+/* ═════════════════════════  DRILLING (HW-08, HW-09)  ═════════════════════════ */
+
+/** Записи ZIP (метод «хранение»): имена из центрального каталога. */
+function zipNames(bytes) {
+  const buf = Buffer.from(bytes);
+  let eocd = buf.length - 22;
+  while (eocd >= 0 && buf.readUInt32LE(eocd) !== 0x06054b50) eocd -= 1;
+  if (eocd < 0) return null;
+  const n = buf.readUInt16LE(eocd + 10);
+  let at = buf.readUInt32LE(eocd + 16);
+  const names = [];
+  for (let i = 0; i < n; i += 1) {
+    if (buf.readUInt32LE(at) !== 0x02014b50) return null;
+    const len = buf.readUInt16LE(at + 28);
+    const extra = buf.readUInt16LE(at + 30);
+    const comment = buf.readUInt16LE(at + 32);
+    names.push(buf.subarray(at + 46, at + 46 + len).toString('utf8'));
+    at += 46 + len + extra + comment;
+  }
+  return names;
+}
+
+/** Правила присадки цеха — те же, что у приёмки движка (verify-drilling). */
+const DRILL_RULES = {
+  hingeEdgeMm: 100,
+  hingeCount: [
+    { upToMm: 900, hinges: 2 },
+    { upToMm: 1600, hinges: 3 },
+  ],
+  plateOnCupAxis: true,
+  handleHoleMm: 5,
+  handlePlaceConfirmed: true,
+  shelfSupport: { frontMm: 37, backMm: 37 },
+  confirmat: { faceDiameterMm: 7, edgeDiameterMm: 5, edgeDepthMm: 50, fromFrontMm: 50, fromBackMm: 50 },
+  minRemainMm: 3,
+  confirmed: true,
+};
+
+async function partDrilling(browser) {
+  console.log('\n── DRILLING (1440 × 900): CLIP top + планка → «Присадка»: чашки и планка числами движка, выпуск, «Экспорт для БАЗИС»');
+  const fx = fixture('kitchen');
+  await withOrg(
+    'DRILLING',
+    browser,
+    async ({ page, errors, consoleErrors, ids }) => {
+      await openStudio(page, ids.kitchen);
+      await hardwareFor(page, 'DRILLING', 'base-1200@w1');
+      const hinge = await installVia(page, 'DRILLING', 'hinge', 'MFR-BLUM-71B3550', '71B3550');
+      const plate = await installVia(page, 'DRILLING', 'hinge_plate', 'MFR-BLUM-173L8130', '173L8130');
+      must('DRILLING петля и планка на местах', hinge.installed && plate.installed, `${JSON.stringify({ hinge, plate })}`);
+      await saved(page);
+      must('DRILLING инструмент «Документы»', await tool(page, 'documents'), 'НУЛЕВОЙ СЕЛЕКТОР: [data-studio-tool="documents"]');
+      const row = page.locator('[data-studio-doc="drilling"]');
+      must('DRILLING строка «Присадка» в документах', (await row.count()) === 1, `НУЛЕВОЙ СЕЛЕКТОР: [data-studio-doc="drilling"] ×${await row.count()}`);
+      await row.first().click();
+      await page.waitForSelector('[data-drilling-map]', { timeout: 60_000 });
+      const probe = await waitFor(page, () => window.__mwDrilling ?? null, (v) => Boolean(v), 30_000);
+      must('DRILLING окошко присадки', Boolean(probe), 'нет window.__mwDrilling');
+      const door = probe.parts.find((p) => p.moduleId === 'base-1200@w1' && p.role === 'door' && p.leaf === 'door:0');
+      const side = probe.parts.find((p) => p.moduleId === 'base-1200@w1' && p.role === 'side_left');
+      const cups = (door?.ops ?? []).filter((o) => o.role === 'hinge_cup');
+      const plates = (side?.ops ?? []).filter((o) => o.role === 'hinge_plate');
+      await page.screenshot({ path: `${OUT}/drilling-1-map.png`, timeout: 120_000 });
+      check(
+        'DRILL.1 чашки CLIP top на дверце 716 × 442 — X 100 и 616, Y 21,5, Ø35 × 13, пласть B; планка — 4 отверстия Ø5 на 37 от кромки (числа приёмки движка DR2–DR3)',
+        door?.lengthMm === 716 &&
+          JSON.stringify(cups.map((o) => o.xMm)) === JSON.stringify([100, 616]) &&
+          cups.every((o) => o.yMm === 21.5 && o.diameterMm === 35 && o.depthMm === 13 && o.face === 'B') &&
+          JSON.stringify(plates.map((o) => o.xMm).sort((a, b) => a - b)) === JSON.stringify([86, 118, 602, 634]) &&
+          plates.every((o) => o.yMm === 37 && o.diameterMm === 5),
+        `дверца ${door?.lengthMm}×${door?.widthMm} · чашки ${cups.map((o) => `${o.xMm}/${o.yMm}`).join(', ')} · планка ${plates.map((o) => o.xMm).join(', ')}`,
+      );
+      const release = await page.locator('[data-drilling-map]').first().getAttribute('data-release');
+      const csvDisabled = await page.locator('[data-drill-export="csv"]').first().isDisabled();
+      check(
+        'DRILL.2 выпуск заперт причинами словами (не всё рассчитано) — CSV и DXF закрыты, PDF подписан «черновика»',
+        release === 'locked' && csvDisabled && probe.release.reasons.length > 0 && /черновика/.test((await page.locator('[data-drill-export="pdf"]').first().textContent()) ?? ''),
+        `${release} · ${probe.release.reasons.slice(0, 2).join(' | ')}`,
+      );
+      const [download] = await Promise.all([page.waitForEvent('download', { timeout: 60_000 }), page.locator('[data-drill-export="bazis"]').first().click()]);
+      const file = `${OUT}/bazis-package.zip`;
+      await download.saveAs(file);
+      const names = zipNames(readFileSync(file)) ?? [];
+      const manifest = await page.evaluate(() => window.__mwBazis ?? null);
+      const notice = (await page.locator('[data-drill-notice]').first().textContent()) ?? '';
+      await page.screenshot({ path: `${OUT}/drilling-2-bazis.png`, timeout: 120_000 });
+      check(
+        'DRILL.3 «Экспорт для БАЗИС»: ZIP с nomenclature.xml, parts.csv, hardware.csv, model.obj, manifest.json и README.txt; присадки в нём нет (выпуск заперт); ни .b3d, ни .cfrn; на экране «Экспорт создан; проверка в БАЗИС ожидается»',
+        ['nomenclature.xml', 'parts.csv', 'hardware.csv', 'model.obj', 'manifest.json', 'README.txt'].every((n) => names.includes(n)) &&
+          !names.some((n) => n.startsWith('drilling') || n.startsWith('dxf/') || /\.(b3d|f3d|fr3d|cfrn)$/i.test(n)) &&
+          manifest?.drilling?.issued === false &&
+          manifest?.bazisCheck === 'Экспорт создан; проверка в БАЗИС ожидается' &&
+          notice.includes('Экспорт создан; проверка в БАЗИС ожидается'),
+        `${names.join(', ')} · «${notice.slice(0, 90)}»`,
+      );
+      check('DRILLING ошибок страницы и консоли нет', errors.length === 0 && consoleErrors.length === 0, [...errors, ...consoleErrors].slice(0, 3).join(' | '));
+    },
+    { viewport: { width: 1440, height: 900 }, projects: [{ key: 'kitchen', zone: 'Кухня', fx }], production: { drawerBox: DRAWER_BOX, drilling: DRILL_RULES } },
+  );
+}
+
 /* ═════════════════════════  запуск  ═════════════════════════ */
 
 const unknownParts = PARTS.filter((p) => !KNOWN.includes(p));
@@ -765,7 +1309,11 @@ let browser;
 const done = [];
 try {
   freePort(PORT);
-  server = spawn('npx', ['next', 'start', '-p', String(PORT)], { stdio: 'ignore', shell: true, env: { ...process.env, SITE_PASSWORD: '' } });
+  /* Журнал сервера — в файл: причину «каталог не прочитался» сервер пишет туда (ловушка 470), а не на экран. */
+  const serverLog = createWriteStream(`${OUT}/server-${PARTS.join('-')}.log`);
+  server = spawn('npx', ['next', 'start', '-p', String(PORT)], { stdio: ['ignore', 'pipe', 'pipe'], shell: true, env: { ...process.env, SITE_PASSWORD: '' } });
+  server.stdout.pipe(serverLog);
+  server.stderr.pipe(serverLog);
   console.log(`Сборка ${buildId()} · снимки: ${OUT}`);
   for (let i = 0; i < 120; i++) {
     try {
@@ -777,14 +1325,21 @@ try {
   }
   browser = await chromium.launch({ args: ['--enable-unsafe-swiftshader', '--use-angle=swiftshader', '--ignore-gpu-blocklist'] });
   for (const part of PARTS) {
+    const startedAt = Date.now();
     try {
       if (part === 'import') await partImport(browser);
       if (part === 'kitchen') await partKitchen(browser);
+      if (part === 'kitchen-drawers') await partKitchenDrawers(browser);
+      if (part === 'kitchen-lift') await partKitchenLift(browser);
       if (part === 'wardrobe') await partWardrobe(browser);
       if (part === 'cargo') await partCargo(browser);
       if (part === 'corner') await partCorner(browser);
       if (part === 'tablet') await partTablet(browser);
+      if (part === 'catalog2') await partCatalog2(browser);
+      if (part === 'drilling') await partDrilling(browser);
+      if (part === 'drawers') await partDrawers(browser);
       done.push(part);
+      console.log(`  ·    ${part}: ${Math.round((Date.now() - startedAt) / 1000)} с`);
     } catch (error) {
       check(`${part}: дошла до конца`, false, error instanceof Error ? error.message : String(error));
     }

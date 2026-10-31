@@ -114,6 +114,7 @@ import { cuttingChecks } from './verify-cutting';
 import { stage01Checks } from './verify-stage01';
 import { lightingChecks } from './verify-lighting';
 import { stageAChecks } from './verify-stage-a';
+import { f9Checks } from './verify-f9';
 import { p0CornerChecks } from './verify-p0-corners';
 import { p1VitrineChecks } from './verify-p1-vitrines';
 import { measurementV2Checks } from './verify-measurement-v2';
@@ -203,7 +204,7 @@ import {
   slabPieces,
   type CounterSlab,
 } from '../lib/millwork/countertop';
-import { DRAWER_TRAVEL_M, bifoldPoses, drawerBoxes, leafPoses, sceneLeaves } from '../lib/millwork/cabinetBoxes';
+import { DRAWER_TRAVEL_M, bifoldPoses, closedFrontRect, drawerBoxes, leafPoses, sceneLeaves } from '../lib/millwork/cabinetBoxes';
 import { TAIL_FILLER_PANEL_NAME } from '../lib/millwork/panels';
 import { wallCornerOf } from '../lib/millwork/objectEstimate';
 import type { CornerChoice, LowerCornerKind, RunCorner, UpperCornerKind } from '../types/millwork';
@@ -21395,6 +21396,11 @@ console.log('\nСлой 55: угол Г и П — владелец, места, 
                          */
                         handle: closedHandle(leaf.id, entry),
                         s,
+                        /* Ходит деталь деталировки (F9) — та же, что нарисована закрытой. */
+                        rect: closedFrontRect(
+                          partsOf[me].map(({ part }) => part).filter((box) => box.part === leaf.id),
+                          [entry.x + leaf.xM, entry.y + leaf.bottomM],
+                        ),
                       }).map((box) =>
                         worldBox(
                           places[me],
@@ -28825,6 +28831,7 @@ lightingChecks(check);
 
 /* ═══════════  ADVANCED CAD · STAGE A: угол и чистота 3D  ═══════════ */
 stageAChecks(check);
+f9Checks(check);
 
 /* ═══════════  P0: настоящие Г- и П-образные углы — владелец по уровням, пара дверец  ═══════════ */
 p0CornerChecks(check);

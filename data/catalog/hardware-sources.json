@@ -1,0 +1,968 @@
+{
+ "checkedAt": "2026-10-31",
+ "sources": [
+  {
+   "id": "BLUM-2024",
+   "manufacturer": "Blum",
+   "kind": "pdf",
+   "file": "MANUFACTURER_CATALOGS/BLUM/raw/Каталог и техническое руководство 2024-2025 ru.pdf",
+   "pages": 758,
+   "about": "каталог и техническое руководство 2024/2025: петли, подъёмники, системы ящиков, направляющие",
+   "bytes": 527391645,
+   "sha256": "79f421ffd13a785914fa902c54a47e1cbde13035502e127706b800cb61a7822f",
+   "extracted": {
+    "records": 318,
+    "status": {
+     "VERIFIED": 285,
+     "PARTIAL": 30,
+     "MISSING_DATA": 2,
+     "CONFLICT": 1
+    },
+    "evidenceFiles": [
+     "CATALOG_STAGING/02_HARDWARE/BLUM/99_UNSORTED/HW01_Blum_fasteners_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BLUM/99_UNSORTED/HW01_KITCHEN_waste_and_corner_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BLUM/DRAWER_RUNNERS/HW01_MOVENTO_760H_766H_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BLUM/DRAWER_RUNNERS/HW01_TANDEM_560H_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BLUM/DRAWER_SYSTEMS/HW01_LEGRABOX_M_sides_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BLUM/DRAWER_SYSTEMS/HW01_LEGRABOX_runners_750_753_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BLUM/DRAWER_SYSTEMS/HW01_TANDEMBOX_antaro_M_sides_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BLUM/DRAWER_SYSTEMS/HW01_TANDEMBOX_antaro_runners_578_576_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BLUM/HINGES/HW01_CLIP_mounting_plates_20-32_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BLUM/HINGES/HW01_CLIP_mounting_plates_37-32_28-32_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BLUM/HINGES/HW01_CLIP_top_110_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BLUM/HINGES/HW01_CLIP_top_155_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BLUM/HINGES/HW01_CLIP_top_170_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BLUM/HINGES/HW01_CLIP_top_false_panel_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BLUM/LIFT_SYSTEMS/HW01_AVENTOS_COMMON_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BLUM/LIFT_SYSTEMS/HW01_AVENTOS_HF_top_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BLUM/LIFT_SYSTEMS/HW01_AVENTOS_HK-S_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BLUM/LIFT_SYSTEMS/HW01_AVENTOS_HK-XS_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BLUM/LIFT_SYSTEMS/HW01_AVENTOS_HK_top_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BLUM/LIFT_SYSTEMS/HW01_AVENTOS_HKi_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BLUM/LIFT_SYSTEMS/HW01_AVENTOS_HL_top_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BLUM/LIFT_SYSTEMS/HW01_AVENTOS_HS_top_evidence.json"
+    ]
+   },
+   "summaries": [
+    "CATALOG_STAGING/02_HARDWARE/BLUM/HW01_SUMMARY.md"
+   ],
+   "rights": "факты (артикулы, размеры) — выписаны; изображения и чертежи — NOT_VERIFIED, в продукт не идут"
+  },
+  {
+   "id": "HETTICH-2018",
+   "manufacturer": "Hettich",
+   "kind": "pdf",
+   "file": "MANUFACTURER_CATALOGS/HETTICH/raw/TA_KSP_ROW_2018_ru_RU.pdf",
+   "pages": 2122,
+   "about": "технический каталог 2018: петли, направляющие, ящики, крепёж, раздвижные системы",
+   "bytes": 387942734,
+   "sha256": "5ee393ca0d7a47b483477267d5da0ae272711da515fb02550db0613e61f79d30",
+   "extracted": {
+    "records": 290,
+    "status": {
+     "PARTIAL": 109,
+     "VERIFIED": 146,
+     "CONFLICT": 35
+    },
+    "evidenceFiles": [
+     "CATALOG_STAGING/02_HARDWARE/HETTICH/99_UNSORTED/HW01_topline_l_sliding_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HETTICH/CONNECTORS_FASTENERS/HW01_rastex_15_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HETTICH/CONNECTORS_FASTENERS/HW01_twister_du_243t_232t_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HETTICH/DRAWER_RUNNERS/HW01_ka_1730_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HETTICH/DRAWER_RUNNERS/HW01_ka_270_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HETTICH/DRAWER_RUNNERS/HW01_ka_290_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HETTICH/DRAWER_RUNNERS/HW01_ka_4532_push_to_open_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HETTICH/DRAWER_RUNNERS/HW01_ka_4532_silent_system_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HETTICH/DRAWER_RUNNERS/HW01_ka_4932_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HETTICH/DRAWER_RUNNERS/HW01_ka_5332_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HETTICH/DRAWER_RUNNERS/HW01_ka_5632_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HETTICH/DRAWER_RUNNERS/HW01_ka_5632_sc_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HETTICH/DRAWER_SYSTEMS/HW01_innotech_atira_70_silver_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HETTICH/DRAWER_SYSTEMS/HW01_quadro_v6_silent_system_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HETTICH/HINGES/HW01_mounting_plates_system_8099_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HETTICH/HINGES/HW01_sensys_8639i_w30_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HETTICH/HINGES/HW01_sensys_8639i_w90_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HETTICH/HINGES/HW01_sensys_8645i_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HETTICH/HINGES/HW01_sensys_8657i_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HETTICH/LEGS_PLINTHS/HW01_korrekt_plinth_leg_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HETTICH/LIFT_SYSTEMS/HW01_ewiva_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HETTICH/SHELF_SUPPORTS/HW01_shelf_supports_universal_duplo_evidence.json"
+    ]
+   },
+   "summaries": [
+    "CATALOG_STAGING/02_HARDWARE/HETTICH/HW01_SUMMARY.md"
+   ],
+   "rights": "факты (артикулы, размеры) — выписаны; изображения и чертежи — NOT_VERIFIED, в продукт не идут"
+  },
+  {
+   "id": "HAFELE-KOMPAKT-2025",
+   "manufacturer": "Häfele",
+   "kind": "pdf",
+   "file": "MANUFACTURER_CATALOGS/HAFELE/raw/КОМПАКТ 2025 (optimized).pdf",
+   "pages": 176,
+   "about": "КОМПАКТ 2025 (страницы-изображения): петли, подъёмники FREE, направляющие, кухня, гардероб, ручки",
+   "bytes": 58280366,
+   "sha256": "34f3e03d7e059b15ca8a5da56b13b4da9ef9ab6181e842966aeb0acd0adb1fc3",
+   "extracted": {
+    "records": 532,
+    "status": {
+     "PARTIAL": 401,
+     "VERIFIED": 19,
+     "CONFLICT": 108,
+     "NOT_READABLE": 4
+    },
+    "evidenceFiles": [
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/99_UNSORTED/SLIDING/HW01_sliding_fline18_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/99_UNSORTED/SLIDING/HW01_sliding_fline32_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/99_UNSORTED/SLIDING/HW01_sliding_fline42_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/99_UNSORTED/SLIDING/HW01_sliding_multisoft60_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/99_UNSORTED/SLIDING/HW01_sliding_slido_classic50_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/99_UNSORTED/WASTE_BINS/HW01_kitchen_waste_bins_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/CARGO_PULL_OUTS/HW01_kitchen_bottle_pullout_549-32_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/CARGO_PULL_OUTS/HW01_kitchen_corner_mechanisms_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/CARGO_PULL_OUTS/HW01_kitchen_pullout_baskets_547-10_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/CARGO_PULL_OUTS/HW01_kitchen_pullout_shelves_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/CARGO_PULL_OUTS/HW01_kitchen_pullout_trays_549-01_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/CARGO_PULL_OUTS/HW01_kitchen_sink_pullout_545-48_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/CARGO_PULL_OUTS/HW01_kitchen_tall_larders_548-91_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/CARGO_PULL_OUTS/HW01_kitchen_wire_baskets_540-39_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/CONNECTORS_FASTENERS/HW01_connectors_minifix_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/DISH_DRYERS/HW01_dish_dryers_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/DRAWER_RUNNERS/HW01_runners_ball_bearing_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/DRAWER_RUNNERS/HW01_runners_concealed_smuso_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/DRAWER_RUNNERS/HW01_runners_groove_keyboard_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/DRAWER_RUNNERS/HW01_runners_heavy_duty_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/HINGES/HW01_hinges_metalla510_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/LIFT_SYSTEMS/HW01_lift_duo_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/LIFT_SYSTEMS/HW01_lift_free_flap_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/LIFT_SYSTEMS/HW01_lift_free_fold_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/LIFT_SYSTEMS/HW01_lift_free_space_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/LIFT_SYSTEMS/HW01_lift_gas_struts_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/WARDROBE_FILLING/HW01_wardrobe_accessories_127_129_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/WARDROBE_FILLING/HW01_wardrobe_conero_inner_drawers_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/WARDROBE_FILLING/HW01_wardrobe_conero_laundry_ties_organizers_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/WARDROBE_FILLING/HW01_wardrobe_conero_rods_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/WARDROBE_FILLING/HW01_wardrobe_dresscode_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/WARDROBE_FILLING/HW01_wardrobe_pantographs_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/WARDROBE_FILLING/HW01_wardrobe_rods_holders_baskets_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/WARDROBE_FILLING/HW01_wardrobe_shoe_storage_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/WARDROBE_FILLING/HW01_wardrobe_trouser_racks_evidence.json"
+    ]
+   },
+   "summaries": [
+    "CATALOG_STAGING/02_HARDWARE/HAFELE/HW01_SUMMARY.md"
+   ],
+   "rights": "факты (артикулы, размеры) — выписаны; изображения и чертежи — NOT_VERIFIED, в продукт не идут"
+  },
+  {
+   "id": "HAFELE-BIG",
+   "manufacturer": "Häfele",
+   "kind": "pdf",
+   "file": "MANUFACTURER_CATALOGS/HAFELE/raw/Большой каталог HAFELE. Мебельная фурнитура. Дизайн.pdf",
+   "pages": 687,
+   "about": "Большой каталог Häfele (текстовый слой есть)",
+   "notExtracted": "не выписывался: на этом этапе факты Häfele взяты из КОМПАКТ 2025 (1199 записей слоя 60); Большой каталог — следующий заход по ручкам и крепежу",
+   "bytes": 100156743,
+   "sha256": "1045437465ecc06a5fa84e56224be83b0f12250cae72afc49134a672b68f7937",
+   "extracted": {
+    "records": 63,
+    "status": {
+     "VERIFIED": 20,
+     "CONFLICT": 1,
+     "PARTIAL": 42
+    },
+    "evidenceFiles": [
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/HANDLES/HW01_handles_bar_timeless_d14_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/HANDLES/HW01_handles_edge_aluminium_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/HANDLES/HW01_handles_edge_stainless_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/HANDLES/HW01_handles_flush_round_stainless_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/HANDLES/HW01_handles_knobs_stainless_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/HAFELE/HANDLES/HW01_handles_profile_rail_handleless_evidence.json"
+    ]
+   },
+   "summaries": [
+    "CATALOG_STAGING/02_HARDWARE/HAFELE/HW01_SUMMARY.md"
+   ],
+   "rights": "факты (артикулы, размеры) — выписаны; изображения и чертежи — NOT_VERIFIED, в продукт не идут"
+  },
+  {
+   "id": "BOYARD-FUNC-2024",
+   "manufacturer": "BOYARD",
+   "kind": "pdf",
+   "file": "MANUFACTURER_CATALOGS/BOYARD/raw/Каталог функциональной фурнитуры BOYARD 2024.pdf",
+   "pages": 352,
+   "about": "функциональная фурнитура 2024: петли, толкатели, направляющие, системы ящиков, кухонное наполнение, подъёмники, опоры, крепёж (копия из «Загрузок», sha256 сверен)",
+   "bytes": 49937318,
+   "sha256": "6c00dc31abacdede5d572af5a81a3206220b9a8a64fab8f35ee5ef741fdba719",
+   "extracted": {
+    "records": 832,
+    "status": {
+     "PARTIAL": 351,
+     "VERIFIED": 341,
+     "MISSING_DATA": 56,
+     "CONFLICT": 84
+    },
+    "evidenceFiles": [
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/99_UNSORTED/HW01_BOYARD_cabinet_hangers_CH_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/99_UNSORTED/HW01_BOYARD_cutlery_organizers_PUZZLE_BLOKI_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/99_UNSORTED/HW01_BOYARD_furniture_locks_Z_BLOCK_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/99_UNSORTED/HW01_BOYARD_soft_closer_DM02_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/99_UNSORTED/HW01_PUSH_AMF_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/CARGO_PULL_OUTS/HW01_BOYARD_ERGOLINE_ESTETICA_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/CARGO_PULL_OUTS/HW01_BOYARD_ERGOLINE_NORMA_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/CARGO_PULL_OUTS/HW01_BOYARD_ERGOLINE_X_design_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/CONNECTORS_FASTENERS/HW01_BOYARD_B-fix_and_classic_fasteners_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/DISH_DRYERS/HW01_BOYARD_ERGOLINE_pullout_dryers_KRS03_KRS06_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/DISH_DRYERS/HW01_BOYARD_dish_dryers_SU02_SU03_SU06_SU07_SU16_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/DRAWER_RUNNERS/HW01_B-Slide_clips_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/DRAWER_RUNNERS/HW01_B-Slide_concealed_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/DRAWER_RUNNERS/HW01_DB_ball_bearing_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/DRAWER_RUNNERS/HW01_START_DB8181_runners_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/DRAWER_SYSTEMS/HW01_START_accessories_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/DRAWER_SYSTEMS/HW01_START_kits_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/DRAWER_SYSTEMS/HW01_START_sidewalls_separate_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/DRAWER_SYSTEMS/HW01_START_trays_organizers_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/HINGES/HW01_CLASSIC_ANGLED_H621_H641_H741_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/HINGES/HW01_CLASSIC_ANGLED_H645_H740_H743_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/HINGES/HW01_CLASSIC_GLASS_SECRETARY_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/HINGES/HW01_CLASSIC_H100_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/HINGES/HW01_CLASSIC_H102_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/HINGES/HW01_CLASSIC_H301_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/HINGES/HW01_CLASSIC_H402_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/HINGES/HW01_CLASSIC_H502_GLASS_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/HINGES/HW01_CLASSIC_H505_GLASS_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/HINGES/HW01_CLASSIC_H600_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/HINGES/HW01_CLASSIC_H601_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/HINGES/HW01_CLASSIC_H620_H640_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/HINGES/HW01_CLASSIC_H660_FRAME_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/HINGES/HW01_CLASSIC_H690_H691_PUSH_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/HINGES/HW01_CLASSIC_PLATES_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/HINGES/HW01_NEO_ACCESSORIES_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/HINGES/HW01_NEO_H305_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/HINGES/HW01_NEO_H306_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/HINGES/HW01_NEO_H316_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/HINGES/HW01_NEO_H319_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/HINGES/HW01_NEO_H404_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/HINGES/HW01_NEO_H603_FLEX_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/HINGES/HW01_NEO_H663_FRAME_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/HINGES/HW01_NEO_H961_PUSH_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/HINGES/HW01_NEO_LINE_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/HINGES/HW01_NEO_PLATES_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/LEGS_PLINTHS/HW01_BOYARD_furniture_supports_N_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/LIFT_SYSTEMS/HW01_BOYARD_GL_gas_lifts_MK_flap_hinges_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/SHELF_SUPPORTS/HW01_BOYARD_shelf_supports_P_evidence.json"
+    ]
+   },
+   "summaries": [
+    "CATALOG_STAGING/02_HARDWARE/BOYARD/HINGES/HW01_SUMMARY_BOYARD_HINGES_PUSH.md",
+    "CATALOG_STAGING/02_HARDWARE/BOYARD/HW01_SUMMARY_BOYARD_functional_p226-341.md"
+   ],
+   "rights": "факты (артикулы, размеры) — выписаны; изображения и чертежи — NOT_VERIFIED, в продукт не идут"
+  },
+  {
+   "id": "BOYARD-DECOR-2024",
+   "manufacturer": "BOYARD",
+   "kind": "pdf",
+   "file": "MANUFACTURER_CATALOGS/BOYARD/raw/Каталог лицевой фурнитуры BOYARD 2024.pdf",
+   "pages": 300,
+   "about": "лицевая фурнитура 2024: ручки, крючки, декоративные опоры и полкодержатели (копия из «Загрузок», sha256 сверен)",
+   "bytes": 47396983,
+   "sha256": "d080336296acbe6640e8aec4fdc005f23ca40ae7b904adef80a8d686ba596f6c",
+   "extracted": {
+    "records": 1806,
+    "status": {
+     "VERIFIED": 1554,
+     "PARTIAL": 217,
+     "CONFLICT": 35
+    },
+    "evidenceFiles": [
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/HANDLES/HW01_BOYARD_handles_edge_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/HANDLES/HW01_BOYARD_handles_modern_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/HANDLES/HW01_BOYARD_handles_profile_gola_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/HANDLES/HW01_BOYARD_handles_tradition_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/HANDLES/HW01_BOYARD_hooks_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/LEGS_PLINTHS/HW01_BOYARD_decorative_legs_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/SHELF_SUPPORTS/HW01_BOYARD_shelf_supports_evidence.json"
+    ]
+   },
+   "summaries": [],
+   "rights": "факты (артикулы, размеры) — выписаны; изображения и чертежи — NOT_VERIFIED, в продукт не идут"
+  },
+  {
+   "id": "DTC-AXERA",
+   "manufacturer": "DTC",
+   "kind": "pdf",
+   "file": "CATALOG_STAGING/HARDWARE_2026_10_30/AXERA_RU.pdf",
+   "pages": 35,
+   "about": "AXERA: кухонное наполнение (MODULO, ANGOLO, VERTO), опускаемые системы ALTO",
+   "bytes": 20881072,
+   "sha256": "ed2365cd36f0d378e077bfd9d22be8e38d275df67c9eadb0e26d109954a71dad",
+   "extracted": {
+    "records": 111,
+    "status": {
+     "PARTIAL": 111
+    },
+    "evidenceFiles": [
+     "CATALOG_STAGING/02_HARDWARE/DTC/99_UNSORTED/HW01_AXERA_ANGOLO_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/DTC/99_UNSORTED/HW01_AXERA_VERTO_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/DTC/DRAWER_SYSTEMS/HW01_AXERA_MODULO_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/DTC/LIFT_SYSTEMS/HW01_AXERA_ALTO_evidence.json"
+    ]
+   },
+   "summaries": [
+    "CATALOG_STAGING/02_HARDWARE/DTC/DRAWER_SYSTEMS/HW01_SUMMARY_AXERA_RU.md"
+   ],
+   "rights": "факты (артикулы, размеры) — выписаны; изображения и чертежи — NOT_VERIFIED, в продукт не идут"
+  },
+  {
+   "id": "DTC-AXERA-X",
+   "manufacturer": "DTC",
+   "kind": "pdf",
+   "file": "CATALOG_STAGING/HARDWARE_2026_10_30/AXERA_X_RU.pdf",
+   "pages": 43,
+   "about": "AXERA X: кухонное наполнение, ALTO X",
+   "bytes": 34491461,
+   "sha256": "4b3065fb8aec5e872721a31029bf4a72b8a6caf6e579aff195660ebeda8f2e28",
+   "extracted": {
+    "records": 105,
+    "status": {
+     "PARTIAL": 100,
+     "CONFLICT": 5
+    },
+    "evidenceFiles": [
+     "CATALOG_STAGING/02_HARDWARE/DTC/99_UNSORTED/HW01_AXERA_ANGOLO_X_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/DTC/99_UNSORTED/HW01_AXERA_VERTO_X_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/DTC/DRAWER_SYSTEMS/HW01_AXERA_MODULO_X_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/DTC/LIFT_SYSTEMS/HW01_AXERA_ALTO_X_evidence.json"
+    ]
+   },
+   "summaries": [
+    "CATALOG_STAGING/02_HARDWARE/DTC/DRAWER_SYSTEMS/HW01_SUMMARY_AXERA_X_RU.md"
+   ],
+   "rights": "факты (артикулы, размеры) — выписаны; изображения и чертежи — NOT_VERIFIED, в продукт не идут"
+  },
+  {
+   "id": "DTC-PIVOT-STAR",
+   "manufacturer": "DTC",
+   "kind": "pdf",
+   "file": "CATALOG_STAGING/HARDWARE_2026_10_30/Pivot_Star.pdf",
+   "pages": 16,
+   "about": "петли PIVOT-STAR (C81), монтажные планки, принадлежности",
+   "bytes": 40801367,
+   "sha256": "d563487a89db6ca36908ad5d5a35012b2e907d918a1aab0c960de8a342ac1104",
+   "extracted": {
+    "records": 76,
+    "status": {
+     "PARTIAL": 60,
+     "CONFLICT": 16
+    },
+    "evidenceFiles": [
+     "CATALOG_STAGING/02_HARDWARE/DTC/HINGES/HW01_DTC_PIVOT_STAR_C81_hinges_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/DTC/HINGES/HW01_DTC_PIVOT_STAR_C81_mounting_plates_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/DTC/HINGES/HW01_DTC_hinge_accessories_evidence.json"
+    ]
+   },
+   "summaries": [
+    "CATALOG_STAGING/02_HARDWARE/DTC/HINGES/HW01_SUMMARY_DTC_HINGES.md",
+    "CATALOG_STAGING/02_HARDWARE/DTC/LIFT_SYSTEMS/HW01_SUMMARY_Top_Stay.md"
+   ],
+   "rights": "факты (артикулы, размеры) — выписаны; изображения и чертежи — NOT_VERIFIED, в продукт не идут"
+  },
+  {
+   "id": "DTC-STYLISH",
+   "manufacturer": "DTC",
+   "kind": "pdf",
+   "file": "CATALOG_STAGING/HARDWARE_2026_10_30/Stylish.pdf",
+   "pages": 18,
+   "about": "петли STYLISH (C82), монтажные планки, принадлежности",
+   "bytes": 44740863,
+   "sha256": "e7c8975a14d53b5fc3c3c6b605a35b284564eac7b3d513a8166bd5813245f4a2",
+   "extracted": {
+    "records": 106,
+    "status": {
+     "CONFLICT": 35,
+     "PARTIAL": 71
+    },
+    "evidenceFiles": [
+     "CATALOG_STAGING/02_HARDWARE/DTC/HINGES/HW01_DTC_STYLISH_C82_hinges_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/DTC/HINGES/HW01_DTC_STYLISH_C82_mounting_plates_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/DTC/HINGES/HW01_DTC_hinge_accessories_evidence.json"
+    ]
+   },
+   "summaries": [
+    "CATALOG_STAGING/02_HARDWARE/DTC/HINGES/HW01_SUMMARY_DTC_HINGES.md"
+   ],
+   "rights": "факты (артикулы, размеры) — выписаны; изображения и чертежи — NOT_VERIFIED, в продукт не идут"
+  },
+  {
+   "id": "DTC-TOP-STAY",
+   "manufacturer": "DTC",
+   "kind": "pdf",
+   "file": "CATALOG_STAGING/HARDWARE_2026_10_30/Top_Stay.pdf",
+   "pages": 20,
+   "about": "подъёмники TOP-STAY: SQ (поворот вверх), ST (складной), SE (компактный), SK (параллельный)",
+   "bytes": 196662251,
+   "sha256": "89cb3b1dcba3dde82bb8fad1e8bd737f6518e04e13be125e5039182f9bfb5211",
+   "extracted": {
+    "records": 183,
+    "status": {
+     "PARTIAL": 36,
+     "VERIFIED": 104,
+     "CONFLICT": 43
+    },
+    "evidenceFiles": [
+     "CATALOG_STAGING/02_HARDWARE/DTC/LIFT_SYSTEMS/HW01_TOPSTAY_SE_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/DTC/LIFT_SYSTEMS/HW01_TOPSTAY_SK_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/DTC/LIFT_SYSTEMS/HW01_TOPSTAY_SQ_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/DTC/LIFT_SYSTEMS/HW01_TOPSTAY_ST_evidence.json"
+    ]
+   },
+   "summaries": [
+    "CATALOG_STAGING/02_HARDWARE/DTC/LIFT_SYSTEMS/HW01_SUMMARY_Top_Stay.md"
+   ],
+   "rights": "факты (артикулы, размеры) — выписаны; изображения и чертежи — NOT_VERIFIED, в продукт не идут"
+  },
+  {
+   "id": "DTC-HQ-GFJ",
+   "manufacturer": "DTC",
+   "kind": "pdf",
+   "file": "CATALOG_STAGING/HARDWARE_2026_10_30/GFJ-K....HQJ900.pdf",
+   "pages": 1,
+   "about": "PURE-PRO HQ: угловой выкатной модуль со стеклянными боковинами",
+   "bytes": 3502338,
+   "sha256": "cc9c1e57989b5e7fa4e9c8c98fb1b150079a2ddaaccd5262809744f91677398e",
+   "extracted": {
+    "records": 3,
+    "status": {
+     "PARTIAL": 3
+    },
+    "evidenceFiles": [
+     "CATALOG_STAGING/02_HARDWARE/DTC/KITCHEN/HW01_DTC_PURE-PRO_HQ_corner_unit_GFJ_evidence.json"
+    ]
+   },
+   "summaries": [
+    "CATALOG_STAGING/02_HARDWARE/DTC/KITCHEN/HW01_SUMMARY_HARDWARE_2026_10_30_DTC_kitchen_leaflets.md"
+   ],
+   "rights": "факты (артикулы, размеры) — выписаны; изображения и чертежи — NOT_VERIFIED, в продукт не идут"
+  },
+  {
+   "id": "DTC-HQ-GFL",
+   "manufacturer": "DTC",
+   "kind": "pdf",
+   "file": "CATALOG_STAGING/HARDWARE_2026_10_30/GFL....KHQL.pdf",
+   "pages": 1,
+   "about": "PURE-PRO HQ: система связанных ящиков (колонна)",
+   "bytes": 4373996,
+   "sha256": "d8ae836a7a68e3da8e2b9164beb843ac11a504d21d4626e39cb9a28c36863fbb",
+   "extracted": {
+    "records": 8,
+    "status": {
+     "PARTIAL": 8
+    },
+    "evidenceFiles": [
+     "CATALOG_STAGING/02_HARDWARE/DTC/KITCHEN/HW01_DTC_PURE-PRO_HQ_tall_unit_GFL_evidence.json"
+    ]
+   },
+   "summaries": [
+    "CATALOG_STAGING/02_HARDWARE/DTC/KITCHEN/HW01_SUMMARY_HARDWARE_2026_10_30_DTC_kitchen_leaflets.md"
+   ],
+   "rights": "факты (артикулы, размеры) — выписаны; изображения и чертежи — NOT_VERIFIED, в продукт не идут"
+  },
+  {
+   "id": "DTC-HQ-B01",
+   "manufacturer": "DTC",
+   "kind": "pdf",
+   "file": "CATALOG_STAGING/HARDWARE_2026_10_30/HQ....B01.pdf",
+   "pages": 1,
+   "about": "PURE-PRO HQ B01: ящик для посуды",
+   "bytes": 4294679,
+   "sha256": "c8c84b235d019202e7da19daa46a5d2e174b75e0e7b815d6ffbfc334a1ba4c3f",
+   "extracted": {
+    "records": 21,
+    "status": {
+     "PARTIAL": 17,
+     "CONFLICT": 1,
+     "MISSING_DATA": 3
+    },
+    "evidenceFiles": [
+     "CATALOG_STAGING/02_HARDWARE/DTC/KITCHEN/HW01_DTC_PURE-PRO_HQ_dish_drawer_B01_evidence.json",
+     "CATALOG_STAGING/02_HARDWARE/DTC/KITCHEN/HW01_DTC_PURE-PRO_HQ_drawer_common_components_evidence.json"
+    ]
+   },
+   "summaries": [
+    "CATALOG_STAGING/02_HARDWARE/DTC/KITCHEN/HW01_SUMMARY_HARDWARE_2026_10_30_DTC_kitchen_leaflets.md"
+   ],
+   "rights": "факты (артикулы, размеры) — выписаны; изображения и чертежи — NOT_VERIFIED, в продукт не идут"
+  },
+  {
+   "id": "DTC-HQ-T01",
+   "manufacturer": "DTC",
+   "kind": "pdf",
+   "file": "CATALOG_STAGING/HARDWARE_2026_10_30/HQ....T01.pdf",
+   "pages": 1,
+   "about": "PURE-PRO HQ T01: ящик для специй",
+   "bytes": 4074842,
+   "sha256": "d1cd3ac95ba8d1a198650641097a22c6ec020151a5125c0ff8e6976444961488",
+   "extracted": {
+    "records": 8,
+    "status": {
+     "CONFLICT": 8
+    },
+    "evidenceFiles": [
+     "CATALOG_STAGING/02_HARDWARE/DTC/KITCHEN/HW01_DTC_PURE-PRO_HQ_spice_drawer_T01_evidence.json"
+    ]
+   },
+   "summaries": [
+    "CATALOG_STAGING/02_HARDWARE/DTC/KITCHEN/HW01_SUMMARY_HARDWARE_2026_10_30_DTC_kitchen_leaflets.md"
+   ],
+   "rights": "факты (артикулы, размеры) — выписаны; изображения и чертежи — NOT_VERIFIED, в продукт не идут"
+  },
+  {
+   "id": "DTC-HQ-Z01",
+   "manufacturer": "DTC",
+   "kind": "pdf",
+   "file": "CATALOG_STAGING/HARDWARE_2026_10_30/HQ....Z01.pdf",
+   "pages": 1,
+   "about": "PURE-PRO HQ Z01: узкий ящик для специй",
+   "bytes": 3201712,
+   "sha256": "21874e1f14f21733f98b80553d00d91e39ad0de03892a16351cea072f89abfdb",
+   "extracted": {
+    "records": 9,
+    "status": {
+     "PARTIAL": 6,
+     "MISSING_DATA": 3
+    },
+    "evidenceFiles": [
+     "CATALOG_STAGING/02_HARDWARE/DTC/KITCHEN/HW01_DTC_PURE-PRO_HQ_narrow_spice_drawer_Z01_evidence.json"
+    ]
+   },
+   "summaries": [
+    "CATALOG_STAGING/02_HARDWARE/DTC/KITCHEN/HW01_SUMMARY_HARDWARE_2026_10_30_DTC_kitchen_leaflets.md"
+   ],
+   "rights": "факты (артикулы, размеры) — выписаны; изображения и чертежи — NOT_VERIFIED, в продукт не идут"
+  },
+  {
+   "id": "DTC-LK-TROUSER",
+   "manufacturer": "DTC",
+   "kind": "pdf",
+   "file": "CATALOG_STAGING/HARDWARE_2026_10_30/Брючница.pdf",
+   "pages": 2,
+   "about": "PURE-PRO LK: брючница",
+   "bytes": 4698059,
+   "sha256": "c51b2dfeae820c63480e2a68d60a2bd2d3bad2288bff30b3a55073d1ef8d219a",
+   "extracted": {
+    "records": 5,
+    "status": {
+     "PARTIAL": 5
+    },
+    "evidenceFiles": [
+     "CATALOG_STAGING/02_HARDWARE/DTC/WARDROBE/HW01_DTC_PURE-PRO_LK_trouser_rack_evidence.json"
+    ]
+   },
+   "summaries": [
+    "CATALOG_STAGING/02_HARDWARE/DTC/WARDROBE/HW01_SUMMARY_HARDWARE_2026_10_30_DTC_wardrobe_leaflets.md"
+   ],
+   "rights": "факты (артикулы, размеры) — выписаны; изображения и чертежи — NOT_VERIFIED, в продукт не идут"
+  },
+  {
+   "id": "DTC-LK-SHOE",
+   "manufacturer": "DTC",
+   "kind": "pdf",
+   "file": "CATALOG_STAGING/HARDWARE_2026_10_30/Обувница_выдвижная.pdf",
+   "pages": 2,
+   "about": "PURE-PRO LK: выдвижная обувница",
+   "bytes": 4023874,
+   "sha256": "7c43bbde390fe4e719f9f9480065e323978f898b8994164cce2350f05cf15a7a",
+   "extracted": {
+    "records": 3,
+    "status": {
+     "PARTIAL": 3
+    },
+    "evidenceFiles": [
+     "CATALOG_STAGING/02_HARDWARE/DTC/WARDROBE/HW01_DTC_PURE-PRO_LK_shoe_rack_evidence.json"
+    ]
+   },
+   "summaries": [
+    "CATALOG_STAGING/02_HARDWARE/DTC/WARDROBE/HW01_SUMMARY_HARDWARE_2026_10_30_DTC_wardrobe_leaflets.md"
+   ],
+   "rights": "факты (артикулы, размеры) — выписаны; изображения и чертежи — NOT_VERIFIED, в продукт не идут"
+  },
+  {
+   "id": "DTC-LY-SHOE-TOWER",
+   "manufacturer": "DTC",
+   "kind": "pdf",
+   "file": "CATALOG_STAGING/HARDWARE_2026_10_30/Обувница_на_10_полок.pdf",
+   "pages": 4,
+   "about": "PURE-PRO LY: вращающаяся обувница",
+   "bytes": 6452608,
+   "sha256": "f43fde37ce9f62ce76c59fc6c55dc9fd604ababff674c2595dc267ecd340913c",
+   "extracted": {
+    "records": 4,
+    "status": {
+     "PARTIAL": 2,
+     "MISSING_DATA": 2
+    },
+    "evidenceFiles": [
+     "CATALOG_STAGING/02_HARDWARE/DTC/WARDROBE/HW01_DTC_PURE-PRO_LY_rotating_shoe_rack_evidence.json"
+    ]
+   },
+   "summaries": [
+    "CATALOG_STAGING/02_HARDWARE/DTC/WARDROBE/HW01_SUMMARY_HARDWARE_2026_10_30_DTC_wardrobe_leaflets.md"
+   ],
+   "rights": "факты (артикулы, размеры) — выписаны; изображения и чертежи — NOT_VERIFIED, в продукт не идут"
+  },
+  {
+   "id": "DTC-LK-MIRROR",
+   "manufacturer": "DTC",
+   "kind": "pdf",
+   "file": "CATALOG_STAGING/HARDWARE_2026_10_30/Зеркало.pdf",
+   "pages": 2,
+   "about": "PURE-PRO LK/LY: поворотное зеркало",
+   "bytes": 4132748,
+   "sha256": "a265bfbbd06280b556e8073be6909f3ab2a4f842ca0e20deb97298c7a065233a",
+   "extracted": {
+    "records": 6,
+    "status": {
+     "CONFLICT": 4,
+     "PARTIAL": 2
+    },
+    "evidenceFiles": [
+     "CATALOG_STAGING/02_HARDWARE/DTC/WARDROBE/HW01_DTC_PURE-PRO_LK_rotating_mirror_evidence.json"
+    ]
+   },
+   "summaries": [
+    "CATALOG_STAGING/02_HARDWARE/DTC/WARDROBE/HW01_SUMMARY_HARDWARE_2026_10_30_DTC_wardrobe_leaflets.md"
+   ],
+   "rights": "факты (артикулы, размеры) — выписаны; изображения и чертежи — NOT_VERIFIED, в продукт не идут"
+  },
+  {
+   "id": "DTC-LQ-DRAWERS",
+   "manufacturer": "DTC",
+   "kind": "pdf",
+   "file": "CATALOG_STAGING/HARDWARE_2026_10_30/Ящики.pdf",
+   "pages": 2,
+   "about": "PURE-PRO LQ: ящики со стеклом",
+   "bytes": 4025988,
+   "sha256": "11fb4650f2f7a8e81952c43a5de3deb3318f473c357f9b4bcf1ad559ad7c4d08",
+   "extracted": {
+    "records": 9,
+    "status": {
+     "PARTIAL": 9
+    },
+    "evidenceFiles": [
+     "CATALOG_STAGING/02_HARDWARE/DTC/WARDROBE/HW01_DTC_PURE-PRO_LQ_glass_drawers_evidence.json"
+    ]
+   },
+   "summaries": [
+    "CATALOG_STAGING/02_HARDWARE/DTC/WARDROBE/HW01_SUMMARY_HARDWARE_2026_10_30_DTC_wardrobe_leaflets.md"
+   ],
+   "rights": "факты (артикулы, размеры) — выписаны; изображения и чертежи — NOT_VERIFIED, в продукт не идут"
+  },
+  {
+   "id": "LIB-TBM",
+   "manufacturer": "DTC, Firmax, Alphalux (библиотека ТБМ)",
+   "kind": "bazis-library",
+   "file": "CATALOG_STAGING/HARDWARE_2026_10_30/TBM_11_25.zip",
+   "pages": null,
+   "about": "библиотека БАЗИС поставщика ТБМ: .f3d/.fr3d/.b3d и база номенклатуры ТБМ.xml",
+   "bytes": 94750912,
+   "sha256": "6e69ccefc97d6b735dfd20ac728b224e19980c2100c5be83b67075dc7b71d55f",
+   "extracted": {
+    "records": 627,
+    "status": {
+     "MISSING_DATA": 76,
+     "PARTIAL": 551
+    },
+    "evidenceFiles": [
+     "CATALOG_STAGING/02_HARDWARE/ALPHALUX/LIBRARY/HW01_TBM_11_25_library.json",
+     "CATALOG_STAGING/02_HARDWARE/DTC/LIBRARY/HW01_TBM_11_25_library.json",
+     "CATALOG_STAGING/02_HARDWARE/FIRMAX/LIBRARY/HW01_TBM_11_25_library.json"
+    ]
+   },
+   "summaries": [],
+   "rights": "3D в формате БАЗИС и изображения — NOT_VERIFIED, в продукт не идут"
+  },
+  {
+   "id": "LIB-COKA",
+   "manufacturer": "Unihopper (серия COKA), библиотека МФ-Комплект",
+   "kind": "bazis-library",
+   "file": "CATALOG_STAGING/HARDWARE_2026_10_30/Гардеробные системы COKA.zip",
+   "pages": null,
+   "about": "библиотека БАЗИС: гардеробное наполнение Unihopper COKA",
+   "bytes": 1257890,
+   "sha256": "f14ec23f82025dc4ea9aed011d8e801929a74b55ee0a9c3dca803fb693f6ac1d",
+   "extracted": {
+    "records": 12,
+    "status": {
+     "MISSING_DATA": 1,
+     "PARTIAL": 11
+    },
+    "evidenceFiles": [
+     "CATALOG_STAGING/02_HARDWARE/MF_KOMPLEKT/LIBRARY/HW01_COKA_library.json",
+     "CATALOG_STAGING/02_HARDWARE/UNIHOPPER/LIBRARY/HW01_COKA_library.json"
+    ]
+   },
+   "summaries": [],
+   "rights": "3D в формате БАЗИС и изображения — NOT_VERIFIED, в продукт не идут"
+  },
+  {
+   "id": "LIB-MF-VAR3E",
+   "manufacturer": "МФ-Комплект (производитель изделия не назван)",
+   "kind": "bazis-library",
+   "file": "CATALOG_STAGING/HARDWARE_2026_10_30/MF Посудосушители Var3e.zip",
+   "pages": null,
+   "about": "библиотека БАЗИС: посудосушители Var3e 400…900",
+   "bytes": 680219,
+   "sha256": "c17680cdd781b31c62a38dc98185889b1651c7fa0df2a1fb4d39ccc6f8db7ef2",
+   "extracted": {
+    "records": 7,
+    "status": {
+     "PARTIAL": 7
+    },
+    "evidenceFiles": [
+     "CATALOG_STAGING/02_HARDWARE/MF_KOMPLEKT/LIBRARY/HW01_MF_VAR3E_library.json"
+    ]
+   },
+   "summaries": [],
+   "rights": "3D в формате БАЗИС и изображения — NOT_VERIFIED, в продукт не идут"
+  },
+  {
+   "id": "BOYARD-CAD-01_hinge",
+   "manufacturer": "BOYARD",
+   "kind": "bazis-library",
+   "file": "CATALOG_STAGING/04_IMPORTED_CAD_ASSETS/BOYARD/raw_downloads/01_hinge/БАЗИС BOYARD - МЕБЕЛЬНЫЕ ПЕТЛИ (13-05-2026).zip",
+   "pages": null,
+   "about": "Петли мебельные (архив от 18.05.2026) — ZIP archive for BASIS-Мебельщик (page: \"БАЗИС-Мебельщик (версия 2024)\"): .f3d fittings and .fr3d fragments, plus \"!_БАЗА МАТЕРИАЛОВ\" .xml/.xlsx material base. Not a neutral CAD format (no STEP/OBJ inside).",
+   "bytes": 10329403,
+   "sha256": "3490d568ba3fd8e9048c8ece5a25fa2df67d892374f2732508ccf3e343aeb545",
+   "url": "https://www.boyard.biz/storage/3D/БАЗИС BOYARD - МЕБЕЛЬНЫЕ ПЕТЛИ (13-05-2026).zip",
+   "extracted": {
+    "records": 100,
+    "status": {
+     "MISSING_DATA": 100
+    },
+    "evidenceFiles": [
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/LIBRARY/HW01_BOYARD_01_hinge_library.json"
+    ]
+   },
+   "summaries": [],
+   "rights": "No licence or terms text for 3D models found on https://www.boyard.biz/3d_models (checked 2026-10-21); the file is a direct link with no login, registration or terms gate. Public offer https://www.boyard.biz/offer п. 2.3: «Товар представлен на Сайте через фотообразцы, графические, текстовые и рекламные материалы, которые являются собственностью Продавца и не являются публичной офертой.» Rights to use in the app or redistribute: NOT_VERIFIED — internal evaluation only until BOYARD confirms in writing."
+  },
+  {
+   "id": "BOYARD-CAD-02_ball_bearing_runner",
+   "manufacturer": "BOYARD",
+   "kind": "bazis-library",
+   "file": "CATALOG_STAGING/04_IMPORTED_CAD_ASSETS/BOYARD/raw_downloads/02_ball_bearing_runner/БАЗИС BOYARD - ШАРИКОВЫЕ НАПРАВЛЯЮЩИЕ (13-05-2026).zip",
+   "pages": null,
+   "about": "Шариковые направляющие (архив от 18.05.2026) — ZIP archive for BASIS-Мебельщик (page: \"БАЗИС-Мебельщик (версия 2024)\"): .f3d fittings and .fr3d fragments, plus \"!_БАЗА МАТЕРИАЛОВ\" .xml/.xlsx material base. Not a neutral CAD format (no STEP/OBJ inside).",
+   "bytes": 522433,
+   "sha256": "d18e2de5d95087b239db8266f56d4b386be02b429d5340e78c9fe65799a13e8d",
+   "url": "https://www.boyard.biz/storage/3D/БАЗИС BOYARD - ШАРИКОВЫЕ НАПРАВЛЯЮЩИЕ (13-05-2026).zip",
+   "extracted": {
+    "records": 25,
+    "status": {
+     "MISSING_DATA": 25
+    },
+    "evidenceFiles": [
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/LIBRARY/HW01_BOYARD_02_ball_bearing_runner_library.json"
+    ]
+   },
+   "summaries": [],
+   "rights": "No licence or terms text for 3D models found on https://www.boyard.biz/3d_models (checked 2026-10-21); the file is a direct link with no login, registration or terms gate. Public offer https://www.boyard.biz/offer п. 2.3: «Товар представлен на Сайте через фотообразцы, графические, текстовые и рекламные материалы, которые являются собственностью Продавца и не являются публичной офертой.» Rights to use in the app or redistribute: NOT_VERIFIED — internal evaluation only until BOYARD confirms in writing."
+  },
+  {
+   "id": "BOYARD-CAD-03_hidden_runner",
+   "manufacturer": "BOYARD",
+   "kind": "bazis-library",
+   "file": "CATALOG_STAGING/04_IMPORTED_CAD_ASSETS/BOYARD/raw_downloads/03_hidden_runner/БАЗИС BOYARD - НАПРАВЛЯЩИЕ СКРЫТОГО МОНТАЖА БИСЛАЙД (13-05-2026).zip",
+   "pages": null,
+   "about": "Направляющие скрытого монтажа Бислайд (архив от 18.05.2026) — ZIP archive for BASIS-Мебельщик (page: \"БАЗИС-Мебельщик (версия 2024)\"): .f3d fittings and .fr3d fragments, plus \"!_БАЗА МАТЕРИАЛОВ\" .xml/.xlsx material base. Not a neutral CAD format (no STEP/OBJ inside).",
+   "bytes": 12183844,
+   "sha256": "a691bf1249c6d758c3335d3b704596f309564e4f74b77c271e7f0c88a37a4f08",
+   "url": "https://www.boyard.biz/storage/3D/БАЗИС BOYARD - НАПРАВЛЯЩИЕ СКРЫТОГО МОНТАЖА БИСЛАЙД (13-05-2026).zip",
+   "extracted": {
+    "records": 67,
+    "status": {
+     "MISSING_DATA": 67
+    },
+    "evidenceFiles": [
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/LIBRARY/HW01_BOYARD_03_hidden_runner_library.json"
+    ]
+   },
+   "summaries": [],
+   "rights": "No licence or terms text for 3D models found on https://www.boyard.biz/3d_models (checked 2026-10-21); the file is a direct link with no login, registration or terms gate. Public offer https://www.boyard.biz/offer п. 2.3: «Товар представлен на Сайте через фотообразцы, графические, текстовые и рекламные материалы, которые являются собственностью Продавца и не являются публичной офертой.» Rights to use in the app or redistribute: NOT_VERIFIED — internal evaluation only until BOYARD confirms in writing."
+  },
+  {
+   "id": "BOYARD-CAD-04_drawer_system",
+   "manufacturer": "BOYARD",
+   "kind": "bazis-library",
+   "file": "CATALOG_STAGING/04_IMPORTED_CAD_ASSETS/BOYARD/raw_downloads/04_drawer_system/БАЗИС BOYARD - СИСТЕМЫ ВЫДВИЖЕНИЯ СТАРТ (13-05-2026).zip",
+   "pages": null,
+   "about": "Система выдвижения СТАРТ (архив от 18.05.2026) — ZIP archive for BASIS-Мебельщик (page: \"БАЗИС-Мебельщик (версия 2024)\"): .f3d fittings and .fr3d fragments, plus \"!_БАЗА МАТЕРИАЛОВ\" .xml/.xlsx material base. Not a neutral CAD format (no STEP/OBJ inside).",
+   "bytes": 79321664,
+   "sha256": "767e64a789dbc625a42bab7c54208ebee65c9af10f0f9e2344c34a9c92ed3a1d",
+   "url": "https://www.boyard.biz/storage/3D/БАЗИС BOYARD - СИСТЕМЫ ВЫДВИЖЕНИЯ СТАРТ (13-05-2026).zip",
+   "extracted": {
+    "records": 202,
+    "status": {
+     "MISSING_DATA": 202
+    },
+    "evidenceFiles": [
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/LIBRARY/HW01_BOYARD_04_drawer_system_library.json"
+    ]
+   },
+   "summaries": [],
+   "rights": "No licence or terms text for 3D models found on https://www.boyard.biz/3d_models (checked 2026-10-21); the file is a direct link with no login, registration or terms gate. Public offer https://www.boyard.biz/offer п. 2.3: «Товар представлен на Сайте через фотообразцы, графические, текстовые и рекламные материалы, которые являются собственностью Продавца и не являются публичной офертой.» Rights to use in the app or redistribute: NOT_VERIFIED — internal evaluation only until BOYARD confirms in writing."
+  },
+  {
+   "id": "BOYARD-CAD-05_pullout_basket",
+   "manufacturer": "BOYARD",
+   "kind": "bazis-library",
+   "file": "CATALOG_STAGING/04_IMPORTED_CAD_ASSETS/BOYARD/raw_downloads/05_pullout_basket/БАЗИС BOYARD - ВЫДВИЖНЫЕ КОРЗИНЫ (13-05-2026).zip",
+   "pages": null,
+   "about": "Выдвижные корзины (архив от 18.05.2026) — ZIP archive for BASIS-Мебельщик (page: \"БАЗИС-Мебельщик (версия 2024)\"): .f3d fittings and .fr3d fragments, plus \"!_БАЗА МАТЕРИАЛОВ\" .xml/.xlsx material base. Not a neutral CAD format (no STEP/OBJ inside).",
+   "bytes": 48921978,
+   "sha256": "7809a81cb9114e60cb6849a07882ebed7bf10c0fdea09ee65d390db9ec3a5064",
+   "url": "https://www.boyard.biz/storage/3D/БАЗИС BOYARD - ВЫДВИЖНЫЕ КОРЗИНЫ (13-05-2026).zip",
+   "extracted": {
+    "records": 30,
+    "status": {
+     "MISSING_DATA": 30
+    },
+    "evidenceFiles": [
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/LIBRARY/HW01_BOYARD_05_pullout_basket_library.json"
+    ]
+   },
+   "summaries": [],
+   "rights": "No licence or terms text for 3D models found on https://www.boyard.biz/3d_models (checked 2026-10-21); the file is a direct link with no login, registration or terms gate. Public offer https://www.boyard.biz/offer п. 2.3: «Товар представлен на Сайте через фотообразцы, графические, текстовые и рекламные материалы, которые являются собственностью Продавца и не являются публичной офертой.» Rights to use in the app or redistribute: NOT_VERIFIED — internal evaluation only until BOYARD confirms in writing."
+  },
+  {
+   "id": "BOYARD-CAD-06_dish_dryer",
+   "manufacturer": "BOYARD",
+   "kind": "bazis-library",
+   "file": "CATALOG_STAGING/04_IMPORTED_CAD_ASSETS/BOYARD/raw_downloads/06_dish_dryer/БАЗИС BOYARD - СУШКИ ДЛЯ ПОСУДЫ (27-06-2026).zip",
+   "pages": null,
+   "about": "Сушки для посуды (архив от 27.06.2026) — ZIP archive for BASIS-Мебельщик (page: \"БАЗИС-Мебельщик (версия 2024)\"): .f3d fittings and .fr3d fragments, plus \"!_БАЗА МАТЕРИАЛОВ\" .xml/.xlsx material base. Not a neutral CAD format (no STEP/OBJ inside).",
+   "bytes": 42131089,
+   "sha256": "47f208b008e6dedd75f36ae70969fb8f88eda789f4bff6d92d4f3d9948a8d95f",
+   "url": "https://www.boyard.biz/storage/3D/БАЗИС BOYARD - СУШКИ ДЛЯ ПОСУДЫ (27-06-2026).zip",
+   "extracted": {
+    "records": 40,
+    "status": {
+     "MISSING_DATA": 40
+    },
+    "evidenceFiles": [
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/LIBRARY/HW01_BOYARD_06_dish_dryer_library.json"
+    ]
+   },
+   "summaries": [],
+   "rights": "No licence or terms text for 3D models found on https://www.boyard.biz/3d_models (checked 2026-10-21); the file is a direct link with no login, registration or terms gate. Public offer https://www.boyard.biz/offer п. 2.3: «Товар представлен на Сайте через фотообразцы, графические, текстовые и рекламные материалы, которые являются собственностью Продавца и не являются публичной офертой.» Rights to use in the app or redistribute: NOT_VERIFIED — internal evaluation only until BOYARD confirms in writing."
+  },
+  {
+   "id": "BOYARD-CAD-07_lift_mechanism",
+   "manufacturer": "BOYARD",
+   "kind": "bazis-library",
+   "file": "CATALOG_STAGING/04_IMPORTED_CAD_ASSETS/BOYARD/raw_downloads/07_lift_mechanism/БАЗИС BOYARD - ГАЗОВЫЕ ЛИФТЫ (13-05-2026).zip",
+   "pages": null,
+   "about": "Подъёмные механизмы (архив от 18.05.2026) — ZIP archive for BASIS-Мебельщик (page: \"БАЗИС-Мебельщик (версия 2024)\"): .f3d fittings and .fr3d fragments, plus \"!_БАЗА МАТЕРИАЛОВ\" .xml/.xlsx material base. Not a neutral CAD format (no STEP/OBJ inside).",
+   "bytes": 4498137,
+   "sha256": "e4727d4c6a95740ac0d9321075024ff7b24a7aa0080f601cc5d198d49d04db52",
+   "url": "https://www.boyard.biz/storage/3D/БАЗИС BOYARD - ГАЗОВЫЕ ЛИФТЫ (13-05-2026).zip",
+   "extracted": {
+    "records": 33,
+    "status": {
+     "MISSING_DATA": 33
+    },
+    "evidenceFiles": [
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/LIBRARY/HW01_BOYARD_07_lift_mechanism_library.json"
+    ]
+   },
+   "summaries": [],
+   "rights": "No licence or terms text for 3D models found on https://www.boyard.biz/3d_models (checked 2026-10-21); the file is a direct link with no login, registration or terms gate. Public offer https://www.boyard.biz/offer п. 2.3: «Товар представлен на Сайте через фотообразцы, графические, текстовые и рекламные материалы, которые являются собственностью Продавца и не являются публичной офертой.» Rights to use in the app or redistribute: NOT_VERIFIED — internal evaluation only until BOYARD confirms in writing."
+  },
+  {
+   "id": "BOYARD-CAD-08_handle_universal_formats",
+   "manufacturer": "BOYARD",
+   "kind": "bazis-library",
+   "file": "CATALOG_STAGING/04_IMPORTED_CAD_ASSETS/BOYARD/raw_downloads/08_handle_universal_formats/3ds Max КАСТОМНЫЕ РУЧКИ-СКОБЫ CUSTOMIZE - BOYARD (08-03-2025).zip",
+   "pages": null,
+   "about": "Кастомные ручки-скобы (архив от 08.03.2025) — ZIP archive from page block \"3D-моделирование (Autodesk 3ds Max 2014, V-Ray, Chaos Corona, DWG, FBX, STL, OBJ, 3DS)\": .max (V-Ray and Corona scenes), .fbx, .obj, .stl, .3ds, .dwg, .mat material libraries, .png maps and previews. One combined set file per format, not one file per article.",
+   "bytes": 39945086,
+   "sha256": "0e27023279a0869add5fc46a634f6f48e6afe586a18fe21170cf37f1125ee777",
+   "url": "https://www.boyard.biz/storage/3D/3ds Max КАСТОМНЫЕ РУЧКИ-СКОБЫ CUSTOMIZE - BOYARD (08-03-2025).zip",
+   "extracted": {
+    "records": 0,
+    "status": {},
+    "evidenceFiles": []
+   },
+   "summaries": [],
+   "rights": "No licence or terms text for 3D models found on https://www.boyard.biz/3d_models (checked 2026-10-21); the file is a direct link with no login, registration or terms gate. Public offer https://www.boyard.biz/offer п. 2.3: «Товар представлен на Сайте через фотообразцы, графические, текстовые и рекламные материалы, которые являются собственностью Продавца и не являются публичной офертой.» Rights to use in the app or redistribute: NOT_VERIFIED — internal evaluation only until BOYARD confirms in writing."
+  },
+  {
+   "id": "BOYARD-CAD-09_handle_basis",
+   "manufacturer": "BOYARD",
+   "kind": "bazis-library",
+   "file": "CATALOG_STAGING/04_IMPORTED_CAD_ASSETS/BOYARD/raw_downloads/09_handle_basis/БАЗИС BOYARD - РУЧКИ ПРОФИЛЬНЫЕ - BOYARD (13-05-2026).zip",
+   "pages": null,
+   "about": "Ручки профильные (архив от 18.05.2026) — ZIP archive for BASIS-Мебельщик (page: \"БАЗИС-Мебельщик (версия 2024)\"): .f3d fittings and .fr3d fragments, plus \"!_БАЗА МАТЕРИАЛОВ\" .xml/.xlsx material base. Not a neutral CAD format (no STEP/OBJ inside).",
+   "bytes": 855234,
+   "sha256": "d2f38c09373dc7781620f4a17a6acea4351335edf64005d8b810ac3716fb2f99",
+   "url": "https://www.boyard.biz/storage/3D/БАЗИС BOYARD - РУЧКИ ПРОФИЛЬНЫЕ - BOYARD (13-05-2026).zip",
+   "extracted": {
+    "records": 84,
+    "status": {
+     "MISSING_DATA": 84
+    },
+    "evidenceFiles": [
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/LIBRARY/HW01_BOYARD_09_handle_basis_library.json"
+    ]
+   },
+   "summaries": [],
+   "rights": "No licence or terms text for 3D models found on https://www.boyard.biz/3d_models (checked 2026-10-21); the file is a direct link with no login, registration or terms gate. Public offer https://www.boyard.biz/offer п. 2.3: «Товар представлен на Сайте через фотообразцы, графические, текстовые и рекламные материалы, которые являются собственностью Продавца и не являются публичной офертой.» Rights to use in the app or redistribute: NOT_VERIFIED — internal evaluation only until BOYARD confirms in writing."
+  },
+  {
+   "id": "BOYARD-CAD-10_shelf_support",
+   "manufacturer": "BOYARD",
+   "kind": "bazis-library",
+   "file": "CATALOG_STAGING/04_IMPORTED_CAD_ASSETS/BOYARD/raw_downloads/10_shelf_support/БАЗИС BOYARD - ПОЛКОДЕРЖАТЕЛИ - BOYARD (13-05-2026).zip",
+   "pages": null,
+   "about": "Полкодержатели (архив от 18.05.2026) — ZIP archive for BASIS-Мебельщик (page: \"БАЗИС-Мебельщик (версия 2024)\"): .f3d fittings and .fr3d fragments, plus \"!_БАЗА МАТЕРИАЛОВ\" .xml/.xlsx material base. Not a neutral CAD format (no STEP/OBJ inside).",
+   "bytes": 1308040,
+   "sha256": "59df10fa83e3efd576ad40a5bec74a5cc2e7f2b4d9f731adad96c457ab9ba445",
+   "url": "https://www.boyard.biz/storage/3D/БАЗИС BOYARD - ПОЛКОДЕРЖАТЕЛИ - BOYARD (13-05-2026).zip",
+   "extracted": {
+    "records": 36,
+    "status": {
+     "MISSING_DATA": 36
+    },
+    "evidenceFiles": [
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/LIBRARY/HW01_BOYARD_10_shelf_support_library.json"
+    ]
+   },
+   "summaries": [],
+   "rights": "No licence or terms text for 3D models found on https://www.boyard.biz/3d_models (checked 2026-10-21); the file is a direct link with no login, registration or terms gate. Public offer https://www.boyard.biz/offer п. 2.3: «Товар представлен на Сайте через фотообразцы, графические, текстовые и рекламные материалы, которые являются собственностью Продавца и не являются публичной офертой.» Rights to use in the app or redistribute: NOT_VERIFIED — internal evaluation only until BOYARD confirms in writing."
+  },
+  {
+   "id": "BOYARD-CAD-11_leg",
+   "manufacturer": "BOYARD",
+   "kind": "bazis-library",
+   "file": "CATALOG_STAGING/04_IMPORTED_CAD_ASSETS/BOYARD/raw_downloads/11_leg/БАЗИС BOYARD - ОПОРЫ - BOYARD (13-05-2026).zip",
+   "pages": null,
+   "about": "Опоры мебельные (архив от 18.05.2026) — ZIP archive for BASIS-Мебельщик (page: \"БАЗИС-Мебельщик (версия 2024)\"): .f3d fittings and .fr3d fragments, plus \"!_БАЗА МАТЕРИАЛОВ\" .xml/.xlsx material base. Not a neutral CAD format (no STEP/OBJ inside).",
+   "bytes": 3841235,
+   "sha256": "97fed49c01cdde27551338f9e1a6a3ddea16ee1c18c429b3139d123b8a0110b8",
+   "url": "https://www.boyard.biz/storage/3D/БАЗИС BOYARD - ОПОРЫ - BOYARD (13-05-2026).zip",
+   "extracted": {
+    "records": 54,
+    "status": {
+     "MISSING_DATA": 54
+    },
+    "evidenceFiles": [
+     "CATALOG_STAGING/02_HARDWARE/BOYARD/LIBRARY/HW01_BOYARD_11_leg_library.json"
+    ]
+   },
+   "summaries": [],
+   "rights": "No licence or terms text for 3D models found on https://www.boyard.biz/3d_models (checked 2026-10-21); the file is a direct link with no login, registration or terms gate. Public offer https://www.boyard.biz/offer п. 2.3: «Товар представлен на Сайте через фотообразцы, графические, текстовые и рекламные материалы, которые являются собственностью Продавца и не являются публичной офертой.» Rights to use in the app or redistribute: NOT_VERIFIED — internal evaluation only until BOYARD confirms in writing."
+  }
+ ]
+}

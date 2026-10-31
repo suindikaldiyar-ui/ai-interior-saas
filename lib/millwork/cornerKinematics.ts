@@ -1,10 +1,12 @@
 import { FALSE_PANEL_RANGE_MM, type HardwareItem, type ProductionSettings } from '@/types/catalog';
+import { liftMotionOf } from './liftKinematics';
+import { runnerModelOf } from './runnerModel';
 import type { CornerChoice, CornerClearance, Module, OpeningKind, Run, ZoneKind } from '@/types/millwork';
 import {
-  DRAWER_TRAVEL_M,
   L_PAIR_FIRST_LEG,
   bentLeafPoses,
   bifoldMotion,
+  closedFrontRect,
   lPairMotion,
   leafOpenAngle,
   leafPoses,
@@ -43,8 +45,9 @@ import type { DoorRoomSolid } from './room';
  * ХОД — ТОТ, ЧТО ИЗВЕСТЕН (`assumptions` говорит, что взято из сцены):
  *   створка — до угла раскрытия петли из каталога (`openingAngleDeg`);
  *             петля не выбрана — до 90°, как её открывает сцена;
- *   ящик    — на ход направляющей из каталога (`strokeMm`); не выбрана —
- *             на 300 мм, как в сцене (`DRAWER_TRAVEL_M`);
+ *   ящик    — на ход модели направляющей (`runnerModelOf`, одна функция со
+ *             сценой, HW-04): ход паспорта; иначе по виду выдвижения (NL);
+ *             иначе условно 300 мм, не больше NL; не выбрана — 300 мм;
  *   ручка   — та коробка, что нарисована (`runBoxes`): модель позиции
  *             каталога или условная скоба, когда позиция не выбрана.
  *
@@ -444,10 +447,14 @@ function levelOf(unit: Module): ClashLevel | null {
   return null;
 }
 
-/** Ход ящика, метры: направляющая каталога — её паспорт; нет — как в сцене. */
-function travelOf(unit: Module, hardware: Map<string, HardwareItem> | undefined): { travelM: number; known: boolean } {
-  const stroke = installedItem(unit, 'slide', hardware)?.hardware.strokeMm;
-  return stroke && stroke > 0 ? { travelM: stroke / MM, known: true } : { travelM: DRAWER_TRAVEL_M, known: false };
+/**
+ * Ход ящика, метры — та же модель направляющей, что двигает ящик в сцене
+ * (`runnerModelOf`, HW-04): паспорт, вид выдвижения (полное — на NL) или
+ * условные 300 мм. Слова — откуда ход, когда он не из паспорта.
+ */
+function travelOf(unit: Module, hardware: Map<string, HardwareItem> | undefined): { travelM: number; known: boolean; words: string } {
+  const model = runnerModelOf(installedItem(unit, 'slide', hardware));
+  return { travelM: model.travelMm / MM, known: model.travelBasis === 'passport', words: model.words };
 }
 
 function movingOf(
@@ -485,8 +492,14 @@ function movingOf(
           : null;
         const { angle, known } = leafOpenAngle(unit, leaf.id.slice(unit.id.length + 1), hardware, leaf.opening);
         if (!known) told.add('створка — до 90°, как в сцене: петля каталога не выбрана');
+        /* Ходит деталь деталировки — та же, что нарисована закрытой (F9). */
+        const frontRect = closedFrontRect(
+          rowBoxes.filter((box) => box.part === leaf.id),
+          [entry.x + leaf.xM, entry.y + leaf.bottomM],
+        );
         at = (s) =>
           leafPoses({
+            rect: frontRect,
             opening: leaf.opening,
             x: leaf.xM,
             y: leaf.bottomM,
@@ -497,6 +510,7 @@ function movingOf(
             handle,
             s,
             openAngle: angle,
+            lift: leaf.opening === 'lift' ? liftMotionOf(unit, hardware) : null,
           }).map((box) => ({
             obb: obbOf(place, [box.center[0] + entry.x, box.center[1] + entry.y, box.center[2] + entry.zM], box.size, box.yaw ?? 0, box.pitch ?? 0),
             part: box.role === 'handle' ? 'ручка' : 'полотно',
@@ -618,11 +632,12 @@ function movingOf(
       } else {
         const parts = rowBoxes.filter((box) => box.part === leaf.id);
         if (parts.length === 0) continue;
-        const { travelM, known } = travelOf(unit, hardware);
-        if (!known) told.add('ящик — на 300 мм, как в сцене: ход направляющей каталога не выбран');
+        const { travelM, known, words } = travelOf(unit, hardware);
+        if (!known) told.add(`ящик — ${words}, как в сцене`);
         at = (s) =>
           parts.map((box) => ({
-            obb: obbOf(place, [box.position[0], box.position[1], box.position[2] + travelM * s], box.scale),
+            /* Средняя секция направляющей — на свою долю хода (HW-04). */
+            obb: obbOf(place, [box.position[0], box.position[1], box.position[2] + travelM * s * (box.slideShare ?? 1)], box.scale),
             part: box.node === 'handle' ? 'ручка' : box.material === 'front' ? 'фасад' : 'короб',
           }));
         steps = Math.max(8, Math.ceil(travelM * MM));

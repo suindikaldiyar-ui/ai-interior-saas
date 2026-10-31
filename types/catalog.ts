@@ -240,6 +240,8 @@ export type HardwareEngineeringStatus = 'VERIFIED' | 'PARTIAL' | 'MISSING_DATA' 
 /** Откуда данные позиции: файл и страница либо адрес, и дата проверки. */
 export type HardwareSource = {
   file?: string;
+  /** Запись внутри архива `file` (база номенклатуры библиотеки БАЗИС), если источник — архив. */
+  entry?: string;
   url?: string;
   pdfPage?: number;
   printedPage?: string;
@@ -261,7 +263,7 @@ export type HardwareDrillingSpec = {
   datum: string | null;
 };
 
-export const HARDWARE_BRANDS = ['blum', 'hettich', 'hafele', 'boyard', 'gtv', 'dtc'] as const;
+export const HARDWARE_BRANDS = ['blum', 'hettich', 'hafele', 'boyard', 'gtv', 'dtc', 'firmax', 'alphalux', 'unihopper', 'mf'] as const;
 export type HardwareBrand = (typeof HARDWARE_BRANDS)[number];
 
 /** Направляющие: телескоп, тандем, боксы. */
@@ -403,6 +405,12 @@ export type HardwareMeta = {
   visualStatus?: 'CAD' | 'VISUAL_APPROXIMATION';
   /** CAD-модель, переведённая в GLB, — только если права подтверждены. */
   model3d?: { url: string; format: 'glb'; units: 'mm' };
+  /**
+   * ГДЕ ЕСТЬ 3D ПРОИЗВОДИТЕЛЯ ИЛИ ПОСТАВЩИКА (HW-01) — сведения, а не модель:
+   * архив библиотеки БАЗИС (.f3d / .fr3d, двоичный формат), права не
+   * подтверждены — в продукт не идёт; `files` — число 3D-файлов в архиве.
+   */
+  cad?: { format: 'BAZIS'; file: string; rightsStatus: 'NOT_VERIFIED'; files: number }[];
   /** Чего в источнике нет, но нужно для установки или присадки. */
   missing?: string[];
   notes?: string;
@@ -698,7 +706,125 @@ export type ProductionSettings = {
    * распиленная плита.
    */
   drawerBox?: DrawerBoxSettings;
+  /**
+   * ПРАВИЛА ПРИСАДКИ ЦЕХА (HW-08).
+   *
+   * Паспорт изделия даёт диаметр, глубину и привязку к своей кромке
+   * (чашка Ø35 на TB от края фасада, планка на 37 от передней кромки).
+   * Где по высоте фасада сидят петли, сколько их, каким сверлом проходит
+   * винт ручки, где стоят полкодержатели и конфирматы — школа цеха, а не
+   * данные изделия. Пусто — правил нет: отверстие не ставится, деталь
+   * подписана словами, выпуск заперт. Умолчаний нет.
+   */
+  drilling?: DrillingSettings;
 };
+
+/**
+ * ПРАВИЛА ПРИСАДКИ ЦЕХА. Каждое поле — «не задано» (`null` / пусто), пока
+ * цех его не ввёл; `confirmed` — цех подтвердил весь набор. Без галочки
+ * отверстия по правилам считаются и показываются, но выпуск заперт.
+ */
+export type DrillingSettings = {
+  /** От верхнего и нижнего края фасада до оси крайней чашки петли, мм. */
+  hingeEdgeMm: number | null;
+  /**
+   * Число петель на фасад по его высоте: «до N мм — k петель», по
+   * возрастанию N. Пусто — правило продукта (выше 1200 мм — три, иначе
+   * две), и это сказано у детали.
+   */
+  hingeCount: { upToMm: number; hinges: number }[];
+  /**
+   * Ось монтажной планки — на высоте оси чашки. Петля поворачивается в
+   * горизонтальной плоскости, и планка по чертежу производителя
+   * симметрична; связь «высота планки — высота чашки» на чертежах не
+   * образмерена — её подтверждает цех.
+   */
+  plateOnCupAxis: boolean;
+  /**
+   * Ручка: диаметр отверстия под винт (насквозь), мм. В паспортах ручек
+   * напечатан винт (M4), а не сверло.
+   */
+  handleHoleMm: number | null;
+  /** Место ручки на фасаде — по правилу продукта (как в сцене) — цех принимает. */
+  handlePlaceConfirmed: boolean;
+  /**
+   * Полкодержатели: оси отверстий от передней и задней кромки боковины, мм.
+   * Отметка полки в наполнении — ось отверстия; это подтверждает цех.
+   */
+  shelfSupport: { frontMm: number; backMm: number } | null;
+  /**
+   * Конфирмат «боковина — дно / крыша»: сквозное в боковине и глухое в
+   * торце горизонтальной детали; оси — от передней и задней кромки.
+   */
+  confirmat: { faceDiameterMm: number; edgeDiameterMm: number; edgeDepthMm: number; fromFrontMm: number; fromBackMm: number } | null;
+  /** Минимальный остаток материала под глухим отверстием, мм. */
+  minRemainMm: number | null;
+  /** Цех подтвердил эти правила. Нет — «не подтверждено цехом», выпуск заперт. */
+  confirmed: boolean;
+};
+
+export const DRILLING_RANGES_MM = {
+  hingeEdgeMm: [30, 300],
+  handleHoleMm: [2, 12],
+  minRemainMm: [0, 20],
+  supportMm: [10, 200],
+  confirmatFaceMm: [4, 12],
+  confirmatEdgeMm: [3, 10],
+  confirmatDepthMm: [10, 80],
+  confirmatFromEdgeMm: [10, 300],
+} as const;
+
+/**
+ * Правила присадки организации. Мусор в поле — поле «не задано» (а не
+ * весь набор): каждое правило работает само по себе.
+ */
+export function drillingSettings(raw: unknown): DrillingSettings | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const v = raw as Record<string, unknown>;
+  const num = (x: unknown, [min, max]: readonly [number, number]) => {
+    if (x === null || x === undefined || x === '') return null;
+    const n = Number(x);
+    return Number.isFinite(n) && n >= min && n <= max ? Math.round(n * 10) / 10 : null;
+  };
+  const count = Array.isArray(v.hingeCount)
+    ? (v.hingeCount as unknown[])
+        .map((row) => {
+          const r = (row ?? {}) as Record<string, unknown>;
+          const upToMm = num(r.upToMm, [100, 3500]);
+          const hinges = Number(r.hinges);
+          return upToMm !== null && Number.isInteger(hinges) && hinges >= 1 && hinges <= 10 ? { upToMm, hinges } : null;
+        })
+        .filter((r): r is { upToMm: number; hinges: number } => r !== null)
+        .sort((a, b) => a.upToMm - b.upToMm)
+    : [];
+  const s = (v.shelfSupport ?? null) as Record<string, unknown> | null;
+  const shelfFront = s ? num(s.frontMm, DRILLING_RANGES_MM.supportMm) : null;
+  const shelfBack = s ? num(s.backMm, DRILLING_RANGES_MM.supportMm) : null;
+  const c = (v.confirmat ?? null) as Record<string, unknown> | null;
+  const conf = c
+    ? {
+        faceDiameterMm: num(c.faceDiameterMm, DRILLING_RANGES_MM.confirmatFaceMm),
+        edgeDiameterMm: num(c.edgeDiameterMm, DRILLING_RANGES_MM.confirmatEdgeMm),
+        edgeDepthMm: num(c.edgeDepthMm, DRILLING_RANGES_MM.confirmatDepthMm),
+        fromFrontMm: num(c.fromFrontMm, DRILLING_RANGES_MM.confirmatFromEdgeMm),
+        fromBackMm: num(c.fromBackMm, DRILLING_RANGES_MM.confirmatFromEdgeMm),
+      }
+    : null;
+  return {
+    hingeEdgeMm: num(v.hingeEdgeMm, DRILLING_RANGES_MM.hingeEdgeMm),
+    hingeCount: count,
+    plateOnCupAxis: v.plateOnCupAxis === true,
+    handleHoleMm: num(v.handleHoleMm, DRILLING_RANGES_MM.handleHoleMm),
+    handlePlaceConfirmed: v.handlePlaceConfirmed === true,
+    shelfSupport: shelfFront !== null && shelfBack !== null ? { frontMm: shelfFront, backMm: shelfBack } : null,
+    confirmat:
+      conf && conf.faceDiameterMm !== null && conf.edgeDiameterMm !== null && conf.edgeDepthMm !== null && conf.fromFrontMm !== null && conf.fromBackMm !== null
+        ? (conf as DrillingSettings['confirmat'])
+        : null,
+    minRemainMm: num(v.minRemainMm, DRILLING_RANGES_MM.minRemainMm),
+    confirmed: v.confirmed === true,
+  };
+}
 
 /**
  * ПРАВИЛА КОРОБА ЯЩИКА ЦЕХА. Длину короба и его ширину даёт направляющая
@@ -1193,6 +1319,8 @@ export function productionSettings(raw: unknown): ProductionSettings {
     ...(value.cutting ? { cutting: cuttingSettings(value.cutting) } : {}),
     /* Правила короба ящика (HARDWARE-01): только заведённые и целые — иначе правил нет. */
     ...(drawerBoxSettings(value.drawerBox) ? { drawerBox: drawerBoxSettings(value.drawerBox)! } : {}),
+    /* Правила присадки (HW-08): только заведённые — иначе правил нет. */
+    ...(drillingSettings(value.drilling) ? { drilling: drillingSettings(value.drilling)! } : {}),
   };
 }
 

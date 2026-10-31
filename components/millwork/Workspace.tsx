@@ -242,7 +242,7 @@ import {
   templateById,
   type RunTemplate,
 } from '@/lib/millwork/templates';
-import { cuttingSettings, type CuttingSettings, type ProductionOverrides, type ProductionSettings } from '@/types/catalog';
+import { cuttingSettings, drillingSettings, type CuttingSettings, type DrillingSettings, type ProductionOverrides, type ProductionSettings } from '@/types/catalog';
 import {
   DEFAULT_SCENE_VIEW,
   type SceneView,
@@ -305,6 +305,15 @@ const PathTraceResult = dynamic(() => import('./PathTraceResult'), { ssr: false 
 const CuttingMap = dynamic(() => import('./CuttingMap'), {
   ssr: false,
   loading: () => <p className="m-4 text-[13px] text-graphiteMw">Собираем карту раскроя…</p>,
+});
+
+/*
+ * Присадка (HW-08) — по требованию: план отверстий, рисунок детали, DXF и
+ * PDF нужны только на её виде в Studio.
+ */
+const DrillingMap = dynamic(() => import('./DrillingMap'), {
+  ssr: false,
+  loading: () => <p className="m-4 text-[13px] text-graphiteMw">Собираем присадку…</p>,
 });
 
 /*
@@ -563,6 +572,50 @@ export default function Workspace(props: WorkspaceProps) {
             if (!res.ok) return data.error ?? `Настройки раскроя не сохранились: ответ ${res.status}.`;
             setCuttingStored(cuttingSettings(data.production?.cutting ?? next));
             setCuttingEdit(null);
+            return null;
+          }
+        : undefined,
+    [props.projectId],
+  );
+  /*
+   * ПРАВИЛА ПРИСАДКИ (HW-08) — настройка ЦЕХА, как раскрой: правка до
+   * сохранения и сохранённое; в объект не пишутся.
+   */
+  const savedDrilling = useMemo<DrillingSettings>(
+    () =>
+      production.drilling ?? {
+        hingeEdgeMm: null,
+        hingeCount: [],
+        plateOnCupAxis: false,
+        handleHoleMm: null,
+        handlePlaceConfirmed: false,
+        shelfSupport: null,
+        confirmat: null,
+        minRemainMm: null,
+        confirmed: false,
+      },
+    [production],
+  );
+  const [drillingEdit, setDrillingEdit] = useState<DrillingSettings | null>(null);
+  const [drillingStored, setDrillingStored] = useState<DrillingSettings | null>(null);
+  const drillingBase = drillingStored ?? savedDrilling;
+  const drillingRules = drillingEdit ?? drillingBase;
+  const drillingDirty = drillingEdit !== null && JSON.stringify(drillingEdit) !== JSON.stringify(drillingBase);
+  const saveDrilling = useMemo(
+    () =>
+      props.projectId
+        ? async (next: DrillingSettings): Promise<string | null> => {
+            const res = await fetch('/api/orgs/production', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ drilling: next }),
+            }).catch(() => null);
+            if (!res) return 'Нет связи с сервером: правила присадки не сохранились, расчёт на экране — по ним.';
+            const data = (await res.json().catch(() => ({}))) as { error?: string; production?: { drilling?: unknown } };
+            if (!res.ok) return data.error ?? `Правила присадки не сохранились: ответ ${res.status}.`;
+            const stored = drillingSettings(data.production?.drilling ?? next);
+            if (stored) setDrillingStored(stored);
+            setDrillingEdit(null);
             return null;
           }
         : undefined,
@@ -4343,7 +4396,7 @@ export default function Workspace(props: WorkspaceProps) {
       else if (next === 'lighting') setStudioView('3d');
       else if (
         (next === 'furniture' || next === 'construction' || next === 'materials') &&
-        (studioView === 'plan' || studioView === 'panels' || studioView === 'cutting')
+        (studioView === 'plan' || studioView === 'panels' || studioView === 'cutting' || studioView === 'drilling')
       ) {
         setStudioView('facade');
       }
@@ -5915,6 +5968,25 @@ export default function Workspace(props: WorkspaceProps) {
             dirty={cuttingDirty}
           />
         </div>
+      ) : studioView === 'drilling' ? (
+        <div className="h-full overflow-y-auto p-4" data-studio-drilling>
+          <DrillingMap
+            walls={panelWalls}
+            title={props.title}
+            projectId={props.projectId ?? 'demo'}
+            production={production}
+            milling={millingItems}
+            carcass={carcassItems}
+            hardware={hardwareItems}
+            fingerprint={objectEstimate.fingerprint}
+            exportLock={screen.exportLockText === drawerDraft ? null : screen.exportLockText}
+            estimateLines={objectEstimate.lines}
+            rules={drillingRules}
+            onRules={setDrillingEdit}
+            onSave={saveDrilling}
+            dirty={drillingDirty}
+          />
+        </div>
       ) : (
         <div className="h-full p-2">{schematicElement}</div>
       );
@@ -6050,6 +6122,16 @@ export default function Workspace(props: WorkspaceProps) {
             >
               <span>Карта раскроя</span>
               <span className="ml-auto text-graphiteMw">листы, PDF и CSV</span>
+            </button>
+            <button
+              type="button"
+              data-studio-doc="drilling"
+              aria-pressed={studioView === 'drilling'}
+              onClick={() => setStudioView('drilling')}
+              className="cad-row"
+            >
+              <span>Присадка</span>
+              <span className="ml-auto text-graphiteMw">отверстия деталей, DXF, CSV, PDF</span>
             </button>
             <button
               type="button"

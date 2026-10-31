@@ -316,10 +316,9 @@ export default function CuttingMap({
   );
   const decors = useMemo(() => decorCatalog(catalog), [catalog]);
   /* Короба, рассчитанные по правилам, не подтверждённым цехом, — тем же счётом, что раскрой (HARDWARE-01). */
-  const drawerBoxUnconfirmed = useMemo(
-    () => drawerDrafts(walls.map((wall) => wall.run), hardware, production).unconfirmed,
-    [walls, hardware, production],
-  );
+  const drafts = useMemo(() => drawerDrafts(walls.map((wall) => wall.run), hardware, production), [walls, hardware, production]);
+  const drawerBoxUnconfirmed = drafts.unconfirmed;
+  const drawerBoxWhy = drafts.unconfirmedWhy;
   /* Стекло и покупные изделия витрин (P1) — тот же список, что у деталировки и сметы (`vitrineParts`). */
   const vitrine = useMemo(
     () => ({
@@ -334,8 +333,8 @@ export default function CuttingMap({
     [walls, production],
   );
   const plan: CuttingPlan = useMemo(
-    () => cuttingPlan({ parts, settings, decors, exportLock, fingerprint, drawerBoxUnconfirmed, vitrine, radius }),
-    [parts, settings, decors, exportLock, fingerprint, drawerBoxUnconfirmed, vitrine, radius],
+    () => cuttingPlan({ parts, settings, decors, exportLock, fingerprint, drawerBoxUnconfirmed, drawerBoxWhy, vitrine, radius }),
+    [parts, settings, decors, exportLock, fingerprint, drawerBoxUnconfirmed, drawerBoxWhy, vitrine, radius],
   );
 
   const [groupKey, setGroupKey] = useState<string | null>(null);
