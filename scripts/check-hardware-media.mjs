@@ -188,7 +188,7 @@ async function open3d(page, label) {
 /** «Фурнитура» без модуля: каталог листается по группам. */
 async function hardwareBrowse(page, label) {
   must(`${label}: инструмент «Фурнитура»`, await tool(page, 'hardware'), 'НУЛЕВОЙ СЕЛЕКТОР: [data-studio-tool="hardware"]');
-  const items = await waitFor(page, () => Number(document.querySelector('[data-hw-panel]')?.getAttribute('data-hw-items') ?? 0), (n) => n >= 1, 60_000);
+  const items = await waitFor(page, () => { const p = document.querySelector('[data-hw-panel]'); const s = p?.getAttribute('data-hw-list'); return s === 'ready' || s === 'demo' ? Number(p.getAttribute('data-hw-items') ?? 0) : s === 'error' ? -1 : 0; }, (n) => n !== 0, 60_000);
   must(`${label}: панель видит каталог организации`, items >= FACT_COUNT, `позиций ${items} при ${FACT_COUNT} в фактах`);
 }
 const count = (page) => page.evaluate(() => Number(document.querySelector('[data-hw-count]')?.getAttribute('data-hw-count') ?? NaN));
@@ -546,7 +546,7 @@ async function coldOpen(page, cdp, projectId, net, label) {
   await sleep(200);
   const click0 = Date.now();
   must(`${label} инструмент «Фурнитура»`, await tool(page, 'hardware'), 'НУЛЕВОЙ СЕЛЕКТОР: [data-studio-tool="hardware"]');
-  const items = await waitFor(page, () => Number(document.querySelector('[data-hw-panel]')?.getAttribute('data-hw-items') ?? 0), (n) => n >= 1, 180_000);
+  const items = await waitFor(page, () => { const p = document.querySelector('[data-hw-panel]'); const s = p?.getAttribute('data-hw-list'); return s === 'ready' || s === 'demo' ? Number(p.getAttribute('data-hw-items') ?? 0) : s === 'error' ? -1 : 0; }, (n) => n !== 0, 180_000);
   const panelReadyMs = Date.now() - nav0;
   const panelWaitMs = Date.now() - click0;
   must(`${label} панель видит каталог`, items >= FACT_COUNT, `позиций ${items}`);
@@ -612,7 +612,7 @@ async function partPerf(browser) {
       net.reset();
       const r0 = Date.now();
       await tool(page, 'hardware');
-      await waitFor(page, () => Number(document.querySelector('[data-hw-panel]')?.getAttribute('data-hw-items') ?? 0), (n) => n >= 1, 60_000);
+      await waitFor(page, () => { const p = document.querySelector('[data-hw-panel]'); const s = p?.getAttribute('data-hw-list'); return s === 'ready' || s === 'demo' ? Number(p.getAttribute('data-hw-items') ?? 0) : s === 'error' ? -1 : 0; }, (n) => n !== 0, 60_000);
       result.reopen = { ms: Date.now() - r0, ...net.snapshot() };
 
       /* 5. Слабый ноутбук: процессор ×4 — то же холодное открытие. */
@@ -837,7 +837,7 @@ async function partSlot(browser) {
       await page.locator('[data-object-module="base-3300@w1"]').first().click();
       await sleep(200);
       must('SLOT инструмент «Фурнитура»', await tool(page, 'hardware'), 'НУЛЕВОЙ СЕЛЕКТОР: [data-studio-tool="hardware"]');
-      const items = await waitFor(page, () => Number(document.querySelector('[data-hw-panel]')?.getAttribute('data-hw-items') ?? 0), (n) => n >= 1, 180_000);
+      const items = await waitFor(page, () => { const p = document.querySelector('[data-hw-panel]'); const s = p?.getAttribute('data-hw-list'); return s === 'ready' || s === 'demo' ? Number(p.getAttribute('data-hw-items') ?? 0) : s === 'error' ? -1 : 0; }, (n) => n !== 0, 180_000);
       must('SLOT панель видит каталог', items >= FACT_COUNT, `позиций ${items}`);
       const places = await page.evaluate(() => Array.from(new Set(Array.from(document.querySelectorAll('[data-hw-slot]')).map((b) => b.getAttribute('data-hw-slot')))));
       const other = places.find((p) => p !== 'slide');

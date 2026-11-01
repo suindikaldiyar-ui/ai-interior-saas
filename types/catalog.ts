@@ -422,6 +422,43 @@ export type HardwareMeta = {
  * `active` берётся у самого товара (`is_active`), а не дублируется в
  * `meta`: два признака «включено» разошлись бы на первой же правке.
  */
+/* ─────────────────  Реестр 3D-фурнитуры (ТЗ 2026-10-31, § 3) — `lib/millwork/hardwareTwin.ts`  ───────────────── */
+
+export type TwinStatus = 'OFFICIAL_CAD' | 'VERIFIED_RECONSTRUCTION' | 'VISUAL_RECONSTRUCTION' | 'PLACEHOLDER' | 'NO_MODEL';
+
+/** Что делает часть модели на ходу: стоит на корпусе, едет с фасадом (ящиком), едет на половину хода. */
+export type TwinRole = 'fixed' | 'moving' | 'middle';
+
+/** Какая монтажная точка движка у этого места модуля. */
+export type TwinAnchorKind = 'cup_axis' | 'plate_center' | 'runner_front' | 'handle_center' | 'mount_point';
+
+export type TwinFinish = 'chrome' | 'nickel' | 'stainless' | 'aluminium' | 'black_matte' | 'white' | 'grey' | 'brass' | 'anthracite';
+
+export type HardwareTwin = {
+  version: 1;
+  status: Exclude<TwinStatus, 'PLACEHOLDER' | 'NO_MODEL'>;
+  asset: { path: string; bytes: number; sha256: string };
+  source: {
+    kind: 'manufacturer_cad' | 'drawing_reconstruction' | 'photo_reconstruction';
+    fileName: string;
+    format: 'step' | 'iges' | 'glb' | 'gltf' | 'obj';
+    url?: string;
+    version?: string;
+    license: string;
+    rights: 'VERIFIED' | 'NOT_VERIFIED' | 'RESTRICTED';
+    rightsNote: string;
+    importedAt: string;
+  };
+  /** Габарит модели после нормализации, мм. */
+  boundsMm: { min: [number, number, number]; max: [number, number, number] };
+  anchor: { kind: TwinAnchorKind; pointMm: [number, number, number] };
+  /** Именованные узлы файла и что они делают на ходу; узел без роли — неподвижный. */
+  parts: { node: string; role: TwinRole }[];
+  finish?: TwinFinish;
+  verification: { visual: 'CHECKED' | 'UNCHECKED'; manufacturing: 'VERIFIED' | 'UNVERIFIED' };
+};
+
+
 export type HardwareItem = {
   id: string;
   orgId: string;
@@ -440,6 +477,8 @@ export type HardwareItem = {
    * дочитали, — не потому, что их нет в источнике.
    */
   detail?: 'light';
+  /** Запись реестра 3D (`meta.twin`): файл модели, монтажная точка, части по ролям. Нет — модели производителя нет. */
+  twin?: HardwareTwin;
 };
 
 /* ─────────────────  Изображения фурнитуры (HARDWARE-PHOTO-PERF-01)  ───────────────── */

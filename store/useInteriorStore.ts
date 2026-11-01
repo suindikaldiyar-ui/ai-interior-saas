@@ -76,6 +76,18 @@ export type InteriorState = {
    * посчитала бы частью мебели и нарисовала бы выдвинутым.
    */
   openParts: string[];
+  /**
+   * «ПОКАЗАТЬ ВЫБРАННУЮ ФУРНИТУРУ» (ТЗ 2026-10-31, § 23): деталь, к которой
+   * камера подлетает. Состояние камеры — законное состояние сцены (CLAUDE.md):
+   * производственного оно ничего не считает. `seq` — каждое нажатие новое.
+   */
+  focusRequest: { partId: string; seq: number } | null;
+  /**
+   * ПРИСАДКА 3D (ТЗ 2026-10-31, § 11): показывать ли отверстия плана в сцене и
+   * какую деталь подсветить. Это ВИД, а не данные: отверстия считает
+   * `drillingPlan` на каждом показе, здесь — только «включено» и ИД детали.
+   */
+  drillView: { on: boolean; partId: string | null };
   /** Разрез: фасады убраны совсем, видно наполнение целиком. */
   cutaway: boolean;
   /**
@@ -164,6 +176,12 @@ export type InteriorState = {
    * или его нет вовсе (демонстрация, студия без входа).
    */
   catalogError: string | null;
+  /**
+   * СПИСОК ФУРНИТУРЫ ПРОИЗВОДИТЕЛЕЙ (ТЗ 2026-10-31, § 21): читается по
+   * требованию панели «Фурнитура», а не при открытии объекта. Его ошибка —
+   * словами в панели; цены и поставленная фурнитура от неё не зависят.
+   */
+  hardwareList: { state: 'idle' | 'loading' | 'ready' | 'error'; read: number; total: number | null; error: string | null };
   /** targetKey → catalog_item_id. Ссылка, а не копия товара:
       компания поменяла цену — проект подтянет актуальную. */
   selections: ProjectSelections;
@@ -196,6 +214,8 @@ export type InteriorState = {
 
   setCaptureMode: (value: boolean) => void;
   toggleOpenPart: (id: string) => void;
+  requestFocus: (partId: string) => void;
+  setDrillView: (value: { on: boolean; partId: string | null }) => void;
   setOpenParts: (ids: string[]) => void;
   closeAllParts: () => void;
   setCutaway: (value: boolean) => void;
@@ -220,6 +240,9 @@ export type InteriorState = {
   setProjectId: (id: string | null) => void;
   setCatalog: (catalog: CatalogEntryFull[]) => void;
   setCatalogError: (error: string | null) => void;
+  setHardwareList: (next: Partial<InteriorState['hardwareList']>) => void;
+  /** Позиции списка и позиции объекта по идентификатору — добавить; полную строку лёгкой не заменять. */
+  mergeCatalogEntries: (entries: CatalogEntryFull[]) => void;
   /**
    * ЦЕНА ПОЗИЦИИ КАТАЛОГА ПОМЕНЯЛАСЬ.
    *
@@ -361,6 +384,8 @@ export const useInteriorStore = create<InteriorState>((set, get) => ({
   future: [],
 
   openParts: [],
+  focusRequest: null,
+  drillView: { on: false, partId: null },
   cutaway: false,
   sceneLayers: ALL_LAYERS,
   economyMode: false,
@@ -383,6 +408,7 @@ export const useInteriorStore = create<InteriorState>((set, get) => ({
   projectId: null,
   catalog: [],
   catalogError: null,
+  hardwareList: { state: 'idle', read: 0, total: null, error: null },
   selections: {},
   analysis: null,
   measurements: {},
@@ -705,6 +731,8 @@ export const useInteriorStore = create<InteriorState>((set, get) => ({
     })),
 
   setOpenParts: (ids) => set({ openParts: Array.from(new Set(ids)) }),
+  requestFocus: (partId) => set((state) => ({ focusRequest: { partId, seq: (state.focusRequest?.seq ?? 0) + 1 } })),
+  setDrillView: (value) => set({ drillView: { on: value.on, partId: value.on ? value.partId : null } }),
   closeAllParts: () => set({ openParts: [] }),
   setCutaway: (value) => set({ cutaway: value }),
   setSceneLayers: (value) => set({ sceneLayers: { ...value } }),
@@ -759,6 +787,25 @@ export const useInteriorStore = create<InteriorState>((set, get) => ({
   /* Прочитанный каталог снимает прежнюю ошибку чтения. */
   setCatalog: (catalog) => set({ catalog, catalogError: null }),
   setCatalogError: (catalogError) => set({ catalogError }),
+  setHardwareList: (next) => set((state) => ({ hardwareList: { ...state.hardwareList, ...next } })),
+  mergeCatalogEntries: (entries) =>
+    set((state) => {
+      const at = new Map(state.catalog.map((item, i) => [item.id, i]));
+      const catalog = [...state.catalog];
+      let changed = false;
+      for (const entry of entries) {
+        const i = at.get(entry.id);
+        if (i === undefined) {
+          at.set(entry.id, catalog.length);
+          catalog.push(entry);
+          changed = true;
+        } else if (catalog[i].detail === 'light' && entry.detail !== 'light') {
+          catalog[i] = entry;
+          changed = true;
+        }
+      }
+      return changed ? { catalog } : {};
+    }),
 
   setCatalogPrice: (id, price) =>
     set((state) => ({

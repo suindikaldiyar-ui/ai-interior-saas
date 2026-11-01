@@ -64,7 +64,8 @@ export async function POST(request: Request) {
   }
 
   const [catalogRead, { data: orgRow }] = await Promise.all([
-    fetchCatalog(supabase, orgId),
+    /* Автопроект без поставленной фурнитуры: ставки и позиции компании (ТЗ 2026-10-31, § 21). */
+    fetchCatalog(supabase, orgId, { hardware: 'referenced' }),
     supabase.from('orgs').select('run_templates, production').eq('id', orgId).maybeSingle(),
   ]);
 

@@ -51,6 +51,7 @@ import { mechanismChecks } from './verify-mechanisms';
 import { applianceChecks } from './verify-appliances';
 import { drillingChecks } from './verify-drilling';
 import { hinge3dChecks } from './verify-hinges3d';
+import { twinChecks } from './verify-twin';
 import { runnerModelOf } from '../lib/millwork/runnerModel';
 import { drillingPlan } from '../lib/millwork/drillingPlan';
 import { drawerBoxPlan } from '../lib/millwork/drawerBox';
@@ -1740,6 +1741,10 @@ drillingChecks(check);
 /* ═════════════════════════  HW-03: петля в 3D  ═════════════════════════ */
 
 hinge3dChecks(check);
+
+/* ═════════════════════════  Реестр 3D-фурнитуры (ТЗ 2026-10-31, § 3)  ═════════════════════════ */
+
+twinChecks(check);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

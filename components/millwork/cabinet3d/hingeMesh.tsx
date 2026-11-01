@@ -4,8 +4,9 @@ import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { BoxDraw, HingeDraw } from '@/lib/millwork/cabinetBoxes';
-import { hingeHalfMesh, linkPose } from '@/lib/millwork/hingeMeshData';
-import { hingeParts } from '@/lib/millwork/hingeModel';
+import { hingeHalfMesh, hingeLinkSegments } from '@/lib/millwork/hingeMeshData';
+import { reportSceneAnomaly } from './sceneAnomalies';
+import { TwinModel } from './twinAsset';
 
 /**
  * ПЕТЛИ В СЦЕНЕ (HW-03).
@@ -23,7 +24,7 @@ type Entry = { geometry: THREE.BufferGeometry; users: number };
 const cache = new Map<string, Entry>();
 
 export function hingeGeometryKey(draw: HingeDraw, fine: boolean, withLinks: boolean): string {
-  return `${draw.model.key}|${draw.half}|${draw.mirror ? 'R' : 'L'}|${draw.sideInnerXMm}|${fine ? 'f' : 'c'}|${withLinks ? 'l' : ''}`;
+  return `${draw.model.key}|${draw.half}|${draw.mirror ? 'R' : 'L'}|${draw.sideInnerXMm}|${fine ? 'f' : 'c'}|${withLinks ? 'l' : ''}|${draw.twin?.asset.sha256 ?? ''}`;
 }
 
 function build(draw: HingeDraw, fine: boolean, withLinks: boolean): THREE.BufferGeometry {
@@ -99,6 +100,17 @@ export function HingeBatch({
     mesh.computeBoundingSphere();
     invalidate();
   }, [boxes, geometry, material, invalidate]);
+  /* Модель из реестра 3D (ТЗ 2026-10-31, § 6): на каждую петлю — модель файла на её оси чашки. */
+  if (draw?.twin) {
+    const twin = draw.twin;
+    return (
+      <>
+        {boxes.map((box, i) => (
+          <TwinModel key={i} twin={twin} role={box.hinge!.half === 'cup' ? 'moving' : 'fixed'} anchorM={box.hinge!.origin} mirror={box.hinge!.mirror} name="hinge-twin" />
+        ))}
+      </>
+    );
+  }
   if (!geometry || boxes.length === 0) return null;
   return (
     <instancedMesh
@@ -115,6 +127,8 @@ export function HingeBatch({
 /** Чашка на едущем полотне — в координатах группы створки. */
 export function HingeMesh({ draw, position, material, fine }: { draw: HingeDraw; position: [number, number, number]; material: THREE.Material; fine: boolean }) {
   const geometry = useHingeGeometry(draw, fine, false);
+  /* Едущая чашка из реестра 3D — часть «moving» модели на той же оси. */
+  if (draw.twin) return <TwinModel twin={draw.twin} role="moving" anchorM={position} mirror={draw.mirror} name="rider:hinge" />;
   if (!geometry) return null;
   return <mesh name="rider:hinge" geometry={geometry} material={material} position={position} castShadow />;
 }
@@ -139,27 +153,28 @@ export function HingeLinks({
   const geometry = useMemo(() => new THREE.BoxGeometry(1, 1, 1), []);
   useEffect(() => () => geometry.dispose(), [geometry]);
   const refs = useRef<(THREE.Mesh | null)[]>([]);
-  const links = useMemo(
-    () =>
-      draws.flatMap((draw) => {
-        const sx = draw.mirror ? -1 : 1;
-        const at = (p: [number, number, number]): [number, number, number] => [
-          draw.origin[0] + (p[0] * sx) / MM,
-          draw.origin[1] + p[1] / MM,
-          draw.origin[2] + p[2] / MM,
-        ];
-        return hingeParts(draw.model, draw.sideInnerXMm).links.map((link) => ({ fixed: at(link.fixed), moving: at(link.moving), width: link.widthMm / MM }));
-      }),
-    [draws],
-  );
+  const count = useMemo(() => hingeLinkSegments(draws, (p) => p).length, [draws]);
   const up = useMemo(() => new THREE.Vector3(1, 0, 0), []);
+  const reported = useRef(false);
   const apply = () => {
-    links.forEach((link, i) => {
+    hingeLinkSegments(draws, (p) => toCarcass(p, angleRef.current)).forEach((pose, i) => {
       const mesh = refs.current[i];
       if (!mesh) return;
-      const pose = linkPose(link.fixed, link.moving, (p) => toCarcass(p, angleRef.current));
+      /*
+       * ПРЕДОХРАНИТЕЛЬ: звено длиннее физически возможного — ошибка осей, а не
+       * петля. Не рисуется, разработчику — диагностика (`__mwSceneAnomalies`).
+       */
+      const anomalous = !(pose.length <= pose.maxLength);
+      mesh.visible = !anomalous;
+      if (anomalous) {
+        if (!reported.current) {
+          reported.current = true;
+          reportSceneAnomaly({ what: 'hinge-link', lengthM: pose.length, maxM: pose.maxLength });
+        }
+        return;
+      }
       mesh.position.set(...pose.mid);
-      mesh.scale.set(pose.length, link.width, link.width);
+      mesh.scale.set(pose.length, pose.width, pose.width);
       mesh.quaternion.setFromUnitVectors(up, new THREE.Vector3(...pose.dir));
     });
   };
@@ -167,7 +182,7 @@ export function HingeLinks({
   useFrame(() => apply());
   return (
     <>
-      {links.map((_, i) => (
+      {Array.from({ length: count }, (_, i) => (
         <mesh
           key={i}
           ref={(m) => {

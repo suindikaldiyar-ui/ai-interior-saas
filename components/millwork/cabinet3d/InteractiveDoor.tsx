@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import type * as THREE from 'three';
 import { useSlide } from './useSlide';
 import { useTouchTarget } from './useTouchTarget';
-import { doorKick, doorPivot, leafLocal, type FrontRect, type PartBox } from '@/lib/millwork/cabinetBoxes';
+import { doorKick, doorPivot, leafLocal, leafPointAt, type FrontRect, type PartBox } from '@/lib/millwork/cabinetBoxes';
 import { useShiftedBox, type CabinetParts } from './parts';
 import type { FrontRelief } from '@/types/millwork';
 import { realSizeShiftOf } from './realSizeMap';
@@ -158,21 +158,10 @@ export default function InteractiveDoor({
   const target = open ? pivot.angle : 0;
   /* Угол створки на этом кадре — для звеньев петли (HW-03). */
   const angleRef = useRef(target);
-  const hingeDraws = (riders ?? []).filter((box) => box.hinge?.half === 'cup').map((box) => box.hinge as HingeDraw);
-  /* Точка полотна в закрытой позе (метры ряда) → та же точка при угле: поворот группы створки вокруг оси и вынос петли. */
-  const toCarcass = (p: [number, number, number], angle: number): [number, number, number] => {
-    const lx = p[0] - pivot.origin[0];
-    const ly = p[1] - pivot.origin[1];
-    const lz = p[2] - pivot.origin[2];
-    if (pivot.axis === 'x') {
-      const c = Math.cos(angle);
-      const s = Math.sin(angle);
-      return [pivot.origin[0] + lx, pivot.origin[1] + ly * c - lz * s, pivot.origin[2] + ly * s + lz * c];
-    }
-    const c = Math.cos(angle);
-    const s = Math.sin(angle);
-    return [pivot.origin[0] + lx * c + lz * s, pivot.origin[1] + ly, pivot.origin[2] + doorKick(pivot, angle) - lx * s + lz * c];
-  };
+  /* Звенья — у процедурной петли; у модели из реестра 3D шарнир — её собственная геометрия (поза звеньев CAD не строится — словами в карточке). */
+  const hingeDraws = (riders ?? []).filter((box) => box.hinge?.half === 'cup' && !box.hinge.twin).map((box) => box.hinge as HingeDraw);
+  /* Точка полотна в закрытой позе (местные оси модуля) → та же точка при угле: одна `leafPointAt` со сценой и приёмкой. */
+  const toCarcass = (p: [number, number, number], angle: number): [number, number, number] => leafPointAt(pivot, p, angle);
 
   useSlide({
     target,

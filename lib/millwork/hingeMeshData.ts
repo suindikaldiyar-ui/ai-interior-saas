@@ -145,6 +145,32 @@ export function meshBounds(mesh: MeshData): { min: [number, number, number]; max
  * корпуса (тот же, что у полотна сцены). Возвращает середину, длину и
  * единичное направление — сцена ставит по ним тонкий брусок.
  */
+/**
+ * ЗВЕНЬЯ ПЕТЕЛЬ НА ХОДУ — отрезки по осям чашки (`HingeDraw.origin`) и повороту
+ * полотна; одна функция на сцену (`HingeLinks`) и приёмку. `maxLength` — предел
+ * физически возможного звена этой модели: звено жёсткое, на ходу оно не длиннее
+ * самой длинной детали петли (плечо, корпус шарнира, звено в закрытой позе) с
+ * запасом вдвое. Длиннее — ошибка осей, а не петля: такое звено сцена не рисует.
+ */
+export function hingeLinkSegments(
+  draws: { model: HingeModel; mirror: boolean; sideInnerXMm: number; origin: [number, number, number] }[],
+  rotate: (p: [number, number, number]) => [number, number, number],
+): { mid: [number, number, number]; length: number; dir: [number, number, number]; width: number; maxLength: number }[] {
+  return draws.flatMap((draw) => {
+    const sx = draw.mirror ? -1 : 1;
+    const at = (p: [number, number, number]): [number, number, number] => [
+      draw.origin[0] + (p[0] * sx) / 1000,
+      draw.origin[1] + p[1] / 1000,
+      draw.origin[2] + p[2] / 1000,
+    ];
+    const parts = hingeParts(draw.model, draw.sideInnerXMm);
+    const span = (b: HingeBox) => Math.max(Math.abs(b.max[0] - b.min[0]), Math.abs(b.max[1] - b.min[1]), Math.abs(b.max[2] - b.min[2]));
+    const closed = parts.links.map((l) => Math.hypot(l.moving[0] - l.fixed[0], l.moving[1] - l.fixed[1], l.moving[2] - l.fixed[2]));
+    const maxLength = (2 * Math.max(...parts.armBoxes.map(span), ...parts.cupBoxes.map(span), ...closed, 2 * parts.cup.radius)) / 1000;
+    return parts.links.map((link) => ({ ...linkPose(at(link.fixed), at(link.moving), rotate), width: link.widthMm / 1000, maxLength }));
+  });
+}
+
 export function linkPose(
   fixed: [number, number, number],
   movingClosed: [number, number, number],

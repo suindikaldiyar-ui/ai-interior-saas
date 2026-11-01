@@ -55,6 +55,11 @@ import { useInteriorStore } from '@/store/useInteriorStore';
 import { DEFAULT_PRODUCTION, type ProductionSettings } from '@/types/catalog';
 import { DEFAULT_SCENE_VIEW, type SceneView } from '@/lib/cameraFraming';
 import type { GlassKind, Module, ProfileFinish, Run } from '@/types/millwork';
+import { boxGeometryOf, sectionKey } from './profileGeometry';
+import DrillHoles3D from './DrillHoles3D';
+import { drillHoles3d } from '@/lib/millwork/drillHoles3d';
+import { fasteners3d } from '@/lib/millwork/fasteners3d';
+import type { DrillingPlan } from '@/lib/millwork/drillingPlan';
 
 /**
  * Интерактивный гарнитур.
@@ -148,6 +153,12 @@ type Props = {
    * материалы, а не меши.
    */
   design?: boolean;
+  /**
+   * ПРИСАДКА 3D (ТЗ 2026-10-31, § 11): план отверстий объекта и стена этого
+   * ряда. Тот же `drillingPlan`, что у «Документы → Присадка»; здесь он только
+   * переносится на коробки ряда (`drillHoles3d`). В «Интерьере» не рисуется.
+   */
+  drill?: { wallId: string; plan: DrillingPlan };
 };
 
 /** Модуль из верхнего сегмента: у него своя отметка низа. */
@@ -181,6 +192,7 @@ export default function Cabinet3D({
   shadows = false,
   instantCamera = false,
   design = false,
+  drill,
 }: Props) {
   const groupRef = useRef<THREE.Group>(null);
   const invalidate = useThree((state) => state.invalidate);
@@ -429,6 +441,32 @@ export default function Cabinet3D({
   /* Экран телевизора (STAGE B) — вид, а не изделие: выключен, включён, демо. */
   const tvScreen = useInteriorStore((s) => s.tvScreen);
 
+  /*
+   * ОТВЕРСТИЯ ПЛАНА НА КОРОБКАХ ЭТОГО РЯДА — те же настройки коробок, что у
+   * пачек ниже, но без рентгена: фасад, снятый рентгеном, своих отверстий не теряет.
+   */
+  const drillOn = useInteriorStore((s) => s.drillView.on);
+  const drillFocus = useInteriorStore((s) => s.drillView.partId);
+  const drill3d = useMemo(
+    () =>
+      drill && drillOn && !design
+        ? drillHoles3d(drill.plan, [{ wallId: drill.wallId, run }], {
+            carcass: carcassItems,
+            hardware: hardwareItems,
+            production,
+            thicknessMm: production.carcassMm,
+            frontThicknessMm: production.frontMm,
+            gapMm: production.frontGapMm,
+          })
+        : null,
+    [drill, drillOn, design, run, carcassItems, hardwareItems, production],
+  );
+  /* Крепления — из тех же отверстий: пара сквозное + торцевое = конфирмат (`fasteners3d`). */
+  const drill3dAll = useMemo(
+    () => (drill3d && drill ? { ...drill3d, fasteners: fasteners3d(drill.plan, drill3d.holes).fasteners } : null),
+    [drill3d, drill],
+  );
+
   const boxes = useMemo(
     () =>
       runBoxes(run, {
@@ -597,6 +635,7 @@ export default function Cabinet3D({
     const glassShelves: PartBox[] = [];
     /* ПРОФИЛЬ ВИТРИНЫ (P1) — пачка на покрытие: рамка двери и каркас несут `PartBox.profile`. */
     const profiles = new Map<ProfileFinish, PartBox[]>();
+    const sections = new Map<string, PartBox[]>();
     /*
      * РАДИУСНЫЕ ДЕТАЛИ (OVAL & RADIUS) — своей формой, по сетке на материал:
      * роль и ключ материала те же, что у коробок (`ShapedBatch`).
@@ -693,9 +732,17 @@ export default function Cabinet3D({
         else profiles.set(box.profile, [box]);
         continue;
       }
+      /* Сечение царги и секции направляющей (ТЗ 2026-10-31, § 5, 8) — пачка на сечение. */
+      const sKey = sectionKey(box);
+      if (box.material === 'metal' && sKey) {
+        const list = sections.get(sKey);
+        if (list) list.push(box);
+        else sections.set(sKey, [box]);
+        continue;
+      }
       groups[box.material].push(box);
     }
-    return { groups, fronts, carcass, inner, reliefFronts, handles, hinges, glassKinds, glassShelves, profiles, shaped, decor, rounded, tv };
+    return { groups, fronts, carcass, inner, reliefFronts, handles, hinges, glassKinds, glassShelves, profiles, sections, shaped, decor, rounded, tv };
   }, [boxes, activeParts, layers]);
 
   /*
@@ -887,6 +934,8 @@ export default function Cabinet3D({
         placement ? placement.zM : originZ,
       ]}
       rotation={[0, placement ? (placement.rotationYDeg * Math.PI) / 180 : 0, 0]}
+      /* Корень ряда: «показать фурнитуру» берёт у него сторону, куда смотрит ряд. */
+      userData={{ row: run.id }}
     >
       <SceneProbe group={groupRef} run={run} />
       {camera && (
@@ -1049,6 +1098,9 @@ export default function Cabinet3D({
         />
       ))}
       <InstancedBoxes name="metal" boxes={grouped.groups.metal} geometry={parts.box} material={parts.metal} />
+      {Array.from(grouped.sections.entries()).map(([key, list]) => (
+        <InstancedBoxes key={`section-${key}`} name={`section:${list[0].section}`} boxes={list} geometry={boxGeometryOf(list[0], parts.box)} material={parts.metal} />
+      ))}
       {/*
         * РУЧКИ — СВОЕЙ ФОРМОЙ (HANDLE-REAL): скоба, кнопка, врезная и
         * торцевая по размерам позиции; без позиции — условная скоба. Имя
@@ -1062,6 +1114,7 @@ export default function Cabinet3D({
       {Array.from(grouped.handles.entries()).map(([batch, list]) => (
         <HandleBatch key={batch} boxes={list} fine={!economy} castShadow={shadows} />
       ))}
+      {drill3dAll && <DrillHoles3D holes={drill3dAll.holes} parts={drill3dAll.parts} focus={drillFocus} fasteners={drill3dAll.fasteners} />}
       {/* Стекло дверцы прибора: по нему духовка узнаётся с трёх метров. */}
       <InstancedBoxes
         name={APPLIANCE_GLASS_NAME}
@@ -1715,14 +1768,36 @@ function SceneProbe({ group, run }: { group: React.RefObject<THREE.Group>; run: 
      */
     /* Сколько деталей сейчас едет (`movingParts`) — тот же учёт, по которому ждёт захват кадра. */
     (w as { __mwMovingCount?: () => number }).__mwMovingCount = () => movingParts();
+    /* Звенья петель в кадре (HW-03): длина каждого нарисованного, метры, и аномалии сцены — приёмке. */
+    (w as { __mwHingeLinks?: () => unknown }).__mwHingeLinks = () => {
+      const lengths: number[] = [];
+      group.current?.traverse((object) => {
+        if (object.name === 'hinge-link' && object.visible) lengths.push(object.scale.x);
+      });
+      const anomalies = (w as { __mwSceneAnomalies?: unknown[] }).__mwSceneAnomalies ?? [];
+      return { count: lengths.length, maxM: lengths.length ? Math.max(...lengths) : 0, anomalies: anomalies.length };
+    };
+    /* Модели реестра 3D в кадре (ТЗ 2026-10-31, § 3): сетки по ролям — приёмке. */
+    (w as { __mwTwins?: () => unknown }).__mwTwins = () => {
+      const meshes: Record<string, number> = {};
+      group.current?.traverse((object) => {
+        const mesh = object as THREE.Mesh;
+        if (mesh.isMesh && mesh.name.startsWith('twin:')) meshes[mesh.name] = (meshes[mesh.name] ?? 0) + 1;
+      });
+      return meshes;
+    };
     (w as { __mwMoving?: (id: string) => unknown }).__mwMoving = (id: string) => {
       const target = group.current?.getObjectByName(`part:${id}`);
       const carrier = target?.parent;
       if (!carrier) return null;
       const names: Record<string, number> = {};
+      /* Сечения металлических деталей на ходу (ТЗ 2026-10-31, § 5, 8): царги и секции — профилем, а не бруском. */
+      const sections: Record<string, number> = {};
       carrier.traverse((object) => {
         if (object === carrier || !(object as THREE.Mesh).isMesh || !object.name || object.name.startsWith('part:')) return;
         names[object.name] = (names[object.name] ?? 0) + 1;
+        const section = object.userData?.section as string | undefined;
+        if (section) sections[section] = (sections[section] ?? 0) + 1;
       });
       /* Где деталь в мире (центр зоны касания), метры: приёмке — куда навести камеру для снимка. */
       const world = new THREE.Vector3();
@@ -1745,6 +1820,7 @@ function SceneProbe({ group, run }: { group: React.RefObject<THREE.Group>; run: 
       group.current!.getWorldQuaternion(root);
       const turn = new THREE.Euler().setFromQuaternion(root.invert().multiply(own), 'XYZ');
       return {
+        sections,
         middleShift: middle,
         shift: [carrier.position.x, carrier.position.y, carrier.position.z].map((v) => Math.round(v * 1000)),
         rotationDeg: [turn.x, turn.y].map((v) => Math.round((v * 180) / Math.PI)),
@@ -1758,6 +1834,8 @@ function SceneProbe({ group, run }: { group: React.RefObject<THREE.Group>; run: 
       delete w.__mwPartPoint;
       delete (w as { __mwPartSlide?: unknown }).__mwPartSlide;
       delete (w as { __mwMoving?: unknown }).__mwMoving;
+      delete (w as { __mwHingeLinks?: unknown }).__mwHingeLinks;
+      delete (w as { __mwTwins?: unknown }).__mwTwins;
       delete (w as { __mwMovingCount?: unknown }).__mwMovingCount;
       delete (w as { __mwOpenableIds?: unknown }).__mwOpenableIds;
       delete (w as { __mwPartSize?: unknown }).__mwPartSize;

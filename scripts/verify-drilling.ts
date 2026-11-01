@@ -30,8 +30,10 @@ import { HARDWARE_FACTS, hardwareCatalogRow } from '../lib/millwork/hardwareCata
 import { drillChecks, drillingPlan, type DrillPart, type DrillingPlan } from '../lib/millwork/drillingPlan';
 import { DRILL_CSV_HEADER, drillingCsv, drillingDxf, drillingJson, readDrillDxf } from '../lib/millwork/drillingExport';
 import { unzipStored, zipFiles } from '../lib/millwork/zip';
-import { objectPanels } from '../lib/millwork/panels';
-import { runBoxes } from '../lib/millwork/cabinetBoxes';
+import { objectPanels, SIDE_PANEL_NAME } from '../lib/millwork/panels';
+import { runBoxes, runBoxesByModule } from '../lib/millwork/cabinetBoxes';
+import { drillHoles3d } from '../lib/millwork/drillHoles3d';
+import { fasteners3d } from '../lib/millwork/fasteners3d';
 import { BAZIS_CHECK_WORDS, BAZIS_PACKAGE_VERSION, bazisPackage } from '../lib/millwork/bazisExport';
 
 type Check = (name: string, ok: boolean, detail?: string) => void;
@@ -113,7 +115,7 @@ function kitchen(production: ProductionSettings) {
     const run = shown().run;
     return drillingPlan({ walls: panelWallsOf(null, wallSegments(null, run, {}), input.runWallId), production: p, hardware: CATALOG });
   };
-  return { shown, ops, plan };
+  return { shown, ops, plan, input };
 }
 
 function partOf(plan: DrillingPlan, moduleId: string, role: DrillPart['role'], leaf?: string): DrillPart {
@@ -506,6 +508,105 @@ export function drillingChecks(outer?: Check): { passed: number; failed: number 
   }
 
   void moduleOf;
+  /*
+   * ── DR3D: ПРИСАДКА 3D (ТЗ 2026-10-31, § 10–11) — отображение операций плана ──
+   * Тот же план (CLIP top + планка, полкодержатели, конфирматы по правилам
+   * цеха), коробки — те, что рисует сцена (`runBoxesByModule`).
+   */
+  {
+    const plan3d = drillHoles3d(plan, [{ wallId: k.input.runWallId, run }], { thicknessMm: 16, frontThicknessMm: 16, gapMm: 4, hardware: CATALOG, production: SHOP });
+    const totalOps = plan.parts.reduce((s, p) => s + p.ops.length, 0);
+    const unplacedOps = plan3d.unplaced.reduce((s, u) => s + (u.opId ? 1 : (plan.parts.find((p) => p.partId === u.partId)?.ops.length ?? 0)), 0);
+    const boxes = runBoxesByModule(run, { thicknessMm: 16, frontThicknessMm: 16, gapMm: 4, hardware: CATALOG, production: SHOP }).modules.flatMap((m) => m.boxes);
+    /* Устье на грани коробки и сверло внутрь: точка на половине глубины (не дальше толщины) — внутри коробки. */
+    /* Деревянная деталь (корпус, фасад, полки) — металл петель и направляющих в счёт не идёт. */
+    const wood = boxes.filter((b) => b.material !== 'metal');
+    const inBox = (b: (typeof boxes)[number], p: [number, number, number]) => [0, 1, 2].every((k) => Math.abs(p[k] - b.position[k]) <= b.scale[k] / 2 + 1e-9);
+    const onFace = (h: (typeof plan3d.holes)[number]) => {
+      const step = Math.min(h.depthM, 0.016) / 2;
+      const inner: [number, number, number] = [h.at[0] + h.dir[0] * step, h.at[1] + h.dir[1] * step, h.at[2] + h.dir[2] * step];
+      const outer: [number, number, number] = [h.at[0] - h.dir[0] * 0.0005, h.at[1] - h.dir[1] * 0.0005, h.at[2] - h.dir[2] * 0.0005];
+      /* Устье — на грани ТОЙ детали, в которую идёт сверло: точка внутри неё, на 0,5 мм снаружи — уже не в ней. */
+      const own = wood.filter((b) => inBox(b, inner));
+      return own.length > 0 && own.some((b) => !inBox(b, outer)) && Math.abs(Math.hypot(...h.dir) - 1) < 1e-9;
+    };
+    const bad = plan3d.holes.filter((h) => !onFace(h));
+    const byRole = plan3d.holes.reduce<Record<string, number>>((m, h) => ({ ...m, [h.role]: (m[h.role] ?? 0) + 1 }), {});
+    check(
+      'DR3D1 присадка 3D: каждое отверстие плана — на грани своей нарисованной коробки, сверло внутрь детали (единичная ось); полкодержатели, планки, чашки и конфирматы — все',
+      plan3d.holes.length > 0 && bad.length === 0 && (byRole.hinge_cup ?? 0) > 0 && (byRole.hinge_plate ?? 0) > 0,
+      `отверстий ${plan3d.holes.length}: ${Object.entries(byRole).map(([k, v]) => `${k} ${v}`).join(', ')} · мимо грани ${bad.length}${bad[0] ? ` (первое ${bad[0].partId}/${bad[0].opId})` : ''}`,
+    );
+    /* Чашки в 3D-присадке — там же, где чашки петель сцены (обе — `hingeCupPlace`). */
+    const sceneCups = boxes.filter((b) => b.node === 'hinge' && b.hinge?.half === 'cup' && b.part === `${DOOR}:door:0`).map((b) => b.hinge!.origin);
+    const drillCups = plan3d.holes.filter((h) => h.role === 'hinge_cup' && plan.parts.find((p) => p.partId === h.partId)?.moduleId === DOOR);
+    const matched = drillCups.filter((h) => sceneCups.some((o) => Math.abs(o[0] - h.at[0]) < 5e-5 && Math.abs(o[1] - h.at[1]) < 5e-5));
+    check(
+      'DR3D2 чашки 3D-присадки = чашки петель сцены (одна `hingeCupPlace`): по X и высоте расхождение меньше 0,05 мм; устье — на тыле фасада, сверло — в фасад; едут с той створкой, что в сцене (`part:<модуль>:door:0`), а отверстия боковины не едут',
+      drillCups.length === 2 &&
+        sceneCups.length === 2 &&
+        matched.length === 2 &&
+        drillCups.every((h) => h.dir[2] > 0.99 && h.carrier === `${DOOR}:door:0`) &&
+        plan3d.holes.filter((h) => h.role === 'hinge_plate').every((h) => h.carrier === undefined),
+      `присадка ${drillCups.map((h) => `${(h.at[0] * 1000).toFixed(1)}/${(h.at[1] * 1000).toFixed(1)}`).join(', ')} · сцена ${sceneCups.map((o) => `${(o[0] * 1000).toFixed(1)}/${(o[1] * 1000).toFixed(1)}`).join(', ')}`,
+    );
+    check(
+      'DR3D3 ни одна операция не потеряна молча: отверстий 3D + непоставленных = операций плана; непоставленные — словами',
+      plan3d.holes.length + unplacedOps === totalOps && plan3d.unplaced.every((u) => u.why.length > 0),
+      `операций ${totalOps} · в 3D ${plan3d.holes.length} · не поставлено ${unplacedOps}${plan3d.unplaced[0] ? ` («${plan3d.unplaced[0].why}»)` : ''}`,
+    );
+    /* Пласти A и B у боковины — те, что в плане: сквозной конфирмат с наружной пласти выходит
+       ровно в устье торцевого отверстия дна или крыши, планка — на внутренней пласти (между боковинами). */
+    const sideXs = runBoxesByModule(run, { thicknessMm: 16, frontThicknessMm: 16, gapMm: 4, hardware: CATALOG, production: SHOP }).modules.map((m) => {
+      const sides = m.boxes.filter((b) => b.panel === SIDE_PANEL_NAME && !b.part).sort((a, b) => a.position[0] - b.position[0]);
+      return { id: m.unit.id, inner: sides.length >= 2 ? [sides[0].position[0] + sides[0].scale[0] / 2, sides[sides.length - 1].position[0] - sides[sides.length - 1].scale[0] / 2] : null };
+    });
+    const moduleOf = (h: (typeof plan3d.holes)[number]) => plan.parts.find((p) => p.partId === h.partId)?.moduleId;
+    const edges = plan3d.holes.filter((h) => h.role === 'confirmat_edge');
+    const faces = plan3d.holes.filter((h) => h.role === 'confirmat_face');
+    const near = (a: number, b: number) => Math.abs(a - b) < 5e-5;
+    /* Пара — по операциям плана, а не «какая-нибудь рядом»: торец `conf-x0-i` дна идёт в `conf-bottom-i` левой боковины того же модуля. */
+    const partOf = (h: (typeof plan3d.holes)[number]) => plan.parts.find((p) => p.partId === h.partId)!;
+    const paired = edges.filter((e) => {
+      const ep = partOf(e);
+      const [, end, i] = e.opId.split('-');
+      const f = faces.find((x) => {
+        const fp = partOf(x);
+        return fp.moduleId === ep.moduleId && fp.role === (end === 'x0' ? 'side_left' : 'side_right') && x.opId === `conf-${ep.role}-${i}`;
+      });
+      return Boolean(f) && near(f!.at[1], e.at[1]) && near(f!.at[2], e.at[2]) && near(f!.at[0] + f!.dir[0] * f!.depthM, e.at[0]);
+    });
+    const plates = plan3d.holes.filter((h) => h.role === 'hinge_plate');
+    const platesInside = plates.filter((h) => {
+      const inner = sideXs.find((m) => m.id === moduleOf(h))?.inner;
+      return Boolean(inner) && h.at[0] >= inner![0] - 1e-9 && h.at[0] <= inner![1] + 1e-9;
+    });
+    check(
+      'DR3D4 пласти боковины в 3D — те, что в плане: каждый сквозной конфирмат с наружной пласти B выходит ровно в устье торцевого отверстия дна или крыши (X, высота и глубина — меньше 0,05 мм), отверстия планки — на внутренней пласти A, между боковинами модуля',
+      edges.length > 0 && paired.length === edges.length && plates.length > 0 && platesInside.length === plates.length,
+      `торцевых ${edges.length}, сошлись со сквозными ${paired.length} · планки ${platesInside.length} из ${plates.length} на внутренней пласти`,
+    );
+    /* Крепления 3D — из пар отверстий плана: стержень конфирмата = толщина боковины + глубина торцевого (правило цеха). */
+    const fx = fasteners3d(plan, plan3d.holes);
+    const conf = SHOP.drilling!.confirmat!;
+    const sideT = (h: (typeof fx.fasteners)[number]) => plan.parts.find((p) => p.moduleId === h.moduleId && (p.role === 'side_left' || p.role === 'side_right'))!.thicknessMm;
+    const lengthsOk = fx.fasteners.every((f) => Math.abs(f.lengthM * 1000 - (sideT(f) + conf.edgeDepthMm)) < 0.05 && Math.abs(f.diameterM * 1000 - conf.faceDiameterMm) < 1e-6);
+    /* Пара, разошедшаяся с осью, — не крепёж: торцевое отверстие сдвинуто на 1 мм — стержня нет, причина словами. */
+    const shifted = plan3d.holes.map((h, i) => (h.role === 'confirmat_edge' && i === plan3d.holes.findIndex((x) => x.role === 'confirmat_edge') ? { ...h, at: [h.at[0], h.at[1] + 0.001, h.at[2]] as [number, number, number] } : h));
+    const fxBad = fasteners3d(plan, shifted);
+    check(
+      'DR3D5 крепления 3D (`fasteners3d`): конфирмат на каждое сквозное отверстие боковины и стягивает боковину с дном или крышей — длина = толщина боковины + глубина торцевого по правилу цеха, Ø — сквозного; торцевое не на оси (сдвиг 1 мм) — стержня нет, причина словами',
+      fx.fasteners.length === faces.length &&
+        fx.broken.length === 0 &&
+        lengthsOk &&
+        fx.fasteners.every((f) => {
+          const [a, b] = f.parts.map((id) => plan.parts.find((p) => p.partId === id)?.role);
+          return (a === 'side_left' || a === 'side_right') && (b === 'bottom' || b === 'top');
+        }) && fxBad.fasteners.length === faces.length - 1 && fxBad.broken.length === 1 && /не на оси/.test(fxBad.broken[0].why),
+      `конфирматов ${fx.fasteners.length} из ${faces.length} · длина ${fx.fasteners[0] ? (fx.fasteners[0].lengthM * 1000).toFixed(1) : '—'} мм (боковина + ${conf.edgeDepthMm}) · сдвинутая пара: ${fxBad.broken[0]?.why ?? 'НЕ ПОЙМАНА'}`,
+    );
+  }
+
   console.log(`\nHW-08 присадка: ${passed} / ${failed}`);
   return { passed, failed };
 }

@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { useInteriorStore } from '@/store/useInteriorStore';
 import {
   ROD_NOTE,
   ROD_VISUAL_DIAMETER_MM,
@@ -969,6 +970,13 @@ function DrawerStackEditor({
    */
   baseMm?: number;
 }) {
+  /* Список направляющих — каталог производителей по требованию (ТЗ 2026-10-31, § 21): «нет» и «ещё не прочитан» — разное. */
+  const orgId = useInteriorStore((s) => s.orgId);
+  const listState = useInteriorStore((s) => s.hardwareList.state);
+  useEffect(() => {
+    if (!orgId || listState !== 'idle') return;
+    void import('@/components/hardwareListLoader').then((loader) => loader.ensureHardwareList());
+  }, [orgId, listState]);
   const slide = raw?.slideItemId ? (slides.find((item) => item.id === raw.slideItemId) ?? null) : null;
   const readiness = raw ? drawerStackReadiness(raw, slide, null, stack.depthMm) : null;
   const removeNote = removeDrawerStackNote(unit, stack.bayId);
@@ -1170,7 +1178,11 @@ function DrawerStackEditor({
         </select>
         {slides.length === 0 && (
           <span className="mt-1 block text-[12px] leading-snug text-graphiteMw" data-drawer-no-slides>
-            В каталоге организации направляющих нет — выбрать не из чего.
+            {orgId && listState === 'loading'
+              ? 'Каталог направляющих загружается…'
+              : orgId && listState === 'error'
+                ? 'Каталог фурнитуры производителей не прочитался — откройте «Фурнитуру» и нажмите «Повторить».'
+                : 'В каталоге организации направляющих нет — выбрать не из чего.'}
           </span>
         )}
       </label>

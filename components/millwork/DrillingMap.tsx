@@ -43,6 +43,8 @@ type Props = {
   onRules: (next: DrillingSettings) => void;
   onSave?: (next: DrillingSettings) => Promise<string | null>;
   dirty: boolean;
+  /** «Показать в 3D» (§ 11): деталь подсвечена в сцене, камера — к ней. */
+  onShow3d?: (partId: string) => void;
 };
 
 const DPI = 160;
@@ -95,7 +97,7 @@ const fileBase = (title: string, date: string) => `Присадка ${title.repl
 type Filter = 'drilled' | 'pending' | 'all';
 
 export default function DrillingMap(props: Props) {
-  const { walls, title, projectId, production, milling, carcass, hardware, fingerprint, exportLock, estimateLines, rules, onRules, onSave, dirty } = props;
+  const { walls, title, projectId, production, milling, carcass, hardware, fingerprint, exportLock, estimateLines, rules, onRules, onSave, dirty, onShow3d } = props;
   const plan = useMemo(
     () => drillingPlan({ walls, production: { ...production, drilling: rules }, hardware, milling, carcass }),
     [walls, production, rules, hardware, milling, carcass],
@@ -320,6 +322,11 @@ export default function DrillingMap(props: Props) {
               <span className="text-[13px] text-graphiteMw">
                 {part.wallLabel} · {part.moduleLabel} · {part.material} · {part.lengthMm} × {part.widthMm} × {part.thicknessMm} мм · штука {part.piece}
               </span>
+              {onShow3d && (
+                <button type="button" className="mw-btn mw-btn-ghost" onClick={() => onShow3d(part.partId)} data-drill-show3d={part.partId}>
+                  Показать в 3D
+                </button>
+              )}
             </div>
             <p className="text-[13px] text-graphiteMw">{part.axes}</p>
             <div className="flex gap-1" role="group" aria-label="Пласть">

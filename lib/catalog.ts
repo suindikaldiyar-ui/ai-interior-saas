@@ -111,6 +111,8 @@ const LIGHT_COLUMNS = [
   'id, org_id, category_id, article, name_ru, name_kk, description, price, unit, dimensions, tiling, is_active',
   'meta_estimateKey:meta->estimateKey',
   'meta_media:meta->media',
+  /* Реестр 3D (`meta.twin`, ТЗ 2026-10-31, § 3) — мал и нужен списку: статус модели и путь к файлу. */
+  'meta_twin:meta->twin',
   ...HARDWARE_LIGHT_FIELDS.map((key) => `hw_${key}:meta->hardware->${key}`),
   'catalog_categories!inner(id, org_id, key, name_ru, name_kk, applies_to, unit, sort_order, is_active)',
   'catalog_assets(id, item_id, kind, role, storage_path, sort_order)',
@@ -119,12 +121,23 @@ const LIGHT_COLUMNS = [
 /**
  * КАК ЧИТАТЬ ПОЗИЦИИ ПРОИЗВОДИТЕЛЕЙ.
  *
- *   'full'  — строка целиком: админка, кабинет клиента, автопроект;
- *   'light' — у позиций «MFR-…» без паспорта карточки (`detail: 'light'`):
- *             рабочее место и Studio. Паспорт установленной позиции и
- *             открытой карточки дочитывает `fetchCatalogDetails`.
+ *   'full'       — строка целиком: админка;
+ *   'light'      — у позиций «MFR-…» без паспорта карточки (`detail: 'light'`);
+ *   'referenced' — позиции компании целиком, позиции производителей — только
+ *                  те, у которых есть статья сметы (ставка), и те, на которые
+ *                  ссылается объект (`ids`, строками целиком). Открытие
+ *                  объекта, кабинет клиента, список объектов, автопроект.
+ *
+ * ПОЧЕМУ 'referenced' (ТЗ 2026-10-31, § 21). 5264 позиции производителей
+ * лёгким чтением — 7,9 МБ ответа (36 путей `meta->hardware->…` на строку,
+ * у большинства `null`), страница 1000 строк — 4–5 с прогретая и 15–27 с
+ * холодная; под нагрузкой — «canceling statement due to statement timeout»,
+ * и объект не открывался вовсе. Открытию объекта список производителей не
+ * нужен: ставки — у позиций со статьёй сметы, сцене и смете — позиции,
+ * поставленные на модули. Список целиком нужен только панели «Фурнитура»
+ * и читается ею (`fetchHardwareList`).
  */
-export type CatalogReadOptions = { hardware?: 'full' | 'light' };
+export type CatalogReadOptions = { hardware?: 'full' | 'light' | 'referenced'; ids?: string[] };
 
 type LightRow = Omit<RawItem, 'meta'> & Record<string, unknown>;
 
@@ -139,6 +152,7 @@ function lightRowItem(row: LightRow): RawItem & { detail: 'light' } {
   if (row.meta_estimateKey !== null && row.meta_estimateKey !== undefined) meta.estimateKey = row.meta_estimateKey;
   /* Изображения позиции (`meta.media`) — малы и нужны списку целиком. */
   if (row.meta_media !== null && row.meta_media !== undefined) meta.media = row.meta_media;
+  if (row.meta_twin !== null && row.meta_twin !== undefined) meta.twin = row.meta_twin;
   if (Object.keys(hardware).length > 0) meta.hardware = hardware;
   const item: Record<string, unknown> = { ...row, meta, detail: 'light' };
   for (const key of Object.keys(item)) if (key.startsWith('hw_') || key.startsWith('meta_')) delete item[key];
@@ -249,6 +263,45 @@ export async function fetchCatalog(
 ): Promise<CatalogRead> {
   const items = () => supabase.from('catalog_items');
   const counted = (count: boolean) => (count ? { count: 'exact' as const } : undefined);
+  if (options.hardware === 'referenced') {
+    const ownRows = await readPages(`организация ${orgId}, позиции компании`, (from, to, count) =>
+      items()
+        .select(FULL_COLUMNS, counted(count))
+        .eq('org_id', orgId)
+        .eq('is_active', true)
+        .not('article', 'like', MFR_PATTERN)
+        .order('article')
+        .order('id')
+        .range(from, to),
+    );
+    /* Позиции производителей со статьёй сметы — ставка, как у любой позиции (`ratesFromCatalog`). */
+    const ratedRows = await readPages(`организация ${orgId}, позиции производителей со ставкой`, (from, to, count) =>
+      items()
+        .select(FULL_COLUMNS, counted(count))
+        .eq('org_id', orgId)
+        .eq('is_active', true)
+        .like('article', MFR_PATTERN)
+        .not('meta->>estimateKey', 'is', null)
+        .order('article')
+        .order('id')
+        .range(from, to),
+    );
+    if (!ownRows || !ratedRows) return { entries: null, error: CATALOG_READ_ERROR };
+    const have = new Set([...(ownRows as RawItem[]), ...(ratedRows as RawItem[])].map((row) => row.id));
+    const wanted = Array.from(new Set(options.ids ?? [])).filter((id) => !have.has(id));
+    const referenced: RawItem[] = [];
+    /* По 100 идентификаторов: список уходит в адрес запроса. */
+    for (let at = 0; at < wanted.length; at += 100) {
+      const part = wanted.slice(at, at + 100);
+      const { data, error } = await items().select(FULL_COLUMNS).eq('org_id', orgId).in('id', part);
+      if (error || !data) {
+        console.error(`[каталог] организация ${orgId}: позиции объекта (${part.length}) не прочитались —`, error?.message ?? 'пустой ответ без ошибки');
+        return { entries: null, error: CATALOG_READ_ERROR };
+      }
+      referenced.push(...(data as unknown as RawItem[]));
+    }
+    return { error: null, entries: await entriesOf([...(ownRows as RawItem[]), ...(ratedRows as RawItem[]), ...referenced]) };
+  }
   if (options.hardware !== 'light') {
     const rows = await readPages(`организация ${orgId}`, (from, to, count) =>
       items().select(FULL_COLUMNS, counted(count)).eq('org_id', orgId).eq('is_active', true).order('article').order('id').range(from, to),
@@ -285,6 +338,71 @@ export async function fetchCatalog(
     error: null,
     entries: await entriesOf([...(own as RawItem[]), ...(makers as LightRow[]).map(lightRowItem)]),
   };
+}
+
+/** Что сказать, когда список фурнитуры производителей не прочитался. Цены объекта он не трогает. */
+export const HARDWARE_LIST_ERROR =
+  'Каталог фурнитуры производителей не прочитался — список мест пуст, поставленная фурнитура и цены на месте. Повторите.';
+
+/**
+ * СПИСОК ФУРНИТУРЫ ПРОИЗВОДИТЕЛЕЙ — ПО ТРЕБОВАНИЮ ПАНЕЛИ (ТЗ 2026-10-31, § 21).
+ *
+ * Лёгкие строки «MFR-…» (`detail: 'light'`), страницами по 500 и не больше
+ * трёх одновременно: страница в 1000 строк одна стоила 4–5 с прогретая и до
+ * 27 с холодная, шесть разом упирались в предел запроса. Число строк — у
+ * первой страницы; прочитано не столько — ошибка, а не урезанный список.
+ * `onProgress` — сколько строк уже пришло (панель говорит это словами).
+ */
+export async function fetchHardwareList(
+  supabase: SupabaseClient,
+  orgId: string,
+  onProgress?: (read: number, total: number | null) => void,
+): Promise<CatalogRead> {
+  const PAGE = 500;
+  const PARALLEL = 3;
+  const what = `организация ${orgId}, список фурнитуры производителей`;
+  const page = (from: number, count: boolean) =>
+    supabase
+      .from('catalog_items')
+      .select(LIGHT_COLUMNS, count ? { count: 'exact' } : undefined)
+      .eq('org_id', orgId)
+      .eq('is_active', true)
+      .like('article', MFR_PATTERN)
+      .order('article')
+      .order('id')
+      .range(from, from + PAGE - 1);
+  const first = (await page(0, true)) as unknown as PageAnswer;
+  if (first.error || !first.data) {
+    console.error(`[каталог] ${what}: чтение строк 0…${PAGE - 1} не удалось —`, first.error?.message ?? 'пустой ответ без ошибки');
+    return { entries: null, error: HARDWARE_LIST_ERROR };
+  }
+  const total = typeof first.count === 'number' ? first.count : null;
+  const rows: unknown[] = [...first.data];
+  onProgress?.(rows.length, total);
+  const starts: number[] = [];
+  if (total !== null) for (let from = PAGE; from < total; from += PAGE) starts.push(from);
+  else if (first.data.length === PAGE) {
+    console.error(`[каталог] ${what}: база не назвала число строк — список не читается частями наугад`);
+    return { entries: null, error: HARDWARE_LIST_ERROR };
+  }
+  for (let i = 0; i < starts.length; i += PARALLEL) {
+    const batch = starts.slice(i, i + PARALLEL);
+    const answers = (await Promise.all(batch.map((from) => page(from, false)))) as unknown as PageAnswer[];
+    for (let k = 0; k < answers.length; k += 1) {
+      const answer = answers[k];
+      if (answer.error || !answer.data) {
+        console.error(`[каталог] ${what}: чтение строк ${batch[k]}…${batch[k] + PAGE - 1} не удалось —`, answer.error?.message ?? 'пустой ответ без ошибки');
+        return { entries: null, error: HARDWARE_LIST_ERROR };
+      }
+      rows.push(...answer.data);
+    }
+    onProgress?.(rows.length, total);
+  }
+  if (total !== null && rows.length !== total) {
+    console.error(`[каталог] ${what}: база назвала ${total} строк, прочитано ${rows.length} — каталог менялся во время чтения`);
+    return { entries: null, error: HARDWARE_LIST_ERROR };
+  }
+  return { error: null, entries: await entriesOf((rows as LightRow[]).map(lightRowItem)) };
 }
 
 /** Что сказать, когда паспорт позиции не дочитался. */

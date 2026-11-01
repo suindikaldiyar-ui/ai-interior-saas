@@ -1,6 +1,7 @@
 import { estimateGroups, type EstimateGroup } from './millwork/estimateGroups';
 import { DEMO_SEED_KEY } from './millwork/demoProject';
 import { projectOffer } from './millwork/objectEstimate';
+import { referencedCatalogIds } from './millwork/hardware';
 import { fetchCatalog } from './catalog';
 import { orgBySlug } from './org';
 import type { MillworkState } from './projects';
@@ -88,7 +89,8 @@ export async function loadDemoPage(slug: string): Promise<DemoPageData | DemoPag
    * причина уходит в лог.
    */
   const [catalogRead, { data: orgRow, error: orgError }] = await Promise.all([
-    fetchCatalog(service, org.id),
+    /* Позиции компании и позиции этого проекта по идентификатору (ТЗ 2026-10-31, § 21). */
+    fetchCatalog(service, org.id, { hardware: 'referenced', ids: referencedCatalogIds(millwork) }),
     service.from('orgs').select('production').eq('id', org.id).maybeSingle(),
   ]);
   if (catalogRead.error !== null) {

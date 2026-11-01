@@ -56,11 +56,12 @@ export default function CatalogLoader({ orgId: knownOrg }: { orgId?: string } = 
 
       setOrgId(orgId);
       /*
-       * Лёгкое чтение (HARDWARE-PHOTO-PERF-01): позиции производителей — без
-       * паспорта карточки. Паспорт установленной фурнитуры дочитывает
-       * рабочее место, открытой карточки — панель фурнитуры.
+       * Открытие объекта (ТЗ 2026-10-31, § 21): позиции компании и позиции
+       * производителей со ставкой. Поставленную фурнитуру дочитывает рабочее
+       * место по идентификаторам объекта, список производителей — панель
+       * «Фурнитура», когда её открыли (`ensureHardwareList`).
        */
-      const read = await fetchCatalog(supabase, orgId, { hardware: 'light' });
+      const read = await fetchCatalog(supabase, orgId, { hardware: 'referenced' });
       if (cancelled) return;
       if (read.error !== null) setCatalogError(read.error);
       else setCatalog(read.entries);

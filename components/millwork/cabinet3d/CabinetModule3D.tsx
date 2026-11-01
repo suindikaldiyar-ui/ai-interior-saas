@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 
 import { useMemo } from 'react';
-import { bayDrawerBoxes, boxShown, closedFrontRect, leafRiders, sceneLeaves, type PartBox } from '@/lib/millwork/cabinetBoxes';
+import { bayDrawerBoxes, boxShown, closedFrontRect, leafRiders, localPartBox, sceneLeaves, type PartBox } from '@/lib/millwork/cabinetBoxes';
 import { DRAWER_SIDE_PANEL_NAME } from '@/lib/millwork/drawerBox';
 import { ALL_LAYERS, type SceneLayers } from '@/lib/millwork/sceneLayers';
 import { ROD_VISUAL_DIAMETER_MM } from '@/lib/millwork/bays';
@@ -157,13 +157,11 @@ export default function CabinetModule3D({
   const isOpen = (id: string) => openParts.includes(id);
 
   /* Коробки детали из пачки ряда — в координатах модуля, только включённых слоёв. */
+  /* Едущая деталь — в местных осях модуля вместе с осью чашки петли (`localPartBox`). */
   const localBoxesOf = (id: string): PartBox[] | undefined =>
     partBoxes?.(id)
       ?.filter((box) => boxShown(box, layers))
-      .map((box) => ({
-        ...box,
-        position: [box.position[0] - x, box.position[1] - y, box.position[2] - zM] as [number, number, number],
-      }));
+      .map((box) => localPartBox(box, [x, y, zM]));
 
   /*
    * ЛЕНТА ВИТРИНЫ В САПР-ВИДЕ (P1) — по раскладке изделия (`vitrineLedStrips`),

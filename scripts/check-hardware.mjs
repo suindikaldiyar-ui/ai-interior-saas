@@ -45,7 +45,7 @@ const PORT = Number(process.env.PORT_HW ?? 3291);
 const BASE = `http://localhost:${PORT}`;
 const OUT = '.capture-check/hardware';
 const PARTS = (process.env.PART ?? 'import,kitchen,kitchen-drawers,kitchen-lift,wardrobe,cargo,corner,tablet').split(',').map((s) => s.trim()).filter(Boolean);
-const KNOWN = ['import', 'kitchen', 'kitchen-drawers', 'kitchen-lift', 'wardrobe', 'cargo', 'corner', 'tablet', 'catalog2', 'drilling', 'drawers'];
+const KNOWN = ['import', 'kitchen', 'kitchen-drawers', 'kitchen-lift', 'wardrobe', 'cargo', 'corner', 'tablet', 'catalog2', 'drilling', 'drawers', 'open', 'twin'];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let failed = 0;
@@ -193,7 +193,7 @@ async function hardwareFor(page, label, moduleId) {
     await sleep(500);
   }
   must(`${label}: инструмент «Фурнитура»`, await tool(page, 'hardware'), 'НУЛЕВОЙ СЕЛЕКТОР: [data-studio-tool="hardware"]');
-  const items = await waitFor(page, () => Number(document.querySelector('[data-hw-panel]')?.getAttribute('data-hw-items') ?? 0), (n) => n >= 1, 60_000);
+  const items = await waitFor(page, () => { const p = document.querySelector('[data-hw-panel]'); const s = p?.getAttribute('data-hw-list'); return s === 'ready' || s === 'demo' ? Number(p.getAttribute('data-hw-items') ?? 0) : s === 'error' ? -1 : 0; }, (n) => n !== 0, 60_000);
   /* Не доехал — что панель говорит словами (ошибка чтения каталога называется там же). */
   const said = items >= FACT_COUNT ? '' : await page.evaluate(() => (document.querySelector('[data-hw-panel]')?.textContent ?? 'ПАНЕЛИ НЕТ').replace(/\s+/g, ' ').slice(0, 240));
   must(`${label}: панель «Фурнитура» видит каталог организации`, items >= FACT_COUNT, `позиций ${items} при ${FACT_COUNT} в фактах · панель: «${said}»`);
@@ -556,6 +556,13 @@ async function partKitchen(browser) {
       await closeUp(page, 'base-1200@w1:door:0');
       await page.screenshot({ path: `${OUT}/kitchen-1-hinges.png`, timeout: 120_000 });
       check('KITCHEN.A2 дверца открыта (поворот ≥ 80°): чашки петель (2) едут с полотном — нарисованы в группе створки', Boolean(door) && Math.abs(door.rotationDeg[1]) >= 80 && door.names['rider:hinge'] === 2, JSON.stringify(door));
+      /* Звенья петель на открытой дверце модуля в 1200 мм от начала ряда: до правки осей они тянулись на эти 1,2 м через комнату. */
+      const links = await page.evaluate(() => (window.__mwHingeLinks ? window.__mwHingeLinks() : null));
+      check(
+        'KITCHEN.A3 звенья петель открытых створок нарисованы и короче 0,1 м (стержней через комнату нет), аномалий сцены нет',
+        Boolean(links) && links.count > 0 && links.maxM <= 0.1 && links.anomalies === 0,
+        JSON.stringify(links),
+      );
       await closeAll(page);
 
 
@@ -595,7 +602,9 @@ async function partKitchenDrawers(browser) {
           (drawer.names['mech:runner'] ?? 0) === 2 &&
           (drawer.names['mech:runner-middle'] ?? 0) === 2 &&
           Array.isArray(drawer.middleShift) &&
-          drawer.middleShift[2] === 250,
+          drawer.middleShift[2] === 250 &&
+          /* Ходовая и средняя секции — С-профилем (ТЗ 2026-10-31, § 8). */
+          (drawer.sections?.['runner-channel'] ?? 0) === 4,
         JSON.stringify(drawer),
       );
       await closeAll(page);
@@ -786,7 +795,10 @@ async function partDrawers(browser) {
           (drawer.names['mech:runner-middle'] ?? 0) === (want.members === 3 ? 2 : 0) &&
           (drawer.names['panel:Дно ящика'] ?? 0) === 1 &&
           (drawer.names['panel:Торец ящика'] ?? 0) === 1 &&
-          (drawer.names['panel:Боковина ящика'] ?? 0) === 0,
+          (drawer.names['panel:Боковина ящика'] ?? 0) === 0 &&
+          /* Царги и ходовые — сечением профиля, а не бруском (ТЗ 2026-10-31, § 5, 8). */
+          (drawer.sections?.['drawer-side'] ?? 0) === 2 &&
+          (drawer.sections?.['runner-channel'] ?? 0) === 2,
         JSON.stringify(drawer),
       );
       await closeAll(page);
@@ -908,6 +920,213 @@ async function partDrawers(browser) {
       );
       await closeAll(page);
       check('DRAWERS ошибок страницы и консоли нет', errors.length === 0 && consoleErrors.length === 0, [...errors, ...consoleErrors].slice(0, 3).join(' | '));
+    },
+    {
+      viewport: { width: 1440, height: 900 },
+      production: { drawerBox: DRAWER_BOX },
+      projects: [{ key: 'kitchen', zone: 'Кухня', fx }],
+    },
+  );
+}
+
+/* ═════════════════════════  OPEN (P0, ТЗ 2026-10-31 § 21)  ═════════════════════════ */
+
+/**
+ * Открытие объекта с каталогом 5264 позиций: время до Studio и до 3D, объём
+ * чтения каталога браузером, поставленная петля в сцене без списка
+ * производителей, список — только по открытию «Фурнитуры». Три открытия:
+ * первое (холодное) и два повторных.
+ */
+async function partOpen(browser) {
+  console.log('\n── OPEN (1440 × 900, P0): объект открывается без списка производителей; поставленная петля в сцене; список — по требованию панели');
+  const fx = fixture('kitchen');
+  await withOrg(
+    'OPEN',
+    browser,
+    async ({ service, org, page, errors, consoleErrors, ids }) => {
+      /* Петля 71B3550 на дверце 450 — до открытия объекта, как у сохранённого заказа. */
+      const { data: hingeRow, error: hingeError } = await service.from('catalog_items').select('id').eq('org_id', org.id).eq('article', 'MFR-BLUM-71B3550').single();
+      if (hingeError || !hingeRow) throw new Stop(`позиции MFR-BLUM-71B3550 в каталоге организации нет: ${hingeError?.message ?? 'пусто'}`);
+      const { data: row } = await service.from('projects').select('millwork').eq('id', ids.kitchen).single();
+      const millwork = row.millwork;
+      const run = millwork.runs.optimal;
+      const door = run.modules.find((m) => m.id === 'base-1200@w1');
+      must('OPEN модуль base-1200@w1 в ряду объекта', Boolean(door), 'НУЛЕВОЙ СЕЛЕКТОР: base-1200@w1');
+      door.fittings = [{ slot: 'hinge', itemId: hingeRow.id }];
+      const { error: upError } = await service.from('projects').update({ millwork }).eq('id', ids.kitchen);
+      if (upError) throw new Stop(`объект не обновился: ${upError.message}`);
+
+      /* Сколько каталога читает браузер: ответы catalog_items, байты тела и запросы списка производителей. */
+      const traffic = { bytes: 0, requests: 0, mfrList: 0 };
+      page.on('response', async (response) => {
+        const url = response.url();
+        if (!url.includes('/rest/v1/catalog_items')) return;
+        traffic.requests += 1;
+        /* Список производителей — «MFR-…» без отбора по статье сметы; запрос позиций со ставкой — не список. */
+        const plain = decodeURIComponent(url);
+        if (plain.includes('article=like.MFR-') && !plain.includes('meta->>estimateKey=not.is.null')) traffic.mfrList += 1;
+        try {
+          traffic.bytes += (await response.body()).length;
+        } catch {
+          /* тело ответа недоступно (перенаправление) — в объём не входит, запрос посчитан */
+        }
+      });
+      const opens = [];
+      for (let i = 0; i < 3; i += 1) {
+        traffic.bytes = 0;
+        traffic.requests = 0;
+        traffic.mfrList = 0;
+        const t0 = Date.now();
+        if (i === 0) await openStudio(page, ids.kitchen);
+        else {
+          await page.reload({ waitUntil: 'domcontentloaded', timeout: 120_000 });
+          await page.waitForSelector('[data-studio-root]', { timeout: 60_000 });
+        }
+        const studioMs = Date.now() - t0;
+        await open3d(page, 'OPEN');
+        const readyMs = Date.now() - t0;
+        /* Поставленная петля — в сцене без панели: позиция объекта дочитана по идентификатору. */
+        const metalNow = await settledMetal(page);
+        opens.push({ studioMs, readyMs, bytes: traffic.bytes, requests: traffic.requests, mfrList: traffic.mfrList, metal: metalNow });
+        console.log(`  ·    открытие ${i + 1}: Studio ${studioMs} мс · 3D ${readyMs} мс · каталог браузером ${Math.round(traffic.bytes / 1024)} кБ в ${traffic.requests} запросах · запросов списка производителей ${traffic.mfrList}`);
+      }
+      const doorOpen = await openAll(page, 'base-1200@w1:door:0', (v) => Math.abs(v.rotationDeg[1]) >= 80);
+      const links = await page.evaluate(() => (window.__mwHingeLinks ? window.__mwHingeLinks() : null));
+      await closeUp(page, 'base-1200@w1:door:0');
+      await page.screenshot({ path: `${OUT}/open-1-hinge-without-list.png`, timeout: 120_000 });
+      check(
+        'OPEN.A объект открывается без списка производителей: запросов списка «MFR-…» 0 при каждом из трёх открытий, каталог браузером — меньше 1 МБ',
+        opens.every((o) => o.mfrList === 0 && o.bytes < 1024 * 1024),
+        opens.map((o) => `${Math.round(o.bytes / 1024)} кБ / ${o.mfrList}`).join(' · '),
+      );
+      check(
+        'OPEN.B поставленная петля 71B3550 — в сцене без открытия «Фурнитуры»: чашки едут с дверцей, звенья короче 0,1 м, аномалий сцены нет (предохранитель ничего не спрятал)',
+        Boolean(doorOpen) && doorOpen.names['rider:hinge'] === 2 && Boolean(links) && links.count > 0 && links.maxM <= 0.1 && links.anomalies === 0,
+        `${JSON.stringify(doorOpen?.names)} · звенья ${JSON.stringify(links)}`,
+      );
+      await closeAll(page);
+
+      /* Панель «Фурнитура» — список производителей по требованию, со словами о загрузке. */
+      const t1 = Date.now();
+      must('OPEN инструмент «Выбор»', await tool(page, 'select'), 'НУЛЕВОЙ СЕЛЕКТОР: [data-studio-tool="select"]');
+      must('OPEN инструмент «Фурнитура»', await tool(page, 'hardware'), 'НУЛЕВОЙ СЕЛЕКТОР: [data-studio-tool="hardware"]');
+      const sawProgress = await waitFor(page, () => document.querySelector('[data-hw-panel]')?.getAttribute('data-hw-list') ?? null, (s) => s === 'loading' || s === 'ready' || s === 'error', 30_000);
+      const state = await waitFor(page, () => document.querySelector('[data-hw-panel]')?.getAttribute('data-hw-list') ?? null, (s) => s === 'ready' || s === 'error', 180_000);
+      const listMs = Date.now() - t1;
+      const items = await page.evaluate(() => Number(document.querySelector('[data-hw-panel]')?.getAttribute('data-hw-items') ?? 0));
+      console.log(`  ·    список производителей: ${state} за ${listMs} мс · ${Math.round(traffic.bytes / 1024)} кБ · позиций в панели ${items}`);
+      check(
+        'OPEN.C «Фурнитура» читает список производителей по требованию: все 5264 позиции в панели; пока читается — состояние «загружается»',
+        sawProgress !== null && state === 'ready' && items >= FACT_COUNT && traffic.mfrList > 0,
+        `состояние ${state} · позиций ${items} при ${FACT_COUNT} · запросов списка ${traffic.mfrList}`,
+      );
+      check('OPEN ошибок страницы и консоли нет', errors.length === 0 && consoleErrors.length === 0, [...errors, ...consoleErrors].slice(0, 3).join(' | '));
+    },
+    {
+      viewport: { width: 1440, height: 900 },
+      production: { drawerBox: DRAWER_BOX },
+      projects: [{ key: 'kitchen', zone: 'Кухня', fx }],
+    },
+  );
+}
+
+/* ═════════════════════════  TWIN (P1, ТЗ 2026-10-31 § 3–4)  ═════════════════════════ */
+
+/**
+ * «Импорт CAD-фурнитуры» → реестр → сцена. Файл — тестовая реконструкция
+ * петли 71B3550 (`scripts/twin-test-asset.ts`, НЕ CAD производителя), статус —
+ * визуальная реконструкция, источник — собственная. Проверяется путь:
+ * разбор, габарит в мм, отказ при неверных единицах, монтажная точка, роли,
+ * запись (`meta.twin` + файл в Storage), модель в сцене на оси чашки,
+ * чашка едет с дверцей, снятие модели — файлы удалены (чтением).
+ */
+async function partTwin(browser) {
+  console.log('\n── TWIN (1440 × 900, P1): «Импорт CAD-фурнитуры» → реестр 3D → петля в сцене → снятие');
+  const fx = fixture('kitchen');
+  const asset = resolve('.capture-check/hardware/twin-hinge-71B3550.glb');
+  const made = JSON.parse(execSync(`npx tsx --tsconfig tsconfig.scripts.json scripts/twin-test-asset.ts "${asset}"`, { encoding: 'utf8' }));
+  await withOrg(
+    'TWIN',
+    browser,
+    async ({ service, org, page, errors, consoleErrors, ids }) => {
+      const { data: hingeRow } = await service.from('catalog_items').select('id').eq('org_id', org.id).eq('article', 'MFR-BLUM-71B3550').single();
+      must('TWIN позиция MFR-BLUM-71B3550 в каталоге организации', Boolean(hingeRow), 'НУЛЕВОЙ СЕЛЕКТОР: MFR-BLUM-71B3550');
+      try {
+        await page.goto(`${BASE}/admin/catalog/cad`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+        await page.waitForSelector('[data-cad-import]', { timeout: 60_000 });
+        await page.locator('[data-cad-item-search]').fill('71B3550');
+        await page.waitForSelector('[data-cad-item="MFR-BLUM-71B3550"]', { timeout: 30_000 });
+        await page.locator('[data-cad-item="MFR-BLUM-71B3550"]').click();
+        await page.locator('[data-cad-file]').setInputFiles(asset);
+        await page.waitForSelector('[data-cad-preview="ready"]', { timeout: 60_000 });
+        const bounds = await page.getAttribute('[data-cad-bounds]', 'data-cad-bounds');
+        const okCheck = await page.getAttribute('[data-cad-check]', 'data-cad-check');
+        /* Неверные единицы: тот же файл «в метрах» — габарит в 1000 раз больше, записать нельзя. */
+        await page.locator('[data-cad-units]').selectOption('m');
+        const refused = await waitFor(page, () => document.querySelector('[data-cad-check]')?.getAttribute('data-cad-check') ?? null, (v) => v === 'refused', 10_000);
+        const saveDisabledWhenWrong = await page.locator('[data-cad-save]').isDisabled();
+        await page.locator('[data-cad-units]').selectOption('mm');
+        check(
+          `TWIN.A разбор GLB: габарит после нормализации ${made.size.join('×')} мм = файлу; против изделия — да; тот же файл «в метрах» — отказ словами и запись заперта`,
+          bounds === made.size.join('x') && okCheck === 'ok' && refused === 'refused' && saveDisabledWhenWrong,
+          `габарит ${bounds} · проверка ${okCheck} → в метрах ${refused} (кнопка ${saveDisabledWhenWrong ? 'заперта' : 'ОТКРЫТА'})`,
+        );
+        await page.locator('[data-cad-anchor]').selectOption('custom');
+        await page.locator('[data-cad-role="cup"]').selectOption('moving');
+        await page.locator('[data-cad-source-kind]').selectOption('drawing_reconstruction');
+        await page.locator('[data-cad-license]').fill('собственная реконструкция ALDIK Studio (тестовый файл приёмки, не CAD производителя)');
+        await page.locator('[data-cad-rights]').selectOption('VERIFIED');
+        await page.locator('[data-cad-rights-note]').fill('геометрия построена ALDIK Studio по паспорту 71B3550');
+        await page.locator('[data-cad-visual]').check();
+        const anchorMm = await page.getAttribute('[data-cad-anchor-mm]', 'data-cad-anchor-mm');
+        await page.screenshot({ path: `${OUT}/twin-1-import.png`, timeout: 120_000 });
+        await page.locator('[data-cad-save]').click();
+        const savedSha = await waitFor(page, () => document.querySelector('[data-cad-notice]')?.getAttribute('data-cad-saved') ?? null, (v) => Boolean(v), 60_000);
+        const notice = await page.evaluate(() => document.querySelector('[data-cad-notice]')?.textContent ?? '');
+        const { data: row } = await service.from('catalog_items').select('meta').eq('id', hingeRow.id).single();
+        const twin = row?.meta?.twin;
+        const folder = `${org.id}/hardware-cad/${hingeRow.id}`;
+        const { data: files } = await service.storage.from('catalog').list(folder);
+        check(
+          'TWIN.B запись: в `meta.twin` — статус «визуальная реконструкция», источник собственный, монтажная точка 0,0,0 (ось чашки), чашка едет, плечо стоит; `meta.hardware` цел; файл GLB — в Storage папки позиции с тем же sha256',
+          Boolean(savedSha) &&
+            twin?.status === 'VISUAL_RECONSTRUCTION' &&
+            twin?.source?.kind === 'drawing_reconstruction' &&
+            anchorMm === '0.0,0.0,0.0' &&
+            twin?.parts?.some((p) => p.node === 'cup' && p.role === 'moving') &&
+            twin?.parts?.some((p) => p.node === 'arm' && p.role === 'fixed') &&
+            Boolean(row?.meta?.hardware?.manufacturer) &&
+            (files ?? []).some((f) => f.name === `${savedSha}.glb`),
+          `${notice.slice(0, 120)} · файлов ${(files ?? []).length}`,
+        );
+
+        /* Сцена: петля на дверце 450 — модель реестра на оси чашки. */
+        const { data: proj } = await service.from('projects').select('millwork').eq('id', ids.kitchen).single();
+        const millwork = proj.millwork;
+        const door = millwork.runs.optimal.modules.find((m) => m.id === 'base-1200@w1');
+        door.fittings = [{ slot: 'hinge', itemId: hingeRow.id }];
+        await service.from('projects').update({ millwork }).eq('id', ids.kitchen);
+        await openStudio(page, ids.kitchen);
+        await open3d(page, 'TWIN');
+        const closed = await waitFor(page, () => (window.__mwTwins ? window.__mwTwins() : null), (v) => Boolean(v) && (v['twin:fixed'] ?? 0) >= 2 && (v['twin:moving'] ?? 0) >= 2, 60_000);
+        const opened = await openAll(page, 'base-1200@w1:door:0', (v) => Math.abs(v.rotationDeg[1]) >= 80);
+        await closeUp(page, 'base-1200@w1:door:0', [-0.35, 0.25, 0.45]);
+        await page.screenshot({ path: `${OUT}/twin-2-hinge-in-scene.png`, timeout: 120_000 });
+        const anomalies = await page.evaluate(() => (window.__mwSceneAnomalies ?? []).length);
+        check(
+          'TWIN.C сцена: у двух петель дверцы — модель реестра (плечи на корпусе, чашки на полотне); дверца открыта — чашки модели едут с ней; аномалий сцены нет',
+          Boolean(closed) && (opened?.names['twin:moving'] ?? 0) >= 2 && Math.abs(opened?.rotationDeg[1] ?? 0) >= 80 && anomalies === 0,
+          `закрыто ${JSON.stringify(closed)} · открыто ${JSON.stringify(opened?.names)} · аномалий ${anomalies}`,
+        );
+        await closeAll(page);
+      } finally {
+        /* Снять модель тем же маршрутом, что экран; файлы — проверка чтением. */
+        const res = await page.request.post(`${BASE}/api/catalog/hardware/twin`, { data: { action: 'remove', itemId: hingeRow.id } });
+        const { data: left } = await service.storage.from('catalog').list(`${org.id}/hardware-cad/${hingeRow.id}`);
+        const { data: after } = await service.from('catalog_items').select('meta').eq('id', hingeRow.id).single();
+        check('TWIN.D «Снять модель»: файлов в Storage 0, `meta.twin` снят, позиция каталога на месте', res.ok() && (left ?? []).length === 0 && !after?.meta?.twin && Boolean(after?.meta?.hardware), `ответ ${res.status()} · файлов ${(left ?? []).length}`);
+      }
+      check('TWIN ошибок страницы и консоли нет', errors.length === 0 && consoleErrors.length === 0, [...errors, ...consoleErrors].slice(0, 3).join(' | '));
     },
     {
       viewport: { width: 1440, height: 900 },
@@ -1289,6 +1508,104 @@ async function partDrilling(browser) {
           notice.includes('Экспорт создан; проверка в БАЗИС ожидается'),
         `${names.join(', ')} · «${notice.slice(0, 90)}»`,
       );
+
+      /* ── ПРИСАДКА 3D (§ 11): «Показать в 3D» у дверцы → отверстия плана в сцене ── */
+      const planOps = probe.parts.reduce((s, p) => s + p.ops.length, 0);
+      const doorOps = door?.ops.length ?? 0;
+      must('DRILLING дверца base-1200@w1 в плане присадки', Boolean(door), 'НУЛЕВОЙ СЕЛЕКТОР: дверца door:0 в __mwDrilling');
+      await page.locator(`[data-drill-part="${door.partId}"]`).first().click();
+      const show = page.locator(`[data-drill-show3d="${door.partId}"]`);
+      must('DRILLING кнопка «Показать в 3D» у дверцы', (await show.count()) === 1, `НУЛЕВОЙ СЕЛЕКТОР: [data-drill-show3d="${door.partId}"]`);
+      await show.first().click();
+      const s3d = await sceneSettled(page);
+      must('DRILLING 3D после «Показать в 3D»', s3d.state === 'ready', `${s3d.state} за ${s3d.ms} мс`);
+      const drawn = await waitFor(page, () => (window.__mwDrill3d ? window.__mwDrill3d() : null), (v) => Boolean(v) && v.total > 0 && Boolean(v.outline), 60_000);
+      const cam = await waitFor(
+        page,
+        (c) => {
+          const pose = window.__mwCadCamera ? window.__mwCadCamera() : null;
+          return pose && c ? Math.hypot(pose.target[0] - c[0], pose.target[1] - c[1], pose.target[2] - c[2]) : null;
+        },
+        (d) => typeof d === 'number' && d < 0.01,
+        20_000,
+        drawn?.outline ?? null,
+      );
+      const pose = await page.evaluate(() => (window.__mwCadCamera ? window.__mwCadCamera() : null));
+      const summaryText = `${(await page.locator('[data-drill-summary="ready"]').first().textContent().catch(() => '')) ?? ''} | ${(await page.locator('[data-drill-summary="ready"]').first().getAttribute('title').catch(() => '')) ?? ''}`;
+      await page.screenshot({ path: `${OUT}/drilling-3-scene-door.png`, timeout: 120_000 });
+      check(
+        `DRILL.4 «Показать в 3D»: в сцене отверстий ровно столько, сколько операций в плане экрана «Присадка» (${planOps}), скрытых нет; подсвечена дверца (её ${doorOps} — ярко, остальные приглушены), камера смотрит в центр её контура; на кнопке «Присадка · ${planOps}», в подсказке — «Отверстий ${planOps}» и сколько деталей не рассчитано`,
+        drawn?.total === planOps && drawn.hidden === 0 && drawn.focus === door.partId && drawn.dimmed === planOps - doorOps && typeof cam === 'number' && cam < 0.01 && summaryText.includes(`Присадка · ${planOps}`) && summaryText.includes(`Отверстий ${planOps}`),
+        `в сцене ${drawn?.total} (${JSON.stringify(drawn?.byRole)}) · скрыто ${drawn?.hidden} · приглушено ${drawn?.dimmed} · до цели камеры ${typeof cam === 'number' ? (cam * 1000).toFixed(1) : cam} мм (цель ${pose?.target?.map((v) => v.toFixed(3)).join(', ')}, камера ${pose?.position?.map((v) => v.toFixed(3)).join(', ')}, контур ${drawn?.outline?.map((v) => v.toFixed(3)).join(', ')}) · «${summaryText.slice(0, 80)}»`,
+      );
+      /* Камера подлетает к детали, а не только целится в неё: расстояние — меньше 1,5 м; поза читается сразу и через 2 с. */
+      const near = (pz) => (pz && drawn?.outline ? Math.hypot(pz.position[0] - drawn.outline[0], pz.position[1] - drawn.outline[1], pz.position[2] - drawn.outline[2]) : null);
+      const focusAgain = await page.evaluate((id) => (window.__mwFocusPart ? window.__mwFocusPart(`drill:${id}`) : null), door.partId);
+      const poseNow = await page.evaluate(() => (window.__mwCadCamera ? window.__mwCadCamera() : null));
+      await sleep(2000);
+      const poseLater = await page.evaluate(() => (window.__mwCadCamera ? window.__mwCadCamera() : null));
+      check(
+        'DRILL.4в камера у детали: после «Показать в 3D» она не дальше 1,5 м от контура дверцы и остаётся там (через 2 с)',
+        near(pose) !== null && near(pose) < 1.5 && near(poseLater) < 1.5,
+        `после кнопки ${near(pose)?.toFixed(2)} м (предел приближения ${pose?.minDistance?.toFixed(2)} м) · повторный фокус ${focusAgain} → сразу ${near(poseNow)?.toFixed(2)} м, через 2 с ${near(poseLater)?.toFixed(2)} м`,
+      );
+      check(
+        'DRILL.4б крепления: конфирмат на каждое сквозное отверстие боковины — столько стержней, сколько пар «пласть + торец» в плане; подсвечена дверца — сквозь материал ни одного (дверцу конфирматы не стягивают)',
+        typeof drawn?.confirmats === 'number' && drawn.confirmats > 0 && drawn.confirmats === (drawn.byRole.confirmat_face ?? -1) && drawn.confirmatsXray === 0,
+        `конфирматов ${drawn?.confirmats} · сквозных ${drawn?.byRole?.confirmat_face} · сквозь материал ${drawn?.confirmatsXray}`,
+      );
+      /* Створка открыта — чашки едут с ней: та же поза, что у полотна сцены. */
+      const leaf = 'base-1200@w1:door:0';
+      const opened = await openAll(page, leaf, (v) => Math.abs(v.rotationDeg[1]) >= 80);
+      const rode = await waitFor(page, (key) => (window.__mwDrill3d ? window.__mwDrill3d().carried[key] ?? null : null), (v) => Boolean(v) && v.turnedDeg > 80, 20_000, leaf);
+      await page.screenshot({ path: `${OUT}/drilling-4-scene-door-open.png`, timeout: 120_000 });
+      check(
+        'DRILL.5 отверстия дверцы едут с ней: открыта — пачка дверцы повёрнута на угол полотна (± 0,5°) и видна; закрыта — на месте (сдвиг 0)',
+        Boolean(rode) && rode.visible && Math.abs(rode.turnedDeg - Math.abs(opened?.rotationDeg[1] ?? 0)) < 0.5,
+        `полотно ${opened?.rotationDeg[1]?.toFixed?.(1)}° · пачка ${rode?.turnedDeg?.toFixed(1)}°, видна ${rode?.visible}`,
+      );
+      await closeAll(page);
+      const back = await waitFor(page, (key) => (window.__mwDrill3d ? window.__mwDrill3d().carried[key] ?? null : null), (v) => Boolean(v) && v.turnedDeg < 0.05 && v.movedM < 1e-4, 20_000, leaf);
+      check('DRILL.5б дверца закрыта — её отверстия на закрытом месте', Boolean(back) && back.visible, JSON.stringify(back));
+      /* Подсветили левую боковину того же модуля — её конфирматы видны сквозь материал, столько, сколько сквозных у неё в плане. */
+      const sideOwn = (side?.ops ?? []).filter((o) => o.role === 'confirmat_face').length;
+      /* «Документы» ещё открыты (вид сменился на 3D, инструмент — нет): нажатие на активный инструмент свернуло бы панель. */
+      if (!(await page.locator('[data-studio-doc="drilling"]').first().isVisible().catch(() => false))) {
+        must('DRILLING инструмент «Документы» (второй раз)', await tool(page, 'documents'), 'НУЛЕВОЙ СЕЛЕКТОР: [data-studio-tool="documents"]');
+      }
+      await page.locator('[data-studio-doc="drilling"]').first().click();
+      await page.waitForSelector(`[data-drill-part="${side.partId}"]`, { timeout: 60_000 });
+      await page.locator(`[data-drill-part="${side.partId}"]`).first().click();
+      await page.locator(`[data-drill-show3d="${side.partId}"]`).first().click();
+      const sideDrawn = await waitFor(page, () => (window.__mwDrill3d ? window.__mwDrill3d() : null), (v) => Boolean(v) && v.focus === side.partId && v.confirmatsXray > 0, 60_000);
+      await sleep(2500);
+      const sidePose = await page.evaluate(() => (window.__mwCadCamera ? window.__mwCadCamera() : null));
+      const sideNear = sidePose && sideDrawn?.outline ? Math.hypot(sidePose.position[0] - sideDrawn.outline[0], sidePose.position[1] - sideDrawn.outline[1], sidePose.position[2] - sideDrawn.outline[2]) : null;
+      await page.screenshot({ path: `${OUT}/drilling-5-scene-side.png`, timeout: 120_000 });
+      check(
+        `DRILL.5в подсвечена левая боковина base-1200@w1 — сквозь материал её конфирматы: ${sideOwn} (сквозных у неё в плане экрана), остальные с глубиной; камера у боковины (не дальше 1,5 м)`,
+        sideDrawn?.focus === side.partId && sideOwn > 0 && sideDrawn.confirmatsXray === sideOwn && sideDrawn.confirmats === drawn?.confirmats && typeof sideNear === 'number' && sideNear < 1.5,
+        `подсвечена ${sideDrawn?.focus} · сквозь материал ${sideDrawn?.confirmatsXray} при ${sideOwn} в плане · всего ${sideDrawn?.confirmats} · камера в ${sideNear?.toFixed(2)} м от боковины`,
+      );
+      /* «Интерьер» — присадки нет вовсе, кнопка недоступна и говорит почему; выключили — вернулась. */
+      must('DRILLING инструмент «Освещение»', await tool(page, 'lighting'), 'НУЛЕВОЙ СЕЛЕКТОР: [data-studio-tool="lighting"]');
+      await page.locator('[data-light-design]').first().click();
+      await waitFor(page, () => (window.__mwLighting ? window.__mwLighting() : null), (v) => v?.design === true && v.warming !== true, 90_000);
+      const inDesign = await waitFor(page, () => (window.__mwDrill3d ? window.__mwDrill3d().total : 0), (n) => n === 0, 20_000);
+      const toggle = page.locator('[data-drill-toggle]').first();
+      const toggleDisabled = await toggle.isDisabled();
+      const toggleTitle = (await toggle.getAttribute('title')) ?? '';
+      await page.locator('[data-light-design]').first().click();
+      await waitFor(page, () => (window.__mwLighting ? window.__mwLighting() : null), (v) => v?.design === false, 60_000);
+      const after = await waitFor(page, () => (window.__mwDrill3d ? window.__mwDrill3d().total : 0), (n) => n === planOps, 30_000);
+      check(
+        'DRILL.6 «Интерьер»: отверстий в сцене 0, кнопка «Присадка» недоступна и называет причину; «Интерьер» выключили — отверстия плана вернулись',
+        inDesign === 0 && toggleDisabled && /В «Интерьере» присадки нет/.test(toggleTitle) && after === planOps,
+        `в «Интерьере» ${inDesign} · кнопка ${toggleDisabled ? 'недоступна' : 'ДОСТУПНА'} «${toggleTitle.slice(0, 50)}» · после ${after}`,
+      );
+      await toggle.click();
+      const off = await waitFor(page, () => (window.__mwDrill3d ? window.__mwDrill3d().total : 0), (n) => n === 0, 20_000);
+      check('DRILL.7 «Присадка» выключена — в сцене отверстий нет', off === 0, `отверстий ${off}`);
       check('DRILLING ошибок страницы и консоли нет', errors.length === 0 && consoleErrors.length === 0, [...errors, ...consoleErrors].slice(0, 3).join(' | '));
     },
     { viewport: { width: 1440, height: 900 }, projects: [{ key: 'kitchen', zone: 'Кухня', fx }], production: { drawerBox: DRAWER_BOX, drilling: DRILL_RULES } },
@@ -1338,6 +1655,8 @@ try {
       if (part === 'catalog2') await partCatalog2(browser);
       if (part === 'drilling') await partDrilling(browser);
       if (part === 'drawers') await partDrawers(browser);
+      if (part === 'open') await partOpen(browser);
+      if (part === 'twin') await partTwin(browser);
       done.push(part);
       console.log(`  ·    ${part}: ${Math.round((Date.now() - startedAt) / 1000)} с`);
     } catch (error) {

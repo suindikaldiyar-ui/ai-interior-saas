@@ -416,7 +416,7 @@ async function handleActions(page, fx, label) {
 
   /* Ручка из каталога: место «Ручки» выбранного модуля → поиск → карточка → «Установить». */
   must(`${label}: инструмент «Фурнитура»`, await tool(page, 'hardware'), 'НУЛЕВОЙ СЕЛЕКТОР: [data-studio-tool="hardware"]');
-  const items = await waitFor(page, () => Number(document.querySelector('[data-hw-panel]')?.getAttribute('data-hw-items') ?? 0), (n) => n >= 1, 60_000);
+  const items = await waitFor(page, () => { const p = document.querySelector('[data-hw-panel]'); const s = p?.getAttribute('data-hw-list'); return s === 'ready' || s === 'demo' ? Number(p.getAttribute('data-hw-items') ?? 0) : s === 'error' ? -1 : 0; }, (n) => n !== 0, 60_000);
   must(`${label}: панель видит каталог`, items >= FACT_COUNT, `позиций ${items} из ${FACT_COUNT}`);
   const slot = page.locator('[data-hw-slot="handle"]');
   must(`${label}: место «Ручки»`, (await slot.count()) > 0, `НУЛЕВОЙ СЕЛЕКТОР: [data-hw-slot="handle"] · места: ${await page.evaluate(() => Array.from(document.querySelectorAll('[data-hw-slot]')).map((b) => b.getAttribute('data-hw-slot')).join(', '))}`);
@@ -530,7 +530,7 @@ async function open3d(page, label) {
 async function handleSlotOf(page, label, moduleId) {
   await selectModule(page, label, moduleId);
   must(`${label}: инструмент «Фурнитура»`, await tool(page, 'hardware'), 'НУЛЕВОЙ СЕЛЕКТОР: [data-studio-tool="hardware"]');
-  const items = await waitFor(page, () => Number(document.querySelector('[data-hw-panel]')?.getAttribute('data-hw-items') ?? 0), (n) => n >= 1, 60_000);
+  const items = await waitFor(page, () => { const p = document.querySelector('[data-hw-panel]'); const s = p?.getAttribute('data-hw-list'); return s === 'ready' || s === 'demo' ? Number(p.getAttribute('data-hw-items') ?? 0) : s === 'error' ? -1 : 0; }, (n) => n !== 0, 60_000);
   must(`${label}: панель видит каталог`, items >= FACT_COUNT, `позиций ${items} из ${FACT_COUNT}`);
   const slot = page.locator('[data-hw-slot="handle"]');
   must(

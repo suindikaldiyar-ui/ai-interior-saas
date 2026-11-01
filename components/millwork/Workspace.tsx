@@ -23,6 +23,7 @@ import FrontMaterialPicker from './FrontMaterialPicker';
 import OpeningPicker from './OpeningPicker';
 import RunSchematic, { SCENE_ROOM_DEFAULT_M, rowsForAngle } from './RunSchematic';
 import type { SceneRow } from './cabinet3d/CadScene';
+import type { DrillingPlan } from '@/lib/millwork/drillingPlan';
 import type { PathImage } from '@/lib/millwork/pathtrace';
 import { hasFacade } from '@/lib/millwork/applianceFront';
 import { frontOf, leafFrontOf } from '@/lib/millwork/frontMaterial';
@@ -80,7 +81,7 @@ import { bayEnvelope, drawerReleaseBlock } from '@/lib/millwork/bays';
 import { cookingFindings } from '@/lib/millwork/cookingStack';
 import { apronFindings } from '@/lib/millwork/apron';
 import { applianceModelFindings } from '@/lib/millwork/applianceChecks';
-import { hardwareByCategory, hardwareCatalog, lightReferences } from '@/lib/millwork/hardware';
+import { hardwareByCategory, hardwareCatalog, lightReferences, referencedCatalogIds } from '@/lib/millwork/hardware';
 import { doorRoomSolids, roomAroundRows, roomSourceOf, type RoomSource } from '@/lib/millwork/room';
 import { normalizeLighting, type RoomLighting } from '@/lib/millwork/lightingState';
 import { openingAssumptions } from '@/lib/millwork/warnings';
@@ -1548,11 +1549,21 @@ export default function Workspace(props: WorkspaceProps) {
    * дочиталось — словами в строке панели фурнитуры; следующая правка
    * спрашивает снова.
    */
-  const mergeCatalogDetails = useInteriorStore((s) => s.mergeCatalogDetails);
+  /*
+   * ПОЗИЦИИ ОБЪЕКТА ПО ИДЕНТИФИКАТОРУ (ТЗ 2026-10-31, § 21). Открытие
+   * объекта не читает список производителей: позиция, на которую ссылается
+   * ряд, но которой в каталоге стора нет, дочитывается здесь же — строкой
+   * целиком. Идентификатор, которого в каталоге организации нет вовсе,
+   * запоминается и второй раз не спрашивается.
+   */
+  const mergeCatalogEntries = useInteriorStore((s) => s.mergeCatalogEntries);
   const detailsInFlight = useRef(new Set<string>());
+  const notInCatalog = useRef(new Set<string>());
   useEffect(() => {
-    if (!orgId) return;
-    const wanted = lightReferences(rowsAll, catalog).filter((id) => !detailsInFlight.current.has(id));
+    if (!orgId || catalog.length === 0) return;
+    const present = new Set(catalog.map((entry) => entry.id.toLowerCase()));
+    const absent = referencedCatalogIds(rowsAll).filter((id) => !present.has(id) && !notInCatalog.current.has(id));
+    const wanted = Array.from(new Set([...lightReferences(rowsAll, catalog), ...absent])).filter((id) => !detailsInFlight.current.has(id));
     if (wanted.length === 0) return;
     for (const id of wanted) detailsInFlight.current.add(id);
     void (async () => {
@@ -1563,12 +1574,16 @@ export default function Workspace(props: WorkspaceProps) {
         const { fetchCatalogDetails } = await import('@/lib/catalog');
         const read = await fetchCatalogDetails(supabase, orgId, wanted);
         if (read.error !== null) setHardwareNotice(read.error);
-        else mergeCatalogDetails(read.entries);
+        else {
+          const got = new Set(read.entries.map((entry) => entry.id.toLowerCase()));
+          for (const id of wanted) if (!got.has(id.toLowerCase())) notInCatalog.current.add(id.toLowerCase());
+          mergeCatalogEntries(read.entries);
+        }
       } finally {
         for (const id of wanted) detailsInFlight.current.delete(id);
       }
     })();
-  }, [rowsAll, catalog, orgId, mergeCatalogDetails]);
+  }, [rowsAll, catalog, orgId, mergeCatalogEntries]);
 
   /**
    * СТЕНА КОМПОЗИЦИИ ПОД ЭТИМ НОМЕРОМ — КЛЮЧ ЕЁ ПРАВОК.
@@ -1801,6 +1816,59 @@ export default function Workspace(props: WorkspaceProps) {
         : sceneRows,
     [sceneRows, island],
   );
+
+  /*
+   * ПРИСАДКА 3D (ТЗ 2026-10-31, § 11). План — тот же `drillingPlan` и те же
+   * входы, что у «Документы → Присадка» (стены экрана, школа цеха с правилами
+   * присадки, фурнитура, фрезеровка, корпус); считается, только пока вид
+   * включён, и модулем по требованию — в первую загрузку присадка не едет.
+   * Не загрузился — слова, а не пустая сцена.
+   */
+  const drillView = useInteriorStore((s) => s.drillView);
+  const setDrillView = useInteriorStore((s) => s.setDrillView);
+  const requestFocus = useInteriorStore((s) => s.requestFocus);
+  const [drillPlan, setDrillPlan] = useState<{ plan: DrillingPlan | null; error: string | null }>({ plan: null, error: null });
+  useEffect(() => {
+    if (!drillView.on) {
+      setDrillPlan({ plan: null, error: null });
+      return;
+    }
+    let alive = true;
+    import('@/lib/millwork/drillingPlan')
+      .then(({ drillingPlan }) => {
+        if (!alive) return;
+        setDrillPlan({
+          plan: drillingPlan({ walls: panelWalls, production: { ...production, drilling: drillingRules }, hardware: hardwareItems, milling: millingItems, carcass: carcassItems }),
+          error: null,
+        });
+      })
+      .catch((error: unknown) => {
+        if (alive) setDrillPlan({ plan: null, error: `Присадка 3D не загрузилась: ${error instanceof Error ? error.message : String(error)}` });
+      });
+    return () => {
+      alive = false;
+    };
+  }, [drillView.on, panelWalls, production, drillingRules, hardwareItems, millingItems, carcassItems]);
+  /* Ряды сцены Studio с планом: стена ряда — по самому ряду (`panelWalls` — те же объекты рядов). */
+  const sceneRowsStudio = useMemo(() => {
+    const plan = drillPlan.plan;
+    if (!plan) return sceneRowsAll;
+    return sceneRowsAll.map((row) => {
+      const wall = panelWalls.find((w) => w.run === row.run);
+      return wall ? { ...row, drill: { wallId: wall.wallId, plan } } : row;
+    });
+  }, [drillPlan.plan, sceneRowsAll, panelWalls]);
+  const drillSummary = useMemo(() => {
+    const plan = drillPlan.plan;
+    if (!drillView.on) return null;
+    if (!plan) return { ops: 0, pending: 0, error: drillPlan.error, ready: false };
+    return {
+      ops: plan.parts.reduce((s, p) => s + p.ops.length, 0),
+      pending: plan.parts.filter((p) => p.pending.length > 0).length,
+      error: null,
+      ready: true,
+    };
+  }, [drillView.on, drillPlan]);
 
   /*
    * ЧТО СЛЕДУЕТ ИЗ МЕСТА ОСТРОВА: вошёл в мебель, стену или колонну —
@@ -3508,15 +3576,20 @@ export default function Workspace(props: WorkspaceProps) {
     const supabase = supabaseBrowser();
     if (!supabase) return 'Supabase не настроен: каталог не перечитан.';
     const { fetchCatalog } = await import('@/lib/catalog');
-    /* Тем же лёгким чтением, что `CatalogLoader`: паспорт установленного дочитается сам. */
-    const read = await fetchCatalog(supabase, orgId, { hardware: 'light' });
+    /*
+     * Тем же чтением, что открытие объекта (`referenced`): позиции компании и
+     * позиции объекта. Список производителей перечитает панель, когда она на
+     * экране (`ensureHardwareList` по состоянию «не прочитан»).
+     */
+    const read = await fetchCatalog(supabase, orgId, { hardware: 'referenced', ids: referencedCatalogIds(rowsAll) });
     if (read.error !== null) {
       setCatalogError(read.error);
       return read.error;
     }
     setCatalog(read.entries);
+    useInteriorStore.getState().setHardwareList({ state: 'idle', read: 0, total: null, error: null });
     return null;
-  }, [orgId, setCatalog, setCatalogError]);
+  }, [orgId, rowsAll, setCatalog, setCatalogError]);
 
   /**
    * ЦЕНА КОЛЛЕКЦИИ ПО ПОВЕРХНОСТЯМ (слой 52).
@@ -5145,7 +5218,8 @@ export default function Workspace(props: WorkspaceProps) {
       panelHidden={panelHidden}
       onTogglePanel={props.studio ? undefined : () => setPanelHidden((on) => !on)}
       run={activeRun}
-      sceneRows={sceneRowsAll}
+      sceneRows={sceneRowsStudio}
+      drillSummary={drillSummary}
       room={roomSource}
       production={production}
       roomWidthM={Math.max(input.lengthMm / 1000, 2)}
@@ -5971,6 +6045,11 @@ export default function Workspace(props: WorkspaceProps) {
       ) : studioView === 'drilling' ? (
         <div className="h-full overflow-y-auto p-4" data-studio-drilling>
           <DrillingMap
+            onShow3d={(partId) => {
+              setDrillView({ on: true, partId });
+              setStudioView('3d');
+              requestFocus(`drill:${partId}`);
+            }}
             walls={panelWalls}
             title={props.title}
             projectId={props.projectId ?? 'demo'}

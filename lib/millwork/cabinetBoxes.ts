@@ -41,6 +41,9 @@ import { carcassKeyOf, type CarcassItem } from './carcassMaterial';
 import { fittingItemId, handleItemOf, installedItem, slidingAccepts } from './fittings';
 import { HINGE_IMAGE_EDGE_MM, hingeCupPlace, hingeHeightsMm } from './hingePlace';
 import { hingeModelOf, type HingeModel } from './hingeModel';
+import { twinBoundsCheck, twinOf } from './hardwareTwin';
+import type { MetalProfileKind } from './metalProfiles';
+import type { HardwareTwin } from '@/types/catalog';
 import { liftPlace, liftPose, type LiftMotion } from './liftKinematics';
 import { SLIDING_DOOR, slidingDoorCount } from './sections';
 import { handleBoxOf, handleSpotOf, type HandleSpot, type LeafGeometry } from './handlePlace';
@@ -133,6 +136,15 @@ export type BoxDraw = {
    * едет на половину хода ящика (0,5). Пусто — на весь ход, как сама деталь.
    */
   slideShare?: number;
+  /**
+   * СЕЧЕНИЕ МЕТАЛЛИЧЕСКОЙ ДЕТАЛИ (ТЗ 2026-10-31, § 5, 8): царга системы
+   * ящика, секция направляющей — выдавленный профиль в габарите коробки
+   * (`metalProfileOutline`), а не брусок. `sectionInner` — внутренняя сторона
+   * (к центру ящика): +1 у левой детали, −1 у правой. (`profile` — другое:
+   * покрытие профиля рамки витрины.)
+   */
+  section?: MetalProfileKind;
+  sectionInner?: 1 | -1;
   /**
    * ЧЕЙ ЭТО КУСОК ВИТРИНЫ (P1): `side:left`, `side:right`, `top`, `bottom`,
    * `back`, `profile` — та же роль, что у строки `vitrineParts`. По ней сцена
@@ -267,6 +279,14 @@ export type HingeDraw = {
   origin: [number, number, number];
   /** Место по паспорту (TB + радиус) или условный отступ картинки. */
   passport: boolean;
+  /**
+   * МОДЕЛЬ ИЗ РЕЕСТРА 3D (ТЗ 2026-10-31, § 3, 6): запись `meta.twin` позиции,
+   * габарит которой прошёл проверку (`twinBoundsCheck`). Есть — сцена ставит
+   * её на ту же ось чашки (`origin`); нет — процедурная модель по паспорту.
+   */
+  twin?: HardwareTwin;
+  /** Запись реестра есть, но габарит не прошёл — словами; модель не рисуется. */
+  twinRefused?: string;
 };
 
 /** Ручка в сцене: что нарисовано, как повёрнуто и какая позиция за ним стоит. */
@@ -1115,6 +1135,37 @@ export function doorKick(pivot: { kick: number; angle: number }, angle: number):
   return pivot.kick * Math.abs(Math.sin(angle));
 }
 
+/**
+ * ТОЧКА ПОЛОТНА ПРИ УГЛЕ — одна на сцену (`InteractiveDoor`, звенья петли) и
+ * приёмку: поворот вокруг оси створки и вынос петли. Точка и ось — в одних
+ * осях (у едущей створки — местных осях модуля).
+ */
+export function leafPointAt(
+  pivot: { origin: [number, number, number]; axis: 'x' | 'y'; kick: number; angle: number },
+  p: [number, number, number],
+  angle: number,
+): [number, number, number] {
+  const lx = p[0] - pivot.origin[0];
+  const ly = p[1] - pivot.origin[1];
+  const lz = p[2] - pivot.origin[2];
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+  if (pivot.axis === 'x') return [pivot.origin[0] + lx, pivot.origin[1] + ly * c - lz * s, pivot.origin[2] + ly * s + lz * c];
+  return [pivot.origin[0] + lx * c + lz * s, pivot.origin[1] + ly, pivot.origin[2] + doorKick(pivot, angle) - lx * s + lz * c];
+}
+
+/**
+ * КОРОБКА В МЕСТНЫХ ОСЯХ МОДУЛЯ — у едущей детали (`CabinetModule3D`). Вместе
+ * с местом переводится и ось чашки петли (`hinge.origin`): звенья петли строятся
+ * от неё. Переведённое одно место без оси давало звенья, которые на ходу
+ * описывали дугу радиусом «отметка модуля в ряду» — метровые стержни через
+ * комнату у каждой петли модуля не в начале ряда.
+ */
+export function localPartBox(box: PartBox, origin: [number, number, number]): PartBox {
+  const shift = (p: [number, number, number]): [number, number, number] => [p[0] - origin[0], p[1] - origin[1], p[2] - origin[2]];
+  return { ...box, position: shift(box.position), ...(box.hinge ? { hinge: { ...box.hinge, origin: shift(box.hinge.origin) } } : {}) };
+}
+
 /** Ручка на кромке: у навесных — на нижней, у механизма — на свободной, у остальных — на верхней. */
 function edgeMountOf(spot: HandleSpot, seat: 'spot' | 'center', upper: boolean): 'top' | 'bottom' {
   if (seat === 'spot' && spot.place === 'top-center') return 'top';
@@ -1351,6 +1402,13 @@ export function doorBoxes(
       ? hingeHeightsMm(leafSize.heightMm, count, ruleEdge).map((hh) => leafBottom + hh / MM)
       : Array.from({ length: count }, (_, i) => leafBottom + (h * (i + 1)) / (count + 1));
   const model = hingeModelOf(hingeItem, plateItem);
+  /* Реестр 3D петли: модель встаёт, только если её габарит — габарит петли (мм ↔ м и оси ловятся здесь). */
+  const twinOfHinge = (() => {
+    const twin = twinOf(hingeItem);
+    if (!twin || !hingeItem) return {};
+    const check = twinBoundsCheck(twin, hingeItem, 'hinge');
+    return check.ok ? { twin } : { twinRefused: check.words };
+  })();
   const mirror = hinge === 'right';
 
   for (let i = 0; i < count; i += 1) {
@@ -1359,7 +1417,7 @@ export function doorBoxes(
     /* Внутренняя плоскость боковины со стороны петель — в осях петли (от оси чашки к кромке — минус). */
     const sideX = hinge === 'left' ? x + place.thicknessM : x + unit.widthMm / MM - place.thicknessM;
     const sideInnerXMm = Math.round((mirror ? edgeX - sideX : sideX - edgeX) * MM * 10) / 10;
-    const draw = (half: 'cup' | 'arm'): HingeDraw => ({ model, half, mirror, sideInnerXMm, origin: [edgeX, at, 0], passport: cupPlace.passport });
+    const draw = (half: 'cup' | 'arm'): HingeDraw => ({ model, half, mirror, sideInnerXMm, origin: [edgeX, at, 0], passport: cupPlace.passport, ...twinOfHinge });
 
     /* Чашка живёт на ПОЛОТНЕ: открылась створка — уехала вместе с ней. */
     hingeNodes.push({
@@ -2931,8 +2989,11 @@ export function moduleBoxes(
 }
 
 /**
- * СДВИГ ПО ГЛУБИНЕ — ОДИН НА ВСЕ КОРОБКИ МОДУЛЯ, и на ноль формы радиусной
- * детали: её сетка стоит там же, где габарит.
+ * СДВИГ ПО ГЛУБИНЕ — ОДИН НА ВСЕ КОРОБКИ МОДУЛЯ: на место, на ноль формы
+ * радиусной детали (её сетка стоит там же, где габарит) и на ось чашки петли
+ * (`hinge.origin`). Без оси петли у модуля мельче нижнего ряда (верхние шкафы,
+ * `zM` −240 мм) петли закрытой пачки висели перед фасадом, а звенья на ходу
+ * тянулись на эти 240 мм.
  */
 function withDepthShift(boxes: PartBox[], zM: number): PartBox[] {
   if (zM === 0) return boxes;
@@ -2942,6 +3003,7 @@ function withDepthShift(boxes: PartBox[], zM: number): PartBox[] {
     ...(box.shape
       ? { shape: { form: box.shape.form, originM: [box.shape.originM[0], box.shape.originM[1], box.shape.originM[2] + zM] as [number, number, number] } }
       : {}),
+    ...(box.hinge ? { hinge: { ...box.hinge, origin: [box.hinge.origin[0], box.hinge.origin[1], box.hinge.origin[2] + zM] as [number, number, number] } } : {}),
   }));
 }
 
@@ -3750,6 +3812,9 @@ function kitBoxes(
         inside: true,
         position,
         scale,
+        /* Секция направляющей — С-профиль, открытый к ящику (ТЗ § 8). */
+        section: 'runner-channel',
+        sectionInner: piece.key === 'rail-right' ? -1 : 1,
         /* Ходовая едет с ящиком, средняя — на половину хода (HW-04), корпусная стоит. */
         ...(piece.member !== 'cabinet' ? { part } : {}),
         ...(piece.member === 'middle' ? { slideShare: 0.5 } : {}),
@@ -3759,7 +3824,8 @@ function kitBoxes(
     }
     /* Царга системы ящика (HW-04) — металл, покупная: детали раскроя у неё нет. */
     if (piece.metal) {
-      out.push({ material: 'metal', node: 'runner', inside: true, part, position, scale, ...(bayId ? { bayId } : {}) });
+      /* Царга системы — профиль со скруглённым верхом и посадкой на ходовую (ТЗ § 5.1). */
+      out.push({ material: 'metal', node: 'runner', inside: true, part, position, scale, section: 'drawer-side', sectionInner: piece.key === 'side-right' ? -1 : 1, ...(bayId ? { bayId } : {}) });
       continue;
     }
     out.push({

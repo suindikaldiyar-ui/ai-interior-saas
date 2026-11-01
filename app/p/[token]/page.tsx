@@ -3,6 +3,7 @@ import ClientPortal from '@/components/ClientPortal';
 import ClientOffer from '@/components/millwork/ClientOffer';
 import { fetchCatalog } from '@/lib/catalog';
 import { projectOffer } from '@/lib/millwork/objectEstimate';
+import { referencedCatalogIds } from '@/lib/millwork/hardware';
 import { VARIANT_STYLE } from '@/lib/millwork/styles';
 import { isEstimatePreliminary } from '@/types/survey';
 import type { MillworkState } from '@/lib/projects';
@@ -93,7 +94,8 @@ export default async function SharePage({ params }: PageProps) {
   if (millwork.priceSnapshot && Object.keys(millwork.priceSnapshot).length > 0) {
     const org = (offerOrg as Org | null) ?? null;
     const [catalogRead, { data: orgRow }] = await Promise.all([
-      fetchCatalog(service, project.org_id as string),
+      /* Позиции компании и позиции этого объекта по идентификатору — не весь паспорт производителей (ТЗ 2026-10-31, § 21). */
+      fetchCatalog(service, project.org_id as string, { hardware: 'referenced', ids: referencedCatalogIds(millwork) }),
       service.from('orgs').select('production').eq('id', project.org_id as string).maybeSingle(),
     ]);
     if (catalogRead.error !== null) {
@@ -198,7 +200,7 @@ export default async function SharePage({ params }: PageProps) {
       .maybeSingle(),
   ]);
 
-  const catalogRead = await fetchCatalog(service, project.org_id as string);
+  const catalogRead = await fetchCatalog(service, project.org_id as string, { hardware: 'referenced', ids: referencedCatalogIds(millwork) });
   if (catalogRead.error !== null) {
     return (
       <OfferUnavailable

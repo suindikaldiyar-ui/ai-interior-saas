@@ -64,11 +64,13 @@ export default async function ProjectWorkspace({ id, studio = false }: { id: str
   if (!project || project.org_id !== org.id) notFound();
 
   /*
-   * Серверу каталог нужен ради ставок (`ratesFromCatalog`): паспорт
-   * фурнитуры производителей их не задаёт — лёгкое чтение (HARDWARE-PHOTO-PERF-01).
+   * Серверу каталог нужен ради ставок (`ratesFromCatalog`): позиции компании
+   * и позиции производителей со статьёй сметы. Список производителей (5264
+   * строки, 7,9 МБ лёгким чтением) открытию объекта не нужен и упирался в
+   * предел запроса — «Объект не открылся» (ТЗ 2026-10-31, § 21).
    */
   const [catalogRead, { data: orgRow }] = await Promise.all([
-    fetchCatalog(supabase, org.id, { hardware: 'light' }),
+    fetchCatalog(supabase, org.id, { hardware: 'referenced' }),
     supabase.from('orgs').select('run_templates, production').eq('id', org.id).maybeSingle(),
   ]);
 

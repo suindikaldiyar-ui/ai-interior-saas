@@ -47,7 +47,8 @@ export default async function ProjectsPage() {
 
   const supabase = supabaseServer();
   const [projects, catalogRead] = supabase
-    ? await Promise.all([listProjects(supabase, org.id), fetchCatalog(supabase, org.id)])
+    ? /* Списку нужны только ставки: позиции компании и производителей со статьёй сметы (ТЗ 2026-10-31, § 21). */
+      await Promise.all([listProjects(supabase, org.id), fetchCatalog(supabase, org.id, { hardware: 'referenced' })])
     : [[], null];
 
   // Пока в каталоге нет ставок, считать смету нечем — говорим об этом сразу,

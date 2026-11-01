@@ -330,7 +330,29 @@ function Thumb({ view, itemId, size, go }: { view: MediaView | null; itemId: str
 
 /* ─────────────────────────  панель  ───────────────────────── */
 
+/**
+ * ДЕТАЛЬ, К КОТОРОЙ ПОДЛЕТАЕТ КАМЕРА (ТЗ 2026-10-31, § 23): у петли, ручки,
+ * подъёмника, сушилки — первая створка модуля, у направляющих и царг — первый
+ * ящик (у отсека — ящик отсека), у прочего — первая створка. Имя — то же, что у
+ * зоны касания детали в сцене (`part:<ИД>`).
+ */
+function focusPartOf(moduleId: string, slot: FittingSlot, bayId?: string): string {
+  if (slot === 'slide' || slot === 'drawer_side') return bayId ? `${moduleId}:${bayId}:drawer:0` : `${moduleId}:drawer:0`;
+  return `${moduleId}:door:0`;
+}
+
 export default function HardwarePanel({ unit, run, production, hardware, catalog, orgId, onCatalogAdded, onOps, notice }: Props) {
+  /*
+   * Организация: список производителей — по требованию этой панели
+   * (`ensureHardwareList`, ТЗ 2026-10-31, § 21). Открытие объекта его не ждёт.
+   */
+  const hardwareList = useInteriorStore((s) => s.hardwareList);
+  const requestFocus = useInteriorStore((s) => s.requestFocus);
+  const toggleOpenPart = useInteriorStore((s) => s.toggleOpenPart);
+  useEffect(() => {
+    if (orgId === null || hardwareList.state !== 'idle') return;
+    void import('@/components/hardwareListLoader').then((loader) => loader.ensureHardwareList());
+  }, [orgId, hardwareList.state]);
   /* Демонстрация: позиции производителей — запросом, когда панель открыли. */
   const [loadError, setLoadError] = useState<string | null>(null);
   useEffect(() => {
@@ -635,7 +657,26 @@ export default function HardwarePanel({ unit, run, production, hardware, catalog
   ].join(' · ');
 
   return (
-    <div className="grid gap-3" data-hw-panel data-hw-items={all.length}>
+    <div className="grid gap-3" data-hw-panel data-hw-items={all.length} data-hw-list={orgId === null ? 'demo' : hardwareList.state}>
+      {orgId !== null && hardwareList.state === 'loading' && (
+        <p className="text-[13px] leading-snug text-graphiteMw" data-hw-list-progress>
+          Каталог фурнитуры производителей загружается: {hardwareList.read}
+          {hardwareList.total !== null ? ` из ${hardwareList.total}` : ''} позиций. Поставленная фурнитура и цены уже на месте.
+        </p>
+      )}
+      {orgId !== null && hardwareList.state === 'error' && (
+        <div className="grid gap-1" data-hw-list-error>
+          <p className="text-[13px] leading-snug text-alert">{hardwareList.error}</p>
+          <button
+            type="button"
+            className="mw-btn mw-btn-ghost justify-self-start text-[13px]"
+            data-hw-list-retry
+            onClick={() => void import('@/components/hardwareListLoader').then((loader) => loader.ensureHardwareList(true))}
+          >
+            Повторить
+          </button>
+        </div>
+      )}
       {loadError && (
         <p className="text-[13px] leading-snug text-alert" data-hw-load-error>
           {loadError}
@@ -699,9 +740,18 @@ export default function HardwarePanel({ unit, run, production, hardware, catalog
                     </span>
                   </button>
                   {id && (
-                    <button type="button" data-hw-remove={key} onClick={() => remove(p)} className="mw-btn mw-btn-ghost mt-1 w-full text-[13px]">
-                      Снять
-                    </button>
+                    <div className="mt-1 grid grid-cols-3 gap-1">
+                      {/* «Показать выбранную фурнитуру» (ТЗ 2026-10-31, § 23): камера — к детали механизма, его можно открыть. */}
+                      <button type="button" data-hw-focus={key} onClick={() => unit && requestFocus(focusPartOf(unit.id, p.slot, p.bayId))} className="mw-btn mw-btn-ghost text-[13px]">
+                        Показать в 3D
+                      </button>
+                      <button type="button" data-hw-open-part={key} onClick={() => unit && toggleOpenPart(focusPartOf(unit.id, p.slot, p.bayId))} className="mw-btn mw-btn-ghost text-[13px]">
+                        Открыть / закрыть
+                      </button>
+                      <button type="button" data-hw-remove={key} onClick={() => remove(p)} className="mw-btn mw-btn-ghost text-[13px]">
+                        Снять
+                      </button>
+                    </div>
                   )}
                   {/* Свои ручки деталей (HANDLE-REAL): у двери слева одна, справа — другая. */}
                   {p.slot === 'handle' &&

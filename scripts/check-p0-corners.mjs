@@ -504,7 +504,7 @@ async function partVideo(browser) {
 
       /* Петля каталога 110° (Blum 71B3550) — «Фурнитура» → место «Петли» → «Установить». */
       must('инструмент «Фурнитура»', await tool(page, 'hardware'), 'НУЛЕВОЙ СЕЛЕКТОР: [data-studio-tool="hardware"]');
-      await waitFor(page, () => Number(document.querySelector('[data-hw-panel]')?.getAttribute('data-hw-items') ?? 0), (n) => n >= 1, 60_000);
+      await waitFor(page, () => { const p = document.querySelector('[data-hw-panel]'); const s = p?.getAttribute('data-hw-list'); return s === 'ready' || s === 'demo' ? Number(p.getAttribute('data-hw-items') ?? 0) : s === 'error' ? -1 : 0; }, (n) => n !== 0, 60_000);
       const slot = page.locator('[data-hw-slot="hinge"]');
       must(
         'место «Петли» у верхнего Г-шкафа',

@@ -15,9 +15,9 @@ import { applyOps } from '../lib/millwork/ops';
 import { hardwareCatalog } from '../lib/millwork/hardware';
 import { HARDWARE_FACTS, hardwareCatalogRow } from '../lib/millwork/hardwareCatalog';
 import { drillingPlan } from '../lib/millwork/drillingPlan';
-import { closedFrontRect, leafPoses, runBoxes, runPlaces } from '../lib/millwork/cabinetBoxes';
+import { closedFrontRect, doorPivot, leafPointAt, leafPoses, localPartBox, runBoxes, runPlaces, sceneLeaves } from '../lib/millwork/cabinetBoxes';
 import { LIFT_WORDS, liftMotionOf, liftPlace, liftPose } from '../lib/millwork/liftKinematics';
-import { hingeHalfMesh, linkPose, meshBounds, type MeshData } from '../lib/millwork/hingeMeshData';
+import { hingeHalfMesh, hingeLinkSegments, linkPose, meshBounds, type MeshData } from '../lib/millwork/hingeMeshData';
 import { hingeModelOf, hingeParts } from '../lib/millwork/hingeModel';
 import { HINGE_IMAGE_EDGE_MM } from '../lib/millwork/hingePlace';
 
@@ -180,6 +180,58 @@ export function hinge3dChecks(outer?: Check): { passed: number; failed: number }
       Math.abs(open.length - closed.length) > 1e-4,
     `закрыто ${(closed.length * 1000).toFixed(1)} мм · открыто ${(open.length * 1000).toFixed(1)} мм`,
   );
+
+  /*
+   * HG6 — ЗВЕНЬЯ ПУТЁМ СЦЕНЫ. Едущая створка живёт в местных осях модуля
+   * (`CabinetModule3D` → `localPartBox`), её ось — `doorPivot` от места створки
+   * (`sceneLeaves`), точка полотна при угле — `leafPointAt`, звенья —
+   * `hingeLinkSegments`. До правки ось чашки оставалась в метрах ряда, и у
+   * модуля не в начале ряда звено на ходу вытягивалось на его отметку: у
+   * высокой двери — три метровых стержня через комнату.
+   */
+  {
+    const runsOf = [
+      { title: 'демо без петель каталога', run: plain.run, production: DEFAULT_PRODUCTION },
+      { title: 'с петлёй 71B3550', run, production: SHOP },
+    ];
+    let leaves = 0;
+    let away = 0;
+    let tallLeaves = 0;
+    let shallow = 0;
+    let worst = { ratio: 0, where: '' };
+    /* Ось чашки закрытой пачки — на тыле своего фасада: у мелкого модуля (zM ≠ 0) она обязана уйти вместе с ним. */
+    let detached = 0;
+    for (const entry of runsOf) {
+      const all = runBoxes(entry.run, { thicknessMm: 16, frontThicknessMm: 16, gapMm: 4, hardware: CATALOG, production: entry.production });
+      for (const place of runPlaces(entry.run)) {
+        for (const leaf of sceneLeaves(place.unit, place.heightM, undefined, 0, entry.production)) {
+          /* Распашные плоские створки; пара Г-модуля и гнутая дверца ходят своей позой и звеньев петли не рисуют. */
+          if (leaf.kind !== 'door' || (leaf.opening !== 'left' && leaf.opening !== 'right')) continue;
+          const local = all.filter((b) => b.part === leaf.id).map((b) => localPartBox(b, [place.x, place.y, place.zM ?? 0]));
+          const draws = local.filter((b) => b.hinge?.half === 'cup').map((b) => b.hinge!);
+          if (draws.length === 0) continue;
+          leaves += 1;
+          if (place.x > 0.3) away += 1;
+          if (place.unit.kind === 'tall') tallLeaves += 1;
+          if ((place.zM ?? 0) !== 0) shallow += 1;
+          for (const c of local.filter((b) => b.hinge?.half === 'cup')) if (Math.abs(c.hinge!.origin[2] - (c.position[2] + c.scale[2] / 2)) > 1e-6) detached += 1;
+          const pivot = doorPivot(leaf.opening, leaf.xM, leaf.bottomM, leaf.widthM, leaf.heightM, 16 / 1000);
+          for (let step = 0; step <= 18; step += 1) {
+            const angle = (pivot.angle * step) / 18;
+            for (const seg of hingeLinkSegments(draws, (p) => leafPointAt(pivot, p, angle))) {
+              const ratio = seg.length / seg.maxLength;
+              if (ratio > worst.ratio) worst = { ratio, where: `${entry.title}: ${leaf.id} при ${Math.round((angle * 180) / Math.PI)}° — ${(seg.length * 1000).toFixed(1)} мм из ${(seg.maxLength * 1000).toFixed(1)}` };
+            }
+          }
+        }
+      }
+    }
+    check(
+      'HG6 звенья петель путём сцены (местные оси модуля, ось створки, весь ход 0…90° шагом 5°): у каждой створки демо и с петлёй каталога — нижних, верхних (мельче ряда) и высоких — звено не длиннее физически возможного для её петли, ось чашки на тыле своего фасада — стержней через комнату и петель в воздухе нет',
+      leaves >= 8 && away >= 4 && tallLeaves >= 1 && shallow >= 1 && worst.ratio <= 1 && detached === 0,
+      `створок ${leaves} (не в начале ряда ${away}, высоких ${tallLeaves}, мельче ряда ${shallow}) · осей чашки не на фасаде ${detached} · самое длинное: ${worst.where}`,
+    );
+  }
 
   /* Сетка петли — там, где её коробка: чашка в пределах ⌀ вокруг оси, плечо — на боковине. */
   const cupMesh = meshBounds(hingeHalfMesh(draw.model, 'cup', draw.sideInnerXMm, draw.mirror));

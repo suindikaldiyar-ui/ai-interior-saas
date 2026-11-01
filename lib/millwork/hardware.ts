@@ -11,6 +11,7 @@ import {
   type MountingData,
 } from '@/types/catalog';
 import type { Module, Run } from '@/types/millwork';
+import { parseTwin } from './hardwareTwin';
 
 /**
  * ФУРНИТУРА ОРГАНИЗАЦИИ — ТОТ ЖЕ КАТАЛОГ, ЧТО И ВСЁ ОСТАЛЬНОЕ.
@@ -280,6 +281,11 @@ export function hardwareOf(item: CatalogEntryFull): HardwareItem | null {
     },
     mounting: mountingOf(raw?.mounting),
     ...(item.detail === 'light' ? { detail: 'light' as const } : {}),
+    /* Реестр 3D (`meta.twin`, ТЗ 2026-10-31, § 3): строго — неполная запись не ставит модель в сцену. */
+    ...(() => {
+      const twin = parseTwin((item.meta as Record<string, unknown> | undefined)?.twin);
+      return twin ? { twin } : {};
+    })(),
   };
 }
 
@@ -339,6 +345,31 @@ export function lightReferences(state: unknown, catalog: CatalogEntryFull[]): st
   const walk = (value: unknown) => {
     if (typeof value === 'string') {
       if (light.has(value)) found.add(value);
+      return;
+    }
+    if (!value || typeof value !== 'object' || seen.has(value)) return;
+    seen.add(value);
+    for (const child of Array.isArray(value) ? value : Object.values(value)) walk(child);
+  };
+  walk(state);
+  return Array.from(found).sort();
+}
+
+/**
+ * НА КАКИЕ ПОЗИЦИИ КАТАЛОГА ССЫЛАЕТСЯ ОБЪЕКТ (ТЗ 2026-10-31, § 21) — все
+ * идентификаторы строк каталога (uuid) в состоянии объекта: места модулей
+ * (`fittings`), система купе ряда, ручки створок, материалы. Открытие объекта
+ * читает их по идентификатору (`fetchCatalog(…, 'referenced')`), а не весь
+ * список производителей. Строка, похожая на uuid, но не позиция каталога,
+ * просто не найдётся — чтение по идентификаторам её не придумает.
+ */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export function referencedCatalogIds(state: unknown): string[] {
+  const found = new Set<string>();
+  const seen = new Set<object>();
+  const walk = (value: unknown) => {
+    if (typeof value === 'string') {
+      if (UUID.test(value)) found.add(value.toLowerCase());
       return;
     }
     if (!value || typeof value !== 'object' || seen.has(value)) return;

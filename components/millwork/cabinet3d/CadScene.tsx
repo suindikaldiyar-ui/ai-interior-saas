@@ -114,6 +114,7 @@ import {
 } from '@/lib/millwork/lighting';
 import DesignLights from './DesignLights';
 import { useDebug } from '@/lib/debug';
+import type { DrillingPlan } from '@/lib/millwork/drillingPlan';
 
 /**
  * САПР-ВИД, А НЕ ФОТОРЕАЛИЗМ.
@@ -135,6 +136,8 @@ export type SceneRow = {
   run: Run;
   /** Место ряда в углу: смещение и поворот вокруг вертикали. */
   placement?: { xM: number; zM: number; rotationYDeg: number };
+  /** Присадка 3D (§ 11): план объекта и стена ряда — только когда вид включён. */
+  drill?: { wallId: string; plan: DrillingPlan };
 };
 
 type Props = {
@@ -532,6 +535,7 @@ export default function CadScene({
           onWidth={i === 0 ? onWidth : undefined}
           onMoveModule={i === 0 ? onMoveModule : undefined}
           design={design}
+          drill={row.drill}
         />
       ))}
 
@@ -734,8 +738,14 @@ function OrbitScene({
     update: () => boolean;
     target: THREE.Vector3;
     object: THREE.Object3D;
+    minDistance: number;
+    addEventListener: (type: 'start', listener: () => void) => void;
+    removeEventListener: (type: 'start', listener: () => void) => void;
   } | null>(null);
   const invalidate = useThree((state) => state.invalidate);
+  const scene = useThree((state) => state.scene);
+  /* Запрос «показать фурнитуру» из панели — та же функция, что у приёмки (`__mwFocusPart`). */
+  const focusRequest = useInteriorStore((state) => state.focusRequest);
   const size = useThree((state) => state.size);
   const center = useMemo(() => new THREE.Vector3(...bounds.center), [bounds.center]);
 
@@ -760,7 +770,37 @@ function OrbitScene({
   useEffect(() => {
     type Pose = { position: number[]; target: number[] };
     const w = window as unknown as {
-      __mwCadCamera?: (pose?: Pose) => (Pose & { bounds: typeof bounds; open: [number, number] }) | null;
+      __mwCadCamera?: (pose?: Pose) => (Pose & { bounds: typeof bounds; open: [number, number]; minDistance: number }) | null;
+      __mwFocusPart?: (partId: string) => boolean;
+    };
+    /*
+     * «ПОКАЗАТЬ ВЫБРАННУЮ ФУРНИТУРУ» (ТЗ 2026-10-31, § 23): камера — перед деталью
+     * (`part:<ИД>`) с той стороны, куда смотрит её ряд, на 0,85 м и чуть выше;
+     * цель — центр детали. Детали в сцене нет — камера не двигается.
+     */
+    w.__mwFocusPart = (partId: string) => {
+      const orbit = controls.current;
+      const object = orbit ? scene.getObjectByName(`part:${partId}`) : undefined;
+      if (!orbit || !object) return false;
+      /*
+       * Мировые матрицы — заново, от корня (ловушка 785): только что
+       * смонтированная деталь (контур присадки) до первого кадра стоит в
+       * осях ряда, и камера улетала на 1,9 м от неё.
+       */
+      object.updateWorldMatrix(true, true);
+      const center = new THREE.Box3().setFromObject(object).getCenter(new THREE.Vector3());
+      let row: THREE.Object3D | null = object;
+      while (row && !row.userData?.row) row = row.parent;
+      const turn = new THREE.Quaternion();
+      (row ?? object).getWorldQuaternion(turn);
+      const out = new THREE.Vector3(0, 0, 1).applyQuaternion(turn);
+      const side = new THREE.Vector3(1, 0, 0).applyQuaternion(turn);
+      const at = center.clone().addScaledVector(out, 0.85).addScaledVector(side, 0.25).add(new THREE.Vector3(0, 0.3, 0));
+      orbit.object.position.copy(at);
+      orbit.target.copy(center);
+      orbit.update();
+      invalidate();
+      return true;
     };
     w.__mwCadCamera = (pose) => {
       const orbit = controls.current;
@@ -773,12 +813,68 @@ function OrbitScene({
       }
       const p = orbit.object.position;
       const t = orbit.target;
-      return { position: [p.x, p.y, p.z], target: [t.x, t.y, t.z], bounds, open };
+      return { position: [p.x, p.y, p.z], target: [t.x, t.y, t.z], bounds, open, minDistance: orbit.minDistance };
     };
     return () => {
       delete w.__mwCadCamera;
+      delete w.__mwFocusPart;
     };
-  }, [bounds, open, invalidate]);
+  }, [bounds, open, invalidate, scene]);
+
+  /*
+   * Нажали «Показать в 3D» — камера к детали (одна функция с приёмкой). Деталь
+   * присадки появляется в сцене, когда план досчитан (модуль по требованию):
+   * ждём её до 10 с по кадру, а не один раз — иначе нажатие пропадало бы молча.
+   */
+  useEffect(() => {
+    if (!focusRequest) return;
+    let tries = 0;
+    let frame = 0;
+    let held = 0;
+    let quiet = 0;
+    let touched = false;
+    let pose: { position: THREE.Vector3; target: THREE.Vector3 } | null = null;
+    const orbit = controls.current;
+    const onStart = () => {
+      touched = true;
+    };
+    orbit?.addEventListener('start', onStart);
+    const focus = () => (window as unknown as { __mwFocusPart?: (id: string) => boolean }).__mwFocusPart?.(focusRequest.partId) ?? false;
+    /*
+     * Поза держится, пока 3D монтируется: раскладка и перелёт камеры ставят
+     * свою позу поверх (замер: цель на детали, а камера в 4,9 м). Держим,
+     * пока полторы секунды (90 кадров) подряд никто её не сбил, но не дольше
+     * 10 с; человек тронул камеру — держать перестаём.
+     */
+    const hold = () => {
+      const now = controls.current;
+      if (touched || !now || !pose) return;
+      if (now.object.position.distanceTo(pose.position) > 0.01 || now.target.distanceTo(pose.target) > 0.01) {
+        focus();
+        quiet = 0;
+      } else {
+        quiet += 1;
+      }
+      held += 1;
+      if (quiet < 90 && held < 600) frame = requestAnimationFrame(hold);
+    };
+    const attempt = () => {
+      if (focus()) {
+        const now = controls.current;
+        if (now) pose = { position: now.object.position.clone(), target: now.target.clone() };
+        frame = requestAnimationFrame(hold);
+        return;
+      }
+      tries += 1;
+      if (tries < 600) frame = requestAnimationFrame(attempt);
+      else console.warn(`«Показать в 3D»: детали ${focusRequest.partId} в сцене нет — камера не двигалась`);
+    };
+    attempt();
+    return () => {
+      cancelAnimationFrame(frame);
+      orbit?.removeEventListener('start', onStart);
+    };
+  }, [focusRequest]);
 
   /*
    * НОВЫЙ РАЗМЕР КАДРА — НОВЫЙ КАДР. При `frameloop="demand"` никто не

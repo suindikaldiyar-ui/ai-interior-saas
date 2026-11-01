@@ -10,6 +10,7 @@ import { leafOfBox, useReliefGeometry, useShiftedRelief } from './reliefGeometry
 import { DRAWER_TRAVEL_M, type PartBox } from '@/lib/millwork/cabinetBoxes';
 import { useInteriorStore } from '@/store/useInteriorStore';
 import { HandleMesh } from './handleMesh';
+import { boxGeometryOf } from './profileGeometry';
 
 /**
  * ЯЩИК ОТСЕКА (R02A), КОТОРЫЙ ВЫЕЗЖАЕТ.
@@ -144,7 +145,7 @@ export default function InteractiveBayDrawer({ id, open, onToggle, boxes, parts,
         {active &&
           boxes.map((box, i) =>
             box.slideShare !== undefined ? (
-              <mesh key={`mid-${i}`} name="mech:runner-middle" geometry={parts.box} material={parts.metal} position={box.position} scale={box.scale} />
+              <mesh key={`mid-${i}`} name="mech:runner-middle" geometry={boxGeometryOf(box, parts.box)} material={parts.metal} position={box.position} scale={box.scale} userData={{ section: box.section }} />
             ) : null,
           )}
       </group>
@@ -157,7 +158,8 @@ export default function InteractiveBayDrawer({ id, open, onToggle, boxes, parts,
             <mesh
               key={`${box.partId ?? box.panel ?? 'box'}-${i}`}
               name={box.node ? `mech:${box.node}` : box.panel ? `panel:${box.panel}` : undefined}
-              geometry={box.material === 'front' ? (reliefGeometry ?? frontBox) : parts.box}
+              geometry={box.material === 'front' ? (reliefGeometry ?? frontBox) : boxGeometryOf(box, parts.box)}
+              userData={{ section: box.section }}
               material={materialOf(box)}
               position={box.position}
               scale={box.material === 'front' && reliefGeometry ? [1, 1, 1] : box.scale}

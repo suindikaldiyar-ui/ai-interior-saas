@@ -175,6 +175,11 @@ type Props = {
    * — потому что сцена не считает раскладку, она её показывает.
    */
   sceneRows?: SceneRow[];
+  /**
+   * Присадка 3D (§ 11): что посчитал план — операций, деталей «не рассчитано»,
+   * не загрузилось ли. Null — вид выключен.
+   */
+  drillSummary?: { ops: number; pending: number; error: string | null; ready: boolean } | null;
   production?: import('@/types/catalog').ProductionSettings;
   roomWidthM?: number;
   roomDepthM?: number;
@@ -332,6 +337,7 @@ export default function RunSchematic({
   neighbour = null,
   neighbourLabel,
   sceneRows = [],
+  drillSummary = null,
   production,
   roomWidthM = SCENE_ROOM_DEFAULT_M.width,
   roomDepthM = SCENE_ROOM_DEFAULT_M.depth,
@@ -509,6 +515,8 @@ export default function RunSchematic({
    * на сервере, иначе разметка разошлась бы с гидратацией.
    */
   const economy = useInteriorStore((state) => state.economyMode);
+  const drillOn = useInteriorStore((state) => state.drillView.on);
+  const setDrillView = useInteriorStore((state) => state.setDrillView);
   const setEconomy = useInteriorStore((state) => state.setEconomyMode);
   useEffect(() => {
     try {
@@ -754,6 +762,39 @@ export default function RunSchematic({
             >
               Размеры
             </button>
+            {/*
+              * ПРИСАДКА 3D (§ 11) — инженерный вид: отверстия плана на деталях.
+              * В «Интерьере» его нет: мебель там такая, какой её привезут, и
+              * кнопка говорит это, а не притворяется работающей.
+              */}
+            {/*
+              * Сколько отверстий — на самой кнопке, а не строкой над сценой:
+              * строка ложилась на мебель (ловушка 510). Не рассчитанное —
+              * в подсказке кнопки; не загрузилось — словами рядом, плашкой.
+              */}
+            <button
+              type="button"
+              data-drill-toggle
+              data-drill-summary={drillOn && drillSummary ? (drillSummary.ready ? 'ready' : drillSummary.error ? 'error' : 'loading') : undefined}
+              aria-pressed={drillOn && !lighting?.preview.design}
+              disabled={Boolean(lighting?.preview.design)}
+              onClick={() => setDrillView({ on: !drillOn, partId: null })}
+              className={`mw-btn ${drillOn && !lighting?.preview.design ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+              title={
+                lighting?.preview.design
+                  ? 'В «Интерьере» присадки нет: мебель показана такой, какой её привезут. Выключите «Интерьер», чтобы увидеть отверстия'
+                  : drillOn && drillSummary?.ready
+                    ? `Отверстий ${drillSummary.ops}${drillSummary.pending > 0 ? ` · у ${drillSummary.pending} дет. не рассчитано — причины в «Документы → Присадка»` : ''}. Закрытый фасад закрывает отверстия за ним: откройте створку`
+                    : 'Присадка: отверстия плана на деталях — чашки, планки, полкодержатели, конфирматы. Закрытый фасад закрывает отверстия за ним: откройте створку'
+              }
+            >
+              {drillOn && drillSummary?.ready && !lighting?.preview.design ? `Присадка · ${drillSummary.ops}` : drillOn && drillSummary && !drillSummary.ready && !drillSummary.error ? 'Присадка…' : 'Присадка'}
+            </button>
+            {drillOn && drillSummary?.error && !lighting?.preview.design && (
+              <span className="self-center rounded-[var(--r-control)] bg-navy px-2 py-1 text-[13px] leading-snug text-tape" data-drill-error>
+                {drillSummary.error}
+              </span>
+            )}
             {/*
               * «Вид» и «Слои» (P1) — в той же группе «что делаем со сценой»,
               * рядом с рентгеном: групп над сценой по-прежнему три (ловушка 327).

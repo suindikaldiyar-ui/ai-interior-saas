@@ -193,6 +193,8 @@ export function sceneDrawing(item: HardwareItem): string | null {
  */
 export function model3dStatusOf(item: HardwareItem): HardwareModel3dStatus {
   if (item.hardware.model3d) return 'OFFICIAL_CAD';
+  /* Запись реестра 3D (ТЗ 2026-10-31, § 3): её статус — словами реестра, не догадкой. */
+  if (item.twin) return item.twin.status === 'OFFICIAL_CAD' ? 'OFFICIAL_CAD' : item.twin.status === 'VERIFIED_RECONSTRUCTION' ? 'MEASURED_RECONSTRUCTION' : 'VISUAL_RECONSTRUCTION';
   if (item.hardware.category === 'handle') return handleItemModel(item).status;
   return sceneDrawing(item) ? 'VISUAL_APPROXIMATION' : 'NO_3D';
 }
