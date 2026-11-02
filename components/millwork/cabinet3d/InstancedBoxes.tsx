@@ -203,7 +203,12 @@ export default function InstancedBoxes({
        * ИД ДЕТАЛИ ПО ЭКЗЕМПЛЯРУ (R01): приёмка находит полку и перегородку
        * отсека в НАРИСОВАННОМ графе и сверяет её матрицу с раскроем.
        */
-      userData={{ partIds: boxes.map((box) => box.partId ?? null), ...(userData ?? {}) }}
+      userData={{
+        partIds: boxes.map((box) => box.partId ?? null),
+        /* Детали сушки по экземпляру (фаза 1): приёмка меряет нарисованное, а не данные. */
+        ...(boxes.some((box) => box.dryer) ? { dryers: boxes.map((box) => box.dryer ?? null) } : {}),
+        ...(userData ?? {}),
+      }}
       castShadow={castShadow}
       receiveShadow={receiveShadow}
       renderOrder={renderOrder}

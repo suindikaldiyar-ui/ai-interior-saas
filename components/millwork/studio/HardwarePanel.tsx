@@ -762,6 +762,23 @@ export default function HardwarePanel({ unit, run, production, hardware, catalog
                       </button>
                     </div>
                   )}
+                  {/* Пантограф: чёрный матовый — вид поверх исполнения артикула (фаза 3); позиция и ход те же. */}
+                  {id && unit && p.slot === 'pantograph' && (() => {
+                    const fit = unit.fittings?.find((f) => f.slot === 'pantograph' && f.bayId === p.bayId);
+                    const black = fit?.visualFinish === 'black_matte';
+                    return (
+                      <button
+                        type="button"
+                        data-hw-visual-finish={key}
+                        aria-pressed={black}
+                        onClick={() => onOps([{ op: 'set_fitting_finish', moduleId: unit.id, slot: 'pantograph', bayId: p.bayId, finish: black ? null : 'black_matte' }])}
+                        className="mw-btn mw-btn-ghost mt-1 w-full text-[13px]"
+                        title="Только вид: артикул, его исполнение в смете, геометрия и ход не меняются."
+                      >
+                        {black ? 'Отделка: чёрный матовый (вид) — вернуть как у артикула' : 'Отделка: чёрный матовый (вид)'}
+                      </button>
+                    );
+                  })()}
                   {/* Свои ручки деталей (HANDLE-REAL): у двери слева одна, справа — другая. */}
                   {p.slot === 'handle' &&
                     leafOverrides.map((f) => {

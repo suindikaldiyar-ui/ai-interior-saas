@@ -104,6 +104,7 @@ export default function InteractiveBifold({
   useSlide({
     target,
     initial: target,
+    sound: 'door',
     apply: (s) => {
       posesAt(s).forEach((pose, i) => {
         const mesh = meshes.current[i];

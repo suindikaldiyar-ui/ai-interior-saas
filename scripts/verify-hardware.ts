@@ -58,6 +58,11 @@ import { realAccountChecks } from './verify-real-account';
 import { drawerFrontsChecks } from './verify-drawer-fronts';
 import { ceilingChecks } from './verify-ceiling';
 import { innerDrawerChecks } from './verify-inner-drawer';
+import { dryerChecks } from './verify-dryers';
+import { leafPartsChecks } from './verify-leaf-parts';
+import { wardrobeChecks } from './verify-wardrobe';
+import { applianceFixChecks } from './verify-appliance-fixes';
+import { dryerOf } from '../lib/millwork/dryer';
 import { runnerModelOf } from '../lib/millwork/runnerModel';
 import { drillingPlan } from '../lib/millwork/drillingPlan';
 import { drawerBoxPlan } from '../lib/millwork/drawerBox';
@@ -932,19 +937,36 @@ console.log('\nHW.H: 3D и движение — механизм по позиц
   if (!over) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: над мойкой нет верхнего шкафа');
   const dryVariant = dOps([{ op: 'set_variant', moduleId: over.id, variant: 'upper_dryer' }]);
   const dryOn = dOps([{ op: 'set_fitting', moduleId: over.id, slot: 'dryer', itemId: item('MFR-HAFELE-544.07.206').id }]);
-  const racks = sceneOf(dryOn.shown.run).filter((b) => b.node === 'dryer');
+  /*
+   * Сушка рисуется одной `dryerOf` (фаза 1): решётка на уровень, прутки тарелок и чашек, поддон (у 544.07.206
+   * напечатано «с 2 пластиковыми поддонами» — под каждым уровнем), держатели у боковин. Прежняя картинка —
+   * 2 решётки по 8 прутков без поддона и держателей — числа «16 прутков» не выводила ни из чего.
+   */
+  const racks = sceneOf(dryOn.shown.run).filter((b) => b.dryer);
+  const dryPlace = runPlaces(dryOn.shown.run).find((p) => p.unit.id === over.id)!;
+  const dryLayout = dryerOf(
+    moduleOf(dryOn.shown.run, over.id),
+    { widthMm: over.widthMm, heightMm: Math.round(dryPlace.heightM * 1000), depthMm: Math.round(dryPlace.depthM * 1000), thicknessMm: DEFAULT_PRODUCTION.carcassMm },
+    item('MFR-HAFELE-544.07.206'),
+  )!;
+  const dryRole = (role: string) => racks.filter((b) => b.dryer === role).length;
   const plainDoor = dRun.modules.find((m) => !m.appliance && m.frontType === 'door');
   if (!plainDoor) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: в ряду нет нижней дверцы для правки');
   const dryKept = dOps([{ op: 'set_handle', moduleId: plainDoor.id, handle: 'profile' } as unknown as MillworkOp]);
   check(
-    'H4 сушилка 544.07.206 в шкафу над мойкой: две решётки — 2 поддона и 16 прутков, неподвижны, в габарите шкафа; правка нижнего ряда позицию не теряет',
+    'H4 сушка 544.07.206 в шкафу над мойкой: две решётки, 2 поддона (напечатано), 4 держателя — коробки = `dryerOf`, неподвижны, в габарите шкафа; правка нижнего ряда позицию не теряет',
     dryVariant.next.warnings.length === 0 &&
       dryOn.next.warnings.length === 0 &&
-      racks.length === 18 &&
+      racks.length === dryLayout.pieces.length &&
+      dryRole('grid') === 2 &&
+      dryRole('tray') === 2 &&
+      dryRole('holder') === 4 &&
+      dryRole('plate-bar') > 0 &&
+      dryRole('cup-bar') > 0 &&
       racks.every((b) => !b.part) &&
       within(dryOn.shown.run, over.id, racks) &&
       moduleOf(dryKept.shown.run, over.id).fittings?.some((f) => f.slot === 'dryer') === true,
-    `${over.id} ${over.widthMm} · коробок ${racks.length} · ${[...dryVariant.next.warnings, ...dryOn.next.warnings].join(' | ')}`,
+    `${over.id} ${over.widthMm} · коробок ${racks.length} (= dryerOf ${dryLayout.pieces.length}: решёток ${dryRole('grid')}, поддонов ${dryRole('tray')}, держателей ${dryRole('holder')}) · ${[...dryVariant.next.warnings, ...dryOn.next.warnings].join(' | ')}`,
   );
 
   /* Пантограф и купе: шкаф спальни 1000, отсек b1 со штангой (476 в свету), система купе ряда. */
@@ -985,7 +1007,8 @@ console.log('\nHW.H: 3D и движение — механизм по позиц
     ],
   } as unknown as ModuleFill;
   const fillOn = wOps([{ op: 'set_fill', moduleId: cabinet.id, fill }]);
-  const rodsBefore = sceneOf(wShown().run).filter((b) => b.node === 'rod' && b.bayId === 'b1').length;
+  /* Штанга — сама штанга (`rodPart: 'rod'`): с фазы 3 рядом с ней в сцене и её держатели. */
+  const rodsBefore = sceneOf(wShown().run).filter((b) => b.node === 'rod' && b.rodPart === 'rod' && b.bayId === 'b1').length;
   const rodLineBefore = wShown().estimate.lines.find((l) => l.key === 'bay_rod')?.quantity ?? 0;
   const pgOn = wOps([{ op: 'set_fitting', moduleId: cabinet.id, slot: 'pantograph', bayId: 'b1', itemId: item('MFR-HAFELE-805.20.625').id }]);
   const pgRun = wShown().run;
@@ -1892,6 +1915,10 @@ ceilingChecks(check);
 /* ═════════════════════════  Внутренний ящик TANDEMBOX: передняя панель, держатели, ручка по Blum (2026-11-02)  ═════════════════════════ */
 
 innerDrawerChecks(check);
+dryerChecks(check);
+leafPartsChecks(check);
+wardrobeChecks(check);
+applianceFixChecks(check);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

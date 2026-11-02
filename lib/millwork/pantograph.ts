@@ -74,6 +74,8 @@ export type PantographSpec = {
   rail: 'chrome' | 'body';
   handle: 'chrome' | 'body';
   finishWords: string;
+  /** Отделка — вид поверх исполнения артикула (фаза 3): тогда материал матовый, а слова говорят это. */
+  visualFinish?: 'black_matte';
   status: 'VISUAL_RECONSTRUCTION';
   words: string;
 };

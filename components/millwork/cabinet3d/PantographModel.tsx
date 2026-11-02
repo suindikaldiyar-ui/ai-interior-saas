@@ -29,20 +29,20 @@ const BODY: Record<PantographFinish, string> = {
 
 type Mats = { body: THREE.MeshStandardMaterial; trim: THREE.MeshStandardMaterial; chrome: THREE.MeshStandardMaterial };
 const matCache = new WeakMap<THREE.WebGLRenderer, Map<string, Mats>>();
-function materialsFor(gl: THREE.WebGLRenderer, body: PantographFinish, economy: boolean): Mats {
+function materialsFor(gl: THREE.WebGLRenderer, body: PantographFinish, economy: boolean, matte = false): Mats {
   let map = matCache.get(gl);
   if (!map) {
     map = new Map();
     matCache.set(gl, map);
   }
-  const key = `${body}|${economy ? 'e' : 'f'}`;
+  const key = `${body}|${economy ? 'e' : 'f'}|${matte ? 'm' : 'g'}`;
   let m = map.get(key);
   if (!m) {
     const env = economy ? null : cadEnvironment(gl);
     const chrome = new THREE.MeshStandardMaterial({ color: '#d9dbde', metalness: 1, roughness: 0.14, envMap: env, envMapIntensity: env ? HANDLE_ENV_INTENSITY : 1 });
     chrome.name = 'pantograph:chrome';
-    const bodyMat = new THREE.MeshStandardMaterial({ color: BODY[body], metalness: 0.15, roughness: 0.42, envMap: env, envMapIntensity: env ? 0.6 : 1 });
-    bodyMat.name = `pantograph:${body}`;
+    const bodyMat = new THREE.MeshStandardMaterial({ color: BODY[body], metalness: matte ? 0.35 : 0.15, roughness: matte ? 0.82 : 0.42, envMap: env, envMapIntensity: env ? 0.6 : 1 });
+    bodyMat.name = `pantograph:${body}${matte ? ':matte' : ''}`;
     const trim = new THREE.MeshStandardMaterial({ color: new THREE.Color(BODY[body]).multiplyScalar(body === 'white' ? 0.86 : 1.25), metalness: 0, roughness: 0.6 });
     trim.name = `pantograph:${body}:plastic`;
     m = { body: bodyMat, trim, chrome };
@@ -119,7 +119,7 @@ export function PantographModel({ box, open, onToggle, shadows }: Props) {
   const gl = useThree((s) => s.gl);
   const economy = useInteriorStore((s) => s.economyMode);
   const degree = useInteriorStore((s) => s.openDegrees[id]);
-  const mats = useMemo(() => materialsFor(gl, spec.body, economy), [gl, spec.body, economy]);
+  const mats = useMemo(() => materialsFor(gl, spec.body, economy, spec.visualFinish === 'black_matte'), [gl, spec.body, economy, spec.visualFinish]);
   const T = VITAFLEX_TRACE;
   const swingDeg = Math.abs((geom.swingRad * 180) / Math.PI);
   const target = open ? (degree !== undefined ? Math.max(0, Math.min(1, degree / swingDeg)) : 1) : 0;
@@ -180,7 +180,7 @@ export function PantographModel({ box, open, onToggle, shadows }: Props) {
     for (const g of arms.current) if (g) g.rotation.x = -pose.armRad;
     if (rail.current) rail.current.position.set(...L((geom.railFromMm + geom.railToMm) / 2, pose.rail.y, pose.rail.z));
   };
-  useSlide({ target, initial: target, apply });
+  useSlide({ target, initial: target, apply, sound: 'pantograph' });
   /* Поза при монтаже (и после пересборки сеток): до первого хода `useSlide` её не ставит. */
   useEffect(() => {
     apply(value.current);

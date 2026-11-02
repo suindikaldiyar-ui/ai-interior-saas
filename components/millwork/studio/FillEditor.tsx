@@ -34,6 +34,7 @@ import {
   setDrawerZone,
   setZoneFunction,
   setZoneRod,
+  setZoneRodLook,
   setZoneShelfCount,
   splitBay,
   splitBayHorizontal,
@@ -832,6 +833,86 @@ function ZonesEditor({
               {ROD_NOTE} Сечение {ROD_VISUAL_DIAMETER_MM} мм и место по глубине — условные; столкновение с открытой дверью не
               проверяется.
             </p>
+            {/*
+              * ВИД ШТАНГИ (фаза 3): длина по центру проёма, место по глубине, сечение, покрытие, вешалки.
+              * Правка — `setZoneRodLook` в то же наполнение; отказ — словами с мм. Вешалки и покрытие — вид.
+              */}
+            <div className="grid gap-1 text-[13px]" data-zone-rod-look={rod.partId} data-rod-length={rod.lengthMm} data-rod-depth={-rod.zMm} data-rod-profile={rod.profile} data-rod-finish={rod.finish ?? ''} data-rod-hangers={rod.hangers?.count ?? 0}>
+              <div className="grid grid-cols-2 gap-2">
+                {(
+                  [
+                    ['lengthMm', 'Длина штанги, мм', rod.lengthMm],
+                    ['depthMm', 'Ось от передней кромки, мм', Math.round(-rod.zMm)],
+                  ] as const
+                ).map(([key, label, value]) => (
+                  <label key={key} className="grid gap-1">
+                    <span className="text-graphiteMw">{label}</span>
+                    <input
+                      key={`${rod.partId}:${key}:${value}`}
+                      type="number"
+                      inputMode="numeric"
+                      data-rod-field={key}
+                      defaultValue={value}
+                      className={field}
+                      onKeyDown={(event) => {
+                        if (event.key !== 'Enter') return;
+                        const v = Number((event.target as HTMLInputElement).value);
+                        if (!Number.isFinite(v)) return;
+                        apply(setZoneRodLook(unit, envelope, bay.id, zone.id, { [key]: Math.round(v) }));
+                      }}
+                    />
+                  </label>
+                ))}
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {(['round', 'oval'] as const).map((p) => (
+                  <button key={p} type="button" data-rod-profile-button={p} aria-pressed={rod.profile === p} className="mw-btn mw-btn-ghost" onClick={() => apply(setZoneRodLook(unit, envelope, bay.id, zone.id, { profile: p }))}>
+                    {p === 'round' ? 'Круглая Ø25' : 'Овальная 30 × 15'}
+                  </button>
+                ))}
+                {(['silver', 'black', 'champagne', 'gold'] as const).map((f) => (
+                  <button key={f} type="button" data-rod-finish-button={f} aria-pressed={rod.finish === f} className="mw-btn mw-btn-ghost" onClick={() => apply(setZoneRodLook(unit, envelope, bay.id, zone.id, { finish: f }))}>
+                    {f === 'silver' ? 'Хром' : f === 'black' ? 'Чёрный' : f === 'champagne' ? 'Сатин' : 'Золото'}
+                  </button>
+                ))}
+              </div>
+              <div className="flex flex-wrap items-center gap-1">
+                <button
+                  type="button"
+                  data-rod-hangers-toggle
+                  aria-pressed={Boolean(rod.hangers)}
+                  className="mw-btn mw-btn-ghost"
+                  onClick={() =>
+                    apply(setZoneRodLook(unit, envelope, bay.id, zone.id, { hangers: rod.hangers ? null : { count: Math.max(1, Math.min(60, Math.floor(rod.lengthMm / 60))) } }))
+                  }
+                >
+                  Вешалки: {rod.hangers ? `${rod.hangers.count} шт.` : 'скрыты'}
+                </button>
+                {rod.hangers ? (
+                  <>
+                    <input
+                      key={`${rod.partId}:h:${rod.hangers.count}`}
+                      type="number"
+                      inputMode="numeric"
+                      data-rod-hangers-count
+                      defaultValue={rod.hangers.count}
+                      className={`${field} w-[90px]`}
+                      onKeyDown={(event) => {
+                        if (event.key !== 'Enter') return;
+                        const v = Math.round(Number((event.target as HTMLInputElement).value));
+                        apply(setZoneRodLook(unit, envelope, bay.id, zone.id, { hangers: { ...rod.hangers!, count: v } }));
+                      }}
+                    />
+                    {(['black', 'white', 'wood'] as const).map((c) => (
+                      <button key={c} type="button" data-rod-hanger-color={c} aria-pressed={(rod.hangers?.color ?? 'black') === c} className="mw-btn mw-btn-ghost" onClick={() => apply(setZoneRodLook(unit, envelope, bay.id, zone.id, { hangers: { ...rod.hangers!, color: c } }))}>
+                        {c === 'black' ? 'чёрные' : c === 'white' ? 'белые' : 'дерево'}
+                      </button>
+                    ))}
+                  </>
+                ) : null}
+              </div>
+              <p className="text-[12px] leading-snug text-graphiteMw">Сечение, покрытие, держатели и вешалки — вид: артикула штанги нет, вешалки в смету не идут.</p>
+            </div>
             <button
               type="button"
               data-zone-action="remove-rod"

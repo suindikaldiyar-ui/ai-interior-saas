@@ -345,6 +345,7 @@ const VARIANT_SLOT: Record<string, FittingSlot | undefined> = {
   bottle: 'cargo',
   tall_cargo: 'cargo',
   upper_dryer: 'dryer',
+  base_dryer: 'dryer',
   corner_carousel: 'corner_unit',
 };
 

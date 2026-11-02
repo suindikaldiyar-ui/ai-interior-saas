@@ -196,6 +196,8 @@ export default function InteractiveDoor({
   useSlide({
     target,
     initial: target,
+    /* Звук (фаза 4): подъёмник — AVENTOS, стеклянная дверь витрины — витрина, остальное — дверь. */
+    sound: opening === 'lift' || opening === 'flap' ? 'aventos' : panelless || riders?.some((r) => r.material === 'glass') ? 'vitrine' : 'door',
     apply: (value) => {
       angleRef.current = value;
       const el = group.current;

@@ -16,6 +16,7 @@ import { bayPantograph, pantographSpecOf, pantographSweep } from './pantograph';
 import { aventosOf, aventosSweep } from './aventos';
 import { ceilingStack, liftLimitOf, topFillerBoxMm } from './topFiller';
 import { plinthMm } from './shop';
+import { dryerKindOf, dryerRefusal } from './dryer';
 
 /**
  * ФУРНИТУРА ПРОИЗВОДИТЕЛЯ НА МЕСТЕ МОДУЛЯ (HARDWARE-01).
@@ -388,8 +389,10 @@ export function fittingSlotsOf(
       out.push({ slot: 'wardrobe_pullout', bayId: bay.id, where: `отсек ${bay.index + 1}`, quantity: 1, per: 'mechanism' });
     }
   }
-  if (isPullOut(unit)) out.push({ slot: 'cargo', where: 'выдвижной модуль', quantity: 1, per: 'mechanism' });
-  if (unit.variant === 'upper_dryer') out.push({ slot: 'dryer', where: 'над мойкой', quantity: 1, per: 'mechanism' });
+  /* Нижняя сушка выдвигается, как карго, но место у неё — сушки (фаза 1): корзина-сушка, а не корзины карго. */
+  const dryKind = dryerKindOf(unit);
+  if (isPullOut(unit) && !dryKind) out.push({ slot: 'cargo', where: 'выдвижной модуль', quantity: 1, per: 'mechanism' });
+  if (dryKind) out.push({ slot: 'dryer', where: dryKind === 'upper' ? 'над мойкой' : 'выдвижная корзина', quantity: 1, per: 'mechanism' });
   if (unit.kind === 'corner_base') out.push({ slot: 'corner_unit', where: 'угол', quantity: 1, per: 'mechanism' });
   if (standsOnFloor(unit) && unit.kind !== 'corner_base') {
     out.push({ slot: 'leg', where: 'опоры корпуса', quantity: 4, per: 'piece' });
@@ -516,6 +519,38 @@ export function hingeBoringMm(g: { carcassMm: number; gapMm: number }, hinge: Ha
  * отказа нет, но чего-то в паспорте или в правилах цеха нет, и это
  * названо. «Встаёт» (`fits`) — всё проверено числами.
  */
+/**
+ * СУШКА НА МЕСТЕ (фаза 1): навесная — в верхний шкаф, выдвижная корзина — в нижний; внутренняя ширина,
+ * высота и глубина корпуса — как напечатаны; уровни — та же `dryerRefusal`, что у правки.
+ */
+function dryerChecks(unit: Module, item: HardwareItem, g: ModuleGeometry): FitCheck[] {
+  const out: FitCheck[] = [];
+  const kind = dryerKindOf(unit);
+  const move = item.hardware.movementType;
+  const slides = move === 'slide_out' || move === 'push_open';
+  if (kind === 'upper' && slides) out.push({ label: 'вид', state: 'fail', words: 'позиция — выдвижная корзина в нижнюю базу, а здесь верхняя сушка: нужна навесная' });
+  else if (kind === 'lower' && !slides) out.push({ label: 'вид', state: 'fail', words: 'позиция — навесная сушка в верхний шкаф, а здесь нижняя выдвижная: нужна корзина на направляющих' });
+  else if (!kind) out.push({ label: 'вид', state: 'fail', words: 'модуль — не сушка: сушка ставится в «Сушку верхнюю» или «Сушку нижнюю выдвижную»' });
+  else out.push({ label: 'вид', state: 'ok', words: kind === 'upper' ? 'навесная сушка в верхнем шкафу' : 'выдвижная корзина в нижней базе' });
+  const inner = g.innerWidthMm;
+  const wExact = dim(item, 'innerWidth');
+  const wRange = range(item, 'innerWidth');
+  if (wExact !== null) out.push({ label: 'ширина в свету', state: wExact === inner ? 'ok' : 'fail', words: `корпус в свету ${inner} мм, позиция — под ${wExact} мм` });
+  else if (wRange) out.push(inRange('ширина в свету', inner, wRange, 'корпус в свету'));
+  const minH = dim(item, 'minInnerHeight');
+  if (minH !== null) out.push(atMost('высота в свету', minH, g.heightMm - 2 * g.carcassMm, 'корпус в свету'));
+  const minCarcass = dim(item, 'minCarcassHeight');
+  if (minCarcass !== null) out.push(atMost('высота боковины', minCarcass, g.heightMm, 'боковина корпуса'));
+  const minDepth = dim(item, 'minCabinetDepth');
+  if (minDepth !== null) out.push(atMost('глубина шкафа', minDepth, g.depthMm, 'глубина корпуса'));
+  if (kind === 'upper') {
+    const refused = dryerRefusal(unit, unit.dryer ?? {}, { widthMm: g.widthMm, heightMm: g.heightMm, depthMm: g.depthMm, thicknessMm: g.carcassMm }, item);
+    out.push(refused ? { label: 'уровни', state: 'fail', words: refused } : { label: 'уровни', state: 'ok', words: 'уровни на своих местах по паспорту' });
+  }
+  out.push({ label: 'присадка', state: 'unknown', words: 'диаметр, глубина или база отверстий крепления в паспорте не напечатаны полностью — присадка не рассчитывается' });
+  return out;
+}
+
 export function fittingVerdict(input: {
   unit: Module;
   run: Run;
@@ -859,7 +894,7 @@ export function fittingVerdict(input: {
       const model = shaped.model;
       const misfit = targets
         .map((l) => {
-          const turn = l.drawer ? 'horizontal' : handleSpotOf(unit, run).turn;
+          const turn = l.drawer && !unit.handleAt?.[l.leaf] ? 'horizontal' : handleSpotOf(unit, run, undefined, l.leaf).turn;
           const along = model.shape === 'bar' && turn === 'vertical' ? l.hMm : l.wMm;
           const need =
             model.shape === 'knob' || model.shape === 'flush'
@@ -946,7 +981,7 @@ export function fittingVerdict(input: {
       );
       const h = range(item, 'cabinetInnerHeight');
       if (h) checks.push(inRange('высота в свету', g.heightMm - 2 * g.carcassMm, h, 'корпус в свету'));
-      if (slot === 'dryer' && !isUpperRow(unit)) checks.push({ label: 'ряд', state: 'fail', words: 'сушилка ставится в верхний шкаф' });
+      if (slot === 'dryer') checks.push(...dryerChecks(unit, item, g));
       break;
     }
     case 'drawer_side': {

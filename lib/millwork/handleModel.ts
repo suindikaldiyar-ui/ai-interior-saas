@@ -343,7 +343,7 @@ export const GENERIC_BAR_PROJECTION_MM = 16;
  * на полотне (`handleBoxOf`: доля стороны), вылет — 16 мм, как у прежнего
  * бруска: проверки открывания у угла меряют тот же габарит.
  */
-export function genericBarModel(lengthMm: number): HandleModel {
+export function genericBarModel(lengthMm: number, custom?: { finish?: HandleFinish; own: boolean }): HandleModel {
   const length = Math.round(lengthMm * 10) / 10;
   return finished(
     {
@@ -353,11 +353,17 @@ export function genericBarModel(lengthMm: number): HandleModel {
       projectionMm: GENERIC_BAR_PROJECTION_MM,
       diameterMm: GENERIC_BAR_DIAMETER_MM,
     },
-    'demo',
+    custom?.finish ?? 'demo',
     'VISUAL_APPROXIMATION',
-    ['артикул ручки не выбран — условная скоба по правилу места на фасаде'],
+    custom?.own
+      ? [`своя скоба ${length} мм без артикула — вид, не подтверждено для производства: межосевого и крепления нет, присадка не ставится`]
+      : ['артикул ручки не выбран — условная скоба по правилу места на фасаде'],
   );
 }
+
+/** Своя длина условной скобы, мм (фаза 2): от 64 до 1200 — короче не возьмёшь рукой, длиннее нет ни в одном каталоге. */
+export const CUSTOM_HANDLE_MIN_MM = 64;
+export const CUSTOM_HANDLE_MAX_MM = 1200;
 
 /** УСЛОВНЫЙ ПРОФИЛЬ — тип «Профиль» без артикула: уголок на кромке во всю ширину полотна. */
 export function genericStripModel(lengthMm: number): HandleModel {
@@ -574,19 +580,27 @@ export function placeHandle(
     const half = model.lengthMm / MM / 2;
     fits = model.lengthMm / MM <= w + 1e-6;
     const room = Math.max(0, w / 2 - half);
-    if (options.seat === 'spot' && (spot.place.startsWith('left') || spot.place.startsWith('right'))) {
+    if (spot.at) {
+      /* Своё место (фаза 2): по ширине — где поставил человек, в пределах полотна. */
+      mx = Math.min(cx + room, Math.max(cx - room, cx - w / 2 + spot.at.xMm / MM));
+    } else if (options.seat === 'spot' && (spot.place.startsWith('left') || spot.place.startsWith('right'))) {
       const fromEdge = Math.max(inset, half);
       const want = spot.place.startsWith('left') ? cx - w / 2 + fromEdge : cx + w / 2 - fromEdge;
       mx = Math.min(cx + room, Math.max(cx - room, want));
     } else mx = cx;
     my = orient === 'top' ? cy + h / 2 : cy - h / 2;
   } else {
-    orient = model.shape === 'bar' && options.seat === 'spot' && spot.turn === 'vertical' ? 'v' : 'h';
+    orient = model.shape === 'bar' && (options.seat === 'spot' || spot.at) && spot.turn === 'vertical' ? 'v' : 'h';
     const box = handleBoundsMm(model, orient, frontMm);
     const halfW = (box.max[0] - box.min[0]) / MM / 2;
     const halfH = (box.max[1] - box.min[1]) / MM / 2;
     fits = halfW <= w / 2 + 1e-6 && halfH <= h / 2 + 1e-6;
-    if (options.seat === 'center') {
+    if (spot.at) {
+      /* Своё место оси ручки (фаза 2): от левого нижнего угла детали; помещается ли — проверка места, не подмена. */
+      mx = cx - w / 2 + spot.at.xMm / MM;
+      my = cy - h / 2 + spot.at.yMm / MM;
+      fits = fits && mx - halfW >= cx - w / 2 - 1e-6 && mx + halfW <= cx + w / 2 + 1e-6 && my - halfH >= cy - h / 2 - 1e-6 && my + halfH <= cy + h / 2 + 1e-6;
+    } else if (options.seat === 'center') {
       mx = cx;
       my = cy;
     } else {

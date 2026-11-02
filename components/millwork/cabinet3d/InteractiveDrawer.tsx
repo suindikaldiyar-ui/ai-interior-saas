@@ -185,6 +185,7 @@ export default function InteractiveDrawer({
 
   useSlide({
     target: open && outerOpen ? travelM : 0,
+    sound: follows ? 'inner_drawer' : 'drawer',
     initial: open && outerOpen ? travelM : 0,
     apply: (value) => {
       own.current = value;

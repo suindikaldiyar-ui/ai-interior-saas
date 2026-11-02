@@ -1,5 +1,6 @@
 import { CORNER_SIZE_MM, SINGLE_DOOR_MAX_MM, frontPlan, isUpperRow } from './modules';
 import { zoneProfile } from './zones';
+import { dryerKindOf } from './dryer';
 import type {
   FrontType,
   Module,
@@ -195,6 +196,26 @@ export const MODULE_VARIANTS: Record<ModuleVariantKind, ModuleVariantSpec> = {
     pullOut: true,
     estimateKeys: ['cargo_300'],
   },
+  /*
+   * СУШКА НИЖНЯЯ ВЫДВИЖНАЯ (фаза 1): корзина с поддоном на направляющих полного выдвижения выезжает
+   * вместе с фасадом — как карго, фасад одной деталью. Механизм — позиция производителя (BOYARD KRS03 /
+   * KRS06, Häfele 544.16.900); без неё строка «цена не задана», а корзина в сцене — условная. Ширины —
+   * монтажные ширины корзин каталога: 600…900.
+   */
+  base_dryer: {
+    kind: 'base_dryer',
+    title: 'Сушка нижняя выдвижная',
+    hint: 'корзина с поддоном выезжает вместе с фасадом',
+    row: 'base',
+    minWidthMm: 600,
+    maxWidthMm: 900,
+    frontType: 'door',
+    /* Фасад один: корзина держится на нём, вторая створка не выедет. */
+    doorCount: 1,
+    pullOut: true,
+    zones: ['kitchen'],
+    estimateKeys: ['dish_dryer_pullout'],
+  },
   sink_base: {
     kind: 'sink_base',
     title: 'Под мойку',
@@ -320,8 +341,8 @@ export const MODULE_VARIANTS: Record<ModuleVariantKind, ModuleVariantSpec> = {
   },
   upper_dryer: {
     kind: 'upper_dryer',
-    title: 'Сушилка',
-    hint: 'решётка внутри, ставится над мойкой',
+    title: 'Сушка верхняя',
+    hint: 'решётки тарелок и чашек, поддон — в шкафу над мойкой',
     row: 'upper',
     minWidthMm: 600,
     maxWidthMm: 800,
@@ -694,6 +715,8 @@ export function applyVariant(unit: Module, kind: ModuleVariantKind): Module {
     doorCount,
     label: spec.title,
     fill: undefined,
+    /* Уровни и поддон сушки — свойство места сушки: другой вид сушки или не сушка — снимаются. */
+    dryer: dryerKindOf({ variant: kind }) !== null && dryerKindOf({ variant: kind }) === dryerKindOf(unit) ? unit.dryer : undefined,
   };
 }
 

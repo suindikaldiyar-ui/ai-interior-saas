@@ -7,6 +7,7 @@ import {
   DEFAULT_HEIGHTS,
   COUNTERTOP_STRIP_RANGE_MM,
   DEFAULT_PRODUCTION,
+  EMPTY_DRILLING,
   DRAWER_BOX_RANGES_MM,
   drawerBoxSettings,
   FALSE_PANEL_RANGE_MM,
@@ -27,6 +28,7 @@ import {
   type RowDepths,
   type RowHeights,
 } from '@/types/catalog';
+import DrillingRulesFields from '@/components/millwork/DrillingRulesFields';
 import { upperBottomMm, workTopMm } from '@/lib/millwork/shop';
 
 /**
@@ -739,6 +741,34 @@ export default function ProductionAdmin({ initial }: Props) {
             * толщины, дно, зазоры по высоте, ось направляющей на боковине.
             * Пусто — короба нет, выпуск в цех с ящиками заперт словами.
             */}
+          {/*
+            * ПРИСАДКА — ПРАВИЛА ЦЕХА (фаза 6): та же форма, что в «Документы → Присадка» (`DrillingRulesFields`).
+            * Три источника врозь: паспорт производителя здесь не правится; правило цеха — поля; «не подтверждено» —
+            * пока цех не поставил галочку, выпуск присадки в цех заперт. Галочка сама не ставится никогда.
+            */}
+          <div id="drilling" className="mt-6 border-t border-navyLine/60 pt-4" data-drilling-rules-admin data-drilling-confirmed={(value.drilling ?? EMPTY_DRILLING).confirmed ? '1' : '0'}>
+            <p className="mw-label">Присадка — правила цеха</p>
+            <ul className="mt-1 grid gap-1 text-[13px] leading-snug">
+              <li>
+                <b>Подтверждено производителем</b> — Ø и глубина чашки петли, TB по таблице наложения, межосевое ручки и планки, цепочки
+                направляющих: из паспорта позиции каталога, здесь не правятся. Чего производитель не напечатал, того нет.
+              </li>
+              <li>
+                <b>Правило цеха</b> — поля ниже: петли по высоте и их число, сверло под винт ручки, полкодержатели, конфирматы, остаток под
+                глухим отверстием. Пусто — отверстие не ставится.
+              </li>
+              <li data-drilling-unconfirmed>
+                <b>Не подтверждено цехом</b> —{' '}
+                {(value.drilling ?? EMPTY_DRILLING).confirmed
+                  ? 'нет: цех подтвердил правила.'
+                  : 'пока не стоит «Цех подтвердил эти правила», присадка — черновик: выпуск в цех заперт, отверстия по правилам цеха в объектах не считаются выпущенными.'}
+              </li>
+            </ul>
+            <div className="mt-2">
+              <DrillingRulesFields rules={value.drilling ?? EMPTY_DRILLING} onRules={(next) => setValue((v) => ({ ...v, drilling: next }))} />
+            </div>
+          </div>
+
           <div id="drawer-box" className="mt-6 border-t border-navyLine/60 pt-4" data-drawer-box data-drawer-box-state={boxEmpty ? 'empty' : boxParsed ? (boxParsed.confirmed ? 'confirmed' : 'unconfirmed') : 'invalid'}>
             <p className="text-[15px] font-medium">Короб ящика</p>
             <p className="mt-0.5 text-[13px] leading-snug text-graphiteMw">

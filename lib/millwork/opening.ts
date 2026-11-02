@@ -406,6 +406,22 @@ export function leafHinges(leafHeightMm: number, opening: FrontOpening, producti
   return hingesPerDoor(leafHeightMm, production?.drilling?.hingeCount);
 }
 
+/**
+ * ПЕТЛИ СТВОРКИ С УЧЁТОМ СВОИХ ВЫСОТ (фаза 2): человек задал оси чашек — их число и есть число петель.
+ * Одна функция на смету, сцену и присадку: картинка, покупка и отверстия — одни и те же петли.
+ */
+export function leafHingeCount(
+  unit: Pick<Module, 'hingeAt'>,
+  leaf: string,
+  leafHeightMm: number,
+  opening: FrontOpening,
+  production?: Pick<ProductionSettings, 'drilling'>,
+): number {
+  if (opening === 'lift') return 0;
+  const own = unit.hingeAt?.[leaf]?.heightsMm;
+  return own ? own.length : leafHinges(leafHeightMm, opening, production);
+}
+
 export function drawerSlides(unit: Module): number {
   /* Ящики отсеков (R02A) едут на тех же направляющих: пара на ящик. */
   return frontDrawerSlides(unit) + bayDrawerCount(unit.fill);
@@ -640,7 +656,7 @@ export function openingHardware(
         continue;
       }
 
-      fronts.leaves.forEach((leaf, i) => addLeafHinges(unit, i, leafHinges(leaf.heightMm, 'left', run.production), false));
+      fronts.leaves.forEach((leaf, i) => addLeafHinges(unit, i, leafHingeCount(unit, `door:${i}`, leaf.heightMm, 'left', run.production), false));
       addHandles(unit, doorsOf(fronts.leaves.length));
       continue;
     }
@@ -656,7 +672,7 @@ export function openingHardware(
        * Петли считаются ПО ПОЛОТНАМ: у встроенного холодильника их два и
        * они вдвое ниже, и `leafHinges` это уже знает.
        */
-      fronts.leaves.forEach((leaf, i) => addLeafHinges(unit, i, leafHinges(leaf.heightMm, opening, run.production), isCorner));
+      fronts.leaves.forEach((leaf, i) => addLeafHinges(unit, i, leafHingeCount(unit, `door:${i}`, leaf.heightMm, opening, run.production), isCorner));
     }
 
     if (opening === 'lift') {
@@ -670,7 +686,7 @@ export function openingHardware(
 
     if (opening === 'flap') {
       add('flaps', 1);
-      addLeafHinges(unit, 0, leafHinges(heightMm, opening, run.production), false);
+      addLeafHinges(unit, 0, leafHingeCount(unit, 'door:0', heightMm, opening, run.production), false);
     }
 
     /*

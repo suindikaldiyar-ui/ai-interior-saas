@@ -3,6 +3,19 @@ import { frontKey, frontPart } from './frontMaterial';
 import { shelvesAreGlass } from './glass';
 import { vitrinePart } from './vitrine';
 import { radiusKey } from './radius';
+import { dryerKey } from './dryer';
+
+/** Вид штанги (фаза 3): только записанное — у прежних штанг отпечаток прежний (ловушка 246). */
+function rodLookKey(rod: { lengthMm?: number; depthMm?: number; profile?: string; finish?: string; hangers?: { count: number; color?: string } }): string {
+  const parts = [
+    rod.lengthMm !== undefined ? `L${rod.lengthMm}` : '',
+    rod.depthMm !== undefined ? `D${rod.depthMm}` : '',
+    rod.profile ? `p${rod.profile}` : '',
+    rod.finish ? `f${rod.finish}` : '',
+    rod.hangers ? `h${rod.hangers.count}${rod.hangers.color ?? ''}` : '',
+  ].filter(Boolean);
+  return parts.length ? `[${parts.join(',')}]` : '';
+}
 import type { BayDrawerStack, BayShelves, CornerChoice, Module, Run } from '@/types/millwork';
 import { cornerOwnerOf } from './corner';
 
@@ -102,7 +115,7 @@ function fillPart(unit: Module): string | undefined {
                   `${zone.id}:${zone.heightMm ?? '*'}` +
                   (zone.shelves ? `:${shelvesPart(zone.shelves)}` : '') +
                   (zone.drawers ? stackPart(zone.drawers) : '') +
-                  (zone.rod ? `:r${zone.rod.belowTopMm}` : '') +
+                  (zone.rod ? `:r${zone.rod.belowTopMm}${rodLookKey(zone.rod)}` : '') +
                   (zone.mezzanine ? ':mz' : ''),
               )
               .join(';')}`
@@ -179,7 +192,7 @@ function extrasPart(unit: Module): string | undefined {
     unit.fittings && unit.fittings.length > 0
       ? unit.fittings
           /* Ограничитель угла подъёмника (задача B) — другой ход и другая проверка; пусто не пишется. */
-          .map((f) => `${f.slot}${f.bayId ? `@${f.bayId}` : ''}${f.leaf ? `#${f.leaf}` : ''}${f.openDeg ? `<${f.openDeg}` : ''}=${f.itemId}`)
+          .map((f) => `${f.slot}${f.bayId ? `@${f.bayId}` : ''}${f.leaf ? `#${f.leaf}` : ''}${f.openDeg ? `<${f.openDeg}` : ''}${f.visualFinish ? `~${f.visualFinish}` : ''}=${f.itemId}`)
           .sort()
           .join(';')
       : '',
@@ -198,6 +211,22 @@ function extrasPart(unit: Module): string | undefined {
      * мебель, другой раскрой и другие деньги. Пусто не пишется (ловушка 246).
      */
     radiusKey(unit),
+    /* Уровни и поддон сушки (фаза 1): другая сушка на месте. Пусто не пишется (ловушка 246). */
+    dryerKey(unit),
+    /* Своё место ручки, своя скоба и свои петли (фаза 2): другая присадка и другая картинка. Пусто не пишется. */
+    unit.handleAt
+      ? `handleAt:${Object.keys(unit.handleAt)
+          .sort()
+          .map((leaf) => `${leaf}=${unit.handleAt![leaf].xMm},${unit.handleAt![leaf].yMm}${unit.handleAt![leaf].turn ? `,${unit.handleAt![leaf].turn}` : ''}`)
+          .join(';')}`
+      : '',
+    unit.handleCustom ? `handleCustom:${unit.handleCustom.lengthMm ?? ''}/${unit.handleCustom.finish ?? ''}` : '',
+    unit.hingeAt
+      ? `hingeAt:${Object.keys(unit.hingeAt)
+          .sort()
+          .map((leaf) => `${leaf}=${unit.hingeAt![leaf].heightsMm.join('/')}`)
+          .join(';')}`
+      : '',
     /* Низ подвесной ТВ-тумбы (STAGE B): та же мебель на другой высоте — другой чертёж. Пусто не пишется. */
     unit.hangMm !== undefined ? `hang${unit.hangMm}` : '',
     /*

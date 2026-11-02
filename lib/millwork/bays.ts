@@ -1,6 +1,6 @@
 import { DEFAULT_ALLOWANCES, type PartAllowances, type ProductionSettings } from '@/types/catalog';
 import type { HardwareItem } from '@/types/catalog';
-import type { BayDrawerStack, BayShelves, BayZone, FillBay, Module, ModuleFill, Run } from '@/types/millwork';
+import type { BayDrawerStack, BayRod, BayShelves, BayZone, FillBay, Module, ModuleFill, ProfileFinish, Run } from '@/types/millwork';
 import { DEFAULT_MEZZANINE_MM, MIN_MEZZANINE_MM } from './sections';
 import {
   MIN_DIVIDER_EDGE_MM,
@@ -225,6 +225,10 @@ export type BayRodPart = {
   diameterMm: number;
   /** Ось по глубине от передней кромки корпуса, мм (минус — внутрь). */
   zMm: number;
+  /** Сечение, покрытие, вешалки (фаза 3) — вид; пусто — круглая Ø25 условно, без вешалок. */
+  profile: 'round' | 'oval';
+  finish?: ProfileFinish;
+  hangers?: { count: number; color?: 'black' | 'white' | 'wood' };
   verified: false;
   note: string;
 };
@@ -716,17 +720,23 @@ function resolveZones(
             `сечение ${ROD_VISUAL_DIAMETER_MM} мм вошло бы в панель.`,
         );
       }
+      /* Своя длина — по центру проёма; своё место по глубине — от передней кромки (фаза 3). */
+      const length = Math.min(widthMm, zone.rod.lengthMm ?? widthMm);
+      const x0 = xFrom + (widthMm - length) / 2;
       rods.push({
         partId: `${unit.id}:${bay.id}:${zone.id}:rod`,
         bayId: bay.id,
         zoneId: zone.id,
         atMm,
         belowTopMm: zone.rod.belowTopMm,
-        xFromMm: xFrom,
-        xToMm: xFrom + widthMm,
-        lengthMm: widthMm,
+        xFromMm: x0,
+        xToMm: x0 + length,
+        lengthMm: length,
         diameterMm: ROD_VISUAL_DIAMETER_MM,
-        zMm: -env.depthMm / 2,
+        zMm: zone.rod.depthMm !== undefined ? -zone.rod.depthMm : -env.depthMm / 2,
+        profile: zone.rod.profile ?? 'round',
+        ...(zone.rod.finish ? { finish: zone.rod.finish } : {}),
+        ...(zone.rod.hangers ? { hangers: zone.rod.hangers } : {}),
         verified: false,
         note: ROD_NOTE,
       });
@@ -2165,6 +2175,54 @@ export function distributeZoneShelves(unit: Module, env: BayEnvelope, bayId: str
  * ШТАНГА ЗОНЫ: ось на `belowTopMm` ниже верха зоны; `null` — убрать штангу
  * («Убрать штангу» — это само действие, и снимает оно только штангу).
  */
+/**
+ * ВИД ШТАНГИ ЗОНЫ (фаза 3): длина, место по глубине, сечение, покрытие, вешалки. Высоту правит `setZoneRod`.
+ * Отказ — словами с мм: длиннее проёма, ось у кромки корпуса (сечение вошло бы в фасад или заднюю стенку).
+ */
+export function setZoneRodLook(
+  unit: Module,
+  env: BayEnvelope,
+  bayId: string,
+  zoneId: string,
+  look: { lengthMm?: number | null; depthMm?: number | null; profile?: 'round' | 'oval'; finish?: ProfileFinish | null; hangers?: { count: number; color?: 'black' | 'white' | 'wood' } | null },
+): BayEdit {
+  const layout = bayLayout(unit, env);
+  const bay = layout?.bays.find((b) => b.id === bayId);
+  const span = bay ? bay.xToMm - bay.xFromMm : 0;
+  const result = editZones(unit, env, bayId, (zones) => {
+    const k = zones.findIndex((zone) => zone.id === zoneId);
+    if (k < 0) return { refusal: `Зоны ${zoneId} в отсеке нет.` };
+    const zone = zones[k];
+    if (!zone.rod) return { refusal: `В зоне ${k + 1} штанги нет.` };
+    const rod: BayRod = { ...zone.rod };
+    const r = ROD_VISUAL_DIAMETER_MM / 2;
+    if (look.lengthMm === null) delete rod.lengthMm;
+    else if (look.lengthMm !== undefined) {
+      if (!Number.isInteger(look.lengthMm) || look.lengthMm <= 0) return { refusal: 'Длина штанги — целое число миллиметров.' };
+      if (look.lengthMm > span) return { refusal: `Штанга ${look.lengthMm} мм длиннее проёма отсека (${span} мм) на ${look.lengthMm - span} мм — через боковину и перегородку она не идёт.` };
+      rod.lengthMm = look.lengthMm;
+    }
+    if (look.depthMm === null) delete rod.depthMm;
+    else if (look.depthMm !== undefined) {
+      if (!Number.isInteger(look.depthMm)) return { refusal: 'Место штанги по глубине — целое число миллиметров.' };
+      if (look.depthMm - r < 0 || look.depthMm + r > env.depthMm) {
+        return { refusal: `Ось штанги на ${look.depthMm} мм от кромки: сечение ${ROD_VISUAL_DIAMETER_MM} мм вышло бы за корпус глубиной ${env.depthMm} мм.` };
+      }
+      rod.depthMm = look.depthMm;
+    }
+    if (look.profile) rod.profile = look.profile;
+    if (look.finish === null) delete rod.finish;
+    else if (look.finish) rod.finish = look.finish;
+    if (look.hangers === null) delete rod.hangers;
+    else if (look.hangers) {
+      if (!Number.isInteger(look.hangers.count) || look.hangers.count < 1 || look.hangers.count > 60) return { refusal: 'Вешалок — от 1 до 60.' };
+      rod.hangers = look.hangers;
+    }
+    return zones.map((other, i) => (i === k ? { ...zone, rod } : other));
+  });
+  return 'loss' in result ? { refusal: result.loss } : result;
+}
+
 export function setZoneRod(unit: Module, env: BayEnvelope, bayId: string, zoneId: string, belowTopMm: number | null): BayEdit {
   const result = editZones(unit, env, bayId, (zones) => {
     const k = zones.findIndex((zone) => zone.id === zoneId);
@@ -2179,7 +2237,8 @@ export function setZoneRod(unit: Module, env: BayEnvelope, bayId: string, zoneId
       return { refusal: `В зоне ${k + 1} ${zoneWhat(zone, zoneSpans(zones, env)[k], env.thicknessMm)} — штанга встаёт в пустую зону или вместо них, с подтверждением.` };
     }
     if (!Number.isInteger(belowTopMm)) return { refusal: 'Высота штанги — целое число миллиметров.' };
-    return zones.map((other, i) => (i === k ? { ...withoutContent(zone), rod: { belowTopMm } } : other));
+    /* Высота меняется, вид штанги (длина, глубина, сечение, вешалки) остаётся (фаза 3). */
+    return zones.map((other, i) => (i === k ? { ...withoutContent(zone), rod: { ...(zone.rod ?? {}), belowTopMm } } : other));
   });
   return 'loss' in result ? { refusal: result.loss } : result;
 }

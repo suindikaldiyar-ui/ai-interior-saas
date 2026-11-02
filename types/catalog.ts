@@ -802,6 +802,19 @@ export type DrillingSettings = {
   confirmed: boolean;
 };
 
+/** Правила присадки цеха, когда цех их не задавал (фаза 6): пусто — ни одного отверстия, умолчаний нет. */
+export const EMPTY_DRILLING: DrillingSettings = {
+  hingeEdgeMm: null,
+  hingeCount: [],
+  plateOnCupAxis: false,
+  handleHoleMm: null,
+  handlePlaceConfirmed: false,
+  shelfSupport: null,
+  confirmat: null,
+  minRemainMm: null,
+  confirmed: false,
+};
+
 export const DRILLING_RANGES_MM = {
   hingeEdgeMm: [30, 300],
   handleHoleMm: [2, 12],

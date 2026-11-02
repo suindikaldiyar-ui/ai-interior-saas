@@ -24,6 +24,7 @@ import {
   type ObjectMark,
 } from './shop';
 import { vitrineOnCounter } from './vitrine';
+import { dryerKindOf } from './dryer';
 import { applianceModel } from './appliances';
 import type { ProductionSettings } from '@/types/catalog';
 import { upperRowBottomMm, zoneTopOfRun, zoneProfile } from './zones';
@@ -1367,6 +1368,12 @@ export function defaultFill(
         return { ...empty, hinge };
     }
   }
+
+  /*
+   * СУШКА (фаза 1): полок нет — корпус занимают решётки или корзина. Полки «как у верхнего шкафа»
+   * резались в раскрое и встали бы в решётки сушки.
+   */
+  if (dryerKindOf(unit)) return { ...empty, hinge };
 
   // Кухня: наполнение от типа модуля.
   if (unit.frontType === 'drawers') {

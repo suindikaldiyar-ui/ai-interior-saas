@@ -3,6 +3,7 @@
 import { useRef } from 'react';
 import { useFrame, type RootState } from '@react-three/fiber';
 import { frameRequestGate, startMoving, stopMoving } from './motion';
+import { playMechanismSound, type SoundCategory } from './mechanismSound';
 
 /**
  * АНИМАЦИЯ НА useFrame, А НЕ НА СТОРОННЕЙ БИБЛИОТЕКЕ.
@@ -53,6 +54,11 @@ export type SlideOptions = {
    * одним вызовом.
    */
   onSettle?: () => void;
+  /**
+   * Звук хода (фаза 4): категория механизма. Играет по СОБЫТИЮ — ход начался или сменил направление, —
+   * а не каждый кадр; открывание — когда цель дальше от нуля, чем значение.
+   */
+  sound?: SoundCategory;
 };
 
 /**
@@ -61,9 +67,10 @@ export type SlideOptions = {
  * Возвращать ничего не нужно: значение отдаётся через `apply`, а объект
  * three двигается напрямую — React в кадре не участвует.
  */
-export function useSlide({ target, apply, initial = target, onSettle }: SlideOptions): void {
+export function useSlide({ target, apply, initial = target, onSettle, sound }: SlideOptions): void {
   const value = useRef(initial);
   const moving = useRef(false);
+  const heading = useRef<'open' | 'close' | null>(null);
 
   useFrame((state) => {
     const delta = target - value.current;
@@ -73,6 +80,7 @@ export function useSlide({ target, apply, initial = target, onSettle }: SlideOpt
         value.current = target;
         apply(target);
         moving.current = false;
+        heading.current = null;
         stopMoving();
         onSettle?.();
         // Последний кадр после остановки: иначе элемент замрёт в миллиметре
@@ -85,6 +93,13 @@ export function useSlide({ target, apply, initial = target, onSettle }: SlideOpt
     if (!moving.current) {
       moving.current = true;
       startMoving();
+    }
+    if (sound) {
+      const dir = Math.abs(target) > Math.abs(value.current) ? 'open' : 'close';
+      if (heading.current !== dir) {
+        heading.current = dir;
+        playMechanismSound(sound, dir);
+      }
     }
 
     value.current += delta * EASING;

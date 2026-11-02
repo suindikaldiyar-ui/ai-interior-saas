@@ -30,6 +30,17 @@ import { allModules } from '../lib/millwork/layout';
 import { aventosLinks, aventosOf } from '../lib/millwork/aventos';
 import { liftChoices } from '../lib/millwork/liftChoice';
 import { ceilingStack, topFillerSpans } from '../lib/millwork/topFiller';
+import { dryerOf } from '../lib/millwork/dryer';
+import { runPlaces } from '../lib/millwork/cabinetBoxes';
+
+function CEILING_CATALOG_EARLY() {
+  return hardwareCatalog(
+    HARDWARE_FACTS.map((fact) => {
+      const row = hardwareCatalogRow(fact);
+      return { id: `hw:${fact.article}`, article: row.article, name_ru: row.name_ru, price: row.price, unit: row.unit, meta: { hardware: fact.hardware }, is_active: true, assets: [] } as unknown as CatalogEntryFull;
+    }),
+  );
+}
 
 type Fixture = { requirements: RunRequirements; measurement: Measurement; survey: Survey; run: Run };
 
@@ -107,6 +118,17 @@ k.apply([{ op: 'set_opening', moduleId: lifted.id, opening: 'lift' }]);
 k.apply([{ op: 'set_variant', moduleId: overSink.id, variant: 'upper_dryer' }]);
 k.apply([{ op: 'set_variant', moduleId: drawers.id, variant: 'drawers' }]);
 const kitchen: Fixture = { requirements: DEMO_REQUIREMENTS, measurement: noWindow, survey: measuredSurvey(noWindow), run: k.shown() };
+/*
+ * Сушка над мойкой (фаза 1): условная видна и без позиции; позиция 544.07.206 меняет то, что напечатано у неё
+ * (два поддона — под каждым уровнем). Сколько коробок прибавит установка — та же `dryerOf`, что у сцены.
+ */
+const dryerPlace = runPlaces(k.shown()).find((p) => p.unit.id === overSink.id)!;
+const dryerEnv = { widthMm: overSink.widthMm, heightMm: Math.round(dryerPlace.heightM * 1000), depthMm: Math.round(dryerPlace.depthM * 1000), thicknessMm: DEFAULT_PRODUCTION.carcassMm };
+const dryerUnit = allModules(k.shown()).find((u) => u.id === overSink.id)!;
+const kitchenDryer = {
+  before: dryerOf(dryerUnit, dryerEnv, null)!.pieces.length,
+  after: dryerOf(dryerUnit, dryerEnv, CEILING_CATALOG_EARLY().get('hw:MFR-HAFELE-544.07.206') ?? null)!.pieces.length,
+};
 
 /* ── cargo: свободная сборка, один модуль «Карго» 200 ── */
 const FREE: RunRequirements = { ...DEMO_REQUIREMENTS, mode: 'free', appliances: [] };
@@ -300,4 +322,66 @@ function ceilingFixture() {
 }
 const ceiling = ceilingFixture();
 
-process.stdout.write(JSON.stringify({ kitchen, cargo, wardrobe, drawersExpect, aventosHk: aventosHk.fx, aventosHkExpect: aventosHk.expect, aventosHl: aventosHl.fx, aventosHlExpect: aventosHl.expect, ceiling: ceiling.fx, ceilingExpect: ceiling.expect }));
+/*
+ * ── dryer (фаза 1): стена А 3900 без окна — над мойкой верхний шкаф 600, у стены нижний 600. «Сушку верхнюю»
+ * и «Сушку нижнюю выдвижную» человек ставит карточкой библиотеки, позиции — «Фурнитурой» → «Сушилка»; ожидания —
+ * та же `dryerOf` на ряду после тех же операций (`applyOps` с каталогом фактов).
+ */
+function dryerFixture() {
+  const room: Measurement = { ...noWindow, id: 'hw-dryer', walls: noWindow.walls.map((w) => ({ ...w, lengthMm: w.id === 'w1' ? 3900 : w.lengthMm })) };
+  const a = screen('HW dryer', 'Кухня', room, DEMO_REQUIREMENTS);
+  const run0 = a.shown();
+  const cat = CEILING_CATALOG_EARLY();
+  const UP = 'upper-1650@w1';
+  const LOW = 'base-3300@w1';
+  const unitIn = (run: Run, id: string) => {
+    const u = allModules(run).find((m) => m.id === id);
+    if (!u) throw new Error(`dryer: модуля ${id} нет`);
+    return u;
+  };
+  if (unitIn(run0, UP).widthMm !== 600 || unitIn(run0, LOW).widthMm !== 600) throw new Error('dryer: ждали верхний 600 над мойкой и нижний 600 у стены');
+  const envOf = (run: Run, id: string) => {
+    const p = runPlaces(run).find((x) => x.unit.id === id)!;
+    return { widthMm: p.unit.widthMm, heightMm: Math.round(p.heightM * 1000), depthMm: Math.round(p.depthM * 1000), thicknessMm: DEFAULT_PRODUCTION.carcassMm };
+  };
+  const step = (run: Run, ops: MillworkOp[]) => {
+    const next = applyOps({ run, requirements: DEMO_REQUIREMENTS, ops, openings: [], roomDepthMm: 0, hardware: cat });
+    if (next.warnings.length) throw new Error(`dryer: движок отказал: ${next.warnings.join(' | ')}`);
+    return next;
+  };
+  const r1 = step(run0, [{ op: 'set_variant', moduleId: UP, variant: 'upper_dryer' }]);
+  const plain = dryerOf(unitIn(r1, UP), envOf(r1, UP), null)!;
+  const su = cat.get('hw:MFR-BOYARD-SU02/600')!;
+  const r2 = step(r1, [{ op: 'set_fitting', moduleId: UP, slot: 'dryer', itemId: su.id }]);
+  const passport = dryerOf(unitIn(r2, UP), envOf(r2, UP), su)!;
+  const r3 = step(r2, [{ op: 'set_dryer', moduleId: UP, lowerMm: 80, upperMm: 400, tray: false }]);
+  const own = dryerOf(unitIn(r3, UP), envOf(r3, UP), su)!;
+  const krs = cat.get('hw:MFR-BOYARD-KRS06/1/3/600')!;
+  const r4 = step(r3, [{ op: 'set_variant', moduleId: LOW, variant: 'base_dryer' }, { op: 'set_fitting', moduleId: LOW, slot: 'dryer', itemId: krs.id }]);
+  const lower = dryerOf(unitIn(r4, LOW), envOf(r4, LOW), krs)!;
+  const fx: Fixture = { requirements: DEMO_REQUIREMENTS, measurement: room, survey: measuredSurvey(room), run: run0 };
+  return {
+    fx,
+    expect: {
+      upper: UP,
+      lower: LOW,
+      upperBottomMm: Math.round(runPlaces(r1).find((x) => x.unit.id === UP)!.y * 1000),
+      lowerBottomMm: Math.round(runPlaces(r4).find((x) => x.unit.id === LOW)!.y * 1000),
+      t: DEFAULT_PRODUCTION.carcassMm,
+      plainLevels: plain.levels.map((l) => l.atMm).join('|'),
+      plainPieces: plain.pieces.length,
+      passportLevels: passport.levels.map((l) => l.atMm).join('|'),
+      passportPieces: passport.pieces.length,
+      ownLevels: own.levels.map((l) => l.atMm).join('|'),
+      ownPieces: own.pieces.length,
+      lowerPieces: lower.pieces.length,
+      lowerMoving: lower.pieces.filter((x) => x.moving).length,
+      travelMm: lower.travel!.mm,
+      su: 'MFR-BOYARD-SU02/600',
+      krs: 'MFR-BOYARD-KRS06/1/3/600',
+    },
+  };
+}
+const dryer = dryerFixture();
+
+process.stdout.write(JSON.stringify({ kitchen, kitchenDryer, cargo, wardrobe, drawersExpect, aventosHk: aventosHk.fx, aventosHkExpect: aventosHk.expect, aventosHl: aventosHl.fx, aventosHlExpect: aventosHl.expect, ceiling: ceiling.fx, ceilingExpect: ceiling.expect, dryer: dryer.fx, dryerExpect: dryer.expect }));

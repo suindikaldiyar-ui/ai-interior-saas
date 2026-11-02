@@ -243,7 +243,7 @@ import {
   templateById,
   type RunTemplate,
 } from '@/lib/millwork/templates';
-import { cuttingSettings, drillingSettings, type CuttingSettings, type DrillingSettings, type ProductionOverrides, type ProductionSettings } from '@/types/catalog';
+import { EMPTY_DRILLING, cuttingSettings, drillingSettings, type CuttingSettings, type DrillingSettings, type ProductionOverrides, type ProductionSettings } from '@/types/catalog';
 import {
   DEFAULT_SCENE_VIEW,
   type SceneView,
@@ -584,17 +584,7 @@ export default function Workspace(props: WorkspaceProps) {
    */
   const savedDrilling = useMemo<DrillingSettings>(
     () =>
-      production.drilling ?? {
-        hingeEdgeMm: null,
-        hingeCount: [],
-        plateOnCupAxis: false,
-        handleHoleMm: null,
-        handlePlaceConfirmed: false,
-        shelfSupport: null,
-        confirmat: null,
-        minRemainMm: null,
-        confirmed: false,
-      },
+      production.drilling ?? EMPTY_DRILLING,
     [production],
   );
   const [drillingEdit, setDrillingEdit] = useState<DrillingSettings | null>(null);
@@ -1130,9 +1120,9 @@ export default function Workspace(props: WorkspaceProps) {
     const next: RunRequirements = {
       ...base,
       mode: freeMode ? 'free' : 'template',
-      ...(freeMode ? { appliances: composition.appliances ?? [], sections: [] } : {}),
-      appliances: composition.appliances ?? base.appliances,
-      sections: composition.sections ?? base.sections,
+      /* В своей сборке техника — то, что поставил человек (фаза 5); строка ниже прежде перекрывала это базовым составом. */
+      appliances: freeMode ? (composition.appliances ?? []) : (composition.appliances ?? base.appliances),
+      sections: freeMode ? (composition.sections ?? []) : (composition.sections ?? base.sections),
       doorSystem: composition.doorSystem ?? base.doorSystem,
       tallSide: composition.tallSide ?? base.tallSide,
       columnTop: composition.columnTop ?? base.columnTop,
@@ -2246,7 +2236,18 @@ export default function Workspace(props: WorkspaceProps) {
     setSelectedId(null);
     let note: string | null = null;
     if (!layout) {
-      setEditedRuns({});
+      /*
+       * ПРЯМАЯ КУХНЯ (фаза 5): своя сборка составом не пересобирается — ряд собран руками, и сброс его
+       * стирал (модель, тип прибора, место духовки обнулялись вместе с модулями). По готовому решению
+       * пересборка законна, но правки человека не пропадают молча — потеря названа.
+       */
+      if (!freeMode) {
+        if (wallEdited(0)) {
+          note = lostWallEditsNote([0]);
+          setMoveNotice(note);
+        }
+        setEditedRuns({});
+      }
     } else {
       const touched = wallsTouchedByChange(patch, {
         assignment: layout.segments.map((segment) => segment.appliances),
@@ -5946,7 +5947,7 @@ export default function Workspace(props: WorkspaceProps) {
         'Studio открыт без оболочки: страница Studio обязана обернуть рабочее место в StudioKitProvider.',
       );
     }
-    const { StudioShell, RoomPlan, WallInspector, StudioObjects, StudioInspector, FillEditor, OverheadEditor, StorageEditor, DrawerFrontsEditor, CeilingLiftEditor, VitrineEditor, RadiusEditor } = studioKit;
+    const { StudioShell, RoomPlan, WallInspector, StudioObjects, StudioInspector, FillEditor, OverheadEditor, StorageEditor, DryerEditor, LeafPartsEditor, DrawerFrontsEditor, CeilingLiftEditor, VitrineEditor, RadiusEditor } = studioKit;
     const surveyWalls = survey?.walls ?? [];
     const turnWords = (item: Survey['walls'][number]) =>
       item.turn === 'custom' ? `${item.turnDeg}° (другой угол)` : `90° ${item.turn === 'left' ? 'влево' : 'вправо'}`;
@@ -6438,6 +6439,54 @@ export default function Workspace(props: WorkspaceProps) {
                 key={`${selectedUnit.id}:${JSON.stringify(activeRun.modules.find((m) => m.appliance === 'fridge')?.storageOver ?? null)}:${activeRun.fingerprint}`}
                 unit={selectedUnit}
                 run={activeRun}
+                onOps={(ops, onRefusal) => runOps(ops, onRefusal)}
+                preview={(ops) =>
+                  applyOps({
+                    run: activeRun,
+                    requirements: requirementsOf(activeIndex),
+                    ops,
+                    openings: wallOpenings(activeIndex),
+                    roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
+                    hardware: hardwareItems,
+                  })
+                }
+              />
+            )}
+            {/*
+              * РУЧКА И ПЕТЛИ ДЕТАЛИ (фаза 2): своё место ручки, своя скоба, высоты петель — `set_handle_at`,
+              * `set_handle_custom`, `set_hinges` тем же `runOps`. Ключ — по записанному: поля показывают число ряда.
+              */}
+            {selectedUnit && (
+              <LeafPartsEditor
+                key={`leaf:${selectedUnit.id}:${JSON.stringify([selectedUnit.handleAt ?? null, selectedUnit.handleCustom ?? null, selectedUnit.hingeAt ?? null, selectedUnit.fittings ?? null])}:${activeRun.fingerprint}`}
+                unit={selectedUnit}
+                run={activeRun}
+                production={production}
+                hardware={hardwareItems}
+                onOps={(ops, onRefusal) => runOps(ops, onRefusal)}
+                preview={(ops) =>
+                  applyOps({
+                    run: activeRun,
+                    requirements: requirementsOf(activeIndex),
+                    ops,
+                    openings: wallOpenings(activeIndex),
+                    roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
+                    hardware: hardwareItems,
+                  })
+                }
+              />
+            )}
+            {/*
+              * СУШКА (фаза 1): уровни, высоты и поддон — `set_dryer` тем же `runOps`; встанет ли — движок
+              * вхолостую. Ключ — по записанной сушке и позиции: поля после правки показывают число ряда.
+              */}
+            {selectedUnit && (selectedUnit.variant === 'upper_dryer' || selectedUnit.variant === 'base_dryer') && (
+              <DryerEditor
+                key={`dryer:${selectedUnit.id}:${JSON.stringify(selectedUnit.dryer ?? null)}:${JSON.stringify(selectedUnit.fittings ?? null)}:${activeRun.fingerprint}`}
+                unit={selectedUnit}
+                run={activeRun}
+                hardware={hardwareItems}
+                carcassMm={production.carcassMm}
                 onOps={(ops, onRefusal) => runOps(ops, onRefusal)}
                 preview={(ops) =>
                   applyOps({

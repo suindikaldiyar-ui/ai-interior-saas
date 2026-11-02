@@ -454,7 +454,11 @@ export default function RunEditor({
                 op: 'add_module',
                 kind: APPLIANCE_SLOTS[appliance].kind,
                 appliance,
-                afterModuleId: selectedModuleId ?? undefined,
+                /*
+                 * Прибор стоит в нижнем ряду (фаза 5): выбранный верхний модуль или антресоль местом не служит —
+                 * вставка «за ним» уводила прибор в висящий ряд обычным шкафом, и прибор пропадал молча.
+                 */
+                afterModuleId: selectedModuleId && run.modules.some((unit) => unit.id === selectedModuleId) ? selectedModuleId : undefined,
               },
             ],
       );
@@ -585,11 +589,21 @@ export default function RunEditor({
               <ApplianceModelPicker
                 key={`model-${appliance}`}
                 appliance={appliance}
-                chosen={requirements.applianceModels?.[appliance] ?? ''}
+                chosen={
+                  freeMode
+                    ? (run.modules.find((unit) => unit.appliance === appliance)?.applianceModels?.[appliance] ?? '')
+                    : (requirements.applianceModels?.[appliance] ?? '')
+                }
                 onPick={(article) =>
-                  onComposition({
-                    applianceModels: { ...(requirements.applianceModels ?? {}), [appliance]: article },
-                  })
+                  /*
+                   * В своей сборке модель ложится на модуль ряда операцией (фаза 5): изменение состава пересобрало
+                   * бы ряд, а собранный руками ряд по требованиям не собирается — он стирался.
+                   */
+                  freeMode
+                    ? onOps([{ op: 'set_appliance_model', appliance, model: article || null }])
+                    : onComposition({
+                        applianceModels: { ...(requirements.applianceModels ?? {}), [appliance]: article },
+                      })
                 }
               />
             ))}

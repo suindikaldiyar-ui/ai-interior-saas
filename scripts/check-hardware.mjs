@@ -51,7 +51,7 @@ const PORT = Number(process.env.PORT_HW ?? 3291);
 const BASE = `http://localhost:${PORT}`;
 const OUT = '.capture-check/hardware';
 const PARTS = (process.env.PART ?? 'import,kitchen,kitchen-drawers,kitchen-lift,wardrobe,cargo,corner,tablet').split(',').map((s) => s.trim()).filter(Boolean);
-const KNOWN = ['import', 'kitchen', 'kitchen-drawers', 'kitchen-lift', 'wardrobe', 'cargo', 'corner', 'tablet', 'catalog2', 'drilling', 'drawers', 'open', 'twin', 'tandembox', 'clip', 'aventos', 'real', 'import-ui', 'fronts', 'fronts-tablet', 'ceiling', 'ceiling-tablet', 'inner'];
+const KNOWN = ['import', 'kitchen', 'kitchen-drawers', 'kitchen-lift', 'wardrobe', 'cargo', 'corner', 'tablet', 'catalog2', 'drilling', 'drawers', 'open', 'twin', 'tandembox', 'clip', 'aventos', 'real', 'import-ui', 'fronts', 'fronts-tablet', 'ceiling', 'ceiling-tablet', 'inner', 'dryer', 'dryer-tablet', 'leaf', 'leaf-tablet'];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let failed = 0;
@@ -742,8 +742,17 @@ async function partKitchenLift(browser) {
       const metal3 = await settledMetal(page);
       await hardwareFor(page, 'KITCHEN', 'upper-1650@w1');
       const dryer = await installVia(page, 'KITCHEN', 'dryer', 'MFR-HAFELE-544.07.206', '544.07.206');
-      const metal4 = await waitFor(page, () => (window.__mwCadMetal ? window.__mwCadMetal() : null), (n) => n === metal3 + 18, 30_000);
-      check('KITCHEN.G сушилка 544.07.206 поставлена: решётки в сцене (+18 узлов: 2 поддона, 16 прутков)', dryer.installed && metal4 === metal3 + 18, `металл ${metal3} → ${metal4}`);
+      /*
+       * Сушка видна и до позиции (фаза 1, условная по корпусу); 544.07.206 меняет напечатанное у неё — два поддона,
+       * под каждым уровнем: прибавка — та же `dryerOf` (`kitchenDryer`), а не «18 узлов» прежней картинки.
+       */
+      const kd = fixture('kitchenDryer');
+      const metal4 = await waitFor(page, () => (window.__mwCadMetal ? window.__mwCadMetal() : null), (n) => n === metal3 + (kd.after - kd.before), 30_000);
+      check(
+        `KITCHEN.G сушилка 544.07.206 поставлена: коробок сушки ${kd.before} → ${kd.after} (второй поддон), в сцене +${kd.after - kd.before}`,
+        dryer.installed && kd.after - kd.before === 1 && metal4 === metal3 + (kd.after - kd.before),
+        `металл ${metal3} → ${metal4}`,
+      );
       await openAll(page, 'upper-1650@w1:door:0', (v) => Math.abs(v.rotationDeg[1]) >= 80);
       await closeUp(page, 'upper-1650@w1:door:0', [0.3, -0.2, 1.3]);
       await page.screenshot({ path: `${OUT}/kitchen-5-dryer.png`, timeout: 120_000 });
@@ -1554,6 +1563,346 @@ const frontsState = (page) =>
     };
   });
 /** Нажатие так, как его делает человек: элемент прокручен в окно панели, в его центре — он сам. */
+/* ═════════════════════════  DRYER: сушки (FINAL MASTER STAGE, фаза 1)  ═════════════════════════ */
+
+const dryerState = (page) =>
+  page.evaluate(() => {
+    const r = document.querySelector('[data-dryer-editor]');
+    if (!r) return null;
+    return {
+      kind: r.getAttribute('data-dryer-editor'),
+      module: r.getAttribute('data-dryer-module'),
+      item: r.getAttribute('data-dryer-item'),
+      levels: r.getAttribute('data-dryer-levels'),
+      tray: Number(r.getAttribute('data-dryer-tray')),
+      travel: r.getAttribute('data-dryer-travel'),
+      refusal: r.querySelector('[data-dryer-refusal]')?.textContent ?? null,
+      notice: r.querySelector('[data-dryer-notice]')?.textContent ?? null,
+      words: (r.textContent ?? '').replace(/\s+/g, ' ').slice(0, 500),
+    };
+  });
+const dryerDrawn = (page) => page.evaluate(() => (window.__mwCadDryer ? window.__mwCadDryer() : null));
+/** Модуль выбран в списке объектов, карточка библиотеки «Мебель» нажата так, как это делает человек. */
+async function pickLibraryCard(page, label, moduleId, variant, width, touch) {
+  if (!(await page.locator('[data-studio-objects]').first().isVisible().catch(() => false))) {
+    must(`${label}: инструмент «Выбор»`, await tool(page, 'select'), 'НУЛЕВОЙ СЕЛЕКТОР: [data-studio-tool="select"]');
+  }
+  const row = page.locator(`[data-object-module="${moduleId}"]`);
+  must(`${label}: модуль ${moduleId} в списке объектов`, (await row.count()) > 0, `НУЛЕВОЙ СЕЛЕКТОР: [data-object-module="${moduleId}"]`);
+  await row.first().click();
+  await sleep(600);
+  must(`${label}: инструмент «Мебель»`, await tool(page, 'modules'), 'НУЛЕВОЙ СЕЛЕКТОР: [data-studio-tool="modules"]');
+  const sel = `[data-library] [data-variant="${variant}"][data-width="${width}"]`;
+  await page.waitForSelector(sel, { timeout: 30_000 }).catch(() => null);
+  const refused = await page.evaluate((q) => document.querySelector(q)?.getAttribute('data-refused') ?? null, sel);
+  must(`${label}: карточка «${variant}» ${width} мм в библиотеке и не серая`, refused === '0', `карточка: ${refused ?? 'НУЛЕВОЙ СЕЛЕКТОР ' + sel}`);
+  await humanPress(page, sel, `карточка ${variant}`, touch);
+}
+/** Модуль выбран в списке объектов (инструмент «Выбор»). */
+async function pickObject(page, label, moduleId) {
+  if (!(await page.locator('[data-studio-objects]').first().isVisible().catch(() => false))) {
+    must(`${label}: инструмент «Выбор»`, await tool(page, 'select'), 'НУЛЕВОЙ СЕЛЕКТОР: [data-studio-tool="select"]');
+  }
+  const row = page.locator(`[data-object-module="${moduleId}"]`);
+  must(`${label}: модуль ${moduleId} в списке объектов`, (await row.count()) > 0, `НУЛЕВОЙ СЕЛЕКТОР: [data-object-module="${moduleId}"]`);
+  await row.first().click();
+  await sleep(600);
+}
+
+async function partDryer(browser, tablet) {
+  const L = tablet ? 'DRY-TAB' : 'DRY';
+  console.log(`\n── ${L} (${tablet ? '1024 × 768 касанием' : '1440 × 900'}): «Сушка верхняя» и «Сушка нижняя выдвижная» — карточкой библиотеки, позиции «Фурнитурой», уровни и поддон, ход корзины, запись → перезагрузка`);
+  const fx = fixture('dryer');
+  const want = fixture('dryerExpect');
+  await withOrg(
+    L,
+    browser,
+    async ({ service, page, errors, consoleErrors, ids }) => {
+      await openStudio(page, ids.dryer);
+      await open3d(page, L);
+      await saved(page);
+      const gridLevels = (drawn, bottom) =>
+        (drawn ?? [])
+          .filter((d) => d.role === 'grid')
+          .map((d) => Math.round((d.boundsMm[1] + d.boundsMm[4]) / 2) - bottom - want.t)
+          .sort((a, b) => a - b)
+          .join('|');
+      const upperDrawn = (drawn) => (drawn ?? []).filter((d) => d.boundsMm[1] >= want.upperBottomMm);
+      const lowerDrawn = (drawn) => (drawn ?? []).filter((d) => d.boundsMm[4] <= want.upperBottomMm);
+
+      /* 1. Верхний шкаф над мойкой → карточка «Сушка верхняя»: условная сушка по корпусу, без позиции. */
+      await pickLibraryCard(page, L, want.upper, 'upper_dryer', 600, tablet);
+      const d1 = await waitFor(page, () => document.querySelector('[data-dryer-editor]')?.getAttribute('data-dryer-editor') ?? null, (v) => v === 'upper', 30_000);
+      await saved(page);
+      const s1 = await dryerState(page);
+      const drawn1 = await waitFor(page, () => (window.__mwCadDryer ? window.__mwCadDryer() : null), (v) => Array.isArray(v) && v.length >= want.plainPieces, 30_000);
+      check(
+        `${L}.1 «Сушка верхняя» карточкой: блок «Сушка» без позиции, уровни ${want.plainLevels} (условные) = движку; в сцене ${want.plainPieces} деталей сушки, решётки на ${want.plainLevels} мм от низа`,
+        d1 === 'upper' && s1?.item === '' && s1?.levels === want.plainLevels && /не выбрана/.test(s1?.words ?? '') &&
+          upperDrawn(drawn1).length === want.plainPieces && gridLevels(upperDrawn(drawn1), want.upperBottomMm) === want.plainLevels,
+        `${JSON.stringify(s1)} · в сцене ${upperDrawn(drawn1).length}, решётки ${gridLevels(upperDrawn(drawn1), want.upperBottomMm)}`,
+      );
+
+      /* 2. «Фурнитура» → «Сушилка» → SU02/600: уровни по паспорту 50 / 325 (стр. 260). */
+      await hardwareFor(page, L, want.upper);
+      const su = await installVia(page, L, 'dryer', want.su, 'SU02/600');
+      await saved(page);
+      const s2 = await waitFor(page, () => document.querySelector('[data-dryer-editor]')?.getAttribute('data-dryer-levels') ?? null, (v) => v === want.passportLevels, 30_000);
+      const st2 = await dryerState(page);
+      const drawn2 = await dryerDrawn(page);
+      check(
+        `${L}.2 SU02/600 «Установить»: место называет позицию, вердикт без отказа; уровни ${want.passportLevels} по паспорту; в сцене решётки там же`,
+        su.installed && su.cardVerdict !== 'fail' && s2 === want.passportLevels && st2?.item === 'SU02/600' && /стр\. 260/.test(st2?.words ?? '') &&
+          gridLevels(upperDrawn(drawn2), want.upperBottomMm) === want.passportLevels,
+        `${su.cardVerdict} · ${JSON.stringify(st2)} · решётки ${gridLevels(upperDrawn(drawn2), want.upperBottomMm)}`,
+      );
+
+      if (!tablet) {
+        /* 3. Нижний уровень 30 — отказ паспорта до нажатия, «Применить» недоступна. */
+        await humanPress(page, '[data-dryer-field="lower"]', 'поле нижнего уровня', tablet);
+        await page.locator('[data-dryer-field="lower"]').first().fill('30');
+        const refusal = await waitFor(page, () => document.querySelector('[data-dryer-refusal]')?.textContent ?? null, (v) => Boolean(v), 15_000);
+        const applyOff = await page.evaluate(() => document.querySelector('[data-dryer-apply]')?.hasAttribute('disabled') ?? null);
+        check(`${L}.3 нижний уровень 30 — отказ до нажатия словами паспорта, «Применить» недоступна`, /не ниже 50 мм \(стр\. 260\).*не хватает 20 мм/.test(refusal ?? '') && applyOff === true, `«${refusal}» · disabled ${applyOff}`);
+
+        /* 4. Свои высоты 80 / 400 и поддон снят — в сцене решётки там же, поддона нет. */
+        await page.locator('[data-dryer-field="lower"]').first().fill('80');
+        await page.locator('[data-dryer-field="upper"]').first().fill('400');
+        await sleep(400);
+        await humanPress(page, '[data-dryer-apply]', 'Применить высоты', tablet);
+        await waitFor(page, () => document.querySelector('[data-dryer-editor]')?.getAttribute('data-dryer-levels') ?? null, (v) => v === '80|400', 30_000);
+        await humanPress(page, '[data-dryer-tray]', 'Поддон', tablet);
+        const tray0 = await waitFor(page, () => document.querySelector('[data-dryer-editor]')?.getAttribute('data-dryer-tray') ?? null, (v) => v === '0', 30_000);
+        await saved(page);
+        const drawn4 = await waitFor(page, () => (window.__mwCadDryer ? window.__mwCadDryer() : null), (v) => Array.isArray(v) && v.filter((d) => d.boundsMm[1] >= 1400).length === want.ownPieces, 30_000);
+        check(
+          `${L}.4 свои высоты ${want.ownLevels} и поддон снят: блок = движку, в сцене ${want.ownPieces} деталей, решётки на ${want.ownLevels}, поддонов 0`,
+          tray0 === '0' && gridLevels(upperDrawn(drawn4), want.upperBottomMm) === want.ownLevels && upperDrawn(drawn4).length === want.ownPieces && !upperDrawn(drawn4).some((d) => d.role === 'tray'),
+          `решётки ${gridLevels(upperDrawn(drawn4), want.upperBottomMm)} · деталей ${upperDrawn(drawn4).length}`,
+        );
+      }
+
+      /* 5. Нижний шкаф у стены → «Сушка нижняя выдвижная» → KRS06/1/3/600: место «Сушилка», не «Карго». */
+      await pickLibraryCard(page, L, want.lower, 'base_dryer', 600, tablet);
+      await waitFor(page, () => document.querySelector('[data-dryer-editor]')?.getAttribute('data-dryer-editor') ?? null, (v) => v === 'lower', 30_000);
+      await hardwareFor(page, L, want.lower);
+      const slots = await page.evaluate(() => Array.from(document.querySelectorAll('[data-hw-slot]')).map((b) => b.getAttribute('data-hw-slot')));
+      const krs = await installVia(page, L, 'dryer', want.krs, 'KRS06/1/3/600');
+      await saved(page);
+      const st5 = await dryerState(page);
+      const drawn5 = await waitFor(page, () => (window.__mwCadDryer ? window.__mwCadDryer() : null), (v) => Array.isArray(v) && v.filter((d) => d.boundsMm[4] <= 1400).length === want.lowerPieces, 30_000);
+      check(
+        `${L}.5 «Сушка нижняя выдвижная» + KRS06/1/3/600: место «Сушилка» (карго нет), позиция поставлена, в сцене ${want.lowerPieces} деталей корзины и направляющих`,
+        slots.includes('dryer') && !slots.includes('cargo') && krs.installed && krs.cardVerdict !== 'fail' && st5?.kind === 'lower' && st5?.item === 'KRS06/1/3/600' && lowerDrawn(drawn5).length === want.lowerPieces,
+        `места ${slots.join(',')} · ${krs.cardVerdict} · ${JSON.stringify(st5)} · в сцене ${lowerDrawn(drawn5).length}`,
+      );
+
+      /* 6. Нажатие на фасад — корзина выезжает вместе с ним на ход полного выдвижения; второе нажатие — обратно. */
+      const door = `${want.lower}:door:0`;
+      await quiet(page);
+      await pressPart(page, door, `${L}: фасад нижней сушки`);
+      const out = await waitFor(page, (id) => (window.__mwPartSlide ? window.__mwPartSlide(id) : null), (v) => typeof v === 'number' && Math.abs(v - want.travelMm) <= 1, 30_000, door);
+      const basketMoved = await waitFor(page, (id) => (window.__mwMoving ? window.__mwMoving(id) : null), (v) => Boolean(v), 10_000, door);
+      await page.screenshot({ path: `${OUT}/${L.toLowerCase()}-6-open.png`, timeout: 120_000 });
+      await pressPart(page, door, `${L}: фасад нижней сушки`);
+      const back = await waitFor(page, (id) => (window.__mwPartSlide ? window.__mwPartSlide(id) : null), (v) => v === 0, 30_000, door);
+      check(
+        `${L}.6 фасад нижней сушки нажатием выезжает на ${want.travelMm} мм (корзина с ним) и задвигается`,
+        typeof out === 'number' && Math.abs(out - want.travelMm) <= 1 && Boolean(basketMoved) && back === 0,
+        `ход ${out} · закрыт ${back}`,
+      );
+
+      /* 7. Смета экрана: строки позиций, типовых строк сушек нет. */
+      const lines = await waitFor(page, () => (window.__mwEstimateLines ? window.__mwEstimateLines() : null), (v) => Array.isArray(v) && v.some((l) => /SU02\/600/.test(l.title)), 30_000);
+      check(
+        `${L}.7 смета экрана: строки SU02/600 и KRS06/1/3/600 по 1, типовых строк «Сушка …» нет`,
+        (lines ?? []).filter((l) => /SU02\/600|KRS06\/1\/3\/600/.test(l.title)).length === 2 && !(lines ?? []).some((l) => l.key === 'dish_dryer' || l.key === 'dish_dryer_pullout'),
+        (lines ?? []).filter((l) => /суш|SU02|KRS/i.test(l.title)).map((l) => `${l.key}:${l.title.slice(0, 40)}×${l.quantity}`).join(' | '),
+      );
+
+      /* 8. Запись → база → перезагрузка: варианты, позиции, уровни и поддон на месте. */
+      await saved(page);
+      const row = (await service.from('projects').select('millwork').eq('id', ids.dryer).single()).data;
+      const run = row?.millwork?.runs?.optimal;
+      const all = [...(run?.modules ?? []), ...((run?.upperSegments ?? []).flatMap((sg) => sg.modules ?? []))];
+      const up = all.find((m) => m.id === want.upper);
+      const low = all.find((m) => m.id === want.lower);
+      const dbOk =
+        up?.variant === 'upper_dryer' && low?.variant === 'base_dryer' &&
+        (up?.fittings ?? []).some((f) => f.slot === 'dryer') && (low?.fittings ?? []).some((f) => f.slot === 'dryer') &&
+        (tablet || (up?.dryer?.lowerMm === 80 && up?.dryer?.upperMm === 400 && up?.dryer?.tray === false));
+      await page.reload();
+      await open3d(page, L);
+      await pickObject(page, L, want.upper);
+      const reread = await waitFor(page, () => document.querySelector('[data-dryer-editor]')?.getAttribute('data-dryer-levels') ?? null, (v) => Boolean(v), 30_000);
+      const tr = await page.evaluate(() => document.querySelector('[data-dryer-editor]')?.getAttribute('data-dryer-tray') ?? null);
+      check(
+        `${L}.8 в базе — варианты, позиции${tablet ? '' : ', уровни 80 / 400 и поддон снят'}; после перезагрузки блок «Сушка» тот же`,
+        dbOk && reread === (tablet ? want.passportLevels : want.ownLevels) && tr === (tablet ? '1' : '0'),
+        `база ${JSON.stringify({ up: up?.dryer ?? null, upVar: up?.variant, lowVar: low?.variant })} · после перезагрузки ${reread} поддон ${tr}`,
+      );
+      if (tablet) {
+        const scroll = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+        check(`${L}.9 прокрутки по ширине нет`, scroll <= 0, `${scroll} px`);
+      }
+      check(`${L}: ошибок страницы и консоли нет`, errors.length === 0 && consoleErrors.length === 0, [...errors, ...consoleErrors].slice(0, 3).join(' | '));
+    },
+    { viewport: tablet ? { width: 1024, height: 768 } : { width: 1440, height: 900 }, touch: tablet, projects: [{ key: 'dryer', zone: 'Кухня', fx }] },
+  );
+}
+
+/* ═════════════════════════  LEAF: ручка и петли детали, звуки, правила присадки (FINAL MASTER STAGE, фазы 2, 4, 6)  ═════════════════════════ */
+
+const leafState = (page) =>
+  page.evaluate(() => {
+    const r = document.querySelector('[data-leaf-editor]');
+    if (!r) return null;
+    return {
+      module: r.getAttribute('data-leaf-editor'),
+      leaf: r.getAttribute('data-leaf-current'),
+      cut: r.getAttribute('data-leaf-cut'),
+      x: Number(r.getAttribute('data-handle-x')),
+      y: Number(r.getAttribute('data-handle-y')),
+      own: r.getAttribute('data-handle-own'),
+      hinges: r.getAttribute('data-hinge-heights'),
+      refusal: r.querySelector('[data-handle-refusal]')?.textContent ?? null,
+      hingeRefusal: r.querySelector('[data-hinge-refusal]')?.textContent ?? null,
+    };
+  });
+const handleWorld = (page, part) =>
+  page.evaluate((key) => {
+    const read = window.__mwHandles ? window.__mwHandles() : null;
+    const h = read?.handles.find((x) => x.part === key && !x.moving);
+    return h ? h.worldMm : null;
+  }, part);
+
+async function partLeaf(browser, tablet) {
+  const L = tablet ? 'LEAF-TAB' : 'LEAF';
+  console.log(`\n── ${L} (${tablet ? '1024 × 768 касанием' : '1440 × 900'}): ручка детали (перетаскивание, X/Y, отказ), петли по высоте, звуки механизмов, правила присадки в «Настройках цеха»`);
+  const fx = fixture('kitchen');
+  const DOOR = 'base-1200@w1';
+  const part = `${DOOR}:door:0`;
+  await withOrg(
+    L,
+    browser,
+    async ({ service, org, page, errors, consoleErrors, ids }) => {
+      await openStudio(page, ids.kitchen);
+      await open3d(page, L);
+      await saved(page);
+      await pickObject(page, L, DOOR);
+      await page.waitForSelector('[data-leaf-editor]', { timeout: 30_000 });
+      const s0 = await leafState(page);
+      const w0 = await waitFor(page, (key) => {
+        const read = window.__mwHandles ? window.__mwHandles() : null;
+        return read?.handles.find((x) => x.part === key && !x.moving)?.worldMm ?? null;
+      }, Boolean, 30_000, part);
+
+      /* 1. Ручку перетащили вниз на схеме детали — правка одна, на отпускании; ручка в сцене сдвинулась на столько же. */
+      const knob = page.locator('[data-handle-knob]').first();
+      const box = await knob.boundingBox();
+      must(`${L}: ручка на схеме детали`, Boolean(box), 'НУЛЕВОЙ СЕЛЕКТОР: [data-handle-knob]');
+      const board = await page.locator('[data-handle-board]').first().boundingBox();
+      const mmPerPx = Number(s0.cut.split('x')[1]) / board.height;
+      const dy = 40;
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + dy / 2, { steps: 4 });
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + dy, { steps: 4 });
+      await page.mouse.up();
+      const own1 = await waitFor(page, () => document.querySelector('[data-leaf-editor]')?.getAttribute('data-handle-own') ?? null, (v) => v === '1', 30_000);
+      await saved(page);
+      const s1 = await leafState(page);
+      const w1 = await waitFor(page, (key) => {
+        const read = window.__mwHandles ? window.__mwHandles() : null;
+        return read?.handles.find((x) => x.part === key && !x.moving)?.worldMm ?? null;
+      }, (v) => Boolean(v) && Math.abs(v[1] - (w0?.[1] ?? 0)) > 5, 30_000, part);
+      const movedMm = w0 && w1 ? w0[1] - w1[1] : NaN;
+      check(
+        `${L}.1 ручка перетащена вниз на ${dy} px (≈${Math.round(dy * mmPerPx)} мм): своё место записано, в сцене ручка ниже на столько же, сколько в блоке (±2 мм)`,
+        own1 === '1' && s1 && Math.abs(s0.y - s1.y - movedMm) <= 2 && Math.abs(movedMm - dy * mmPerPx) <= 4,
+        `блок ${s0.y} → ${s1?.y} · сцена ${w0?.[1]} → ${w1?.[1]} (${movedMm} мм)`,
+      );
+
+      if (!tablet) {
+        /* 2. X = 5 — ручка вышла бы за деталь: отказ до нажатия, «Поставить» недоступна. */
+        await page.locator('[data-handle-field="x"]').first().fill('5');
+        const refusal = await waitFor(page, () => document.querySelector('[data-handle-refusal]')?.textContent ?? null, Boolean, 15_000);
+        const off = await page.evaluate(() => document.querySelector('[data-handle-apply]')?.hasAttribute('disabled') ?? null);
+        check(`${L}.2 X = 5 — отказ движка до нажатия «выходит за деталь слева», «Поставить» недоступна`, /выходит за деталь слева/.test(refusal ?? '') && off === true, `«${refusal}» · ${off}`);
+
+        /* 3. Петли 90 / 200 / 626 — записаны; 10 / 600 — отказ «за низ двери». */
+        await page.locator('[data-hinge-field]').first().fill('10 / 600');
+        const hr = await waitFor(page, () => document.querySelector('[data-hinge-refusal]')?.textContent ?? null, Boolean, 15_000);
+        await page.locator('[data-hinge-field]').first().fill('90 / 200 / 626');
+        await sleep(400);
+        await humanPress(page, '[data-hinge-apply]', 'Применить петли', tablet);
+        const hinges = await waitFor(page, () => document.querySelector('[data-leaf-editor]')?.getAttribute('data-hinge-heights') ?? null, (v) => v === '90|200|626', 30_000);
+        await saved(page);
+        check(`${L}.3 петли 10 / 600 — отказ «выходит за низ двери»; 90 / 200 / 626 — записаны`, /выходит за низ двери/.test(hr ?? '') && hinges === '90|200|626', `«${hr}» · ${hinges}`);
+      }
+
+      /* 4. Звуки механизмов: по умолчанию выключены; включили — открывание двери играет звук «дверь, открывание». */
+      await humanPress(page, '[data-scene-layers-toggle]', 'Слои', tablet);
+      const soundOff = await page.evaluate(() => document.querySelector('[data-scene-sound]')?.getAttribute('aria-pressed') ?? null);
+      await humanPress(page, '[data-scene-sound]', 'Звуки механизмов', tablet);
+      const soundOn = await page.evaluate(() => document.querySelector('[data-scene-sound]')?.getAttribute('aria-pressed') ?? null);
+      await humanPress(page, '[data-scene-layers-toggle]', 'Слои', tablet);
+      await quiet(page);
+      await pressPart(page, part, `${L}: дверь`);
+      const played = await waitFor(page, () => (window.__mwSounds ? window.__mwSounds() : null), (v) => Boolean(v) && v.played.some((p) => p.category === 'door' && p.direction === 'open'), 15_000);
+      await sleep(1500);
+      await pressPart(page, part, `${L}: дверь`);
+      const closed = await waitFor(page, () => (window.__mwSounds ? window.__mwSounds() : null), (v) => Boolean(v) && v.played.some((p) => p.category === 'door' && p.direction === 'close'), 15_000);
+      check(
+        `${L}.4 звуки: по умолчанию «Выкл»; «Вкл» — открывание и закрывание двери играют свои звуки (по событию, не по кадру: ${'≤'} 2 события на дверь)`,
+        soundOff === 'false' && soundOn === 'true' && Boolean(played) && Boolean(closed) && (closed?.played ?? []).filter((p) => p.category === 'door').length <= 3,
+        `выкл ${soundOff} → ${soundOn} · контекст ${closed?.state} · ${(closed?.played ?? []).map((p) => `${p.category}:${p.direction}`).join(', ')}`,
+      );
+
+      /* 5. Запись → база → перезагрузка: своё место ручки и петли — в объекте; звук — выбор устройства. */
+      const row = (await service.from('projects').select('millwork').eq('id', ids.kitchen).single()).data;
+      const unit = (row?.millwork?.runs?.optimal?.modules ?? []).find((m) => m.id === DOOR);
+      await page.reload();
+      await open3d(page, L);
+      await pickObject(page, L, DOOR);
+      const s5 = await waitFor(page, () => document.querySelector('[data-leaf-editor]')?.getAttribute('data-handle-own') ?? null, (v) => v === '1', 30_000);
+      await humanPress(page, '[data-scene-layers-toggle]', 'Слои', tablet);
+      const soundKept = await page.evaluate(() => document.querySelector('[data-scene-sound]')?.getAttribute('aria-pressed') ?? null);
+      check(
+        `${L}.5 в базе своё место ручки${tablet ? '' : ' и петли'}; после перезагрузки блок тот же; звук «Вкл» — запомнен устройством`,
+        Boolean(unit?.handleAt?.['door:0']) && (tablet || unit?.hingeAt?.['door:0']?.heightsMm?.join('|') === '90|200|626') && s5 === '1' && soundKept === 'true',
+        JSON.stringify({ handleAt: unit?.handleAt ?? null, hingeAt: unit?.hingeAt ?? null, soundKept }),
+      );
+
+      if (!tablet) {
+        /* 6. «Настройки цеха» → «Присадка — правила цеха»: та же форма; сохранение не ставит «Цех подтвердил». */
+        await page.goto(`${BASE}/admin/production#drilling`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+        await page.waitForSelector('[data-drilling-rules-admin] [data-drill-rule="hingeEdgeMm"]', { timeout: 60_000 });
+        await page.waitForFunction(() => {
+          const el = document.querySelector('[data-drilling-rules-admin] [data-drill-rule="hingeEdgeMm"]');
+          return Boolean(el && Object.keys(el).some((k) => k.startsWith('__reactProps')));
+        }, undefined, { timeout: 60_000 });
+        const words = await page.evaluate(() => (document.querySelector('[data-drilling-rules-admin]')?.textContent ?? '').replace(/\s+/g, ' '));
+        await page.fill('[data-drilling-rules-admin] [data-drill-rule="hingeEdgeMm"]', '100');
+        await page.getByRole('button', { name: 'Сохранить', exact: true }).click({ timeout: 15_000 });
+        await waitFor(page, () => document.body.textContent?.includes('Сохранено.') ?? false, Boolean, 30_000);
+        const { data: orgRow } = await service.from('orgs').select('production').eq('id', org.id).single();
+        check(
+          `${L}.6 «Настройки цеха» → присадка: три источника словами; 100 мм сохранены; «Цех подтвердил» не поставился сам`,
+          /Подтверждено производителем/.test(words) && /Правило цеха/.test(words) && /Не подтверждено цехом/.test(words) &&
+            orgRow?.production?.drilling?.hingeEdgeMm === 100 && orgRow?.production?.drilling?.confirmed === false,
+          JSON.stringify(orgRow?.production?.drilling ?? null),
+        );
+      } else {
+        const scroll = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+        check(`${L}.6 прокрутки по ширине нет`, scroll <= 0, `${scroll} px`);
+      }
+      check(`${L}: ошибок страницы и консоли нет`, errors.length === 0 && consoleErrors.length === 0, [...errors, ...consoleErrors].slice(0, 3).join(' | '));
+    },
+    { viewport: tablet ? { width: 1024, height: 768 } : { width: 1440, height: 900 }, touch: tablet, projects: [{ key: 'kitchen', zone: 'Кухня', fx }] },
+  );
+}
+
 async function humanPress(page, selector, label, touch) {
   const b = page.locator(selector).first();
   must(`${label}: ${selector}`, (await b.count()) > 0, `НУЛЕВОЙ СЕЛЕКТОР: ${selector}`);
@@ -3147,6 +3496,10 @@ try {
       if (part === 'ceiling') await partCeiling(browser, false);
       if (part === 'ceiling-tablet') await partCeiling(browser, true);
       if (part === 'inner') await partInner(browser);
+      if (part === 'dryer') await partDryer(browser, false);
+      if (part === 'dryer-tablet') await partDryer(browser, true);
+      if (part === 'leaf') await partLeaf(browser, false);
+      if (part === 'leaf-tablet') await partLeaf(browser, true);
       done.push(part);
       console.log(`  ·    ${part}: ${Math.round((Date.now() - startedAt) / 1000)} с`);
     } catch (error) {

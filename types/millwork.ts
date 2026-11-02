@@ -156,6 +156,21 @@ export type ApplianceKind =
 export type FrontType = 'door' | 'drawers' | 'none' | 'appliance';
 
 /** Начинка конкретного места. Каталог — в lib/millwork/moduleVariants.ts. */
+/**
+ * СУШКА ДЛЯ ПОСУДЫ — что выбрал человек (фаза 1). Верхняя: уровни и их высоты от низа корпуса в свету;
+ * нижняя выдвижная: только поддон — корзину задаёт позиция производителя.
+ */
+export interface DryerSpec {
+  /** Уровней: 1 — тарелки, 2 — тарелки и чашки. Позиция с напечатанным числом уровней сильнее. */
+  levels?: 1 | 2;
+  /** Нижний уровень (решётка тарелок) от низа корпуса в свету, мм. */
+  lowerMm?: number;
+  /** Верхний уровень (решётка чашек) от низа корпуса в свету, мм. */
+  upperMm?: number;
+  /** Поддон: false — снят. */
+  tray?: boolean;
+}
+
 export type ModuleVariantKind =
   | 'door'
   | 'door_two'
@@ -173,6 +188,7 @@ export type ModuleVariantKind =
   | 'upper_glass'
   | 'upper_display'
   | 'upper_dryer'
+  | 'base_dryer'
   | 'upper_lift'
   | 'upper_open'
   | 'upper_micro'
@@ -440,6 +456,16 @@ export interface FillBay {
 export interface BayRod {
   /** Ось штанги ниже верха зоны (нижней грани панели над ней), мм. */
   belowTopMm: number;
+  /** Своя длина штанги, мм (фаза 3) — по центру проёма, не длиннее его. Пусто — во весь проём. */
+  lengthMm?: number;
+  /** Ось штанги от передней кромки корпуса, мм (фаза 3). Пусто — посередине глубины. */
+  depthMm?: number;
+  /** Сечение (фаза 3): круглая Ø25 или овальная 30 × 15 — вид; артикула штанги нет. */
+  profile?: 'round' | 'oval';
+  /** Покрытие штанги и держателей (фаза 3) — вид. */
+  finish?: ProfileFinish;
+  /** Вешалки (фаза 3): показать числом поровну по штанге — вид, в смету не идут. */
+  hangers?: { count: number; color?: 'black' | 'white' | 'wood' };
 }
 
 /**
@@ -574,6 +600,11 @@ export interface ModuleFitting {
    * угла — в проверке хода и в сцене. Пусто — до паспортного угла.
    */
   openDeg?: number;
+  /**
+   * ОТДЕЛКА — ВИД (фаза 3): у пантографа «чёрный матовый» поверх исполнения артикула. Позиция, геометрия и
+   * ход те же; у артикула другого исполнения — подпись «вид, не исполнение позиции».
+   */
+  visualFinish?: 'black_matte';
 }
 
 /** Высота ручки на полотне. Сторона не хранится: она напротив петель. */
@@ -581,6 +612,37 @@ export type HandleLevel = 'top' | 'middle' | 'bottom';
 
 /** Как повёрнута планка ручки. */
 export type HandleTurn = 'vertical' | 'horizontal';
+
+/**
+ * СВОЁ МЕСТО РУЧКИ НА ДЕТАЛИ ФАСАДА (FINAL MASTER STAGE, фаза 2): ось ручки — от левого нижнего угла детали
+ * (вид спереди, деталь раскроя), мм; поворот планки. Сильнее места по правилу (`handleSpotOf`). Ручка
+ * целиком на детали — иначе отказ словами (`handleAtRefusal`).
+ */
+export interface HandleAt {
+  xMm: number;
+  yMm: number;
+  turn?: HandleTurn;
+}
+
+/** Покрытие условной скобы без позиции (фаза 2): только вид, артикул им не меняется. */
+export type HandleCustomFinish = 'black_matte' | 'chrome' | 'stainless_brushed' | 'matte_chrome' | 'gold';
+
+/**
+ * УСЛОВНАЯ СКОБА СВОЕЙ ДЛИНЫ (фаза 2): ручка без позиции производителя — своя длина и покрытие. Межосевого и
+ * крепления у неё нет: «не подтверждено для производства», присадка не ставится.
+ */
+export interface HandleCustom {
+  lengthMm?: number;
+  finish?: HandleCustomFinish;
+}
+
+/**
+ * ПЕТЛИ СТВОРКИ ПО ВЫСОТЕ (фаза 2): оси чашек от нижнего торца двери, мм, снизу вверх. Число петель — длина
+ * списка. Проверка — `hingeAtRefusal`: чашка на двери, петли не друг на друге, планка не на полке.
+ */
+export interface HingeAt {
+  heightsMm: number[];
+}
 
 /**
  * ВОСЕМЬ МЕСТ РУЧКИ НА ФАСАДЕ.
@@ -1061,6 +1123,18 @@ export interface Module {
    * читаются `vitrineOf` без этого поля, и отпечаток у них прежний).
    */
   vitrine?: VitrineSpec;
+  /**
+   * СУШКА ДЛЯ ПОСУДЫ (FINAL MASTER STAGE, фаза 1): уровни верхней сушки и поддон. Разбирает одна
+   * `dryerOf` (lib/millwork/dryer.ts) — сцена, проверка места, смета и присадка. Пусто — умолчания
+   * паспорта позиции или условные без неё; умолчания в данные не пишутся (ловушка 246).
+   */
+  dryer?: DryerSpec;
+  /** Своё место ручки по детали фасада (`door:0`, `drawer:1`) — фаза 2. Пусто — место по правилу. */
+  handleAt?: Record<string, HandleAt>;
+  /** Условная скоба своей длины и покрытия (без позиции) — фаза 2. */
+  handleCustom?: HandleCustom;
+  /** Петли створки по высоте (`door:0`) — фаза 2. Пусто — раскладка по правилу цеха или поровну. */
+  hingeAt?: Record<string, HingeAt>;
   /**
    * МАТЕРИАЛ КОРПУСА ЭТОГО МОДУЛЯ: ссылка на позицию каталога.
    *
@@ -2324,6 +2398,27 @@ export type MillworkOp =
    * правка не трогает: отказ — словами с миллиметрами до записи.
    */
   | { op: 'set_storage'; moduleId: string; heightMm?: number | null; depthMm?: number | null; removed?: boolean }
+  /**
+   * СУШКА ДЛЯ ПОСУДЫ (фаза 1): уровни, их высоты и поддон. `null` у поля — вернуть умолчание (паспорта или
+   * условное); `reset` — все умолчания. Отказ — `dryerRefusal`, словами с мм и страницей паспорта.
+   */
+  /**
+   * СВОЁ МЕСТО РУЧКИ (фаза 2): ось ручки на детали фасада `leaf` от её левого нижнего угла, мм; поворот. `reset` —
+   * место по правилу. Отказ — ручка выходит за деталь (мм).
+   */
+  | { op: 'set_handle_at'; moduleId: string; leaf: string; xMm?: number; yMm?: number; turn?: HandleTurn; reset?: boolean }
+  /** Условная скоба без позиции: своя длина и покрытие (фаза 2). `null` — снять. */
+  | { op: 'set_handle_custom'; moduleId: string; lengthMm?: number | null; finish?: HandleCustomFinish | null }
+  /** Петли створки по высоте (фаза 2): оси чашек от нижнего торца, мм; `null` — по правилу. */
+  | { op: 'set_hinges'; moduleId: string; leaf: string; heightsMm: number[] | null }
+  /**
+   * МОДЕЛЬ ПРИБОРА В СВОЕЙ СБОРКЕ (фаза 5): артикул ложится на модули ряда с этим прибором — ряд не
+   * пересобирается. `null` — типовой прибор. Модель другой ширины модуля — отказ словами.
+   */
+  | { op: 'set_appliance_model'; appliance: ApplianceKind; model: string | null }
+  /** Отделка поставленной позиции — вид (фаза 3): пантограф «чёрный матовый». `null` — как у артикула. */
+  | { op: 'set_fitting_finish'; moduleId: string; slot: FittingSlot; bayId?: string; finish: 'black_matte' | null }
+  | { op: 'set_dryer'; moduleId: string; levels?: 1 | 2 | null; lowerMm?: number | null; upperMm?: number | null; tray?: boolean | null; reset?: boolean }
   /** Фартук этой стены из каталога материалов (ЭТАП 4, часть C); `null` — снять выбор. */
   | { op: 'set_apron'; itemId: string | null; surface?: string }
   /**

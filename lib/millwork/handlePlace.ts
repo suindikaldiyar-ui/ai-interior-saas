@@ -72,8 +72,11 @@ export function handleSpotOrNull(value: unknown): HandleSpotPlace | null {
   return typeof value === 'string' && SPOTS.has(value) ? (value as HandleSpotPlace) : null;
 }
 
-/** Куда ручка встала и как повёрнута планка. */
-export type HandleSpot = { place: HandleSpotPlace; turn: HandleTurn };
+/**
+ * Куда ручка встала и как повёрнута планка. `at` — своё место оси ручки на детали фасада (фаза 2): от левого
+ * нижнего угла детали, мм; есть — сильнее места по правилу.
+ */
+export type HandleSpot = { place: HandleSpotPlace; turn: HandleTurn; at?: { xMm: number; yMm: number } };
 
 /**
  * СТАРОЕ ЗНАЧЕНИЕ ПЕРЕНОСИТСЯ ПО СМЫСЛУ, А НЕ СБРАСЫВАЕТСЯ.
@@ -118,7 +121,17 @@ export function handleSpotOf(
    * фурнитуры спрашивают модуль целиком и оставляют пустым.
    */
   hinge?: 'left' | 'right',
+  /** Деталь фасада (`door:0`, `drawer:1`): её своё место (`handleAt`) сильнее правила — фаза 2. */
+  leaf?: string,
 ): HandleSpot {
+  const spot = ruleSpotOf(unit, run, hinge);
+  const own = leaf ? unit.handleAt?.[leaf] : undefined;
+  if (!own) return spot;
+  /* У фронта ящика планка по умолчанию горизонтальна — правило створки ему не указ. */
+  return { place: spot.place, turn: own.turn ?? (leaf!.startsWith('drawer:') ? 'horizontal' : spot.turn), at: { xMm: own.xMm, yMm: own.yMm } };
+}
+
+function ruleSpotOf(unit: Module, run: Pick<Run, 'options'>, hinge?: 'left' | 'right'): HandleSpot {
   const { handle } = handleOf(unit, run);
   const { opening } = openingOf(unit);
 

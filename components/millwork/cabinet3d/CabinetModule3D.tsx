@@ -378,12 +378,15 @@ export default function CabinetModule3D({
           /* Карго: фасад и корзины — коробки пачки ряда, едут вперёд вместе. */
           const moving = localBoxesOf(leaf.id);
           if (!moving || moving.length === 0) return null;
+          /* Сушка нижняя (фаза 1): ход корзины — у её коробок (полное выдвижение); у карго — прежний. */
+          const pullTravel = moving.find((box) => box.travel)?.travel;
           return (
             <InteractiveBayDrawer
               key={leaf.id}
               id={leaf.id}
               open={isOpen(leaf.id)}
               onToggle={onToggle}
+              vectorM={pullTravel ? [0, 0, pullTravel.mm / 1000] : undefined}
               boxes={moving}
               parts={parts}
               frontMaterial={look?.material ?? frontMaterial}

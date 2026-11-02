@@ -269,6 +269,13 @@ export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts'): GlyphEleme
       }
       break;
 
+    case 'base_dryer':
+      // Нижняя сушка (фаза 1): выдвижной фасад и решётка корзины за ним.
+      elements.push({ kind: 'panel' });
+      elements.push({ kind: 'cargo' });
+      elements.push({ kind: 'dryer' });
+      break;
+
     case 'cargo':
       // Узкий выдвижной фасад: вертикальная стрелка выдвижения.
       elements.push({ kind: 'panel' });

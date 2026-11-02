@@ -259,7 +259,30 @@ Object.assign(DIM_MAP, {
     'монтажный зазор 12,7 (±0,2)': 'sideClearance',
   },
   'BOYARD/drawer_system': { 'NL (монтажная длина = длина направляющих с боковой стенкой)': 'nominalLength' },
-  'BOYARD/kitchen': { 'A — ширина кухонного шкафа': 'cabinetWidth' },
+  'BOYARD/kitchen': {
+    'A — ширина кухонного шкафа': 'cabinetWidth',
+    /*
+     * Сушки (FINAL MASTER STAGE, фаза 1) — только подписи с однозначным смыслом. Монтажная ширина корзины —
+     * ширина базы (код артикула «/600», и внутренняя ширина 564…568 рядом). «455 / 550 (глубина)» не сводятся:
+     * на чертеже не сказано, глубина это корзины или корпуса.
+     */
+    'монтажная ширина': 'cabinetWidth',
+    'min 350 (высота)': 'minInnerHeight',
+    '200 min (высота)': 'minInnerHeight',
+    '75 (от дна)': 'runnerFromBottom',
+    '79 (от дна)': 'runnerFromBottom',
+    '50 min (нижний уровень от низа)': 'dryerLowerMin',
+    '275 min (между уровнями)': 'dryerLevelGapMin',
+    'min 280 (между рядами отверстий)': 'dryerLevelGapMin',
+    /* SU07: «* — минимальный рекомендованный размер» — так напечатано под таблицей. */
+    '300* (между уровнями)': 'dryerLevelGapMin',
+    '254 (глубина сушки)': 'dryerDepth',
+    '276 (глубина сушки)': 'dryerDepth',
+    'min 260 (глубина шкафа)': 'minCabinetDepth',
+    'min 320 (глубина на чертеже установки)': 'minCabinetDepth',
+    'min 500 (высота боковины)': 'minCarcassHeight',
+    'L — ширина, внутренний размер': 'innerWidth',
+  },
   'BOYARD/handle': { L: 'length', N: 'holeSpacing', 'N по коду артикула': 'holeSpacing' },
   'BOYARD/handle/bar_handle': { H: 'projection' },
   'BOYARD/handle/rail_handle': { H: 'projection' },
@@ -334,6 +357,8 @@ const RANGE_MAP = {
 Object.assign(RANGE_MAP, {
   'BOYARD/hinge': { 'наложение D при H=0': 'overlayMd0', 'наложение D при H=2': 'overlayMd2', 'наложение D при H=4': 'overlayMd4' },
   'BOYARD/slide': { 'толщина плиты (боковины ящика), мм — обзор стр. 174': 'drawerSide' },
+  /* Сушки (фаза 1): внутренняя ширина шкафа / базы — диапазон, как напечатан. */
+  'BOYARD/kitchen': { 'L — внутренняя ширина шкафа': 'innerWidth', 'внутренняя ширина базы': 'innerWidth' },
   'DTC/hinge': { 'Диапазон толщины двери': 'doorThickness', 'Диапазон толщин фасада': 'doorThickness' },
   'DTC/lift': {
     'индекс мощности LF (KH мм x вес двери кг)': 'powerFactor',

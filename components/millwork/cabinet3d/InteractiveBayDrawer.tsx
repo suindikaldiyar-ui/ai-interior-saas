@@ -108,6 +108,8 @@ export default function InteractiveBayDrawer({ id, open, onToggle, boxes, parts,
   );
   useSlide({
     target: open && outerOpen ? 1 : 0,
+    /* Звук (фаза 4): внутренний ящик, корзина нижней сушки, ящик системы (царги — сечения), остальное — ящик. */
+    sound: follows ? 'inner_drawer' : boxes.some((b) => b.dryer) ? 'dryer' : boxes.some((b) => b.section) ? 'tandembox' : vectorM && vectorM[1] !== 0 ? 'pantograph' : 'drawer',
     initial: open && outerOpen ? 1 : 0,
     apply: (value) => {
       own.current = value;

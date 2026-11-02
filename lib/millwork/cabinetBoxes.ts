@@ -80,13 +80,14 @@ import { frontWithMilling, leafFrontWithMilling } from './milling';
 import type { FrontRelief } from '@/types/millwork';
 import { gripOrient, reliefGlassMm, type ReliefOrient } from './facadeRelief';
 import { isUpperRow } from './modules';
-import { bentHingeOf, isPullOut, leafHinges, milledGrip, openingHardware, openingOf } from './opening';
+import { bentHingeOf, isPullOut, leafHingeCount, leafHinges, milledGrip, openingHardware, openingOf } from './opening';
 import type { GlassKind, Module, ProfileFinish, Run } from '@/types/millwork';
 import { GLASS_SHELF_MM, glassOf, shelvesAreGlass, vitrineDoorKind } from './glass';
 import { VITRINE_GLASS_SHOWN_MM, VITRINE_PROFILE_MM, vitrineBackMm, vitrineBodyGlassMm, vitrineDoorCount, vitrineGrooveMm, vitrineOf } from './vitrine';
 import type { SceneLayer } from './sceneLayers';
 import { tvBoxMm, wallPanelParts, type PanelCorners } from './tvZone';
 import { applianceModel, frontOnApplianceDoor } from './appliances';
+import { dryerOf, type DryerPiece } from './dryer';
 import type { WallPanelKind } from '@/types/millwork';
 
 /**
@@ -113,6 +114,10 @@ const MM = 1000;
 export type BoxDraw = {
   position: [number, number, number];
   scale: [number, number, number];
+  /** Деталь сушки (фаза 1): решётка, пруток, поддон, держатель, корзина, направляющая — из `dryerOf`. */
+  dryer?: DryerPiece['role'];
+  /** Часть штанги отсека (фаза 3): сама штанга, держатель, вешалка — вид. */
+  rodPart?: 'rod' | 'holder' | 'hanger';
   /** Деталь стоит ВНУТРИ корпуса: за закрытым фасадом её не видно. */
   inside?: boolean;
   /**
@@ -477,18 +482,58 @@ export function bayRodBoxes(
 ): PartBox[] {
   const layout = bayLayout(unit, placeEnvelope(unit, place, production));
   if (!layout) return [];
+  const span = (bayId: string) => {
+    const bay = layout.bays.find((b) => b.id === bayId);
+    return bay ? bay.xToMm - bay.xFromMm : 0;
+  };
   return layout.bays.flatMap((bay) =>
-    (installedItem(unit, 'pantograph', hardware, bay.id) ? [] : bay.rods).map(
-      (rod): PartBox => ({
-        material: 'metal',
-        node: 'rod',
-        inside: true,
-        partId: rod.partId,
-        bayId: bay.id,
-        position: [place.x + (rod.xFromMm + rod.xToMm) / 2 / MM, place.y + rod.atMm / MM, rod.zMm / MM],
-        scale: [rod.lengthMm / MM, rod.diameterMm / MM, rod.diameterMm / MM],
-      }),
-    ),
+    (installedItem(unit, 'pantograph', hardware, bay.id) ? [] : bay.rods).flatMap((rod): PartBox[] => {
+      /* Сечение, покрытие, держатели и вешалки (фаза 3) — вид; ось, длина и место — из `bayLayout`. */
+      const finish = rod.finish ? { profile: rod.finish } : {};
+      const [secH, secD] = rod.profile === 'oval' ? [15, 30] : [rod.diameterMm, rod.diameterMm];
+      const y = place.y + rod.atMm / MM;
+      const z = rod.zMm / MM;
+      const out: PartBox[] = [
+        {
+          material: 'metal',
+          node: 'rod',
+          inside: true,
+          partId: rod.partId,
+          bayId: bay.id,
+          rodPart: 'rod',
+          ...finish,
+          position: [place.x + (rod.xFromMm + rod.xToMm) / 2 / MM, y, z],
+          scale: [rod.lengthMm / MM, secH / MM, secD / MM],
+        },
+      ];
+      const full = rod.lengthMm >= span(bay.id) - 0.5;
+      /*
+       * Держатели — на штанге, а не в ней: деталь сцены не входит в соседнюю (пересечений 0). Во весь проём —
+       * фланец на боковине над концом штанги; короче — кронштейн от верха штанги к панели над зоной.
+       */
+      const top = secH / 2;
+      for (const x of [rod.xFromMm, rod.xToMm]) {
+        out.push(
+          full
+            ? { material: 'metal', node: 'rod', inside: true, bayId: bay.id, rodPart: 'holder', ...finish, position: [place.x + (x + (x === rod.xFromMm ? 3 : -3)) / MM, y + (top + 15) / MM, z], scale: [6 / MM, 30 / MM, 40 / MM] }
+            : { material: 'metal', node: 'rod', inside: true, bayId: bay.id, rodPart: 'holder', ...finish, position: [place.x + (x + (x === rod.xFromMm ? 3 : -3)) / MM, y + (top + rod.belowTopMm) / 2 / MM, z], scale: [6 / MM, Math.max(1, rod.belowTopMm - top) / MM, 20 / MM] },
+        );
+      }
+      const hangers = rod.hangers;
+      if (hangers && hangers.count > 0) {
+        const step = rod.lengthMm / hangers.count;
+        const widthMm = Math.min(420, Math.max(120, -2 * rod.zMm - 20));
+        const look: Pick<PartBox, 'material' | 'profile'> =
+          hangers.color === 'white' ? { material: 'carcass' } : hangers.color === 'wood' ? { material: 'inner' } : { material: 'metal', profile: 'black' };
+        for (let i = 0; i < hangers.count; i += 1) {
+          const x = place.x + (rod.xFromMm + (i + 0.5) * step) / MM;
+          /* Крючок — от низа штанги вниз: в штангу он не входит. */
+          out.push({ ...look, node: 'rod', inside: true, bayId: bay.id, rodPart: 'hanger', position: [x, y - (secH / 2 + 25) / MM, z], scale: [4 / MM, 50 / MM, 4 / MM] });
+          out.push({ ...look, node: 'rod', inside: true, bayId: bay.id, rodPart: 'hanger', position: [x, y - 150 / MM, z], scale: [8 / MM, 10 / MM, widthMm / MM] });
+        }
+      }
+      return out;
+    }),
   );
 }
 
@@ -1338,9 +1383,10 @@ export function leafHandleBox(input: {
   if (kind === 'profile') model = genericStripModel(geometry.widthM * MM);
   else if (shaped) model = shaped;
   else {
-    /* Условная скоба — длиной прежнего бруска: доля стороны, вдоль которой она стоит. */
+    /* Условная скоба — длиной прежнего бруска: доля стороны, вдоль которой она стоит; своя длина и покрытие — фаза 2. */
     const box = handleBoxOf(seat === 'center' ? { place: 'top-center', turn: 'horizontal' } : spot, geometry);
-    model = genericBarModel(Math.max(box.scale[0], box.scale[1]) * MM);
+    const custom = unit.handleCustom;
+    model = genericBarModel(custom?.lengthMm ?? Math.max(box.scale[0], box.scale[1]) * MM, custom ? { finish: custom.finish, own: custom.lengthMm !== undefined } : undefined);
   }
   const placed = placeHandle(model, spot, geometry, { seat, edge: edgeMountOf(spot, seat, isUpperRow(unit)) });
   return {
@@ -1367,6 +1413,52 @@ export function leafHandleBox(input: {
  * мешем: пока положение считается в одном месте, закрытая и открытая
  * дверь не могут оказаться разной мебелью.
  */
+/**
+ * СВОЁ МЕСТО РУЧКИ — ВСТАЁТ ЛИ (фаза 2): та же `leafHandleBox`, что рисует сцену, на детали раскроя
+ * (`frontCutsOf`). Ручка целиком на детали — иначе отказ с миллиметрами. Своей формулы места нет.
+ */
+export function handleAtCheck(
+  unit: Module,
+  leaf: string,
+  at: { xMm: number; yMm: number; turn?: HandleSpot['turn'] },
+  run: Run,
+  production: ProductionSettings,
+  hardware?: Map<string, HardwareItem>,
+): { ok: true; boundsMm: [number, number, number, number]; cut: FrontCut } | { ok: false; words: string } {
+  const cut = frontCutsOf(run, production, hardware).get(`${unit.id}:${leaf}`);
+  if (!cut) return { ok: false, words: `У «${unit.label}» нет детали фасада «${leaf}» — ставить ручку не на что.` };
+  const probe: Module = { ...unit, handleAt: { ...(unit.handleAt ?? {}), [leaf]: { xMm: at.xMm, yMm: at.yMm, ...(at.turn ? { turn: at.turn } : {}) } } };
+  const w = cut.widthMm / MM;
+  const h = cut.lengthMm / MM;
+  const box = leafHandleBox({
+    unit: probe,
+    leaf,
+    part: `${unit.id}:${leaf}`,
+    geometry: { cx: w / 2, cy: h / 2, widthM: w, heightM: h, thicknessM: production.frontMm / MM },
+    spot: handleSpotOf(probe, run, undefined, leaf),
+    seat: leaf.startsWith('drawer:') ? 'center' : 'spot',
+    options: { integratedHandles: run.options.integratedHandles, hardware },
+  });
+  if (!box) return { ok: false, words: `У «${unit.label}» на этой детали штучной ручки нет (без ручки, профиль или ручка, фрезерованная в фасаде) — двигать нечего.` };
+  const x0 = (box.position[0] - box.scale[0] / 2) * MM;
+  const x1 = (box.position[0] + box.scale[0] / 2) * MM;
+  const y0 = (box.position[1] - box.scale[1] / 2) * MM;
+  const y1 = (box.position[1] + box.scale[1] / 2) * MM;
+  const over = [
+    { side: 'слева', mm: -x0 },
+    { side: 'справа', mm: x1 - cut.widthMm },
+    { side: 'снизу', mm: -y0 },
+    { side: 'сверху', mm: y1 - cut.lengthMm },
+  ].filter((o) => o.mm > 0.05);
+  if (over.length > 0) {
+    return {
+      ok: false,
+      words: `Ручка выходит за деталь ${over.map((o) => `${o.side} на ${Math.round(o.mm * 10) / 10} мм`).join(', ')} (деталь ${cut.widthMm} × ${cut.lengthMm} мм) — сдвиньте её внутрь.`,
+    };
+  }
+  return { ok: true, boundsMm: [Math.round(x0 * 10) / 10, Math.round(y0 * 10) / 10, Math.round(x1 * 10) / 10, Math.round(y1 * 10) / 10], cut };
+}
+
 /** Наружный размер детали фасада, мм: высота (`lengthMm`) и ширина — как режет цех. */
 export type FrontCut = { lengthMm: number; widthMm: number };
 
@@ -1483,7 +1575,7 @@ export function doorBoxes(
     leaf: `door:${index}`,
     part,
     geometry: { cx, cy, widthM: w, heightM: h, thicknessM: thickness },
-    spot: handleSpotOf(unit, { options: { integratedHandles } } as Run, hinge),
+    spot: handleSpotOf(unit, { options: { integratedHandles } } as Run, hinge, `door:${index}`),
     seat: 'spot',
     options,
   });
@@ -1524,8 +1616,11 @@ export function doorBoxes(
   const ruleEdge = cupPlace.passport ? (options.production?.drilling?.hingeEdgeMm ?? null) : null;
   const leafBottom = cy - h / 2;
   void gapMm;
-  const heights =
-    ruleEdge !== null
+  /* Свои высоты створки (фаза 2) — те же, что у сметы (`leafHingeCount`) и присадки. */
+  const ownHinges = unit.hingeAt?.[`door:${index}`]?.heightsMm;
+  const heights = ownHinges
+    ? ownHinges.slice(0, count).map((hh) => leafBottom + hh / MM)
+    : ruleEdge !== null
       ? hingeHeightsMm(leafSize.heightMm, count, ruleEdge).map((hh) => leafBottom + hh / MM)
       : Array.from({ length: count }, (_, i) => leafBottom + (h * (i + 1)) / (count + 1));
   const model = hingeModelOf(hingeItem, plateItem);
@@ -2032,7 +2127,7 @@ export function drawerBoxes(
     leaf: `drawer:${index}`,
     part,
     geometry: { cx, cy, widthM: frontW, heightM: frontH, thicknessM: thickness },
-    spot: { place: 'top-center', turn: 'horizontal' },
+    spot: unit.handleAt?.[`drawer:${index}`] ? handleSpotOf(unit, { options: { integratedHandles } } as Run, undefined, `drawer:${index}`) : { place: 'top-center', turn: 'horizontal' },
     seat: 'center',
     options: { integratedHandles, hardware: options.hardware },
   });
@@ -2272,7 +2367,7 @@ function lCornerBoxesRight(unit: Module, place: ModulePlacement, options: FrontO
     leaf: 'door:0',
     part,
     geometry: { cx: x + legB / 2, cy: y + H / 2, widthM: aW, heightM: h, thicknessM: tf },
-    spot: handleSpotOf(unit, { options: { integratedHandles: options.integratedHandles } } as Run, 'right'),
+    spot: handleSpotOf(unit, { options: { integratedHandles: options.integratedHandles } } as Run, 'right', 'door:0'),
     seat: 'spot',
     options,
   });
@@ -2344,7 +2439,7 @@ function lPairMotionRight(
     leaf,
     part,
     geometry: { cx, cy, widthM: width, heightM: h, thicknessM: tf },
-    spot: handleSpotOf(unit, { options: { integratedHandles: options.integratedHandles } } as Run, opening),
+    spot: handleSpotOf(unit, { options: { integratedHandles: options.integratedHandles } } as Run, opening, leaf),
     seat: 'spot',
     options,
   });
@@ -2816,7 +2911,7 @@ function bifoldMotionRight(
     leaf: 'door:0',
     part: `${unit.id}:door:0`,
     geometry: { cx: legB / 2, cy: H / 2, widthM: aW, heightM: h, thicknessM: tf },
-    spot: handleSpotOf(unit, { options: { integratedHandles: options.integratedHandles } } as Run, 'right'),
+    spot: handleSpotOf(unit, { options: { integratedHandles: options.integratedHandles } } as Run, 'right', 'door:0'),
     seat: 'spot',
     options,
   });
@@ -3129,6 +3224,8 @@ export function moduleBoxes(
   boxes.push(...bayRodBoxes(unit, place, production, options.hardware));
   /* Механизмы по позиции на месте (HARDWARE-01): картинка по паспорту, без CAD производителя. */
   boxes.push(...mechanismBoxes(unit, place, options, production));
+  /* Сушка (фаза 1): и без позиции — условная, по корпусу; детали — `dryerOf`. */
+  boxes.push(...dryerBoxes(unit, place, options));
 
 
   /*
@@ -3177,8 +3274,8 @@ export function moduleBoxes(
      * они на двух его створках — так же, как полотна сцены (STAGE A).
      */
     const total = Math.max(0, Math.round(options.hinges ?? 0));
-    const byLeaf = leaves.map((leaf) =>
-      leafHinges(leaf.span ? leaf.span.heightMm : Math.round(place.heightM * MM), openingOf(unit).opening, production),
+    const byLeaf = leaves.map((leaf, i) =>
+      leafHingeCount(unit, `door:${i}`, leaf.span ? leaf.span.heightMm : Math.round(place.heightM * MM), openingOf(unit).opening, production),
     );
     const spread = byLeaf.reduce((sum, v) => sum + v, 0);
     if (byLeaf.length > 0) byLeaf[0] += total - spread;
@@ -3733,10 +3830,6 @@ const MECH = {
   basketStepMm: 300,
   basketRailMm: 60,
   wireMm: 4,
-  /** Сушилка: высота решёток (тарелки, чашки) и число прутков. */
-  dryerPlateMm: 120,
-  dryerCupMm: 80,
-  dryerBars: 8,
   /** Пантограф: высота тяги над штангой; ход вниз — не больше; вылет вперёд (условно, паспорт печатает его для монтажа). */
   pantographArmMm: 350,
   pantographDropMm: 600,
@@ -3812,6 +3905,28 @@ export function pulloutPlan(
 }
 
 /** Механизмы на местах модуля: подъёмник, корзины карго, сушилка, пантографы отсеков. */
+/**
+ * СУШКА В СЦЕНЕ (фаза 1): детали `dryerOf` в осях ряда. Верхняя стоит в корпусе; корзина нижней,
+ * её поддон и подвижные части направляющих едут с фасадом (`door:0`) — с ходом полного выдвижения.
+ */
+export function dryerBoxes(unit: Module, place: ModulePlacement, options: FrontOptions): PartBox[] {
+  const W = unit.widthMm;
+  const env = { widthMm: W, heightMm: place.heightM * MM, depthMm: place.depthM * MM, thicknessMm: place.thicknessM * MM };
+  const item = options.hardware ? installedItem(unit, 'dryer', options.hardware) : null;
+  const layout = dryerOf(unit, env, item);
+  if (!layout) return [];
+  const part = `${unit.id}:door:0`;
+  return layout.pieces.map((piece): PartBox => ({
+    material: 'metal',
+    node: piece.moving ? 'basket' : piece.role === 'runner-cabinet' ? 'runner' : 'dryer',
+    inside: true,
+    dryer: piece.role,
+    position: [place.x + mm(piece.x), place.y + mm(piece.y), mm(piece.z)],
+    scale: [mm(piece.sx), mm(piece.sy), mm(piece.sz)],
+    ...(piece.moving ? { part, ...(layout.travel ? { travel: layout.travel } : {}) } : {}),
+  }));
+}
+
 export function mechanismBoxes(
   unit: Module,
   place: ModulePlacement,
@@ -3879,24 +3994,6 @@ export function mechanismBoxes(
     }
   }
 
-  /* Сушилка: решётка тарелок внизу и решётка чашек выше — в корпусе, неподвижно. */
-  const dryer = installedItem(unit, 'dryer', hardware);
-  if (dryer) {
-    const w = W - 2 * t - 20;
-    const depth = D - t - 40;
-    const zc = -(20 + depth / 2);
-    const levels: [number, number][] = [
-      [t + 40, MECH.dryerPlateMm],
-      [t + 40 + Math.min(300, (H - 2 * t) / 2), MECH.dryerCupMm],
-    ];
-    for (const [y0, barH] of levels) {
-      out.push({ material: 'metal', node: 'dryer', inside: true, position: at(W / 2, y0, zc), scale: size(w, MECH.wireMm, depth) });
-      for (let b = 0; b < MECH.dryerBars; b += 1) {
-        const x = t + 10 + ((b + 0.5) * w) / MECH.dryerBars;
-        out.push({ material: 'metal', node: 'dryer', inside: true, position: at(x, y0 + barH / 2, zc), scale: size(MECH.wireMm, barH, depth) });
-      }
-    }
-  }
 
   /* Выдвижное наполнение отсека: едет вперёд; направляющая выдвижной штанги под крышей стоит. */
   for (const fitting of unit.fittings) {
@@ -3927,8 +4024,21 @@ export function mechanismBoxes(
   for (const fitting of unit.fittings) {
     if (fitting.slot !== 'pantograph' || !fitting.bayId) continue;
     const item = installedItem(unit, 'pantograph', hardware, fitting.bayId);
-    const spec = pantographSpecOf(item);
-    if (!item || !spec) continue;
+    const own = pantographSpecOf(item);
+    if (!item || !own) continue;
+    /* Чёрный матовый — вид (фаза 3): позиция, геометрия и ход те же; у белого артикула так и сказано. */
+    const spec =
+      fitting.visualFinish === 'black_matte'
+        ? {
+            ...own,
+            body: 'black' as const,
+            visualFinish: 'black_matte' as const,
+            finishWords:
+              own.body === 'black'
+                ? own.finishWords
+                : `чёрный матовый — вид, не исполнение позиции: ${item.hardware.manufacturerArticle ?? item.article} по таблице — ${own.finishWords}`,
+          }
+        : own;
     const layout = bayLayout(unit, placeEnvelope(unit, place, production));
     const bay = layout?.bays.find((b) => b.id === fitting.bayId);
     if (!layout || !bay) continue;

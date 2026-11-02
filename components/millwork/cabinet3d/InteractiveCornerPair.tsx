@@ -129,6 +129,7 @@ export default function InteractiveCornerPair({
   useSlide({
     target,
     initial: target,
+    sound: 'door',
     apply: (u) => {
       posesAt(u).forEach(({ pose }, i) => {
         const mesh = meshes.current[i];

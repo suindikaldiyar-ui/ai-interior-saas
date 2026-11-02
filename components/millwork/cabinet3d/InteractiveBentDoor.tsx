@@ -72,6 +72,7 @@ export default function InteractiveBentDoor({
   useSlide({
     target,
     initial: target,
+    sound: 'door',
     apply: (value) => {
       const el = group.current;
       if (!el) return;

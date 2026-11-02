@@ -2216,6 +2216,27 @@ function FrameProbe({ rows, room, design }: { rows: SceneRow[]; room: Room | nul
      * ВЕРХНЯЯ ФАЛЬШПАНЕЛЬ ПО НАРИСОВАННОМУ (задача B): экземпляры пачек с ключом детали `…:top-filler:<n>` —
      * габарит в мире, мм (матрица экземпляра × матрица пачки); сверяется с участками движка.
      */
+    /* Сушка (фаза 1): детали по экземплярам пачек — решётки, прутки, поддоны, держатели, корзина, направляющие. */
+    (w as { __mwCadDryer?: () => unknown }).__mwCadDryer = () => {
+      const out: { role: string; boundsMm: number[] }[] = [];
+      const matrix = new THREE.Matrix4();
+      const unitBox = new THREE.Box3(new THREE.Vector3(-0.5, -0.5, -0.5), new THREE.Vector3(0.5, 0.5, 0.5));
+      const box = new THREE.Box3();
+      scene.traverse((object) => {
+        const mesh = object as THREE.InstancedMesh;
+        if (!mesh.isInstancedMesh || mesh.visible === false) return;
+        const roles = (mesh.userData.dryers ?? []) as (string | null)[];
+        if (roles.length === 0) return;
+        mesh.updateWorldMatrix(true, false);
+        roles.forEach((role, index) => {
+          if (!role || index >= mesh.count) return;
+          mesh.getMatrixAt(index, matrix);
+          box.copy(unitBox).applyMatrix4(matrix).applyMatrix4(mesh.matrixWorld);
+          out.push({ role, boundsMm: [box.min.x, box.min.y, box.min.z, box.max.x, box.max.y, box.max.z].map((v) => Math.round(v * 1000)) });
+        });
+      });
+      return out;
+    };
     (w as { __mwCadTopFiller?: () => unknown }).__mwCadTopFiller = () => {
       const out: { partId: string; boundsMm: number[] }[] = [];
       const matrix = new THREE.Matrix4();
@@ -2318,6 +2339,7 @@ function FrameProbe({ rows, room, design }: { rows: SceneRow[]; room: Room | nul
       delete (w as { __mwCadLeaves?: unknown }).__mwCadLeaves;
       delete (w as { __mwCadPartPoint?: unknown }).__mwCadPartPoint;
       delete (w as { __mwCadTopFiller?: unknown }).__mwCadTopFiller;
+      delete (w as { __mwCadDryer?: unknown }).__mwCadDryer;
     };
   }, [gl, camera, scene, get, rows, room]);
 

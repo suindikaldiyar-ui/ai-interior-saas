@@ -13,7 +13,8 @@ import {
 } from './panels';
 import { DRAWER_SIDE_PANEL_NAME, runnerAxisMissingWhy, type DrawerProfile } from './drawerBox';
 import { moduleDrawerKits } from './drawerKit';
-import { fittingItemId, handleItemOf, hingeBoringMm } from './fittings';
+import { fittingItemId, handleItemOf, hingeBoringMm, installedItem } from './fittings';
+import { dryerKindOf } from './dryer';
 import { allModules } from './layout';
 import { hingeCountBasis } from './modules';
 import { isPullOut, isSwing, leafHinges, openingOf } from './opening';
@@ -259,20 +260,23 @@ function hingeOps(ctx: Ctx, door: DrillPart, side: { left?: DrillPart; right?: D
   else if (cup.depthMm === null) why.push('глубина сверления чашки не напечатана');
   const tb = hingeBoringMm({ carcassMm: ctx.production.carcassMm, gapMm: ctx.production.frontGapMm }, hinge, plate);
   if (tb === null) why.push(plate ? 'TB с выбранной планкой не получается из таблицы наложения паспорта' : 'ответная планка не выбрана — TB не вычислить');
-  if (ctx.rules.hingeEdgeMm === null) why.push('от края фасада до оси крайней чашки — правило цеха не задано');
-  if (why.length > 0 || cup.diameterMm === null || cup.depthMm === null || tb === null || ctx.rules.hingeEdgeMm === null) {
+  const ownLayout = ctx.unit.hingeAt?.[leaf.leaf] !== undefined;
+  if (ctx.rules.hingeEdgeMm === null && !ownLayout) why.push('от края фасада до оси крайней чашки — правило цеха не задано');
+  if (why.length > 0 || cup.diameterMm === null || cup.depthMm === null || tb === null || (ctx.rules.hingeEdgeMm === null && !ownLayout)) {
     door.pending.push({ what: 'чашки петель', why });
     return;
   }
-  const count = leafHinges(leaf.lengthMm, 'left', ctx.production);
-  const basis = hingeCountBasis(leaf.lengthMm, ctx.rules.hingeCount);
+  /* Свои высоты створки (фаза 2) — проект человека: число и места петель заданы им, правило цеха не нужно. */
+  const ownHeights = ctx.unit.hingeAt?.[leaf.leaf]?.heightsMm ?? null;
+  const count = ownHeights ? ownHeights.length : leafHinges(leaf.lengthMm, 'left', ctx.production);
+  const basis = ownHeights ? { shop: true, words: '' } : hingeCountBasis(leaf.lengthMm, ctx.rules.hingeCount);
   if (!basis.shop) door.pending.push({ what: 'число петель', why: [basis.words] });
   const edge = ctx.rules.hingeEdgeMm;
   /* Высоты и отступ чашки — тот же расчёт, что ставит петлю в сцене (`hingePlace`). */
-  const xs = hingeHeightsMm(leaf.lengthMm, count, edge);
+  const xs = ownHeights ?? hingeHeightsMm(leaf.lengthMm, count, edge);
   const place = hingeCupPlace(ctx.production, hinge, plate);
   const yCup = leaf.hinge === 'left' ? place.fromEdgeMm : door.widthMm - place.fromEdgeMm;
-  const src = `${sourceOf(hinge)}: Ø${cup.diameterMm}, глубина ${cup.depthMm}, TB ${tb} (таблица наложения с планкой ${plate?.hardware.manufacturerArticle ?? '—'}); по высоте — правило цеха ${edge} мм от края, ${basis.shop ? 'число петель — таблица цеха' : 'число петель — правило продукта'}`;
+  const src = `${sourceOf(hinge)}: Ø${cup.diameterMm}, глубина ${cup.depthMm}, TB ${tb} (таблица наложения с планкой ${plate?.hardware.manufacturerArticle ?? '—'}); по высоте — ${ownHeights ? `свои высоты створки ${ownHeights.join(' / ')} мм (проект)` : `правило цеха ${edge} мм от края, ${basis.shop ? 'число петель — таблица цеха' : 'число петель — правило продукта'}`}`;
   const fix = cupFixOf(specOf(hinge, 'door', /крепёжн|крепежн/i));
   const fixSpec = specOf(hinge, 'door', /крепёжн|крепежн/i);
   xs.forEach((x, i) => {
@@ -494,7 +498,15 @@ function handleOps(ctx: Ctx, part: DrillPart, leaf: string, hinge: 'left' | 'rig
   if (kind !== 'bar') return;
   const item = handleItemOf(ctx.unit, leaf, ctx.hardware);
   if (!item) {
-    part.pending.push({ what: 'ручка', why: ['позиция ручки производителя не выбрана — отверстий нет (условная скоба сцены — не изделие)'] });
+    const own = ctx.unit.handleCustom?.lengthMm;
+    part.pending.push({
+      what: 'ручка',
+      why: [
+        own !== undefined
+          ? `своя скоба ${own} мм без артикула — не подтверждено для производства: межосевого и крепления нет, отверстий нет`
+          : 'позиция ручки производителя не выбрана — отверстий нет (условная скоба сцены — не изделие)',
+      ],
+    });
     return;
   }
   const model = handleItemModel(item).model;
@@ -513,16 +525,18 @@ function handleOps(ctx: Ctx, part: DrillPart, leaf: string, hinge: 'left' | 'rig
     if (spacing === undefined || spacing === null) why.push(`межосевое у ${sourceOf(item)} не напечатано`);
     if (ctx.rules.handleHoleMm === null) why.push('диаметр отверстия под винт ручки — правило цеха не задано (в паспорте напечатан винт, а не сверло)');
   }
-  if (!ctx.rules.handlePlaceConfirmed) why.push('место ручки на фасаде (правило продукта) цехом не подтверждено');
+  if (!ctx.rules.handlePlaceConfirmed && ctx.unit.handleAt?.[leaf] === undefined) why.push('место ручки на фасаде (правило продукта) цехом не подтверждено');
   if (why.length > 0 || !model) {
     part.pending.push({ what: 'ручка', why });
     return;
   }
   const MM = 1000;
   const geometry = { cx: part.widthMm / 2 / MM, cy: part.lengthMm / 2 / MM, widthM: part.widthMm / MM, heightM: part.lengthMm / MM, thicknessM: part.thicknessMm / MM };
-  const spot = handleSpotOf(ctx.unit, ctx.run, hinge);
+  /* Своё место ручки детали (фаза 2) — то же, что у сцены; у фронта ящика без своего места — середина. */
+  const own = ctx.unit.handleAt?.[leaf] !== undefined;
+  const spot = handleSpotOf(ctx.unit, ctx.run, hinge, leaf);
   const upper = ctx.unit.kind === 'upper' || ctx.unit.kind === 'corner_upper';
-  const placed = placeHandle(model, spot, geometry, { seat, edge: upper ? 'bottom' : 'top' });
+  const placed = placeHandle(model, seat === 'center' && !own ? { place: 'top-center', turn: 'horizontal' } : spot, geometry, { seat, edge: upper ? 'bottom' : 'top' });
   const cy = placed.mount[0] * MM;
   const cx = placed.mount[1] * MM;
   const along = placed.orient === 'v' ? 'x' : 'y';
@@ -539,7 +553,7 @@ function handleOps(ctx: Ctx, part: DrillPart, leaf: string, hinge: 'left' | 'rig
       direction: 'перпендикулярно лицу (A)',
       itemId: item.id,
       article: item.hardware.manufacturerArticle ?? item.article,
-      source: `${sourceOf(item)}: ${pocket.what}; место — правило продукта (подтверждено цехом)`,
+      source: `${sourceOf(item)}: ${pocket.what}; ${own ? `место — задано на детали (${ctx.unit.handleAt![leaf].xMm}, ${ctx.unit.handleAt![leaf].yMm} мм)` : 'место — правило продукта (подтверждено цехом)'}`,
     });
     return;
   }
@@ -558,7 +572,7 @@ function handleOps(ctx: Ctx, part: DrillPart, leaf: string, hinge: 'left' | 'rig
       direction: 'насквозь, с тыла (B) к лицу',
       itemId: item.id,
       article: item.hardware.manufacturerArticle ?? item.article,
-      source: `${sourceOf(item)}: ${spacing ? `межосевое ${spacing}` : 'кнопка — одно отверстие по центру'}; Ø — правило цеха; место — правило продукта (подтверждено цехом)`,
+      source: `${sourceOf(item)}: ${spacing ? `межосевое ${spacing}` : 'кнопка — одно отверстие по центру'}; Ø — правило цеха; ${own ? `место — задано на детали (${ctx.unit.handleAt![leaf].xMm}, ${ctx.unit.handleAt![leaf].yMm} мм)` : 'место — правило продукта (подтверждено цехом)'}`,
     });
   }
 }
@@ -611,6 +625,35 @@ function shelfOps(ctx: Ctx, sides: DrillPart[]): void {
 }
 
 /* ─────────────────────────── конфирматы ─────────────────────────── */
+
+/**
+ * СУШКА (фаза 1): крепление сушки к боковинам и держатели фасада корзины — только «не рассчитано» с
+ * напечатанным. У SU02 диаметр и глубина есть, но какая кромка боковины передняя — не подписано; у
+ * корзин KRS диаметра и глубины нет. Отверстие по ним не ставится.
+ */
+function dryerPending(ctx: Ctx, sides: DrillPart[], front: DrillPart | undefined): void {
+  const kind = dryerKindOf(ctx.unit);
+  if (!kind) return;
+  const what = kind === 'upper' ? 'крепление сушки' : 'направляющие корзины-сушки';
+  const item = installedItem(ctx.unit, 'dryer', ctx.hardware);
+  if (!item) {
+    for (const p of sides) p.pending.push({ what, why: ['сушка производителя не выбрана — отверстий нет (условная сушка сцены — не изделие)'] });
+    return;
+  }
+  if (item.detail === 'light') {
+    for (const p of sides) p.pending.push({ what, why: ['паспорт позиции ещё не дочитан'] });
+    return;
+  }
+  const specs = item.hardware.drilling ?? [];
+  const onSide = specs.filter((spec) => spec.part === 'cabinet_side');
+  const onFront = specs.filter((spec) => spec.part === 'front');
+  const missing = item.hardware.missing?.length ? item.hardware.missing : ['крепление в паспорте не образмерено'];
+  for (const p of sides) {
+    if (onSide.length === 0) p.pending.push({ what, why: missing });
+    for (const spec of onSide) p.pending.push({ what: `${what}: ${spec.what}`, why: [...printedDrilling(spec), ...missing] });
+  }
+  if (front) for (const spec of onFront) front.pending.push({ what: `держатели фасада корзины: ${spec.what}`, why: printedDrilling(spec) });
+}
 
 function confirmatOps(ctx: Ctx, sides: { left?: DrillPart; right?: DrillPart }, horizontal: DrillPart[]): void {
   const rule = ctx.rules.confirmat;
@@ -800,6 +843,7 @@ export function drillingPlan(input: {
     shelfOps(ctx, [side.left, side.right].filter((p): p is DrillPart => Boolean(p)));
     const horizontal = entry.parts.filter((p) => p.role === 'bottom' || p.role === 'top');
     if (side.left || side.right) confirmatOps(ctx, side, horizontal);
+    dryerPending(ctx, [side.left, side.right].filter((p): p is DrillPart => Boolean(p)), entry.parts.find((p) => p.role === 'door' && p.leaf === 'door:0'));
   }
 
   const issues = parts.flatMap((p) => drillChecks(p, rules));
@@ -810,6 +854,40 @@ export function drillingPlan(input: {
   if (!rules.confirmed) reasons.push('правила присадки не подтверждены цехом');
   if (parts.every((p) => p.ops.length === 0)) reasons.push('ни одной операции: фурнитура производителя и правила цеха не заданы');
   return { version: DRILLING_PLAN_VERSION, parts, issues, release: { open: reasons.length === 0, reasons } };
+}
+
+/**
+ * ПОЧЕМУ НЕТ ОТВЕРСТИЙ (фаза 6) — причины «не рассчитано» по тому, кто может их закрыть: цех (правило не
+ * задано или не подтверждено), человек в проекте (позиция не выбрана), производитель (не напечатал — отверстие
+ * не ставится до его чертежа). Своих чисел нет: только сгруппированные слова плана.
+ */
+export type DrillBlocker = { who: 'shop' | 'choose' | 'manufacturer' | 'other'; words: string; parts: number };
+export function drillingBlockers(plan: DrillingPlan): DrillBlocker[] {
+  const groups = new Map<string, { who: DrillBlocker['who']; words: string; parts: Set<string> }>();
+  for (const part of plan.parts) {
+    for (const pend of part.pending) {
+      /* Причина — первая строка; остальные строки — подробности той же причины (база, «не ставится»). */
+      const all = pend.why.join(' ');
+      const who: DrillBlocker['who'] = /правило цеха|цехом не подтвержден|таблицы цеха|правило продукта/i.test(all)
+        ? 'shop'
+        : /не выбран/i.test(all)
+          ? 'choose'
+          : /не напечатан|не образмерен|не подписан|не задано полностью|заданы не полностью|в паспорте/i.test(all)
+            ? 'manufacturer'
+            : 'other';
+      /* Номер детали внутри модуля — не причина: «ящик 0» и «ящик 1» — одна строка. */
+      const what = pend.what.replace(/(ящик|дверь|фасад|створка|деталь|планка петли) \(?[\w:]*\d+\)?/gi, '$1 N');
+      const words = `${what}: ${pend.why[0] ?? ''}`;
+      const key = `${who}|${words}`;
+      const g = groups.get(key) ?? { who, words, parts: new Set<string>() };
+      g.parts.add(part.partId);
+      groups.set(key, g);
+    }
+  }
+  const order = { shop: 0, choose: 1, manufacturer: 2, other: 3 } as const;
+  return Array.from(groups.values())
+    .map((g) => ({ who: g.who, words: g.words, parts: g.parts.size }))
+    .sort((a, b) => order[a.who] - order[b.who] || b.parts - a.parts);
 }
 
 /** Сводка для экрана и выгрузки: деталей с отверстиями, операций, «не рассчитано». */

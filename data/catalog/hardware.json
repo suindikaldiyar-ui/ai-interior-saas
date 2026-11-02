@@ -86169,6 +86169,9 @@
     "subcategory": "bottle",
     "series": "ERGOLINE ESTETICA FLORA KR05",
     "variant": "bottle · монтажная ширина 150; левая (L); 2 уровня; амортизация",
+    "dimensionsMm": {
+     "cabinetWidth": 150
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -86282,6 +86285,9 @@
     "subcategory": "bottle",
     "series": "ERGOLINE ESTETICA FLORA KR05",
     "variant": "bottle · монтажная ширина 150; левая (L); 2 уровня; амортизация",
+    "dimensionsMm": {
+     "cabinetWidth": 150
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -86395,6 +86401,9 @@
     "subcategory": "bottle",
     "series": "ERGOLINE ESTETICA FLORA KR05",
     "variant": "bottle · монтажная ширина 150; правая (R); 2 уровня; амортизация",
+    "dimensionsMm": {
+     "cabinetWidth": 150
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -86508,6 +86517,9 @@
     "subcategory": "bottle",
     "series": "ERGOLINE ESTETICA FLORA KR05",
     "variant": "bottle · монтажная ширина 150; правая (R); 2 уровня; амортизация",
+    "dimensionsMm": {
+     "cabinetWidth": 150
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -86621,6 +86633,9 @@
     "subcategory": "bottle",
     "series": "ERGOLINE ESTETICA FLORA KR05",
     "variant": "bottle · монтажная ширина 200; левая (L); 2 уровня; амортизация",
+    "dimensionsMm": {
+     "cabinetWidth": 200
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -86734,6 +86749,9 @@
     "subcategory": "bottle",
     "series": "ERGOLINE ESTETICA FLORA KR05",
     "variant": "bottle · монтажная ширина 200; левая (L); 2 уровня; амортизация",
+    "dimensionsMm": {
+     "cabinetWidth": 200
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -86847,6 +86865,9 @@
     "subcategory": "bottle",
     "series": "ERGOLINE ESTETICA FLORA KR05",
     "variant": "bottle · монтажная ширина 200; правая (R); 2 уровня; амортизация",
+    "dimensionsMm": {
+     "cabinetWidth": 200
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -86960,6 +86981,9 @@
     "subcategory": "bottle",
     "series": "ERGOLINE ESTETICA FLORA KR05",
     "variant": "bottle · монтажная ширина 200; правая (R); 2 уровня; амортизация",
+    "dimensionsMm": {
+     "cabinetWidth": 200
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -87073,6 +87097,9 @@
     "subcategory": "bottle",
     "series": "ERGOLINE ESTETICA FLORA PUSH KR05",
     "variant": "bottle · монтажная ширина 150; левая (L); 2 уровня; открывание нажатием (Push-to-open)",
+    "dimensionsMm": {
+     "cabinetWidth": 150
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -87186,6 +87213,9 @@
     "subcategory": "bottle",
     "series": "ERGOLINE ESTETICA FLORA PUSH KR05",
     "variant": "bottle · монтажная ширина 150; левая (L); 2 уровня; открывание нажатием (Push-to-open)",
+    "dimensionsMm": {
+     "cabinetWidth": 150
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -87299,6 +87329,9 @@
     "subcategory": "bottle",
     "series": "ERGOLINE ESTETICA FLORA PUSH KR05",
     "variant": "bottle · монтажная ширина 200; левая (L); 2 уровня; открывание нажатием (Push-to-open)",
+    "dimensionsMm": {
+     "cabinetWidth": 200
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -87412,6 +87445,9 @@
     "subcategory": "bottle",
     "series": "ERGOLINE ESTETICA FLORA PUSH KR05",
     "variant": "bottle · монтажная ширина 200; левая (L); 2 уровня; открывание нажатием (Push-to-open)",
+    "dimensionsMm": {
+     "cabinetWidth": 200
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -87525,6 +87561,9 @@
     "subcategory": "bottle",
     "series": "ERGOLINE NORMA BELLISSIMO KR08",
     "variant": "bottle · монтажная ширина 150; левая (L); 2 уровня",
+    "dimensionsMm": {
+     "cabinetWidth": 150
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -87625,6 +87664,9 @@
     "subcategory": "bottle",
     "series": "ERGOLINE NORMA BELLISSIMO KR08",
     "variant": "bottle · монтажная ширина 150; левая (L); 2 уровня",
+    "dimensionsMm": {
+     "cabinetWidth": 150
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -87725,6 +87767,9 @@
     "subcategory": "bottle",
     "series": "ERGOLINE NORMA BELLISSIMO KR08",
     "variant": "bottle · монтажная ширина 150; правая (R); 2 уровня",
+    "dimensionsMm": {
+     "cabinetWidth": 150
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -87825,6 +87870,9 @@
     "subcategory": "bottle",
     "series": "ERGOLINE NORMA BELLISSIMO KR08",
     "variant": "bottle · монтажная ширина 150; правая (R); 2 уровня",
+    "dimensionsMm": {
+     "cabinetWidth": 150
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -87925,6 +87973,9 @@
     "subcategory": "bottle",
     "series": "ERGOLINE NORMA BELLISSIMO KR08",
     "variant": "bottle · монтажная ширина 200; левая (L); 2 уровня",
+    "dimensionsMm": {
+     "cabinetWidth": 200
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -88025,6 +88076,9 @@
     "subcategory": "bottle",
     "series": "ERGOLINE NORMA BELLISSIMO KR08",
     "variant": "bottle · монтажная ширина 200; левая (L); 2 уровня",
+    "dimensionsMm": {
+     "cabinetWidth": 200
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -88125,6 +88179,9 @@
     "subcategory": "bottle",
     "series": "ERGOLINE NORMA BELLISSIMO KR08",
     "variant": "bottle · монтажная ширина 200; правая (R); 2 уровня",
+    "dimensionsMm": {
+     "cabinetWidth": 200
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -88225,6 +88282,9 @@
     "subcategory": "bottle",
     "series": "ERGOLINE NORMA BELLISSIMO KR08",
     "variant": "bottle · монтажная ширина 200; правая (R); 2 уровня",
+    "dimensionsMm": {
+     "cabinetWidth": 200
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -88325,6 +88385,9 @@
     "subcategory": "bottle",
     "series": "ERGOLINE NORMA BELLISSIMO PUSH KR08",
     "variant": "bottle · монтажная ширина 150; левая (L); 2 уровня; Push-to-open",
+    "dimensionsMm": {
+     "cabinetWidth": 150
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -88425,6 +88488,9 @@
     "subcategory": "bottle",
     "series": "ERGOLINE NORMA BELLISSIMO PUSH KR08",
     "variant": "bottle · монтажная ширина 150; левая (L); 2 уровня; Push-to-open",
+    "dimensionsMm": {
+     "cabinetWidth": 150
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -88525,6 +88591,9 @@
     "subcategory": "bottle",
     "series": "ERGOLINE NORMA BELLISSIMO PUSH KR08",
     "variant": "bottle · монтажная ширина 200; левая (L); 2 уровня; Push-to-open",
+    "dimensionsMm": {
+     "cabinetWidth": 200
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -88625,6 +88694,9 @@
     "subcategory": "bottle",
     "series": "ERGOLINE NORMA BELLISSIMO PUSH KR08",
     "variant": "bottle · монтажная ширина 200; левая (L); 2 уровня; Push-to-open",
+    "dimensionsMm": {
+     "cabinetWidth": 200
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -88725,6 +88797,9 @@
     "subcategory": "waste",
     "series": "ERGOLINE NORMA BIN KR09",
     "variant": "waste · монтажная ширина 450; на распашной фасад; 12 л",
+    "dimensionsMm": {
+     "cabinetWidth": 450
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -88844,6 +88919,9 @@
     "subcategory": "tall_cargo",
     "series": "ERGOLINE NORMA STELLA KR26",
     "variant": "tall_cargo · монтажная ширина 300; монтажная высота 1970–2270; 5 уровней; 4D-регулировка",
+    "dimensionsMm": {
+     "cabinetWidth": 300
+    },
     "printed": [
      {
       "label": "10",
@@ -88979,6 +89057,9 @@
     "subcategory": "tall_cargo",
     "series": "ERGOLINE NORMA STELLA KR26",
     "variant": "tall_cargo · монтажная ширина 400; монтажная высота 1970–2270; 5 уровней; 4D-регулировка",
+    "dimensionsMm": {
+     "cabinetWidth": 400
+    },
     "printed": [
      {
       "label": "10",
@@ -89114,6 +89195,9 @@
     "subcategory": "tall_cargo",
     "series": "ERGOLINE ESTETICA STELLA ESTETICA KR27",
     "variant": "tall_cargo · монтажная ширина 300; монтажная высота 1970–2270; 5 уровней; 4D-регулировка",
+    "dimensionsMm": {
+     "cabinetWidth": 300
+    },
     "printed": [
      {
       "label": "10",
@@ -89249,6 +89333,9 @@
     "subcategory": "tall_cargo",
     "series": "ERGOLINE ESTETICA STELLA ESTETICA KR27",
     "variant": "tall_cargo · монтажная ширина 400; монтажная высота 1970–2270; 5 уровней; 4D-регулировка",
+    "dimensionsMm": {
+     "cabinetWidth": 400
+    },
     "printed": [
      {
       "label": "10",
@@ -89384,6 +89471,9 @@
     "subcategory": "cargo",
     "series": "ERGOLINE ESTETICA QUADRA KR28",
     "variant": "cargo · монтажная ширина 300; 2 уровня; амортизация; диагональное крепление (L/R)",
+    "dimensionsMm": {
+     "cabinetWidth": 300
+    },
     "printed": [
      {
       "label": "82",
@@ -89493,6 +89583,9 @@
     "subcategory": "cargo",
     "series": "ERGOLINE ESTETICA QUADRA KR28",
     "variant": "cargo · монтажная ширина 300; 2 уровня; амортизация; диагональное крепление (L/R)",
+    "dimensionsMm": {
+     "cabinetWidth": 300
+    },
     "printed": [
      {
       "label": "82",
@@ -89602,6 +89695,9 @@
     "subcategory": "cargo",
     "series": "ERGOLINE ESTETICA QUADRA KR28",
     "variant": "cargo · монтажная ширина 400; 2 уровня; амортизация; диагональное крепление (L/R)",
+    "dimensionsMm": {
+     "cabinetWidth": 400
+    },
     "printed": [
      {
       "label": "82",
@@ -89711,6 +89807,9 @@
     "subcategory": "cargo",
     "series": "ERGOLINE ESTETICA QUADRA KR28",
     "variant": "cargo · монтажная ширина 400; 2 уровня; амортизация; диагональное крепление (L/R)",
+    "dimensionsMm": {
+     "cabinetWidth": 400
+    },
     "printed": [
      {
       "label": "82",
@@ -89820,6 +89919,9 @@
     "subcategory": "cargo",
     "series": "ERGOLINE ESTETICA QUADRA PUSH KR28",
     "variant": "cargo · монтажная ширина 300; 2 уровня; Push-to-open; диагональное крепление (L/R)",
+    "dimensionsMm": {
+     "cabinetWidth": 300
+    },
     "printed": [
      {
       "label": "82",
@@ -89929,6 +90031,9 @@
     "subcategory": "cargo",
     "series": "ERGOLINE ESTETICA QUADRA PUSH KR28",
     "variant": "cargo · монтажная ширина 300; 2 уровня; Push-to-open; диагональное крепление (L/R)",
+    "dimensionsMm": {
+     "cabinetWidth": 300
+    },
     "printed": [
      {
       "label": "82",
@@ -90038,6 +90143,9 @@
     "subcategory": "cargo",
     "series": "ERGOLINE ESTETICA QUADRA PUSH KR28",
     "variant": "cargo · монтажная ширина 400; 2 уровня; Push-to-open; диагональное крепление (L/R)",
+    "dimensionsMm": {
+     "cabinetWidth": 400
+    },
     "printed": [
      {
       "label": "82",
@@ -90147,6 +90255,9 @@
     "subcategory": "cargo",
     "series": "ERGOLINE ESTETICA QUADRA PUSH KR28",
     "variant": "cargo · монтажная ширина 400; 2 уровня; Push-to-open; диагональное крепление (L/R)",
+    "dimensionsMm": {
+     "cabinetWidth": 400
+    },
     "printed": [
      {
       "label": "82",
@@ -90256,6 +90367,9 @@
     "subcategory": "waste",
     "series": "ERGOLINE ESTETICA MAX KR32",
     "variant": "waste · монтажная ширина 350; нижнее крепление; 2 ведра",
+    "dimensionsMm": {
+     "cabinetWidth": 350
+    },
     "printed": [
      {
       "label": "23",
@@ -90506,6 +90620,9 @@
     "subcategory": "bottle",
     "series": "ERGOLINE NORMA BELLA UP KR35",
     "variant": "bottle · в верхнюю базу; монтажная ширина 150; правая (R); 2 уровня",
+    "dimensionsMm": {
+     "cabinetWidth": 150
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -90608,6 +90725,9 @@
     "subcategory": "bottle",
     "series": "ERGOLINE ESTETICA AURA KR36",
     "variant": "bottle · монтажная ширина 150; левая (L); 2 уровня; полное выдвижение; амортизация",
+    "dimensionsMm": {
+     "cabinetWidth": 150
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -90717,6 +90837,9 @@
     "subcategory": "bottle",
     "series": "ERGOLINE ESTETICA AURA KR36",
     "variant": "bottle · монтажная ширина 150; левая (L); 2 уровня; полное выдвижение; амортизация",
+    "dimensionsMm": {
+     "cabinetWidth": 150
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -90826,6 +90949,9 @@
     "subcategory": "bottle",
     "series": "ERGOLINE ESTETICA AURA KR36",
     "variant": "bottle · монтажная ширина 200; левая (L); 2 уровня; полное выдвижение; амортизация",
+    "dimensionsMm": {
+     "cabinetWidth": 200
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -90935,6 +91061,9 @@
     "subcategory": "bottle",
     "series": "ERGOLINE ESTETICA AURA KR36",
     "variant": "bottle · монтажная ширина 200; левая (L); 2 уровня; полное выдвижение; амортизация",
+    "dimensionsMm": {
+     "cabinetWidth": 200
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -91044,6 +91173,9 @@
     "subcategory": "cargo",
     "series": "ERGOLINE NORMA VEGA KR39",
     "variant": "cargo · монтажная ширина 300; складная; 2 уровня; диагональное крепление (L/R)",
+    "dimensionsMm": {
+     "cabinetWidth": 300
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -91145,6 +91277,9 @@
     "subcategory": "cargo",
     "series": "ERGOLINE NORMA VEGA KR39",
     "variant": "cargo · монтажная ширина 400; складная; 2 уровня; диагональное крепление (L/R)",
+    "dimensionsMm": {
+     "cabinetWidth": 400
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -91246,6 +91381,9 @@
     "subcategory": "bottle",
     "series": "ERGOLINE X.design X.FIT KR43",
     "variant": "bottle · монтажная ширина 150; левая (L); 2 уровня; полное выдвижение 100%; амортизация",
+    "dimensionsMm": {
+     "cabinetWidth": 150
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -91352,6 +91490,9 @@
     "subcategory": "bottle",
     "series": "ERGOLINE X.design X.FIT KR43",
     "variant": "bottle · монтажная ширина 200; левая (L); 2 уровня; полное выдвижение 100%; амортизация",
+    "dimensionsMm": {
+     "cabinetWidth": 200
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -91458,6 +91599,9 @@
     "subcategory": "cargo",
     "series": "ERGOLINE X.design X.ERGO KR44",
     "variant": "cargo · монтажная ширина 300; 2 уровня; полное выдвижение; амортизация",
+    "dimensionsMm": {
+     "cabinetWidth": 300
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -91560,6 +91704,9 @@
     "subcategory": "cargo",
     "series": "ERGOLINE X.design X.ERGO KR44",
     "variant": "cargo · монтажная ширина 400; 2 уровня; полное выдвижение; амортизация",
+    "dimensionsMm": {
+     "cabinetWidth": 400
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -91662,6 +91809,9 @@
     "subcategory": "basket",
     "series": "ERGOLINE X.design X.BOX KR45",
     "variant": "basket · монтажная ширина 600; полное выдвижение; амортизация",
+    "dimensionsMm": {
+     "cabinetWidth": 600
+    },
     "printed": [
      {
       "label": "19",
@@ -92453,6 +92603,17 @@
     "subcategory": "dish_dryer",
     "series": "ERGOLINE NORMA MERCURY KRS03/1/3",
     "variant": "dish_dryer · монтажная ширина 600; 1 уровень; поддон; амортизация",
+    "dimensionsMm": {
+     "cabinetWidth": 600,
+     "minInnerHeight": 350,
+     "runnerFromBottom": 75
+    },
+    "ranges": {
+     "innerWidth": [
+      564,
+      568
+     ]
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -92554,6 +92715,17 @@
     "subcategory": "dish_dryer",
     "series": "ERGOLINE NORMA MERCURY KRS03/1/3",
     "variant": "dish_dryer · монтажная ширина 800; 1 уровень; поддон; амортизация",
+    "dimensionsMm": {
+     "cabinetWidth": 800,
+     "minInnerHeight": 350,
+     "runnerFromBottom": 75
+    },
+    "ranges": {
+     "innerWidth": [
+      764,
+      768
+     ]
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -92655,6 +92827,11 @@
     "subcategory": "dish_dryer",
     "series": "ERGOLINE ESTETICA MIRA KRS06",
     "variant": "dish_dryer · монтажная ширина 600; 1 поддон; амортизация",
+    "dimensionsMm": {
+     "cabinetWidth": 600,
+     "minInnerHeight": 200,
+     "runnerFromBottom": 79
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -92757,6 +92934,11 @@
     "subcategory": "dish_dryer",
     "series": "ERGOLINE ESTETICA MIRA KRS06",
     "variant": "dish_dryer · монтажная ширина 600; 1 поддон; амортизация",
+    "dimensionsMm": {
+     "cabinetWidth": 600,
+     "minInnerHeight": 200,
+     "runnerFromBottom": 79
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -92859,6 +93041,11 @@
     "subcategory": "dish_dryer",
     "series": "ERGOLINE ESTETICA MIRA KRS06",
     "variant": "dish_dryer · монтажная ширина 800; 1 поддон; амортизация",
+    "dimensionsMm": {
+     "cabinetWidth": 800,
+     "minInnerHeight": 200,
+     "runnerFromBottom": 79
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -92961,6 +93148,11 @@
     "subcategory": "dish_dryer",
     "series": "ERGOLINE ESTETICA MIRA KRS06",
     "variant": "dish_dryer · монтажная ширина 800; 1 поддон; амортизация",
+    "dimensionsMm": {
+     "cabinetWidth": 800,
+     "minInnerHeight": 200,
+     "runnerFromBottom": 79
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -93063,6 +93255,11 @@
     "subcategory": "dish_dryer",
     "series": "ERGOLINE ESTETICA MIRA KRS06",
     "variant": "dish_dryer · монтажная ширина 900; 1 поддон; амортизация",
+    "dimensionsMm": {
+     "cabinetWidth": 900,
+     "minInnerHeight": 200,
+     "runnerFromBottom": 79
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -93165,6 +93362,11 @@
     "subcategory": "dish_dryer",
     "series": "ERGOLINE ESTETICA MIRA KRS06",
     "variant": "dish_dryer · монтажная ширина 900; 1 поддон; амортизация",
+    "dimensionsMm": {
+     "cabinetWidth": 900,
+     "minInnerHeight": 200,
+     "runnerFromBottom": 79
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -93267,6 +93469,11 @@
     "subcategory": "dish_dryer",
     "series": "ERGOLINE ESTETICA MIRA PUSH KRS06",
     "variant": "dish_dryer · монтажная ширина 600; 1 поддон; Push-to-open",
+    "dimensionsMm": {
+     "cabinetWidth": 600,
+     "minInnerHeight": 200,
+     "runnerFromBottom": 79
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -93372,6 +93579,11 @@
     "subcategory": "dish_dryer",
     "series": "ERGOLINE ESTETICA MIRA PUSH KRS06",
     "variant": "dish_dryer · монтажная ширина 600; 1 поддон; Push-to-open",
+    "dimensionsMm": {
+     "cabinetWidth": 600,
+     "minInnerHeight": 200,
+     "runnerFromBottom": 79
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -93477,6 +93689,11 @@
     "subcategory": "dish_dryer",
     "series": "ERGOLINE ESTETICA MIRA PUSH KRS06",
     "variant": "dish_dryer · монтажная ширина 800; 1 поддон; Push-to-open",
+    "dimensionsMm": {
+     "cabinetWidth": 800,
+     "minInnerHeight": 200,
+     "runnerFromBottom": 79
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -93582,6 +93799,11 @@
     "subcategory": "dish_dryer",
     "series": "ERGOLINE ESTETICA MIRA PUSH KRS06",
     "variant": "dish_dryer · монтажная ширина 800; 1 поддон; Push-to-open",
+    "dimensionsMm": {
+     "cabinetWidth": 800,
+     "minInnerHeight": 200,
+     "runnerFromBottom": 79
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -93687,6 +93909,11 @@
     "subcategory": "dish_dryer",
     "series": "ERGOLINE ESTETICA MIRA PUSH KRS06",
     "variant": "dish_dryer · монтажная ширина 900; 1 поддон; Push-to-open",
+    "dimensionsMm": {
+     "cabinetWidth": 900,
+     "minInnerHeight": 200,
+     "runnerFromBottom": 79
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -93792,6 +94019,11 @@
     "subcategory": "dish_dryer",
     "series": "ERGOLINE ESTETICA MIRA PUSH KRS06",
     "variant": "dish_dryer · монтажная ширина 900; 1 поддон; Push-to-open",
+    "dimensionsMm": {
+     "cabinetWidth": 900,
+     "minInnerHeight": 200,
+     "runnerFromBottom": 79
+    },
     "printed": [
      {
       "label": "размер базы (ШхГхВ)",
@@ -229029,7 +229261,17 @@
     "series": "SU02",
     "variant": "dish_dryer · ширина кухонного шкафа 500 мм; 2 уровня; 1 стальной поддон; монтаж в предварительно просверленные отверстия",
     "dimensionsMm": {
-     "cabinetWidth": 500
+     "cabinetWidth": 500,
+     "dryerLevelGapMin": 275,
+     "dryerLowerMin": 50,
+     "dryerDepth": 254,
+     "minCabinetDepth": 260
+    },
+    "ranges": {
+     "innerWidth": [
+      464,
+      468
+     ]
     },
     "printed": [
      {
@@ -229122,7 +229364,17 @@
     "series": "SU02",
     "variant": "dish_dryer · ширина кухонного шкафа 600 мм; 2 уровня; 1 стальной поддон; монтаж в предварительно просверленные отверстия",
     "dimensionsMm": {
-     "cabinetWidth": 600
+     "cabinetWidth": 600,
+     "dryerLevelGapMin": 275,
+     "dryerLowerMin": 50,
+     "dryerDepth": 254,
+     "minCabinetDepth": 260
+    },
+    "ranges": {
+     "innerWidth": [
+      564,
+      568
+     ]
     },
     "printed": [
      {
@@ -229215,7 +229467,17 @@
     "series": "SU02",
     "variant": "dish_dryer · ширина кухонного шкафа 700 мм; 2 уровня; 1 стальной поддон; монтаж в предварительно просверленные отверстия",
     "dimensionsMm": {
-     "cabinetWidth": 700
+     "cabinetWidth": 700,
+     "dryerLevelGapMin": 275,
+     "dryerLowerMin": 50,
+     "dryerDepth": 254,
+     "minCabinetDepth": 260
+    },
+    "ranges": {
+     "innerWidth": [
+      664,
+      668
+     ]
     },
     "printed": [
      {
@@ -229308,7 +229570,17 @@
     "series": "SU02",
     "variant": "dish_dryer · ширина кухонного шкафа 800 мм; 2 уровня; 1 стальной поддон; монтаж в предварительно просверленные отверстия",
     "dimensionsMm": {
-     "cabinetWidth": 800
+     "cabinetWidth": 800,
+     "dryerLevelGapMin": 275,
+     "dryerLowerMin": 50,
+     "dryerDepth": 254,
+     "minCabinetDepth": 260
+    },
+    "ranges": {
+     "innerWidth": [
+      764,
+      768
+     ]
     },
     "printed": [
      {
@@ -229401,7 +229673,17 @@
     "series": "SU02",
     "variant": "dish_dryer · ширина кухонного шкафа 900 мм; 2 уровня; 1 стальной поддон; монтаж в предварительно просверленные отверстия",
     "dimensionsMm": {
-     "cabinetWidth": 900
+     "cabinetWidth": 900,
+     "dryerLevelGapMin": 275,
+     "dryerLowerMin": 50,
+     "dryerDepth": 254,
+     "minCabinetDepth": 260
+    },
+    "ranges": {
+     "innerWidth": [
+      864,
+      868
+     ]
     },
     "printed": [
      {
@@ -229494,7 +229776,8 @@
     "series": "SU03",
     "variant": "dish_dryer · ширина кухонного шкафа 400 мм; 2 уровня; 2 пластиковых поддона; для боковин 16 или 18 мм",
     "dimensionsMm": {
-     "cabinetWidth": 400
+     "cabinetWidth": 400,
+     "dryerDepth": 276
     },
     "printed": [
      {
@@ -229593,7 +229876,8 @@
     "series": "SU03",
     "variant": "dish_dryer · ширина кухонного шкафа 500 мм; 2 уровня; 2 пластиковых поддона; для боковин 16 или 18 мм",
     "dimensionsMm": {
-     "cabinetWidth": 500
+     "cabinetWidth": 500,
+     "dryerDepth": 276
     },
     "printed": [
      {
@@ -229692,7 +229976,8 @@
     "series": "SU03",
     "variant": "dish_dryer · ширина кухонного шкафа 600 мм; 2 уровня; 2 пластиковых поддона; для боковин 16 или 18 мм",
     "dimensionsMm": {
-     "cabinetWidth": 600
+     "cabinetWidth": 600,
+     "dryerDepth": 276
     },
     "printed": [
      {
@@ -229791,7 +230076,8 @@
     "series": "SU03",
     "variant": "dish_dryer · ширина кухонного шкафа 700 мм; 2 уровня; 2 пластиковых поддона; для боковин 16 или 18 мм",
     "dimensionsMm": {
-     "cabinetWidth": 700
+     "cabinetWidth": 700,
+     "dryerDepth": 276
     },
     "printed": [
      {
@@ -229890,7 +230176,8 @@
     "series": "SU03",
     "variant": "dish_dryer · ширина кухонного шкафа 800 мм; 2 уровня; 2 пластиковых поддона; для боковин 16 или 18 мм",
     "dimensionsMm": {
-     "cabinetWidth": 800
+     "cabinetWidth": 800,
+     "dryerDepth": 276
     },
     "printed": [
      {
@@ -229989,7 +230276,8 @@
     "series": "SU03",
     "variant": "dish_dryer · ширина кухонного шкафа 900 мм; 2 уровня; 2 пластиковых поддона; для боковин 16 или 18 мм",
     "dimensionsMm": {
-     "cabinetWidth": 900
+     "cabinetWidth": 900,
+     "dryerDepth": 276
     },
     "printed": [
      {
@@ -230088,7 +230376,10 @@
     "series": "ERGOLINE NORMA LORA SU06",
     "variant": "dish_dryer · ширина кухонного шкафа 500 мм; для короба с толщиной плиты от 18 мм; 2 уровня; 2 поддона; L-образная форма",
     "dimensionsMm": {
-     "cabinetWidth": 500
+     "cabinetWidth": 500,
+     "innerWidth": 464,
+     "minCarcassHeight": 500,
+     "dryerLevelGapMin": 280
     },
     "printed": [
      {
@@ -230194,7 +230485,10 @@
     "series": "ERGOLINE NORMA LORA SU06",
     "variant": "dish_dryer · ширина кухонного шкафа 600 мм; для короба с толщиной плиты от 18 мм; 2 уровня; 2 поддона; L-образная форма",
     "dimensionsMm": {
-     "cabinetWidth": 600
+     "cabinetWidth": 600,
+     "innerWidth": 564,
+     "minCarcassHeight": 500,
+     "dryerLevelGapMin": 280
     },
     "printed": [
      {
@@ -230300,7 +230594,10 @@
     "series": "ERGOLINE NORMA LORA SU06",
     "variant": "dish_dryer · ширина кухонного шкафа 700 мм; для короба с толщиной плиты от 18 мм; 2 уровня; 2 поддона; L-образная форма",
     "dimensionsMm": {
-     "cabinetWidth": 700
+     "cabinetWidth": 700,
+     "innerWidth": 664,
+     "minCarcassHeight": 500,
+     "dryerLevelGapMin": 280
     },
     "printed": [
      {
@@ -230406,7 +230703,10 @@
     "series": "ERGOLINE NORMA LORA SU06",
     "variant": "dish_dryer · ширина кухонного шкафа 800 мм; для короба с толщиной плиты от 18 мм; 2 уровня; 2 поддона; L-образная форма",
     "dimensionsMm": {
-     "cabinetWidth": 800
+     "cabinetWidth": 800,
+     "innerWidth": 764,
+     "minCarcassHeight": 500,
+     "dryerLevelGapMin": 280
     },
     "printed": [
      {
@@ -230512,7 +230812,10 @@
     "series": "ERGOLINE NORMA LORA SU06",
     "variant": "dish_dryer · ширина кухонного шкафа 900 мм; для короба с толщиной плиты от 18 мм; 2 уровня; 2 поддона; L-образная форма",
     "dimensionsMm": {
-     "cabinetWidth": 900
+     "cabinetWidth": 900,
+     "innerWidth": 864,
+     "minCarcassHeight": 500,
+     "dryerLevelGapMin": 280
     },
     "printed": [
      {
@@ -230618,7 +230921,15 @@
     "series": "ERGOLINE ESTETICA PANDORA SU07",
     "variant": "dish_dryer · ширина кухонного шкафа 600 мм; 2 уровня; 2 поддона",
     "dimensionsMm": {
-     "cabinetWidth": 600
+     "cabinetWidth": 600,
+     "minCabinetDepth": 320,
+     "dryerLevelGapMin": 300
+    },
+    "ranges": {
+     "innerWidth": [
+      564,
+      568
+     ]
     },
     "printed": [
      {
@@ -230728,7 +231039,15 @@
     "series": "ERGOLINE ESTETICA PANDORA SU07",
     "variant": "dish_dryer · ширина кухонного шкафа 700 мм; 2 уровня; 2 поддона",
     "dimensionsMm": {
-     "cabinetWidth": 700
+     "cabinetWidth": 700,
+     "minCabinetDepth": 320,
+     "dryerLevelGapMin": 300
+    },
+    "ranges": {
+     "innerWidth": [
+      664,
+      668
+     ]
     },
     "printed": [
      {
@@ -230838,7 +231157,15 @@
     "series": "ERGOLINE ESTETICA PANDORA SU07",
     "variant": "dish_dryer · ширина кухонного шкафа 800 мм; 2 уровня; 2 поддона",
     "dimensionsMm": {
-     "cabinetWidth": 800
+     "cabinetWidth": 800,
+     "minCabinetDepth": 320,
+     "dryerLevelGapMin": 300
+    },
+    "ranges": {
+     "innerWidth": [
+      764,
+      768
+     ]
     },
     "printed": [
      {
@@ -230948,7 +231275,15 @@
     "series": "ERGOLINE ESTETICA PANDORA SU07",
     "variant": "dish_dryer · ширина кухонного шкафа 900 мм; 2 уровня; 2 поддона",
     "dimensionsMm": {
-     "cabinetWidth": 900
+     "cabinetWidth": 900,
+     "minCabinetDepth": 320,
+     "dryerLevelGapMin": 300
+    },
+    "ranges": {
+     "innerWidth": [
+      864,
+      868
+     ]
     },
     "printed": [
      {
@@ -231418,7 +231753,10 @@
     "series": "ERGOLINE NORMA GLORIA SU16",
     "variant": "dish_dryer · ширина кухонного шкафа 500 мм; для короба с толщиной плиты 16 мм; 2 уровня; 2 поддона; L-образная форма",
     "dimensionsMm": {
-     "cabinetWidth": 500
+     "cabinetWidth": 500,
+     "innerWidth": 468,
+     "minCarcassHeight": 500,
+     "dryerLevelGapMin": 280
     },
     "printed": [
      {
@@ -231532,7 +231870,10 @@
     "series": "ERGOLINE NORMA GLORIA SU16",
     "variant": "dish_dryer · ширина кухонного шкафа 600 мм; для короба с толщиной плиты 16 мм; 2 уровня; 2 поддона; L-образная форма",
     "dimensionsMm": {
-     "cabinetWidth": 600
+     "cabinetWidth": 600,
+     "innerWidth": 568,
+     "minCarcassHeight": 500,
+     "dryerLevelGapMin": 280
     },
     "printed": [
      {
@@ -231646,7 +231987,10 @@
     "series": "ERGOLINE NORMA GLORIA SU16",
     "variant": "dish_dryer · ширина кухонного шкафа 700 мм; для короба с толщиной плиты 16 мм; 2 уровня; 2 поддона; L-образная форма",
     "dimensionsMm": {
-     "cabinetWidth": 700
+     "cabinetWidth": 700,
+     "innerWidth": 668,
+     "minCarcassHeight": 500,
+     "dryerLevelGapMin": 280
     },
     "printed": [
      {
@@ -231760,7 +232104,10 @@
     "series": "ERGOLINE NORMA GLORIA SU16",
     "variant": "dish_dryer · ширина кухонного шкафа 800 мм; для короба с толщиной плиты 16 мм; 2 уровня; 2 поддона; L-образная форма",
     "dimensionsMm": {
-     "cabinetWidth": 800
+     "cabinetWidth": 800,
+     "innerWidth": 768,
+     "minCarcassHeight": 500,
+     "dryerLevelGapMin": 280
     },
     "printed": [
      {
@@ -231874,7 +232221,10 @@
     "series": "ERGOLINE NORMA GLORIA SU16",
     "variant": "dish_dryer · ширина кухонного шкафа 900 мм; для короба с толщиной плиты 16 мм; 2 уровня; 2 поддона; L-образная форма",
     "dimensionsMm": {
-     "cabinetWidth": 900
+     "cabinetWidth": 900,
+     "innerWidth": 868,
+     "minCarcassHeight": 500,
+     "dryerLevelGapMin": 280
     },
     "printed": [
      {

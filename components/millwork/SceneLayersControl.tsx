@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { armSoundUnlock, setSoundPrefs, soundPrefs, unlockMechanismSound } from './cabinet3d/mechanismSound';
 import { useInteriorStore } from '@/store/useInteriorStore';
 import {
   SCENE_LAYERS,
@@ -37,6 +38,15 @@ export default function SceneLayersControl({ counts }: { counts: Partial<Record<
   const economy = useInteriorStore((state) => state.economyMode);
   const setEconomy = useInteriorStore((state) => state.setEconomyMode);
   const [open, setOpen] = useState(false);
+  /* Звуки механизмов (фаза 4): выбор устройства, по умолчанию выключены; включение — жест, будит звук браузера. */
+  const [sound, setSound] = useState(() => soundPrefs());
+  const [soundSaved, setSoundSaved] = useState(true);
+  const changeSound = (next: { on: boolean; volume: number }) => {
+    setSound(next);
+    setSoundSaved(setSoundPrefs(next));
+    if (next.on) unlockMechanismSound();
+  };
+  useEffect(() => armSoundUnlock(), []);
   const preset = presetOf(layers);
 
   /*
@@ -120,6 +130,31 @@ export default function SceneLayersControl({ counts }: { counts: Partial<Record<
           >
             Экономичный режим
           </button>
+          <button
+            type="button"
+            data-scene-sound
+            aria-pressed={sound.on}
+            onClick={() => changeSound({ ...sound, on: !sound.on })}
+            className={`mw-btn ${sound.on ? 'mw-btn-primary' : 'mw-btn-ghost'}`}
+            title="Звуки дверей, ящиков, подъёмников, сушки и пантографа при открывании и закрывании — синтез, не записи. Выбор этого устройства."
+          >
+            Звуки механизмов: {sound.on ? 'Вкл' : 'Выкл'}
+          </button>
+          {sound.on ? (
+            <label className="flex items-center gap-1 text-[13px] text-graphiteMw">
+              <span>Громкость</span>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={5}
+                data-scene-sound-volume
+                value={Math.round(sound.volume * 100)}
+                onChange={(e) => changeSound({ ...sound, volume: Number(e.target.value) / 100 })}
+              />
+            </label>
+          ) : null}
+          {!soundSaved ? <span className="text-[13px] text-graphiteMw">выбор не сохранится: хранилище браузера недоступно</span> : null}
         </div>
       )}
     </div>

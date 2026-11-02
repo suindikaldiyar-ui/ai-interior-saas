@@ -37,7 +37,7 @@ import {
   shelfAboveRoof,
 } from './fill';
 import { mezzanineOf, zoneHeightMm, zoneProfile } from './zones';
-import { handleOf, isMechanism, openingRejection } from './opening';
+import { handleOf, isMechanism, isSwing, openingOf, openingRejection } from './opening';
 import { glassRefusal, glassShelvesRefusal } from './glass';
 import { vitrineEdit } from './vitrinePlace';
 import { radiusAfterEdit, radiusEdit, radiusRowOf } from './radiusPlace';
@@ -46,7 +46,7 @@ import { normalizedPanel, normalizedTv, tvRefusal, tvZoneRefusal, wallPanelRefus
 import { vitrineFrameRefusal } from './vitrine';
 import { frontConflict, frontOf, leafTitle } from './frontMaterial';
 import { reliefParamRefusal } from './facadeRelief';
-import { openablePartIds } from './cabinetBoxes';
+import { frontCutsOf, handleAtCheck, leafHandleBox, openablePartIds } from './cabinetBoxes';
 import {
   MAX_APPLIANCE_DEPTH_MM,
   MIN_DRAWER_MM,
@@ -54,7 +54,8 @@ import {
   moduleCarcassHeightMm,
   moduleDepthMm,
 } from './fill';
-import { CORNER } from './modules';
+import { CORNER, modelModuleWidthMm } from './modules';
+import { applianceModel } from './appliances';
 import { MAX_MEZZANINE_MM, MIN_MEZZANINE_MM, sectionSpec } from './sections';
 import { ceilingOverSpanMm } from './ceiling';
 import { hasFacade } from './applianceFront';
@@ -64,6 +65,10 @@ import { bayEnvelope, bayLayout, bayLossNote, baysRefusal, baysWidthRefusal, typ
 import { allModules } from './layout';
 import { DEFAULT_ALLOWANCES, type HardwareItem } from '@/types/catalog';
 import { FITTING_SLOT_TITLE, fittingVerdict, installedItem, slidingVerdict, withFitting, withHandle } from './fittings';
+import { dryerRefusal, storedDryer } from './dryer';
+import { handleSpotOf } from './handlePlace';
+import { hingeAtRefusal, hingeCupOf } from './hingePlace';
+import { CUSTOM_HANDLE_MAX_MM, CUSTOM_HANDLE_MIN_MM } from './handleModel';
 import { topFillerRefusal } from './topFiller';
 import { aventosOf } from './aventos';
 import {
@@ -1719,6 +1724,14 @@ export function applyOps({
         if (op.appliance === 'fridge') {
           created.builtIn = (requirements.fridgeType ?? 'built_in') === 'built_in';
         }
+        /*
+         * МОДЕЛЬ ПРИБОРА — И У ПОСТАВЛЕННОГО РУКАМИ (фаза 5). Раскладка кладёт выбор кухни в модуль сама;
+         * прибор из «+ Модуль» или «Техники» его не получал, и модель в своей сборке не доезжала до модуля.
+         */
+        const chosenModel = op.appliance ? requirements.applianceModels?.[op.appliance] : undefined;
+        if (op.appliance && chosenModel && applianceModel(chosenModel)?.kind === op.appliance) {
+          created.applianceModels = { [op.appliance]: chosenModel };
+        }
 
 
         /*
@@ -1895,6 +1908,228 @@ export function applyOps({
         break;
       }
 
+      case 'set_appliance_model': {
+        /* Модель прибора в своей сборке (фаза 5): на модули ряда с этим прибором, без пересборки. */
+        const model = op.model ? applianceModel(op.model) : null;
+        if (op.model && (!model || model.kind !== op.appliance)) {
+          warnings.push(`Модели ${op.model} для «${APPLIANCE_SLOTS[op.appliance].title}» в фактах нет — ставить нечего.`);
+          break;
+        }
+        const carriers = [...modules, ...upperModules].filter((m) => moduleAppliances(m).includes(op.appliance));
+        if (carriers.length === 0) {
+          warnings.push(`«${APPLIANCE_SLOTS[op.appliance].title}» в ряду нет — модель класть не на что: поставьте прибор.`);
+          break;
+        }
+        const needWidth = model && !carriers[0].column ? modelModuleWidthMm(model) : null;
+        const narrow = needWidth !== null ? carriers.find((m) => m.widthMm !== needWidth) : undefined;
+        if (narrow && needWidth !== null) {
+          warnings.push(`${op.model} ставится в модуль ${needWidth} мм, а «${narrow.label}» — ${narrow.widthMm} мм: поставьте прибор в модуль этой ширины.`);
+          break;
+        }
+        const put = (m: Module): Module => {
+          if (!moduleAppliances(m).includes(op.appliance)) return m;
+          const own = { ...(m.applianceModels ?? {}) };
+          if (op.model) own[op.appliance] = op.model;
+          else delete own[op.appliance];
+          const { applianceModels: _was, ...rest } = m;
+          void _was;
+          return Object.keys(own).length > 0 ? { ...rest, applianceModels: own } : rest;
+        };
+        modules = modules.map(put);
+        upperModules = upperModules.map(put);
+        break;
+      }
+      case 'set_fitting_finish': {
+        /* Отделка поставленной позиции — вид (фаза 3): только пантограф, позиция и ход не меняются. */
+        const fAt = modules.findIndex((m) => m.id === op.moduleId);
+        const fTarget = fAt >= 0 ? modules[fAt] : (upperModules.find((m) => m.id === op.moduleId) ?? mezzModules.find((m) => m.id === op.moduleId));
+        const fitting = fTarget?.fittings?.find((f) => f.slot === op.slot && (op.bayId === undefined || f.bayId === op.bayId));
+        if (!fTarget || !fitting) {
+          warnings.push(`Позиции «${op.slot}» на модуле ${op.moduleId} нет — отделку менять не у чего.`);
+          break;
+        }
+        if (op.slot !== 'pantograph') {
+          warnings.push('Отделка-вид есть только у пантографа: у остальной фурнитуры покрытие — это другой артикул.');
+          break;
+        }
+        const edited: Module = {
+          ...fTarget,
+          fittings: fTarget.fittings!.map((f) => {
+            if (f !== fitting) return f;
+            const { visualFinish: _was, ...rest } = f;
+            void _was;
+            return op.finish ? { ...rest, visualFinish: op.finish } : rest;
+          }),
+        };
+        if (fAt >= 0) modules[fAt] = edited;
+        else if (!editMezz(fTarget.id, () => edited)) editUpper(fTarget.id, () => edited);
+        break;
+      }
+      case 'set_handle_at':
+      case 'set_handle_custom':
+      case 'set_hinges': {
+        /*
+         * РУЧКА И ПЕТЛИ НА ДЕТАЛИ (фаза 2): своё место ручки, своя скоба без позиции, свои высоты петель.
+         * Проверка — те же функции, что рисуют сцену (`handleAtCheck`, `leafHandleBox`) и физика узла петли
+         * (`hingeAtRefusal`); до записи, отказ словами с мм.
+         */
+        const pAt = modules.findIndex((m) => m.id === op.moduleId);
+        const pTarget = pAt >= 0 ? modules[pAt] : (upperModules.find((m) => m.id === op.moduleId) ?? mezzModules.find((m) => m.id === op.moduleId));
+        if (!pTarget) {
+          warnings.push(`Модуль ${op.moduleId} не найден: ручку и петли ставить не на что.`);
+          break;
+        }
+        const pWrite = (edited: Module) => {
+          if (pAt >= 0) modules[pAt] = edited;
+          else if (editMezz(pTarget.id, () => edited)) return;
+          else editUpper(pTarget.id, () => edited);
+        };
+        const pShell = { ...run, zone, modules, options } as Run;
+        const pShop = shopOf(run.production);
+        if (op.op === 'set_handle_at') {
+          if (op.reset) {
+            const own = { ...(pTarget.handleAt ?? {}) };
+            delete own[op.leaf];
+            const { handleAt: _was, ...rest } = pTarget;
+            void _was;
+            pWrite(Object.keys(own).length > 0 ? { ...rest, handleAt: own } : rest);
+            break;
+          }
+          if (op.xMm === undefined || op.yMm === undefined || !Number.isFinite(op.xMm) || !Number.isFinite(op.yMm)) {
+            warnings.push(`«${pTarget.label}»: место ручки задаётся двумя числами — X и Y от левого нижнего угла детали, мм.`);
+            break;
+          }
+          const at = { xMm: Math.round(op.xMm), yMm: Math.round(op.yMm), ...(op.turn ? { turn: op.turn } : {}) };
+          const checked = handleAtCheck(pTarget, op.leaf, at, pShell, pShop, hardware);
+          if (!checked.ok) {
+            warnings.push(checked.words);
+            break;
+          }
+          pWrite({ ...pTarget, handleAt: { ...(pTarget.handleAt ?? {}), [op.leaf]: at } });
+          break;
+        }
+        if (op.op === 'set_handle_custom') {
+          const next: NonNullable<Module['handleCustom']> = { ...(pTarget.handleCustom ?? {}) };
+          if (op.lengthMm === null) delete next.lengthMm;
+          else if (op.lengthMm !== undefined) {
+            const length = Math.round(op.lengthMm);
+            if (!Number.isFinite(length) || length < CUSTOM_HANDLE_MIN_MM || length > CUSTOM_HANDLE_MAX_MM) {
+              warnings.push(`Своя скоба ${op.lengthMm} мм: такой длины не бывает — от ${CUSTOM_HANDLE_MIN_MM} до ${CUSTOM_HANDLE_MAX_MM} мм.`);
+              break;
+            }
+            next.lengthMm = length;
+          }
+          if (op.finish === null) delete next.finish;
+          else if (op.finish !== undefined) next.finish = op.finish;
+          const { handleCustom: _old, ...base } = pTarget;
+          void _old;
+          const edited: Module = Object.keys(next).length > 0 ? { ...base, handleCustom: next } : base;
+          /* Длиннее детали скоба не встаёт — та же сцена говорит, помещается ли (`fits`). */
+          const cuts = frontCutsOf(pShell, pShop, hardware);
+          const misfit = Array.from(cuts.entries())
+            .filter(([key]) => key.startsWith(`${pTarget.id}:`))
+            .map(([key, cut]) => {
+              const leaf = key.slice(pTarget.id.length + 1);
+              const w = cut.widthMm / 1000;
+              const h = cut.lengthMm / 1000;
+              const box = leafHandleBox({
+                unit: edited,
+                leaf,
+                part: key,
+                geometry: { cx: w / 2, cy: h / 2, widthM: w, heightM: h, thicknessM: pShop.frontMm / 1000 },
+                spot: handleSpotOf(edited, pShell, undefined, leaf),
+                seat: leaf.startsWith('drawer:') ? 'center' : 'spot',
+                options: { integratedHandles: options.integratedHandles, hardware },
+              });
+              return box?.handle && !box.handle.fits ? `${leaf} (${cut.widthMm} × ${cut.lengthMm} мм)` : null;
+            })
+            .filter(Boolean);
+          if (misfit.length > 0) {
+            warnings.push(`Скоба ${next.lengthMm} мм не помещается на деталь ${misfit.join(', ')} — короче или поверните планку.`);
+            break;
+          }
+          pWrite(edited);
+          break;
+        }
+        /* set_hinges */
+        if (op.heightsMm === null) {
+          const own = { ...(pTarget.hingeAt ?? {}) };
+          delete own[op.leaf];
+          const { hingeAt: _was, ...rest } = pTarget;
+          void _was;
+          pWrite(Object.keys(own).length > 0 ? { ...rest, hingeAt: own } : rest);
+          break;
+        }
+        const hingeCut = /^door:\d+$/.test(op.leaf) ? frontCutsOf(pShell, pShop, hardware).get(`${pTarget.id}:${op.leaf}`) : undefined;
+        if (!hingeCut) {
+          warnings.push(`У «${pTarget.label}» нет створки «${op.leaf}» на петлях — высоты петель задавать не у чего.`);
+          break;
+        }
+        if (!isSwing(openingOf(pTarget).opening)) {
+          warnings.push(`«${pTarget.label}» открывается не на петлях (подъёмник, откидной или выдвижной) — высоты петель не задаются.`);
+          break;
+        }
+        const heights = op.heightsMm.map((v) => Math.round(v)).sort((a, b) => a - b);
+        const hingeItem = hardware ? installedItem(pTarget, 'hinge', hardware) : null;
+        const hRefused = hingeAtRefusal({
+          heightsMm: heights,
+          leafHeightMm: hingeCut.lengthMm,
+          cupDiameterMm: hingeCupOf(hingeItem).diameterMm,
+          shelvesMm: pTarget.fill?.shelves ?? [],
+          carcassMm: pShop.carcassMm,
+          gapMm: pShop.frontGapMm,
+          label: pTarget.label,
+        });
+        if (hRefused) {
+          warnings.push(hRefused);
+          break;
+        }
+        pWrite({ ...pTarget, hingeAt: { ...(pTarget.hingeAt ?? {}), [op.leaf]: { heightsMm: heights } } });
+        break;
+      }
+      case 'set_dryer': {
+        /*
+         * СУШКА (фаза 1): уровни, их высоты и поддон. Проверка одна — `dryerRefusal` (напечатанные минимумы
+         * паспорта позиции, корпус в свету) до записи; умолчания не пишутся (ловушка 246).
+         */
+        const dryAt = modules.findIndex((m) => m.id === op.moduleId);
+        const dryTarget = dryAt >= 0 ? modules[dryAt] : upperModules.find((m) => m.id === op.moduleId);
+        if (!dryTarget) {
+          warnings.push(`Модуль ${op.moduleId} не найден: сушку настраивать не у чего.`);
+          break;
+        }
+        const next: NonNullable<Module['dryer']> = op.reset ? {} : { ...(dryTarget.dryer ?? {}) };
+        if (!op.reset) {
+          if (op.levels === null) delete next.levels;
+          else if (op.levels !== undefined) next.levels = op.levels;
+          if (op.lowerMm === null) delete next.lowerMm;
+          else if (op.lowerMm !== undefined) next.lowerMm = Math.round(op.lowerMm);
+          if (op.upperMm === null) delete next.upperMm;
+          else if (op.upperMm !== undefined) next.upperMm = Math.round(op.upperMm);
+          if (op.tray === null) delete next.tray;
+          else if (op.tray !== undefined) next.tray = op.tray;
+        }
+        if (next.levels === 1) delete next.upperMm;
+        const dryShell = { ...run, zone, modules, options };
+        const dryEnv = {
+          widthMm: dryTarget.widthMm,
+          heightMm: moduleCarcassHeightMm(dryTarget, dryShell),
+          depthMm: moduleDepthMm(dryTarget, zone, run.production),
+          thicknessMm: shopOf(run.production).carcassMm,
+        };
+        const dryRefused = dryerRefusal(dryTarget, next, dryEnv, hardware ? installedItem(dryTarget, 'dryer', hardware) : null);
+        if (dryRefused) {
+          warnings.push(dryRefused);
+          break;
+        }
+        const dryEdited: Module = { ...dryTarget };
+        const dryStored = storedDryer(next);
+        if (dryStored) dryEdited.dryer = dryStored;
+        else delete dryEdited.dryer;
+        if (dryAt >= 0) modules[dryAt] = dryEdited;
+        else editUpper(dryTarget.id, () => dryEdited);
+        break;
+      }
       case 'set_storage': {
         /*
          * КЛАДОВКА НАД ХОЛОДИЛЬНИКОМ — СВОЯ ВЫСОТА И ГЛУБИНА (ЭТАП 4, часть 2).
@@ -2230,9 +2465,20 @@ export function applyOps({
          * сделает. Его пересчитает `fill`.
          */
         const swap = (unit: Module): Module => {
-          const width = op.appliance
-            ? applianceWidthMm(op.appliance, requirements.applianceSizes)
-            : Math.round(op.widthMm ?? unit.widthMm);
+          /*
+           * ТОТ ЖЕ ПРИБОР НА МЕСТЕ (фаза 5): модель, встройка, свои размеры и духовка под варочной — свойства
+           * прибора, а не модуля. Замена их теряла: модель не доезжала, колонна переставала быть колонной.
+           */
+          const same = op.appliance && moduleAppliances(unit).includes(op.appliance) ? op.appliance : null;
+          const width = same ? unit.widthMm : op.appliance ? applianceWidthMm(op.appliance, requirements.applianceSizes) : Math.round(op.widthMm ?? unit.widthMm);
+          const carried: Partial<Module> = same
+            ? {
+                ...(unit.applianceModels?.[same] ? { applianceModels: { [same]: unit.applianceModels[same] } } : {}),
+                ...(unit.applianceSizes?.[same] ? { applianceSizes: { [same]: unit.applianceSizes[same] } } : {}),
+                ...(same === 'fridge' && unit.builtIn !== undefined ? { builtIn: unit.builtIn } : {}),
+                ...(same === 'hob' && unit.ovenBelow ? { ovenBelow: unit.ovenBelow } : {}),
+              }
+            : {};
 
           const made: Module = {
             ...makePlainModule(op.kind, width, run.wallId, op.appliance),
@@ -2256,6 +2502,7 @@ export function applyOps({
              */
             ...(unit.leafFronts ? { leafFronts: unit.leafFronts } : {}),
             carcassItemId: unit.carcassItemId,
+            ...carried,
           };
 
           const dressed = op.variant ? applyVariant(made, op.variant) : made;
@@ -2324,8 +2571,10 @@ export function applyOps({
          */
         if (replacing) {
           const keeps = new Set(op.appliance ? [op.appliance] : []);
+          /* В своей сборке прибор — это модуль ряда (фаза 5): в требованиях его нет, а пропал бы он так же. */
+          const owned = requirements.mode === 'free' ? moduleAppliances(replacing) : requirements.appliances;
           const lost = moduleAppliances(replacing).filter(
-            (kind) => requirements.appliances.includes(kind) && !keeps.has(kind),
+            (kind) => owned.includes(kind) && !keeps.has(kind),
           );
           if (lost.length > 0) {
             warnings.push(
@@ -4866,6 +5115,40 @@ export function applyOps({
     void _before;
     return Object.keys(kept).length > 0 ? { ...rest, leafFronts: kept } : rest;
   };
+  /*
+   * СВОЁ МЕСТО РУЧКИ И СВОИ ПЕТЛИ ДЕТАЛИ, КОТОРОЙ БОЛЬШЕ НЕТ (фаза 2): снимаются словами, как свой фасад.
+   */
+  const keepOwnPlaces = (unit: Module): Module => {
+    if (!unit.handleAt && !unit.hingeAt) return unit;
+    const out: Module = { ...unit };
+    const lost: string[] = [];
+    const prune = <T,>(own: Record<string, T> | undefined, words: string): Record<string, T> | undefined => {
+      if (!own) return undefined;
+      const kept: Record<string, T> = {};
+      for (const [leaf, value] of Object.entries(own)) {
+        if (leafIds.has(`${unit.id}:${leaf}`)) kept[leaf] = value;
+        else lost.push(`${words} «${leaf}»`);
+      }
+      return Object.keys(kept).length > 0 ? kept : undefined;
+    };
+    const handleAt = prune(unit.handleAt, 'место ручки');
+    /* Створка ушла с петель (подъёмник, откидной, выдвижной) — свои высоты петель ни на что не влияют: снимаются. */
+    const kept = prune(unit.hingeAt, 'петли');
+    const swing = isSwing(openingOf(unit).opening);
+    if (!swing && kept) for (const leaf of Object.keys(kept)) lost.push(`петли «${leaf}» (створка теперь не на петлях)`);
+    const hingeAt = swing ? kept : undefined;
+    if (handleAt) out.handleAt = handleAt;
+    else delete out.handleAt;
+    if (hingeAt) out.hingeAt = hingeAt;
+    else delete out.hingeAt;
+    if (lost.length === 0) return unit;
+    warnings.push(`«${unit.label}»: ${lost.join(', ')} сняты — такой детали или петель у модуля больше нет.`);
+    return out;
+  };
+  if (allModules(nextRun).some((unit) => unit.handleAt || unit.hingeAt)) {
+    nextRun.modules = nextRun.modules.map(keepOwnPlaces);
+    nextRun.upperSegments = nextRun.upperSegments.map((segment) => ({ ...segment, modules: segment.modules.map(keepOwnPlaces) }));
+  }
   if (allModules(nextRun).some((unit) => unit.leafFronts)) {
     nextRun.modules = nextRun.modules.map(keepLeaves);
     nextRun.upperSegments = nextRun.upperSegments.map((segment) => ({

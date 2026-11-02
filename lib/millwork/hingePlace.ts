@@ -60,6 +60,47 @@ export function hingeCupPlace(
  * правило цеха; нет — поровну по полотну (так сцена рисовала всегда).
  */
 export function hingeHeightsMm(lengthMm: number, count: number, edgeMm: number | null): number[] {
+  return hingeHeightsByRule(lengthMm, count, edgeMm);
+}
+
+/**
+ * СВОИ ВЫСОТЫ ПЕТЕЛЬ — ВСТАЮТ ЛИ (фаза 2). Только физика узла, без выдуманных отступов: чашка целиком на
+ * двери; чашки не друг на друге; планка на боковине не в полке (ось петли в корпусе — от низа корпуса через
+ * половину зазора фасада). Петель не меньше двух. Отказ — словами с мм; `null` — встают.
+ */
+export function hingeAtRefusal(input: {
+  heightsMm: number[];
+  leafHeightMm: number;
+  cupDiameterMm: number | null;
+  shelvesMm: number[];
+  carcassMm: number;
+  gapMm: number;
+  label: string;
+}): string | null {
+  const { heightsMm, leafHeightMm, carcassMm, gapMm, label } = input;
+  const cup = input.cupDiameterMm ?? 35;
+  const r = cup / 2;
+  const cupWords = input.cupDiameterMm === null ? `Ø${cup} условно (чашка позиции не напечатана)` : `Ø${cup}`;
+  if (heightsMm.length < 2) return `«${label}»: на одной петле створка проворачивается — петель нужно не меньше двух.`;
+  const sorted = [...heightsMm].sort((a, b) => a - b);
+  for (const h of sorted) {
+    if (!Number.isFinite(h) || h - r < 0) return `«${label}»: петля на ${h} мм — чашка ${cupWords} выходит за низ двери на ${Math.round((r - h) * 10) / 10} мм.`;
+    if (h + r > leafHeightMm) return `«${label}»: петля на ${h} мм — чашка ${cupWords} выходит за верх двери (${leafHeightMm} мм) на ${Math.round((h + r - leafHeightMm) * 10) / 10} мм.`;
+  }
+  for (let i = 1; i < sorted.length; i += 1) {
+    if (sorted[i] - sorted[i - 1] < cup) return `«${label}»: петли на ${sorted[i - 1]} и ${sorted[i]} мм — чашки ${cupWords} заходят друг на друга: между осями нужно не меньше ${cup} мм.`;
+  }
+  for (const h of sorted) {
+    const axis = gapMm / 2 + h;
+    for (const shelf of input.shelvesMm) {
+      const near = Math.abs(axis - shelf) - (carcassMm + r);
+      if (near < 0) return `«${label}»: петля на ${h} мм — её узел на боковине встаёт в полку на ${shelf} мм (заход ${Math.round(-near * 10) / 10} мм). Сдвиньте петлю или полку.`;
+    }
+  }
+  return null;
+}
+
+function hingeHeightsByRule(lengthMm: number, count: number, edgeMm: number | null): number[] {
   if (count <= 0) return [];
   if (edgeMm === null) return Array.from({ length: count }, (_, i) => (lengthMm * (i + 1)) / (count + 1));
   if (count === 1) return [lengthMm / 2];

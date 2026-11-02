@@ -75,7 +75,9 @@ function variantText(variant: ModuleVariantKind, unit: RunModuleLike): string | 
     case 'tall_cargo':
       return `узкий выдвижной фасад карго ${unit.widthMm} мм — одна вертикальная панель`;
     case 'upper_dryer':
-      return 'фасад глухой, внутри сушилка для посуды';
+      return 'фасад глухой, внутри сушка для посуды: решётки тарелок и чашек, поддон';
+    case 'base_dryer':
+      return `выдвижной фасад ${unit.widthMm} мм — одна панель, за ней корзина-сушка для посуды с поддоном`;
     case 'upper_lift':
       return 'фасад ПОДЪЁМНЫЙ: одна цельная панель, открывается вверх, ручка снизу';
     case 'drawers_four':
