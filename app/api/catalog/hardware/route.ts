@@ -32,6 +32,13 @@ const CSV_LIMIT = 4_000_000;
  * либо `csv` (текст файла, раскодированный на экране тем же `decodeCsvBuffer`,
  * что у прайса): те же записи и та же проверка, мусор отклоняется построчно.
  *
+ * ЧАСТЯМИ (`batch`, ТЗ 2026-11-02): за один запрос — не больше `batch` записей
+ * (сначала новые, потом обновления), в ответе — сколько осталось (`remaining`).
+ * План пересчитывается на каждом запросе по тому, что уже в каталоге, поэтому
+ * следующий запрос продолжает с того же места, а оборванный ничего не
+ * задваивает. Одним запросом 4065 вставок и 242 обновления на хостинге упирались
+ * в предел функции 60 с.
+ *
  * Ключ — артикул «MFR-<производитель>-<артикул>»: повтор не добавляет ни
  * строки. У своей строки обновляется только запись изделия
  * (`meta.hardware`); цена, название, активность и единица продажи,
@@ -72,7 +79,7 @@ export async function POST(request: Request) {
   } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Требуется вход.' }, { status: 401 });
 
-  let body: { orgId?: string; dryRun?: boolean; confirm?: boolean; rows?: unknown; csv?: unknown };
+  let body: { orgId?: string; dryRun?: boolean; confirm?: boolean; rows?: unknown; csv?: unknown; batch?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -143,10 +150,20 @@ export async function POST(request: Request) {
   const categoryId = categories.byKey.get('hardware');
   if (!categoryId) return NextResponse.json({ error: 'Категория «Фурнитура» не завелась — позициям некуда лечь.' }, { status: 500 });
 
+  /* Сколько записей за этот запрос: без `batch` — все (прежнее поведение), с ним — не больше. */
+  const batch = typeof body.batch === 'number' && Number.isFinite(body.batch) && body.batch > 0 ? Math.min(2000, Math.floor(body.batch)) : Number.POSITIVE_INFINITY;
+  const inserts = plan.insert.slice(0, batch);
+  const updates = plan.update.slice(0, Math.max(0, batch - inserts.length));
+  const progress = (added: number, updated: number) => ({
+    added,
+    updated,
+    remaining: plan.insert.length - added + plan.update.length - updated,
+  });
+
   let added = 0;
   const CHUNK = 200;
-  for (let at = 0; at < plan.insert.length; at += CHUNK) {
-    const payload = plan.insert.slice(at, at + CHUNK).map((row) => ({
+  for (let at = 0; at < inserts.length; at += CHUNK) {
+    const payload = inserts.slice(at, at + CHUNK).map((row) => ({
       org_id: orgId,
       category_id: categoryId,
       article: row.article,
@@ -160,24 +177,28 @@ export async function POST(request: Request) {
     const { data, error } = await supabase.from('catalog_items').insert(payload).select('id');
     if (error) {
       return NextResponse.json(
-        { error: `Добавлено ${added} из ${plan.insert.length}, дальше не записалось: ${error.message}. Повтор начнёт с того же места.`, added },
+        { error: `Добавлено ${added} из ${plan.insert.length}, дальше не записалось: ${error.message}. Повтор начнёт с того же места.`, ...progress(added, 0) },
         { status: 500 },
       );
     }
     added += data?.length ?? 0;
   }
 
+  /* Обновления — по 8 разом: поштучно 242 строки — десятки секунд одного запроса. */
   let updated = 0;
-  for (const row of plan.update) {
-    const { error } = await supabase.from('catalog_items').update({ meta: row.meta }).eq('id', row.id).eq('org_id', orgId);
-    if (error) {
+  const PARALLEL = 8;
+  for (let at = 0; at < updates.length; at += PARALLEL) {
+    const group = updates.slice(at, at + PARALLEL);
+    const results = await Promise.all(group.map((row) => supabase.from('catalog_items').update({ meta: row.meta }).eq('id', row.id).eq('org_id', orgId)));
+    const failed = results.find((r) => r.error);
+    updated += results.filter((r) => !r.error).length;
+    if (failed?.error) {
       return NextResponse.json(
-        { error: `Добавлено ${added}, обновлено ${updated} из ${plan.update.length}, дальше не записалось: ${error.message}`, added, updated },
+        { error: `Добавлено ${added}, обновлено ${updated} из ${plan.update.length}, дальше не записалось: ${failed.error.message}. Повтор начнёт с того же места.`, ...progress(added, updated) },
         { status: 500 },
       );
     }
-    updated += 1;
   }
 
-  return NextResponse.json({ ok: true, orgId, ...summary, added, updated });
+  return NextResponse.json({ ok: true, orgId, ...summary, ...progress(added, updated) });
 }

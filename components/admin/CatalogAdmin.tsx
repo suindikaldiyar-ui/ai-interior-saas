@@ -69,6 +69,8 @@ type HardwareSummary = {
 };
 /** Своя пачка, показанная в «что ляжет»: та же уходит в запись. Пусто — факты производителей. */
 type HardwarePayload = { csv: string } | { rows: unknown } | null;
+/** Записей фурнитуры за один запрос: вставки пачками по 200 и обновления по 8 разом укладываются в предел функции хостинга 60 с. */
+const HW_BATCH = 400;
 
 const OVERSCAN = 8;
 
@@ -401,6 +403,13 @@ export default function CatalogAdmin({
     [],
   );
   const [hardware, setHardware] = useState<{ summary: HardwareSummary; payload: HardwarePayload; file: string | null } | null>(null);
+  /*
+   * ЗАГРУЗКА ФУРНИТУРЫ ЧАСТЯМИ (ТЗ 2026-11-02): одним запросом 4065 вставок и обновления упирались в предел
+   * функции хостинга 60 с — запрос обрывался без ответа. Теперь — по `HW_BATCH` записей за запрос, прогресс
+   * и итог на экране; оборвалось — «Продолжить загрузку» начинает с того же места (план пересчитывается
+   * сервером по тому, что уже в каталоге, записанное не повторяется).
+   */
+  const [hwRun, setHwRun] = useState<{ state: 'running' | 'done' | 'error'; total: number; written: number; added: number; updated: number; words: string } | null>(null);
   const hardwareRequest = async (confirm: boolean, payload: HardwarePayload, file: string | null) => {
     setBusy(true);
     setNotice(confirm ? 'Записываем фурнитуру…' : 'Считаем, что ляжет…');
@@ -433,6 +442,7 @@ export default function CatalogAdmin({
     }
     if (!confirm) {
       setNotice(null);
+      setHwRun(null);
       setHardware({ summary: data as HardwareSummary, payload, file });
       return;
     }
@@ -443,6 +453,70 @@ export default function CatalogAdmin({
         (data.errors?.length ? `, не принято строк: ${data.errors.length}` : '') +
         '. Цен у позиций нет — «цена не задана», пока компания не укажет свою.',
     );
+    await reload();
+  };
+  const runHardwareImport = async () => {
+    if (!hardware) return;
+    const { payload, summary } = hardware;
+    const resume = hwRun?.state === 'error';
+    const total = resume ? hwRun.total : summary.insert + summary.update;
+    let added = resume ? hwRun.added : 0;
+    let updated = resume ? hwRun.updated : 0;
+    let written = resume ? hwRun.written : 0;
+    setBusy(true);
+    setNotice(null);
+    setHwRun({ state: 'running', total, written, added, updated, words: `Записываем: ${written} из ${total}…` });
+    const fail = (why: string) =>
+      setHwRun({
+        state: 'error',
+        total,
+        written,
+        added,
+        updated,
+        words: `Записано ${written} из ${total} (новых ${added}, обновлено ${updated}). ${why} «Продолжить загрузку» начнёт с того же места — записанное не повторится.`,
+      });
+    for (let step = 0; step < 500; step += 1) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 70_000);
+      let res: Response;
+      let data: { added?: number; updated?: number; remaining?: number; error?: string };
+      try {
+        res = await fetch('/api/catalog/hardware', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ orgId, confirm: true, batch: HW_BATCH, ...(payload ?? {}) }),
+          signal: controller.signal,
+        });
+        data = await res.json().catch(() => ({}));
+      } catch (error) {
+        clearTimeout(timer);
+        fail(controller.signal.aborted ? 'Сервер не ответил за 70 с.' : `Запрос не дошёл до сервера (${error instanceof Error ? error.message : 'нет связи'}).`);
+        setBusy(false);
+        await reload();
+        return;
+      }
+      clearTimeout(timer);
+      added += data.added ?? 0;
+      updated += data.updated ?? 0;
+      if (typeof data.remaining === 'number') written = Math.max(written, total - data.remaining);
+      if (!res.ok) {
+        fail(data.error ?? `Сервер ответил ${res.status}.`);
+        setBusy(false);
+        await reload();
+        return;
+      }
+      if (!data.remaining || data.remaining <= 0) break;
+      setHwRun({ state: 'running', total, written, added, updated, words: `Записываем: ${written} из ${total} (новых ${added}, обновлено ${updated})…` });
+    }
+    setBusy(false);
+    setHwRun({
+      state: 'done',
+      total,
+      written: total,
+      added,
+      updated,
+      words: `Готово: добавлено ${added}, обновлено ${updated}. Цены, названия и единицы продажи компании не тронуты, ничего не удалено; у новых позиций цена «не задана».`,
+    });
     await reload();
   };
   const onHardwareFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -760,7 +834,55 @@ export default function CatalogAdmin({
         )}
 
         {hardware && (
-          <div className="border-b border-navyLine bg-navy px-3 py-3 text-[13px]" data-admin-hardware-plan={hardware.summary.source}>
+          <div className="max-h-[60vh] shrink-0 overflow-y-auto border-b border-navyLine bg-navy px-3 pb-3 text-[13px]" data-admin-hardware-plan={hardware.summary.source}>
+            {/*
+              * КНОПКА — НАВЕРХУ И ЗАКРЕПЛЕНА (ТЗ 2026-11-02): страница каталога — экран без прокрутки
+              * (`h-screen overflow-hidden`), а кнопка внизу панели под таблицей и 35 источниками уходила за край
+              * окна, где её не прокрутить. Панель прокручивается сама, кнопка и счёт видны всегда.
+              */}
+            <div className="sticky top-0 z-10 -mx-3 mb-2 border-b border-navyLine bg-navy px-3 py-2">
+              <p className="mb-2" data-admin-hardware-totals>
+                Всего новых {hardware.summary.insert}, обновить {hardware.summary.update}, без изменений {hardware.summary.unchanged}.
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void runHardwareImport()}
+                  disabled={busy || (hardware.summary.insert + hardware.summary.update === 0 && hwRun?.state !== 'error') || hwRun?.state === 'done'}
+                  data-admin-hardware-confirm
+                  className="mw-touch border border-cyanBright bg-cyanBright px-3 text-[13px] text-navyDeep disabled:opacity-40"
+                >
+                  {hwRun?.state === 'error'
+                    ? 'Продолжить загрузку'
+                    : hwRun?.state === 'running'
+                      ? 'Загружаем…'
+                      : hwRun?.state === 'done' || hardware.summary.insert + hardware.summary.update === 0
+                        ? 'Всё уже в каталоге'
+                        : `Загрузить (${hardware.summary.insert + hardware.summary.update})`}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setHardware(null);
+                    setHwRun(null);
+                  }}
+                  disabled={hwRun?.state === 'running'}
+                  className="mw-touch border border-navyLine px-3 text-[13px] text-graphiteMw disabled:opacity-40"
+                >
+                  {hwRun?.state === 'done' ? 'Закрыть' : 'Отмена'}
+                </button>
+              </div>
+              {hwRun && (
+                <div className="mt-2" data-admin-hardware-result={hwRun.state}>
+                  <div className="h-1.5 w-full max-w-md bg-navyLine" aria-hidden>
+                    <div className="h-full bg-cyanBright" style={{ width: `${hwRun.total > 0 ? Math.round((hwRun.written / hwRun.total) * 100) : 100}%` }} />
+                  </div>
+                  <p className={`mt-1 ${hwRun.state === 'error' ? 'text-alert' : hwRun.state === 'done' ? 'text-cyanBright' : 'text-graphiteMw'}`} role="status">
+                    {hwRun.words}
+                  </p>
+                </div>
+              )}
+            </div>
             <p className="mb-2">
               {hardware.file
                 ? `Файл «${hardware.file}»: позиций ${hardware.summary.items}.`
@@ -813,14 +935,17 @@ export default function CatalogAdmin({
               группы не нашлось; придуманных позиций нет.
             </p>
             {!hardware.file && hardware.summary.sources.length > 0 && (
-              <ul className="mb-2 text-graphiteMw" data-admin-hardware-sources={hardware.summary.sources.length}>
-                {hardware.summary.sources.map((source) => (
-                  <li key={source.key}>
-                    {source.manufacturer}: {source.file}
-                    {source.pages ? ` · ${source.pages} с.` : ''} — {source.pageRule}
-                  </li>
-                ))}
-              </ul>
+              <details className="mb-2 text-graphiteMw" data-admin-hardware-sources={hardware.summary.sources.length}>
+                <summary>Источники: {hardware.summary.sources.length}</summary>
+                <ul className="mt-1 list-disc pl-5">
+                  {hardware.summary.sources.map((source) => (
+                    <li key={source.key}>
+                      {source.manufacturer}: {source.file}
+                      {source.pages ? ` · ${source.pages} с.` : ''} — {source.pageRule}
+                    </li>
+                  ))}
+                </ul>
+              </details>
             )}
             {!hardware.file && hardware.summary.notFound.length > 0 && (
               <details className="mb-2 text-graphiteMw" data-admin-hardware-not-found={hardware.summary.notFound.length}>
@@ -852,24 +977,6 @@ export default function CatalogAdmin({
                 {hardware.summary.errors.length > 8 && <li>и ещё {hardware.summary.errors.length - 8}</li>}
               </ul>
             )}
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => hardwareRequest(true, hardware.payload, hardware.file)}
-                disabled={busy || hardware.summary.insert + hardware.summary.update === 0}
-                data-admin-hardware-confirm
-                className="mw-touch border border-cyanBright bg-cyanBright px-3 text-[13px] text-navyDeep disabled:opacity-40"
-              >
-                {hardware.summary.insert + hardware.summary.update === 0 ? 'Всё уже в каталоге' : 'Загрузить'}
-              </button>
-              <button
-                type="button"
-                onClick={() => setHardware(null)}
-                className="mw-touch border border-navyLine px-3 text-[13px] text-graphiteMw"
-              >
-                Отмена
-              </button>
-            </div>
           </div>
         )}
 

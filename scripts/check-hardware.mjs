@@ -51,7 +51,7 @@ const PORT = Number(process.env.PORT_HW ?? 3291);
 const BASE = `http://localhost:${PORT}`;
 const OUT = '.capture-check/hardware';
 const PARTS = (process.env.PART ?? 'import,kitchen,kitchen-drawers,kitchen-lift,wardrobe,cargo,corner,tablet').split(',').map((s) => s.trim()).filter(Boolean);
-const KNOWN = ['import', 'kitchen', 'kitchen-drawers', 'kitchen-lift', 'wardrobe', 'cargo', 'corner', 'tablet', 'catalog2', 'drilling', 'drawers', 'open', 'twin', 'tandembox', 'clip', 'aventos', 'real'];
+const KNOWN = ['import', 'kitchen', 'kitchen-drawers', 'kitchen-lift', 'wardrobe', 'cargo', 'corner', 'tablet', 'catalog2', 'drilling', 'drawers', 'open', 'twin', 'tandembox', 'clip', 'aventos', 'real', 'import-ui'];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let failed = 0;
@@ -445,21 +445,20 @@ async function partImport(browser) {
         `групп ${plan.groups.length} · ${plan.groups.map((g) => `${g.key} ${g.found}`).join(', ')} · сумма ${sum}/${FACT_COUNT} · ${plan.manufacturers.map((m) => `${m.name} ${m.found}`).join(', ')} · источников ${plan.sources}`,
       );
       const before = await countMfr(service, org.id);
+      /*
+       * Загрузка идёт частями (ТЗ 2026-11-02), и конец её говорит экран (`data-admin-hardware-result`), а не
+       * таймер приёмки: прежние 120 с опроса базы пустая организация (5264 вставки) перерастала — 4800 из 5264.
+       */
+      const startedAt = Date.now();
       await page.locator('[data-admin-hardware-confirm]').first().click();
-      const after = await (async () => {
-        const until = Date.now() + 120_000;
-        let n = await countMfr(service, org.id);
-        while (n < FACT_COUNT && Date.now() < until) {
-          await sleep(1000);
-          n = await countMfr(service, org.id);
-        }
-        return n;
-      })();
+      const result = await waitFor(page, () => document.querySelector('[data-admin-hardware-result]')?.getAttribute('data-admin-hardware-result') ?? null, (v) => v === 'done' || v === 'error', 600_000);
+      const words = await page.evaluate(() => document.querySelector('[data-admin-hardware-result]')?.textContent ?? '');
+      const after = await countMfr(service, org.id);
       const { data: priced } = await service.from('catalog_items').select('id').eq('org_id', org.id).like('article', 'MFR-%').gt('price', 0).limit(1);
       check(
-        'IMPORT.2 «Загрузить» — в каталоге организации ровно столько позиций, сколько в фактах; цены нет ни у одной («цена не задана»)',
-        before === 0 && after === FACT_COUNT && (priced ?? []).length === 0,
-        `до ${before} · после ${after} из ${FACT_COUNT} · с ценой ${(priced ?? []).length}`,
+        'IMPORT.2 «Загрузить» — экран сказал «готово»; в каталоге организации ровно столько позиций, сколько в фактах; цены нет ни у одной («цена не задана»)',
+        result === 'done' && before === 0 && after === FACT_COUNT && (priced ?? []).length === 0,
+        `${result} за ${Math.round((Date.now() - startedAt) / 1000)} с · «${words.replace(/\s+/g, ' ').slice(0, 160)}» · до ${before} · после ${after} из ${FACT_COUNT} · с ценой ${(priced ?? []).length}`,
       );
       await sleep(1500);
       await page.locator('[data-admin-hardware]').first().click();
@@ -1116,6 +1115,75 @@ async function partReal(browser) {
     },
     { viewport: { width: 1440, height: 900 }, importHardware: false, projects: [{ key: 'kitchen', zone: 'Кухня', fx }] },
   );
+}
+
+/* ═════════════════════════  IMPORT-UI: кнопка импорта видна человеку (ТЗ 2026-11-02, срочно)  ═════════════════════════ */
+
+/**
+ * Кнопка — так, как её видит человек: в пределах окна, и в её центре — она сама (`elementFromPoint`),
+ * нажатие — мышью по координатам. `locator.click()` прокручивает программно даже контейнер без прокрутки
+ * и нажимает то, до чего человек не дотянется: так прошёл REAL.2 при невидимой кнопке.
+ */
+async function humanReach(page, selector) {
+  return page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    if (!el) return { found: false };
+    const r = el.getBoundingClientRect();
+    const cx = r.left + r.width / 2;
+    const cy = r.top + r.height / 2;
+    const inView = r.width > 0 && r.height > 0 && r.top >= 0 && r.bottom <= window.innerHeight && r.left >= 0 && r.right <= window.innerWidth;
+    const hit = inView ? document.elementFromPoint(cx, cy) : null;
+    return { found: true, inView, onTop: Boolean(hit && (hit === el || el.contains(hit))), x: Math.round(cx), y: Math.round(cy), top: Math.round(r.top), bottom: Math.round(r.bottom), vh: window.innerHeight, text: (el.textContent ?? '').trim() };
+  }, selector);
+}
+
+async function partImportUi(browser) {
+  for (const vp of [{ label: 'IMPORT-UI-1024', viewport: { width: 1024, height: 768 }, touch: true }, { label: 'IMPORT-UI-1440', viewport: { width: 1440, height: 900 }, touch: false }]) {
+    console.log(`\n── ${vp.label}: каталог как у настоящей организации → «Фурнитура производителей» → кнопка видна → загрузка частями → итог`);
+    await withOrg(
+      vp.label,
+      browser,
+      async ({ service, org, page, errors, consoleErrors }) => {
+        const seeded = await seedLikeRealOrg(service, org.id);
+        /* Своё у компании: цена и название у двух позиций — импорт не трогает. */
+        const own = { 'MFR-BLUM-576.4501M': { price: 12345, name_ru: 'Ходовая TANDEMBOX (наша цена)' }, 'MFR-BLUM-71B3550': { price: 2100, name_ru: 'Петля CLIP top (наша)' } };
+        for (const [article, patch] of Object.entries(own)) await service.from('catalog_items').update(patch).eq('org_id', org.id).eq('article', article);
+        await page.goto(`${BASE}/admin/catalog`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+        await page.locator('[data-admin-hardware]').first().waitFor({ timeout: 60_000 });
+        await page.locator('[data-admin-hardware]').first().click();
+        await page.waitForSelector('[data-admin-hardware-plan="facts"]', { timeout: 120_000 });
+        const reach = await humanReach(page, '[data-admin-hardware-confirm]');
+        await page.screenshot({ path: `${OUT}/${vp.label.toLowerCase()}-1-plan.png`, timeout: 120_000 });
+        check(
+          `${vp.label}.1 «Фурнитура производителей» (каталог как у настоящей организации, ${seeded.seeded} позиций): кнопка «Загрузить» на экране и не закрыта ничем — до неё дотягивается человек, а не только программа`,
+          reach.found && reach.inView && reach.onTop && /Загрузить/.test(reach.text),
+          JSON.stringify(reach),
+        );
+        if (!(reach.found && reach.inView && reach.onTop)) return;
+        const startedAt = Date.now();
+        await page.mouse.click(reach.x, reach.y);
+        const result = await waitFor(page, () => document.querySelector('[data-admin-hardware-result]')?.getAttribute('data-admin-hardware-result') ?? null, (v) => v === 'done' || v === 'error', 900_000);
+        const progressSeen = await page.evaluate(() => document.querySelector('[data-admin-hardware-result]')?.textContent ?? '');
+        await page.screenshot({ path: `${OUT}/${vp.label.toLowerCase()}-2-result.png`, timeout: 120_000 });
+        const n = await countMfr(service, org.id);
+        const { data: rows } = await service.from('catalog_items').select('article, price, name_ru, hw:meta->hardware').eq('org_id', org.id).in('article', Object.keys(own));
+        const kept = (rows ?? []).every((r) => r.price === own[r.article].price && r.name_ru === own[r.article].name_ru);
+        const nl = (rows ?? []).find((r) => r.article === 'MFR-BLUM-576.4501M')?.hw?.dimensionsMm?.nominalLength ?? null;
+        check(
+          `${vp.label}.2 загрузка частями до конца: итог «готово» со счётом; позиций — сколько в своде (${FACT_COUNT}); у 576.4501M появилась NL 450; цена и название компании у двух позиций не тронуты; ничего не удалено`,
+          result === 'done' && n === FACT_COUNT && nl === 450 && kept,
+          `${result} за ${Math.round((Date.now() - startedAt) / 1000)} с · «${progressSeen.replace(/\s+/g, ' ').slice(0, 220)}» · позиций ${n} · NL ${nl} · своё ${kept ? 'цело' : 'ИЗМЕНЕНО'}`,
+        );
+        /* Повтор — «Всё уже в каталоге», кнопка закрыта. */
+        await page.locator('[data-admin-hardware]').first().click();
+        await page.waitForSelector('[data-admin-hardware-plan="facts"]', { timeout: 120_000 });
+        const again = await humanReach(page, '[data-admin-hardware-confirm]');
+        check(`${vp.label}.3 повтор: «Всё уже в каталоге» на экране, дублей нет`, again.inView && /Всё уже в каталоге/.test(again.text) && (await countMfr(service, org.id)) === FACT_COUNT, JSON.stringify(again));
+        check(`${vp.label} ошибок страницы и консоли нет`, errors.length === 0 && consoleErrors.length === 0, [...errors, ...consoleErrors].slice(0, 3).join(' | '));
+      },
+      { viewport: vp.viewport, touch: vp.touch, importHardware: false, projects: [] },
+    );
+  }
 }
 
 /* ═════════════════════════  DRAWERS (HW-04)  ═════════════════════════ */
@@ -2515,6 +2583,7 @@ try {
       if (part === 'clip') await partClip(browser);
       if (part === 'aventos') await partAventos(browser);
       if (part === 'real') await partReal(browser);
+      if (part === 'import-ui') await partImportUi(browser);
       done.push(part);
       console.log(`  ·    ${part}: ${Math.round((Date.now() - startedAt) / 1000)} с`);
     } catch (error) {
