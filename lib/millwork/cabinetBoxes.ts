@@ -31,7 +31,7 @@ import { moduleDepthMm, rowStandardDepthMm } from './fill';
 import { bayDrawerStackOf, bayEnvelope, bayLayout, placeEnvelope } from './bays';
 import type { HardwareItem, ProductionSettings } from '@/types/catalog';
 import type { ApplianceKind } from '@/types/millwork';
-import { moduleDrawerKits, type DrawerKit } from './drawerKit';
+import { drawerRunnerOf, moduleDrawerKits, type DrawerKit } from './drawerKit';
 import { DRAWER_BOTTOM_PANEL_NAME, DRAWER_SIDE_PANEL_NAME, DRAWER_WALL_PANEL_NAME, drawerPieceId } from './drawerBox';
 import { shopOf } from './shop';
 import { FRAME_WIDTH_MM, frontKey, frontOf, isFramed } from './frontMaterial';
@@ -41,9 +41,10 @@ import { carcassKeyOf, type CarcassItem } from './carcassMaterial';
 import { fittingItemId, handleItemOf, installedItem, slidingAccepts } from './fittings';
 import { HINGE_IMAGE_EDGE_MM, hingeCupPlace, hingeHeightsMm } from './hingePlace';
 import { hingeModelOf, type HingeModel } from './hingeModel';
+import { linkagePose, type HingeLinkage } from './hingeLinkage';
 import { twinBoundsCheck, twinOf } from './hardwareTwin';
 import type { MetalProfileKind } from './metalProfiles';
-import type { HardwareTwin } from '@/types/catalog';
+import type { HardwareTwin, TwinRole } from '@/types/catalog';
 import { liftPlace, liftPose, type LiftMotion } from './liftKinematics';
 import { SLIDING_DOOR, slidingDoorCount } from './sections';
 import { handleBoxOf, handleSpotOf, type HandleSpot, type LeafGeometry } from './handlePlace';
@@ -137,6 +138,11 @@ export type BoxDraw = {
    */
   slideShare?: number;
   /**
+   * Ход ящика этой детали (`drawerRunnerOf`): сцена и ход у угла берут его отсюда — по
+   * коробу ящика, а не одним числом на модуль.
+   */
+  travel?: { mm: number; known: boolean; words: string };
+  /**
    * СЕЧЕНИЕ МЕТАЛЛИЧЕСКОЙ ДЕТАЛИ (ТЗ 2026-10-31, § 5, 8): царга системы
    * ящика, секция направляющей — выдавленный профиль в габарите коробки
    * (`metalProfileOutline`), а не брусок. `sectionInner` — внутренняя сторона
@@ -145,6 +151,18 @@ export type BoxDraw = {
    */
   section?: MetalProfileKind;
   sectionInner?: 1 | -1;
+  /**
+   * МОДЕЛЬ РЕЕСТРА НА ЭТОЙ КОРОБКЕ (ТЗ 2026-10-31, § 4–5): царга и секции ходовой
+   * системы ящика — файл реестра (`meta.twin`), поставленный на точку движка:
+   * кромка и низ дна у передней кромки (`anchorM`, метры ряда — та же точка, что
+   * у чертежа производителя), правая сторона — отражением. Коробка остаётся: по
+   * ней ход, проверки угла и зона касания; рисуется модель. `role` — какие узлы
+   * файла рисует эта коробка: царга — едущие, корпусная секция — неподвижные,
+   * ходовая — едущие, средняя — средние.
+   */
+  twin?: { model: HardwareTwin; anchorM: [number, number, number]; mirror: boolean; role: TwinRole };
+  /** Модель реестра есть, но габаритом не встаёт на это изделие (мм ↔ м, другая NL) — словами. */
+  twinRefused?: string;
   /**
    * ЧЕЙ ЭТО КУСОК ВИТРИНЫ (P1): `side:left`, `side:right`, `top`, `bottom`,
    * `back`, `profile` — та же роль, что у строки `vitrineParts`. По ней сцена
@@ -1090,6 +1108,12 @@ export function doorPivot(
    * |sin угла|`, то есть на толщину фасада при 90°.
    */
   kickM = 0,
+  /**
+   * ШАРНИРНАЯ КИНЕМАТИКА ПЕТЛИ (`hingeLinkageOf`, решение владельца 2026-11-01):
+   * фасад ходит по четырёхзвеннику петли, а не поворотом у кромки с выносом;
+   * угол — паспортный (110°). Пусто — прежний ход.
+   */
+  link: DoorLink | null = null,
 ) {
   if (opening === 'lift') {
     return {
@@ -1121,13 +1145,27 @@ export function doorPivot(
    * обязан оказаться перед фасадом, а не за ним.
    */
   const left = opening === 'left';
+  const full = link ? (link.linkage.openDeg * Math.PI) / 180 : OPEN_ANGLE;
   return {
     axis: 'y' as const,
-    angle: left ? -OPEN_ANGLE : OPEN_ANGLE,
+    angle: left ? -full : full,
     origin: [left ? x : x + width, y + height / 2, 0] as [number, number, number],
     panel: [left ? width / 2 : -width / 2, 0, 0] as [number, number, number],
     kick: kickM,
+    ...(link ? { link } : {}),
   };
+}
+
+/**
+ * ПЕТЛЯ С ЧЕТЫРЁХЗВЕННИКОМ НА СТВОРКЕ: механизм, ось чашки закрытого фасада
+ * (x, z — те же оси, что у створки) и сторона (петли справа — X отражён).
+ */
+export type DoorLink = { linkage: HingeLinkage; cup: [number, number]; sx: 1 | -1 };
+
+/** Механизм створки по её чашке (`HingeDraw` половины «чашка»): нет кинематики — `null`. */
+export function doorLinkOf(hinge: HingeDraw | null | undefined): DoorLink | null {
+  if (!hinge || hinge.half !== 'cup' || !hinge.model.linkage) return null;
+  return { linkage: hinge.model.linkage, cup: [hinge.origin[0], hinge.origin[2]], sx: hinge.mirror ? -1 : 1 };
 }
 
 /** Насколько полотно вынесено вперёд при повороте на `angle` (радианы). */
@@ -1136,12 +1174,32 @@ export function doorKick(pivot: { kick: number; angle: number }, angle: number):
 }
 
 /**
+ * СДВИГ ГРУППЫ СТВОРКИ ПРИ УГЛЕ (метры, x и z) — поворот вокруг оси `origin` плюс
+ * этот сдвиг дают позу полотна. Без механизма — вынос петли вперёд (`doorKick`,
+ * слой 55). С механизмом — поза шатуна четырёхзвенника: ось чашки уходит туда,
+ * куда её ведут звенья (`linkagePose`), и поворот группы вокруг `origin`
+ * поправляется так, чтобы чашка стояла ровно там. Одна функция на сцену
+ * (`InteractiveDoor`, звенья) и проверку хода (`leafPoses`).
+ */
+export function doorShift(pivot: { kick: number; angle: number; origin: [number, number, number]; link?: DoorLink }, angle: number): [number, number] {
+  if (!pivot.link) return [0, doorKick(pivot, angle)];
+  const { linkage, cup, sx } = pivot.link;
+  const pose = linkagePose(linkage, Math.abs(angle));
+  /* Поворот группы вокруг Y на `angle` — тот же, что у полотна сцены. */
+  const cx = cup[0] - pivot.origin[0];
+  const cz = cup[1] - pivot.origin[2];
+  const rx = cx * Math.cos(angle) + cz * Math.sin(angle);
+  const rz = -cx * Math.sin(angle) + cz * Math.cos(angle);
+  return [cx - rx + (sx * pose.shift[0]) / 1000, cz - rz + pose.shift[1] / 1000];
+}
+
+/**
  * ТОЧКА ПОЛОТНА ПРИ УГЛЕ — одна на сцену (`InteractiveDoor`, звенья петли) и
  * приёмку: поворот вокруг оси створки и вынос петли. Точка и ось — в одних
  * осях (у едущей створки — местных осях модуля).
  */
 export function leafPointAt(
-  pivot: { origin: [number, number, number]; axis: 'x' | 'y'; kick: number; angle: number },
+  pivot: { origin: [number, number, number]; axis: 'x' | 'y'; kick: number; angle: number; link?: DoorLink },
   p: [number, number, number],
   angle: number,
 ): [number, number, number] {
@@ -1151,7 +1209,8 @@ export function leafPointAt(
   const c = Math.cos(angle);
   const s = Math.sin(angle);
   if (pivot.axis === 'x') return [pivot.origin[0] + lx, pivot.origin[1] + ly * c - lz * s, pivot.origin[2] + ly * s + lz * c];
-  return [pivot.origin[0] + lx * c + lz * s, pivot.origin[1] + ly, pivot.origin[2] + doorKick(pivot, angle) - lx * s + lz * c];
+  const [dx, dz] = doorShift(pivot, angle);
+  return [pivot.origin[0] + dx + lx * c + lz * s, pivot.origin[1] + ly, pivot.origin[2] + dz - lx * s + lz * c];
 }
 
 /**
@@ -1163,7 +1222,12 @@ export function leafPointAt(
  */
 export function localPartBox(box: PartBox, origin: [number, number, number]): PartBox {
   const shift = (p: [number, number, number]): [number, number, number] => [p[0] - origin[0], p[1] - origin[1], p[2] - origin[2]];
-  return { ...box, position: shift(box.position), ...(box.hinge ? { hinge: { ...box.hinge, origin: shift(box.hinge.origin) } } : {}) };
+  return {
+    ...box,
+    position: shift(box.position),
+    ...(box.hinge ? { hinge: { ...box.hinge, origin: shift(box.hinge.origin) } } : {}),
+    ...(box.twin ? { twin: { ...box.twin, anchorM: shift(box.twin.anchorM) } } : {}),
+  };
 }
 
 /** Ручка на кромке: у навесных — на нижней, у механизма — на свободной, у остальных — на верхней. */
@@ -1754,7 +1818,7 @@ export function bayDrawerBoxes(
       /* Короб рассчитан (HARDWARE-01) — его детали и направляющая вместо габарита. */
       const kit = options.drawerKits?.find((k) => k.place.key === drawer.id);
       if (kit && kit.state === 'box') {
-        out.push(...kitBoxes(kit, place, drawer.id, options.carcassKey ?? null, bay.id));
+        out.push(...kitBoxes(kit, place, drawer.id, options.carcassKey ?? null, bay.id, options.hardware));
       } else out.push({
         material: 'inner',
         part: drawer.id,
@@ -1839,7 +1903,7 @@ export function drawerBoxes(
    */
   const boxZ = -innerDepth / 2;
 
-  const boxes: PartBox[] = kit && kit.state === 'box' ? kitBoxes(kit, place, part, options.carcassKey ?? null) : [
+  const boxes: PartBox[] = kit && kit.state === 'box' ? kitBoxes(kit, place, part, options.carcassKey ?? null, undefined, options.hardware) : [
     // Короб: дно, две боковины, задняя стенка. Всё это ВНУТРИ модуля.
     {
       material: 'carcass',
@@ -2339,6 +2403,8 @@ export type PosedBox = {
    * (`front`) — только габарит хода и зона касания, плиты нет (`panelless`).
    */
   role: 'front' | 'handle' | 'hinge' | 'frame' | 'glass';
+  /** Поза посчитана механизмом петли (`doorShift` с четырёхзвенником): его ключ. */
+  mechanism?: string;
   panel?: string;
   /** Ручка (HANDLE-REAL): сцена рисует её модель, коробка — её габарит. */
   handle?: HandleDraw;
@@ -2438,9 +2504,11 @@ export function leafPoses(input: {
   lift?: LiftMotion | null;
   /** Деталь полотна в осях места (F9, `closedFrontRect`): ходит та же деталь, что нарисована закрытой. */
   rect?: FrontRect | null;
+  /** Петля с четырёхзвенником на этой створке (`doorLinkOf`): ход — по нему, угол — её. */
+  link?: DoorLink | null;
 }): PosedBox[] {
   const { opening, x, y, width, height, thickness, gap } = input;
-  const pivot = doorPivot(opening, x, y, width, height, thickness);
+  const pivot = doorPivot(opening, x, y, width, height, thickness, opening === 'left' || opening === 'right' ? (input.link ?? null) : null);
   if (opening === 'lift' && (input.lift === 'parallel_lift' || input.lift === 'swing_over')) {
     const pose = liftPose(input.lift, input.s, height, thickness);
     const local = leafLocal({ opening, width, height, thickness, gap, rect: input.rect });
@@ -2457,15 +2525,15 @@ export function leafPoses(input: {
   }
   const full = input.openAngle !== undefined ? Math.sign(pivot.angle) * input.openAngle : pivot.angle;
   const angle = full * Math.max(0, Math.min(1, input.s));
-  /* Вынос вперёд по ходу — тот же, что двигает группу `InteractiveDoor`. */
-  const kick = doorKick(pivot, angle);
+  /* Вынос вперёд по ходу (или поза четырёхзвенника) — тот же, что двигает группу `InteractiveDoor`. */
+  const [shiftX, kick] = doorShift(pivot, angle);
   const local = leafLocal({ opening, width, height, thickness, gap, rect: input.rect });
 
   /* Локальные точки группы на оси → координаты модуля. */
   const place = (local: [number, number, number]): [number, number, number] => {
     if (pivot.axis === 'y') {
       return [
-        pivot.origin[0] + local[0] * Math.cos(angle) + local[2] * Math.sin(angle),
+        pivot.origin[0] + shiftX + local[0] * Math.cos(angle) + local[2] * Math.sin(angle),
         pivot.origin[1] + local[1],
         pivot.origin[2] + kick - local[0] * Math.sin(angle) + local[2] * Math.cos(angle),
       ];
@@ -2478,7 +2546,7 @@ export function leafPoses(input: {
   };
   const turn = pivot.axis === 'y' ? { yaw: angle } : { yaw: 0, pitch: angle };
 
-  const out: PosedBox[] = [{ center: place(local.panel.at), size: local.panel.size, role: 'front', ...turn }];
+  const out: PosedBox[] = [{ center: place(local.panel.at), size: local.panel.size, role: 'front', ...turn, ...('link' in pivot && pivot.link ? { mechanism: pivot.link.linkage.key } : {}) }];
   if (input.handle) {
     /* Ручка в осях петель — её место у закрытой створки минус ось; дальше она едет с полотном. */
     const at: [number, number, number] = [
@@ -3004,6 +3072,7 @@ function withDepthShift(boxes: PartBox[], zM: number): PartBox[] {
       ? { shape: { form: box.shape.form, originM: [box.shape.originM[0], box.shape.originM[1], box.shape.originM[2] + zM] as [number, number, number] } }
       : {}),
     ...(box.hinge ? { hinge: { ...box.hinge, origin: [box.hinge.origin[0], box.hinge.origin[1], box.hinge.origin[2] + zM] as [number, number, number] } } : {}),
+    ...(box.twin ? { twin: { ...box.twin, anchorM: [box.twin.anchorM[0], box.twin.anchorM[1], box.twin.anchorM[2] + zM] as [number, number, number] } } : {}),
   }));
 }
 
@@ -3783,6 +3852,40 @@ export function sceneSlides(run: Run, hardware?: Map<string, HardwareItem>): { i
 }
 
 /**
+ * МОДЕЛИ РЕЕСТРА СИСТЕМЫ ЯЩИКА (ТЗ 2026-10-31, § 5): царги и ходовая — по позициям
+ * на местах ящика, точка — кромка и низ дна у передней кромки (её знают и чертёж
+ * производителя, и движок: дно стоит на половине вычета LW − ширина дна).
+ * Модель, чей габарит не сходится с изделием (`twinBoundsCheck`: NL ± 3 %), не
+ * ставится — словами. Только система ящика: у боковой направляющей точки
+ * «кромка дна» на чертеже нет.
+ */
+function systemTwins(kit: DrawerKit & { state: 'box' }, place: ModulePlacement, hardware?: Map<string, HardwareItem>) {
+  const bottom = kit.plan.pieces.find((piece) => piece.key === 'bottom');
+  if (!hardware || !kit.profile.system || !bottom) return null;
+  const pick = (id: string | null | undefined, slot: 'drawer_side' | 'slide') => {
+    const item = id ? hardware.get(id) : undefined;
+    const twin = twinOf(item);
+    if (!twin || !item) return { twin: null, refused: null };
+    const check = twinBoundsCheck(twin, item, slot);
+    return check.ok ? { twin, refused: null } : { twin: null, refused: check.words };
+  };
+  const side = pick(kit.profile.system.sideItemId, 'drawer_side');
+  const runner = pick(kit.place.slideItemId, 'slide');
+  const { xFromMm, zoneFromMm, boxFrontZMm } = kit.place;
+  return {
+    side: side.twin,
+    sideRefused: side.refused,
+    runner: runner.twin,
+    runnerRefused: runner.refused,
+    datum: (right: boolean): [number, number, number] => [
+      place.x + (xFromMm + (right ? bottom.x1 : bottom.x0)) / MM,
+      place.y + (zoneFromMm + bottom.y0) / MM,
+      boxFrontZMm / MM,
+    ],
+  };
+}
+
+/**
  * КОРОБ ЯЩИКА ПО КОМПЛЕКТУ (HARDWARE-01) — коробки сцены из того же плана,
  * по которому режется раскрой (`drawerBoxPlan`): боковины, торцы и дно с
  * ИД своих деталей и направляющая — неподвижная половина на корпусе,
@@ -3795,9 +3898,14 @@ function kitBoxes(
   part: string,
   carcassKey: string | null,
   bayId?: string,
+  hardware?: Map<string, HardwareItem>,
 ): PartBox[] {
   const out: PartBox[] = [];
   const { xFromMm, zoneFromMm, boxFrontZMm, key } = kit.place;
+  const twins = systemTwins(kit, place, hardware);
+  const runner = drawerRunnerOf(kit, hardware);
+  const travel = { mm: runner.travelMm, known: runner.travelBasis === 'passport' || runner.travelBasis === 'loss', words: runner.words };
+  const start = out.length;
   for (const piece of kit.plan.pieces) {
     const position: [number, number, number] = [
       place.x + (xFromMm + (piece.x0 + piece.x1) / 2) / MM,
@@ -3819,13 +3927,33 @@ function kitBoxes(
         ...(piece.member !== 'cabinet' ? { part } : {}),
         ...(piece.member === 'middle' ? { slideShare: 0.5 } : {}),
         ...(bayId ? { bayId } : {}),
+        ...(twins?.runner
+          ? { twin: { model: twins.runner, anchorM: twins.datum(piece.key === 'rail-right'), mirror: piece.key === 'rail-right', role: piece.member === 'cabinet' ? ('fixed' as const) : piece.member === 'middle' ? ('middle' as const) : ('moving' as const) } }
+          : twins?.runnerRefused
+            ? { twinRefused: twins.runnerRefused }
+            : {}),
       });
       continue;
     }
     /* Царга системы ящика (HW-04) — металл, покупная: детали раскроя у неё нет. */
     if (piece.metal) {
       /* Царга системы — профиль со скруглённым верхом и посадкой на ходовую (ТЗ § 5.1). */
-      out.push({ material: 'metal', node: 'runner', inside: true, part, position, scale, section: 'drawer-side', sectionInner: piece.key === 'side-right' ? -1 : 1, ...(bayId ? { bayId } : {}) });
+      out.push({
+        material: 'metal',
+        node: 'runner',
+        inside: true,
+        part,
+        position,
+        scale,
+        section: 'drawer-side',
+        sectionInner: piece.key === 'side-right' ? -1 : 1,
+        ...(bayId ? { bayId } : {}),
+        ...(twins?.side
+          ? { twin: { model: twins.side, anchorM: twins.datum(piece.key === 'side-right'), mirror: piece.key === 'side-right', role: 'moving' as const } }
+          : twins?.sideRefused
+            ? { twinRefused: twins.sideRefused }
+            : {}),
+      });
       continue;
     }
     out.push({
@@ -3840,6 +3968,7 @@ function kitBoxes(
       ...(bayId ? { bayId } : {}),
     });
   }
+  for (let k = start; k < out.length; k += 1) if (out[k].part) out[k] = { ...out[k], travel };
   return out;
 }
 

@@ -77,6 +77,12 @@ export type InteriorState = {
    */
   openParts: string[];
   /**
+   * УГОЛ РАСКРЫТИЯ СТВОРКИ, градусы: открытая створка встаёт на него, а не на
+   * полный угол петли. Пусто — полный. Состояние сцены, как `openParts`:
+   * показать петлю на 45° и 90° клиенту и приёмке; производственного не считает.
+   */
+  openDegrees: Record<string, number>;
+  /**
    * «ПОКАЗАТЬ ВЫБРАННУЮ ФУРНИТУРУ» (ТЗ 2026-10-31, § 23): деталь, к которой
    * камера подлетает. Состояние камеры — законное состояние сцены (CLAUDE.md):
    * производственного оно ничего не считает. `seq` — каждое нажатие новое.
@@ -217,6 +223,7 @@ export type InteriorState = {
   requestFocus: (partId: string) => void;
   setDrillView: (value: { on: boolean; partId: string | null }) => void;
   setOpenParts: (ids: string[]) => void;
+  setOpenDegree: (id: string, deg: number | null) => void;
   closeAllParts: () => void;
   setCutaway: (value: boolean) => void;
   setSceneLayers: (value: SceneLayers) => void;
@@ -384,6 +391,7 @@ export const useInteriorStore = create<InteriorState>((set, get) => ({
   future: [],
 
   openParts: [],
+  openDegrees: {},
   focusRequest: null,
   drillView: { on: false, partId: null },
   cutaway: false,
@@ -731,9 +739,16 @@ export const useInteriorStore = create<InteriorState>((set, get) => ({
     })),
 
   setOpenParts: (ids) => set({ openParts: Array.from(new Set(ids)) }),
+  setOpenDegree: (id, deg) =>
+    set((state) => {
+      const next = { ...state.openDegrees };
+      if (deg === null || !Number.isFinite(deg)) delete next[id];
+      else next[id] = deg;
+      return { openDegrees: next };
+    }),
   requestFocus: (partId) => set((state) => ({ focusRequest: { partId, seq: (state.focusRequest?.seq ?? 0) + 1 } })),
   setDrillView: (value) => set({ drillView: { on: value.on, partId: value.on ? value.partId : null } }),
-  closeAllParts: () => set({ openParts: [] }),
+  closeAllParts: () => set({ openParts: [], openDegrees: {} }),
   setCutaway: (value) => set({ cutaway: value }),
   setSceneLayers: (value) => set({ sceneLayers: { ...value } }),
   setEconomyMode: (value) => {

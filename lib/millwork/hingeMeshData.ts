@@ -73,25 +73,31 @@ function pushCylinder(mesh: MeshData, cx: number, cy: number, r: number, z0: num
   }
 }
 
-/** Брусок от точки к точке (звено): квадратное сечение `width`. */
-export function pushBeam(mesh: MeshData, from: [number, number, number], to: [number, number, number], width: number, mirror: boolean): void {
+/** Брусок от точки к точке (звено): сечение `width` (в плоскости, перпендикулярной Y) × `thickness` (вдоль Y); без толщины — квадрат. */
+export function pushBeam(mesh: MeshData, from: [number, number, number], to: [number, number, number], width: number, mirror: boolean, thickness = width): void {
   const sx = mirror ? -1 : 1;
-  const a: [number, number, number] = [from[0] * sx, from[1], from[2]];
-  const b: [number, number, number] = [to[0] * sx, to[1], to[2]];
-  const d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+  const a0: [number, number, number] = [from[0] * sx, from[1], from[2]];
+  const b0: [number, number, number] = [to[0] * sx, to[1], to[2]];
+  const d = [b0[0] - a0[0], b0[1] - a0[1], b0[2] - a0[2]];
   const len = Math.hypot(d[0], d[1], d[2]) || 1e-9;
   const u = [d[0] / len, d[1] / len, d[2] / len];
+  /* Проушины: звено выходит за оси на полширины — оси сидят в его концах, а не на краю. */
+  const e = width / 2;
+  const a: [number, number, number] = [a0[0] - u[0] * e, a0[1] - u[1] * e, a0[2] - u[2] * e];
+  const b: [number, number, number] = [b0[0] + u[0] * e, b0[1] + u[1] * e, b0[2] + u[2] * e];
   /* Два перпендикуляра к оси звена. */
   const ref = Math.abs(u[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
   const v = [u[1] * ref[2] - u[2] * ref[1], u[2] * ref[0] - u[0] * ref[2], u[0] * ref[1] - u[1] * ref[0]];
   const vl = Math.hypot(v[0], v[1], v[2]);
   const vn = [v[0] / vl, v[1] / vl, v[2] / vl];
   const w = [u[1] * vn[2] - u[2] * vn[1], u[2] * vn[0] - u[0] * vn[2], u[0] * vn[1] - u[1] * vn[0]];
-  const h = width / 2;
+  /* `vn` лежит в плоскости хода (u × Y), `w` — вдоль Y: ширина по `vn`, толщина по `w`. */
+  const hw = width / 2;
+  const ht = thickness / 2;
   const corner = (p: [number, number, number], s: number, t: number): [number, number, number] => [
-    p[0] + (vn[0] * s + w[0] * t) * h,
-    p[1] + (vn[1] * s + w[1] * t) * h,
-    p[2] + (vn[2] * s + w[2] * t) * h,
+    p[0] + vn[0] * s * hw + w[0] * t * ht,
+    p[1] + vn[1] * s * hw + w[1] * t * ht,
+    p[2] + vn[2] * s * hw + w[2] * t * ht,
   ];
   const sides: [number, number][] = [[1, 1], [-1, 1], [-1, -1], [1, -1]];
   for (let i = 0; i < 4; i += 1) {
@@ -119,7 +125,7 @@ export function hingeHalfMesh(model: HingeModel, half: 'cup' | 'arm', sideInnerX
     pushCylinder(mesh, parts.cup.center[0], parts.cup.center[1], parts.cup.radius, 0, parts.cup.depth, fine ? 28 : 12, mirror);
     for (const box of parts.cupBoxes) pushBox(mesh, box, mirror);
     /* Закрытая петля в пачке — со звеньями в закрытой позе; на ходу их строит сцена. */
-    if (withLinks) for (const link of parts.links) pushBeam(mesh, link.fixed, link.moving, link.widthMm, mirror);
+    if (withLinks) for (const link of parts.links) pushBeam(mesh, link.fixed, link.moving, link.widthMm, mirror, link.thicknessMm ?? link.widthMm);
   } else {
     for (const box of parts.armBoxes) pushBox(mesh, box, mirror);
   }
@@ -155,7 +161,7 @@ export function meshBounds(mesh: MeshData): { min: [number, number, number]; max
 export function hingeLinkSegments(
   draws: { model: HingeModel; mirror: boolean; sideInnerXMm: number; origin: [number, number, number] }[],
   rotate: (p: [number, number, number]) => [number, number, number],
-): { mid: [number, number, number]; length: number; dir: [number, number, number]; width: number; maxLength: number }[] {
+): { mid: [number, number, number]; length: number; dir: [number, number, number]; width: number; thickness: number; maxLength: number }[] {
   return draws.flatMap((draw) => {
     const sx = draw.mirror ? -1 : 1;
     const at = (p: [number, number, number]): [number, number, number] => [
@@ -167,7 +173,7 @@ export function hingeLinkSegments(
     const span = (b: HingeBox) => Math.max(Math.abs(b.max[0] - b.min[0]), Math.abs(b.max[1] - b.min[1]), Math.abs(b.max[2] - b.min[2]));
     const closed = parts.links.map((l) => Math.hypot(l.moving[0] - l.fixed[0], l.moving[1] - l.fixed[1], l.moving[2] - l.fixed[2]));
     const maxLength = (2 * Math.max(...parts.armBoxes.map(span), ...parts.cupBoxes.map(span), ...closed, 2 * parts.cup.radius)) / 1000;
-    return parts.links.map((link) => ({ ...linkPose(at(link.fixed), at(link.moving), rotate), width: link.widthMm / 1000, maxLength }));
+    return parts.links.map((link) => ({ ...linkPose(at(link.fixed), at(link.moving), rotate), width: link.widthMm / 1000, thickness: (link.thicknessMm ?? link.widthMm) / 1000, maxLength }));
   });
 }
 

@@ -31,6 +31,12 @@
  *   PART=drilling — 1440 × 900 (HW-08, HW-09): CLIP top + планка →
  *     «Документы» → «Присадка»: числа чашек и планки = приёмке движка,
  *     выпуск заперт словами, «Экспорт для БАЗИС» — ZIP без присадки.
+ *   PART=open, twin — открытие без списка производителей; реестр 3D петлёй-тестом.
+ *   PART=tandembox — 1440 × 900 × 2: реконструкция TANDEMBOX antaro по чертежу
+ *     Blum «Импортом CAD-фурнитуры» (материалы как в файле) → путь панели → модель
+ *     на ящиках, ход, металл со своей картой окружения, снимки крупным планом.
+ *   PART=clip — то же для петли CLIP top BLUMOTION 71B3550 с планкой 175H3130:
+ *     чашка едет со створкой, плечо и планка стоят.
  * Каждая часть — своя временная организация, заводится служебным ключом и
  * удаляется; уборка проверяется чтением. Снимки: .capture-check/hardware.
  */
@@ -45,7 +51,7 @@ const PORT = Number(process.env.PORT_HW ?? 3291);
 const BASE = `http://localhost:${PORT}`;
 const OUT = '.capture-check/hardware';
 const PARTS = (process.env.PART ?? 'import,kitchen,kitchen-drawers,kitchen-lift,wardrobe,cargo,corner,tablet').split(',').map((s) => s.trim()).filter(Boolean);
-const KNOWN = ['import', 'kitchen', 'kitchen-drawers', 'kitchen-lift', 'wardrobe', 'cargo', 'corner', 'tablet', 'catalog2', 'drilling', 'drawers', 'open', 'twin'];
+const KNOWN = ['import', 'kitchen', 'kitchen-drawers', 'kitchen-lift', 'wardrobe', 'cargo', 'corner', 'tablet', 'catalog2', 'drilling', 'drawers', 'open', 'twin', 'tandembox', 'clip'];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let failed = 0;
@@ -289,15 +295,29 @@ async function seedHardware(service, orgId) {
   const chunks = [];
   for (let at = 0; at < rows.length; at += CHUNK) chunks.push(rows.slice(at, at + CHUNK));
   let added = 0;
-  for (let i = 0; i < chunks.length; i += 4) {
-    const results = await Promise.all(
-      chunks.slice(i, i + 4).map((chunk) =>
-        service.from('catalog_items').insert(chunk.map((row) => ({ org_id: orgId, category_id: category.id, ...row, is_active: true }))).select('id'),
-      ),
-    );
-    for (const result of results) {
-      if (result.error) throw new Error(`засев фурнитуры: записано ${added} из ${rows.length}, дальше: ${result.error.message}`);
-      added += result.data?.length ?? 0;
+  const insert = (chunk) => service.from('catalog_items').insert(chunk.map((row) => ({ org_id: orgId, category_id: category.id, ...row, is_active: true }))).select('id');
+  /*
+   * Две пачки разом, а не четыре: на медленном канале четыре запроса по 400
+   * строк обрывались «fetch failed» на одной и той же пачке. Оборванная пачка
+   * повторяется ОДИН раз частями по 100 — с записью в журнал; не вышло —
+   * падение. Пропусков нет: число строк сверяется в конце.
+   */
+  for (let i = 0; i < chunks.length; i += 2) {
+    const group = chunks.slice(i, i + 2);
+    const results = await Promise.all(group.map(insert));
+    for (const [k, result] of results.entries()) {
+      if (!result.error) {
+        added += result.data?.length ?? 0;
+        continue;
+      }
+      if (!/fetch failed/i.test(result.error.message)) throw new Error(`засев фурнитуры: записано ${added} из ${rows.length}, дальше: ${result.error.message}`);
+      console.log(`  ·    засев: пачка ${i + k + 1} оборвалась («${result.error.message}») — повтор частями по 100`);
+      const chunk = group[k];
+      for (let at = 0; at < chunk.length; at += 100) {
+        const again = await insert(chunk.slice(at, at + 100));
+        if (again.error) throw new Error(`засев фурнитуры: записано ${added} из ${rows.length}, повтор не прошёл: ${again.error.message}`);
+        added += again.data?.length ?? 0;
+      }
     }
   }
   const { count, error: countError } = await service.from('catalog_items').select('id', { count: 'exact', head: true }).eq('org_id', orgId).like('article', 'MFR-%');
@@ -305,7 +325,7 @@ async function seedHardware(service, orgId) {
   console.log(`  ·    каталог фурнитуры засеян: ${added} строк за ${Math.round((Date.now() - startedAt) / 1000)} с`);
 }
 
-async function withOrg(label, browser, body, { viewport, touch = false, projects = [], importHardware = true, production = null }) {
+async function withOrg(label, browser, body, { viewport, touch = false, projects = [], importHardware = true, production = null, scale = 1 }) {
   const URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const service = createClient(URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
   const stamp = `${Date.now()}${Math.floor(Math.random() * 1000)}`;
@@ -340,7 +360,7 @@ async function withOrg(label, browser, body, { viewport, touch = false, projects
     });
     const { error: signError } = await ssr.auth.signInWithPassword({ email, password });
     if (signError) throw new Error(`signIn: ${signError.message}`);
-    const context = await browser.newContext({ viewport, hasTouch: touch, acceptDownloads: true });
+    const context = await browser.newContext({ viewport, hasTouch: touch, acceptDownloads: true, deviceScaleFactor: scale });
     await context.addCookies(jar.map((c) => ({ name: c.name, value: c.value, domain: 'localhost', path: '/', sameSite: 'Lax' })));
     const page = await context.newPage();
     const errors = [];
@@ -558,10 +578,12 @@ async function partKitchen(browser) {
       check('KITCHEN.A2 дверца открыта (поворот ≥ 80°): чашки петель (2) едут с полотном — нарисованы в группе створки', Boolean(door) && Math.abs(door.rotationDeg[1]) >= 80 && door.names['rider:hinge'] === 2, JSON.stringify(door));
       /* Звенья петель на открытой дверце модуля в 1200 мм от начала ряда: до правки осей они тянулись на эти 1,2 м через комнату. */
       const links = await page.evaluate(() => (window.__mwHingeLinks ? window.__mwHingeLinks() : null));
+      /* Дверца с 71B3550: её звенья отдельно — у соседних створок без петли каталога звенья условные. */
+      const doorLinks = await page.evaluate(() => (window.__mwHingeLinks ? window.__mwHingeLinks('base-1200@w1:door:0') : null));
       check(
-        'KITCHEN.A3 звенья петель открытых створок нарисованы и короче 0,1 м (стержней через комнату нет), аномалий сцены нет',
-        Boolean(links) && links.count > 0 && links.maxM <= 0.1 && links.anomalies === 0,
-        JSON.stringify(links),
+        'KITCHEN.A3 звенья петель открытых створок нарисованы и короче 0,1 м (стержней через комнату нет), аномалий сцены нет; у дверцы с 71B3550 — четырёхзвенник: 2 петли × 2 звена той же длины, что в закрытой позе (чашка и плечо не расходятся)',
+        Boolean(links) && links.count > 0 && links.maxM <= 0.1 && links.anomalies === 0 && Boolean(doorLinks) && doorLinks.count === 4 && doorLinks.driftM < 1e-6,
+        `${JSON.stringify(links).slice(0, 200)} · дверца: ${JSON.stringify(doorLinks)}`,
       );
       await closeAll(page);
 
@@ -788,7 +810,7 @@ async function partDrawers(browser) {
       await closeUp(page, `${want.module}:drawer:0`, [-0.7, 0.8, 0.9]);
       await page.screenshot({ path: `${OUT}/drawers-1-tandembox-open.png`, timeout: 120_000 });
       check(
-        `DRAWERS.B ящик выехал на ${want.travelMm} мм (${want.travelWords}); едут: царги металлом 2 + ходовые секции 2 (секций у модели ${want.members}, средней нет), дно и задняя стенка раскроя; боковин ЛДСП нет`,
+        `DRAWERS.B ящик выехал на ${want.travelMm} мм (${want.travelWords}); едут: царги металлом 2 + секции направляющей 2 (секций у модели ${want.members}: средних на половину хода ${want.members === 3 ? 2 : 0}), дно и задняя стенка раскроя; боковин ЛДСП нет`,
         Boolean(drawer) &&
           drawer.shift[2] === want.travelMm &&
           (drawer.names['mech:runner'] ?? 0) === 4 &&
@@ -798,7 +820,9 @@ async function partDrawers(browser) {
           (drawer.names['panel:Боковина ящика'] ?? 0) === 0 &&
           /* Царги и ходовые — сечением профиля, а не бруском (ТЗ 2026-10-31, § 5, 8). */
           (drawer.sections?.['drawer-side'] ?? 0) === 2 &&
-          (drawer.sections?.['runner-channel'] ?? 0) === 2,
+          /* Ходовая и средняя секции — С-профилем: при трёх секциях (полное выдвижение) их 4, как у KA (KITCHEN.B2). */
+          (drawer.sections?.['runner-channel'] ?? 0) === (want.members === 3 ? 4 : 2) &&
+          (want.members !== 3 || (Array.isArray(drawer.middleShift) && Math.abs(drawer.middleShift[2] - want.travelMm / 2) <= 1)),
         JSON.stringify(drawer),
       );
       await closeAll(page);
@@ -1024,6 +1048,397 @@ async function partOpen(browser) {
     },
     {
       viewport: { width: 1440, height: 900 },
+      production: { drawerBox: DRAWER_BOX },
+      projects: [{ key: 'kitchen', zone: 'Кухня', fx }],
+    },
+  );
+}
+
+/* ═════════════════════════  TANDEMBOX — модель реестра (ТЗ 2026-11-01, приоритет № 1)  ═════════════════════════ */
+
+/**
+ * «Импорт CAD-фурнитуры» → реестр → TANDEMBOX antaro в Studio. Файлы — визуальная
+ * реконструкция по чертежу Blum (`scripts/twin-tandembox-asset.ts`, каталог
+ * 2024-2025, pdf 301), НЕ CAD производителя, и так и записаны. Проверяется путь:
+ * импорт двух файлов (царга 378M4502SA, ходовая 576.4501M) тем же экраном,
+ * установка позиций путём панели «Фурнитура», модели на местах движка, ход —
+ * едущие части с ящиком на ход модели направляющей, корпусные стоят; снимки
+ * крупным планом; снятие моделей — файлы удалены (чтением).
+ */
+async function importCad(page, service, org, { label, article, query, file, roles, license, note, finish = null }) {
+  await page.goto(`${BASE}/admin/catalog/cad`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+  await page.waitForSelector('[data-cad-import]', { timeout: 60_000 });
+  await page.locator('[data-cad-item-search]').fill(query);
+  await page.waitForSelector(`[data-cad-item="${article}"]`, { timeout: 30_000 });
+  await page.locator(`[data-cad-item="${article}"]`).click();
+  await page.locator('[data-cad-file]').setInputFiles(file);
+  await page.waitForSelector('[data-cad-preview="ready"]', { timeout: 60_000 });
+  const bounds = await page.getAttribute('[data-cad-bounds]', 'data-cad-bounds');
+  const fit = await page.getAttribute('[data-cad-check]', 'data-cad-check');
+  const fitWords = (await page.locator('[data-cad-check]').first().textContent()) ?? '';
+  await page.locator('[data-cad-anchor]').selectOption('custom');
+  for (const [node, role] of Object.entries(roles)) {
+    const select = page.locator(`[data-cad-role="${node}"]`);
+    must(`${label}: роль узла «${node}» в импорте`, (await select.count()) === 1, `НУЛЕВОЙ СЕЛЕКТОР: [data-cad-role="${node}"]`);
+    await select.selectOption(role);
+  }
+  await page.locator('[data-cad-source-kind]').selectOption('drawing_reconstruction');
+  await page.locator('[data-cad-license]').fill(license);
+  await page.locator('[data-cad-rights]').selectOption('VERIFIED');
+  await page.locator('[data-cad-rights-note]').fill(note);
+  await page.locator('[data-cad-visual]').check();
+  /* «Как в файле» — покраска, цинк и пластик реконструкции, а не одно покрытие на всё. */
+  if (finish) await page.locator('[data-cad-finish]').selectOption(finish);
+  const anchorMm = await page.getAttribute('[data-cad-anchor-mm]', 'data-cad-anchor-mm');
+  await page.screenshot({ path: `${OUT}/import-${article}.png`, timeout: 120_000 });
+  await page.locator('[data-cad-save]').click();
+  const sha = await waitFor(page, () => document.querySelector('[data-cad-notice]')?.getAttribute('data-cad-saved') ?? null, (v) => Boolean(v), 60_000);
+  const { data: row } = await service.from('catalog_items').select('id, meta').eq('org_id', org.id).eq('article', article).single();
+  const { data: files } = await service.storage.from('catalog').list(`${org.id}/hardware-cad/${row.id}`);
+  return { bounds, fit, fitWords, anchorMm, sha, twin: row?.meta?.twin, itemId: row?.id, files: (files ?? []).map((f) => f.name) };
+}
+
+async function partTandembox(browser) {
+  console.log('\n── TANDEMBOX (1440 × 900): «Импорт CAD-фурнитуры» царги и ходовой → установка путём панели → модель в Studio, ход, крупный план');
+  const fx = fixture('kitchen');
+  const want = fixture('drawersExpect');
+  const dir = resolve('.capture-check/hardware/tandembox');
+  const made = JSON.parse(execSync(`npx tsx --tsconfig tsconfig.scripts.json scripts/twin-tandembox-asset.ts "${dir}"`, { encoding: 'utf8' }));
+  await withOrg(
+    'TANDEMBOX',
+    browser,
+    async ({ service, org, page, errors, consoleErrors, ids }) => {
+      const removeIds = [];
+      try {
+        const license = 'собственная реконструкция ALDIK Studio по чертежу Blum (каталог 2024-2025, pdf 301 / печ. 297), не CAD производителя';
+        const note = 'геометрия построена ALDIK Studio: напечатаны 95,5 / 37,5 / 83,6 и позиции саморезов; форма профиля снята с чертежа масштабом';
+        const side = await importCad(page, service, org, {
+          label: 'TANDEMBOX царга',
+          article: want.sides,
+          query: '378M4502SA',
+          file: made.side.path,
+          roles: { 'side-profile': 'moving' },
+          finish: 'file',
+          license,
+          note,
+        });
+        removeIds.push(side.itemId);
+        const runnerFile = await importCad(page, service, org, {
+          label: 'TANDEMBOX ходовая',
+          article: want.runner,
+          query: '576.4501M',
+          file: made.runner.path,
+          /* Каретка с роликами — между корпусным профилем и профилем царги (сечение pdf 301): половина хода. */
+          roles: { 'cabinet-member': 'fixed', 'mount-screws': 'fixed', carriage: 'middle', rollers: 'middle' },
+          finish: 'file',
+          license,
+          note,
+        });
+        removeIds.push(runnerFile.itemId);
+        check(
+          `TBX.A импорт: габарит царги ${made.side.size.join('×')} мм и ходовой ${made.runner.size.join('×')} мм = файлам, проверка против изделия (NL 450) — да; в реестре — «визуальная реконструкция», источник — по чертежу, точка 0,0,0 (кромка и низ дна), роли узлов и материалы — как в файле; файлы — в Storage папки позиции`,
+          side.bounds === made.side.size.join('x') &&
+            runnerFile.bounds === made.runner.size.join('x') &&
+            side.fit === 'ok' &&
+            runnerFile.fit === 'ok' &&
+            side.anchorMm === '0.0,0.0,0.0' &&
+            [side, runnerFile].every((r) => r.twin?.status === 'VISUAL_RECONSTRUCTION' && r.twin?.source?.kind === 'drawing_reconstruction' && r.twin?.finish === undefined && r.files.includes(`${r.sha}.glb`)) &&
+            runnerFile.twin.parts.filter((p) => p.role === 'fixed').length === 2 &&
+            runnerFile.twin.parts.filter((p) => p.role === 'middle').length === 2 &&
+            runnerFile.twin.parts.filter((p) => p.role === 'moving').length === 0,
+          `царга ${side.bounds} (${side.fitWords.slice(0, 60)}) · ходовая ${runnerFile.bounds} · ${side.twin?.status} · файлов ${side.files.length} + ${runnerFile.files.length}`,
+        );
+
+        /* Пользователь выбирает изделие путём панели — и видит модель реестра. */
+        await openStudio(page, ids.kitchen);
+        await open3d(page, 'TANDEMBOX');
+        await hardwareFor(page, 'TANDEMBOX', want.module);
+        const runner = await installByPath(page, 'TANDEMBOX', 'slide', { brand: 'Blum', series: 'TANDEMBOX antaro', nl: 450, article: want.runner });
+        await waitFor(page, () => document.querySelectorAll('[data-hw-slot="drawer_side"]').length, (n) => n > 0, 20_000);
+        const sides = await installByPath(page, 'TANDEMBOX', 'drawer_side', { brand: 'Blum', series: 'TANDEMBOX antaro', nl: 450, article: want.sides });
+        must('TANDEMBOX ходовая и царги поставлены путём панели', runner.installed && sides.installed, JSON.stringify({ runner: runner.installed, sides: sides.installed }));
+        await saved(page);
+        await quiet(page);
+        const closed = await waitFor(
+          page,
+          () => (window.__mwTwinCenters ? window.__mwTwinCenters() : null),
+          (v) => Boolean(v) && v.filter((m) => m.role === 'fixed').length >= 4 && v.filter((m) => m.role === 'moving').length >= 2 && v.filter((m) => m.role === 'middle').length >= 4,
+          60_000,
+        );
+        const fixedN = closed?.filter((m) => m.role === 'fixed').length ?? 0;
+        const movingN = closed?.filter((m) => m.role === 'moving').length ?? 0;
+        const middleN = closed?.filter((m) => m.role === 'middle').length ?? 0;
+        check(
+          `TBX.B модели реестра в сцене на ${want.drawers} ящиках: у каждого — 2 царги (едут с ящиком), 2 каретки с роликами (половина хода) и 2 корпусных профиля с саморезами (стоят) — по сечению Blum pdf 301; придуманной ходовой нет, брусков на их месте нет`,
+          fixedN === 4 * want.drawers && movingN === 2 * want.drawers && middleN === 4 * want.drawers && want.members === 3,
+          `неподвижных мешей ${fixedN} (ждём ${4 * want.drawers}) · едущих ${movingN} (ждём ${2 * want.drawers}) · кареток ${middleN} (ждём ${4 * want.drawers}) · секций у модели ${want.members}`,
+        );
+        const metals = (closed ?? []).filter((m) => m.metal > 0);
+        check(
+          'TBX.F металл модели (покрытие импорта и цинк файла) — со своей картой окружения, как ручки: без неё царга рисовалась почти чёрной',
+          metals.length > 0 && metals.every((m) => m.ownEnv),
+          `металлических мешей ${metals.length} · со своей картой ${metals.filter((m) => m.ownEnv).length}`,
+        );
+        /* Крупный план: цель камеры — в центре холста; вырезка вокруг неё при плотности 2×. Ближе 1 м камера не подходит (предел сцены). */
+        const key = (part, side, role, node) => closed.find((m) => m.key === `${part}|${side}|${role}|${node}`);
+        const top = `${want.module}:drawer:0`;
+        const sideL = key(top, 'L', 'moving', 'side-profile');
+        must('TANDEMBOX царга верхнего ящика в окошке', Boolean(sideL), `ключи: ${closed.map((m) => m.key).slice(0, 4).join(' · ')}`);
+        const shot = async (name, target, offset, size) => {
+          await page.evaluate((pose) => (window.__mwCadCamera ? window.__mwCadCamera(pose) : null), { position: [target[0] + offset[0], target[1] + offset[1], target[2] + offset[2]], target });
+          await sleep(2500);
+          const box = await page.locator('[data-studio-viewport] canvas').first().boundingBox();
+          const clip = { x: box.x + box.width / 2 - size[0] / 2, y: box.y + box.height / 2 - size[1] / 2, width: size[0], height: size[1] };
+          await page.screenshot({ path: `${OUT}/${name}`, clip, timeout: 120_000 });
+        };
+        const sideFront = [sideL.center[0], sideL.center[1], sideL.center[2] + 0.225];
+        await shot('tandembox-0-module-closed.png', [sideFront[0] + 0.25, sideFront[1] - 0.15, sideFront[2]], [-0.45, 0.35, 0.9], [760, 520]);
+        /* Торец царг без фасадов: сечение, которое рисует чертёж Blum. */
+        await page.locator('[data-scene-layers-toggle]').first().click();
+        await page.locator('[data-scene-layer="fronts"]').first().click();
+        await sleep(1500);
+        await shot('tandembox-1-section-end.png', sideFront, [0.0, 0.02, 1.0], [300, 260]);
+        await page.locator('[data-scene-layer="fronts"]').first().click();
+        await page.locator('[data-scene-layers-toggle]').first().click();
+        const opened = await openAll(page, `${want.module}:drawer:0`, (v) => v.shift[2] >= want.travelMm - 1);
+        const after = await page.evaluate(() => (window.__mwTwinCenters ? window.__mwTwinCenters() : null));
+        const moved = (role) =>
+          (after ?? []).filter((m) => m.role === role).map((m) => {
+            const before = closed.find((c) => c.key === m.key);
+            return before ? Math.hypot(m.center[0] - before.center[0], m.center[1] - before.center[1], m.center[2] - before.center[2]) : NaN;
+          });
+        const fixedMoves = moved('fixed');
+        const movingMoves = moved('moving');
+        const middleMoves = moved('middle');
+        /* Открытый ящик сверху: царги во всю длину, дно и задняя стенка раскроя. */
+        const sideOpen = (after ?? []).find((m) => m.key === `${top}|L|moving|side-profile`);
+        const sideOpenR = (after ?? []).find((m) => m.key === `${top}|R|moving|side-profile`);
+        if (sideOpen && sideOpenR) {
+          const mid = [(sideOpen.center[0] + sideOpenR.center[0]) / 2, sideOpen.center[1], sideOpen.center[2]];
+          await shot('tandembox-2-open-top.png', mid, [-0.35, 0.8, 0.55], [760, 520]);
+          /* Ходовая изнутри ящика: корпусная секция с саморезами и ходовая под царгой. */
+          await page.locator('[data-scene-layers-toggle]').first().click();
+          await page.locator('[data-scene-layer="fronts"]').first().click();
+          await sleep(1500);
+          await shot('tandembox-3-runner-inside.png', [sideOpen.center[0] - 0.01, sideOpen.center[1] - 0.04, sideOpen.center[2] + 0.15], [0.55, 0.25, 0.8], [520, 380]);
+          await page.locator('[data-scene-layer="fronts"]').first().click();
+          await page.locator('[data-scene-layers-toggle]').first().click();
+          /* Направляющая открытого ящика крупным планом — в виде «Фурнитура» (корпус и фасады не закрывают): корпусный профиль, каретка на половине хода, царга. */
+          const carriage = (after ?? []).find((m) => m.key === `${top}|L|middle|carriage`);
+          const preset = page.locator('[data-scene-preset-select]');
+          if (carriage && (await preset.count()) > 0) {
+            const usual = await preset.first().inputValue();
+            await preset.first().selectOption('hardware');
+            await sleep(1500);
+            await shot('tandembox-4-runner-open-hardware.png', carriage.center, [0.32, 0.18, 0.5], [620, 420]);
+            await shot('tandembox-5-side-open-hardware.png', sideOpen.center, [0.5, 0.12, 0.35], [620, 420]);
+            await preset.first().selectOption(usual);
+            await sleep(1000);
+          }
+        }
+        check(
+          `TBX.C ход по определению Blum (полное выдвижение, потеря 0 — pdf 728, 731): «Открыть всё» — царги едут с ящиком на ${want.travelMm} мм (± 1), каретки с роликами — на половину (${want.travelMm / 2} ± 1), корпусные профили и саморезы стоят (сдвиг 0)`,
+          Boolean(opened) &&
+            fixedMoves.length === fixedN &&
+            fixedMoves.every((d) => d < 1e-6) &&
+            movingMoves.length === movingN &&
+            movingMoves.every((d) => Math.abs(d * 1000 - want.travelMm) <= 1) &&
+            middleMoves.length === middleN &&
+            middleMoves.every((d) => Math.abs(d * 1000 - want.travelMm / 2) <= 1),
+          `царг ${movingMoves.length}: ${[...new Set(movingMoves.map((d) => (d * 1000).toFixed(1)))].join(', ')} мм · кареток ${middleMoves.length}: ${[...new Set(middleMoves.map((d) => (d * 1000).toFixed(1)))].join(', ')} мм · стоящих ${fixedMoves.length}: ${[...new Set(fixedMoves.map((d) => (d * 1000).toFixed(1)))].join(', ')} мм · ${want.travelWords.slice(0, 90)}`,
+        );
+        await closeAll(page);
+        const anomalies = await page.evaluate(() => (window.__mwSceneAnomalies ?? []).length);
+        check('TBX.D аномалий сцены нет (модели загрузились, габарит — изделия)', anomalies === 0, `аномалий ${anomalies}`);
+      } finally {
+        for (const itemId of removeIds.filter(Boolean)) {
+          const res = await page.request.post(`${BASE}/api/catalog/hardware/twin`, { data: { action: 'remove', itemId }, timeout: 120_000 });
+          const { data: left } = await service.storage.from('catalog').list(`${org.id}/hardware-cad/${itemId}`);
+          check(`TBX.E «Снять модель» ${itemId.slice(0, 8)}: файлов 0`, res.ok() && (left ?? []).length === 0, `ответ ${res.status()} · файлов ${(left ?? []).length}`);
+        }
+      }
+      check('TANDEMBOX ошибок страницы и консоли нет', errors.length === 0 && consoleErrors.length === 0, [...errors, ...consoleErrors].slice(0, 3).join(' | '));
+    },
+    {
+      viewport: { width: 1440, height: 900 },
+      scale: 2,
+      production: { drawerBox: DRAWER_BOX },
+      projects: [{ key: 'kitchen', zone: 'Кухня', fx }],
+    },
+  );
+}
+
+/* ═════════════════════════  CLIP — петля 71B3550 моделью реестра (ТЗ 2026-11-01, п. 5)  ═════════════════════════ */
+
+/**
+ * «Импорт CAD-фурнитуры» → реестр → петля Blum CLIP top BLUMOTION 71B3550 с планкой
+ * 175H3130 в Studio. Файл — визуальная реконструкция по чертежам Blum
+ * (`scripts/twin-hinge-asset.ts`: каталог 2024-2025, pdf 81, 154, 724), НЕ CAD
+ * производителя, и так и записан; материалы — как в файле. Путь: импорт экраном,
+ * петля и планка путём панели «Фурнитура», модель на осях чашек движка, чашка
+ * едет со створкой, плечо и планка стоят; снимки крупным планом; снятие — файлы
+ * удалены (чтением).
+ */
+async function partClip(browser) {
+  console.log('\n── CLIP (1440 × 900): «Импорт CAD-фурнитуры» петли 71B3550 → петля и планка путём панели → модель в Studio, ход, крупный план');
+  const fx = fixture('kitchen');
+  const dir = resolve('.capture-check/hardware/hinge');
+  const made = JSON.parse(execSync(`npx tsx --tsconfig tsconfig.scripts.json scripts/twin-hinge-asset.ts "${dir}"`, { encoding: 'utf8' }));
+  const MODULE = 'base-1200@w1';
+  await withOrg(
+    'CLIP',
+    browser,
+    async ({ service, org, page, errors, consoleErrors, ids }) => {
+      let itemId = null;
+      try {
+        const roles = Object.fromEntries([...made.roles.moving.map((n) => [n, 'moving']), ...made.roles.fixed.map((n) => [n, 'fixed'])]);
+        const imp = await importCad(page, service, org, {
+          label: 'CLIP петля',
+          article: 'MFR-BLUM-71B3550',
+          query: '71B3550',
+          file: made.hinge.path,
+          roles,
+          finish: 'file',
+          license: 'собственная реконструкция ALDIK Studio по чертежам Blum (каталог 2024-2025, pdf 81 / печ. 77, pdf 154 / печ. 150, pdf 724 / печ. 720), не CAD производителя',
+          note: 'геометрия построена ALDIK Studio: напечатаны чашка, фланец, высота и длина плеча, планка и её отверстия; форма плеча и щёк шарнира снята с чертежа; оси звеньев — четырёхзвенник, подобранный под угол 110° и вхождение 12 мм',
+        });
+        itemId = imp.itemId;
+        check(
+          `CLIP.A импорт: габарит ${made.hinge.size.join('×')} мм = файлу, против изделия — да; в реестре — «визуальная реконструкция» по чертежу, точка 0,0,0 (ось чашки), материалы файла (покрытие не навязано), узлов ${made.hinge.nodes.length}: едут ${made.roles.moving.length}, стоят ${made.roles.fixed.length}; файл в Storage папки позиции`,
+          imp.bounds === made.hinge.size.join('x') &&
+            imp.fit === 'ok' &&
+            imp.anchorMm === '0.0,0.0,0.0' &&
+            imp.twin?.status === 'VISUAL_RECONSTRUCTION' &&
+            imp.twin?.source?.kind === 'drawing_reconstruction' &&
+            imp.twin?.finish === undefined &&
+            imp.twin?.parts?.length === made.hinge.nodes.length &&
+            imp.twin.parts.filter((p) => p.role === 'moving').length === made.roles.moving.length &&
+            imp.files.includes(`${imp.sha}.glb`),
+          `габарит ${imp.bounds} (${imp.fitWords.slice(0, 60)}) · ${imp.twin?.status} · покрытие ${imp.twin?.finish ?? 'как в файле'} · узлов ${imp.twin?.parts?.length} · файлов ${imp.files.length}`,
+        );
+
+        /* Пользователь выбирает петлю и планку путём панели — и видит модель реестра. */
+        await openStudio(page, ids.kitchen);
+        await open3d(page, 'CLIP');
+        await hardwareFor(page, 'CLIP', MODULE);
+        const hinge = await installVia(page, 'CLIP', 'hinge', 'MFR-BLUM-71B3550', '71B3550');
+        const plate = await installVia(page, 'CLIP', 'hinge_plate', 'MFR-BLUM-175H3130', '175H3130');
+        must('CLIP петля и планка поставлены путём панели', hinge.installed && plate.installed, JSON.stringify({ hinge: hinge.installed, plate: plate.installed }));
+        await saved(page);
+        await quiet(page);
+        const per = made.roles.moving.length;
+        const closed = await waitFor(
+          page,
+          () => (window.__mwTwinCenters ? window.__mwTwinCenters() : null),
+          (v) => Boolean(v) && v.filter((m) => m.role === 'moving').length >= 2 * per && v.filter((m) => m.role === 'fixed').length >= 2 * made.roles.fixed.length,
+          60_000,
+        );
+        const movingN = closed?.filter((m) => m.role === 'moving').length ?? 0;
+        const fixedN = closed?.filter((m) => m.role === 'fixed').length ?? 0;
+        const metals = (closed ?? []).filter((m) => m.metal > 0);
+        check(
+          `CLIP.B модели реестра на двух петлях дверцы: чашка, фланец, саморезы и щёки с осями чашки (${per} узла) — на полотне, плечо, нос плеча с осями, демпфер, планка и её саморезы (${made.roles.fixed.length}) — на боковине; металл — со своей картой окружения`,
+          movingN === 2 * per && fixedN === 2 * made.roles.fixed.length && metals.length > 0 && metals.every((m) => m.ownEnv),
+          `едущих мешей ${movingN} (ждём ${2 * per}) · стоящих ${fixedN} (ждём ${2 * made.roles.fixed.length}) · металл ${metals.length}, со своей картой ${metals.filter((m) => m.ownEnv).length}`,
+        );
+        /*
+         * Крупный план. Без полотна чашка видна только в виде «Фурнитура» (`boxShown`: фурнитура на фасаде без фасада
+         * висела бы в воздухе) — петля снимается там целиком, закрытой и открытой, и открытой с фасадами. Камера — по
+         * центрам частей нижней петли: цель между чашкой и планкой, со стороны середины шкафа, на 0,6 м (ближе сцена
+         * камеру не подпускает).
+         */
+        const lowest = (list, node) => list.filter((m) => m.node === node).sort((a, b) => a.center[1] - b.center[1])[0];
+        const cupC = lowest(closed, 'cup');
+        const plateC = lowest(closed, 'mounting-plate');
+        const arm = lowest(closed, 'arm');
+        must('CLIP чашка, плечо и планка нижней петли в окошке', Boolean(cupC && plateC && arm), `узлы: ${[...new Set(closed.map((m) => m.node))].join(', ')}`);
+        const inward = Math.sign(cupC.center[0] - plateC.center[0]) || 1;
+        const mid = (a, b) => a.center.map((v, k) => (v + b.center[k]) / 2);
+        const shot = async (name, target, offset, size) => {
+          await page.evaluate((pose) => (window.__mwCadCamera ? window.__mwCadCamera(pose) : null), { position: [target[0] + offset[0], target[1] + offset[1], target[2] + offset[2]], target });
+          await sleep(2500);
+          const box = await page.locator('[data-studio-viewport] canvas').first().boundingBox();
+          const clip = { x: box.x + box.width / 2 - size[0] / 2, y: box.y + box.height / 2 - size[1] / 2, width: size[0], height: size[1] };
+          await page.screenshot({ path: `${OUT}/${name}`, clip, timeout: 120_000 });
+        };
+        const preset = page.locator('[data-scene-preset-select]');
+        must('CLIP список «Вид»', (await preset.count()) > 0, 'НУЛЕВОЙ СЕЛЕКТОР: [data-scene-preset-select]');
+        const usual = await preset.first().inputValue();
+        await preset.first().selectOption('hardware');
+        await sleep(1500);
+        await shot('clip-1-closed-hardware.png', mid(cupC, plateC), [inward * 0.36, 0.22, -0.43], [460, 340]);
+        /* Плечо с планкой и саморезами изнутри шкафа — крепление к боковине. */
+        await shot('clip-0-plate-hardware.png', plateC.center, [inward * 0.5, 0.18, -0.35], [460, 340]);
+        const DOOR = `${MODULE}:door:0`;
+        const rotOf = () => page.evaluate((id) => (window.__mwMoving ? window.__mwMoving(id) : null), DOOR);
+        /*
+         * Ход четырёхзвенником (решение владельца 2026-11-01, п. 2): дверца встаёт на 45° и 90° (угол сцены
+         * `openDegrees`) и на полный паспортный 110°. На каждом угле — звенья той же длины, что в закрытой позе.
+         */
+        const stops = [];
+        for (const deg of [45, 90, null]) {
+          await page.evaluate(([id, d]) => window.__mwSetOpenDegree?.(id, d), [DOOR, deg]);
+          const want = deg ?? 110;
+          if (stops.length === 0) await openAll(page, DOOR, (v) => Math.abs(Math.abs(v.rotationDeg[1]) - want) <= 0.5);
+          const at = await waitFor(page, () => (window.__mwMoving ? window.__mwMoving('base-1200@w1:door:0') : null), (v) => Boolean(v) && Math.abs(Math.abs(v.rotationDeg[1]) - want) <= 0.5, 30_000);
+          await sleep(800);
+          /* Звенья ЭТОЙ дверцы: «Открыть всё» открывает и соседние створки, у которых петли каталога нет (звенья условные). */
+          const links = await page.evaluate((id) => (window.__mwHingeLinks ? window.__mwHingeLinks(id) : null), DOOR);
+          const centers = await page.evaluate(() => (window.__mwTwinCenters ? window.__mwTwinCenters() : null));
+          stops.push({ want, rot: at ? Math.abs(at.rotationDeg[1]) : NaN, links, centers });
+          const cupNow = lowest(centers ?? [], 'cup');
+          await shot(`clip-${deg ?? 110}-hardware.png`, mid(cupNow ?? cupC, plateC), [inward * 0.42, 0.2, 0.4], [460, 340]);
+          if (deg === null) {
+            /* Сверху — как план на чертеже Blum (pdf 81): плечо на боковине, звенья, фасад на полном открывании. */
+            await shot('clip-top-110-hardware.png', mid(cupNow ?? cupC, plateC), [0.02, 0.62, 0.06], [460, 340]);
+          }
+        }
+        const opened = await rotOf();
+        const after = stops[stops.length - 1].centers;
+        /* Чашка уходит с полотном, плечо стоит: сравниваются центры той же части (узел) у той же петли — ближайший до хода. */
+        const shift = (role) =>
+          (after ?? []).filter((m) => m.role === role).map((m) => {
+            const same = closed.filter((c) => c.node === m.node && c.role === role);
+            return Math.min(...same.map((c) => Math.hypot(m.center[0] - c.center[0], m.center[1] - c.center[1], m.center[2] - c.center[2])));
+          });
+        const fixedMoves = shift('fixed');
+        const movingMoves = shift('moving');
+        const cupO = lowest(after ?? [], 'cup');
+        await preset.first().selectOption(usual);
+        await sleep(1500);
+        /* Камера ближе к своей боковине: дальше по ширине стоит открытое полотно соседней створки. */
+        await shot('clip-3-open-fronts.png', mid(cupO ?? cupC, plateC), [inward * 0.2, 0.3, 0.48], [520, 380]);
+        check(
+          'CLIP.C ход: «Открыть всё» — дверца на паспортные 110° (± 0,5), чашки с фланцами, саморезами и осями ушли с полотном (≥ 10 мм), плечи, нос плеча, демпферы и планки стоят (сдвиг 0)',
+          Boolean(opened) &&
+            Math.abs(Math.abs(opened.rotationDeg[1]) - 110) <= 0.5 &&
+            fixedMoves.length === fixedN &&
+            fixedMoves.every((d) => d < 1e-6) &&
+            movingMoves.length === movingN &&
+            movingMoves.every((d) => d * 1000 >= 10),
+          `поворот ${opened?.rotationDeg?.[1]}° · едущих ${movingMoves.length}: ${movingMoves.map((d) => (d * 1000).toFixed(0)).join('/')} мм · стоящих ${fixedMoves.length}: ${[...new Set(fixedMoves.map((d) => (d * 1000).toFixed(1)))].join(', ')} мм`,
+        );
+        check(
+          'CLIP.F шарнирная кинематика: на 45°, 90° и 110° у обеих петель по 2 звена от оси плеча к оси чашки, каждое — той же длины, что в закрытой позе (± 0,001 мм): чашка и плечо не расходятся',
+          stops.length === 3 &&
+            stops.every((st) => Math.abs(st.rot - st.want) <= 0.5 && st.links && st.links.count === 4 && st.links.driftM < 1e-6 && st.links.anomalies === 0),
+          stops.map((st) => `${st.want}°: поворот ${st.rot.toFixed(1)}°, звеньев ${st.links?.count}, длины ${st.links?.lengthsMm?.join('/')} мм, отклонение ${((st.links?.driftM ?? NaN) * 1000).toFixed(4)} мм`).join(' · '),
+        );
+        await closeAll(page);
+        const anomalies = await page.evaluate(() => (window.__mwSceneAnomalies ?? []).length);
+        check('CLIP.D аномалий сцены нет (модель загрузилась, габарит — петли)', anomalies === 0, `аномалий ${anomalies}`);
+      } finally {
+        if (itemId) {
+          const res = await page.request.post(`${BASE}/api/catalog/hardware/twin`, { data: { action: 'remove', itemId }, timeout: 120_000 });
+          const { data: left } = await service.storage.from('catalog').list(`${org.id}/hardware-cad/${itemId}`);
+          check('CLIP.E «Снять модель»: файлов 0', res.ok() && (left ?? []).length === 0, `ответ ${res.status()} · файлов ${(left ?? []).length}`);
+        }
+      }
+      check('CLIP ошибок страницы и консоли нет', errors.length === 0 && consoleErrors.length === 0, [...errors, ...consoleErrors].slice(0, 3).join(' | '));
+    },
+    {
+      viewport: { width: 1440, height: 900 },
+      scale: 2,
       production: { drawerBox: DRAWER_BOX },
       projects: [{ key: 'kitchen', zone: 'Кухня', fx }],
     },
@@ -1657,6 +2072,8 @@ try {
       if (part === 'drawers') await partDrawers(browser);
       if (part === 'open') await partOpen(browser);
       if (part === 'twin') await partTwin(browser);
+      if (part === 'tandembox') await partTandembox(browser);
+      if (part === 'clip') await partClip(browser);
       done.push(part);
       console.log(`  ·    ${part}: ${Math.round((Date.now() - startedAt) / 1000)} с`);
     } catch (error) {

@@ -15,7 +15,9 @@ import { applyOps } from '../lib/millwork/ops';
 import { hardwareCatalog } from '../lib/millwork/hardware';
 import { HARDWARE_FACTS, hardwareCatalogRow } from '../lib/millwork/hardwareCatalog';
 import { drillingPlan } from '../lib/millwork/drillingPlan';
-import { closedFrontRect, doorPivot, leafPointAt, leafPoses, localPartBox, runBoxes, runPlaces, sceneLeaves } from '../lib/millwork/cabinetBoxes';
+import { closedFrontRect, doorLinkOf, doorPivot, leafOpenAngle, leafPointAt, leafPoses, localPartBox, runBoxes, runPlaces, sceneLeaves } from '../lib/millwork/cabinetBoxes';
+import { CLIP_TOP_110_OVERLAY, hingeSideSweep, linkagePoint, linkagePose } from '../lib/millwork/hingeLinkage';
+import { sideInnerXMm as clipTopSideXMm } from '../lib/millwork/clipTopHinge';
 import { LIFT_WORDS, liftMotionOf, liftPlace, liftPose } from '../lib/millwork/liftKinematics';
 import { hingeHalfMesh, hingeLinkSegments, linkPose, meshBounds, type MeshData } from '../lib/millwork/hingeMeshData';
 import { hingeModelOf, hingeParts } from '../lib/millwork/hingeModel';
@@ -215,7 +217,8 @@ export function hinge3dChecks(outer?: Check): { passed: number; failed: number }
           if (place.unit.kind === 'tall') tallLeaves += 1;
           if ((place.zM ?? 0) !== 0) shallow += 1;
           for (const c of local.filter((b) => b.hinge?.half === 'cup')) if (Math.abs(c.hinge!.origin[2] - (c.position[2] + c.scale[2] / 2)) > 1e-6) detached += 1;
-          const pivot = doorPivot(leaf.opening, leaf.xM, leaf.bottomM, leaf.widthM, leaf.heightM, 16 / 1000);
+          /* Ось и механизм — как у `InteractiveDoor`: петля с четырёхзвенником ведёт створку им. */
+          const pivot = doorPivot(leaf.opening, leaf.xM, leaf.bottomM, leaf.widthM, leaf.heightM, 16 / 1000, doorLinkOf(draws[0]));
           for (let step = 0; step <= 18; step += 1) {
             const angle = (pivot.angle * step) / 18;
             for (const seg of hingeLinkSegments(draws, (p) => leafPointAt(pivot, p, angle))) {
@@ -236,11 +239,112 @@ export function hinge3dChecks(outer?: Check): { passed: number; failed: number }
   /* Сетка петли — там, где её коробка: чашка в пределах ⌀ вокруг оси, плечо — на боковине. */
   const cupMesh = meshBounds(hingeHalfMesh(draw.model, 'cup', draw.sideInnerXMm, draw.mirror));
   const armMesh = meshBounds(hingeHalfMesh(draw.model, 'arm', draw.sideInnerXMm, draw.mirror));
+  /*
+   * Перед кромкой корпуса (z > 0) плечо может быть только в отверстии чашки: у петли с
+   * четырёхзвенником нос плеча с осями звеньев стоит в чашке (так петля и закрывается),
+   * а за пределами отверстия он вошёл бы в тело фасада.
+   */
+  const armPoints = hingeHalfMesh(draw.model, 'arm', draw.sideInnerXMm, draw.mirror).positions;
+  let armInDoor = 0;
+  for (let i = 0; i < armPoints.length; i += 3) {
+    const [ax, ay, az] = [armPoints[i], armPoints[i + 1], armPoints[i + 2]];
+    if (az > 1e-6 && (Math.hypot(ax, ay) > draw.model.cupDiameterMm / 2 + 1e-6 || az > draw.model.cupDepthMm + 1e-6)) armInDoor += 1;
+  }
   check(
-    'HG5 сетка у своей коробки: чашка — от тыла фасада в фасад на глубину 13; планка — на внутренней плоскости боковины (x ≥ ' + draw.sideInnerXMm + ') и на 37 мм вглубь',
-    Math.abs(cupMesh.max[2] - 13) < 1e-6 && armMesh.min[0] >= draw.sideInnerXMm - 1e-6 && armMesh.min[2] <= -37 && armMesh.max[2] <= 0,
-    `чашка z ${cupMesh.min[2]}…${cupMesh.max[2]} · плечо x ${armMesh.min[0]}…${armMesh.max[0]}, z ${armMesh.min[2]}…${armMesh.max[2]}`,
+    'HG5 сетка у своей коробки: чашка — от тыла фасада в фасад на глубину 13; планка — на внутренней плоскости боковины (x ≥ ' + draw.sideInnerXMm + ') и на 37 мм вглубь; перед кромкой корпуса плечо — только в отверстии чашки (нос с осями звеньев)',
+    Math.abs(cupMesh.max[2] - 13) < 1e-6 && armMesh.min[0] >= draw.sideInnerXMm - 1e-6 && armMesh.min[2] <= -37 && armInDoor === 0,
+    `чашка z ${cupMesh.min[2]}…${cupMesh.max[2]} · плечо x ${armMesh.min[0]}…${armMesh.max[0]}, z ${armMesh.min[2]}…${armMesh.max[2]} · точек плеча в теле фасада ${armInDoor}`,
   );
+
+  /*
+   * ═════════════ ШАРНИРНАЯ КИНЕМАТИКА CLIP top 110° (решение владельца 2026-11-01, п. 2) ═════════════
+   * Путь экрана: дверца с петлёй 71B3550 и прямой планкой 175H3130 (подъём 3); створка — как у
+   * `InteractiveDoor`: `doorLinkOf` по чашке, `doorPivot`, `leafPointAt`; ход у угла — `leafPoses`.
+   */
+  {
+    const { run: clipRun } = kitchen(SHOP, [
+      { op: 'set_fitting', moduleId: DOOR, slot: 'hinge', itemId: item('MFR-BLUM-71B3550').id },
+      { op: 'set_fitting', moduleId: DOOR, slot: 'hinge_plate', itemId: item('MFR-BLUM-175H3130').id },
+    ] as MillworkOp[]);
+    const all = runBoxes(clipRun, { thicknessMm: 16, frontThicknessMm: 16, gapMm: 4, hardware: CATALOG, production: SHOP });
+    const clipPlace = runPlaces(clipRun).find((p) => p.unit.id === DOOR);
+    if (!clipPlace) throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: модуля ${DOOR} в ряду нет`);
+    const leaf = sceneLeaves(clipPlace.unit, clipPlace.heightM, undefined, 0, SHOP).find((l) => l.id === `${DOOR}:door:0`);
+    if (!leaf || leaf.kind !== 'door' || (leaf.opening !== 'left' && leaf.opening !== 'right')) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: распашной створки door:0 нет');
+    const local = all.filter((b) => b.part === leaf.id).map((b) => localPartBox(b, [clipPlace.x, clipPlace.y, clipPlace.zM ?? 0]));
+    const draws = local.filter((b) => b.hinge?.half === 'cup').map((b) => b.hinge!);
+    if (draws.length === 0) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: чашек петли на створке нет');
+    const link = doorLinkOf(draws[0]);
+    const pivot = doorPivot(leaf.opening, leaf.xM, leaf.bottomM, leaf.widthM, leaf.heightM, 16 / 1000, link);
+    const passport = leafOpenAngle(clipPlace.unit, 'door:0', CATALOG, leaf.opening);
+    const closedLinks = hingeLinkSegments(draws, (p) => p).map((seg) => seg.length);
+    const sx = draws[0].mirror ? -1 : 1;
+    let worstLink = 0;
+    let worstCup = 0;
+    for (let deg = 0; deg <= 110; deg += 1) {
+      const angle = Math.sign(pivot.angle) * ((deg * Math.PI) / 180);
+      hingeLinkSegments(draws, (p) => leafPointAt(pivot, p, angle)).forEach((seg, i) => {
+        worstLink = Math.max(worstLink, Math.abs(seg.length - closedLinks[i]));
+      });
+      /* Ось чашки сцены — там, куда её ведёт механизм. */
+      const cup = draws[0].origin;
+      const moved = leafPointAt(pivot, cup, angle);
+      const pose = linkagePose(CLIP_TOP_110_OVERLAY, (deg * Math.PI) / 180);
+      worstCup = Math.max(worstCup, Math.hypot(moved[0] - (cup[0] + (sx * pose.shift[0]) / 1000), moved[2] - (cup[2] + pose.shift[1] / 1000)));
+    }
+    check(
+      'HG7 CLIP top 110° ходит четырёхзвенником (путь `InteractiveDoor`): механизм у створки есть, полный угол — паспортный 110°; на всём ходу 0…110° шагом 1° каждое звено каждой петли — своей длины (чашка и плечо не расходятся), ось чашки — там, куда её ведёт механизм',
+      link !== null &&
+        Math.abs(Math.abs(pivot.angle) - (110 * Math.PI) / 180) < 1e-12 &&
+        passport.known &&
+        Math.abs(passport.angle - Math.abs(pivot.angle)) < 1e-12 &&
+        draws.length === 2 &&
+        worstLink < 1e-6 &&
+        worstCup < 1e-6,
+      `петель ${draws.length} · угол ${((Math.abs(pivot.angle) * 180) / Math.PI).toFixed(1)}° (паспорт ${((passport.angle * 180) / Math.PI).toFixed(1)}°) · звенья ${closedLinks.map((l) => (l * 1000).toFixed(2)).join(' / ')} мм, наибольшее отклонение длины ${(worstLink * 1000).toFixed(6)} мм · ось чашки ${(worstCup * 1000).toFixed(6)} мм`,
+    );
+
+    /* Напечатанное: вхождение фасада при полном открывании 12 мм (pdf 81: подъём 0, TB — середина 3–7). */
+    const printed = linkagePoint(CLIP_TOP_110_OVERLAY, (110 * Math.PI) / 180, [-(CLIP_TOP_110_OVERLAY.trace.tbMm + 17.5), 0]);
+    const ingress = printed[0] + (17.5 - 11);
+    /* Сцена: угол фасада у кромки при полном открывании — `leafPointAt`; ход у угла (`leafPoses`) — тот же поворот. */
+    const edgeX = leaf.opening === 'left' ? leaf.xM : leaf.xM + leaf.widthM;
+    /* TB — от кромки НАРИСОВАННОЙ детали (F9), как её ставит `hingeCupPlace`. */
+    const rect = closedFrontRect(local);
+    if (!rect) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: детали полотна нет');
+    const detailEdge = leaf.opening === 'left' ? rect.cx - rect.w / 2 : rect.cx + rect.w / 2;
+    const tbMm = Math.round((Math.abs(draws[0].origin[0] - detailEdge) * 1000 - 17.5) * 10) / 10;
+    const sideX = draws[0].origin[0] + (sx * draws[0].sideInnerXMm) / 1000;
+    const open = leafPoses({ opening: leaf.opening, x: leaf.xM, y: leaf.bottomM, width: leaf.widthM, height: leaf.heightM, thickness: 16 / 1000, gap: 4 / 1000, s: 1, openAngle: passport.angle, link }).find((b) => b.role === 'front');
+    if (!open) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: полотна в позе хода нет');
+    const openCorner = leafPointAt(pivot, [edgeX, 0, 0], pivot.angle);
+    const sceneIngress = sx * (openCorner[0] - sideX) * 1000;
+    check(
+      'HG8 вхождение фасада при полном открывании — напечатанное 12 мм (Blum pdf 81, подъём 0, TB 5) ± 0,5; ход у угла (`leafPoses`) поворачивает полотно на тот же паспортный угол',
+      Math.abs(ingress - 12) <= 0.5 && Math.abs(Math.abs(open.yaw ?? 0) - passport.angle) < 1e-9 && Number.isFinite(sceneIngress),
+      `механизм: ${ingress.toFixed(2)} мм (угол кромки на ${printed[1].toFixed(2)} мм перед корпусом; снято с чертежа ${CLIP_TOP_110_OVERLAY.trace.cornerZMm}) · сцена (TB ${tbMm.toFixed(1)}, подъём 3): ${sceneIngress.toFixed(2)} мм`,
+    );
+
+    /* Фасад против своей боковины на всём ходу: толщины 16…22, TB 3…7, подъём 0 и 3 — и сцена. */
+    let worst = { minMm: Infinity, where: '' };
+    for (const lift of [0, 3]) for (const tb of [3, 4, 5, 6, 7]) for (const front of [16, 18, 19, 22]) {
+      const r = hingeSideSweep(CLIP_TOP_110_OVERLAY, { tbMm: tb, cupRadiusMm: 17.5, frontMm: front, sideInnerXMm: -(17.5 - 11 + lift), sideMm: 16 });
+      if (r.minMm < worst.minMm) worst = { minMm: r.minMm, where: `подъём ${lift}, TB ${tb}, фасад ${front} при ${r.atDeg}°` };
+    }
+    const scene = hingeSideSweep(CLIP_TOP_110_OVERLAY, { tbMm, cupRadiusMm: 17.5, frontMm: 16, sideInnerXMm: draws[0].sideInnerXMm, sideMm: 16 });
+    check(
+      'HG9 фасад не заходит в свою боковину ни на одном шаге хода (0,5…110°, шаг 0,5°): подъём планки 0 и 3, TB 3…7, фасад 16…22 мм — и створка сцены',
+      worst.minMm >= 0 && scene.minMm >= 0,
+      `наименьший зазор ${worst.minMm.toFixed(3)} мм (${worst.where}) · сцена ${scene.minMm.toFixed(3)} мм при ${scene.atDeg}°`,
+    );
+
+    /* Модель реестра (GLB) построена на ту же боковину, что у створки сцены: плечо стоит на планке, а не в боковине. */
+    check(
+      'HG10 боковина модели CLIP top в реестре — та же, что у створки сцены с 71B3550 и 175H3130 (таблица наложения pdf 81: DT/2 − 11 + подъём) ± 0,5 мм',
+      Math.abs(clipTopSideXMm() - draws[0].sideInnerXMm) <= 0.5,
+      `модель ${clipTopSideXMm()} мм · сцена ${draws[0].sideInnerXMm} мм`,
+    );
+  }
 
   /* ═════════════ HW-07: подъёмник — вид хода из класса механизма, одна поза на сцену и проверку ═════════════ */
   {

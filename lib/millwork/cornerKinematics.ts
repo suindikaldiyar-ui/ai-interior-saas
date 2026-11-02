@@ -8,6 +8,7 @@ import {
   bifoldMotion,
   closedFrontRect,
   lPairMotion,
+  doorLinkOf,
   leafOpenAngle,
   leafPoses,
   legOptions,
@@ -492,6 +493,11 @@ function movingOf(
           : null;
         const { angle, known } = leafOpenAngle(unit, leaf.id.slice(unit.id.length + 1), hardware, leaf.opening);
         if (!known) told.add('створка — до 90°, как в сцене: петля каталога не выбрана');
+        /* Петля с четырёхзвенником: створка ходит по нему, как в сцене (`doorLinkOf` → `doorShift`). */
+        const cupBox = rowBoxes.find((box) => box.part === leaf.id && box.hinge?.half === 'cup');
+        const link = cupBox?.hinge
+          ? doorLinkOf({ ...cupBox.hinge, origin: [cupBox.hinge.origin[0] - entry.x, cupBox.hinge.origin[1] - entry.y, cupBox.hinge.origin[2] - entry.zM] })
+          : null;
         /* Ходит деталь деталировки — та же, что нарисована закрытой (F9). */
         const frontRect = closedFrontRect(
           rowBoxes.filter((box) => box.part === leaf.id),
@@ -511,10 +517,15 @@ function movingOf(
             s,
             openAngle: angle,
             lift: leaf.opening === 'lift' ? liftMotionOf(unit, hardware) : null,
-          }).map((box) => ({
-            obb: obbOf(place, [box.center[0] + entry.x, box.center[1] + entry.y, box.center[2] + entry.zM], box.size, box.yaw ?? 0, box.pitch ?? 0),
-            part: box.role === 'handle' ? 'ручка' : 'полотно',
-          }));
+            link,
+          }).map((box) => {
+            /* Поза посчитана механизмом петли — проверка это называет (слова — от позы, а не от наличия петли). */
+            if (box.mechanism && link) told.add(link.linkage.words);
+            return {
+              obb: obbOf(place, [box.center[0] + entry.x, box.center[1] + entry.y, box.center[2] + entry.zM], box.size, box.yaw ?? 0, box.pitch ?? 0),
+              part: box.role === 'handle' ? 'ручка' : 'полотно',
+            };
+          });
         /*
          * Шаг 0,5°. Скорость — верхняя оценка для отбора максимумов на
          * уточнение, а не допуск результата: точка дальше всех от оси — край
@@ -632,7 +643,9 @@ function movingOf(
       } else {
         const parts = rowBoxes.filter((box) => box.part === leaf.id);
         if (parts.length === 0) continue;
-        const { travelM, known, words } = travelOf(unit, hardware);
+        /* Ход — тот же, что в сцене: с коробок этого ящика (`drawerRunnerOf`), без короба — модель позиции. */
+        const own = parts.find((box) => box.travel)?.travel;
+        const { travelM, known, words } = own ? { travelM: own.mm / MM, known: own.known, words: own.words } : travelOf(unit, hardware);
         if (!known) told.add(`ящик — ${words}, как в сцене`);
         at = (s) =>
           parts.map((box) => ({

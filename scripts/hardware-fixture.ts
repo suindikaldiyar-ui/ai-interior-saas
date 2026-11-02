@@ -25,7 +25,7 @@ import type { CatalogEntryFull, ProductionSettings } from '../types/catalog';
 import { HARDWARE_FACTS, hardwareCatalogRow } from '../lib/millwork/hardwareCatalog';
 import { hardwareCatalog } from '../lib/millwork/hardware';
 import { runnerModelOf } from '../lib/millwork/runnerModel';
-import { drawerDrafts, moduleDrawerKits } from '../lib/millwork/drawerKit';
+import { drawerDrafts, drawerRunnerOf, moduleDrawerKits } from '../lib/millwork/drawerKit';
 import { allModules } from '../lib/millwork/layout';
 
 type Fixture = { requirements: RunRequirements; measurement: Measurement; survey: Survey; run: Run };
@@ -189,7 +189,8 @@ const sizes = (name: string) =>
     .filter((p) => p.name === name)
     .flatMap((p) => Array.from({ length: p.qty }, () => `${p.lengthMm}x${p.widthMm}`))
     .sort();
-const runner = runnerModelOf(tbItem(TB_RUNNER));
+/* Ход — тем же `drawerRunnerOf`, что кладёт его на коробки ящика сцены: по коробу (полное выдвижение, потеря 0). */
+const runner = tbKits[0].state === 'box' ? drawerRunnerOf(tbKits[0], tbCatalog) : runnerModelOf(tbItem(TB_RUNNER));
 const drawersExpect = {
   module: TB_MODULE,
   runner: TB_RUNNER,

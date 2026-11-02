@@ -57,6 +57,7 @@ import { DEFAULT_SCENE_VIEW, type SceneView } from '@/lib/cameraFraming';
 import type { GlassKind, Module, ProfileFinish, Run } from '@/types/millwork';
 import { boxGeometryOf, sectionKey } from './profileGeometry';
 import DrillHoles3D from './DrillHoles3D';
+import { TwinModel, twinKeyOf } from './twinAsset';
 import { drillHoles3d } from '@/lib/millwork/drillHoles3d';
 import { fasteners3d } from '@/lib/millwork/fasteners3d';
 import type { DrillingPlan } from '@/lib/millwork/drillingPlan';
@@ -636,6 +637,8 @@ export default function Cabinet3D({
     /* ПРОФИЛЬ ВИТРИНЫ (P1) — пачка на покрытие: рамка двери и каркас несут `PartBox.profile`. */
     const profiles = new Map<ProfileFinish, PartBox[]>();
     const sections = new Map<string, PartBox[]>();
+    /* Царги и секции ходовой с моделью реестра (§ 5) — модель вместо сечения. */
+    const twins: PartBox[] = [];
     /*
      * РАДИУСНЫЕ ДЕТАЛИ (OVAL & RADIUS) — своей формой, по сетке на материал:
      * роль и ключ материала те же, что у коробок (`ShapedBatch`).
@@ -732,6 +735,10 @@ export default function Cabinet3D({
         else profiles.set(box.profile, [box]);
         continue;
       }
+      if (box.twin) {
+        twins.push(box);
+        continue;
+      }
       /* Сечение царги и секции направляющей (ТЗ 2026-10-31, § 5, 8) — пачка на сечение. */
       const sKey = sectionKey(box);
       if (box.material === 'metal' && sKey) {
@@ -742,7 +749,7 @@ export default function Cabinet3D({
       }
       groups[box.material].push(box);
     }
-    return { groups, fronts, carcass, inner, reliefFronts, handles, hinges, glassKinds, glassShelves, profiles, sections, shaped, decor, rounded, tv };
+    return { groups, fronts, carcass, inner, reliefFronts, handles, hinges, glassKinds, glassShelves, profiles, sections, twins, shaped, decor, rounded, tv };
   }, [boxes, activeParts, layers]);
 
   /*
@@ -1098,6 +1105,9 @@ export default function Cabinet3D({
         />
       ))}
       <InstancedBoxes name="metal" boxes={grouped.groups.metal} geometry={parts.box} material={parts.metal} />
+      {grouped.twins.map((box, i) => (
+        <TwinModel key={`twin-${i}`} twin={box.twin!.model} role={box.twin!.role} anchorM={box.twin!.anchorM} mirror={box.twin!.mirror} name={`twin:${box.twin!.role}`} twinKey={twinKeyOf(box)} />
+      ))}
       {Array.from(grouped.sections.entries()).map(([key, list]) => (
         <InstancedBoxes key={`section-${key}`} name={`section:${list[0].section}`} boxes={list} geometry={boxGeometryOf(list[0], parts.box)} material={parts.metal} />
       ))}
@@ -1769,14 +1779,22 @@ function SceneProbe({ group, run }: { group: React.RefObject<THREE.Group>; run: 
     /* Сколько деталей сейчас едет (`movingParts`) — тот же учёт, по которому ждёт захват кадра. */
     (w as { __mwMovingCount?: () => number }).__mwMovingCount = () => movingParts();
     /* Звенья петель в кадре (HW-03): длина каждого нарисованного, метры, и аномалии сцены — приёмке. */
-    (w as { __mwHingeLinks?: () => unknown }).__mwHingeLinks = () => {
+    (w as { __mwHingeLinks?: (part?: string) => unknown }).__mwHingeLinks = (part?: string) => {
       const lengths: number[] = [];
+      /* Жёсткость звеньев на ходу (решение владельца 2026-11-01): отклонение длины от закрытой, метры; `part` — звенья одной створки. */
+      let drift = 0;
       group.current?.traverse((object) => {
-        if (object.name === 'hinge-link' && object.visible) lengths.push(object.scale.x);
+        if (object.name !== 'hinge-link' || !object.visible) return;
+        if (part && object.userData.part !== part) return;
+        const length = Number(object.userData.length ?? object.scale.x);
+        lengths.push(length);
+        if (typeof object.userData.closed === 'number') drift = Math.max(drift, Math.abs(length - object.userData.closed));
       });
       const anomalies = (w as { __mwSceneAnomalies?: unknown[] }).__mwSceneAnomalies ?? [];
-      return { count: lengths.length, maxM: lengths.length ? Math.max(...lengths) : 0, anomalies: anomalies.length };
+      return { count: lengths.length, maxM: lengths.length ? Math.max(...lengths) : 0, anomalies: anomalies.length, driftM: drift, lengthsMm: lengths.map((l) => Math.round(l * 1e5) / 100) };
     };
+    /* Угол раскрытия створки (состояние сцены, `openDegrees`): показ петли на 45° и 90°. */
+    (w as { __mwSetOpenDegree?: (id: string, deg: number | null) => void }).__mwSetOpenDegree = (id, deg) => useInteriorStore.getState().setOpenDegree(id, deg);
     /* Модели реестра 3D в кадре (ТЗ 2026-10-31, § 3): сетки по ролям — приёмке. */
     (w as { __mwTwins?: () => unknown }).__mwTwins = () => {
       const meshes: Record<string, number> = {};
@@ -1785,6 +1803,27 @@ function SceneProbe({ group, run }: { group: React.RefObject<THREE.Group>; run: 
         if (mesh.isMesh && mesh.name.startsWith('twin:')) meshes[mesh.name] = (meshes[mesh.name] ?? 0) + 1;
       });
       return meshes;
+    };
+    /*
+     * МОДЕЛИ РЕЕСТРА В МИРЕ (§ 5): у каждого меша — ключ экземпляра (ящик, сторона,
+     * роль) и узел файла, центр габарита в метрах мира. Ключ один и в пачке, и на
+     * ходу: открытый ящик переезжает в свою группу, а сравнивать надо ту же часть.
+     */
+    (w as { __mwTwinCenters?: () => unknown }).__mwTwinCenters = () => {
+      const out: { key: string; role: string; node: string; center: [number, number, number]; metal: number; ownEnv: boolean }[] = [];
+      group.current?.updateWorldMatrix(true, true);
+      group.current?.traverse((object) => {
+        const mesh = object as THREE.Mesh;
+        if (!mesh.isMesh || !mesh.name.startsWith('twin:')) return;
+        let owner: THREE.Object3D | null = mesh;
+        while (owner && owner.userData?.twinKey === undefined) owner = owner.parent;
+        const c = new THREE.Box3().setFromObject(mesh).getCenter(new THREE.Vector3());
+        const node = String(mesh.userData.node ?? '');
+        /* Металл модели — со своей картой окружения, как ручки (ловушки 639, 724): без неё он тёмный. */
+        const m = (Array.isArray(mesh.material) ? mesh.material[0] : mesh.material) as THREE.MeshStandardMaterial;
+        out.push({ key: `${owner?.userData.twinKey ?? '?'}|${node}`, role: mesh.name.slice(5), node, center: [c.x, c.y, c.z], metal: m?.metalness ?? 0, ownEnv: Boolean(m?.envMap) });
+      });
+      return out;
     };
     (w as { __mwMoving?: (id: string) => unknown }).__mwMoving = (id: string) => {
       const target = group.current?.getObjectByName(`part:${id}`);
@@ -1818,12 +1857,15 @@ function SceneProbe({ group, run }: { group: React.RefObject<THREE.Group>; run: 
       const root = new THREE.Quaternion();
       carrier.getWorldQuaternion(own);
       group.current!.getWorldQuaternion(root);
-      const turn = new THREE.Euler().setFromQuaternion(root.invert().multiply(own), 'XYZ');
+      const relative = root.invert().multiply(own);
+      const turn = new THREE.Euler().setFromQuaternion(relative, 'XYZ');
+      /* Поворот створки вокруг вертикали — порядком «сначала Y»: в «XYZ» 110° читаются как 70° с переворотом X и Z. */
+      const yaw = new THREE.Euler().setFromQuaternion(relative, 'YXZ').y;
       return {
         sections,
         middleShift: middle,
         shift: [carrier.position.x, carrier.position.y, carrier.position.z].map((v) => Math.round(v * 1000)),
-        rotationDeg: [turn.x, turn.y].map((v) => Math.round((v * 180) / Math.PI)),
+        rotationDeg: [turn.x, yaw].map((v) => Math.round((v * 180) / Math.PI)),
         names,
         world: [world.x, world.y, world.z],
       };
@@ -1836,6 +1878,7 @@ function SceneProbe({ group, run }: { group: React.RefObject<THREE.Group>; run: 
       delete (w as { __mwMoving?: unknown }).__mwMoving;
       delete (w as { __mwHingeLinks?: unknown }).__mwHingeLinks;
       delete (w as { __mwTwins?: unknown }).__mwTwins;
+      delete (w as { __mwTwinCenters?: unknown }).__mwTwinCenters;
       delete (w as { __mwMovingCount?: unknown }).__mwMovingCount;
       delete (w as { __mwOpenableIds?: unknown }).__mwOpenableIds;
       delete (w as { __mwPartSize?: unknown }).__mwPartSize;

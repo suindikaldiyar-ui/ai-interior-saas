@@ -53,6 +53,7 @@ import { changeCorner, cornerDoorCards, cornerOwnerCards, describeRebuild } from
 import { hardwareCatalog } from '../lib/millwork/hardware';
 import { HARDWARE_FACTS, hardwareCatalogRow } from '../lib/millwork/hardwareCatalog';
 import { withFitting } from '../lib/millwork/fittings';
+import { CLIP_TOP_110_OVERLAY } from '../lib/millwork/hingeLinkage';
 import { DEMO_RATES } from '../lib/millwork/demo';
 import { lowerWall, wallLabel } from '../lib/millwork/walls';
 import { DEFAULT_PRODUCTION, type CatalogEntryFull, type ProductionSettings } from '../types/catalog';
@@ -167,9 +168,9 @@ function slabsOf(run: Run, place: RowPlace, production: ProductionSettings): Box
 
 /* ─────────────────────────  каталог: петля 110°  ───────────────────────── */
 
-function hingeCatalog(angleDeg: number) {
-  const fact = HARDWARE_FACTS.find((f) => f.hardware.openingAngleDeg === angleDeg);
-  if (!fact) throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: петли ${angleDeg}° в фактах нет`);
+function hingeCatalog(angleDeg: number, article?: string) {
+  const fact = HARDWARE_FACTS.find((f) => (article ? f.hardware.manufacturerArticle === article : f.hardware.openingAngleDeg === angleDeg));
+  if (!fact) throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: петли ${article ?? `${angleDeg}°`} в фактах нет`);
   const row = hardwareCatalogRow(fact);
   const entry = {
     id: `hw:${fact.article}`,
@@ -632,6 +633,24 @@ export function p0CornerChecks(check: Check): void {
       ownAfter.length === 0 && both <= 0,
       `своих заходов ${ownAfter.length} · обе открыты: зазор ${(-both).toFixed(1)} мм · углы ${Math.round((angle(0) * 180) / Math.PI)}° / ${Math.round((angle(1) * 180) / Math.PI)}°`,
     );
+
+    /*
+     * Ход у угла — тем же четырёхзвенником, что сцена (решение владельца 2026-11-01, п. 2): створка нижнего
+     * ряда с петлёй Blum CLIP top 110° (71B3550) меряется по механизму петли, и проверка это называет.
+     */
+    {
+      const clip = hingeCatalog(110, '71B3550');
+      const doorUnit = lower(runs[0]).find((u) => u.frontType === 'door' && !u.appliance && (u.doorCount ?? 0) >= 1);
+      if (!doorUnit) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: распашного модуля в нижнем ряду стены А нет');
+      const withClip = runs.map((r, i) => (i !== 0 ? r : { ...r, modules: r.modules.map((u) => (u.id === doorUnit.id ? withFitting(u, 'hinge', clip.itemId) : u)) }));
+      const kinClip = cornerKinematics({ runs: withClip, places: object.engine.places, production: shop, hardware: clip.catalog });
+      const kinPlain = cornerKinematics({ runs, places: object.engine.places, production: shop, hardware: clip.catalog });
+      check(
+        `P0.14 ход у угла — тем же четырёхзвенником, что сцена: створка «${doorUnit.label}» с петлёй ${clip.title} меряется по механизму петли (слова механизма в допущениях проверки); без петли — прежний ход`,
+        kinClip.assumptions.includes(CLIP_TOP_110_OVERLAY.words) && !kinPlain.assumptions.includes(CLIP_TOP_110_OVERLAY.words),
+        `допущения с петлёй: ${kinClip.assumptions.length} · без: ${kinPlain.assumptions.length}`,
+      );
+    }
 
     /* Раскрой, смета, сцена, отпечаток: деталь та же, петли обычные, у дверцы Б свой фасад. */
     const withB = applyOps({

@@ -19,6 +19,11 @@ import { runBoxes } from '../lib/millwork/cabinetBoxes';
 import { parseTwin, twinBoundsCheck, twinPlacement, twinStatusOf } from '../lib/millwork/hardwareTwin';
 import { model3dStatusOf } from '../lib/millwork/hardwareMedia';
 import { metalProfileOutline, outlineArea } from '../lib/millwork/metalProfiles';
+import { TB_PRINTED, TB_TRACE, cabinetMemberOutline, carriageOutline, sideOutline, signedArea, type Outline } from '../lib/millwork/tandemboxAntaro';
+import { DRAWER_BOTTOM_PANEL_NAME } from '../lib/millwork/drawerBox';
+import { CT_PRINTED, CT_TRACE, PLATE_PRINTED, sideInnerXMm } from '../lib/millwork/clipTopHinge';
+import { CLIP_TOP_PARTS, CLIP_TOP_ROLES } from './twin-hinge-asset';
+import { CLIP_TOP_110_OVERLAY } from '../lib/millwork/hingeLinkage';
 
 type Check = (name: string, ok: boolean, detail?: string) => void;
 let passed = 0;
@@ -225,6 +230,202 @@ export function twinChecks(outer?: Check): { passed: number; failed: number } {
       'TW7 путь экрана (`runBoxes`): у каждого ящика TANDEMBOX две царги сечением «царга» (левая открыта внутрь +x, правая −x), у ходовых и у секций KA 4532 — сечение «С-профиль»; брусков без сечения у направляющих и царг нет',
       sides.length > 0 && sides.length % 2 === 0 && leftOf(sides) === sides.length / 2 && rails.length > 0 && leftOf(rails) === rails.length / 2 && [...tb, ...ka].every((b) => b.section),
       `TANDEMBOX: металла ${tb.length}, царг ${sides.length} · KA: металла ${ka.length} · секций всего ${rails.length} · без сечения ${[...tb, ...ka].filter((b) => !b.section).length}`,
+    );
+  }
+
+  /* TW8 — реконструкция TANDEMBOX antaro M по чертежу Blum: напечатанное — ровно, части не входят друг в друга. */
+  {
+    const side = sideOutline();
+    const cab = cabinetMemberOutline();
+    const dm = carriageOutline();
+    const ys = side.map(([, y]) => y);
+    const top = Math.max(...ys);
+    const runnerBottom = Math.min(...cab.map(([, y]) => y));
+    const inside = (pt: [number, number], poly: Outline) => {
+      let c = false;
+      for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+        const [xi, yi] = poly[i];
+        const [xj, yj] = poly[j];
+        if (yi > pt[1] !== yj > pt[1] && pt[0] < ((xj - xi) * (pt[1] - yi)) / (yj - yi) + xi) c = !c;
+      }
+      return c;
+    };
+    const cross = (a: [number, number], b: [number, number], c: [number, number], d: [number, number]) => {
+      const o = (p: [number, number], q: [number, number], r: [number, number]) => Math.sign((q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]));
+      return o(a, b, c) * o(a, b, d) < 0 && o(c, d, a) * o(c, d, b) < 0;
+    };
+    const overlap = (a: Outline, b: Outline) =>
+      a.some((pt) => inside(pt, b)) || b.some((pt) => inside(pt, a)) || a.some((p, i) => b.some((q, j) => cross(p, a[(i + 1) % a.length], q, b[(j + 1) % b.length])));
+    const pairs: [string, Outline, Outline][] = [
+      ['царга / корпусная', side, cab],
+      ['царга / ходовая', side, dm.outer],
+      ['корпусная / ходовая', cab, dm.outer],
+    ];
+    const hits = pairs.filter(([, a, b]) => overlap(a, b)).map(([name]) => name);
+    check(
+      'TW8 реконструкция TANDEMBOX antaro M (`tandemboxAntaro`): напечатанное ровно — высота царги 83,6, низ ходовой — верх царги 95,5, боковина корпуса на 37,5 от кромки дна (каталог Blum, pdf 300–301); контуры не вывернуты; царга, корпусная и ходовая части не входят друг в друга; масштаб снятия с чертежа — 4,84 px/мм',
+      Math.abs(top - Math.min(...ys) - TB_PRINTED.sideHeightMm) < 1e-9 &&
+        Math.abs(top - runnerBottom - TB_PRINTED.totalHeightMm) < 1e-9 &&
+        Math.min(...cab.map(([x]) => x)) === -TB_PRINTED.carcassToBottomEdgeMm &&
+        [side, cab, dm.outer].every((p) => signedArea(p) > 0) &&
+        signedArea(dm.hole) < 0 &&
+        hits.length === 0 &&
+        TB_TRACE.pxPerMm === 4.84,
+      `царга ${(top - Math.min(...ys)).toFixed(1)} · всего ${(top - runnerBottom).toFixed(1)} · стена корпуса ${Math.min(...cab.map(([x]) => x))} · пересечения: ${hits.join(', ') || 'нет'}`,
+    );
+
+    /* TW9 / TW10 — путь экрана: модели реестра на царгах и секциях ходовой встают на кромку и низ дна; чужая NL — отказ словами. */
+    const record = (nodes: string[], roles: ('fixed' | 'moving' | 'middle')[], bounds: { min: [number, number, number]; max: [number, number, number] }, file: string): HardwareTwin => ({
+      ...TWIN,
+      asset: { path: `org-tw/hardware-cad/${file}/${'b'.repeat(64)}.glb`, bytes: 4096, sha256: 'b'.repeat(64) },
+      source: { ...TWIN.source, fileName: `${file}.glb`, license: 'собственная реконструкция ALDIK Studio по чертежу Blum', rightsNote: 'геометрия построена ALDIK Studio по каталогу Blum 2024-2025, pdf 301' },
+      boundsMm: bounds,
+      anchor: { kind: 'runner_front', pointMm: [0, 0, 0] },
+      parts: nodes.map((name, i) => ({ node: name, role: roles[i] })),
+      finish: undefined,
+    });
+    const sideTwin = record(['side-profile'], ['moving'], { min: [-30.3, 4.3, -450], max: [5.9, 87.9, 0] }, 'side');
+    const runnerTwin = record(['cabinet-member', 'mount-screws', 'carriage', 'rollers'], ['fixed', 'fixed', 'middle', 'middle'], { min: [-37.5, -7.6, -450], max: [-10, 33.9, 0] }, 'runner');
+    const production: ProductionSettings = {
+      ...DEFAULT_PRODUCTION,
+      drawerBox: { sideMm: 16, bottomMm: 4, bottomMaterial: 'hdf', bottomMount: 'groove', bottomGrooveMm: 6, gapBelowMm: 10, gapAboveMm: 30, runnerAxisMm: 40, edge: '0.4', confirmed: true },
+    };
+    const HOB = 'base-2700-hob@w1';
+    const boxesWith = (twins: Record<string, unknown>) => {
+      const cat = catalogWith(twins);
+      const base = workspaceInput({ title: 'TW', zone: 'Кухня', measurement: DEMO_MEASUREMENT, requirements: DEMO_REQUIREMENTS, rates: DEMO_RATES, cornerAt: null });
+      const input = objectInput({ base, resolution: null, requirements: DEMO_REQUIREMENTS, rates: DEMO_RATES, production, milling: new Map(), carcass: new Map(), materials: new Map(), hardware: cat });
+      const disabled = { basic: [], optimal: [], premium: [] } as Record<VariantKey, string[]>;
+      const shown = (edited: Partial<Record<VariantKey, Run>>) => composeVariants(input, disabled, edited).find((v) => v.key === 'optimal')!.run;
+      const next = applyOps({
+        run: shown({}),
+        requirements: DEMO_REQUIREMENTS,
+        ops: [
+          { op: 'set_fitting', moduleId: HOB, slot: 'slide', itemId: 'hw:MFR-BLUM-576.4501M' },
+          { op: 'set_fitting', moduleId: HOB, slot: 'drawer_side', itemId: 'hw:MFR-BLUM-378M4502SA' },
+        ] as MillworkOp[],
+        openings: input.openings,
+        hardware: cat,
+      });
+      if (next.warnings.length > 0) throw new Error(next.warnings.join(' | '));
+      return runBoxes(shown({ optimal: next }), { thicknessMm: 16, frontThicknessMm: 16, gapMm: 4, hardware: cat, production }).filter((b) => Math.abs(b.position[0] - 3) < 0.4);
+    };
+    const boxes = boxesWith({ 'MFR-BLUM-378M4502SA': sideTwin, 'MFR-BLUM-576.4501M': runnerTwin });
+    const sides = boxes.filter((b) => b.section === 'drawer-side');
+    const rails = boxes.filter((b) => b.section === 'runner-channel');
+    const bottoms = boxes.filter((b) => b.panel === DRAWER_BOTTOM_PANEL_NAME);
+    /* Точка модели — кромка и низ дна того же ящика: у левой — левая кромка, у правой — правая. */
+    const datumOk = (b: (typeof boxes)[number]) => {
+      const bottom = bottoms.find((d) => d.part === (b.part ?? d.part) && Math.abs(d.position[1] - d.scale[1] / 2 - (b.twin?.anchorM[1] ?? NaN)) < 1e-9);
+      if (!bottom || !b.twin) return false;
+      const x = b.twin.mirror ? bottom.position[0] + bottom.scale[0] / 2 : bottom.position[0] - bottom.scale[0] / 2;
+      return Math.abs(b.twin.anchorM[0] - x) < 1e-9;
+    };
+    const roles = rails.map((b) => b.twin?.role ?? '—');
+    check(
+      'TW9 путь экрана: у каждой царги TANDEMBOX — модель реестра 378M4502SA (едет с ящиком), у секций ходовой 576.4501M — корпусная неподвижна, ходовая едет; точка модели — кромка и низ дна того же ящика (± 0), правая сторона — отражением',
+      bottoms.length > 0 &&
+        sides.length > 0 &&
+        sides.every((b) => b.twin?.model === sideTwin && b.twin.role === 'moving' && b.twin.mirror === (b.sectionInner === -1) && datumOk(b)) &&
+        rails.length > 0 &&
+        rails.every((b) => b.twin?.model === runnerTwin && b.twin.mirror === (b.sectionInner === -1) && datumOk(b)) &&
+        roles.includes('fixed') &&
+        roles.includes('moving') &&
+        rails.every((b) => (b.twin?.role === 'fixed') === (b.part === undefined)),
+      `царг ${sides.length} с моделью ${sides.filter((b) => b.twin).length} · секций ${rails.length}: ${roles.join(', ')} · дно ${bottoms.length} · точка ${sides.every(datumOk) && rails.every(datumOk) ? 'на кромке дна' : 'МИМО'}`,
+    );
+    const wrong = boxesWith({ 'MFR-BLUM-378M4502SA': { ...sideTwin, boundsMm: { min: [-30.3, 4.3, -500], max: [5.9, 87.9, 0] } } }).filter((b) => b.section === 'drawer-side');
+    check(
+      'TW10 модель длиной NL 500 на царге NL 450 — не встаёт: у царг сечение, причина словами с числами',
+      wrong.length > 0 && wrong.every((b) => !b.twin && /500/.test(b.twinRefused ?? '') && /450/.test(b.twinRefused ?? '')),
+      wrong[0]?.twinRefused ?? 'причины нет',
+    );
+  }
+
+  /* TW11 — реконструкция петли CLIP top 71B3550 + планка 175H3130 (`twin-hinge-asset`): узлы файла меряются против напечатанного в каталоге Blum. */
+  {
+    const boundsOf = (name: string) => {
+      const part = CLIP_TOP_PARTS.find((p) => p.name === name);
+      if (!part) return null;
+      const min = [Infinity, Infinity, Infinity];
+      const max = [-Infinity, -Infinity, -Infinity];
+      const p = part.mesh.positions;
+      for (let i = 0; i < p.length; i += 3) for (let k = 0; k < 3; k += 1) {
+        min[k] = Math.min(min[k], p[i + k]);
+        max[k] = Math.max(max[k], p[i + k]);
+      }
+      return { min, max, size: max.map((v, k) => v - min[k]) };
+    };
+    const near = (a: number, b: number) => Math.abs(a - b) < 0.05;
+    const cup = boundsOf('cup');
+    const flange = boundsOf('flange');
+    const arm = boundsOf('arm');
+    const plate = boundsOf('mounting-plate');
+    const screws = CLIP_TOP_PARTS.find((p) => p.name === 'plate-screws');
+    const side = sideInnerXMm();
+    /* Головки саморезов планки: середина каждой из двух групп вершин по Z — на отверстии планки. */
+    const screwZ: number[] = [];
+    if (screws) {
+      const zs = Array.from({ length: screws.mesh.positions.length / 3 }, (_, i) => screws.mesh.positions[i * 3 + 2]).sort((a, b) => a - b);
+      const cut = zs.findIndex((z, i) => i > 0 && z - zs[i - 1] > 5);
+      const groups = cut > 0 ? [zs.slice(0, cut), zs.slice(cut)] : [zs];
+      for (const g of groups) screwZ.push((g[0] + g[g.length - 1]) / 2);
+    }
+    /* Ожидание — напечатанные 20 и 20 + 32 от кромки, а не функция модели (иначе проверка повторяет себя). */
+    const holes = [-PLATE_PRINTED.holeFromEdgeMm, -(PLATE_PRINTED.holeFromEdgeMm + PLATE_PRINTED.holeSpacingMm)];
+    const zOk = screwZ.length === 2 && holes.every((z) => screwZ.some((sz) => Math.abs(sz - z) < 0.05));
+    const lift = PLATE_PRINTED.heightMm - PLATE_PRINTED.heightLift0Mm;
+    const names = CLIP_TOP_PARTS.map((p) => p.name);
+    check(
+      'TW11 реконструкция петли 71B3550 + планка 175H3130 по чертежам Blum: чашка Ø35 × 13, фланец 57 вдоль кромки × 37,5 × 3,2, плечо от тыла фасада до −66,5 и высотой 21,5 над боковиной (+3 подъёма планки), планка 58,3 × 18,7 × H 11,5 на боковине, саморезы планки на 20 и 52 от кромки — по узлам файла; роли: чашка, фланец, саморезы чашки, корпус шарнира едут, остальное стоит',
+      Boolean(cup && flange && arm && plate) &&
+        near(cup!.size[0], CT_PRINTED.cupDiameterMm) &&
+        near(cup!.size[1], CT_PRINTED.cupDiameterMm) &&
+        near(cup!.min[2], 0) &&
+        near(cup!.max[2], CT_PRINTED.cupDepthMm) &&
+        near(flange!.size[1], CT_PRINTED.flangeWidthMm) &&
+        near(flange!.size[0], CT_PRINTED.flangeSpaceMm) &&
+        near(flange!.size[2], CT_PRINTED.flangeHeightMm) &&
+        near(flange!.max[2], 0) &&
+        near(arm!.min[2], -CT_PRINTED.armLengthMm) &&
+        near(arm!.max[0] - side, CT_PRINTED.armHeightMm + lift) &&
+        near(plate!.size[2], PLATE_PRINTED.lengthMm) &&
+        near(plate!.size[1], PLATE_PRINTED.widthMm) &&
+        near(plate!.min[0], side) &&
+        near(plate!.max[0] - side, PLATE_PRINTED.heightMm) &&
+        zOk &&
+        [...CLIP_TOP_ROLES.moving, ...CLIP_TOP_ROLES.fixed].sort().join() === [...names].sort().join() &&
+        CLIP_TOP_ROLES.moving.every((n) => !CLIP_TOP_ROLES.fixed.includes(n)),
+      `чашка ${cup?.size.map((v) => v.toFixed(1)).join('×')} · фланец ${flange?.size.map((v) => v.toFixed(1)).join('×')} · плечо до ${arm?.min[2].toFixed(1)}, над боковиной ${(arm ? arm.max[0] - side : NaN).toFixed(1)} · планка ${plate?.size.map((v) => v.toFixed(1)).join('×')} от ${plate?.min[0].toFixed(1)} · саморезы z ${screwZ.map((z) => z.toFixed(1)).join('/')}`,
+    );
+  }
+
+  /*
+   * TW12 — ОСИ ШАРНИРА В ФАЙЛЕ = ОСИ МЕХАНИЗМА СЦЕНЫ (`CLIP_TOP_110_OVERLAY`): звенья сцена ставит от оси
+   * плеча к оси чашки, и в файле на этих местах обязаны стоять оси (`arm-head`, `cup-pins`). Нос плеча —
+   * не выше плеча SH (+ подъём планки), перед кромкой корпуса — только в отверстии чашки; щёки чашки — в чашке.
+   */
+  {
+    const vertsOf = (name: string): [number, number, number][] => {
+      const part = CLIP_TOP_PARTS.find((p) => p.name === name);
+      if (!part) throw new Error(`НУЛЕВОЙ СЕЛЕКТОР: узла ${name} в файле петли нет`);
+      return Array.from({ length: part.mesh.positions.length / 3 }, (_, i) => [part.mesh.positions[i * 3], part.mesh.positions[i * 3 + 1], part.mesh.positions[i * 3 + 2]] as [number, number, number]);
+    };
+    const head = vertsOf('arm-head');
+    const pins = vertsOf('cup-pins');
+    const side = sideInnerXMm();
+    const bar = CLIP_TOP_110_OVERLAY.bar;
+    const r = CT_PRINTED.cupDiameterMm / 2;
+    /* Поверхность оси: вершины на радиусе оси вокруг точки механизма (X, Z). */
+    const onPin = (verts: [number, number, number][], c: [number, number]) => verts.filter((v) => Math.abs(Math.hypot(v[0] - c[0], v[2] - c[1]) - CT_TRACE.pinDiameterMm / 2) < 1e-3).length;
+    const pinsAt = [onPin(head, bar.a0), onPin(head, bar.b0), onPin(pins, bar.a1), onPin(pins, bar.b1)];
+    const headTop = Math.max(...head.map((v) => v[0])) - side;
+    const headInDoor = head.filter((v) => v[2] > 1e-6 && Math.hypot(v[0], v[1]) > r + 1e-6).length;
+    const pinsOut = pins.filter((v) => Math.hypot(v[0], v[1]) > r + 1e-6 || v[2] < -1e-6 || v[2] > CT_PRINTED.cupDepthMm + 1e-6).length;
+    check(
+      'TW12 оси шарнира в файле петли — на осях механизма сцены (A0, B0 на носу плеча, A1, B1 в чашке); нос плеча не выше 21,5 + подъём 3 над боковиной, перед кромкой корпуса — только в отверстии чашки; щёки и оси чашки — в чашке',
+      pinsAt.every((n) => n >= 40) && headTop <= CT_PRINTED.armHeightMm + (PLATE_PRINTED.heightMm - PLATE_PRINTED.heightLift0Mm) + 0.05 && headInDoor === 0 && pinsOut === 0,
+      `вершин на осях A0 / B0 / A1 / B1: ${pinsAt.join(' / ')} · нос над боковиной ${headTop.toFixed(2)} мм · носа в теле фасада ${headInDoor} · щёк чашки вне чашки ${pinsOut}`,
     );
   }
 

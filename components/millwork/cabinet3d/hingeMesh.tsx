@@ -4,7 +4,8 @@ import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { BoxDraw, HingeDraw } from '@/lib/millwork/cabinetBoxes';
-import { hingeHalfMesh, hingeLinkSegments } from '@/lib/millwork/hingeMeshData';
+import { hingeHalfMesh, hingeLinkSegments, pushBeam, type MeshData } from '@/lib/millwork/hingeMeshData';
+import { hingeParts } from '@/lib/millwork/hingeModel';
 import { reportSceneAnomaly } from './sceneAnomalies';
 import { TwinModel } from './twinAsset';
 
@@ -108,6 +109,8 @@ export function HingeBatch({
         {boxes.map((box, i) => (
           <TwinModel key={i} twin={twin} role={box.hinge!.half === 'cup' ? 'moving' : 'fixed'} anchorM={box.hinge!.origin} mirror={box.hinge!.mirror} name="hinge-twin" />
         ))}
+        {/* Звенья четырёхзвенника закрытых петель — в файле их нет: одна сетка на пачку. */}
+        {draw.half === 'cup' && draw.model.linkage && <ClosedLinks boxes={boxes} material={material} />}
       </>
     );
   }
@@ -122,6 +125,27 @@ export function HingeBatch({
       userData={{ hingeHalf: draw?.half, hingeModel: draw?.model.key, hingeStatus: draw?.model.status }}
     />
   );
+}
+
+/** Звенья закрытых петель с четырёхзвенником (модель реестра): одна сетка на пачку, метры ряда. */
+function ClosedLinks({ boxes, material }: { boxes: (BoxDraw & { hinge?: HingeDraw })[]; material: THREE.Material }) {
+  const geometry = useMemo(() => {
+    const mesh: MeshData = { positions: [], normals: [], indices: [] };
+    for (const box of boxes) {
+      const h = box.hinge!;
+      const sx = h.mirror ? -1 : 1;
+      const at = (p: [number, number, number]): [number, number, number] => [h.origin[0] * 1000 + p[0] * sx, h.origin[1] * 1000 + p[1], h.origin[2] * 1000 + p[2]];
+      for (const link of hingeParts(h.model, h.sideInnerXMm).links) pushBeam(mesh, at(link.fixed), at(link.moving), link.widthMm, false, link.thicknessMm ?? link.widthMm);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(mesh.positions.map((v) => v / MM), 3));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(mesh.normals, 3));
+    g.setIndex(mesh.indices);
+    g.computeBoundingSphere();
+    return g;
+  }, [boxes]);
+  useEffect(() => () => geometry.dispose(), [geometry]);
+  return <mesh name="hinge-links-closed" geometry={geometry} material={material} castShadow />;
 }
 
 /** Чашка на едущем полотне — в координатах группы створки. */
@@ -143,9 +167,12 @@ export function HingeLinks({
   material,
   toCarcass,
   angleRef,
+  part,
 }: {
   draws: HingeDraw[];
   material: THREE.Material;
+  /** Створка, чьи это звенья, — приёмке (`__mwHingeLinks(part)`). */
+  part?: string;
   /** Точка (метры ряда, закрытая поза) → та же точка полотна при угле `angle`. */
   toCarcass: (p: [number, number, number], angle: number) => [number, number, number];
   angleRef: { current: number };
@@ -153,7 +180,9 @@ export function HingeLinks({
   const geometry = useMemo(() => new THREE.BoxGeometry(1, 1, 1), []);
   useEffect(() => () => geometry.dispose(), [geometry]);
   const refs = useRef<(THREE.Mesh | null)[]>([]);
-  const count = useMemo(() => hingeLinkSegments(draws, (p) => p).length, [draws]);
+  /* Длины звеньев в закрытой позе: на ходу у жёсткого звена они те же (приёмка сверяет). */
+  const closedLengths = useMemo(() => hingeLinkSegments(draws, (p) => p).map((seg) => seg.length), [draws]);
+  const count = closedLengths.length;
   const up = useMemo(() => new THREE.Vector3(1, 0, 0), []);
   const reported = useRef(false);
   const apply = () => {
@@ -173,8 +202,11 @@ export function HingeLinks({
         }
         return;
       }
+      mesh.userData.length = pose.length;
+      mesh.userData.closed = closedLengths[i];
       mesh.position.set(...pose.mid);
-      mesh.scale.set(pose.length, pose.width, pose.width);
+      /* Пластина звена: длина по оси звена, толщина вдоль осей шарнира (Y), ширина — в плоскости хода. */
+      mesh.scale.set(pose.length + pose.width, pose.thickness, pose.width);
       mesh.quaternion.setFromUnitVectors(up, new THREE.Vector3(...pose.dir));
     });
   };
@@ -191,6 +223,7 @@ export function HingeLinks({
           name="hinge-link"
           geometry={geometry}
           material={material}
+          userData={{ part }}
         />
       ))}
     </>

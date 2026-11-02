@@ -75,6 +75,29 @@ export function parseTwin(raw: unknown): HardwareTwin | null {
   return t as unknown as HardwareTwin;
 }
 
+const FINISH_WORDS: Record<TwinFinish, string> = {
+  chrome: 'хром',
+  nickel: 'никель',
+  stainless: 'нержавеющая сталь',
+  aluminium: 'алюминий',
+  black_matte: 'чёрный матовый',
+  white: 'белый',
+  grey: 'серый',
+  brass: 'латунь',
+  anthracite: 'антрацит',
+};
+
+/**
+ * ПОКРЫТИЕ МОДЕЛИ РЕЕСТРА — словами (решение владельца 2026-11-01, п. 3): без
+ * `finish` — материалы самого файла; с ним — выбрано при импорте. Ни то, ни
+ * другое производитель не подтверждал, пока модель не его CAD с правами.
+ */
+export function twinFinishWords(twin: HardwareTwin): string {
+  const confirmed = twin.status === 'OFFICIAL_CAD';
+  if (twin.finish === undefined) return confirmed ? 'материалы — из CAD производителя' : 'материалы — как в файле модели; цвет производителем не подтверждён';
+  return `покрытие «${FINISH_WORDS[twin.finish]}» выбрано при импорте — производителем не подтверждено`;
+}
+
 /** Запись реестра позиции: `meta.twin` строки каталога (`hardwareOf` кладёт её в `HardwareItem.twin`). */
 export function twinOf(item: HardwareItem | null | undefined): HardwareTwin | null {
   return item?.twin ?? null;

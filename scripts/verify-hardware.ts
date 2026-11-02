@@ -34,7 +34,7 @@ import {
 import { fittingSlotsOf, fittingVerdict, slidingAccepts, slidingVerdict, slotAccepts } from '../lib/millwork/fittings';
 import { buildPanels, objectPanels, type ObjectPanel } from '../lib/millwork/panels';
 import { boxedDrawerCount, cuttingPlan, drawerCount } from '../lib/millwork/cutting';
-import { drawerDrafts, moduleDrawerKits } from '../lib/millwork/drawerKit';
+import { drawerDrafts, drawerRunnerOf, moduleDrawerKits } from '../lib/millwork/drawerKit';
 import { drawerReleaseBlock } from '../lib/millwork/bays';
 import { buildEstimate, totalCaption, unpricedLines } from '../lib/millwork/estimate';
 import { kupeLeaves, runBoxes, runPlaces, sceneLeaves, sceneSlides } from '../lib/millwork/cabinetBoxes';
@@ -1706,6 +1706,40 @@ console.log('\nHW-04: направляющая — секции по виду в
       !tbPlan.release.open,
     `боковин ${hobSides.length}, причин ${sidePending.length}: «${sidePending[0]?.why.find((w) => w.includes('высота')) ?? 'НЕТ'}» · фронтов ${hobFronts.length} (INSERTA у ${hobFronts.filter((p) => p.pending.some((x) => x.what.includes('INSERTA'))).length}) · задних ${hobBacks.length} (держатель у ${hobBacks.filter((p) => p.pending.some((x) => x.what.includes('держатель'))).length})`,
   );
+
+  /*
+   * TB6 — ХОД TANDEMBOX ПО ОПРЕДЕЛЕНИЮ BLUM, А НЕ «= NL»: полное выдвижение и потеря при
+   * выдвижении 0 (каталог 2024-2025, pdf 728 и 731) — задняя стенка выдвинутого ящика встаёт
+   * на кромку корпуса. Ход — от тыла задней стенки короба до кромки: дно NL − 24 (паспорт) плюс
+   * толщина задней стенки; секции — по сечению pdf 301: каретка с роликами — половина хода.
+   */
+  {
+    const tbRunner = drawerRunnerOf(tbKit, CATALOG);
+    const expected = 450 - 24 + (tbBack?.thicknessMm ?? NaN);
+    const tbDrawer = tbScene.filter((b) => b.part === `${HOB}:drawer:0`);
+    const middles = tbScene.filter((b) => b.part === `${HOB}:drawer:0` && b.node === 'runner' && b.slideShare === 0.5);
+    const movento = runnerModelOf(item('MFR-BLUM-760H5000S'));
+    const plain = runnerModelOf(item('MFR-BLUM-576.4501M'));
+    check(
+      'TB6 ход TANDEMBOX 576.4501M NL 450 — по определению Blum (полное выдвижение, потеря 0: pdf 728, 731): от тыла задней стенки короба до кромки корпуса = 450 − 24 + толщина стенки, а не NL; у каждой коробки ящика в сцене — этот ход (его же берёт ход у угла); секции — три по сечению pdf 301 (каретка — половина хода); без короба — «условно» словами; MOVENTO 760H — тот же класс по pdf 728, сечения нет — словами',
+      tbRunner.travelBasis === 'loss' &&
+        Math.abs(tbRunner.travelMm - expected) < 0.05 &&
+        tbRunner.travelMm !== 450 &&
+        tbRunner.words.includes('pdf 731') &&
+        tbRunner.members === 3 &&
+        tbRunner.membersWords.includes('pdf 301') &&
+        tbDrawer.length > 0 &&
+        tbDrawer.filter((b) => !b.travel).every((b) => b.material === 'front' || b.node === 'handle') &&
+        tbDrawer.filter((b) => b.travel).every((b) => b.travel!.mm === tbRunner.travelMm && b.travel!.known) &&
+        middles.length === 2 &&
+        plain.travelBasis === 'conditional' &&
+        plain.words.includes('короба у ящика нет') &&
+        movento.extension === 'full' &&
+        movento.words.includes('pdf 728') &&
+        movento.membersWords.includes('условная'),
+      `ход ${tbRunner.travelMm} мм (${tbRunner.travelBasis}; ждём ${expected}) · коробок ящика ${tbDrawer.length}, с ходом ${tbDrawer.filter((b) => b.travel).length} · средних секций ${middles.length} · без короба: ${plain.travelBasis} ${plain.travelMm} · MOVENTO: ${movento.extension}/${movento.members}/${movento.travelBasis}`,
+    );
+  }
 
   /* Ход не одинаковый у всех моделей и нигде не длиннее самой направляющей. */
   const allSlides = Array.from(CATALOG.values()).filter((it) => it.hardware.category === 'slide' || /runner/.test(it.hardware.subcategory ?? ''));

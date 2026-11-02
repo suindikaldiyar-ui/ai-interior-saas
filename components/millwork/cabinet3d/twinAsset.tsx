@@ -1,11 +1,13 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useThree } from '@react-three/fiber';
+import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { HardwareTwin, TwinFinish, TwinRole } from '@/types/catalog';
 import { twinPlacement, twinRoleOf } from '@/lib/millwork/hardwareTwin';
 import { CATALOG_BUCKET, storageUrl } from '@/lib/supabase/config';
+import { useInteriorStore } from '@/store/useInteriorStore';
+import { HANDLE_ENV_INTENSITY, cadEnvironment } from './cadLook';
 import { reportSceneAnomaly } from './sceneAnomalies';
 
 /**
@@ -61,14 +63,42 @@ const FINISH: Record<TwinFinish, { color: string; metalness: number; roughness: 
   brass: { color: '#b8954f', metalness: 1, roughness: 0.3 },
   anthracite: { color: '#3c3f44', metalness: 0.5, roughness: 0.55 },
 };
-const materials = new Map<TwinFinish, THREE.MeshStandardMaterial>();
-function finishMaterial(finish: TwinFinish): THREE.MeshStandardMaterial {
-  const known = materials.get(finish);
+/**
+ * Материалы модели — НА ОТРИСОВЩИК, металл со СВОЕЙ картой окружения, как у ручек
+ * и профиля витрины (ловушки 639, 724): на окружении сцены (сила 0,5) металл
+ * покрытия «никель» и цинк файла рисовались тёмно-серыми, царга TANDEMBOX —
+ * почти чёрной. Карта окружения живёт в контексте WebGL, поэтому и материал —
+ * в контексте; экономичный режим — без отражений.
+ */
+const materials = new WeakMap<THREE.WebGLRenderer, Map<string, THREE.MeshStandardMaterial>>();
+function ownMaterial(gl: THREE.WebGLRenderer, key: string, economy: boolean, make: () => THREE.MeshStandardMaterial): THREE.MeshStandardMaterial {
+  let own = materials.get(gl);
+  if (!own) {
+    own = new Map();
+    materials.set(gl, own);
+  }
+  const full = `${key}|${economy ? 'e' : 'n'}`;
+  const known = own.get(full);
   if (known) return known;
-  const f = FINISH[finish];
-  const material = new THREE.MeshStandardMaterial({ color: f.color, metalness: f.metalness, roughness: f.roughness, side: THREE.DoubleSide });
-  materials.set(finish, material);
+  const material = make();
+  material.side = THREE.DoubleSide;
+  if (!economy && material.metalness > 0) {
+    material.envMap = cadEnvironment(gl);
+    material.envMapIntensity = HANDLE_ENV_INTENSITY;
+  }
+  material.userData = { ...material.userData, twinMaterial: key };
+  own.set(full, material);
   return material;
+}
+function finishMaterial(gl: THREE.WebGLRenderer, finish: TwinFinish, economy: boolean): THREE.MeshStandardMaterial {
+  const f = FINISH[finish];
+  return ownMaterial(gl, `finish:${finish}`, economy, () => new THREE.MeshStandardMaterial({ color: f.color, metalness: f.metalness, roughness: f.roughness, name: `twin:${finish}` }));
+}
+/** Материал из файла: металлический — копия на отрисовщик со своей картой окружения; прочий — как в файле. */
+function fileMaterial(gl: THREE.WebGLRenderer, source: THREE.Material, economy: boolean): THREE.Material {
+  const standard = source as THREE.MeshStandardMaterial;
+  if (!standard.isMeshStandardMaterial || standard.metalness <= 0) return source;
+  return ownMaterial(gl, `file:${source.uuid}`, economy, () => standard.clone());
 }
 
 function useTwinScene(twin: HardwareTwin): THREE.Group | null {
@@ -93,9 +123,9 @@ function useTwinScene(twin: HardwareTwin): THREE.Group | null {
 }
 
 /** Часть модели одной роли — клон сцены файла без узлов чужой роли; геометрия общая с файлом. */
-function rolePart(scene: THREE.Group, twin: HardwareTwin, role: TwinRole): THREE.Group {
+function rolePart(scene: THREE.Group, twin: HardwareTwin, role: TwinRole, gl: THREE.WebGLRenderer, economy: boolean): THREE.Group {
   const part = scene.clone(true);
-  const material = twin.finish ? finishMaterial(twin.finish) : null;
+  const material = twin.finish ? finishMaterial(gl, twin.finish, economy) : null;
   const foreign: THREE.Mesh[] = [];
   part.traverse((object) => {
     const mesh = object as THREE.Mesh;
@@ -114,12 +144,25 @@ function rolePart(scene: THREE.Group, twin: HardwareTwin, role: TwinRole): THREE
       foreign.push(mesh);
       return;
     }
-    if (material) mesh.material = material;
+    mesh.material = material ?? (Array.isArray(mesh.material) ? mesh.material.map((m) => fileMaterial(gl, m, economy)) : fileMaterial(gl, mesh.material, economy));
     mesh.castShadow = true;
+    /* Узел файла — для приёмки: какая часть изделия где стоит и куда едет. */
+    mesh.userData.node = mesh.userData.node ?? mesh.name;
     mesh.name = `twin:${role}`;
   });
   for (const mesh of foreign) mesh.parent?.remove(mesh);
   return part;
+}
+
+/**
+ * КЛЮЧ ЭКЗЕМПЛЯРА МОДЕЛИ НА ОБЪЕКТЕ: ящик (или «корпус» с местом у неподвижной
+ * части), сторона, роль. Одинаков в общей пачке и в группе едущего ящика —
+ * приёмка сравнивает ту же часть до и после хода.
+ */
+export function twinKeyOf(box: { part?: string; twin?: { anchorM: [number, number, number]; mirror: boolean; role: TwinRole } }): string {
+  if (!box.twin) return '';
+  const side = box.twin.mirror ? 'R' : 'L';
+  return box.part ? `${box.part}|${side}|${box.twin.role}` : `cabinet|${box.twin.anchorM.map((v) => v.toFixed(4)).join(',')}|${side}|${box.twin.role}`;
 }
 
 /** Одна модель реестра в точке движка. */
@@ -129,16 +172,32 @@ export function TwinModel({
   anchorM,
   mirror = false,
   name,
+  twinKey,
 }: {
   twin: HardwareTwin;
   role: TwinRole;
   anchorM: [number, number, number];
   mirror?: boolean;
   name?: string;
+  /** Что это за экземпляр на объекте (ящик, сторона, роль) — одинаковый в пачке и на ходу; приёмке. */
+  twinKey?: string;
 }) {
   const scene = useTwinScene(twin);
-  const part = useMemo(() => (scene ? rolePart(scene, twin, role) : null), [scene, twin, role]);
+  const gl = useThree((state) => state.gl);
+  const world = useThree((state) => state.scene);
+  const economy = useInteriorStore((state) => state.economyMode);
+  const part = useMemo(() => (scene ? rolePart(scene, twin, role, gl, economy) : null), [scene, twin, role, gl, economy]);
+  /* Своя карта окружения поворачивается вместе с окружением сцены (оно смотрит к открытой стороне). */
+  useFrame(() => {
+    part?.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      for (const m of (Array.isArray(mesh.material) ? mesh.material : [mesh.material]) as THREE.MeshStandardMaterial[]) {
+        if (m.envMap && m.envMapRotation.y !== world.environmentRotation.y) m.envMapRotation.copy(world.environmentRotation);
+      }
+    });
+  });
   if (!part) return null;
   const place = twinPlacement(twin, anchorM, mirror);
-  return <primitive object={part} position={place.position} scale={place.scale} name={name ?? `twin:${twin.asset.sha256.slice(0, 8)}`} />;
+  return <primitive object={part} position={place.position} scale={place.scale} name={name ?? `twin:${twin.asset.sha256.slice(0, 8)}`} userData={{ twinKey }} />;
 }

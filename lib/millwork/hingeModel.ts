@@ -1,5 +1,6 @@
 import type { HardwareItem } from '@/types/catalog';
 import { hingeCupOf, plateHolesOf } from './hingePlace';
+import { hingeLinkageOf, type HingeLinkage } from './hingeLinkage';
 
 /**
  * МОДЕЛЬ ПЕТЛИ ДЛЯ СЦЕНЫ (HW-03) — из паспорта позиции, без three.
@@ -25,6 +26,12 @@ export type HingeModel = {
   status: HingeModelStatus;
   /** Что условно — словами. */
   conditional: string[];
+  /**
+   * ШАРНИРНАЯ КИНЕМАТИКА (`hingeLinkageOf`): у петли с четырёхзвенником фасад
+   * ходит по нему, звенья — его оси. Нет — прежний ход сцены (поворот у кромки и
+   * вынос, слой 55) и условные звенья.
+   */
+  linkage?: HingeLinkage;
 };
 
 export function hingeModelOf(hinge: HardwareItem | null | undefined, plate: HardwareItem | null | undefined): HingeModel {
@@ -44,8 +51,10 @@ export function hingeModelOf(hinge: HardwareItem | null | undefined, plate: Hard
   const plateFromEdgeMm = holes?.fromEdge ?? 37;
   if (!holes) conditional.push('планка 32 / 37 мм — условно (планка не выбрана или её отверстия не разобраны)');
   const article = hinge?.hardware.manufacturerArticle ?? null;
+  const linkage = hingeLinkageOf(hinge);
+  if (linkage) conditional.splice(0, 1, 'плечо и корпус шарнира — условные; звенья — четырёхзвенник, оси подобраны под напечатанные угол 110° и вхождение 12 мм (Blum pdf 81)');
   return {
-    key: `hinge:${cupDiameterMm}:${cupDepthMm}:${flangeWidthMm}:${plateSpacingMm}:${plateFromEdgeMm}`,
+    key: `hinge:${cupDiameterMm}:${cupDepthMm}:${flangeWidthMm}:${plateSpacingMm}:${plateFromEdgeMm}${linkage ? `:${linkage.key}` : ''}`,
     article,
     cupDiameterMm,
     cupDepthMm,
@@ -54,6 +63,7 @@ export function hingeModelOf(hinge: HardwareItem | null | undefined, plate: Hard
     plateFromEdgeMm,
     status: hinge ? 'VISUAL_RECONSTRUCTION' : 'VISUAL_APPROXIMATION',
     conditional,
+    ...(linkage ? { linkage } : {}),
   };
 }
 
@@ -64,7 +74,8 @@ export function hingeModelOf(hinge: HardwareItem | null | undefined, plate: Hard
  * этих осях (отрицательная: боковина ближе к кромке, чем чашка).
  */
 export type HingeBox = { min: [number, number, number]; max: [number, number, number] };
-export type HingeLink = { fixed: [number, number, number]; moving: [number, number, number]; widthMm: number };
+/** Звено: ширина в плоскости хода и толщина вдоль осей шарнира (Y); без толщины — квадратное. */
+export type HingeLink = { fixed: [number, number, number]; moving: [number, number, number]; widthMm: number; thicknessMm?: number };
 
 export type HingeParts = {
   /** Едет с фасадом: чашка (цилиндр), фланец, корпус шарнира. */
@@ -77,6 +88,7 @@ export type HingeParts = {
 };
 
 export function hingeParts(model: HingeModel, sideInnerXMm: number): HingeParts {
+  if (model.linkage) return linkageParts(model, sideInnerXMm);
   const r = model.cupDiameterMm / 2;
   const flangeH = model.flangeWidthMm / 2;
   const knuckleX: [number, number] = [-r - 3, -r + 9];
@@ -100,6 +112,49 @@ export function hingeParts(model: HingeModel, sideInnerXMm: number): HingeParts 
     links: [
       { fixed: [plateFace + 8, 5, -16], moving: [knuckleX[0] + 2, 5, -9], widthMm: 4 },
       { fixed: [plateFace + 8, -5, -16], moving: [knuckleX[1] - 2, -5, -9], widthMm: 4 },
+    ],
+  };
+}
+
+/** Звено петли с четырёхзвенником — штампованная пластина: ширина и толщина, мм (условно). */
+export const LINK_WIDTH_MM = 4.5;
+export const LINK_THICKNESS_MM = 1.4;
+
+/**
+ * ЧАСТИ ПЕТЛИ С ЧЕТЫРЁХЗВЕННИКОМ: звенья — от осей плеча (A0, B0) к осям чашки
+ * (A1, B1) в закрытом положении; нос плеча доходит до своих осей, в чашке —
+ * бобышки под оси. Звенья разведены по высоте (Y), чтобы не проходить друг
+ * сквозь друга.
+ */
+function linkageParts(model: HingeModel, sideInnerXMm: number): HingeParts {
+  const bar = model.linkage!.bar;
+  const r = model.cupDiameterMm / 2;
+  const flangeH = model.flangeWidthMm / 2;
+  const plateHalf = model.plateSpacingMm / 2 + 9;
+  const plateZ = -model.plateFromEdgeMm;
+  const plateFace = Math.min(sideInnerXMm, -1);
+  const pin = (p: [number, number], y0: number, y1: number): HingeBox => ({ min: [p[0] - 2, y0, p[1] - 2], max: [p[0] + 2, y1, p[1] + 2] });
+  const noseX0 = Math.min(bar.a0[0], bar.b0[0]) - 2.5;
+  const noseX1 = Math.max(bar.a0[0], bar.b0[0]) + 2.5;
+  const noseZ1 = Math.max(bar.a0[1], bar.b0[1]) + 2.5;
+  return {
+    cup: { center: [0, 0], radius: r, depth: model.cupDepthMm },
+    cupBoxes: [
+      /* Фланец заподлицо с тылом фасада. */
+      { min: [-r * 0.85, -flangeH, -1.5], max: [r * 0.75, flangeH, 0] },
+      /* Бобышки осей чашки. */
+      pin(bar.a1, -7, 7),
+      pin(bar.b1, -7, 7),
+    ],
+    armBoxes: [
+      { min: [plateFace, -plateHalf, plateZ - 16], max: [plateFace + 4, plateHalf, plateZ + 16] },
+      { min: [plateFace + 4, -8, plateZ - 12], max: [plateFace + 12, 8, Math.min(noseZ1, -2)] },
+      /* Нос плеча с осями звеньев. */
+      { min: [noseX0, -6, Math.min(bar.a0[1], bar.b0[1]) - 2.5], max: [noseX1, 6, noseZ1] },
+    ],
+    links: [
+      { fixed: [bar.a0[0], 1.8, bar.a0[1]], moving: [bar.a1[0], 1.8, bar.a1[1]], widthMm: LINK_WIDTH_MM, thicknessMm: LINK_THICKNESS_MM },
+      { fixed: [bar.b0[0], -1.8, bar.b0[1]], moving: [bar.b1[0], -1.8, bar.b1[1]], widthMm: LINK_WIDTH_MM, thicknessMm: LINK_THICKNESS_MM },
     ],
   };
 }

@@ -2359,7 +2359,8 @@ function rowCorners(
   /**
    * ДЛЯ РЁБЕР (HANDLE-REAL): у ручки своя форма — скоба, кнопка, профиль, —
    * и контур коробки вокруг неё рисовал бы проволочный ящик поверх ручки.
-   * Габарит мебели и пересечения ручку по-прежнему видят.
+   * Габарит мебели и пересечения ручку по-прежнему видят. То же у петли и у
+   * модели реестра 3D: у них своя форма, и контур коробки их не обводит.
    */
   outline = false,
   /**
@@ -2394,7 +2395,9 @@ function rowCorners(
           (inside || !box.inside) &&
           boxShown(box, layers) &&
           !(box.part && open.has(box.part)) &&
-          !(outline && box.node === 'handle' && box.handle),
+          !(outline && box.node === 'handle' && box.handle) &&
+          /* Петля и модель реестра — своей формой (чашка, плечо, файл): коробка вокруг них — проволочный ящик поверх узла. */
+          !(outline && (box.hinge || box.twin)),
       );
 
       const place = rowPlacement(row);

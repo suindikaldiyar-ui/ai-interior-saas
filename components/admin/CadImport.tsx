@@ -116,6 +116,30 @@ type OcctResult = {
 };
 
 /** Сетки файла с уникальными именами: часть без имени — `part-N`; повтор — `имя-2`. */
+/**
+ * СВОИ МАТЕРИАЛЫ ФАЙЛА: именованные или не по умолчанию (цвет, металл,
+ * шероховатость). У модели с ними покрытие по умолчанию — «как в файле»
+ * (решение владельца 2026-11-01, п. 3): одно покрытие на всё красит окрашенную
+ * царгу и пластик никелем. У файла без материалов (OBJ без MTL, STEP без
+ * цвета) покрытие выбирает человек — и оно подписано выбранным при импорте.
+ */
+export function fileMaterialsOf(root: THREE.Object3D): string[] {
+  const names = new Set<string>();
+  root.traverse((object) => {
+    const mesh = object as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+      if (!m) continue;
+      const std = m as THREE.MeshStandardMaterial;
+      const named = Boolean(m.name?.trim());
+      const coloured = std.color ? std.color.getHex() !== 0xffffff : false;
+      const pbr = typeof std.metalness === 'number' && (std.metalness > 0 || std.roughness !== 1);
+      if (named || coloured || pbr) names.add(m.name?.trim() || `#${std.color?.getHexString() ?? 'материал'}`);
+    }
+  });
+  return Array.from(names);
+}
+
 function namedMeshes(root: THREE.Object3D): THREE.Mesh[] {
   const meshes: THREE.Mesh[] = [];
   const used = new Set<string>();
@@ -157,7 +181,12 @@ export default function CadImport({ orgId }: { orgId: string }) {
   const [anchorNode, setAnchorNode] = useState('');
   const [custom, setCustom] = useState<[number, number, number]>([0, 0, 0]);
   const [roles, setRoles] = useState<Record<string, TwinRole>>({});
-  const [finish, setFinish] = useState<TwinFinish>('nickel');
+  /*
+   * «Как в файле» — материалы файла (покраска, цинк, пластик) без подмены одним покрытием;
+   * у файла без своих материалов покрытие выбирает человек (`unset` — ещё не выбрано, записи нет).
+   */
+  const [finish, setFinish] = useState<TwinFinish | 'file' | 'unset'>('unset');
+  const [fileMaterials, setFileMaterials] = useState<string[]>([]);
   const [status, setStatus] = useState<HardwareTwin['status']>('VISUAL_RECONSTRUCTION');
   const [sourceKind, setSourceKind] = useState<HardwareTwin['source']['kind']>('manufacturer_cad');
   const [license, setLicense] = useState('');
@@ -235,7 +264,9 @@ export default function CadImport({ orgId }: { orgId: string }) {
   const check = item && slot && boundsMm ? twinBoundsCheck({ boundsMm }, item, slot) : null;
   const officialBlocked = status === 'OFFICIAL_CAD' && (sourceKind !== 'manufacturer_cad' || rights !== 'VERIFIED');
   const canSave =
-    Boolean(item && normalized && anchorMm && check?.ok && license.trim() && rightsNote.trim() && rights === 'VERIFIED' && !officialBlocked && !busy);
+    Boolean(item && normalized && anchorMm && check?.ok && license.trim() && rightsNote.trim() && rights === 'VERIFIED' && !officialBlocked && !busy) &&
+    finish !== 'unset' &&
+    !(finish === 'file' && fileMaterials.length === 0);
 
   const onFile = async (next: File | null) => {
     setFile(next);
@@ -253,6 +284,9 @@ export default function CadImport({ orgId }: { orgId: string }) {
     try {
       const group = await parseFile(next, f);
       setSource(group);
+      const own = fileMaterialsOf(group);
+      setFileMaterials(own);
+      setFinish(own.length > 0 ? 'file' : 'unset');
       const meshes = namedMeshes(group);
       setRoles(Object.fromEntries(meshes.map((m) => [m.name, 'fixed' as TwinRole])));
       setAnchorNode(meshes[0]?.name ?? '');
@@ -299,7 +333,7 @@ export default function CadImport({ orgId }: { orgId: string }) {
         boundsMm,
         anchor: { kind: anchorKindFor(slot!), pointMm: anchorMm },
         parts: normalized.meshes.map((m) => ({ node: m.name, role: roles[m.name] ?? 'fixed' })),
-        finish,
+        ...(finish === 'file' || finish === 'unset' ? {} : { finish }),
         verification: { visual: visualChecked ? 'CHECKED' : 'UNCHECKED', manufacturing: 'UNVERIFIED' },
       };
       const res = await fetch('/api/catalog/hardware/twin', {
@@ -453,13 +487,20 @@ export default function CadImport({ orgId }: { orgId: string }) {
             <div className="grid grid-cols-2 gap-2">
               <label className="block">
                 <span className="mw-label">Покрытие</span>
-                <select data-cad-finish className="mw-field w-full" value={finish} onChange={(e) => setFinish(e.target.value as TwinFinish)}>
+                <select data-cad-finish className="mw-field w-full" value={finish} onChange={(e) => setFinish(e.target.value as TwinFinish | 'file' | 'unset')}>
+                  {fileMaterials.length === 0 && <option value="unset">выберите покрытие</option>}
+                  {fileMaterials.length > 0 && <option value="file">как в файле</option>}
                   {FINISHES.map((f) => (
                     <option key={f} value={f}>
                       {FINISH_TITLE[f]}
                     </option>
                   ))}
                 </select>
+                <span className="mt-1 block text-[13px] text-graphiteMw" data-cad-finish-words>
+                  {fileMaterials.length > 0
+                    ? `Материалы файла: ${fileMaterials.slice(0, 4).join(', ')}${fileMaterials.length > 4 ? ` и ещё ${fileMaterials.length - 4}` : ''}. Цвет — как в файле; производителем не подтверждён.`
+                    : 'Своих материалов в файле нет: покрытие выбирается здесь и подписывается как выбранное при импорте, не подтверждённое производителем.'}
+                </span>
               </label>
               <label className="block">
                 <span className="mw-label">Достоверность</span>

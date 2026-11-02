@@ -4,6 +4,7 @@ import { moduleCarcassHeightMm, moduleDepthMm } from './fill';
 import { bayEnvelope, bayLayout } from './bays';
 import { fittingItemId, installedItem } from './fittings';
 import { shopOf } from './shop';
+import { runnerModelOf, type RunnerModel } from './runnerModel';
 import {
   drawerBoxPlan,
   drawerBoxRulesOf,
@@ -44,6 +45,23 @@ export type DrawerPlace = {
 export type DrawerKit =
   | { place: DrawerPlace; state: 'box'; profile: DrawerProfile; plan: DrawerBoxPlan }
   | { place: DrawerPlace; state: 'draft'; missing: string[] };
+
+/**
+ * ТЫЛ ЗАДНЕЙ СТЕНКИ КОРОБА ОТ ПЕРЕДНЕЙ КРОМКИ КОРПУСА, мм — закрытый ящик. У
+ * полного выдвижения с потерей 0 (Blum pdf 731) это и есть ход: задняя стенка
+ * выдвинутого ящика встаёт на кромку корпуса.
+ */
+export function drawerRearFromFrontMm(kit: DrawerKit & { state: 'box' }): number | null {
+  const back = kit.plan.pieces.find((piece) => piece.key === 'wall-back');
+  return back ? -(kit.place.boxFrontZMm + back.z0) : null;
+}
+
+/** Направляющая ящика как механизм — с ходом по его коробу: одна функция на коробки сцены, ход у угла и приёмку. */
+export function drawerRunnerOf(kit: DrawerKit, hardware?: Map<string, HardwareItem>): RunnerModel {
+  const slide = kit.place.slideItemId ? hardware?.get(kit.place.slideItemId) : undefined;
+  const rear = kit.state === 'box' ? drawerRearFromFrontMm(kit) : null;
+  return runnerModelOf(slide ?? null, rear !== null ? { rearFromFrontMm: rear } : undefined);
+}
 
 /** Места ящиков модуля: классические сверху вниз, затем отсеки слева направо. */
 export function drawerPlaces(unit: Module, run: Run, production: ProductionSettings = shopOf(run.production)): DrawerPlace[] {

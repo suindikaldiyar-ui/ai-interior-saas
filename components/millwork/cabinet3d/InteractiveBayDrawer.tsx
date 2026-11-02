@@ -11,6 +11,7 @@ import { DRAWER_TRAVEL_M, type PartBox } from '@/lib/millwork/cabinetBoxes';
 import { useInteriorStore } from '@/store/useInteriorStore';
 import { HandleMesh } from './handleMesh';
 import { boxGeometryOf } from './profileGeometry';
+import { TwinModel, twinKeyOf } from './twinAsset';
 
 /**
  * ЯЩИК ОТСЕКА (R02A), КОТОРЫЙ ВЫЕЗЖАЕТ.
@@ -145,13 +146,20 @@ export default function InteractiveBayDrawer({ id, open, onToggle, boxes, parts,
         {active &&
           boxes.map((box, i) =>
             box.slideShare !== undefined ? (
-              <mesh key={`mid-${i}`} name="mech:runner-middle" geometry={boxGeometryOf(box, parts.box)} material={parts.metal} position={box.position} scale={box.scale} userData={{ section: box.section }} />
+              box.twin ? (
+                <TwinModel key={`mid-${i}`} twin={box.twin.model} role={box.twin.role} anchorM={box.twin.anchorM} mirror={box.twin.mirror} name={`twin:${box.twin.role}`} twinKey={twinKeyOf(box)} />
+              ) : (
+                <mesh key={`mid-${i}`} name="mech:runner-middle" geometry={boxGeometryOf(box, parts.box)} material={parts.metal} position={box.position} scale={box.scale} userData={{ section: box.section }} />
+              )
             ) : null,
           )}
       </group>
       {active &&
         boxes.map((box, i) =>
-          box.slideShare !== undefined ? null : /* Ручка едет своей моделью, той же, что у задвинутого в пачке (HANDLE-REAL). */
+          box.slideShare !== undefined ? null : /* Царга и ходовая с моделью реестра (§ 5) — модель, а не сечение. */
+          box.twin ? (
+            <TwinModel key={`twin-${i}`} twin={box.twin.model} role={box.twin.role} anchorM={box.twin.anchorM} mirror={box.twin.mirror} name={`twin:${box.twin.role}`} twinKey={twinKeyOf(box)} />
+          ) : /* Ручка едет своей моделью, той же, что у задвинутого в пачке (HANDLE-REAL). */
           box.handle ? (
             <HandleMesh key={`handle-${i}`} draw={box.handle} position={box.position} fine={!economy} part={box.part ?? id} />
           ) : (

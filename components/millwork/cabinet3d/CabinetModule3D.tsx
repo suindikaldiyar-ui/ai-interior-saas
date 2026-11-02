@@ -144,8 +144,16 @@ export default function CabinetModule3D({
 }: Props) {
   /* Деталь модуля по идентификатору сцены: `<модуль>:door:0` → `door:0`. */
   const lookOf = (partId: string) => leafLook?.(partId.slice(unit.id.length + 1));
-  /* Ход ящика — модель направляющей на месте модуля (HW-04): та же, что меряет ход у угла. */
-  const drawerTravelM = runnerModelOf(installedItem(unit, 'slide', hardware)).travelMm / 1000;
+  /*
+   * Ход ящика — модель направляющей на месте модуля (HW-04), по коробу ЭТОГО ящика
+   * (`drawerRunnerOf` кладёт ход на его коробки): у полного выдвижения с потерей 0
+   * задняя стенка выходит на кромку корпуса. Ящик без короба — модель позиции.
+   */
+  const moduleTravelM = runnerModelOf(installedItem(unit, 'slide', hardware)).travelMm / 1000;
+  const drawerTravelM = (id: string) => {
+    const own = partBoxes?.(id)?.find((box) => box.travel)?.travel;
+    return own ? own.mm / 1000 : moduleTravelM;
+  };
   const widthM = unit.widthMm / MM;
   const fill = unit.fill;
 
@@ -303,7 +311,7 @@ export default function CabinetModule3D({
                 parts={parts}
                 frontMaterial={look?.material ?? frontMaterial}
                 onActive={onActive}
-                vectorM={[0, 0, drawerTravelM]}
+                vectorM={[0, 0, drawerTravelM(leaf.id)]}
               />
             );
           }
@@ -330,7 +338,7 @@ export default function CabinetModule3D({
               relief={look?.relief}
               reliefOrient={gripOrient(look?.relief, 'flap', isUpperRow(unit))}
               front={closedFrontRect(partBoxes?.(leaf.id))}
-              travelM={drawerTravelM}
+              travelM={drawerTravelM(leaf.id)}
             />
           );
         }

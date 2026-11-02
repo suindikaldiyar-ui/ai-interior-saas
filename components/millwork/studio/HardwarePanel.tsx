@@ -35,6 +35,8 @@ import {
   sceneDrawing,
   type MediaView,
 } from '@/lib/millwork/hardwareMedia';
+import { twinFinishWords } from '@/lib/millwork/hardwareTwin';
+import { hingeLinkageOf } from '@/lib/millwork/hingeLinkage';
 import { openingHardware } from '@/lib/millwork/opening';
 import { cornerOfModule } from '@/lib/millwork/corner';
 import { moduleCarcassHeightMm } from '@/lib/millwork/fill';
@@ -1483,7 +1485,13 @@ function HardwareDetail({
   const [shownPhoto, setShownPhoto] = useState(0);
   const photo = photos[Math.min(shownPhoto, Math.max(0, photos.length - 1))] ?? null;
   const status3d = facts?.model3d ?? 'NO_3D';
-  const drawingWords = sceneDrawing(item);
+  /*
+   * Что нарисовано и как: модель реестра — её покрытие (файл или выбрано при импорте), петля с
+   * четырёхзвенником — откуда её ход (решение владельца 2026-11-01, п. 2–3).
+   */
+  const linkage = hingeLinkageOf(item);
+  const drawingWords =
+    [sceneDrawing(item), item.twin ? twinFinishWords(item.twin) : null, linkage ? linkage.words : null].filter(Boolean).join('; ') || null;
   /* Модель ручки (HANDLE-REAL): что показано по размерам паспорта, а что условно. */
   const shaped = item.hardware.category === 'handle' ? handleItemModel(item) : null;
   /* Класс механизма (ЭТАП 2): только у изделий производителя — у позиции компании записи изделия нет. */

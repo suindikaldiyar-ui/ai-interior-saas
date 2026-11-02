@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import type * as THREE from 'three';
 import { useSlide } from './useSlide';
 import { useTouchTarget } from './useTouchTarget';
-import { doorKick, doorPivot, leafLocal, leafPointAt, type FrontRect, type PartBox } from '@/lib/millwork/cabinetBoxes';
+import { doorLinkOf, doorPivot, doorShift, leafLocal, leafPointAt, type FrontRect, type PartBox } from '@/lib/millwork/cabinetBoxes';
 import { useShiftedBox, type CabinetParts } from './parts';
 import type { FrontRelief } from '@/types/millwork';
 import { realSizeShiftOf } from './realSizeMap';
@@ -154,12 +154,25 @@ export default function InteractiveDoor({
   useTouchTarget(touch, { width, height, depth: 0.06 });
   void depth;
 
-  const pivot = doorPivot(opening, x, y, width, height, thickness);
-  const target = open ? pivot.angle : 0;
+  /*
+   * ШАРНИРНАЯ КИНЕМАТИКА (решение владельца 2026-11-01): у петли с четырёхзвенником
+   * створка ходит по нему и раскрывается на паспортный угол; чашка остаётся на
+   * звеньях плеча. Без механизма — прежний поворот у кромки с выносом (слой 55).
+   */
+  const link = opening === 'left' || opening === 'right' ? doorLinkOf((riders ?? []).find((box) => box.hinge?.half === 'cup')?.hinge) : null;
+  const pivot = doorPivot(opening, x, y, width, height, thickness, link);
+  /* Угол, заданный створке (45°, 90° — показ), не больше полного. */
+  const degree = useInteriorStore((state) => state.openDegrees[id]);
+  const full = Math.abs(pivot.angle);
+  const wanted = degree !== undefined ? Math.min(full, Math.max(0, (degree * Math.PI) / 180)) : full;
+  const target = open ? Math.sign(pivot.angle) * wanted : 0;
   /* Угол створки на этом кадре — для звеньев петли (HW-03). */
   const angleRef = useRef(target);
-  /* Звенья — у процедурной петли; у модели из реестра 3D шарнир — её собственная геометрия (поза звеньев CAD не строится — словами в карточке). */
-  const hingeDraws = (riders ?? []).filter((box) => box.hinge?.half === 'cup' && !box.hinge.twin).map((box) => box.hinge as HingeDraw);
+  /*
+   * Звенья — у процедурной петли и у петли с четырёхзвенником (её звенья — оси
+   * механизма, у модели реестра тоже: в файле их нет, они ходят сами по себе).
+   */
+  const hingeDraws = (riders ?? []).filter((box) => box.hinge?.half === 'cup' && (!box.hinge.twin || box.hinge.model.linkage)).map((box) => box.hinge as HingeDraw);
   /* Точка полотна в закрытой позе (местные оси модуля) → та же точка при угле: одна `leafPointAt` со сценой и приёмкой. */
   const toCarcass = (p: [number, number, number], angle: number): [number, number, number] => leafPointAt(pivot, p, angle);
 
@@ -180,8 +193,10 @@ export default function InteractiveDoor({
       if (pivot.axis === 'x') el.rotation.x = value;
       else {
         el.rotation.y = value;
-        /* Петля выносит полотно вперёд по ходу (`doorKick`, слой 55). */
-        el.position.z = pivot.origin[2] + doorKick(pivot, value);
+        /* Петля выносит полотно вперёд по ходу (`doorKick`, слой 55) или ведёт его четырёхзвенником (`doorShift`). */
+        const [dx, dz] = doorShift(pivot, value);
+        el.position.x = pivot.origin[0] + dx;
+        el.position.z = pivot.origin[2] + dz;
       }
     },
     onSettle: () => {
@@ -216,10 +231,10 @@ export default function InteractiveDoor({
      */
     <>
     {/* Звенья петли — вне группы полотна: одним концом на плече корпуса, другим на чашке (HW-03). */}
-    {active && hingeDraws.length > 0 && <HingeLinks draws={hingeDraws} material={parts.metal} toCarcass={toCarcass} angleRef={angleRef} />}
+    {active && hingeDraws.length > 0 && <HingeLinks draws={hingeDraws} material={parts.metal} toCarcass={toCarcass} angleRef={angleRef} part={id} />}
     <group
       ref={group}
-      position={[pivot.origin[0], pivot.origin[1], pivot.origin[2] + doorKick(pivot, target)]}
+      position={[pivot.origin[0] + doorShift(pivot, target)[0], pivot.origin[1], pivot.origin[2] + doorShift(pivot, target)[1]]}
     >
       <group ref={lifted} name={liftMotion ? `lift:${liftMotion}` : undefined}>
       <mesh
