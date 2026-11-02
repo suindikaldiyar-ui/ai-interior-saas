@@ -22,7 +22,7 @@ import { glassOf } from '@/lib/millwork/glass';
 import type { FrontRelief, Module } from '@/types/millwork';
 import { gripOrient } from '@/lib/millwork/facadeRelief';
 import { isUpperRow } from '@/lib/millwork/modules';
-import { liftMotionOf } from '@/lib/millwork/liftKinematics';
+import { liftModelOf, liftMotionOf } from '@/lib/millwork/liftKinematics';
 import { runnerModelOf } from '@/lib/millwork/runnerModel';
 import { installedItem } from '@/lib/millwork/fittings';
 
@@ -150,6 +150,8 @@ export default function CabinetModule3D({
    * задняя стенка выходит на кромку корпуса. Ящик без короба — модель позиции.
    */
   const moduleTravelM = runnerModelOf(installedItem(unit, 'slide', hardware)).travelMm / 1000;
+  /* Механизм подъёмника (AVENTOS): модель позиции и, у HL top, комплект рычагов по высоте корпуса. */
+  const liftModel = useMemo(() => liftModelOf(unit, hardware, Math.round(heightM * MM)), [unit, hardware, heightM]);
   const drawerTravelM = (id: string) => {
     const own = partBoxes?.(id)?.find((box) => box.travel)?.travel;
     return own ? own.mm / 1000 : moduleTravelM;
@@ -471,6 +473,11 @@ export default function CabinetModule3D({
             glassMaterial={glassMaterial}
             profileMaterial={profileMaterial}
             liftMotion={leaf.opening === 'lift' ? liftMotionOf(unit, hardware) : null}
+            liftMech={
+              leaf.opening === 'lift' && liftModel
+                ? { model: liftModel, frontTopMm: (leaf.bottomM + leaf.heightM) * MM - (heightM - thicknessM) * MM }
+                : null
+            }
             rect={closedFrontRect(partBoxes?.(leaf.id), [x + leaf.xM, y + leaf.bottomM])}
           />
         );

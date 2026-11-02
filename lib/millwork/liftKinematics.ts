@@ -2,6 +2,8 @@ import type { HardwareItem } from '@/types/catalog';
 import type { Module } from '@/types/millwork';
 import { installedItem } from './fittings';
 import { mechanismOf } from './mechanisms';
+import { aventosPose, aventosOf, type AventosModel } from './aventos';
+import { rotate } from './hingeLinkage';
 
 /**
  * КИНЕМАТИКА ПОДЪЁМНИКА (HW-07) — ОДНА ПОЗА НА СЦЕНУ И ПРОВЕРКУ ХОДА.
@@ -55,12 +57,36 @@ export type LiftPose = {
 };
 
 /**
+ * МЕХАНИЗМ ПОДЪЁМНИКА НА ФАСАДЕ (AVENTOS HK top, HS top, HL top — `aventosOf`): модель и верх фасада
+ * над низом крыши, мм (оси механизма). Нет модели — ход прежний, условный (`liftPose` по виду хода).
+ */
+export type LiftMechanism = { model: AventosModel; frontTopMm: number };
+
+/** Модель механизма на месте модуля: позиция подъёмника и, у HL top, высота корпуса (комплект рычагов). */
+export function liftModelOf(unit: Module, hardware: Map<string, HardwareItem> | undefined, cabinetHeightMm: number): AventosModel | null {
+  const item = hardware ? installedItem(unit, 'lift', hardware) : null;
+  return item ? aventosOf(item, cabinetHeightMm) : null;
+}
+
+/**
  * Поза при доле хода `u` ∈ [0, 1]. Точка полотна `p` (оси створки) уходит в
  * `Rx(angle) · (p + (0, liftY, liftZ))` — так её ставит сцена (внешняя группа
  * поворачивает, внутренняя сдвигает) и так её меряет `leafPoses`.
+ *
+ * С МЕХАНИЗМОМ (`mech`) поза — поза модели (`aventosPose`): фасад — шатун механизма, а не
+ * поворот у кромки. Ось створки — верхняя кромка тыла фасада; в осях механизма это (0, верх фасада).
  */
-export function liftPose(motion: LiftMotion | null, u: number, heightM: number, thicknessM: number): LiftPose {
+export function liftPose(motion: LiftMotion | null, u: number, heightM: number, thicknessM: number, mech?: LiftMechanism | null): LiftPose {
   const s = Math.max(0, Math.min(1, u));
+  if (mech) {
+    const pose = aventosPose(mech.model, s);
+    /* Куда ушла ось створки (мм механизма) → сдвиг до поворота в осях створки (метры). */
+    const o: [number, number] = [0, mech.frontTopMm];
+    const r = rotate(o, pose.theta);
+    const d: [number, number] = [(r[0] + pose.shift[0] - o[0]) / 1000, (r[1] + pose.shift[1] - o[1]) / 1000];
+    const t = rotate(d, -pose.theta);
+    return { angle: -pose.theta, liftY: t[1], liftZ: t[0] };
+  }
   if (motion === 'parallel_lift') return { angle: 0, liftY: heightM * s, liftZ: thicknessM * s };
   if (motion === 'swing_over') {
     const up = Math.min(1, s / 0.5);

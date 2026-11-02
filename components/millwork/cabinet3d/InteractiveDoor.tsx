@@ -15,7 +15,8 @@ import { useInteriorStore } from '@/store/useInteriorStore';
 import { HandleMesh } from './handleMesh';
 import { HingeLinks, HingeMesh } from './hingeMesh';
 import type { HingeDraw } from '@/lib/millwork/cabinetBoxes';
-import { liftPose, type LiftMotion } from '@/lib/millwork/liftKinematics';
+import { liftPose, type LiftMechanism, type LiftMotion } from '@/lib/millwork/liftKinematics';
+import { setLiftTravel } from './liftTravel';
 
 /**
  * Дверь, которая распахивается.
@@ -95,6 +96,11 @@ type Props = {
    * поворот вверх, как было. Поза — `liftPose`, та же, что меряет `leafPoses`.
    */
   liftMotion?: LiftMotion | null;
+  /**
+   * МЕХАНИЗМ ПОДЪЁМНИКА (AVENTOS, решение владельца 2026-11-01, п. 4): фасад — шатун модели, поза —
+   * `liftPose` с механизмом, та же, что меряет `leafPoses`; доля хода уходит рычагам (`setLiftTravel`).
+   */
+  liftMech?: LiftMechanism | null;
   /** Деталь полотна в осях места (F9): закрытая коробка пачки — ходит та же деталь. */
   rect?: FrontRect | null;
 };
@@ -123,6 +129,7 @@ export default function InteractiveDoor({
   profileMaterial,
   showPanel = true,
   liftMotion = null,
+  liftMech = null,
   rect = null,
 }: Props) {
   const economy = useInteriorStore((state) => state.economyMode);
@@ -164,7 +171,10 @@ export default function InteractiveDoor({
   /* Угол, заданный створке (45°, 90° — показ), не больше полного. */
   const degree = useInteriorStore((state) => state.openDegrees[id]);
   const full = Math.abs(pivot.angle);
-  const wanted = degree !== undefined ? Math.min(full, Math.max(0, (degree * Math.PI) / 180)) : full;
+  /* У механизма угол показа — угол фасада механизма (107° у HK top): доля хода — от него. */
+  const mechDeg = liftMech && liftMech.model.openDeg > 0 ? liftMech.model.openDeg : 0;
+  const wanted =
+    degree === undefined ? full : mechDeg > 0 ? Math.min(full, Math.max(0, degree / mechDeg) * full) : Math.min(full, Math.max(0, (degree * Math.PI) / 180));
   const target = open ? Math.sign(pivot.angle) * wanted : 0;
   /* Угол створки на этом кадре — для звеньев петли (HW-03). */
   const angleRef = useRef(target);
@@ -172,7 +182,12 @@ export default function InteractiveDoor({
    * Звенья — у процедурной петли и у петли с четырёхзвенником (её звенья — оси
    * механизма, у модели реестра тоже: в файле их нет, они ходят сами по себе).
    */
-  const hingeDraws = (riders ?? []).filter((box) => box.hinge?.half === 'cup' && (!box.hinge.twin || box.hinge.model.linkage)).map((box) => box.hinge as HingeDraw);
+  const hingeDraws = (riders ?? []).filter((box) => box.hinge?.half === 'cup' && box.hinge.model.linkage).map((box) => box.hinge as HingeDraw);
+  /*
+   * ПЕТЛЯ БЕЗ МЕХАНИЗМА (условная или каталога без кинематики, решение владельца 2026-11-01): на ходу
+   * звенья не рисуются — растягивающееся звено выдавало бы условный поворот за настоящую петлю. Чашка
+   * остаётся в отверстии фасада и едет с ним; кинематика «не подтверждена» — словами в «Открывании».
+   */
   /* Точка полотна в закрытой позе (местные оси модуля) → та же точка при угле: одна `leafPointAt` со сценой и приёмкой. */
   const toCarcass = (p: [number, number, number], angle: number): [number, number, number] => leafPointAt(pivot, p, angle);
 
@@ -183,11 +198,13 @@ export default function InteractiveDoor({
       angleRef.current = value;
       const el = group.current;
       if (!el) return;
-      if (opening === 'lift' && (liftMotion === 'parallel_lift' || liftMotion === 'swing_over')) {
+      if (opening === 'lift' && (liftMech || liftMotion === 'parallel_lift' || liftMotion === 'swing_over')) {
         /* Доля хода — от угла, которым его ведёт `useSlide`; поза — одна функция со проверкой. */
-        const pose = liftPose(liftMotion, pivot.angle === 0 ? 0 : value / pivot.angle, height, thickness);
+        const u = pivot.angle === 0 ? 0 : value / pivot.angle;
+        const pose = liftPose(liftMotion, u, height, thickness, liftMech);
         el.rotation.x = pose.angle;
         if (lifted.current) lifted.current.position.set(0, pose.liftY, pose.liftZ);
+        if (liftMech) setLiftTravel(id, u);
         return;
       }
       if (pivot.axis === 'x') el.rotation.x = value;
@@ -236,7 +253,7 @@ export default function InteractiveDoor({
       ref={group}
       position={[pivot.origin[0] + doorShift(pivot, target)[0], pivot.origin[1], pivot.origin[2] + doorShift(pivot, target)[1]]}
     >
-      <group ref={lifted} name={liftMotion ? `lift:${liftMotion}` : undefined}>
+      <group ref={lifted} name={liftMech ? `lift:${liftMech.model.key}` : liftMotion ? `lift:${liftMotion}` : undefined}>
       <mesh
         ref={touch}
         name={`part:${id}`}

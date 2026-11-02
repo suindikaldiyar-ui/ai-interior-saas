@@ -2397,7 +2397,7 @@ function rowCorners(
           !(box.part && open.has(box.part)) &&
           !(outline && box.node === 'handle' && box.handle) &&
           /* Петля и модель реестра — своей формой (чашка, плечо, файл): коробка вокруг них — проволочный ящик поверх узла. */
-          !(outline && (box.hinge || box.twin)),
+          !(outline && (box.hinge || box.twin || box.pantograph || box.aventos)),
       );
 
       const place = rowPlacement(row);

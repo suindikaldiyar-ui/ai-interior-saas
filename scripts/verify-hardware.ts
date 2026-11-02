@@ -38,6 +38,7 @@ import { drawerDrafts, drawerRunnerOf, moduleDrawerKits } from '../lib/millwork/
 import { drawerReleaseBlock } from '../lib/millwork/bays';
 import { buildEstimate, totalCaption, unpricedLines } from '../lib/millwork/estimate';
 import { kupeLeaves, runBoxes, runPlaces, sceneLeaves, sceneSlides } from '../lib/millwork/cabinetBoxes';
+import { VITAFLEX_PRINTED, pantographPose, pantographSpecOf } from '../lib/millwork/pantograph';
 import { moduleDrilling, panelDrilling } from '../lib/millwork/drilling';
 import { configurationFingerprint } from '../lib/millwork/fingerprint';
 import { DRILLING_UNREAD } from '../lib/millwork/drilling';
@@ -52,6 +53,7 @@ import { applianceChecks } from './verify-appliances';
 import { drillingChecks } from './verify-drilling';
 import { hinge3dChecks } from './verify-hinges3d';
 import { twinChecks } from './verify-twin';
+import { aventosChecks } from './verify-aventos';
 import { runnerModelOf } from '../lib/millwork/runnerModel';
 import { drillingPlan } from '../lib/millwork/drillingPlan';
 import { drawerBoxPlan } from '../lib/millwork/drawerBox';
@@ -447,6 +449,8 @@ console.log('\nHW.C: места модуля и проверка совмест�
   const hkTop = onUpper('MFR-BLUM-22K2310');
   const hsTop = onUpper('MFR-BLUM-22S2800');
   const hfTop = onUpper('MFR-BLUM-22F2500');
+  /* Вертикальный подъёмник без модели механизма (DTC TOP-STAYS SK): ход не построен — словами. */
+  const skNoModel = onUpper('MFR-DTC-SK00AC');
   check(
     'C8 подъёмник на шкафу 720: HK top (KH 205–600) — отказ «больше на 120 мм»; HS top (KH 650–800) — встаёт, вес фасада не проверен; HF — отказ: фасад из двух частей',
     hkTop.state === 'refused' && hkTop.summary.includes('больше на 120') && hsTop.state === 'unverified' && hfTop.state === 'refused' && hfTop.summary.includes('двух частей'),
@@ -474,14 +478,15 @@ console.log('\nHW.C: места модуля и проверка совмест�
   const foldTried = lift.ops([{ op: 'set_fitting', moduleId: UPPER, slot: 'lift', itemId: item(freeFold.article).id }]);
   const foldKept = moduleOf(foldTried.shown.run, UPPER).fittings?.some((f) => f.slot === 'lift') ?? false;
   check(
-    'C8б складной FREE FOLD Häfele на цельный фасад — отказ «фасад из двух частей», и путём экрана позиция не встаёт; HS top — «ход не построен» словами',
+    'C8б складной FREE FOLD Häfele на цельный фасад — отказ «фасад из двух частей», и путём экрана позиция не встаёт; HS top — ход по механизму (модель AVENTOS); вертикальный без модели (DTC SK00AC) — «модели механизма нет — ход не построен» словами',
     vFold.state === 'refused' &&
       vFold.summary.includes('двух частей') &&
       !foldKept &&
       foldTried.next.warnings.some((w) => w.includes('двух частей')) &&
       allFolds.length > 1 &&
       foldsLet.length === 0 &&
-      hsTop.checks.some((c) => c.label === 'ход' && c.state === 'unknown' && c.words.includes('не построен')),
+      hsTop.checks.some((c) => c.label === 'ход' && c.state === 'ok' && c.words.includes('по механизму')) &&
+      skNoModel.checks.some((c) => c.label === 'ход' && c.state === 'unknown' && c.words.includes('модели механизма нет') && c.words.includes('не построен')),
     `${freeFold.hardware.manufacturerArticle}: ${vFold.summary} · на модуле ${foldKept ? 'ВСТАЛ' : 'нет'} · ${foldTried.next.warnings.join(' | ')} · складных всего ${allFolds.length}, не отказано ${foldsLet.length}${foldsLet.length ? ': ' + foldsLet.map((f) => f.hardware.manufacturerArticle).join(', ') : ''}`,
   );
   const wrongSlot = fittingVerdict({ unit: moduleOf(run, DOOR), run, slot: 'hinge', item: item('MFR-HETTICH-9114276'), production: DEFAULT_PRODUCTION, catalog: CATALOG });
@@ -837,26 +842,31 @@ console.log('\nHW.H: 3D и движение — механизм по позиц
     `мест под петли ${hingeSlot?.quantity ?? 'НЕТ'} · чашек на полотне ${cups.length}`,
   );
 
-  /* Подъёмник: без позиции механизма в сцене нет; с позицией — корпуса у боковин и рычаги на ключе фасада. */
+  /*
+   * Подъёмник: без позиции механизма в сцене нет; с позицией AVENTOS — механизм у каждой боковины (модель:
+   * корпус, рычаги, крепление фасада — решение владельца 2026-11-01, п. 4). Прежняя проверка закрепляла
+   * «2 корпуса и 2 рычага на ключе фасада» — коробки-заглушки вместо механизма.
+   */
   const lk = kitchen();
   lk.ops([{ op: 'set_opening', moduleId: UPPER, opening: 'lift' }]);
   const liftBefore = sceneOf(lk.shown().run).filter((b) => b.node === 'lift').length;
   const liftOn = lk.ops([{ op: 'set_fitting', moduleId: UPPER, slot: 'lift', itemId: item('MFR-BLUM-22S2800').id }]);
   const liftBoxes = sceneOf(liftOn.shown.run).filter((b) => b.node === 'lift');
-  const housings = liftBoxes.filter((b) => !b.part);
-  const arms = liftBoxes.filter((b) => b.part === `${UPPER}:door:0`);
+  const housings = liftBoxes.filter((b) => !b.part && b.aventos?.model.family === 'HS top' && b.aventos.door === `${UPPER}:door:0`);
+  const sides = new Set(housings.map((b) => b.aventos!.inward));
   /* Правка нижнего ряда пересобирает верхний: позиция на месте обязана пережить пересборку. */
   const liftKept = lk.ops([{ op: 'set_handle', moduleId: DOOR, handle: 'profile' } as unknown as MillworkOp]);
   const keptFitting = moduleOf(liftKept.shown.run, UPPER).fittings?.find((f) => f.slot === 'lift')?.itemId;
   check(
-    'H2 подъёмник: без позиции — 0 коробок механизма; HS top 22S2800 на месте — 2 корпуса у боковин (стоят) и 2 рычага на ключе фасада (едут), все в габарите модуля; правка нижнего ряда позицию не теряет',
+    'H2 подъёмник: без позиции — 0 коробок механизма; HS top 22S2800 на месте — механизм у обеих боковин (модель HS top на створке модуля, коробка — корпус механизма), заглушек нет, всё в габарите модуля; правка нижнего ряда позицию не теряет',
     liftBefore === 0 &&
       liftOn.next.warnings.length === 0 &&
+      liftBoxes.length === 2 &&
       housings.length === 2 &&
-      arms.length === 2 &&
+      sides.size === 2 &&
       within(liftOn.shown.run, UPPER, liftBoxes) &&
       keptFitting === item('MFR-BLUM-22S2800').id,
-    `до ${liftBefore} · корпусов ${housings.length} · рычагов ${arms.length} · после правки низа ${keptFitting ?? 'ПОЗИЦИИ НЕТ'} · ${liftOn.next.warnings.join(' | ')}`,
+    `до ${liftBefore} · коробок ${liftBoxes.length} · механизмов HS top ${housings.length} (боковин ${sides.size}) · после правки низа ${keptFitting ?? 'ПОЗИЦИИ НЕТ'} · ${liftOn.next.warnings.join(' | ')}`,
   );
 
   /* Карго: фасад не открывается, а выдвигается; корзины на ключе фасада. Своя кухня — свободная сборка с одним модулем. */
@@ -975,25 +985,101 @@ console.log('\nHW.H: 3D и движение — механизм по позиц
   const pgOn = wOps([{ op: 'set_fitting', moduleId: cabinet.id, slot: 'pantograph', bayId: 'b1', itemId: item('MFR-HAFELE-805.20.625').id }]);
   const pgRun = wShown().run;
   const pgBoxes = sceneOf(pgRun).filter((b) => b.node === 'pantograph' && b.bayId === 'b1');
-  const pgMoving = pgBoxes.filter((b) => b.part === `${cabinet.id}:b1:pantograph`);
+  const pgModel = pgBoxes.filter((b) => b.part === `${cabinet.id}:b1:pantograph` && b.pantograph);
   const pgSlide = sceneSlides(pgRun, CATALOG).find((slide) => slide.id === `${cabinet.id}:b1:pantograph`);
   const pgEstimate = wShown().estimate;
+  const pgUnit = pgRun.modules.find((m) => m.id === cabinet.id)!;
+  const pgVerdict = fittingVerdict({ unit: pgUnit, run: pgRun, slot: 'pantograph', item: item('MFR-HAFELE-805.20.625'), bayId: 'b1', catalog: CATALOG });
+  /*
+   * H5 (решение владельца 2026-11-01, п. 3): пантограф — механизм, а не брусок. Прежняя проверка
+   * закрепляла «штанга с тягами (3) едет вниз и вперёд, кронштейны (2) стоят» — это и была палка.
+   */
   check(
-    'H5 пантограф 805.20.625 в отсеке b1 (476 в свету при паспорте 440–610): штанга отсека в сцене и в смете уступает ему место; штанга с тягами (3) едет вниз и вперёд, кронштейны (2) стоят; строка позиции 1 шт. «цена не задана»',
+    'H5 пантограф 805.20.625 в отсеке b1 (476 в свету, по таблице артикула 440–610): штанга отсека в сцене и в смете уступает ему место; в сцене — механизм (корпуса, тяги, штанга, ручка — модель по каталогу), а не бруски; ходит поворотом тяг (`swing`), а не по прямой; проверка места — ширина, место механизма и ход «ok»; строка позиции 1 шт. «цена не задана»',
     fillOn.warnings.length === 0 &&
       pgOn.warnings.length === 0 &&
       rodsBefore === 1 &&
       rodLineBefore > 0 &&
       sceneOf(pgRun).filter((b) => b.node === 'rod' && b.bayId === 'b1').length === 0 &&
       !pgEstimate.lines.some((l) => l.key === 'bay_rod') &&
-      pgMoving.length === 3 &&
-      pgBoxes.length - pgMoving.length === 2 &&
+      pgBoxes.length === 1 &&
+      pgModel.length === 1 &&
+      pgModel[0].pantograph!.spec.article === '805.20.625' &&
       pgSlide !== undefined &&
+      pgSlide.swing === true &&
       pgSlide.vectorM[1] < 0 &&
       pgSlide.vectorM[2] > 0 &&
+      pgVerdict.state !== 'refused' &&
+      pgVerdict.checks.some((c) => c.label === 'ход' && c.state === 'ok') &&
+      pgVerdict.checks.some((c) => c.label === 'ширина отсека' && c.state === 'ok') &&
       pgEstimate.lines.some((l) => l.key === `fitting_pantograph_${item('MFR-HAFELE-805.20.625').id}` && l.quantity === 1 && Boolean(l.priceUnset)),
-    `штанг b1 до ${rodsBefore} · строка штанг до ${rodLineBefore} · подвижных ${pgMoving.length} · стоят ${pgBoxes.length - pgMoving.length} · ход ${JSON.stringify(pgSlide?.vectorM ?? null)} · ${[...fillOn.warnings, ...pgOn.warnings].join(' | ')}`,
+    `штанг b1 до ${rodsBefore} · строка штанг до ${rodLineBefore} · коробок механизма ${pgBoxes.length} (с моделью ${pgModel.length}) · ход ${JSON.stringify(pgSlide ?? null)} · проверка ${pgVerdict.state}: ${pgVerdict.checks.map((c) => `${c.label} ${c.state}`).join(', ')} · ${[...fillOn.warnings, ...pgOn.warnings].join(' | ')}`,
   );
+
+  /* PG1 — модели по таблице pdf 125: какие артикулы с моделью, какие нет — числом. */
+  {
+    const pgItems = Array.from(CATALOG.values()).filter((it) => it.hardware.subcategory === 'pantograph');
+    const withModel = pgItems.filter((it) => pantographSpecOf(it));
+    const spec657 = pantographSpecOf(item('MFR-HAFELE-805.20.657'));
+    const spec055 = pantographSpecOf(item('MFR-HAFELE-805.20.055'));
+    const spec224 = pantographSpecOf(item('MFR-HAFELE-805.19.224'));
+    check(
+      'PG1 модели пантографа — по таблице Häfele pdf 125: 21 артикул (7 исполнений × 3 ширины) с моделью, остальные пантографы каталога — без модели; ширина — колонка артикула (805.20.657 — 770–1200), исполнение — строка (805.20.055 — чёрный, штанга и ручка хром; 805.19.224 — чёрный, хром только штанга)',
+      pgItems.length === 39 &&
+        withModel.length === 21 &&
+        spec657?.widthMm[0] === 770 && spec657.widthMm[1] === 1200 &&
+        spec055?.body === 'black' && spec055.rail === 'chrome' && spec055.handle === 'chrome' &&
+        spec224?.body === 'black' && spec224.rail === 'chrome' && spec224.handle === 'body',
+      `пантографов в каталоге ${pgItems.length} · с моделью ${withModel.length} · без модели: ${pgItems.filter((it) => !pantographSpecOf(it)).map((it) => it.hardware.manufacturerArticle).join(', ')}`,
+    );
+  }
+
+  /* PG2 — геометрия по напечатанному: точки штанги, поворот 90°, тяга одной длины на всём ходу, обе стороны — одна ось. */
+  {
+    const g = pgModel[0]?.pantograph?.geom;
+    if (!g) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: геометрии пантографа в сцене нет');
+    const top = g.raised.y + VITAFLEX_PRINTED.railBelowTopMm;
+    let worst = 0;
+    for (let i = 0; i <= 90; i += 1) {
+      const pose = pantographPose(g, i / 90);
+      worst = Math.max(worst, Math.abs(Math.hypot(pose.rail.z - g.pivot.z, pose.rail.y - g.pivot.y) - g.armMm));
+    }
+    const end = pantographPose(g, 1).rail;
+    check(
+      'PG2 ход по напечатанному (Häfele pdf 125): поднятая штанга — 30 мм под крышей, опущенная — 830 под крышей и 365 перед корпусом; поворот тяги 90°; конец тяги на всём ходу — на штанге (длина тяги та же до 0,001 мм); ось — внутри корпуса',
+      Math.abs(top - g.lowered.y - VITAFLEX_PRINTED.lowerBelowTopMm) < 1e-9 &&
+        Math.abs(g.lowered.z - VITAFLEX_PRINTED.lowerForwardMm) < 1e-9 &&
+        Math.abs(Math.abs(g.swingRad) - Math.PI / 2) < 1e-9 &&
+        Math.hypot(end.z - g.lowered.z, end.y - g.lowered.y) < 1e-6 &&
+        worst < 1e-3 &&
+        g.pivot.z < 0 &&
+        g.sides.length === 2 &&
+        g.refusal === null,
+      `ось z ${g.pivot.z.toFixed(1)}, y ${g.pivot.y.toFixed(1)} · тяга ${g.armMm.toFixed(1)} мм · поворот ${((g.swingRad * 180) / Math.PI).toFixed(1)}° · отклонение конца ${worst.toExponential(1)} мм`,
+    );
+  }
+
+  /* PG3 — внутри шкафа: полка на пути — отказ словами; ширина не по артикулу — отказ; без модели — не рисуется. */
+  {
+    const withShelf = {
+      ...pgUnit,
+      fill: { ...pgUnit.fill!, bays: pgUnit.fill!.bays!.map((b) => (b.id === 'b1' ? { ...b, zones: (b.zones ?? []).map((z) => ({ ...z, shelves: { mode: 'even' as const, count: 3 } })) } : b)) },
+    } as Module;
+    const shelfVerdict = fittingVerdict({ unit: withShelf, run: pgRun, slot: 'pantograph', item: item('MFR-HAFELE-805.20.625'), bayId: 'b1', catalog: CATALOG });
+    const wideVerdict = fittingVerdict({ unit: pgUnit, run: pgRun, slot: 'pantograph', item: item('MFR-HAFELE-805.20.657'), bayId: 'b1', catalog: CATALOG });
+    const noModel = wOps([{ op: 'set_fitting', moduleId: cabinet.id, slot: 'pantograph', bayId: 'b1', itemId: item('MFR-HAFELE-811.62.300').id }]);
+    const noModelBoxes = sceneOf(wShown().run).filter((b) => b.node === 'pantograph' && b.bayId === 'b1');
+    check(
+      'PG3 внутри шкафа: полка отсека на пути штанги — отказ с миллиметрами; пантограф 770–1200 в отсек 476 — отказ шириной; позиция без модели (Conero 811.62.300) — в сцене не рисуется вовсе (бруска вместо механизма нет)',
+      shelfVerdict.state === 'refused' &&
+        shelfVerdict.checks.some((c) => c.label === 'ход' && c.state === 'fail' && /Полка на \d+ мм в зоне хода пантографа: (тяга|штанга) заходит в неё на \d+ мм/.test(c.words)) &&
+        wideVerdict.state === 'refused' &&
+        wideVerdict.checks.some((c) => c.label === 'ширина отсека' && c.state === 'fail') &&
+        noModelBoxes.length === 0,
+      `полка: ${shelfVerdict.state} — ${shelfVerdict.checks.map((c) => `${c.label} ${c.state}: ${c.words}`).join(' / ')} · ширина: ${wideVerdict.checks.find((c) => c.label === 'ширина отсека')?.words} · без модели коробок ${noModelBoxes.length} (${noModel.warnings.join(' | ')})`,
+    );
+    wOps([{ op: 'set_fitting', moduleId: cabinet.id, slot: 'pantograph', bayId: 'b1', itemId: item('MFR-HAFELE-805.20.625').id }]);
+  }
 
   /* Выдвижная штанга 807.61.774 (длина 410 по паспорту) в пустом отсеке b2: едет вперёд на 0,9 длины, направляющая стоит. */
   const poOn = wOps([{ op: 'set_fitting', moduleId: cabinet.id, slot: 'wardrobe_pullout', bayId: 'b2', itemId: item('MFR-HAFELE-807.61.774').id }]);
@@ -1779,6 +1865,10 @@ hinge3dChecks(check);
 /* ═════════════════════════  Реестр 3D-фурнитуры (ТЗ 2026-10-31, § 3)  ═════════════════════════ */
 
 twinChecks(check);
+
+/* ═════════════════════════  AVENTOS механизмом (решение владельца 2026-11-01, п. 4)  ═════════════════════════ */
+
+aventosChecks(check);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

@@ -16,7 +16,7 @@ import { hardwareCatalog } from '../lib/millwork/hardware';
 import { HARDWARE_FACTS, hardwareCatalogRow } from '../lib/millwork/hardwareCatalog';
 import { drillingPlan } from '../lib/millwork/drillingPlan';
 import { closedFrontRect, doorLinkOf, doorPivot, leafOpenAngle, leafPointAt, leafPoses, localPartBox, runBoxes, runPlaces, sceneLeaves } from '../lib/millwork/cabinetBoxes';
-import { CLIP_TOP_110_OVERLAY, hingeSideSweep, linkagePoint, linkagePose } from '../lib/millwork/hingeLinkage';
+import { CLIP_TOP_110_OVERLAY, CLIP_TOP_110_VARIANTS, hingeLinkageOf, hingeSideSweep, linkagePoint, linkagePose } from '../lib/millwork/hingeLinkage';
 import { sideInnerXMm as clipTopSideXMm } from '../lib/millwork/clipTopHinge';
 import { LIFT_WORDS, liftMotionOf, liftPlace, liftPose } from '../lib/millwork/liftKinematics';
 import { hingeHalfMesh, hingeLinkSegments, linkPose, meshBounds, type MeshData } from '../lib/millwork/hingeMeshData';
@@ -343,6 +343,28 @@ export function hinge3dChecks(outer?: Check): { passed: number; failed: number }
       'HG10 боковина модели CLIP top в реестре — та же, что у створки сцены с 71B3550 и 175H3130 (таблица наложения pdf 81: DT/2 − 11 + подъём) ± 0,5 мм',
       Math.abs(clipTopSideXMm() - draws[0].sideInnerXMm) <= 0.5,
       `модель ${clipTopSideXMm()} мм · сцена ${draws[0].sideInnerXMm} мм`,
+    );
+  }
+
+  /*
+   * HG11 — ПОЛУНАКЛАДНАЯ И ВКЛАДНАЯ CLIP top 110°: тот же механизм, другое колено плеча. Проверка —
+   * напечатанным: вхождение при полном открывании 21,5 и 30 (pdf 81) получается из того же
+   * четырёхзвенника при боковине по строке таблицы TB (FA = TB + 1,5 / TB − 7), без подгонки.
+   */
+  {
+    const corner = linkagePoint(CLIP_TOP_110_OVERLAY, (110 * Math.PI) / 180, [-(CLIP_TOP_110_OVERLAY.trace.tbMm + 17.5), 0]);
+    const ingressOf = (faOverTb: number) => corner[0] + (17.5 - faOverTb);
+    const rows = (['overlay', 'half_overlay', 'inset'] as const).map((k) => ({ k, got: ingressOf(CLIP_TOP_110_VARIANTS[k].faOverTbMm), want: CLIP_TOP_110_VARIANTS[k].ingressMm }));
+    const half = hingeLinkageOf(item('MFR-BLUM-71B3650'));
+    const inset = hingeLinkageOf(item('MFR-BLUM-71B3750'));
+    check(
+      'HG11 полунакладная (71B3650) и вкладная (71B3750) CLIP top 110° — тот же четырёхзвенник: вхождение при полном открывании 12 / 21,5 / 30 мм (pdf 81) выходит из одного механизма ± 0,5 мм; у позиций механизм свой ключ и свои слова',
+      rows.every((r) => Math.abs(r.got - r.want) <= 0.5) &&
+        half?.key === 'blum-clip-top-110-half_overlay' &&
+        inset?.key === 'blum-clip-top-110-inset' &&
+        half.words.includes('вхождение фасада 21,5 мм') &&
+        inset.words.includes('вхождение фасада 30 мм'),
+      rows.map((r) => `${r.k}: ${r.got.toFixed(2)} (напечатано ${r.want})`).join(' · ') + ` · ключи ${half?.key} / ${inset?.key}`,
     );
   }
 

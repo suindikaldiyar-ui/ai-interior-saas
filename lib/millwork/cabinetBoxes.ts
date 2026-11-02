@@ -42,10 +42,12 @@ import { fittingItemId, handleItemOf, installedItem, slidingAccepts } from './fi
 import { HINGE_IMAGE_EDGE_MM, hingeCupPlace, hingeHeightsMm } from './hingePlace';
 import { hingeModelOf, type HingeModel } from './hingeModel';
 import { linkagePose, type HingeLinkage } from './hingeLinkage';
+import { bayPantograph, pantographSpecOf, pantographSweep, type PantographGeometry, type PantographSpec } from './pantograph';
 import { twinBoundsCheck, twinOf } from './hardwareTwin';
 import type { MetalProfileKind } from './metalProfiles';
 import type { HardwareTwin, TwinRole } from '@/types/catalog';
-import { liftPlace, liftPose, type LiftMotion } from './liftKinematics';
+import { liftPlace, liftPose, type LiftMechanism, type LiftMotion } from './liftKinematics';
+import { aventosOf, type AventosModel } from './aventos';
 import { SLIDING_DOOR, slidingDoorCount } from './sections';
 import { handleBoxOf, handleSpotOf, type HandleSpot, type LeafGeometry } from './handlePlace';
 import {
@@ -276,6 +278,30 @@ export type PartBox = BoxDraw & {
    * коробка — её габарит, по нему меряют проверки открывания и рёбра.
    */
   handle?: HandleDraw;
+  /**
+   * ПАНТОГРАФ ОТСЕКА (решение владельца 2026-11-01, п. 3): механизм по каталогу — корпуса,
+   * тяги, штанга и ручка рисуются и ходят своей моделью (`PantographModel`), коробка — их
+   * габарит в поднятом положении (касание, рёбра, «Открыть всё»). `anchorMm` — точка модуля
+   * (мм) в центре коробки: модель ставится от `position`, и сдвиги коробки её не теряют.
+   */
+  pantograph?: { spec: PantographSpec; geom: PantographGeometry; anchorMm: [number, number, number]; clash: string | null };
+  /**
+   * ПОДЪЁМНИК AVENTOS НА БОКОВИНЕ (решение владельца 2026-11-01, п. 4): корпус, рычаги и крепление
+   * фасада рисует `AventosModel` по позе модели (`aventosLinks`, `aventosPose`) — той же, по которой
+   * ходит фасад (`liftPose` с механизмом). Коробка — корпус механизма (габарит, рёбра). `xMm` —
+   * плоскость боковины (мм модуля), `inward` — куда от неё механизм; `underMm` — низ крыши (мм
+   * модуля); `frontTopMm` — верх места створки над низом крыши; `anchorMm` — центр коробки.
+   */
+  aventos?: {
+    model: AventosModel;
+    door: string;
+    xMm: number;
+    inward: 1 | -1;
+    underMm: number;
+    frontTopMm: number;
+    leafCenterXMm: number;
+    anchorMm: [number, number, number];
+  };
   /**
    * ПЕТЛЯ ЭТОЙ КОРОБКИ (HW-03): модель по паспорту и половина узла. Есть —
    * сцена рисует сетку петли (`hingeHalfMesh`) с началом в оси чашки;
@@ -2502,6 +2528,8 @@ export function leafPoses(input: {
   openAngle?: number;
   /** ВИД ХОДА ПОДЪЁМНИКА (HW-07) — та же поза, что у сцены (`liftPose`). Пусто — поворот вверх. */
   lift?: LiftMotion | null;
+  /** Механизм подъёмника (AVENTOS, `liftModelOf`): поза — модели, та же, что у сцены. */
+  liftMech?: LiftMechanism | null;
   /** Деталь полотна в осях места (F9, `closedFrontRect`): ходит та же деталь, что нарисована закрытой. */
   rect?: FrontRect | null;
   /** Петля с четырёхзвенником на этой створке (`doorLinkOf`): ход — по нему, угол — её. */
@@ -2509,10 +2537,19 @@ export function leafPoses(input: {
 }): PosedBox[] {
   const { opening, x, y, width, height, thickness, gap } = input;
   const pivot = doorPivot(opening, x, y, width, height, thickness, opening === 'left' || opening === 'right' ? (input.link ?? null) : null);
-  if (opening === 'lift' && (input.lift === 'parallel_lift' || input.lift === 'swing_over')) {
-    const pose = liftPose(input.lift, input.s, height, thickness);
+  if (opening === 'lift' && (input.liftMech || input.lift === 'parallel_lift' || input.lift === 'swing_over')) {
+    const pose = liftPose(input.lift ?? null, input.s, height, thickness, input.liftMech);
     const local = leafLocal({ opening, width, height, thickness, gap, rect: input.rect });
-    const out: PosedBox[] = [{ center: liftPlace(pivot.origin, pose, local.panel.at), size: local.panel.size, role: 'front', yaw: 0, pitch: pose.angle }];
+    const out: PosedBox[] = [
+      {
+        center: liftPlace(pivot.origin, pose, local.panel.at),
+        size: local.panel.size,
+        role: 'front',
+        yaw: 0,
+        pitch: pose.angle,
+        ...(input.liftMech ? { mechanism: input.liftMech.model.key } : {}),
+      },
+    ];
     if (input.handle) {
       const at: [number, number, number] = [
         input.handle.position[0] - pivot.origin[0],
@@ -3539,10 +3576,6 @@ export function runBoxesByModule(
  * и они названы условными.
  */
 const MECH = {
-  /** Корпус силового механизма подъёмника: толщина у боковины, высота, глубина. */
-  liftWidthMm: 30,
-  liftHeightMm: 120,
-  liftDepthMm: 160,
   /** Корзина карго: шаг по высоте, высота бортика, толщина прутка. */
   basketStepMm: 300,
   basketRailMm: 60,
@@ -3642,22 +3675,36 @@ export function mechanismBoxes(
   const at = (xMm: number, yMm: number, zMm: number): [number, number, number] => [place.x + mm(xMm), place.y + mm(yMm), mm(zMm)];
   const size = (x: number, y: number, z: number): [number, number, number] => [mm(x), mm(y), mm(z)];
 
-  /* Подъёмник: два силовых механизма у боковин под крышей; рычаг едет с фасадом. */
+  /*
+   * ПОДЪЁМНИК — МЕХАНИЗМОМ (AVENTOS HK top, HS top, HL top — `aventosOf`): по коробке на боковину,
+   * рисует и двигает её `AventosModel` по позе модели. Позиция без модели (HK-S, HK-XS, HKi, HF top,
+   * DTC, Häfele) в сцене не рисуется: коробок-заглушек вместо механизма нет, фасад ходит условно, и это
+   * сказано у позиции («кинематика не подтверждена»).
+   */
   const lift = installedItem(unit, 'lift', hardware);
-  if (lift && openingOf(unit).opening === 'lift' && !options.cutaway) {
-    const h = lift.hardware.dimensionsMm?.mechanismHeight ?? MECH.liftHeightMm;
-    const d = Math.min(lift.hardware.dimensionsMm?.mechanismDepth ?? MECH.liftDepthMm, Math.max(40, D - t - 20));
-    const y = H - t - 10 - h / 2;
-    for (const x of [t + MECH.liftWidthMm / 2, W - t - MECH.liftWidthMm / 2]) {
-      out.push({ material: 'metal', node: 'lift', inside: true, position: at(x, y, -(20 + d / 2)), scale: size(MECH.liftWidthMm, h, d) });
-      out.push({
-        material: 'metal',
-        node: 'lift',
-        inside: true,
-        part: `${unit.id}:door:0`,
-        position: at(x, y + h / 2 - 15, -10),
-        scale: size(12, 30, 20),
-      });
+  const model = lift && openingOf(unit).opening === 'lift' && !options.cutaway ? aventosOf(lift, H) : null;
+  if (model) {
+    const door = `${unit.id}:door:0`;
+    const leaf = sceneLeaves(unit, place.heightM, undefined, 0, production).find((l) => l.id === door);
+    if (leaf && leaf.kind === 'door') {
+      const under = H - t;
+      const frontTopMm = (leaf.bottomM + leaf.heightM) * MM - under;
+      const hz = model.housing;
+      for (const [x, inward] of [
+        [t, 1],
+        [W - t, -1],
+      ] as const) {
+        const cx = x + (inward * model.housing.sideMm) / 2;
+        const anchor: [number, number, number] = [cx, under + (hz.y0 + hz.y1) / 2, (hz.z0 + hz.z1) / 2];
+        out.push({
+          material: 'metal',
+          node: 'lift',
+          inside: true,
+          position: at(anchor[0], anchor[1], anchor[2]),
+          scale: size(model.housing.sideMm, hz.y1 - hz.y0, Math.min(hz.z1 - hz.z0, D - t)),
+          aventos: { model, door, xMm: x, inward, underMm: under, frontTopMm, leafCenterXMm: (leaf.xM + leaf.widthM / 2) * MM, anchorMm: anchor },
+        });
+      }
     }
   }
 
@@ -3718,35 +3765,41 @@ export function mechanismBoxes(
     }
   }
 
-  /* Пантограф отсека: штанга с тягами едет вниз и вперёд; кронштейны на боковинах стоят. */
+  /*
+   * ПАНТОГРАФ ОТСЕКА — механизм по каталогу (`pantographSpecOf`): корпуса на боковинах, две
+   * тяги на одной оси, штанга и ручка. Одна коробка — габарит механизма поднятым; рисует и
+   * двигает его `PantographModel` по `pantographPose`. Позиция без модели (не из таблицы
+   * pdf 125) в сцене не рисуется — модели нет, это сказано у позиции; бруска вместо неё нет.
+   */
   for (const fitting of unit.fittings) {
     if (fitting.slot !== 'pantograph' || !fitting.bayId) continue;
-    if (!installedItem(unit, 'pantograph', hardware, fitting.bayId)) continue;
-    const plan = pantographPlan(unit, place, production, fitting.bayId);
-    if (!plan) continue;
+    const item = installedItem(unit, 'pantograph', hardware, fitting.bayId);
+    const spec = pantographSpecOf(item);
+    if (!item || !spec) continue;
+    const layout = bayLayout(unit, placeEnvelope(unit, place, production));
+    const bay = layout?.bays.find((b) => b.id === fitting.bayId);
+    if (!layout || !bay) continue;
+    const { geom, obstacles } = bayPantograph(layout, bay);
+    const sweep = pantographSweep(geom, obstacles);
     const part = `${unit.id}:${fitting.bayId}:pantograph`;
-    const len = plan.x1Mm - plan.x0Mm - 50;
-    const xc = (plan.x0Mm + plan.x1Mm) / 2;
-    out.push({ material: 'metal', node: 'pantograph', inside: true, part, bayId: fitting.bayId, position: at(xc, plan.rodAtMm, plan.rodZMm), scale: size(len, 25, 25) });
-    for (const x of [plan.x0Mm + 12, plan.x1Mm - 12]) {
-      out.push({
-        material: 'metal',
-        node: 'pantograph',
-        inside: true,
-        part,
-        bayId: fitting.bayId,
-        position: at(x, plan.rodAtMm + MECH.pantographArmMm / 2, plan.rodZMm),
-        scale: size(12, MECH.pantographArmMm, 25),
-      });
-      out.push({
-        material: 'metal',
-        node: 'pantograph',
-        inside: true,
-        bayId: fitting.bayId,
-        position: at(x, plan.rodAtMm + MECH.pantographArmMm + 30, plan.rodZMm),
-        scale: size(20, 60, 80),
-      });
-    }
+    const r = 12.5;
+    const x0 = bay.xFromMm;
+    const x1 = bay.xToMm;
+    const y0 = geom.housing.y0;
+    const y1 = geom.raised.y + r;
+    const z0 = Math.min(geom.housing.z0, geom.raised.z - r);
+    const z1 = Math.max(geom.housing.z1, geom.raised.z + r);
+    const anchor: [number, number, number] = [(x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2];
+    out.push({
+      material: 'metal',
+      node: 'pantograph',
+      inside: true,
+      part,
+      bayId: fitting.bayId,
+      position: at(anchor[0], anchor[1], anchor[2]),
+      scale: size(x1 - x0, y1 - y0, z1 - z0),
+      pantograph: { spec, geom, anchorMm: anchor, clash: geom.refusal ?? sweep.clash },
+    });
   }
   return out;
 }
@@ -3817,8 +3870,8 @@ function kupeBoxes(
  * ЧТО В РЯДУ ЕДЕТ ПО ПРЯМОЙ — пантографы отсеков и полотна купе: ключ и
  * вектор хода, метры. Одна функция на сцену, «Открыть всё» и проверку.
  */
-export function sceneSlides(run: Run, hardware?: Map<string, HardwareItem>): { id: string; vectorM: [number, number, number] }[] {
-  const out: { id: string; vectorM: [number, number, number] }[] = [];
+export function sceneSlides(run: Run, hardware?: Map<string, HardwareItem>): { id: string; vectorM: [number, number, number]; swing?: true }[] {
+  const out: { id: string; vectorM: [number, number, number]; swing?: true }[] = [];
   if (hardware && hardware.size > 0) {
     for (const entry of runPlaces(run)) {
       for (const fitting of entry.unit.fittings ?? []) {
@@ -3830,7 +3883,19 @@ export function sceneSlides(run: Run, hardware?: Map<string, HardwareItem>): { i
           run.production,
           fitting.bayId,
         );
-        if (plan) out.push({ id: `${entry.unit.id}:${fitting.bayId}:pantograph`, vectorM: [0, -mm(plan.dropMm), mm(plan.reachMm)] });
+        /*
+         * Пантограф с моделью ходит поворотом тяг (`PantographModel`), а не по прямой: здесь — только
+         * ключ для «Открыть всё» и перенос штанги от поднятой к опущенной (`swing`). Без модели — не ходит.
+         */
+        const spec = pantographSpecOf(installedItem(entry.unit, 'pantograph', hardware, fitting.bayId));
+        if (plan && spec) {
+          const layout = bayLayout(entry.unit, placeEnvelope(entry.unit, { heightM: entry.heightM, depthM: entry.depthM, thicknessM: shopOf(run.production).carcassMm / MM }, run.production));
+          const bay = layout?.bays.find((b) => b.id === fitting.bayId);
+          if (layout && bay) {
+            const { geom } = bayPantograph(layout, bay);
+            out.push({ id: `${entry.unit.id}:${fitting.bayId}:pantograph`, vectorM: [0, mm(geom.lowered.y - geom.raised.y), mm(geom.lowered.z - geom.raised.z)], swing: true });
+          }
+        }
       }
       for (const fitting of entry.unit.fittings ?? []) {
         if (fitting.slot !== 'wardrobe_pullout' || !fitting.bayId) continue;

@@ -27,6 +27,7 @@ import { hardwareCatalog } from '../lib/millwork/hardware';
 import { runnerModelOf } from '../lib/millwork/runnerModel';
 import { drawerDrafts, drawerRunnerOf, moduleDrawerKits } from '../lib/millwork/drawerKit';
 import { allModules } from '../lib/millwork/layout';
+import { aventosLinks, aventosOf } from '../lib/millwork/aventos';
 
 type Fixture = { requirements: RunRequirements; measurement: Measurement; survey: Survey; run: Run };
 
@@ -205,4 +206,46 @@ const drawersExpect = {
   releaseWords: drawerDrafts([tbRun], tbCatalog, tbShop).reasons.filter((r) => r.includes('система ящика')),
 };
 
-process.stdout.write(JSON.stringify({ kitchen, cargo, wardrobe, drawersExpect }));
+/*
+ * ── aventosHk, aventosHl (решение владельца 2026-11-01, п. 4): подъёмник AVENTOS на антресоли над
+ * upper-1200@w1. HK top — для корпусов 205…600 (pdf 50), HL top — 300…580 (pdf 44): верхний шкаф 720 им
+ * не по размеру, антресоль — высотой числом. Короб вентиляции снят (под ним антресоли нет), у HL потолок
+ * 3100 — над антресолью 400 остаётся 530 мм на подъём фасада (22L3800: b = 425, pdf 46). Позиции ставит
+ * человек в Studio; ожидания — тот же движок (`aventosOf`, `aventosLinks`).
+ */
+const aventosRoom = (id: string, ceilingHeightMm: number): Measurement => ({
+  ...noWindow,
+  id,
+  ceilingHeightMm,
+  walls: noWindow.walls.map((wall) => ({ ...wall, openings: wall.openings.filter((o) => o.kind !== 'beam') })),
+});
+function aventosFixture(id: string, ceilingHeightMm: number, mezzMm: number, article: string) {
+  const room = aventosRoom(id, ceilingHeightMm);
+  const a = screen(`HW ${id}`, 'Кухня', room, DEMO_REQUIREMENTS);
+  a.apply([{ op: 'set_mezzanine', heightMm: mezzMm }]);
+  const mezz = a.shown().upperSegments.flatMap((sg) => sg.modules).find((u) => u.section === 'mezzanine' && u.offsetMm === 1200);
+  if (!mezz) throw new Error(`${id}: антресоли над upper-1200@w1 нет`);
+  a.apply([{ op: 'set_opening', moduleId: mezz.id, opening: 'lift' }]);
+  const facts = HARDWARE_FACTS.find((f) => f.article === article);
+  if (!facts) throw new Error(`${id}: позиции ${article} в фактах нет`);
+  const model = aventosOf({ hardware: facts.hardware } as never, mezzMm);
+  if (!model) throw new Error(`${id}: у ${article} нет модели AVENTOS при корпусе ${mezzMm}`);
+  const fx: Fixture = { requirements: DEMO_REQUIREMENTS, measurement: room, survey: measuredSurvey(room), run: a.shown() };
+  return {
+    fx,
+    expect: {
+      module: mezz.id,
+      door: `${mezz.id}:door:0`,
+      article,
+      family: model.family,
+      key: model.key,
+      armSet: model.armSet ?? null,
+      openDeg: model.openDeg,
+      linksMm: aventosLinks(model, 0).map((l) => Math.hypot(l.to[0] - l.from[0], l.to[1] - l.from[1])),
+    },
+  };
+}
+const aventosHk = aventosFixture('hw-aventos-hk', 2700, 350, 'MFR-BLUM-22K2300');
+const aventosHl = aventosFixture('hw-aventos-hl', 3100, 400, 'MFR-BLUM-22L2500');
+
+process.stdout.write(JSON.stringify({ kitchen, cargo, wardrobe, drawersExpect, aventosHk: aventosHk.fx, aventosHkExpect: aventosHk.expect, aventosHl: aventosHl.fx, aventosHlExpect: aventosHl.expect }));

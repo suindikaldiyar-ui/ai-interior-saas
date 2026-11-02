@@ -51,7 +51,7 @@ const PORT = Number(process.env.PORT_HW ?? 3291);
 const BASE = `http://localhost:${PORT}`;
 const OUT = '.capture-check/hardware';
 const PARTS = (process.env.PART ?? 'import,kitchen,kitchen-drawers,kitchen-lift,wardrobe,cargo,corner,tablet').split(',').map((s) => s.trim()).filter(Boolean);
-const KNOWN = ['import', 'kitchen', 'kitchen-drawers', 'kitchen-lift', 'wardrobe', 'cargo', 'corner', 'tablet', 'catalog2', 'drilling', 'drawers', 'open', 'twin', 'tandembox', 'clip'];
+const KNOWN = ['import', 'kitchen', 'kitchen-drawers', 'kitchen-lift', 'wardrobe', 'cargo', 'corner', 'tablet', 'catalog2', 'drilling', 'drawers', 'open', 'twin', 'tandembox', 'clip', 'aventos'];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let failed = 0;
@@ -581,8 +581,10 @@ async function partKitchen(browser) {
       /* Дверца с 71B3550: её звенья отдельно — у соседних створок без петли каталога звенья условные. */
       const doorLinks = await page.evaluate(() => (window.__mwHingeLinks ? window.__mwHingeLinks('base-1200@w1:door:0') : null));
       check(
-        'KITCHEN.A3 звенья петель открытых створок нарисованы и короче 0,1 м (стержней через комнату нет), аномалий сцены нет; у дверцы с 71B3550 — четырёхзвенник: 2 петли × 2 звена той же длины, что в закрытой позе (чашка и плечо не расходятся)',
-        Boolean(links) && links.count > 0 && links.maxM <= 0.1 && links.anomalies === 0 && Boolean(doorLinks) && doorLinks.count === 4 && doorLinks.driftM < 1e-6,
+        'KITCHEN.A3 звенья петель открытых створок короче 0,1 м, аномалий сцены нет; у дверцы с 71B3550 — четырёхзвенник: 2 петли × 2 звена той же длины, что в закрытой позе; у створок без петли каталога звеньев на ходу нет (кинематика не подтверждена — растягивающихся звеньев нет)',
+        Boolean(links) && links.count > 0 && links.maxM <= 0.1 && links.anomalies === 0 && Boolean(doorLinks) && doorLinks.count === 4 && doorLinks.driftM < 1e-6 &&
+          /* Створки без петли каталога (кинематика не подтверждена) на ходу звеньев не рисуют — все звенья кадра у дверцы с 71B3550. */
+          links.count === doorLinks.count,
         `${JSON.stringify(links).slice(0, 200)} · дверца: ${JSON.stringify(doorLinks)}`,
       );
       await closeAll(page);
@@ -718,13 +720,23 @@ async function partKitchenLift(browser) {
       /* Металл до подъёмника — когда каталог дочитан и сцена тиха: иначе в разницу войдут чужие узлы. */
       await hardwareFor(page, 'KITCHEN', 'upper-1200@w1');
       const metal1 = await settledMetal(page);
+      void metal1;
       const lift = await installVia(page, 'KITCHEN', 'lift', 'MFR-BLUM-22S2800', '22S2800');
-      const metal2 = await waitFor(page, () => (window.__mwCadMetal ? window.__mwCadMetal() : null), (n) => n === metal1 + 4, 30_000);
-      check('KITCHEN.E подъёмник HS top поставлен: в сцене +4 металлических узла (2 корпуса у боковин, 2 рычага)', lift.installed && metal2 === metal1 + 4, `металл ${metal1} → ${metal2}`);
-      const up = await openAll(page, 'upper-1200@w1:door:0', (v) => Math.abs(v.rotationDeg[0]) >= 60);
-      await closeUp(page, 'upper-1200@w1:door:0', [-0.6, -0.3, 1.2]);
+      /* HS top — механизмом (решение владельца 2026-11-01, п. 4): у каждой боковины модель, а не коробки-заглушки. */
+      const hsDoor = 'upper-1200@w1:door:0';
+      const hsAll = () => page.evaluate((door) => (window.__mwAventos ? window.__mwAventos().filter((m) => m.door === door) : []), hsDoor);
+      const hs0 = await waitFor(page, (door) => (window.__mwAventos ? window.__mwAventos().filter((m) => m.door === door) : []), (v) => v.length === 2, 30_000, hsDoor);
+      check('KITCHEN.E подъёмник HS top поставлен: механизм у обеих боковин (модель HS top), в закрытом звенья — своей длины', lift.installed && hs0.length === 2 && hs0.every((m) => m.family === 'HS top' && m.u === 0), JSON.stringify(hs0.map((m) => ({ side: m.side, family: m.family, u: m.u, links: m.links.map((l) => l.lengthMm?.toFixed(2)) }))));
+      const up = await openAll(page, hsDoor, (v) => Math.abs(v.rotationDeg[0]) >= 60);
+      const hs1 = await hsAll();
+      await closeUp(page, hsDoor, [-0.6, -0.3, 1.2]);
       await page.screenshot({ path: `${OUT}/kitchen-4-lift.png`, timeout: 120_000 });
-      check('KITCHEN.E2 фасад поднят (поворот ≥ 60°): рычаги (2) едут с ним', Boolean(up) && Math.abs(up.rotationDeg[0]) >= 60 && up.names['rider:lift'] === 2, JSON.stringify(up));
+      const hsEnds = hs1.flatMap((m) => m.links.map((l, i) => (l.to && m.onFront[i] ? Math.hypot(l.to[1] - m.onFront[i][1], l.to[2] - m.onFront[i][2]) * 1000 : Infinity)));
+      check(
+        'KITCHEN.E2 фасад поднят по механизму HS top (поворот 72,7°): у обеих боковин концы звеньев на осях крепления фасада (± 0,5 мм), звенья своей длины',
+        Boolean(up) && Math.abs(Math.abs(up.rotationDeg[0]) - 72.7) < 0.5 && hs1.length === 2 && hs1.every((m) => Math.abs(m.u - 1) < 1e-6) && hsEnds.every((d) => d <= 0.5) && hs1.every((m) => m.links.every((l) => Math.abs(l.lengthMm - l.designMm) <= 0.05)),
+        `поворот ${up?.rotationDeg?.[0]?.toFixed(1)}° · концы звеньев от осей фасада ${hsEnds.map((d) => d.toFixed(2)).join(' / ')} мм`,
+      );
       await closeAll(page);
 
       /* G. Сушилка в шкафу над мойкой. */
@@ -741,6 +753,111 @@ async function partKitchenLift(browser) {
       await kitchenReopen(ctx, 'KITCHEN.JL', ['upper-1200@w1:lift', 'upper-1650@w1:dryer'], { module: 'upper-1200@w1', slot: 'lift', article: 'MFR-BLUM-22S2800' });
     },
     KITCHEN_ORG(fx),
+  );
+}
+
+/* ═════════════════════════  AVENTOS (решение владельца 2026-11-01, п. 4)  ═════════════════════════ */
+
+/**
+ * ПОДЪЁМНИК AVENTOS МЕХАНИЗМОМ: HK top на антресоли 350, HL top на антресоли 400 под потолком 3100.
+ * Путь: «Фурнитура» → «Подъёмник» → артикул → «Установить». Поза читается зондом `__mwAventos` из
+ * мировых матриц: звенья своей длины, конец звена — на оси крепления фасада, а ось эта меряется через
+ * группу полотна `InteractiveDoor` (две разные ветки кода: фасад и рычаг). Ход: 0, половина, весь.
+ */
+async function aventosCase(ctx, key, expect, shots) {
+  const { page, service, ids } = ctx;
+  const L = `AV-${expect.family.replace(' top', '')}`;
+  await openStudio(page, ids[key]);
+  await open3d(page, L);
+  await saved(page);
+  await hardwareFor(page, L, expect.module);
+  const inst = await installVia(page, L, 'lift', expect.article, expect.article.replace('MFR-BLUM-', ''));
+  const all = (door) => (window.__mwAventos ? window.__mwAventos().filter((m) => m.door === door) : []);
+  const state = () => page.evaluate(all, expect.door);
+  const wait = (test, ms = 60_000) => waitFor(page, all, (v) => v.length === 2 && test(v), ms, expect.door);
+  /* Концы звеньев — на осях крепления, прочитанных через полотно фасада (y, z мира), мм. */
+  const ends = (list) =>
+    list.flatMap((m) => {
+      const pairs = expect.family === 'HK top' ? [[m.links[1].to, m.onFront[0]]] : m.links.map((l, i) => [l.to, m.onFront[i]]);
+      return pairs.map(([a, b]) => (a && b ? Math.hypot(a[1] - b[1], a[2] - b[2]) * 1000 : Infinity));
+    });
+  const rigid = (list) => list.every((m) => m.links.length === expect.linksMm.length && m.links.every((l, i) => Math.abs(l.lengthMm - expect.linksMm[i]) <= 0.05));
+  const shot = async (name, offset) => {
+    const st = await state();
+    const left = st.find((m) => m.side === 'left') ?? st[0];
+    const target = left.links[0].from;
+    await page.evaluate((pose) => (window.__mwCadCamera ? window.__mwCadCamera(pose) : null), { position: [target[0] + offset[0], target[1] + offset[1], target[2] + offset[2]], target });
+    await sleep(2500);
+    await page.screenshot({ path: `${OUT}/${name}`, timeout: 120_000 });
+  };
+  const s0 = await wait((v) => v.every((m) => m.u === 0));
+  check(
+    `${L}.1 ${expect.article} поставлен путём панели: у обеих боковин механизм ${expect.family}${expect.armSet ? ` (рычаги ${expect.armSet} — по высоте корпуса)` : ''}, звенья ${expect.linksMm.map((v) => v.toFixed(2)).join(' / ')} мм, металл со своей картой окружения`,
+    inst.installed && s0.length === 2 && s0.every((m) => m.key === expect.key && m.ownEnv) && rigid(s0) && new Set(s0.map((m) => m.side)).size === 2,
+    `${inst.cardVerdict} · ${JSON.stringify(s0.map((m) => ({ side: m.side, key: m.key, links: m.links.map((l) => l.lengthMm?.toFixed(2)) })))}`,
+  );
+  await shot(`${shots}-0-closed.png`, [-0.55, 0.12, 0.85]);
+  const preset = page.locator('[data-scene-preset-select]');
+  const usual = (await preset.count()) > 0 ? await preset.first().inputValue() : null;
+  if (usual !== null) {
+    await preset.first().selectOption('hardware');
+    await sleep(1500);
+    await shot(`${shots}-1-closed-hardware.png`, [-0.4, 0.05, 0.6]);
+    await preset.first().selectOption(usual);
+    await sleep(1000);
+  }
+  /* Половина хода: угол показа — половина угла фасада (у HL — 45° из 90° хода рычага). */
+  const half = expect.openDeg > 0 ? expect.openDeg / 2 : 45;
+  await page.evaluate(([id, deg]) => window.__mwSetOpenDegree?.(id, deg), [expect.door, half]);
+  await page.locator('[data-open-all]').first().click();
+  const sHalf = await wait((v) => v.every((m) => Math.abs(m.u - 0.5) < 0.003), 120_000);
+  await quiet(page).catch(() => null);
+  await shot(`${shots}-2-half.png`, [-0.75, 0.2, 1.1]);
+  await page.evaluate((id) => window.__mwSetOpenDegree?.(id, null), expect.door);
+  const sOpen = await wait((v) => v.every((m) => Math.abs(m.u - 1) < 1e-6), 120_000);
+  await sleep(1200);
+  await shot(`${shots}-3-open.png`, [-0.8, 0.25, 1.2]);
+  await shot(`${shots}-4-open-closeup.png`, [-0.35, 0.08, 0.5]);
+  const eHalf = ends(sHalf);
+  const eOpen = ends(sOpen);
+  check(
+    `${L}.2 на половине хода и в конце: звенья своей длины (± 0,05 мм), концы звеньев на осях крепления фасада (± 0,5 мм) у обеих боковин; угол фасада — ${expect.openDeg}° в конце`,
+    rigid(sHalf) && rigid(sOpen) && eHalf.every((d) => d <= 0.5) && eOpen.every((d) => d <= 0.5) && sOpen.every((m) => Math.abs(m.theta - expect.openDeg) < 0.01),
+    `половина: концы ${eHalf.map((d) => d.toFixed(2)).join(' / ')} мм, угол ${sHalf[0]?.theta?.toFixed(1)}° · конец: концы ${eOpen.map((d) => d.toFixed(2)).join(' / ')} мм, угол ${sOpen[0]?.theta?.toFixed(1)}°`,
+  );
+  await closeAll(page);
+  const sBack = await wait((v) => v.every((m) => m.u === 0));
+  check(`${L}.3 «Закрыть всё» — механизм в закрытом (ход 0), звенья своей длины`, rigid(sBack), JSON.stringify(sBack.map((m) => m.u)));
+  /* Запись → база → перезагрузка: позиция на месте, механизм снова у обеих боковин. */
+  await saved(page);
+  const row = (await service.from('projects').select('millwork').eq('id', ids[key]).single()).data;
+  const stored = [...(row?.millwork?.runs?.optimal?.upperSegments ?? []).flatMap((sg) => sg.modules)].find((m) => m.id === expect.module)?.fittings ?? [];
+  await page.reload({ waitUntil: 'domcontentloaded', timeout: 120_000 });
+  await page.waitForSelector('[data-studio-root]', { timeout: 60_000 });
+  await sleep(1500);
+  await open3d(page, L);
+  await hardwareFor(page, L, expect.module);
+  const sReload = await wait(() => true, 90_000);
+  check(
+    `${L}.4 в базе позиция на месте «lift» у ${expect.module}; после перезагрузки механизм снова у обеих боковин`,
+    stored.some((f) => f.slot === 'lift') && sReload.length === 2 && rigid(sReload),
+    `в базе: ${stored.map((f) => f.slot).join(', ') || 'НИЧЕГО'} · механизмов ${sReload.length}`,
+  );
+}
+
+async function partAventos(browser) {
+  console.log('\n── AVENTOS (1440 × 900): HK top на антресоли 350, HL top на антресоли 400 (потолок 3100) — механизмом, путём панели');
+  const hk = fixture('aventosHk');
+  const hl = fixture('aventosHl');
+  await withOrg(
+    'AVENTOS',
+    browser,
+    async (ctx) => {
+      await aventosCase(ctx, 'avHk', fixture('aventosHkExpect'), 'aventos-hk');
+      await aventosCase(ctx, 'avHl', fixture('aventosHlExpect'), 'aventos-hl');
+      check('AVENTOS ошибок страницы и консоли нет', ctx.errors.length === 0 && ctx.consoleErrors.length === 0, [...ctx.errors, ...ctx.consoleErrors].slice(0, 3).join(' | '));
+    },
+    { viewport: { width: 1440, height: 900 }, projects: [{ key: 'avHk', zone: 'Кухня', fx: hk }, { key: 'avHl', zone: 'Кухня', fx: hl }] },
   );
 }
 
@@ -1566,15 +1683,80 @@ async function partWardrobe(browser) {
       await hardwareFor(page, 'WARDROBE', 'tall-900@w1');
       const pg = await installVia(page, 'WARDROBE', 'pantograph@b1', 'MFR-HAFELE-805.20.625', '805.20.625');
       const po = await installVia(page, 'WARDROBE', 'wardrobe_pullout@b2', 'MFR-HAFELE-807.61.774', '807.61.774');
-      const lowered = await openAll(page, 'tall-900@w1:b1:pantograph', (v) => v.shift[1] <= -599);
+      /*
+       * ПАНТОГРАФ — МЕХАНИЗМ (решение владельца 2026-11-01, п. 3): корпуса на боковинах, тяги, штанга, ручка.
+       * Поза читается зондом `__mwPantographs` из мировых матриц сцены: концы тяг — на торцах штанги, тяги
+       * обеих сторон — один угол; 45° — `__mwSetOpenDegree`; остановка на ходу — нажатием на штангу.
+       */
+      const PG = 'tall-900@w1:b1:pantograph';
+      const pgState = () => page.evaluate((id) => (window.__mwPantographs ? window.__mwPantographs().find((p) => p.id === id) ?? null : null), PG);
+      const pgWait = (test, ms = 60_000) => waitFor(page, (id) => (window.__mwPantographs ? window.__mwPantographs().find((p) => p.id === id) ?? null : null), (v) => Boolean(v) && test(v), ms, PG);
+      /* Шарниры не расходятся: конец тяги каждой стороны — на торце штанги (по высоте и глубине), мм. */
+      const joins = (st) => st.sides.map((sd, i) => Math.hypot(sd.tip[1] - st.railEnds[i][1], sd.tip[2] - st.railEnds[i][2]) * 1000);
+      const sync = (st) => Math.abs(st.sides[0].rotationX - st.sides[1].rotationX);
+      const pg0 = await pgWait((v) => v.s === 0);
+      const preset = page.locator('[data-scene-preset-select]');
+      const usualPreset = (await preset.count()) > 0 ? await preset.first().inputValue() : null;
+      const pgShot = async (name, offset) => {
+        const st = await pgState();
+        const c = st.railEnds[0].map((v, k) => (v + st.railEnds[1][k]) / 2);
+        const target = [c[0], (c[1] + st.sides[0].pivot[1]) / 2, (c[2] + st.sides[0].pivot[2]) / 2];
+        await page.evaluate((pose) => (window.__mwCadCamera ? window.__mwCadCamera(pose) : null), { position: [target[0] + offset[0], target[1] + offset[1], target[2] + offset[2]], target });
+        await sleep(2500);
+        await page.screenshot({ path: `${OUT}/${name}`, timeout: 120_000 });
+      };
+      await pgShot('wardrobe-pg-0-closed-cabinet.png', [-1.1, 0.4, 2.0]);
+      if (usualPreset !== null) {
+        await preset.first().selectOption('hardware');
+        await sleep(1500);
+        await pgShot('wardrobe-pg-1-raised-hardware.png', [-0.9, 0.2, 1.4]);
+        await preset.first().selectOption(usualPreset);
+        await sleep(1000);
+      }
+      await page.evaluate((id) => window.__mwSetOpenDegree?.(id, 45), PG);
+      await page.locator('[data-open-all]').first().click();
+      const pgMid = await pgWait((v) => Math.abs(v.s - 0.5) < 0.005);
+      await quiet(page);
       const pulled = await moving(page, 'tall-900@w1:b2:pullout');
-      await closeUp(page, 'tall-900@w1:b1:pantograph', [-0.5, 0.2, 1.8]);
-      await page.screenshot({ path: `${OUT}/wardrobe-1-pantograph.png`, timeout: 120_000 });
+      await pgShot('wardrobe-pg-2-45deg.png', [-1.0, 0.25, 1.9]);
+      await page.evaluate((id) => window.__mwSetOpenDegree?.(id, null), PG);
+      const pgLow = await pgWait((v) => v.s === 1);
+      await quiet(page);
+      await pgShot('wardrobe-pg-3-lowered.png', [-1.0, 0.25, 1.9]);
+      await pgShot('wardrobe-pg-4-lowered-closeup.png', [-0.55, 0.15, 0.75]);
+      const drop = (pg0.railEnds[0][1] - pgLow.railEnds[0][1]) * 1000;
+      const ahead = (pgLow.railEnds[0][2] - pg0.railEnds[0][2]) * 1000;
+      /* Остановка на ходу: камера на механизм, закрыть — и нажать на штангу, пока она поднимается. */
+      await pgShot('wardrobe-pg-5-before-stop.png', [-1.0, 0.25, 1.9]);
+      await page.locator('[data-close-all]').first().click();
+      await pgWait((v) => v.s < 0.75 && v.s > 0.3, 20_000);
+      const pt = await page.evaluate((id) => (window.__mwCadPartPoint ? window.__mwCadPartPoint(id) : null), PG);
+      if (pt) await page.mouse.click(pt.x, pt.y);
+      await quiet(page);
+      await sleep(800);
+      const pgStop = await pgState();
       await closeAll(page);
       const kupe = await installVia(page, 'WARDROBE', 'sliding', 'MFR-HAFELE-400.51.121', '400.51.121');
       check('WARDROBE.C/D/I пантограф b1, выдвижная штанга b2 и система купе поставлены — не отказ', pg.installed && po.installed && kupe.installed && [pg, po, kupe].every((x) => x.cardVerdict !== 'refused'), [pg, po, kupe].map((x) => x.cardVerdict).join(', '));
       const leaf = await openAll(page, 'tall-0@w1:kupe:0', (v) => v.shift[0] >= 949);
-      check('WARDROBE.C пантограф опустился на 600 и вышел на 350 мм; штанга с тягами (3) едет', Boolean(lowered) && lowered.shift[1] === -600 && lowered.shift[2] === 350 && lowered.names['mech:pantograph'] === 3, JSON.stringify(lowered));
+      check(
+        'WARDROBE.C пантограф Häfele 805.20.625 — механизм: на 0, 45° и 90° концы тяг на торцах штанги (± 0,5 мм), тяги левой и правой стороны — один угол; штанга опустилась на 800 мм (30 → 830 под крышей, pdf 125) и вышла вперёд; исполнение «белый» — свои материалы, металл со своей картой окружения',
+        Boolean(pg0 && pgMid && pgLow) &&
+          [pg0, pgMid, pgLow].every((st) => joins(st).every((d) => d <= 0.5) && sync(st) < 1e-9) &&
+          Math.abs(pgMid.armDeg - 45) < 0.5 &&
+          Math.abs(pgLow.armDeg - 90) < 0.01 &&
+          Math.abs(drop - 800) < 1 &&
+          ahead > 600 &&
+          pgLow.body === 'white' &&
+          pgLow.ownEnv === true &&
+          pg0.clash === null,
+        `закрыт: стыки ${joins(pg0).map((d) => d.toFixed(2)).join('/')} мм · 45°: угол ${pgMid?.armDeg.toFixed(1)}°, стыки ${joins(pgMid).map((d) => d.toFixed(2)).join('/')} · опущен: угол ${pgLow?.armDeg.toFixed(1)}°, стыки ${joins(pgLow).map((d) => d.toFixed(2)).join('/')} · ход вниз ${drop.toFixed(1)} мм, вперёд ${ahead.toFixed(1)} мм · ${pgLow?.materials?.join(', ')}`,
+      );
+      check(
+        'WARDROBE.C2 нажатие на штангу на ходу останавливает механизм в промежуточном положении (стоит, тяги — один угол, стыки целы)',
+        Boolean(pgStop) && pgStop.s > 0.05 && pgStop.s < 0.95 && joins(pgStop).every((d) => d <= 0.5) && sync(pgStop) < 1e-9,
+        `точка нажатия ${JSON.stringify(pt)} · встал на ${pgStop ? (pgStop.s * 100).toFixed(0) : '—'}% хода (${pgStop?.armDeg?.toFixed(1)}°)`,
+      );
       check('WARDROBE.D выдвижная штанга вышла на 369 мм (0,9 длины 410 по паспорту)', Boolean(pulled) && pulled.shift[2] === 369 && pulled.names['mech:pullout'] === 1, JSON.stringify(pulled));
       check('WARDROBE.I полотно купе 1 уехало вбок на 950 мм (шаг 1000 минус нахлёст 50)', Boolean(leaf) && leaf.shift[0] === 950 && (leaf.names['panel:Дверь-купе'] ?? 0) === 1, JSON.stringify(leaf));
       await page.screenshot({ path: `${OUT}/wardrobe-2-kupe.png`, timeout: 120_000 });
@@ -2074,6 +2256,7 @@ try {
       if (part === 'twin') await partTwin(browser);
       if (part === 'tandembox') await partTandembox(browser);
       if (part === 'clip') await partClip(browser);
+      if (part === 'aventos') await partAventos(browser);
       done.push(part);
       console.log(`  ·    ${part}: ${Math.round((Date.now() - startedAt) / 1000)} с`);
     } catch (error) {

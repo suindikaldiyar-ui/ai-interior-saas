@@ -1,5 +1,5 @@
 import { FALSE_PANEL_RANGE_MM, type HardwareItem, type ProductionSettings } from '@/types/catalog';
-import { liftMotionOf } from './liftKinematics';
+import { liftModelOf, liftMotionOf } from './liftKinematics';
 import { runnerModelOf } from './runnerModel';
 import type { CornerChoice, CornerClearance, Module, OpeningKind, Run, ZoneKind } from '@/types/millwork';
 import {
@@ -503,6 +503,11 @@ function movingOf(
           rowBoxes.filter((box) => box.part === leaf.id),
           [entry.x + leaf.xM, entry.y + leaf.bottomM],
         );
+        /* Механизм подъёмника (AVENTOS): фасад ходит по модели, как в сцене (`liftPose` с механизмом). */
+        const liftModel = leaf.opening === 'lift' ? liftModelOf(unit, hardware, Math.round(entry.heightM * MM)) : null;
+        const liftMech = liftModel
+          ? { model: liftModel, frontTopMm: (leaf.bottomM + leaf.heightM) * MM - (entry.heightM * MM - production.carcassMm) }
+          : null;
         at = (s) =>
           leafPoses({
             rect: frontRect,
@@ -517,10 +522,12 @@ function movingOf(
             s,
             openAngle: angle,
             lift: leaf.opening === 'lift' ? liftMotionOf(unit, hardware) : null,
+            liftMech,
             link,
           }).map((box) => {
             /* Поза посчитана механизмом петли — проверка это называет (слова — от позы, а не от наличия петли). */
             if (box.mechanism && link) told.add(link.linkage.words);
+            if (box.mechanism && liftMech) told.add(liftMech.model.words);
             return {
               obb: obbOf(place, [box.center[0] + entry.x, box.center[1] + entry.y, box.center[2] + entry.zM], box.size, box.yaw ?? 0, box.pitch ?? 0),
               part: box.role === 'handle' ? 'ручка' : 'полотно',

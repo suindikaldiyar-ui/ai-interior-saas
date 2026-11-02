@@ -57,6 +57,8 @@ import { DEFAULT_SCENE_VIEW, type SceneView } from '@/lib/cameraFraming';
 import type { GlassKind, Module, ProfileFinish, Run } from '@/types/millwork';
 import { boxGeometryOf, sectionKey } from './profileGeometry';
 import DrillHoles3D from './DrillHoles3D';
+import { PantographModel, pantographProbe } from './PantographModel';
+import { AventosModel, aventosProbe } from './AventosModel';
 import { TwinModel, twinKeyOf } from './twinAsset';
 import { drillHoles3d } from '@/lib/millwork/drillHoles3d';
 import { fasteners3d } from '@/lib/millwork/fasteners3d';
@@ -639,6 +641,10 @@ export default function Cabinet3D({
     const sections = new Map<string, PartBox[]>();
     /* Царги и секции ходовой с моделью реестра (§ 5) — модель вместо сечения. */
     const twins: PartBox[] = [];
+    /* Пантографы отсеков — механизмом (`PantographModel`), не пачкой коробок и не «по прямой». */
+    const pantographs: PartBox[] = [];
+    /* Подъёмники AVENTOS — механизмом у боковин (`AventosModel`): ходят с фасадом, а не пачкой. */
+    const aventos: PartBox[] = [];
     /*
      * РАДИУСНЫЕ ДЕТАЛИ (OVAL & RADIUS) — своей формой, по сетке на материал:
      * роль и ключ материала те же, что у коробок (`ShapedBatch`).
@@ -654,8 +660,16 @@ export default function Cabinet3D({
     let tv: PartBox | null = null;
 
     for (const box of boxes) {
-      if (box.part && active.has(box.part)) continue;
       /* Слой выключен — коробки нет в кадре (P1); в раскрое и смете она остаётся. */
+      if (box.pantograph) {
+        if (boxShown(box, layers)) pantographs.push(box);
+        continue;
+      }
+      if (box.aventos) {
+        if (boxShown(box, layers)) aventos.push(box);
+        continue;
+      }
+      if (box.part && active.has(box.part)) continue;
       if (!boxShown(box, layers)) continue;
       if (box.node === 'tv') {
         tv = box;
@@ -749,7 +763,7 @@ export default function Cabinet3D({
       }
       groups[box.material].push(box);
     }
-    return { groups, fronts, carcass, inner, reliefFronts, handles, hinges, glassKinds, glassShelves, profiles, sections, twins, shaped, decor, rounded, tv };
+    return { groups, fronts, carcass, inner, reliefFronts, handles, hinges, glassKinds, glassShelves, profiles, sections, twins, pantographs, aventos, shaped, decor, rounded, tv };
   }, [boxes, activeParts, layers]);
 
   /*
@@ -1214,7 +1228,17 @@ export default function Cabinet3D({
         />
       ))}
 
+      {grouped.pantographs.map((box) => (
+        <PantographModel key={box.part} box={box} open={openParts.includes(box.part!)} onToggle={handleToggle} shadows={shadows} />
+      ))}
+
+      {grouped.aventos.map((box) => (
+        <AventosModel key={`${box.aventos!.door}|${box.aventos!.inward}`} box={box} onToggle={handleToggle} shadows={shadows} />
+      ))}
+
       {slides.map((slide) => {
+        /* Пантограф ходит поворотом тяг — своей моделью выше. */
+        if (slide.swing) return null;
         const own = (boxesByPart.get(slide.id) ?? []).filter((box) => boxShown(box, layers));
         if (own.length === 0) return null;
         return (
@@ -1793,6 +1817,10 @@ function SceneProbe({ group, run }: { group: React.RefObject<THREE.Group>; run: 
       const anomalies = (w as { __mwSceneAnomalies?: unknown[] }).__mwSceneAnomalies ?? [];
       return { count: lengths.length, maxM: lengths.length ? Math.max(...lengths) : 0, anomalies: anomalies.length, driftM: drift, lengthsMm: lengths.map((l) => Math.round(l * 1e5) / 100) };
     };
+    /* Пантографы отсеков: поза тяг, штанги и ручки в мире (решение владельца 2026-11-01, п. 3). */
+    (w as { __mwPantographs?: () => unknown }).__mwPantographs = () => pantographProbe();
+    /* Подъёмники AVENTOS: звенья, крепление и ось на фасаде в мире (решение владельца 2026-11-01, п. 4). */
+    (w as { __mwAventos?: () => unknown }).__mwAventos = () => aventosProbe();
     /* Угол раскрытия створки (состояние сцены, `openDegrees`): показ петли на 45° и 90°. */
     (w as { __mwSetOpenDegree?: (id: string, deg: number | null) => void }).__mwSetOpenDegree = (id, deg) => useInteriorStore.getState().setOpenDegree(id, deg);
     /* Модели реестра 3D в кадре (ТЗ 2026-10-31, § 3): сетки по ролям — приёмке. */

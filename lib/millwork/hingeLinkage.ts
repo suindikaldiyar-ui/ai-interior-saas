@@ -68,12 +68,33 @@ export const CLIP_TOP_110_OVERLAY: HingeLinkage = {
     'Ход петли — четырёхзвенник: напечатаны угол 110° и вхождение фасада 12 мм при полном открывании (Blum, каталог 2024-2025, pdf 81 / печ. 77); оси шарнира в каталоге не напечатаны — подобраны под эти числа, путь фасада между ними — расчёт реконструкции, не CAD производителя.',
 };
 
-/** Петля, у которой есть кинематика: Blum CLIP top BLUMOTION 110°, накладная. */
+/**
+ * ИСПОЛНЕНИЯ CLIP top 110° — один механизм (чашка, звенья, нос плеча), разное колено плеча.
+ * Проверено напечатанным: тот же четырёхзвенник даёт вхождение фасада при полном открывании
+ * 12 (накладная), 21,5 (полунакладная) и 30 (вкладная) — pdf 81 / печ. 77; боковина у каждого
+ * исполнения — по своей строке таблицы TB (FA = TB + 11 / TB + 1,5 / TB − 7 при подъёме 0).
+ */
+export const CLIP_TOP_110_VARIANTS = {
+  overlay: { faOverTbMm: 11, ingressMm: 12 },
+  half_overlay: { faOverTbMm: 1.5, ingressMm: 21.5 },
+  inset: { faOverTbMm: -7, ingressMm: 30 },
+} as const;
+
+/** Петля, у которой есть кинематика: Blum CLIP top BLUMOTION 110° — накладная, полунакладная, вкладная. */
 export function hingeLinkageOf(item: HardwareItem | null | undefined): HingeLinkage | null {
   const h = item?.hardware;
   if (!h) return null;
-  if (h.manufacturer !== 'Blum' || h.series !== 'CLIP top BLUMOTION' || h.subcategory !== 'overlay' || h.openingAngleDeg !== 110) return null;
-  return CLIP_TOP_110_OVERLAY;
+  if (h.manufacturer !== 'Blum' || h.series !== 'CLIP top BLUMOTION' || h.openingAngleDeg !== 110) return null;
+  const variant = h.subcategory === 'overlay' || h.subcategory === 'half_overlay' || h.subcategory === 'inset' ? h.subcategory : null;
+  if (!variant) return null;
+  if (variant === 'overlay') return CLIP_TOP_110_OVERLAY;
+  const v = CLIP_TOP_110_VARIANTS[variant];
+  return {
+    ...CLIP_TOP_110_OVERLAY,
+    key: `blum-clip-top-110-${variant}`,
+    printed: { ingressMm: v.ingressMm, source: `Blum, каталог 2024-2025, pdf 81 / печ. 77: «Вхождение фасада при полном открывании», ${variant === 'inset' ? 'вкладная' : 'полунакладная'} — ${String(v.ingressMm).replace('.', ',')}` },
+    words: `Ход петли — тот же четырёхзвенник, что у накладной CLIP top 110° (другое колено плеча): напечатаны угол 110° и вхождение фасада ${String(v.ingressMm).replace('.', ',')} мм (Blum, каталог 2024-2025, pdf 81 / печ. 77) — механизм даёт его без подгонки; оси шарнира подобраны, не CAD производителя.`,
+  };
 }
 
 const sub = (a: Pt, b: Pt): Pt => [a[0] - b[0], a[1] - b[1]];
@@ -141,7 +162,7 @@ function tableOf(bar: FourBar, openRad: number): Table {
       return table;
     }
   }
-  throw new Error('Четырёхзвенник петли не доходит до угла открывания — оси механизма заданы неверно.');
+  throw new Error('Четырёхзвенник механизма не доходит до угла открывания — оси механизма заданы неверно.');
 }
 
 /**
@@ -149,7 +170,7 @@ function tableOf(bar: FourBar, openRad: number): Table {
  * перенос начала чашки (`shift` — куда ушла ось чашки закрытого фасада). Звенья
  * жёсткие точно: A1 — на окружности кривошипа, B1 — пересечение окружностей.
  */
-export function linkagePose(link: HingeLinkage, theta: number): { a1: Pt; b1: Pt; shift: Pt; theta: number } {
+export function linkagePose(link: Pick<HingeLinkage, 'bar' | 'openDeg'>, theta: number): { a1: Pt; b1: Pt; shift: Pt; theta: number } {
   const openRad = (link.openDeg * Math.PI) / 180;
   const t = Math.max(0, Math.min(openRad, theta));
   const table = tableOf(link.bar, openRad);
@@ -227,4 +248,16 @@ export function hingeSideSweep(
     }
   }
   return { minMm: Number.isFinite(minMm) ? minMm : Infinity, atDeg };
+}
+
+/**
+ * КИНЕМАТИКА СТВОРКИ СЛОВАМИ (решение владельца 2026-11-01, п. 1): петля с механизмом — откуда её
+ * ход; петля каталога без механизма или петля не выбрана — «кинематика не подтверждена», фасад
+ * открывается условным поворотом, звенья на ходу не рисуются (растягивающееся звено — неправда).
+ */
+export function doorKinematicsWords(hinge: HardwareItem | null | undefined): { confirmed: boolean; words: string } {
+  const linkage = hingeLinkageOf(hinge);
+  if (linkage) return { confirmed: true, words: linkage.words };
+  if (hinge) return { confirmed: false, words: `Петля ${hinge.hardware.manufacturerArticle ?? hinge.article}: кинематика не подтверждена — механизма петли в продукте нет, фасад открывается условным поворотом.` };
+  return { confirmed: false, words: 'Петля не выбрана — кинематика не подтверждена: фасад открывается условным поворотом.' };
 }

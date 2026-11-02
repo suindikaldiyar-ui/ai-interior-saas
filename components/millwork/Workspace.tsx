@@ -5319,6 +5319,7 @@ export default function Workspace(props: WorkspaceProps) {
             run={activeRun}
             onOps={runOps}
             onRefuse={setSceneNotice}
+            hardware={hardwareItems}
           />
         </div>
       </div>

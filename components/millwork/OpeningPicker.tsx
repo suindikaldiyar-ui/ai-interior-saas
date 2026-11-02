@@ -11,6 +11,9 @@ import {
   openingsFor,
 } from '@/lib/millwork/opening';
 import type { FrontOpening, HandleKind, MillworkOp, Module, Run } from '@/types/millwork';
+import type { HardwareItem } from '@/types/catalog';
+import { installedItem } from '@/lib/millwork/fittings';
+import { doorKinematicsWords } from '@/lib/millwork/hingeLinkage';
 
 /**
  * КУДА ОТКРЫВАЕТСЯ ФАСАД.
@@ -27,6 +30,8 @@ import type { FrontOpening, HandleKind, MillworkOp, Module, Run } from '@/types/
  */
 
 type Props = {
+  /** Каталог организации: петля на модуле — с механизмом или без (кинематика словами). */
+  hardware?: Map<string, HardwareItem>;
   unit: Module;
   /** Ряд нужен ради умолчания ручки: оно живёт в опциях ряда. */
   run: Pick<Run, 'options'>;
@@ -35,7 +40,7 @@ type Props = {
   onRefuse?: (message: string) => void;
 };
 
-export default function OpeningPicker({ unit, run, onOps, onRefuse }: Props) {
+export default function OpeningPicker({ unit, run, onOps, onRefuse, hardware }: Props) {
   const allowed = openingsFor(unit);
   /*
    * У МОДУЛЯ ИЗ ОДНИХ ЯЩИКОВ НАПРАВЛЕНИЯ НЕТ, А РУЧКА ЕСТЬ (HANDLE-REAL).
@@ -46,6 +51,7 @@ export default function OpeningPicker({ unit, run, onOps, onRefuse }: Props) {
   if (allowed.length === 0 && drawers === 0) return null;
 
   const { opening, assumed, basis } = openingOf(unit);
+  const kinematics = doorKinematicsWords(installedItem(unit, 'hinge', hardware));
   const { handle } = handleOf(unit, run);
   const kept = (unit.fittings ?? []).filter((f) => f.slot === 'handle').length;
 
@@ -93,6 +99,12 @@ export default function OpeningPicker({ unit, run, onOps, onRefuse }: Props) {
       {assumed && (
         <p className="mt-2 text-[13px] leading-snug text-graphiteMw" data-opening-assumed>
           Не выбрано — считаем по умолчанию: {basis}.
+        </p>
+      )}
+      {/* Кинематика створки: механизм петли или «не подтверждена» — словами (решение владельца 2026-11-01). */}
+      {(opening === 'left' || opening === 'right') && (
+        <p className="mt-2 text-[13px] leading-snug text-graphiteMw" data-door-kinematics={kinematics.confirmed ? 'mechanism' : 'unconfirmed'}>
+          {kinematics.words}
         </p>
       )}
         </>

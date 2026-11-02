@@ -1,6 +1,6 @@
 import { DEFAULT_ALLOWANCES, type HardwareCategory, type HardwareItem, type ProductionSettings } from '@/types/catalog';
 import type { FittingSlot, Module, ModuleFitting, Run } from '@/types/millwork';
-import { moduleCarcassHeightMm, moduleDepthMm } from './fill';
+import { moduleCarcassHeightMm, moduleDepthMm, upperBottomFor } from './fill';
 import { HANDLE_TITLE, frontDrawerSlides, handleOf, isPullOut, openingHardware, openingOf } from './opening';
 import { moduleFronts } from './applianceFront';
 import { cornerOfModule } from './corner';
@@ -12,6 +12,10 @@ import { slidingDoorCount } from './sections';
 import { handleItemModel } from './handleModel';
 import { handleSpotOf } from './handlePlace';
 import { isMechanism, mechanismOf, TYPE_TITLE } from './mechanisms';
+import { bayPantograph, pantographSpecOf, pantographSweep } from './pantograph';
+import { aventosOf, aventosSweep } from './aventos';
+import { ceilingOverModuleMm } from './ceiling';
+import { plinthMm } from './shop';
 
 /**
  * ФУРНИТУРА ПРОИЗВОДИТЕЛЯ НА МЕСТЕ МОДУЛЯ (HARDWARE-01).
@@ -752,12 +756,51 @@ export function fittingVerdict(input: {
       if (isMechanism(mechanism) && mechanism.type === 'bifold') {
         checks.push({ label: 'фасад', state: 'fail', words: 'складной подъёмник — фасад из двух частей, а у модуля фасад один' });
       }
-      /* Вертикальный и откидной над корпусом ходят не поворотом: сцена их хода пока не строит, место над корпусом не проверено. */
-      if (isMechanism(mechanism) && (mechanism.type === 'parallel' || mechanism.type === 'up_and_over')) {
+      /*
+       * AVENTOS HK top, HS top, HL top — МЕХАНИЗМОМ (решение владельца 2026-11-01, п. 4): ход фасада —
+       * поза модели (`aventosSweep`, та же, что рисует сцена), место над корпусом — до потолка (под
+       * ригелем — до его низа) и до модуля, висящего над этим. Без модели вертикальный и откидной над
+       * корпусом — «не проверено», как было.
+       */
+      const aventos = aventosOf(item, g.heightMm);
+      if (aventos) {
+        const sweep = aventosSweep(aventos, { topMm: g.carcassMm - g.gapMm / 2, heightMm: frontH, thicknessMm: g.frontMm }, g.carcassMm);
+        const upper = isUpperRow(unit);
+        const topFloor = (upper ? upperBottomFor(unit, run) : plinthMm(run.production)) + g.heightMm;
+        let limit = ceilingOverModuleMm(unit, run);
+        let limitWords = 'до потолка';
+        for (const other of (run.upperSegments ?? []).flatMap((seg) => seg.modules)) {
+          if (other.id === unit.id || other.offsetMm >= unit.offsetMm + unit.widthMm || other.offsetMm + other.widthMm <= unit.offsetMm) continue;
+          const bottom = upperBottomFor(other, run);
+          if (bottom >= topFloor - 1 && bottom < limit) {
+            limit = bottom;
+            limitWords = `до «${other.label}» над ним`;
+          }
+        }
+        const room = Math.round(limit - topFloor);
+        const need = Math.max(0, Math.round(sweep.aboveTopMm));
+        checks.push({
+          label: 'ход',
+          state: sweep.intoCarcassMm <= 0.5 ? 'ok' : 'fail',
+          words:
+            sweep.intoCarcassMm <= 0.5
+              ? `${aventos.family}: ход по механизму, фасад в корпус не заходит, вылет вперёд ${Math.round(sweep.forwardMm)} мм`
+              : `${aventos.family}: фасад на ходу заходит в корпус на ${sweep.intoCarcassMm.toFixed(1)} мм`,
+        });
+        checks.push({
+          label: 'место над корпусом',
+          state: need <= room ? 'ok' : 'fail',
+          words:
+            need <= room
+              ? `фасад на ходу поднимается на ${need} мм над корпусом, ${limitWords} ${room} мм`
+              : `фасад на ходу поднимается на ${need} мм над корпусом, а ${limitWords} ${room} мм — не хватает ${need - room} мм`,
+        });
+      } else if (isMechanism(mechanism) && (mechanism.type === 'parallel' || mechanism.type === 'up_and_over')) {
+        /* Вертикальный и откидной над корпусом без модели: ход не построен, показан поворот вверх. */
         checks.push({
           label: 'ход',
           state: 'unknown',
-          words: `${TYPE_TITLE[mechanism.type]}: ход этого вида в сцене не построен — показан поворот вверх, место над корпусом не проверено`,
+          words: `${TYPE_TITLE[mechanism.type]}: модели механизма нет — ход этого вида в сцене не построен, показан поворот вверх, место над корпусом не проверено`,
         });
       }
       if (openingOf(unit).opening !== 'lift') {
@@ -832,7 +875,25 @@ export function fittingVerdict(input: {
       const layout = bayLayout(unit, bayEnvelope(unit, run, production));
       const bay = layout?.bays.find((b) => b.id === bayId);
       if (!bay) return refuse(`Отсека ${bayId ?? '—'} у «${unit.label}» нет.`);
-      checks.push(inRange('ширина отсека', bay.widthMm, range(item, 'cabinetInnerWidth'), 'отсек в свету'));
+      /*
+       * Пантограф с моделью (`pantographSpecOf`, Häfele pdf 125): ширина — колонка его артикула в таблице,
+       * место механизма и ход штанги и тяг мимо полок, перегородок и ящиков отсека — той же геометрией,
+       * что рисует сцена (`bayPantograph`).
+       */
+      const pgSpec = slot === 'pantograph' ? pantographSpecOf(item) : null;
+      checks.push(inRange('ширина отсека', bay.widthMm, pgSpec ? pgSpec.widthMm : range(item, 'cabinetInnerWidth'), 'отсек в свету'));
+      if (pgSpec && layout) {
+        const { geom, obstacles } = bayPantograph(layout, bay);
+        if (geom.refusal) checks.push({ label: 'место механизма', state: 'fail', words: geom.refusal });
+        else {
+          const sweep = pantographSweep(geom, obstacles);
+          checks.push(
+            sweep.clash
+              ? { label: 'ход', state: 'fail', words: sweep.clash }
+              : { label: 'ход', state: 'ok', words: `штанга опускается на ${Math.round(geom.raised.y - geom.lowered.y)} мм и выходит на ${Math.round(geom.lowered.z)} мм перед корпусом — полки и ящики отсека не задевает` },
+          );
+        }
+      }
       const minDepth = dim(item, 'minInnerDepth');
       if (minDepth !== null) checks.push(atMost('глубина отсека', minDepth, g.usableDepthMm, 'глубина в свету'));
       const length = dim(item, 'length');
