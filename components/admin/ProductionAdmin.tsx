@@ -739,7 +739,7 @@ export default function ProductionAdmin({ initial }: Props) {
             * толщины, дно, зазоры по высоте, ось направляющей на боковине.
             * Пусто — короба нет, выпуск в цех с ящиками заперт словами.
             */}
-          <div className="mt-6 border-t border-navyLine/60 pt-4" data-drawer-box data-drawer-box-state={boxEmpty ? 'empty' : boxParsed ? (boxParsed.confirmed ? 'confirmed' : 'unconfirmed') : 'invalid'}>
+          <div id="drawer-box" className="mt-6 border-t border-navyLine/60 pt-4" data-drawer-box data-drawer-box-state={boxEmpty ? 'empty' : boxParsed ? (boxParsed.confirmed ? 'confirmed' : 'unconfirmed') : 'invalid'}>
             <p className="text-[15px] font-medium">Короб ящика</p>
             <p className="mt-0.5 text-[13px] leading-snug text-graphiteMw">
               Длина короба — номинальная длина NL выбранной направляющей, ширина — проём минус её монтажная ширина с

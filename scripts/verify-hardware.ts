@@ -54,6 +54,7 @@ import { drillingChecks } from './verify-drilling';
 import { hinge3dChecks } from './verify-hinges3d';
 import { twinChecks } from './verify-twin';
 import { aventosChecks } from './verify-aventos';
+import { realAccountChecks } from './verify-real-account';
 import { runnerModelOf } from '../lib/millwork/runnerModel';
 import { drillingPlan } from '../lib/millwork/drillingPlan';
 import { drawerBoxPlan } from '../lib/millwork/drawerBox';
@@ -1869,6 +1870,10 @@ twinChecks(check);
 /* ═════════════════════════  AVENTOS механизмом (решение владельца 2026-11-01, п. 4)  ═════════════════════════ */
 
 aventosChecks(check);
+
+/* ═════════════════════════  Настоящая организация: комплект и готовые модели (ТЗ 2026-11-02)  ═════════════════════════ */
+
+realAccountChecks(check);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

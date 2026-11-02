@@ -41,6 +41,7 @@ import { openingHardware } from '@/lib/millwork/opening';
 import { cornerOfModule } from '@/lib/millwork/corner';
 import { moduleCarcassHeightMm } from '@/lib/millwork/fill';
 import { moduleDrawerKits } from '@/lib/millwork/drawerKit';
+import { drawerSystemKit } from '@/lib/millwork/kitReadiness';
 import {
   ANALOG_KEY_TITLE,
   NO_SERIES,
@@ -377,6 +378,12 @@ export default function HardwarePanel({ unit, run, production, hardware, catalog
   }, [orgId]);
 
   const places = useMemo(() => (unit ? fittingSlotsOf(unit, run, production, hardware) : []), [unit, run, production, hardware]);
+  /*
+   * КОМПЛЕКТ СИСТЕМЫ ЯЩИКА (ТЗ 2026-11-02): ходовая TANDEMBOX сама по себе ящик не собирает — нужны
+   * сведения производителя с NL, царги той же NL, правила короба цеха и модель реестра. Шаги — словами,
+   * царги — кнопками из каталога, остальное — куда идти (`drawerSystemKit`).
+   */
+  const kit = useMemo(() => (unit ? drawerSystemKit(unit, production, hardware) : null), [unit, production, hardware]);
   const sliding = run.doorSystem === 'sliding';
   const [slotKey, setSlotKey] = useState<string | null>(null);
   const placeKey = (place: Pick<SlotPlace, 'slot' | 'bayId'>) => `${place.slot}${place.bayId ? `@${place.bayId}` : ''}`;
@@ -820,6 +827,34 @@ export default function HardwarePanel({ unit, run, production, hardware, catalog
             <p className="mt-1 text-[13px] leading-snug text-graphiteMw">
               У модуля нет мест под фурнитуру производителя: ни петель, ни ящиков, ни механизма.
             </p>
+          )}
+          {unit && kit && (
+            <div className="mt-2 grid gap-2 rounded-[var(--r-control)] bg-navy p-3 text-[13px]" data-hw-kit={kit.every((step) => step.ok) ? 'ready' : 'todo'}>
+              <p className="mw-label">Комплект системы ящика</p>
+              {kit.map((step) => (
+                <div key={step.key} className="grid gap-1" data-hw-kit-step={step.key} data-hw-kit-ok={step.ok ? 'yes' : 'no'}>
+                  <p className="leading-snug">
+                    <span className={step.ok ? 'text-cyanBright' : 'text-tape'}>{step.ok ? '✓' : '•'}</span> {step.title}: {step.words}
+                  </p>
+                  {!step.ok && step.href && (
+                    <a href={step.href} target="_blank" rel="noopener" className="justify-self-start text-cyanBright underline" data-hw-kit-link={step.key}>
+                      Открыть в новой вкладке
+                    </a>
+                  )}
+                  {step.offers?.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      data-hw-kit-side={item.article}
+                      className="mw-btn mw-btn-ghost justify-self-start text-[12px]"
+                      onClick={() => onOps([{ op: 'set_fitting', moduleId: unit.id, slot: 'drawer_side', itemId: item.id }])}
+                    >
+                      Поставить царги {item.article.replace(/^MFR-[A-Z]+-/, '')} · {item.name}
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </div>
           )}
           {handleSlot && handleLeaves.length > 1 && (
             <div className="mt-2" data-hw-leaf-targets={handleLeaves.length}>

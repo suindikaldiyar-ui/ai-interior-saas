@@ -7,6 +7,8 @@ import { currentOrg, currentUser } from '@/lib/supabase/server';
 
 /* Импорт — с three.js и превью: только по требованию, на этой странице. */
 const CadImport = dynamic(() => import('@/components/admin/CadImport'), { ssr: false });
+/* Готовые модели ALDIK — тем же путём записи, что импорт (`uploadTwin`). */
+const ReadyTwins = dynamic(() => import('@/components/admin/ReadyTwins'), { ssr: false });
 
 /**
  * «ИМПОРТ CAD-ФУРНИТУРЫ» (ТЗ 2026-10-31, § 4.3). Компания приносит CAD-файл
@@ -36,6 +38,7 @@ export default async function CadImportPage() {
           ← Каталог
         </Link>
       </header>
+      <ReadyTwins orgId={org.id} />
       <CadImport orgId={org.id} />
     </main>
   );

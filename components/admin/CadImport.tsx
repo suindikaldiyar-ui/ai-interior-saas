@@ -27,7 +27,7 @@ import type { FittingSlot } from '@/types/millwork';
  */
 
 const OCCT = 'https://cdn.jsdelivr.net/npm/occt-import-js@0.0.23/dist/';
-type Format = 'glb' | 'gltf' | 'obj' | 'step' | 'iges';
+export type Format = 'glb' | 'gltf' | 'obj' | 'step' | 'iges';
 type Units = 'mm' | 'cm' | 'm' | 'in';
 const UNIT_TO_MM: Record<Units, number> = { mm: 1, cm: 10, m: 1000, in: 25.4 };
 const FINISHES: TwinFinish[] = ['chrome', 'nickel', 'stainless', 'aluminium', 'black_matte', 'white', 'grey', 'brass', 'anthracite'];
@@ -54,7 +54,7 @@ function formatOf(name: string): Format | null {
 }
 
 /** Место модуля по группе изделия: им выбирается монтажная точка и предел габарита. */
-function slotOf(item: HardwareItem): FittingSlot {
+export function slotOf(item: HardwareItem): FittingSlot {
   const c = item.hardware.category;
   /* Монтажная планка — подвид петли («hinge / mounting_plate»). */
   if (c === 'hinge') return item.hardware.subcategory === 'mounting_plate' ? 'hinge_plate' : 'hinge';
@@ -76,7 +76,7 @@ function loadScript(src: string): Promise<void> {
 }
 
 /** Файл → группа именованных сеток в единицах файла. */
-async function parseFile(file: File, format: Format): Promise<THREE.Group> {
+export async function parseFile(file: File, format: Format): Promise<THREE.Group> {
   const buffer = await file.arrayBuffer();
   if (format === 'glb' || format === 'gltf') {
     const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js');
@@ -140,7 +140,7 @@ export function fileMaterialsOf(root: THREE.Object3D): string[] {
   return Array.from(names);
 }
 
-function namedMeshes(root: THREE.Object3D): THREE.Mesh[] {
+export function namedMeshes(root: THREE.Object3D): THREE.Mesh[] {
   const meshes: THREE.Mesh[] = [];
   const used = new Set<string>();
   root.traverse((object) => {
@@ -160,6 +160,74 @@ async function sha256(buffer: ArrayBuffer): Promise<string> {
   return Array.from(new Uint8Array(digest))
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
+}
+
+/**
+ * ЗАПИСЬ МОДЕЛИ В РЕЕСТР — ОДНА НА РУЧНОЙ ИМПОРТ И ГОТОВЫЕ МОДЕЛИ ALDIK: нормализованный корень → GLB →
+ * sha256 → ссылка на загрузку (только права VERIFIED) → Storage папки позиции → `meta.twin` через
+ * `/api/catalog/hardware/twin` (сервер проверяет запись тем же `parseTwin`). Возвращает сохранённую запись.
+ */
+export async function uploadTwin(input: {
+  itemId: string;
+  root: THREE.Object3D;
+  meshes: THREE.Mesh[];
+  slot: FittingSlot;
+  fileName: string;
+  format: Format;
+  status: HardwareTwin['status'];
+  sourceKind: HardwareTwin['source']['kind'];
+  sourceUrl?: string;
+  license: string;
+  rights: HardwareTwin['source']['rights'];
+  rightsNote: string;
+  boundsMm: HardwareTwin['boundsMm'];
+  anchorMm: [number, number, number];
+  roles: Record<string, TwinRole>;
+  finish?: TwinFinish;
+  visualChecked: boolean;
+}): Promise<HardwareTwin> {
+  const { GLTFExporter } = await import('three/examples/jsm/exporters/GLTFExporter.js');
+  const glb = (await new GLTFExporter().parseAsync(input.root, { binary: true })) as ArrayBuffer;
+  const hash = await sha256(glb);
+  const up = await fetch('/api/catalog/hardware/twin', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ action: 'upload-url', itemId: input.itemId, sha256: hash, bytes: glb.byteLength, rights: input.rights }),
+  });
+  const upBody = (await up.json().catch(() => ({}))) as { path?: string; token?: string; error?: string };
+  if (!up.ok || !upBody.path || !upBody.token) throw new Error(upBody.error ?? `ссылка на загрузку не выдана (${up.status})`);
+  const supabase = supabaseBrowser();
+  if (!supabase) throw new Error('Supabase не настроен');
+  const { error: uploadError } = await supabase.storage.from('catalog').uploadToSignedUrl(upBody.path, upBody.token, new Blob([glb], { type: 'model/gltf-binary' }));
+  if (uploadError) throw new Error(`файл не загрузился: ${uploadError.message}`);
+  const twin: HardwareTwin = {
+    version: 1,
+    status: input.status,
+    asset: { path: upBody.path, bytes: glb.byteLength, sha256: hash },
+    source: {
+      kind: input.sourceKind,
+      fileName: input.fileName,
+      format: input.format,
+      ...(input.sourceUrl?.trim() ? { url: input.sourceUrl.trim() } : {}),
+      license: input.license.trim(),
+      rights: input.rights,
+      rightsNote: input.rightsNote.trim(),
+      importedAt: new Date().toISOString(),
+    },
+    boundsMm: input.boundsMm,
+    anchor: { kind: anchorKindFor(input.slot), pointMm: input.anchorMm },
+    parts: input.meshes.map((m) => ({ node: m.name, role: input.roles[m.name] ?? 'fixed' })),
+    ...(input.finish ? { finish: input.finish } : {}),
+    verification: { visual: input.visualChecked ? 'CHECKED' : 'UNCHECKED', manufacturing: 'UNVERIFIED' },
+  };
+  const res = await fetch('/api/catalog/hardware/twin', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ action: 'save', itemId: input.itemId, twin }),
+  });
+  const body = (await res.json().catch(() => ({}))) as { twin?: HardwareTwin; error?: string };
+  if (!res.ok || !body.twin) throw new Error(body.error ?? `запись не сохранилась (${res.status})`);
+  return body.twin;
 }
 
 type ItemRow = { id: string; org_id: string; article: string; name_ru: string; price: number; is_active: boolean; meta: Record<string, unknown> | null };
@@ -302,49 +370,27 @@ export default function CadImport({ orgId }: { orgId: string }) {
     setBusy(true);
     setNotice(null);
     try {
-      const { GLTFExporter } = await import('three/examples/jsm/exporters/GLTFExporter.js');
-      const glb = (await new GLTFExporter().parseAsync(normalized.root, { binary: true })) as ArrayBuffer;
-      const hash = await sha256(glb);
-      const up = await fetch('/api/catalog/hardware/twin', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ action: 'upload-url', itemId: item.id, sha256: hash, bytes: glb.byteLength, rights }),
-      });
-      const upBody = (await up.json().catch(() => ({}))) as { path?: string; token?: string; error?: string };
-      if (!up.ok || !upBody.path || !upBody.token) throw new Error(upBody.error ?? `ссылка на загрузку не выдана (${up.status})`);
-      const supabase = supabaseBrowser();
-      if (!supabase) throw new Error('Supabase не настроен');
-      const { error: uploadError } = await supabase.storage.from('catalog').uploadToSignedUrl(upBody.path, upBody.token, new Blob([glb], { type: 'model/gltf-binary' }));
-      if (uploadError) throw new Error(`файл не загрузился: ${uploadError.message}`);
-      const twin: HardwareTwin = {
-        version: 1,
+      const twin = await uploadTwin({
+        itemId: item.id,
+        root: normalized.root,
+        meshes: normalized.meshes,
+        slot: slot!,
+        fileName: file.name,
+        format,
         status,
-        asset: { path: upBody.path, bytes: glb.byteLength, sha256: hash },
-        source: {
-          kind: sourceKind,
-          fileName: file.name,
-          format,
-          ...(sourceUrl.trim() ? { url: sourceUrl.trim() } : {}),
-          license: license.trim(),
-          rights,
-          rightsNote: rightsNote.trim(),
-          importedAt: new Date().toISOString(),
-        },
+        sourceKind,
+        sourceUrl,
+        license,
+        rights,
+        rightsNote,
         boundsMm,
-        anchor: { kind: anchorKindFor(slot!), pointMm: anchorMm },
-        parts: normalized.meshes.map((m) => ({ node: m.name, role: roles[m.name] ?? 'fixed' })),
+        anchorMm,
+        roles,
         ...(finish === 'file' || finish === 'unset' ? {} : { finish }),
-        verification: { visual: visualChecked ? 'CHECKED' : 'UNCHECKED', manufacturing: 'UNVERIFIED' },
-      };
-      const res = await fetch('/api/catalog/hardware/twin', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ action: 'save', itemId: item.id, twin }),
+        visualChecked,
       });
-      const body = (await res.json().catch(() => ({}))) as { twin?: HardwareTwin; error?: string };
-      if (!res.ok || !body.twin) throw new Error(body.error ?? `запись не сохранилась (${res.status})`);
-      setSaved(body.twin);
-      setNotice(`Модель записана: ${item.article} — ${TWIN_STATUS_WORDS[body.twin.status]}. В сцене она встанет на место «${slot}» при установке позиции.`);
+      setSaved(twin);
+      setNotice(`Модель записана: ${item.article} — ${TWIN_STATUS_WORDS[twin.status]}. В сцене она встанет на место «${slot}» при установке позиции.`);
     } catch (error) {
       setNotice(`Не записано: ${error instanceof Error ? error.message : String(error)}`);
     } finally {

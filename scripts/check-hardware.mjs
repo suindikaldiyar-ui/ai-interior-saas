@@ -51,7 +51,7 @@ const PORT = Number(process.env.PORT_HW ?? 3291);
 const BASE = `http://localhost:${PORT}`;
 const OUT = '.capture-check/hardware';
 const PARTS = (process.env.PART ?? 'import,kitchen,kitchen-drawers,kitchen-lift,wardrobe,cargo,corner,tablet').split(',').map((s) => s.trim()).filter(Boolean);
-const KNOWN = ['import', 'kitchen', 'kitchen-drawers', 'kitchen-lift', 'wardrobe', 'cargo', 'corner', 'tablet', 'catalog2', 'drilling', 'drawers', 'open', 'twin', 'tandembox', 'clip', 'aventos'];
+const KNOWN = ['import', 'kitchen', 'kitchen-drawers', 'kitchen-lift', 'wardrobe', 'cargo', 'corner', 'tablet', 'catalog2', 'drilling', 'drawers', 'open', 'twin', 'tandembox', 'clip', 'aventos', 'real'];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let failed = 0;
@@ -858,6 +858,263 @@ async function partAventos(browser) {
       check('AVENTOS ошибок страницы и консоли нет', ctx.errors.length === 0 && ctx.consoleErrors.length === 0, [...ctx.errors, ...ctx.consoleErrors].slice(0, 3).join(' | '));
     },
     { viewport: { width: 1440, height: 900 }, projects: [{ key: 'avHk', zone: 'Кухня', fx: hk }, { key: 'avHl', zone: 'Кухня', fx: hl }] },
+  );
+}
+
+/* ═════════════════════════  REAL: как у настоящей организации (ТЗ 2026-11-02)  ═════════════════════════ */
+
+/**
+ * КАТАЛОГ КАК У НАСТОЯЩЕЙ ОРГАНИЗАЦИИ: те же артикулы и те же записи изделия (`meta.hardware`), что лежат у
+ * «shymkent mebel» (импорт 21.10.2026, 1199 позиций) — чтение оттуда служебным ключом, только чтение. Цены не
+ * копируются (0 — «цена не задана»); строка и категория — как у засева. Правил короба и моделей нет.
+ */
+const REAL_ORG_SLUG = 'org-c7ade9f2';
+async function seedLikeRealOrg(service, orgId) {
+  const { data: realOrg, error: realError } = await service.from('orgs').select('id').eq('slug', REAL_ORG_SLUG).single();
+  if (realError || !realOrg) throw new Stop(`организации ${REAL_ORG_SLUG} нет: ${realError?.message ?? 'пусто'}`);
+  const real = new Map();
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await service.from('catalog_items').select('article, hw:meta->hardware').eq('org_id', realOrg.id).like('article', 'MFR-%').order('article').range(from, from + 999);
+    if (error) throw new Error(`каталог ${REAL_ORG_SLUG}: ${error.message}`);
+    for (const row of data ?? []) real.set(row.article, row.hw);
+    if (!data || data.length < 1000) break;
+  }
+  const rows = hardwareImportRows().filter((row) => real.has(row.article)).map((row) => ({ ...row, price: 0, meta: { ...row.meta, hardware: real.get(row.article) } }));
+  const { data: category, error } = await service.from('catalog_categories').select('id').eq('org_id', orgId).eq('key', 'hardware').single();
+  if (error || !category) throw new Error(`категории «Фурнитура» нет после типового прайса: ${error?.message ?? 'пусто'}`);
+  for (let at = 0; at < rows.length; at += 300) {
+    const { error: insertError } = await service.from('catalog_items').insert(rows.slice(at, at + 300).map((row) => ({ org_id: orgId, category_id: category.id, ...row, is_active: true })));
+    if (insertError) throw new Error(`засев как у ${REAL_ORG_SLUG}: ${insertError.message}`);
+  }
+  return { real: real.size, seeded: rows.length };
+}
+
+/** Панель «Фурнитура» видит каталог организации (любое число позиций — у настоящей их 1199, а не 5264). */
+async function hardwarePanelFor(page, label, moduleId) {
+  if (!(await page.locator('[data-studio-objects]').first().isVisible().catch(() => false))) {
+    must(`${label}: инструмент «Выбор»`, await tool(page, 'select'), 'НУЛЕВОЙ СЕЛЕКТОР: [data-studio-tool="select"]');
+  }
+  const row = page.locator(`[data-object-module="${moduleId}"]`);
+  must(`${label}: модуль ${moduleId} в списке объектов`, (await row.count()) > 0, `НУЛЕВОЙ СЕЛЕКТОР: [data-object-module="${moduleId}"]`);
+  await row.first().click();
+  await sleep(500);
+  must(`${label}: инструмент «Фурнитура»`, await tool(page, 'hardware'), 'НУЛЕВОЙ СЕЛЕКТОР: [data-studio-tool="hardware"]');
+  const items = await waitFor(page, () => { const p = document.querySelector('[data-hw-panel]'); const s = p?.getAttribute('data-hw-list'); return s === 'ready' ? Number(p.getAttribute('data-hw-items') ?? 0) : s === 'error' ? -1 : 0; }, (n) => n !== 0, 90_000);
+  must(`${label}: панель «Фурнитура» прочитала каталог организации`, items > 0, `позиций ${items}`);
+  return items;
+}
+const kitState = (page) =>
+  page.evaluate(() => {
+    const box = document.querySelector('[data-hw-kit]');
+    if (!box) return null;
+    return {
+      state: box.getAttribute('data-hw-kit'),
+      steps: Array.from(box.querySelectorAll('[data-hw-kit-step]')).map((el) => ({ key: el.getAttribute('data-hw-kit-step'), ok: el.getAttribute('data-hw-kit-ok') === 'yes', words: (el.textContent ?? '').replace(/\s+/g, ' ').slice(0, 260) })),
+      sides: Array.from(box.querySelectorAll('[data-hw-kit-side]')).map((el) => el.getAttribute('data-hw-kit-side')),
+      links: Array.from(box.querySelectorAll('[data-hw-kit-link]')).map((el) => `${el.getAttribute('data-hw-kit-link')}:${el.getAttribute('href')}`),
+    };
+  });
+
+async function partReal(browser) {
+  console.log('\n── REAL (1440 × 900 → 1024 × 768): каталог как у настоящей организации → TANDEMBOX не собирается → шаги комплекта → модели в 3D');
+  const fx = fixture('kitchen');
+  await withOrg(
+    'REAL',
+    browser,
+    async ({ service, org, page, errors, consoleErrors, ids }) => {
+      const seeded = await seedLikeRealOrg(service, org.id);
+      check(`REAL.0 каталог временной организации — как у ${REAL_ORG_SLUG}: те же артикулы и записи изделия (без цен)`, seeded.seeded === seeded.real && seeded.real > 1000, `у настоящей ${seeded.real} · засеяно ${seeded.seeded}`);
+      const MOD = 'base-3300@w1';
+      const RUNNER = 'MFR-BLUM-576.4501M';
+      const SIDES = 'MFR-BLUM-378M4502SA';
+
+      /* 1. Симптом: ходовая ставится, а системы ящика нет — и шаги названы. */
+      await openStudio(page, ids.kitchen);
+      await open3d(page, 'REAL');
+      await saved(page);
+      const panelItems = await hardwarePanelFor(page, 'REAL', MOD);
+      const r1 = await installVia(page, 'REAL', 'slide', RUNNER, '576.4501M');
+      const kit1 = await waitFor(page, () => document.querySelector('[data-hw-kit]')?.getAttribute('data-hw-kit') ?? null, Boolean, 20_000).then(() => kitState(page));
+      await saved(page);
+      const twins1 = await page.evaluate(() => (window.__mwTwinCenters ? window.__mwTwinCenters().length : -1));
+      await page.screenshot({ path: `${OUT}/real-1-kit-stale.png`, timeout: 120_000 });
+      check(
+        'REAL.1 как у владельца: панель видит 1199 позиций, ходовая 576.4501M ставится, модели в сцене нет; комплект называет четыре шага — сведения производителя (нет NL), царги, короб ящика цеха, 3D-модель — со ссылками',
+        r1.installed && panelItems === seeded.seeded && kit1?.state === 'todo' && kit1.steps.length === 4 && kit1.steps.every((st) => !st.ok) && /нет NL/.test(kit1.steps[0].words) && twins1 === 0 &&
+          kit1.links.includes('facts:/admin/catalog') && kit1.links.includes('rules:/admin/production#drawer-box') && kit1.links.includes('model:/admin/catalog/cad'),
+        `${panelItems} позиций · моделей в сцене ${twins1} · ${kit1?.steps.map((st) => `${st.key} ${st.ok ? 'ok' : '✗'}`).join(' · ')} · ${kit1?.links.join(', ')}`,
+      );
+
+      /* 2. Сведения производителя — «Каталог» → «Фурнитура производителей» → «Загрузить». */
+      await page.goto(`${BASE}/admin/catalog`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+      await page.locator('[data-admin-hardware]').first().waitFor({ timeout: 60_000 });
+      await page.locator('[data-admin-hardware]').first().click();
+      await page.waitForSelector('[data-admin-hardware-plan="facts"]', { timeout: 120_000 });
+      const confirmText = (await page.locator('[data-admin-hardware-confirm]').first().textContent()) ?? '';
+      await page.screenshot({ path: `${OUT}/real-2-facts-plan.png`, timeout: 120_000 });
+      await page.locator('[data-admin-hardware-confirm]').first().click();
+      const fresh = await (async () => {
+        const until = Date.now() + 480_000;
+        for (;;) {
+          const { data } = await service.from('catalog_items').select('hw:meta->hardware').eq('org_id', org.id).eq('article', RUNNER).single();
+          const nl = data?.hw?.dimensionsMm?.nominalLength ?? null;
+          const n = await countMfr(service, org.id);
+          if ((nl === 450 && n === FACT_COUNT) || Date.now() > until) return { nl, n };
+          await sleep(3000);
+        }
+      })();
+      check('REAL.2 «Загрузить» обновил сведения производителя: у 576.4501M появилась NL 450; позиций — сколько в своде фактов', fresh.nl === 450 && fresh.n === FACT_COUNT, `«${confirmText.trim()}» · NL ${fresh.nl} · позиций ${fresh.n} из ${FACT_COUNT}`);
+
+      /* 3. Короб ящика цеха — «Настройки цеха». Числа — приёмки (как у части drawers), не умолчание продукта. */
+      await page.goto(`${BASE}/admin/production#drawer-box`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+      await page.waitForSelector('[data-drawer-box-field="sideMm"]', { timeout: 60_000 });
+      await page.waitForFunction(() => {
+        const el = document.querySelector('[data-drawer-box-field="sideMm"]');
+        return Boolean(el && Object.keys(el).some((k) => k.startsWith('__reactProps')));
+      }, undefined, { timeout: 60_000 });
+      for (const [key, value] of Object.entries({ sideMm: '16', bottomMm: '4', bottomGrooveMm: '6', gapBelowMm: '10', gapAboveMm: '30', runnerAxisMm: '40' })) {
+        if (key === 'bottomGrooveMm') {
+          await page.selectOption('[data-drawer-box-field="bottomMaterial"]', 'hdf');
+          await page.selectOption('[data-drawer-box-field="bottomMount"]', 'groove');
+        }
+        await page.fill(`[data-drawer-box-field="${key}"]`, value);
+      }
+      await page.selectOption('[data-drawer-box-field="edge"]', '0.4');
+      await page.locator('[data-drawer-box-confirmed]').check();
+      await page.getByRole('button', { name: 'Сохранить', exact: true }).click({ timeout: 15_000 });
+      await waitFor(page, () => document.body.textContent?.includes('Сохранено.') ?? false, Boolean, 30_000);
+      const { data: orgRow } = await service.from('orgs').select('production').eq('id', org.id).single();
+      check('REAL.3 «Короб ящика» сохранён в настройках цеха (подтверждено цехом)', orgRow?.production?.drawerBox?.sideMm === 16 && orgRow.production.drawerBox.confirmed === true, JSON.stringify(orgRow?.production?.drawerBox ?? null));
+
+      /* 4. Готовые модели ALDIK — «Импорт CAD-фурнитуры». */
+      await page.goto(`${BASE}/admin/catalog/cad`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+      await page.waitForSelector('[data-ready-twins="ready"]', { timeout: 120_000 });
+      const plan = await page.evaluate(() => Array.from(document.querySelectorAll('[data-ready-twin]')).map((el) => ({ article: el.getAttribute('data-ready-twin'), state: el.getAttribute('data-ready-state'), words: (el.textContent ?? '').replace(/\s+/g, ' ').slice(0, 200) })));
+      await page.screenshot({ path: `${OUT}/real-4-ready-plan.png`, timeout: 120_000 });
+      await page.locator('[data-ready-install]').first().click();
+      const done = await waitFor(page, () => document.querySelector('[data-ready-done]')?.getAttribute('data-ready-done') ?? null, Boolean, 180_000);
+      const { data: twinRows } = await service.from('catalog_items').select('id, article, meta').eq('org_id', org.id).in('article', [RUNNER, SIDES, 'MFR-BLUM-71B3550']);
+      const filesN = [];
+      for (const row of twinRows ?? []) {
+        const { data: files } = await service.storage.from('catalog').list(`${org.id}/hardware-cad/${row.id}`);
+        filesN.push((files ?? []).length);
+      }
+      check(
+        'REAL.4 «Готовые модели ALDIK»: до записи — 3 к установке (царга, ходовая, петля CLIP top); «Поставить» — у трёх позиций `meta.twin` (визуальная реконструкция по чертежу, права подтверждены), файлы в Storage папок позиций',
+        plan.length === 3 && plan.every((r) => r.state === 'install') && done === '3' && (twinRows ?? []).length === 3 && (twinRows ?? []).every((r) => r.meta?.twin?.status === 'VISUAL_RECONSTRUCTION' && r.meta.twin.source.rights === 'VERIFIED') && filesN.every((n) => n === 1),
+        `${plan.map((r) => `${r.article}: ${r.state}`).join(' · ')} · записано ${done} · файлов ${filesN.join('/')}`,
+      );
+
+      /* 5. Studio: царги — кнопкой комплекта; модель в 3D; ход. */
+      await openStudio(page, ids.kitchen);
+      await open3d(page, 'REAL');
+      await hardwarePanelFor(page, 'REAL', MOD);
+      await page.locator('[data-hw-slot="slide"]').first().click();
+      await waitFor(page, () => document.querySelector('[data-hw-kit]') !== null, Boolean, 30_000);
+      const kit2 = await kitState(page);
+      const sideButton = page.locator(`[data-hw-kit-side="${SIDES}"]`);
+      must('REAL: кнопка царг 378M4502SA в комплекте', (await sideButton.count()) > 0, `кнопки: ${kit2?.sides.join(', ')}`);
+      await sideButton.first().click();
+      const kit3 = await waitFor(page, () => document.querySelector('[data-hw-kit]')?.getAttribute('data-hw-kit') ?? null, (v) => v === 'ready', 30_000).then(() => kitState(page));
+      await saved(page);
+      await quiet(page);
+      const closed = await waitFor(
+        page,
+        () => (window.__mwTwinCenters ? window.__mwTwinCenters() : null),
+        (v) => Boolean(v) && v.filter((m) => m.role === 'fixed').length >= 4 && v.filter((m) => m.role === 'moving').length >= 2,
+        90_000,
+      );
+      const drawersN = fixture('drawersExpect').drawers;
+      /* Модели реестра в кадре — только у этого модуля; неподвижные профили ходовой — на корпусе (ключ «cabinet|…»), как у TBX.B. */
+      const fixedN = closed?.filter((m) => m.role === 'fixed').length ?? 0;
+      const movingN = closed?.filter((m) => m.role === 'moving').length ?? 0;
+      const middleN = closed?.filter((m) => m.role === 'middle').length ?? 0;
+      await page.screenshot({ path: `${OUT}/real-5-kit-ready.png`, timeout: 120_000 });
+      check(
+        `REAL.5 после шагов: царги той же NL — кнопкой комплекта (кнопок ${kit2?.sides.length}), все четыре шага выполнены; в сцене модели реестра на ${drawersN} ящиках — царги, каретки, корпусные профили`,
+        kit2?.steps[0].ok === true && kit3?.state === 'ready' && fixedN === 4 * drawersN && movingN === 2 * drawersN && middleN === 4 * drawersN,
+        `${kit3?.steps.map((st) => `${st.key} ${st.ok ? 'ok' : '✗'}`).join(' · ')} · неподвижных ${fixedN}, едущих ${movingN}, кареток ${middleN}`,
+      );
+      const top = `${MOD}:drawer:0`;
+      const want = fixture('drawersExpect');
+      await openAll(page, top, (v) => v.shift[2] >= want.travelMm - 1);
+      const after = await page.evaluate(() => (window.__mwTwinCenters ? window.__mwTwinCenters() : null));
+      /* Едущие и каретки — у верхнего ящика; неподвижные профили — на корпусе (ключ «cabinet|…»): все. */
+      const travel = (role) =>
+        (after ?? []).filter((m) => m.role === role && (role === 'fixed' || m.key.startsWith(top))).map((m) => {
+          const b = closed.find((c) => c.key === m.key);
+          return b ? Math.round(Math.hypot(m.center[0] - b.center[0], m.center[1] - b.center[1], m.center[2] - b.center[2]) * 10000) / 10 : NaN;
+        });
+      const sideL = (after ?? []).find((m) => m.key === `${top}|L|moving|side-profile`);
+      if (sideL) {
+        await page.evaluate((pose) => (window.__mwCadCamera ? window.__mwCadCamera(pose) : null), { position: [sideL.center[0] - 0.4, sideL.center[1] + 0.6, sideL.center[2] + 0.7], target: sideL.center });
+        await sleep(2500);
+      }
+      await page.screenshot({ path: `${OUT}/real-6-drawer-open.png`, timeout: 120_000 });
+      const mv = travel('moving');
+      const md = travel('middle');
+      const fx0 = travel('fixed');
+      check(
+        `REAL.6 «Открыть всё»: царги верхнего ящика едут на ${want.travelMm} мм (ход по коробу), каретки — на половину, корпусные профили стоят`,
+        mv.length === 2 && mv.every((d) => Math.abs(d - want.travelMm) <= 1) && md.length > 0 && md.every((d) => Math.abs(d - want.travelMm / 2) <= 1) && fx0.length > 0 && fx0.every((d) => d <= 0.5),
+        `царги ${mv.join('/')} мм · каретки ${md.join('/')} мм · профили ${fx0.join('/')} мм`,
+      );
+      await closeAll(page);
+
+      /* 6. CLIP top на дверце и HS top на верхнем шкафу — у той же организации. */
+      await hardwarePanelFor(page, 'REAL', 'base-1200@w1');
+      /* Меши модели реестра по ролям (`__mwTwins`, как у TWIN.C): у петли — плечо на корпусе, чашка на полотне. */
+      const twinsBefore = await page.evaluate(() => (window.__mwTwins ? window.__mwTwins() : {}));
+      const hinge = await installVia(page, 'REAL', 'hinge', 'MFR-BLUM-71B3550', '71B3550');
+      const twinsAfter = await waitFor(
+        page,
+        () => (window.__mwTwins ? window.__mwTwins() : {}),
+        (v) => (v['twin:fixed'] ?? 0) >= (twinsBefore['twin:fixed'] ?? 0) + 2 && (v['twin:moving'] ?? 0) >= (twinsBefore['twin:moving'] ?? 0) + 2,
+        60_000,
+      );
+      const hingeTwins = { length: (twinsAfter['twin:fixed'] ?? 0) - (twinsBefore['twin:fixed'] ?? 0) + (twinsAfter['twin:moving'] ?? 0) - (twinsBefore['twin:moving'] ?? 0) };
+      await hardwarePanelFor(page, 'REAL', 'upper-1200@w1');
+      const lift = await installVia(page, 'REAL', 'lift', 'MFR-BLUM-22S2800', '22S2800');
+      const hs = await waitFor(page, () => (window.__mwAventos ? window.__mwAventos().filter((m) => m.door === 'upper-1200@w1:door:0') : []), (v) => v.length === 2, 60_000);
+      check(
+        'REAL.7 той же организации: петля CLIP top 71B3550 — модель реестра на петлях дверцы (плечи на корпусе, чашки на полотне: мешей прибавилось у обеих ролей); подъёмник HS top 22S2800 — механизм у обеих боковин',
+        hinge.installed && (twinsAfter['twin:fixed'] ?? 0) >= (twinsBefore['twin:fixed'] ?? 0) + 2 && (twinsAfter['twin:moving'] ?? 0) >= (twinsBefore['twin:moving'] ?? 0) + 2 && lift.installed && hs.length === 2 && hs.every((m) => m.family === 'HS top'),
+        `мешей модели петли ${hingeTwins.length} · механизмов HS ${hs.length}`,
+      );
+
+      /* 7. Перезагрузка: всё на месте. */
+      await saved(page);
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: 120_000 });
+      await page.waitForSelector('[data-studio-root]', { timeout: 60_000 });
+      await sleep(1500);
+      await open3d(page, 'REAL');
+      await hardwarePanelFor(page, 'REAL', MOD);
+      const reloaded = await waitFor(page, () => (window.__mwTwinCenters ? window.__mwTwinCenters().length : 0), (n) => n > 0, 90_000);
+      const hsReload = await waitFor(page, () => (window.__mwAventos ? window.__mwAventos().length : 0), (n) => n === 2, 60_000);
+      const { data: row } = await service.from('projects').select('millwork').eq('id', ids.kitchen).single();
+      const mods = [...(row?.millwork?.runs?.optimal?.modules ?? []), ...(row?.millwork?.runs?.optimal?.upperSegments ?? []).flatMap((sg) => sg.modules)];
+      const stored = mods.flatMap((m) => (m.fittings ?? []).map((f) => `${m.id}:${f.slot}`)).sort();
+      check(
+        'REAL.8 запись и перезагрузка: в базе ходовая, царги, петля и подъёмник на местах; после перезагрузки модели реестра и механизм HS снова в сцене',
+        ['base-3300@w1:slide', 'base-3300@w1:drawer_side', 'base-1200@w1:hinge', 'upper-1200@w1:lift'].every((k) => stored.includes(k)) && reloaded > 0 && hsReload === 2,
+        `${stored.join(', ')} · мешей моделей ${reloaded} · HS ${hsReload}`,
+      );
+
+      /* 8. Планшет 1024 × 768: комплект и сцена без горизонтальной прокрутки. */
+      await page.setViewportSize({ width: 1024, height: 768 });
+      await sleep(1500);
+      await page.locator('[data-hw-slot="slide"]').first().click().catch(() => undefined);
+      await sleep(800);
+      const tablet = await page.evaluate(() => ({
+        scroll: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        kit: document.querySelector('[data-hw-kit]')?.getAttribute('data-hw-kit') ?? null,
+        canvas: (() => { const c = document.querySelector('[data-studio-viewport] canvas'); const r = c?.getBoundingClientRect(); return r ? Math.round(r.width) : 0; })(),
+      }));
+      await page.screenshot({ path: `${OUT}/real-8-tablet.png`, timeout: 120_000 });
+      check('REAL.9 планшет 1024 × 768: прокрутки по ширине нет, комплект «готов», сцена на экране', tablet.scroll <= 1 && tablet.kit === 'ready' && tablet.canvas > 300, JSON.stringify(tablet));
+      check('REAL ошибок страницы и консоли нет', errors.length === 0 && consoleErrors.length === 0, [...errors, ...consoleErrors].slice(0, 3).join(' | '));
+    },
+    { viewport: { width: 1440, height: 900 }, importHardware: false, projects: [{ key: 'kitchen', zone: 'Кухня', fx }] },
   );
 }
 
@@ -2257,6 +2514,7 @@ try {
       if (part === 'tandembox') await partTandembox(browser);
       if (part === 'clip') await partClip(browser);
       if (part === 'aventos') await partAventos(browser);
+      if (part === 'real') await partReal(browser);
       done.push(part);
       console.log(`  ·    ${part}: ${Math.round((Date.now() - startedAt) / 1000)} с`);
     } catch (error) {
