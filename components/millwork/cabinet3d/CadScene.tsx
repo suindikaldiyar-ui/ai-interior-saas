@@ -2212,6 +2212,30 @@ function FrameProbe({ rows, room, design }: { rows: SceneRow[]; room: Room | nul
      * Экранная точка ЛЮБОЙ детали сцены — нажимать по мебели любой стены, а не наугад. Точка — центр ЛИЦЕВОЙ грани
      * зоны касания: у ящика зона уходит в корпус на полглубины, и её центр в перспективе ложится на соседний модуль.
      */
+    /*
+     * ВЕРХНЯЯ ФАЛЬШПАНЕЛЬ ПО НАРИСОВАННОМУ (задача B): экземпляры пачек с ключом детали `…:top-filler:<n>` —
+     * габарит в мире, мм (матрица экземпляра × матрица пачки); сверяется с участками движка.
+     */
+    (w as { __mwCadTopFiller?: () => unknown }).__mwCadTopFiller = () => {
+      const out: { partId: string; boundsMm: number[] }[] = [];
+      const matrix = new THREE.Matrix4();
+      const unitBox = new THREE.Box3(new THREE.Vector3(-0.5, -0.5, -0.5), new THREE.Vector3(0.5, 0.5, 0.5));
+      const box = new THREE.Box3();
+      scene.traverse((object) => {
+        const mesh = object as THREE.InstancedMesh;
+        if (!mesh.isInstancedMesh || mesh.visible === false) return;
+        const ids = (mesh.userData.partIds ?? []) as (string | null)[];
+        if (!ids.some((id) => id?.includes(':top-filler:'))) return;
+        mesh.updateWorldMatrix(true, false);
+        ids.forEach((id, index) => {
+          if (!id || !id.includes(':top-filler:') || index >= mesh.count) return;
+          mesh.getMatrixAt(index, matrix);
+          box.copy(unitBox).applyMatrix4(matrix).applyMatrix4(mesh.matrixWorld);
+          out.push({ partId: id, boundsMm: [box.min.x, box.min.y, box.min.z, box.max.x, box.max.y, box.max.z].map((v) => Math.round(v * 1000)) });
+        });
+      });
+      return out;
+    };
     (w as { __mwCadPartPoint?: (id: string) => { x: number; y: number } | null }).__mwCadPartPoint = (id: string) => {
       /* У Г-модуля зон касания две (фасады А и Б на одном ключе): берётся та, что смотрит на камеру. */
       const targets: THREE.Object3D[] = [];
@@ -2285,6 +2309,7 @@ function FrameProbe({ rows, room, design }: { rows: SceneRow[]; room: Room | nul
       delete w.__mwCadShadows;
       delete (w as { __mwCadLeaves?: unknown }).__mwCadLeaves;
       delete (w as { __mwCadPartPoint?: unknown }).__mwCadPartPoint;
+      delete (w as { __mwCadTopFiller?: unknown }).__mwCadTopFiller;
     };
   }, [gl, camera, scene, get, rows, room]);
 

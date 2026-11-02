@@ -51,7 +51,7 @@ const PORT = Number(process.env.PORT_HW ?? 3291);
 const BASE = `http://localhost:${PORT}`;
 const OUT = '.capture-check/hardware';
 const PARTS = (process.env.PART ?? 'import,kitchen,kitchen-drawers,kitchen-lift,wardrobe,cargo,corner,tablet').split(',').map((s) => s.trim()).filter(Boolean);
-const KNOWN = ['import', 'kitchen', 'kitchen-drawers', 'kitchen-lift', 'wardrobe', 'cargo', 'corner', 'tablet', 'catalog2', 'drilling', 'drawers', 'open', 'twin', 'tandembox', 'clip', 'aventos', 'real', 'import-ui'];
+const KNOWN = ['import', 'kitchen', 'kitchen-drawers', 'kitchen-lift', 'wardrobe', 'cargo', 'corner', 'tablet', 'catalog2', 'drilling', 'drawers', 'open', 'twin', 'tandembox', 'clip', 'aventos', 'real', 'import-ui', 'fronts', 'fronts-tablet', 'ceiling', 'ceiling-tablet'];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let failed = 0;
@@ -1184,6 +1184,363 @@ async function partImportUi(browser) {
       { viewport: vp.viewport, touch: vp.touch, importHardware: false, projects: [] },
     );
   }
+}
+
+/* ═════════════════════════  CEILING: антресоль до потолка — фальшпанель и подбор подъёмника (ТЗ 2026-11-02, B)  ═════════════════════════ */
+
+const ceilingState = (page) =>
+  page.evaluate(() => {
+    const root = document.querySelector('[data-ceiling-lift]');
+    if (!root) return null;
+    return {
+      stack: root.getAttribute('data-ceiling-stack'),
+      filler: root.getAttribute('data-top-filler'),
+      notice: root.querySelector('[data-ceiling-notice]')?.textContent ?? null,
+      list: root.querySelector('[data-lift-pick]')?.getAttribute('data-lift-list') ?? null,
+      choices: [...root.querySelectorAll('[data-lift-choice]')].map((c) => ({ article: c.getAttribute('data-lift-choice'), state: c.getAttribute('data-lift-state'), text: (c.textContent ?? '').replace(/\s+/g, ' ') })),
+    };
+  });
+const stackOf = (s) => `${s.ceilingMm}|${s.topMm}|${s.fillerMm}|${s.gapMm}|${s.aboveMm}`;
+const avOf = (page, door) => page.evaluate((d) => (window.__mwAventos ? window.__mwAventos().filter((m) => m.door === d) : []), door);
+const fillerDrawn = (page) => page.evaluate(() => (window.__mwCadTopFiller ? window.__mwCadTopFiller() : null));
+
+async function partCeiling(browser, tablet) {
+  const L = tablet ? 'CEIL-TAB' : 'CEIL';
+  console.log(`\n── ${L} (${tablet ? '1024 × 768 касанием' : '1440 × 900'}): антресоль до потолка — фальшпанель 100, отказ 600, «Подобрать подъёмник», ограничитель HK top, ход в 3D, запись → перезагрузка`);
+  const fx = fixture('ceiling');
+  const want = fixture('ceilingExpect');
+  await withOrg(
+    L,
+    browser,
+    async ({ service, page, errors, consoleErrors, ids }) => {
+      await openStudio(page, ids.ceiling);
+      await open3d(page, L);
+      await saved(page);
+      if (!(await page.locator('[data-studio-objects]').first().isVisible().catch(() => false))) {
+        must(`${L}: инструмент «Выбор»`, await tool(page, 'select'), 'НУЛЕВОЙ СЕЛЕКТОР: [data-studio-tool="select"]');
+      }
+      const row = page.locator(`[data-object-module="${want.module}"]`);
+      must(`${L}: модуль ${want.module} в списке объектов`, (await row.count()) > 0, `НУЛЕВОЙ СЕЛЕКТОР: [data-object-module="${want.module}"]`);
+      await row.first().click();
+      await page.waitForSelector('[data-ceiling-lift]', { timeout: 30_000 });
+      const c0 = await ceilingState(page);
+      check(
+        `${L}.1 блок «Антресоль до потолка» у ${want.module}: высоты словами — потолок, корпус, планка, зазор, место над корпусом = движку (${stackOf(want.stack0)})`,
+        c0?.stack === stackOf(want.stack0) && c0?.filler === '',
+        JSON.stringify(c0?.stack),
+      );
+
+      /* Фальшпанель 100: корпус ниже на её высоту; в 3D — планка по участкам движка, низ на верхе корпуса. */
+      await humanPress(page, '[data-top-filler-example="100"]', 'фальшпанель 100', tablet);
+      const c1 = await waitFor(page, () => document.querySelector('[data-ceiling-lift]')?.getAttribute('data-top-filler') ?? null, (v) => v === '100x0', 30_000);
+      const blocks = await page.evaluate(() => document.querySelectorAll('[data-ceiling-lift]').length);
+      check(`${L}.2а после «100» блок «Антресоль до потолка» на экране один (прежний не застывает рядом)`, blocks === 1, `блоков ${blocks}`);
+      await saved(page);
+      const s1 = await ceilingState(page);
+      const drawn = await waitFor(page, () => (window.__mwCadTopFiller ? window.__mwCadTopFiller() : null), (v) => Array.isArray(v) && v.length > 0, 30_000);
+      const spans = (drawn ?? []).map((d) => [d.boundsMm[0], d.boundsMm[3]]).sort((a, b) => a[0] - b[0]);
+      const xs = (drawn ?? []).map((d) => d.boundsMm[3] - d.boundsMm[0]);
+      check(
+        `${L}.2 «100» — планка 100 мм: высоты = движку (${stackOf(want.stack1)}); в сцене ${want.spans.length} куска планки длиной ${want.spans.map(([a, b]) => b - a).join(' / ')} мм, низ на ${want.stack1.topMm} мм, высота 100`,
+        c1 === '100x0' &&
+          s1?.stack === stackOf(want.stack1) &&
+          (drawn ?? []).length === want.spans.length &&
+          xs.sort((a, b) => a - b).join(',') === want.spans.map(([a, b]) => b - a).sort((a, b) => a - b).join(',') &&
+          (drawn ?? []).every((d) => Math.abs(d.boundsMm[1] - want.stack1.topMm) <= 1 && Math.abs(d.boundsMm[4] - d.boundsMm[1] - 100) <= 1),
+        `${s1?.stack} · сцена ${JSON.stringify(drawn)} · участки движка ${JSON.stringify(want.spans)}`,
+      );
+      void spans;
+      await page.screenshot({ path: `${OUT}/${L.toLowerCase()}-1-filler.png`, timeout: 120_000 });
+
+      /* Отказ числом: планка 600 — антресоли не хватает места; планка прежняя. */
+      if (!tablet) {
+        await humanPress(page, '[data-top-filler-height]', 'поле высоты планки', tablet);
+        const input = page.locator('[data-top-filler-height]').first();
+        await input.fill('600');
+        await input.press('Enter');
+        await sleep(1200);
+        const s2 = await ceilingState(page);
+        check(
+          `${L}.3 планка 600 — отказ движка словами с мм («лишние … мм»), планка прежняя 100`,
+          /лишние \d+ мм/.test(s2?.notice ?? '') && s2?.filler === '100x0',
+          `«${s2?.notice ?? '—'}» · ${s2?.filler}`,
+        );
+      }
+
+      /* «Подобрать подъёмник»: список производителей дочитывается по нажатию; HK top — «при изменении конструкции». */
+      await humanPress(page, '[data-lift-pick]', 'Подобрать подъёмник', tablet);
+      const picked = await waitFor(page, () => document.querySelectorAll('[data-lift-choice]').length, (n) => n > 0, 120_000);
+      const s3 = await ceilingState(page);
+      const hk = s3?.choices.find((c) => c.article === want.article);
+      const hs = s3?.choices.find((c) => c.article === 'MFR-BLUM-22S2200');
+      check(
+        `${L}.4 «Подобрать подъёмник» (каталог дочитан по нажатию): позиций с моделью ${want.choices} = движку; ${want.article.replace('MFR-BLUM-', '')} — «подходит при изменении конструкции» (${want.changes.join(', ')}); HS top — «${want.hsState}» словами с мм`,
+        picked === want.choices &&
+          hk?.state === want.state &&
+          new RegExp(`ограничитель угла открывания ${want.limiterDeg}°`).test(hk?.text ?? '') &&
+          hs?.state === want.hsState &&
+          /не хватает \d+ мм/.test(hs?.text ?? ''),
+        `позиций ${picked} · HK: ${hk?.state} «${(hk?.text ?? '').slice(0, 220)}» · HS: ${hs?.state}`,
+      );
+
+      /* Изменение — только по нажатию: ограничитель и установка одним действием движка. */
+      await humanPress(page, `[data-lift-choice="${want.article}"] [data-lift-change="limiter"]`, 'ограничитель угла', tablet);
+      const av0 = await waitFor(page, (d) => (window.__mwAventos ? window.__mwAventos().filter((m) => m.door === d).length : 0), (n) => n === 2, 60_000, want.door);
+      await saved(page);
+      must(`${L}: механизм HK top в сцене после «Применить и установить»`, av0 === 2, `механизмов ${av0}`);
+      await page.locator('[data-open-all]').first().scrollIntoViewIfNeeded().catch(() => null);
+      await humanPress(page, '[data-open-all]', 'Открыть всё', tablet);
+      const uEnd = want.limiterDeg / want.openDeg;
+      const open = await waitFor(page, (d) => (window.__mwAventos ? window.__mwAventos().filter((m) => m.door === d) : []), (v) => v.length === 2 && v.every((m) => Math.abs(m.u - uEnd) < 1e-4), 120_000, want.door);
+      await page.screenshot({ path: `${OUT}/${L.toLowerCase()}-2-open.png`, timeout: 120_000 });
+      check(
+        `${L}.5 «Открыть всё»: фасад HK top останавливается на ограничителе ${want.limiterDeg}° (паспорт ${want.openDeg}°) у обеих боковин — ход ${uEnd.toFixed(3)} хода механизма`,
+        open.length === 2 && open.every((m) => Math.abs(m.theta - want.limiterDeg) < 0.05 && Math.abs(m.u - uEnd) < 1e-4),
+        JSON.stringify(open.map((m) => ({ side: m.side, u: m.u?.toFixed(4), theta: m.theta?.toFixed(2) }))),
+      );
+      await closeAll(page);
+      await saved(page);
+      const row0 = (await service.from('projects').select('millwork').eq('id', ids.ceiling).single()).data;
+      const runDb = row0?.millwork?.runs?.optimal;
+      const mezzDb = (runDb?.upperSegments ?? []).flatMap((sg) => sg.modules).find((m) => m.id === want.module);
+      const liftDb = (mezzDb?.fittings ?? []).find((f) => f.slot === 'lift');
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: 120_000 });
+      await page.waitForSelector('[data-studio-root]', { timeout: 60_000 });
+      await sleep(1500);
+      await open3d(page, L);
+      if (!(await page.locator('[data-studio-objects]').first().isVisible().catch(() => false))) await tool(page, 'select');
+      await page.locator(`[data-object-module="${want.module}"]`).first().click();
+      await page.waitForSelector('[data-ceiling-lift]', { timeout: 30_000 });
+      const s4 = await ceilingState(page);
+      const avReload = await waitFor(page, (d) => (window.__mwAventos ? window.__mwAventos().filter((m) => m.door === d).length : 0), (n) => n === 2, 90_000, want.door);
+      const drawnReload = await fillerDrawn(page);
+      check(
+        `${L}.6 запись → база → перезагрузка: в базе планка ${runDb?.topFiller?.heightMm} мм и подъёмник с ограничителем ${liftDb?.openDeg}°; после перезагрузки — те же высоты, планка в сцене, механизм у обеих боковин`,
+        runDb?.topFiller?.heightMm === 100 &&
+          liftDb?.openDeg === want.limiterDeg &&
+          s4?.filler === '100x0' &&
+          s4?.stack === stackOf(want.stack1) &&
+          avReload === 2 &&
+          (drawnReload ?? []).length === want.spans.length,
+        `база: ${JSON.stringify(runDb?.topFiller)} · ${JSON.stringify(liftDb)} · экран ${s4?.stack} · механизмов ${avReload} · кусков планки ${(drawnReload ?? []).length}`,
+      );
+      if (tablet) {
+        const wide = await page.evaluate(() => document.scrollingElement.scrollWidth - window.innerWidth);
+        check(`${L}.7 планшет: прокрутки по ширине нет`, wide <= 0, `лишние ${wide} px`);
+      }
+      check(`${L} ошибок страницы и консоли нет`, errors.length === 0 && consoleErrors.length === 0, [...errors, ...consoleErrors].slice(0, 3).join(' | '));
+    },
+    { viewport: tablet ? { width: 1024, height: 768 } : { width: 1440, height: 900 }, touch: tablet, projects: [{ key: 'ceiling', zone: 'Кухня', fx }] },
+  );
+}
+
+/* ═════════════════════════  FRONTS: редактор «Фасады ящиков» (ТЗ 2026-11-02, A2–A4)  ═════════════════════════ */
+
+const frontsState = (page) =>
+  page.evaluate(() => {
+    const root = document.querySelector('[data-drawer-fronts]');
+    if (!root) return null;
+    return {
+      total: Number(root.getAttribute('data-drawer-fronts-total')),
+      gap: Number(root.getAttribute('data-drawer-fronts-gap')),
+      rows: Number(root.getAttribute('data-drawer-fronts-rows')),
+      count: Number(root.getAttribute('data-drawer-fronts-count')),
+      split: root.getAttribute('data-drawer-split') ?? '',
+      slots: [...root.querySelectorAll('[data-drawer-row]')].map((r) => Number(r.getAttribute('data-row-slot'))),
+      locks: [...root.querySelectorAll('[data-drawer-row]')].map((r) => r.getAttribute('data-row-locked')).join(''),
+      fronts: [...root.querySelectorAll('[data-drawer-front]')].map((f) => ({ h: Number(f.getAttribute('data-front-height')), w: Number(f.getAttribute('data-front-width')), ready: f.getAttribute('data-front-ready') })),
+      notice: root.querySelector('[data-drawer-fronts-notice]')?.textContent ?? null,
+    };
+  });
+/** Нажатие так, как его делает человек: элемент прокручен в окно панели, в его центре — он сам. */
+async function humanPress(page, selector, label, touch) {
+  const b = page.locator(selector).first();
+  must(`${label}: ${selector}`, (await b.count()) > 0, `НУЛЕВОЙ СЕЛЕКТОР: ${selector}`);
+  await b.scrollIntoViewIfNeeded();
+  const reach = await humanReach(page, selector);
+  must(`${label}: ${selector} на экране и не закрыт`, reach.inView && reach.onTop, JSON.stringify(reach));
+  if (touch) await page.touchscreen.tap(reach.x, reach.y);
+  else await page.mouse.click(reach.x, reach.y);
+  await sleep(700);
+}
+async function typeRow(page, row, value, touch) {
+  const sel = `[data-drawer-fronts] [data-row-input="${row}"]`;
+  await humanPress(page, sel, `поле ряда ${row + 1}`, touch);
+  const input = page.locator(sel).first();
+  await input.fill(String(value));
+  await input.press('Enter');
+  await sleep(900);
+}
+async function selectModule(page, moduleId) {
+  if (!(await page.locator('[data-studio-objects]').first().isVisible().catch(() => false))) {
+    must('инструмент «Выбор»', await tool(page, 'select'), 'НУЛЕВОЙ СЕЛЕКТОР: [data-studio-tool="select"]');
+  }
+  const row = page.locator(`[data-object-module="${moduleId}"]`);
+  must(`модуль ${moduleId} в списке объектов`, (await row.count()) > 0, `НУЛЕВОЙ СЕЛЕКТОР: [data-object-module="${moduleId}"]`);
+  await row.first().click();
+  await sleep(600);
+  await page.waitForSelector('[data-drawer-fronts]', { timeout: 30_000 });
+}
+
+async function partFronts(browser, tablet) {
+  const L = tablet ? 'FRONTS-TAB' : 'FRONTS';
+  console.log(`\n── ${L} (${tablet ? '1024 × 768 касанием' : '1440 × 900'}): «Фасады ящиков» — высоты числом, закрепление, равномерно, пропорционально, отказ с мм, ряды, деление на столбцы, 3D, запись → перезагрузка`);
+  const fx = fixture('kitchen');
+  const want = fixture('drawersExpect');
+  await withOrg(
+    L,
+    browser,
+    async ({ service, page, errors, consoleErrors, ids }) => {
+      await openStudio(page, ids.kitchen);
+      await saved(page);
+      await selectModule(page, want.module);
+      const s0 = await frontsState(page);
+      const g = s0?.gap ?? NaN;
+      check(
+        `${L}.1 модуль «Ящики» ${want.module}: блок «Фасады ящиков» — ${s0?.rows} ряда, сумма мест = корпус ${s0?.total} мм, деталь = место − зазор ${g} мм`,
+        Boolean(s0) && s0.rows >= 2 && s0.slots.reduce((a, b) => a + b, 0) === s0.total && s0.fronts.every((f, i) => f.h === s0.slots[i] - g),
+        JSON.stringify(s0),
+      );
+      const H = s0.total;
+      /* «Остаток автоматически»: верхний 140, затем средний 250 — верхний закреплён и стоит. */
+      await typeRow(page, 0, 140, tablet);
+      const s1 = await waitFor(page, () => document.querySelector('[data-drawer-row="0"]')?.getAttribute('data-row-slot'), (v) => v === String(140 + g), 20_000);
+      await typeRow(page, 1, 250, tablet);
+      const s2 = await waitFor(page, () => document.querySelector('[data-drawer-row="1"]')?.getAttribute('data-row-slot'), (v) => v === String(250 + g), 20_000);
+      const st2 = await frontsState(page);
+      check(
+        `${L}.2 верхний фасад 140, затем средний 250 — верхний закреплён и не сдвинулся, остаток — нижнему; сумма мест = корпус`,
+        s1 === String(140 + g) && s2 === String(250 + g) && st2.fronts[0].h === 140 && st2.fronts[1].h === 250 && st2.locks.startsWith('11') && st2.slots.reduce((a, b) => a + b, 0) === H,
+        JSON.stringify(st2),
+      );
+      /* Отказ с миллиметрами: фасад 50 мм. */
+      await typeRow(page, 2, 50, tablet);
+      const st3 = await frontsState(page);
+      check(`${L}.3 фасад 50 мм — отказ движка словами с миллиметрами, места прежние`, /не хватает \d+ мм/.test(st3.notice ?? '') && st3.slots.join('/') === st2.slots.join('/'), `«${st3.notice}» · ${st3.slots.join('/')}`);
+      /* Равномерно и пропорционально. */
+      await humanPress(page, '[data-drawer-fronts-even]', 'Равномерно', tablet);
+      const st4 = await waitFor(page, () => document.querySelector('[data-drawer-row="0"]')?.getAttribute('data-row-locked'), (v) => v === '0', 20_000).then(() => frontsState(page));
+      const each = Math.floor(H / st4.rows);
+      await humanPress(page, '[data-drawer-fronts-shares]', 'доли', tablet);
+      await page.locator('[data-drawer-fronts-shares]').first().fill(st4.rows === 3 ? '1:2:2' : Array.from({ length: st4.rows }, () => '1').join(':'));
+      await humanPress(page, '[data-drawer-fronts-proportional]', 'Пропорционально', tablet);
+      const st5 = await waitFor(page, () => document.querySelector('[data-drawer-row="0"]')?.getAttribute('data-row-slot'), (v) => v === String(Math.floor(H / 5)), 20_000).then(() => frontsState(page));
+      check(
+        `${L}.4 «Равномерно» — места по ${each} мм, закреплений нет; «Пропорционально» 1 : 2 : 2 — ${Math.floor(H / 5)} / ${Math.floor((2 * H) / 5)} / остаток`,
+        st4.slots.slice(0, -1).every((s) => s === each) && st4.locks === '000' && st5.slots[0] === Math.floor(H / 5) && st5.slots[1] === Math.floor((2 * H) / 5) && st5.slots.reduce((a, b) => a + b, 0) === H,
+        `${st4.slots.join('/')} · ${st5.slots.join('/')}`,
+      );
+      let tandembox = null;
+      if (!tablet) {
+        /* TANDEMBOX путём «Фурнитуры»; минимум системы — отказ словами «царга 83,6». */
+        await hardwareFor(page, L, want.module);
+        const runner = await installByPath(page, L, 'slide', { brand: 'Blum', series: 'TANDEMBOX antaro', nl: 450, article: want.runner });
+        await waitFor(page, () => document.querySelectorAll('[data-hw-slot="drawer_side"]').length, (n) => n > 0, 20_000);
+        const sides = await installByPath(page, L, 'drawer_side', { brand: 'Blum', series: 'TANDEMBOX antaro', nl: 450, article: want.sides });
+        await selectModule(page, want.module);
+        const ready = await waitFor(page, () => [...document.querySelectorAll('[data-drawer-front]')].every((f) => f.getAttribute('data-front-ready') === '1'), (v) => v === true, 30_000);
+        await typeRow(page, 0, 100, false);
+        const st6 = await frontsState(page);
+        tandembox = { runner: runner.installed, sides: sides.installed, ready, notice: st6.notice };
+        check(
+          `${L}.5 TANDEMBOX 576.4501M + 378M4502SA: ящики за фасадами — коробы системы; верхний фасад 100 мм — отказ словами «царга 83,6 мм» с миллиметрами`,
+          runner.installed && sides.installed && ready === true && /царга 83,6/.test(st6.notice ?? '') && /не хватает \d+ мм/.test(st6.notice ?? ''),
+          JSON.stringify(tandembox),
+        );
+      }
+      /* Ряды: + один ряд; деление верхнего ряда на два столбца (левый 200). */
+      await humanPress(page, '[data-drawer-fronts-more]', 'больше рядов', tablet);
+      const rows7 = await waitFor(page, () => document.querySelector('[data-drawer-fronts]')?.getAttribute('data-drawer-fronts-rows'), (v) => v === String(st5.rows + 1), 20_000);
+      await humanPress(page, '[data-drawer-split-left]', 'левый столбец', tablet);
+      await page.locator('[data-drawer-split-left]').first().fill('200');
+      await page.locator('[data-drawer-split-rows]').first().scrollIntoViewIfNeeded();
+      await page.locator('[data-drawer-split-rows]').first().selectOption('1');
+      const split = await waitFor(page, () => document.querySelector('[data-drawer-fronts]')?.getAttribute('data-drawer-split'), (v) => v === '200x1', 20_000);
+      const st8 = await frontsState(page);
+      const W = st8.fronts[st8.fronts.length - 1].w + g;
+      check(
+        `${L}.6 рядов ${st5.rows} → ${st5.rows + 1}; верхний ряд на два столбца (левый 200 мм): фасадов ${st5.rows + 2}, верхние ${200 - g} и ${W - 200 - g} мм, ниже — на всю ширину`,
+        rows7 === String(st5.rows + 1) && split === '200x1' && st8.count === st5.rows + 2 && st8.fronts[0].w === 200 - g && st8.fronts[1].w === W - 200 - g && st8.fronts.slice(2).every((f) => f.w === W - g),
+        JSON.stringify(st8),
+      );
+      /* A6: внутренний ящик за нижним фасадом (зона 100) и органайзер в ящике 3 — визуальный прототип словами. */
+      const lastCell = st8.count - 1;
+      await humanPress(page, `[data-front-inners="${lastCell}"]`, 'зоны внутренних ящиков', tablet);
+      await page.locator(`[data-front-inners="${lastCell}"]`).first().fill('100');
+      await page.locator(`[data-front-inners="${lastCell}"]`).first().press('Enter');
+      const innerRow = await waitFor(page, (leaf) => document.querySelector(`[data-front-inner="${leaf}"]`)?.textContent ?? null, (v) => Boolean(v), 20_000, `idrawer:${lastCell}:0`);
+      await page.locator('[data-front-insert="2"]').first().scrollIntoViewIfNeeded();
+      await page.locator('[data-front-insert="2"]').first().selectOption('organizer');
+      const insertWords = await waitFor(page, () => document.querySelector('[data-front-insert-words="2"]')?.textContent ?? null, (v) => Boolean(v), 20_000);
+      check(
+        `${L}.6b внутренний ящик за нижним фасадом (зона 100 мм) и органайзер в ящике 3 — в редакторе со словами: открывается с наружным, органайзер — визуальный прототип`,
+        /зона 100 мм/.test(innerRow ?? '') && /открывается, когда открыт фасад/.test(innerRow ?? '') && /визуальный прототип/.test(insertWords ?? ''),
+        `«${innerRow}» · «${insertWords}»`,
+      );
+      /* 3D: «Открыть всё» — каждый ящик своим ключом выезжает, «Закрыть всё». */
+      await open3d(page, L);
+      const ids5 = [...Array.from({ length: st8.count }, (_, i) => `${want.module}:drawer:${i}`), `${want.module}:idrawer:${lastCell}:0`];
+      await openAll(page, ids5[0], (v) => v.shift[2] > 50);
+      const moved = [];
+      for (const id of ids5) moved.push(await moving(page, id));
+      await page.screenshot({ path: `${OUT}/${L.toLowerCase()}-open.png`, timeout: 120_000 });
+      const organizer = await moving(page, `${want.module}:drawer:2`);
+      check(
+        `${L}.7 3D: «Открыть всё» — все ${st8.count} ящиков (два в верхнем ряду) и внутренний выехали каждый своим ключом; органайзер едет с ящиком 3`,
+        moved.every((m) => m && m.shift[2] > 50) && (organizer?.names?.['mech:insert'] ?? 0) > 0,
+        `${moved.map((m, i) => `${i}: ${m ? Math.round(m.shift[2]) : 'НЕТ'}`).join(' · ')} · органайзер: ${JSON.stringify(organizer?.names ?? null)}`,
+      );
+      await closeAll(page);
+      if (!tablet) {
+        /* Деталировка: перегородка и перемычка — строками раскроя. */
+        must(`${L} инструмент «Документы»`, await tool(page, 'documents'), 'НУЛЕВОЙ СЕЛЕКТОР: [data-studio-tool="documents"]');
+        await page.locator('[data-studio-doc="panels"]').first().click();
+        await page.waitForSelector('[data-panel-row]', { timeout: 30_000 });
+        const text = await page.evaluate(() => [...document.querySelectorAll('[data-panel-row]')].map((r) => r.textContent ?? '').join('\n'));
+        check(
+          `${L}.8 деталировка: перегородка вертикальная и горизонтальная (перемычка ${W - 32} мм) и фасады ${200 - g} / ${W - 200 - g} мм — строками раскроя`,
+          /Перегородка вертикальная/.test(text) && /Перегородка горизонтальная/.test(text) && text.includes(String(W - 32)) && text.includes(String(200 - g)) && text.includes(String(W - 200 - g)),
+          text.split('\n').filter((l) => /Перегородка|Фронт ящика/.test(l)).slice(0, 6).join(' | '),
+        );
+      }
+      /* Запись → база → перезагрузка. */
+      await saved(page);
+      const row = (await service.from('projects').select('millwork').eq('id', ids.kitchen).single()).data;
+      const all = [...(row?.millwork?.runs?.optimal?.modules ?? []), ...(row?.millwork?.runs?.optimal?.upperSegments ?? []).flatMap((s) => s.modules)];
+      const unit = all.find((m) => m.id === want.module);
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: 120_000 });
+      await page.waitForSelector('[data-studio-root]', { timeout: 60_000 });
+      await sleep(1500);
+      await selectModule(page, want.module);
+      const st9 = await frontsState(page);
+      check(
+        `${L}.9 в базе у модуля места ${st8.slots.join('/')}, деление 200 × 1, внутренний ящик и органайзер; после перезагрузки редактор показывает то же`,
+        JSON.stringify(unit?.fill?.drawerHeights) === JSON.stringify(st8.slots) &&
+          JSON.stringify(unit?.fill?.drawerInners) === JSON.stringify([{ cell: lastCell, heightsMm: [100] }]) &&
+          unit?.fill?.drawerInserts?.['drawer:2']?.kind === 'organizer' &&
+          (await page.locator(`[data-front-inner="idrawer:${lastCell}:0"]`).count()) > 0 &&
+          unit?.fill?.drawerSplit?.leftMm === 200 &&
+          unit?.fill?.drawerSplit?.rows === 1 &&
+          st9.slots.join('/') === st8.slots.join('/') &&
+          st9.split === '200x1' &&
+          st9.count === st8.count,
+        `база ${JSON.stringify(unit?.fill?.drawerHeights)} ${JSON.stringify(unit?.fill?.drawerSplit)} · экран ${st9.slots.join('/')} ${st9.split}`,
+      );
+      if (tablet) {
+        const wide = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+        check(`${L}.10 1024 × 768: прокрутки по ширине нет`, wide <= 0, `лишние ${wide} px`);
+      }
+      await page.screenshot({ path: `${OUT}/${L.toLowerCase()}-editor.png`, timeout: 120_000 });
+      check(`${L} ошибок страницы и консоли нет`, errors.length === 0 && consoleErrors.length === 0, [...errors, ...consoleErrors].slice(0, 3).join(' | '));
+    },
+    {
+      viewport: tablet ? { width: 1024, height: 768 } : { width: 1440, height: 900 },
+      touch: tablet,
+      importHardware: !tablet,
+      production: { drawerBox: DRAWER_BOX },
+      projects: [{ key: 'kitchen', zone: 'Кухня', fx }],
+    },
+  );
 }
 
 /* ═════════════════════════  DRAWERS (HW-04)  ═════════════════════════ */
@@ -2584,6 +2941,10 @@ try {
       if (part === 'aventos') await partAventos(browser);
       if (part === 'real') await partReal(browser);
       if (part === 'import-ui') await partImportUi(browser);
+      if (part === 'fronts') await partFronts(browser, false);
+      if (part === 'fronts-tablet') await partFronts(browser, true);
+      if (part === 'ceiling') await partCeiling(browser, false);
+      if (part === 'ceiling-tablet') await partCeiling(browser, true);
       done.push(part);
       console.log(`  ·    ${part}: ${Math.round((Date.now() - startedAt) / 1000)} с`);
     } catch (error) {

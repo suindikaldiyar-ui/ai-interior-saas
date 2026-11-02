@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useRef } from 'react';
 import type { RowRoomObject } from '@/lib/millwork/room';
+import { drawerSplitOf } from '@/lib/millwork/drawerGrid';
+import { topFillerSpans } from '@/lib/millwork/topFiller';
 import DimensionChain from './DimensionChain';
 import LeaderLines from './LeaderLines';
 import FrontGlyph from './FrontGlyph';
@@ -949,6 +951,25 @@ function ModuleInside({
           );
         })}
 
+      {/* Перегородка ящиков (A4): от крыши на высоту разделённых рядов — та же `drawerSplitOf`, что у раскроя. */}
+      {(() => {
+        const split = drawerSplitOf(fill, unit.widthMm);
+        if (!split) return null;
+        const rowsH = fill.drawerHeights.slice(0, split.rows).reduce((sum, h) => sum + h, 0);
+        const px = x + (split.leftMm * width) / unit.widthMm;
+        return (
+          <line
+            x1={px}
+            y1={yTop}
+            x2={px}
+            y2={yTop + rowsH * scaleY}
+            stroke="var(--blueprint)"
+            strokeWidth={0.9 * k}
+            data-drawer-partition
+          />
+        );
+      })()}
+
       {/*
         * Пустая секция: сказать прямо, а не оставлять белое место. У модуля
         * с отсеками (R01) полки живут в отсеках, а перегородка — тоже
@@ -1051,7 +1072,7 @@ export default function ElevationDrawing({
    */
   const zone = zoneProfile(run.zone);
   const sectionZone = Boolean(run.zone) && run.zone !== 'kitchen';
-  const zoneTop = Math.min(zoneHeightMm(run.zone, ceiling, run.production), ceiling);
+  const zoneTop = Math.min(zoneHeightMm(run.zone, ceiling, run.production, run.topFiller?.heightMm), ceiling);
 
   const marks: [number, string][] = sectionZone
     ? [
@@ -2372,6 +2393,31 @@ export default function ElevationDrawing({
             strokeWidth={0.5 * k}
           />
         ))}
+
+        {/* Верхняя фальшпанель (задача B): над мебелью до потолка, те же участки, что режет раскрой. */}
+        {run.topFiller &&
+          topFillerSpans(run).map((span) => (
+            <g key={`top-filler-${span.index}`} data-top-filler-piece data-from-mm={span.fromMm} data-to-mm={span.toMm}>
+              <rect
+                x={padLeft + span.fromMm * scale}
+                y={yOf(zoneTop + (run.topFiller?.heightMm ?? 0))}
+                width={(span.toMm - span.fromMm) * scale}
+                height={(run.topFiller?.heightMm ?? 0) * heightScale}
+                fill="none"
+                stroke="var(--blueprint)"
+                strokeWidth={0.8 * k}
+              />
+              <text
+                x={padLeft + ((span.fromMm + span.toMm) / 2) * scale}
+                y={yOf(zoneTop + (run.topFiller?.heightMm ?? 0) / 2) + 2.5}
+                textAnchor="middle"
+                fontSize={6}
+                fill="var(--graphite-mw)"
+              >
+                фальшпанель {run.topFiller?.heightMm}
+              </text>
+            </g>
+          ))}
 
         {/* Столешница есть не в каждой зоне: в шкафу её нет вовсе. */}
         {(!sectionZone || zone.hasCountertop) &&

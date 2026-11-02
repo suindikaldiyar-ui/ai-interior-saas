@@ -29,7 +29,9 @@ import {
 import { moduleNumbers } from './positions';
 import { blindPartMm, cornerFillersOf, fillerNeighbour, openFrontMm } from './corner';
 import { tailFillersOf } from './countertop';
+import { TOP_FILLER_PANEL_NAME, topFillerFront, topFillerSpans } from './topFiller';
 import { moduleDrawerKits } from './drawerKit';
+import { drawerCells, drawerFrontCutMm, drawerSplitBodies } from './drawerGrid';
 import { drawerPartPieces, drawerPieceId, type DrawerBoxPart } from './drawerBox';
 import type { Module, Panel, PanelStock, PanelTotals, Run } from '@/types/millwork';
 import {
@@ -737,6 +739,26 @@ function moduleBodyPanels(
   }
 
   /*
+   * ДЕЛЕНИЕ ЯЩИКОВ НА СТОЛБЦЫ (A4): перегородка от крыши на высоту разделённых рядов и перемычка
+   * под ними — те же `drawerSplitBodies`, что рисует сцена; имена — как у перегородок отсеков.
+   */
+  for (const body of drawerSplitBodies(unit, heightMm, depthMm, production)) {
+    push({
+      name: body.kind === 'partition' ? DIVIDER_PANEL_NAME : HDIVIDER_PANEL_NAME,
+      material: partitionMaterial,
+      stock: partitionStock,
+      thicknessMm: t,
+      lengthMm: body.lengthMm,
+      widthMm: body.widthMm,
+      qty: 1,
+      edges: { long: 1, short: 0 },
+      edgeType: thick,
+      grain: body.kind === 'partition' ? 'along' : 'across',
+      partIds: [body.partId],
+    });
+  }
+
+  /*
    * СТЕКЛЯННЫЕ ПОЛКИ ВИТРИНЫ (V3D-02) из листа не режут: это покупное
    * стекло, и в смете у него своя строка (`glass_shelf`).
    */
@@ -1040,7 +1062,8 @@ function moduleBodyPanels(
     const fronts = moduleFronts(unit, heightMm, production);
 
     fronts.drawers.forEach((front, i) => {
-      pushFront('Фронт ящика', front - gap, unit.widthMm - gap, [`drawer:${i}`]);
+      const cut = drawerFrontCutMm(front, unit.widthMm, gap);
+      pushFront('Фронт ящика', cut.heightMm, cut.widthMm, [`drawer:${i}`]);
     });
     /* Номер створки — её место в списке (`doorLeaves`), тот же, что у сцены. */
     fronts.leaves.forEach((leaf, i) => {
@@ -1085,10 +1108,14 @@ function moduleBodyPanels(
   }
 
   if (unit.frontType === 'drawers') {
-    const heights = unit.fill?.drawerHeights ?? [];
-    heights.forEach((front, i) => {
-      pushFront('Фронт ящика', front - gap, unit.widthMm - gap, [`drawer:${i}`]);
-    });
+    /*
+     * Ячейка за ячейкой (A4): у разделённого ряда два фронта, каждый по месту своего столбца.
+     * Деталь — место минус зазор: та же `drawerFrontCutMm`, что показывает редактор фасадов.
+     */
+    for (const cell of drawerCells(unit.fill, unit.widthMm, heightMm)) {
+      const cut = drawerFrontCutMm(cell.heightMm, cell.widthMm, gap);
+      pushFront('Фронт ящика', cut.heightMm, cut.widthMm, [cell.leaf]);
+    }
   }
 
   return panels;
@@ -1300,6 +1327,32 @@ export function buildPanels({ run, production = DEFAULT_PRODUCTION, milling, car
       edges: { long: 1, short: 0 },
       edgeType: edgeType(production),
       grain: 'along',
+    });
+  }
+
+  /*
+   * ВЕРХНЯЯ ФАЛЬШПАНЕЛЬ (задача B): по участкам мебели до потолка — `topFillerSpans`, та же функция ставит
+   * планку в сцену; плита — фасадная (материал планки), высота — своя, длина — участок. Номер «Ф.1».
+   */
+  let topNo = 0;
+  for (const span of topFillerSpans(run)) {
+    const spec = topFillerFront(run);
+    topNo += 1;
+    extra.push({
+      moduleId: `${run.id}:top-filler`,
+      moduleLabel: 'Над мебелью до потолка',
+      number: `Ф.${topNo}`,
+      name: TOP_FILLER_PANEL_NAME,
+      material: `Фасад ${shop.frontMm}`,
+      stock: frontStock(spec),
+      thicknessMm: shop.frontMm,
+      lengthMm: Math.round(span.toMm - span.fromMm),
+      widthMm: run.topFiller?.heightMm ?? 0,
+      qty: 1,
+      edges: hasEdgeBanding(spec) ? { long: 2, short: 2 } : { long: 0, short: 0 },
+      edgeType: edgeType(production),
+      grain: 'along',
+      partIds: [span.partId],
     });
   }
 

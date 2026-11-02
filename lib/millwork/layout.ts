@@ -945,9 +945,11 @@ export function sectionMezzanineBand(input: {
   heightMm: number;
   /** Школа цеха: зазор до потолка (Measurement 2.0). */
   production?: ProductionSettings;
+  /** Верхняя фальшпанель ряда (задача B): полоса антресоли ниже на её высоту. */
+  topFillerMm?: number;
 }): UpperSegment[] {
   const spec = SECTION_SPECS.mezzanine;
-  const mezzanineBottom = Math.max(0, zoneHeightMm(input.zone, input.ceilingHeightMm, input.production) - input.heightMm);
+  const mezzanineBottom = Math.max(0, zoneHeightMm(input.zone, input.ceilingHeightMm, input.production, input.topFillerMm) - input.heightMm);
   const blocked = beamBlockedSpans(input.beams, input.ceilingHeightMm, mezzanineBottom);
   const segments: UpperSegment[] = [];
 
@@ -2056,7 +2058,7 @@ export function upperSpansOfRun(
 export function rowSpansOfRun(
   row: 'base' | 'upper' | 'mezzanine',
   run: Pick<Run, 'lengthMm' | 'beams' | 'ceilingHeightMm' | 'production'> &
-    Partial<Pick<Run, 'zone' | 'mezzanine' | 'corner'>>,
+    Partial<Pick<Run, 'zone' | 'mezzanine' | 'corner' | 'topFiller'>>,
   baseModules: Module[],
   openings: Opening[],
   requirements: RunRequirements,
@@ -2086,6 +2088,7 @@ export function rowSpansOfRun(
   const shell = {
     zone: run.zone ?? requirements.zone,
     ceilingHeightMm: run.ceilingHeightMm,
+    topFiller: run.topFiller,
     options,
     production: run.production,
     mezzanine: run.mezzanine,
@@ -2103,6 +2106,7 @@ export function rowSpansOfRun(
     openings,
     rowBandMm('mezzanine', {
       ceilingHeightMm: run.ceilingHeightMm,
+      topFillerMm: run.topFiller?.heightMm,
       options,
       production: run.production,
       mezzanineMm: run.mezzanine ? mezzanineHeightMm(run) : null,

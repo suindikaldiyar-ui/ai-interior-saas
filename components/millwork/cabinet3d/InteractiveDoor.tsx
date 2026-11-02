@@ -173,8 +173,10 @@ export default function InteractiveDoor({
   const full = Math.abs(pivot.angle);
   /* У механизма угол показа — угол фасада механизма (107° у HK top): доля хода — от него. */
   const mechDeg = liftMech && liftMech.model.openDeg > 0 ? liftMech.model.openDeg : 0;
+  /* Ограничитель угла подъёмника (задача B): «открыто» — до его угла, а не до паспортного. */
+  const limited = liftMech?.limitDeg && mechDeg > 0 ? Math.min(full, (liftMech.limitDeg / mechDeg) * full) : full;
   const wanted =
-    degree === undefined ? full : mechDeg > 0 ? Math.min(full, Math.max(0, degree / mechDeg) * full) : Math.min(full, Math.max(0, (degree * Math.PI) / 180));
+    degree === undefined ? limited : mechDeg > 0 ? Math.min(limited, Math.max(0, degree / mechDeg) * full) : Math.min(full, Math.max(0, (degree * Math.PI) / 180));
   const target = open ? Math.sign(pivot.angle) * wanted : 0;
   /* Угол створки на этом кадре — для звеньев петли (HW-03). */
   const angleRef = useRef(target);

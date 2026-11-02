@@ -28,6 +28,8 @@ import { runnerModelOf } from '../lib/millwork/runnerModel';
 import { drawerDrafts, drawerRunnerOf, moduleDrawerKits } from '../lib/millwork/drawerKit';
 import { allModules } from '../lib/millwork/layout';
 import { aventosLinks, aventosOf } from '../lib/millwork/aventos';
+import { liftChoices } from '../lib/millwork/liftChoice';
+import { ceilingStack, topFillerSpans } from '../lib/millwork/topFiller';
 
 type Fixture = { requirements: RunRequirements; measurement: Measurement; survey: Survey; run: Run };
 
@@ -248,4 +250,54 @@ function aventosFixture(id: string, ceilingHeightMm: number, mezzMm: number, art
 const aventosHk = aventosFixture('hw-aventos-hk', 2700, 350, 'MFR-BLUM-22K2300');
 const aventosHl = aventosFixture('hw-aventos-hl', 3100, 400, 'MFR-BLUM-22L2500');
 
-process.stdout.write(JSON.stringify({ kitchen, cargo, wardrobe, drawersExpect, aventosHk: aventosHk.fx, aventosHkExpect: aventosHk.expect, aventosHl: aventosHl.fx, aventosHlExpect: aventosHl.expect }));
+/*
+ * ── ceiling (задача B): антресоль до потолка — короб вентиляции снят, верхний ряд до потолка 2700 (зазор цеха 0),
+ * антресоль 350 над upper-1200@w1, подъёмное открывание. Планку 100, «Подобрать подъёмник» и установку делает
+ * человек в Studio; ожидания — тот же движок: ряд с планкой (`applyOps`), подбор (`liftChoices`) по фактам.
+ */
+const CEILING_CATALOG = hardwareCatalog(
+  HARDWARE_FACTS.map((fact) => {
+    const row = hardwareCatalogRow(fact);
+    return { id: `hw:${fact.article}`, article: row.article, name_ru: row.name_ru, price: row.price, unit: row.unit, meta: { hardware: fact.hardware }, is_active: true, assets: [] } as unknown as CatalogEntryFull;
+  }),
+);
+function ceilingFixture() {
+  const room = aventosRoom('hw-ceiling', 2700);
+  const a = screen('HW ceiling', 'Кухня', room, DEMO_REQUIREMENTS);
+  a.apply([{ op: 'set_option', key: 'upperToCeiling', value: true }, { op: 'set_mezzanine', heightMm: 350 }]);
+  const mezz = a.shown().upperSegments.flatMap((sg) => sg.modules).find((u) => u.section === 'mezzanine' && u.offsetMm === 1200);
+  if (!mezz) throw new Error('ceiling: антресоли над upper-1200@w1 нет');
+  a.apply([{ op: 'set_opening', moduleId: mezz.id, opening: 'lift' }]);
+  const run0 = a.shown();
+  const filled = applyOps({ run: run0, requirements: DEMO_REQUIREMENTS, ops: [{ op: 'set_top_filler', heightMm: 100 }], openings: [], roomDepthMm: 0, hardware: CEILING_CATALOG });
+  if (filled.warnings.length > 0) throw new Error(`ceiling: планка 100 не встала: ${filled.warnings.join(' | ')}`);
+  const unitIn = (run: Run) => allModules(run).find((u) => u.id === mezz.id)!;
+  const pick = liftChoices(unitIn(filled), filled, CEILING_CATALOG);
+  const hk = pick.choices.find((c) => c.article === 'MFR-BLUM-22K2300');
+  const limiter = hk?.changes.find((c) => c.kind === 'limiter');
+  const limitOp = limiter?.ops.find((op) => op.op === 'set_fitting') as { openDeg?: number } | undefined;
+  if (!hk || !limitOp?.openDeg) throw new Error('ceiling: подбор не предложил ограничитель HK top');
+  const hs = pick.choices.find((c) => c.article === 'MFR-BLUM-22S2200');
+  const fx: Fixture = { requirements: DEMO_REQUIREMENTS, measurement: room, survey: measuredSurvey(room), run: run0 };
+  return {
+    fx,
+    expect: {
+      module: mezz.id,
+      door: `${mezz.id}:door:0`,
+      stack0: ceilingStack(unitIn(run0), run0),
+      stack1: ceilingStack(unitIn(filled), filled),
+      article: hk.article,
+      state: hk.state,
+      limiterDeg: limitOp.openDeg,
+      changes: hk.changes.map((c) => c.kind),
+      hsState: hs?.state ?? null,
+      hsWords: hs?.words ?? null,
+      choices: pick.choices.length,
+      spans: topFillerSpans(filled).map((s) => [s.fromMm, s.toMm]),
+      openDeg: aventosOf({ hardware: HARDWARE_FACTS.find((f) => f.article === hk.article)!.hardware } as never, ceilingStack(unitIn(filled), filled).carcassMm)!.openDeg,
+    },
+  };
+}
+const ceiling = ceilingFixture();
+
+process.stdout.write(JSON.stringify({ kitchen, cargo, wardrobe, drawersExpect, aventosHk: aventosHk.fx, aventosHkExpect: aventosHk.expect, aventosHl: aventosHl.fx, aventosHlExpect: aventosHl.expect, ceiling: ceiling.fx, ceilingExpect: ceiling.expect }));

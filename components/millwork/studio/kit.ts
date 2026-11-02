@@ -5,6 +5,8 @@ import type StudioInspector from '../StudioInspector';
 import type FillEditor from './FillEditor';
 import type OverheadEditor from './OverheadEditor';
 import type StorageEditor from './StorageEditor';
+import type DrawerFrontsEditor from './DrawerFrontsEditor';
+import type CeilingLiftEditor from './CeilingLiftEditor';
 import type VitrineEditor from './VitrineEditor';
 import type RadiusEditor from './RadiusEditor';
 import type IslandEditor from './IslandEditor';
@@ -38,6 +40,8 @@ export type StudioKit = {
   FillEditor: typeof FillEditor;
   OverheadEditor: typeof OverheadEditor;
   StorageEditor: typeof StorageEditor;
+  DrawerFrontsEditor: typeof DrawerFrontsEditor;
+  CeilingLiftEditor: typeof CeilingLiftEditor;
   VitrineEditor: typeof VitrineEditor;
   RadiusEditor: typeof RadiusEditor;
   IslandEditor: typeof IslandEditor;

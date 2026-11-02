@@ -38,6 +38,11 @@ export type AventosModel = {
   motion: AventosMotion;
   /** Угол фасада в конце хода, градусы (у HL top — 0: фасад не поворачивается). */
   openDeg: number;
+  /**
+   * Наименьший угол регулировки, градусы — только у модели, где регулировка угла напечатана (HK top:
+   * «бесступенчатая регулировка 75…107°»). Пусто — ограничителя у модели нет (задача B).
+   */
+  minOpenDeg?: number;
   /** Корпус механизма у боковины (мм осей механизма) и его толщина от боковины. */
   housing: { z0: number; z1: number; y0: number; y1: number; sideMm: number };
   /** Крепление фасада: саморезы под низом крыши (мм), их Z от тыла фасада — тело на тыле. */
@@ -243,6 +248,7 @@ export function aventosOf(item: HardwareItem | null | undefined, cabinetHeightMm
       family: 'HK top',
       motion: { kind: 'axis', centerMm: HK_TOP_AXIS, dyad: HK_TOP_ARM },
       openDeg: HK_TOP_PRINTED.openDeg,
+      minOpenDeg: HK_TOP_PRINTED.minOpenDeg,
       housing: {
         z0: -HK_TOP_PRINTED.housingDepthMm,
         z1: 0,
@@ -401,7 +407,14 @@ export function aventosSweep(
   model: AventosModel,
   front: { topMm: number; heightMm: number; thicknessMm: number },
   topMm: number,
-): { aboveTopMm: number; forwardMm: number; intoCarcassMm: number } {
+  /**
+   * Задача B: `uMax` — доля хода до ограничителя угла (1 — паспортный угол); `obstacle` — прямоугольник
+   * в осях механизма (верхняя фальшпанель): насколько фасад на ходу в него заходит.
+   */
+  opts: { uMax?: number; obstacle?: { z0: number; z1: number; y0: number; y1: number } | null } = {},
+): { aboveTopMm: number; forwardMm: number; intoCarcassMm: number; intoObstacleMm: number } {
+  const uMax = Math.max(0, Math.min(1, opts.uMax ?? 1));
+  const box = opts.obstacle ?? null;
   const corners: Pt[] = [
     [0, front.topMm],
     [front.thicknessMm, front.topMm],
@@ -411,8 +424,9 @@ export function aventosSweep(
   let above = -Infinity;
   let forward = -Infinity;
   let into = 0;
+  let intoBox = 0;
   for (let i = 0; i <= 200; i += 1) {
-    const pts = corners.map((q) => aventosPoint(model, i / 200, q));
+    const pts = corners.map((q) => aventosPoint(model, (i / 200) * uMax, q));
     for (let k = 0; k < 4; k += 1) {
       const a = pts[k];
       const b = pts[(k + 1) % 4];
@@ -421,8 +435,11 @@ export function aventosSweep(
         above = Math.max(above, p[1] - topMm);
         forward = Math.max(forward, p[0]);
         if (p[0] < -0.01 && p[1] < topMm) into = Math.max(into, Math.min(-p[0], topMm - p[1]));
+        if (box && p[0] > box.z0 + 0.01 && p[0] < box.z1 - 0.01 && p[1] > box.y0 + 0.01 && p[1] < box.y1 - 0.01) {
+          intoBox = Math.max(intoBox, Math.min(p[0] - box.z0, box.z1 - p[0], p[1] - box.y0, box.y1 - p[1]));
+        }
       }
     }
   }
-  return { aboveTopMm: above, forwardMm: forward, intoCarcassMm: into };
+  return { aboveTopMm: above, forwardMm: forward, intoCarcassMm: into, intoObstacleMm: intoBox };
 }

@@ -97,7 +97,7 @@ export function runInContext(saved: Run, live: RunContext): InContext {
     let next = fill;
 
     if (fill.drawerHeights.length > 0) {
-      const fronts = refitDrawerFronts(fill.drawerHeights, was, now);
+      const fronts = refitDrawerFronts(fill.drawerHeights, was, now, fill.drawerLocked);
       if (fronts) {
         if (fronts !== fill.drawerHeights) {
           next = { ...next, drawerHeights: fronts };

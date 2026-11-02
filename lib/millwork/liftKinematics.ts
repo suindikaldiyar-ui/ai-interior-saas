@@ -60,7 +60,8 @@ export type LiftPose = {
  * МЕХАНИЗМ ПОДЪЁМНИКА НА ФАСАДЕ (AVENTOS HK top, HS top, HL top — `aventosOf`): модель и верх фасада
  * над низом крыши, мм (оси механизма). Нет модели — ход прежний, условный (`liftPose` по виду хода).
  */
-export type LiftMechanism = { model: AventosModel; frontTopMm: number };
+/* `limitDeg` — ограничитель угла (задача B): фасад открывается до него, а не до паспортного угла. */
+export type LiftMechanism = { model: AventosModel; frontTopMm: number; limitDeg?: number };
 
 /** Модель механизма на месте модуля: позиция подъёмника и, у HL top, высота корпуса (комплект рычагов). */
 export function liftModelOf(unit: Module, hardware: Map<string, HardwareItem> | undefined, cabinetHeightMm: number): AventosModel | null {
@@ -79,7 +80,9 @@ export function liftModelOf(unit: Module, hardware: Map<string, HardwareItem> | 
 export function liftPose(motion: LiftMotion | null, u: number, heightM: number, thicknessM: number, mech?: LiftMechanism | null): LiftPose {
   const s = Math.max(0, Math.min(1, u));
   if (mech) {
-    const pose = aventosPose(mech.model, s);
+    /* Ограничитель (задача B): ход кончается на его угле — одна поза на сцену, ход у угла и приёмку. */
+    const stop = mech.limitDeg && mech.model.openDeg > 0 ? Math.min(1, mech.limitDeg / mech.model.openDeg) : 1;
+    const pose = aventosPose(mech.model, Math.min(s, stop));
     /* Куда ушла ось створки (мм механизма) → сдвиг до поворота в осях створки (метры). */
     const o: [number, number] = [0, mech.frontTopMm];
     const r = rotate(o, pose.theta);

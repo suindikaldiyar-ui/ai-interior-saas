@@ -586,7 +586,7 @@ export function suggestPanel(
   production?: ProductionSettings,
 ): WallPanel | { refusal: string } {
   const id = nextPanelId(run);
-  const top = zoneHeightMm(run.zone ?? 'living', run.ceilingHeightMm, production ?? run.production);
+  const top = zoneHeightMm(run.zone ?? 'living', run.ceilingHeightMm, production ?? run.production, run.topFiller?.heightMm);
   const tv = run.tv ? tvRect(run.tv) : null;
   const center = run.tv ? run.tv.centerMm : Math.round(run.lengthMm / 2);
   const bottom = furnitureTopAt(run, center);

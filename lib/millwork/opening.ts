@@ -1,4 +1,5 @@
 import { CORNER, hingesPerDoor, isUpperRow } from './modules';
+import { drawerCells } from './drawerGrid';
 import { MODULE_VARIANTS } from './moduleVariants';
 import { moduleFronts, nicheFacadeSpans } from './applianceFront';
 import { bayDrawerCount } from './drawerCount';
@@ -416,7 +417,11 @@ export function drawerSlides(unit: Module): number {
  * их направляющая выбирается в блоке, а не выбрана — это оценка.
  */
 export function frontDrawerSlides(unit: Module): number {
-  return unit.column ? 0 : (unit.fill?.drawerHeights.length ?? 0);
+  /* По ящику — по ячейке (A4): разделённый ряд — два ящика и два комплекта направляющих; у
+   * внутреннего ящика (A6) — своя пара направляющих. */
+  if (unit.column) return 0;
+  const inner = (unit.fill?.drawerInners ?? []).reduce((sum, entry) => sum + entry.heightsMm.length, 0);
+  return drawerCells(unit.fill, unit.widthMm, 0).length + inner;
 }
 
 export function openingHardware(
@@ -563,7 +568,7 @@ export function openingHardware(
     if (cornerOf?.(unit) === 'closed') continue;
 
     if (fronts.drawers.length > 0) {
-      addHandles(unit, fronts.drawers.map((_, i) => `drawer:${i}`));
+      addHandles(unit, drawerCells(unit.fill, unit.widthMm, heightMm).map((cell) => cell.leaf));
     }
     /*
      * ВСТРОЙКА ИДЁТ ОБЩЕЙ ВЕТКОЙ.

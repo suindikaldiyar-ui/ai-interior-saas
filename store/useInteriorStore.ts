@@ -3,6 +3,7 @@
 import { create } from 'zustand';
 import type { SceneView } from '@/lib/cameraFraming';
 import { ALL_LAYERS, type SceneLayers } from '@/lib/millwork/sceneLayers';
+import { toggleDrawerInterlock } from '@/lib/millwork/drawerGrid';
 
 /** Ключ экономичного режима 3D в хранилище браузера: настройка устройства, не объекта. */
 export const ECONOMY_KEY = 'mw-economy-3d';
@@ -731,12 +732,8 @@ export const useInteriorStore = create<InteriorState>((set, get) => ({
 
   setCaptureMode: (value) => set({ captureMode: value }),
 
-  toggleOpenPart: (id) =>
-    set((state) => ({
-      openParts: state.openParts.includes(id)
-        ? state.openParts.filter((x) => x !== id)
-        : [...state.openParts, id],
-    })),
+  /* Внутренний ящик — только с открытым наружным; закрытие наружного закрывает его внутренние (A7). */
+  toggleOpenPart: (id) => set((state) => ({ openParts: toggleDrawerInterlock(state.openParts, id) })),
 
   setOpenParts: (ids) => set({ openParts: Array.from(new Set(ids)) }),
   setOpenDegree: (id, deg) =>

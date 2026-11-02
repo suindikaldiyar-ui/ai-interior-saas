@@ -1,5 +1,8 @@
-import { columnNiches, moduleCarcassHeightMm, upperBottomFor } from '@/lib/millwork/fill';
+import { columnNiches, moduleCarcassHeightMm, moduleFloorMm, upperBottomFor } from '@/lib/millwork/fill';
 import { carcassHeightMm, plinthMm } from './shop';
+import { drawerCellZones, drawerCells, drawerInnerZones, drawerSplitBodies, insertPieces, type DrawerInsertKind } from './drawerGrid';
+import { TOP_FILLER_PANEL_NAME, topFillerFront, topFillerSpans } from './topFiller';
+import { zoneTopOfRun } from './zones';
 import { cookingModules, ovenNicheOf, stageFourModelsOf, tallOvensOf } from './cookingStack';
 import {
   BACK_PANEL_NAME,
@@ -133,7 +136,8 @@ export type BoxDraw = {
    * чтобы проверка могла спросить «петель в сцене столько же, сколько в
    * смете».
    */
-  node?: 'hinge' | 'hinge-arm' | 'handle' | 'rod' | 'glass' | 'runner' | 'lift' | 'pantograph' | 'pullout' | 'basket' | 'dryer' | 'track' | 'frame' | 'glass-shelf' | 'glass-panel' | 'vitrine-frame' | 'tv' | 'appliance';
+  /* `insert` — вставка в ящик (A6): органайзер, разделители, релинги — визуальный прототип. */
+  node?: 'hinge' | 'hinge-arm' | 'handle' | 'rod' | 'glass' | 'runner' | 'lift' | 'pantograph' | 'pullout' | 'basket' | 'dryer' | 'track' | 'frame' | 'glass-shelf' | 'glass-panel' | 'vitrine-frame' | 'tv' | 'appliance' | 'insert';
   /**
    * ДОЛЯ ХОДА ДЕТАЛИ (HW-04): средняя секция направляющей полного выдвижения
    * едет на половину хода ящика (0,5). Пусто — на весь ход, как сама деталь.
@@ -684,6 +688,26 @@ export function carcassBoxes(
     );
   }
 
+  /*
+   * ДЕЛЕНИЕ ЯЩИКОВ НА СТОЛБЦЫ (A4): перегородка и перемычка — те же `drawerSplitBodies`, что режет
+   * раскрой; задней кромкой в заднюю стенку, как перегородки отсеков (припуск цеха — спереди).
+   */
+  for (const body of drawerSplitBodies(unit, heightM * MM, depthM * MM, { carcassMm: thicknessM * MM, allowances: production?.allowances })) {
+    boxes.push({
+      ...at(
+        (body.xFromMm + body.xToMm) / 2 / MM,
+        (body.yFromMm + body.yToMm) / 2 / MM,
+        backFaceZ + body.depthMm / MM / 2,
+        (body.xToMm - body.xFromMm) / MM,
+        (body.yToMm - body.yFromMm) / MM,
+        body.depthMm / MM,
+        true,
+        body.kind === 'partition' ? DIVIDER_PANEL_NAME : HDIVIDER_PANEL_NAME,
+      ),
+      partId: body.partId,
+    });
+  }
+
   return boxes;
 }
 
@@ -914,7 +938,8 @@ export type SceneLeaf =
   | { kind: 'bifold'; id: string }
   /** Дверца пары верхнего Г-модуля (P0): каждая на своих петлях, `leg` 0 — нога А, 1 — нога Б. */
   | { kind: 'lpair'; id: string; leg: 0 | 1 }
-  | { kind: 'drawer'; id: string; bottomM: number; heightM: number }
+  /* `xM` / `widthM` — место ячейки разделённого ряда (A4); пусто — ящик на всю ширину модуля. */
+  | { kind: 'drawer'; id: string; bottomM: number; heightM: number; xM?: number; widthM?: number }
   /** Карго: фасад не открывается, а выдвигается — вместе с корзинами (HARDWARE-01). */
   | { kind: 'pullout'; id: string }
   /**
@@ -990,15 +1015,27 @@ export function sceneLeaves(
    * обычные ящики (ловушка 358). Высоты идут сверху вниз, сцена — от пола.
    */
   if (!unit.column && fill) {
-    fill.drawerHeights.forEach((frontMm, i) => {
-      const above = fill.drawerHeights.slice(0, i).reduce((sum, h) => sum + h, 0);
+    /* Ячейки (A4): у разделённого ряда два ящика, каждый своим ключом и местом. */
+    for (const cell of drawerCells(fill, unit.widthMm, heightM * MM)) {
       out.push({
         kind: 'drawer',
-        id: `${unit.id}:drawer:${i}`,
-        bottomM: Math.max(0, heightM * MM - above - frontMm) / MM,
-        heightM: frontMm / MM,
+        id: `${unit.id}:${cell.leaf}`,
+        bottomM: Math.max(0, cell.yMm) / MM,
+        heightM: cell.heightMm / MM,
+        ...(cell.columns > 1 ? { xM: cell.xMm / MM, widthM: cell.widthMm / MM } : {}),
       });
-    });
+    }
+    /* Внутренние ящики (A6): свой ключ, своё место за наружным фасадом. */
+    for (const zone of drawerInnerZones(unit, heightM * MM, thicknessOf(production))) {
+      out.push({
+        kind: 'drawer',
+        id: `${unit.id}:${zone.leaf}`,
+        bottomM: zone.fromMm / MM,
+        heightM: (zone.toMm - zone.fromMm) / MM,
+        xM: zone.xFromMm / MM,
+        widthM: zone.openingWidthMm / MM,
+      });
+    }
   }
   /* Г-образный: два фасада на одном ключе, открываются вместе — или две дверцы на своих петлях (P0). */
   if (unit.kind === 'corner_upper' && unit.cornerDoors === 'pair') {
@@ -1896,17 +1933,18 @@ export function drawerBoxes(
   if (!fill) return [];
 
   const { x, y, heightM, depthM, thicknessM } = place;
-  const widthM = unit.widthMm / MM;
   const innerDepth = depthM - thicknessM;
-  const frontMm = fill.drawerHeights[index];
-  if (frontMm === undefined) return [];
+  /* Ячейка (A4) — та же раскладка, что у раскроя: у разделённого ряда ящик своего столбца. */
+  const cell = drawerCells(fill, unit.widthMm, heightM * MM)[index];
+  if (!cell) return [];
+  const frontMm = cell.heightMm;
+  const widthM = cell.widthMm / MM;
 
   // Высоты идут сверху вниз, а сцена считает от пола.
-  const above = fill.drawerHeights.slice(0, index).reduce((sum, h) => sum + h, 0);
-  const bottomMm = Math.max(0, heightM * MM - above - frontMm);
+  const bottomMm = Math.max(0, cell.yMm);
 
   const height = frontMm / MM;
-  const cx = x + widthM / 2;
+  const cx = x + (cell.xMm + cell.widthMm / 2) / MM;
   const cy = y + bottomMm / MM + height / 2;
   const part = unit.id + ':drawer:' + index;
 
@@ -1968,7 +2006,7 @@ export function drawerBoxes(
   /* Ящик выдвигают за верх; у верхнего ряда — за низ. */
   const drawerOrient = gripOrient(spec.relief, 'flap', isUpperRow(unit));
   /* Фронт — деталь деталировки (F9): ширина и высота места минус зазор, а не два. */
-  const front = frontLeafMm(options.cuts?.get(part), { openMm: unit.widthMm, heightMm: frontMm, doors: 1, gapMm: gap * MM, kind: 'drawer' });
+  const front = frontLeafMm(options.cuts?.get(part), { openMm: cell.widthMm, heightMm: frontMm, doors: 1, gapMm: gap * MM, kind: 'drawer' });
   const frontW = front.widthMm / MM;
   const frontH = front.heightMm / MM;
   boxes.push({
@@ -2001,6 +2039,100 @@ export function drawerBoxes(
   if (handle) boxes.push(handle);
 
   return boxes;
+}
+
+/** Толщина корпуса школы цеха (мм) — для мест внутренних ящиков в листьях сцены. */
+function thicknessOf(production?: ProductionSettings): number {
+  return production?.carcassMm ?? 16;
+}
+
+/**
+ * ВНУТРЕННИЕ ЯЩИКИ (A6): короб по комплекту (`kitBoxes`) или условный короб в зоне, ключ —
+ * `<модуль>:idrawer:<ячейка>:<j>`; наружного фасада у них нет, ручки тоже.
+ */
+function innerDrawerBoxes(unit: Module, place: ModulePlacement, options: FrontOptions): PartBox[] {
+  if (!unit.fill?.drawerInners?.length) return [];
+  const out: PartBox[] = [];
+  const t = place.thicknessM;
+  const innerDepth = place.depthM - t;
+  for (const zone of drawerInnerZones(unit, place.heightM * MM, t * MM)) {
+    const part = `${unit.id}:${zone.leaf}`;
+    const kit = options.drawerKits?.find((k) => k.place.key === part);
+    if (kit && kit.state === 'box') {
+      out.push(...kitBoxes(kit, place, part, options.carcassKey ?? null, undefined, options.hardware));
+      continue;
+    }
+    const x0 = place.x + zone.xFromMm / MM;
+    const w = zone.openingWidthMm / MM;
+    const y0 = place.y + zone.fromMm / MM;
+    const h = Math.max(0.03, (zone.toMm - zone.fromMm) / MM - 0.01);
+    const z = -innerDepth / 2;
+    out.push(
+      { material: 'carcass', part, inside: true, position: [x0 + w / 2, y0 + t / 2, z], scale: [w, t, innerDepth * 0.9] },
+      { material: 'carcass', part, inside: true, position: [x0 + t / 2, y0 + h / 2, z], scale: [t, h, innerDepth * 0.9] },
+      { material: 'carcass', part, inside: true, position: [x0 + w - t / 2, y0 + h / 2, z], scale: [t, h, innerDepth * 0.9] },
+      { material: 'carcass', part, inside: true, position: [x0 + w / 2, y0 + h / 2, -t / 2], scale: [w, h, t] },
+    );
+  }
+  return out;
+}
+
+/**
+ * ВСТАВКИ В ЯЩИК (A6) — ВИЗУАЛЬНЫЙ ПРОТОТИП (`insertPieces`): внутри короба по комплекту (его дно и
+ * стенки) либо условного короба зоны; едут с ящиком (тот же `part`). В раскрой не идут.
+ */
+function insertBoxes(unit: Module, place: ModulePlacement, options: FrontOptions): PartBox[] {
+  const inserts = unit.fill?.drawerInserts;
+  if (!inserts) return [];
+  const out: PartBox[] = [];
+  const carcassMm = place.heightM * MM;
+  const t = place.thicknessM * MM;
+  const zones = [
+    ...drawerCellZones(unit, carcassMm, t).map((z) => ({ leaf: z.cell.leaf, xFromMm: z.xFromMm, openingWidthMm: z.openingWidthMm, fromMm: z.fromMm, toMm: z.toMm })),
+    ...drawerInnerZones(unit, carcassMm, t).map((z) => ({ leaf: z.leaf, xFromMm: z.xFromMm, openingWidthMm: z.openingWidthMm, fromMm: z.fromMm, toMm: z.toMm })),
+  ];
+  const depthMm = (place.depthM - place.thicknessM) * MM;
+  for (const [leaf, insert] of Object.entries(inserts)) {
+    const zone = zones.find((z) => z.leaf === leaf);
+    if (!zone) continue;
+    const part = `${unit.id}:${leaf}`;
+    const kit = options.drawerKits?.find((k) => k.place.key === part);
+    /* Оси короба: x от левого края проёма, y от низа зоны, z от передней плоскости корпуса назад. */
+    let box = { x0: t, x1: zone.openingWidthMm - t, floorY: t, z0: -depthMm * 0.9, z1: -t, sideTopY: zone.toMm - zone.fromMm - 10 };
+    if (kit && kit.state === 'box') {
+      const bottom = kit.plan.pieces.find((p) => p.key === 'bottom');
+      const side = kit.plan.pieces.find((p) => p.key === 'side-left');
+      const back = kit.plan.pieces.find((p) => p.key === 'wall-back');
+      const front = kit.plan.pieces.find((p) => p.key === 'wall-front');
+      if (bottom) {
+        box = {
+          x0: bottom.x0,
+          x1: bottom.x1,
+          floorY: bottom.y1,
+          z0: back ? back.z1 : bottom.z0,
+          z1: front ? front.z0 : bottom.z1,
+          sideTopY: side ? side.y1 : bottom.y1 + 80,
+        };
+      }
+    }
+    const xFrom = kit && kit.state === 'box' ? kit.place.xFromMm : zone.xFromMm;
+    const yFrom = kit && kit.state === 'box' ? kit.place.zoneFromMm : zone.fromMm;
+    for (const piece of insertPieces(insert.kind as DrawerInsertKind, insert.sections ?? 4, box)) {
+      out.push({
+        material: piece.metal ? 'metal' : 'carcass',
+        part,
+        inside: true,
+        node: 'insert',
+        position: [
+          place.x + (xFrom + (piece.x0 + piece.x1) / 2) / MM,
+          place.y + (yFrom + (piece.y0 + piece.y1) / 2) / MM,
+          ((piece.z0 + piece.z1) / 2) / MM,
+        ],
+        scale: [(piece.x1 - piece.x0) / MM, (piece.y1 - piece.y0) / MM, (piece.z1 - piece.z0) / MM],
+      });
+    }
+  }
+  return out;
 }
 
 /**
@@ -3010,8 +3142,10 @@ export function moduleBoxes(
    * Спрашиваем то, что и значит «здесь есть ящики»: фронты в наполнении.
    * Их считает `defaultFill`, и по ним же режется раскрой.
    */
-  const drawers = unit.column ? 0 : (unit.fill?.drawerHeights.length ?? 0);
+  const drawers = unit.column ? 0 : drawerCells(unit.fill, unit.widthMm, 0).length;
   for (let i = 0; i < drawers; i += 1) boxes.push(...drawerBoxes(unit, place, i, options));
+  /* Внутренние ящики и вставки (A6) — по комплекту, тем же ключом, что едет. */
+  if (!unit.column) boxes.push(...innerDrawerBoxes(unit, place, options), ...insertBoxes(unit, place, options));
   /* Ящики отсеков (R02A) — своей функцией из `bayLayout`. */
   boxes.push(...bayDrawerBoxes(unit, place, options, production));
 
@@ -3298,9 +3432,6 @@ export function runPlaces(
    * лежали правильно. Тот же класс, что и две глубины угла.
    */
   const rowDepthM = rowStandardDepthMm(run.zone, 'base', run.production) / MM;
-  const plinthM = plinthMm(run.production) / MM;
-
-  const isUpper = (unit: Module) => unit.kind === 'upper' || unit.kind === 'corner_upper';
 
   /*
    * ЗАДНЯЯ ПЛОСКОСТЬ ЛЮБОГО МОДУЛЯ ЛЕЖИТ НА СТЕНЕ.
@@ -3315,8 +3446,8 @@ export function runPlaces(
       unit,
       // `offsetMm` у верхних модулей уже абсолютный (ловушка 92).
       x: unit.offsetMm / MM,
-      // Верхние висят, нижние стоят на цоколе.
-      y: isUpper(unit) ? upperBottomFor(unit, run) / MM : plinthM,
+      // Верхние висят, нижние стоят на цоколе — та же `moduleFloorMm`, что меряет фальшпанель.
+      y: moduleFloorMm(unit, run) / MM,
       heightM: moduleCarcassHeightMm(unit, run) / MM,
       depthM: depthMm / MM,
       zM: depthMm / MM - rowDepthM,
@@ -3456,6 +3587,28 @@ export function runBoxesByModule(
       material: 'carcass',
       panel: TAIL_FILLER_PANEL_NAME,
     });
+  }
+
+  /*
+   * ВЕРХНЯЯ ФАЛЬШПАНЕЛЬ (задача B): над мебелью до потолка, в плоскости её фасадов (лицо утоплено на
+   * `setbackMm`) — те же `topFillerSpans`, что режет раскрой. Фасад: в рентгене снята, как фасады.
+   */
+  if (run.topFiller && !options.cutaway) {
+    const topM = zoneTopOfRun(run) / MM;
+    const heightM = run.topFiller.heightMm / MM;
+    const setbackM = (run.topFiller.setbackMm ?? 0) / MM;
+    const spec = topFillerFront(run);
+    for (const span of topFillerSpans(run)) {
+      const planeM = (span.depthMm - rowStandardDepthMm(run.zone, 'base', run.production)) / MM;
+      filler.push({
+        position: [(span.fromMm + span.toMm) / 2 / MM, topM + heightM / 2, planeM + frontM / 2 - setbackM],
+        scale: [Math.max(0, (span.toMm - span.fromMm) / MM), heightM, frontM],
+        material: 'front',
+        panel: TOP_FILLER_PANEL_NAME,
+        partId: span.partId,
+        frontKey: frontKey(spec),
+      });
+    }
   }
 
   /* Система купе ряда (HARDWARE-01): шины и полотна — по позиции ряда. */
@@ -4110,7 +4263,8 @@ export function openablePartIds(run: Run): string[] {
      * `cabinetBoxes`.
      */
     if (!unit.column) {
-      unit.fill?.drawerHeights.forEach((_, i) => ids.push(`${unit.id}:drawer:${i}`));
+      for (const cell of drawerCells(unit.fill, unit.widthMm, 0)) ids.push(`${unit.id}:${cell.leaf}`);
+      for (const entry of unit.fill?.drawerInners ?? []) entry.heightsMm.forEach((_, j) => ids.push(`${unit.id}:idrawer:${entry.cell}:${j}`));
     }
     /* Ящики отсеков (R02A) — и в зонах отсеков (R02B): каждый своим ключом, тем же, что несут его коробки. */
     if (unit.fill?.bays?.some((bay) => bayDrawerStackOf(bay))) {

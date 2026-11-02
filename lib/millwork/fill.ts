@@ -26,7 +26,7 @@ import {
 import { vitrineOnCounter } from './vitrine';
 import { applianceModel } from './appliances';
 import type { ProductionSettings } from '@/types/catalog';
-import { upperRowBottomMm, zoneHeightMm, zoneProfile } from './zones';
+import { upperRowBottomMm, zoneTopOfRun, zoneProfile } from './zones';
 import type { ApplianceKind, Module, ModuleFill, ModuleKind, Run, ZoneKind } from '@/types/millwork';
 
 /**
@@ -194,9 +194,12 @@ export function columnNichesSumMm(
 /** Полки ближе трёх шагов друг к другу бессмысленны: туда ничего не встанет. */
 export const MIN_SHELF_GAP_MM = SYSTEM32_STEP_MM * 3;
 
-/** Ящик ниже 100 мм не нужен, выше 400 мм не выдвигается нормально. */
+/**
+ * Ящик ниже 100 мм места не делают. Верхнего предела нет (решение владельца 2026-11-02):
+ * прежнее «выше 400 мм не выдвигается» придумал продукт — в паспортах Blum, Hettich и
+ * Häfele такого числа нет; высоту ящика ограничивают корпус и система (царга + зазоры).
+ */
 export const MIN_DRAWER_MM = 100;
-export const MAX_DRAWER_MM = 400;
 
 /** Перегородка не ближе этого к боковине: уже — не отсек, а щель. */
 export const MIN_DIVIDER_EDGE_MM = 150;
@@ -210,10 +213,10 @@ export const MIN_DIVIDER_EDGE_MM = 150;
 export function moduleCarcassHeightMm(
   unit: Module,
   run: Pick<Run, 'zone' | 'ceilingHeightMm'> &
-    Partial<Pick<Run, 'options' | 'upperSegments' | 'mezzanine' | 'modules' | 'beams' | 'production'>>,
+    Partial<Pick<Run, 'options' | 'upperSegments' | 'mezzanine' | 'modules' | 'beams' | 'production' | 'topFiller'>>,
 ): number {
   const zone = zoneProfile(run.zone);
-  const top = zoneHeightMm(run.zone, run.ceilingHeightMm, run.production);
+  const top = zoneTopOfRun(run);
 
   /*
    * РИГЕЛЬ ОПУСКАЕТ ПОТОЛОК НАД ЭТИМ МЕСТОМ.
@@ -296,7 +299,7 @@ export function moduleCarcassHeightMm(
       const storage = base?.appliance === 'fridge' ? fridgeStorageOf(base, run) : null;
       if (storage) return capped(Math.max(0, storage.heightMm));
       if (base) {
-        const top = zoneHeightMm(run.zone, run.ceilingHeightMm, run.production);
+        const top = zoneTopOfRun(run);
         return capped(
           Math.max(0, top - plinthMm(run.production) - moduleCarcassHeightMm(base, run)),
         );
@@ -343,7 +346,7 @@ export function moduleCarcassHeightMm(
    * становятся модулем, а не пустотой.
    */
   if (unit.appliance === 'fridge') {
-    const top = zoneHeightMm(run.zone, run.ceilingHeightMm, run.production);
+    const top = zoneTopOfRun(run);
     const cap = top - plinthMm(run.production) - FRIDGE_MEZZANINE_MIN_MM;
 
     /*
@@ -402,7 +405,7 @@ export function moduleCarcassHeightMm(
 function bottomFromFloorMm(
   unit: Module,
   run: Pick<Run, 'zone' | 'ceilingHeightMm'> &
-    Partial<Pick<Run, 'options' | 'upperSegments' | 'mezzanine' | 'modules' | 'beams' | 'production'>>,
+    Partial<Pick<Run, 'options' | 'upperSegments' | 'mezzanine' | 'modules' | 'beams' | 'production' | 'topFiller'>>,
 ): number {
   if (unit.overhead) return overheadBottomMm(unit, run);
   if (unit.section === 'mezzanine') {
@@ -457,12 +460,12 @@ function capByCeiling(
   heightMm: number,
   unit: Module,
   run: Pick<Run, 'zone' | 'ceilingHeightMm'> &
-    Partial<Pick<Run, 'options' | 'upperSegments' | 'mezzanine' | 'modules' | 'beams' | 'production'>>,
+    Partial<Pick<Run, 'options' | 'upperSegments' | 'mezzanine' | 'modules' | 'beams' | 'production' | 'topFiller'>>,
 ): number {
   if (!run.beams || run.beams.length === 0) return heightMm;
 
   const ceiling = ceilingOverModuleMm(unit, run);
-  if (ceiling >= zoneHeightMm(run.zone, run.ceilingHeightMm, run.production)) return heightMm;
+  if (ceiling >= zoneTopOfRun(run)) return heightMm;
 
   const room = Math.max(0, ceiling - bottomFromFloorMm(unit, run));
 
@@ -479,7 +482,7 @@ function capByCeiling(
 
 /** В ряду есть антресоль: она забирает верх, и корпус под неё укорачивается. */
 export function hasMezzanine(
-  run: Partial<Pick<Run, 'upperSegments' | 'mezzanine' | 'modules' | 'production'>> &
+  run: Partial<Pick<Run, 'upperSegments' | 'mezzanine' | 'modules' | 'production' | 'topFiller'>> &
     Pick<Run, 'zone' | 'ceilingHeightMm'>,
 ): boolean {
   if (run.mezzanine) return true;
@@ -513,9 +516,9 @@ export function hasMezzanine(
  * `null`: «в линию» ставить не с чем, и это сказано словами (`set_mezzanine`).
  */
 export function tallStorageOf(
-  run: Pick<Run, 'zone' | 'ceilingHeightMm'> & Partial<Pick<Run, 'modules' | 'options' | 'beams' | 'production'>>,
+  run: Pick<Run, 'zone' | 'ceilingHeightMm'> & Partial<Pick<Run, 'modules' | 'options' | 'beams' | 'production' | 'topFiller'>>,
 ): { column: Module; bottomMm: number; heightMm: number } | null {
-  const top = zoneHeightMm(run.zone, run.ceilingHeightMm, run.production);
+  const top = zoneTopOfRun(run);
   for (const unit of [...(run.modules ?? [])].sort((a, b) => a.offsetMm - b.offsetMm)) {
     /*
      * Низ кладовки и то, встаёт ли она, — та же `fridgeStorageOf`, что
@@ -568,13 +571,13 @@ export type FridgeStorage = {
  */
 export function fridgeStorageOf(
   column: Module,
-  run: Pick<Run, 'zone' | 'ceilingHeightMm'> & Partial<Pick<Run, 'options' | 'beams' | 'production'>>,
+  run: Pick<Run, 'zone' | 'ceilingHeightMm'> & Partial<Pick<Run, 'options' | 'beams' | 'production' | 'topFiller'>>,
 ): FridgeStorage | null {
   if (column.appliance !== 'fridge' || !standsOnFloor(column)) return null;
-  const bare = { zone: run.zone, ceilingHeightMm: run.ceilingHeightMm, options: run.options, beams: run.beams, production: run.production };
+  const bare = { zone: run.zone, ceilingHeightMm: run.ceilingHeightMm, topFiller: run.topFiller, options: run.options, beams: run.beams, production: run.production };
   const bottomMm = plinthMm(run.production) + moduleCarcassHeightMm(column, bare);
   const ceilingMm = Math.min(
-    zoneHeightMm(run.zone, run.ceilingHeightMm, run.production),
+    zoneTopOfRun(run),
     ceilingOverSpanMm(column.offsetMm, column.offsetMm + column.widthMm, run.beams ?? [], run.ceilingHeightMm),
   );
   const roomMm = ceilingMm - bottomMm;
@@ -608,7 +611,7 @@ export function fridgeStorageOf(
  * с тем местом, которое под неё оставил верхний ряд.
  */
 export function mezzanineHeightMm(
-  run: Partial<Pick<Run, 'mezzanine' | 'production' | 'zone' | 'ceilingHeightMm' | 'modules' | 'options' | 'beams'>>,
+  run: Partial<Pick<Run, 'mezzanine' | 'production' | 'topFiller' | 'zone' | 'ceilingHeightMm' | 'modules' | 'options' | 'beams'>>,
 ): number {
   if (run.mezzanine?.alignTall && run.ceilingHeightMm !== undefined) {
     const storage = tallStorageOf({ ...run, ceilingHeightMm: run.ceilingHeightMm, zone: run.zone });
@@ -632,7 +635,7 @@ export function mezzanineBlockedByBeam(
   fromMm: number,
   toMm: number,
   run: Pick<Run, 'zone' | 'ceilingHeightMm'> &
-    Partial<Pick<Run, 'mezzanine' | 'options' | 'production' | 'beams'>>,
+    Partial<Pick<Run, 'mezzanine' | 'options' | 'production' | 'topFiller' | 'beams'>>,
 ): boolean {
   return (
     ceilingOverSpanMm(fromMm, toMm, run.beams, run.ceilingHeightMm) - mezzanineBottomMm(run) <
@@ -642,7 +645,7 @@ export function mezzanineBlockedByBeam(
 
 export function mezzanineBottomMm(
   run: Pick<Run, 'zone' | 'ceilingHeightMm'> &
-    Partial<Pick<Run, 'mezzanine' | 'options' | 'production'>>,
+    Partial<Pick<Run, 'mezzanine' | 'options' | 'production' | 'topFiller'>>,
 ): number {
   const profile = zoneProfile(run.zone);
 
@@ -681,7 +684,7 @@ export function mezzanineBottomMm(
  */
 export function upperRowHeightMm(
   run: Pick<Run, 'zone' | 'ceilingHeightMm'> &
-    Partial<Pick<Run, 'mezzanine' | 'options' | 'upperSegments' | 'production' | 'modules' | 'beams'>>,
+    Partial<Pick<Run, 'mezzanine' | 'options' | 'upperSegments' | 'production' | 'topFiller' | 'modules' | 'beams'>>,
 ): number {
   /*
    * Зона по-прежнему решает, где низ верхнего ряда, — просто спрашивают
@@ -691,7 +694,7 @@ export function upperRowHeightMm(
    * Местная копия профиля осталась без читателей.
    */
   const bottom = upperRowBottomMm(run.zone, run.ceilingHeightMm, 0, run.production);
-  const top = zoneHeightMm(run.zone, run.ceilingHeightMm, run.production);
+  const top = zoneTopOfRun(run);
   const mezzanine = hasMezzanine(run) ? mezzanineHeightMm(run) : 0;
 
   /*
@@ -734,7 +737,7 @@ export function upperRowHeightMm(
 export function mezzanineBaseOf(
   unit: Module,
   run: Pick<Run, 'zone' | 'ceilingHeightMm'> &
-    Partial<Pick<Run, 'mezzanine' | 'options' | 'modules' | 'upperSegments' | 'beams' | 'production'>>,
+    Partial<Pick<Run, 'mezzanine' | 'options' | 'modules' | 'upperSegments' | 'beams' | 'production' | 'topFiller'>>,
 ): Module | null {
   if (unit.section !== 'mezzanine') return null;
   const bottom = upperRowBottomMm(run.zone, run.ceilingHeightMm, 0, run.production);
@@ -748,6 +751,7 @@ export function mezzanineBaseOf(
   const bare = {
     zone: run.zone,
     ceilingHeightMm: run.ceilingHeightMm,
+    topFiller: run.topFiller,
     options: run.options,
     beams: run.beams,
   };
@@ -805,11 +809,23 @@ export function overheadBaseOf(
 function overheadBottomMm(
   unit: Module,
   run: Pick<Run, 'zone' | 'ceilingHeightMm'> &
-    Partial<Pick<Run, 'options' | 'upperSegments' | 'mezzanine' | 'modules' | 'beams' | 'production'>>,
+    Partial<Pick<Run, 'options' | 'upperSegments' | 'mezzanine' | 'modules' | 'beams' | 'production' | 'topFiller'>>,
 ): number {
   const base = overheadBaseOf(unit, run);
   if (base) return plinthMm(run.production) + moduleCarcassHeightMm(base, run);
-  return Math.max(0, zoneHeightMm(run.zone, run.ceilingHeightMm, run.production) - moduleCarcassHeightMm(unit, run));
+  return Math.max(0, zoneTopOfRun(run) - moduleCarcassHeightMm(unit, run));
+}
+
+/**
+ * НИЗ МОДУЛЯ ОТ ПОЛА, мм — как его ставит сцена (`runPlaces`): висящий — от отметки навески
+ * (`upperBottomFor`), стоящий — от цоколя. Одна функция на сцену и на ширину фальшпанели (задача B).
+ */
+export function moduleFloorMm(
+  unit: Module,
+  run: Pick<Run, 'zone' | 'ceilingHeightMm' | 'options' | 'upperSegments'> &
+    Partial<Pick<Run, 'mezzanine' | 'modules' | 'production' | 'topFiller'>>,
+): number {
+  return unit.kind === 'upper' || unit.kind === 'corner_upper' ? upperBottomFor(unit, run) : plinthMm(run.production);
 }
 
 /**
@@ -821,7 +837,7 @@ function overheadBottomMm(
 export function upperBottomFor(
   unit: Module,
   run: Pick<Run, 'zone' | 'ceilingHeightMm' | 'options' | 'upperSegments'> &
-    Partial<Pick<Run, 'mezzanine' | 'modules' | 'production'>>,
+    Partial<Pick<Run, 'mezzanine' | 'modules' | 'production' | 'topFiller'>>,
 ): number {
   /* Антресоль над шкафом (P2) стоит на его крыше — `overheadBottomMm`. */
   if (unit.overhead) return overheadBottomMm(unit, run);
@@ -1090,7 +1106,7 @@ export function drawerFit(
   heightMm: number,
   count: number,
 ): { fits: boolean; topMm: number; restMm: number; eachMm: number } {
-  const topMm = Math.min(MAX_DRAWER_MM, Math.max(MIN_DRAWER_MM, TOP_DRAWER_MM));
+  const topMm = Math.max(MIN_DRAWER_MM, TOP_DRAWER_MM);
 
   if (count <= 0) return { fits: false, topMm, restMm: heightMm, eachMm: 0 };
   if (count === 1) {
@@ -1109,6 +1125,10 @@ export function drawerFit(
  * ниже. Сумма ОБЯЗАНА совпасть с высотой модуля до миллиметра — иначе
  * фасады не закроют корпус.
  */
+export function defaultDrawerHeights(heightMm: number, count: number): number[] {
+  return drawerHeights(heightMm, count);
+}
+
 function drawerHeights(heightMm: number, count: number): number[] {
   if (count <= 0) return [];
   if (count === 1) return [heightMm];
@@ -1134,14 +1154,23 @@ function drawerHeights(heightMm: number, count: number): number[] {
  * становится меньше `MIN_DRAWER_MM` — `null`: подгонять нечем, и это
  * называется словами, а не режется.
  */
-export function refitDrawerFronts(fronts: number[], fromMm: number, toMm: number): number[] | null {
+export function refitDrawerFronts(fronts: number[], fromMm: number, toMm: number, locked?: boolean[]): number[] | null {
   if (fronts.length === 0) return fronts;
   const sum = fronts.reduce((total, h) => total + h, 0);
   if (sum === toMm) return fronts;
   const standard = drawerHeights(fromMm, fronts.length);
   const isStandard = standard.length === fronts.length && standard.every((h, i) => h === fronts[i]);
   const next = isStandard ? drawerHeights(toMm, fronts.length) : [...fronts];
-  if (!isStandard) next[next.length - 1] += toMm - sum;
+  if (!isStandard) {
+    /*
+     * Закреплённый фасад (редактор «Фасады ящиков») держит свою высоту: разница уходит в
+     * нижний НЕзакреплённый. Закреплены все — подгонять нечем, словами (`null`).
+     */
+    let at = next.length - 1;
+    while (at >= 0 && locked?.[at] === true) at -= 1;
+    if (at < 0) return null;
+    next[at] += toMm - sum;
+  }
   return next.every((h) => h >= MIN_DRAWER_MM) ? next : null;
 }
 
@@ -1170,7 +1199,7 @@ export function defaultFill(
    * правки давали разные полки на одном и том же модуле.
    */
   run: Pick<Run, 'zone' | 'ceilingHeightMm' | 'options'> &
-    Partial<Pick<Run, 'beams' | 'mezzanine' | 'upperSegments' | 'modules' | 'production'>>,
+    Partial<Pick<Run, 'beams' | 'mezzanine' | 'upperSegments' | 'modules' | 'production' | 'topFiller'>>,
   /** Индекс модуля в ряду: от него зависит сторона открывания. */
   index = 0,
   total = 1,
@@ -1581,8 +1610,7 @@ export function moveDrawerBoundary(
   const nextA = heights[a] + shift;
   const nextB = heights[b] - shift;
 
-  if (nextA < MIN_DRAWER_MM || nextA > MAX_DRAWER_MM) return fill;
-  if (nextB < MIN_DRAWER_MM || nextB > MAX_DRAWER_MM) return fill;
+  if (nextA < MIN_DRAWER_MM || nextB < MIN_DRAWER_MM) return fill;
 
   heights[a] = nextA;
   heights[b] = nextB;

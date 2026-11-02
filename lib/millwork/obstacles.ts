@@ -144,13 +144,15 @@ export function rowBandMm(
     production?: ProductionSettings;
     /** Высота антресоли ряда, если она заказана. */
     mezzanineMm?: number | null;
+    /** Верхняя фальшпанель ряда (задача B). */
+    topFillerMm?: number;
   },
 ): RowBand {
   if (row === 'base') return { row, bottomMm: 0, topMm: workTopMm(input.production) };
 
   const bottom = upperBottomMm(input.production);
   /* Верх мебели — верх зоны: потолок минус монтажный зазор цеха (`zoneHeightMm`). */
-  const top = zoneHeightMm('kitchen', input.ceilingHeightMm, input.production);
+  const top = zoneHeightMm('kitchen', input.ceilingHeightMm, input.production, input.topFillerMm);
   const upperTop = input.options.upperToCeiling ? top : bottom + GEOMETRY.upper.carcassH;
   if (row === 'upper') return { row, bottomMm: bottom, topMm: upperTop };
 
@@ -214,13 +216,14 @@ export type ObstacleConflict = {
  * новом выступе не знает.
  */
 export function obstacleConflicts(
-  run: Pick<Run, 'modules' | 'upperSegments' | 'ceilingHeightMm' | 'options' | 'production' | 'mezzanine'>,
+  run: Pick<Run, 'modules' | 'upperSegments' | 'ceilingHeightMm' | 'options' | 'production' | 'mezzanine'> & Partial<Pick<Run, 'topFiller'>>,
   openings: Opening[] | undefined,
 ): ObstacleConflict[] {
   const all = wallObstacles(openings, run.ceilingHeightMm);
   if (all.length === 0) return [];
   const shell = {
     ceilingHeightMm: run.ceilingHeightMm,
+    topFillerMm: run.topFiller?.heightMm,
     options: run.options,
     production: run.production,
     mezzanineMm: run.mezzanine ? mezzanineHeightMm(run) : null,

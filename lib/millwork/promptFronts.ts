@@ -1,5 +1,6 @@
 import { APPLIANCE_SLOTS } from './modules';
 import { MODULE_VARIANTS } from './moduleVariants';
+import { drawerCells } from './drawerGrid';
 import { sectionSpec } from './sections';
 import type { RunModuleLike } from '@/lib/kitchen';
 import { FRONT_BASES, FRONT_FINISHES, FRAME_WIDTH_MM } from './frontMaterial';
@@ -278,7 +279,7 @@ export function describeFront(unit: RunModuleLike): FrontDescription {
    * Число ящиков берём из `fill`, если оно там есть: высоты фронтов —
    * то же, что уходит в раскрой, а `drawerCount` рядом с ним лишь копия.
    */
-  const drawerCount = unit.fill?.drawerHeights.length || Number(unit.drawerCount ?? 0);
+  const drawerCount = (unit.fill ? drawerCells(unit.fill, unit.widthMm, 0).length : 0) || Number(unit.drawerCount ?? 0);
   const variant = unit.variant as ModuleVariantKind | undefined;
 
   let text: string;

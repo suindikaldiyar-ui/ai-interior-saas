@@ -58,11 +58,14 @@ import { CORNER } from './modules';
 import { MAX_MEZZANINE_MM, MIN_MEZZANINE_MM, sectionSpec } from './sections';
 import { ceilingOverSpanMm } from './ceiling';
 import { hasFacade } from './applianceFront';
-import { columnNiches, fillRefusal, fridgeStorageOf, tallStorageOf } from './fill';
+import { columnNiches, defaultDrawerHeights, fillRefusal, fridgeStorageOf, tallStorageOf } from './fill';
+import { drawerHeightsRefusal, drawerLocksOf, recountDrawerFronts, withDrawerFronts } from './drawerFronts';
 import { bayEnvelope, bayLayout, bayLossNote, baysRefusal, baysWidthRefusal, type BayEnvelope } from './bays';
 import { allModules } from './layout';
 import { DEFAULT_ALLOWANCES, type HardwareItem } from '@/types/catalog';
-import { FITTING_SLOT_TITLE, fittingVerdict, slidingVerdict, withFitting, withHandle } from './fittings';
+import { FITTING_SLOT_TITLE, fittingVerdict, installedItem, slidingVerdict, withFitting, withHandle } from './fittings';
+import { topFillerRefusal } from './topFiller';
+import { aventosOf } from './aventos';
 import {
   moveConflict,
   moveRefusal,
@@ -351,6 +354,34 @@ function withStorageVitrine(unit: Module, own: StorageVitrine | null): Module {
   return { ...rest, ...own };
 }
 
+/**
+ * ОГРАНИЧИТЕЛЬ УГЛА ПОДЪЁМНИКА — МОЖНО ЛИ (задача B): только у модели с напечатанной регулировкой (AVENTOS
+ * HK top 75…107°, каталог Blum) и в её пределах. Одна проверка на установку с углом и на смену угла.
+ */
+function liftAngleRefusal(item: HardwareItem, cabinetMm: number, openDeg: number): string | null {
+  const model = aventosOf(item, cabinetMm);
+  if (!model || model.minOpenDeg === undefined) {
+    return `«${item.name}»: регулировка угла открывания у этой модели в каталоге не напечатана — ограничитель не подтверждён.`;
+  }
+  if (!Number.isFinite(openDeg) || openDeg < model.minOpenDeg || openDeg > model.openDeg) {
+    return `«${item.name}»: угол открывания регулируется от ${model.minOpenDeg}° до ${model.openDeg}° (каталог Blum) — ${openDeg}° не встаёт.`;
+  }
+  return null;
+}
+
+/** Ограничитель на месте подъёмника: `null` — снять. */
+function withLiftAngle(unit: Module, openDeg: number | null): Module {
+  return {
+    ...unit,
+    fittings: (unit.fittings ?? []).map((f) => {
+      if (f.slot !== 'lift') return f;
+      const { openDeg: _drop, ...rest } = f;
+      void _drop;
+      return openDeg === null ? rest : { ...rest, openDeg: Math.round(openDeg) };
+    }),
+  };
+}
+
 export function applyOps({
   run,
   requirements,
@@ -359,6 +390,12 @@ export function applyOps({
   roomDepthMm,
   hardware,
 }: ApplyOpsInput): Run {
+  /*
+   * Ряд ДО правки — для сверки «встало до, перестало после» (фурнитура). Правки уровня ряда
+   * (фальшпанель, ТВ, панели стены, торцы столешницы) переписывают `run` по ходу, и «до» иначе
+   * читалось бы уже правленым: подъёмник под снятой фальшпанелью не назывался вовсе (задача B).
+   */
+  const runBefore = run;
   let modules = [...run.modules];
   let options = { ...run.options };
 
@@ -1117,7 +1154,7 @@ export function applyOps({
     }
 
     const ceiling = Math.min(
-      zoneHeightMm(zone, run.ceilingHeightMm, run.production),
+      zoneHeightMm(zone, run.ceilingHeightMm, run.production, run.topFiller?.heightMm),
       ceilingOverSpanMm(base.offsetMm, base.offsetMm + width, run.beams, run.ceilingHeightMm),
     );
     const room = ceiling - plinth - baseHeight;
@@ -1193,7 +1230,7 @@ export function applyOps({
       }
       const top = plinthMm(run.production) + moduleCarcassHeightMm(base, shell) + (over.heightMm ?? 0);
       const ceiling = Math.min(
-        zoneHeightMm(zone, run.ceilingHeightMm, run.production),
+        zoneHeightMm(zone, run.ceilingHeightMm, run.production, run.topFiller?.heightMm),
         ceilingOverSpanMm(over.offsetMm, over.offsetMm + over.widthMm, run.beams, run.ceilingHeightMm),
       );
       if (top > ceiling) {
@@ -1956,7 +1993,7 @@ export function applyOps({
         if (had && own.heightMm !== column.storageOver?.heightMm) {
           const now = storageNow(had.id) ?? had;
           /* Та же оболочка, что у наполнения ряда: с нижним рядом, иначе опоры кладовки не видно. */
-          const bare = { zone, ceilingHeightMm: run.ceilingHeightMm, options, beams: run.beams, production: run.production };
+          const bare = { zone, ceilingHeightMm: run.ceilingHeightMm, topFiller: run.topFiller, options, beams: run.beams, production: run.production };
           const resized: Module = { ...now, storageSize: probe.storageOver ? { ...probe.storageOver } : undefined };
           if (!resized.storageSize) delete resized.storageSize;
           const usual = defaultFill(now, { ...bare, modules }, 0, 1).shelves;
@@ -2162,7 +2199,7 @@ export function applyOps({
           break;
         }
         const height = moduleCarcassHeightMm(target, { ...run, modules });
-        const top = zoneHeightMm(zone, run.ceilingHeightMm, run.production);
+        const top = zoneHeightMm(zone, run.ceilingHeightMm, run.production, run.topFiller?.heightMm);
         if (hang + height > top) {
           warnings.push(`«${target.label}»: низ ${hang} мм — верх ушёл бы на ${hang + height} мм, а зона кончается на ${top} мм.`);
           break;
@@ -2577,7 +2614,8 @@ export function applyOps({
         });
         const fit = drawerFit(carcassMm, op.drawerCount);
 
-        if (op.drawerCount > 0 && !fit.fits) {
+        /* Свои места (`heights`) проверяет `drawerHeightsRefusal` ниже — раскладка по умолчанию им не мерка. */
+        if (op.drawerCount > 0 && !fit.fits && !op.heights) {
           warnings.push(
             `${op.drawerCount} ящиков не встанут: у «${modules[at].label}» под ` +
               `верхним фронтом остаётся ${fit.restMm} мм, на ящик нужно от ` +
@@ -2627,6 +2665,67 @@ export function applyOps({
         const stale =
           fronts.drawerCount !== modules[at].drawerCount ||
           fronts.doorCount !== modules[at].doorCount;
+
+        /*
+         * СВОИ МЕСТА ФАСАДОВ ПРИ НОВОМ ЧИСЛЕ (редактор «Фасады ящиков», 2026-11-02): у модуля,
+         * где ящики уже есть, наполнение не собирается заново — ручка, открывание и
+         * закреплённые фасады остаются, меняются только места. Отказ — тем же
+         * `drawerHeightsRefusal`, что у `set_fill`: сумма, минимум ящика и короб системы.
+         */
+        /*
+         * ЗАКРЕПЛЁННЫЕ ФАСАДЫ ПЕРЕЖИВАЮТ СМЕНУ ЧИСЛА — и из поля «Фасад», и из редактора:
+         * число меняется одной операцией, и места считает одна `recountDrawerFronts`.
+         * Не помещаются — отказ словами, ряд прежний; закреплённых нет — прежнее:
+         * раскладка по умолчанию.
+         */
+        const lockedNow = drawerLocksOf(modules[at].fill);
+        let ownHeights = op.heights;
+        let ownLocked = op.locked;
+        if (!ownHeights && stale && fronts.drawerCount > 0 && lockedNow.some(Boolean) && !modules[at].fill?.bays?.length) {
+          const recount = recountDrawerFronts(modules[at].fill?.drawerHeights ?? [], lockedNow, fronts.drawerCount, Math.round(carcassMm));
+          if ('refusal' in recount) {
+            warnings.push(`Число ящиков ${fronts.drawerCount} не встаёт, не трогая закреплённые фасады «${modules[at].label}»: ${recount.refusal}`);
+            break;
+          }
+          ownHeights = recount.heights;
+          ownLocked = recount.locked;
+        }
+        /*
+         * ДЕЛЕНИЕ НА СТОЛБЦЫ ПЕРЕЖИВАЕТ СМЕНУ ЧИСЛА (A4): наполнение не собирается заново — места
+         * рядов по умолчанию для нового числа, деление то же; разделённых рядов больше, чем станет, —
+         * отказ словами (`drawerHeightsRefusal` → `drawerSplitRefusal`), а не молча снятая перегородка.
+         */
+        const keepsOwn = Boolean(modules[at].fill?.drawerSplit || modules[at].fill?.drawerInners?.length || modules[at].fill?.drawerInserts);
+        if (!ownHeights && stale && fronts.drawerCount > 0 && keepsOwn && !modules[at].fill?.bays?.length) {
+          ownHeights = defaultDrawerHeights(Math.round(carcassMm), fronts.drawerCount);
+          ownLocked = [];
+        }
+        if (ownHeights && fronts.drawerCount > 0) {
+          const base = modules[at].fill;
+          if (!base || base.drawerHeights.length === 0 || base.bays?.length) {
+            warnings.push(`«${modules[at].label}»: свои места фасадов задаются у модуля, где ящики уже есть.`);
+            break;
+          }
+          if (ownHeights.length !== fronts.drawerCount) {
+            warnings.push(
+              `«${modules[at].label}»: мест фасадов ${ownHeights.length}, а ящиков ${fronts.drawerCount} — по месту на ящик.`,
+            );
+            break;
+          }
+          const heightsRefusal = drawerHeightsRefusal(modules[at], ownHeights, undefined, { ...run, zone, options, modules }, hardware);
+          if (heightsRefusal) {
+            warnings.push(heightsRefusal);
+            break;
+          }
+          const locked = Array.from({ length: ownHeights.length }, (_, i) => ownLocked?.[i] === true);
+          modules[at] = {
+            ...modules[at],
+            drawerCount: fronts.drawerCount,
+            doorCount: fronts.doorCount,
+            fill: withDrawerFronts(base, ownHeights, locked),
+          };
+          break;
+        }
 
         modules[at] = {
           ...modules[at],
@@ -3071,7 +3170,7 @@ export function applyOps({
          * встаёт, и сказать об этом надо ЧИСЛОМ: «останется 180 мм».
          */
         if (op.appliance === 'fridge' && op.size.heightMm) {
-          const top = zoneHeightMm(zone, run.ceilingHeightMm, run.production);
+          const top = zoneHeightMm(zone, run.ceilingHeightMm, run.production, run.topFiller?.heightMm);
           const left = top - plinthMm(run.production) - (op.size.heightMm + NICHE_CLEARANCE_MM);
           if (left < FRIDGE_MEZZANINE_MIN_MM) {
             warnings.push(
@@ -3314,6 +3413,7 @@ export function applyOps({
         const fillShell = {
           zone: run.zone,
           ceilingHeightMm: run.ceilingHeightMm,
+          topFiller: run.topFiller,
           options,
           production: run.production,
           beams: run.beams,
@@ -3327,6 +3427,28 @@ export function applyOps({
         if (refusal) {
           warnings.push(refusal);
           break;
+        }
+        /*
+         * МЕСТА ФАСАДОВ ЯЩИКОВ — МИНИМУМ ЯЩИКА И КОРОБ СИСТЕМЫ (редактор «Фасады ящиков»,
+         * 2026-11-02). Проверяется изменённое: место, которое правка не трогала, остаётся
+         * как было. Сумма уже сверена `fillRefusal`.
+         */
+        if (!fillTarget.column && op.fill.drawerHeights.length > 0) {
+          const before = fillTarget.fill?.drawerHeights;
+          const changed = !before || before.length !== op.fill.drawerHeights.length || before.some((h, i) => h !== op.fill.drawerHeights[i]);
+          /* Деление на столбцы (A4) — тем же отказом: перегородка, перемычка и проёмы столбцов. */
+          const splitChanged = JSON.stringify(fillTarget.fill?.drawerSplit ?? null) !== JSON.stringify(op.fill.drawerSplit ?? null);
+          /* Внутренние ящики и вставки (A6) — тем же отказом. */
+          const innerChanged =
+            JSON.stringify(fillTarget.fill?.drawerInners ?? null) !== JSON.stringify(op.fill.drawerInners ?? null) ||
+            JSON.stringify(fillTarget.fill?.drawerInserts ?? null) !== JSON.stringify(op.fill.drawerInserts ?? null);
+          const drawerRefusal = changed || splitChanged || innerChanged
+            ? drawerHeightsRefusal(fillTarget, op.fill.drawerHeights, before, { ...run, options, modules }, hardware, op.fill)
+            : null;
+          if (drawerRefusal) {
+            warnings.push(drawerRefusal);
+            break;
+          }
         }
 
         /*
@@ -3819,8 +3941,19 @@ export function applyOps({
           modules,
           mezzanine: mezzanine ?? undefined,
         };
+        /* Ограничитель угла (задача B) ставится вместе с подъёмником — проверка хода видит его сразу. */
+        if (op.openDeg !== undefined) {
+          const angleWords = op.slot === 'lift'
+            ? liftAngleRefusal(fitItem, Math.round(moduleCarcassHeightMm(fitTarget, fitShell)), op.openDeg)
+            : `Ограничитель угла — только у подъёмника, а не у места «${FITTING_SLOT_TITLE[op.slot]}».`;
+          if (angleWords) {
+            warnings.push(angleWords);
+            break;
+          }
+        }
+        const fitProbe = op.openDeg !== undefined ? withLiftAngle(withFitting(fitTarget, op.slot, op.itemId), op.openDeg) : fitTarget;
         const verdict = fittingVerdict({
-          unit: fitTarget,
+          unit: fitProbe,
           run: fitShell,
           slot: op.slot,
           item: fitItem,
@@ -3831,6 +3964,10 @@ export function applyOps({
         });
         if (verdict.state === 'refused') {
           warnings.push(`«${fitTarget.label}» · ${FITTING_SLOT_TITLE[op.slot]}: «${fitItem.name}» — ${verdict.summary}`);
+          break;
+        }
+        if (op.openDeg !== undefined) {
+          write(withLiftAngle(withFitting(fitTarget, op.slot, op.itemId, op.bayId, op.leaf), op.openDeg));
           break;
         }
         /*
@@ -3889,6 +4026,63 @@ export function applyOps({
          * столешница. Метраж — `apronSpans`, позиция задаёт вид, цену и толщину.
          */
         apronMaterial = op.itemId ? { itemId: op.itemId, ...(op.surface ? { surface: op.surface } : {}) } : undefined;
+        break;
+      }
+
+      /*
+       * ВЕРХНЯЯ ФАЛЬШПАНЕЛЬ (задача B): поле ряда; корпуса «до потолка» ниже на её высоту (`zoneTopOfRun`).
+       * Проверяется ДО записи с модулями ряда: модуль, который с планкой вышел бы выше верха зоны (у
+       * антресоли над верхним рядом высота своя), — отказ словами с миллиметрами, ряд прежний.
+       */
+      case 'set_top_filler': {
+        if (op.heightMm === null) {
+          run = { ...run, topFiller: undefined };
+          break;
+        }
+        const next = {
+          heightMm: op.heightMm,
+          ...(op.setbackMm !== undefined ? { setbackMm: op.setbackMm } : run.topFiller?.setbackMm !== undefined ? { setbackMm: run.topFiller.setbackMm } : {}),
+          ...(op.front === null ? {} : op.front ? { front: op.front } : run.topFiller?.front ? { front: run.topFiller.front } : {}),
+        };
+        const probe: Run = { ...run, zone, options, modules, mezzanine: mezzanine ?? undefined, topFiller: next };
+        const refusal = topFillerRefusal(probe);
+        if (refusal) {
+          warnings.push(refusal);
+          break;
+        }
+        run = { ...run, topFiller: next };
+        break;
+      }
+
+      /*
+       * ОГРАНИЧИТЕЛЬ УГЛА ПОДЪЁМНИКА (задача B): только у модели с напечатанной регулировкой угла
+       * (AVENTOS HK top: 75…107°, каталог Blum) и только в её пределах; иначе — отказ словами.
+       */
+      case 'set_lift_angle': {
+        const at = modules.findIndex((m) => m.id === op.moduleId);
+        const inUpper = at < 0 ? (mezzModules.find((m) => m.id === op.moduleId) ?? upperModules.find((m) => m.id === op.moduleId)) : null;
+        const target = at >= 0 ? modules[at] : inUpper;
+        if (!target) {
+          warnings.push(`Модуль ${op.moduleId} не найден: ограничитель ставить не на что.`);
+          break;
+        }
+        const fitting = target.fittings?.find((f) => f.slot === 'lift');
+        const item = hardware ? installedItem(target, 'lift', hardware) : null;
+        if (!fitting || !item) {
+          warnings.push(`«${target.label}»: подъёмника нет — ограничитель угла ставить не на что.`);
+          break;
+        }
+        if (op.openDeg !== null) {
+          const angleWords = liftAngleRefusal(item, Math.round(moduleCarcassHeightMm(target, { ...run, zone, options, modules })), op.openDeg);
+          if (angleWords) {
+            warnings.push(angleWords);
+            break;
+          }
+        }
+        const updated: Module = withLiftAngle(target, op.openDeg);
+        if (at >= 0) modules[at] = updated;
+        else if (editMezz(target.id, () => updated)) break;
+        else editUpper(target.id, () => updated);
         break;
       }
 
@@ -4099,6 +4293,7 @@ export function applyOps({
   const shell = {
     zone,
     ceilingHeightMm: run.ceilingHeightMm,
+    topFiller: run.topFiller,
     options,
     beams: run.beams,
     production: run.production,
@@ -4256,7 +4451,7 @@ export function applyOps({
          */
         let fill = edited ?? had?.fill ?? unit.fill;
         if (!edited && had?.fill) {
-          const bare = { zone, ceilingHeightMm: run.ceilingHeightMm, options, beams: run.beams, production: run.production };
+          const bare = { zone, ceilingHeightMm: run.ceilingHeightMm, topFiller: run.topFiller, options, beams: run.beams, production: run.production };
           const was = { ...bare, modules: run.modules };
           const now = { ...bare, modules };
           const wasHeight = moduleCarcassHeightMm(had, was);
@@ -4509,6 +4704,7 @@ export function applyOps({
                 ceilingHeightMm: nextRun.ceilingHeightMm,
                 heightMm: mezzanine.heightMm,
                 production: nextRun.production,
+                topFillerMm: nextRun.topFiller?.heightMm,
               })
                 .flatMap((segment) => onWall(segment.modules, nextRun.wallId))
                 .map((unit) => {
@@ -4688,8 +4884,8 @@ export function applyOps({
    * что встало ДО правки и перестало ПОСЛЕ: давний отказ не повторяется.
    */
   if (hardware && hardware.size > 0) {
-    const before = new Map(allModules(run).map((unit) => [unit.id, unit] as const));
-    const shop = shopOf(run.production);
+    const before = new Map(allModules(runBefore).map((unit) => [unit.id, unit] as const));
+    const shop = shopOf(runBefore.production);
     for (const unit of allModules(nextRun)) {
       for (const fitting of unit.fittings ?? []) {
         const item = hardware.get(fitting.itemId);
@@ -4711,7 +4907,7 @@ export function applyOps({
               (f.bayId ?? null) === (fitting.bayId ?? null) &&
               (f.leaf ?? null) === (leaf ?? null),
           ) &&
-          fittingVerdict({ unit: was, run, slot: fitting.slot, item, bayId: fitting.bayId, leaf, production: shop, catalog: hardware }).state !== 'refused';
+          fittingVerdict({ unit: was, run: runBefore, slot: fitting.slot, item, bayId: fitting.bayId, leaf, production: shop, catalog: hardware }).state !== 'refused';
         if (!wasOk) continue;
         const now = fittingVerdict({ unit, run: nextRun, slot: fitting.slot, item, bayId: fitting.bayId, leaf, production: shop, catalog: hardware });
         if (now.state === 'refused') {

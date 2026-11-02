@@ -6,6 +6,7 @@ import {
 } from './moduleVariants';
 import { gripOnEvery, handleOf, openingOf } from './opening';
 import { schemeLeaves } from './frontSwatch';
+import { drawerSplitOf } from './drawerGrid';
 import { fillShelfCount } from './bays';
 import { handleSpotOf, type HandleSpot } from './handlePlace';
 import { vitrineDoorCount, vitrineOf } from './vitrine';
@@ -42,7 +43,8 @@ export type GlyphElement =
    *
    * Пусто — модуля ещё нет (превью варианта в ленте), и доли равные.
    */
-  | { kind: 'drawer'; index: number; count: number; heights?: number[] }
+  /* `leftShare` — ряд разделён на два столбца (A4): ось перегородки долей ширины модуля. */
+  | { kind: 'drawer'; index: number; count: number; heights?: number[]; leftShare?: number }
   /** Незакрашенное поле стекла: заливка на печати схлопывается в плашку. */
   | { kind: 'glass' }
   /** Рама витрины по периметру. */
@@ -207,12 +209,14 @@ export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts'): GlyphEleme
      * Выдуманный ящик на чертеже клиент примет за факт, а в раскрое его
      * нет: пустое поле модуля честнее придуманного.
      */
+    const split = drawerSplitOf(unit.fill, unit.widthMm);
     for (let i = 0; i < count; i += 1) {
       elements.push({
         kind: 'drawer',
         index: i,
         count,
         heights: heights.length === count ? heights : undefined,
+        ...(split && i < split.rows && heights.length === count ? { leftShare: split.leftMm / unit.widthMm } : {}),
       });
     }
   };

@@ -4,6 +4,7 @@ import {
   standsOnFloor,
 } from './modules';
 import { allModules } from './layout';
+import { DRAWER_INSERT_TITLE, drawerCells, type DrawerInsertKind } from './drawerGrid';
 import { apronLengthMm, counterMitersOf, countertopCurveMm, countertopCuts, countertopLengthMm } from './countertop';
 import { islandTopDepthMm } from './island';
 import { WALL_PANEL_TITLE, tvCableMm } from './tvZone';
@@ -225,7 +226,10 @@ function sectionDrafts(
          * по ставке оплатил бы его второй раз. Строка остаётся у ящиков без
          * короба — их число, а не все ящики секции.
          */
-        const all = unit.fill?.drawerHeights.length || unit.drawerCount || spec.drawerCount;
+        const all =
+          (unit.fill ? drawerCells(unit.fill, unit.widthMm, 0).length + (unit.fill.drawerInners ?? []).reduce((s, e) => s + e.heightsMm.length, 0) : 0) ||
+          unit.drawerCount ||
+          spec.drawerCount;
         const boxed = moduleDrawerKits(unit, run, production, hardwareItems).filter(
           (kit) => kit.state === 'box' && !kit.place.bayId,
         ).length;
@@ -1284,6 +1288,18 @@ export function buildEstimateDrafts(
     /* Панели стены (STAGE B) режут на той же пиле: их площадь — в распил. У рядов без панелей — ноль. */
     { key: 'cutting', title: 'Распил и присадка', unit: 'm2', quantity: round2(materials.carcassM2 + materials.shelfM2 + materials.frontM2 + materials.decorM2) },
   );
+
+  /*
+   * ВСТАВКИ В ЯЩИК (A6) — визуальный прототип: строка с количеством, а цены нет — подтверждённого
+   * артикула с размерами в каталоге нет (итог «неполный», а не выдуманная ставка).
+   */
+  const inserts = new Map<DrawerInsertKind, number>();
+  for (const unit of modules) {
+    for (const insert of Object.values(unit.fill?.drawerInserts ?? {})) inserts.set(insert.kind, (inserts.get(insert.kind) ?? 0) + 1);
+  }
+  inserts.forEach((quantity, kind) => {
+    drafts.push({ key: `drawer_insert_${kind}`, title: `${DRAWER_INSERT_TITLE[kind]} — визуальный прототип`, unit: 'pcs', quantity });
+  });
 
   if (run.options.hasCornice) {
     drafts.push({ key: 'cornice', title: 'Антресоль до потолка', unit: 'mp', quantity: frontRowMp });

@@ -70,6 +70,8 @@ type Props = {
   showBox?: boolean;
   /** Фронт — деталь деталировки (F9): размер закрытой коробки пачки. Пусто — место минус два зазора. */
   front?: FrontRect | null;
+  /** Детали, которые едут с ящиком (вставки A6: органайзер, разделители, релинги) — коробки пачки. */
+  riders?: PartBox[];
   /** Ход, метры (HW-04): модель направляющей на месте модуля (`runnerModelOf`). Пусто — условные 300 мм. */
   travelM?: number;
 };
@@ -96,6 +98,7 @@ export default function InteractiveDrawer({
   showBox = true,
   front = null,
   travelM = DRAWER_TRAVEL_M,
+  riders,
 }: Props) {
   const economy = useInteriorStore((state) => state.economyMode);
   const hit = showFront || showBox || Boolean(handle);
@@ -246,6 +249,18 @@ export default function InteractiveDrawer({
             castShadow
           />
           )}
+
+          {/* Вставки (A6) — те же коробки пачки: место в модуле минус начало группы ящика. */}
+          {riders?.map((box, i) => (
+            <mesh
+              key={`rider-${i}`}
+              geometry={parts.box}
+              material={box.material === 'metal' ? parts.metal : parts.carcass}
+              position={[box.position[0] - (x + width / 2), box.position[1] - (y + height / 2), box.position[2]]}
+              scale={box.scale}
+              name="mech:insert"
+            />
+          ))}
 
           {/* Ручка — та же коробка пачки, своей моделью: место в модуле минус начало группы ящика. */}
           {handle?.handle && (

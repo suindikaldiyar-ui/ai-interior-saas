@@ -5946,7 +5946,7 @@ export default function Workspace(props: WorkspaceProps) {
         'Studio открыт без оболочки: страница Studio обязана обернуть рабочее место в StudioKitProvider.',
       );
     }
-    const { StudioShell, RoomPlan, WallInspector, StudioObjects, StudioInspector, FillEditor, OverheadEditor, StorageEditor, VitrineEditor, RadiusEditor } = studioKit;
+    const { StudioShell, RoomPlan, WallInspector, StudioObjects, StudioInspector, FillEditor, OverheadEditor, StorageEditor, DrawerFrontsEditor, CeilingLiftEditor, VitrineEditor, RadiusEditor } = studioKit;
     const surveyWalls = survey?.walls ?? [];
     const turnWords = (item: Survey['walls'][number]) =>
       item.turn === 'custom' ? `${item.turnDeg}° (другой угол)` : `90° ${item.turn === 'left' ? 'влево' : 'вправо'}`;
@@ -6347,6 +6347,59 @@ export default function Workspace(props: WorkspaceProps) {
                 onToggleOpen={toggleOpenPart}
                 selectedZoneId={selectedBay?.moduleId === selectedUnit.id ? (selectedBay.zoneId ?? null) : null}
                 onSelectZone={(bayId, zoneId) => setSelectedBay({ moduleId: selectedUnit.id, bayId, zoneId })}
+              />
+            )}
+            {/*
+              * ФАСАДЫ ЯЩИКОВ (2026-11-02): места и детали фасадов модуля с ящиками на всю
+              * ширину — числами раскроя и комплекта; правка — `set_fill` / `set_fronts` тем же
+              * `runOps`, ответ «встанет ли» — тот же `applyOps` вхолостую. Ключ — по местам и
+              * закреплениям: поля после правки показывают число ряда.
+              */}
+            {selectedUnit && (selectedUnit.fill?.drawerHeights.length ?? 0) > 0 && !selectedUnit.column && (
+              <DrawerFrontsEditor
+                key={`${selectedUnit.id}:${selectedUnit.fill?.drawerHeights.join(',')}:${(selectedUnit.fill?.drawerLocked ?? []).join(',')}:${moduleCarcassHeightMm(selectedUnit, activeRun)}`}
+                unit={selectedUnit}
+                run={activeRun}
+                hardware={hardwareItems}
+                onOps={(ops, onRefusal) => runOps(ops, onRefusal)}
+                preview={(ops) =>
+                  applyOps({
+                    run: activeRun,
+                    requirements: requirementsOf(activeIndex),
+                    ops,
+                    openings: wallOpenings(activeIndex),
+                    roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
+                    hardware: hardwareItems,
+                  })
+                }
+              />
+            )}
+            {/*
+              * АНТРЕСОЛЬ ДО ПОТОЛКА (задача B): верхняя фальшпанель и подбор подъёмника — `set_top_filler`,
+              * `set_fitting`, `set_lift_angle` тем же `runOps`; ответ «встанет ли» — тот же `applyOps` вхолостую.
+              */}
+            {selectedUnit && (
+              <CeilingLiftEditor
+                /* Ключ — с именем блока: у «Кладовки» соседний ключ `<модуль>:null:<отпечаток>` совпадал с этим, и
+                   React оставлял на экране застывший прежний блок рядом с новым. */
+                key={`ceiling:${selectedUnit.id}:${JSON.stringify(activeRun.topFiller ?? null)}:${activeRun.fingerprint}`}
+                unit={selectedUnit}
+                run={activeRun}
+                hardware={hardwareItems}
+                orgId={orgId}
+                catalog={catalog}
+                onCatalogAdded={addCatalogEntries}
+                onOps={(ops, onRefusal) => runOps(ops, onRefusal)}
+                preview={(ops) =>
+                  applyOps({
+                    run: activeRun,
+                    requirements: requirementsOf(activeIndex),
+                    ops,
+                    openings: wallOpenings(activeIndex),
+                    roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
+                    hardware: hardwareItems,
+                  })
+                }
               />
             )}
             {/*

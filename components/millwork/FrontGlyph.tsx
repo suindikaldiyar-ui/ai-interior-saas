@@ -109,6 +109,18 @@ export default function FrontGlyph({
                 {el.index > 0 && (
                   <line x1={x} y1={top} x2={x + width} y2={top} stroke={LINE} strokeWidth={0.4 * k} />
                 )}
+                {/* Ряд на два столбца (A4): шов между фасадами по оси перегородки. */}
+                {el.leftShare !== undefined && (
+                  <line
+                    x1={x + width * el.leftShare}
+                    y1={top}
+                    x2={x + width * el.leftShare}
+                    y2={top + step}
+                    stroke={LINE}
+                    strokeWidth={0.4 * k}
+                    data-drawer-seam
+                  />
+                )}
                 {/* Стрелка вперёд: по ней ящик не спутать со створкой. */}
                 <g stroke={LINE} strokeWidth={0.5 * k} fill="none" opacity={0.8}>
                   <line

@@ -1,5 +1,6 @@
 import { FRONT_BASES, frontOf } from './frontMaterial';
 import { hasFacade } from './applianceFront';
+import { drawerCells } from './drawerGrid';
 import type { FrontBase, FrontFinish, FrontSpec, Module } from '@/types/millwork';
 
 /**
@@ -164,12 +165,14 @@ export function schemeLeaves(unit: Module): { leaf: string; x0: number; x1: numb
   if (heights.length > 0) {
     const total = heights.reduce((sum, h) => sum + h, 0);
     if (total <= 0) return [];
-    let above = 0;
-    return heights.map((h, i) => {
-      const place = { leaf: `drawer:${i}`, x0: 0, x1: 1, y0: above / total, y1: (above + h) / total };
-      above += h;
-      return place;
-    });
+    /* Ячейки (A4): у разделённого ряда — две детали по месту своих столбцов. */
+    return drawerCells(unit.fill, unit.widthMm, total).map((cell) => ({
+      leaf: cell.leaf,
+      x0: cell.xMm / unit.widthMm,
+      x1: (cell.xMm + cell.widthMm) / unit.widthMm,
+      y0: (total - cell.yMm - cell.heightMm) / total,
+      y1: (total - cell.yMm) / total,
+    }));
   }
   if (unit.frontType !== 'door' || unit.doorCount < 1) return [];
   return Array.from({ length: unit.doorCount }, (_, i) => ({ leaf: `door:${i}`, x0: i / unit.doorCount, x1: (i + 1) / unit.doorCount, y0: 0, y1: 1 }));

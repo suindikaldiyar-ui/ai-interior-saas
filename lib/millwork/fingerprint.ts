@@ -58,7 +58,13 @@ function fillPart(unit: Module): string | undefined {
     fill.shelves.join('.'),
     fill.dividerMm,
     fill.rodsMm.join('.'),
-    fill.drawerHeights.join('.'),
+    fill.drawerHeights.join('.') +
+      (fill.drawerSplit ? `|s${fill.drawerSplit.leftMm}x${fill.drawerSplit.rows}` : '') +
+      /* Внутренние ящики и вставки (A6) — другая мебель; пусто не пишется (ловушка 246). */
+      (fill.drawerInners?.length ? `|i${fill.drawerInners.map((e) => `${e.cell}:${e.heightsMm.join('.')}`).join(',')}` : '') +
+      (fill.drawerInserts && Object.keys(fill.drawerInserts).length
+        ? `|x${Object.entries(fill.drawerInserts).sort(([a], [b]) => a.localeCompare(b)).map(([leaf, ins]) => `${leaf}=${ins.kind}${ins.sections ?? ''}`).join(',')}`
+        : ''),
     fill.hinge,
     // Умолчание не пишется: ряды, собранные до выбора ручек, не едут.
     fill.handle ?? '',
@@ -172,7 +178,8 @@ function extrasPart(unit: Module): string | undefined {
      */
     unit.fittings && unit.fittings.length > 0
       ? unit.fittings
-          .map((f) => `${f.slot}${f.bayId ? `@${f.bayId}` : ''}${f.leaf ? `#${f.leaf}` : ''}=${f.itemId}`)
+          /* Ограничитель угла подъёмника (задача B) — другой ход и другая проверка; пусто не пишется. */
+          .map((f) => `${f.slot}${f.bayId ? `@${f.bayId}` : ''}${f.leaf ? `#${f.leaf}` : ''}${f.openDeg ? `<${f.openDeg}` : ''}=${f.itemId}`)
           .sort()
           .join(';')
       : '',
@@ -258,7 +265,7 @@ export function configurationFingerprint(modules: Module[]): string {
  */
 export function runFingerprint(
   run: Pick<Run, 'modules' | 'upperSegments'> &
-    Partial<Pick<Run, 'beams' | 'slidingSystemItemId' | 'counterCorners' | 'tv' | 'wallPanels'>>,
+    Partial<Pick<Run, 'beams' | 'slidingSystemItemId' | 'counterCorners' | 'tv' | 'wallPanels' | 'topFiller'>>,
 ): string {
   const modules = configurationFingerprint([
     ...run.modules,
@@ -283,10 +290,17 @@ export function runFingerprint(
    * и декоративные панели (изделия цеха). Пусто не пишется (ловушка 246).
    */
   const tvZone = tvZonePart(run);
-  if (!beams && !sliding && !corners && !tvZone) return modules;
+  /*
+   * Верхняя фальшпанель (задача B) — другая мебель: корпуса до потолка ниже, деталь планки. Пусто не
+   * пишется (ловушка 246): у рядов без неё отпечаток прежний до символа.
+   */
+  const filler = run.topFiller
+    ? `tf=${run.topFiller.heightMm}/${run.topFiller.setbackMm ?? 0}${run.topFiller.front ? `/${frontKey(run.topFiller.front)}` : ''}`
+    : '';
+  if (!beams && !sliding && !corners && !tvZone && !filler) return modules;
 
   let hash = 0x811c9dc5;
-  for (const ch of `${modules}|${beams ?? ''}${sliding ? `|${sliding}` : ''}${corners ? `|${corners}` : ''}${tvZone ? `|${tvZone}` : ''}`) {
+  for (const ch of `${modules}|${beams ?? ''}${sliding ? `|${sliding}` : ''}${corners ? `|${corners}` : ''}${tvZone ? `|${tvZone}` : ''}${filler ? `|${filler}` : ''}`) {
     hash ^= ch.charCodeAt(0);
     hash = Math.imul(hash, 0x01000193) >>> 0;
   }

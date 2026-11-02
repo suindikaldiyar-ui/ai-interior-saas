@@ -235,9 +235,21 @@ export function zoneHeightMm(
   kind: ZoneKind | undefined | null,
   ceilingHeightMm: number,
   production?: ProductionSettings,
+  /** Верхняя фальшпанель ряда (задача B): корпус ниже на её высоту; зазор до потолка — над ней. */
+  topFillerMm = 0,
 ): number {
   const profile = zoneProfile(kind);
-  return profile.height === 'ceiling' ? ceilingHeightMm - ceilingGapOf(production).gapMm : profile.height;
+  return profile.height === 'ceiling' ? ceilingHeightMm - ceilingGapOf(production).gapMm - Math.max(0, topFillerMm || 0) : profile.height;
+}
+
+/** Верх зоны у ряда — с его фальшпанелью (`Run.topFiller`). Одна функция на всех, кто держит ряд. */
+export function zoneTopOfRun(run: {
+  zone?: ZoneKind | null;
+  ceilingHeightMm: number;
+  production?: ProductionSettings;
+  topFiller?: { heightMm: number } | null;
+}): number {
+  return zoneHeightMm(run.zone, run.ceilingHeightMm, run.production, run.topFiller?.heightMm ?? 0);
 }
 
 /**

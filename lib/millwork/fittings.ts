@@ -14,7 +14,7 @@ import { handleSpotOf } from './handlePlace';
 import { isMechanism, mechanismOf, TYPE_TITLE } from './mechanisms';
 import { bayPantograph, pantographSpecOf, pantographSweep } from './pantograph';
 import { aventosOf, aventosSweep } from './aventos';
-import { ceilingOverModuleMm } from './ceiling';
+import { ceilingStack, liftLimitOf, topFillerBoxMm } from './topFiller';
 import { plinthMm } from './shop';
 
 /**
@@ -764,19 +764,22 @@ export function fittingVerdict(input: {
        */
       const aventos = aventosOf(item, g.heightMm);
       if (aventos) {
-        const sweep = aventosSweep(aventos, { topMm: g.carcassMm - g.gapMm / 2, heightMm: frontH, thicknessMm: g.frontMm }, g.carcassMm);
         const upper = isUpperRow(unit);
         const topFloor = (upper ? upperBottomFor(unit, run) : plinthMm(run.production)) + g.heightMm;
-        let limit = ceilingOverModuleMm(unit, run);
-        let limitWords = 'до потолка';
-        for (const other of (run.upperSegments ?? []).flatMap((seg) => seg.modules)) {
-          if (other.id === unit.id || other.offsetMm >= unit.offsetMm + unit.widthMm || other.offsetMm + other.widthMm <= unit.offsetMm) continue;
-          const bottom = upperBottomFor(other, run);
-          if (bottom >= topFloor - 1 && bottom < limit) {
-            limit = bottom;
-            limitWords = `до «${other.label}» над ним`;
-          }
-        }
+        /*
+         * ОГРАНИЧИТЕЛЬ УГЛА И ФАЛЬШПАНЕЛЬ (задача B): ход — до угла ограничителя, если он стоит; планка над
+         * этим модулем — препятствие в осях механизма (y — от низа крыши, z — от кромки корпуса).
+         */
+        const limitDeg = unit.fittings?.find((f) => f.slot === 'lift')?.openDeg;
+        const uMax = limitDeg && aventos.openDeg > 0 ? Math.min(1, limitDeg / aventos.openDeg) : 1;
+        const stack = ceilingStack(unit, run as Run);
+        const fillerBox = stack.underFiller ? topFillerBoxMm(run as Run, g.frontMm) : null;
+        const obstacle = fillerBox
+          ? { z0: fillerBox.z0, z1: fillerBox.z1, y0: g.carcassMm + (fillerBox.y0 - topFloor), y1: g.carcassMm + (fillerBox.y1 - topFloor) }
+          : null;
+        const sweep = aventosSweep(aventos, { topMm: g.carcassMm - g.gapMm / 2, heightMm: frontH, thicknessMm: g.frontMm }, g.carcassMm, { uMax, obstacle });
+        /* До чего подниматься — одна `liftLimitOf` с блоком высот «Антресоль до потолка». */
+        const { limitMm: limit, words: limitWords } = liftLimitOf(unit, run as Run);
         const room = Math.round(limit - topFloor);
         const need = Math.max(0, Math.round(sweep.aboveTopMm));
         checks.push({
@@ -784,9 +787,19 @@ export function fittingVerdict(input: {
           state: sweep.intoCarcassMm <= 0.5 ? 'ok' : 'fail',
           words:
             sweep.intoCarcassMm <= 0.5
-              ? `${aventos.family}: ход по механизму, фасад в корпус не заходит, вылет вперёд ${Math.round(sweep.forwardMm)} мм`
+              ? `${aventos.family}: ход по механизму${limitDeg ? ` до ${limitDeg}° (ограничитель)` : ''}, фасад в корпус не заходит, вылет вперёд ${Math.round(sweep.forwardMm)} мм`
               : `${aventos.family}: фасад на ходу заходит в корпус на ${sweep.intoCarcassMm.toFixed(1)} мм`,
         });
+        if (obstacle) {
+          checks.push({
+            label: 'фальшпанель',
+            state: sweep.intoObstacleMm <= 0.5 ? 'ok' : 'fail',
+            words:
+              sweep.intoObstacleMm <= 0.5
+                ? `фасад на ходу проходит мимо верхней фальшпанели ${stack.fillerMm} мм${limitDeg ? ` (ограничитель ${limitDeg}°)` : ''}`
+                : `фасад на ходу заходит в верхнюю фальшпанель ${stack.fillerMm} мм на ${sweep.intoObstacleMm.toFixed(1)} мм`,
+          });
+        }
         checks.push({
           label: 'место над корпусом',
           state: need <= room ? 'ok' : 'fail',

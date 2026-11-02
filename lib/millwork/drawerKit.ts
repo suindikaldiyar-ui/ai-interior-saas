@@ -9,10 +9,10 @@ import {
   drawerBoxPlan,
   drawerBoxRulesOf,
   drawerProfileFor,
-  frontDrawerZones,
   type DrawerBoxPlan,
   type DrawerProfile,
 } from './drawerBox';
+import { drawerCellZones, drawerInnerZones } from './drawerGrid';
 
 /**
  * КОМПЛЕКТ ЯЩИКА: НАПРАВЛЯЮЩАЯ + КОРОБ — ОДИН ОТВЕТ НА ЯЩИК (HARDWARE-01).
@@ -26,6 +26,8 @@ import {
  */
 
 export type DrawerPlace = {
+  /** Внутренний ящик за общим фасадом (A6): у него нет своего наружного фасада. */
+  inner?: boolean;
   /** Ключ ящика — тот же, что у открывания в сцене: `<модуль>:drawer:<i>` или ИД ящика отсека. */
   key: string;
   bayId?: string;
@@ -44,7 +46,21 @@ export type DrawerPlace = {
 
 export type DrawerKit =
   | { place: DrawerPlace; state: 'box'; profile: DrawerProfile; plan: DrawerBoxPlan }
-  | { place: DrawerPlace; state: 'draft'; missing: string[] };
+  /*
+   * `profile` у черновика — когда профиль подтверждён и не хватает только ВЫСОТЫ зоны:
+   * редактор фасадов по нему называет наименьшее место (`drawerZoneNeedMm`).
+   */
+  | { place: DrawerPlace; state: 'draft'; missing: string[]; profile?: DrawerProfile };
+
+/**
+ * СКОЛЬКО ЗОНЫ ПО ВЫСОТЕ НУЖНО КОРОБУ, мм — одна мера на черновик «короба не остаётся» и
+ * на минимум места фасада в редакторе. У системы ящика царга покупная: её высоту не
+ * подрезать — нужна царга плюс зазор снизу; у короба цеха — больше зазоров короба.
+ */
+export function drawerZoneNeedMm(profile: DrawerProfile): number {
+  if (profile.system) return profile.system.sideHeightMm + (profile.gapBelowMm ?? 0);
+  return profile.boxHeightGapMm;
+}
 
 /**
  * ТЫЛ ЗАДНЕЙ СТЕНКИ КОРОБА ОТ ПЕРЕДНЕЙ КРОМКИ КОРПУСА, мм — закрытый ящик. У
@@ -73,11 +89,35 @@ export function drawerPlaces(unit: Module, run: Run, production: ProductionSetti
     const heightMm = moduleCarcassHeightMm(unit, run);
     const depthMm = moduleDepthMm(unit, run.zone, run.production);
     const slideItemId = fittingItemId(unit, 'slide');
-    for (const zone of frontDrawerZones(fronts, heightMm, t)) {
+    /* Ячейки (A4): у разделённого ряда проём столбца — между боковиной и перегородкой. */
+    for (const zone of drawerCellZones(unit, heightMm, t)) {
       out.push({
-        key: `${unit.id}:drawer:${zone.index}`,
-        openingWidthMm: unit.widthMm - 2 * t,
-        xFromMm: t,
+        key: `${unit.id}:${zone.cell.leaf}`,
+        openingWidthMm: zone.openingWidthMm,
+        xFromMm: zone.xFromMm,
+        zoneFromMm: zone.fromMm,
+        zoneToMm: zone.toMm,
+        boxFrontZMm: 0,
+        usableDepthMm: depthMm - allow.shelfDepthMm,
+        overlay: true,
+        slideItemId,
+      });
+    }
+  }
+  /*
+   * ВНУТРЕННИЕ ЯЩИКИ (A6): под верхом зоны своей ячейки, проём — проём ячейки, передняя плоскость
+   * короба — плоскость корпуса (за наружным фасадом), направляющая — та же, что у модуля.
+   */
+  if (fronts.length > 0 && unit.fill?.drawerInners?.length) {
+    const heightMm = moduleCarcassHeightMm(unit, run);
+    const depthMm = moduleDepthMm(unit, run.zone, run.production);
+    const slideItemId = fittingItemId(unit, 'slide');
+    for (const zone of drawerInnerZones(unit, heightMm, t)) {
+      out.push({
+        key: `${unit.id}:${zone.leaf}`,
+        inner: true,
+        openingWidthMm: zone.openingWidthMm,
+        xFromMm: zone.xFromMm,
         zoneFromMm: zone.fromMm,
         zoneToMm: zone.toMm,
         boxFrontZMm: 0,
@@ -138,12 +178,43 @@ export function moduleDrawerKits(
       drawerSide: hardware ? installedItem(unit, 'drawer_side', hardware, place.bayId) : null,
     });
     if (!verdict.ready) return { place, state: 'draft', missing: verdict.missing };
+    /*
+     * ВНУТРЕННИЙ ЯЩИК СИСТЕМЫ: у металлической системы короб без передней стенки — ему нужен
+     * внутренний фасад и его крепление, а их размеров в каталоге нет. Черновик словами, а не
+     * короб без передней стенки за наружным фасадом.
+     */
+    if (place.inner && verdict.profile.system) {
+      return {
+        place,
+        state: 'draft',
+        profile: verdict.profile,
+        missing: ['внутреннему ящику системы нужен внутренний фасад и его крепление — их размеров в каталоге нет'],
+      };
+    }
     const zoneH = place.zoneToMm - place.zoneFromMm;
+    /*
+     * ЦАРГА СИСТЕМЫ НЕ ПОДРЕЗАЕТСЯ (2026-11-02). План короба брал меньшее из высоты царги и
+     * зоны: в низкой зоне металлическая царга 83,6 мм рисовалась и считалась ниже себя —
+     * такой детали у производителя нет. Теперь это черновик с миллиметрами.
+     */
+    const sys = verdict.profile.system;
+    if (sys && zoneH < drawerZoneNeedMm(verdict.profile)) {
+      const need = drawerZoneNeedMm(verdict.profile);
+      return {
+        place,
+        state: 'draft',
+        profile: verdict.profile,
+        missing: [
+          `царге ${tenthWords(sys.sideHeightMm)} мм с зазором снизу ${tenthWords(verdict.profile.gapBelowMm ?? 0)} мм нужна зона ящика от ${tenthWords(need)} мм, а здесь ${tenthWords(zoneH)} мм — не хватает ${tenthWords(need - zoneH)} мм`,
+        ],
+      };
+    }
     const plan = drawerBoxPlan(place.openingWidthMm, zoneH, verdict.profile);
     if (plan.heightMm <= 0) {
       return {
         place,
         state: 'draft',
+        profile: verdict.profile,
         missing: [
           `зона ящика ${zoneH} мм, а зазоры короба цеха ${verdict.profile.boxHeightGapMm} мм — короба не остаётся`,
         ],
@@ -151,6 +222,10 @@ export function moduleDrawerKits(
     }
     return { place, state: 'box', profile: verdict.profile, plan };
   });
+}
+
+function tenthWords(mm: number): string {
+  return String(Math.round(mm * 10) / 10).replace('.', ',');
 }
 
 /** Сколько ящиков ряда — черновики и почему: для замков выпуска и экрана. */

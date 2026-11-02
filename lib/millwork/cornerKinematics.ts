@@ -505,8 +505,13 @@ function movingOf(
         );
         /* Механизм подъёмника (AVENTOS): фасад ходит по модели, как в сцене (`liftPose` с механизмом). */
         const liftModel = leaf.opening === 'lift' ? liftModelOf(unit, hardware, Math.round(entry.heightM * MM)) : null;
+        const liftLimit = leaf.opening === 'lift' ? unit.fittings?.find((f) => f.slot === 'lift')?.openDeg : undefined;
         const liftMech = liftModel
-          ? { model: liftModel, frontTopMm: (leaf.bottomM + leaf.heightM) * MM - (entry.heightM * MM - production.carcassMm) }
+          ? {
+              model: liftModel,
+              frontTopMm: (leaf.bottomM + leaf.heightM) * MM - (entry.heightM * MM - production.carcassMm),
+              ...(liftLimit ? { limitDeg: liftLimit } : {}),
+            }
           : null;
         at = (s) =>
           leafPoses({

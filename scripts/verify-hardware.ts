@@ -55,6 +55,8 @@ import { hinge3dChecks } from './verify-hinges3d';
 import { twinChecks } from './verify-twin';
 import { aventosChecks } from './verify-aventos';
 import { realAccountChecks } from './verify-real-account';
+import { drawerFrontsChecks } from './verify-drawer-fronts';
+import { ceilingChecks } from './verify-ceiling';
 import { runnerModelOf } from '../lib/millwork/runnerModel';
 import { drillingPlan } from '../lib/millwork/drillingPlan';
 import { drawerBoxPlan } from '../lib/millwork/drawerBox';
@@ -1874,6 +1876,14 @@ aventosChecks(check);
 /* ═════════════════════════  Настоящая организация: комплект и готовые модели (ТЗ 2026-11-02)  ═════════════════════════ */
 
 realAccountChecks(check);
+
+/* ═════════════════════════  Фасады ящиков: редактор мест и деталей (ТЗ 2026-11-02, A2–A3)  ═════════════════════════ */
+
+drawerFrontsChecks(check);
+
+/* ═════════════════════════  Антресоль до потолка: верхняя фальшпанель, ограничитель, подбор подъёмника (задача B)  ═════════════════════════ */
+
+ceilingChecks(check);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

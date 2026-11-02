@@ -323,9 +323,9 @@ export default function CabinetModule3D({
               id={leaf.id}
               open={isOpen(leaf.id)}
               onToggle={onToggle}
-              x={0}
+              x={leaf.xM ?? 0}
               y={leaf.bottomM}
-              width={widthM}
+              width={leaf.widthM ?? widthM}
               height={leaf.heightM}
               depth={innerDepth}
               thickness={frontThicknessM}
@@ -333,7 +333,9 @@ export default function CabinetModule3D({
               cutaway={cutaway}
               gap={gapM}
               handle={localBoxesOf(leaf.id)?.find((box) => box.node === 'handle')}
-              showFront={layers.fronts}
+              riders={localBoxesOf(leaf.id)?.filter((box) => box.node === 'insert')}
+              /* У внутреннего ящика (A6) наружного фасада нет: он за общим фасадом. */
+              showFront={layers.fronts && !leaf.id.includes(':idrawer:')}
               showBox={layers.drawers}
               onActive={onActive}
               frontMaterial={look?.material ?? frontMaterial}
@@ -475,7 +477,12 @@ export default function CabinetModule3D({
             liftMotion={leaf.opening === 'lift' ? liftMotionOf(unit, hardware) : null}
             liftMech={
               leaf.opening === 'lift' && liftModel
-                ? { model: liftModel, frontTopMm: (leaf.bottomM + leaf.heightM) * MM - (heightM - thicknessM) * MM }
+                ? {
+                    model: liftModel,
+                    frontTopMm: (leaf.bottomM + leaf.heightM) * MM - (heightM - thicknessM) * MM,
+                    /* Ограничитель угла (задача B) — та же запись на месте подъёмника, что у проверки хода. */
+                    ...(unit.fittings?.find((f) => f.slot === 'lift')?.openDeg ? { limitDeg: unit.fittings?.find((f) => f.slot === 'lift')?.openDeg } : {}),
+                  }
                 : null
             }
             rect={closedFrontRect(partBoxes?.(leaf.id), [x + leaf.xM, y + leaf.bottomM])}
