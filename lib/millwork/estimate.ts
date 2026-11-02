@@ -1353,6 +1353,7 @@ export function buildEstimateDrafts(
   drafts.push(...sectionDrafts(run, production, hardwareItems));
 
   drafts.push(...bayDrawerDrafts(run, hardwareItems, production));
+  drafts.push(...innerDrawerFrontDrafts(run, hardwareItems, production));
   /* Пантограф отсека (HARDWARE-01) — вместо штанги этого отсека. */
   for (const unit of modules) {
     for (const f of unit.fittings ?? []) {
@@ -1499,6 +1500,45 @@ function countertopTitle(kind: Run['options']['countertop']): string {
  * позиции, как у фурнитуры модуля (`hardware_<позиция>_slides`), и это
  * уже не оценка. Короб — оценка всегда, пока у цеха нет правил короба.
  */
+function innerDrawerFrontDrafts(
+  run: Run,
+  hardwareItems: Map<string, HardwareItem>,
+  production: ProductionSettings = DEFAULT_PRODUCTION,
+): Draft[] {
+  /*
+   * ПЕРЕДНЯЯ ЧАСТЬ ВНУТРЕННИХ ЯЩИКОВ СИСТЕМЫ (Blum TANDEMBOX antaro, «Внутренний ящик – M», печ. 298): на
+   * ящик — передняя панель (одна заготовка под раскрой, длина раскроя — в строке), комплект держателей и
+   * ручка. Позиции — те же, что нашёл комплект ящика (`moduleDrawerKits`): второго подбора нет. Царги и
+   * ходовая внутреннего ящика — в строках места модуля, как у наружных (`frontDrawerSlides`).
+   */
+  const rows = new Map<string, { item: HardwareItem; unit: EstimateUnit; what: string; quantity: number; cuts: number[] }>();
+  const add = (item: HardwareItem, unit: EstimateUnit, what: string, cut?: number) => {
+    const row = rows.get(item.id) ?? { item, unit, what, quantity: 0, cuts: [] };
+    row.quantity += 1;
+    if (cut !== undefined) row.cuts.push(cut);
+    rows.set(item.id, row);
+  };
+  for (const unit of allModules(run)) {
+    for (const kit of moduleDrawerKits(unit, run, production, hardwareItems)) {
+      if (kit.state !== 'box' || !kit.inner) continue;
+      add(kit.inner.panel, 'pcs', 'передняя панель внутреннего ящика', kit.inner.panelLengthMm);
+      add(kit.inner.holder, 'set', 'держатели передней панели внутреннего ящика');
+      add(kit.inner.handle, 'pcs', 'ручка внутреннего ящика');
+    }
+  }
+  return Array.from(rows.values()).map(({ item, unit, what, quantity, cuts }) => {
+    const raw = item.hardware.dimensionsMm?.rawLength;
+    const cut = cuts.length > 0 ? ` (раскрой ${Array.from(new Set(cuts)).map((mm) => String(mm).replace('.', ',')).join(', ')} мм${raw ? ` из заготовки ${raw} мм` : ''}, по заготовке на ящик)` : '';
+    return {
+      key: `inner_front_${item.id}`,
+      title: `${item.name} — ${what}${cut}`,
+      unit,
+      quantity,
+      ...(Number.isFinite(item.price) && item.price > 0 ? { rate: item.price } : { priceUnset: 'цена не задана: позицию производителя компания ещё не оценила' }),
+    };
+  });
+}
+
 function bayDrawerDrafts(
   run: Run,
   hardwareItems: Map<string, HardwareItem>,

@@ -4153,6 +4153,21 @@ function kitBoxes(
       });
       continue;
     }
+    /*
+     * ПЕРЕДНЯЯ ЧАСТЬ ВНУТРЕННЕГО ЯЩИКА СИСТЕМЫ (печ. 298): панель — металл, держатели и ручка — пластмасса;
+     * покупные, картинка узла (`systemInnerFrontPieces`), деталей раскроя нет. Едут с ящиком (тот же `part`).
+     */
+    if (piece.key.startsWith('inner-')) {
+      out.push({
+        material: piece.metal ? 'metal' : 'carcass',
+        inside: true,
+        part,
+        position,
+        scale,
+        ...(bayId ? { bayId } : {}),
+      });
+      continue;
+    }
     /* Царга системы ящика (HW-04) — металл, покупная: детали раскроя у неё нет. */
     if (piece.metal) {
       /* Царга системы — профиль со скруглённым верхом и посадкой на ходовую (ТЗ § 5.1). */

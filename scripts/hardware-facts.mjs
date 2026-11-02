@@ -142,7 +142,14 @@ function canonicalSub(category, raw, item) {
 /* ── Канонические размеры: явная таблица «как напечатано» → имя движка ── */
 const DIM_MAP = {
   /* Системы ящиков Blum (HW-04): NL и высота царги — как напечатаны в строке заказа. */
-  'Blum/drawer_system': { NL: 'nominalLength', 'Высота царги': 'sideHeight' },
+  'Blum/drawer_system': {
+    NL: 'nominalLength',
+    'Высота царги': 'sideHeight',
+    /* Внутренний ящик TANDEMBOX antaro M (pdf.js 302–303 / печ. 298–299): панель под раскрой и место по высоте. */
+    'Длина (мм)': 'rawLength',
+    'Необходимое пространство внутреннего ящика: min 106* (с ручкой или без нее)': 'innerSpaceMin',
+    'Необходимое пространство внутреннего ящика с удобным доступом сверху: 136**': 'innerSpaceComfort',
+  },
   'Hettich/slide': {
     NL: 'nominalLength',
     KTmin: 'minCabinetDepth',
@@ -545,6 +552,9 @@ for (const file of files) {
         dims.backHeight = Number(back[1].replace(',', '.'));
         dims.backWidthDeduct = Number(back[2].replace(',', '.'));
       }
+      /* Передняя панель внутреннего ящика под раскрой: «внутр. ширина корпуса LW – 132 мм». */
+      const panel = /передняя панель[^|]*?LW\s*[–-]\s*(\d+(?:[.,]\d+)?)/i.exec(formulaText);
+      if (panel) dims.frontPanelWidthDeduct = Number(panel[1].replace(',', '.'));
     }
     const ktFormula = (Array.isArray(it.formulas) ? it.formulas : [])
       .map((f) => /Необходимое пространство \(глубина\):\s*NL\s*\+\s*(\d+(?:[.,]\d+)?)/.exec(String(f)))

@@ -2236,7 +2236,15 @@ function FrameProbe({ rows, room, design }: { rows: SceneRow[]; room: Room | nul
       });
       return out;
     };
-    (w as { __mwCadPartPoint?: (id: string) => { x: number; y: number } | null }).__mwCadPartPoint = (id: string) => {
+    /*
+     * Точка на экране для нажатия по детали: центр лицевой грани зоны касания, а с `local` — любая точка
+     * зоны в её осях (единичный куб, −0,5…0,5): так приёмка нажимает на верх внутреннего ящика сверху,
+     * как человек, а не сквозь открытый фасад.
+     */
+    (w as { __mwCadPartPoint?: (id: string, local?: [number, number, number]) => { x: number; y: number } | null }).__mwCadPartPoint = (
+      id: string,
+      local?: [number, number, number],
+    ) => {
       /* У Г-модуля зон касания две (фасады А и Б на одном ключе): берётся та, что смотрит на камеру. */
       const targets: THREE.Object3D[] = [];
       scene.traverse((object) => {
@@ -2254,7 +2262,7 @@ function FrameProbe({ rows, room, design }: { rows: SceneRow[]; room: Room | nul
         const score = normal.dot(camera.position.clone().sub(front).normalize());
         if (score > facing) {
           facing = score;
-          point = front;
+          point = local ? target.localToWorld(new THREE.Vector3(local[0], local[1], local[2])) : front;
         }
       }
       if (!point) return null;

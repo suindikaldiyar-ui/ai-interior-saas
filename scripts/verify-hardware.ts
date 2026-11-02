@@ -57,6 +57,7 @@ import { aventosChecks } from './verify-aventos';
 import { realAccountChecks } from './verify-real-account';
 import { drawerFrontsChecks } from './verify-drawer-fronts';
 import { ceilingChecks } from './verify-ceiling';
+import { innerDrawerChecks } from './verify-inner-drawer';
 import { runnerModelOf } from '../lib/millwork/runnerModel';
 import { drillingPlan } from '../lib/millwork/drillingPlan';
 import { drawerBoxPlan } from '../lib/millwork/drawerBox';
@@ -176,10 +177,11 @@ console.log('\nHW.A: факты производителей — артикул,
    * Unihopper (COKA) и МФ-Комплект (Var3e). Прежние три — те же до записи.
    */
   check(
-    'A1 записей в фактах: Hettich 290, Blum 318, Häfele 591 (прежние), BOYARD 2762, DTC 892, Firmax 226, Alphalux 166, Unihopper 11, МФ-Комплект 8, всего 5264 — число не уменьшается молча',
-    by('Hettich') === 290 && by('Blum') === 318 && by('Häfele') === 591 &&
+/* 2026-11-02: +4 записи Blum — комплект внутреннего ящика TANDEMBOX antaro M (Z31L1036A, ZIF.71M0, ZIF.80M5, ZIF.80M7; печ. 298): 318 → 322, всего 5264 → 5268. */
+    'A1 записей в фактах: Hettich 290, Blum 322, Häfele 591 (прежние + комплект внутреннего ящика TANDEMBOX), BOYARD 2762, DTC 892, Firmax 226, Alphalux 166, Unihopper 11, МФ-Комплект 8, всего 5268 — число не уменьшается молча',
+    by('Hettich') === 290 && by('Blum') === 322 && by('Häfele') === 591 &&
       by('BOYARD') === 2762 && by('DTC') === 892 && by('Firmax') === 226 && by('Alphalux') === 166 && by('Unihopper') === 11 && by('МФ-Комплект') === 8 &&
-      HARDWARE_FACTS.length === 5264,
+      HARDWARE_FACTS.length === 5268,
     `Hettich ${by('Hettich')} · Blum ${by('Blum')} · Häfele ${by('Häfele')} · BOYARD ${by('BOYARD')} · DTC ${by('DTC')} · Firmax ${by('Firmax')} · Alphalux ${by('Alphalux')} · Unihopper ${by('Unihopper')} · МФ-Комплект ${by('МФ-Комплект')} · всего ${HARDWARE_FACTS.length}`,
   );
   const articles = HARDWARE_FACTS.map((fact) => fact.article);
@@ -1279,11 +1281,12 @@ console.log('\nHW.I: изображения позиции, статус 3D, п�
       status('MFR-HETTICH-9114276') === 'VISUAL_APPROXIMATION' &&
       status('MFR-BLUM-173L6100') === 'NO_3D' &&
       approx === 619 &&
-      none === 542 &&
+      /* +4: покупные детали внутреннего ящика TANDEMBOX (2026-11-02) — модели нет, «3D нет». */
+      none === 546 &&
       measured === 13 &&
       reconstructed === 25 &&
       approx + none + measured + reconstructed === oldItems.length &&
-      oldItems.length === 1199 &&
+      oldItems.length === 1203 &&
       newDiffer.length === 0 &&
       allStatuses.length === CATALOG.size &&
       modelOutsideHandles.length === 0 &&
@@ -1310,16 +1313,17 @@ console.log('\nHW.I: изображения позиции, статус 3D, п�
   }) as CatalogEntryFull[];
   const cov = mediaCoverage(bound, makerOf);
   check(
-    'I6 покрытие фото: Blum 318, Hettich 290, Häfele 591 — точных и серии 0, «нет фото» = всего; точное фото, фото серии и ссылка без файла меняют ровно свои строки',
+    'I6 покрытие фото: Blum 322 (318 + 4 детали внутреннего ящика TANDEMBOX, 2026-11-02), Hettich 290, Häfele 591 — точных и серии 0, «нет фото» = всего; точное фото, фото серии и ссылка без файла меняют ровно свои строки',
     zeroPhotos &&
-      bare.Blum.total === 318 &&
+      bare.Blum.total === 322 &&
       bare.Hettich.total === 290 &&
       bare['Häfele'].total === 591 &&
       cov['Häfele'].exact === 1 &&
       cov['Häfele'].none === 590 &&
       cov.Blum.series === 1 &&
       cov.Blum.exact === 0 &&
-      cov.Blum.none === 317 &&
+      /* 322 − одна позиция с фото серии (71B3550). */
+      cov.Blum.none === 321 &&
       cov.Hettich.rightsNotVerified === 1 &&
       cov.Hettich.none === 290,
     JSON.stringify(cov),
@@ -1361,8 +1365,8 @@ console.log('\nHW.I: изображения позиции, статус 3D, п�
     }
   }
   check(
-    'I7 лёгкое чтение: у всех 5264 позиций те же места и тот же статус 3D; проверка совместимости на местах трёх модулей кухни — та же до слова',
-    CATALOG.size === 5264 &&
+    'I7 лёгкое чтение: у всех 5268 позиций (5264 + 4 детали внутреннего ящика TANDEMBOX, 2026-11-02) те же места и тот же статус 3D; проверка совместимости на местах трёх модулей кухни — та же до слова',
+    CATALOG.size === 5268 &&
       acceptDiff.length === 0 && verdictDiff.length === 0 && verdicts > 500,
     `позиций с разницей ${acceptDiff.length} · проверок ${verdicts}, разошлось ${verdictDiff.length}${verdictDiff[0] ? ` (${verdictDiff[0]})` : ''}`,
   );
@@ -1884,6 +1888,10 @@ drawerFrontsChecks(check);
 /* ═════════════════════════  Антресоль до потолка: верхняя фальшпанель, ограничитель, подбор подъёмника (задача B)  ═════════════════════════ */
 
 ceilingChecks(check);
+
+/* ═════════════════════════  Внутренний ящик TANDEMBOX: передняя панель, держатели, ручка по Blum (2026-11-02)  ═════════════════════════ */
+
+innerDrawerChecks(check);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

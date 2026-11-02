@@ -51,7 +51,7 @@ const PORT = Number(process.env.PORT_HW ?? 3291);
 const BASE = `http://localhost:${PORT}`;
 const OUT = '.capture-check/hardware';
 const PARTS = (process.env.PART ?? 'import,kitchen,kitchen-drawers,kitchen-lift,wardrobe,cargo,corner,tablet').split(',').map((s) => s.trim()).filter(Boolean);
-const KNOWN = ['import', 'kitchen', 'kitchen-drawers', 'kitchen-lift', 'wardrobe', 'cargo', 'corner', 'tablet', 'catalog2', 'drilling', 'drawers', 'open', 'twin', 'tandembox', 'clip', 'aventos', 'real', 'import-ui', 'fronts', 'fronts-tablet', 'ceiling', 'ceiling-tablet'];
+const KNOWN = ['import', 'kitchen', 'kitchen-drawers', 'kitchen-lift', 'wardrobe', 'cargo', 'corner', 'tablet', 'catalog2', 'drilling', 'drawers', 'open', 'twin', 'tandembox', 'clip', 'aventos', 'real', 'import-ui', 'fronts', 'fronts-tablet', 'ceiling', 'ceiling-tablet', 'inner'];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let failed = 0;
@@ -1184,6 +1184,207 @@ async function partImportUi(browser) {
       { viewport: vp.viewport, touch: vp.touch, importHardware: false, projects: [] },
     );
   }
+}
+
+/* ═════════════════════════  INNER: внутренний ящик TANDEMBOX за верхним фасадом (2026-11-02)  ═════════════════════════ */
+
+const slideOf = (page, id) => page.evaluate((k) => (window.__mwPartSlide ? window.__mwPartSlide(k) : null), id);
+/** Нажатие по детали в сцене — мышью по точке зоны касания на экране (`local` — точка в осях зоны). */
+async function pressPart(page, id, label, local) {
+  const pt = await page.evaluate(([k, l]) => (window.__mwCadPartPoint ? window.__mwCadPartPoint(k, l ?? undefined) : null), [id, local ?? null]);
+  must(`${label}: точка ${id} на экране`, Boolean(pt), `НУЛЕВОЙ СЕЛЕКТОР: part:${id}`);
+  await page.mouse.click(pt.x, pt.y);
+}
+/** Ход двух ящиков каждый кадр, пока условие не выполнено: [наружный, внутренний] в мм. */
+const sampleSlides = (page, outer, inner, ms) =>
+  page.evaluate(
+    ([o, i, limit]) =>
+      new Promise((resolve) => {
+        /* Замер кончается, когда ход НАЧАЛСЯ и затих (ничего не едет 400 мс), — а не по таймеру от нажатия. */
+        const out = [];
+        const t0 = performance.now();
+        let started = false;
+        let quietSince = null;
+        const tick = () => {
+          const a = window.__mwPartSlide ? window.__mwPartSlide(o) : null;
+          const b = window.__mwPartSlide ? window.__mwPartSlide(i) : null;
+          out.push([a, b]);
+          const moving = window.__mwMovingCount ? window.__mwMovingCount() : 0;
+          if (moving > 0 || (out.length > 1 && (a !== out[0][0] || b !== out[0][1]))) started = true;
+          const now = performance.now();
+          quietSince = moving === 0 ? (quietSince ?? now) : null;
+          if ((started && quietSince !== null && now - quietSince > 400) || now - t0 > limit) resolve(out);
+          else requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      }),
+    [outer, inner, ms],
+  );
+
+async function partInner(browser) {
+  const L = 'INNER';
+  console.log(`\n── ${L} (1440 × 900): «ЖК ТУМАР» — два одинаковых наружных фасада, за верхним внутренний ящик 120 мм; TANDEMBOX 576.4501M + 378M4502SA NL 450 с 3D-моделями ALDIK`);
+  const fx = fixture('kitchen');
+  const want = fixture('drawersExpect');
+  const widthMm = fx.run.modules.find((m) => m.id === want.module)?.widthMm;
+  must(`${L}: модуль ${want.module} в объекте`, Number.isFinite(widthMm), `НУЛЕВОЙ СЕЛЕКТОР: ${want.module}`);
+  const panelMm = widthMm - 2 * 16 - 132;
+  const outerId = `${want.module}:drawer:0`;
+  const innerId = `${want.module}:idrawer:0:0`;
+  await withOrg(
+    L,
+    browser,
+    async ({ service, page, errors, consoleErrors, ids }) => {
+      /* 3D-модели установлены, как у владельца: «Готовые модели ALDIK» (царга 378M4502SA, ходовая 576.4501M). */
+      await page.goto(`${BASE}/admin/catalog/cad`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+      await page.waitForSelector('[data-ready-twins="ready"]', { timeout: 120_000 });
+      await page.locator('[data-ready-install]').first().click();
+      const twinsDone = await waitFor(page, () => document.querySelector('[data-ready-done]')?.getAttribute('data-ready-done') ?? null, Boolean, 180_000);
+      must(`${L}: готовые модели ALDIK поставлены`, Boolean(twinsDone), String(twinsDone));
+
+      await openStudio(page, ids.kitchen);
+      await open3d(page, L);
+      await saved(page);
+      await hardwareFor(page, L, want.module);
+      const runner = await installByPath(page, L, 'slide', { brand: 'Blum', series: 'TANDEMBOX antaro', nl: 450, article: want.runner });
+      await waitFor(page, () => document.querySelectorAll('[data-hw-slot="drawer_side"]').length, (n) => n > 0, 20_000);
+      const sides = await installByPath(page, L, 'drawer_side', { brand: 'Blum', series: 'TANDEMBOX antaro', nl: 450, article: want.sides });
+      must(`${L}: TANDEMBOX путём «Фурнитуры»`, runner.installed && sides.installed, JSON.stringify({ runner: runner.installed, sides: sides.installed }));
+      await selectModule(page, want.module);
+
+      /* Два одинаковых наружных фасада: рядов 2 и «Равномерно». */
+      let st = await frontsState(page);
+      for (let i = 0; i < 6 && st.rows > 2; i += 1) {
+        await humanPress(page, '[data-drawer-fronts-less]', 'рядов меньше', false);
+        st = await frontsState(page);
+      }
+      for (let i = 0; i < 6 && st.rows < 2; i += 1) {
+        await humanPress(page, '[data-drawer-fronts-more]', 'рядов больше', false);
+        st = await frontsState(page);
+      }
+      await humanPress(page, '[data-drawer-fronts-even]', 'Равномерно', false);
+      st = await waitFor(page, () => document.querySelector('[data-drawer-fronts]') !== null, Boolean, 10_000).then(() => frontsState(page));
+      check(
+        `${L}.1 два одинаковых наружных фасада: рядов 2, места ${st.slots.join(' / ')} мм, детали ${st.fronts.map((f) => f.h).join(' / ')} мм, оба ящика — короба системы`,
+        st.rows === 2 && st.slots[0] === st.slots[1] && st.fronts[0]?.h === st.fronts[1]?.h && st.fronts.every((f) => f.ready === '1'),
+        JSON.stringify(st),
+      );
+
+      /* Внутренний ящик 120 мм за верхним фасадом. */
+      await humanPress(page, '[data-front-inners="0"]', 'внутренний ящик за верхним фасадом', false);
+      await page.locator('[data-front-inners="0"]').first().fill('120');
+      await page.locator('[data-front-inners="0"]').first().press('Enter');
+      const innerRow = await waitFor(page, () => document.querySelector('[data-front-inner="idrawer:0:0"]')?.textContent ?? null, (v) => /Z31L1036A/.test(v ?? '') || /черновик/.test(v ?? ''), 30_000);
+      await saved(page);
+      check(
+        `${L}.2 внутренний ящик 120 мм за верхним: короб системы, передняя панель Z31L1036A ${panelMm} мм (LW − 132), держатели ZIF.71M0, ручка ZIF.80M5; «место 120 мм при min 106», удобного доступа сверху нет (136) — словами; не черновик`,
+        new RegExp(`Z31L1036A ${panelMm} мм \\(LW − 132\\)`).test(innerRow ?? '') &&
+          /ZIF\.71M0/.test(innerRow ?? '') &&
+          /ZIF\.80M5/.test(innerRow ?? '') &&
+          /место 120 мм при min 106/.test(innerRow ?? '') &&
+          /удобного доступа сверху нет/.test(innerRow ?? '') &&
+          !/черновик/.test(innerRow ?? ''),
+        `«${(innerRow ?? '').replace(/\s+/g, ' ').slice(0, 400)}»`,
+      );
+
+      /* Смета экрана: передняя часть внутреннего — три строки по 1; направляющих и царг — по 3. */
+      const lines = await waitFor(
+        page,
+        () => (window.__mwEstimateLines ? window.__mwEstimateLines() : null),
+        (l) => Array.isArray(l) && l.filter((x) => x.key.startsWith('inner_front_')).length === 3,
+        60_000,
+      );
+      const inner3 = (lines ?? []).filter((x) => x.key.startsWith('inner_front_'));
+      const slideLine = (lines ?? []).find((x) => x.key.startsWith('fitting_slide_') && !x.key.endsWith('_missing'));
+      const sideLine = (lines ?? []).find((x) => x.key.startsWith('fitting_drawer_side_') && !x.key.endsWith('_missing'));
+      check(
+        `${L}.3 смета экрана: передняя панель, держатели, ручка внутреннего ящика — по 1, «цена не задана»; направляющие 576.4501M и царги 378M4502SA — по 3 комплекта`,
+        inner3.length === 3 && inner3.every((x) => x.quantity === 1 && Boolean(x.priceUnset)) && slideLine?.quantity === 3 && sideLine?.quantity === 3,
+        JSON.stringify({ inner: inner3.map((x) => [x.key.slice(0, 24), x.quantity]), slides: slideLine?.quantity, sides: sideLine?.quantity }),
+      );
+
+      /* 3D: модели реестра стоят и на внутреннем ящике. */
+      await open3d(page, L);
+      const twins = await waitFor(page, () => (window.__mwTwinCenters ? window.__mwTwinCenters() : []), (v) => v.some((t) => t.key.includes('idrawer:0:0')), 60_000);
+      const innerTwins = twins.filter((t) => t.key.includes('idrawer:0:0'));
+      check(
+        `${L}.4 3D-модели ALDIK (царга и ходовая) — и у внутреннего ящика: мешей ${innerTwins.length}`,
+        innerTwins.length > 0,
+        innerTwins.slice(0, 4).map((t) => `${t.key}:${t.role}`).join(' · '),
+      );
+
+      /* Нажатие на верх наружного фасада (за ним внутренний) — открывает наружный; внутренний остаётся. */
+      await page.locator('[data-angle="iso"]').first().click();
+      await sleep(2500);
+      await pressPart(page, outerId, 'верх наружного фасада', [0, 0.42, 0.5]);
+      const s1 = await sampleSlides(page, outerId, innerId, 30_000);
+      const end1 = s1[s1.length - 1];
+      await page.screenshot({ path: `${OUT}/inner-1-outer-open.png`, timeout: 120_000 });
+      check(
+        `${L}.5 нажатие на верх наружного фасада, за которым внутренний: открылся наружный (${end1?.[0]} мм), внутренний остался на месте (${end1?.[1]} мм) — до внутреннего за закрытым фасадом не дотянуться`,
+        end1?.[0] > 400 && end1?.[1] === 0 && s1.every(([, b]) => b === 0),
+        `кадров ${s1.length}`,
+      );
+
+      /* Сверху — нажатие на внутренний: выдвигается отдельно, наружный стоит. */
+      await page.locator('[data-angle="plan"]').first().click();
+      await sleep(2500);
+      await pressPart(page, innerId, 'внутренний ящик сверху', [0, 0.49, -0.45]);
+      const s2 = await sampleSlides(page, outerId, innerId, 30_000);
+      const end2 = s2[s2.length - 1];
+      await page.locator('[data-angle="iso"]').first().click();
+      await sleep(2500);
+      await page.screenshot({ path: `${OUT}/inner-2-both-open.png`, timeout: 120_000 });
+      check(
+        `${L}.6 нажатие на внутренний (сверху, как рукой): выдвинулся отдельно до ${end2?.[1]} мм, наружный стоит (${end2?.[0]} мм); на ходу внутренний не дальше наружного`,
+        end2?.[1] > 400 && Math.abs(end2[0] - end1[0]) <= 1 && s2.every(([a, b]) => b <= a + 0.5),
+        `кадров ${s2.length}`,
+      );
+
+      /* Закрытие наружного: внутренний закрывается с ним и ни на кадр не выходит за тыл его фасада. */
+      await pressPart(page, outerId, 'наружный фасад', [0, 0, 0.5]);
+      const s3 = await sampleSlides(page, outerId, innerId, 30_000);
+      const end3 = s3[s3.length - 1];
+      const worst3 = Math.max(...s3.map(([a, b]) => (b ?? 0) - (a ?? 0)));
+      check(
+        `${L}.7 закрытие наружного: закрылись оба (${end3?.[0]} / ${end3?.[1]} мм), внутренний на ходу ни на кадр не дальше наружного (наибольшее превышение ${worst3} мм за ${s3.length} кадров)`,
+        end3?.[0] === 0 && end3?.[1] === 0 && worst3 <= 0.5 && s3.length > 5,
+        `первые: ${JSON.stringify(s3.slice(0, 4))}`,
+      );
+
+      /* «Открыть всё»: сначала наружный до конца, потом внутренний. */
+      await page.locator('[data-open-all]').first().click();
+      const s4 = await sampleSlides(page, outerId, innerId, 40_000);
+      const end4 = s4[s4.length - 1];
+      const early = s4.filter(([a, b]) => (b ?? 0) > 0 && (a ?? 0) < end1[0] - 1);
+      check(
+        `${L}.8 «Открыть всё»: внутренний начинает ход, только когда наружный открыт до конца (кадров с внутренним на ходу при неоткрытом наружном — ${early.length}); в конце оба открыты (${end4?.[0]} / ${end4?.[1]} мм)`,
+        early.length === 0 && end4?.[0] > 400 && end4?.[1] > 400,
+        `кадров ${s4.length}`,
+      );
+      await closeAll(page);
+      await saved(page);
+
+      /* Запись → база → перезагрузка. */
+      const row = (await service.from('projects').select('millwork').eq('id', ids.kitchen).single()).data;
+      const unitDb = [...(row?.millwork?.runs?.optimal?.modules ?? [])].find((m) => m.id === want.module);
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: 120_000 });
+      await page.waitForSelector('[data-studio-root]', { timeout: 60_000 });
+      await sleep(1500);
+      await selectModule(page, want.module);
+      const rowReload = await waitFor(page, () => document.querySelector('[data-front-inner="idrawer:0:0"]')?.textContent ?? null, (v) => /Z31L1036A/.test(v ?? ''), 60_000);
+      check(
+        `${L}.9 в базе — два равных места и внутренний 120 мм за верхним (${JSON.stringify(unitDb?.fill?.drawerInners ?? null)}); после перезагрузки строка внутреннего — та же передняя часть`,
+        JSON.stringify(unitDb?.fill?.drawerInners ?? null) === JSON.stringify([{ cell: 0, heightsMm: [120] }]) &&
+          (unitDb?.fill?.drawerHeights ?? []).length === 2 &&
+          unitDb.fill.drawerHeights[0] === unitDb.fill.drawerHeights[1] &&
+          /Z31L1036A/.test(rowReload ?? ''),
+        `места ${JSON.stringify(unitDb?.fill?.drawerHeights)}`,
+      );
+      check(`${L} ошибок страницы и консоли нет`, errors.length === 0 && consoleErrors.length === 0, [...errors, ...consoleErrors].slice(0, 3).join(' | '));
+    },
+    { viewport: { width: 1440, height: 900 }, projects: [{ key: 'kitchen', zone: 'Кухня', fx }], production: { drawerBox: DRAWER_BOX } },
+  );
 }
 
 /* ═════════════════════════  CEILING: антресоль до потолка — фальшпанель и подбор подъёмника (ТЗ 2026-11-02, B)  ═════════════════════════ */
@@ -2945,6 +3146,7 @@ try {
       if (part === 'fronts-tablet') await partFronts(browser, true);
       if (part === 'ceiling') await partCeiling(browser, false);
       if (part === 'ceiling-tablet') await partCeiling(browser, true);
+      if (part === 'inner') await partInner(browser);
       done.push(part);
       console.log(`  ·    ${part}: ${Math.round((Date.now() - startedAt) / 1000)} с`);
     } catch (error) {

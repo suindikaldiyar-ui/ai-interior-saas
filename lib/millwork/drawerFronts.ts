@@ -1,7 +1,7 @@
 import type { HardwareItem, ProductionSettings } from '@/types/catalog';
 import type { Module, ModuleFill, Run } from '@/types/millwork';
 import { MIN_DRAWER_MM, moduleCarcassHeightMm } from './fill';
-import { drawerZoneNeedMm, moduleDrawerKits, type DrawerKit } from './drawerKit';
+import { drawerZoneNeedMm, innerSystemWords, moduleDrawerKits, type DrawerKit } from './drawerKit';
 import {
   DRAWER_INSERT_TITLE,
   drawerCellZones,
@@ -381,7 +381,7 @@ export function drawerFrontRows(
             zoneMm: zone.toMm - zone.fromMm,
             drawer: inner
               ? inner.state === 'box'
-                ? `короб ${inner.profile.system ? 'системы' : 'ЛДСП'} ${tenth(inner.plan.heightMm)} мм`
+                ? `короб ${inner.profile.system ? 'системы' : 'ЛДСП'} ${tenth(inner.plan.heightMm)} мм${inner.inner ? `: ${innerSystemWords(inner)}` : ''}`
                 : `черновик: ${inner.missing[0] ?? 'короб не рассчитан'}`
               : 'ящика нет',
             ready: inner?.state === 'box',

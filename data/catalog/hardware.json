@@ -35306,6 +35306,51 @@
    }
   },
   {
+   "article": "MFR-BLUM-Z31L1036A",
+   "brand": "blum",
+   "name": "Blum TANDEMBOX antaro Передняя панель без паза — TANDEMBOX antaro внутренний ящик · Z31L1036A",
+   "hardware": {
+    "category": "drawer_system",
+    "brand": "blum",
+    "manufacturer": "Blum",
+    "manufacturerArticle": "Z31L1036A",
+    "officialName": "Передняя панель без паза — TANDEMBOX antaro внутренний ящик",
+    "subcategory": "tandembox_inner_front_panel",
+    "series": "TANDEMBOX antaro",
+    "variant": "tandembox_inner_front_panel · длина 1036 мм, под раскрой; цвет SW | R9006",
+    "dimensionsMm": {
+     "rawLength": 1036,
+     "frontPanelWidthDeduct": 132
+    },
+    "printed": [
+     {
+      "label": "Длина (мм)",
+      "value": "1036"
+     }
+    ],
+    "formulas": [
+     "Раскрой: передняя панель 5 — внутр. ширина корпуса LW – 132 мм"
+    ],
+    "finish": "SW (белый шелк) | R9006 (серый RAL 9006)",
+    "movementType": "none",
+    "compatibleWith": "Внутренний ящик TANDEMBOX antaro M: направляющие 578.xxx1M / 576.xxx1M, царги 378M…SA той же NL, комплект держателей передней панели ZIF.71M0, держатели задней стенки Z30M000S.04; ручка ZIF.80M5 или ручка и поводок ZIF.80M7",
+    "source": {
+     "file": "MANUFACTURER_CATALOGS/BLUM/raw/Каталог и техническое руководство 2024-2025 ru.pdf",
+     "pdfPage": 302,
+     "printedPage": "298",
+     "checkedAt": "2026-11-02"
+    },
+    "rightsStatus": "NOT_VERIFIED",
+    "engineeringStatus": "PARTIAL",
+    "visualStatus": "VISUAL_APPROXIMATION",
+    "missing": [
+     "высота и толщина передней панели не напечатаны",
+     "материал передней панели не напечатан"
+    ],
+    "notes": "Внутренний ящик – M (веб-код DQC45A), позиция 5 «Передняя панель без паза»; сноска ¹ к длине — «Под раскрой». Та же панель — на страницах внутренних ящиков K, C, D."
+   }
+  },
+  {
    "article": "MFR-BLUM-ZB7M000S",
    "brand": "blum",
    "name": "Blum LEGRABOX Держатели для задней стенки из ДСП, лев./прав. — LEGRABOX M · ZB7M000S",
@@ -35461,6 +35506,174 @@
     "missing": [
      "глубина отверстий Ø 10 словами не напечатана (min 12** на виде сбоку не подписан)"
     ]
+   }
+  },
+  {
+   "article": "MFR-BLUM-ZIF.71M0",
+   "brand": "blum",
+   "name": "Blum TANDEMBOX antaro Комплект держателей передней панели — TANDEMBOX antaro внутренний ящик M · ZIF.71M0",
+   "hardware": {
+    "category": "drawer_system",
+    "brand": "blum",
+    "manufacturer": "Blum",
+    "manufacturerArticle": "ZIF.71M0",
+    "officialName": "Комплект держателей передней панели — TANDEMBOX antaro внутренний ящик M",
+    "subcategory": "tandembox_inner_front_holder",
+    "series": "TANDEMBOX antaro",
+    "variant": "tandembox_inner_front_holder · высота царги M; пластмасса; цвет SW | WGR",
+    "dimensionsMm": {
+     "sideHeight": 83.6,
+     "innerSpaceMin": 106,
+     "innerSpaceComfort": 136,
+     "bottomWidthDeduct": 75,
+     "bottomLengthDeduct": 24,
+     "backHeight": 84,
+     "backWidthDeduct": 87
+    },
+    "printed": [
+     {
+      "label": "Высота царги",
+      "value": "83.6"
+     },
+     {
+      "label": "Необходимое пространство внутреннего ящика: min 106* (с ручкой или без нее)",
+      "value": "106"
+     },
+     {
+      "label": "Необходимое пространство внутреннего ящика с удобным доступом сверху: 136**",
+      "value": "136"
+     },
+     {
+      "label": "95.5 (высота на чертеже «Необходимое пространство в корпусе»)",
+      "value": "95.5"
+     },
+     {
+      "label": "min 73* (верхний размер цепочки на том же чертеже)",
+      "value": "73"
+     },
+     {
+      "label": "103** (верхний размер цепочки, удобный доступ сверху)",
+      "value": "103"
+     },
+     {
+      "label": "min 33 (нижний размер цепочки)",
+      "value": "33"
+     },
+     {
+      "label": "37.5 (по горизонтали на том же чертеже)",
+      "value": "37.5"
+     }
+    ],
+    "formulas": [
+     "Раскрой – плит ДСП 16 мм: задняя стенка из ДСП B — 84 мм x (LW – 87 мм)",
+     "Дно A — ширина LW – 75 мм; длина NL – 24 мм (задняя стенка из ДСП) или NL – 22 мм (задняя стенка из стали)",
+     "Необходимое пространство (глубина): NL + 3"
+    ],
+    "material": "Пластмасса",
+    "finish": "SW (белый шелк) | WGR (серый)",
+    "movementType": "none",
+    "packaging": "Комплектация: 4a 1 x держатели передней панели, левый/правый; 4e 1 x фиксатор – Z31A0008; 4f 4 x самореза",
+    "saleUnit": "pair",
+    "compatibleWith": "Внутренний ящик TANDEMBOX antaro M: царги 378M…SA, передняя панель Z31L1036A",
+    "drilling": [
+     {
+      "part": "other",
+      "what": "держатель задней стенки из ДСП: 2 отверстия",
+      "diameterMm": null,
+      "depthMm": null,
+      "positionsMm": "20 / 32 по вертикали; 9 по горизонтали",
+      "datum": "по чертежу «Установочные размеры – задняя стенка» (pdf.js 303 / печ. 299): базы словами не подписаны"
+     }
+    ],
+    "source": {
+     "file": "MANUFACTURER_CATALOGS/BLUM/raw/Каталог и техническое руководство 2024-2025 ru.pdf",
+     "pdfPage": 302,
+     "printedPage": "298",
+     "checkedAt": "2026-11-02"
+    },
+    "rightsStatus": "NOT_VERIFIED",
+    "engineeringStatus": "PARTIAL",
+    "visualStatus": "VISUAL_APPROXIMATION",
+    "missing": [
+     "габарит держателей передней панели не напечатан (95.5 — высота на чертеже необходимого пространства, а не размер детали)",
+     "*min 106 / 73 — «мин. необходимое пространство для внутреннего ящика с ручкой или без нее; мебель без ручек можно открыть только снизу»; **136 / 103 — «внутренний ящик с удобным доступом сверху»"
+    ],
+    "notes": "Внутренний ящик – M (веб-код DQC45A), позиция 4; проектирование — pdf.js 303 / печ. 299."
+   }
+  },
+  {
+   "article": "MFR-BLUM-ZIF.80M5",
+   "brand": "blum",
+   "name": "Blum TANDEMBOX antaro Ручка — TANDEMBOX antaro внутренний ящик · ZIF.80M5",
+   "hardware": {
+    "category": "drawer_system",
+    "brand": "blum",
+    "manufacturer": "Blum",
+    "manufacturerArticle": "ZIF.80M5",
+    "officialName": "Ручка — TANDEMBOX antaro внутренний ящик",
+    "subcategory": "tandembox_inner_handle",
+    "series": "TANDEMBOX antaro",
+    "variant": "tandembox_inner_handle · пластмасса; цвет SW | WGR",
+    "material": "Пластмасса",
+    "finish": "SW (белый шелк) | WGR (серый)",
+    "movementType": "none",
+    "compatibleWith": "Внутренний ящик TANDEMBOX antaro: передняя панель Z31L1036A",
+    "source": {
+     "file": "MANUFACTURER_CATALOGS/BLUM/raw/Каталог и техническое руководство 2024-2025 ru.pdf",
+     "pdfPage": 302,
+     "printedPage": "298",
+     "checkedAt": "2026-11-02"
+    },
+    "rightsStatus": "NOT_VERIFIED",
+    "engineeringStatus": "PARTIAL",
+    "visualStatus": "VISUAL_APPROXIMATION",
+    "missing": [
+     "габарит ручки не напечатан"
+    ],
+    "notes": "Принадлежности, 6a «Ручка». Текст страницы: «Внутренний ящик либо с ручкой, либо с ручкой и поводком»."
+   }
+  },
+  {
+   "article": "MFR-BLUM-ZIF.80M7",
+   "brand": "blum",
+   "name": "Blum TANDEMBOX antaro Ручка и поводок — TANDEMBOX antaro внутренний ящик · ZIF.80M7",
+   "hardware": {
+    "category": "drawer_system",
+    "brand": "blum",
+    "manufacturer": "Blum",
+    "manufacturerArticle": "ZIF.80M7",
+    "officialName": "Ручка и поводок — TANDEMBOX antaro внутренний ящик",
+    "subcategory": "tandembox_inner_handle_driver",
+    "series": "TANDEMBOX antaro",
+    "variant": "tandembox_inner_handle_driver · пластмасса; цвет SW | WGR; нельзя использовать с TIP-ON BLUMOTION",
+    "material": "Пластмасса",
+    "finish": "SW (белый шелк) | WGR (серый)",
+    "movementType": "none",
+    "compatibleWith": "Внутренний ящик TANDEMBOX antaro: передняя панель Z31L1036A; не с TIP-ON BLUMOTION",
+    "drilling": [
+     {
+      "part": "front",
+      "what": "поводок на наружном фасаде: отверстие Ø 25 и отверстия крепления",
+      "diameterMm": 25,
+      "depthMm": null,
+      "positionsMm": "Ø 25 по оси ширины фасада, min 17 от верхней кромки; 61.5; x и x + 47 по вертикали; 12 — на виде сбоку",
+      "datum": "по чертежу «Карта сверления – фасад – поводок» (pdf.js 303 / печ. 299): база размера x словами не подписана"
+     }
+    ],
+    "source": {
+     "file": "MANUFACTURER_CATALOGS/BLUM/raw/Каталог и техническое руководство 2024-2025 ru.pdf",
+     "pdfPage": 302,
+     "printedPage": "298",
+     "checkedAt": "2026-11-02"
+    },
+    "rightsStatus": "NOT_VERIFIED",
+    "engineeringStatus": "PARTIAL",
+    "visualStatus": "VISUAL_APPROXIMATION",
+    "missing": [
+     "база размера x на карте сверления поводка не подписана — присадка поводка не рассчитывается",
+     "глубина отверстия Ø 25 не напечатана"
+    ],
+    "notes": "Принадлежности, 6b «Ручка и поводок» — альтернатива для 6a; сноска ¹ «Нельзя использовать с TIP-ON BLUMOTION»."
    }
   },
   {

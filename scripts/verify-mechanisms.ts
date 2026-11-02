@@ -72,10 +72,11 @@ export function mechanismChecks(check: Check): void {
     const sorted = (o: Record<string, number> | undefined) => JSON.stringify(Object.entries(o ?? {}).sort());
     const rolesDiffer = Object.keys({ ...NEW_ROLES, ...newRoles }).filter((maker) => sorted(NEW_ROLES[maker]) !== sorted(newRoles[maker]));
     check(
-      'MC1 записей Blum, Hettich и Häfele 1199: механизмов 669, деталей систем 90, принадлежностей 135, вне пяти классов 305; у новых производителей (4065) — объявленные числа; у каждой основание или причина словами',
-      all.length === 1199 &&
+      /* 2026-11-02: +4 детали системы — комплект внутреннего ящика TANDEMBOX antaro M (Blum, печ. 298): 1199 → 1203, деталей систем 90 → 94. */
+      'MC1 записей Blum, Hettich и Häfele 1203: механизмов 669, деталей систем 94, принадлежностей 135, вне пяти классов 305; у новых производителей (4065) — объявленные числа; у каждой основание или причина словами',
+      all.length === 1203 &&
         roles.mechanism === 669 &&
-        roles.component === 90 &&
+        roles.component === 94 &&
         roles.accessory === 135 &&
         roles.none === 305 &&
         added.length === 4065 &&
@@ -171,8 +172,8 @@ export function mechanismChecks(check: Check): void {
       if (!same) differ.push(f.article);
     }
     check(
-      'MC3 класс по лёгкой записи (карточка Studio) = класс по полному паспорту у всех 5264 записей',
-      every.length === 5264 && differ.length === 0,
+      'MC3 класс по лёгкой записи (карточка Studio) = класс по полному паспорту у всех 5268 записей (5264 + 4 детали внутреннего ящика TANDEMBOX, 2026-11-02)',
+      every.length === 5268 && differ.length === 0,
       `записей ${every.length}${differ.length ? ` · расходятся ${differ.slice(0, 5).join(', ')}` : ''}`,
     );
   }

@@ -113,6 +113,12 @@ const ROD_DIAMETER_M = ROD_VISUAL_DIAMETER_MM / MM;
  * была второй (слой 55).
  */
 
+/** Наружный ящик, за фасадом которого стоит внутренний (`<модуль>:idrawer:<k>:<j>` → `<модуль>:drawer:<k>`). */
+function innerOuterOf(id: string): string | undefined {
+  const inner = /^(.*):idrawer:(\d+):\d+$/.exec(id);
+  return inner ? `${inner[1]}:drawer:${inner[2]}` : undefined;
+}
+
 export default function CabinetModule3D({
   unit,
   gapM,
@@ -280,7 +286,22 @@ export default function CabinetModule3D({
         * Встроенная техника (холодильник, посудомойка, мойка) закрыта
         * фасадом наравне с обычным модулем: так это и выглядит в квартире.
         */}
-      {sceneLeaves(unit, heightM, openWidthM, openFromM, production).map((leaf) => {
+      {(() => {
+        const leaves = sceneLeaves(unit, heightM, openWidthM, openFromM, production);
+        /*
+         * НАРУЖНЫЙ ЯЩИК С ВНУТРЕННИМ (2026-11-02): сколько сверху его фасада занимает внутренний ящик — там
+         * нажатие принадлежит внутреннему (когда наружный открыт), а не короб наружного.
+         */
+        const innerTopOf = (leafId: string): number | undefined => {
+          const cell = /:drawer:(\d+)$/.exec(leafId);
+          if (!cell) return undefined;
+          const drawers = leaves.flatMap((l) => (l.kind === 'drawer' ? [l] : []));
+          const outer = drawers.find((l) => l.id === leafId);
+          const inners = drawers.filter((l) => l.id.startsWith(`${unit.id}:idrawer:${cell[1]}:`));
+          if (!outer || inners.length === 0) return undefined;
+          return Math.max(0, outer.bottomM + outer.heightM - Math.min(...inners.map((l) => l.bottomM)));
+        };
+        return leaves.map((leaf) => {
         /*
          * СЛОИ — ЭТО ЧТО ВИДНО, А НЕ ЧТО ОТКРЫВАЕТСЯ (STAGE A).
          *
@@ -314,6 +335,9 @@ export default function CabinetModule3D({
                 frontMaterial={look?.material ?? frontMaterial}
                 onActive={onActive}
                 vectorM={[0, 0, drawerTravelM(leaf.id)]}
+                /* Внутренний за наружным (2026-11-02): ход не дальше его и после того, как он открыт. */
+                follows={innerOuterOf(leaf.id)}
+                hasInner={innerTopOf(leaf.id) !== undefined}
               />
             );
           }
@@ -343,6 +367,9 @@ export default function CabinetModule3D({
               reliefOrient={gripOrient(look?.relief, 'flap', isUpperRow(unit))}
               front={closedFrontRect(partBoxes?.(leaf.id))}
               travelM={drawerTravelM(leaf.id)}
+              /* Внутренний ящик едет за наружным: ход не дальше его и после того, как он открыт (`drawerTravel`). */
+              follows={innerOuterOf(leaf.id)}
+              innerTopM={innerTopOf(leaf.id)}
             />
           );
         }
@@ -488,7 +515,8 @@ export default function CabinetModule3D({
             rect={closedFrontRect(partBoxes?.(leaf.id), [x + leaf.xM, y + leaf.bottomM])}
           />
         );
-      })}
+        });
+      })()}
 
       {/* Ящики отсеков (R02A): каждый своим ключом, открывается сам по себе. */}
       {bayDrawers.filter(([, boxes]) => boxes.length > 0).map(([id, boxes]) => (

@@ -436,14 +436,18 @@ export function drawerFrontsChecks(outer?: Check): { passed: number; failed: num
   const sysInner = ks.ops([{ op: 'set_fill', moduleId: MODULE, fill: withDrawerInners(unitOf(ks.shown()).fill!, fronts(ks.shown()).length - 1, [100]) }]);
   const sysKit = moduleDrawerKits(unitOf(ks.shown()), ks.shown(), sys, hw).find((k) => k.place.key.includes(':idrawer:'));
   check(
-    'DF15 отказы словами: внутренним 300 мм в зоне ящика — «наружному коробу не остаётся места»; меньше ящиков при внутреннем в последнем — «сначала снимите внутренние ящики»; у TANDEMBOX внутренний ящик — черновик «нужен внутренний фасад и его крепление»',
+    /*
+     * У TANDEMBOX с 2026-11-02 у внутреннего ящика есть передняя часть по Blum (печ. 298): черновик здесь —
+     * по месту: зона 100 мм меньше напечатанного min 106 (раньше — «размеров в каталоге нет»).
+     */
+    'DF15 отказы словами: внутренним 300 мм в зоне ящика — «наружному коробу не остаётся места»; меньше ящиков при внутреннем в последнем — «сначала снимите внутренние ящики»; у TANDEMBOX внутренний ящик в зоне 100 мм — черновик «нужно по высоте от 106 мм … не хватает 6 мм»',
     tooTall.warnings.length === 1 &&
       /не остаётся места/.test(tooTall.warnings[0]) &&
       fewer.warnings.length === 1 &&
       /сначала снимите внутренние ящики/.test(fewer.warnings[0]) &&
       sysInner.warnings.length === 0 &&
       sysKit?.state === 'draft' &&
-      /внутренний фасад/.test(sysKit.missing.join(' ')),
+      /от 106 мм .*не хватает 6 мм/.test(sysKit.missing.join(' ')),
     `«${tooTall.warnings[0] ?? '—'}» · «${fewer.warnings[0] ?? '—'}» · система: ${sysKit?.state} ${sysKit?.state === 'draft' ? sysKit.missing[0] : ''}`,
   );
 

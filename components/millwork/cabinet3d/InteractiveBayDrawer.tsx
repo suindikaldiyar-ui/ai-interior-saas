@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type * as THREE from 'three';
 import { useSlide } from './useSlide';
 import { useTouchTarget } from './useTouchTarget';
@@ -12,6 +12,7 @@ import { useInteriorStore } from '@/store/useInteriorStore';
 import { HandleMesh } from './handleMesh';
 import { boxGeometryOf } from './profileGeometry';
 import { TwinModel, twinKeyOf } from './twinAsset';
+import { drawerSettledOpen, drawerTravelOf, onDrawerSettled, onDrawerTravel, setDrawerSettledOpen, setDrawerTravel } from './drawerTravel';
 
 /**
  * ЯЩИК ОТСЕКА (R02A), КОТОРЫЙ ВЫЕЗЖАЕТ.
@@ -42,9 +43,22 @@ type Props = {
    * считает движок (`sceneSlides`), здесь он только применяется.
    */
   vectorM?: [number, number, number];
+  /**
+   * ВНУТРЕННИЙ ЯЩИК ЗА ФАСАДОМ (2026-11-02): ИД наружного ящика. Ход — не дальше наружного и только когда
+   * наружный открыт до конца (`drawerTravel`); нажатие ловит, только когда наружный открыт.
+   */
+  follows?: string;
+  /**
+   * НАРУЖНЫЙ С ВНУТРЕННИМ (2026-11-02): зона касания — фасад (тонкой пластиной во всю высоту) и свой короб,
+   * без полосы внутреннего ящика: там нажатие принадлежит внутреннему.
+   */
+  hasInner?: boolean;
 };
 
-export default function InteractiveBayDrawer({ id, open, onToggle, boxes, parts, frontMaterial, onActive, vectorM }: Props) {
+/** Толщина зоны касания фасада наружного ящика с внутренним, метры: за фасадом, у его тыла. */
+const FRONT_TOUCH_M = 0.03;
+
+export default function InteractiveBayDrawer({ id, open, onToggle, boxes, parts, frontMaterial, onActive, vectorM, follows, hasInner }: Props) {
   const travel: [number, number, number] = vectorM ?? [0, 0, DRAWER_TRAVEL_M];
   const economy = useInteriorStore((state) => state.economyMode);
   const group = useRef<THREE.Group>(null);
@@ -64,21 +78,55 @@ export default function InteractiveBayDrawer({ id, open, onToggle, boxes, parts,
   /* Средняя секция направляющей едет на свою долю хода (HW-04): обратный сдвиг внутри группы ящика. */
   const middle = useRef<THREE.Group>(null);
   const share = boxes.find((box) => box.slideShare !== undefined)?.slideShare ?? 1;
+  /*
+   * НАРУЖНЫЙ И ВНУТРЕННИЙ (2026-11-02): каждый ящик сообщает свой ход (метры по глубине) и «открыт до конца»;
+   * внутренний (`follows`) начинает ход, когда наружный открыт до конца, и стоит не дальше него — на ходу
+   * закрытия тоже, синхронно с наружным: передняя панель внутреннего за тылом наружного фасада ни на кадр.
+   */
+  const outerOpen = useSyncExternalStore(
+    onDrawerSettled,
+    () => (follows ? drawerSettledOpen(follows) : true),
+    () => !follows,
+  );
+  const own = useRef(open && outerOpen ? 1 : 0);
+  const place = () => {
+    const limit = follows && travel[2] > 0 ? drawerTravelOf(follows) / travel[2] : 1;
+    const value = Math.min(own.current, limit);
+    const el = group.current;
+    if (el) el.position.set(travel[0] * value, travel[1] * value, travel[2] * value);
+    const mid = middle.current;
+    if (mid) mid.position.set(-travel[0] * value * (1 - share), -travel[1] * value * (1 - share), -travel[2] * value * (1 - share));
+    setDrawerTravel(id, travel[2] * value);
+  };
+  useEffect(() => (follows ? onDrawerTravel(follows, () => place()) : undefined));
+  useEffect(
+    () => () => {
+      setDrawerSettledOpen(id, false);
+      setDrawerTravel(id, 0);
+    },
+    [id],
+  );
   useSlide({
-    target: open ? 1 : 0,
-    initial: open ? 1 : 0,
+    target: open && outerOpen ? 1 : 0,
+    initial: open && outerOpen ? 1 : 0,
     apply: (value) => {
-      const el = group.current;
-      if (el) el.position.set(travel[0] * value, travel[1] * value, travel[2] * value);
-      const mid = middle.current;
-      if (mid) mid.position.set(-travel[0] * value * (1 - share), -travel[1] * value * (1 - share), -travel[2] * value * (1 - share));
+      own.current = value;
+      if (value < 1 - 1e-6) setDrawerSettledOpen(id, false);
+      place();
     },
     onSettle: () => {
+      setDrawerSettledOpen(id, openRef.current && own.current >= 1 - 1e-6);
       if (!openRef.current) setActive(false);
     },
   });
+  const reachable = !follows || outerOpen;
 
-  /* Зона касания — габарит всех коробок ящика: фасад и рабочая зона за ним. */
+  /*
+   * Зона касания — габарит коробок ящика: фасад и рабочая зона за ним. У наружного с внутренним — без
+   * фасада (своя пластина ниже): иначе выдвинутый наружный накрывает внутренний, и нажатие на внутренний
+   * задвигало наружный.
+   */
+  const frontBoxOf = boxes.find((box) => box.material === 'front');
   const hit = useMemo(() => {
     let x0 = Infinity;
     let x1 = -Infinity;
@@ -87,6 +135,7 @@ export default function InteractiveBayDrawer({ id, open, onToggle, boxes, parts,
     let z0 = Infinity;
     let z1 = -Infinity;
     for (const box of boxes) {
+      if (hasInner && box.material === 'front') continue;
       x0 = Math.min(x0, box.position[0] - box.scale[0] / 2);
       x1 = Math.max(x1, box.position[0] + box.scale[0] / 2);
       y0 = Math.min(y0, box.position[1] - box.scale[1] / 2);
@@ -98,9 +147,15 @@ export default function InteractiveBayDrawer({ id, open, onToggle, boxes, parts,
       center: [(x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2] as [number, number, number],
       size: [x1 - x0, y1 - y0, z1 - z0] as [number, number, number],
     };
-  }, [boxes]);
+  }, [boxes, hasInner]);
 
   useTouchTarget(touch, { width: hit.size[0], height: hit.size[1], depth: hit.size[2] });
+  const onClick = reachable
+    ? (event: { stopPropagation: () => void }) => {
+        event.stopPropagation();
+        onToggle(id);
+      }
+    : undefined;
 
   /* Фронт ящика — тот же кусок дерева, что у него закрытого в пачке (ключ — идентификатор ящика). */
   const frontBox = useShiftedBox(parts.box, id);
@@ -121,6 +176,18 @@ export default function InteractiveBayDrawer({ id, open, onToggle, boxes, parts,
 
   return (
     <group ref={group}>
+      {/* Фасад наружного с внутренним — своя тонкая зона касания во всю высоту, у тыла фасада. */}
+      {hasInner && frontBoxOf ? (
+        <mesh
+          name={`part:${id}`}
+          position={[frontBoxOf.position[0], frontBoxOf.position[1], frontBoxOf.position[2] - frontBoxOf.scale[2] / 2 - FRONT_TOUCH_M / 2]}
+          geometry={parts.box}
+          material={parts.hit}
+          visible={false}
+          scale={[frontBoxOf.scale[0], frontBoxOf.scale[1], FRONT_TOUCH_M]}
+          onClick={onClick}
+        />
+      ) : null}
       <mesh
         ref={touch}
         name={`part:${id}`}
@@ -129,17 +196,22 @@ export default function InteractiveBayDrawer({ id, open, onToggle, boxes, parts,
         material={parts.hit}
         visible={false}
         scale={hit.size}
-        onClick={(event) => {
-          event.stopPropagation();
-          onToggle(id);
-        }}
-        onPointerOver={(event) => {
-          event.stopPropagation();
-          document.body.style.cursor = 'pointer';
-        }}
-        onPointerOut={() => {
-          document.body.style.cursor = '';
-        }}
+        onClick={onClick}
+        onPointerOver={
+          reachable
+            ? (event) => {
+                event.stopPropagation();
+                document.body.style.cursor = 'pointer';
+              }
+            : undefined
+        }
+        onPointerOut={
+          reachable
+            ? () => {
+                document.body.style.cursor = '';
+              }
+            : undefined
+        }
       />
       {/* Средние секции направляющих — своей группой на долю хода. */}
       <group ref={middle}>

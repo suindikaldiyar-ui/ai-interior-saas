@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type * as THREE from 'three';
 import { useSlide } from './useSlide';
 import { useTouchTarget } from './useTouchTarget';
@@ -12,6 +12,7 @@ import type { ReliefOrient } from '@/lib/millwork/facadeRelief';
 import { DRAWER_TRAVEL_M, type FrontRect, type PartBox } from '@/lib/millwork/cabinetBoxes';
 import { useInteriorStore } from '@/store/useInteriorStore';
 import { HandleMesh } from './handleMesh';
+import { drawerSettledOpen, drawerTravelOf, onDrawerSettled, onDrawerTravel, setDrawerSettledOpen, setDrawerTravel } from './drawerTravel';
 
 /**
  * Ящик, который выезжает.
@@ -74,7 +75,21 @@ type Props = {
   riders?: PartBox[];
   /** Ход, метры (HW-04): модель направляющей на месте модуля (`runnerModelOf`). Пусто — условные 300 мм. */
   travelM?: number;
+  /**
+   * ВНУТРЕННИЙ ЯЩИК ЗА ФАСАДОМ (2026-11-02): ИД наружного ящика, за фасадом которого он стоит. Ход —
+   * не дальше наружного и только когда наружный открыт до конца (`drawerTravel`).
+   */
+  follows?: string;
+  /**
+   * НАРУЖНЫЙ С ВНУТРЕННИМ (2026-11-02): сколько сверху фасада занимает внутренний ящик, метры. Короб-зона
+   * касания наружного — без этой полосы (там нажатие принадлежит внутреннему); фасад ловит нажатие тонкой
+   * пластиной во всю высоту.
+   */
+  innerTopM?: number;
 };
+
+/** Толщина зоны касания фасада наружного ящика с внутренним, метры: за фасадом, у его тыла. */
+const FRONT_TOUCH_M = 0.03;
 
 export default function InteractiveDrawer({
   id,
@@ -99,9 +114,11 @@ export default function InteractiveDrawer({
   front = null,
   travelM = DRAWER_TRAVEL_M,
   riders,
+  follows,
+  innerTopM,
 }: Props) {
   const economy = useInteriorStore((state) => state.economyMode);
-  const hit = showFront || showBox || Boolean(handle);
+  const visibleHit = showFront || showBox || Boolean(handle);
   const group = useRef<THREE.Group>(null);
   const touch = useRef<THREE.Mesh>(null);
 
@@ -138,14 +155,44 @@ export default function InteractiveDrawer({
     onActive?.(id, active);
   }, [id, active, onActive]);
 
+  /*
+   * НАРУЖНЫЙ И ВНУТРЕННИЙ (2026-11-02). Каждый ящик сообщает свой ход и «открыт до конца»; внутренний
+   * (`follows`) начинает ход, когда наружный открыт до конца, и стоит не дальше него — на ходу закрытия
+   * тоже: его передняя панель за тылом наружного фасада, пересечения нет ни на кадр.
+   */
+  const outerOpen = useSyncExternalStore(
+    onDrawerSettled,
+    () => (follows ? drawerSettledOpen(follows) : true),
+    () => !follows,
+  );
+  /* Внутренний ловит нажатие, только когда наружный открыт: закрытый он за фасадом, дотянуться до него нельзя. */
+  const hit = visibleHit && (!follows || outerOpen);
+  const own = useRef(open ? travelM : 0);
+  const place = () => {
+    const el = group.current;
+    if (!el) return;
+    el.position.z = follows ? Math.min(own.current, drawerTravelOf(follows)) : own.current;
+    setDrawerTravel(id, el.position.z);
+  };
+  useEffect(() => (follows ? onDrawerTravel(follows, () => place()) : undefined));
+  useEffect(
+    () => () => {
+      setDrawerSettledOpen(id, false);
+      setDrawerTravel(id, 0);
+    },
+    [id],
+  );
+
   useSlide({
-    target: open ? travelM : 0,
-    initial: open ? travelM : 0,
+    target: open && outerOpen ? travelM : 0,
+    initial: open && outerOpen ? travelM : 0,
     apply: (value) => {
-      const el = group.current;
-      if (el) el.position.z = value;
+      own.current = value;
+      if (value < travelM - 1e-6) setDrawerSettledOpen(id, false);
+      place();
     },
     onSettle: () => {
+      setDrawerSettledOpen(id, openRef.current && own.current >= travelM - 1e-6);
       if (!openRef.current) setActive(false);
     },
   });
@@ -158,15 +205,34 @@ export default function InteractiveDrawer({
    * коллайдер раздувается до 44 px НА ЭКРАНЕ — в миллиметрах эта задача
    * не решается, на телефоне фронт ящика сам по себе в несколько пикселей.
    */
-  useTouchTarget(touch, { width, height, depth });
+  const bodyH = innerTopM ? Math.max(0.02, height - innerTopM) : height;
+  useTouchTarget(touch, { width, height: bodyH, depth });
+  const onClick = hit
+    ? (event: { stopPropagation: () => void }) => {
+        event.stopPropagation();
+        onToggle(id);
+      }
+    : undefined;
 
   return (
     <group ref={group} position={[x + width / 2, y + height / 2, 0]}>
+      {/* Фасад наружного с внутренним ящиком — своя тонкая зона касания во всю высоту (короб-зона ниже внутреннего). */}
+      {innerTopM ? (
+        <mesh
+          name={`part:${id}`}
+          position={[0, 0, -FRONT_TOUCH_M / 2]}
+          geometry={parts.box}
+          material={parts.hit}
+          visible={false}
+          scale={[width, height, FRONT_TOUCH_M]}
+          onClick={onClick}
+        />
+      ) : null}
       {/* Невидимая зона касания. */}
       <mesh
         ref={touch}
         name={`part:${id}`}
-        position={[0, 0, -depth / 2]}
+        position={[0, innerTopM ? -(height - bodyH) / 2 : 0, -depth / 2]}
         geometry={parts.box}
         material={parts.hit}
         /*
@@ -176,15 +242,8 @@ export default function InteractiveDrawer({
          * по-прежнему находит — проверено кликом по мебели.
          */
         visible={false}
-        scale={[width, height, depth]}
-        onClick={
-          hit
-            ? (event) => {
-                event.stopPropagation();
-                onToggle(id);
-              }
-            : undefined
-        }
+        scale={[width, bodyH, depth]}
+        onClick={onClick}
         onPointerOver={
           hit
             ? (event) => {

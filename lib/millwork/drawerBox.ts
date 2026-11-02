@@ -403,7 +403,19 @@ export const DRAWER_BOX_PANEL_NAMES = [DRAWER_SIDE_PANEL_NAME, DRAWER_WALL_PANEL
 
 /** Коробка детали в координатах ящика: x — от левого края проёма, y — от низа зоны, z — от передней плоскости короба назад (минус). */
 export type DrawerPiece = {
-  key: 'side-left' | 'side-right' | 'wall-front' | 'wall-back' | 'bottom' | 'rail-left' | 'rail-right';
+  key:
+    | 'side-left'
+    | 'side-right'
+    | 'wall-front'
+    | 'wall-back'
+    | 'bottom'
+    | 'rail-left'
+    | 'rail-right'
+    /* Внутренний ящик системы (Blum TANDEMBOX antaro, печ. 298): передняя панель, держатели, ручка — покупные. */
+    | 'inner-panel'
+    | 'inner-holder-left'
+    | 'inner-holder-right'
+    | 'inner-handle';
   x0: number;
   x1: number;
   y0: number;
@@ -643,6 +655,50 @@ function systemBoxPlan(
     pieces,
     runnerAxisFromZoneMm: null,
   };
+}
+
+/**
+ * ВНУТРЕННИЙ ЯЩИК СИСТЕМЫ — ПЕРЕДНЯЯ ЧАСТЬ (Blum TANDEMBOX antaro, «Внутренний ящик – M», pdf.js 302–303 /
+ * печ. 298–299). Напечатано: передняя панель Z31L1036A под раскрой — «внутр. ширина корпуса LW – 132 мм»,
+ * держатели ZIF.71M0 соединяют её с царгами, ручка ZIF.80M5 — на панели. Высота и толщина панели, габарит
+ * держателей и ручки НЕ напечатаны: в сцене это картинка узла (`approximate`) — высотой царги, панель 2 мм,
+ * ручка над панелью в пределах зоны. В раскрой, присадку и подбор эти числа не идут; передняя плоскость —
+ * плоскость корпуса (z = 0): панель целиком за наружным фасадом.
+ */
+export const INNER_FRONT_PICTURE_MM = { panelThickness: 2, holderDepth: 20, handleWidth: 60, handleHeight: 12, handleDepth: 16 } as const;
+export function systemInnerFrontPieces(
+  plan: DrawerBoxPlan,
+  openingWidthMm: number,
+  panelLengthMm: number,
+  zoneHeightMm: number,
+): DrawerPiece[] {
+  const pic = INNER_FRONT_PICTURE_MM;
+  const bottom = plan.pieces.find((p) => p.key === 'bottom');
+  if (!bottom) return [];
+  const y0 = plan.bottomFromMm;
+  const y1 = tenth(y0 + plan.heightMm);
+  const px0 = tenth((openingWidthMm - panelLengthMm) / 2);
+  const px1 = tenth(px0 + panelLengthMm);
+  const mid = openingWidthMm / 2;
+  const handleTop = Math.min(zoneHeightMm, y1 + pic.handleHeight);
+  const pieces: DrawerPiece[] = [
+    { key: 'inner-panel', x0: px0, x1: px1, y0, y1, z0: -pic.panelThickness, z1: 0, metal: true, approximate: true },
+    { key: 'inner-holder-left', x0: bottom.x0, x1: px0, y0, y1, z0: -pic.holderDepth, z1: 0, approximate: true },
+    { key: 'inner-holder-right', x0: px1, x1: bottom.x1, y0, y1, z0: -pic.holderDepth, z1: 0, approximate: true },
+  ];
+  if (handleTop - y1 > 1) {
+    pieces.push({
+      key: 'inner-handle',
+      x0: mid - pic.handleWidth / 2,
+      x1: mid + pic.handleWidth / 2,
+      y0: y1,
+      y1: handleTop,
+      z0: -pic.panelThickness - pic.handleDepth,
+      z1: -pic.panelThickness,
+      approximate: true,
+    });
+  }
+  return pieces;
 }
 
 /**

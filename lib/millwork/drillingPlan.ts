@@ -409,7 +409,9 @@ function runnerOps(
     if (kit.state !== 'box') continue;
     const item = kit.profile.slideItemId ? ctx.hardware.get(kit.profile.slideItemId) : undefined;
     if (!item) continue;
-    const label = `ящик ${kit.place.key.split(':').pop()}`;
+    /* Внутренний ящик (`…:idrawer:<k>:<j>`) — «внутренний ящик <k>» по ячейке, за фасадом которой стоит: последний сегмент ключа у него тот же, что у наружного. */
+    const innerOf = /:idrawer:(\d+):\d+$/.exec(kit.place.key);
+    const label = innerOf ? `внутренний ящик ${innerOf[1]}` : `ящик ${kit.place.key.split(':').pop()}`;
     if (kit.profile.mount === 'under' || kit.profile.system) {
       underBoxPending(ctx, kit, item, label, fronts.get(kit.place.key), backs.get(kit.place.key));
     }
