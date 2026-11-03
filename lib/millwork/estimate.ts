@@ -1371,6 +1371,17 @@ export function buildEstimateDrafts(
    * девяноста тысячах.
    */
   for (const unit of modules) {
+    /* СВЧ в навесном шкафу (задача 2): модель — своя строка, как у прибора-модуля; прибора-модуля у ниши нет. */
+    const wallMw = unit.variant === 'upper_micro' ? unitModel(unit, 'microwave') : null;
+    if (wallMw) {
+      drafts.push({
+        key: `appliance_microwave_${wallMw.article}`,
+        title: `${APPLIANCE_SLOTS.microwave.title} ${modelTitle(wallMw)} — в навесном шкафу`,
+        unit: 'pcs',
+        quantity: 1,
+        unsetWithoutRate: `цена не задана: модель ${modelTitle(wallMw)} — ставку задаёт компания (${retailWords(wallMw)})`,
+      });
+    }
     for (const appliance of moduleAppliances(unit)) {
       /*
        * МОДЕЛЬ ПРОИЗВОДИТЕЛЯ (ЭТАП 3) — своя строка с артикулом и своей

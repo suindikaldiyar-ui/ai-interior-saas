@@ -15,6 +15,8 @@ import { DRAWER_SIDE_PANEL_NAME, runnerAxisMissingWhy, type DrawerProfile } from
 import { moduleDrawerKits } from './drawerKit';
 import { fittingItemId, handleItemOf, hingeBoringMm, installedItem } from './fittings';
 import { dryerKindOf } from './dryer';
+import { FRIDGE_PANEL_PART_NAME } from './fridgePanels';
+import { WALL_MICROWAVE_SHELF_NAME } from './wallMicrowave';
 import { allModules } from './layout';
 import { hingeCountBasis } from './modules';
 import { isPullOut, isSwing, leafHinges, openingOf } from './opening';
@@ -844,6 +846,14 @@ export function drillingPlan(input: {
     const horizontal = entry.parts.filter((p) => p.role === 'bottom' || p.role === 'top');
     if (side.left || side.right) confirmatOps(ctx, side, horizontal);
     dryerPending(ctx, [side.left, side.right].filter((p): p is DrillPart => Boolean(p)), entry.parts.find((p) => p.role === 'door' && p.leaf === 'door:0'));
+    /* Планки холодильника (фаза 5): чем и где их крепить к корпусу или стене, цех не задавал — отверстий нет. */
+    for (const p of entry.parts.filter((x) => x.name === FRIDGE_PANEL_PART_NAME.left || x.name === FRIDGE_PANEL_PART_NAME.right)) {
+      p.pending.push({ what: 'крепление планки холодильника', why: ['способ крепления планки — правило цеха не задано: присадка не рассчитана'] });
+    }
+    /* Полка над нишей СВЧ в навесном шкафу (задача 2) — неподвижная, не на отверстиях 32: её крепления цех не задавал. */
+    for (const p of entry.parts.filter((x) => x.name === WALL_MICROWAVE_SHELF_NAME)) {
+      p.pending.push({ what: 'крепление неподвижной полки над нишей СВЧ', why: ['неподвижная полка — правило цеха не задано: присадка не рассчитана'] });
+    }
   }
 
   const issues = parts.flatMap((p) => drillChecks(p, rules));

@@ -7,6 +7,8 @@ import type OverheadEditor from './OverheadEditor';
 import type StorageEditor from './StorageEditor';
 import type DryerEditor from './DryerEditor';
 import type LeafPartsEditor from './LeafPartsEditor';
+import type FridgePanelsEditor from './FridgePanelsEditor';
+import type WallMicrowaveEditor from './WallMicrowaveEditor';
 import type DrawerFrontsEditor from './DrawerFrontsEditor';
 import type CeilingLiftEditor from './CeilingLiftEditor';
 import type VitrineEditor from './VitrineEditor';
@@ -44,6 +46,8 @@ export type StudioKit = {
   StorageEditor: typeof StorageEditor;
   DryerEditor: typeof DryerEditor;
   LeafPartsEditor: typeof LeafPartsEditor;
+  FridgePanelsEditor: typeof FridgePanelsEditor;
+  WallMicrowaveEditor: typeof WallMicrowaveEditor;
   DrawerFrontsEditor: typeof DrawerFrontsEditor;
   CeilingLiftEditor: typeof CeilingLiftEditor;
   VitrineEditor: typeof VitrineEditor;

@@ -2237,6 +2237,27 @@ function FrameProbe({ rows, room, design }: { rows: SceneRow[]; room: Room | nul
       });
       return out;
     };
+    /* Детали раскроя по имени (задачи 1–4): габарит в мире, мм, по экземплярам пачек — планки, полка над нишей СВЧ, корпус. */
+    (w as { __mwCadPanels?: (names: string[]) => unknown }).__mwCadPanels = (names: string[]) => {
+      const out: { panel: string; boundsMm: number[] }[] = [];
+      const matrix = new THREE.Matrix4();
+      const unitBox = new THREE.Box3(new THREE.Vector3(-0.5, -0.5, -0.5), new THREE.Vector3(0.5, 0.5, 0.5));
+      const box = new THREE.Box3();
+      scene.traverse((object) => {
+        const mesh = object as THREE.InstancedMesh;
+        if (!mesh.isInstancedMesh || mesh.visible === false) return;
+        const panels = (mesh.userData.panels ?? []) as (string | null)[];
+        if (!panels.some((name) => name && names.includes(name))) return;
+        mesh.updateWorldMatrix(true, false);
+        panels.forEach((panel, index) => {
+          if (!panel || !names.includes(panel) || index >= mesh.count) return;
+          mesh.getMatrixAt(index, matrix);
+          box.copy(unitBox).applyMatrix4(matrix).applyMatrix4(mesh.matrixWorld);
+          out.push({ panel, boundsMm: [box.min.x, box.min.y, box.min.z, box.max.x, box.max.y, box.max.z].map((v) => Math.round(v * 1000)) });
+        });
+      });
+      return out;
+    };
     (w as { __mwCadTopFiller?: () => unknown }).__mwCadTopFiller = () => {
       const out: { partId: string; boundsMm: number[] }[] = [];
       const matrix = new THREE.Matrix4();
@@ -2340,6 +2361,7 @@ function FrameProbe({ rows, room, design }: { rows: SceneRow[]; room: Room | nul
       delete (w as { __mwCadPartPoint?: unknown }).__mwCadPartPoint;
       delete (w as { __mwCadTopFiller?: unknown }).__mwCadTopFiller;
       delete (w as { __mwCadDryer?: unknown }).__mwCadDryer;
+      delete (w as { __mwCadPanels?: unknown }).__mwCadPanels;
     };
   }, [gl, camera, scene, get, rows, room]);
 

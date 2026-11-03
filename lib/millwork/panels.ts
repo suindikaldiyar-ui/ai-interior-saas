@@ -1,7 +1,7 @@
 import { shelvesAreGlass, vitrineDoorKind } from './glass';
 import { vitrineOf } from './vitrine';
 import { moduleCarcassHeightMm, moduleDepthMm } from './fill';
-import { carcassHeightMm, shopOf } from './shop';
+import { carcassHeightMm, plinthMm, shopOf } from './shop';
 import { millingLink, type MillingItem } from './milling';
 import { carcassMaterialName, carcassStock, type CarcassItem } from './carcassMaterial';
 import { BUILT_IN_FRIDGE_FRONTS } from './modules';
@@ -47,6 +47,8 @@ import {
 } from './radius';
 import { radiusDimsOf } from './radiusDims';
 import { ISLAND_BACK_PANEL_NAME, islandBackOf } from './island';
+import { FRIDGE_PANEL_PART_NAME, fridgeCore, fridgePanelDims } from './fridgePanels';
+import { WALL_MICROWAVE_SHELF_NAME, wallMicrowaveNiche } from './wallMicrowave';
 import { WALL_PANEL_TITLE, wallPanelPartAreaM2, wallPanelPartCurvedMm, wallPanelPartCut, wallPanelParts } from './tvZone';
 
 /**
@@ -797,7 +799,26 @@ function moduleBodyPanels(
   // Задняя стенка: вкладная садится в паз, накладная кроется по габариту.
   const backInset = production.backMount === 'inset' ? allow.backInsetMm : 0;
   /* Стеклянная или зеркальная задняя стенка витрины — стекло; без задней стенки — ничего (P1). */
-  if ((!vit || vit.back === 'board') && !cooking) {
+  /*
+   * СВЧ В НАВЕСНОМ ШКАФУ (задача 2): задней стенки нет — так требует инструкция («у шкафа не должно быть задней
+   * стенки»); над нишей — неподвижная полка той же плиты и размера, что дно (`wallMicrowaveNiche`).
+   */
+  const wallMw = wallMicrowaveNiche(unit, heightMm, production);
+  if (wallMw?.shelf) {
+    push({
+      name: WALL_MICROWAVE_SHELF_NAME,
+      material,
+      stock,
+      thicknessMm: t,
+      lengthMm: inner,
+      widthMm: depthMm,
+      qty: 1,
+      edges: { long: 1, short: 0 },
+      edgeType: thick,
+      grain: 'across',
+    });
+  }
+  if ((!vit || vit.back === 'board') && !cooking && !wallMw) {
     push({
       name: BACK_PANEL_NAME,
       material: `ХДФ ${production.backMm}`,
@@ -1139,6 +1160,42 @@ function modulePanels(
   carcass?: Map<string, CarcassItem>,
   hardware?: Map<string, HardwareItem>,
 ): Panel[] {
+  /*
+   * ПЛАНКИ ХОЛОДИЛЬНИКА (фаза 5): холодильник режется на ядре модуля — те же детали, что без планок; планки —
+   * свои детали: декоративная из листа фасада (кромка по видимым торцам), конструктивная — из корпуса.
+   */
+  const withPanels = fridgeCore(unit, production);
+  if (withPanels) {
+    const inner = modulePanels(withPanels.core, run, production, moduleNumber, milling, carcass, hardware);
+    const look = frontOf(unit);
+    const depthMm = moduleDepthMm(unit, run.zone, run.production);
+    const fullHeightMm = moduleCarcassHeightMm(unit, run) + plinthMm(production);
+    const panelRows: Panel[] = [];
+    for (const side of ['left', 'right'] as const) {
+      const panel = unit.sidePanels?.[side];
+      if (!panel) continue;
+      const d = fridgePanelDims(panel, { production, moduleDepthMm: depthMm, fullHeightMm });
+      panelRows.push({
+        moduleId: unit.id,
+        moduleLabel: `${moduleNumber}. ${unit.label || unit.kind}`,
+        /* Номер — следом за деталями холодильника: у каждой планки свой, иначе присадка и раскрой их склеивают. */
+        number: `${moduleNumber}.${inner.length + panelRows.length + 1}`,
+        name: FRIDGE_PANEL_PART_NAME[side],
+        /* Плита своей толщины: конструктивная планка 18 мм при корпусе 16 — это лист 18, а не 16. */
+        material: d.decorative ? frontMaterialName(look, d.thicknessMm) : carcassMaterialName(`ЛДСП ${d.thicknessMm}`, unit, run, carcass ?? new Map()),
+        stock: d.decorative ? frontStock(look) : carcassStock(unit, run, carcass ?? new Map()),
+        thicknessMm: d.thicknessMm,
+        lengthMm: d.heightMm,
+        widthMm: d.depthMm,
+        qty: 1,
+        /* Видимые торцы: передний по высоте и верхний. */
+        edges: { long: 1, short: 1 },
+        edgeType: edgeType(production),
+        grain: 'along',
+      } as Panel);
+    }
+    return [...inner, ...panelRows];
+  }
   const body = moduleBodyPanels(unit, run, production, moduleNumber, milling, carcass);
   /* Без правил цеха и каталога коробов не бывает — раскрой прежний до байта. */
   if (!hardware || hardware.size === 0 || !production.drawerBox) return body;

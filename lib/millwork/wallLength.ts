@@ -1,5 +1,6 @@
 import { lowerGapMm } from './corner';
 import { allModules } from './layout';
+import { tvRect } from './tvZone';
 import { OPENING_KIND_TITLE, type Module, type Run } from '@/types/millwork';
 import { COMM_TITLE, valueOf, type Survey } from '@/types/survey';
 
@@ -173,6 +174,34 @@ export function wallLengthVerdict(input: {
           text:
             `${label}: «${far.label}» (${far.id}) стоит до ${required} мм от угла — ${shortage(lengthMm, required)}. ` +
             'Мебель сама не двигается: сдвиньте или уберите модуль в «Мебели», потом поправьте длину.',
+        };
+      }
+    }
+    /*
+     * ТЕЛЕВИЗОР И ПАНЕЛИ СТЕНЫ — ТОЖЕ НА СВОИХ ОТМЕТКАХ (задача 3). Они стоят на ряду (`Run.tv`, `Run.wallPanels`), а не
+     * модулями, и мерить только мебель значило выпустить телевизор за стену молча: проверка после правки этого не
+     * ловит — «давнее не повторяется», а ряд уже новой длины. Сами не двигаются — отказ словами с мм, как у модуля.
+     */
+    const tv = furniture.run.tv;
+    if (tv) {
+      const required = furniture.startMm + tvRect(tv).x1;
+      if (required > lengthMm) {
+        return {
+          kind: 'refuse',
+          text:
+            `${label}: телевизор ${tv.diagonalIn}″ стоит до ${required} мм от угла — ${shortage(lengthMm, required)}. ` +
+            'Телевизор сам не двигается: сдвиньте его в «ТВ-зоне», потом поправьте длину.',
+        };
+      }
+    }
+    for (const panel of furniture.run.wallPanels ?? []) {
+      const required = furniture.startMm + Math.round(panel.fromMm + panel.widthMm);
+      if (required > lengthMm) {
+        return {
+          kind: 'refuse',
+          text:
+            `${label}: панель стены (${panel.id}) идёт до ${required} мм от угла — ${shortage(lengthMm, required)}. ` +
+            'Панель сама не укорачивается: сузьте или сдвиньте её в «ТВ-зоне», потом поправьте длину.',
         };
       }
     }

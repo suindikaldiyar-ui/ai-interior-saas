@@ -207,6 +207,8 @@ export default function InstancedBoxes({
         partIds: boxes.map((box) => box.partId ?? null),
         /* Детали сушки по экземпляру (фаза 1): приёмка меряет нарисованное, а не данные. */
         ...(boxes.some((box) => box.dryer) ? { dryers: boxes.map((box) => box.dryer ?? null) } : {}),
+        /* Имя детали раскроя по экземпляру (задачи 1–4): приёмка сверяет нарисованное с деталировкой. */
+        ...(boxes.some((box) => box.panel) ? { panels: boxes.map((box) => box.panel ?? null) } : {}),
         ...(userData ?? {}),
       }}
       castShadow={castShadow}

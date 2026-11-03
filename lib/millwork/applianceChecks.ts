@@ -15,6 +15,7 @@
  */
 import { applianceModel, modelTitle, ruleSource, unitModel } from './appliances';
 import type { CookingFinding } from './cookingStack';
+import { wallMicrowaveFindings } from './wallMicrowave';
 import { columnNiches, moduleCarcassHeightMm, moduleDepthMm, singleNicheOf } from './fill';
 import { buildPanels } from './panels';
 import { apronMm, plinthMm, shopOf } from './shop';
@@ -84,6 +85,9 @@ export function applianceModelFindings(run: Run, production: ProductionSettings 
         }
       }
     }
+
+    /* ─── СВЧ в навесном шкафу (задача 2) — по правилам навесного шкафа той же инструкции ─── */
+    out.push(...wallMicrowaveFindings(unit, run, production));
 
     /* ─── Холодильник ─── */
     const fridgeModel = unitModel(unit, 'fridge');

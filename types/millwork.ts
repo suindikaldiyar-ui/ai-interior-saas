@@ -645,6 +645,18 @@ export interface HingeAt {
 }
 
 /**
+ * ПЛАНКА ХОЛОДИЛЬНИКА (фаза 5): у боковой стороны прибора, от пола. Пусто у поля — умолчание: толщина — фасада
+ * (декоративная) или корпуса (конструктивная), глубина — модуля, высота — от пола до верха модуля, отступ 0.
+ */
+export interface FridgePanel {
+  kind?: 'decorative' | 'constructive';
+  thicknessMm?: number;
+  depthMm?: number;
+  heightMm?: number;
+  setbackMm?: number;
+}
+
+/**
  * ВОСЕМЬ МЕСТ РУЧКИ НА ФАСАДЕ.
  *
  * Три высоты у левого края, три у правого и по центру верхней и нижней
@@ -1135,6 +1147,8 @@ export interface Module {
   handleCustom?: HandleCustom;
   /** Петли створки по высоте (`door:0`) — фаза 2. Пусто — раскладка по правилу цеха или поровну. */
   hingeAt?: Record<string, HingeAt>;
+  /** Планки холодильника слева и справа (фаза 5): модуль шире на их толщину, ниша прибора та же (`fridgeCore`). */
+  sidePanels?: { left?: FridgePanel; right?: FridgePanel };
   /**
    * МАТЕРИАЛ КОРПУСА ЭТОГО МОДУЛЯ: ссылка на позицию каталога.
    *
@@ -2415,7 +2429,13 @@ export type MillworkOp =
    * МОДЕЛЬ ПРИБОРА В СВОЕЙ СБОРКЕ (фаза 5): артикул ложится на модули ряда с этим прибором — ряд не
    * пересобирается. `null` — типовой прибор. Модель другой ширины модуля — отказ словами.
    */
-  | { op: 'set_appliance_model'; appliance: ApplianceKind; model: string | null }
+  /**
+   * Модель прибора. Без `moduleId` — на все модули ряда с этим прибором; с `moduleId` — на один модуль: так модель СВЧ
+   * кладётся в навесной шкаф «Ниша под микроволновку» (`upper_micro`), у которого прибора-модуля нет.
+   */
+  | { op: 'set_appliance_model'; appliance: ApplianceKind; model: string | null; moduleId?: string }
+  /** Планка холодильника (фаза 5): поставить, поправить или снять (`null`). Модуль шире на её толщину. */
+  | { op: 'set_fridge_panel'; moduleId: string; side: 'left' | 'right'; panel: FridgePanel | null }
   /** Отделка поставленной позиции — вид (фаза 3): пантограф «чёрный матовый». `null` — как у артикула. */
   | { op: 'set_fitting_finish'; moduleId: string; slot: FittingSlot; bayId?: string; finish: 'black_matte' | null }
   | { op: 'set_dryer'; moduleId: string; levels?: 1 | 2 | null; lowerMm?: number | null; upperMm?: number | null; tray?: boolean | null; reset?: boolean }

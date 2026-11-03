@@ -51,7 +51,7 @@ const PORT = Number(process.env.PORT_HW ?? 3291);
 const BASE = `http://localhost:${PORT}`;
 const OUT = '.capture-check/hardware';
 const PARTS = (process.env.PART ?? 'import,kitchen,kitchen-drawers,kitchen-lift,wardrobe,cargo,corner,tablet').split(',').map((s) => s.trim()).filter(Boolean);
-const KNOWN = ['import', 'kitchen', 'kitchen-drawers', 'kitchen-lift', 'wardrobe', 'cargo', 'corner', 'tablet', 'catalog2', 'drilling', 'drawers', 'open', 'twin', 'tandembox', 'clip', 'aventos', 'real', 'import-ui', 'fronts', 'fronts-tablet', 'ceiling', 'ceiling-tablet', 'inner', 'dryer', 'dryer-tablet', 'leaf', 'leaf-tablet'];
+const KNOWN = ['import', 'kitchen', 'kitchen-drawers', 'kitchen-lift', 'wardrobe', 'cargo', 'corner', 'tablet', 'catalog2', 'drilling', 'drawers', 'open', 'twin', 'tandembox', 'clip', 'aventos', 'real', 'import-ui', 'fronts', 'fronts-tablet', 'ceiling', 'ceiling-tablet', 'inner', 'dryer', 'dryer-tablet', 'leaf', 'leaf-tablet', 'fridge', 'fridge-tablet'];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let failed = 0;
@@ -1591,7 +1591,7 @@ async function pickLibraryCard(page, label, moduleId, variant, width, touch) {
   must(`${label}: модуль ${moduleId} в списке объектов`, (await row.count()) > 0, `НУЛЕВОЙ СЕЛЕКТОР: [data-object-module="${moduleId}"]`);
   await row.first().click();
   await sleep(600);
-  must(`${label}: инструмент «Мебель»`, await tool(page, 'modules'), 'НУЛЕВОЙ СЕЛЕКТОР: [data-studio-tool="modules"]');
+  must(`${label}: инструмент «Мебель»`, await tool(page, 'furniture'), 'НУЛЕВОЙ СЕЛЕКТОР: [data-studio-tool="furniture"]');
   const sel = `[data-library] [data-variant="${variant}"][data-width="${width}"]`;
   await page.waitForSelector(sel, { timeout: 30_000 }).catch(() => null);
   const refused = await page.evaluate((q) => document.querySelector(q)?.getAttribute('data-refused') ?? null, sel);
@@ -1671,7 +1671,8 @@ async function partDryer(browser, tablet) {
         await sleep(400);
         await humanPress(page, '[data-dryer-apply]', 'Применить высоты', tablet);
         await waitFor(page, () => document.querySelector('[data-dryer-editor]')?.getAttribute('data-dryer-levels') ?? null, (v) => v === '80|400', 30_000);
-        await humanPress(page, '[data-dryer-tray]', 'Поддон', tablet);
+        /* Галочка — `input[data-dryer-tray]`: у корня блока тот же атрибут (число поддонов), и `.first()` нажимал середину блока. */
+        await humanPress(page, 'input[data-dryer-tray]', 'Поддон', tablet);
         const tray0 = await waitFor(page, () => document.querySelector('[data-dryer-editor]')?.getAttribute('data-dryer-tray') ?? null, (v) => v === '0', 30_000);
         await saved(page);
         const drawn4 = await waitFor(page, () => (window.__mwCadDryer ? window.__mwCadDryer() : null), (v) => Array.isArray(v) && v.filter((d) => d.boundsMm[1] >= 1400).length === want.ownPieces, 30_000);
@@ -1713,11 +1714,13 @@ async function partDryer(browser, tablet) {
       );
 
       /* 7. Смета экрана: строки позиций, типовых строк сушек нет. */
-      const lines = await waitFor(page, () => (window.__mwEstimateLines ? window.__mwEstimateLines() : null), (v) => Array.isArray(v) && v.some((l) => /SU02\/600/.test(l.title)), 30_000);
+      /* Зонд сметы отдаёт ключ строки, а не название: позиция производителя — `fitting_dryer_<ид позиции>`. */
+      const lines = await waitFor(page, () => (window.__mwEstimateLines ? window.__mwEstimateLines() : null), (v) => Array.isArray(v) && v.filter((l) => l.key.startsWith('fitting_dryer_')).length === 2, 30_000);
+      const dryerLines = (lines ?? []).filter((l) => l.key.startsWith('fitting_dryer_'));
       check(
-        `${L}.7 смета экрана: строки SU02/600 и KRS06/1/3/600 по 1, типовых строк «Сушка …» нет`,
-        (lines ?? []).filter((l) => /SU02\/600|KRS06\/1\/3\/600/.test(l.title)).length === 2 && !(lines ?? []).some((l) => l.key === 'dish_dryer' || l.key === 'dish_dryer_pullout'),
-        (lines ?? []).filter((l) => /суш|SU02|KRS/i.test(l.title)).map((l) => `${l.key}:${l.title.slice(0, 40)}×${l.quantity}`).join(' | '),
+        `${L}.7 смета экрана: две строки позиций сушек (SU02/600 и KRS06/1/3/600) по 1, типовых строк «Сушка …» нет`,
+        dryerLines.length === 2 && dryerLines.every((l) => l.quantity === 1) && !(lines ?? []).some((l) => l.key === 'dish_dryer' || l.key === 'dish_dryer_pullout'),
+        (lines ?? []).filter((l) => /dryer/.test(l.key)).map((l) => `${l.key}×${l.quantity}`).join(' | ') || `строк ${lines?.length ?? 'нет'}`,
       );
 
       /* 8. Запись → база → перезагрузка: варианты, позиции, уровни и поддон на месте. */
@@ -1748,6 +1751,146 @@ async function partDryer(browser, tablet) {
       check(`${L}: ошибок страницы и консоли нет`, errors.length === 0 && consoleErrors.length === 0, [...errors, ...consoleErrors].slice(0, 3).join(' | '));
     },
     { viewport: tablet ? { width: 1024, height: 768 } : { width: 1440, height: 900 }, touch: tablet, projects: [{ key: 'dryer', zone: 'Кухня', fx }] },
+  );
+}
+
+/* ═════════════════════════  FRIDGE: планки холодильника и СВЧ в навесном шкафу (FINAL MASTER STAGE, задачи 1–2)  ═════════════════════════ */
+
+const fridgeSide = (page, side) =>
+  page.evaluate((s) => {
+    const r = document.querySelector(`[data-fridge-side="${s}"]`);
+    if (!r) return null;
+    return {
+      on: r.getAttribute('data-fridge-on'),
+      dims: r.getAttribute('data-fridge-dims'),
+      kind: r.getAttribute('data-fridge-kind'),
+      words: r.querySelector(`[data-fridge-toggle-words="${s}"]`)?.textContent ?? null,
+      refusal: r.querySelector(`[data-fridge-refusal="${s}"]`)?.textContent ?? null,
+      width: document.querySelector('[data-fridge-panels]')?.getAttribute('data-fridge-width') ?? null,
+    };
+  }, side);
+const panelsDrawn = (page, names) => page.evaluate((n) => (window.__mwCadPanels ? window.__mwCadPanels(n) : null), names);
+
+async function partFridge(browser, tablet) {
+  const L = tablet ? 'FRIDGE-TAB' : 'FRIDGE';
+  console.log(`\n── ${L} (${tablet ? '1024 × 768 касанием' : '1440 × 900'}): планки холодильника (левая, правая, размеры, отказ), СВЧ BFL524MB2 в навесном шкафу, запись → перезагрузка`);
+  const fx = fixture('fridgeMw');
+  const want = fixture('fridgeMwExpect');
+  const LEFT = 'Планка холодильника левая';
+  const RIGHT = 'Планка холодильника правая';
+  const x0 = -want.lengthMm / 2 + want.fridgeOffsetMm;
+  await withOrg(
+    L,
+    browser,
+    async ({ service, page, errors, consoleErrors, ids }) => {
+      await openStudio(page, ids.fridgeMw);
+      await open3d(page, L);
+      await saved(page);
+
+      /* 1. Холодильник в «Выборе» — блок «Планки холодильника»: обе выключены, до нажатия сказано, что сузится. */
+      await pickObject(page, L, want.fridge);
+      await page.waitForSelector('[data-fridge-panels]', { timeout: 30_000 });
+      const s1 = await fridgeSide(page, 'left');
+      check(
+        `${L}.1 блок «Планки холодильника»: модуль ${want.w0}, обе выключены; до нажатия — «модуль ${want.w0} → ${want.w1} мм; ${want.shrunkLeft.join('; ')}»`,
+        s1?.on === '0' && s1?.width === String(want.w0) && (s1?.words ?? '').includes(`${want.w0} → ${want.w1}`) &&
+          want.shrunkLeft.every((w) => {
+            const [, name, from, to] = /^(.*) (\d+)→(\d+)$/.exec(w) ?? [];
+            return Boolean(name) && (s1?.words ?? '').includes(`«${name}» внизу ${from} → ${to} мм`);
+          }),
+        JSON.stringify(s1),
+      );
+
+      /* 2. Левая — «Вкл»: модуль шире, в сцене планка у левого края от пола своих размеров. */
+      await humanPress(page, '[data-fridge-toggle="left"]', 'левая планка', tablet);
+      const on = await waitFor(page, () => document.querySelector('[data-fridge-side="left"]')?.getAttribute('data-fridge-on') ?? null, (v) => v === '1', 30_000);
+      await saved(page);
+      const drawn2 = await waitFor(page, (n) => (window.__mwCadPanels ? window.__mwCadPanels(n) : null), (v) => Array.isArray(v) && v.length === 1, 30_000, [LEFT]);
+      const b = drawn2?.[0]?.boundsMm ?? [];
+      check(
+        `${L}.2 левая «Вкл»: модуль ${want.w1}, в сцене одна планка ${want.left.t} × ${want.left.h} × ${want.left.d} от пола, у левого края (x ${x0}…${x0 + want.left.t})`,
+        on === '1' && (await fridgeSide(page, 'left'))?.width === String(want.w1) && b.length === 6 &&
+          Math.abs(b[0] - x0) <= 1 && Math.abs(b[3] - b[0] - want.left.t) <= 1 && Math.abs(b[1]) <= 1 && Math.abs(b[4] - b[1] - want.left.h) <= 1 && Math.abs(b[5] - b[2] - want.left.d) <= 1,
+        JSON.stringify(drawn2),
+      );
+
+      if (!tablet) {
+        /* 3. Левая выше низа кладовки — отказ движка до нажатия, «Применить» недоступна. */
+        await page.locator('[data-fridge-field="left:height"]').first().fill(String(want.storageBottomMm + 300));
+        const refusal = await waitFor(page, () => document.querySelector('[data-fridge-refusal="left"]')?.textContent ?? null, Boolean, 15_000);
+        const off = await page.evaluate(() => document.querySelector('[data-fridge-apply="left"]')?.hasAttribute('disabled') ?? null);
+        check(`${L}.3 высота ${want.storageBottomMm + 300} — «упрётся в кладовку над холодильником … лишние 300 мм», «Применить» недоступна`, /упрётся в кладовку над холодильником.*лишние 300 мм/.test(refusal ?? '') && off === true, `«${refusal}» · ${off}`);
+        await page.locator('[data-fridge-field="left:height"]').first().fill('');
+
+        /* 4. Правая конструктивная своих размеров: поля → «Вкл»; в сцене — у правого края, лицом на 20 мм за фасадом. */
+        await humanPress(page, '[data-fridge-kind-button="right:constructive"]', 'конструктивная', tablet);
+        await page.locator('[data-fridge-field="right:thickness"]').first().fill(String(want.right.thicknessMm));
+        await page.locator('[data-fridge-field="right:depth"]').first().fill(String(want.right.depthMm));
+        await page.locator('[data-fridge-field="right:height"]').first().fill(String(want.right.heightMm));
+        await page.locator('[data-fridge-field="right:setback"]').first().fill(String(want.right.setbackMm));
+        await sleep(400);
+        await humanPress(page, '[data-fridge-toggle="right"]', 'правая планка', tablet);
+        await waitFor(page, () => document.querySelector('[data-fridge-side="right"]')?.getAttribute('data-fridge-on') ?? null, (v) => v === '1', 30_000);
+        await saved(page);
+        const s4 = await fridgeSide(page, 'right');
+        const drawn4 = await waitFor(page, (n) => (window.__mwCadPanels ? window.__mwCadPanels(n) : null), (v) => Array.isArray(v) && v.length === 1, 30_000, [RIGHT]);
+        const r = drawn4?.[0]?.boundsMm ?? [];
+        check(
+          `${L}.4 правая конструктивная ${want.right.thicknessMm} × ${want.right.depthMm} × ${want.right.heightMm}, отступ ${want.right.setbackMm}: модуль ${want.w2}; в сцене у правого края, лицо на ${want.right.setbackMm} мм за фасадом`,
+          s4?.kind === 'constructive' && s4?.width === String(want.w2) && s4?.dims === `${want.right.thicknessMm}x${want.right.depthMm}x${want.right.heightMm}@${want.right.setbackMm}` &&
+            r.length === 6 && Math.abs(r[3] - (x0 + want.w2)) <= 1 && Math.abs(r[3] - r[0] - want.right.thicknessMm) <= 1 && Math.abs(r[4] - r[1] - want.right.heightMm) <= 1 && Math.abs(r[5] + want.right.setbackMm) <= 1,
+          `${JSON.stringify(s4)} · ${JSON.stringify(drawn4)}`,
+        );
+      }
+
+      /* 5. СВЧ в навесном шкафу: карточка «Ниша под микроволновку» → модель BFL524MB2 → полка над нишей, модель на дне, без задней стенки. */
+      await pickLibraryCard(page, L, want.upper, 'upper_micro', 600, tablet);
+      await page.waitForSelector('[data-wall-microwave]', { timeout: 30_000 });
+      await humanPress(page, '[data-wall-microwave-pick="BFL524MB2"]', 'BFL524MB2', tablet);
+      const model = await waitFor(page, () => document.querySelector('[data-wall-microwave]')?.getAttribute('data-wall-microwave-model') ?? null, (v) => v === 'BFL524MB2', 30_000);
+      await saved(page);
+      const shelf = await waitFor(page, (n) => (window.__mwCadPanels ? window.__mwCadPanels(n) : null), (v) => Array.isArray(v) && v.length === 1, 30_000, ['Полка над нишей СВЧ']);
+      const mw = await waitFor(page, (id) => {
+        const all = window.__mwApplianceModels ? Object.values(window.__mwApplianceModels).flat() : [];
+        return all.find((e) => e.moduleId === id && e.kind === 'microwave') ?? null;
+      }, Boolean, 30_000, want.upper);
+      const findings = await page.evaluate(() => Array.from(document.querySelectorAll('[data-wall-microwave-findings] li')).map((li) => `${li.getAttribute('data-level')}: ${li.textContent}`));
+      const shelfBottom = shelf?.[0]?.boundsMm?.[1];
+      check(
+        `${L}.5 BFL524MB2 в шкафу 600: полка над нишей низом на ${want.upperBottomMm + want.shelfFromMm} мм от пола, модель на дне (${want.upperBottomMm + want.t}); выпуск заперт словами (неподвижная полка, зазор 16 мм, 95 °C), блокирующих нет`,
+        model === 'BFL524MB2' && Math.abs((shelfBottom ?? 0) - (want.upperBottomMm + want.shelfFromMm)) <= 1 && mw?.bottomMm === want.upperBottomMm + want.t &&
+          findings.length === 3 && findings.every((f) => f.startsWith('release')) && findings.some((f) => /неподвижная/.test(f)) && findings.some((f) => /16 мм/.test(f)),
+        `${shelfBottom} · ${JSON.stringify(mw)} · ${findings.join(' | ').slice(0, 300)}`,
+      );
+
+      /* 6. Смета экрана — строка модели «цена не задана». */
+      const lines = await waitFor(page, () => (window.__mwEstimateLines ? window.__mwEstimateLines() : null), (v) => Array.isArray(v) && v.some((l) => l.key === 'appliance_microwave_BFL524MB2'), 30_000);
+      check(`${L}.6 смета экрана: «Микроволновка Bosch BFL524MB2 — в навесном шкафу» × 1`, (lines ?? []).filter((l) => l.key === 'appliance_microwave_BFL524MB2').length === 1, (lines ?? []).filter((l) => /microwave|Микровол/.test(`${l.key} ${l.title}`)).map((l) => `${l.key}:${l.title}`).join(' | '));
+
+      /* 7. Запись → база → перезагрузка: планки и модель СВЧ в объекте, блоки те же. */
+      const row = (await service.from('projects').select('millwork').eq('id', ids.fridgeMw).single()).data;
+      const run = row?.millwork?.runs?.optimal;
+      const all = [...(run?.modules ?? []), ...((run?.upperSegments ?? []).flatMap((sg) => sg.modules ?? []))];
+      const fr = all.find((m) => m.appliance === 'fridge');
+      const up = all.find((m) => m.id === want.upper);
+      await page.reload();
+      await open3d(page, L);
+      await pickObject(page, L, want.fridge);
+      const after = await waitFor(page, () => document.querySelector('[data-fridge-panels]')?.getAttribute('data-fridge-width') ?? null, Boolean, 30_000);
+      const drawn7 = await waitFor(page, (n) => (window.__mwCadPanels ? window.__mwCadPanels(n) : null), (v) => Array.isArray(v) && v.length >= 1, 30_000, [LEFT, RIGHT]);
+      check(
+        `${L}.7 в базе — планки (${tablet ? 'левая' : 'левая и правая'}) и модель СВЧ на шкафу; после перезагрузки модуль ${tablet ? want.w1 : want.w2}, в сцене ${tablet ? 1 : 2} планки`,
+        fr?.sidePanels?.left?.kind === 'decorative' && (tablet || fr?.sidePanels?.right?.thicknessMm === 18) && up?.variant === 'upper_micro' && up?.applianceModels?.microwave === 'BFL524MB2' &&
+          after === String(tablet ? want.w1 : want.w2) && (drawn7 ?? []).length === (tablet ? 1 : 2),
+        JSON.stringify({ sidePanels: fr?.sidePanels ?? null, up: up?.applianceModels ?? null, after, drawn: (drawn7 ?? []).length }),
+      );
+      if (tablet) {
+        const scroll = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+        check(`${L}.8 прокрутки по ширине нет`, scroll <= 0, `${scroll} px`);
+      }
+      check(`${L}: ошибок страницы и консоли нет`, errors.length === 0 && consoleErrors.length === 0, [...errors, ...consoleErrors].slice(0, 3).join(' | '));
+    },
+    { viewport: tablet ? { width: 1024, height: 768 } : { width: 1440, height: 900 }, touch: tablet, projects: [{ key: 'fridgeMw', zone: 'Кухня', fx }] },
   );
 }
 
@@ -1799,6 +1942,9 @@ async function partLeaf(browser, tablet) {
 
       /* 1. Ручку перетащили вниз на схеме детали — правка одна, на отпускании; ручка в сцене сдвинулась на столько же. */
       const knob = page.locator('[data-handle-knob]').first();
+      /* Блок стоит ниже края инспектора: без прокрутки жест мышью по координатам уходит мимо схемы. */
+      await page.locator('[data-handle-board]').first().scrollIntoViewIfNeeded();
+      await sleep(300);
       const box = await knob.boundingBox();
       must(`${L}: ручка на схеме детали`, Boolean(box), 'НУЛЕВОЙ СЕЛЕКТОР: [data-handle-knob]');
       const board = await page.locator('[data-handle-board]').first().boundingBox();
@@ -1824,11 +1970,11 @@ async function partLeaf(browser, tablet) {
       );
 
       if (!tablet) {
-        /* 2. X = 5 — ручка вышла бы за деталь: отказ до нажатия, «Поставить» недоступна. */
-        await page.locator('[data-handle-field="x"]').first().fill('5');
+        /* 2. X = 0 — ось на кромке, скоба Ø10 вышла бы за деталь на 5 мм: отказ до нажатия, «Поставить» недоступна. */
+        await page.locator('[data-handle-field="x"]').first().fill('0');
         const refusal = await waitFor(page, () => document.querySelector('[data-handle-refusal]')?.textContent ?? null, Boolean, 15_000);
         const off = await page.evaluate(() => document.querySelector('[data-handle-apply]')?.hasAttribute('disabled') ?? null);
-        check(`${L}.2 X = 5 — отказ движка до нажатия «выходит за деталь слева», «Поставить» недоступна`, /выходит за деталь слева/.test(refusal ?? '') && off === true, `«${refusal}» · ${off}`);
+        check(`${L}.2 X = 0 — отказ движка до нажатия «выходит за деталь слева», «Поставить» недоступна`, /выходит за деталь слева/.test(refusal ?? '') && off === true, `«${refusal}» · ${off}`);
 
         /* 3. Петли 90 / 200 / 626 — записаны; 10 / 600 — отказ «за низ двери». */
         await page.locator('[data-hinge-field]').first().fill('10 / 600');
@@ -3500,6 +3646,8 @@ try {
       if (part === 'dryer-tablet') await partDryer(browser, true);
       if (part === 'leaf') await partLeaf(browser, false);
       if (part === 'leaf-tablet') await partLeaf(browser, true);
+      if (part === 'fridge') await partFridge(browser, false);
+      if (part === 'fridge-tablet') await partFridge(browser, true);
       done.push(part);
       console.log(`  ·    ${part}: ${Math.round((Date.now() - startedAt) / 1000)} с`);
     } catch (error) {

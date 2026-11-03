@@ -220,6 +220,16 @@ function extrasPart(unit: Module): string | undefined {
           .map((leaf) => `${leaf}=${unit.handleAt![leaf].xMm},${unit.handleAt![leaf].yMm}${unit.handleAt![leaf].turn ? `,${unit.handleAt![leaf].turn}` : ''}`)
           .join(';')}`
       : '',
+    /* Планки холодильника (фаза 5): другая мебель в раскрое и в смете. Пусто не пишется. */
+    unit.sidePanels
+      ? `sidePanels:${(['left', 'right'] as const)
+          .filter((side) => unit.sidePanels![side])
+          .map((side) => {
+            const p = unit.sidePanels![side]!;
+            return `${side}=${p.kind ?? ''}/${p.thicknessMm ?? ''}/${p.depthMm ?? ''}/${p.heightMm ?? ''}/${p.setbackMm ?? ''}`;
+          })
+          .join(';')}`
+      : '',
     unit.handleCustom ? `handleCustom:${unit.handleCustom.lengthMm ?? ''}/${unit.handleCustom.finish ?? ''}` : '',
     unit.hingeAt
       ? `hingeAt:${Object.keys(unit.hingeAt)

@@ -5947,7 +5947,7 @@ export default function Workspace(props: WorkspaceProps) {
         'Studio открыт без оболочки: страница Studio обязана обернуть рабочее место в StudioKitProvider.',
       );
     }
-    const { StudioShell, RoomPlan, WallInspector, StudioObjects, StudioInspector, FillEditor, OverheadEditor, StorageEditor, DryerEditor, LeafPartsEditor, DrawerFrontsEditor, CeilingLiftEditor, VitrineEditor, RadiusEditor } = studioKit;
+    const { StudioShell, RoomPlan, WallInspector, StudioObjects, StudioInspector, FillEditor, OverheadEditor, StorageEditor, DryerEditor, LeafPartsEditor, FridgePanelsEditor, WallMicrowaveEditor, DrawerFrontsEditor, CeilingLiftEditor, VitrineEditor, RadiusEditor } = studioKit;
     const surveyWalls = survey?.walls ?? [];
     const turnWords = (item: Survey['walls'][number]) =>
       item.turn === 'custom' ? `${item.turnDeg}° (другой угол)` : `90° ${item.turn === 'left' ? 'влево' : 'вправо'}`;
@@ -6487,6 +6487,52 @@ export default function Workspace(props: WorkspaceProps) {
                 run={activeRun}
                 hardware={hardwareItems}
                 carcassMm={production.carcassMm}
+                onOps={(ops, onRefusal) => runOps(ops, onRefusal)}
+                preview={(ops) =>
+                  applyOps({
+                    run: activeRun,
+                    requirements: requirementsOf(activeIndex),
+                    ops,
+                    openings: wallOpenings(activeIndex),
+                    roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
+                    hardware: hardwareItems,
+                  })
+                }
+              />
+            )}
+            {/*
+              * СВЧ В НАВЕСНОМ ШКАФУ (задача 2): модель — `set_appliance_model` с `moduleId` тем же `runOps`;
+              * ниша и проверки — те же функции, что у раскроя и сцены. Только у шкафа «Ниша под микроволновку».
+              */}
+            {selectedUnit && selectedUnit.variant === 'upper_micro' && (
+              <WallMicrowaveEditor
+                key={`wall-mw:${selectedUnit.id}:${selectedUnit.applianceModels?.microwave ?? ''}:${activeRun.fingerprint}`}
+                unit={selectedUnit}
+                run={activeRun}
+                production={production}
+                onOps={(ops, onRefusal) => runOps(ops, onRefusal)}
+                preview={(ops) =>
+                  applyOps({
+                    run: activeRun,
+                    requirements: requirementsOf(activeIndex),
+                    ops,
+                    openings: wallOpenings(activeIndex),
+                    roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
+                    hardware: hardwareItems,
+                  })
+                }
+              />
+            )}
+            {/*
+              * ПЛАНКИ ХОЛОДИЛЬНИКА (фаза 5): левая и правая — `set_fridge_panel` тем же `runOps`; что сузится и
+              * встанет ли — движок вхолостую до нажатия. Только у холодильника нижнего ряда.
+              */}
+            {selectedUnit && selectedUnit.appliance === 'fridge' && activeRun.modules.some((m) => m.id === selectedUnit.id) && (
+              <FridgePanelsEditor
+                key={`fridge-panels:${selectedUnit.id}:${JSON.stringify(selectedUnit.sidePanels ?? null)}:${activeRun.fingerprint}`}
+                unit={selectedUnit}
+                run={activeRun}
+                production={production}
                 onOps={(ops, onRefusal) => runOps(ops, onRefusal)}
                 preview={(ops) =>
                   applyOps({

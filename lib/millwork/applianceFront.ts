@@ -32,6 +32,11 @@ import type { ProductionSettings } from '@/types/catalog';
  * столешницу, мойку — тоже, и створка под ними есть всегда.
  */
 export function hasFacade(unit: Module): boolean {
+  /*
+   * ДОБОРНАЯ ПЛАНКА — САМА ДЕТАЛЬ, ФАСАДА ПЕРЕД НЕЙ НЕТ (задача 4): режется одной планкой. Её тип фасада
+   * `door` нёс в сцену дверцу с ручкой и петлями, а в смету — три петли и ручку, которых на объекте нет.
+   */
+  if (unit.kind === 'filler') return false;
   if (unit.appliance === undefined && unit.column === undefined) return true;
   return unit.builtIn !== false;
 }

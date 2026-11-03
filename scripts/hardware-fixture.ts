@@ -32,6 +32,10 @@ import { liftChoices } from '../lib/millwork/liftChoice';
 import { ceilingStack, topFillerSpans } from '../lib/millwork/topFiller';
 import { dryerOf } from '../lib/millwork/dryer';
 import { runPlaces } from '../lib/millwork/cabinetBoxes';
+import { fridgePanelDims } from '../lib/millwork/fridgePanels';
+import { wallMicrowaveNiche } from '../lib/millwork/wallMicrowave';
+import { moduleCarcassHeightMm, upperBottomFor } from '../lib/millwork/fill';
+import { plinthMm } from '../lib/millwork/shop';
 
 function CEILING_CATALOG_EARLY() {
   return hardwareCatalog(
@@ -384,4 +388,62 @@ function dryerFixture() {
 }
 const dryer = dryerFixture();
 
-process.stdout.write(JSON.stringify({ kitchen, kitchenDryer, cargo, wardrobe, drawersExpect, aventosHk: aventosHk.fx, aventosHkExpect: aventosHk.expect, aventosHl: aventosHl.fx, aventosHlExpect: aventosHl.expect, ceiling: ceiling.fx, ceilingExpect: ceiling.expect, dryer: dryer.fx, dryerExpect: dryer.expect }));
+/**
+ * ПЛАНКИ ХОЛОДИЛЬНИКА И СВЧ В НАВЕСНОМ ШКАФУ (задачи 1–2): тот же замер, что у сушек (3900 без окна), ожидания —
+ * движком путём экрана: левая декоративная, правая конструктивная 18 × 500 × 2000 с отступом 20, СВЧ BFL524MB2 в шкаф 600.
+ */
+function fridgeMwFixture() {
+  const room: Measurement = { ...noWindow, id: 'hw-fridge-mw', walls: noWindow.walls.map((w) => ({ ...w, lengthMm: w.id === 'w1' ? 3900 : w.lengthMm })) };
+  const a = screen('HW fridge mw', 'Кухня', room, DEMO_REQUIREMENTS);
+  const run0 = a.shown();
+  const UP = 'upper-1650@w1';
+  const fridge = run0.modules.find((m) => m.appliance === 'fridge');
+  if (!fridge) throw new Error('fridge-mw: холодильника нет');
+  const step = (run: Run, ops: MillworkOp[]) => {
+    const next = applyOps({ run, requirements: DEMO_REQUIREMENTS, ops, openings: [], roomDepthMm: 0 });
+    if (next.warnings.length) throw new Error(`fridge-mw: движок отказал: ${next.warnings.join(' | ')}`);
+    return next;
+  };
+  const RIGHT = { kind: 'constructive' as const, thicknessMm: 18, depthMm: 500, setbackMm: 20, heightMm: 2000 };
+  const r1 = step(run0, [{ op: 'set_fridge_panel', moduleId: fridge.id, side: 'left', panel: { kind: 'decorative' } }]);
+  const r2 = step(r1, [{ op: 'set_fridge_panel', moduleId: fridge.id, side: 'right', panel: RIGHT }]);
+  const f1 = r1.modules.find((m) => m.id === fridge.id)!;
+  const f2 = r2.modules.find((m) => m.id === fridge.id)!;
+  const place = runPlaces(r2).find((x) => x.unit.id === fridge.id)!;
+  const fullMm = moduleCarcassHeightMm(f2, r2) + plinthMm(DEFAULT_PRODUCTION);
+  const left = fridgePanelDims({ kind: 'decorative' }, { production: DEFAULT_PRODUCTION, moduleDepthMm: Math.round(place.depthM * 1000), fullHeightMm: fullMm });
+  const shrunk = (before: Run, after: Run) =>
+    after.modules.filter((m) => m.id !== fridge.id).map((m) => {
+      const was = before.modules.find((b) => b.label === m.label && b.kind === m.kind && Math.abs(b.offsetMm - m.offsetMm) <= 100);
+      return was && was.widthMm !== m.widthMm ? `${m.label} ${was.widthMm}→${m.widthMm}` : null;
+    }).filter(Boolean);
+  const r3 = step(r2, [{ op: 'set_variant', moduleId: UP, variant: 'upper_micro' }]);
+  const r4 = step(r3, [{ op: 'set_appliance_model', appliance: 'microwave', model: 'BFL524MB2', moduleId: UP }]);
+  const up = allModules(r4).find((m) => m.id === UP)!;
+  const niche = wallMicrowaveNiche(up, moduleCarcassHeightMm(up, r4), DEFAULT_PRODUCTION)!;
+  const fx: Fixture = { requirements: DEMO_REQUIREMENTS, measurement: room, survey: measuredSurvey(room), run: run0 };
+  return {
+    fx,
+    expect: {
+      fridge: fridge.id,
+      upper: UP,
+      lengthMm: run0.lengthMm,
+      fridgeOffsetMm: fridge.offsetMm,
+      w0: fridge.widthMm,
+      w1: f1.widthMm,
+      w2: f2.widthMm,
+      fullMm,
+      left: { t: left.thicknessMm, d: left.depthMm, h: left.heightMm },
+      right: RIGHT,
+      shrunkLeft: shrunk(run0, r1),
+      storageBottomMm: fullMm,
+      clearMm: niche.clearMm,
+      shelfFromMm: niche.shelf!.fromMm,
+      upperBottomMm: upperBottomFor(up, r4),
+      t: DEFAULT_PRODUCTION.carcassMm,
+    },
+  };
+}
+const fridgeMw = fridgeMwFixture();
+
+process.stdout.write(JSON.stringify({ kitchen, kitchenDryer, cargo, wardrobe, drawersExpect, aventosHk: aventosHk.fx, aventosHkExpect: aventosHk.expect, aventosHl: aventosHl.fx, aventosHlExpect: aventosHl.expect, ceiling: ceiling.fx, ceilingExpect: ceiling.expect, dryer: dryer.fx, dryerExpect: dryer.expect, fridgeMw: fridgeMw.fx, fridgeMwExpect: fridgeMw.expect }));

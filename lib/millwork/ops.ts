@@ -66,6 +66,7 @@ import { allModules } from './layout';
 import { DEFAULT_ALLOWANCES, type HardwareItem } from '@/types/catalog';
 import { FITTING_SLOT_TITLE, fittingVerdict, installedItem, slidingVerdict, withFitting, withHandle } from './fittings';
 import { dryerRefusal, storedDryer } from './dryer';
+import { fridgePanelRefusal, fridgePanelThicknessMm } from './fridgePanels';
 import { handleSpotOf } from './handlePlace';
 import { hingeAtRefusal, hingeCupOf } from './hingePlace';
 import { CUSTOM_HANDLE_MAX_MM, CUSTOM_HANDLE_MIN_MM } from './handleModel';
@@ -1908,11 +1909,163 @@ export function applyOps({
         break;
       }
 
+      case 'set_fridge_panel': {
+        /*
+         * ПЛАНКИ ХОЛОДИЛЬНИКА (фаза 5): модуль шире на толщину планок, ниша прибора та же. Помещаемость — то же
+         * правило, что у ширины (`bottomWidthRefusal`); сама планка — `fridgePanelRefusal`. Отказ словами с мм.
+         */
+        const at = modules.findIndex((m) => m.id === op.moduleId);
+        const fridgeUnit = at >= 0 ? modules[at] : undefined;
+        if (!fridgeUnit || fridgeUnit.appliance !== 'fridge') {
+          warnings.push(`Планки ставятся у холодильника нижнего ряда: у модуля ${op.moduleId} холодильника нет.`);
+          break;
+        }
+        const pShop = shopOf(run.production);
+        const thick = (side: 'left' | 'right', panels: Module['sidePanels']) => fridgePanelThicknessMm(panels?.[side], pShop);
+        const base = fridgeUnit.widthMm - thick('left', fridgeUnit.sidePanels) - thick('right', fridgeUnit.sidePanels);
+        const nextPanels: NonNullable<Module['sidePanels']> = { ...(fridgeUnit.sidePanels ?? {}) };
+        if (op.panel) {
+          const shell = { ...run, zone, modules, options } as Run;
+          /* Кладовка над холодильником стоит на крыше колонны: планка выше её низа вошла бы в неё. */
+          const storageOver = fridgeStorageOf(fridgeUnit, shell);
+          const refusal = fridgePanelRefusal(op.panel, op.side, {
+            production: pShop,
+            moduleDepthMm: moduleDepthMm(fridgeUnit, zone, run.production),
+            fullHeightMm: moduleCarcassHeightMm(fridgeUnit, shell) + plinthMm(run.production),
+            ...(storageOver && !fridgeUnit.storageOver?.removed && storageOver.roomMm >= FRIDGE_MEZZANINE_MIN_MM
+              ? { topMm: storageOver.bottomMm, topWhat: 'кладовку над холодильником' }
+              : { topMm: run.ceilingHeightMm, topWhat: 'потолок' }),
+            label: fridgeUnit.label,
+          });
+          if (refusal) {
+            warnings.push(refusal);
+            break;
+          }
+          nextPanels[op.side] = op.panel;
+        } else delete nextPanels[op.side];
+        const wanted = base + thick('left', nextPanels) + thick('right', nextPanels);
+        const delta = wanted - fridgeUnit.widthMm;
+        const { sidePanels: _was, ...rest } = fridgeUnit;
+        void _was;
+        const widened: Module = Object.keys(nextPanels).length > 0 ? { ...rest, widthMm: wanted, sidePanels: nextPanels } : { ...rest, widthMm: wanted };
+        if (delta === 0) {
+          modules[at] = widened;
+          break;
+        }
+        if (requirements.mode === 'free') {
+          /* Своя сборка: модуль растёт вправо, только если там пусто (то же правило, что у ширины). */
+          const refusedWidth = bottomWidthRefusal(at, wanted);
+          if (refusedWidth) {
+            warnings.push(refusedWidth);
+            break;
+          }
+          modules[at] = widened;
+          break;
+        }
+        /*
+         * РЯД ПО ГОТОВОМУ РЕШЕНИЮ — ТОЛЩИНУ ПЛАНКИ ОТДАЁТ БЛИЖАЙШИЙ ОБЫЧНЫЙ МОДУЛЬ. Каскад «все вправо, последний
+         * уже» уводил мойку от воды и варочную из-под вытяжки на толщину планки, а верхний шкаф у колонны — выбрасывал.
+         * Здесь сдвигаются только модули между холодильником и тем, кто сужается (пеналы держат габарит), сужается
+         * он один; верхний шкаф над тем же стыком сужается вместе с ним. Снятая планка отдаёт ширину обратно.
+         */
+        const sorted = [...modules].sort((a, b) => a.offsetMm - b.offsetMm);
+        const pos = sorted.findIndex((m) => m.id === fridgeUnit.id);
+        const absorbs = (m: Module) =>
+          !m.appliance && !m.column && m.kind !== 'tall' && m.kind !== 'corner_base' && !m.radius && m.widthMm - delta >= MIN_WIDTH && !blindAtWidth(m, m.widthMm - delta);
+        const chainOf = (dir: 1 | -1): { moved: Module[]; absorber: Module } | null => {
+          const moved: Module[] = [];
+          let edge = dir === 1 ? fridgeUnit.offsetMm + fridgeUnit.widthMm : fridgeUnit.offsetMm;
+          for (let i = pos + dir; i >= 0 && i < sorted.length; i += dir) {
+            const m = sorted[i];
+            if (dir === 1 ? m.offsetMm !== edge : m.offsetMm + m.widthMm !== edge) return null;
+            if (absorbs(m)) return { moved, absorber: m };
+            if (m.kind === 'corner_base') return null;
+            moved.push(m);
+            edge = dir === 1 ? m.offsetMm + m.widthMm : m.offsetMm;
+          }
+          return null;
+        };
+        const chain = chainOf(1) ?? chainOf(-1);
+        if (!chain) {
+          warnings.push(
+            `Планке ${Math.abs(delta)} мм некуда встать: рядом с «${fridgeUnit.label}» вплотную нет модуля, который можно ${delta > 0 ? 'сузить' : 'расширить'} — ` +
+              'сузьте соседний модуль или поставьте планку в своей сборке.',
+          );
+          break;
+        }
+        const right = chain.moved.every((m) => m.offsetMm >= fridgeUnit.offsetMm) && chain.absorber.offsetMm > fridgeUnit.offsetMm;
+        const absorberWidth = chain.absorber.widthMm - delta;
+        const absorberLeaves = leavesAfterWidth(chain.absorber, absorberWidth);
+        if (absorberLeaves && 'refusal' in absorberLeaves) {
+          warnings.push(absorberLeaves.refusal);
+          break;
+        }
+        const absorberBays = baysWidthRefusal(chain.absorber, absorberWidth, shopOf(run.production).carcassMm);
+        if (absorberBays) {
+          warnings.push(absorberBays);
+          break;
+        }
+        /* Стык, на котором сужается сосед: у него же сужается верхний шкаф, начинающийся (кончающийся) на этом стыке. */
+        const seamMm = right ? chain.absorber.offsetMm : chain.absorber.offsetMm + chain.absorber.widthMm;
+        const upperAt = upperModules.findIndex((m) => (right ? m.offsetMm === seamMm : m.offsetMm + m.widthMm === seamMm));
+        if (upperAt >= 0) {
+          const u = upperModules[upperAt];
+          const uWidth = u.widthMm - delta;
+          if (uWidth < MIN_WIDTH) {
+            warnings.push(`Планка не встанет: верхний «${u.label}» над стыком стал бы ${uWidth} мм — уже ${MIN_WIDTH} мм.`);
+            break;
+          }
+          const uLeaves = blindAtWidth(u, uWidth) ? null : leavesAfterWidth(u, uWidth);
+          if (uLeaves && 'refusal' in uLeaves) {
+            warnings.push(uLeaves.refusal);
+            break;
+          }
+          upperModules = upperModules.map((m, i) => (i === upperAt ? { ...m, widthMm: uWidth, ...(right ? { offsetMm: m.offsetMm + delta } : {}), ...(uLeaves ?? {}) } : m));
+        }
+        const movedIds = new Set(chain.moved.map((m) => m.id));
+        modules = modules.map((m) => {
+          if (m.id === fridgeUnit.id) return right ? widened : { ...widened, offsetMm: m.offsetMm - delta };
+          if (movedIds.has(m.id)) return { ...m, offsetMm: m.offsetMm + (right ? delta : -delta) };
+          if (m.id === chain.absorber.id) return { ...m, widthMm: absorberWidth, ...(right ? { offsetMm: m.offsetMm + delta } : {}), ...(absorberLeaves ?? {}) };
+          return m;
+        });
+        break;
+      }
       case 'set_appliance_model': {
         /* Модель прибора в своей сборке (фаза 5): на модули ряда с этим прибором, без пересборки. */
         const model = op.model ? applianceModel(op.model) : null;
         if (op.model && (!model || model.kind !== op.appliance)) {
           warnings.push(`Модели ${op.model} для «${APPLIANCE_SLOTS[op.appliance].title}» в фактах нет — ставить нечего.`);
+          break;
+        }
+        /*
+         * СВЧ В НАВЕСНОМ ШКАФУ (задача 2): модель — на один модуль «Ниша под микроволновку». Модель без правил
+         * навесного шкафа — отказ: ниши для неё производитель не напечатал. Наполнение шкафа — заново (полок нет).
+         */
+        if (op.moduleId) {
+          const target = upperModules.find((m) => m.id === op.moduleId);
+          if (!target || target.variant !== 'upper_micro') {
+            warnings.push(`Модель СВЧ ставится в навесной шкаф «Ниша под микроволновку»: у модуля ${op.moduleId} такой ниши нет.`);
+            break;
+          }
+          if (op.appliance !== 'microwave') {
+            warnings.push(`В нишу под микроволновку ставится только СВЧ: «${APPLIANCE_SLOTS[op.appliance].title}» в навесной шкаф не встаёт.`);
+            break;
+          }
+          if (model && !model.microwave?.wall) {
+            warnings.push(`${op.model}: правил установки в навесной шкаф у производителя нет — только в колонну или пенал.`);
+            break;
+          }
+          const own = { ...(target.applianceModels ?? {}) };
+          if (op.model) own.microwave = op.model;
+          else delete own.microwave;
+          const { applianceModels: _had, ...bare } = target;
+          void _had;
+          const next: Module = Object.keys(own).length > 0 ? { ...bare, applianceModels: own } : bare;
+          const shellRun = { ...run, zone, modules, options } as Run;
+          const fresh = defaultFill(next, shellRun, 0, 1);
+          const fill = target.fill?.hinge ? { ...fresh, hinge: target.fill.hinge } : fresh;
+          upperModules = upperModules.map((m) => (m.id === target.id ? { ...next, fill } : m));
           break;
         }
         const carriers = [...modules, ...upperModules].filter((m) => moduleAppliances(m).includes(op.appliance));

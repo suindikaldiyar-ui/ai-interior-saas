@@ -25,7 +25,9 @@ import {
   facadeDoorWidthMm,
   panelLeafCut,
   panelLeaves,
+  shelfSizeMm,
 } from './panels';
+import { hasBottom } from './moduleVariants';
 import { bentLeavesOf, partBounds, radiusParts, type RadiusForm } from './radius';
 import { radiusDimsOf } from './radiusDims';
 import { blindPartMm, cornerFillersOf, cornerOfModule, fillerNeighbour, lLegOf, openFrontMm, openFrontOf } from './corner';
@@ -33,13 +35,14 @@ import { tailFillersOf } from './countertop';
 import { moduleDepthMm, rowStandardDepthMm } from './fill';
 import { bayDrawerStackOf, bayEnvelope, bayLayout, placeEnvelope } from './bays';
 import type { HardwareItem, ProductionSettings } from '@/types/catalog';
+import { DEFAULT_ALLOWANCES } from '@/types/catalog';
 import type { ApplianceKind } from '@/types/millwork';
 import { drawerRunnerOf, moduleDrawerKits, type DrawerKit } from './drawerKit';
 import { DRAWER_BOTTOM_PANEL_NAME, DRAWER_SIDE_PANEL_NAME, DRAWER_WALL_PANEL_NAME, drawerPieceId } from './drawerBox';
 import { shopOf } from './shop';
 import { FRAME_WIDTH_MM, frontKey, frontOf, isFramed } from './frontMaterial';
 import { ISLAND_BACK_PANEL_NAME, islandBackOf } from './island';
-import { MIN_FACADE_SPAN_MM, moduleFronts, tallNicheOf, type FacadeSpan } from './applianceFront';
+import { MIN_FACADE_SPAN_MM, hasFacade, moduleFronts, tallNicheOf, type FacadeSpan } from './applianceFront';
 import { carcassKeyOf, type CarcassItem } from './carcassMaterial';
 import { fittingItemId, handleItemOf, installedItem, slidingAccepts } from './fittings';
 import { HINGE_IMAGE_EDGE_MM, hingeCupPlace, hingeHeightsMm } from './hingePlace';
@@ -88,6 +91,8 @@ import type { SceneLayer } from './sceneLayers';
 import { tvBoxMm, wallPanelParts, type PanelCorners } from './tvZone';
 import { applianceModel, frontOnApplianceDoor } from './appliances';
 import { dryerOf, type DryerPiece } from './dryer';
+import { fridgeCore, fridgePanelDims } from './fridgePanels';
+import { WALL_MICROWAVE_SHELF_NAME, wallMicrowaveNiche } from './wallMicrowave';
 import type { WallPanelKind } from '@/types/millwork';
 
 /**
@@ -550,7 +555,6 @@ export function carcassBoxes(
   // Внутренние размеры считаются той же формулой, что в детализировке:
   // разойдись они — клиент увидит одно, а цех получит другое.
   const innerW = Math.max(0.05, widthM - 2 * thicknessM);
-  const innerDepth = depthM - thicknessM;
 
   const at = (
     dx: number,
@@ -594,8 +598,19 @@ export function carcassBoxes(
    * выводится из того, во что деталь упирается: задний край — на лицевой
    * плоскости задней стенки. Размер детали прежний.
    */
+  /*
+   * ЗАДНЯЯ СТЕНКА — ДЕТАЛЬ РАСКРОЯ (FINAL MASTER STAGE, задача 4): толщина плиты цеха (`backMm`), вкладная — меньше
+   * габарита на паз (`backInsetMm`), как её режут. Сцена рисовала 4 мм во весь модуль: ХДФ 3 мм в раскрое и 4 мм в
+   * сцене — две детали на одном месте, а деталь 600 × 720 против 592 × 712 заходила в боковины.
+   */
+  const shop = shopOf(production);
+  const backT = shop.backMm / MM;
+  const backInsetM = (shop.backMount === 'inset' ? (shop.allowances ?? DEFAULT_ALLOWANCES).backInsetMm : 0) / MM;
   const backZ = -depthM + 0.004;
-  const backFaceZ = backZ + 0.004 / 2;
+  const backFaceZ = backZ + backT / 2;
+  /* Полка и перегородка — тех же размеров, что режет раскрой (`shelfSizeMm`, припуск перегородки цеха). */
+  const shelfMm = shelfSizeMm(unit.widthMm, Math.round(depthM * MM), shop);
+  const dividerDepthM = depthM - (shop.allowances ?? DEFAULT_ALLOWANCES).dividerDepthMm / MM;
 
   /*
    * ДУХОВОЙ ШКАФ ПОД ВАРОЧНОЙ (ЭТАП 3): верхних планок и задней стенки нет —
@@ -603,12 +618,14 @@ export function carcassBoxes(
    * `ovenNicheOf`, той же, что режет раскрой.
    */
   const oven = ovenNicheOf(unit, shopOf(production));
+  /* СВЧ в навесном шкафу (задача 2): задней стенки нет, над нишей — неподвижная полка той же раскладки, что режет раскрой. */
+  const wallMw = wallMicrowaveNiche(unit, Math.round(heightM * MM), shopOf(production));
   const boxes: BoxDraw[] = [
     // Боковины
     at(thicknessM / 2, heightM / 2, -depthM / 2, thicknessM, heightM, depthM, false, SIDE_PANEL_NAME),
     at(widthM - thicknessM / 2, heightM / 2, -depthM / 2, thicknessM, heightM, depthM, false, SIDE_PANEL_NAME),
-    // Дно и крыша
-    at(widthM / 2, thicknessM / 2, -depthM / 2, innerW, thicknessM, depthM, false, BOTTOM_PANEL_NAME),
+    // Дно и крыша. У модуля под мойку дна нет — ни в раскрое, ни в сцене (`hasBottom`).
+    ...(hasBottom(unit) ? [at(widthM / 2, thicknessM / 2, -depthM / 2, innerW, thicknessM, depthM, false, BOTTOM_PANEL_NAME)] : []),
     ...(oven
       ? [
           at(
@@ -625,8 +642,9 @@ export function carcassBoxes(
       : [
           at(widthM / 2, heightM - thicknessM / 2, -depthM / 2, innerW, thicknessM, depthM, false, topName),
           // Задняя стенка
-          at(widthM / 2, heightM / 2, backZ, widthM, heightM, 0.004, false, BACK_PANEL_NAME),
+          ...(wallMw ? [] : [at(widthM / 2, heightM / 2, backZ, widthM - backInsetM, heightM - backInsetM, backT, false, BACK_PANEL_NAME)]),
         ]),
+    ...(wallMw?.shelf ? [at(widthM / 2, (wallMw.shelf.fromMm + wallMw.shelf.fromMm + thicknessM * MM) / 2 / MM, -depthM / 2, innerW, thicknessM, depthM, false, WALL_MICROWAVE_SHELF_NAME)] : []),
   ];
 
   /*
@@ -707,10 +725,10 @@ export function carcassBoxes(
       at(
         widthM / 2,
         mm / MM,
-        backFaceZ + innerDepth / 2,
-        innerW - 0.002,
+        backFaceZ + shelfMm.widthMm / MM / 2,
+        shelfMm.lengthMm / MM,
         thicknessM,
-        innerDepth,
+        shelfMm.widthMm / MM,
         true,
         SHELF_PANEL_NAME,
       ),
@@ -723,10 +741,10 @@ export function carcassBoxes(
       at(
         fill.dividerMm / MM,
         heightM / 2,
-        backFaceZ + innerDepth / 2,
+        backFaceZ + dividerDepthM / 2,
         thicknessM,
         heightM - 2 * thicknessM,
-        innerDepth,
+        dividerDepthM,
         true,
         DIVIDER_PANEL_NAME,
       ),
@@ -1042,6 +1060,16 @@ export function sceneLeaves(
   /** Школа цеха: створки колонны — по нишам от пола (`facadeSpans`). */
   production?: ProductionSettings,
 ): SceneLeaf[] {
+  /* Доборная планка (задача 4): фасада перед ней нет (`hasFacade`) — открывать нечего. */
+  if (!hasFacade(unit) && unit.kind === 'filler') return [];
+  /* Планки холодильника (фаза 5): створки — у ядра, сдвинутые на левую планку; ход у угла и сцена видят те же. */
+  const withPanels = fridgeCore(unit, shopOf(production));
+  if (withPanels) {
+    const shift = withPanels.leftMm / MM;
+    return sceneLeaves(withPanels.core, heightM, openWidthM, openFromM, production).map((leaf) =>
+      'xM' in leaf && typeof leaf.xM === 'number' ? { ...leaf, xM: leaf.xM + shift } : leaf,
+    );
+  }
   const out: SceneLeaf[] = [];
   const fill = unit.fill;
   /*
@@ -3176,6 +3204,48 @@ export function moduleBoxes(
    * с фальш-панелью вместо второй ноги — то, что было до слоя, — описывал
    * мебель, которой цех не делает.
    */
+  /*
+   * ПЛАНКИ ХОЛОДИЛЬНИКА (фаза 5): холодильник считается на ядре модуля (`fridgeCore`) — та же геометрия, что без
+   * планок, сдвинутая на левую планку; планки — коробки у краёв от пола. Ниша прибора не меньше прежней.
+   */
+  const shop = shopOf(production);
+  /*
+   * ДОБОРНАЯ ПЛАНКА — ОДНА ДЕТАЛЬ (задача 4): та же, что режет раскрой («Доборная планка», высота корпуса ×
+   * ширина модуля × толщина плиты), в плоскости фасадов. Сцена рисовала на её месте шкафчик с дверцей.
+   */
+  if (unit.kind === 'filler') {
+    const t = shop.carcassMm / MM;
+    return [
+      {
+        material: 'carcass',
+        panel: 'Доборная планка',
+        position: [place.x + unit.widthMm / MM / 2, place.y + place.heightM / 2, t / 2],
+        scale: [unit.widthMm / MM, place.heightM, t],
+      },
+    ];
+  }
+  const withPanels = fridgeCore(unit, shop);
+  if (withPanels) {
+    const { core, leftMm, rightMm } = withPanels;
+    const inner = moduleBoxes(core, { ...place, x: place.x + leftMm / MM }, options, production);
+    const plinth = plinthMm(shop);
+    const out: PartBox[] = [...inner];
+    for (const side of ['left', 'right'] as const) {
+      const panel = unit.sidePanels?.[side];
+      if (!panel) continue;
+      const d = fridgePanelDims(panel, { production: shop, moduleDepthMm: Math.round(place.depthM * MM), fullHeightMm: Math.round(place.heightM * MM) + plinth });
+      const x = side === 'left' ? place.x + d.thicknessMm / 2 / MM : place.x + (unit.widthMm - d.thicknessMm / 2) / MM;
+      out.push({
+        material: d.decorative ? 'front' : 'carcass',
+        ...(d.decorative ? { frontKey: frontKey(frontOf(unit)) } : {}),
+        panel: side === 'left' ? 'Планка холодильника левая' : 'Планка холодильника правая',
+        position: [x, place.y - plinth / MM + d.heightMm / 2 / MM, -(d.setbackMm + d.depthMm / 2) / MM],
+        scale: [d.thicknessMm / MM, d.heightMm / MM, d.depthMm / MM],
+      });
+    }
+    void rightMm;
+    return out;
+  }
   if (unit.kind === 'corner_base' || unit.kind === 'corner_upper') {
     return lCornerBoxes(unit, place, options);
   }
@@ -3392,8 +3462,12 @@ function radiusModuleBoxes(unit: Module, place: ModulePlacement, options: FrontO
     }
     const inner = part.inside === true;
     const key = part.kind === 'shelf' ? options.partKeys?.shelves : undefined;
+    /* Задняя стенка — деталь раскроя (задача 4): вкладная меньше габарита на паз, как её режут (`backInsetMm`). */
+    const shop = shopOf(production);
+    const backInset = part.kind === 'back' && shop.backMount === 'inset' ? (shop.allowances ?? DEFAULT_ALLOWANCES).backInsetMm / MM : 0;
     out.push({
       ...base,
+      ...(backInset > 0 ? { scale: [base.scale[0] - backInset, base.scale[1] - backInset, base.scale[2]] as [number, number, number] } : {}),
       material: inner ? 'inner' : 'carcass',
       ...(inner ? { inside: true } : {}),
       carcassKey: key !== undefined ? key : (options.carcassKey ?? null),

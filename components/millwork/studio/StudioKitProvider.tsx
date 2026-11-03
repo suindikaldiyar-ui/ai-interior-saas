@@ -7,6 +7,8 @@ import OverheadEditor from './OverheadEditor';
 import StorageEditor from './StorageEditor';
 import DryerEditor from './DryerEditor';
 import LeafPartsEditor from './LeafPartsEditor';
+import FridgePanelsEditor from './FridgePanelsEditor';
+import WallMicrowaveEditor from './WallMicrowaveEditor';
 import DrawerFrontsEditor from './DrawerFrontsEditor';
 import CeilingLiftEditor from './CeilingLiftEditor';
 import VitrineEditor from './VitrineEditor';
@@ -19,7 +21,7 @@ import StudioObjects from './StudioObjects';
 import StudioShell from './StudioShell';
 import WallInspector from './WallInspector';
 
-const KIT: StudioKit = { StudioShell, RoomPlan, WallInspector, StudioObjects, StudioInspector, FillEditor, OverheadEditor, StorageEditor, DryerEditor, LeafPartsEditor, DrawerFrontsEditor, CeilingLiftEditor, VitrineEditor, RadiusEditor, IslandEditor, TvZoneEditor };
+const KIT: StudioKit = { StudioShell, RoomPlan, WallInspector, StudioObjects, StudioInspector, FillEditor, OverheadEditor, StorageEditor, DryerEditor, LeafPartsEditor, FridgePanelsEditor, WallMicrowaveEditor, DrawerFrontsEditor, CeilingLiftEditor, VitrineEditor, RadiusEditor, IslandEditor, TvZoneEditor };
 
 /** Оболочка Studio для рабочего места — только на странице Studio (см. `kit.ts`). */
 export default function StudioKitProvider({ children }: { children: ReactNode }) {

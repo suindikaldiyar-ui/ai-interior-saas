@@ -1374,6 +1374,11 @@ export function defaultFill(
    * резались в раскрое и встали бы в решётки сушки.
    */
   if (dryerKindOf(unit)) return { ...empty, hinge };
+  /*
+   * СВЧ В НАВЕСНОМ ШКАФУ (задача 2): у шкафа с моделью полок на отверстиях 32 нет — над нишей неподвижная полка
+   * (`wallMicrowaveNiche`), её режет раскрой отдельной деталью. Две полки «как у верхнего шкафа» встали бы в прибор.
+   */
+  if (unit.variant === 'upper_micro' && applianceModel(unit.applianceModels?.microwave)?.microwave?.wall) return { ...empty, hinge };
 
   // Кухня: наполнение от типа модуля.
   if (unit.frontType === 'drawers') {

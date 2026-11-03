@@ -4,6 +4,8 @@ import { applianceModel, modelTitle, ruleSource, type ApplianceModel } from './a
 import { COUNTER_OVERHANG_MM, columnNiches, counterSlabDepthMm, moduleCarcassHeightMm, moduleDepthMm, rowStandardDepthMm, singleNicheOf, upperBottomFor } from './fill';
 import { APPLIANCE_SLOTS, nicheHeightMm } from './modules';
 import { countertopMm, plinthMm, shopOf, upperBottomMm, workTopMm } from './shop';
+import { fridgeCore } from './fridgePanels';
+import { wallMicrowaveNiche } from './wallMicrowave';
 import { TOP_RAIL_PANEL_NAME } from './panelNames';
 
 /**
@@ -552,18 +554,34 @@ export function stageFourModelsOf(run: Pick<Run, 'modules' | 'zone' | 'ceilingHe
       if (niche) out.push({ unit, kind: 'microwave', model: mw, xMm: x, bottomMm: plinth + niche.fromMm + t / 2, zMm: 0, moverIds: [`${unit.id}:microwave:door`] });
     }
     const fridge = unit.appliance === 'fridge' ? applianceModel(unit.applianceModels?.fridge) : null;
+    /* Планки холодильника (фаза 5): прибор — по центру ядра, а не модуля с планками. */
+    const coreOf = fridgeCore(unit, shopOf(production));
+    const fx = coreOf ? unit.offsetMm + coreOf.leftMm + coreOf.core.widthMm / 2 : x;
     if (fridge?.fridge) {
       if (fridge.fridge.builtIn) {
-        out.push({ unit, kind: 'fridge-built', model: fridge, xMm: x, bottomMm: plinth + t, zMm: 0, moverIds: [] });
+        out.push({ unit, kind: 'fridge-built', model: fridge, xMm: fx, bottomMm: plinth + t, zMm: 0, moverIds: [] });
       } else {
         const shift = moduleDepthMm(unit, run.zone, production) - rowStandardDepthMm(run.zone, unit.kind, production, unit.section);
-        out.push({ unit, kind: 'fridge-free', model: fridge, xMm: x, bottomMm: 0, zMm: Math.max(0, shift), moverIds: [`${unit.id}:fridge:door:0`, `${unit.id}:fridge:door:1`] });
+        out.push({ unit, kind: 'fridge-free', model: fridge, xMm: fx, bottomMm: 0, zMm: Math.max(0, shift), moverIds: [`${unit.id}:fridge:door:0`, `${unit.id}:fridge:door:1`] });
       }
     }
     const dw = unit.appliance === 'dishwasher45' || unit.appliance === 'dishwasher60' ? applianceModel(unit.applianceModels?.[unit.appliance]) : null;
     if (dw?.dishwasher) out.push({ unit, kind: 'dishwasher', model: dw, xMm: x, bottomMm: 0, zMm: 0, moverIds: [`${unit.id}:dishwasher:baskets`] });
   }
   for (const unit of (run.upperSegments ?? []).flatMap((segment) => segment.modules)) {
+    /* СВЧ в навесном шкафу (задача 2): модель стоит на дне шкафа, дверь — тот же ход, что у СВЧ колонны. */
+    const wallMw = run.options && run.upperSegments ? wallMicrowaveNiche(unit, moduleCarcassHeightMm(unit, run as Run), shopOf(production)) : null;
+    if (wallMw && !wallMw.short) {
+      out.push({
+        unit,
+        kind: 'microwave',
+        model: wallMw.model,
+        xMm: unit.offsetMm + unit.widthMm / 2,
+        bottomMm: upperBottomFor(unit, run as Run) + t,
+        zMm: 0,
+        moverIds: [`${unit.id}:microwave:door`],
+      });
+    }
     const hood = unit.appliance === 'hood' ? applianceModel(unit.applianceModels?.hood) : null;
     if (hood?.hood) {
       out.push({ unit, kind: 'hood', model: hood, xMm: unit.offsetMm + unit.widthMm / 2, bottomMm: upperBottomMm(production), zMm: 0, moverIds: [`${unit.id}:hood:screen`] });
