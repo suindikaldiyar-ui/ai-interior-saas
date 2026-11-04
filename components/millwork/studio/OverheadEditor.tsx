@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import { moduleCarcassHeightMm, moduleDepthMm, overheadBaseOf } from '@/lib/millwork/fill';
 import { plinthMm } from '@/lib/millwork/shop';
-import { zoneHeightMm } from '@/lib/millwork/zones';
+import { tallTopOfRun, zoneProfile } from '@/lib/millwork/zones';
 import { GEOMETRY } from '@/lib/millwork/modules';
 import { sectionSpec } from '@/lib/millwork/sections';
 import type { MillworkOp, Module, Run } from '@/types/millwork';
@@ -38,10 +38,13 @@ export default function OverheadEditor({ unit, run, onOps, preview, onSelect }: 
   const hanging = run.upperSegments.flatMap((segment) => segment.modules);
   const base = unit.overhead ? overheadBaseOf(unit, run) : unit;
   const over = unit.overhead ? unit : hanging.find((m) => m.overhead && overheadBaseOf(m, run)?.id === unit.id) ?? null;
-  const eligible = Boolean(base) && base!.kind === 'tall' && !base!.appliance && !base!.column;
+  /* Высокий шкаф без прибора — или тумба зоны без столешницы (P1, ТВ-зона): то же правило, что у движка. */
+  const eligible =
+    Boolean(base) && !base!.appliance && !base!.column && (base!.kind === 'tall' || (base!.kind === 'base' && !zoneProfile(run.zone).hasCountertop));
 
   const plinth = plinthMm(run.production);
-  const ceiling = zoneHeightMm(run.zone, run.ceilingHeightMm, run.production, run.topFiller?.heightMm);
+  /* Верх корпуса над шкафом — тот же, что у движка (`tallTopOfRun`): в зале до потолка, а не до профиля 2000. */
+  const ceiling = tallTopOfRun(run);
   const baseHeight = base ? moduleCarcassHeightMm(base, run) : 0;
   const room = ceiling - plinth - baseHeight;
   const minH = GEOMETRY.upper.minCarcassH;

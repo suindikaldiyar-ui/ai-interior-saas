@@ -49,10 +49,15 @@ export default function DryerEditor({ unit, run, hardware, carcassMm, onOps, pre
   const [notice, setNotice] = useState<string | null>(null);
 
   const op = useMemo((): MillworkOp | null => {
-    if (kind !== 'upper') return null;
     const change: MillworkOp = { op: 'set_dryer', moduleId: unit.id };
-    const l = num(lower);
     const u = num(upper);
+    /* Нижняя (задача 3): правится только вторая корзина — первую ставят направляющие. */
+    if (kind === 'lower') {
+      if (u !== undefined && u !== upperNow) change.upperMm = u;
+      return change.upperMm !== undefined ? change : null;
+    }
+    if (kind !== 'upper') return null;
+    const l = num(lower);
     if (l !== undefined && l !== lowerNow) change.lowerMm = l;
     if (u !== undefined && u !== upperNow) change.upperMm = u;
     return change.lowerMm !== undefined || change.upperMm !== undefined ? change : null;
@@ -127,9 +132,45 @@ export default function DryerEditor({ unit, run, hardware, carcassMm, onOps, pre
           </div>
         </>
       ) : (
-        <p className="text-[13px] leading-snug" data-dryer-travel-words>
-          Корзина выезжает вместе с фасадом на {layout.travel?.mm} мм — {layout.travel?.words}. Уровни задаёт корзина производителя.
-        </p>
+        <>
+          <p className="text-[13px] leading-snug" data-dryer-travel-words>
+            {layout.baskets === 2 ? 'Обе корзины выезжают' : 'Корзина выезжает'} вместе с фасадом на {layout.travel?.mm} мм — {layout.travel?.words}. Первую корзину ставят
+            направляющие позиции.
+          </p>
+          <div className="flex flex-wrap items-center gap-2 text-[13px]" data-dryer-baskets={layout.baskets ?? 1} data-dryer-composed={layout.composed ? '1' : '0'}>
+            <span className="text-graphiteMw">Корзин</span>
+            {([1, 2] as const).map((n) => (
+              <button
+                key={n}
+                type="button"
+                className="mw-btn min-h-[40px] px-3"
+                aria-pressed={(layout.baskets ?? 1) === n}
+                data-dryer-baskets-button={n}
+                onClick={() => send([{ op: 'set_dryer', moduleId: unit.id, levels: n === 2 ? 2 : null, ...(n === 1 ? { upperMm: null } : {}) }])}
+              >
+                {n === 1 ? '1 корзина' : itemLevels === 2 ? '2 корзины' : '2 корзины · условно'}
+              </button>
+            ))}
+          </div>
+          {layout.baskets === 2 ? (
+            <>
+              <label className="grid gap-1 text-[13px]">
+                <span className="text-graphiteMw">
+                  Вторая корзина от низа, мм · {BASIS[layout.levels[1]?.basis ?? 'visual']}
+                </span>
+                <input className="mw-field mw-num w-[140px]" inputMode="numeric" data-dryer-field="upper" value={upper} onChange={(e) => setUpper(e.target.value)} />
+              </label>
+              {refusal ? (
+                <p className="text-[13px] leading-snug text-alert" data-dryer-refusal>
+                  {refusal}
+                </p>
+              ) : null}
+              <button type="button" className="mw-btn min-h-[36px] w-fit px-3" data-dryer-apply disabled={!op || Boolean(refusal)} onClick={() => op && send([op])}>
+                Применить высоту
+              </button>
+            </>
+          ) : null}
+        </>
       )}
       <label className="flex items-center gap-2 text-[13px]">
         <input type="checkbox" data-dryer-tray checked={layout.tray} onChange={(e) => send([{ op: 'set_dryer', moduleId: unit.id, tray: e.target.checked }])} />

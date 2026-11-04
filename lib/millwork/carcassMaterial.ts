@@ -45,11 +45,12 @@ export const carcassScopeOf = millingScopeOf;
  * второй лестницы наследования здесь нет. Перегородки — обе: вертикальные
  * и горизонтальные.
  */
-export type CarcassPart = 'shelves' | 'partitions';
+export type CarcassPart = 'shelves' | 'partitions' | 'back';
 
 export const CARCASS_PARTS: { key: CarcassPart; title: string }[] = [
   { key: 'shelves', title: 'Полки' },
   { key: 'partitions', title: 'Перегородки' },
+  { key: 'back', title: 'Задняя стенка' },
 ];
 
 /**
@@ -99,7 +100,8 @@ export function carcassItemOf(entry: CatalogEntryFull): CarcassItem | null {
    */
   const collection = collectionOf(entry);
   if (collection) {
-    if (!metaRoles(entry.meta).includes('carcass')) return null;
+    /* Корпус — и задняя стенка (P3): позиция роли `back` — та же запись каталога, свой род детали. */
+    if (!metaRoles(entry.meta).includes('carcass') && !metaRoles(entry.meta).includes('back')) return null;
     const colorHex = materialColorOf(entry);
     if (!colorHex) return null;
     /*
@@ -179,6 +181,11 @@ export function carcassFor(unit: Module, run: Pick<Run, 'carcass'>, part?: Carca
   if (part) {
     const byPart = run.carcass?.[part]?.trim();
     if (byPart) return byPart === NO_CARCASS_ID ? null : byPart;
+    /*
+     * ЗАДНЯЯ СТЕНКА НЕ БЕРЁТ ДЕКОР КОРПУСА (P3): это ХДФ, а не ЛДСП корпуса. Не выбрана своя — типовая ХДФ цеха:
+     * смена EGGER корпуса её не трогает.
+     */
+    if (part === 'back') return null;
   }
 
   const own = unit.carcassItemId?.trim();

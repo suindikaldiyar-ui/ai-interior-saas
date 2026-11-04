@@ -89,8 +89,9 @@ export function collectionOf(entry: { category?: { key?: string } | null }): str
 }
 
 /** На что идёт материал. Роли — из файла каталога, код их не выдумывает. */
-export type MaterialRole = 'front' | 'carcass' | 'countertop' | 'backsplash';
-export const MATERIAL_ROLES: readonly MaterialRole[] = ['front', 'carcass', 'countertop', 'backsplash'];
+/* `back` — задняя стенка (ХДФ, COMPLETE UNFINISHED P3): свой род детали, декор корпуса её не трогает. */
+export type MaterialRole = 'front' | 'carcass' | 'countertop' | 'backsplash' | 'back';
+export const MATERIAL_ROLES: readonly MaterialRole[] = ['front', 'carcass', 'countertop', 'backsplash', 'back'];
 
 /**
  * За что назначена цена.

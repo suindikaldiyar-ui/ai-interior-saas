@@ -34,8 +34,12 @@ import { dryerOf } from '../lib/millwork/dryer';
 import { runPlaces } from '../lib/millwork/cabinetBoxes';
 import { fridgePanelDims } from '../lib/millwork/fridgePanels';
 import { wallMicrowaveNiche } from '../lib/millwork/wallMicrowave';
-import { moduleCarcassHeightMm, upperBottomFor } from '../lib/millwork/fill';
+import { moduleCarcassHeightMm, pencilNiches, upperBottomFor } from '../lib/millwork/fill';
+import { buildPanels } from '../lib/millwork/panels';
+import { countertopSlabs } from '../lib/millwork/countertop';
 import { plinthMm } from '../lib/millwork/shop';
+import { sceneLeaves } from '../lib/millwork/cabinetBoxes';
+import { RUN_TEMPLATES, requirementsFromTemplate } from '../lib/millwork/templates';
 
 function CEILING_CATALOG_EARLY() {
   return hardwareCatalog(
@@ -446,4 +450,205 @@ function fridgeMwFixture() {
 }
 const fridgeMw = fridgeMwFixture();
 
-process.stdout.write(JSON.stringify({ kitchen, kitchenDryer, cargo, wardrobe, drawersExpect, aventosHk: aventosHk.fx, aventosHkExpect: aventosHk.expect, aventosHl: aventosHl.fx, aventosHlExpect: aventosHl.expect, ceiling: ceiling.fx, ceilingExpect: ceiling.expect, dryer: dryer.fx, dryerExpect: dryer.expect, fridgeMw: fridgeMw.fx, fridgeMwExpect: fridgeMw.expect }));
+/*
+ * ПЕНАЛ — ДУХОВКА И МИКРОВОЛНОВКА (задача 1): демо-стена без окна, пенал с духовкой. Ожидания — тем же движком,
+ * теми же операциями, что шлёт блок «Пенал»: микроволновку в пенал, её низ на 1500 мм, своя полка, порядок.
+ */
+function pencilFixture() {
+  const a = screen('HW pencil', 'Кухня', noWindow, DEMO_REQUIREMENTS);
+  const run0 = a.shown();
+  const start = run0.modules.find((m) => m.kind === 'tall' && m.appliance === 'oven' && !m.column);
+  if (!start) throw new Error('pencil: пенала с духовкой нет');
+  const at = start.offsetMm;
+  const of = (run: Run) => run.modules.find((m) => m.kind === 'tall' && m.offsetMm === at)!;
+  const step = (run: Run, ops: MillworkOp[]) => {
+    const next = applyOps({ run, requirements: DEMO_REQUIREMENTS, ops, openings: [], roomDepthMm: 0 });
+    if (next.warnings.length) throw new Error(`pencil: движок отказал: ${next.warnings.join(' | ')}`);
+    return next;
+  };
+  const niches = (run: Run) => {
+    const u = of(run);
+    return pencilNiches(u, moduleCarcassHeightMm(u, run), DEFAULT_PRODUCTION).map((n) => `${n.appliance}:${n.markMm}`).join(';');
+  };
+  const fronts = (run: Run) =>
+    buildPanels({ run, production: DEFAULT_PRODUCTION })
+      .filter((p) => p.moduleId === of(run).id && p.name === 'Фасад')
+      .map((p) => p.lengthMm)
+      .sort((x, y) => x - y)
+      .join('/');
+  const r1 = step(run0, [{ op: 'set_pencil_appliances', moduleId: start.id, oven: true, microwave: true }]);
+  const r2 = step(r1, [{ op: 'set_appliance_at', moduleId: of(r1).id, appliance: 'microwave', fromFloorMm: 1500 }]);
+  const u2 = of(r2);
+  const r3 = step(r2, [{ op: 'set_fill', moduleId: u2.id, fill: { ...u2.fill!, shelves: [...u2.fill!.shelves, 2016].sort((x, y) => x - y) } }]);
+  const refusal = applyOps({ run: r3, requirements: DEMO_REQUIREMENTS, ops: [{ op: 'set_appliance_at', moduleId: of(r3).id, appliance: 'microwave', fromFloorMm: 1240 }], openings: [], roomDepthMm: 0 }).warnings[0] ?? '';
+  const r4 = step(r3, [{ op: 'set_column_order', moduleId: of(r3).id, top: 'oven' }]);
+  const fx: Fixture = { requirements: DEMO_REQUIREMENTS, measurement: noWindow, survey: measuredSurvey(noWindow), run: run0 };
+  return {
+    fx,
+    expect: {
+      start: start.id,
+      atMm: at,
+      lengthMm: run0.lengthMm,
+      widthMm: start.widthMm,
+      plinthMm: plinthMm(DEFAULT_PRODUCTION),
+      markShelves: of(r2).fill!.shelves.join('/'),
+      pencil: of(r1).id,
+      tallCount: run0.modules.filter((m) => m.kind === 'tall').length,
+      both: niches(r1),
+      bothFronts: fronts(r1),
+      mark: niches(r2),
+      markFronts: fronts(r2),
+      shelves3: of(r3).fill!.shelves.join('/'),
+      refusal,
+      swapped: niches(r4),
+      shelves4: of(r4).fill!.shelves.join('/'),
+      fp4: r4.fingerprint,
+    },
+  };
+}
+const pencil = pencilFixture();
+
+/*
+ * ОТ ПЕНАЛА ДО СТЕНЫ (задача 6, TEST G): своя сборка на стене 3800 без проёмов — пенал с духовкой и СВЧ у левой
+ * стены, нижние модули 600 + 800 + 600 + 400 до 3000 мм. Дальше — нажатиями в браузере: продолжить столешницу,
+ * заполнить до стены, разделить, верхний ряд до стены. Ожидания — тем же движком теми же операциями.
+ */
+function spanFixture() {
+  const FREE_SPAN: RunRequirements = { ...DEMO_REQUIREMENTS, mode: 'free', appliances: [] };
+  const room: Measurement = { ...noWindow, id: 'hw-span', walls: noWindow.walls.map((w) => ({ ...w, lengthMm: w.id === 'w1' ? 3800 : w.lengthMm, openings: [] })) };
+  const a = screen('HW span', 'Кухня', room, FREE_SPAN);
+  a.apply([{ op: 'add_module', kind: 'tall', widthMm: 600, atMm: 0 }]);
+  const pencil0 = a.shown().modules.find((m) => m.kind === 'tall')!;
+  a.apply([{ op: 'set_pencil_appliances', moduleId: pencil0.id, oven: true, microwave: true }]);
+  a.apply([{ op: 'fill_span', row: 'base', fromMm: 600, toMm: 3000, widthsMm: [600, 800, 600, 400] }]);
+  const run0 = a.shown();
+  const step = (run: Run, ops: MillworkOp[]) => {
+    const next = applyOps({ run, requirements: FREE_SPAN, ops, openings: [], roomDepthMm: 0 });
+    if (next.warnings.length) throw new Error(`span: движок отказал: ${next.warnings.join(' | ')}`);
+    return next;
+  };
+  const base = (run: Run) => run.modules.filter((m) => m.kind === 'base').map((m) => `${m.offsetMm}+${m.widthMm}`).join(';');
+  const upper = (run: Run) => run.upperSegments.flatMap((s) => s.modules).filter((m) => m.section !== 'mezzanine').map((m) => `${m.offsetMm}+${m.widthMm}`).join(';');
+  const slab = (run: Run) => countertopSlabs(run).map((s) => `${s.fromMm}-${s.toMm}`).join(';');
+  const r1 = step(run0, [{ op: 'set_counter_extend', end: 'end', extend: true }]);
+  const r2 = step(r1, [{ op: 'fill_span', row: 'base', fromMm: 3000, toMm: 3800, widthsMm: [400, 400] }]);
+  const m800 = r2.modules.find((m) => m.offsetMm === 1200)!;
+  const r3 = step(r2, [{ op: 'split_module', moduleId: m800.id, widthsMm: [400, 400] }]);
+  const r4 = step(r3, [{ op: 'fill_span', row: 'upper', fromMm: 600, toMm: 3800, widthsMm: [800, 800, 800, 800] }]);
+  const refusal650 = applyOps({ run: r4, requirements: FREE_SPAN, ops: [{ op: 'set_width', moduleId: r4.modules.find((m) => m.kind === 'tall')!.id, widthMm: 650 }], openings: [], roomDepthMm: 0 }).warnings[0] ?? '';
+  const fx: Fixture = { requirements: FREE_SPAN, measurement: room, survey: measuredSurvey(room), run: run0 };
+  return {
+    fx,
+    expect: {
+      pencil: run0.modules.find((m) => m.kind === 'tall')!.id,
+      last: run0.modules.find((m) => m.offsetMm === 2600)!.id,
+      m800: m800.id,
+      slab0: slab(run0),
+      slab1: slab(r1),
+      base2: base(r2),
+      base3: base(r3),
+      upper4: upper(r4),
+      slab4: slab(r4),
+      refusal650,
+      fp4: r4.fingerprint,
+      wallModule: r4.modules.find((m) => m.offsetMm === 3400)!.id,
+      wallModuleWidth: 400,
+      widthRefusal: applyOps({ run: r4, requirements: FREE_SPAN, ops: [{ op: 'set_width', moduleId: r4.modules.find((m) => m.offsetMm === 3400)!.id, widthMm: 410 }], openings: [], roomDepthMm: 0 }).warnings[0] ?? '',
+    },
+  };
+}
+const span = spanFixture();
+
+/*
+ * ДВЕ КОРЗИНЫ НИЖНЕЙ СУШКИ (задача 3): демо-стена 3900 без окна, нижний у стены — «Сушка нижняя выдвижная» без позиции.
+ * Дальше — нажатиями: «2 корзины · условно», высота второй. Ожидания — тем же движком.
+ */
+function dryer2Fixture() {
+  const room: Measurement = { ...noWindow, id: 'hw-dryer2', walls: noWindow.walls.map((w) => ({ ...w, lengthMm: w.id === 'w1' ? 3900 : w.lengthMm })) };
+  const a = screen('HW dryer2', 'Кухня', room, DEMO_REQUIREMENTS);
+  const LOW = 'base-3300@w1';
+  a.apply([{ op: 'set_variant', moduleId: LOW, variant: 'base_dryer' }]);
+  const run0 = a.shown();
+  const env = (run: Run) => {
+    const p = runPlaces(run).find((x) => x.unit.id === LOW)!;
+    return { widthMm: p.unit.widthMm, heightMm: Math.round(p.heightM * 1000), depthMm: Math.round(p.depthM * 1000), thicknessMm: DEFAULT_PRODUCTION.carcassMm };
+  };
+  const step = (run: Run, ops: MillworkOp[]) => {
+    const next = applyOps({ run, requirements: DEMO_REQUIREMENTS, ops, openings: [], roomDepthMm: 0 });
+    if (next.warnings.length) throw new Error(`dryer2: движок отказал: ${next.warnings.join(' | ')}`);
+    return next;
+  };
+  const r1 = step(run0, [{ op: 'set_dryer', moduleId: LOW, levels: 2 }]);
+  const lay1 = dryerOf(allModules(r1).find((m) => m.id === LOW)!, env(r1), null)!;
+  const upper = lay1.levels[1].atMm + 64;
+  const r2 = step(r1, [{ op: 'set_dryer', moduleId: LOW, upperMm: upper }]);
+  const lay2 = dryerOf(allModules(r2).find((m) => m.id === LOW)!, env(r2), null)!;
+  const fx: Fixture = { requirements: DEMO_REQUIREMENTS, measurement: room, survey: measuredSurvey(room), run: run0 };
+  return { fx, expect: { low: LOW, levels1: lay1.levels.map((l) => l.atMm).join('|'), upperMm: upper, levels2: lay2.levels.map((l) => l.atMm).join('|') } };
+}
+const dryer2 = dryer2Fixture();
+
+/*
+ * ВЫСОКИЙ ШКАФ ТВ-ЗОНЫ (COMPLETE UNFINISHED, TEST B): готовая ТВ-зона C на стене 3800 зала. Дальше — нажатиями:
+ * правая витрина → «Полки», антресоль над шкафом, «Объединить», шов по линии соседа, витрина слева выше, телевизор
+ * 55″ правее, панель снята, витрина на тумбе. Ожидания — тем же движком теми же операциями, что шлют блоки.
+ */
+function tallFixture() {
+  const room: Measurement = { ...DEMO_MEASUREMENT, id: 'hw-tall', walls: DEMO_MEASUREMENT.walls.map((w, i) => (i === 0 ? { ...w, lengthMm: 3800, openings: [] } : w)), comms: [] };
+  const template = RUN_TEMPLATES.find((t) => t.tvZone === 'C');
+  if (!template) throw new Error('tall: шаблона ТВ-зоны C нет');
+  const requirements = requirementsFromTemplate(template, DEMO_REQUIREMENTS.options);
+  const a = screen('HW tall', 'Гостиная', room, requirements);
+  const run0 = a.shown();
+  const R = 'tall-3350@w1';
+  const LEFT = 'tall-0@w1';
+  const TUMBA = 'base-550@w1';
+  for (const id of [R, LEFT, TUMBA]) if (!allModules(run0).some((m) => m.id === id)) throw new Error(`tall: модуля ${id} в ТВ-зоне C нет`);
+  const step = (run: Run, ops: MillworkOp[]) => {
+    const next = applyOps({ run, requirements, ops, openings: [], roomDepthMm: 0 });
+    if (next.warnings.length) throw new Error(`tall: движок отказал: ${next.warnings.join(' | ')}`);
+    return next;
+  };
+  const yOf = (run: Run, id: string) => {
+    const p = runPlaces(run).find((x) => x.unit.id === id);
+    if (!p) throw new Error(`tall: модуля ${id} нет`);
+    return [Math.round(p.y * 1000), Math.round((p.y + p.heightM) * 1000)];
+  };
+  const leafCenters = (run: Run, id: string) => {
+    const p = runPlaces(run).find((x) => x.unit.id === id)!;
+    return sceneLeaves(p.unit, p.heightM, undefined, 0, DEFAULT_PRODUCTION)
+      .filter((l) => l.kind === 'door')
+      .map((l) => (l.kind === 'door' ? Math.round((p.y + l.bottomM + l.heightM / 2) * 1000) : 0));
+  };
+  const r1 = step(run0, [{ op: 'set_section', moduleId: R, section: 'shelves' }]);
+  const r2 = step(r1, [{ op: 'add_overhead', moduleId: R, heightMm: 500, baseHeightMm: 2100 }]);
+  const over = r2.upperSegments.flatMap((seg) => seg.modules).find((m) => m.overhead && m.offsetMm === 3350);
+  if (!over) throw new Error('tall: антресоль над шкафом не встала');
+  const r3 = step(r2, [{ op: 'merge_overhead', moduleId: over.id, keepSeam: true }]);
+  const r4 = step(r3, [{ op: 'set_front_split', moduleId: R, seamsMm: [1900] }]);
+  const widthTry = applyOps({ run: r4, requirements, ops: [{ op: 'set_width', moduleId: R, widthMm: 400 }], openings: [], roomDepthMm: 0 });
+  const r5 = step(r4, [{ op: 'set_height', moduleId: LEFT, heightMm: 2200 }]);
+  const fx: Fixture = { requirements, measurement: room, survey: measuredSurvey(room), run: run0 };
+  return {
+    fx,
+    expect: {
+      right: R,
+      left: LEFT,
+      tumba: TUMBA,
+      overId: over.id,
+      y2: { tall: yOf(r2, R), over: yOf(r2, over.id) },
+      y3: yOf(r3, R),
+      leaves3: leafCenters(r3, R),
+      seams3: r3.modules.find((m) => m.id === R)!.frontSplitMm ?? [],
+      leaves4: leafCenters(r4, R),
+      width400: widthTry.warnings[0] ?? null,
+      width400Run: widthTry.warnings.length === 0 ? widthTry.modules.find((m) => m.id === R)!.widthMm : null,
+      y5left: yOf(r5, LEFT),
+      tv0: run0.tv,
+      tumbaTop: yOf(run0, TUMBA)[1],
+    },
+  };
+}
+const tall = tallFixture();
+
+process.stdout.write(JSON.stringify({ kitchen, kitchenDryer, cargo, wardrobe, drawersExpect, aventosHk: aventosHk.fx, aventosHkExpect: aventosHk.expect, aventosHl: aventosHl.fx, aventosHlExpect: aventosHl.expect, ceiling: ceiling.fx, ceilingExpect: ceiling.expect, dryer: dryer.fx, dryerExpect: dryer.expect, fridgeMw: fridgeMw.fx, fridgeMwExpect: fridgeMw.expect, pencil: pencil.fx, pencilExpect: pencil.expect, span: span.fx, spanExpect: span.expect, dryer2: dryer2.fx, dryer2Expect: dryer2.expect, tall: tall.fx, tallExpect: tall.expect }));

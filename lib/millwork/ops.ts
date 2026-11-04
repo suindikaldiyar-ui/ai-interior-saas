@@ -1,4 +1,5 @@
 import {
+  APPLIANCE_COLUMN,
   APPLIANCE_SLOTS,
   FRIDGE_MEZZANINE_MIN_MM,
   GEOMETRY,
@@ -15,7 +16,7 @@ import {
 } from './modules';
 import { rowSpansOfRun, upperSpansOfRun, buildUpperRow, fillGap, moduleId, onWall, sectionMezzanineBand, uniqueModuleIds } from './layout';
 import { blindPartMm, blindVariantRefusal, cornerDoorHinge, cornerOfModule, levelBoundsOf, upperCornerOf } from './corner';
-import { counterCornerRefusal, counterTailsOf } from './countertop';
+import { counterCornerRefusal, counterGapOf, counterTailsOf } from './countertop';
 import { obstaclesInBand, rowBandMm, wallObstacles, type WallObstacle } from './obstacles';
 import {
   assertNoOverlap,
@@ -36,17 +37,18 @@ import {
   overheadBaseOf,
   shelfAboveRoof,
 } from './fill';
-import { mezzanineOf, zoneHeightMm, zoneProfile } from './zones';
-import { handleOf, isMechanism, isSwing, openingOf, openingRejection } from './opening';
+import { mezzanineOf, tallTopOfRun, zoneHeightMm, zoneProfile } from './zones';
+import { handleOf, isMechanism, isPullOut, isSwing, openingOf, openingRejection } from './opening';
 import { glassRefusal, glassShelvesRefusal } from './glass';
 import { vitrineEdit } from './vitrinePlace';
 import { radiusAfterEdit, radiusEdit, radiusRowOf } from './radiusPlace';
 import { islandTopRefusal } from './island';
-import { normalizedPanel, normalizedTv, tvRefusal, tvZoneRefusal, wallPanelRefusal } from './tvZone';
-import { vitrineFrameRefusal } from './vitrine';
+import { normalizedPanel, normalizedTv, panelRect, tvBoxMm, tvRefusal, tvZoneRefusal, wallPanelRefusal } from './tvZone';
+import { wallShelfShapeRefusal } from './wallShelf';
+import { vitrineFrameRefusal, vitrineOf } from './vitrine';
 import { frontConflict, frontOf, leafTitle } from './frontMaterial';
 import { reliefParamRefusal } from './facadeRelief';
-import { frontCutsOf, handleAtCheck, leafHandleBox, openablePartIds } from './cabinetBoxes';
+import { frontCutsOf, handleAtCheck, leafHandleBox, openablePartIds, runPlaces } from './cabinetBoxes';
 import {
   MAX_APPLIANCE_DEPTH_MM,
   MIN_DRAWER_MM,
@@ -58,8 +60,8 @@ import { CORNER, modelModuleWidthMm } from './modules';
 import { applianceModel } from './appliances';
 import { MAX_MEZZANINE_MM, MIN_MEZZANINE_MM, sectionSpec } from './sections';
 import { ceilingOverSpanMm } from './ceiling';
-import { hasFacade } from './applianceFront';
-import { columnNiches, defaultDrawerHeights, fillRefusal, fridgeStorageOf, tallStorageOf } from './fill';
+import { hasFacade, MIN_FACADE_SPAN_MM } from './applianceFront';
+import { MIN_SHELF_GAP_MM, bearsCountertop, columnNiches, snapTo32, tallBodyLimitMm, defaultDrawerHeights, fillRefusal, fridgeStorageOf, isPencil, ownShelvesOf, pencilDepthNeedMm, pencilNicheRefusal, pencilShelves, tallStorageOf } from './fill';
 import { drawerHeightsRefusal, drawerLocksOf, recountDrawerFronts, withDrawerFronts } from './drawerFronts';
 import { bayEnvelope, bayLayout, bayLossNote, baysRefusal, baysWidthRefusal, type BayEnvelope } from './bays';
 import { allModules } from './layout';
@@ -94,6 +96,7 @@ import type {
   Run,
   RunRequirements,
   SectionKind,
+  WallShelf,
 } from '@/types/millwork';
 
 /**
@@ -386,6 +389,39 @@ function withLiftAngle(unit: Module, openDeg: number | null): Module {
       return openDeg === null ? rest : { ...rest, openDeg: Math.round(openDeg) };
     }),
   };
+}
+
+/**
+ * НАСТЕННАЯ ПОЛКА И ТО, ЧТО УЖЕ СТОИТ НА СТЕНЕ (P2): мебель ряда (места `runPlaces` — те же, что рисует сцена),
+ * телевизор (`tvBoxMm`) и панели стены (`panelRect`). Полка лежит у стены во всю свою глубину — входит в любой
+ * корпус, с которым пересекается по длине ряда и по высоте. Отказ называет, во что и на сколько.
+ */
+function wallShelfRefusal(run: Run, shelf: WallShelf): string | null {
+  const name = `Полка ${shelf.fromMm}…${shelf.toMm} мм на ${shelf.bottomMm} мм`;
+  const y0 = shelf.bottomMm;
+  const y1 = shelf.bottomMm + shelf.thicknessMm;
+  for (const place of runPlaces(run)) {
+    const ux0 = place.unit.offsetMm;
+    const ux1 = place.unit.offsetMm + place.unit.widthMm;
+    const uy0 = Math.round(place.y * 1000);
+    const uy1 = Math.round((place.y + place.heightM) * 1000);
+    if (shelf.fromMm < ux1 && ux0 < shelf.toMm && y0 < uy1 && uy0 < y1) {
+      return `${name} заходит в «${place.unit.label}» (${ux0}…${ux1} мм, ${uy0}…${uy1} мм от пола) на ${Math.min(shelf.toMm, ux1) - Math.max(shelf.fromMm, ux0)} мм по длине — поставьте полку выше, ниже или в свободный участок.`;
+    }
+  }
+  if (run.tv) {
+    const tv = tvBoxMm(run, run.tv);
+    if (shelf.fromMm < tv.x1 && tv.x0 < shelf.toMm && y0 < tv.y1 && tv.y0 < y1) {
+      return `${name} заходит в телевизор (${Math.round(tv.x0)}…${Math.round(tv.x1)} мм, низ ${Math.round(tv.y0)} мм) — сдвиньте полку или телевизор.`;
+    }
+  }
+  for (const panel of run.wallPanels ?? []) {
+    const r = panelRect(panel);
+    if (shelf.fromMm < r.x1 && r.x0 < shelf.toMm && y0 < r.y1 && r.y0 < y1) {
+      return `${name} стоит на панели стены (${Math.round(r.x0)}…${Math.round(r.x1)} мм) — полка крепится к стене, а не к панели. Сдвиньте полку или уменьшите панель.`;
+    }
+  }
+  return null;
 }
 
 export function applyOps({
@@ -1115,12 +1151,54 @@ export function applyOps({
    * приходит только явно (`baseHeightMm`), а полка, ящик или зона, которые
    * в неё не влезут, называются поимённо — и правка не применяется.
    */
-  /** Под антресолью — только высокий шкаф без прибора: у колонны высоту задаёт прибор, на нижний ложится столешница. */
-  const overheadKindRefusal = (base: Module): string | null =>
-    base.kind !== 'tall' || base.appliance || base.column
-      ? `Антресоль над шкафом ставится на высокий шкаф без прибора: над «${base.label}» её не поставить — ` +
-        'высоту колонны задаёт прибор, а на нижний шкаф ложится столешница.'
-      : null;
+  /**
+   * МОЖНО ЛИ ДЕЛИТЬ ФАСАД ПО ВЫСОТЕ (P1/P2) — отказ словами или `null`. Делится одна распашная створка в ширину:
+   * у прибора фасад делят ниши, у ящиков фронты — сами ящики, у подъёмника, витрины, карго, гнутой створки и слепого
+   * угла фасад один. Каждая часть — не ниже фасадного минимума (`MIN_FACADE_SPAN_MM`), швы — внутри корпуса.
+   */
+  const frontSplitRefusal = (unit: Module, heightMm: number, seams: number[], shell: Run): string | null => {
+    if (seams.length === 0) return null;
+    const name = `«${unit.label}»`;
+    if (unit.appliance !== undefined || unit.column) return `${name}: фасад модуля с техникой делят ниши прибора — своё деление по высоте у него не ставится.`;
+    if (unit.frontType === 'drawers' || (unit.fill?.drawerHeights?.length ?? 0) > 0) return `${name}: у ящиков фронты — это ящики, их высоты правятся в «Фасадах ящиков».`;
+    if (unit.frontType !== 'door' || unit.doorCount < 1) return `${name}: фасада нет — делить нечего.`;
+    if (vitrineOf(unit)) return `${name}: у витрины стекло и двери правятся в блоке «Витрина».`;
+    if (unit.radius) return `${name}: у радиусного модуля створка гнутая — по высоте её не делят.`;
+    if (isPullOut(unit)) return `${name}: карго выдвигается целиком — фасад у него один.`;
+    if (isMechanism(openingOf(unit).opening)) return `${name}: фасад на подъёмнике один — по высоте делят распашную створку. Смените открывание на петли слева или справа.`;
+    if (unit.doorCount > 1) {
+      return `${name}: две створки в ширину — по высоте делится модуль с одной створкой. Разделите модуль по ширине («Разделить модуль»), у каждой части своё деление.`;
+    }
+    if (blindPartMm(unit, shell) > 0) return `${name}: у слепого угла створка одна и на доступной части — по высоте её не делят.`;
+    if (seams.length > 4) return `${name}: больше пяти частей фасада не делят — каждой нужны свои петли и ручка.`;
+    const outside = seams.find((s) => !Number.isFinite(s) || s <= 0 || s >= heightMm);
+    if (outside !== undefined) return `${name}: шов на ${outside} мм — вне корпуса высотой ${heightMm} мм.`;
+    const cuts = [0, ...seams, heightMm];
+    for (let i = 1; i < cuts.length; i += 1) {
+      const len = cuts[i] - cuts[i - 1];
+      if (len < MIN_FACADE_SPAN_MM) {
+        return `${name}: часть фасада ${cuts[i - 1]}…${cuts[i]} мм от дна корпуса — ${len} мм, ниже фасадного минимума ${MIN_FACADE_SPAN_MM} мм.`;
+      }
+    }
+    return null;
+  };
+
+  /**
+   * Под антресолью — высокий шкаф без прибора: у колонны высоту задаёт прибор, на нижний шкаф кухни ложится
+   * столешница. И тумба зоны без столешницы (P1, ТВ-зона): корпус на тумбе — витрина или шкаф над ней, его низ —
+   * крыша тумбы (`overheadBaseOf` → `overheadBottomMm`, та же опора, что у антресоли над шкафом).
+   */
+  const overheadKindRefusal = (base: Module): string | null => {
+    if (base.appliance || base.column) {
+      return `Над «${base.label}» корпус не ставят: высоту модуля с прибором задаёт прибор.`;
+    }
+    if (base.kind === 'tall') return null;
+    if (base.kind === 'base' && !zoneProfile(zone).hasCountertop) return null;
+    return (
+      `Антресоль над шкафом ставится на высокий шкаф без прибора или на тумбу без столешницы: над «${base.label}» её не поставить — ` +
+      (base.kind === 'base' ? 'на нижний шкаф ложится столешница.' : 'это не напольный корпус.')
+    );
+  };
 
   const overheadPlan = (
     base: Module,
@@ -1134,8 +1212,11 @@ export function applyOps({
     const plinth = plinthMm(run.production);
     const t = shopOf(run.production).carcassMm;
     const baseNow = moduleCarcassHeightMm(base, shell);
-    const fullBody = moduleCarcassHeightMm({ ...base, heightMm: undefined }, shell);
+    const fullBody = tallBodyLimitMm(shell, moduleCarcassHeightMm({ ...base, heightMm: undefined }, shell));
     const baseHeight = want.baseHeightMm !== undefined ? Math.round(want.baseHeightMm) : baseNow;
+    if (base.kind !== 'tall' && baseHeight !== baseNow) {
+      return { refusal: `Высоту тумбы ${name} задаёт её секция (${baseNow} мм): корпус ставится на тумбу как есть.` };
+    }
     if (!Number.isFinite(baseHeight) || baseHeight <= 2 * t) {
       return { refusal: `Шкаф ${name} высотой ${want.baseHeightMm} мм не собрать: дно и крыша сами по себе ${2 * t} мм.` };
     }
@@ -1160,7 +1241,7 @@ export function applyOps({
     }
 
     const ceiling = Math.min(
-      zoneHeightMm(zone, run.ceilingHeightMm, run.production, run.topFiller?.heightMm),
+      tallTopOfRun({ ...run, zone }),
       ceilingOverSpanMm(base.offsetMm, base.offsetMm + width, run.beams, run.ceilingHeightMm),
     );
     const room = ceiling - plinth - baseHeight;
@@ -1236,7 +1317,7 @@ export function applyOps({
       }
       const top = plinthMm(run.production) + moduleCarcassHeightMm(base, shell) + (over.heightMm ?? 0);
       const ceiling = Math.min(
-        zoneHeightMm(zone, run.ceilingHeightMm, run.production, run.topFiller?.heightMm),
+        tallTopOfRun({ ...run, zone }),
         ceilingOverSpanMm(over.offsetMm, over.offsetMm + over.widthMm, run.beams, run.ceilingHeightMm),
       );
       if (top > ceiling) {
@@ -1877,13 +1958,15 @@ export function applyOps({
           break;
         }
         const unit = modules[at];
-        if (unit.kind !== 'tall' || unit.appliance || unit.column) {
-          warnings.push(`Высота «${unit.label}» задаётся не числом: у колонны её задаёт прибор, у нижнего шкафа — столешница.`);
+        /* Пенал с духовкой и микроволновкой (задача 1) — высота числом; приборы обязаны остаться в корпусе. */
+        if (unit.kind !== 'tall' || ((unit.appliance || unit.column) && !isPencil(unit))) {
+          warnings.push(`Высота «${unit.label}» задаётся не числом: у колонны холодильника её задаёт прибор, у нижнего шкафа — столешница.`);
           break;
         }
         const shell = { ...run, zone, modules, options };
         const t = shopOf(run.production).carcassMm;
-        const fullBody = moduleCarcassHeightMm({ ...unit, heightMm: undefined }, shell);
+        /* Высокий шкаф в зале и санузле — до потолка (P1): тот же предел, что у раскладки (`tallBodyLimitMm`). */
+        const fullBody = tallBodyLimitMm(shell, moduleCarcassHeightMm({ ...unit, heightMm: undefined }, shell));
         if (op.heightMm === null) {
           const { heightMm: _was, ...rest } = unit;
           void _was;
@@ -1899,7 +1982,31 @@ export function applyOps({
           warnings.push(`Шкаф «${unit.label}» выше ${fullBody} мм в этом ряду не бывает: просили ${wanted} мм — лишние ${wanted - fullBody} мм.`);
           break;
         }
+        /* Деление фасада по высоте (P1/P2): верхняя часть не ниже фасадного минимума — иначе шов ушёл бы за крышу. */
+        const topSeam = Math.max(0, ...(unit.frontSplitMm ?? []));
+        if (topSeam > 0 && wanted - topSeam < MIN_FACADE_SPAN_MM) {
+          warnings.push(
+            `Шкаф «${unit.label}» высотой ${wanted} мм: верхний шов фасада на ${topSeam} мм от дна — верхней части осталось бы ` +
+              `${wanted - topSeam} мм при фасадном минимуме ${MIN_FACADE_SPAN_MM} мм. Опустите шов в блоке «Фасад по высоте» или снимите деление.`,
+          );
+          break;
+        }
         const lowered = { ...unit, heightMm: wanted };
+        if (isPencil(unit)) {
+          const loweredShell = { ...shell, modules: modules.map((m, i) => (i === at ? lowered : m)) } as Run;
+          const plan = pencilShelves(lowered, loweredShell, ownShelvesOf(unit, shell));
+          const candidate = { ...lowered, fill: { ...(unit.fill ?? defaultFill(lowered, loweredShell)), shelves: plan.shelves } };
+          const tallest = Math.max(0, ...plan.shelves);
+          const refusedNiche =
+            pencilNicheRefusal(candidate, wanted, run.production, plan.supports) ??
+            (tallest > wanted - t - MIN_SHELF_GAP_MM ? `полка на ${tallest} мм от дна не встанет под крышу корпуса ${wanted} мм — сначала уберите её.` : null);
+          if (refusedNiche) {
+            warnings.push(`Пенал высотой ${wanted} мм: ${refusedNiche}`);
+            break;
+          }
+          modules[at] = candidate;
+          break;
+        }
         const lost = overheadFillLoss(unit, lowered, shell, wanted, t);
         if (lost.length > 0) {
           warnings.push(`Шкаф «${unit.label}» не опустить до ${wanted} мм: ${lost.join('; ')}. Наполнение молча не снимается — поправьте его.`);
@@ -1909,6 +2016,337 @@ export function applyOps({
         break;
       }
 
+      case 'fill_span':
+      case 'split_module': {
+        /*
+         * УЧАСТОК МОДУЛЯМИ ТОЧНЫХ ШИРИН (задача 6). Ширина — число: `rebalance` и стандарт ширин здесь не участвуют,
+         * сумма обязана сойтись с участком до миллиметра — иначе отказ числом, ряд прежний. Место проверяют те же
+         * функции, что у добавления на отметку: занято, за краем, в препятствии, вне участков висящего ряда.
+         */
+        const widths = op.widthsMm.map((w) => Math.round(w));
+        const split = op.op === 'split_module' ? (modules.find((m) => m.id === op.moduleId) ?? upperModules.find((m) => m.id === op.moduleId)) : undefined;
+        if (op.op === 'split_module' && !split) {
+          warnings.push(`Модуль ${op.moduleId} не найден: делить нечего.`);
+          break;
+        }
+        if (split && (moduleAppliances(split).length > 0 || split.kind === 'filler')) {
+          warnings.push(`«${split.label}» не делится: ${moduleAppliances(split).length > 0 ? 'его ширину диктует прибор' : 'это доборная планка, а не корпус'}.`);
+          break;
+        }
+        if (split && split.section === 'mezzanine') {
+          warnings.push(STORAGE_PLACE_WORDS);
+          break;
+        }
+        const hanging = split ? split.kind === 'upper' : op.op === 'fill_span' && op.row === 'upper';
+        const fromMm = split ? split.offsetMm : Math.round((op as { fromMm: number }).fromMm);
+        const spanMm = split ? split.widthMm : Math.round((op as { toMm: number }).toMm) - fromMm;
+        const sum = widths.reduce((s, w) => s + w, 0);
+        if (widths.length === 0 || (split && widths.length < 2)) {
+          warnings.push(split ? 'Разделить — значит на две части и больше: ширины не заданы.' : 'Ширины секций не заданы — заполнять нечем.');
+          break;
+        }
+        if (sum !== spanMm) {
+          warnings.push(
+            `Ширины ${widths.join(' + ')} = ${sum} мм, а ${split ? `модуль «${split.label}»` : 'участок'} — ${spanMm} мм: ` +
+              `${sum > spanMm ? `лишние ${sum - spanMm}` : `не хватает ${spanMm - sum}`} мм.`,
+          );
+          break;
+        }
+        const wrong = widths.find((w) => w < MIN_WIDTH || w > MAX_WIDTH);
+        if (wrong !== undefined) {
+          warnings.push(`Секция ${wrong} мм не собирается: корпус бывает от ${MIN_WIDTH} до ${MAX_WIDTH} мм.`);
+          break;
+        }
+        const kind: ModuleKind = split ? split.kind : hanging ? 'upper' : 'base';
+        /* Что модуль переносит на части: фасад, вариант, высоту, глубину. Детали створок — нет (они у прежних створок). */
+        const dress = (unit: Module): Module => {
+          if (!split) return op.op === 'fill_span' && op.variant ? applyVariant(unit, op.variant) : unit;
+          const dressed = split.variant ? applyVariant(unit, split.variant) : unit;
+          return {
+            ...dressed,
+            ...(split.front ? { front: split.front } : {}),
+            ...(split.heightMm !== undefined ? { heightMm: split.heightMm } : {}),
+            ...(split.ownDepthMm !== undefined ? { ownDepthMm: split.ownDepthMm } : {}),
+            ...(split.hangMm !== undefined ? { hangMm: split.hangMm } : {}),
+          };
+        };
+        const made: Module[] = [];
+        let at = fromMm;
+        for (const w of widths) {
+          made.push(dress({ ...makePlainModule(kind, w, run.wallId, undefined, requirements), id: moduleId(kind, at, undefined, run.wallId), offsetMm: at }));
+          at += w;
+        }
+        if (hanging) {
+          const others = upperModules.filter((m) => m.id !== split?.id);
+          const spans = spansNow();
+          let refusedHang: string | null = null;
+          const placedSoFar: Module[] = [];
+          for (const unit of made) {
+            refusedHang = noRoomAt(unit.offsetMm, unit.widthMm, [...others, ...placedSoFar], spans);
+            if (refusedHang) break;
+            placedSoFar.push(unit);
+          }
+          if (refusedHang) {
+            warnings.push(refusedHang);
+            break;
+          }
+          placeUpper([...others, ...made], split ? `«${split.label}»` : `Участок ${spanMm} мм`);
+          break;
+        }
+        const othersBase = modules.filter((m) => m.id !== split?.id);
+        let clashWords: string | null = null;
+        for (const unit of made) {
+          const probe = { ...unit, id: `${unit.id}:проба` };
+          if (unit.offsetMm < 0 || unit.offsetMm + unit.widthMm > run.lengthMm) {
+            clashWords = `Секция ${unit.widthMm} мм с отметки ${unit.offsetMm} мм не встаёт: до края стены ${run.lengthMm - unit.offsetMm} мм.`;
+            break;
+          }
+          const clash = moveConflict([...othersBase, ...made.filter((m) => m !== unit), probe], probe.id, unit.offsetMm, run.lengthMm, baseBlocked);
+          if (clash) {
+            clashWords = moveRefusal(clash);
+            break;
+          }
+        }
+        if (clashWords) {
+          warnings.push(clashWords);
+          break;
+        }
+        modules = [...othersBase, ...made].sort((a, b) => a.offsetMm - b.offsetMm);
+        break;
+      }
+      case 'set_pencil_appliances':
+      case 'set_column_order':
+      case 'set_appliance_at': {
+        /*
+         * ПЕНАЛ С ТЕХНИКОЙ (задача 1): духовка и микроволновка — в ОДНОМ корпусе. Поставить, убрать, оставить одну,
+         * поменять местами, задать низ прибора от пола — правки этого модуля, без второго шкафа. Модели и габариты
+         * оставшегося прибора не сбрасываются. Ниши, опоры, фасады и раскрой — производная (`pencilNiches`).
+         */
+        const pAt = modules.findIndex((m) => m.id === op.moduleId);
+        const pencil = pAt >= 0 ? modules[pAt] : undefined;
+        if (!pencil || pencil.kind !== 'tall' || (pencil.appliance && !isPencil(pencil))) {
+          warnings.push(`Пенал ${op.moduleId} не найден: технику ставят в высокий модуль без холодильника.`);
+          break;
+        }
+        const shellP = { ...run, zone, modules, options } as Run;
+        let next: Module = pencil;
+        if (op.op === 'set_pencil_appliances') {
+          const wanted = (['oven', 'microwave'] as const).filter((a) => (a === 'oven' ? op.oven : op.microwave));
+          const elsewhere = wanted.filter((a) => !moduleAppliances(pencil).includes(a) && allModules({ ...run, modules } as Run).some((m) => m.id !== pencil.id && moduleAppliances(m).includes(a)));
+          if (elsewhere.length > 0) {
+            const holder = allModules({ ...run, modules } as Run).find((m) => m.id !== pencil.id && moduleAppliances(m).includes(elsewhere[0]))!;
+            warnings.push(
+              `${APPLIANCE_SLOTS[elsewhere[0]].title} уже стоит в «${holder.label}»: второй прибор в ряд не ставится молча — уберите его там или поставьте сюда после этого.`,
+            );
+            break;
+          }
+          const keepModels = { ...(pencil.applianceModels ?? {}) };
+          const keepSizes = { ...(pencil.applianceSizes ?? {}) };
+          const keepAt = { ...(pencil.applianceAt ?? {}) };
+          for (const a of ['oven', 'microwave'] as const) {
+            if (!wanted.includes(a)) {
+              delete keepModels[a];
+              delete keepSizes[a];
+              delete keepAt[a];
+            }
+          }
+          const { column: _c, appliance: _a, applianceModels: _m, applianceSizes: _s, applianceAt: _t, fill: _f, ...bare } = pencil;
+          void _c; void _a; void _m; void _s; void _t; void _f;
+          const fronts = frontPlan('tall', pencil.widthMm);
+          const top = pencil.column?.top ?? 'microwave';
+          next = {
+            ...bare,
+            ...(wanted.length > 0 ? { appliance: wanted.includes('oven') ? 'oven' : 'microwave' } : {}),
+            ...(wanted.length === 2 ? { column: { moduleId: pencil.id, top, bottom: top === 'oven' ? 'microwave' : 'oven' } } : {}),
+            ...(Object.keys(keepModels).length ? { applianceModels: keepModels } : {}),
+            ...(Object.keys(keepSizes).length ? { applianceSizes: keepSizes } : {}),
+            ...(Object.keys(keepAt).length ? { applianceAt: keepAt } : {}),
+            frontType: wanted.length > 0 ? 'appliance' : 'door',
+            doorCount: wanted.length > 0 ? 0 : fronts.doorCount,
+            drawerCount: 0,
+            label:
+              wanted.length === 2
+                ? `Колонна: ${APPLIANCE_SLOTS[(top === 'oven' ? 'microwave' : 'oven') as ApplianceKind].title.toLowerCase()} и ${APPLIANCE_SLOTS[top as ApplianceKind].title.toLowerCase()}`
+                : wanted.length === 1
+                  ? APPLIANCE_SLOTS[wanted[0]].title
+                  : 'Пенал',
+          } as Module;
+        } else if (op.op === 'set_column_order') {
+          if (!pencil.column) {
+            warnings.push(`В «${pencil.label}» один прибор: менять местами нечего.`);
+            break;
+          }
+          const bottom = op.top === 'oven' ? 'microwave' : 'oven';
+          /* Отметки принадлежат приборам; поменяли местами — прежние отметки не встают, они снимаются (названо до нажатия). */
+          const { applianceAt: _was, ...rest } = pencil;
+          void _was;
+          next = {
+            ...rest,
+            column: { ...pencil.column, top: op.top, bottom },
+            label: `Колонна: ${APPLIANCE_SLOTS[bottom as ApplianceKind].title.toLowerCase()} и ${APPLIANCE_SLOTS[op.top as ApplianceKind].title.toLowerCase()}`,
+          };
+        } else {
+          if (!moduleAppliances(pencil).includes(op.appliance)) {
+            warnings.push(`${op.appliance === 'oven' ? 'Духовки' : 'Микроволновки'} в «${pencil.label}» нет — ставить её отметку не у чего.`);
+            break;
+          }
+          const own = { ...(pencil.applianceAt ?? {}) };
+          if (op.fromFloorMm === null) delete own[op.appliance];
+          else {
+            const mark = Math.round(op.fromFloorMm);
+            if (!Number.isFinite(mark) || mark < 0) {
+              warnings.push('Низ прибора от пола — целое число миллиметров.');
+              break;
+            }
+            own[op.appliance] = mark;
+          }
+          const { applianceAt: _was, ...rest } = pencil;
+          void _was;
+          next = Object.keys(own).length > 0 ? { ...rest, applianceAt: own } : rest;
+        }
+        const carcassP = moduleCarcassHeightMm(next, shellP);
+        const shellNext = { ...shellP, modules: modules.map((m, i) => (i === pAt ? next : m)) } as Run;
+        const fresh = defaultFill(next, shellNext);
+        /* Свои полки человека переживают правку; попавшая в нишу молча не убирается — правка отказывает и называет её. */
+        const planP = pencilShelves(next, shellNext, ownShelvesOf(pencil, shellP));
+        const hinge = pencil.fill?.hinge && fresh.hinge !== undefined ? { hinge: pencil.fill.hinge } : {};
+        const candidateP: Module = { ...next, fill: { ...fresh, ...hinge, shelves: planP.shelves } };
+        const refusedP = pencilNicheRefusal(candidateP, carcassP, run.production, planP.supports);
+        if (refusedP) {
+          warnings.push(refusedP);
+          break;
+        }
+        modules[pAt] = candidateP;
+        break;
+      }
+      case 'set_front_split': {
+        /*
+         * ДЕЛЕНИЕ ФАСАДА ПО ВЫСОТЕ (P1/P2): швы от дна корпуса снизу вверх. Корпус один; каждая часть — своя створка,
+         * своя деталь раскроя и свои петли тем же путём, что участки пенала (`facadeSpans`). Пустой список — одна створка.
+         */
+        const fAt = modules.findIndex((m) => m.id === op.moduleId);
+        const fTarget = fAt >= 0 ? modules[fAt] : [...upperModules, ...overModules].find((m) => m.id === op.moduleId);
+        if (!fTarget) {
+          warnings.push(`Модуль ${op.moduleId} не найден: делить фасад не у чего.`);
+          break;
+        }
+        const fShell = { ...run, zone, modules, options } as Run;
+        const fHeight = moduleCarcassHeightMm(fTarget, fShell);
+        const seams = Array.from(new Set(op.seamsMm.map((s) => Math.round(s)))).sort((a, b) => a - b);
+        const fRefusal = frontSplitRefusal(fTarget, fHeight, seams, fShell);
+        if (fRefusal) {
+          warnings.push(fRefusal);
+          break;
+        }
+        const { frontSplitMm: _fs, ...bareF } = fTarget;
+        void _fs;
+        const nextF: Module = seams.length > 0 ? { ...bareF, frontSplitMm: seams } : bareF;
+        if (fAt >= 0) modules[fAt] = nextF;
+        else editUpper(fTarget.id, () => nextF);
+        break;
+      }
+      case 'merge_overhead': {
+        /*
+         * ШКАФ И АНТРЕСОЛЬ НАД НИМ — ОДИН КОРПУС (P1). Два корпуса одной стойки становятся одним: высота — сумма, ширина
+         * и глубина — шкафа (антресоль шире шкафа не бывает — она стоит на нём целиком), полки антресоли переезжают в
+         * шкаф на отверстия 32, на месте прежней крыши — полка. `keepSeam` — шов фасада на прежней границе корпусов.
+         */
+        const mShell = { ...run, zone, modules, options } as Run;
+        const over =
+          overModules.find((m) => m.id === op.moduleId) ??
+          overModules.find((m) => overheadBaseOf(m, mShell)?.id === op.moduleId);
+        if (!over) {
+          warnings.push(`Над модулем ${op.moduleId} антресоли нет — объединять не с чем.`);
+          break;
+        }
+        const mBase = overheadBaseOf(over, mShell);
+        if (!mBase) {
+          warnings.push('Под этой антресолью нет шкафа — объединять не с чем.');
+          break;
+        }
+        if (mBase.kind !== 'tall') {
+          warnings.push(`«${mBase.label}» и корпус на ней в один не объединяют: высоту тумбы задаёт её секция — объединяется высокий шкаф с антресолью над ним.`);
+          break;
+        }
+        const mAt = modules.indexOf(mBase);
+        const baseH = moduleCarcassHeightMm(mBase, mShell);
+        const overH = moduleCarcassHeightMm(over, mShell);
+        const merged = baseH + overH;
+        const zoneBodyM = moduleCarcassHeightMm({ ...mBase, heightMm: undefined }, mShell);
+        const fullBody = tallBodyLimitMm(mShell, zoneBodyM);
+        if (merged > fullBody) {
+          warnings.push(`Шкаф с антресолью ${merged} мм выше ${fullBody} мм в этом ряду не бывает: лишние ${merged - fullBody} мм.`);
+          break;
+        }
+        const mt = shopOf(run.production).carcassMm;
+        const baseFill = mBase.fill ?? defaultFill(mBase, mShell);
+        const lifted = [snapTo32(baseH), ...(over.fill?.shelves ?? []).map((s) => snapTo32(baseH + s))];
+        const allShelves = Array.from(new Set([...baseFill.shelves, ...lifted]))
+          .filter((s) => s > mt && s < merged - mt)
+          .sort((a, b) => a - b);
+        const shelves: number[] = [];
+        for (const s of allShelves) if (shelves.length === 0 || s - shelves[shelves.length - 1] >= MIN_SHELF_GAP_MM) shelves.push(s);
+        const seamsM = [
+          ...(mBase.frontSplitMm ?? []),
+          ...(op.keepSeam ? [baseH] : []),
+          ...(over.frontSplitMm ?? []).map((s) => baseH + s),
+        ];
+        const { heightMm: _h, frontSplitMm: _f, ...bareM } = mBase;
+        void _h;
+        void _f;
+        const nextM: Module = {
+          ...bareM,
+          ...(merged === zoneBodyM ? {} : { heightMm: merged }),
+          fill: { ...baseFill, shelves },
+        };
+        const seamRefusal = frontSplitRefusal(nextM, merged, Array.from(new Set(seamsM)).sort((a, b) => a - b), mShell);
+        if (seamRefusal) {
+          warnings.push(`Объединить с сохранением шва нельзя — ${seamRefusal}`);
+          break;
+        }
+        modules[mAt] = seamsM.length > 0 ? { ...nextM, frontSplitMm: Array.from(new Set(seamsM)).sort((a, b) => a - b) } : nextM;
+        overModules = overModules.filter((m) => m !== over);
+        break;
+      }
+      case 'set_module_depth': {
+        /*
+         * СВОЯ ГЛУБИНА КОРПУСА (задача 1): пенал и верхний модуль. Задняя плоскость на стене, уходит передняя.
+         * Не мельче, чем нужно прибору (глубина прибора + просвет — тот же расчёт, что у глубокого прибора).
+         * Нижний шкаф — глубина ряда: столешница над рядом одна.
+         */
+        const dAt = modules.findIndex((m) => m.id === op.moduleId);
+        const dTarget = dAt >= 0 ? modules[dAt] : upperModules.find((m) => m.id === op.moduleId);
+        if (!dTarget) {
+          warnings.push(`Модуль ${op.moduleId} не найден: глубину менять не у чего.`);
+          break;
+        }
+        if (dTarget.kind !== 'tall' && dTarget.kind !== 'upper') {
+          warnings.push(`Глубина «${dTarget.label}» — глубина ряда: столешница над нижними шкафами одна, свою глубину задают пеналу и верхнему модулю.`);
+          break;
+        }
+        const { ownDepthMm: _d, ...bareD } = dTarget;
+        void _d;
+        if (op.depthMm === null) {
+          if (dAt >= 0) modules[dAt] = bareD;
+          else editUpper(dTarget.id, () => bareD);
+          break;
+        }
+        const depthWanted = Math.round(op.depthMm);
+        const t2 = shopOf(run.production).carcassMm;
+        if (!Number.isFinite(depthWanted) || depthWanted <= 2 * t2) {
+          warnings.push(`Глубина ${op.depthMm} мм: корпус мельче ${2 * t2 + 1} мм не собрать.`);
+          break;
+        }
+        const applianceNeed = pencilDepthNeedMm(bareD);
+        if (applianceNeed !== null && depthWanted < applianceNeed) {
+          warnings.push(`«${dTarget.label}» мельче ${applianceNeed} мм не встанет: глубина прибора с просветом за ним — ${applianceNeed} мм, не хватает ${applianceNeed - depthWanted} мм.`);
+          break;
+        }
+        const deeper: Module = { ...bareD, ownDepthMm: depthWanted };
+        if (dAt >= 0) modules[dAt] = deeper;
+        else editUpper(dTarget.id, () => deeper);
+        break;
+      }
       case 'set_fridge_panel': {
         /*
          * ПЛАНКИ ХОЛОДИЛЬНИКА (фаза 5): модуль шире на толщину планок, ниша прибора та же. Помещаемость — то же
@@ -2476,6 +2914,34 @@ export function applyOps({
         break;
       }
 
+      case 'set_counter_extend': {
+        /*
+         * ПРОДОЛЖИТЬ СТОЛЕШНИЦУ (задача 6) у прямой кухни: от крайнего модуля, несущего плиту, до стены или боковины
+         * пенала — одна плита над модулями и пустотой. У угловой хвост до стены и так есть (слой 55). Нижних модулей
+         * нет — плиту класть не на что: отказ словами.
+         */
+        if (run.corner) {
+          warnings.push('У ряда угловой кухни плита и так доходит до стены: снять её над пустотой — «Убрать столешницу над пустотой».');
+          break;
+        }
+        const ends = { ...(run.counterEnds ?? {}) };
+        if (op.extend) {
+          const gap = counterGapOf({ ...run, modules }, op.end);
+          if (!gap) {
+            const bears = modules.some((unit) => bearsCountertop(unit, { ...run, modules }));
+            warnings.push(
+              bears
+                ? `У ${op.end === 'start' ? 'начала' : 'конца'} ряда плита уже доходит до стены или боковины высокого модуля — продолжать некуда.`
+                : 'Под столешницей нет ни одного нижнего модуля: класть плиту не на что — сначала заполните участок модулями.',
+            );
+            break;
+          }
+          ends[op.end] = 'extend';
+        } else if (ends[op.end] === 'extend') delete ends[op.end];
+        run = { ...run, counterEnds: Object.keys(ends).length > 0 ? ends : undefined };
+        break;
+      }
+
       case 'set_counter_corner': {
         /*
          * СКРУГЛЁННЫЙ УГОЛ СТОЛЕШНИЦЫ У СВОБОДНОГО КОНЦА РЯДА (OVAL & RADIUS):
@@ -2549,6 +3015,36 @@ export function applyOps({
         break;
       }
 
+      case 'set_wall_shelf': {
+        /*
+         * НАСТЕННАЯ ПОЛКА (P2): от пенала до стены. Форма — `wallShelfShapeRefusal`, место — не в мебели ряда, не в
+         * телевизоре и не на панели стены (`wallShelfRefusal`). Отказ словами, ряд прежний.
+         */
+        const shelf = { ...op.shelf };
+        const candidate = { ...run, modules, wallShelves: [...(run.wallShelves ?? []).filter((s) => s.id !== shelf.id), shelf] } as Run;
+        const words = wallShelfShapeRefusal(shelf, candidate) ?? wallShelfRefusal(candidate, shelf);
+        if (words) {
+          warnings.push(words);
+          break;
+        }
+        run = { ...run, wallShelves: candidate.wallShelves };
+        break;
+      }
+      case 'remove_wall_shelf': {
+        const shelves = run.wallShelves ?? [];
+        if (!shelves.some((s) => s.id === op.id)) {
+          warnings.push(`Полки ${op.id} на этой стене нет.`);
+          break;
+        }
+        const restS = shelves.filter((s) => s.id !== op.id);
+        if (restS.length > 0) run = { ...run, wallShelves: restS };
+        else {
+          const { wallShelves: _gone, ...plainS } = run;
+          void _gone;
+          run = plainS;
+        }
+        break;
+      }
       case 'remove_wall_panel': {
         const panels = run.wallPanels ?? [];
         if (!panels.some((p) => p.id === op.id)) {
@@ -2902,9 +3398,17 @@ export function applyOps({
 
         const at = modules.findIndex((m) => m.id === op.moduleId);
         if (at < 0) break;
-        if (modules[at].appliance) {
+        /*
+         * Габарит прибора фиксирован, но ПЕНАЛ — корпус (задача 1): его ширина числом, не уже прибора (600 мм у
+         * приборов 60 см). Подходит ли ниша модели — проверка по её инструкции (`applianceModelFindings`).
+         */
+        if (modules[at].appliance && !isPencil(modules[at])) {
           // Габарит техники фиксирован прибором, менять его нельзя.
           warnings.push(`${modules[at].label}: ширина техники не меняется.`);
+          break;
+        }
+        if (isPencil(modules[at]) && Math.round(op.widthMm) < APPLIANCE_COLUMN.widthMm) {
+          warnings.push(`Пенал ${Math.round(op.widthMm)} мм уже прибора: духовке и микроволновке 60 см нужен корпус от ${APPLIANCE_COLUMN.widthMm} мм — не хватает ${APPLIANCE_COLUMN.widthMm - Math.round(op.widthMm)} мм.`);
           break;
         }
 
@@ -3170,8 +3674,18 @@ export function applyOps({
             ? frontPlan(spec.moduleKind, width, spec.drawerCount)
             : frontPlan(spec.moduleKind, width);
 
+        /*
+         * СМЕНА СЕКЦИИ-ВИТРИНЫ СНИМАЕТ ВИТРИНУ (COMPLETE UNFINISHED, P1). Отказ «снять витрину» у секции-витрины называет
+         * этот путь — а витрина, заданная своим полем (`vitrine`, у готовой ТВ-зоны C — каркас из профиля), здесь
+         * оставалась: секция «Полки» рисовалась рамкой со стеклом, в раскрое было только дно и крыша, петли — под рамку.
+         */
+        const leavingVitrine = modules[at].section === 'glass_display' && op.section !== 'glass_display';
+        const { vitrine: _vit, glass: _glass, glassShelves: _gs, ...sectionBase } = modules[at];
+        void _vit;
+        void _glass;
+        void _gs;
         modules[at] = {
-          ...modules[at],
+          ...(leavingVitrine ? sectionBase : modules[at]),
           kind: spec.moduleKind,
           section: op.section,
           label: spec.title,
@@ -3716,7 +4230,20 @@ export function applyOps({
          * полка 1504 проходила сквозь микроволновку 460. Пересчитываются тем
          * же `defaultFill`; петли и ручка остаются.
          */
-        if (unit.column && unit.fill) {
+        if (isPencil(unit) && unit.fill) {
+          /* Пенал (задача 1): прибор выше — ниша обязана остаться в корпусе; свои полки вне ниш остаются. */
+          const sizedShell = { ...run, zone, modules, options } as Run;
+          const keepS = ownShelvesOf(unit, { ...run, zone, modules: modules.map((m, i) => (i === at ? unit : m)), options } as Run);
+          const planS = pencilShelves(modules[at], sizedShell, keepS);
+          const sized: Module = { ...modules[at], fill: { ...unit.fill, shelves: planS.shelves } };
+          const refusedSize = pencilNicheRefusal(sized, moduleCarcassHeightMm(sized, sizedShell), run.production, planS.supports);
+          if (refusedSize) {
+            modules[at] = unit;
+            warnings.push(`${unit.label}: ${refusedSize}`);
+            break;
+          }
+          modules[at] = sized;
+        } else if (unit.column && unit.fill) {
           const supports = defaultFill(modules[at], { ...run, zone, modules, options }).shelves;
           modules[at] = { ...modules[at], fill: { ...unit.fill, shelves: supports } };
         }
@@ -3792,20 +4319,6 @@ export function applyOps({
           break;
         }
         /*
-         * ПОЛКИ КОЛОННЫ — ОПОРЫ НИШ (ЭТАП 4, часть 4). Ниша считается заново по
-         * приборам (`columnNiches`), а полка лежала в наполнении: утащенная
-         * мышью, она проходила сквозь микроволновку, а ниша и прибор стояли
-         * на месте. Их место задают приборы — меняют высоту прибора.
-         */
-        if (fillTarget.column && fillTarget.fill && op.fill.shelves.join(',') !== fillTarget.fill.shelves.join(',')) {
-          warnings.push(
-            `Полки «${fillTarget.label}» — опоры ниш: на них стоят приборы, и их место задают высоты приборов. ` +
-              'Поправьте высоту духового шкафа или микроволновки — опоры встанут сами.',
-          );
-          break;
-        }
-
-        /*
          * ВЫСОТА КОРПУСА — ТА ЖЕ, ПО КОТОРОЙ СЧИТАЕТСЯ РАСКРОЙ.
          *
          * Оболочка собрана из `run` с уже поправленными списками: под
@@ -3830,6 +4343,44 @@ export function applyOps({
           warnings.push(refusal);
           break;
         }
+        /*
+         * Сначала — общее правило полки (выше корпуса, система 32): его отказ называет число и у пенала.
+         *
+         * ПОЛКИ КОЛОННЫ — ОПОРЫ НИШ (ЭТАП 4, часть 4). Ниша считается заново по
+         * приборам (`columnNiches`), а полка лежала в наполнении: утащенная
+         * мышью, она проходила сквозь микроволновку, а ниша и прибор стояли
+         * на месте. Их место задают приборы — меняют высоту прибора.
+         */
+        /*
+         * Пенал (задача 1): опоры приборов на месте, свои полки — вне ниш (верхний и нижний отсек). Сдвинутая
+         * опора и полка в нише — отказ словами; проверяет та же `pencilNicheRefusal`, что и отметку прибора.
+         */
+        if (isPencil(fillTarget) && op.fill.shelves.join(',') !== (fillTarget.fill?.shelves ?? []).join(',')) {
+          const pShell = { ...run, zone, modules, options } as Run;
+          const supports = defaultFill(fillTarget, pShell).shelves;
+          const lost = supports.filter((s) => !op.fill.shelves.includes(s));
+          if (lost.length > 0) {
+            /* Те же слова, что у колонны до задачи 1: опору двигают отметкой прибора, а не мышью. */
+            warnings.push(
+              `Полки «${fillTarget.label}» — опоры ниш: на них стоят приборы, и их место задают высоты приборов. ` +
+                `Полка на ${lost[0]} мм от дна встанет сама, если поставить прибор выше или ниже в блоке «Пенал».`,
+            );
+            break;
+          }
+          const candidate = { ...fillTarget, fill: { ...(fillTarget.fill ?? defaultFill(fillTarget, pShell)), shelves: op.fill.shelves } };
+          const refusedShelf = pencilNicheRefusal(candidate, moduleCarcassHeightMm(fillTarget, pShell), run.production, supports);
+          if (refusedShelf) {
+            warnings.push(refusedShelf);
+            break;
+          }
+        } else if (fillTarget.column && fillTarget.fill && op.fill.shelves.join(',') !== fillTarget.fill.shelves.join(',')) {
+          warnings.push(
+            `Полки «${fillTarget.label}» — опоры ниш: на них стоят приборы, и их место задают высоты приборов. ` +
+              'Поправьте высоту духового шкафа или микроволновки — опоры встанут сами.',
+          );
+          break;
+        }
+
         /*
          * МЕСТА ФАСАДОВ ЯЩИКОВ — МИНИМУМ ЯЩИКА И КОРОБ СИСТЕМЫ (редактор «Фасады ящиков»,
          * 2026-11-02). Проверяется изменённое: место, которое правка не трогала, остаётся
@@ -5409,6 +5960,13 @@ export function applyOps({
   if (owned.tv) {
     const now = tvRefusal(owned, owned.tv);
     const was = run.tv ? tvRefusal(run, run.tv) : null;
+    if (now && !was) return { ...run, warnings: [`Правка не применена: ${now.charAt(0).toLowerCase()}${now.slice(1)}`] };
+  }
+  /* Настенные полки после правки (P2): модуль, вставший в полку (шире, выше, новый), — правка не применена. */
+  for (const shelf of owned.wallShelves ?? []) {
+    const now = wallShelfRefusal(owned, shelf);
+    const before = run.wallShelves?.find((s) => s.id === shelf.id);
+    const was = before ? wallShelfRefusal(run, before) : null;
     if (now && !was) return { ...run, warnings: [`Правка не применена: ${now.charAt(0).toLowerCase()}${now.slice(1)}`] };
   }
   for (const panel of owned.wallPanels ?? []) {

@@ -75,8 +75,8 @@ export function facadeSpans(
         fromMm: niche.fromMm,
         heightMm: niche.toMm - niche.fromMm,
       }))
-    : nicheOf(unit, heightMm);
-  if (niches.length === 0) return [{ fromMm: 0, heightMm }];
+    : nicheOf(unit, heightMm, production);
+  if (niches.length === 0) return frontSplitSpans(unit, heightMm) ?? [{ fromMm: 0, heightMm }];
 
   const spans: FacadeSpan[] = [];
   let cursor = 0;
@@ -93,6 +93,24 @@ export function facadeSpans(
   // Огрызок ниже фасадного минимума фасадом не закрывают: его закрывает
   // сам прибор или соседняя деталь.
   return spans.filter((span) => span.heightMm >= MIN_FACADE_SPAN_MM);
+}
+
+/**
+ * ДЕЛЕНИЕ ФАСАДА ПО ВЫСОТЕ (P1/P2) — участки между швами `frontSplitMm`, снизу вверх, или `null`.
+ *
+ * У модуля без прибора: ниш нет, и швы ставит человек. Дальше участки идут той же дорогой, что участки над нишей и
+ * под ней у пенала (`nicheFacadeSpans` → `moduleFronts` → раскрой, сцена, петли, ручки): второй раскладки нет.
+ * Шов вне корпуса не считается вовсе (его не пишет операция `set_front_split`).
+ */
+export function frontSplitSpans(
+  unit: Pick<Module, 'frontSplitMm' | 'appliance' | 'column'>,
+  heightMm: number,
+): FacadeSpan[] | null {
+  const seams = unit.frontSplitMm;
+  if (!seams || seams.length === 0 || unit.appliance !== undefined || unit.column) return null;
+  const cuts = [0, ...[...seams].filter((s) => s > 0 && s < heightMm).sort((a, b) => a - b), heightMm];
+  const spans = cuts.slice(1).map((to, i) => ({ fromMm: cuts[i], heightMm: to - cuts[i] }));
+  return spans.length > 1 ? spans : null;
 }
 
 /**
@@ -129,9 +147,9 @@ export function nicheFacadeSpans(unit: Module, heightMm: number, production?: Pr
  * чёрной плитой вместо полок (STAGE A). У колонны ниши свои
  * (`columnNiches`); прибор без фасада занимает модуль целиком — `null`.
  */
-export function tallNicheOf(unit: Module, heightMm: number): FacadeSpan | null {
+export function tallNicheOf(unit: Module, heightMm: number, production?: ProductionSettings): FacadeSpan | null {
   if (unit.column || !hasFacade(unit)) return null;
-  return nicheOf(unit, heightMm)[0] ?? null;
+  return nicheOf(unit, heightMm, production)[0] ?? null;
 }
 
 /**
@@ -285,12 +303,12 @@ export const MIN_FACADE_SPAN_MM = 90;
  * У колонны их две и считает их `columnNiches`; здесь одиночная духовка
  * или микроволновка в пенале — тот же случай, только ниша одна.
  */
-function nicheOf(unit: Module, heightMm: number): FacadeSpan[] {
+function nicheOf(unit: Module, heightMm: number, production?: ProductionSettings): FacadeSpan[] {
   const appliance = moduleAppliances(unit)[0];
   if (!appliance || unit.kind !== 'tall') return [];
 
   /* Ниша — одна `singleNicheOf` (ЭТАП 4): её границы — оси полок-опор, их же режет раскрой. */
-  const niche = singleNicheOf(unit, heightMm);
+  const niche = singleNicheOf(unit, heightMm, production);
   return niche ? [{ fromMm: niche.fromMm, heightMm: niche.toMm - niche.fromMm }] : [];
 }
 

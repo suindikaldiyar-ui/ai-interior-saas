@@ -34,6 +34,8 @@ type Props = {
    * а линия становится настоящей чертёжной.
    */
   lineScale?: number;
+  /** Высота корпуса, мм: по ней фасад, разделённый по высоте (P1/P2), рисуется своими участками. */
+  heightMm?: number;
 };
 
 export default function FrontGlyph({
@@ -44,8 +46,9 @@ export default function FrontGlyph({
   width,
   height,
   lineScale = 1,
+  heightMm,
 }: Props) {
-  const elements = frontGlyph(unit, mode);
+  const elements = frontGlyph(unit, mode, heightMm);
   const k = lineScale;
 
   return (
@@ -70,19 +73,39 @@ export default function FrontGlyph({
             );
 
           case 'swing': {
-            const half = unit.doorCount >= 2 ? width / 2 : width;
+            const half = unit.doorCount >= 2 && !el.band ? width / 2 : width;
             const left = el.hinge === 'left' ? x : x + width - half;
+            /* Участок фасада, разделённого по высоте: доли от низа модуля, а SVG считает сверху. */
+            const top = el.band ? y + height * (1 - el.band[1]) : y;
+            const bandH = el.band ? height * (el.band[1] - el.band[0]) : height;
             return (
               <SwingMark
                 key={i}
                 x={left}
-                y={y}
+                y={top}
                 width={half}
-                height={height}
+                height={bandH}
                 hinge={el.hinge}
               />
             );
           }
+
+          case 'hseam':
+            return (
+              <g key={i} data-glyph-hseam={el.shares.map((share) => share.toFixed(4)).join(',')}>
+                {el.shares.map((share) => (
+                  <line
+                    key={share}
+                    x1={x}
+                    y1={y + height * (1 - share)}
+                    x2={x + width}
+                    y2={y + height * (1 - share)}
+                    stroke={LINE}
+                    strokeWidth={0.4 * k}
+                  />
+                ))}
+              </g>
+            );
 
           case 'drawer': {
             /*

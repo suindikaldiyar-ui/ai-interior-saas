@@ -27,7 +27,7 @@ import { vitrineOnCounter } from './vitrine';
 import { dryerKindOf } from './dryer';
 import { applianceModel } from './appliances';
 import type { ProductionSettings } from '@/types/catalog';
-import { upperRowBottomMm, zoneTopOfRun, zoneProfile } from './zones';
+import { tallTopOfRun, upperRowBottomMm, zoneTopOfRun, zoneProfile } from './zones';
 import type { ApplianceKind, Module, ModuleFill, ModuleKind, Run, ZoneKind } from '@/types/millwork';
 
 /**
@@ -70,6 +70,23 @@ export function snapUp32(mm: number): number {
   return SYSTEM32_BASE_MM + Math.max(0, steps) * SYSTEM32_STEP_MM;
 }
 
+/** Ближайшее отверстие НЕ ВЫШЕ заданной высоты — опора прибора не поднимает его над отметкой человека. */
+export function snapDown32(mm: number): number {
+  const steps = Math.floor((mm - SYSTEM32_BASE_MM) / SYSTEM32_STEP_MM);
+  return SYSTEM32_BASE_MM + Math.max(0, steps) * SYSTEM32_STEP_MM;
+}
+
+/*
+ * ОТМЕТКА ПРИБОРА ОТ ПОЛА ↔ ОСЬ ЕГО ОПОРЫ ОТ ДНА КОРПУСА (задача 1). Прибор стоит на полке: его низ — верх
+ * полки, ось полки — на отверстии системы 32. Одна пара функций на ниши, блок пенала и приёмку.
+ */
+export function nicheFromForMarkMm(markMm: number, production?: ProductionSettings): number {
+  return snapDown32(markMm - plinthMm(production) - shopOf(production).carcassMm / 2);
+}
+export function markForNicheFromMm(fromMm: number, production?: ProductionSettings): number {
+  return plinthMm(production) + fromMm + shopOf(production).carcassMm / 2;
+}
+
 /**
  * Ниши колонны снизу вверх: высота от дна корпуса и её прибор.
  *
@@ -79,7 +96,7 @@ export function snapUp32(mm: number): number {
  * паспортной, а не ниже.
  */
 export function columnNiches(
-  unit: Pick<Module, 'column' | 'applianceSizes'>,
+  unit: Pick<Module, 'column' | 'applianceSizes'> & Partial<Pick<Module, 'applianceAt'>>,
   carcassHeightMm: number,
   /** Школа цеха: отметка низа духовки задана ОТ ПОЛА, а цоколь свой. */
   production?: ProductionSettings,
@@ -111,18 +128,121 @@ export function columnNiches(
   const wanted = Math.max(0, APPLIANCE_COLUMN.baseFromFloorMm - plinthMm(production));
   const capped = Math.max(0, Math.min(wanted, carcassHeightMm - needed));
   const snapped = snapUp32(capped);
-  const base = snapped > capped ? Math.max(0, snapped - SYSTEM32_STEP_MM) : snapped;
+  /*
+   * СВОИ ОТМЕТКИ ПРИБОРОВ (задача 1): низ нижнего и верхнего прибора — от пола, как их задал человек; опора — на
+   * ближайшем отверстии не выше отметки. Без отметки — прежнее умолчание; верхний без отметки стоит на нижнем.
+   */
+  const ownBottom = unit.applianceAt?.[column.bottom];
+  const ownTop = unit.applianceAt?.[column.top];
+  const base =
+    ownBottom !== undefined ? nicheFromForMarkMm(ownBottom, production) : snapped > capped ? Math.max(0, snapped - SYSTEM32_STEP_MM) : snapped;
 
   const boundary = snapUp32(base + bottomH);
+  const topFrom = ownTop !== undefined ? Math.max(boundary, nicheFromForMarkMm(ownTop, production)) : boundary;
 
   return [
     { appliance: column.bottom as ApplianceKind, fromMm: base, toMm: boundary },
-    { appliance: column.top as ApplianceKind, fromMm: boundary, toMm: snapUp32(boundary + topH) },
+    { appliance: column.top as ApplianceKind, fromMm: topFrom, toMm: snapUp32(topFrom + topH) },
   ];
 }
 
 /** Низ ниши духовки от дна пенала: на этой высоте её и ставят. */
 export const OVEN_FROM_FLOOR_MM = 850;
+
+/** Пенал с техникой (задача 1): высокий модуль с духовкой, микроволновкой или обеими — не холодильник. */
+export function isPencil(unit: Pick<Module, 'kind' | 'appliance' | 'column'>): boolean {
+  return unit.kind === 'tall' && (Boolean(unit.column) || unit.appliance === 'oven' || unit.appliance === 'microwave');
+}
+
+export type PencilNiche = { appliance: 'oven' | 'microwave'; fromMm: number; toMm: number; markMm: number };
+
+/**
+ * НИШИ ПЕНАЛА СНИЗУ ВВЕРХ (задача 1) — одна функция на блок пенала, проверку операции и приёмку: у колонны —
+ * `columnNiches`, у одного прибора — `singleNicheOf`. `markMm` — низ прибора от пола, который встал на самом деле.
+ */
+export function pencilNiches(unit: Module, carcassHeightMm: number, production?: ProductionSettings): PencilNiche[] {
+  if (!isPencil(unit)) return [];
+  const raw = unit.column
+    ? columnNiches(unit, carcassHeightMm, production)
+    : (() => {
+        const one = singleNicheOf(unit, carcassHeightMm, production);
+        return one ? [{ appliance: unit.appliance as ApplianceKind, ...one }] : [];
+      })();
+  return raw
+    .filter((n) => n.appliance === 'oven' || n.appliance === 'microwave')
+    .map((n) => ({ appliance: n.appliance as 'oven' | 'microwave', fromMm: n.fromMm, toMm: n.toMm, markMm: markForNicheFromMm(n.fromMm, production) }))
+    .sort((a, b) => a.fromMm - b.fromMm);
+}
+
+/**
+ * ВСТАНУТ ЛИ НИШИ ПЕНАЛА (задача 1): опора прибора — над дном, ниши — под крышей, друг в друга не заходят;
+ * свои полки человека — не в нише прибора. Отказ — словами с мм; `null` — встаёт.
+ */
+export function pencilNicheRefusal(
+  unit: Module,
+  carcassHeightMm: number,
+  production?: ProductionSettings,
+  /** Опоры ниш этого модуля (`defaultFill`): их не проверяют как свои полки. */
+  supports: number[] = [],
+): string | null {
+  const t = shopOf(production).carcassMm;
+  const niches = pencilNiches(unit, carcassHeightMm, production);
+  const title = (a: 'oven' | 'microwave') => (a === 'oven' ? 'Духовка' : 'Микроволновка');
+  const whom = (a: 'oven' | 'microwave') => (a === 'oven' ? 'духовку' : 'микроволновку');
+  for (const n of niches) {
+    if (n.fromMm - t / 2 < t) {
+      return `${title(n.appliance)} на ${n.markMm} мм от пола: её опора легла бы на дно корпуса — поднимите прибор хотя бы до ${markForNicheFromMm(snapUp32(1.5 * t), production)} мм.`;
+    }
+    const roof = carcassHeightMm - t;
+    if (n.toMm + t / 2 > roof) {
+      return `${title(n.appliance)} с низом на ${n.markMm} мм не встаёт в корпус ${carcassHeightMm} мм: ниша доходит до ${n.toMm + t / 2} мм от дна, а крыша — на ${roof} мм, лишние ${n.toMm + t / 2 - roof} мм.`;
+    }
+  }
+  if (niches.length === 2) {
+    const [low, high] = niches;
+    const gap = high.fromMm - low.toMm;
+    if (gap < 0) return `${title(high.appliance)} заходит в нишу прибора ниже на ${-gap} мм — поставьте ${whom(high.appliance)} не ниже ${markForNicheFromMm(low.toMm, production)} мм от пола.`;
+    if (gap > 0 && gap < MIN_SHELF_GAP_MM) {
+      return `Между приборами ${gap - t} мм — туда ни полка, ни фасад не встанут: поставьте ${whom(high.appliance)} вплотную (${markForNicheFromMm(low.toMm, production)} мм от пола) или не ниже ${markForNicheFromMm(low.toMm + MIN_SHELF_GAP_MM, production)} мм.`;
+    }
+  }
+  for (const shelf of (unit.fill?.shelves ?? []).filter((s) => !supports.includes(s))) {
+    const inside = niches.find((n) => shelf >= n.fromMm && shelf <= n.toMm);
+    if (inside) return `Полка на ${shelf} мм от дна попала бы в нишу «${title(inside.appliance)}» (${inside.fromMm}…${inside.toMm} мм) — уберите её или поставьте прибор иначе.`;
+    const close = supports.find((x) => Math.abs(x - shelf) < MIN_SHELF_GAP_MM);
+    if (close !== undefined) return `Полка на ${shelf} мм от дна легла бы в ${Math.abs(close - shelf)} мм от опоры прибора (${close} мм) — между полками нужно от ${MIN_SHELF_GAP_MM} мм.`;
+  }
+  return null;
+}
+
+/** Свои полки человека в модуле: всё, чего нет в раскладке по умолчанию (опоры ниш, полки пенала). */
+export function ownShelvesOf(unit: Module, run: Parameters<typeof defaultFill>[1]): number[] {
+  const defaults = defaultFill(unit, run).shelves;
+  return (unit.fill?.shelves ?? []).filter((s) => !defaults.includes(s));
+}
+
+/**
+ * Полки пенала после правки (задача 1): опоры ниш — производная ниш (`defaultFill`) плюс свои полки человека
+ * (`keep`, снятые с прежнего модуля `ownShelvesOf`). Встают ли свои — `pencilNicheRefusal` с этими опорами:
+ * полка в нише не убирается молча, правка отказывает и называет её.
+ */
+export function pencilShelves(unit: Module, run: Parameters<typeof defaultFill>[1], keep: number[] = []): { shelves: number[]; supports: number[] } {
+  const supports = defaultFill(unit, run).shelves;
+  if (!isPencil(unit)) return { shelves: supports, supports };
+  return { shelves: [...supports, ...keep.filter((s) => !supports.includes(s))].sort((a, b) => a - b), supports };
+}
+
+/**
+ * Сколько прибору нужно глубины корпуса (задача 1): глубина прибора — введённая или модели — плюс просвет за ним.
+ * Неизвестна — `null`: проверки по прибору нет, и это сказано словами, а не подставлено числом.
+ */
+export function pencilDepthNeedMm(unit: Module): number | null {
+  const deepest = Math.max(
+    0,
+    ...moduleAppliances(unit).map((a) => unit.applianceSizes?.[a]?.depthMm ?? applianceModel(unit.applianceModels?.[a])?.sizeMm?.depth ?? 0),
+  );
+  return deepest > 0 ? deepest + APPLIANCE_BACK_GAP_MM : null;
+}
 
 /**
  * НИША ОДИНОЧНОГО ПРИБОРА В ПЕНАЛЕ (ЭТАП 4) — одна функция на фасады
@@ -137,12 +257,18 @@ export const OVEN_FROM_FLOOR_MM = 850;
  * (ловушка 103). Правило «низ не выше 600 от пола» сюда не идёт: оно про пару
  * в колонне, документа под одиночный пенал нет (решение владельца).
  */
-export function singleNicheOf(unit: Module, heightMm: number): { fromMm: number; toMm: number } | null {
+export function singleNicheOf(unit: Module, heightMm: number, production?: ProductionSettings): { fromMm: number; toMm: number } | null {
   if (unit.column || unit.kind !== 'tall') return null;
   const appliance = moduleAppliances(unit)[0];
   if (!appliance) return null;
   const niche = nicheHeightMm(appliance, unit.applianceSizes?.[appliance]);
   if (!niche) return null;
+  /* Своя отметка прибора (задача 1): опора — на отверстии не выше неё; влезает ли — проверка операции. */
+  const own = appliance === 'oven' || appliance === 'microwave' ? unit.applianceAt?.[appliance] : undefined;
+  if (own !== undefined) {
+    const fromMm = nicheFromForMarkMm(own, production);
+    return { fromMm, toMm: snapUp32(fromMm + niche) };
+  }
   const wanted = Math.max(0, Math.min(heightMm - niche, OVEN_FROM_FLOOR_MM));
   const snapped = snapUp32(wanted);
   const fromMm = snapped > wanted ? Math.max(0, snapped - SYSTEM32_STEP_MM) : snapped;
@@ -211,6 +337,17 @@ export const MIN_DIVIDER_EDGE_MM = 150;
  * Высота КОРПУСА модуля: от дна до крыши, без цоколя и столешницы.
  * По ней считается и наполнение, и детализировка.
  */
+/**
+ * ПРЕДЕЛ КОРПУСА ВЫСОКОГО ШКАФА СВОЕЙ ВЫСОТЫ, мм (P1): корпус по профилю зоны — или до потолка там, где профиль ниже
+ * потолка (`tallTopOfRun`). Один предел у раскладки, у правки высоты, у корпуса над шкафом и у объединения с ним.
+ */
+export function tallBodyLimitMm(
+  run: Pick<Run, 'zone' | 'ceilingHeightMm'> & Partial<Pick<Run, 'production' | 'topFiller'>>,
+  zoneBodyMm: number,
+): number {
+  return Math.max(zoneBodyMm, tallTopOfRun(run) - plinthMm(run.production));
+}
+
 export function moduleCarcassHeightMm(
   unit: Module,
   run: Pick<Run, 'zone' | 'ceilingHeightMm'> &
@@ -266,8 +403,8 @@ export function moduleCarcassHeightMm(
    * колонны задаёт прибор. Выше того, что позволяет ряд, не бывает: предел
    * — тот же `fullBody`, что у шкафа без заданной высоты.
    */
-  if (unit.heightMm !== undefined && unit.heightMm > 0 && standsOnFloor(unit) && !unit.appliance && !unit.column) {
-    return capped(Math.min(Math.round(unit.heightMm), fullBody));
+  if (unit.heightMm !== undefined && unit.heightMm > 0 && standsOnFloor(unit) && (isPencil(unit) || (!unit.appliance && !unit.column))) {
+    return capped(Math.min(Math.round(unit.heightMm), unit.kind === 'tall' ? tallBodyLimitMm(run, fullBody) : fullBody));
   }
 
   if (unit.section) {
@@ -1010,6 +1147,8 @@ export function moduleDepthMm(
   if (unit.section === 'mezzanine' && unit.storageSize?.depthMm !== undefined) {
     return Math.max(0, Math.round(unit.storageSize.depthMm));
   }
+  /* Своя глубина корпуса (задача 1): задняя плоскость на стене, уходит передняя; хватает ли прибору — у операции. */
+  if (unit.ownDepthMm !== undefined && unit.ownDepthMm > 0) return Math.round(unit.ownDepthMm);
 
   /*
    * Зону спрашивают на уровень ниже: `rowStandardDepthMm` решает, чья
@@ -1221,8 +1360,10 @@ export function defaultFill(
    */
   if (unit.column) {
     const niches = columnNiches(unit, heightMm, run.production);
+    /* Между приборами может быть промежуток (свои отметки, задача 1): у верхнего — своя опора. */
     const shelves = [
       niches[0].fromMm,
+      niches[0].toMm,
       niches[1].fromMm,
       snapUp32(niches[1].toMm),
     ].filter((mm) => mm > 0 && mm < heightMm - MIN_SHELF_GAP_MM);
@@ -1272,7 +1413,7 @@ export function defaultFill(
    * Одиночный прибор в пенале стоит на полке-опоре (ЭТАП 4): полки — границы
    * его ниши (`singleNicheOf`), те же, по которым режутся фасады.
    */
-  const single = singleNicheOf(unit, heightMm);
+  const single = singleNicheOf(unit, heightMm, run.production);
   if (single) {
     return { ...empty, shelves: [single.fromMm, single.toMm].filter((mm) => mm > 0 && mm < heightMm - MIN_SHELF_GAP_MM) };
   }

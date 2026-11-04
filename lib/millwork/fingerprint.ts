@@ -18,6 +18,7 @@ function rodLookKey(rod: { lengthMm?: number; depthMm?: number; profile?: string
 }
 import type { BayDrawerStack, BayShelves, CornerChoice, Module, Run } from '@/types/millwork';
 import { cornerOwnerOf } from './corner';
+import { wallShelfPart } from './wallShelf';
 
 /**
  * Отпечаток конфигурации.
@@ -251,6 +252,14 @@ function extrasPart(unit: Module): string | undefined {
           .join(';')
       : '',
     unit.ovenBelow ? 'oven_below' : '',
+    /*
+     * Своя глубина корпуса (задача 1): другие боковины, дно и полки в раскрое. Пусто не пишется (ловушка 246).
+     * Своя отметка прибора в пенале в отпечаток не пишется: её след — опоры ниш в наполнении (`fill.shelves`), и
+     * две отметки, давшие одну нишу на отверстиях 32, — одна мебель.
+     */
+    unit.ownDepthMm !== undefined ? `d${unit.ownDepthMm}` : '',
+    /* Деление фасада по высоте (P1/P2): другие детали раскроя и другие петли. Пусто не пишется (ловушка 246). */
+    unit.frontSplitMm && unit.frontSplitMm.length > 0 ? `fs=${unit.frontSplitMm.join('/')}` : '',
   ].filter(Boolean);
 
   return parts.length > 0 ? parts.join(',') : undefined;
@@ -304,7 +313,7 @@ export function configurationFingerprint(modules: Module[]): string {
  */
 export function runFingerprint(
   run: Pick<Run, 'modules' | 'upperSegments'> &
-    Partial<Pick<Run, 'beams' | 'slidingSystemItemId' | 'counterCorners' | 'tv' | 'wallPanels' | 'topFiller'>>,
+    Partial<Pick<Run, 'beams' | 'slidingSystemItemId' | 'counterCorners' | 'counterEnds' | 'tv' | 'wallPanels' | 'topFiller' | 'wallShelves'>>,
 ): string {
   const modules = configurationFingerprint([
     ...run.modules,
@@ -336,10 +345,18 @@ export function runFingerprint(
   const filler = run.topFiller
     ? `tf=${run.topFiller.heightMm}/${run.topFiller.setbackMm ?? 0}${run.topFiller.front ? `/${frontKey(run.topFiller.front)}` : ''}`
     : '';
-  if (!beams && !sliding && !corners && !tvZone && !filler) return modules;
+  /*
+   * Продолженная столешница у прямой кухни (задача 6) — другая плита и другие деньги. Только `extend`: снятая над
+   * пустотой у угловой (слой 55) в отпечаток не входила и не входит — у прежних рядов отпечаток прежний.
+   */
+  const extended = (['start', 'end'] as const).filter((end) => run.counterEnds?.[end] === 'extend');
+  const counterExtend = extended.length > 0 ? `cx=${extended.join('/')}` : '';
+  /* Настенные полки (P2): другая деталь раскроя. Пусто не пишется (ловушка 246). */
+  const shelves = wallShelfPart(run);
+  if (!beams && !sliding && !corners && !tvZone && !filler && !counterExtend && !shelves) return modules;
 
   let hash = 0x811c9dc5;
-  for (const ch of `${modules}|${beams ?? ''}${sliding ? `|${sliding}` : ''}${corners ? `|${corners}` : ''}${tvZone ? `|${tvZone}` : ''}${filler ? `|${filler}` : ''}`) {
+  for (const ch of `${modules}|${beams ?? ''}${sliding ? `|${sliding}` : ''}${corners ? `|${corners}` : ''}${tvZone ? `|${tvZone}` : ''}${filler ? `|${filler}` : ''}${counterExtend ? `|${counterExtend}` : ''}${shelves ? `|${shelves}` : ''}`) {
     hash ^= ch.charCodeAt(0);
     hash = Math.imul(hash, 0x01000193) >>> 0;
   }

@@ -2,6 +2,7 @@ import { columnNiches, moduleCarcassHeightMm, moduleFloorMm, upperBottomFor } fr
 import { carcassHeightMm, plinthMm } from './shop';
 import { drawerCellZones, drawerCells, drawerInnerZones, drawerSplitBodies, insertPieces, type DrawerInsertKind } from './drawerGrid';
 import { TOP_FILLER_PANEL_NAME, topFillerFront, topFillerSpans } from './topFiller';
+import { WALL_SHELF_NAME } from './wallShelf';
 import { zoneTopOfRun } from './zones';
 import { cookingModules, ovenNicheOf, stageFourModelsOf, tallOvensOf } from './cookingStack';
 import {
@@ -809,7 +810,7 @@ export type FrontOptions = {
    * КЛЮЧИ ДЕКОРА ПОЛОК И ПЕРЕГОРОДОК — та же `carcassKeyOf` с родом детали.
    * Своего декора нет — ключ тот же, что у корпуса.
    */
-  partKeys?: Partial<Record<'shelves' | 'partitions', string | null>>;
+  partKeys?: Partial<Record<'shelves' | 'partitions' | 'back', string | null>>;
   /**
    * ФРЕЗЕРОВКА, НАЗНАЧЕННАЯ ПОЛОСАМ РЯДА.
    *
@@ -3151,7 +3152,7 @@ export function applianceBoxes(
     Boolean(kind && applianceModel(unit.applianceModels?.[kind]) && (kind === 'microwave' || kind === 'hood' || (kind === 'fridge' && unit.builtIn === false)));
   if (hasVisibleAppliance(unit) && !(unit.appliance === 'oven' && unit.kind === 'tall' && !unit.column) && !ownModel(unit.appliance)) {
     /* Прибор пенала — в своей нише, той же, что разбила фасад на створки (`tallNicheOf`); без ниши — во весь модуль. */
-    const niche = tallNicheOf(unit, Math.round(heightM * MM));
+    const niche = tallNicheOf(unit, Math.round(heightM * MM), production);
     boxes.push(
       ...applianceFace(
         unit.appliance,
@@ -3782,6 +3783,21 @@ export function runBoxesByModule(
     }
   }
 
+  /*
+   * НАСТЕННЫЕ ПОЛКИ (P2): доска у стены — те же числа, что режет раскрой (`WallShelf`): длина вдоль ряда, низ от пола,
+   * глубина от стены (задняя плоскость ряда лежит на стене), толщина. Корпусной материал: в рентгене остаётся.
+   */
+  for (const shelf of run.wallShelves ?? []) {
+    const wallZ0 = -rowStandardDepthMm(run.zone, 'base', run.production) / MM;
+    filler.push({
+      position: [(shelf.fromMm + shelf.toMm) / 2 / MM, (shelf.bottomMm + shelf.thicknessMm / 2) / MM, wallZ0 + shelf.depthMm / 2 / MM],
+      scale: [(shelf.toMm - shelf.fromMm) / MM, shelf.thicknessMm / MM, shelf.depthMm / MM],
+      material: 'carcass',
+      panel: WALL_SHELF_NAME,
+      partId: `wall-shelf:${shelf.id}`,
+    });
+  }
+
   /* Система купе ряда (HARDWARE-01): шины и полотна — по позиции ряда. */
   filler.push(...kupeBoxes(run, options));
 
@@ -3869,6 +3885,8 @@ export function runBoxesByModule(
         partKeys: {
           shelves: carcassKeyOf(entry.unit, run, carcassItems, 'shelves'),
           partitions: carcassKeyOf(entry.unit, run, carcassItems, 'partitions'),
+          /* Задняя стенка своей позиции (P3) — свой цвет; не выбрана — как было, ключом корпуса. */
+          ...(run.carcass?.back ? { back: carcassKeyOf(entry.unit, run, carcassItems, 'back') } : {}),
         },
         /* У слепого угла фасад — только на доступной части (`openFrontOf`): её ширина и с какой стороны. */
         ...openOptions(entry.unit, run),

@@ -220,7 +220,7 @@ export function tallOvensOf(run: Pick<Run, 'modules' | 'zone' | 'ceilingHeightMm
     const niche = unit.column
       ? columnNiches(unit, carcass, production).find((n) => n.appliance === 'oven') ?? null
       : unit.appliance === 'oven'
-        ? singleNicheOf(unit, carcass)
+        ? singleNicheOf(unit, carcass, production)
         : null;
     if (!niche) continue;
     out.push({
@@ -325,7 +325,7 @@ export function cookingFindings(
      * универсальное «низ не выше 600 мм» без документа сюда не идёт.
      */
     const carcass = moduleCarcassHeightMm(unit, run);
-    const single = singleNicheOf(unit, carcass);
+    const single = singleNicheOf(unit, carcass, production);
     /*
      * ПРОСВЕТ НИШИ ДУХОВОГО ШКАФА В ПЕНАЛЕ И КОЛОННЕ (ЭТАП 4, A4). Ниша — между
      * осями опор на отверстиях 32, просвет — минус толщина полки: 608 − 16 = 592
@@ -549,7 +549,7 @@ export function stageFourModelsOf(run: Pick<Run, 'modules' | 'zone' | 'ceilingHe
       const niche = unit.column
         ? (columnNiches(unit, carcass, production).find((n) => n.appliance === 'microwave') ?? null)
         : unit.appliance === 'microwave'
-          ? singleNicheOf(unit, carcass)
+          ? singleNicheOf(unit, carcass, production)
           : null;
       if (niche) out.push({ unit, kind: 'microwave', model: mw, xMm: x, bottomMm: plinth + niche.fromMm + t / 2, zMm: 0, moverIds: [`${unit.id}:microwave:door`] });
     }

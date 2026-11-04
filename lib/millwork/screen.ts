@@ -57,6 +57,11 @@ export type ScreenInput = {
    */
   drawerDraft?: string | null;
   /**
+   * КОНСТРУКЦИЯ НЕ ПОДТВЕРЖДЕНА (FINAL FURNITURE EDITOR, P0): плита над пустотой без опоры, полка без крепления и
+   * нагрузки — словами. Проектировать, считать смету и писать можно; выгрузка и печать для цеха заперты.
+   */
+  construction?: { words: string }[];
+  /**
    * ОСТРОВ НЕ ВСТАНЕТ (OVAL & RADIUS): вошёл в мебель ряда, в стену или в
    * колонну — словами (`islandIssues`). Цены нет, «Дальше» и выпуск в цех
    * заперты; запись идёт — данные целы, а запертая запись потеряла бы
@@ -231,6 +236,7 @@ export function screenState(input: ScreenInput): ScreenState {
   const applianceBlocks = (input.appliances ?? []).filter((f) => f.level === 'blocking').map((f) => f.words);
   const applianceRelease = (input.appliances ?? []).filter((f) => f.level === 'release').map((f) => f.words);
   const materialRelease = (input.materials ?? []).map((f) => f.words);
+  const constructionRelease = (input.construction ?? []).map((f) => f.words);
 
   const channel: SurveyWarning[] = [
     ...(refusal
@@ -267,6 +273,7 @@ export function screenState(input: ScreenInput): ScreenState {
     })),
     ...applianceRelease.map((words, i) => ({ id: `appliance-release-${i}`, severity: 'clarify' as const, message: `${words}.` })),
     ...materialRelease.map((words, i) => ({ id: `material-release-${i}`, severity: 'clarify' as const, message: `${words}.` })),
+    ...constructionRelease.map((words, i) => ({ id: `construction-release-${i}`, severity: 'clarify' as const, message: `${words}.` })),
     ...(catalogError
       ? [
           {
@@ -391,7 +398,9 @@ export function screenState(input: ScreenInput): ScreenState {
               ? `Выгрузки для раскроя и печати для цеха нет: ${applianceRelease[0]}.`
               : materialRelease.length > 0
                 ? `Выгрузки для раскроя и печати для цеха нет: ${materialRelease[0]}.`
-                : (input.drawerDraft ?? null);
+                : constructionRelease.length > 0
+                  ? `Выгрузки для раскроя и печати для цеха нет: ${constructionRelease[0]}.`
+                  : (input.drawerDraft ?? null);
   const exportLocked = exportLockText !== null;
 
   return {

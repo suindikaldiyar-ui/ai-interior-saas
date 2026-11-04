@@ -987,6 +987,18 @@ export function applianceChecks(check: Check): void {
       `${words(mwFind)} · низ ${mwPlace?.bottomMm ?? 'НЕТ'} · лицо ${faceBoxes(typical.run, colT.id)} → ${faceBoxes(mw.run, col.id)} · строка ${mwLine ? mwLine.title : 'НЕТ'}`,
     );
 
+    /*
+     * AP28в (COMPLETE UNFINISHED, P5): прибор под просвет не подгоняется — слова отказа называют ближайшие просветы на
+     * отверстиях 32 (32·k − полка: 368 и 400 мм) и ту установку, что печатает та же инструкция (навесной шкаф,
+     * ниша 362…365, рис. 16.5) — блок «СВЧ в навесном шкафу».
+     */
+    const gridWords = mwFind.find((f) => f.level === 'blocking' && f.words.includes('просвет ниши между опорами'))?.words ?? '';
+    check(
+      'AP28в BFL524MB2 в колонне: «ближайшие просветы 368 и 400 мм — 380…382 на них не получить»; инструкция печатает навесной шкаф — «ниша 362…365 мм», блок «СВЧ в навесном шкафу»',
+      /ближайшие просветы 368 и 400 мм/.test(gridWords) && /380…382 на них не получить/.test(gridWords) && /ниша 362…365 мм/.test(gridWords) && /СВЧ в навесном шкафу/.test(gridWords),
+      gridWords,
+    );
+
     /* AP29: встраиваемый KIN86AF3M8 — ниша 1775 в колонне, кладовка над ней, фасад на двери прибора. */
     const built = shown({ ...DEMO_REQUIREMENTS, applianceModels: { fridge: 'KIN86AF3M8' } });
     const fridgeB = unitOf(built.run, (m) => m.appliance === 'fridge', 'холодильника');

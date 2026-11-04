@@ -2258,7 +2258,8 @@ function FrameProbe({ rows, room, design }: { rows: SceneRow[]; room: Room | nul
       });
       return out;
     };
-    (w as { __mwCadTopFiller?: () => unknown }).__mwCadTopFiller = () => {
+    /* Доски ряда в сцене (верхняя фальшпанель, настенная полка P2) — по части ИД детали: `:top-filler:` или `wall-shelf:`. */
+    (w as { __mwCadTopFiller?: (needle?: string) => unknown }).__mwCadTopFiller = (needle = ':top-filler:') => {
       const out: { partId: string; boundsMm: number[] }[] = [];
       const matrix = new THREE.Matrix4();
       const unitBox = new THREE.Box3(new THREE.Vector3(-0.5, -0.5, -0.5), new THREE.Vector3(0.5, 0.5, 0.5));
@@ -2267,10 +2268,10 @@ function FrameProbe({ rows, room, design }: { rows: SceneRow[]; room: Room | nul
         const mesh = object as THREE.InstancedMesh;
         if (!mesh.isInstancedMesh || mesh.visible === false) return;
         const ids = (mesh.userData.partIds ?? []) as (string | null)[];
-        if (!ids.some((id) => id?.includes(':top-filler:'))) return;
+        if (!ids.some((id) => id?.includes(needle))) return;
         mesh.updateWorldMatrix(true, false);
         ids.forEach((id, index) => {
-          if (!id || !id.includes(':top-filler:') || index >= mesh.count) return;
+          if (!id || !id.includes(needle) || index >= mesh.count) return;
           mesh.getMatrixAt(index, matrix);
           box.copy(unitBox).applyMatrix4(matrix).applyMatrix4(mesh.matrixWorld);
           out.push({ partId: id, boundsMm: [box.min.x, box.min.y, box.min.z, box.max.x, box.max.y, box.max.z].map((v) => Math.round(v * 1000)) });

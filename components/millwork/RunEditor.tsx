@@ -1190,6 +1190,7 @@ export default function RunEditor({
               <label className={`block ${hide(onBuild)}`}>
                 <span className="mw-label">Секция</span>
                 <select
+                  data-section-select={selected.id}
                   value={selected.section ?? ''}
                   onChange={(e) => {
                     const value = e.target.value as SectionKind | '';

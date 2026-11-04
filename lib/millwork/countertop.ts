@@ -133,7 +133,7 @@ export type CounterTail = {
 };
 
 export function counterTailsOf(run: RunLike): CounterTail[] {
-  if (!run.corner) return [];
+  if (!run.corner) return extendedTails(run);
   const bearing = [...run.modules]
     .filter((unit) => bearsCountertop(unit, run))
     .sort((a, b) => a.offsetMm - b.offsetMm);
@@ -175,6 +175,65 @@ export function counterTailsOf(run: RunLike): CounterTail[] {
   return tails;
 }
 
+/**
+ * ПРОДОЛЖЕННАЯ ПЛИТА У ПРЯМОЙ КУХНИ (задача 6). Правило прямой (ловушка 230) — за крайним модулем плиты нет;
+ * человек вправе продолжить её (`counterEnds[конец] = 'extend'`) от крайнего модуля, несущего плиту, до ближайшей
+ * опоры с той стороны: боковины высокого модуля или стены. Добор под хвостом меньше 150 мм — то же правило, что у
+ * угловой. Сквозь пенал плита не идёт: хвост кончается на его боковине.
+ */
+function extendedTails(run: RunLike): CounterTail[] {
+  const ends = run.counterEnds ?? {};
+  if (ends.start !== 'extend' && ends.end !== 'extend') return [];
+  return (['start', 'end'] as const).flatMap((end) => {
+    if (ends[end] !== 'extend') return [];
+    const tail = counterGapOf(run, end);
+    return tail ? [tail] : [];
+  });
+}
+
+/**
+ * Пустота у конца плиты прямой кухни — от крайнего модуля, несущего плиту, до боковины высокого модуля или стены.
+ * Её и продолжает `set_counter_extend`; `null` — плиты нет или пустоты нет.
+ */
+export function counterGapOf(run: RunLike, end: 'start' | 'end'): CounterTail | null {
+  const bearing = [...run.modules].filter((unit) => bearsCountertop(unit, run)).sort((a, b) => a.offsetMm - b.offsetMm);
+  if (bearing.length === 0) return null;
+  const floor = [...run.modules].filter((unit) => standsOnFloor(unit)).sort((a, b) => a.offsetMm - b.offsetMm);
+  if (end === 'start') {
+    const first = bearing[0];
+    if (first.radius?.place === 'left') return null;
+    const stop = floor.filter((unit) => unit.offsetMm + unit.widthMm <= first.offsetMm).pop();
+    const fromMm = stop ? stop.offsetMm + stop.widthMm : 0;
+    if (fromMm >= first.offsetMm) return null;
+    const widthMm = first.offsetMm - fromMm;
+    return { end, widthMm, filler: widthMm < TAIL_FILLER_MAX_MM, corner: false, fromMm, toMm: first.offsetMm };
+  }
+  const last = bearing[bearing.length - 1];
+  if (last.radius?.place === 'right') return null;
+  const lastEnd = last.offsetMm + last.widthMm;
+  const stop = floor.find((unit) => unit.offsetMm >= lastEnd);
+  const toMm = stop ? stop.offsetMm : run.lengthMm;
+  if (toMm <= lastEnd) return null;
+  const widthMm = toMm - lastEnd;
+  return { end, widthMm, filler: widthMm < TAIL_FILLER_MAX_MM, corner: false, fromMm: lastEnd, toMm };
+}
+
+/**
+ * ПЛИТА НАД ПУСТОТОЙ БЕЗ ПОДТВЕРЖДЁННОЙ ОПОРЫ (FINAL FURNITURE EDITOR, P0). Продолженная у прямой кухни плита над
+ * хвостом от 150 мм держится только тем, чем её крепят к стене или к боковине пенала, — а кронштейнов, ножек и их
+ * нагрузки цех не задавал. Проектировать можно, выпуск в цех заперт словами: участок, длина и что не задано.
+ * Хвост меньше 150 мм закрывает добор (опора есть) — слов нет.
+ */
+export function counterSupportFindings(run: RunLike, label: string): { words: string }[] {
+  return extendedTails(run)
+    .filter((tail) => !tail.filler)
+    .map((tail) => ({
+      words:
+        `${label}: столешница продолжена над пустотой ${tail.fromMm}…${tail.toMm} мм (${tail.widthMm} мм) — опору плиты ` +
+        '(кронштейн к стене или к боковине пенала, ножку) и её нагрузку цех не задавал: конструкция не подтверждена',
+    }));
+}
+
 /** Где доборы хвостов: только у хвостов меньше 150 мм, под плитой. */
 export function tailFillersOf(run: RunLike): { fromMm: number; toMm: number }[] {
   return counterTailsOf(run)
@@ -210,8 +269,9 @@ function slabsOverModules(run: RunLike): CounterSlab[] {
   for (const tail of counterTailsOf(run)) {
     const cut = !tail.filler && !tail.corner && run.counterEnds?.[tail.end] === 'cut';
     if (cut) continue;
-    if (tail.end === 'start') slabs[0] = { ...slabs[0], fromMm: 0 };
-    else slabs[slabs.length - 1] = { ...slabs[slabs.length - 1], toMm: run.lengthMm };
+    /* Хвост угловой — до конца ряда; продолженный у прямой — до стены или боковины пенала (`tail.fromMm/toMm`). */
+    if (tail.end === 'start') slabs[0] = { ...slabs[0], fromMm: tail.fromMm };
+    else slabs[slabs.length - 1] = { ...slabs[slabs.length - 1], toMm: tail.toMm };
   }
 
   /*

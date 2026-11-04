@@ -84,7 +84,7 @@ export default function StudioInspector({ run, wall, selectedId, gap }: Props) {
   const row = unit ? (rowOfModule(run, unit.id)?.row ?? null) : null;
 
   return (
-    <div className="mb-4 rounded-[var(--r-panel)] bg-surface-2 px-4 py-3" data-studio-inspector>
+    <div className="mb-4 min-w-0 rounded-[var(--r-panel)] bg-surface-2 px-4 py-3 [overflow-wrap:anywhere]" data-studio-inspector>
       {/*
         * СТЕНА — ВСЕГДА ПЕРВОЙ СТРОКОЙ.
         *
@@ -115,7 +115,7 @@ export default function StudioInspector({ run, wall, selectedId, gap }: Props) {
 
       {unit && place && heightMm !== null && depthMm !== null && fronts ? (
         <dl
-          className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[13px]"
+          className="mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-[13px]"
           data-inspector-module={unit.id}
           data-inspector-wall={wall.id}
           data-inspector-offset={unit.offsetMm}

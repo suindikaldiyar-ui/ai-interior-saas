@@ -76,10 +76,12 @@ import { islandOpsRefusal, islandRequirements } from '@/lib/millwork/islandEdit'
 import { islandIssues, islandWallClearance } from '@/lib/millwork/islandCheck';
 import { flatRadiusFronts, staleRadius } from '@/lib/millwork/radiusPlace';
 import { ratesFromCatalog } from '@/lib/millwork/rates';
-import { markShownMm, marksOfZone, moduleCarcassHeightMm, rowStandardDepthMm } from '@/lib/millwork/fill';
+import { isPencil, markShownMm, marksOfZone, moduleCarcassHeightMm, rowStandardDepthMm } from '@/lib/millwork/fill';
 import { bayEnvelope, drawerReleaseBlock } from '@/lib/millwork/bays';
 import { cookingFindings } from '@/lib/millwork/cookingStack';
 import { apronFindings } from '@/lib/millwork/apron';
+import { counterSupportFindings } from '@/lib/millwork/countertop';
+import { wallShelfFindings } from '@/lib/millwork/wallShelf';
 import { applianceModelFindings } from '@/lib/millwork/applianceChecks';
 import { hardwareByCategory, hardwareCatalog, lightReferences, referencedCatalogIds } from '@/lib/millwork/hardware';
 import { doorRoomSolids, roomAroundRows, roomSourceOf, type RoomSource } from '@/lib/millwork/room';
@@ -3466,6 +3468,7 @@ export default function Workspace(props: WorkspaceProps) {
       carcass: { itemId: carcassId && materialItems.has(carcassId) ? carcassId : null },
       shelves: { itemId: known(segments[0]?.carcass?.shelves) },
       partitions: { itemId: known(segments[0]?.carcass?.partitions) },
+      back: { itemId: known(segments[0]?.carcass?.back) },
       antresol: { itemId: antresolTop ? antresolTop[0] : null },
       countertop: counter ? { itemId: counter.itemId, surface: counter.surface } : { itemId: null },
       /* Фартук (ЭТАП 4): всех стен — у первой стены; этой стены — у выбранной. */
@@ -4015,6 +4018,12 @@ export default function Workspace(props: WorkspaceProps) {
     ],
     [rowsAll, sceneRowsAll, production, hardwareItems, lightingRoom, roomWallName],
   );
+  /* Плита над пустотой без опоры (P0): проектировать можно, выпуск в цех заперт словами. */
+  /* Настенная полка (P2): крепления и нагрузки цех не задавал — выпуск заперт словами, как у плиты над пустотой. */
+  const constructionFindings = useMemo(
+    () => segments.flatMap((row, i) => [...counterSupportFindings(row, wallLabel(i)), ...wallShelfFindings(row, wallLabel(i))]),
+    [segments],
+  );
   /* Фартук из каталога (ЭТАП 4, часть C): размеры не подтверждены документами — заперт только выпуск. */
   const materialFindings = useMemo(
     () => segments.flatMap((row, i) => apronFindings(row, materialItems, production, wallLabel(i))),
@@ -4039,6 +4048,7 @@ export default function Workspace(props: WorkspaceProps) {
         /* Варочная и духовой шкаф по документам Bosch (ЭТАП 3): нарушено — цены нет; нечем выпустить — выпуск заперт. */
         appliances: applianceFindings,
         materials: materialFindings,
+        construction: constructionFindings,
         /*
          * Правки и закрепления, которые сейчас не участвуют: те же
          * `editedRuns`, `editedWalls` и `applianceWalls`, что держит экран.
@@ -4067,6 +4077,7 @@ export default function Workspace(props: WorkspaceProps) {
       drawerDraft,
       applianceFindings,
       materialFindings,
+      constructionFindings,
       islandProblems,
       active.run,
       input.runWallId,
@@ -5947,7 +5958,7 @@ export default function Workspace(props: WorkspaceProps) {
         'Studio открыт без оболочки: страница Studio обязана обернуть рабочее место в StudioKitProvider.',
       );
     }
-    const { StudioShell, RoomPlan, WallInspector, StudioObjects, StudioInspector, FillEditor, OverheadEditor, StorageEditor, DryerEditor, LeafPartsEditor, FridgePanelsEditor, WallMicrowaveEditor, DrawerFrontsEditor, CeilingLiftEditor, VitrineEditor, RadiusEditor } = studioKit;
+    const { StudioShell, RoomPlan, WallInspector, StudioObjects, StudioInspector, FillEditor, OverheadEditor, StorageEditor, DryerEditor, LeafPartsEditor, FridgePanelsEditor, WallMicrowaveEditor, PencilEditor, SpanEditor, ModuleSizeEditor, FrontSplitEditor, DrawerFrontsEditor, CeilingLiftEditor, VitrineEditor, RadiusEditor } = studioKit;
     const surveyWalls = survey?.walls ?? [];
     const turnWords = (item: Survey['walls'][number]) =>
       item.turn === 'custom' ? `${item.turnDeg}° (другой угол)` : `90° ${item.turn === 'left' ? 'влево' : 'вправо'}`;
@@ -6239,7 +6250,8 @@ export default function Workspace(props: WorkspaceProps) {
     );
 
     const studioInspector = (
-      <div className="grid gap-3">
+      /* Столбец — не шире колонки (`minmax(0,1fr)`): блок с широким содержимым не растягивает соседей за край окна. */
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-3">
         {props.libraryNote && (
           <p className="rounded-[var(--r-control)] bg-surface-2 px-3 py-2 text-[13px] leading-snug text-tape">
             {props.libraryNote}. Подставленные величины — допущения, смета предварительная.
@@ -6510,6 +6522,104 @@ export default function Workspace(props: WorkspaceProps) {
                 unit={selectedUnit}
                 run={activeRun}
                 production={production}
+                onOps={(ops, onRefusal) => runOps(ops, onRefusal)}
+                preview={(ops) =>
+                  applyOps({
+                    run: activeRun,
+                    requirements: requirementsOf(activeIndex),
+                    ops,
+                    openings: wallOpenings(activeIndex),
+                    roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
+                    hardware: hardwareItems,
+                  })
+                }
+              />
+            )}
+            {/*
+              * ПЕНАЛ — ДУХОВКА И МИКРОВОЛНОВКА (задача 1): у высокого модуля кухни без холодильника в нижнем ряду.
+              * Приборы, порядок, отметки, модели, корпус и свои полки — операциями движка тем же `runOps`; встанет
+              * ли — движок вхолостую до нажатия. Ключ — по записанному модулю: поля после правки показывают число ряда.
+              */}
+            {selectedUnit &&
+              selectedUnit.kind === 'tall' &&
+              selectedUnit.appliance !== 'fridge' &&
+              (activeRun.zone ?? 'kitchen') === 'kitchen' &&
+              activeRun.modules.some((m) => m.id === selectedUnit.id) && (
+                <PencilEditor
+                  key={`pencil:${selectedUnit.id}:${JSON.stringify([selectedUnit.column ?? null, selectedUnit.applianceAt ?? null, selectedUnit.applianceModels ?? null, selectedUnit.heightMm ?? null, selectedUnit.ownDepthMm ?? null, selectedUnit.widthMm])}:${activeRun.fingerprint}`}
+                  unit={selectedUnit}
+                  run={activeRun}
+                  production={production}
+                  /* Идентификатор пенала выводится из прибора: убрали духовку — модуль тот же, id другой. Выделение — по месту. */
+                  onOps={(ops, onRefusal) =>
+                    runOps(ops, onRefusal, (next) => next.modules.find((m) => m.offsetMm === selectedUnit.offsetMm && m.kind === 'tall')?.id ?? null)
+                  }
+                  preview={(ops) =>
+                    applyOps({
+                      run: activeRun,
+                      requirements: requirementsOf(activeIndex),
+                      ops,
+                      openings: wallOpenings(activeIndex),
+                      roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
+                      hardware: hardwareItems,
+                    })
+                  }
+                />
+              )}
+            {/*
+              * РАЗМЕРЫ МОДУЛЯ (общий редактор размеров): ширина, высота и глубина числом и ±10 — `set_width`,
+              * `set_height`, `set_module_depth` тем же `runOps`. У пенала — свой блок «Пенал».
+              */}
+            {selectedUnit && !onIsland && !isPencil(selectedUnit) && (activeRun.modules.some((m) => m.id === selectedUnit.id) || activeRun.upperSegments.some((s) => s.modules.some((m) => m.id === selectedUnit.id))) && (
+              <ModuleSizeEditor
+                key={`size:${selectedUnit.id}:${selectedUnit.widthMm}:${selectedUnit.heightMm ?? ''}:${selectedUnit.ownDepthMm ?? ''}:${activeRun.fingerprint}`}
+                unit={selectedUnit}
+                run={activeRun}
+                onOps={(ops, onRefusal) => runOps(ops, onRefusal, (next) => next.modules.find((m) => m.offsetMm === selectedUnit.offsetMm && m.kind === selectedUnit.kind)?.id ?? next.upperSegments.flatMap((s) => s.modules).find((m) => m.offsetMm === selectedUnit.offsetMm)?.id ?? null)}
+                preview={(ops) =>
+                  applyOps({
+                    run: activeRun,
+                    requirements: requirementsOf(activeIndex),
+                    ops,
+                    openings: wallOpenings(activeIndex),
+                    roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
+                    hardware: hardwareItems,
+                  })
+                }
+              />
+            )}
+            {/*
+              * ФАСАД ПО ВЫСОТЕ И СЕКЦИИ (P1/P2): деление фасада, выравнивание шва по соседям, шкаф и антресоль — один
+              * корпус. `set_front_split` / `merge_overhead` тем же `runOps`; встанет ли — вхолостую до нажатия.
+              */}
+            {selectedUnit && !onIsland && (activeRun.modules.some((m) => m.id === selectedUnit.id) || activeRun.upperSegments.some((s) => s.modules.some((m) => m.id === selectedUnit.id))) && (
+              <FrontSplitEditor
+                key={`fsplit:${selectedUnit.id}:${(selectedUnit.frontSplitMm ?? []).join('/')}:${activeRun.fingerprint}`}
+                unit={selectedUnit}
+                run={activeRun}
+                onOps={(ops, onRefusal) => runOps(ops, onRefusal, (next) => next.modules.find((m) => m.offsetMm === selectedUnit.offsetMm && m.kind === 'tall')?.id ?? next.modules.find((m) => m.offsetMm === selectedUnit.offsetMm)?.id ?? next.upperSegments.flatMap((s) => s.modules).find((m) => m.offsetMm === selectedUnit.offsetMm)?.id ?? null)}
+                preview={(ops) =>
+                  applyOps({
+                    run: activeRun,
+                    requirements: requirementsOf(activeIndex),
+                    ops,
+                    openings: wallOpenings(activeIndex),
+                    roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
+                    hardware: hardwareItems,
+                  })
+                }
+              />
+            )}
+            {/*
+              * УЧАСТОК ДО СТЕНЫ И ДЕЛЕНИЕ (задача 6): пустоты рядом — те же `libraryGapList`, что рисует схема; заполнить,
+              * продолжить столешницу, разделить модуль — операциями движка тем же `runOps`, встанет ли — вхолостую до нажатия.
+              */}
+            {selectedUnit && !onIsland && (activeRun.modules.some((m) => m.id === selectedUnit.id) || activeRun.upperSegments.some((s) => s.modules.some((m) => m.id === selectedUnit.id))) && (
+              <SpanEditor
+                key={`span:${selectedUnit.id}:${selectedUnit.widthMm}:${activeRun.fingerprint}:${JSON.stringify(activeRun.counterEnds ?? null)}`}
+                unit={selectedUnit}
+                run={activeRun}
+                gaps={libraryGapList}
                 onOps={(ops, onRefusal) => runOps(ops, onRefusal)}
                 preview={(ops) =>
                   applyOps({

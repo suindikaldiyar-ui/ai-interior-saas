@@ -181,7 +181,7 @@ export default function LeafPartsEditor({ unit, run, production, hardware, onOps
             viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
             width={VIEW_W}
             height={VIEW_H}
-            className="touch-none self-start rounded-[6px] bg-surface-2"
+            className="h-auto max-w-full touch-none self-start rounded-[6px] bg-surface-2"
             data-handle-board
             onPointerMove={(e) => {
               if (!drag.current || !knob.current) return;

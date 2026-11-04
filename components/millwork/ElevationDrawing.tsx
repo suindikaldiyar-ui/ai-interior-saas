@@ -1755,6 +1755,7 @@ export default function ElevationDrawing({
           width={w}
           height={h}
           lineScale={k}
+          heightMm={tallTop - bottom}
         />
 
         {/*
@@ -2392,6 +2393,30 @@ export default function ElevationDrawing({
             stroke="var(--blueprint)"
             strokeWidth={0.5 * k}
           />
+        ))}
+
+        {/* Настенные полки (P2): та же доска, что режет раскрой и ставит сцена — длина, низ от пола, толщина. */}
+        {(run.wallShelves ?? []).map((shelf) => (
+          <g key={`wall-shelf-${shelf.id}`} data-wall-shelf={shelf.id} data-from-mm={shelf.fromMm} data-to-mm={shelf.toMm} data-bottom-mm={shelf.bottomMm}>
+            <rect
+              x={padLeft + shelf.fromMm * scale}
+              y={yOf(shelf.bottomMm + shelf.thicknessMm)}
+              width={(shelf.toMm - shelf.fromMm) * scale}
+              height={Math.max(0.6, shelf.thicknessMm * heightScale)}
+              fill="var(--sheet)"
+              stroke="var(--blueprint)"
+              strokeWidth={0.8 * k}
+            />
+            <text
+              x={padLeft + ((shelf.fromMm + shelf.toMm) / 2) * scale}
+              y={yOf(shelf.bottomMm + shelf.thicknessMm) - 2}
+              textAnchor="middle"
+              fontSize={6}
+              fill="var(--graphite-mw)"
+            >
+              полка {shelf.toMm - shelf.fromMm} × {shelf.depthMm}, низ {shelf.bottomMm}
+            </text>
+          </g>
         ))}
 
         {/* Верхняя фальшпанель (задача B): над мебелью до потолка, те же участки, что режет раскрой. */}

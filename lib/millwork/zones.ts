@@ -243,6 +243,24 @@ export function zoneHeightMm(
 }
 
 /** Верх зоны у ряда — с его фальшпанелью (`Run.topFiller`). Одна функция на всех, кто держит ряд. */
+/**
+ * ВЕРХ ВЫСОКОГО ШКАФА СВОЕЙ ВЫСОТЫ И КОРПУСА НАД НИМ (COMPLETE UNFINISHED, P1), мм от пола.
+ *
+ * У зон «до потолка» — тот же верх зоны. У зала и санузла верх ряда задаёт профиль (2000 и 850 мм), а высокий шкаф
+ * ТВ-зоны доводят до потолка: потолок минус зазор цеха и верхняя фальшпанель — та же отметка, что у зон «до потолка».
+ * Умолчание прежнее: без своей высоты шкаф стоит по профилю (`moduleCarcassHeightMm`), ряды не едут.
+ */
+export function tallTopOfRun(run: {
+  zone?: ZoneKind | null;
+  ceilingHeightMm: number;
+  production?: ProductionSettings;
+  topFiller?: { heightMm: number } | null;
+}): number {
+  const zoneTop = zoneTopOfRun(run);
+  if (zoneProfile(run.zone).height === 'ceiling') return zoneTop;
+  return Math.max(zoneTop, run.ceilingHeightMm - ceilingGapOf(run.production).gapMm - Math.max(0, run.topFiller?.heightMm ?? 0));
+}
+
 export function zoneTopOfRun(run: {
   zone?: ZoneKind | null;
   ceilingHeightMm: number;

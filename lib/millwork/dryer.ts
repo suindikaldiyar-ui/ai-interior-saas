@@ -58,7 +58,39 @@ export type DryerLayout = {
   printed: string[];
   /** Что условно — словами. */
   visual: string[];
+  /**
+   * Нижняя выдвижная (задача 3): корзин на фасаде и условна ли вторая. Двухуровневого комплекта позиции
+   * производитель не печатал — вторая корзина «условная композиция»: в смете без цены, присадки нет.
+   */
+  baskets?: 1 | 2;
+  composed?: boolean;
 };
+
+/** Между корзинами нижней сушки, мм — картинка, не паспорт (задача 3). */
+export const SECOND_BASKET_GAP_MM = 40;
+
+/**
+ * Первая корзина нижней сушки — одна раскладка на сцену и проверку: ось направляющих от низа корпуса и высота
+ * корзины (напечатанное у позиции, иначе условно).
+ */
+function lowerBasket(env: DryerEnvelope, item: HardwareItem | null) {
+  const t = env.thicknessMm;
+  const innerH = env.heightMm - 2 * t;
+  const rfb = dim(item, 'runnerFromBottom');
+  const minH = dim(item, 'minInnerHeight');
+  const runnerY = t + (rfb ?? VISUAL.runnerFromBottomMm);
+  const basketH = Math.max(100, Math.min((minH ?? VISUAL.basketMm) - 40, innerH - (runnerY - t) - 40));
+  /* Низ корзины от низа корпуса в свету, мм. */
+  const bottomMm = runnerY - 10 - t;
+  return { rfb, minH, runnerY, basketH, bottomMm, innerH };
+}
+
+/** Низ второй корзины от низа корпуса в свету, мм; `null` — корзина одна. */
+export function secondBasketMm(spec: DryerSpec | undefined, env: DryerEnvelope, item: HardwareItem | null): number | null {
+  if (spec?.levels !== 2) return null;
+  const first = lowerBasket(env, item);
+  return spec.upperMm ?? first.bottomMm + first.basketH + SECOND_BASKET_GAP_MM;
+}
 
 /** Решётки — картинка: высота прутков тарелок и чашек, шаг прутков, толщина прутка. */
 const RACK = { plateMm: 120, cupMm: 80, barStepMm: 40, wireMm: 4, trayMm: 3, trayBelowMm: 30, holderMm: 8 } as const;
@@ -187,17 +219,34 @@ export function dryerOf(unit: Module, env: DryerEnvelope, item: HardwareItem | n
   }
 
   /* Нижняя выдвижная: корзина на направляющих, едет с фасадом. */
-  const rfb = dim(item, 'runnerFromBottom');
-  const minH = dim(item, 'minInnerHeight');
+  const { rfb, minH, runnerY, basketH } = lowerBasket(env, item);
   if (rfb !== null) printed.push(`направляющие — ${rfb} мм от дна (${page})`);
   if (minH !== null) printed.push(`высота в свету — от ${minH} мм (${page})`);
   visual.push('глубина корзины на чертеже не подписана — по корпусу; ход — полное выдвижение на глубину корзины, условно');
-  const runnerY = t + (rfb ?? VISUAL.runnerFromBottomMm);
-  const basketH = Math.max(100, Math.min((minH ?? VISUAL.basketMm) - 40, innerH - (runnerY - t) - 40));
   const bw = innerW - 2 * VISUAL.sideClearMm;
   const bd = Math.max(200, D - t - VISUAL.backGapMm);
   const bz = -(20 + bd / 2);
   const by = runnerY - 10;
+  /* Вторая корзина (задача 3) — над первой, на том же фасаде; её место — `secondBasketMm`, та же функция, что у проверки. */
+  const second = secondBasketMm(spec, env, item);
+  const kitLevels = dryerItemLevels(item);
+  const composed = second !== null && kitLevels !== 2;
+  if (second !== null) {
+    const y2 = t + second;
+    box('grid', true, W / 2, y2, bz, bw, RACK.wireMm, bd);
+    for (const sx of [t + VISUAL.sideClearMm + RACK.wireMm / 2, W - t - VISUAL.sideClearMm - RACK.wireMm / 2]) box('basket-rail', true, sx, y2 + basketH / 2, bz, RACK.wireMm, basketH, bd);
+    for (const z of [bz + bd / 2, bz - bd / 2]) box('basket-rail', true, W / 2, y2 + basketH / 2, z, bw, basketH, RACK.wireMm);
+    for (const x of [W / 2 - bw / 4, W / 2 + bw / 4]) box('cup-bar', true, x, y2 + RACK.cupMm / 2, bz, RACK.wireMm, RACK.cupMm, bd - 20);
+    /* Стойки между корзинами — у углов, едут с ними. */
+    for (const x of [t + VISUAL.sideClearMm + RACK.holderMm / 2, W - t - VISUAL.sideClearMm - RACK.holderMm / 2]) {
+      for (const z of [bz + bd / 2 - 10, bz - bd / 2 + 10]) box('holder', true, x, (by + y2 + basketH) / 2, z, RACK.holderMm, y2 + basketH - by, RACK.holderMm);
+    }
+    if (composed) {
+      visual.push(
+        `вторая корзина — условная композиция: двухуровневого комплекта ${item ? articleOf(item) : 'позиции'} производитель не печатал; высота ${spec?.upperMm !== undefined ? 'задана' : 'условная'}, в смете без цены, присадка не рассчитана`,
+      );
+    }
+  }
   box('grid', true, W / 2, by, bz, bw, RACK.wireMm, bd);
   for (const sx of [t + VISUAL.sideClearMm + RACK.wireMm / 2, W - t - VISUAL.sideClearMm - RACK.wireMm / 2]) box('basket-rail', true, sx, by + basketH / 2, bz, RACK.wireMm, basketH, bd);
   for (const z of [bz + bd / 2, bz - bd / 2]) box('basket-rail', true, W / 2, by + basketH / 2, z, bw, basketH, RACK.wireMm);
@@ -226,6 +275,16 @@ export function dryerOf(unit: Module, env: DryerEnvelope, item: HardwareItem | n
     innerHeightMm: innerH,
     printed,
     visual,
+    baskets: second !== null ? 2 : 1,
+    composed,
+    ...(second !== null
+      ? {
+          levels: [
+            { role: 'plates' as const, atMm: by - t, basis: rfb !== null ? ('passport' as const) : ('visual' as const) },
+            { role: 'cups' as const, atMm: second, basis: spec?.upperMm !== undefined ? ('chosen' as const) : ('visual' as const) },
+          ],
+        }
+      : {}),
   };
 }
 
@@ -236,10 +295,22 @@ export function dryerOf(unit: Module, env: DryerEnvelope, item: HardwareItem | n
 export function dryerRefusal(unit: Module, next: DryerSpec, env: DryerEnvelope, item: HardwareItem | null): string | null {
   const kind = dryerKindOf(unit);
   if (!kind) return `«${unit.label}» — не сушка: уровни и поддон задаются у «Сушки верхней» и «Сушки нижней выдвижной».`;
-  if (kind === 'lower' && (next.levels !== undefined || next.lowerMm !== undefined || next.upperMm !== undefined)) {
-    return 'У нижней выдвижной сушки уровни задаёт корзина производителя: в ней правится только поддон.';
+  if (kind === 'lower') {
+    /* Нижняя (задача 3): первую корзину ставят направляющие позиции; правятся вторая корзина и поддон. */
+    if (next.lowerMm !== undefined) return 'У нижней выдвижной сушки уровни задаёт корзина производителя: первую ставят её направляющие — правится вторая корзина и поддон.';
+    if (next.upperMm !== undefined && next.levels !== 2) return 'Высота второй корзины — только у сушки с двумя корзинами: сначала поставьте вторую.';
+    if (next.levels !== 2) return null;
+    const first = lowerBasket(env, item);
+    const second = secondBasketMm(next, env, item)!;
+    const firstTop = first.bottomMm + first.basketH;
+    if (!Number.isFinite(second) || second < firstTop) {
+      return `Вторая корзина на ${second} мм от низа заходит в первую (её верх — ${firstTop} мм): поставьте её не ниже ${firstTop} мм.`;
+    }
+    if (second + first.basketH > first.innerH) {
+      return `Вторая корзина на ${second} мм не встаёт: её верх ${second + first.basketH} мм, а корпус в свету ${first.innerH} мм — лишние ${second + first.basketH - first.innerH} мм.`;
+    }
+    return null;
   }
-  if (kind === 'lower') return null;
   const innerH = env.heightMm - 2 * env.thicknessMm;
   const page = dryerPage(item);
   const itemLevels = dryerItemLevels(item);

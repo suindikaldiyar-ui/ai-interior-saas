@@ -51,7 +51,7 @@ const PORT = Number(process.env.PORT_HW ?? 3291);
 const BASE = `http://localhost:${PORT}`;
 const OUT = '.capture-check/hardware';
 const PARTS = (process.env.PART ?? 'import,kitchen,kitchen-drawers,kitchen-lift,wardrobe,cargo,corner,tablet').split(',').map((s) => s.trim()).filter(Boolean);
-const KNOWN = ['import', 'kitchen', 'kitchen-drawers', 'kitchen-lift', 'wardrobe', 'cargo', 'corner', 'tablet', 'catalog2', 'drilling', 'drawers', 'open', 'twin', 'tandembox', 'clip', 'aventos', 'real', 'import-ui', 'fronts', 'fronts-tablet', 'ceiling', 'ceiling-tablet', 'inner', 'dryer', 'dryer-tablet', 'leaf', 'leaf-tablet', 'fridge', 'fridge-tablet'];
+const KNOWN = ['import', 'kitchen', 'kitchen-drawers', 'kitchen-lift', 'wardrobe', 'cargo', 'corner', 'tablet', 'catalog2', 'drilling', 'drawers', 'open', 'twin', 'tandembox', 'clip', 'aventos', 'real', 'import-ui', 'fronts', 'fronts-tablet', 'ceiling', 'ceiling-tablet', 'inner', 'dryer', 'dryer-tablet', 'leaf', 'leaf-tablet', 'fridge', 'fridge-tablet', 'pencil', 'pencil-tablet', 'span', 'span-tablet', 'dryer2', 'dryer2-tablet', 'tall', 'tall-tablet', 'back', 'back-tablet', 'shelf', 'shelf-tablet'];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let failed = 0;
@@ -1142,7 +1142,7 @@ async function humanReach(page, selector) {
     const cy = r.top + r.height / 2;
     const inView = r.width > 0 && r.height > 0 && r.top >= 0 && r.bottom <= window.innerHeight && r.left >= 0 && r.right <= window.innerWidth;
     const hit = inView ? document.elementFromPoint(cx, cy) : null;
-    return { found: true, inView, onTop: Boolean(hit && (hit === el || el.contains(hit))), x: Math.round(cx), y: Math.round(cy), top: Math.round(r.top), bottom: Math.round(r.bottom), vh: window.innerHeight, text: (el.textContent ?? '').trim() };
+    return { found: true, inView, onTop: Boolean(hit && (hit === el || el.contains(hit))), x: Math.round(cx), y: Math.round(cy), top: Math.round(r.top), bottom: Math.round(r.bottom), left: Math.round(r.left), right: Math.round(r.right), vh: window.innerHeight, vw: window.innerWidth, text: (el.textContent ?? '').trim() };
   }, selector);
 }
 
@@ -1891,6 +1891,721 @@ async function partFridge(browser, tablet) {
       check(`${L}: ошибок страницы и консоли нет`, errors.length === 0 && consoleErrors.length === 0, [...errors, ...consoleErrors].slice(0, 3).join(' | '));
     },
     { viewport: tablet ? { width: 1024, height: 768 } : { width: 1440, height: 900 }, touch: tablet, projects: [{ key: 'fridgeMw', zone: 'Кухня', fx }] },
+  );
+}
+
+/* ═════════════════════════  PENCIL: пенал — духовка и микроволновка (FINAL FURNITURE EDITOR, задача 1, TEST A)  ═════════════════════════ */
+
+const pencilState = (page) =>
+  page.evaluate(() => {
+    const el = document.querySelector('[data-pencil]');
+    if (!el) return null;
+    return {
+      blocks: document.querySelectorAll('[data-pencil]').length,
+      id: el.getAttribute('data-pencil'),
+      appliances: el.getAttribute('data-pencil-appliances'),
+      marks: el.getAttribute('data-pencil-marks'),
+      shelves: el.querySelector('[data-pencil-shelves]')?.getAttribute('data-pencil-shelves') ?? null,
+      size: el.getAttribute('data-pencil-size'),
+    };
+  });
+
+async function partPencil(browser, tablet) {
+  const L = tablet ? 'PENCIL-TAB' : 'PENCIL';
+  console.log(`\n── ${L} (${tablet ? '1024 × 768 касанием' : '1440 × 900'}): пенал с духовкой → микроволновка в тот же корпус, низ СВЧ 1500, отказ, своя полка, порядок, сцена, смета, запись → перезагрузка`);
+  const fx = fixture('pencil');
+  const want = fixture('pencilExpect');
+  const x0 = -want.lengthMm / 2 + want.atMm;
+  const ovenMark = (marks) => Number((/oven:(\d+)/.exec(marks ?? '') ?? [])[1]);
+  /* Полки пенала в сцене: деталь «Полка» в полосе модуля по X; центр — ось полки от пола. */
+  const shelvesOf = (drawn) =>
+    (drawn ?? [])
+      .filter((d) => d.boundsMm[0] >= x0 - 1 && d.boundsMm[3] <= x0 + want.widthMm + 1)
+      .map((d) => Math.round((d.boundsMm[1] + d.boundsMm[4]) / 2) - want.plinthMm)
+      .sort((a, b) => a - b)
+      .join('/');
+  /* Сцена дорисовывает после записи — ждём ожидаемое, а отдаём то, что нарисовано (не дождались — расхождение видно). */
+  const sceneShelves = (page, expected) =>
+    waitFor(page, (n) => (window.__mwCadPanels ? window.__mwCadPanels(n) : null), (v) => Array.isArray(v) && shelvesOf(v) === expected, 30_000, ['Полка']).then(shelvesOf);
+  await withOrg(
+    L,
+    browser,
+    async ({ service, page, errors, consoleErrors, ids }) => {
+      await openStudio(page, ids.pencil);
+      await open3d(page, L);
+      await saved(page);
+
+      /* 1. Пенал в «Выборе» — блок «Пенал»: духовка есть, микроволновки нет; до нажатия сказано, что корпус тот же. */
+      await pickObject(page, L, want.start);
+      await page.waitForSelector('[data-pencil]', { timeout: 30_000 });
+      const s1 = await pencilState(page);
+      const words1 = await page.evaluate(() => document.querySelector('[data-pencil-toggle-words="microwave"]')?.textContent ?? '');
+      check(
+        `${L}.1 блок «Пенал»: один, духовка есть; у микроволновки до нажатия — «корпус тот же, второй шкаф не появится»`,
+        s1?.blocks === 1 && s1?.appliances === 'oven' && /корпус тот же, второй шкаф не появится/.test(words1),
+        `${JSON.stringify(s1)} · «${words1}»`,
+      );
+
+      /* 2. «Микроволновка — поставить»: тот же модуль, ниши движка, модель духовки в сцене на своей полке, строка СВЧ в смете. */
+      await humanPress(page, '[data-pencil-toggle="microwave"]', 'микроволновка в пенал', tablet);
+      const s2 = await waitFor(page, () => document.querySelector('[data-pencil]')?.getAttribute('data-pencil-marks') ?? null, (v) => v === want.both, 30_000);
+      await saved(page);
+      const oven2 = await waitFor(page, (id) => {
+        const all = window.__mwApplianceModels ? Object.values(window.__mwApplianceModels).flat() : [];
+        return all.find((e) => e.moduleId === id && e.tall)?.ovenBottomMm ?? null;
+      }, (v) => v === ovenMark(want.both), 30_000, want.pencil);
+      const lines2 = await waitFor(page, () => (window.__mwEstimateLines ? window.__mwEstimateLines() : null), (v) => Array.isArray(v) && v.some((l) => l.key === 'appliance_microwave'), 30_000);
+      const tall2 = await page.evaluate(() => document.querySelectorAll('[data-object-module^="tall-"]').length);
+      check(
+        `${L}.2 микроволновка в тот же корпус: ниши ${want.both}; духовка в сцене низом на ${ovenMark(want.both)} мм; в смете «appliance_microwave» × 1; пеналов в списке ${want.tallCount}`,
+        s2 === want.both && oven2 === ovenMark(want.both) && (lines2 ?? []).filter((l) => l.key === 'appliance_microwave').length === 1 && tall2 === want.tallCount,
+        `${s2} · духовка ${oven2} · пеналов ${tall2} · ${(lines2 ?? []).filter((l) => /microwave/.test(l.key)).map((l) => `${l.key}×${l.quantity}`).join(',')}`,
+      );
+
+      /* 3. Низ микроволновки 1500: до нажатия — «встанет на N мм»; после — ниши движка, полки в сцене = опоры движка. */
+      await page.locator('[data-pencil-mark-field="microwave"]').first().fill('1500');
+      const landed = Number((/microwave:(\d+)/.exec(want.mark) ?? [])[1]);
+      const words3 = await waitFor(page, () => document.querySelector('[data-pencil-mark-words="microwave"]')?.textContent ?? null, Boolean, 15_000);
+      await humanPress(page, '[data-pencil-mark-apply="microwave"]', 'низ СВЧ 1500', tablet);
+      const s3 = await waitFor(page, () => document.querySelector('[data-pencil]')?.getAttribute('data-pencil-marks') ?? null, (v) => v === want.mark, 30_000);
+      await saved(page);
+      const supports = want.markShelves;
+      const shelves3 = await sceneShelves(page, supports);
+      check(
+        `${L}.3 «низ СВЧ 1500»: до нажатия — «Встанет на ${landed} мм … не выше 1500»; ниши ${want.mark}; полки пенала в сцене ${supports}`,
+        (words3 ?? '').includes(`Встанет на ${landed} мм`) && s3 === want.mark && shelves3 === supports,
+        `«${words3}» · ${s3} · сцена ${shelves3}`,
+      );
+
+      if (!tablet) {
+        /* 4. Низ 1240 — отказ движка до нажатия теми же словами, «Поставить» недоступна. */
+        await page.locator('[data-pencil-mark-field="microwave"]').first().fill('1240');
+        const refusal = await waitFor(page, () => document.querySelector('[data-pencil-mark-words="microwave"]')?.textContent ?? null, (v) => Boolean(v) && /Между приборами/.test(v), 15_000);
+        const off = await page.evaluate(() => document.querySelector('[data-pencil-mark-apply="microwave"]')?.hasAttribute('disabled') ?? null);
+        check(`${L}.4 низ СВЧ 1240 — «${want.refusal.slice(0, 60)}…», «Поставить» недоступна`, refusal === want.refusal && off === true, `«${refusal}» · ${off}`);
+        await page.locator('[data-pencil-mark-field="microwave"]').first().fill('1500');
+      }
+
+      /* 5. Своя полка 2016 в верхнем отсеке — числом; в сцене полка пенала на месте. */
+      await page.locator('[data-pencil-shelf-field]').first().fill('2016');
+      await waitFor(page, () => document.querySelector('[data-pencil-shelf-words]')?.textContent ?? null, Boolean, 15_000);
+      await humanPress(page, '[data-pencil-shelf-add]', 'полка 2016', tablet);
+      const s5 = await waitFor(page, () => document.querySelector('[data-pencil-shelves]')?.getAttribute('data-pencil-shelves') ?? null, (v) => v === '2016', 30_000);
+      await saved(page);
+      const shelves5 = await sceneShelves(page, want.shelves3);
+      check(`${L}.5 своя полка 2016: в блоке «2016», полки пенала в сцене ${want.shelves3}`, s5 === '2016' && shelves5 === want.shelves3, `${s5} · сцена ${shelves5}`);
+
+      /* Ширина инспектора: блоки не шире колонки — иначе кнопки уходят за край окна (замер, не проверка). */
+      const wide = await page.evaluate(() => {
+        const box = document.querySelector('[data-studio-inspector]');
+        if (!box) return null;
+        const edge = box.getBoundingClientRect().right;
+        const over = Array.from(box.querySelectorAll('*'))
+          .map((el) => ({ el, r: el.getBoundingClientRect() }))
+          .filter(({ r }) => r.width > 0 && r.right > edge + 0.5)
+          .slice(0, 6)
+          .map(({ el, r }) => `${el.tagName.toLowerCase()}${el.getAttribute('class') ? '.' + el.getAttribute('class').split(' ').slice(0, 3).join('.') : ''}[${Math.round(r.left)}…${Math.round(r.right)}]${Object.keys(el.dataset).slice(0, 2).join(',')}`);
+        return { edge: Math.round(edge), client: box.clientWidth, scroll: box.scrollWidth, over };
+      });
+      check(`${L}.5б колонка инспектора не шире своей ширины: блоков за правым краем 0`, (wide?.over ?? ['НЕТ ИНСПЕКТОРА']).length === 0 && wide.scroll <= wide.client, JSON.stringify(wide));
+
+      /* 6. «Поменять местами»: до нажатия — «свои отметки снимутся»; ниши движка, духовка в сцене выше, полка 2016 осталась. */
+      const words6 = await page.evaluate(() => document.querySelector('[data-pencil-order-words]')?.textContent ?? '');
+      await humanPress(page, '[data-pencil-order]', 'поменять местами', tablet);
+      const s6 = await waitFor(page, () => document.querySelector('[data-pencil]')?.getAttribute('data-pencil-marks') ?? null, (v) => v === want.swapped, 30_000);
+      await saved(page);
+      const oven6 = await waitFor(page, (id) => {
+        const all = window.__mwApplianceModels ? Object.values(window.__mwApplianceModels).flat() : [];
+        return all.find((e) => e.moduleId === id && e.tall)?.ovenBottomMm ?? null;
+      }, (v) => v === ovenMark(want.swapped), 30_000, want.pencil);
+      const shelves6 = await sceneShelves(page, want.shelves4);
+      check(
+        `${L}.6 сверху духовка: до нажатия — «свои отметки … снимутся»; ниши ${want.swapped}; духовка в сцене на ${ovenMark(want.swapped)} мм; полки ${want.shelves4}`,
+        /снимутся/.test(words6) && s6 === want.swapped && oven6 === ovenMark(want.swapped) && shelves6 === want.shelves4,
+        `«${words6}» · ${s6} · духовка ${oven6} · сцена ${shelves6}`,
+      );
+
+      /* 7. Запись → база → перезагрузка: колонна, порядок и полки в объекте; блок тот же. */
+      const row = (await service.from('projects').select('millwork').eq('id', ids.pencil).single()).data;
+      const unit = (row?.millwork?.runs?.optimal?.modules ?? []).find((m) => m.kind === 'tall' && m.offsetMm === want.atMm);
+      await page.reload();
+      await open3d(page, L);
+      await pickObject(page, L, want.pencil);
+      const after = await waitFor(page, () => document.querySelector('[data-pencil]')?.getAttribute('data-pencil-marks') ?? null, Boolean, 30_000);
+      const shelves7 = await sceneShelves(page, want.shelves4);
+      check(
+        `${L}.7 в базе — один пенал, сверху духовка, полки ${want.shelves4}; после перезагрузки ниши ${want.swapped}, полки в сцене те же`,
+        unit?.column?.top === 'oven' && (unit?.fill?.shelves ?? []).join('/') === want.shelves4 && after === want.swapped && shelves7 === want.shelves4,
+        JSON.stringify({ column: unit?.column ?? null, shelves: unit?.fill?.shelves ?? null, after, shelves7 }),
+      );
+      if (tablet) {
+        const scroll = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+        check(`${L}.8 прокрутки по ширине нет`, scroll <= 0, `${scroll} px`);
+      }
+      check(`${L}: ошибок страницы и консоли нет`, errors.length === 0 && consoleErrors.length === 0, [...errors, ...consoleErrors].slice(0, 3).join(' | '));
+    },
+    { viewport: tablet ? { width: 1024, height: 768 } : { width: 1440, height: 900 }, touch: tablet, importHardware: false, projects: [{ key: 'pencil', zone: 'Кухня', fx }] },
+  );
+}
+
+/* ═════════════════════════  DRYER2: две корзины нижней сушки (FINAL FURNITURE EDITOR, задача 3)  ═════════════════════════ */
+
+async function partDryer2(browser, tablet) {
+  const L = tablet ? 'DRYER2-TAB' : 'DRYER2';
+  console.log(`\n── ${L} (${tablet ? '1024 × 768 касанием' : '1440 × 900'}): нижняя сушка — «2 корзины · условно», обе на фасаде, высота второй, смета без цены, запись → перезагрузка`);
+  const fx = fixture('dryer2');
+  const want = fixture('dryer2Expect');
+  const editor = (page) =>
+    page.evaluate(() => {
+      const el = document.querySelector('[data-dryer-editor="lower"]');
+      if (!el) return null;
+      return {
+        levels: el.getAttribute('data-dryer-levels'),
+        baskets: el.querySelector('[data-dryer-baskets]')?.getAttribute('data-dryer-baskets') ?? null,
+        composed: el.querySelector('[data-dryer-baskets]')?.getAttribute('data-dryer-composed') ?? null,
+        visual: Array.from(el.querySelectorAll('[data-dryer-visual] li')).map((li) => li.textContent ?? '').join(' | '),
+      };
+    });
+  await withOrg(
+    L,
+    browser,
+    async ({ service, page, errors, consoleErrors, ids }) => {
+      await openStudio(page, ids.dryer2);
+      await open3d(page, L);
+      await saved(page);
+      await pickObject(page, L, want.low);
+      await page.waitForSelector('[data-dryer-editor="lower"]', { timeout: 30_000 });
+      const grids0 = await waitFor(page, () => (window.__mwCadDryer ? window.__mwCadDryer() : null), (v) => Array.isArray(v), 30_000);
+      const g0 = (grids0 ?? []).filter((d) => d.role === 'grid').length;
+
+      /* 1. «2 корзины · условно»: две решётки в сцене, слова «условная композиция», строка сметы без цены. */
+      await humanPress(page, '[data-dryer-baskets-button="2"]', '2 корзины', tablet);
+      const s1 = await waitFor(page, () => document.querySelector('[data-dryer-editor="lower"]')?.getAttribute('data-dryer-levels') ?? null, (v) => v === want.levels1, 30_000);
+      await saved(page);
+      const e1 = await editor(page);
+      const grids1 = await waitFor(page, () => (window.__mwCadDryer ? window.__mwCadDryer() : null), (v) => Array.isArray(v) && v.filter((d) => d.role === 'grid').length === 2, 30_000);
+      const lines1 = await waitFor(page, () => (window.__mwEstimateLines ? window.__mwEstimateLines() : null), (v) => Array.isArray(v) && v.some((l) => l.key === 'dryer_second_basket'), 30_000);
+      check(
+        `${L}.1 «2 корзины · условно»: уровни ${want.levels1}, решёток в сцене ${g0} → 2, «условная композиция» словами, в смете «dryer_second_basket» × 1`,
+        s1 === want.levels1 && g0 === 1 && (grids1 ?? []).filter((d) => d.role === 'grid').length === 2 && e1?.baskets === '2' && e1?.composed === '1' && /условная композиция/.test(e1?.visual ?? '') &&
+          (lines1 ?? []).filter((l) => l.key === 'dryer_second_basket').length === 1,
+        `${s1} · ${JSON.stringify(e1)} · решёток ${(grids1 ?? []).filter((d) => d.role === 'grid').length}`,
+      );
+
+      /* 2. Высота второй корзины полем — встала; 900 — отказ движка до нажатия. */
+      await page.locator('[data-dryer-field="upper"]').first().fill('900');
+      const r2 = await waitFor(page, () => document.querySelector('[data-dryer-refusal]')?.textContent ?? null, Boolean, 15_000);
+      await page.locator('[data-dryer-field="upper"]').first().fill(String(want.upperMm));
+      await sleep(300);
+      await humanPress(page, '[data-dryer-apply]', 'высота второй корзины', tablet);
+      const s2 = await waitFor(page, () => document.querySelector('[data-dryer-editor="lower"]')?.getAttribute('data-dryer-levels') ?? null, (v) => v === want.levels2, 30_000);
+      await saved(page);
+      check(`${L}.2 вторая на 900 — «лишние … мм»; на ${want.upperMm} — уровни ${want.levels2}`, /лишние \d+ мм/.test(r2 ?? '') && s2 === want.levels2, `«${r2}» · ${s2}`);
+
+      /* 3. Запись → база → перезагрузка. */
+      const row = (await service.from('projects').select('millwork').eq('id', ids.dryer2).single()).data;
+      const unit = (row?.millwork?.runs?.optimal?.modules ?? []).find((m) => m.id === want.low);
+      await page.reload();
+      await open3d(page, L);
+      await pickObject(page, L, want.low);
+      const s3 = await waitFor(page, () => document.querySelector('[data-dryer-editor="lower"]')?.getAttribute('data-dryer-levels') ?? null, Boolean, 30_000);
+      check(`${L}.3 в базе — две корзины, вторая на ${want.upperMm}; после перезагрузки уровни ${want.levels2}`, unit?.dryer?.levels === 2 && unit?.dryer?.upperMm === want.upperMm && s3 === want.levels2, JSON.stringify({ dryer: unit?.dryer ?? null, s3 }));
+      if (tablet) {
+        const scroll = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+        check(`${L}.4 прокрутки по ширине нет`, scroll <= 0, `${scroll} px`);
+      }
+      check(`${L}: ошибок страницы и консоли нет`, errors.length === 0 && consoleErrors.length === 0, [...errors, ...consoleErrors].slice(0, 3).join(' | '));
+    },
+    { viewport: tablet ? { width: 1024, height: 768 } : { width: 1440, height: 900 }, touch: tablet, importHardware: false, projects: [{ key: 'dryer2', zone: 'Кухня', fx }] },
+  );
+}
+
+/* ═════════════════════════  SPAN: от пенала до стены (FINAL FURNITURE EDITOR, задача 6, TEST G)  ═════════════════════════ */
+
+async function partSpan(browser, tablet) {
+  const L = tablet ? 'SPAN-TAB' : 'SPAN';
+  console.log(`\n── ${L} (${tablet ? '1024 × 768 касанием' : '1440 × 900'}): пенал у стены, столешница до стены, заполнить до стены, разделить, верхний ряд до стены, пенал 650 — отказ, запись → перезагрузка`);
+  const fx = fixture('span');
+  const want = fixture('spanExpect');
+  const objects = (page, prefix) =>
+    page.evaluate((p) => Array.from(document.querySelectorAll(`[data-object-module^="${p}"]`)).map((el) => el.getAttribute('data-object-module')), prefix);
+  const counterAttr = (page) => page.evaluate(() => document.querySelector('[data-span-counter]')?.getAttribute('data-span-counter') ?? null);
+  const fillWidths = async (page, row, widths) => {
+    await humanPress(page, `[data-span-count="${row}:${widths.length}"]`, `${widths.length} секций`, tablet);
+    for (let i = 0; i < widths.length; i += 1) await page.locator(`[data-span-width="${row}:${i}"]`).first().fill(String(widths[i]));
+    await sleep(300);
+  };
+  await withOrg(
+    L,
+    browser,
+    async ({ service, page, errors, consoleErrors, ids }) => {
+      await openStudio(page, ids.span);
+      await open3d(page, L);
+      await saved(page);
+
+      /* 1. Крайний нижний модуль — блок «Участок»: пусто 800 мм до стены; плита по модулям. */
+      await pickObject(page, L, want.last);
+      await page.waitForSelector('[data-span-editor]', { timeout: 30_000 });
+      const gaps1 = await page.evaluate(() => document.querySelector('[data-span-editor]')?.getAttribute('data-span-gaps') ?? null);
+      const slab1 = await counterAttr(page);
+      check(`${L}.1 блок «Участок до стены»: внизу пусто 3000+800 до стены; плита ${want.slab0}`, (gaps1 ?? '').includes('base:3000+800') && slab1 === want.slab0, `${gaps1} · ${slab1}`);
+
+      /* 2. «Продолжить столешницу у конца ряда» — одна плита до стены, в базе `counterEnds`. */
+      await humanPress(page, '[data-span-counter-extend="end"]', 'продолжить столешницу', tablet);
+      const slab2 = await waitFor(page, () => document.querySelector('[data-span-counter]')?.getAttribute('data-span-counter') ?? null, (v) => v === want.slab1, 30_000);
+      await saved(page);
+      check(`${L}.2 «Продолжить столешницу» — плита ${want.slab1}, сквозь пенал не идёт`, slab2 === want.slab1, `${slab2}`);
+
+      /* 3. Заполнить до стены: 400 + 300 — отказ до нажатия; 400 + 400 — модули точно до стены. */
+      await fillWidths(page, 'base', [400, 300]);
+      const words3 = await page.evaluate(() => document.querySelector('[data-span-words="base"]')?.textContent ?? '');
+      const off3 = await page.evaluate(() => document.querySelector('[data-span-fill="base"]')?.hasAttribute('disabled') ?? null);
+      await page.locator('[data-span-width="base:1"]').first().fill('400');
+      await sleep(300);
+      await humanPress(page, '[data-span-fill="base"]', 'заполнить до стены', tablet);
+      await waitFor(page, (p) => document.querySelectorAll(`[data-object-module^="${p}"]`).length, (n) => n === 6, 30_000, 'base-');
+      await saved(page);
+      const base3 = await objects(page, 'base-');
+      check(
+        `${L}.3 «Заполнить до стены»: 400 + 300 — «не хватает 100 мм», кнопка недоступна; 400 + 400 — нижних модулей 6, у стены 3000 и 3400`,
+        /не хватает 100 мм/.test(words3) && off3 === true && base3.length === 6 && base3.some((id) => /^base-3000/.test(id)) && base3.some((id) => /^base-3400/.test(id)),
+        `«${words3}» · ${off3} · ${base3.join(',')}`,
+      );
+
+      /* 4. Разделить модуль 800 на 400 + 400 — два корпуса на его месте. */
+      await pickObject(page, L, want.m800);
+      await page.waitForSelector('[data-span-split]', { timeout: 30_000 });
+      await humanPress(page, '[data-split-count="2"]', '2 части', tablet);
+      await humanPress(page, '[data-split-apply]', 'разделить', tablet);
+      await waitFor(page, (p) => document.querySelectorAll(`[data-object-module^="${p}"]`).length, (n) => n === 7, 30_000, 'base-');
+      await saved(page);
+      const base4 = await objects(page, 'base-');
+      check(`${L}.4 «Разделить» 800 → 400 + 400: нижних модулей 7, корпуса на 1200 и 1600`, base4.length === 7 && base4.some((id) => /^base-1200/.test(id)) && base4.some((id) => /^base-1600/.test(id)), base4.join(','));
+
+      /* 5. Пенал — верхний ряд до стены: 4 × 800. */
+      await pickObject(page, L, want.pencil);
+      await page.waitForSelector('[data-span-gap^="upper:600"]', { timeout: 30_000 });
+      await humanPress(page, '[data-span-count="upper:4"]', '4 секции наверху', tablet);
+      await humanPress(page, '[data-span-fill="upper"]', 'верхний ряд до стены', tablet);
+      await waitFor(page, (p) => document.querySelectorAll(`[data-object-module^="${p}"]`).length, (n) => n === 4, 30_000, 'upper-');
+      await saved(page);
+      const up5 = await objects(page, 'upper-');
+      check(`${L}.5 «Продолжить верхний ряд до стены» 4 × 800: верхних модулей 4 (600, 1400, 2200, 3000)`, ['600', '1400', '2200', '3000'].every((x) => up5.some((id) => id.startsWith(`upper-${x}`))), up5.join(','));
+
+      /* 6. Пенал 650 — отказ движка до нажатия словами с мм. */
+      await page.waitForSelector('[data-pencil]', { timeout: 30_000 });
+      await page.locator('[data-pencil-size-field="width"]').first().fill('650');
+      const r6 = await waitFor(page, () => document.querySelector('[data-pencil-size-refusal="width"]')?.textContent ?? null, Boolean, 15_000);
+      check(`${L}.6 пенал 650 — «${want.refusal650.slice(0, 50)}…», плита и ряды не тронуты`, r6 === want.refusal650 && (await counterAttr(page)) === want.slab4, `«${r6}»`);
+      await page.locator('[data-pencil-size-field="width"]').first().fill('');
+
+      /* 7. Запись → база → перезагрузка. */
+      const row = (await service.from('projects').select('millwork').eq('id', ids.span).single()).data;
+      const run = row?.millwork?.runs?.optimal;
+      const baseDb = (run?.modules ?? []).filter((m) => m.kind === 'base').map((m) => `${m.offsetMm}+${m.widthMm}`).join(';');
+      const upDb = (run?.upperSegments ?? []).flatMap((s) => s.modules ?? []).filter((m) => m.section !== 'mezzanine').map((m) => `${m.offsetMm}+${m.widthMm}`).join(';');
+      await page.reload();
+      await open3d(page, L);
+      await pickObject(page, L, want.last);
+      const slab7 = await waitFor(page, () => document.querySelector('[data-span-counter]')?.getAttribute('data-span-counter') ?? null, Boolean, 30_000);
+      check(
+        `${L}.7 в базе — низ ${want.base3}, верх ${want.upper4}, плита до стены; после перезагрузки плита ${want.slab4}`,
+        baseDb === want.base3 && upDb === want.upper4 && run?.counterEnds?.end === 'extend' && slab7 === want.slab4,
+        JSON.stringify({ baseDb, upDb, ends: run?.counterEnds ?? null, slab7 }),
+      );
+
+      /* 8. «Размеры модуля» у модуля у стены: +10 — отказ движка до нажатия; высота нижнего — «не правится» словами. */
+      await pickObject(page, L, want.wallModule);
+      await page.waitForSelector('[data-module-size]', { timeout: 30_000 });
+      await humanPress(page, '[data-module-size-plus="width"]', '+10 к ширине', tablet);
+      const r8 = await waitFor(page, () => document.querySelector('[data-module-size-refusal="width"]')?.textContent ?? null, Boolean, 15_000);
+      const off8 = await page.evaluate(() => document.querySelector('[data-module-size-apply="width"]')?.hasAttribute('disabled') ?? null);
+      const h8 = await page.evaluate(() => document.querySelector('[data-module-size-refusal="height"]')?.textContent ?? '');
+      check(
+        `${L}.8 «Размеры модуля»: ширина ${want.wallModuleWidth} +10 — отказ движка до нажатия («${want.widthRefusal.slice(0, 40)}…»), «Применить» недоступна; высота нижнего — «не правится» словами`,
+        r8 === want.widthRefusal && off8 === true && /Не правится: у нижнего шкафа высоту задаёт рабочая поверхность/.test(h8),
+        `«${r8}» · ${off8} · «${h8}»`,
+      );
+      if (tablet) {
+        const scroll = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+        check(`${L}.8 прокрутки по ширине нет`, scroll <= 0, `${scroll} px`);
+      }
+      check(`${L}: ошибок страницы и консоли нет`, errors.length === 0 && consoleErrors.length === 0, [...errors, ...consoleErrors].slice(0, 3).join(' | '));
+    },
+    { viewport: tablet ? { width: 1024, height: 768 } : { width: 1440, height: 900 }, touch: tablet, importHardware: false, projects: [{ key: 'span', zone: 'Кухня', fx }] },
+  );
+}
+
+/* ═════════════════════════  TALL: высокий шкаф ТВ-зоны (COMPLETE UNFINISHED, TEST B)  ═════════════════════════ */
+
+async function partTall(browser, tablet) {
+  const L = tablet ? 'TALL-TAB' : 'TALL';
+  console.log(`\n── ${L} (${tablet ? '1024 × 768 касанием' : '1440 × 900'}): ТВ-зона C — правая витрина → шкаф, антресоль, объединить, шов по соседу, ширина, витрина слева выше, телевизор, витрина на тумбе, запись → перезагрузка`);
+  const fx = fixture('tall');
+  const want = fixture('tallExpect');
+  const modules = (page) => page.evaluate(() => (window.__mwCadModules ? window.__mwCadModules() : null));
+  const leafYs = (page, id) =>
+    page.evaluate(
+      (p) => (window.__mwCadLeaves ? window.__mwCadLeaves().leaves : []).filter((l) => l.id.startsWith(`${p}:door:`)).map((l) => l.world[1]).sort((a, b) => a - b),
+      id,
+    );
+  const near = (a, b, tol = 6) => Array.isArray(a) && a.length === b.length && a.every((v, i) => Math.abs(v - b[i]) <= tol);
+  const dbRun = async (service, id) => (await service.from('projects').select('millwork').eq('id', id).single()).data?.millwork?.runs?.optimal ?? null;
+  const fillEnter = async (page, sel, value) => {
+    const box = page.locator(sel).first();
+    await box.scrollIntoViewIfNeeded();
+    await box.fill(String(value));
+    await box.press('Enter');
+    await sleep(400);
+  };
+  await withOrg(
+    L,
+    browser,
+    async ({ service, page, errors, consoleErrors, ids }) => {
+      await openStudio(page, ids.tall);
+      await open3d(page, L);
+      await saved(page);
+
+      /* 1. Правая витрина → секция «Полки»: витрины нет, одна створка во всю высоту в сцене. */
+      await pickObject(page, L, want.right);
+      await page.waitForSelector(`[data-section-select="${want.right}"]`, { timeout: 30_000 });
+      await page.locator(`[data-section-select="${want.right}"]`).first().selectOption('shelves');
+      await waitFor(page, () => document.querySelector('[data-front-split]') !== null, Boolean, 30_000);
+      await saved(page);
+      const db1 = await dbRun(service, ids.tall);
+      const r1 = (db1?.modules ?? []).find((m) => m.id === want.right);
+      const leaves1 = await leafYs(page, want.right);
+      check(
+        `${L}.1 правая витрина → «Полки»: секция shelves, витрины в базе нет, в сцене одна створка`,
+        r1?.section === 'shelves' && !r1?.vitrine && leaves1.length === 1,
+        `${r1?.section} · ${JSON.stringify(r1?.vitrine ?? null)} · створок ${leaves1.length}`,
+      );
+
+      /* 2. Антресоль над шкафом: высота 500, шкаф 2100 — два корпуса, низ антресоли на крыше шкафа. */
+      await page.waitForSelector('[data-overhead-editor]', { timeout: 30_000 });
+      await page.locator('[data-overhead-field="height"]').first().fill('500');
+      await page.locator('[data-overhead-field="base"]').first().fill('2100');
+      await sleep(300);
+      await humanPress(page, '[data-overhead-action="add"]', 'поставить антресоль', tablet);
+      const m2 = await waitFor(page, () => (window.__mwCadModules ? window.__mwCadModules() : null), (m) => Boolean(m?.boxes?.['over-3350@w1']), 30_000);
+      await saved(page);
+      check(
+        `${L}.2 антресоль 500 над шкафом 2100: шкаф ${want.y2.tall.join('…')}, антресоль ${want.y2.over.join('…')} мм от пола`,
+        near(m2?.boxes?.[want.right]?.y, want.y2.tall, 1) && near(m2?.boxes?.[want.overId]?.y, want.y2.over, 1),
+        `${m2?.boxes?.[want.right]?.y} · ${m2?.boxes?.[want.overId]?.y}`,
+      );
+
+      /* 3. «Объединить шкаф и антресоль в один корпус» со швом на прежней границе: один корпус, две створки. */
+      await pickObject(page, L, want.right);
+      await page.waitForSelector('[data-merge-apply]', { timeout: 30_000 });
+      const words3 = await page.evaluate(() => document.querySelector('[data-merge-words]')?.textContent ?? '');
+      await humanPress(page, '[data-merge-apply]', 'объединить', tablet);
+      const m3 = await waitFor(
+        page,
+        (p) => {
+          const m = window.__mwCadModules ? window.__mwCadModules() : null;
+          return m && !m.boxes?.['over-3350@w1'] ? m.boxes?.[p]?.y ?? null : null;
+        },
+        (y) => Array.isArray(y) && y[1] === 2700,
+        30_000,
+        want.right,
+      );
+      await saved(page);
+      const leaves3 = await waitFor(
+        page,
+        (p) => (window.__mwCadLeaves ? window.__mwCadLeaves().leaves : []).filter((l) => l.id.startsWith(`${p}:door:`)).map((l) => l.world[1]).sort((a, b) => a - b),
+        (v) => Array.isArray(v) && v.length === 2,
+        30_000,
+        want.right,
+      );
+      const db3 = await dbRun(service, ids.tall);
+      const r3 = (db3?.modules ?? []).find((m) => m.id === want.right);
+      check(
+        `${L}.3 объединить: слова до нажатия («${words3.slice(0, 60)}…»); один корпус ${want.y3.join('…')}, антресоли нет; створки сцены — центры ${want.leaves3.join(', ')} мм; в базе шов ${want.seams3}`,
+        /одним корпусом 2600 мм/.test(words3) &&
+          near(m3, want.y3, 1) &&
+          near(leaves3, want.leaves3) &&
+          JSON.stringify(r3?.frontSplitMm ?? []) === JSON.stringify(want.seams3) &&
+          !(db3?.upperSegments ?? []).some((seg) => (seg.modules ?? []).some((m) => m.overhead)),
+        `${m3} · створки ${leaves3} · шов ${JSON.stringify(r3?.frontSplitMm)}`,
+      );
+
+      /* 4. Выровнять шов по линии соседа — верх левой витрины 2000 мм от пола. */
+      await page.waitForSelector('[data-front-split-align="2000"]', { timeout: 30_000 });
+      await humanPress(page, '[data-front-split-align="2000"]', 'шов по верху витрины', tablet);
+      const leaves4 = await waitFor(
+        page,
+        (p) => (window.__mwCadLeaves ? window.__mwCadLeaves().leaves : []).filter((l) => l.id.startsWith(`${p}:door:`)).map((l) => l.world[1]).sort((a, b) => a - b),
+        (v) => Array.isArray(v) && v.length === 2 && Math.abs(v[1] - 2350) <= 6,
+        30_000,
+        want.right,
+      );
+      await saved(page);
+      check(`${L}.4 «Выровнять» по верху левой витрины 2000: створки сцены — центры ${want.leaves4.join(', ')} мм`, near(leaves4, want.leaves4), `${leaves4}`);
+
+      /* 5. Ширина шкафа 450 → 400 («Размеры модуля»). */
+      await page.waitForSelector('[data-module-size]', { timeout: 30_000 });
+      await page.locator('[data-module-size-field="width"]').first().fill('400');
+      await sleep(300);
+      await humanPress(page, '[data-module-size-apply="width"]', 'ширина 400', tablet);
+      await sleep(800);
+      await saved(page);
+      const db5 = await dbRun(service, ids.tall);
+      const r5 = (db5?.modules ?? []).find((m) => m.offsetMm >= 3000 && m.kind === 'tall');
+      check(
+        `${L}.5 ширина шкафа 400 — в базе ${want.width400Run}, шов тот же`,
+        r5?.widthMm === want.width400Run && JSON.stringify(r5?.frontSplitMm) === '[1900]',
+        `${r5?.id} ${r5?.widthMm} · ${JSON.stringify(r5?.frontSplitMm)}`,
+      );
+
+      /* 6. Левая витрина выше: 1900 → 2200. */
+      await pickObject(page, L, want.left);
+      await page.waitForSelector(`[data-module-size="${want.left}"]`, { timeout: 30_000 });
+      await page.locator('[data-module-size-field="height"]').first().fill('2200');
+      await sleep(300);
+      await humanPress(page, '[data-module-size-apply="height"]', 'высота витрины 2200', tablet);
+      const m6 = await waitFor(page, (p) => (window.__mwCadModules ? window.__mwCadModules().boxes?.[p]?.y ?? null : null), (y) => Array.isArray(y) && y[1] === 2300, 30_000, want.left);
+      await saved(page);
+      check(`${L}.6 витрина слева 2200: ${want.y5left.join('…')} мм от пола`, near(m6, want.y5left, 1), `${m6}`);
+
+      /* 7. Телевизор 55″ и правее: центр 2700 — блок «ТВ-зона» инструмента «Мебель». */
+      must(`${L}: инструмент «Мебель»`, await tool(page, 'furniture'), 'НУЛЕВОЙ СЕЛЕКТОР: [data-studio-tool="furniture"]');
+      await page.waitForSelector('[data-tv-zone]', { timeout: 30_000 });
+      await humanPress(page, '[data-tv-diagonal="55"]', 'телевизор 55', tablet);
+      await sleep(600);
+      await saved(page);
+      await fillEnter(page, '[data-tv-field="center"]', 2700);
+      await saved(page);
+      const db7 = await dbRun(service, ids.tall);
+      check(`${L}.7 телевизор 55″, центр 2700 — в базе`, db7?.tv?.diagonalIn === 55 && db7?.tv?.centerMm === 2700, JSON.stringify(db7?.tv ?? null));
+
+      /* 8. Панель реек снята, витрина на тумбе: корпус 700 на крыше тумбы, затем витриной и 700 × 800. */
+      const panelId = (db7?.wallPanels ?? [])[0]?.id;
+      if (!panelId) throw new Stop(`${L}.8 НУЛЕВОЙ СЕЛЕКТОР: панели реек у ТВ-зоны C в базе нет`);
+      await page.waitForSelector(`[data-panel-remove="${panelId}"]`, { timeout: 30_000 });
+      await humanPress(page, `[data-panel-remove="${panelId}"]`, 'снять панель', tablet);
+      await saved(page);
+      await pickObject(page, L, want.tumba);
+      await page.waitForSelector('[data-overhead-editor]', { timeout: 30_000 });
+      await page.locator('[data-overhead-field="height"]').first().fill('700');
+      await page.locator('[data-overhead-field="depth"]').first().fill('350');
+      await sleep(300);
+      await humanPress(page, '[data-overhead-action="add"]', 'корпус на тумбе', tablet);
+      const overT = 'over-550@w1';
+      const m8 = await waitFor(page, (p) => (window.__mwCadModules ? window.__mwCadModules().boxes?.[p]?.y ?? null : null), Boolean, 30_000, overT);
+      await saved(page);
+      await humanPress(page, '[data-overhead-action="select"]', 'выбрать корпус на тумбе', tablet);
+      await page.waitForSelector('[data-vitrine-action="make"]', { timeout: 30_000 });
+      await humanPress(page, '[data-vitrine-action="make"]', 'сделать витриной', tablet);
+      await saved(page);
+      await page.waitForSelector('[data-overhead-editor]', { timeout: 30_000 });
+      await page.locator('[data-overhead-field="height"]').first().fill('800');
+      await page.locator('[data-overhead-field="width"]').first().fill('700');
+      await sleep(300);
+      await humanPress(page, '[data-overhead-action="set"]', 'витрина 700 × 800', tablet);
+      const m8b = await waitFor(
+        page,
+        (p) => (window.__mwCadModules ? window.__mwCadModules().boxes?.[p]?.y ?? null : null),
+        (y) => Array.isArray(y) && y[1] - y[0] === 800,
+        30_000,
+        overT,
+      );
+      await saved(page);
+      const db8 = await dbRun(service, ids.tall);
+      const ov8 = (db8?.upperSegments ?? []).flatMap((seg) => seg.modules ?? []).find((m) => m.id === overT);
+      check(
+        `${L}.8 витрина на тумбе: низ на крыше тумбы ${want.tumbaTop} мм, 700 × 800 × 350; в базе витрина, панели нет`,
+        near(m8, [want.tumbaTop, want.tumbaTop + 700], 1) &&
+          near(m8b, [want.tumbaTop, want.tumbaTop + 800], 1) &&
+          Boolean(ov8?.vitrine) &&
+          ov8?.widthMm === 700 &&
+          ov8?.heightMm === 800 &&
+          ov8?.overhead?.depthMm === 350 &&
+          (db8?.wallPanels ?? []).length === 0,
+        `${m8} → ${m8b} · ${JSON.stringify({ v: ov8?.vitrine ?? null, w: ov8?.widthMm, h: ov8?.heightMm, d: ov8?.overhead })}`,
+      );
+
+      /* 9. Перезагрузка: те же корпуса, швы и витрина на тумбе. */
+      await page.reload();
+      await open3d(page, L);
+      const m9 = await waitFor(
+        page,
+        () => (window.__mwCadModules ? window.__mwCadModules() : null),
+        (m) => Boolean(m?.boxes?.['over-550@w1']) && Boolean(m?.boxes?.['tall-0@w1']),
+        30_000,
+      );
+      const leaves9 = await leafYs(page, r5?.id ?? want.right);
+      check(
+        `${L}.9 после перезагрузки: витрина слева ${want.y5left.join('…')}, шкаф справа одним корпусом с двумя створками, витрина на тумбе ${want.tumbaTop}…${want.tumbaTop + 800}`,
+        near(m9?.boxes?.[want.left]?.y, want.y5left, 1) && near(m9?.boxes?.[overT]?.y, [want.tumbaTop, want.tumbaTop + 800], 1) && leaves9.length === 2,
+        `${m9?.boxes?.[want.left]?.y} · ${m9?.boxes?.[overT]?.y} · створок ${leaves9.length}`,
+      );
+      if (tablet) {
+        const scroll = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+        check(`${L}.9 прокрутки по ширине нет`, scroll <= 0, `${scroll} px`);
+      }
+      check(`${L}: ошибок страницы и консоли нет`, errors.length === 0 && consoleErrors.length === 0, [...errors, ...consoleErrors].slice(0, 3).join(' | '));
+    },
+    { viewport: tablet ? { width: 1024, height: 768 } : { width: 1440, height: 900 }, touch: tablet, importHardware: false, projects: [{ key: 'tall', zone: 'Гостиная', fx }] },
+  );
+}
+
+/* ═════════════════════════  BACK: материал задней стенки отдельно от корпуса (COMPLETE UNFINISHED, TEST D)  ═════════════════════════ */
+
+async function partBack(browser, tablet) {
+  const L = tablet ? 'BACK-TAB' : 'BACK';
+  console.log(`\n── ${L} (${tablet ? '1024 × 768 касанием' : '1440 × 900'}): «Материалы» → «Задняя стенка всей кухни» — своя позиция ХДФ; EGGER на корпус — ХДФ та же; смета, сцена, база, перезагрузка`);
+  const fx = fixture('kitchen');
+  const stamp = Date.now().toString(36).toUpperCase();
+  const dbMill = async (service, id) => (await service.from('projects').select('millwork').eq('id', id).single()).data?.millwork ?? null;
+  const addOwn = async (page, collection, code, name, hex) => {
+    await humanPress(page, '[data-material-add]', 'своя позиция', tablet);
+    const form = page.locator('[data-material-add-form]');
+    await form.waitFor({ timeout: 30_000 });
+    await form.locator('[data-add-collection]').selectOption(collection);
+    await form.locator('[data-add-code]').fill(code);
+    await form.locator('[data-add-name]').fill(name);
+    const color = form.locator('[data-add-color]');
+    if ((await color.count()) > 0) await color.first().fill(hex);
+    await humanPress(page, '[data-material-add-form] [data-add-save]', 'сохранить позицию', tablet);
+    const error = await waitFor(page, () => document.querySelector('[data-add-error]')?.textContent ?? null, (t) => t !== null, 3_000);
+    return error;
+  };
+  const pickItem = async (page, tab, code) => {
+    await humanPress(page, `[data-material-tab="${tab}"]`, `вкладка ${tab}`, tablet);
+    const search = page.locator('[data-material-search]').first();
+    if ((await search.count()) > 0) await search.fill(code);
+    const row = await waitFor(page, (c) => (document.querySelector(`[data-materials-panel] [data-material-item="${c}"]`) ? c : null), Boolean, 30_000, code);
+    if (!row) throw new Stop(`${L}: НУЛЕВОЙ СЕЛЕКТОР: позиции ${code} нет на вкладке ${tab}`);
+    await humanPress(page, `[data-materials-panel] [data-material-item="${code}"]`, `позиция ${code}`, tablet);
+  };
+  await withOrg(
+    L,
+    browser,
+    async ({ service, page, errors, consoleErrors, ids }) => {
+      await openStudio(page, ids.back);
+      await open3d(page, L);
+      await saved(page);
+      must(`${L}: инструмент «Материалы»`, await tool(page, 'materials'), 'НУЛЕВОЙ СЕЛЕКТОР: [data-studio-tool="materials"]');
+      await page.waitForSelector('[data-material-target="back"]', { timeout: 60_000 });
+
+      /* 1. Цель «Задняя стенка всей кухни»: коллекция ХДФ ждёт импорта — своя позиция; применить. */
+      await humanPress(page, '[data-material-target="back"]', 'цель «Задняя стенка»', tablet);
+      const hdfCode = `HDF-${stamp}`;
+      const err1 = await addOwn(page, 'hdf-back', hdfCode, 'ХДФ белая проба', '#f2efe8');
+      await pickItem(page, 'hdf', hdfCode);
+      await saved(page);
+      const m1 = await dbMill(service, ids.back);
+      const back1 = m1?.runs?.optimal?.carcass?.back ?? null;
+      const lines1 = await waitFor(page, () => (window.__mwEstimateLines ? window.__mwEstimateLines().map((l) => l.key) : []), (k) => k.some((x) => x.startsWith('hdf_back_')), 30_000);
+      check(
+        `${L}.1 своя позиция ХДФ на задние стенки: в базе carcass.back, строка сметы «Задние стенки ХДФ «…»», корпус не тронут`,
+        !err1 && Boolean(back1) && lines1.includes(`hdf_back_${back1}`) && !m1?.runs?.optimal?.carcass?.base,
+        `${err1 ?? ''} · back ${back1} · ${lines1.filter((k) => k.startsWith('hdf')).join(',')}`,
+      );
+
+      /* 2. EGGER на корпус (своя позиция коллекции EGGER): корпус — EGGER, задняя стенка — та же ХДФ. */
+      await humanPress(page, '[data-material-target="carcass"]', 'цель «Корпус всей кухни»', tablet);
+      const eggerCode = `EGGER-${stamp}`;
+      const err2 = await addOwn(page, 'egger-ldsp', eggerCode, 'Корпус проба', '#8a6f55');
+      await pickItem(page, 'ldsp', eggerCode);
+      await saved(page);
+      const m2 = await dbMill(service, ids.back);
+      const c2 = m2?.runs?.optimal?.carcass ?? {};
+      const lines2 = await waitFor(page, () => (window.__mwEstimateLines ? window.__mwEstimateLines().map((l) => l.key) : []), (k) => k.some((x) => x.startsWith('carcass_')), 30_000);
+      check(
+        `${L}.2 EGGER на корпус после ХДФ: корпус своей позицией, carcass.back — та же ХДФ, строка ХДФ на месте`,
+        !err2 && Boolean(c2.base) && c2.base !== back1 && c2.back === back1 && lines2.includes(`hdf_back_${back1}`) && lines2.some((k) => k === `carcass_${c2.base}`),
+        `${err2 ?? ''} · ${JSON.stringify(c2)} · ${lines2.filter((k) => /^(hdf|carcass)/.test(k)).join(',')}`,
+      );
+
+      /* 3. Перезагрузка: тот же выбор, та же строка. */
+      await page.reload();
+      await open3d(page, L);
+      const lines3 = await waitFor(page, () => (window.__mwEstimateLines ? window.__mwEstimateLines().map((l) => l.key) : []), (k) => k.some((x) => x.startsWith('hdf_back_')), 60_000);
+      check(`${L}.3 после перезагрузки строка «Задние стенки ХДФ «ХДФ белая проба»» на месте`, lines3.includes(`hdf_back_${back1}`), lines3.filter((k) => k.startsWith('hdf')).join(','));
+      if (tablet) {
+        const scroll = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+        check(`${L}.3 прокрутки по ширине нет`, scroll <= 0, `${scroll} px`);
+      }
+      check(`${L}: ошибок страницы и консоли нет`, errors.length === 0 && consoleErrors.length === 0, [...errors, ...consoleErrors].slice(0, 3).join(' | '));
+    },
+    { viewport: tablet ? { width: 1024, height: 768 } : { width: 1440, height: 900 }, touch: tablet, importHardware: false, projects: [{ key: 'back', zone: 'Кухня', fx }] },
+  );
+}
+
+/* ═════════════════════════  SHELF: полка от пенала до стены (COMPLETE UNFINISHED, P2, TEST G шаги 11–12)  ═════════════════════════ */
+
+async function partShelf(browser, tablet) {
+  const L = tablet ? 'SHELF-TAB' : 'SHELF';
+  console.log(`\n── ${L} (${tablet ? '1024 × 768 касанием' : '1440 × 900'}): пенал у стены → «Полка от пенала до стены»: поставить, низ и глубина, отказ, запись → перезагрузка`);
+  const fx = fixture('span');
+  const want = fixture('spanExpect');
+  const pieces = (page) => page.evaluate(() => (window.__mwCadTopFiller ? window.__mwCadTopFiller('wall-shelf:') : null));
+  const size = (b) => (b ? [b[3] - b[0], b[4] - b[1], b[5] - b[2]] : null);
+  await withOrg(
+    L,
+    browser,
+    async ({ service, page, errors, consoleErrors, ids }) => {
+      await openStudio(page, ids.span);
+      await open3d(page, L);
+      await saved(page);
+
+      /* 1. Пенал → блок «Полка от пенала до стены»: низ 1600, глубина 300, толщина 22 → поставить. */
+      await pickObject(page, L, want.pencil);
+      await page.waitForSelector('[data-wall-shelf-block]', { timeout: 30_000 });
+      await page.locator('[data-wall-shelf-field="bottom"]').first().fill('1600');
+      await page.locator('[data-wall-shelf-field="depth"]').first().fill('300');
+      await page.locator('[data-wall-shelf-field="thickness"]').first().fill('22');
+      await sleep(400);
+      const words1 = await page.evaluate(() => document.querySelector('[data-wall-shelf-words]')?.textContent ?? '');
+      await humanPress(page, '[data-wall-shelf-apply]', 'поставить полку', tablet);
+      const p1 = await waitFor(page, () => (window.__mwCadTopFiller ? window.__mwCadTopFiller('wall-shelf:') : null), (v) => Array.isArray(v) && v.length === 1, 30_000);
+      await saved(page);
+      const db1 = (await service.from('projects').select('millwork').eq('id', ids.span).single()).data?.millwork?.runs?.optimal?.wallShelves ?? null;
+      const s1 = size(p1?.[0]?.boundsMm);
+      check(
+        `${L}.1 полка 600…3800 на 1600, 300 × 22: в сцене доска 3200 × 22 × 300 низом на 1600; в базе та же; слова — «выпуск в цех заперт»`,
+        /выпуск в цех заперт/.test(words1) &&
+          Array.isArray(s1) && Math.abs(s1[0] - 3200) <= 1 && Math.abs(s1[1] - 22) <= 1 && Math.abs(s1[2] - 300) <= 1 && Math.abs(p1[0].boundsMm[1] - 1600) <= 1 &&
+          Array.isArray(db1) && db1.length === 1 &&
+          ['id:shelf-1', 'fromMm:600', 'toMm:3800', 'bottomMm:1600', 'depthMm:300', 'thicknessMm:22'].every((kv) => `${kv.split(':')[0]}:${db1[0][kv.split(':')[0]]}` === kv),
+        `«${words1.slice(0, 70)}…» · ${JSON.stringify(p1)} · ${JSON.stringify(db1)}`,
+      );
+
+      /* 2. Низ 1700, глубина 250 → «Применить к полке» (правка снимает выделение — пенал выбирается снова, как в «span»). */
+      await pickObject(page, L, want.pencil);
+      await page.waitForSelector('[data-wall-shelf-block]', { timeout: 30_000 });
+      await page.locator('[data-wall-shelf-field="bottom"]').first().fill('1700');
+      await page.locator('[data-wall-shelf-field="depth"]').first().fill('250');
+      await sleep(400);
+      await humanPress(page, '[data-wall-shelf-apply]', 'применить к полке', tablet);
+      const p2 = await waitFor(page, () => (window.__mwCadTopFiller ? window.__mwCadTopFiller('wall-shelf:') : null), (v) => Array.isArray(v) && v.length === 1 && Math.abs(v[0].boundsMm[1] - 1700) <= 1, 30_000);
+      await saved(page);
+      check(`${L}.2 низ 1700, глубина 250: доска в сцене на 1700, глубиной 250`, Array.isArray(p2) && Math.abs(size(p2[0].boundsMm)[2] - 250) <= 1, JSON.stringify(p2));
+      await pickObject(page, L, want.pencil);
+      await page.waitForSelector('[data-wall-shelf-block]', { timeout: 30_000 });
+
+      /* 3. Низ 400 — в нижние модули: отказ движка до нажатия, кнопка недоступна. */
+      await page.locator('[data-wall-shelf-field="bottom"]').first().fill('400');
+      await sleep(500);
+      const words3 = await page.evaluate(() => document.querySelector('[data-wall-shelf-words]')?.textContent ?? '');
+      const off3 = await page.evaluate(() => document.querySelector('[data-wall-shelf-apply]')?.hasAttribute('disabled') ?? null);
+      check(`${L}.3 низ 400 — «заходит в «…»» до нажатия, кнопка недоступна`, /заходит в «/.test(words3) && off3 === true, `«${words3}» · ${off3}`);
+      await page.locator('[data-wall-shelf-field="bottom"]').first().fill('1700');
+
+      /* 4. Перезагрузка: та же доска. */
+      await page.reload();
+      await open3d(page, L);
+      const p4 = await waitFor(page, () => (window.__mwCadTopFiller ? window.__mwCadTopFiller('wall-shelf:') : null), (v) => Array.isArray(v) && v.length === 1, 60_000);
+      check(`${L}.4 после перезагрузки — та же доска на 1700`, Array.isArray(p4) && Math.abs(p4[0].boundsMm[1] - 1700) <= 1, JSON.stringify(p4));
+      if (tablet) {
+        const scroll = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+        check(`${L}.4 прокрутки по ширине нет`, scroll <= 0, `${scroll} px`);
+      }
+      check(`${L}: ошибок страницы и консоли нет`, errors.length === 0 && consoleErrors.length === 0, [...errors, ...consoleErrors].slice(0, 3).join(' | '));
+    },
+    { viewport: tablet ? { width: 1024, height: 768 } : { width: 1440, height: 900 }, touch: tablet, importHardware: false, projects: [{ key: 'span', zone: 'Кухня', fx }] },
   );
 }
 
@@ -3648,6 +4363,18 @@ try {
       if (part === 'leaf-tablet') await partLeaf(browser, true);
       if (part === 'fridge') await partFridge(browser, false);
       if (part === 'fridge-tablet') await partFridge(browser, true);
+      if (part === 'pencil') await partPencil(browser, false);
+      if (part === 'pencil-tablet') await partPencil(browser, true);
+      if (part === 'span') await partSpan(browser, false);
+      if (part === 'span-tablet') await partSpan(browser, true);
+      if (part === 'tall') await partTall(browser, false);
+      if (part === 'tall-tablet') await partTall(browser, true);
+      if (part === 'back') await partBack(browser, false);
+      if (part === 'back-tablet') await partBack(browser, true);
+      if (part === 'shelf') await partShelf(browser, false);
+      if (part === 'shelf-tablet') await partShelf(browser, true);
+      if (part === 'dryer2') await partDryer2(browser, false);
+      if (part === 'dryer2-tablet') await partDryer2(browser, true);
       done.push(part);
       console.log(`  ·    ${part}: ${Math.round((Date.now() - startedAt) / 1000)} с`);
     } catch (error) {

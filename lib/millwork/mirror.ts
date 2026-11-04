@@ -207,6 +207,10 @@ export function mirroredRun(run: Run): Run {
    * частей симметричны, скругления — у обоих крайних углов.
    */
   if (run.tv) next.tv = { ...run.tv, centerMm: L - run.tv.centerMm };
+  /* Настенные полки (P2) — от другого угла: та же доска на той же стене. */
+  if (run.wallShelves) {
+    next.wallShelves = run.wallShelves.map((shelf) => ({ ...shelf, fromMm: L - shelf.toMm, toMm: L - shelf.fromMm }));
+  }
   if (run.wallPanels) {
     next.wallPanels = run.wallPanels.map((panel) => ({ ...panel, fromMm: mirroredSpan(L, panel.fromMm, panel.widthMm) }));
   }

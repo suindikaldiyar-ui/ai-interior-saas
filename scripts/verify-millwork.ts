@@ -313,7 +313,7 @@ import {
   hasMountingData,
   resolveHardware,
 } from '../lib/millwork/hardware';
-import { columnNichesSumMm, ovenBottomMm } from '../lib/millwork/fill';
+import { columnNichesSumMm, isPencil, ovenBottomMm } from '../lib/millwork/fill';
 import { beamBottomMm, beamDropMm } from '../lib/millwork/ceiling';
 import {
   beamWarnings,
@@ -17101,8 +17101,11 @@ console.log('\n' + 'Правка на чертеже: ряды, инвариан
     );
   }
 
-  /** Модуль ряда, у которого есть полка: её и двигаем. */
-  const withShelf = (list: Module[]) => list.find((u) => (u.fill?.shelves.length ?? 0) > 0);
+  /*
+   * Модуль ряда, у которого есть полка: её и двигаем. Пенал с техникой — нет (слой 86): его полки — опоры ниш,
+   * правка мышью у него отказ (как у колонны с ЭТАПА 4), и проверка маршрута правки мерила бы отказ, а не маршрут.
+   */
+  const withShelf = (list: Module[]) => list.find((u) => (u.fill?.shelves.length ?? 0) > 0 && !isPencil(u));
 
   const moved = (unit: Module, run: Run) => {
     const h = moduleCarcassHeightMm(unit, run);
@@ -17125,7 +17128,7 @@ console.log('\n' + 'Правка на чертеже: ряды, инвариан
      * 160 (ЭТАП 4 — наполнение по оболочке с нижним рядом), и на 96 мм ей
      * физически некуда; раньше она стояла на 256 по чужой высоте 500.
      */
-    const unit = before[where].find((u) => (u.fill?.shelves.length ?? 0) > 0 && moved(u, three) !== null) ?? withShelf(before[where]);
+    const unit = before[where].find((u) => (u.fill?.shelves.length ?? 0) > 0 && !isPencil(u) && moved(u, three) !== null) ?? withShelf(before[where]);
     check(
       `в ряду «${where}» есть модуль с полкой — править есть`,
       Boolean(unit),

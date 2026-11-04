@@ -15,6 +15,7 @@ import { buildPanels, panelMaterials, partOfPanel, type PanelMaterials } from '.
 import { DEFAULT_PRODUCTION, type HardwareItem, type ProductionSettings } from '@/types/catalog';
 import { resolveHardware } from './hardware';
 import { FITTING_SLOT_TITLE, handleItemOf, installedItem } from './fittings';
+import { dryerItemLevels } from './dryer';
 import { GLASS_MATERIAL, GLASS_SHELF_LINE, glassLine, glassOf } from './glass';
 import { PROFILE_TITLE, VITRINE_LED_TITLE, vitrineLedMeters, vitrineLedStrips, vitrineOf } from './vitrine';
 import { vitrineModuleParts, type VitrinePart } from './vitrineParts';
@@ -978,7 +979,12 @@ export function buildEstimateDrafts(
       unit: 'm2',
       quantity: round2(Math.max(0, materials.shelfM2 - pickedCarcassM2(run, panels, carcassItems, ['shelves']))),
     },
-    { key: 'hdf_back', title: 'Задние стенки ХДФ', unit: 'm2', quantity: materials.backM2 },
+    /*
+     * Задние стенки СВОЕЙ позиции (P3, `run.carcass.back`) уходят своими строками по цене позиции; их площадь отсюда
+     * вычитается. Без своей позиции — как всегда, ставкой цеха «Задние стенки ХДФ».
+     */
+    { key: 'hdf_back', title: 'Задние стенки ХДФ', unit: 'm2', quantity: round2(Math.max(0, materials.backM2 - backDrafts(run, panels, carcassItems, materialItems, rates).reduce((s, d) => s + d.quantity, 0))) },
+    ...backDrafts(run, panels, carcassItems, materialItems, rates),
     /*
      * ФАСАДЫ ПО СТАВКЕ ЦЕХА — ТОЛЬКО ТЕ, ЧТО НЕ ИЗ КОЛЛЕКЦИИ.
      *
@@ -1336,6 +1342,19 @@ export function buildEstimateDrafts(
      * варианта по типовой ставке уходит: механизм оплачен своей строкой.
      */
     const variantSlot = VARIANT_SLOT[unit.variant ?? ''];
+    /*
+     * ВТОРАЯ КОРЗИНА НИЖНЕЙ СУШКИ (задача 3): двухуровневого комплекта позиции производитель не печатал — строка
+     * «условная композиция» без цены; итог «неполный», а не цена одной корзины, выданная за две.
+     */
+    if (unit.variant === 'base_dryer' && unit.dryer?.levels === 2 && dryerItemLevels(installedItem(unit, 'dryer', hardwareItems)) !== 2) {
+      drafts.push({
+        key: 'dryer_second_basket',
+        title: `Вторая корзина сушки (${unit.widthMm} мм) — условная композиция`,
+        unit: 'pcs',
+        quantity: 1,
+        priceUnset: 'цена не задана: двухуровневый комплект производитель не печатал — вторая корзина условная',
+      });
+    }
     if (variantSlot && fit.take(unit, variantSlot, 1)) continue;
     /* Стекло и лента витрины — строками витрины выше (P1): здесь их второй раз не пишем. */
     const vitrine = vitrineOf(unit) !== null;
@@ -1731,7 +1750,9 @@ function carcassAreas(
 
   for (const panel of panels) {
     if (panel.material.startsWith('ХДФ') || panel.material.startsWith('Фасад')) continue;
-    const part = partOfPanel(panel.name);
+    const named = partOfPanel(panel.name);
+    /* Задняя стенка — ХДФ, у неё свои строки (`backDrafts`); сюда она не доезжает (выход выше по «ХДФ»). */
+    const part = named === 'back' ? null : named;
     const ownPart = part !== null && Boolean(run.carcass?.[part]);
     if (part === 'shelves' && !ownPart) continue;
     const line: DecorLine = ownPart ? part! : 'carcass';
@@ -1785,6 +1806,44 @@ const DECOR_LINE: Record<DecorLine, { key: string; title: string }> = {
  * Площадь — из раскроя, цена — из позиции. Позиция без цены своей строки
  * не даёт вовсе и остаётся в общей: корпус за ничего клиенту не выдаём.
  */
+/**
+ * ЗАДНИЕ СТЕНКИ СВОЕЙ ПОЗИЦИИ (P3): детали «Задняя стенка» с листом позиции (`hdf:<t>:item:<id>`) — та же площадь,
+ * что режет раскрой, строкой по позиции. Позиция коллекции без цены — «цена не задана», итог «неполный».
+ */
+function backDrafts(
+  run: Run,
+  panels: Panel[],
+  catalog: Map<string, CarcassItem>,
+  materialItems: Map<string, MaterialItem>,
+  rates: RateTable,
+): Draft[] {
+  const areas = new Map<string, { item: CarcassItem; m2: number }>();
+  if (!run.carcass?.back || catalog.size === 0) return [];
+  const byModule = new Map<string, Module>();
+  for (const unit of [...run.modules, ...run.upperSegments.flatMap((s) => s.modules)]) byModule.set(unit.id, unit);
+  for (const panel of panels) {
+    if (partOfPanel(panel.name) !== 'back') continue;
+    const unit = byModule.get(panel.moduleId);
+    if (!unit) continue;
+    /* Та же связь «деталь → позиция», что у раскроя (`backLook` → `carcassLink(…, 'back')`). */
+    const link = carcassLink(unit, run, catalog, 'back');
+    if (link.state === 'none' || link.state === 'missing') continue;
+    const item = link.item;
+    const at = areas.get(item.id) ?? { item, m2: 0 };
+    at.m2 += (panel.lengthMm * panel.widthMm * panel.qty) / 1_000_000;
+    areas.set(item.id, at);
+  }
+  return Array.from(areas.values())
+    .sort((a, b) => a.item.name.localeCompare(b.item.name, 'ru'))
+    .map(({ item, m2 }) => {
+      const base = { key: `hdf_back_${item.id}`, unit: 'm2' as const, quantity: Math.round(m2 * 100) / 100, title: `Задние стенки ХДФ «${item.name}»` };
+      if (!item.collection) return item.price > 0 ? { ...base, rate: item.price } : { ...base, priceUnset: PRICE_UNSET };
+      const material = materialItems.get(item.id);
+      const price = material ? priceState(material, material.finishes[0], 'm2', rates) : { state: 'unset' as const, reason: item.priceNote ?? 'цена не задана' };
+      return { ...base, ...(price.state === 'priced' ? { rate: price.rate } : { priceUnset: price.reason }) };
+    });
+}
+
 function carcassDrafts(
   run: Run,
   panels: Panel[],

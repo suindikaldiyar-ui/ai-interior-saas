@@ -10,6 +10,7 @@ import { drawerSplitOf } from './drawerGrid';
 import { fillShelfCount } from './bays';
 import { handleSpotOf, type HandleSpot } from './handlePlace';
 import { vitrineDoorCount, vitrineOf } from './vitrine';
+import { frontSplitSpans } from './applianceFront';
 import type { Module, ModuleVariantKind, Run } from '@/types/millwork';
 
 /**
@@ -29,8 +30,13 @@ import type { Module, ModuleVariantKind, Run } from '@/types/millwork';
 export type GlyphElement =
   /** Сплошная створка во всю высоту модуля. */
   | { kind: 'panel' }
-  /** Диагонали открывания со сходом на петельной стороне. */
-  | { kind: 'swing'; hinge: 'left' | 'right' }
+  /**
+   * Диагонали открывания со сходом на петельной стороне. `band` — участок фасада, разделённого по высоте
+   * (доли высоты модуля от низа): у каждой части свои диагонали.
+   */
+  | { kind: 'swing'; hinge: 'left' | 'right'; band?: [number, number] }
+  /** Горизонтальные швы фасада, разделённого по высоте (P1/P2): доли высоты модуля от низа. */
+  | { kind: 'hseam'; shares: number[] }
   /** Шов между двумя створками. */
   | { kind: 'split' }
   /**
@@ -116,8 +122,17 @@ function shelfCount(unit: Module, fallback: number): number {
  * дуга — какой механизм заказать. Выведи их отдельной формулой, и лист
  * начнёт обещать одно, а смета оплачивать другое.
  */
-function pushOpening(unit: Module, elements: GlyphElement[]): void {
+function pushOpening(unit: Module, elements: GlyphElement[], heightMm?: number): void {
   const { opening } = openingOf(unit);
+  /* Фасад разделён по высоте (P1/P2): швы и диагонали у каждой части — те же участки, что у раскроя и сцены. */
+  const split = heightMm ? frontSplitSpans(unit, heightMm) : null;
+  if (split && (opening === 'left' || opening === 'right')) {
+    elements.push({ kind: 'hseam', shares: split.slice(1).map((span) => span.fromMm / heightMm!) });
+    for (const span of split) {
+      elements.push({ kind: 'swing', hinge: opening, band: [span.fromMm / heightMm!, (span.fromMm + span.heightMm) / heightMm!] });
+    }
+    return;
+  }
 
   if (opening === 'lift') {
     elements.push({ kind: 'lift' });
@@ -178,7 +193,7 @@ function vitrineGlyph(unit: Module, vitrine: NonNullable<ReturnType<typeof vitri
  * корзины, у сушилки — решётка: иначе разрез не отличает один вариант
  * от другого, а отличаются они именно начинкой.
  */
-export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts'): GlyphElement[] {
+export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts', heightMm?: number): GlyphElement[] {
   const variant: ModuleVariantKind = currentVariant(unit);
   const elements: GlyphElement[] = [];
 
@@ -226,7 +241,7 @@ export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts'): GlyphEleme
     case 'door':
       if (mode === 'fronts') {
         elements.push({ kind: 'panel' });
-        pushOpening(unit, elements);
+        pushOpening(unit, elements, heightMm);
       } else {
         elements.push({ kind: 'shelf', count: shelfCount(unit, 1) });
       }
@@ -236,7 +251,7 @@ export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts'): GlyphEleme
       // Две створки: шов посередине и свои диагонали на каждой.
       if (mode === 'fronts') {
         elements.push({ kind: 'panel' });
-        pushOpening(unit, elements);
+        pushOpening(unit, elements, heightMm);
       } else {
         elements.push({ kind: 'shelf', count: shelfCount(unit, 2) });
       }
@@ -262,7 +277,7 @@ export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts'): GlyphEleme
       if (mode === 'fronts') {
         elements.push({ kind: 'drawer', index: 0, count: 1 });
         elements.push({ kind: 'panel' });
-        pushOpening(unit, elements);
+        pushOpening(unit, elements, heightMm);
       } else {
         elements.push({ kind: 'drawer', index: 0, count: 1 });
         elements.push({ kind: 'shelf', count: shelfCount(unit, 1) });
@@ -286,7 +301,7 @@ export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts'): GlyphEleme
     case 'sink_base':
       if (mode === 'fronts') {
         elements.push({ kind: 'panel' });
-        pushOpening(unit, elements);
+        pushOpening(unit, elements, heightMm);
       }
       // Пунктирная чаша сверху — по ней видно, что дна у модуля нет.
       elements.push({ kind: 'sinkCut' });
@@ -304,7 +319,7 @@ export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts'): GlyphEleme
 
     case 'corner_carousel':
       elements.push({ kind: 'panel' });
-      pushOpening(unit, elements);
+      pushOpening(unit, elements, heightMm);
       elements.push({ kind: 'shelf', count: 2 });
       break;
 
@@ -317,7 +332,7 @@ export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts'): GlyphEleme
     case 'upper_door':
       if (mode === 'fronts') {
         elements.push({ kind: 'panel' });
-        pushOpening(unit, elements);
+        pushOpening(unit, elements, heightMm);
       } else {
         elements.push({ kind: 'shelf', count: shelfCount(unit, 1) });
       }
@@ -334,7 +349,7 @@ export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts'): GlyphEleme
     case 'upper_dryer':
       if (mode === 'fronts') {
         elements.push({ kind: 'panel' });
-        pushOpening(unit, elements);
+        pushOpening(unit, elements, heightMm);
       }
       elements.push({ kind: 'dryer' });
       break;
@@ -345,7 +360,7 @@ export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts'): GlyphEleme
        * Дугу рисует то же поле, что и у остальных: вариант «Подъёмник»
        * пишет направление в `fill`, и второго признака у него нет.
        */
-      pushOpening(unit, elements);
+      pushOpening(unit, elements, heightMm);
       if (mode === 'inside') elements.push({ kind: 'shelf', count: shelfCount(unit, 1) });
       break;
 
@@ -358,7 +373,7 @@ export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts'): GlyphEleme
     case 'tall_shelves':
       if (mode === 'fronts') {
         elements.push({ kind: 'panel' });
-        pushOpening(unit, elements);
+        pushOpening(unit, elements, heightMm);
       }
       elements.push({ kind: 'shelf', count: shelfCount(unit, 4) });
       break;
@@ -374,7 +389,7 @@ export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts'): GlyphEleme
       // Встроенный холодильник: сплошной фасад заподлицо и одна врезка.
       if (mode === 'fronts') {
         elements.push({ kind: 'panel' });
-        pushOpening(unit, elements);
+        pushOpening(unit, elements, heightMm);
       }
       elements.push({ kind: 'niche', count: 1 });
       break;
@@ -390,7 +405,7 @@ export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts'): GlyphEleme
     case 'tall_rod':
       if (mode === 'fronts') {
         elements.push({ kind: 'panel' });
-        pushOpening(unit, elements);
+        pushOpening(unit, elements, heightMm);
       }
       elements.push({ kind: 'rod' });
       break;

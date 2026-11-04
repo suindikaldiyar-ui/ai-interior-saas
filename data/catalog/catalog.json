@@ -32623,6 +32623,24 @@
    "items": []
   },
   {
+   "id": "hdf-back",
+   "category": "hdf",
+   "label": "ХДФ · задняя стенка",
+   "roles": [
+    "back"
+   ],
+   "finishes": [
+    "matte"
+   ],
+   "priceUnit": "m2",
+   "status": "awaiting_import",
+   "source": {
+    "type": "supplier",
+    "note": "Поставщик ХДФ цеха — уточнить. Позиций в файле нет: код, название и цвет ХДФ заводятся своей позицией. Толщина задней стенки — настройка цеха."
+   },
+   "items": []
+  },
+  {
    "id": "grandex-acrylic",
    "category": "countertop",
    "label": "Столешница · Grandex (акриловый камень)",

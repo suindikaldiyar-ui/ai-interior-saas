@@ -6,7 +6,7 @@ import { millingLink, type MillingItem } from './milling';
 import { carcassMaterialName, carcassStock, type CarcassItem } from './carcassMaterial';
 import { BUILT_IN_FRIDGE_FRONTS } from './modules';
 import { hasBottom } from './moduleVariants';
-import { hasFacade, MIN_FACADE_SPAN_MM, moduleFronts } from './applianceFront';
+import { frontSplitSpans, hasFacade, MIN_FACADE_SPAN_MM, moduleFronts } from './applianceFront';
 import { cookingStackOf } from './cookingStack';
 import { TOP_RAIL_PANEL_NAME } from './panelNames';
 import { bayLayout } from './bays';
@@ -30,6 +30,7 @@ import { moduleNumbers } from './positions';
 import { blindPartMm, cornerFillersOf, fillerNeighbour, openFrontMm } from './corner';
 import { tailFillersOf } from './countertop';
 import { TOP_FILLER_PANEL_NAME, topFillerFront, topFillerSpans } from './topFiller';
+import { WALL_SHELF_NAME } from './wallShelf';
 import { moduleDrawerKits } from './drawerKit';
 import { drawerCells, drawerFrontCutMm, drawerSplitBodies } from './drawerGrid';
 import { drawerPartPieces, drawerPieceId, type DrawerBoxPart } from './drawerBox';
@@ -163,8 +164,9 @@ export const HDIVIDER_PANEL_NAME = 'Перегородка горизонтал�
  * — по имени детали раскроя. Одна таблица на раскрой, смету и сцену: сцена
  * знает деталь по тому же имени (`BoxDraw.panel`).
  */
-export function partOfPanel(name: string | undefined): 'shelves' | 'partitions' | null {
+export function partOfPanel(name: string | undefined): 'shelves' | 'partitions' | 'back' | null {
   if (name === SHELF_PANEL_NAME) return 'shelves';
+  if (name === BACK_PANEL_NAME) return 'back';
   if (name === DIVIDER_PANEL_NAME || name === HDIVIDER_PANEL_NAME) return 'partitions';
   return null;
 }
@@ -276,6 +278,17 @@ export function edgeSides(panel: Pick<Panel, 'edges'>): EdgeSide[] {
 
 /** Лист задней стенки: ХДФ, декор в продукте не выбирается (CUT-01). */
 const BACK_STOCK: PanelStock = { kind: 'hdf', decor: null };
+
+/**
+ * МАТЕРИАЛ ЗАДНЕЙ СТЕНКИ (COMPLETE UNFINISHED, P3): позиция роли «задняя стенка» на ряду (`run.carcass.back`) —
+ * подпись «ХДФ 3 · <позиция>» и свой лист (`hdf:3:item:<id>`); не выбрана — типовая ХДФ цеха, как было. Декор корпуса
+ * сюда не доезжает (`carcassFor` без отката для `back`). Толщина — настройка цеха (`backMm`).
+ */
+function backLook(unit: Module, run: Run, carcass: Map<string, CarcassItem> | undefined, thicknessMm: number): { material: string; stock: PanelStock } {
+  const base = `ХДФ ${thicknessMm}`;
+  if (!carcass || !run.carcass?.back) return { material: base, stock: BACK_STOCK };
+  return { material: carcassMaterialName(base, unit, run, carcass, 'back'), stock: { ...carcassStock(unit, run, carcass, 'back'), kind: 'hdf' } };
+}
 
 /**
  * ШИРИНА СТВОРКИ ПО ПРОЁМУ, мм — одна формула на фасад из листа и на дверь
@@ -450,7 +463,7 @@ function moduleBodyPanels(
       if (form.kind === 'box') {
         const [sx, sy, sz] = form.size;
         if (part.kind === 'back') {
-          add({ name: BACK_PANEL_NAME, material: `ХДФ ${production.backMm}`, stock: BACK_STOCK, thicknessMm: production.backMm, lengthMm: r0(sy - backInset), widthMm: r0(sx - backInset), qty: 1, edges: { long: 0, short: 0 }, edgeType: '0.4', grain: 'none' });
+          add({ name: BACK_PANEL_NAME, ...backLook(unit, run, carcass, production.backMm), thicknessMm: production.backMm, lengthMm: r0(sy - backInset), widthMm: r0(sx - backInset), qty: 1, edges: { long: 0, short: 0 }, edgeType: '0.4', grain: 'none' });
         } else if (part.kind === 'slat') {
           /* Рейка — из того же листа, что фасад модуля, той же кромкой. */
           const look = lookOf(null);
@@ -593,8 +606,7 @@ function moduleBodyPanels(
     ] as const) {
       push({
         name: legName(BACK_PANEL_NAME, leg),
-        material: `ХДФ ${production.backMm}`,
-        stock: BACK_STOCK,
+        ...backLook(unit, run, carcass, production.backMm),
         thicknessMm: production.backMm,
         lengthMm: heightMm - backInsetL,
         widthMm,
@@ -821,8 +833,7 @@ function moduleBodyPanels(
   if ((!vit || vit.back === 'board') && !cooking && !wallMw) {
     push({
       name: BACK_PANEL_NAME,
-      material: `ХДФ ${production.backMm}`,
-      stock: BACK_STOCK,
+      ...backLook(unit, run, carcass, production.backMm),
       thicknessMm: production.backMm,
       lengthMm: heightMm - backInset,
       widthMm: unit.widthMm - backInset,
@@ -1098,6 +1109,18 @@ function moduleBodyPanels(
     if (cooking && cooking.lowerFrontMm !== null && cooking.lowerFrontMm >= MIN_FACADE_SPAN_MM) {
       pushFront(OVEN_FRONT_PANEL_NAME, cooking.lowerFrontMm - gap, unit.widthMm - gap, ['panel:0']);
     }
+    return panels;
+  }
+
+  /*
+   * ФАСАД, РАЗДЕЛЁННЫЙ ПО ВЫСОТЕ (P1/P2): деталь на каждый участок между швами — те же участки, что у сцены и петель
+   * (`facadeSpans` → `moduleFronts`). Номер створки — снизу вверх, как у пенала. Ширина — та же, что у неделённой
+   * створки (`facadeDoorWidthMm`): деление по высоте не меняет ширину детали.
+   */
+  const splitSpans = unit.frontType === 'door' ? frontSplitSpans(unit, heightMm) : null;
+  if (splitSpans) {
+    const splitWidth = facadeDoorWidthMm(unit.widthMm, 1, gap);
+    splitSpans.forEach((span, i) => pushFront(FACADE_PANEL_NAME, span.heightMm - gap, splitWidth, [`door:${i}`]));
     return panels;
   }
 
@@ -1412,6 +1435,35 @@ export function buildPanels({ run, production = DEFAULT_PRODUCTION, milling, car
       partIds: [span.partId],
     });
   }
+
+  /*
+   * НАСТЕННЫЕ ПОЛКИ (P2): доска ЛДСП своей толщины — длина вдоль ряда, ширина — глубина от стены, кромка по передней
+   * длинной стороне. Декор — корпуса модуля, к чьей боковине полка примыкает (иначе — первого модуля ряда): полка
+   * от пенала до стены — в цвет пенала. Номер «НП.n».
+   */
+  [...(run.wallShelves ?? [])]
+    .sort((a, b) => a.fromMm - b.fromMm || a.bottomMm - b.bottomMm)
+    .forEach((shelf, index) => {
+      const near =
+        modules.find((m) => m.offsetMm + m.widthMm === shelf.fromMm || m.offsetMm === shelf.toMm) ?? modules[0];
+      const t = shelf.thicknessMm;
+      extra.push({
+        moduleId: `${run.id}:wall-shelf:${shelf.id}`,
+        moduleLabel: 'Полка до стены',
+        number: `НП.${index + 1}`,
+        name: WALL_SHELF_NAME,
+        material: near && carcass ? carcassMaterialName(`ЛДСП ${t}`, near, run, carcass, 'shelves') : `ЛДСП ${t}`,
+        stock: near && carcass ? carcassStock(near, run, carcass, 'shelves') : { kind: 'ldsp', decor: null },
+        thicknessMm: t,
+        lengthMm: shelf.toMm - shelf.fromMm,
+        widthMm: shelf.depthMm,
+        qty: 1,
+        edges: { long: 1, short: 0 },
+        edgeType: edgeType(production),
+        grain: 'along',
+        partIds: [`wall-shelf:${shelf.id}`],
+      });
+    });
 
   /*
    * ДЕКОРАТИВНЫЕ ПАНЕЛИ СТЕНЫ (STAGE B) — после мебели и своими номерами

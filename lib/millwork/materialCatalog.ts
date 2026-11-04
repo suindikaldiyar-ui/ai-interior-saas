@@ -772,6 +772,8 @@ export type MaterialTarget =
   | 'carcass'
   | 'shelves'
   | 'partitions'
+  /* Задняя стенка (P3): ХДФ всей кухни — своим выбором, корпус не трогается. */
+  | 'back'
   | 'antresol'
   | 'countertop'
   /* Фартук (ЭТАП 4, часть C): всех стен кухни и одной выбранной стены. */
@@ -786,6 +788,7 @@ export const MATERIAL_TARGETS: MaterialTarget[] = [
   'carcass',
   'shelves',
   'partitions',
+  'back',
   'antresol',
   'countertop',
   'apron',
@@ -800,6 +803,7 @@ export const TARGET_TITLE: Record<MaterialTarget, string> = {
   carcass: 'Корпус всей кухни',
   shelves: 'Полки',
   partitions: 'Перегородки',
+  back: 'Задняя стенка всей кухни',
   antresol: 'Антресоль',
   countertop: 'Столешница',
   apron: 'Фартук всех стен',
@@ -821,6 +825,7 @@ export function targetTitle(target: MaterialTarget, zone?: ZoneKind | null): str
   if (!zone || zone === 'kitchen') return TARGET_TITLE[target];
   if (target === 'fronts') return 'Фасады всей комнаты';
   if (target === 'carcass') return 'Корпус всей комнаты';
+  if (target === 'back') return 'Задняя стенка всей комнаты';
   return TARGET_TITLE[target];
 }
 
@@ -830,6 +835,7 @@ export const TARGET_ROLE: Record<MaterialTarget, MaterialRole> = {
   carcass: 'carcass',
   shelves: 'carcass',
   partitions: 'carcass',
+  back: 'back',
   /* Антресоль — её корпус; фасады ложатся вместе с ним, если позиция идёт и на фасад. */
   antresol: 'carcass',
   countertop: 'countertop',
@@ -846,6 +852,7 @@ const TARGET_ON: Record<MaterialTarget, string> = {
   carcass: 'на корпус',
   shelves: 'на полки',
   partitions: 'на перегородки',
+  back: 'на заднюю стенку',
   antresol: 'на корпус антресоли',
   countertop: 'на столешницу',
   apron: 'на фартук',
@@ -1058,7 +1065,7 @@ export function materialOps(
    * деталь. Корпус не трогается; полки, которые появятся потом, возьмут
    * этот декор сами — он лежит на ряду, а не в сегодняшних модулях.
    */
-  if (target === 'shelves' || target === 'partitions') {
+  if (target === 'shelves' || target === 'partitions' || target === 'back') {
     return { ops: [{ op: 'set_carcass', part: target, itemId: choice.item.id }], note: null };
   }
 

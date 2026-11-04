@@ -1,5 +1,5 @@
 import type { Module, Run } from '@/types/millwork';
-import { defaultFill, moduleCarcassHeightMm, refitDrawerFronts, shelfAboveRoof } from './fill';
+import { isPencil, moduleCarcassHeightMm, ownShelvesOf, pencilShelves, refitDrawerFronts, shelfAboveRoof } from './fill';
 import { bayEnvelope, bayLayout } from './bays';
 import { shopOf } from './shop';
 
@@ -85,9 +85,14 @@ export function runInContext(saved: Run, live: RunContext): InContext {
      * поэтому проверка «высота сменилась» ниже их не трогала. Руками опоры не
      * двигают (`set_fill` отказывает), значит пересчитать — не потерять правку.
      */
-    if (unit.column) {
-      const supports = defaultFill(unit, shell).shelves;
-      return supports.join(',') === fill.shelves.join(',') ? unit : { ...unit, fill: { ...fill, shelves: supports } };
+    /*
+     * Пенал с одной духовкой — так же (P0): опоры одиночной ниши садятся от пола, и при другом цоколе цеха оставались
+     * на прежних отметках — сквозь прибор.
+     */
+    if (isPencil(unit)) {
+      /* Свои полки человека в верхнем и нижнем отсеке (задача 1) — не опоры: они остаются, пересчитываются только опоры. */
+      const { shelves } = pencilShelves(unit, shell, ownShelvesOf(unit, saved));
+      return shelves.join(',') === fill.shelves.join(',') ? unit : { ...unit, fill: { ...fill, shelves } };
     }
     const was = moduleCarcassHeightMm(unit, saved);
     const now = moduleCarcassHeightMm(unit, shell);

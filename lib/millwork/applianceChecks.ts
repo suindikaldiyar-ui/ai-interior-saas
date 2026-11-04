@@ -51,19 +51,31 @@ export function applianceModelFindings(run: Run, production: ProductionSettings 
       const niche = unit.column
         ? (columnNiches(unit, carcass, production).find((n) => n.appliance === 'microwave') ?? null)
         : unit.appliance === 'microwave'
-          ? singleNicheOf(unit, carcass)
+          ? singleNicheOf(unit, carcass, production)
           : null;
       if (niche) {
         const clear = niche.toMm - niche.fromMm - t;
         const [lo, hi] = mw.microwave.column.nicheHeightMm;
         if (clear < lo || clear > hi) {
+          /*
+           * БЛИЖАЙШИЕ ПРОСВЕТЫ НА ОТВЕРСТИЯХ 32 (P5): между опорами — 32·k − полка. Прибор под просвет не подгоняется;
+           * если ни один шаг не попадает в диапазон инструкции, это сказано числами, и названа та установка, что напечатана
+           * той же инструкцией (навесной шкаф, блок «СВЧ в навесном шкафу»), — только если она у модели есть.
+           */
+          const below = Math.floor((lo + t) / 32) * 32 - t;
+          const above = Math.ceil((hi + t) / 32) * 32 - t;
+          const onGrid = below >= lo && below <= hi ? below : above >= lo && above <= hi ? above : null;
+          const wall = mw.microwave.wall;
           out.push({
             moduleId: unit.id,
             level: 'blocking',
             words:
               `${label}: ${modelTitle(mw)} — просвет ниши между опорами ${clear} мм, а в колонне нужно ${lo}…${hi} мм ` +
               `(${ruleSource(mw, 'column')}) — ${clear > hi ? `лишние ${clear - hi}` : `не хватает ${lo - clear}`} мм; ` +
-              `опоры стоят на отверстиях 32 при полке ${t} мм, и просвета ${lo}…${hi} на них не получить`,
+              (onGrid !== null
+                ? `на отверстиях 32 при полке ${t} мм встаёт просвет ${onGrid} мм — поставьте прибор по отметке, где опора даёт его`
+                : `опоры стоят на отверстиях 32 при полке ${t} мм: ближайшие просветы ${below} и ${above} мм — ${lo}…${hi} на них не получить` +
+                  (wall ? `; та же инструкция печатает установку в навесной шкаф — ниша ${wall.nicheHeightMm[0]}…${wall.nicheHeightMm[1]} мм (${ruleSource(mw, 'wall')}), блок «СВЧ в навесном шкафу»` : '')),
           });
         }
         const bottom = plinth + niche.fromMm + t / 2;
