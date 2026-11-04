@@ -70,6 +70,7 @@ import { spanChecks } from './verify-span';
 import { tallChecks } from './verify-tall';
 import { dryerBasketChecks } from './verify-dryer-baskets';
 import { backChecks } from './verify-back';
+import { verifyBazisModel } from './verify-bazis';
 import { dryerOf } from '../lib/millwork/dryer';
 import { runnerModelOf } from '../lib/millwork/runnerModel';
 import { drillingPlan } from '../lib/millwork/drillingPlan';
@@ -407,8 +408,8 @@ console.log('\nHW.C: места модуля и проверка совмест�
   const run = k.shown().run;
   const slots = (id: string) => fittingSlotsOf(moduleOf(run, id), run, DEFAULT_PRODUCTION).map((s) => `${s.slot}:${s.quantity}`).join(',');
   check(
-    'C1 места: под варочной — направляющие 2 пары, ручки 2, опоры 4; дверца 450 — петли 2, планки 2, ручка 1, опоры 4; у вытяжки мест нет',
-    slots(HOB) === 'slide:2,handle:2,leg:4' && slots(DOOR) === 'hinge:2,hinge_plate:2,handle:1,leg:4' && slots('upper-2700-hood@w1') === '',
+    'C1 места: под варочной — направляющие 2 пары, ручки 2, опоры 4; дверца 450 — петли 2, планки 2, ручка 1, полкодержатели 4 (полка одна: слой 88 — места раньше не было, выбрать было негде), опоры 4; у вытяжки мест нет',
+    slots(HOB) === 'slide:2,handle:2,leg:4' && slots(DOOR) === 'hinge:2,hinge_plate:2,handle:1,shelf_support:4,leg:4' && slots('upper-2700-hood@w1') === '',
     `${slots(HOB)} | ${slots(DOOR)} | вытяжка «${slots('upper-2700-hood@w1')}»`,
   );
   /* Полезная глубина = 560 − припуск цеха 20 = 540. */
@@ -1935,6 +1936,9 @@ spanChecks(check);
 tallChecks(check);
 dryerBasketChecks(check);
 backChecks(check);
+
+console.log('\nКОМПЛЕКТ ЦЕХА И МОДЕЛЬ БАЗИС: фурнитура на все модули, готовность, учебный шкаф, скрипт импорта на подобии API');
+verifyBazisModel(check);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

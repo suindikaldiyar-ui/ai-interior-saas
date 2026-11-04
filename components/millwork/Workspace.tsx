@@ -1,5 +1,6 @@
 'use client';
 
+import type { KitPlan } from '@/lib/millwork/drillingKit';
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useInteriorStore } from '@/store/useInteriorStore';
 import dynamic from 'next/dynamic';
@@ -1841,6 +1842,15 @@ export default function Workspace(props: WorkspaceProps) {
       alive = false;
     };
   }, [drillView.on, panelWalls, production, drillingRules, hardwareItems, millingItems, carcassItems]);
+  /* Места рядов для модели БАЗИС: те же, что у сцены. */
+  const rowPlacements = useMemo(() => {
+    const out: Record<string, { xM: number; zM: number; rotationYDeg: number }> = {};
+    for (const row of sceneRowsAll) {
+      const wall = panelWalls.find((w) => w.run === row.run);
+      if (wall && row.placement) out[wall.wallId] = row.placement;
+    }
+    return out;
+  }, [sceneRowsAll, panelWalls]);
   /* Ряды сцены Studio с планом: стена ряда — по самому ряду (`panelWalls` — те же объекты рядов). */
   const sceneRowsStudio = useMemo(() => {
     const plan = drillPlan.plan;
@@ -3311,6 +3321,31 @@ export default function Workspace(props: WorkspaceProps) {
       setSelectedGap(null);
     },
     [runOps, selectedId, selectedGap],
+  );
+
+  /*
+   * КОМПЛЕКТ ЦЕХА НА ВСЕ МОДУЛИ (слой 88). Те же `set_fitting`, что у «Фурнитуры», тем же `applyOps` — на каждую
+   * стену и остров. Отказ движка — словами, а ряд записывается с тем, что прошло. Что поставить, решил `kitPlan`.
+   */
+  const applyKit = useCallback(
+    (plan: KitPlan): string | null => {
+      const said: string[] = [];
+      let changed = false;
+      for (const index of [...segments.map((_, i) => i), ...(island ? [ISLAND_ROW] : [])]) {
+        const run = rowAt(index);
+        const wall = panelWalls.find((w) => w.run === run);
+        const ops = wall ? plan.ops[wall.wallId] : undefined;
+        if (!run || !ops || ops.length === 0) continue;
+        const next = applyOps({ run, requirements: requirementsOf(index), ops, openings: wallOpenings(index), roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000), hardware: hardwareItems });
+        if (next.warnings[0]) said.push(next.warnings[0]);
+        writeRow(index, next);
+        changed = true;
+      }
+      if (changed) dirty.current = true;
+      return said[0] ?? null;
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [segments, island, panelWalls, hardwareItems, props.roomDepthM],
   );
 
   /*
@@ -6064,6 +6099,8 @@ export default function Workspace(props: WorkspaceProps) {
               requestFocus(`drill:${partId}`);
             }}
             walls={panelWalls}
+            placements={rowPlacements}
+            onApplyKit={applyKit}
             title={props.title}
             projectId={props.projectId ?? 'demo'}
             production={production}

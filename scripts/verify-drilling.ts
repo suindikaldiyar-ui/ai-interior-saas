@@ -297,12 +297,26 @@ export function drillingChecks(outer?: Check): { passed: number; failed: number 
     const sideHob = partOf(pr, 'base-2700-hob@w1', 'side_left');
     const boxSides = pr.parts.filter((p) => p.moduleId === 'base-2700-hob@w1' && p.role === 'drawer_side');
     check(
-      'DR9 KA 4532 под варочной: отверстий направляющей нет ни на корпусе, ни на ящике — «диаметр … не напечатан»; боковин ящиков в плане 4',
+      'DR9 KA 4532 под варочной: в паспорте напечатан винт, сверла цеха нет — отверстий направляющей нет ни на корпусе, ни на ящике, причина «правило цеха не задано» с напечатанным; боковин ящиков в плане 4',
       sideHob.ops.every((o) => !o.role.startsWith('runner')) &&
-        sideHob.pending.some((p) => p.what.startsWith('направляющая на корпусе') && p.why.some((w) => w.includes('не напечатан'))) &&
+        sideHob.pending.some((p) => p.what.startsWith('направляющая на корпусе') && p.why.some((w) => w.includes('сверло под винт направляющей — правило цеха не задано (в паспорте:'))) &&
         boxSides.length === 4 &&
         boxSides.every((b) => b.ops.length === 0 && b.pending.length > 0),
       `${sideHob.pending.map((p) => p.what).join(', ')} · боковин ящиков ${boxSides.length}`,
+    );
+    /* Сверло под винт — правило цеха: цепочка и база из паспорта, Ø и глубина — цеха, и источник это говорит. */
+    const krHole = kitchen({ ...SHOP, drilling: { ...SHOP.drilling!, runnerHole: { diameterMm: 2.5, depthMm: 12 } }, drawerBox: { sideMm: 16, bottomMm: 4, bottomMaterial: 'hdf', bottomMount: 'groove', bottomGrooveMm: 6, gapBelowMm: 10, gapAboveMm: 30, runnerAxisMm: 40, edge: '0.4', confirmed: true } });
+    krHole.ops([{ op: 'set_fitting', moduleId: 'base-2700-hob@w1', slot: 'slide', itemId: item('MFR-HETTICH-9114276').id } as MillworkOp]);
+    const ph = krHole.plan();
+    const sideOps = partOf(ph, 'base-2700-hob@w1', 'side_left').ops.filter((o) => o.role === 'runner_cabinet');
+    const boxOps = ph.parts.filter((p) => p.moduleId === 'base-2700-hob@w1' && p.role === 'drawer_side').flatMap((p) => p.ops);
+    check(
+      'DR9б правило цеха «сверло под винт» Ø 2.5 × 12: отверстия на боковине корпуса и на боковинах ящика по цепочке паспорта, источник называет правило цеха',
+      sideOps.length > 0 &&
+        boxOps.length > 0 &&
+        [...sideOps, ...boxOps].every((o) => o.diameterMm === 2.5 && o.depthMm === 12 && o.source.includes('Ø и глубина — правило цеха')) &&
+        partOf(ph, 'base-2700-hob@w1', 'side_left').pending.every((p) => !p.what.startsWith('направляющая на корпусе')),
+      `на корпусе ${sideOps.length}, на ящиках ${boxOps.length} · ${sideOps[0]?.source ?? 'нет операций'}`,
     );
   }
 

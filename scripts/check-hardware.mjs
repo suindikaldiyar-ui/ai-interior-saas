@@ -31,6 +31,12 @@
  *   PART=drilling — 1440 × 900 (HW-08, HW-09): CLIP top + планка →
  *     «Документы» → «Присадка»: числа чашек и планки = приёмке движка,
  *     выпуск заперт словами, «Экспорт для БАЗИС» — ZIP без присадки.
+ *   PART=wizard — 1440 × 900 (слой 88): «Настроить присадку цеха» с пустых настроек: выбор изделий, числа цеха,
+ *                проверка на учебном шкафу, галочка только руками, база, перезагрузка; снимки для руководства.
+ *   PART=wizard-tablet — то же на 1024 × 768 с касанием.
+ *   PART=bazis — 1440 × 900 (слой 88): «Поставить на все модули», отверстия объекта, «Экспорт в БАЗИС» при запертом
+ *                выпуске и черновой обмен; ZIP прочитан обратно, скрипт из него — на подобии API.
+ *   PART=bazis-tablet — то же на 1024 × 768 с касанием.
  *   PART=open, twin — открытие без списка производителей; реестр 3D петлёй-тестом.
  *   PART=tandembox — 1440 × 900 × 2: реконструкция TANDEMBOX antaro по чертежу
  *     Blum «Импортом CAD-фурнитуры» (материалы как в файле) → путь панели → модель
@@ -51,7 +57,7 @@ const PORT = Number(process.env.PORT_HW ?? 3291);
 const BASE = `http://localhost:${PORT}`;
 const OUT = '.capture-check/hardware';
 const PARTS = (process.env.PART ?? 'import,kitchen,kitchen-drawers,kitchen-lift,wardrobe,cargo,corner,tablet').split(',').map((s) => s.trim()).filter(Boolean);
-const KNOWN = ['import', 'kitchen', 'kitchen-drawers', 'kitchen-lift', 'wardrobe', 'cargo', 'corner', 'tablet', 'catalog2', 'drilling', 'drawers', 'open', 'twin', 'tandembox', 'clip', 'aventos', 'real', 'import-ui', 'fronts', 'fronts-tablet', 'ceiling', 'ceiling-tablet', 'inner', 'dryer', 'dryer-tablet', 'leaf', 'leaf-tablet', 'fridge', 'fridge-tablet', 'pencil', 'pencil-tablet', 'span', 'span-tablet', 'dryer2', 'dryer2-tablet', 'tall', 'tall-tablet', 'back', 'back-tablet', 'shelf', 'shelf-tablet'];
+const KNOWN = ['wizard', 'wizard-tablet', 'bazis', 'bazis-tablet', 'import', 'kitchen', 'kitchen-drawers', 'kitchen-lift', 'wardrobe', 'cargo', 'corner', 'tablet', 'catalog2', 'drilling', 'drawers', 'open', 'twin', 'tandembox', 'clip', 'aventos', 'real', 'import-ui', 'fronts', 'fronts-tablet', 'ceiling', 'ceiling-tablet', 'inner', 'dryer', 'dryer-tablet', 'leaf', 'leaf-tablet', 'fridge', 'fridge-tablet', 'pencil', 'pencil-tablet', 'span', 'span-tablet', 'dryer2', 'dryer2-tablet', 'tall', 'tall-tablet', 'back', 'back-tablet', 'shelf', 'shelf-tablet'];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let failed = 0;
@@ -4141,6 +4147,282 @@ const DRILL_RULES = {
   confirmed: true,
 };
 
+/*
+ * МАСТЕР ПРИСАДКИ И ЭКСПОРТ В БАЗИС (слой 88). Значения приёмки — проба экрана, а не рекомендация цеху: продукт их
+ * не подставляет, и первая проверка меряет именно это — поля цеха пусты, галочка недоступна.
+ */
+const WIZ_ARTICLES = { shelf_support: 'MFR-BOYARD-P101Zn.56', hinge: 'MFR-BLUM-71B3590', hinge_plate: 'MFR-BLUM-173L8130', slide: 'MFR-HETTICH-9114276', handle: 'MFR-HAFELE-115.52.630' };
+const GUIDE = 'docs/images/aldik-bazis';
+
+async function partWizard(browser, tablet) {
+  const L = tablet ? 'WIZARD-T' : 'WIZARD';
+  console.log(`\n── ${L}: «Настроить присадку цеха» с пустых настроек до подтверждения ──`);
+  await withOrg(
+    L,
+    browser,
+    async ({ service, org, page, errors, consoleErrors }) => {
+      mkdirSync(GUIDE, { recursive: true });
+      const shot = (name) => (tablet ? Promise.resolve() : page.screenshot({ path: `${GUIDE}/${name}.png`, timeout: 120_000 }));
+      await page.goto(`${BASE}/admin/production`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+      await page.waitForSelector('[data-drilling-wizard]', { timeout: 60_000 });
+      const wizard = page.locator('[data-drilling-wizard]').first();
+      await wizard.scrollIntoViewIfNeeded();
+      const state = () => wizard.getAttribute('data-wizard-state');
+      const step = async (key) => {
+        await page.locator(`[data-wizard-step="${key}"]`).first().click();
+        await sleep(250);
+      };
+      const field = (key) => page.locator(`[data-wizard-field="${key}"]`).first();
+      const set = async (key, value) => {
+        await field(key).fill(String(value));
+        await sleep(60);
+      };
+      const pick = async (slot) => {
+        const article = WIZ_ARTICLES[slot];
+        await page.locator(`[data-kit-search="${slot}"]`).first().fill(article.split('-').pop());
+        const row = page.locator(`[data-kit-list="${slot}"] [data-kit-item="${article}"]`).first();
+        await row.waitFor({ timeout: 90_000 });
+        await row.click();
+        await page.locator(`[data-kit-chosen="${slot}"]`).first().waitFor({ timeout: 30_000 });
+        const manufacturer = page.locator(`[data-kit-chosen="${slot}"] [data-fact-level="manufacturer"]`);
+        await waitFor(page, (s) => document.querySelectorAll(`[data-kit-chosen="${s}"] [data-fact-level="manufacturer"]`).length, (n) => n > 0, 30_000, slot);
+        return manufacturer.count();
+      };
+
+      await step('confirm');
+      const lockedAtStart = await field('confirmed').isDisabled();
+      await step('joints');
+      const empties = await Promise.all(['confirmat-face', 'confirmat-edge', 'confirmat-depth', 'confirmat-front', 'confirmat-back'].map((k) => field(k).inputValue()));
+      check(
+        `${L}.1 пустые настройки: поля цеха пусты, продукт ничего не подставил, галочка цеха недоступна, итог — выбор изделия`,
+        empties.every((v) => v === '') && lockedAtStart && (await state()) === 'needs_item',
+        `поля ${JSON.stringify(empties)} · галочка ${lockedAtStart ? 'недоступна' : 'доступна'} · ${await state()}`,
+      );
+      await shot('01-wizard-start');
+
+      await set('confirmat-face', 7);
+      await set('confirmat-edge', 5);
+      await set('confirmat-depth', 50);
+      await set('confirmat-front', 50);
+      await set('confirmat-back', 50);
+      await step('shelves');
+      const shelfFacts = await pick('shelf_support');
+      await set('shelf-front', 37);
+      await set('shelf-back', 37);
+      await shot('02-wizard-shelves');
+      await step('hinges');
+      const hingeFacts = await pick('hinge');
+      const hingeText = (await page.locator('[data-kit-chosen="hinge"]').first().textContent()) ?? '';
+      await set('hinge-edge', 100);
+      await field('hinge-count').fill('900=2, 1600=3');
+      await field('hinge-count').blur();
+      await shot('03-wizard-hinges');
+      await step('plates');
+      await pick('hinge_plate');
+      await field('plate-axis').check();
+      await step('runners');
+      await pick('slide');
+      await set('runner-d', 2.5);
+      await set('runner-h', 12);
+      await step('handles');
+      await pick('handle');
+      await set('handle-hole', 5);
+      await field('handle-place').check();
+      await step('remain');
+      await set('min-remain', 3);
+      check(
+        `${L}.2 числа производителя приехали сами из паспорта позиции и подписаны производителем; чашка петли — напечатанная`,
+        shelfFacts > 0 && hingeFacts > 0 && /Подтверждено производителем/.test(hingeText) && /35 мм/.test(hingeText),
+        `полкодержатель ${shelfFacts}, петля ${hingeFacts} · ${hingeText.replace(/\s+/g, ' ').slice(0, 140)}`,
+      );
+
+      await step('check');
+      await waitFor(page, () => document.querySelector('[data-wizard-lesson]')?.getAttribute('data-lesson-ops') ?? 'none', (v) => v !== 'none' && Number(v) > 0, 30_000);
+      const lesson = page.locator('[data-wizard-lesson]').first();
+      const lessonOps = Number(await lesson.getAttribute('data-lesson-ops'));
+      const lessonRelease = await lesson.getAttribute('data-lesson-release');
+      const lessonParts = await page.locator('[data-lesson-part]').count();
+      await shot('04-wizard-lesson');
+      check(
+        `${L}.3 учебный шкаф 600 × 720 × 560: 8 деталей, отверстия посчитаны, без галочки выпуск заперт`,
+        lessonOps > 0 && lessonParts === 8 && lessonRelease === 'locked',
+        `отверстий ${lessonOps}, деталей ${lessonParts}, выпуск ${lessonRelease}`,
+      );
+
+      await step('confirm');
+      const open = !(await field('confirmed').isDisabled());
+      const notYet = (await state()) === 'needs_confirm';
+      await shot('05-wizard-confirm');
+      await field('confirmed').check();
+      await page.locator('[data-wizard-save]').first().click();
+      const stored = await waitFor(
+        page,
+        () => null,
+        () => true,
+        100,
+      ).then(async () => {
+        for (let i = 0; i < 60; i += 1) {
+          const row = (await service.from('orgs').select('production').eq('id', org.id).single()).data;
+          if (row?.production?.drilling?.confirmed === true) return row.production.drilling;
+          await sleep(500);
+        }
+        return null;
+      });
+      check(
+        `${L}.4 галочка доступна только после всех шагов и ставится руками; в базе комплект из 5 позиций, правила и подтверждение`,
+        open && notYet && stored?.confirmed === true && Object.keys(stored?.kit ?? {}).length === 5 && stored?.runnerHole?.diameterMm === 2.5 && stored?.confirmat?.faceDiameterMm === 7,
+        JSON.stringify({ open, notYet, kit: Object.keys(stored?.kit ?? {}), hole: stored?.runnerHole }),
+      );
+
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: 120_000 });
+      await page.waitForSelector('[data-drilling-wizard]', { timeout: 60_000 });
+      await waitFor(page, () => document.querySelector('[data-drilling-wizard]')?.getAttribute('data-wizard-state') ?? null, (v) => v === 'ready', 90_000);
+      await step('remain');
+      await set('min-remain', 4);
+      await step('confirm');
+      const dropped = !(await field('confirmed').isChecked());
+      check(
+        `${L}.5 после перезагрузки всё готово; любая правка снимает подтверждение`,
+        dropped && (await page.locator('[data-drilling-wizard]').first().getAttribute('data-wizard-state')) === 'needs_confirm',
+        `галочка снята ${dropped}`,
+      );
+      const wide = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      check(`${L}.6 прокрутки по ширине нет, ошибок страницы нет`, wide <= 0 && errors.length === 0, `вылет ${wide} px · ${errors.slice(0, 2).join(' | ')} · консоль ${consoleErrors.length}`);
+    },
+    { viewport: tablet ? { width: 1024, height: 768 } : { width: 1440, height: 900 }, touch: tablet, production: { drawerBox: DRAWER_BOX } },
+  );
+}
+
+async function partBazis(browser, tablet) {
+  const L = tablet ? 'BAZIS-T' : 'BAZIS';
+  console.log(`\n── ${L}: комплект на все модули, отверстия объекта, «Экспорт в БАЗИС», ZIP прочитан обратно ──`);
+  const fx = fixture('kitchen');
+  await withOrg(
+    L,
+    browser,
+    async ({ service, org, page, errors, ids }) => {
+      mkdirSync(GUIDE, { recursive: true });
+      const shot = (name) => (tablet ? Promise.resolve() : page.screenshot({ path: `${GUIDE}/${name}.png`, timeout: 120_000 }));
+      const idOf = async (article) => {
+        const { data, error } = await service.from('catalog_items').select('id').eq('org_id', org.id).eq('article', article).single();
+        if (error) throw new Stop(`НУЛЕВОЙ СЕЛЕКТОР: позиции ${article} нет: ${error.message}`);
+        return data.id;
+      };
+      const kit = {
+        hinge: await idOf('MFR-BLUM-71B3590'),
+        hinge_plate: await idOf('MFR-BLUM-173L8130'),
+        handle: await idOf('MFR-HAFELE-115.52.630'),
+        shelf_support: await idOf('MFR-BOYARD-P101Zn.56'),
+        slide: await idOf('MFR-HETTICH-9114276'),
+      };
+      /* Правила цеха без галочки: выпуск обязан остаться запертым, что бы ни посчиталось. */
+      const drilling = {
+        hingeEdgeMm: 100,
+        hingeCount: [{ upToMm: 900, hinges: 2 }, { upToMm: 1600, hinges: 3 }],
+        plateOnCupAxis: true,
+        handleHoleMm: 5,
+        handlePlaceConfirmed: true,
+        shelfSupport: { frontMm: 37, backMm: 37 },
+        confirmat: { faceDiameterMm: 7, edgeDiameterMm: 5, edgeDepthMm: 50, fromFrontMm: 50, fromBackMm: 50 },
+        minRemainMm: 3,
+        runnerHole: { diameterMm: 2.5, depthMm: 12 },
+        kit,
+        noDrillParts: [],
+        confirmed: false,
+      };
+      const { error: orgError } = await service.from('orgs').update({ production: { drawerBox: DRAWER_BOX, drilling } }).eq('id', org.id);
+      if (orgError) throw new Stop(`настройки временной организации: ${orgError.message}`);
+
+      await openStudio(page, ids.kitchen);
+      must(`${L} инструмент «Документы»`, await tool(page, 'documents'), 'НУЛЕВОЙ СЕЛЕКТОР: [data-studio-tool="documents"]');
+      await page.locator('[data-studio-doc="drilling"]').first().click();
+      await page.waitForSelector('[data-drilling-map]', { timeout: 60_000 });
+      const preview = page.locator('[data-kit-preview]').first();
+      await preview.waitFor({ timeout: 120_000 });
+      await waitFor(page, () => Number(document.querySelector('[data-kit-preview]')?.getAttribute('data-kit-set') ?? 0), (n) => n > 0, 120_000);
+      const map = page.locator('[data-drilling-map]').first();
+      const opsBefore = Number(await map.getAttribute('data-ops'));
+      const set = Number(await preview.getAttribute('data-kit-set'));
+      const unpricedWords = (await page.locator('[data-kit-unpriced]').first().textContent().catch(() => '')) ?? '';
+      check(`${L}.0 до нажатия сказано, что итог станет «неполным»: у позиций комплекта нет цены`, /неполным/.test(unpricedWords), unpricedWords.slice(0, 160));
+      await shot('06-drilling-kit');
+      await page.locator('[data-kit-apply]').first().click();
+      await waitFor(page, () => Number(document.querySelector('[data-drilling-map]')?.getAttribute('data-ops') ?? 0), (n) => n > 0, 90_000);
+      await sleep(1500);
+      const opsAfter = Number(await map.getAttribute('data-ops'));
+      const left = Number((await page.locator('[data-kit-preview]').first().getAttribute('data-kit-set')) ?? -1);
+      await saved(page);
+      const row = (await service.from('projects').select('millwork').eq('id', ids.kitchen).single()).data;
+      const json = JSON.stringify(row?.millwork ?? {});
+      await shot('07-drilling-after-kit');
+      check(
+        `${L}.1 «Поставить на все модули»: мест ${set}, отверстий ${opsBefore} → ${opsAfter}; на модулях в базе — настоящие позиции; повторять нечего`,
+        set > 0 && opsAfter > opsBefore && json.includes(kit.hinge) && json.includes(kit.shelf_support) && left === 0,
+        `мест ${set} · ${opsBefore} → ${opsAfter} · осталось ${left}`,
+      );
+      const release = await map.getAttribute('data-release');
+      const stateWord = await page.locator('[data-drill-state]').first().getAttribute('data-drill-state');
+      check(`${L}.2 без галочки цеха выпуск заперт, что бы ни посчиталось`, release === 'locked' && stateWord !== 'ready', `${release} · ${stateWord}`);
+
+      await page.locator('[data-drill-bazis-wizard]').first().click();
+      await page.waitForSelector('[data-bazis-wizard]', { timeout: 30_000 });
+      await sleep(400);
+      const onScreen = await page.evaluate(() => {
+        const r = document.querySelector('[data-bazis-wizard]').getBoundingClientRect();
+        return r.top >= 0 && r.top < window.innerHeight * 0.6;
+      });
+      check(`${L}.2б блок «Экспорт в БАЗИС» открылся на экране, а не под списком деталей`, onScreen, `на экране: ${onScreen}`);
+      const drillOk = await page.locator('[data-bazis-check="drilling"]').first().getAttribute('data-check-ok');
+      await shot('08-bazis-checks');
+      await page.locator('[data-bazis-next]').first().click();
+      await page.locator('[data-bazis-draft-holes]').first().waitFor({ timeout: 15_000 });
+      await shot('09-bazis-way');
+      await page.locator('[data-bazis-next]').first().click();
+
+      const pull = async (name) => {
+        const [download] = await Promise.all([page.waitForEvent('download', { timeout: 120_000 }), page.locator('[data-bazis-build]').first().click()]);
+        const file = `${OUT}/${name}.zip`;
+        await download.saveAs(file);
+        return file;
+      };
+      const clean = await pull(`bazis-${tablet ? 't-' : ''}locked`);
+      await page.locator('[data-bazis-result]').first().waitFor({ timeout: 30_000 });
+      await shot('10-bazis-result');
+      const out1 = JSON.parse(execSync(`npx tsx --tsconfig tsconfig.scripts.json scripts/bazis-zip-check.ts "${clean}"`, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }).trim().split('\n').pop());
+      check(
+        `${L}.3 выпуск заперт: в ZIP нет файлов присадки и отверстий в скрипте; скрипт из скачанного архива собрал все панели на подобии API`,
+        drillOk === 'no' &&
+          out1.names.includes('aldik-import-bazis.js') &&
+          !out1.names.some((n) => n.startsWith('drilling') || n.startsWith('dxf/') || /\.(b3d|f3d|fr3d|cfrn)$/i.test(n)) &&
+          out1.holesMode === 'none' &&
+          out1.holes === 0 &&
+          out1.built === out1.panels &&
+          out1.panels > 0 &&
+          out1.off === 0,
+        JSON.stringify(out1).slice(0, 320),
+      );
+      const shownPanels = Number(await page.locator('[data-bazis-result]').first().getAttribute('data-bazis-panels'));
+      check(`${L}.4 экран называет то, что прочитано из архива`, shownPanels === out1.panels, `${shownPanels} = ${out1.panels}`);
+
+      await page.locator('[data-bazis-close]').first().click();
+      await page.locator('[data-drill-bazis-wizard]').first().click();
+      await page.locator('[data-bazis-next]').first().click();
+      await page.locator('[data-bazis-draft-holes]').first().check();
+      await page.locator('[data-bazis-next]').first().click();
+      const draftFile = await pull(`bazis-${tablet ? 't-' : ''}draft`);
+      const out2 = JSON.parse(execSync(`npx tsx --tsconfig tsconfig.scripts.json scripts/bazis-zip-check.ts "${draftFile}"`, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }).trim().split('\n').pop());
+      check(
+        `${L}.5 черновой обмен только галочкой: отверстия в модели с пометкой, файлов присадки для цеха нет`,
+        out2.holesMode === 'draft' && out2.holes > 0 && !out2.names.some((n) => n.startsWith('drilling') || n.startsWith('dxf/')) && out2.report.includes('ЧЕРНОВИК'),
+        JSON.stringify({ mode: out2.holesMode, holes: out2.holes, pockets: out2.pockets }),
+      );
+      const wide = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      check(`${L}.6 прокрутки по ширине нет, ошибок страницы нет`, wide <= 0 && errors.length === 0, `вылет ${wide} px · ${errors.slice(0, 2).join(' | ')}`);
+    },
+    { viewport: tablet ? { width: 1024, height: 768 } : { width: 1440, height: 900 }, touch: tablet, projects: [{ key: 'kitchen', zone: 'Кухня', fx }], production: { drawerBox: DRAWER_BOX } },
+  );
+}
+
 async function partDrilling(browser) {
   console.log('\n── DRILLING (1440 × 900): CLIP top + планка → «Присадка»: чашки и планка числами движка, выпуск, «Экспорт для БАЗИС»');
   const fx = fixture('kitchen');
@@ -4190,7 +4472,7 @@ async function partDrilling(browser) {
       const notice = (await page.locator('[data-drill-notice]').first().textContent()) ?? '';
       await page.screenshot({ path: `${OUT}/drilling-2-bazis.png`, timeout: 120_000 });
       check(
-        'DRILL.3 «Экспорт для БАЗИС»: ZIP с nomenclature.xml, parts.csv, hardware.csv, model.obj, manifest.json и README.txt; присадки в нём нет (выпуск заперт); ни .b3d, ни .cfrn; на экране «Экспорт создан; проверка в БАЗИС ожидается»',
+        'DRILL.3 «Только файлы (ZIP)»: ZIP с nomenclature.xml, parts.csv, hardware.csv, model.obj, manifest.json и README.txt; присадки в нём нет (выпуск заперт); ни .b3d, ни .cfrn; на экране «Экспорт создан; проверка в БАЗИС ожидается»',
         ['nomenclature.xml', 'parts.csv', 'hardware.csv', 'model.obj', 'manifest.json', 'README.txt'].every((n) => names.includes(n)) &&
           !names.some((n) => n.startsWith('drilling') || n.startsWith('dxf/') || /\.(b3d|f3d|fr3d|cfrn)$/i.test(n)) &&
           manifest?.drilling?.issued === false &&
@@ -4344,6 +4626,10 @@ try {
       if (part === 'tablet') await partTablet(browser);
       if (part === 'catalog2') await partCatalog2(browser);
       if (part === 'drilling') await partDrilling(browser);
+      if (part === 'wizard') await partWizard(browser, false);
+      if (part === 'wizard-tablet') await partWizard(browser, true);
+      if (part === 'bazis') await partBazis(browser, false);
+      if (part === 'bazis-tablet') await partBazis(browser, true);
       if (part === 'drawers') await partDrawers(browser);
       if (part === 'open') await partOpen(browser);
       if (part === 'twin') await partTwin(browser);

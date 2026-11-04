@@ -2,6 +2,9 @@ import type { HardwareItem } from '@/types/catalog';
 import type { EstimateLine } from '@/types/millwork';
 import type { PartBox } from './cabinetBoxes';
 import { cell, csvFile, panelsToCsv } from './csv-export';
+import { BAZIS_SCRIPT_NAME, bazisImportScript } from './bazisImportScript';
+import { bazisModel, type BazisHolesMode, type BazisModel, type BazisWall } from './bazisModel';
+import type { RunBoxesOptions } from './cabinetBoxes';
 import { FITTING_SLOT_TITLE } from './fittings';
 import { drillingCsv, drillingDxf, drillingJson, type DrillExportMeta } from './drillingExport';
 import type { DrillingPlan } from './drillingPlan';
@@ -38,8 +41,10 @@ import type { ZipEntry } from './zip';
  * (`runBoxes`).
  */
 
-export const BAZIS_PACKAGE_VERSION = 'HW-09.1';
+export const BAZIS_PACKAGE_VERSION = 'HW-09.2';
 export const BAZIS_CHECK_WORDS = 'Экспорт создан; проверка в БАЗИС ожидается';
+/** Статус редактируемой модели, пока скрипт не запускали в настоящей программе. */
+export const BAZIS_MODEL_STATUS = 'Требует проверки в БАЗИС-Мебельщик';
 
 export type BazisFile = {
   name: string;
@@ -62,6 +67,18 @@ export type BazisManifest = {
   drilling: { issued: boolean; parts: number; ops: number; reasons: string[] };
   /** Замок экрана (композиция, стена) — пакет помечен черновиком. */
   draft: string | null;
+  /** Редактируемая модель: файл данных и скрипт импорта. Нет — пакет собран без мест рядов. */
+  model: {
+    file: string;
+    script: string;
+    panels: number;
+    placed: number;
+    unplaced: number;
+    holesMode: BazisHolesMode;
+    holes: number;
+    edgeHoles: number;
+    status: string;
+  } | null;
   counts: { parts: number; pieces: number; materials: number; edges: number; hardware: number; boxes: number };
   files: BazisFile[];
   notIncluded: string[];
@@ -71,7 +88,8 @@ const NOT_INCLUDED = [
   'Файлы .b3d, .f3d, .fr3d не создаются: формат БАЗИС закрыт, опубликованной спецификации и SDK нет.',
   'Файл .cfrn не создаётся: описание формата не называет единицы, порядок матрицы и положение отверстий — до подтверждения Базис-Центра это была бы догадка.',
   'Программ станка нет: пласть, базирование и инструмент задаёт технолог.',
-  'Модель с панелями, кромкой и присадкой в БАЗИС из этого пакета автоматически не получается — её собирает технолог по деталям и присадке.',
+  'Нативный файл модели пакет не содержит: панели, материалы, кромку и выемки собирает в БАЗИС скрипт aldik-import-bazis.js, а файл сохраняет сама программа. В настоящей программе этот скрипт ещё не запускался.',
+  'Настоящих отверстий фурнитуры скрипт не ставит: API БАЗИС не добавляет отверстие в панель напрямую. Отверстие на пласти приезжает круглой выемкой или вырезом контура, отверстие в торце — только в drilling.csv.',
 ];
 
 const xml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -247,6 +265,16 @@ const README = (m: BazisManifest) =>
     m.bazisCheck + '.',
     m.draft ? `ЧЕРНОВИК: ${m.draft}` : '',
     '',
+    ...(m.model
+      ? [
+          `Как открыть в БАЗИС (${m.model.status}):`,
+          `  1. Скопируйте ${m.model.script} в папку Документы\\BazisX\\Scripts (X — ваша версия БАЗИС).`,
+          '  2. Откройте БАЗИС-Мебельщик и создайте новую модель.',
+          `  3. Меню «Скрипты» → ${m.model.script.replace(/\.js$/, '')}. Скрипт покажет отчёт: сколько панелей собрано и что не передано.`,
+          '  4. Проверьте габарит и панели, затем «Файл» → «Сохранить как».',
+          '',
+        ]
+      : []),
     'Файлы:',
     ...m.files.map((f) => `  ${f.name} — ${f.what}. В БАЗИС: ${f.bazis}`),
     '',
@@ -270,9 +298,20 @@ export type BazisPackageInput = {
   walls: { label: string; boxes: PartBox[] }[];
   /** Замок выпуска экрана (`screen.exportLock`): есть — пакет черновик. */
   exportLock: string | null;
+  /** Ряды с местами в мире и настройки коробок — для редактируемой модели. Пусто — без неё. */
+  modelWalls?: BazisWall[];
+  boxOptions?: RunBoxesOptions;
+  /**
+   * Черновой обмен: рассчитанные отверстия при запертом выпуске — только явным выбором человека, с пометкой
+   * «ЧЕРНОВИК» в модели и отчёте скрипта. В файлы присадки для цеха они не идут.
+   */
+  draftHoles?: boolean;
+  zone?: BazisWall['run']['zone'];
+  /** Имя материала ALDIK → имя в базе БАЗИС цеха. */
+  materialMap?: Record<string, string>;
 };
 
-export function bazisPackage(input: BazisPackageInput): { files: ZipEntry[]; manifest: BazisManifest } {
+export function bazisPackage(input: BazisPackageInput): { files: ZipEntry[]; manifest: BazisManifest; model: BazisModel | null } {
   const { meta, panels, plan, lines, hardware, walls } = input;
   const issued = plan.release.open && input.exportLock === null;
   const drilled = plan.parts.filter((p) => p.ops.length > 0);
@@ -323,6 +362,17 @@ export function bazisPackage(input: BazisPackageInput): { files: ZipEntry[]; man
     }
   }
   const boxes = walls.reduce((s, w) => s + w.boxes.length, 0);
+  const holesMode: BazisHolesMode = issued ? 'issued' : input.draftHoles ? 'draft' : 'none';
+  const model = input.modelWalls && input.boxOptions ? bazisModel({ meta, panels, plan, walls: input.modelWalls, options: input.boxOptions, holesMode, zone: input.zone, materialMap: input.materialMap }) : null;
+  if (model) {
+    add(
+      BAZIS_SCRIPT_NAME,
+      bazisImportScript(model),
+      `скрипт импорта: панелей ${model.counts.panels}, кромок ${model.counts.edges}, отверстий на пласти ${model.counts.holes}${holesMode === 'draft' ? ' (ЧЕРНОВИК)' : ''}`,
+      `Папка Документы\\BazisX\\Scripts → меню «Скрипты» модуля БАЗИС-Мебельщик. ${BAZIS_MODEL_STATUS}`,
+    );
+    add('aldik-model.json', JSON.stringify(model, null, 1), 'те же данные скрипта структурой: детали, места, кромка, отверстия, материалы', 'в БАЗИС не загружается: данные уже внутри скрипта, файл — для проверки');
+  }
   add('model.obj', bazisObj(walls), `справочная геометрия: стен ${walls.length}, коробок ${boxes}`, 'Импорт 3D моделей (*.obj) — нередактируемый полигональный объект, только подложка');
 
   const manifest: BazisManifest = {
@@ -341,6 +391,19 @@ export function bazisPackage(input: BazisPackageInput): { files: ZipEntry[]; man
       reasons: issued ? [] : [...(input.exportLock ? [input.exportLock] : []), ...plan.release.reasons],
     },
     draft: input.exportLock,
+    model: model
+      ? {
+          file: 'aldik-model.json',
+          script: BAZIS_SCRIPT_NAME,
+          panels: model.counts.panels,
+          placed: model.counts.placed,
+          unplaced: model.counts.unplaced,
+          holesMode,
+          holes: model.counts.holes,
+          edgeHoles: model.counts.edgeHoles,
+          status: BAZIS_MODEL_STATUS,
+        }
+      : null,
     counts: {
       parts: panels.length,
       pieces: panels.reduce((s, p) => s + p.qty, 0),
@@ -354,5 +417,5 @@ export function bazisPackage(input: BazisPackageInput): { files: ZipEntry[]; man
   };
   files.push({ name: 'manifest.json', data: JSON.stringify(manifest, null, 1) });
   files.push({ name: 'README.txt', data: utf8(README(manifest)) });
-  return { files, manifest };
+  return { files, manifest, model };
 }

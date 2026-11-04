@@ -14,7 +14,7 @@ import { CORNER_HINGE_TITLE, frontDrawerSlides, liftKey, openingHardware, type M
 import { buildPanels, panelMaterials, partOfPanel, type PanelMaterials } from './panels';
 import { DEFAULT_PRODUCTION, type HardwareItem, type ProductionSettings } from '@/types/catalog';
 import { resolveHardware } from './hardware';
-import { FITTING_SLOT_TITLE, handleItemOf, installedItem } from './fittings';
+import { FITTING_SLOT_TITLE, handleItemOf, installedItem, shelfSupportCount } from './fittings';
 import { dryerItemLevels } from './dryer';
 import { GLASS_MATERIAL, GLASS_SHELF_LINE, glassLine, glassOf } from './glass';
 import { PROFILE_TITLE, VITRINE_LED_TITLE, vitrineLedMeters, vitrineLedStrips, vitrineOf } from './vitrine';
@@ -1369,6 +1369,9 @@ export function buildEstimateDrafts(
       });
     }
   }
+
+  /* Полкодержатель, поставленный на модуль, — своей строкой: столько же штук, сколько отверстий считает присадка. */
+  for (const unit of modules) fit.take(unit, 'shelf_support', shelfSupportCount(unit));
 
   drafts.push(...sectionDrafts(run, production, hardwareItems));
 

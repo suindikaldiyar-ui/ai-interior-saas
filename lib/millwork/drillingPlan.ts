@@ -2,10 +2,13 @@ import type { DrillingSettings, HardwareDrillingSpec, HardwareItem, ProductionSe
 import type { Module, Run } from '@/types/millwork';
 import { DEFAULT_PRODUCTION } from '@/types/catalog';
 import {
+  BACK_PANEL_NAME,
   BOTTOM_PANEL_NAME,
   FACADE_PANEL_NAME,
+  SHELF_PANEL_NAME,
   SIDE_PANEL_NAME,
   TOP_PANEL_NAME,
+  TOP_RAIL_PANEL_NAME,
   objectPanels,
   panelLeaves,
   type ObjectPanel,
@@ -151,14 +154,14 @@ export type DrillingPlan = {
 
 /* ─────────────────────────── источники чисел ─────────────────────────── */
 
-function sourceOf(item: HardwareItem): string {
+export function hardwareSource(item: HardwareItem): string {
   const s = item.hardware.source;
   const page = s?.printedPage ? `, с. ${s.printedPage}` : '';
   const pdf = s?.pdfPage ? ` (PDF ${s.pdfPage})` : '';
   return `${item.hardware.manufacturer ?? 'позиция компании'} ${item.hardware.manufacturerArticle ?? item.article}${page}${pdf}`;
 }
 
-function specOf(item: HardwareItem, part: HardwareDrillingSpec['part'], match?: RegExp): HardwareDrillingSpec | null {
+export function hardwareSpec(item: HardwareItem, part: HardwareDrillingSpec['part'], match?: RegExp): HardwareDrillingSpec | null {
   return item.hardware.drilling?.find((d) => d.part === part && (!match || match.test(d.what))) ?? null;
 }
 
@@ -175,6 +178,16 @@ export function cupFixOf(spec: HardwareDrillingSpec | null): { spacing: number; 
   return { spacing: num(spacing[1]), offset: num(offset[1]) };
 }
 
+/**
+ * Чашка на саморезах, чьё положение паспорт не образмерил: присадка чашки есть, а отверстий под саморезы поставить
+ * нечем — деталь «не рассчитано» и выпуск заперт. Одно условие на план и на подбор позиции в мастере.
+ */
+export function cupScrewsUnknown(hinge: HardwareItem): boolean {
+  const fix = cupFixOf(hardwareSpec(hinge, 'door', /крепёжн|крепежн/i));
+  const cupSpec = hardwareSpec(hinge, 'door', /чашк/i) ?? hardwareSpec(hinge, 'door');
+  return !fix && Boolean(cupSpec?.what) && /точк|саморез/i.test(cupSpec?.what ?? '');
+}
+
 /** Правила цеха, или «пусто» — тогда ни одно правило не задано. */
 function rulesOf(production: ProductionSettings): DrillingSettings {
   return (
@@ -187,6 +200,7 @@ function rulesOf(production: ProductionSettings): DrillingSettings {
       shelfSupport: null,
       confirmat: null,
       minRemainMm: null,
+      runnerHole: null,
       confirmed: false,
     }
   );
@@ -198,7 +212,8 @@ function roleOf(panel: ObjectPanel, piece: number): PartRole {
   if (panel.name === SIDE_PANEL_NAME) return panel.qty === 2 ? (piece === 0 ? 'side_left' : 'side_right') : 'side';
   if (panel.name === DRAWER_SIDE_PANEL_NAME) return 'drawer_side';
   if (panel.name === BOTTOM_PANEL_NAME) return 'bottom';
-  if (panel.name === TOP_PANEL_NAME) return 'top';
+  /* «Планки верхние» нижнего шкафа — та же деталь между боковинами, что крыша: без роли они оставались без отверстий молча. */
+  if (panel.name === TOP_PANEL_NAME || panel.name === TOP_RAIL_PANEL_NAME) return 'top';
   if (panel.name === 'Фронт ящика') return 'drawer_front';
   if (panel.name === FACADE_PANEL_NAME || /^Фасад( [АБ])?$/.test(panel.name) || panel.name === 'Фасад встройки' || panel.name === `${FACADE_PANEL_NAME}: рама`) {
     return 'door';
@@ -257,7 +272,7 @@ function hingeOps(ctx: Ctx, door: DrillPart, side: { left?: DrillPart; right?: D
   /* Числа чашки — те же размеры для подбора, по которым петлю ставит сцена (`hingeCupOf`). */
   const cup = hingeCupOf(hinge);
   const why: string[] = [];
-  if (cup.diameterMm === null && cup.depthMm === null) why.push(`присадки чашки в паспорте ${sourceOf(hinge)} нет`);
+  if (cup.diameterMm === null && cup.depthMm === null) why.push(`присадки чашки в паспорте ${hardwareSource(hinge)} нет`);
   else if (cup.diameterMm === null) why.push('диаметр чашки не напечатан');
   else if (cup.depthMm === null) why.push('глубина сверления чашки не напечатана');
   const tb = hingeBoringMm({ carcassMm: ctx.production.carcassMm, gapMm: ctx.production.frontGapMm }, hinge, plate);
@@ -278,9 +293,9 @@ function hingeOps(ctx: Ctx, door: DrillPart, side: { left?: DrillPart; right?: D
   const xs = ownHeights ?? hingeHeightsMm(leaf.lengthMm, count, edge);
   const place = hingeCupPlace(ctx.production, hinge, plate);
   const yCup = leaf.hinge === 'left' ? place.fromEdgeMm : door.widthMm - place.fromEdgeMm;
-  const src = `${sourceOf(hinge)}: Ø${cup.diameterMm}, глубина ${cup.depthMm}, TB ${tb} (таблица наложения с планкой ${plate?.hardware.manufacturerArticle ?? '—'}); по высоте — ${ownHeights ? `свои высоты створки ${ownHeights.join(' / ')} мм (проект)` : `правило цеха ${edge} мм от края, ${basis.shop ? 'число петель — таблица цеха' : 'число петель — правило продукта'}`}`;
-  const fix = cupFixOf(specOf(hinge, 'door', /крепёжн|крепежн/i));
-  const fixSpec = specOf(hinge, 'door', /крепёжн|крепежн/i);
+  const src = `${hardwareSource(hinge)}: Ø${cup.diameterMm}, глубина ${cup.depthMm}, TB ${tb} (таблица наложения с планкой ${plate?.hardware.manufacturerArticle ?? '—'}); по высоте — ${ownHeights ? `свои высоты створки ${ownHeights.join(' / ')} мм (проект)` : `правило цеха ${edge} мм от края, ${basis.shop ? 'число петель — таблица цеха' : 'число петель — правило продукта'}`}`;
+  const fix = cupFixOf(hardwareSpec(hinge, 'door', /крепёжн|крепежн/i));
+  const fixSpec = hardwareSpec(hinge, 'door', /крепёжн|крепежн/i);
   xs.forEach((x, i) => {
     door.ops.push({
       id: `cup-${i + 1}`,
@@ -314,13 +329,12 @@ function hingeOps(ctx: Ctx, door: DrillPart, side: { left?: DrillPart; right?: D
           direction: 'перпендикулярно пласти B (тыл фасада)',
           itemId: hinge.id,
           article: hinge.hardware.manufacturerArticle ?? hinge.article,
-          source: `${sourceOf(hinge)}: крепёж чашки — ${fixSpec.positionsMm}`,
+          source: `${hardwareSource(hinge)}: крепёж чашки — ${fixSpec.positionsMm}`,
         });
       }
     }
   });
-  const cupSpec = specOf(hinge, 'door', /чашк/i) ?? specOf(hinge, 'door');
-  if (!fix && cupSpec?.what && /точк|саморез/i.test(cupSpec.what)) {
+  if (cupScrewsUnknown(hinge)) {
     door.pending.push({ what: 'крепёж чашки', why: ['положение саморезов чашки в паспорте не образмерено — отверстия под саморезы не ставятся'] });
   }
 
@@ -331,10 +345,10 @@ function hingeOps(ctx: Ctx, door: DrillPart, side: { left?: DrillPart; right?: D
     sidePart.pending.push({ what: 'планка петли', why: ['ответная планка не выбрана'] });
     return;
   }
-  const plateSpec = specOf(plate, 'cabinet_side');
+  const plateSpec = hardwareSpec(plate, 'cabinet_side');
   const holes = plateHolesOf(plate);
   const pwhy: string[] = [];
-  if (!plateSpec) pwhy.push(`присадки планки в паспорте ${sourceOf(plate)} нет`);
+  if (!plateSpec) pwhy.push(`присадки планки в паспорте ${hardwareSource(plate)} нет`);
   if (plateSpec && plateSpec.diameterMm === null) pwhy.push(`диаметр отверстий планки не напечатан (${plateSpec.what})`);
   if (plateSpec && plateSpec.depthMm === null) pwhy.push('глубина отверстий планки не напечатана');
   if (plateSpec && !holes) pwhy.push(`расстояния планки не разобраны: «${plateSpec.positionsMm ?? '—'}»`);
@@ -362,7 +376,7 @@ function hingeOps(ctx: Ctx, door: DrillPart, side: { left?: DrillPart; right?: D
         direction: 'перпендикулярно пласти A (внутренняя)',
         itemId: plate.id,
         article: plate.hardware.manufacturerArticle ?? plate.article,
-        source: `${sourceOf(plate)}: Ø${plateSpec.diameterMm}, глубина ${plateSpec.depthMm}, ${holes.fromEdge} от передней кромки, ${holes.spacing} между отверстиями; по высоте — ось чашки (правило цеха)`,
+        source: `${hardwareSource(plate)}: Ø${plateSpec.diameterMm}, глубина ${plateSpec.depthMm}, ${holes.fromEdge} от передней кромки, ${holes.spacing} между отверстиями; по высоте — ось чашки (правило цеха)`,
       });
     }
   });
@@ -427,8 +441,8 @@ function runnerOps(
       for (const p of [...targets, ...boxes]) p.pending.push({ what: `направляющая, ${label}`, why: ['паспорт позиции ещё не дочитан'] });
       continue;
     }
-    const cab = specOf(item, 'cabinet_side');
-    const drw = specOf(item, 'drawer_side');
+    const cab = hardwareSpec(item, 'cabinet_side');
+    const drw = hardwareSpec(item, 'drawer_side');
     const cabChain = chainPositions(cab?.positionsMm ?? null);
     const drwChain = chainPositions(drw?.positionsMm ?? null);
     const axis = kit.plan.runnerAxisFromZoneMm;
@@ -436,11 +450,15 @@ function runnerOps(
     if (kit.place.bayId) why.push('ящик отсека: стенка отсека — не боковина корпуса, присадка по ней не рассчитывается');
     if (!kit.place.overlay) why.push('привязка отверстий в паспорте дана для накладного фасада');
     if (axis === null) why.push(runnerAxisMissingWhy(kit.profile));
+    /* В паспорте напечатан винт, а не сверло: Ø и глубина — правило цеха, как у ручки. Напечатанное сильнее. */
+    const hole = ctx.rules.runnerHole ?? null;
+    const cabD = cab?.diameterMm ?? hole?.diameterMm ?? null;
+    const cabH = cab?.depthMm ?? hole?.depthMm ?? null;
     const cabWhy = [...why];
     if (!cabChain) cabWhy.push('цепочки отверстий на корпусе в паспорте нет');
-    if (cab && cab.diameterMm === null) cabWhy.push(`диаметр отверстия на корпусе не напечатан: ${cab.what}`);
-    if (cab && cab.depthMm === null) cabWhy.push('глубина отверстия на корпусе не напечатана');
-    if (cabWhy.length > 0 || !cab || !cabChain || cab.diameterMm === null || cab.depthMm === null || axis === null) {
+    if (cab && cabD === null) cabWhy.push(`сверло под винт направляющей — правило цеха не задано (в паспорте: ${cab.what})`);
+    if (cab && cabD !== null && cabH === null) cabWhy.push('глубина отверстия на корпусе — правило цеха не задано');
+    if (cabWhy.length > 0 || !cab || !cabChain || cabD === null || cabH === null || axis === null) {
       for (const p of targets) p.pending.push({ what: `направляющая на корпусе, ${label}`, why: cabWhy });
     } else {
       const height = kit.place.zoneFromMm + axis;
@@ -452,22 +470,24 @@ function runnerOps(
             face: 'A',
             xMm: r1(height),
             yMm: y,
-            diameterMm: cab.diameterMm!,
-            depthMm: cab.depthMm!,
+            diameterMm: cabD,
+            depthMm: cabH,
             through: false,
             direction: 'перпендикулярно пласти A (внутренняя)',
             itemId: item.id,
             article: item.hardware.manufacturerArticle ?? item.article,
-            source: `${sourceOf(item)}: цепочка «${cab.positionsMm}» от передней кромки; по высоте — ось направляющей короба цеха`,
+            source: `${hardwareSource(item)}: цепочка «${cab.positionsMm}» от передней кромки; по высоте — ось направляющей короба цеха${cab.diameterMm === null ? '; Ø и глубина — правило цеха (в паспорте напечатан винт)' : ''}`,
           }),
         );
       }
     }
+    const drwD = drw?.diameterMm ?? hole?.diameterMm ?? null;
+    const drwH = drw?.depthMm ?? hole?.depthMm ?? null;
     const drwWhy = [...why.filter((w) => !w.startsWith('ящик отсека'))];
     if (!drwChain) drwWhy.push('цепочки отверстий на ящике в паспорте нет');
-    if (drw && drw.diameterMm === null) drwWhy.push(`диаметр отверстия на ящике не напечатан: ${drw.what}`);
-    if (drw && drw.depthMm === null) drwWhy.push('глубина отверстия на ящике не напечатана');
-    if (drwWhy.length > 0 || !drw || !drwChain || drw.diameterMm === null || drw.depthMm === null || axis === null) {
+    if (drw && drwD === null) drwWhy.push(`сверло под винт направляющей — правило цеха не задано (в паспорте: ${drw.what})`);
+    if (drw && drwD !== null && drwH === null) drwWhy.push('глубина отверстия на ящике — правило цеха не задано');
+    if (drwWhy.length > 0 || !drw || !drwChain || drwD === null || drwH === null || axis === null) {
       for (const p of boxes) p.pending.push({ what: `направляющая на ящике, ${label}`, why: drwWhy });
     } else {
       const y = axis - kit.plan.bottomFromMm;
@@ -479,13 +499,13 @@ function runnerOps(
             face: 'B',
             xMm: x,
             yMm: r1(y),
-            diameterMm: drw.diameterMm!,
-            depthMm: drw.depthMm!,
+            diameterMm: drwD,
+            depthMm: drwH,
             through: false,
             direction: 'перпендикулярно пласти B (наружная)',
             itemId: item.id,
             article: item.hardware.manufacturerArticle ?? item.article,
-            source: `${sourceOf(item)}: цепочка «${drw.positionsMm}» от передней кромки; по высоте — ось направляющей короба цеха`,
+            source: `${hardwareSource(item)}: цепочка «${drw.positionsMm}» от передней кромки; по высоте — ось направляющей короба цеха${drw.diameterMm === null ? '; Ø и глубина — правило цеха (в паспорте напечатан винт)' : ''}`,
           }),
         );
       }
@@ -519,12 +539,12 @@ function handleOps(ctx: Ctx, part: DrillPart, leaf: string, hinge: 'left' | 'rig
     return;
   }
   /* Врезная — гнездо под корпус по паспорту (Ø и глубина), а не отверстия под винты. */
-  const pocket = model?.shape === 'flush' ? specOf(item, 'front') : null;
+  const pocket = model?.shape === 'flush' ? hardwareSpec(item, 'front') : null;
   const spacing = model?.shape === 'knob' ? 0 : item.hardware.dimensionsMm?.holeSpacing;
   if (model?.shape === 'flush') {
-    if (!pocket || pocket.diameterMm === null || pocket.depthMm === null) why.push(`гнезда врезной ручки в паспорте ${sourceOf(item)} нет`);
+    if (!pocket || pocket.diameterMm === null || pocket.depthMm === null) why.push(`гнезда врезной ручки в паспорте ${hardwareSource(item)} нет`);
   } else {
-    if (spacing === undefined || spacing === null) why.push(`межосевое у ${sourceOf(item)} не напечатано`);
+    if (spacing === undefined || spacing === null) why.push(`межосевое у ${hardwareSource(item)} не напечатано`);
     if (ctx.rules.handleHoleMm === null) why.push('диаметр отверстия под винт ручки — правило цеха не задано (в паспорте напечатан винт, а не сверло)');
   }
   if (!ctx.rules.handlePlaceConfirmed && ctx.unit.handleAt?.[leaf] === undefined) why.push('место ручки на фасаде (правило продукта) цехом не подтверждено');
@@ -555,7 +575,7 @@ function handleOps(ctx: Ctx, part: DrillPart, leaf: string, hinge: 'left' | 'rig
       direction: 'перпендикулярно лицу (A)',
       itemId: item.id,
       article: item.hardware.manufacturerArticle ?? item.article,
-      source: `${sourceOf(item)}: ${pocket.what}; ${own ? `место — задано на детали (${ctx.unit.handleAt![leaf].xMm}, ${ctx.unit.handleAt![leaf].yMm} мм)` : 'место — правило продукта (подтверждено цехом)'}`,
+      source: `${hardwareSource(item)}: ${pocket.what}; ${own ? `место — задано на детали (${ctx.unit.handleAt![leaf].xMm}, ${ctx.unit.handleAt![leaf].yMm} мм)` : 'место — правило продукта (подтверждено цехом)'}`,
     });
     return;
   }
@@ -574,7 +594,7 @@ function handleOps(ctx: Ctx, part: DrillPart, leaf: string, hinge: 'left' | 'rig
       direction: 'насквозь, с тыла (B) к лицу',
       itemId: item.id,
       article: item.hardware.manufacturerArticle ?? item.article,
-      source: `${sourceOf(item)}: ${spacing ? `межосевое ${spacing}` : 'кнопка — одно отверстие по центру'}; Ø — правило цеха; ${own ? `место — задано на детали (${ctx.unit.handleAt![leaf].xMm}, ${ctx.unit.handleAt![leaf].yMm} мм)` : 'место — правило продукта (подтверждено цехом)'}`,
+      source: `${hardwareSource(item)}: ${spacing ? `межосевое ${spacing}` : 'кнопка — одно отверстие по центру'}; Ø — правило цеха; ${own ? `место — задано на детали (${ctx.unit.handleAt![leaf].xMm}, ${ctx.unit.handleAt![leaf].yMm} мм)` : 'место — правило продукта (подтверждено цехом)'}`,
     });
   }
 }
@@ -590,10 +610,10 @@ function shelfOps(ctx: Ctx, sides: DrillPart[]): void {
     for (const p of sides) p.pending.push({ what: 'полкодержатели', why: ['полкодержатель производителя на модуле не выбран — отверстий нет'] });
     return;
   }
-  const spec = specOf(item, 'cabinet_side') ?? specOf(item, 'other');
+  const spec = hardwareSpec(item, 'cabinet_side') ?? hardwareSpec(item, 'other');
   const why: string[] = [];
   if (item.detail === 'light') why.push('паспорт позиции ещё не дочитан');
-  if (!spec) why.push(`присадки полкодержателя в паспорте ${sourceOf(item)} нет`);
+  if (!spec) why.push(`присадки полкодержателя в паспорте ${hardwareSource(item)} нет`);
   if (spec && spec.diameterMm === null) why.push('диаметр отверстия полкодержателя не напечатан');
   if (spec && spec.depthMm === null) why.push('глубина отверстия полкодержателя не напечатана');
   if (!ctx.rules.shelfSupport) why.push('оси полкодержателей от передней и задней кромки — правило цеха не задано');
@@ -619,7 +639,7 @@ function shelfOps(ctx: Ctx, sides: DrillPart[]): void {
           direction: 'перпендикулярно пласти A (внутренняя)',
           itemId: item.id,
           article: item.hardware.manufacturerArticle ?? item.article,
-          source: `${sourceOf(item)}: Ø${spec.diameterMm}, глубина ${spec.depthMm}; оси от кромок — правило цеха; отметка полки — ось отверстия`,
+          source: `${hardwareSource(item)}: Ø${spec.diameterMm}, глубина ${spec.depthMm}; оси от кромок — правило цеха; отметка полки — ось отверстия`,
         });
       }
     });
@@ -758,6 +778,13 @@ export function drillChecks(part: DrillPart, rules: DrillingSettings): DrillIssu
 
 /* ─────────────────────────── план объекта ─────────────────────────── */
 
+/**
+ * Детали, которым отверстий не положено по схеме сборки продукта: полка лежит на полкодержателях (отверстия — в
+ * боковинах), задняя стенка — в пазу или на скобах. Остальная деталь без отверстий и без причины — НЕ «готово»:
+ * у неё строка «не рассчитано», пока цех не отметил её «крепится без присадки» (`noDrillParts`).
+ */
+export const PARTS_WITHOUT_HOLES: readonly string[] = [SHELF_PANEL_NAME, BACK_PANEL_NAME];
+
 export function drillingPlan(input: {
   walls: PanelWall[];
   production?: ProductionSettings;
@@ -856,6 +883,12 @@ export function drillingPlan(input: {
     }
   }
 
+  const noDrill = new Set([...PARTS_WITHOUT_HOLES, ...(rules.noDrillParts ?? [])]);
+  for (const p of parts) {
+    if (p.ops.length > 0 || p.pending.length > 0 || noDrill.has(p.name)) continue;
+    p.pending.push({ what: `крепление: ${p.name}`, why: ['схема крепления этой детали — правило цеха не задано: присадка не рассчитана'] });
+  }
+
   const issues = parts.flatMap((p) => drillChecks(p, rules));
   const reasons: string[] = [];
   const pendingParts = parts.filter((p) => p.pending.length > 0);
@@ -901,12 +934,14 @@ export function drillingBlockers(plan: DrillingPlan): DrillBlocker[] {
 }
 
 /** Сводка для экрана и выгрузки: деталей с отверстиями, операций, «не рассчитано». */
-export function drillingSummary(plan: DrillingPlan): { parts: number; drilled: number; ops: number; pending: number; issues: number } {
+export function drillingSummary(plan: DrillingPlan): { parts: number; drilled: number; ops: number; pending: number; pendingParts: number; issues: number } {
   return {
     parts: plan.parts.length,
     drilled: plan.parts.filter((p) => p.ops.length > 0).length,
     ops: plan.parts.reduce((s, p) => s + p.ops.length, 0),
+    /* Причин, а не деталей: у боковины их бывает четыре. Экран пишет деталей (`pendingParts`), иначе «110» читается как 110 деталей из 128. */
     pending: plan.parts.reduce((s, p) => s + p.pending.length, 0),
+    pendingParts: plan.parts.filter((p) => p.pending.length > 0).length,
     issues: plan.issues.length,
   };
 }

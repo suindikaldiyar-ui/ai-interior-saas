@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import dynamic from 'next/dynamic';
 import {
   DEFAULT_ALLOWANCES,
   DEFAULT_DEPTHS,
@@ -40,7 +41,10 @@ import { upperBottomMm, workTopMm } from '@/lib/millwork/shop';
  * распиленная неверно партия.
  */
 
-type Props = { initial: ProductionSettings };
+type Props = { initial: ProductionSettings; orgId?: string };
+
+/* Мастер присадки — движок присадки и список производителей: только когда страница открыта, отдельным чанком. */
+const DrillingWizard = dynamic(() => import('./DrillingWizard'), { ssr: false, loading: () => <p className="text-[13px]">Мастер присадки загружается…</p> });
 
 type Field<K extends keyof ProductionSettings> = {
   key: K;
@@ -153,7 +157,7 @@ const HEIGHTS: { key: keyof RowHeights; title: string; hint: string }[] = [
   { key: 'apronMm', title: 'Фартук', hint: 'От столешницы до низа навесных' },
 ];
 
-export default function ProductionAdmin({ initial }: Props) {
+export default function ProductionAdmin({ initial, orgId }: Props) {
   const [value, setValue] = useState<ProductionSettings>(initial);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -764,9 +768,15 @@ export default function ProductionAdmin({ initial }: Props) {
                   : 'пока не стоит «Цех подтвердил эти правила», присадка — черновик: выпуск в цех заперт, отверстия по правилам цеха в объектах не считаются выпущенными.'}
               </li>
             </ul>
-            <div className="mt-2">
-              <DrillingRulesFields rules={value.drilling ?? EMPTY_DRILLING} onRules={(next) => setValue((v) => ({ ...v, drilling: next }))} />
+            <div className="mt-3">
+              <DrillingWizard orgId={orgId ?? null} production={value} rules={value.drilling} onRules={(next) => setValue((v) => ({ ...v, drilling: next }))} onSave={() => void save()} busy={busy} />
             </div>
+            <details className="mt-3">
+              <summary className="cursor-pointer text-[13px]">Все поля одной формой</summary>
+              <div className="mt-2">
+                <DrillingRulesFields rules={value.drilling ?? EMPTY_DRILLING} onRules={(next) => setValue((v) => ({ ...v, drilling: next }))} />
+              </div>
+            </details>
           </div>
 
           <div id="drawer-box" className="mt-6 border-t border-navyLine/60 pt-4" data-drawer-box data-drawer-box-state={boxEmpty ? 'empty' : boxParsed ? (boxParsed.confirmed ? 'confirmed' : 'unconfirmed') : 'invalid'}>

@@ -44,7 +44,7 @@ export default async function ProductionPage() {
         </div>
       </header>
 
-      <ProductionAdmin initial={productionSettings(data?.production)} />
+      <ProductionAdmin initial={productionSettings(data?.production)} orgId={org.id} />
     </main>
   );
 }

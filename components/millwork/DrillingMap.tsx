@@ -7,6 +7,10 @@ import type { CarcassItem } from '@/lib/millwork/carcassMaterial';
 import DrillingRulesFields from './DrillingRulesFields';
 import type { PanelWall } from '@/lib/millwork/panels';
 import { DRILL_ROLE_TITLE, drillingBlockers, drillingPlan, drillingSummary, type DrillPart } from '@/lib/millwork/drillingPlan';
+import { kitPlan, planReadiness, type KitPlan } from '@/lib/millwork/drillingKit';
+import { ensureHardwareList } from '@/components/hardwareListLoader';
+import { useInteriorStore } from '@/store/useInteriorStore';
+import BazisExportWizard from './BazisExportWizard';
 import { DRILL_FILE_NOTE, drillEdgeSvg, drillPartSvg, drillingCsv, drillingDxf, drillingJson, drillingPdfPages } from '@/lib/millwork/drillingExport';
 import { csvFile } from '@/lib/millwork/csv-export';
 import { PAGE_H, PAGE_W } from '@/lib/millwork/cuttingDraw';
@@ -45,6 +49,10 @@ type Props = {
   dirty: boolean;
   /** «Показать в 3D» (§ 11): деталь подсвечена в сцене, камера — к ней. */
   onShow3d?: (partId: string) => void;
+  /** Места рядов в мире — те же, что у сцены: по ним модель БАЗИС ставит детали. */
+  placements?: Record<string, { xM: number; zM: number; rotationYDeg: number }>;
+  /** Поставить комплект цеха на все пустые места модулей. Возвращает слова движка, если что-то не встало. */
+  onApplyKit?: (plan: KitPlan) => string | null;
 };
 
 const DPI = 160;
@@ -97,7 +105,7 @@ const fileBase = (title: string, date: string) => `Присадка ${title.repl
 type Filter = 'drilled' | 'pending' | 'all';
 
 export default function DrillingMap(props: Props) {
-  const { walls, title, projectId, production, milling, carcass, hardware, fingerprint, exportLock, estimateLines, rules, onRules, onSave, dirty, onShow3d } = props;
+  const { walls, title, projectId, production, milling, carcass, hardware, fingerprint, exportLock, estimateLines, rules, onRules, onSave, dirty, onShow3d, onApplyKit, placements } = props;
   const plan = useMemo(
     () => drillingPlan({ walls, production: { ...production, drilling: rules }, hardware, milling, carcass }),
     [walls, production, rules, hardware, milling, carcass],
@@ -114,6 +122,21 @@ export default function DrillingMap(props: Props) {
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [saveNote, setSaveNote] = useState<string | null>(null);
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [kitNote, setKitNote] = useState<string | null>(null);
+  const kitChosen = Object.keys(rules.kit ?? {}).length > 0;
+  /* Комплект цеха — позиции производителей: без их записи `kitPlan` назвал бы их «нет в каталоге». */
+  const listState = useInteriorStore((s) => s.hardwareList.state);
+  useEffect(() => {
+    if (kitChosen) void ensureHardwareList();
+  }, [kitChosen]);
+  const kit = useMemo(
+    () => (kitChosen && hardware ? kitPlan({ walls, kit: rules.kit, hardware, production: { ...production, drilling: rules } }) : null),
+    [kitChosen, walls, rules, hardware, production],
+  );
+  const state = useMemo(() => planReadiness(plan, rules), [plan, rules]);
+  const shop = useMemo(() => ({ ...production, drilling: rules }), [production, rules]);
+  const modelWalls = useMemo(() => walls.map((w) => ({ ...w, placement: placements?.[w.wallId] })), [walls, placements]);
 
   const list = plan.parts.filter((p) => (filter === 'all' ? true : filter === 'drilled' ? p.ops.length > 0 : p.pending.length > 0));
   const part: DrillPart | null = plan.parts.find((p) => p.partId === partId) ?? list[0] ?? null;
@@ -178,7 +201,17 @@ export default function DrillingMap(props: Props) {
       label: w.label,
       boxes: runBoxes(w.run, { thicknessMm: shop.carcassMm, frontThicknessMm: shop.frontMm, gapMm: shop.frontGapMm, hardware, carcass, production: shop }),
     }));
-    const pack = bazisPackage({ meta, panels, plan, lines: estimateLines, hardware: hardware ?? new Map(), walls: boxes, exportLock });
+    const pack = bazisPackage({
+      meta,
+      panels,
+      plan,
+      lines: estimateLines,
+      hardware: hardware ?? new Map(),
+      walls: boxes,
+      exportLock,
+      modelWalls,
+      boxOptions: { thicknessMm: shop.carcassMm, frontThicknessMm: shop.frontMm, gapMm: shop.frontGapMm, hardware, carcass, production: shop },
+    });
     saveFile(zipFiles(pack.files, meta.date), 'application/zip', `${fileBase(title, meta.date)} БАЗИС.zip`);
     (window as unknown as { __mwBazis?: unknown }).__mwBazis = pack.manifest;
     setNotice(
@@ -217,8 +250,64 @@ export default function DrillingMap(props: Props) {
       <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
         <h2 className="text-[22px] font-semibold">Присадка</h2>
         <span className="text-[15px] text-graphiteMw">
-          деталей {summary.parts} · с отверстиями {summary.drilled} · операций {summary.ops} · не рассчитано {summary.pending} · замечаний {summary.issues}
+          деталей {summary.parts} · с отверстиями {summary.drilled} · операций {summary.ops} · деталей без расчёта {summary.pendingParts} · замечаний {summary.issues}
         </span>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px]" data-drill-state={state.state}>
+        <b className="text-[15px]">{state.title}</b>
+        <a className="underline" href="/admin/production#drilling" data-drill-wizard-link>
+          Настроить присадку цеха
+        </a>
+      </div>
+
+      {/* Комплект цеха (слой 88): фурнитура на все пустые места модулей одним нажатием, с тем, что встанет, — до нажатия. */}
+      <div className="rounded-[10px] bg-surface-2 px-4 py-3 text-[13px]" data-drill-kit={kit ? 'chosen' : 'none'}>
+        <p className="text-[15px] font-semibold">Фурнитура цеха на все модули</p>
+        {!kitChosen && <p>Комплект цеха не выбран: откройте «Настроить присадку цеха» и выберите петлю, планку, ручку, полкодержатель и направляющую. Пока позиции ставятся на каждое место вручную в «Фурнитуре».</p>}
+        {kitChosen && listState === 'loading' && <p>Список производителей читается…</p>}
+        {kit && listState !== 'loading' && (
+          <>
+            <p data-kit-preview data-kit-set={kit.set} data-kit-refused={kit.refused} data-kit-kept={kit.kept}>
+              Встанет {kit.set}, уже стоит своя позиция {kit.kept}, не встанет {kit.refused}
+              {kit.empty.length > 0 ? `; в комплекте нет: ${kit.empty.join(', ')}` : ''}. Поставленное вами не меняется.
+            </p>
+            {kit.set > 0 && kit.unpriced.length > 0 && (
+              <p className="mt-1" data-kit-unpriced>
+                Сумма сметы изменится: типовая строка сменится позицией каталога, а у позиций без цены ({kit.unpriced.join(', ')}) итог станет «неполным», пока цена не задана в каталоге.
+              </p>
+            )}
+            {kit.refused > 0 && (
+              <ul className="mt-1 list-disc pl-5">
+                {kit.rows
+                  .filter((r) => r.state === 'refused')
+                  .slice(0, 4)
+                  .map((r) => (
+                    <li key={`${r.wallId}${r.moduleId}${r.slot}${r.bayId ?? ''}`}>
+                      {r.wallLabel}, {r.moduleLabel}: {r.words}
+                    </li>
+                  ))}
+              </ul>
+            )}
+            <button
+              type="button"
+              className="mw-btn mw-btn-primary mt-2"
+              disabled={kit.set === 0 || !onApplyKit}
+              onClick={() => {
+                const said = onApplyKit?.(kit) ?? null;
+                setKitNote(said ?? `Поставлено мест: ${kit.set}. Смета и присадка пересчитаны.`);
+              }}
+              data-kit-apply
+            >
+              Поставить на все модули
+            </button>
+          </>
+        )}
+        {kitNote && (
+          <p className="mt-1" data-kit-note>
+            {kitNote}
+          </p>
+        )}
       </div>
 
       <div className={`rounded-[10px] px-4 py-3 text-[15px] ${release.open ? 'bg-surface-2' : 'bg-[color:var(--alert)]/10'}`} data-drilling-release>
@@ -284,6 +373,9 @@ export default function DrillingMap(props: Props) {
         <button type="button" className="mw-btn mw-btn-ghost" onClick={downloadJson} data-drill-export="json">
           JSON операций
         </button>
+        <button type="button" className="mw-btn mw-btn-primary" onClick={() => setWizardOpen(true)} data-drill-bazis-wizard>
+          Экспорт в БАЗИС
+        </button>
         <button
           type="button"
           className="mw-btn mw-btn-ghost"
@@ -291,7 +383,7 @@ export default function DrillingMap(props: Props) {
           title="Номенклатура XML, детали CSV, фурнитура, присадка (если выпуск открыт), OBJ-подложка. Импорт в БАЗИС не проверялся."
           data-drill-export="bazis"
         >
-          Экспорт для БАЗИС
+          Только файлы (ZIP)
         </button>
         {notice && (
           <span className="self-center text-[13px]" data-drill-notice>
@@ -299,6 +391,22 @@ export default function DrillingMap(props: Props) {
           </span>
         )}
       </div>
+
+      {wizardOpen && (
+        <BazisExportWizard
+          meta={meta}
+          walls={modelWalls}
+          production={shop}
+          milling={milling}
+          carcass={carcass}
+          hardware={hardware}
+          plan={plan}
+          exportLock={exportLock}
+          lines={estimateLines}
+          onSave={(bytes) => saveFile(bytes, 'application/zip', `${fileBase(title, meta.date)} БАЗИС.zip`)}
+          onClose={() => setWizardOpen(false)}
+        />
+      )}
 
       <div className="grid gap-4 lg:grid-cols-[minmax(240px,320px)_1fr]">
         <div className="grid content-start gap-2">

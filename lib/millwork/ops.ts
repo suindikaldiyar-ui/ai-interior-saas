@@ -4851,9 +4851,11 @@ export function applyOps({
          * `set_fill`: нижний, верхний, антресоль или кладовка над колонной.
          */
         const fitAt = modules.findIndex((m) => m.id === op.moduleId);
-        const storageUnit = run.upperSegments
+        const storageFound = run.upperSegments
           .flatMap((segment) => segment.modules)
           .find((m) => m.id === op.moduleId && m.section === 'mezzanine' && isStorage(m.id));
+        /* Кладовку пересобирает каждая правка: поставленное в этой же пачке операций лежит в `storageFittings`, а не на ней. */
+        const storageUnit = storageFound && storageFittings.has(storageFound.id) ? { ...storageFound, fittings: storageFittings.get(storageFound.id) } : storageFound;
         const fitTarget =
           fitAt >= 0
             ? modules[fitAt]

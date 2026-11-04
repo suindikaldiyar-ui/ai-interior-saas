@@ -17,6 +17,7 @@ import { aventosOf, aventosSweep } from './aventos';
 import { ceilingStack, liftLimitOf, topFillerBoxMm } from './topFiller';
 import { plinthMm } from './shop';
 import { dryerKindOf, dryerRefusal } from './dryer';
+import { shelvesAreGlass } from './glass';
 
 /**
  * ФУРНИТУРА ПРОИЗВОДИТЕЛЯ НА МЕСТЕ МОДУЛЯ (HARDWARE-01).
@@ -379,6 +380,13 @@ export function fittingSlotsOf(
   if (runner && runner.hardware.category === 'drawer_system') out.push({ slot: 'drawer_side', where: `ящиков ${drawers}`, quantity: drawers, per: 'pair' });
   if (hw && hw.lifts > 0) out.push({ slot: 'lift', where: 'фасад вверх', quantity: hw.lifts, per: 'mechanism' });
   if (hw && hw.handleBar > 0) out.push({ slot: 'handle', where: 'скобы на фасадах', quantity: hw.handleBar, per: 'piece' });
+  /*
+   * ПОЛКОДЕРЖАТЕЛИ: присадка спрашивала позицию этого места, а выбрать её было негде — места не было вовсе,
+   * и «не выбран» нельзя было закрыть из интерфейса. Четыре на полку — те же четыре отверстия, что ставит
+   * `shelfOps`: две оси на каждой из двух боковин. Стеклянные полки держит своя строка витрины.
+   */
+  const pinShelves = shelfSupportCount(unit);
+  if (pinShelves > 0) out.push({ slot: 'shelf_support', where: `полок ${pinShelves / SUPPORTS_PER_SHELF}`, quantity: pinShelves, per: 'piece' });
 
   const layout = unit.fill?.bays?.length ? bayLayout(unit, bayEnvelope(unit, run, production)) : null;
   for (const bay of layout?.bays ?? []) {
@@ -398,6 +406,15 @@ export function fittingSlotsOf(
     out.push({ slot: 'leg', where: 'опоры корпуса', quantity: 4, per: 'piece' });
   }
   return out;
+}
+
+/** Держателей на полку: по две оси на каждой из двух боковин — столько же отверстий ставит присадка. */
+export const SUPPORTS_PER_SHELF = 4;
+
+/** Сколько полкодержателей у модуля: полки наполнения; стеклянные полки считает витрина. */
+export function shelfSupportCount(unit: Module): number {
+  if (shelvesAreGlass(unit)) return 0;
+  return (unit.fill?.shelves?.length ?? 0) * SUPPORTS_PER_SHELF;
 }
 
 /* ─────────────────────────  Проверка  ───────────────────────── */

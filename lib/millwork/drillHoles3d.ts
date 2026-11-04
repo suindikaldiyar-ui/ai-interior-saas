@@ -15,7 +15,7 @@
 import type { Run } from '@/types/millwork';
 import type { DrillOp, DrillPart, DrillingPlan } from './drillingPlan';
 import { runBoxesByModule, type PartBox, type RunBoxesOptions } from './cabinetBoxes';
-import { BOTTOM_PANEL_NAME, SIDE_PANEL_NAME, TOP_PANEL_NAME } from './panels';
+import { BOTTOM_PANEL_NAME, SIDE_PANEL_NAME, TOP_PANEL_NAME, TOP_RAIL_PANEL_NAME } from './panels';
 
 export type Hole3d = {
   wallId: string;
@@ -57,7 +57,7 @@ function extents(box: PartBox): { min: Vec; max: Vec } {
  * ОСИ ДЕТАЛИ В ОСЯХ РЯДА — словами `PART_AXES`: начало, куда идут X и Y, где
  * пласть A. Модуль нарисован от нуля вглубь (передняя плоскость — max Z).
  */
-function frameOf(part: DrillPart, box: PartBox): Frame | null {
+export function frameOfPart(part: DrillPart, box: PartBox): Frame | null {
   const { min, max } = extents(box);
   const sz: Vec = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
   const left = part.role === 'side_left' || (part.role === 'drawer_side' && (part.leaf ?? '').endsWith(':side:1'));
@@ -93,7 +93,7 @@ function frameOf(part: DrillPart, box: PartBox): Frame | null {
 }
 
 /** Коробка детали в сцене: та же, что нарисована (боковины — слева и справа, фасад — по ключу створки, короб — по ИД). */
-function boxOf(part: DrillPart, boxes: PartBox[]): PartBox | null {
+export function boxOfPart(part: DrillPart, boxes: PartBox[]): PartBox | null {
   switch (part.role) {
     case 'side_left':
     case 'side_right': {
@@ -113,7 +113,7 @@ function boxOf(part: DrillPart, boxes: PartBox[]): PartBox | null {
     case 'bottom':
       return boxes.find((b) => b.panel === BOTTOM_PANEL_NAME && !b.part) ?? null;
     case 'top':
-      return boxes.find((b) => b.panel === TOP_PANEL_NAME && !b.part) ?? null;
+      return boxes.find((b) => (b.panel === TOP_PANEL_NAME || b.panel === TOP_RAIL_PANEL_NAME) && !b.part) ?? null;
     default:
       return null;
   }
@@ -171,8 +171,8 @@ export function drillHoles3d(
     const modules = runBoxesByModule(wall.run, options).modules;
     for (const part of plan.parts.filter((p) => p.wallId === wall.wallId && p.ops.length > 0)) {
       const boxes = modules.find((m) => m.unit.id === part.moduleId)?.boxes ?? [];
-      const box = boxOf(part, boxes);
-      const frame = box ? frameOf(part, box) : null;
+      const box = boxOfPart(part, boxes);
+      const frame = box ? frameOfPart(part, box) : null;
       if (!box || !frame) {
         unplaced.push({ partId: part.partId, why: box ? `оси детали «${part.name}» в сцене не заданы` : `деталь «${part.name}» в сцене не нарисована` });
         continue;

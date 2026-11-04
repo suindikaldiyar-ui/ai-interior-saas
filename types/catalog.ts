@@ -798,9 +798,34 @@ export type DrillingSettings = {
   confirmat: { faceDiameterMm: number; edgeDiameterMm: number; edgeDepthMm: number; fromFrontMm: number; fromBackMm: number } | null;
   /** Минимальный остаток материала под глухим отверстием, мм. */
   minRemainMm: number | null;
+  /**
+   * Сверло под винт направляющей: Ø и глубина. В паспортах направляющих
+   * напечатан винт (Ø 4 × 15), а не сверло, — то же, что у ручки. Пусто —
+   * отверстия направляющей не ставятся, деталь подписана словами.
+   */
+  runnerHole?: { diameterMm: number; depthMm: number } | null;
+  /**
+   * КОМПЛЕКТ ЦЕХА: какие изделия цех обычно ставит на места модулей. Это выбор
+   * цеха, а не величина: на модули он ложится ОДНИМ действием человека
+   * (`set_fitting` на каждое пустое место — `kitPlan`), и дальше смета, сцена и
+   * присадка читают обычные `Module.fittings`. Сам по себе ничего не считает.
+   */
+  kit?: DrillingKit;
+  /**
+   * Детали, которые цех крепит БЕЗ присадки (саморезами по месту, скобами).
+   * Имена деталей раскроя. Деталь без отверстий и не из этого списка —
+   * «не рассчитано» и выпуск заперт: молчание читалось бы как «всё готово».
+   */
+  noDrillParts?: string[];
   /** Цех подтвердил эти правила. Нет — «не подтверждено цехом», выпуск заперт. */
   confirmed: boolean;
 };
+
+/** Места модуля, которые ставит комплект цеха. */
+export const DRILLING_KIT_SLOTS = ['hinge', 'hinge_plate', 'slide', 'handle', 'shelf_support'] as const;
+export type DrillingKitSlot = (typeof DRILLING_KIT_SLOTS)[number];
+/** Место → ИД позиции каталога организации. Пусто — изделие не выбрано. */
+export type DrillingKit = Partial<Record<DrillingKitSlot, string>>;
 
 /** Правила присадки цеха, когда цех их не задавал (фаза 6): пусто — ни одного отверстия, умолчаний нет. */
 export const EMPTY_DRILLING: DrillingSettings = {
@@ -824,6 +849,8 @@ export const DRILLING_RANGES_MM = {
   confirmatEdgeMm: [3, 10],
   confirmatDepthMm: [10, 80],
   confirmatFromEdgeMm: [10, 300],
+  runnerHoleMm: [1, 10],
+  runnerDepthMm: [3, 30],
 } as const;
 
 /**
@@ -852,6 +879,16 @@ export function drillingSettings(raw: unknown): DrillingSettings | null {
   const s = (v.shelfSupport ?? null) as Record<string, unknown> | null;
   const shelfFront = s ? num(s.frontMm, DRILLING_RANGES_MM.supportMm) : null;
   const shelfBack = s ? num(s.backMm, DRILLING_RANGES_MM.supportMm) : null;
+  const rh = (v.runnerHole ?? null) as Record<string, unknown> | null;
+  const runnerDiameter = rh ? num(rh.diameterMm, DRILLING_RANGES_MM.runnerHoleMm) : null;
+  const runnerDepth = rh ? num(rh.depthMm, DRILLING_RANGES_MM.runnerDepthMm) : null;
+  const rawKit = (v.kit ?? null) as Record<string, unknown> | null;
+  const kit: DrillingKit = {};
+  for (const slot of DRILLING_KIT_SLOTS) {
+    const id = rawKit?.[slot];
+    if (typeof id === 'string' && id.length > 0) kit[slot] = id;
+  }
+  const noDrillParts = Array.isArray(v.noDrillParts) ? (v.noDrillParts as unknown[]).filter((x): x is string => typeof x === 'string' && x.length > 0 && x.length <= 80) : [];
   const c = (v.confirmat ?? null) as Record<string, unknown> | null;
   const conf = c
     ? {
@@ -874,6 +911,9 @@ export function drillingSettings(raw: unknown): DrillingSettings | null {
         ? (conf as DrillingSettings['confirmat'])
         : null,
     minRemainMm: num(v.minRemainMm, DRILLING_RANGES_MM.minRemainMm),
+    runnerHole: runnerDiameter !== null && runnerDepth !== null ? { diameterMm: runnerDiameter, depthMm: runnerDepth } : null,
+    kit,
+    noDrillParts,
     confirmed: v.confirmed === true,
   };
 }
