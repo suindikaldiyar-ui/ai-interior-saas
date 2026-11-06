@@ -4,6 +4,7 @@ import { standsOnFloor } from './modules';
 import { obstaclesInBand, wallObstacles, type WallObstacle } from './obstacles';
 import { countertopMm, countertopStripOf, plinthMm, upperBottomMm, workTopMm } from './shop';
 import { vitrineOnCounter } from './vitrine';
+import { sinkHoleOf, type SinkHole } from './sinkModel';
 import { islandDepthMm, islandOvalOf, islandReachMm, ovalPath } from './island';
 import {
   curvedLengthOf,
@@ -54,6 +55,8 @@ export type CounterSlab = {
   toMm: number;
   /** Вырезы сзади под препятствия у стены: где и на сколько плита мельче. */
   cuts?: CounterCut[];
+  /** Отверстия под мойки с моделью (задача 5): плита вокруг них остаётся одной. */
+  holes?: SinkHole[];
   /**
    * КОНТУР ПЛИТЫ НАД РАДИУСНЫМИ МОДУЛЯМИ (OVAL & RADIUS) — мм ряда: x вдоль
    * ряда, z — 0 на лицевой плоскости корпусов, к стене минус. Есть только у
@@ -380,7 +383,12 @@ export function countertopSlabs(run: RunLike): CounterSlab[] {
           depthMm: obstacle.depthMm!,
           reason: obstacle.reason,
         }));
-      const withCuts: CounterSlab = cuts.length > 0 ? { ...slab, cuts } : slab;
+      /* Отверстия под мойки с моделью (задача 5): та же `sinkHoleOf`, что ставит чашу в сцене. */
+      const holes = run.modules.flatMap((unit) => {
+        const hole = sinkHoleOf(unit, run);
+        return hole && hole.fromMm >= slab.fromMm && hole.toMm <= slab.toMm ? [hole] : [];
+      });
+      const withCuts: CounterSlab = { ...slab, ...(cuts.length > 0 ? { cuts } : {}), ...(holes.length > 0 ? { holes } : {}) };
       /*
        * ПЛИТА НАД РАДИУСНЫМ МОДУЛЕМ — КОНТУРОМ (OVAL & RADIUS): у скруглённого
        * торца она выходит за модуль на свес и по дуге, и её габарит по ряду —
@@ -668,9 +676,9 @@ export function radiusPlinths(run: RunLike): { moduleId: string; path: PlanPath 
  * стены, а от его лицевой плоскости (`backCutMm` — сколько срезано от
  * стены). Одна функция на сцену и на приёмку пересечений.
  */
-export function slabPieces(slab: CounterSlab): { fromMm: number; toMm: number; backCutMm: number }[] {
+export function slabPieces(slab: CounterSlab): { fromMm: number; toMm: number; backCutMm: number; frontCutMm?: number }[] {
   const cuts = [...(slab.cuts ?? [])].sort((a, b) => a.fromMm - b.fromMm);
-  const pieces: { fromMm: number; toMm: number; backCutMm: number }[] = [];
+  const pieces: { fromMm: number; toMm: number; backCutMm: number; frontCutMm?: number }[] = [];
   let at = slab.fromMm;
   for (const cut of cuts) {
     if (cut.fromMm > at) pieces.push({ fromMm: at, toMm: cut.fromMm, backCutMm: 0 });
@@ -678,7 +686,27 @@ export function slabPieces(slab: CounterSlab): { fromMm: number; toMm: number; b
     at = Math.max(at, cut.toMm);
   }
   if (at < slab.toMm) pieces.push({ fromMm: at, toMm: slab.toMm, backCutMm: 0 });
-  return pieces.filter((piece) => piece.toMm > piece.fromMm);
+  const whole = pieces.filter((piece) => piece.toMm > piece.fromMm);
+  /*
+   * ОТВЕРСТИЕ ПОД МОЙКУ (задача 5): над ним плита — полоса у стены и полоса у кромки, по бокам — целиком. Сквозное
+   * отверстие в одной коробке не нарисовать, а чаша обязана быть видна снизу вверх.
+   */
+  return (slab.holes ?? []).reduce((list, hole) => {
+    const out: typeof list = [];
+    for (const piece of list) {
+      const from = Math.max(piece.fromMm, hole.fromMm);
+      const to = Math.min(piece.toMm, hole.toMm);
+      if (to <= from) {
+        out.push(piece);
+        continue;
+      }
+      if (from > piece.fromMm) out.push({ ...piece, toMm: from });
+      out.push({ fromMm: from, toMm: to, backCutMm: piece.backCutMm, frontCutMm: hole.slabDepthMm - hole.backMm });
+      out.push({ fromMm: from, toMm: to, backCutMm: hole.frontMm });
+      if (to < piece.toMm) out.push({ ...piece, fromMm: to });
+    }
+    return out;
+  }, whole);
 }
 
 /** Вырезы плиты под препятствия — одни на сцену и на строку сметы «Вырез столешницы». */

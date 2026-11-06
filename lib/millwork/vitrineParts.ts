@@ -18,6 +18,8 @@ import type { ProductionSettings } from '@/types/catalog';
 import type { GlassKind, Module, Run } from '@/types/millwork';
 import { bayEnvelope, bayLayout } from './bays';
 import { moduleCarcassHeightMm, moduleDepthMm } from './fill';
+import { facadeSpans, moduleFronts } from './applianceFront';
+import { glassShelfInZones, hasFrontZones, zoneOfDoor } from './frontZones';
 import { GLASS_MATERIAL, glassOf, shelvesAreGlass, vitrineDoorKind } from './glass';
 import { facadeDoorWidthMm, lCornerFrontWidthsMm, shelfSizeMm } from './panels';
 import { shopOf } from './shop';
@@ -69,6 +71,7 @@ const thick = (mm: number | null) => (mm ? `${mm} мм` : 'толщина не �
 
 /** Стекло и покупные изделия одной витрины; не витрина и без стеклянных полок — пусто. */
 export function vitrineModuleParts(unit: Module, run: Run, production: ProductionSettings = shopOf(run.production)): VitrinePart[] {
+  if (hasFrontZones(unit)) return zoneGlassParts(unit, run, production);
   const v = vitrineOf(unit);
   const glassShelves = shelvesAreGlass(unit);
   if (!v && !glassShelves) return [];
@@ -305,6 +308,68 @@ export function vitrineModuleParts(unit: Module, run: Run, production: Productio
     }
   }
 
+  return out;
+}
+
+/**
+ * СТЕКЛО ЗОН ФАСАДА (задачи 3–4): дверь витрины зоны — в алюминиевой рамке, по наружному размеру своей детали; полки зоны
+ * со стеклом — по размеру полки. Те же строки и те же слова подтверждения, что у витрины целиком.
+ */
+function zoneGlassParts(unit: Module, run: Run, production: ProductionSettings): VitrinePart[] {
+  const heightMm = moduleCarcassHeightMm(unit, run);
+  const depthMm = moduleDepthMm(unit, run.zone, run.production);
+  const gap = unit.frontGapMm ?? production.frontGapMm;
+  const glass = glassOf(unit);
+  const label = unit.label || unit.kind;
+  const spans = facadeSpans(unit, heightMm, run.production);
+  const out: VitrinePart[] = [];
+  const profileOf = (leaf: number) => zoneOfDoor(unit, leaf)?.zone.profile ?? null;
+  moduleFronts(unit, heightMm, run.production).leaves.forEach((leaf, i) => {
+    if (!leaf.glass) return;
+    const profile = profileOf(i);
+    out.push({
+      moduleId: unit.id,
+      moduleLabel: label,
+      name: 'Дверь стеклянная в алюминиевой рамке',
+      kind: 'door',
+      line: 'frame_door',
+      role: `door:${i}`,
+      glass,
+      thicknessMm: null,
+      lengthMm: leaf.heightMm - gap,
+      widthMm: facadeDoorWidthMm(unit.widthMm, leaf.widthMm !== undefined ? 2 : 1, gap),
+      qty: 1,
+      material: `Стекло ${GLASS_MATERIAL[glass]} в рамке · профиль: ${profile ? PROFILE_TITLE[profile].toLowerCase() : 'покрытие не выбрано'}`,
+      unconfirmed: [
+        'заказ у профильщика по наружному размеру: сечение профиля и размер стекла — по его системе',
+        ...(profile ? [] : ['покрытие профиля не выбрано']),
+      ],
+    });
+  });
+  const count = (unit.fill?.shelves ?? []).filter((mm) => glassShelfInZones(unit, spans, mm)).length;
+  if (count > 0) {
+    const size = shelfSizeMm(unit.widthMm, depthMm, production);
+    out.push({
+      moduleId: unit.id,
+      moduleLabel: label,
+      name: 'Полка стеклянная',
+      kind: 'glass',
+      line: 'glass_shelf',
+      role: 'shelf',
+      glass,
+      thicknessMm: null,
+      lengthMm: size.lengthMm,
+      widthMm: size.widthMm,
+      qty: count,
+      material: `Стекло ${GLASS_MATERIAL[glass]} ${thick(null)}`,
+      unconfirmed: [
+        'размер — по припускам полки цеха',
+        'держатели стеклянной полки — позиции в каталоге нет',
+        'допустимые пролёт и нагрузка стеклянной полки цехом не подтверждены — нужна производственная проверка',
+        'толщина стекла не выбрана',
+      ],
+    });
+  }
   return out;
 }
 

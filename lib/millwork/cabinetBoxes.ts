@@ -43,7 +43,10 @@ import { DRAWER_BOTTOM_PANEL_NAME, DRAWER_SIDE_PANEL_NAME, DRAWER_WALL_PANEL_NAM
 import { shopOf } from './shop';
 import { FRAME_WIDTH_MM, frontKey, frontOf, isFramed } from './frontMaterial';
 import { ISLAND_BACK_PANEL_NAME, islandBackOf } from './island';
-import { MIN_FACADE_SPAN_MM, hasFacade, moduleFronts, tallNicheOf, type FacadeSpan } from './applianceFront';
+import { MIN_FACADE_SPAN_MM, facadeSpans, hasFacade, moduleFronts, tallNicheOf, zoneDividersMm, type FacadeSpan } from './applianceFront';
+import { glassShelfInZones, hasFrontZones } from './frontZones';
+import { topOpenForSink, topRailParts, topRailsOf } from './topRails';
+import { FIXED_FRONT_PANEL_NAME } from './panelNames';
 import { carcassKeyOf, type CarcassItem } from './carcassMaterial';
 import { fittingItemId, handleItemOf, installedItem, slidingAccepts } from './fittings';
 import { HINGE_IMAGE_EDGE_MM, hingeCupPlace, hingeHeightsMm } from './hingePlace';
@@ -115,6 +118,8 @@ import type { WallPanelKind } from '@/types/millwork';
  */
 
 const MM = 1000;
+/** Сечение опоры тумбы в сцене, м: условное — позиции опоры нет, и в раскрой она не идёт. */
+const LEG_SIDE_M = 0.04;
 
 /** Коробка в координатах ряда: где стоит и какого размера. */
 export type BoxDraw = {
@@ -621,7 +626,20 @@ export function carcassBoxes(
   const oven = ovenNicheOf(unit, shopOf(production));
   /* СВЧ в навесном шкафу (задача 2): задней стенки нет, над нишей — неподвижная полка той же раскладки, что режет раскрой. */
   const wallMw = wallMicrowaveNiche(unit, Math.round(heightM * MM), shopOf(production));
+  const rails = topRailsOf(unit, shopOf(production));
+  /* Опоры тумбы зала (задача 8): четыре стойки от пола до дна корпуса — покупное изделие, в раскрое их нет. */
+  const legM = (unit.hangMount === 'legs' ? (unit.hangMm ?? 0) : 0) / MM;
+  const legs: BoxDraw[] =
+    legM > 0
+      ? [
+          [LEG_SIDE_M, LEG_SIDE_M],
+          [widthM - LEG_SIDE_M, LEG_SIDE_M],
+          [LEG_SIDE_M, depthM - LEG_SIDE_M],
+          [widthM - LEG_SIDE_M, depthM - LEG_SIDE_M],
+        ].map(([x, z]) => ({ ...at(x, -legM / 2, -z, LEG_SIDE_M, legM, LEG_SIDE_M, false, 'Опора тумбы'), material: 'metal' as const }))
+      : [];
   const boxes: BoxDraw[] = [
+    ...legs,
     // Боковины
     at(thicknessM / 2, heightM / 2, -depthM / 2, thicknessM, heightM, depthM, false, SIDE_PANEL_NAME),
     at(widthM - thicknessM / 2, heightM / 2, -depthM / 2, thicknessM, heightM, depthM, false, SIDE_PANEL_NAME),
@@ -641,7 +659,24 @@ export function carcassBoxes(
           ),
         ]
       : [
-          at(widthM / 2, heightM - thicknessM / 2, -depthM / 2, innerW, thicknessM, depthM, false, topName),
+          /* Верх шкафа: сплошная деталь или планки — те же детали, что режет раскрой (`topRailParts`). */
+          ...(rails
+            ? topRailParts(unit, rails, Math.round(depthM * MM), Math.round(thicknessM * MM)).map((part) => ({
+                ...at(
+                  part.xMm / MM,
+                  heightM - part.thicknessMm / MM / 2,
+                  -part.zFromFrontMm / MM,
+                  (part.cross ? part.widthMm : part.lengthMm) / MM,
+                  part.thicknessMm / MM,
+                  (part.cross ? part.lengthMm : part.widthMm) / MM,
+                  false,
+                  part.name,
+                ),
+                partId: part.partId,
+              }))
+            : topOpenForSink(unit, shopOf(production))
+              ? []
+              : [at(widthM / 2, heightM - thicknessM / 2, -depthM / 2, innerW, thicknessM, depthM, false, topName)]),
           // Задняя стенка
           ...(wallMw ? [] : [at(widthM / 2, heightM / 2, backZ, widthM - backInsetM, heightM - backInsetM, backT, false, BACK_PANEL_NAME)]),
         ]),
@@ -734,6 +769,11 @@ export function carcassBoxes(
         SHELF_PANEL_NAME,
       ),
     );
+  }
+
+  /* Перегородки между зонами (задача 4): тот же размер и то же имя, что режет раскрой. */
+  for (const mm of zoneDividersMm(unit, Math.round(heightM * MM), production)) {
+    boxes.push(at(widthM / 2, mm / MM, backFaceZ + dividerDepthM / 2, innerW, thicknessM, dividerDepthM, true, HDIVIDER_PANEL_NAME));
   }
 
   // Вертикальная перегородка
@@ -863,6 +903,8 @@ export type FrontOptions = {
 const VISIBLE_APPLIANCES = new Set(['oven', 'hob', 'hood', 'microwave']);
 
 export function hasVisibleAppliance(unit: Module): boolean {
+  /* Шкаф со встроенной вытяжкой закрыт фасадом (задача 7). */
+  if (unit.appliance === 'hood' && (unit.hoodCabinet === 'door' || unit.hoodCabinet === 'lift')) return false;
   return (
     Boolean(unit.appliance) &&
     !unit.column &&
@@ -956,15 +998,17 @@ export function doorLeaves(
    * вытяжки фасад резался и не рисовался, у мойки висел без петель.
    */
   const fronts = moduleFronts(unit, heightMm, production);
-  if (fronts.drawers.length > 0) return [];
+  /* У зон фасада рядом с ящиками могут висеть створки: их считает зона, а не вид фронта. */
+  if (fronts.drawers.length > 0 && !hasFrontZones(unit)) return [];
 
   return fronts.leaves.map((span, index) => ({
     index,
     /*
      * Полотно во всю высоту модуля ставится без участка: так его рисует
-     * прежний код, и числа у него свои (зазор, ручка, петли).
+     * прежний код, и числа у него свои (зазор, ручка, петли). Створка зоны
+     * идёт участком всегда: у неё своё место, вид и петли.
      */
-    span: span.fromMm === 0 && span.heightMm === heightMm ? null : span,
+    span: span.fromMm === 0 && span.heightMm === heightMm && !hasFrontZones(unit) ? null : span,
   }));
 }
 
@@ -1088,7 +1132,7 @@ export function sceneLeaves(
    * Ящики выдвигаются и под варочной: прибор занимает нишу, под ним
    * обычные ящики (ловушка 358). Высоты идут сверху вниз, сцена — от пола.
    */
-  if (!unit.column && fill) {
+  if ((!unit.column || hasFrontZones(unit)) && fill) {
     /* Ячейки (A4): у разделённого ряда два ящика, каждый своим ключом и местом. */
     for (const cell of drawerCells(fill, unit.widthMm, heightM * MM)) {
       out.push({
@@ -1143,18 +1187,22 @@ export function sceneLeaves(
   const spans = openWidthM === undefined ? doorLeaves(unit, Math.round(heightM * MM), production).filter((leaf) => leaf.span) : [];
   if (spans.length > 0) {
     for (const leaf of spans) {
+      const span = leaf.span!;
       out.push({
         kind: 'door',
         id: `${unit.id}:door:${leaf.index}`,
-        opening: doorHinge(unit, 0, 1),
-        xM: 0,
-        widthM: unit.widthMm / MM,
-        bottomM: leaf.span!.fromMm / MM,
-        heightM: leaf.span!.heightMm / MM,
+        opening: span.hinge ?? doorHinge(unit, 0, 1),
+        xM: (span.xMm ?? 0) / MM,
+        widthM: (span.widthMm ?? unit.widthMm) / MM,
+        bottomM: span.fromMm / MM,
+        heightM: span.heightMm / MM,
+        ...(span.glass ? { glass: true as const } : {}),
       });
     }
     return out;
   }
+  /* Зоны без створок (ящики, панель, открытая): распашного полотна на всю высоту у такого модуля нет. */
+  if (hasFrontZones(unit)) return out;
   if (hasVisibleAppliance(unit) || unit.column || openWidthM === 0) {
     return out;
   }
@@ -1542,7 +1590,7 @@ export function doorBoxes(
    * функции, по которой этот отрезок попал в раскрой; своей арифметики
    * «высота минус ниша» здесь нет, иначе полотно уедет с детали.
    */
-  span?: { fromMm: number; heightMm: number },
+  span?: FacadeSpan,
 ): PartBox[] {
   if (options.cutaway) return [];
 
@@ -1556,10 +1604,11 @@ export function doorBoxes(
    */
   const blind = options.openWidthMm !== undefined && options.openWidthMm < unit.widthMm;
   const doors = span || blind ? 1 : doorCount(unit);
-  const widthM = (blind ? options.openWidthMm! : unit.widthMm) / MM;
-  const hinge = doorHinge(unit, span ? 0 : index, doors);
+  /* Створка зоны — на своей половине: две в ширину в участке (задачи 2–4). */
+  const widthM = (blind ? options.openWidthMm! : (span?.widthMm ?? unit.widthMm)) / MM;
+  const hinge = span?.hinge ?? doorHinge(unit, span ? 0 : index, doors);
   /* Доступная часть у угла в начале ряда — у правого края модуля (P0). */
-  const fromM = blind ? (options.openFromMm ?? 0) / MM : 0;
+  const fromM = blind ? (options.openFromMm ?? 0) / MM : (span?.xMm ?? 0) / MM;
 
   const { gapM: gap, frontThicknessM: thickness, integratedHandles } = options;
   /*
@@ -3150,7 +3199,9 @@ export function applianceBoxes(
    */
   const ownModel = (kind: ApplianceKind | undefined) =>
     Boolean(kind && applianceModel(unit.applianceModels?.[kind]) && (kind === 'microwave' || kind === 'hood' || (kind === 'fridge' && unit.builtIn === false)));
-  if (hasVisibleAppliance(unit) && !(unit.appliance === 'oven' && unit.kind === 'tall' && !unit.column) && !ownModel(unit.appliance)) {
+  /* Вытяжка в шкафу остаётся в сцене и за закрытым фасадом: открыли — она на своём месте, фасад её не везёт. */
+  const hoodInside = unit.appliance === 'hood' && Boolean(unit.hoodCabinet);
+  if ((hasVisibleAppliance(unit) || hoodInside) && !(unit.appliance === 'oven' && unit.kind === 'tall' && !unit.column) && !ownModel(unit.appliance)) {
     /* Прибор пенала — в своей нише, той же, что разбила фасад на створки (`tallNicheOf`); без ниши — во весь модуль. */
     const niche = tallNicheOf(unit, Math.round(heightM * MM), production);
     boxes.push(
@@ -3267,9 +3318,16 @@ export function moduleBoxes(
   const glassShelves = shelvesAreGlass(unit);
   /* Толщина стеклянной полки — выбранная у витрины (P1); не выбрана — 6 мм условно. */
   const shelfGlassM = (vitrineOf(unit)?.glassMm ?? GLASS_SHELF_MM) / MM;
+  /* Стеклянные полки зоны (задачи 3–4): по отметке полки — полки соседней зоны остаются из плиты. */
+  const zoneSpans = hasFrontZones(unit) ? facadeSpans(unit, Math.round(place.heightM * MM), production) : [];
+  const glassBox = (box: BoxDraw) => {
+    if (glassShelves) return true;
+    if (zoneSpans.length === 0) return false;
+    return glassShelfInZones(unit, zoneSpans, Math.round((box.position[1] - place.y) * MM));
+  };
   /* Части корпуса витрины из стекла и каркас из профиля (P1) — `vitrineBodyBoxes`. */
   const boxes: PartBox[] = vitrineBodyBoxes(unit, place, carcassBoxes(unit, place, production).map((box): PartBox => {
-    if (glassShelves && box.panel === SHELF_PANEL_NAME) {
+    if (box.panel === SHELF_PANEL_NAME && glassBox(box)) {
       const { panel: _panel, ...rest } = box;
       void _panel;
       return {
@@ -3310,7 +3368,7 @@ export function moduleBoxes(
    * Спрашиваем то, что и значит «здесь есть ящики»: фронты в наполнении.
    * Их считает `defaultFill`, и по ним же режется раскрой.
    */
-  const drawers = unit.column ? 0 : drawerCells(unit.fill, unit.widthMm, 0).length;
+  const drawers = unit.column && !hasFrontZones(unit) ? 0 : drawerCells(unit.fill, unit.widthMm, 0).length;
   for (let i = 0; i < drawers; i += 1) boxes.push(...drawerBoxes(unit, place, i, options));
   /* Внутренние ящики и вставки (A6) — по комплекту, тем же ключом, что едет. */
   if (!unit.column) boxes.push(...innerDrawerBoxes(unit, place, options), ...insertBoxes(unit, place, options));
@@ -3369,6 +3427,19 @@ export function moduleBoxes(
      * открывается, петель и ручки нет; уже фасадного минимума не рисуется,
      * как не режется.
      */
+    /* Глухие панели зон (задачи 2–4): фасад есть, не открывается, петель и ручки нет; размер — деталь раскроя. */
+    moduleFronts(unit, Math.round(place.heightM * MM), production).fixed?.forEach((fixed, i) => {
+      const cut = options.cuts?.get(`${unit.id}:panel:${i}`);
+      const size = frontLeafMm(cut, { openMm: unit.widthMm, heightMm: fixed.heightMm, doors: 1, gapMm: options.gapM * MM, kind: 'door' });
+      const spec = leafFrontWithMilling(unit, `panel:${i}`, { milling: options.rowMilling });
+      boxes.push({
+        material: 'front',
+        frontKey: frontKey(spec),
+        panel: FIXED_FRONT_PANEL_NAME,
+        position: [place.x + unit.widthMm / MM / 2, place.y + (fixed.fromMm + fixed.heightMm / 2) / MM, options.frontThicknessM / 2],
+        scale: [size.widthMm / MM, size.heightMm / MM, options.frontThicknessM],
+      });
+    });
     const ovenNiche = ovenNicheOf(unit, shopOf(production));
     if (ovenNiche) {
       const lowerMm = Math.round(place.heightM * MM) - ovenNiche.nicheMm;
@@ -4479,7 +4550,7 @@ export function openablePartIds(run: Run): string[] {
      * у неколонных модулей и `doorCount` — тот же, что считает
      * `cabinetBoxes`.
      */
-    if (!unit.column) {
+    if (!unit.column || hasFrontZones(unit)) {
       for (const cell of drawerCells(unit.fill, unit.widthMm, 0)) ids.push(`${unit.id}:${cell.leaf}`);
       for (const entry of unit.fill?.drawerInners ?? []) entry.heightsMm.forEach((_, j) => ids.push(`${unit.id}:idrawer:${entry.cell}:${j}`));
     }

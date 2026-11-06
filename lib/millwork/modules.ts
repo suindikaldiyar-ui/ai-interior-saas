@@ -215,6 +215,21 @@ export const APPLIANCE_TYPES: Partial<Record<ApplianceKind, ApplianceType[]>> = 
       hint: 'прячется в шкаф, снаружи видна только панель',
     },
     {
+      id: 'hood_telescopic',
+      title: 'Телескопическая',
+      widthMm: 600,
+      nicheHMm: 300,
+      depthMm: 300,
+      hint: 'в шкафу, экран выдвигается на время готовки',
+    },
+    {
+      id: 'hood_wall',
+      title: 'Декоративная настенная',
+      widthMm: 600,
+      depthMm: 500,
+      hint: 'открыто на стене, короб виден',
+    },
+    {
       id: 'hood_slant',
       title: 'Наклонная',
       widthMm: 600,

@@ -13,6 +13,7 @@
  * (`moduleCarcassHeightMm`), фасады (`buildPanels`). Без модели прибор
  * типовой, и здесь о нём не говорится ничего.
  */
+import { sinkFindings } from './sinkModel';
 import { applianceModel, modelTitle, ruleSource, unitModel } from './appliances';
 import type { CookingFinding } from './cookingStack';
 import { wallMicrowaveFindings } from './wallMicrowave';
@@ -268,6 +269,22 @@ export function applianceModelFindings(run: Run, production: ProductionSettings 
           `от промежуточной полки; ход экрана в документах нет`,
       });
     }
+
+    /* ─── Шкаф со встроенной вытяжкой без модели (задача 7): ниша, вырез в дне и вентиляция — только по инструкции ─── */
+    if (unit.hoodCabinet && !hoodModel) {
+      out.push({
+        moduleId: unit.id,
+        level: 'release',
+        words:
+          `${label}: шкаф со встроенной вытяжкой без модели — размеры ниши, вырез в дне, вывод воздуховода и вентиляционные зазоры ` +
+          'берутся из инструкции прибора, её нет: выпуск заперт, выберите модель вытяжки',
+      });
+    }
+  }
+
+  /* ─── Мойка (задача 5): условный вырез и то, что стоит под чашей ─── */
+  for (const finding of sinkFindings(run, production)) {
+    out.push({ moduleId: finding.moduleId, level: finding.block ? 'blocking' : 'release', words: finding.words });
   }
   return out;
 }

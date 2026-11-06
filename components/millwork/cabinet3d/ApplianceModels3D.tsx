@@ -21,6 +21,9 @@ import {
   type ShapePart,
 } from '@/lib/millwork/applianceShapes';
 import { useInteriorStore } from '@/store/useInteriorStore';
+import { sinkModelsOf, sinkShape } from '@/lib/millwork/sinkModel';
+import { rowStandardDepthMm } from '@/lib/millwork/fill';
+import { workTopMm } from '@/lib/millwork/shop';
 import { HANDLE_ENV_INTENSITY, cadEnvironment } from './cadLook';
 import { useSlide } from './useSlide';
 
@@ -354,6 +357,19 @@ function StageFourModel3D({ entry, economy, shadows }: { entry: StageFourModel; 
   );
 }
 
+/** Мойка на столешнице (задача 5): чаша объёмом в отверстии плиты, слив и сифон; модель — `sinkShape`, место — `sinkModelsOf`. */
+function SinkModel3D({ entry, topMm, frontZMm, economy, shadows }: { entry: ReturnType<typeof sinkModelsOf>[number]; topMm: number; frontZMm: number; economy: boolean; shadows: boolean }) {
+  const shape = useMemo(() => sinkShape(entry.model), [entry.model]);
+  const merged = useMerged(shape.parts);
+  return (
+    <group name={`appliances:${entry.unit.id}:sink`} userData={{ applianceModule: entry.unit.id, sinkModel: entry.model.bowls }}>
+      <group position={[entry.xMm / MM, topMm / MM, (frontZMm + entry.fromWallMm) / MM]} name="sink">
+        <Meshes merged={merged} economy={economy} shadows={shadows} name="sink" />
+      </group>
+    </group>
+  );
+}
+
 /**
  * ВСЯ ТЕХНИКА РЯДА В МОДЕЛЯХ — варочные панели и духовые шкафы под ними.
  * Слой «Техника» выключен — прибора в кадре нет, как коробок слоя.
@@ -372,6 +388,8 @@ export default function ApplianceModels3D({ run, production, shadows = false }: 
   const tallOvens = useMemo(() => tallOvensOf(run, production), [run, production]);
   /* Техника этапа 4 — модели Bosch, выбранные кухней. */
   const stageFour = useMemo(() => stageFourModelsOf(run, production), [run, production]);
+  /* Мойки с моделью (задача 5). */
+  const sinks = useMemo(() => sinkModelsOf(run), [run]);
   const invalidate = useThree((state) => state.invalidate);
   useEffect(() => invalidate(), [invalidate, stacks, tallOvens, stageFour, layers.appliances]);
 
@@ -417,11 +435,12 @@ export default function ApplianceModels3D({ run, production, shadows = false }: 
         zMm: entry.zMm,
         movers: entry.moverIds,
       })),
+      ...sinks.map((entry) => ({ moduleId: entry.unit.id, hob: null, oven: null, sink: entry.model.bowls, sinkAt: entry.xMm })),
     ];
     return () => {
       delete own[key];
     };
-  }, [stacks, tallOvens, stageFour, run.id, drawsFrames]);
+  }, [stacks, tallOvens, stageFour, sinks, run.id, drawsFrames]);
 
   /* Дверь при смене слоя и состава перерисовывается сама; поворот окружения — как у ручек. */
   const scene = useThree((state) => state.scene);
@@ -488,6 +507,16 @@ export default function ApplianceModels3D({ run, production, shadows = false }: 
       ))}
       {stageFour.map((entry) => (
         <StageFourModel3D key={`s4:${entry.unit.id}:${entry.kind}`} entry={entry} economy={economy} shadows={shadows} />
+      ))}
+      {sinks.map((entry) => (
+        <SinkModel3D
+          key={`sink:${entry.unit.id}`}
+          entry={entry}
+          topMm={workTopMm(production)}
+          frontZMm={-rowStandardDepthMm(run.zone, 'base', production)}
+          economy={economy}
+          shadows={shadows}
+        />
       ))}
     </group>
   );

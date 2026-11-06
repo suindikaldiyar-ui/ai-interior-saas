@@ -54,13 +54,15 @@ export function drawerSplitOf(fill: Pick<ModuleFill, 'drawerHeights' | 'drawerSp
 }
 
 /** Ячейки ящиков модуля: ряд за рядом сверху вниз, в разделённом ряду — слева направо. */
-export function drawerCells(fill: Pick<ModuleFill, 'drawerHeights' | 'drawerSplit'> | undefined, widthMm: number, carcassMm: number): DrawerCell[] {
+export function drawerCells(fill: Pick<ModuleFill, 'drawerHeights' | 'drawerSplit' | 'drawerTopMm'> | undefined, widthMm: number, carcassMm: number): DrawerCell[] {
   const heights = fill?.drawerHeights ?? [];
   const split = drawerSplitOf(fill, widthMm);
   const out: DrawerCell[] = [];
   let above = 0;
+  /* Ящики зоны (задачи 3–4) стоят под своей границей, а не под крышей корпуса. */
+  const topMm = fill?.drawerTopMm ?? carcassMm;
   heights.forEach((h, row) => {
-    const yMm = carcassMm - above - h;
+    const yMm = topMm - above - h;
     above += h;
     if (split && row < split.rows) {
       out.push({ leaf: `drawer:${out.length}`, index: out.length, row, column: 0, columns: 2, xMm: 0, widthMm: split.leftMm, yMm, heightMm: h });
@@ -170,8 +172,10 @@ function cellZonesRaw(
   const heights = unit.fill?.drawerHeights ?? [];
   const boundary = split ? carcassMm - heights.slice(0, split.rows).reduce((a, b) => a + b, 0) : null;
   const traverseUnder = split && split.rows < heights.length ? split.rows : -1;
+  /* Верх стопки зоны — перегородка той же толщины, что крыша. */
+  const roofMm = (unit.fill?.drawerTopMm ?? carcassMm) - t;
   return cells.map((cell) => {
-    let toMm = Math.min(cell.yMm + cell.heightMm, carcassMm - t);
+    let toMm = Math.min(cell.yMm + cell.heightMm, roofMm);
     if (cell.row === traverseUnder && boundary !== null) toMm = Math.min(toMm, boundary - t);
     const fromMm = Math.max(cell.yMm, t);
     if (cell.columns === 1) return { cell, openingWidthMm: unit.widthMm - 2 * t, xFromMm: t, fromMm, toMm };

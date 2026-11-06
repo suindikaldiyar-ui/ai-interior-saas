@@ -16,6 +16,7 @@ import {
   countertopStrip,
   ceilingGap,
   CEILING_GAP_RANGE_MM,
+  TOP_RAIL_RULE_RANGE_MM,
   BEND_METHOD_TITLE,
   BEND_RADIUS_RANGE_MM,
   radiusMethods,
@@ -608,6 +609,49 @@ export default function ProductionAdmin({ initial, orgId }: Props) {
                 Не подтверждено цехом: замерщик видит эту пометку у каждого выреза и разрыва столешницы.
               </p>
             )}
+          </div>
+
+          {/*
+            * ВЕРХНИЕ ПЛАНКИ (FINAL KITCHEN, задача 9). Пусто или без галочки — верх нижнего шкафа сплошной деталью, как
+            * было: универсальных размеров нет, и подсказка здесь не значение.
+            */}
+          <div className="mt-6 border-t border-navyLine/60 pt-4" data-top-rails-rule>
+            <p className="text-[15px] font-medium">Верхние планки нижних шкафов</p>
+            <p className="mt-0.5 text-[13px] leading-snug text-graphiteMw">
+              Передняя и задняя планка вместо сплошной детали под столешницей. Пока цех не задал ширины и не подтвердил их, верх шкафа
+              режется сплошным; на отдельном шкафу планки задают в его инспекторе.
+            </p>
+            <div className="mt-3 grid max-w-[320px] grid-cols-2 gap-2">
+              {(['frontMm', 'backMm'] as const).map((key) => (
+                <label key={key} className="block">
+                  <span className="mw-label">{key === 'frontMm' ? 'Передняя, мм' : 'Задняя, мм'}</span>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min={TOP_RAIL_RULE_RANGE_MM[0]}
+                    max={TOP_RAIL_RULE_RANGE_MM[1]}
+                    data-top-rails-rule-mm={key}
+                    value={value.topRails?.[key] ?? ''}
+                    onChange={(event) =>
+                      setValue((prev) => ({ ...prev, topRails: { frontMm: prev.topRails?.frontMm ?? 0, backMm: prev.topRails?.backMm ?? 0, ...(prev.topRails?.confirmed ? { confirmed: true } : {}), [key]: Number(event.target.value) } }))
+                    }
+                    className="mw-field mt-1 w-full"
+                  />
+                </label>
+              ))}
+            </div>
+            <label className="mt-3 flex items-center gap-2 text-[15px]">
+              <input
+                type="checkbox"
+                data-top-rails-rule-confirmed
+                disabled={!value.topRails}
+                checked={value.topRails?.confirmed === true}
+                onChange={(event) =>
+                  setValue((prev) => (prev.topRails ? { ...prev, topRails: { frontMm: prev.topRails.frontMm, backMm: prev.topRails.backMm, ...(event.target.checked ? { confirmed: true } : {}) } } : prev))
+                }
+              />
+              Цех подтвердил эти числа
+            </label>
           </div>
 
           {/*

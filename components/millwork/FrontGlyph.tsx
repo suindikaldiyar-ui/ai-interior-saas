@@ -90,6 +90,54 @@ export default function FrontGlyph({
             );
           }
 
+          case 'zone': {
+            /*
+             * ЗОНА ФАСАДА: граница, створки диагоналями, ящики линиями, витрина штрихом, глухая панель — крестом: лист
+             * печатают чёрно-белым, и наполнение обязано читаться линиями.
+             */
+            const y0 = y + height * (1 - el.to);
+            const y1 = y + height * (1 - el.from);
+            const h = y1 - y0;
+            const line = (x1: number, ya: number, x2: number, yb: number, key: string, dash?: string) => (
+              <line key={key} x1={x1} y1={ya} x2={x2} y2={yb} stroke={LINE} strokeWidth={0.4 * k} strokeDasharray={dash} />
+            );
+            return (
+              <g key={i} data-glyph-zone={el.fill} data-glyph-zone-doors={el.doors}>
+                {el.from > 0 ? line(x, y1, x + width, y1, 'seam') : null}
+                {el.doors === 2 ? line(x + width / 2, y0, x + width / 2, y1, 'mid') : null}
+                {el.fill === 'drawers'
+                  ? Array.from({ length: Math.max(0, el.drawers - 1) }, (_, row) => line(x, y0 + (h * (row + 1)) / el.drawers, x + width, y0 + (h * (row + 1)) / el.drawers, `d${row}`))
+                  : null}
+                {el.fill === 'door' || el.fill === 'doors2'
+                  ? Array.from({ length: el.doors }, (_, leaf) => {
+                      const a = x + (width * leaf) / el.doors;
+                      const b = x + (width * (leaf + 1)) / el.doors;
+                      const hinge = el.doors === 2 ? (leaf === 0 ? a : b) : a;
+                      const free = hinge === a ? b : a;
+                      return (
+                        <g key={`s${leaf}`}>
+                          {line(free, y0, hinge, (y0 + y1) / 2, `s${leaf}a`, '2 1.5')}
+                          {line(hinge, (y0 + y1) / 2, free, y1, `s${leaf}b`, '2 1.5')}
+                        </g>
+                      );
+                    })
+                  : null}
+                {el.fill === 'glass' ? (
+                  <g data-symbol="glass" opacity={0.7}>
+                    {line(x + 6, y1 - 8, x + Math.min(width - 8, 18), y0 + 8, 'g1')}
+                    {line(x + 12, y1 - 8, x + Math.min(width - 6, 24), y0 + 8, 'g2')}
+                  </g>
+                ) : null}
+                {el.fill === 'blank' ? (
+                  <g>
+                    {line(x, y0, x + width, y1, 'x1')}
+                    {line(x + width, y0, x, y1, 'x2')}
+                  </g>
+                ) : null}
+              </g>
+            );
+          }
+
           case 'hseam':
             return (
               <g key={i} data-glyph-hseam={el.shares.map((share) => share.toFixed(4)).join(',')}>

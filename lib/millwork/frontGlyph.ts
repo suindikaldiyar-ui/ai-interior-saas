@@ -10,8 +10,9 @@ import { drawerSplitOf } from './drawerGrid';
 import { fillShelfCount } from './bays';
 import { handleSpotOf, type HandleSpot } from './handlePlace';
 import { vitrineDoorCount, vitrineOf } from './vitrine';
-import { frontSplitSpans } from './applianceFront';
-import type { Module, ModuleVariantKind, Run } from '@/types/millwork';
+import { facadeSpans, frontSplitSpans } from './applianceFront';
+import { hasFrontZones, zoneAt, zoneDoors } from './frontZones';
+import type { FrontZoneFill, Module, ModuleVariantKind, Run } from '@/types/millwork';
 
 /**
  * ЧТО ВИДНО НА ФАСАДЕ МОДУЛЯ.
@@ -89,7 +90,9 @@ export type GlyphElement =
   /** Тёмные врезки приборов колонны. */
   | { kind: 'niche'; count: number }
   /** Штанга поперёк секции. */
-  | { kind: 'rod' };
+  | { kind: 'rod' }
+  /** Зона фасада по высоте: доли от низа модуля и что в ней (`frontZones`). */
+  | { kind: 'zone'; from: number; to: number; fill: FrontZoneFill; doors: number; drawers: number };
 
 export type GlyphMode = 'fronts' | 'inside';
 
@@ -103,6 +106,7 @@ export function glyphSignature(elements: GlyphElement[]): string {
       if (el.kind === 'shelf') return `shelf:${el.count}`;
       if (el.kind === 'niche') return `niche:${el.count}`;
       if (el.kind === 'swing') return `swing:${el.hinge}`;
+      if (el.kind === 'zone') return `zone:${el.fill}:${el.doors}`;
       return el.kind;
     })
     .join('|');
@@ -196,6 +200,30 @@ function vitrineGlyph(unit: Module, vitrine: NonNullable<ReturnType<typeof vitri
 export function frontGlyph(unit: Module, mode: GlyphMode = 'fronts', heightMm?: number): GlyphElement[] {
   const variant: ModuleVariantKind = currentVariant(unit);
   const elements: GlyphElement[] = [];
+
+  /*
+   * ЗОНЫ ФАСАДА (задачи 2–4): участки те же, что у раскроя и сцены, в долях высоты. Без высоты (лента превью) — поровну.
+   */
+  if (hasFrontZones(unit)) {
+    const fullMm = heightMm ?? 1000;
+    const spans = heightMm ? facadeSpans(unit, heightMm) : (unit.frontZones ?? []).map((_, i, all) => ({ fromMm: (fullMm * i) / all.length, heightMm: fullMm / all.length }));
+    spans.forEach((span, i) => {
+      const zone = zoneAt(unit, i);
+      elements.push({
+        kind: 'zone',
+        from: span.fromMm / fullMm,
+        to: (span.fromMm + span.heightMm) / fullMm,
+        fill: zone.fill,
+        doors: zoneDoors(zone),
+        drawers: zone.fill === 'drawers' ? (unit.fill?.drawerHeights.length ?? 1) : 0,
+      });
+    });
+    if (unit.column && !elements.some((el) => el.kind === 'niche')) {
+      elements.push({ kind: 'niche', count: [unit.column.top, unit.column.bottom].filter(Boolean).length });
+    }
+    if (mode === 'fronts') pushHandle(unit, elements);
+    return elements;
+  }
 
   /* Витрина (P1) — одним рисунком по `vitrineOf`, какой бы вариант и секция её ни дали. */
   const vitrine = vitrineOf(unit);
@@ -441,7 +469,7 @@ function pushHandle(unit: Module, elements: GlyphElement[]): void {
   const run = { options: {} as Run['options'] };
   const handle = handleOf(unit, run);
   const fronts = elements.some(
-    (el) => el.kind === 'panel' || el.kind === 'drawer' || el.kind === 'glass',
+    (el) => el.kind === 'panel' || el.kind === 'drawer' || el.kind === 'glass' || (el.kind === 'zone' && el.doors + el.drawers > 0),
   );
 
   /* Ручка фрезерована во всех фасадах модуля (KIRA «Интегрированные ручки», `milledGrip`) — значка ручки нет. */

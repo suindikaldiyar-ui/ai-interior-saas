@@ -292,7 +292,7 @@ function geometryOf(unit: Module, run: Run, production: ProductionSettings): Mod
 }
 
 /** Фурнитура фасадов модуля — тем же счётом, что смета (с углами ряда). */
-function frontHardwareOf(unit: Module, run: Run) {
+export function frontHardwareOf(unit: Module, run: Run) {
   return openingHardware([{ unit, heightMm: moduleCarcassHeightMm(unit, run) }], run, cornerOfModule(run));
 }
 
@@ -325,6 +325,8 @@ export function handleLeafSizes(
     }
     const index = Number(/^door:(\d+)$/.exec(leaf)?.[1] ?? 0);
     const span = fronts.leaves[index];
+    /* Створка зоны — на своей половине (задачи 2–4). */
+    if (span?.widthMm !== undefined) return { leaf, wMm: span.widthMm - 2 * g.gapMm, hMm: span.heightMm - 2 * g.gapMm, drawer: false };
     if (sideBySide) {
       return { leaf, wMm: g.widthMm / fronts.leaves.length - 2 * g.gapMm, hMm: g.heightMm - 2 * g.gapMm, drawer: false };
     }

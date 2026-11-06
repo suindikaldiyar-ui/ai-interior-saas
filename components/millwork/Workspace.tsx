@@ -83,6 +83,7 @@ import { cookingFindings } from '@/lib/millwork/cookingStack';
 import { apronFindings } from '@/lib/millwork/apron';
 import { counterSupportFindings } from '@/lib/millwork/countertop';
 import { wallShelfFindings } from '@/lib/millwork/wallShelf';
+import { hangFindings } from '@/lib/millwork/tvZone';
 import { applianceModelFindings } from '@/lib/millwork/applianceChecks';
 import { hardwareByCategory, hardwareCatalog, lightReferences, referencedCatalogIds } from '@/lib/millwork/hardware';
 import { doorRoomSolids, roomAroundRows, roomSourceOf, type RoomSource } from '@/lib/millwork/room';
@@ -156,6 +157,7 @@ import type { StudioTool, StudioView } from './studio/StudioShell';
 import type { PlanCommand, PlanFurniture } from './studio/RoomPlan';
 import { StudioKitContext } from './studio/kit';
 import { wallFurnitureOf, wallLengthVerdict } from '@/lib/millwork/wallLength';
+import { fitRunLength } from '@/lib/millwork/rowFit';
 import SurveySheet from './SurveySheet';
 import TemplatePicker from './TemplatePicker';
 import type { RateTable } from '@/lib/millwork/estimate';
@@ -2832,9 +2834,10 @@ export default function Workspace(props: WorkspaceProps) {
       if (card.refusal || card.current) return card;
       const corners = cornerChoices.map((choice, i) => (i === cornerInput.index ? card.choice : choice));
       const attempt = compositionWith(corners, true);
+      /* Без фальшпанели и своя сборка: ход уже измерен по новым рядам экрана (`cardOf`). */
       return attempt?.state === 'refused'
         ? { ...card, refusal: attempt.reason, runs: null }
-        : { ...card, opening: openingOf(attempt, cornerInput.index) };
+        : { ...card, opening: card.opening ?? openingOf(attempt, cornerInput.index) };
     });
   }, [cornerInput, cornerChoices, compositionWith, openingOf]);
 
@@ -4056,7 +4059,7 @@ export default function Workspace(props: WorkspaceProps) {
   /* Плита над пустотой без опоры (P0): проектировать можно, выпуск в цех заперт словами. */
   /* Настенная полка (P2): крепления и нагрузки цех не задавал — выпуск заперт словами, как у плиты над пустотой. */
   const constructionFindings = useMemo(
-    () => segments.flatMap((row, i) => [...counterSupportFindings(row, wallLabel(i)), ...wallShelfFindings(row, wallLabel(i))]),
+    () => segments.flatMap((row, i) => [...counterSupportFindings(row, wallLabel(i)), ...wallShelfFindings(row, wallLabel(i)), ...hangFindings(row, wallLabel(i))]),
     [segments],
   );
   /* Фартук из каталога (ЭТАП 4, часть C): размеры не подтверждены документами — заперт только выпуск. */
@@ -4153,6 +4156,28 @@ export default function Workspace(props: WorkspaceProps) {
     [wallIdAt],
   );
 
+  /**
+   * РЯД ПОД СТЕНУ БЕЗ ПЕРЕСБОРКИ (FINAL KITCHEN, задача 1): «ряд собран на 2800 мм, а на стене 2850 мм». Модули на
+   * своих отметках, меняется длина ряда; разница — свободный участок, который заполняют «до границы». Короче мебели —
+   * отказ числом.
+   */
+  const fitWallLength = useCallback(
+    (index: number, usableMm: number) => {
+      const run = segments[index];
+      if (!run) return;
+      const fitted = fitRunLength(run, usableMm);
+      if ('refusal' in fitted) {
+        setSceneNotice(fitted.refusal);
+        return;
+      }
+      dirty.current = true;
+      if (index === 0) setEditedRuns((prev) => ({ ...prev, [active.key]: fitted.run }));
+      else setEditedWalls((prev) => withWallEdit(prev, wallIdAt(index), index, fitted.run));
+      setSceneNotice(`${wallLabel(index)}: ряд подогнан к стене — ${usableMm} мм, модули на своих местах.`);
+    },
+    [segments, active.key, wallIdAt],
+  );
+
   const blockingWarnings = screen.blocking;
   /**
    * Стена, которую предлагает пересобрать красная полоса: расхождение со
@@ -4163,6 +4188,19 @@ export default function Workspace(props: WorkspaceProps) {
     screen.rebuildWall === null
       ? undefined
       : { index: screen.rebuildWall, label: wallLabel(screen.rebuildWall) };
+  /* Подогнать можно только разницу длины: конфликт угла, препятствия и высоты кнопка не снимает. */
+  const staleFit = staleShown
+    ? mismatches.find(
+        (mismatch) =>
+          mismatch.index === staleShown.index &&
+          mismatch.runLengthMm !== mismatch.usableMm &&
+          !mismatch.corner?.length &&
+          !mismatch.leaves?.length &&
+          !mismatch.obstacles?.length &&
+          !mismatch.heights?.length &&
+          !mismatch.clashes?.length,
+      )
+    : undefined;
   const softWarnings = groupWarnings(screen.clarify);
   const { shown: shownSoft, hidden: hiddenSoft } = splitWarnings(softWarnings);
 
@@ -5993,7 +6031,7 @@ export default function Workspace(props: WorkspaceProps) {
         'Studio открыт без оболочки: страница Studio обязана обернуть рабочее место в StudioKitProvider.',
       );
     }
-    const { StudioShell, RoomPlan, WallInspector, StudioObjects, StudioInspector, FillEditor, OverheadEditor, StorageEditor, DryerEditor, LeafPartsEditor, FridgePanelsEditor, WallMicrowaveEditor, PencilEditor, SpanEditor, ModuleSizeEditor, FrontSplitEditor, DrawerFrontsEditor, CeilingLiftEditor, VitrineEditor, RadiusEditor } = studioKit;
+    const { StudioShell, RoomPlan, WallInspector, StudioObjects, StudioInspector, FillEditor, OverheadEditor, StorageEditor, DryerEditor, LeafPartsEditor, FridgePanelsEditor, WallMicrowaveEditor, PencilEditor, SpanEditor, RowFitEditor, FrontZonesEditor, SinkModelEditor, HoodEditor, TopRailsEditor, ModuleSizeEditor, FrontSplitEditor, DrawerFrontsEditor, CeilingLiftEditor, VitrineEditor, RadiusEditor } = studioKit;
     const surveyWalls = survey?.walls ?? [];
     const turnWords = (item: Survey['walls'][number]) =>
       item.turn === 'custom' ? `${item.turnDeg}° (другой угол)` : `90° ${item.turn === 'left' ? 'влево' : 'вправо'}`;
@@ -6015,6 +6053,30 @@ export default function Workspace(props: WorkspaceProps) {
           `${pickedFurniture.startMm + Math.max(...pickedUnits.map((unit) => unit.offsetMm + unit.widthMm))} мм от угла`
         : '';
     const pickedVerdict = pickedWall && wallVerdict?.wallId === pickedWall.id ? wallVerdict : null;
+    /*
+     * МЕСТО НА СТЕНЕ (FINAL KITCHEN, задача 1): у каждого ряда свой отступ у угла. Числа и «Заполнить ряд до
+     * доступной границы» — `rowFits` / `fill_row`, те же участки, что у раскладки. Острова это не касается.
+     */
+    const rowFitBlock = !onIsland ? (
+      <RowFitEditor
+        key={`fit:${activeIndex}:${activeRun.fingerprint}:${activeRun.lengthMm}`}
+        run={activeRun}
+        label={wallLabel(activeIndex)}
+        openings={wallOpenings(activeIndex)}
+        requirements={requirementsOf(activeIndex)}
+        onOps={(ops, onRefusal) => runOps(ops, onRefusal)}
+        preview={(ops) =>
+          applyOps({
+            run: activeRun,
+            requirements: requirementsOf(activeIndex),
+            ops,
+            openings: wallOpenings(activeIndex),
+            roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
+            hardware: hardwareItems,
+          })
+        }
+      />
+    ) : null;
     /* Стена, чьи проёмы правятся в панели «Замер»: выбранная, иначе стена ряда. */
     const measureWallId = selectedWallId ?? input.runWallId ?? surveyWalls[0]?.id ?? null;
     const measureIndex = measureWallId ? surveyWalls.findIndex((item) => item.id === measureWallId) : -1;
@@ -6323,10 +6385,21 @@ export default function Workspace(props: WorkspaceProps) {
                 Пересобрать {lowerWall(staleShown.label, 'accusative')}
               </button>
             )}
+            {staleFit && (
+              <button
+                type="button"
+                data-fit-wall={staleFit.index}
+                onClick={() => fitWallLength(staleFit.index, staleFit.usableMm)}
+                className="mw-btn mw-btn-primary mt-2 w-full"
+              >
+                Подогнать ряд к стене — правки останутся
+              </button>
+            )}
           </div>
         )}
 
         {pickedWall ? (
+          <>
           <WallInspector
             wallId={pickedWall.id}
             label={`Стена ${pickedIndex + 1}`}
@@ -6359,9 +6432,13 @@ export default function Workspace(props: WorkspaceProps) {
                 : undefined
             }
           />
+          {/* Стена с мебелью: числа её рядов и «Заполнить» — здесь, а не только у выбранного модуля. */}
+          {pickedFurniture ? rowFitBlock : null}
+          </>
         ) : (
           <>
             <StudioInspector run={activeRun} wall={studioWall} selectedId={selectedId} gap={selectedGap} />
+            {rowFitBlock}
             {/*
               * ВНУТРЕННЕЕ НАПОЛНЕНИЕ (R01) — отсеки и полки выбранного шкафа.
               * Конверт модуля — `bayEnvelope` по тому же ряду, по которому
@@ -6603,6 +6680,50 @@ export default function Workspace(props: WorkspaceProps) {
                   }
                 />
               )}
+            {/*
+              * ФАСАДЫ И ЗОНЫ ПО ВЫСОТЕ (FINAL KITCHEN, задачи 2–4): шкаф под мойку, секции пенала, комбинированный пенал —
+              * один блок и одна правка `set_front_zones`; встанет ли — вхолостую до нажатия. Идентификатор пенала
+              * выводится из прибора, поэтому выделение после правки — по месту в ряду.
+              */}
+            {selectedUnit && !onIsland && (() => {
+              /* Мойка, вытяжка и планки (задачи 5–7, 9): те же `runOps` и движок вхолостую, что у зон фасада. */
+              const previewOps = (ops: MillworkOp[]) =>
+                applyOps({
+                  run: activeRun,
+                  requirements: requirementsOf(activeIndex),
+                  ops,
+                  openings: wallOpenings(activeIndex),
+                  roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
+                  hardware: hardwareItems,
+                });
+              const send = (ops: MillworkOp[], onRefusal: (text: string | null) => void) => runOps(ops, onRefusal);
+              const stamp = `${selectedUnit.id}:${activeRun.fingerprint}`;
+              return (
+                <>
+                  <SinkModelEditor key={`sink:${stamp}`} unit={selectedUnit} onOps={send} preview={previewOps} />
+                  <HoodEditor key={`hood:${stamp}`} unit={selectedUnit} run={activeRun} onOps={send} preview={previewOps} />
+                  <TopRailsEditor key={`rails:${stamp}`} unit={selectedUnit} run={activeRun} onOps={send} preview={previewOps} />
+                </>
+              );
+            })()}
+            {selectedUnit && !onIsland && activeRun.modules.some((m) => m.id === selectedUnit.id) && (
+              <FrontZonesEditor
+                key={`zones:${selectedUnit.id}:${JSON.stringify([selectedUnit.frontZones ?? null, selectedUnit.frontSplitMm ?? null, selectedUnit.seamAtCounter ?? null, selectedUnit.frontGapMm ?? null, selectedUnit.fill?.shelves ?? null])}:${activeRun.fingerprint}`}
+                unit={selectedUnit}
+                run={activeRun}
+                onOps={(ops, onRefusal) => runOps(ops, onRefusal, (next) => next.modules.find((m) => m.offsetMm === selectedUnit.offsetMm && m.kind === selectedUnit.kind)?.id ?? null)}
+                preview={(ops) =>
+                  applyOps({
+                    run: activeRun,
+                    requirements: requirementsOf(activeIndex),
+                    ops,
+                    openings: wallOpenings(activeIndex),
+                    roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
+                    hardware: hardwareItems,
+                  })
+                }
+              />
+            )}
             {/*
               * РАЗМЕРЫ МОДУЛЯ (общий редактор размеров): ширина, высота и глубина числом и ±10 — `set_width`,
               * `set_height`, `set_module_depth` тем же `runOps`. У пенала — свой блок «Пенал».
@@ -7789,6 +7910,16 @@ export default function Workspace(props: WorkspaceProps) {
                 className="mw-btn mw-btn-ghost mt-2"
               >
                 Пересобрать {lowerWall(staleShown.label, 'accusative')}
+              </button>
+            )}
+            {staleFit && (
+              <button
+                type="button"
+                data-fit-wall={staleFit.index}
+                onClick={() => fitWallLength(staleFit.index, staleFit.usableMm)}
+                className="mw-btn mw-btn-primary ml-2 mt-2"
+              >
+                Подогнать ряд к стене — правки останутся
               </button>
             )}
           </div>

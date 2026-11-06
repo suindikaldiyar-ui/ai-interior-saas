@@ -19,7 +19,7 @@ import {
 } from './cabinetBoxes';
 import { ovenShape } from './applianceShapes';
 import { cookingStackOf, ovenDoorId, tallOvensOf } from './cookingStack';
-import { cornerGeometry, cornerOwnerOf, openFrontOf, wallOfRole } from './corner';
+import { cornerGeometry, cornerOwnerOf, openFrontOf, panelFreeLower, panelFreeUpper, wallOfRole } from './corner';
 import { rowStandardDepthMm } from './fill';
 import { installedItem } from './fittings';
 import { shopOf } from './shop';
@@ -126,6 +126,11 @@ export type CornerClash = {
    */
   blocked: { fix: PanelFix; needWholeMm: number; widthMm: number; limitMm: number } | null;
   /**
+   * Наименьший добор, который развёл бы эту пару, целые мм — у угла, где панели нет по выбору. Только слова отказа: панель
+   * сама не заводится (FINAL KITCHEN, задача 10). `null` — добором не снимается или панель у угла есть.
+   */
+  minFillerMm?: number | null;
+  /**
    * ЗАХОД ВНУТРИ ПАРЫ ДВЕРЕЦ ВЕРХНЕГО Г-МОДУЛЯ (P0): одна дверца пары — в
    * другую. Панелью его не снять: решают ручка у угла и угол раскрытия
    * петель. `first` — заходит дверца, которая открывается первой (Б — мимо
@@ -199,6 +204,8 @@ export function panelWidthMm(
 ): number {
   const g = cornerGeometry(choice, zone, production);
   const upperDepth = rowStandardDepthMm(zone, 'upper', production);
+  /* Панель ведущей стороны у глухого угла короче на толщину фасада: сравнивается ширина того, чем ряд отошёл от угла. */
+  if (fix.level === 'lower' && fix.side === 'owner' && choice.lower === 'dead') return g.ownerLowerCutMm - rowStandardDepthMm(zone, 'base', production);
   if (fix.level === 'lower') return fix.side === 'dock' ? g.fillerMm : g.ownerFillerMm;
   if (choice.upper === 'empty') return fix.side === 'dock' ? g.upperStartMm - upperDepth : g.ownerUpperCutMm - upperDepth;
   return fix.side === 'dock' ? g.upperFillerMm : g.ownerUpperFillerMm;
@@ -418,7 +425,12 @@ type Solid = {
  */
 function panelAt(choice: CornerChoice | undefined, side: ClashSide, level: ClashLevel): boolean {
   if (!choice) return false;
-  if (level === 'lower') return side === 'dock' ? true : choice.lower === 'blind';
+  /*
+   * «БЕЗ ФАЛЬШПАНЕЛИ» И «ТОРЕЦ К ТОРЦУ» — ВЫБОР ЧЕЛОВЕКА: панели нет и ход её не заводит. Скрытая панель ради зелёной
+   * проверки — обман: заход остаётся заходом и называется экраном с миллиметрами и тем, что можно сделать.
+   */
+  if (level === 'lower' ? panelFreeLower(choice.lower) : panelFreeUpper(choice.upper)) return false;
+  if (level === 'lower') return side === 'dock' ? true : choice.lower === 'blind' || choice.lower === 'dead';
   return side === 'dock' ? true : choice.upper === 'blind' || choice.upper === 'empty';
 }
 
@@ -1002,6 +1014,7 @@ export function cornerKinematics(input: {
             blocked: null,
             /* Подписи, а не id: id выводится из места, и после пересборки ряда у той же пары он другой. */
             pair: `${corner}|${wall}:${m.unit.label}:${m.leaf}|${other}:${solid.moduleId ? solid.label : solid.part}`,
+            ...(candidates.length === 0 ? { minFillerMm: needOf(m, solid, away[pos], worst.depth, MAX_PANEL_SHIFT_MM)?.whole ?? null } : {}),
           };
           clashes.push(clash);
           optionsOf.set(clash, options);
@@ -1588,6 +1601,13 @@ export function stuckWords(clash: CornerClash, choice: CornerChoice, wallOf: (wa
       ? `развести можно, только сделав ${panelWords(choice, b.fix, clash.corner, wallOf)} шире на ${b.needWholeMm} мм, а ряда на это нет`
       : `развела бы ${panelWords(choice, b.fix, clash.corner, wallOf)} ${b.widthMm + b.needWholeMm} мм, ` +
           `а шире ${FALSE_PANEL_RANGE_MM[1]} мм — это уже модуль, а не панель`;
+  }
+  if (clash.level !== null && (clash.level === 'lower' ? panelFreeLower(choice.lower) : panelFreeUpper(choice.upper))) {
+    return (
+      'у этого угла панели нет по выбору: поменяйте сторону петель, поставьте «Без ручки» или ручку с меньшим вылетом, другой механизм ' +
+      '(подъёмник, ящики вместо створки), смените модуль у угла' +
+      (clash.minFillerMm ? ` или поставьте добор от ${clash.minFillerMm} мм — «Слепой с фальш-панелью»` : ' или выберите «Слепой с фальш-панелью»')
+    );
   }
   return clash.level === null
     ? 'у этой детали своего ряда у угла нет — панелью её не отодвинуть'

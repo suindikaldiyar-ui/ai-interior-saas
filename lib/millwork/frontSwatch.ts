@@ -160,7 +160,8 @@ export function leafSwatches(
  * У колонны, ящиков отсеков и углового модуля деталей на схеме нет — пусто.
  */
 export function schemeLeaves(unit: Module): { leaf: string; x0: number; x1: number; y0: number; y1: number }[] {
-  if (!hasFacade(unit) || unit.column) return [];
+  /* Зоны фасада рисует своё `zone`: у их створок своё место и участок (`FrontGlyph`). */
+  if (!hasFacade(unit) || unit.column || (unit.frontZones?.length ?? 0) > 0) return [];
   const heights = unit.fill?.drawerHeights ?? [];
   if (heights.length > 0) {
     const total = heights.reduce((sum, h) => sum + h, 0);

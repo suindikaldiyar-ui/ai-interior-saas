@@ -1385,21 +1385,23 @@ export default function Cabinet3D({
               ]
             : slabPieces(slab).map((piece) => {
             const cutM = piece.backCutMm / MM;
+            /* У отверстия под мойку кусок ещё и короче спереди: полоса плиты у стены. */
+            const frontCutM = (piece.frontCutMm ?? 0) / MM;
             return (
               <mesh
-                key={`counter-${slab.fromMm}-${piece.fromMm}`}
+                key={`counter-${slab.fromMm}-${piece.fromMm}-${piece.backCutMm}`}
                 name={`counter:${run.wallId ?? 'a'}`}
                 geometry={parts.box}
                 material={parts.counter}
                 position={[
                   (piece.fromMm + piece.toMm) / 2 / MM,
                   (counterTopY + countertopMm(run.production) / 2) / MM,
-                  -depthM / 2 + counterOverhangM / 2 + frontThicknessM / 2 + cutM / 2,
+                  -depthM / 2 + counterOverhangM / 2 + frontThicknessM / 2 + cutM / 2 - frontCutM / 2,
                 ]}
                 scale={[
                   (piece.toMm - piece.fromMm) / MM,
                   countertopMm(run.production) / MM,
-                  depthM + counterOverhangM + frontThicknessM - cutM,
+                  depthM + counterOverhangM + frontThicknessM - cutM - frontCutM,
                 ]}
                 castShadow
                 receiveShadow

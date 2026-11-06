@@ -46,18 +46,25 @@ import { cornerSizesOf, plinthMm, shopOf, upperBottomMm } from './shop';
 
 export const LOWER_CORNER_TITLE: Record<LowerCornerKind, string> = {
   blind: 'Слепой с фальш-панелью',
+  no_filler: 'Без фальшпанели',
+  dead: 'Глухой угол',
   l_shape: 'Г-образный',
+  butt: 'Торец к торцу',
 };
 
 export const UPPER_CORNER_TITLE: Record<UpperCornerKind, string> = {
   l_shape: 'Г-образный навесной',
   blind: 'Слепой',
+  no_filler: 'Без фальшпанели',
   empty: 'Пустой',
+  butt: 'Торец к торцу',
 };
 
 export const MEZZANINE_CORNER_TITLE: Record<MezzanineCornerKind, string> = {
   blind: 'Одна идёт в угол',
+  no_filler: 'Без фальшпанели',
   empty: 'Пустой',
+  butt: 'Торец к торцу',
 };
 
 /** Как уровень угла называется человеку. */
@@ -71,14 +78,27 @@ export const CORNER_LEVEL_TITLE: Record<CornerLevel, string> = {
 /** Что это значит — одна строка, которую замерщик пересказывает клиенту. */
 export const LOWER_CORNER_HINT: Record<LowerCornerKind, string> = {
   blind: 'ряд идёт в угол, дверца — на доступной части, угловые петли',
+  no_filler: 'соседний ряд сразу за фасадами ведущего: детали нет, открывание проверяется',
+  dead: 'шкафа в углу нет: оба ряда кончаются у пустого квадрата, его закрывают панели',
   l_shape: 'корпус в две ноги, два фасада открываются вместе',
+  butt: 'оба ряда кончаются торцами у пустого квадрата, панелей нет',
 };
 
 export const UPPER_CORNER_HINT: Record<UpperCornerKind, string> = {
   l_shape: 'навесной корпус в две ноги над углом',
   blind: 'верх идёт в угол, соседний ряд стыкуется через фальш-панель',
+  no_filler: 'соседний шкаф сразу за фасадами ведущего: детали нет, открывание проверяется',
   empty: 'над столешницей в углу шкафа нет',
+  butt: 'оба верхних ряда кончаются торцами, панелей нет',
 };
+
+/** Режимы, у которых панели нет по выбору человека: ход её не расширяет и не заводит. */
+export function panelFreeLower(kind: LowerCornerKind): boolean {
+  return kind === 'no_filler' || kind === 'butt';
+}
+export function panelFreeUpper(kind: UpperCornerKind | MezzanineCornerKind): boolean {
+  return kind === 'no_filler' || kind === 'butt';
+}
 
 /**
  * УМОЛЧАНИЕ НОВОГО УГЛА: слепой низ и слепой верх.
@@ -402,6 +422,8 @@ export type CornerGeometry = {
   ownerFillerMm: number;
   /** То же у навесного ряда ведущего. */
   ownerUpperFillerMm: number;
+  /** Сколько нижний ряд ВЕДУЩЕЙ стороны не доходит до стены соседа: глухой угол и торец к торцу. Ноль — доходит. */
+  ownerLowerCutMm: number;
   /** Сторона нижнего Г-модуля. Ноль — Г-модуля нет. */
   lowerLegMm: number;
   /** Сторона верхнего Г-модуля. Ноль — его нет. */
@@ -447,6 +469,13 @@ export function cornerGeometry(
   const frontMm = shopOf(production).frontMm;
   const panelMm = sizes.falsePanelMm;
   /*
+   * БЕЗ ФАЛЬШПАНЕЛИ И ТОРЕЦ К ТОРЦУ: сосед начинается за плоскостью фасадов
+   * ведущего на толщину фасада и зазор цеха. Ближе нельзя: полотно соседа
+   * на первых градусах хода идёт вдоль фасада ведущего, и на глубине корпуса
+   * его свободная кромка упёрлась бы в торец этого фасада на всю толщину.
+   */
+  const bareMm = frontMm + shopOf(production).frontGapMm;
+  /*
    * ФАЛЬШ-ПАНЕЛИ ПО ХОДУ (STAGE A). Ширина фальш-панели соседа — настройка
    * цеха; шире она только тогда, когда этого требует ход створок и ящиков
    * (`cornerKinematics`), уже — никогда. Фальш-панели ведущего у цеха нет
@@ -474,15 +503,42 @@ export function cornerGeometry(
           fillerMm: lowerLPanelMm,
           ownerBlindMm: 0,
           ownerFillerMm: 0,
+          ownerLowerCutMm: 0,
           lowerLegMm: sizes.lowerLMm,
         }
-      : {
-          lostMm: depthMm + lowerPanelMm,
-          fillerMm: lowerPanelMm,
-          ownerBlindMm: depthMm + frontMm + ownerPanelMm,
-          ownerFillerMm: ownerPanelMm,
-          lowerLegMm: 0,
-        };
+      : choice.lower === 'no_filler'
+        ? {
+            /* Детали нет, панели по ходу не читаются: заход называет проверка, а не скрытая панель. */
+            lostMm: depthMm + bareMm,
+            fillerMm: 0,
+            ownerBlindMm: depthMm + frontMm,
+            ownerFillerMm: 0,
+            ownerLowerCutMm: 0,
+            lowerLegMm: 0,
+          }
+        : choice.lower === 'butt'
+          ? { lostMm: depthMm + bareMm, fillerMm: 0, ownerBlindMm: 0, ownerFillerMm: 0, ownerLowerCutMm: depthMm + bareMm, lowerLegMm: 0 }
+          : choice.lower === 'dead'
+            ? {
+                /*
+                 * Панель ведущей стороны кончается у плоскости фасадов соседа: две панели встречаются в
+                 * углу, и второй нужна та же плоскость, что у первой.
+                 */
+                lostMm: depthMm + lowerPanelMm,
+                fillerMm: lowerPanelMm,
+                ownerBlindMm: 0,
+                ownerFillerMm: Math.max(panelMm, clear?.ownerMm ?? 0) - frontMm,
+                ownerLowerCutMm: depthMm + Math.max(panelMm, clear?.ownerMm ?? 0),
+                lowerLegMm: 0,
+              }
+            : {
+                lostMm: depthMm + lowerPanelMm,
+                fillerMm: lowerPanelMm,
+                ownerBlindMm: depthMm + frontMm + ownerPanelMm,
+                ownerFillerMm: ownerPanelMm,
+                ownerLowerCutMm: 0,
+                lowerLegMm: 0,
+              };
 
   const upper =
     choice.upper === 'l_shape'
@@ -504,6 +560,10 @@ export function cornerGeometry(
             ownerUpperFillerMm: 0,
             upperLegMm: 0,
           }
+        : choice.upper === 'no_filler'
+          ? { upperStartMm: upperMm + bareMm, upperFillerMm: 0, ownerUpperCutMm: 0, ownerUpperBlindMm: upperMm + frontMm, ownerUpperFillerMm: 0, upperLegMm: 0 }
+          : choice.upper === 'butt'
+            ? { upperStartMm: upperMm + bareMm, upperFillerMm: 0, ownerUpperCutMm: upperMm + bareMm, ownerUpperBlindMm: 0, ownerUpperFillerMm: 0, upperLegMm: 0 }
         : {
             upperStartMm: upperMm + upperPanelMm,
             upperFillerMm: upperPanelMm,
@@ -536,6 +596,10 @@ export function cornerGeometry(
           ownerMezzBlindMm: 0,
           ownerMezzFillerMm: 0,
         }
+      : choice.mezzanine === 'no_filler'
+        ? { mezzStartMm: mezzMm + bareMm, mezzFillerMm: 0, ownerMezzCutMm: 0, ownerMezzBlindMm: mezzMm + frontMm, ownerMezzFillerMm: 0 }
+        : choice.mezzanine === 'butt'
+          ? { mezzStartMm: mezzMm + bareMm, mezzFillerMm: 0, ownerMezzCutMm: mezzMm + bareMm, ownerMezzBlindMm: 0, ownerMezzFillerMm: 0 }
       : {
           mezzStartMm: mezzMm + mezzPanelMm,
           mezzFillerMm: mezzPanelMm,
@@ -584,12 +648,16 @@ export function levelOfChoice(
   const designated = cornerOwnerOf(choice, level) === side;
   const none = { choice, designated, legMm: 0, blindMm: 0 };
   if (level === 'lower') {
+    /* Глухой угол и торец к торцу: в угол не идёт никто, оба ряда кончаются у пустого квадрата. */
+    if (choice.lower === 'dead' || choice.lower === 'butt') {
+      return { ...none, owns: false, gapMm: designated ? g.ownerLowerCutMm : g.lostMm, panelMm: designated ? g.ownerFillerMm : g.fillerMm };
+    }
     return designated
-      ? { ...none, owns: true, gapMm: 0, legMm: g.lowerLegMm, blindMm: choice.lower === 'blind' ? g.ownerBlindMm : 0, panelMm: g.ownerFillerMm }
+      ? { ...none, owns: true, gapMm: 0, legMm: g.lowerLegMm, blindMm: choice.lower === 'blind' || choice.lower === 'no_filler' ? g.ownerBlindMm : 0, panelMm: g.ownerFillerMm }
       : { ...none, owns: false, gapMm: g.lostMm, panelMm: g.fillerMm };
   }
   if (level === 'upper') {
-    if (choice.upper === 'empty') {
+    if (choice.upper === 'empty' || choice.upper === 'butt') {
       return { ...none, owns: false, gapMm: designated ? g.ownerUpperCutMm : g.upperStartMm, panelMm: 0 };
     }
     return designated
@@ -598,19 +666,19 @@ export function levelOfChoice(
           owns: true,
           gapMm: 0,
           legMm: g.upperLegMm,
-          blindMm: choice.upper === 'blind' ? g.ownerUpperBlindMm : 0,
+          blindMm: choice.upper === 'blind' || choice.upper === 'no_filler' ? g.ownerUpperBlindMm : 0,
           panelMm: g.ownerUpperFillerMm,
         }
       : { ...none, owns: false, gapMm: g.upperStartMm, panelMm: g.upperFillerMm };
   }
   /* Антресоль за верхом: отступы верха, у пустого верха — оба ряда в стороне. */
   if (!choice.mezzanine) {
-    if (choice.upper === 'empty') {
+    if (choice.upper === 'empty' || choice.upper === 'butt') {
       return { ...none, owns: false, gapMm: designated ? g.ownerMezzCutMm : g.mezzStartMm, panelMm: 0 };
     }
     return designated ? { ...none, owns: true, gapMm: 0, panelMm: 0 } : { ...none, owns: false, gapMm: g.mezzStartMm, panelMm: 0 };
   }
-  if (choice.mezzanine === 'empty') {
+  if (choice.mezzanine === 'empty' || choice.mezzanine === 'butt') {
     return { ...none, owns: false, gapMm: designated ? g.ownerMezzCutMm : g.mezzStartMm, panelMm: 0 };
   }
   return designated

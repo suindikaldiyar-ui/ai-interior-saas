@@ -17,7 +17,9 @@ import { resolveHardware } from './hardware';
 import { FITTING_SLOT_TITLE, handleItemOf, installedItem, shelfSupportCount } from './fittings';
 import { dryerItemLevels } from './dryer';
 import { GLASS_MATERIAL, GLASS_SHELF_LINE, glassLine, glassOf } from './glass';
-import { PROFILE_TITLE, VITRINE_LED_TITLE, vitrineLedMeters, vitrineLedStrips, vitrineOf } from './vitrine';
+import { PROFILE_TITLE, VITRINE_LED_TITLE, vitrineLedMeters, vitrineLedStrips, vitrineOf, zoneLedStrips } from './vitrine';
+import { facadeSpans } from './applianceFront';
+import { hasFrontZones } from './frontZones';
 import { vitrineModuleParts, type VitrinePart } from './vitrineParts';
 import { moduleDrawerKits } from './drawerKit';
 import { SLIDING_DOOR, sectionSpec, slidingDoorCount } from './sections';
@@ -315,7 +317,7 @@ function sectionDrafts(
      * неё нет, крепёж — тот же подвесной комплект на модуль, что у навесного
      * модуля зала. У «Подвесного модуля» он уже посчитан выше.
      */
-    if (unit.hangMm !== undefined && unit.section !== 'hanging_module') {
+    if (unit.hangMm !== undefined && unit.section !== 'hanging_module' && !unit.hangMount && unit.appliance !== 'hood') {
       drafts.push({ key: 'hanging_bracket', title: 'Подвесной крепёж (комплект на модуль)', unit: 'set', quantity: 1 });
     }
   }
@@ -636,6 +638,14 @@ function vitrineDrafts(
         unsetWithoutRate: VITRINE_UNSET.hinge_glass_door,
       });
     }
+  }
+
+  /* Лента витрины зоны (задачи 3–4) — по своим полосам, той же раскладке, что рисует сцена. */
+  if (hasFrontZones(unit)) {
+    const carcass = moduleCarcassHeightMm(unit, run);
+    const strips = zoneLedStrips(unit, facadeSpans(unit, carcass, run.production), production.carcassMm);
+    const meters = vitrineLedMeters(strips);
+    if (meters > 0) out.push({ key: 'led_display', title: `Подсветка витрины LED (${name})`, unit: 'mp', quantity: meters });
   }
 
   /* Лента — по своим полосам, той же раскладке, что рисует сцена. */
@@ -1326,7 +1336,7 @@ export function buildEstimateDrafts(
   for (const unit of modules) {
     const v = vitrineOf(unit);
     const parts = vitrineModuleParts(unit, run, production);
-    if (!v && parts.length === 0) continue;
+    if (!v && parts.length === 0 && !hasFrontZones(unit)) continue;
     const name = `${unit.label}, ${unit.widthMm} мм`;
     drafts.push(...vitrineDrafts(unit, v, parts, name, run, production, hardware.byModule[unit.id], fit));
   }
@@ -1346,6 +1356,16 @@ export function buildEstimateDrafts(
      * ВТОРАЯ КОРЗИНА НИЖНЕЙ СУШКИ (задача 3): двухуровневого комплекта позиции производитель не печатал — строка
      * «условная композиция» без цены; итог «неполный», а не цена одной корзины, выданная за две.
      */
+    /* Тумба на опорах (задача 8): опоры такой высоты — не цокольные регулируемые; позиции нет — цена не задана, а не ставка опор. */
+    if (unit.hangMount === 'legs' && (unit.hangMm ?? 0) > 0) {
+      drafts.push({
+        key: 'cabinet_legs',
+        title: `Опоры тумбы ${unit.hangMm} мм`,
+        unit: 'pcs',
+        quantity: 4,
+        priceUnset: 'цена не задана: опоры такой высоты цех не выбирал',
+      });
+    }
     if (unit.variant === 'base_dryer' && unit.dryer?.levels === 2 && dryerItemLevels(installedItem(unit, 'dryer', hardwareItems)) !== 2) {
       drafts.push({
         key: 'dryer_second_basket',

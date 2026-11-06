@@ -118,7 +118,7 @@ function solidsOf(runs: Run[], places: RowPlace[], production: ProductionSetting
 }
 
 /** Деталь одного модуля входит в деталь другого — на своей стене и на чужой. */
-function hitsOf(runs: Run[], places: RowPlace[], production: ProductionSettings): { hits: string[]; pairs: number } {
+export function hitsOf(runs: Run[], places: RowPlace[], production: ProductionSettings): { hits: string[]; pairs: number } {
   const solids = solidsOf(runs, places, production);
   const hits: string[] = [];
   let pairs = 0;

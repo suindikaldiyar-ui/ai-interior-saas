@@ -902,3 +902,20 @@ export function tvZoneShortWords(variant: TvZoneVariant, lengthMm: number, needM
         : `две витрины по ${R.vitrineMm} мм, зазоры по ${R.vitrineGapMm} мм и тумба от ${R.unitMinC} мм`;
   return `${TV_ZONE_TITLE[variant]} не помещается: стене нужно от ${needMm} мм (${parts}), а она ${lengthMm} мм — не хватает ${needMm - lengthMm} мм.`;
 }
+
+/**
+ * КРЕПЛЕНИЕ ПОДВЕСНОЙ ТУМБЫ (задача 8): вид можно проектировать, а монтаж — только с подтверждённым креплением. Цех его не
+ * задавал: выпуск заперт словами, а не молчанием. Опоры и пол такого вопроса не ставят.
+ */
+export function hangFindings(run: Pick<Run, 'modules' | 'zone'>, label: string): { words: string }[] {
+  if (run.zone !== 'living') return [];
+  const hung = run.modules.filter((unit) => unit.hangMm !== undefined && !unit.hangMount);
+  if (hung.length === 0) return [];
+  return [
+    {
+      words:
+        `${label}: подвесная тумба (${hung.length} мод.) — крепление к стене и допустимая нагрузка не подтверждены цехом: проект собирается, ` +
+        'но как готовая к монтажу конструкция не выпускается',
+    },
+  ];
+}

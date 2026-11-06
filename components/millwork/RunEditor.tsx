@@ -96,7 +96,7 @@ type Props = {
   zone?: ZoneKind;
   selectedModuleId: string | null;
   onSelect: (moduleId: string | null) => void;
-  onOps: (ops: MillworkOp[]) => void;
+  onOps: (ops: MillworkOp[], onRefusal?: (text: string | null) => void) => void;
   /**
    * Заголовок выбранного модуля: «Модуль 3 · 600 мм».
    *
@@ -413,7 +413,7 @@ export default function RunEditor({
    */
   const wanted = new Set(
     freeMode
-      ? (run.modules.map((unit) => unit.appliance).filter(Boolean) as ApplianceKind[])
+      ? ([...run.modules, ...run.upperSegments.flatMap((segment) => segment.modules)].map((unit) => unit.appliance).filter(Boolean) as ApplianceKind[])
       : (requirements?.appliances ?? []),
   );
   const chosenSections = requirements?.sections ?? profile.defaultSections;
@@ -438,10 +438,13 @@ export default function RunEditor({
        * «кнопка не работает»; отказ называет мир, как отказы зон.
        */
       setNotice(null);
+      /*
+       * ВЫТЯЖКА — В ВЕРХНИЙ РЯД НАД ВАРОЧНОЙ. Здесь была только подсказка: нажатие ничего не ставило, а верхний ряд своей
+       * сборки по раскладке не строится, и вытяжка не появлялась никогда (задача 6). Отказ — словами движка.
+       */
       if (appliance === 'hood') {
-        setNotice(
-          'Вытяжка ставится над варочной панелью: она в верхнем ряду и едет за ней сама.',
-        );
+        const hood = run.upperSegments.flatMap((segment) => segment.modules).find((unit) => unit.appliance === 'hood');
+        onOps([hood ? { op: 'set_hood', remove: true } : { op: 'set_hood' }], (text) => setNotice(text));
         return;
       }
 

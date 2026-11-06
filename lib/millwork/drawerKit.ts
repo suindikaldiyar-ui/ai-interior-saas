@@ -14,6 +14,7 @@ import {
   type DrawerProfile,
 } from './drawerBox';
 import { drawerCellZones, drawerInnerZones } from './drawerGrid';
+import { hasFrontZones } from './frontZones';
 
 /**
  * КОМПЛЕКТ ЯЩИКА: НАПРАВЛЯЮЩАЯ + КОРОБ — ОДИН ОТВЕТ НА ЯЩИК (HARDWARE-01).
@@ -101,7 +102,7 @@ export function drawerPlaces(unit: Module, run: Run, production: ProductionSetti
   const out: DrawerPlace[] = [];
   const t = production.carcassMm;
   const allow = production.allowances ?? DEFAULT_ALLOWANCES;
-  const fronts = unit.column ? [] : (unit.fill?.drawerHeights ?? []);
+  const fronts = unit.column && !hasFrontZones(unit) ? [] : (unit.fill?.drawerHeights ?? []);
   if (fronts.length > 0) {
     const heightMm = moduleCarcassHeightMm(unit, run);
     const depthMm = moduleDepthMm(unit, run.zone, run.production);

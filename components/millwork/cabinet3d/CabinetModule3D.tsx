@@ -17,7 +17,9 @@ import InteractiveDrawer from './InteractiveDrawer';
 import type { CabinetParts } from './parts';
 import type { GlassMaterials } from './glassLook';
 import type { ProfileMaterials } from './profileLook';
-import { vitrineLedStrips, vitrineOf } from '@/lib/millwork/vitrine';
+import { vitrineLedStrips, vitrineOf, zoneLedStrips } from '@/lib/millwork/vitrine';
+import { facadeSpans } from '@/lib/millwork/applianceFront';
+import { hasFrontZones } from '@/lib/millwork/frontZones';
 import { glassOf } from '@/lib/millwork/glass';
 import type { FrontRelief, Module } from '@/types/millwork';
 import { gripOrient } from '@/lib/millwork/facadeRelief';
@@ -185,7 +187,11 @@ export default function CabinetModule3D({
    * До P1 здесь была одна полоса под крышей и только у секции-витрины.
    */
   const vitrine = vitrineOf(unit);
-  const ledStrips = vitrine && vitrine.led !== 'off' ? vitrineLedStrips(unit, vitrine.led, Math.round(heightM * MM), Math.round(thicknessM * MM)) : [];
+  const ledStrips = hasFrontZones(unit)
+    ? zoneLedStrips(unit, facadeSpans(unit, Math.round(heightM * MM), production), Math.round(thicknessM * MM))
+    : vitrine && vitrine.led !== 'off'
+      ? vitrineLedStrips(unit, vitrine.led, Math.round(heightM * MM), Math.round(thicknessM * MM))
+      : [];
   /* Стекло этого модуля — вида, выбранного у него (`Module.glass`). */
   const glassMaterial = glass?.door[glassOf(unit)];
   /* Профиль витрины — того покрытия, что выбрано у неё; не выбрано — серебро (VISUAL_ONLY). */

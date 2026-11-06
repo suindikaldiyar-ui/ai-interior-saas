@@ -2,6 +2,7 @@ import type { Module, Run } from '@/types/millwork';
 import { isPencil, moduleCarcassHeightMm, ownShelvesOf, pencilShelves, refitDrawerFronts, shelfAboveRoof } from './fill';
 import { bayEnvelope, bayLayout } from './bays';
 import { shopOf } from './shop';
+import { syncZoneDrawers } from './frontZonesEdit';
 
 /**
  * ОКРУЖЕНИЕ ПРАВЛЕНОГО РЯДА — ИЗ ЖИВОГО СОСТОЯНИЯ, НА КАЖДОМ ПОКАЗЕ (STAGE 01).
@@ -75,7 +76,9 @@ export function runInContext(saved: Run, live: RunContext): InContext {
   const t = shopOf(shell.production).carcassMm;
   const tWas = shopOf(saved.production).carcassMm;
 
-  const refit = (unit: Module): Module => {
+  const refit = (raw: Module): Module => {
+    /* Граница по столешнице едет за ней, и ящики зоны — за границей (задача 4). */
+    const unit = syncZoneDrawers(raw, shell);
     const fill = unit.fill;
     if (!fill) return unit;
     /*

@@ -113,6 +113,8 @@ function sideBySideLeaves(unit: Module, run: Run): number {
   const heightMm = moduleCarcassHeightMm(unit, run);
   const { leaves } = moduleFronts(unit, heightMm, run.production);
   if (leaves.length < 2) return 0;
+  /* У створок зон рядом стоят только пары своей зоны; ключи деталей от отражения здесь не меняются. */
+  if (leaves.some((leaf) => leaf.hinge)) return 0;
   return leaves.every((leaf) => leaf.fromMm === 0) ? leaves.length : 0;
 }
 

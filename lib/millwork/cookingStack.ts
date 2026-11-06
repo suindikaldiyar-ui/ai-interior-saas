@@ -584,7 +584,7 @@ export function stageFourModelsOf(run: Pick<Run, 'modules' | 'zone' | 'ceilingHe
     }
     const hood = unit.appliance === 'hood' ? applianceModel(unit.applianceModels?.hood) : null;
     if (hood?.hood) {
-      out.push({ unit, kind: 'hood', model: hood, xMm: unit.offsetMm + unit.widthMm / 2, bottomMm: upperBottomMm(production), zMm: 0, moverIds: [`${unit.id}:hood:screen`] });
+      out.push({ unit, kind: 'hood', model: hood, xMm: unit.offsetMm + unit.widthMm / 2, bottomMm: unit.hangMm ?? upperBottomMm(production), zMm: 0, moverIds: [`${unit.id}:hood:screen`] });
     }
   }
   return out;

@@ -2,6 +2,7 @@ import { CORNER, hingesPerDoor, isUpperRow } from './modules';
 import { drawerCells } from './drawerGrid';
 import { MODULE_VARIANTS } from './moduleVariants';
 import { moduleFronts, nicheFacadeSpans } from './applianceFront';
+import { hasFrontZones } from './frontZones';
 import { bayDrawerCount } from './drawerCount';
 import { leafFrontOf } from './frontMaterial';
 import { vitrineDoorKind } from './glass';
@@ -608,6 +609,15 @@ export function openingHardware(
      * участка: полотно 480 мм и полотно 796 мм держатся разным числом
      * петель, и `hingesPerDoor` это уже знает.
      */
+    /*
+     * ЗОНЫ ФАСАДА (задачи 2–4): каждая створка — по своей высоте и своей статье (дверь витрины — петли под рамку), глухая
+     * панель фурнитуры не берёт. Ключ створки — её место в списке `moduleFronts`.
+     */
+    if (hasFrontZones(unit)) {
+      fronts.leaves.forEach((leaf, i) => addLeafHinges(unit, i, leafHingeCount(unit, `door:${i}`, leaf.heightMm, 'left', run.production), false));
+      addHandles(unit, doorsOf(fronts.leaves.length));
+      continue;
+    }
     const facades = nicheFacadeSpans(unit, heightMm, run.production);
     if (facades) {
       /* Свободные участки — обычные распашные полотна. */

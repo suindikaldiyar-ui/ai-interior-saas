@@ -3,15 +3,20 @@ import { CORNER_LABEL, allModules, describeFronts, moduleId } from './layout';
 import {
   choiceOnly,
   cornerGeometry,
+  cornerOfSegment,
   cornerOwnerOf,
   levelAt,
   levelBoundsOf,
+  levelOfChoice,
   LOWER_CORNER_TITLE,
   lowerGapMm,
+  panelFreeLower,
+  panelFreeUpper,
   sameCorner,
   stampCornerDoors,
   UPPER_CORNER_TITLE,
   upperBoundsOf,
+  type CornerEnd,
 } from './corner';
 import { mezzanineBaseOf } from './fill';
 import { openingsOnRun, runPlacements } from './composition';
@@ -80,6 +85,18 @@ function legacyCorner(choice: CornerChoice): boolean {
     !choice.mezzanine &&
     (['lower', 'upper', 'countertop'] as const).every((level) => cornerOwnerOf(choice, level) === 'prev')
   );
+}
+
+/** Угол с пустым квадратом: ведущий ряд тоже не доходит до стены соседа. */
+function cutsCorner(choice: CornerChoice): boolean {
+  return choice.lower === 'dead' || choice.lower === 'butt' || choice.upper === 'butt';
+}
+
+/** Панели у этого уровня нет по выбору человека: заход остаётся заходом, а не поводом расширить деталь. */
+function panelFreeClash(choice: CornerChoice, level: 'lower' | 'upper' | null): boolean {
+  if (level === 'lower') return panelFreeLower(choice.lower);
+  if (level === 'upper') return panelFreeUpper(choice.upper);
+  return false;
 }
 
 /** Меняется только плита через угол: ряды стоят как стоят. */
@@ -326,6 +343,163 @@ function hangingOf(run: Run): Module[] {
 }
 
 /**
+ * СМЕНА УГЛА В СВОЕЙ СБОРКЕ — МЕБЕЛЬ В МИРЕ СТОИТ, ГДЕ СТОИТ.
+ *
+ * Своя сборка не собирается по шаблону: пересборка композицией отдавала две
+ * ПУСТЫЕ стены, и смена «кто ведёт угол» стирала всё, что человек поставил
+ * руками. Здесь меняются только границы рядов у этого угла: ряд становится
+ * длиннее или короче на разницу того, что занял угол, начало ряда переезжает
+ * вместе с отметками, а модули остаются на своих местах в комнате.
+ *
+ * Модуль, в который упирается новая граница, не двигается и не режется —
+ * отказ с миллиметрами: его сдвигает или сужает человек. Модуль угла
+ * (Г-модуль) уходит вместе со своим углом: стоящий на его месте шкаф своего
+ * вида — тот же корпус; новому Г-модулю нужно свободное место у стены.
+ */
+function changeOnSite(
+  input: Omit<Parameters<typeof changeOnce>[0], 'next'> & { next: CornerChoice },
+): CornerChange {
+  const { runs, index, corners, requirements } = input;
+  const next = choiceOnly(input.next);
+  const owner = runs[index];
+  const dock = runs[index + 1];
+  if (!owner || !dock) return { ok: false, why: `Угла ${index + 1} в этой кухне нет: стен ${runs.length}.` };
+  const zone = owner.zone ?? requirements.zone;
+  const production = owner.production;
+  const choicesAfter = corners.map((choice, i) => (i === index ? next : choice));
+  const name = (wall: number) => input.labels[wall] ?? `Стена ${wall + 1}`;
+
+  /** Ряд с новым углом у этого конца: длина и отметки — на разницу занятого. */
+  const moved = (run: Run, end: CornerEnd): Run => {
+    const placed: Run = stampCornerDoors({ ...run, corner: { ...run.corner, [end]: next } });
+    const deltaMm = lowerGapMm(run, end) - lowerGapMm(placed, end);
+    const shiftMm = end === 'start' ? deltaMm : 0;
+    const go = (unit: Module) => (shiftMm === 0 ? unit : shifted(unit, -shiftMm, run.wallId));
+    return {
+      ...placed,
+      lengthMm: run.lengthMm + deltaMm,
+      modules: run.modules.map(go),
+      upperSegments: run.upperSegments.map((segment) => ({
+        ...segment,
+        fromMm: segment.fromMm + shiftMm,
+        toMm: segment.toMm + shiftMm,
+        modules: segment.modules.map(go),
+      })),
+    };
+  };
+
+  /** Что стоит у этого конца ряда: Г-модуль приходит и уходит вместе с выбором угла. */
+  const cornerUnits = (run: Run, end: CornerEnd): Run | string => {
+    let floor = [...run.modules];
+    let hanging = upperOf(run);
+    const lower = levelAt(run, end, 'lower')!;
+    const upper = levelAt(run, end, 'upper')!;
+    const up = levelBoundsOf(run, 'upper');
+
+    const swap = (list: Module[], kind: ModuleKind, plain: ModuleKind, label: string, wanted: number, fromMm: number, toMm: number, level: string): Module[] | string => {
+      const found = list.find((unit) => unit.kind === kind && (end === 'end' ? unit.offsetMm + unit.widthMm >= toMm - 1 : unit.offsetMm <= fromMm + 1));
+      if (wanted > 0) {
+        if (found && found.widthMm === wanted) return list;
+        const at = end === 'end' ? toMm - wanted : fromMm;
+        const rest = list.filter((unit) => unit !== found);
+        const block = blocking(rest, at, at + wanted);
+        if (block) {
+          return (
+            `${name(runs.indexOf(run) >= 0 ? runs.indexOf(run) : index)}: ${level} Г-модулю ${wanted} мм нужно ${wanted} мм у угла, там «${block.label}» — ` +
+            `не хватает ${Math.round(end === 'end' ? block.offsetMm + block.widthMm - at : at + wanted - block.offsetMm)} мм.`
+          );
+        }
+        return [...rest, cornerModule(kind, wanted, at, label, 2, run.wallId)];
+      }
+      if (!found) return list;
+      /* Г-модуль уходит вместе со своим углом; внутри границ ряда на его месте остаётся обычный шкаф. */
+      if (found.offsetMm < fromMm || found.offsetMm + found.widthMm > toMm) return list.filter((unit) => unit !== found);
+      return list.map((unit) => (unit === found ? cornerModule(plain, unit.widthMm, unit.offsetMm, describeFronts(1, 0), 1, run.wallId) : unit));
+    };
+
+    const nextFloor = swap(floor, 'corner_base', 'base', CORNER_LABEL.lowerL, lower.owns ? lower.legMm : 0, 0, run.lengthMm, 'нижнему');
+    if (typeof nextFloor === 'string') return nextFloor;
+    floor = nextFloor;
+    if (run.options.hasUpper) {
+      const nextUpper = swap(hanging, 'corner_upper', 'upper', CORNER_LABEL.upperL, upper.owns ? upper.legMm : 0, up.fromMm, up.toMm, 'верхнему');
+      if (typeof nextUpper === 'string') return nextUpper;
+      hanging = nextUpper;
+    }
+    return {
+      ...run,
+      modules: floor.sort((a, b) => a.offsetMm - b.offsetMm),
+      upperSegments: [...asSegments(hanging), ...asSegments(upperRestOf(run))],
+    };
+  };
+
+  /** Модуль за новой границей ряда — словами: мебель сама не двигается. */
+  const outside = (run: Run, wall: number): string | null => {
+    const check = (list: Module[], fromMm: number, toMm: number, level: string): string | null => {
+      for (const unit of [...list].sort((a, b) => a.offsetMm - b.offsetMm)) {
+        const over = Math.max(fromMm - unit.offsetMm, unit.offsetMm + unit.widthMm - toMm);
+        if (over > 0.5) {
+          return (
+            `${name(wall)}: при этом угле ${level} ряд кончается раньше, и «${unit.label}» заходит за границу на ${Math.round(over)} мм — ` +
+            'мебель сама не двигается: сдвиньте или сузьте этот модуль, потом смените угол.'
+          );
+        }
+      }
+      return null;
+    };
+    const up = levelBoundsOf(run, 'upper');
+    const mezz = levelBoundsOf(run, 'mezzanine');
+    return (
+      check(run.modules, 0, run.lengthMm, 'нижний') ??
+      check(upperOf(run), up.fromMm, up.toMm, 'верхний') ??
+      check(
+        upperRestOf(run).filter((unit) => mezzanineBaseOf(unit, run) === null),
+        mezz.fromMm,
+        mezz.toMm,
+        'антресольный',
+      )
+    );
+  };
+
+  /* Проёмы ряда — той же `openingsOnRun`, что у композиции: от начала ряда при новых углах. */
+  const rowOpenings = (wall: number, run: Run): Opening[] => {
+    const startMm = wall > 0 ? levelOfChoice(choicesAfter[wall - 1], 'next', 'lower', zone, production).gapMm : 0;
+    const shell = { corner: cornerOfSegment(choicesAfter, wall, runs.length), zone, production, lengthMm: run.lengthMm };
+    const upper = levelBoundsOf(shell, 'upper');
+    const mezz = levelBoundsOf(shell, 'mezzanine');
+    return openingsOnRun(
+      input.wallOpenings[wall],
+      startMm,
+      run.lengthMm,
+      Math.min(0, upper.fromMm, mezz.fromMm),
+      Math.max(run.lengthMm, upper.toMm, mezz.toMm),
+    );
+  };
+
+  const out = [...runs];
+  for (const [wall, end] of [
+    [index, 'end'],
+    [index + 1, 'start'],
+  ] as [number, CornerEnd][]) {
+    const run = cornerUnits(moved(runs[wall], end), end);
+    if (typeof run === 'string') return { ok: false, why: run };
+    const refused = outside(run, wall);
+    if (refused) return { ok: false, why: refused };
+    try {
+      const settled = applyOps({ run, requirements, ops: [], openings: rowOpenings(wall, run) });
+      const before = run.modules.length + upperOf(run).length;
+      const after = settled.modules.length + upperOf(settled).length;
+      if (after < before) {
+        return { ok: false, why: settled.warnings[0] ?? `${name(wall)}: при этом угле модулей стало бы меньше на ${before - after}.` };
+      }
+      out[wall] = settled;
+    } catch (error) {
+      return { ok: false, why: error instanceof Error ? error.message : 'Так собрать нельзя.' };
+    }
+  }
+  return { ok: true, runs: out, corners: choicesAfter };
+}
+
+/**
  * СМЕНА УГЛА С ПАНЕЛЯМИ ПО ХОДУ (STAGE A).
  *
  * Угол меняется на месте (`changeOnce`), и ряды после смены проходят ход
@@ -371,14 +545,17 @@ export function changeCorner(input: Parameters<typeof changeOnce>[0] & {
   if (prevChoice && mezzanineOnly(prevChoice, input.next)) {
     return mezzanineChange({ ...input, prev: prevChoice });
   }
+  /* Своя сборка по шаблону не собирается: мебель на месте, меняются границы рядов. */
+  if (prevChoice && input.requirements.mode === 'free') return changeOnSite(input);
   /*
    * КТО ВЕДЁТ УРОВЕНЬ — СМЕНА КРАЙНИХ МОДУЛЕЙ ОБЕИХ СТЕН (P0). Угловой модуль
    * переходит к другой стене, её ряд начинается от стены соседа, а ряд
    * прежнего владельца кончается раньше. Это пересборка двух стен той же
    * композицией, что строит экран; на месте правится только смена ВИДА угла
-   * при прежнем владельце — как было (слой 55).
+   * при прежнем владельце — как было (слой 55). Глухой угол и торец к торцу
+   * укорачивают ряд ведущего — тоже пересборка.
    */
-  if (!prevChoice || !legacyCorner(prevChoice) || !legacyCorner(input.next)) {
+  if (!prevChoice || !legacyCorner(prevChoice) || !legacyCorner(input.next) || cutsCorner(prevChoice) || cutsCorner(input.next)) {
     if (!input.recompose) return { ok: false, why: 'Смену того, кто ведёт угол, собирает композиция стен — её здесь нет.' };
     const built = input.recompose(chosen);
     if ('why' in built) return { ok: false, why: built.why };
@@ -417,7 +594,11 @@ export function changeCorner(input: Parameters<typeof changeOnce>[0] & {
      * вида угла его не создаёт: он виден на экране блокирующим со своими словами.
      * Отказывать из-за него в смене низа значило бы запереть угол целиком.
      */
-    const here = kin.clashes.filter((clash) => clash.corner === input.index && !clash.own);
+    /*
+     * Заход у уровня, где панели нет по выбору, — не повод отказать в смене: человек выбирает «без фальшпанели»,
+     * а потом меняет петли и ручки. Он назван на карточке до нажатия и запирает цену на экране.
+     */
+    const here = kin.clashes.filter((clash) => clash.corner === input.index && !clash.own && !panelFreeClash(next, clash.level));
     if (here.length === 0) return change;
     const stale = kin.pairs.filter((pair) => pair.corner === input.index && last.get(pair.pair)?.fix && pair.depthMm >= last.get(pair.pair)!.depthMm - 0.05);
     if (stale.length > 0) {
@@ -763,6 +944,33 @@ function cardOf(
   if (current || !change) return card;
   if (!change.ok) return { ...card, refusal: change.why, runs: null };
   /*
+   * БЕЗ ФАЛЬШПАНЕЛИ И СВОЯ СБОРКА — ХОД ПО НОВЫМ РЯДАМ, ДО НАЖАТИЯ. Панель заход не снимет (её нет), а своя сборка
+   * композицией не меряется вовсе: «заходов нет» про чужие ряды было бы неправдой. Меряется то, что встанет на экран, с
+   * позициями каталога, тем же `cornerKinematics`, что запрёт цену после смены.
+   */
+  const measured = input.requirements.mode === 'free' || panelFreeLower(choice.lower) || panelFreeUpper(choice.upper);
+  const openingNow = (): CornerCard['opening'] => {
+    const zone = input.runs[input.index]?.zone ?? input.requirements.zone;
+    const production = input.runs[input.index]?.production;
+    const kin = cornerKinematics({
+      runs: change.runs,
+      places: runPlacements({ runs: change.runs, corners: change.corners, zone, production }),
+      production: shopOf(production),
+      ...(input.hardware ? { hardware: input.hardware } : {}),
+    });
+    const wallOf = (wall: number) => lowerWall(input.labels[wall] ?? `Стена ${wall + 1}`, 'genitive');
+    const deepest = new Map<string, (typeof kin.clashes)[number]>();
+    for (const clash of kin.clashes) {
+      if (clash.corner !== input.index) continue;
+      const was = deepest.get(clash.pair);
+      if (!was || clash.depthMm > was.depthMm) deepest.set(clash.pair, clash);
+    }
+    const list = Array.from(deepest.values()).sort((a, b) => b.depthMm - a.depthMm);
+    return list.length > 0
+      ? { ok: false, words: `${list.slice(0, 2).map((clash) => clashWords(clash, wallOf)).join('; ')} — ${stuckWords(list[0], change.corners[input.index] ?? choice, wallOf)}` }
+      : { ok: true, words: 'заходов при открывании у угла нет: проверены створки, ящики и ручки на всём ходу' };
+  };
+  /*
    * ТОЛЬКО АНТРЕСОЛЬ (Measurement 2.0): ряды те же, кроме антресоли, — что
    * изменится, это её границы у угла, а ход у угла меряется по НОВЫМ рядам,
    * с позициями каталога, тем же `cornerKinematics`, по которому экран
@@ -794,6 +1002,7 @@ function cardOf(
   return {
     ...card,
     runs: change.runs,
+    ...(measured && !change.keep ? { opening: openingNow() } : {}),
     ...(change.keep ? { keep: true as const } : {}),
     ...(change.rebuild
       ? { rebuild: change.rebuild, changes: describeRebuild(input.runs, change.runs, change.rebuild, input.labels, input.edited, input.index) }
@@ -826,6 +1035,7 @@ export function cornerCards(input: CardInput): CornerCard[] {
     return cardOf(input, `${level}:${kind}`, level, choice, title, (shown) => {
       const geometry = cornerGeometry(shown, zone, owner?.production);
       const widthMm = level === 'lower' ? geometry.lowerLegMm : geometry.upperLegMm;
+      const start = level === 'lower' ? geometry.lostMm : geometry.upperStartMm;
       const hint =
         kind === 'blind'
           ? level === 'lower'
@@ -833,17 +1043,24 @@ export function cornerCards(input: CardInput): CornerCard[] {
             : `фальш-панель ${geometry.upperFillerMm} мм`
           : kind === 'l_shape'
             ? `${widthMm}×${widthMm} мм, два фасада вместе, фальш-панель не нужна`
-            : 'над столешницей в углу шкафа нет';
+            : kind === 'no_filler'
+              ? `детали нет, соседний ряд с ${start} мм от стены; открывание проверяется`
+              : kind === 'dead'
+                ? `шкафа в углу нет, две панели закрывают квадрат; ряды кончаются в ${start} мм от стен`
+                : kind === 'butt'
+                  ? `оба ряда кончаются в ${start} мм от стен, панелей нет`
+                  : 'над столешницей в углу шкафа нет';
       return { hint, widthMm };
     });
   };
 
   /* Выбор карточки — только вид угла: панели по ходу прежнего угла под новый не годятся. */
-  const lower = (['blind', 'l_shape'] as const).map((kind) => make('lower', { ...base, lower: kind }));
+  const lower = (['blind', 'no_filler', 'dead', 'l_shape', 'butt'] as const).map((kind) => make('lower', { ...base, lower: kind }));
   const upper = owner?.options.hasUpper
-    ? (['l_shape', 'blind', 'empty'] as const).map((kind) => make('upper', { ...base, upper: kind }))
+    ? (['l_shape', 'blind', 'no_filler', 'empty', 'butt'] as const).map((kind) => make('upper', { ...base, upper: kind }))
     : [];
-  return [...lower, ...upper];
+  /* Глухой угол и торец к торцу укорачивают ряд ведущего: собирает их композиция стен. Без неё такой карточки нет — обещать нечего. */
+  return [...lower, ...upper].filter((card) => card.current || input.requirements.mode === 'free' || Boolean(input.recompose) || !cutsCorner(card.choice));
 }
 
 /** У рядов угла есть антресоль над верхним рядом (не кладовка над колонной). */
@@ -886,13 +1103,15 @@ export function cornerOwnerCards(input: CardInput): CornerCard[] {
         const hint =
           shown.lower === 'l_shape'
             ? `Г-модуль ${g.lowerLegMm}×${g.lowerLegMm} — в ряду ${genitive(side)}`
-            : `ряд ${genitive(side)} до стены; ${lowerWall(wallName(other(side)))} — за фальш-панелью ${g.fillerMm} мм`;
+            : g.fillerMm > 0
+              ? `ряд ${genitive(side)} до стены; ${lowerWall(wallName(other(side)))} — за фальш-панелью ${g.fillerMm} мм`
+              : `ряд ${genitive(side)} до стены; ${lowerWall(wallName(other(side)))} — с ${g.lostMm} мм от неё`;
         return { hint, widthMm: g.lowerLegMm };
       }),
     );
   }
 
-  if (owner?.options.hasUpper && prev.upper !== 'empty') {
+  if (owner?.options.hasUpper && prev.upper !== 'empty' && prev.upper !== 'butt') {
     for (const side of ['prev', 'next'] as CornerOwner[]) {
       out.push(
         cardOf(input, `owner:upper:${side}`, 'upper', withOwner(base, 'upper', side), `Верх: ${wallName(side)} идёт в угол`, (shown) => {
@@ -900,7 +1119,9 @@ export function cornerOwnerCards(input: CardInput): CornerCard[] {
           const hint =
             shown.upper === 'l_shape'
               ? `Г-модуль ${g.upperLegMm}×${g.upperLegMm} — в ряду ${genitive(side)}`
-              : `верх ${genitive(side)} до стены; ${lowerWall(wallName(other(side)))} — за фальш-панелью ${g.upperFillerMm} мм`;
+              : g.upperFillerMm > 0
+                ? `верх ${genitive(side)} до стены; ${lowerWall(wallName(other(side)))} — за фальш-панелью ${g.upperFillerMm} мм`
+                : `верх ${genitive(side)} до стены; ${lowerWall(wallName(other(side)))} — с ${g.upperStartMm} мм от неё`;
           return { hint, widthMm: g.upperLegMm };
         }),
       );
@@ -935,8 +1156,20 @@ export function cornerOwnerCards(input: CardInput): CornerCard[] {
       );
     }
     out.push(
+      cardOf(input, 'owner:mezzanine:no_filler', 'mezzanine', { ...base, mezzanine: 'no_filler' }, 'Антресоль: без фальшпанели', (shown) => ({
+        hint: `детали нет, соседняя антресоль с ${cornerGeometry(shown, zone, owner?.production).mezzStartMm} мм от стены; открывание проверяется`,
+        widthMm: 0,
+      })),
+    );
+    out.push(
       cardOf(input, 'owner:mezzanine:empty', 'mezzanine', { ...base, mezzanine: 'empty' }, 'Антресоль: пустой угол', () => ({
         hint: 'над верхним рядом в углу антресоли нет',
+        widthMm: 0,
+      })),
+    );
+    out.push(
+      cardOf(input, 'owner:mezzanine:butt', 'mezzanine', { ...base, mezzanine: 'butt' }, 'Антресоль: торец к торцу', (shown) => ({
+        hint: `обе антресоли кончаются в ${cornerGeometry(shown, zone, owner?.production).mezzStartMm} мм от стен, панелей нет`,
         widthMm: 0,
       })),
     );

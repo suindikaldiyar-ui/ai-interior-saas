@@ -1,4 +1,4 @@
-import { CORNER_SIZE_MM, SINGLE_DOOR_MAX_MM, frontPlan, isUpperRow } from './modules';
+import { APPLIANCE_SLOTS, CORNER_SIZE_MM, SINGLE_DOOR_MAX_MM, frontPlan, isUpperRow } from './modules';
 import { zoneProfile } from './zones';
 import { dryerKindOf } from './dryer';
 import type {
@@ -738,6 +738,13 @@ export function hasBottom(unit: Module): boolean {
   if (unit.appliance?.startsWith('sink')) return false;
   const kind = unit.variant;
   return !(kind && MODULE_VARIANTS[kind].noBottom);
+}
+
+/** Самый узкий шкаф под мойку: чаша типа прибора, модель уточняет (`sinkModelMinWidthMm`). */
+export function sinkMinWidthMm(unit: Pick<Module, 'appliance' | 'sinkModel'>): number {
+  const model = unit.sinkModel?.minCabinetMm;
+  if (model) return model;
+  return unit.appliance ? (APPLIANCE_SLOTS[unit.appliance]?.widthMm ?? 0) : 0;
 }
 
 /** Модуль мойки: бездонный корпус с вырезом под сифон — своя работа. */

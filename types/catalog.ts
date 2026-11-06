@@ -629,6 +629,23 @@ export function isSurfaceKind(appliesTo: AppliesTo): boolean {
  * сделали бы детализировку неверной для половины клиентов, а неверная
  * детализировка хуже её отсутствия: по ней распилят плиту.
  */
+/** Ширины верхних планок цеха: заведённое и подтверждённое. */
+export type TopRailsRule = { frontMm: number; backMm: number; confirmed?: boolean };
+
+/** Пределы ширины планки в настройках — те же, что у правки на модуле (`TOP_RAIL_RANGE_MM`). */
+export const TOP_RAIL_RULE_RANGE_MM: [number, number] = [40, 300];
+
+/** Правило цеха из записи: числа вне пределов — правила нет, а не подрезанное значение. */
+export function topRailsRule(raw: unknown): TopRailsRule | null {
+  const value = (raw ?? {}) as Partial<TopRailsRule>;
+  const [low, high] = TOP_RAIL_RULE_RANGE_MM;
+  const front = Number(value.frontMm);
+  const back = Number(value.backMm);
+  const inside = (mm: number) => Number.isFinite(mm) && mm >= low && mm <= high;
+  if (!inside(front) || !inside(back)) return null;
+  return { frontMm: Math.round(front), backMm: Math.round(back), ...(value.confirmed === true ? { confirmed: true } : {}) };
+}
+
 export type ProductionSettings = {
   /** Толщина ЛДСП корпуса, мм. */
   carcassMm: 16 | 18;
@@ -745,6 +762,11 @@ export type ProductionSettings = {
    * распиленная плита.
    */
   drawerBox?: DrawerBoxSettings;
+  /**
+   * ВЕРХНИЕ ПЛАНКИ НИЖНИХ ШКАФОВ (FINAL KITCHEN, задача 9), мм: правило цеха. Пусто или не подтверждено — верх шкафа
+   * сплошной деталью, как было; универсальных размеров нет.
+   */
+  topRails?: TopRailsRule;
   /**
    * ПРАВИЛА ПРИСАДКИ ЦЕХА (HW-08).
    *
@@ -1409,6 +1431,8 @@ export function productionSettings(raw: unknown): ProductionSettings {
     ...(value.radius ? { radius: radiusMethods(value.radius) } : {}),
     /* Раскрой листов (CUT-01) — так же: не заводили — типовые числа без форматов. */
     ...(value.cutting ? { cutting: cuttingSettings(value.cutting) } : {}),
+    /* Верхние планки (FINAL KITCHEN): только заведённое и в пределах — иначе верх шкафа сплошной, как был. */
+    ...(topRailsRule(value.topRails) ? { topRails: topRailsRule(value.topRails)! } : {}),
     /* Правила короба ящика (HARDWARE-01): только заведённые и целые — иначе правил нет. */
     ...(drawerBoxSettings(value.drawerBox) ? { drawerBox: drawerBoxSettings(value.drawerBox)! } : {}),
     /* Правила присадки (HW-08): только заведённые — иначе правил нет. */

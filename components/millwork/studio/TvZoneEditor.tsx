@@ -91,6 +91,46 @@ function NumField({
   );
 }
 
+/** Как стоит тумба и где её низ: режим и отметка — одна операция `set_hang` на все модули тумбы; соседи не двигаются. */
+function TumbaBlock({ tumbas, run, tv, apply }: { tumbas: Run['modules']; run: Run; tv: TvSpec | null; apply: (ops: MillworkOp[]) => void }) {
+  const first = tumbas[0];
+  const bottom = first.hangMm ?? 0;
+  const mode: 'floor' | 'legs' | 'wall' = first.hangMount === 'legs' ? 'legs' : first.hangMm === undefined || first.hangMount === 'floor' ? 'floor' : 'wall';
+  const top = bottom + moduleCarcassHeightMm(first, run);
+  const set = (hangMm: number, mount?: 'floor' | 'legs' | 'wall') => apply(tumbas.map((unit) => ({ op: 'set_hang' as const, moduleId: unit.id, hangMm, ...(mount ? { mount } : {}) })));
+  return (
+    <div className="grid gap-2" data-tv-hang data-tv-hang-mode={mode} data-tv-hang-bottom={bottom}>
+      <p className="mw-label">Тумба: низ от пола</p>
+      <div className="flex flex-wrap gap-1">
+        {(
+          [
+            ['floor', 'Напольная', 0],
+            ['legs', 'На опорах', bottom || 200],
+            ['wall', 'Подвесная', bottom || 350],
+          ] as const
+        ).map(([id, title, mm]) => (
+          <button key={id} type="button" aria-pressed={mode === id} data-tv-mount={id} className={`mw-btn min-h-[40px] px-3 ${mode === id ? 'mw-btn-primary' : 'mw-btn-ghost'}`} onClick={() => set(mm, id)}>
+            {title}
+          </button>
+        ))}
+      </div>
+      <div className="flex flex-wrap gap-1">
+        {[0, 200, 350, 500].map((mm) => (
+          <button key={mm} type="button" aria-pressed={bottom === mm} data-tv-low={mm} className={`mw-btn min-h-[40px] px-3 ${bottom === mm ? 'mw-btn-primary' : 'mw-btn-ghost'}`} onClick={() => set(mm, mm === 0 ? 'floor' : mode === 'floor' ? 'wall' : mode)}>
+            {mm}
+          </button>
+        ))}
+      </div>
+      <NumField label={`Низ тумбы от пола, мм — у всех ${tumbas.length} модулей`} name="hang" value={bottom} onCommit={(v) => v !== null && set(v, v === 0 ? 'floor' : mode === 'floor' ? 'wall' : mode)} />
+      <p className="text-[12px] text-graphiteMw" data-tv-hang-top>
+        Верх тумбы — {top} мм от пола.{tv ? ` До низа телевизора ${tv.bottomMm - top} мм.` : ''}
+        {mode === 'wall' ? ' Крепление к стене цех не подтверждал: проект собирается, как готовая к монтажу — нет.' : ''}
+        {mode === 'legs' ? ' Опоры такой высоты — строкой сметы без цены.' : ''}
+      </p>
+    </div>
+  );
+}
+
 export default function TvZoneEditor({ run, production, onOps }: Props) {
   const [notice, setNotice] = useState<string | null>(null);
   const [panelId, setPanelId] = useState<string | null>(null);
@@ -99,7 +139,8 @@ export default function TvZoneEditor({ run, production, onOps }: Props) {
   const tv = run.tv ?? null;
   const panels = run.wallPanels ?? [];
   const panel = panels.find((p) => p.id === panelId) ?? panels[0] ?? null;
-  const hanging = run.modules.filter((unit) => unit.hangMm !== undefined);
+  /* Тумба зала — всё, что не высокое и не прибор: соседние витрины и пеналы стоят на своих местах (задача 8). */
+  const tumbas = run.zone === 'living' ? run.modules.filter((unit) => unit.kind === 'base' || unit.kind === 'upper') : run.modules.filter((unit) => unit.hangMm !== undefined);
 
   const apply = (ops: MillworkOp[]) => {
     setNotice(null);
@@ -389,21 +430,9 @@ export default function TvZoneEditor({ run, production, onOps }: Props) {
         {panels.length === 0 && <p className="text-[12px] text-graphiteMw">Панелей на этой стене нет.</p>}
       </div>
 
-      {/* ── Подвесная тумба ── */}
-      {hanging.length > 0 && (
-        <div className="grid gap-2" data-tv-hang key={hanging.map((u) => `${u.id}:${u.hangMm}`).join(',')}>
-          <p className="mw-label">Подвесная тумба</p>
-          <NumField
-            label={`Низ от пола, мм — у всех ${hanging.length} модулей тумбы`}
-            name="hang"
-            value={hanging[0].hangMm ?? null}
-            onCommit={(v) => v !== null && apply(hanging.map((unit) => ({ op: 'set_hang' as const, moduleId: unit.id, hangMm: v })))}
-          />
-          <p className="text-[12px] text-graphiteMw" data-tv-hang-top>
-            Верх тумбы — {(hanging[0].hangMm ?? 0) + moduleCarcassHeightMm(hanging[0], run)} мм от пола.
-            {tv ? ` До низа телевизора ${tv.bottomMm - ((hanging[0].hangMm ?? 0) + moduleCarcassHeightMm(hanging[0], run))} мм.` : ''}
-          </p>
-        </div>
+      {/* ── Тумба: низ от пола ── */}
+      {tumbas.length > 0 && (
+        <TumbaBlock key={tumbas.map((u) => `${u.id}:${u.hangMm}:${u.hangMount}`).join(',')} tumbas={tumbas} run={run} tv={tv} apply={apply} />
       )}
 
       {tv && (

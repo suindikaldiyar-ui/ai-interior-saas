@@ -1,6 +1,7 @@
 import { beamsPart } from './ceiling';
 import { frontKey, frontPart } from './frontMaterial';
 import { shelvesAreGlass } from './glass';
+import { frontZonesKey } from './frontZones';
 import { vitrinePart } from './vitrine';
 import { radiusKey } from './radius';
 import { dryerKey } from './dryer';
@@ -197,6 +198,14 @@ function extrasPart(unit: Module): string | undefined {
           .sort()
           .join(';')
       : '',
+    /* Зоны фасада (FINAL KITCHEN): другое наполнение участков — другая мебель. Пусто не пишется (ловушка 246). */
+    frontZonesKey(unit),
+    unit.hoodCabinet ? `hoodcab=${unit.hoodCabinet}` : '',
+    unit.hoodType ? `hoodtype=${unit.hoodType}` : '',
+    unit.hangMount ? `mount=${unit.hangMount}` : '',
+    unit.topRails ? `rails=${unit.topRails.frontMm}/${unit.topRails.backMm}/${unit.topRails.thicknessMm ?? ''}/${unit.topRails.cross ?? 0}/${unit.topRails.crossMm ?? ''}/${unit.topRails.frontOffsetMm ?? 0}` : '',
+    /* Мойка с размерами: другой вырез столешницы. Типовая не пишется. */
+    unit.sinkModel ? `sink=${unit.sinkModel.widthMm}x${unit.sinkModel.depthMm}/${unit.sinkModel.bowls}/${unit.sinkModel.mount}/${unit.sinkModel.offsetMm ?? 0}/${unit.sinkModel.cutout?.widthMm ?? ''}x${unit.sinkModel.cutout?.depthMm ?? ''}` : '',
     /* Вид стекла витрины (V3D-02): бронзовое — другой лист. Прозрачное не пишется (ловушка 246). */
     unit.glass && unit.glass !== 'clear' ? `glass=${unit.glass}` : '',
     /* Стеклянные полки (V3D-02): другой раскрой и другая смета. ЛДСП не пишется. */
@@ -399,10 +408,13 @@ function cornerOwnersPart(
   const owners = levels.map((level) => cornerOwnerOf(choice, level));
   const pair = choice.upper === 'l_shape' && choice.upperDoors === 'pair';
   const changed = owners.some((owner) => owner === 'next') || Boolean(choice.mezzanine);
+  /* Режимы примыкания без детали и с пустым квадратом — другая мебель: у прежних выборов строки нет (ловушка 246). */
+  const lowerKind = choice.lower === 'blind' || choice.lower === 'l_shape' ? '' : `/lk:${choice.lower}`;
+  const upperKind = choice.upper === 'no_filler' || choice.upper === 'butt' ? `/uk:${choice.upper}` : '';
   return (
     (changed
       ? `/own:${owners.map((owner) => (owner === 'next' ? 'n' : 'p')).join('')}${choice.mezzanine ? `/m:${choice.mezzanine}` : ''}`
-      : '') + (pair ? '/ud:pair' : '')
+      : '') + (pair ? '/ud:pair' : '') + lowerKind + upperKind
   );
 }
 

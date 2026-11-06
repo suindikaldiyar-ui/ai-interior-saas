@@ -455,19 +455,19 @@ export default function PlanDrawing({
             strokeDasharray="3 2"
           />
         ))}
-      {(run.obstacles?.length || countertopSlabs(run).some((slab) => slab.outline)
+      {(run.obstacles?.length || countertopSlabs(run).some((slab) => slab.outline || slab.holes?.length)
         ? countertopSlabs(run)
             .filter((slab) => !slab.outline)
             .flatMap((slab) => slabPieces(slab))
-        : [{ fromMm: 0, toMm: run.lengthMm, backCutMm: 0 }]
+        : [{ fromMm: 0, toMm: run.lengthMm, backCutMm: 0 } as ReturnType<typeof slabPieces>[number]]
       ).map((piece) => (
         <rect
-          key={`counter-${piece.fromMm}`}
+          key={`counter-${piece.fromMm}-${piece.backCutMm}`}
           data-counter-piece={piece.backCutMm > 0 ? 'cut' : 'full'}
           x={PADDING_LEFT + piece.fromMm * scale}
           y={wallY + Math.min(piece.backCutMm, maxDepth) * scale}
           width={(piece.toMm - piece.fromMm) * scale}
-          height={Math.max(0, maxDepth - piece.backCutMm) * scale}
+          height={Math.max(0, maxDepth - piece.backCutMm - (piece.frontCutMm ?? 0)) * scale}
           fill="none"
           stroke="var(--blueprint)"
           strokeWidth={0.5 * k}

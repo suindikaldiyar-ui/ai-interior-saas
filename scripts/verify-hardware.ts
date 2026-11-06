@@ -71,6 +71,7 @@ import { tallChecks } from './verify-tall';
 import { dryerBasketChecks } from './verify-dryer-baskets';
 import { backChecks } from './verify-back';
 import { verifyBazisModel } from './verify-bazis';
+import { kitchenFinalChecks } from './verify-kitchen-final';
 import { dryerOf } from '../lib/millwork/dryer';
 import { runnerModelOf } from '../lib/millwork/runnerModel';
 import { drillingPlan } from '../lib/millwork/drillingPlan';
@@ -1939,6 +1940,7 @@ backChecks(check);
 
 console.log('\nКОМПЛЕКТ ЦЕХА И МОДЕЛЬ БАЗИС: фурнитура на все модули, готовность, учебный шкаф, скрипт импорта на подобии API');
 verifyBazisModel(check);
+kitchenFinalChecks(check);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

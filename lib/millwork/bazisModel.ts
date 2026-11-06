@@ -311,7 +311,8 @@ export function bazisModel(input: {
     countertopSlabs(wall.run).forEach((slab, s) => {
       slabPieces(slab).forEach((piece, i) => {
         const length = piece.toMm - piece.fromMm;
-        const width = depth - piece.backCutMm;
+        const frontCut = piece.frontCutMm ?? 0;
+        const width = depth - piece.backCutMm - frontCut;
         if (length <= 0 || width <= 0) return;
         const moduleKey = `${wall.wallId}:countertop`;
         if (!modules.has(moduleKey)) modules.set(moduleKey, { id: moduleKey, title: `${wall.label} · Столешница`, wall: wall.label });
@@ -319,7 +320,7 @@ export function bazisModel(input: {
         const axisX = world.dir([1, 0, 0]).map(r6) as Vec3;
         const axisY = world.dir([0, 0, -1]).map(r6) as Vec3;
         const axisZ = cross(axisX, axisY).map(r6) as Vec3;
-        const rowOrigin: Vec3 = [piece.fromMm / MM, (top - thickness) / MM, frontOverMm / MM];
+        const rowOrigin: Vec3 = [piece.fromMm / MM, (top - thickness) / MM, (frontOverMm - frontCut) / MM];
         const origin = world.point(rowOrigin).map((v) => r2(v * MM)) as Vec3;
         const corners: Vec3[] = [];
         for (const a of [0, length]) for (const b of [0, width]) for (const c of [0, thickness]) {

@@ -6,9 +6,11 @@ import { millingLink, type MillingItem } from './milling';
 import { carcassMaterialName, carcassStock, type CarcassItem } from './carcassMaterial';
 import { BUILT_IN_FRIDGE_FRONTS } from './modules';
 import { hasBottom } from './moduleVariants';
-import { frontSplitSpans, hasFacade, MIN_FACADE_SPAN_MM, moduleFronts } from './applianceFront';
+import { facadeSpans, frontSplitSpans, hasFacade, MIN_FACADE_SPAN_MM, moduleFronts, zoneDividersMm } from './applianceFront';
 import { cookingStackOf } from './cookingStack';
-import { TOP_RAIL_PANEL_NAME } from './panelNames';
+import { FIXED_FRONT_PANEL_NAME, TOP_RAIL_PANEL_NAME } from './panelNames';
+import { glassShelfInZones, hasFrontZones } from './frontZones';
+import { topOpenForSink, topRailParts, topRailsOf } from './topRails';
 import { bayLayout } from './bays';
 import {
   FRAME_WIDTH_MM,
@@ -668,7 +670,25 @@ function moduleBodyPanels(
    * до столешницы, а панель уходит в неё вырезом (рис. 22.3 инструкции
    * духового шкафа). Задней стенки тоже нет — ниже.
    */
-  if (board('top') && !cooking) {
+  const rails = topRailsOf(unit, production);
+  if (rails && board('top') && !cooking) {
+    for (const part of topRailParts(unit, rails, depthMm, t)) {
+      push({
+        name: part.name,
+        material,
+        stock,
+        thicknessMm: part.thicknessMm,
+        lengthMm: part.lengthMm,
+        widthMm: part.widthMm,
+        qty: 1,
+        edges: { long: part.cross ? 0 : 1, short: 0 },
+        edgeType: thick,
+        grain: 'across',
+        partIds: [part.partId],
+      });
+    }
+  }
+  if (board('top') && !cooking && !rails && !topOpenForSink(unit, production)) {
     push({
       name:
         unit.kind === 'base' || unit.kind === 'corner_base'
@@ -752,6 +772,23 @@ function moduleBodyPanels(
     }
   }
 
+  /* Перегородки между зонами (задача 4): плита на шве, той же глубины, что перегородка цеха. */
+  const dividers = zoneDividersMm(unit, heightMm, production);
+  if (dividers.length > 0) {
+    push({
+      name: HDIVIDER_PANEL_NAME,
+      material: partitionMaterial,
+      stock: partitionStock,
+      thicknessMm: t,
+      lengthMm: inner,
+      widthMm: depthMm - allow.dividerDepthMm,
+      qty: dividers.length,
+      edges: { long: 1, short: 0 },
+      edgeType: thick,
+      grain: 'across',
+    });
+  }
+
   /*
    * ДЕЛЕНИЕ ЯЩИКОВ НА СТОЛБЦЫ (A4): перегородка от крыши на высоту разделённых рядов и перемычка
    * под ними — те же `drawerSplitBodies`, что рисует сцена; имена — как у перегородок отсеков.
@@ -776,7 +813,10 @@ function moduleBodyPanels(
    * СТЕКЛЯННЫЕ ПОЛКИ ВИТРИНЫ (V3D-02) из листа не режут: это покупное
    * стекло, и в смете у него своя строка (`glass_shelf`).
    */
-  const shelves = bays || shelvesAreGlass(unit) ? 0 : (unit.fill?.shelves.length ?? 0);
+  /* Стеклянные полки зоны (задачи 3–4) уходят из листа по отметке; полки соседней зоны — из плиты. */
+  const zoneSpans = hasFrontZones(unit) ? facadeSpans(unit, heightMm, production) : [];
+  const shelves =
+    bays || shelvesAreGlass(unit) ? 0 : (unit.fill?.shelves ?? []).filter((mm) => !glassShelfInZones(unit, zoneSpans, mm)).length;
   if (shelves > 0) {
     const size = shelfSizeMm(unit.widthMm, depthMm, production);
     push({
@@ -865,7 +905,8 @@ function moduleBodyPanels(
   }
   }
 
-  const gap = production.frontGapMm;
+  /* Свой зазор фасадов модуля (задача 2) сильнее зазора цеха. */
+  const gap = unit.frontGapMm ?? production.frontGapMm;
 
   /*
    * ДЕТАЛИ ОДНОГО ФАСАДА — ОДНО МЕСТО НА ВСЕ ТРИ СЛУЧАЯ.
@@ -1044,6 +1085,26 @@ function moduleBodyPanels(
   }
 
   /*
+   * ЗОНЫ ФАСАДА (задачи 2–4): что висит — один ответ `moduleFronts`. Дверь витрины покупная и в раскрой не идёт, глухая
+   * панель — своя деталь того же листа. Ширина створки — та же формула, что у неделённой (`facadeDoorWidthMm`).
+   */
+  if (hasFrontZones(unit)) {
+    const zoned = moduleFronts(unit, heightMm, production);
+    for (const cell of drawerCells(unit.fill, unit.widthMm, heightMm)) {
+      const cut = drawerFrontCutMm(cell.heightMm, cell.widthMm, gap);
+      pushFront('Фронт ящика', cut.heightMm, cut.widthMm, [cell.leaf]);
+    }
+    zoned.leaves.forEach((leaf, i) => {
+      if (leaf.glass) return;
+      pushFront(FACADE_PANEL_NAME, leaf.heightMm - gap, facadeDoorWidthMm(unit.widthMm, leaf.widthMm !== undefined ? 2 : 1, gap), [`door:${i}`]);
+    });
+    (zoned.fixed ?? []).forEach((fixed, i) => {
+      pushFront(FIXED_FRONT_PANEL_NAME, fixed.heightMm - gap, facadeDoorWidthMm(unit.widthMm, 1, gap), [`panel:${i}`]);
+    });
+    return panels;
+  }
+
+  /*
    * Встроенный холодильник закрыт фасадом заподлицо: две створки во всю
    * высоту пенала. Без этих деталей раскрой уедет — фасад есть в смете,
    * а в цех уходит лист без него.
@@ -1117,7 +1178,7 @@ function moduleBodyPanels(
    * (`facadeSpans` → `moduleFronts`). Номер створки — снизу вверх, как у пенала. Ширина — та же, что у неделённой
    * створки (`facadeDoorWidthMm`): деление по высоте не меняет ширину детали.
    */
-  const splitSpans = unit.frontType === 'door' ? frontSplitSpans(unit, heightMm) : null;
+  const splitSpans = unit.frontType === 'door' ? frontSplitSpans(unit, heightMm, production) : null;
   if (splitSpans) {
     const splitWidth = facadeDoorWidthMm(unit.widthMm, 1, gap);
     splitSpans.forEach((span, i) => pushFront(FACADE_PANEL_NAME, span.heightMm - gap, splitWidth, [`door:${i}`]));

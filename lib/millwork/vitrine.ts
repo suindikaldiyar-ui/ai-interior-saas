@@ -24,6 +24,7 @@
  * сцене и деталировке, но выпуск в цех у них заперт словами: схему сборки
  * стекла цех не подтверждал.
  */
+import { zoneLeds } from './frontZones';
 import type {
   FrontRelief,
   Module,
@@ -477,6 +478,24 @@ export function vitrineLedStrips(
     (mm, i): VitrineLedStrip => ({ key: `shelf-${i}`, center: [w / 2, mm - t / 2 - 6, z], lengthMm: innerW, axis: 'x', facing: 'down' }),
   );
   return [top, ...shelves];
+}
+
+/**
+ * ЛЕНТЫ ВИТРИН ЗОН (задачи 3–4) — той же раскладкой, что у витрины целиком, на высоту зоны и со сдвигом на её низ: одна
+ * функция на смету, САПР-вид и свет «Интерьера».
+ */
+export function zoneLedStrips(
+  unit: Pick<Module, 'widthMm' | 'fill' | 'frontZones'>,
+  spans: { fromMm: number; heightMm: number }[],
+  carcassMm: number,
+): VitrineLedStrip[] {
+  return zoneLeds(unit, spans).flatMap(({ led, span, at }) =>
+    vitrineLedStrips({ widthMm: unit.widthMm, fill: { ...(unit.fill as Module['fill'] & object), bays: undefined, shelves: (unit.fill?.shelves ?? []).filter((mm) => mm > span.fromMm && mm < span.fromMm + span.heightMm).map((mm) => mm - span.fromMm) } }, led, span.heightMm, carcassMm).map((strip) => ({
+      ...strip,
+      key: `z${at}-${strip.key}`,
+      center: [strip.center[0], strip.center[1] + span.fromMm, strip.center[2]] as [number, number, number],
+    })),
+  );
 }
 
 /** Погонные метры ленты витрины — сумма полос `vitrineLedStrips`, до сотых. */

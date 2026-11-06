@@ -1,5 +1,7 @@
 import { BUILT_IN_FRIDGE_FRONTS, moduleAppliances } from './modules';
 import { columnNiches, singleNicheOf, OVEN_FROM_FLOOR_MM } from './fill';
+import { hasFrontZones, zoneFronts, type ZoneLeaf, type ZoneSpan } from './frontZones';
+import { plinthMm, workTopMm } from './shop';
 import type { Module } from '@/types/millwork';
 import type { ProductionSettings } from '@/types/catalog';
 
@@ -46,6 +48,13 @@ export type FacadeSpan = {
   fromMm: number;
   /** Высота участка, мм. */
   heightMm: number;
+  /** Место створки зоны по ширине: левый край и ширина, мм (две в ширину). Пусто — вся ширина. */
+  xMm?: number;
+  widthMm?: number;
+  /** Сторона петель створки зоны, когда их две в ширину. */
+  hinge?: 'left' | 'right';
+  /** Дверь витрины зоны: покупная, полотна из плиты нет. */
+  glass?: true;
 };
 
 /**
@@ -76,7 +85,7 @@ export function facadeSpans(
         heightMm: niche.toMm - niche.fromMm,
       }))
     : nicheOf(unit, heightMm, production);
-  if (niches.length === 0) return frontSplitSpans(unit, heightMm) ?? [{ fromMm: 0, heightMm }];
+  if (niches.length === 0) return frontSplitSpans(unit, heightMm, production) ?? [{ fromMm: 0, heightMm }];
 
   const spans: FacadeSpan[] = [];
   let cursor = 0;
@@ -103,14 +112,37 @@ export function facadeSpans(
  * Шов вне корпуса не считается вовсе (его не пишет операция `set_front_split`).
  */
 export function frontSplitSpans(
-  unit: Pick<Module, 'frontSplitMm' | 'appliance' | 'column'>,
+  unit: Pick<Module, 'frontSplitMm' | 'appliance' | 'column' | 'seamAtCounter'>,
   heightMm: number,
+  production?: ProductionSettings,
 ): FacadeSpan[] | null {
-  const seams = unit.frontSplitMm;
-  if (!seams || seams.length === 0 || unit.appliance !== undefined || unit.column) return null;
+  const seams = unit.seamAtCounter ? [counterSeamMm(production), ...(unit.frontSplitMm ?? []).slice(1)] : unit.frontSplitMm;
+  /* Шкаф под мойку — корпус с участками: фальшфасад над створками делит его тем же швом (задача 2). */
+  const appliance = unit.appliance !== undefined && !unit.appliance.startsWith('sink');
+  if (!seams || seams.length === 0 || appliance || unit.column) return null;
   const cuts = [0, ...[...seams].filter((s) => s > 0 && s < heightMm).sort((a, b) => a - b), heightMm];
   const spans = cuts.slice(1).map((to, i) => ({ fromMm: cuts[i], heightMm: to - cuts[i] }));
   return spans.length > 1 ? spans : null;
+}
+
+/**
+ * ПЕРЕГОРОДКИ МЕЖДУ ЗОНАМИ (задача 4), мм от дна корпуса: шов делит корпус на отсеки, и на шве стоит плита. Только у модуля
+ * без приборов: у пенала участки разделены опорами ниш (`pencilShelves`), у шкафа под мойку фальшфасад — панель, а не отсек.
+ * Одна функция на раскрой и сцену.
+ */
+export function zoneDividersMm(unit: Module, heightMm: number, production?: ProductionSettings): number[] {
+  if (!hasFrontZones(unit) || moduleAppliances(unit).length > 0) return [];
+  return facadeSpans(unit, heightMm, production)
+    .slice(1)
+    .map((span) => span.fromMm);
+}
+
+/**
+ * ШОВ ПО СТОЛЕШНИЦЕ, мм от дна корпуса (задача 4): верх рабочей поверхности минус цоколь. Одна отметка на границу зон,
+ * сцену и раскрой: столешница поднялась — шов поехал за ней, если человек выбрал границу по столешнице.
+ */
+export function counterSeamMm(production?: ProductionSettings): number {
+  return workTopMm(production) - plinthMm(production);
 }
 
 /**
@@ -184,6 +216,8 @@ export type ModuleFronts = {
   leaves: FacadeSpan[];
   /** Фронты ящиков снизу вверх, миллиметры. */
   drawers: number[];
+  /** Глухие панели зон: фасад есть, не открывается, петель и ручки нет (`frontZones`). */
+  fixed?: FacadeSpan[];
 };
 
 export function moduleFronts(unit: Module, heightMm: number, production?: ProductionSettings): ModuleFronts {
@@ -191,6 +225,19 @@ export function moduleFronts(unit: Module, heightMm: number, production?: Produc
 
   /* Отдельностоящий прибор: он виден целиком, полотна перед ним нет. */
   if (!hasFacade(unit)) return empty;
+
+  /*
+   * ЗОНЫ ФАСАДА (задачи 2–4): на участках своё наполнение. Участки те же (`facadeSpans`), дорога дальше та же.
+   * Ящики зоны — те же фронты в наполнении, поэтому и створки, и ящики здесь могут быть вместе.
+   */
+  if (hasFrontZones(unit)) {
+    const zoned = zoneFronts(unit, facadeSpans(unit, heightMm, production) as ZoneSpan[]);
+    return {
+      leaves: zoned.leaves.map((leaf: ZoneLeaf) => ({ ...leaf })),
+      drawers: zoned.drawers ? [...(unit.fill?.drawerHeights ?? [])] : [],
+      fixed: zoned.fixed.map(({ fromMm, heightMm: h }) => ({ fromMm, heightMm: h })),
+    };
+  }
 
   /*
    * ФРОНТ У МОДУЛЯ ОДИН: СТВОРКИ ИЛИ ЯЩИКИ (ловушка 359).
@@ -253,6 +300,8 @@ export function moduleFronts(unit: Module, heightMm: number, production?: Produc
  */
 export function hasSwingLeaf(unit: Module): boolean {
   if (!hasFacade(unit)) return false;
+  /* Зоны: створки есть, если хоть одна зона на петлях. */
+  if (hasFrontZones(unit)) return (unit.frontZones ?? []).some((zone) => zone.fill === 'door' || zone.fill === 'doors2' || zone.fill === 'glass');
   if (!unit.column && (unit.fill?.drawerHeights.length ?? 0) > 0) return false;
   if (hasVisibleWholeAppliance(unit) || unit.column) return false;
   return doorCountOf(unit) > 0;
@@ -268,6 +317,8 @@ export function hasSwingLeaf(unit: Module): boolean {
 const WHOLE_APPLIANCES = new Set(['oven', 'hob', 'hood', 'microwave']);
 
 export function hasVisibleWholeAppliance(unit: Module): boolean {
+  /* Шкаф со встроенной вытяжкой закрыт фасадом (задача 7): прибор внутри, створка на корпусе. */
+  if (unit.appliance === 'hood' && (unit.hoodCabinet === 'door' || unit.hoodCabinet === 'lift')) return false;
   return (
     Boolean(unit.appliance) &&
     !unit.column &&

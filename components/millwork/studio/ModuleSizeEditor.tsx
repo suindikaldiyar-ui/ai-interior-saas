@@ -1,5 +1,6 @@
 'use client';
 
+import { isSinkBase } from '@/lib/millwork/moduleVariants';
 import { useState } from 'react';
 import { moduleCarcassHeightMm, moduleDepthMm } from '@/lib/millwork/fill';
 import { moduleAppliances } from '@/lib/millwork/modules';
@@ -29,7 +30,8 @@ export default function ModuleSizeEditor({ unit, run, onOps, preview }: Props) {
   const send = (ops: MillworkOp[]) => onOps(ops, (text) => setNotice(text));
   const carcass = moduleCarcassHeightMm(unit, run);
   const depth = moduleDepthMm(unit, run.zone, run.production);
-  const fixedWidth = moduleAppliances(unit).length > 0;
+  /* Шкаф под мойку — мебель с прибором сверху: ширину решает человек, предел — чаша и вырез (`set_width`). */
+  const fixedWidth = moduleAppliances(unit).length > 0 && !isSinkBase(unit);
   const rows: { key: 'width' | 'height' | 'depth'; title: string; now: number; why: string | null; op: (v: number) => MillworkOp; reset: MillworkOp | null }[] = [
     {
       key: 'width',

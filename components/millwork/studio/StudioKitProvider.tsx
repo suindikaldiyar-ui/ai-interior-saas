@@ -11,6 +11,9 @@ import FridgePanelsEditor from './FridgePanelsEditor';
 import WallMicrowaveEditor from './WallMicrowaveEditor';
 import PencilEditor from './PencilEditor';
 import SpanEditor from './SpanEditor';
+import RowFitEditor from './RowFitEditor';
+import FrontZonesEditor from './FrontZonesEditor';
+import { HoodEditor, SinkModelEditor, TopRailsEditor } from './KitchenPartsEditors';
 import ModuleSizeEditor from './ModuleSizeEditor';
 import FrontSplitEditor from './FrontSplitEditor';
 import DrawerFrontsEditor from './DrawerFrontsEditor';
@@ -25,7 +28,7 @@ import StudioObjects from './StudioObjects';
 import StudioShell from './StudioShell';
 import WallInspector from './WallInspector';
 
-const KIT: StudioKit = { StudioShell, RoomPlan, WallInspector, StudioObjects, StudioInspector, FillEditor, OverheadEditor, StorageEditor, DryerEditor, LeafPartsEditor, FridgePanelsEditor, WallMicrowaveEditor, PencilEditor, SpanEditor, ModuleSizeEditor, FrontSplitEditor, DrawerFrontsEditor, CeilingLiftEditor, VitrineEditor, RadiusEditor, IslandEditor, TvZoneEditor };
+const KIT: StudioKit = { StudioShell, RoomPlan, WallInspector, StudioObjects, StudioInspector, FillEditor, OverheadEditor, StorageEditor, DryerEditor, LeafPartsEditor, FridgePanelsEditor, WallMicrowaveEditor, PencilEditor, SpanEditor, RowFitEditor, FrontZonesEditor, SinkModelEditor, HoodEditor, TopRailsEditor, ModuleSizeEditor, FrontSplitEditor, DrawerFrontsEditor, CeilingLiftEditor, VitrineEditor, RadiusEditor, IslandEditor, TvZoneEditor };
 
 /** Оболочка Studio для рабочего места — только на странице Studio (см. `kit.ts`). */
 export default function StudioKitProvider({ children }: { children: ReactNode }) {

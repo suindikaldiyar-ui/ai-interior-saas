@@ -1,6 +1,7 @@
 import {
   APPLIANCE_COLUMN,
   APPLIANCE_SLOTS,
+  APPLIANCE_TYPES,
   FRIDGE_MEZZANINE_MIN_MM,
   GEOMETRY,
   NICHE_CLEARANCE_MM,
@@ -25,7 +26,7 @@ import {
   widthOverflowMm,
 } from './invariants';
 import { runFingerprint } from './fingerprint';
-import { plinthMm, shopOf, upperBottomMm } from './shop';
+import { plinthMm, shopOf, upperBottomMm, workTopMm } from './shop';
 import { NO_MILLING_ID } from './milling';
 import { NO_CARCASS_ID } from './carcassMaterial';
 import { HANDLE_LEVELS, HANDLE_TURNS, handleLevelOrNull, handleTurnOrNull } from './handlePlace';
@@ -83,7 +84,12 @@ import {
 } from './freeRun';
 import { SECTION_SPECS } from './sections';
 import { allowsAppliance, allowsSection, applianceRefusal, sectionRefusal } from './zones';
-import { MODULE_VARIANTS, applyVariant, leavesAfterWidth, variantsForModule } from './moduleVariants';
+import { MODULE_VARIANTS, applyVariant, isSinkBase, leavesAfterWidth, sinkMinWidthMm, variantsForModule } from './moduleVariants';
+import { rowFillPlan } from './rowFit';
+import { sinkRefusal } from './sinkModel';
+import { topRailsRefusal } from './topRails';
+import { frontZonesEdit, syncZoneDrawers } from './frontZonesEdit';
+import { hasFrontZones } from './frontZones';
 import type {
   ApplianceKind,
   MillworkOp,
@@ -2016,6 +2022,188 @@ export function applyOps({
         break;
       }
 
+      case 'set_hood': {
+        /*
+         * ВЫТЯЖКА РУКАМИ (задачи 6–7). Кнопка в своей сборке только показывала подсказку: вытяжка живёт в верхнем ряду, а
+         * верхний ряд своей сборки по раскладке не строится — нажатие ничего не ставило. Здесь она встаёт над варочной этой
+         * стены; всё, что мешает, названо.
+         */
+        const hoodNow = upperModules.find((m) => m.appliance === 'hood');
+        if (op.remove) {
+          if (hoodNow) upperModules = upperModules.filter((m) => m !== hoodNow);
+          break;
+        }
+        const hobHere = modules.find((m) => m.appliance === 'hob');
+        if (!hobHere && !hoodNow) {
+          warnings.push('Вытяжка ставится над варочной панелью: на этой стене варочной нет — сначала поставьте её.');
+          break;
+        }
+        if (!options.hasUpper) {
+          warnings.push('Вытяжка: верхнего ряда нет — вешать её не на что. Включите верхний ряд.');
+          break;
+        }
+        /* Вид вытяжки (задача 6): только из списка продукта; ширину и глубину даёт он, своих чисел здесь нет. */
+        const hoodKind = op.type ? (APPLIANCE_TYPES.hood ?? []).find((type) => type.id === op.type) : undefined;
+        if (op.type && !hoodKind) {
+          warnings.push(`Вытяжка: вида «${op.type}» нет.`);
+          break;
+        }
+        const hoodWidth = hoodKind?.widthMm ?? hoodNow?.widthMm ?? applianceWidthMm('hood', requirements.applianceSizes, requirements.applianceTypes);
+        const centerNow = hoodNow ? hoodNow.offsetMm + hoodNow.widthMm / 2 : hobHere!.offsetMm + hobHere!.widthMm / 2;
+        const hoodAt = Math.round((op.centerMm ?? centerNow) - hoodWidth / 2);
+        const others = upperModules.filter((m) => m !== hoodNow);
+        const overlap = others.find((m) => m.offsetMm < hoodAt + hoodWidth && m.offsetMm + m.widthMm > hoodAt);
+        if (overlap) {
+          const inMm = Math.min(hoodAt + hoodWidth, overlap.offsetMm + overlap.widthMm) - Math.max(hoodAt, overlap.offsetMm);
+          warnings.push(`Вытяжка ${hoodAt}…${hoodAt + hoodWidth} мм заходит в «${overlap.label}» на ${inMm} мм: сдвиньте или снимите этот шкаф.`);
+          break;
+        }
+        const roomHood = noRoomAt(hoodAt, hoodWidth, others);
+        if (roomHood) {
+          warnings.push(`Вытяжка: ${roomHood}`);
+          break;
+        }
+        const workTop = workTopMm(run.production);
+        if (op.bottomMm !== undefined && op.bottomMm !== null && (op.bottomMm <= workTop || op.bottomMm >= run.ceilingHeightMm)) {
+          warnings.push(`Низ вытяжки ${op.bottomMm} мм: выше столешницы (${workTop} мм) и ниже потолка (${run.ceilingHeightMm} мм).`);
+          break;
+        }
+        const madeHood: Module = hoodNow ?? {
+          ...makePlainModule('upper', hoodWidth, run.wallId, 'hood', requirements),
+          ...(requirements.applianceModels?.hood ? { applianceModels: { hood: requirements.applianceModels.hood } } : {}),
+        };
+        const { hangMm: _h, hoodCabinet: _c, hoodType: _t, ...hoodBare } = madeHood;
+        void _h;
+        void _c;
+        void _t;
+        const bottom = op.bottomMm === undefined ? madeHood.hangMm : (op.bottomMm ?? undefined);
+        const cabinet = op.cabinet === undefined ? madeHood.hoodCabinet : (op.cabinet ?? undefined);
+        const nextHood: Module = {
+          ...hoodBare,
+          id: moduleId('upper', hoodAt, 'hood', run.wallId),
+          offsetMm: hoodAt,
+          ...(bottom !== undefined ? { hangMm: bottom } : {}),
+          ...(cabinet ? { hoodCabinet: cabinet } : {}),
+          ...(hoodKind ? { hoodType: hoodKind.id, widthMm: hoodWidth, applianceSizes: { ...hoodBare.applianceSizes, hood: { widthMm: hoodWidth, ...(hoodKind.depthMm ? { depthMm: hoodKind.depthMm } : {}) } } } : madeHood.hoodType ? { hoodType: madeHood.hoodType } : {}),
+          doorCount: cabinet === 'door' || cabinet === 'lift' ? 1 : 0,
+          fill: { ...(hoodBare.fill ?? { shelves: [], dividerMm: 0, rodsMm: [], drawerHeights: [], hinge: 'left' as const }), hinge: cabinet === 'lift' ? 'lift' : 'left', openingChosen: cabinet === 'lift' ? true : undefined },
+        };
+        placeUpper([...others, nextHood], 'Вытяжка');
+        break;
+      }
+
+      case 'set_top_rails': {
+        const rAt = modules.findIndex((m) => m.id === op.moduleId);
+        if (rAt < 0) {
+          warnings.push(`Модуль ${op.moduleId} не найден.`);
+          break;
+        }
+        const depth = moduleDepthMm(modules[rAt], zone, run.production);
+        const refusedRails = op.rails ? topRailsRefusal(op.rails, depth, modules[rAt]) : null;
+        if (refusedRails) {
+          warnings.push(refusedRails);
+          break;
+        }
+        const { topRails: _rails, ...bareRails } = modules[rAt];
+        void _rails;
+        modules[rAt] = op.rails ? { ...bareRails, topRails: op.rails } : bareRails;
+        break;
+      }
+
+      case 'set_sink_model': {
+        const sAt = modules.findIndex((m) => m.id === op.moduleId);
+        if (sAt < 0 || !isSinkBase(modules[sAt])) {
+          warnings.push(sAt < 0 ? `Модуль ${op.moduleId} не найден.` : `«${modules[sAt].label}»: модель мойки ставится на шкаф под мойку.`);
+          break;
+        }
+        if (op.model === null) {
+          const { sinkModel: _was, ...rest } = modules[sAt];
+          void _was;
+          modules[sAt] = rest;
+          break;
+        }
+        const refusedSink = sinkRefusal(modules[sAt], op.model, { ...run, zone });
+        if (refusedSink) {
+          warnings.push(refusedSink);
+          break;
+        }
+        modules[sAt] = { ...modules[sAt], sinkModel: op.model };
+        break;
+      }
+
+      case 'set_front_zones': {
+        /* Зоны фасада (задачи 2–4): можно ли и что записать — `frontZonesEdit`, он же отвечает блоку до нажатия. */
+        const zAt = modules.findIndex((m) => m.id === op.moduleId);
+        if (zAt < 0) {
+          warnings.push(`Модуль ${op.moduleId} не найден: зоны фасада задавать не у чего.`);
+          break;
+        }
+        const zoned = frontZonesEdit(modules[zAt], { ...run, zone, modules, options } as Run, op);
+        if ('refusal' in zoned) {
+          warnings.push(zoned.refusal);
+          break;
+        }
+        modules[zAt] = zoned.unit;
+        break;
+      }
+
+      case 'fill_row': {
+        /*
+         * ПЛАН СЧИТАЕТ `rowFillPlan` — ТОТ ЖЕ, ЧТО ПОКАЗЫВАЕТ ЭКРАН ДО НАЖАТИЯ. Снимок ряда — с поставленным в этой
+         * пачке: следующая операция видит результат предыдущей.
+         */
+        const snapshot: Run = {
+          ...run,
+          modules,
+          options,
+          mezzanine: mezzanine ?? undefined,
+          upperSegments: [{ fromMm: 0, toMm: run.lengthMm, modules: [...upperModules, ...mezzModules] }],
+        };
+        const plan = rowFillPlan(snapshot, op.row, openings, requirements);
+        if (plan.refusal) {
+          warnings.push(plan.refusal);
+          break;
+        }
+        const hangKind: ModuleKind = 'upper';
+        let list = op.row === 'base' ? [...modules] : op.row === 'upper' ? [...upperModules] : [...mezzModules];
+        let refusedRow: string | null = null;
+        for (const step of plan.steps) {
+          if (step.kind === 'add') {
+            let at = step.fromMm;
+            for (const widthMm of step.widthsMm) {
+              const kind: ModuleKind = op.row === 'base' ? 'base' : hangKind;
+              const plain = { ...makePlainModule(kind, widthMm, run.wallId, undefined, requirements), id: moduleId(kind, at, undefined, run.wallId), offsetMm: at };
+              list.push(op.row === 'mezzanine' ? asMezzanine(plain, run.wallId) : plain);
+              at += widthMm;
+            }
+          } else if (step.kind === 'filler') {
+            list.push({ ...makePlainModule('filler', step.widthMm, run.wallId, undefined, requirements), id: moduleId('filler', step.fromMm, undefined, run.wallId), offsetMm: step.fromMm, isFiller: true, label: 'Доборная планка' });
+          } else {
+            const unit = list.find((m) => m.id === step.moduleId);
+            if (!unit) continue;
+            const leaves = blindAtWidth(unit, step.widthMm) ? null : leavesAfterWidth(unit, step.widthMm);
+            if (leaves && 'refusal' in leaves) {
+              refusedRow = leaves.refusal;
+              break;
+            }
+            const bays = baysWidthRefusal(unit, step.widthMm, shopOf(run.production).carcassMm);
+            if (bays) {
+              refusedRow = bays;
+              break;
+            }
+            list = list.map((m) => (m === unit ? { ...m, offsetMm: step.offsetMm, widthMm: step.widthMm, ...(leaves ?? {}) } : m));
+          }
+        }
+        if (refusedRow) {
+          warnings.push(refusedRow);
+          break;
+        }
+        if (op.row === 'base') modules = list.sort((a, b) => a.offsetMm - b.offsetMm);
+        else if (op.row === 'upper') upperModules = list.sort((a, b) => a.offsetMm - b.offsetMm);
+        else mezzModules = list.sort((a, b) => a.offsetMm - b.offsetMm);
+        break;
+      }
+
       case 'fill_span':
       case 'split_module': {
         /*
@@ -3073,8 +3261,8 @@ export function applyOps({
           warnings.push(`Модуль ${op.moduleId} не найден.`);
           break;
         }
-        if (zone !== 'living' || target.kind !== 'upper') {
-          warnings.push(`«${target.label}»: низ от пола задают только подвесным модулям зала — этот стоит ${target.kind === 'upper' ? 'на отметке навески ряда' : 'на полу'}.`);
+        if (zone !== 'living' || (target.kind !== 'upper' && target.kind !== 'base') || moduleAppliances(target).length > 0) {
+          warnings.push(`«${target.label}»: низ от пола задают только тумбам зала — этот модуль стоит ${target.kind === 'upper' ? 'на отметке навески ряда' : 'на полу'}.`);
           break;
         }
         const hang = op.hangMm;
@@ -3088,7 +3276,29 @@ export function applyOps({
           warnings.push(`«${target.label}»: низ ${hang} мм — верх ушёл бы на ${hang + height} мм, а зона кончается на ${top} мм.`);
           break;
         }
-        modules[at] = { ...target, hangMm: hang };
+        /*
+         * НАПОЛЬНАЯ, НА ОПОРАХ, ПОДВЕСНАЯ (задача 8): тумба со своим низом — модуль со своей отметкой. Напольная зала становится
+         * такой при первой правке: высота и глубина записываются, чтобы отметка не поменяла размер корпуса. Двигается только
+         * она: соседи на своих местах, детали едут за ней сами — их место считает та же `upperBottomFor`.
+         */
+        const mount = op.mount ?? (hang === 0 ? 'floor' : (target.hangMount ?? 'wall'));
+        if (mount === 'floor' && hang !== 0) {
+          warnings.push(`«${target.label}»: напольная стоит на полу — низ 0 мм, а задано ${hang} мм. Выберите «На опорах» или «Подвесная».`);
+          break;
+        }
+        const { hangMount: _mount, ...hangBare } = target;
+        void _mount;
+        const lifted: Module =
+          target.kind === 'base'
+            ? {
+                ...hangBare,
+                kind: 'upper',
+                id: moduleId('upper', target.offsetMm, undefined, run.wallId),
+                heightMm: height,
+                ownDepthMm: moduleDepthMm(target, zone, run.production),
+              }
+            : hangBare;
+        modules[at] = { ...lifted, hangMm: hang, ...(mount === 'wall' ? {} : { hangMount: mount }) };
         break;
       }
 
@@ -3402,9 +3612,19 @@ export function applyOps({
          * Габарит прибора фиксирован, но ПЕНАЛ — корпус (задача 1): его ширина числом, не уже прибора (600 мм у
          * приборов 60 см). Подходит ли ниша модели — проверка по её инструкции (`applianceModelFindings`).
          */
-        if (modules[at].appliance && !isPencil(modules[at])) {
+        /*
+         * ШКАФ ПОД МОЙКУ — КОРПУС ВОКРУГ ЧАШИ (задача 2): его ширину задаёт человек, а мойка держит минимум. Уже мойки шкаф не
+         * делают; мойку другого размера выбирают моделью.
+         */
+        const sinkHere = isSinkBase(modules[at]) && modules[at].appliance;
+        if (modules[at].appliance && !isPencil(modules[at]) && !sinkHere) {
           // Габарит техники фиксирован прибором, менять его нельзя.
           warnings.push(`${modules[at].label}: ширина техники не меняется.`);
+          break;
+        }
+        if (sinkHere && Math.round(op.widthMm) < sinkMinWidthMm(modules[at])) {
+          const need = sinkMinWidthMm(modules[at]);
+          warnings.push(`Шкаф ${Math.round(op.widthMm)} мм уже мойки: ей нужен корпус от ${need} мм — не хватает ${need - Math.round(op.widthMm)} мм.`);
           break;
         }
         if (isPencil(modules[at]) && Math.round(op.widthMm) < APPLIANCE_COLUMN.widthMm) {
@@ -3439,7 +3659,8 @@ export function applyOps({
          * постановке (`leavesAfterWidth`). У слепого угла створку ставит
          * угол: глухую часть знает ряд, и её модуль здесь не трогается.
          */
-        const leaves = blindAtWidth(modules[at], wanted) ? null : leavesAfterWidth(modules[at], wanted);
+        /* Створки зон и шкафа под мойку считает их наполнение, а не ширина: две дверцы остаются двумя. */
+        const leaves = blindAtWidth(modules[at], wanted) || hasFrontZones(modules[at]) || sinkHere ? null : leavesAfterWidth(modules[at], wanted);
         if (leaves && 'refusal' in leaves) {
           warnings.push(leaves.refusal);
           break;
@@ -5230,6 +5451,8 @@ export function applyOps({
    */
   const free = requirements.mode === 'free';
   modules = placeFree(free ? modules : settleBottom(modules), run.wallId);
+  /* Ящики зоны идут за её границей: сумма фронтов сходится с зоной на каждой правке (ловушка 83). */
+  modules = modules.map((unit) => syncZoneDrawers(unit, { ...run, zone, modules, options } as Run));
 
   /*
    * Наполнение пересчитывается там, где оно слетело со сменой секции:

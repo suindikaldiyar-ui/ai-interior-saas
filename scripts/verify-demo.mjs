@@ -2184,14 +2184,15 @@ try {
         words: (n.getAttribute('title') ?? '').trim(),
       })),
     );
-    const WANT_CARDS = ['lower:blind', 'lower:l_shape', 'upper:l_shape', 'upper:blind', 'upper:empty'];
+    /* Слой 89: режимы угла по ТЗ — без фальшпанели, глухой, торец к торцу. Было пять карточек, стало десять; сверка та же, точная. */
+    const WANT_CARDS = ['lower:blind', 'lower:no_filler', 'lower:dead', 'lower:l_shape', 'lower:butt', 'upper:l_shape', 'upper:blind', 'upper:no_filler', 'upper:empty', 'upper:butt'];
     check(
       'нажатие на угол открывает панель угла',
       (await panel.count()) === 1,
       `${await panel.count()} панелей`,
     );
     check(
-      'в панели угла пять карточек: низ и верх',
+      'в панели угла десять карточек: пять режимов низа и пять верха',
       cards.length === WANT_CARDS.length && WANT_CARDS.every((k) => cards.some((c) => c.key === k)),
       cards.map((c) => c.key).join(', ') || 'карточек угла нет',
     );

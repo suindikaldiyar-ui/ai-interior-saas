@@ -11,6 +11,7 @@ import type { GlassKind, Module, Run } from '@/types/millwork';
 import { designHasCut } from './reliefDesign';
 import { frontWithMilling, leafFrontWithMilling } from './milling';
 import { vitrineOf } from './vitrine';
+import { hasFrontZones, zoneOfDoor } from './frontZones';
 
 export const GLASS_KINDS: readonly GlassKind[] = ['clear', 'extra_clear', 'frosted', 'bronze', 'grey', 'fluted', 'mirror'];
 
@@ -60,6 +61,12 @@ export const GLASS_MATERIAL: Record<GlassKind, string> = {
  * `null` — не витрина: створка обычная.
  */
 export function vitrineDoorKind(unit: Module, leaf: string, run: Pick<Run, 'milling'> | undefined): 'alu' | 'mdf' | 'glass' | null {
+  /* Зоны фасада (задачи 3–4): витрина — зона, а не весь модуль; дверь зоны — в алюминиевой рамке. */
+  if (hasFrontZones(unit)) {
+    const door = /^door:(\d+)$/.exec(leaf);
+    const found = door ? zoneOfDoor(unit, Number(door[1])) : null;
+    return found?.zone.fill === 'glass' ? 'alu' : null;
+  }
   const v = vitrineOf(unit);
   if (!v) return null;
   const relief = leafFrontWithMilling(unit, leaf, { milling: run?.milling } as Pick<Run, 'milling'>).relief;

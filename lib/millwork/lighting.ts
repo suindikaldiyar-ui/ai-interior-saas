@@ -51,7 +51,9 @@ import {
 /* Хранимая часть (типы, ключи, разбор сохранённого) — своим модулем: она в первой загрузке рабочего места. */
 export * from './lightingState';
 import { rowPlacement, type Room, type RoomWall } from './room';
-import { vitrineLedStrips, vitrineOnCounter, vitrineOf } from './vitrine';
+import { vitrineLedStrips, vitrineOnCounter, vitrineOf, zoneLedStrips } from './vitrine';
+import { facadeSpans } from './applianceFront';
+import { hasFrontZones } from './frontZones';
 import type { VitrineLed } from '@/types/millwork';
 import { runPlaces } from './cabinetBoxes';
 import { standsOnFloor } from './modules';
@@ -542,7 +544,9 @@ export function underCabinetLine(span: UnderCabinetSpan, fixture: Pick<UnderCabi
  * Есть ли у модуля лента витрины — тот же признак, что выписывает её в смету:
  * витрина, у которой подсветка не «без подсветки» (`vitrineOf`, P1).
  */
-export function hasDisplayLed(unit: Pick<Module, 'section' | 'variant' | 'vitrine'>): boolean {
+export function hasDisplayLed(unit: Pick<Module, 'section' | 'variant' | 'vitrine' | 'frontZones'>): boolean {
+  /* Витрина зоны (задачи 3–4) — лента своей зоны: выключатель тот же. */
+  if ((unit.frontZones ?? []).some((zone) => zone.fill === 'glass' && zone.led && zone.led !== 'off')) return true;
   const v = vitrineOf(unit);
   return v !== null && v.led !== 'off';
 }
@@ -838,7 +842,10 @@ export function lightingPlan(
         displays.push({ moduleId: unit.id, label: unit.label, rowIndex });
         const own = lighting.displays[unit.id] ?? DEFAULT_DISPLAY_LIGHT;
         /* Полосы — та же раскладка, что в смете (`vitrineLedStrips`, P1). */
-        for (const strip of vitrineLedStrips(unit, displayLedLayout(unit, lighting.displays[unit.id]), heightMm, carcassMm)) {
+        const ledStrips = hasFrontZones(unit)
+          ? zoneLedStrips(unit, facadeSpans(unit, heightMm, row.run.production), carcassMm)
+          : vitrineLedStrips(unit, displayLedLayout(unit, lighting.displays[unit.id]), heightMm, carcassMm);
+        for (const strip of ledStrips) {
           strips.push({
             key: `display:${unit.id}:${strip.key}`,
             source: displayKey(unit.id),
