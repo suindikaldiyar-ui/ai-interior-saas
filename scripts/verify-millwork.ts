@@ -27371,7 +27371,11 @@ console.log('\nR01: независимые отсеки — полки толь�
       words(tooTall),
     );
 
-    /* Полки шкафа «Полки» стоят до 2112 мм — опустить до 2000 нельзя, пока они там. */
+    /*
+     * Своя полка на 2016 мм — опустить до 2000 нельзя, пока она там. Решение владельца 2026-11-07:
+     * полки по умолчанию идут за шкафом (OH5.15), поставленные рукой стоят — отказ остался на них.
+     */
+    fx.ops([{ op: 'set_fill', moduleId: cab.id, fill: { ...fx.run.modules[0].fill!, shelves: [352, 704, 1056, 1408, 1760, 2016] } }]);
     const shelfLoss = fx.ops([{ op: 'add_overhead', moduleId: cab.id, heightMm: 400, baseHeightMm: 2000 } as MillworkOp]);
     const shelvesNow = shelfLoss.modules[0].fill?.shelves ?? [];
     check(

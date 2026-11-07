@@ -63,7 +63,7 @@ import { applianceModel } from './appliances';
 import { MAX_MEZZANINE_MM, MIN_MEZZANINE_MM, sectionSpec } from './sections';
 import { ceilingOverSpanMm } from './ceiling';
 import { hasFacade, MIN_FACADE_SPAN_MM } from './applianceFront';
-import { MIN_SHELF_GAP_MM, bearsCountertop, columnNiches, snapTo32, tallBodyLimitMm, defaultDrawerHeights, fillRefusal, fridgeStorageOf, isPencil, ownShelvesOf, pencilDepthNeedMm, pencilNicheRefusal, pencilShelves, tallStorageOf } from './fill';
+import { MIN_SHELF_GAP_MM, bearsCountertop, columnNiches, snapTo32, tallBodyLimitMm, defaultDrawerHeights, fillRefusal, fridgeStorageOf, isPencil, ownShelvesOf, pencilDepthNeedMm, pencilNicheRefusal, refitDrawerFronts, pencilShelves, tallStorageOf } from './fill';
 import { drawerHeightsRefusal, drawerLocksOf, recountDrawerFronts, withDrawerFronts } from './drawerFronts';
 import { bayEnvelope, bayLayout, bayLossNote, baysRefusal, baysWidthRefusal, type BayEnvelope } from './bays';
 import { allModules } from './layout';
@@ -276,21 +276,30 @@ export function confirmBayLoss(ops: MillworkOp[]): MillworkOp[] {
  * которой не было при прежней высоте. Прежние проблемы не считаются —
  * меряется внесённое (ловушка 385).
  */
-function overheadFillLoss(before: Module, after: Module, shell: Run, heightMm: number, t: number): string[] {
+function overheadFillLoss(
+  before: Module,
+  after: Module,
+  shell: Run,
+  heightMm: number,
+  t: number,
+  /** Прежний размер: что лежало выше прежней крыши, эта правка не ломает (ловушка 385). */
+  was: { heightMm: number; shell: Run },
+): string[] {
   const fill = before.fill;
   if (!fill) return [];
   const out: string[] = [];
   const roof = heightMm - t;
-  const shelves = fill.shelves.filter((mm) => shelfAboveRoof(mm, roof, t));
+  const stood = (mm: number) => !shelfAboveRoof(mm, was.heightMm - t, t);
+  const shelves = fill.shelves.filter((mm) => shelfAboveRoof(mm, roof, t) && stood(mm));
   if (shelves.length > 0) {
     out.push(`${shelves.length === 1 ? 'полка' : 'полки'} на ${shelves.join(', ')} мм выше новой крыши ${roof} мм`);
   }
-  const rods = fill.rodsMm.filter((mm) => mm >= roof);
+  const rods = fill.rodsMm.filter((mm) => mm >= roof && mm < was.heightMm - t);
   if (rods.length > 0) out.push(`штанга на ${rods.join(', ')} мм выше новой крыши ${roof} мм`);
   if (fill.bays) {
-    const was = new Set(bayLayout(before, bayEnvelope(before, shell))?.problems ?? []);
+    const prior = new Set(bayLayout(before, bayEnvelope(before, was.shell))?.problems ?? []);
     for (const problem of bayLayout(after, bayEnvelope(after, shell))?.problems ?? []) {
-      if (!was.has(problem)) out.push(problem);
+      if (!prior.has(problem)) out.push(problem);
     }
   }
   return out;
@@ -531,6 +540,18 @@ export function applyOps({
   let overModules: Module[] = run.upperSegments
     .flatMap((segment) => segment.modules)
     .filter((unit) => Boolean(unit.overhead));
+  /**
+   * МОДУЛЬ ВИСЯЩИХ РЯДОВ — ОДИН ПОИСК НА ВСЕ ОПЕРАЦИИ.
+   *
+   * Висящих списков три: верхний ряд, антресоль ряда и корпуса над шкафами.
+   * Экран показывает их все, а операции спрашивали свои копии поиска, и почти
+   * все копии — два списка из трёх: корпус над шкафом (`over-2180@w1`) лежал в
+   * ряду, выделялся и показывал наполнение, а правка отвечала «не найден».
+   * Кладовка над колонной сюда не входит: она пересобирается (`storageNow`).
+   * Ищется только идентификатор: модуль на той же отметке — другой модуль.
+   */
+  const hangingNow = (id: string): Module | undefined =>
+    [...upperModules, ...mezzModules, ...overModules].find((unit) => unit.id === id);
   /**
    * Материал на ВЕСЬ объект: так ложится готовый дизайн.
    *
@@ -1207,15 +1228,54 @@ export function applyOps({
     );
   };
 
+  /**
+   * НАПОЛНЕНИЕ КОРПУСА ПОД НОВЫЙ РАЗМЕР — ОДНО ПРАВИЛО НА АНТРЕСОЛЬ И ШКАФ ПОД НЕЙ.
+   *
+   * Смена размера антресоли сбрасывала наполнение целиком: отсеки, полки, штанга,
+   * открывание и ручка уходили молча, и на их месте вставало наполнение по умолчанию.
+   * Теперь за размером идёт только то, что никто не трогал: полки и штанги по
+   * умолчанию (ловушка 815) и открывание, которого не выбирали, — если сменилось
+   * число створок.
+   * Поставленное человеком стоит на своих отметках. Что под новым размером не
+   * встаёт, названо, и правка не применяется.
+   */
+  const refitFill = (before: Module, after: Module, was: Run, now: Run): { fill: ModuleFill | undefined; lost: string[] } => {
+    const fill = before.fill;
+    if (!fill) return { fill, lost: [] };
+    const t = shopOf(run.production).carcassMm;
+    const wasMm = moduleCarcassHeightMm(before, was);
+    const nowMm = moduleCarcassHeightMm(after, now);
+    const fresh = defaultFill(after, now, 0, 1);
+    const stock = defaultFill(before, was, 0, 1);
+    const byDefault = !fill.bays?.length && fill.shelves.join(',') === stock.shelves.join(',');
+    const rodsByDefault = !fill.bays?.length && fill.rodsMm.join(',') === stock.rodsMm.join(',');
+    let next: ModuleFill = {
+      ...fill,
+      ...(byDefault ? { shelves: fresh.shelves } : {}),
+      ...(rodsByDefault ? { rodsMm: fresh.rodsMm } : {}),
+      ...(!fill.openingChosen && before.doorCount !== after.doorCount ? { hinge: fresh.hinge } : {}),
+    };
+    const lost: string[] = [];
+    if (wasMm !== nowMm && next.drawerHeights.length > 0) {
+      const fronts = refitDrawerFronts(next.drawerHeights, wasMm, nowMm, next.drawerLocked);
+      if (fronts) next = { ...next, drawerHeights: fronts };
+      else lost.push(`${next.drawerHeights.length} ящ. не встают в корпус ${nowMm} мм`);
+    }
+    if (next.dividerMm > after.widthMm) lost.push(`перегородка на ${next.dividerMm} мм за шириной ${after.widthMm} мм`);
+    const own = byDefault ? { ...next, shelves: [] } : next;
+    lost.push(...overheadFillLoss({ ...before, fill: own }, { ...after, fill: own }, now, nowMm, t, { heightMm: wasMm, shell: was }));
+    return { fill: next, lost };
+  };
+
   const overheadPlan = (
     base: Module,
     want: { widthMm?: number; depthMm?: number; heightMm?: number; baseHeightMm?: number },
     current: Module | null,
-  ): { refusal: string } | { unit: Module; baseHeightMm: number | null } => {
+  ): { refusal: string } | { unit: Module; lowered: Module | null } => {
     const name = `«${base.label}»`;
     const kindRefusal = overheadKindRefusal(base);
     if (kindRefusal) return { refusal: kindRefusal };
-    const shell = { ...run, zone, modules, options };
+    const shell = { ...run, zone, modules, options, mezzanine: mezzanine ?? undefined };
     const plinth = plinthMm(run.production);
     const t = shopOf(run.production).carcassMm;
     const baseNow = moduleCarcassHeightMm(base, shell);
@@ -1269,13 +1329,14 @@ export function applyOps({
     }
 
     /*
-     * Шкаф опускается — его наполнение обязано влезть. Меряется ВНЕСЁННОЕ
-     * (ловушка 385): только то, что новая высота ломает, а не то, что
-     * раскладка поставила раньше.
+     * Шкаф опускается — тем же правилом, что под «Антресолью» (решение владельца
+     * 2026-11-07): полки и штанги по умолчанию идут за ним, поставленное человеком
+     * стоит или отказ поимённо. Меряется ВНЕСЁННОЕ (ловушка 385).
      */
+    let lowered: Module | null = null;
     if (baseHeight !== baseNow) {
-      const lowered = { ...base, heightMm: baseHeight };
-      const lost = overheadFillLoss(base, lowered, shell, baseHeight, t);
+      const shorter = { ...base, heightMm: baseHeight };
+      const { fill, lost } = refitFill(base, shorter, shell, shell);
       if (lost.length > 0) {
         return {
           refusal:
@@ -1283,32 +1344,50 @@ export function applyOps({
             'Наполнение молча не снимается — поправьте его, затем ставьте антресоль.',
         };
       }
+      lowered = fill ? { ...shorter, fill } : shorter;
     }
 
-    const unit: Module = current
+    /*
+     * Размер сменился — наполнение остаётся (`refitFill`). Механизм держит одну
+     * створку при любой ширине (`set_opening`): её число за шириной не идёт.
+     */
+    const resized: Module | null = current
       ? {
           ...current,
           widthMm: width,
           heightMm: height,
           overhead: { depthMm: depth },
-          ...(current.widthMm !== width
+          ...(current.widthMm !== width && !isMechanism(openingOf(current).opening)
             ? { doorCount: makePlainModule('upper', width, run.wallId).doorCount }
             : {}),
-          /* Габарит поменялся — наполнение пересчитается по новому корпусу. */
-          fill: current.widthMm === width && current.heightMm === height ? current.fill : undefined,
         }
-      : {
-          ...makePlainModule('upper', width, run.wallId),
-          id: moduleId('over', base.offsetMm, undefined, run.wallId),
-          offsetMm: base.offsetMm,
-          heightMm: height,
-          overhead: { depthMm: depth },
-          label: 'Антресоль над шкафом',
-          /* Материал — тот же, что у шкафа под ней: её видно рядом с ним. */
-          ...(base.front ? { front: base.front } : {}),
-          ...(base.carcassItemId ? { carcassItemId: base.carcassItemId } : {}),
+      : null;
+    if (current && resized) {
+      const seamRefusal = frontSplitRefusal(resized, height, current.frontSplitMm ?? [], shell);
+      if (seamRefusal) return { refusal: seamRefusal };
+      const { fill, lost } = refitFill(current, resized, shell, shell);
+      if (lost.length > 0) {
+        return {
+          refusal:
+            `Антресоль над ${name} не поменять: ${lost.join('; ')}. ` +
+            'Наполнение молча не снимается — поправьте его, затем меняйте размер.',
         };
-    return { unit, baseHeightMm: baseHeight !== baseNow ? baseHeight : null };
+      }
+      return { unit: { ...resized, fill }, lowered };
+    }
+
+    const unit: Module = {
+      ...makePlainModule('upper', width, run.wallId),
+      id: moduleId('over', base.offsetMm, undefined, run.wallId),
+      offsetMm: base.offsetMm,
+      heightMm: height,
+      overhead: { depthMm: depth },
+      label: 'Антресоль над шкафом',
+      /* Материал — тот же, что у шкафа под ней: её видно рядом с ним. */
+      ...(base.front ? { front: base.front } : {}),
+      ...(base.carcassItemId ? { carcassItemId: base.carcassItemId } : {}),
+    };
+    return { unit, lowered };
   };
 
   /**
@@ -1316,7 +1395,7 @@ export function applyOps({
    * своём шкафу и не упирается ли в потолок. Слова — для отказа.
    */
   const overheadProblem = (list: Module[]): string | null => {
-    const shell = { ...run, zone, modules: list, options };
+    const shell = { ...run, zone, modules: list, options, mezzanine: mezzanine ?? undefined };
     for (const over of overModules) {
       const base = overheadBaseOf(over, shell);
       if (!base) {
@@ -1464,7 +1543,10 @@ export function applyOps({
      * воздухе или упёрся в потолок. Тот же приём, что у препятствий: ряд
      * прежний, отказ словами.
      */
-    const beforeOver = overModules.length > 0 ? { modules: [...modules], over: [...overModules] } : null;
+    const beforeOver: { modules: Module[]; over: Module[]; mezzanine: NonNullable<Run['mezzanine']> | null; mezz: Module[]; dropped: boolean } | null =
+      overModules.length > 0
+        ? { modules: [...modules], over: [...overModules], mezzanine, mezz: [...mezzModules], dropped: mezzanineDropped }
+        : null;
     const beforeStorage = modules.some((unit) => unit.storageOver) ? [...modules] : null;
     applyOne(op);
     if (beforeStorage) {
@@ -1479,6 +1561,9 @@ export function applyOps({
       if (problem) {
         modules = beforeOver.modules;
         overModules = beforeOver.over;
+        mezzanine = beforeOver.mezzanine;
+        mezzModules = beforeOver.mezz;
+        mezzanineDropped = beforeOver.dropped;
         warnings.push(`Правка не применена: ${problem}. Сначала уберите или поправьте антресоль над шкафом.`);
       }
     }
@@ -1503,11 +1588,24 @@ export function applyOps({
         : undefined;
     if (
       overTarget &&
-      (op.op === 'set_width' || op.op === 'move_module' || op.op === 'replace_module' || op.op === 'set_section')
+      (op.op === 'set_width' ||
+        op.op === 'move_module' ||
+        op.op === 'replace_module' ||
+        op.op === 'set_height' ||
+        op.op === 'set_module_depth' ||
+        op.op === 'split_module' ||
+        op.op === 'set_hang')
     ) {
       warnings.push(
         `«${overTarget.label}» — отдельный корпус над шкафом: ширина, высота и глубина правятся в её карточке ` +
           '«Над шкафом», а место — вместе со шкафом под ней.',
+      );
+      return;
+    }
+    if (overTarget && op.op === 'set_section') {
+      warnings.push(
+        `«${overTarget.label}» — отдельный корпус над шкафом: секцию ему не выбирают. ` +
+          'Полки, штанга и ящики задаются во «Внутреннем наполнении».',
       );
       return;
     }
@@ -1926,7 +2024,7 @@ export function applyOps({
             warnings.push(plan.refusal);
             break;
           }
-          if (plan.baseHeightMm !== null) modules[baseAt] = { ...base, heightMm: plan.baseHeightMm };
+          if (plan.lowered) modules[baseAt] = plan.lowered;
           overModules = [...overModules, plan.unit];
           break;
         }
@@ -1947,7 +2045,7 @@ export function applyOps({
           warnings.push(plan.refusal);
           break;
         }
-        if (plan.baseHeightMm !== null) modules[modules.indexOf(base)] = { ...base, heightMm: plan.baseHeightMm };
+        if (plan.lowered) modules[modules.indexOf(base)] = plan.lowered;
         overModules = overModules.map((unit, i) => (i === overAt ? plan.unit : unit));
         break;
       }
@@ -1977,7 +2075,12 @@ export function applyOps({
         if (op.heightMm === null) {
           const { heightMm: _was, ...rest } = unit;
           void _was;
-          modules[at] = rest;
+          const { fill, lost } = refitFill(unit, rest, shell, shell);
+          if (lost.length > 0) {
+            warnings.push(`Шкафу «${unit.label}» высоту не вернуть: ${lost.join('; ')}. Наполнение молча не снимается — поправьте его.`);
+            break;
+          }
+          modules[at] = fill ? { ...rest, fill } : rest;
           break;
         }
         const wanted = Math.round(op.heightMm);
@@ -2014,12 +2117,12 @@ export function applyOps({
           modules[at] = candidate;
           break;
         }
-        const lost = overheadFillLoss(unit, lowered, shell, wanted, t);
+        const { fill: refitted, lost } = refitFill(unit, lowered, shell, shell);
         if (lost.length > 0) {
           warnings.push(`Шкаф «${unit.label}» не опустить до ${wanted} мм: ${lost.join('; ')}. Наполнение молча не снимается — поправьте его.`);
           break;
         }
-        modules[at] = lowered;
+        modules[at] = refitted ? { ...lowered, fill: refitted } : lowered;
         break;
       }
 
@@ -2735,7 +2838,7 @@ export function applyOps({
       case 'set_fitting_finish': {
         /* Отделка поставленной позиции — вид (фаза 3): только пантограф, позиция и ход не меняются. */
         const fAt = modules.findIndex((m) => m.id === op.moduleId);
-        const fTarget = fAt >= 0 ? modules[fAt] : (upperModules.find((m) => m.id === op.moduleId) ?? mezzModules.find((m) => m.id === op.moduleId));
+        const fTarget = fAt >= 0 ? modules[fAt] : hangingNow(op.moduleId);
         const fitting = fTarget?.fittings?.find((f) => f.slot === op.slot && (op.bayId === undefined || f.bayId === op.bayId));
         if (!fTarget || !fitting) {
           warnings.push(`Позиции «${op.slot}» на модуле ${op.moduleId} нет — отделку менять не у чего.`);
@@ -2767,7 +2870,7 @@ export function applyOps({
          * (`hingeAtRefusal`); до записи, отказ словами с мм.
          */
         const pAt = modules.findIndex((m) => m.id === op.moduleId);
-        const pTarget = pAt >= 0 ? modules[pAt] : (upperModules.find((m) => m.id === op.moduleId) ?? mezzModules.find((m) => m.id === op.moduleId));
+        const pTarget = pAt >= 0 ? modules[pAt] : hangingNow(op.moduleId);
         if (!pTarget) {
           warnings.push(`Модуль ${op.moduleId} не найден: ручку и петли ставить не на что.`);
           break;
@@ -2886,7 +2989,7 @@ export function applyOps({
          * паспорта позиции, корпус в свету) до записи; умолчания не пишутся (ловушка 246).
          */
         const dryAt = modules.findIndex((m) => m.id === op.moduleId);
-        const dryTarget = dryAt >= 0 ? modules[dryAt] : upperModules.find((m) => m.id === op.moduleId);
+        const dryTarget = dryAt >= 0 ? modules[dryAt] : hangingNow(op.moduleId);
         if (!dryTarget) {
           warnings.push(`Модуль ${op.moduleId} не найден: сушку настраивать не у чего.`);
           break;
@@ -3700,7 +3803,7 @@ export function applyOps({
         /*
          * ОПЕРАЦИЯ, КОТОРАЯ НЕ СРАБОТАЛА, ГОВОРИТ ОБ ЭТОМ.
          *
-         * Здесь стояло `if (at < 0 || modules[at].appliance) break;` —
+         * Здесь стояло `if (at < 0 || frontUnit.appliance) break;` —
          * молчаливый выход. Если идентификатор не совпал (ряд успел
          * пересобраться, модуль пришёл с другой стены), человек менял
          * число в поле и не получал НИЧЕГО: ни ящиков, ни объяснения.
@@ -3711,10 +3814,16 @@ export function applyOps({
          * (`set_appliance_size`, `set_width`); эта молчала одна.
          */
         const at = modules.findIndex((m) => m.id === op.moduleId);
-        if (at < 0) {
+        const frontUnit = at >= 0 ? modules[at] : hangingNow(op.moduleId);
+        if (!frontUnit) {
           warnings.push(`Модуль ${op.moduleId} не найден: число фронтов менять не у чего.`);
           break;
         }
+        /* Ряд один: нижний, антресоль, верхний или корпус над шкафом — как у `set_fill`. */
+        const putFront = (edited: Module) => {
+          if (at >= 0) modules[at] = edited;
+          else if (!editMezz(frontUnit.id, () => edited)) editUpper(frontUnit.id, () => edited);
+        };
 
         /*
          * ЯЩИКИ ЕСТЬ У ТОГО, У КОГО ЕСТЬ ФРОНТЫ ЯЩИКОВ.
@@ -3731,11 +3840,11 @@ export function applyOps({
          * нишами.
          */
         const hasDrawers =
-          !modules[at].column && (modules[at].fill?.drawerHeights.length ?? 0) > 0;
+          !frontUnit.column && (frontUnit.fill?.drawerHeights.length ?? 0) > 0;
 
-        if (modules[at].appliance && !hasDrawers) {
+        if (frontUnit.appliance && !hasDrawers) {
           warnings.push(
-            `«${modules[at].label}»: фасад здесь задаёт прибор, а не поле — ` +
+            `«${frontUnit.label}»: фасад здесь задаёт прибор, а не поле — ` +
               'ящиков под ним нет.',
           );
           break;
@@ -3748,7 +3857,7 @@ export function applyOps({
          * назови отказ своей арифметикой — и он будет обещать другое
          * число, чем получит цех.
          */
-        const carcassMm = moduleCarcassHeightMm(modules[at], {
+        const carcassMm = moduleCarcassHeightMm(frontUnit, {
           ...run,
           zone,
           production: run.production,
@@ -3758,14 +3867,14 @@ export function applyOps({
         /* Свои места (`heights`) проверяет `drawerHeightsRefusal` ниже — раскладка по умолчанию им не мерка. */
         if (op.drawerCount > 0 && !fit.fits && !op.heights) {
           warnings.push(
-            `${op.drawerCount} ящиков не встанут: у «${modules[at].label}» под ` +
+            `${op.drawerCount} ящиков не встанут: у «${frontUnit.label}» под ` +
               `верхним фронтом остаётся ${fit.restMm} мм, на ящик нужно от ` +
               `${MIN_DRAWER_MM} мм — вышло бы по ${fit.eachMm} мм.`,
           );
           break;
         }
 
-        const fronts = frontPlan(modules[at].kind, modules[at].widthMm, op.drawerCount);
+        const fronts = frontPlan(frontUnit.kind, frontUnit.widthMm, op.drawerCount);
 
         /*
          * ОБРЕЗАЛИ ЧИСЛО — СКАЗАЛИ ОБ ЭТОМ.
@@ -3779,7 +3888,7 @@ export function applyOps({
         if (op.drawerCount > 0 && fronts.drawerCount < op.drawerCount) {
           warnings.push(
             `Больше ${fronts.drawerCount} ящиков в один модуль не ставят: ` +
-              `у «${modules[at].label}» стало ${fronts.drawerCount}, а не ${op.drawerCount}.`,
+              `у «${frontUnit.label}» стало ${fronts.drawerCount}, а не ${op.drawerCount}.`,
           );
         }
 
@@ -3804,8 +3913,8 @@ export function applyOps({
          * замерщик двигал руками, переживают повторное нажатие.
          */
         const stale =
-          fronts.drawerCount !== modules[at].drawerCount ||
-          fronts.doorCount !== modules[at].doorCount;
+          fronts.drawerCount !== frontUnit.drawerCount ||
+          fronts.doorCount !== frontUnit.doorCount;
 
         /*
          * СВОИ МЕСТА ФАСАДОВ ПРИ НОВОМ ЧИСЛЕ (редактор «Фасады ящиков», 2026-11-02): у модуля,
@@ -3819,13 +3928,13 @@ export function applyOps({
          * Не помещаются — отказ словами, ряд прежний; закреплённых нет — прежнее:
          * раскладка по умолчанию.
          */
-        const lockedNow = drawerLocksOf(modules[at].fill);
+        const lockedNow = drawerLocksOf(frontUnit.fill);
         let ownHeights = op.heights;
         let ownLocked = op.locked;
-        if (!ownHeights && stale && fronts.drawerCount > 0 && lockedNow.some(Boolean) && !modules[at].fill?.bays?.length) {
-          const recount = recountDrawerFronts(modules[at].fill?.drawerHeights ?? [], lockedNow, fronts.drawerCount, Math.round(carcassMm));
+        if (!ownHeights && stale && fronts.drawerCount > 0 && lockedNow.some(Boolean) && !frontUnit.fill?.bays?.length) {
+          const recount = recountDrawerFronts(frontUnit.fill?.drawerHeights ?? [], lockedNow, fronts.drawerCount, Math.round(carcassMm));
           if ('refusal' in recount) {
-            warnings.push(`Число ящиков ${fronts.drawerCount} не встаёт, не трогая закреплённые фасады «${modules[at].label}»: ${recount.refusal}`);
+            warnings.push(`Число ящиков ${fronts.drawerCount} не встаёт, не трогая закреплённые фасады «${frontUnit.label}»: ${recount.refusal}`);
             break;
           }
           ownHeights = recount.heights;
@@ -3836,40 +3945,40 @@ export function applyOps({
          * рядов по умолчанию для нового числа, деление то же; разделённых рядов больше, чем станет, —
          * отказ словами (`drawerHeightsRefusal` → `drawerSplitRefusal`), а не молча снятая перегородка.
          */
-        const keepsOwn = Boolean(modules[at].fill?.drawerSplit || modules[at].fill?.drawerInners?.length || modules[at].fill?.drawerInserts);
-        if (!ownHeights && stale && fronts.drawerCount > 0 && keepsOwn && !modules[at].fill?.bays?.length) {
+        const keepsOwn = Boolean(frontUnit.fill?.drawerSplit || frontUnit.fill?.drawerInners?.length || frontUnit.fill?.drawerInserts);
+        if (!ownHeights && stale && fronts.drawerCount > 0 && keepsOwn && !frontUnit.fill?.bays?.length) {
           ownHeights = defaultDrawerHeights(Math.round(carcassMm), fronts.drawerCount);
           ownLocked = [];
         }
         if (ownHeights && fronts.drawerCount > 0) {
-          const base = modules[at].fill;
+          const base = frontUnit.fill;
           if (!base || base.drawerHeights.length === 0 || base.bays?.length) {
-            warnings.push(`«${modules[at].label}»: свои места фасадов задаются у модуля, где ящики уже есть.`);
+            warnings.push(`«${frontUnit.label}»: свои места фасадов задаются у модуля, где ящики уже есть.`);
             break;
           }
           if (ownHeights.length !== fronts.drawerCount) {
             warnings.push(
-              `«${modules[at].label}»: мест фасадов ${ownHeights.length}, а ящиков ${fronts.drawerCount} — по месту на ящик.`,
+              `«${frontUnit.label}»: мест фасадов ${ownHeights.length}, а ящиков ${fronts.drawerCount} — по месту на ящик.`,
             );
             break;
           }
-          const heightsRefusal = drawerHeightsRefusal(modules[at], ownHeights, undefined, { ...run, zone, options, modules }, hardware);
+          const heightsRefusal = drawerHeightsRefusal(frontUnit, ownHeights, undefined, { ...run, zone, options, modules }, hardware);
           if (heightsRefusal) {
             warnings.push(heightsRefusal);
             break;
           }
           const locked = Array.from({ length: ownHeights.length }, (_, i) => ownLocked?.[i] === true);
-          modules[at] = {
-            ...modules[at],
+          putFront({
+            ...frontUnit,
             drawerCount: fronts.drawerCount,
             doorCount: fronts.doorCount,
             fill: withDrawerFronts(base, ownHeights, locked),
-          };
+          });
           break;
         }
 
-        modules[at] = {
-          ...modules[at],
+        putFront({
+          ...frontUnit,
           /*
            * ПРИБОРНЫЙ МОДУЛЬ ОСТАЁТСЯ ПРИБОРНЫМ.
            *
@@ -3878,15 +3987,15 @@ export function applyOps({
            * варочной этого не отменяют: меняется их ЧИСЛО, а не то, что
            * сверху стоит панель.
            */
-          frontType: modules[at].appliance
-            ? modules[at].frontType
+          frontType: frontUnit.appliance
+            ? frontUnit.frontType
             : fronts.drawerCount > 0
               ? 'drawers'
               : 'door',
           drawerCount: fronts.drawerCount,
           doorCount: fronts.doorCount,
-          fill: stale ? undefined : modules[at].fill,
-        };
+          fill: stale ? undefined : frontUnit.fill,
+        });
         break;
       }
 
@@ -3945,13 +4054,8 @@ export function applyOps({
          * оказалась бы недоступной.
          */
         const at = modules.findIndex((m) => m.id === op.moduleId);
-        /* Оба висящих ряда держатся: ищем в их ТЕКУЩИХ копиях. */
-        const upperUnit = at < 0
-          ? upperModules.find((m) => m.id === op.moduleId)
-          : null;
-
-        const mezzUnit = mezzModules.find((m) => m.id === op.moduleId);
-        const target = at >= 0 ? modules[at] : (mezzUnit ?? upperUnit);
+        /* Висящие ряды держатся: ищем в их ТЕКУЩИХ копиях. */
+        const target = at >= 0 ? modules[at] : hangingNow(op.moduleId);
         if (!target) {
           warnings.push(`Модуль ${op.moduleId} не найден.`);
           break;
@@ -4538,8 +4642,7 @@ export function applyOps({
         const fillTarget =
           fillAt >= 0
             ? modules[fillAt]
-            : (mezzModules.find((m) => m.id === op.moduleId) ??
-              upperModules.find((m) => m.id === op.moduleId) ??
+            : (hangingNow(op.moduleId) ??
               /*
                * Кладовка над колонной держанного списка не имеет: она
                * пересобирается. Найти её всё равно надо — иначе правка
@@ -4686,8 +4789,7 @@ export function applyOps({
          */
         const upperUnit =
           at < 0
-            ? (mezzModules.find((m) => m.id === op.moduleId) ??
-              upperModules.find((m) => m.id === op.moduleId))
+            ? hangingNow(op.moduleId)
             : null;
 
         /* Кладовка над колонной (ЭТАП 4, часть 2) — тем же путём, что её полки: `storageFills`. */
@@ -4749,8 +4851,7 @@ export function applyOps({
          */
         const upperUnit =
           at < 0
-            ? (mezzModules.find((m) => m.id === op.moduleId) ??
-              upperModules.find((m) => m.id === op.moduleId))
+            ? hangingNow(op.moduleId)
             : null;
 
         const stored = at < 0 && !upperUnit ? storageNow(op.moduleId) : null;
@@ -4788,7 +4889,7 @@ export function applyOps({
          */
         const at = modules.findIndex((m) => m.id === op.moduleId);
         const upperUnit =
-          at < 0 ? (mezzModules.find((m) => m.id === op.moduleId) ?? upperModules.find((m) => m.id === op.moduleId)) : null;
+          at < 0 ? hangingNow(op.moduleId) : null;
         const stored = at < 0 && !upperUnit ? storageNow(op.moduleId) : null;
         const target = at >= 0 ? modules[at] : (upperUnit ?? stored);
         if (!target) {
@@ -4822,7 +4923,7 @@ export function applyOps({
          */
         const at = modules.findIndex((m) => m.id === op.moduleId);
         const upperUnit =
-          at < 0 ? (mezzModules.find((m) => m.id === op.moduleId) ?? upperModules.find((m) => m.id === op.moduleId)) : null;
+          at < 0 ? hangingNow(op.moduleId) : null;
         const stored = at < 0 && !upperUnit ? storageNow(op.moduleId) : null;
         const target = at >= 0 ? modules[at] : (upperUnit ?? stored);
         if (!target) {
@@ -4969,8 +5070,7 @@ export function applyOps({
         const at = modules.findIndex((m) => m.id === op.moduleId);
         const upperUnit =
           at < 0
-            ? (mezzModules.find((m) => m.id === op.moduleId) ??
-              upperModules.find((m) => m.id === op.moduleId))
+            ? hangingNow(op.moduleId)
             : null;
 
         const target = at >= 0 ? modules[at] : upperUnit;
@@ -5094,9 +5194,7 @@ export function applyOps({
         const fitTarget =
           fitAt >= 0
             ? modules[fitAt]
-            : (mezzModules.find((m) => m.id === op.moduleId) ??
-              upperModules.find((m) => m.id === op.moduleId) ??
-              storageUnit);
+            : (hangingNow(op.moduleId) ?? storageUnit);
         if (!fitTarget) {
           warnings.push(`Модуль ${op.moduleId} не найден: фурнитуру ставить некуда.`);
           break;
@@ -5250,7 +5348,7 @@ export function applyOps({
        */
       case 'set_lift_angle': {
         const at = modules.findIndex((m) => m.id === op.moduleId);
-        const inUpper = at < 0 ? (mezzModules.find((m) => m.id === op.moduleId) ?? upperModules.find((m) => m.id === op.moduleId)) : null;
+        const inUpper = at < 0 ? hangingNow(op.moduleId) : null;
         const target = at >= 0 ? modules[at] : inUpper;
         if (!target) {
           warnings.push(`Модуль ${op.moduleId} не найден: ограничитель ставить не на что.`);
@@ -5373,6 +5471,46 @@ export function applyOps({
             );
             break;
           }
+
+          /*
+           * ШКАФЫ СТАНОВЯТСЯ НИЖЕ, КОРПУСА НАД НИМИ ИДУТ ЗА ВЫСОТОЙ.
+           *
+           * Высоту шкафа задаёт `run.mezzanine`, а у корпуса над шкафом она своя:
+           * 500 → 600 опускало шкаф на 100 мм, а корпус оставался 500, и между ним
+           * и потолком вставала щель. Корпус высоты антресоли идёт за ней, своё
+           * наполнение стоит. Что не встаёт, названо, и правка не применяется.
+           */
+          const wasMezzanine = mezzanine;
+          const wasModules = modules;
+          const nextMezzanine = { heightMm: wanted, ...(mezzanine?.alignTall ? { alignTall: true as const } : {}) };
+          const shellWas = { ...run, zone, modules, options, mezzanine: mezzanine ?? undefined };
+          const shellNow = { ...shellWas, mezzanine: nextMezzanine };
+          const broken: string[] = [];
+          const lowered = modules.map((unit) => {
+            if (moduleCarcassHeightMm(unit, shellWas) === moduleCarcassHeightMm(unit, shellNow)) return unit;
+            const { fill, lost } = refitFill(unit, unit, shellWas, shellNow);
+            if (lost.length > 0) broken.push(`«${unit.label}»: ${lost.join('; ')}`);
+            return fill ? { ...unit, fill } : unit;
+          });
+          mezzanine = nextMezzanine;
+          modules = lowered;
+          const followed = overModules.map((over) => {
+            const base = wasMezzanine && over.heightMm === wasMezzanine.heightMm ? overheadBaseOf(over, { modules }) : undefined;
+            if (!base) return over;
+            const plan = overheadPlan(base, { heightMm: wanted }, over);
+            if ('refusal' in plan) {
+              broken.push(plan.refusal);
+              return over;
+            }
+            return plan.unit;
+          });
+          if (broken.length > 0) {
+            mezzanine = wasMezzanine;
+            modules = wasModules;
+            warnings.push(`Антресоль ${wanted} мм не встаёт: ${broken.join(' ')}. Наполнение молча не снимается — поправьте его, затем меняйте высоту.`);
+            break;
+          }
+          overModules = followed;
         } else {
           /*
            * Антресоль садится НА верхний ряд, и вдвоём они обязаны влезть

@@ -4,6 +4,7 @@
  * Запуск: `npx tsx --tsconfig tsconfig.scripts.json scripts/android-room-fixture.ts` → JSON.
  */
 import { buildObject } from './corner-quality-fixture';
+import { wardrobe } from './verify-overhead-fill';
 import { DEMO_REQUIREMENTS } from '../lib/millwork/demo';
 import { RUN_TEMPLATES, requirementsFromTemplate } from '../lib/millwork/templates';
 import { zoneProfile } from '../lib/millwork/zones';
@@ -25,4 +26,14 @@ const objects = ZONES.map((zone) => {
   return { key: zone, title: o.title, zone: zoneProfile(zone).title, measurement: o.measurement, survey: o.survey, requirements: o.requirements, shape: o.shape, corners: o.corners, templateId: template.id, runs: { optimal: o.engine.segments[0] } };
 });
 
-process.stdout.write(JSON.stringify({ objects }));
+/* Шкаф с антресолью владельца: три секции по 1090, «Антресоль» 500, корпуса над шкафами — запись ряда как у настоящего объекта. */
+const wardrobes = [
+  { key: 'bedroom', title: 'Спальня · шкаф с антресолью', stand: wardrobe('bedroom') },
+  { key: 'hallway', title: 'Прихожая · шкаф с антресолью', stand: wardrobe('hallway') },
+  { key: 'kupe', title: 'Спальня · шкаф-купе с антресолью', stand: wardrobe('bedroom', {}, 'sliding') },
+].map(({ key, title, stand }) => {
+  const o = stand.object;
+  return { key, title, zone: zoneProfile(stand.requirements.zone ?? 'bedroom').title, measurement: o.measurement, survey: o.survey, requirements: stand.requirements, shape: o.shape, corners: o.corners, runs: { optimal: stand.run } };
+});
+
+process.stdout.write(JSON.stringify({ objects, wardrobes }));

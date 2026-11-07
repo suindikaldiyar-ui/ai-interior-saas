@@ -10,7 +10,7 @@ const PORT = Number(process.env.PORT_ANDROID ?? 3329);
 const BASE = `http://localhost:${PORT}`;
 const OUT = '.capture-check/android';
 const PARTS = (process.env.PART ?? 'zones').split(',').map((s) => s.trim()).filter(Boolean);
-const KNOWN = ['zones', 'flow', 'guard'];
+const KNOWN = ['zones', 'flow', 'guard', 'overhead'];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let failed = 0;
@@ -393,6 +393,143 @@ async function partFlow(browser) {
   }
 }
 
+/* ─────────────────────────  антресоль над шкафом  ───────────────────────── */
+
+const oversIn = (run) => (run?.upperSegments ?? []).flatMap((segment) => segment.modules).filter((unit) => unit.overhead);
+const savedRun = (millwork) => Object.values(millwork?.runs ?? {}).find(Boolean) ?? null;
+const shelvesInPanel = (page, editor) => page.locator(`${editor} [data-fill-action="remove-shelf"]`).count();
+const notFound = (page) => page.evaluate(() => /не найден/.test(document.body?.innerText ?? ''));
+
+/** Выбор модуля списком — нажатием, как человек; панель наполнения появляется только у него. */
+async function pick(page, id, label, touch) {
+  await ensureTool(page, 'select');
+  await waitFor(page, () => document.querySelectorAll('[data-studio-objects] [data-object-module]').length, (n) => n > 0, 30_000);
+  await press(page, `[data-object-module="${id}"]`, `${label}: модуль ${id} в списке`, { touch });
+  const editor = `[data-fill-editor="${id}"]`;
+  await page.waitForSelector(editor, { timeout: 20_000 });
+  return editor;
+}
+
+async function overheadFlow(page, service, item, name, touch) {
+  const tag = `${name} · ${item.key}`;
+  const { over, second } = item;
+  await openStudio(page, item.id);
+
+  /* Секция над шкафом: нажатие, на котором владелец получил «не найден». */
+  const editor = await pick(page, over, tag, touch);
+  await press(page, `${editor} [data-fill-action="split"]`, `${tag}: «Разделить вертикально»`, { touch });
+  const bays = await waitFor(page, (sel) => Number(document.querySelector(sel)?.getAttribute('data-fill-bays') ?? 0), (n) => n === 2, 15_000, editor);
+  check(`${tag} 1 «Разделить вертикально» у ${over}: отсеков 2, «не найден» нет`, bays === 2 && !(await notFound(page)), `отсеков ${bays}`);
+
+  /* В корпусе 500 третья полка при 160 и 320 на отверстие не встаёт: сначала убрать, потом добавить. */
+  const before = await shelvesInPanel(page, editor);
+  await press(page, `${editor} [data-fill-action="remove-shelf"]`, `${tag}: убрать полку`, { touch });
+  const removed = await waitFor(page, (sel) => document.querySelectorAll(`${sel} [data-fill-action="remove-shelf"]`).length, (n) => n === before - 1, 15_000, editor);
+  await press(page, `${editor} [data-fill-action="add-shelf"]`, `${tag}: «Добавить полку»`, { touch });
+  const added = await waitFor(page, (sel) => document.querySelectorAll(`${sel} [data-fill-action="remove-shelf"]`).length, (n) => n === before, 15_000, editor);
+  check(`${tag} 2 полки: убрать и добавить — ${before} → ${removed} → ${added}`, removed === before - 1 && added === before && !(await notFound(page)), '');
+
+  /* Шаг полки — числом, как в панели. */
+  const firstAt = () => page.evaluate((sel) => Number(document.querySelector(`${sel} [data-shelf-at]`)?.getAttribute('data-shelf-at') ?? 0), editor);
+  const wasAt = await firstAt();
+  const height = page.locator(`${editor} [data-shelf-height-input]`);
+  must(`${tag}: поле высоты полки`, (await height.count()) > 0, 'НУЛЕВОЙ СЕЛЕКТОР: [data-shelf-height-input]');
+  await height.first().scrollIntoViewIfNeeded().catch(() => undefined);
+  await height.first().fill(String(wasAt + 32));
+  await height.first().press('Enter');
+  const nowAt = await waitFor(page, (sel) => Number(document.querySelector(`${sel} [data-shelf-at]`)?.getAttribute('data-shelf-at') ?? 0), (n) => n === wasAt + 32, 15_000, editor);
+  check(`${tag} 2а шаг полки числом: ${wasAt} → ${nowAt}`, nowAt === wasAt + 32 && !(await notFound(page)), '');
+
+  /* Соседняя секция — своим наполнением: полки на штангу и на ящики. */
+  const next = await pick(page, second, tag, touch);
+  await press(page, `${next} [data-fill-action="split"]`, `${tag}: соседняя секция`, { touch });
+  const neighbour = await waitFor(page, (sel) => Number(document.querySelector(sel)?.getAttribute('data-fill-bays') ?? 0), (n) => n === 2, 15_000, next);
+  check(`${tag} 3 соседняя секция ${second}: своё наполнение`, neighbour === 2, `отсеков ${neighbour}`);
+
+  const confirmLoss = async () => {
+    await sleep(350);
+    const dialog = page.locator('[data-bay-loss-action="confirm"]');
+    if ((await dialog.count()) > 0) await press(page, '[data-bay-loss-action="confirm"]', `${tag}: снимаемое подтверждено`, { touch });
+  };
+  /* Перегородка встаёт посередине: полки 160 и 320 рядом с ней её не пускают — сперва снять их, как человек. */
+  for (let left = await shelvesInPanel(page, next); left > 0; left -= 1) {
+    await press(page, `${next} [data-fill-action="remove-shelf"]`, `${tag}: полка отсека снята`, { touch });
+    await waitFor(page, (sel) => document.querySelectorAll(`${sel.at} [data-fill-action="remove-shelf"]`).length, (n) => n === left - 1, 15_000, { at: next });
+  }
+  await press(page, `${next} [data-zone-action="split"]`, `${tag}: зоны отсека`, { touch });
+  await press(page, `${next} [data-zone-fn="rod"]`, `${tag}: зона — штанга`, { touch });
+  await confirmLoss();
+  const rods = await waitFor(page, (sel) => document.querySelectorAll(`${sel} [data-zone-rod]`).length, (n) => n > 0, 15_000, next);
+  check(`${tag} 3а полки на штангу в корпусе над шкафом`, rods > 0 && !(await notFound(page)), `штанг ${rods}`);
+  const other = await page.evaluate((sel) => {
+    const pressed = document.querySelector(`${sel} [data-zone-editor]`)?.getAttribute('data-zone-editor');
+    return [...document.querySelectorAll(`${sel} [data-zone-select]`)].map((el) => el.getAttribute('data-zone-select')).find((id) => id !== pressed) ?? null;
+  }, next);
+  must(`${tag}: вторая зона отсека`, Boolean(other), 'НУЛЕВОЙ СЕЛЕКТОР: [data-zone-select]');
+  await press(page, `${next} [data-zone-select="${other}"]`, `${tag}: вторая зона`, { touch });
+  await press(page, `${next} [data-zone-fn="drawers"]`, `${tag}: зона — ящики`, { touch });
+  await confirmLoss();
+  const stacks = await waitFor(page, (sel) => document.querySelectorAll(`${sel} [data-drawer-stack]`).length, (n) => n > 0, 15_000, next);
+  check(`${tag} 3б ящики в зоне корпуса над шкафом`, stacks > 0 && !(await notFound(page)), `блоков ${stacks}`);
+
+  /* Высота антресоли — поле «Антресоль» инструмента «Мебель». */
+  if (item.height) {
+    await ensureTool(page, 'furniture');
+    const field = page.locator('[data-mezzanine-height]');
+    must(`${tag}: поле высоты антресоли`, (await field.count()) > 0, 'НУЛЕВОЙ СЕЛЕКТОР: [data-mezzanine-height]');
+    await field.first().scrollIntoViewIfNeeded().catch(() => undefined);
+    await field.first().fill('600');
+    await field.first().press('Enter');
+    await sleep(900);
+  }
+  must(`${tag}: записано`, await saved(page), 'нет «Сохранено»');
+  const stored = savedRun(await millworkOf(service, item.id));
+  const row = oversIn(stored).find((unit) => unit.id === over);
+  check(
+    `${tag} 4 в базе: ${over} на месте, отсеков 2${item.height ? ', высота 600' : ''}`,
+    Boolean(row) && (row?.fill?.bays?.length ?? 0) === 2 && (!item.height || (row?.heightMm === 600 && stored?.mezzanine?.heightMm === 600)),
+    `${row?.heightMm} · отсеков ${row?.fill?.bays?.length ?? 0} · антресоль ${stored?.mezzanine?.heightMm}`,
+  );
+
+  /* Повторное открытие: тот же корпус, правка ложится. */
+  await page.reload({ waitUntil: 'domcontentloaded', timeout: 120_000 });
+  await openStudio(page, item.id);
+  const reopened = await pick(page, over, tag, touch);
+  const kept = await waitFor(page, (sel) => Number(document.querySelector(sel)?.getAttribute('data-fill-bays') ?? 0), (n) => n === 2, 20_000, reopened);
+  const shelvesKept = await shelvesInPanel(page, reopened);
+  await press(page, `${reopened} [data-fill-action="add-shelf"]`, `${tag}: полка после открытия`, { touch });
+  const again = await waitFor(page, (sel) => document.querySelectorAll(`${sel} [data-fill-action="remove-shelf"]`).length, (n) => n === shelvesKept + 1, 15_000, reopened);
+  check(`${tag} 5 после перезагрузки: отсеков ${kept}, полок ${shelvesKept} → ${again}, «не найден» нет`, kept === 2 && again === shelvesKept + 1 && !(await notFound(page)), '');
+  await shot(page, `overhead-${name}-${item.slug}.png`);
+  must(`${tag}: записано после открытия`, await saved(page), 'нет «Сохранено»');
+  const last = oversIn(savedRun(await millworkOf(service, item.id))).find((unit) => unit.id === over);
+  check(`${tag} 6 вторая запись: отсеки в базе`, (last?.fill?.bays?.length ?? 0) === 2, `${last?.fill?.bays?.length ?? 0}`);
+}
+
+async function partOverhead(browser) {
+  const wardrobes = fixture('wardrobes');
+  must('объекты шкафов с антресолью', wardrobes.length === 3, `объектов ${wardrobes.length}`);
+  for (const name of CHOSEN) {
+    const touch = Boolean(PROFILES[name].hasTouch);
+    console.log(`\n── ${name}: антресоль над шкафом`);
+    await withOrg(name, browser, async ({ page, errors, project, service, orgId }) => {
+      const items = [];
+      for (const fx of wardrobes) {
+        items.push({ key: fx.title, slug: fx.key, id: await project(fx), over: 'over-2180@w1', second: 'over-1090@w1', height: true });
+      }
+      const copies = await copiesOf(service, orgId, (process.env.REAL ?? '').split(',').filter(Boolean));
+      for (const copy of copies) {
+        const list = oversIn(savedRun(await millworkOf(service, copy.id)));
+        must(`${copy.key}: корпуса над шкафами`, list.length >= 2, `корпусов ${list.length}`);
+        items.push({ key: copy.key, slug: copy.key.replace(/[^a-z0-9]+/gi, '-'), id: copy.id, over: list[list.length - 1].id, second: list[list.length - 2].id, height: true });
+      }
+      for (const item of items) await overheadFlow(page, service, item, name, touch);
+      check(`${name} ошибок страницы нет`, errors.length === 0, errors.join(' | '));
+      for (const copy of copies) await service.from('projects').delete().eq('id', copy.id);
+    }, { contextOptions: PROFILES[name] });
+  }
+}
+
 /* ─────────────────────────  защита  ───────────────────────── */
 
 async function partGuard(browser) {
@@ -433,7 +570,7 @@ async function partGuard(browser) {
   }
 }
 
-const PART_RUN = { zones: partZones, flow: partFlow, guard: partGuard };
+const PART_RUN = { zones: partZones, flow: partFlow, guard: partGuard, overhead: partOverhead };
 
 async function main() {
   const unknown = PARTS.filter((p) => !KNOWN.includes(p));
