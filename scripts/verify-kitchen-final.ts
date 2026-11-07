@@ -15,15 +15,17 @@
  *   KF8.*  тумба зала: низ от пола, опоры, подвесная; соседи стоят.
  *   KF9.*  верхние планки: детали вместо сплошной, сцена = раскрой, правило цеха, без двойного учёта.
  *   KF10.* угол без фальшпанели: безопасный принят, опасный назван и что делать.
+ *   KF11.* белый экран Studio: числа ряда и холостой прогон не бросают ни на одном готовом решении ни с одним значением верхнего ряда.
  */
 import { buildObject, NEW_CORNER, L_MODULE, type Spec } from './corner-quality-fixture';
 import { hitsOf } from './verify-p0-corners';
-import { applyOps } from '../lib/millwork/ops';
+import { applyOps, isInvariantError, previewOps } from '../lib/millwork/ops';
+import { ModuleOverlapError } from '../lib/millwork/invariants';
 import { cornerGeometry, levelBoundsOf, lowerGapMm, cornerFillersOf } from '../lib/millwork/corner';
 import { changeCorner, cornerCards } from '../lib/millwork/cornerChange';
 import { cornerKinematics } from '../lib/millwork/cornerKinematics';
 import { runPlacements } from '../lib/millwork/composition';
-import { fitRunLength, rowFit, rowFillPlan } from '../lib/millwork/rowFit';
+import { fitRunLength, rowFit, rowFillPlan, rowFits } from '../lib/millwork/rowFit';
 import { rowStandardDepthMm } from '../lib/millwork/fill';
 import { countertopSlabs } from '../lib/millwork/countertop';
 import { objectPanels } from '../lib/millwork/panels';
@@ -818,6 +820,100 @@ export function kitchenFinalChecks(check: Check): void {
       `заходов ${left.length} · экран ${screen(safeRuns).length}`,
     );
   }
+
+  whiteScreenChecks(check);
+}
+
+/**
+ * KF11 — БЕЛЫЙ ЭКРАН STUDIO (2026-11-07). Блок «Место на стене» звал «Заполнить» вхолостую при отрисовке, а у зон без верхнего ряда с
+ * включённым `hasUpper` шкаф вставал в объём тумбы: `ModuleOverlapError` из отрисовки — `Application error` на любом устройстве.
+ */
+function whiteScreenChecks(check: Check): void {
+  let configurations = 0;
+  let rows = 0;
+  let crashed: string[] = [];
+  let lied: string[] = [];
+  for (const template of RUN_TEMPLATES) {
+    for (const lengthMm of [2400, 3200, 3800]) {
+      for (const hasUpper of [true, false]) {
+        const base = requirementsFromTemplate(template, DEMO_REQUIREMENTS.options);
+        const requirements = { ...base, options: { ...base.options, hasUpper } };
+        let object: ReturnType<typeof buildObject>;
+        try {
+          object = buildObject({ key: 'kf11', title: 'kf11', lengths: [lengthMm], shape: 'linear', corners: [], requirements });
+        } catch (error) {
+          /* Решение, которому мала стена, — законный отказ раскладки, а не предмет проверки. Прочее — дефект. */
+          if (error instanceof Error && /не собрал|не влез|не встан|короче|отказ/i.test(error.message)) continue;
+          throw error;
+        }
+        const run = object.engine.segments[0];
+        configurations += 1;
+        for (const fit of rowFits(run, [], requirements)) {
+          rows += 1;
+          const name = `${template.id} ${lengthMm} ${fit.row}`;
+          try {
+            const next = applyOps({ run, requirements, ops: [{ op: 'fill_row', row: fit.row }], openings: [] });
+            if (fit.free.length > 0 && next.warnings.length === 0 && rowFit(next, fit.row, [], requirements).freeMm !== 0) lied.push(name);
+          } catch (error) {
+            crashed.push(`${name}: ${error instanceof Error ? error.message.slice(0, 70) : error}`);
+          }
+        }
+      }
+    }
+  }
+  check(
+    'KF11.1 все готовые решения × 3 длины × верхний ряд вкл/выкл: «Заполнить» не бросает, а «свободно» значит «встанет»',
+    configurations >= 200 && rows >= configurations && crashed.length === 0 && lied.length === 0,
+    `конфигураций ${configurations}, рядов ${rows}, исключений ${crashed.length}${crashed[0] ? `: ${crashed[0]}` : ''}, неправды ${lied.length}${lied[0] ? `: ${lied[0]}` : ''}`,
+  );
+
+  /* Зона без верхнего ряда: над тумбой места нет, и ряда «Верх» в блоке нет. Кухня — прежняя. */
+  const bath = RUN_TEMPLATES.find((t) => t.zone === 'bathroom');
+  if (!bath) throw new Error('НУЛЕВОЙ СЕЛЕКТОР: шаблона санузла нет');
+  const bathReq = { ...requirementsFromTemplate(bath, DEMO_REQUIREMENTS.options), options: { ...requirementsFromTemplate(bath, DEMO_REQUIREMENTS.options).options, hasUpper: true } };
+  const bathRun = buildObject({ key: 'kf11b', title: 'kf11b', lengths: [3200], shape: 'linear', corners: [], requirements: bathReq }).engine.segments[0];
+  const kitchenRun = buildObject({ key: 'kf11k', title: 'kf11k', lengths: [3800], shape: 'linear', corners: [], requirements: DEMO_REQUIREMENTS }).engine.segments[0];
+  const bathFits = rowFits(bathRun, [], bathReq);
+  const kitchenFits = rowFits(kitchenRun, [], DEMO_REQUIREMENTS);
+  const upperFree = bathFits.find((fit) => fit.row === 'upper')?.freeMm ?? 0;
+  check(
+    'KF11.2 числа ряда: над тумбой санузла свободного места нет; у кухни верхний ряд на месте',
+    upperFree === 0 && kitchenFits.some((fit) => fit.row === 'upper' && fit.availableMm > 0),
+    `санузел ${bathFits.map((fit) => `${fit.row} ${fit.availableMm}/${fit.freeMm}`).join(', ')} · кухня ${kitchenFits.map((fit) => `${fit.row} ${fit.availableMm}/${fit.freeMm}`).join(', ')}`,
+  );
+
+  /* Второй рубеж: числа ряда сказали «свободно», а заполнить нечем — отказ самой операции, а не исключение. Висит низко над свободным местом. */
+  const emptyWall = freeObject('kf11-low', [NEW_CORNER]).engine.segments[0];
+  const lowFree = { ...DEMO_REQUIREMENTS, mode: 'free' as const, appliances: [], sections: [] };
+  const seeded = applyOps({ run: emptyWall, requirements: lowFree, openings: [], ops: [{ op: 'add_module', kind: 'base', widthMm: 600 }] });
+  const hanger = { ...seeded.modules[0], id: 'upper-low', kind: 'upper', offsetMm: 600, widthMm: 600, hangMm: 150 } as Module;
+  const lowRun: Run = { ...seeded, upperSegments: [{ fromMm: 0, toMm: seeded.lengthMm, modules: [hanger] }] };
+  let filled = '';
+  try {
+    filled = applyOps({ run: lowRun, requirements: lowFree, openings: [], ops: [{ op: 'fill_row', row: 'base' }] }).warnings[0] ?? 'принято';
+  } catch (error) {
+    filled = `ИСКЛЮЧЕНИЕ ${error instanceof Error ? error.name : error}`;
+  }
+  check('KF11.2а «Заполнить» в чужой объём: отказ операции словами, а не исключение', /^Ряд не заполнить/.test(filled), filled);
+
+  /* Холостой прогон: исключение инварианта — ответ словами, ряд прежний; настоящая правка бросает, как бросала. */
+  /* Два модуля на одном месте своей сборки: раскладка их не разводит, и инвариант обязан сказать. */
+  const freeReq = { ...DEMO_REQUIREMENTS, mode: 'free' as const, appliances: [], sections: [] };
+  const twin = { ...kitchenRun.modules.find((u) => !u.appliance)!, offsetMm: 0 };
+  const broken: Run = { ...kitchenRun, requirements: undefined, modules: [twin, { ...twin, id: `${twin.id}-twin` }] } as unknown as Run;
+  const input = { run: broken, requirements: freeReq, ops: [], openings: [] };
+  let thrown = '';
+  try {
+    applyOps(input);
+  } catch (error) {
+    thrown = error instanceof Error ? error.name : String(error);
+  }
+  const answered = previewOps(input);
+  check(
+    'KF11.3 холостой прогон: инвариант — отказ словами, а не исключение; applyOps бросает по-прежнему, правки не ослаблены',
+    thrown === 'RunLayoutError' && /накладываются/.test(answered.warnings[0] ?? '') && isInvariantError(new ModuleOverlapError([])),
+    `${thrown || 'не бросил'} · ${answered.warnings[0]?.slice(0, 90) ?? 'нет слов'}`,
+  );
 }
 
 function moduleDepthOf(run: Run, id: string): number {

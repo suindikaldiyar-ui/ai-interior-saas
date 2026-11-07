@@ -1,5 +1,6 @@
 import { levelAt, type CornerEnd } from './corner';
 import { rowSpansOfRun } from './layout';
+import { hangingRowBlocks } from './invariants';
 import { mezzanineBaseOf } from './fill';
 import { MAX_WIDTH, MIN_WIDTH, moduleAppliances } from './modules';
 import type { Module, Opening, Run, RunRequirements } from '@/types/millwork';
@@ -58,10 +59,26 @@ function cornerMm(run: Run, end: CornerEnd, row: FitRow): number {
   return levelAt(run, end, levelOfRow(row))?.gapMm ?? 0;
 }
 
+/** Участки без того, что заходит в ряд снизу: своя мебель считается отдельно, это — чужая. */
+function withoutBlocks(spans: { from: number; to: number }[], blocks: { fromMm: number; toMm: number }[]): { from: number; to: number }[] {
+  return blocks.reduce(
+    (list, block) =>
+      list.flatMap((span) => {
+        if (block.toMm <= span.from || block.fromMm >= span.to) return [span];
+        return [
+          ...(block.fromMm > span.from ? [{ from: span.from, to: block.fromMm }] : []),
+          ...(block.toMm < span.to ? [{ from: block.toMm, to: span.to }] : []),
+        ];
+      }),
+    spans,
+  );
+}
+
 export function rowFit(run: Run, row: FitRow, openings: Opening[], requirements: RunRequirements): RowFit {
   const wallMm = run.lengthMm + cornerMm(run, 'start', 'base') + cornerMm(run, 'end', 'base');
-  const spans = rowSpansOfRun(row, run, run.modules, openings, requirements, run.options).free;
   const units = [...occupied(run, row)].sort((a, b) => a.offsetMm - b.offsetMm);
+  const raw = rowSpansOfRun(row, run, run.modules, openings, requirements, run.options).free;
+  const spans = row === 'base' ? raw : withoutBlocks(raw, hangingRowBlocks(run, row, units));
   const free: { fromMm: number; toMm: number }[] = [];
   for (const span of spans) {
     let at = span.from;
@@ -91,7 +108,8 @@ export function rowFits(run: Run, openings: Opening[], requirements: RunRequirem
   const rows: FitRow[] = ['base'];
   if (run.options.hasUpper) rows.push('upper');
   if (run.mezzanine) rows.push('mezzanine');
-  return rows.map((row) => rowFit(run, row, openings, requirements));
+  /* Ряд, которому на этой стене негде стоять и в котором ничего нет, не показывается: «Верх» над шкафом до потолка — не место. */
+  return rows.map((row) => rowFit(run, row, openings, requirements)).filter((fit) => fit.row === 'base' || fit.availableMm > 0 || fit.builtMm > 0);
 }
 
 /** Что сделать с одним свободным участком. */

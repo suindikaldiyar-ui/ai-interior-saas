@@ -162,7 +162,7 @@ import SurveySheet from './SurveySheet';
 import TemplatePicker from './TemplatePicker';
 import type { RateTable } from '@/lib/millwork/estimate';
 import { unpricedLines } from '@/lib/millwork/estimate';
-import { applyOps, confirmBayLoss, opsBayLoss } from '@/lib/millwork/ops';
+import { applyOps, confirmBayLoss, opsBayLoss, isInvariantError, previewOps } from '@/lib/millwork/ops';
 import MaterialLibraryPanel, { type AppliedMaterial } from './MaterialLibraryPanel';
 import CaptureSceneBoundary from './CaptureSceneBoundary';
 import {
@@ -3110,6 +3110,24 @@ export default function Workspace(props: WorkspaceProps) {
     selectAfter?: (next: Run) => string | null;
   } | null>(null);
 
+  /*
+   * «ВСТАНЕТ ЛИ» — ОДНА ФУНКЦИЯ НА ВСЕ БЛОКИ. Их зовут при отрисовке, поэтому исключение инварианта здесь — ответ, а не падение
+   * страницы. Ссылка стабильна при том же ряде: блоки не пересчитывают проверки на каждую перерисовку.
+   */
+  const previewRun = useCallback(
+    (ops: MillworkOp[]) =>
+      previewOps({
+        run: activeRun,
+        requirements: requirementsOf(activeIndex),
+        ops,
+        openings: wallOpenings(activeIndex),
+        roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
+        hardware: hardwareItems,
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [activeRun, activeIndex, props.roomDepthM, hardwareItems],
+  );
+
   const runOps = useCallback(
     (
       ops: MillworkOp[],
@@ -3217,14 +3235,22 @@ export default function Workspace(props: WorkspaceProps) {
         return;
       }
       const before = new Map(activeRun.modules.map((m) => [m.id, m.widthMm]));
-      const next = applyOps({
-        run: activeRun,
-        requirements: requirementsOf(activeIndex),
-        ops,
-        openings: wallOpenings(activeIndex),
-        roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
-        hardware: hardwareItems,
-      });
+      let next: Run;
+      try {
+        next = applyOps({
+          run: activeRun,
+          requirements: requirementsOf(activeIndex),
+          ops,
+          openings: wallOpenings(activeIndex),
+          roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
+          hardware: hardwareItems,
+        });
+      } catch (error) {
+        /* Мебель, которую нельзя собрать: ряд прежний, причина — словами там, где делали жест. Иначе нажатие молчало. */
+        if (!isInvariantError(error)) throw error;
+        onRefusal(error.message);
+        return;
+      }
       dirty.current = true;
       /*
        * ОТКАЗ НАЗЫВАЕТСЯ СЛОВАМИ. Ряд при этом всё равно записывается:
@@ -6065,16 +6091,7 @@ export default function Workspace(props: WorkspaceProps) {
         openings={wallOpenings(activeIndex)}
         requirements={requirementsOf(activeIndex)}
         onOps={(ops, onRefusal) => runOps(ops, onRefusal)}
-        preview={(ops) =>
-          applyOps({
-            run: activeRun,
-            requirements: requirementsOf(activeIndex),
-            ops,
-            openings: wallOpenings(activeIndex),
-            roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
-            hardware: hardwareItems,
-          })
-        }
+        preview={previewRun}
       />
     ) : null;
     /* Стена, чьи проёмы правятся в панели «Замер»: выбранная, иначе стена ряда. */
@@ -6489,16 +6506,7 @@ export default function Workspace(props: WorkspaceProps) {
                 run={activeRun}
                 hardware={hardwareItems}
                 onOps={(ops, onRefusal) => runOps(ops, onRefusal)}
-                preview={(ops) =>
-                  applyOps({
-                    run: activeRun,
-                    requirements: requirementsOf(activeIndex),
-                    ops,
-                    openings: wallOpenings(activeIndex),
-                    roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
-                    hardware: hardwareItems,
-                  })
-                }
+                preview={previewRun}
               />
             )}
             {/*
@@ -6517,16 +6525,7 @@ export default function Workspace(props: WorkspaceProps) {
                 catalog={catalog}
                 onCatalogAdded={addCatalogEntries}
                 onOps={(ops, onRefusal) => runOps(ops, onRefusal)}
-                preview={(ops) =>
-                  applyOps({
-                    run: activeRun,
-                    requirements: requirementsOf(activeIndex),
-                    ops,
-                    openings: wallOpenings(activeIndex),
-                    roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
-                    hardware: hardwareItems,
-                  })
-                }
+                preview={previewRun}
               />
             )}
             {/*
@@ -6540,16 +6539,7 @@ export default function Workspace(props: WorkspaceProps) {
                 unit={selectedUnit}
                 run={activeRun}
                 onOps={(ops, onRefusal) => runOps(ops, onRefusal)}
-                preview={(ops) =>
-                  applyOps({
-                    run: activeRun,
-                    requirements: requirementsOf(activeIndex),
-                    ops,
-                    openings: wallOpenings(activeIndex),
-                    roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
-                    hardware: hardwareItems,
-                  })
-                }
+                preview={previewRun}
                 onSelect={selectModule}
               />
             )}
@@ -6566,16 +6556,7 @@ export default function Workspace(props: WorkspaceProps) {
                 unit={selectedUnit}
                 run={activeRun}
                 onOps={(ops, onRefusal) => runOps(ops, onRefusal)}
-                preview={(ops) =>
-                  applyOps({
-                    run: activeRun,
-                    requirements: requirementsOf(activeIndex),
-                    ops,
-                    openings: wallOpenings(activeIndex),
-                    roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
-                    hardware: hardwareItems,
-                  })
-                }
+                preview={previewRun}
               />
             )}
             {/*
@@ -6590,16 +6571,7 @@ export default function Workspace(props: WorkspaceProps) {
                 production={production}
                 hardware={hardwareItems}
                 onOps={(ops, onRefusal) => runOps(ops, onRefusal)}
-                preview={(ops) =>
-                  applyOps({
-                    run: activeRun,
-                    requirements: requirementsOf(activeIndex),
-                    ops,
-                    openings: wallOpenings(activeIndex),
-                    roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
-                    hardware: hardwareItems,
-                  })
-                }
+                preview={previewRun}
               />
             )}
             {/*
@@ -6614,16 +6586,7 @@ export default function Workspace(props: WorkspaceProps) {
                 hardware={hardwareItems}
                 carcassMm={production.carcassMm}
                 onOps={(ops, onRefusal) => runOps(ops, onRefusal)}
-                preview={(ops) =>
-                  applyOps({
-                    run: activeRun,
-                    requirements: requirementsOf(activeIndex),
-                    ops,
-                    openings: wallOpenings(activeIndex),
-                    roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
-                    hardware: hardwareItems,
-                  })
-                }
+                preview={previewRun}
               />
             )}
             {/*
@@ -6637,16 +6600,7 @@ export default function Workspace(props: WorkspaceProps) {
                 run={activeRun}
                 production={production}
                 onOps={(ops, onRefusal) => runOps(ops, onRefusal)}
-                preview={(ops) =>
-                  applyOps({
-                    run: activeRun,
-                    requirements: requirementsOf(activeIndex),
-                    ops,
-                    openings: wallOpenings(activeIndex),
-                    roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
-                    hardware: hardwareItems,
-                  })
-                }
+                preview={previewRun}
               />
             )}
             {/*
@@ -6668,16 +6622,7 @@ export default function Workspace(props: WorkspaceProps) {
                   onOps={(ops, onRefusal) =>
                     runOps(ops, onRefusal, (next) => next.modules.find((m) => m.offsetMm === selectedUnit.offsetMm && m.kind === 'tall')?.id ?? null)
                   }
-                  preview={(ops) =>
-                    applyOps({
-                      run: activeRun,
-                      requirements: requirementsOf(activeIndex),
-                      ops,
-                      openings: wallOpenings(activeIndex),
-                      roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
-                      hardware: hardwareItems,
-                    })
-                  }
+                  preview={previewRun}
                 />
               )}
             {/*
@@ -6687,22 +6632,13 @@ export default function Workspace(props: WorkspaceProps) {
               */}
             {selectedUnit && !onIsland && (() => {
               /* Мойка, вытяжка и планки (задачи 5–7, 9): те же `runOps` и движок вхолостую, что у зон фасада. */
-              const previewOps = (ops: MillworkOp[]) =>
-                applyOps({
-                  run: activeRun,
-                  requirements: requirementsOf(activeIndex),
-                  ops,
-                  openings: wallOpenings(activeIndex),
-                  roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
-                  hardware: hardwareItems,
-                });
               const send = (ops: MillworkOp[], onRefusal: (text: string | null) => void) => runOps(ops, onRefusal);
               const stamp = `${selectedUnit.id}:${activeRun.fingerprint}`;
               return (
                 <>
-                  <SinkModelEditor key={`sink:${stamp}`} unit={selectedUnit} onOps={send} preview={previewOps} />
-                  <HoodEditor key={`hood:${stamp}`} unit={selectedUnit} run={activeRun} onOps={send} preview={previewOps} />
-                  <TopRailsEditor key={`rails:${stamp}`} unit={selectedUnit} run={activeRun} onOps={send} preview={previewOps} />
+                  <SinkModelEditor key={`sink:${stamp}`} unit={selectedUnit} onOps={send} preview={previewRun} />
+                  <HoodEditor key={`hood:${stamp}`} unit={selectedUnit} run={activeRun} onOps={send} preview={previewRun} />
+                  <TopRailsEditor key={`rails:${stamp}`} unit={selectedUnit} run={activeRun} onOps={send} preview={previewRun} />
                 </>
               );
             })()}
@@ -6712,16 +6648,7 @@ export default function Workspace(props: WorkspaceProps) {
                 unit={selectedUnit}
                 run={activeRun}
                 onOps={(ops, onRefusal) => runOps(ops, onRefusal, (next) => next.modules.find((m) => m.offsetMm === selectedUnit.offsetMm && m.kind === selectedUnit.kind)?.id ?? null)}
-                preview={(ops) =>
-                  applyOps({
-                    run: activeRun,
-                    requirements: requirementsOf(activeIndex),
-                    ops,
-                    openings: wallOpenings(activeIndex),
-                    roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
-                    hardware: hardwareItems,
-                  })
-                }
+                preview={previewRun}
               />
             )}
             {/*
@@ -6734,16 +6661,7 @@ export default function Workspace(props: WorkspaceProps) {
                 unit={selectedUnit}
                 run={activeRun}
                 onOps={(ops, onRefusal) => runOps(ops, onRefusal, (next) => next.modules.find((m) => m.offsetMm === selectedUnit.offsetMm && m.kind === selectedUnit.kind)?.id ?? next.upperSegments.flatMap((s) => s.modules).find((m) => m.offsetMm === selectedUnit.offsetMm)?.id ?? null)}
-                preview={(ops) =>
-                  applyOps({
-                    run: activeRun,
-                    requirements: requirementsOf(activeIndex),
-                    ops,
-                    openings: wallOpenings(activeIndex),
-                    roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
-                    hardware: hardwareItems,
-                  })
-                }
+                preview={previewRun}
               />
             )}
             {/*
@@ -6756,16 +6674,7 @@ export default function Workspace(props: WorkspaceProps) {
                 unit={selectedUnit}
                 run={activeRun}
                 onOps={(ops, onRefusal) => runOps(ops, onRefusal, (next) => next.modules.find((m) => m.offsetMm === selectedUnit.offsetMm && m.kind === 'tall')?.id ?? next.modules.find((m) => m.offsetMm === selectedUnit.offsetMm)?.id ?? next.upperSegments.flatMap((s) => s.modules).find((m) => m.offsetMm === selectedUnit.offsetMm)?.id ?? null)}
-                preview={(ops) =>
-                  applyOps({
-                    run: activeRun,
-                    requirements: requirementsOf(activeIndex),
-                    ops,
-                    openings: wallOpenings(activeIndex),
-                    roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
-                    hardware: hardwareItems,
-                  })
-                }
+                preview={previewRun}
               />
             )}
             {/*
@@ -6779,16 +6688,7 @@ export default function Workspace(props: WorkspaceProps) {
                 run={activeRun}
                 gaps={libraryGapList}
                 onOps={(ops, onRefusal) => runOps(ops, onRefusal)}
-                preview={(ops) =>
-                  applyOps({
-                    run: activeRun,
-                    requirements: requirementsOf(activeIndex),
-                    ops,
-                    openings: wallOpenings(activeIndex),
-                    roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
-                    hardware: hardwareItems,
-                  })
-                }
+                preview={previewRun}
               />
             )}
             {/*
@@ -6802,16 +6702,7 @@ export default function Workspace(props: WorkspaceProps) {
                 run={activeRun}
                 production={production}
                 onOps={(ops, onRefusal) => runOps(ops, onRefusal)}
-                preview={(ops) =>
-                  applyOps({
-                    run: activeRun,
-                    requirements: requirementsOf(activeIndex),
-                    ops,
-                    openings: wallOpenings(activeIndex),
-                    roomDepthMm: Math.round((props.roomDepthM ?? 0) * 1000),
-                    hardware: hardwareItems,
-                  })
-                }
+                preview={previewRun}
               />
             )}
             {/*

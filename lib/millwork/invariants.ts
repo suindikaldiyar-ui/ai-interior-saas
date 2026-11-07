@@ -36,6 +36,14 @@ export class RunOverflowError extends Error {
  * Вызывается в конце buildRun и applyOps — то есть на каждом пути, который
  * вообще способен собрать ряд.
  */
+/** Модули ряда идут внахлёст. Свой класс, а не `Error`: холостой прогон обязан отличать инвариант от дефекта программы (`isInvariantError`). */
+export class RunLayoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RunLayoutError';
+  }
+}
+
 export function assertRunFits(run: Run): void {
   const sum = runWidthSum(run);
   if (sum > run.lengthMm) {
@@ -47,7 +55,7 @@ export function assertRunFits(run: Run): void {
     return next !== undefined && unit.offsetMm + unit.widthMm > next.offsetMm;
   });
   if (overlapping) {
-    throw new Error(
+    throw new RunLayoutError(
       `Модули накладываются: ${overlapping.id} заканчивается на ` +
         `${overlapping.offsetMm + overlapping.widthMm} мм, а следующий начинается раньше.`,
     );
@@ -265,6 +273,25 @@ export function moduleOverlaps(run: Run): ModuleOverlap[] {
   }
 
   return found;
+}
+
+/**
+ * ГДЕ В ВИСЯЩЕМ РЯДУ СТОЯТЬ НЕЛЬЗЯ: x-участки модулей других рядов, заходящих в его полосу высот.
+ *
+ * Границы ряда (`rowSpansOfRun`) знают окно, ригель и пеналы, но не тумбу зоны без верхнего ряда: у спальни, прихожей, зала и
+ * санузла место над ней считалось свободным, хотя шкаф встал бы в её объём. Габарит и высота — той же `moduleBox`, что у проверки
+ * непересечения: «свободно» обязано значить то же, что «встанет».
+ */
+export function hangingRowBlocks(run: Run, row: 'upper' | 'mezzanine', own: Module[]): { fromMm: number; toMm: number }[] {
+  /* Проба вне стены: у кладовки над колонной опора ищется по отметке, а здесь нужна полоса самого ряда. */
+  const probe = { id: 'probe', kind: 'upper', label: '', offsetMm: -100000, widthMm: 600, ...(row === 'mezzanine' ? { section: 'mezzanine' } : {}) } as Module;
+  const band = moduleBox(probe, run, true);
+  const mine = new Set(own.map((unit) => unit.id));
+  const others = [
+    ...run.modules.map((unit) => moduleBox(unit, run, false)),
+    ...run.upperSegments.flatMap((segment) => segment.modules.filter((unit) => !mine.has(unit.id)).map((unit) => moduleBox(unit, run, true))),
+  ];
+  return others.filter((box) => Math.min(box.y1, band.y1) - Math.max(box.y0, band.y0) > 1).map((box) => ({ fromMm: box.x0, toMm: box.x1 }));
 }
 
 export class ModuleOverlapError extends Error {

@@ -24,6 +24,7 @@ import {
   assertRunFits,
   assertUnderCeiling,
   widthOverflowMm,
+BeamOverlapError, CornerOverlapError, ModuleOverlapError, RunLayoutError, RunOverflowError, moduleOverlaps,
 } from './invariants';
 import { runFingerprint } from './fingerprint';
 import { plinthMm, shopOf, upperBottomMm, workTopMm } from './shop';
@@ -2196,6 +2197,19 @@ export function applyOps({
         }
         if (refusedRow) {
           warnings.push(refusedRow);
+          break;
+        }
+        /*
+         * ТО, ЧТО ЗАПОЛНИТ РЯД, ОБЯЗАНО ВСТАТЬ. Встанет ли, решает инвариант, а не надежда: мебель в чужом объёме — отказ словами, а
+         * не исключение из отрисовки блока (белый экран Studio у спальни, прихожей и зала с включённым верхним рядом).
+         */
+        const clash = moduleOverlaps({
+          ...snapshot,
+          modules: op.row === 'base' ? list : modules,
+          upperSegments: [{ fromMm: 0, toMm: run.lengthMm, modules: op.row === 'base' ? [...upperModules, ...mezzModules] : op.row === 'upper' ? [...list, ...mezzModules] : [...upperModules, ...list] }],
+        });
+        if (clash.length > 0) {
+          warnings.push(`Ряд не заполнить: ${clash[0].message}`);
           break;
         }
         if (op.row === 'base') modules = list.sort((a, b) => a.offsetMm - b.offsetMm);
@@ -6213,4 +6227,25 @@ export function applyOps({
   assertUnderCeiling(owned);
 
   return owned;
+}
+
+/** Инвариант ряда: мебель, которую нельзя собрать. Текст исключения написан для человека там же, где брошен. */
+export function isInvariantError(error: unknown): error is Error {
+  return error instanceof RunOverflowError || error instanceof RunLayoutError || error instanceof ModuleOverlapError || error instanceof BeamOverlapError || error instanceof CornerOverlapError;
+}
+
+/**
+ * ПРАВКА ВХОЛОСТУЮ — ТО, ЧТО ЭКРАН ЗОВЁТ ПРИ ОТРИСОВКЕ.
+ *
+ * Блоки инспектора спрашивают движок «встанет ли» прямо в отрисовке. Исключение инварианта там — не ответ, а белый экран всей
+ * Studio (`Application error`): так падали спальни, прихожие и залы. Здесь оно становится ответом «так нельзя» теми же словами;
+ * всё остальное — дефект программы, и его ловит граница блока, а не этот разбор.
+ */
+export function previewOps(input: Parameters<typeof applyOps>[0]): ReturnType<typeof applyOps> {
+  try {
+    return applyOps(input);
+  } catch (error) {
+    if (!isInvariantError(error)) throw error;
+    return { ...input.run, warnings: [error.message] };
+  }
 }
